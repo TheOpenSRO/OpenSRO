@@ -93,6 +93,7 @@ The full recipe, as actually run on the public server, is `deploy/README.md`.
 | `findregionassets` | scan every region's `.o`/`.o2` placements for an asset |
 | `scanlandmarks` | scan placements for landmark objects (world map work) |
 | `o2sectors` | check a `.o2` file's entries against its sector grid |
+| `mapobjcensus` | the objects the retail loader builds from every region's `.o2` (lists 1 and 2, one per key, owner's frame) against the client's placement rule; `-dumpmodels` feeds `client/tools/map_object_census.gd` |
 | `auditcharacters` | walk the real character/equipment asset chain and report what resolves |
 | `audittextures` | walk the whole object catalog and report texture resolution |
 

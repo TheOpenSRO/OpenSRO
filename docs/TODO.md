@@ -1305,8 +1305,8 @@ layer-key lead). Left open:
 - **The other event pieces are drawn.** The user chose four sets. `layerobjdef.txt`'s layer 11,
   구정 (Lunar New Year, `res\etc\newyearday\`), the season door (`res\etc\seasonevent_door.bsr`)
   and `alex_burner` stay unless the user asks. `alex_burner` matches no layer row by position.
-- **The `.o2` skip bit** (below, "`.o2` list semantics"): 240 list-2 records that retail does not
-  build are drawn. None of them is seasonal.
+- **The `.o2` skip bit** (below, "`.o2` list semantics"): tested since round 643, so the 1,000
+  records retail does not build are not drawn either. None of them is seasonal.
 
 ### Buffs on the server (skills epic, round 616) — **started: the book, Grass Walk's speed, cancel, Ghost Walk**
 The server starts an action-kind-3 cast as a record in the caster's book, ends it at its time or
@@ -1540,15 +1540,16 @@ Retail draws water from each `.m` block's PlaneType/PlaneHeight, not from the `.
 - **Walking under water is authentic** (the user, 2026-09-28): it happens in the original game too.
   Leave movement alone.
 
-### Scenery still off the ground
+### Scenery still off the ground — **re-measure after round 643**
 83 objects fell to 60 once each `.o2` entry was assigned to the region whose heightmap explains
-its height (eighty-fifth round). The rule resolves small scenery reliably and **cannot** resolve a
-large structure standing on its own platform, whose base has no reason to touch the terrain.
+its height (eighty-fifth round). Round 643 replaced that height test with the record's own owner
+field (bytes 28-29, READ): every object now stands in its owner region's frame. The 60 have not
+been re-counted under the new rule (`SRREVAMP_QA_FLOAT`).
 
-### The `cj_s` city wall's copies
-Down from six to two or three. The surviving one currently lands correctly because an unauthored
-band of zeroes beats the regions with real data — luck, recorded as luck in the eighty-sixth
-round, not a working rule.
+### The `cj_s` city wall's copies — **one object since round 643**
+The wall is one key (owner 97/168), listed by five regions; `World3D._placed_objects` places it
+once, in its owner's frame, whichever region commits first. The luck the eighty-sixth round
+recorded is no longer involved.
 
 ### Objects you could walk inside — **fixed** (hundred-and-twenty-third round)
 It was 232 objects world-wide, not the eight Jangan ones the count named. The graph resolved an
@@ -1577,20 +1578,35 @@ were overturned by re-reading data, and the tell in every one was a header word 
 used** — the `.bsr` offset table, the `UV_*` fields, and `.bms` skinning. Grepping the other
 readers for the same shape found none, so this is the last of it for now.
 
-### `.o2` list semantics
-List 2 is a region's own objects and the others are cross-references, measured at 91% against 46%
-on the sector check. What the three lists *are* is still unknown.
+### `.o2` list semantics — **what the world builds is settled (round 643); what the lists mean is not**
+Round 643 read that the loader builds `lists[1]` and `lists[2]` alike, one object per key, and
+measured that a record's position is in its owner region's frame; the world now does the same
+(`World3D.region_placements`, `_placed_objects`; MAPO2_FORMAT.md, "Round 643"). The old reading,
+"list 2 is a region's own objects and the others are cross-references", was wrong: 52,366 of the
+75,564 objects are in `lists[1]` alone, Hotan's stable and bridges and the Fertility Temple among
+them. Left open:
+- **What separates the two lists.** A key is in one or the other (7 of 75,564 in both). The
+  loader does one thing more for a `lists[1]` record whose object has +0x1a bit 0 set (a link
+  through a map at +0x247b: a portal or warp candidate), not read further.
+- **The key registry's holder is the first region to commit.** An object moves to another lister
+  when its holder streams out (`_release_region_objects`); retail keeps a refcount instead. A
+  listed object whose last loaded lister streams out goes with it, as in retail.
+- **20 models the map places are not in Data.pk2** (222 placements: `res\dun\asiam\r2_cv\field\`
+  ruins and statues, `st_part01`..`03`, `pha_crypt`, `res\testsize\aa.bsr`): nothing to load.
+- **`oas_hot_etc03`** (one piece of `oas_hot_etc`, Hotan): an MTRL mod tests at 128 and its DXT3
+  texture's alpha is below 128 everywhere, so it draws nothing here. Whether its stage-0 alpha op
+  reads the texture (the MTRL animated colour is still open, round 625) decides whether retail
+  draws it.
+- **Two regions with a populated `.o` and no `.o2`** (51/84, 93/211) draw no objects, as retail.
 
 Round 583 read three record fields in the loader (`FUN_00a361b0`;
 [protocol/MAPO2_FORMAT.md](protocol/MAPO2_FORMAT.md), "Corrected (round 583)"). Bytes 22-23 are
 the object's uid and bytes 28-29 its owner region, and together they are the key the loader files
 the object under. Byte 27 bit 0 is a skip bit: in `lists[1]` and `lists[2]` a record with the bit
-set is not built. **Open**: `World3D` does not test that bit, so it draws 240 `lists[2]` records
-(in 41 regions, none of them Jangan's) that retail does not build from the file. They are
-Baghdad's `bagh_masin_lightwall` (120), guild barricades (48), Baghdad's event barricades (46),
-Petra's fires (24) and `res\dun\jupiter\piety\piety_golddoor.bsr` (2). What does put
-them in the world (a siege, an event) is not traced. Next step: trace who creates an object
-filed with the bit set. Only after that, decide whether to skip the bit.
+set is not built. `World3D` tests the bit since round 643, as the loader does, so the 240
+`lists[2]` records (Baghdad's `bagh_masin_lightwall` (120), guild barricades (48), Baghdad's event
+barricades (46), Petra's fires (24) and `piety_golddoor` (2)) and 760 `lists[1]` ones are no
+longer drawn. **Open**: what does put them in the world (a siege, an event) is not traced.
 
 ## Established, do not re-derive
 

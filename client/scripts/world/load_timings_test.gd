@@ -261,7 +261,7 @@ func _test_world3d_objects_laps_are_exhaustive() -> void:
 		"_objects_commit": _body_of(src, "\nfunc _objects_commit("),
 		"_load_object_template": _body_of(src, "\nfunc _load_object_template("),
 		"_cell_prepare": _body_of(src, "\nstatic func _cell_prepare("),
-		"_placements_belonging_here": _body_of(src, "\nstatic func _placements_belonging_here("),
+		"region_placements": _body_of(src, "\nstatic func region_placements("),
 		"_job_heightmap": _body_of(src, "\nstatic func _job_heightmap("),
 	}
 	for name in bodies:
@@ -279,7 +279,7 @@ func _test_world3d_objects_laps_are_exhaustive() -> void:
 	_check(got_commit == OBJECTS_COMMIT_LAPS,
 		"the commit's laps -- _objects_commit's textures, _load_object_template's templates, the loop's place -- are %s (got %s)" % [
 			str(OBJECTS_COMMIT_LAPS), str(got_commit)])
-	for name in ["_objects_prepare", "_cell_prepare", "_placements_belonging_here", "_job_heightmap"]:
+	for name in ["_objects_prepare", "_cell_prepare", "region_placements", "_job_heightmap"]:
 		_check((bodies[name] as String).find("_load_timings") < 0,
 			"%s records no lap in _load_timings (it can run on a WorkerThreadPool task)" % name)
 	for name in bodies:

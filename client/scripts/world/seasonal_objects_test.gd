@@ -96,7 +96,7 @@ func _test_enabled_list(C: GDScript) -> void:
 	_check(C.call("parse_enabled", "christmas,easter,xmas") == {"christmas": true}, "an unknown name is ignored")
 	_check((C.call("parse_enabled", "christmas,halloween,obt,summer") as Dictionary).size() == 4, "all four")
 
-## World3D's prepare over a synthetic `97\168.o`: a wall, a Christmas tree,
+## World3D's prepare over a synthetic `97\168.o2` (round 643; a `.o` until then): a wall, a Christmas tree,
 ## a Halloween display, arabia_fouad and a repeat of the Christmas tree (the
 ## de-duplication runs first, so it is hidden once).
 func _test_prepare_hides() -> void:
@@ -106,7 +106,7 @@ func _test_prepare_hides() -> void:
 		return
 	var map_path := "user://srrevamp_r583_seasonal_map.pk2"
 	var data_path := "user://srrevamp_r583_seasonal_data.pk2"
-	_write_pk2(map_path, {"97\\168.o": _build_mapo()})
+	_write_pk2(map_path, {"97\\168.o2": _build_mapo2()})
 	_write_pk2(data_path, {"prim\\none.txt": "x".to_ascii_buffer()})
 
 	var saved := OS.get_environment("SRREVAMP_SEASONAL")
@@ -124,9 +124,10 @@ func _test_prepare_hides() -> void:
 	_check(job.get("seasonal_hid", {}) == {"christmas": 1, "halloween": 1},
 		"the job counts what it hid, per set (got %s)" % str(job.get("seasonal_hid")))
 	var text := _log_text(job)
-	_check(text.contains("World3D: 97\\168.o -- hid 2 seasonal placement(s) (christmas 1, halloween 1, obt 0, summer 0)"),
+	_check(text.contains("World3D: 97\\168.o2 -- hid 2 seasonal placement(s) (christmas 1, halloween 1, obt 0, summer 0)"),
 		"the job logs the hidden count per set (got %s)" % text)
-	_check(text.contains("dropped 1 duplicate real placements (5 -> 4)"), "the repeat was merged before the filter")
+	_check(text.contains("4 object(s) from 5 record(s) of lists 1 and 2 (1 listed again by another sector"),
+		"the second listing of one key was merged before the filter (got %s)" % text)
 
 	OS.set_environment("SRREVAMP_SEASONAL", "christmas")
 	job = _prepare(S, map_path, data_path)
@@ -179,19 +180,32 @@ func _object_index() -> ObjidxReader.Table:
 	return table
 
 ## A real-shaped `.o` (objects_prepare_test.gd's layout).
-func _build_mapo() -> PackedByteArray:
+## A real-shaped `.o2` (MapO2Reader) for 97/168: sector 0's list 1 holds
+## the five records, each owned by 97/168 (0x61a8) with its own uid, the
+## last a second listing of the Christmas tree's key (the same object, as a
+## second sector lists it). The world reads no `.o` since round 643.
+func _build_mapo2() -> PackedByteArray:
 	var buf := PackedByteArray()
-	buf.append_array((MapoReader.MAGIC + "1001").to_ascii_buffer())
-	buf.resize(buf.size() + 8)
-	for rec in [[1, Vector3(100, 0, 100)], [2, Vector3(200, 0, 100)], [3, Vector3(300, 0, 300)],
-			[4, Vector3(400, 0, 400)], [2, Vector3(200, 0, 100)]]:
-		var r := PackedByteArray()
-		r.resize(MapoReader.FIXED_RECORD_LEN)
-		r.encode_u32(0, rec[0])
-		r.encode_float(4, rec[1].x)
-		r.encode_float(8, rec[1].y)
-		r.encode_float(12, rec[1].z)
-		buf.append_array(r)
+	buf.append_array((MapO2Reader.MAGIC + "1001").to_ascii_buffer())
+	var records := [[1, Vector3(100, 0, 100), 1], [2, Vector3(200, 0, 100), 2], [3, Vector3(300, 0, 300), 3],
+			[4, Vector3(400, 0, 400), 4], [2, Vector3(200, 0, 100), 2]]
+	for sector in range(MapO2Reader.SECTORS_PER_SIDE * MapO2Reader.SECTORS_PER_SIDE):
+		for field in range(MapO2Reader.FIELDS_PER_SECTOR):
+			var count := records.size() if sector == 0 and field == 2 else 0
+			var c := PackedByteArray()
+			c.resize(2)
+			c.encode_u16(0, count)
+			buf.append_array(c)
+			for i in range(count):
+				var r := PackedByteArray()
+				r.resize(MapO2Reader.ENTRY_LEN)
+				r.encode_u32(0, records[i][0])
+				r.encode_float(4, records[i][1].x)
+				r.encode_float(8, records[i][1].y)
+				r.encode_float(12, records[i][1].z)
+				r.encode_u16(22, records[i][2])
+				r.encode_u16(28, (97 << 8) | 168)
+				buf.append_array(r)
 	return buf
 
 ## A synthetic pk2 holding `files` ({"folder\\name": bytes}), one directory

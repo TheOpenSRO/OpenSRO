@@ -296,18 +296,24 @@ func _near(map: Pk2Reader, table: ObjidxReader.Table, spec: String) -> void:
 	var at := Vector2(float(nums[0]), float(nums[1]))
 	var r := float(nums[2])
 	var placements: Array = []
-	var o := MapoReader.parse(AssetSource.read_bytes(region + ".o", map))
-	if o != null:
-		for p in o.objects:
-			placements.append([p.type_id, p.position, p.rotation, ".o"])
+	# The records the world builds (World3D.region_placements, round 643):
+	# lists 1 and 2 of the `.o2`, skip bit clear, one per key, in the owner's
+	# frame. The `.o` is not read (retail reads none).
+	var rx := int(region.get_slice("\\", 0))
+	var ry := int(region.get_slice("\\", 1))
 	var o2bytes := AssetSource.read_bytes(region + ".o2", map)
 	if not o2bytes.is_empty():
 		var o2 := MapO2Reader.parse(o2bytes)
 		if o2 != null:
+			var keys := {}
 			for s in o2.sectors:
-				if s.lists.size() >= 3:
-					for e in s.lists[2]:
-						placements.append([e.type_id, e.position, e.rotation, ".o2"])
+				for li in [1, 2]:
+					for e in s.lists[li]:
+						if e.skipped() or keys.has(e.object_key()):
+							continue
+						keys[e.object_key()] = true
+						placements.append([e.type_id, e.position + MapO2Reader.owner_offset(e.owner_region, rx, ry),
+							e.rotation, ".o2 list %d" % li])
 	var seen := {}
 	for p in placements:
 		var pos: Vector3 = p[1]

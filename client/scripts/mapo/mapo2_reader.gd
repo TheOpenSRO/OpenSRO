@@ -57,13 +57,43 @@ class Entry:
 	## the raw record). Round 583 read it in the loader: it is the object's
 	## uid, the low half of the key the loader files the object under, and
 	## raw[28:30] is the high half, the owner region `(Y<<8)|X`. raw[27]
-	## bit 0 is the loader's skip bit, which this reader does not act on
-	## (MAPO2_FORMAT.md, "Corrected (round 583)").
+	## bit 0 is the loader's skip bit (MAPO2_FORMAT.md, "Corrected (round
+	## 583)"); World3D.region_placements acts on both since round 643.
 	var index: int
+	## The owner region, raw[28:30] as a little-endian uint16: the packed
+	## `(first << 8) | second` of the owner's `<first>\<second>` folder name
+	## (round 583: `86\90.o2`'s own records carry 0x565a). The record's
+	## position is local to this region, not necessarily the file's.
+	var owner_region: int
+	## raw[27], whose bit 0 is the loader's skip bit (skipped()).
+	var build_flags: int
 	## The full 30 raw bytes, including the fields already decoded above --
 	## kept so nothing is lost while the trailing bytes' full meaning is
 	## still being worked out.
 	var raw: PackedByteArray
+
+	## The loader's skip test (FUN_00a361b0, READ in round 583): a record of
+	## the second or third stored list with raw[27] & 1 is not built.
+	func skipped() -> bool:
+		return build_flags & 1 != 0
+
+	## The key the loader files the object under: CONCAT22(raw[28:30],
+	## raw[22:24]) -- the owner region and the uid (round 583, READ). Two
+	## records with one key are one object (Map::FUN_00a1a1d0's refcounted
+	## cache), however many sectors or regions list it.
+	func object_key() -> int:
+		return (owner_region << 16) | index
+
+## The offset from region (region_x, region_y) -- World3D's
+## _parse_region_coords of `<x>\<y>` -- to the frame of the packed owner
+## region, in the region's local space: the owner's `<y>` steps local x and
+## its `<x>` steps local z, one REGION_SPAN (1920) each, as
+## World3D._cell_offset steps the terrain groups (region_x -> world Z,
+## region_y -> world X). Zero for the region's own records.
+static func owner_offset(owner_region: int, region_x: int, region_y: int) -> Vector3:
+	var owner_x := (owner_region >> 8) & 0xFF
+	var owner_y := owner_region & 0xFF
+	return Vector3((owner_y - region_y) * 1920.0, 0.0, (owner_x - region_x) * 1920.0)
 
 class Sector:
 	## Exactly LISTS_PER_SECTOR (3) arrays of Entry, in real file order --
@@ -121,6 +151,8 @@ static func parse(data: PackedByteArray) -> ParsedRegion:
 						data.decode_float(off + 12))
 					entry.rotation = data.decode_float(off + 18)
 					entry.index = data.decode_u16(off + 22)
+					entry.build_flags = data[off + 27]
+					entry.owner_region = data.decode_u16(off + 28)
 					entry.raw = data.slice(off, off + ENTRY_LEN)
 					off += ENTRY_LEN
 					entries.append(entry)

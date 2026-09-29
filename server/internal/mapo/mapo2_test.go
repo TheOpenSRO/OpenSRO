@@ -158,3 +158,27 @@ func TestParse2TooSmall(t *testing.T) {
 		t.Error("Parse2 on a too-small buffer should return an error")
 	}
 }
+
+// TestEntry2Key (round 643): the owner region, the skip bit and the key
+// are read off the raw record.
+func TestEntry2Key(t *testing.T) {
+	raw := makeEntry2(nil, 7, [3]float32{1, 2, 3}, 0, 5)
+	raw[27] = 1
+	raw[28], raw[29] = 0xa9, 0x61 // 0x61a9: 97/169
+	var e Entry2
+	copy(e.Raw[:], raw)
+	e.Index = 5
+	if got := e.OwnerRegion(); got != 0x61a9 {
+		t.Fatalf("OwnerRegion = %#x, want 0x61a9", got)
+	}
+	if !e.Skipped() {
+		t.Fatal("Skipped = false with Raw[27] bit 0 set")
+	}
+	if got := e.Key(); got != 0x61a90005 {
+		t.Fatalf("Key = %#x, want 0x61a90005", got)
+	}
+	e.Raw[27] = 0xfe
+	if e.Skipped() {
+		t.Fatal("Skipped = true with Raw[27] bit 0 clear")
+	}
+}

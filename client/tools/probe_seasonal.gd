@@ -89,9 +89,9 @@ func _initialize() -> void:
 		for line in job["log"]:
 			if str(line[1]).contains("seasonal"):
 				print(line[1])
-		print("SEASONAL %s hid=%d christmas=%d halloween=%d obt=%d summer=%d (.o %d, .o2 list 2 %d)" % [
+		print("SEASONAL %s hid=%d christmas=%d halloween=%d obt=%d summer=%d (.o2 records %d, lists 1 and 2 since round 643)" % [
 			r, total, int(hid.get("christmas", 0)), int(hid.get("halloween", 0)), int(hid.get("obt", 0)),
-			int(hid.get("summer", 0)), int(job.get("objects_o", -1)), int(job.get("objects_o2", -1))])
+			int(hid.get("summer", 0)), int(job.get("objects_o2", -1))])
 		# The region's navmesh: nv_<yyxx>.nvm, hex.
 		var nvm_bytes := AssetSource.read_bytes("navmesh\\nv_%02x%02x.nvm" % [y, x], data_pk2)
 		var nvm := NvmReader.parse(nvm_bytes) if not nvm_bytes.is_empty() else null

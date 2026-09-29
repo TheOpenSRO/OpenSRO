@@ -4050,6 +4050,9 @@ func _clear_region_grid() -> void:
 	# region uses are withdrawn, so they are the first the cap evicts.
 	if _object_templates != null:
 		_object_templates.forget_regions()
+	# The placed objects go with their containers (round 643).
+	_placed_objects.clear()
+	_object_containers.clear()
 	for child in get_children():
 		if child.name.begins_with("RealTerrain") or child.name.begins_with("RealMapObjects"):
 			remove_child(child)
@@ -4358,6 +4361,12 @@ func _maybe_stream_regions() -> void:
 		# _try_spawn_region_npcs) and go with it; counted so the log reads
 		# against the `NPC(s) placed in x/y` line of the region's return.
 		var npcs_freed := 0
+		# Before the containers go: what this region holds that a region
+		# still loaded lists moves there (round 643).
+		var handed := _release_region_objects(suffix)
+		if int(handed["moved"]) > 0:
+			print("World3D: region %d/%d unloaded -- %d object(s) it held handed to a region still listing them, %d dropped" % [
+				region_x, region_y, handed["moved"], handed["dropped"]])
 		var terrain_node := get_node_or_null("RealTerrain" + suffix)
 		if terrain_node != null:
 			for child in terrain_node.get_children():
@@ -4384,6 +4393,58 @@ func _maybe_stream_regions() -> void:
 		var dropped := _grid.unload(region_x, region_y)
 		print("World3D: region %d/%d forgotten -- %s; %d NPC holder(s) freed with its terrain" % [
 			region_x, region_y, ", ".join(dropped), npcs_freed])
+
+## A region streaming out (round 643): it stops listing every key it
+## listed (_placed_objects), and each object whose node its container holds
+## moves -- keeping its place in the world -- to the container of another
+## loaded region that lists it, or goes with the container when none does.
+## So an object shared by two regions stays drawn while either is loaded,
+## as the retail loader's refcount keeps it. Returns {"moved", "dropped"}.
+func _release_region_objects(suffix: String) -> Dictionary:
+	_object_containers.erase(suffix)
+	var moved := 0
+	var dropped := 0
+	for key in _placed_objects.keys():
+		var held: Dictionary = _placed_objects[key]
+		var listers: Dictionary = held["listers"]
+		if not listers.erase(suffix) or held["holder"] != suffix:
+			continue
+		var node: Node3D = held["node"]
+		var heir := ""
+		for other in listers:
+			var candidate = _object_containers.get(other)
+			if candidate != null and is_instance_valid(candidate) and not (candidate as Node).is_queued_for_deletion():
+				heir = other
+				break
+		if heir == "" or not is_instance_valid(node):
+			_placed_objects.erase(key)
+			dropped += 1
+			continue
+		# A unique name first: the heir's container may hold an "Obj_x_<n>"
+		# of its own, and a clash would rename the node "@Obj_x...@".
+		var suffix_k: String = "_k%d" % key
+		if not String(node.name).ends_with(suffix_k):
+			node.name = String(node.name) + suffix_k
+		var target: Node3D = _object_containers[heir]
+		# Its place in the world kept: the containers' chains up the tree
+		# composed by hand, which holds outside the tree too.
+		var xf := _chain_transform(target).affine_inverse() * _chain_transform(node.get_parent() as Node3D) * node.transform
+		node.get_parent().remove_child(node)
+		target.add_child(node)
+		node.transform = xf
+		held["holder"] = heir
+		moved += 1
+	return {"moved": moved, "dropped": dropped}
+
+## A Node3D's transform composed up its chain of Node3D parents -- its
+## global transform when the chain reaches the world's root.
+static func _chain_transform(node: Node3D) -> Transform3D:
+	var xf := Transform3D.IDENTITY
+	var n: Node = node
+	while n is Node3D:
+		xf = (n as Node3D).transform * xf
+		n = n.get_parent()
+	return xf
 
 ## Builds up to STREAM_CELLS_PER_FRAME queued cells a frame, so a boundary
 ## crossing streams over several frames rather than freezing for one long
@@ -5167,6 +5228,19 @@ var _object_templates: ObjectTemplateCache
 ## texture_cache): two models naming one texture upload it once. Per
 ## world, never static -- statics are what a reconnect keeps.
 var _object_textures := {}
+## Every map object this world has placed, by the `.o2` record's key
+## (MapO2Reader.Entry.object_key: owner region and uid) -> {"node", "holder"
+## (the region suffix whose container holds the node), "listers" (every
+## loaded region whose `.o2` names the key)} -- round 643. The retail loader
+## keeps one object per key in a refcounted cache (Map::FUN_00a1a1d0), and
+## a region-straddling object is listed by each region it reaches; so the
+## first region to commit a key places it, later ones share it, and a
+## region streaming out hands what it holds to a lister still loaded
+## (_release_region_objects). Cleared with the grid (_clear_region_grid).
+var _placed_objects := {}
+## Each loaded region's RealMapObjects container, by region suffix -- where
+## _release_region_objects moves an object whose holder streams out.
+var _object_containers := {}
 ## The models the objects job being committed prepared (round 566), lower-
 ## cased path -> ObjectLoader.prepare_object's result: set by _objects_commit
 ## around its placement loop, read by _load_object_template, empty
@@ -8755,18 +8829,17 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 ##
 ## The objects of a cell are built in the same two halves as its terrain
 ## (_terrain_prepare). The PREPARE half -- this function, static, plain data
-## -- reads and parses the region's `.o` and `.o2`, merges and de-duplicates
-## their placements, keeps the ones that stand on this region's ground
-## (_placements_belonging_here, whose neighbour heightmaps it reads under
-## Pk2Reader's lock: see below), resolves each placement's model in the
-## object index and prepares every model this world does not hold a
-## template for (ObjectLoader.prepare_object: the `.bsr`/`.bms`/`.bmt`
+## -- reads the region's `.o2` and takes from it the objects the retail
+## loader builds (region_placements, round 643), resolves each placement's
+## model in the object index and prepares every model this world does not
+## hold a template for (ObjectLoader.prepare_object: the `.bsr`/`.bms`/`.bmt`
 ## parsed, the mesh arrays and trimesh faces built, the textures decoded to
 ## Images and the alpha classified on them). The COMMIT half,
 ## _objects_commit, uploads the textures, commits each prepared model into
 ## ObjectTemplateCache -- the templates' owner since round 559, so a placed
 ## copy is still a duplicate() of the world's one template -- and places
-## the copies, on the main thread. Until round 566 all of it ran on the main
+## the copies, on the main thread, each object once in the world
+## (_placed_objects). Until round 566 all of it ran on the main
 ## thread in the frame the cell was committed in: the load benchmark on
 ## round 565's code measured 26-83 ms of objects a streamed cell at the
 ## crossing and 5,346 ms over the entry's 25 cells, `templates` 3,526 of it
@@ -8784,141 +8857,54 @@ func _try_load_real_map_objects(path_override: String = "", world_offset: Vector
 ## heightmaps parsed so far. objects_prepare_test.gd walks a prepared job for
 ## Nodes and Resources other than Image.
 ##
-## The neighbour heightmaps are read INSIDE the prepare, under Pk2Reader's
-## per-handle lock (every read_file takes it, round 565), not pre-parsed on
-## the main thread before dispatch: that parse is most of the `own` lap
-## (1,069 ms over round 561's 25 cells; 308 ms of the entry's centre and
-## 143 / 154 ms of its first neighbours at round 566's BASE), and
-## pre-parsing would put it back in the frame this round takes it out of. A
-## heightmap the grid already holds reaches the job as a reference (read
-## only after its parse), one it does not is parsed into
-## job["new_heightmaps"] for the commit to cache -- two tasks may both
-## parse the same neighbour; the first commit's is kept. The region's own
-## heightmap, when the same task's terrain prepare has parsed it
-## (job["here"], _cell_prepare), is that parse rather than a second one.
+## The region's own heightmap is read here for the grid's cache (the QA
+## ground probes and _qa_ground_report read it there): the terrain prepare's
+## parse when the same task made one (job["here"], _cell_prepare), else a
+## parse of its own under Pk2Reader's lock, handed back in
+## job["new_heightmaps"]. Until round 643 the prepare also parsed the eight
+## neighbours' for an ownership test by height (_placements_belonging_here),
+## which the record's own owner field replaces.
 static func _objects_prepare(job: Dictionary) -> void:
 	var mapo_path: String = job["mapo_path"]
 	var map_archive: Pk2Reader = job["map_pk2"]
 	var sw := Time.get_ticks_usec()
-	var mapo_bytes := AssetSource.read_bytes(mapo_path, map_archive)
-	if mapo_bytes.is_empty():
-		job["error"] = "World3D: could not find map objects at %s" % mapo_path
-		job["prepared"] = true
-		return
-	var region := MapoReader.parse(mapo_bytes)
-	if region == null:
-		job["error"] = "World3D: could not parse map objects at %s" % mapo_path
-		job["prepared"] = true
-		return
-
-	# Real .o2 placements are collected the same way as .o's: same type ID
-	# + world position shape (see docs/protocol/MAPO2_FORMAT.md), just
-	# indexed into a real 6x6 sector grid of 3 lists each rather than one
-	# flat resync-scanned list. .o2 only exists for newer-generation
-	# ("Shape B") regions -- see docs/protocol/MAPM_FORMAT.md's Shape A/B
-	# split -- so a missing .o2 here (Shape A, or no real objects/sectors
-	# unpopulated) is the normal, expected case, not an error.
-	var placements: Array = []
-	for obj in region.objects:
-		placements.append({"type_id": obj.type_id, "position": obj.position, "rotation": obj.rotation})
+	# The retail client reads no `.o` (round 643): its only map-object path
+	# is "%d\%d.o2" (sro_client.exe's strings hold "%d\%d.m", "%d\%d.o2" and
+	# "%d\%d.t" and no "%d\%d.o"), read by FUN_00a361b0. A region without an
+	# `.o2` has no objects there either.
 	var mapo2_path := mapo_path + "2"
 	var mapo2_bytes := AssetSource.read_bytes(mapo2_path, map_archive)
-	var o2_count := 0
-	if not mapo2_bytes.is_empty():
-		var region2 := MapO2Reader.parse(mapo2_bytes)
-		if region2 != null:
-			# Only the third of each sector's three stored lists is treated
-			# as this region's own objects.
-			#
-			# A real playtest found the town's gateway arches bricked up.
-			# The arches are real -- reading `cj_s_wall01.bms`'s own
-			# triangles and firing a ray through the wall at head height
-			# finds three clear openings, exactly where the gate's arches
-			# are -- but five different real regions (96/167, 96/168,
-			# 97/167, 97/168, 97/169) each place that same real
-			# `cj_s.bsr` at the *identical* local position
-			# (860.64, -1.76, 1764.43). Since each region's objects are
-			# placed relative to that region, this drew five copies of a
-			# 5,559-unit-long city wall at five different world positions,
-			# and a neighbour's solid section landed across this region's
-			# archways.
-			#
-			# The three lists are not interchangeable, and which one an
-			# entry sits in is the signal that separates a region's own
-			# objects from these cross-references. A real `.o2` files its
-			# entries into a 6x6 sector grid, so an entry's position
-			# implies which sector it should be in -- and measured across
-			# real regions, **list 2's entries are in their implied sector
-			# about 91% of the time against list 1's 46%** (real 97/168:
-			# 145/159 vs 129/273; real 98/168: 106/116 vs 180/390). List 2
-			# is where a region's own objects live; the others are
-			# references to objects that belong somewhere else. That is
-			# also exactly how the gate falls out: 97/168, the region the
-			# arches actually line up with, is the only one of the five
-			# that lists it in list 2.
-			#
-			# What this gives up: the entries only lists 0/1 carry and the
-			# region's own `.o` does not repeat -- 22 in real 97/168, 47
-			# in real 98/168, nearly all edge vegetation, which is the
-			# same cross-reference pattern in miniature. Drawing a
-			# neighbour's tree in the wrong place is the same bug as
-			# drawing its wall in the wrong place.
-			for sector in region2.sectors:
-				if sector.lists.size() < 3:
-					continue
-				for entry in sector.lists[2]:
-					# Real yaw rotation -- see MapO2Reader.Entry.rotation's
-					# doc comment for how this was confirmed (same
-					# real-range empirical check as .o's own rotation
-					# field, against a live region).
-					placements.append({
-						"type_id": entry.type_id, "position": entry.position,
-						"rotation": entry.rotation, "from_o2": true})
-					o2_count += 1
-
-	# **De-duplicated 2026-09-07** (see docs/WORLD_ISSUES.md's seventy-fifth
-	# round). A real `.o2` is organised into *sectors*, and a real object
-	# overlapping more than one sector is listed **in each of them**. Reading
-	# every sector and appending them all therefore places big structures --
-	# real gates, real walls, real grass groups -- several times over.
-	#
-	# Measured on real Jangan: real `98\168.o2` holds 506 entries of which 456
-	# exactly repeat (position and yaw to 4dp) one of the real 273 entries in
-	# its own `.o`, so the same object is listed up to several times; real
-	# `97\168.o2` repeats a real `cj_jang_gate` 24 times. A real playtest saw
-	# exactly that: far more gates along the walls than the real city has, and
-	# a wall standing a little past a gate the player had just walked through.
-	#
-	# Both files genuinely carry unique placements too (a real `97\168.o` has
-	# 128 entries absent from its `.o2`), so neither can simply be dropped in
-	# favour of the other -- they are merged, and exact repeats removed.
-	var deduped: Array = []
-	var seen_placements := {}
-	for p in placements:
-		var pos: Vector3 = p["position"]
-		var k := "%d@%.4f,%.4f,%.4f,%.5f" % [p["type_id"], pos.x, pos.y, pos.z, p["rotation"]]
-		if seen_placements.has(k):
-			continue
-		seen_placements[k] = true
-		deduped.append(p)
-	var dropped := placements.size() - deduped.size()
-	if dropped > 0:
-		(job["log"] as Array).append(["out", "World3D: %s -- dropped %d duplicate real placements (%d -> %d)" % [
-			mapo_path, dropped, placements.size(), deduped.size()]])
+	if mapo2_bytes.is_empty():
+		job["error"] = "World3D: could not find map objects at %s" % mapo2_path
+		job["prepared"] = true
+		return
+	var region2 := MapO2Reader.parse(mapo2_bytes)
+	if region2 == null:
+		job["error"] = "World3D: could not parse map objects at %s" % mapo2_path
+		job["prepared"] = true
+		return
+	var coords: Dictionary = job["coords"]
+	var taken := region_placements(region2, coords)
+	var deduped: Array = taken["placements"]
+	(job["log"] as Array).append(["out", "World3D: %s -- %d object(s) from %d record(s) of lists 1 and 2 (%d listed again by another sector, %d with the skip bit, %d owned by a neighbour and placed in its frame)" % [
+		mapo2_path, deduped.size(), taken["records"], taken["repeats"], taken["skipped"], taken["foreign"]]])
 	# Seasonal event decorations left out (round 583, SeasonalObjects): before
-	# the ownership filter and the model loop, so their models and textures
-	# are never even read. Each piece carries its own collision
-	# (_objects_commit), so not placing it removes that too; no region's
-	# `.nvm` references a seasonal id, so navigation is unchanged.
+	# the model loop, so their models and textures are never even read. Each
+	# piece carries its own collision (_objects_commit), so not placing it
+	# removes that too; no region's `.nvm` references a seasonal id, so
+	# navigation is unchanged.
 	var seasonal := SeasonalObjects.filter(deduped, job.get("seasonal_hidden", {}))
 	deduped = seasonal["kept"]
 	job["seasonal_hid"] = seasonal["hid"]
 	if int(seasonal["total"]) > 0:
-		(job["log"] as Array).append(["out", SeasonalObjects.log_line(mapo_path, seasonal)])
-	job["objects_o"] = region.objects.size()
-	job["objects_o2"] = o2_count
+		(job["log"] as Array).append(["out", SeasonalObjects.log_line(mapo2_path, seasonal)])
+	job["objects_o2"] = taken["records"]
+	job["objects_foreign"] = taken["foreign"]
 	sw = _job_lap(job, "parse", sw)
-	placements = _placements_belonging_here(deduped, job)
+	# The region's own heightmap, for the grid's cache (see above).
+	if not coords.is_empty():
+		_job_heightmap(job, coords["x"], coords["y"])
+	var placements: Array = deduped
 	sw = _job_lap(job, "own", sw)
 
 	if placements.is_empty():
@@ -8966,11 +8952,74 @@ static func _objects_prepare(job: Dictionary) -> void:
 	_job_lap(job, "models", sw)
 	job["prepared"] = true
 
+## The objects a region's `.o2` gives the world, the way the retail loader
+## takes them (round 643) -- READ in sro_client.exe's FUN_00a361b0
+## (MapCallBack.cpp; docs/protocol/MAPO2_FORMAT.md):
+##
+## - Each of the 36 sectors has three stored lists. The loader builds every
+##   record of the second and third (MapO2Reader's `lists[1]` and
+##   `lists[2]`) whose byte 27 has bit 0 clear (MapO2Reader.Entry.skipped);
+##   the first list is empty in every file (round 583).
+## - Each record names its object by a 32-bit key, CONCAT22(bytes 28-29,
+##   bytes 22-23) -- the owner region and the uid (Entry.object_key) -- and
+##   is looked up in a refcounted cache (Map::FUN_00a1a1d0): the first
+##   record of a key builds the object, every later one shares it. A big
+##   object is listed by every sector (and every region) it reaches, and
+##   exists once.
+## - The position is in the OWNER region's frame. MEASURED over the 4,559
+##   region `.o2` files: 10,703 keys are listed by more than one region,
+##   10,682 of them at the identical local position and type in every file,
+##   and 75,543 of the 75,564 keys are listed by their owner's own file.
+##   So a neighbour's object is placed here at its local position plus the
+##   owner's offset from this region (MapO2Reader.owner_offset).
+##
+## Until round 643 the world drew the region's `.o` (which retail never
+## reads) and `.o2`'s `lists[2]` only, each in this region's frame, then
+## dropped `.o2` entries a neighbour's ground explained better. Measured
+## with server/cmd/mapobjcensus: 12,847 of the 75,564 objects retail builds
+## were never drawn -- 52,366 keys sit in `lists[1]` alone, among them
+## Hotan's stable and its north and south bridges and the Taklamakan temple
+## with its two bridges -- and 1,064 placements matched no object retail
+## builds.
+##
+## Returns {"placements": [{type_id, position, rotation, key}], "records",
+## "repeats", "skipped", "foreign"}; `coords` is the region's
+## _parse_region_coords (empty: every position is taken as given).
+static func region_placements(region2: MapO2Reader.ParsedRegion, coords: Dictionary) -> Dictionary:
+	var placements: Array = []
+	var keys := {}
+	var records := 0
+	var repeats := 0
+	var skipped := 0
+	var foreign := 0
+	for sector in region2.sectors:
+		for li in [1, 2]:
+			for entry in (sector as MapO2Reader.Sector).lists[li]:
+				var e := entry as MapO2Reader.Entry
+				records += 1
+				if e.skipped():
+					skipped += 1
+					continue
+				var key := e.object_key()
+				if keys.has(key):
+					repeats += 1
+					continue
+				keys[key] = true
+				var pos := e.position
+				if not coords.is_empty():
+					var offset := MapO2Reader.owner_offset(e.owner_region, int(coords["x"]), int(coords["y"]))
+					if offset != Vector3.ZERO:
+						foreign += 1
+						pos += offset
+				placements.append({"type_id": e.type_id, "position": pos, "rotation": e.rotation, "key": key})
+	return {"placements": placements, "records": records, "repeats": repeats, "skipped": skipped, "foreign": foreign}
+
 ## An objects job for mapo_path, built on the main thread (round 566): the
 ## placement the commit needs, the readers, the object index (loaded here if
 ## this is the world's first region; _terrain_job loads the same table), and
-## a snapshot of every cache the prepare consults -- the parsed heightmaps
-## of the region and its eight neighbours that the grid holds, the model
+## a snapshot of every cache the prepare consults -- the region's parsed
+## heightmap if the grid holds it (its eight neighbours' too until round
+## 643, for the ownership test region_placements replaced), the model
 ## paths ObjectTemplateCache holds a template for, and the textures this
 ## world has uploaded (ObjectLoader.snapshot_textures: key, fourCC and
 ## measured statistics, never a texture). See _objects_prepare.
@@ -8980,11 +9029,9 @@ func _objects_job(mapo_path: String, world_offset: Vector3, node_suffix: String)
 	var coords := _parse_region_coords(mapo_path)
 	var heightmaps := {}
 	if not coords.is_empty():
-		for dy in [-1, 0, 1]:
-			for dx in [-1, 0, 1]:
-				var key := RegionGridState.region_key(int(coords["x"]) + (dx as int), int(coords["y"]) + (dy as int))
-				if _grid.parsed_heightmaps.has(key):
-					heightmaps[key] = _grid.parsed_heightmaps[key]
+		var key := RegionGridState.region_key(int(coords["x"]), int(coords["y"]))
+		if _grid.parsed_heightmaps.has(key):
+			heightmaps[key] = _grid.parsed_heightmaps[key]
 	if _object_templates == null:
 		_object_templates = ObjectTemplateCache.new(_load_object_template)
 	var job := {
@@ -9094,6 +9141,7 @@ func _objects_commit(job: Dictionary) -> void:
 	else:
 		container.position = job["world_offset"]
 		add_child(container)
+	_object_containers[node_suffix] = container
 
 	var loaded := 0
 	var skipped_unresolved := 0
@@ -9114,6 +9162,7 @@ func _objects_commit(job: Dictionary) -> void:
 	# never print -- the job that committed the model printed its own, and
 	# the `prepared again` line counts the copy (round 566's review: a gap in
 	# the log only).
+	var shared_here := 0 # keys another loaded region had already placed
 	var models_here := {} # distinct model paths this region placed
 	var reused_here := 0 # of those, how many another region had already built
 	_prepared_models = job["models"]
@@ -9129,6 +9178,16 @@ func _objects_commit(job: Dictionary) -> void:
 		if entry == null:
 			skipped_unresolved += 1
 			continue
+		# One object per key in the world, as the retail loader's refcounted
+		# cache keeps it (region_placements, round 643): a key another loaded
+		# region has placed is shared, not placed again.
+		var key := int(placement.get("key", -1))
+		if key >= 0:
+			var held: Dictionary = _placed_objects.get(key, {})
+			if not held.is_empty() and is_instance_valid(held["node"]):
+				(held["listers"] as Dictionary)[node_suffix] = true
+				shared_here += 1
+				continue
 
 		var model_key: String = entry.path.to_lower()
 		if not models_here.has(model_key):
@@ -9158,6 +9217,8 @@ func _objects_commit(job: Dictionary) -> void:
 		node.name = "Obj_%s_%d" % [entry.path.get_file().get_basename(), loaded]
 		container.add_child(node)
 		loaded += 1
+		if key >= 0:
+			_placed_objects[key] = {"node": node, "holder": node_suffix, "listers": {node_suffix: true}}
 	_prepared_models = {}
 	# Retail's reflection draws the scenery too (round 628 review).
 	if _water_reflection_on:
@@ -9169,95 +9230,15 @@ func _objects_commit(job: Dictionary) -> void:
 	if job["threaded"]:
 		unprepared = " -- prepared off the main thread, dispatched at frame %d; %d template(s) built unprepared" % [
 			job["dispatched_frame"], _templates_unprepared]
-	print("World3D: loaded %d/%d real map objects from %s (%d real .o + %d real .o2, %d unresolved type IDs skipped, %d distinct real models, %d templates reused, %d held for the world)%s" % [
-		loaded, placements.size(), mapo_path, job["objects_o"], job["objects_o2"], skipped_unresolved,
+	print("World3D: loaded %d/%d real map objects from %s2 (%d .o2 records, %d owned by a neighbour, %d already placed by a loaded region, %d unresolved type IDs skipped, %d distinct real models, %d templates reused, %d held for the world)%s" % [
+		loaded, placements.size(), mapo_path, job["objects_o2"], job["objects_foreign"], shared_here, skipped_unresolved,
 		models_here.size(), reused_here, _object_templates.size(), unprepared])
 
-## Keeps only the `.o2` placements that belong to this region, by asking
-## which region's ground each one actually stands on.
-##
-## A real `.o2` cross-references objects belonging to neighbouring regions,
-## and drawing those here puts them at the wrong place and the wrong
-## height. The seventy-eighth round filtered them by which per-sector list
-## they sit in, which helps but is not decisive. The heightmap is: an
-## object's own placement Y and its region's own terrain are two
-## independently authored numbers, and they agree only for the region the
-## object really belongs to.
-##
-## Measured on real data (see docs/WORLD_ISSUES.md's eighty-fifth round):
-## four real objects drawn against real 96/167's east edge sit 60-odd
-## units above that region's ground at -52.98, -59.24, -50.13 and -49.09,
-## and land on real **96/166**'s ground at 14.49, 8.09, 16.13 and 16.17 --
-## against their own placement heights of 14.5, 7.8, 16.1 and 16.2.
-##
-## The test is *comparative*, not a tolerance, which is what keeps
-## genuinely elevated scenery: a real `x_mas_wreath02` authored 167 units
-## over real 96/168's ground still matches 96/168 better than any
-## neighbour, so it stays. Only an entry that some neighbour explains
-## better is dropped. `.o` placements are never filtered -- that file is
-## the region's own list.
-##
-## Static since round 566: part of _objects_prepare, over the job's
-## heightmaps (_job_heightmap).
-static func _placements_belonging_here(placements: Array, job: Dictionary) -> Array:
-	var coords: Dictionary = job["coords"]
-	if coords.is_empty():
-		return placements
-	var here := _job_heightmap(job, coords["x"], coords["y"])
-	if here == null:
-		return placements
-
-	var kept: Array = []
-	var moved := 0
-	for p in placements:
-		if not p.get("from_o2", false):
-			kept.append(p)
-			continue
-		var pos: Vector3 = p["position"]
-		var own := MapmTerrainBuilder.height_at(here, pos.x, pos.z)
-		if is_nan(own):
-			kept.append(p)
-			continue
-		var own_error := absf(pos.y - own)
-		var better := false
-		for dy in [-1, 0, 1]:
-			for dx in [-1, 0, 1]:
-				if dx == 0 and dy == 0:
-					continue
-				var neighbour := _job_heightmap(job,
-					coords["x"] + (dx as int), coords["y"] + (dy as int))
-				if neighbour == null:
-					continue
-				var h := MapmTerrainBuilder.height_at(neighbour, pos.x, pos.z)
-				if is_nan(h):
-					continue
-				if absf(pos.y - h) < own_error - PLACEMENT_OWNERSHIP_MARGIN:
-					better = true
-					break
-			if better:
-				break
-		if better:
-			moved += 1
-		else:
-			kept.append(p)
-	if moved > 0:
-		(job["log"] as Array).append(["out", "World3D: %s -- dropped %d real .o2 placement(s) that stand on a neighbouring region's ground" % [
-			job["mapo_path"], moved]])
-	return kept
-
-## How much better a neighbouring region has to explain a placement's own
-## height before the placement is treated as that neighbour's rather than
-## this region's. Small, because the real matches are exact to a few
-## hundredths while the mismatches run to tens of units -- it only guards
-## against handing an object away on rounding.
-const PLACEMENT_OWNERSHIP_MARGIN := 1.0
-
-## Parsed `.m` heightmaps by region, so the ownership test above can sample
-## a neighbour's terrain without rebuilding it. Parsing is the expensive
-## part and every region in the grid gets parsed for its own terrain
-## anyway, so this is a second reference rather than a second parse of
-## anything new. Held in _grid.parsed_heightmaps and dropped with the
-## region (round 563).
+## Parsed `.m` heightmaps by region, for the grid's cache: the QA ground
+## probes read a region's there. Until round 643 the objects prepare also
+## sampled the eight neighbours' for an ownership test by height, which the
+## `.o2` record's owner field replaced (region_placements). Held in
+## _grid.parsed_heightmaps and dropped with the region (round 563).
 ##
 ## Since round 566 the job's view of that cache (_objects_job snapshots it):
 ## a heightmap not in it is read and parsed here, under Pk2Reader's lock --
@@ -9674,6 +9655,12 @@ func _update_blob_shadow() -> void:
 ##                          contains one of these fragments
 ##   SRREVAMP_QA_LOOK=1     print which real placed objects the camera is
 ##                          pointing at (model name, distance, placement)
+##   SRREVAMP_QA_OBJECTS=a,b at each `--shots` viewpoint, one `QA OBJECT`
+##                          line per placed map object whose node name
+##                          contains a fragment: its `.o2` key, the region
+##                          holding it, where it stands, its drawn pieces
+##                          and triangles, whether it is visible and in the
+##                          camera's frustum (_qa_objects_report, round 643)
 ##   SRREVAMP_QA_DEBUG=1    open the debug panel (Ctrl+F3) as soon as the first
 ##                          region has loaded, so a render shows it
 ##   SRREVAMP_QA_ZONE=z     after the first region loads, reload assets for
@@ -10696,6 +10683,57 @@ func _qa_texel_mean(tex: Texture2D) -> String:
 			sum += img.get_pixel(gx * img.get_width() / 8, gy * img.get_height() / 8)
 	return "(%.2f, %.2f, %.2f)" % [sum.r / 64.0, sum.g / 64.0, sum.b / 64.0]
 
+## SRREVAMP_QA_OBJECTS (round 643): every placed map object whose node name
+## contains one of `fragments`, measured -- `QA OBJECT <shot> <name> key
+## <owner x>/<owner y>#<uid> held by <region> (listed by N) at world (x, y,
+## z) region-local (x, z) of <region>: P piece(s), T triangle(s), visible
+## <bool>, in frustum <bool>, <d> from the camera` -- or `QA OBJECT <shot>
+## <fragment>: none placed`. The triangles are the drawn surfaces' own
+## index counts, not a picture.
+func _qa_objects_report(shot: String, fragments: PackedStringArray) -> void:
+	var found := {}
+	for key in _placed_objects:
+		var held: Dictionary = _placed_objects[key]
+		var node: Node3D = held["node"]
+		if not is_instance_valid(node) or not node.is_inside_tree():
+			continue
+		var node_name := String(node.name)
+		var hit := ""
+		for f in fragments:
+			if node_name.contains(f):
+				hit = f
+		if hit == "":
+			continue
+		found[hit] = true
+		var pieces := 0
+		var tris := 0
+		var in_frustum := false
+		for mesh_node in node.find_children("*", "MeshInstance3D", true, false):
+			var mi := mesh_node as MeshInstance3D
+			if mi.mesh == null:
+				continue
+			pieces += 1
+			for si in range(mi.mesh.get_surface_count()):
+				var arrays := mi.mesh.surface_get_arrays(si)
+				var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+				tris += idx.size() / 3 if not idx.is_empty() else (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).size() / 3
+			var aabb := mi.global_transform * mi.mesh.get_aabb()
+			for corner in range(8):
+				if camera_3d.is_position_in_frustum(aabb.get_endpoint(corner)):
+					in_frustum = true
+		var holder := String(held["holder"])
+		var group := get_node_or_null("RealTerrain" + holder) as Node3D
+		var local := group.to_local(node.global_position) if group != null else Vector3.INF
+		var owner_region := (int(key) >> 16) & 0xFFFF
+		print("QA OBJECT %s %s key %d/%d#%d held by %s (listed by %d) at world (%.1f, %.1f, %.1f) region-local (%.1f, %.1f) of %s: %d piece(s), %d triangle(s), visible %s, in frustum %s, %.0f from the camera" % [
+			shot, node_name, owner_region >> 8, owner_region & 0xFF, int(key) & 0xFFFF, holder.trim_prefix("_"),
+			(held["listers"] as Dictionary).size(), node.global_position.x, node.global_position.y, node.global_position.z,
+			local.x, local.z, holder.trim_prefix("_"), pieces, tris, node.is_visible_in_tree(), in_frustum,
+			camera_3d.global_position.distance_to(node.global_position)])
+	for f in fragments:
+		if not found.has(f):
+			print("QA OBJECT %s %s: none placed" % [shot, f])
+
 ## Walks a run through several viewpoints, announcing the movie frame each
 ## one lands on.
 ##
@@ -10729,6 +10767,9 @@ func _qa_advance_shots() -> void:
 			int(Performance.get_monitor(Performance.OBJECT_COUNT)),
 			int(Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT)),
 			int(Performance.get_monitor(Performance.MEMORY_STATIC))])
+		var wanted := OS.get_environment("SRREVAMP_QA_OBJECTS")
+		if wanted != "":
+			_qa_objects_report(_qa_shots[_qa_shot_index]["name"], wanted.split(",", false))
 	_qa_shot_frames -= 1
 	if _qa_shot_frames > 0:
 		return
