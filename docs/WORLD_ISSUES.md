@@ -7094,6 +7094,116 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirty-second round, composite review follow-up: a grant's icon goes when the grant ends, the window has its Cancel, and a failed store changes nothing
+
+The review of 5b362d2 confirmed every READ claim. It also confirmed, with real input, the GM
+path, the non-GM path and the +5 s bonus. This follow-up fixes what it found. Labels: READ,
+MEASURED, INFERRED, OURS.
+
+**1. The grant's end is pushed (READ: 0x653e80 sends 0x315B; the client's FUN_008993b0 removes the
+entry and the icon).**
+- `CompositeKeeper.put` now starts a real-time timer for each grant. The timer and the last use
+  both end the grant. Each end pushes `OpCompositeEnd` (0x0108, OURS) {item, scroll} to the
+  session the character last used the keeper through.
+- A generation stamp stops a stale timer from ending a newer grant.
+- The last use pushes the end BEFORE its result, because vslot_007 ends the job before it
+  answers 0xB15F.
+- A refused fill is now followed by the state too.
+- The client's `_on_composite_ended` removes the kind-5 icon.
+
+**2. The Cancel button (READ: FUN_007af830 builds count + 1 buttons, and the extra one is
+labelled from `UIIT_CTL_CANCEL` at 0x7afb57; FUN_007b03e0 hit-tests all count + 1).**
+- `CompositeItemWindow` adds it one step below the last item button. Pressing it closes the
+  window.
+- The file's header now describes the count + 1 buttons.
+
+**3. Leaks.**
+- `BerserkDisconnectHandler` runs before `worldDisconnect`. It skips a character still live on
+  another session. It calls:
+  - `Tracker.Forget` (renamed from Clear; a method named Clear is on the orphan list for the threat table): drops the charges (they are persisted and reseeded), the active window, the
+    turn (unless a request holds it; `TryLock`) and an expired bonus;
+  - `CompositeKeeper.Forget`: drops the session binding, expired grants and the empty map.
+- The berserk tracker was never cleared on logout before this round.
+- A RUNNING grant or bonus stays until its own timer deletes it, because retail keeps timed
+  jobs across a relog. So what stays in memory is bounded by the jobs still running.
+- `SetDurationBonus` now takes (now, lasts) and deletes its entry on real time.
+
+**4. No partial state on a store error.**
+- The fill persists `SetHwanCount(after)` FIRST. On an error it answers "using failed" and
+  leaves the grant, the bonus, the cooldown and the live orbs as they were.
+- The bag potion does the same: on an error the potion is handed back and the orbs are
+  untouched.
+
+**5. The pieces that had been skipped.**
+- *The FUN_00488db0 gate (READ, 0x488db0).* It answers 1 for TID bit 1 clear and TypeID
+  3/3/3/10. On 0, `0x49fc94 je 0x49fd55` skips the type-10 job with no error. srrevamp now skips
+  such a UIU1 entry the same way.
+  - The type-3 branch's class is `FUN_004929c0` (0x4929c0: TypeID 3/3/13) with TID4 4. This
+    corrects the previous round's "TypeID4 4" to **3/3/13/4**. Such rows are still refused, as
+    not modelled.
+- *FUN_004a0600's vslot_300 (READ, OPEN).*
+  - `CGObjPC::vslot_300` (0x4ef340) is `GObjPC::FUN_004a9430`. It calls
+    `CGObjMobile::vslot_300` (0x48b730), which is both move controllers' +0x18. It may send
+    0xB023, copies the position block, and resets the stance from body state 2/3.
+  - That this is a movement stop is INFERRED. Not mirrored, labelled OPEN in code and in
+    TODO.md.
+- *board+0x390 (READ + INFERRED).*
+  - At 0x800501 it guards the click. The board's grant map is the std::map at +0x388: its
+    iterators compare against the head at +0x38c (FUN_008052f0 / FUN_00805430). So +0x390 is
+    the map's size under MSVC's layout.
+  - That means "some grant exists". Ours opens only for an icon whose grant it holds, which
+    implies the same.
+
+**6. Minor.**
+- An `items_code_name_idx` index for `GetItemByCode`.
+- 0x185b's authored text, `UIIT_MSG_STRGERR_WAIT_FOR_REUSE_DELAY` "Still have time to reuse the
+  item.", now replaces srrevamp's "wait for the reuse delay" on every item path.
+- The client prints `World3D: use item refused: <text>`, so tester logs show refusals.
+
+**7. deploy/README.md: the ROUND 632 note.** The item CSV grows to 72 columns (70 CodeName, 71
+CompositeDesc). It needs a re-export and a re-import on srrevamp-01. The note gives the check
+queries (23944's list, 23937's code).
+
+**Tests.**
+- Go, `composite_test.go`:
+  - `TestEnergyOfLifeEndPushOnUse`: the end comes before the result, and a refusal is followed
+    by the state;
+  - `TestCompositeGrantExpiresByTimer`;
+  - `TestCompositeGrantExpiryIsPushed`: the timer's end reaches the wire;
+  - `TestCompositeForget`;
+  - `TestEnergyOfLifeFillStoreErrorChangesNothing`;
+  - `TestBerserkPotionStoreErrorChangesNothing`.
+- Go, `berserk_test.go`: `TestForgetDropsTurnAndExpiredBonus`.
+- Client, `composite_test.gd`: the end push decodes; Cancel follows the item button one step
+  down and closes the window.
+- **Negative against 5b362d2**, through its own fixture:
+
+      --- FAIL: TestCompositeReviewNegative (0.11s)
+          review2_neg_test.go:18: the last use pushed no grant end first: opcode 0x105, want 0x0108
+          review2_neg_test.go:24: the reuse refusal reads "wait for the reuse delay", want the authored UIIT_MSG_STRGERR_WAIT_FOR_REUSE_DELAY text
+
+**Real input on the box (MEASURED from the log; the screenshot only confirms the closed
+window).** The setup is the same as before (a GM, `/give 23944 2`). The run went: right-click
+the scroll, left-click the icon, click **Cancel**, left-click the icon again, click the fill,
+press Tab.
+
+    QA COMPOSITE: grant item 23937 from 23944, 1/1 uses, 3600 s left, ...
+    CompositeItemWindow: 1 button(s): Hwan regeneration fill(1), Cancel
+      (Cancel: no use sent, window closed)
+    CompositeItemWindow: 1 button(s): Hwan regeneration fill(1), Cancel
+    World3D: composite grant ended: item 23937 from 23944 -- icon removed
+    World3D: composite use: item 23937, 0 left, gauge 100, active false, error ''
+    World3D: berserk result: activated true, gauge 0, active true
+
+An expiry through the client was not driven: the grant lasts 3600 s. The wire test covers the
+timer's push.
+
+**OPEN.**
+- The movement stop in FUN_004a0600 and in Item_HandleUseItem.
+- The jobs are in memory only, so a restart loses them.
+- The window's resize is not recovered.
+- Who registers the event-0xc listeners is not traced.
+
 ## Six-hundred-and-thirty-second round, review follow-up: the Energy of life scroll works as the game's does, and cooldowns of key 0 are per item
 
 The review confirmed every READ claim of round 632 and asked for five changes. All five are

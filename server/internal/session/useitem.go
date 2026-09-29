@@ -1062,7 +1062,7 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// (ItemCooldowns::IsReady) before DoJob.
 		now := useItemClock()
 		if it.CooltimeMs > 0 && !itemCooldowns.ReadyItem(characterID, it.ID, it.CooltimeGroup, now) {
-			return fail("wait for the reuse delay")
+			return fail(reuseDelayRefusal)
 		}
 		// A plain HP/MP potion carries no COOLTIME descriptor, but slot 308
 		// locks each recovery kind on its own (round 508, potionReuseBit):
@@ -1079,7 +1079,7 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// not closed.
 		reuseBit, knownKind := potionReuseBit(it.TypeID4)
 		if !knownKind || !potionLocks.Ready(characterID, reuseBit, now) {
-			return fail("wait for the reuse delay")
+			return fail(reuseDelayRefusal)
 		}
 
 		owned, err := chars.GetByID(ctx, characterID)

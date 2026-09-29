@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/berserk"
@@ -73,7 +72,7 @@ func useBerserkPotion(ctx context.Context, sess *gateway.Session, fail func(stri
 	now := useItemClock()
 	cooltime := it.CooltimeMs > 0 && !isGM
 	if cooltime && !itemCooldowns.ReadyItem(characterID, it.ID, it.CooltimeGroup, now) {
-		return fail("wait for the reuse delay")
+		return fail(reuseDelayRefusal)
 	}
 	// The berserk turn (round 632 review) is held from the berserk test to
 	// the persisted orbs, so an activation cannot run between them.
@@ -92,10 +91,19 @@ func useBerserkPotion(ctx context.Context, sess *gateway.Session, fail func(stri
 	if err := inv.RemoveItem(ctx, characterID, held.Index, 1); err != nil {
 		return fail("using failed")
 	}
-	zerk.Add(characterID, berserk.PotionCharges)
-	if err := chars.SetHwanCount(ctx, characterID, zerk.Charges(characterID)); err != nil {
-		return fmt.Errorf("useitem: persisting berserk potion: %w", err)
+	// The count is persisted before the live orbs change (composite
+	// review): a store error hands the potion back and changes nothing.
+	after := zerk.Charges(characterID) + berserk.PotionCharges
+	if after > berserk.Orbs {
+		after = berserk.Orbs
 	}
+	if err := chars.SetHwanCount(ctx, characterID, after); err != nil {
+		if backErr := inv.AddItemInstance(ctx, characterID, held.ItemID, 1, held.Instance()); backErr != nil {
+			return fail("using failed, and the item could not be returned")
+		}
+		return fail("using failed")
+	}
+	zerk.Add(characterID, berserk.PotionCharges)
 	if cooltime {
 		itemCooldowns.ArmItem(characterID, it.ID, it.CooltimeGroup, time.Duration(it.CooltimeMs)*time.Millisecond, now)
 	}

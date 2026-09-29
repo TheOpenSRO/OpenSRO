@@ -2,7 +2,8 @@ extends HudWindow
 class_name CompositeItemWindow
 
 ## CIFCompositeItemWnd (round 632 review): the window a left-click on an
-## item-grant icon opens, with one button per granted item.
+## item-grant icon opens -- one button per granted item, then a Cancel
+## button (count + 1 in all).
 ##
 ## READ (retail client, the round's RE):
 ##   - Registry `GDR_COMPOSITE_ITEM:CIFCompositeItemWnd`, resinfo\ginterface.txt,
@@ -12,7 +13,10 @@ class_name CompositeItemWindow
 ##     33,82,148,110).
 ##   - FUN_007af830(key) builds the buttons in code: interface\system\sys_button.ddj,
 ##     150 x 25, from (0x1f, 0x3a) down 0x22 px per button, labelled
-##     swprintf "%s(%d)" -- the granted item's name and its uses left.
+##     swprintf "%s(%d)" -- the granted item's name and its uses left -- and
+##     ONE MORE after them, labelled with UIIT_CTL_CANCEL's text (0x7afb57
+##     pushes the key, 0x8c9c30 resolves it). FUN_007b03e0 hit-tests all
+##     count + 1; the last closes the window (composite review).
 ##   - A button's click (FUN_007b03e0 -> FUN_007afbf0) closes the window and
 ##     sends 0x715F {compositeRefId, limitedRefId} for a granted item that is
 ##     not 3/3/3/1, 3/3/3/3 or 3/3/13/6.
@@ -37,7 +41,8 @@ func setup(builder: UiBuilder) -> bool:
 	name = "CompositeItemWindow"
 	return build(builder, LAYOUT, "", PackedStringArray(), PackedStringArray(), false, {"name": REGISTRY})
 
-## Fills the buttons: `entries` is [[item_id, label_name, remaining], ...].
+## Fills the buttons: `entries` is [[item_id, label_name, remaining], ...];
+## a Cancel button follows them.
 func show_entries(entries: Array) -> void:
 	for b in _buttons:
 		if is_instance_valid(b):
@@ -65,6 +70,21 @@ func show_entries(entries: Array) -> void:
 			use_requested.emit(item_id))
 		add_child(btn)
 		_buttons.append(btn)
+	var cancel := Button.new()
+	cancel.name = "CompositeCancel"
+	var cancel_text := _builder.resolve_text("UIIT_CTL_CANCEL") if _builder != null else ""
+	cancel.text = cancel_text if cancel_text != "" and cancel_text != "UIIT_CTL_CANCEL" else "Cancel"
+	cancel.position = BUTTON_ORIGIN + Vector2(0, BUTTON_STEP * entries.size())
+	cancel.size = BUTTON_SIZE
+	cancel.custom_minimum_size = BUTTON_SIZE
+	if tex != null:
+		var csb := StyleBoxTexture.new()
+		csb.texture = tex
+		for st in ["normal", "hover", "pressed", "disabled", "focus"]:
+			cancel.add_theme_stylebox_override(st, csb)
+	cancel.pressed.connect(func() -> void: hide())
+	add_child(cancel)
+	_buttons.append(cancel)
 	print("CompositeItemWindow: %d button(s): %s" % [entries.size(), ", ".join(_buttons.map(func(b): return (b as Button).text))])
 
 ## A button's centre on screen, for a QA run to aim a real click.

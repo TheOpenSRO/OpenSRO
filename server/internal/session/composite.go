@@ -72,7 +72,7 @@ import (
 // Not modelled (disclosed): the grant and the bonus are in memory, so a
 // server restart loses them (the engine's timed jobs survive a relog through
 // their __time32_t stamps -- srrevamp's survive a relog too, not a restart);
-// the UIU1 branch for a TypeID4-4 item (a skill-like buff, FUN_0049a400) and
+// the UIU1 branch for a 3/3/13/4 item (a type-3 job, FUN_0049a400) and
 // every other FourCC (BCS1, BFI1, PSU1, UQL1, USL1, USU1) are refused as
 // "that cannot be used"; the engine's order queues the UIL1 job before it
 // meets a running 0x706874 job, srrevamp checks both first.
@@ -81,6 +81,7 @@ const (
 	OpCompositeUseResult uint16 = 0x0105 // server -> client
 	OpCompositeList      uint16 = 0x0106 // client -> server: what grants do I hold
 	OpCompositeState     uint16 = 0x0107 // server -> client: the grants and the bonus (reply and push)
+	OpCompositeEnd       uint16 = 0x0108 // server -> client: a grant ended (retail 0x315B)
 )
 
 // The authored texts of the codes this path answers (textuisystem.txt,
@@ -90,6 +91,11 @@ const (
 	compositeOverlapRefusal = "The selected item cannot be used together or the skill is already in use."
 	compositeUsedUpRefusal  = "Exceeded one day use limit."
 	compositeCannotUse      = "The selected item is unusable."
+	// reuseDelayRefusal is 0x185b's authored text,
+	// UIIT_MSG_STRGERR_WAIT_FOR_REUSE_DELAY (composite review); every item
+	// path's reuse refusal uses it. It replaced srrevamp's own "wait for the
+	// reuse delay".
+	reuseDelayRefusal = "Still have time to reuse the item."
 )
 
 // hwanTimeFourCC is the UIU1 buff item's Param2, the "ParamKeeper FourCC"
@@ -163,17 +169,37 @@ type compositeGrant struct {
 	remaining int
 	max       int
 	until     time.Time
+	gen       uint64 // which put this is (a timer ends only its own)
 }
 
 // CompositeKeeper holds every character's UIL1 grants (CTJ_CompositeItemKeeper
 // in the engine). Process-wide and in memory.
+//
+// A grant ENDS by a timer, not lazily (composite review): retail's
+// CUsedItemLimit job sends 0x315B {compositeRefId, limitedRefId} when it
+// ends (0x653e80), and the client's handler (FUN_008993b0) removes the map
+// entry and the kind-5 icon. srrevamp sends OpCompositeEnd to the session the
+// character last used the keeper through (bind), when the grant runs out and
+// when its last use consumes it.
 type CompositeKeeper struct {
-	mu     sync.Mutex
-	grants map[int64]map[int64]*compositeGrant // character -> fill id -> grant
+	mu       sync.Mutex
+	grants   map[int64]map[int64]*compositeGrant // character -> fill id -> grant
+	sessions map[int64]*gateway.Session          // character -> the session to push to
+	gen      uint64                              // stamps each put, so a stale timer ends nothing
 }
 
 func NewCompositeKeeper() *CompositeKeeper {
-	return &CompositeKeeper{grants: map[int64]map[int64]*compositeGrant{}}
+	return &CompositeKeeper{grants: map[int64]map[int64]*compositeGrant{}, sessions: map[int64]*gateway.Session{}}
+}
+
+// bind records the session a character's end pushes go to.
+func (k *CompositeKeeper) bind(characterID int64, sess *gateway.Session) {
+	if sess == nil {
+		return
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.sessions[characterID] = sess
 }
 
 // running returns the character's unexpired grants, dropping expired ones.
@@ -181,13 +207,17 @@ func (k *CompositeKeeper) running(characterID int64, now time.Time) []*composite
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	var out []*compositeGrant
-	for id, g := range k.grants[characterID] {
+	m := k.grants[characterID]
+	for id, g := range m {
 		if !now.Before(g.until) {
-			delete(k.grants[characterID], id)
+			delete(m, id)
 			continue
 		}
 		cp := *g
 		out = append(out, &cp)
+	}
+	if m != nil && len(m) == 0 {
+		delete(k.grants, characterID)
 	}
 	return out
 }
@@ -203,15 +233,37 @@ func (k *CompositeKeeper) get(characterID, fillID int64, now time.Time) (*compos
 	return &cp, true
 }
 
-func (k *CompositeKeeper) put(characterID int64, g compositeGrant) {
+// put stores a grant and starts its end timer, `lasts` of real time from now
+// (the grant's until is on the handler's clock, which tests move).
+func (k *CompositeKeeper) put(characterID int64, g compositeGrant, lasts time.Duration) {
 	k.mu.Lock()
-	defer k.mu.Unlock()
 	m := k.grants[characterID]
 	if m == nil {
 		m = map[int64]*compositeGrant{}
 		k.grants[characterID] = m
 	}
+	k.gen++
+	g.gen = k.gen
 	m[g.fillID] = &g
+	k.mu.Unlock()
+	gen := g.gen
+	time.AfterFunc(lasts, func() { k.expire(characterID, g.fillID, gen) })
+}
+
+// expire is the timer's end: the grant, if it is still the one the timer was
+// started for, is removed and the end is pushed.
+func (k *CompositeKeeper) expire(characterID, fillID int64, gen uint64) {
+	k.mu.Lock()
+	g, ok := k.grants[characterID][fillID]
+	if !ok || g.gen != gen {
+		k.mu.Unlock()
+		return
+	}
+	ended := *g
+	k.removeLocked(characterID, fillID)
+	sess := k.sessions[characterID]
+	k.mu.Unlock()
+	sendCompositeEnd(sess, ended)
 }
 
 func (k *CompositeKeeper) setRemaining(characterID, fillID int64, remaining int) {
@@ -222,10 +274,78 @@ func (k *CompositeKeeper) setRemaining(characterID, fillID int64, remaining int)
 	}
 }
 
+// end removes a consumed grant and pushes its end.
 func (k *CompositeKeeper) end(characterID, fillID int64) {
 	k.mu.Lock()
+	g, ok := k.grants[characterID][fillID]
+	if !ok {
+		k.mu.Unlock()
+		return
+	}
+	ended := *g
+	k.removeLocked(characterID, fillID)
+	sess := k.sessions[characterID]
+	k.mu.Unlock()
+	sendCompositeEnd(sess, ended)
+}
+
+// removeLocked drops a grant and the character's map once it is empty.
+func (k *CompositeKeeper) removeLocked(characterID, fillID int64) {
+	m := k.grants[characterID]
+	delete(m, fillID)
+	if len(m) == 0 {
+		delete(k.grants, characterID)
+	}
+}
+
+// Forget is the logout (composite review): the character's session binding
+// goes, and so do its expired grants and an empty map. A RUNNING grant stays
+// until its timer ends it -- the engine keeps timed jobs across a relog --
+// so what is kept is bounded by the grants still running.
+func (k *CompositeKeeper) Forget(characterID int64, now time.Time) {
+	k.mu.Lock()
 	defer k.mu.Unlock()
-	delete(k.grants[characterID], fillID)
+	delete(k.sessions, characterID)
+	m := k.grants[characterID]
+	for id, g := range m {
+		if !now.Before(g.until) {
+			delete(m, id)
+		}
+	}
+	if len(m) == 0 {
+		delete(k.grants, characterID)
+	}
+}
+
+// OpCompositeEnd's payload: the granted item and the composite that granted
+// it, retail 0x315B's {compositeRefId, limitedRefId} in our widths.
+type CompositeEnd struct {
+	ItemID   int64
+	ScrollID int64
+}
+
+func (e *CompositeEnd) Encode() []byte {
+	return append(encodeInt64(e.ItemID), encodeInt64(e.ScrollID)...)
+}
+
+func DecodeCompositeEnd(data []byte) (*CompositeEnd, error) {
+	a, rest, err := decodeInt64(data)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding CompositeEnd: %w", err)
+	}
+	b, _, err := decodeInt64(rest)
+	if err != nil {
+		return nil, fmt.Errorf("session: decoding CompositeEnd: %w", err)
+	}
+	return &CompositeEnd{ItemID: a, ScrollID: b}, nil
+}
+
+func sendCompositeEnd(sess *gateway.Session, g compositeGrant) {
+	if sess == nil {
+		return
+	}
+	// A closed session's send fails; the grant has ended either way.
+	_ = sess.Send(&proto.Packet{Opcode: OpCompositeEnd, Data: (&CompositeEnd{ItemID: g.fillID, ScrollID: g.scrollID}).Encode()})
 }
 
 // itemByCode is the lookup a composite needs; both refdata stores have it.
@@ -244,6 +364,7 @@ func isCompositeScroll(it *refdata.Item) bool {
 // anything is spent.
 type compositePlan struct {
 	grants     []compositeGrant
+	grantFor   []time.Duration
 	bonusSecs  int // the param-60 value (Param3 of the UIU1 item)
 	bonusFor   time.Duration
 	bonusValid bool
@@ -285,11 +406,28 @@ func planComposite(ctx context.Context, items combat.ItemLookup, keeper *Composi
 				fillID: part.ID, scrollID: scroll.ID, remaining: remaining, max: e.count,
 				until: now.Add(time.Duration(e.seconds) * time.Second),
 			})
+			plan.grantFor = append(plan.grantFor, time.Duration(e.seconds)*time.Second)
 		case "UIU1":
-			// Only the 3/3/3/10 param-keeper buff with FourCC 0x706874 is
-			// modelled; its Param1..3 are exported as RestoreHP, the packed
-			// ReinforceRate1 (Param2, u32) and ReinforceRate2 (Param3).
-			if part.TypeID4 == 4 || part.ReinforceRate1 != hwanTimeFourCC {
+			// FUN_0049f590's UIU1 branch: a 3/3/13/4 row (FUN_004929c0,
+			// 0x4929c0: TypeID 3/3/13, and TID & 0xf800 == 0x2000) makes a
+			// type-3 job with its Param1, which
+			// srrevamp does not model -- refused. Otherwise FUN_00488db0
+			// (0x49fc8d; 0x488db0: TID bit 1 clear, TypeID 3/3/3/10) must
+			// answer 1 for the type-10 job; on 0 the branch jumps to
+			// 0x49fd55 and makes NO job, silently -- mirrored by skipping the
+			// entry. Of a 3/3/3/10 row, only CTJ_CharParamKeeper's 0x706874
+			// (param 60) is modelled; the table's other keys (urep, ursp,
+			// urse -> params 256/258/258, 0x6552d0) are refused. Its
+			// Param1..3 are exported as RestoreHP, the packed ReinforceRate1
+			// (Param2, u32) and ReinforceRate2 (Param3).
+			if part.TypeID1 == equipment.TypeItem && part.TypeID2 == equipment.TypeExpendable && part.TypeID3 == 13 && part.TypeID4 == 4 {
+				return plan, "that cannot be used"
+			}
+			if !(part.TypeID1 == equipment.TypeItem && part.TypeID2 == equipment.TypeExpendable &&
+				part.TypeID3 == 3 && part.TypeID4 == 10) {
+				continue
+			}
+			if part.ReinforceRate1 != hwanTimeFourCC {
 				return plan, "that cannot be used"
 			}
 			if secs, _ := zerk.DurationBonus(characterID, now); secs != 0 { // FUN_00411560(10, fourcc)
@@ -317,7 +455,7 @@ func useCompositeScroll(ctx context.Context, sess *gateway.Session, fail func(st
 	now := useItemClock()
 	cooltime := it.CooltimeMs > 0 && !isGM
 	if cooltime && !itemCooldowns.ReadyItem(characterID, it.ID, it.CooltimeGroup, now) {
-		return fail("wait for the reuse delay")
+		return fail(reuseDelayRefusal)
 	}
 	release := zerk.Turn(characterID)
 	defer release()
@@ -328,11 +466,12 @@ func useCompositeScroll(ctx context.Context, sess *gateway.Session, fail func(st
 	if err := inv.RemoveItem(ctx, characterID, held.Index, 1); err != nil {
 		return fail("using failed")
 	}
-	for _, g := range plan.grants {
-		keeper.put(characterID, g)
+	keeper.bind(characterID, sess)
+	for i, g := range plan.grants {
+		keeper.put(characterID, g, plan.grantFor[i])
 	}
 	if plan.bonusValid {
-		zerk.SetDurationBonus(characterID, plan.bonusSecs, now.Add(plan.bonusFor))
+		zerk.SetDurationBonus(characterID, plan.bonusSecs, now, plan.bonusFor)
 	}
 	if cooltime {
 		itemCooldowns.ArmItem(characterID, it.ID, it.CooltimeGroup, time.Duration(it.CooltimeMs)*time.Millisecond, now)
@@ -499,25 +638,36 @@ func CompositeHandler(chars character.Store, items combat.ItemLookup, keeper *Co
 			if errStr != "" || keeper == nil || zerk == nil {
 				return nil
 			}
+			keeper.bind(characterID, sess)
 			return sendCompositeState(sess, keeper, zerk, characterID, useItemClock())
 		case OpCompositeUse:
 		default:
 			return nil
 		}
 		req, err := DecodeCompositeUseRequest(p.Data)
-		fail := func(reason string, itemID int64) error {
-			return sess.Send(&proto.Packet{Opcode: OpCompositeUseResult, Data: (&CompositeUseResult{Error: reason, ItemID: itemID}).Encode()})
-		}
 		if err != nil {
-			return fail("malformed request", 0)
+			return sess.Send(&proto.Packet{Opcode: OpCompositeUseResult, Data: (&CompositeUseResult{Error: "malformed request"}).Encode()})
 		}
 		characterID, errStr := resolveCharacterID(ctx, sess, chars, req.CharacterName)
+		// A refusal is followed by the state too (composite review), so a
+		// client whose grant has gone (expired, or spent from another
+		// session) drops its icon.
+		fail := func(reason string, itemID int64) error {
+			if err := sess.Send(&proto.Packet{Opcode: OpCompositeUseResult, Data: (&CompositeUseResult{Error: reason, ItemID: itemID}).Encode()}); err != nil {
+				return err
+			}
+			if errStr == "" && keeper != nil && zerk != nil {
+				return sendCompositeState(sess, keeper, zerk, characterID, useItemClock())
+			}
+			return nil
+		}
 		if errStr != "" {
 			return fail(errStr, req.ItemID)
 		}
 		if keeper == nil || zerk == nil || items == nil {
 			return fail("that cannot be used", req.ItemID)
 		}
+		keeper.bind(characterID, sess)
 		username, _ := AuthenticatedUsername(sess)
 		isGM := gate.Allows(username)
 		now := useItemClock()
@@ -558,6 +708,28 @@ func CompositeHandler(chars character.Store, items combat.ItemLookup, keeper *Co
 		if zerk.Charges(characterID) >= berserk.Orbs {
 			return fail(compositeCannotUse, req.ItemID)
 		}
+		// NOT MODELLED (OPEN): FUN_004a0600 first calls vtable +0x4b0,
+		// CGObjPC::vslot_300 (0x4ef340), with FUN_0048b840(.., 1)'s float
+		// (0x4a0614..0x4a0629). vslot_300 is GObjPC::FUN_004a9430 (0x4a9430):
+		// when the mobile's +0x4c0 answers non-zero it calls
+		// CGObjMobile::vslot_300 (0x48b730, both move controllers' +0x18),
+		// may send 0xB023 (NetProcessInNavAndSkill on the client), copies
+		// the position block (+0x7c..+0x90 into +0xa10..), and resets the
+		// stance when the body state is 2 or 3 -- INFERRED a movement stop.
+		// Item_HandleUseItem makes the same call on one of its paths (after
+		// its vtable +0xb8 / +0x44c tests), and srrevamp's item uses do not
+		// stop movement on any.
+		//
+		// FUN_004a0600: AddHwanCount(Param1 byte). The count is PERSISTED
+		// FIRST (composite review): a store error then leaves the grant, the
+		// bonus, the cooldown and the live orbs as they were.
+		after := zerk.Charges(characterID) + int(uint8(fill.RestoreHP))
+		if after > berserk.Orbs {
+			after = berserk.Orbs
+		}
+		if err := chars.SetHwanCount(ctx, characterID, after); err != nil {
+			return fail("using failed", req.ItemID)
+		}
 		// The last use ends the grant and the 0x706874 job and arms the
 		// fill's COOLTIME (OURS: not for a GM).
 		if g.remaining == 1 {
@@ -569,11 +741,7 @@ func CompositeHandler(chars character.Store, items combat.ItemLookup, keeper *Co
 		} else {
 			keeper.setRemaining(characterID, req.ItemID, g.remaining-1)
 		}
-		// FUN_004a0600: AddHwanCount(Param1 byte).
 		zerk.Add(characterID, int(uint8(fill.RestoreHP)))
-		if err := chars.SetHwanCount(ctx, characterID, zerk.Charges(characterID)); err != nil {
-			return fmt.Errorf("composite: persisting berserk fill: %w", err)
-		}
 		if err := sess.Send(&proto.Packet{Opcode: OpCompositeUseResult, Data: (&CompositeUseResult{
 			ItemID: req.ItemID, Remaining: int32(g.remaining - 1),
 			BerserkGauge: int32(zerk.Gauge(characterID)), BerserkActive: zerk.Active(characterID),
@@ -581,5 +749,34 @@ func CompositeHandler(chars character.Store, items combat.ItemLookup, keeper *Co
 			return err
 		}
 		return sendCompositeState(sess, keeper, zerk, characterID, now)
+	}
+}
+
+// BerserkDisconnectHandler forgets a leaving character's berserk and
+// composite bookkeeping (composite review): the tracker's charges, active
+// window, turn and an expired duration bonus (berserk.Tracker.Forget -- the
+// charges are persisted and reseeded on return), and the keeper's session
+// binding, expired grants and empty map (CompositeKeeper.Forget). Running
+// grants and a running bonus stay until their timers end them. It runs before
+// the world's own disconnect, while the hub still knows the session; a
+// character still live on another session is left alone.
+func BerserkDisconnectHandler(hub *world.Hub, zerk *berserk.Tracker, keeper *CompositeKeeper) func(sess *gateway.Session) {
+	return func(sess *gateway.Session) {
+		if hub == nil || sess == nil {
+			return
+		}
+		e, ok := hub.EntityBySession(sess.ID())
+		if !ok {
+			return
+		}
+		if live, ok := hub.EntityByCharacterID(e.CharacterID); ok && live.Session != nil && live.Session != sess {
+			return
+		}
+		if zerk != nil {
+			zerk.Forget(e.CharacterID)
+		}
+		if keeper != nil {
+			keeper.Forget(e.CharacterID, useItemClock())
+		}
 	}
 }

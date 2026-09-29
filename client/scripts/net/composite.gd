@@ -11,6 +11,7 @@ const OP_USE := 0x0104      # client -> server: spend one use of a granted item
 const OP_USE_RESULT := 0x0105
 const OP_LIST := 0x0106     # client -> server: which grants do I hold
 const OP_STATE := 0x0107    # server -> client: the grants (reply and push)
+const OP_END := 0x0108      # server -> client: a grant ended (retail 0x315B)
 
 ## One running grant: the item it lets the player use, the uses left of the
 ## maximum, and the seconds it still runs.
@@ -92,3 +93,9 @@ static func decode_state(data: PackedByteArray) -> State:
 	s.bonus_seconds = data.decode_s32(t)
 	s.bonus_seconds_left = data.decode_s32(t + 4)
 	return s
+
+## OP_END: {i64 item_id, i64 scroll_id}; [item_id, scroll_id], or [] when short.
+static func decode_end(data: PackedByteArray) -> Array:
+	if data.size() < 16:
+		return []
+	return [data.decode_s64(0), data.decode_s64(8)]

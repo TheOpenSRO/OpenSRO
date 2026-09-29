@@ -1370,6 +1370,10 @@ func main() {
 	)
 
 	worldDisconnect := session.WorldDisconnectHandler(hub, chars)
+	// Round 632's composite review: a leaving character's berserk turn,
+	// charges and expired jobs are forgotten (before worldDisconnect, while
+	// the hub still knows the session).
+	berserkDisconnect := session.BerserkDisconnectHandler(hub, zerkTracker, compositeKeeper)
 	partyDisconnect := session.PartyDisconnectHandler(parties)
 	duelDisconnect := session.DuelDisconnectHandler(hub, duels)
 	tradeDisconnect := session.TradeDisconnectHandler(hub, trades)
@@ -1405,6 +1409,7 @@ func main() {
 			duelDisconnect(sess)
 			tradeDisconnect(sess)
 			guildPointsDisconnect(sess)
+			berserkDisconnect(sess)
 			worldDisconnect(sess)
 			partyDisconnect(sess)
 		},

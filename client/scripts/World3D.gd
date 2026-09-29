@@ -1843,6 +1843,8 @@ func _wire_composite_items() -> void:
 		return
 	NetClient.composite_state.connect(_on_composite_state)
 	NetClient.composite_use_result.connect(_on_composite_use_result)
+	if NetClient.has_signal("composite_ended"):
+		NetClient.composite_ended.connect(_on_composite_ended)
 	if _hud_buff_board != null:
 		_hud_buff_board.item_state_clicked.connect(_on_item_state_clicked)
 	if NetClient.current_character_name != "" and NetClient.is_connected_to_server():
@@ -1901,6 +1903,15 @@ func _on_item_state_clicked(token: int) -> void:
 	await get_tree().process_frame
 	if _composite_window != null:
 		print("QA COMPOSITE: window open, button 0 at screen %s" % str(_composite_window.button_screen_centre(0)))
+
+## A grant's end (composite review; retail 0x315B, FUN_008993b0 removes the
+## entry and its kind-5 icon).
+func _on_composite_ended(item_id: int, scroll_id: int) -> void:
+	var token := -item_id
+	_composite_grants.erase(token)
+	if _hud_buff_board != null:
+		_hud_buff_board.remove_item_state(token)
+	print("World3D: composite grant ended: item %d from %d -- icon removed" % [item_id, scroll_id])
 
 func _on_composite_use_result(result: CompositeNet.UseResult) -> void:
 	if result == null:
@@ -16533,6 +16544,8 @@ func _on_use_item_result(result) -> void:
 	# A potion's success sounds snd_potion (0xb04c's handler, read; UiSounds).
 	UiSounds.use_replied(result.error == "")
 	if result.error != "":
+		# Logged, so a tester's log shows every refusal (composite review).
+		print("World3D: use item refused: %s" % result.error)
 		_log_system(result.error)
 		return
 	if _hud_player_info != null:

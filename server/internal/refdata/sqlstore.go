@@ -98,6 +98,8 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS can_pick BOOLEAN NOT NULL DEFAULT TRU
 ALTER TABLE items ADD COLUMN IF NOT EXISTS code_name TEXT NOT NULL DEFAULT '';
 -- CompositeDesc (round 632 review): a composite item's timed-job list.
 ALTER TABLE items ADD COLUMN IF NOT EXISTS composite_desc TEXT NOT NULL DEFAULT '';
+-- GetItemByCode looks items up by code (composite review).
+CREATE INDEX IF NOT EXISTS items_code_name_idx ON items (code_name);
 -- The potion restore amounts. REAL and exported since the Param block was
 -- decoded, and parsed by the CSV loader -- but there were no columns here, so
 -- ImportItems dropped them and every potion failed useitem's "cannot be used"

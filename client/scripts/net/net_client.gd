@@ -183,6 +183,8 @@ signal use_item_result(result: UseItemNet.Result)
 ## The Energy of life scroll's grants (round 632 review, CompositeNet).
 signal composite_state(state: CompositeNet.State)
 signal composite_use_result(result: CompositeNet.UseResult)
+## A grant ended (expired or consumed): drop its icon (retail 0x315B).
+signal composite_ended(item_id: int, scroll_id: int)
 
 ## The GM console's reply (GmNet.Result): whether this account is a GM, the
 ## text to print, and any place to move to / views to refresh.
@@ -751,6 +753,10 @@ func _dispatch(p: Packet) -> void:
 			composite_state.emit(CompositeNet.decode_state(p.data))
 		CompositeNet.OP_USE_RESULT:
 			composite_use_result.emit(CompositeNet.decode_use_result(p.data))
+		CompositeNet.OP_END:
+			var ended := CompositeNet.decode_end(p.data)
+			if ended.size() == 2:
+				composite_ended.emit(int(ended[0]), int(ended[1]))
 		StorageNet.OP_LIST_RESULT:
 			var r := StorageNet.decode_list_result(p.data)
 			storage_list_result.emit(r.slots, r.error, r.capacity)

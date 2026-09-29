@@ -63,6 +63,29 @@ func _init() -> void:
 	board.remove_item_state(-23937)
 	_check(board.item_state_tokens().is_empty(), "removed")
 	board.queue_free()
+
+	var endb := PackedByteArray()
+	endb.resize(16)
+	endb.encode_s64(0, 23937)
+	endb.encode_s64(8, 23944)
+	var ended := CompositeNet.decode_end(endb)
+	_check(ended.size() == 2 and int(ended[0]) == 23937 and int(ended[1]) == 23944, "an end push decodes")
+	_check(CompositeNet.decode_end(PackedByteArray()).is_empty(), "a short end push decodes to nothing")
+
+	var win := CompositeItemWindow.new()
+	root.add_child(win)
+	win.show_entries([[23937, "Hwan regeneration fill", 1]])
+	var cancel := win.get_node_or_null("CompositeCancel") as Button
+	_check(cancel != null, "a Cancel button follows the item buttons (count + 1)")
+	_check(cancel != null and cancel.position == CompositeItemWindow.BUTTON_ORIGIN + Vector2(0, CompositeItemWindow.BUTTON_STEP),
+		"Cancel sits one step below the last item button")
+	var fill := win.get_node_or_null("CompositeButton0") as Button
+	_check(fill != null and fill.text == "Hwan regeneration fill(1)", "the item button reads name(count)")
+	win.show()
+	if cancel != null:
+		cancel.pressed.emit()
+	_check(not win.visible, "Cancel closes the window")
+	win.queue_free()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

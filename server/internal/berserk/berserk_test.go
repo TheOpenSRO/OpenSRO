@@ -144,7 +144,7 @@ func TestBoostOnlyWhenActive(t *testing.T) {
 	if got := tr.Boost(id, 100); got != 200 {
 		t.Fatalf("berserk doubles the blow: Boost(100) = %d, want 200", got)
 	}
-	tr.Clear(id)
+	tr.Forget(id)
 	if tr.Active(id) || tr.Charges(id) != 0 {
 		t.Fatal("Clear must drop the state")
 	}
@@ -276,7 +276,7 @@ func TestUnseededCharacterHasNoOrbs(t *testing.T) {
 func TestDurationBonusLengthensBerserk(t *testing.T) {
 	z := NewTracker()
 	now := time.Now()
-	z.SetDurationBonus(1, 5, now.Add(time.Hour))
+	z.SetDurationBonus(1, 5, now, time.Hour)
 	z.Add(1, Orbs)
 	if !z.Activate(1) {
 		t.Fatal("activate")
@@ -286,11 +286,34 @@ func TestDurationBonusLengthensBerserk(t *testing.T) {
 		t.Errorf("berserk lasts %v with a 5 s bonus, want ~%v", got, Duration+5*time.Second)
 	}
 	z.ClearDurationBonus(2)
-	z.SetDurationBonus(2, 5, now.Add(time.Hour))
+	z.SetDurationBonus(2, 5, now, time.Hour)
 	z.ClearDurationBonus(2)
 	z.Add(2, Orbs)
 	z.Activate(2)
 	if got := z.activeUntil[2].Sub(now); got > Duration+time.Second {
 		t.Errorf("a cleared bonus still lengthened the berserk: %v", got)
+	}
+}
+
+// Logout drops the turn and an expired bonus, keeps a running one; a bonus's
+// own timer deletes it when it runs out (composite review).
+func TestForgetDropsTurnAndExpiredBonus(t *testing.T) {
+	z := NewTracker()
+	z.Turn(1)()
+	z.SetDurationBonus(1, 5, time.Now(), time.Hour)
+	z.Forget(1)
+	if _, ok := z.turns[1]; ok {
+		t.Error("the turn survived Forget")
+	}
+	if _, ok := z.durationBonus[1]; !ok {
+		t.Error("a running bonus was dropped at logout")
+	}
+	z.SetDurationBonus(2, 5, time.Now(), 20*time.Millisecond)
+	time.Sleep(80 * time.Millisecond)
+	z.mu.Lock()
+	_, left := z.durationBonus[2]
+	z.mu.Unlock()
+	if left {
+		t.Error("an expired bonus is still stored after its timer")
 	}
 }

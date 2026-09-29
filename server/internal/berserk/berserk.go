@@ -339,13 +339,15 @@ type Tracker struct {
 	durationBonus map[int64]timedBonus
 	// turns serialise one character's orb changes with their persistence
 	// (see Turn).
-	turnsMu sync.Mutex
-	turns   map[int64]*sync.Mutex
+	turnsMu  sync.Mutex
+	turns    map[int64]*sync.Mutex
+	bonusGen uint64
 }
 
 type timedBonus struct {
 	seconds int
 	until   time.Time
+	gen     uint64
 }
 
 func NewTracker() *Tracker {
@@ -383,10 +385,21 @@ func (t *Tracker) Turn(characterID int64) func() {
 // added to the base while the job runs. One per character: the engine
 // refuses a second job with the same FourCC (FUN_00411560(10, fourcc),
 // 0x49fd09 -> 0x1894).
-func (t *Tracker) SetDurationBonus(characterID int64, seconds int, until time.Time) {
+func (t *Tracker) SetDurationBonus(characterID int64, seconds int, now time.Time, lasts time.Duration) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.durationBonus[characterID] = timedBonus{seconds: seconds, until: until}
+	t.bonusGen++
+	gen := t.bonusGen
+	t.durationBonus[characterID] = timedBonus{seconds: seconds, until: now.Add(lasts), gen: gen}
+	t.mu.Unlock()
+	// The job's own end (composite review): the entry goes when it runs out,
+	// on real time, so a character who never returns leaves nothing behind.
+	time.AfterFunc(lasts, func() {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		if b, ok := t.durationBonus[characterID]; ok && b.gen == gen {
+			delete(t.durationBonus, characterID)
+		}
+	})
 }
 
 // ClearDurationBonus ends the param-60 job early (the fill's last use does,
@@ -404,7 +417,11 @@ func (t *Tracker) DurationBonus(characterID int64, now time.Time) (int, time.Tim
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	b, ok := t.durationBonus[characterID]
-	if !ok || !now.Before(b.until) {
+	if !ok {
+		return 0, time.Time{}
+	}
+	if !now.Before(b.until) {
+		delete(t.durationBonus, characterID)
 		return 0, time.Time{}
 	}
 	return b.seconds, b.until
@@ -545,13 +562,26 @@ func (t *Tracker) Boost(characterID int64, damage int) int {
 	return damage * DamageNumerator / DamageDenominator
 }
 
-// Clear drops a character's state (on disconnect).
-func (t *Tracker) Clear(characterID int64) {
+// Forget drops a character's state (on disconnect).
+func (t *Tracker) Forget(characterID int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	delete(t.charges, characterID)
 	delete(t.activeUntil, characterID)
-	// durationBonus is kept: it is a timed job, which the engine keeps
-	// across a relog (its jobs carry __time32_t stamps); srrevamp keeps it in
-	// memory, so only a server restart loses it -- disclosed.
+	// A RUNNING durationBonus is kept: it is a timed job, which the engine
+	// keeps across a relog (its jobs carry __time32_t stamps), and its own
+	// timer (SetDurationBonus) deletes it when it runs out. An expired one
+	// goes now. srrevamp keeps it in memory, so a restart loses it --
+	// disclosed.
+	if b, ok := t.durationBonus[characterID]; ok && !time.Now().Before(b.until) {
+		delete(t.durationBonus, characterID)
+	}
+	// The turn goes too (composite review), unless someone holds it -- a
+	// request still in flight for this character keeps the mutex it locked.
+	t.turnsMu.Lock()
+	if m, ok := t.turns[characterID]; ok && m.TryLock() {
+		delete(t.turns, characterID)
+		m.Unlock()
+	}
+	t.turnsMu.Unlock()
 }

@@ -838,8 +838,8 @@ func TestPotionReuseDelayPerKind(t *testing.T) {
 		_, before := qtyOf(id)
 		hpBefore, _ := chars.GetByID(ctx, c.ID)
 		mpBefore := mp.Current(c.ID, maxMP)
-		if res := use(id); res.Error != "wait for the reuse delay" {
-			t.Errorf("%s: got %+v, want the 0x185b refusal %q", label, res, "wait for the reuse delay")
+		if res := use(id); res.Error != reuseDelayRefusal {
+			t.Errorf("%s: got %+v, want the 0x185b refusal %q", label, res, reuseDelayRefusal)
 		}
 		if _, after := qtyOf(id); after != before {
 			t.Errorf("%s: the refused potion was consumed: %d left, want %d", label, after, before)

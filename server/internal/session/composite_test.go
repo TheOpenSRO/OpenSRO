@@ -1,10 +1,13 @@
 package session
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/berserk"
+	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/gm"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 )
@@ -49,7 +52,7 @@ func TestKeyZeroPotionsDoNotCrossBlock(t *testing.T) {
 	}
 	f.clock = f.clock.Add(time.Minute)
 	slot, _ = f.slotOf(testKeyZeroA)
-	if res := f.use(slot); res.Error != "wait for the reuse delay" {
+	if res := f.use(slot); res.Error != reuseDelayRefusal {
 		t.Errorf("22936 again a minute later got %+v, want the reuse-delay refusal", res)
 	}
 }
@@ -74,20 +77,41 @@ func (f *berserkPotionFixture) useScroll() (*UseItemResult, *CompositeState) {
 
 func (f *berserkPotionFixture) useFill() (*CompositeUseResult, *CompositeState) {
 	f.t.Helper()
+	res, st, _ := f.useFillEnds()
+	return res, st
+}
+
+// useFillEnds spends the fill and returns the result, the state that follows
+// it, and any OpCompositeEnd pushed before the result (the last use ends the
+// grant inside the use, as vslot_007 ends the job before 0xB15F).
+func (f *berserkPotionFixture) useFillEnds() (*CompositeUseResult, *CompositeState, []*CompositeEnd) {
+	f.t.Helper()
+	var ends []*CompositeEnd
 	p := f.send(OpCompositeUse, (&CompositeUseRequest{CharacterName: "Aria", ItemID: testHwanFill}).Encode())
+	for p.Opcode == OpCompositeEnd {
+		e, err := DecodeCompositeEnd(p.Data)
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		ends = append(ends, e)
+		p = f.recv()
+	}
+	if p.Opcode != OpCompositeUseResult {
+		f.t.Fatalf("opcode %#x, want the use result", p.Opcode)
+	}
 	res, err := DecodeCompositeUseResult(p.Data)
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	if res.Error != "" {
-		return res, nil
-	}
 	p = f.recv()
+	if p.Opcode != OpCompositeState {
+		f.t.Fatalf("after the use result: opcode %#x, want the state (sent after a refusal too)", p.Opcode)
+	}
 	st, err := DecodeCompositeState(p.Data)
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	return res, st
+	return res, st, ends
 }
 
 // Item 3: the Energy of life scroll grants one fill for 3600 s and +5 s of
@@ -129,7 +153,7 @@ func TestEnergyOfLifeScroll(t *testing.T) {
 	}
 	f.zerk.Add(f.charID, -berserk.Orbs)
 	f.clock = f.clock.Add(19 * time.Minute)
-	if res, _ := f.useScroll(); res.Error != "wait for the reuse delay" {
+	if res, _ := f.useScroll(); res.Error != reuseDelayRefusal {
 		t.Errorf("a scroll 19 min after the fill got %q, want the 20-minute group 0xC9 refusal", res.Error)
 	}
 	f.clock = f.clock.Add(time.Minute)
@@ -222,5 +246,142 @@ func TestParseCompositeDesc(t *testing.T) {
 	}
 	if _, err := parseCompositeDesc("[UIL1:X,Q,1,1]"); err == nil {
 		t.Error("a UIL1 flag other than A/P parsed")
+	}
+}
+
+// Composite review, item 1: the last use pushes the grant's end (retail
+// 0x315B) before its result; a refused fill is followed by the state.
+func TestEnergyOfLifeEndPushOnUse(t *testing.T) {
+	f := newBerserkPotionFixture(t, nil)
+	if res, _ := f.useScroll(); res.Error != "" {
+		t.Fatal(res.Error)
+	}
+	res, st, ends := f.useFillEnds()
+	if res.Error != "" || len(ends) != 1 || ends[0].ItemID != testHwanFill || ends[0].ScrollID != testHwanScroll {
+		t.Fatalf("fill %+v ends %+v, want one end of %d/%d", res, ends, testHwanFill, testHwanScroll)
+	}
+	if len(st.Grants) != 0 {
+		t.Errorf("state after the end still lists %+v", st.Grants)
+	}
+	refused, st2, _ := f.useFillEnds()
+	if refused.Error == "" || st2 == nil {
+		t.Errorf("a fill with no grant: %+v, state %+v -- want a refusal followed by the state", refused, st2)
+	}
+}
+
+// Composite review, item 1: a grant that runs out is ended by its timer and
+// pushed, with no request from the client.
+func TestCompositeGrantExpiresByTimer(t *testing.T) {
+	k := NewCompositeKeeper()
+	now := time.Now()
+	k.put(7, compositeGrant{fillID: testHwanFill, scrollID: testHwanScroll, remaining: 1, max: 1,
+		until: now.Add(50 * time.Millisecond)}, 50*time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		k.mu.Lock()
+		_, left := k.grants[7]
+		k.mu.Unlock()
+		if !left {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the grant was never ended by its timer")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Through the wire: the timer's end reaches the bound session as OpCompositeEnd.
+func TestCompositeGrantExpiryIsPushed(t *testing.T) {
+	f := newBerserkPotionFixture(t, nil)
+	if res, _ := f.useScroll(); res.Error != "" {
+		t.Fatal(res.Error)
+	}
+	// Re-arm the grant with a short real timer, as a 1-second row would.
+	g, _ := f.keeper.get(f.charID, testHwanFill, f.clock)
+	f.keeper.put(f.charID, *g, 50*time.Millisecond)
+	p := f.recv()
+	if p.Opcode != OpCompositeEnd {
+		t.Fatalf("opcode %#x, want OpCompositeEnd", p.Opcode)
+	}
+	e, _ := DecodeCompositeEnd(p.Data)
+	if e.ItemID != testHwanFill || e.ScrollID != testHwanScroll {
+		t.Errorf("end %+v", e)
+	}
+	if _, ok := f.keeper.get(f.charID, testHwanFill, f.clock); ok {
+		t.Error("the grant is still held after its end")
+	}
+}
+
+// Composite review, item 3: logout forgets the session binding, expired
+// grants and an empty map; a running grant stays for its timer.
+func TestCompositeForget(t *testing.T) {
+	k := NewCompositeKeeper()
+	now := time.Now()
+	k.put(8, compositeGrant{fillID: 1, until: now.Add(-time.Second)}, time.Hour)
+	k.put(8, compositeGrant{fillID: 2, until: now.Add(time.Hour)}, time.Hour)
+	k.Forget(8, now)
+	if _, ok := k.grants[8][1]; ok {
+		t.Error("an expired grant survived Forget")
+	}
+	if _, ok := k.grants[8][2]; !ok {
+		t.Error("a running grant was dropped at logout")
+	}
+	k.Forget(8, now.Add(2*time.Hour))
+	if _, ok := k.grants[8]; ok {
+		t.Error("the empty per-character map survived Forget")
+	}
+}
+
+// Composite review, item 4: a store error on the orbs leaves the grant, the
+// bonus and the live orbs as they were.
+func TestEnergyOfLifeFillStoreErrorChangesNothing(t *testing.T) {
+	f := newBerserkPotionFixture(t, nil)
+	if res, _ := f.useScroll(); res.Error != "" {
+		t.Fatal(res.Error)
+	}
+	before := f.zerk.Charges(f.charID)
+	if secs, _ := f.zerk.DurationBonus(f.charID, f.clock); secs != 5 {
+		t.Fatalf("bonus %d before the fill", secs)
+	}
+	f.hwanStore.fail = true
+	res, st := f.useFill()
+	if res.Error == "" {
+		t.Fatal("the fill succeeded with a failing store")
+	}
+	if f.zerk.Charges(f.charID) != before {
+		t.Errorf("orbs changed: %d -> %d", before, f.zerk.Charges(f.charID))
+	}
+	if len(st.Grants) != 1 || st.BonusSeconds != 5 {
+		t.Errorf("state after the failed fill %+v, want the grant and the bonus kept", st)
+	}
+}
+
+// hwanFailStore fails SetHwanCount on demand (the store-error ordering test).
+type hwanFailStore struct {
+	*character.MemStore
+	fail bool
+}
+
+func (s *hwanFailStore) SetHwanCount(ctx context.Context, characterID int64, count int) error {
+	if s.fail {
+		return errors.New("test: store down")
+	}
+	return s.MemStore.SetHwanCount(ctx, characterID, count)
+}
+
+// The bag potion's store error: the potion comes back and the orbs stay.
+func TestBerserkPotionStoreErrorChangesNothing(t *testing.T) {
+	f := newBerserkPotionFixture(t, nil)
+	f.hwanStore.fail = true
+	slot, _ := f.slotOf(testHwanPotion)
+	if res := f.use(slot); res.Error == "" {
+		t.Fatal("the potion succeeded with a failing store")
+	}
+	if n := f.countOf(testHwanPotion); n != 3 {
+		t.Errorf("%d potions left, want 3 (handed back)", n)
+	}
+	if got := f.zerk.Charges(f.charID); got != 0 {
+		t.Errorf("orbs %d after a failed potion", got)
 	}
 }

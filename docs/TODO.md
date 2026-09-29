@@ -1068,6 +1068,11 @@ of berserk (param 60); COOLTIME keys are per item for key 0; a GM account skips 
 
 - **The jobs are in memory.** A server restart loses a granted fill and the berserk-time bonus
   (retail keeps timed jobs with `__time32_t` stamps across relogs; ours survive a relog only).
+  Their timers end them on real time (OpCompositeEnd), and logout forgets a character's turn,
+  charges and expired entries.
+- **FUN_004a0600's movement stop.** `CGObjPC::vslot_300` (`0x4ef340` -> `FUN_004a9430`) runs before
+  AddHwanCount -- INFERRED a movement stop (it may send `0xB023`); no srrevamp item use stops
+  movement. Read what `0xB023` carries and what `+0x4c0` tests before mirroring it.
 - **Other composite kinds** (UIU1 of a TypeID4-4 item, BCS1, BFI1, PSU1, UQL1, USL1, USU1) are
   refused; only the Energy of life's UIL1 + 0x706874 UIU1 is modelled. UIL1's "P" flag and the
   0x3161 refill (`0x653a40`) are read but unused by any modelled row.

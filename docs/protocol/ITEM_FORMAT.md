@@ -564,25 +564,52 @@ removed and unable to use Energy of life for 20 Mins)".
   when a type-5 job from this scroll runs, when a UIL1 job for the fill runs,
   and (`0x49fd09`) when a type-10 job with the same FourCC runs.
 - **The UIU1 job**: the named item's Param1 is the seconds (`0x49fcc0`), Param2
-  the FourCC, Param3 the value.
+  the FourCC, Param3 the value. Which job depends on the named row (composite
+  review): a 3/3/13/4 row (`FUN_004929c0` 0x4929c0 = TypeID 3/3/13, and TID &
+  0xf800 == 0x2000) makes a type-3 job (not modelled, refused); otherwise
+  `FUN_00488db0` (0x488db0: TID bit 1 clear, TypeID **3/3/3/10**) gates the
+  type-10 job, and on 0 the branch jumps to `0x49fd55` and makes **no job at
+  all**, silently -- srrevamp skips such an entry the same way.
 - **The fill**: client `0x715F` {u32 compositeRefId, u32 limitedRefId} ->
   `GObjPC_HandleCompositeItemMsg_15f` (`0x511640`): no job -> 2, no use left ->
   `0x18c6` ("Exceeded one day use limit."), else `CUsedItemLimit::vslot_007`:
   row checks, `FUN_004a05b0` (dead `0x1889`, berserk `0x18ce`, five orbs `0x183e`
   "The selected item is unusable."), on the last use end the UIL1 job, end the
-  `0x706874` job and arm the fill's COOLTIME; then `AddHwanCount(Param1 byte)`,
-  and the handler decrements the count and answers `0xB15F` {1, A, B}.
+  `0x706874` job and arm the fill's COOLTIME; then `FUN_004a0600`:
+  `CGObjPC::vslot_300` (`0x4ef340`) with `FUN_0048b840(.., 1)`'s float
+  (`0x4a0614..0x4a0629`), then `AddHwanCount(Param1 byte)`, and the handler
+  decrements the count and answers `0xB15F` {1, A, B}. `vslot_300` is
+  `GObjPC::FUN_004a9430`: when `+0x4c0` answers non-zero it calls
+  `CGObjMobile::vslot_300` (`0x48b730`: both move controllers' `+0x18`), may
+  send `0xB023` (a NetProcessInNavAndSkill message on the client), copies the
+  position block and resets the stance from body state 2/3 -- INFERRED a
+  movement stop. **OPEN, not mirrored**: no srrevamp item use stops movement.
   vslot_007 does not ask IsReady: the 20 minutes block the next scroll.
 - **What the client shows** (retail client, READ): `0x3159` {compositeRefId,
   secs, limitedRefId, count} adds a kind-5 icon on CIFMagicStateBoard -- the
   COMPOSITE item's icon, gauge total = its Param1 x 1000 -- and a map entry;
   `0x315B` removes both; `0x3161` refills the count. A left-click on the icon
-  (`CIFMagicStateBoard::vslot_029`, `0x800430`) opens `CIFCompositeItemWnd`
+  (`CIFMagicStateBoard::vslot_029`, `0x800430`; guarded by `board+0x390 != 0`
+  at `0x800501` -- the map of grant entries is the std::map at `+0x388`, whose
+  iterators end at the head `+0x38c` (FUN_008052f0/FUN_00805430, READ), so
+  `+0x390` is its size, INFERRED from MSVC's layout: "some grant exists")
+  opens `CIFCompositeItemWnd`
   (`GDR_COMPOSITE_ITEM`, ID 36, 300,200,214,245; layout
   `resinfo\ifcompositeitemwnd.txt`), whose buttons (`FUN_007af830`:
   `sys_button.ddj`, 150 x 25 from (0x1f, 0x3a), step 0x22, label "%s(%d)") send
-  `0x715F` (`FUN_00821720`).
-- **srrevamp** carries this on its own opcodes 0x0104-0x0107 (OURS; see
+  `0x715F` (`FUN_00821720`). It builds **count + 1** buttons: the last is
+  labelled with `UIIT_CTL_CANCEL`'s text (`0x7afb57`), and `FUN_007b03e0`
+  hit-tests all count + 1 (composite review).
+- **The end**: the CUsedItemLimit job sends `0x315B` {compositeRefId,
+  limitedRefId} when it ends (`0x653e80`), consumed or expired, and the client
+  (`FUN_008993b0`) removes the entry and the kind-5 icon. srrevamp pushes
+  `OpCompositeEnd` (0x0108) from a timer and from the last use, before the
+  use's result (vslot_007 ends the job before `0xB15F`), and sends the state
+  after a refused fill too.
+- **Texts**: 0x185b's authored text is `UIIT_MSG_STRGERR_WAIT_FOR_REUSE_DELAY`,
+  "Still have time to reuse the item." -- every item path's reuse refusal now
+  uses it.
+- **srrevamp** carries this on its own opcodes 0x0104-0x0108 (OURS; see
   `session/composite.go`, `client/scripts/net/composite.gd`), keeps the jobs in
   memory (a restart loses them), and a GM account neither checks nor arms the
   scroll's or the fill's COOLTIME (OURS, the user's request).

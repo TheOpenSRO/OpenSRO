@@ -36,12 +36,15 @@ type berserkPotionFixture struct {
 	inv    *inventory.MemStore
 	zerk   *berserk.Tracker
 	keeper *CompositeKeeper
-	send   func(op uint16, data []byte) *proto.Packet
-	recv   func() *proto.Packet
-	charID int64
-	clock  time.Time
-	use    func(slot int) *UseItemResult
-	slotOf func(id int64) (index, qty int)
+	// hwanStore is chars with a switchable SetHwanCount failure; the
+	// handlers are given it.
+	hwanStore *hwanFailStore
+	send      func(op uint16, data []byte) *proto.Packet
+	recv      func() *proto.Packet
+	charID    int64
+	clock     time.Time
+	use       func(slot int) *UseItemResult
+	slotOf    func(id int64) (index, qty int)
 }
 
 func newBerserkPotionFixture(t *testing.T, gate *gm.Gate) *berserkPotionFixture {
@@ -55,6 +58,7 @@ func newBerserkPotionFixture(t *testing.T, gate *gm.Gate) *berserkPotionFixture 
 		t.Fatalf("create: %v", err)
 	}
 	f.charID = c.ID
+	f.hwanStore = &hwanFailStore{MemStore: f.chars}
 	items := refdata.NewMemStore()
 	if err := items.ImportItems(f.ctx, []refdata.Item{
 		{ID: testHwanFill, MaxStack: 1, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 8, CanUse: true,
@@ -103,8 +107,8 @@ func newBerserkPotionFixture(t *testing.T, gate *gm.Gate) *berserkPotionFixture 
 	useItemClock = func() time.Time { return f.clock }
 
 	handle := gateway.Chain(LoginHandler(accounts),
-		UseItemHandler(f.chars, f.inv, items, nil, nil, nil, nil, f.zerk, gate, f.keeper),
-		CompositeHandler(f.chars, items, f.keeper, f.zerk, gate, nil))
+		UseItemHandler(f.hwanStore, f.inv, items, nil, nil, nil, nil, f.zerk, gate, f.keeper),
+		CompositeHandler(f.hwanStore, items, f.keeper, f.zerk, gate, nil))
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)
 	conn := dialTestServer(t, addr)
@@ -231,7 +235,7 @@ func TestBerserkPotionCooltimeForAPlayer(t *testing.T) {
 	f.zerk.Add(f.charID, -berserk.Orbs) // empty the orbs again
 	f.clock = f.clock.Add(1200000*time.Millisecond - time.Second)
 	slot, _ = f.slotOf(testHwanFill)
-	if res := f.use(slot); res.Error != "wait for the reuse delay" {
+	if res := f.use(slot); res.Error != reuseDelayRefusal {
 		t.Errorf("second fill 19:59 later got %+v, want the reuse-delay refusal", res)
 	}
 	if n := f.countOf(testHwanFill); n != 1 {
