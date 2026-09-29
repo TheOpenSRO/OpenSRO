@@ -64,6 +64,7 @@ and changes nothing.
 | `/durability <slot> <n>` | Sets a worn item's durability. Slots: 0 helm, 1 mail, 2 shoulder, 3 gauntlet, 4 pants, 5 boots, 6 weapon, 7 shield, 8 job suit. |
 | `/sp <n>` | Adds skill points (a negative number takes them away). |
 | `/hwan <0-5>` | Sets the berserk orbs held (round 629; a test tool, not a retail command). Five light the ready circle. |
+| `/invsize [1-96\|default]` | Shows or sets your bag's size in slots (round 633; a test tool, not a retail command). The bag shows 32 slots a page, up to three pages, and locks the slots of the last page past the size. `default` goes back to the server's `-inventory-size` (96 unless the operator set another). Refused below a slot that holds an item. |
 
 `/goto` and `/spawn` with no valid name list the zones and monster code names
 they accept. `/give` takes the item's numeric id; the client resolves an item

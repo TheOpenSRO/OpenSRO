@@ -7094,6 +7094,308 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirty-third round: the inventory has its frame again, three pages of 32 slots, purse colours, the real equipment slot art and avatar view, and a bright preview that turns with the arrows
+
+The user's report on v0.1.459 had five parts, and the coordinator added a sixth:
+
+1. Inventory, Character, Party "aren't showing the border properly again".
+2. Add the inventory's three pages.
+3. The equipment slots are "visually inaccurate".
+4. Fix the avatar slot page.
+5. The preview character is badly placed and too dark, and should turn with the arrows and reset
+   with the circle.
+6. Colour the gold amount by its size.
+
+Labels used below: READ, MEASURED, INFERRED, OURS. Every address and table is in
+`docs/protocol/inventory_window.md`.
+
+### 1. The missing frames: round 630's Style-64 rule hid the registry windows' own frames
+
+**READ.** The builder's `0x8b5710` test hides any control whose Style has bit 0x40, whatever its
+class (`0x652da0(0x40)`, then vslot `0x5c` ShowWindow(0)). `ginterface.txt` gives Style 64 to 43
+registry entries, and those entries are windows, not controls. Among them are `GDR_MAINPOPUP`,
+`GDR_STORAGEROOM`, `GDR_EXCHANGE` and `GDR_GAMEGUIDE`. The client creates these windows hidden,
+and each one's ShowWindow(1) shows the window along with the frame it draws.
+
+Our `HudWindow` builds the registry entry as a child, `RegistryFrame`, through `build_control`.
+Round 630 therefore hid that child, and nothing ever showed it again.
+
+**The fix** is in `hud_window.gd`: `_add_registry_frame` keeps the frame visible, and the window's
+own visibility stays with HudPanels. The shared UiBuilder is not changed. A Style-64 control
+inside a layout is still hidden at creation, as round 630 made it.
+
+**MEASURED** with `client/tools/dump_visible_panels.gd`, which builds every window from the box's
+Media.pk2 and lists its visible nodes. Diffing v0.1.458 (cfddf39), v0.1.459 (b9bbf07) and this
+round shows the regression and what came back:
+
+| Window | `RegistryFrame` nodes: 458 | 459 | 633 |
+|---|---|---|---|
+| inventory, character, skill, action, party, academy (the main popup) | 9 | 0 | 9 |
+| storage, exchange | 9 | 0 | 9 |
+| help (GDR_GAMEGUIDE) | 9 | 0 | 9 |
+| quest, guild, community, store, system, party match, auto potion, NPC talk, alchemy, option, world map | unchanged | | |
+
+The windows marked "unchanged" are either 2dt windows or registry entries without Style 64.
+
+The only other differences between 458 and 459 were:
+
+- the party and academy leader marks, which are hidden now and rightly so (Style 64 in their
+  layouts, shown by code for a leader);
+- round 630's text layout.
+
+The before and after renders are in the round's `inv_shots/before_after_sheet.png`.
+
+### 2. The bag's pages
+
+**READ.** The character-data handler takes 13 off the inventory size (`0x9d9aee`) and calls
+IFInventory `0x6b6620` with the result. That builds:
+
+- `((size-1)>>5)+1` pages, asserting at most 3;
+- one CIFSelectableArea tab per page:
+  - (4,-23,60,24) using `com_tab_on/off`;
+  - (64,-23,56,24) and (118,-23,57,24) using `com_short_tab_on/off`;
+  - captions `UIIT_CTL_BELOINGING`, `_INVENTORY_EXTENSION_TEB` and `_TEB2`;
+- 32 slots per page, 32x32 at each lattice cell's top-left;
+- slots past the size drawn with `interface\pet\pt_block.ddj` and disabled.
+
+`0x6b3d00` shows one page's slots, and a tab click reaches it through `0x6b45b0`.
+
+**Built (client).** HudPanels code-builds the tabs on the inventory pane. The lattice's 32 cells
+show the selected page, cell i being bag slot `page*32+i`. Locked cells show `pt_block` and take no
+drop. Icons are now 32x32 at the cell's top-left; they had been stretched to 36.
+
+**Built (server).** Each character now has its own bag size:
+
+- `character.InventorySizeStore`, stored in the `characters.inventory_size` column;
+- `inventory.BagCapacity`, which holds every bag operation to that size;
+- the bag list and move replies carry the size as a trailing u16, the warehouse list's shape.
+
+**The size settings.**
+
+- `-inventory-size` / `SRREVAMP_INVENTORY_SIZE` sets the size for any character without its own,
+  clamped to 1..96. Its default is **96**, three full pages: OURS, the user's choice for testing.
+- `/invsize [1-96|default]` is a GM command (OURS). It refuses to shrink the bag below an occupied
+  slot.
+- The inventory expansion item (+32) now grows the bag under the engine's kind-0 test, which
+  counts the 13 equipment slots, against a ceiling of 64. So one item takes a 32-slot bag to 64,
+  and a second is refused with 0x18fe and kept.
+
+**Retail's starting size is not known.** It is a `_CHAR.InventorySize` database default, and
+neither executable carries it; this was already recorded for the server and is re-checked here
+for the client. The engine's growth caps (77, or 99 with the quest, both counting the 13
+equipment slots) mean retail's third page is never full by its own means: at most 86 slots.
+
+**Carrying an item to another page.** The retail mechanism is not read. Ours (OURS) turns the
+page when a drag passes over a tab.
+
+### 3 and 4. Equipment slot art and the avatar view
+
+**READ.** The slots draw no art of their own. CIFEquipment's draw (`0x6ad860`) paints:
+
+- a backdrop for each worn slot, from the textures Create loads (`0x6ac1c0`), at the offsets in
+  the table at `0xda6e20`;
+- each backdrop 40 square, except the weapon's and shield's at 56;
+- in avatar mode, only slot 8's backdrop plus five avatar backdrops (hat, dress, pandernt, flag,
+  extraneous01; table `0xda6df8`).
+
+**What was wrong.** Ours drew the backdrop inside each 32x32 slot, shrunk to fit. It also gave
+slots 8..12 the wrong art (the earring on 108, the special dress on 112), and gave the avatar
+slots none. That is why the avatar page looked empty.
+
+**MEASURED** in the dump:
+
+- `EquipBackdrop0` is at the window's (199,123), which is the pane (198,41) plus (1,82);
+- the weapon's is 56x56 at (198,41);
+- every texture is its read size.
+
+The mode switch was already right (refresh `0x6abde0`). It now also switches the backdrops and
+sets the buttons' `UIIT_STT_AVATAR_VIEW_*` tooltips.
+
+### 5. The preview
+
+**READ.** The model is drawn into the pane's rect grown by (+2,+15,-2,-37), which is (2,15,176,318).
+
+- **Camera:** perspective, vertical field of view 30, near 1, far 500000, from (0,9,-40) looking
+  at (0,9,0). It is fixed, with no framing on the model.
+- **Light:** directional along the view, diffuse 0.7, ambient 0.3.
+
+**What was wrong.** Ours was a 98x236 orthographic view framed on the bones, lit by a side key.
+
+**Built.** `PaperDoll.use_equipment_view` sets the view up the retail way.
+
+**The light's energy is MEASURED**, because the client lights in gamma space and Godot in
+linear. `client/tools/measure_doll_light.gd` renders a 0.5-grey quad facing the camera, and at
+energy 0.89 it reads 128 of 255, the client's 0.5×(0.3+0.7). The sweep:
+
+| Energy | Reads |
+|---|---|
+| 0.85 | 126 |
+| 0.88 | 127 |
+| 0.89 | 128 |
+| 0.90 | 129 |
+| 1.0 | 134 |
+
+With the light off the quad reads 34, against the client's 38.
+
+**The arrows, READ:**
+
+- `0x6ab920` / `0x6ab960`: yaw ∓/± frame_ms × 0.0015, with the frame clamped to 3000 ms.
+- `0x6ab9a0`: yaw = 0.
+- Flag `0x20` on the two arrows makes a hold repeat: one step on the press, 1000 ms, then one
+  every 50 ms, paused while the pointer is off the button.
+- The circle acts on its release.
+- The yaw is kept across opens.
+
+**The on-screen direction is INFERRED.** It rests on the model's vslot `0x30` being a plain
+RotationY, which would put a positive yaw's face toward the screen's left. The render matches
+that.
+
+### 6. Gold colours
+
+**READ: the rule.** `0x5d3df0` picks the colour by the amount's power of ten:
+
+| Amount | Colour |
+|---|---|
+| below 10^4 | white |
+| 10^4 | FFFA85 |
+| 10^5 | FFD348 |
+| 10^6 | FFAD5C |
+| 10^7 | FF9AA1 |
+| 10^8 | EBA1FF |
+| 10^9 | B8BBFF |
+| 10^10 | 95DEFF |
+| 10^11 and up | 8BFFE5 |
+
+**READ: where it applies.** A census of all 20 call sites and of the formatters' colour
+out-pointer found it on the number's own static in three windows:
+
+- the bag's purse (`0x6b045b`);
+- the warehouse (`0x6cc535`);
+- the exchange's two offers (`0x7b23be`, `0x7b236e`), which start at 0.
+
+It is **not** applied to:
+
+- store prices;
+- the gold input box: CIFEdit colouring needs flag `0x400`, and nothing sets it;
+- tooltips;
+- the "Gold" captions.
+
+**Built.** `client/scripts/ui/gold_color.gd`, applied at those three places. The exchange boxes
+are filled from the trade events.
+
+**MEASURED:** a purse of 1,500,000,000 renders its digits at (184,187,255), and "Gold" stays
+(255,255,255).
+
+### Real input (xdotool on Xvfb, Login -> Character select, the lane's server with `-gm-accounts qa`)
+
+The steps: `/give` ×5, `/gold 1499999000`, then `i`. After that:
+
+- click Page 2, then Page 1;
+- drag cell 0 over the Page 2 tab onto page 2's cell 5;
+- `/invsize 40`, click Page 2, drag onto a locked cell;
+- `/invsize default`;
+- the avatar button twice;
+- the right arrow once, then held for 3 s, then reset;
+- the left arrow held for 2 s, then reset;
+- `i` twice.
+
+    HudPanels: inventory gold readout 1,500,000,000 (server gold 1500000000)
+    HudPanels: bag page 2 of 3 (size 96)
+    HudPanels: bag page 1 of 3 (size 96)
+    HudPanels: bag page 2 of 3 (size 96)
+    HudPanels: bag after move: {1:11 x50, 2:6 x25, 3:13 x25, 4:3632 x1, 37:4 x50}
+    GM REPLY: inventory size now 40 slots (2 pages)
+    HudPanels: bag page 2 of 2 (size 40)
+    GM REPLY: inventory size now 96 slots (3 pages)
+    HudPanels: equipment avatar view
+    HudPanels: equipment equipment view
+    HudPanels: doll yaw 0.0240 at 78253 ms          (one click)
+    HudPanels: doll yaw 0.0480 at 80078 ms          (the hold's press)
+    HudPanels: doll yaw 0.0720 at 81085 ms          (+1007 ms)
+    HudPanels: doll yaw 0.0960 at 81135 ms          (+50 ms, then every 50-66 ms ...)
+    HudPanels: doll yaw 1.0080 at 83068 ms
+    HudPanels: doll yaw 0.0000 at 84780 ms          (reset)
+    HudPanels: doll yaw -0.0240 at 86590 ms ... -0.5040 at 88564 ms
+    HudPanels: doll yaw 0.0000 at 90291 ms
+
+The drop onto a locked cell sent nothing: the item stayed in slot 37, and the log has no second
+"bag after move".
+
+**From the shots only:**
+
+- page 2 shows the moved potion;
+- at size 40, page 2's last 24 cells show `pt_block`;
+- the avatar view shows three backdrops on the left, two on the right and the special dress's;
+- with the right arrow held the face turns to the screen's left.
+
+The pictures are in `inv_shots/` (`sheet_pages.png`, `sheet_equip.png`, `real/`).
+
+### Tests and negatives
+
+**Client: `inventory_pages_test.gd`**, 70 checks. It covers:
+
+- registry frames with Style 64;
+- a layout's Style-64 mark staying hidden;
+- tab count, rects and art;
+- the page mapping and locked cells;
+- every gold threshold;
+- backdrop rects and modes;
+- arrow step, repeat, pause, clamp and reset;
+- the doll camera and yaw;
+- the list's capacity.
+
+The same file against b9bbf07:
+
+    FAIL the main popup's frame (GDR_MAINPOPUP, Style 64) is drawn on the inventory tab
+    FAIL ... and on the party tab
+    FAIL the warehouse's frame (GDR_STORAGEROOM, Style 64) is drawn
+    FAIL HudPanels pages the bag (select_bag_page)
+    SCRIPT ERROR: Cannot call method 'call' on a null value.   (gold_color.gd does not exist)
+    FAIL HudPanels draws the equipment backdrops
+    FAIL HudPanels turns the paper doll (_doll_turn_tick)
+    FAIL PaperDoll has the equipment view
+    FAIL the bag list's trailing u16 is its capacity (got 0)
+
+Why round 630's tests missed the regression: `hud_registry_frame_test.gd` and
+`hud_main_popup_test.gd` build their registry entries without a Style field.
+
+**Go.** The new tests are:
+
+- `TestBagPagesSizeAndMoves` and `TestBagCapacityDefaultsAndClamps` (session);
+- `TestInvsize` (gm);
+- `TestInventorySizeStores` (character, memory and PostgreSQL);
+- `TestUseBagExpansionItem`, and `TestBagExpansionAllowedFollowsExpandInventory` updated.
+
+The behaviour against b9bbf07, through its own APIs:
+
+    --- FAIL: TestBagNegative
+        bagneg_test.go:45: the bag list carries capacity 0, want 96 (three pages)
+        bagneg_test.go:49: moving to page 2's slot 60 was refused: "invalid slot"
+    --- FAIL: TestInvsizeNegative
+        invneg_test.go:8: /invsize 40: {Text:unknown GM command /invsize. ...}
+
+**Runs:**
+
+- `remote_godot.sh check`: 386 scripts, ALL LOAD.
+- `remote_godot.sh tests`: 154 suites. The first run failed `storage_test.gd`'s "an error reply
+  reports no capacity", because the shared list decoder read a capacity on an error. It is now
+  guarded, and that suite and the new one pass.
+- `go vet ./...` is clean.
+- `go test -count=1 -p 1 ./...`: 60 packages ok.
+
+### OPEN
+
+Listed in `docs/TODO.md`, "The inventory window (round 633)":
+
+- the retail way of carrying an item across pages;
+- the selected tab's text flag 2;
+- the yaw direction's vslot `0x30`;
+- the preview's inherited render state;
+- the preview idling only while visible;
+- the avatar skill strip;
+- the retail starting size;
+- the exchange window not being opened by a trade.
+
 ## Rounds 629-632 integration review (int/ui): the berserk display lasts as long as the berserk, a revive or a zone change ends it on the server, hit rate and parry are the item's own, and the panel follows every change of what is worn
 
 The final review of int/ui (dev cfddf39 + rounds 629-632, merged at 1a7e84d) confirmed every READ

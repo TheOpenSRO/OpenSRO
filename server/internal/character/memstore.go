@@ -12,6 +12,9 @@ type MemStore struct {
 	byID       map[int64]*Character
 	namesTaken map[string]bool // lowercased, for case-insensitive uniqueness
 	nextID     int64
+	// invSize is each character's own bag size (InventorySizeStore); a
+	// character with no entry has none stored (0).
+	invSize map[int64]int
 }
 
 // NewMemStore returns an empty MemStore.

@@ -51,9 +51,12 @@ func DecodeInventoryMoveRequest(data []byte) (*InventoryMoveRequest, error) {
 // InventoryMoveHandler returns a gateway.Handler implementing OpInventoryMove.
 //
 // The reply is an InventoryListResult on OpInventoryMoveResult: the error, or
-// the whole bag as it stands after the move -- the same wire shape the
-// storage list reuses -- so the client redraws from the server's own answer
-// instead of assuming the move happened and asking again.
+// the whole bag as it stands after the move with the bag's size after it
+// (bagListResult) -- so the client redraws from the server's own answer
+// instead of assuming the move happened and asking again. A slot at or past
+// the character's size is refused as "invalid slot" (the store's capacity,
+// inventory.BagCapacity): the client locks it (0x6b6620), and the server
+// holds the same line.
 func InventoryMoveHandler(chars character.Store, inv inventory.Store, items ItemLookup) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpInventoryMove {
@@ -89,10 +92,6 @@ func InventoryMoveHandler(chars character.Store, inv inventory.Store, items Item
 		if err != nil {
 			return fail("list failed")
 		}
-		snaps := make([]InventorySlotSnapshot, 0, len(slots))
-		for _, sl := range slots {
-			snaps = append(snaps, InventorySlotSnapshot{Slot: sl.Index, ItemID: sl.ItemID, Quantity: sl.Quantity})
-		}
-		return sess.Send(&proto.Packet{Opcode: OpInventoryMoveResult, Data: (&InventoryListResult{Slots: snaps, Durabilities: inventoryDurabilities(ctx, slots, items)}).Encode()})
+		return sess.Send(&proto.Packet{Opcode: OpInventoryMoveResult, Data: bagListResult(ctx, inv, characterID, slots, items).Encode()})
 	}
 }

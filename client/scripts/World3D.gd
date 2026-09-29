@@ -7137,6 +7137,11 @@ func _refresh_paper_doll(equipped: Dictionary, gender: String) -> void:
 		_paper_doll = PaperDoll.new()
 		_paper_doll.name = "PaperDoll"
 		add_child(_paper_doll)
+		# The client's own camera and light for this view (round 633), and the
+		# yaw the pane's rotate arrows and circle set (HudPanels).
+		_paper_doll.use_equipment_view()
+		_paper_doll.set_yaw(_hud_panels.paper_doll_yaw)
+		_hud_panels.paper_doll_yaw_changed.connect(_paper_doll.set_yaw)
 	var doll_skeleton := _build_assembled_character(equipped, gender)
 	if doll_skeleton == null:
 		return
@@ -16683,6 +16688,11 @@ func _on_trade_started(started: TradeNet.Started) -> void:
 		return
 	trade_status_label.text = "Trading with %s. Set your offer below." % started.partner_name
 	trade_their_offer_label.text = "Their offer: (none yet)"
+	# The exchange window's gold boxes start at 0 (CIFExchange's clear path,
+	# 0x7b370f / 0x7b3718), in the gold colours (HudPanels.set_exchange_money).
+	_trade_my_gold = 0
+	if _hud_panels != null:
+		_hud_panels.set_exchange_money(0, 0)
 
 func _on_trade_declined(declined: TradeNet.Declined) -> void:
 	if declined == null:
@@ -16696,11 +16706,21 @@ func _on_trade_set_offer_pressed() -> void:
 	var gold := int(gold_text) if gold_text.is_valid_int() else 0
 	var item_slot := int(slot_text) if slot_text.is_valid_int() else TradeNet.ITEM_SLOT_NONE
 	var quantity := int(qty_text) if qty_text.is_valid_int() else 0
+	_trade_pending_gold = gold
 	NetClient.trade_set_offer(NetClient.current_character_name, gold, item_slot, quantity)
+
+## The gold this side last offered, and the amount of the offer in flight,
+## for the exchange window's GDR_EXCHANGE_STATIC_MYMONEY.
+var _trade_my_gold := 0
+var _trade_pending_gold := 0
 
 func _on_trade_offer_result(ok: bool, reason: String) -> void:
 	if not ok:
 		trade_status_label.text = "Offer failed: %s" % reason
+		return
+	_trade_my_gold = _trade_pending_gold
+	if _hud_panels != null:
+		_hud_panels.set_exchange_money(_trade_my_gold, -1)
 
 func _on_trade_confirm_result(ok: bool, reason: String) -> void:
 	trade_status_label.text = "Confirmed. Waiting on the other side." if ok else "Confirm failed: %s" % reason
@@ -16710,6 +16730,8 @@ func _on_trade_offer_updated(updated: TradeNet.OfferUpdated) -> void:
 		return
 	var item_desc := "no item" if updated.offer.item_slot < 0 else "slot %d x%d" % [updated.offer.item_slot, updated.offer.quantity]
 	trade_their_offer_label.text = "Their offer: %dg, %s" % [updated.offer.gold, item_desc]
+	if _hud_panels != null:
+		_hud_panels.set_exchange_money(-1, updated.offer.gold)
 
 func _on_trade_completed(completed: TradeNet.Completed) -> void:
 	if completed == null:
@@ -16727,6 +16749,9 @@ func _on_trade_cancelled(cancelled: TradeNet.Cancelled) -> void:
 	var by_whom := cancelled.cancelled_by_name if cancelled.cancelled_by_name != "" else "the system"
 	trade_status_label.text = "Trade cancelled by %s." % by_whom
 	trade_their_offer_label.text = "Their offer: (none yet)"
+	_trade_my_gold = 0
+	if _hud_panels != null:
+		_hud_panels.set_exchange_money(0, 0)
 	# Forget the invite, or Accept would answer "no pending request". The
 	# server holds each character in at most one trade or request (round 500,
 	# after the engine's GObjPC_HandleTradeMsg_081), so this packet always ends

@@ -1116,6 +1116,32 @@ bars use `pmi_hp.ddj` / `pmi_mp.ddj`. Left:
       activation. OPEN: body mode 2 (the revive / entry invincibility and its berserk error 4);
       other players' body modes are not drawn.
 
+### The inventory window (round 633) — **pages, purse colours, slot art, avatar view, preview built; these are left**
+
+What round 633 read and built is in `docs/protocol/inventory_window.md`.
+
+- **Carrying an item across pages the way the client does.** Its dragged-item model
+  (`CIFDraggedStatic`, `IFInventory`'s `vslot_028`) is not read. Ours turns the page when a drag
+  passes over a tab (OURS).
+- **The selected tab's text flag 2** (`0x64cc30` → `0x8b44b0(0,2)` → the glyph mode in
+  `0x8b39e0`). What it draws is not read, so nothing is drawn for it.
+- **The preview's turn direction** rests on the model's vslot `0x30` being a plain
+  `D3DXMatrixRotationY(yaw)` (INFERRED). Reading vslot `0x30` of the object at
+  `CObjCharacter+4` would settle it.
+- **The preview's inherited render state**: `D3DRS_AMBIENT` and `SPECULARENABLE`, set by whatever
+  drew before. Our lights match the client's only at the two ends: a face turned full on
+  (MEASURED 128/128) and one lit by ambient alone (34 against 38).
+- **The preview advances its idle only while the pane is visible** (`vslot_012` `0x6ab6b0` tests
+  `0xb8f530`). Ours runs whenever the world ticks.
+- **The avatar skill strip** (`GDR_AVATAR_SKILL_WND`, ID 500) needs avatar items with its type
+  bit. This server has none.
+- **The retail starting inventory size** is a `_CHAR.InventorySize` database default that neither
+  executable carries. `-inventory-size` 96 is ours. The engine's growth caps (77, or 99 with the
+  quest, counting 13 equipment slots) mean retail never fills the third page by its own means.
+- **The exchange window's gold boxes** are coloured and filled from the trade events. The
+  exchange window itself is still not opened by a trade (World3D's debug trade labels do that
+  work).
+
 ### Seasonal event decorations — **hidden by default (round 583)**
 The user decided on 2026-09-26 that early testing gets no seasonal decorations. Christmas,
 Halloween, the China open-beta (OBT) event set and the summer festival set are left out of every

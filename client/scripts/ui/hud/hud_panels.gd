@@ -24,6 +24,7 @@ const GuildWindow = preload("res://scripts/ui/hud/guild_window.gd")
 const QuestWindow = preload("res://scripts/ui/hud/quest_window.gd")
 const AlchemyWindow = preload("res://scripts/ui/hud/alchemy_window.gd")
 const OptionWindow = preload("res://scripts/ui/hud/option_window.gd")
+const GoldColor = preload("res://scripts/ui/gold_color.gd")
 
 ## key: the panel id used by the underbar's menu_action and by the keys.
 ## Each entry is [layout path, window title].
@@ -254,6 +255,8 @@ func _wire_equipment_modes(window: HudWindow, pane: CanvasItem = null) -> void:
 ## Shows the equipment window's worn slots (false) or its avatar slots
 ## (true); the comment above EQUIPMENT_MODE_SLOTS has what each mode shows.
 func set_equipment_avatar_mode(avatar: bool) -> void:
+	if avatar != _equipment_avatar_mode:
+		print("HudPanels: equipment %s view" % ("avatar" if avatar else "equipment"))
 	_equipment_avatar_mode = avatar
 	var window := _equipment_window
 	if window == null or not is_instance_valid(window):
@@ -267,6 +270,7 @@ func set_equipment_avatar_mode(avatar: bool) -> void:
 	_set_shown(window, BTN_TO_AVATAR, not avatar)
 	_set_shown(window, BTN_TO_EQUIPMENT, avatar)
 	_set_shown(window, AVATAR_SKILL_STRIP, false)
+	_show_equipment_backdrops()
 
 ## Whether the equipment window is showing its avatar slots.
 func is_equipment_avatar_mode() -> bool:
@@ -407,6 +411,9 @@ func open(panel_id: String) -> HudWindow:
 		_windows[panel_id] = window
 		if panel_id == "system":
 			_wire_system(window)
+		if panel_id == "exchange":
+			# CIFExchange::Create sets both offers to 0 (0x7b2941 / 0x7b294c).
+			set_exchange_money(0, 0)
 		_wire_close_sound(panel_id, window)
 		_populate(panel_id)
 	if panel_id == "exchange" and not was_shown:
@@ -586,9 +593,14 @@ func _open_main_popup(panel_id: String) -> HudWindow:
 		_hide_at_create("academy", window)
 		_wire_close_sound(MAIN_POPUP_ID, window)
 		_wire_equipment_modes(window, popup.pane_control("GDR_EQUIPMENT"))
+		_wire_doll_rotation(window)
 		_apply_equipment_slot_backgrounds()
 		_place_paper_doll_docked()
 		_fill_equipment_slots(_equipped_items)
+		# The bag's page tabs and its shown page (0x6b6620 builds them with
+		# the bag; 0x6b3d00(0) selects the first).
+		_build_bag_tabs()
+		_draw_bag_page()
 	# The skill board reads a few MB of tables, so it is filled the first time
 	# its tab is shown, as it was the first time its window opened.
 	if tab == "skill" and not _skill_board_filled:
@@ -2162,7 +2174,7 @@ func _update_storage_gold_labels() -> void:
 		# "95,7,44,6" right-aligning it at x 104..192); GDR_STORAGE_STA_GOLD
 		# keeps its authored "Gold" (UIIT_STT_GOLD) after it. It used to be
 		# written over the "Gold" (round 630 review).
-		_set_purse_text(window, "GDR_STORAGE_STA_MONEY", _grouped(_storage_stored))
+		_set_money_text(window, "GDR_STORAGE_STA_MONEY", _storage_stored)
 		var dialog_bal := window.get_node_or_null("GoldDialog/VB/GoldBal") as Label
 		if dialog_bal != null:
 			dialog_bal.text = "Carried: %s     Stored: %s" % [_grouped(_storage_carried), _grouped(_storage_stored)]
@@ -2171,7 +2183,7 @@ func _update_storage_gold_labels() -> void:
 		_stats.gold = _storage_carried
 	var inventory: HudWindow = _windows.get("inventory")
 	if inventory != null:
-		_set_purse_text(inventory, "GDR_INVENTORY_STA_MONEY", _grouped(_storage_carried))
+		_set_money_text(inventory, "GDR_INVENTORY_STA_MONEY", _storage_carried)
 
 ## Writes a purse amount where the client does. READ: the amount is its own
 ## static -- ifinventory's GDR_INVENTORY_STA_MONEY (0,305 176x28 over
@@ -2185,6 +2197,31 @@ func _set_purse_text(window: HudWindow, control_name: String, text: String) -> L
 	if window == null or _builder == null:
 		return null
 	return _builder.set_static_text(window.node(control_name) as Control, text)
+
+## A gold amount on its money static, grouped by thousands and in the colour
+## the client gives that amount (GoldColor: 0x5d3df0, applied with 0x8b2b70 by
+## the bag's 0x6b03a0, the warehouse's 0x6cc470 and the exchange's 0x7b2350 /
+## 0x7b23a0 -- the number's static only, never the "Gold" caption).
+func _set_money_text(window: HudWindow, control_name: String, amount: int) -> Label:
+	var label := _set_purse_text(window, control_name, _grouped(amount))
+	if label != null:
+		label.add_theme_color_override("font_color", GoldColor.of(amount))
+	return label
+
+## The exchange window's two offered amounts (GDR_EXCHANGE_STATIC_MYMONEY,
+## ID 19, and _OTHERMONEY, ID 18), in the gold colours. READ: CIFExchange's
+## Create and its clear path set both to 0 (0x7b2941 / 0x7b294c, 0x7b370f /
+## 0x7b3718), so a new exchange starts at 0 in white; an offer update sets
+## the one that changed (the net handlers 0x87caac, 0x880674). A negative
+## amount leaves that box as it is.
+func set_exchange_money(mine: int, other: int) -> void:
+	var window: HudWindow = _windows.get("exchange")
+	if window == null:
+		return
+	if mine >= 0:
+		_set_money_text(window, "GDR_EXCHANGE_STATIC_MYMONEY", mine)
+	if other >= 0:
+		_set_money_text(window, "GDR_EXCHANGE_STATIC_OTHERMONEY", other)
 
 ## The gold dialog: an amount to deposit into or withdraw from the warehouse.
 ## Stays open so several moves can be made; the balances line refreshes from
@@ -2288,39 +2325,146 @@ func set_paper_doll_texture(texture: Texture2D) -> void:
 	_paper_doll_texture = texture
 	_place_paper_doll_docked()
 
-## The paper doll's place in the equipment pane, relative to the pane (and to
-## ifequipment's own origin): x 40..138, y 46..282. This is the placement the
-## doll has had since it was docked -- between the two slot columns (x 5 and
-## x 141, 32 wide) -- and it was chosen, not read. What the client does is
-## read (CIFEquipment::vslot_013, 0x6ad8ae..0x6ad8ed): it renders the model
-## into the pane's rect grown by (+2, +0x0f, -2, -0x25), i.e. (2, 15, 176, 318)
-## for the 178x355 pane, with a camera that was not read. Until the camera is,
-## the doll keeps its old rect rather than a new one fitted to that viewport.
-const PAPER_DOLL_RECT := Rect2(40, 46, 98, 236)
+## The paper doll's viewport in the equipment pane. READ (round 633):
+## CIFEquipment::vslot_013 renders the model into the pane's rect grown by
+## (+2, +0x0f, -2, -0x25) (0x6ad8ca..0x6ad8d3) -- (2, 15, 176, 318) for the
+## 178x355 pane -- with a Z clear only (0x6ad94b), so the frame and tile drawn
+## before it show behind the model. PaperDoll.use_equipment_view renders at
+## exactly this size with the client's camera, so the texture is drawn 1:1.
+## (It was 98x236 at (40, 46), chosen by hand and framed on the bones.)
+const PAPER_DOLL_RECT := Rect2(2, 15, 176, 318)
 
-## Draws the live 3D paper doll in the equipment pane of the main popup, in
-## the central column between its two worn-slot columns.
+## Draws the live 3D paper doll in the equipment pane of the main popup, where
+## vslot_013 draws it: in front of the frame and tile, behind the slot art and
+## the slots.
 func _place_paper_doll_docked() -> void:
 	if _paper_doll_texture == null or _popup == null:
 		return
-	var pane := _popup.pane_control("GDR_EQUIPMENT")
-	if pane == null or pane.get_child_count() == 0:
+	var eq_root := _equipment_root()
+	if eq_root == null:
 		return
-	var eq_root := pane.get_child(0) as Control
 	var doll := eq_root.get_node_or_null("PaperDoll") as TextureRect
 	if doll == null:
 		doll = TextureRect.new()
 		doll.name = "PaperDoll"
 		doll.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		doll.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		doll.stretch_mode = TextureRect.STRETCH_SCALE
 		doll.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		# Between the equipment window's two slot columns (slots at x 5 and
-		# x 141, 32 wide, over a 177-wide window): the central column x 40..138,
-		# below the title bar to just above the avatar-skill strip.
 		doll.position = PAPER_DOLL_RECT.position
 		doll.size = PAPER_DOLL_RECT.size
 		eq_root.add_child(doll)
+		eq_root.move_child(doll, _after_equipment_background(eq_root))
 	doll.texture = _paper_doll_texture
+
+# --- Turning the paper doll (round 633) ---------------------------------------
+#
+# READ: the pane's arrows and circle are GDR_EQ_BTN_ROTATE_LEFT (ID 10,
+# 54,327,28,16), _RIGHT (ID 11, 96,327) and _RESET (ID 12, 81,327,16,16);
+# Create keeps them at +0x26a4/+0x26a8/+0x26ac. Their handlers (the click
+# table filled at 0xd6c570):
+#
+#   left  0x6ab920   yaw = yaw - frame_ms * 0.0015
+#   right 0x6ab960   yaw = yaw + frame_ms * 0.0015
+#   reset 0x6ab9a0   yaw = 0
+#
+# with the yaw at +0x578, handed to the model through 0xa5a8c0 (its vslot
+# 0x30). 0.0015 is the double at 0xda6fa8; frame_ms is the int at 0x110f7f8,
+# the frame's duration in milliseconds, clamped to 3000 (0xba4101) -- so a
+# step is one frame's worth, 0.025 rad (1.4 degrees) at 60 frames a second.
+# The yaw starts at 0 (the constructor, 0x6ab555) and nothing resets it on a
+# show (0x6ac010), so a turned doll stays turned.
+#
+# Create sets flag 0x20 on the two arrows (0x6ac341, 0x6ac34e; not on the
+# circle), and CIFButton's mouse handler then repeats them: the command is
+# sent on the press (0x201/0x203), a 1000 ms timer starts (0x6561c9..0x656219),
+# when it fires it gives way to a 50 ms one that re-sends the command each time
+# it fires (OnTimer 0x655f40), and the release kills both without a click
+# (0x656259..0x6562a3). Leaving the button pauses the timers and coming back
+# resumes them (0xb93290 / 0xb93240). A timer fires when at least its period
+# has passed since it last fired, once per tick (0xb933d0). The circle is a
+# plain button: it acts on the release.
+#
+# Which way a positive yaw turns the model on screen rests on vslot 0x30 being
+# the model's plain Y rotation (not read): PaperDoll.set_yaw has the mapping.
+signal paper_doll_yaw_changed(yaw: float)
+const DOLL_YAW_PER_MS := 0.0015
+const DOLL_FRAME_MS_MAX := 3000
+const DOLL_REPEAT_DELAY_MS := 1000
+const DOLL_REPEAT_MS := 50
+const DOLL_BTN_LEFT := "GDR_EQ_BTN_ROTATE_LEFT"
+const DOLL_BTN_RIGHT := "GDR_EQ_BTN_ROTATE_RIGHT"
+const DOLL_BTN_RESET := "GDR_EQ_BTN_ROTATE_RESET"
+## The model's yaw in radians (+0x578).
+var paper_doll_yaw := 0.0
+## -1 while the left arrow is held, +1 the right, 0 neither.
+var _doll_turn := 0
+var _doll_turn_hovered := true
+## When the repeat timer last fired (or was started), and its period.
+var _doll_turn_last_ms := 0
+var _doll_turn_period_ms := DOLL_REPEAT_DELAY_MS
+
+func _wire_doll_rotation(window: HudWindow) -> void:
+	for pair in [[DOLL_BTN_LEFT, -1], [DOLL_BTN_RIGHT, 1]]:
+		var button := window.node(pair[0]) as BaseButton
+		if button == null:
+			continue
+		var dir: int = pair[1]
+		button.button_down.connect(func() -> void: _doll_turn_start(dir))
+		button.button_up.connect(func() -> void: _doll_turn_stop(dir))
+		button.mouse_exited.connect(func() -> void:
+			if _doll_turn == dir:
+				_doll_turn_hovered = false)
+		button.mouse_entered.connect(func() -> void:
+			if _doll_turn == dir:
+				_doll_turn_hovered = true)
+	var reset := window.node(DOLL_BTN_RESET) as BaseButton
+	if reset != null:
+		reset.pressed.connect(func() -> void: set_paper_doll_yaw(0.0))
+
+## The frame's duration as 0x110f7f8 holds it: whole milliseconds, at most
+## 3000.
+func _doll_frame_ms() -> int:
+	if test_doll_frame_ms >= 0:
+		return mini(test_doll_frame_ms, DOLL_FRAME_MS_MAX)
+	return mini(int(get_process_delta_time() * 1000.0), DOLL_FRAME_MS_MAX)
+
+## A test hook: the frame duration the arrows read, instead of the real one
+## (-1).
+var test_doll_frame_ms := -1
+
+func set_paper_doll_yaw(yaw: float) -> void:
+	paper_doll_yaw = yaw
+	paper_doll_yaw_changed.emit(yaw)
+	# The measurement a real-input run reads (round 633).
+	print("HudPanels: doll yaw %.4f at %d ms" % [yaw, Time.get_ticks_msec()])
+
+## One arrow command: 0x6ab920 (dir -1) or 0x6ab960 (dir +1).
+func _doll_turn_step(dir: int) -> void:
+	set_paper_doll_yaw(paper_doll_yaw + float(dir) * float(_doll_frame_ms()) * DOLL_YAW_PER_MS)
+
+func _doll_turn_start(dir: int) -> void:
+	_doll_turn = dir
+	_doll_turn_hovered = true
+	_doll_turn_step(dir)
+	_doll_turn_last_ms = Time.get_ticks_msec()
+	_doll_turn_period_ms = DOLL_REPEAT_DELAY_MS
+
+func _doll_turn_stop(dir: int) -> void:
+	if _doll_turn == dir:
+		_doll_turn = 0
+
+## The repeat timers, run each frame while an arrow is held.
+func _doll_turn_tick(now_ms: int) -> void:
+	if _doll_turn == 0 or not _doll_turn_hovered:
+		return
+	if now_ms - _doll_turn_last_ms < _doll_turn_period_ms:
+		return
+	_doll_turn_last_ms = now_ms
+	_doll_turn_period_ms = DOLL_REPEAT_MS
+	_doll_turn_step(_doll_turn)
+
+func _process(_delta: float) -> void:
+	_doll_turn_tick(Time.get_ticks_msec())
 
 ## The System window as CIFSystemWnd::Create (0x6f6610) leaves it, which is
 ## not ifsystemwnd.txt's geometry. After building the layout it:
@@ -2862,36 +3006,257 @@ func item_param1(item_id: int) -> int:
 	var item: ItemTableReader.Item = _items.get(item_id)
 	return item.param1 if item != null else 0
 
+# --- The bag's pages (round 633) -------------------------------------------
+#
+# READ from sro_client.exe. The character-data handler reads the inventory
+# size byte, takes 13 off it for the equipment slots (0x9d9aee `sub dl,0xd`)
+# and hands the bag's size to IFInventory 0x6b6620, which builds the bag:
+#
+#   - pages = ((size - 1) >> 5) + 1, one for a size of 0 or 1, asserting at
+#     most 3 (IFInventory.cpp line 0xa7);
+#   - one tab per page, a CIFSelectableArea (class 0xee96c0) placed in code
+#     relative to the pane, above its frame (the TABS below);
+#   - pages * 32 slots, CIFSlotWithHelp (0xee9b18) ID 100 + i, each 32x32 at
+#     (18 + 36 * col, 13 + 36 * row) for col i % 4 and row (i % 32) / 4: the
+#     top-left of the lattice cell it sits on (GDR_INVENTORY_LATTICE is
+#     18,13, 36-pixel cells) -- so an icon is 32 pixels in a 36-pixel cell;
+#   - a slot at or past the size shows `interface\pet\pt_block.ddj` and is
+#     disabled (0xb8f540(0)): the part of the last page the size does not
+#     reach is locked;
+#   - page 0 selected (0x6b3d00(0) at 0x6b6d16).
+#
+# 0x6b3d00(page) is the selector: the old tab deselected and the new one
+# selected (0x64cc30), the page kept at +0x3cc, and the slots of that page
+# shown, every other slot hidden. A tab click reaches it through 0x6b45b0,
+# which finds the clicked tab by its ID. An expansion (0x6b7020, the new size
+# from the size-change packet at 0x8a759c, again less 13) adds the new pages'
+# tabs and slots and re-selects the current page.
+#
+# Here the lattice's 32 cells are the page's 32 slots: cell i shows bag slot
+# page * 32 + i. The server's bag slots start at 0 (it keeps the equipment
+# apart), so bag slot n is the client's slot 13 + n.
+const BAG_PAGE_SLOTS := 32
+## The client's own ceiling (the assert above): three pages, 96 slots.
+const BAG_MAX_PAGES := 3
+## The slot icon's rect inside its lattice cell (the slot's 32x32 at the
+## cell's top-left, above).
+const BAG_SLOT_ICON := Rect2(0, 0, 32, 32)
+## The locked slot's art (0x6b6e2a).
+const BAG_BLOCK_DDJ := "interface\\pet\\pt_block.ddj"
+## The page tabs, READ from 0x6b6620 (0x6b6a1a..0x6b6b65): ID, rect relative
+## to the pane (x, y, w, h), the selected and unselected art (0x64ce30 stores
+## its first texture as the selected one, +0x380, and its second as the
+## unselected, +0x384), and the caption's text key. The first tab is the wide
+## `com_tab`, the other two `com_short_tab`.
+const BAG_TABS := [
+	{"id": 0x50, "rect": Rect2(4, -23, 60, 24), "on": "interface\\ifcommon\\com_tab_on.ddj",
+		"off": "interface\\ifcommon\\com_tab_off.ddj", "text": "UIIT_CTL_BELOINGING"},
+	{"id": 0x51, "rect": Rect2(64, -23, 56, 24), "on": "interface\\ifcommon\\com_short_tab_on.ddj",
+		"off": "interface\\ifcommon\\com_short_tab_off.ddj", "text": "UIIT_STT_INVENTORY_EXTENSION_TEB"},
+	{"id": 0x52, "rect": Rect2(118, -23, 57, 24), "on": "interface\\ifcommon\\com_short_tab_on.ddj",
+		"off": "interface\\ifcommon\\com_short_tab_off.ddj", "text": "UIIT_STT_INVENTORY_EXTENSION_TEB2"},
+]
+## Each tab's caption when the text table cannot resolve its key (the three
+## keys' English, from the archive's textuisystem.txt, are what a real
+## archive resolves to).
+const BAG_TAB_FALLBACK := ["Page 1", "Page 2", "Page 3"]
+const BAG_TABS_NODE := "BagPageTabs"
+
+## The bag's size in slots as the server last sent it (the trailing capacity
+## of the bag list); 0 until one arrives. With none -- an older server --
+## the grid shows all three pages and locks nothing (OURS: a slot the server
+## may use is never hidden behind a lock the client guessed).
+var _bag_size := 0
+## The page shown, 0-based (+0x3cc). Kept across closing and opening the
+## window, as the client keeps it.
+var _bag_page := 0
+## The bag as the server last sent it, redrawn on a page change.
+var _bag_slots: Array = []
+
+## The number of pages a bag of `size` slots has (0x6b6620's arithmetic).
+static func bag_pages(size: int) -> int:
+	if size <= 1:
+		return 1
+	return mini(((size - 1) >> 5) + 1, BAG_MAX_PAGES)
+
+func _bag_size_shown() -> int:
+	return _bag_size if _bag_size > 0 else BAG_PAGE_SLOTS * BAG_MAX_PAGES
+
+## The page shown (a test hook and the QA log).
+func bag_page() -> int:
+	return _bag_page
+
+## The bag's size as the grid draws it.
+func bag_size() -> int:
+	return _bag_size
+
+## Sets the bag's size: the tabs are rebuilt for the new page count and the
+## page kept (0x6b7020 re-selects +0x3cc). A page the new size no longer has
+## falls back to the last one (OURS: the client only ever grows the bag).
+func set_bag_size(size: int) -> void:
+	_bag_size = maxi(size, 0)
+	var pages := bag_pages(_bag_size_shown())
+	if _bag_page >= pages:
+		_bag_page = pages - 1
+	_build_bag_tabs()
+	_draw_bag_page()
+
+## Builds the page tabs on the inventory pane: one per page, the shown one
+## selected. READ (0x6b6bff..0x6b6c7d): a tab's ClientRect is empty, its font
+## index 0 (0xba5460(0)), its text centred both ways (slots 0x14 and 0x18
+## with 1). Its text colour is never set there, so it is the text board's
+## default -- INFERRED white, which the tabs of the retail screenshot show.
+## A selected tab also sets the text flag 2 (0x64cc30 -> 0x8b44b0(0, 2)),
+## which switches the glyph mode (0x8b39e0); what that mode draws is not
+## read, so nothing here changes with it (OPEN).
+func _build_bag_tabs() -> void:
+	var window: HudWindow = _windows.get("inventory")
+	if window == null:
+		return
+	var pane := window.node("GDR_INVENTORY") as Control
+	if pane == null:
+		return
+	var old := pane.get_node_or_null(BAG_TABS_NODE)
+	if old != null:
+		pane.remove_child(old)
+		old.queue_free()
+	var strip := Control.new()
+	strip.name = BAG_TABS_NODE
+	strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pane.add_child(strip)
+	for i in range(bag_pages(_bag_size_shown())):
+		var spec: Dictionary = BAG_TABS[i]
+		var rect: Rect2 = spec["rect"]
+		var tab := TextureButton.new()
+		tab.name = "BagTab%d" % i
+		tab.set_meta("ctrl_id", int(spec["id"]))
+		tab.set_meta("tex_on", _builder.load_texture(spec["on"]) if _builder != null else null)
+		tab.set_meta("tex_off", _builder.load_texture(spec["off"]) if _builder != null else null)
+		tab.ignore_texture_size = true
+		tab.stretch_mode = TextureButton.STRETCH_SCALE
+		tab.focus_mode = Control.FOCUS_NONE
+		tab.position = rect.position
+		tab.size = rect.size
+		tab.custom_minimum_size = rect.size
+		var page := i
+		tab.pressed.connect(func() -> void: select_bag_page(page))
+		var caption := Label.new()
+		caption.name = "Text"
+		var key: String = spec["text"]
+		var text := _builder.resolve_text(key) if _builder != null else key
+		caption.text = BAG_TAB_FALLBACK[i] if text == "" or text == key else text
+		caption.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		caption.clip_text = false
+		if _builder != null:
+			var font := _builder.font_at(0)
+			if font != null:
+				caption.add_theme_font_override("font", font)
+		caption.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+		tab.add_child(caption)
+		strip.add_child(tab)
+	_show_selected_bag_tab()
+
+func _show_selected_bag_tab() -> void:
+	var window: HudWindow = _windows.get("inventory")
+	var strip := window.node(BAG_TABS_NODE) as Control if window != null else null
+	if strip == null:
+		return
+	for tab in strip.get_children():
+		var button := tab as TextureButton
+		if button == null:
+			continue
+		var selected := button.name == "BagTab%d" % _bag_page
+		button.texture_normal = button.get_meta("tex_on" if selected else "tex_off")
+
+## 0x6b3d00: shows `page`'s 32 slots and selects its tab.
+func select_bag_page(page: int) -> void:
+	if page < 0 or page >= bag_pages(_bag_size_shown()):
+		return
+	_bag_page = page
+	_show_selected_bag_tab()
+	_draw_bag_page()
+	print("HudPanels: bag page %d of %d (size %d)" % [page + 1, bag_pages(_bag_size_shown()), _bag_size])
+
+## OURS, disclosed: an item dragged over a page tab turns to that page, so the
+## drag can be let go on a slot of another page. How the retail client carries
+## an item between pages (its dragged-item model, CIFDraggedStatic) was not
+## read; a plain click on a tab is the client's own (0x6b45b0).
+## Driven from _input's motion while a drag is live: a held mouse button
+## keeps Godot's hover on the control it was pressed on, so the tabs' own
+## mouse_entered never fires during a drag.
+func _bag_drag_over_tab(at: Vector2) -> void:
+	if _bag_drag_preview == null:
+		return
+	var window: HudWindow = _windows.get("inventory")
+	if window == null or not is_open("inventory"):
+		return
+	var strip := window.node(BAG_TABS_NODE) as Control
+	if strip == null:
+		return
+	for i in range(strip.get_child_count()):
+		var tab := strip.get_child(i) as Control
+		if tab != null and tab.get_global_rect().has_point(at) and i != _bag_page:
+			select_bag_page(i)
+			return
+
 ## Fills the inventory window's authored slot grid with the icons of what
-## the character is carrying.
+## the character is carrying: the shown page's 32 slots (see above).
 ##
 ## This is the authored presentation rather than the plain list: the grid is
 ## GDR_INVENTORY_LATTICE, which UiBuilder already builds as one Control per
 ## cell, each with a named "ItemIcon" child.
 func _fill_inventory_grid(slots: Array) -> void:
+	_bag_slots = slots
+	var capacity := int(NetClient.last_inventory_capacity) if NetClient != null else 0
+	if capacity > 0 and capacity != _bag_size:
+		set_bag_size(capacity)
+		return
+	_draw_bag_page()
+
+func _draw_bag_page() -> void:
 	var window: HudWindow = _windows.get("inventory")
 	if window == null:
 		return
 	var grid := window.node("GDR_INVENTORY_LATTICE") as Control
 	if grid == null:
 		return
-	for cell in grid.get_children():
+	var base := _bag_page * BAG_PAGE_SLOTS
+	var size := _bag_size_shown()
+	var block: Texture2D = null
+	for i in range(grid.get_child_count()):
+		var cell := grid.get_child(i)
 		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
+		var locked := base + i >= size
 		if icon != null:
+			_place_bag_icon(icon)
 			icon.texture = null
+			icon.tooltip_text = ""
+			icon.modulate = Color.WHITE
+			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			for m in ["inv_slot", "inv_item_id", "inv_qty"]:
 				if icon.has_meta(m):
 					icon.remove_meta(m)
+			if locked:
+				if block == null and _builder != null:
+					block = _builder.load_texture(BAG_BLOCK_DDJ)
+				icon.texture = block
+			icon.set_meta("inv_locked", locked)
 		var count := cell.get_node_or_null("CountLabel") as Label
 		if count != null:
+			_place_bag_icon(count)
 			count.text = ""
 	var durability := _durability_map(NetClient.last_inventory_durabilities)
 	var cells := grid.get_child_count()
-	for entry in slots:
-		var index := int(_first_field(entry, ["slot", "slot_index", "index"]) if _first_field(entry, ["slot", "slot_index", "index"]) != null else -1)
-		if index < 0 or index >= cells:
+	for entry in _bag_slots:
+		var slot_field = _first_field(entry, ["slot", "slot_index", "index"])
+		var index := int(slot_field) if slot_field != null else -1
+		var cell_index := index - base
+		if index < 0 or index >= size or cell_index < 0 or cell_index >= cells:
 			continue
-		var cell := grid.get_child(index)
+		var cell := grid.get_child(cell_index)
 		var item_id = _first_field(entry, ["item_id", "id"])
 		if item_id == null:
 			continue
@@ -2918,12 +3283,23 @@ func _fill_inventory_grid(slots: Array) -> void:
 			icon.set_meta("inv_slot", index)
 			icon.set_meta("inv_item_id", int(item_id))
 			icon.set_meta("inv_qty", qty)
+			# The slot a live drag came from stays dimmed across a page turn.
+			if _bag_drag_preview != null and index == _bag_drag_slot:
+				icon.modulate = Color(1, 1, 1, 0.35)
+				_bag_drag_icon = icon
 			if not icon.has_meta("inv_click_wired"):
 				icon.set_meta("inv_click_wired", true)
 				icon.gui_input.connect(func(ev: InputEvent) -> void: _on_inventory_cell_input(ev, icon))
 		var count_label := cell.get_node_or_null("CountLabel") as Label
 		if count_label != null and qty > 1:
 			count_label.text = str(qty)
+
+## Puts a bag cell's icon (or count) on the slot's 32x32 at the cell's
+## top-left (BAG_SLOT_ICON), where the client's slot sits.
+static func _place_bag_icon(node: Control) -> void:
+	node.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	node.position = BAG_SLOT_ICON.position
+	node.size = BAG_SLOT_ICON.size
 
 ## A click on an inventory item. Left, while an NPC service window is open:
 ## sell it (shop) or deposit it (storage) -- the bag is how the client moves
@@ -3031,8 +3407,8 @@ func _cancel_bag_drag() -> void:
 	_bag_drag_item_id = 0
 
 ## Which bag cell (its slot index) is under a screen point, or -1. Cells are
-## GDR_INVENTORY_LATTICE's children in slot order, the same indexing
-## _fill_inventory_grid draws by.
+## GDR_INVENTORY_LATTICE's children in slot order on the shown page, the same
+## indexing _draw_bag_page draws by.
 func _bag_slot_at(point: Vector2) -> int:
 	var window: HudWindow = _windows.get("inventory")
 	if window == null or not is_open("inventory"):
@@ -3043,7 +3419,9 @@ func _bag_slot_at(point: Vector2) -> int:
 	for i in range(grid.get_child_count()):
 		var cell := grid.get_child(i) as Control
 		if cell != null and cell.get_global_rect().has_point(point):
-			return i
+			# The shown page's slot; a locked one takes nothing (0xb8f540(0)).
+			var slot := _bag_page * BAG_PAGE_SLOTS + i
+			return -1 if slot >= _bag_size_shown() else slot
 	return -1
 
 ## Which worn slot of the docked paper doll is under a screen point (an
@@ -3160,6 +3538,7 @@ func _input(event: InputEvent) -> void:
 			if motion.global_position.distance_to(_bag_drag_origin) >= BAG_DRAG_THRESHOLD:
 				_start_bag_drag()
 		_position_bag_drag_preview(motion.global_position)
+		_bag_drag_over_tab(motion.global_position)
 		return
 	if event is InputEventKey and (event as InputEventKey).pressed and (event as InputEventKey).keycode == KEY_ESCAPE:
 		if _bag_drag_preview != null:
@@ -4248,53 +4627,135 @@ func _text_table() -> UiTextTable:
 ## (helm 0, mail 1, shoulderguard 2, gauntlet 3, pants 4, boots 5) follows.
 const EQUIPMENT_SLOT_BASE := 100
 
-## The empty-slot silhouette each worn slot draws when nothing is in it. These
-## are real client art (interface\equipment\equip_slot_*.ddj, named in
-## sro_client.exe) that the CIFSlotWithHelp control has no `DDJ` for in the
-## layout -- the EXE supplies them per slot, the same way it hardcodes the
-## close button's default. The slot index -> type mapping is the game's own
-## equip-slot order, confirmed against the starter kit the server gives
-## (slot 1=mail, 4=pants, 5=boots, 6=weapon). Keyed by slot index i, drawn in
-## GDR_EQUIPMENT_SLOT_(100+i).
-const EQUIP_SLOT_TEXTURES := {
-	0: "interface\\equipment\\equip_slot_helm.ddj",
-	1: "interface\\equipment\\equip_slot_mail.ddj",
-	2: "interface\\equipment\\equip_slot_shoulderguard.ddj",
-	3: "interface\\equipment\\equip_slot_gauntlet.ddj",
-	4: "interface\\equipment\\equip_slot_pants.ddj",
-	5: "interface\\equipment\\equip_slot_boots.ddj",
-	6: "interface\\equipment\\equip_slot_weapon.ddj",
-	7: "interface\\equipment\\equip_slot_shield.ddj",
-	8: "interface\\equipment\\equip_slot_earring.ddj",
-	9: "interface\\equipment\\equip_slot_necklace.ddj",
-	10: "interface\\equipment\\equip_slot_l_ring.ddj",
-	11: "interface\\equipment\\equip_slot_r_ring.ddj",
-	12: "interface\\equipment\\equip_slot_specialdress.ddj",
-}
+## The equipment pane's slot art, as CIFEquipment draws it (round 633; the
+## previous version put each texture INSIDE its 32x32 slot, shrunk to fit, and
+## gave slots 8..12 the wrong art -- the earring on 108, the special dress on
+## 112 -- and the avatar slots none).
+##
+## READ: the slots themselves carry no art (their layout DDJ is empty). The
+## window's own draw, CIFEquipment::vslot_013 (0x6ad860), paints a backdrop for
+## each slot after the frame and tile and the 3D model and before the slots
+## (its children), which draw the item on top:
+##
+##   - the worn loop (0x6adc02..0x6adf35), i = 0..12, the textures CIFEquipment
+##     ::Create (0x6ac1c0) loads into +0x594 + 4i (0x6ac51a..0x6ac8f2), at the
+##     window's origin plus the pair at 0xda6e20 + 8i, 0x28 (40) square, or
+##     0x38 (56) for 6 and 7 (0x6adc2a..0x6adc39) -- each 32x32 slot centred in
+##     it, the weapon's and shield's in a bigger box. Drawn whether the slot
+##     is filled or not; in avatar mode (+0xf08) only i == 8 (0x6ade59);
+##   - the avatar loop (0x6adf3b..0x6ae191), avatar mode only, the five at
+##     +0x5d0 + 4k (0x6ac380..0x6ac4c8), at the pairs from 0xda6df8, 40.0
+##     square (0xe1b8f8). k 4's y of 169 rather than 168 is the table's own.
+##
+## The textures are drawn at their own size: every one is 40x40 but the
+## weapon's and shield's 56x56 (MEASURED from their headers), the size the
+## loop asks for. The window scale the loop multiplies by (+0x1fc/+0x200) is
+## INFERRED to be 1.
+const EQUIP_BACKDROPS := [
+	["interface\\equipment\\equip_slot_helm.ddj", Vector2(1, 82), 40],
+	["interface\\equipment\\equip_slot_mail.ddj", Vector2(1, 125), 40],
+	["interface\\equipment\\equip_slot_shoulderguard.ddj", Vector2(137, 82), 40],
+	["interface\\equipment\\equip_slot_gauntlet.ddj", Vector2(137, 125), 40],
+	["interface\\equipment\\equip_slot_pants.ddj", Vector2(1, 168), 40],
+	["interface\\equipment\\equip_slot_boots.ddj", Vector2(137, 168), 40],
+	["interface\\equipment\\equip_slot_weapon.ddj", Vector2(0, 0), 56],
+	["interface\\equipment\\equip_slot_shield.ddj", Vector2(122, 0), 56],
+	["interface\\equipment\\equip_slot_specialdress.ddj", Vector2(137, 304), 40],
+	["interface\\equipment\\equip_slot_earring.ddj", Vector2(1, 211), 40],
+	["interface\\equipment\\equip_slot_necklace.ddj", Vector2(137, 211), 40],
+	["interface\\equipment\\equip_slot_l_ring.ddj", Vector2(1, 254), 40],
+	["interface\\equipment\\equip_slot_r_ring.ddj", Vector2(137, 254), 40],
+]
+## The avatar backdrops, k = 0..4, framing GDR_AVATAR_SLOT_01..05: hat, dress,
+## accessory (pandernt), flag (plag) and the extra (extraneous01) slot.
+const AVATAR_BACKDROPS := [
+	["interface\\equipment\\equip_slot_helm.ddj", Vector2(1, 82), 40],
+	["interface\\equipment\\equip_slot_cloth.ddj", Vector2(1, 125), 40],
+	["interface\\equipment\\equip_slot_pandernt.ddj", Vector2(137, 125), 40],
+	["interface\\equipment\\equip_slot_plag.ddj", Vector2(137, 82), 40],
+	["interface\\equipment\\equip_slot_extraneous01.ddj", Vector2(1, 169), 40],
+]
+## The one worn backdrop avatar mode keeps (0x6ade59: i == 8).
+const EQUIP_BACKDROP_KEPT := 8
+const EQUIP_BACKDROP_PREFIX := "EquipBackdrop"
+const AVATAR_BACKDROP_PREFIX := "AvatarBackdrop"
+## The avatar buttons' tooltips, set by Create with 0x653dc0 (button 13 from
+## the UTF-16 key at 0xda73d0, button 14 from 0xda738c).
+const BTN_TO_AVATAR_TIP := "UIIT_STT_AVATAR_VIEW_AVATARSLOT"
+const BTN_TO_EQUIPMENT_TIP := "UIIT_STT_AVATAR_VIEW_EQUIPSLOT"
 
-## Draws each worn slot's empty silhouette behind its item icon. A filled
-## slot's icon covers it; an empty slot shows the silhouette -- which is what
-## makes the paper doll read as the real equipment panel rather than bare
-## squares on black.
+## The equipment pane's own root (its layout's "Create" section), or null.
+func _equipment_root() -> Control:
+	if _popup == null:
+		return null
+	var pane := _popup.pane_control("GDR_EQUIPMENT")
+	if pane == null or pane.get_child_count() == 0:
+		return null
+	return pane.get_child(0) as Control
+
+## Where vslot_013's own drawing goes in the pane's draw order: just in front
+## of the frame (ID 4) and the tile (ID 5), which it draws first
+## (0x6ad871..0x6ad89d), and behind every other child.
+static func _after_equipment_background(root: Control) -> int:
+	var at := 0
+	for name in ["GDR_EQ_FRAME", "GDR_EQ_NORMALTILE_BG"]:
+		var n := root.get_node_or_null(name)
+		if n != null:
+			at = maxi(at, n.get_index() + 1)
+	return at
+
+## Builds the pane's backdrops (EQUIP_BACKDROPS, AVATAR_BACKDROPS) once, in
+## vslot_013's order -- worn, then avatar -- right in front of the frame, the
+## tile and the paper doll.
 func _apply_equipment_slot_backgrounds() -> void:
-	var window: HudWindow = _windows.get("inventory")
-	if window == null or _builder == null:
+	var root := _equipment_root()
+	if root == null or _builder == null:
 		return
-	for i in EQUIP_SLOT_TEXTURES:
-		var slot := window.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + i)) as Control
-		if slot == null:
-			continue
-		var bg := slot.get_node_or_null("EmptySlotBg") as TextureRect
-		if bg == null:
-			bg = TextureRect.new()
-			bg.name = "EmptySlotBg"
-			bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-			bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			slot.add_child(bg)
-			slot.move_child(bg, 0) # behind the ItemIcon
-		bg.texture = _builder.load_texture(EQUIP_SLOT_TEXTURES[i])
+	var at := _after_equipment_background(root)
+	var doll := root.get_node_or_null("PaperDoll")
+	if doll != null:
+		at = maxi(at, doll.get_index() + 1)
+	for set_spec in [[EQUIP_BACKDROPS, EQUIP_BACKDROP_PREFIX], [AVATAR_BACKDROPS, AVATAR_BACKDROP_PREFIX]]:
+		var specs: Array = set_spec[0]
+		for i in range(specs.size()):
+			var node_name := "%s%d" % [set_spec[1], i]
+			var bd := root.get_node_or_null(node_name) as TextureRect
+			if bd == null:
+				bd = TextureRect.new()
+				bd.name = node_name
+				bd.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				bd.stretch_mode = TextureRect.STRETCH_SCALE
+				bd.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				root.add_child(bd)
+			root.move_child(bd, at)
+			at += 1
+			var spec: Array = specs[i]
+			bd.texture = _builder.load_texture(spec[0])
+			bd.position = spec[1]
+			bd.size = Vector2(spec[2], spec[2])
+	var window: HudWindow = _windows.get("inventory")
+	if window != null:
+		for pair in [[BTN_TO_AVATAR, BTN_TO_AVATAR_TIP], [BTN_TO_EQUIPMENT, BTN_TO_EQUIPMENT_TIP]]:
+			var button := window.node(pair[0]) as Control
+			if button != null:
+				var tip := _builder.resolve_text(pair[1])
+				if tip != "" and tip != pair[1]:
+					button.tooltip_text = tip
+	_show_equipment_backdrops()
+
+## The backdrops of the current mode (vslot_013's two loops).
+func _show_equipment_backdrops() -> void:
+	var root := _equipment_root()
+	if root == null:
+		return
+	for i in range(EQUIP_BACKDROPS.size()):
+		var bd := root.get_node_or_null("%s%d" % [EQUIP_BACKDROP_PREFIX, i]) as CanvasItem
+		if bd != null:
+			bd.visible = not _equipment_avatar_mode or i == EQUIP_BACKDROP_KEPT
+	for k in range(AVATAR_BACKDROPS.size()):
+		var bd := root.get_node_or_null("%s%d" % [AVATAR_BACKDROP_PREFIX, k]) as CanvasItem
+		if bd != null:
+			bd.visible = _equipment_avatar_mode
 
 func _fill_equipment_slots(items: Array) -> void:
 	# The equipment is a pane of the main popup, shown with the bag on its
@@ -4530,7 +4991,7 @@ func _apply_stats(stats: StatsNet.Stats) -> void:
 
 	var inventory: HudWindow = _windows.get("inventory")
 	if inventory != null:
-		var gold := _set_purse_text(inventory, "GDR_INVENTORY_STA_MONEY", _grouped(stats.gold))
+		var gold := _set_money_text(inventory, "GDR_INVENTORY_STA_MONEY", stats.gold)
 		if gold != null:
 			# The number on the authored gold row, so a render's log can be
 			# held against the frame (and against the server's own value).
