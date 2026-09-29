@@ -90,6 +90,7 @@ Section = Create,"0,0,200,100","0"
 	_check_font_table()
 	_check_frame_pieces_at_own_size()
 	_check_section_size_measures_what_is_drawn()
+	_check_text_overrun_follows_alignment()
 
 	if _failures == 0:
 		print("ALL PASS")
@@ -375,3 +376,38 @@ Section = Create,"0,0,0,0","0"
 		"a zero-size button counts at its art's 76x24, so the window reaches y=363 (got %s)" % str(UiBuilder.section_size(sec, b)))
 	_check(UiBuilder.is_parked(Rect2i(9999, 70, 100, 104)) and not UiBuilder.is_parked(Rect2i(800, 0, 64, 52)),
 		"x=9999 is parked; ifunderbar's 800,0 is not")
+
+## Round 630: a label taller or wider than its rect overruns it the way
+## CIFStatic's 0x64d9b0 lays text out -- evenly when centred, toward the top
+## or left when bottom- or right-aligned, from the truncated point -- not
+## right and down from the rect's corner. The text's size is stood in for by
+## a minimum size, so the check does not depend on a font.
+func _check_text_overrun_follows_alignment() -> void:
+	# (Text sizes taller than Godot's default font's line, which is the
+	# floor of any Label's height here, since this builder has no archive.)
+	var cases := [
+		# [halign, valign, rect, text size, where the label must start]
+		[0, 0, Rect2(10, 20, 60, 4), Vector2(40, 30), Vector2(10, 20)],
+		[1, 1, Rect2(10, 20, 60, 4), Vector2(40, 30), Vector2(10, 7)],
+		[2, 2, Rect2(10, 20, 60, 4), Vector2(40, 30), Vector2(10, -6)],
+		[1, 1, Rect2(10, 20, 30, 12), Vector2(41, 31), Vector2(4, 10)],
+		[2, 0, Rect2(143, 314, 24, 12), Vector2(26, 30), Vector2(141, 314)],
+	]
+	var builder := UiBuilder.new(null, null)
+	var script := load("res://scripts/ui/ui_builder.gd") as GDScript
+	var has_rule := false
+	for m in script.get_script_method_list():
+		if m["name"] == "place_label":
+			has_rule = true
+	if not has_rule:
+		_check(false, "the builder lays an overrunning label by its alignment (UiBuilder.place_label)")
+		return
+	for c in cases:
+		var label := Label.new()
+		label.horizontal_alignment = builder._map_halign(int(c[0]))
+		label.vertical_alignment = builder._map_valign(int(c[1]))
+		label.custom_minimum_size = c[3]
+		script.call("place_label", label, c[2])
+		_check(label.position == c[4],
+			"align (%d,%d): a %s text in %s starts at %s (got %s)" % [c[0], c[1], c[3], c[2], c[4], label.position])
+		label.free()

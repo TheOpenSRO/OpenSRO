@@ -348,10 +348,66 @@ static func apply_authored_rects(root: Node) -> void:
 		var rect: Rect2 = root.get_meta(AUTHORED_RECT_META)
 		var ctrl := root as Control
 		ctrl.custom_minimum_size = Vector2.ZERO
-		ctrl.position = rect.position
-		ctrl.size = rect.size
+		if ctrl is Label and ctrl.has_meta(STATIC_TEXT_META):
+			place_label(ctrl as Label, rect)
+			if not ctrl.has_meta(RELAY_META):
+				ctrl.set_meta(RELAY_META, true)
+				ctrl.minimum_size_changed.connect(_on_label_min_changed.bind(ctrl))
+		else:
+			ctrl.position = rect.position
+			ctrl.size = rect.size
 	for child in root.get_children():
 		apply_authored_rects(child)
+
+## Lays a text label on its authored rect the way the client lays text out
+## (CIFStatic's 0x64d9b0; align_overrun has the reading). A label that fits
+## takes the rect, and its own alignment places the text inside it. One whose
+## text is taller or wider than the rect -- a Label is never smaller than its
+## text -- overruns it by the alignment: evenly when centred, toward the top
+## or left when bottom- or right-aligned, from the truncated position the
+## client draws at (0x64d96c: 0xb42d10 of the float, cvttsd2si, which truncates; floor
+## here, the coordinates being positive). Godot placed it at the rect's
+## top-left and grew it right and down, so a centred row drew its text low
+## by half the overrun (round 630). Measured on the render box (the archive's
+## Arial fallback): GDR_PMI_TXT_HP, 124x12 with a 13-pixel line, now starts at
+## y 25 rather than 26. That the client's text height (the extent 0x64d9b0
+## reads at +0xde) equals Godot's line height for the same face is INFERRED.
+const RELAY_META := "srrevamp_label_relay"
+## Marks a label _build_static made for a CIFStatic's text: the ones the
+## client lays out with 0x64d9b0, and so the only ones place_label moves.
+## Other labels that carry an authored rect (a window's caption strip) keep
+## their rect as before -- their draw was not read.
+const STATIC_TEXT_META := "srrevamp_static_text"
+static func place_label(label: Label, rect: Rect2) -> void:
+	var need := label.get_combined_minimum_size()
+	var pos := rect.position
+	var size := rect.size
+	if need.x > size.x:
+		pos.x = floorf(rect.position.x + _align_share(label.horizontal_alignment) * (size.x - need.x))
+		size.x = need.x
+	if need.y > size.y:
+		pos.y = floorf(rect.position.y + _valign_share(label.vertical_alignment) * (size.y - need.y))
+		size.y = need.y
+	label.position = pos
+	label.size = size
+
+## The text can change after the rect is settled (a number, a name), and
+## with it how far it overruns: re-lay it on its authored rect then.
+static func _on_label_min_changed(label: Label) -> void:
+	if is_instance_valid(label) and label.has_meta(AUTHORED_RECT_META):
+		place_label(label, label.get_meta(AUTHORED_RECT_META))
+
+static func _align_share(h: HorizontalAlignment) -> float:
+	match h:
+		HORIZONTAL_ALIGNMENT_CENTER: return 0.5
+		HORIZONTAL_ALIGNMENT_RIGHT: return 1.0
+		_: return 0.0
+
+static func _valign_share(v: VerticalAlignment) -> float:
+	match v:
+		VERTICAL_ALIGNMENT_CENTER: return 0.5
+		VERTICAL_ALIGNMENT_BOTTOM: return 1.0
+		_: return 0.0
 
 ## Frames the settling pass runs for. One is normally enough; a few are cheap
 ## and remove the guesswork about exactly which frame the theme cache
@@ -435,6 +491,7 @@ func _build_button(def: UiLayoutParser.ControlDef) -> TextureButton:
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		label.set_anchors_preset(Control.PRESET_FULL_RECT)
+		align_overrun(label, 1, 1)
 		if def.font_color != Color.WHITE:
 			label.add_theme_color_override("font_color", def.font_color)
 		_apply_font(label, def)
@@ -477,6 +534,7 @@ func _build_static(def: UiLayoutParser.ControlDef) -> Control:
 			label.horizontal_alignment = _map_halign(def.halign)
 			label.vertical_alignment = _map_valign(def.valign)
 			label.set_anchors_preset(Control.PRESET_FULL_RECT)
+			align_overrun(label, def.halign, def.valign)
 			if def.font_color != Color.WHITE:
 				label.add_theme_color_override("font_color", def.font_color)
 			_apply_font(label, def)
@@ -493,6 +551,8 @@ func _build_static(def: UiLayoutParser.ControlDef) -> Control:
 	label.horizontal_alignment = _map_halign(def.halign)
 	label.vertical_alignment = _map_valign(def.valign)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Laid out by CIFStatic's own rule once its rect settles (place_label).
+	label.set_meta(STATIC_TEXT_META, true)
 	if def.font_color != Color.WHITE:
 		label.add_theme_color_override("font_color", def.font_color)
 	_apply_font(label, def)
@@ -1284,6 +1344,42 @@ func _insert_suffix(path: String, suffix: String) -> String:
 	if dot == -1:
 		return path + suffix
 	return path.substr(0, dot) + suffix + path.substr(dot)
+
+## Makes a label that is larger than its rect overrun it the way the client
+## lays text out, rather than Godot's right-and-down.
+##
+## READ: CIFStatic's text layout 0x64d9b0 takes the rect 0x652800 fills
+## (left, top, width, height) and the text's extent (+0xdc wide,
+## +0xde tall), and puts the text's top-left at
+##
+##   HAlign (+0x88)  0: left            1: left + (width - text w) * 0.5
+##                   2: right - text w
+##   VAlign (+0x8c)  0: top             1: top + (height - text h) * 0.5
+##                   2: bottom - text h
+##
+## (0x64da4d..0x64db39; 0.5 is 0xe1b7d0), and the draw 0x64d940 hands that
+## point to 0x8b48b0 unclipped. So a text taller or wider than its rect
+## overruns it evenly when centred, and toward the top or left when bottom-
+## or right-aligned. A Godot Label is never smaller than its text and grew
+## right and down only, so every centred row shorter than the font's line
+## (the underbar's 4 px rows, round 598, which TwoDtBuilder.set_text fixed
+## for .2dt windows) drew its text low, and a right-aligned number too wide
+## for its rect started at the rect's left. This is the same rule for the
+## resinfo builder (round 630), for a label anchored to fill its control
+## (a static's caption over its art, a button's caption). A label placed by
+## position and size is laid by place_label instead, because Control.set_size
+## clamps to the minimum before the grow rule can act. A label that fits is
+## untouched: the grow direction only acts when the minimum size exceeds the
+## rect.
+static func align_overrun(label: Control, halign: int, valign: int) -> void:
+	label.grow_horizontal = _grow_for(halign)
+	label.grow_vertical = _grow_for(valign)
+
+static func _grow_for(align: int) -> Control.GrowDirection:
+	match align:
+		1: return Control.GROW_DIRECTION_BOTH
+		2: return Control.GROW_DIRECTION_BEGIN
+		_: return Control.GROW_DIRECTION_END
 
 func _map_halign(h: int) -> HorizontalAlignment:
 	match h:

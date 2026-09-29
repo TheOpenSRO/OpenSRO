@@ -290,6 +290,26 @@ func _run() -> void:
 	_check(_caption(window) == "The World", "the world map is captioned with its name (got '%s')" % _caption(window))
 	_check(not _at(root, 6).visible, "the world button is hidden on the world map")
 
+	# --- the marker turns with the player (round 630) ----------------------
+	# CNIFWorldMap turns it by -(heading - pi/2) exactly as the minimap turns
+	# its arrow (0x6200de..0x620236): facing east the art (pointing right) is
+	# unturned, facing north it points up. It was never turned before.
+	var marker := window.find_child("PlayerMarker", true, false) as Control
+	var four_args := false
+	for m in window.get_method_list():
+		if m["name"] == "update_player" and m["args"].size() >= 4:
+			four_args = true
+	if four_args:
+		window.call("update_player", 98, 101, Vector3(960, 0, 960), Vector2(0, 1))
+	else:
+		window.call("update_player", 98, 101, Vector3(960, 0, 960))
+	_check(marker != null and Vector2.RIGHT.rotated(marker.rotation).is_equal_approx(Vector2(0, -1)),
+		"facing north, the world map's marker points up (got %s)" % (Vector2.RIGHT.rotated(marker.rotation) if marker else null))
+	if four_args:
+		window.call("update_player", 98, 101, Vector3(960, 0, 960), Vector2(-1, 0))
+	_check(marker != null and Vector2.RIGHT.rotated(marker.rotation).is_equal_approx(Vector2(-1, 0)),
+		"facing west, it points left (got %s)" % (Vector2.RIGHT.rotated(marker.rotation) if marker else null))
+
 	# --- auto-move follows the player ---------------------------------------
 	window.call("update_player", 98, 101, Vector3(960, 0, 960))
 	var cur: Object = window.call("current_map")

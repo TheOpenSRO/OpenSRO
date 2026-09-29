@@ -99,13 +99,30 @@ func _test_hide_ui_button(world: Node, recorder: Node) -> void:
 		minimap.offset_right = -14.0
 		minimap.offset_top = 10.0
 		minimap.offset_bottom = 185.0
+	# The arrow's facing (round 630): the player's front is its node's +Z
+	# (rotation.y = atan2(dir.x, dir.z)) and a region group carries
+	# scale.z = -1, so rotation.y 0 faces world +Z, region-local south.
+	if world.has_method("minimap_facing"):
+		var group := Basis.from_scale(Vector3(1, 1, -1))
+		var south: Vector2 = world.call("minimap_facing", Basis.from_euler(Vector3(0, 0, 0)), group)
+		var east: Vector2 = world.call("minimap_facing", Basis.from_euler(Vector3(0, PI / 2.0, 0)), group)
+		var north: Vector2 = world.call("minimap_facing", Basis.from_euler(Vector3(0, PI, 0)), group)
+		_check(south.is_equal_approx(Vector2(0, -1)) and east.is_equal_approx(Vector2(1, 0)) and north.is_equal_approx(Vector2(0, 1)),
+			"rotation.y 0 / 90 / 180 face region-local south / east / north (got %s %s %s)" % [south, east, north])
+	else:
+		_check(false, "World3D turns the player's facing into the region's frame for the arrow (minimap_facing)")
 	var view := root.get_visible_rect()
 	var map_rect := minimap.get_global_rect()
 	var button_rect := button.get_global_rect()
 	# The probes: both rects are real and on screen, and the minimap is STOP
 	# (round 529), so it can take a click from the button.
-	_check(map_rect.size == Vector2(136, 175) and view.encloses(map_rect),
-		"the probe: the minimap is 136x175 on screen (%s in %s)" % [map_rect, view])
+	# Round 630: flush with the top-right corner, as 0x79f030 puts it --
+	# SetPos(width - 0x81, 0) on the 140x184 window, whose art is opaque over
+	# its first 129 columns, so the 11 transparent ones hang off the edge.
+	_check(map_rect.size == Vector2(140, 184) and map_rect.position == Vector2(view.end.x - 129, 0),
+		"the minimap is 140x184 at (width - 129, 0) (%s in %s)" % [map_rect, view])
+	_check(view.encloses(Rect2(map_rect.position, Vector2(129, 184))),
+		"the probe: its opaque 129 columns are on screen (%s in %s)" % [map_rect, view])
 	_check(button_rect.size.x > 0 and button_rect.size.y > 0 and view.encloses(button_rect),
 		"the probe: the button has a rect on screen (%s)" % [button_rect])
 	_check(minimap.mouse_filter == Control.MOUSE_FILTER_STOP, "the probe: the minimap is STOP")

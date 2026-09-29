@@ -7094,6 +7094,133 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirtieth round: the minimap shows where the player stands, its arrow points the way the player faces, and it sits flush in the corner without the black ring
+
+The report on v0.1.458: a black circle left of the globe; the map not matching the dirt road the
+player stood on (HUD X:6450 Y:891, Grassland); the arrow (minimap and world map) not facing the way
+the character faces; the NPC and monster dots misplaced; the zoom buttons outside their circles and
+the text slightly off; and the minimap not flush with the top-right corner. Every value below was
+READ from the client (`/var/tmp/decomp_client`, `/var/tmp/sro_client.asm`) or MEASURED; the full
+reading is in [protocol/minimap.md](protocol/minimap.md).
+
+### What was wrong, and the reading that fixes it
+
+1. **The black ring** is `GDR_MINIMAP_DUNGEON_FLOOR_INFO` (id 10, `mm_dungeonfloor.ddj`, 1,42
+   32x32). READ: its Style is 64, and the resinfo builder hides a style-0x40 control at creation
+   (`0x8b5710..0x8b5726`); `0x661ce0` shows it only while the region id's top bit is set
+   (`0x6620db..0x662101`), a dungeon region. The retail screenshot has no ring. Hidden now.
+2. **The map was mirrored north-south inside each region.** READ (`0x661ce0`):
+   `+0x408 = S * (1920 - z) / 1920` -- an image's rows run north to south. The minimap drew row
+   `z / 1920` under the player instead. MEASURED three ways:
+   - the harness (`--base` against this tree, 1024x768 on the RX 5700 XT): the pixel under the
+     aperture's centre matches the tile's texel at `(x, 1920 - z)` within 0.005 (mean RGB, 0..1) at
+     five of six spots, where the base matched `(x, z)`; at (960, 960), the region's middle row, the
+     two rules agree, which is why the error was easy to miss;
+   - against the terrain: over every navmesh tile of six regions (96/168, 97/168, 96/167, 95/168,
+     96/169, 98/168) grass tiles sit on greener texels than the rest by 0.022..0.104 under the READ
+     rule, and by -0.011..0.008 under the old one. At the report's spot, 96/168 local (1140, 1230),
+     the terrain is `c_dust_fld_06` (dirt) and the READ texel is brown (114,84,32); the old rule
+     read (1140, 690), which is `c_grass_fld_05`, and drew green (35,56,1);
+   - the tiles' seams: `168x97`'s bottom row continues `168x96`'s top row (mean difference 13.8
+     against 31.7 reversed), and `169x96` continues it to the east (10.0 against 24.8).
+   Also READ: the client draws the **3x3** tiles around the player (`0x662271..0x6622a3`), so the
+   neighbouring region shows near an edge (the map went blank past its own region), and one region
+   is **160 px** (`0x660c42`), not 256. Zoom is the client's: +-19.2 a press between 64 and 256
+   (`0x660620`, `0x660660`), walked at 0.05 per frame-timer count (INFERRED milliseconds).
+3. **The arrow.** READ: vslot_013 turns the 16x16 arrow by `-(player+0x8c - pi/2)` through the
+   clockwise rotation `0x8b5c50` (cos `0xb44a10`, sin `0xb44b40`). MEASURED: `mm_sign_character.ddj`
+   points right. The minimap passed Godot's `rotation_degrees.y` straight through, so it pointed
+   right when the player faced south: only 45 degrees came out right. It now turns the art by the
+   angle of the facing's `(x, -z)`, the facing taken into the region group's frame
+   (`World3D.minimap_facing`). INFERRED: that is the READ formula for a heading counted from south
+   toward east (the heading's writer was not traced). The world map's marker is turned the same way
+   (READ `0x6200de..0x620236`); it never turned before. The minimap is also updated every frame
+   now, as the client's is, instead of every tenth.
+   MEASURED with real movement (`qa_shot.sh --walk`, 96/168 at (1140, 1230), the new
+   `QA MINIMAP` log line): walking world heading 180 moves local z up and logs facing (0.00, 1.00),
+   arrow -90 (up); 90: (1.00, 0.00), 0 (right); 0: (0.00, -1.00), 90 (down); 270: (-1.00, 0.00),
+   180 (left). The frames' arrow pixels fit the art turned 270 (260 at 5-degree steps), 0, 90, 180.
+   The base walking north draws it pointing left (`minimap_shots/live/base_walk_180_minimap_3x.png`).
+4. **The signs** were placed right relative to the player (world X right, world -Z up) but on a map
+   that was mirrored and at 256 px a region. READ (vslot_013): 8x8 quads (+-4) whatever the art's
+   size, drawn only inside `w/2 - 8` = 44.5 px. MEASURED (harness): signs at world offsets (192,0),
+   (0,-192), (-240,120), (300,300), (400,0) land at 16.0, 16.0, 22.4, 35.4, 33.3 px from the centre,
+   exactly the computed points, 8x8.
+5. **The zoom buttons outside their circles**: `mm_window.ddj` is 140x184 (MEASURED) and ginterface
+   gives the window 140x184; it was stretched to 136x175, which slid the art's circles and bars up
+   and left of the children laid at their authored rects (the + circle by 3.3 and 7.1 px). Now 1:1.
+   MEASURED: every child sits at its authored rect (zoom-in 107,136; zoom-out 90,152; X 8,32; Y
+   67,32; area 12,9; map button 99,47).
+   **The systemic text rule.** READ: CIFStatic lays its text out in `0x64d9b0` -- left / centred /
+   right and top / centred / bottom within its rect by the text's extent, then truncated
+   (`0xb42d10`, `cvttsd2si`) and drawn unclipped by `0x8b48b0` / `0x8b2290` with each glyph cell's
+   top at the point. A Godot Label is never smaller than its text and grew right and down from the
+   rect's corner, so a centred row shorter than the font's line drew low, and a right-aligned word
+   wider than its rect started at the rect's left. `UiBuilder.place_label` now lays a CIFStatic's
+   text label by the client's rule when its rect settles and whenever its text's size changes;
+   captions of button and art statics get the matching grow directions. What it moves, MEASURED on
+   the box (Arial fallback) across the minimap, player info, target, underbar and all twelve
+   HudPanels windows: `GDR_PMI_TXT_HP` / `_MP` 1 px up (centred, 13-pixel line in 12);
+   inventory's and equipment's `GDR_INVENTORY_STA_GOLD` "Gold" 2 px left (right-aligned, 26 wide in
+   24); autopotion's `GDR_AUTO_POTION_ABNORMAL_QUICKSLOT_STA` 8 px left; party match's
+   `GDR_PARTYMATCH_SLOTLIST_NUM_BTN` caption half a pixel left. Nothing else moved. Window captions
+   (title strips) are not CIFStatic text and keep their rects (`hud_registry_frame_test.gd`,
+   `hud_settle_test.gd` pin them).
+   MEASURED against the retail crop (frame matched at scale 2.00, offset 26,2): with retail's own
+   strings, "Hotan Kingdom" spans x 22..104 and starts at y 11 in both; "X:114" / "Y:244" caps start
+   at y 34 here and 35 in retail. The box has no Tahoma, and the archive's Arial fallback has the
+   smaller ascent (about 10.9 px at 12 against Tahoma's 12.0), which accounts for the pixel.
+   INFERRED, not measured with Tahoma.
+6. **The corner.** READ: `0x79f030` calls the minimap's SetPos with `(screen width - 0x81, 0)`. The
+   art is opaque over columns 0..128 and rows 0..171 (MEASURED), so it is flush with the top-right
+   corner and 11 transparent columns hang off the edge. It sat 14 in and 10 down (ours). MEASURED:
+   the window's rect is (895, 0) 140x184 in a 1024-wide viewport.
+
+### Evidence
+
+- Renders (before = base cfddf39, after = this tree), in the session scratchpad's
+  `minimap_shots/`: `minimap_before_after_3x.png`, `before|after/hud.png`, `before|after/panel_*.png`,
+  `after/arrow_*.png`, `live/walk_{0,90,180,270}_minimap_3x.png`, `live/base_walk_180_minimap_3x.png`,
+  `live/walk_town_east_minimap_3x.png` (Jangan's square from the spawn: the log's five NPC signs of
+  41 in range sit round the dragon, which is south of the spawn and drawn below the arrow).
+- The harness and probes are scratch (not committed): `zz_mm_render.gd` (the HUD at 1024x768 with
+  per-label glyph diffs, the map texel check, the signs and the arrow's texture fit),
+  `zz_mm_terrain.gd` (tiles against navmesh tile types), `zz_style40.gd` (the Style census).
+- Tests: `hud_minimap_test.gd` (window size, the hidden ring, the tile and image row under the
+  centre, 160 px, the 3x3, the arrow for four facings, zoom), `worldmap_window_test.gd` (the marker
+  turns), `hud_click_routing_test.gd` (placement at width - 129, 0; `minimap_facing`),
+  `ui_builder_test.gd` (the overrun rule). The NEGATIVE, the new tests run against cfddf39:
+
+```
+FAIL the minimap window is 140x184 (got (136, 175))
+FAIL the frame art is drawn 1:1 at 140x184 (got (136, 175))
+FAIL the dungeon-floor ring is hidden outside a dungeon (visible true)
+FAIL the aperture centre shows (u, v) = (x, 1920 - z) / 1920 of the player's tile (got (0.59375, 0.640625))
+FAIL and that tile is the middle of the 3x3, the player's own region (got RegionMap)
+FAIL a region is 160 px across at the start (got (256, 256))
+FAIL the minimap lays the client's 3x3 of region tiles (tile_region / tile_position)
+FAIL facing north, the arrow points (0, -1) on screen (got (-1, -0))
+FAIL facing east, the arrow points (1, 0) on screen (got (-0, 1))
+FAIL facing south, the arrow points (0, 1) on screen (got (1, 0))
+FAIL facing west, the arrow points (-1, 0) on screen (got (-0, -1))
+FAIL the minimap has the client's zoom (zoom_in / zoom_out / tile_px)
+FAIL facing north, the world map's marker points up (got (1, 0))
+FAIL facing west, it points left (got (1, 0))
+FAIL World3D turns the player's facing into the region's frame for the arrow (minimap_facing)
+FAIL the minimap is 140x184 at (width - 129, 0) ([P: (1002, 10), S: (136, 175)] in [P: (0, 0), S: (1152, 648)])
+FAIL the builder lays an overrunning label by its alignment (UiBuilder.place_label)
+```
+
+- `remote_godot.sh check`: 378 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 148
+  suites, 0 failing. `go build ./... && go test -count=1 -p 1 ./...`: 60 packages ok.
+
+### Still open
+
+Unique, animal, party and quest-NPC signs and the party/quest arrows; the tiles' colour modulation
+(`0x9edd60`'s colour times 400); dungeon regions (`minimap_d\`); Style bit 0x40 across the other
+windows (92 controls, 49 outside ginterface.txt, 15 of them in ifplayerminiinfo.txt, round 629's
+window); the text measurement with Tahoma. All in `docs/TODO.md` item 4.
+
 ## Six-hundred-and-twenty-eighth round, review follow-up: the reflection is as bright as the game's, clips at the water, leaves out characters, and the sky is the game's cloud layer
 
 The review confirmed the mirror's geometry: its marker's reflection lands where predicted, within

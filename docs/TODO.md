@@ -642,6 +642,23 @@ loading `resinfo/ifminimap.txt`): displays the region's own art (`minimap\<y>x<x
 clipping, rotating heading arrow (`mm_sign_character.ddj`), and real-time X/Y coordinate readout
 derived from the ninety-seventh round's recovered coordinate math.
 
+Round 630 rebuilt it on `CIFMinimap`'s own draw ([protocol/minimap.md](protocol/minimap.md)): the
+3x3 region tiles with image rows north to south (the map was mirrored north-south in each region),
+160 px a region with the client's eleven zoom levels, the arrow turned as the client turns it (and
+the world map's marker, which never turned), 8x8 signs culled at 44.5 px, the 140x184 window flush
+with the screen's top-right corner, and the dungeon-floor ring hidden. Still open:
+
+- [ ] Unique, animal, party and quest-NPC signs, and the party/quest arrows at 47.0 -- `HudMinimap`
+      draws only monster, NPC and other-player signs (no data for the rest yet). A unique's sign is
+      `+0x3b0` when the monster's `+0x7ac` is 3 or 8.
+- [ ] The tiles' colour modulation (a colour from `0x9edd60`'s object, times 400, capped at 255).
+- [ ] Dungeon regions (`minimap_d\`, and showing the floor ring there).
+- [ ] `UiBuilder` does not honour Style bit `0x40` (hidden at creation, `0x8b5710`) for any window:
+      92 resinfo controls carry it, 49 outside ginterface.txt (15 in ifplayerminiinfo.txt). The
+      minimap hides its one itself.
+- [ ] Measure a text label's cap top against the retail screenshot with **Tahoma**: the box has
+      only the archive's Arial fallback, whose smaller ascent puts caps 1 px higher (round 630).
+
 ### 5. Break up `client/scripts/World3D.gd`
 5,259 lines, against 800 for the next largest file — and now the file both lanes would edit at
 once, which makes this deconfliction as well as tidying.
