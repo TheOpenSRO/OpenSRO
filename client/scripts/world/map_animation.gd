@@ -286,39 +286,137 @@ static func sector_in_view(centre: Vector3, planes: Array) -> bool:
 			return false
 	return true
 
+## A margin (world units) on the per-sector range bounds below: a sector is
+## decided "every object in range" or "every object out" only when that holds
+## with this much to spare, so float rounding in the bound can never decide
+## an object the per-object test would decide the other way. OURS (a guard
+## band, not a retail value); inside the band every object is tested.
+const BOUND_MARGIN := 1.0
+
+## SRREVAMP_MAP_ANIM_NO_SHARE=1: every running clip keeps its own player and
+## skeleton (round 645's path) -- the A/B for the shared poses' saving, and
+## what MapAnimationProbe's cost modes need. Not a player option.
+static var no_share := OS.get_environment("SRREVAMP_MAP_ANIM_NO_SHARE") != ""
+
+## One registered clip: a placed object's player, skeleton and skinned
+## pieces, where it stands, and whose pose it is drawn with.
+class Obj:
+	extends RefCounted
+	var player: AnimationPlayer
+	var root: Node3D
+	var skeleton: Skeleton3D
+	## [MeshInstance3D, its own skeleton NodePath] of each piece skinned to
+	## `skeleton` (front-pass twins included).
+	var meshes: Array = []
+	var clip: Animation
+	var origin := Vector3.ZERO
+	var radius := 0.0
+	## Its clock runs this frame (its own player's, or its pose group's).
+	var running := false
+	## The pose group it is drawn from while it runs, or null for its own.
+	var group: PoseGroup = null
+	var sector: Sector = null
+	var always := false
+
+## Running clips of one Animation whose clocks are equal, drawn from one
+## pose: `player` plays the clip on `skeleton`, and every member's skinned
+## pieces are bound to `skeleton`. A group only forms from clips that START
+## in the same frame at the same clock (see Driver._start_all), so its
+## members' clocks are equal by construction, and a member leaves it the
+## frame its own clock stops.
+class PoseGroup:
+	extends RefCounted
+	var clip: Animation
+	var node: Node3D
+	var skeleton: Skeleton3D
+	var player: AnimationPlayer
+	var members: Array = []
+
+## A `.o2` sector's registered objects, with bounds for the per-sector range
+## decision: `rho` the farthest origin from `centre`, `rmin`/`rmax` the
+## smallest and largest radius.
+class Sector:
+	extends RefCounted
+	var centre := Vector3.ZERO
+	var objs: Array = []
+	var in_view := false
+	## 0: its objects were tested one by one (or not yet), 1: all in range,
+	## 2: all out -- as decided the last frame it was in view.
+	var state := 0
+	## Every object hidden and paused: true as registered (fade state 0),
+	## and after a frame that switched them all off.
+	var quiet := true
+	var rho := 0.0
+	var rmin := INF
+	var rmax := 0.0
+
 ## The world's animated map objects, run as the client runs them: each frame
 ## a sector the view touches has its objects' fade state tested; an object in
 ## range runs its clock and is drawn, one out of range is paused and hidden.
 ## A sector out of view is not visited: its objects' clocks stop and their
 ## fade state (here, whether they are drawn) stays as it was -- READ, the
 ## update loop only walks the sectors whose +0xba2 flag is set. object.ifo
-## flag bit 0 objects always run and are always drawn. One per World3D;
-## entries whose object has gone (a region streamed out) are dropped as
-## they are found.
+## flag bit 0 objects always run and are always drawn. One per World3D.
 ##
-## Cost: the placement never moves, so its origin and sector are taken once,
-## at add, and the view is tested once per sector, not per object.
+## Cost (round 647): the placement never moves, so its origin and sector are
+## taken once, at add, and the view is tested once per sector, not per object.
+## A sector whose bounds put every object in range (or every one out) is
+## decided without visiting its objects, and one decided the same way last
+## frame is not visited at all. Clips that start in the same frame at the
+## same clock share one pose (PoseGroup): one player and one skeleton for
+## all of them, so the players, skeleton updates and bone uploads a frame
+## scale with the distinct clocks, not the objects. Retail pauses each object
+## on its own (SWorld::FUN_00a38a50's fade state is per object, READ), so a
+## member whose clock stops leaves its group, keeping the pose it had.
 class Driver:
 	extends RefCounted
-	## sector key -> [cell centre, [[player, object root, world origin,
-	## X-Z radius], ..], in view last frame] for the range-tested objects.
+	## sector key -> Sector, for the range-tested objects.
 	var _sectors := {}
-	## [player, object root] of the object.ifo flag bit 0 objects: always on.
+	## The object.ifo flag bit 0 objects: always on, each on its own pose.
 	var _always: Array = []
 	var _count := 0
-	## Clips running, and the time the last tick took (us), for the QA line
-	## and the frame-cost measurement.
+	## Clips whose clock runs (objects), the players actually advancing for
+	## them (poses), the pose groups alive, and the time the last tick took
+	## (us) -- for the QA line and the frame-cost measurement.
 	var running := 0
+	var poses := 0
+	var groups := 0
 	var tick_usec := 0
+	## The last tick's work, for the QA line: sectors whose view was tested,
+	## and objects tested one by one.
+	var sectors_viewed := 0
+	var objects_tested := 0
 	## Set by MapAnimationProbe (SRREVAMP_QA_MAPANIM_SPLIT): the driver stops
 	## testing, leaving the probe's state in place. Never set in play.
 	var halted := false
+	## Where pose groups' nodes live (World3D's own holder). null: no sharing.
+	var pose_parent: Node = null
+	## Share poses (no_share unset). A test flips it per driver.
+	var share := not MapAnimation.no_share
+	## Pose-group nodes by clip, idle, for reuse; and the ones released this
+	## tick, pooled only at the next -- a node whose player was processing
+	## this frame, reused the same frame, would advance a frame early.
+	var _pool := {}
+	var _released: Array = []
+	var _live_groups: Array = []
+	## The last tick's camera, and whether an object came or went since.
+	var _last_eye := Vector3.INF
+	var _last_planes: Array = []
+	var _changed := true
 
-	## Every registered entry, [player, object root, ..] -- for the probe.
+	## Every registered entry, [player, object root, world origin, radius] --
+	## for the probe and the tests.
 	func entries() -> Array:
 		var out: Array = []
+		for o in objects():
+			out.append([o.player, o.root, o.origin, o.radius])
+		return out
+
+	## Every registered Obj.
+	func objects() -> Array:
+		var out: Array = []
 		for key in _sectors:
-			out.append_array(_sectors[key][1])
+			out.append_array((_sectors[key] as Sector).objs)
 		out.append_array(_always)
 		return out
 
@@ -330,25 +428,48 @@ class Driver:
 		var added := 0
 		var parent := node.get_parent() as Node3D
 		var to_world := parent.global_transform if parent != null else Transform3D.IDENTITY
-		var sector := MapAnimation.sector_of(node.position, to_world)
+		var where := MapAnimation.sector_of(node.position, to_world)
 		for player in MapAnimation.players_of(node):
-			var root: Node3D = (player as Node).get_parent()
+			var o := Obj.new()
+			o.player = player
+			o.root = (player as Node).get_parent()
+			o.skeleton = o.root.get_node_or_null(MapAnimation.SKELETON_NODE) as Skeleton3D
+			o.clip = (player as AnimationPlayer).get_animation(MapAnimation.CLIP_NAME)
+			if o.skeleton != null:
+				for mi in o.root.find_children("*", "MeshInstance3D", true, false):
+					var m := mi as MeshInstance3D
+					if m.skin != null and m.get_node_or_null(m.skeleton) == o.skeleton:
+						o.meshes.append([m, m.skeleton])
 			MapAnimation.start(player)
 			added += 1
 			if always:
+				o.always = true
+				o.running = true
 				(player as AnimationPlayer).active = true
 				running += 1
-				_always.append([player, root])
+				poses += 1
+				_always.append(o)
 				continue
 			# Hidden until its sector is first visited, as the client's fade
 			# state starts at 0.
-			root.visible = false
-			if not _sectors.has(sector[0]):
-				_sectors[sector[0]] = [sector[1], [], false]
-			var scale := absf(root.global_transform.basis.get_scale().x)
-			(_sectors[sector[0]][1] as Array).append([player, root, node.global_position,
-				float(root.get_meta(MapAnimation.META_RADIUS, 0.0)) * scale])
+			o.root.visible = false
+			var s: Sector = _sectors.get(where[0])
+			if s == null:
+				s = Sector.new()
+				s.centre = where[1]
+				_sectors[where[0]] = s
+			var scale := absf(o.root.global_transform.basis.get_scale().x)
+			o.origin = node.global_position
+			o.radius = float(o.root.get_meta(MapAnimation.META_RADIUS, 0.0)) * scale
+			o.sector = s
+			s.objs.append(o)
+			s.rho = maxf(s.rho, o.origin.distance_to(s.centre))
+			s.rmin = minf(s.rmin, o.radius)
+			s.rmax = maxf(s.rmax, o.radius)
+			# A newcomer is hidden and paused: the sector is tested whole again.
+			s.state = 0
 		_count += added
+		_changed = true
 		return added
 
 	func size() -> int:
@@ -362,57 +483,283 @@ class Driver:
 		if _count == 0 or halted:
 			tick_usec = 0
 			return
+		if not _released.is_empty():
+			_pool_released()
+		# The same camera as the last tick, and nothing added or dropped
+		# since: every decision below would come out as it did, and the
+		# last tick already applied them.
+		if not _changed and eye == _last_eye and planes == _last_planes:
+			sectors_viewed = 0
+			objects_tested = 0
+			tick_usec = Time.get_ticks_usec() - sw
+			return
+		_changed = false
+		_last_eye = eye
+		_last_planes = planes.duplicate()
+		var starting: Array = []
+		var stopping: Array = []
 		var dead := false
+		var near := MapAnimation.OBJECT_RANGE - BOUND_MARGIN
+		var far := MapAnimation.OBJECT_RANGE + BOUND_MARGIN
+		var object_range := MapAnimation.OBJECT_RANGE
+		var reach := MapAnimation.SECTOR_RADIUS
+		var view: Array[Plane] = []
+		for plane in planes:
+			view.append(plane)
+		var viewed := 0
+		var tested := 0
 		for key in _sectors:
-			var sector: Array = _sectors[key]
-			if not MapAnimation.sector_in_view(sector[0], planes):
-				if sector[2]:
-					# Just left the view: the clocks stop, the drawing stays.
-					sector[2] = false
-					for entry in sector[1]:
-						if is_instance_valid(entry[0]) and (entry[0] as AnimationPlayer).active:
-							(entry[0] as AnimationPlayer).active = false
-							running -= 1
+			var s: Sector = _sectors[key]
+			# The bounds: every origin lies within rho of the centre, so an
+			# object's `dist - radius` is at most d + rho - rmin and at least
+			# d - rho - rmax.
+			var d := s.centre.distance_to(eye)
+			if s.quiet and d - s.rho - s.rmax >= far:
+				# Every object out of range and already paused and hidden:
+				# in view or not, nothing about them changes (in view they
+				# are hidden and paused, out of view they keep that).
 				continue
-			sector[2] = true
-			for entry in sector[1]:
+			# MapAnimation.sector_in_view, inlined.
+			viewed += 1
+			var seen := true
+			for plane in view:
+				if plane.distance_to(s.centre) > reach:
+					seen = false
+					break
+			if not seen:
+				if s.in_view:
+					# Just left the view: the clocks stop, the drawing stays.
+					s.in_view = false
+					for o in s.objs:
+						if o.running:
+							stopping.append(o)
+				continue
+			var was := s.in_view
+			s.in_view = true
+			var all := 0
+			if d + s.rho - s.rmin < near:
+				all = 1
+			elif d - s.rho - s.rmax >= far:
+				all = 2
+			if all != 0 and was and s.state == all:
+				continue
+			s.state = all
+			tested += s.objs.size()
+			var quiet := true
+			for o in s.objs:
 				# Test the raw Variant first: a freed player raises on a typed
 				# assignment (World3D._tick_idle_animations, round 214).
-				if not is_instance_valid(entry[0]) or not is_instance_valid(entry[1]):
+				if not is_instance_valid(o.player) or not is_instance_valid(o.root):
 					dead = true
 					continue
-				var player: AnimationPlayer = entry[0]
-				var root: Node3D = entry[1]
-				var on := MapAnimation.in_range(entry[2], entry[3], eye)
-				if root.visible != on:
-					root.visible = on
-				if player.active != on:
-					player.active = on
-					running += 1 if on else -1
+				# MapAnimation.in_range, inlined: the same expression.
+				var on: bool = all == 1 or (all == 0 and o.origin.distance_to(eye) - o.radius < object_range)
+				if on:
+					quiet = false
+				if o.root.visible != on:
+					o.root.visible = on
+				if o.running != on:
+					if on:
+						starting.append(o)
+					else:
+						stopping.append(o)
+			s.quiet = quiet
+		for o in stopping:
+			_stop(o)
+		if not starting.is_empty():
+			_start_all(starting)
 		if dead:
 			_prune()
+		sectors_viewed = viewed
+		objects_tested = tested
 		tick_usec = Time.get_ticks_usec() - sw
 
-	## Drops every entry whose object has been freed, everywhere, and
-	## recounts.
-	func _prune() -> void:
-		running = 0
-		_count = 0
-		for key in _sectors.keys():
-			var alive: Array = []
-			for entry in _sectors[key][1]:
-				if is_instance_valid(entry[0]) and is_instance_valid(entry[1]):
-					alive.append(entry)
-					running += 1 if (entry[0] as AnimationPlayer).active else 0
-			if alive.is_empty():
-				_sectors.erase(key)
+	## `o`'s clock stops this frame: its own player pauses, or it leaves its
+	## pose group holding the group's pose -- its own player set to the
+	## group's clock, which is its own clock, and its pieces bound back.
+	func _stop(o: Obj) -> void:
+		o.running = false
+		running -= 1
+		if o.group == null:
+			if is_instance_valid(o.player):
+				o.player.active = false
+			poses -= 1
+			return
+		_leave(o, true)
+
+	func _leave(o: Obj, restore: bool) -> void:
+		var g := o.group
+		o.group = null
+		if restore and is_instance_valid(o.player) and is_instance_valid(g.player):
+			# Before this frame's advance: the group's clock is the one `o`
+			# ran to, so the seek puts `o` at its own clock (a seek needs an
+			# active player; it is paused again at once, before the tree's
+			# process list reaches it).
+			o.player.active = true
+			o.player.seek(g.player.current_animation_position, true)
+			o.player.active = false
+			_bind(o, null)
+		g.members.erase(o)
+		if g.members.is_empty():
+			_release(g)
+
+	## Starts the clocks of `starting` (each paused until now, its own player
+	## at its own clock). Shareable clips with the same Animation and the
+	## same clock start as one pose group; any other runs on its own player.
+	## A start never joins a group already running: its clock would have to
+	## equal the group's exactly, and a group already processing this frame
+	## advances in it while a newly started clip does not (the tree's process
+	## list is copied before the frame's first node, scene_tree.cpp 4.2.2
+	## `_process_group`) -- so it would run a frame ahead.
+	func _start_all(starting: Array) -> void:
+		var buckets := {}
+		for o in starting:
+			o.running = true
+			running += 1
+			if not _shareable(o):
+				o.player.active = true
+				poses += 1
+				continue
+			var key := [o.clip, o.player.current_animation_position]
+			if buckets.has(key):
+				(buckets[key] as Array).append(o)
 			else:
-				_sectors[key][1] = alive
-			_count += alive.size()
-		var still: Array = []
-		for entry in _always:
-			if is_instance_valid(entry[0]) and is_instance_valid(entry[1]):
-				still.append(entry)
-				running += 1
-		_always = still
-		_count += still.size()
+				buckets[key] = [o]
+		for key in buckets:
+			var same: Array = buckets[key]
+			poses += 1
+			if same.size() == 1:
+				(same[0] as Obj).player.active = true
+				continue
+			var g := _group(same[0], float(key[1]))
+			for o in same:
+				o.group = g
+				g.members.append(o)
+				_bind(o, g.skeleton)
+
+	func _shareable(o: Obj) -> bool:
+		return share and pose_parent != null and is_instance_valid(pose_parent) and pose_parent.is_inside_tree() and o.skeleton != null \
+			and not o.meshes.is_empty() and o.clip != null and o.clip.loop_mode != Animation.LOOP_NONE
+
+	## A pose group for `o`'s clip at `pos`: an idle node of that clip, or a
+	## new one -- a copy of `o`'s skeleton (its held poses included) and
+	## player (the same Animation) under pose_parent.
+	func _group(o: Obj, pos: float) -> PoseGroup:
+		var g := PoseGroup.new()
+		g.clip = o.clip
+		var idle: Array = _pool.get(o.clip, [])
+		if not idle.is_empty():
+			g.node = idle.pop_back()
+		else:
+			g.node = Node3D.new()
+			g.node.name = "Pose"
+			var sk := o.skeleton.duplicate() as Skeleton3D
+			sk.name = MapAnimation.SKELETON_NODE
+			var pl := o.player.duplicate() as AnimationPlayer
+			pl.name = MapAnimation.PLAYER_NODE
+			g.node.add_child(sk)
+			g.node.add_child(pl)
+			pl.root_node = NodePath("..")
+			pose_parent.add_child(g.node)
+		g.skeleton = g.node.get_node(MapAnimation.SKELETON_NODE)
+		g.player = g.node.get_node(MapAnimation.PLAYER_NODE)
+		g.player.active = true
+		if g.player.current_animation != MapAnimation.CLIP_NAME:
+			g.player.play(MapAnimation.CLIP_NAME)
+		g.player.seek(pos, true)
+		_live_groups.append(g)
+		groups += 1
+		return g
+
+	## `g` has no member left: its player stops now; its node is pooled at
+	## the next tick.
+	func _release(g: PoseGroup) -> void:
+		if is_instance_valid(g.player):
+			g.player.active = false
+		poses -= 1
+		groups -= 1
+		_live_groups.erase(g)
+		if is_instance_valid(g.node):
+			_released.append(g)
+
+	func _pool_released() -> void:
+		for g in _released:
+			if is_instance_valid(g.node):
+				if not _pool.has(g.clip):
+					_pool[g.clip] = []
+				(_pool[g.clip] as Array).append(g.node)
+		_released.clear()
+
+	## Binds `o`'s skinned pieces to `skeleton`, or back to their own when null.
+	func _bind(o: Obj, skeleton: Skeleton3D) -> void:
+		for pair in o.meshes:
+			if not is_instance_valid(pair[0]):
+				continue
+			var mi: MeshInstance3D = pair[0]
+			mi.skeleton = pair[1] if skeleton == null else skeleton.get_path()
+
+	## Drops `o`: its clock stops and it leaves its group, bound back to its
+	## own skeleton while its object is still there.
+	func _remove(o: Obj) -> void:
+		_changed = true
+		if o.running:
+			o.running = false
+			running -= 1
+			if o.group != null:
+				_leave(o, is_instance_valid(o.root) and o.root.is_inside_tree())
+			else:
+				poses -= 1
+		if o.sector != null:
+			o.sector.objs.erase(o)
+			if o.sector.objs.is_empty():
+				for key in _sectors.keys():
+					if _sectors[key] == o.sector:
+						_sectors.erase(key)
+						break
+		else:
+			_always.erase(o)
+		_count -= 1
+
+	## Drops every entry whose object has been freed.
+	func _prune() -> void:
+		for o in objects():
+			if not is_instance_valid(o.player) or not is_instance_valid(o.root):
+				_remove(o)
+
+	## A region streaming out (round 647): drops every object under
+	## `container` -- what World3D._release_region_objects did not hand to
+	## a region still loaded, and which goes with the container -- and any
+	## already freed. Returns how many were dropped.
+	func drop_under(container: Node) -> int:
+		var dropped := 0
+		for o in objects():
+			var gone: bool = not is_instance_valid(o.player) or not is_instance_valid(o.root)
+			if gone or (is_instance_valid(container) and container.is_ancestor_of(o.root)):
+				_remove(o)
+				dropped += 1
+		return dropped
+
+	## Forgets everything (round 647): the grid was cleared (a zone change,
+	## which moves the world's origin, so no sector key or centre carries
+	## over). The objects go with their containers; the pose nodes go now.
+	func reset() -> void:
+		for g in _live_groups:
+			if is_instance_valid(g.node):
+				g.node.queue_free()
+		for g in _released:
+			if is_instance_valid(g.node):
+				g.node.queue_free()
+		for clip in _pool:
+			for n in _pool[clip]:
+				if is_instance_valid(n):
+					(n as Node).queue_free()
+		_sectors = {}
+		_always = []
+		_pool = {}
+		_released = []
+		_live_groups = []
+		_count = 0
+		running = 0
+		poses = 0
+		groups = 0
+		_changed = true

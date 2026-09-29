@@ -4032,9 +4032,13 @@ func _clear_region_grid() -> void:
 	# region uses are withdrawn, so they are the first the cap evicts.
 	if _object_templates != null:
 		_object_templates.forget_regions()
-	# The placed objects go with their containers (round 643).
+	# The placed objects go with their containers (round 643), and the
+	# animation driver forgets them (round 647): a zone change moves the
+	# world's origin, so a sector keyed by world position would otherwise
+	# take the new zone's objects in with the old zone's stale ones.
 	_placed_objects.clear()
 	_object_containers.clear()
+	_map_animations.reset()
 	for child in get_children():
 		if child.name.begins_with("RealTerrain") or child.name.begins_with("RealMapObjects"):
 			remove_child(child)
@@ -4383,6 +4387,7 @@ func _maybe_stream_regions() -> void:
 ## So an object shared by two regions stays drawn while either is loaded,
 ## as the retail loader's refcount keeps it. Returns {"moved", "dropped"}.
 func _release_region_objects(suffix: String) -> Dictionary:
+	var own_container = _object_containers.get(suffix)
 	_object_containers.erase(suffix)
 	var moved := 0
 	var dropped := 0
@@ -4416,6 +4421,11 @@ func _release_region_objects(suffix: String) -> Dictionary:
 		node.transform = xf
 		held["holder"] = heir
 		moved += 1
+	# What stays in the container goes with it: the animation driver drops
+	# it now (round 647) rather than finding it freed later -- a sector
+	# decided whole is not visited, so a freed object could sit in it.
+	if own_container != null:
+		_map_animations.drop_under(own_container)
 	return {"moved": moved, "dropped": dropped}
 
 ## A Node3D's transform composed up its chain of Node3D parents -- its
@@ -5496,6 +5506,20 @@ var _idle_anim_time := 0.0
 ## while its object is in range and in view, as retail's update does.
 var _map_animations := MapAnimation.Driver.new()
 
+## Where the driver's shared poses live (round 647): one node under the
+## world, made with the first animated object, kept across zone changes.
+func _map_animation_poses() -> Node:
+	if _map_animations.pose_parent == null or not is_instance_valid(_map_animations.pose_parent):
+		var holder := Node3D.new()
+		holder.name = "MapAnimationPoses"
+		add_child(holder)
+		_map_animations.pose_parent = holder
+	return _map_animations.pose_parent
+
+## The QA MAPANIM line's last timestamp (usec) and frame, for its frame_ms.
+var _qa_mapanim_us := 0
+var _qa_mapanim_frame := 0
+
 ## The object range is measured from the camera, as retail's is (READ: the
 ## camera struct's +0x4, SWorld::vslot_004); the camera's frustum stands in
 ## for the sectors the view touches (see MapAnimation).
@@ -5523,8 +5547,18 @@ func _tick_map_animations() -> void:
 		if Engine.get_process_frames() <= 1:
 			RenderingServer.viewport_set_measure_render_time(vp, true)
 		if Engine.get_process_frames() % every == 0:
-			print("QA MAPANIM frame %d registered=%d running=%d driver_us=%d mix_us=%d process_ms=%.3f render_cpu_ms=%.3f render_gpu_ms=%.3f draws=%d objects=%d" % [
-				Engine.get_process_frames(), _map_animations.size(), _map_animations.running, _map_animations.tick_usec,
+			# frame_ms (round 647): the mean wall time of a frame since the
+			# last line -- every frame of the interval, not one sample (a
+			# frame this skips, the loading drain's, still counts).
+			var now_us := Time.get_ticks_usec()
+			var frames := Engine.get_process_frames() - _qa_mapanim_frame
+			var frame_ms := float(now_us - _qa_mapanim_us) / 1000.0 / float(frames) if _qa_mapanim_us > 0 and frames > 0 else 0.0
+			_qa_mapanim_us = now_us
+			_qa_mapanim_frame = Engine.get_process_frames()
+			print("QA MAPANIM frame %d frame_ms=%.3f registered=%d running=%d poses=%d groups=%d sectors=%d viewed=%d tested=%d driver_us=%d mix_us=%d process_ms=%.3f render_cpu_ms=%.3f render_gpu_ms=%.3f draws=%d objects=%d" % [
+				Engine.get_process_frames(), frame_ms, _map_animations.size(), _map_animations.running,
+				_map_animations.poses, _map_animations.groups, _map_animations._sectors.size(),
+				_map_animations.sectors_viewed, _map_animations.objects_tested, _map_animations.tick_usec,
 				MapAnimationProbe.mix_usec, Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0,
 				RenderingServer.viewport_get_measured_render_time_cpu(vp),
 				RenderingServer.viewport_get_measured_render_time_gpu(vp),
@@ -9329,6 +9363,7 @@ func _objects_commit(job: Dictionary) -> void:
 		var type_id := int(placement.get("type_id", -1))
 		var ifo_entry: ObjidxReader.Entry = table.lookup(type_id) if table != null else null
 		if node.has_meta(MapAnimation.META_ANIMATED) or model_key.ends_with(".cpd"):
+			_map_animation_poses()
 			_map_animations.add(node, ifo_entry != null and (ifo_entry.flags & 1) != 0)
 		loaded += 1
 		if key >= 0:
