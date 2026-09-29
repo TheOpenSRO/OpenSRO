@@ -263,10 +263,30 @@ placements in motion.
 | Speed and clock | Speed 1.0 (`FUN_00c55360` → `FUN_00c72fd0(.., 1.0)`). Each frame does `t += round(speed*dt + frac)` and `t %= Duration`, in ms. FPS is unused | `CRTAniCyclic::vslot_002` 0xc74790 |
 | Phase | No `rand()` is on the path. The constructor sets t = 0 (vslot_001), so objects start in step when their sector's objects start | the path above; the `_rand` callers in 0x9f0000-0xa60000 and 0xbc0000-0xc90000 checked |
 | Cull and draw | A list-2 object is updated only while its fade state obj+0x1e is not 0. The state is advanced by `SWorld::FUN_00a38a50(state, dist, range)`: out of range when `range <= dist - radius`, so in range strictly below. `dist` is the 3D distance from the camera (camera struct +0x4, copied to SWorld +0x20a6) to the object's **placement origin** obj+0x57/+0x5b/+0x5f (asm 0xa2d92a). `radius` is `sqrt((dx/2)^2 + (dz/2)^2)` of the union of its mesh bounds (asm 0xa389f0). **`range` = `DAT_00ec54b0 - 480.0`** (asm 0xa2d961 `fld [0xec54b0]`, 0xa2d967 `fsub qword [0xde4f58]` = 480.0) = **2020** at the start value of 2500; the view-distance option sets `DAT_00ec54b0` to `min(0.8 × view distance, 2500)`, so the range is 720 / 1520 / 2020 / 2020 / 2020. States: 0 hidden; entering range from 0 goes to 2 (shown, alpha 255) when `range >= 1.5 × (dist - radius)` (the double at 0xe1b7e8), i.e. within two thirds of the range, else to 1 (fading in); 1 steps its alpha up by `512 × dt` (the double at 0xde5148) to 255 (0xd83108), then 2; leaving range, 1 or 2 go to 3, which steps the alpha down to 0 and then 0; an object out of range not visited for 50 frames drops straight to 0. Only sectors the frustum touches are visited (byte +0xba2, `Map::FUN_00a2b370`); the object is updated after the call only while its state is not 0 (asm 0xa2d9dd), and drawn only then (`Map::FUN_00a1e530`, asm 0xa1e791-0xa1e7d5, beside a per-object frustum test), with states 1 and 3 at alpha obj+0x23 (compound slot 5). Out of range the clock is **paused**. List +0x24 is visited only in the 9 nearest sectors, at range 480 (`DAT_00de4f64`). object.ifo flag bit 0 (the first hex column) puts an object on the region-level list, updated every frame | `SWorld::vslot_004` 0xa2cf60, `SWorld::FUN_00a38a50`, asm 0xa389f0/0xa2d92a/0xa2d961, `SWorld::vslot_043` 0xa194a0 |
+| Pause is per object (round 647) | The fade state is the object's own byte obj+0x1e, tested against the object's own `dist - radius` (above). The update after it (asm 0xa2d9dd: `cmp byte [ebp],0`, ebp = obj+0x1e; then the compound's slot 14, the update, `call [vtable+0x38]` with `DAT_0110f7f8`, 1 and 0.0) runs per object; every object of the pass gets the same `DAT_0110f7f8` (one global; that it is the frame's elapsed time is INFERRED, beside the float dt at 0x110f7fc the fade uses). obj+0x27 is stamped with SWorld +0x6720 and an object already stamped is skipped (asm 0xa2d91b/0xa2da08), so an object listed by two sectors is updated once a pass (that +0x6720 counts frames is INFERRED). So two objects' clocks are equal exactly when they started in the same frame and were updated in the same frames since; a sector leaving the view pauses all of its objects together, and crossing the range edge pauses one object alone | `SWorld::vslot_004` asm 0xa2d904-0xa2da08 |
 | Pose skip | `AniMixer::FUN_00c54200` skips frames when `DAT_01113194 != 0`. That global has no writer, so this is INFERRED off | asm 0xc54207 |
 | Skinning | The characters' path: AniMixer → runtime skeleton (compound+0xf4) → CObjRendererVS SKIN0/SKIN2 | as above |
 | After a one-shot | The mixer unlinks the finished clip (`AniMixer::FUN_00c53e80`). With no clip left, the pose evaluation `AniMixer::FUN_00c54200` only clears each bone's blend weights (`FUN_00c4c3f0` → `CRTBone::vslot_004`, asm 0xc47a20: +0x98 and +0x9c = 0); the apply (`vslot_005`) and the skeleton update (`FUN_00c4c320`) run only when a clip was evaluated, so the bones and skin matrices **keep their last pose** | as named |
 | Unskinned pieces of a skeletal object | OPEN (mesh+0x3c bit 0x400 selects a second triangle test) | |
+
+**How this client runs them (round 647; OURS on the READ rules above).** `MapAnimation.Driver`
+keeps retail's per-object pause and per-frame dt and saves work three exact ways:
+- **Shared poses.** Clips of one model's Animation that start in the same frame at the same clock
+  are one `PoseGroup`: one AnimationPlayer and one Skeleton3D under World3D's
+  `MapAnimationPoses`, with every member's skinned pieces bound to that skeleton. Godot skins a
+  piece from the skeleton-space bone poses (`pose_global * bind`, `Skeleton3D`
+  NOTIFICATION_UPDATE_SKELETON) and the piece's own transform, never the skeleton node's
+  (READ, Godot 4.2.2 `scene/3d/skeleton_3d.cpp` and `mesh_instance_3d.cpp`
+  `_resolve_skeleton_path`), so a member stands and turns where it is placed. A member whose clock
+  stops leaves at once: its own player is set to the group's clock and its pieces are bound back.
+  A start never joins a group already running (a group already processing advances in that frame
+  and a newly started clip does not: Godot copies the process list before the frame's first node,
+  `scene_tree.cpp` `_process_group`). One-shot clips are never shared.
+- **Per-sector range bounds.** With `rho` the farthest origin from a sector's centre, every object
+  is in range when `d + rho - rmin < 2020 - 1` and out when `d - rho - rmax >= 2020 + 1` (a 1-unit
+  guard band); a sector decided the same way as last frame is not visited, and a sector wholly out
+  of range whose objects are already off is not even view-tested.
+- **A camera held still** re-tests nothing: every decision would come out as the last tick's.
 
 **TEXANI (READ in outline, not drawn).** `ModDataTexAni::vslot_004` (0xc5c5a0) reads the IModData
 header (its four bytes are the start frame, the end frame and flags), then five words to

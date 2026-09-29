@@ -7094,6 +7094,223 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-forty-seventh round: the Jangan spawn draws at 85 fps instead of 71 with every tree swaying exactly as before, and a zone change no longer leaves the old zone's animated objects behind
+
+Round 645 made the map's skeletal objects move. The rounds 641–646 integration review MEASURED what
+that cost at the Jangan spawn (97/168 local 1002, 1020, yaw 0, 1280×720, default radius,
+`--print-fps --disable-vsync`, mean of the last 40 samples): 14.1–14.5 ms a frame against dev
+8658370's 10.6–11.2 ms and 10.9–11.3 ms with `SRREVAMP_NO_MAP_ANIM=1` — about 90 fps down to 70,
+all of it round 645's. Round 645's own figure for Jangan (+1.4 ms, at 640×360) understated it; its
+entry now says so and points here. This round cuts the cost without changing a pixel, fixes the
+driver's zone-change bookkeeping, and records what is left.
+
+### 1. Where Jangan's cost went (MEASURED, before any change)
+
+`MapAnimationProbe` (round 645's split): at frame 3,600 every registered object is switched to one
+state and the driver halts; each row compares the mean of the once-a-second frame times from frame
+1,200 to the split against those from 2 s after it to the end (140 s runs, one per mode, the
+c306c51 path). The same split with `SRREVAMP_NO_MAP_ANIM=1` drifted **+0.69 ms**, so a row is good
+to about ±0.7 ms.
+
+| Mode after frame 3,600 | Change (ms/frame) |
+|---|---|
+| `halt`: the driver stops testing, nothing else changes | −0.26 (the driver's own bracket: 450–480 µs) |
+| `manual`: the driver steps the 154 players itself | −0.03 (with the driver halted; the `advance()` calls bracket at 874 µs) |
+| `strip_player`: players freed, skins and skeletons stay, still | −2.43 |
+| `freeze_skel`: as `strip_player`, skeleton processing off | −2.57 |
+| `strip_skin`: skins unbound, players and skeletons still running | −2.21 |
+| `stripped`: players, skeletons and skins gone (the pre-645 object) | −3.20 |
+| `share`: every running copy of a clip on one skeleton (21 poses, lockstep) | −2.29 |
+| `unskin_hidden` | +0.60 (inside the drift) |
+
+`census` (new mode, one line): **154 clips running, 222 skinned MeshInstance3Ds (no front-pass
+twins), 610 skin binds, 717 bones, 21 distinct clips, 69 clip × sector pairs, and 21 clip × clock
+pairs** — every running copy of a clip had the same clock, because the whole view starts in one
+frame after the load. The top models are ground cover: `grs_weed02` 32, `c_pondflower` 22,
+`grs_water_big` 18, `grs_weed04` 17, then the maples and ginkgos.
+
+So at Jangan the cost is per skeleton, not per drawn instance: freeing the players, or unbinding the
+skins, or putting one clip's copies on one skeleton each take away 2.2–2.6 ms of the ~3 ms, while
+drawing the skinned instances (`stripped` against `strip_player`) is under 1 ms. The reeds' split in
+round 645 had the drawing larger; §5 has it again after this round. Why each skeleton costs so much
+is INFERRED from Godot's source, not split further: every changed skin's bone texture is
+re-specified with `glTexImage2D` each frame and the skeleton's version bumped, which re-skins every
+instance on it by transform feedback (`drivers/gles3/storage/mesh_storage.cpp`,
+`_update_dirty_skeletons` and `update_mesh_instances`, 4.2.2).
+
+### 2. Is sharing a pose exact? Retail pauses each object on its own (READ)
+
+- **Per object.** `SWorld::vslot_004` tests each list-2 object's own fade state (obj+0x1e) against
+  its own `dist - radius` (`SWorld::FUN_00a38a50`), then, only while that byte is not 0 (asm
+  0xa2d9dd), calls the compound's update (slot 14, `call [vtable+0x38]`) with the one global
+  `DAT_0110f7f8` for every object of the pass. obj+0x27 is stamped with SWorld +0x6720 so an
+  object two sectors list is updated once (asm 0xa2d91b/0xa2da08).
+- **So** two objects' clocks are equal exactly when they started in the same pass and were updated
+  in the same passes since. A sector leaving the view pauses all its objects together; an object
+  crossing the 2,020 edge pauses alone. `Map::FUN_00a1e530` (the draw) only reads the state. BSR_FORMAT.md's
+  table has the row.
+
+### 3. What was built (OURS on those READ rules)
+
+`client/scripts/world/map_animation.gd`, `MapAnimation.Driver`, rewritten around three exact savings:
+
+- **Shared poses (`PoseGroup`).** Clips of one Animation that start in the same frame at the same
+  clock run as one group: one AnimationPlayer and one Skeleton3D (a copy of a member's, pooled per
+  clip) under World3D's new `MapAnimationPoses` node, and every member's skinned pieces bound to
+  that skeleton by absolute path, so a region hand-over (round 643) that moves a member keeps it
+  bound. Godot skins a piece from the skeleton-space pose (`pose_global * bind`) and the piece's
+  own transform, never the skeleton node's (READ, 4.2.2 `scene/3d/skeleton_3d.cpp`,
+  `mesh_instance_3d.cpp` `_resolve_skeleton_path`), so a member stays where it is placed.
+  - A member whose clock stops **leaves at once**: its own player is seeked to the group's clock
+    (its own clock) and its pieces bound back. The group runs until its last member stops.
+  - A start **never joins a running group.** A group already processing advances in the frame a
+    newly started clip does not, because Godot copies the process list before the frame's first
+    node (READ, `scene/main/scene_tree.cpp` `_process_group`, "Make a copy"). For the same reason a
+    group node released in a frame is pooled only at the next tick.
+  - One-shot clips (`LOOP_NONE`, the horses) and object.ifo flag bit 0 objects keep their own
+    player.
+- **Per-sector range bounds.** With `rho` the farthest origin from a sector's centre and
+  `rmin`/`rmax` its radii, every object is in range when `d + rho - rmin < 2020 - 1` and out when
+  `d - rho - rmax >= 2020 + 1` (the 1-unit guard band is OURS, so rounding cannot flip a decision).
+  A sector decided the same way as last frame is not visited; a sector wholly out of range whose
+  objects are all hidden and paused (`quiet`, as registered) is not even view-tested. The plane and
+  range tests are inlined, the same expressions as `sector_in_view` and `in_range`.
+- **A camera held still** (the same eye and planes, nothing added or dropped) re-tests nothing.
+
+Not done, and why:
+- **(b) pausing objects not drawn this frame.** The world's DirectionalLight3D casts shadows
+  (`World3D.tscn`, `shadow_enabled = true`) and the water reflection draws the scenery from a
+  second camera, so an object outside the camera frustum can still be seen moving; "not drawn"
+  cannot be proven from the frustum. Retail runs the clock of every in-range object of a sector in
+  view.
+- **(d) manual stepping.** No gain (§1: `manual` −0.03 against `halt` −0.26 alone).
+- **One Skin per object** (instead of per piece): 222 skins on 154 objects before sharing; on 23
+  poses it would save a handful of uploads. Left.
+- The update rate is untouched: every running clip still advances every frame by the frame's dt.
+
+`SRREVAMP_MAP_ANIM_NO_SHARE=1` keeps every clip on its own player (the A/B, and what the probe's
+cost modes need). The QA MAPANIM line gains `poses`, `groups`, `sectors`, `viewed`, `tested` and a
+`frame_ms` averaged over every frame since the last line; `MapAnimationProbe` gains `census` and
+`freeze_poses`. The synthetic tree the tests build moved to `map_animation_fixture.gd`, shared by
+the two suites.
+
+### 4. The zone change (Task 2)
+
+`_clear_region_grid` cleared `_placed_objects` and `_object_containers` but not `_map_animations`.
+Sectors are keyed by world position, and a zone change re-origins the world, so the new zone's
+objects joined the old zone's sector records (stale centre, stale view and range state, freed
+entries only pruned when a visited sector found them). Now `_clear_region_grid` calls
+`Driver.reset()` (the records and the pose nodes go), and `_release_region_objects` calls
+`drop_under(container)` after handing the survivors on, so what goes with the container leaves the
+driver the same frame instead of sitting, freed, in a sector the bounds no longer visit.
+
+### 5. Before and after (MEASURED)
+
+Interleaved per repetition — c306c51, this round, this round with `SRREVAMP_NO_MAP_ANIM=1`, this
+round with `SRREVAMP_MAP_ANIM_NO_SHARE=1` — at Jangan, then the same at the reeds (98/157 local
+900, 900, yaw 0), three repetitions. 1280×720, default radius, `--print-fps --disable-vsync`, mean of
+the last 40 once-a-second samples of 110 s runs, on the RX 5700 XT through VirtualGL, box shared
+with another lane. Base in `/opt/srrevamp-client-animperf-base` from `git archive c306c51`.
+
+| Site | Build | Run 1 | Run 2 | Run 3 | Mean ms/frame | Over NO_MAP_ANIM |
+|---|---|---|---|---|---|---|
+| Jangan spawn | c306c51 | 13.61 | 14.54 | 13.99 | **14.05** (71 fps) | +2.86 |
+| | round 647 | 11.72 | 11.65 | 12.00 | **11.79** (85 fps) | +0.60 |
+| | round 647, NO_SHARE | 13.00 | 13.32 | 13.87 | 13.40 | +2.21 |
+| | round 647, NO_MAP_ANIM | 11.33 | 11.11 | 11.13 | 11.19 | — |
+| Reeds 98/157 | c306c51 | 12.31 | 12.10 | 12.21 | **12.21** | +6.04 |
+| | round 647 | 11.11 | 11.13 | 11.10 | **11.11** | +4.94 |
+| | round 647, NO_SHARE | 11.90 | 11.88 | 12.23 | 12.00 | +5.83 |
+| | round 647, NO_MAP_ANIM | 6.11 | 6.16 | 6.23 | 6.17 | — |
+
+- **Jangan:** the animated objects' cost falls from +2.86 to **+0.60 ms** (79% of it). The driver
+  work accounts for about 0.65 ms (c306c51 against NO_SHARE) and the shared poses for about
+  1.6 ms (NO_SHARE against this round). QA MAPANIM: 154 clips running on **23 poses** (17 groups,
+  6 alone); the driver's tick **461–874 µs → 1–2 µs** with the camera held.
+- **Reeds:** +6.04 → +4.94 ms. 40 reeds on **1 pose**; driver 154–317 µs → 2 µs.
+- **Walking** (Jangan spawn, `SRREVAMP_QA_WALK=180`: about 30 s of walking north through the gate
+  into the next region, then held against the palace's indoor floor at local 1002, 801; two runs
+  each). The first 20 samples, while walking: c306c51 11.45 / 11.45 ms, this round **10.64 /
+  10.62 ms**. A moving camera view-tests 74–79 sectors a tick: the driver took 172–301 µs against
+  c306c51's 217–497 µs while walking. The poses as the walk went (this round): 154 running on 23 → 119 on 28 →
+  77 on 21 → 21 on 15 → 15 on 14. Objects leaving the range leave their groups, and the ones the
+  walk brought into range each started alone — in play, sharing holds for what started together
+  and fragments with the per-object pause, as retail's clocks do.
+
+**The picture is the same (MEASURED).** 640×360 fixed-step movies (`--write-movie`, 1/60 s a frame,
+400 frames, `SRREVAMP_QA_NOUI=1`) of c306c51 twice and this round once, at both sites: frames 100 to
+390, every 10th (30 frames), are **pixel-identical** to c306c51's below the top 12 rows
+(`compare -metric AE` = 0), and so are two c306c51 runs to each other. The top right 65×10 strip
+differs between the two c306c51 runs as well (93–158 px at the reeds), so it is not this round. At
+Jangan the whole frame is identical (AE 0 at frames 150, 250, 350, 399). The scene does move: the
+reeds' frames 150 and 399 differ in 204,926 pixels, Jangan's in 1,729, identically in both builds.
+
+**What is left at the reeds (MEASURED).** The same split on this round (share on, at frame 3,600,
+NO_MAP_ANIM drift +0.20):
+- `freeze_poses` (new: every pose player paused, skins bound): **+0.20** — nothing; posing and
+  re-skinning 40 reeds from one pose costs no measurable time now.
+- `stripped` (skins unbound, drawn unskinned): **−4.70**, and the viewport's measured GPU time falls
+  from 3.79 to 1.50 ms with the draw count unchanged (1,013).
+
+So the reeds' remaining +4.9 ms is Godot 4.2's GL Compatibility drawing of 40 skinned instances,
+even when their pose does not change: GPU time, not the pose. Each skinned instance draws from its
+own transform-feedback vertex buffer (`rasterizer_scene_gles3.cpp`,
+`mesh_instance_surface_get_vertex_arrays_and_format`, READ); that this is what costs is INFERRED.
+It cannot be cut exactly here: the members of a group draw identical skinned geometry, but Godot
+4.2 has no way to draw one skinned result at several transforms (a MultiMesh does not skin). It
+stays OPEN (TODO.md).
+
+### Tests
+
+- New `client/scripts/world/map_animation_share_test.gd`:
+  - **Exactness, frame by frame.** Eight copies of the synthetic tree driven by the new driver,
+    eight driven by round 645's rules (each on its own player) at the same places, over 46 frames
+    of a scripted run — all in view; a sector turned out of view (its two leave the pose); back
+    (they form their own); one copy past 2,020; back (it runs alone); one copy's region dropped;
+    everything out of view; back (pooled nodes reused). Each frame, for every pair: the same clock,
+    the same drawn state and every bone's global pose equal **to the bit** (`==`). The counts:
+    8 running on 1 pose; 6 on 1; 8 on 2; 8 on 3 with the edge-crosser on its own skeleton.
+  - Two mutations of the driver were caught by it before the commit: not binding a leaver back
+    (`S6 bone 1` differs at the first frame after the turn) and seeking it to 0 instead of the
+    group's clock.
+  - One-shot clips keep a player each; NO_SHARE gives one pose per clip; `reset()` frees the pose
+    nodes; `drop_under` drops the region's object and rebinds it to its own skeleton.
+  - **The bounds**: 400 eye positions around the 2,020 edge (some held two ticks), 48 copies scaled
+    0.5–40× in 8 sectors: every object's drawn and running state equals `in_range` (0 wrong). A held
+    camera re-tests nothing; quiet far sectors are not view-tested; all-in sectors as last frame
+    are view-tested but their objects are not.
+  - **World3D**: `_release_region_objects` takes the region's animated object out of the driver;
+    `_clear_region_grid` resets it; the new zone's object is the only one registered.
+- `map_animation_test.gd` (round 645) now builds from the fixture and reads the origin through
+  `entries()`; its checks are unchanged.
+- Box: `remote_godot.sh check` gives ALL LOAD; `tests` runs **167 suites, 0 failing**. The server is untouched, so the Go tests were not run.
+
+**NEGATIVE: the new suite against c306c51** (copied into the base client on the box):
+
+```
+FAIL r647: the driver shares poses (poses, groups, pose_parent, drop_under and reset exist)
+FAIL r647: a region streaming out takes its animated objects out of the driver (got 1 registered)
+FAIL r647: a zone change resets the driver (got 1 registered, 1 running)
+FAIL r647: the new zone's object is the only one registered, in a sector of its own (got 2)
+FAILURES: 4
+```
+
+(Its bounds check passes there: c306c51 tests every object, which is the reference.)
+
+### Open
+
+- **The reeds' skinned drawing**, +4.9 ms at 1280×720 with 40 reeds on one pose (above).
+- **Sharing fragments in play.** Groups form only among clips that start together; an object
+  crossing the range edge alone runs alone from then on (retail's per-object pause, READ). The
+  walk above ends with 15 running on 14 poses.
+- **A moving camera** still view-tests every in-range sector each tick (74–79 at Jangan, 172–301 µs).
+- **The per-sector view test can hide an object whose mesh reaches into view.** The review found
+  `Obj_oas_tarim_thorng01_01_7` at 95/147 local (700, 800) reporting visible false while in the
+  frustum. The per-sector rule is READ; the sphere standing in for the sector's footprint is OURS;
+  whether retail's rasterised footprint covers it is OPEN (TODO.md, and round 645's open items).
+- Round 645's other open items (the alpha fade, 2,020 for still scenery, TEXANI, cloth, rigid
+  pieces) are unchanged.
+
 ## Six-hundred-and-forty-sixth round, review follow-up: a walled caster's teleport landing is one move to a point the server named, and players who arrive during a zone change's load are drawn
 
 The review confirmed the client roster, the replay, the dedup and the READs (`0x9d1300`,
@@ -7542,6 +7759,11 @@ dev 8658370 with only the QA print patched in. They ran interleaved A, C, B, twi
 
 - **Jangan.** A costs about +1.4 ms against C, all in process time. Render time is equal or lower:
   559 fewer draws, because the animated objects beyond 2,020 are now hidden.
+  **Corrected in round 647:** that understates it. At the Jangan spawn (1002, 1020, yaw 0) at
+  1280×720 with `--print-fps --disable-vsync`, the rounds 641–646 integration review MEASURED
+  14.1–14.5 ms a frame against dev 8658370's 10.6–11.2 ms and 10.9–11.3 ms with
+  `SRREVAMP_NO_MAP_ANIM=1` (about +3.3 ms, 90 fps to 70); round 647 MEASURED +2.86 ms (14.05
+  against 11.19) and cut it to +0.60 ms. See round 647.
 - **Reeds.** A costs about +4.8 ms at 640×360 in those runs, nearly all process time. At 320×180
   in the split runs below it is about +2.9 ms.
 
@@ -7636,6 +7858,13 @@ skeleton, the skin and the player, 4 FAILs.
 
 - **The reeds' cost**, split in "Where the reeds' cost goes": about 1.6 ms is Godot's cost of drawing
   skinned instances. The 0.6 ms of pose updates could be shared between copies with equal clocks.
+  (**Round 647** shares them, exactly: the clips that start together at one clock run on one pose.
+  What is left at the reeds is the skinned drawing; see round 647.)
+- **The per-sector view test can hide an object whose mesh reaches into view** (added in round 647).
+  The rounds 641–646 integration review found `Obj_oas_tarim_thorng01_01_7` at 95/147 local
+  (700, 800) reporting visible false while in the frustum. The per-sector rule is retail's (READ);
+  the sphere standing in for the sector's footprint is OURS. Whether retail's rasterised footprint
+  (`Map::FUN_00a2b370`) covers that object is OPEN (TODO.md).
 - **The alpha fade** in and out, over 0.5 s.
 - **The 2,020 end for still scenery.** Retail applies it to every list-2 object. That belongs to the
   loading lane.

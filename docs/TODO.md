@@ -1555,15 +1555,30 @@ Still open, by the files each would add:
 - **2,020 for still scenery.** Retail's fade state applies to every list-2 object, not only the
   animated ones: still scenery also ends at `dist - radius < 2020` from the camera. That is a
   visibility change for the loading lane; the client applies it to animated objects only.
-- **The reeds' cost.** At 98/157, 57 running reeds cost about +2.9 ms at 320×180 (MEASURED,
-  WORLD_ISSUES "Where the reeds' cost goes"):
-  - driver 0.20 ms;
-  - mixers 0.53 ms;
-  - skeleton and skin-bone updates about 0.6 ms;
-  - Godot's cost of drawing the visible skinned instances about 1.6 ms, which is inherent.
-
-  Open: share one skeleton between copies whose clocks are equal. Retail's per-object pause means
-  the groups must split on every pause, and it would save about 0.6 ms.
+- **The cost (round 647).** Clips that start together at the same clock now share one pose, and
+  the driver's per-sector bounds and a held camera leave it almost nothing to do; the saving and the
+  split are in WORLD_ISSUES, round 647. What is left:
+  - **Drawing the skinned instances.** At the reeds (98/157 at 900, 900, 1280×720) the animated
+    objects still cost +4.94 ms over `SRREVAMP_NO_MAP_ANIM=1` (11.11 against 6.17 ms), with 40
+    reeds on one pose. Pausing every pose changes nothing (+0.20, the drift); drawing them unskinned
+    takes 4.70 ms off and the GPU time from 3.79 to 1.50 ms at the same 1,013 draws. So it is Godot
+    4.2's GL Compatibility cost of drawing skinned instances, pose or no pose (MEASURED; that the
+    per-instance transform-feedback buffers are why is INFERRED). Godot 4.2 cannot draw one skinned
+    result at several transforms, so no exact cut is known. At the Jangan spawn what is left is
+    +0.60 ms.
+  - **Shared poses fragment in play.** Retail pauses each object on its own
+    (`SWorld::FUN_00a38a50`, READ), so an object crossing the 2,020 edge alone leaves its group
+    for good, and a group never re-forms (a start never joins a running pose). A player walking
+    away from the spawn ends with 15 clips running on 14 poses (round 647's walk). Also a moving
+    camera still view-tests every in-range sector each tick (74–79 at Jangan, 172–301 µs).
+- **The per-sector view test can hide an object whose mesh reaches into view.** The sector's
+  320-unit cell is tested as a sphere against the frustum (OURS: retail rasterises the frustum onto
+  the sector grid, `Map::FUN_00a2b370`, READ), and an object in a sector out of view keeps its
+  drawn state but stops. The integration review of rounds 641-646 found
+  `Obj_oas_tarim_thorng01_01_7` at 95/147 local (700, 800) reporting visible false while in the
+  frustum (MEASURED there; not re-measured in round 647). The per-sector rule is retail's (READ);
+  the sphere standing in for the sector's footprint is OURS, and whether retail's rasterised
+  footprint would cover that object is OPEN.
 - **`cj_ferry_boat_old`.** Its `.bsk` is a root with no other bone, which `BskReader` refuses
   (1 placement).
 - **Rigid pieces of a skeletal object.** 20 animated models, such as `bagh_city_portal` and the
