@@ -55,6 +55,11 @@ const PLAN_HOSTILE_AT_CHARACTER := "hostile_at_character"
 ## UIIT_SKILL_USE_FAIL_WRONGTARGET. The server answers with the same strings.
 const NO_TARGET_TEXT := "The target is not selected."
 const INVALID_TARGET_TEXT := "Invalid target"
+## The server's marker for a cast retail ends with 0xB071 kind 2 and error 0
+## (round 636's review: SkillAction_Buff's sub-state 0 bit test). Retail's
+## client ends the cast and shows no text (FUN_00a56680 -> FUN_00a50a00); the
+## marker is OURS, and the chat does not log it.
+const SILENT_END_TEXT := "the skill action ended"
 
 ## A row's target-group bits (SkillDataReader.TARGET_BIT_*), from its reach.
 static func _groups(reach: Dictionary) -> int:

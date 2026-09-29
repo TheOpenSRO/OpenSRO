@@ -931,6 +931,10 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		// OpEntityLeft below, which takes the owner's buffs with it.
 		if !stillLive {
 			buffBooks.EndAll(left.CharacterID)
+			// A GM's /speed goes with the character (round 636's review, OURS):
+			// the next login starts at its own speed, so a demotion (a server
+			// restarted without the account in -gm-accounts) leaves nothing.
+			buffBooks.SetGMSpeedFactor(left.CharacterID, 1)
 		}
 		// Nor may it save where the stale session last stood, or tell the
 		// zone the character left: the live session's entity is still there,

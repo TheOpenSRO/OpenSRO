@@ -95,6 +95,18 @@ rm -f itemdata_* skilldata_* npcpos.txt teleport*.txt   # the extracted tables a
 # columns; the store adds skills.target_heal_hp and target_heal_mp): the same re-export and
 # re-import. Until then Heal is cast at the named player and heals nobody. Check:
 # `SELECT count(*) FROM skills WHERE target_heal_hp > 0;` answers 27 on a retail archive.
+# ROUND 636 (buffs that must not stack) adds thirteen columns, the recast rule's (the CSV is 77
+# columns; the store adds skills.action_overlap, ovl2, has_dttp, dttp0, dttp1, efr2, offensive,
+# msch1, hide, skc_end, basic_group, activity, dtt): the same re-export and re-import, then restart.
+# Until then every state byte loads 0 and Fire Protection stacks and the Grass Walks run together,
+# as before. Check: `SELECT count(*) FROM skills WHERE action_overlap <> 0;` answers 1835 on a
+# retail archive.
+# ROUND 636'S REVIEW (one trap at a time, one guard link too many) adds six more, FUN_0059dc80's and
+# the collector flag (the CSV is 83 columns; the store adds skills.lnks_group, lnks_max, efr3, qest,
+# trap, efr1): the same re-export and re-import. Until then a Fire Trap can be cast again while one
+# runs and a Warrior guard links any number of party members. Check:
+# `SELECT count(*) FROM skills WHERE efr3 AND lnks;` answers 32 on a retail archive (every one a
+# Target_Required 0 row: the Fire Traps and seven quest traps).
 # ROUND 632 (berserk potions, the Energy of life scroll) NEEDS THE ITEMS RE-EXPORT ON srrevamp-01:
 # re-run `export-refdata -mode items` with the NEW binary (step 1; items.csv grows to 72 columns --
 # column 70 CodeName, round 497, which an older CSV may also lack, and the new column 71

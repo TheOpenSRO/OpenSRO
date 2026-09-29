@@ -19,6 +19,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/gm"
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
@@ -43,16 +44,34 @@ const (
 	skExplosionA1 = 11265 // SKILL_EU_BARD_BATTLAA_EXPLOSION_A_01: group 726, TR 0, kind 0, att 8,368,106,130
 	skSmashA1     = 3     // SKILL_CH_SWORD_SMASH_A_01: group 174, TR 1, att 5,143,15,18 (groups: hostile only)
 	skDaggerSpdA1 = 9834  // SKILL_EU_ROG_DAGGERA_SPEED_A_01: group 628, kind 3, dura 15000, hst2 48
+	// Round 636 (each row's Action_Overlap low bytes, CSV column 64, also
+	// MEASURED; Grass Walk A above carries 6 too):
+	skGrassWalkC1 = 115  // SKILL_CH_LIGHTNING_GYEONGGONG_C_01: group 262, dura 557143, hste 55, overlap 6
+	skGrassWalkE1 = 8148 // SKILL_CH_LIGHTNING_GYEONGGONG_E_01: group 493, dura 829412, hste 93, overlap 6
+	skFireProtA1  = 133  // SKILL_CH_FIRE_GANGGI_A_01: group 280, cbuf, 'dura' -1875767296 (no duration here), overlap 3
+	skColdProtA1  = 93   // SKILL_CH_COLD_GANGGI_A_01: group 240, cbuf, overlap 2
 )
 
 func (buffSkillRef) GetSkill(_ context.Context, id int64) (*refdata.Skill, error) {
 	switch id {
 	case skGrassWalkA1:
 		return &refdata.Skill{ID: id, GroupID: 260, BasicLevel: 1, ActionKind: 3, DuraMs: 355462,
-			BuffParams: "hste:20", NoCombatParam: true, ZeroDamage: true}, nil
+			BuffParams: "hste:20", NoCombatParam: true, ZeroDamage: true, ActionOverlap: 6, Activity: 1}, nil
 	case skGrassWalkA2:
 		return &refdata.Skill{ID: id, GroupID: 260, BasicLevel: 2, ActionKind: 3, DuraMs: 370588,
-			BuffParams: "hste:23", NoCombatParam: true, ZeroDamage: true}, nil
+			BuffParams: "hste:23", NoCombatParam: true, ZeroDamage: true, ActionOverlap: 6, Activity: 1}, nil
+	case skGrassWalkC1:
+		return &refdata.Skill{ID: id, GroupID: 262, BasicLevel: 1, ActionKind: 3, DuraMs: 557143,
+			BuffParams: "hste:55", NoCombatParam: true, ZeroDamage: true, ActionOverlap: 6, Activity: 1}, nil
+	case skGrassWalkE1:
+		return &refdata.Skill{ID: id, GroupID: 493, BasicLevel: 1, ActionKind: 3, DuraMs: 829412,
+			BuffParams: "hste:93", NoCombatParam: true, ZeroDamage: true, ActionOverlap: 6, Activity: 1}, nil
+	case skFireProtA1:
+		return &refdata.Skill{ID: id, GroupID: 280, BasicLevel: 1, ActionKind: 3, DuraMs: -1875767296, Cbuf: true,
+			BuffParams: "defp:0,6,0", NoCombatParam: true, ZeroDamage: true, ActionOverlap: 3, Activity: 2}, nil
+	case skColdProtA1:
+		return &refdata.Skill{ID: id, GroupID: 240, BasicLevel: 1, ActionKind: 3, DuraMs: -1875767296, Cbuf: true,
+			BuffParams: "defp:2,0,0", NoCombatParam: true, ZeroDamage: true, ActionOverlap: 2, Activity: 2}, nil
 	case skGhostWalkB1:
 		return &refdata.Skill{ID: id, GroupID: 261, BasicLevel: 1, ActionKind: 0, TargetRequired: true,
 			TargetLand: true, Tele0: 500, Tele1: 100, NoCombatParam: true, ZeroDamage: true}, nil
@@ -108,7 +127,8 @@ func startBuffWorld(t *testing.T) *buffWorld {
 	eq := equipment.NewMemStore(inv)
 	eq.Equip(ctx, c.ID, equipment.SlotWeapon, 0)
 	skills := skill.NewMemStore()
-	for _, id := range []int64{skGrassWalkA1, skGrassWalkA2, skGhostWalkB1, skImbueA1, skNbufSelf, skExplosionA1, skSmashA1, skDaggerSpdA1} {
+	for _, id := range []int64{skGrassWalkA1, skGrassWalkA2, skGhostWalkB1, skImbueA1, skNbufSelf, skExplosionA1, skSmashA1, skDaggerSpdA1,
+		skGrassWalkC1, skGrassWalkE1, skFireProtA1, skColdProtA1} {
 		if err := skills.Learn(ctx, c.ID, id); err != nil {
 			t.Fatal(err)
 		}
@@ -127,6 +147,8 @@ func startBuffWorld(t *testing.T) *buffWorld {
 		WorldHandler(chars, eq, hub),
 		UseSkillHandler(chars, eq, items, skills, hub, monsters, quest.NewMemStore(), inv, buffSkillRef{}, nil, mana.NewTracker(), nil),
 		BuffHandler(chars, hub),
+		// Round 636: the GM console, for /speed (alice is a GM here).
+		GMCommandHandler(chars, gm.ParseAccounts("alice"), nil, hub, nil),
 	)
 	// The world's disconnect handler is wired, as cmd/server wires it.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -142,7 +164,7 @@ func startBuffWorld(t *testing.T) *buffWorld {
 	conn := dialTestServer(t, addr)
 	t.Cleanup(func() { conn.Close() })
 	w := &buffWorld{addr: addr, skills: skills, aria: c.ID, hub: hub, monster: m.ID, conn: conn, r: bufio.NewReader(conn)}
-	t.Cleanup(func() { buffBooks.EndAll(c.ID); motions.clear(c.ID) })
+	t.Cleanup(func() { buffBooks.EndAll(c.ID); buffBooks.SetGMSpeedFactor(c.ID, 1); motions.clear(c.ID) })
 	w.write(t, OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
 	if lr, err := DecodeLoginResult(w.expect(t, OpLoginResult).Data); err != nil || !lr.OK {
 		t.Fatalf("login: %v %+v", err, lr)
@@ -799,4 +821,117 @@ func TestStaleSessionDisconnectKeepsTheLiveKeepUpAndMotion(t *testing.T) {
 	if st := motions.state(w.aria, time.Now()); st != MotionStand {
 		t.Fatalf("the live session's disconnect left motion state %d", st)
 	}
+}
+
+// Round 636, the user's report on v0.1.460: Fire Protection cast twice
+// stacked. Through the real handler the second cast is refused with 0x300c's
+// text before it costs anything, and no second record or OpBuffStart comes;
+// Cold Protection (another state byte) still starts beside it.
+func TestFireProtectionTwiceIsRefused(t *testing.T) {
+	w := startBuffWorld(t)
+	if ar := w.cast(t, &UseSkillRequest{SkillID: skFireProtA1, TargetType: TargetNone, HasTargetType: true}); ar.Error != "" {
+		t.Fatalf("Fire Protection refused: %q", ar.Error)
+	}
+	w.expect(t, OpBuffStart)
+	if ar := w.cast(t, &UseSkillRequest{SkillID: skFireProtA1, TargetType: TargetNone, HasTargetType: true}); ar.Error != overlapRefusal {
+		t.Fatalf("the second Fire Protection: %q, want the overlap refusal", ar.Error)
+	}
+	w.expectNone(t, OpBuffStart, 150*time.Millisecond)
+	if n := len(buffBooks.Active(w.aria)); n != 1 {
+		t.Fatalf("%d records, want 1", n)
+	}
+	if ar := w.cast(t, &UseSkillRequest{SkillID: skColdProtA1, TargetType: TargetNone, HasTargetType: true}); ar.Error != "" {
+		t.Fatalf("Cold Protection beside it refused: %q", ar.Error)
+	}
+	w.expect(t, OpBuffStart)
+}
+
+// The user's second report: Grass Walk - Flow (A), - Speed (C) and E ran at
+// once. Now the second and third are refused and the first keeps running,
+// its icon, aura and speed untouched: no OpBuffEnd, no second OpBuffStart.
+// A recast of the same variant still replaces (OpBuffEnd then OpBuffStart).
+func TestGrassWalkVariantsOneAtATime(t *testing.T) {
+	w := startBuffWorld(t)
+	w.cast(t, &UseSkillRequest{SkillID: skGrassWalkA1, TargetType: TargetNone, HasTargetType: true})
+	first, _ := DecodeBuffStart(w.expect(t, OpBuffStart).Data)
+	for _, id := range []int64{skGrassWalkC1, skGrassWalkE1} {
+		if ar := w.cast(t, &UseSkillRequest{SkillID: id, TargetType: TargetNone, HasTargetType: true}); ar.Error != overlapRefusal {
+			t.Fatalf("skill %d over Grass Walk A: %q, want the overlap refusal", id, ar.Error)
+		}
+	}
+	w.expectNone(t, OpBuffEnd, 150*time.Millisecond)
+	w.expectNone(t, OpBuffStart, 50*time.Millisecond)
+	act := buffBooks.Active(w.aria)
+	if len(act) != 1 || act[0].Token != first.Token || buffBooks.RunSpeed(w.aria) != 60 {
+		t.Fatalf("%d records, speed %d; want Grass Walk A alone at 60", len(act), buffBooks.RunSpeed(w.aria))
+	}
+	if ar := w.cast(t, &UseSkillRequest{SkillID: skGrassWalkA2, TargetType: TargetNone, HasTargetType: true}); ar.Error != "" {
+		t.Fatalf("A lv2 over A lv1: %q", ar.Error)
+	}
+	end, _ := DecodeBuffEnd(w.expect(t, OpBuffEnd).Data)
+	second, _ := DecodeBuffStart(w.expect(t, OpBuffStart).Data)
+	if len(end.Tokens) != 1 || end.Tokens[0] != first.Token || second.RunSpeed != 62 || end.RunSpeed != 62 {
+		t.Fatalf("the replacement: end %+v start %+v; want the first's token ended and 62 on both", end, second)
+	}
+}
+
+// /speed (OURS, round 636): the GM's run speed through the buff path -- an
+// OpBuffEnd with no tokens and the new speed -- on top of a buff, and off
+// again.
+func TestGMSpeedCommand(t *testing.T) {
+	w := startBuffWorld(t)
+	gmLine := func(line string) *GMCommandResult {
+		t.Helper()
+		w.write(t, OpGMCommand, (&GMCommandRequest{Name: "Aria", Line: line}).Encode())
+		res, err := DecodeGMCommandResult(w.expect(t, OpGMCommandResult).Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	if res := gmLine("/speed 3"); res.Refused || res.Text != "run speed 150 (x3)" {
+		t.Fatalf("/speed 3: %+v", res)
+	}
+	end, err := DecodeBuffEnd(w.expect(t, OpBuffEnd).Data)
+	if err != nil || end.OwnerID != w.aria || len(end.Tokens) != 0 || end.RunSpeed != 150 {
+		t.Fatalf("the speed packet %+v %v, want no tokens and 150", end, err)
+	}
+	w.cast(t, &UseSkillRequest{SkillID: skGrassWalkA1, TargetType: TargetNone, HasTargetType: true})
+	if start, _ := DecodeBuffStart(w.expect(t, OpBuffStart).Data); start.RunSpeed != 180 {
+		t.Fatalf("Grass Walk under /speed 3: run speed %d, want 180", start.RunSpeed)
+	}
+	if res := gmLine("/speed"); res.Text != "run speed 180 (x3)" {
+		t.Fatalf("/speed: %+v", res)
+	}
+	if res := gmLine("/speed off"); res.Refused || res.Text != "speed multiplier off: run speed 60" {
+		t.Fatalf("/speed off: %+v", res)
+	}
+	if end, _ := DecodeBuffEnd(w.expect(t, OpBuffEnd).Data); end.RunSpeed != 60 || len(end.Tokens) != 0 {
+		t.Fatalf("off: %+v", end)
+	}
+	if res := gmLine("/speed 0"); !res.Refused {
+		t.Fatalf("/speed 0 accepted: %+v", res)
+	}
+}
+
+// /speed is pruned when the character leaves the world (round 636's
+// review): a logout leaves no multiplier behind for the next login.
+func TestGMSpeedPrunedOnLogout(t *testing.T) {
+	w := startBuffWorld(t)
+	w.write(t, OpGMCommand, (&GMCommandRequest{Name: "Aria", Line: "/speed 4"}).Encode())
+	if res, err := DecodeGMCommandResult(w.expect(t, OpGMCommandResult).Data); err != nil || res.Refused {
+		t.Fatalf("/speed 4: %+v %v", res, err)
+	}
+	if _, ok := buffBooks.GMSpeedFactor(w.aria); !ok {
+		t.Fatal("no multiplier after /speed 4")
+	}
+	w.conn.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := buffBooks.GMSpeedFactor(w.aria); !ok {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the multiplier outlived the logout")
 }
