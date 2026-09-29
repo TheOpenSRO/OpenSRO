@@ -421,8 +421,53 @@ func _test_decode_seated() -> void:
 	var cut := zone.slice(0, zone.size() - 3)
 	_check(WorldNet.decode_change_zone_result(cut).error != "", "a seated tail cut short is a decode error")
 
+## The headings tail (round 637's review follow-up, "headings in the arrival
+## lists"): after the Seated list -- always written when it follows, a zero
+## count here -- a u16 count equal to the list's and a u16 wire angle per other
+## (server/internal/session/world.go's encodeHeadings), then, on an enter-world
+## result, this player's own. Wire angle 16384 is heading pi (the angle plus
+## pi/2); 0 is pi/2.
+func _u16s(values: Array) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(2 * values.size())
+	for i in range(values.size()):
+		out.encode_u16(2 * i, int(values[i]))
+	return out
+
+func _test_decode_headings() -> void:
+	var others := [{"id": 42, "name": "Bram", "x": 4.0, "y": 5.0, "z": 6.0, "gender": CharacterNet.GENDER_CHINA_MAN}]
+	var enter := _build_enter_world_result(true, "", "jangan", 1.0, 2.0, 3.0, CharacterNet.GENDER_CHINA_MAN, others, 10, 20)
+	enter.append_array(_frame_bytes("97/168"))
+	enter.append(0)
+	enter.append_array(_seated_tail([]))
+	enter.append_array(_u16s([1, 16384, 0]))
+	var r := WorldNet.decode_enter_world_result(enter)
+	_check(r.error == "" and r.others.size() == 1, "an enter-world result with a headings tail decodes (error %s)" % r.error)
+	var h = r.others[0].get("heading") if r.others.size() == 1 else null
+	_check(h != null and absf(float(h) - PI) < 1e-3, "Bram, standing there, faces heading pi (got %s)" % str(h))
+	var own = r.get("heading")
+	_check(own != null and absf(float(own) - PI / 2.0) < 1e-3, "and this player re-enters facing pi/2 (got %s)" % str(own))
+	var zone := _build_change_zone_result(true, "", "jangan", 0.0, 0.0, 0.0, others)
+	zone.append_array(_frame_bytes("97/168"))
+	zone.append_array(_seated_tail([42]))
+	zone.append_array(_u16s([1, 0]))
+	var z := WorldNet.decode_change_zone_result(zone)
+	var zh = z.others[0].get("heading") if z.others.size() == 1 else null
+	_check(z.error == "" and z.seated == [42] and zh != null and absf(float(zh) - PI / 2.0) < 1e-3,
+		"a zone-change result's tail seats Bram and faces him pi/2 (seated %s, heading %s, error %s)" % [str(z.seated), str(zh), z.error])
+	var mismatched := zone.slice(0, zone.size() - 4)
+	mismatched.append_array(_u16s([2, 0]))
+	_check(WorldNet.decode_change_zone_result(mismatched).error != "", "a headings count that does not match the list is a decode error")
+	# An older server's payload (no tail) leaves the heading unknown.
+	var old := _build_change_zone_result(true, "", "jangan", 0.0, 0.0, 0.0, others)
+	old.append_array(_frame_bytes("97/168"))
+	var o := WorldNet.decode_change_zone_result(old)
+	var oh = o.others[0].get("heading") if o.others.size() == 1 else 0.0
+	_check(o.error == "" and oh != null and is_nan(float(oh)), "no tail: the heading stays unknown (NAN)")
+
 func _init() -> void:
 	_test_decode_seated()
+	_test_decode_headings()
 	_test_motion()
 	_test_encode_enter_world()
 	_test_encode_move()

@@ -295,6 +295,9 @@ In order. Each is checked off here when it ships in a release, with its round in
       `npcpos` by region and position, and turn each NPC by the real angle -- through the same
       engine-to-Godot conversion as map objects (`NavGraph.godot_yaw`), after confirming the
       character-facing convention (the spawn packet's angle -> the body's front) in the client.
+      Round 637 read that conversion: the heading is the wire angle plus pi/2 (`FUN_009c40b0`), and
+      heading `h` faces `(sin h, 0, -cos h)` region-local, which is `rotation.y = h` on a +Z-front
+      node (`RemoteFacing`). Whether `wInitialDir` goes through the same `+pi/2` is not read.
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
       material's diffuse and the ambient by its ambient (round 136's stated approximation).
 - [x] ~~Real spawn points for every roster species~~ -- **done, v0.1.403 (round 253)**: `export-refdata
@@ -965,6 +968,45 @@ whose flip conditions these items feed).
       snap to the ground, 104.07 above Donwhang's drawn landing and 86.23 to 246.32 below the
       others' under the one frame, until the mover's own client lifts or drops it and sends an
       `OpMove`. Snapping another player's body the way a monster's is snapped would close it.
+
+### Other bodies' facing (round 637 and its review follow-up) — **built: every body, this player's too, turns to face where it goes at 3 pi rad/s, and an arrival faces the way it last walked; these are left**
+
+READ and measured in `docs/WORLD_ISSUES.md`'s 637th round; the rule is `RemoteFacing`.
+`SRREVAMP_QA_FACING_LOG=1` plus `client/tools/facing_measure.py` is the measurement.
+
+- [x] ~~The local player still snaps its own facing~~ -- **done in round 637's review follow-up**:
+      it turns at 3 pi rad/s (READ: the echoed `0xB021` -> `FUN_008a5750` -> `FUN_009e0550`), with
+      `FUN_009eb2a0`'s snap exception and its 5-unit idle filter (`RemoteFacing.click_rule`).
+- [x] ~~A player coming into view faces heading 0~~ -- **done in the review follow-up for
+      `OpEntityEntered`**. The server keeps a heading per character (`world.Entity.Heading`, from
+      each walk) and carries it through a zone change. The arrival snaps to it (`FUN_009d17e0` ->
+      `FUN_009c4260`). Left:
+  - [x] ~~The lists carry no heading~~ -- **done ("headings in the arrival lists")**: a tail
+        after `Seated`, with `Seated` always written.
+  - [x] ~~A fresh world entry faces heading 0~~ -- **done under `-persist-position`**: the heading
+        is saved with the position (`character.HeadingStore`, OURS: `_CHAR` has no such column)
+        and restored with it. With the flag off, an entry still faces 0.
+- [ ] **The retail re-aim guard is not applied.** `0xB021` aims only when the order is in effect
+      (mover `+0xac`, `obj+0x714`) or the destination is more than 5 units (squared 25.0) from the
+      mover's current POSITION (`+0x54/+0x58`). srrevamp streams positions about 2.5 units apart
+      and has no stop message, so the guard would only drop the first sample of each walk after a
+      spawn or placement. Revisit if the move packet becomes a destination (`0x7021`/`0xB021`).
+- [ ] **The cast start's and a standing monster's turns toward a target are OURS snaps.** They
+      leave a turn in progress running, as the skill action reader's bare `FUN_009c4260` does
+      (`FUN_00a54be0`, READ). Two things are INFERRED: that they are that path, and the angle (ours
+      points at the target; retail's comes in the message). The monster spawn heading is a snap
+      that ends the turn (a new object, READ). A monster's stop snaps to its turn's target and ends
+      it: `FUN_009e00f0`'s snap to the server's angle, with the turn's target standing in for the
+      angle (INFERRED).
+- [ ] **The relocation rule is OURS.** An `OpMove` is flagged relocated when:
+      - the sender knows it is one (a gap recovery, a region-local placement); or
+      - its displacement exceeds the walk since the last send by `RELOCATE_MARGIN` (1.0).
+
+      The server keeps the heading on a relocated move and relays the flag, and the other clients
+      place the body without turning it.
+- [ ] **A monster the list moves mid-leg keeps its leg's facing.** Seen once at world entry: 7.4
+      degrees off for 0.6 s. The client's facing changes only on a message, so this may be right;
+      not established.
 
 ### The buff bar — **built (round 618); these are left**
 `HudBuffBoard` is retail's `CIFMagicStateBoard`. It has the icons, the draining time bar, the end

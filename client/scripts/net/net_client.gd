@@ -409,8 +409,8 @@ func enter_world(char_name: String) -> void:
 	own_character_id = -1
 	_send(WorldNet.OP_ENTER_WORLD, WorldNet.encode_enter_world(char_name))
 
-func move_to(x: float, y: float, z: float) -> void:
-	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z))
+func move_to(x: float, y: float, z: float, relocated: bool = false) -> void:
+	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z, relocated))
 
 ## Asks to sit down or stand up (WorldNet.OP_MOTION_REQUEST [4], the N key).
 func request_motion(value: int) -> void:

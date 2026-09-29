@@ -73,6 +73,10 @@ class EntitySnapshot:
 	## slot -> item id, for every slot with something in it.
 	var equipped: Dictionary = {}
 	var gender: String
+	## The client heading the character faces (RemoteFacing's frame), from
+	## OpEntityEntered's trailing wire angle (round 637's review follow-up);
+	## NAN from a list or an older server, which send none.
+	var heading: float = NAN
 
 	func item_in(slot: int) -> int:
 		return int(equipped.get(slot, 0))
@@ -87,12 +91,18 @@ static func encode_enter_world(character_name: String) -> PackedByteArray:
 	return out
 
 ## Encodes an OpMove request: three float32 fields, no length prefix.
-static func encode_move(x: float, y: float, z: float) -> PackedByteArray:
+## `relocated` (round 637's review follow-up) adds a trailing flags byte, bit
+## 0: the position is one the player was put at, not walked to
+## (World3D._position_relocated). Sent only when set; an older server reads
+## the three floats and ignores it.
+static func encode_move(x: float, y: float, z: float, relocated: bool = false) -> PackedByteArray:
 	var out := PackedByteArray()
-	out.resize(12)
+	out.resize(13 if relocated else 12)
 	out.encode_float(0, x)
 	out.encode_float(4, y)
 	out.encode_float(8, z)
+	if relocated:
+		out[12] = 1
 	return out
 
 ## Result of decode_enter_world_result(): either an error, or the assigned
@@ -127,6 +137,10 @@ class EnterWorldResult:
 	## The ids among `others` who sit or are sitting down (round 607), from the
 	## tail after Restored; empty when nobody sits or from an older server.
 	var seated: Array[int] = []
+	## This player's own heading, restored with its position (round 637's
+	## review follow-up; the last field of the headings tail); NAN from a
+	## server that sends none.
+	var heading: float = NAN
 	var error: String # decode error, distinct from a well-formed "not ok" response
 
 ## Parses one EntitySnapshot from data starting at offset, returning it
@@ -266,6 +280,14 @@ static func decode_enter_world_result(data: PackedByteArray) -> EnterWorldResult
 		var seated := _decode_seated(data, after_frame + 1)
 		result.seated = seated[0]
 		result.error = seated[1]
+		# The headings tail (round 637's review follow-up), then this
+		# player's own wire angle.
+		if result.error == "":
+			var heads := _decode_headings(data, int(seated[2]), result.others)
+			result.error = heads[0]
+			var own: int = heads[1]
+			if result.error == "" and own + 2 <= data.size():
+				result.heading = RemoteFacing.from_wire_angle(data.decode_u16(own))
 	return result
 
 ## Reads the Seated tail of an OpEnterWorldResult or OpChangeZoneResult (round
@@ -274,17 +296,37 @@ static func decode_enter_world_result(data: PackedByteArray) -> EnterWorldResult
 static func _decode_seated(data: PackedByteArray, offset: int) -> Array:
 	var ids: Array[int] = []
 	if offset >= data.size():
-		return [ids, ""]
+		return [ids, "", offset]
 	if offset + 2 > data.size():
-		return [ids, "truncated seated count"]
+		return [ids, "truncated seated count", offset]
 	var n := data.decode_u16(offset)
 	offset += 2
 	for i in range(n):
 		if offset + 8 > data.size():
-			return [ids, "truncated seated %d" % i]
+			return [ids, "truncated seated %d" % i, offset]
 		ids.append(data.decode_s64(offset))
 		offset += 8
-	return [ids, ""]
+	return [ids, "", offset]
+
+## Reads the headings tail after the Seated list of an OpEnterWorldResult or
+## OpChangeZoneResult (round 637's review follow-up; the server's
+## decodeHeadings): a u16 count equal to the list's length and one u16 wire
+## angle per other, set as each snapshot's heading (RemoteFacing.
+## from_wire_angle). Nothing there is an older server. Returns [error, next].
+static func _decode_headings(data: PackedByteArray, offset: int, others: Array) -> Array:
+	if offset >= data.size():
+		return ["", offset]
+	if offset + 2 > data.size():
+		return ["truncated heading count", offset]
+	var n := data.decode_u16(offset)
+	offset += 2
+	if n != others.size():
+		return ["%d headings for %d others" % [n, others.size()], offset]
+	if offset + 2 * n > data.size():
+		return ["truncated headings", offset]
+	for i in range(n):
+		(others[i] as EntitySnapshot).heading = RemoteFacing.from_wire_angle(data.decode_u16(offset + 2 * i))
+	return ["", offset + 2 * n]
 
 ## Reads the FrameRegion that trails an OpEnterWorldResult or an
 ## OpChangeZoneResult (round 570; server/internal/session/world.go's
@@ -308,10 +350,18 @@ static func _decode_frame(data: PackedByteArray, offset: int) -> Array:
 		return ["", "truncated frame", offset]
 	return [data.slice(offset, offset + frame_len).get_string_from_utf8(), "", offset + frame_len]
 
-## Decodes an OpEntityEntered broadcast payload (a single EntitySnapshot).
+## Decodes an OpEntityEntered broadcast payload (a single EntitySnapshot),
+## and the heading after it when the server sends one (round 637's review
+## follow-up: server EntitySnapshot.EncodeEntered): retail's u16 wire angle,
+## turned into the client's heading as NetProcessInNavAndSkill::FUN_008a5640
+## and FUN_009c40b0 turn it (RemoteFacing.from_wire_angle).
 static func decode_entity_entered(data: PackedByteArray) -> EntitySnapshot:
 	var decoded := _decode_entity_snapshot(data, 0)
-	return decoded[0]
+	var snap: EntitySnapshot = decoded[0]
+	var end: int = decoded[1]
+	if snap != null and end >= 0 and end + 2 <= data.size():
+		snap.heading = RemoteFacing.from_wire_angle(data.decode_u16(end))
+	return snap
 
 ## Result of decode_entity_moved().
 class EntityMoved:
@@ -319,6 +369,10 @@ class EntityMoved:
 	var x: float
 	var y: float
 	var z: float
+	## The mover was put here, not walked here (server EntityMoved.Relocated,
+	## a trailing flags byte; round 637's review follow-up): the body is placed
+	## and not turned. False from an older server.
+	var relocated: bool = false
 
 static func decode_entity_moved(data: PackedByteArray) -> EntityMoved:
 	if data.size() < 20:
@@ -328,6 +382,7 @@ static func decode_entity_moved(data: PackedByteArray) -> EntityMoved:
 	m.x = data.decode_float(8)
 	m.y = data.decode_float(12)
 	m.z = data.decode_float(16)
+	m.relocated = data.size() > 20 and (data[20] & 1) != 0
 	return m
 
 ## One OP_STATE_CHANGE broadcast: whose state, which kind, what value.
@@ -465,6 +520,8 @@ static func decode_change_zone_result(data: PackedByteArray) -> ChangeZoneResult
 		var seated := _decode_seated(data, frame[2])
 		result.seated = seated[0]
 		result.error = seated[1]
+		if result.error == "":
+			result.error = _decode_headings(data, int(seated[2]), result.others)[0]
 	return result
 
 ## Encodes an OpRevive request: nothing. The server knows who asks from the

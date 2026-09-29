@@ -53,6 +53,10 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS pos_z DOUBLE PRECISION NOT NULL 
 -- (charData+0xac) less its 13 equipment slots. 0 is "none stored": the
 -- server's -inventory-size default applies (InventorySizeStore).
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS inventory_size INTEGER NOT NULL DEFAULT 0;
+-- The way the character last faced (round 637's review follow-up,
+-- HeadingStore): the client's heading in radians, saved with the position.
+-- OURS: _CHAR declares no such column.
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS heading DOUBLE PRECISION NOT NULL DEFAULT 0;
 CREATE UNIQUE INDEX IF NOT EXISTS characters_name_lower ON characters (LOWER(name));
 CREATE INDEX IF NOT EXISTS characters_account_id ON characters(account_id);
 `

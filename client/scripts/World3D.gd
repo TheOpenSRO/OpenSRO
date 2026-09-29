@@ -979,6 +979,17 @@ var _mob_height_retry_usec := 0
 var _mob_height_cursor := 0
 var _last_sent_pos := Vector3.ZERO
 var _time_since_send := 0.0
+## Round 637's review follow-up: how far (x, z) the player has walked since
+## the last OpMove -- the physics step's own movement, not a placement -- and
+## whether the next OpMove is known to be a relocation. _position_relocated
+## flags a move whose displacement the walk cannot account for, so no other
+## client turns its body toward a teleport, a recovery or a placement.
+var _walked_since_send := 0.0
+var _relocated_pending := false
+## OURS: the slack, in world units, a walk's displacement may exceed the
+## distance walked by (the step-up assist nudges the body a little) before
+## the move counts as a relocation.
+const RELOCATE_MARGIN := 1.0
 
 var _player_skeleton: Skeleton3D
 var _player_gender := DEFAULT_GENDER
@@ -1306,6 +1317,12 @@ func _ready() -> void:
 		zone_label.text = "Zone: %s" % result.zone
 		player.position = Vector3(result.x, result.y, result.z)
 		_last_sent_pos = player.position
+		_walked_since_send = 0.0
+		# Facing the way this character left (round 637's review follow-up:
+		# the heading restored with the position, OURS), when the server sends
+		# one.
+		if not is_nan(result.heading):
+			player.rotation.y = RemoteFacing.yaw_of(result.heading, 0.0)
 		_spawn_result_others(result.others, result.seated)
 
 	NetClient.entity_entered.connect(_on_entity_entered)
@@ -4968,6 +4985,9 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	var teleport_arrival := _teleport_arrival_pending
 	_teleport_arrival_pending = false
 	if result != null and result.ok:
+		# A new object in the new zone: no movement order (round 637's review
+		# follow-up, _player_move_order).
+		_player_move_order = false
 		# The server stands a character that changes zone (round 607).
 		_sit.reset()
 		# Retail's zone reset (FUN_00787860) runs FUN_007b5300: a running
@@ -5016,6 +5036,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# FRAME region's middle, off it.
 	player.position = Vector3(result.x, result.y, result.z)
 	_last_sent_pos = player.position
+	_walked_since_send = 0.0
 	# The monsters of the old zone are left behind, and so is any attack
 	# still walking toward one of them -- with the walk, whose target is a
 	# spot in the old zone's coordinates.
@@ -8139,6 +8160,10 @@ func _on_skill_cast(sc: SkillNet.SkillCast) -> void:
 		if target != null and target != body:
 			var d := Vector2(target.global_position.x - body.global_position.x, target.global_position.z - body.global_position.z)
 			if not d.is_zero_approx() and sc.caster_kind == SkillNet.OWNER_CHARACTER:
+				# A snap that leaves any turn in progress running, as the skill
+				# action reader's bare FUN_009c4260 does (FUN_00a54be0, round
+				# 637's review follow-up). OURS: the angle is toward the target;
+				# retail's comes in the message.
 				body.rotation.y = atan2(d.x, d.y)
 		var clip := 0.0
 		if sc.caster_kind == SkillNet.OWNER_CHARACTER:
@@ -8568,8 +8593,9 @@ func _flush_position() -> void:
 	# it sits without one.
 	if _sit.sitting or _motion_locked():
 		return
-	NetClient.move_to(player.position.x, player.position.y, player.position.z)
+	NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
 	_last_sent_pos = player.position
+	_walked_since_send = 0.0
 	_time_since_send = 0.0
 
 ## Sends an attack request: a plain swing when skill_id is 0, else the cast --
@@ -9515,6 +9541,10 @@ func _update_blob_shadow() -> void:
 ##                          server-style leg (OpMonsterMoved, built and decoded
 ##                          here) from where it stands; with --server the list
 ##                          is asked for at half the leg (_qa_mob_move)
+##   SRREVAMP_QA_FACING_LOG=1  (round 637) every 50 ms, each other player's
+##                          and each walking monster's drawn position and the
+##                          way its model faces (_qa_facing_report), for
+##                          client/tools/facing_measure.py
 ##   SRREVAMP_QA_MOB_LOG=1  print each monster leg, its progress every 30
 ##                          frames, its arrival, each height resolve's navmesh
 ##                          and terrain-ray answers side by side (round 557),
@@ -10810,10 +10840,11 @@ func _qa_attack_nearest() -> void:
 		spot.y = _terrain_height_at(spot)
 		player.global_position = spot
 		player.velocity = Vector3.ZERO
-		NetClient.move_to(player.position.x, player.position.y, player.position.z)
+		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
 		# Recorded as sent, so _attack_monster's _flush_position does not send
 		# the same OpMove a second time.
 		_last_sent_pos = player.position
+		_walked_since_send = 0.0
 		_time_since_send = 0.0
 		nearest = target.global_position.distance_to(player.global_position)
 		print("QA ATTACK: moved next to monster %d at %.1f,%.1f,%.1f" % [nearest_id, spot.x, spot.y, spot.z])
@@ -12201,7 +12232,9 @@ func _physics_step(delta: float) -> void:
 			var dir := to_target.normalized()
 			player.velocity.x = dir.x * _move_speed
 			player.velocity.z = dir.z * _move_speed
-			player.rotation.y = atan2(dir.x, dir.z)
+			# Turned toward the walk at the client's rate (round 637's review
+			# follow-up), not snapped: _aim_local_player, _step_local_turn.
+			_aim_local_player(dir)
 	elif _qa_walk != "" and not _player_dead:
 		# SRREVAMP_QA_WALK: walk on a fixed world heading (its own path; no
 		# key moves the character since round 608), so a render shows the
@@ -12209,10 +12242,13 @@ func _physics_step(delta: float) -> void:
 		var ang := deg_to_rad(float(_qa_walk))
 		player.velocity.x = sin(ang) * _move_speed
 		player.velocity.z = cos(ang) * _move_speed
+		# QA only: faces the fixed heading at once, as before.
 		player.rotation.y = ang
+		_player_turn_target = NAN
 	else:
 		player.velocity.x = 0.0
 		player.velocity.z = 0.0
+	_step_local_turn(delta)
 
 	var is_moving := _has_move_target or (_qa_walk != "" and not _player_dead)
 	if is_moving and (_sit.sitting or (_player_sit_clip != null and _player_one_shot == _player_sit_clip)):
@@ -12227,13 +12263,16 @@ func _physics_step(delta: float) -> void:
 		# A teleport arrival still waiting for its region (round 576): held,
 		# neither walking nor falling, until _step_teleport_landing lands it.
 		_step_teleport_landing()
-	elif not _move_on_nav_graph(delta):
-		if not player.is_on_floor():
-			player.velocity.y -= GRAVITY * delta
-		else:
-			player.velocity.y = 0.0
-		_try_step_up(delta)
-		player.move_and_slide()
+	else:
+		var walk_from := player.position
+		if not _move_on_nav_graph(delta):
+			if not player.is_on_floor():
+				player.velocity.y -= GRAVITY * delta
+			else:
+				player.velocity.y = 0.0
+			_try_step_up(delta)
+			player.move_and_slide()
+		_walked_since_send += Vector2(player.position.x - walk_from.x, player.position.z - walk_from.z).length()
 
 	# CharacterBody3D.is_on_floor() was observed real, unreliable here (stays
 	# false indefinitely for a character resting motionless since spawn, a
@@ -12256,6 +12295,9 @@ func _physics_step(delta: float) -> void:
 		player.velocity = Vector3.ZERO
 		_has_move_target = false
 		_pending_attack = {}
+		# Put back, not walked back (round 637's review follow-up): others
+		# place the body there without turning it.
+		_relocated_pending = true
 
 	_recover_if_below_terrain()
 
@@ -12272,8 +12314,9 @@ func _physics_step(delta: float) -> void:
 	# do either. A real move clears the sit above (_leave_sit_by_moving) first.
 	if _time_since_send >= MIN_SEND_INTERVAL and player.position.distance_to(_last_sent_pos) >= MIN_SEND_DISTANCE \
 			and not _sit.sitting and not _motion_locked():
-		NetClient.move_to(player.position.x, player.position.y, player.position.z)
+		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
 		_last_sent_pos = player.position
+		_walked_since_send = 0.0
 		_time_since_send = 0.0
 
 	# Smooths every other real entity toward its latest known position
@@ -12294,6 +12337,9 @@ func _physics_step(delta: float) -> void:
 		# two on the last inch of the lerp.
 		_set_other_gait(character_id, body.position.distance_to(target) > OTHER_GAIT_THRESHOLD)
 		body.position = body.position.lerp(target, minf(OTHER_BODY_INTERPOLATION_SPEED * delta, 1.0))
+	_step_remote_turns(delta)
+	if _qa_facing_log:
+		_qa_facing_report()
 
 	if _real_skeleton != null and _real_skeleton_track.keyframes.size() > 1:
 		_real_skeleton_time += delta
@@ -12397,7 +12443,147 @@ func _physics_step(delta: float) -> void:
 					Skeleton3DBuilder.apply_ban_pose_at(_player_skeleton, anim, _player_anim_time, true)
 					_anim_sounds.advance(_player_skeleton, anim, 0.0, _loop_ms(anim, _player_anim_time), true)
 
-func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, gender: String = DEFAULT_GENDER) -> void:
+## Whether the OpMove about to go out is a relocation (round 637's review
+## follow-up), consumed by the send: one already known (_relocated_pending:
+## a placement, a recovery) or a displacement (x, z) from the last sent
+## position that the physics step's walk since then cannot account for
+## (_walked_since_send + RELOCATE_MARGIN) -- a QA or GM placement, the
+## unstuck landing. OURS: srrevamp's OpMove is a position stream, and this is
+## how its sender tells a placement from a step; the retail client sends a
+## destination and the server places objects with a message of its own.
+func _position_relocated() -> bool:
+	var moved := Vector2(player.position.x - _last_sent_pos.x, player.position.z - _last_sent_pos.z).length()
+	var relocated := _relocated_pending or moved > _walked_since_send + RELOCATE_MARGIN
+	_relocated_pending = false
+	return relocated
+
+## The player's own turn (round 637's review follow-up): the heading its walk
+## turns toward, NAN when no turn is in progress. READ: the player's click is
+## sent and its echo (0xB021 -> NetProcessInNavAndSkill::FUN_008a5750 ->
+## FUN_009e0550) turns the player's own mover at RemoteFacing's rate, exactly
+## as another player's; the one exception, FUN_009e04b0's snap, is
+## _player_turn_snap (RemoteFacing.click_rule).
+var _player_turn_target := NAN
+## The next aim snaps the heading and ends any turn (FUN_009e04b0 ->
+## FUN_009e0050), set by a click RemoteFacing.click_rule calls "snap".
+var _player_turn_snap := false
+## The player's movement order is in effect (the object's +0x714, mover +0xac,
+## READ): FUN_009e0550 / FUN_009e04b0 / FUN_009e08a0 set it; the stop or
+## position message (FUN_008a4f80 -> FUN_009e00f0), FUN_009e0150,
+## FUN_009e11e0 and FUN_009e0960 clear it, and arriving does NOT (FUN_009e0e60
+## clears +0x84 only). srrevamp has no stop message: it is set by an accepted
+## ground click and cleared by a new world entry or zone change (a new object)
+## and by the player's own skill move -- the last two mappings INFERRED.
+var _player_move_order := false
+
+## Aims the player's walk along `dir` (world): the target heading is the
+## direction's, as the echoed move aims it; a pending snap sets it at once.
+func _aim_local_player(dir: Vector3) -> void:
+	var current := RemoteFacing.heading_of_yaw(player.rotation.y, 0.0)
+	var target := RemoteFacing.heading_toward(current, dir)
+	if _player_turn_snap:
+		_player_turn_snap = false
+		player.rotation.y = RemoteFacing.yaw_of(target, 0.0)
+		_player_turn_target = NAN
+		return
+	_player_turn_target = target
+
+## One frame of the player's turn, walking or standing (FUN_009e0e60 runs the
+## turn for a mover that is not moving too, while +0x88 & 0x31).
+func _step_local_turn(delta: float) -> void:
+	if is_nan(_player_turn_target):
+		return
+	var r := RemoteFacing.turn(RemoteFacing.heading_of_yaw(player.rotation.y, 0.0), _player_turn_target, delta * 1000.0)
+	player.rotation.y = RemoteFacing.yaw_of(float(r["heading"]), 0.0)
+	if not bool(r["turning"]):
+		_player_turn_target = NAN
+
+## SRREVAMP_QA_FACING_LOG=1 (round 637): every 50 ms, one line for this
+## player ("self", from its review follow-up), one per other player's body
+## and per monster on a leg, with where it is drawn and the way
+## its MODEL faces, read off the drawn skeleton's global basis (the player
+## body's front is its skeleton's -Z, MEASURED in round 533; a monster's is
+## MonsterMotion.FRONT_BY_MODEL's). client/tools/facing_measure.py turns
+## consecutive lines into movement-versus-facing angles. Measurement only.
+var _qa_facing_log := OS.get_environment("SRREVAMP_QA_FACING_LOG") != ""
+var _qa_facing_log_ms := 0
+
+func _qa_facing_report() -> void:
+	var now := Time.get_ticks_msec()
+	if now - _qa_facing_log_ms < 50:
+		return
+	_qa_facing_log_ms = now
+	# This player too (round 637's review follow-up): its own turn, read off
+	# its drawn skeleton the same way.
+	if _player_skeleton != null and is_instance_valid(_player_skeleton):
+		var own := _player_skeleton.global_basis * Vector3(0, 0, -1)
+		print("QA FACING self 0 ms=%d pos=(%.3f,%.3f) front=(%.4f,%.4f)" % [
+			now, player.global_position.x, player.global_position.z, own.x, own.z])
+	for id in _other_bodies:
+		var body: Node3D = _other_bodies[id]
+		if not is_instance_valid(body):
+			continue
+		var gait: Dictionary = _other_gaits.get(id, {})
+		var skel = gait.get("skeleton")
+		var front := Vector3.ZERO
+		if skel != null and is_instance_valid(skel):
+			front = (skel as Node3D).global_basis * Vector3(0, 0, -1)
+		print("QA FACING player %d ms=%d pos=(%.3f,%.3f) front=(%.4f,%.4f)" % [
+			id, now, body.global_position.x, body.global_position.z, front.x, front.z])
+	for id in _monster_motion:
+		var mbody = _monster_bodies.get(id)
+		if mbody == null or not is_instance_valid(mbody):
+			continue
+		var fr := MonsterMotion.front_of(String((mbody as Node3D).get_meta("model", "")))
+		if fr != "-Z":
+			continue
+		var asm: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(id)
+		var node: Node3D = asm.skeleton if asm != null and asm.skeleton != null else mbody
+		var mf := node.global_basis * Vector3(0, 0, -1)
+		print("QA FACING monster %d ms=%d pos=(%.3f,%.3f) front=(%.4f,%.4f)" % [
+			id, now, (mbody as Node3D).global_position.x, (mbody as Node3D).global_position.z, mf.x, mf.z])
+
+## Turns in progress on other players' and monsters' bodies (round 637):
+## body instance id -> {"target": the client's heading it turns to, "front":
+## the yaw of the body's front from its node's +Z}. RemoteFacing has the rule.
+var _remote_turns := {}
+
+## Aims a drawn body along `dir` (world) the way the client's mover does
+## (FUN_009e0550 -> FUN_009e02f0(heading, 0)): the target heading is set and
+## the turn starts; _step_remote_turns moves the facing each frame. A vector
+## too short to have a heading keeps the current one (FUN_009ed130).
+func _aim_remote_body(body: Node3D, dir: Vector3, front_yaw: float) -> void:
+	if body == null or not is_instance_valid(body):
+		return
+	var current := RemoteFacing.heading_of_yaw(body.rotation.y, front_yaw)
+	var target := RemoteFacing.heading_toward(current, dir)
+	_remote_turns[body.get_instance_id()] = {"target": target, "front": front_yaw}
+
+## One frame of every turn in progress: FUN_009e02f0 with the frame's time
+## (the mover's tick, FUN_009e0e60 -> FUN_009e0c10). A turn that reaches its
+## target ends there; a body that has gone is dropped.
+func _step_remote_turns(delta: float) -> void:
+	if _remote_turns.is_empty():
+		return
+	for id in _remote_turns.keys():
+		var body := instance_from_id(id) as Node3D
+		if body == null or not is_instance_valid(body):
+			_remote_turns.erase(id)
+			continue
+		var turn: Dictionary = _remote_turns[id]
+		var front := float(turn["front"])
+		var r := RemoteFacing.turn(RemoteFacing.heading_of_yaw(body.rotation.y, front), float(turn["target"]), delta * 1000.0)
+		body.rotation.y = RemoteFacing.yaw_of(float(r["heading"]), front)
+		if not bool(r["turning"]):
+			_remote_turns.erase(id)
+
+## `heading` (round 637's review follow-up) is OpEntityEntered's: the body is
+## placed facing it -- FUN_009d17e0 stores the spawn's angle with a bare
+## FUN_009c4260, no turn -- and a turn left from before ends (a spawn is a new
+## object, whose mover starts with none: 0x9e0cd0 zeroes +0xa4). NAN (a list,
+## an older server) leaves the facing as it is. A snapshot is a placement, not
+## a walk, so it never aims the body.
+func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, gender: String = DEFAULT_GENDER, heading: float = NAN) -> void:
 	if not equipped.is_empty():
 		_other_equipped[character_id] = equipped
 	if _other_bodies.has(character_id):
@@ -12405,10 +12591,16 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		# _other_body_targets' own doc comment for why this replaced a
 		# direct position snap.
 		_other_body_targets[character_id] = pos
+		if not is_nan(heading):
+			var drawn: Node3D = _other_bodies[character_id]
+			drawn.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
+			_remote_turns.erase(drawn.get_instance_id())
 		return
 
 	var body := Node3D.new()
 	body.position = pos
+	if not is_nan(heading):
+		body.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
 
 	# The same body and the same dressing as the local player: their
 	# Gender and every worn item's id come in the snapshot (see genderOf
@@ -12468,12 +12660,30 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	_other_body_targets[character_id] = pos
 
 func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
-	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.equipped, snapshot.gender)
+	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.equipped, snapshot.gender, snapshot.heading)
 	_log_system("%s entered the zone." % snapshot.char_name)
 
+## Another player's position (OpEntityMoved): their body's new walk target,
+## and (round 637) the heading toward it, which the body turns to at the
+## client's own rate (RemoteFacing; _step_remote_turns). srrevamp streams
+## positions, not retail's destinations (0xB021), so each position is the
+## destination the client's mover would aim at from where the body is drawn
+## (FUN_009e0550 aims from the object's own position, +0x74). Nothing turns
+## the body once the positions stop, so it keeps its last heading.
+##
+## A relocation (moved.relocated, round 637's review follow-up: a teleport,
+## a recovery, a placement) puts the body there and turns nothing, as the
+## client places an object at a message's source position (FUN_009e11e0)
+## without aiming it; a turn already in progress goes on.
 func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 	if _other_bodies.has(moved.character_id):
-		_other_body_targets[moved.character_id] = Vector3(moved.x, moved.y, moved.z)
+		var to := Vector3(moved.x, moved.y, moved.z)
+		_other_body_targets[moved.character_id] = to
+		var body: Node3D = _other_bodies[moved.character_id]
+		if moved.relocated:
+			body.position = to
+			return
+		_aim_remote_body(body, to - body.position, 0.0)
 
 func _on_entity_left(character_id: int) -> void:
 	if character_id == _selected_character:
@@ -12602,6 +12812,10 @@ func _place_at_region_local(region_x: int, region_y: int, local_x: float, local_
 		Vector3(local_x, graph.landing_height_at(local_x, local_z), local_z))
 	player.velocity = Vector3.ZERO
 	_last_sent_pos = player.position
+	_walked_since_send = 0.0
+	# The server still has the old position: the next OpMove is a relocation
+	# (round 637's review follow-up).
+	_relocated_pending = true
 	return true
 
 ## A gate teleport's receipt (round 576, TeleportNet): on success the server's
@@ -12680,6 +12894,7 @@ func _land_teleport_arrival(x: float, z: float) -> bool:
 	player.global_position = group.to_global(Vector3(local.x, graph.landing_height_at(local.x, local.z), local.z))
 	player.velocity = Vector3.ZERO
 	_last_sent_pos = player.position
+	_walked_since_send = 0.0
 	_refresh_zone_label_position()
 	print("World3D: teleport arrival in %s at local (%.1f, %.1f), height %.2f -- the destination gate's point, on the walkable graph" % [
 		group.name, local.x, local.z, player.global_position.y])
@@ -13118,7 +13333,9 @@ func _place_player_at_world(x: float, z: float) -> void:
 	player.global_position = spot
 	player.velocity = Vector3.ZERO
 	_last_sent_pos = player.position
-	NetClient.move_to(player.position.x, player.position.y, player.position.z)
+	_walked_since_send = 0.0
+	_relocated_pending = false
+	NetClient.move_to(player.position.x, player.position.y, player.position.z, true)
 
 ## The developer chrome that has no authored equivalent yet: the zone travel
 ## box, Log Out, and the Hide UI button. Shown with Ctrl+F1 (KeyMap, run by
@@ -13711,13 +13928,25 @@ func _try_set_move_target(screen_pos: Vector2) -> void:
 	var point = _ground_point_at(screen_pos)
 	if point == null:
 		return
-	_move_target = point
-	_has_move_target = true
-	# A walk somewhere else supersedes an attack that was walking into reach,
-	# and a friendly cast walking to its player (round 622's review).
+	# A click on the ground supersedes an attack that was walking into reach,
+	# and a friendly cast walking to its player (round 622's review) -- even
+	# one the filter below does not send (OURS: where retail drops a pending
+	# action on a click is not read).
 	_pending_attack = {}
 	_released_attack = {}
 	_pending_friend_cast = {}
+	# The client's own click filter (FUN_009eb2a0, round 637's review
+	# follow-up; RemoteFacing.click_rule): with no movement order in effect a
+	# click under 5 units away is not sent -- nothing moves; a far click
+	# within 5 degrees of a far order snaps the heading instead of turning.
+	match RemoteFacing.click_rule(_player_move_order, (point as Vector3) - player.position, _move_target - player.position):
+		"ignore":
+			return
+		"snap":
+			_player_turn_snap = true
+	_player_move_order = true
+	_move_target = point
+	_has_move_target = true
 
 ## The point on the ground or a placed object under a screen point, or null:
 ## the click-to-move ray, shared with the ground-pick cast (round 617).
@@ -13791,6 +14020,7 @@ func _unstuck_player() -> void:
 		var zone: String = NetClient.current_zone if NetClient.current_zone != "" else result.zone
 		if _place_at_zone_landing(zone):
 			_last_sent_pos = sent
+			_walked_since_send = 0.0
 			_log_system("Unstuck: returned to the zone's landing spot.")
 			return
 	player.position = Vector3(result.x, result.y, result.z)
@@ -14258,8 +14488,9 @@ func _on_ground_item_spawned(snap: GroundItemsNet.Snapshot) -> void:
 		player.velocity = Vector3.ZERO
 		# Tell the server where we now stand and let that packet land before the
 		# pick, so its range check sees us on the item, not where we were.
-		NetClient.move_to(player.position.x, player.position.y, player.position.z)
+		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
 		_last_sent_pos = player.position
+		_walked_since_send = 0.0
 		print("QA PICKUP: standing at %.1f,%.1f,%.1f next to ground item %d; picking shortly" % [
 			player.global_position.x, player.global_position.y, player.global_position.z, snap.id])
 		# A moment on the ground (frames show the drop lying there), then pick.
@@ -14267,7 +14498,7 @@ func _on_ground_item_spawned(snap: GroundItemsNet.Snapshot) -> void:
 		# nothing teleports us away in between.
 		await get_tree().create_timer(1.2).timeout
 		if _ground_items != null and _ground_items.has(snap.id):
-			NetClient.move_to(player.position.x, player.position.y, player.position.z)
+			NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
 			await get_tree().create_timer(0.2).timeout
 			NetClient.pick_up(NetClient.current_character_name, snap.id)
 
@@ -14533,14 +14764,28 @@ func _apply_monster_leg(moved: CombatNet.MonsterMoved) -> void:
 	_set_monster_gait(moved.monster_id, MonsterMotion.state_gait(state))
 	var front := MonsterMotion.front_of(String(body.get_meta("model", "")))
 	if MonsterMotion.turns_to_face(state) and front != "":
-		body.rotation.y = MonsterMotion.facing_yaw(state["dest"] - pos, front)
+		# Turned toward the destination at the client's rate (round 637), not
+		# snapped: the same mover as another player's (_aim_remote_body).
+		var to_dest: Vector2 = state["dest"] - pos
+		_aim_remote_body(body, Vector3(to_dest.x, 0.0, to_dest.y), MonsterMotion.front_yaw(front))
+	elif bool(state["stop"]) and _remote_turns.has(body.get_instance_id()):
+		# A stop: the client's stop message snaps the heading to the server's
+		# angle and ends the turn (FUN_008a4f80 -> FUN_009e00f0 ->
+		# FUN_009e0050, round 637's review follow-up). srrevamp's stop carries
+		# no angle; the turn's own target stands in for it (INFERRED: the
+		# server's heading is its last leg's).
+		var stopping: Dictionary = _remote_turns[body.get_instance_id()]
+		body.rotation.y = RemoteFacing.yaw_of(float(stopping["target"]), float(stopping["front"]))
+		_remote_turns.erase(body.get_instance_id())
 	if _mob_logging():
 		var kind := "stop"
 		if MonsterMotion.turns_to_face(state):
 			kind = "run" if int(state["mode"]) == MonsterMotion.MODE_RUN else "walk"
-		print("World3D: monster %d %s from (%.1f,%.1f) to (%.1f,%.1f) at %.1f/s yaw %.2f%s" % [
+		var turn = _remote_turns.get(body.get_instance_id())
+		print("World3D: monster %d %s from (%.1f,%.1f) to (%.1f,%.1f) at %.1f/s yaw %.2f%s%s" % [
 			moved.monster_id, kind, pos.x, pos.y, moved.dest_x, moved.dest_z, float(state["speed"]),
-			body.rotation.y, "" if front != "" else " (facing unmeasured)"])
+			body.rotation.y, "" if turn == null else " turning to %.2f" % RemoteFacing.yaw_of(float(turn["target"]), float(turn["front"])),
+			"" if front != "" else " (facing unmeasured)"])
 
 ## Plays a gait on a monster's body: its own idle for 0 (stand), its walk or
 ## run clip otherwise. A model with no such clip keeps the loop it has.
@@ -15118,6 +15363,8 @@ func _enter_dead_state(exp_lost: int) -> void:
 		return
 	_player_dead = true
 	_sit.reset()
+	# The body stops turning where it fell (round 637's review follow-up; OURS).
+	_player_turn_target = NAN
 	# Retail's death (0x30BF kind 0 value 2 -> FUN_0077b000) runs FUN_007b5300:
 	# the berserk display fades out (round 629's review).
 	if _hud_player_info != null:
@@ -15258,6 +15505,9 @@ func _face_monster_toward(monster_id: int, at: Vector2) -> void:
 	var dir := at - Vector2((body as Node3D).position.x, (body as Node3D).position.z)
 	if front == "" or dir.is_zero_approx():
 		return
+	# A bare snap: a turn in progress goes on (INFERRED: a monster's strike is
+	# retail's skill action, whose reader FUN_00a54be0 snaps with a bare
+	# FUN_009c4260; round 637's review follow-up).
 	(body as Node3D).rotation.y = MonsterMotion.facing_yaw(dir, front)
 
 ## Another player's hit reaction: the TYPE_HIT clip of their own body's
@@ -15587,8 +15837,9 @@ func _request_sit_toggle() -> String:
 	# The stop is sent before the request, so the server does not take a
 	# later position update for a move made in its transition.
 	if player.position != _last_sent_pos:
-		NetClient.move_to(player.position.x, player.position.y, player.position.z)
+		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
 		_last_sent_pos = player.position
+		_walked_since_send = 0.0
 		_time_since_send = 0.0
 	_sit.press(_player_anim_time)
 	print("SIT: N pressed -- sending 0x704f [04] (sitting=%s)" % str(was_sitting))
@@ -15990,6 +16241,9 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 	# (round 616-620 integration; skills_spec §1.5 -- Ghost Walk's rows are a
 	# READY with no effect and the WAIT loop lightning_bobeop_move_a.efp).
 	_fx_self_cast_acts(moved.skill_id, "OpSkillMove", true)
+	# The skill's move ends the movement order (_player_move_order; INFERRED
+	# from the skill paths' FUN_009e0150).
+	_player_move_order = false
 	var from := player.position
 	_drop_pending_attack()
 	_has_move_target = false
@@ -16000,6 +16254,7 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 	player.position = to
 	# The server already has the player there; do not send it back.
 	_last_sent_pos = to
+	_walked_since_send = 0.0
 	_time_since_send = 0.0
 	print("SKILL move handled: this player snapped (duration OPEN) from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f), %.1f units, by skill %d, footing %s" % [
 		from.x, from.y, from.z, to.x, to.y, to.z, from.distance_to(to), moved.skill_id, footing])
@@ -16104,8 +16359,9 @@ func _leave_sit_by_moving() -> void:
 		# tap too short for the ordinary send gate must still reach it, or the
 		# server keeps her seated while this client draws her standing (round
 		# 607's review).
-		NetClient.move_to(player.position.x, player.position.y, player.position.z)
+		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
 		_last_sent_pos = player.position
+		_walked_since_send = 0.0
 		_time_since_send = 0.0
 	if not _player_one_shot_hold and _player_sit_clip != null and _player_one_shot == _player_sit_clip:
 		_player_one_shot = null
@@ -16120,7 +16376,9 @@ func _leave_sit_by_moving() -> void:
 ## drawn seated takes the sitting loop without the sit-down clip.
 func _spawn_result_others(others: Array, seated: Array) -> void:
 	for other in others:
-		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped, other.gender)
+		# Each faces its heading from the list's tail (round 637's review
+		# follow-up; NAN from an older server).
+		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped, other.gender, other.heading)
 	for id in seated:
 		if not _other_bodies.has(int(id)):
 			continue
@@ -16199,7 +16457,10 @@ func _face_monster_heading(monster_id: int, heading: float) -> void:
 	var front := MonsterMotion.front_of(String((body as Node3D).get_meta("model", "")))
 	if front == "":
 		return
+	# A spawn is a new object: its mover has no turn (0x9e0cd0 zeroes +0xa4),
+	# and FUN_009d17e0 stores the angle with a bare FUN_009c4260.
 	(body as Node3D).rotation.y = MonsterMotion.facing_yaw(MonsterMotion.heading_dir(heading), front)
+	_remote_turns.erase((body as Node3D).get_instance_id())
 
 func _on_monster_damaged(damaged: CombatNet.MonsterDamaged) -> void:
 	# Someone else's hit on a monster: play its reaction now. The local
@@ -16255,6 +16516,10 @@ func _begin_monster_death(monster_id: int) -> void:
 		_drop_pending_attack()
 	# A dead monster walks no further; its die clip replaces the gait below.
 	_monster_motion.erase(monster_id)
+	# Nor turns (round 637's review follow-up; OURS).
+	var dying_body = _monster_bodies.get(monster_id)
+	if dying_body != null and is_instance_valid(dying_body):
+		_remote_turns.erase((dying_body as Node3D).get_instance_id())
 	# Nor strikes again: a counter still waiting for its blow to land keeps
 	# its own wait (the timer holds it), and nothing newer will come.
 	_strike_waits.erase(monster_id)

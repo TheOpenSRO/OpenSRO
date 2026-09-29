@@ -145,15 +145,19 @@ static func front_of(model_path: String) -> String:
 ## A monster's skeleton is not turned, so its measured front's own yaw is
 ## taken off instead.
 static func facing_yaw(dir: Vector2, front: String) -> float:
-	var front_yaw := 0.0
+	return wrapf(atan2(dir.x, dir.y) - front_yaw(front), -PI, PI)
+
+## The yaw of a measured front from the node's +Z: PI for -Z, +-PI/2 for +-X,
+## 0 otherwise. A body's rotation.y is its heading less this (RemoteFacing.yaw_of).
+static func front_yaw(front: String) -> float:
 	match front:
 		"-Z":
-			front_yaw = PI
+			return PI
 		"+X":
-			front_yaw = PI / 2.0
+			return PI / 2.0
 		"-X":
-			front_yaw = -PI / 2.0
-	return wrapf(atan2(dir.x, dir.y) - front_yaw, -PI, PI)
+			return -PI / 2.0
+	return 0.0
 
 ## The ground direction (x, z) a server heading points along. srrevamp's
 ## headings are radians in its world frame, measured from +x toward +z
