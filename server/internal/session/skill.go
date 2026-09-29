@@ -1014,6 +1014,11 @@ func useSkillHandler(
 			if motions.state(characterID, now) == MotionChangeMotion {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: seatedRefusal}).Encode()})
 			}
+			// Round 640, OURS: a wall roots its caster (walls.go wallRoots),
+			// so a ground move is refused too, before anything is spent.
+			if wallRoots(characterID) {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: rootedRefusal}).Encode()})
+			}
 			groundDest = ghostWalkDestination(e.Pos,
 				world.Position{X: float64(req.X), Y: float64(req.Y), Z: float64(req.Z)}, float64(castRow.Tele1))
 		}

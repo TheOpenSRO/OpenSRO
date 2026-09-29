@@ -276,10 +276,18 @@ func (t *motionTracker) endWall(characterID int64, now time.Time) {
 }
 
 // moved records an OpMove. It is refused in the transition, as the movement
-// handler refuses state 0x12; otherwise a sitter is on its feet at once (the
+// handler refuses state 0x12, and (round 640, OURS) while a wall roots the
+// character; otherwise a sitter is on its feet at once (the
 // handler's SetMotionState(WALK/RUN)) and the move is accepted. leftSit
 // reports that it was sitting.
 func (t *motionTracker) moved(characterID int64, now time.Time) (accepted, leftSit bool) {
+	// Round 640, OURS (the user's request, not in retail's binaries): a
+	// character its own protection wall holds does not move (walls.go
+	// wallRoots). Refused like the transition: nothing stored, nothing
+	// relayed, no answer.
+	if wallRoots(characterID) {
+		return false, false
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	e := t.entryLocked(characterID, now)

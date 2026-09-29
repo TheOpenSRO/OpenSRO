@@ -1277,8 +1277,9 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       the gate / sit / regen, the kind-7 number and the DefenseEfp on the client. **The user's
       "they don't let you move / attack within a radius" was NOT found in either binary** (the
       movement handler never tests 0x11; the client's move gates read neither `pw` nor `onff`;
-      `pc+0xc44` is the `stns` stun holder) -- so nothing roots the caster. Left open:
-      - a user decision: root the caster anyway (OURS), or keep retail's code as read;
+      `pc+0xc44` is the `stns` stun holder). **The user then chose "Root while walled", built as
+      OURS** (the server drops a walled caster's moves and refuses Ghost Walk; the client sends no
+      move while its own wall stands; attacks and skills go out where the player stands). Left open:
       - the absorb test's second-record term (`att +0x10` with the context's `+0x78`);
       - player-versus-player blows on a wall (srrevamp has none);
       - which sounds retail plays for a kind-7 entry (the monster's blow sound is kept).

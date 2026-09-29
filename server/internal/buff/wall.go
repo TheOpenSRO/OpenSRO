@@ -92,6 +92,16 @@ func (b *Books) HitWall(ownerID int64, att uint32, damage func(w Wall) int) (Wal
 	return WallHit{Token: r.Token, SkillID: r.SkillID, Damage: d, HP: r.WallHP, Max: r.Wall.HP, Broke: broke}, true
 }
 
+// HoldsWall reports whether ownerID has a wall record active (book+0x1dc
+// set): the root (round 640, OURS -- walls.go wallRoots) lasts exactly as
+// long, whatever ends the record.
+func (b *Books) HoldsWall(ownerID int64) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	bk := b.books[ownerID]
+	return bk != nil && bk.wallHolder != 0 && bk.index(bk.wallHolder) >= 0
+}
+
 // EndBrokenWalls is SkillAction_Buff's sub-state 2 tail (0x5830b0, the
 // check at 0x585302..0x585372, READ): a record whose wall object's HP is 0
 // ends -- its state bits cleared (SkillBook::SetGroupBits(Action_Overlap, 1),

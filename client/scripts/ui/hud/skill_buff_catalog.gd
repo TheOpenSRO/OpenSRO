@@ -186,6 +186,9 @@ static func parse_row(cols: PackedStringArray) -> Dictionary:
 	# Round 640: whether the row is an 'onff' toggle (client +0x58), and its
 	# Basic_Code (col 3) for the skilleffect rows the walls' DefenseEfp is on.
 	info["onff"] = codes.has("onff")
+	# A protection wall ('pw', client +0x90): its caster is rooted while it
+	# stands (round 640, OURS -- World3D._wall_root).
+	info["pw"] = codes.has("pw")
 	info["basic_code"] = cols[3].strip_edges() if cols.size() > 3 else ""
 	# 'tele' value[0] and value[1] (round 616-618 integration): value[1] is
 	# the ground-cast move's reach, D in the server's FUN_005862e0 (READ);

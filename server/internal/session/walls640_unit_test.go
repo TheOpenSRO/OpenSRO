@@ -78,6 +78,9 @@ func TestRound640FireWallAbsorbsMagicUntilItBreaks(t *testing.T) {
 	if s := motions.state(w.aria, time.Now()); s != MotionStand {
 		t.Fatalf("motion state %#x after the break, want STAND", s)
 	}
+	if wallRoots(w.aria) {
+		t.Fatal("still rooted after the break")
+	}
 	out := w.strike(t, 171)
 	if out.wall.Absorbed || out.damage <= 0 || w.hp(t) != before-out.damage {
 		t.Fatalf("after the break: %+v, HP %d -> %d; want the blow on the caster", out, before, w.hp(t))

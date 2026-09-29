@@ -22,12 +22,22 @@ package session
 //   - the toggle: Tick_UseSkill's phase 0 (0x4ae590) ends a running 'onff'
 //     record of the skill instead of casting it again.
 //
-// NOT found in either binary, and so not done: anything that stops a walled
-// caster from moving. The server's movement handler (GObjPC::FUN_004b0ea0,
-// CGObjPC's slot 377) refuses motion states 8, 0x10 and 0x12 and the 'stns'
-// stun holder pc+0xc44, not 0x11; the client's move gates (the body-state
-// mask FUN_009eb140 & 0x2476, the 500 ms send lock, the modal UI) read
-// neither 'pw' nor 'onff'. docs/protocol/skill_buffs.md has the probes.
+// NOT found in either binary: anything that stops a walled caster from
+// moving. The server's movement handler (GObjPC::FUN_004b0ea0, CGObjPC's
+// slot 377) refuses motion states 8, 0x10 and 0x12 and the 'stns' stun
+// holder pc+0xc44, not 0x11; the client's move gates (the body-state mask
+// FUN_009eb140 & 0x2476, the 500 ms send lock, the modal UI) read neither
+// 'pw' nor 'onff'. docs/protocol/skill_buffs.md has the probes.
+//
+// THE ROOT IS OURS (round 640, the user's choice "Root while walled", asked
+// after the probes above came back empty): while a 'pw' wall record is
+// active its caster's moves are dropped -- silently, the way handleMove
+// drops a move in the sit/stand transition (retail's own early returns in
+// FUN_004b0ea0 answer nothing either) -- and a ground-move cast (Ghost Walk)
+// is refused before it costs anything. Attacks and other skills are not
+// touched: the ordinary reach rules decide them. Whatever ends the record
+// (a cancel, a recast, the wall's HP, the MP drain, a death, a logout) ends
+// the root with it.
 
 import (
 	"context"
@@ -51,6 +61,16 @@ import (
 // tick restores nothing in it (CGObjPC::vslot_362 regenerates only in STAND
 // and SIT) -- all three READ.
 const MotionProtectionWall byte = 0x11
+
+// wallRoots reports whether characterID is rooted by its own wall (OURS,
+// see the package note above): a 'pw' record is active on its book.
+func wallRoots(characterID int64) bool {
+	return buffBooks.HoldsWall(characterID)
+}
+
+// rootedRefusal answers a ground-move cast (Ghost Walk) while the caster's
+// wall roots it. OURS, as the root is.
+const rootedRefusal = "cannot move while a wall is up"
 
 // wallStateRefusal answers an 'ao'/'pw' cast refused because its caster
 // stands in SKILL_PROTECTIONWALL. The engine answers 0x3009 there, as for a

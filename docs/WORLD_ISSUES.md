@@ -7155,6 +7155,43 @@ Tahoma: its first row says Arial) and hud_panels.gd (the doll's turn direction i
 Not done: the dungeon light (`Map::FUN_00a255c0` gives the object shader an ambient-only light in a
 dungeon). This client loads no dungeon, so there is nowhere for it to apply yet (OPEN).
 
+## Six-hundred-and-fortieth round, the root: a wall roots its caster (OURS, the user's choice)
+
+Round 640 found nothing in either binary that roots a walled caster. Asked, the user chose **"Root
+while walled"**. It is built as **OURS**, not retail's, and labelled so in the code
+(`session/walls.go` `wallRoots`, `World3D._wall_root`), in `docs/protocol/skill_buffs.md` and in
+`docs/TODO.md`.
+- **Server:** while a `pw` record is active on the caster's book (`buff.Books.HoldsWall`), an
+  `OpMove` is dropped silently in `motions.moved`, the way a move in the sit/stand transition is.
+  A Ghost Walk cast is refused before any cost (OURS text: "cannot move while a wall is up").
+- **Client:** while its own wall buff stands (the catalog row carries `pw`), no move is started
+  and there is no walk clip. That covers a ground click, a held-button steer, and the walk into an
+  attack's, a friendly cast's or a pick-up's reach. Each refusal is logged as `ROOT: ... refused --
+  this player's wall (skill N) roots it (OURS ...)`. Attacks, casts and pick-ups go out from where
+  the player stands, and the server's reach rule answers them. A walk already under way stops.
+- **The end:** it ends with the wall's record: a right-click cancel, a recast, the wall's HP at 0,
+  the MP drain running short, a death or a logout.
+- **Tests:**
+  - `wallroot640_test.go`: a move with the wall up is not stored; after a cancel, a recast or the
+    drain's end, the same move is stored. The break is checked in the unit test.
+  - `client/scripts/world/wall_root_test.gd`: rooted by the wall's row, not by a Grass Walk's or
+    another player's wall; a click and a steer set no target; the OpBuffEnd frees the player.
+  - The negative against 946da3a:
+    ```
+    --- FAIL: TestRound640TheWallRootsItsCaster (0.57s)
+        wallroot640_test.go:49: a move with the wall up took Aria to {X:40 Y:0 Z:40}, want her rooted at 10,10
+    --- FAIL: TestRound640EveryEndEndsTheRoot (0.70s)
+        wallroot640_test.go:71: a move with Fire Wall up went through to {X:20 Y:0 Z:20}
+        wallroot640_test.go:85: a move with Crystal Wall up went through to {X:30 Y:0 Z:30}
+    ```
+- **Real input** (`/var/tmp/walls/run640r.sh`, the Login route):
+  - key 1 put Fire Wall up;
+  - a ground click logged `PICK: click at (640, 300) ...` then `ROOT: a move to the clicked point
+    refused`, and the player stayed at local z 1020;
+  - a right-click on the icon logged `cancel sent`, then `BUFF end ... tokens [1]`;
+  - the same click then walked the player to z 990.
+  - Shots: `wall_shots/root_21_click_refused.jpg` and `root_23_moved.jpg`.
+
 ## Six-hundred-and-fortieth round: Fire Wall and Crystal Wall take the blows of their type until their own HP runs out, drain MP until it runs short, and switch off when recast or cancelled
 
 The user's request: "There's also skill lines like fire wall and crystal (ice) wall that don't let

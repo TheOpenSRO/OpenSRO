@@ -7806,6 +7806,13 @@ func _cast_on_character(skill_id: int, basic_code: String, character_id: int) ->
 		_flush_position()
 		_send_character_cast(skill_id, basic_code, character_id)
 		return
+	var cast_root := _wall_root()
+	if cast_root != 0:
+		# Round 640 (OURS): rooted, so no walk -- the server judges the reach.
+		_log_root("the walk into reach of player %d" % character_id, cast_root)
+		_flush_position()
+		_send_character_cast(skill_id, basic_code, character_id)
+		return
 	var band: Vector2 = planned["band"]
 	_pending_friend_cast = {"character": character_id, "skill": skill_id, "code": basic_code,
 		"stop": band.x, "reach": band.y}
@@ -8167,6 +8174,14 @@ func _attack_monster(monster_id: int, skill_id: int = 0, basic_code: String = ""
 	if not planned.has("band"):
 		print("World3D: no approach for monster %d (%s) -- sending at once; the server judges the distance" % [
 			monster_id, str(planned.get("why", "?"))])
+		_flush_position()
+		_send_attack(monster_id, skill_id, basic_code)
+		return
+	# Round 640 (OURS): rooted by the wall, no walk into reach -- sent from
+	# where the player stands; the server's reach rule answers it.
+	var attack_root := _wall_root()
+	if attack_root != 0:
+		_log_root("the walk into reach of monster %d" % monster_id, attack_root)
 		_flush_position()
 		_send_attack(monster_id, skill_id, basic_code)
 		return
@@ -11938,7 +11953,10 @@ func _physics_step(delta: float) -> void:
 	# Getting up or down (round 607): the server refuses a move in its 1.5 s
 	# transition, so none is made; a move while seated is allowed and stands
 	# the character at once (_leave_sit_by_moving), as the server's does.
-	var locked := typing or _player_dead or _motion_locked()
+	# Rooted by the player's own wall (round 640, OURS -- _wall_root): a walk
+	# already under way when the wall went up stops, as the server drops its
+	# moves.
+	var locked := typing or _player_dead or _motion_locked() or (_has_move_target and _wall_root() != 0)
 	if locked:
 		_has_move_target = false
 		_pending_attack = {}
@@ -13480,6 +13498,10 @@ func _on_guild_leave_requested() -> void:
 	NetClient.leave_guild(NetClient.current_character_name)
 
 func _try_set_move_target(screen_pos: Vector2) -> void:
+	var root := _wall_root()
+	if root != 0:
+		_log_root("a move to the clicked point" if not _left_steering else "a held-button steer", root)
+		return
 	var point = _ground_point_at(screen_pos)
 	if point == null:
 		return
@@ -14149,7 +14171,12 @@ func _pick_up_ground_item(ground_id: int) -> void:
 	# there) -- which this client then displayed as "your inventory may be
 	# full". The player had the gold and an error message about it.
 	var target := _ground_items.position_of(ground_id)
-	if target != Vector3.INF and player.global_position.distance_to(target) > GroundItemsNet.PICK_RANGE:
+	# Round 640 (OURS): rooted, the pick-up is asked for from where the player
+	# stands and the server judges the range.
+	var pick_root := _wall_root()
+	if pick_root != 0 and target != Vector3.INF and player.global_position.distance_to(target) > GroundItemsNet.PICK_RANGE:
+		_log_root("the walk to ground item %d" % ground_id, pick_root)
+	if pick_root == 0 and target != Vector3.INF and player.global_position.distance_to(target) > GroundItemsNet.PICK_RANGE:
 		_move_target = target
 		_has_move_target = true
 		_pending_attack = {}
@@ -15200,6 +15227,35 @@ func _own_toggle_running(skill_id: int) -> bool:
 		return false
 	var key := _fx_owner_key(_own_id(), SkillNet.OWNER_CHARACTER)
 	return (_fx_owner_buffs.get(key, {}) as Dictionary).values().has(skill_id)
+
+## The skill id of this player's own protection wall while one stands, else
+## 0 (round 640). THE ROOT IS OURS -- the user's choice "Root while walled";
+## retail's client and server both let a walled caster move (the probes are
+## in docs/protocol/skill_buffs.md). While it holds, no ground click, held-
+## button steer or walk into reach moves the player; attacks, skills and
+## pick-ups go out from where the player stands and the server's ordinary
+## reach rules judge them. The server drops a rooted caster's moves too
+## (session/walls.go wallRoots). Whatever ends the wall's buff ends it.
+func _wall_root() -> int:
+	if _hud_buff_board == null or _hud_buff_board.catalog == null:
+		return 0
+	var mine: Dictionary = _fx_owner_buffs.get(_fx_owner_key(_own_id(), SkillNet.OWNER_CHARACTER), {})
+	for t in mine:
+		var skill := int(mine[t])
+		if bool(_hud_buff_board.catalog.info(skill).get("pw", false)):
+			return skill
+	return 0
+
+## When a refused move was last logged (a held-button steer asks every frame).
+var _root_logged_ms := -100000
+
+## Logs a move the wall refused, at most once a second.
+func _log_root(what: String, skill: int) -> void:
+	var now := Time.get_ticks_msec()
+	if now - _root_logged_ms < 1000:
+		return
+	_root_logged_ms = now
+	print("ROOT: %s refused -- this player's wall (skill %d) roots it (OURS: the user's request, not in retail's binaries)" % [what, skill])
 
 ## A monster's blow a protection wall took (round 640): the number over
 ## `anchor` as an ordinary damage number, the DefenseEfp of the body's

@@ -764,9 +764,23 @@ nothing (`CGObjPC::vslot_362` only in STAND and SIT). `SkillAction_BuffEnd` for 
   `pw` (client `+0x90`) nor `onff` (`+0x58`); no bit of 0x2476 is set for a wall (every setter of
   states 1, 2, 4, 6, 10, 13 listed; state 2, the cast deco's, clears when its shot animation ends;
   the 0xB0BD buff deco sets no state); the client's 0x30BF motion handler has no case for 0x11.
-- So srrevamp roots nobody: a move while a wall stands is accepted, leaves SKILL_PROTECTIONWALL
-  (the movement handler's SetMotionState(WALK/RUN)) and the wall keeps absorbing. Attacks and
-  skills are not refused either (the gate's motion test covers only `ao`/`pw` rows).
+- So retail roots nobody: a move while a wall stands is accepted, leaves SKILL_PROTECTIONWALL
+  (the movement handler's SetMotionState(WALK/RUN)) and the wall keeps absorbing.
+
+**The root is OURS (round 640, the user's choice "Root while walled", asked after the probes above
+came back empty).** srrevamp departs from retail here, on purpose:
+- **Server** (`session/walls.go` `wallRoots`, checked in `motions.moved`): while a `pw` record is
+  active on the caster's book (`buff.Books.HoldsWall`), an `OpMove` is dropped -- silently, the way
+  a move in the sit/stand transition is (retail's own movement refusals answer nothing either); a
+  Ghost Walk (`tele`) cast is refused before any cost, `"cannot move while a wall is up"` (OURS text).
+- **Client** (`World3D._wall_root`, from its own buffs whose catalog row carries `pw`): a ground
+  click or a held-button steer sets no move target (no walk, no walk clip) and logs `ROOT: ...
+  refused`; a walk already under way stops; an attack, a friendly cast or a pick-up out of reach is
+  sent from where the player stands instead of walking, and the server's ordinary reach rules answer
+  it (`"too far away"` or the blow).
+- **Attacks and skills** are not refused for the root.
+- **Its end** is the record's end: a right-click cancel, a recast (the toggle-off), the wall's HP
+  reaching 0, the MP drain running short, a death or a logout.
 
 **The client (READ, `sro_client.exe`).** The wall's aura is the buff's ACT_L loop
 (`fire_hwabyeok_keep_a.efp`, `cold_bingbyeok_keep_a.efp`). A kind-7 entry (`FUN_00a55e00`) clears the
