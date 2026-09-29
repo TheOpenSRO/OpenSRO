@@ -161,6 +161,25 @@ func (t AttackType) Known() bool { return t&(AttackPhysical|AttackMagical) != 0 
 // its `mov esi,N`. NoInstance (or an item exported before the hi columns
 // existed, whose hi ends are zero) reads the lo end alone, which is what this
 // function did for every weapon until 2026-09-19 (round 244).
+// WeaponAttackRate is the weapon's own attack rate, its contribution to param
+// 11 (hit rate): READ, Char_BuildAggregateStats interpolates the ref's
+// +0x288/+0x28c (itemdata columns 113/114, refdata HitRateMin/Max) by variance
+// group 3 (durability.WeaponAttackRateGroup, `mov esi,3` at 0x496376) into
+// item+0x1d8, and Char_PublishCombatStats publishes +0x1d8 as param 11
+// (0x497ace..0x497add). The instance rule is WeaponRange's: NoInstance, or a
+// row without its hi end, reads the lo end. The per-plus increment (column
+// 115) is not added: srrevamp instances carry no plus level.
+func WeaponAttackRate(item *refdata.Item, inst Instance) float64 {
+	if item == nil {
+		return 0
+	}
+	lo, hi := item.HitRateMin, item.HitRateMax
+	if !inst.Tracked || hi <= lo {
+		return lo
+	}
+	return durability.WhiteStat(lo, hi, inst.Variance, durability.WeaponAttackRateGroup)
+}
+
 func WeaponRange(item *refdata.Item, inst Instance, str, intel int, atk AttackType) (min, max int) {
 	if item == nil {
 		return 0, 0

@@ -250,19 +250,33 @@ func _set_bar(gauge: TextureProgressBar, label: Label, current: int, maximum: in
 #     advances every flame one frame each 50 ms (0x32, vslot_005 case 1);
 #     GDR_PMI_HWAN_EFF_FACE and _GLOW show and fade in over 3.0 s (the float
 #     at 0x00d8adc4).
-#   * While berserk, timer 2 fires every duration/5 (the period is
-#     round((60 + player+0x20f8 + a Hwan socket-stone bonus) * 1000 / 5)
-#     ms) and fades one orb and its flame out over 1.0 s, CIRCLE0/SLOT0
-#     (the top) first. After the fifth everything hides and the face and
-#     glow fade out over 3.0 s.
-#   * FUN_007b5300 fades whatever is still shown and stops the drain; retail
-#     runs it on the player's death and on a zone reset (reset_hwan_display).
-#     The server's body-mode end (0x30BF kind 4 value 0) does not touch it.
+#   * While berserk, timer 2 fires every duration/5 and fades one orb and
+#     its flame out over 1.0 s, CIRCLE0/SLOT0 (the top) first. After the
+#     fifth everything hides, the face and glow fade out over 3.0 s, and
+#     both timers stop. The period is fixed when the display starts:
+#     ROUND((stones + player+0x20f8 + 60.0) * 1000.0 / 5.0) ms (0x007b4f40;
+#     60.0 the double at 0x00d880d8, 1000.0 at 0x00d83268, 5.0 at
+#     0x00d81950). player+0x20f8 is the Energy of life scroll's duration
+#     bonus: FUN_0089a0d0 stores the value of a timed job whose FourCC is
+#     0x706874 there (FUN_009d4e00) while the job has time left, and
+#     FUN_0089a1a0 clears it when that job ends. srrevamp's server sends the
+#     same bonus in its composite state (CompositeNet.State.bonus_seconds,
+#     set_hwan_time_bonus), the seconds its own berserk adds to param 60.
+#     "stones" is FUN_006ac0a0: +0x19c of each worn item's
+#     SKILL_ITEM_ETC_SOCKET_STONE_HWAN_E_01..03 socket -- OPEN, 0 here:
+#     srrevamp has no socket stones.
+#   * The refresh FUN_007b4f40(0) (the count arriving without a start)
+#     leaves both timers, the face and the glow alone: a running drain
+#     goes on and fades orb k on its next step whatever the refresh lit.
+#   * FUN_007b5300 stops the drain (timer 2, not the flames' timer 1): while
+#     the drain runs, every SHOWN orb fades 255 -> 0 over 1.0 s with its
+#     flame, and the face and the glow fade over 3.0 s -- each only if its
+#     alpha is exactly 255 (`+0x12d == -1`). Retail runs it on the player's
+#     death and on a zone reset (reset_hwan_display). The server's
+#     body-mode end (0x30BF kind 4 value 0) does not touch it.
 #
-# OPEN, labelled: the drain period uses the READ 60 s base only -- this
-# server keeps neither player+0x20f8 nor Hwan socket stones. The base agrees
-# with the server's own berserk.Duration (60 s, recovered from the server
-# binary independently). The Hwan-level art swap
+# The base 60 s agrees with the server's own berserk.Duration (60 s,
+# recovered from the server binary independently). The Hwan-level art swap
 # (FUN_007b5f40, pmi_jahwan_02*.ddj when the byte at player+0x764 is not 0;
 # INFERRED to be _CHAR.HwanLevel, as its setter 0x009ca930 builds the Hwan
 # title through the hwanleveldata table) is not driven: this server has no
@@ -282,8 +296,11 @@ const HWAN_BURN_FRAME_SEC := 0.05
 const HWAN_ORB_FADE_SEC := 1.0
 const HWAN_FACE_FADE_SEC := 3.0
 ## READ base of the client's display duration (0x007b4f40: `+ 60.0`, the
-## double at 0x00d880d8); see the header for what is not added to it.
+## double at 0x00d880d8); the header has the whole period.
 const HWAN_DISPLAY_BASE_SEC := 60.0
+## The Hwan socket stones' bonus (FUN_006ac0a0). OPEN: srrevamp has no
+## socket stones, so it is 0.
+const HWAN_SOCKET_STONE_SEC := 0
 
 var _circles: Array = []   # CIRCLE0..4 (top..bottom)
 var _burns: Array = []     # DECO_HWAN_SLOT0..4, each a TextureRect over an AtlasTexture
@@ -297,6 +314,15 @@ var _hwan_active := false
 var _hwan_drained := 0
 var _burn_clock := 0.0
 var _drain_clock := 0.0
+## Timer 1 (the flames' frames) runs apart from timer 2 (_hwan_active, the
+## drain): FUN_007b5300 stops only the drain, the fifth drain step both.
+var _burn_running := false
+## player+0x20f8, the scroll's duration bonus in seconds, and the tick it
+## stops counting at (the job's end; set_hwan_time_bonus).
+var _hwan_time_bonus := 0
+var _hwan_time_bonus_until_ms := 0
+## Timer 2's period, fixed when the display starts (drain_period_seconds).
+var _drain_period := HWAN_DISPLAY_BASE_SEC / float(BERSERK_ORBS)
 
 func _setup_hwan(root: Control) -> void:
 	_circles.clear()
@@ -388,6 +414,33 @@ func set_hwan(charges: int, starts: bool) -> void:
 	elif _hwan_charges != 0:
 		_refresh_hwan()
 
+## player+0x20f8 from the server's composite state: the Energy of life job's
+## duration bonus in seconds and how long the job still runs. A bonus of 0,
+## or a job with no time left, clears it (FUN_0089a0d0 stores only while the
+## job has time left; FUN_0089a1a0 clears it at the job's end).
+func set_hwan_time_bonus(seconds: int, seconds_left: int) -> void:
+	if seconds <= 0 or seconds_left <= 0:
+		_hwan_time_bonus = 0
+		_hwan_time_bonus_until_ms = 0
+		return
+	_hwan_time_bonus = seconds
+	_hwan_time_bonus_until_ms = Time.get_ticks_msec() + seconds_left * 1000
+
+## The bonus in force now: 0 once the job's time has run out.
+func hwan_time_bonus() -> int:
+	if _hwan_time_bonus <= 0 or Time.get_ticks_msec() >= _hwan_time_bonus_until_ms:
+		return 0
+	return _hwan_time_bonus
+
+## Timer 2's period in seconds for a display started now: READ, 0x007b4f40,
+## ROUND((stones + player+0x20f8 + 60.0) * 1000.0 / 5.0) milliseconds.
+func drain_period_seconds() -> float:
+	var ms := roundi((float(HWAN_SOCKET_STONE_SEC) + float(hwan_time_bonus()) + HWAN_DISPLAY_BASE_SEC) * 1000.0 / float(BERSERK_ORBS))
+	return float(ms) / 1000.0
+
+func drain_period() -> float:
+	return _drain_period
+
 ## Whether the client would ask for berserk: 0x00778ac0 tests the count only
 ## (player+0x886 >= 5), not whether a display is running.
 func hwan_ready() -> bool:
@@ -402,22 +455,21 @@ func hwan_charges() -> int:
 func hwan_display_active() -> bool:
 	return _hwan_active
 
-## FUN_007b4f40(0).
+## FUN_007b4f40(0), READ: the five flames hide (vslot 0x5c ShowWindow(0));
+## the ready circle shows exactly at a count of 5; from CIRCLE4 up, each orb
+## is set steady at 255 (FUN_006552b0(0xff, 0xff, 0, 0) and the +0x84 alpha
+## call with 0xff -- its fade is over) and shown for a charge or hidden. Both
+## timers, the face and the glow are left as they are: a running display
+## keeps draining (round 629-632 integration; this used to stop it).
 func _refresh_hwan() -> void:
-	_kill_fades()
-	_hwan_active = false
 	for b in _burns:
 		(b as CanvasItem).visible = false
-		(b as CanvasItem).modulate.a = 1.0
-	for fx in [_hwan_face, _hwan_glow]:
-		if fx != null:
-			fx.visible = false
-			fx.modulate.a = 1.0
 	if _btn_jahwan != null:
 		_btn_jahwan.visible = _hwan_charges >= BERSERK_ORBS
 	var lit := lit_circles(_hwan_charges)
 	for i in range(_circles.size()):
 		var orb := _circles[i] as CanvasItem
+		_kill_fade(orb)
 		orb.modulate = Color.WHITE
 		orb.visible = i in lit
 
@@ -425,6 +477,8 @@ func _refresh_hwan() -> void:
 func _start_hwan() -> void:
 	_kill_fades()
 	_hwan_active = true
+	_burn_running = true
+	_drain_period = drain_period_seconds()
 	_hwan_drained = 0
 	_drain_clock = 0.0
 	_burn_clock = 0.0
@@ -446,20 +500,27 @@ func _start_hwan() -> void:
 
 ## FUN_007b5300, READ: the reset retail runs on the player's death
 ## (0x8a80a0 kind 0 value 2 -> FUN_0077b000) and on a zone reset
-## (FUN_00787860). While the drain runs, every shown orb and flame fades
-## 255 -> 0 over 1.0 s, a fully shown face and glow over 3.0 s, and the drain
-## stops. The count is left as it is.
+## (FUN_00787860). Only while timer 2 (the drain) runs: for each of the five,
+## top to bottom, when the ORB is shown (FUN_00b8f530), the orb and its flame
+## fade 255 -> 0 over 1.0 s -- from 255, whatever alpha the orb had; the face
+## and the glow each fade 255 -> 0 over 3.0 s only when their alpha is exactly
+## 255 (`*(char *)(+0x12d) == -1`), so one still fading in carries on; then
+## timer 2 stops. Timer 1 (the flames' frames) keeps running. The count is
+## left as it is.
 func reset_hwan_display() -> void:
 	if not _hwan_active:
 		return
 	_hwan_active = false
 	for i in range(_circles.size()):
-		for item in [_circles[i], _burns[i] if i < _burns.size() else null]:
-			if item != null and (item as CanvasItem).visible:
-				_fade(item as CanvasItem, (item as CanvasItem).modulate.a, 0.0, HWAN_ORB_FADE_SEC, true)
+		var orb := _circles[i] as CanvasItem
+		if orb == null or not orb.visible:
+			continue
+		_fade(orb, 1.0, 0.0, HWAN_ORB_FADE_SEC, true)
+		if i < _burns.size():
+			_fade(_burns[i] as CanvasItem, 1.0, 0.0, HWAN_ORB_FADE_SEC, true)
 	for fx in [_hwan_face, _hwan_glow]:
-		if fx != null and fx.visible:
-			_fade(fx, fx.modulate.a, 0.0, HWAN_FACE_FADE_SEC, true)
+		if fx != null and fx.visible and fx.modulate.a >= 1.0 and not _fades.has(fx):
+			_fade(fx, 1.0, 0.0, HWAN_FACE_FADE_SEC, true)
 
 func _show_burn_frame(i: int) -> void:
 	var slot := _burns[i] as Control
@@ -480,6 +541,12 @@ func _show_burn_frame(i: int) -> void:
 ## kills the old one first (round 629's review): an old fade-out's hide
 ## callback must not land on an orb a new berserk has just shown.
 var _fades: Dictionary = {}
+
+func _kill_fade(item: CanvasItem) -> void:
+	var old = _fades.get(item)
+	if old != null and (old as Tween).is_valid():
+		(old as Tween).kill()
+	_fades.erase(item)
 
 func _kill_fades() -> void:
 	for tw in _fades.values():
@@ -509,18 +576,18 @@ func _fade(item: CanvasItem, from: float, to: float, seconds: float, hide_after:
 			item.modulate.a = 1.0)
 
 func _process(delta: float) -> void:
+	if _burn_running:
+		_burn_clock += delta
+		while _burn_clock >= HWAN_BURN_FRAME_SEC:
+			_burn_clock -= HWAN_BURN_FRAME_SEC
+			for i in range(_burns.size()):
+				_burn_frame[i] = (int(_burn_frame[i]) + 1) % HWAN_BURN_FRAMES
+				_show_burn_frame(i)
 	if not _hwan_active:
 		return
-	_burn_clock += delta
-	while _burn_clock >= HWAN_BURN_FRAME_SEC:
-		_burn_clock -= HWAN_BURN_FRAME_SEC
-		for i in range(_burns.size()):
-			_burn_frame[i] = (int(_burn_frame[i]) + 1) % HWAN_BURN_FRAMES
-			_show_burn_frame(i)
 	_drain_clock += delta
-	var period := HWAN_DISPLAY_BASE_SEC / float(BERSERK_ORBS)
-	while _hwan_active and _drain_clock >= period and _hwan_drained < BERSERK_ORBS:
-		_drain_clock -= period
+	while _hwan_active and _drain_clock >= _drain_period and _hwan_drained < BERSERK_ORBS:
+		_drain_clock -= _drain_period
 		_drain_one()
 
 ## vslot_005 case 2 (client timer 2): one orb and its flame fade out, the top
@@ -533,7 +600,9 @@ func _drain_one() -> void:
 		_fade(_burns[k] as CanvasItem, 1.0, 0.0, HWAN_ORB_FADE_SEC)
 	_hwan_drained += 1
 	if _hwan_drained >= BERSERK_ORBS:
+		print("HudPlayerInfo: berserk display ended by its drain (%d steps of %.3f s)" % [BERSERK_ORBS, _drain_period])
 		_hwan_active = false
+		_burn_running = false
 		for item in _circles + _burns:
 			var old = _fades.get(item)
 			if old != null and (old as Tween).is_valid():

@@ -335,7 +335,9 @@ class StateChange:
 	var object_id: int
 	var kind: int
 	var value: int
-	## The kind-4 value-1 byte (chardata+5 on the server; OPEN what it is).
+	## The kind-4 value-1 byte: chardata+5 on the server, READ -- SetBodyMode's
+	## fifth argument (the flag granting param 189's 0.3), which the berserk
+	## activation passes as 0 (0x515cc6).
 	var extra: int = 0
 
 ## Encodes an OP_MOTION_REQUEST: the one requested byte (4 toggles sitting).

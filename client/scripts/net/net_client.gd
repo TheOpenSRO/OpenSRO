@@ -43,10 +43,12 @@ var last_equipment_durabilities: Array = []
 signal inventory_move_result(slots: Array, error: String)
 ## The character's own gold, vitals and equipment-derived combat numbers.
 signal character_stats_result(stats: StatsNet.Stats)
-## Fires for OpEquipmentList AND for equip/unequip acks -- the server uses
-## one opcode/shape for all three (a successful equip/unequip ack just has
-## an empty items array). Callers that need to react to "my equip request
-## succeeded" specifically should track that they're awaiting one.
+## Fires for OpEquipmentList AND for equip/unequip replies -- the server uses
+## one opcode/shape for all three. A successful equip/unequip is answered
+## with the worn list itself (the server's sendWornList), so an empty list
+## means nothing is worn; only a refusal carries an error and no list.
+## Callers that need to react to "my equip request succeeded" specifically
+## should track that they're awaiting one.
 signal equipment_result(items: Array, error: String)
 ## A repair's outcome: 0 = repaired, otherwise a refusal code; the gold spent
 ## and the worn slots' durability afterwards (EquipmentNet.RepairResult).

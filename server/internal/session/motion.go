@@ -105,8 +105,13 @@ const MotionChangeDuration = 1500 * time.Millisecond
 const movingWindow = 500 * time.Millisecond
 
 // StateChange is the OpStateChange payload. Extra is the byte a kind-4
-// value-1 change carries after the value (chardata+5 in the engine; OPEN what
-// it is -- srrevamp sends 0); it is on the wire only for that pair.
+// value-1 change carries after the value; it is on the wire only for that
+// pair. READ, what it is: chardata+5, which CGObjChar::SetBodyMode (0x4a9fc0)
+// sets to its FIFTH argument just before it broadcasts -- the flag that, at
+// 1, grants param 189 its 0.3 base (the berserk damage bonus) -- and the
+// berserk activation passes 0 there (`push 0x0` at 0x515cc6, the first push
+// of SetBodyMode(1, 0, duration, 0)). So srrevamp's 0 is the activation's own
+// value.
 type StateChange struct {
 	ObjectID uint32
 	Kind     byte

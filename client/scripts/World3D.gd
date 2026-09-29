@@ -1888,7 +1888,14 @@ func _wire_composite_items() -> void:
 		NetClient.composite_list(NetClient.current_character_name)
 
 func _on_composite_state(state: CompositeNet.State) -> void:
-	if state == null or _hud_buff_board == null:
+	if state == null:
+		return
+	# player+0x20f8 (round 629-632 integration): the Energy of life job's
+	# duration bonus, which the next berserk display's drain period adds
+	# (HudPlayerInfo.set_hwan_time_bonus; FUN_0089a0d0 / FUN_0089a1a0).
+	if _hud_player_info != null:
+		_hud_player_info.set_hwan_time_bonus(state.bonus_seconds, state.bonus_seconds_left)
+	if _hud_buff_board == null:
 		return
 	var live := {}
 	for g in state.grants:
@@ -15643,7 +15650,12 @@ func _on_body_mode(change: WorldNet.StateChange) -> void:
 	var mine := own >= 0 and change.object_id == own
 	print("World3D: body mode %d for %d (%s)" % [change.value, change.object_id, "this player" if mine else "someone else"])
 	if mine and change.value == 1 and _hud_player_info != null:
+		var was_running := _hud_player_info.hwan_display_active()
 		_hud_player_info.set_hwan(0, true)
+		if not was_running:
+			print("World3D: berserk display started: drain step %.3f s (bonus %d s), %.3f s in all" % [
+				_hud_player_info.drain_period(), _hud_player_info.hwan_time_bonus(),
+				_hud_player_info.drain_period() * HudPlayerInfo.BERSERK_ORBS])
 
 ## The server's answer for this player: sit (4) or stand (0), through the 1.5 s
 ## transition in which it refuses a move.
@@ -15895,23 +15907,30 @@ func _flush_stat_panel_refresh() -> void:
 	_stat_panel_refresh_causes.clear()
 	_request_world_stats()
 
-## What was worn at the last non-empty equipment list, as "slot:item" pairs.
+## What was worn at the last equipment list, as "slot:item" pairs, and
+## whether a list has come yet (the world entry asks for one).
 var _stat_panel_worn_sig := ""
+var _stat_panel_worn_known := false
 
-## An equipment list refreshes the panel only when what is worn CHANGED. Every
-## list is not a change: opening the bag asks for one, and an equip's
-## acknowledgement is an empty list followed by the real one, so an empty
-## list is skipped and the next real one is compared with the last.
+## An equipment list refreshes the panel only when what is worn CHANGED:
+## every list is not a change (opening the bag asks for one). Every successful
+## reply is a real list, an empty one included -- the server answers an equip
+## and an unequip with the worn list itself (sendWornList), and a refusal
+## carries an error and no list -- so an empty list is "nothing worn": taking
+## off the last item, or putting one on a character wearing nothing, is a
+## change (round 629-632 integration; round 629's review skipped empty lists
+## as acknowledgements, which missed both).
 func _stat_panel_on_equipment(items: Array, error: String) -> void:
-	if error != "" or items.is_empty():
+	if error != "":
 		return
 	var pairs: Array = []
 	for e in items:
 		pairs.append("%d:%d" % [e.slot, e.item_id])
 	pairs.sort()
 	var sig := ",".join(PackedStringArray(pairs))
-	var changed := _stat_panel_worn_sig != "" and sig != _stat_panel_worn_sig
+	var changed := _stat_panel_worn_known and sig != _stat_panel_worn_sig
 	_stat_panel_worn_sig = sig
+	_stat_panel_worn_known = true
 	if changed:
 		_refresh_stat_panel("equipment changed")
 

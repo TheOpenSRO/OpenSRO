@@ -96,7 +96,7 @@ func newTeleportRig(t *testing.T, o teleportRigOpts) *teleportRig {
 	eq := equipment.NewMemStore(inventory.NewMemStore(nil))
 	hub := world.NewHub()
 	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, eq, hub),
-		TeleportHandler(chars, eq, hub, o.network, gm.ParseAccounts(o.gms), o.free, nil))
+		TeleportHandler(chars, eq, hub, o.network, gm.ParseAccounts(o.gms), o.free, nil, nil))
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

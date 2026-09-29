@@ -317,3 +317,34 @@ func TestForgetDropsTurnAndExpiredBonus(t *testing.T) {
 		t.Error("an expired bonus is still stored after its timer")
 	}
 }
+
+// A running berserk refuses another activation before the orbs are counted
+// (READ: GObjPC_HandleBerserkMsg_0a7's error 3), and End stops it once.
+func TestActivateRefusedWhileActiveAndEnd(t *testing.T) {
+	tr := NewTracker()
+	const id = int64(9)
+	tr.SetCharges(id, Orbs)
+	if !tr.Activate(id) {
+		t.Fatal("five orbs must activate")
+	}
+	until := tr.ActiveUntil(id)
+	tr.SetCharges(id, Orbs)
+	if tr.Activate(id) {
+		t.Fatal("an activation while berserk must be refused")
+	}
+	if tr.Charges(id) != Orbs || !tr.ActiveUntil(id).Equal(until) {
+		t.Fatalf("a refused activation changed the state: charges %d, until moved %v", tr.Charges(id), !tr.ActiveUntil(id).Equal(until))
+	}
+	if !tr.End(id) {
+		t.Fatal("End of a running berserk must report it")
+	}
+	if tr.Active(id) || tr.End(id) {
+		t.Fatal("after End the berserk is over, and a second End finds nothing")
+	}
+	if tr.ActiveUntil(id).Equal(until) {
+		t.Fatal("End must move ActiveUntil, so the old end timer stands down")
+	}
+	if !tr.Activate(id) {
+		t.Fatal("after End five orbs activate again")
+	}
+}

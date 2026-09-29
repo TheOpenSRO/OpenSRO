@@ -175,16 +175,58 @@ var berserkEndDelay = func(until time.Time) time.Duration { return time.Until(un
 
 // scheduleBerserkEnd pushes the body-mode end when this activation runs out.
 // The tracker expires lazily (Active compares the clock), so nothing else
-// would say it; the engine's SetBodyMode timer does. A later activation moves
-// ActiveUntil, and the older timer then stands down.
+// would say it; the engine's SetBodyMode timer does. A later activation, or
+// an End (revive, zone change), moves ActiveUntil, and the older timer then
+// stands down. The test and the push are one step under the character's
+// berserk turn, so an activation cannot land between them and be followed by
+// this older activation's "off".
 func scheduleBerserkEnd(hub *world.Hub, zerk *berserk.Tracker, characterID int64) {
 	until := zerk.ActiveUntil(characterID)
 	time.AfterFunc(berserkEndDelay(until), func() {
+		release := zerk.Turn(characterID)
+		defer release()
 		if !zerk.ActiveUntil(characterID).Equal(until) {
 			return
 		}
 		broadcastBodyMode(hub, characterID, 0)
 	})
+}
+
+// endBerserk ends the character's running berserk now, as the engine does
+// when another body mode replaces mode 1, and tells the zone the body mode is
+// 0. Its two callers:
+//
+//   - revive: READ. GObjPC::Revive (0x4df290) ends with SetBodyMode(2, 0,
+//     6.0 s (0xb45b78) or 11.0 s (0xb45bb8), 0) -- body mode 2,
+//     BODYMODE_INVINCIBLE, for that long -- which replaces mode 1, and
+//     SetBodyMode broadcasts the change (kind 4, value 2).
+//   - zone change: world entry is READ -- CGame::EnterWorld (0x417240, the
+//     0x3012 SR_READY_TO_PLAY handler's) calls CGObjPC::vslot_391 (0x4df9e0)
+//     once CGObj::EnterWorld succeeds, and vslot_391 sets body mode 2 (a
+//     timer the world gives) or 4 -- but that a teleport is such a re-entry
+//     is INFERRED: 0x34b5 (SR_RESET_CLIENT, sent from
+//     CMainProcess::CharDataSavingCompleted 0x437de0) and its ack 0x34b6
+//     (FUN_00402e60 -> FUN_00437e80, which hands the lobby entry off with
+//     0x7005 and destroys it) were read; the path from the teleport handler
+//     to them was not traced. The client resets its display on a zone
+//     change (FUN_00787860, READ), and ending the server's berserk there
+//     keeps the two consistent.
+//
+// OURS: the broadcast value is 0, not the engine's 2. srrevamp has no body
+// mode 2 -- neither the invincibility nor its timer -- so the character's
+// body mode after the end is 0 here; the client's 0x30BF kind-4 handler
+// starts the display only on value 1 and does nothing else to the orbs on
+// either value (0x8a80a0, READ). A character with no running berserk hears
+// nothing. The turn orders it against an activation of the same character.
+func endBerserk(hub *world.Hub, zerk *berserk.Tracker, characterID int64) {
+	if zerk == nil {
+		return
+	}
+	release := zerk.Turn(characterID)
+	defer release()
+	if zerk.End(characterID) {
+		broadcastBodyMode(hub, characterID, 0)
+	}
 }
 
 // levelTable is the EXP curve the server was started with, or nil if the
@@ -1706,7 +1748,9 @@ func attackerDamageOf(ctx context.Context, characterID int64, str, intel int, eq
 		// exactly the deployments that have imported least, which is the same
 		// reasoning the unarmed fallback above already uses.
 		if defenderParry > 0 && item.HitRateMin > 0 {
-			hra := combat.CharacterRate(attackerLevel, item.HitRateMin)
+			// The instance's own attack rate (combat.WeaponAttackRate: its
+			// variance group 3, as the engine publishes param 11).
+			hra := combat.CharacterRate(attackerLevel, combat.WeaponAttackRate(item, weaponInstance(e)))
 			centre := combat.DamageCentrePercent(hra, defenderParry, attackerLevel, defenderLevel)
 			return rollCentred(min, max, centre), nil
 		}
@@ -1777,11 +1821,16 @@ func monsterBlow(m combat.Monster, playerLevel int, parry float64) int {
 // block ratio and every one of them a shield, with no row carrying both
 // (round 377). Shields block; body armour parries.
 //
-// The LO end is taken, not an instance-interpolated value. defenderDefence
-// interpolates its pairs through a recovered variance group; no such group is
-// recovered for parry, and inventing one would be worse than the documented
-// rule for this field -- srrevamp models neither per-instance variance nor plus
-// level, so lo is what applies.
+// Each piece's parry is its INSTANCE's, as the engine publishes param 9
+// (round 629's integration review, which replaced the LO end taken until
+// then): READ, Char_BuildAggregateStats' armour branch interpolates the ref's
+// ER triple +0x1c8/+0x1cc (itemdata columns 68/69, ParryRatioMin/Max) by
+// variance group 5 (durability.ArmourParryGroup, `mov esi,5` at 0x496062) into
+// item+0x19c (0x496088), and Char_PublishCombatStats publishes +0x19c as
+// param 9 (0x497920..0x49792f). The instance rule is defenderDefence's: a
+// piece that never rolled a variance (Untracked) counts at the top of its
+// range; a row without its hi end reads the lo end. The per-plus increment
+// (column 70) is not added: srrevamp instances carry no plus level.
 //
 // A broken piece parries for nothing, the same rule defenderDefence uses.
 func defenderParryRate(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (float64, error) {
@@ -1802,9 +1851,22 @@ func defenderParryRate(ctx context.Context, characterID int64, eq equipment.Stor
 		if err != nil || it == nil {
 			continue // no reference row: contributes nothing, as elsewhere here
 		}
-		total += it.ParryRatioMin
+		total += armourParry(e, it)
 	}
 	return total, nil
+}
+
+// armourParry is one worn armour piece's parry, param 9's item term (see
+// defenderParryRate).
+func armourParry(e equipment.Equipped, it *refdata.Item) float64 {
+	lo, hi := it.ParryRatioMin, it.ParryRatioMax
+	if hi <= lo {
+		return lo
+	}
+	if e.Durability == durability.Untracked {
+		return hi
+	}
+	return durability.WhiteStat(lo, hi, e.Variance, durability.ArmourParryGroup)
 }
 
 func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (int, error) {

@@ -172,13 +172,58 @@ func _initialize() -> void:
 		if _visible(pmi, "GDR_PMI_DECO_HWAN_SLOT%d" % i) and _visible(pmi, "GDR_PMI_CIRCLE%d" % i):
 			shown += 1
 	_check(shown == 5, "a new berserk right after a reset keeps its five orbs and flames (got %d)" % shown)
+	# FUN_007b4f40(0) during a display (round 629-632 integration; NEGATIVE
+	# against b0ce3bd, whose refresh stopped the drain and hid the face): the
+	# orbs follow the count, the flames hide, and the drain, the face and the
+	# glow are left running.
 	pmi.set_berserk(60, false)
-	_check(_shown_circles(pmi) == [2, 3, 4] and not bool(pmi.get("_hwan_active")), "a count after the display refreshes it: three orbs")
+	_check(_shown_circles(pmi) == [2, 3, 4], "a count during the display lights three orbs (got %s)" % [_shown_circles(pmi)])
+	_check(bool(pmi.get("_hwan_active")), "a refresh during the display leaves the drain running")
+	_check(_visible(pmi, "GDR_PMI_HWAN_EFF_FACE") and _visible(pmi, "GDR_PMI_HWAN_EFF_GLOW"), "a refresh leaves the face and the glow")
+	_check(not _visible(pmi, "GDR_PMI_DECO_HWAN_SLOT4"), "a refresh hides the flames")
 	pmi.set_hwan_count(0)
 	_check(_shown_circles(pmi) == [2, 3, 4], "a count of 0 without a start refreshes nothing (FUN_00778ae0(0,0))")
+	# The drain runs on and, at its fifth step, hides all ten -- the lit
+	# three included, as retail's vslot_005 case 2 does.
+	pmi._process(HudPlayerInfo.HWAN_DISPLAY_BASE_SEC + 0.1)
+	_check(not bool(pmi.get("_hwan_active")) and _shown_circles(pmi).is_empty(), "the drain still ends the display after a refresh (orbs %s)" % [_shown_circles(pmi)])
+	pmi.set_berserk(60, false)
+	_check(_shown_circles(pmi) == [2, 3, 4] and not bool(pmi.get("_hwan_active")), "a count after the display refreshes it: three orbs")
+
+	# --- The drain step (0x007b4f40): ROUND((stones + player+0x20f8 + 60) *
+	# 1000 / 5) ms, fixed at the start (NEGATIVE against b0ce3bd: a fixed 12 s).
+	_check(is_equal_approx(pmi.drain_period_seconds(), 12.0), "no bonus: a 12 s step (got %s)" % str(pmi.drain_period_seconds()))
+	pmi.set_hwan_time_bonus(5, 3600)
+	_check(is_equal_approx(pmi.drain_period_seconds(), 13.0), "a 5 s bonus: a 13 s step (got %s)" % str(pmi.drain_period_seconds()))
+	pmi.set_hwan_time_bonus(14, 0)
+	_check(is_equal_approx(pmi.drain_period_seconds(), 12.0), "a bonus whose job has no time left adds nothing (got %s)" % str(pmi.drain_period_seconds()))
+	pmi.set_hwan_time_bonus(5, 3600)
+	pmi.set_berserk(100, false)
+	pmi.set_berserk(0, true)
+	pmi.set_hwan_time_bonus(0, 0)
+	_check(is_equal_approx(pmi.drain_period(), 13.0), "the step is fixed when the display starts (got %s)" % str(pmi.drain_period()))
+	pmi._process(60.5)
+	_check(bool(pmi.get("_hwan_active")) and int(pmi.get("_hwan_drained")) == 4, "at 60.5 s of a 65 s display four orbs have drained and it runs on (drained %d)" % int(pmi.get("_hwan_drained")))
+	pmi._process(4.6)
+	_check(not bool(pmi.get("_hwan_active")), "the 65 s display ends at 65 s")
+
+	# --- FUN_007b5300 fades the face and the glow only at alpha 255: one
+	# still fading in carries on; the flames' timer keeps running.
+	pmi.set_berserk(100, false)
 	pmi.set_berserk(0, true)
 	pmi.reset_hwan_display()
+	_check(not bool(pmi.get("_hwan_active")) and bool(pmi.get("_burn_running")), "a reset stops the drain, not the flames' timer")
 	await create_timer(1.3).timeout
+	_check(_shown_circles(pmi).is_empty(), "a reset fades the shown orbs out (got %s)" % [_shown_circles(pmi)])
+	await create_timer(2.0).timeout
+	var face := pmi.find_child("GDR_PMI_HWAN_EFF_FACE", true, false) as CanvasItem
+	_check(face != null and face.visible and face.modulate.a >= 1.0, "a face still fading in at the reset finishes fading in (visible %s, alpha %s)" % [str(face.visible) if face != null else "-", str(face.modulate.a) if face != null else "-"])
+	pmi.set_berserk(100, false)
+	pmi.set_berserk(0, true)
+	await create_timer(3.2).timeout
+	pmi.reset_hwan_display()
+	await create_timer(3.3).timeout
+	_check(face != null and not face.visible, "a face at full alpha fades out and hides on a reset")
 	pmi.set_hwan(0, false)
 	_check(pmi.lit_circles(2) == [3, 4], "lit_circles(2) is [3, 4]")
 

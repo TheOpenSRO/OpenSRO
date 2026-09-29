@@ -1096,17 +1096,25 @@ bars use `pmi_hp.ddj` / `pmi_mp.ddj`. Left:
       view is not settled (READ the camera build in `FUN_00a5a8c0` next). Then a SubViewport with
       its own World3D and a copy of the player's skeleton and worn meshes.
 - [x] **Hit rate / Parry ratio** -- round 629's review: the stats packet's fifth and sixth tails,
-      the rates combat already uses (innate 10 + level + weapon HitRateMin / armour parry), in both
-      windows. Still OPEN: retail adds buffs and masteries to params 11 / 9; ours does not.
+      the rates combat already uses, in both windows. Since the 629-632 integration review each
+      item's OWN value: the weapon's HitRateMin..Max by its variance group 3, the body armour's
+      ParryRatioMin..Max by group 5 (READ, `Char_BuildAggregateStats` -> `Char_PublishCombatStats`
+      params 11 / 9), combat's centre roll included; a broken weapon adds nothing. Still OPEN:
+      retail adds buffs, masteries and the per-plus increments (columns 115 / 70); ours does not.
 - [ ] **Buffs do not change the panel's numbers** because the server's buff book only records the
       run-speed contributions (`internal/buff`); the panel already re-asks on OpBuffStart/End.
 - [ ] **Hwan-level art** (`pmi_jahwan_02*`, blue) needs a Hwan level (`player+0x764`, INFERRED
-      `_CHAR.HwanLevel`); the berserk display's extra seconds (`player+0x20f8`, Hwan socket stones)
-      likewise. The "+" button's blink (`FUN_00655ec0(1)`) is not drawn.
+      `_CHAR.HwanLevel`); the Hwan socket stones' extra display seconds (`FUN_006ac0a0`) likewise
+      (the Energy of life bonus, `player+0x20f8`, is fed since the 629-632 integration review). The
+      "+" button's blink (`FUN_00655ec0(1)`) is not drawn.
 - [x] **The berserk end** -- round 629's review: the server pushes 0x30BF kind 4 (body mode) on
       at activation and off when it runs out; the display ends on its own timer 2, and on death and
-      zone reset (`FUN_007b5300`). OPEN: the value-1 extra byte (chardata+5) is sent as 0; other
-      players' body modes are not drawn.
+      zone reset (`FUN_007b5300`). Since the 629-632 integration review a revive (READ,
+      `GObjPC::Revive`'s `SetBodyMode(2, ...)`) and a zone change (world entry READ, teleport as
+      re-entry INFERRED) end the server's berserk too, and a second activation is refused (error 3,
+      READ). The value-1 extra byte (chardata+5) is READ: `SetBodyMode`'s fifth argument, 0 on the
+      activation. OPEN: body mode 2 (the revive / entry invincibility and its berserk error 4);
+      other players' body modes are not drawn.
 
 ### Seasonal event decorations — **hidden by default (round 583)**
 The user decided on 2026-09-26 that early testing gets no seasonal decorations. Christmas,

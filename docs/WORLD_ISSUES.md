@@ -7094,6 +7094,95 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Rounds 629-632 integration review (int/ui): the berserk display lasts as long as the berserk, a revive or a zone change ends it on the server, hit rate and parry are the item's own, and the panel follows every change of what is worn
+
+The final review of int/ui (dev cfddf39 + rounds 629-632, merged at 1a7e84d) confirmed every READ
+of round 629's follow-up (b0ce3bd) and ran the whole branch with real input. It found five
+problems and three smaller ones; all are fixed here. Before is 1a7e84d.
+
+**1. The display's drain step includes the scroll's bonus (READ).** `FUN_007b4f40(1)` fixes timer
+2 at `ROUND((stones + player+0x20f8 + 60.0) * 1000.0 / 5.0)` ms. `player+0x20f8` is written by
+`FUN_0089a0d0` -> `FUN_009d4e00` with the value of a timed job whose FourCC is `0x706874` (the
+Energy of life job) while it has time left, and cleared by `FUN_0089a1a0` at its end; "stones" is
+`FUN_006ac0a0`, the Hwan socket stones (OPEN, 0: none here). The client used 60 s whatever the
+bonus, so with the scroll's +5 s the orbs were gone 5 s before the server's end. Now
+`HudPlayerInfo.set_hwan_time_bonus` takes the composite state's bonus and its time left, and the
+step is fixed when the display starts. MEASURED (real input: scroll, potion, Tab): "drain step
+13.000 s (bonus 5 s)", the display ended at 02:34:56.278 and the server's body mode 0 arrived at
+02:34:56.277, 65.003 s after the start (was 60 s against 65 s).
+
+**2. A revive and a zone change end the server's berserk.**
+- Revive, READ: `GObjPC::Revive` (0x4df290) ends with `SetBodyMode(2, 0, 6.0 or 11.0 s, 0)`
+  (0x4df46c..0x4df484; 0xb45b78 = 6.0f, 0xb45bb8 = 11.0f), which replaces body mode 1.
+- Zone change: world entry is READ -- `CGame::EnterWorld` (0x417240, reached from the 0x3012
+  SR_READY_TO_PLAY handler `Game__EnterWorld`) calls `CGObjPC::vslot_391` (0x4df9e0) after
+  `CGObj::EnterWorld` succeeds, and vslot_391 sets body mode 2 (with the world's timer) or 4. That
+  a teleport is such a re-entry is INFERRED: 0x34b5 (SR_RESET_CLIENT, sent by
+  `CMainProcess::CharDataSavingCompleted` 0x437de0) and its ack 0x34b6 (`FUN_00402e60` ->
+  `FUN_00437e80`, which sends 0x7005 and destroys the lobby entry) were read; the path from the
+  teleport handler to them was not traced.
+- `berserk.Tracker.End` clears the active window (the activation's end timer then stands down)
+  and `session.endBerserk` broadcasts body mode 0, from `ReviveHandler`, the auto-revive and
+  `warpTo` (change zone and teleport). OURS: the value is 0, not the engine's 2 -- srrevamp has no
+  body mode 2 (the invincibility and its timer); the client's handler starts the display only on
+  1 and does nothing else to the orbs on either value (0x8a80a0).
+- MEASURED: berserk at 02:55:51.6, killed, Revive clicked at 02:56:06.1 -> body mode 0 at
+  02:56:06.129, before "revived"; no second end at the activation's 02:56:51. Berserk at
+  02:35:17 (65 s with the bonus), `/goto hotan` at 02:35:20.9 -> body mode 0 delivered once the
+  zone had loaded (02:35:25.8), and no end at the activation's 02:36:22 (its timer stood down).
+  Before, 1a7e84d's server kept the berserk through the zone change: a potion in Hotan 30 s after
+  Tab was refused "during berserk mode".
+
+**3. Hit rate and parry are each item's own (READ).** `Char_BuildAggregateStats` interpolates the
+weapon's ref +0x288/+0x28c (itemdata 113/114, HitRateMin/Max) by variance group 3 (`mov esi,3` at
+0x496376) into item+0x1d8, and the body armour's ER triple +0x1c8/+0x1cc (itemdata 68/69,
+ParryRatioMin/Max) by group 5 (0x496062) into item+0x19c; `Char_PublishCombatStats` publishes
++0x1d8 as param 11 (0x497ace..0x497add) and +0x19c as param 9 (0x497920..0x49792f). All 2913
+weapons in the box's itemdata have HitRateMin < HitRateMax, so the minimum was wrong for nearly
+every instance. `combat.WeaponAttackRate` and `session.armourParry` apply the instance (the
+weapon rule of `combat.WeaponRange`, the armour rule of `defenderDefence`), in the panel AND in
+combat's centre roll and `monsterBlow`, so the two still agree; a broken weapon adds nothing. The
+disclosure is restored: retail also adds buffs, masteries and the per-plus increments (columns
+115 / 70). MEASURED: the starter sword (24..30) now reads hit 38 (10 + 1 + 27) on one character;
+bare-handed 11.
+
+**4. The refresh leaves the running display alone (READ, `FUN_007b4f40(0)`).** It hides the
+flames, shows the ready circle at 5, steadies the orbs at 255 and shows one per charge -- and
+touches neither timer, the face nor the glow. b0ce3bd's `_refresh_hwan` stopped the drain and
+hid the face. `reset_hwan_display` (`FUN_007b5300`) now fades each SHOWN orb and its flame from
+255, the face and the glow only at alpha 255 (`+0x12d == -1`; +0x12d is the control's current
+fade alpha, 0xff at construction), and stops timer 2 only -- the flames' timer 1 runs on. A
+visible consequence, READ and kept: a death in the first 3 s of a berserk leaves the face and the
+glow fading in to full, and they stay until the next display ends (seen live: the portrait stayed
+red after a death 2.6 s into a berserk).
+
+**5. The stat panel follows every change of what is worn.** Round 629's review skipped empty
+equipment lists as "acknowledgements", but the server answers an equip and an unequip with the
+worn list itself (`sendWornList`); only a refusal carries no list. So taking off the last item and
+equipping onto nothing were missed. MEASURED with real drags: four unequips gave refreshes #2-#4
+(the last "player equipment {}" -> hit 11 parry 11), and the sword onto an empty character gave
+refresh #5 (hit 38).
+
+**Smaller:** a second activation while berserk is refused before the orbs are counted (READ:
+`GObjPC_HandleBerserkMsg_0a7` 0x515b30, error 3 when GetBodyMode() is 1; its error 4 for body mode
+2 is OPEN with body mode 2); `/hwan` takes the berserk turn; the end timer holds the turn across
+its test and its broadcast. **chardata+5 is READ**: `SetBodyMode` stores its fifth argument there
+just before broadcasting (the flag granting param 189's 0.3), and the activation passes 0
+(`push 0x0` at 0x515cc6) -- labels upgraded in motion.go, world.gd and player_mini_info.md.
+
+**Tests.** `hud_player_info_test.gd` against 1a7e84d's `hud_player_info.gd`:
+
+    FAIL a refresh during the display leaves the drain running
+    FAIL a refresh leaves the face and the glow
+    FAIL the drain still ends the display after a refresh (orbs [2, 3, 4])
+    SCRIPT ERROR: Invalid call. Nonexistent function 'drain_period_seconds' in base 'Control (HudPlayerInfo)'.
+
+Go: `TestActivateRefusedWhileActiveAndEnd`, `TestBerserkActivationRefusedWhileBerserk`,
+`TestReviveEndsBerserk`, `TestZoneChangeEndsBerserk`, `TestCharacterRatesUseTheInstance`.
+`remote_godot.sh check`: 382 scripts, ALL LOAD; `tests`: 153 suites, 0 failing; `go vet ./...`
+clean; `go test -race -count=1 -p 1 ./internal/berserk/... ./internal/session/...` ok; `go test
+-count=1 -p 1 ./...`: 60 packages ok. Live: 0 SCRIPT ERROR in four logs, p95 work frame 4-9 ms.
+
 ## Six-hundred-and-thirty-second round, composite review follow-up: a grant's icon goes when the grant ends, the window has its Cancel, and a failed store changes nothing
 
 The review of 5b362d2 confirmed every READ claim. It also confirmed, with real input, the GM

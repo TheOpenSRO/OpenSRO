@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/OpenSRO/srrevamp/server/internal/berserk"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
@@ -52,6 +53,9 @@ type RegenDeps struct {
 	Items     combat.ItemLookup
 	Skills    skill.Store
 	Mana      *mana.Tracker
+	// Berserk is the orb tracker a revive ends a running berserk in
+	// (endBerserk: GObjPC::Revive's SetBodyMode(2, ...)); nil leaves it.
+	Berserk *berserk.Tracker
 }
 
 // regenPass fires the tick for every online character whose timer is due at

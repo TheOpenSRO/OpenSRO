@@ -72,3 +72,124 @@ func TestBerserkBroadcastsBodyModeOnAndOff(t *testing.T) {
 	expect("Aria", f.read(t, f.connA, f.rA), 0)
 	expect("Bram", f.read(t, f.connB, f.rB), 0)
 }
+
+// berserkFixture is a two-player world whose zone change and revive end a
+// running berserk (startDeadWorldFixtureZerk), with the berserk request
+// served, Aria holding five orbs, and the end timer delayed by delay.
+func berserkFixture(t *testing.T, delay time.Duration) (*deadWorldFixture, *berserk.Tracker) {
+	t.Helper()
+	old := berserkEndDelay
+	berserkEndDelay = func(time.Time) time.Duration { return delay }
+	t.Cleanup(func() { berserkEndDelay = old })
+	zerk := berserk.NewTracker()
+	f := startDeadWorldFixtureZerk(t, zerk, func(chars character.Store, hub *world.Hub) gateway.Handler {
+		return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+			if p.Opcode != OpBerserk {
+				return nil
+			}
+			return handleBerserk(ctx, sess, p, chars, hub, zerk)
+		}
+	})
+	if err := f.chars.SetHwanCount(context.Background(), f.aria, 5); err != nil {
+		t.Fatalf("SetHwanCount: %v", err)
+	}
+	return f, zerk
+}
+
+// expectBodyMode reads one packet and requires it to be Aria's 0x30bf kind 4
+// with value.
+func (f *deadWorldFixture) expectBodyMode(t *testing.T, who string, p *proto.Packet, value byte) {
+	t.Helper()
+	if p.Opcode != OpStateChange {
+		t.Fatalf("%s got %#04x, want 0x30bf", who, p.Opcode)
+	}
+	sc, ok := DecodeStateChange(p.Data)
+	if !ok || sc.ObjectID != uint32(f.aria) || sc.Kind != StateKindBodyMode || sc.Value != value {
+		t.Fatalf("%s got %+v, want {Aria, kind 4, value %d}", who, sc, value)
+	}
+}
+
+// goBerserk sends Aria's activation and reads its three packets.
+func (f *deadWorldFixture) goBerserk(t *testing.T) {
+	t.Helper()
+	f.send(t, f.connA, OpBerserk, (&CharacterNameRequest{Name: "Aria"}).Encode())
+	f.expectBodyMode(t, "Aria", f.read(t, f.connA, f.rA), 1)
+	if p := f.read(t, f.connA, f.rA); p.Opcode != OpBerserkResult {
+		t.Fatalf("Aria's second packet is %#04x, want the berserk result", p.Opcode)
+	}
+	f.expectBodyMode(t, "Bram", f.read(t, f.connB, f.rB), 1)
+}
+
+// A second activation while berserk is refused before the orbs are looked at
+// (READ: GObjPC_HandleBerserkMsg_0a7's error 3 on GetBodyMode() == 1), and
+// nobody hears a body-mode change.
+func TestBerserkActivationRefusedWhileBerserk(t *testing.T) {
+	f, zerk := berserkFixture(t, time.Hour)
+	f.goBerserk(t)
+	zerk.SetCharges(f.aria, 5)
+	f.send(t, f.connA, OpBerserk, (&CharacterNameRequest{Name: "Aria"}).Encode())
+	p := f.read(t, f.connA, f.rA)
+	if p.Opcode != OpBerserkResult {
+		t.Fatalf("Aria got %#04x, want the berserk result", p.Opcode)
+	}
+	r, err := DecodeBerserkResult(p.Data)
+	if err != nil || r.Activated || !r.Active {
+		t.Fatalf("second activation answered %+v (err %v), want refused while still active", r, err)
+	}
+	if zerk.Charges(f.aria) != 5 {
+		t.Errorf("a refused activation spent the orbs: %d left", zerk.Charges(f.aria))
+	}
+	if !f.nothing(t, f.connB, f.rB) {
+		t.Error("Bram heard something for a refused activation")
+	}
+}
+
+// A revive ends a running berserk (READ: GObjPC::Revive's SetBodyMode(2, ...)
+// replaces body mode 1): the tracker is no longer active, the zone hears body
+// mode 0 before the revive result, and the activation's own end timer stands
+// down.
+func TestReviveEndsBerserk(t *testing.T) {
+	f, zerk := berserkFixture(t, 400*time.Millisecond)
+	f.goBerserk(t)
+	f.kill(t, f.aria, time.Now())
+	f.send(t, f.connA, OpRevive, nil)
+	f.expectBodyMode(t, "Aria", f.read(t, f.connA, f.rA), 0)
+	if p := f.read(t, f.connA, f.rA); p.Opcode != OpReviveResult {
+		t.Fatalf("Aria's packet after the body mode is %#04x, want OpReviveResult", p.Opcode)
+	}
+	if p := f.read(t, f.connA, f.rA); p.Opcode != OpCharacterStatsResult {
+		t.Fatalf("Aria's packet after the revive is %#04x, want the stats push", p.Opcode)
+	}
+	f.expectBodyMode(t, "Bram", f.read(t, f.connB, f.rB), 0)
+	if zerk.Active(f.aria) {
+		t.Fatal("still berserk after the revive")
+	}
+	time.Sleep(500 * time.Millisecond)
+	if !f.nothing(t, f.connA, f.rA) || !f.nothing(t, f.connB, f.rB) {
+		t.Error("the ended activation's timer still pushed an end")
+	}
+}
+
+// A zone change ends a running berserk (world entry's body mode READ; that a
+// zone change is a re-entry INFERRED -- endBerserk): the mover hears body mode
+// 0 in the new zone after its result, the old zone only its OpEntityLeft, and
+// the activation's own end timer stands down.
+func TestZoneChangeEndsBerserk(t *testing.T) {
+	f, zerk := berserkFixture(t, 400*time.Millisecond)
+	f.goBerserk(t)
+	f.send(t, f.connA, OpChangeZone, (&ChangeZoneRequest{Zone: "donwhang"}).Encode())
+	if p := f.read(t, f.connA, f.rA); p.Opcode != OpChangeZoneResult {
+		t.Fatalf("Aria got %#04x, want OpChangeZoneResult", p.Opcode)
+	}
+	f.expectBodyMode(t, "Aria", f.read(t, f.connA, f.rA), 0)
+	if p := f.read(t, f.connB, f.rB); p.Opcode != OpEntityLeft {
+		t.Fatalf("Bram got %#04x, want OpEntityLeft", p.Opcode)
+	}
+	if zerk.Active(f.aria) {
+		t.Fatal("still berserk after the zone change")
+	}
+	time.Sleep(500 * time.Millisecond)
+	if !f.nothing(t, f.connA, f.rA) || !f.nothing(t, f.connB, f.rB) {
+		t.Error("the ended activation's timer still pushed an end")
+	}
+}

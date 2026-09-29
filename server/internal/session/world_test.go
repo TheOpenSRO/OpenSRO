@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/account"
+	"github.com/OpenSRO/srrevamp/server/internal/berserk"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
@@ -144,7 +145,7 @@ func TestWorldHandlerRunsTheEnterHookFirst(t *testing.T) {
 		return errors.New("a courtesy that failed")
 	}
 	hub := world.NewHub()
-	handle := gateway.Chain(LoginHandler(accounts), WorldHandlerWithHook(chars, eq, hub, hook))
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandlerWithHook(chars, eq, hub, hook, nil))
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -987,6 +988,13 @@ func startDeadWorldFixture(t *testing.T) *deadWorldFixture {
 // test).
 func startDeadWorldFixtureWith(t *testing.T, extra func(chars character.Store, hub *world.Hub) gateway.Handler) *deadWorldFixture {
 	t.Helper()
+	return startDeadWorldFixtureZerk(t, nil, extra)
+}
+
+// startDeadWorldFixtureZerk is startDeadWorldFixtureWith whose zone change and
+// revive end a running berserk in zerk (round 629-632 integration).
+func startDeadWorldFixtureZerk(t *testing.T, zerk *berserk.Tracker, extra func(chars character.Store, hub *world.Hub) gateway.Handler) *deadWorldFixture {
+	t.Helper()
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	accounts.Add("alice", "hunter2")
@@ -995,7 +1003,7 @@ func startDeadWorldFixtureWith(t *testing.T, extra func(chars character.Store, h
 	aria, _ := chars.Create(ctx, 1, "Aria")
 	bram, _ := chars.Create(ctx, 2, "Bram")
 	hub := world.NewHub()
-	handlers := []gateway.Handler{LoginHandler(accounts), WorldHandler(chars, nil, hub), ReviveHandler(chars, hub, RegenDeps{})}
+	handlers := []gateway.Handler{LoginHandler(accounts), WorldHandlerWithHook(chars, nil, hub, nil, zerk), ReviveHandler(chars, hub, RegenDeps{Berserk: zerk})}
 	if extra != nil {
 		handlers = append(handlers, extra(chars, hub))
 	}

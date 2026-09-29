@@ -60,7 +60,12 @@ A left press anywhere else on the block is `vslot_030` (0x007b4be0), selecting t
 - **Activation**, `FUN_007b4f40(1)` (READ): the ready circle hides; timer 1 is set to 50 ms
   (`FUN_00b93320(1, 0x32)`) and timer 2 to `round((60 + player+0x20f8 + socket bonus) * 1000 / 5)`
   ms (60.0 is the double at 0x00d880d8, 1000.0 at 0x00d83268, 5.0 at 0x00d81950; the socket bonus
-  is `FUN_006ac0a0`, which looks for `SKILL_ITEM_ETC_SOCKET_STONE_HWAN_E_01..03`); each flame starts
+  is `FUN_006ac0a0`, which looks for `SKILL_ITEM_ETC_SOCKET_STONE_HWAN_E_01..03`). `player+0x20f8`
+  is the Energy of life scroll's bonus (READ): `FUN_0089a0d0` stores the value of a timed job with
+  FourCC `0x706874` there (`FUN_009d4e00`) while the job has time left, and `FUN_0089a1a0` clears
+  it at that job's end. srrevamp feeds it from the composite state's bonus
+  (`HudPlayerInfo.set_hwan_time_bonus`; round 629-632 integration); the socket bonus is OPEN (0:
+  no socket stones). Each flame starts
   on frame `rand() % 12`, shows, and fades 0 -> 255 over 1.0 s (`FUN_006526e0(0, 0xff, 1.0f)`);
   the face and glow show and fade in over 3.0 s (the float at 0x00d8adc4).
 - **While on** (`vslot_005`, READ): case 1 advances every flame one frame (`FUN_00634300`, wraps
@@ -68,15 +73,23 @@ A left press anywhere else on the block is `vslot_030` (0x007b4be0), selecting t
   fades orb `k` and flame `k` 255 -> 0 over 1.0 s, `k` counting
   up from 0 (the top first); at the fifth it hides all ten, fades the face and glow out over 3.0 s,
   and kills both timers.
-- **The reset**, `FUN_007b5300` (READ): fades whatever still shows and kills timer 2. It is NOT the
+- **The refresh**, `FUN_007b4f40(0)`, touches neither timer nor the face and the glow (above): a
+  count arriving during the display leaves the drain running.
+- **The reset**, `FUN_007b5300` (READ): only while timer 2 runs -- each SHOWN orb and its flame
+  fade 255 -> 0 over 1.0 s (from 255), the face and the glow over 3.0 s only when their alpha is
+  exactly 255 (`+0x12d == -1`) -- then it kills timer 2 (not timer 1). It is NOT the
   server's end: it runs on the player's DEATH (0x30BF kind 0 value 2 -> `FUN_0077b000`, the call
   at 0x0077b02c) and on a ZONE RESET (`FUN_00787860`, the call at 0x00787930).
 - **The body mode**, 0x30BF kind 4 (READ; server `CGObjChar::SetBodyMode` 0x4a9fc0 ->
   `GObjPC::BroadcastStateChange` 0x4a8340, client handler 0x8a80a0): value 1 = berserk on, with
-  one more byte (chardata+5; OPEN what it holds) that the client reads only for value 1, and for
+  one more byte that the client reads only for value 1 -- chardata+5, which `SetBodyMode` sets to
+  its fifth argument just before broadcasting (the flag granting param 189's 0.3), and the berserk
+  activation passes 0 there (`push 0x0` at 0x515cc6; READ, round 629-632 integration) -- and for
   its own player `FUN_00778ae0(0, 1)` -- the display starts; value 0 = off, which ends the body mode
   and leaves the display to timer 2. srrevamp's server sends both (round 629's review): on at
-  activation, off when the tracker's activation runs out (`scheduleBerserkEnd`).
+  activation, off when the tracker's activation runs out (`scheduleBerserkEnd`), and off when a
+  revive or a zone change ends the berserk (`endBerserk`: the engine's revive and world entry set
+  body mode 2, broadcast as value 2; srrevamp has no body mode 2 and sends 0, OURS).
 - **Hwan level art**, `FUN_007b5f40` (READ): when the byte at `player+0x764` is not 0 the orbs,
   flames, button, face and glow swap to `pmi_jahwan_02*.ddj` (blue). INFERRED: that byte is
   `_CHAR.HwanLevel` -- its setter 0x009ca930 builds the Hwan title through `hwanleveldata`.

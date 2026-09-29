@@ -105,10 +105,10 @@ type CharacterStatsResult struct {
 	// client's FUN_00880f80 stores them as the u16s at +0x14 and +0x16 of the
 	// stats block both windows draw), built by CGObjPC::vslot_334 (0x4ebe30)
 	// from params 11 and 9. They are the numbers combat already places blows
-	// with: combat.CharacterRate(level, the weapon's HitRateMin) and
-	// CharacterRate(level, defenderParryRate), rounded. OPEN: retail also
-	// feeds both from buffs and masteries, which srrevamp's params do not
-	// carry.
+	// with: combat.CharacterRate(level, the worn weapon instance's attack
+	// rate) and CharacterRate(level, defenderParryRate), rounded
+	// (characterRates, which also discloses what retail adds and this does
+	// not: buffs, masteries and the per-plus increments).
 	HitRate   int32
 	ParryRate int32
 }
@@ -257,9 +257,19 @@ func defenderMagicArmor(ctx context.Context, characterID int64, eq equipment.Sto
 
 // characterRates is the character's attack rate and parry rate as combat uses
 // them (performAttack's centre roll and monsterBlow's): the innate 10 plus the
-// level plus the worn weapon's HitRateMin, and the same over the body armour's
-// parry (defenderParryRate), each rounded for the panel's "%d". An unarmed
-// character's weapon term is 0, which CharacterRate takes as it is.
+// level plus the worn weapon's own attack rate (combat.WeaponAttackRate: the
+// instance's variance group 3, param 11's item term), and the same over the
+// body armour's parry (defenderParryRate: each piece's variance group 5,
+// param 9's), each rounded for the panel's "%d". An unarmed character's
+// weapon term is 0, which CharacterRate takes as it is; so is a BROKEN
+// weapon's, as combat swings it bare-fisted (attackerDamageOf) and the
+// publisher zeroes a broken item's params.
+//
+// DISCLOSED, what retail adds and this does not: params 11 and 9 also take
+// buffs and masteries, and each item's per-plus increment (columns 115 and
+// 70) -- srrevamp's params carry no buff or mastery term here and its
+// instances no plus level. So a buffed or enhanced character reads lower here
+// than on a retail panel.
 func characterRates(ctx context.Context, level int, characterID int64, eq equipment.Store, items combat.ItemLookup) (hit, parry int, err error) {
 	equipped, err := eq.Get(ctx, characterID)
 	if err != nil {
@@ -270,8 +280,11 @@ func characterRates(ctx context.Context, level int, characterID int64, eq equipm
 		if e.Slot != equipment.SlotWeapon {
 			continue
 		}
+		if durability.IsBroken(e.Durability) {
+			break
+		}
 		if it, err := items.GetItem(ctx, e.ItemID); err == nil && it != nil {
-			weaponRate = it.HitRateMin
+			weaponRate = combat.WeaponAttackRate(it, weaponInstance(e))
 		}
 		break
 	}

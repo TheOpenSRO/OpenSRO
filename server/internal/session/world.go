@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/OpenSRO/srrevamp/server/internal/berserk"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
@@ -706,7 +707,7 @@ func DecodeEntityLeft(data []byte) (*EntityLeft, error) {
 // OpMove against chars (to resolve character ownership) and hub (world
 // state + broadcast fan-out).
 func WorldHandler(chars character.Store, eq equipment.Store, hub *world.Hub) gateway.Handler {
-	return WorldHandlerWithHook(chars, eq, hub, nil)
+	return WorldHandlerWithHook(chars, eq, hub, nil, nil)
 }
 
 // EnterHook runs when a character is about to enter the world, after it
@@ -716,8 +717,9 @@ func WorldHandler(chars character.Store, eq equipment.Store, hub *world.Hub) gat
 // entering the world must not fail over a courtesy.
 type EnterHook func(ctx context.Context, c *character.Character) error
 
-// WorldHandlerWithHook is WorldHandler with an EnterHook.
-func WorldHandlerWithHook(chars character.Store, eq equipment.Store, hub *world.Hub, onEnter EnterHook) gateway.Handler {
+// WorldHandlerWithHook is WorldHandler with an EnterHook, and the berserk
+// tracker a zone change ends a running berserk in (endBerserk; nil leaves it).
+func WorldHandlerWithHook(chars character.Store, eq equipment.Store, hub *world.Hub, onEnter EnterHook, zerk *berserk.Tracker) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpEnterWorld:
@@ -725,7 +727,7 @@ func WorldHandlerWithHook(chars character.Store, eq equipment.Store, hub *world.
 		case OpMove:
 			return handleMove(sess, p, hub, chars)
 		case OpChangeZone:
-			return handleChangeZone(ctx, sess, p, eq, chars, hub)
+			return handleChangeZone(ctx, sess, p, eq, chars, hub, zerk)
 		default:
 			return nil
 		}
@@ -917,7 +919,7 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 // everyone else in the world gets the mover's OpEntityLeft and then its
 // OpEntityEntered at the landing (a flicker, recorded in round 571, not a
 // bug). A label with no frame keeps the old rule.
-func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packet, eq equipment.Store, chars character.Store, hub *world.Hub) error {
+func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packet, eq equipment.Store, chars character.Store, hub *world.Hub, zerk *berserk.Tracker) error {
 	req, err := DecodeChangeZoneRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "malformed request"}).Encode()})
@@ -943,7 +945,7 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	if !oneWorld && req.Zone == current.Zone {
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "already in that zone"}).Encode()})
 	}
-	_, err = warpTo(ctx, sess, eq, chars, hub, req.Zone, bucket, pos, frame)
+	_, err = warpTo(ctx, sess, eq, chars, hub, zerk, req.Zone, bucket, pos, frame)
 	return err
 }
 
@@ -956,7 +958,7 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 // everyone in the new bucket its OpEntityEntered at pos. moved is false when
 // the session is not in the world: the mover is then sent the "not in the
 // world" refusal, as handleChangeZone always did, and nothing moved.
-func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, chars character.Store, hub *world.Hub, zone, bucket string, pos world.Position, frame string) (moved bool, err error) {
+func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, chars character.Store, hub *world.Hub, zerk *berserk.Tracker, zone, bucket string, pos world.Position, frame string) (moved bool, err error) {
 	old, remainingOld, othersNew, ok := hub.ChangeZone(sess, bucket, pos)
 	if !ok {
 		return false, sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
@@ -1007,6 +1009,11 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 	// new neighbours' (round 616, buffs.go).
 	arrived.Session = sess
 	sendBuffsInView(hub, arrived, time.Now())
+	// A running berserk ends with the zone change (endBerserk: the world
+	// entry's body mode is READ, that a zone change is a re-entry INFERRED),
+	// as the client's display does (FUN_00787860); the new zone and the mover
+	// hear body mode 0.
+	endBerserk(hub, zerk, old.CharacterID)
 	return true, nil
 }
 

@@ -177,8 +177,8 @@ type Deps struct {
 	Monsters *combat.Hub
 	// World is the world hub whose cached level /level moves with the row
 	// (world.Entity.Level, round 555); nil leaves the cache alone.
-	World   *world.Hub
-	Mana    *mana.Tracker
+	World *world.Hub
+	Mana  *mana.Tracker
 	// Berserk is the orb tracker /hwan sets; nil refuses it.
 	Berserk *berserk.Tracker
 	Levels  *leveldata.Table
@@ -255,6 +255,11 @@ func (d *Deps) hwan(ctx context.Context, actor Actor, args []string) Result {
 	if d.Berserk == nil || d.Chars == nil {
 		return refuse("no berserk tracker")
 	}
+	// The character's berserk turn (berserk.Tracker.Turn), as every other
+	// changer of the orbs holds it: the count and its persisted copy move as
+	// one against a potion, a fill or an activation of the same character.
+	release := d.Berserk.Turn(actor.CharacterID)
+	defer release()
 	if c, err := d.Chars.GetByID(ctx, actor.CharacterID); err == nil {
 		d.Berserk.EnsureSeeded(actor.CharacterID, c.HwanCount)
 	}

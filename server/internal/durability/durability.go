@@ -57,6 +57,7 @@ const (
 	// and shifts the two defences to 4 and 5.
 	ArmourPhysDefenseGroup = 3 // 0x495f26
 	ArmourMagDefenseGroup  = 4 // 0x495fa0
+	ArmourParryGroup       = 5 // 0x496062: ER, ref +0x1c8/+0x1cc (itemdata 68/69) -> item+0x19c -> param 9
 	ShieldBlockGroup       = 3 // 0x4967b0
 	ShieldPhysDefenseGroup = 4 // 0x49682a
 	ShieldMagDefenseGroup  = 5 // 0x4968a4

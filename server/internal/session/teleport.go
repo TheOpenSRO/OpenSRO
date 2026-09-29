@@ -57,6 +57,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/OpenSRO/srrevamp/server/internal/berserk"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
@@ -158,8 +159,8 @@ func DecodeTeleportResult(data []byte) (*TeleportResult, error) {
 // (nil without it: every request is refused); gate is the GM account list, the
 // same gm.Gate the GM console uses (nil: nobody is a GM); free is
 // -teleport-free. logger may be nil.
-func TeleportHandler(chars character.Store, eq equipment.Store, hub *world.Hub, network *teleport.Table, gate *gm.Gate, free bool, logger *slog.Logger) gateway.Handler {
-	t := &teleporter{chars: chars, eq: eq, hub: hub, network: network, gate: gate, free: free, logger: logger}
+func TeleportHandler(chars character.Store, eq equipment.Store, hub *world.Hub, network *teleport.Table, gate *gm.Gate, free bool, logger *slog.Logger, zerk *berserk.Tracker) gateway.Handler {
+	t := &teleporter{chars: chars, eq: eq, hub: hub, network: network, gate: gate, free: free, logger: logger, zerk: zerk}
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpTeleportUse {
 			return nil
@@ -177,6 +178,9 @@ type teleporter struct {
 	gate    *gm.Gate
 	free    bool
 	logger  *slog.Logger
+	// zerk is the berserk tracker the arrival ends a running berserk in
+	// (warpTo -> endBerserk); nil leaves it.
+	zerk *berserk.Tracker
 }
 
 // use runs one OpTeleportUse, in the engine's order where it has one: the
@@ -263,7 +267,7 @@ func (t *teleporter) use(ctx context.Context, sess *gateway.Session, p *proto.Pa
 	}).Encode()}); err != nil {
 		return err
 	}
-	moved, err := warpTo(ctx, sess, t.eq, t.chars, t.hub, zone, bucket, pos, frame)
+	moved, err := warpTo(ctx, sess, t.eq, t.chars, t.hub, t.zerk, zone, bucket, pos, frame)
 	if !moved && fee > 0 {
 		// The session left the world between the check above and the move;
 		// nothing moved, so nothing is owed.

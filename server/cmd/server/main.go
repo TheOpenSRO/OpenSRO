@@ -1084,7 +1084,7 @@ func main() {
 	session.SetPlayerDeadState(*deadState)
 	if *deadState {
 		go session.RunAutoRevive(ctx, hub, chars, session.RegenDeps{
-			Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
+			Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker, Berserk: zerkTracker,
 		}, logger)
 		logger.Info(fmt.Sprintf("player dead state on: a monster's kill leaves the player dead (life state 2, HP 0) until OpRevive 0x0028 or the %v auto-revive fallback (own design)", session.AutoReviveAfter))
 	} else {
@@ -1328,7 +1328,7 @@ func main() {
 			}
 			logger.Info("dressing a character that had nothing", "character", c.Name)
 			return equipment.GiveStartingKit(ctx, inv, eq, c.ID, c.Gender)
-		}),
+		}, zerkTracker),
 		session.InventoryHandler(chars, inv, refItems),
 		session.InventoryMoveHandler(chars, inv, refItems),
 		session.EquipmentHandlerWithRules(chars, eq, inv, refItems, trades),
@@ -1338,7 +1338,7 @@ func main() {
 		// The town teleporters (round 576): a gate's MOVE, charged and moved
 		// by the teleport network; GM accounts travel free (the same gate as
 		// the console), and everyone under -teleport-free.
-		session.TeleportHandler(chars, eq, hub, teleportNetwork, gmGate, *teleportFree, logger),
+		session.TeleportHandler(chars, eq, hub, teleportNetwork, gmGate, *teleportFree, logger, zerkTracker),
 		session.ShopHandler(chars, shopSvc, trades),
 		session.RepairHandler(chars, eq, refItems, trades),
 		session.StorageHandler(chars, storageSvc, trades),
@@ -1353,7 +1353,7 @@ func main() {
 		// OpRevive (round 549): answered whatever the flag says -- with it off
 		// nobody is ever dead and the reply is "not dead", which no client
 		// asks for since none is dead.
-		session.ReviveHandler(chars, hub, session.RegenDeps{Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker}),
+		session.ReviveHandler(chars, hub, session.RegenDeps{Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker, Berserk: zerkTracker}),
 		session.SkillListHandler(chars, skills),
 		session.SkillStateHandler(chars, skills),
 		session.RaiseMasteryHandler(chars, skills),

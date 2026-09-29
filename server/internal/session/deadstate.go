@@ -403,6 +403,8 @@ func ReviveHandler(chars character.Store, hub *world.Hub, deps RegenDeps) gatewa
 		if err != nil {
 			return refuse("revive failed")
 		}
+		// GObjPC::Revive's SetBodyMode(2, 0, t, 0) ends a berserk (endBerserk).
+		endBerserk(hub, deps.Berserk, e.CharacterID)
 		return sendRevived(ctx, sess, c, mpNow, deps)
 	}
 }
@@ -464,6 +466,7 @@ func autoReviveTick(ctx context.Context, hub *world.Hub, chars character.Store, 
 		if logger != nil {
 			logger.Info("auto-revive", "character", e.CharacterID, "after", now.Sub(e.DiedAt), "hp", c.HP)
 		}
+		endBerserk(hub, deps.Berserk, e.CharacterID)
 		_ = sendRevived(ctx, e.Session, c, mpNow, deps)
 	}
 	autoReviveWarned.Range(func(k, _ any) bool {

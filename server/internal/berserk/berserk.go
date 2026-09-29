@@ -539,15 +539,24 @@ func (t *Tracker) SetCharges(characterID int64, n int) int {
 
 // Activate goes berserk if all Orbs charges are held, spending all of them
 // (the handler's FUN_004e4d00(-5)) and returning true. Fewer charges leave
-// the count untouched and return false (the handler's error 1).
+// the count untouched and return false (the handler's error 1). A berserk
+// already running is refused first, count untouched: READ,
+// GObjPC_HandleBerserkMsg_0a7 (0x515b30) sends error 3 when GetBodyMode()
+// answers 1 for an activation request -- before it looks at the count -- and
+// also for body modes 3 and 4, which srrevamp never sets. Its error 4 for
+// body mode 2 (the invincible spell after a revive or a world entry) is not
+// modelled: srrevamp has no body mode 2 (OPEN).
 func (t *Tracker) Activate(characterID int64) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	now := time.Now()
+	if now.Before(t.activeUntil[characterID]) {
+		return false
+	}
 	if t.charges[characterID] < Orbs {
 		return false
 	}
 	t.charges[characterID] = 0
-	now := time.Now()
 	d := Duration
 	if b, ok := t.durationBonus[characterID]; ok && now.Before(b.until) {
 		d += time.Duration(b.seconds) * time.Second
@@ -563,6 +572,24 @@ func (t *Tracker) ActiveUntil(characterID int64) time.Time {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.activeUntil[characterID]
+}
+
+// End ends a running berserk now and reports whether one was running; the
+// orbs are left as they are. GObjPC::Revive (0x4df290) ends it by setting
+// body mode 2 (SetBodyMode(2, 0, 6.0 or 11.0 s, 0), 0x4df46c..0x4df484), and
+// the world entry CGObjPC::vslot_391 (0x4df9e0, run by CGame::EnterWorld
+// 0x417240) by setting body mode 2 or 4 -- any mode but 1 is the end of a
+// berserk. The end timer of the activation it ends then stands down, as
+// ActiveUntil no longer matches.
+func (t *Tracker) End(characterID int64) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	until, ok := t.activeUntil[characterID]
+	if !ok || !time.Now().Before(until) {
+		return false
+	}
+	delete(t.activeUntil, characterID)
+	return true
 }
 
 // Active reports whether the character is currently berserk.
