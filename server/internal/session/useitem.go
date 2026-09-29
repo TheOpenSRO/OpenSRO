@@ -956,8 +956,10 @@ func potionQueueTick(ctx context.Context, hub *world.Hub, chars character.Store,
 // zerk is the berserk tracker a berserk potion (TypeID 3/3/1/8, round 632)
 // fills; nil refuses such a potion as before. gate names the GM accounts,
 // whose berserk potions skip the reuse delay -- srrevamp's own rule, OURS, at
-// the user's request (see useBerserkPotion); nil makes nobody a GM.
-func UseItemHandler(chars character.Store, inv inventory.Store, items combat.ItemLookup, mp *mana.Tracker, warehouse *storage.Service, potions *PotionQueue, hub *world.Hub, zerk *berserk.Tracker, gate *gm.Gate) gateway.Handler {
+// the user's request (see useBerserkPotion); nil makes nobody a GM. keeper
+// holds the Energy of life scroll's grants (composite.go); nil refuses the
+// scroll.
+func UseItemHandler(chars character.Store, inv inventory.Store, items combat.ItemLookup, mp *mana.Tracker, warehouse *storage.Service, potions *PotionQueue, hub *world.Hub, zerk *berserk.Tracker, gate *gm.Gate, keeper *CompositeKeeper) gateway.Handler {
 	// The per-kind potion locks (round 508), keyed by character and
 	// potionReuseBit. The handler is built once per server (cmd/server), so
 	// this is process-wide there, as the item cooldowns are.
@@ -1039,6 +1041,12 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 			username, _ := AuthenticatedUsername(sess)
 			return useBerserkPotion(ctx, sess, fail, chars, inv, zerk, gate.Allows(username), characterID, it, held, have)
 		}
+		// The Energy of life scroll (round 632 review): UseByKind case 0xe,
+		// a composite item's timed jobs.
+		if isCompositeScroll(it) {
+			username, _ := AuthenticatedUsername(sess)
+			return useCompositeScroll(ctx, sess, fail, inv, items, keeper, zerk, gate.Allows(username), characterID, it, held, have)
+		}
 		// Only a recovery kind's Param block is a restore amount (round 491,
 		// restoresUserPool); any other kind's effect is not modelled.
 		if !restoresUserPool(it) {
@@ -1053,7 +1061,7 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// WAIT_FOR_REUSE_DELAY (0x185b). Item_HandleUseItem asks it
 		// (ItemCooldowns::IsReady) before DoJob.
 		now := useItemClock()
-		if it.CooltimeMs > 0 && !itemCooldowns.Ready(characterID, it.CooltimeGroup, now) {
+		if it.CooltimeMs > 0 && !itemCooldowns.ReadyItem(characterID, it.ID, it.CooltimeGroup, now) {
 			return fail("wait for the reuse delay")
 		}
 		// A plain HP/MP potion carries no COOLTIME descriptor, but slot 308
@@ -1154,7 +1162,7 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// engine persists a delay of five minutes or more across a relog,
 		// srrevamp does not yet -- disclosed.
 		if it.CooltimeMs > 0 {
-			itemCooldowns.Arm(characterID, it.CooltimeGroup, time.Duration(it.CooltimeMs)*time.Millisecond, now)
+			itemCooldowns.ArmItem(characterID, it.ID, it.CooltimeGroup, time.Duration(it.CooltimeMs)*time.Millisecond, now)
 		}
 		// The kind's lock (round 508): FUN_004e0ab0 after the heal, for the
 		// delay chosen by the Country and FUN_0049aa70's absolute flag

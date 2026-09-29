@@ -180,6 +180,9 @@ signal friend_remove_result(ok: bool, reason: String)
 signal friend_pending_list_result(requests: Array, error: String)
 ## Using a consumable: what it restored, and how many are left.
 signal use_item_result(result: UseItemNet.Result)
+## The Energy of life scroll's grants (round 632 review, CompositeNet).
+signal composite_state(state: CompositeNet.State)
+signal composite_use_result(result: CompositeNet.UseResult)
 
 ## The GM console's reply (GmNet.Result): whether this account is a GM, the
 ## text to print, and any place to move to / views to refresh.
@@ -451,6 +454,14 @@ func sell_item(char_name: String, slot: int, quantity: int) -> void:
 ## Uses one item from a bag slot (a potion). The reply carries the new HP/MP.
 func use_item(char_name: String, inventory_slot: int) -> void:
 	_send(UseItemNet.OP_USE_ITEM, UseItemNet.encode_use(char_name, inventory_slot))
+
+## Spends one use of a granted item (the fill an Energy of life scroll grants).
+func composite_use(char_name: String, item_id: int) -> void:
+	_send(CompositeNet.OP_USE, CompositeNet.encode_use(char_name, item_id))
+
+## Asks which item grants this character holds (answered by composite_state).
+func composite_list(char_name: String) -> void:
+	_send(CompositeNet.OP_LIST, CompositeNet.encode_list(char_name))
 
 func list_storage(char_name: String) -> void:
 	_send(StorageNet.OP_LIST, StorageNet.encode_list_request(char_name))
@@ -736,6 +747,10 @@ func _dispatch(p: Packet) -> void:
 			shop_sell_result.emit(r.ok, r.reason if r.error == "" else r.error, r.gold_received)
 		UseItemNet.OP_RESULT:
 			use_item_result.emit(UseItemNet.decode_result(p.data))
+		CompositeNet.OP_STATE:
+			composite_state.emit(CompositeNet.decode_state(p.data))
+		CompositeNet.OP_USE_RESULT:
+			composite_use_result.emit(CompositeNet.decode_use_result(p.data))
 		StorageNet.OP_LIST_RESULT:
 			var r := StorageNet.decode_list_result(p.data)
 			storage_list_result.emit(r.slots, r.error, r.capacity)

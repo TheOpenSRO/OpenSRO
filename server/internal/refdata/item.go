@@ -415,6 +415,17 @@ type Item struct {
 	//
 	// Empty for an export that predates the column.
 	CodeName string
+
+	// CompositeDesc is a COMPOSITE item's list of timed jobs (round 632
+	// review), e.g. the Energy of life scroll's "[UIL1:ITEM_ETC_SECOND_HWAN,
+	// A,3600,1],[UIU1:ITEM_ETC_INCREASE_HWAN_TIME_01]". RefObjItem's
+	// ExtractData (0x6a55a5 region) hands a Desc128 string to the list parser
+	// ReferenceData::FUN_00864bc0 only for TypeID 3/3/13/14 (TID & 0xf800 ==
+	// 0x7000; four Param slots after Param1) and 3/3/13/15 (0x7800; two), and
+	// only where the Param BESIDE it is 1 -- starting at Param2 (+0x2c0,
+	// desc +0x2c4). The exporter joins every such Desc with ",". Empty
+	// otherwise.
+	CompositeDesc string
 }
 
 // ReinforceRates is the three packed dwords in tier order, the shape

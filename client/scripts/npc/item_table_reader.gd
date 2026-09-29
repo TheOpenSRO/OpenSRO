@@ -89,6 +89,8 @@ const COL_DURABILITY := 63
 ## read sword/blade 6, spear/glaive 18, bow/crossbow 180, dagger 3. The same
 ## column the server's exporter reads (export-refdata fRange = 94).
 const COL_RANGE := 94
+## Param1, itemdata column 118 (the export's fParam1).
+const COL_PARAM1 := 118
 const COL_PHYS_ATK_MIN := 95
 const COL_PHYS_ATK_MAX := 97
 const COL_MAG_ATK_MIN := 100
@@ -181,6 +183,10 @@ class Item:
 	## The weapon's reach (COL_RANGE), world units; 0 for a non-weapon or a
 	## row too short to carry the column.
 	var attack_range: int = 0
+	## Param1 (column 118; round 632 review): a composite item's (the Energy
+	## of life scroll's) duration in seconds, which retail's item-grant
+	## gauge reads as its total (ref+0x2b4 x 1000). 0 when the row is short.
+	var param1: int = 0
 	## Armour defence, base (+0), min~max (floats). Zero for a non-defensive
 	## item. block is a shield's block ratio.
 	var phys_def := Vector2.ZERO
@@ -340,6 +346,7 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		item.attack_rate = _int_at(cols, COL_ATTACK_RATE)
 		item.critical = _int_at(cols, COL_CRITICAL)
 		item.attack_range = _int_at(cols, COL_RANGE)
+		item.param1 = _int_at(cols, COL_PARAM1)
 		item.phys_def = Vector2(_float_at(cols, COL_PHYS_DEF_MIN), _float_at(cols, COL_PHYS_DEF_MAX))
 		item.mag_def = Vector2(_float_at(cols, COL_MAG_DEF_MIN), _float_at(cols, COL_MAG_DEF_MAX))
 		item.block = Vector2(_float_at(cols, COL_BLOCK_MIN), _float_at(cols, COL_BLOCK_MAX))

@@ -269,3 +269,28 @@ func TestUnseededCharacterHasNoOrbs(t *testing.T) {
 		t.Errorf("Charges = %d for an unseeded character, want 0", got)
 	}
 }
+
+// The Energy of life buff's param-60 contribution lengthens the berserk
+// (round 632 review): 60 + 5 s while it runs, 60 s after it ends or is
+// cleared.
+func TestDurationBonusLengthensBerserk(t *testing.T) {
+	z := NewTracker()
+	now := time.Now()
+	z.SetDurationBonus(1, 5, now.Add(time.Hour))
+	z.Add(1, Orbs)
+	if !z.Activate(1) {
+		t.Fatal("activate")
+	}
+	got := z.activeUntil[1].Sub(now)
+	if got < Duration+5*time.Second-time.Second || got > Duration+5*time.Second+time.Second {
+		t.Errorf("berserk lasts %v with a 5 s bonus, want ~%v", got, Duration+5*time.Second)
+	}
+	z.ClearDurationBonus(2)
+	z.SetDurationBonus(2, 5, now.Add(time.Hour))
+	z.ClearDurationBonus(2)
+	z.Add(2, Orbs)
+	z.Activate(2)
+	if got := z.activeUntil[2].Sub(now); got > Duration+time.Second {
+		t.Errorf("a cleared bonus still lengthened the berserk: %v", got)
+	}
+}

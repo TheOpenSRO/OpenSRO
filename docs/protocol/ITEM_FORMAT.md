@@ -482,6 +482,18 @@ fill") `COOLTIME:0x000000C9` with 1,200,000 ms (20 minutes) and
 `ITEM_ETC_GNGWC_WHAN` (22936) `COOLTIME:0x00000000` with 180,000 ms. A GM
 account's berserk potion skips the delay (OURS, the user's request).
 
+**A key of 0 is not a group (round 632 review).** The descriptor's value is a
+KEY, handed to `ItemCooldowns::IsReady` (`0x64c040`) in EAX from ref+0x520
+(`0x510d8f`). Key 0 reads the block's **per-item** map at `+0x10`, keyed by the
+item; a non-zero key reads the group map at `+0x2c` once per non-zero BYTE of
+the key. `ItemCooldowns::Arm` (`0x64c320`) always stores the per-item entry and
+links each non-zero byte to a group timer. So the retail ids carrying
+`COOLTIME:0x00000000` (37 of them, the review's count) each keep their own timer (22936's 3 minutes do not block
+22941 or 23977), and round 632 was wrong to call key 0 "group 0x00".
+`session/itemcooldown.go`'s `ReadyItem`/`ArmItem` do it this way; the engine
+returns ready at the first non-zero byte whose group has run out, which on the
+single-byte retail keys is the same as "no byte's group is running".
+
 ## Berserk potions and Energy of life (round 632)
 
 Read from Media.pk2's itemdata and textdata_object and from SR_GameServer.exe.
@@ -489,7 +501,7 @@ Read from Media.pk2's itemdata and textdata_object and from SR_GameServer.exe.
 | id | code | TID | name (textdata_object) | Param1 | COOLTIME |
 |---|---|---|---|---|---|
 | 23937 | `ITEM_ETC_SECOND_HWAN` | 3/3/1/8 | Hwan regeneration fill | 5 | group 0xC9, 1,200,000 ms |
-| 22936 | `ITEM_ETC_GNGWC_WHAN` | 3/3/1/8 | Berserk Regeneration Potion | 5 | group 0x00, 180,000 ms |
+| 22936 | `ITEM_ETC_GNGWC_WHAN` | 3/3/1/8 | Berserk Regeneration Potion | 5 | key 0 (its own timer), 180,000 ms |
 | 24331 | `ITEM_ETC_E080723_HWAN_POTION` | 3/3/1/8 | Berserker Regeneration Potion | 5 | none |
 | 24993 | `ITEM_EVENT_HWAN_POTION` | 3/3/1/8 | Berserker Regeneration Potion | 5 | none |
 | 33884 | `ITEM_EVENT_RENT_HWAN_POTION` | 3/3/1/8 | Berserker Regeneration Potion | 5 | none |
@@ -503,8 +515,9 @@ answers `0x18ce` and the potion is kept; otherwise `AddHwanCount` with a
 literal `mov esi,0x5` and the answer is 1. It neither asks the per-kind lock
 nor reads the orb count, so at five orbs the potion is still spent.
 `Item_HandleUseItem` (`0x00510980`) checks and arms the COOLTIME around it,
-as for every item. `0x18ce` has no case in the client's error switch; the
-tooltip's "Cannot be used during berserk mode" is the wording srrevamp uses.
+as for every item. `0x18ce` has no case in the client's error switch, but its
+text is authored: textuisystem's `UIIT_MSG_QUEST_ERR_USE_WHANITEM`, "Selected
+item cannot be used during berserk mode." (round 632 review).
 
 **The Energy of life scroll** (3/3/13/14) is a COMPOSITE item, not a potion.
 Its Param2 descriptor reads `[UIL1:ITEM_ETC_SECOND_HWAN,A,3600,1],[UIU1:
@@ -512,9 +525,21 @@ ITEM_ETC_INCREASE_HWAN_TIME_0n]`: `UseByKind` (`0x0049c2b0`) case `0xe` ->
 `GObjPC::FUN_0049f590` walks those FourCC entries (`'UIL1'` = `0x55494c31`,
 `'UIU1'` = `0x55495531`) and queues timed jobs -- a one-use, 3600 s
 used-item-limit on the fill, and the berserk-time buff: a "ParamKeeper
-FourCC" `0x706874` worth 5/8/11/14, which the Vietnamese tooltip calls
-seconds of berserk time. Which param that FourCC reaches is not traced --
-it is not one of the 53 tags in `param_tags.md` (OPEN).
+FourCC" `0x706874` worth 5/8/11/14. **Traced (round 632 review):** it is not
+one of `Stat_ApplyTaggedModifier`'s tags; it is a key of
+`CTJ_CharParamKeeper`'s own table (`FUN_006552d0`, `0x6552fe`), whose record
+is {index 0, **param 0x3c = 60**, slot 0}. The job's apply
+(`CTJ_CharParamKeeper::vslot_012`, `0x655045` -> `0x655430`, EDX = the
+record's param, `ParamKeeper_SetParam` `0x4b3510`) writes the value into
+param 60's slot 0 keyed by the job, and slot 0 sums. Param 60 is the berserk
+duration's base (the activation reads `EvaluateParam(60) + EvaluateParam(195)`
+and `GObjPC_InitStats` sets 60.0), so the scroll's berserk lasts 65/68/71/74 s
+while the job runs; `vslot_015` (`0x655180`, `ecx 0`) removes it. The client
+is consistent with it: its `0x325F` handler (`FUN_0089a0d0`) stores the value
+when the tag is `0x706874` and its berserk activation (`FUN_007b4f40`) reads
+that field (READ); that the client treats it as seconds is INFERRED. The UIU1 buff shows no buff-bar icon: the
+client adds one only when the item's Param4 is 1, and it is -1 on
+23938-23941.
 The fill is then spent through `CUsedItemLimit::vslot_007` (`0x00654080`),
 which asks `FUN_004a05b0` first (dead `0x1889`, berserk `0x18ce`, **five
 orbs already `0x183e`** -- a refusal the bag path does not have), arms the
@@ -522,5 +547,42 @@ fill's COOLTIME (`0xC9`, 20 minutes, which then blocks the scroll too: it
 carries the same group), and calls `FUN_004a0600`, whose `AddHwanCount`
 takes Param1's byte (5). The tooltip says it: "During the Effect, 100% gauge
 charge can be used once. (After use of 100% Gauge charge, extend time will be
-removed and unable to use Energy of life for 20 Mins)". srrevamp does not
-model the composite: the scroll is still refused (OPEN, docs/TODO.md).
+removed and unable to use Energy of life for 20 Mins)".
+
+### The composite path, end to end (round 632 review; srrevamp builds it)
+
+- **Which rows carry a list.** RefObjItem's ExtractData (loop `0x6a558e..0x6a55aa`)
+  hands Desc_k to the list parser `ReferenceData::FUN_00864bc0` only for TID
+  3/3/13/14 (k = 2..5) and 3/3/13/15 (k = 2..3), and only where Param_k is 1.
+  Exported as item column 71, `CompositeDesc`.
+- **UIL1's fields** (`FUN_00864500`, UIL slot 1): code, a flag (`FUN_00864240`:
+  "A" -> 0, "P" -> 1; strings at `0xb12aa4`/`0xb12aa8`), seconds (+0x28), count
+  (+0x2c). The type-5 job packs remaining<<16 | max; remaining is count, or
+  count-1 for "P".
+- **The scroll's refusals** (`FUN_0049f090`): `0x1894` UIIT_SKILL_USE_FAIL_OVERLAP
+  ("The selected item cannot be used together or the skill is already in use.")
+  when a type-5 job from this scroll runs, when a UIL1 job for the fill runs,
+  and (`0x49fd09`) when a type-10 job with the same FourCC runs.
+- **The UIU1 job**: the named item's Param1 is the seconds (`0x49fcc0`), Param2
+  the FourCC, Param3 the value.
+- **The fill**: client `0x715F` {u32 compositeRefId, u32 limitedRefId} ->
+  `GObjPC_HandleCompositeItemMsg_15f` (`0x511640`): no job -> 2, no use left ->
+  `0x18c6` ("Exceeded one day use limit."), else `CUsedItemLimit::vslot_007`:
+  row checks, `FUN_004a05b0` (dead `0x1889`, berserk `0x18ce`, five orbs `0x183e`
+  "The selected item is unusable."), on the last use end the UIL1 job, end the
+  `0x706874` job and arm the fill's COOLTIME; then `AddHwanCount(Param1 byte)`,
+  and the handler decrements the count and answers `0xB15F` {1, A, B}.
+  vslot_007 does not ask IsReady: the 20 minutes block the next scroll.
+- **What the client shows** (retail client, READ): `0x3159` {compositeRefId,
+  secs, limitedRefId, count} adds a kind-5 icon on CIFMagicStateBoard -- the
+  COMPOSITE item's icon, gauge total = its Param1 x 1000 -- and a map entry;
+  `0x315B` removes both; `0x3161` refills the count. A left-click on the icon
+  (`CIFMagicStateBoard::vslot_029`, `0x800430`) opens `CIFCompositeItemWnd`
+  (`GDR_COMPOSITE_ITEM`, ID 36, 300,200,214,245; layout
+  `resinfo\ifcompositeitemwnd.txt`), whose buttons (`FUN_007af830`:
+  `sys_button.ddj`, 150 x 25 from (0x1f, 0x3a), step 0x22, label "%s(%d)") send
+  `0x715F` (`FUN_00821720`).
+- **srrevamp** carries this on its own opcodes 0x0104-0x0107 (OURS; see
+  `session/composite.go`, `client/scripts/net/composite.gd`), keeps the jobs in
+  memory (a restart loses them), and a GM account neither checks nor arms the
+  scroll's or the fill's COOLTIME (OURS, the user's request).

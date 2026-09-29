@@ -2747,6 +2747,21 @@ func _item_name(item_id: int) -> String:
 	var item: ItemTableReader.Item = _items.get(item_id)
 	return item.display_name(_object_names) if item != null else ""
 
+## An item's display name, icon path (itemdata's, under `icon\`) and Param1,
+## for the item-grant icons and the CompositeItem window (round 632 review).
+func item_name(item_id: int) -> String:
+	return _item_name(item_id)
+
+func item_icon_path(item_id: int) -> String:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	return item.icon_path if item != null else ""
+
+func item_param1(item_id: int) -> int:
+	_load_items()
+	var item: ItemTableReader.Item = _items.get(item_id)
+	return item.param1 if item != null else 0
+
 ## Fills the inventory window's authored slot grid with the icons of what
 ## the character is carrying.
 ##

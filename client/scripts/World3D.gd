@@ -1804,6 +1804,8 @@ func _try_initialize_pk2_ui() -> void:
 	# quickslot over them too.
 	_relay_middle_button_to_hotbar()
 
+	# The Energy of life scroll's grants (round 632 review).
+	_wire_composite_items()
 	print("World3D: authentic Silkroad UI initialized from Media.pk2 (minimap, underbar, player info, %d panels)" % HudPanels.PANELS.size())
 
 ## The buff bar (HudBuffBoard, round 618): built, told who this player is,
@@ -1826,6 +1828,91 @@ func _build_buff_board() -> void:
 	var qa := OS.get_environment("SRREVAMP_QA_BUFFS")
 	if qa != "":
 		_hud_buff_board.qa_inject(qa, OS.get_environment("SRREVAMP_QA_BUFFS_END"))
+
+## Item grants (round 632 review): a used Energy of life scroll grants one
+## use of the Hwan regeneration fill for an hour. Retail shows the grant as
+## a kind-5 icon on the buff board -- the scroll's icon, its gauge running
+## over the scroll's Param1 seconds -- a left-click opens CIFCompositeItemWnd
+## with a "<name>(<uses>)" button per granted item, and the button spends one
+## (0x715F). See CompositeNet and CompositeItemWindow.
+var _composite_grants: Dictionary = {}   # token -> CompositeNet.Grant
+var _composite_window: CompositeItemWindow = null
+
+func _wire_composite_items() -> void:
+	if not NetClient.has_signal("composite_state"):
+		return
+	NetClient.composite_state.connect(_on_composite_state)
+	NetClient.composite_use_result.connect(_on_composite_use_result)
+	if _hud_buff_board != null:
+		_hud_buff_board.item_state_clicked.connect(_on_item_state_clicked)
+	if NetClient.current_character_name != "" and NetClient.is_connected_to_server():
+		NetClient.composite_list(NetClient.current_character_name)
+
+func _on_composite_state(state: CompositeNet.State) -> void:
+	if state == null or _hud_buff_board == null:
+		return
+	var live := {}
+	for g in state.grants:
+		var grant: CompositeNet.Grant = g
+		var token := -grant.item_id
+		live[token] = grant
+		var icon := _hud_panels.item_icon_path(grant.scroll_id) if _hud_panels != null else ""
+		var total_s := _hud_panels.item_param1(grant.scroll_id) if _hud_panels != null else 0
+		var scroll_name := _hud_panels.item_name(grant.scroll_id) if _hud_panels != null else ""
+		var b := _hud_buff_board.add_item_state(token, icon, total_s * 1000, grant.seconds_left * 1000, scroll_name)
+		if b != null and b.slot != null:
+			print("QA COMPOSITE: grant item %d from %d, %d/%d uses, %d s left, icon token %d at screen %s size %s" % [
+				grant.item_id, grant.scroll_id, grant.remaining, grant.maximum, grant.seconds_left, token,
+				str(b.slot.global_position), str(b.slot.size)])
+	for t in _hud_buff_board.item_state_tokens():
+		if not live.has(t):
+			_hud_buff_board.remove_item_state(int(t))
+	_composite_grants = live
+	print("World3D: composite state: %d grant(s), berserk bonus %d s (%d s left)" % [
+		state.grants.size(), state.bonus_seconds, state.bonus_seconds_left])
+
+func _on_item_state_clicked(token: int) -> void:
+	var clicked: CompositeNet.Grant = _composite_grants.get(token)
+	if clicked == null:
+		return
+	# FUN_007af830 lists every board entry whose composite (entry+0) is the
+	# clicked icon's key.
+	var entries: Array = []
+	for t in _composite_grants:
+		var g: CompositeNet.Grant = _composite_grants[t]
+		if g.scroll_id == clicked.scroll_id:
+			var n := _hud_panels.item_name(g.item_id) if _hud_panels != null else ""
+			entries.append([g.item_id, n if n != "" else "Item %d" % g.item_id, g.remaining])
+	if _composite_window == null or not is_instance_valid(_composite_window):
+		_composite_window = CompositeItemWindow.new()
+		if not _composite_window.setup(_ui_builder):
+			print("World3D: resinfo\\ifcompositeitemwnd.txt did not build")
+			_composite_window = null
+			return
+		ui_control.add_child(_composite_window)
+		var reg := _ui_builder.window_def(CompositeItemWindow.REGISTRY)
+		if reg != null:
+			_composite_window.position = Vector2(reg.rect.position)
+		_composite_window.use_requested.connect(func(item_id: int) -> void:
+			if NetClient.current_character_name != "":
+				NetClient.composite_use(NetClient.current_character_name, item_id))
+	_composite_window.show_entries(entries)
+	_composite_window.show()
+	await get_tree().process_frame
+	if _composite_window != null:
+		print("QA COMPOSITE: window open, button 0 at screen %s" % str(_composite_window.button_screen_centre(0)))
+
+func _on_composite_use_result(result: CompositeNet.UseResult) -> void:
+	if result == null:
+		return
+	print("World3D: composite use: item %d, %d left, gauge %d, active %s, error '%s'" % [
+		result.item_id, result.remaining, result.berserk_gauge, str(result.berserk_active), result.error])
+	UiSounds.use_replied(result.error == "")
+	if result.error != "":
+		_log_system(result.error)
+		return
+	if _hud_player_info != null:
+		_hud_player_info.set_berserk(result.berserk_gauge, result.berserk_active)
 
 ## Whether a buff's owner is this client's player (round 618's review): a
 ## character (ownerKind 0) whose id is this player's -- the one _sync_own_id

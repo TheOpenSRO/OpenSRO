@@ -50,9 +50,9 @@ import (
 // delay for a GM too.
 //
 // 0x18ce has no case in the client's error-message switch
-// (docs/protocol/error_codes.md), so the wording below is srrevamp's own,
-// taken from the tooltip's "Cannot be used during berserk mode".
-const berserkPotionRefusal = "that cannot be used during berserk mode"
+// (docs/protocol/error_codes.md), but the text has an authored source:
+// textuisystem.txt's UIIT_MSG_QUEST_ERR_USE_WHANITEM (round 632 review).
+const berserkPotionRefusal = "Selected item cannot be used during berserk mode."
 
 // isBerserkPotion reports whether slot 308 sends the item to AddHwanCount:
 // TypeID 3/3 (CGItemExpendable), TypeID3 1, TypeID4 8.
@@ -72,9 +72,13 @@ func useBerserkPotion(ctx context.Context, sess *gateway.Session, fail func(stri
 	}
 	now := useItemClock()
 	cooltime := it.CooltimeMs > 0 && !isGM
-	if cooltime && !itemCooldowns.Ready(characterID, it.CooltimeGroup, now) {
+	if cooltime && !itemCooldowns.ReadyItem(characterID, it.ID, it.CooltimeGroup, now) {
 		return fail("wait for the reuse delay")
 	}
+	// The berserk turn (round 632 review) is held from the berserk test to
+	// the persisted orbs, so an activation cannot run between them.
+	release := zerk.Turn(characterID)
+	defer release()
 	owned, err := chars.GetByID(ctx, characterID)
 	if err != nil || owned == nil {
 		return fail("lookup failed")
@@ -93,7 +97,7 @@ func useBerserkPotion(ctx context.Context, sess *gateway.Session, fail func(stri
 		return fmt.Errorf("useitem: persisting berserk potion: %w", err)
 	}
 	if cooltime {
-		itemCooldowns.Arm(characterID, it.CooltimeGroup, time.Duration(it.CooltimeMs)*time.Millisecond, now)
+		itemCooldowns.ArmItem(characterID, it.ID, it.CooltimeGroup, time.Duration(it.CooltimeMs)*time.Millisecond, now)
 	}
 	// MaxHP/MaxMP 0: the pools are untouched, and the client leaves its bars
 	// alone (World3D._on_use_item_result).

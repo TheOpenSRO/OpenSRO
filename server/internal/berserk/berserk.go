@@ -334,10 +334,80 @@ type Tracker struct {
 	mu          sync.Mutex
 	charges     map[int64]int
 	activeUntil map[int64]time.Time
+	// durationBonus is each character's timed contribution to param 60, the
+	// berserk duration's base (see DurationBonus).
+	durationBonus map[int64]timedBonus
+	// turns serialise one character's orb changes with their persistence
+	// (see Turn).
+	turnsMu sync.Mutex
+	turns   map[int64]*sync.Mutex
+}
+
+type timedBonus struct {
+	seconds int
+	until   time.Time
 }
 
 func NewTracker() *Tracker {
-	return &Tracker{charges: map[int64]int{}, activeUntil: map[int64]time.Time{}}
+	return &Tracker{charges: map[int64]int{}, activeUntil: map[int64]time.Time{},
+		durationBonus: map[int64]timedBonus{}, turns: map[int64]*sync.Mutex{}}
+}
+
+// Turn takes the character's berserk turn and returns its release (round 632
+// review). A caller that reads the orbs or the berserk state, spends an item,
+// changes the orbs and persists them holds the turn across all of it, so a
+// potion cannot be spent against a state a concurrent activation is changing.
+// The engine needs no lock: the use and the activation both run on the PC's
+// own thread. The tracker's own mu is never held across a store call.
+func (t *Tracker) Turn(characterID int64) func() {
+	t.turnsMu.Lock()
+	m := t.turns[characterID]
+	if m == nil {
+		m = &sync.Mutex{}
+		t.turns[characterID] = m
+	}
+	t.turnsMu.Unlock()
+	m.Lock()
+	return m.Unlock
+}
+
+// SetDurationBonus records a timed contribution of seconds to param 60 until
+// the given time (round 632 review). Param 60 is the berserk duration's base
+// (Duration's note: the activation reads EvaluateParam(60) +
+// EvaluateParam(195), and GObjPC_InitStats sets 60 to 60.0). The Energy of
+// life scroll's buff is a CTJ_CharParamKeeper timed job whose FourCC
+// 0x706874 its table (CTJ_CharParamKeeper::FUN_006552d0, 0x6552fe) maps to
+// param 0x3c = 60, slot 0, index 0; the job's apply (vslot_012, 0x655045 ->
+// 0x655430 -> ParamKeeper_SetParam 0x4b3510) writes the job's value there,
+// keyed by the job, and slot 0 SUMS its entries. So the value is seconds
+// added to the base while the job runs. One per character: the engine
+// refuses a second job with the same FourCC (FUN_00411560(10, fourcc),
+// 0x49fd09 -> 0x1894).
+func (t *Tracker) SetDurationBonus(characterID int64, seconds int, until time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.durationBonus[characterID] = timedBonus{seconds: seconds, until: until}
+}
+
+// ClearDurationBonus ends the param-60 job early (the fill's last use does,
+// CUsedItemLimit::vslot_007 -> FUN_004dd620 finds the type-10 job with
+// FourCC 0x706874 and ends it).
+func (t *Tracker) ClearDurationBonus(characterID int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.durationBonus, characterID)
+}
+
+// DurationBonus returns the running param-60 contribution in seconds and
+// when it ends, or 0 when none runs.
+func (t *Tracker) DurationBonus(characterID int64, now time.Time) (int, time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	b, ok := t.durationBonus[characterID]
+	if !ok || !now.Before(b.until) {
+		return 0, time.Time{}
+	}
+	return b.seconds, b.until
 }
 
 // EarnOnKill rolls the engine's hwan gain for a killing blow the character
@@ -444,7 +514,12 @@ func (t *Tracker) Activate(characterID int64) bool {
 		return false
 	}
 	t.charges[characterID] = 0
-	t.activeUntil[characterID] = time.Now().Add(Duration)
+	now := time.Now()
+	d := Duration
+	if b, ok := t.durationBonus[characterID]; ok && now.Before(b.until) {
+		d += time.Duration(b.seconds) * time.Second
+	}
+	t.activeUntil[characterID] = now.Add(d)
 	return true
 }
 
@@ -476,4 +551,7 @@ func (t *Tracker) Clear(characterID int64) {
 	defer t.mu.Unlock()
 	delete(t.charges, characterID)
 	delete(t.activeUntil, characterID)
+	// durationBonus is kept: it is a timed job, which the engine keeps
+	// across a relog (its jobs carry __time32_t stamps); srrevamp keeps it in
+	// memory, so only a server restart loses it -- disclosed.
 }

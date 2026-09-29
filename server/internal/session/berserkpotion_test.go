@@ -23,6 +23,10 @@ import (
 const (
 	testHwanFill   = 23937 // ITEM_ETC_SECOND_HWAN's shape: COOLTIME 0xC9, 20 min
 	testHwanPotion = 24331 // ITEM_ETC_E080723_HWAN_POTION's shape: no COOLTIME
+	testHwanScroll = 23944 // ITEM_ETC_SECOND_HWAN_SCROLL_01's shape: composite, COOLTIME 0xC9, 1 ms
+	testHwanBuff   = 23938 // ITEM_ETC_INCREASE_HWAN_TIME_01's shape: 3600 s, FourCC 0x706874, 5
+	testKeyZeroA   = 22936 // ITEM_ETC_GNGWC_WHAN's shape: COOLTIME key 0, 180,000 ms
+	testKeyZeroB   = 99001 // a second key-0 row (synthetic id): must not share 22936's timer
 )
 
 type berserkPotionFixture struct {
@@ -31,6 +35,9 @@ type berserkPotionFixture struct {
 	chars  *character.MemStore
 	inv    *inventory.MemStore
 	zerk   *berserk.Tracker
+	keeper *CompositeKeeper
+	send   func(op uint16, data []byte) *proto.Packet
+	recv   func() *proto.Packet
 	charID int64
 	clock  time.Time
 	use    func(slot int) *UseItemResult
@@ -51,8 +58,17 @@ func newBerserkPotionFixture(t *testing.T, gate *gm.Gate) *berserkPotionFixture 
 	items := refdata.NewMemStore()
 	if err := items.ImportItems(f.ctx, []refdata.Item{
 		{ID: testHwanFill, MaxStack: 1, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 8, CanUse: true,
-			CooltimeGroup: 0xC9, CooltimeMs: 1200000},
-		{ID: testHwanPotion, MaxStack: 10, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 8, CanUse: true},
+			CooltimeGroup: 0xC9, CooltimeMs: 1200000, RestoreHP: 5, CodeName: "ITEM_ETC_SECOND_HWAN"},
+		{ID: testHwanPotion, MaxStack: 10, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 8, CanUse: true, RestoreHP: 5},
+		{ID: testHwanScroll, MaxStack: 50, TypeID1: 3, TypeID2: 3, TypeID3: 13, TypeID4: 14, CanUse: true,
+			CooltimeGroup: 0xC9, CooltimeMs: 1, RestoreHP: 3600, CodeName: "ITEM_ETC_SECOND_HWAN_SCROLL_01",
+			CompositeDesc: "[UIL1:ITEM_ETC_SECOND_HWAN,A,3600,1],[UIU1:ITEM_ETC_INCREASE_HWAN_TIME_01]"},
+		{ID: testHwanBuff, MaxStack: 1, TypeID1: 3, TypeID2: 3, TypeID3: 3, TypeID4: 10, CanUse: true,
+			RestoreHP: 3600, ReinforceRate1: 0x706874, ReinforceRate2: 5, CodeName: "ITEM_ETC_INCREASE_HWAN_TIME_01"},
+		{ID: testKeyZeroA, MaxStack: 1, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 8, CanUse: true,
+			CooltimeGroup: 0, CooltimeMs: 180000, RestoreHP: 5},
+		{ID: testKeyZeroB, MaxStack: 1, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 8, CanUse: true,
+			CooltimeGroup: 0, CooltimeMs: 180000, RestoreHP: 5},
 	}); err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -63,10 +79,21 @@ func newBerserkPotionFixture(t *testing.T, gate *gm.Gate) *berserkPotionFixture 
 	if err := f.inv.AddItem(f.ctx, c.ID, testHwanFill, 1); err != nil {
 		t.Fatalf("add second fill: %v", err)
 	}
-	if err := f.inv.AddItem(f.ctx, c.ID, testHwanPotion, 3); err != nil {
-		t.Fatalf("add potion: %v", err)
+	for _, add := range []struct {
+		id  int64
+		qty int
+	}{{testHwanPotion, 3}, {testHwanScroll, 3}, {testKeyZeroA, 1}, {testKeyZeroB, 1}} {
+		if err := f.inv.AddItem(f.ctx, c.ID, add.id, add.qty); err != nil {
+			t.Fatalf("add %d: %v", add.id, err)
+		}
 	}
 	f.zerk = berserk.NewTracker()
+	f.keeper = NewCompositeKeeper()
+	// A fresh cooldown block per test, as TestSkillCooldownGroupIsShared does.
+	savedItems, savedGroups := itemCooldowns, skillGroupCooldowns
+	t.Cleanup(func() { itemCooldowns, skillGroupCooldowns = savedItems, savedGroups })
+	itemCooldowns = newItemCooldownTracker()
+	skillGroupCooldowns = itemCooldowns
 
 	// A past clock, so an armed group can never outlive the test into
 	// another one that reads the real time (itemCooldowns is process-wide).
@@ -76,7 +103,8 @@ func newBerserkPotionFixture(t *testing.T, gate *gm.Gate) *berserkPotionFixture 
 	useItemClock = func() time.Time { return f.clock }
 
 	handle := gateway.Chain(LoginHandler(accounts),
-		UseItemHandler(f.chars, f.inv, items, nil, nil, nil, nil, f.zerk, gate))
+		UseItemHandler(f.chars, f.inv, items, nil, nil, nil, nil, f.zerk, gate, f.keeper),
+		CompositeHandler(f.chars, items, f.keeper, f.zerk, gate, nil))
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)
 	conn := dialTestServer(t, addr)
@@ -87,6 +115,16 @@ func newBerserkPotionFixture(t *testing.T, gate *gm.Gate) *berserkPotionFixture 
 		if err := proto.Write(conn, &proto.Packet{Opcode: op, Data: data}, nil, nil); err != nil {
 			t.Fatalf("write: %v", err)
 		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return resp
+	}
+	f.send = send
+	f.recv = func() *proto.Packet {
+		t.Helper()
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 		resp, err := proto.Read(r, nil, nil)
 		if err != nil {
