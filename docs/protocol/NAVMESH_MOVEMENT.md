@@ -71,10 +71,24 @@ if (bVar5 & 0x04)  INTERNAL edge:
 else               OUTLINE edge:
     if (bVar5 & 0x08)  result |= 2 and the edge's index is looked up in the object's link
                        list (a linked edge -- the mover hands over to the linked object)
-    if (collide_mode && (bVar5 & 0x12))           -> BLOCKED   (value 2, or 0x10: no exit here)
+    if (collide_mode && (bVar5 & 0x12))           -> BLOCKED   (value 2, or 0x10: no exit here;
+                                                     collide_mode is 1 on every walk, below)
     else                                          -> EXIT: result |= 0x10, position = the
                                                      crossing pushed 0.01 out; back on the terrain
 ```
+
+**`collide_mode` is 1 on every walk the client makes (round 644 review, READ).** It is the
+in-object walk's `param_6` and the entry test's `param_5`, both `CRTNavMeshObj::vslot_002`'s
+`param_3`. That arrives unchanged from the caller's second argument through the terrain walk
+(`CRTNavMeshTerrain::vslot_002` 0x4047a0 pushes its `[ebp+0xc]` as the per-instance test's fourth
+argument at 0x404916, 0x404c8d and 0x40511f), the per-instance test (0x404060 pushes its fourth
+stack argument as the object walk's second at 0x4041e3), the dungeon walk (0x43f477) and the
+region manager (`CRegionManagerBody::vslot_012` 0x412660 pushes its `[ebp+0xc]` at 0x412914).
+Every one of the nine calls through the region manager at `0x111a02c` (slot 0x30: 0x5068c3,
+0x77b791, 0x9e0ba3, 0x9e0fe0, 0x9e111e, 0x9e12ca, 0x9ed472, 0xa5101c, 0xa54e97) pushes **1** as
+that argument, and the no-slide stop `FUN_004045f0` pushes 1 itself (0x4046f5). So `0x02`/`0x10`
+outline edges always hold a player in, and a cell whose reachable outline is all `0x02`/`0x10` is
+one a player cannot walk out of (`walk_probe --reach` names them).
 
 The two `GetCell` selectors were read off the disassembly (`44b1d5: xor eax,eax` before the
 first `call 0x45db20`, `44b1f3: mov eax,1` before the second); the decompiler had dropped them.
@@ -162,8 +176,18 @@ words) and tests the word at **file offset 0x28** (`mov edi,[esp+0x5c]` at `0x42
 buffer pushed as `esp+0x2c`; the decompiler shows the wrong local). Zero: no navigation mesh.
 Otherwise it seeks there, reads one length-prefixed string (`FUN_0043c250`) -- the path that opens
 the bounding-box block, the "mesh path" BSR_FORMAT.md lists before the bounding box -- and hands it
-to `FUN_0042cbc0`, which reads that `.bms`'s 0x3c-byte header and deserializes the collision
-section at its word 0x28, with its word 0x38 as the record-size bits. **One mesh.** Rounds 505-643
+to `FUN_0042cbc0`, which opens it through the loader's file manager (loader `+0x28`, vtable
+`+0x28`, prefixed with `data\` when the loader's `+0x14` is 0), returns 0 when the open fails,
+and otherwise reads that `.bms`'s 0x3c-byte header and deserializes the collision section at its
+word 0x28 (0 there: no mesh), with its word 0x38 as the record-size bits.
+
+**An empty path is passed on, not refused (round 644 review).** Three `.bsr` files carry a
+non-zero word 0x28 that points at a length of 0 -- `euro_esteuro_ph_box2` (word 140),
+`alex_minga07` (132), `alex_fstair02` (133), MEASURED -- and nothing between the string read and
+the call tests it, so the client calls `FUN_0042cbc0("")` and opens `data\` (READ). What the
+open does with that directory name is **not read**: the file manager is GFXFileManager.dll, not
+`sro_client.exe`. `NavObjectSource` gives the three no mesh (INFERRED: a directory is not a
+file). It reaches no walk either way: no `.nvm` places any of the three (MEASURED). **One mesh.** Rounds 505-643
 merged the collision sections of every mesh the `.bsr` lists; `client/tools/navmesh_source_census.gd`
 over Data.pk2's `navmesh\object.ifo` (3,268 entries) finds that agreed on 2,039 objects and
 differed on 4 (`NavObjectSource`, `client/scripts/nav/nav_object_source.gd`, names them). The graph
@@ -178,10 +202,12 @@ pre-644 all-edges rule. See WORLD_ISSUES.md's six-hundred-and-forty-fourth round
 
 ## What is not implemented
 
-- The mover's cell is not carried from step to step; `NavGraph._cells_under` infers it from the
-  position and height, and a walk that leaves its cell without crossing an edge (through a vertex
-  shared by several cells) is retried from the next candidate cell or stopped. The client keeps a
-  cell pointer in the position instead.
+- The mover's cell is not carried from step to step; `NavGraph._start_cells` infers it from the
+  position and height (the cells under the point at the mover's own level, `LEVEL_REACH` 1.0;
+  when none, the nearest cells of that level in plan). A walk that ends outside the cell it
+  reached without crossing an edge -- a mover a hair outside a sealed edge after a slide, measured
+  on `cj_etc`, `cj_luxury` and the 105/80 tent -- is retried from the next candidate cell of the
+  same level, or stopped. The client keeps a cell pointer in the position instead.
 - `.cpd` compound objects (the loader's 'd' case, `MapLoader::FUN_0042bc00`) get no navigation
   mesh: 105 entries of the navigation index.
 - Linked edges (`0x08`) are not followed through the `.nvm` link table; the mover exits the one

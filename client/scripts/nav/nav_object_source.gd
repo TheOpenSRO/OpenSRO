@@ -14,12 +14,24 @@ class_name NavObjectSource
 ##     buffer at `esp+0x2c` pushed before the call: 0x54 - 0x2c = 0x28; the
 ##     decompiler names the wrong local). Zero -> no navigation mesh
 ##     (`jbe 0x42c5b0`). Otherwise it seeks there (vtable +0x98), reads one
-##     length-prefixed string (`FUN_0043c250`) and hands that path to
-##     `FUN_0042cbc0`.
-##   * `FUN_0042cbc0` reads that `.bms`'s 0x3c-byte header, and when the word
-##     at 0x28 -- the collision-section offset -- is non-zero, seeks to it and
-##     deserializes that one collision section (`RTNavMeshObj::FUN_004489b0`,
-##     with the header word at 0x38 as its record-size bits).
+##     length-prefixed string (`FUN_0043c250`: a u32 length, then that many
+##     bytes; a length of 0 leaves the string empty) and hands that path to
+##     `FUN_0042cbc0` -- an empty one too: nothing between the read and the
+##     call tests it.
+##   * `FUN_0042cbc0` opens the path through the loader's file manager
+##     (the object at loader +0x28, its vtable +0x28, access 0x80000000):
+##     as given when the loader's +0x14 is non-zero, else prefixed with
+##     "data\\" (`MapLoader::FUN_0043a3c0`; `cmp [esi+0x14],ebx` at 0x42cc44).
+##     A failed open returns 0 -- no navigation mesh (0x42cc85, 0x42cd0c).
+##     An open file's 0x3c-byte header is read, and when its word at 0x28 --
+##     the collision-section offset -- is non-zero, that one collision
+##     section is deserialized (`RTNavMeshObj::FUN_004489b0`, with the header
+##     word at 0x38 as its record-size bits); a zero word returns 0.
+##   * **An empty path** therefore opens "data\\" (or ""). What the file
+##     manager's open does with a directory name is NOT READ: it is not in
+##     `sro_client.exe` but in GFXFileManager.dll. If it fails, the object
+##     has no navigation mesh; that it fails is INFERRED (a directory is not
+##     a file), and it is what this class does.
 ##
 ## So the client's navigation mesh for a `.bsr` is **one** mesh's collision
 ## section: the mesh named at the start of the `.bsr`'s bounding-box block
@@ -28,7 +40,8 @@ class_name NavObjectSource
 ## which is what this project merged from round 505 to round 643.
 
 ## The path the client reads at the `.bsr` header word 0x28, or "" when that
-## word is zero, out of range, or the string there is not a plausible path.
+## word is zero, out of range, or the string there is empty or not a
+## plausible path.
 static func navmesh_path_of_bsr(data: PackedByteArray) -> String:
 	if data.size() < 0x2C:
 		return ""
@@ -50,10 +63,15 @@ static func navmesh_path_of_bsr(data: PackedByteArray) -> String:
 ## MEASURED (round 644, `tools/navmesh_source_census.gd` over Data.pk2's
 ## `navmesh\object.ifo`, 3,268 entries): for 2,039 objects this is the same
 ## single mesh the round-505 merge of every mesh found; the merge differed
-## on 4 -- three whose 0x28 word names no mesh (`euro_esteuro_ph_box2`,
-## `alex_minga07`, `alex_fstair02`: the client gives them no navigation mesh,
-## the merge gave them one) and one it merged a second piece into
-## (`arabiaf_fpapaya01_03`).
+## on 4 -- three whose 0x28 path is EMPTY and one it merged a second piece
+## into (`arabiaf_fpapaya01_03`). The three are not zero words: the word is
+## 140 (`euro_esteuro_ph_box2`), 132 (`alex_minga07`) and 133
+## (`alex_fstair02`) and points at a length of 0 (MEASURED, round 644
+## review), so the client calls `FUN_0042cbc0("")` -- see above for what is
+## read of that. The merge gave each a mesh (`euro_esteuro_ph_box2.bms`,
+## `alex_minga07_01.bms`, `alex_fstair02_02.bms`); this gives none. MEASURED
+## too: no `.nvm` file places any of the three, in its own list or as a
+## cross-reference, so neither choice reaches a walk.
 static func load_collision(archive: Pk2Reader, path: String) -> BmsReader.CollisionMesh:
 	if archive == null or path == "":
 		return null

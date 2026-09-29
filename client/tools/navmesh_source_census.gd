@@ -12,7 +12,9 @@ extends SceneTree
 ## starts with (`FUN_0043c250`) and hands it to `FUN_0042cbc0`, which reads
 ## that `.bms`'s header and deserializes its collision section
 ## (`RTNavMeshObj::FUN_004489b0`). A zero word, or a path whose mesh has no
-## collision section, is no navigation mesh.
+## collision section, is no navigation mesh. An EMPTY path (a non-zero word
+## pointing at a zero length) is handed to `FUN_0042cbc0` as "": see
+## NavObjectSource.load_collision for what is and is not read of that.
 ##
 ## Until round 644 the graph merged the collision sections of EVERY mesh
 ## the `.bsr` lists (World3D._load_object_collision). This counts where
@@ -93,7 +95,12 @@ func _init() -> void:
 			kind = "neither has one"
 		elif retail == null:
 			if nav_path == "":
-				kind = "ours only (no path at 0x28)"
+				# The word and the length it points at, so a zero word and an
+				# empty string are told apart (round 644 review: all three
+				# of these carry a non-zero word and an empty path).
+				var word := data.decode_u32(0x28) if data.size() >= 0x2C else 0
+				var slen := data.decode_u32(word) if word != 0 and word + 4 <= data.size() else -1
+				kind = "ours only (0x28 word 0)" if word == 0 else "ours only (0x28 word %d, path length %d)" % [word, slen]
 			elif ObjectLoader.find_file(archive, nav_path) == null:
 				kind = "ours only (0x28 path missing)"
 			else:

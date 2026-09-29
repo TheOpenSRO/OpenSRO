@@ -154,8 +154,8 @@ func _bridge_over_its_own_pier(region: NvmReader.ParsedRegion) -> void:
 
 	# A sealed square (a lamp base) with its diagonal from the corner a mover
 	# slides into: from inside, pushed into the wall beside that corner, it
-	# must stay inside. Round 644's sweep caught the cell walk leaking out
-	# through the shared vertex on real `cj_field_lamp`.
+	# must stay inside. (This passes with the leak guard removed too -- round
+	# 644 review; `_inferred_cell_guards` case 1 is the one that pins it.)
 	var box := NavGraph.place(_quad([
 		Vector3(0.0, 0.0, 0.0), Vector3(8.0, 0.0, 0.0), Vector3(8.0, 0.0, 8.0), Vector3(0.0, 0.0, 8.0),
 	], [3, 3, 3, 3]), 0, Vector3(100.0, 0.0, 200.0), 0.0)
@@ -175,6 +175,66 @@ func _bridge_over_its_own_pier(region: NvmReader.ParsedRegion) -> void:
 	var diag := g.step_tracked(Vector3(101.0, 40.0, 203.333), Vector2(27.0, 90.0), 0)
 	_check(not diag.blocked and diag.standing_on == 0 and absf(diag.position.x - 128.0) < 0.01,
 		"a move along the deck's diagonal ends on the deck (x %.2f, z %.2f, on %d)" % [diag.position.x, diag.position.z, diag.standing_on])
+
+## Round 644 review: the inferred-cell walk's guards, each pinned by a case
+## that fails without it (the FAIL lines are quoted in WORLD_ISSUES.md).
+func _inferred_cell_guards(region: NvmReader.ParsedRegion) -> void:
+	# 1. A mover a hair OUTSIDE its cell's sealed outline edge -- inside
+	# _triangle_height's tolerance, so still "on" the object -- walking on
+	# out. A slide along an 0x03 edge left real movers there (97/168 cj_etc
+	# and cj_luxury, the 105/80 tent: margins -0.000006 .. -0.000001); the
+	# walk from that cell crosses nothing, and without the guard that makes a
+	# walk end inside its cell they walked out through the wall. This sets up
+	# the state the slide left them in; the slide itself did not reproduce
+	# on synthetic sealed shapes (120 convex heptagons at region-scale
+	# coordinates, 72 headings each: no escape even without the guard).
+	var box := NavGraph.place(_quad([
+		Vector3(0.0, 0.0, 0.0), Vector3(8.0, 0.0, 0.0), Vector3(8.0, 0.0, 8.0), Vector3(0.0, 0.0, 8.0),
+	], [3, 3, 3, 3]), 0, Vector3(100.0, 0.0, 200.0), 0.0)
+	var g_box := NavGraph.build(region, _placed_list(box))
+	var hair := g_box.step_tracked(Vector3(104.0, 0.0, 199.9995), Vector2(0.0, -1.0), 0)
+	_check(hair.blocked and hair.standing_on == 0 and hair.position.z > 199.99,
+		"a mover a hair outside a sealed edge of its cell is stopped, not let out through it (z %.4f, on %d, blocked %s)" % [hair.position.z, hair.standing_on, hair.blocked])
+
+	# 2. A mover on the LOWER part of a mesh whose parts overlap: on the
+	# pier, under the deck. Its walk must start from the pier's cell, at its
+	# own height, not the deck's above it, so the pier's sealed side stops it.
+	var placed := NavGraph.place(_deck_over_pier(), 0, Vector3(100.0, 0.0, 200.0), 0.0)
+	var g := NavGraph.build(region, _placed_list(placed))
+	var pos := Vector3(115.0, 0.0, 250.0)
+	var on_pier := 0
+	var walls := 0
+	for _i in range(20):
+		var r := g.step_tracked(pos, Vector2(0.0, 1.0), on_pier)
+		if r.blocked:
+			walls += 1
+		pos = r.position
+		on_pier = r.standing_on
+	_check(walls > 0 and on_pier == 0 and pos.z < 260.0 and absf(pos.y) < 0.01,
+		"a mover on a pier under a deck is stopped by the pier's own sealed side (z %.3f, y %.2f, walls %d)" % [pos.z, pos.y, walls])
+
+	# 3. The "not explained" fallback stays at the mover's level: a mover on
+	# the pier a hair outside its sealed side, under the deck. The deck's cell
+	# above would "explain" the move (it ends inside it); trying it would let
+	# the mover out of the pier and up 40 onto the deck.
+	var under := g.step_tracked(Vector3(115.0, 0.0, 260.0005), Vector2(0.0, 1.0), 0)
+	_check(under.blocked and under.position.z < 260.01 and absf(under.position.y) < 0.01,
+		"a mover a hair outside the pier's side is stopped there, not walked out and up onto the deck (z %.4f, y %.2f)" % [under.position.z, under.position.y])
+
+	# 4. An entry whose push lands a hair outside every cell -- a grazing
+	# approach to the open side of a box, a hair from its corner with a sealed
+	# side -- must not leave the rest of the step unchecked. The push lands
+	# past the corner; without the nearest-cell start, the walk found no cell
+	# and let the whole 5-unit step through, as a Ghost Walk's single long
+	# step would be.
+	var door := NavGraph.place(_quad([
+		Vector3(0.0, 0.0, 0.0), Vector3(10.0, 0.0, 0.0), Vector3(10.0, 0.0, 10.0), Vector3(0.0, 0.0, 10.0),
+	], [0, 3, 3, 3]), 0, Vector3(100.0, 0.0, 200.0), 0.0)
+	var g_door := NavGraph.build(region, _placed_list(door))
+	for slide in [true, false]:
+		var graze := g_door.step_tracked(Vector3(102.002, 0.0, 199.9), Vector2(-5.0, 0.25), NavGraph.ON_TERRAIN, slide)
+		_check(graze.entered == 0 and graze.blocked and graze.position.x > 99.9,
+			"a step whose entry lands a hair outside every cell is still walked, and stopped at the corner (slide %s: x %.3f, z %.4f, entered %d, blocked %s)" % [slide, graze.position.x, graze.position.z, graze.entered, graze.blocked])
 
 func _placed_list(placed: NavGraph.PlacedObject) -> Array[NavGraph.PlacedObject]:
 	var out: Array[NavGraph.PlacedObject] = [placed]
@@ -505,6 +565,7 @@ func _initialize() -> void:
 		"landing_height_at comes to rest on top of it instead (got %.2f)" % landing)
 
 	_bridge_over_its_own_pier(region)
+	_inferred_cell_guards(region)
 
 	if _failures == 0:
 		print("ALL PASS")
