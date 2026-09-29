@@ -295,6 +295,9 @@ In order. Each is checked off here when it ships in a release, with its round in
       `npcpos` by region and position, and turn each NPC by the real angle -- through the same
       engine-to-Godot conversion as map objects (`NavGraph.godot_yaw`), after confirming the
       character-facing convention (the spawn packet's angle -> the body's front) in the client.
+      Round 637 read that conversion: the heading is the wire angle plus pi/2 (`FUN_009c40b0`), and
+      heading `h` faces `(sin h, 0, -cos h)` region-local, which is `rotation.y = h` on a +Z-front
+      node (`RemoteFacing`). Whether `wInitialDir` goes through the same `+pi/2` is not read.
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
       material's diffuse and the ambient by its ambient (round 136's stated approximation).
 - [x] ~~Real spawn points for every roster species~~ -- **done, v0.1.403 (round 253)**: `export-refdata
@@ -965,6 +968,33 @@ whose flip conditions these items feed).
       snap to the ground, 104.07 above Donwhang's drawn landing and 86.23 to 246.32 below the
       others' under the one frame, until the mover's own client lifts or drops it and sends an
       `OpMove`. Snapping another player's body the way a monster's is snapped would close it.
+
+### Other bodies' facing (round 637) — **built: other players and monsters turn to face where they go, at 3 pi rad/s; these are left**
+
+READ and measured in `docs/WORLD_ISSUES.md`'s 637th round; the rule is `RemoteFacing`.
+`SRREVAMP_QA_FACING_LOG=1` plus `client/tools/facing_measure.py` is the measurement.
+
+- [ ] **The local player still snaps its own facing** (`_physics_process`:
+      `rotation.y = atan2(dir.x, dir.z)`). Retail's own character goes through the same mover
+      (`FUN_009e0550` -> `FUN_009e02f0`), so it turns at 3 pi rad/s too (INFERRED from the shared
+      mover; the click path into `FUN_009e0550` is not traced). Left out of round 637, which kept
+      to the remote-entity code.
+- [ ] **A player coming into view faces heading 0 (world +z) until they move.** srrevamp's
+      `OpEntityEntered` snapshot carries no angle, and the server keeps none: it receives positions
+      only. Retail's spawn carries one (wire angle `a`, heading `a + pi/2`: `FUN_009c3a70`,
+      `FUN_009c40b0`). A fix needs the server to keep each character's last movement heading and
+      send it.
+- [ ] **The retail re-aim guard is not applied.** `0xB021` re-aims only past 25.0 squared distance
+      from the held destination, or when `obj+0x714` is set (unread). srrevamp streams positions
+      2.5 units apart, so the guard would never re-aim. Revisit if the move packet becomes a
+      destination (`0x7021`/`0xB021`, this file's movement item).
+- [ ] **Three turns still snap:** the cast start toward the target (`_on_skill_cast`), a standing
+      monster turned to its target (`_face_monster_toward`) and a monster's spawn heading
+      (`_face_monster_heading`). Each cancels a turn in progress. Whether retail turns or snaps in
+      these cases is not read.
+- [ ] **A monster the list moves mid-leg keeps its leg's facing.** Seen once at world entry: 7.4
+      degrees off for 0.6 s. The client's facing changes only on a message, so this may be right;
+      not established.
 
 ### The buff bar — **built (round 618); these are left**
 `HudBuffBoard` is retail's `CIFMagicStateBoard`. It has the icons, the draining time bar, the end

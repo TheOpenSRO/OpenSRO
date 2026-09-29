@@ -7094,6 +7094,214 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirty-seventh round: other players face the way they run, and they and monsters turn toward it at the game's own rate
+
+The user's report on v0.1.460: "when I see other players on the server it doesn't show them running
+in the direction they're facing. So you'll see them running sideways or backwards." Labels: READ
+(from `sro_client.exe`'s decompile or disassembly, or its PE image), MEASURED (on the render box),
+INFERRED, OURS, OPEN.
+
+### 1. Reproduced by measurement
+
+- MEASURED: two clients on the box, through Login -> CharacterSelect with real X input, against a
+  server built from dev 5a82339 (`-in-memory`, `-monster-ai`). A (QaTester) walked 8 directions by
+  real clicks around its own body. B (QaFriend) logged A's puppet every 50 ms with the new
+  `SRREVAMP_QA_FACING_LOG=1`. Each line has the drawn position and the way the MODEL faces, read
+  off the skeleton's global basis (the body's front is the skeleton's -Z, MEASURED in round 533).
+  `client/tools/facing_measure.py` turns the lines into movement against facing.
+- Before (dev 5a82339 plus only the log hook), per leg, the movement heading and the facing:
+
+  | leg | move | face | off |
+  |---|---:|---:|---:|
+  | E | -76.4 | 0.0 | 76.4 |
+  | W | 76.4 | 0.0 | 76.4 |
+  | N | 0.0 | 0.0 | 0.0 |
+  | S | 180.0 | 0.0 | 180.0 |
+  | NE | -36.6 | 0.0 | 36.6 |
+  | SW | 124.9 | 0.0 | 124.9 |
+  | NW | 47.1 | 0.0 | 53.3 (mean) |
+  | SE | -124.9 | 0.0 | 124.9 |
+
+  The puppet always faced world +z, whichever way it ran: 18.1% of its moving samples were within
+  2 degrees of the movement, and those were only the leg that happened to run +z.
+- MEASURED, monsters (18 bodies, 24,987 moving samples after the first 3 s): 99.8% within 2
+  degrees. Their longest stretch off by more than 2 degrees was 183 ms, a sample across a leg's
+  corner. Monsters faced their path already; they were snapped to it at each leg's start.
+- NPCs do not move in srrevamp (they are placed statues, `NpcFacing`), so there was nothing to
+  measure.
+
+### 2. The cause
+
+- READ in this checkout: `World3D._on_entity_moved` set only the body's walk target
+  (`_other_body_targets`). Nothing ever set another player's `rotation.y` on a move, so the body
+  kept rotation 0. The only turn was the cast start's snap toward a target (`_on_skill_cast`).
+- The monster path differs: `_apply_monster_leg` set `rotation.y = MonsterMotion.facing_yaw(...)`
+  at every leg. That is why monsters were right and players were not.
+- srrevamp's player protocol carries no angle. `OpEntityMoved` is a character id and a position.
+  The mover's client streams positions (`MIN_SEND_INTERVAL` 0.05 s), not retail's destinations. So
+  the angle-units question does not arise for players: there is no angle to convert.
+
+### 3. What the client does (READ)
+
+- **The message.** `0xB021`'s reader, `NetProcessInNavAndSkill::FUN_008a5750`:
+  - reads the object id and the movement (`FUN_008a5640`);
+  - reads an optional source position; when it is present, `FUN_009e11e0` places the object;
+  - for a destination (kind 1), calls `FUN_009e0550(region, dest)` on the object's mover. It does
+    this when `obj+0x714` is non-zero or when `FUN_009ed1e0`'s SQUARED distance between the mover's
+    current destination (`+0x6bc/+0x6c0`) and the new one exceeds 25.0 (`0xe1b8a0`).
+- **The aim.** `FUN_009e0550`:
+  - takes the vector from the object's position (`+0x74`) to the destination
+    (`FUN_009ecc70`, which zeroes the y);
+  - makes a heading of it with `FUN_009ed130`, starting from the current heading
+    (`FUN_009e0020`, `+0x8c`);
+  - calls `FUN_009e02f0(heading, 0)`.
+- **The heading of a vector.** `FUN_009ed130` (0x9ed130..0x9ed1cd):
+  - `len = |v|`;
+  - if `len <= 1e-6` (`0xe1b848`) the output is left alone;
+  - otherwise `a = acos(-z_local / len)`, and the heading is `a` for `x >= 0` and `2 pi - a` for
+    `x < 0`.
+- **The turn.** `FUN_009e02f0` (0x9e02f0..0x9e0461), from the disassembly, since the decompile loses
+  the x87 stack:
+  - `d = target - current`, and `sign = -1` (with `d = -d`) when `d < 0`. When `d > pi` (`0xd81948`)
+    the sign flips and `d = 2 pi - d`: the shorter way.
+  - `step = elapsed * 9.42477798461914 / 1000.0`:
+    - the two doubles are at `0xde3128` and `0xd83268`, read out of the PE image;
+    - `elapsed` is an unsigned int (`+2^32` when negative, `0xe1b7c8`).
+  - It stores the target at mover `+0xa8` and points the travel direction (`+0x68`) along the
+    TARGET at once (`FUN_009ec850`).
+  - When `step <= d` (fcom, C0|C3 at 0x9e039d):
+    - the heading becomes `current + sign * step`, wrapped into `[0, 2 pi)`;
+    - the turn stays on (`+0x88` bit 0, `+0xa4 = 1`);
+    - the turn's clock restarts (`+0xa0` = the object's `+0x3c`).
+  - Otherwise the heading is the target and the turn is over.
+  - Both paths store through `FUN_009c4260`, which wraps into `[0, 2 pi)` and writes `+0x8c`.
+- **Every frame.** The mover's tick `FUN_009e0e60` (called from 0x9d1fac) calls `FUN_009e0c10`,
+  which calls `FUN_009e02f0(+0xa8, obj+0x3c - +0xa0)` while `+0xa4` is set. It also runs for a
+  mover that is not moving, when `+0x88 & 0x31`.
+- **The clock.**
+  - `obj+0x3c` is CObj's millisecond clock: the scene loop `FUN_00ba34e0` adds the frame's
+    milliseconds (`DAT_0110f7f8`, which `FUN_00ba4020` sets each frame, clamped to 3000) to
+    `+0x3c` after each object's update (0xba359b..0xba35a1).
+  - Every character is a CObj (RTTI: CICUser : CICharactor : CIGIDObject : CIObject : CIEntity :
+    CObjChild : CObj).
+  - So the turn rate is **3 pi radians a second** (9.42477798461914 is 3 pi at float precision). A
+    half turn takes a third of a second.
+- **The heading-only form** (kind 0, `FUN_009e08a0`) goes through the same `FUN_009e02f0`, so it
+  turns at the same rate. Its wire angle is converted by `FUN_009c40b0`, which adds pi/2
+  (`0xe1b8f0`) and wraps. So the wire angle `a` is `h - pi/2`, which faces `(cos a, sin a)`
+  region-local (x east, z north): counted from east toward north. The spawn reader
+  `FUN_009c3a70` (0x9c3adf..0x9c3b0a) does the same conversion.
+- **When it stops.** A body that stops keeps its heading: nothing but `FUN_009e02f0` writes it, and
+  nothing calls that without a message.
+
+### 4. The frame (READ, then checked)
+
+- `0x9ec850` makes the heading's facing `(sin h, 0, -cos h)` region-local (round 630). The region
+  group mirrors z (`World3D.minimap_facing`), so in world space the facing is `(sin h, cos h)`.
+  That is where a node with `rotation.y = h` points its local +Z.
+- Another player's front is its node's +Z (the skeleton is turned PI inside it), so its
+  `rotation.y` IS the client's heading.
+- A -Z-front monster's `rotation.y` is `h - pi` (`RemoteFacing.yaw_of`).
+- The test checks it both ways: `(sin h, -cos h)` mirrored equals the direction the heading came
+  from, and so does the node's +Z.
+- There is no mirror between the two turn directions: yaw and heading are the same number. So the
+  tie at exactly pi turns the way the client's does.
+
+### 5. The fix
+
+- `client/scripts/world/remote_facing.gd` (new, pure) is `FUN_009ed130` and `FUN_009e02f0` with the
+  rate above.
+- `World3D._aim_remote_body` is the aim (`FUN_009e0550`). `_step_remote_turns`, called every
+  physics frame after the other bodies' lerp, is the tick.
+- Another player: each `OpEntityMoved` (and a snapshot for a body already drawn) aims the body from
+  where it is drawn toward the new position.
+  - OURS: srrevamp streams positions, so each position is treated as the destination.
+  - The retail 25.0 squared-distance re-aim guard is NOT applied. It compares destinations, and
+    with ours 2.5 units apart it would never re-aim.
+- A monster's leg now turns at the same rate instead of snapping (`_apply_monster_leg`). The
+  snapping turns stay snaps, and each cancels a turn in progress:
+  - the cast start's turn toward the target;
+  - a standing monster turned to its target (`_face_monster_toward`);
+  - a spawn heading (`_face_monster_heading`).
+
+  Whether retail turns or snaps in those three cases is not read (OPEN).
+- OURS: the elapsed time is the physics frame's float milliseconds, where the client uses whole
+  milliseconds per frame.
+
+### 6. Tests
+
+- `client/scripts/world/remote_facing_test.gd` (new, 33 checks, ALL PASS). It covers:
+  - the heading of 7 vectors;
+  - the 1e-6 early return;
+  - the frame check;
+  - the rate (3 pi);
+  - 100 ms turning 0.9425 rad;
+  - a half turn not done at 333 ms and done at 334 ms;
+  - the shorter way and its wrap both ways;
+  - the tie at pi.
+- On a bare World3D, it also covers:
+  - 8 directions each walked for a second: the worst leg is 0.00 degrees off;
+  - a half turn at 90.00 degrees after 10 frames and done at 21;
+  - a stop keeping its facing;
+  - a position on the body leaving the facing;
+  - a monster's leg that does not snap: 54.00 degrees after 6 frames, on its destination once done.
+- `monster_motion_test.gd`'s leg-facing check now steps the turn (0.5 s) before it looks. ALL PASS.
+- `remote_godot.sh tests`: 157 suites, 0 failing. `go build ./... && go test -count=1 -p 1 ./...`:
+  all packages ok (the server is unchanged).
+- NEGATIVE: the same file run against dev 5a82339 (a clean worktree of the base, shipped to its own
+  render dir):
+
+      FAIL RemoteFacing exists
+      FAIL World3D steps remote turns each frame
+      FAIL after walking each of 8 directions the body faces its movement (worst 180.00 deg)
+      FAIL 10 frames into a half turn it has turned 90 deg, at 3 pi rad/s (got 0.00)
+      FAIL 21 frames (0.35 s) in it faces the new way (off by 180.00 deg)
+      FAIL a monster's leg does not snap it round: it still faces +z as the leg starts (got 90.00 deg)
+      FAIL 6 frames in it has turned 54 deg toward +x (got 90.00)
+      7 FAILURES
+
+### 7. After the fix, measured (the same two-client run, this branch's client)
+
+- Per leg, with the steady part after the first 0.4 s:
+
+  | leg | move | face | mean off | max off |
+  |---|---:|---:|---:|---:|
+  | E | -80.0 | -80.0 | 0.01 | 0.02 |
+  | W | 80.0 | 80.0 | 0.01 | 0.03 |
+  | N | 0.0 | 0.0 | 0.00 | 0.00 |
+  | S | 180.0 | 180.0 | 0.00 | 0.00 |
+  | NE | -47.2 | -53.9 | 0.61 | 5.44 |
+  | SW | 124.2 | 124.2 | 0.02 | 0.03 |
+  | NW | 83.2 | 85.9 | 1.36 | 3.96 |
+  | SE | -124.2 | -124.2 | 0.01 | 0.01 |
+
+- MEASURED: the NE and NW maxima come from A's own path bending near its end, from -40.7 to -83.2
+  degrees on NE. The facing follows it within one 50 ms sample, which is the turn rate at work.
+- The turn itself was MEASURED on B: 27.0 degrees per 50 ms sample (-162 -> -135 -> -108 -> -81),
+  which is 540 degrees a second, 3 pi.
+- The time to come within 2 degrees matched the angle turned. A 135-degree start was aligned after
+  250 ms; 135 / 540 = 250 ms.
+- After the first 3 s:
+  - A's puppet's stretches off by more than 2 degrees were turns: 10 of them, longest 319 ms,
+    median 272 ms.
+  - Monsters were 98.4% within 2 degrees, with turns up to 423 ms (a 180-degree turn plus a
+    sample).
+- Screenshots (for a human only; the numbers above are the evidence): the session scratchpad's
+  `facing_shots/`, before and after, B's view of A in each direction.
+- Observed once, at world entry: a monster whose body the list moved mid-leg walked 7.4 degrees
+  off its facing for 0.6 s until its next leg. The leg's facing is aimed once per leg, in the base
+  as in the client, whose facing only a message turns. OPEN whether the list's placement should
+  re-aim it.
+
+### Left open
+
+See `docs/TODO.md`, "Other bodies' facing (round 637)":
+- the local player still snaps its own facing;
+- a player coming into view faces heading 0, since no angle is sent;
+- the re-aim guard and what `+0x714` is;
+- the three snapping turns;
+- the list-placement case.
+
 ## Rounds 633-635 integration review (int/ui2): nothing new lands past a lowered bag size, the portrait's ambient is clamped, the chat's penalty line sits where the client puts it, and the text table loads rows as the client does
 
 The final review of int/ui2 (dev b9bbf07 + rounds 633-635 and their follow-ups, merged at 14c4889)

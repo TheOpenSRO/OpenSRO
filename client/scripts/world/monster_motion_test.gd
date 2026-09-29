@@ -459,6 +459,9 @@ func _test_world_move(world_script: GDScript) -> void:
 	var state = (world.get("_monster_motion") as Dictionary).get(7)
 	_check(state != null and state["pos"] == Vector2(103, -200) and bool(state["moving"]),
 		"a push starts the body's leg from where it is drawn")
+	# The body turns at the client's rate since round 637 (RemoteFacing): half
+	# a second is past any turn's end (a half turn takes a third).
+	world.call("_step_remote_turns", 0.5)
 	var front := Basis(Vector3.UP, body.rotation.y) * Vector3(0, 0, -1)
 	_check(front.is_equal_approx(Vector3(1, 0, 0)), "the body's front turns toward its destination, +X (got %s)" % str(front))
 	var yaw := body.rotation.y

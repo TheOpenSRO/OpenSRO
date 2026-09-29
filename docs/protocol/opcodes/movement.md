@@ -137,6 +137,41 @@ two blocks — the later comparisons are against the return of **vtable slot `0x
 getter whose identity is unread. Reading the whole body is what caught it; the grep alone would
 have added three invented values to the state vocabulary.
 
+## How the client turns a moved object (round 637)
+
+Read from `sro_client.exe` (`docs/WORLD_ISSUES.md`, 637th round, has the full trace). srrevamp's
+`World3D` follows it in `client/scripts/world/remote_facing.gd`.
+
+- **The reader.** `NetProcessInNavAndSkill::FUN_008a5750` is `0xB021`'s client reader.
+  - The object id is followed by the movement (`FUN_008a5640`, this page's layout).
+  - Then comes a one-byte flag. When it is 1, a source position follows. It is a u16 region, then
+    an x, a 4-byte y and a z. The x and z are 2 bytes each, or 4 bytes each when the LOCAL player's
+    region (`[0xeef5ec]+0x7c`) has its high bit set. The decompile divides both by 10.0
+    (`0xe1b840`). `FUN_009e11e0` places the object there.
+  - The component types were not settled from the disassembly; this is the decompile's reading.
+  - A destination goes to the mover's `FUN_009e0550`. It is used when `obj+0x714 != 0` or when it
+    is more than 25.0 in squared distance (`0xe1b8a0`, `FUN_009ed1e0`) from the destination
+    already held. Unread: what `+0x714` is.
+- **The wire angle.** `FUN_008a5640` turns the u16 into radians (`/65535 * 360 * (pi/180)`).
+  `FUN_009c40b0` then adds pi/2 (`0xe1b8f0`) and wraps into `[0, 2 pi)` to make the object's
+  heading `h` (`+0x8c`). The spawn reader `FUN_009c3a70` does the same.
+  - `h` faces `(sin h, 0, -cos h)` region-local (`0x9ec850`).
+  - So a wire angle `a` faces `(cos a, sin a)`, measured from east toward north.
+- **The aim.** `FUN_009e0550`:
+  - takes the vector from the object (`+0x74`) to the destination, with y zeroed (`FUN_009ecc70`);
+  - makes a heading of it (`FUN_009ed130`): `acos(-z/len)`, or `2 pi` minus that when `x < 0`;
+    it keeps the current heading when `len <= 1e-6`;
+  - calls `FUN_009e02f0(heading, 0)`.
+- **The turn** (`FUN_009e02f0`):
+  - The travel direction points at the target at once.
+  - The facing turns the shorter way by `elapsed_ms * 9.42477798461914 / 1000` (`0xde3128`,
+    `0xd83268`): **3 pi rad/s**.
+  - Each frame, the mover's tick (`FUN_009e0e60` -> `FUN_009e0c10`) calls the turn again with the
+    object clock's milliseconds since the last call. This continues until the step would pass the
+    target, which then becomes the heading.
+  - The heading-only form (`FUN_009e08a0`) turns the same way.
+  - Nothing turns an object that has stopped.
+
 ## Not read
 
 - **What the `+0x14` byte in the heading form is.** Its width is settled at one byte; its meaning

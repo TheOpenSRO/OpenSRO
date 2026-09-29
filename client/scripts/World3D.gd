@@ -7916,6 +7916,7 @@ func _on_skill_cast(sc: SkillNet.SkillCast) -> void:
 			var d := Vector2(target.global_position.x - body.global_position.x, target.global_position.z - body.global_position.z)
 			if not d.is_zero_approx() and sc.caster_kind == SkillNet.OWNER_CHARACTER:
 				body.rotation.y = atan2(d.x, d.y)
+				_remote_turns.erase(body.get_instance_id())
 		var clip := 0.0
 		if sc.caster_kind == SkillNet.OWNER_CHARACTER:
 			clip = _play_other_cast_anim(sc.caster_id, sc.skill_id)
@@ -9291,6 +9292,10 @@ func _update_blob_shadow() -> void:
 ##                          server-style leg (OpMonsterMoved, built and decoded
 ##                          here) from where it stands; with --server the list
 ##                          is asked for at half the leg (_qa_mob_move)
+##   SRREVAMP_QA_FACING_LOG=1  (round 637) every 50 ms, each other player's
+##                          and each walking monster's drawn position and the
+##                          way its model faces (_qa_facing_report), for
+##                          client/tools/facing_measure.py
 ##   SRREVAMP_QA_MOB_LOG=1  print each monster leg, its progress every 30
 ##                          frames, its arrival, each height resolve's navmesh
 ##                          and terrain-ray answers side by side (round 557),
@@ -12070,6 +12075,9 @@ func _physics_step(delta: float) -> void:
 		# two on the last inch of the lerp.
 		_set_other_gait(character_id, body.position.distance_to(target) > OTHER_GAIT_THRESHOLD)
 		body.position = body.position.lerp(target, minf(OTHER_BODY_INTERPOLATION_SPEED * delta, 1.0))
+	_step_remote_turns(delta)
+	if _qa_facing_log:
+		_qa_facing_report()
 
 	if _real_skeleton != null and _real_skeleton_track.keyframes.size() > 1:
 		_real_skeleton_time += delta
@@ -12173,6 +12181,78 @@ func _physics_step(delta: float) -> void:
 					Skeleton3DBuilder.apply_ban_pose_at(_player_skeleton, anim, _player_anim_time, true)
 					_anim_sounds.advance(_player_skeleton, anim, 0.0, _loop_ms(anim, _player_anim_time), true)
 
+## SRREVAMP_QA_FACING_LOG=1 (round 637): every 50 ms, one line per other
+## player's body and per monster on a leg, with where it is drawn and the way
+## its MODEL faces, read off the drawn skeleton's global basis (the player
+## body's front is its skeleton's -Z, MEASURED in round 533; a monster's is
+## MonsterMotion.FRONT_BY_MODEL's). client/tools/facing_measure.py turns
+## consecutive lines into movement-versus-facing angles. Measurement only.
+var _qa_facing_log := OS.get_environment("SRREVAMP_QA_FACING_LOG") != ""
+var _qa_facing_log_ms := 0
+
+func _qa_facing_report() -> void:
+	var now := Time.get_ticks_msec()
+	if now - _qa_facing_log_ms < 50:
+		return
+	_qa_facing_log_ms = now
+	for id in _other_bodies:
+		var body: Node3D = _other_bodies[id]
+		if not is_instance_valid(body):
+			continue
+		var gait: Dictionary = _other_gaits.get(id, {})
+		var skel = gait.get("skeleton")
+		var front := Vector3.ZERO
+		if skel != null and is_instance_valid(skel):
+			front = (skel as Node3D).global_basis * Vector3(0, 0, -1)
+		print("QA FACING player %d ms=%d pos=(%.3f,%.3f) front=(%.4f,%.4f)" % [
+			id, now, body.global_position.x, body.global_position.z, front.x, front.z])
+	for id in _monster_motion:
+		var mbody = _monster_bodies.get(id)
+		if mbody == null or not is_instance_valid(mbody):
+			continue
+		var fr := MonsterMotion.front_of(String((mbody as Node3D).get_meta("model", "")))
+		if fr != "-Z":
+			continue
+		var asm: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(id)
+		var node: Node3D = asm.skeleton if asm != null and asm.skeleton != null else mbody
+		var mf := node.global_basis * Vector3(0, 0, -1)
+		print("QA FACING monster %d ms=%d pos=(%.3f,%.3f) front=(%.4f,%.4f)" % [
+			id, now, (mbody as Node3D).global_position.x, (mbody as Node3D).global_position.z, mf.x, mf.z])
+
+## Turns in progress on other players' and monsters' bodies (round 637):
+## body instance id -> {"target": the client's heading it turns to, "front":
+## the yaw of the body's front from its node's +Z}. RemoteFacing has the rule.
+var _remote_turns := {}
+
+## Aims a drawn body along `dir` (world) the way the client's mover does
+## (FUN_009e0550 -> FUN_009e02f0(heading, 0)): the target heading is set and
+## the turn starts; _step_remote_turns moves the facing each frame. A vector
+## too short to have a heading keeps the current one (FUN_009ed130).
+func _aim_remote_body(body: Node3D, dir: Vector3, front_yaw: float) -> void:
+	if body == null or not is_instance_valid(body):
+		return
+	var current := RemoteFacing.heading_of_yaw(body.rotation.y, front_yaw)
+	var target := RemoteFacing.heading_toward(current, dir)
+	_remote_turns[body.get_instance_id()] = {"target": target, "front": front_yaw}
+
+## One frame of every turn in progress: FUN_009e02f0 with the frame's time
+## (the mover's tick, FUN_009e0e60 -> FUN_009e0c10). A turn that reaches its
+## target ends there; a body that has gone is dropped.
+func _step_remote_turns(delta: float) -> void:
+	if _remote_turns.is_empty():
+		return
+	for id in _remote_turns.keys():
+		var body := instance_from_id(id) as Node3D
+		if body == null or not is_instance_valid(body):
+			_remote_turns.erase(id)
+			continue
+		var turn: Dictionary = _remote_turns[id]
+		var front := float(turn["front"])
+		var r := RemoteFacing.turn(RemoteFacing.heading_of_yaw(body.rotation.y, front), float(turn["target"]), delta * 1000.0)
+		body.rotation.y = RemoteFacing.yaw_of(float(r["heading"]), front)
+		if not bool(r["turning"]):
+			_remote_turns.erase(id)
+
 func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, gender: String = DEFAULT_GENDER) -> void:
 	if not equipped.is_empty():
 		_other_equipped[character_id] = equipped
@@ -12181,6 +12261,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		# _other_body_targets' own doc comment for why this replaced a
 		# direct position snap.
 		_other_body_targets[character_id] = pos
+		_aim_remote_body(_other_bodies[character_id], pos - (_other_bodies[character_id] as Node3D).position, 0.0)
 		return
 
 	var body := Node3D.new()
@@ -12245,9 +12326,19 @@ func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.equipped, snapshot.gender)
 	_log_system("%s entered the zone." % snapshot.char_name)
 
+## Another player's position (OpEntityMoved): their body's new walk target,
+## and (round 637) the heading toward it, which the body turns to at the
+## client's own rate (RemoteFacing; _step_remote_turns). srrevamp streams
+## positions, not retail's destinations (0xB021), so each position is the
+## destination the client's mover would aim at from where the body is drawn
+## (FUN_009e0550 aims from the object's own position, +0x74). Nothing turns
+## the body once the positions stop, so it keeps its last heading.
 func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 	if _other_bodies.has(moved.character_id):
-		_other_body_targets[moved.character_id] = Vector3(moved.x, moved.y, moved.z)
+		var to := Vector3(moved.x, moved.y, moved.z)
+		_other_body_targets[moved.character_id] = to
+		var body: Node3D = _other_bodies[moved.character_id]
+		_aim_remote_body(body, to - body.position, 0.0)
 
 func _on_entity_left(character_id: int) -> void:
 	if character_id == _selected_character:
@@ -14291,14 +14382,19 @@ func _apply_monster_leg(moved: CombatNet.MonsterMoved) -> void:
 	_set_monster_gait(moved.monster_id, MonsterMotion.state_gait(state))
 	var front := MonsterMotion.front_of(String(body.get_meta("model", "")))
 	if MonsterMotion.turns_to_face(state) and front != "":
-		body.rotation.y = MonsterMotion.facing_yaw(state["dest"] - pos, front)
+		# Turned toward the destination at the client's rate (round 637), not
+		# snapped: the same mover as another player's (_aim_remote_body).
+		var to_dest: Vector2 = state["dest"] - pos
+		_aim_remote_body(body, Vector3(to_dest.x, 0.0, to_dest.y), MonsterMotion.front_yaw(front))
 	if _mob_logging():
 		var kind := "stop"
 		if MonsterMotion.turns_to_face(state):
 			kind = "run" if int(state["mode"]) == MonsterMotion.MODE_RUN else "walk"
-		print("World3D: monster %d %s from (%.1f,%.1f) to (%.1f,%.1f) at %.1f/s yaw %.2f%s" % [
+		var turn = _remote_turns.get(body.get_instance_id())
+		print("World3D: monster %d %s from (%.1f,%.1f) to (%.1f,%.1f) at %.1f/s yaw %.2f%s%s" % [
 			moved.monster_id, kind, pos.x, pos.y, moved.dest_x, moved.dest_z, float(state["speed"]),
-			body.rotation.y, "" if front != "" else " (facing unmeasured)"])
+			body.rotation.y, "" if turn == null else " turning to %.2f" % RemoteFacing.yaw_of(float(turn["target"]), float(turn["front"])),
+			"" if front != "" else " (facing unmeasured)"])
 
 ## Plays a gait on a monster's body: its own idle for 0 (stand), its walk or
 ## run clip otherwise. A model with no such clip keeps the loop it has.
@@ -15009,6 +15105,7 @@ func _face_monster_toward(monster_id: int, at: Vector2) -> void:
 	if front == "" or dir.is_zero_approx():
 		return
 	(body as Node3D).rotation.y = MonsterMotion.facing_yaw(dir, front)
+	_remote_turns.erase((body as Node3D).get_instance_id())
 
 ## Another player's hit reaction: the TYPE_HIT clip of their own body's
 ## gender and weapon group, once, back to their stand or run after
@@ -15943,6 +16040,7 @@ func _face_monster_heading(monster_id: int, heading: float) -> void:
 	if front == "":
 		return
 	(body as Node3D).rotation.y = MonsterMotion.facing_yaw(MonsterMotion.heading_dir(heading), front)
+	_remote_turns.erase((body as Node3D).get_instance_id())
 
 func _on_monster_damaged(damaged: CombatNet.MonsterDamaged) -> void:
 	# Someone else's hit on a monster: play its reaction now. The local
