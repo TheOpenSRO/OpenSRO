@@ -252,6 +252,33 @@ region-local (..) of <region>: P piece(s), T triangle(s), visible <b>, in frustu
 the camera` per placed object whose node name holds a fragment, or `<fragment>: none placed` --
 the triangles are the drawn surfaces' own index counts.
 
+### Map objects that move: the animation census and its cost
+
+`mapanim_census.gd` (round 645) classes every model of Map.pk2's `object.ifo` by what could animate
+it: `skeletal`, `skel_only`, `texani`, `dy` (cloth) and `motion`. It adds `animates` for what this
+client plays: the model is built with `ObjectLoader.load_object` and has its player (round 645
+review). A named clip that fails to build is `clip_fails`, with a `CLIPFAIL` line saying why. Each
+model's placements are counted over every region's
+`.o` and `.o2` list 2. It prints one `MODEL` line per classed model, with its clips (Duration,
+IsCyclic, bones), its `default` group entries and its object.ifo flag, then `CLASS` totals.
+`--regions` adds per-region counts, `--region=100/134 --all` lists everything a region places, and
+`--where=edimmu` prints the placements of matching models. It takes about 60 seconds for the whole
+map.
+
+```
+client/tools/remote_godot.sh script res://tools/mapanim_census.gd -- \
+  --pk2=/opt/sro-files/client/Data.pk2 --map=/opt/sro-files/client/Map.pk2 [--regions]
+```
+
+`mapanim_bench.gd` places `--count` copies of each `--models` path and times uncapped frames with
+every clip running, every clip paused and none placed. Low-processor sleep and vsync are off; the
+default headless loop sleeps 6.9 ms a frame, which swamps the measurement. It can also run with the
+GL renderer, under `xvfb-run` and `vglrun` without `--headless`. `--noskin` and `--nomesh` strip
+the copies' skins or meshes, to split the cost. In the world,
+`SRREVAMP_QA_MAPANIM=n` prints the driver's counts and the process time every n frames;
+`SRREVAMP_NO_MAP_ANIM=1` is the A/B.
+
+
 ### Particle effects: the `.efp` census
 
 `EfpReader.decode` (and its Go twin `efp.Decode`) reads the typed tree of every particle

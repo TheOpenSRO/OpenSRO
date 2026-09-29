@@ -7397,6 +7397,476 @@ It is measured live above.
 - the `efta` creator byte;
 - view ranges.
 
+## Six-hundred-and-forty-fifth round, review follow-up: the user's tentacles are the Tarim thorn vines, and they move; animated objects end at 2,020 as in retail; the view test is per sector
+
+The review confirmed the first commit's reading of the clip, looping, speed, flag bit 0, the absence
+of wind, the lockstep phase and the bounds, and that still objects are unchanged. It also found
+errors, which this follow-up fixes.
+
+### 1. The user's tentacles (MEASURED, then READ)
+
+The report's screenshot shows a canyon with a rope bridge high overhead and curling, spiked
+tentacles. That is not the Taklamakan pit round 645 showed. Only the first line of the report was
+about tentacles; "animated assets in Taklaman too" was a second report.
+
+**Finding the canyon (MEASURED).**
+- The rope bridge is `res\bldg\china\dunhuang\field-obj\w_cd_bridge01_01.bsr`. It is placed at
+  about y 1,015 in 94/145, 94/146 and 95/147.
+- The tentacles are the Tarim thorn vines. `res\nature\oasis\tarim\oas_tarim_thorng01_01.bsr` is
+  skeletal: 4 skinned pieces, 19 bones, and `oas_tarim_thorng01_01.ban` (10,000 ms, cyclic). Its
+  `default` group has a type-0 entry.
+- It is placed 10 times in 93/144–96/148, including three times in 95/147.
+- A render at 95/147 local (700, 800), looking along +Z, reproduces the picture: tentacles on the
+  canyon wall and the bridge overhead.
+- With `SRREVAMP_QA_HIDE=thorng01`, 28 mesh instances (the pieces `oas_tarim_thornG01_01..04`) were
+  hidden, and most of the tentacles in the picture went with them.
+
+**The ones left (READ against the census).** `thorng02_01`, `thorng04_01_01`, `thorng05_01_01` and
+the `thornp*` vines remain. They have no skeleton, no mod section entries and no per-vertex motion
+section.
+- Retail builds an AniMixer only for a skeleton plus a clip (`CCompChar::FUN_00c2b930`).
+- Retail has no wind or wave code.
+- These models carry no TEXANI or DY* mod.
+
+So nothing in the client moves them, and they stand still in retail too. The user's moving
+tentacles are `thorng01`, which the first commit already plays.
+
+**Motion (MEASURED).** Changed pixels with `compare -fuzz 3%` inside a rectangle on a tentacle's
+body, excluding sky, against frame 200:
+
+| Rectangle | +1 s | +2 s | +3 s |
+|---|---|---|---|
+| Right tentacle, this branch | 323 | 549 | 587 |
+| Right tentacle, dev 8658370 | 0 | 0 | 0 |
+| Left tentacle, this branch | 139 | 206 | 238 |
+| Left tentacle, dev 8658370 | 0 | 0 | 0 |
+
+The ground control rectangle was 0 in every run. The Taklamakan pit (101/130) still measures 1,379
+to 4,133 over 0.5–3 s. The whole upper rectangle does change on the base (1,545 at +2 s), but a diff
+image puts all of that change in the sky.
+
+### 2. The range is 2,020, measured from the placement origin, strictly (READ)
+
+- **The range.** At asm 0xa2d961 the caller loads `DAT_00ec54b0` (2500.0). At 0xa2d967 it subtracts
+  the double at 0xde4f58, which is 480.0. It passes the result to `SWorld::FUN_00a38a50`.
+- **The test.** That function takes the object out of range when `range <= dist - radius`.
+- **The distance** is from the camera (+0x20a6..) to obj+0x57/+0x5b/+0x5f, the placement origin
+  (asm 0xa2d92a).
+
+So `OBJECT_RANGE` is 2020, the test is strict, and the distance is measured from the node's placement
+origin, not the meshes' centre. Per view-distance setting the range is 720 / 1,520 / 2,020.
+
+The first commit said 2,500 and the mesh centre. That text is corrected in the round's own entry
+below and in BSR_FORMAT.md.
+
+### 3. Drawing ends where the range ends (READ; OURS for the fade)
+
+**READ (`SWorld::FUN_00a38a50`).**
+- State 0 is hidden.
+- Entering range within two-thirds of it (`range >= 1.5 × (dist - radius)`, the double at 0xe1b7e8)
+  goes straight to state 2, drawn at alpha 255. Farther out it goes to state 1, whose alpha rises by
+  `512 × dt` (0xde5148) to 255 (0xd83108).
+- Leaving range goes to state 3, whose alpha falls back to 0.
+
+The object is updated only while its state is not 0 (asm 0xa2d9dd). It is drawn only then too:
+`Map::FUN_00a1e530` checks the state beside its frustum test.
+
+**Here.** The driver hides an animated object out of range: `visible = false` on its root, with its
+clock paused.
+- **OURS:** the 0.5 s alpha fade is not drawn; the object is switched.
+- **Scope:** only the animated objects. Retail applies the rule to every list-2 object, and making
+  still scenery end at 2,020 is a visibility change for the loading lane, so it is noted in TODO.md
+  rather than made.
+
+### 4. The view test is per sector, not per object (READ; the sphere is OURS)
+
+The first commit tested each object's bind-pose sphere against the frustum. That froze clips whose
+geometry travels far from their bind pose while they were in view: the hawk (up to about 880 units
+away), the boats and the goldfish.
+
+**READ.** Retail visits only the sectors whose +0xba2 flag the frustum rasterisation
+(`Map::FUN_00a2b370`) sets, and it updates the objects of those sectors. A sector not visited keeps
+its objects' state: their clocks stop, and their drawn state stays as it was.
+
+**Here.**
+- Each placement is filed under its `.o2` sector: its 320-unit cell of the region's 6 × 6 grid.
+  That this is the same grid as the frame's sector list is INFERRED.
+- The cell's X-Z circle is tested at the object's height against the camera frustum. That sphere
+  is OURS; retail rasterises a ground footprint.
+- The test runs once per sector per frame. That replaces the old slicing, so there is no lag of up
+  to 4 frames.
+- A sector leaving the view pauses its clocks and leaves its objects drawn, as retail does.
+
+### 5. The rest
+
+- **The LAST type-0 entry wins (READ).** `ResObject::FUN_00c0f500` reads each entry's type and file
+  index, then calls `FUN_00c0f470`. On an existing key, that function overwrites the entry's clip
+  pointer (asm 0xc0f4e6). A negative file index stores null (asm 0xc0f58d). `clip_entry` now takes
+  the last type-0 entry and returns null when it has no clip. No placed model has two type-0
+  entries (MEASURED over the census), so nothing on the map changes.
+- **After a one-shot (READ).** The mixer unlinks the finished clip (`AniMixer::FUN_00c53e80`). With
+  none left, `AniMixer::FUN_00c54200` only clears the bones' blend weights: `CRTBone::vslot_004`,
+  asm 0xc47a20, zeroes +0x98 and +0x9c. The apply (`CRTBone::vslot_005`) and the skeleton update
+  (`FUN_00c4c320`) run only when a clip was evaluated, so the body keeps its last pose. Holding the
+  last key matches this. It is no longer OPEN.
+- **`SRREVAMP_NO_MAP_ANIM=1` now builds the pre-645 object.** `MapAnimation.prepare` returns before
+  reading anything, so there is no skeleton, skin or player. It is a clean baseline: B measures like
+  dev below.
+- **The census is exact now.** `animates` builds the model with `ObjectLoader.load_object` and looks
+  for its player. The corrected counts:
+  - **144 models**, 92 of them placed, **2,275 placements** in 226 regions.
+  - Two models name a type-0 clip and still build still: `cj_ferry_boat_old`, whose `.bsk` has a
+    root and no other bone (`bsk: no bones parsed`, 1 placement), and `demon_air rock01`
+    (0 placements).
+  - The round's entry said 146 models and 2,276 placements; that counted these two.
+  - 0 placements animated before round 645.
+
+### 6. Cost (MEASURED)
+
+**Method.** 640×360 movie runs with the HUD hidden and one held viewpoint. Each row averages 30
+samples, frames 100–390. The box is shared with other lanes. The columns:
+- process: `Performance.TIME_PROCESS`;
+- render CPU / GPU: the viewport's measured render times.
+
+**The variants and order.** A is this branch, B this branch with `SRREVAMP_NO_MAP_ANIM=1`, and C is
+dev 8658370 with only the QA print patched in. They ran interleaved A, C, B, twice at each site.
+
+| Site | Run | Process ms | Render CPU ms | Render GPU ms | Sum ms | Draws |
+|---|---|---|---|---|---|---|
+| Jangan maples (97/168; 456 registered, 123 running) | A1 / A2 | 14.37 / 14.38 | 4.84 / 5.10 | 4.56 / 4.79 | 23.77 / 24.27 | 4,777 |
+| | C1 / C2 | 12.73 / 13.29 | 4.88 / 4.87 | 4.70 / 4.70 | 22.31 / 22.86 | 5,336 |
+| | B1 / B2 | 13.96 / 12.86 | 5.41 / 4.87 | 5.20 / 4.67 | 24.57 / 22.41 | 5,336 |
+| Dunhuang reeds (98/157 at 900, 900; 197 registered, 57 running) | A1 / A2 | 9.91 / 11.56 | 2.01 / 2.28 | 1.89 / 1.91 | 13.81 / 15.75 | 1,655 |
+| | C1 / C2 | 5.85 / 6.42 | 2.11 / 2.26 | 1.50 / 1.82 | 9.46 / 10.50 | 1,641 |
+| | B1 / B2 | 5.92 / 5.68 | 2.01 / 2.08 | 1.62 / 1.43 | 9.55 / 9.19 | 1,641 |
+
+- **Jangan.** A costs about +1.4 ms against C, all in process time. Render time is equal or lower:
+  559 fewer draws, because the animated objects beyond 2,020 are now hidden.
+- **Reeds.** A costs about +4.8 ms at 640×360 in those runs, nearly all process time. At 320×180
+  in the split runs below it is about +2.9 ms.
+
+#### Where the reeds' cost goes (MEASURED)
+
+The split was made with `MapAnimationProbe`: `SRREVAMP_QA_MAPANIM_SPLIT=420` with
+`SRREVAMP_QA_MAPANIM_MODE=<mode>`.
+- At frame 420 every registered object is switched to one state, and the driver halts.
+- Each run compares the median process time of frames 100–420 against frames 440–800, per frame,
+  at the reeds view (98/157 at 900, 900, 320×180, 197 registered, 57 running).
+- An `SRREVAMP_NO_MAP_ANIM=1` run (B) gives the drift across the two windows: 6.21 and 6.10.
+- The earlier rapid in-run toggling was abandoned: switching skins and players back and forth
+  every 12–50 frames swamped the differences.
+
+| Mode (after frame 420) | Before (median ms) | After | Change | Motion after (px, f700 vs f760) |
+|---|---|---|---|---|
+| `stripped`: players, skeletons and skins gone (the pre-645 object) | 9.10 | 6.37 | −2.73 | 36 |
+| `strip_skin`: skins unbound, players and skeletons running | 9.16 | 7.10 | −2.06 | 34 |
+| `strip_player`: players freed, skins and skeletons stay still | 9.17 | 8.01 | −1.16 | 29 |
+| `freeze_skel`: as `strip_player`, and skeleton processing off | 8.55 | 7.92 | −0.63 | — |
+| `share`: every running copy of a clip draws from one skeleton | 8.66 | 8.08 | −0.58 | 26,950 (still moving) |
+| `unskin_hidden`: skins unbound on the objects not drawn | 9.07 | 9.05 | 0 | 27,020 |
+| `manual`: the driver steps the players itself, timed | 9.02 | 8.63 | — | 26,880 |
+
+Brackets from the same runs: the driver's GDScript loop takes **0.20 ms** a frame (0.05 ms of it the
+sector view tests). The 57 players' `advance()` calls take **0.53 ms** (`mix_us`, timed around
+manual stepping).
+
+**The split of the ~2.9 ms:**
+- **Driver: 0.20 ms** (bracketed).
+- **AnimationMixer: 0.53 ms** (bracketed).
+- **Skeleton pose and skin-bone updates: about 0.6 ms.** This is what `share` saves, and it matches
+  `strip_player` less the mixer.
+- **Skinned mesh instances being drawn: about 1.6 ms.** That is `strip_player`/`freeze_skel`
+  (8.0 / 7.9) against `stripped` (6.37). It does not depend on the skeleton processing
+  (`freeze_skel` equals `strip_player`). It does not come from the skinned objects that are not
+  drawn (`unskin_hidden` changes nothing), and the draw count is the same (1,655). So it is the
+  cost of the visible skinned instances in Godot 4.2's GL Compatibility renderer, even when their
+  pose does not change.
+- That process time here includes the render step is INFERRED from these numbers: the monitor's
+  split was not read from the engine.
+
+**What was cut: nothing.**
+- The largest part, about 1.6 ms, is inherent to Godot's skinned instances. Their pose is the
+  object's animation, and drawing them skinned is what makes them move.
+- Retail advances every map-object clip every frame by the frame's dt
+  (`SWorld::vslot_004` → `CRTAniCyclic::vslot_002`), so a lower rate would change what the player
+  sees.
+- The one cut that keeps every pose is sharing a skeleton between copies whose clocks are equal.
+  It is worth about 0.6 ms. The clocks are equal only while the copies have been in range and in
+  view for the same frames, because retail pauses each object on its own. Clock-grouped sharing
+  with re-grouping on every pause is left OPEN (TODO.md). The `share` probe itself runs every copy
+  in lockstep, so it is not a candidate.
+- **B against C.** B now measures like C (Jangan 22.4–24.6 against 22.3–22.9; reeds 9.2–9.6 against
+  9.5–10.5), so the A/B switch is clean.
+
+### Tests
+
+- `map_animation_test.gd` now also checks:
+  - hidden and paused at placement;
+  - a sector out of view pausing its clocks while staying drawn;
+  - out of range paused and not drawn;
+  - 2,020 from the origin less a radius of 0.71 being in range;
+  - the 2,020 constant, the strict edge (2,029.9 in and 2,030 out with radius 10) and 2,505 now out;
+  - the 3D distance from the placement origin;
+  - the sector cell and a real camera's sector test in front of and behind it;
+  - flag bit 0 at 9,000 units;
+  - the last-entry rule and a null last entry;
+  - `SRREVAMP_NO_MAP_ANIM` building the pre-645 object;
+  - the cost probe's `entries()`, and a halted driver changing nothing.
+
+  A missing or older API is reported as a FAIL line, not a script error.
+- Box: `remote_godot.sh check` gives ALL LOAD, and `tests` runs **162 suites, 0 failing**. Go:
+  `go build ./... && go test -count=1 -p 1 ./...` is green: 60 packages ok, exit 0.
+
+**NEGATIVE: the suite against round 645's first commit, c69b408**:
+
+```
+FAIL r645: it starts at t = 0 (READ: no random phase), paused and hidden (fade state 0)
+FAIL r645 review: out of range it is paused and not drawn (retail draws a state-0 object not at all)
+FAIL r645 review: the range is DAT_00ec54b0 - 480 = 2020 (got 2500)
+FAIL r645 review: of two type-0 entries the last plays (got prim\sway.ban)
+FAIL r645 review: a last type-0 entry with no clip plays nothing
+FAIL r645 review: in_range(origin, radius, eye), sector_of, the per-sector driver and the NO_MAP_ANIM switch exist
+FAILURES: 6
+```
+
+Against dev 8658370 the suite fails as the round's first negative did: `MapAnimation exists`, the
+skeleton, the skin and the player, 4 FAILs.
+
+### Open
+
+- **The reeds' cost**, split in "Where the reeds' cost goes": about 1.6 ms is Godot's cost of drawing
+  skinned instances. The 0.6 ms of pose updates could be shared between copies with equal clocks.
+- **The alpha fade** in and out, over 0.5 s.
+- **The 2,020 end for still scenery.** Retail applies it to every list-2 object. That belongs to the
+  loading lane.
+- **`cj_ferry_boat_old`'s root-only skeleton.** `BskReader` refuses a `.bsk` with no bone besides
+  its root.
+- TEXANI, cloth, and the `.o2` list +0x24 objects stay open, as before.
+
+## Six-hundred-and-forty-fifth round: the map moves — trees sway, the Taklamakan tentacles writhe, and reeds, grass, flowers, lanterns, boats and grazing animals play their own animations
+
+A player reported on v0.1.461 that "some map assets around the game world are animated, like these
+tentacles", with a screenshot of spiked tentacles in the Taklamakan. They also said there are "more
+parts of the map that you'll need to find". Round 625 had left the trees still: their `.bsk` and
+`.ban` were read, but the pieces were placed rigid and the skinned leaves drew in bind pose. This
+round counted what moves, read how retail plays it, and plays it the same way.
+
+### 1. What moves: the census (MEASURED)
+
+`client/tools/mapanim_census.gd` (new) reads every model in Map.pk2's `object.ifo` the way
+ObjectLoader reads it, with a `.cpd` read through its children. It counts each model's placements
+over all 4,050 regions' `.o` and `.o2` list-2 records, de-duplicated by model and position. The
+classes:
+
+| Class | Models | Placements | Regions |
+|---|---:|---:|---:|
+| skeletal (a `.bsk` and at least one `.ban`) | 152 | 2,281 | 231 |
+| **animates** (what this client now plays, §2) | **146** (corrected: 144, 92 of them placed) | **2,276** (corrected: 2,275) | **226** |
+| skeleton, no clip | 15 | 76 | 15 |
+| TEXANI mod (texture sprite animation) | 52 | 253 | 69 |
+| DYVERTEX/DYJOINT/DYLATTICE mod (cloth: tents, sails, banners) | 143 | 550 | 175 |
+| per-vertex motion section in a mesh | 139 | 767 | 174 |
+
+Before this round, **0** placements animated.
+
+**What is in the skeletal set:**
+- **The tentacles** are `res\nature\ruins\taklamakan des\edimmu\ruin_takla_edimmu1_1.bsr`: 4 skinned
+  pieces, a 41-bone skeleton, and `ruin_takla_edimmu1.ban` (6,666 ms, cyclic). It is placed four
+  times in the Taklamakan, at 100/131, 100/134, 100/135 and 101/130. A placement is a pit ringed
+  with tentacles (the picture below). `ruin_takla_edimmu3`/`3_1` (8 placements) have no skeleton and
+  stand still.
+- **Trees:**
+  - Every Jangan tree: `tre_maple01`/`02`/`03`/`03_big`, `tre_tree01`/`02`, `tre_smalltree01`,
+    `tre_bank*`, `tre_frie01`, `tre_willow*`, `tre_leaf01`.
+  - `tre_bamboo04` (98 placements).
+  - The Tarim thorn trees, `oas_tarim_thorng01_01`.
+- **Ground cover:**
+  - Dunhuang reeds, `fw_cd_reeds_l` (444 placements, the most placed);
+  - pond grass `grs_water_big` (256), `grs_weed02`/`04`;
+  - `c_pondflower` (153), `flw_s01_*_ani`.
+- **Other Taklamakan and Tarim objects:** the robber tower and the two rope bridges
+  `oas_tarim_rob_*_brid*`.
+- **Lanterns:** `cj_pub01_light01..03`, `cj_adult04_light01`, `cj_luxu_light` and `cj_pub03_light`.
+- **Boats:** the Dunhuang boats `w_cd_boat`/`w_cd_ani_boat`, the ferries `cj_ferry_boat_*` and
+  `rock_mt_ship`.
+- **Gates and portals:** `bagh_city_portal`, `alex_portal`/`fportal`, the fortress gates, and the
+  Baghdad bridge.
+- **Animals and people:**
+  - the Central Asian sheep, the Alexandria camels and horses, and `hawk`;
+  - the Jangan chickens and goldfish;
+  - `chinaetc_horse1..4`, the NPC bodies placed as scenery.
+
+The densest regions are Jangan's 97/167 (135 placements), Donwhang's 124/237 (134) and 98/169
+(120).
+
+### 2. How retail plays a map object (READ, sro_client.exe)
+
+The addresses and excerpts are in docs/protocol/BSR_FORMAT.md, "How a map object animates".
+
+- **One path for every type.** The compound factory `ResourceMgr::FUN_00be92b0` builds CCompChar,
+  CCompBldg or CCompSimple. All three share the animation slots (update 0xc33230, play 0xc2bbb0).
+  `FUN_00c2b930` creates the AniMixer only when the `.bsr` has a skeleton **and** at least one
+  animation.
+- **The clip.** A sector's objects are started by `Map::FUN_00a34140`/`00a342b0`/`00a34a90`, which
+  call `Map::FUN_00a38dc0(obj, "default", 0)` (the string is built from 0xd9bac8). So the clip is
+  animation group `default`, **action type 0**, and there is **no fallback**
+  (`AniMixer::FUN_00c551a0`).
+  - Six skeletal models carry only a type-60 entry and do not move in retail:
+    `rok_key03..05_01`, `euro_esteuro_viking20`, `big_gate_ja_01` and `fort_stone_ht`. That is
+    why 146 of the 152 play.
+- **Looping.** The `.ban`'s own IsCyclic word (prim +0x60) picks CRTAniCyclic or CRTAniOneShot. A
+  one-shot plays once.
+- **Speed and clock.** Speed is 1.0. Time is in ms, wrapping at the `.ban` Duration
+  (`CRTAniCyclic::vslot_002` 0xc74790). The authored FPS is unused.
+- **Phase.** There is **no random phase**: no `rand()` is on the start path. The clip starts at
+  t = 0 when its sector's objects are started.
+- **Cull.** `SWorld::vslot_004` (0xa2cf60) updates a list-2 object only while its fade state
+  obj+0x1e is not 0 (`SWorld::FUN_00a38a50`). That test is `dist - radius < range`:
+  - `dist` is the full 3D distance from the camera (camera struct +0x4);
+  - `radius` is `sqrt((dx/2)² + (dz/2)²)` of the object's mesh bounds (asm 0xa389f0);
+  - `range` is `DAT_00ec54b0`, 2,500 at start, `min(0.8 × view distance, 2500)`. **Corrected
+    in the review follow-up:** the caller subtracts 480.0 first (asm 0xa2d967), so the range is
+    2,020. The distance is measured to the placement origin, and the test is strict.
+
+  The update also covers only sectors the view frustum touches. Out of range the clock **pauses**,
+  and the object is not drawn either (`Map::FUN_00a1e530`), so the pause cannot be seen. An
+  object.ifo flag bit 0 object is updated every frame; 2 of the 146 have it (`rok_key01_01`,
+  `naruter_fish01`). No separate animation-LOD distance exists. The every-Nth-frame skip
+  (`DAT_01113194`) has no writer, so it is INFERRED off.
+- **Skinning.** It is the characters' path: AniMixer, then the runtime skeleton, then
+  CObjRendererVS with its SKIN permutations. Whether an unskinned piece of a skeletal object follows
+  a bone is OPEN.
+- **Tree sway is skeletal.** Round 625's per-mesh word (mesh+0x1f8) is **not** animation: its only
+  readers are the object ray test (`FUN_00bd3c50`) and `FUN_00bd3130`, so it marks meshes that take
+  ray hits. No wind, sway or wave strings are in the exe, and no wave shader permutation exists.
+
+### 3. What was built (OURS where marked)
+
+- **`client/scripts/world/map_animation.gd` (new).** The PREPARE half reads the `.bsk` and the one
+  `.ban` on the objects job's worker. The COMMIT half:
+  - gives the template a `Skeleton3D` (`Skeleton3DBuilder.build_skeleton3d`, the characters'
+    builder);
+  - gives each skinned piece a `Skin` (`build_skin`);
+  - adds an `AnimationPlayer` whose `Animation` is built from the `.ban` key times.
+
+  A track whose keys never change is baked into the template skeleton's pose instead of played.
+  Tree clips are mostly held poses: a maple is 1 track out of 5 bones, the tentacles 53 tracks out
+  of 41 bones × 2.
+- **Shared by every placement.** Placements are `duplicate()`s of the template, so they share the
+  Animation, the Skins and the meshes. Each owns only its skeleton and its player.
+- **The driver.** `MapAnimation.Driver`, one per World3D:
+  - it starts each placed clip at t = 0 when the region's objects are placed (READ that retail has
+    no phase; OURS that it starts per region, not per sector);
+  - it runs a clip only while `dist - radius < 2500` from the camera and the object is in view
+    (**corrected in the review follow-up:** 2,020 from the placement origin, a per-sector view
+    test, and hidden out of range);
+  - ifo flag bit 0 runs at any range.
+
+  The view test is on the object's own bounding sphere, not its sector (OURS: an in-range object
+  just off screen keeps its clock in retail and is paused here; neither draws it). The driver tests
+  a quarter of the list each frame (OURS, a lag of 4 frames at most; see §4).
+- **ObjectLoader.** It keeps each skinned piece's bone palette and calls the two halves.
+  - An animated object binds its pieces before any two-pass twin is made, so the twin shares the
+    skin.
+  - A still object is built exactly as before.
+- **What a one-shot shows after it ends** is OPEN. It holds the last key (OURS). (**READ in the
+  review follow-up:** retail keeps the last pose too.) This affects the
+  horses (`chinaetc_horse*_basic`, IsCyclic 0), several scenery NPCs and nothing else in the census.
+- `SRREVAMP_QA_MAPANIM=n` prints `QA MAPANIM frame .. registered running driver_us process_ms`.
+  `SRREVAMP_NO_MAP_ANIM=1` leaves everything still, for the A/B.
+
+### 4. Verified
+
+**Motion, measured.** Pixel change is `compare -metric AE -fuzz 3%` inside the object's rectangle
+in 640×360 movie frames (60 per second), against frame 200 of the held last viewpoint, beside a
+ground control rectangle.
+
+- **Tentacles**, at 101/130 (the pit at local 715.9, 635.8), with the `high` viewpoint:
+
+  | After | This branch | Base |
+  |---|---|---|
+  | +0.5 s | 1,401 | 0 |
+  | +1.0 s | 2,490 | 0 |
+  | +1.5 s | 3,081 | 0 |
+  | +2.0 s | 3,090 | 0 |
+  | +2.5 s | 3,657 | 0 |
+  | +3.0 s | 4,144 | 0 |
+
+  The control rectangle was 0 in both runs.
+- **Jangan maples**, at 97/168 (the round-625 grass strip), in the lower canopy rectangle:
+
+  | After | This branch | Base |
+  |---|---|---|
+  | +1 s | 5,137 | 364 |
+  | +2 s | 6,665 | 645 |
+  | +3 s | 7,474 | 804 |
+
+  The base's change is sky and clouds through the leaves. The control rectangle was 0 in both
+  runs.
+- **Pictures** (for a human; the table is the measurement) are in the session scratchpad under
+  `mapanim_shots/`:
+  - `tent_motion.gif` and `maple_motion.gif` (frames 200–398);
+  - `tent_n_base_vs_new.png` and `maple_base_vs_new.png`;
+  - `tentB_views.png`, the pit from four sides.
+
+  GL was the RX 5700 XT through VirtualGL. `SCRIPT ERROR` count was 0, and the `ERROR:` lines
+  matched the base's.
+
+**Cost, measured.**
+- **Headless, uncapped (`client/tools/mapanim_bench.gd`, new).** Per running clip per frame: maple
+  1.5 µs, pond grass 1.9 µs, reeds 6.2 µs, sheep 7.3 µs, tentacles 29 µs. 500 mixed clips cost
+  4.8 ms. A paused clip costs nothing measurable (+0.2 to 1.2 µs for the whole set).
+- **In Jangan's 25 regions, 456 clips registered.**
+  - The driver took 1,050 µs a frame testing every clip.
+  - With world centres cached and a quarter tested per frame it takes about 200 µs.
+  - 182 clips run from the maple viewpoint.
+  - Process time over 44 samples was 20.3 ms mean against 17.7 ms with `SRREVAMP_NO_MAP_ANIM=1`.
+    That is +2.6 ms on a box shared with other lanes; the p10–p90 bands were 17.6–22.1 and
+    15.6–19.0.
+
+**Tests.**
+- New: `client/scripts/world/map_animation_test.gd`, on a synthetic tree, synthetic `.bsk`/`.ban`/
+  skinned `.bms` and an in-memory archive. It checks:
+  - the default/type-0 choice and its missing fallback;
+  - the bound skin;
+  - loop by IsCyclic;
+  - the baked held track;
+  - the shared Animation and Skin;
+  - t = 0 and paused at start;
+  - the range and flag-bit-0 tests;
+  - a real Camera3D frustum's sign;
+  - the pose at 0.5 s and 2.5 s against `Skeleton3DBuilder.apply_ban_pose_at` (the character path);
+  - that a freed object leaves the driver.
+- Box: `remote_godot.sh check` gives ALL LOAD, and `tests` ran **162 suites, 0 failing**. Go:
+  `go build ./... && go test -count=1 -p 1 ./...` is green: 60 packages ok, exit 0.
+
+**NEGATIVE: the suite against dev 8658370** (copied into a base client on the box):
+
+```
+FAIL r645: MapAnimation exists (res://scripts/world/map_animation.gd)
+FAIL r645: the tree gets its skeleton (got <Object#null>)
+FAIL r645: the skinned leaves are bound to it, not drawn in bind pose (skin <Object#null>, skeleton '..')
+FAIL r645: the tree gets a player with its clip
+FAILURES: 4
+```
+
+### Open
+
+- **What a one-shot map clip leaves** when it ends: bind pose or its last key. It holds the last
+  key here.
+- **Whether an unskinned piece of a skeletal object follows a bone.** 20 of the animated models have
+  rigid pieces, such as `bagh_city_portal` with 5 of 8 and the Tarim rope bridges with 6 and 7. They
+  stay put here.
+- **TEXANI sprite animation** (52 models, 253 placements) is READ in outline and not drawn: a
+  frame grid, 1000/fps ms a frame, loop/ping-pong flags, and a UV offset uploaded to VS register
+  0x17.
+- **Cloth** (DYVERTEX/DYJOINT/DYLATTICE, 143 models: tents, sails, banners, including the
+  Taklamakan `ruin_takla_tent*` and `ruin_takla_ship_01`) is not read.
+- **The `.o2` list +0x24 objects** update only in the 9 nearest sectors with a range of 480
+  (`DAT_00de4f64`). This client does not draw that list (round 75).
+- **The view-distance option** that lowers the range to 1,200 or 2,000 does not exist in this
+  client.
+
 ## Six-hundred-and-forty-third round: Hotan's stable and bridges, the Fertility Temple and its bridges, and 12,847 other placed objects are drawn -- the world builds what the map's `.o2` builds, once each, in its owner's frame
 
 *Updated in place by the round's review follow-up:*
@@ -8144,6 +8614,7 @@ rules; a pushed mouse move. The negative, against dev 8658370 with the new test 
 **Checks.**
 - Client: `check` loads 402 scripts, and `tests` runs 162 suites with 0 failing.
 - Go: build, vet and `go test -count=1 -p 1 ./...` pass (60 packages ok; no server change).
+
 
 ## Rounds 636-640 integration review (feat/walls): a death ends the wall on the default respawn path, a re-bound hotbar slot takes its level's code, and the wall's refusal tests 'tel2' and 'tel3'
 

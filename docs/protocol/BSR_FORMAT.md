@@ -240,6 +240,42 @@ names fell back that way, 580 of 779 pieces loaded; with the word read, 0 fall b
 load.** Every swaying tree in Jangan — `tre_maple01`/`02`/`03`, `tre_tree01`, `tre_smalltree01`,
 `tre_bank01`/`02`, `tre_frie01`, the willows, `tre_pine01`..`04` — drew its trunk alone.
 
+**What the word means (round 645, READ).** It is not animation. Its only readers are the object
+ray test `FUN_00bd3c50` (a mesh is tested only when its word is non-zero; reached through
+`FUN_00c337f0` from RTDunBlock/CCompChar picking) and `CResAttachable::FUN_00bd3130` (sets resource
+flag bit 0 when any mesh's word is 0). So it marks the meshes that take ray hits, and Load's
+`param_1[0xc4] = 1` means "has pickable meshes". A tree sways through its skeleton, as below.
+
+### How a map object animates (round 645, READ from sro_client.exe)
+
+A map object animates exactly as a character does, and only through its `.bsr`'s skeleton and
+animation lists. There is no wind, sway or wave anywhere: the exe has no such strings, and the object
+vertex-shader permutations (`CObjRendererVS::FUN_00bf67c0`, `shader\vss0.c`/`vss2.c`) have no wave
+axis. Measured on the census in docs/WORLD_ISSUES.md (round 645), this puts 2,276 of the map's
+placements in motion.
+
+| Question | Answer | Where |
+|---|---|---|
+| What animates | A compound builds its AniMixer (compound+0xf8) only when the resource has a skeleton (res+0x250) AND at least one animation (res+0x184..0x188). Every animation slot starts with `if (compound+0xf8 != 0)` | `CCompChar::FUN_00c2b930`; creates the skeleton with `FUN_00c28210`, the mixer with `FUN_00c28280` |
+| One path for all types | The factory builds CCompChar (type 0), CCompBldg (type 2) or CCompSimple (types 1, 3, 4, 5, 6). All four vtables share update (slot 14, 0xc33230) and play (slot 42, 0xc2bbb0) | `ResourceMgr::FUN_00be92b0` |
+| Which clip | The sector's objects are started by `Map::FUN_00a34140` (the `.o2` list at +0x14, "list 2"), `FUN_00a342b0` (+0x24) and `FUN_00a34a90` (the region-level +0x247f list). Each calls `Map::FUN_00a38dc0(obj, "default", 0)`. The string is `DAT_00ec5934`, built at 0xd76980 from the literal at 0xd9bac8. That is group `default`, **action type 0**, and there is **no fallback** to animation index 0. Of two type-0 entries the **last** wins: the group reader `ResObject::FUN_00c0f500` hands each entry to `FUN_00c0f470`, which overwrites an existing type's clip in place (asm 0xc0f4e6); a file index below 0 stores a null clip (asm 0xc0f58d), and nothing plays | `AniMixer::FUN_00c551a0`: `FUN_00bd68e0` (group by name), `FUN_00c0e950` (entry by type) |
+| Looping | CPrimAnimation +0x60 is the `.ban` IsCyclic word (the header is parsed into prim+0x38: +0x58 Duration, +0x5c FPS, +0x60 IsCyclic). Non-zero selects CRTAniCyclic (0xc75c80); zero selects CRTAniOneShot (0xc75ce0), which plays once | `FUN_00c530f0` / `FUN_00c53160`; `CRTAniOneShot::vslot_002` 0xc749a0 |
+| Speed and clock | Speed 1.0 (`FUN_00c55360` → `FUN_00c72fd0(.., 1.0)`). Each frame does `t += round(speed*dt + frac)` and `t %= Duration`, in ms. FPS is unused | `CRTAniCyclic::vslot_002` 0xc74790 |
+| Phase | No `rand()` is on the path. The constructor sets t = 0 (vslot_001), so objects start in step when their sector's objects start | the path above; the `_rand` callers in 0x9f0000-0xa60000 and 0xbc0000-0xc90000 checked |
+| Cull and draw | A list-2 object is updated only while its fade state obj+0x1e is not 0. The state is advanced by `SWorld::FUN_00a38a50(state, dist, range)`: out of range when `range <= dist - radius`, so in range strictly below. `dist` is the 3D distance from the camera (camera struct +0x4, copied to SWorld +0x20a6) to the object's **placement origin** obj+0x57/+0x5b/+0x5f (asm 0xa2d92a). `radius` is `sqrt((dx/2)^2 + (dz/2)^2)` of the union of its mesh bounds (asm 0xa389f0). **`range` = `DAT_00ec54b0 - 480.0`** (asm 0xa2d961 `fld [0xec54b0]`, 0xa2d967 `fsub qword [0xde4f58]` = 480.0) = **2020** at the start value of 2500; the view-distance option sets `DAT_00ec54b0` to `min(0.8 × view distance, 2500)`, so the range is 720 / 1520 / 2020 / 2020 / 2020. States: 0 hidden; entering range from 0 goes to 2 (shown, alpha 255) when `range >= 1.5 × (dist - radius)` (the double at 0xe1b7e8), i.e. within two thirds of the range, else to 1 (fading in); 1 steps its alpha up by `512 × dt` (the double at 0xde5148) to 255 (0xd83108), then 2; leaving range, 1 or 2 go to 3, which steps the alpha down to 0 and then 0; an object out of range not visited for 50 frames drops straight to 0. Only sectors the frustum touches are visited (byte +0xba2, `Map::FUN_00a2b370`); the object is updated after the call only while its state is not 0 (asm 0xa2d9dd), and drawn only then (`Map::FUN_00a1e530`, asm 0xa1e791-0xa1e7d5, beside a per-object frustum test), with states 1 and 3 at alpha obj+0x23 (compound slot 5). Out of range the clock is **paused**. List +0x24 is visited only in the 9 nearest sectors, at range 480 (`DAT_00de4f64`). object.ifo flag bit 0 (the first hex column) puts an object on the region-level list, updated every frame | `SWorld::vslot_004` 0xa2cf60, `SWorld::FUN_00a38a50`, asm 0xa389f0/0xa2d92a/0xa2d961, `SWorld::vslot_043` 0xa194a0 |
+| Pose skip | `AniMixer::FUN_00c54200` skips frames when `DAT_01113194 != 0`. That global has no writer, so this is INFERRED off | asm 0xc54207 |
+| Skinning | The characters' path: AniMixer → runtime skeleton (compound+0xf4) → CObjRendererVS SKIN0/SKIN2 | as above |
+| After a one-shot | The mixer unlinks the finished clip (`AniMixer::FUN_00c53e80`). With no clip left, the pose evaluation `AniMixer::FUN_00c54200` only clears each bone's blend weights (`FUN_00c4c3f0` → `CRTBone::vslot_004`, asm 0xc47a20: +0x98 and +0x9c = 0); the apply (`vslot_005`) and the skeleton update (`FUN_00c4c320`) run only when a clip was evaluated, so the bones and skin matrices **keep their last pose** | as named |
+| Unskinned pieces of a skeletal object | OPEN (mesh+0x3c bit 0x400 selects a second triangle test) | |
+
+**TEXANI (READ in outline, not drawn).** `ModDataTexAni::vslot_004` (0xc5c5a0) reads the IModData
+header (its four bytes are the start frame, the end frame and flags), then five words to
++0x24..+0x34 (fps at +0x2c, rows at +0x30, columns at +0x34) and a 64-byte matrix. `CRTModTexAni`'s
+step (asm 0xc82640) accumulates dt and advances one frame per `1000.0 / fps` ms. Flag bit 0 loops
+and bit 1 ping-pongs; otherwise it clamps at the end. The UV offset is `(frame % cols) / cols,
+(frame / cols) / rows` (`FUN_00c825f0`), uploaded to VS register 0x17 by `CRTModTexAni::vslot_004`
+0xc82970.
+
 ### Material-state mods (round 625 and its review, READ)
 
 The mod-data section below carries `ENVMAP` (0x40000) and `MTRL` (0) mods that change how a

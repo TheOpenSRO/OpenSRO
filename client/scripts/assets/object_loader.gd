@@ -233,6 +233,11 @@ static func _prepare_node(archive: Pk2Reader, path: String, known: Dictionary, p
 
 		var arrays := BmsReader.to_arrays(mesh)
 		var piece := {"name": mesh.mesh_name, "arrays": arrays, "faces": _piece_faces(arrays), "material": null}
+		# A skinned piece's bone palette, for MapAnimation (round 645) to bind
+		# it to the object's skeleton when the object animates.
+		if mesh.is_skinned():
+			piece["bones"] = mesh.bone_names
+			piece["object_space"] = mesh.object_space_vertices > 0
 
 		# Real static collision, a trimesh shape derived directly from the
 		# real render mesh, the way World3D's own real terrain collision is
@@ -277,6 +282,10 @@ static func _prepare_node(archive: Pk2Reader, path: String, known: Dictionary, p
 		missing.append("%s: none of its %d mesh piece(s) could be loaded" % [bsr_path, mesh_paths.size()])
 		return null
 
+	# Round 645: a map object whose `.bsr` carries a skeleton and a
+	# `default` type-0 clip moves, as retail plays it (MapAnimation).
+	MapAnimation.prepare(archive, obj, node, missing)
+
 	return node
 
 ## The collision faces of one piece's surface, as `create_trimesh_shape()`
@@ -315,6 +324,10 @@ static func _commit_node(node: Dictionary, texture_cache: Dictionary) -> Node3D:
 		for child in node["children"]:
 			root.add_child(_commit_node(child, texture_cache))
 		return root
+	# An animated object (round 645) binds its pieces to its skeleton before
+	# any two-pass twin is made, so the twin takes the skin too.
+	var animated: bool = node.has("anim")
+	var bound: Array = []
 	for piece in node["pieces"]:
 		var mesh_instance := MeshInstance3D.new()
 		mesh_instance.name = piece["name"]
@@ -334,7 +347,14 @@ static func _commit_node(node: Dictionary, texture_cache: Dictionary) -> Node3D:
 			if godot_material != null:
 				mesh_instance.material_override = godot_material
 		root.add_child(mesh_instance)
-		add_front_pass(mesh_instance)
+		if animated:
+			bound.append([mesh_instance, piece])
+		else:
+			add_front_pass(mesh_instance)
+	if animated:
+		MapAnimation.commit(root, node["anim"], bound)
+		for pair in bound:
+			add_front_pass(pair[0])
 	return root
 
 ## The piece's trimesh from the prepared faces -- `create_trimesh_shape()`'s
