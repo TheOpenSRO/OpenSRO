@@ -445,6 +445,9 @@ func TestTeleportToSamarkandArrivesInTheTownsFrame(t *testing.T) {
 // World3D._land_teleport_arrival).
 func TestTeleportToJanganSendsTheGatePoint(t *testing.T) {
 	rig := newTeleportRig(t, teleportRigOpts{network: teleportFixture(t), level: 30, gold: 10000})
+	// Beside Donwhang's gate structure (building 2095, 103/153 local 962, 8):
+	// the teleport measures the range from the requester (round 642's review).
+	rig.standAt(26521, 962, 40)
 	if res := rig.use(2, 1); !res.OK {
 		t.Fatalf("receipt %+v; want ok", res)
 	}
@@ -518,3 +521,33 @@ func TestTeleportWireShapes(t *testing.T) {
 
 // teleportTestLabel spells a region "x/y", as frameFor does.
 func teleportTestLabel(x, y int) string { return fmt.Sprintf("%d/%d", x, y) }
+
+// standAt moves Aria to region-local (lx, lz) of region `region`, named in the
+// frame of the zone the hub keeps her in, the way the client reports a
+// position (OpMove, relocated), and waits until the hub holds it. Round 642's
+// review: the teleport measures the interaction range from there.
+func (rig *teleportRig) standAt(region int, lx, lz float64) {
+	rig.t.Helper()
+	id := rig.players["Aria"].charID
+	e, ok := rig.hub.EntityByCharacterID(id)
+	if !ok {
+		rig.t.Fatal("Aria is not in the world")
+	}
+	fx, fy, ok := entityFrame(e.Zone)
+	if !ok {
+		rig.t.Fatalf("zone %q has no frame", e.Zone)
+	}
+	rx, ry := worldmap.RegionXY(region)
+	x, z := worldmap.ToWorld(rx, ry, lx, lz, fx, fy)
+	if err := proto.Write(rig.players["Aria"].conn, &proto.Packet{Opcode: OpMove,
+		Data: (&MoveRequest{X: float32(x), Z: float32(z), Relocated: true}).Encode()}, nil, nil); err != nil {
+		rig.t.Fatalf("Write OpMove: %v", err)
+	}
+	for i := 0; i < 200; i++ {
+		if e, _ := rig.hub.EntityByCharacterID(id); math.Abs(e.Pos.X-float64(float32(x))) < 0.01 && math.Abs(e.Pos.Z-float64(float32(z))) < 0.01 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	rig.t.Fatalf("the hub never took Aria's move to %d/%d (%v, %v)", rx, ry, lx, lz)
+}

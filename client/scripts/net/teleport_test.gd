@@ -126,6 +126,15 @@ func _init() -> void:
 	_check(no_link == "No such destination.", "2 keeps our own wording (got %s)" % no_link)
 	var dead := ErrorText.teleport_line(0, errors, "you are dead")
 	_check(dead == "you are dead", "code 0 shows the server's words (got %s)" % dead)
+	# Round 642's review: the interaction range's 4 and 3. Category 0xd shows
+	# 4 as UIIT_MSG_INTERACTION_FAIL_TOO_FAR and nothing for 3.
+	var far_table := _table(PackedStringArray([_row("UIIT_MSG_INTERACTION_FAIL_TOO_FAR", "Fixture too far")]))
+	var far_line := ErrorText.teleport_line(4, far_table, "you are too far away")
+	_check(far_line == "Fixture too far", "4 shows the table's too-far text (got %s)" % far_line)
+	var far_own := ErrorText.teleport_line(4, errors, "you are too far away")
+	_check(far_own == "You are too far away.", "4 without the row gives our own wording (got %s)" % far_own)
+	var not_near := ErrorText.teleport_line(3, far_table, "you are not near that gate")
+	_check(not_near == "You are not near that gate.", "3 keeps our own wording (got %s)" % not_near)
 	var level_fallback := ErrorText.teleport_line(0x1c15, null, "server words")
 	_check(level_fallback == "Your level does not allow that destination.", "0x1c15 without a table gives our own wording (got %s)" % level_fallback)
 

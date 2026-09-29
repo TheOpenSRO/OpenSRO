@@ -61,6 +61,7 @@
 package worldmap
 
 import (
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -97,6 +98,21 @@ func ToWorld(rx, ry int, localX, localZ float64, originX, originY int) (x, z flo
 	x = float64(ry-originY)*RegionSpan + (localX - halfSpan)
 	z = float64(originX-rx)*RegionSpan + (halfSpan - localZ)
 	return x, z
+}
+
+// FromWorld is ToWorld's inverse: the region (rx, ry) a world point in the
+// frame centred on (originX, originY) lies in, and its local x/z there, with
+// local coordinates in [0, RegionSpan). Round 642's review: the teleport's
+// interaction range needs the requester's region (the engine's adjacency test,
+// FUN_00430ce0) and the hub keeps only frame coordinates.
+func FromWorld(x, z float64, originX, originY int) (rx, ry int, localX, localZ float64) {
+	ky := int(math.Floor((x + halfSpan) / RegionSpan))
+	ry = originY + ky
+	localX = x + halfSpan - float64(ky)*RegionSpan
+	kx := int(math.Ceil((z - halfSpan) / RegionSpan))
+	rx = originX - kx
+	localZ = float64(kx)*RegionSpan + halfSpan - z
+	return rx, ry, localX, localZ
 }
 
 // ZoneCentre is the region each named zone's world is built around, and so

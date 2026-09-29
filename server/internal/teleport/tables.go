@@ -145,6 +145,42 @@ type Table struct {
 	buildingByCode map[string]int
 	linksFrom      map[int][]int
 	linkByPair     map[[2]int]int
+	// objectPlaces is where each associated NPC stands (round 642's review),
+	// set by the server from its npcpos table (SetObjectPlaces); a building's
+	// place is its own row.
+	objectPlaces map[int][]Place
+}
+
+// SetObjectPlaces records where an associated object that is not a building
+// row stands -- an NPC's npcpos placements (cmd/server, from -npcpos-csv) --
+// for the interaction range (Reach). It replaces what was set before.
+func (t *Table) SetObjectPlaces(objectID int, places []Place) {
+	if t.objectPlaces == nil {
+		t.objectPlaces = map[int][]Place{}
+	}
+	t.objectPlaces[objectID] = append([]Place(nil), places...)
+}
+
+// ObjectPlaces returns where associated object `objectID` stands: its
+// teleportbuilding row's region and offset for a gate structure, else the
+// places SetObjectPlaces recorded (none when the server has no npcpos).
+func (t *Table) ObjectPlaces(objectID int) []Place {
+	if b, ok := t.BuildingByID(objectID); ok {
+		return []Place{{Region: b.Region, X: float64(b.X), Y: float64(b.Y), Z: float64(b.Z)}}
+	}
+	return t.objectPlaces[objectID]
+}
+
+// HasWorldIDs reports whether any point carries a WorldID -- false for a
+// teleportdata.csv exported before round 642, whose points all read 0, so
+// instanced destinations are not refused (cmd/server warns at boot).
+func (t *Table) HasWorldIDs() bool {
+	for _, p := range t.Points {
+		if p.WorldID != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Load reads the three CSVs from dir. A configured directory that cannot be

@@ -131,6 +131,34 @@ type monsterSpec struct {
 	Spawns []realSpawn
 }
 
+// teleportObjectPlaces records, on the teleport network, where each teleport
+// NPC stands -- its npcpos rows -- for the interaction range (round 642's
+// review; teleport.Table.ObjectPlaces, session's reach). Gate structures carry
+// their own place in teleportbuilding. Returns how many NPCs were placed; none
+// without an npcpos table.
+func teleportObjectPlaces(network *teleport.Table, npcs spawn.Table) int {
+	if network == nil || npcs == nil {
+		return 0
+	}
+	placed := 0
+	for _, p := range network.Points {
+		if _, isBuilding := network.BuildingByID(p.ObjectID); p.ObjectID == 0 || isBuilding {
+			continue
+		}
+		rows := npcs.Rows(int64(p.ObjectID))
+		if len(rows) == 0 {
+			continue
+		}
+		places := make([]teleport.Place, 0, len(rows))
+		for _, r := range rows {
+			places = append(places, teleport.Place{Region: r.RegionID, X: r.LocalX, Y: r.LocalY, Z: r.LocalZ})
+		}
+		network.SetObjectPlaces(p.ObjectID, places)
+		placed++
+	}
+	return placed
+}
+
 // realSpawn is one npcpos row, kept in the table's own terms rather than
 // pre-converted, so the source stores the grounded fact and the derived world
 // coordinate cannot drift away from it.
@@ -1186,8 +1214,10 @@ func main() {
 	// species with rows takes them all, replacing both the embedded rows and
 	// the own-design anchor. A configured path that does not load is fatal
 	// rather than a silent fall-back to the anchors.
+	var npcPlacements spawn.Table
 	if *npcposCSV != "" {
 		table, err := spawn.LoadCSV(*npcposCSV)
+		npcPlacements = table
 		if err != nil {
 			logger.Error("loading npcpos placements", "path", *npcposCSV, "err", err)
 			os.Exit(1)
@@ -1221,6 +1251,19 @@ func main() {
 		teleportNetwork = network
 		logger.Info("teleport network loaded", "dir", *teleportDir,
 			"points", len(network.Points), "links", len(network.Links), "buildings", len(network.Buildings))
+		if !network.HasWorldIDs() {
+			logger.Warn("teleport network has no WorldID column (exported before round 642): links into " +
+				"instanced areas (fortress, tomb, temple, arena, survival, Roc) are not refused up front -- " +
+				"re-export it with cmd/export-refdata -mode teleport (deploy/README.md)")
+		}
+		placed := teleportObjectPlaces(network, npcPlacements)
+		if npcPlacements == nil {
+			logger.Warn("teleport NPCs' interaction range is not measured: no -npcpos-csv, so the server " +
+				"does not know where the ferry, airship and tunnel sellers stand (gate structures are measured)")
+		} else {
+			logger.Info("teleport interaction range: NPC 300, structure 800 (IsWithinInteractionRange 0x4a8e10)",
+				"npcs_placed", placed)
+		}
 	}
 	if *teleportFree {
 		logger.Info("teleport free on: every gate teleport costs nothing (-teleport-free, own design, for testing)")

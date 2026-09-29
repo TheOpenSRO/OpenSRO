@@ -342,6 +342,21 @@ func _initialize() -> void:
 		_check((world.call("_npc_services", "NPC_CH_FERRY") as Array).is_empty(),
 			"a ferry the NPC tables do not know gets no line")
 		world.set("_teleport_reader", reader)
+
+		# (f) Round 642's review: the talk box of a teleport NPC or gate closes
+		# beyond the READ interaction range (0x4a8e10): 300 from an NPC, 800
+		# from a structure, the 3-D length, the limit itself still inside.
+		var near := Vector3(100, 0, 100)
+		_check(not bool(world_script.call("talk_out_of_range", near, near + Vector3(300, 0, 0), false)),
+			"300 from an NPC is within its range")
+		_check(bool(world_script.call("talk_out_of_range", near, near + Vector3(300.5, 0, 0), false)),
+			"300.5 from an NPC is beyond it")
+		_check(bool(world_script.call("talk_out_of_range", near, near + Vector3(200, 250, 0), false)),
+			"the height counts: 200 across and 250 up is 320 from an NPC")
+		_check(not bool(world_script.call("talk_out_of_range", near, near + Vector3(0, 0, 790), true)),
+			"790 from a gate structure is within its 800")
+		_check(bool(world_script.call("talk_out_of_range", near, near + Vector3(0, 0, 810), true)),
+			"810 from a gate structure is beyond it")
 		world.free()
 
 	if _failures == 0:

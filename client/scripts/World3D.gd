@@ -5007,8 +5007,8 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# talk box and the destinations it lists go, and so does the NPC it
 	# names -- a talk box left up here would list the old gate's destinations
 	# in the new zone (its teleport line reads _talk_npc_code), and a click
-	# would send the old gate's links from there; the server has no range test
-	# (session/teleport.go's header).
+	# would send the old gate's links from there (the server would now refuse
+	# it by range, round 642's review, but the lines must not be offered).
 	_close_gate_ui()
 	# A zone change is a loading screen: music and ambient stop, the area is
 	# cleared (round 612, FUN_0084ab20), whether or not the screen is shown.
@@ -12225,6 +12225,7 @@ func _physics_process(delta: float) -> void:
 ## One physics step of the world: the sky, the monsters' legs, the player's
 ## input and walk, the QA hooks, region streaming and the position send.
 func _physics_step(delta: float) -> void:
+	_check_talk_range()
 	if _sky_dome != null:
 		# READ: u += frac(GetTickCount() / 500000); the layer itself follows
 		# the eye in its shader.
@@ -12911,9 +12912,10 @@ func _on_teleport_result(result: TeleportNet.Result) -> void:
 		# 603's review): the server sends this receipt, then warpTo does its
 		# per-entity work before OpChangeZoneResult, so the two can land in
 		# different frames, and a click on a destination line between them
-		# would send a second OpTeleportUse that the server (no range test)
-		# serves and charges again. _close_gate_ui clears it on the arrival;
-		# a refused zone change clears it (_on_change_zone_result; the server
+		# would send a second OpTeleportUse -- which the server, measuring the
+		# range from where the first put the player (round 642's review),
+		# refuses, but the click must not go out. _close_gate_ui clears it on
+		# the arrival; a refused zone change clears it (_on_change_zone_result; the server
 		# refunds a move that failed).
 		var receipt := TeleportNet.receipt_line(_teleport_place_name(result.destination), result.fee, _ui_text_table)
 		_log_system(receipt)
@@ -13205,8 +13207,14 @@ func _run_ground_probe(mode: String = "full") -> PackedStringArray:
 func _where_report() -> PackedStringArray:
 	var out: PackedStringArray = []
 	var p := player.global_position
-	var result = NetClient.last_enter_world_result
-	var zone: String = result.zone if result != null else "?"
+	# The zone the server last put the player in -- a zone change or a
+	# teleport's arrival as well as the entry (NetClient.current_zone, set by
+	# both results). Until round 642's review this read the entry's result
+	# alone, so after a ferry /where still named the zone the session began in.
+	var zone: String = NetClient.current_zone
+	if zone == "":
+		var result = NetClient.last_enter_world_result
+		zone = result.zone if result != null else "?"
 	out.append("zone: %s" % zone)
 	# The region is whichever loaded cell's own space contains the player --
 	# each RealTerrain_<x>_<y> node's local space IS that region's real
@@ -13808,6 +13816,7 @@ func _try_talk_to_npc(screen_pos: Vector2) -> bool:
 	var code := str(node.get_meta("npc_code")) if node.has_meta("npc_code") else ""
 	_talk_npc_name = npc_name
 	_talk_npc_code = code
+	_talk_node = node as Node3D
 	# Talking supersedes an attack still walking into reach: the attack would
 	# otherwise go out behind the talk window.
 	_drop_pending_attack()
@@ -13982,17 +13991,59 @@ func _open_teleport_list() -> void:
 ## Closes the gate's UI -- the talk box and the destinations it lists -- and
 ## forgets the NPC being talked to and the list's gate, so
 ## nothing from a gate left behind can send its links (round 578's review).
-## Called on a zone change (_on_change_zone_result). Walking away from a gate
-## does NOT close them: the retail interaction range is unread (0x4a8e10), so
-## no distance is guessed here -- disclosed beside the server's missing range
-## test in docs/protocol/teleport_network.md.
+## Called on a zone change (_on_change_zone_result), and since round 642's
+## review when the player walks out of the interaction range of the gate or
+## teleport NPC being talked to (_check_talk_range).
 func _close_gate_ui() -> void:
 	if _hud_panels != null:
 		_hud_panels.close("npctalk")
 	_talk_npc_code = ""
 	_talk_npc_name = ""
+	_talk_node = null
 	_teleport_gate_point_id = 0
 	_teleport_request_pending = false
+
+## The object the open talk box was opened on by a click (an NPC holder or a
+## bound gate), for _check_talk_range; null for a QA talk box.
+var _talk_node: Node3D = null
+
+## The interaction range, READ (round 642's review): the server's
+## GObjPC::IsWithinInteractionRange (0x4a8e10), which HandleTeleportUse
+## applies -- 300.0 for an NPCNPC (.rdata 0xb45c40), 800.0 for a structure
+## (0xb46190), a 3-D length. The server refuses a teleport beyond it (4, "too
+## far"); the client closes the talk box of a gate or teleport NPC once the
+## player walks beyond it, so its destination lines cannot be clicked from
+## where the server would refuse them. Only a talk box whose target is a
+## teleport point: that the other NPCs' talk uses the same range is not read
+## (OURS, disclosed). The server measures horizontally (session reach); this
+## check is 3-D, which is never shorter, so it closes no talk box the server
+## would still serve.
+const TALK_RANGE_NPC := 300.0
+const TALK_RANGE_STRUCTURE := 800.0
+
+func _check_talk_range() -> void:
+	if _talk_node == null or _hud_panels == null or player == null:
+		return
+	if not is_instance_valid(_talk_node) or not _talk_node.is_inside_tree():
+		_talk_node = null
+		return
+	if not _hud_panels.is_open("npctalk"):
+		_talk_node = null
+		return
+	if _teleport_point_for_code(_talk_npc_code) == null:
+		return
+	var structure := _talk_node.has_meta("gate_point_id")
+	if talk_out_of_range(player.global_position, _talk_node.global_position, structure):
+		print("World3D: walked %.0f from %s (range %.0f) -- the talk box closes" % [
+			player.global_position.distance_to(_talk_node.global_position), _talk_npc_code,
+			TALK_RANGE_STRUCTURE if structure else TALK_RANGE_NPC])
+		_close_gate_ui()
+
+## Whether `from` is beyond the interaction range of a target at `to`: 800 for
+## a structure (a bound gate), else 300 (an NPC); the 3-D length, retail's
+## `fVar9 <= limit` passing (0x4a8e10).
+static func talk_out_of_range(from: Vector3, to: Vector3, structure: bool) -> bool:
+	return from.distance_to(to) > (TALK_RANGE_STRUCTURE if structure else TALK_RANGE_NPC)
 
 ## A destination line clicked in a gate's talk box (round 603; the board's
 ## Move in round 578): asks the server to travel from the list's gate to

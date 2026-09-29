@@ -39,15 +39,14 @@ package session
 //     within a unit of the table's y at 33 of the 42 open-world points
 //     probed, and dry ground at all of them.
 //   - The zone label the arrival is kept under (teleportZoneFor).
-//   - No interaction-range test (retail's GObjPC::IsWithinInteractionRange,
-//     0x4a8e10, was not read into a distance srrevamp could apply; the client
-//     only offers a gate's destinations after a click on the gate, lists them
-//     in the gate's talk box (round 603), and drops that talk box on a zone
-//     change, but not on walking
-//     away inside the zone -- a hand-built client can send any link) and no
-//     "already teleporting" state (0x1c14, IGObj::GetTeleportState: a
-//     srrevamp teleport completes inside one request, so there is no state
-//     to be in).
+//   - The interaction range is READ since round 642's review (reach,
+//     teleport.Reach: GObjPC::IsWithinInteractionRange, 0x4a8e10; NPC 300,
+//     structure 800, the requester's region or a neighbour). OURS within it:
+//     the height term is dropped, and an NPC the server has no npcpos row for
+//     is not measured. Still no "already teleporting" state (0x1c14,
+//     IGObj::GetTeleportState): a srrevamp teleport completes inside one
+//     request, so there is no state to be in -- and a second request from
+//     the old gate is now refused by the range (the player has moved).
 //   - A point with no associated object is refused with code 2 as well; the
 //     engine answers nothing when its gate lookup (FUN_00485d90) fails -- a
 //     bare `return` -- and srrevamp does not leave a client waiting.
@@ -227,6 +226,19 @@ func (t *teleporter) use(ctx context.Context, sess *gateway.Session, p *proto.Pa
 	if !ok {
 		return refuse(teleportNoLink, "no such gate", "gate", gatePoint.Code)
 	}
+	// A gate in another game world -- a fortress, tomb, temple or arena
+	// point -- is refused as its destinations are (OURS, round 642's review:
+	// srrevamp has the open world only, so a player cannot stand at one).
+	if !inOpenWorld(gatePoint) {
+		return refuse(0, "that gate is in an instanced area srrevamp does not have yet", "gate", gateCode, "world", gatePoint.WorldID)
+	}
+	// The interaction range, READ (round 642's review): HandleTeleportUse
+	// calls GObjPC::IsWithinInteractionRange (0x4a8e10) here, before the
+	// link, and refuses with its 3 (not the gate's type, or not in the
+	// requester's region or a neighbour) or 4 (too far). teleport.Reach.
+	if code, measured := t.reach(current, gatePoint); code != 1 {
+		return refuse(uint16(code), teleportRefusalReason(uint16(code)), "gate", gateCode, "measured", measured)
+	}
 	link, ok := t.network.LinkBetween(gatePoint.ID, int(req.Destination))
 	if !ok {
 		return refuse(teleportNoLink, "no such destination", "gate", gateCode, "dest", req.Destination)
@@ -256,7 +268,7 @@ func (t *teleporter) use(ctx context.Context, sess *gateway.Session, p *proto.Pa
 	// when there is none (0x513802). It does so after the restrictions and
 	// the gold compare, as here -- except that srrevamp refuses the world
 	// before a short purse, since its charge is the compare.
-	if dest.WorldID != 0 && dest.WorldID != teleport.MainWorld {
+	if !inOpenWorld(dest) {
 		return refuse(0, "that destination is an instanced area srrevamp does not have yet", "gate", gateCode, "dest", dest.Code, "world", dest.WorldID)
 	}
 	isGM := t.gate.Allows(username)
@@ -333,6 +345,65 @@ func gateObject(network *teleport.Table, p teleport.Point) (string, bool) {
 	return p.Code, true
 }
 
+// inOpenWorld reports whether point p is in the open world, the one srrevamp
+// has: WorldID 1, or 0 for a teleportdata.csv exported before round 642,
+// which does not say (cmd/server warns at boot).
+func inOpenWorld(p teleport.Point) bool {
+	return p.WorldID == 0 || p.WorldID == teleport.MainWorld
+}
+
+// reach is IsWithinInteractionRange's answer for the requester and the object
+// gate point p stands for: 1 within reach, else teleport.ErrInteractionTarget
+// (3) or teleport.ErrTooFar (4). The object is the point's associated object
+// -- its teleportbuilding row for a gate structure (limit RangeStructure,
+// 800), its npcpos placements for an NPC (limit RangeNPC, 300; the nearest
+// placement counts). The type test (FUN_004a8d90) holds by construction: a
+// building row is a structure and every other associated object with links
+// is an NPCNPC (all 32 retail ones read TypeID 1, 2, 2).
+//
+// The requester's place is the hub position named back into region and local
+// coordinates in its frame (worldmap.FromWorld; the world frame under
+// -single-frame). OURS, disclosed: an NPC with no known placement -- a server
+// run without -npcpos-csv -- is not measured (reach answers 1, measured
+// false), and a requester whose zone has no frame is answered 3. The height
+// is left out (teleport.Reach's horizontal mode, why there).
+func (t *teleporter) reach(e world.Entity, p teleport.Point) (code int, measured bool) {
+	places := t.network.ObjectPlaces(p.ObjectID)
+	if len(places) == 0 {
+		return 1, false
+	}
+	limit := teleport.RangeNPC
+	if _, ok := t.network.BuildingByID(p.ObjectID); ok {
+		limit = teleport.RangeStructure
+	}
+	fx, fy, ok := entityFrame(e.Zone)
+	if !ok {
+		return teleport.ErrInteractionTarget, true
+	}
+	rx, ry, lx, lz := worldmap.FromWorld(e.Pos.X, e.Pos.Z, fx, fy)
+	from := teleport.Place{Region: worldmap.RegionID(rx, ry), X: lx, Y: e.Pos.Y, Z: lz}
+	code = teleport.ErrInteractionTarget
+	for _, to := range places {
+		switch c := teleport.Reach(from, to, limit, true); {
+		case c == 1:
+			return 1, true
+		case c == teleport.ErrTooFar:
+			code = c
+		}
+	}
+	return code, true
+}
+
+// entityFrame is the region a hub entity's coordinates are relative to: the
+// world frame for the -single-frame bucket, else its zone label's own
+// (worldmap.FrameFor).
+func entityFrame(zone string) (rx, ry int, ok bool) {
+	if zone == worldmap.WorldBucket {
+		return worldmap.WorldOrigin[0], worldmap.WorldOrigin[1], true
+	}
+	return worldmap.FrameFor(zone)
+}
+
 // teleportArrival is where a teleport to point p lands: the zone label
 // (teleportZoneFor), the hub bucket and FrameRegion arrival gives that label
 // -- its own centre, or worldmap.WorldOrigin under -single-frame -- and the
@@ -401,6 +472,10 @@ func teleportRefusalReason(code uint16) string {
 		return "your PvP state bars this destination"
 	case teleport.ErrRocItem, teleport.ErrRocJob:
 		return "you cannot enter there"
+	case teleport.ErrTooFar:
+		return "you are too far away"
+	case teleport.ErrInteractionTarget:
+		return "you are not near that gate"
 	}
 	return fmt.Sprintf("teleport refused (code 0x%x)", code)
 }

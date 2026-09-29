@@ -602,6 +602,14 @@ to `dev` changes nothing for tagged clients until the release that carries the g
 - Jangan's four gate soldiers and Constantinople's three guides (free);
 - the two NPCs that lead to Thief Town (free).
 
+Since round 642's review the server also measures the retail interaction range from the
+player: 300 units from an NPC and 800 from a gate structure, and the player's own region or a
+neighbouring one. It measures NPCs from their npcpos rows, so it needs `-npcpos-csv`
+(`/data/npcpos.csv` on srrevamp-01). Without it the boot log warns `teleport NPCs' interaction
+range is not measured`, and NPC teleports are served from anywhere. A teleport directory
+exported before round 642 logs `teleport network has no WorldID column` at boot; re-export it as
+described above.
+
 Talk to one, then 'Select teleport area', then a destination. The log names the NPC's point:
 `gate=GATE_NPC_CH_FERRY`. A destination in an instanced area (a fortress, tomb, temple, arena or
 survival map) is refused with nothing charged: srrevamp has only the open world.

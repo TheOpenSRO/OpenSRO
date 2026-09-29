@@ -105,7 +105,8 @@ including the 10.0 at `0xb45b44`), and the handler refuses with ITS return
 value -- `4` beyond the distance, `0` or `3` on its early exits, `1` passing --
 not with `0x1c14`. (Until round 575 this said `0x1c14` was the range test;
 round 575 re-read `0x513590`: `mov eax,[edx+0x120]` then `0x1c14` at
-`0x513642`, before the range call.) `0x1c0f` is `FUN_00486a40`, the
+`0x513642`, before the range call. Its distances and region rule are read in "The
+interaction range (round 642's review)" below.) `0x1c0f` is `FUN_00486a40`, the
 destination index outside the gate's 28-byte link list; `0x1c21` an empty
 selection; `0x1c31` a state-byte value of 30.
 
@@ -297,14 +298,9 @@ messages (`client/scripts/net/error_text.gd`). srrevamp's client shows those thr
 in the archive's words, our own wording for `2` (category `0xd` sends it to the
 default, no message), and the server's words for its own refusals (code 0).
 
-**Not modelled, disclosed:** the interaction-range test (retail's
-`GObjPC::IsWithinInteractionRange` `0x4a8e10` was not read into a distance; the
-client offers a gate's destinations only after a click on the gate, and closes
-the board and the gate's talk box on every zone change -- `World3D._close_gate_ui`,
-round 578's review -- so a gate's links are not offered from another zone. Walking
-away from a gate inside the same zone does **not** close them: that distance is the
-same unread `0x4a8e10`, so the client does not guess one either), the
-"already teleporting" state (`0x1c14`: a srrevamp teleport completes inside one
+**Not modelled, disclosed:** (the interaction-range test was here until round 642's
+review, which read and applied it -- "The interaction range (round 642's review)" below)
+the "already teleporting" state (`0x1c14`: a srrevamp teleport completes inside one
 request), the fortress tax (no fortresses), and the retail receipt line's source
 (the client shows `UIIT_CTL_TELEPORT_RESULT` / `_FREE_RESULT` from its own
 archive, choosing the free one when nothing was charged -- the retail dialog's
@@ -583,11 +579,74 @@ The table's y is not used; the client lands on the graph (`World3D._land_telepor
   id 7 nor id 9. The client does not offer id 2 ("Talk to this person"), unread as before.
 
 **Not modelled, disclosed:**
-- the interaction range, as for the gates;
+- the interaction range's height term and unplaced NPCs (next section);
 - the `+0x34` byte, stood in for as above;
 - the instanced worlds.
 - The Thief Town arrival (`GATE_TD`, 96/182) moves the player like any other. srrevamp has no thief
   town rules.
+
+### The interaction range (round 642's review)
+
+`GObjPC::HandleTeleportUse` (`0x513590`) calls `GObjPC::IsWithinInteractionRange` (`0x4a8e10`)
+right after the "already teleporting" test and before the id-8 check and the link. It refuses with
+whatever the function returns other than 1. READ in `/var/tmp/srgs.asm` and the dump; the floats
+were read from the exe's `.rdata`.
+
+1. **The type.** `HandleTeleportUse` passes a mask: `0x146` when the gate object answers
+   `IGObj::IsNPCNPC` (vslot 9, `+0x24`), else `0x30`. `FUN_004a8d90` compares it with the object's
+   TypeID fields and returns **3** on a mismatch.
+   - `0x146` is TypeID1 1, TypeID2 2, TypeID3 2, an NPCNPC. `NPC_CH_FERRY`'s characterdata
+     columns 9-11 read 1, 2, 2.
+   - `0x30` is TypeID1 4, TypeID2 1, a structure.
+2. **The regions.** `FUN_00430ce0` requires both regions to be field or both dungeon (bit 15). For
+   field regions both bytes must differ by less than 2. Otherwise **3**.
+3. **The limit, by the target's class**, in the order of the vtable tests:
+
+   | test | limit | .rdata |
+   |---|---|---|
+   | IsPC | 600.0 | `0xb46198` |
+   | IsNPCNPC | **300.0** | `0xb45c40` |
+   | IsMonster | 500.0 | `0xb46168` |
+   | IsCOS | 1500.0 | `0xb46194` |
+   | IsStruct | **800.0** | `0xb46190` |
+   | IsItem | 10.0 | `0xb45b44` |
+   | IsPet | 500.0 | `0xb46168` |
+   | else | 320.0 | `0xb460dc` |
+
+4. **The length.** `FUN_00430ba0` builds the offset. In field regions each axis is the local
+   difference plus 1920.0 (`0xb45ad0`, a double) times the region-byte difference: the low byte
+   (region y) goes on x, the high byte (region x) on z. The height is the plain difference.
+   `sqrt(dx*dx + dy*dy + dz*dz) <= limit` passes (`0x4a8e10`'s tail); otherwise **4**.
+
+The reply carries 3 or 4 as they are. The client's category-0xd table shows 4 as
+`UIIT_MSG_INTERACTION_FAIL_TOO_FAR` (`0x7ba03b`) and sends 3 to its default, which shows no message.
+
+**srrevamp.**
+- **Server.** `teleport.Reach` and `session.teleporter.reach` apply it before the link, as the
+  engine does.
+  - The object's place is its teleportbuilding row for a gate structure (limit 800). For an NPC it
+    is its npcpos rows (limit 300, the nearest row counts), which cmd/server records from
+    `-npcpos-csv` (`teleportObjectPlaces`).
+  - The requester's place is the hub position named back into region and local coordinates
+    (`worldmap.FromWorld`).
+- **OURS, disclosed.**
+  - The height term is dropped. The server does not know a player's height: an arrival holds
+    y = 0 until the client's first move, and the client sends none after landing a teleport. A
+    horizontal length is never longer than the 3-D one.
+  - An NPC with no npcpos row is not measured, which is a server run without `-npcpos-csv`. The
+    boot log says so.
+  - The type test holds by construction. A building row is a structure, and all 32 NPC objects
+    read TypeID 1, 2, 2.
+- **The client** closes a gate's or teleport NPC's talk box once the player is beyond the same
+  limit, in 3-D (`World3D._check_talk_range`, `talk_out_of_range`). So its lines cannot be clicked
+  from where the server would refuse them. Other NPCs' talk boxes are not closed; that range is
+  not read.
+- **The stale second request** round 603's review left open is refused now. After the ferry, the
+  same request from the far bank is 3, with nothing charged.
+
+**The source world (round 642's review, OURS).** A gate point whose `WorldID` is not 1 is refused
+with code 0, as its destinations are. 64 retail links leave such a point. Round 642's retail-link
+test had counted 46 of them as moved.
 
 ### The teleport board (round 578) -- superseded by round 603
 

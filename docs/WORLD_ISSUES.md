@@ -7094,6 +7094,103 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-forty-second round, review follow-up: a teleport is served only within the retail interaction range, never from an instanced gate, and walking away closes the gate's talk box
+
+The review confirmed round 642's READ claims. It also verified with real input a paid non-GM ferry
+(gold 1000 -> 500) and the level-95 refusal at the harbour, so the TODO item for a charged teleport
+under real input is closed. Labels as before. The record is in `docs/protocol/teleport_network.md`,
+"The interaction range (round 642's review)".
+
+**READ: the interaction range.** `HandleTeleportUse` (`0x513590`) calls
+`GObjPC::IsWithinInteractionRange` (`0x4a8e10`) before the id-8 check and the link, and refuses
+with its return value.
+- **3** when the object's TypeID fails the mask: `0x146` (NPCNPC) or `0x30` (structure), in
+  `FUN_004a8d90`.
+- **3** when the regions are not both field or both dungeon, or differ by 2 or more on either byte
+  (`FUN_00430ce0`).
+- **4** when the 3-D length is over the class's limit. The length comes from `FUN_00430ba0`: local
+  difference plus 1920.0 times the region-byte difference, region y on x and region x on z. The
+  limits, read from the exe's `.rdata`, are:
+  - IsPC 600, IsNPCNPC **300**, IsMonster 500, IsCOS 1500;
+  - IsStruct **800**, IsItem 10, IsPet 500, default 320.
+
+The client's category 0xd shows 4 as `UIIT_MSG_INTERACTION_FAIL_TOO_FAR` (`0x7ba03b`) and nothing
+for 3.
+
+**Fixed:**
+- **The range on the server.** `teleport.Reach` and `session.teleporter.reach` apply it before
+  the link, from the object's place:
+  - a gate structure's teleportbuilding row, limit 800;
+  - an NPC's npcpos rows, limit 300, nearest row. cmd/server records them from `-npcpos-csv`
+    (`teleportObjectPlaces`).
+
+  `worldmap.FromWorld` names the hub position back into region and local coordinates.
+  - OURS: the height term is dropped. The server does not know the player's height: an arrival
+    holds y = 0 and the client sends no move after landing.
+  - OURS: an NPC with no npcpos row is not measured, and the boot log warns.
+  - The stale second request that round 603's review left open is now refused 3, with nothing
+    charged.
+- **The source world (OURS).** A gate point whose `WorldID` is not 1 is refused with code 0.
+  - 64 retail links leave such a point.
+  - Round 642's retail-link test had counted 46 of them as moved. It now counts them as refused.
+- **The old export.** A teleport directory whose points all read `WorldID` 0 logs a boot warning.
+  That is an export from before round 642, and with it the instance refusal is off.
+- **Client, plausible:**
+  - A gate's or teleport NPC's talk box closes when the player walks beyond the same limit, in 3-D
+    (`World3D._check_talk_range`, `talk_out_of_range`). Other NPCs' talk boxes are left open: their
+    range is not read. This also stops a far bank's lines being clicked again and again.
+  - The refusal text is the archive's `UIIT_MSG_INTERACTION_FAIL_TOO_FAR` for 4, and our own words
+    for 3.
+  - `/where` reports `NetClient.current_zone`, the zone after a zone change or teleport, instead of
+    the entry's.
+- **Comments.** The stale "no range test" comments are corrected: `teleport.go`'s header and three
+  in `World3D.gd`.
+
+**Still OPEN:**
+- the `+0x34` byte, until the user decides about searching the server package;
+- the "already teleporting" state (0x1c14);
+- the talk range of shops and warehouses (`docs/TODO.md`).
+
+**Tests.**
+- `teleport/reach_test.go`:
+  - the limit and just past it;
+  - both region edges;
+  - two regions over;
+  - dungeon against field;
+  - 3-D against horizontal.
+- `worldmap`: `FromWorld` inverts `ToWorld`.
+- `session/teleport_npc_test.go`:
+  - `TestTeleportInteractionRange`: the ferry from Jangan's spawn is 3; 310 from the seller is 4;
+    290 moves; the same request again from the far bank is 3; 810 from a gate is 4; 790 passes.
+  - The fixture's NPCs stand at their npcpos rows, and each test stands the player beside the
+    object first (`standAt`, `standBy`).
+  - An instanced source is refused.
+- `TestTeleportEveryRetailLink` stands the player at each source object. It now counts 108 moved
+  (all 56 NPC links), 64 refused as sources in another world, 46 as instanced or dungeon
+  destinations, 69 with no object at the source, 4 as dungeon sources and 1 by the Roc rules. That
+  was measured with an export and with `SRREVAMP_NPCPOS_CSV` (all 32 NPCs placed); the export was
+  deleted afterwards.
+- `cmd/server`: `teleportObjectPlaces`.
+- `teleport_test.gd`: the 4 and 3 lines.
+- `teleport_reader_test.gd` (f): the talk-range rule.
+
+**The negative against 79f1887** (round 642). The new session tests were copied into a detached
+worktree and adapted to the base's API: the NPC places are held in the test, the range codes are
+literal, and the frame comes from `worldmap.FrameFor`.
+```
+--- FAIL: TestTeleportNPCRefusals
+    --- FAIL: TestTeleportNPCRefusals/a_gate_in_an_instanced_world_(round_642's_review)
+    teleport_npc_test.go:176: result &{OK:true Code:0 Waiver:0 Fee:0 Destination:SN_ZONE_40008 Reason:}; want refused with code 0x0 and a reason
+--- FAIL: TestTeleportInteractionRange
+    teleport_npc_test.go:235: the ferry from Jangan's spawn: &{OK:true Code:0 Waiver:0 Fee:500 Destination:SN_ZONE_21004 Reason:}; want refused with code 3 and a reason
+```
+Round 642's own run of the retail-link test is the source-world negative: it counted 154 moved,
+46 of them from an instanced gate.
+
+**Checks.** The Go suite passes: `go build ./...`, `go vet ./...` and `go test -count=1 -p 1 ./...`
+(shared cache). The retail-link test passed with an export and `SRREVAMP_NPCPOS_CSV`. On the box,
+with the lane env inline, `check` loads all 401 scripts and `tests` runs 161 suites with 0 failing.
+
 ## Six-hundred-and-forty-second round: the ferries, airships, tunnels and every other teleport NPC take a player to their linked point
 
 The user asked for every teleport NPC across the map to work and to go to the right place. The
