@@ -7094,67 +7094,6 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
-## Rounds 633-635 integration review (int/ui2): nothing new lands past a lowered bag size, the portrait's ambient is clamped, the chat's penalty line sits where the client puts it, and the text table loads rows as the client does
-
-The final review of int/ui2 (dev b9bbf07 + rounds 633-635 and their follow-ups, merged at 14c4889)
-confirmed the follow-ups' READs against the decompiles and ran two clients with real input through
-Login (the portrait in Jangan and after `/goto donwhang`, every window's frame, the bag's pages, a
-drag across pages and to a quickslot, the doll's arrows, gold colours, every chat channel, the
-notice, a global, the size modes). It found these; all are fixed here. Before is 14c4889.
-
-**1. A lowered bag size placed new items past itself (OURS rule, tightened).** round 633's
-`inventory.KeepHeld` raised the size every operation used to the highest held slot + 1, so with
-`-inventory-size 32` and an item in slot 60, pickups, buys, trades and withdrawals filled slots
-32..59 and any item could be moved to 59: the bag never came back to 32 (a throwaway test: 28
-extra adds succeeded). Now the stores keep two bounds (`SetKeepHeld`): the REACH (size, raised to
-the highest held slot + 1) for listing, removing, durability and moving OUT, and the configured size
-for every NEW placement -- AddItem's stacking and free-slot search, a move's target, a swap into a
-held slot (refused), and the trade's space check (`inventory.PlacementCapacityOf`, counting only
-slots within the size). `TestKeepHeldReachesHeldSlotsButPlacesWithinTheSize` (both stores): 32
-items fill 0..31, the 33rd is ErrNoRoom, moves to 32/59/60 and the swap into 60 are refused, a
-stack of the held item goes to slot 1 rather than onto 60, and emptying 60 brings the size to 32.
-
-**2. The bag expansion grew the reach.** `useExpansion` took `CapacityOf` (the raised reach) as its
-base, so with no stored size it stored 61 + 32, or refused an expansion the configured 32 allows.
-It takes `PlacementCapacityOf` now; `TestBagExpansionGrowsTheConfiguredSizeNotTheReach` stores 64
-(and fails against the old base with the 0x18fe refusal). `/invsize` shows the configured size and,
-when items are held past it, how far they stay reachable.
-
-**3. The doll's measurement lines flooded the log.** Every 50 ms repeat of a held arrow printed the
-yaw and a three-bone pose line (~40 lines a second, measured on the live run). They print on an
-arrow's press and release and on the reset now.
-
-**4. The portrait's ambient is clamped (READ).** `Map::FUN_00a1baf0` clamps world+0x6853..0x685b to
-[0, 1] in the same block as the diffuse (0x00a1cc50..0x00a1cc88); `zone_light_colors` passed
-channel 3 through. No change on the box's archive (its highest channel-3 component is 0.925); an
-archive above 1 would have lit the face too bright.
-
-**5. The chat's penalty line (READ).** 0x7ab1b0..0x7ab1d6 places +0x468 (ID 52,
-GDR_CHAT_STA_PENALTY) at its own x and +0x464's (ID 15, the size button's) y + 3 (`add ecx,0x3`);
-it was at + 2, the authored 380 - 378.
-
-**6. The text table loads rows as TextStringManager 0x8cac30 does (READ).**
-- The service column: a row is loaded only when column 0 reads 1 (`0xb9cc80(0, 1)`, `cmp eax,1`
-  at 0x8cb110..0x8cb118). On the box's archive no real key changes; the rows skipped are the
-  continuation lines of multi-line values (57 in textuisystem, 129 in textdata_object), which had
-  been read as keys.
-- A first row with no English: the loader reads ONE column, 0x8c5370(language) -- the CGame loads
-  (0x849215..0x8493ad) pass -1 as the first-choice language, and 0x8cace6 sets that slot to -1, so
-  0x8c6a90's compare with L"0" (DAT_00e1804c) never chooses -- and stores the field as it stands.
-  So a key whose first row has no English holds that column's "0" filler (or blank) in the
-  client. Ours fell back to the Korean column 2 or the token; it keeps the English column's own
-  field now. The box's Rebecca Event Hats (SN_ITEM_ETC_E060823_SATGAT_INT3_M/F), whose first row is
-  all "0" and whose English row comes after it, read "0", as in the client (were "??? ?? (?)").
-  On the box's archive this is 450 textuisystem keys (313 of them "0"), 2179 object names (1849
-  "0"), 490 speech lines; of the Jangan-area names, seven (event NPCs, two Tiger Woman variants
-  and a Strong Mangnyang).
-
-**7. Stale comments** in ui_text_table.gd (last row wins), ui_builder.gd (the archive's font is
-Tahoma: its first row says Arial) and hud_panels.gd (the doll's turn direction is READ).
-
-Not done: the dungeon light (`Map::FUN_00a255c0` gives the object shader an ambient-only light in a
-dungeon). This client loads no dungeon, so there is nowhere for it to apply yet (OPEN).
-
 ## Six-hundred-and-fortieth round, the root: a wall roots its caster (OURS, the user's choice)
 
 Round 640 found nothing in either binary that roots a walled caster. Asked, the user chose **"Root
@@ -7331,6 +7270,979 @@ scratch `wall_shots/`):
 Not done / OPEN: the root itself (the user's call); the `BDMD` drain reduction; the absorb test's
 second-record term; walls against player blows (srrevamp has no PvP); the kind-7 sounds; the
 `summ` lifetime.
+
+## Six-hundred-and-thirty-ninth round, review follow-up: the saved bar follows skill upgrades and bag moves, a death writes retail's EXP-loss line, and a held arrow turns at an aimable speed
+
+The review confirmed round 639's READ claims. It found the following, each fixed here.
+
+1. **The bar follows a learned skill (READ).** AddLearnedSkill `0x880be0` -> `0x778840(id, 1)` ->
+   CNIFUnderMenuBar `0x60c230`:
+   - It finds the new record's previous level (level byte +0x60 less one; `0x93f770(group, level)`).
+   - Every skill slot (kind 0x49) holding that level's id takes the new id and icon, and is saved.
+   - A level-1 skill changes nothing.
+
+   The withdrawal `0x880db0` passes the id it names, which is the group's skill after the
+   withdrawal, with 0. Slots holding exactly that id are cleared; the group's other slots take it.
+   - Built as `HotbarStore.rebind_for_skill`. It runs on every successful learn: the learn result
+     names no skill, so NetClient queues the requested ids and emits `learn_skill_done(id, ok)`.
+   - This server has no withdrawal, so that half is built and tested but reached by nothing (OPEN).
+   - Reproduced before the fix: skill 90 upgraded to 1101 still cast 90, even after a relog.
+2. **The bar follows a bag move (READ).** `0x60c430` re-binds the item slots bound to a bag slot, by
+   the item's ref id through the whole bag or at that slot. It is called from the item results at
+   `0x87b613`, `0x88bd53` and `0x88c20b`. Ours re-resolved only on bag lists; it now also does so
+   on every move answer (`_on_inventory_move_for_hotbar`) and saves.
+3. **A death writes UIIT_MSG_STATE_LOSE_EXP (READ).** The line is "[N]Experience Points lost.",
+   type 1, as `0x8a9b76..0x8a9baa` writes it, instead of our "You were killed. Lost N experience.".
+   The revive prompt and the status label keep ours.
+4. **The saved file is robust (OURS).**
+   - Every field is type-checked on load; a bad entry is skipped and the rest load. Before, a
+     non-integer field aborted the decode with a script error.
+   - A file that exists but does not load is never written over, so no other character's entry is
+     lost.
+   - The write goes to `quickslots.cfg.tmp`, which is then renamed over the old file.
+5. **The reload flag (READ).** In `0x8a7c50`, a flag other than 7 discards the list
+   (`0x8a7ce7..0x8a7d08`), so the bar starts empty. This is recorded in the doc.
+6. **The held arrow (OURS).** A click still turns 36 degrees. A held arrow repeats after retail's
+   1000 ms and then every **250 ms**, which is **144 degrees a second**. Retail's 50 ms made 720
+   degrees a second.
+7. **Smaller fixes.**
+   - The party-leave line is UIIT_MSG_PARTY_SECEDE, "[%s] has left the party.", with the name
+     from the party list the client now keeps. Ours remains only for an unknown id.
+   - The EXP a result reports is what was actually added (`session.expAdded`: the levels passed
+     plus the progress). At the cap it is only what fitted, and 0 (no line) once full. What
+     retail's server sends at the cap was not read (OPEN).
+   - The window's mouse: CGWndBase's mouse slot (`0xb91440`) keeps a message inside the window's
+     rect (`0xb8f3d0`, a rect test, not an art test). The whole-rect STOP matches. INFERRED: the
+     window's own handler reports it handled.
+
+**MEASURED, real X input on the box** (Login route, the round's rebuilt server in memory).
+- Skill 90 was put on slot 1 by a click and on slot 4 by a drag. A real click on its ADD learned
+  level 2, and both slots became 1101 and were saved.
+- The potion was put on slot 7 from bag slot 0. A real drag moved it to bag slot 10, and the log
+  showed "quickslot 7 follows item 4 from bag slot 0 to 10" and a save. Key 7 then "uses item 4 at
+  bag slot 10" (snd_potion).
+- After Escape, Restart, the bar restored {1: 1101, 4: 1101, 7: item 4 at 10}. Key 1 "casts skill
+  1101" (CAST send: skill 1101), and key 7 used the potion again.
+- Holding the right arrow for 2077 ms turned the doll 0.6283 -> 3.7699 rad: the press, then repeats
+  at 1000, 1250, 1500, 1750 and 2000 ms, six steps of 36 degrees.
+
+**Tests.**
+- `hotbar_store_test.gd`: bad field types, no overwrite after a failed load, no leftover temp
+  file, and learn/withdraw rebinds.
+- `inventory_pages_test.gd`: the 250 ms repeat.
+- `hud_system_message_test.gd`: the loss line.
+- Go: `TestExpAddedCountsLevelsAndTheCap`.
+
+The negative, against af79fe9 (round 639 before this follow-up):
+
+    FAIL World3D.exp_loss_line writes retail's EXP-loss line
+    SCRIPT ERROR: Invalid call. Nonexistent 'int' constructor.
+    SCRIPT ERROR: Invalid get index 'skills' (on base: 'Dictionary').
+    FAIL no repeat 50 ms later (retail's period is not used)
+    FAIL the next repeat 250 ms after the first
+    internal/session/combat_test.go:105:12: undefined: expAdded
+    FAIL	github.com/OpenSRO/srrevamp/server/internal/session [build failed]
+
+The two SCRIPT ERRORs are the old decode aborting on a bad field. The runner counts them as
+failures.
+
+On this commit:
+- `remote_godot.sh check`: ALL LOAD.
+- `remote_godot.sh tests`: 158 suites, 0 failing.
+- `go test -count=1 -p 1 ./...`: all ok.
+
+## Six-hundred-and-thirty-ninth round: system messages have their own window at the bottom right, the hotbar is still there after a relog, and the preview turns a tenth of a circle per click
+
+The user's three requests on v0.1.460. The full reading is in `docs/protocol/system_message.md`;
+labels READ, MEASURED, INFERRED, OURS, OPEN as there.
+
+**1. The system message window (READ).** Retail writes its system lines through `0x7781b0(type,
+text)` to interface child 0x44, `GDR_SYSTEM_MESSAGE_VIEW`, a `CIFSystemMessage` built from
+`resinfo\ifsystemmessage.txt` (Create `0x7bc150`). Round 634 had put ours in the chat's All list.
+
+- **Layout and size.** It has the chat's three `chat_window.ddj` bands, a 316-wide text box (pitch 14,
+  100 lines, bottom-stacked, hanging-indent wrap) and a scroll bar and filter and size buttons at
+  x 337.
+  - The constructor starts at mode 2; the size button (`0x7b89c0`) steps 1..6 and wraps.
+  - `0x7b87a0` places it at x = W - 357 and y = H - 375 + (6 - m) * 42, with its bottom at H - 90.
+  - The text box is m * 42 tall with m * 3 rows; the scroll bar is m * 42 - 57, hidden in mode 1.
+- **Filter and colours.** `0x7b85f0` passes types 0 and 6 always, 1..5 and 7 by the filter board's
+  GAIN, FIGHT, STATUS, PARTY and GAME boxes, and nothing else. With no `Setting\chop.dat`, only FIGHT
+  is off (`0x7a95f0`; the CIFCheckBox constructor checks by default). Type 6 is `0xffbacff2`,
+  everything else `0xffdbc99b`.
+- **The census.** Every direct call of the adds was sorted: 457 of `0x7781b0`, 50 of `0x778210`,
+  17 of `0x778280`, 223 of the error-code path `0x778190`. From it:
+  - type 1: EXP and skill EXP gained (`Client_ApplyExpAndLevelUp` `0x8a97c0`), gold and item
+    pickups (`0x87ba20`);
+  - type 4: party joins and leaves (`0x886b10`), and the chat's own party, guild and academy
+    refusals (one `push 0x4`, `0x7ad866`);
+  - type 0: the chat's server refusals (`0x877798`), the "Chat to all" refusals, the camera-view
+    line, and the error codes;
+  - type 6: one caller, the guide tip (`0x789e53`, INFERRED to be the screenshot's "[Guide]"
+    lines).
+  - The level-up line is not a system line: it goes to `GDR_WARNING_WND` (`0x77b580`, child 0x23,
+    a CIFNotify), formatted by swprintf, so "level [40]." keeps its brackets. Ours dropped them.
+- **Built.** `HudSystemMessage` implements all of the above; World3D anchors it bottom-right at
+  those offsets. `_log_system(text, type)` writes there, not to the chat; HudChat's refusals go
+  through `system_sink`. The level-up line shows on a second HudNotice for GDR_WARNING_WND, and
+  the gold pickup reads "[N]gold gained." (retail's string; the old line was ours).
+- **EXP after a kill.** The server appends `ExpGained` and `SkillExpGained` (two s64s) to
+  OpAttackResult after the targetType byte; the carrier is OURS, since retail has its own EXP
+  packet. The client writes retail's two lines from them, type 1. Skill EXP is `combat.go`'s
+  disclosed M = 1.
+- **Our own lines.** "Assigned skill to quickslot N ..." and "Put the item on quickslot N." are
+  removed from the screen and go to the log: the live bar (`0x60a000..0x60efff`) calls none of the
+  adds. The rest of ours stay in the window with type 0; the doc lists them.
+- **Not built (OPEN).** The filter board and `chop.dat` (the button only logs), the frame's
+  hover-only option (`0x4f9d00`+7), GDR_WARNING_WND's own y, guide lines and unique notices (our
+  server sends neither).
+
+**2. The hotbar is saved (READ: retail saves it on the server; ours is client-side, OURS).**
+
+- **Retail.** CNIFUnderMenuBar `0x60bea0` sends 0x7158 on every change: slot 0..50, kind, and a u32
+  (the skill id, or the item's bag slot, `0x666800`). The character-data handler `0x8ab0e0` reads
+  them back through `0x8a7c50`: u8 flag, u8 count, count x {u8 slot, u8 kind, u32}; `0x60b260`
+  fills the bar from them.
+- **Ours.** At the user's request, `HotbarStore` keeps every skill slot (id, Basic_Code) and item
+  slot (item id, bag slot) on every page, one entry per server:port and character, in
+  `user://quickslots.cfg`. It is written on every change and read once the bar exists.
+- **Items.** An item is re-resolved against the bag: its slot first, as retail binds it, then the
+  same item anywhere.
+
+**3. The preview's step (OURS, the user's request).** 36 degrees per arrow command instead of
+retail's frame_ms * 0.0015 rad. A held arrow repeats the step at retail's 1000/50 ms, which is 720
+degrees a second once repeating. The yaw wraps in [0, 360), and the reset still sets 0.
+
+**MEASURED, real X input on the box** (Login route, the round's server in memory, 1280x720, display
+:87, `/var/tmp/syslog/live.sh` and `x.sh`; renders in the scratchpad's `syslog_shots/`):
+
+- The window sits at (923, 513) 350x117 in mode 2.
+- Four real clicks on its size button step 2 -> 3 -> 4 -> 5 -> 6, the bottom staying at 630.
+  `compare_ref_vs_mode6.png` puts mode 6 beside the user's crop.
+- Kills by the QA attack loop write "[1]Experience Points gained." / "[1]skill experience point
+  gained." (level 40 on level-1..7 monsters).
+- G writes "[99]gold gained.". A typed "#hello" without a party writes "Cannot find the
+  corresponding party." with type 4. Key 1 pressed three times fast writes the server's "skill on
+  cooldown".
+- The level-up (GM /level 40) goes to the warning window.
+- The hotbar: a skill window click put skill 90 on slot 1. Real drags put 90 on 3, 114 on 5, 114 on
+  page 2's slot 12, and the potion (item 4) on 7. The file was written each time.
+  - The in-client Restart (Escape, System, Restart) and a new process both restored all five.
+  - Key 7 then used the potion (snd_potion), and F2 showed slot 12.
+- Ten real clicks on the right rotate arrow logged yaw 0.6283, 1.2566, ... 5.6549, 0.0000. After
+  five clicks the doll shows its back.
+
+**Tests.**
+
+- New client suites: `hud_system_message_test.gd` (geometry, anchor, filter, colours, 100 lines,
+  refusal routing, EXP and level-up formats) and `hotbar_store_test.gd`.
+- Extended: `combat_test.gd` (the EXP tail) and `inventory_pages_test.gd` (36 degrees, ten clicks).
+- Go: `TestAttackResultCarriesTheKillsExperience`; `TestLevelUpMovesTheEntityLevel` checks the
+  kill's ExpGained; the two tail-offset tests moved to the new length.
+
+The negative, against dev 5a82339 (the same tests in a base worktree):
+
+    FAIL the system message window exists (hud_system_message.gd)
+    FAIL HudSystemMessage.mode_geometry lays out the size modes (0x7b87a0)
+    FAIL HudChat hands its refusals to the system window (system_sink)
+    FAIL World3D.exp_gain_lines writes the kill's EXP lines
+    FAIL World3D.level_up_line formats the level-up line
+    FAIL the quick-slot bar is kept between sessions (hotbar_store.gd)
+    SCRIPT ERROR: Invalid get index 'exp_gained' (on base: 'RefCounted (AttackResult)').
+    FAIL a press on the right arrow turns 36 degrees (got 0.0075)
+    FAIL ten clicks step 36 degrees each and come back to 0 (got [0.43, 0.859, 1.289, 1.719, 2.149, 2.578, 3.008, 3.438, 3.867, 4.297])
+    internal/session/combat_test.go:79:3: unknown field ExpGained in struct literal of type AttackResult
+    FAIL	github.com/OpenSRO/srrevamp/server/internal/session [build failed]
+
+On the round: `remote_godot.sh check` ALL LOAD (396 scripts); `remote_godot.sh tests` ran 158
+suites, 0 failing; `go build ./... && go test -count=1 -p 1 ./...` all ok.
+
+## Six-hundred-and-thirty-eighth round, review follow-up: a player's premium shows on their target row, the server starts it from the item, and a target that is gone closes the window
+
+The review of round 638 upheld every READ claim except one: **the premium does show on a
+target.** The first icon of the user's retail target row is `icon\item\etc\mall_pre_apru_4w.ddj`
+(correlation 0.978, the reviewer's measurement). This follow-up corrects that, makes the server
+start the premium's buff, and mirrors the target window's per-frame check. Labels: READ,
+MEASURED, INFERRED, OURS, OPEN. Record: `docs/protocol/target_window_buffs.md`.
+
+**1. The premium is a skill buff (READ, SR_GameServer.exe; MEASURED, the box's data).**
+- The premium items carry `[USU1:SKILL_MALL_PRE_APRU_4W_01]` or `…_GLOBAL_4W_01`: skilldata 5412,
+  29723 and 46405, `SN_SKILL_MALL_PRE_APRU_4W` / `…_GLOBAL_4W`, icon `item\etc\mall_pre_apru_4w.ddj`.
+  Examples: `ITEM_MALL_PREMIUM_GOLDTIME` 9277 and `ITEM_MALL_PREMIUM_GLOBAL_SILVERTIME` 22925.
+- USU1 in `GObjPC::FUN_0049f590` (0x49fad0):
+  - It queues a type-0 timed job keyed by the skill id, lasting 'dura' / 1000 s. The division is
+    unsigned (`mul 0x10624dd3; shr 6`): the 4-week rows hold 2,419,200,000 ms as −1875767296.
+  - The manager's switch (0x6565f0, table 0x656690) makes type 0 a **CTJ_SkillKeeper**.
+  - Its slot 12 (0x650e70), run as the factory 0x655be0 makes it, calls RegisterSkillInBook,
+    EngageSkill and **Skill_BroadcastBuffAdded_B0BD**.
+- The pre-check (0x49f4ab..0x49f4ef):
+  - the skill by code (0x495690);
+  - 0x1894 if the same skill's type-0 job runs (FUN_00411560(0, id));
+  - 0x650d40: no 'dura' is 0x3003, then the skill gate 0x58d8f0.
+- So the premium reaches every client as 0xB0BD and sits in its owner's buff list like any buff.
+  Only the item-time kinds 3/4/5 (the UIL1/UIU1 grants) never reach the viewer.
+- The four wrong statements are corrected: target_window_buffs.md, the round 638 entry's §3, the
+  viewer's header, and the round's commit note repeated there.
+
+**2. The server starts it (built; `session/composite.go`).**
+- A composite item's USU1 entry resolves its skill by code (new `GetSkillByCode`, the lowest id,
+  as items are). It refuses with 0x1894's text while the same skill's buff runs, and refuses a skill
+  with no 'dura'. After the spend, it starts the buff on the user's own book (`startUsu1Buff`, under
+  the owner's buff lock) for 'dura' read unsigned / 1000 s, and tells the zone with OpBuffStart.
+- **OURS, changed from round 632:** an entry srrevamp does not model is now skipped and logged
+  instead of refusing the whole item. These are a UIU1 3/3/13/4 (the premium time, a
+  CTJ_PremiumKeeper type-3 job), a UIU1 3/3/3/10 with a FourCC other than 0x706874, BCS1, BFI1,
+  PSU1, UQL1 and USL1. An item with nothing modelled is still refused and not spent.
+- Not modelled: the skill gate 0x58d8f0; the buff's params (dru, odar, hr, luck, alcu, inti, stri),
+  since the book models only run speed; the premium time, BFI1 and UQL1.
+
+**3. A skill name in the second text file (READ/MEASURED).**
+- `SN_SKILL_MALL_PRE_APRU_4W` ("Premium") is only in `textdata_object.txt`, not
+  `textdata_equip&skill.txt` (MEASURED on the box's Media.pk2).
+- The client's TextStringManager loads both into one map.
+- `SkillBuffCatalog.text_of` now falls back to the object-name table (World3D's `_object_names`),
+  for the buff bar and the viewer alike.
+- The live run below still showed the code (it began before this fix). The fix is covered by the
+  test.
+- The viewer's name-only list (0x7fc412..) has no `SN_SKILL_MALL_PRE_APRU_4W`, so a target's
+  premium reads "Premium Lv 1" (READ; the buff bar's own list has it).
+
+**4. A target that is gone closes the window (READ, CIFTargetWindow::vslot_012 0x698ae0).**
+- Each frame the window looks its id up.
+  - Not found: it hides.
+  - A CICharactor whose vslot 0x54 answers 0: it hides and deselects (0x778650(0)).
+- `HudTarget.check_target` mirrors this with `World3D._target_exists`. That is a monster body or
+  snapshot, another player's body, or this player.
+- World3D then drops its selection. Dropping the id is OURS: retail keeps it unshown.
+- A zone change also clears `_monster_snapshots`, and world entry clears the target outright.
+
+**5. The review's smaller items.**
+- **0xB0BD attaches only when the owner's `+0x21c` is not −1** (0x8a5d58; otherwise the object is
+  destroyed). What `+0x21c` is, is OPEN.
+- **The item-use effects (0x8735d0) use ids 0x80000023..25**, which the collector's `js` skips.
+- **`_show_target` is re-called for every HP update.** The viewer now diffs when the owner and
+  piece are the same, instead of rebuilding (OURS, equivalent to retail's select running only on
+  a change).
+- **This player selected before OpSelfId** (key `character:-1`) is re-keyed when the id arrives
+  (`set_buff_owner`).
+
+**Live (MEASURED; two clients, Login → CharacterSelect, real X input; `tb_run.sh`, run r2;
+screenshots in `scratchpad/targetbuff_shots/review/`):**
+- A gets the premium with `/give 9277` (`ITEM_MALL_PREMIUM_GOLDTIME`; the reply was "gave 1 x item
+  9277").
+- B left-clicks A. The log reads `buffs of character:1 -- 0 main` (03).
+- A opens the inventory (I) and right-clicks the premium. The server logs `composite: USU1 skill
+  buff item=9277 character=1 skill=5412 seconds=2419200 started=true`, then `entries not
+  modelled, skipped [UIU1:ITEM_PRE_GOLTAM_4W BFI1:… UQL1:QSP_ALL_POTION_3]`.
+- A's own bar shows the premium icon beside its three UIL1 grants (04, A side).
+- B's log: `BUFF start: owner 1 … skill 5412 token 1 duration 2419200000 ms`, then `HudTarget:
+  buffs of character:1 -- 1 main, 0 second: 5412@(0, 0)`. B's row shows the premium icon, the same
+  art as the retail row's first icon (04).
+- Hovering it showed the raw code, before the text-map fix (05).
+- B, with A selected, types `/goto donwhang` into chat (a zone change). The log reads `HudTarget:
+  target character:1 is gone -- window hidden (vslot_012)` and `World3D: target character:1 gone
+  -- deselected`, and the window is gone (09).
+- An earlier `/goto mangyang` moved B within Jangan's zone. A stayed in the zone's entity list,
+  so the window rightly stayed.
+- There were no SCRIPT ERRORs.
+
+**Tests and negatives.**
+- Server: `server/internal/session/usu1_test.go`, with synthetic rows in the premium's shape.
+  1. The premium is used; its skill's buff is on the user's book at 2,419,200 s; a second is
+     refused with 0x1894's text and not spent.
+  2. A BFI1-only item is refused and not spent.
+  3. The unsigned duration.
+
+  Against c89f758, with the fixture change copied in:
+  ```
+  --- FAIL: TestUsu1StartsTheSkillBuff (0.10s)
+      usu1_test.go:32: premium: "that cannot be used", want used (UIU1 3/3/13/4 and BFI1 skipped, USU1 started)
+  ```
+- Client: `hud_target_buffs_test.gd` gains these checks:
+  - the text-map fallback and the skill table first;
+  - the premium's "<name> Lv 1";
+  - the same target re-shown keeping its slots;
+  - re-keying;
+  - vslot_012 hiding the window and naming the lost owner.
+
+  Against c89f758:
+  ```
+  FAIL showing the same target again keeps its icons (a diff, not a rebuild)
+  FAIL HudTarget can re-key its owner
+  FAIL HudTarget checks its target each frame (vslot_012)
+  3 FAILURE(S)
+  ```
+- On this branch: ALL PASS. `remote_godot.sh check` → ALL LOAD; `remote_godot.sh tests` → 157
+  suites, 0 failing; `go build ./... && go test -count=1 -p 1 ./...` → all ok.
+
+## Six-hundred-and-thirty-eighth round: clicking a player or a monster shows its buffs under its name at the top middle, and a player's race emblem at the left
+
+The user asked for a clicked character's or monster's running buffs to show at the top middle of
+the screen, the way the top-left bar shows this player's, with the race emblem at the left of that
+window. The retail reference (`target_buffs.png`) shows a target window "DragonDive": the emblem at
+the left and a row of 20x20 icons under the name bar that wraps onto a second row. Labels: READ,
+MEASURED, INFERRED, OURS, OPEN. The full record, with every address, is
+`docs/protocol/target_window_buffs.md`.
+
+**1. It is a separate class, CIFBuffViewer (READ).**
+- `resinfo\iftargetwindow.txt` declares `GDR_TW_BUFF:CIFBuffViewer` (ID 100, `Rect=0,37,0,0`).
+  `CIFTargetWindow::Create` keeps it at `+0x388`.
+- Its vtable (0xdcf59c, 49 slots) overrides only slots 0, 1, 2 and 10. So it takes no clicks: no
+  right-click cancel, unlike the buff bar.
+- Its icons are the buff bar's own `CIFStateSlot` class (0xeec948).
+
+**2. Which targets and where (READ, the select function 0x699540).**
+- A flag is set in the monster branch (every rarity), the pet/horse branch and the player branch.
+  It is not set for NPCs or structures.
+- With the flag set, the viewer is moved to (window x, the shown piece's y + height + 1),
+  directly under the piece (0x69a1ab..0x69a1cb). The layout's `0,37` is not used.
+- Then the target's buffs are filled in, and timer 1 is armed at 1000 ms (0x69a215).
+- MEASURED on the retail crop: the icons repeat every 23 px, and the first row starts 36 px below
+  the 35-tall player bar's top.
+- MEASURED live (below): the icon cells start at (522, 43) on a 1280-wide screen. That is the
+  window's x = (1280 − 236) / 2 and y = 7 + 35 + 1.
+
+**3. What it shows (READ).**
+- The fill (0x9d25e0 → 0x699480) walks the target object's list of skill objects (`+0x284`, a
+  std::list in arrival order, appended by 0x9cd050).
+- Type 2 objects are made by 0xa54020, which the 0xB0BD buff-start handler calls for whatever
+  owner the packet names (0x8a5d49). So every buff the zone hears of belongs to its owner.
+- Type 3 objects come from 0xB0BE (a buff carrying a name; unread, and srrevamp sends none).
+  The abnormal-state bits go into the second list (none are sent).
+- ~~Item states are never among the sources, so a target's premium does not show.~~ **Wrong;
+  corrected by the review follow-up above:** the premium is a USU1 skill buff (0xB0BD) and does
+  show. Only the item-time kinds 3/4/5 (the UIL1/UIU1 grants) never reach the viewer.
+
+**4. The grid (READ, 0x699480 / 0x7fbea0 / 0x7fd020).**
+- 8 per row, a 23 x 23 pitch, 20 x 20 icons.
+- A skill with `bbuf` (row `+0x184`) goes to a second list, which starts one row down plus 2 px.
+- **An empty main list counts no rows here** (0x7fbff1), unlike the buff bar's board.
+- **No time gauge:** 0x806d50's first argument, "make the gauge", is 1 from the board and 0 from
+  the viewer. So a target's icons have no expiry bar, and the slot is the bare 20x20 icon.
+
+**5. Live (READ, 0x6993a0 → 0x7fd640).**
+- Every 1000 ms the target's list is diffed into the viewer by skill id.
+- A buff that stays keeps its slot. One that ended is removed at once, with no burst or sound.
+- New ones are appended, and the grid is laid out again. A target that is gone clears it.
+
+**6. The tooltip (READ, 0x7fc260, shown by CIFStateSlot::vslot_048 0x806640 through the generic
+tooltip because the slot's parent is not the board).**
+- `"%s Lv %d\n\n"`, with a LITERAL "Lv", unlike the board's `UIIT_STT_LEVEL_LV`. Twelve codes
+  print the name alone: the board's list less `SN_SKILL_MALL_PRE_APRU_4W`.
+- Then the description plus `"\n\n"`.
+- Then 0x96e480's parameter lines (OPEN: not built).
+- No remaining-time line: the entry's `+0x28` stays 0.
+
+**7. The race emblem (READ, 0x69b0d0 → 0x98caa0).**
+- The player piece's `GDR_TW_KINDRED_MARK` (ID 10, 3,0 24x24) gets `FUN_0098caa0(ref +0x9c, 0)`.
+- That is Country: 0 → `com_kindred_china.ddj`, 1 → `com_kindred_europe.ddj`, anything else no
+  file.
+- The monster pieces have no such control.
+- **No server change was needed for race.** Retail reads it from the object's reference data, not
+  from a packet field. srrevamp's entity snapshot already carries Gender, its stand-in for the
+  reference object. Gender maps to the body code, and characterdata column 14 gives Country (0 on
+  every `CHAR_CH_*` row, MEASURED round 629).
+
+**8. The 0xB0BD handler, READ this round.** It is noted here because it settles "are others'
+buffs known": the start handler attaches a skill object to the owner it finds for every start,
+not only this player's. srrevamp's server already broadcasts OpBuffStart/End to the zone, and
+replays them on zone entry both ways (rounds 616/622). The server starts no monster buffs, so a
+monster's row is empty (OPEN, a server feature).
+
+**Built (OURS where marked):**
+- `client/scripts/ui/hud/hud_target_buffs.gd` holds `HudTargetBuffs`, the viewer (grid, diff,
+  tooltip, the point-sampled icons of round 624), and `HudTargetBuffs.Book`. The book keeps every
+  owner's buffs in start order, keyed like the auras.
+- `HudTarget` changes:
+  - it creates the viewer with the buff bar's skill index;
+  - it places the viewer under the monster or player piece;
+  - it runs timer 1 (`advance_buffs`);
+  - it hides and empties the viewer on close;
+  - it sets the kindred mark (`set_kindred`, `kindred_mark_path`).
+- `World3D` changes:
+  - it feeds the book from `_on_buff_started` / `_on_buff_ended`;
+  - it drops an owner on `entity_left`, on a monster's death, and all owners on world entry and on
+    a zone change;
+  - it passes the owner key and the race (`_race_of_gender`, from the body's new `gender` meta).
+- OURS:
+  - a zone re-send of a token counts once;
+  - the viewer waits for the skill index before its first fill;
+  - a rarity-2 monster's viewer is hidden (retail leaves its position undefined);
+  - the trailing blank lines of the tooltip are trimmed;
+  - the slots take the mouse only for the tooltip.
+
+**Live (MEASURED, two clients on the box through Login → CharacterSelect, real X input;
+`/var/tmp/targetbuffs/e2e/tb_run.sh`, screenshots in `scratchpad/targetbuff_shots/`):**
+- B left-clicks A (`PICK … PlayerClickBody`). The log reads `HudTarget: buffs of character:1 --
+  0 main, 0 second` and `selected player 1 (QaTester), race 0`. The emblem is China's (04).
+- A presses 1 (Grass Walk) and then 2 (Lightning Force A, id 107). B's log reads `1 main: 113@(0,
+  0)`, then `2 main: 113@(0, 0), 107@(23, 0)` (05). Pixel-measured in the frame: the icon cells
+  are x 522 and 545, y 43.
+- 15 s later the imbue's OpBuffEnd arrives, and B's viewer drops to `1 main: 113@(0, 0)` (06).
+- Hovering the icon shows "Grass Walk - Flow Lv 1", a blank line and the description (07).
+- B then left-clicks a Mangyang (`ClickBody … monster_id=48`). The log reads `HudTarget: buffs of
+  monster:48 -- 0 main, 0 second`. The special-mob piece shows, with nothing under it (21).
+- There were no SCRIPT ERRORs in either log.
+- Compared with the retail crop: the same emblem at the bar's left, 20x20 icons directly under
+  the bar at its left edge, and a 23 px pitch.
+- Five earlier clicks on monsters said "no hit". The Mangyangs had wandered off between the
+  screenshot and the click; the sixth, straight after a `/spawn`, hit.
+- Not verified live: the zone-change clear (added after the run). The book clear is one line, and
+  the viewer's emptying on the next tick is the tested `sync`.
+
+**Tests.** `client/scripts/ui/hud/hud_target_buffs_test.gd`, with synthetic rows and a synthetic
+text table. It checks the book's order, re-send and drop; the grid (wrap at 8, 23 px, the second
+list at y 2 under an empty main list and at 25 under one row, the sizes); no gauge child; the diff
+keeping a slot and appending; the three tooltip forms; the viewer offset (0, 36) and (0, 79); the
+kindred paths; and HudTarget's 1000 ms tick (not at 999 ms, at 1000 ms; an end goes on the next
+tick; no piece hides it; close empties it).
+
+Against dev 5a82339 (a second worktree, the test copied in), it fails with:
+```
+FAIL hud_target_buffs.gd exists (the CIFBuffViewer port)
+FAIL a per-owner buff book exists
+FAIL the viewer builds without an archive
+FAIL HudTarget places a buff viewer
+FAIL HudTarget knows the race emblem
+FAIL HudTarget refreshes the viewer every 1000 ms
+6 FAILURE(S)
+```
+On this branch it gives ALL PASS (45 checks). The full client suite: `remote_godot.sh tests` → 157
+suites, 0 failing. `go build ./... && go test -count=1 -p 1 ./...` passes (no server change).
+
+**Open:** the tooltip's parameter lines (0x96e480); monster buffs (a server feature); abnormal
+states; 0xB0BE; the `+0x36c` comparison; the `lnks` frame; a rarity-2 monster's position; the
+window keeping a stale name after a zone change (predates this round); pets. All are in
+`docs/TODO.md`, "The target window's buffs and race emblem".
+
+## Six-hundred-and-thirty-seventh round, headings in the arrival lists: the players already standing where you arrive face the way they face, and you re-enter facing the way you left
+
+Same user-visible bug, last case: the players listed in `EnterWorldResult` and `ChangeZoneResult`
+(already in the zone when you enter it or change into it) were drawn facing heading 0. The follow-
+up above sent a heading only on `OpEntityEntered`. Labels: READ, MEASURED, INFERRED, OURS.
+
+**The tail (OURS protocol, READ conversion).**
+- Both results carry a headings tail after `Seated`: a u16 count equal to `len(Others)`, and one
+  u16 wire angle per other in list order. The angle is `proto.EncodeMovementAngle(world.WireAngle(h))`,
+  as `OpEntityEntered`'s.
+- `EnterWorldResult` then adds the entering character's own wire angle.
+- `Seated` is always written when the tail follows (a zero count), and so is `Restored` before it,
+  as `Seated`'s own doc comment asks of the next field.
+- The tail is written only when a snapshot carries a heading (the server's always do,
+  `entitySnapshotFromWorld`). So a result built without one is byte for byte the older payload,
+  and the round-570/573/607 compatibility tests stand unchanged.
+- Older decoders stop after the seated list. Checked on both sides: the b5911a1 client decodes the
+  new payloads without an error (its "decodes" check passes; only the heading checks fail), and
+  the Go test reads the new tail with the Seated reader, which stops before the headings.
+  `decodeSeated` became `decodeSeatedRest`, returning what follows: the orphans probe
+  (`internal/systems`) refused the old name once only a test called it.
+- A count that does not match the list is a decode error, in Go and GDScript.
+- The client reads each angle with `RemoteFacing.from_wire_angle` and places the listed body facing
+  it (`_spawn_result_others` -> `_spawn_or_update_other`). That is the spawn's bare
+  `FUN_009c4260`, READ in the follow-up above.
+
+**Persistence (OURS).**
+- `character.HeadingStore` is implemented by the MemStore and the SQLStore; the SQLStore adds a
+  `heading DOUBLE PRECISION NOT NULL DEFAULT 0` column. It is kept off `Character`, as
+  `InventorySizeStore` is, so the `_CHAR` mapping is unchanged. `_CHAR` declares no heading
+  column, and whether retail keeps a facing across a logout is not read.
+- `savePosition` saves the heading with the position.
+- `handleEnterWorld` restores it when the position is restored (`restoredHeading`,
+  `Hub.SetHeading`). It then sends it on the entering character's `OpEntityEntered`, in the lists'
+  own tail, and to its own client, which faces it (`World3D`'s entry reads `result.heading`).
+- With `-persist-position` off, an entry faces 0 as before.
+
+**Tests.**
+- Go `session/facing_test.go` `TestArrivalListCarriesTheHeadingsOfThoseStanding`, end to end:
+  - Aria walks toward -z (the relayed moves are read first, so both are in the hub).
+  - Bram changes to Donwhang and back.
+  - His `ChangeZoneResult` ends `00 00 01 00 00 40`: no one seated, one heading, wire angle 16384
+    (heading pi).
+- Go `session/facing_codec_test.go`:
+  - both results round-trip the headings and the own heading;
+  - the tail is the older payload plus `Seated`(0) and the angles;
+  - a Seated read of the new tail stops before the headings;
+  - a mismatched count is refused;
+  - `TestPersistPositionKeepsTheHeading`: a walk toward +x, a logout, the store holds pi/2, and the
+    re-entry's own heading and the hub's are pi/2.
+- Client `net/world_test.gd` `_test_decode_headings`: the enter-world tail (Bram pi, own pi/2),
+  the zone-change tail with Bram seated (pi/2), a mismatched count, and an older payload (NAN).
+- Client `remote_facing_test.gd`: a listed body with heading pi is drawn facing -z.
+- NEGATIVE against b5911a1 (the follow-up's commit):
+
+      --- FAIL: TestArrivalListCarriesTheHeadingsOfThoseStanding (0.19s)
+          facing_test.go:129: the arrival list ends 39 37 2f 31 36 38, want the tail 00 00 01 00 00 40 (no one seated, 1 heading, wire angle 16384)
+      FAIL Bram, standing there, faces heading pi (got nan)
+      FAIL and this player re-enters facing pi/2 (got <null>)
+      FAIL a zone-change result's tail seats Bram and faces him pi/2 (seated [42], heading nan, error )
+      FAIL a headings count that does not match the list is a decode error
+      4 FAILURES
+      FAIL someone in the arrival list with heading pi is drawn facing -z (rotation 0)
+      1 FAILURES
+
+  (The older payload ends at the frame "97/168"; the older client decodes the new one without
+  error.)
+
+**Real input, measured (two clients on the box, this branch's server and client).**
+- A signed in through Login -> CharacterSelect and walked by real clicks: east, then south-west.
+  A stopped facing **124.17 degrees**, its own model and its last movement agreeing (124.16).
+- Then B signed in. B's first sample of A, from `EnterWorldResult`'s list, faced **124.17
+  degrees**, at A's own position (31.039, -65.343).
+- A first attempt lost its Xvfb display partway (the X server on `:97` was gone when B started);
+  the rerun is the measurement.
+- Screenshot: `facing_shots/lists_B_enters_sees_A.jpg`. The numbers are the evidence.
+
+**Checks.**
+- `check`: ALL LOAD. `tests`: 157 suites, 0 failing.
+- Go: every package ok, run with the shared cache.
+
+## Six-hundred-and-thirty-seventh round, review follow-up: your own character turns as others do, an arrival faces the way it last walked, and a teleport turns nobody
+
+The review confirmed the round's core: the 3 pi rate, the millisecond clock, the shorter way, the
+1e-6 keep and no axis flip. It found no jitter in a real-input curve and zig-zag. It asked for six
+things. Labels: READ, MEASURED, INFERRED, OURS, OPEN.
+
+**1. The re-aim guard, corrected (READ).**
+- `0xB021`'s reader aims when `obj+0x714 != 0`, or when the new destination is more than 5 units
+  (squared 25.0) from the mover's CURRENT POSITION. The mover is at `obj+0x668`, so
+  `obj+0x6bc/+0x6c0` is mover `+0x54/+0x58`. The round had called this the held destination.
+- `obj+0x714` is mover `+0xac`, the movement order in effect:
+  - `FUN_009e0550`, `FUN_009e04b0` and `FUN_009e08a0` set it;
+  - the stop/position message (`FUN_008a4f80` -> `FUN_009e00f0`), `FUN_009e0150`, `FUN_009e11e0`
+    and `FUN_009e0960` clear it;
+  - arrival in the ordinary tick does not: `FUN_009e0e60` clears `+0x84` only.
+- Fixed in `docs/protocol/opcodes/movement.md`, the round's entry below, and `docs/TODO.md`. The
+  guard stays unapplied (OURS; the reason is in TODO).
+
+**2. The local player turns at 3 pi (READ).**
+- A ground click goes `UI_SILKMALL::FUN_009ec240` -> `FUN_009eb2a0`; a return of 1 sends the move.
+  The server's echo, `0xB021` -> `FUN_008a5750` -> `FUN_009e0550`, turns the player's own mover as
+  it turns anyone's.
+- `FUN_009eb2a0` has two exceptions:
+  - With no order in effect, a click under 5 units away (squared 25.0, `0xe1b8a0`) is not sent.
+  - With an order in effect, a click that meets all three of these is not sent:
+    - it is 100 or more units away (squared 10000.0, `0xd82efc`);
+    - the order's destination (`obj+0x684/+0x688`) is 100 or more away too;
+    - the angle between the two (`FUN_0045c590`, y zeroed) is 5 degrees or less
+      (`0xdb9828` = 0.0872664600610733).
+
+    Instead `FUN_009e04b0` re-aims the local mover and SNAPS the heading (`FUN_009e0050`).
+- `RemoteFacing.click_rule` is that rule. `World3D._try_set_move_target` applies it: "ignore"
+  moves nothing and "snap" sets `_player_turn_snap`. `_aim_local_player` and `_step_local_turn`
+  replace `rotation.y = atan2(dir.x, dir.z)`.
+- The turn runs while standing too, as `FUN_009e0e60` runs it when `+0x88 & 0x31`.
+- `_player_move_order` is set by an accepted click and cleared by a zone change or the player's own
+  skill move. Both mappings are INFERRED: srrevamp has no stop message.
+- A ground click still drops a pending attack or friendly cast even when the filter does not send
+  it. That keeps round 622's behaviour (OURS: where retail drops a pending action is not read).
+  `friend_cast_test` caught the first ordering.
+
+**3. The spawn heading, end to end.**
+- Server:
+  - `world.Entity.Heading` holds the client's heading.
+  - `Hub.MoveFacing` updates it from each walk's delta with `world.HeadingToward`, which is
+    `FUN_009ed130` in srrevamp's frame: +z is 0, +x is pi/2, and a step of 1e-6 or less keeps it.
+  - `Hub.Move`, used for relocations and skill moves, leaves it alone.
+  - `Hub.ChangeZone` carries it.
+  - A fresh entry has heading 0; it is not saved with the position.
+- The wire:
+  - `EntitySnapshot.EncodeEntered` appends the u16 wire angle,
+    `proto.EncodeMovementAngle(world.WireAngle(h))`, where the wire angle is `h - pi/2`.
+  - It goes AFTER the snapshot rather than after x/y/z. An older client's
+    `decode_entity_entered` reads one snapshot and stops. The same snapshot sits inside the
+    `EnterWorldResult`/`ChangeZoneResult` lists, which have fields after them, so those lists carry
+    no heading here. They do now, in a tail of their own (the entry above).
+- Client:
+  - `WorldNet.decode_entity_entered` reads the angle with `RemoteFacing.from_wire_angle`: READ
+    `FUN_008a5640` + `FUN_009c40b0`, the wire angle times 360/65535 degrees, plus pi/2, wrapped
+    with the float constants.
+  - `_spawn_or_update_other` places a new body facing it and snaps a drawn one, ending any turn.
+    This is READ: `FUN_009d17e0` stores the spawn's angle with a bare `FUN_009c4260`, and a new
+    mover has no turn (`0x9e0cd0` zeroes `+0xa4`).
+  - `FUN_009ca320` aims a body that spawned moving. srrevamp's arrivals never do, so nothing aims.
+
+**4. Snap or turn, per path (READ, then matched).**
+- The stop/position message snaps to the server's angle AND ends the turn (`FUN_009e00f0` ->
+  `FUN_009e0050`). srrevamp's monster stop has no angle. It now snaps to the turn's own target and
+  ends the turn (INFERRED: the server's heading is the last leg's).
+- The angle-only message `FUN_008a4ec0` turns at 3 pi unless mover `+0x94` is set. `FUN_008a78b0`
+  (a u8 angle) snaps with a bare `FUN_009c4260`. srrevamp sends neither; both are documented.
+- The skill action reader `FUN_00a54be0` snaps with a bare `FUN_009c4260`, which does NOT end a
+  turn. So two snaps no longer cancel a turn:
+  - the cast start's snap toward the target;
+  - a standing monster's snap toward its target (`_face_monster_toward`).
+
+  Labelled INFERRED as that path. The angle is OURS: it points at the target, where retail's
+  comes in the message.
+- The monster spawn heading still ends the turn (a new object, READ).
+- "Each snap cancels a turn" in the round's entry is corrected there.
+
+**5. A relocation turns nobody (OURS rule, READ reason).**
+- Before this, the entry placement ((0,0) -> the first position) and the gap-recovery snap-back
+  turned the puppet toward the jump. Measured in round 637's run: the entry leg read "move 145.0,
+  face 145.0".
+- Retail places an object at a message's source position (`FUN_009e11e0`) without aiming it.
+- srrevamp's `OpMove` now has a trailing flags byte, bit 0 = relocated. Older servers read three
+  floats and ignore it.
+  - `World3D._position_relocated` sets it when the sender knows (`_relocated_pending`: the gap
+    recovery, `_place_at_region_local`).
+  - It also sets it when the displacement since the last send exceeds the physics step's walk
+    since then (`_walked_since_send`) by `RELOCATE_MARGIN` (1.0, OURS). This catches QA/GM
+    placements and the unstuck landing.
+- The server skips the heading on a relocated move and relays the flag on `OpEntityMoved`. Older
+  clients read 20 bytes and ignore it.
+- The receiver places the body at once and does not turn it.
+- A skill's move already snapped (`OpSkillMove`).
+
+**6.** A dying monster's turn is dropped (OURS). The player's own turn stops at death (OURS).
+
+### Tests
+
+- `remote_facing_test.gd` now has 57 checks, ALL PASS. New in this follow-up:
+  - wire angles 0, 16384 and 49151, and 64 headings round-tripped within one unit;
+  - the click rule's six cases;
+  - a relocation placed and not turned;
+  - a spawn facing its heading, with no turn;
+  - a monster's stop snapping to its turn's target and ending it;
+  - a bare snap leaving a turn;
+  - the player's own quarter turn at 90 degrees in 10 frames;
+  - a reverse click still facing the old way one frame in;
+  - a snap click at once;
+  - the relocation rule both ways.
+- Go:
+  - `world/heading_test.go`: the rule, the wire angle, and MoveFacing / Move / ChangeZone.
+  - `session/facing_test.go` (end to end through a real server, written against payload bytes so
+    it runs on older commits): an arrival's wire angle after a walk toward -z is 16384; a
+    relocation is relayed with the flag and keeps the heading.
+  - `session/facing_codec_test.go`: the codecs.
+- NEGATIVE, the client file against 56840cb (this round's first commit):
+
+      FAIL RemoteFacing reads a wire angle
+      FAIL RemoteFacing has the click rule
+      FAIL a relocation puts the body there at once (got (0, 0, 0))
+      FAIL and does not turn it toward the jump (front 180.00 deg)
+      FAIL a spawn with heading pi/2 is placed facing +x (rotation 0)
+      FAIL a stop mid-turn snaps to the turn's heading, +x (FUN_009e00f0 -> FUN_009e0050) (got (0, 0, 1))
+      FAIL and ends the turn
+      FAIL a standing monster turned to its target keeps its turn (a bare FUN_009c4260, INFERRED)
+      FAIL World3D has no _aim_local_player
+      9 FAILURES
+
+- NEGATIVE, `session/facing_test.go` against dev 5a82339 (the server is the same at 56840cb):
+
+      --- FAIL: TestArrivalFacesTheLastWalk (0.19s)
+          facing_test.go:47: OpEntityEntered carries 0 byte(s) after the snapshot, want the 2-byte wire angle
+      --- FAIL: TestRelocationIsRelayedAndKeepsTheHeading (0.19s)
+          facing_test.go:72: the relocation is relayed as 20 bytes (last 0xc3), want 21 with the relocated flag
+          facing_test.go:93: OpEntityEntered carries 0 byte(s) after the snapshot, want 2
+
+### Real input, measured (two clients on the box, this branch's server and client)
+
+- The setup was round 637's Login -> CharacterSelect run, with A logging its own facing too
+  (`QA FACING self`, the review follow-up's addition to the hook).
+- **A's own reverse click.** A clicked east, then west. A's model turned -80 -> -62 -> -35 -> 1 ->
+  37 -> 64 -> 80 degrees in about 300 ms, the shorter way through 0.
+  - At 60 frames a second, 3 pi rad/s is 9 degrees a frame. The samples moved 27 or 36 degrees
+    between log lines (3 or 4 frames), and 540 degrees a second where a sample spans a whole turn
+    step.
+  - On a later turn the rate was 27.0 degrees per 50 ms, 540 degrees a second.
+  - B saw both legs within 0.12 degrees once turned: E -80.0 / -80.0, W 80.0 / 80.0.
+- **A's entry placement.** It jumped (0,0) -> (42,-60) in one sample, and B's puppet kept facing
+  0.0 degrees. Before this follow-up it turned to face 145 degrees.
+- **The spawn.** B went to Donwhang (`/goto donwhang`). A walked, ending at -126.50 degrees (A's own
+  model and movement agree), then went to Donwhang too. B's first sample of A there faced
+  **-126.49 degrees**: the wire angle's quantisation, 0.01 degrees.
+- A trap for the next run: A's chat lost keys (`/goto donwha`, then `donwhan/g////...`). Its log
+  wrote a line per monster every 50 ms, which slowed its frames, and X autorepeat turned held keys
+  into runs. `xset r off`, one `xdotool key` per character, and closing the Help window the stray
+  keys had opened got the command through.
+- Screenshots: `facing_shots/review_*.jpg` in the session scratchpad. In Donwhang both characters
+  stand on the same landing spot, so the picture shows them overlapping; the numbers are the
+  evidence.
+
+### Checks
+
+- `remote_godot.sh check`: ALL LOAD. `remote_godot.sh tests`: 157 suites, 0 failing (after the
+  click-ordering fix).
+- `go build ./... && go test -count=1 -p 1 ./...`: every package ok. It ran with a private
+  GOCACHE, removed afterwards.
+
+## Six-hundred-and-thirty-seventh round: other players face the way they run, and they and monsters turn toward it at the game's own rate
+
+The user's report on v0.1.460: "when I see other players on the server it doesn't show them running
+in the direction they're facing. So you'll see them running sideways or backwards." Labels: READ
+(from `sro_client.exe`'s decompile or disassembly, or its PE image), MEASURED (on the render box),
+INFERRED, OURS, OPEN.
+
+### 1. Reproduced by measurement
+
+- MEASURED: two clients on the box, through Login -> CharacterSelect with real X input, against a
+  server built from dev 5a82339 (`-in-memory`, `-monster-ai`). A (QaTester) walked 8 directions by
+  real clicks around its own body. B (QaFriend) logged A's puppet every 50 ms with the new
+  `SRREVAMP_QA_FACING_LOG=1`. Each line has the drawn position and the way the MODEL faces, read
+  off the skeleton's global basis (the body's front is the skeleton's -Z, MEASURED in round 533).
+  `client/tools/facing_measure.py` turns the lines into movement against facing.
+- Before (dev 5a82339 plus only the log hook), per leg, the movement heading and the facing:
+
+  | leg | move | face | off |
+  |---|---:|---:|---:|
+  | E | -76.4 | 0.0 | 76.4 |
+  | W | 76.4 | 0.0 | 76.4 |
+  | N | 0.0 | 0.0 | 0.0 |
+  | S | 180.0 | 0.0 | 180.0 |
+  | NE | -36.6 | 0.0 | 36.6 |
+  | SW | 124.9 | 0.0 | 124.9 |
+  | NW | 47.1 | 0.0 | 53.3 (mean) |
+  | SE | -124.9 | 0.0 | 124.9 |
+
+  The puppet always faced world +z, whichever way it ran: 18.1% of its moving samples were within
+  2 degrees of the movement, and those were only the leg that happened to run +z.
+- MEASURED, monsters (18 bodies, 24,987 moving samples after the first 3 s): 99.8% within 2
+  degrees. Their longest stretch off by more than 2 degrees was 183 ms, a sample across a leg's
+  corner. Monsters faced their path already; they were snapped to it at each leg's start.
+- NPCs do not move in srrevamp (they are placed statues, `NpcFacing`), so there was nothing to
+  measure.
+
+### 2. The cause
+
+- READ in this checkout: `World3D._on_entity_moved` set only the body's walk target
+  (`_other_body_targets`). Nothing ever set another player's `rotation.y` on a move, so the body
+  kept rotation 0. The only turn was the cast start's snap toward a target (`_on_skill_cast`).
+- The monster path differs: `_apply_monster_leg` set `rotation.y = MonsterMotion.facing_yaw(...)`
+  at every leg. That is why monsters were right and players were not.
+- srrevamp's player protocol carries no angle. `OpEntityMoved` is a character id and a position.
+  The mover's client streams positions (`MIN_SEND_INTERVAL` 0.05 s), not retail's destinations. So
+  the angle-units question does not arise for players: there is no angle to convert.
+
+### 3. What the client does (READ)
+
+- **The message.** `0xB021`'s reader, `NetProcessInNavAndSkill::FUN_008a5750`:
+  - reads the object id and the movement (`FUN_008a5640`);
+  - reads an optional source position; when it is present, `FUN_009e11e0` places the object;
+  - for a destination (kind 1), calls `FUN_009e0550(region, dest)` on the object's mover. It does
+    this when `obj+0x714` is non-zero or when `FUN_009ed1e0`'s SQUARED distance between the mover's
+    current POSITION (`+0x6bc/+0x6c0`, mover `+0x54/+0x58`) and the new destination exceeds 25.0
+    (`0xe1b8a0`). Corrected by the review. This entry first called `+0x6bc/+0x6c0` the held
+    destination; `+0x714` is mover `+0xac`, the movement order in effect (see the follow-up
+    above).
+- **The aim.** `FUN_009e0550`:
+  - takes the vector from the object's position (`+0x74`) to the destination
+    (`FUN_009ecc70`, which zeroes the y);
+  - makes a heading of it with `FUN_009ed130`, starting from the current heading
+    (`FUN_009e0020`, `+0x8c`);
+  - calls `FUN_009e02f0(heading, 0)`.
+- **The heading of a vector.** `FUN_009ed130` (0x9ed130..0x9ed1cd):
+  - `len = |v|`;
+  - if `len <= 1e-6` (`0xe1b848`) the output is left alone;
+  - otherwise `a = acos(-z_local / len)`, and the heading is `a` for `x >= 0` and `2 pi - a` for
+    `x < 0`.
+- **The turn.** `FUN_009e02f0` (0x9e02f0..0x9e0461), from the disassembly, since the decompile loses
+  the x87 stack:
+  - `d = target - current`, and `sign = -1` (with `d = -d`) when `d < 0`. When `d > pi` (`0xd81948`)
+    the sign flips and `d = 2 pi - d`: the shorter way.
+  - `step = elapsed * 9.42477798461914 / 1000.0`:
+    - the two doubles are at `0xde3128` and `0xd83268`, read out of the PE image;
+    - `elapsed` is an unsigned int (`+2^32` when negative, `0xe1b7c8`).
+  - It stores the target at mover `+0xa8` and points the travel direction (`+0x68`) along the
+    TARGET at once (`FUN_009ec850`).
+  - When `step <= d` (fcom, C0|C3 at 0x9e039d):
+    - the heading becomes `current + sign * step`, wrapped into `[0, 2 pi)`;
+    - the turn stays on (`+0x88` bit 0, `+0xa4 = 1`);
+    - the turn's clock restarts (`+0xa0` = the object's `+0x3c`).
+  - Otherwise the heading is the target and the turn is over.
+  - Both paths store through `FUN_009c4260`, which wraps into `[0, 2 pi)` and writes `+0x8c`.
+- **Every frame.** The mover's tick `FUN_009e0e60` (called from 0x9d1fac) calls `FUN_009e0c10`,
+  which calls `FUN_009e02f0(+0xa8, obj+0x3c - +0xa0)` while `+0xa4` is set. It also runs for a
+  mover that is not moving, when `+0x88 & 0x31`.
+- **The clock.**
+  - `obj+0x3c` is CObj's millisecond clock: the scene loop `FUN_00ba34e0` adds the frame's
+    milliseconds (`DAT_0110f7f8`, which `FUN_00ba4020` sets each frame, clamped to 3000) to
+    `+0x3c` after each object's update (0xba359b..0xba35a1).
+  - Every character is a CObj (RTTI: CICUser : CICharactor : CIGIDObject : CIObject : CIEntity :
+    CObjChild : CObj).
+  - So the turn rate is **3 pi radians a second** (9.42477798461914 is 3 pi at float precision). A
+    half turn takes a third of a second.
+- **The heading-only form** (kind 0, `FUN_009e08a0`) goes through the same `FUN_009e02f0`, so it
+  turns at the same rate. Its wire angle is converted by `FUN_009c40b0`, which adds pi/2
+  (`0xe1b8f0`) and wraps. So the wire angle `a` is `h - pi/2`, which faces `(cos a, sin a)`
+  region-local (x east, z north): counted from east toward north. The spawn reader
+  `FUN_009c3a70` (0x9c3adf..0x9c3b0a) does the same conversion.
+- **When it stops.** A body that stops keeps its heading: nothing but `FUN_009e02f0` writes it, and
+  nothing calls that without a message.
+
+### 4. The frame (READ, then checked)
+
+- `0x9ec850` makes the heading's facing `(sin h, 0, -cos h)` region-local (round 630). The region
+  group mirrors z (`World3D.minimap_facing`), so in world space the facing is `(sin h, cos h)`.
+  That is where a node with `rotation.y = h` points its local +Z.
+- Another player's front is its node's +Z (the skeleton is turned PI inside it), so its
+  `rotation.y` IS the client's heading.
+- A -Z-front monster's `rotation.y` is `h - pi` (`RemoteFacing.yaw_of`).
+- The test checks it both ways: `(sin h, -cos h)` mirrored equals the direction the heading came
+  from, and so does the node's +Z.
+- There is no mirror between the two turn directions: yaw and heading are the same number. So the
+  tie at exactly pi turns the way the client's does.
+
+### 5. The fix
+
+- `client/scripts/world/remote_facing.gd` (new, pure) is `FUN_009ed130` and `FUN_009e02f0` with the
+  rate above.
+- `World3D._aim_remote_body` is the aim (`FUN_009e0550`). `_step_remote_turns`, called every
+  physics frame after the other bodies' lerp, is the tick.
+- Another player: each `OpEntityMoved` (and a snapshot for a body already drawn) aims the body from
+  where it is drawn toward the new position.
+  - OURS: srrevamp streams positions, so each position is treated as the destination.
+  - The retail 25.0 squared-distance guard is NOT applied. Corrected by the review: it compares
+    the new destination with the body's current POSITION, and only while no movement order is in
+    effect (see the follow-up above). Applied to srrevamp's stream, it would drop the first
+    sample (about 2.5 units away) of each walk after a spawn or placement, and nothing after
+    that.
+- A monster's leg now turns at the same rate instead of snapping (`_apply_monster_leg`). The
+  snapping turns stay snaps. Each cancelled a turn in progress; the review follow-up (above) now
+  matches each path to the client instead:
+  - the cast start's turn toward the target;
+  - a standing monster turned to its target (`_face_monster_toward`);
+  - a spawn heading (`_face_monster_heading`).
+
+  Whether retail turns or snaps in those three cases is not read (OPEN).
+- OURS: the elapsed time is the physics frame's float milliseconds, where the client uses whole
+  milliseconds per frame.
+
+### 6. Tests
+
+- `client/scripts/world/remote_facing_test.gd` (new, 33 checks, ALL PASS). It covers:
+  - the heading of 7 vectors;
+  - the 1e-6 early return;
+  - the frame check;
+  - the rate (3 pi);
+  - 100 ms turning 0.9425 rad;
+  - a half turn not done at 333 ms and done at 334 ms;
+  - the shorter way and its wrap both ways;
+  - the tie at pi.
+- On a bare World3D, it also covers:
+  - 8 directions each walked for a second: the worst leg is 0.00 degrees off;
+  - a half turn at 90.00 degrees after 10 frames and done at 21;
+  - a stop keeping its facing;
+  - a position on the body leaving the facing;
+  - a monster's leg that does not snap: 54.00 degrees after 6 frames, on its destination once done.
+- `monster_motion_test.gd`'s leg-facing check now steps the turn (0.5 s) before it looks. ALL PASS.
+- `remote_godot.sh tests`: 157 suites, 0 failing. `go build ./... && go test -count=1 -p 1 ./...`:
+  all packages ok (the server is unchanged).
+- NEGATIVE: the same file run against dev 5a82339 (a clean worktree of the base, shipped to its own
+  render dir):
+
+      FAIL RemoteFacing exists
+      FAIL World3D steps remote turns each frame
+      FAIL after walking each of 8 directions the body faces its movement (worst 180.00 deg)
+      FAIL 10 frames into a half turn it has turned 90 deg, at 3 pi rad/s (got 0.00)
+      FAIL 21 frames (0.35 s) in it faces the new way (off by 180.00 deg)
+      FAIL a monster's leg does not snap it round: it still faces +z as the leg starts (got 90.00 deg)
+      FAIL 6 frames in it has turned 54 deg toward +x (got 90.00)
+      7 FAILURES
+
+### 7. After the fix, measured (the same two-client run, this branch's client)
+
+- Per leg, with the steady part after the first 0.4 s:
+
+  | leg | move | face | mean off | max off |
+  |---|---:|---:|---:|---:|
+  | E | -80.0 | -80.0 | 0.01 | 0.02 |
+  | W | 80.0 | 80.0 | 0.01 | 0.03 |
+  | N | 0.0 | 0.0 | 0.00 | 0.00 |
+  | S | 180.0 | 180.0 | 0.00 | 0.00 |
+  | NE | -47.2 | -53.9 | 0.61 | 5.44 |
+  | SW | 124.2 | 124.2 | 0.02 | 0.03 |
+  | NW | 83.2 | 85.9 | 1.36 | 3.96 |
+  | SE | -124.2 | -124.2 | 0.01 | 0.01 |
+
+- MEASURED: the NE and NW maxima come from A's own path bending near its end, from -40.7 to -83.2
+  degrees on NE. The facing follows it within one 50 ms sample, which is the turn rate at work.
+- The turn itself was MEASURED on B: 27.0 degrees per 50 ms sample (-162 -> -135 -> -108 -> -81),
+  which is 540 degrees a second, 3 pi.
+- The time to come within 2 degrees matched the angle turned. A 135-degree start was aligned after
+  250 ms; 135 / 540 = 250 ms.
+- After the first 3 s:
+  - A's puppet's stretches off by more than 2 degrees were turns: 10 of them, longest 319 ms,
+    median 272 ms.
+  - Monsters were 98.4% within 2 degrees, with turns up to 423 ms (a 180-degree turn plus a
+    sample).
+- Screenshots (for a human only; the numbers above are the evidence): the session scratchpad's
+  `facing_shots/`, before and after, B's view of A in each direction.
+- Observed once, at world entry: a monster whose body the list moved mid-leg walked 7.4 degrees
+  off its facing for 0.6 s until its next leg. The leg's facing is aimed once per leg, in the base
+  as in the client, whose facing only a message turns. OPEN whether the list's placement should
+  re-aim it.
+
+### Left open
+
+See `docs/TODO.md`, "Other bodies' facing (round 637)":
+- the local player still snaps its own facing;
+- a player coming into view faces heading 0, since no angle is sent;
+- the re-aim guard (what `+0x714` is was read in the review follow-up);
+- the three snapping turns;
+- the list-placement case.
+
+
+## Rounds 633-635 integration review (int/ui2): nothing new lands past a lowered bag size, the portrait's ambient is clamped, the chat's penalty line sits where the client puts it, and the text table loads rows as the client does
+
+The final review of int/ui2 (dev b9bbf07 + rounds 633-635 and their follow-ups, merged at 14c4889)
+confirmed the follow-ups' READs against the decompiles and ran two clients with real input through
+Login (the portrait in Jangan and after `/goto donwhang`, every window's frame, the bag's pages, a
+drag across pages and to a quickslot, the doll's arrows, gold colours, every chat channel, the
+notice, a global, the size modes). It found these; all are fixed here. Before is 14c4889.
+
+**1. A lowered bag size placed new items past itself (OURS rule, tightened).** round 633's
+`inventory.KeepHeld` raised the size every operation used to the highest held slot + 1, so with
+`-inventory-size 32` and an item in slot 60, pickups, buys, trades and withdrawals filled slots
+32..59 and any item could be moved to 59: the bag never came back to 32 (a throwaway test: 28
+extra adds succeeded). Now the stores keep two bounds (`SetKeepHeld`): the REACH (size, raised to
+the highest held slot + 1) for listing, removing, durability and moving OUT, and the configured size
+for every NEW placement -- AddItem's stacking and free-slot search, a move's target, a swap into a
+held slot (refused), and the trade's space check (`inventory.PlacementCapacityOf`, counting only
+slots within the size). `TestKeepHeldReachesHeldSlotsButPlacesWithinTheSize` (both stores): 32
+items fill 0..31, the 33rd is ErrNoRoom, moves to 32/59/60 and the swap into 60 are refused, a
+stack of the held item goes to slot 1 rather than onto 60, and emptying 60 brings the size to 32.
+
+**2. The bag expansion grew the reach.** `useExpansion` took `CapacityOf` (the raised reach) as its
+base, so with no stored size it stored 61 + 32, or refused an expansion the configured 32 allows.
+It takes `PlacementCapacityOf` now; `TestBagExpansionGrowsTheConfiguredSizeNotTheReach` stores 64
+(and fails against the old base with the 0x18fe refusal). `/invsize` shows the configured size and,
+when items are held past it, how far they stay reachable.
+
+**3. The doll's measurement lines flooded the log.** Every 50 ms repeat of a held arrow printed the
+yaw and a three-bone pose line (~40 lines a second, measured on the live run). They print on an
+arrow's press and release and on the reset now.
+
+**4. The portrait's ambient is clamped (READ).** `Map::FUN_00a1baf0` clamps world+0x6853..0x685b to
+[0, 1] in the same block as the diffuse (0x00a1cc50..0x00a1cc88); `zone_light_colors` passed
+channel 3 through. No change on the box's archive (its highest channel-3 component is 0.925); an
+archive above 1 would have lit the face too bright.
+
+**5. The chat's penalty line (READ).** 0x7ab1b0..0x7ab1d6 places +0x468 (ID 52,
+GDR_CHAT_STA_PENALTY) at its own x and +0x464's (ID 15, the size button's) y + 3 (`add ecx,0x3`);
+it was at + 2, the authored 380 - 378.
+
+**6. The text table loads rows as TextStringManager 0x8cac30 does (READ).**
+- The service column: a row is loaded only when column 0 reads 1 (`0xb9cc80(0, 1)`, `cmp eax,1`
+  at 0x8cb110..0x8cb118). On the box's archive no real key changes; the rows skipped are the
+  continuation lines of multi-line values (57 in textuisystem, 129 in textdata_object), which had
+  been read as keys.
+- A first row with no English: the loader reads ONE column, 0x8c5370(language) -- the CGame loads
+  (0x849215..0x8493ad) pass -1 as the first-choice language, and 0x8cace6 sets that slot to -1, so
+  0x8c6a90's compare with L"0" (DAT_00e1804c) never chooses -- and stores the field as it stands.
+  So a key whose first row has no English holds that column's "0" filler (or blank) in the
+  client. Ours fell back to the Korean column 2 or the token; it keeps the English column's own
+  field now. The box's Rebecca Event Hats (SN_ITEM_ETC_E060823_SATGAT_INT3_M/F), whose first row is
+  all "0" and whose English row comes after it, read "0", as in the client (were "??? ?? (?)").
+  On the box's archive this is 450 textuisystem keys (313 of them "0"), 2179 object names (1849
+  "0"), 490 speech lines; of the Jangan-area names, seven (event NPCs, two Tiger Woman variants
+  and a Strong Mangnyang).
+
+**7. Stale comments** in ui_text_table.gd (last row wins), ui_builder.gd (the archive's font is
+Tahoma: its first row says Arial) and hud_panels.gd (the doll's turn direction is READ).
+
+Not done: the dungeon light (`Map::FUN_00a255c0` gives the object shader an ambient-only light in a
+dungeon). This client loads no dungeon, so there is nowhere for it to apply yet (OPEN).
 
 ## Six-hundred-and-thirty-sixth round, review follow-up: a refused cast no longer ends a stealth, a Fire Trap or a Warrior guard link can't be doubled, and a second Fire Detect is charged and does nothing, as retail does
 

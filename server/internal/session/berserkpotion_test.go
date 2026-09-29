@@ -73,8 +73,21 @@ func newBerserkPotionFixture(t *testing.T, gate *gm.Gate) *berserkPotionFixture 
 			CooltimeGroup: 0, CooltimeMs: 180000, RestoreHP: 5},
 		{ID: testKeyZeroB, MaxStack: 1, TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 8, CanUse: true,
 			CooltimeGroup: 0, CooltimeMs: 180000, RestoreHP: 5},
+		// Round 638 review: the premium's shape (usu1_test.go).
+		{ID: testPremium, MaxStack: 1, TypeID1: 3, TypeID2: 3, TypeID3: 13, TypeID4: 14, CanUse: true,
+			CodeName: "ITEM_TEST_PREMIUM", CompositeDesc: "[UIU1:ITEM_TEST_PRE_TIME],[USU1:SKILL_TEST_PRE_01],[BFI1:ITEM_TEST_BOOTH,A,2419200]"},
+		{ID: testPremiumTime, MaxStack: 1, TypeID1: 3, TypeID2: 3, TypeID3: 13, TypeID4: 4, CanUse: true,
+			CodeName: "ITEM_TEST_PRE_TIME"},
+		{ID: testOnlyUnmodelled, MaxStack: 1, TypeID1: 3, TypeID2: 3, TypeID3: 13, TypeID4: 14, CanUse: true,
+			CodeName: "ITEM_TEST_BOOTH_ONLY", CompositeDesc: "[BFI1:ITEM_TEST_BOOTH,A,2419200]"},
 	}); err != nil {
 		t.Fatalf("import: %v", err)
+	}
+	if err := items.ImportSkills(f.ctx, []refdata.Skill{
+		// 'dura' 2,419,200,000 ms, as the signed column holds it.
+		{ID: testPremiumSkill, GroupID: 375, BasicCode: "SKILL_TEST_PRE_01", BasicLevel: 1, ActionKind: 3, DuraMs: -1875767296},
+	}); err != nil {
+		t.Fatalf("import skills: %v", err)
 	}
 	f.inv = inventory.NewMemStore(items)
 	if err := f.inv.AddItem(f.ctx, c.ID, testHwanFill, 1); err != nil {

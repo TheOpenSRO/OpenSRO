@@ -295,6 +295,9 @@ In order. Each is checked off here when it ships in a release, with its round in
       `npcpos` by region and position, and turn each NPC by the real angle -- through the same
       engine-to-Godot conversion as map objects (`NavGraph.godot_yaw`), after confirming the
       character-facing convention (the spawn packet's angle -> the body's front) in the client.
+      Round 637 read that conversion: the heading is the wire angle plus pi/2 (`FUN_009c40b0`), and
+      heading `h` faces `(sin h, 0, -cos h)` region-local, which is `rotation.y = h` on a +Z-front
+      node (`RemoteFacing`). Whether `wInitialDir` goes through the same `+pi/2` is not read.
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
       material's diffuse and the ambient by its ambient (round 136's stated approximation).
 - [x] ~~Real spawn points for every roster species~~ -- **done, v0.1.403 (round 253)**: `export-refdata
@@ -966,6 +969,45 @@ whose flip conditions these items feed).
       others' under the one frame, until the mover's own client lifts or drops it and sends an
       `OpMove`. Snapping another player's body the way a monster's is snapped would close it.
 
+### Other bodies' facing (round 637 and its review follow-up) — **built: every body, this player's too, turns to face where it goes at 3 pi rad/s, and an arrival faces the way it last walked; these are left**
+
+READ and measured in `docs/WORLD_ISSUES.md`'s 637th round; the rule is `RemoteFacing`.
+`SRREVAMP_QA_FACING_LOG=1` plus `client/tools/facing_measure.py` is the measurement.
+
+- [x] ~~The local player still snaps its own facing~~ -- **done in round 637's review follow-up**:
+      it turns at 3 pi rad/s (READ: the echoed `0xB021` -> `FUN_008a5750` -> `FUN_009e0550`), with
+      `FUN_009eb2a0`'s snap exception and its 5-unit idle filter (`RemoteFacing.click_rule`).
+- [x] ~~A player coming into view faces heading 0~~ -- **done in the review follow-up for
+      `OpEntityEntered`**. The server keeps a heading per character (`world.Entity.Heading`, from
+      each walk) and carries it through a zone change. The arrival snaps to it (`FUN_009d17e0` ->
+      `FUN_009c4260`). Left:
+  - [x] ~~The lists carry no heading~~ -- **done ("headings in the arrival lists")**: a tail
+        after `Seated`, with `Seated` always written.
+  - [x] ~~A fresh world entry faces heading 0~~ -- **done under `-persist-position`**: the heading
+        is saved with the position (`character.HeadingStore`, OURS: `_CHAR` has no such column)
+        and restored with it. With the flag off, an entry still faces 0.
+- [ ] **The retail re-aim guard is not applied.** `0xB021` aims only when the order is in effect
+      (mover `+0xac`, `obj+0x714`) or the destination is more than 5 units (squared 25.0) from the
+      mover's current POSITION (`+0x54/+0x58`). srrevamp streams positions about 2.5 units apart
+      and has no stop message, so the guard would only drop the first sample of each walk after a
+      spawn or placement. Revisit if the move packet becomes a destination (`0x7021`/`0xB021`).
+- [ ] **The cast start's and a standing monster's turns toward a target are OURS snaps.** They
+      leave a turn in progress running, as the skill action reader's bare `FUN_009c4260` does
+      (`FUN_00a54be0`, READ). Two things are INFERRED: that they are that path, and the angle (ours
+      points at the target; retail's comes in the message). The monster spawn heading is a snap
+      that ends the turn (a new object, READ). A monster's stop snaps to its turn's target and ends
+      it: `FUN_009e00f0`'s snap to the server's angle, with the turn's target standing in for the
+      angle (INFERRED).
+- [ ] **The relocation rule is OURS.** An `OpMove` is flagged relocated when:
+      - the sender knows it is one (a gap recovery, a region-local placement); or
+      - its displacement exceeds the walk since the last send by `RELOCATE_MARGIN` (1.0).
+
+      The server keeps the heading on a relocated move and relays the flag, and the other clients
+      place the body without turning it.
+- [ ] **A monster the list moves mid-leg keeps its leg's facing.** Seen once at world entry: 7.4
+      degrees off for 0.6 s. The client's facing changes only on a message, so this may be right;
+      not established.
+
 ### The buff bar — **built (round 618); these are left**
 `HudBuffBoard` is retail's `CIFMagicStateBoard`. It has the icons, the draining time bar, the end
 burst and sound, right-click cancel and the tooltip. The record is in
@@ -1001,6 +1043,38 @@ burst and sound, right-click cancel and the tooltip. The record is in
   - [ ] **A "high-res icons" option.** The user may want one later. `AUTHENTIC_ICONS` is a
         static var, so a setting can flip it; icons already on the board keep their look until
         rebuilt. No UI was added.
+
+### The target window's buffs and race emblem (round 638) — **built; these are left**
+`HudTargetBuffs` is retail's `CIFBuffViewer` under the target's name bar: 20x20 icons, 8 a row at a
+23 px pitch, `bbuf` skills in a second list, refreshed every 1000 ms from every owner's
+OpBuffStart/End, with the viewer's own tooltip. The player piece shows the race emblem. The record
+is in `docs/protocol/target_window_buffs.md`. Left open:
+- [ ] **The tooltip's parameter lines** (0x96e480(7), the skill window's damage/range text). They
+      are not built, so the viewer's tooltip is the name, level and description only.
+- [ ] **Monster buffs.** The viewer shows a monster's buffs, but the server starts none
+      (`OwnerKind` is always `OwnerCharacter`), so a monster's row is always empty.
+- [ ] **Abnormal states** (the target's `+0x2c4` bits go in the second list). srrevamp sends no
+      one's abnormal states to the client.
+- [ ] **0xB0BE**, the type-3 buff that carries a name (the tooltip's "Target :" line). What it is
+      in retail is unread, and srrevamp sends nothing like it.
+- [ ] **The byte behind `+0x36c`** (the "Not affected" state; now known to come from 0x9d25e0's
+      comparison of two 32-entry arrays, 0x9c7830 / 0x9cdf00). What the arrays are is unread.
+- [ ] **A rarity-2 monster's viewer position.** Retail never writes it; ours hides the viewer.
+      No monster in the archive has rarity 2.
+- [x] **The target window after a zone change or a target leaving view** -- done in the
+      review follow-up: CIFTargetWindow::vslot_012's per-frame lookup is mirrored
+      (`HudTarget.check_target`), so a target that is gone hides the window and is deselected.
+      Another player's death is not reported to this client, so that case is OPEN.
+- [x] **The premium on a target** -- done in the review follow-up. The premium is a USU1 skill
+      buff and shows like any buff; the server now starts it (`session/composite.go`). Left
+      open on the server:
+  - the skill gate 0x58d8f0 that 0x650d40 runs;
+  - the buff's params (dru, odar, hr, luck, alcu, inti, stri): the book models only run speed;
+  - the premium's other entries are skipped (OURS, logged): the UIU1 premium time (3/3/13/4,
+    a type-3 CTJ_PremiumKeeper job), BFI1 and UQL1.
+- [ ] **What `+0x21c == -1` means** for an owner whose 0xB0BD object is destroyed, not attached
+      (0x8a5d58).
+- [ ] **Pets** (the CICCos branch shows the viewer too). srrevamp's pets cannot be targeted yet.
 
 ### Store and warehouse confirm boxes — **crash fixed (round 631); next: the retail CIFMessageBox**
 Round 631 fixed the crash the user hit on v0.1.458 (a box freed from its own button: SIGSEGV).
@@ -1147,8 +1221,8 @@ refusals, the global chatting item's "Chat to all" window, the GM notice's line 
 - **Not built**: the whisper list pop-up (`GDR_WHISPERLIST`, 0x7acfd0), the chat-mode button and
   viewer (IDs 41/42), the hide button, the "*" name prefix (0x877810/0x877340, the sender's vslot
   0xac state not identified), speech balloons over heads (0x9c77c0), the flood block
-  (0x7a9bb0), the global window's text filter (0x8c4020), the system message window (interface
-  child 0x44) -- srrevamp's own "* ..." lines and refusals go to the All tab (OURS).
+  (0x7a9bb0), the global window's text filter (0x8c4020). The system message window is built
+  (round 639; its own list is below).
 - **Open questions**: whether the client strips CSV quote marks from a text row (24 first rows on
   the box's archive keep them since first-row-wins); whether retail's server strips the channel mark from the text; the
   range of ordinary chat (srrevamp: the zone bucket); the wheel
@@ -1157,6 +1231,35 @@ refusals, the global chatting item's "Chat to all" window, the GM notice's line 
   binary; the private client's source for the cyan is not known.
 - "Remaining turns" in the global window overruns into its count (the authored static is 55 px
   wide; our font draws the caption wider).
+
+### The system message window and the saved quick slots (round 639) — **built; these are left**
+
+What round 639 read and built is in `docs/protocol/system_message.md`.
+
+- **The filter board** (GDR_SYETEM_MESSAGE_OPTBOARD, CIFChatOptionBoard, `ifchatoptionboard.txt`):
+  its five checkboxes, their art (set in code, not read) and `Setting\chop.dat`. The filter button
+  does nothing yet; the filters stay at the no-file defaults (FIGHT off, the rest on).
+- **The frame's hover-only option** (`0x4f9d00`+7, `0x77b385..0x77b3db`): which option it is and its
+  default. The frame always shows here.
+- **Guide lines and unique notices.** The window shows retail's type-6 "[Guide]" tips
+  (`0x789e53`) and the uniques' appearance and death lines (`0x874ea0`) when they arrive; srrevamp's
+  server sends neither.
+- **Retail's messages for srrevamp's refusals.** The server sends English text; retail sends a code
+  that `0x7b8b40` turns into the UIIT_ message.
+- **Quest EXP** writes no line (only a kill's result carries the EXP).
+- **GDR_WARNING_WND's position** (the level-up line): the CIFNotify class's +0x7d4, read as 0 for
+  GDR_NOTICE; no writer for this instance was looked for.
+- **The quick slots on the server.** Retail saves them with 0x7158 and loads them from the character
+  data (`0x8a7c50`); srrevamp keeps them client-side at the user's request (OURS,
+  `user://quickslots.cfg`). A new character's default slots (`0x786f30`) and dragging a slot off the
+  bar to clear it (vslot 26 `0x60c1b0`) are still not wired, as before.
+- **The paper doll's step** is 36 degrees a click at the user's request (OURS); a held arrow repeats
+  it after 1000 ms and then every 250 ms (144 degrees a second, OURS). Retail's step is a frame's
+  worth, frame_ms * 0.0015 rad, repeated every 50 ms.
+- **Skill withdrawal** has no server side here; the bar's withdrawal rebind (`0x60c230` with 0) is
+  built and tested but reached by nothing.
+- **The EXP line at the level cap** reports what was added (0 once full); what retail's server
+  sends there was not read.
 
 ### The inventory window (round 633) — **pages, purse colours, slot art, avatar view, preview built; these are left**
 

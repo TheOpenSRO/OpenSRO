@@ -5,12 +5,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/berserk"
+	"github.com/OpenSRO/srrevamp/server/internal/buff"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
@@ -69,13 +71,40 @@ import (
 // OURS, the user's request: a GM account consults and arms neither the
 // scroll's nor the fill's COOLTIME.
 //
+//   - USU1 "used skill use" (round 638 review; the premium items'
+//     [USU1:SKILL_MALL_PRE_APRU_4W_01]): FUN_0049f090's pre-check
+//     (0x49f4ab..0x49f4ef) looks the SKILL up by code (0x495690, else 2),
+//     refuses 0x1894 when a type-0 timed job keyed by its id runs
+//     (FUN_00411560(0, id)), and asks 0x650d40, which refuses a skill with
+//     no 'dura' (+0x280, 0x3003) and runs the skill gate 0x58d8f0 (a
+//     non-zero code is sent as 0xB070 and the use answers 2). The branch
+//     (0x49fad0..0x49fb2e -> 0x49f80e -> 0x49fd46) then queues a type-0
+//     job -- CTimedJobManagerForPC's switch (0x6565f0, table 0x656690)
+//     makes type 0 a CTJ_SkillKeeper (0x650cd0 -> its pool 0x657180) --
+//     keyed by the skill id, lasting `dura / 1000` seconds, the division
+//     UNSIGNED (`mul` by 0x10624dd3, `shr 6`): the premium rows' dura is
+//     2,419,200,000 ms, which the signed column holds as -1875767296. The
+//     job's slot 12 (0x650e70), run as the factory 0x655be0 makes it,
+//     registers the skill in the book (0x59e220), EngageSkill (0x593540)
+//     and Skill_BroadcastBuffAdded_B0BD (0x59af00): an ordinary buff,
+//     which every client in the zone is told of and draws on its owner --
+//     the buff bar and a target's CIFBuffViewer (docs/protocol/
+//     target_window_buffs.md). srrevamp starts it on the user's buff book
+//     (startCasterBuffOn) with that duration; the skill gate 0x58d8f0 is
+//     not modelled, and the buff's params (dru, odar, hr, luck ...) are
+//     not applied -- the book models only run speed (TODO.md).
+//
 // Not modelled (disclosed): the grant and the bonus are in memory, so a
 // server restart loses them (the engine's timed jobs survive a relog through
 // their __time32_t stamps -- srrevamp's survive a relog too, not a restart);
-// the UIU1 branch for a 3/3/13/4 item (a type-3 job, FUN_0049a400) and
-// every other FourCC (BCS1, BFI1, PSU1, UQL1, USL1, USU1) are refused as
-// "that cannot be used"; the engine's order queues the UIL1 job before it
-// meets a running 0x706874 job, srrevamp checks both first.
+// the engine's order queues the UIL1 job before it meets a running 0x706874
+// job, srrevamp checks both first. OURS since the round 638 review: an entry
+// srrevamp does not model -- a UIU1 3/3/13/4 row (the premium time, a type-3
+// job, FUN_0049a400), a UIU1 3/3/3/10 row whose FourCC is not 0x706874, and
+// BCS1, BFI1, PSU1, UQL1 and USL1 -- is SKIPPED and logged, where it used to
+// refuse the whole item; an item none of whose entries is modelled is still
+// refused. So a premium item starts its skill buff and its UIL1 grants and
+// nothing else.
 const (
 	OpCompositeUse       uint16 = 0x0104 // client -> server: spend a granted fill
 	OpCompositeUseResult uint16 = 0x0105 // server -> client
@@ -368,6 +397,22 @@ type compositePlan struct {
 	bonusSecs  int // the param-60 value (Param3 of the UIU1 item)
 	bonusFor   time.Duration
 	bonusValid bool
+	// skills are the USU1 entries' buffs, each with its job's duration.
+	skills   []*refdata.Skill
+	skillFor []time.Duration
+	// skipped names the entries srrevamp does not model (OURS, logged).
+	skipped []string
+}
+
+// skillByCode resolves a USU1 entry's skill (0x495690).
+type skillByCode interface {
+	GetSkillByCode(ctx context.Context, code string) (*refdata.Skill, error)
+}
+
+// usu1Duration is the skill job's length: 'dura' (+0x280) read UNSIGNED and
+// divided by 1000 into whole seconds (0x49fb11..0x49fb20).
+func usu1Duration(duraMs int) time.Duration {
+	return time.Duration(uint32(duraMs)/1000) * time.Second
 }
 
 // planComposite resolves the scroll's entries and runs FUN_0049f090's and
@@ -389,6 +434,35 @@ func planComposite(ctx context.Context, items combat.ItemLookup, keeper *Composi
 		}
 	}
 	for _, e := range entries {
+		if e.fourCC == "USU1" {
+			// FUN_0049f090's USU1 pre-check, then the branch (see the header).
+			bySkill, ok := items.(skillByCode)
+			if !ok {
+				return plan, "that cannot be used"
+			}
+			ref, err := bySkill.GetSkillByCode(ctx, e.code)
+			if err != nil || ref == nil {
+				return plan, "that cannot be used"
+			}
+			if ref.DuraMs == 0 { // 0x650d40: no 'dura' is 0x3003
+				return plan, "that cannot be used"
+			}
+			for _, r := range buffBooks.Active(characterID) { // FUN_00411560(0, skill id)
+				if r.SkillID == ref.ID {
+					return plan, compositeOverlapRefusal
+				}
+			}
+			plan.skills = append(plan.skills, ref)
+			plan.skillFor = append(plan.skillFor, usu1Duration(ref.DuraMs))
+			continue
+		}
+		switch e.fourCC {
+		case "UIL1", "UIU1":
+		default:
+			// OURS: a kind srrevamp does not model is skipped (header).
+			plan.skipped = append(plan.skipped, e.fourCC+":"+e.code)
+			continue
+		}
 		part, err := byCode.GetItemByCode(ctx, e.code)
 		if err != nil || part == nil {
 			return plan, "that cannot be used"
@@ -421,14 +495,17 @@ func planComposite(ctx context.Context, items combat.ItemLookup, keeper *Composi
 			// Param1..3 are exported as RestoreHP, the packed ReinforceRate1
 			// (Param2, u32) and ReinforceRate2 (Param3).
 			if part.TypeID1 == equipment.TypeItem && part.TypeID2 == equipment.TypeExpendable && part.TypeID3 == 13 && part.TypeID4 == 4 {
-				return plan, "that cannot be used"
+				// The premium time (a type-3 job): not modelled, skipped (OURS).
+				plan.skipped = append(plan.skipped, e.fourCC+":"+e.code)
+				continue
 			}
 			if !(part.TypeID1 == equipment.TypeItem && part.TypeID2 == equipment.TypeExpendable &&
 				part.TypeID3 == 3 && part.TypeID4 == 10) {
 				continue
 			}
 			if part.ReinforceRate1 != hwanTimeFourCC {
-				return plan, "that cannot be used"
+				plan.skipped = append(plan.skipped, e.fourCC+":"+e.code)
+				continue
 			}
 			if secs, _ := zerk.DurationBonus(characterID, now); secs != 0 { // FUN_00411560(10, fourcc)
 				return plan, compositeOverlapRefusal
@@ -436,9 +513,11 @@ func planComposite(ctx context.Context, items combat.ItemLookup, keeper *Composi
 			plan.bonusSecs = int(part.ReinforceRate2)
 			plan.bonusFor = time.Duration(part.RestoreHP) * time.Second
 			plan.bonusValid = true
-		default:
-			return plan, "that cannot be used"
 		}
+	}
+	if len(plan.grants) == 0 && !plan.bonusValid && len(plan.skills) == 0 {
+		// Nothing srrevamp models: the item is refused, not spent.
+		return plan, "that cannot be used"
 	}
 	return plan, ""
 }
@@ -447,7 +526,7 @@ func planComposite(ctx context.Context, items combat.ItemLookup, keeper *Composi
 // refusals, the spend, the jobs, the COOLTIME arm. isGM skips the COOLTIME
 // (OURS).
 func useCompositeScroll(ctx context.Context, sess *gateway.Session, fail func(string) error,
-	inv inventory.Store, items combat.ItemLookup, keeper *CompositeKeeper, zerk *berserk.Tracker, isGM bool,
+	inv inventory.Store, items combat.ItemLookup, keeper *CompositeKeeper, zerk *berserk.Tracker, hub *world.Hub, isGM bool,
 	characterID int64, it *refdata.Item, held inventory.Slot, have int) error {
 	if keeper == nil || zerk == nil {
 		return fail("that cannot be used")
@@ -472,6 +551,16 @@ func useCompositeScroll(ctx context.Context, sess *gateway.Session, fail func(st
 	}
 	if plan.bonusValid {
 		zerk.SetDurationBonus(characterID, plan.bonusSecs, now, plan.bonusFor)
+	}
+	// USU1: the skill job's buff, started on the user's own book and told to
+	// its zone as any buff is (round 638 review).
+	for i, ref := range plan.skills {
+		started := startUsu1Buff(hub, ref, plan.skillFor[i], characterID, now)
+		slog.Info("composite: USU1 skill buff", "item", it.ID, "character", characterID, "skill", ref.ID,
+			"seconds", int64(plan.skillFor[i]/time.Second), "started", started)
+	}
+	if len(plan.skipped) > 0 {
+		slog.Info("composite: entries not modelled, skipped", "item", it.ID, "character", characterID, "entries", plan.skipped)
 	}
 	if cooltime {
 		itemCooldowns.ArmItem(characterID, it.ID, it.CooltimeGroup, time.Duration(it.CooltimeMs)*time.Millisecond, now)
@@ -779,4 +868,23 @@ func BerserkDisconnectHandler(hub *world.Hub, zerk *berserk.Tracker, keeper *Com
 			keeper.Forget(e.CharacterID, useItemClock())
 		}
 	}
+}
+
+// startUsu1Buff starts a USU1 skill job's buff on characterID, cast by
+// itself, lasting lasts (usu1Duration), and tells the zone (OpBuffStart),
+// under the owner's buff lock as every buff start is.
+func startUsu1Buff(hub *world.Hub, ref *refdata.Skill, lasts time.Duration, characterID int64, now time.Time) bool {
+	l := buffLock(characterID)
+	l.Lock()
+	defer l.Unlock()
+	spec := buffSpec(ref, characterID)
+	spec.DuraMs = int(lasts.Milliseconds())
+	rec, ended, refused, sp := buffBooks.Start(characterID, spec, now)
+	if refused != buff.NotRefused {
+		return false
+	}
+	zone := zoneOf(hub, characterID)
+	broadcastBuffEnd(zone, characterID, ended, sp)
+	sendToAll(zone, OpBuffStart, buffStartPacket(rec, now, speedField(sp)))
+	return true
 }

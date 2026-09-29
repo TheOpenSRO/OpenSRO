@@ -82,6 +82,13 @@ type Entity struct {
 	// delayed act is dropped when its caster has arrived anew since the
 	// cast started (session.announceCast).
 	Arrival uint64
+	// Heading is the way the character faces, the client's heading (+0x8c,
+	// radians in [0, 2 pi); HeadingToward has the frame), kept from the
+	// direction of its last move (MoveFacing) and carried through a zone
+	// change, so the zone it arrives in sees it facing that way (round 637's
+	// review follow-up; OpEntityEntered's trailing wire angle). 0 until the
+	// character first moves: a heading is not saved with the position.
+	Heading float64
 }
 
 // Hub tracks all entities currently in the world, grouped by zone. Safe for
@@ -156,6 +163,24 @@ func (h *Hub) Move(sess *gateway.Session, pos Position) (entity Entity, others [
 	return *e, h.othersInZoneLocked(e.Zone, sess.ID()), true
 }
 
+// MoveFacing is Move for a walk: the character also turns to face the way it
+// moved (HeadingToward from the old position to pos), keeping its heading
+// when the step is too short to have one. A relocation -- a skill's jump, a
+// client's recovery or teleport -- goes through Move and keeps the heading, as
+// the client's own placement (FUN_009e11e0) aims nothing.
+func (h *Hub) MoveFacing(sess *gateway.Session, pos Position) (entity Entity, others []Entity, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	e, exists := h.bySession[sess.ID()]
+	if !exists {
+		return Entity{}, nil, false
+	}
+	e.Heading = HeadingToward(e.Heading, pos.X-e.Pos.X, pos.Z-e.Pos.Z)
+	e.Pos = pos
+	return *e, h.othersInZoneLocked(e.Zone, sess.ID()), true
+}
+
 // ChangeZone moves sess's character to newZone at pos, the same discrete
 // "leave the old zone, appear fresh in the new one" semantics as Leave
 // followed by Enter, but as one atomic operation (no window where the
@@ -179,11 +204,11 @@ func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (o
 	h.removeLocked(sess.ID())
 	remainingOld = h.othersInZoneLocked(old.Zone, sess.ID())
 
-	// The life state and the level travel with the character: a zone change
+	// The life state, the level and the heading travel with the character: a zone change
 	// is refused while dead (session.handleChangeZone), so this carries
 	// LifeAlive in practice, but a state is never reset by a move.
 	h.arrivals++
-	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos, Life: old.Life, DiedAt: old.DiedAt, Level: old.Level, Arrival: h.arrivals}
+	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos, Life: old.Life, DiedAt: old.DiedAt, Level: old.Level, Arrival: h.arrivals, Heading: old.Heading}
 	h.bySession[sess.ID()] = next
 	if h.byZone[newZone] == nil {
 		h.byZone[newZone] = make(map[uint64]*Entity)
@@ -241,6 +266,21 @@ func (h *Hub) SetLevel(characterID int64, level int) bool {
 		}
 	}
 	return false
+}
+
+// SetHeading sets sess's character's heading -- a restored one at world entry
+// (round 637's review follow-up; character.HeadingStore). Reports whether the
+// session is in the world.
+func (h *Hub) SetHeading(sess *gateway.Session, heading float64) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	e, exists := h.bySession[sess.ID()]
+	if !exists {
+		return false
+	}
+	e.Heading = heading
+	return true
 }
 
 // EntitiesInZone returns a snapshot of every entity currently in zone.

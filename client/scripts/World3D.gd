@@ -979,6 +979,17 @@ var _mob_height_retry_usec := 0
 var _mob_height_cursor := 0
 var _last_sent_pos := Vector3.ZERO
 var _time_since_send := 0.0
+## Round 637's review follow-up: how far (x, z) the player has walked since
+## the last OpMove -- the physics step's own movement, not a placement -- and
+## whether the next OpMove is known to be a relocation. _position_relocated
+## flags a move whose displacement the walk cannot account for, so no other
+## client turns its body toward a teleport, a recovery or a placement.
+var _walked_since_send := 0.0
+var _relocated_pending := false
+## OURS: the slack, in world units, a walk's displacement may exceed the
+## distance walked by (the step-up assist nudges the body a little) before
+## the move counts as a relocation.
+const RELOCATE_MARGIN := 1.0
 
 var _player_skeleton: Skeleton3D
 var _player_gender := DEFAULT_GENDER
@@ -1199,8 +1210,18 @@ var _hud_panels: HudPanels
 var _hud_chat: HudChat
 ## GDR_NOTICE (round 634) and the "Chat to all" window, built on first use.
 var _hud_notice: HudNotice
+## The system message window, bottom right (round 639): where this client's
+## system lines go, as retail's 0x7781b0 writes its own (HudSystemMessage).
+var _hud_syslog: HudSystemMessage
+## GDR_WARNING_WND, interface child 0x23 (a CIFNotify like GDR_NOTICE): the
+## level-up line goes there (0x8a9c26 -> 0x77b580 -> 0x7b3eb0), not to the
+## system window (round 639).
+var _hud_warning: HudNotice
 ## Whether the last party answer put this player in a party (chat's #).
 var _chat_in_party := false
+## The party's members by character id, from the party answers and join
+## pushes, so the leave line can name who left (round 639's review).
+var _party_names := {}
 var _hud_whole_chat: HudWholeChat
 ## The chat-input slash console (scripts/ui/console.gd) and the in-client
 ## Help window (scripts/ui/help_window.gd). GM state comes from the server's
@@ -1296,6 +1317,12 @@ func _ready() -> void:
 		zone_label.text = "Zone: %s" % result.zone
 		player.position = Vector3(result.x, result.y, result.z)
 		_last_sent_pos = player.position
+		_walked_since_send = 0.0
+		# Facing the way this character left (round 637's review follow-up:
+		# the heading restored with the position, OURS), when the server sends
+		# one.
+		if not is_nan(result.heading):
+			player.rotation.y = RemoteFacing.yaw_of(result.heading, 0.0)
 		_spawn_result_others(result.others, result.seated)
 
 	NetClient.entity_entered.connect(_on_entity_entered)
@@ -1335,6 +1362,10 @@ func _ready() -> void:
 	NetClient.ground_item_owner_released.connect(_on_ground_item_owner_released)
 	NetClient.pick_up_result.connect(_on_pick_up_result)
 	NetClient.inventory_list_result.connect(_on_inventory_list_result)
+	# A bag move answers with the whole bag: the bar's items follow it, as
+	# retail's 0x60c430 re-binds them on its move and item results (round
+	# 639's review).
+	NetClient.inventory_move_result.connect(_on_inventory_move_for_hotbar)
 	NetClient.equipment_result.connect(_on_equipment_result)
 	# Round 629: the player block's stat panel keeps up with what changes the
 	# numbers while it is open -- a real change of what is worn (not every
@@ -1349,6 +1380,7 @@ func _ready() -> void:
 	NetClient.quest_completed.connect(_on_quest_completed)
 	NetClient.skill_list_result.connect(_on_skill_list_result)
 	NetClient.learn_skill_result.connect(_on_learn_skill_result)
+	NetClient.learn_skill_done.connect(_on_skill_learned_for_hotbar)
 	NetClient.shop_list_result.connect(_on_shop_list_result)
 	NetClient.shop_buy_result.connect(_on_shop_buy_result)
 
@@ -1642,6 +1674,13 @@ func _try_initialize_pk2_ui() -> void:
 			# its icons were the last entry's, or another character's.
 			if _hud_buff_board != null:
 				_hud_buff_board.clear()
+			# And every other owner's (round 638): the zone re-sends them.
+			_target_buff_book.clear()
+			# And no target carries over (round 638 review): whatever was
+			# selected belonged to the entry that ended.
+			_last_attack_target = -1
+			_selected_character = -1
+			_clear_target()
 		if result != null and result.ok and result.max_hp > 0:
 			_last_enter_world_hp = result.hp
 			_last_enter_world_max_hp = result.max_hp
@@ -1678,6 +1717,13 @@ func _try_initialize_pk2_ui() -> void:
 				print("QA ATTACK RESULT: refused (%s)" % result.error)
 		if result != null and result.error == "":
 			_audio_set_hwan(result.berserk_active)
+			# Round 639: what the kill earned, in the system window, as
+			# retail's EXP handler writes it (exp_gain_lines).
+			if result.exp_gained > 0 or result.skill_exp_gained > 0:
+				var exp_t := _ui_text_table.get_text("UIIT_MSG_STATE_GAIN_EXP", "") if _ui_text_table != null else ""
+				var sexp_t := _ui_text_table.get_text("UIIT_MSG_STATE_GET_SKILL_EXP", "") if _ui_text_table != null else ""
+				for line in exp_gain_lines(result.exp_gained, result.skill_exp_gained, exp_t, sexp_t):
+					_log_system(line, HudSystemMessage.TYPE_GAIN)
 		if result != null and result.error == "" and _last_enter_world_max_hp > 0:
 			if _hud_player_info != null:
 				_hud_player_info.set_hp(result.player_hp, _last_enter_world_max_hp)
@@ -1797,7 +1843,7 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.teleport_requested.connect(_on_teleport_requested)
 	# The Revive button (round 548): the one click a dead player has.
 	_hud_panels.revive_requested.connect(_on_revive_requested)
-	# A server refusal the panels hear about (a mastery raise) goes to chat.
+	# A server refusal the panels hear about (a mastery raise) goes to the system window (round 639).
 	_hud_panels.system_notice.connect(_log_system)
 	# M: the world map's toggle, the same one the minimap's map button calls
 	# (KeyMap's slot 7 and HudPanels' world_map_toggle_requested have the
@@ -1847,11 +1893,34 @@ func _try_initialize_pk2_ui() -> void:
 			HudChat.TYPE_GUILD:
 				return NetClient.last_guild_result != null and NetClient.last_guild_result.guild_id != 0
 		return false
+	# The system message window (round 639), bottom right at 0x7b87a0's
+	# offsets; the chat's own 0x7781b0 lines (its refusals) go there too.
+	_hud_syslog = HudSystemMessage.new(_ui_builder)
+	_hud_syslog.name = "HudSystemMessage"
+	ui_control.add_child(_hud_syslog)
+	_hud_syslog.setup()
+	_hud_syslog.anchor_bottom_right()
+	_hud_panels.stack_over(_hud_syslog)
+	_hud_chat.system_sink = func(t: int, text: String) -> void: _log_system(text, t)
+	print("World3D: system message window at %s (mode %d), underbar %s" % [
+		str(Rect2(_hud_syslog.position, _hud_syslog.size)), _hud_syslog.mode,
+		str(_hud_underbar.size) if _hud_underbar != null else "none"])
+	# The quick-slot bar as this character left it (round 639, HotbarStore):
+	# the bar and the panels (for the icons) both exist now.
+	_restore_hotbar()
 	# GDR_NOTICE, the GM notice banner (round 634), over everything else.
 	_hud_notice = HudNotice.new()
 	_hud_notice.name = "HudNotice"
 	ui_control.add_child(_hud_notice)
 	_hud_notice.setup(_ui_builder)
+	# GDR_WARNING_WND (round 639): the same CIFNotify class, for the level-up
+	# line. Its y is the class's +0x7d4, which the constructor sets to 0 (round
+	# 634's reading of GDR_NOTICE; no writer for this instance was looked for
+	# -- OPEN), so it shares the notice's top-centre spot.
+	_hud_warning = HudNotice.new()
+	_hud_warning.name = "HudWarning"
+	ui_control.add_child(_hud_warning)
+	_hud_warning.setup(_ui_builder)
 	# The global chatting item opens "Chat to all" (round 634).
 	_hud_panels.global_chat_requested.connect(_on_global_chat_requested)
 	_setup_console_and_help()
@@ -1891,6 +1960,9 @@ func _build_buff_board() -> void:
 	_hud_buff_board.is_self = _buff_owner_is_self
 	_hud_buff_board.catalog.names_provider = func() -> UiTextTable:
 		return _hud_panels.skill_names_table() if _hud_panels != null else null
+	# The second file of the client's one text map (round 638 review): a
+	# mall skill's name (the premium's "Premium") is in textdata_object.
+	_hud_buff_board.catalog.object_names_provider = _object_names
 	_hud_buff_board.preload_catalog()
 	if not _hud_buff_board.connect_net(NetClient):
 		print("World3D: NetClient has no buff_started signal -- the buff bar is fed by SRREVAMP_QA_BUFFS only")
@@ -4914,6 +4986,9 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	var teleport_arrival := _teleport_arrival_pending
 	_teleport_arrival_pending = false
 	if result != null and result.ok:
+		# A new object in the new zone: no movement order (round 637's review
+		# follow-up, _player_move_order).
+		_player_move_order = false
 		# The server stands a character that changes zone (round 607).
 		_sit.reset()
 		# Retail's zone reset (FUN_00787860) runs FUN_007b5300: a running
@@ -4962,6 +5037,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# FRAME region's middle, off it.
 	player.position = Vector3(result.x, result.y, result.z)
 	_last_sent_pos = player.position
+	_walked_since_send = 0.0
 	# The monsters of the old zone are left behind, and so is any attack
 	# still walking toward one of them -- with the walk, whose target is a
 	# spot in the old zone's coordinates.
@@ -4978,6 +5054,9 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	_other_bodies.clear()
 	_other_gaits.clear()
 	_other_seated.clear()
+	# Their buffs went with them (round 638): the new zone's owners, this
+	# player included, are re-sent on arrival (sendBuffsInView).
+	_target_buff_book.clear()
 	_spawn_result_others(result.others, result.seated)
 
 	# Same stale-body bug as _other_bodies above, for monsters -- the old
@@ -4986,6 +5065,9 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	for monster_id in _monster_bodies.keys():
 		_monster_bodies[monster_id].queue_free()
 	_monster_bodies.clear()
+	# Their snapshots too (round 638 review): the old zone's monsters are no
+	# one's target here; the list below refills it.
+	_monster_snapshots.clear()
 	_monster_motion.clear()
 	_monster_heights_pending.clear()
 	_strike_waits.clear()
@@ -5576,10 +5658,27 @@ func _set_hp_bar(body: Node3D, hp: int, max_hp: int) -> void:
 ## on damage, hidden on death or when nothing is targeted. Everything it
 ## shows is the server's snapshot -- see hud_target.gd for the recovery.
 var _hud_target: HudTarget = null
+## Every owner's active buffs, from OpBuffStart / OpBuffEnd for the whole zone
+## (round 638): what the target window's buff viewer shows for the selected
+## monster or player (HudTargetBuffs.Book; retail keeps them on each object,
+## 0xB0BD -> 0x9cd050).
+var _target_buff_book := HudTargetBuffs.Book.new()
 
 func _build_target_window() -> void:
 	_hud_target = HudTarget.new(_ui_builder)
 	_hud_target.name = "TargetWindow"
+	# The buff viewer reads the buff bar's skill index (one parse) and the
+	# zone's buffs by owner (round 638).
+	if _hud_buff_board != null:
+		_hud_target.buff_catalog = _hud_buff_board.catalog
+	_hud_target.buff_source = _target_buff_book.list_of
+	# CIFTargetWindow::vslot_012's per-frame lookup (round 638 review): a
+	# target that no longer exists hides the window, and the selection goes.
+	_hud_target.target_exists = _target_exists
+	_hud_target.target_lost.connect(func(owner_key: String) -> void:
+		_last_attack_target = -1
+		_selected_character = -1
+		print("World3D: target %s gone -- deselected" % owner_key))
 	if not _hud_target.setup():
 		# No archive: no window, no stand-in. Keep the node so callers are
 		# null-safe through the wrappers below.
@@ -5609,7 +5708,8 @@ func _show_target(monster_id: int) -> void:
 	if snap == null:
 		_hud_target.clear()
 		return
-	_hud_target.show_target(snap.monster_name, snap.level, snap.rarity, snap.hp, snap.max_hp)
+	_hud_target.show_target(snap.monster_name, snap.level, snap.rarity, snap.hp, snap.max_hp,
+		_fx_owner_key(monster_id, SkillNet.OWNER_MONSTER))
 
 func _set_target_hp(hp: int, max_hp: int) -> void:
 	if _hud_target != null:
@@ -7411,7 +7511,11 @@ func _on_skill_assign_requested(skill_id: int, basic_code: String, icon: Texture
 		if not _quickslot_skills.has(slot) and not _quickslot_items.has(slot):
 			_quickslot_skills[slot] = {"id": skill_id, "code": basic_code}
 			_hud_underbar.set_slot_item(slot, icon)
-			_log_system("Assigned skill to quickslot %s -- click it (or its key) to cast." % HudUnderbar.slot_label(slot))
+			# Retail writes no line when a slot is filled (CNIFUnderMenuBar's
+			# 0x60a000..0x60efff has no call to the system window's adds --
+			# round 639); the log file keeps it.
+			print("World3D: quickslot %d <- skill %d (%s)" % [slot, skill_id, basic_code])
+			_save_hotbar()
 			return
 	_log_system("Quickslots are full.")
 
@@ -7427,7 +7531,8 @@ func _on_skill_drop_requested(at: Vector2, skill_id: int, basic_code: String, ic
 	_quickslot_items.erase(slot)
 	_quickslot_skills[slot] = {"id": skill_id, "code": basic_code}
 	_hud_underbar.set_slot_item(slot, icon)
-	_log_system("Assigned skill to quickslot %s." % HudUnderbar.slot_label(slot))
+	print("World3D: quickslot %d <- skill %d (%s), dropped" % [slot, skill_id, basic_code])
+	_save_hotbar()
 
 ## Whether a skill may go on the hotbar: the server has to have said the
 ## character knows it.
@@ -7458,6 +7563,7 @@ func _on_quickslot_activated(slot_index: int) -> void:
 			("skill %d" % int(entry["id"])) if entry != null else ("item" if _quickslot_items.has(slot_index) else "empty"),
 			_last_attack_target])
 	if entry != null:
+		print("World3D: quickslot %d casts skill %d" % [slot_index, int(entry["id"])])
 		_cast_skill(int(entry["id"]), String(entry["code"]))
 		return
 	# A CONSUMABLE on the bar. The quickslots held skills only until now, so a
@@ -7466,6 +7572,7 @@ func _on_quickslot_activated(slot_index: int) -> void:
 	# 2026-09-20).
 	var item = _quickslot_items.get(slot_index)
 	if item != null and NetClient.current_character_name != "":
+		print("World3D: quickslot %d uses item %d at bag slot %d" % [slot_index, int(item["item"]), int(item["slot"])])
 		if _hud_panels != null:
 			UiSounds.expect_use(_hud_panels.bag_item_types(int(item["slot"])))
 		NetClient.use_item(NetClient.current_character_name, int(item["slot"]))
@@ -7485,8 +7592,8 @@ func _on_item_drop_requested(at: Vector2, item_id: int, inventory_slot: int, ico
 	_quickslot_skills.erase(slot)
 	_quickslot_items[slot] = {"item": item_id, "slot": inventory_slot}
 	_hud_underbar.set_slot_item(slot, icon)
-	_log_system("Put the item on quickslot %s." % HudUnderbar.slot_label(slot))
 	print("World3D: quickslot %d <- item %d from bag slot %d" % [slot, item_id, inventory_slot])
+	_save_hotbar()
 
 ## Keeps the bar's item slots pointing at the right bag slots, and clears any
 ## whose item is gone (spent, sold, moved). Called whenever the bag is redrawn.
@@ -7494,6 +7601,7 @@ func _resync_quickslot_items(slots: Array) -> void:
 	if _hud_underbar == null or _quickslot_items.is_empty():
 		return
 	var by_slot := {}
+	var changed := false
 	for entry in slots:
 		var sl: InventoryNet.Slot = entry
 		by_slot[sl.slot_index] = sl.item_id
@@ -7502,10 +7610,118 @@ func _resync_quickslot_items(slots: Array) -> void:
 		var bag := int(_quickslot_items[qs]["slot"])
 		var found := HudUnderbar.resolve_item_binding(want, bag, by_slot)
 		if found >= 0:
+			if found != bag:
+				changed = true
+				print("World3D: quickslot %d follows item %d from bag slot %d to %d" % [qs, want, bag, found])
 			_quickslot_items[qs]["slot"] = found
 		else:
 			_quickslot_items.erase(qs)
 			_hud_underbar.set_slot_item(qs, null)
+			changed = true
+			print("World3D: quickslot %d cleared: item %d is no longer in the bag" % [qs, want])
+	if changed:
+		_save_hotbar()
+
+## A skill was learned (NetClient.learn_skill_done): every bar slot holding
+## its previous level takes the new one, as retail's 0x60c230 does after
+## AddLearnedSkill (HotbarStore.rebind_for_skill), and the bar is saved.
+func _on_skill_learned_for_hotbar(skill_id: int, ok: bool) -> void:
+	if not ok or _hud_panels == null or _quickslot_skills.is_empty():
+		return
+	var levels := _hud_panels.skill_level_ids(skill_id)
+	var changed := HotbarStore.rebind_for_skill(_quickslot_skills, skill_id, true, levels)
+	_apply_skill_rebind(changed)
+
+## The withdrawal's half of the same rebind (0x880db0 -> 0x778840(id, 0)).
+## This server has no skill withdrawal, so nothing calls it yet (OPEN); it is
+## here, tested, for when one lands.
+func _on_skill_withdrawn_for_hotbar(skill_id: int) -> void:
+	if _hud_panels == null or _quickslot_skills.is_empty():
+		return
+	var levels := _hud_panels.skill_level_ids(skill_id)
+	_apply_skill_rebind(HotbarStore.rebind_for_skill(_quickslot_skills, skill_id, false, levels))
+
+func _apply_skill_rebind(changed: Array) -> void:
+	if changed.is_empty() or _hud_underbar == null:
+		return
+	for slot in changed:
+		if _quickslot_skills.has(slot):
+			var id := int(_quickslot_skills[slot]["id"])
+			var icon: Texture2D = null
+			var path := _hud_panels.skill_icon_path(id)
+			if path != "" and _ui_builder != null:
+				icon = _ui_builder.load_texture(path)
+			_hud_underbar.set_slot_item(int(slot), icon)
+			SkillEffects.preload_skill(id)
+		else:
+			_hud_underbar.clear_slot(int(slot))
+	print("World3D: hotbar rebind for a skill change: slots %s -> %s" % [str(changed), str(_quickslot_skills)])
+	_save_hotbar()
+
+## A bag move's answer (the whole bag): keep the bar's item slots on their
+## items (0x60c430's re-bind, called from the move and item results at
+## 0x87b613, 0x88bd53 and 0x88c20b).
+func _on_inventory_move_for_hotbar(slots: Array, error: String) -> void:
+	if error != "":
+		return
+	_inventory_slots.assign(slots)
+	_resync_quickslot_items(slots)
+
+## The quick-slot file's entry for this character on this server (round
+## 639, HotbarStore -- OURS: retail keeps the bar on the server, 0x7158).
+func _hotbar_key() -> String:
+	var server := "%s:%d" % [NetClient.server_host, NetClient.server_port]
+	return HotbarStore.key_for(server, NetClient.current_character_name)
+
+## Set while _restore_hotbar fills the bar, so the fill is not written back.
+var _hotbar_restoring := false
+
+## Writes the bar -- every skill and item slot on every page -- on each
+## change (a skill or item put on it, an item's bag slot followed or its
+## binding dropped).
+func _save_hotbar() -> void:
+	if _hotbar_restoring or NetClient.current_character_name == "":
+		return
+	var ok := HotbarStore.save(_hotbar_key(), _quickslot_skills, _quickslot_items)
+	print("World3D: hotbar saved (%d skills, %d items) for %s: %s" % [_quickslot_skills.size(),
+		_quickslot_items.size(), _hotbar_key(), "ok" if ok else "FAILED"])
+
+## Fills the bar from the file: skills with their icons from the skill
+## tables, items with theirs from the item table, bound to the bag slot they
+## were saved with and re-resolved against the bag when it is known (now, or
+## on its next list, _resync_quickslot_items).
+func _restore_hotbar() -> void:
+	if _hud_underbar == null or NetClient.current_character_name == "":
+		return
+	var bar := HotbarStore.load_bar(_hotbar_key())
+	var skills: Dictionary = bar["skills"]
+	var items: Dictionary = bar["items"]
+	_hotbar_restoring = true
+	for slot in skills:
+		var e: Dictionary = skills[slot]
+		_quickslot_items.erase(slot)
+		_quickslot_skills[slot] = {"id": int(e["id"]), "code": String(e["code"])}
+		var icon: Texture2D = null
+		if _hud_panels != null and _ui_builder != null:
+			var path := _hud_panels.skill_icon_path(int(e["id"]))
+			if path != "":
+				icon = _ui_builder.load_texture(path)
+		_hud_underbar.set_slot_item(int(slot), icon)
+		SkillEffects.preload_skill(int(e["id"]))
+	for slot in items:
+		var e: Dictionary = items[slot]
+		_quickslot_skills.erase(slot)
+		_quickslot_items[slot] = {"item": int(e["item"]), "slot": int(e["slot"])}
+		var icon: Texture2D = null
+		if _hud_panels != null and _ui_builder != null:
+			var path := _hud_panels.item_icon_path(int(e["item"]))
+			if path != "":
+				icon = _ui_builder.load_texture(path)
+		_hud_underbar.set_slot_item(int(slot), icon)
+	print("World3D: hotbar restored for %s: skills %s, items %s" % [_hotbar_key(), str(skills), str(items)])
+	if not _inventory_slots.is_empty():
+		_resync_quickslot_items(_inventory_slots)
+	_hotbar_restoring = false
 
 ## SRREVAMP_QA_LEARN's steps (see the hook in _qa_step): "<mastery>x<n>"
 ## raises that mastery n times, "<id>" learns that skill; each waits for its
@@ -7751,15 +7967,44 @@ func _select_self() -> void:
 	_last_attack_target = -1
 	_selected_character = own
 	if _hud_target != null:
-		_hud_target.show_player(NetClient.current_character_name)
+		_hud_target.show_player(NetClient.current_character_name,
+			_fx_owner_key(own, SkillNet.OWNER_CHARACTER), _race_of_gender(_player_gender))
 	print("World3D: selected this player (%d, %s)" % [own, NetClient.current_character_name])
 
 func _select_character(character_id: int, char_name: String) -> void:
 	_last_attack_target = -1
 	_selected_character = character_id
+	var race := -1
+	var body = _other_bodies.get(character_id)
+	if body != null and is_instance_valid(body) and (body as Node).has_meta("gender"):
+		race = _race_of_gender(String((body as Node).get_meta("gender")))
 	if _hud_target != null:
-		_hud_target.show_player(char_name)
-	print("World3D: selected player %d (%s)" % [character_id, char_name])
+		_hud_target.show_player(char_name, _fx_owner_key(character_id, SkillNet.OWNER_CHARACTER), race)
+	print("World3D: selected player %d (%s), race %d" % [character_id, char_name, race])
+
+## Whether a target window owner still exists (round 638 review, the
+## vslot_012 mirror): a monster with a body or a snapshot, another player
+## with a body, or this player (its own id, or -1 before OpSelfId).
+func _target_exists(owner_key: String) -> bool:
+	var parts := owner_key.split(":")
+	if parts.size() != 2 or not parts[1].is_valid_int():
+		return false
+	var id := int(parts[1])
+	if parts[0] == "monster":
+		return _monster_bodies.has(id) or _monster_snapshots.has(id)
+	if id == -1 or id == _own_id():
+		return true
+	return _other_bodies.has(id)
+
+## A character's race for the target window's emblem (round 638): the Country
+## (characterdata column 14) of the body its Gender draws -- srrevamp's Gender
+## stands in for the reference object retail reads +0x9c of (0x69b143). -1
+## when the table has no row for it: no emblem rather than a guessed one.
+func _race_of_gender(gender: String) -> int:
+	var code := String(GENDER_BODY_CODE.get(gender, ""))
+	if code == "" or not _country_by_code.has(code):
+		return -1
+	return int(_country_by_code[code])
 
 ## Where the server measures a player target from: the position it last sent
 ## for them (the body interpolates toward it).
@@ -7930,6 +8175,10 @@ func _on_skill_cast(sc: SkillNet.SkillCast) -> void:
 		if target != null and target != body:
 			var d := Vector2(target.global_position.x - body.global_position.x, target.global_position.z - body.global_position.z)
 			if not d.is_zero_approx() and sc.caster_kind == SkillNet.OWNER_CHARACTER:
+				# A snap that leaves any turn in progress running, as the skill
+				# action reader's bare FUN_009c4260 does (FUN_00a54be0, round
+				# 637's review follow-up). OURS: the angle is toward the target;
+				# retail's comes in the message.
 				body.rotation.y = atan2(d.x, d.y)
 		var clip := 0.0
 		if sc.caster_kind == SkillNet.OWNER_CHARACTER:
@@ -8367,8 +8616,9 @@ func _flush_position() -> void:
 	# it sits without one.
 	if _sit.sitting or _motion_locked():
 		return
-	NetClient.move_to(player.position.x, player.position.y, player.position.z)
+	NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
 	_last_sent_pos = player.position
+	_walked_since_send = 0.0
 	_time_since_send = 0.0
 
 ## Sends an attack request: a plain swing when skill_id is 0, else the cast --
@@ -9314,6 +9564,10 @@ func _update_blob_shadow() -> void:
 ##                          server-style leg (OpMonsterMoved, built and decoded
 ##                          here) from where it stands; with --server the list
 ##                          is asked for at half the leg (_qa_mob_move)
+##   SRREVAMP_QA_FACING_LOG=1  (round 637) every 50 ms, each other player's
+##                          and each walking monster's drawn position and the
+##                          way its model faces (_qa_facing_report), for
+##                          client/tools/facing_measure.py
 ##   SRREVAMP_QA_MOB_LOG=1  print each monster leg, its progress every 30
 ##                          frames, its arrival, each height resolve's navmesh
 ##                          and terrain-ray answers side by side (round 557),
@@ -10609,10 +10863,11 @@ func _qa_attack_nearest() -> void:
 		spot.y = _terrain_height_at(spot)
 		player.global_position = spot
 		player.velocity = Vector3.ZERO
-		NetClient.move_to(player.position.x, player.position.y, player.position.z)
+		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
 		# Recorded as sent, so _attack_monster's _flush_position does not send
 		# the same OpMove a second time.
 		_last_sent_pos = player.position
+		_walked_since_send = 0.0
 		_time_since_send = 0.0
 		nearest = target.global_position.distance_to(player.global_position)
 		print("QA ATTACK: moved next to monster %d at %.1f,%.1f,%.1f" % [nearest_id, spot.x, spot.y, spot.z])
@@ -12003,7 +12258,9 @@ func _physics_step(delta: float) -> void:
 			var dir := to_target.normalized()
 			player.velocity.x = dir.x * _move_speed
 			player.velocity.z = dir.z * _move_speed
-			player.rotation.y = atan2(dir.x, dir.z)
+			# Turned toward the walk at the client's rate (round 637's review
+			# follow-up), not snapped: _aim_local_player, _step_local_turn.
+			_aim_local_player(dir)
 	elif _qa_walk != "" and not _player_dead:
 		# SRREVAMP_QA_WALK: walk on a fixed world heading (its own path; no
 		# key moves the character since round 608), so a render shows the
@@ -12011,10 +12268,13 @@ func _physics_step(delta: float) -> void:
 		var ang := deg_to_rad(float(_qa_walk))
 		player.velocity.x = sin(ang) * _move_speed
 		player.velocity.z = cos(ang) * _move_speed
+		# QA only: faces the fixed heading at once, as before.
 		player.rotation.y = ang
+		_player_turn_target = NAN
 	else:
 		player.velocity.x = 0.0
 		player.velocity.z = 0.0
+	_step_local_turn(delta)
 
 	var is_moving := _has_move_target or (_qa_walk != "" and not _player_dead)
 	if is_moving and (_sit.sitting or (_player_sit_clip != null and _player_one_shot == _player_sit_clip)):
@@ -12029,13 +12289,16 @@ func _physics_step(delta: float) -> void:
 		# A teleport arrival still waiting for its region (round 576): held,
 		# neither walking nor falling, until _step_teleport_landing lands it.
 		_step_teleport_landing()
-	elif not _move_on_nav_graph(delta):
-		if not player.is_on_floor():
-			player.velocity.y -= GRAVITY * delta
-		else:
-			player.velocity.y = 0.0
-		_try_step_up(delta)
-		player.move_and_slide()
+	else:
+		var walk_from := player.position
+		if not _move_on_nav_graph(delta):
+			if not player.is_on_floor():
+				player.velocity.y -= GRAVITY * delta
+			else:
+				player.velocity.y = 0.0
+			_try_step_up(delta)
+			player.move_and_slide()
+		_walked_since_send += Vector2(player.position.x - walk_from.x, player.position.z - walk_from.z).length()
 
 	# CharacterBody3D.is_on_floor() was observed real, unreliable here (stays
 	# false indefinitely for a character resting motionless since spawn, a
@@ -12058,6 +12321,9 @@ func _physics_step(delta: float) -> void:
 		player.velocity = Vector3.ZERO
 		_has_move_target = false
 		_pending_attack = {}
+		# Put back, not walked back (round 637's review follow-up): others
+		# place the body there without turning it.
+		_relocated_pending = true
 
 	_recover_if_below_terrain()
 
@@ -12074,8 +12340,9 @@ func _physics_step(delta: float) -> void:
 	# do either. A real move clears the sit above (_leave_sit_by_moving) first.
 	if _time_since_send >= MIN_SEND_INTERVAL and player.position.distance_to(_last_sent_pos) >= MIN_SEND_DISTANCE \
 			and not _sit.sitting and not _motion_locked():
-		NetClient.move_to(player.position.x, player.position.y, player.position.z)
+		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
 		_last_sent_pos = player.position
+		_walked_since_send = 0.0
 		_time_since_send = 0.0
 
 	# Smooths every other real entity toward its latest known position
@@ -12096,6 +12363,9 @@ func _physics_step(delta: float) -> void:
 		# two on the last inch of the lerp.
 		_set_other_gait(character_id, body.position.distance_to(target) > OTHER_GAIT_THRESHOLD)
 		body.position = body.position.lerp(target, minf(OTHER_BODY_INTERPOLATION_SPEED * delta, 1.0))
+	_step_remote_turns(delta)
+	if _qa_facing_log:
+		_qa_facing_report()
 
 	if _real_skeleton != null and _real_skeleton_track.keyframes.size() > 1:
 		_real_skeleton_time += delta
@@ -12199,7 +12469,147 @@ func _physics_step(delta: float) -> void:
 					Skeleton3DBuilder.apply_ban_pose_at(_player_skeleton, anim, _player_anim_time, true)
 					_anim_sounds.advance(_player_skeleton, anim, 0.0, _loop_ms(anim, _player_anim_time), true)
 
-func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, gender: String = DEFAULT_GENDER) -> void:
+## Whether the OpMove about to go out is a relocation (round 637's review
+## follow-up), consumed by the send: one already known (_relocated_pending:
+## a placement, a recovery) or a displacement (x, z) from the last sent
+## position that the physics step's walk since then cannot account for
+## (_walked_since_send + RELOCATE_MARGIN) -- a QA or GM placement, the
+## unstuck landing. OURS: srrevamp's OpMove is a position stream, and this is
+## how its sender tells a placement from a step; the retail client sends a
+## destination and the server places objects with a message of its own.
+func _position_relocated() -> bool:
+	var moved := Vector2(player.position.x - _last_sent_pos.x, player.position.z - _last_sent_pos.z).length()
+	var relocated := _relocated_pending or moved > _walked_since_send + RELOCATE_MARGIN
+	_relocated_pending = false
+	return relocated
+
+## The player's own turn (round 637's review follow-up): the heading its walk
+## turns toward, NAN when no turn is in progress. READ: the player's click is
+## sent and its echo (0xB021 -> NetProcessInNavAndSkill::FUN_008a5750 ->
+## FUN_009e0550) turns the player's own mover at RemoteFacing's rate, exactly
+## as another player's; the one exception, FUN_009e04b0's snap, is
+## _player_turn_snap (RemoteFacing.click_rule).
+var _player_turn_target := NAN
+## The next aim snaps the heading and ends any turn (FUN_009e04b0 ->
+## FUN_009e0050), set by a click RemoteFacing.click_rule calls "snap".
+var _player_turn_snap := false
+## The player's movement order is in effect (the object's +0x714, mover +0xac,
+## READ): FUN_009e0550 / FUN_009e04b0 / FUN_009e08a0 set it; the stop or
+## position message (FUN_008a4f80 -> FUN_009e00f0), FUN_009e0150,
+## FUN_009e11e0 and FUN_009e0960 clear it, and arriving does NOT (FUN_009e0e60
+## clears +0x84 only). srrevamp has no stop message: it is set by an accepted
+## ground click and cleared by a new world entry or zone change (a new object)
+## and by the player's own skill move -- the last two mappings INFERRED.
+var _player_move_order := false
+
+## Aims the player's walk along `dir` (world): the target heading is the
+## direction's, as the echoed move aims it; a pending snap sets it at once.
+func _aim_local_player(dir: Vector3) -> void:
+	var current := RemoteFacing.heading_of_yaw(player.rotation.y, 0.0)
+	var target := RemoteFacing.heading_toward(current, dir)
+	if _player_turn_snap:
+		_player_turn_snap = false
+		player.rotation.y = RemoteFacing.yaw_of(target, 0.0)
+		_player_turn_target = NAN
+		return
+	_player_turn_target = target
+
+## One frame of the player's turn, walking or standing (FUN_009e0e60 runs the
+## turn for a mover that is not moving too, while +0x88 & 0x31).
+func _step_local_turn(delta: float) -> void:
+	if is_nan(_player_turn_target):
+		return
+	var r := RemoteFacing.turn(RemoteFacing.heading_of_yaw(player.rotation.y, 0.0), _player_turn_target, delta * 1000.0)
+	player.rotation.y = RemoteFacing.yaw_of(float(r["heading"]), 0.0)
+	if not bool(r["turning"]):
+		_player_turn_target = NAN
+
+## SRREVAMP_QA_FACING_LOG=1 (round 637): every 50 ms, one line for this
+## player ("self", from its review follow-up), one per other player's body
+## and per monster on a leg, with where it is drawn and the way
+## its MODEL faces, read off the drawn skeleton's global basis (the player
+## body's front is its skeleton's -Z, MEASURED in round 533; a monster's is
+## MonsterMotion.FRONT_BY_MODEL's). client/tools/facing_measure.py turns
+## consecutive lines into movement-versus-facing angles. Measurement only.
+var _qa_facing_log := OS.get_environment("SRREVAMP_QA_FACING_LOG") != ""
+var _qa_facing_log_ms := 0
+
+func _qa_facing_report() -> void:
+	var now := Time.get_ticks_msec()
+	if now - _qa_facing_log_ms < 50:
+		return
+	_qa_facing_log_ms = now
+	# This player too (round 637's review follow-up): its own turn, read off
+	# its drawn skeleton the same way.
+	if _player_skeleton != null and is_instance_valid(_player_skeleton):
+		var own := _player_skeleton.global_basis * Vector3(0, 0, -1)
+		print("QA FACING self 0 ms=%d pos=(%.3f,%.3f) front=(%.4f,%.4f)" % [
+			now, player.global_position.x, player.global_position.z, own.x, own.z])
+	for id in _other_bodies:
+		var body: Node3D = _other_bodies[id]
+		if not is_instance_valid(body):
+			continue
+		var gait: Dictionary = _other_gaits.get(id, {})
+		var skel = gait.get("skeleton")
+		var front := Vector3.ZERO
+		if skel != null and is_instance_valid(skel):
+			front = (skel as Node3D).global_basis * Vector3(0, 0, -1)
+		print("QA FACING player %d ms=%d pos=(%.3f,%.3f) front=(%.4f,%.4f)" % [
+			id, now, body.global_position.x, body.global_position.z, front.x, front.z])
+	for id in _monster_motion:
+		var mbody = _monster_bodies.get(id)
+		if mbody == null or not is_instance_valid(mbody):
+			continue
+		var fr := MonsterMotion.front_of(String((mbody as Node3D).get_meta("model", "")))
+		if fr != "-Z":
+			continue
+		var asm: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(id)
+		var node: Node3D = asm.skeleton if asm != null and asm.skeleton != null else mbody
+		var mf := node.global_basis * Vector3(0, 0, -1)
+		print("QA FACING monster %d ms=%d pos=(%.3f,%.3f) front=(%.4f,%.4f)" % [
+			id, now, (mbody as Node3D).global_position.x, (mbody as Node3D).global_position.z, mf.x, mf.z])
+
+## Turns in progress on other players' and monsters' bodies (round 637):
+## body instance id -> {"target": the client's heading it turns to, "front":
+## the yaw of the body's front from its node's +Z}. RemoteFacing has the rule.
+var _remote_turns := {}
+
+## Aims a drawn body along `dir` (world) the way the client's mover does
+## (FUN_009e0550 -> FUN_009e02f0(heading, 0)): the target heading is set and
+## the turn starts; _step_remote_turns moves the facing each frame. A vector
+## too short to have a heading keeps the current one (FUN_009ed130).
+func _aim_remote_body(body: Node3D, dir: Vector3, front_yaw: float) -> void:
+	if body == null or not is_instance_valid(body):
+		return
+	var current := RemoteFacing.heading_of_yaw(body.rotation.y, front_yaw)
+	var target := RemoteFacing.heading_toward(current, dir)
+	_remote_turns[body.get_instance_id()] = {"target": target, "front": front_yaw}
+
+## One frame of every turn in progress: FUN_009e02f0 with the frame's time
+## (the mover's tick, FUN_009e0e60 -> FUN_009e0c10). A turn that reaches its
+## target ends there; a body that has gone is dropped.
+func _step_remote_turns(delta: float) -> void:
+	if _remote_turns.is_empty():
+		return
+	for id in _remote_turns.keys():
+		var body := instance_from_id(id) as Node3D
+		if body == null or not is_instance_valid(body):
+			_remote_turns.erase(id)
+			continue
+		var turn: Dictionary = _remote_turns[id]
+		var front := float(turn["front"])
+		var r := RemoteFacing.turn(RemoteFacing.heading_of_yaw(body.rotation.y, front), float(turn["target"]), delta * 1000.0)
+		body.rotation.y = RemoteFacing.yaw_of(float(r["heading"]), front)
+		if not bool(r["turning"]):
+			_remote_turns.erase(id)
+
+## `heading` (round 637's review follow-up) is OpEntityEntered's: the body is
+## placed facing it -- FUN_009d17e0 stores the spawn's angle with a bare
+## FUN_009c4260, no turn -- and a turn left from before ends (a spawn is a new
+## object, whose mover starts with none: 0x9e0cd0 zeroes +0xa4). NAN (a list,
+## an older server) leaves the facing as it is. A snapshot is a placement, not
+## a walk, so it never aims the body.
+func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, gender: String = DEFAULT_GENDER, heading: float = NAN) -> void:
 	if not equipped.is_empty():
 		_other_equipped[character_id] = equipped
 	if _other_bodies.has(character_id):
@@ -12207,10 +12617,16 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		# _other_body_targets' own doc comment for why this replaced a
 		# direct position snap.
 		_other_body_targets[character_id] = pos
+		if not is_nan(heading):
+			var drawn: Node3D = _other_bodies[character_id]
+			drawn.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
+			_remote_turns.erase(drawn.get_instance_id())
 		return
 
 	var body := Node3D.new()
 	body.position = pos
+	if not is_nan(heading):
+		body.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
 
 	# The same body and the same dressing as the local player: their
 	# Gender and every worn item's id come in the snapshot (see genderOf
@@ -12261,6 +12677,8 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	# A click body on its own layer (round 622), so the player can be selected.
 	body.set_meta("character_id", character_id)
 	body.set_meta("character_name", char_name)
+	# Its Gender, for the target window's race emblem (round 638).
+	body.set_meta("gender", gender)
 	body.add_child(_other_player_collider(top))
 
 	other_entities.add_child(body)
@@ -12268,12 +12686,30 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	_other_body_targets[character_id] = pos
 
 func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
-	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.equipped, snapshot.gender)
+	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.equipped, snapshot.gender, snapshot.heading)
 	_log_system("%s entered the zone." % snapshot.char_name)
 
+## Another player's position (OpEntityMoved): their body's new walk target,
+## and (round 637) the heading toward it, which the body turns to at the
+## client's own rate (RemoteFacing; _step_remote_turns). srrevamp streams
+## positions, not retail's destinations (0xB021), so each position is the
+## destination the client's mover would aim at from where the body is drawn
+## (FUN_009e0550 aims from the object's own position, +0x74). Nothing turns
+## the body once the positions stop, so it keeps its last heading.
+##
+## A relocation (moved.relocated, round 637's review follow-up: a teleport,
+## a recovery, a placement) puts the body there and turns nothing, as the
+## client places an object at a message's source position (FUN_009e11e0)
+## without aiming it; a turn already in progress goes on.
 func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 	if _other_bodies.has(moved.character_id):
-		_other_body_targets[moved.character_id] = Vector3(moved.x, moved.y, moved.z)
+		var to := Vector3(moved.x, moved.y, moved.z)
+		_other_body_targets[moved.character_id] = to
+		var body: Node3D = _other_bodies[moved.character_id]
+		if moved.relocated:
+			body.position = to
+			return
+		_aim_remote_body(body, to - body.position, 0.0)
 
 func _on_entity_left(character_id: int) -> void:
 	if character_id == _selected_character:
@@ -12284,6 +12720,7 @@ func _on_entity_left(character_id: int) -> void:
 		_drop_pending_attack()
 	_other_gaits.erase(character_id)
 	SkillEffects.detach_owner(_fx_owner_key(character_id, 0))
+	_target_buff_book.drop(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER))
 	_fx_owner_buffs.erase(_fx_owner_key(character_id, 0))
 	_other_seated.erase(character_id)
 	# A monster's blow on this player may cross the notice (round 546,
@@ -12402,6 +12839,10 @@ func _place_at_region_local(region_x: int, region_y: int, local_x: float, local_
 		Vector3(local_x, graph.landing_height_at(local_x, local_z), local_z))
 	player.velocity = Vector3.ZERO
 	_last_sent_pos = player.position
+	_walked_since_send = 0.0
+	# The server still has the old position: the next OpMove is a relocation
+	# (round 637's review follow-up).
+	_relocated_pending = true
 	return true
 
 ## A gate teleport's receipt (round 576, TeleportNet): on success the server's
@@ -12480,6 +12921,7 @@ func _land_teleport_arrival(x: float, z: float) -> bool:
 	player.global_position = group.to_global(Vector3(local.x, graph.landing_height_at(local.x, local.z), local.z))
 	player.velocity = Vector3.ZERO
 	_last_sent_pos = player.position
+	_walked_since_send = 0.0
 	_refresh_zone_label_position()
 	print("World3D: teleport arrival in %s at local (%.1f, %.1f), height %.2f -- the destination gate's point, on the walkable graph" % [
 		group.name, local.x, local.z, player.global_position.y])
@@ -12587,8 +13029,18 @@ func _on_global_chat_requested(slot: int, count: int) -> void:
 		_hud_whole_chat.refused.connect(_log_system)
 	_hud_whole_chat.open_for(slot, count)
 
-func _log_system(text: String) -> void:
-	if _hud_chat != null:
+## A system line (round 639): to the system message window, as retail's
+## 0x7781b0(type, text) writes its own -- `type` is the window's filter type
+## (HudSystemMessage.TYPE_*; 0 always shows). Every line this client writes
+## here is either retail's own message for the same event (the pickup, EXP and
+## party lines, refusals) or srrevamp's own (the help hints, the dev tools,
+## the quickslot and zone lines; docs/protocol/system_message.md lists them).
+## Before the window exists (and on a bare World3D) the chat's All list
+## takes it, as before.
+func _log_system(text: String, type: int = HudSystemMessage.TYPE_ALWAYS) -> void:
+	if _hud_syslog != null:
+		_hud_syslog.add_message(type, text)
+	elif _hud_chat != null:
 		_hud_chat.add_message("", "* " + text)
 	# Null on a bare World3D (the headless suites drive one with no scene).
 	if chat_log != null:
@@ -12908,7 +13360,9 @@ func _place_player_at_world(x: float, z: float) -> void:
 	player.global_position = spot
 	player.velocity = Vector3.ZERO
 	_last_sent_pos = player.position
-	NetClient.move_to(player.position.x, player.position.y, player.position.z)
+	_walked_since_send = 0.0
+	_relocated_pending = false
+	NetClient.move_to(player.position.x, player.position.y, player.position.z, true)
 
 ## The developer chrome that has no authored equivalent yet: the zone travel
 ## box, Log Out, and the Hide UI button. Shown with Ctrl+F1 (KeyMap, run by
@@ -13505,13 +13959,25 @@ func _try_set_move_target(screen_pos: Vector2) -> void:
 	var point = _ground_point_at(screen_pos)
 	if point == null:
 		return
-	_move_target = point
-	_has_move_target = true
-	# A walk somewhere else supersedes an attack that was walking into reach,
-	# and a friendly cast walking to its player (round 622's review).
+	# A click on the ground supersedes an attack that was walking into reach,
+	# and a friendly cast walking to its player (round 622's review) -- even
+	# one the filter below does not send (OURS: where retail drops a pending
+	# action on a click is not read).
 	_pending_attack = {}
 	_released_attack = {}
 	_pending_friend_cast = {}
+	# The client's own click filter (FUN_009eb2a0, round 637's review
+	# follow-up; RemoteFacing.click_rule): with no movement order in effect a
+	# click under 5 units away is not sent -- nothing moves; a far click
+	# within 5 degrees of a far order snaps the heading instead of turning.
+	match RemoteFacing.click_rule(_player_move_order, (point as Vector3) - player.position, _move_target - player.position):
+		"ignore":
+			return
+		"snap":
+			_player_turn_snap = true
+	_player_move_order = true
+	_move_target = point
+	_has_move_target = true
 
 ## The point on the ground or a placed object under a screen point, or null:
 ## the click-to-move ray, shared with the ground-pick cast (round 617).
@@ -13585,6 +14051,7 @@ func _unstuck_player() -> void:
 		var zone: String = NetClient.current_zone if NetClient.current_zone != "" else result.zone
 		if _place_at_zone_landing(zone):
 			_last_sent_pos = sent
+			_walked_since_send = 0.0
 			_log_system("Unstuck: returned to the zone's landing spot.")
 			return
 	player.position = Vector3(result.x, result.y, result.z)
@@ -14052,8 +14519,9 @@ func _on_ground_item_spawned(snap: GroundItemsNet.Snapshot) -> void:
 		player.velocity = Vector3.ZERO
 		# Tell the server where we now stand and let that packet land before the
 		# pick, so its range check sees us on the item, not where we were.
-		NetClient.move_to(player.position.x, player.position.y, player.position.z)
+		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
 		_last_sent_pos = player.position
+		_walked_since_send = 0.0
 		print("QA PICKUP: standing at %.1f,%.1f,%.1f next to ground item %d; picking shortly" % [
 			player.global_position.x, player.global_position.y, player.global_position.z, snap.id])
 		# A moment on the ground (frames show the drop lying there), then pick.
@@ -14061,7 +14529,7 @@ func _on_ground_item_spawned(snap: GroundItemsNet.Snapshot) -> void:
 		# nothing teleports us away in between.
 		await get_tree().create_timer(1.2).timeout
 		if _ground_items != null and _ground_items.has(snap.id):
-			NetClient.move_to(player.position.x, player.position.y, player.position.z)
+			NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
 			await get_tree().create_timer(0.2).timeout
 			NetClient.pick_up(NetClient.current_character_name, snap.id)
 
@@ -14092,14 +14560,19 @@ func _on_pick_up_result(result: GroundItemsNet.PickUpResult) -> void:
 			if result.gold:
 				what = "%d gold" % result.quantity
 				print("World3D: picked up %s (ground item %d, item %d)" % [what, result.ground_id, result.item_id])
-				# No self-gold acquire key was found in the UI text table
-				# (UIIT_MSG_PARTYGET_GOLD is the party share), so this line is ours.
-				_log_system("Picked up %s." % what)
+				# Retail's own line (round 639, READ): the ground-item handler
+				# 0x87ba20 writes UIIT_MSG_STATE_GAIN_GOLD ("[%d]gold gained.")
+				# for the gold kind (0xfe) through 0x778210 with type 1, the
+				# GAIN filter (0x87bef4..0x87bf20).
+				var gold_t := _ui_text_table.get_text("UIIT_MSG_STATE_GAIN_GOLD", "") if _ui_text_table != null else ""
+				_log_system(gold_t.replace("%d", str(result.quantity)) if gold_t.contains("%d") else "Picked up %s." % what,
+					HudSystemMessage.TYPE_GAIN)
 			else:
 				var label := _item_label_for_line(result.item_id)
 				what = ("%dx %s" % [result.quantity, label]) if label != "" else ("%dx" % result.quantity)
 				print("World3D: picked up %s (ground item %d, item %d)" % [what, result.ground_id, result.item_id])
-				_log_system(_acquired_item_line(label, result.quantity))
+				# 0x87ba20's item lines are type 1 too (0x87bec4..0x87becf).
+				_log_system(_acquired_item_line(label, result.quantity), HudSystemMessage.TYPE_GAIN)
 			if NetClient.is_connected_to_server():
 				if result.gold:
 					NetClient.character_stats(NetClient.current_character_name)
@@ -14328,14 +14801,28 @@ func _apply_monster_leg(moved: CombatNet.MonsterMoved) -> void:
 	_set_monster_gait(moved.monster_id, MonsterMotion.state_gait(state))
 	var front := MonsterMotion.front_of(String(body.get_meta("model", "")))
 	if MonsterMotion.turns_to_face(state) and front != "":
-		body.rotation.y = MonsterMotion.facing_yaw(state["dest"] - pos, front)
+		# Turned toward the destination at the client's rate (round 637), not
+		# snapped: the same mover as another player's (_aim_remote_body).
+		var to_dest: Vector2 = state["dest"] - pos
+		_aim_remote_body(body, Vector3(to_dest.x, 0.0, to_dest.y), MonsterMotion.front_yaw(front))
+	elif bool(state["stop"]) and _remote_turns.has(body.get_instance_id()):
+		# A stop: the client's stop message snaps the heading to the server's
+		# angle and ends the turn (FUN_008a4f80 -> FUN_009e00f0 ->
+		# FUN_009e0050, round 637's review follow-up). srrevamp's stop carries
+		# no angle; the turn's own target stands in for it (INFERRED: the
+		# server's heading is its last leg's).
+		var stopping: Dictionary = _remote_turns[body.get_instance_id()]
+		body.rotation.y = RemoteFacing.yaw_of(float(stopping["target"]), float(stopping["front"]))
+		_remote_turns.erase(body.get_instance_id())
 	if _mob_logging():
 		var kind := "stop"
 		if MonsterMotion.turns_to_face(state):
 			kind = "run" if int(state["mode"]) == MonsterMotion.MODE_RUN else "walk"
-		print("World3D: monster %d %s from (%.1f,%.1f) to (%.1f,%.1f) at %.1f/s yaw %.2f%s" % [
+		var turn = _remote_turns.get(body.get_instance_id())
+		print("World3D: monster %d %s from (%.1f,%.1f) to (%.1f,%.1f) at %.1f/s yaw %.2f%s%s" % [
 			moved.monster_id, kind, pos.x, pos.y, moved.dest_x, moved.dest_z, float(state["speed"]),
-			body.rotation.y, "" if front != "" else " (facing unmeasured)"])
+			body.rotation.y, "" if turn == null else " turning to %.2f" % RemoteFacing.yaw_of(float(turn["target"]), float(turn["front"])),
+			"" if front != "" else " (facing unmeasured)"])
 
 ## Plays a gait on a monster's body: its own idle for 0 (stand), its walk or
 ## run clip otherwise. A model with no such clip keeps the loop it has.
@@ -14924,7 +15411,7 @@ func _hold_player_one_shot(die: BanReader.ParsedAnimation) -> void:
 		_player_one_shot_hold = true
 
 ## This player has been left dead: every walk and attack under way ends, the
-## input locks (_player_dead), the death line goes to chat and the HUD shows
+## input locks (_player_dead), the death line goes to the system window and the HUD shows
 ## the Revive button. The pose itself is played when the killing blow lands
 ## (_play_player_struck), on the counter's own timing. Idempotent: a push that
 ## repeats a result's kill (MonsterStrikes.CLAIM_HELD) reaches here twice.
@@ -14933,6 +15420,8 @@ func _enter_dead_state(exp_lost: int) -> void:
 		return
 	_player_dead = true
 	_sit.reset()
+	# The body stops turning where it fell (round 637's review follow-up; OURS).
+	_player_turn_target = NAN
 	# Retail's death (0x30BF kind 0 value 2 -> FUN_0077b000) runs FUN_007b5300:
 	# the berserk display fades out (round 629's review).
 	if _hud_player_info != null:
@@ -14949,7 +15438,15 @@ func _enter_dead_state(exp_lost: int) -> void:
 	_qa_dead_tick = _qa_tick
 	_qa_revive_sent = false
 	var line := _death_line(exp_lost)
-	_log_system(line)
+	# The system window gets retail's own line for the loss (round 639's
+	# review): Client_ApplyExpAndLevelUp writes UIIT_MSG_STATE_LOSE_EXP
+	# ("[%I64d]Experience Points lost.") with type 1 when the EXP goes down
+	# (0x8a9b76..0x8a9baa). No other death line was found among the system
+	# window's callers; the revive prompt keeps ours.
+	var loss := exp_loss_line(exp_lost, _ui_text_table.get_text("UIIT_MSG_STATE_LOSE_EXP", "") if _ui_text_table != null else "")
+	if loss != "":
+		_log_system(loss, HudSystemMessage.TYPE_GAIN)
+	print("World3D: %s" % line)
 	if _hud_panels != null:
 		_hud_panels.player_dead = true # the bag's right-click use (round 550)
 		_hud_panels.show_revive_prompt(line)
@@ -15078,6 +15575,9 @@ func _face_monster_toward(monster_id: int, at: Vector2) -> void:
 	var dir := at - Vector2((body as Node3D).position.x, (body as Node3D).position.z)
 	if front == "" or dir.is_zero_approx():
 		return
+	# A bare snap: a turn in progress goes on (INFERRED: a monster's strike is
+	# retail's skill action, whose reader FUN_00a54be0 snaps with a bare
+	# FUN_009c4260; round 637's review follow-up).
 	(body as Node3D).rotation.y = MonsterMotion.facing_yaw(dir, front)
 
 ## Another player's hit reaction: the TYPE_HIT clip of their own body's
@@ -15516,8 +16016,9 @@ func _request_sit_toggle() -> String:
 	# The stop is sent before the request, so the server does not take a
 	# later position update for a move made in its transition.
 	if player.position != _last_sent_pos:
-		NetClient.move_to(player.position.x, player.position.y, player.position.z)
+		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
 		_last_sent_pos = player.position
+		_walked_since_send = 0.0
 		_time_since_send = 0.0
 	_sit.press(_player_anim_time)
 	print("SIT: N pressed -- sending 0x704f [04] (sitting=%s)" % str(was_sitting))
@@ -15790,8 +16291,8 @@ func _key_whisper_reply() -> String:
 	return "chat line opened with '%s'" % line
 
 ## F9: the next camera view (KeyMap.next_camera_view), announced with the
-## client's own line for it (0x780420 shows it through 0x7781b0(0, text);
-## that this is the chat's system line is inferred).
+## client's own line for it (0x780420 shows it through 0x7781b0(0, text),
+## the system message window's add -- READ in round 639).
 func _key_cycle_camera() -> String:
 	var current := maxi(CAMERA_VIEWS.find(_camera_view), 0)
 	var next := KeyMap.next_camera_view(current)
@@ -15847,6 +16348,7 @@ func _on_buff_started(start: SkillNet.BuffStart) -> void:
 	if mine:
 		_apply_buff_run_speed(start.run_speed, "OpBuffStart skill %d token %d" % [start.skill_id, start.token])
 		_refresh_stat_panel("own buff started")
+	_target_buff_book.start(_fx_owner_key(start.owner_id, start.owner_kind), start.token, start.skill_id)
 	_fx_on_buff_started(start)
 
 ## Buffs ended (OpBuffEnd, round 617): this player's run speed, as for a start.
@@ -15857,12 +16359,18 @@ func _on_buff_ended(ended: SkillNet.BuffEnd) -> void:
 	if mine:
 		_apply_buff_run_speed(ended.run_speed, "OpBuffEnd tokens %s" % str(ended.tokens))
 		_refresh_stat_panel("own buff ended")
+	_target_buff_book.end(_fx_owner_key(ended.owner_id, ended.owner_kind), ended.tokens)
 	_fx_on_buff_ended(ended)
 
 ## OpSelfId arrived (round 617's review): this player's own id, for the buff
 ## and move handlers and the sit state alike.
 func _on_self_id_received(_character_id: int) -> void:
 	_sync_own_id()
+	# This player selected before its id came (round 638 review): the target
+	# window's owner "character:-1" becomes the real id's key.
+	if _hud_target != null and _hud_target.buff_owner() == _fx_owner_key(-1, SkillNet.OWNER_CHARACTER) and _own_id() >= 0:
+		_hud_target.set_buff_owner(_fx_owner_key(_own_id(), SkillNet.OWNER_CHARACTER))
+		_selected_character = _own_id()
 
 ## Brings the two holders of this player's own id into line with the best
 ## source: OpSelfId (NetClient.own_character_id) when the server sent it --
@@ -15912,6 +16420,9 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 	# (round 616-620 integration; skills_spec §1.5 -- Ghost Walk's rows are a
 	# READY with no effect and the WAIT loop lightning_bobeop_move_a.efp).
 	_fx_self_cast_acts(moved.skill_id, "OpSkillMove", true)
+	# The skill's move ends the movement order (_player_move_order; INFERRED
+	# from the skill paths' FUN_009e0150).
+	_player_move_order = false
 	var from := player.position
 	_drop_pending_attack()
 	_has_move_target = false
@@ -15922,6 +16433,7 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 	player.position = to
 	# The server already has the player there; do not send it back.
 	_last_sent_pos = to
+	_walked_since_send = 0.0
 	_time_since_send = 0.0
 	print("SKILL move handled: this player snapped (duration OPEN) from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f), %.1f units, by skill %d, footing %s" % [
 		from.x, from.y, from.z, to.x, to.y, to.z, from.distance_to(to), moved.skill_id, footing])
@@ -16026,8 +16538,9 @@ func _leave_sit_by_moving() -> void:
 		# tap too short for the ordinary send gate must still reach it, or the
 		# server keeps her seated while this client draws her standing (round
 		# 607's review).
-		NetClient.move_to(player.position.x, player.position.y, player.position.z)
+		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
 		_last_sent_pos = player.position
+		_walked_since_send = 0.0
 		_time_since_send = 0.0
 	if not _player_one_shot_hold and _player_sit_clip != null and _player_one_shot == _player_sit_clip:
 		_player_one_shot = null
@@ -16042,7 +16555,9 @@ func _leave_sit_by_moving() -> void:
 ## drawn seated takes the sitting loop without the sit-down clip.
 func _spawn_result_others(others: Array, seated: Array) -> void:
 	for other in others:
-		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped, other.gender)
+		# Each faces its heading from the list's tail (round 637's review
+		# follow-up; NAN from an older server).
+		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped, other.gender, other.heading)
 	for id in seated:
 		if not _other_bodies.has(int(id)):
 			continue
@@ -16121,7 +16636,10 @@ func _face_monster_heading(monster_id: int, heading: float) -> void:
 	var front := MonsterMotion.front_of(String((body as Node3D).get_meta("model", "")))
 	if front == "":
 		return
+	# A spawn is a new object: its mover has no turn (0x9e0cd0 zeroes +0xa4),
+	# and FUN_009d17e0 stores the angle with a bare FUN_009c4260.
 	(body as Node3D).rotation.y = MonsterMotion.facing_yaw(MonsterMotion.heading_dir(heading), front)
+	_remote_turns.erase((body as Node3D).get_instance_id())
 
 func _on_monster_damaged(damaged: CombatNet.MonsterDamaged) -> void:
 	# Someone else's hit on a monster: play its reaction now. The local
@@ -16170,12 +16688,17 @@ func _begin_monster_death(monster_id: int) -> void:
 	if monster_id == _last_attack_target:
 		_clear_target()
 		_last_attack_target = -1
+	_target_buff_book.drop(_fx_owner_key(monster_id, SkillNet.OWNER_MONSTER))
 	# A kill of the monster this player was walking to: no attack to send,
 	# and no reason to keep walking.
 	if not _pending_attack.is_empty() and int(_pending_attack["monster"]) == monster_id:
 		_drop_pending_attack()
 	# A dead monster walks no further; its die clip replaces the gait below.
 	_monster_motion.erase(monster_id)
+	# Nor turns (round 637's review follow-up; OURS).
+	var dying_body = _monster_bodies.get(monster_id)
+	if dying_body != null and is_instance_valid(dying_body):
+		_remote_turns.erase((dying_body as Node3D).get_instance_id())
 	# Nor strikes again: a counter still waiting for its blow to land keeps
 	# its own wait (the timer holds it), and nothing newer will come.
 	_strike_waits.erase(monster_id)
@@ -16201,15 +16724,16 @@ func _begin_monster_death(monster_id: int) -> void:
 ## handler does not need to push it anywhere -- it is here so the signal's
 ## full payload is on record at the call site.
 func _on_level_up(new_level: int, _stat_points: int) -> void:
-	var msg := "You have advanced to level %d." % new_level
-	if _ui_text_table != null:
-		# The real string is UIIT_MSG_STRGERR_LEVEL "You have advanced to
-		# level [%d]." -- recovered from textuisystem.txt. Substitute the
-		# level into its own placeholder rather than hardcoding the English.
-		var template := _ui_text_table.get_text("UIIT_MSG_STRGERR_LEVEL", "")
-		if template != "":
-			msg = template.replace("[%d]", str(new_level))
-	_log_system(msg)
+	var msg := level_up_line(new_level, _ui_text_table.get_text("UIIT_MSG_STRGERR_LEVEL", "") if _ui_text_table != null else "")
+	# Round 639: retail's Client_ApplyExpAndLevelUp formats this with swprintf
+	# (0x8a9bd3, 0x80 wide chars) and hands it to GDR_WARNING_WND, interface
+	# child 0x23 (0x8a9c26 -> 0x77b580 -> CIFNotify 0x7b3eb0) -- not to the
+	# system window. Logged for the tester's file all the same.
+	print("SYSLOG warning: %s" % msg)
+	if _hud_warning != null:
+		_hud_warning.show_notice(msg)
+	else:
+		_log_system(msg)
 	# 0x3054's handler 0x8a7020: snd_levup, 2-D (read; UiSounds.level_up).
 	UiSounds.level_up("level up to %d" % new_level)
 	_play_level_up_effect()
@@ -16338,6 +16862,46 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 		# and 19). The bar's real fill is progress toward the next skill
 		# point, which the server does not send yet.
 		_hud_underbar.set_sp(stats.skill_points)
+
+## The EXP-loss line (UIIT_MSG_STATE_LOSE_EXP, "[%I64d]Experience Points
+## lost."), or "" when nothing was lost.
+static func exp_loss_line(exp_lost: int, template: String) -> String:
+	if exp_lost <= 0:
+		return ""
+	return _printf_one(template if template != "" else "[%I64d]Experience Points lost.",
+		["%I64d", "%lld", "%d"], exp_lost)
+
+## The level-up line: UIIT_MSG_STRGERR_LEVEL ("You have advanced to level
+## [%d].") through swprintf, as 0x8a9bd3 formats it -- so the brackets stay
+## ("level [5]."). Until round 639 this replaced "[%d]" whole and dropped them.
+static func level_up_line(new_level: int, template: String) -> String:
+	if template == "" or not template.contains("%d"):
+		return "You have advanced to level [%d]." % new_level
+	return template.replace("%d", str(new_level))
+
+## The lines a kill's experience writes to the system window, as
+## Client_ApplyExpAndLevelUp (0x8a97c0) writes them: UIIT_MSG_STATE_GAIN_EXP
+## ("[%I64d]Experience Points gained.") when the experience is above 0
+## (0x8a9a45..0x8a9a76) and UIIT_MSG_STATE_GET_SKILL_EXP ("[%u]skill
+## experience point gained.") when the skill experience is (0x8a9cc3..
+## 0x8a9cfa), both with type 1 (the GAIN filter). An empty template (no
+## archive) falls back to that English.
+static func exp_gain_lines(exp_gained: int, skill_exp_gained: int, exp_template: String,
+		skill_template: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	if exp_gained > 0:
+		out.append(_printf_one(exp_template if exp_template != "" else "[%I64d]Experience Points gained.",
+			["%I64d", "%lld", "%d"], exp_gained))
+	if skill_exp_gained > 0:
+		out.append(_printf_one(skill_template if skill_template != "" else "[%u]skill experience point gained.",
+			["%u", "%d"], skill_exp_gained))
+	return out
+
+static func _printf_one(template: String, specs: Array, value: int) -> String:
+	for spec in specs:
+		if template.contains(String(spec)):
+			return template.replace(String(spec), str(value))
+	return template
 
 ## Spawns the real level-up burst on the player, sized to the player's own
 ## rendered height. Does nothing (beyond the message already logged) when the
@@ -16517,7 +17081,7 @@ func _on_loot_dropped(dropped: CombatNet.LootDropped) -> void:
 	if dropped == null:
 		return
 	for d in dropped.drops:
-		_log_system(_acquired_item_line(_item_label_for_line(d.item_id), d.quantity))
+		_log_system(_acquired_item_line(_item_label_for_line(d.item_id), d.quantity), HudSystemMessage.TYPE_GAIN)
 	NetClient.list_inventory(NetClient.current_character_name)
 
 # --- Inventory tab ---------------------------------------------------------
@@ -16706,6 +17270,11 @@ func _on_party_result(result: PartyNet.Result) -> void:
 		party_status_label.text = "Error: %s" % result.error
 		return
 	_chat_in_party = result.party_id != 0
+	_party_names.clear()
+	for m in result.members:
+		var pm: PartyNet.Member = m
+		if pm != null:
+			_party_names[pm.character_id] = pm.member_name
 	if result.party_id == 0:
 		party_status_label.text = "Not in a party."
 		party_list.clear()
@@ -16739,11 +17308,28 @@ func _on_party_leave_result(ok: bool, reason: String) -> void:
 func _on_party_member_joined(member: PartyNet.MemberJoined) -> void:
 	if member == null:
 		return
-	_log_system("%s joined your party." % member.member_name)
+	_party_names[member.character_id] = member.member_name
+	# UI_PARTY 0x886b10 writes UIIT_MSG_PARTY_JOIN ("[%s]joined the party.")
+	# with type 4, the PARTY filter (round 639, READ).
+	var join_t := _ui_text_table.get_text("UIIT_MSG_PARTY_JOIN", "") if _ui_text_table != null else ""
+	_log_system(join_t.replace("%s", member.member_name) if join_t.contains("%s") else "%s joined your party." % member.member_name,
+		HudSystemMessage.TYPE_PARTY)
 	NetClient.party_info(NetClient.current_character_name)
 
 func _on_party_member_left(character_id: int) -> void:
-	_log_system("A party member left (character #%d)." % character_id)
+	# UI_PARTY 0x886b10 writes UIIT_MSG_PARTY_SECEDE ("[%s] has left the
+	# party.") with type 4. The push carries only the id; the name comes from
+	# the party list this client keeps (round 639's review). An unknown id
+	# keeps our own line.
+	var left_name := String(_party_names.get(character_id, ""))
+	_party_names.erase(character_id)
+	var secede_t := _ui_text_table.get_text("UIIT_MSG_PARTY_SECEDE", "") if _ui_text_table != null else ""
+	if left_name != "" and secede_t.contains("%s"):
+		_log_system(secede_t.replace("%s", left_name), HudSystemMessage.TYPE_PARTY)
+	elif left_name != "":
+		_log_system("[%s] has left the party." % left_name, HudSystemMessage.TYPE_PARTY)
+	else:
+		_log_system("A party member left (character #%d)." % character_id, HudSystemMessage.TYPE_PARTY)
 	NetClient.party_info(NetClient.current_character_name)
 
 # --- Guild tab -------------------------------------------------------------

@@ -104,10 +104,17 @@ const TYPE_COLORS := {
 	TYPE_NPC: 0xffdbadf8,
 	TYPE_ACADEMY: 0xff64c7ff,
 }
-## A refusal's line: 0x7781b0 colours its messages 0xffdbc99b (the message
-## window it writes to, interface child 0x44, is not built here; the line
-## goes to the All list instead -- OURS).
+## A refusal's line: 0x7781b0 colours its messages 0xffdbc99b. Retail writes
+## them to the system message window (interface child 0x44, HudSystemMessage,
+## round 639) through system_sink; with no sink (the tests) they go to the
+## All list in that colour instead.
 const REFUSAL_COLOR := 0xffdbc99b
+## The system-window types the refusals are written with (READ): 0x7ad400's
+## party, guild and academy refusals share one `push 0x4` (0x7ad866; the
+## guild and academy branches jump back to it), 0x877340's result errors one
+## `push 0x0` (0x877798).
+const REFUSAL_TYPE_GROUP := 4
+const REFUSAL_TYPE_RESULT := 0
 
 ## The five tabs, in order: their lists' layout names, lamps' names,
 ## captions and the channel mark each puts in an empty input line
@@ -219,6 +226,10 @@ var _font_size := 12
 
 ## The player's own name, for the lines a sent message echoes.
 var own_name := ""
+## Where 0x7781b0's lines go: called with (type, text) -- World3D hands it
+## the system message window's add (round 639). Unset, they go to the All
+## list.
+var system_sink: Callable
 ## Whether the player is a GM, so an unmarked line goes out as type 3.
 var is_gm := false
 
@@ -634,9 +645,9 @@ func add_chat(type: int, name: String, message: String, sent: bool = false) -> v
 	_add_to(lists_for(int(line["type"])), String(line["text"]), line["color"])
 
 ## Adds one line to the All list only, the way CIFChatViewer's vslot 49
-## (0x7aaa50) does. `speaker` empty makes it a system line (this client's
-## own "* ..." lines -- OURS: retail writes its system messages to a separate
-## window, interface child 0x44, that is not built).
+## (0x7aaa50) does. `speaker` empty makes it a speakerless line; this
+## client's system lines go to the system message window instead (round 639,
+## HudSystemMessage).
 func add_message(speaker: String, text: String, color: Color = Color.WHITE) -> void:
 	var line := text
 	if speaker != "":
@@ -809,7 +820,7 @@ func _on_submitted(text: String) -> void:
 	# (0x7781b0) and empties the box (SetText "" at 0x7ad875).
 	if type in [TYPE_PARTY, TYPE_GUILD, TYPE_ACADEMY] and group_check.is_valid() \
 			and not bool(group_check.call(type)):
-		add_message("", group_refusal(type), argb(REFUSAL_COLOR))
+		_system_line(REFUSAL_TYPE_GROUP, group_refusal(type))
 		_input.text = ""
 		return
 	_input.clear()
@@ -850,7 +861,14 @@ func on_result(ok: bool, type: int, index: int, code: int, target: String) -> vo
 		return
 	var line := refusal_text(code, target if target != "" else String(sent.get("target", "")))
 	if line != "":
-		add_message("", line, argb(REFUSAL_COLOR))
+		_system_line(REFUSAL_TYPE_RESULT, line)
+
+## A 0x7781b0 line: to the system window when there is one.
+func _system_line(type: int, text: String) -> void:
+	if system_sink.is_valid():
+		system_sink.call(type, text)
+	else:
+		add_message("", text, argb(REFUSAL_COLOR))
 
 ## The line 0x7ad400 shows for a channel line with no group behind it.
 func group_refusal(type: int) -> String:
@@ -978,6 +996,11 @@ class ChatList extends Control:
 			changed.emit()
 	## The row under the mouse, or -1 (0x63ad10 sets it on a mouse move).
 	var hover := -1
+	## Whether the hover bar is drawn: the chat's Create sets its colour
+	## (0x638cf0); the system window's (0x7bc150) does not (round 639).
+	var hover_enabled := true
+	## Lines kept (+0x3a0): 100 in both the chat and the system window.
+	var max_lines := HudChat.MAX_LINES
 	var _laid_width := -1.0
 
 	func _ready() -> void:
@@ -1032,7 +1055,7 @@ class ChatList extends Control:
 	func add_line(text: String, color: Color) -> void:
 		var follow := at_bottom()
 		messages.append({"text": text, "color": color})
-		while messages.size() > HudChat.MAX_LINES:
+		while messages.size() > max_lines:
 			messages.pop_front()
 		_relayout()
 		if follow:
@@ -1052,7 +1075,7 @@ class ChatList extends Control:
 
 	func _gui_input(event: InputEvent) -> void:
 		var mm := event as InputEventMouseMotion
-		if mm != null:
+		if mm != null and hover_enabled:
 			var h := line_at(mm.position.y)
 			if h != hover:
 				hover = h

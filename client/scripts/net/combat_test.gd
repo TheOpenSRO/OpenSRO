@@ -89,6 +89,29 @@ func _test_decode_attack_result_appended_tail() -> void:
 		if width < 16:
 			_check(not s2.player_blocked, "a %d-byte tail reports no block" % width)
 
+## Round 639: a kill's experience and skill experience, two s64s after the
+## monster id and the targetType byte; a result that stops at the targetType
+## (a round-616 server) reports neither.
+func _test_decode_attack_result_experience() -> void:
+	var base := _build_attack_result("", 20, 0, true, 0, 85, false)
+	var tail := PackedByteArray()
+	tail.resize(16 + 8 + 1 + 16)
+	tail.encode_s64(16, 42)            # monster id
+	tail[24] = 1                       # targetType
+	tail.encode_s64(25, 0x100000005)   # exp gained
+	tail.encode_s64(33, 321)           # skill exp gained
+	var full := base.duplicate()
+	full.append_array(tail)
+	var r := CombatNet.decode_attack_result(full)
+	_check(r.monster_id == 42 and r.target_type_echoed, "the id and targetType before the experience decode")
+	_check(r.exp_gained == 0x100000005, "exp_gained round-trips as an s64 (got %d)" % r.exp_gained)
+	_check(r.skill_exp_gained == 321, "skill_exp_gained round-trips (got %d)" % r.skill_exp_gained)
+	var old := base.duplicate()
+	old.append_array(tail.slice(0, 25))
+	var o := CombatNet.decode_attack_result(old)
+	_check(o.monster_id == 42 and o.exp_gained == 0 and o.skill_exp_gained == 0,
+		"a result that ends at the targetType reports no experience")
+
 func _test_decode_attack_result_deaths() -> void:
 	var payload := _build_attack_result("", 20, 0, true, 0, 100, false)
 	var result := CombatNet.decode_attack_result(payload)
@@ -378,10 +401,10 @@ func _test_decode_wall_suffix() -> void:
 		"the wall suffix's numbers: 321 on a 1159-HP wall, 0 left")
 	var ar := _build_attack_result("", 0, 0, false, 0, 150, false)
 	var tail := PackedByteArray()
-	tail.resize(25) # berserk 5, exp 8, three flags, monster id 8, target type 1
+	tail.resize(41) # berserk 5, exp 8, three flags, monster id 8, target type 1, round 639's EXP tail 16
 	tail[24] = 0
 	ar.append_array(tail)
-	_check(CombatNet.decode_attack_result(ar).wall == null, "an OpAttackResult ending at its targetType has no wall")
+	_check(CombatNet.decode_attack_result(ar).wall == null, "an OpAttackResult ending at its EXP tail has no wall")
 	var toggled := suffix.duplicate()
 	toggled[0] = CombatNet.WALL_TOGGLED_OFF
 	ar.append_array(toggled)
@@ -492,6 +515,7 @@ func _init() -> void:
 	_test_encode_attack()
 	_test_decode_attack_result()
 	_test_decode_attack_result_appended_tail()
+	_test_decode_attack_result_experience()
 	_test_decode_attack_result_deaths()
 	_test_decode_monster_damaged()
 	_test_decode_monster_died()

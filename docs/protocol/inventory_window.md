@@ -257,6 +257,12 @@ and tile (ID 5), then the 3D model, then the slot backdrops, then the children.
   - release: no click;
   - moving off the button pauses the repeat (`0xb93290` / `0xb93240`).
 - **Reset** fires on release, like any plain button.
+- **srrevamp's step is 36 degrees (OURS, round 639).** The user found retail's step (one
+  frame's worth, about 1.4 degrees at 60 fps) too slow and asked for 36 degrees a click, ten
+  clicks to a full turn. A held arrow repeats the same 36 degrees after retail's 1000 ms and
+  then every 250 ms (OURS, round 639's review: retail's 50 ms made 720 degrees a second, too fast
+  to aim; 250 ms is 144 degrees a second). The yaw is kept in [0, 360) and the reset still sets
+  0. MEASURED on the box: ten real clicks on the right arrow logged 36, 72, ... 324 and 0.
 - **Direction and handedness** (round 633's review, READ). The yaw setter
   `CCompChar::FUN_00c26e70` builds the row-vector matrix
   `[[c,0,s],[0,1,0],[-s,0,c]]`, so the model's forward is (sin, 0, -cos). At

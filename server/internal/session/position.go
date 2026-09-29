@@ -108,7 +108,33 @@ func savePosition(chars character.Store, sess *gateway.Session, e world.Entity) 
 		log.Printf("session: saving %q's position: %v", e.Name, err)
 		return false
 	}
+	// The heading goes with it (round 637's review follow-up; OURS, as
+	// character.HeadingStore says), for a store that keeps one.
+	if hs, ok := chars.(character.HeadingStore); ok {
+		if err := hs.SetHeading(ctx, e.CharacterID, e.Heading); err != nil {
+			log.Printf("session: saving %q's heading: %v", e.Name, err)
+		}
+	}
 	return true
+}
+
+// restoredHeading is the heading a character re-enters facing: the saved one
+// when its position was restored (restoredArrival) and the store keeps one,
+// else 0.
+func restoredHeading(ctx context.Context, chars character.Store, characterID int64, restored bool) float64 {
+	if !restored {
+		return 0
+	}
+	hs, ok := chars.(character.HeadingStore)
+	if !ok {
+		return 0
+	}
+	h, err := hs.Heading(ctx, characterID)
+	if err != nil {
+		log.Printf("session: reading character %d's heading: %v", characterID, err)
+		return 0
+	}
+	return h
 }
 
 // savePositionEvery is the move handler's save: at most once every

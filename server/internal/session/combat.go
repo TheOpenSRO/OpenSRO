@@ -402,10 +402,38 @@ type AttackResult struct {
 	TargetType    uint8
 	HasTargetType bool
 
+	// ExpGained and SkillExpGained are what a kill earned the attacker (round
+	// 639): the experience added to the character and the skill experience
+	// the 400:1 conversion was fed (leveldata.SkillExpPerPoint), 0 for a blow
+	// that killed nothing or a server with no level table. Two trailing s64s
+	// after the targetType byte, so a client that stops there still decodes.
+	// The client writes them to its system-message window as retail's
+	// Client_ApplyExpAndLevelUp (0x8a97c0) does with UIIT_MSG_STATE_GAIN_EXP
+	// and UIIT_MSG_STATE_GET_SKILL_EXP. Retail carries them in its own EXP
+	// packet; carrying them here is OURS (docs/protocol/system_message.md).
+	ExpGained      int64
+	SkillExpGained int64
 	// Wall is the monster's counter meeting the player's protection wall
 	// (round 640, walls.go WallInfo), or the toggle-off marker; a strict
-	// suffix after TargetType, all zero when neither.
+	// suffix after round 639's EXP tail (ExpGained, SkillExpGained), sent
+	// only when non-zero.
 	Wall WallInfo
+}
+
+// expAdded is the experience a character gained going from (level, exp) to
+// (newLevel, newExp): the requirements of the levels passed plus the change in
+// progress; never below 0.
+func expAdded(t *leveldata.Table, level int, exp int64, newLevel int, newExp int64) int64 {
+	added := newExp - exp
+	for l := level; l < newLevel; l++ {
+		if need, ok := t.ExpToNext(l); ok {
+			added += need
+		}
+	}
+	if added < 0 {
+		return 0
+	}
+	return added
 }
 
 // EchoedTargetType is the targetType the result carries on the wire.
@@ -447,6 +475,9 @@ func (r *AttackResult) Encode() []byte {
 	buf = append(buf, encodeInt64(r.MonsterID)...)
 	// Trailing again (round 616): the echoed targetType.
 	buf = append(buf, r.EchoedTargetType())
+	// And again (round 639): the kill's experience and skill experience.
+	buf = append(buf, encodeInt64(r.ExpGained)...)
+	buf = append(buf, encodeInt64(r.SkillExpGained)...)
 	// Trailing again (round 640): the wall suffix, only when there is one,
 	// so every result without a wall is byte for byte what it was.
 	if r.Wall != (WallInfo{}) {
@@ -495,7 +526,11 @@ func DecodeAttackResult(data []byte) (*AttackResult, error) {
 	if len(rest) >= 43 && rest[42] != TargetEntity {
 		r.TargetType, r.HasTargetType = rest[42], true
 	}
-	if w, ok := decodeWallInfo(rest[min(len(rest), 43):]); ok {
+	if len(rest) >= 59 {
+		r.ExpGained = int64(binary.LittleEndian.Uint64(rest[43:51]))
+		r.SkillExpGained = int64(binary.LittleEndian.Uint64(rest[51:59]))
+	}
+	if w, ok := decodeWallInfo(rest[min(len(rest), 59):]); ok {
 		r.Wall = w
 	}
 	return r, nil
@@ -1511,8 +1546,13 @@ func performAttack(
 				if _, _, err := skills.AddSkillExp(ctx, characterID, gainedExp); err != nil {
 					return fmt.Errorf("combat: granting skill experience: %w", err)
 				}
+				result.SkillExpGained = gainedExp
 			}
 			newLevel, newExp, gained := levelTable.Advance(char.Level, char.Exp, gainedExp)
+			// What the character actually gained (round 639's review): at the
+			// level cap Advance holds the EXP below the requirement, so the
+			// line reports what was added, not what the kill was worth.
+			result.ExpGained = expAdded(levelTable, char.Level, char.Exp, newLevel, newExp)
 			newStatPoints := char.StatPoints + gained*leveldata.StatPointsPerLevel
 			// Str and Int rise by one each per level, automatically and without
 			// the player choosing -- on top of the three spendable points.

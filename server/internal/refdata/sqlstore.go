@@ -595,6 +595,20 @@ func (s *SQLStore) ImportSkills(ctx context.Context, skills []Skill) error {
 	return tx.Commit()
 }
 
+// GetSkillByCode looks up one skill by its BasicCode (round 638 review, a
+// composite item's USU1 entry), the lowest id when several rows share it.
+func (s *SQLStore) GetSkillByCode(ctx context.Context, code string) (*Skill, error) {
+	var id int64
+	if code == "" {
+		return nil, fmt.Errorf("refdata: querying skill %q: not found", code)
+	}
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM skills WHERE basic_code = $1 ORDER BY id LIMIT 1`, code).Scan(&id)
+	if err != nil {
+		return nil, fmt.Errorf("refdata: querying skill %q: %w", code, err)
+	}
+	return s.GetSkill(ctx, id)
+}
+
 // GetSkill looks up one skill by ID.
 func (s *SQLStore) GetSkill(ctx context.Context, id int64) (*Skill, error) {
 	var sk Skill

@@ -191,6 +191,13 @@ class AttackResult:
 	## (SelfCast.is_self_reply).
 	var target_type: int = 1
 	var target_type_echoed: bool = false
+	## What a kill earned (round 639): the experience and the skill
+	## experience the server granted, two trailing s64s after target_type; 0
+	## for a blow that killed nothing, a server with no level table, or a
+	## server too old to send them. World3D writes them to the system window
+	## as retail's Client_ApplyExpAndLevelUp (0x8a97c0) does.
+	var exp_gained: int = 0
+	var skill_exp_gained: int = 0
 	## The counter's meeting with the player's protection wall, or the
 	## toggle-off marker (round 640); null when neither.
 	var wall: WallHit = null
@@ -478,8 +485,13 @@ static func decode_attack_result(data: PackedByteArray) -> AttackResult:
 	if offset + 43 <= data.size():
 		result.target_type = data[offset + 42]
 		result.target_type_echoed = true
-	# Round 640: the wall suffix, only when there is one.
-	result.wall = decode_wall_suffix(data, offset + 43)
+	# Round 639: the kill's experience and skill experience.
+	if offset + 59 <= data.size():
+		result.exp_gained = data.decode_s64(offset + 43)
+		result.skill_exp_gained = data.decode_s64(offset + 51)
+	# Round 640: the wall suffix, after round 639's EXP tail, only when there
+	# is one.
+	result.wall = decode_wall_suffix(data, offset + 59)
 
 	return result
 
