@@ -70,18 +70,26 @@ Layout `resinfo\ifchatviewer.txt`, read with `UI_UPDATE_2009_FIRST` (round 585);
 **Tabs (READ, `CIFChatViewer::Create` `0x7ab920`).** Built in code, not in the layout: five
 CIFSelectableAreas, IDs 100..104, rect `(45 + 70 i, 0, 71, 20)` (`0x7ab9bd`: `i * 0x46 + 0x2d`,
 `0x47`, `0x14`), texture `interface\chattingwnd\chat_long_tab.ddj` (100x20, stretched; MEASURED),
-captions UIIT_CTL_CHAT_ALL, UIIT_CTL_CHATMENU_PARTY, _GUILD, _ALLY, _TRAININGCAMP. The archive's
-text table has UIIT_CTL_CHATMENU_TRAININGCAMP twice, "&Team" and later "&Academy"; UiTextTable
-keeps the later row, "&Academy" (which row retail keeps is OPEN). The selected tab gets
-`0x64cc30(1)`, font style 2 (`0x8b2cc0` maps flag 2 to style 2, the bold variant); drawn here with
-Godot's embolden (OURS). Caption centring is MEASURED from the retail screenshot.
+captions UIIT_CTL_CHAT_ALL, UIIT_CTL_CHATMENU_PARTY, _GUILD, _ALLY, _TRAININGCAMP. The selected tab
+gets `0x64cc30(1)`, font style 2 (`0x8b2cc0` maps flag 2 to style 2, the bold variant; drawn here
+with Godot's embolden, OURS) and text state 0, white; every other tab `0x64cc30(0)` and
+`0x8b4750(3)` at `0x7aa79d`, text state 3, the grey `0xffb4b4b4` the CIFStatic constructor sets for
+it (`0x64d64f`, also `0x8b5759`) (READ, round 634's review). Caption centring is MEASURED from the
+retail screenshot.
+
+**The Academy caption.** The client's text loader keeps the FIRST row of a duplicated key (see
+"The text table" below). The box's archive -- a private server's -- has
+UIIT_CTL_CHATMENU_TRAININGCAMP "&Team" first and "&Academy" after it; the vanilla archive has only
+"&Academy" (round 634's review), and the user asked for Academy. HudChat therefore keeps the
+table's first row everywhere and shows the vanilla "&Academy" when that caption resolves to a known
+private-server row ("&Team", "Job/Team"; `PRIVATE_SERVER_CAPTIONS`, OURS and labelled).
 
 **Lamps (READ).** The layout's five lamps are moved to `(48 + 70 i, 6)` (vslot `0x98` at
 `0x7ac098..0x7ac0f5`); the tab switch (`0x7aa690`) hides all five and shows the selected tab's.
 
 **Tab switch (READ, `0x7aa690`).** Hides the five lists and lamps, shows the selected ones, binds
 the scroll bar to the list and scrolls it to 999 (the bottom). If the input box is empty or holds
-one of `# $ % & @ ^ ~` alone (the jump table at `0x7aa9dc`), it gets the tab's mark: "", "#", "@",
+one of `# $ % & / @ ^ ~` alone (the jump table at `0x7aa9dc`), it gets the tab's mark: "", "#", "@",
 "%", "&".
 
 **What each tab files (READ, `0x7aca30`).** All: types 1, 2, 3, 4, 5, 6, 8, 0xa, 0xb, 0xd, 0x10,
@@ -91,10 +99,15 @@ channel tabs too. Types it does not list (7, 9, ...) add nothing -- a notice arr
 **Lists (READ).** 100 lines each (`+0x3a0 = 100`, `0x7abed8`; `0x64f8a0` drops the oldest). Word
 wrap with a hanging indent: `0x64e930`, enabled by `+0x3cc` (`0x64e380(1)`), prefixes each
 continuation line with `floor(20 / space advance)` spaces (at least one) and narrows it by as much.
-That the break falls between words is MEASURED from the screenshot. The retail line pitch MEASURED
-from the screenshot is 14 px; srrevamp's font-0 line (12 px em) measured on the box is 14 px. Text
-has a one-pixel black shadow at (+1, +1) (MEASURED: every glyph pixel's lower-right neighbour is
-black). The lists' `+0x3c8 = 0x66ffffff` (`0x638cf0`) and the other flags Create sets are OPEN.
+That the break falls between words is MEASURED from the screenshot. The pitch is `+0x39c = 14`
+(`0x638c20(0xe)` at `0x7abeb8`; the draw `0x639ab0` adds it per line), which the screenshot's 14 px
+agrees with. A list shows `+0x3a4` rows, the mode's m * 4. **Lines stack from the bottom:** with
+fewer lines than rows, `0x639ab0` starts pitch * (rows - count) down (`0x639d20..0x639d52`, under
+`+0x3a8`, which Create sets with `0x638b50(1)` at `0x7abeee`). **The hover bar:** `+0x3c8 =
+0x66ffffff` (`0x638cf0`) is a 40%-white bar under the row the mouse is over -- the mouse-move slot
+17 (`0x63ad10`, enabled by `+0x3aa`) picks the row, the draw (`0x639ab0` -> `0x63b0e0`, enabled by
+`+0x386`) fills it; its height is the line's text height (`+0x384` unset). Text has a one-pixel
+black shadow at (+1, +1) (MEASURED: every glyph pixel's lower-right neighbour is black).
 
 **Scroll bar (READ).** `GDR_CHAT_VSCROLL` (CIFVerticalScroll, `0,36,16,308`); its layout
 `ifverticalscroll.txt`: up arrow `chat_arrow_up.ddj` at (0,-16), down arrow `chat_arrow_down.ddj`,
@@ -104,9 +117,26 @@ below the bar's top (`0x659150`), the down arrow sits at the top + 308 + 16 (`0x
 step 1. The bar art covering the thumb's whole travel is MEASURED from the screenshot. The wheel
 step (1 line) and a click on the bar (jumps the thumb, starts a drag) are OURS.
 
+**Size modes (READ, `0x7aac20`).** The constructor starts the window at mode m = 2 (`+0x428 = 2`
+at `0x7ad385`). `GDR_BTN_CHAT_SIZE` (ID 15; the event map at `0xebebf0` -> `0x7ac2a0`) steps m
+through 0..6 and back to 0. For m > 0: lists m * 56 + 7 tall showing m * 4 rows, scroll length
+m * 56 - 28, middle band m * 56 + 12, the bottom band at m * 56 + 37, the input row (size button,
+mode button, input line) at m * 56 + 42, and the window at y = H - 0x1d3 + (6 - m) * 56 with its
+bottom on the bar (height 399 - (6 - m) * 56). Mode 0 is the input row alone, 0x15 tall at
+H - 0x59, the tabs hidden (`0x7a9a80(1)`), the lists, bands, scroll bar and the two left buttons
+hidden. Mode 6 is the layout's geometry (the registry's 398 against the formula's 399 is a pixel
+the client's own code gives). The user's retail screenshot is mode 5 (its down arrow at 304 =
+36 + 252 + 16).
+
+**Refusals before sending (READ, `0x7ad400`).** A party, guild or academy line with no such group
+is refused by the client: UIIT_MSG_PARTYERR_CANT_FIND_PARTY "Cannot find the corresponding
+party.", UIIT_MSG_GUILD_NON_EXISTING "Cannot carry this function out because you do not belong to
+the guild.", UIIT_MSG_TC_ERROR_NOT_POSITION "You do not belong to an Academy.", and the box is
+emptied (SetText "" at `0x7ad875`). srrevamp's client knows the party and guild from their info
+answers; the server still refuses with its own codes.
+
 **Not built (OPEN):** the whisper list (`GDR_WHISPERLIST`, `0x7acfd0` adds to it), the chat-mode
-button and viewer (IDs 41/42), the size toggle `GDR_BTN_CHAT_SIZE` (the retail screenshot is the
-56-px-shorter mode: its down arrow sits at 304, 36 + 252 + 16), the hide button, speech balloons
+button and viewer (IDs 41/42), the hide button, speech balloons
 (`0x9c77c0` for types 1, 3, 6, 0xd), the system message window (interface child 0x44, `0x7781b0`,
 colours `0xffdbc99b` / `0xffbacff2`) -- srrevamp writes its system lines and refusals into the All
 list (OURS).
@@ -136,15 +166,33 @@ Type 7 in `0x876810`: the chat line `(Notice):text`, filed as type 3 (every tab)
 (no other writer found for this class): the top centre. The update `0x7b3e20` fades the alpha to
 `remaining * 255 / 2000` over the last 2000 ms. Frame textures `com_notice_edge.ddj`,
 `com_notice_edge2.ddj`, `com_notice_corner.ddj` (READ); all translucent maroon (128, 45, 67)
-(MEASURED); their arrangement as a stretch frame around the text is INFERRED.
+(MEASURED); their arrangement as a stretch frame over the window -- which is the text's extent --
+is INFERRED; no fill of ours.
 
 srrevamp's `/notice <text>` GM command (OURS) sends type 7 to everyone.
 
 ## The retail screenshot's colours
 
-The user's screenshot is a private server's client. MEASURED there: global lines (255, 255, 0) =
-`0xffffff00`, ordinary lines white -- both as read. Its notice / warning lines are (0, 174, 195):
+The colours are READ (`0x876810`). The user's screenshot, a private server's client, confirms the
+byte order: its global lines are (255, 255, 0), `0xffffff00` read as ARGB. Its notice / warning
+lines are (0, 174, 195):
 exactly `0xffffaec3`'s green and blue bytes with the red byte zeroed, and they carry no "(Notice):"
 prefix. The binary on the box says pink `0xffffaec3` and the prefix; srrevamp draws what the binary
 says. Where the private client's cyan comes from (its `vsroplus_lib.dll` is the likely suspect) is
 OPEN.
+
+## The text table (READ, round 634's review)
+
+TextStringManager `0x8cac30` loads textdataname.txt's list, textuisystem, textzonename, textquest,
+texthelp and textevent into one hash map; its insert (`0x8ca120`) returns the existing entry for a
+key it already holds, and the caller at `0x8cb266` ignores that -- **the first row of a duplicated
+key wins**. UiTextTable now does the same (`keep_first`, default true). On the box's archive this
+changes 566 of 6,937 keys in textuisystem.txt, 55 of 11,119 in textdata_object.txt and 2 of 8,005
+in textdata_equip&skill.txt (`/var/tmp/chat` tool text_dupes.gd). Visible examples:
+UIIT_STT_PHYSICAL_ATTACK "Phy. Atk:" (was "Phy. atk"), UIIT_STT_MAGICAL_ATTACK "Mag. Atk:",
+UIIT_STT_PHYSICAL_DEFENCE "Phy. Def:", UIIT_STT_PHYSICAL_BALANCE "Phy. Balance:" (the stat panel);
+UIC_STT_FONTNAME "Arial" (was "Tahoma", which was never installed -- both ended on an Arial file);
+UIIT_CTL_CHATMENU_TRAININGCAMP "&Team"; login and install messages worded "SRO" instead of
+"Silkroad-Online"; twelve 2013 avatar item names ("Grey Warlord Hat (M)" for "Grey Dragon Soul
+Helm (M)"); about 40 rows whose first copy is Korean mangled to "?", and 24 whose first copy keeps
+CSV quote marks (`"""<sml2>...`).

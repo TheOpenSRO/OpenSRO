@@ -118,13 +118,21 @@ const LAMP_NAMES := ["GDR_STATIC_ALLLAMP", "GDR_STATIC_PARTYLAMP", "GDR_STATIC_G
 	"GDR_STATIC_ALLYLAMP", "GDR_STATIC_APPRENTICE"]
 const TAB_CAPTIONS := ["UIIT_CTL_CHAT_ALL", "UIIT_CTL_CHATMENU_PARTY", "UIIT_CTL_CHATMENU_GUILD",
 	"UIIT_CTL_CHATMENU_ALLY", "UIIT_CTL_CHATMENU_TRAININGCAMP"]
-## Used only when the archive has no text table (the English column's own
-## words, textuisystem.txt).
+## Used when the archive has no text table (the English column's own words,
+## textuisystem.txt).
 const TAB_FALLBACKS := ["All", "#Party", "@Guild", "%Union", "&Academy"]
+## Rows a private server's archive puts FIRST for a key, which the client's
+## first-row-wins loader (UiTextTable, round 634's review) would show. The
+## box's archive has UIIT_CTL_CHATMENU_TRAININGCAMP "&Team" first and
+## "&Academy" after it; the vanilla archive has only "&Academy", and the user
+## asked for Academy ("Job/Team is another private server modification").
+## So these captions fall back to the vanilla word (OURS, a labelled
+## override).
+const PRIVATE_SERVER_CAPTIONS := {"UIIT_CTL_CHATMENU_TRAININGCAMP": ["&Team", "Job/Team", "&Job/Team"]}
 const TAB_PREFIX := ["", "#", "@", "%", "&"]
 ## The characters 0x7aa690 treats as "only a channel mark" when it swaps the
 ## mark on a tab switch (its jump table at 0x7aa9dc: index 0 for these).
-const LONE_MARKS := "#$%&@^~"
+const LONE_MARKS := "#$%&/@^~"
 
 const TAB_DDJ := "interface\\chattingwnd\\chat_long_tab.ddj"
 const TAB_X0 := 45.0
@@ -140,12 +148,40 @@ const LAMP_Y := 6.0
 const WRAP_INDENT_PX := 20.0
 ## Lines per list (+0x3a0 = 100 at 0x7abed8).
 const MAX_LINES := 100
+## The line pitch: +0x39c = 14, set by 0x638c20(0xe) at 0x7abeb8 and added
+## per line by the draw (0x639ab0).
+const LINE_PITCH := 14
+## A list's hover row is drawn under a 40%-white bar (+0x3c8 = 0x66ffffff,
+## 0x638cf0 at 0x7abf37; the draw 0x639ab0 -> 0x63b0e0, the row from the
+## mouse-move slot 17 0x63ad10, enabled by +0x3aa and +0x386).
+const HOVER_COLOR := 0x66ffffff
+## An unselected tab's caption is text state 3 (0x8b4750(3) at 0x7aa79d),
+## the grey 0xffb4b4b4 the CIFStatic constructor sets for it (0x64d64f); the
+## selected one is state 0, white.
+const TAB_TEXT_SELECTED := 0xffffffff
+const TAB_TEXT_UNSELECTED := 0xffb4b4b4
+
+## The window's size modes (0x7aac20). The constructor starts at mode 2
+## (+0x428 = 2 at 0x7ad385); GDR_BTN_CHAT_SIZE (ID 15, its event-map entry
+## at 0xebebf0) runs 0x7ac2a0, which steps the mode 0..6 and back to 0. For a
+## mode m > 0: the lists are m * 56 + 7 tall and show m * 4 rows, the scroll
+## bar's length is m * 56 - 28, the middle band m * 56 + 12, and the window
+## is placed at y = screen height - 0x1d3 + (6 - m) * 56 with its bottom on
+## the bar (height (H - 0x44) - y, so 399 - (6 - m) * 56). Mode 0 is the
+## input row alone, 0x15 tall at H - 0x59, the tabs hidden (0x7a9a80(1)).
+## Mode 6 is the layout's own geometry.
+const MODE_DEFAULT := 2
+const MODE_MAX := 6
+const MODE_STEP := 56
+const ROWS_PER_MODE := 4
+const MODE0_HEIGHT := 21
 
 ## The scroll bar (GDR_CHAT_VSCROLL, a CIFVerticalScroll): its layout,
 ## ifverticalscroll.txt, is the up arrow at (0,-16), the down arrow and the
 ## 16x16 thumb `com_scroll_button.ddj`; the bar's own art is
 ## `com_scroll_bar.ddj` (0x65a9c0). Create gives it a length of 308 (0x134,
-## 0x7abf60 into 0x65a390), which puts the thumb's travel at the bar's top
+## 0x7abf60 into 0x65a390) -- mode 6's; the size mode then sets m * 56 - 28
+## (0x7aac20, see MODE_DEFAULT). The length puts the thumb's travel at the bar's top
 ## plus 0..308 (0x659150: `(pos - min) * length / (max - min)`) and the down
 ## arrow at the bar's top + 308 + 16 (0x65a40f).
 const SCROLL_TOP := Vector2(0, 36)
@@ -171,6 +207,12 @@ var _lamps: Array = []
 var _tabs: Array = []
 var _scroll: ChatScroll
 var _tab := 0
+## The size mode (0..6); see MODE_DEFAULT.
+var mode := MODE_DEFAULT
+## Whether the player is in the group a channel needs: called with TYPE_PARTY,
+## TYPE_GUILD or TYPE_ACADEMY. Unset, every line goes to the server, which
+## refuses it itself.
+var group_check: Callable
 var _font: Font
 var _bold: Font
 var _font_size := 12
@@ -216,6 +258,7 @@ func setup() -> void:
 	_bold = bold
 
 	if _builder == null:
+		_apply_mode(mode, false)
 		return
 	var layout := _builder.load_layout(LAYOUT_PATH, PackedStringArray(LAYOUT_DEFINES), true)
 	if layout == null:
@@ -238,7 +281,13 @@ func setup() -> void:
 	_install_tabs()
 	_install_scroll()
 	_install_input()
-	select_tab(0)
+	var size_btn := _root.get_node_or_null("GDR_BTN_CHAT_SIZE") as BaseButton
+	print("HudChat: size button %s" % ("GDR_BTN_CHAT_SIZE (%s)" % size_btn.get_class() if size_btn != null else "missing"))
+	if size_btn != null:
+		size_btn.pressed.connect(cycle_mode)
+		# No keyboard focus on buttons (the client has none; round 606).
+		size_btn.focus_mode = Control.FOCUS_NONE
+	_apply_mode(mode, false)
 
 ## A ChatList over each authored list box, at exactly its rect.
 ##
@@ -252,7 +301,9 @@ func _install_lists() -> void:
 		list.font = _font
 		list.font_size = _font_size
 		list.set_anchors_preset(Control.PRESET_FULL_RECT)
-		list.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		# PASS: the list sees the mouse move for its hover bar; clicks and the
+		# wheel carry on to the window.
+		list.mouse_filter = Control.MOUSE_FILTER_PASS
 		list.changed.connect(_on_list_changed.bind(list))
 		if box != null:
 			box.add_child(list)
@@ -286,7 +337,7 @@ func _install_tabs() -> void:
 		var tab := ChatTab.new()
 		tab.name = "ChatTab%d" % i
 		tab.texture = tex
-		tab.caption = _text(TAB_CAPTIONS[i], TAB_FALLBACKS[i])
+		tab.caption = caption_for(TAB_CAPTIONS[i], _text(TAB_CAPTIONS[i], TAB_FALLBACKS[i]), TAB_FALLBACKS[i])
 		tab.font = _font
 		tab.bold_font = _bold
 		tab.font_size = _font_size
@@ -334,6 +385,13 @@ func _install_input() -> void:
 	_input.text_submitted.connect(_on_submitted)
 	box.add_child(_input)
 
+## A tab's caption: the text table's, unless it is a known private-server
+## row (PRIVATE_SERVER_CAPTIONS), which gives way to the vanilla word.
+static func caption_for(key: String, resolved: String, vanilla: String) -> String:
+	if (PRIVATE_SERVER_CAPTIONS.get(key, []) as Array).has(resolved):
+		return vanilla
+	return resolved
+
 func _text(key: String, fallback: String) -> String:
 	if _builder == null:
 		return fallback
@@ -351,10 +409,10 @@ func select_tab(index: int) -> void:
 		return
 	_tab = index
 	for i in _list_boxes.size():
-		(_list_boxes[i] as Control).visible = i == index
+		(_list_boxes[i] as Control).visible = i == index and mode > 0
 	for i in _lamps.size():
 		if _lamps[i] != null:
-			(_lamps[i] as CanvasItem).visible = i == index
+			(_lamps[i] as CanvasItem).visible = i == index and mode > 0
 	for i in _tabs.size():
 		(_tabs[i] as ChatTab).selected = i == index
 	if index < _lists.size():
@@ -369,6 +427,112 @@ func select_tab(index: int) -> void:
 
 func current_tab() -> int:
 	return _tab
+
+# --- Size modes (0x7aac20) ------------------------------------------------
+
+## The geometry of mode `m`, in window-local pixels (see MODE_DEFAULT).
+static func mode_geometry(m: int) -> Dictionary:
+	if m <= 0:
+		return {"height": MODE0_HEIGHT, "row_y": 0, "rows": 0}
+	return {
+		"height": 399 - (MODE_MAX - m) * MODE_STEP,
+		"list_h": m * MODE_STEP + 7,
+		"rows": m * ROWS_PER_MODE,
+		"scroll_len": m * MODE_STEP - 28,
+		"mid_h": m * MODE_STEP + 12,
+		"down_y": m * MODE_STEP + 37,
+		"row_y": m * MODE_STEP + 42,
+	}
+
+## The size button (0x7ac2a0): the next mode, 6 wrapping to 0.
+func cycle_mode() -> void:
+	var m := mode + 1
+	if m > MODE_MAX:
+		m = 0
+	print("CHAT MODE %d -> %d" % [mode, m])
+	_apply_mode(m, true)
+
+func set_mode(m: int) -> void:
+	_apply_mode(clampi(m, 0, MODE_MAX), true)
+
+## Lays the window out for mode `m`. With `keep_bottom` the window's bottom
+## edge stays where it is (the client places it on the bar in every mode).
+func _apply_mode(m: int, keep_bottom: bool) -> void:
+	mode = m
+	var g := mode_geometry(m)
+	var bottom := position.y + size.y
+	var h := float(g["height"])
+	custom_minimum_size = Vector2(size.x, h)
+	size = Vector2(size.x, h)
+	if keep_bottom:
+		position.y = bottom - h
+	if _root == null:
+		return
+	var open := m > 0
+	# 0x7a9a80: the tabs shown unless mode 0.
+	for t in _tabs:
+		(t as Control).visible = open
+	for n in ["GDR_CHAT_BG_UP", "GDR_CHAT_BG_MID", "GDR_CHAT_BG_DOWN", "GDR_BUTTON_WHISPERLIST",
+			"GDR_BUTTON_CHATTABHIDE"]:
+		var c := _root.get_node_or_null(n) as Control
+		if c != null:
+			c.visible = open
+	if _scroll != null:
+		_scroll.visible = open
+	# The authored scroll control is a plain container here (ChatScroll
+	# draws and takes the input); at its layout height, 308, it lay over the
+	# size button in the smaller modes and ate its click (found on the live
+	# run). It follows the mode's length, as the real one does (0x65a500).
+	var vscroll := _root.get_node_or_null("GDR_CHAT_VSCROLL") as Control
+	if vscroll != null:
+		vscroll.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vscroll.visible = open
+		if open:
+			_place("GDR_CHAT_VSCROLL", -1, float(g["scroll_len"]))
+	var row_y := float(g["row_y"])
+	for n in ["GDR_BTN_CHAT_SIZE", "GDR_CHAT_MODE_BTN", "GDR_CHAT_INPUTBOX"]:
+		_place(n, row_y)
+	# The penalty line keeps its authored 2 below the row.
+	_place("GDR_CHAT_STA_PENALTY", row_y + 2)
+	if not open:
+		for b in _list_boxes:
+			(b as Control).visible = false
+		for l in _lamps:
+			if l != null:
+				(l as CanvasItem).visible = false
+		return
+	_place("GDR_CHAT_BG_MID", -1, float(g["mid_h"]))
+	_place("GDR_CHAT_BG_DOWN", float(g["down_y"]))
+	for i in _lists.size():
+		(_lists[i] as ChatList).rows = int(g["rows"])
+		var box: Control = _list_boxes[i]
+		if box != _lists[i]:
+			_place(String(box.name), -1, float(g["list_h"]))
+		else:
+			box.size.y = float(g["list_h"])
+	if _scroll != null:
+		_scroll.length = float(g["scroll_len"])
+		_scroll.size = Vector2(SCROLL_BUTTON.x, SCROLL_BUTTON.y * 3 + _scroll.length)
+		_scroll.queue_redraw()
+	# 0x7aac20 ends with the tab switch.
+	select_tab(_tab)
+
+## Moves (y >= 0) and sizes (h >= 0) one layout control, keeping its settling
+## rect in step (UiBuilder.settle_authored_rects re-applies it).
+func _place(control_name: String, y: float, h: float = -1.0) -> void:
+	var c := _root.get_node_or_null(control_name) as Control
+	if c == null:
+		return
+	var r := Rect2(c.position, c.size)
+	if c.has_meta(UiBuilder.AUTHORED_RECT_META):
+		r = c.get_meta(UiBuilder.AUTHORED_RECT_META)
+	if y >= 0.0:
+		r.position.y = y
+	if h >= 0.0:
+		r.size.y = h
+	c.set_meta(UiBuilder.AUTHORED_RECT_META, r)
+	c.position = r.position
+	c.size = r.size
 
 func _current_list() -> ChatList:
 	return _lists[_tab] if _tab < _lists.size() else null
@@ -638,6 +802,14 @@ func _on_submitted(text: String) -> void:
 	if type == TYPE_INCOMPLETE:
 		_input.release_focus()
 		return
+	# 0x7ad400 refuses a party, guild or academy line itself when the player
+	# is in no such group (0x987070 / 0x9870e0 / 0x987140), shows the refusal
+	# (0x7781b0) and empties the box (SetText "" at 0x7ad875).
+	if type in [TYPE_PARTY, TYPE_GUILD, TYPE_ACADEMY] and group_check.is_valid() \
+			and not bool(group_check.call(type)):
+		add_message("", group_refusal(type), argb(REFUSAL_COLOR))
+		_input.text = ""
+		return
 	_input.clear()
 	message_submitted.emit(text)
 	var after := "" if type == TYPE_COMMAND else line_after_send(parsed, _tab)
@@ -678,6 +850,18 @@ func on_result(ok: bool, type: int, index: int, code: int, target: String) -> vo
 	if line != "":
 		add_message("", line, argb(REFUSAL_COLOR))
 
+## The line 0x7ad400 shows for a channel line with no group behind it.
+func group_refusal(type: int) -> String:
+	match type:
+		TYPE_PARTY:
+			return _text("UIIT_MSG_PARTYERR_CANT_FIND_PARTY", "Cannot find the corresponding party.")
+		TYPE_GUILD:
+			return _text("UIIT_MSG_GUILD_NON_EXISTING",
+				"Cannot carry this function out because you do not belong to the guild.")
+		TYPE_ACADEMY:
+			return _text("UIIT_MSG_TC_ERROR_NOT_POSITION", "You do not belong to an Academy.")
+	return ""
+
 ## The refusal line for a result code (0x877340's switch; the guild and
 ## academy ones are 0x7ad400's own client-side refusals, which srrevamp's
 ## server answers -- see server/internal/session/chat.go).
@@ -695,13 +879,13 @@ func refusal_text(code: int, target: String) -> String:
 			return _text("UIIT_CHATERR_ALLIANCE_PERMISSION_DENIED",
 				"Cannot use the Ally Chat because the selected guild is not your ally.")
 		0x200d:
-			return _text("UIIT_STT_CANT_CHATTING", "You cannot chat for %d seconds.").replace("%d", "10")
+			return _text("UIIT_STT_CANT_CHATTING", "Chat Restricted: %d seconds").replace("%d", "10")
 		0x200e:
-			return _text("UIIT_MSG_GUILD_UNION_CHAT_LIMIT", "")
+			return _text("UIIT_MSG_GUILD_UNION_CHAT_LIMIT", "You do not have union chatting authority, so you cannot chat.")
 		0xf001:
-			return _text("UIIT_MSG_GUILD_NON_EXISTING", "You are not in a guild.")
+			return group_refusal(TYPE_GUILD)
 		0xf002:
-			return _text("UIIT_MSG_TC_ERROR_NOT_POSITION", "You are not in an academy.")
+			return group_refusal(TYPE_ACADEMY)
 		0xf003:
 			return "No global chatting item in that slot."
 	return ""
@@ -782,19 +966,54 @@ class ChatList extends Control:
 	var lines: Array = []
 	## The first line drawn (the scroll position).
 	var first := 0
+	## The rows the list shows (+0x3a4, the mode's m * 4).
+	var rows := HudChat.MODE_DEFAULT * HudChat.ROWS_PER_MODE:
+		set(v):
+			var follow := at_bottom()
+			rows = maxi(1, v)
+			first = max_first() if follow else clampi(first, 0, max_first())
+			queue_redraw()
+			changed.emit()
+	## The row under the mouse, or -1 (0x63ad10 sets it on a mouse move).
+	var hover := -1
 	var _laid_width := -1.0
 
+	func _ready() -> void:
+		mouse_exited.connect(func() -> void:
+			hover = -1
+			queue_redraw())
+
 	func line_height() -> float:
-		return font.get_height(font_size) if font != null else 14.0
+		return float(HudChat.LINE_PITCH)
 
 	func visible_lines() -> int:
-		return maxi(1, int(floor(size.y / line_height())))
+		return rows
 
 	func max_first() -> int:
 		return maxi(0, lines.size() - visible_lines())
 
 	func at_bottom() -> bool:
 		return first >= max_first()
+
+	## Where the first drawn line's top sits: with fewer lines than rows they
+	## stack from the bottom -- 0x639ab0 adds pitch * (rows - count) when
+	## +0x3a8 is set (0x639d20..0x639d52), which Create sets (0x638b50(1) at
+	## 0x7abeee).
+	func top_offset() -> float:
+		var n := lines.size()
+		return line_height() * float(rows - n) if n < rows else 0.0
+
+	## The line under local y, or -1 (0x63ad10's row: (y - top) / pitch,
+	## shifted for the bottom stacking, plus the scroll position).
+	func line_at(y: float) -> int:
+		var rel := y - top_offset()
+		if rel < 0.0:
+			return -1
+		var row := int(floor(rel / line_height()))
+		if row >= rows:
+			return -1
+		var idx := first + row
+		return idx if idx < lines.size() else -1
 
 	func set_first(pos: int) -> void:
 		var clamped := clampi(pos, 0, max_first())
@@ -829,6 +1048,14 @@ class ChatList extends Control:
 			queue_redraw()
 			changed.emit()
 
+	func _gui_input(event: InputEvent) -> void:
+		var mm := event as InputEventMouseMotion
+		if mm != null:
+			var h := line_at(mm.position.y)
+			if h != hover:
+				hover = h
+				queue_redraw()
+
 	func _relayout() -> void:
 		_laid_width = size.x
 		lines.clear()
@@ -841,13 +1068,18 @@ class ChatList extends Control:
 			return
 		var h := line_height()
 		var ascent := font.get_ascent(font_size)
-		var n := visible_lines()
-		for i in n:
+		var y0 := top_offset()
+		for i in visible_lines():
 			var idx := first + i
 			if idx >= lines.size():
 				break
 			var l: Dictionary = lines[idx]
-			var at := Vector2(0, i * h + ascent)
+			var top := y0 + i * h
+			if idx == hover:
+				# The bar is the line's text height (+0x384 unset: 0x639ab0
+				# takes the extent's height, not the pitch).
+				draw_rect(Rect2(0, top, size.x, font.get_height(font_size)), HudChat.argb(HudChat.HOVER_COLOR))
+			var at := Vector2(0, top + ascent)
 			draw_string(font, at + HudChat.SHADOW_OFFSET, String(l["text"]), HORIZONTAL_ALIGNMENT_LEFT, -1,
 				font_size, Color(0, 0, 0, (l["color"] as Color).a))
 			draw_string(font, at, String(l["text"]), HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, l["color"])
@@ -898,7 +1130,8 @@ static func wrap(text: String, font: Font, font_size: int, width: float) -> Pack
 
 ## One tab: `chat_long_tab.ddj` stretched over 71x20 with its caption
 ## centred on it (the centring is MEASURED from the retail screenshot), bold
-## while selected (0x64cc30).
+## and white while selected (0x64cc30(1), text state 0), grey 0xffb4b4b4
+## otherwise (text state 3, 0x8b4750(3)).
 class ChatTab extends Control:
 	signal pressed
 
@@ -924,7 +1157,10 @@ class ChatTab extends Control:
 		var w := f.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
 		var y := (size.y - f.get_height(font_size)) / 2.0 + f.get_ascent(font_size)
 		draw_string(f, Vector2(round((size.x - w) / 2.0), round(y)), caption, HORIZONTAL_ALIGNMENT_LEFT, -1,
-			font_size, Color.WHITE)
+			font_size, text_color())
+
+	func text_color() -> Color:
+		return HudChat.argb(HudChat.TAB_TEXT_SELECTED if selected else HudChat.TAB_TEXT_UNSELECTED)
 
 	func _gui_input(event: InputEvent) -> void:
 		var mb := event as InputEventMouseButton

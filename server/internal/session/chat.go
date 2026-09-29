@@ -272,6 +272,12 @@ func handleChatSend(ctx context.Context, sess *gateway.Session, p *proto.Packet,
 		if !ok {
 			return fail(ChatErrCantFindTarget, req.Target)
 		}
+		// A whisper to oneself is answered with the sender's "(TO)" echo
+		// only, not a "(FROM)" line as well (OURS: retail's server was not
+		// read for it; its client will not even reply to itself, 0x7ab470).
+		if target.Session.ID() == sess.ID() {
+			return okResult()
+		}
 		if err := sendChatUpdate(target.Session, line); err != nil {
 			return fail(ChatErrCantFindTarget, req.Target)
 		}

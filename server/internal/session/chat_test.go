@@ -207,6 +207,18 @@ func TestChatAllAndWhisper(t *testing.T) {
 	}
 	w.c.none(OpChatUpdate)
 
+	// A whisper to oneself: the "(TO)" echo only, no "(FROM)" line too.
+	w.c.say(ChatWhisper, 4, "Cato", "note to self")
+	w.c.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	first, err := proto.Read(w.c.r, nil, nil)
+	if err != nil || first.Opcode != OpChatResult {
+		t.Fatalf("a self-whisper's first answer is 0x%04x, want only the result (no FROM line)", first.Opcode)
+	}
+	if r, _ := DecodeChatResult(first.Data); !r.OK || r.Target != "Cato" {
+		t.Fatalf("self-whisper result = %+v", r)
+	}
+	w.c.none(OpChatUpdate)
+
 	w.b.say(ChatWhisper, 3, "Ghost", "hello?")
 	if r := w.b.result(); r.OK || r.Code != ChatErrCantFindTarget || r.Target != "Ghost" || r.Index != 3 {
 		t.Fatalf("whisper to nobody = %+v, want code 3 naming Ghost", r)
@@ -370,6 +382,9 @@ func TestNoticeReachesEveryone(t *testing.T) {
 	res := d.Run(context.Background(), gm.Actor{Name: "Aria"}, "/notice Server maintenance in  10 minutes.")
 	if res.Refused || res.Notice != "Server maintenance in  10 minutes." {
 		t.Fatalf("/notice = %+v", res)
+	}
+	if res := d.Run(context.Background(), gm.Actor{Name: "Aria"}, "/ notice hi there"); res.Refused || res.Notice != "hi there" {
+		t.Fatalf("'/ notice hi there' = %+v, want the notice 'hi there'", res)
 	}
 	if res := d.Run(context.Background(), gm.Actor{Name: "Aria"}, "/notice   "); !res.Refused || res.Notice != "" {
 		t.Fatalf("/notice with no text = %+v, want refused", res)

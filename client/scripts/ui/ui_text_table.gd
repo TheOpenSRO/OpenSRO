@@ -47,7 +47,7 @@ const FIRST_LANGUAGE_COL := 3
 
 var _strings: Dictionary = {}
 
-static func parse(data: PackedByteArray, lang_col: int = COL_ENGLISH) -> UiTextTable:
+static func parse(data: PackedByteArray, lang_col: int = COL_ENGLISH, keep_first: bool = true) -> UiTextTable:
 	var table := UiTextTable.new()
 	if data.is_empty():
 		return table
@@ -86,6 +86,16 @@ static func parse(data: PackedByteArray, lang_col: int = COL_ENGLISH) -> UiTextT
 			else:
 				val = token
 
+		# The FIRST row for a key wins (round 634's review, READ): the
+		# client's loader TextStringManager 0x8cac30 -- which reads
+		# textdataname.txt's list, textuisystem, textzonename, textquest,
+		# texthelp and textevent -- inserts every row into a hash map
+		# (0x8ca120), which hands back the existing entry for a key it
+		# already holds, and the caller at 0x8cb266 ignores it. `keep_first`
+		# false keeps the old last-row rule, for the tool that lists the
+		# difference (docs/protocol/chat.md).
+		if keep_first and table._strings.has(token):
+			continue
 		table._strings[token] = val
 
 	return table

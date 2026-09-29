@@ -7183,6 +7183,103 @@ Go: `TestActivateRefusedWhileActiveAndEnd`, `TestBerserkActivationRefusedWhileBe
 clean; `go test -race -count=1 -p 1 ./internal/berserk/... ./internal/session/...` ok; `go test
 -count=1 -p 1 ./...`: 60 packages ok. Live: 0 SCRIPT ERROR in four logs, p95 work frame 4-9 ms.
 
+## Six-hundred-and-thirty-fourth round, review follow-up: the chat opens small and resizes with its own button, lines sit at the bottom, idle tabs are grey, and the first row of the text table wins
+
+The review confirmed round 634's READ claims: the pink "(Notice):" line, ARGB order (the
+screenshot's yellow globals prove it), the background, and pixel-identical art. It found the
+following, each fixed here and labelled READ, MEASURED, INFERRED or OURS.
+
+1. **Lines stack from the bottom (READ).** With fewer lines than rows, the draw 0x639ab0 starts
+   pitch * (rows - count) down (0x639d20..0x639d52, under +0x3a8; Create 0x638b50(1) at
+   0x7abeee). `ChatList.top_offset`.
+2. **Idle tab captions are grey (READ).** 0x8b4750(3) at 0x7aa79d selects text state 3,
+   0xffb4b4b4 (the CIFStatic constructor, 0x64d64f). The selected tab is state 0, white.
+3. **Size modes (READ, 0x7aac20).** The window opens at m = 2 (+0x428 = 2, 0x7ad385).
+   - GDR_BTN_CHAT_SIZE (ID 15, event map 0xebebf0 -> 0x7ac2a0) steps m 0..6.
+   - For m > 0: lists m*56+7 with m*4 rows, scroll m*56-28, input row at m*56+42, window height
+     399-(6-m)*56 with its bottom on the bar.
+   - Mode 0 is the input row alone, 21 tall, tabs hidden (0x7a9a80(1)).
+   - Mode 6 is the layout. The user's screenshot is mode 5.
+   - The live run found a bug: the authored GDR_CHAT_VSCROLL box (308 tall) lay over the size
+     button in the small modes and ate its click. It now follows the mode's length and passes
+     the mouse through.
+4. **Lone marks (READ).** The tab switch's table at 0x7aa9dc is `# $ % & / @ ^ ~`; "/" was missing.
+5. **Group refusals before sending (READ, 0x7ad400).** These strings are shown, and the box is
+   emptied (SetText "" at 0x7ad875):
+   - no party: "Cannot find the corresponding party."
+   - no guild: "Cannot carry this function out because you do not belong to the guild."
+   - no academy: "You do not belong to an Academy."
+
+   The client learns the party from its party answers and the guild from the kept guild info.
+   The server's codes stay as the fallback.
+6. **Text table: the first row wins (READ).** TextStringManager 0x8cac30 inserts into a hash map
+   whose insert (0x8ca120) returns the existing entry; the caller at 0x8cb266 ignores it.
+   `UiTextTable.parse` now keeps the first row (`keep_first`, default true).
+   - MEASURED on the box's archive: 566 of 6,937 textuisystem keys, 55 of 11,119 object names
+     and 2 of 8,005 equip/skill names change.
+   - Stat labels: "Phy. Atk:", "Mag. Atk:", "Phy. Def:", "Phy. Balance:" (were "Phy. atk", ...).
+   - UIC_STT_FONTNAME: "Arial" (was "Tahoma", uninstalled; both ended on an Arial file).
+   - The storage line: "Deposit items/gold into storage." (was "Deposit into storage.";
+     npc_service_reader_test now expects the first row).
+   - Login and installer texts say "SRO". Twelve 2013 avatar names change, e.g. "Grey Warlord
+     Hat (M)".
+   - About 40 first rows are Korean mangled to "?", and 24 keep CSV quote marks (OPEN: whether
+     the client strips them).
+   - **Academy:** the box's archive is a private server's, with "&Team" first; vanilla has only
+     "&Academy", and the user asked for Academy. HudChat keeps first-wins but shows "&Academy"
+     when that caption resolves to a known private-server row (`PRIVATE_SERVER_CAPTIONS`: "&Team",
+     "Job/Team"; OURS, labelled).
+7. **Hover bar (READ).** +0x3c8 = 0x66ffffff is a 40%-white bar under the row the mouse is over.
+   The row comes from slot 17 (0x63ad10, +0x3aa) and is drawn by 0x639ab0 -> 0x63b0e0 (+0x386).
+   Its height is the text height, since +0x384 is unset.
+8. **Pitch (READ).** The pitch is +0x39c = 14 (0x638c20(0xe) at 0x7abeb8), no longer the font
+   height. chat.md's colour note is now READ-only.
+9. **Also fixed:**
+   - The notice banner is the text's extent (0x7b3eb0), with no fill of ours.
+   - `/ notice hi` keeps its text ("e hi" before).
+   - A whisper to oneself shows the "(TO)" echo only (OURS).
+   - OPEN: the "*" before a name at 0x877810/0x877340 depends on the sender's vslot 0xac state
+     (!= 4) and, for received lines, the option at DAT_00ef1bc0. Neither was identified cheaply,
+     so it is not built.
+
+**Real input (xdotool, run r2 in `/var/tmp/chat/e2e`):**
+- The window opened in mode 2 with grey idle tabs.
+- The mouse over a line drew the hover bar.
+- `@guild check` and `&academy check` showed the game's refusals without a `CHAT SEND`.
+- After B was relaunched outside the party, `#still there?` showed "Cannot find the
+  corresponding party." and emptied the box, with no send.
+- B's #Party tab with one line drew it at the bottom.
+- Seven clicks on the size button logged `CHAT MODE 2 -> 3` ... `6 -> 0`, `0 -> 1`, `1 -> 2`.
+  The renders show each size, with the bottom edge fixed.
+- Renders: the session scratchpad's `chat_shots/review/`.
+
+**Negative, against 8eae571** (round 634's commit, the new tests copied in):
+```
+--- FAIL: TestChatAllAndWhisper: a self-whisper's first answer is 0x00a6, want only the result (no FROM line)
+--- FAIL: TestNoticeReachesEveryone: '/ notice hi there' = {... Notice:e hi there}, want the notice 'hi there'
+FAIL the tab switch's lone marks are 0x7aa9dc's # $ % & / @ ^ ~ (got '#$%&@^~')
+FAIL pitch 14 (+0x39c) and mode 2 at start (+0x428)
+FAIL HudChat.mode_geometry lays out the size modes (0x7aac20)
+FAIL HudChat.caption_for keeps a private-server row off the Academy tab
+FAIL the window opens in mode 2: 175 tall, lists 119, the input row at 154 (got 398, 343, 378)
+FAIL the selected caption is white, the others grey 0xffb4b4b4 (ChatTab.text_color)
+FAIL lines stack from the bottom and the hovered row is barred (ChatList.top_offset / line_at)
+FAIL a party line with no party is not sent and the box empties
+FAIL the size button steps the mode (0x7ac2a0)
+FAIL the banner is the text's extent (0x7b3eb0) (got (197, 33))
+FAIL the first row of a duplicated key wins (got Phy. atk)
+FAIL the private archive's first row is what the table holds (got &Academy)
+```
+
+**Tests.**
+- `hud_chat_test.gd`, `ui_text_table_test.gd` and `chat_test.go` are extended.
+- `hud_stack_test.gd` pins mode 6. `hud_alternates_test.gd` expects mode 2's input row (y 154).
+  `npc_service_reader_test.gd` expects the first STOREHOUSE row.
+- `remote_godot.sh check`: 385 scripts, ALL LOAD.
+- `tests`: 154 suites, 0 failing.
+- `go vet ./...`: clean. `go test -count=1 -p 1 ./...`: every package ok.
+- Results are given below.
+
 ## Six-hundred-and-thirty-fourth round: the chat window looks like the game's -- five tabs that filter, a left scroll bar, coloured channels -- and party, guild, whisper, global and GM notice all work
 
 The user: "fix the chat window so it looks like the original game ... the Job/Team tab is supposed

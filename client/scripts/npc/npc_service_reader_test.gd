@@ -131,8 +131,10 @@ func _init() -> void:
 	_check(not consts.has("TALKEND2_STRID"), "no TALKEND2 constant (pulley-only, id 0x1f)")
 	# (g) textuisystem.txt holds STOREHOUSE twice, in two layouts: a 16-column
 	# row with the English at [8], and later a 19-column row with "0" at [8]
-	# and the English at [9]. The later row wins, which is why the player's
-	# archive shows "Deposit into storage." rather than the earlier row's text.
+	# and the English at [9]. Since round 634's review the FIRST row wins, as
+	# the client's loader keeps it (TextStringManager 0x8cac30 -> 0x8ca120's
+	# insert returns the existing entry): the box's archive now reads
+	# "Deposit items/gold into storage." where it read "Deposit into storage.".
 	var a16 := PackedStringArray()
 	a16.resize(16)
 	a16.fill("0")
@@ -147,8 +149,8 @@ func _init() -> void:
 	b19[9] = "LAYOUT-B"
 	var ui_rows := "\t".join(a16) + "\n" + "\t".join(b19) + "\n"
 	var ui := UiTextTable.parse(ui_rows.to_utf16_buffer())
-	_check(ui.get_text("UIIT_STT_NPC_CHATTING_WND_STOREHOUSE") == "LAYOUT-B",
-		"the later 19-column STOREHOUSE row wins (got %s)" % ui.get_text("UIIT_STT_NPC_CHATTING_WND_STOREHOUSE"))
+	_check(ui.get_text("UIIT_STT_NPC_CHATTING_WND_STOREHOUSE") == "LAYOUT-A",
+		"the first (16-column) STOREHOUSE row wins (got %s)" % ui.get_text("UIIT_STT_NPC_CHATTING_WND_STOREHOUSE"))
 
 	# (h) The composition a warehouse keeper really gets. The player's
 	# refshopgroup.txt lists 8 of the 9 keepers npcpos spawns as running a

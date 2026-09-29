@@ -277,8 +277,10 @@ func _chat_checks() -> void:
 	var input := chat.find_child("GDR_CHAT_INPUTBOX", true, false) as Control
 	var mode := chat.find_child("GDR_CHAT_MODE_BTN", true, false) as Control
 	var input_rect: Rect2 = input.get_meta(UiBuilder.AUTHORED_RECT_META) if input != null else Rect2()
-	_check(input_rect == Rect2(38, 378, 360, 20),
-		"chat: the input line is at its UI_UPDATE_2009_FIRST rect 38,378,360,20 (got %s)" % input_rect)
+	# x and width are the UI_UPDATE_2009_FIRST branch's (38, 360; the #else
+	# is 18, 381); y is the start mode's row, 2 * 56 + 42 (round 634, 0x7aac20).
+	_check(input_rect == Rect2(38, 154, 360, 20),
+		"chat: the input line is at its UI_UPDATE_2009_FIRST rect 38,_,360,20, on mode 2's row 154 (got %s)" % input_rect)
 	var mode_rect: Rect2 = mode.get_meta(UiBuilder.AUTHORED_RECT_META) if mode != null else Rect2()
 	_check(mode != null and not input_rect.intersects(mode_rect),
 		"chat: the input line does not cover the mode button (%s vs %s)" % [input_rect, mode_rect])

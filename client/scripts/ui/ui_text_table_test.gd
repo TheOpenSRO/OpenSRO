@@ -34,8 +34,28 @@ func _init() -> void:
 		"1\tUIIT_STT_HIT_RATIO\t\u1355\t0\t0\t0\t0\t0\t0\tHit rate\t0\t0\t0\t0\t0\t0\t0\t0\t0",
 	])
 	var varying_table := UiTextTable.parse(("\n".join(varying)).to_utf16_buffer())
-	_check(varying_table.get_text("UIIT_STT_PHYSICAL_ATTACK") == "Phy. atk",
-		"picks the English column even when it moves (got %s)" % varying_table.get_text("UIIT_STT_PHYSICAL_ATTACK"))
+	# The FIRST row for a key wins, as the client's loader keeps it (round
+	# 634's review: 0x8ca120's insert returns the existing entry).
+	_check(varying_table.get_text("UIIT_STT_PHYSICAL_ATTACK") == "Phy. Atk:",
+		"the first row of a duplicated key wins (got %s)" % varying_table.get_text("UIIT_STT_PHYSICAL_ATTACK"))
+	var script: Script = load("res://scripts/ui/ui_text_table.gd")
+	var parse_args := 0
+	for m in script.get_script_method_list():
+		if m["name"] == "parse":
+			parse_args = (m["args"] as Array).size()
+	if parse_args >= 3:
+		var last_table = script.call("parse", ("\n".join(varying)).to_utf16_buffer(), 8, false)
+		_check(last_table.get_text("UIIT_STT_PHYSICAL_ATTACK") == "Phy. atk",
+			"picks the English column even when it moves; keep_first false keeps the last row (got %s)" % last_table.get_text("UIIT_STT_PHYSICAL_ATTACK"))
+	else:
+		_check(false, "parse takes keep_first (the old last-row rule as an option)")
+	var dup := PackedStringArray([
+		"1\tUIIT_CTL_CHATMENU_TRAININGCAMP\t&???\t0\t0\t0\t0\t0\t&Team\t&Team\t0",
+		"1\tUIIT_CTL_CHATMENU_TRAININGCAMP\t&x\t0\t0\t0\t0\t0\t0\t&Academy\t0",
+	])
+	var dup_table := UiTextTable.parse(("\n".join(dup)).to_utf16_buffer())
+	_check(dup_table.get_text("UIIT_CTL_CHATMENU_TRAININGCAMP") == "&Team",
+		"the private archive's first row is what the table holds (got %s)" % dup_table.get_text("UIIT_CTL_CHATMENU_TRAININGCAMP"))
 	_check(varying_table.get_text("UIIT_STT_HIT_RATIO") == "Hit rate",
 		"a row whose column 8 is the \"0\" filler still resolves (got %s)" % varying_table.get_text("UIIT_STT_HIT_RATIO"))
 

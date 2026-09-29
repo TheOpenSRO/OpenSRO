@@ -1199,6 +1199,8 @@ var _hud_panels: HudPanels
 var _hud_chat: HudChat
 ## GDR_NOTICE (round 634) and the "Chat to all" window, built on first use.
 var _hud_notice: HudNotice
+## Whether the last party answer put this player in a party (chat's #).
+var _chat_in_party := false
 var _hud_whole_chat: HudWholeChat
 ## The chat-input slash console (scripts/ui/console.gd) and the in-client
 ## Help window (scripts/ui/help_window.gd). GM state comes from the server's
@@ -1827,6 +1829,16 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_chat.message_submitted.connect(_on_chat_submitted)
 	_hud_chat.own_name = NetClient.current_character_name
 	_hud_chat.is_gm = _is_gm
+	# 0x7ad400's own refusals need the groups the player is in (round 634's
+	# review): the party from the party results, the guild from the kept
+	# guild info; srrevamp has no academy.
+	_hud_chat.group_check = func(t: int) -> bool:
+		match t:
+			HudChat.TYPE_PARTY:
+				return _chat_in_party
+			HudChat.TYPE_GUILD:
+				return NetClient.last_guild_result != null and NetClient.last_guild_result.guild_id != 0
+		return false
 	# GDR_NOTICE, the GM notice banner (round 634), over everything else.
 	_hud_notice = HudNotice.new()
 	_hud_notice.name = "HudNotice"
@@ -16433,6 +16445,7 @@ func _on_party_result(result: PartyNet.Result) -> void:
 	if result.error != "":
 		party_status_label.text = "Error: %s" % result.error
 		return
+	_chat_in_party = result.party_id != 0
 	if result.party_id == 0:
 		party_status_label.text = "Not in a party."
 		party_list.clear()
@@ -16449,6 +16462,7 @@ func _on_party_join_pressed() -> void:
 
 func _on_party_leave_result(ok: bool, reason: String) -> void:
 	if ok:
+		_chat_in_party = false
 		party_status_label.text = "Left the party."
 		party_list.clear()
 	else:

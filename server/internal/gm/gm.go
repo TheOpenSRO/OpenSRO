@@ -203,7 +203,9 @@ const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty], /gol
 // the first word is the command. The caller has already checked the gate.
 func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 	line = strings.TrimSpace(line)
-	line = strings.TrimPrefix(line, "/")
+	// Trimmed again after the slash, so "/ notice hi" keeps its text whole:
+	// /notice slices the line after its first word (round 634's review).
+	line = strings.TrimSpace(strings.TrimPrefix(line, "/"))
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
 		return refuse("empty command. " + Help)

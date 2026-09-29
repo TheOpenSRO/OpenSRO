@@ -1126,14 +1126,16 @@ refusals, the global chatting item's "Chat to all" window, the GM notice's line 
 
 - **Union and academy chat have no audience**: srrevamp forms no alliances and has no academy, so
   the server refuses both (the client shows the game's own refusal lines).
+- **Built in the review follow-up**: the size modes and button, bottom-stacked lines, grey idle
+  tabs, the hover bar, the client-side group refusals, first-row-wins for the text table.
 - **Not built**: the whisper list pop-up (`GDR_WHISPERLIST`, 0x7acfd0), the chat-mode button and
-  viewer (IDs 41/42), the window size toggle (`GDR_BTN_CHAT_SIZE`; the user's retail screenshot is
-  the 56-px-shorter mode), the hide button, speech balloons over heads (0x9c77c0), the flood block
+  viewer (IDs 41/42), the hide button, the "*" name prefix (0x877810/0x877340, the sender's vslot
+  0xac state not identified), speech balloons over heads (0x9c77c0), the flood block
   (0x7a9bb0), the global window's text filter (0x8c4020), the system message window (interface
   child 0x44) -- srrevamp's own "* ..." lines and refusals go to the All tab (OURS).
-- **Open questions**: which of the archive's two UIIT_CTL_CHATMENU_TRAININGCAMP rows ("&Team",
-  "&Academy") retail keeps; whether retail's server strips the channel mark from the text; the
-  range of ordinary chat (srrevamp: the zone bucket); the lists' `+0x3c8 = 0x66ffffff`; the wheel
+- **Open questions**: whether the client strips CSV quote marks from a text row (24 first rows on
+  the box's archive keep them since first-row-wins); whether retail's server strips the channel mark from the text; the
+  range of ordinary chat (srrevamp: the zone bucket); the wheel
   step. The user's screenshot (a private server) draws notices cyan (0, 174, 195) without the
   "(Notice):" prefix; the binary says pink `0xffffaec3` with the prefix -- srrevamp follows the
   binary; the private client's source for the cyan is not known.

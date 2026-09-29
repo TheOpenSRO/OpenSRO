@@ -24,9 +24,9 @@ class_name HudNotice
 ## (0x7b3fe0). READ: those three names; MEASURED: all three are the one
 ## translucent maroon (128, 45, 67) -- the corner fading in both directions,
 ## edge2 (40x8) across, edge (4x8) down to alpha 128. INFERRED: laid out as a
-## stretch frame, corners at the corners, edge2 on the sides, edge along the
-## top and bottom, alpha-128 maroon inside, the pieces around the text's
-## rect (how 0x8185e0 / 0x8182e0 size the frame was not read).
+## stretch frame over the window's rect, which is the text's extent --
+## corners at the corners, edge2 on the sides, edge along the top and bottom
+## (how 0x8185e0 / 0x8182e0 size the frame was not read). No fill is drawn.
 
 const UiBuilder = preload("res://scripts/ui/ui_builder.gd")
 
@@ -37,8 +37,6 @@ const EDGE2_DDJ := "interface\\ifcommon\\com_notice_edge2.ddj"
 const CORNER_DDJ := "interface\\ifcommon\\com_notice_corner.ddj"
 ## The pieces' size: the corner and edge2 are 40x8, the edge 4x8.
 const SIDE := Vector2(40, 8)
-## The fill inside the frame (MEASURED: the edge's full-alpha rows).
-const FILL := Color8(128, 45, 67, 128)
 ## GDR_NOTICE's FontColor (255,255,255,255) and FontIndex 0.
 const TEXT_COLOR := Color.WHITE
 
@@ -62,15 +60,16 @@ func setup(builder: UiBuilder) -> void:
 	if _font == null:
 		_font = ThemeDB.fallback_font
 
-## Shows `text` for LIFE_MS (0x7b3eb0).
+## Shows `text` for LIFE_MS (0x7b3eb0): the window is the text's extent,
+## centred, at the top.
 func show_notice(text: String) -> void:
 	_text = text
 	_left_ms = LIFE_MS
 	var extent := _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size)
 	extent.y = _font.get_height(_font_size)
 	var screen_w := get_viewport_rect().size.x if is_inside_tree() else 1024.0
-	size = extent + SIDE * 2.0
-	position = Vector2(floor(screen_w / 2.0 - extent.x / 2.0) - SIDE.x, 0)
+	size = extent
+	position = Vector2(floor(screen_w / 2.0 - extent.x / 2.0), 0)
 	modulate.a = 1.0
 	visible = true
 	queue_redraw()
@@ -102,24 +101,25 @@ func advance(ms: int) -> void:
 		return
 	modulate.a = alpha_for(_left_ms)
 
+## The frame pieces over the window's own rect -- the corners at its
+## corners, the edge along the top and bottom, edge2 down the sides -- with no
+## fill of our own (INFERRED arrangement; the texture names are READ).
 func _draw() -> void:
-	var inner := Rect2(SIDE, size - SIDE * 2.0)
-	draw_rect(inner, FILL)
 	var w := size.x
 	var h := size.y
-	if _edge != null:
-		# Top and bottom: the edge tiled across, the bottom one flipped.
-		draw_texture_rect(_edge, Rect2(SIDE.x, 0, inner.size.x, SIDE.y), true)
-		draw_texture_rect(_edge, Rect2(SIDE.x, h, inner.size.x, -SIDE.y), true)
-	if _edge2 != null:
-		# The sides: edge2 stretched down, the right one mirrored.
-		draw_texture_rect(_edge2, Rect2(0, SIDE.y, SIDE.x, inner.size.y), false)
-		draw_texture_rect(_edge2, Rect2(w, SIDE.y, -SIDE.x, inner.size.y), false)
+	var cw := minf(SIDE.x, w / 2.0)
+	var ch := minf(SIDE.y, h / 2.0)
+	if _edge != null and w > 2.0 * cw:
+		draw_texture_rect(_edge, Rect2(cw, 0, w - 2.0 * cw, ch), true)
+		draw_texture_rect(_edge, Rect2(cw, h, w - 2.0 * cw, -ch), true)
+	if _edge2 != null and h > 2.0 * ch:
+		draw_texture_rect(_edge2, Rect2(0, ch, cw, h - 2.0 * ch), false)
+		draw_texture_rect(_edge2, Rect2(w, ch, -cw, h - 2.0 * ch), false)
 	if _corner != null:
-		draw_texture_rect(_corner, Rect2(0, 0, SIDE.x, SIDE.y), false)
-		draw_texture_rect(_corner, Rect2(w, 0, -SIDE.x, SIDE.y), false)
-		draw_texture_rect(_corner, Rect2(0, h, SIDE.x, -SIDE.y), false)
-		draw_texture_rect(_corner, Rect2(w, h, -SIDE.x, -SIDE.y), false)
+		draw_texture_rect(_corner, Rect2(0, 0, cw, ch), false)
+		draw_texture_rect(_corner, Rect2(w, 0, -cw, ch), false)
+		draw_texture_rect(_corner, Rect2(0, h, cw, -ch), false)
+		draw_texture_rect(_corner, Rect2(w, h, -cw, -ch), false)
 	if _font != null and _text != "":
-		var at := Vector2(SIDE.x, SIDE.y + _font.get_ascent(_font_size))
-		draw_string(_font, at, _text, HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size, TEXT_COLOR)
+		draw_string(_font, Vector2(0, _font.get_ascent(_font_size)), _text, HORIZONTAL_ALIGNMENT_LEFT, -1,
+			_font_size, TEXT_COLOR)
