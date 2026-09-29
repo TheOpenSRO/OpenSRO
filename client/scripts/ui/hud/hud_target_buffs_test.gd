@@ -43,11 +43,18 @@ func _catalog() -> SkillBuffCatalog:
 		"cbuf": false, "nbuf": true, "bbuf": true, "lnks": false})
 	c.set_row({"id": 34917, "level": 5, "icon": "skill\\t_d.ddj", "name_code": "SN_SKILL_CENTURION", "desc_code": "",
 		"cbuf": false, "nbuf": false, "bbuf": false, "lnks": true})
+	# The premium's skill row shape (round 638 review): a USU1 skill buff.
+	c.set_row({"id": 5412, "level": 1, "icon": "item\\etc\\t_pre.ddj", "name_code": "SN_SKILL_MALL_PRE_APRU_4W", "desc_code": "",
+		"cbuf": false, "nbuf": false, "bbuf": false, "lnks": false})
 	for i in 20:
 		c.set_row({"id": 1000 + i, "level": 1, "icon": "", "name_code": "SN_N%d" % i, "desc_code": "",
 			"cbuf": false, "nbuf": false, "bbuf": false, "lnks": false})
 	c.set_names(_names({"SN_T_A": "Grass Walk", "SN_T_A_STUDY": "Moves faster.", "SN_T_B": "Lightning Force",
 		"SN_SKILL_CENTURION": "Centurion"}))
+	# The premium's name is only in textdata_object (MEASURED), the second
+	# file of the client's one text map.
+	var objects := _names({"SN_SKILL_MALL_PRE_APRU_4W": "Premium"})
+	c.set("object_names_provider", func() -> UiTextTable: return objects)
 	c.finish_loading()
 	return c
 
@@ -131,6 +138,12 @@ func _init() -> void:
 		_check(v.tooltip_for(107) == "Lightning Force Lv 3", "tooltip: no description, no time line")
 		_check(v.tooltip_for(34917) == "Centurion", "tooltip: a name-only code shows the name alone")
 		_check(not v.tooltip_for(113).contains("Remain"), "tooltip: no remaining time for a target's buff")
+		# 0x7fc412..0x7fc594's list has no SN_SKILL_MALL_PRE_APRU_4W (the
+		# buff bar's does): a target's premium reads "<name> Lv 1".
+		_check(cat.text_of("SN_SKILL_MALL_PRE_APRU_4W") == "Premium",
+			"a skill name only textdata_object has resolves (the client's one text map)")
+		_check(cat.text_of("SN_T_A") == "Grass Walk", "the skill table still comes first")
+		_check(v.tooltip_for(5412) == "Premium Lv 1", "tooltip: a target's premium is \"<name> Lv 1\" (got '%s')" % v.tooltip_for(5412))
 		v.free()
 
 	# --- HudTarget: where the viewer goes, the kindred mark. ---
@@ -169,6 +182,33 @@ func _init() -> void:
 		feed.end("character:5", [21])
 		hud.call("advance_buffs", 1000.0)
 		_check(viewer.skill_ids(true) == [107], "an ended buff goes on the next tick")
+		# The same target shown again (an HP update) keeps its slots.
+		var kept_slot = viewer.slot_of(107)
+		hud.call("_show_buffs", piece, "character:5")
+		_check(viewer.slot_of(107) == kept_slot, "showing the same target again keeps its icons (a diff, not a rebuild)")
+		# Re-keyed: this player selected before its id came.
+		if hud.has_method("set_buff_owner"):
+			feed.start("character:9", 31, 1001)
+			hud.call("set_buff_owner", "character:9")
+			_check(viewer.skill_ids(true) == [1001], "re-keyed to the real id: that owner's buffs")
+			hud.call("set_buff_owner", "character:5")
+		else:
+			_check(false, "HudTarget can re-key its owner")
+		# vslot_012: a target that no longer exists hides the window.
+		if hud.has_method("check_target"):
+			var lost: Array = []
+			hud.connect("target_lost", func(k: String) -> void: lost.append(k))
+			hud.visible = true
+			hud.set("target_exists", func(_k: String) -> bool: return true)
+			_check(not bool(hud.call("check_target")) and hud.visible, "a target that exists keeps the window")
+			hud.set("target_exists", func(_k: String) -> bool: return false)
+			_check(bool(hud.call("check_target")) and not hud.visible and lost == ["character:5"],
+				"a target that is gone hides the window and says which (vslot_012)")
+			_check(not viewer.visible and String(hud.call("buff_owner")) == "", "and the viewer goes with it")
+			hud.set("target_exists", func(_k: String) -> bool: return true)
+		else:
+			_check(false, "HudTarget checks its target each frame (vslot_012)")
+		hud.call("_show_buffs", piece, "character:5")
 		hud.call("_show_buffs", null, "monster:3")
 		_check(not viewer.visible, "no piece (a rarity-2 monster): no viewer")
 		hud.call("_show_buffs", piece, "character:5")

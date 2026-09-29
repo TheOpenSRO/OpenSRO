@@ -7094,6 +7094,124 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirty-eighth round, review follow-up: a player's premium shows on their target row, the server starts it from the item, and a target that is gone closes the window
+
+The review of round 638 upheld every READ claim except one: **the premium does show on a
+target.** The first icon of the user's retail target row is `icon\item\etc\mall_pre_apru_4w.ddj`
+(correlation 0.978, the reviewer's measurement). This follow-up corrects that, makes the server
+start the premium's buff, and mirrors the target window's per-frame check. Labels: READ,
+MEASURED, INFERRED, OURS, OPEN. Record: `docs/protocol/target_window_buffs.md`.
+
+**1. The premium is a skill buff (READ, SR_GameServer.exe; MEASURED, the box's data).**
+- The premium items carry `[USU1:SKILL_MALL_PRE_APRU_4W_01]` or `…_GLOBAL_4W_01`: skilldata 5412,
+  29723 and 46405, `SN_SKILL_MALL_PRE_APRU_4W` / `…_GLOBAL_4W`, icon `item\etc\mall_pre_apru_4w.ddj`.
+  Examples: `ITEM_MALL_PREMIUM_GOLDTIME` 9277 and `ITEM_MALL_PREMIUM_GLOBAL_SILVERTIME` 22925.
+- USU1 in `GObjPC::FUN_0049f590` (0x49fad0):
+  - It queues a type-0 timed job keyed by the skill id, lasting 'dura' / 1000 s. The division is
+    unsigned (`mul 0x10624dd3; shr 6`): the 4-week rows hold 2,419,200,000 ms as −1875767296.
+  - The manager's switch (0x6565f0, table 0x656690) makes type 0 a **CTJ_SkillKeeper**.
+  - Its slot 12 (0x650e70), run as the factory 0x655be0 makes it, calls RegisterSkillInBook,
+    EngageSkill and **Skill_BroadcastBuffAdded_B0BD**.
+- The pre-check (0x49f4ab..0x49f4ef):
+  - the skill by code (0x495690);
+  - 0x1894 if the same skill's type-0 job runs (FUN_00411560(0, id));
+  - 0x650d40: no 'dura' is 0x3003, then the skill gate 0x58d8f0.
+- So the premium reaches every client as 0xB0BD and sits in its owner's buff list like any buff.
+  Only the item-time kinds 3/4/5 (the UIL1/UIU1 grants) never reach the viewer.
+- The four wrong statements are corrected: target_window_buffs.md, the round 638 entry's §3, the
+  viewer's header, and the round's commit note repeated there.
+
+**2. The server starts it (built; `session/composite.go`).**
+- A composite item's USU1 entry resolves its skill by code (new `GetSkillByCode`, the lowest id,
+  as items are). It refuses with 0x1894's text while the same skill's buff runs, and refuses a skill
+  with no 'dura'. After the spend, it starts the buff on the user's own book (`startUsu1Buff`, under
+  the owner's buff lock) for 'dura' read unsigned / 1000 s, and tells the zone with OpBuffStart.
+- **OURS, changed from round 632:** an entry srrevamp does not model is now skipped and logged
+  instead of refusing the whole item. These are a UIU1 3/3/13/4 (the premium time, a
+  CTJ_PremiumKeeper type-3 job), a UIU1 3/3/3/10 with a FourCC other than 0x706874, BCS1, BFI1,
+  PSU1, UQL1 and USL1. An item with nothing modelled is still refused and not spent.
+- Not modelled: the skill gate 0x58d8f0; the buff's params (dru, odar, hr, luck, alcu, inti, stri),
+  since the book models only run speed; the premium time, BFI1 and UQL1.
+
+**3. A skill name in the second text file (READ/MEASURED).**
+- `SN_SKILL_MALL_PRE_APRU_4W` ("Premium") is only in `textdata_object.txt`, not
+  `textdata_equip&skill.txt` (MEASURED on the box's Media.pk2).
+- The client's TextStringManager loads both into one map.
+- `SkillBuffCatalog.text_of` now falls back to the object-name table (World3D's `_object_names`),
+  for the buff bar and the viewer alike.
+- The live run below still showed the code (it began before this fix). The fix is covered by the
+  test.
+- The viewer's name-only list (0x7fc412..) has no `SN_SKILL_MALL_PRE_APRU_4W`, so a target's
+  premium reads "Premium Lv 1" (READ; the buff bar's own list has it).
+
+**4. A target that is gone closes the window (READ, CIFTargetWindow::vslot_012 0x698ae0).**
+- Each frame the window looks its id up.
+  - Not found: it hides.
+  - A CICharactor whose vslot 0x54 answers 0: it hides and deselects (0x778650(0)).
+- `HudTarget.check_target` mirrors this with `World3D._target_exists`. That is a monster body or
+  snapshot, another player's body, or this player.
+- World3D then drops its selection. Dropping the id is OURS: retail keeps it unshown.
+- A zone change also clears `_monster_snapshots`, and world entry clears the target outright.
+
+**5. The review's smaller items.**
+- **0xB0BD attaches only when the owner's `+0x21c` is not −1** (0x8a5d58; otherwise the object is
+  destroyed). What `+0x21c` is, is OPEN.
+- **The item-use effects (0x8735d0) use ids 0x80000023..25**, which the collector's `js` skips.
+- **`_show_target` is re-called for every HP update.** The viewer now diffs when the owner and
+  piece are the same, instead of rebuilding (OURS, equivalent to retail's select running only on
+  a change).
+- **This player selected before OpSelfId** (key `character:-1`) is re-keyed when the id arrives
+  (`set_buff_owner`).
+
+**Live (MEASURED; two clients, Login → CharacterSelect, real X input; `tb_run.sh`, run r2;
+screenshots in `scratchpad/targetbuff_shots/review/`):**
+- A gets the premium with `/give 9277` (`ITEM_MALL_PREMIUM_GOLDTIME`; the reply was "gave 1 x item
+  9277").
+- B left-clicks A. The log reads `buffs of character:1 -- 0 main` (03).
+- A opens the inventory (I) and right-clicks the premium. The server logs `composite: USU1 skill
+  buff item=9277 character=1 skill=5412 seconds=2419200 started=true`, then `entries not
+  modelled, skipped [UIU1:ITEM_PRE_GOLTAM_4W BFI1:… UQL1:QSP_ALL_POTION_3]`.
+- A's own bar shows the premium icon beside its three UIL1 grants (04, A side).
+- B's log: `BUFF start: owner 1 … skill 5412 token 1 duration 2419200000 ms`, then `HudTarget:
+  buffs of character:1 -- 1 main, 0 second: 5412@(0, 0)`. B's row shows the premium icon, the same
+  art as the retail row's first icon (04).
+- Hovering it showed the raw code, before the text-map fix (05).
+- B, with A selected, types `/goto donwhang` into chat (a zone change). The log reads `HudTarget:
+  target character:1 is gone -- window hidden (vslot_012)` and `World3D: target character:1 gone
+  -- deselected`, and the window is gone (09).
+- An earlier `/goto mangyang` moved B within Jangan's zone. A stayed in the zone's entity list,
+  so the window rightly stayed.
+- There were no SCRIPT ERRORs.
+
+**Tests and negatives.**
+- Server: `server/internal/session/usu1_test.go`, with synthetic rows in the premium's shape.
+  1. The premium is used; its skill's buff is on the user's book at 2,419,200 s; a second is
+     refused with 0x1894's text and not spent.
+  2. A BFI1-only item is refused and not spent.
+  3. The unsigned duration.
+
+  Against c89f758, with the fixture change copied in:
+  ```
+  --- FAIL: TestUsu1StartsTheSkillBuff (0.10s)
+      usu1_test.go:32: premium: "that cannot be used", want used (UIU1 3/3/13/4 and BFI1 skipped, USU1 started)
+  ```
+- Client: `hud_target_buffs_test.gd` gains these checks:
+  - the text-map fallback and the skill table first;
+  - the premium's "<name> Lv 1";
+  - the same target re-shown keeping its slots;
+  - re-keying;
+  - vslot_012 hiding the window and naming the lost owner.
+
+  Against c89f758:
+  ```
+  FAIL showing the same target again keeps its icons (a diff, not a rebuild)
+  FAIL HudTarget can re-key its owner
+  FAIL HudTarget checks its target each frame (vslot_012)
+  3 FAILURE(S)
+  ```
+- On this branch: ALL PASS. `remote_godot.sh check` → ALL LOAD; `remote_godot.sh tests` → 157
+  suites, 0 failing; `go build ./... && go test -count=1 -p 1 ./...` → all ok.
+
 ## Six-hundred-and-thirty-eighth round: clicking a player or a monster shows its buffs under its name at the top middle, and a player's race emblem at the left
 
 The user asked for a clicked character's or monster's running buffs to show at the top middle of
@@ -7128,9 +7246,9 @@ MEASURED, INFERRED, OURS, OPEN. The full record, with every address, is
   owner the packet names (0x8a5d49). So every buff the zone hears of belongs to its owner.
 - Type 3 objects come from 0xB0BE (a buff carrying a name; unread, and srrevamp sends none).
   The abnormal-state bits go into the second list (none are sent).
-- **Item states are never among the sources** (every caller of the viewer's two adds was listed).
-  So a target's premium or item grant does not show here in retail. A mall item that works by
-  starting a skill buff does show.
+- ~~Item states are never among the sources, so a target's premium does not show.~~ **Wrong;
+  corrected by the review follow-up above:** the premium is a USU1 skill buff (0xB0BD) and does
+  show. Only the item-time kinds 3/4/5 (the UIL1/UIU1 grants) never reach the viewer.
 
 **4. The grid (READ, 0x699480 / 0x7fbea0 / 0x7fd020).**
 - 8 per row, a 23 x 23 pitch, 20 x 20 icons.

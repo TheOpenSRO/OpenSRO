@@ -1019,10 +1019,19 @@ is in `docs/protocol/target_window_buffs.md`. Left open:
       comparison of two 32-entry arrays, 0x9c7830 / 0x9cdf00). What the arrays are is unread.
 - [ ] **A rarity-2 monster's viewer position.** Retail never writes it; ours hides the viewer.
       No monster in the archive has rarity 2.
-- [ ] **The target window after a zone change or a target leaving view.** It keeps the old
-      name (this predates round 638). The viewer empties at its next tick, because the book is
-      cleared with the old zone. Retail's per-frame check (vslot_012) closing the window was not
-      read.
+- [x] **The target window after a zone change or a target leaving view** -- done in the
+      review follow-up: CIFTargetWindow::vslot_012's per-frame lookup is mirrored
+      (`HudTarget.check_target`), so a target that is gone hides the window and is deselected.
+      Another player's death is not reported to this client, so that case is OPEN.
+- [x] **The premium on a target** -- done in the review follow-up. The premium is a USU1 skill
+      buff and shows like any buff; the server now starts it (`session/composite.go`). Left
+      open on the server:
+  - the skill gate 0x58d8f0 that 0x650d40 runs;
+  - the buff's params (dru, odar, hr, luck, alcu, inti, stri): the book models only run speed;
+  - the premium's other entries are skipped (OURS, logged): the UIU1 premium time (3/3/13/4,
+    a type-3 CTJ_PremiumKeeper job), BFI1 and UQL1.
+- [ ] **What `+0x21c == -1` means** for an owner whose 0xB0BD object is destroyed, not attached
+      (0x8a5d58).
 - [ ] **Pets** (the CICCos branch shows the viewer too). srrevamp's pets cannot be targeted yet.
 
 ### Store and warehouse confirm boxes — **crash fixed (round 631); next: the retail CIFMessageBox**

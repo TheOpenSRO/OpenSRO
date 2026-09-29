@@ -130,6 +130,26 @@ func (m *MemStore) GetSkill(_ context.Context, id int64) (*Skill, error) {
 	return &cp, nil
 }
 
+// GetSkillByCode returns the skill whose BasicCode is code, the lowest id
+// when several rows share it (round 638 review: a composite item's USU1 entry
+// names its skill by code, and GObjPC::FUN_0049f590 resolves it by code at use
+// time through 0x495690).
+func (m *MemStore) GetSkillByCode(_ context.Context, code string) (*Skill, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var best *Skill
+	for _, sk := range m.skills {
+		if sk.BasicCode == code && (best == nil || sk.ID < best.ID) {
+			cp := sk
+			best = &cp
+		}
+	}
+	if best == nil || code == "" {
+		return nil, fmt.Errorf("refdata: querying skill %q: not found", code)
+	}
+	return best, nil
+}
+
 // ListAllSkills returns every imported skill, ordered by ID.
 func (m *MemStore) ListAllSkills(_ context.Context) ([]*Skill, error) {
 	m.mu.RLock()

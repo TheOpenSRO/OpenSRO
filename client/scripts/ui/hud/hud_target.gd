@@ -121,6 +121,9 @@ extends Control
 ## the level difference.
 
 signal closed
+## The target is gone (round 638 review): CIFTargetWindow::vslot_012's
+## per-frame check hid the window. World3D drops its selection.
+signal target_lost(owner_key: String)
 
 const CONTAINER_LAYOUT := "resinfo\\iftargetwindow.txt"
 const COMMON_LAYOUT := "resinfo\\iftw_commonenemy.txt"
@@ -177,6 +180,9 @@ var _buffs: HudTargetBuffs = null
 var buff_catalog: SkillBuffCatalog = null
 var buff_source: Callable = func(_owner_key: String) -> Array: return []
 var _buff_owner := ""
+## Whether the shown owner still exists (World3D: a monster's body, another
+## player's body, or this player). Default: always.
+var target_exists: Callable = func(_owner_key: String) -> bool: return true
 ## Timer 1 (0x69a215, 1000 ms): ms since the viewer last refreshed, and
 ## whether its first fill still waits for the skill index (OURS).
 var _buff_timer_ms := 0.0
@@ -619,6 +625,13 @@ static func buff_viewer_offset(piece_size: Vector2) -> Vector2:
 func _show_buffs(piece: Control, owner_key: String) -> void:
 	if _buffs == null:
 		return
+	# The same target shown again (World3D re-calls show_target for every HP
+	# update): keep the icons and the timer, as retail's select runs only on
+	# a selection change (OURS: the diff instead of 0x699480's rebuild).
+	if piece != null and owner_key == _buff_owner and _buffs.visible and not _buff_fill_pending \
+			and _buffs.position == buff_viewer_offset(piece.size):
+		_buffs.sync(_owner_buffs())
+		return
 	_buff_owner = owner_key
 	_buff_timer_ms = 0.0
 	if piece == null:
@@ -645,9 +658,43 @@ func _owner_buffs() -> Array:
 	return buff_source.call(_buff_owner)
 
 func _process(delta: float) -> void:
-	if not visible or _buffs == null or not _buffs.visible:
+	if not visible:
+		return
+	if check_target():
+		return
+	if _buffs == null or not _buffs.visible:
 		return
 	advance_buffs(delta * 1000.0)
+
+## CIFTargetWindow::vslot_012 (0x698ae0), each frame: the target is looked up
+## by id (0x9c3220); gone, the window's +0x36c is cleared and it hides; a
+## CICharactor whose vslot 0x54 answers 0 also hides and deselects
+## (0x778650(0)). Here "gone" is target_exists false; the second case (vslot
+## 0x54, INFERRED "alive") is the death path World3D already closes the
+## window on. Returns true when it hid the window.
+func check_target() -> bool:
+	if _buff_owner == "" or not target_exists.is_valid():
+		return false
+	if bool(target_exists.call(_buff_owner)):
+		return false
+	var gone := _buff_owner
+	print("HudTarget: target %s is gone -- window hidden (vslot_012)" % gone)
+	clear()
+	target_lost.emit(gone)
+	return true
+
+## The owner the window shows, "" for none.
+func buff_owner() -> String:
+	return _buff_owner
+
+## Re-keys the shown owner (this player selected before OpSelfId gave its
+## id: "character:-1" becomes the real id's key).
+func set_buff_owner(owner_key: String) -> void:
+	if _buff_owner == owner_key:
+		return
+	_buff_owner = owner_key
+	if _buffs != null and _buffs.visible and _buffs.ready_to_fill():
+		_buffs.sync(_owner_buffs())
 
 ## Timer 1's ticks, `ms` of time (public so a test steps it exactly):
 ## every 1000 ms the viewer is diffed against the owner's list (vslot_005).

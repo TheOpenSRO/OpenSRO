@@ -27,8 +27,13 @@ class_name HudTargetBuffs
 ## only this player -- and type 3 (0xa53fc0, from 0xB0BE, a buff carrying a
 ## name; srrevamp sends none). Then the abnormal-state bits of +0x2c4
 ## (0x7fd2e0, into the second list; srrevamp sends no one's abnormal states:
-## OPEN). Item-time entries (the buff bar's kinds 3/4/5, "premium" and the
-## item grants) are NOT among the sources: they never reach this viewer.
+## OPEN). The premium IS a skill buff (round 638 review): the premium items
+## carry [USU1:SKILL_MALL_PRE_APRU_4W_01], whose job engages the skill and
+## sends 0xB0BD, so it shows here as any buff does. Only the buff bar's
+## item-time kinds 3/4/5 (the UIL1/UIU1 grants) never reach this viewer.
+## 0xB0BD attaches its object only when the owner's +0x21c is not -1
+## (0x8a5d58); the item-use effects (0x8735d0) use ids 0x80000023..25, which
+## the collector skips as not > 0.
 ##
 ## THE GRID (READ, 0x699480 sets it, 0x7fbea0 lays it out): 8 per row
 ## (0x7fabb0(8)), a 23 x 23 pitch (0x7fabc0(0x17, 0x17)), 20 x 20 icons

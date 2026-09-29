@@ -70,7 +70,13 @@ the icons repeat every 23 px across and the second row sits about 24-25 px under
   object's `+0x74` string). Any other type is skipped.
 - Type 2 objects are made by 0xa54020 (0xa53850 writes `+0x54 = 2`). The **0xB0BD** buff-start
   handler (0x8a59e0) calls it at 0x8a5d49 for the owner it finds by id (0x9c31a0), whoever that is,
-  and attaches the object with 0x9cd050. So every buff the zone is told about is on its owner.
+  and attaches the object with 0x9cd050 -- **only when the owner's `+0x21c` is not −1**
+  (0x8a5d58: `cmp [edi+0x21c],-1`; at −1 the object is destroyed instead, vslot 2). So every buff
+  the zone is told about is on its owner, save an owner whose `+0x21c` is −1 (what that field is,
+  is OPEN).
+- The item-use effects (0x8735d0) also make CIDecoSkill objects through 0xa54020, but with the ids
+  0x80000023, 0x80000024 and 0x80000025 (0x873743..0x873769), which are negative as the signed
+  `+0x5c` the collector tests (`js`), so they never reach the viewer.
 - Type 3 objects are made by 0xa53fc0 (`+0x54 = 3`, the name copied to `+0x74`), called only from
   the **0xB0BE** handler (0x8a5da0, at 0x8a5e7d). What 0xB0BE carries in retail is OPEN; srrevamp
   sends nothing like it.
@@ -78,12 +84,37 @@ the icons repeat every 23 px across and the second row sits about 24-25 px under
   appends to the **second** list (0x7fd433..0x7fd463). srrevamp sends no one's abnormal states to
   the client, so none is shown (OPEN).
 
-**Item states are not shown (READ).** The only adds are 0x7fd020 (a skill entry) and 0x7fd2e0 (an
-abnormal bit): every call of either is from 0x699480, 0x7fd640, the party window (0x6d90xx) or
-0x7b47xx. The buff bar's item-time kinds (3/4/5: "premium" and the item grants, round 632) come
-from other packets into CIFMagicStateBoard only. So a target's premium or item grant never
-appears here. A mall item that works by starting a **skill** buff (the `SN_SKILL_MALL_*` rows in
-the name-only list below) does come through 0xB0BD and does appear.
+**The premium shows; the item-time kinds do not (READ; corrected by the round 638 review).** The
+only adds are 0x7fd020 (a skill entry) and 0x7fd2e0 (an abnormal bit): every call of either is from
+0x699480, 0x7fd640, the party window (0x6d90xx) or 0x7b47xx. The buff bar's item-time kinds 3/4/5
+(the UIL1/UIU1 grants, round 632) come from other packets into CIFMagicStateBoard only and never
+appear here. **But the premium is not one of them.** The premium items carry
+`[USU1:SKILL_MALL_PRE_APRU_4W_01]` (or `…_GLOBAL_4W_01`), a skill: skilldata rows 5412, 29723 and
+46405 (`SN_SKILL_MALL_PRE_APRU_4W` / `…_GLOBAL_4W`, icon `item\etc\mall_pre_apru_4w.ddj`, 'dura'
+2,419,200,000 ms for the 4-week rows) (MEASURED). The server's USU1 branch queues a CTJ_SkillKeeper
+job whose start engages the skill and sends 0xB0BD (below), so the premium is a skill buff on its
+owner and appears in the viewer like any buff. The first icon of the user's retail target row is
+that file (correlation 0.978, the review's measurement). The round's first write-up said the
+premium never shows here; that was wrong.
+
+**USU1 on the server (READ, SR_GameServer.exe; implemented in `session/composite.go`).**
+- FUN_0049f090's pre-check (0x49f4ab..0x49f4ef) looks the skill up by code (0x495690; none is 2).
+  It refuses 0x1894 if a type-0 timed job keyed by the skill id is running (FUN_00411560(0, id)).
+  It then asks 0x650d40, which answers 0x3003 for a skill with no 'dura' and runs the skill gate
+  0x58d8f0 (a non-zero code goes out as 0xB070 and the use answers 2).
+- The branch (0x49fad0..0x49fb2e) queues a type-0 job keyed by the skill id, lasting 'dura' / 1000
+  seconds. The division is **unsigned** (`mul` 0x10624dd3, `shr 6`): the 4-week rows' dura is
+  held in the signed column as −1875767296 and read as 2,419,200,000.
+- CTimedJobManagerForPC's switch (0x6565f0, table 0x656690) makes type 0 a **CTJ_SkillKeeper**
+  (0x650cd0 → its pool 0x657180).
+- The factory 0x655be0 runs the job's slot 12 (0x650e70) as it makes it. That registers the skill
+  in the book (0x59e220), calls EngageSkill (0x593540) and Skill_BroadcastBuffAdded_B0BD (0x59af00).
+- The event log records it as 0x6e (0x49fe46).
+- srrevamp starts the buff on the user's book with that duration and tells the zone.
+- The skill gate 0x58d8f0 is not modelled, and neither are the buff's params (dru, odar, hr, luck,
+  alcu, inti, stri): the book models only run speed.
+- The other premium entries (the UIU1 premium time 3/3/13/4, BFI1, UQL1) are skipped (OURS,
+  logged) rather than refusing the item.
 
 ## The grid (0x699480 sets it, 0x7fbea0 lays it out)
 
@@ -147,6 +178,23 @@ the name-only list below) does come through 0xB0BD and does appear.
 - **So an icon appears or goes within a second of its buff's start or end.** A buff that stays
   keeps its place.
 
+## When the target goes (CIFTargetWindow::vslot_012 0x698ae0, each frame; round 638 review)
+
+- The window looks its target up by id (`+0x370`, 0x9c3220).
+- **Not found:** `+0x36c` = 0 and the window hides (vslot 0x5c(0)). The selected id itself is not
+  cleared on this path.
+- **Found, a CICharactor whose vslot 0x54 answers 0** (INFERRED: "alive"): `+0x36c` = 0, it
+  hides, and 0x778650(0) clears the selection (`+0x628` = 0).
+- srrevamp: `HudTarget.check_target` runs each frame. The owner exists when it is a monster with
+  a body or a snapshot, another player with a body, or this player (`World3D._target_exists`).
+  A target that is gone hides the window and World3D drops `_last_attack_target` /
+  `_selected_character`.
+  - This covers a target leaving view, a zone change (whose bodies and, since this round, monster
+    snapshots are cleared) and world re-entry, which also clears the target outright.
+  - Dropping the id on the not-found path is OURS: retail keeps it but no longer shows it.
+- A monster's death already closes the window (`_begin_monster_death`). Another player's death is
+  not reported to this client (OPEN).
+
 ## The tooltip (0x7fc260; shown by CIFStateSlot::vslot_048 0x806640)
 
 - 0x7fd020 calls 0x7fc260(entry) for every slot. That builds the text and stores it on the slot
@@ -155,7 +203,10 @@ the name-only list below) does come through 0xB0BD and does appear.
   (0xeec928). If it is, the board's own tooltip runs (vslot 0xc4). If not, as here, the generic
   tooltip window (0x798db0) opens, 200 wide, with the slot's stored text.
 - The text for a skill entry (kind 1), in order:
-  1. `"%s Lv %d\n\n"`: the name (the row's `+0x124` code, resolved) and the level (the row's `+0x60`
+  1. `"%s Lv %d\n\n"`: the name (the row's `+0x124` code, resolved through the client's one text
+     map: TextStringManager 0x8cac30 loads `textdataname.txt`'s list, TextData_Equip&Skill.txt then
+     TextData_Object.txt, into one map; `SN_SKILL_MALL_PRE_APRU_4W` "Premium" is only in the second,
+     MEASURED) and the level (the row's `+0x60`
      byte). The "Lv" is a **literal** in the format string at 0xdcf7d0, not `UIIT_STT_LEVEL_LV` as
      in the buff bar's tooltip. Twelve name codes print `"%s\n\n"`, the name alone (0x7fc412..0x7fc594,
      each compared at full length): `SN_SKILL_ASSAULTING_SOILDER`, `SN_SKILL_ELITE_ASSAULTING_SOILDER`,

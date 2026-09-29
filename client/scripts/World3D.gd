@@ -1644,6 +1644,11 @@ func _try_initialize_pk2_ui() -> void:
 				_hud_buff_board.clear()
 			# And every other owner's (round 638): the zone re-sends them.
 			_target_buff_book.clear()
+			# And no target carries over (round 638 review): whatever was
+			# selected belonged to the entry that ended.
+			_last_attack_target = -1
+			_selected_character = -1
+			_clear_target()
 		if result != null and result.ok and result.max_hp > 0:
 			_last_enter_world_hp = result.hp
 			_last_enter_world_max_hp = result.max_hp
@@ -1892,6 +1897,9 @@ func _build_buff_board() -> void:
 	_hud_buff_board.is_self = _buff_owner_is_self
 	_hud_buff_board.catalog.names_provider = func() -> UiTextTable:
 		return _hud_panels.skill_names_table() if _hud_panels != null else null
+	# The second file of the client's one text map (round 638 review): a
+	# mall skill's name (the premium's "Premium") is in textdata_object.
+	_hud_buff_board.catalog.object_names_provider = _object_names
 	_hud_buff_board.preload_catalog()
 	if not _hud_buff_board.connect_net(NetClient):
 		print("World3D: NetClient has no buff_started signal -- the buff bar is fed by SRREVAMP_QA_BUFFS only")
@@ -4990,6 +4998,9 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	for monster_id in _monster_bodies.keys():
 		_monster_bodies[monster_id].queue_free()
 	_monster_bodies.clear()
+	# Their snapshots too (round 638 review): the old zone's monsters are no
+	# one's target here; the list below refills it.
+	_monster_snapshots.clear()
 	_monster_motion.clear()
 	_monster_heights_pending.clear()
 	_strike_waits.clear()
@@ -5593,6 +5604,13 @@ func _build_target_window() -> void:
 	if _hud_buff_board != null:
 		_hud_target.buff_catalog = _hud_buff_board.catalog
 	_hud_target.buff_source = _target_buff_book.list_of
+	# CIFTargetWindow::vslot_012's per-frame lookup (round 638 review): a
+	# target that no longer exists hides the window, and the selection goes.
+	_hud_target.target_exists = _target_exists
+	_hud_target.target_lost.connect(func(owner_key: String) -> void:
+		_last_attack_target = -1
+		_selected_character = -1
+		print("World3D: target %s gone -- deselected" % owner_key))
 	if not _hud_target.setup():
 		# No archive: no window, no stand-in. Keep the node so callers are
 		# null-safe through the wrappers below.
@@ -7773,6 +7791,20 @@ func _select_character(character_id: int, char_name: String) -> void:
 	if _hud_target != null:
 		_hud_target.show_player(char_name, _fx_owner_key(character_id, SkillNet.OWNER_CHARACTER), race)
 	print("World3D: selected player %d (%s), race %d" % [character_id, char_name, race])
+
+## Whether a target window owner still exists (round 638 review, the
+## vslot_012 mirror): a monster with a body or a snapshot, another player
+## with a body, or this player (its own id, or -1 before OpSelfId).
+func _target_exists(owner_key: String) -> bool:
+	var parts := owner_key.split(":")
+	if parts.size() != 2 or not parts[1].is_valid_int():
+		return false
+	var id := int(parts[1])
+	if parts[0] == "monster":
+		return _monster_bodies.has(id) or _monster_snapshots.has(id)
+	if id == -1 or id == _own_id():
+		return true
+	return _other_bodies.has(id)
 
 ## A character's race for the target window's emblem (round 638): the Country
 ## (characterdata column 14) of the body its Gender draws -- srrevamp's Gender
@@ -15720,6 +15752,11 @@ func _on_buff_ended(ended: SkillNet.BuffEnd) -> void:
 ## and move handlers and the sit state alike.
 func _on_self_id_received(_character_id: int) -> void:
 	_sync_own_id()
+	# This player selected before its id came (round 638 review): the target
+	# window's owner "character:-1" becomes the real id's key.
+	if _hud_target != null and _hud_target.buff_owner() == _fx_owner_key(-1, SkillNet.OWNER_CHARACTER) and _own_id() >= 0:
+		_hud_target.set_buff_owner(_fx_owner_key(_own_id(), SkillNet.OWNER_CHARACTER))
+		_selected_character = _own_id()
 
 ## Brings the two holders of this player's own id into line with the best
 ## source: OpSelfId (NetClient.own_character_id) when the server sent it --
