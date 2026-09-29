@@ -189,6 +189,20 @@ type Deps struct {
 	// Zones are the named zones /goto accepts (worldmap.ZoneCentre's keys).
 	Zones  []string
 	Logger *slog.Logger
+	// Speed is what /speed drives (round 636); nil refuses it. The session
+	// layer fills it in (session.GMCommandHandler) when the server leaves it
+	// nil.
+	Speed SpeedControl
+}
+
+// SpeedControl is /speed's hook into the run speed the server tells a
+// client (round 636; the buff book's speed path, session.gmSpeed).
+type SpeedControl interface {
+	// SetGMSpeed sets characterID's /speed multiplier (1 clears it), tells
+	// the character's client its new run speed, and returns that speed.
+	SetGMSpeed(characterID int64, factor float64) (runSpeed uint32)
+	// GMSpeed is characterID's multiplier (1 when none) and run speed.
+	GMSpeed(characterID int64) (factor float64, runSpeed uint32)
 }
 
 // MaxSpawn caps one /spawn. Own choice: enough to test a group, not enough
@@ -197,7 +211,7 @@ const MaxSpawn = 20
 
 // Help is the one-line list of server-side commands, what the client shows
 // a GM. Kept here so the list and the dispatcher cannot drift apart.
-const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /kill, /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default]"
+const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /kill, /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off]"
 
 // Run executes one command line for actor. The leading slash is optional;
 // the first word is the command. The caller has already checked the gate.
@@ -240,6 +254,8 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = notice(line[len(fields[0]):])
 	case "invsize":
 		res = d.invsize(ctx, actor, args)
+	case "speed":
+		res = d.speed(actor, args)
 	default:
 		res = refuse("unknown GM command /" + cmd + ". " + Help)
 	}
@@ -248,6 +264,44 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 			"line", line, "refused", res.Refused, "reply", res.Text)
 	}
 	return res
+}
+
+// speed multiplies the GM's own run speed (OURS, a test tool with no
+// retail counterpart; round 636, at the user's request): /speed <x> sets a
+// multiplier on top of the buffs (0 < x <= buff.MaxGMSpeedFactor, 10),
+// /speed off (or 1) clears it, /speed alone shows it. The new speed reaches
+// the client through the buff path's runSpeed (an OpBuffEnd with no
+// tokens); the server does not police movement speed, so nothing else has
+// to accept it.
+func (d *Deps) speed(actor Actor, args []string) Result {
+	const usage = "usage: /speed [x|off] (x from 0.1 to 10: a multiplier on your run speed)"
+	if d.Speed == nil {
+		return refuse("no speed control")
+	}
+	if actor.Zone == "" {
+		return refuse("not in the world")
+	}
+	switch len(args) {
+	case 0:
+		f, v := d.Speed.GMSpeed(actor.CharacterID)
+		return Result{Text: fmt.Sprintf("run speed %d (x%.2g)", v, f)}
+	case 1:
+	default:
+		return refuse(usage)
+	}
+	f := 1.0
+	if a := strings.ToLower(args[0]); a != "off" && a != "default" {
+		v, err := strconv.ParseFloat(strings.TrimPrefix(a, "x"), 64)
+		if err != nil || math.IsNaN(v) || v < 0.1 || v > 10 {
+			return refuse(usage)
+		}
+		f = v
+	}
+	v := d.Speed.SetGMSpeed(actor.CharacterID, f)
+	if f == 1 {
+		return Result{Text: fmt.Sprintf("speed multiplier off: run speed %d", v)}
+	}
+	return Result{Text: fmt.Sprintf("run speed %d (x%.2g)", v, f)}
 }
 
 // hwan sets the berserk orbs held (OURS, a test tool; round 629's review): the

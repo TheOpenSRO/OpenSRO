@@ -788,6 +788,10 @@ func useSkillHandler(
 		if !knows {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "skill not known"}).Encode()})
 		}
+		// THE CATEGORY END (round 636, buffs.go endCategoryOnSkillUse): a
+		// skill use ends the caster's records its 'skc' / 0x1d-0x23 bytes
+		// name, before any of the gate's refusals below.
+		endCategoryOnSkillUse(hub, characterID, castRow)
 
 		// THE WEAPON GATE, recovered from FUN_0058d480: a skill names up to two
 		// weapon type codes and the engine refuses the cast with error 0x300d
@@ -1057,12 +1061,14 @@ func useSkillHandler(
 			l.Lock()
 			defer l.Unlock()
 		}
-		if isBuff && buffBooks.CheckOverlap(buffOwner, buffSpec(castRow, characterID)) != buff.NotRefused {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: overlapRefusal}).Encode()})
-		}
-
 		if refusal := skillCostRefusal(ctx, chars, mp, characterID, hpCost, mpCost); refusal != "" {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: refusal}).Encode()})
+		}
+		// The recast rule after the costs' test, as the gate orders them
+		// (round 636, READ): 0x58e292 NOTENOUGHHP and 0x58e2b1 NOTENOUGHMP
+		// come before row 16's 0x300c at 0x58e2fd.
+		if isBuff && buffBooks.CheckOverlap(buffOwner, buffSpec(castRow, characterID)) != buff.NotRefused {
+			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: overlapRefusal}).Encode()})
 		}
 		// A character target is measured as a monster one is (round 622,
 		// characterInReach), before the costs.

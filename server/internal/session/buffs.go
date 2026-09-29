@@ -268,6 +268,11 @@ func buffSpec(ref *refdata.Skill, casterID int64) buff.Spec {
 		SkillID: ref.ID, GroupID: ref.GroupID, Level: ref.BasicLevel, CasterID: casterID,
 		DuraMs: ref.DuraMs, Cbuf: ref.Cbuf, Nbuf: ref.Nbuf,
 		Lnks: ref.Lnks, Lks2: ref.Lks2, TargetRequired: ref.TargetRequired,
+		// Round 636: the rest of what the recast rule reads.
+		ActionOverlap: uint32(ref.ActionOverlap) & 0xffffff, Ovl2: uint32(ref.Ovl2),
+		HasDttp: ref.HasDttp, Dttp0: uint32(ref.Dttp0), Dttp1: uint32(ref.Dttp1),
+		Efr2: ref.Efr2, Offensive: ref.Offensive, Msch1: ref.Msch1, Dtt: ref.Dtt,
+		BasicGroup: ref.BasicGroup, Activity: ref.Activity, SkcEnd: uint8(ref.SkcEnd),
 	}
 	if v, ok := ref.BuffParam("hste"); ok && len(v) > 0 {
 		s.HasHste, s.Hste = true, v[0]
@@ -383,6 +388,63 @@ func startCasterBuffOn(zone []world.Entity, ref *refdata.Skill, casterID, ownerI
 	return true
 }
 
+// endCategoryOnSkillUse is FUN_0059b480's category end (0x59b745,
+// `push ebx(row); push 2; push book; call 0x5a16c0` -- READ, round 636): a
+// skill use ends every record of the caster's own, on a skill with a
+// non-zero Basic_Activity, whose 'skc' value[1] carries bit 2 (MEASURED: the
+// EU stealth, invisibility, transform and illusion rows) or whose
+// Action_Overlap byte pairs with the new row's 0x1d / 0x23 byte
+// (FUN_005a1840; the Bard songs and dances). FUN_0059b480 builds the skill
+// use's context, before the gate (Skill_CheckUseConditions) runs, so the
+// ends stand even when the cast is then refused (INFERRED from that order).
+func endCategoryOnSkillUse(hub *world.Hub, casterID int64, row *refdata.Skill) {
+	if row == nil {
+		return
+	}
+	l := buffLock(casterID)
+	l.Lock()
+	defer l.Unlock()
+	ended, sp := buffBooks.EndCategory(casterID, buff.CategorySkillUse, uint32(row.ActionOverlap), true)
+	if len(ended) > 0 {
+		broadcastBuffEnd(zoneOf(hub, casterID), casterID, ended, sp)
+	}
+}
+
+// gmSpeed is the GM console's /speed (round 636, OURS: a test tool): the
+// multiplier lives beside the buff book (buff.Books.SetGMSpeedFactor), so
+// every buff packet's runSpeed carries it, and the new speed reaches the
+// client the way a buff's does -- an OpBuffEnd with no tokens and the speed,
+// to the owner's zone (a client applies only its own owner's runSpeed,
+// World3D._on_buff_ended). The server does not police movement speed
+// (handleMove stores what the client sends; no speed or distance check
+// exists -- re-measured by grep in round 636), so nothing else has to
+// accept it.
+type gmSpeed struct{ hub *world.Hub }
+
+func (g gmSpeed) SetGMSpeed(characterID int64, factor float64) uint32 {
+	l := buffLock(characterID)
+	l.Lock()
+	defer l.Unlock()
+	sp := buffBooks.SetGMSpeedFactor(characterID, factor)
+	sendSpeed(zoneOf(g.hub, characterID), characterID, sp.RunSpeed)
+	return sp.RunSpeed
+}
+
+func (g gmSpeed) GMSpeed(characterID int64) (float64, uint32) {
+	f, ok := buffBooks.GMSpeedFactor(characterID)
+	if !ok {
+		f = 1
+	}
+	return f, buffBooks.RunSpeed(characterID)
+}
+
+// sendSpeed tells zone ownerID's run speed with no buff: an OpBuffEnd
+// carrying no tokens. The caller holds buffLock(ownerID).
+func sendSpeed(zone []world.Entity, ownerID int64, runSpeed uint32) {
+	msg := &BuffEnd{OwnerID: ownerID, RunSpeed: runSpeed, OwnerKind: OwnerCharacter}
+	sendToAll(zone, OpBuffEnd, msg.Encode())
+}
+
 // endBuffsOf clears ownerID's whole book and tells its zone (a death).
 func endBuffsOf(hub *world.Hub, ownerID int64) {
 	l := buffLock(ownerID)
@@ -456,6 +518,13 @@ func sendBuffsInView(hub *world.Hub, arriving world.Entity, now time.Time) {
 		for _, data := range packets(other.CharacterID) {
 			arriving.Session.Send(&proto.Packet{Opcode: OpBuffStart, Data: data})
 		}
+	}
+	// A /speed multiplier (round 636, OURS) outlives a zone change, a death
+	// and a reconnect; the arriving client learns it here, since a buff
+	// packet carries a speed only for a record that writes one.
+	if _, ok := buffBooks.GMSpeedFactor(arriving.CharacterID); ok && arriving.Session != nil {
+		msg := &BuffEnd{OwnerID: arriving.CharacterID, RunSpeed: buffBooks.RunSpeed(arriving.CharacterID), OwnerKind: OwnerCharacter}
+		arriving.Session.Send(&proto.Packet{Opcode: OpBuffEnd, Data: msg.Encode()})
 	}
 	mine := packets(arriving.CharacterID)
 	if len(mine) == 0 {

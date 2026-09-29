@@ -318,6 +318,28 @@ type Skill struct {
 	// A suffix after Lks2; an older export loads 0, no heal on a target.
 	TargetHealHP int
 	TargetHealMP int
+	// The recast-rule columns (round 636; CSV 64..76, cmd/export-refdata
+	// stackColumns, docs/protocol/skill_buffs.md "The recast rule"):
+	// ActionOverlap is Action_Overlap (+0x8c) AND 0xffffff, the three state
+	// bytes FUN_0059db10 tests and SkillBook::SetGroupBits sets; Ovl2 'ovl2'
+	// value[0] (+0x37c); HasDttp/Dttp0/Dttp1 'dttp' (+0x424); Efr2 an 'efr'
+	// of kind 2 (+0x290); Offensive FUN_00589d20's answer; Msch1 'msch'
+	// value[0] == 1 (+0x4a4); Hide 'hide' (+0x428); SkcEnd 'skc' value[1]'s
+	// low byte (+0x490 -> +4); BasicGroup Basic_Group (+0x44); Activity
+	// Basic_Activity (+0x65); Dtt 'dtt' (+0x420). A suffix after
+	// TargetHealMP; an older export loads zero/empty for all of them.
+	ActionOverlap int64
+	Ovl2          int64
+	HasDttp       bool
+	Dttp0, Dttp1  int64
+	Efr2          bool
+	Offensive     bool
+	Msch1         bool
+	Hide          bool
+	SkcEnd        int
+	BasicGroup    string
+	Activity      int
+	Dtt           bool
 
 	// The mastery this skill belongs to and the mastery level required to learn
 	// it (ReqCommon_Mastery1 / ReqCommon_MasteryLevel1). These are what the

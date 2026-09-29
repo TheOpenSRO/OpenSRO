@@ -14,20 +14,28 @@ import (
 //	SKILL_CH_LIGHTNING_GYEONGGONG_A_02  id 1276, group 260, lv 2, kind 3, dura 370588, hste 23
 //	SKILL_CH_LIGHTNING_GYEONGGONG_C_01  id 115,  group 262, lv 1, kind 3, dura 557143, hste 55
 //	SKILL_EU_ROG_DAGGERA_SPEED_A_01     id 9834, group 628, lv 1, kind 3, dura 15000,  hst2 48
+//
+// and, round 636, each row's Action_Overlap low bytes (CSV column 64),
+// Basic_Group and Basic_Activity: Grass Walk A/C/E 6 (Activity 1), the
+// dagger speed 78 (Activity 1).
 func grassWalkA1(caster int64) Spec {
-	return Spec{SkillID: 113, GroupID: 260, Level: 1, CasterID: caster, DuraMs: 355462, HasHste: true, Hste: 20}
+	return Spec{SkillID: 113, GroupID: 260, Level: 1, CasterID: caster, DuraMs: 355462, HasHste: true, Hste: 20,
+		ActionOverlap: 6, BasicGroup: "SKILL_CH_LIGHTNING_GYEONGGONG_A", Activity: 1}
 }
 
 func grassWalkA2(caster int64) Spec {
-	return Spec{SkillID: 1276, GroupID: 260, Level: 2, CasterID: caster, DuraMs: 370588, HasHste: true, Hste: 23}
+	return Spec{SkillID: 1276, GroupID: 260, Level: 2, CasterID: caster, DuraMs: 370588, HasHste: true, Hste: 23,
+		ActionOverlap: 6, BasicGroup: "SKILL_CH_LIGHTNING_GYEONGGONG_A", Activity: 1}
 }
 
 func grassWalkC1(caster int64) Spec {
-	return Spec{SkillID: 115, GroupID: 262, Level: 1, CasterID: caster, DuraMs: 557143, HasHste: true, Hste: 55}
+	return Spec{SkillID: 115, GroupID: 262, Level: 1, CasterID: caster, DuraMs: 557143, HasHste: true, Hste: 55,
+		ActionOverlap: 6, BasicGroup: "SKILL_CH_LIGHTNING_GYEONGGONG_C", Activity: 1}
 }
 
 func daggerSpeedA1(caster int64) Spec {
-	return Spec{SkillID: 9834, GroupID: 628, Level: 1, CasterID: caster, DuraMs: 15000, HasHst2: true, Hst2: 48}
+	return Spec{SkillID: 9834, GroupID: 628, Level: 1, CasterID: caster, DuraMs: 15000, HasHst2: true, Hst2: 48,
+		ActionOverlap: 78, BasicGroup: "SKILL_EU_ROG_DAGGERA_SPEED_A", Activity: 1}
 }
 
 var t0 = time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
@@ -186,11 +194,16 @@ func TestRecastRuleConditions(t *testing.T) {
 }
 
 // The speed holder (pc+0xc24): a second 'hste' record of another group
-// writes nothing while the first holds it.
+// writes nothing while the first holds it. SYNTHETIC second row: every
+// retail 'hste' row that a Grass Walk would meet carries overlap byte 6 and
+// is refused before it starts (round 636), so the holder rule is shown with
+// a row of another state byte.
 func TestSecondHsteBuffDoesNotStack(t *testing.T) {
 	b := NewBooks(50)
 	b.Start(1, grassWalkA1(1), t0)
-	rec, _, _, sp := b.Start(1, grassWalkC1(1), t0)
+	other := grassWalkC1(1)
+	other.ActionOverlap = 0
+	rec, _, _, sp := b.Start(1, other, t0)
 	if Contributes(rec) || sp.Changed {
 		t.Fatalf("the second hste record wrote a contribution (%+v)", sp)
 	}

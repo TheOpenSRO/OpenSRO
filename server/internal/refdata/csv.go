@@ -452,6 +452,11 @@ var skillCSVColumns = []string{
 	// character it names (skillparam.TargetHealAmounts). A strict suffix: an
 	// older export loads 0, which is no heal on a target.
 	"TargetHealHP", "TargetHealMP",
+	// Appended in round 636: the recast rule's columns (Skill.ActionOverlap
+	// and what follows it). A strict suffix: an older export loads zero and
+	// empty, no overlap bits -- the rule as it was before this round.
+	"ActionOverlap", "Ovl2", "HasDttp", "Dttp0", "Dttp1", "Efr2", "Offensive",
+	"Msch1", "Hide", "SkcEnd", "BasicGroup", "Activity", "Dtt",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -655,6 +660,26 @@ func parseSkillRow(f []string) (Skill, error) {
 	boolAt(61, &sk.Lks2)
 	intAt(62, &sk.TargetHealHP)
 	intAt(63, &sk.TargetHealMP)
+	int64At := func(i int, dst *int64) {
+		if len(f) > i {
+			*dst = parseInt64(f[i])
+		}
+	}
+	int64At(64, &sk.ActionOverlap)
+	int64At(65, &sk.Ovl2)
+	boolAt(66, &sk.HasDttp)
+	int64At(67, &sk.Dttp0)
+	int64At(68, &sk.Dttp1)
+	boolAt(69, &sk.Efr2)
+	boolAt(70, &sk.Offensive)
+	boolAt(71, &sk.Msch1)
+	boolAt(72, &sk.Hide)
+	intAt(73, &sk.SkcEnd)
+	if len(f) > 74 {
+		sk.BasicGroup = strings.TrimSpace(f[74])
+	}
+	intAt(75, &sk.Activity)
+	boolAt(76, &sk.Dtt)
 
 	if err != nil {
 		return Skill{}, err

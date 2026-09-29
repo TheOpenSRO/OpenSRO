@@ -432,6 +432,14 @@ const (
 	skReqLearnSP          = 46 // ReqLearn_SP (learn cost, verified 2/5/7 across SMASH_A 1-3)
 	skReqLearnRace        = 47 // ReqLearn_Race
 	skName                = 62 // SN_SKILL_ name code
+	// skBasicGroup and skBasicActivity are Basic_Group (the std::string at
+	// CRefSkill+0x44) and Basic_Activity (the u8 at +0x65), columns 5 and 8
+	// in CopyFixedColumns' order (docs/protocol/skill_fields.md). Round 636:
+	// the recast rule's 'efr' kind-2 branch compares Basic_Group strings
+	// (0x59d985 FUN_00425210 on +0x44), and the category end FUN_005a16c0
+	// takes only rows whose +0x65 is non-zero.
+	skBasicGroup    = 5
+	skBasicActivity = 8
 	// The highest field skillRecord reads; a shorter row isn't a real skill.
 	skMax = 62
 )
@@ -937,7 +945,7 @@ func skillRecord(cols []string) ([]string, bool) {
 		cooldownGroup(cols),        // 45 CooldownGroup -- Overlap's high byte, CRefSkill+0x8f (round 504)
 		sitGate(cols),              // 46 SitGate -- the skill gate's motion-state refusals (round 607)
 		// 47..61: the buff and self-cast columns (round 616, buffColumns).
-	}, append(buffColumns(cols), targetHeal(cols)...)...), true
+	}, append(append(buffColumns(cols), targetHeal(cols)...), stackColumns(cols)...)...), true
 }
 
 // targetHeal is skill CSV columns 62/63 (round 622), TargetHealHP and
@@ -1072,6 +1080,133 @@ func buffColumns(cols []string) []string {
 		return append(out, "1")
 	}
 	return append(out, "0")
+}
+
+// stackColumns are skill CSV columns 64..75 (round 636,
+// docs/protocol/skill_buffs.md "The recast rule"): what FUN_0059d870, its
+// bit test FUN_0059db10, SkillBook::SetGroupBits (0x59dc00) and the category
+// end FUN_005a16c0 read off a row, in refdata.skillCSVColumns order:
+//
+//	64 ActionOverlap  Action_Overlap (+0x8c, column 18) AND 0xffffff: the three
+//	                  low bytes the bit test and SetGroupBits walk (shifts 0, 8,
+//	                  16; the high byte is the cooldown group, column 45)
+//	65 Ovl2           'ovl2' value[0] (+0x37c), 0 without one (all 32 bits:
+//	                  the functions mask the three low bytes themselves)
+//	66 HasDttp        'dttp' (+0x424) present
+//	67-68 Dttp0/Dttp1 'dttp' value[0] and value[1]
+//	69 Efr2           an 'efr' run with value[0] == 2, the field +0x290
+//	                  (skill_params.md: efr files itself at 0x28c/0x290/0x294
+//	                  by value[0])
+//	70 Offensive      FUN_00589d20's answer (see offensiveCodes)
+//	71 Msch1          'msch' (+0x4a4) with value[0] == 1
+//	72 Hide           'hide' (+0x428) present
+//	73 SkcEnd         'skc' (+0x490) value[1] AND 0xff -- the byte at +4
+//	                  FUN_005a16c0 intersects with its event mask
+//	74 BasicGroup     Basic_Group, column 5 (+0x44)
+//	75 Activity       Basic_Activity, column 8 (+0x65)
+//	76 Dtt            'dtt' (+0x420) present: SkillAction_Buff attaches the
+//	                  caster to an 'efr' kind-2 record only without it
+//	                  (0x5830b0, `puVar12[0xa4] != 0 && puVar12[0x108] == 0`)
+//
+// An older export loads all of them as zero/empty: no overlap bits, which is
+// what the server tested before this round.
+func stackColumns(cols []string) []string {
+	intCol := func(i int) int64 {
+		if i >= len(cols) {
+			return 0
+		}
+		v, err := strconv.ParseInt(strings.TrimSpace(cols[i]), 10, 64)
+		if err != nil {
+			return 0
+		}
+		return v
+	}
+	strCol := func(i int) string {
+		if i >= len(cols) {
+			return ""
+		}
+		return strings.TrimSpace(cols[i])
+	}
+	overlap := strconv.FormatUint(uint64(uint32(intCol(skOverlap))&0xffffff), 10)
+	tail := []string{strCol(skBasicGroup), strconv.FormatInt(intCol(skBasicActivity), 10)}
+	words, ok := paramWords(cols)
+	if !ok {
+		return append(append([]string{overlap, "0", "0", "0", "0", "0", "0", "0", "0", "0"}, tail...), "0")
+	}
+	entries, _, _ := skillparam.Walk(words)
+	value := func(e skillparam.Entry, k int) int64 {
+		if e.Index+1+k >= len(words) || k+1 >= e.Run {
+			return 0
+		}
+		return int64(words[e.Index+1+k])
+	}
+	var (
+		ovl2, dttp0, dttp1, skc         int64
+		hasDttp, efr2, msch1, hide, off bool
+		dtt                             bool
+		present                         = map[skillparam.Code]bool{}
+	)
+	for _, e := range entries {
+		present[e.Code] = true
+		switch e.Code {
+		case "ovl2":
+			ovl2 = value(e, 0)
+		case "dttp":
+			hasDttp, dttp0, dttp1 = true, value(e, 0), value(e, 1)
+		case "efr":
+			if value(e, 0) == 2 {
+				efr2 = true
+			}
+		case "msch":
+			if value(e, 0) == 1 {
+				msch1 = true
+			}
+		case "hide":
+			hide = true
+		case "dtt":
+			dtt = true
+		case "skc":
+			skc = value(e, 1) & 0xff
+		}
+	}
+	off = offensive(present)
+	b := func(v bool) string {
+		if v {
+			return "1"
+		}
+		return "0"
+	}
+	return append([]string{
+		overlap,
+		strconv.FormatInt(ovl2, 10),
+		b(hasDttp), strconv.FormatInt(dttp0, 10), strconv.FormatInt(dttp1, 10),
+		b(efr2), b(off), b(msch1), b(hide),
+		strconv.FormatInt(skc, 10),
+	}, append(tail, b(dtt))...)
+}
+
+// offensiveCodes is FUN_00589d20 (READ, round 636): with no 'abnb' (+0x41c)
+// it answers 1 when the row carries any of these fields -- the offsets its
+// test reads, each named through skillparam.Field. The recast rule's 'efr'
+// kind-2 branch (0x59d978, 0x59d9b3) runs only for rows it answers 0.
+var offensiveCodes = []skillparam.Code{
+	"att", "fz", "fb", "es", "bu", "ps", "zb", // 0x230, 0x30c..0x320
+	"se", "rt", "sl", "fe", "my", "bl", "dn", "st", "ds", "ca", // 0x430..0x458 (not 0x448)
+	"cssr", "csit", "cspd", "csmd", "cshp", "csmp", // 0x45c..0x470
+	"lfst", "tb", "ck", "pdmg", "pdm2", "tant", "tnt2", "dttp", // 0x400 0x474 0x248 0x234 0x238 0x3c8 0x3cc 0x424
+	"terd", "hitm", "trap", "hntp", "thrd", // 0x2dc 0x2c8 0x4a0 0x48c 0x2e0
+}
+
+func offensive(present map[skillparam.Code]bool) bool {
+	if present["abnb"] {
+		return false
+	}
+	for _, c := range offensiveCodes {
+		if present[c] {
+			return true
+		}
+	}
+	return false
 }
 
 // cooldownGroup is the skill's cooldown group as the CooldownGroup column:

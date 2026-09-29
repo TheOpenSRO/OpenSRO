@@ -66,6 +66,7 @@ and changes nothing.
 | `/hwan <0-5>` | Sets the berserk orbs held (round 629; a test tool, not a retail command). Five light the ready circle. |
 | `/notice <text>` | Sends a GM notice to every player (round 634): a pink "(Notice):" line in every chat tab and the notice banner at the top of the screen for 7 seconds. The command is ours; the line and banner are the game's. |
 | `/invsize [1-96\|default]` | Shows or sets your bag's size in slots (round 633; a test tool, not a retail command). The bag shows 32 slots a page, up to three pages, and locks the slots of the last page past the size. `default` goes back to the server's `-inventory-size` (96 unless the operator set another). Refused below a slot that holds an item. |
+| `/speed [x\|off]` | Multiplies your run speed by *x* (0.1 to 10) on top of any buff, so testing covers ground faster (round 636; a test tool, not a retail command). `off` (or `1`) goes back to normal; `/speed` alone prints the multiplier and the speed. The server sends the new speed down the buff speed path (an `OpBuffEnd` with no tokens), and the multiplier outlasts a zone change, a death and a reconnect until you turn it off or the server restarts. The server does no movement-speed check, so nothing refuses the faster moves. |
 
 `/goto` and `/spawn` with no valid name list the zones and monster code names
 they accept. `/give` takes the item's numeric id; the client resolves an item

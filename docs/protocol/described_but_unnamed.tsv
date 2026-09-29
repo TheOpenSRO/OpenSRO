@@ -39,7 +39,6 @@
 7	004df050	FUN_004df050	570	docs/protocol/PACKET_FORMAT.md,docs/protocol/described_but_unnamed.tsv
 7	00477880	FUN_00477880	525	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 7	0042a730	GObjPC::FUN_0042a730	460	docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
-7	00589d20	FUN_00589d20	434	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/skill_params.md
 7	00976a30	FUN_00976a30	305	docs/RE_COMPLETION.md,docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/teleport_network.md
 7	00589f10	FUN_00589f10	265	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/skill_params.md
 7	005def20	FUN_005def20	226	docs/protocol/academy.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md

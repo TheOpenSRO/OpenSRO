@@ -1250,16 +1250,30 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       the link, `docs/protocol/BSR_FORMAT.md`): self/ground casts use it; targeted casts still use the
       clip-name route and the swing. Needs the READY/SHOT phase timing (`FUN_00a54f00`'s later
       phases) and the per-deco pick among several entries (`+0xe4` byte).
-- [ ] **The recast rule's other branches**: `dttp` groups (36 rows), the `+0x290` field and the
-      Action_Overlap/`ovl2` tail (`FUN_0059db10`) of FUN_0059d870; the `lnks` path
-      (`FUN_0059dc80`, attached-object records). (Target_Required 1 recasts: READ and applied on the
-      target's book in round 622's review; the caster-is-target running-action skip has no
-      running action here.)
+- [x] **The recast rule's other branches** (round 636): all of FUN_0059d870 read and built -- the
+      `dttp` and `efr` kind-2 (`+0x290`) branches, and the book's state bit set that Action_Overlap
+      and `ovl2` fill (`SkillBook::SetGroupBits` 0x59dc00 / `FUN_0059db10`). Fire Protection no longer
+      stacks; a second Grass Walk variant is refused 0x300c while one runs, as retail refuses it. The
+      whole table is driven by `TestRecastRuleCensus` (`SRREVAMP_SKILLS_CSV`). Still open:
+      - the `lnks` path `FUN_0059dc80` (32 Target_Required 0 `lnks` rows get no recast check; it
+        needs a linked second object);
+      - row 16's `hide` rule (the caster's vslot 0x100 state 4: which state is not read);
+      - the running-action half of `FUN_0059db10` (a buff between its cast and its engage; srrevamp
+        engages at the cast);
+      - the category end's other callers: movement (mask 1) and berserk (mask 4) end nothing by the
+        data (no `skc` carries them) and are not wired; `GObjPC::FUN_004d2200`'s mask (8,
+        `SKILL_FORT_REPAIR_KIT`) was not traced.
+- [ ] **The wall skills** (the user's report, parked to round 640): Fire Wall / Crystal Wall
+      (`SKILL_CH_FIRE_HWABYEOK_*`, `SKILL_CH_COLD_BINGBYEOK_*`, state byte 11) root the caster, keep
+      attacks within a radius, and end on a cancel or when the wall's own HP runs out. Needs the
+      rows' `pw` / `eshp` / `esht` runs read, the protection-wall motion state (SKILL_PROTECTIONWALL,
+      round 607's sit-gate list) and the movement refusal (`GObjPC::FUN_004b0ea0` returns early on
+      `pc+0xc44`), and the wall's HP and its end.
 - [ ] **The duration extension** (`ctx+0x24`): `RPBU`/`STDU`/`DTDR` through `FUN_005a0330`'s map at
       book `+0x244` -- needs whatever files entries there (passive skills, INFERRED).
 - [ ] **Retail's death and teleport rules for buffs** (ours: a death clears, a zone change keeps),
-      buffs restored at login (ctx+0xc bits 4|8), the `skc` category ends (`FUN_005a16c0`), and
-      whether retail re-sends buffs on entering view (ours: yes).
+      buffs restored at login (ctx+0xc bits 4|8), and whether retail re-sends buffs on entering view
+      (ours: yes). (The `skc` category end on a skill use is built, round 636.)
 
 ### Berserk potions and Energy of life (round 632 and its review) -- **built**
 

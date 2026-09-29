@@ -144,6 +144,9 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 	if deps.Logger == nil {
 		deps.Logger = logger
 	}
+	if deps.Speed == nil {
+		deps.Speed = gmSpeed{hub: hub}
+	}
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpGMCommand {
 			return nil

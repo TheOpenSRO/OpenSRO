@@ -7155,6 +7155,195 @@ Tahoma: its first row says Arial) and hud_panels.gd (the doll's turn direction i
 Not done: the dungeon light (`Map::FUN_00a255c0` gives the object shader an ambient-only light in a
 dungeon). This client loads no dungeon, so there is nowhere for it to apply yet (OPEN).
 
+## Six-hundred-and-thirty-sixth round: Fire Protection no longer stacks, one Grass Walk runs at a time, and a GM's /speed makes testing faster
+
+The user's report on v0.1.460:
+- Fire Protection could be cast again and again, stacking;
+- three different Grass Walks could run at once;
+- they asked for a `/speed` command for testing.
+
+Round 616 modelled only `FUN_0059d870`'s GroupID branch. This round read the whole function, its
+bit test and the bit set behind it, and the category end. Labels: READ (`SR_GameServer.exe`, the
+dump and `srv.asm` on the RE box), MEASURED (the retail export), INFERRED, OURS, OPEN. The detail is
+in `docs/protocol/skill_buffs.md`, "The recast rule" and "Every row, by rule".
+
+**1. Why they stacked (READ + MEASURED).**
+- `FUN_0059d870`'s list walk passes over every record whose skill carries `cbuf` (0x59d908). All
+  five Fire Protections (`SKILL_CH_FIRE_GANGGI_A..E`) carry it. So the GroupID branch never saw an
+  active Fire Protection, and srrevamp had nothing after the list.
+- Retail has something after the list: the **bit test** (0x59dad2). `FUN_0059db10` tests the row's
+  `ovl2` and Action_Overlap bytes against a 256-bit state set at `book+0x1b0`.
+  - `SkillBook::SetGroupBits` (0x59dc00) fills that set. A buff's engage sets its bytes (0x5842ce)
+    and its end clears them (0x582c8c).
+  - Every Fire Protection carries Action_Overlap **3**, so the second one meets bit 3 and is refused
+    `0x300c`.
+- Grass Walk - Flow (`GYEONGGONG_A`, group 260), - Speed (`_C`, 262) and the E row (493) never meet
+  in the GroupID branch, because their groups differ. All three carry byte **6**, as do the speed
+  potions and scrolls.
+- MEASURED over the 33,698 exported rows: only action-kind-3 rows carry state bytes (1,835 rows),
+  and each byte is a family:
+
+  | byte | family |
+  |---|---|
+  | 1 | every imbue |
+  | 2 | Cold Protection |
+  | 3 | Fire Protection |
+  | 6 | speed buffs |
+  | 11 | walls |
+  | 16 | Fire Shield |
+  | 83 | Cold Shield |
+  | 0x1d / 0x23 | the Bard songs and dances; never tested, only paired by the category end |
+
+**2. Retail refuses the second Grass Walk; it does not swap (READ).** The user asked for "cast the
+skill, cancel the other one". Retail answers `0x300c` ("The selected item cannot be used together
+or the skill is already in use.") and the first one keeps running.
+- The server path is the bit test above.
+- The client does not cancel first either. Its skill use `FUN_0081ba10` builds only the kind-4
+  0x7074. The kind-5 cancel sender `SendMagicStateMsg_074_81c5b0` has four callers: the buff
+  board's vslots 32/33, a confirm-dialog dispatcher `FUN_00797d90` (case 0x20), and a silk mall
+  function. None of them is the skill use.
+- The user chose "match the original" when asked (relayed by the coordinator).
+- A recast of the **same** group still replaces the old record: the GroupID branch ends it, and the
+  client sees `OpBuffEnd` for the old token and then `OpBuffStart`, so its icon and aura go.
+- A lower level of the same group is refused. A higher or lower level of **another** variant is
+  refused too (byte 6).
+
+**3. The rest of `FUN_0059d870` (READ, asm 0x59d870..0x59db06; the Ghidra C of it is garbled):**
+- **`dttp` branch:** the owner casting on itself is allowed at once. Otherwise a record the owner
+  cast on itself is passed over, and value[1] compares unsigned: lower refused, equal or higher ends
+  the record.
+- **`+0x290` branch:** round 616 wrote "no code maps to it". That was wrong: it is `efr` of kind 2
+  (skill_params.md's own table). The branch:
+  - compares Basic_Group strings (`+0x44`, `FUN_00425210`) and levels;
+  - requires `efr` 2 on both rows and `FUN_00589d20` 0 on both. That function is an "offensive" test
+    over 36 fields, READ at 0x589d20;
+  - requires an attached object at ctx `+0x6c`. SkillAction_Buff sets it to the caster's id for an
+    `efr`-2 row without `dtt` (`param_2[2]`, READ).
+  - It then ends the record and the caster's record of that skill.
+  - It never falls through to the GroupID branch.
+- **`msch` 1** skips the list.
+- **Gate order:** row 16 also refuses a `hide` row while the caster's vslot 0x100 answers 4 (OPEN
+  which state). The gate tests HP (0x58e292) and MP (0x58e2b1) before row 16. srrevamp now tests the
+  costs first; round 616 had it the other way round.
+- **The engage:** it re-tests Action_Overlap and does not engage on a hit (`return 2`). Its set and
+  clear masks differ for an `lnks` record cast on oneself (it sets none) and for a record on another
+  character (`ovl2` instead). Both are modelled (`engageBits` / `endBits`).
+
+**4. The category end, `FUN_005a16c0` (READ).** It ends a caster's own records (non-zero
+Basic_Activity) whose `skc` value[1] meets the event's mask, or whose Action_Overlap `0x1d`/`0x23`
+byte pairs with the new row's (`FUN_005a1840`). The events:
+
+| mask | caller | row passed | built? |
+|---|---|---|---|
+| 1 | the move handler `GObjPC::FUN_004b0ea0` (0x4b0ff3) | none | no: no row's `skc` carries 1 (MEASURED) |
+| 2 | a skill use's context builder `FUN_0059b480` (0x59b745) | the skill's | **yes**, `endCategoryOnSkillUse` |
+| 4 | berserk (0x515c43) | none | no: no row carries 4 (MEASURED) |
+
+Mask 2 ends the EU stealth, invisibility, transform and illusion rows on any skill use, and a Bard
+dance ends the dance before it. Its place, before the gate, is INFERRED from `FUN_0059b480`'s order.
+
+**5. srrevamp.**
+- `buff.Books` keeps the bit set and applies the whole function (`overlapLocked`) on the caster's
+  book and, for a Target_Required 1 row, the target's.
+- The export gains skill CSV columns 64..76 (`cmd/export-refdata` `stackColumns`: Action_Overlap's
+  three low bytes, `ovl2`, `dttp`, `efr` 2, `FUN_00589d20`, `msch` 1, `hide`, `skc` value[1],
+  Basic_Group, Basic_Activity, `dtt`) and the matching Postgres columns. **srrevamp-01 must
+  re-export and re-import its skills** (deploy/README.md's skills steps); with an older export
+  every state byte loads 0 and the old behaviour returns.
+- Not modelled:
+  - the running-action half of `FUN_0059db10` (srrevamp engages at the cast);
+  - `FUN_0059dc80`, the `lnks` path (OPEN; 32 Target_Required 0 `lnks` rows get no recast check);
+  - the `hide` rule;
+  - category masks 1, 4 and 8.
+
+**6. `/speed` (OURS, a test tool).**
+- `/speed <x>` (0.1..10) multiplies the GM's run speed on top of any buff; `/speed off` clears it;
+  `/speed` alone prints it.
+- The multiplier sits beside the buff book (`buff.Books.SetGMSpeedFactor`), so every buff packet's
+  `runSpeed` carries it.
+- The change reaches the client as an `OpBuffEnd` with no tokens and the new speed, which the
+  existing client applies (`World3D._on_buff_ended`). No client change was needed beyond the
+  console's GM list.
+- It outlives a zone change, a death and a reconnect. `sendBuffsInView` resends it.
+- The server has no movement-speed check to accept it (re-measured by grep: `handleMove` stores what
+  the client sends).
+- It is documented in DEBUG_TOOLS.md.
+
+**7. Every row (MEASURED; `TestRecastRuleCensus`, `SRREVAMP_SKILLS_CSV`).**
+- The test runs the rule over the 2,348 kind-3 rows of the box's export.
+
+  | rows | rule |
+  |---:|---|
+  | 1,457 | GroupID |
+  | 397 | `cbuf` with a state byte |
+  | 82 | `efr` 2 |
+  | 36 | `dttp` |
+  | 31 | GroupID 0 with a byte |
+  | 1 | `msch` 1 |
+  | 160 | `lks2` with no byte |
+  | 76 | `cbuf` with no byte |
+  | 76 | GroupID 0 with no byte |
+  | 32 | `lnks`/Target_Required 0 (OPEN) |
+
+- The rows with no byte stack in retail too (READ: nothing stops them). They are the Warlock DOTs,
+  the socket stones, the WANTED rows and the monster rows.
+- All 311,259 pairs that share a byte across groups are refused as the second, save the READ
+  exceptions.
+- A same-skill recast leaves two records only for the `dttp` owner-cast stack and those rows.
+
+**8. Tests.**
+- `server/internal/buff/stack_test.go`: Fire Protection; A→C, C→E, E→A; lower and higher levels
+  across variants; the same-group replace; the bit mechanics; `ovl2`, `dttp`, `efr` 2, `msch`,
+  `lnks`; the category end; `/speed`.
+- `session/buffs_test.go`: the handlers, including the `OpBuffEnd` of a replace and `/speed`
+  through the GM handler.
+- `gm/speed_test.go`.
+- `cmd/export-refdata` `TestStackColumns` and `TestOffensiveCodesAreTheFieldsFUN00589d20Reads`.
+- The census.
+- `go test -count=1 -p 1 ./...` is green.
+
+**The negative.** `session/buffstack636_test.go` (the six rows in the export's CSV layout, typed with only the
+MEASURED values the cast path reads, through `LoadSkillsCSV`, so
+the same file compiles on both sides) was copied into a worktree at dev 5a82339:
+
+    buffstack636_test.go:182: the second Fire Protection: "", want "The selected item cannot be used together or the skill is already in use."
+    buffstack636_test.go:185: 2 Fire Protection records, want 1
+    --- FAIL: TestRound636FireProtectionTwice
+    buffstack636_test.go:200: skill 115 over Grass Walk A: "", want "The selected item cannot be used together or the skill is already in use."
+    buffstack636_test.go:200: skill 8148 over Grass Walk A: "", want "The selected item cannot be used together or the skill is already in use."
+    buffstack636_test.go:204: 3 records at run speed 60, want Grass Walk A alone at 60
+    --- FAIL: TestRound636GrassWalkVariants
+    buffstack636_test.go:220: /speed 3: &{IsGM:true Refused:true Text:unknown GM command /speed. ...}
+    --- FAIL: TestRound636SpeedCommand
+
+On the branch all three pass.
+
+**9. Real input (MEASURED, the box, `/var/tmp/buffstack/run636.sh`).**
+- The route: Login → CharacterSelect, xdotool keys, a server built from the branch with the skills
+  CSV exported from Media.pk2.
+- The setup: level 110, Lightning mastery 106, Grass Walk A to lv12, C to lv12, E lv1, Fire
+  Protection A lv1.
+- The client log, in order:
+  - `/speed 2`: `SPEED: run speed 50 -> 100 (OpBuffEnd tokens [])`, `GM REPLY: run speed 100 (x2)`;
+  - key 1 (Grass Walk - Flow lv12, `hste` 53): `BUFF start ... skill 1286 token 1 ... runSpeed 153`
+    (50 × 1.53 × 2), and the aura on token 1;
+  - key 2 (- Speed) and key 3 (E): each `CAST reply ... refused: The selected item cannot be used
+    together or the skill is already in use.`, with no `BUFF start` and no `BUFF end`;
+  - key 1 again: `BUFF end ... tokens [1]` then `BUFF start ... token 2`; the aura moves to token 2;
+  - key 4 (Fire Protection): `BUFF start ... skill 133 token 3`;
+  - key 4 again: refused, the same text.
+- The chat shows the three refusals.
+- The screenshot (`r4/06_fireprot_again.png`) shows two icons at the top left, Grass Walk and Fire
+  Protection. It is a picture for a human; the log lines above are the measurement.
+- An earlier run without `/speed` gave 77 (50 × 1.53) for Grass Walk alone. `/speed 3` gave 150 and
+  `/speed off` 50.
+- Observed, not this lane's: typed chat after skill hotkeys sometimes left the keys going to the game
+  (`KEY typing ...` followed by `KEY Slash ... focus none`). The `/speed` chat was moved before the
+  casts. OPEN for the chat lane.
+
+**The walls** (the user's follow-up): parked to round 640 at the coordinator's instruction. What
+they need is in docs/TODO.md.
+
 ## Six-hundred-and-thirty-fifth round, review follow-up: the portrait is lit by the zone's light, as the client lights it, and every body layer draws
 
 The review of acd31b6 confirmed the camera, the yaw, the mask, the dirty triggers, the re-render on

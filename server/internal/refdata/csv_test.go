@@ -587,7 +587,7 @@ func TestSkillCSVBuffColumnsAreAStrictSuffix(t *testing.T) {
 	if err != nil || sk.ActionKind != 0 || sk.TargetLand || sk.DuraMs != 0 || sk.HasTele() || sk.BuffParams != "" || sk.Lks2 {
 		t.Fatalf("an export predating the buff columns: %+v, %v", sk, err)
 	}
-	if skillCSVColumns[47] != "ActionKind" || skillCSVColumns[60] != "BuffParams" || skillCSVColumns[61] != "Lks2" || skillCSVColumns[63] != "TargetHealMP" || len(skillCSVColumns) != 64 {
+	if skillCSVColumns[47] != "ActionKind" || skillCSVColumns[60] != "BuffParams" || skillCSVColumns[61] != "Lks2" || skillCSVColumns[63] != "TargetHealMP" || skillCSVColumns[64] != "ActionOverlap" || skillCSVColumns[76] != "Dtt" || len(skillCSVColumns) != 77 {
 		t.Fatalf("test premise: columns %q..%q, %d in all", skillCSVColumns[47], skillCSVColumns[len(skillCSVColumns)-1], len(skillCSVColumns))
 	}
 	// Round 622's TargetHealHP/MP after them: absent, no heal on a target.
@@ -627,5 +627,15 @@ func TestSkillCSVBuffColumnsAreAStrictSuffix(t *testing.T) {
 	// Cut part-way through the run: what is there is read.
 	if sk, err = parseSkillRow(synthetic[:54]); err != nil || sk.ActionKind != 3 || sk.DuraMs != 60000 || sk.Nbuf {
 		t.Fatalf("a cut export: %+v, %v", sk, err)
+	}
+	// Round 636's recast-rule columns: an export predating them loads no
+	// overlap bits; present, they are read in order (Grass Walk - Flow lv1,
+	// MEASURED: Action_Overlap 6, Basic_Group ..._GYEONGGONG_A, Activity 1).
+	if sk.ActionOverlap != 0 || sk.BasicGroup != "" || sk.Activity != 0 {
+		t.Fatalf("an export predating the recast columns: %+v", sk)
+	}
+	stack := append(append(append([]string{}, grass...), "0", "0"), "6", "0", "0", "0", "0", "0", "0", "0", "0", "0", "SKILL_CH_LIGHTNING_GYEONGGONG_A", "1", "0")
+	if sk, err = parseSkillRow(stack); err != nil || sk.ActionOverlap != 6 || sk.BasicGroup != "SKILL_CH_LIGHTNING_GYEONGGONG_A" || sk.Activity != 1 || sk.Efr2 || sk.Dtt {
+		t.Fatalf("Grass Walk's recast columns: %+v, %v", sk, err)
 	}
 }

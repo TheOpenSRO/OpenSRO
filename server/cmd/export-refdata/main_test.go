@@ -748,8 +748,8 @@ func TestSelfHealColumns(t *testing.T) {
 			if !ok {
 				t.Fatal("skillRecord rejected a valid row")
 			}
-			if len(rec) != 64 {
-				t.Fatalf("record has %d fields, want 64 (SelfHealHP at 43, SelfHealMP at 44, CooldownGroup at 45, SitGate at 46, the buff columns 47-61, TargetHealHP/MP at 62/63)", len(rec))
+			if len(rec) != 77 {
+				t.Fatalf("record has %d fields, want 77 (SelfHealHP at 43, SelfHealMP at 44, CooldownGroup at 45, SitGate at 46, the buff columns 47-61, TargetHealHP/MP at 62/63, the recast-rule columns 64-76)", len(rec))
 			}
 			if rec[43] != tc.hp || rec[44] != tc.mp {
 				t.Errorf("record[43:45] = %v, want [%s %s]", rec[43:45], tc.hp, tc.mp)
@@ -838,7 +838,7 @@ func TestSitGateColumn(t *testing.T) {
 			t.Errorf("%s: sitGate = %s, want %s", c.name, got, c.want)
 		}
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 64 || rec[46] != c.want {
+		if !ok || len(rec) != 77 || rec[46] != c.want {
 			t.Errorf("%s: record column 46 = %v (ok %v, %d fields), want %s", c.name, rec, ok, len(rec), c.want)
 			continue
 		}
@@ -879,7 +879,7 @@ func TestBuffColumns(t *testing.T) {
 		{"nbuf, lnks, defr and lks2", marked, []string{"3", "0", "0", "0", "0", "0", "0", "0", "1", "0", "1", "0", "0", "defr:10,12", "1"}},
 	} {
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 64 {
+		if !ok || len(rec) != 77 {
 			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
 		}
 		if got := strings.Join(rec[47:62], "|"); got != strings.Join(c.want, "|") {
@@ -922,7 +922,7 @@ func TestTargetHealColumns(t *testing.T) {
 		{"a resurrection", res, "0", "0"},
 	} {
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 64 {
+		if !ok || len(rec) != 77 {
 			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
 		}
 		if rec[43] != c.self || rec[62] != c.target || rec[63] != "0" {
@@ -935,6 +935,98 @@ func TestTargetHealColumns(t *testing.T) {
 		skills, err := refdata.LoadSkillsCSV(strings.NewReader(buf.String()))
 		if err != nil || len(skills) != 1 || strconv.Itoa(skills[0].TargetHealHP) != c.target {
 			t.Fatalf("%s: imported %+v, %v", c.name, skills, err)
+		}
+	}
+}
+
+// Round 636: columns 64..76, the recast rule's (stackColumns). The rows are
+// the retail shapes MEASURED on the RE box's skilldata, typed here as test
+// data (no archive in the repo): Grass Walk - Flow lv1 (Action_Overlap 6,
+// Basic_Group SKILL_CH_LIGHTNING_GYEONGGONG_A, Activity 1); Fire Protection
+// A lv1 (Action_Overlap 3, 'cbuf'); Ghost Walk's Action_Overlap 989855744 =
+// 0x3b000000, whose only byte is the high one -- the cooldown group, not a
+// state byte, so column 64 is 0. SYNTHETIC: the 'ovl2', 'dttp', 'efr' 2,
+// 'msch', 'hide', 'skc', 'dtt' and 'att' runs.
+func TestStackColumns(t *testing.T) {
+	w := skillparam.WordOf
+	grass := skillRow(w("dura"), 355462, w("hste"), 20)
+	grass[skOverlap], grass[skBasicGroup], grass[skBasicActivity] = "6", "SKILL_CH_LIGHTNING_GYEONGGONG_A", "1"
+	fire := skillRow(w("cbuf"), w("dura"), -1875767296, w("defp"), 0, 6, 0)
+	fire[skOverlap], fire[skBasicGroup], fire[skBasicActivity] = "3", "SKILL_CH_FIRE_GANGGI_A", "2"
+	ghost := skillRow(w("tele"), 500, 100)
+	ghost[skOverlap] = "989855744"
+	marked := skillRow(w("ovl2"), 34, w("dttp"), 7, 9, w("efr"), 2, 1, 2, 3, 4, 5, w("msch"), 1, 0,
+		w("hide"), 1, 2, 3, w("skc"), 0, 10, 0, w("dtt"), 1, 2)
+	attack := skillRow(w("att"), 1, 2, 3, 4, 5, w("efr"), 2, 1, 2, 3, 4, 5)
+	for _, c := range []struct {
+		name string
+		row  []string
+		want string
+	}{
+		{"Grass Walk - Flow", grass, "6|0|0|0|0|0|0|0|0|0|SKILL_CH_LIGHTNING_GYEONGGONG_A|1|0"},
+		{"Fire Protection", fire, "3|0|0|0|0|0|0|0|0|0|SKILL_CH_FIRE_GANGGI_A|2|0"},
+		{"Ghost Walk (the high byte is not a state byte)", ghost, "0|0|0|0|0|0|0|0|0|0|0|0|0"},
+		{"ovl2, dttp, efr 2, msch 1, hide, skc, dtt", marked, "0|34|1|7|9|1|1|1|1|10|0|0|1"},
+		{"att is offensive", attack, "0|0|0|0|0|1|1|0|0|0|0|0|0"},
+	} {
+		rec, ok := skillRecord(c.row)
+		if !ok || len(rec) != 77 {
+			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
+		}
+		if got := strings.Join(rec[64:77], "|"); got != c.want {
+			t.Errorf("%s: columns 64..76 = %s, want %s", c.name, got, c.want)
+		}
+		var buf strings.Builder
+		cw := csv.NewWriter(&buf)
+		cw.Write(rec)
+		cw.Flush()
+		skills, err := refdata.LoadSkillsCSV(strings.NewReader(buf.String()))
+		if err != nil || len(skills) != 1 {
+			t.Fatalf("%s: the importer rejected the export: %v", c.name, err)
+		}
+		sk := skills[0]
+		got := strings.Join([]string{
+			strconv.FormatInt(sk.ActionOverlap, 10), strconv.FormatInt(sk.Ovl2, 10), b01(sk.HasDttp),
+			strconv.FormatInt(sk.Dttp0, 10), strconv.FormatInt(sk.Dttp1, 10), b01(sk.Efr2), b01(sk.Offensive),
+			b01(sk.Msch1), b01(sk.Hide), strconv.Itoa(sk.SkcEnd), sk.BasicGroup, strconv.Itoa(sk.Activity), b01(sk.Dtt),
+		}, "|")
+		if got != c.want {
+			t.Errorf("%s: imported %s, want %s", c.name, got, c.want)
+		}
+	}
+}
+
+func b01(v bool) string {
+	if v {
+		return "1"
+	}
+	return "0"
+}
+
+// offensiveCodes is FUN_00589d20's field list (READ, round 636, 0x589d20):
+// every offset its test reads, through skillparam.Field.
+func TestOffensiveCodesAreTheFieldsFUN00589d20Reads(t *testing.T) {
+	want := map[int]bool{
+		0x230: true, 0x30c: true, 0x310: true, 0x314: true, 0x318: true, 0x31c: true, 0x320: true,
+		0x430: true, 0x434: true, 0x438: true, 0x43c: true, 0x440: true, 0x444: true, 0x44c: true,
+		0x450: true, 0x454: true, 0x458: true, 0x45c: true, 0x460: true, 0x464: true, 0x468: true,
+		0x46c: true, 0x470: true, 0x400: true, 0x474: true, 0x248: true, 0x234: true, 0x238: true,
+		0x3c8: true, 0x3cc: true, 0x424: true, 0x2dc: true, 0x2c8: true, 0x4a0: true, 0x48c: true, 0x2e0: true,
+	}
+	got := map[int]bool{}
+	for _, c := range offensiveCodes {
+		off, ok := skillparam.Field[c]
+		if !ok {
+			t.Fatalf("%q has no field", c)
+		}
+		got[off] = true
+	}
+	if len(got) != len(want) {
+		t.Fatalf("%d fields, want %d", len(got), len(want))
+	}
+	for off := range want {
+		if !got[off] {
+			t.Errorf("0x%x missing", off)
 		}
 	}
 }
