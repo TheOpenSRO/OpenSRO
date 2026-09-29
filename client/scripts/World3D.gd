@@ -9348,8 +9348,14 @@ func _objects_commit(job: Dictionary) -> void:
 		container.add_child(node)
 		# Round 645: its clip starts at t = 0 now, as a sector's objects do
 		# in retail; object.ifo flag bit 0 keeps it running at any range.
-		if node.has_meta(MapAnimation.META_ANIMATED) or entry.path.to_lower().ends_with(".cpd"):
-			_map_animations.add(node, (entry.flags & 1) != 0)
+		# A force_addobject row (round 643's review) carries the type its
+		# path names in object.ifo, found as retail finds it; a path the
+		# table lacks has no entry here, and the flags retail's appended
+		# type gets (SWorld::vslot_045) are not read -- taken as 0 (OPEN).
+		var type_id := int(placement.get("type_id", -1))
+		var ifo_entry: ObjidxReader.Entry = table.lookup(type_id) if table != null else null
+		if node.has_meta(MapAnimation.META_ANIMATED) or model_key.ends_with(".cpd"):
+			_map_animations.add(node, ifo_entry != null and (ifo_entry.flags & 1) != 0)
 		loaded += 1
 		if key >= 0:
 			_placed_objects[key] = {"node": node, "holder": node_suffix, "listers": {node_suffix: true}}
