@@ -44,6 +44,10 @@ The labels are:
 - The slot is then sized to width × (20 + the gauge's height), which is 20 × 24. That is the slot's rect for the right-click hit test.
 - Kind 3 (item time) entries use `s_stateodd_time02_gauge.ddj` and a second gauge. They are not built here.
 - A skill with `lnks` gets a frame cut from `interface\ifcommon\window_all.ddj` at `{-2, -2, w+4, h+4+gauge}`, using the UV constants at 0xdd07a0..0xdd07b0. This is not drawn here: which constant is which corner is OPEN.
+- Round 638: the same CIFStateSlot is used by the target window's buff viewer (CIFBuffViewer),
+  which passes 0 as 0x806d50's first argument, so that viewer's slots have no gauge. The flag at
+  `+0x36c` is written by 0x806630 from an entry byte that 0x9d25e0 computes. See
+  `target_window_buffs.md`.
 - A kind-1 slot also loads `icon\stateodd\s_admittance_back.ddj` (string at 0xdd077c) and `icon\stateodd\s_admittance_icon.ddj` (0xdd0758) into `+0x390` and `+0x394`. CIFStateSlot's vslot_015 (0x8071c0) draws the two only while the slot's `+0x36c` is set. This is the same flag as the tooltip's red line. What sets it is OPEN, so neither sprite is drawn here.
 
 ## The icon's texture and sampling (round 624)

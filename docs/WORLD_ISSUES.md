@@ -7094,6 +7094,146 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirty-eighth round: clicking a player or a monster shows its buffs under its name at the top middle, and a player's race emblem at the left
+
+The user asked for a clicked character's or monster's running buffs to show at the top middle of
+the screen, the way the top-left bar shows this player's, with the race emblem at the left of that
+window. The retail reference (`target_buffs.png`) shows a target window "DragonDive": the emblem at
+the left and a row of 20x20 icons under the name bar that wraps onto a second row. Labels: READ,
+MEASURED, INFERRED, OURS, OPEN. The full record, with every address, is
+`docs/protocol/target_window_buffs.md`.
+
+**1. It is a separate class, CIFBuffViewer (READ).**
+- `resinfo\iftargetwindow.txt` declares `GDR_TW_BUFF:CIFBuffViewer` (ID 100, `Rect=0,37,0,0`).
+  `CIFTargetWindow::Create` keeps it at `+0x388`.
+- Its vtable (0xdcf59c, 49 slots) overrides only slots 0, 1, 2 and 10. So it takes no clicks: no
+  right-click cancel, unlike the buff bar.
+- Its icons are the buff bar's own `CIFStateSlot` class (0xeec948).
+
+**2. Which targets and where (READ, the select function 0x699540).**
+- A flag is set in the monster branch (every rarity), the pet/horse branch and the player branch.
+  It is not set for NPCs or structures.
+- With the flag set, the viewer is moved to (window x, the shown piece's y + height + 1),
+  directly under the piece (0x69a1ab..0x69a1cb). The layout's `0,37` is not used.
+- Then the target's buffs are filled in, and timer 1 is armed at 1000 ms (0x69a215).
+- MEASURED on the retail crop: the icons repeat every 23 px, and the first row starts 36 px below
+  the 35-tall player bar's top.
+- MEASURED live (below): the icon cells start at (522, 43) on a 1280-wide screen. That is the
+  window's x = (1280 − 236) / 2 and y = 7 + 35 + 1.
+
+**3. What it shows (READ).**
+- The fill (0x9d25e0 → 0x699480) walks the target object's list of skill objects (`+0x284`, a
+  std::list in arrival order, appended by 0x9cd050).
+- Type 2 objects are made by 0xa54020, which the 0xB0BD buff-start handler calls for whatever
+  owner the packet names (0x8a5d49). So every buff the zone hears of belongs to its owner.
+- Type 3 objects come from 0xB0BE (a buff carrying a name; unread, and srrevamp sends none).
+  The abnormal-state bits go into the second list (none are sent).
+- **Item states are never among the sources** (every caller of the viewer's two adds was listed).
+  So a target's premium or item grant does not show here in retail. A mall item that works by
+  starting a skill buff does show.
+
+**4. The grid (READ, 0x699480 / 0x7fbea0 / 0x7fd020).**
+- 8 per row, a 23 x 23 pitch, 20 x 20 icons.
+- A skill with `bbuf` (row `+0x184`) goes to a second list, which starts one row down plus 2 px.
+- **An empty main list counts no rows here** (0x7fbff1), unlike the buff bar's board.
+- **No time gauge:** 0x806d50's first argument, "make the gauge", is 1 from the board and 0 from
+  the viewer. So a target's icons have no expiry bar, and the slot is the bare 20x20 icon.
+
+**5. Live (READ, 0x6993a0 → 0x7fd640).**
+- Every 1000 ms the target's list is diffed into the viewer by skill id.
+- A buff that stays keeps its slot. One that ended is removed at once, with no burst or sound.
+- New ones are appended, and the grid is laid out again. A target that is gone clears it.
+
+**6. The tooltip (READ, 0x7fc260, shown by CIFStateSlot::vslot_048 0x806640 through the generic
+tooltip because the slot's parent is not the board).**
+- `"%s Lv %d\n\n"`, with a LITERAL "Lv", unlike the board's `UIIT_STT_LEVEL_LV`. Twelve codes
+  print the name alone: the board's list less `SN_SKILL_MALL_PRE_APRU_4W`.
+- Then the description plus `"\n\n"`.
+- Then 0x96e480's parameter lines (OPEN: not built).
+- No remaining-time line: the entry's `+0x28` stays 0.
+
+**7. The race emblem (READ, 0x69b0d0 → 0x98caa0).**
+- The player piece's `GDR_TW_KINDRED_MARK` (ID 10, 3,0 24x24) gets `FUN_0098caa0(ref +0x9c, 0)`.
+- That is Country: 0 → `com_kindred_china.ddj`, 1 → `com_kindred_europe.ddj`, anything else no
+  file.
+- The monster pieces have no such control.
+- **No server change was needed for race.** Retail reads it from the object's reference data, not
+  from a packet field. srrevamp's entity snapshot already carries Gender, its stand-in for the
+  reference object. Gender maps to the body code, and characterdata column 14 gives Country (0 on
+  every `CHAR_CH_*` row, MEASURED round 629).
+
+**8. The 0xB0BD handler, READ this round.** It is noted here because it settles "are others'
+buffs known": the start handler attaches a skill object to the owner it finds for every start,
+not only this player's. srrevamp's server already broadcasts OpBuffStart/End to the zone, and
+replays them on zone entry both ways (rounds 616/622). The server starts no monster buffs, so a
+monster's row is empty (OPEN, a server feature).
+
+**Built (OURS where marked):**
+- `client/scripts/ui/hud/hud_target_buffs.gd` holds `HudTargetBuffs`, the viewer (grid, diff,
+  tooltip, the point-sampled icons of round 624), and `HudTargetBuffs.Book`. The book keeps every
+  owner's buffs in start order, keyed like the auras.
+- `HudTarget` changes:
+  - it creates the viewer with the buff bar's skill index;
+  - it places the viewer under the monster or player piece;
+  - it runs timer 1 (`advance_buffs`);
+  - it hides and empties the viewer on close;
+  - it sets the kindred mark (`set_kindred`, `kindred_mark_path`).
+- `World3D` changes:
+  - it feeds the book from `_on_buff_started` / `_on_buff_ended`;
+  - it drops an owner on `entity_left`, on a monster's death, and all owners on world entry and on
+    a zone change;
+  - it passes the owner key and the race (`_race_of_gender`, from the body's new `gender` meta).
+- OURS:
+  - a zone re-send of a token counts once;
+  - the viewer waits for the skill index before its first fill;
+  - a rarity-2 monster's viewer is hidden (retail leaves its position undefined);
+  - the trailing blank lines of the tooltip are trimmed;
+  - the slots take the mouse only for the tooltip.
+
+**Live (MEASURED, two clients on the box through Login → CharacterSelect, real X input;
+`/var/tmp/targetbuffs/e2e/tb_run.sh`, screenshots in `scratchpad/targetbuff_shots/`):**
+- B left-clicks A (`PICK … PlayerClickBody`). The log reads `HudTarget: buffs of character:1 --
+  0 main, 0 second` and `selected player 1 (QaTester), race 0`. The emblem is China's (04).
+- A presses 1 (Grass Walk) and then 2 (Lightning Force A, id 107). B's log reads `1 main: 113@(0,
+  0)`, then `2 main: 113@(0, 0), 107@(23, 0)` (05). Pixel-measured in the frame: the icon cells
+  are x 522 and 545, y 43.
+- 15 s later the imbue's OpBuffEnd arrives, and B's viewer drops to `1 main: 113@(0, 0)` (06).
+- Hovering the icon shows "Grass Walk - Flow Lv 1", a blank line and the description (07).
+- B then left-clicks a Mangyang (`ClickBody … monster_id=48`). The log reads `HudTarget: buffs of
+  monster:48 -- 0 main, 0 second`. The special-mob piece shows, with nothing under it (21).
+- There were no SCRIPT ERRORs in either log.
+- Compared with the retail crop: the same emblem at the bar's left, 20x20 icons directly under
+  the bar at its left edge, and a 23 px pitch.
+- Five earlier clicks on monsters said "no hit". The Mangyangs had wandered off between the
+  screenshot and the click; the sixth, straight after a `/spawn`, hit.
+- Not verified live: the zone-change clear (added after the run). The book clear is one line, and
+  the viewer's emptying on the next tick is the tested `sync`.
+
+**Tests.** `client/scripts/ui/hud/hud_target_buffs_test.gd`, with synthetic rows and a synthetic
+text table. It checks the book's order, re-send and drop; the grid (wrap at 8, 23 px, the second
+list at y 2 under an empty main list and at 25 under one row, the sizes); no gauge child; the diff
+keeping a slot and appending; the three tooltip forms; the viewer offset (0, 36) and (0, 79); the
+kindred paths; and HudTarget's 1000 ms tick (not at 999 ms, at 1000 ms; an end goes on the next
+tick; no piece hides it; close empties it).
+
+Against dev 5a82339 (a second worktree, the test copied in), it fails with:
+```
+FAIL hud_target_buffs.gd exists (the CIFBuffViewer port)
+FAIL a per-owner buff book exists
+FAIL the viewer builds without an archive
+FAIL HudTarget places a buff viewer
+FAIL HudTarget knows the race emblem
+FAIL HudTarget refreshes the viewer every 1000 ms
+6 FAILURE(S)
+```
+On this branch it gives ALL PASS (45 checks). The full client suite: `remote_godot.sh tests` → 157
+suites, 0 failing. `go build ./... && go test -count=1 -p 1 ./...` passes (no server change).
+
+**Open:** the tooltip's parameter lines (0x96e480); monster buffs (a server feature); abnormal
+states; 0xB0BE; the `+0x36c` comparison; the `lnks` frame; a rarity-2 monster's position; the
+window keeping a stale name after a zone change (predates this round); pets. All are in
+`docs/TODO.md`, "The target window's buffs and race emblem".
+
 ## Rounds 633-635 integration review (int/ui2): nothing new lands past a lowered bag size, the portrait's ambient is clamped, the chat's penalty line sits where the client puts it, and the text table loads rows as the client does
 
 The final review of int/ui2 (dev b9bbf07 + rounds 633-635 and their follow-ups, merged at 14c4889)

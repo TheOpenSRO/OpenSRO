@@ -1002,6 +1002,29 @@ burst and sound, right-click cancel and the tooltip. The record is in
         static var, so a setting can flip it; icons already on the board keep their look until
         rebuilt. No UI was added.
 
+### The target window's buffs and race emblem (round 638) — **built; these are left**
+`HudTargetBuffs` is retail's `CIFBuffViewer` under the target's name bar: 20x20 icons, 8 a row at a
+23 px pitch, `bbuf` skills in a second list, refreshed every 1000 ms from every owner's
+OpBuffStart/End, with the viewer's own tooltip. The player piece shows the race emblem. The record
+is in `docs/protocol/target_window_buffs.md`. Left open:
+- [ ] **The tooltip's parameter lines** (0x96e480(7), the skill window's damage/range text). They
+      are not built, so the viewer's tooltip is the name, level and description only.
+- [ ] **Monster buffs.** The viewer shows a monster's buffs, but the server starts none
+      (`OwnerKind` is always `OwnerCharacter`), so a monster's row is always empty.
+- [ ] **Abnormal states** (the target's `+0x2c4` bits go in the second list). srrevamp sends no
+      one's abnormal states to the client.
+- [ ] **0xB0BE**, the type-3 buff that carries a name (the tooltip's "Target :" line). What it is
+      in retail is unread, and srrevamp sends nothing like it.
+- [ ] **The byte behind `+0x36c`** (the "Not affected" state; now known to come from 0x9d25e0's
+      comparison of two 32-entry arrays, 0x9c7830 / 0x9cdf00). What the arrays are is unread.
+- [ ] **A rarity-2 monster's viewer position.** Retail never writes it; ours hides the viewer.
+      No monster in the archive has rarity 2.
+- [ ] **The target window after a zone change or a target leaving view.** It keeps the old
+      name (this predates round 638). The viewer empties at its next tick, because the book is
+      cleared with the old zone. Retail's per-frame check (vslot_012) closing the window was not
+      read.
+- [ ] **Pets** (the CICCos branch shows the viewer too). srrevamp's pets cannot be targeted yet.
+
 ### Store and warehouse confirm boxes — **crash fixed (round 631); next: the retail CIFMessageBox**
 Round 631 fixed the crash the user hit on v0.1.458 (a box freed from its own button: SIGSEGV).
 It also made the store's goods and the warehouse's items clickable again: their authored

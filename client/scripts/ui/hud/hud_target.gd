@@ -84,9 +84,20 @@ extends Control
 ##     slot 43 returns was not read.
 ##   - CICATStruct (0xee774c): the fortress piece, or the **common-enemy**
 ##     window with tw_gem_normal (0x69a0df..).
-##   This window only ever shows monsters here (World3D._show_target takes a
-##   monster id; NPCs open the talk box, and players and pets are never
-##   targeted), so show_target follows the CICMonster branch.
+##   show_target follows the CICMonster branch (World3D._show_target takes a
+##   monster id; NPCs open the talk box), show_player the CICUser branch
+##   (round 622: another player, or this player); pets are never targeted.
+## - **The buff viewer, read (round 638).** The container's GDR_TW_BUFF
+##   (CIFBuffViewer, ID 100, the window's +0x388) shows the target's buffs
+##   under the piece for a monster, a pet or a player -- not for an NPC or a
+##   structure. HudTargetBuffs has the rules; buff_viewer_offset where it
+##   sits.
+## - **The race emblem, read (round 638).** The player piece's
+##   GDR_TW_KINDRED_MARK (ID 10, 3,0 24x24) is set by 0x69b0d0 to
+##   FUN_0098caa0(the target's reference object +0x9c, 0) -- Country: 0 ->
+##   interface\ifcommon\com_kindred_china.ddj, 1 -> com_kindred_europe.ddj,
+##   anything else no file (kindred_mark_path). The monster pieces have no
+##   such control: a monster shows its gem instead.
 ## - **The rank rows, read (0x69b4c0).** On the special-mob window it sets the
 ##   rank icon (ID 3) and the rank text (+0x378, ID 2, `GDR_TWSM_TEXT_LEV`,
 ##   colour 0xffffffff) per rarity through the table 0x69baac, and writes
@@ -156,6 +167,20 @@ var _special: Control = null
 var _player: Control = null
 var _job_player: Control = null
 var _close: BaseButton = null
+
+## The buff viewer (round 638), under the shown piece; null without an
+## archive. `buff_catalog` is the buff bar's skill index (World3D passes it
+## before setup, so the shards are not parsed twice); `buff_source` returns
+## an owner's buffs in start order ([{token, skill_id}]); the owner shown is
+## `_buff_owner`, "" for none.
+var _buffs: HudTargetBuffs = null
+var buff_catalog: SkillBuffCatalog = null
+var buff_source: Callable = func(_owner_key: String) -> Array: return []
+var _buff_owner := ""
+## Timer 1 (0x69a215, 1000 ms): ms since the viewer last refreshed, and
+## whether its first fill still waits for the skill index (OURS).
+var _buff_timer_ms := 0.0
+var _buff_fill_pending := false
 
 ## Handles into the visible window's controls, refreshed by _select().
 var _gem: TextureRect = null
@@ -254,8 +279,10 @@ func setup() -> bool:
 		_move_authored(_special.find_child("GDR_TWSM_GAUGE_HPGAUGE", true, false), null, SPECIAL_GAUGE_SIZE)
 		_move_authored(_special.find_child("GDR_TWSM_ICON", true, false), SPECIAL_RANK_ICON_AT, null)
 		_move_authored(_special.find_child("GDR_TWSM_TEXT_LEV", true, false), SPECIAL_RANK_TEXT_AT, null)
-	_player = _build_kind(sec.control_by_name.get("GDR_TW_PLAYERWND"), PLAYER_LAYOUT)
-	_job_player = _build_kind(sec.control_by_name.get("GDR_TW_JOB_PLAYERWND"), JOB_PLAYER_LAYOUT)
+	# The player kinds' kindred marks are art-less statics like the gems; each
+	# gets a TextureRect at its authored rect (round 638).
+	_player = _build_kind(sec.control_by_name.get("GDR_TW_PLAYERWND"), PLAYER_LAYOUT, KINDRED_MARK)
+	_job_player = _build_kind(sec.control_by_name.get("GDR_TW_JOB_PLAYERWND"), JOB_PLAYER_LAYOUT, "GDR_TWJP_KINDRED_MARK")
 	for w in [_common, _special, _player, _job_player]:
 		if w != null:
 			w.visible = false
@@ -286,6 +313,13 @@ func setup() -> bool:
 			_close.position = CLOSE_BUTTON_AT
 			UiBuilder.settle_authored_rects(_close)
 		chrome.queue_free()
+
+	# The buff viewer (round 638): hidden, as Create leaves it (0x699157).
+	if buff_catalog == null:
+		buff_catalog = SkillBuffCatalog.new(_builder.media_archive())
+	_buffs = HudTargetBuffs.new(_builder, buff_catalog)
+	_buffs.visible = false
+	add_child(_buffs)
 
 	# The window is the size of the piece showing; start with the common one.
 	var first: Control = _common if _common != null else _special
@@ -430,7 +464,8 @@ func set_player_level(level: int) -> void:
 ## Shows the window for a target: its name, level (through the gem and the
 ## name colour), rarity (which window, and the rank icon on the special one),
 ## and HP. All server values.
-func show_target(target_name: String, level: int, rarity: int, hp: int, max_hp: int) -> void:
+func show_target(target_name: String, level: int, rarity: int, hp: int, max_hp: int,
+		owner_key: String = "") -> void:
 	if _common == null and _special == null:
 		return
 	# Only CIFTargetWindow's CICMonster branch is followed: this window shows
@@ -454,16 +489,19 @@ func show_target(target_name: String, level: int, rarity: int, hp: int, max_hp: 
 	set_hp(hp, max_hp)
 	visible = true
 	place()
+	_show_buffs(_shown, owner_key)
 
 ## Shows the window for a selected PLAYER (round 622): the player piece
 ## (iftw_player.txt, CIFTargetWindow's CICUser branch -- its "player window"
 ## kind, ID 0; the job-player kind needs a job state srrevamp does not send)
-## with the name in GDR_TWP_TEXT_NAME. The kindred mark (GDR_TW_KINDRED_MARK)
-## is left empty: what fills it was not read (OPEN). The piece has those two
+## with the name in GDR_TWP_TEXT_NAME and, since round 638, the race emblem
+## in GDR_TW_KINDRED_MARK (0x69b0d0, see set_kindred; `race` is the target's
+## Country, -1 for unknown) and the buff viewer under the piece for
+## `owner_key` (_show_buffs). The piece has those two
 ## controls and nothing else (MEASURED, iftw_player.txt): no HP gauge, for
 ## another player or for oneself (round 622's review asked for HP; the
 ## layout has no place for it, so none is drawn).
-func show_player(target_name: String) -> void:
+func show_player(target_name: String, owner_key: String = "", race: int = -1) -> void:
 	if _player == null:
 		return
 	_shown = _player
@@ -483,8 +521,10 @@ func show_player(target_name: String) -> void:
 	if _name != null:
 		_name.text = target_name
 		_name.remove_theme_color_override("font_color")
+	set_kindred(race)
 	visible = true
 	place()
+	_show_buffs(_player, owner_key)
 
 ## The name the window shows: rarity 7 prefixes it with UIIT_STT_MOB_STRONG's
 ## text and a space (read, STRONG_NAME_KEY). If the text table cannot resolve
@@ -523,6 +563,110 @@ func set_hp(hp: int, max_hp: int) -> void:
 
 func clear() -> void:
 	visible = false
+	# The close path (vslot_043 -> the select with id 0) hides every piece and
+	# the viewer and kills timer 1 (0x69a300).
+	_buff_owner = ""
+	_buff_fill_pending = false
+	if _buffs != null:
+		_buffs.visible = false
+		_buffs.clear_all()
+
+# ---------------------------------------------------------------------------
+# The race emblem and the buff viewer (round 638).
+# ---------------------------------------------------------------------------
+
+const KINDRED_MARK := "GDR_TW_KINDRED_MARK"
+## FUN_0098caa0's files for its second argument 0 (0x69b150 passes 0): the
+## 24x24 ones; the "16" twins are for a non-zero argument (the party list).
+const KINDRED_MARK_DDJ := ["interface\\ifcommon\\com_kindred_china.ddj",
+	"interface\\ifcommon\\com_kindred_europe.ddj"]
+
+## The emblem file for a Country value, or "" (FUN_0098caa0: 0 China,
+## 1 Europe, anything else builds an empty path and nothing is drawn).
+static func kindred_mark_path(race: int) -> String:
+	return KINDRED_MARK_DDJ[race] if race >= 0 and race < KINDRED_MARK_DDJ.size() else ""
+
+## Sets the player piece's kindred mark for a Country value (-1: unknown,
+## no emblem -- never a guessed race).
+func set_kindred(race: int) -> void:
+	if _player == null:
+		return
+	var mark := _player.find_child(KINDRED_MARK + "_art", true, false) as TextureRect
+	if mark == null:
+		return
+	var path := kindred_mark_path(race)
+	mark.texture = _builder.load_texture(path) if (path != "" and _builder != null) else null
+	mark.visible = mark.texture != null
+
+## The emblem file the player piece shows now, "" for none (QA and tests).
+func kindred_shown() -> String:
+	if _player == null:
+		return ""
+	var mark := _player.find_child(KINDRED_MARK + "_art", true, false) as TextureRect
+	if mark == null or not mark.visible or mark.texture == null:
+		return ""
+	return mark.texture.resource_path if mark.texture.resource_path != "" else "(texture)"
+
+## Where the viewer sits relative to the window for a shown piece of this
+## size (0x69a1ab..0x69a1cb: MoveTo(window x, piece y + piece h + 1)).
+static func buff_viewer_offset(piece_size: Vector2) -> Vector2:
+	return Vector2(0, piece_size.y + 1)
+
+## Shows the viewer under `piece` for an owner, filled from buff_source
+## (0x699480), and starts the 1000 ms refresh. No piece (a rarity-2
+## monster, whose rect the client leaves unwritten): hidden (OURS; no
+## monster in the archive has rarity 2).
+func _show_buffs(piece: Control, owner_key: String) -> void:
+	if _buffs == null:
+		return
+	_buff_owner = owner_key
+	_buff_timer_ms = 0.0
+	if piece == null:
+		_buffs.visible = false
+		_buffs.clear_all()
+		_buff_fill_pending = false
+		return
+	_buffs.position = buff_viewer_offset(piece.size)
+	_buffs.visible = true
+	_buffs.clear_all()
+	_buff_fill_pending = true
+	_fill_buffs()
+
+func _fill_buffs() -> void:
+	if not _buffs.ready_to_fill():
+		return
+	_buff_fill_pending = false
+	_buffs.rebuild(_owner_buffs())
+	print("HudTarget: buffs of %s -- %s" % [_buff_owner, _buffs.describe()])
+
+func _owner_buffs() -> Array:
+	if _buff_owner == "" or not buff_source.is_valid():
+		return []
+	return buff_source.call(_buff_owner)
+
+func _process(delta: float) -> void:
+	if not visible or _buffs == null or not _buffs.visible:
+		return
+	advance_buffs(delta * 1000.0)
+
+## Timer 1's ticks, `ms` of time (public so a test steps it exactly):
+## every 1000 ms the viewer is diffed against the owner's list (vslot_005).
+func advance_buffs(ms: float) -> void:
+	if _buff_fill_pending:
+		_fill_buffs()
+		return
+	_buff_timer_ms += ms
+	while _buff_timer_ms >= HudTargetBuffs.REFRESH_MS:
+		_buff_timer_ms -= HudTargetBuffs.REFRESH_MS
+		var before := _buffs.describe()
+		_buffs.sync(_owner_buffs())
+		var after := _buffs.describe()
+		if after != before:
+			print("HudTarget: buffs of %s -- %s" % [_buff_owner, after])
+
+## The viewer (tests and QA).
+func buff_viewer() -> HudTargetBuffs:
+	return _buffs
 
 ## The rank icon for a rarity (characterdata _RefObjChar col 15), recovered
 ## from the retail client's switch (FUN_0069b4c0): 0/7 normal, 1 champion,
