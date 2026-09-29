@@ -7094,6 +7094,106 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirtieth round, review follow-up: no seams or holes in the map, text sits in each control's ClientRect, the purse amount has its own field, and Style-64 controls start hidden
+
+The review confirmed round 630's readings and traced the heading: `0x9ed130` / `0x9c4260` store it
+at `player+0x8c` in `[0, 2 pi)` and `0x9ec850` turns it into `(sin h, 0, -cos h)` (re-read here:
+`0xb44b40` is the sin, `0xb44a10` the cos). So the arrow's origin is now READ, not INFERRED. The
+review also found seven problems, and this follow-up fixes them. Labels are as in round 630.
+
+1. **1-pixel see-through seams** (MEASURED by the review's magenta probe). At every zoom level but
+   64, 160 and 256 the tile size is fractional, and each tile's rect was snapped separately. Now
+   `HudMinimap.tile_rect` floors every tile edge, so a tile's right edge is its neighbour's left edge
+   (OURS; the client's float quads share their vertices). Re-run of the review's
+   `zz_rv630_seam.gd`, first 630 commit against this one: before, 6 of 28 zoom/spot cases showed
+   magenta, up to 176 aperture pixels (at S 179.2, spot (1919.9, 0.1)), with seam-band error up to
+   0.708. After, 0 of 28, and the seam-band means (0.000..0.057) are the interior's (0.001..0.060).
+2. **ClientRect.** READ: `0x652800` insets the text rect by `+0x18c..+0x198`, which `0x6527d0`
+   copies from the parsed ClientRect (`0x8b566e..0x8b5674`) in the order left, top, right, bottom.
+   CIFButton's draw is CIFStatic's (its slot 13, `0x655f30`, jumps to `0x64d940`; its slot 42 is
+   `0x64d9b0`), and the builder sets every control's HAlign and VAlign (`0x8b5696..0x8b56b8`).
+   `UiBuilder.place_label` now lays the text of every CIFStatic and CIFButton inside its ClientRect,
+   by its own alignment. Button captions used to be centred both ways whatever the layout said.
+   - Truncation: the client truncates the SCREEN coordinate (`cvttsd2si`). Windows sit at whole
+     pixels and that coordinate is not negative, so the offset inside the window is floored, as
+     before. Truncating the offset itself would be a pixel off whenever it is negative and
+     fractional. Kept, and the reason is written at `place_label`.
+   - MEASURED, the same census as round 630 plus storage and exchange, first 630 commit against this
+     one (Arial fallback): storage's "Total Gold" moved from centred on the whole 236 px strip to
+     x 16..71 (text rect x 17..71), left of the coin button; its "Gold" to x 210..237 (the round
+     562 record's 210..237). Button captions' label boxes are now their ClientRect, and they keep
+     their own alignment: party / academy Invite, Set, Party match and Matching (centred) go from
+     the whole 24 px button to y 6..20. Party match's Join, Whisper, Auto match, Form party, Change
+     entry, Delete entry, Search and Refresh, autopotion's Confirm and Cancel, and exchange's
+     Confirm and Cancel are VAlign 0 and now start at y 6 instead of being centred on the button.
+     These are node rects; the glyphs themselves were not diffed for these windows. Party match's
+     column headers are unchanged.
+     No window builds ifmessagebox's MsgBoxStore* sections, so their NAME / PRICE fields are not
+     drawn anywhere yet.
+3. **The purse amount.** READ from ifinventory.txt: the amount is `GDR_INVENTORY_STA_MONEY` (0,305
+   176x28 over int_window_downbox, ClientRect 36,7,39,5, HAlign 2: right-aligned, ending at x 137),
+   and the 24-pixel `GDR_INVENTORY_STA_GOLD` says "Gold". ifstorageroom.txt pairs
+   `GDR_STORAGE_STA_MONEY` and `_STA_GOLD` the same way. HudPanels wrote the amount over "Gold" in
+   both. It now writes `STA_MONEY` through the new `UiBuilder.set_static_text`, which puts text on
+   an art static the layout gave none.
+4. **Missing neighbour tiles.** READ: `0x661ce0` stores the null the loader returns, and the quad
+   is drawn with no texture, which Direct3D 9 samples as black (the review's reading). MEASURED at
+   region 80/78's corners, where 3 of the 9 regions have no file: before, 2,994 of 6,077 aperture
+   pixels showed the window behind; after, 0, and 2,987 are black.
+5. **Cost.**
+   - `update_signs` no longer builds a dictionary or a log string every tick.
+   - `World3D._refresh_minimap` keeps the region group and its parsed name until the player leaves
+     it, and refills two kept lists for the signs.
+   - The tiles stay out of the builder's unbounded cache (`load_texture(path, false)`): a bounded
+     set of 25 (OURS), with missing names remembered.
+   - MEASURED with the review's probe: 82.3 -> 44.0 us per `update_player` + `update_signs`; a
+     crossing east (3 new tiles) 3.0 -> 2.4 ms; cold 3x3 7.5 -> 7.4 ms.
+   - OPEN: decoding off the main thread. The archive reader is shared with world streaming and its
+     thread safety was not checked.
+6. **Docs.**
+   - `0x661ce0` has two callers: vslot_012 (`0x6625f4`), only while a zoom walks, and `0x777a70`
+     (`0x777ac7`), which the review traces to CICPlayer::vslot_015(3) on a heading change. The
+     per-frame refresh is ours.
+   - Corrected in protocol/minimap.md and in `World3D._refresh_minimap`'s comment.
+7. **Style 64.** READ (`0x8b5710`): `UiBuilder.build_control` now hides a Style-0x40 control at
+   creation, for every window. MEASURED with the review's `zz_rv630_st64.gd`:
+   - Now hidden: the chat's `GDR_CHAT_MODE_VIEW_WND`, the party's `GDR_PTY_PARTY_LEADER` and
+     `_RACE_MARK`, and the academy's `GDR_APPRENTICESHIP_LEADER` and `_RANK_MARK`.
+   - Still shown: the player info's `GDR_PMI_CIRCLE0..4`, because this tree's
+     `hud_player_info.gd` sets them visible itself. Round 629 rewrote that file to show them per
+     retail; it is untouched here, and its explicit `visible` / `show()` calls still work over the
+     builder's hide.
+
+Tests:
+- `hud_minimap_test.gd`: whole-pixel edges meet at all eleven zoom levels; missing tiles are black.
+- `ui_builder_test.gd`: ClientRect for a static and a button caption; Style 64 hidden;
+  `set_static_text`.
+- `hud_main_popup_test.gd`: the purse amount lands on STA_MONEY ending at x 137, and "Gold" stays.
+
+NEGATIVE, the new tests against the first 630 commit (92173f0):
+
+```
+FAIL the tiles are laid on whole-pixel edges (tile_rect)
+FAIL with no archive every tile is a missing region, drawn black (got 0 of 9)
+FAIL the title's text is laid in its ClientRect, x 17..71 (got [P: (9, 283), S: (236, 24)])
+FAIL a button's caption follows its HAlign/VAlign in its ClientRect, at (5, 3) (got (-11, -11.5))
+FAIL a Style-64 control starts hidden (visible true)
+FAIL the builder can put text on an art static (set_static_text)
+FAIL the purse's amount is on GDR_INVENTORY_STA_MONEY (got no label)
+FAIL GDR_INVENTORY_STA_GOLD still says Gold (got 1,234,567,890)
+```
+
+Results:
+- `remote_godot.sh check`: 382 scripts (4 of them this round's scratch probes left in the lane's
+  deploy directory) and 5 scenes, ALL LOAD.
+- `remote_godot.sh tests`: 148 suites, 0 failing.
+- Go: 60 packages ok.
+
+Renders (session scratchpad, `minimap_shots/review/`):
+- `before|after/panel_{storage,party,partymatch,exchange,autopotion,inventory}.png`
+- `storage_money_row_before_after_3x.png`
+- `after/null_5_5.png`
+
 ## Six-hundred-and-thirtieth round: the minimap shows where the player stands, its arrow points the way the player faces, and it sits flush in the corner without the black ring
 
 The report on v0.1.458: a black circle left of the globe; the map not matching the dirt road the

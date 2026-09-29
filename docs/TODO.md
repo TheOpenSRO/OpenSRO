@@ -653,9 +653,12 @@ with the screen's top-right corner, and the dungeon-floor ring hidden. Still ope
       `+0x3b0` when the monster's `+0x7ac` is 3 or 8.
 - [ ] The tiles' colour modulation (a colour from `0x9edd60`'s object, times 400, capped at 255).
 - [ ] Dungeon regions (`minimap_d\`, and showing the floor ring there).
-- [ ] `UiBuilder` does not honour Style bit `0x40` (hidden at creation, `0x8b5710`) for any window:
-      92 resinfo controls carry it, 49 outside ginterface.txt (15 in ifplayerminiinfo.txt). The
-      minimap hides its one itself.
+- [x] `UiBuilder` hides a Style-`0x40` control at creation (`0x8b5710`), every window (round 630
+      review); a window that shows one sets it visible itself.
+- [ ] Decode a crossing's new tiles off the main thread (2.4 ms measured): the archive reader's
+      thread safety beside world streaming was not checked.
+- [ ] ifmessagebox's MsgBoxStore* sections (their NAME / PRICE fields have ClientRects) are not
+      built by any window yet.
 - [ ] Measure a text label's cap top against the retail screenshot with **Tahoma**: the box has
       only the archive's Arial fallback, whose smaller ascent puts caps 1 px higher (round 630).
 

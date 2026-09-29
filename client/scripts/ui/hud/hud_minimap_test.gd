@@ -140,8 +140,10 @@ Section = Create,"0,0,150,180","0"
 	# mirrored about the region's middle, which is grass.
 	_update(minimap, 96, 168, Vector3(1140, 0, 1230), Vector2(0, 1))
 	var hit := _tile_under_centre(minimap)
-	_check(not hit.is_empty() and hit["uv"].is_equal_approx(Vector2(1140.0 / 1920.0, 690.0 / 1920.0)),
-		"the aperture centre shows (u, v) = (x, 1920 - z) / 1920 of the player's tile (got %s)" % [hit.get("uv")])
+	# (Within a pixel of the 160-px tile: its edges are whole pixels.)
+	var want_uv := Vector2(1140.0 / 1920.0, 690.0 / 1920.0)
+	_check(not hit.is_empty() and absf(hit["uv"].x - want_uv.x) <= 1.0 / 160.0 and absf(hit["uv"].y - want_uv.y) <= 1.0 / 160.0,
+		"the aperture centre shows (u, v) = (x, 1920 - z) / 1920 of the player's tile, within a pixel (got %s, want %s)" % [hit.get("uv"), want_uv])
 	_check(not hit.is_empty() and hit["name"] == "RegionMap_1_1",
 		"and that tile is the middle of the 3x3, the player's own region (got %s)" % [hit.get("name")])
 	# 160 pixels a region to start with (0x660c42, 160.0f).
@@ -158,6 +160,32 @@ Section = Create,"0,0,150,180","0"
 		_check(north.is_equal_approx(own - Vector2(0, 160)), "the region north of the player's is drawn one tile above it")
 	else:
 		_check(false, "the minimap lays the client's 3x3 of region tiles (tile_region / tile_position)")
+
+	# Round 630 review: at a fractional size the nine tiles share their edges
+	# exactly (whole-pixel edges), and a region with no minimap file is drawn
+	# black, not see-through.
+	if minimap.has_method("tile_rect"):
+		var gaps := 0
+		for s_px in [64.0, 83.2, 102.4, 121.6, 140.8, 160.0, 179.2, 198.4, 217.6, 236.8, 256.0]:
+			for spot in [Vector3(1915, 0, 960), Vector3(3, 0, 2), Vector3(1140, 0, 1230), Vector3(1919.9, 0, 0.1)]:
+				for i in 2:
+					for j in 3:
+						var a: Rect2 = minimap.call("tile_rect", i, j, spot, s_px)
+						var b: Rect2 = minimap.call("tile_rect", i + 1, j, spot, s_px)
+						var c: Rect2 = minimap.call("tile_rect", j, i, spot, s_px)
+						var d: Rect2 = minimap.call("tile_rect", j, i + 1, spot, s_px)
+						if a.end.x != b.position.x or c.end.y != d.position.y or a.position.x != floorf(a.position.x):
+							gaps += 1
+		_check(gaps == 0, "at every zoom level the tiles' whole-pixel edges meet (%d gaps)" % gaps)
+	else:
+		_check(false, "the tiles are laid on whole-pixel edges (tile_rect)")
+	var black := 0
+	for c in (minimap.get_node("MapClip") as Node).get_children():
+		if c is TextureRect and String(c.name).begins_with("RegionMap"):
+			var t := (c as TextureRect).texture
+			if t != null and t.get_size() == Vector2(1, 1) and t.get_image().get_pixel(0, 0) == Color(0, 0, 0, 1):
+				black += 1
+	_check(black == 9, "with no archive every tile is a missing region, drawn black (got %d of 9)" % black)
 
 	# The arrow: north up, east right, south down, west left -- the angle of
 	# the facing's (x, -z) on the y-down screen, the arrow's art pointing

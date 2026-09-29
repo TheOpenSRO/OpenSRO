@@ -117,7 +117,11 @@ func _mainpopup() -> String:
 	return _layout(body)
 
 func _inventory() -> String:
-	return _layout(_control("GDR_INVENTORY_STA_GOLD", "CIFStatic", "143,314,24,12", "", 12, "")
+	# The purse row as ifinventory.txt authors it (round 630 review): the
+	# amount's static over the down box, its ClientRect "36,7,39,5" and
+	# HAlign 2 right-aligning it to x 137, and the 24-pixel "Gold" beside it.
+	var money := "\tGDR_INVENTORY_STA_MONEY:CIFStatic\n\t{\n\t\tClientRect=RECT,\"36,7,39,5\"\n\t\tDDJ=STRING,\"interface\\\\inventory\\\\int_window_downbox.ddj\"\n\t\tHAlign=INTEGER,\"2\"\n\t\tVAlign=INTEGER,\"1\"\n\t\tID=INTEGER,\"10\"\n\t\tRect=RECT,\"0,305,176,28\"\n\t\tText=STRING,\"\"\n\t}\n"
+	return _layout(money + _control("GDR_INVENTORY_STA_GOLD", "CIFStatic", "143,314,24,12", "", 12, "Gold")
 		+ _control("GDR_INVENTORY_FRAME", "CIFFrame", "0,0,176,308", "", 0))
 
 ## ifequipment.txt's worn slots at their authored rects, one avatar slot,
@@ -255,6 +259,24 @@ func _popup_checks(panels_script: GDScript) -> void:
 	var window := first
 	await process_frame
 	await process_frame
+
+	# The purse goes on GDR_INVENTORY_STA_MONEY, right-aligned in its
+	# ClientRect (x 36..137), and "Gold" stays "Gold" (round 630 review: it
+	# was written over the 24-pixel "Gold" label).
+	var purse := StatsNet.Stats.new()
+	purse.gold = 1234567890
+	panels.call("_apply_stats", purse)
+	await process_frame
+	var money := window.call("node", "GDR_INVENTORY_STA_MONEY") as Control
+	var amount := money.get_node_or_null("Text") as Label if money != null else null
+	var gold_word := window.call("node", "GDR_INVENTORY_STA_GOLD") as Label
+	_check(amount != null and amount.text == "1,234,567,890",
+		"the purse's amount is on GDR_INVENTORY_STA_MONEY (got %s)" % (amount.text if amount else "no label"))
+	_check(gold_word != null and gold_word.text == "Gold", "GDR_INVENTORY_STA_GOLD still says Gold (got %s)" % (gold_word.text if gold_word else null))
+	if amount != null:
+		var right := amount.position.x + amount.size.x
+		_check(amount.horizontal_alignment == HORIZONTAL_ALIGNMENT_RIGHT and absf(right - 137.0) < 0.01,
+			"the amount ends at x 137, its ClientRect's right edge (got %s, align %d)" % [right, amount.horizontal_alignment])
 	_check(window.size == POPUP_SIZE, "the window is GDR_MAINPOPUP's %s (got %s)" % [POPUP_SIZE, window.size])
 	_check(_frame_piece_count(builder, window) == 8,
 		"GDR_MAINPOPUP's mframe_wnd_ frame is drawn, all eight pieces (got %d)" % _frame_piece_count(builder, window))

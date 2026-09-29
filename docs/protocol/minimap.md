@@ -35,14 +35,17 @@ a control whose Style has bit `0x40` at creation (`0x8b5710..0x8b5726`: `0x652da
 vslot `0x5c` with 0), and `0x661ce0` shows child 10 only while the region id's top bit is set
 (`0x661d65..0x661def` keep `player+0x7c >> 15`; `0x6620db..0x662101` call its vslot `0x5c` with
 that bit) -- the same bit that switches the tiles to `minimap_d\`. MEASURED: 92 of the archive's
-3,754 resinfo controls carry Style bit `0x40` (43 of them in ginterface.txt). OPEN: `UiBuilder`
-does not honour the bit in general; `HudMinimap` hides child 10 itself. The others (for example
-ifplayerminiinfo's `GDR_PMI_RACE_MARK`, `GDR_PMI_CIRCLE0..4`, `GDR_PMI_SELECT`) are each window's
-own business.
+3,754 resinfo controls carry Style bit `0x40` (43 of them in ginterface.txt). `UiBuilder` hides
+every one of them at creation since the round 630 review (`STYLE_HIDDEN_AT_CREATION`); a window
+that shows one later (the player info's orbs and race mark) sets it visible itself.
 
 ## The map
 
-READ, from `0x661ce0` (run every frame by vslot_012 `0x662510`) and the draw vslot_013 (`0x662bd0`):
+READ, from `0x661ce0` and the draw vslot_013 (`0x662bd0`). `0x661ce0` has two callers only: vslot_012
+(`0x6625f4`), which reaches it only while the zoom is walking (`0x662510` returns early once the drawn
+size is the target), and `0x777a70` (`0x777ac7`), which CICPlayer::vslot_015(3) sends when the
+player's heading changes (`0x9d49db`, `0x9d5a5f`; the review's reading). The draw reads the stored
+position every frame. OURS: `World3D._refresh_minimap` refreshes every physics frame instead.
 
 - `+0x424` / `+0x428` are the player's region id's low and high bytes (`player+0x7c`); `+0x3e0`,
   `+0x3e4`, `+0x3e8` its region-local x, y, z (`player+0x80..0x88`).
@@ -61,6 +64,11 @@ READ, from `0x661ce0` (run every frame by vslot_012 `0x662510`) and the draw vsl
   is drawn at `((i - 1) * S - +0x404 + w * 0.5, (j - 1) * S - +0x408 + h * 0.5)` in the aperture
   (child 1's rect, `w = h = 105`), clipped to it, with the mask as texture stage 0. So an image's
   rows run north to south and the player's point is always the aperture's centre.
+- A region with no minimap file: `0x661ce0` stores the loader's null and the tile's quad is drawn
+  with no texture, which Direct3D 9 samples as black (the review's reading). Drawn black here.
+- OURS: `HudMinimap.tile_rect` floors each tile edge, so neighbouring tiles share an edge at the
+  fractional sizes (the client's float quads share their vertices; snapping each Godot rect on its
+  own left 1-pixel gaps). The tiles are kept in a bounded set of 25, missing names remembered.
 - MEASURED: decoded with this project's DdjReader, tile `168x97`'s bottom row continues `168x96`'s
   top row (mean RGB difference 13.8, against 31.7 the other way round), `169x96` continues
   `168x96` to the east (10.0 against 24.8): the images are upright.
@@ -91,16 +99,17 @@ READ, from `0x661ce0` (run every frame by vslot_012 `0x662510`) and the draw vsl
   `(x cos - y sin, x sin + y cos)` with `0xb44a10` the cos (`fcos`) and `0xb44b40` the sin (`fsin`):
   clockwise on the y-down screen. `+0x3ec = player+0x8c - pi / 2` (`0x661dc5`, `0xe1b8f0`).
 - MEASURED: `mm_sign_character.ddj` points right: its tip is column 15, row 7 of 16.
-- INFERRED: `player+0x8c` counts from south toward east, which is what makes the READ turn point the
-  arrow along the facing. The heading's writer was not traced. `HudMinimap.arrow_rotation` turns the
-  art by the angle of the facing's `(x, -z)` on the screen, the same thing for that origin.
+- READ (round 630 review): `0x9ed130` / `0x9c4260` store the heading `h` at `player+0x8c` in
+  `[0, 2 pi)`, and `0x9ec850` turns it into the facing `(sin h, 0, -cos h)` (`0xb44b40` the sin,
+  `0xb44a10` the cos): `h` counts from south (-z) toward east. So the client's `-(h - pi/2)` is the
+  angle of the facing's `(x, -z)` on the screen, which is what `HudMinimap.arrow_rotation` computes.
 - READ: the world map's marker is the same art turned the same way: `CNIFWorldMap` keeps
   `player+0x8c - pi / 2` at `+0x97c8` (`0x60f6a5`, `0x610a05`) and turns a +-8 quad by
   `-(+0x97c8)` (`0x6200de..0x620236`).
 
 ## How a CIFStatic lays out its text
 
-READ: CIFStatic's layout `0x64d9b0` takes the rect `0x652800` fills (left, top, width, height) and
+READ: CIFStatic's layout `0x64d9b0` takes the rect `0x652800` fills and
 the text's extent (`+0xdc` wide, `+0xde` tall) and stores the text's top-left at `+0x370`/`+0x374`:
 
 | | 0 | 1 | 2 |
@@ -113,7 +122,16 @@ hands them to `0x8b48b0`, unclipped. `0x8b48b0` walks the glyph runs and draws e
 which puts the glyph's whole cell bitmap at `(x, y)` -- the cell's top at `y` -- and, when the text
 board's `+0x60` has bit 1, first draws a black copy at `(x + 1, y + 1)`. So a text larger than its
 rect overruns it evenly when centred and toward the top or left when bottom- or right-aligned.
-`UiBuilder.place_label` lays a CIFStatic's text label by that rule (round 630);
+The rect is the control's, inset by its ClientRect: `0x652800` adds `+0x18c` / `+0x190` to the left
+and top and takes `+0x18c + +0x194` / `+0x190 + +0x198` off the width and height
+(`0x65280e..0x65283b`), and `0x6527d0` copies those four from the parsed ClientRect
+(`0x8b566e..0x8b5674`, the def's `+0x58..+0x64`) in the file's order: left, top, right, bottom. 60
+CIFStatics and 238 CIFButtons carry a non-zero one. CIFButton draws its text the same way: its
+vtable's slot 13 (`0x655f30`) jumps to CIFStatic's `0x64d940`, its slot 42 is `0x64d9b0`, and the
+builder sets every control's HAlign and VAlign (`0x8b5696..0x8b56b8`, no type test).
+`UiBuilder.place_label` lays a CIFStatic's or CIFButton's text by that rule, in its ClientRect
+(round 630 and its review); the draw truncates the screen coordinate, which for a window at whole
+pixels is flooring the offset in it;
 `TwoDtBuilder.set_text` already did the same for `.2dt` windows (round 598).
 
 MEASURED (the render box, where Tahoma is not installed and the archive's Arial fallback draws):

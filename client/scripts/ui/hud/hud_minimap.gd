@@ -238,16 +238,14 @@ func setup(layout_data: Variant = null) -> void:
 
 		# GDR_MINIMAP_DUNGEON_FLOOR_INFO (id 10, mm_dungeonfloor.ddj at
 		# 1,42 32x32) is the black ring the user saw left of the globe. Its
-		# Style is 64, and the layout builder hides a style-0x40 control at
-		# creation (0x8b5710..0x8b5726). 0x661ce0 then shows child 10 only
-		# in a dungeon region: 0x6620db..0x662101 calls its vslot 0x5c with
-		# (region id >> 15) != 0, the region id's top bit (0x661d70,
-		# 0x661de6..0x661def), which also switches the tiles to
-		# `minimap_d\`. This client has no dungeon regions, so it stays
-		# hidden.
+		# Style is 64, so the builder hides it at creation, as the client's
+		# does (0x8b5710..0x8b5726; UiBuilder.STYLE_HIDDEN_AT_CREATION).
+		# 0x661ce0 shows child 10 only in a dungeon region: 0x6620db..0x662101
+		# calls its vslot 0x5c with (region id >> 15) != 0, the region id's
+		# top bit (0x661d70, 0x661de6..0x661def), which also switches the
+		# tiles to `minimap_d\`. This client has no dungeon regions, so it
+		# stays hidden.
 		_dungeon_floor = layout_root.get_node_or_null("GDR_MINIMAP_DUNGEON_FLOOR_INFO") as CanvasItem
-		if _dungeon_floor != null:
-			_dungeon_floor.visible = false
 
 		_lbl_pos_x = layout_root.get_node_or_null("GDR_MINIMAP_TEXT_POS_X") as Label
 		_lbl_pos_y = layout_root.get_node_or_null("GDR_MINIMAP_TEXT_POS_Y") as Label
@@ -288,6 +286,20 @@ static func tile_position(i: int, j: int, local_pos: Vector3, tile_px: float,
 		tile_px * (REGION_SPAN - local_pos.z) / REGION_SPAN)
 	return Vector2((i - 1) * tile_px, (j - 1) * tile_px) - off + aperture / 2.0
 
+## Tile (i, j)'s rect with whole-pixel edges. At a size that is not whole
+## (every zoom level but 64, 160 and 256 is a multiple of 19.2) the tiles'
+## float rects left a pixel column between neighbours uncovered once each
+## was snapped on its own -- the review's magenta probe saw the window
+## behind through it (round 630 review). Each edge is floored here, so a
+## tile's right edge is its neighbour's left edge exactly. OURS: the client
+## draws float quads that share their edge vertices, which leaves no gap.
+static func tile_rect(i: int, j: int, local_pos: Vector3, tile_px: float,
+		aperture: Vector2 = APERTURE_RECT.size) -> Rect2:
+	var a := tile_position(i, j, local_pos, tile_px, aperture)
+	var lo := Vector2(floorf(a.x), floorf(a.y))
+	var hi := Vector2(floorf(a.x + tile_px), floorf(a.y + tile_px))
+	return Rect2(lo, hi - lo)
+
 ## The region tile (i, j) shows, as (region_x, region_y) -- this project's
 ## naming, where the file is minimap\<region_y>x<region_x>.ddj.
 static func tile_region(region_x: int, region_y: int, i: int, j: int) -> Vector2i:
@@ -305,9 +317,11 @@ static func tile_region(region_x: int, region_y: int, i: int, j: int) -> Vector2
 ## MEASURED: mm_sign_character.ddj points right (+x): its tip is at column
 ## 15, row 7 of 16 (round 630's dump). So an unturned arrow points east, and
 ## the turn that points it along the facing is the angle of (x, -z) on the
-## y-down screen -- the retail formula when the heading counts from south
-## toward east, which is what makes the arrow point where the character
-## faces (INFERRED; the heading's own origin was not traced to a write).
+## y-down screen. READ (round 630 review): 0x9ed130 / 0x9c4260 store the
+## heading at +0x8c in [0, 2 pi), and 0x9ec850 turns it into the facing
+## (sin h, 0, -cos h) -- 0xb44b40 the sin, 0xb44a10 the cos -- so h counts
+## from south (-z) toward east, and the client's -(h - pi/2) is exactly the
+## angle of (x, -z): atan2(cos h, sin h) = pi/2 - h.
 ## The minimap passed Godot's rotation.y straight through before, which
 ## pointed the arrow right when the player faced south and down when facing
 ## east: only a heading of 45 degrees came out right.
@@ -349,8 +363,9 @@ func _layout_tiles() -> void:
 			var tile: TextureRect = _tiles[i * 3 + j] if i * 3 + j < _tiles.size() else null
 			if tile == null:
 				continue
-			tile.size = Vector2(_tile_px, _tile_px)
-			tile.position = tile_position(i, j, _local, _tile_px)
+			var r := tile_rect(i, j, _local, _tile_px)
+			tile.position = r.position
+			tile.size = r.size
 			# The clip shader samples the mask in aperture space, so it needs
 			# the tile's rect every time the tile moves.
 			if tile.material is ShaderMaterial:
@@ -403,54 +418,79 @@ static func sign_offset(player_world: Vector3, entity_world: Vector3, map_size: 
 func update_signs(player_world: Vector3, npcs: Array, monsters: Array, others: Array) -> void:
 	if _signs_root == null:
 		return
-	var centre := APERTURE_RECT.size / 2.0
-	var drawn := 0
-	var total := 0
-	var placed: PackedStringArray = []  # kind@(dx,dy) per drawn sign, for the log
-	var lists := {"npc": npcs, "monster": monsters, "other": others}
-	for kind in lists:
-		var positions: Array = lists[kind]
-		var pool: Array = _sign_pools.get(kind, [])
-		var tex: Texture2D = _sign_textures.get(kind, null)
-		var used := 0
-		if tex != null:
-			for pos in positions:
-				total += 1
-				var off := sign_offset(player_world, pos, _tile_px)
-				if off.length() >= SIGN_RADIUS:
-					continue
-				var sign: TextureRect
-				if used < pool.size():
-					sign = pool[used]
-				else:
-					sign = TextureRect.new()
-					sign.name = "%s_%d" % [kind, used]
-					sign.texture = tex
-					sign.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-					sign.stretch_mode = TextureRect.STRETCH_SCALE
-					sign.mouse_filter = MOUSE_FILTER_IGNORE
-					sign.size = SIGN_SIZE
-					_signs_root.add_child(sign)
-					pool.append(sign)
-				sign.position = centre + off - SIGN_SIZE / 2.0
-				sign.visible = true
-				used += 1
-				drawn += 1
-				placed.append("%s@(%d,%d)" % [kind, roundi(off.x), roundi(off.y)])
-		else:
-			total += positions.size()
-		for i in range(used, pool.size()):
-			(pool[i] as TextureRect).visible = false
-		_sign_pools[kind] = pool
-	var report := Vector2i(drawn, total)
-	if report != _last_sign_report:
-		_last_sign_report = report
+	# Nothing is allocated here once the pools have grown: no per-kind
+	# dictionary, and the log line is only built when the counts change
+	# (round 630 review).
+	var drawn := _place_signs("npc", player_world, npcs) + _place_signs("monster", player_world, monsters) \
+		+ _place_signs("other", player_world, others)
+	var total := npcs.size() + monsters.size() + others.size()
+	if drawn != _last_sign_report.x or total != _last_sign_report.y:
+		_last_sign_report = Vector2i(drawn, total)
+		var placed: PackedStringArray = []
+		var centre := APERTURE_RECT.size / 2.0
+		for kind in SIGN_TEXTURES:
+			for sign in _sign_pools.get(kind, []):
+				var node := sign as TextureRect
+				if node.visible:
+					var off := node.position + SIGN_SIZE / 2.0 - centre
+					placed.append("%s@(%d,%d)" % [kind, roundi(off.x), roundi(off.y)])
 		print("HudMinimap: signs drawn %d of %d entities (npc %d, monster %d, other %d): %s" % [
 			drawn, total, npcs.size(), monsters.size(), others.size(), " ".join(placed)])
 
-## Loads the 3x3 tiles around the player's region. A region with no
-## minimap file leaves its tile empty (0x661ce0 stores the null the loader
-## returns and draws the quad untextured).
+## Places one kind's signs from its pool; returns how many were drawn.
+func _place_signs(kind: String, player_world: Vector3, positions: Array) -> int:
+	var tex: Texture2D = _sign_textures.get(kind, null)
+	var pool: Array = _sign_pools.get(kind, [])
+	var used := 0
+	if tex != null:
+		var centre := APERTURE_RECT.size / 2.0
+		for pos in positions:
+			var off := sign_offset(player_world, pos, _tile_px)
+			if off.length() >= SIGN_RADIUS:
+				continue
+			var sign: TextureRect
+			if used < pool.size():
+				sign = pool[used]
+			else:
+				sign = TextureRect.new()
+				sign.name = "%s_%d" % [kind, used]
+				sign.texture = tex
+				sign.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				sign.stretch_mode = TextureRect.STRETCH_SCALE
+				sign.mouse_filter = MOUSE_FILTER_IGNORE
+				sign.size = SIGN_SIZE
+				_signs_root.add_child(sign)
+				pool.append(sign)
+			sign.position = centre + off - SIGN_SIZE / 2.0
+			sign.visible = true
+			used += 1
+	for i in range(used, pool.size()):
+		(pool[i] as TextureRect).visible = false
+	return used
+
+## Loads the 3x3 tiles around the player's region.
+##
+## A region with no minimap file is drawn black: 0x661ce0 stores the null
+## the loader returns and vslot_013 draws that tile's quad with no texture
+## bound, which Direct3D 9 samples as black (the review's reading). It was
+## left see-through, showing the window behind (round 630 review).
+##
+## The tiles are kept here, not in the builder's cache (which keeps every
+## texture for its life): the last TILE_CACHE_MAX used, and a set of the
+## names that have no file, so a crossing reads only the new column or row.
+## OURS: the bound (25, a 5x5 around the player) is our choice.
+const TILE_CACHE_MAX := 25
+var _tile_cache := {}          # path -> Texture2D, in use order (oldest first)
+var _tile_absent := {}         # path -> true
+static var _black: ImageTexture = null
+
+static func black_texture() -> ImageTexture:
+	if _black == null:
+		var img := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+		img.fill(Color(0, 0, 0, 1))
+		_black = ImageTexture.create_from_image(img)
+	return _black
+
 func _load_region_tiles(rx: int, ry: int) -> void:
 	for i in 3:
 		for j in 3:
@@ -458,11 +498,27 @@ func _load_region_tiles(rx: int, ry: int) -> void:
 			if tile == null:
 				continue
 			var r := tile_region(rx, ry, i, j)
-			tile.texture = null
-			if _ui_builder != null:
-				# minimap\<y>x<x>.ddj (AGENTS.md; 0x661ce0's `%s%dx%d.ddj`
-				# with the region id's low byte first).
-				tile.texture = _ui_builder.load_texture("minimap\\%dx%d.ddj" % [r.y, r.x])
+			# minimap\<y>x<x>.ddj (AGENTS.md; 0x661ce0's `%s%dx%d.ddj` with
+			# the region id's low byte first).
+			var tex := _tile_texture("minimap\\%dx%d.ddj" % [r.y, r.x])
+			tile.texture = tex if tex != null else black_texture()
+
+func _tile_texture(path: String) -> Texture2D:
+	if _tile_cache.has(path):
+		var hit: Texture2D = _tile_cache[path]
+		_tile_cache.erase(path)
+		_tile_cache[path] = hit
+		return hit
+	if _tile_absent.has(path) or _ui_builder == null:
+		return null
+	var tex := _ui_builder.load_texture(path, false)
+	if tex == null:
+		_tile_absent[path] = true
+		return null
+	_tile_cache[path] = tex
+	while _tile_cache.size() > TILE_CACHE_MAX:
+		_tile_cache.erase(_tile_cache.keys()[0])
+	return tex
 
 ## The zoom buttons' handlers, 0x660620 and 0x660660.
 func zoom_in() -> void:

@@ -321,8 +321,22 @@ func build_control(def: UiLayoutParser.ControlDef) -> Control:
 				node.set_meta(AUTHORED_RECT_META, Rect2(Vector2(def.rect.position), natural))
 				node.size = natural
 				node.custom_minimum_size = natural
+		for caption_name in ["Text", "ButtonLabel"]:
+			var caption := node.get_node_or_null(caption_name) as Label
+			if caption != null and caption.has_meta(STATIC_TEXT_META):
+				_lay_caption(node, caption)
+		# READ: the resinfo builder hides a control whose Style has bit 0x40
+		# as it creates it (0x8b5710..0x8b5726: 0x652da0(0x40), then vslot
+		# 0x5c ShowWindow(0)). 92 of the archive's 3,754 resinfo controls
+		# carry it; the client shows each one from code when it applies (the
+		# minimap's dungeon ring in a dungeon, the party leader's mark on the
+		# leader). A window that shows one sets it visible itself.
+		if def.style & STYLE_HIDDEN_AT_CREATION:
+			node.visible = false
 
 	return node
+
+const STYLE_HIDDEN_AT_CREATION := 0x40
 
 ## Where build_control stashes the rect the layout asked for.
 const AUTHORED_RECT_META := "srrevamp_authored_rect"
@@ -350,9 +364,7 @@ static func apply_authored_rects(root: Node) -> void:
 		ctrl.custom_minimum_size = Vector2.ZERO
 		if ctrl is Label and ctrl.has_meta(STATIC_TEXT_META):
 			place_label(ctrl as Label, rect)
-			if not ctrl.has_meta(RELAY_META):
-				ctrl.set_meta(RELAY_META, true)
-				ctrl.minimum_size_changed.connect(_on_label_min_changed.bind(ctrl))
+			_relay(ctrl as Label)
 		else:
 			ctrl.position = rect.position
 			ctrl.size = rect.size
@@ -360,25 +372,50 @@ static func apply_authored_rects(root: Node) -> void:
 		apply_authored_rects(child)
 
 ## Lays a text label on its authored rect the way the client lays text out
-## (CIFStatic's 0x64d9b0; align_overrun has the reading). A label that fits
+## (CIFStatic's 0x64d9b0; the comment above _map_halign has the reading). A label that fits
 ## takes the rect, and its own alignment places the text inside it. One whose
 ## text is taller or wider than the rect -- a Label is never smaller than its
 ## text -- overruns it by the alignment: evenly when centred, toward the top
 ## or left when bottom- or right-aligned, from the truncated position the
-## client draws at (0x64d96c: 0xb42d10 of the float, cvttsd2si, which truncates; floor
-## here, the coordinates being positive). Godot placed it at the rect's
+## client draws at (0x64d96c: 0xb42d10 of the float, cvttsd2si, which truncates).
+## The client truncates the SCREEN coordinate, window position plus the
+## offset; the windows sit at whole pixels and the screen coordinate is not
+## negative, so trunc(window + offset) is window + floor(offset), and the
+## offset here is floored. (Truncating the offset itself would be a pixel off
+## whenever it is negative and fractional: a centred 15-pixel text on a
+## 4-pixel row at the top of its parent.) Godot placed it at the rect's
 ## top-left and grew it right and down, so a centred row drew its text low
 ## by half the overrun (round 630). Measured on the render box (the archive's
 ## Arial fallback): GDR_PMI_TXT_HP, 124x12 with a 13-pixel line, now starts at
 ## y 25 rather than 26. That the client's text height (the extent 0x64d9b0
 ## reads at +0xde) equals Godot's line height for the same face is INFERRED.
 const RELAY_META := "srrevamp_label_relay"
-## Marks a label _build_static made for a CIFStatic's text: the ones the
-## client lays out with 0x64d9b0, and so the only ones place_label moves.
+## Marks a label this builder made for a CIFStatic's or CIFButton's text:
+## the ones the client lays out with 0x64d9b0, and so the only ones
+## place_label moves.
 ## Other labels that carry an authored rect (a window's caption strip) keep
 ## their rect as before -- their draw was not read.
 const STATIC_TEXT_META := "srrevamp_static_text"
-static func place_label(label: Label, rect: Rect2) -> void:
+## A text label's ClientRect (left, top, right, bottom insets, as the layout
+## writes them), and an art static's def.
+const CLIENT_RECT_META := "srrevamp_client_rect"
+const STATIC_DEF_META := "srrevamp_static_def"
+
+## The rect a control's text is laid out in. READ: 0x64d9b0 asks 0x652800
+## for it, which takes the control's rect and moves its left and top in by
+## +0x18c and +0x190 and takes +0x18c + +0x194 off the width and +0x190 +
+## +0x198 off the height (0x65280e..0x65283b). 0x6527d0 copies those four
+## from its argument, and the builder passes it the parsed ClientRect
+## (0x8b566e..0x8b5674, the def's +0x58..+0x64), in the file's order: left,
+## top, right, bottom. UiLayoutParser keeps them as a Rect2i's x, y, width
+## and height. 60 CIFStatics and 238 CIFButtons carry a non-zero one
+## (round 630 review's census); GDR_STORAGE_TXT_MONEY_TITLE's "8,4,174,3"
+## centres its title in the strip's left 54 pixels.
+static func text_rect(rect: Rect2, client: Rect2i) -> Rect2:
+	return Rect2(rect.position.x + client.position.x, rect.position.y + client.position.y,
+		rect.size.x - client.position.x - client.size.x, rect.size.y - client.position.y - client.size.y)
+static func place_label(label: Label, authored: Rect2) -> void:
+	var rect := text_rect(authored, label.get_meta(CLIENT_RECT_META, Rect2i()))
 	var need := label.get_combined_minimum_size()
 	var pos := rect.position
 	var size := rect.size
@@ -485,16 +522,16 @@ func _build_button(def: UiLayoutParser.ControlDef) -> TextureButton:
 		btn.texture_disabled = load_texture(disable_path)
 
 	if def.text != "":
-		var label := Label.new()
+		# READ: CIFButton draws its text with CIFStatic's own draw (its vtable
+		# slot 13, 0x655f30, jumps to 0x64d940) and lays it out with the same
+		# 0x64d9b0 (its slot 42), and the builder gives every control its
+		# layout's HAlign and VAlign (0x8b5696..0x8b56b8, no type test). So a
+		# caption follows its def's alignment and ClientRect, as a static's
+		# text does -- it used to be centred both ways whatever the layout
+		# said (round 630 review).
+		var label := _make_text_label(def)
 		label.name = "ButtonLabel"
 		label.text = _resolve_text(def.text)
-		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		label.set_anchors_preset(Control.PRESET_FULL_RECT)
-		align_overrun(label, 1, 1)
-		if def.font_color != Color.WHITE:
-			label.add_theme_color_override("font_color", def.font_color)
-		_apply_font(label, def)
 		btn.add_child(label)
 
 	return btn
@@ -527,17 +564,14 @@ func _build_static(def: UiLayoutParser.ControlDef) -> Control:
 		# 74 of those same 76. Modulating by it tinted every piece of
 		# artwork a different random colour.
 
+		# The def is kept so set_static_text can put text on a static that
+		# was authored without any (GDR_INVENTORY_STA_MONEY: the purse's
+		# amount on int_window_downbox, filled at runtime).
+		rect.set_meta(STATIC_DEF_META, def)
 		if def.text != "":
-			var label := Label.new()
+			var label := _make_text_label(def)
 			label.name = "Text"
 			label.text = _resolve_text(def.text)
-			label.horizontal_alignment = _map_halign(def.halign)
-			label.vertical_alignment = _map_valign(def.valign)
-			label.set_anchors_preset(Control.PRESET_FULL_RECT)
-			align_overrun(label, def.halign, def.valign)
-			if def.font_color != Color.WHITE:
-				label.add_theme_color_override("font_color", def.font_color)
-			_apply_font(label, def)
 			rect.add_child(label)
 
 		return rect
@@ -546,17 +580,60 @@ func _build_static(def: UiLayoutParser.ControlDef) -> Control:
 	# plain Control for the empty case (as this used to) meant every live
 	# data field in a window, GDR_PMI_TXT_ID and the HP/MP readouts
 	# included, was built as something that can never show text.
-	var label := Label.new()
+	var label := _make_text_label(def)
 	label.text = _resolve_text(def.text)
+	return label
+
+## A text label for a control's text, styled from its def and marked to be
+## laid out by CIFStatic's rule (place_label) inside the def's ClientRect.
+func _make_text_label(def: UiLayoutParser.ControlDef) -> Label:
+	var label := Label.new()
 	label.horizontal_alignment = _map_halign(def.halign)
 	label.vertical_alignment = _map_valign(def.valign)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# Laid out by CIFStatic's own rule once its rect settles (place_label).
+	label.clip_text = false
 	label.set_meta(STATIC_TEXT_META, true)
+	label.set_meta(CLIENT_RECT_META, def.client_rect)
 	if def.font_color != Color.WHITE:
 		label.add_theme_color_override("font_color", def.font_color)
 	_apply_font(label, def)
 	return label
+
+## Puts `text` on a static the way the client's SetText does: a text label is
+## the static itself, and a static with art gets its text drawn over the art
+## in its ClientRect, the label made the first time. Null when the node is
+## neither (not built by this builder).
+func set_static_text(node: Control, text: String) -> Label:
+	if node == null:
+		return null
+	if node is Label:
+		(node as Label).text = text
+		return node as Label
+	var label := node.get_node_or_null("Text") as Label
+	if label == null:
+		var def = node.get_meta(STATIC_DEF_META, null)
+		if def == null:
+			return null
+		label = _make_text_label(def)
+		label.name = "Text"
+		node.add_child(label)
+		_lay_caption(node, label)
+	label.text = text
+	return label
+
+## A caption drawn over its control (a static's art, a button): laid in the
+## control's own rect, from its top-left, by place_label -- now, and on the
+## settling pass through the meta.
+static func _lay_caption(owner: Control, label: Label) -> void:
+	var r: Rect2 = owner.get_meta(AUTHORED_RECT_META, Rect2(Vector2.ZERO, owner.size))
+	label.set_meta(AUTHORED_RECT_META, Rect2(Vector2.ZERO, r.size))
+	place_label(label, Rect2(Vector2.ZERO, r.size))
+	_relay(label)
+
+static func _relay(label: Label) -> void:
+	if not label.has_meta(RELAY_META):
+		label.set_meta(RELAY_META, true)
+		label.minimum_size_changed.connect(_on_label_min_changed.bind(label))
 
 ## A 1x1 white texture, so a gauge with no artwork of its own can still be
 ## drawn and tinted. Built once and shared.
@@ -1034,7 +1111,11 @@ func _build_generic(def: UiLayoutParser.ControlDef) -> Control:
 	return ctrl
 
 ## Loads a .ddj texture from Media.pk2, using an in-memory cache to avoid duplicate decodes.
-func load_texture(ddj_path: String) -> Texture2D:
+## `cache` false leaves the texture out of the builder's cache, which keeps
+## every texture it loads for the builder's life: a caller that streams many
+## textures in and out keeps its own bounded set (HudMinimap's region tiles,
+## round 630 review). A texture already cached is still returned from there.
+func load_texture(ddj_path: String, cache: bool = true) -> Texture2D:
 	if ddj_path.is_empty():
 		return null
 	var key := ddj_path.to_lower().replace("/", "\\")
@@ -1054,7 +1135,7 @@ func load_texture(ddj_path: String) -> Texture2D:
 	if parsed == null:
 		return null
 	var tex := DdjReader.to_texture(parsed)
-	if tex != null:
+	if tex != null and cache:
 		_texture_cache[key] = tex
 	return tex
 
@@ -1345,8 +1426,7 @@ func _insert_suffix(path: String, suffix: String) -> String:
 		return path + suffix
 	return path.substr(0, dot) + suffix + path.substr(dot)
 
-## Makes a label that is larger than its rect overrun it the way the client
-## lays text out, rather than Godot's right-and-down.
+## The client's text layout, which place_label follows.
 ##
 ## READ: CIFStatic's text layout 0x64d9b0 takes the rect 0x652800 fills
 ## (left, top, width, height) and the text's extent (+0xdc wide,
@@ -1365,21 +1445,8 @@ func _insert_suffix(path: String, suffix: String) -> String:
 ## (the underbar's 4 px rows, round 598, which TwoDtBuilder.set_text fixed
 ## for .2dt windows) drew its text low, and a right-aligned number too wide
 ## for its rect started at the rect's left. This is the same rule for the
-## resinfo builder (round 630), for a label anchored to fill its control
-## (a static's caption over its art, a button's caption). A label placed by
-## position and size is laid by place_label instead, because Control.set_size
-## clamps to the minimum before the grow rule can act. A label that fits is
-## untouched: the grow direction only acts when the minimum size exceeds the
-## rect.
-static func align_overrun(label: Control, halign: int, valign: int) -> void:
-	label.grow_horizontal = _grow_for(halign)
-	label.grow_vertical = _grow_for(valign)
-
-static func _grow_for(align: int) -> Control.GrowDirection:
-	match align:
-		1: return Control.GROW_DIRECTION_BOTH
-		2: return Control.GROW_DIRECTION_BEGIN
-		_: return Control.GROW_DIRECTION_END
+## resinfo builder (round 630), for every CIFStatic's and CIFButton's text,
+## inside its ClientRect (text_rect).
 
 func _map_halign(h: int) -> HorizontalAlignment:
 	match h:

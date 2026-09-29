@@ -91,6 +91,7 @@ Section = Create,"0,0,200,100","0"
 	_check_frame_pieces_at_own_size()
 	_check_section_size_measures_what_is_drawn()
 	_check_text_overrun_follows_alignment()
+	_check_client_rect_style_and_captions()
 
 	if _failures == 0:
 		print("ALL PASS")
@@ -411,3 +412,74 @@ func _check_text_overrun_follows_alignment() -> void:
 		_check(label.position == c[4],
 			"align (%d,%d): a %s text in %s starts at %s (got %s)" % [c[0], c[1], c[3], c[2], c[4], label.position])
 		label.free()
+
+## Round 630 review: a control's text is laid out inside its ClientRect
+## (0x652800 insets the rect by +0x18c..+0x198, set by 0x6527d0 from the
+## parsed ClientRect), a CIFButton's caption by its own HAlign / VAlign
+## (its draw is CIFStatic's), and a Style-0x40 control starts hidden
+## (0x8b5710).
+func _check_client_rect_style_and_captions() -> void:
+	var layout_text := """
+Interface Text
+
+Section = Create,"0,0,260,320","0"
+{
+	GDR_STORAGE_TXT_MONEY_TITLE:CIFStatic
+	{
+		ClientRect=RECT,"8,4,174,3"
+		HAlign=INTEGER,"1"
+		VAlign=INTEGER,"1"
+		Rect=RECT,"9,283,236,24"
+		Text=STRING,"Title"
+	}
+	GDR_CAPTIONED:CIFButton
+	{
+		ClientRect=RECT,"5,3,0,0"
+		HAlign=INTEGER,"0"
+		VAlign=INTEGER,"0"
+		Rect=RECT,"10,10,120,40"
+		Text=STRING,"Go"
+	}
+	GDR_HIDDEN_AT_CREATION:CIFStatic
+	{
+		Rect=RECT,"1,42,32,32"
+		Style=INTEGER,"64"
+	}
+	GDR_ART_STATIC:CIFStatic
+	{
+		ClientRect=RECT,"36,7,39,5"
+		DDJ=STRING,"interface\\inventory\\int_window_downbox.ddj"
+		HAlign=INTEGER,"2"
+		VAlign=INTEGER,"1"
+		Rect=RECT,"0,305,176,28"
+		Text=STRING,""
+	}
+}
+"""
+	var builder := UiBuilder.new(null, null)
+	var section := builder.build_section(UiLayoutParser.parse(layout_text), "Create")
+	# A plain label: its text rect is the rect inset by (8, 4) and (174, 3):
+	# x 17..71, y 287..304 -- 54 wide. The text ("Title") fits that width, so
+	# the label takes it and centres the word inside.
+	var title := section.get_node_or_null("GDR_STORAGE_TXT_MONEY_TITLE") as Label
+	UiBuilder.apply_authored_rects(section)
+	_check(title != null and title.position.x == 17.0 and title.size.x == 54.0,
+		"the title's text is laid in its ClientRect, x 17..71 (got %s)" % (Rect2(title.position, title.size) if title else null))
+	# A button's caption: HAlign 0 / VAlign 0 put it at its ClientRect's
+	# top-left (5, 3) in the button, not centred.
+	var btn := section.get_node_or_null("GDR_CAPTIONED") as Control
+	var caption := btn.get_node_or_null("ButtonLabel") as Label if btn != null else null
+	_check(caption != null and caption.position == Vector2(5, 3) and caption.horizontal_alignment == HORIZONTAL_ALIGNMENT_LEFT,
+		"a button's caption follows its HAlign/VAlign in its ClientRect, at (5, 3) (got %s)" % (caption.position if caption else null))
+	var hidden := section.get_node_or_null("GDR_HIDDEN_AT_CREATION") as CanvasItem
+	_check(hidden != null and not hidden.visible, "a Style-64 control starts hidden (visible %s)" % (hidden.visible if hidden else null))
+	# Text put on an art static the layout gave none (the purse's amount).
+	var art := section.get_node_or_null("GDR_ART_STATIC") as Control
+	if builder.has_method("set_static_text"):
+		var amount: Label = builder.call("set_static_text", art, "1,234")
+		_check(amount != null and amount.text == "1,234" and amount.get_parent() == art
+			and absf(amount.position.x + amount.size.x - 137.0) < 0.01,
+			"set_static_text writes an art static's text, right-aligned to its ClientRect's x 137 (got %s)" % (Rect2(amount.position, amount.size) if amount else null))
+	else:
+		_check(false, "the builder can put text on an art static (set_static_text)")
+	section.free()
