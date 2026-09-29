@@ -10,159 +10,368 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/account"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/srrevamp/server/internal/gm"
+	"github.com/OpenSRO/srrevamp/server/internal/guild"
+	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/srrevamp/server/internal/party"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
-func TestChatMessageRoundTrip(t *testing.T) {
-	want := &ChatMessage{SenderName: "Aria", Message: "hello, jangan"}
-	got, err := DecodeChatMessage(want.Encode())
-	if err != nil {
-		t.Fatalf("DecodeChatMessage: %v", err)
+func TestChatPayloadsRoundTrip(t *testing.T) {
+	send := &ChatSendRequest{Type: ChatWhisper, Index: 7, Target: "Bram", Message: "psst"}
+	if got, err := DecodeChatSendRequest(send.Encode()); err != nil || *got != *send {
+		t.Fatalf("ChatSendRequest: got %+v err %v, want %+v", got, err, send)
 	}
-	if *got != *want {
-		t.Fatalf("got %+v, want %+v", got, want)
+	up := &ChatUpdate{Type: ChatGlobal, Sender: "Aria", Message: "wts blade"}
+	if got, err := DecodeChatUpdate(up.Encode()); err != nil || *got != *up {
+		t.Fatalf("ChatUpdate: got %+v err %v, want %+v", got, err, up)
 	}
-}
-
-func TestChatWhisperRequestRoundTrip(t *testing.T) {
-	want := &ChatWhisperRequest{TargetName: "Bram", Message: "hey"}
-	got, err := DecodeChatWhisperRequest(want.Encode())
-	if err != nil {
-		t.Fatalf("DecodeChatWhisperRequest: %v", err)
+	res := &ChatResult{OK: false, Type: ChatWhisper, Index: 9, Code: ChatErrCantFindTarget, Target: "Ghost"}
+	if got, err := DecodeChatResult(res.Encode()); err != nil || *got != *res {
+		t.Fatalf("ChatResult: got %+v err %v, want %+v", got, err, res)
 	}
-	if *got != *want {
-		t.Fatalf("got %+v, want %+v", got, want)
+	glob := &ChatGlobalRequest{InventorySlot: 21, Message: "hi all"}
+	if got, err := DecodeChatGlobalRequest(glob.Encode()); err != nil || *got != *glob {
+		t.Fatalf("ChatGlobalRequest: got %+v err %v, want %+v", got, err, glob)
 	}
 }
 
-func TestChatWhisperResultRoundTrip(t *testing.T) {
-	want := &ChatWhisperResult{OK: false, Reason: "player not found"}
-	got, err := DecodeChatWhisperResult(want.Encode())
-	if err != nil {
-		t.Fatalf("DecodeChatWhisperResult: %v", err)
-	}
-	if *got != *want {
-		t.Fatalf("got %+v, want %+v", got, want)
+// The types are the retail client's bytes (0x7ad400's prefix switch,
+// 0x877810's reader); a renumbering would still round-trip, so pin them.
+func TestChatTypesAreTheClientBytes(t *testing.T) {
+	for name, pair := range map[string][2]byte{
+		"all": {ChatAll, 1}, "whisper": {ChatWhisper, 2}, "gm": {ChatAllGM, 3}, "party": {ChatParty, 4},
+		"guild": {ChatGuild, 5}, "global": {ChatGlobal, 6}, "notice": {ChatNotice, 7},
+		"union": {ChatUnion, 0x0b}, "academy": {ChatAcademy, 0x10},
+	} {
+		if pair[0] != pair[1] {
+			t.Errorf("%s = %d, want %d", name, pair[0], pair[1])
+		}
 	}
 }
 
-// TestChatFullFlow logs two accounts in on separate connections, has both
-// enter the same zone, confirms a Say broadcasts to both (including the
-// sender), then confirms a Whisper delivers only to its target and the
-// sender gets an OK ack, and finally that whispering a nonexistent player
-// returns a "player not found" ack rather than silently dropping.
-func TestChatFullFlow(t *testing.T) {
+type chatClient struct {
+	t    *testing.T
+	conn net.Conn
+	r    *bufio.Reader
+}
+
+func (c *chatClient) send(opcode uint16, data []byte) {
+	c.t.Helper()
+	if err := proto.Write(c.conn, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
+		c.t.Fatalf("Write: %v", err)
+	}
+}
+
+// next reads packets until one with the opcode arrives (other broadcasts,
+// such as an entity entering, are skipped).
+func (c *chatClient) next(opcode uint16) *proto.Packet {
+	c.t.Helper()
+	for {
+		c.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		p, err := proto.Read(c.r, nil, nil)
+		if err != nil {
+			c.t.Fatalf("waiting for 0x%04x: %v", opcode, err)
+		}
+		if p.Opcode == opcode {
+			return p
+		}
+	}
+}
+
+// none asserts nothing with the opcode arrives within a short window.
+func (c *chatClient) none(opcode uint16) {
+	c.t.Helper()
+	for {
+		c.conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+		p, err := proto.Read(c.r, nil, nil)
+		if err != nil {
+			return
+		}
+		if p.Opcode == opcode {
+			c.t.Fatalf("unexpected 0x%04x: % x", opcode, p.Data)
+		}
+	}
+}
+
+func (c *chatClient) update() *ChatUpdate {
+	c.t.Helper()
+	u, err := DecodeChatUpdate(c.next(OpChatUpdate).Data)
+	if err != nil {
+		c.t.Fatalf("DecodeChatUpdate: %v", err)
+	}
+	return u
+}
+
+func (c *chatClient) result() *ChatResult {
+	c.t.Helper()
+	r, err := DecodeChatResult(c.next(OpChatResult).Data)
+	if err != nil {
+		c.t.Fatalf("DecodeChatResult: %v", err)
+	}
+	return r
+}
+
+func (c *chatClient) say(typ, index byte, target, msg string) {
+	c.send(OpChatSend, (&ChatSendRequest{Type: typ, Index: index, Target: target, Message: msg}).Encode())
+}
+
+type chatWorld struct {
+	hub     *world.Hub
+	parties *party.Hub
+	guilds  *guild.MemStore
+	inv     *inventory.MemStore
+	a, b, c *chatClient
+}
+
+// globalItemID is a synthetic global chatting item (TypeID 3/3/3/5); 99 is a
+// potion-shaped item that is not one.
+const (
+	globalItemID = 900001
+	notGlobalID  = 99
+)
+
+// newChatWorld logs three accounts in (alice is a GM), each into the same
+// zone, with the channels' stores behind the handler.
+func newChatWorld(t *testing.T) *chatWorld {
+	t.Helper()
 	ctx := context.Background()
 	accounts := account.NewMemStore()
-	accounts.Add("alice", "hunter2")
-	accounts.Add("bob", "hunter3")
+	accounts.Add("alice", "pw1")
+	accounts.Add("bob", "pw2")
+	accounts.Add("carol", "pw3")
 	chars := character.NewMemStore()
 	chars.Create(ctx, 1, "Aria")
 	chars.Create(ctx, 2, "Bram")
+	chars.Create(ctx, 3, "Cato")
 
-	hub := world.NewHub()
-	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub), ChatHandler(hub))
-
+	items := refdata.NewMemStore()
+	if err := items.ImportItems(ctx, []refdata.Item{
+		{ID: globalItemID, CodeName: "ITEM_MALL_GLOBAL_CHATTING", TypeID1: 3, TypeID2: 3, TypeID3: 3, TypeID4: 5, MaxStack: 50},
+		{ID: notGlobalID, CodeName: "ITEM_ETC_HP_POTION_01", TypeID1: 3, TypeID2: 3, TypeID3: 1, TypeID4: 1, MaxStack: 50},
+	}); err != nil {
+		t.Fatalf("ImportItems: %v", err)
+	}
+	w := &chatWorld{hub: world.NewHub(), parties: party.NewHub(), guilds: guild.NewMemStore(), inv: inventory.NewMemStore(nil)}
+	gate := gm.ParseAccounts("alice")
+	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, w.hub),
+		ChatHandler(ChatDeps{Hub: w.hub, Parties: w.parties, Guilds: w.guilds, Inv: w.inv, Items: items, Gate: gate}))
 	addr, cleanup := startTestServer(t, handle)
-	defer cleanup()
+	t.Cleanup(cleanup)
 
-	connA := dialTestServer(t, addr)
-	defer connA.Close()
-	rA := bufio.NewReader(connA)
-	connB := dialTestServer(t, addr)
-	defer connB.Close()
-	rB := bufio.NewReader(connB)
-
-	doSend := func(c net.Conn, r *bufio.Reader, opcode uint16, data []byte) *proto.Packet {
-		if err := proto.Write(c, &proto.Packet{Opcode: opcode, Data: data}, nil, nil); err != nil {
-			t.Fatalf("Write: %v", err)
+	login := func(user, pw, name string) *chatClient {
+		conn := dialTestServer(t, addr)
+		t.Cleanup(func() { conn.Close() })
+		c := &chatClient{t: t, conn: conn, r: bufio.NewReader(conn)}
+		c.send(OpLogin, (&LoginRequest{Username: user, Password: pw}).Encode())
+		if lr, err := DecodeLoginResult(c.next(OpLoginResult).Data); err != nil || !lr.OK {
+			t.Fatalf("%s login: %v %+v", user, err, lr)
 		}
-		c.SetReadDeadline(time.Now().Add(2 * time.Second))
-		resp, err := proto.Read(r, nil, nil)
-		if err != nil {
-			t.Fatalf("Read: %v", err)
+		c.send(OpEnterWorld, (&EnterWorldRequest{CharacterName: name}).Encode())
+		if er, err := DecodeEnterWorldResult(c.next(OpEnterWorldResult).Data); err != nil || !er.OK {
+			t.Fatalf("%s enter world: %v %+v", name, err, er)
 		}
-		return resp
+		return c
+	}
+	w.a = login("alice", "pw1", "Aria")
+	w.b = login("bob", "pw2", "Bram")
+	w.c = login("carol", "pw3", "Cato")
+	return w
+}
+
+// TestChatAllAndWhisper: ordinary chat reaches the zone but not the sender,
+// who gets 0xB025's OK carrying its index; a whisper reaches only its target;
+// a whisper to nobody answers code 3 with the name.
+func TestChatAllAndWhisper(t *testing.T) {
+	w := newChatWorld(t)
+
+	w.b.say(ChatAll, 1, "", "hello, jangan")
+	if r := w.b.result(); !r.OK || r.Type != ChatAll || r.Index != 1 {
+		t.Fatalf("sender's result = %+v, want OK type 1 index 1", r)
+	}
+	for _, c := range []*chatClient{w.a, w.c} {
+		if u := c.update(); *u != (ChatUpdate{Type: ChatAll, Sender: "Bram", Message: "hello, jangan"}) {
+			t.Fatalf("heard %+v", u)
+		}
+	}
+	w.b.none(OpChatUpdate)
+
+	w.b.say(ChatWhisper, 2, "Aria", "psst")
+	if r := w.b.result(); !r.OK || r.Type != ChatWhisper || r.Index != 2 || r.Target != "Aria" {
+		t.Fatalf("whisper result = %+v", r)
+	}
+	if u := w.a.update(); *u != (ChatUpdate{Type: ChatWhisper, Sender: "Bram", Message: "psst"}) {
+		t.Fatalf("whisper heard %+v", u)
+	}
+	w.c.none(OpChatUpdate)
+
+	w.b.say(ChatWhisper, 3, "Ghost", "hello?")
+	if r := w.b.result(); r.OK || r.Code != ChatErrCantFindTarget || r.Target != "Ghost" || r.Index != 3 {
+		t.Fatalf("whisper to nobody = %+v, want code 3 naming Ghost", r)
+	}
+}
+
+// TestChatGMLineOnlyFromGM: a type-3 line from a GM account goes out as 3; the
+// same byte from a player goes out as ordinary chat.
+func TestChatGMLineOnlyFromGM(t *testing.T) {
+	w := newChatWorld(t)
+	w.a.say(ChatAllGM, 1, "", "server restart soon")
+	w.a.result()
+	if u := w.b.update(); u.Type != ChatAllGM || u.Sender != "Aria" {
+		t.Fatalf("GM line heard as %+v, want type 3", u)
+	}
+	w.c.update()
+	w.b.say(ChatAllGM, 1, "", "i am a gm")
+	w.b.result()
+	if u := w.a.update(); u.Type != ChatAll {
+		t.Fatalf("a player's type-3 line heard as %+v, want type 1", u)
+	}
+}
+
+// TestChatPartyAndGuild: the party and guild lines reach only the group; with
+// no group they are refused with the codes the client shows.
+func TestChatPartyAndGuild(t *testing.T) {
+	w := newChatWorld(t)
+	ctx := context.Background()
+
+	w.a.say(ChatParty, 4, "", "anyone?")
+	if r := w.a.result(); r.OK || r.Code != ChatErrNotPartyMember {
+		t.Fatalf("party with no party = %+v, want 0x200a", r)
+	}
+	w.a.say(ChatGuild, 5, "", "anyone?")
+	if r := w.a.result(); r.OK || r.Code != ChatErrNoGuild {
+		t.Fatalf("guild with no guild = %+v, want the no-guild code", r)
 	}
 
-	resp := doSend(connA, rA, OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
-	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
-		t.Fatalf("alice login failed: err=%v result=%+v", err, lr)
-	}
-	resp = doSend(connB, rB, OpLogin, (&LoginRequest{Username: "bob", Password: "hunter3"}).Encode())
-	if lr, err := DecodeLoginResult(resp.Data); err != nil || !lr.OK {
-		t.Fatalf("bob login failed: err=%v result=%+v", err, lr)
-	}
-
-	resp = doSend(connA, rA, OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
-	if er, err := DecodeEnterWorldResult(resp.Data); err != nil || !er.OK {
-		t.Fatalf("aria enter world failed: err=%v result=%+v", err, er)
-	}
-	resp = doSend(connB, rB, OpEnterWorld, (&EnterWorldRequest{CharacterName: "Bram"}).Encode())
-	if er, err := DecodeEnterWorldResult(resp.Data); err != nil || !er.OK {
-		t.Fatalf("bram enter world failed: err=%v result=%+v", err, er)
-	}
-	// Aria was already in the zone when Bram entered, so she gets an
-	// EntityEntered broadcast for him -- drain it before it interferes with
-	// the chat assertions below.
-	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := proto.Read(rA, nil, nil); err != nil {
-		t.Fatalf("draining EntityEntered: %v", err)
-	}
-
-	if err := proto.Write(connA, &proto.Packet{Opcode: OpChatSay, Data: (&ChatSayRequest{Message: "hello, jangan"}).Encode()}, nil, nil); err != nil {
-		t.Fatalf("Write OpChatSay: %v", err)
-	}
-
-	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	echoed, err := proto.Read(rA, nil, nil)
+	ea, _ := w.hub.FindByName("Aria")
+	eb, _ := w.hub.FindByName("Bram")
+	pt, err := w.parties.Create(party.Member{Session: ea.Session, CharacterID: ea.CharacterID, Name: "Aria", Level: 10})
 	if err != nil {
-		t.Fatalf("reading own ChatMessage echo: %v", err)
+		t.Fatalf("party create: %v", err)
 	}
-	if echoed.Opcode != OpChatMessage {
-		t.Fatalf("got opcode 0x%04x, want OpChatMessage", echoed.Opcode)
+	if _, err := w.parties.Join(pt.ID, party.Member{Session: eb.Session, CharacterID: eb.CharacterID, Name: "Bram"}); err != nil {
+		t.Fatalf("party join: %v", err)
 	}
-	if cm, err := DecodeChatMessage(echoed.Data); err != nil || cm.SenderName != "Aria" || cm.Message != "hello, jangan" {
-		t.Fatalf("unexpected echoed message: %+v (err=%v)", cm, err)
+	w.a.say(ChatParty, 6, "", "pull the boss")
+	if r := w.a.result(); !r.OK || r.Type != ChatParty {
+		t.Fatalf("party result %+v", r)
 	}
+	if u := w.b.update(); *u != (ChatUpdate{Type: ChatParty, Sender: "Aria", Message: "pull the boss"}) {
+		t.Fatalf("party heard %+v", u)
+	}
+	w.c.none(OpChatUpdate)
 
-	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
-	heard, err := proto.Read(rB, nil, nil)
+	g, err := w.guilds.Create(ctx, "Lions", ec(w, "Cato"), "Cato")
 	if err != nil {
-		t.Fatalf("reading ChatMessage on B: %v", err)
+		t.Fatalf("guild create: %v", err)
 	}
-	if heard.Opcode != OpChatMessage {
-		t.Fatalf("got opcode 0x%04x, want OpChatMessage", heard.Opcode)
+	if _, err := w.guilds.Join(ctx, g.ID, ec(w, "Bram"), "Bram"); err != nil {
+		t.Fatalf("guild join: %v", err)
 	}
-	if cm, err := DecodeChatMessage(heard.Data); err != nil || cm.SenderName != "Aria" || cm.Message != "hello, jangan" {
-		t.Fatalf("unexpected message on B: %+v (err=%v)", cm, err)
+	w.c.say(ChatGuild, 7, "", "guild war at 8")
+	if r := w.c.result(); !r.OK {
+		t.Fatalf("guild result %+v", r)
 	}
+	if u := w.b.update(); *u != (ChatUpdate{Type: ChatGuild, Sender: "Cato", Message: "guild war at 8"}) {
+		t.Fatalf("guild heard %+v", u)
+	}
+	w.a.none(OpChatUpdate)
 
-	// Whisper from Bram to Aria: Bram gets an OK ack, Aria gets the
-	// whisper message; Aria should NOT get a second broadcast.
-	resp = doSend(connB, rB, OpChatWhisper, (&ChatWhisperRequest{TargetName: "Aria", Message: "psst"}).Encode())
-	if wr, err := DecodeChatWhisperResult(resp.Data); err != nil || !wr.OK {
-		t.Fatalf("whisper ack failed: err=%v result=%+v", err, wr)
+	// srrevamp has no alliances and no academy.
+	w.c.say(ChatUnion, 8, "", "x")
+	if r := w.c.result(); r.OK || r.Code != ChatErrAllianceDenied {
+		t.Fatalf("union = %+v, want 0x200b", r)
 	}
+	w.c.say(ChatAcademy, 9, "", "x")
+	if r := w.c.result(); r.OK || r.Code != ChatErrNoAcademy {
+		t.Fatalf("academy = %+v, want the no-academy code", r)
+	}
+	// A notice is not the player's to send.
+	w.c.say(ChatNotice, 10, "", "fake notice")
+	if r := w.c.result(); r.OK || r.Code != ChatErrInvalidCommand {
+		t.Fatalf("player notice = %+v, want refused", r)
+	}
+	w.a.none(OpChatUpdate)
+}
 
-	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
-	whispered, err := proto.Read(rA, nil, nil)
-	if err != nil {
-		t.Fatalf("reading ChatWhisperMessage on A: %v", err)
-	}
-	if whispered.Opcode != OpChatWhisperMessage {
-		t.Fatalf("got opcode 0x%04x, want OpChatWhisperMessage", whispered.Opcode)
-	}
-	if cm, err := DecodeChatMessage(whispered.Data); err != nil || cm.SenderName != "Bram" || cm.Message != "psst" {
-		t.Fatalf("unexpected whisper on A: %+v (err=%v)", cm, err)
-	}
+func ec(w *chatWorld, name string) int64 {
+	e, _ := w.hub.FindByName(name)
+	return e.CharacterID
+}
 
-	// Whispering a nonexistent player should ack with a clear failure, not
-	// silently drop.
-	resp = doSend(connB, rB, OpChatWhisper, (&ChatWhisperRequest{TargetName: "Ghost", Message: "hello?"}).Encode())
-	wr, err := DecodeChatWhisperResult(resp.Data)
-	if err != nil || wr.OK || wr.Reason != "player not found" {
-		t.Fatalf("whisper to nonexistent player: err=%v result=%+v", err, wr)
+// TestChatGlobalSpendsTheItemAndReachesEveryone: a global needs the global
+// chatting item in the named slot, spends one, and reaches every character,
+// the sender too.
+func TestChatGlobalSpendsTheItemAndReachesEveryone(t *testing.T) {
+	w := newChatWorld(t)
+	ctx := context.Background()
+	id := ec(w, "Aria")
+
+	// No item: refused, nobody hears it.
+	w.a.send(OpChatGlobal, (&ChatGlobalRequest{InventorySlot: 13, Message: "wts"}).Encode())
+	if r := w.a.result(); r.OK || r.Code != ChatErrNoGlobalItem {
+		t.Fatalf("global with nothing = %+v", r)
+	}
+	if err := w.inv.AddItem(ctx, id, notGlobalID, 1); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	if err := w.inv.AddItem(ctx, id, globalItemID, 2); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	slots, _ := w.inv.List(ctx, id)
+	var potionSlot, globalSlot int = -1, -1
+	for _, s := range slots {
+		switch s.ItemID {
+		case notGlobalID:
+			potionSlot = s.Index
+		case globalItemID:
+			globalSlot = s.Index
+		}
+	}
+	w.a.send(OpChatGlobal, (&ChatGlobalRequest{InventorySlot: int32(potionSlot), Message: "wts"}).Encode())
+	if r := w.a.result(); r.OK || r.Code != ChatErrNoGlobalItem {
+		t.Fatalf("global from a potion = %+v", r)
+	}
+	w.b.none(OpChatUpdate)
+
+	w.a.send(OpChatGlobal, (&ChatGlobalRequest{InventorySlot: int32(globalSlot), Message: "WTS blade +7"}).Encode())
+	want := ChatUpdate{Type: ChatGlobal, Sender: "Aria", Message: "WTS blade +7"}
+	for _, c := range []*chatClient{w.a, w.b, w.c} {
+		if u := c.update(); *u != want {
+			t.Fatalf("global heard %+v, want %+v", u, want)
+		}
+	}
+	if r := w.a.result(); !r.OK || r.Type != ChatGlobal {
+		t.Fatalf("global result %+v", r)
+	}
+	slots, _ = w.inv.List(ctx, id)
+	for _, s := range slots {
+		if s.ItemID == globalItemID && s.Quantity != 1 {
+			t.Fatalf("global chatting items left = %d, want 1", s.Quantity)
+		}
+	}
+}
+
+// TestNoticeReachesEveryone: BroadcastNotice is chat type 7 with no sender,
+// to every character; the GM command hands its text through untouched.
+func TestNoticeReachesEveryone(t *testing.T) {
+	w := newChatWorld(t)
+	if n := BroadcastNotice(w.hub, "Server maintenance in  10 minutes."); n != 3 {
+		t.Fatalf("notice reached %d, want 3", n)
+	}
+	for _, c := range []*chatClient{w.a, w.b, w.c} {
+		if u := c.update(); *u != (ChatUpdate{Type: ChatNotice, Message: "Server maintenance in  10 minutes."}) {
+			t.Fatalf("notice heard %+v", u)
+		}
+	}
+	d := &gm.Deps{}
+	res := d.Run(context.Background(), gm.Actor{Name: "Aria"}, "/notice Server maintenance in  10 minutes.")
+	if res.Refused || res.Notice != "Server maintenance in  10 minutes." {
+		t.Fatalf("/notice = %+v", res)
+	}
+	if res := d.Run(context.Background(), gm.Actor{Name: "Aria"}, "/notice   "); !res.Refused || res.Notice != "" {
+		t.Fatalf("/notice with no text = %+v, want refused", res)
 	}
 }

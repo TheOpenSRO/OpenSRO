@@ -7183,6 +7183,108 @@ Go: `TestActivateRefusedWhileActiveAndEnd`, `TestBerserkActivationRefusedWhileBe
 clean; `go test -race -count=1 -p 1 ./internal/berserk/... ./internal/session/...` ok; `go test
 -count=1 -p 1 ./...`: 60 packages ok. Live: 0 SCRIPT ERROR in four logs, p95 work frame 4-9 ms.
 
+## Six-hundred-and-thirty-fourth round: the chat window looks like the game's -- five tabs that filter, a left scroll bar, coloured channels -- and party, guild, whisper, global and GM notice all work
+
+The user: "fix the chat window so it looks like the original game ... the Job/Team tab is supposed
+to be Academy ... Make sure the chat functionality works too, including globals and GM notices."
+Our window was a plain box with coloured tick marks, a right scroll bar and one chat stream.
+docs/protocol/chat.md has every address. Labels: READ, MEASURED, INFERRED, OURS, OPEN.
+
+**The window (READ, CIFChatViewer::Create 0x7ab920 and the tab switch 0x7aa690).**
+- Five tabs built in code: `chat_long_tab.ddj` at `(45 + 70 i, 0, 71, 20)`, captioned
+  UIIT_CTL_CHAT_ALL / _CHATMENU_PARTY / _GUILD / _ALLY / _TRAININGCAMP. The archive has two rows
+  for the last, "&Team" and "&Academy"; our table keeps the later, "&Academy".
+- The selected tab's caption is bold (0x64cc30 -> style 2). The lamps move to `(48 + 70 i, 6)`;
+  only the selected tab's lamp and list show. An empty input line takes the tab's mark.
+- Filing (0x7aca30): All gets everything. A channel tab gets its own type plus whispers, GM lines,
+  notices (filed as type 3) and system lines.
+- Lines (0x876810): `name:text`, `name(FROM):text` / `target(TO):text`, `name(Party):text`,
+  `name(Guild):text`, `(Notice):text`, `name(Academy):text`.
+- Colours: whisper `0xff9ffffe`, GM and notice `0xffffaec3`, party `0xff9affd0`, guild
+  `0xffffb541`, global `0xffffff00`, union `0xffc2f573`, academy `0xff64c7ff`, else white.
+- Each list keeps 100 lines. Continuation lines are indented by `floor(20 / space width)` spaces
+  (0x64e930).
+- The scroll bar is on the LEFT (GDR_CHAT_VSCROLL 0,36): up and down arrows, the 16x16 thumb over
+  `com_scroll_bar.ddj`, length 308 (0x65a390/0x659150).
+- MEASURED from the retail screenshot: a 14-px line pitch (ours measures 14 px on the box), a
+  one-pixel black shadow at (+1,+1), and word-boundary breaks.
+
+**The input (READ, 0x7ad400).** `#` party (4), `@` guild (5), `%` union (0x0b), `&` academy
+(0x10), `$name text` whisper (2; 0x7ab230 splits the name), `/` a command, else type 1 (3 for a
+GM). A lone mark ends the input without sending. After a send the line keeps the whisper's
+`$name ` or the channel's mark. R now opens `$name ` (0x7ab470), no longer our `/w name `.
+
+**Server (OURS framing, retail fields).** The opcodes are 0x00A5 send, 0x00A6 update, 0x00A7
+result (0xB025's codes: 3 "Cannot find [%s].", 0x200a not a party member, 0x200b alliance) and
+0x00A8 global.
+- Ordinary chat goes to the sender's zone.
+- A whisper goes to its target.
+- Party chat goes to the party. The guild line goes to the online guild.
+- Union and academy are refused: srrevamp has no alliances or academy.
+- A type-3 line from a non-GM goes out as type 1.
+- The sender sees its own line from the OK result, as retail does.
+
+**Globals (READ).** Using an item of TypeID 3/3/3/5 opens "Chat to all" (0x676570 -> 0x79b8a0,
+`ifwholechat.txt`, GDR_WHOLE_CHAT). Its "Remaining turns" is the stack. Use sends 0x704c
+(0x7901c0). Server (OURS): one item per line, the line to everyone.
+
+**Notices (READ).** Type 7 is a pink `(Notice):` line in every tab, plus GDR_NOTICE (0x7b3eb0):
+7000 ms, top centre, fading over the last 2000 ms. The `com_notice_*` frame pieces are READ; their
+layout is INFERRED. `/notice <text>` (OURS) is the GM command.
+
+**Verified live, real X input (xdotool), two clients through Login -> CharacterSelect**
+(`/var/tmp/chat/e2e`, run r1). A = QaTester (GM), B = QaFriend. Log lines from A.log / B.log:
+- Normal chat: A typed `hello nearby`. B: `CHAT: type 3 from 'QaTester': hello nearby`.
+- Whisper: B typed `$QaTester psst from B`. A: `CHAT: type 2 from 'QaFriend': psst from B`.
+- Reply: A pressed R. A: `KEYMAP R -> whisper_reply 20: chat line opened with '$QaFriend '`.
+  A typed `reply back`. B: `CHAT: type 2 from 'QaTester': reply back`.
+- Party: A typed `#party hello`. B: `CHAT: type 4 from 'QaTester': party hello`.
+- Guild with no guild: A: `CHAT RESULT: type 5 ... ok false code 0xf001`, shown as the game's
+  refusal line.
+- Unknown whisper target: B: code 0x3, shown as "Cannot find [Ghost]."
+- Global: A right-clicked the item, and "Chat to all" opened. A typed and pressed Use. B:
+  `CHAT: type 6 from 'QaTester': WTS Blade +7 pm me`. The count went 5 -> 4 -> 3.
+- GM notice: A typed `/notice ...`. Both logs: `CHAT: type 7 from '': Server maintenance ...`.
+  The banner shows on B.
+- Tabs: B's #Party tab showed the party line, whispers, the GM line and the notice. @Guild showed
+  no party line.
+- Scrolling: 30 lines, then up arrow x6, wheel x5, a thumb drag to the top and down x3. Each moved
+  the list and the thumb.
+- Renders are in the session scratchpad's `chat_shots/`. `compare_orig_left_ours_right.png` sets
+  ours beside orig_chat.png.
+- The live run found one bug: Escape left the focus on the global window's Use button and the
+  window open. Now its buttons take no focus and Escape closes it.
+
+**The screenshot's cyan (MEASURED, OPEN).** The user's retail picture is a private server's
+client. Its notice lines are (0, 174, 195) = `0xffffaec3` with the red byte zeroed, with no
+"(Notice):" prefix. The binary says pink. We follow the binary.
+
+**Negative, against dev b9bbf07** (worktree, the new tests copied in):
+```
+internal/session/chat_test.go:23:11: undefined: ChatSendRequest
+internal/session/chat_test.go:27:9: undefined: ChatUpdate
+FAIL HudChat.parse_line reads the channel from the line's first character
+FAIL HudChat.lists_for routes a line to its tabs
+FAIL HudChat.color_for colours a line by type
+FAIL five tabs are built (0)
+FAIL the lamps sit at x = 48 + 70 i (got [50, 101, 152, 203, 254])
+FAIL All starts selected: its lamp and list only (lamps ["GDR_STATIC_ALLLAMP", "GDR_STATIC_PARTYLAMP", "GDR_STATIC_GUILDLAMP", "GDR_STATIC_ALLYLAMP", "GDR_STATIC_APPRENTICE"], lists ["GDR_LIST_CHATTING"])
+FAIL HudNotice fades out over its last 2000 ms of 7000
+FAIL HudPanels knows the global chatting item (TypeID 3/3/3/5)
+FAIL the opcodes are the server's 0x00A5..0x00A8 (got { "OP_SAY": 160, ... })
+```
+
+**Tests.** Go: `TestChatPayloadsRoundTrip`, `TestChatTypesAreTheClientBytes`,
+`TestChatAllAndWhisper`, `TestChatGMLineOnlyFromGM`, `TestChatPartyAndGuild`,
+`TestChatGlobalSpendsTheItemAndReachesEveryone`, `TestNoticeReachesEveryone`. Godot:
+`hud_chat_test.gd` (new), `net/chat_test.gd` (rewritten), `keymap_test.gd` (R's line).
+`remote_godot.sh check`: 385 scripts, ALL LOAD; `tests`: 154 suites, 0 failing; `go vet ./...`
+clean; `go test -count=1 -p 1 ./...`: every package ok.
+
+**Open** (TODO.md "Chat (round 634)"): the whisper list, the size toggle, the chat-mode button,
+speech balloons, the flood block, the global text filter, the system message window, unions and
+the academy, and chat range.
+
 ## Six-hundred-and-thirty-second round, composite review follow-up: a grant's icon goes when the grant ends, the window has its Cancel, and a failed store changes nothing
 
 The review of 5b362d2 confirmed every READ claim. It also confirmed, with real input, the GM

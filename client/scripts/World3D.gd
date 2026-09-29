@@ -1197,6 +1197,9 @@ func _seed_vitals_from_last_enter_world() -> void:
 		_last_enter_world_max_hp = entered.max_hp
 var _hud_panels: HudPanels
 var _hud_chat: HudChat
+## GDR_NOTICE (round 634) and the "Chat to all" window, built on first use.
+var _hud_notice: HudNotice
+var _hud_whole_chat: HudWholeChat
 ## The chat-input slash console (scripts/ui/console.gd) and the in-client
 ## Help window (scripts/ui/help_window.gd). GM state comes from the server's
 ## probe reply, not a guess.
@@ -1298,8 +1301,8 @@ func _ready() -> void:
 	NetClient.entity_left.connect(_on_entity_left)
 	NetClient.change_zone_result.connect(_on_change_zone_result)
 	NetClient.teleport_result.connect(_on_teleport_result)
-	NetClient.chat_message.connect(_on_chat_message)
-	NetClient.chat_whisper_message.connect(_on_chat_whisper_message)
+	NetClient.chat_update.connect(_on_chat_update)
+	NetClient.chat_result.connect(_on_chat_result)
 	NetClient.disconnected.connect(_on_disconnected)
 	send_button.pressed.connect(_on_send_pressed)
 	chat_input.text_submitted.connect(func(_text: String): _on_send_pressed())
@@ -1822,6 +1825,15 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_chat.offset_bottom = -_hud_underbar.size.y
 	_hud_chat.offset_top = _hud_chat.offset_bottom - _hud_chat.size.y
 	_hud_chat.message_submitted.connect(_on_chat_submitted)
+	_hud_chat.own_name = NetClient.current_character_name
+	_hud_chat.is_gm = _is_gm
+	# GDR_NOTICE, the GM notice banner (round 634), over everything else.
+	_hud_notice = HudNotice.new()
+	_hud_notice.name = "HudNotice"
+	ui_control.add_child(_hud_notice)
+	_hud_notice.setup(_ui_builder)
+	# The global chatting item opens "Chat to all" (round 634).
+	_hud_panels.global_chat_requested.connect(_on_global_chat_requested)
 	_setup_console_and_help()
 	# The panels are built after the vitals arrive, so they are seeded from
 	# the same cached result rather than waiting for a signal that already
@@ -9226,6 +9238,7 @@ func _update_blob_shadow() -> void:
 ##                          behind each result that reports a counter, the
 ##                          OpMonsterAttacked it would send goes through
 ##                          NetClient's own dispatch (_qa_mob_strike)
+##   SRREVAMP_QA_PARTY=create|join:<id>  form a party at tick 70 (round 634)
 ##   SRREVAMP_QA_COMMANDS="/a;/b"  feed these lines through the chat console
 ##                          (docs/DEBUG_TOOLS.md) 2 s after boot; each prints
 ##                          "QA COMMAND: <line>" and a GM reply "GM REPLY: ..."
@@ -9514,10 +9527,11 @@ func _qa_input_step() -> void:
 		"up":
 			_qa_push_key(arg, [false])
 		"whisper_from":
-			var heard := ChatNet.Message.new()
+			var heard := ChatNet.Update.new()
+			heard.type = HudChat.TYPE_WHISPER
 			heard.sender_name = arg
 			heard.message_text = "tt whisper"
-			_on_chat_whisper_message(heard)
+			_on_chat_update(heard)
 		"type":
 			for i in arg.length():
 				_qa_push_key(arg[i])
@@ -9778,6 +9792,16 @@ func _qa_step() -> void:
 		print("QA HELP: opened the Help window")
 	if OS.get_environment("SRREVAMP_QA_COMMANDS") != "" and _qa_tick == 60:
 		_run_qa_commands(OS.get_environment("SRREVAMP_QA_COMMANDS"))
+	# SRREVAMP_QA_PARTY=create | join:<party id> (round 634): forms a party at
+	# tick 70 through the same requests the old party panel sent, so a live
+	# run can type party chat; the retail party window's invite is not built.
+	var qa_party := OS.get_environment("SRREVAMP_QA_PARTY")
+	if qa_party != "" and _qa_tick == 70 and NetClient.current_character_name != "":
+		print("QA PARTY: %s" % qa_party)
+		if qa_party == "create":
+			NetClient.create_party(NetClient.current_character_name)
+		elif qa_party.begins_with("join:"):
+			NetClient.join_party(NetClient.current_character_name, qa_party.substr(5).to_int())
 	var mob_heights := OS.get_environment("SRREVAMP_QA_MOB_HEIGHTS")
 	if mob_heights != "" and mob_heights.split(",").has(str(_qa_tick)):
 		_qa_mob_heights_report()
@@ -12403,21 +12427,57 @@ func _on_change_zone_pressed() -> void:
 ## Chat panel, ported from the 2D World.gd HUD (see docs/PROGRESS.md) --
 ## this scene is becoming the one real client, so its UI needs to cover
 ## everything the 2D view used to.
-func _on_chat_message(message: ChatNet.Message) -> void:
-	if message == null:
+## A chat line from the server (round 634): the chat files and colours it
+## by type (HudChat.add_chat); a whisper's sender is who R answers; a notice
+## also raises GDR_NOTICE (0x876810's type-7 branch -> 0x777bf0).
+func _on_chat_update(u: ChatNet.Update) -> void:
+	if u == null:
 		return
+	print("CHAT: type %d from '%s': %s" % [u.type, u.sender_name, u.message_text])
+	if u.type == HudChat.TYPE_WHISPER:
+		# R replies to this name (KeyMap slot 20; _key_whisper_reply).
+		_last_whisperer = u.sender_name
 	if _hud_chat != null:
-		_hud_chat.add_message(message.sender_name, message.message_text)
-	chat_log.add_text("%s: %s\n" % [message.sender_name, message.message_text])
+		_hud_chat.add_chat(u.type, u.sender_name, u.message_text)
+	if u.type == HudChat.TYPE_NOTICE and _hud_notice != null:
+		_hud_notice.show_notice(u.message_text)
+	if chat_log != null:
+		chat_log.add_text("%s: %s\n" % [u.sender_name, u.message_text])
 
-func _on_chat_whisper_message(message: ChatNet.Message) -> void:
-	if message == null:
+## The server's answer to a line this client sent (0xB025's fields): the
+## player's own line, or the refusal. A global's answer refreshes the bag,
+## whose stack of global chatting items shrank.
+func _on_chat_result(r: ChatNet.Result) -> void:
+	if r == null:
 		return
-	# R replies to this name (KeyMap slot 20; _key_whisper_reply).
-	_last_whisperer = message.sender_name
+	print("CHAT RESULT: type %d index %d ok %s code 0x%x" % [r.type, r.index, str(r.ok), r.code])
+	if r.type == HudChat.TYPE_GLOBAL:
+		if r.ok:
+			if NetClient.current_character_name != "":
+				NetClient.list_inventory(NetClient.current_character_name)
+			if _hud_whole_chat != null and _hud_whole_chat.visible:
+				_hud_whole_chat.set_count(maxi(0, _hud_whole_chat.count - 1))
+		elif _hud_chat != null:
+			_log_system(_hud_chat.refusal_text(r.code, ""))
+		return
 	if _hud_chat != null:
-		_hud_chat.add_whisper(message.sender_name, message.message_text)
-	chat_log.add_text("[%s whispers]: %s\n" % [message.sender_name, message.message_text])
+		_hud_chat.on_result(r.ok, r.type, r.index, r.code, r.target)
+
+## The global chatting item was used from the bag: "Chat to all" opens for
+## that slot (CIFWholeChat, round 634).
+func _on_global_chat_requested(slot: int, count: int) -> void:
+	if _hud_whole_chat == null:
+		_hud_whole_chat = HudWholeChat.new()
+		_hud_whole_chat.name = "HudWholeChat"
+		ui_control.add_child(_hud_whole_chat)
+		if not _hud_whole_chat.setup(_ui_builder):
+			_log_system("The global chat window is unavailable.")
+			return
+		_hud_whole_chat.send_requested.connect(func(at: int, text: String) -> void:
+			print("CHAT GLOBAL: slot %d: %s" % [at, text])
+			NetClient.send_global(at, text))
+		_hud_whole_chat.refused.connect(_log_system)
+	_hud_whole_chat.open_for(slot, count)
 
 func _log_system(text: String) -> void:
 	if _hud_chat != null:
@@ -13377,6 +13437,17 @@ func _send_chat(text: String) -> void:
 	# answers an unknown one with the help line -- never silence. Anything
 	# else is ordinary chat.
 	if text.begins_with("/") and _console != null and _console.submit(text):
+		return
+	# A chat line (round 634): the channel from its first character
+	# (HudChat.parse_line, 0x7ad400), kept under an index for the echo.
+	if _hud_chat != null:
+		_hud_chat.own_name = NetClient.current_character_name
+		_hud_chat.is_gm = _is_gm
+		var req := _hud_chat.request_for(text)
+		if req.is_empty():
+			return
+		print("CHAT SEND: type %d index %d to '%s': %s" % [int(req["type"]), int(req["index"]), String(req["target"]), String(req["message"])])
+		NetClient.send_chat(int(req["type"]), int(req["index"]), String(req["target"]), String(req["message"]))
 		return
 	NetClient.say(text)
 

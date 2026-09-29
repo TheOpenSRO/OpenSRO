@@ -64,6 +64,7 @@ and changes nothing.
 | `/durability <slot> <n>` | Sets a worn item's durability. Slots: 0 helm, 1 mail, 2 shoulder, 3 gauntlet, 4 pants, 5 boots, 6 weapon, 7 shield, 8 job suit. |
 | `/sp <n>` | Adds skill points (a negative number takes them away). |
 | `/hwan <0-5>` | Sets the berserk orbs held (round 629; a test tool, not a retail command). Five light the ready circle. |
+| `/notice <text>` | Sends a GM notice to every player (round 634): a pink "(Notice):" line in every chat tab and the notice banner at the top of the screen for 7 seconds. The command is ours; the line and banner are the game's. |
 
 `/goto` and `/spawn` with no valid name list the zones and monster code names
 they accept. `/give` takes the item's numeric id; the client resolves an item

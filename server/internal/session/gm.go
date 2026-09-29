@@ -249,6 +249,11 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 			result.Refresh |= gmRefreshEquipment
 		}
 		err = sess.Send(&proto.Packet{Opcode: OpGMCommandResult, Data: result.Encode()})
+		// A GM /notice (round 634) reaches every character, the GM included,
+		// after the GM's own reply.
+		if out.Notice != "" {
+			BroadcastNotice(hub, out.Notice)
+		}
 		// A GM /spawn is pushed to the whole zone, the GM included, after the
 		// GM's own reply (round 542, behind -monster-spawn-push; off, nothing
 		// is sent). Until then the other players found it only on their next

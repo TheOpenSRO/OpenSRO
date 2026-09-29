@@ -314,6 +314,10 @@ signal guild_leave_requested
 ## A line for the chat's system channel -- today a server refusal of a mastery
 ## raise, which used to be dropped silently. World3D logs it (_log_system).
 signal system_notice(text: String)
+## A global chatting item (TypeID 3/3/3/5) was used from bag slot `slot`
+## holding `count` (round 634): retail opens the "Chat to all" window for it
+## (IFSlotWithHelp 0x676570's case 5 -> 0x79b8a0) instead of using it.
+signal global_chat_requested(slot: int, count: int)
 ## A destination line of a gate's talk box (open_teleport_list, round 603) was
 ## clicked: `dest_id` is its destination, a teleportdata id. World3D sends it
 ## with the gate the list was opened at (NetClient.teleport_use).
@@ -2786,6 +2790,11 @@ func item_types(item_id: int) -> PackedInt32Array:
 	var item: ItemTableReader.Item = _items.get(item_id)
 	return item.type_ids if item != null else PackedInt32Array()
 
+## Whether TypeIDs are the global chatting item's, 3/3/3/5 (0x7901c0's
+## type-word test; round 634).
+static func is_global_chat_item(types: PackedInt32Array) -> bool:
+	return types.size() >= 4 and types[0] == 3 and types[1] == 3 and types[2] == 3 and types[3] == 5
+
 ## The TypeIDs of what lies in a bag slot, or empty.
 func bag_item_types(slot: int) -> PackedInt32Array:
 	var id := _bag_item_id_at_slot(slot)
@@ -2942,6 +2951,9 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 	if button == MOUSE_BUTTON_RIGHT:
 		if player_dead:
 			system_notice.emit(DEAD_INPUT_LINE)
+			return
+		if is_global_chat_item(item_types(item_id)):
+			global_chat_requested.emit(slot, qty)
 			return
 		if NetClient.current_character_name != "":
 			UiSounds.expect_use(item_types(item_id))

@@ -52,7 +52,7 @@ do nothing for now. A window to change the keys is not built yet.
 | **Hold V** | Hide other players and monsters, so you can see NPCs |
 | **Hold Z** | Show the names of items on the ground nearby (within 300) |
 | X | Use the "m" slot of the hotbar (as the middle mouse button does) |
-| R | Reply to the last whisper (opens the chat line with `/w <name> `) |
+| R | Reply to the last whisper (opens the chat line with `$<name> `, the game's own whisper line) |
 | 1 ... 9, 0 | Use the hotbar's slots on the current page |
 | F1 ... F4 | Hotbar pages 1 to 4 |
 | Space + 1 ... 0 | Use hidden quick slots 41 to 50 |
@@ -106,8 +106,28 @@ click a monster first, then cast.
 ## Chat and commands
 
 The chat line takes messages and slash commands. `/help` opens this help and
-lists the commands; `/w <name> <message>` whispers. See **Debug tools** for the
-full list of testing commands.
+lists the commands. See **Debug tools** for the full list of testing commands.
+
+The first character of a line picks who hears it, as in the original game:
+
+| You type | Goes to |
+|---|---|
+| `hello` | everyone near you |
+| `$Name hello` | a whisper to Name (`/w Name hello` works too); **R** fills in `$<last whisperer> ` |
+| `#hello` | your party |
+| `@hello` | your guild |
+| `%hello` | your union (unions do not exist yet, so this is refused) |
+| `&hello` | your academy (academies do not exist yet, so this is refused) |
+
+The tabs across the top of the chat window -- All, #Party, @Guild, %Union and
+&Academy -- filter what you see: All shows everything, a group's tab shows
+that group's lines plus whispers and notices. Picking a tab also puts its mark
+in an empty chat line. Scroll back with the arrows, the thumb or the mouse
+wheel.
+
+**Globals** go to every player: right-click a *Global chatting* item in your
+bag, type the message in the "Chat to all" window and press **Use** (or
+Enter). Each message uses one item.
 
 **Enter** opens the chat line (plain Enter; not with Shift, Ctrl or Alt held),
 and Enter sends what you typed, exactly as typed. The line keeps the keyboard

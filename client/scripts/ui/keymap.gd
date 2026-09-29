@@ -353,12 +353,12 @@ const SCREENSHOT_JPEG_QUALITY := 80
 
 ## The chat line R puts in the input box for a reply, or "" for none: no
 ## whisper yet (0x7aa2b0's copy is empty, `je 0x780a15`), or the last
-## whisperer is the player (0x7ab470's compare, read). The retail line is
-## built from the wide string at 0xdbb848, L"$", and the name by 0x5412c0
-## (how they combine was not read); this client's chat takes a whisper as
-## `/w <name> <message>` (the client's own UIIT_STT_CHAT_COMMAND_WHISPER3,
-## "/w"), so the line is that command with the name filled in (ours).
+## whisperer is the player (0x7ab470's compare, read). The line is "$", the
+## name and a space (round 634, READ: 0x7ab470 joins L"$" at 0xdbb848 and the
+## name with 0x5412c0, appends L" " at 0xe19330 with 0x4780b0 and sets the
+## input box's text through vslot 0xb4) -- the whisper syntax the chat's input
+## handler parses (0x7ad400: "$" is type 2, 0x7ab230 splits the name off).
 static func reply_line(last_whisperer: String, own_name: String) -> String:
 	if last_whisperer == "" or last_whisperer == own_name:
 		return ""
-	return "/w %s " % last_whisperer
+	return "$%s " % last_whisperer

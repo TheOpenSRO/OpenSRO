@@ -1116,6 +1116,30 @@ bars use `pmi_hp.ddj` / `pmi_mp.ddj`. Left:
       activation. OPEN: body mode 2 (the revive / entry invincibility and its berserk error 4);
       other players' body modes are not drawn.
 
+### Chat (round 634) -- **the retail window, channels, globals and notices built; these are left**
+
+docs/protocol/chat.md has every address. Built: the five tabs with their filters and lamps, the
+per-type colours and captions, the hanging wrap indent, the left scroll bar (arrows, thumb, wheel,
+drag), the channel marks `# @ % & $`, R's `$name ` reply, the sender's echo and the 0xB025
+refusals, the global chatting item's "Chat to all" window, the GM notice's line and banner, and
+`/notice`.
+
+- **Union and academy chat have no audience**: srrevamp forms no alliances and has no academy, so
+  the server refuses both (the client shows the game's own refusal lines).
+- **Not built**: the whisper list pop-up (`GDR_WHISPERLIST`, 0x7acfd0), the chat-mode button and
+  viewer (IDs 41/42), the window size toggle (`GDR_BTN_CHAT_SIZE`; the user's retail screenshot is
+  the 56-px-shorter mode), the hide button, speech balloons over heads (0x9c77c0), the flood block
+  (0x7a9bb0), the global window's text filter (0x8c4020), the system message window (interface
+  child 0x44) -- srrevamp's own "* ..." lines and refusals go to the All tab (OURS).
+- **Open questions**: which of the archive's two UIIT_CTL_CHATMENU_TRAININGCAMP rows ("&Team",
+  "&Academy") retail keeps; whether retail's server strips the channel mark from the text; the
+  range of ordinary chat (srrevamp: the zone bucket); the lists' `+0x3c8 = 0x66ffffff`; the wheel
+  step. The user's screenshot (a private server) draws notices cyan (0, 174, 195) without the
+  "(Notice):" prefix; the binary says pink `0xffffaec3` with the prefix -- srrevamp follows the
+  binary; the private client's source for the cyan is not known.
+- "Remaining turns" in the global window overruns into its count (the authored static is 55 px
+  wide; our font draws the caption wider).
+
 ### Seasonal event decorations — **hidden by default (round 583)**
 The user decided on 2026-09-26 that early testing gets no seasonal decorations. Christmas,
 Halloween, the China open-beta (OBT) event set and the summer festival set are left out of every
