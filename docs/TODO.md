@@ -1317,6 +1317,44 @@ What round 633 read and built is in `docs/protocol/inventory_window.md`.
   exchange window itself is still not opened by a trade (World3D's debug trade labels do that
   work).
 
+### Invisible walls on objects (round 644) — **the bridge walls fixed; these are left**
+
+Round 644 made the on-object walk go cell by cell, as the client's does, and loads each object's
+one navigation mesh (the `.bsr` header word 0x28). The Black Robber Den's four bridges and the
+Temple of fertility's two cross end to end; Hotan's four were already walkable (their problem is
+drawing, round 643). Left:
+- **`.cpd` compound objects get no navigation mesh.** 105 entries of the navigation index; the
+  client loads them through `MapLoader::FUN_0042bc00` (not read). Where one is placed a player
+  walks through it.
+- **The mover's cell is inferred, not carried** (`NavGraph._start_cells`). The client keeps a cell
+  pointer in the position; carrying it (`StepResult`, World3D's `_nav_footing`) would remove the
+  inference and the three guards it needs (a walk must end in its cell; the fallback stays at the
+  mover's level, `LEVEL_REACH`; an entry landing outside every cell starts from the nearest one),
+  each pinned in `nav_graph_test`'s `_inferred_cell_guards`.
+- **A walk step on Hotan's castle costs about 9 ms at worst** (the round 644 review's
+  measurement; `oas_hot_c1_castle`, 985 cells). It predates round 644: every step on an object scans all
+  of its cells three times (`step_tracked`'s footing check and final height, both
+  `_surface_near`, and `_cells_under` for the walk's start cell), and the castle is the largest mesh a player walks on. No fix
+  needed yet; the cure is the same as above -- carry the cell -- or a per-object cell grid like
+  the one the file already stores for edges (`RTNavMeshObj::FUN_00448540`).
+- **A landing inside a sealed object footprint holds the player there.** 105/80 local
+  (1892.2, 649.9) is inside `ruin_takla_tent05_01[45]` (10 outline edges, all `0x03`); the
+  footing settles on the tent (its floor is 0.68 below the terrain there, inside
+  `SURFACE_REACH_UP`), and the client's walk lets no one out of an all-`0x03` outline (READ,
+  `collide_mode` is 1 on every walk). How the real client settles the footing for a position
+  that arrives inside such a footprint is not read.
+- **Linked edges (`0x08`)** still hand over by position (`_seam_object_at`), not through the
+  `.nvm` link table the per-instance test reads (`RTNavMeshTerrain::FUN_00404060`, instance
+  `+0xa0`). Hotan's north bridge and the temple bridges end in such edges and walk; not measured
+  elsewhere.
+- **Duplicate navmesh files.** Data.pk2 carries a second set of `nv_*.nvm` names repeating other
+  files' placements with their own region ids (`nv_16b7` repeats `nv_5b93`'s bridge). What the
+  client does with them is not read.
+- **The footing was re-settled every frame for 10 frames** of the live Hotan run (GM `/speed 4`,
+  91/135 local z 340-370, NAV ticks 849-858): the player was found more than
+  `NAV_FOOTING_RESETTLE_DISTANCE` (1.0) from where the walk left it, so something else moved it
+  between frames. The walk carried on; the cause is not chased.
+
 ### Seasonal event decorations — **hidden by default (round 583)**
 The user decided on 2026-09-26 that early testing gets no seasonal decorations. Christmas,
 Halloween, the China open-beta (OBT) event set and the summer festival set are left out of every

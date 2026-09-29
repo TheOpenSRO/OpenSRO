@@ -7867,6 +7867,384 @@ FAILURES: 4
 - **The view-distance option** that lowers the range to 1,200 or 2,000 does not exist in this
   client.
 
+## Six-hundred-and-forty-fourth round: the Black Robber Den's four bridges and the Temple of fertility's two can be crossed -- the walk on an object goes cell by cell, as the client's does
+
+**The report.** "I can't cross any bridges at the black robber den because an invisible wall
+blocks me on all 4 of them", with "invisible bridges" at Hotan north/south and the Fertility
+temple. Round 643 takes the drawing; this round the walking.
+
+**Where the den is (READ from `textzonename`).** "Black Robber Den" names regions 91/147-149 and
+92/147-149. Its bridges are two `oas_tarim_rob_s_brid` (north and south, 1,311 long) and two
+`oas_tarim_rob_b_brid_01` (east and west, 2,664 long) running out from a central tower
+(`oas_tarim_rob_b_center`, 700 tall). The Temple of fertility is 101-103/134-135; its bridges are
+two `ruin_takla_tembrig_01`. Hotan is 92/135 (`worldmap.ZoneCentre`, round 569); its bridges are
+three `oas_hot_b1_bridge` (south, west, east) and `oas_hot_b2_bridge` (north).
+
+**Reproduced by measurement (MEASURED, `client/tools/walk_probe.gd`, headless).** `--cross=1`
+is new: a walk carries on into the neighbouring region's graph, re-settling the footing from the
+height as `World3D._move_on_nav_graph` does. Each den bridge was walked end to end at dev 8658370:
+
+| bridge | walk | stopped at | on |
+|---|---|---|---|
+| south | 90/148 (980, 1500) heading 0 | 91/148 (980.0, 477.7) | `oas_tarim_rob_s_brid[1]` |
+| north | 93/148 (952, 250) heading 180 | 92/148 (952.0, 1450.5) | `oas_tarim_rob_s_brid[8]` |
+| west | 91/146 (1450, 1911) heading 90 | 91/147 (246.3, 1911.0) | `oas_tarim_rob_b_brid_01[14]` |
+| east | 91/150 (520, 1909) heading 270 | 91/149 (1718.6, 1909.0) | `oas_tarim_rob_b_brid_01[20]` |
+
+Every stop is on the bridge deck, at about y 620. The edges that stopped them are the bridge's
+own. `oas_tarim_rob_s_brid`'s navigation mesh (`--edges`) has a deck at y 617-631 with open ends
+(0x00) and 0x10 sides. Under it, on the canyon floor at y 156.5, is a sealed pier footprint:
+outline 0x03, x 694.7-1260.4, z 477.7-741.2. The south walk met that footprint's edge at
+z = 477.7, 464 units below the deck. The east/west bridge carries two such piers at y 130.9.
+
+This was not a missing mesh, a wrong yaw or position, or a terrain edge. The mover was on the
+object, and `NavGraph._first_event` tested **every edge of that object in plan view**, whatever
+part of the mesh it bounded.
+
+**The rule, READ in `sro_client.exe` (`/var/tmp/decomp_client`, `/var/tmp/sro_client.asm`).**
+- **The in-object walk goes cell to cell** (`CRTNavMeshObj::FUN_0044add0`). It loops `iVar11`
+  0..2 over the current cell's edge slots (`CRTNavCellTri::FUN_0045dec0`: `cell+0x28+i*4`),
+  skipping the edge it came in by (`param_8`). An open internal edge recurses into its other cell
+  (`CRTNavCellTri::FUN_0045ded0`).
+- **The slots are filled by the deserializer** (`RTNavMeshObj::FUN_004489b0`). Every edge,
+  outline list first and in file order, goes to its `cell_from` cell and, when `cell_to` is not
+  0xFFFF, to its `cell_to` cell. Each goes through `RTNavMeshObj::FUN_0045dcf0`, which appends
+  while the count at `+0x24` is below 4.
+- **So from the deck, the pier's edges are never tested.**
+- The entry test for a mover on the terrain (`RTNavMeshObj::FUN_0044a790`) is unchanged. It walks
+  the object's own edge grid, which the file stores (`RTNavMeshObj::FUN_00448540`) and which lists
+  all 8 of `oas_tarim_rob_b_center`'s outline edges and all 28 of `oas_tarim_rob_s_brid`'s
+  (MEASURED, `walk_probe --grid`). The piers still stop someone walking into them on the canyon
+  floor, as they should.
+- **Which mesh is the navigation mesh** (`FUN_0042ce60` switches on the path's last letter;
+  `MapLoader::FUN_0042c4a0` for a `.bsr`):
+  - the `.bsr` header word at **0x28** (`mov edi,[esp+0x5c]` at 0x42c73d; the decompiler named
+    the wrong local) points at a length-prefixed path;
+  - `FUN_0042cbc0` deserializes that one `.bms`'s collision section;
+  - a zero word means no navigation mesh;
+  - **an empty path is not a zero word** (corrected by the review follow-up, below): the string
+    is read and handed on as `""`, and `FUN_0042cbc0("")` opens `data\` through the file
+    manager in GFXFileManager.dll, whose answer is not read.
+
+  Rounds 505-643 merged the collision sections of every mesh the `.bsr` lists (OURS, from a
+  sweep). `client/tools/navmesh_source_census.gd` over Data.pk2's `navmesh\object.ifo` (3,268
+  entries) found the two differ on 4 objects, MEASURED:
+  ```
+     2039  same single mesh
+        3  ours only (EMPTY path at 0x28) euro_esteuro_ph_box2 (word 140), alex_minga07 (132),
+                                         alex_fstair02 (133) -- each word points at a length of 0
+        1  we merged extra meshes        arabiaf_fpapaya01_03
+      105  not a .bsr (cpd)
+      817  neither has one
+      303  bsr missing
+  ```
+
+**Fixed.**
+- **`NavGraph` walks an object cell by cell** (`_object_walk`, `_walk_cells`).
+  - `NavGraph.place` records each edge's cells (`edge_cell_from`/`edge_cell_to`) and each cell's
+    slots (`cell_edges`, the loader's rule: `CELL_EDGE_SLOTS_KEPT` 4, `CELL_EDGE_SLOTS` 3).
+  - An on-object mover meets only the edges of the cells its walk crosses. Direction bits are
+    judged against the cell it is in, not by side-of-line.
+  - The terrain walk and the entry test are unchanged.
+- **The mover's cell is inferred, OURS.** The client carries a cell pointer; `_cells_under`
+  picks the cell under the point nearest the mover's height, the most clearly containing one
+  first.
+- **Two guards, OURS.**
+  - An edge counts only if the move goes out through it (the cell's centroid on the far side).
+  - A walk that meets nothing must end inside the cell it reached; otherwise the next candidate
+    cell is tried, and if none explains the move it is stopped where it is. (Review follow-up:
+    only candidates at the mover's own level are tried, and a mover with no cell at its level
+    under it starts from the nearest ones, `NavGraph._start_cells`.)
+
+  The second was found by this round's own sweep; this entry first said on `cj_field_lamp`,
+  through a shared vertex, and that `nav_graph_test` pinned it. **Neither held** (review
+  follow-up, below): removing the guard failed no suite, and the guard-removed sweep of 97/168
+  leaks on `cj_etc[42]` and `cj_luxury[7]` instead, a mover a hair OUTSIDE a sealed edge after
+  a slide. A test that fails without the guard is added below.
+- **`World3D._load_object_collision` loads the one mesh** the client does
+  (`NavObjectSource.load_collision`, `client/scripts/nav/nav_object_source.gd`). `walk_probe`
+  follows whichever rule the build it runs in has, so before/after traces compare like with like.
+
+**After (MEASURED, the same walks).**
+
+| bridge | result |
+|---|---|
+| den south | off the deck at 91/148 (980.0, 1278.0); wall at z 1465.3 |
+| den north | off at 92/148 (952.0, 675.0); wall at z 390.6 |
+| den west | off at 91/148 (448.0, 1911.0); wall at x 560.4 |
+| den east | off at 91/148 (1534.0, 1909.0); wall at x 1405.8 |
+
+That one wall on each walk is `oas_tarim_rob_b_center`'s outline. The octagon is 0x03 on all 8
+edges and has no linked edge, so the client's entry test stops it too (READ, above). Its render
+meshes stand 700 tall over a 978-wide base: the central tower. A player walks around it on the
+terrain ring (113-188 wide) that every bridge lands on.
+
+`--traverse=<object>` walks an object from one open outline edge to another through its own cells
+(the path is read off the raw mesh, so it runs against the old build too). Walls met, before ->
+after:
+- den S 1 -> 0, den N 1 -> 0, den W 1 -> 0, den E 1 -> 0;
+- temple A 2 -> 0 (the old walk never reached the far end in 92,654 steps);
+- temple B 2 -> 0;
+- Hotan S/W/E b1 and N b2: 0 -> 0.
+
+Hotan's bridges were walkable: south from 90/135 onto the deck, into 91/135 and up the castle
+ramp; north castle -> `oas_hot_b2_bridge` -> palace through the two linked 0x08 ends. Their
+problem is drawing only (round 643).
+
+**Census across the map (MEASURED, `client/tools/nav_phantom_census.gd`).** Over every object
+navigation mesh (2,040), it counts (cell, edge) pairs where an edge that is not one of the cell's
+own slots crosses the cell's interior in plan. Those are edges the old all-edges rule met but the
+client's walk cannot.
+
+| | objects | pairs |
+|---|---:|---:|
+| phantom WALL | 73 | 5,883 |
+| phantom EXIT | 11 | 18 |
+
+The phantom exits are open outline edges of another part, which dropped a mover on the part above
+to the terrain.
+
+Over the `.nvm` files, 23,363 distinct placements: **86** use an object with a phantom wall, **11**
+one with a phantom exit. Among them:
+- the Black Robber Den bridges, the temple bridges and the Taklamakan temple and fort;
+- Jangan's `cj_s`/`cj_w`/`cj_e` walls, `cj_etc`, `cj_luxury`, `cj_stab` and the palace's
+  `cj_pal_south_buildan01`;
+- Donwhang's walls, inn and camps; `oas_hot_c1_castle`;
+- the fortress gates and the guild halls;
+- Constantinople's `euro_const_mili`.
+
+One mesh has a cell whose slot count is not three. Also MEASURED: Data.pk2 holds a second set of
+`nv_*.nvm` names that repeat other files' placements with their own region ids (`nv_16b7`
+repeats `nv_5b93`'s bridge). The census de-duplicates placements by type and position. What the
+client makes of those files is not read (OPEN).
+
+**Nothing changed elsewhere (MEASURED, `walk_probe --sweep=400`).** Each sweep is 400 seeded
+walks, half from a random object cell and half from a random terrain point, 300 steps each, on
+the base and on this build. Differing walks per region:
+
+| region | differ | on |
+|---|---:|---|
+| 97/168 | 4 | cj_etc, cj_luxury, cj_s, cj_stab |
+| 98/168 | 3 | cj_pal_south_buildan01, tre_bank02, tre_bank01_big |
+| 97/167 | 1 | cj2_brg_wall04 |
+| 102/153 | 2 | w_cd_inn |
+| 105/79 | 2 | euro_esteuro_ph_fbset5_01 |
+| 92/135 | 4 | oas_hot_army01, c2/c3 castle |
+| 91/148 | 16 | the den bridges, two fire pits |
+| 101/135 | 37 | the temple bridge and temple |
+
+**Every walk that started on the terrain is identical, byte for byte.** Every difference starts
+on an object cell. Most are census objects. For three that are not, the start has no way out
+through the object's own cells (MEASURED, `walk_probe --reach`):
+- `oas_hot_army01`: 14 of 14 cells reachable, no exit;
+- `euro_esteuro_ph_fbset5_01`: 6 of 6, no exit;
+- `cj_etc`: 58 of 88, no exit.
+
+The old rule let the mover out of those; the client's walk does not. That the client's walk
+holds a player in there -- that its `0x02`/`0x10` test is live for a player -- is READ in the
+review follow-up below (`collide_mode` is 1 on every walk).
+
+**Real input on the box (the Login -> CharacterSelect route, `/var/tmp/invisiwall/live.sh`).**
+The setup:
+- an in-memory server built from this tree, the QA account (GM) and `/speed 4`;
+- placed on the south den bridge at 91/148 (980, 300) with `SRREVAMP_QA_AT`;
+- 25 real X left clicks ahead of the player (`xdotool`, no `--window`), `SRREVAMP_QA_NAVTRACE=2`.
+
+Base client: `NAV 629: wall at local 980.0, 477.7 (on object oas_tarim_rob_s_brid)`, and it
+stayed there. This build: no wall line, and it was still on the deck at (980.0, 1186.7) when the
+clicks ran out.
+
+Hotan's south bridge, this build: from 90/135 (1139, 1250) over the deck into 91/135, onto
+`oas_hot_c1_castle`'s ramp and up to the town at y 243.8 (91/135 local z 1610), with no wall. Only
+a picture shows this: the base client's frame has the player on an open deck with nothing in
+front. The measurement is the NAV lines. Frames are in the session scratchpad,
+`wall_nav_shots/` (`den_before_*`, `den_after_*`, `hotan_after_*`).
+
+**Tests.** `nav_graph_test.gd` gains a deck over its own sealed pier, one mesh with overlapping
+parts (synthetic):
+- the cell slots;
+- the deck crossed over the pier;
+- the deck's 0x10 side and open end;
+- the pier still solid from the ground;
+- a move along the diagonal;
+- the sealed corner.
+
+The negative, the new file against dev 8658370's NavGraph:
+```
+FAIL each cell keeps the edges that name it, outline first, in file order (got <null>)
+FAIL a mover on a bridge deck crosses over the bridge's own pier below it (walls 56, z 239.99, y 40.00, on 0)
+FAIL the pier's outline is no wall to someone on the deck above it
+FAIL a move along the deck's diagonal ends on the deck (x 128.00, z 239.99, on 0)
+4 FAILURES
+```
+This build (164b80d): `remote_godot.sh check` loads 404 scripts, and `tests` runs 161 suites
+with 0 failing. That includes `nav_graph_test`, `nvm_water_test`, `ghost_walk_test`,
+`ghost_walk_review_test`, `monster_motion_test` and `npc_facing_test`. No server code changed.
+
+**OPEN** (docs/TODO.md, "Invisible walls on objects"):
+- `.cpd` compound objects (105 index entries) still get no navigation mesh;
+- the cell is inferred, not carried;
+- linked edges still hand over by position;
+- the duplicate `nv_*` files;
+- one live stretch where the footing was re-settled every frame.
+
+### Round 644 review follow-up
+
+The review confirmed claims 2 and 3 in the asm, the linked edges (Hotan's castle, bridge and
+palace), the negative, and that every zone landing, teleport point and town object cell behaves
+as on the base but one. It found a wrong doc, two tests that pinned nothing, two code risks and an
+unread parameter. Each is settled here.
+
+**1. The three "no path at 0x28" objects have an EMPTY path, not a zero word (MEASURED, READ).**
+`navmesh_source_census.gd` now prints the word and the length it points at:
+```
+01624 ours only (0x28 word 140, path length 0) euro_esteuro_ph_box2.bsr
+02248 ours only (0x28 word 132, path length 0) alex_minga07.bsr
+02308 ours only (0x28 word 133, path length 0) alex_fstair02.bsr
+```
+What the client does with that, READ in `sro_client.exe`:
+- `FUN_0043c250` reads a u32 length and resizes the string to it, so a length of 0 gives `""`.
+  Nothing between that read and the call to `FUN_0042cbc0` tests the string.
+- `FUN_0042cbc0` opens its path through the loader's file manager (loader `+0x28`, vtable
+  `+0x28`, access `0x80000000`). When the loader's `+0x14` is 0 it prefixes the path with
+  `data\` first (`MapLoader::FUN_0043a3c0`; `cmp [esi+0x14],ebx` at 0x42cc44).
+- A failed open returns 0, which means no navigation mesh (0x42cc85, 0x42cd0c).
+- So `""` opens `data\`, or `""`. **What that open returns is NOT READ**: the file manager is
+  GFXFileManager.dll, not the exe.
+- `NavObjectSource` gives the three no mesh. That the open fails is INFERRED: a directory is not
+  a file.
+
+It reaches no walk either way (MEASURED). `nav_phantom_census.gd --where=` finds no `.nvm` that
+places any of the three, in its own list or as a cross-reference. The same probe finds their
+siblings: `alex_fstair01`, `03` and `04`, and `alex_minga01`-`06`/`08`. Alexandria's placed
+stairs load the same single mesh on both builds and walk the same. `walk_probe --traverse`,
+base 8658370 and this build:
+- `alex_fstair01[22]` (90/48): from linked edge 2 to linked edge 30 through 5 cells, 0 walls,
+  onto `alex_center`;
+- `alex_fstair03[44]`: from open edge 2 to open edge 57 through 11 cells, 0 walls.
+
+So a player climbs the Alexandria stairs as before. `alex_fstair02` with no navigation mesh
+changes nothing a player can reach. Whether an `.o2` list draws it somewhere was not checked; if
+one does, the player walks the terrain there on either build.
+
+**2. The leak guard is now pinned.** `_inferred_cell_guards` case 1 puts a mover on a sealed box
+a hair outside its cell's `0x03` edge, still inside `_triangle_height`'s tolerance, and walks it
+on out. With the guard removed from 164b80d (`return {}` unconditionally):
+```
+FAIL a mover a hair outside a sealed edge of its cell is stopped, not let out through it (z 198.9995, on -1, blocked false)
+```
+That is the state the real leaks were in (MEASURED, a leak-printing copy of NavGraph with the
+guard removed):
+- `walk_probe --sweep=400` over 97/168 leaks on `cj_etc[42]` (cell 69, barycentric margin
+  -0.000006) and `cj_luxury[7]` (cell 4, -0.000001);
+- the 105/80 tent (item 5) leaks at -0.000002.
+
+In each, a slide along the cell's `0x03` outline edge left the mover just past it. The round's
+account (`cj_field_lamp`, a shared vertex) did not reproduce, and the old lamp test passes without
+the guard; its comment now says so. The slide itself did not reproduce on synthetic shapes: 120
+convex sealed heptagons at region-scale coordinates, 72 headings each, gave 0 escapes without the
+guard. So the test sets up the state the slide produces, not the slide itself.
+
+**3. The mover's height now picks its part of the mesh, and a test says so.** Case 2 puts a mover
+on the pier, under the deck, walking into the pier's sealed side. Against 164b80d with
+`_cells_under` ignoring height (`gap := -h`):
+```
+FAIL a mover on a pier under a deck is stopped by the pier's own sealed side (z 270.000, y 40.00, walls 0)
+```
+The start cell is now chosen by `_start_cells`, which checks the height twice: the cells under
+the point nearest the mover, and a reach test against the step's height. So `gap := -h` alone no
+longer fails the test, because the reach test catches the deck 40 up. Ignoring height in both
+places (`gap := -h` and the reach test forced true) fails it again, with case 3:
+```
+FAIL a mover on a pier under a deck is stopped by the pier's own sealed side (z 270.000, y 40.00, walls 0)
+FAIL a mover a hair outside the pier's side is stopped there, not walked out and up onto the deck (z 261.0005, y 40.00)
+```
+
+**4. No step goes unchecked, and the fallback stays at the mover's level (OURS).**
+`NavGraph._start_cells` makes three choices:
+- The cells under the point, the one nearest the step's height first. Only those at that cell's
+  level are kept: within `LEVEL_REACH` 1.0 of its height there.
+- When there is no cell under the point, or the best is more than `SURFACE_REACH_UP` from the
+  step's height, it takes the nearest cells of the mover's level in plan instead
+  (`_nearest_cells`). The walk from there goes through the guard as usual.
+- The step's height is compared with `SURFACE_REACH_UP`, not 1.0, because it is stale within a
+  step. A slide substep moves the mover along a ramp without updating it. A first cut compared
+  with 1.0, and its 105/80 sweep changed one walk on `euro_esteuro_port01[3]`, where a slide
+  began 1.0066 from the step's height (MEASURED); that walk is identical now.
+
+`step_tracked`'s "enter" also takes the crossed edge's own height when the cell under the push is
+more than `LEVEL_REACH` from it. That covers a push that lands a hair outside every cell of the
+level, or over only a part of the mesh below it. Pinned:
+- **Case 4**: a grazing approach to a box's open side a hair from its corner with a sealed side,
+  one 5-unit step, as Ghost Walk's `_land` makes one long step. Against 164b80d (and with the
+  nearest-cell start removed):
+  ```
+  FAIL a step whose entry lands a hair outside every cell is still walked, and stopped at the corner (slide true: x 97.002, z 200.1500, entered 0, blocked false)
+  FAIL a step whose entry lands a hair outside every cell is still walked, and stopped at the corner (slide false: x 97.002, z 200.1500, entered 0, blocked false)
+  ```
+  This build stops it at x 99.992.
+- **Case 3**: a mover on the pier a hair outside its side, under the deck. The deck's cell
+  "explains" the move. Against 164b80d (and with the level filter removed):
+  ```
+  FAIL a mover a hair outside the pier's side is stopped there, not walked out and up onto the deck (z 261.0005, y 40.00)
+  ```
+
+**5. The one new stuck landing is correct (MEASURED).** 105/80 local (1892.2, 649.9) is inside
+`ruin_takla_tent05_01[45]`:
+- 8 cells and 10 outline edges, every one `0x03`;
+- `walk_probe --reach`: 8 of 8 cells reachable, no exit;
+- the footing settles on the tent, whose floor is 0.68 below the terrain there.
+
+Walked 40 steps on 16 headings, base and branch end identically on 15. Heading 225 escapes on
+the base alone: it slides along outline edge 5, `(1889.0, 643.4)-(1892.3, 638.6)`, until step 37
+leaves it at barycentric margin -0.000002 of cell 4, just past that sealed edge. At step 38 it
+walks out to the terrain at (1890.7, 639.2). That is the leak of item 2, not a way out. The
+client's walk refuses every `0x03` outline edge to a player (item 6), so it would hold them in
+the same way. Nothing is hacked round it. How the client settles the footing for a position
+that arrives inside a sealed footprint is not read (OPEN, docs/TODO.md).
+
+**6. `collide_mode` is 1 on every walk the client makes (READ).**
+- The in-object walk blocks a `0x02`/`0x10` outline edge only when `param_6 != 0`. Otherwise it
+  exits through it.
+- `param_6` is `CRTNavMeshObj::vslot_002`'s `param_3`. The entry test gets the same value as its
+  `param_5`.
+- That value is passed on unchanged as the caller's second argument by:
+  - the terrain walk 0x4047a0 (`[ebp+0xc]` pushed at 0x404916, 0x404c8d, 0x40511f);
+  - the per-instance test (0x4041e3);
+  - the dungeon walk (0x43f477);
+  - `CRegionManagerBody::vslot_012` (0x412914).
+- All nine calls through the region manager at `0x111a02c` push **1**: 0x5068c3, 0x77b791,
+  0x9e0ba3, 0x9e0fe0, 0x9e111e, 0x9e12ca, 0x9ed472, 0xa5101c, 0xa54e97.
+- The no-slide stop `FUN_004045f0` pushes 1 itself (0x4046f5).
+
+So the branch's rule (0x02/0x10 always holds) matches the client. The cells `--reach` finds with
+no exit (`oas_hot_army01`, `euro_esteuro_ph_fbset5_01`, `cj_etc`, the tent) are cells a player
+cannot walk out of in the client too. NAVMESH_MOVEMENT.md carries the call chain.
+
+**Also filed:** docs/TODO.md now notes the review's ~9 ms worst-case step on Hotan's
+`oas_hot_c1_castle` (985 cells). It predates this round, and no fix is needed yet.
+
+**Nothing else moved (MEASURED).** `walk_probe --sweep=400` (seed 644), this build against 164b80d:
+- 13 regions: 97/168, 98/168, 97/167, 102/153, 105/79, 105/80, 92/135, 91/135, 91/148, 101/135,
+  90/48, 91/147 and 92/148;
+- 5,200 walks, **0** differ.
+
+The four den bridge walks (`--cross=1`, 2,500 steps) end at the same points on both. The tent
+walk on heading 225 is still held, at (1891.6, 639.6).
+
+**Tests.** The new cases are in `nav_graph_test.gd`'s `_inferred_cell_guards`; their FAIL lines
+are quoted above. On this build:
+- `remote_godot.sh check` loads 404 scripts;
+- `tests` runs 161 suites with 0 failing.
+
+No server code changed.
+
+**Still OPEN:**
+- what GFXFileManager.dll's open returns for `data\`;
+- how the client settles the footing for a position inside a sealed footprint;
+- the rest of this round's OPEN list above.
+
+
 ## Six-hundred-and-forty-third round: Hotan's stable and bridges, the Fertility Temple and its bridges, and 12,847 other placed objects are drawn -- the world builds what the map's `.o2` builds, once each, in its owner's frame
 
 *Updated in place by the round's review follow-up:*
@@ -8614,7 +8992,6 @@ rules; a pushed mouse move. The negative, against dev 8658370 with the new test 
 **Checks.**
 - Client: `check` loads 402 scripts, and `tests` runs 162 suites with 0 failing.
 - Go: build, vet and `go test -count=1 -p 1 ./...` pass (60 packages ok; no server change).
-
 
 ## Rounds 636-640 integration review (feat/walls): a death ends the wall on the default respawn path, a re-bound hotbar slot takes its level's code, and the wall's refusal tests 'tel2' and 'tel3'
 

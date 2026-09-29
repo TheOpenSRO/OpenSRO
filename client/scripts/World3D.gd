@@ -3099,39 +3099,13 @@ static func _load_object_collision(
 	var entry = table.lookup(resource_id)
 	if entry == null:
 		return null
-	var bsr_entry := ObjectLoader.find_file(archive, entry.path)
-	if bsr_entry == null:
-		return null
-	var bsr := BsrReader.parse(archive.read_file(bsr_entry))
-	if bsr == null or bsr.mesh_path == "":
-		return null
-
-	# **Every mesh, not just the first.** An object's walkable surface is
-	# one piece among many and the pieces are in alphabetical order, so
-	# whether reading `mesh_path` alone found it was chance: of the 2,043
-	# objects in the index that carry navigation data anywhere, **232 do not
-	# carry it in their first mesh** and were reported as having none --
-	# Jangan's six shops, its city wall, the palace door,
-	# `cj_ferry_buil.bsr` with nineteen pieces. A player walks inside every
-	# one of those. And 117 objects carry it in more than one mesh (every
-	# tree does), so taking the first piece that has any would still lose
-	# half of those.
-	var meshes: Array[String] = [bsr.mesh_path]
-	for path in bsr.sub_mesh_paths:
-		meshes.append(path)
-	var parts: Array = []
-	for path in meshes:
-		if path == "":
-			continue
-		var mesh_entry := ObjectLoader.find_file(archive, path)
-		if mesh_entry == null:
-			continue
-		var part := BmsReader.parse_collision(archive.read_file(mesh_entry))
-		if part != null and not part.cells.is_empty():
-			parts.append(part)
-	if parts.is_empty():
-		return null
-	var collision: BmsReader.CollisionMesh = parts[0] if parts.size() == 1 else BmsCollision.merge(parts)
+	# The one mesh the client's own map loader reads (round 644, READ):
+	# the `.bsr`'s header word 0x28 names it, and its collision section is
+	# the object's navigation mesh -- see NavObjectSource. Rounds 505-643
+	# merged the collision sections of every mesh the `.bsr` lists instead;
+	# over the 3,268-entry navigation index that agreed on 2,039 objects and
+	# differed on 4 (NavObjectSource.load_collision names them).
+	var collision := NavObjectSource.load_collision(archive, entry.path)
 	cache[resource_id] = collision
 	return collision
 

@@ -45,7 +45,7 @@ bytes ahead of the bounding-box floats.
 | 0x1C | 4 | Offset of the **mesh group** section (2026-09-10; see below) |
 | 0x20 | 4 | Offset of the **animation group** section (2026-09-10; see below) |
 | 0x24 | 4 | Offset of the **mod-data** section, which carries the per-animation **sound tracks** (and material, particle and dynamics mods): see "Sound tracks" below |
-| 0x28 | 4 | Offset of the bounding-box block; equals `name_end + 48` in every file checked |
+| 0x28 | 4 | Offset of the bounding-box block; equals `name_end + 48` in every file checked. **The block opens with a length-prefixed path: the `.bms` whose collision section is the object's navigation mesh** (round 644, READ in the map loader `MapLoader::FUN_0042c4a0`, see NAVMESH_MOVEMENT.md "Which mesh is the navigation mesh"); a zero word means no navigation mesh. The path can be **empty** behind a non-zero word: `euro_esteuro_ph_box2` (140), `alex_minga07` (132), `alex_fstair02` (133) point at a length of 0 (round 644 review, MEASURED), and the loader hands `""` on to `FUN_0042cbc0`, whose open of `"data\\"` is decided in GFXFileManager.dll (not read) |
 | 0x2C | 4 | **Flag word** (round 625, READ): `CResObject::Load` (`ResObject::FUN_00be41d0`) copies it to the object (`param_1[1]`); **bit 0 set means every mesh entry carries one more `uint32` after its path** (see "Mesh entries" below). 1 on the swaying trees, 0 in the files checked before |
 | 0x2C bit 1 | | **Two passes** (round 625 review, READ): `CObjRendererVS::vslot_038` then draws with `FUN_00bf5780` — every material back faces (CULLMODE CW), then front faces (CCW) |
 | 0x30 | 4 | Copied beside it (`param_1[2]`); meaning not read |
@@ -314,7 +314,7 @@ table finds six — geometry that was simply not being drawn.
 |---|---|
 | (2 unconfirmed `uint32` fields, observed values 10 and 2) | |
 | (reserved padding, observed ~40 zero bytes in well-formed files) | |
-| Mesh path | `uint32` length + ASCII bytes |
+| Mesh path | `uint32` length + ASCII bytes -- the navigation mesh's `.bms` (round 644, READ; the header word 0x28 points at its length) |
 | Bounding box + tail | 6× `float32` (min xyz, max xyz), then `float32` ×6 sentinel padding (`FLT_MAX`/`-FLT_MAX`, an "uninitialized" idiom) and 3× `uint32` (observed `0, 1, 0`) — 60 bytes total, confirmed in 2 of 3 real files; one had 4 extra leading zero bytes and effectively no mesh path (see below) |
 | Material path | `uint32` length + ASCII bytes |
 | Sub-mesh count | `uint32` |

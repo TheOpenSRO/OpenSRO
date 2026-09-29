@@ -39,11 +39,14 @@ class_name NavGraph
 ##     (0x10) are not tested at all from outside: they are how a character
 ##     walks *under* a city wall's archway while the wall's own walkway stays
 ##     fenced (real `cj_s.bsr`: 121 walls, 21 such edges over its gates).
-##   * On an object, **only that object's edges** are tested -- its internal
-##     edges directionally (value 1 blocks a mover on the edge's `cell_to`
-##     side, value 2 one on its `cell_from` side), its outline edges as exits
+##   * On an object, **only that object's edges** are tested, and only as the
+##     walk reaches them **cell by cell** (round 644, `_object_walk`): from the
+##     cell the mover is in, that cell's own edges; its internal edges
+##     directionally (value 1 blocks a mover on the edge's `cell_to` side,
+##     value 2 one on its `cell_from` side), its outline edges as exits
 ##     (value 2 or 0x10 blocks leaving; anything else steps back onto the
-##     terrain). Neither the terrain's walls nor any other object's apply
+##     terrain). An edge of another part of the same mesh -- a pier on the
+##     canyon floor under a bridge deck -- is never met from the deck. Neither the terrain's walls nor any other object's apply
 ##     while standing on an object, unless the object's own navigation mesh
 ##     names an event called "event"/"EVENT" (the client's loader sets a
 ##     byte for exactly those two spellings at 0x449395/0x4495d9, and the
@@ -110,8 +113,10 @@ const TILE_SIZE := 20.0
 ## project choice, not recovered data: those queries are asked about a point,
 ## while the real client tracks which cell the character is already in and
 ## never has to guess. Movement no longer uses it to decide what the mover
-## is on (see `step_tracked`); it only settles what to stand on after a
-## teleport, a region change or a landing.
+## is on (see `step_tracked`); it settles what to stand on after a
+## teleport, a region change or a landing, and (round 644 review) how far
+## the in-object walk's inferred start cell may be from the height the step
+## began at (`_start_cells`).
 const SURFACE_REACH_UP := 12.0
 
 ## The object-edge flag bits, as the client's own walk reads them. Names are
@@ -145,6 +150,34 @@ const MAX_SUBSTEPS := 8
 ## `standing_on` value for the terrain.
 const ON_TERRAIN := -1
 
+## How many edges a cell of an object keeps, and how many of them the
+## in-object walk tests. READ: the deserializer (`RTNavMeshObj::FUN_004489b0`)
+## hands every edge to its `cell_from` cell and, when it has one, its
+## `cell_to` cell through `RTNavMeshObj::FUN_0045dcf0`, which appends it to the
+## cell's slot list at +0x28 while the count at +0x24 is below 4; the walk
+## (`CRTNavMeshObj::FUN_0044add0`) reads slots 0..2 (`CRTNavCellTri::
+## FUN_0045dec0`, `iVar11` 0..2). MEASURED (round 644, `tools/
+## nav_phantom_census.gd`): of 2,043 object navigation meshes one has a single
+## cell whose slot count is not three.
+const CELL_EDGE_SLOTS_KEPT := 4
+const CELL_EDGE_SLOTS := 3
+
+## How many cells one in-object walk may pass through before it gives up and
+## ends the move where it is. The client bounds its recursion with a budget
+## the caller passes in (`param_7[1]`, decremented per edge crossed); its
+## value was not read. OURS: far more than any real frame crosses.
+const MAX_CELL_STEPS := 512
+
+## How far, in height, a cell under a point may be from the best cell there
+## and still be at "the mover's own level" when the in-object walk has to
+## infer which cell the mover is in (`_start_cells`). OURS, not read: the
+## client carries its cell and never asks. Cells that share an edge or a
+## vertex have the same height there, so at a point a hair from that edge or
+## vertex they agree to a few thousandths; the parts of one mesh that overlap
+## in plan are far further apart (a bridge deck 464 above its own pier, a
+## storey over a floor).
+const LEVEL_REACH := 1.0
+
 ## How far a terrain-wall stop is moved toward the centre of the cell the
 ## mover is in, at most: the double 0xb45de8 = 0.2 in the server's
 ## RTNavMeshTerrain::FUN_009c1050 (asm 0x9c1092 / 0x9c10ac) and 0xe1b850 = 0.2
@@ -176,6 +209,15 @@ class PlacedObject:
 	var edge_v1: PackedInt32Array = PackedInt32Array()
 	var edge_outline: PackedByteArray = PackedByteArray()
 	var edge_inside: PackedVector2Array = PackedVector2Array()
+	## The edge's two cells as the file names them, -1 for none (an outline
+	## edge's far side). Parallel to `edge_flags`.
+	var edge_cell_from: PackedInt32Array = PackedInt32Array()
+	var edge_cell_to: PackedInt32Array = PackedInt32Array()
+	## Per cell, the edges (indices into `edge_flags`) the in-object walk
+	## tests from it: every edge naming the cell, outline list first, in file
+	## order, at most CELL_EDGE_SLOTS of them -- the loader's own slots (see
+	## CELL_EDGE_SLOTS and `_object_walk`).
+	var cell_edges: Array[PackedInt32Array] = []
 	## The "event"/"EVENT" marker (see the class comment): the terrain and the
 	## other objects keep blocking a mover who stands on this object.
 	var terrain_collides: bool = false
@@ -295,6 +337,9 @@ static func place(
 		var b: Vector3 = placed.vertices[edge.v1]
 		placed.blocking.append(Vector2(a.x, a.z))
 		placed.blocking.append(Vector2(b.x, b.z))
+	placed.cell_edges.resize(collision.cells.size())
+	for c in range(collision.cells.size()):
+		placed.cell_edges[c] = PackedInt32Array()
 	for list_index in range(2):
 		var list: Array[BmsReader.CollisionEdge] = collision.outline_edges if list_index == 0 else collision.internal_edges
 		for edge in list:
@@ -321,12 +366,31 @@ static func place(
 			placed.edge_v1.append(edge.v1)
 			placed.edge_outline.append(1 if list_index == 0 else 0)
 			placed.edge_inside.append(Vector2((ca.x + cb.x + cc.x) / 3.0, (ca.z + cb.z + cc.z) / 3.0))
+			var index := placed.edge_flags.size() - 1
+			var raw_from := -1 if edge.cell_from == BmsReader.NO_CELL or edge.cell_from >= collision.cells.size() else edge.cell_from
+			var raw_to := -1 if edge.cell_to == BmsReader.NO_CELL or edge.cell_to >= collision.cells.size() else edge.cell_to
+			placed.edge_cell_from.append(raw_from)
+			placed.edge_cell_to.append(raw_to)
+			_slot_edge(placed, raw_from, index)
+			if raw_to != raw_from:
+				_slot_edge(placed, raw_to, index)
 	for name in collision.events:
 		# The loader's own comparison: a five-character match against
 		# "event" or "EVENT", nothing looser.
 		if name == "event" or name == "EVENT":
 			placed.terrain_collides = true
 	return placed
+
+## Appends an edge to a cell's slot list the way the loader does
+## (`RTNavMeshObj::FUN_0045dcf0`: nothing for no cell, nothing past the
+## fourth).
+static func _slot_edge(placed: PlacedObject, cell: int, edge: int) -> void:
+	if cell < 0:
+		return
+	var slots: PackedInt32Array = placed.cell_edges[cell]
+	if slots.size() < CELL_EDGE_SLOTS_KEPT:
+		slots.append(edge)
+		placed.cell_edges[cell] = slots
 
 ## Builds a graph for one real region. `placed_objects` may be empty (terrain
 ## only) or hold any subset of the region's own objects.
@@ -572,7 +636,7 @@ func step_tracked(from: Vector3, motion: Vector2, standing_on: int, slide: bool 
 			break
 		var from2 := Vector2(pos.x, pos.z)
 		var to2 := from2 + remaining
-		var hit := _first_event(from2, to2, on)
+		var hit := _first_event(from2, to2, on, pos.y)
 		if hit.is_empty():
 			pos.x = to2.x
 			pos.z = to2.y
@@ -591,10 +655,14 @@ func step_tracked(from: Vector3, motion: Vector2, standing_on: int, slide: bool 
 				# The height of the cell just entered, chosen nearest the
 				# mover's own height so a stacked floor is entered at the
 				# level walked in from; the crossed edge's own height at the
-				# crossing when the push lands a hair outside every cell.
+				# crossing when the push lands a hair outside every cell of
+				# that level -- outside every cell, or over only a part of
+				# the mesh at another height (a deck's end over its pier),
+				# which would otherwise drop the mover onto that part.
+				var edge_h := _edge_height_at(placed, hit["edge"], contact)
 				var h := _surface_near(placed, pos.x, pos.z, pos.y)
-				if is_nan(h):
-					h = _edge_height_at(placed, hit["edge"], contact)
+				if is_nan(h) or absf(h - edge_h) > LEVEL_REACH:
+					h = edge_h
 				pos.y = h
 				on = oi
 				result.entered = oi
@@ -719,8 +787,10 @@ func _meets_outline(oi: int, a: Vector2, b: Vector2) -> bool:
 ## Does moving from `from` to `to` (both region-local X/Z) run into a wall?
 ## `standing_on` is what the mover stands on, as `step_tracked` reports it.
 ## A move that merely steps onto or off an object is not blocked.
-func blocked(from: Vector2, to: Vector2, standing_on: int = ON_TERRAIN) -> bool:
-	var hit := _first_event(from, to, standing_on)
+## `y`, the mover's height, picks the cell of an object it is on where parts
+## of the object overlap in plan; without it the highest is taken.
+func blocked(from: Vector2, to: Vector2, standing_on: int = ON_TERRAIN, y: float = NAN) -> bool:
+	var hit := _first_event(from, to, standing_on, y)
 	return not hit.is_empty() and String(hit["kind"]) == "block"
 
 ## The first thing along the move that changes it: the nearest wall, doorway
@@ -729,8 +799,9 @@ func blocked(from: Vector2, to: Vector2, standing_on: int = ON_TERRAIN) -> bool:
 ##
 ## A mover on the terrain (or on an object that keeps terrain collision)
 ## meets the terrain's blocking edges and the outline edges of every object
-## the move passes; a mover on an object meets that object's own edges.
-func _first_event(from: Vector2, to: Vector2, standing_on: int) -> Dictionary:
+## the move passes; a mover on an object meets the edges of the cells its
+## walk crosses (`_object_walk`), starting from the cell nearest `from_y`.
+func _first_event(from: Vector2, to: Vector2, standing_on: int, from_y: float = NAN) -> Dictionary:
 	var best := {}
 	var best_d := INF
 	var on_object := standing_on != ON_TERRAIN and objects.has(standing_on)
@@ -786,39 +857,276 @@ func _first_event(from: Vector2, to: Vector2, standing_on: int) -> Dictionary:
 							best = {"kind": "enter", "point": hit, "a": a, "b": b, "object": oi, "edge": e}
 				e += 1
 	if on_object:
-		var placed: PlacedObject = objects[standing_on]
-		var e := 0
-		while e < placed.edge_flags.size():
-			var flags := placed.edge_flags[e]
+		var hit := _object_walk(standing_on, from, to, from_y)
+		if not hit.is_empty():
+			var d: float = from.distance_squared_to(hit["point"])
+			if d < best_d:
+				best_d = d
+				best = hit
+	return best
+
+## The client's in-object walk (`CRTNavMeshObj::FUN_0044add0`, READ round
+## 644) for a mover on object `oi` moving from `from` to `to` at height
+## `from_y`: the first wall or exit met, as `_first_event` reports it, or {}
+## when the move ends on the object.
+##
+## The walk goes **cell to cell**. From the cell the mover is in it tests
+## only that cell's own edge slots (CELL_EDGE_SLOTS), less the edge it came
+## in by; an internal edge crossed hands the move to the cell on its other
+## side unless the edge's direction bits stop it (value 2 against a mover in
+## its `cell_from`, value 1 against one in its `cell_to`); an outline edge
+## crossed is a wall when it carries 0x02 or 0x10 and an exit otherwise.
+## Nothing else of the object is tested. (The client's walk tests 0x02/0x10
+## only when its `param_6` is non-zero, `if (param_6 != 0 && (flags & 0x12))`;
+## READ, round 644 review: every walk the client makes passes 1 there --
+## the nine `CRegionManagerBody::vslot_012` calls through the region manager
+## at 0x111a02c all push 1 as its second argument, which reaches
+## `CRTNavMeshObj::vslot_002` as `param_3` through the terrain walk 0x4047a0,
+## the per-instance test 0x404060 and the dungeon walk 0x43f390, and the
+## no-slide stop FUN_004045f0 pushes 1 itself. So a cell with no open
+## outline edge within its reach is a cell a player cannot walk out of.)
+## Until round 644 this tested every edge of the object in plan view, whatever cell it bounded: a bridge deck
+## met the outline of its own piers on the canyon floor 460 units below and
+## stopped the player half-way across (Black Robber Den; 73 objects and 86
+## map placements carry such edges, `tools/nav_phantom_census.gd`).
+##
+## Which cell the mover is in is not carried from step to step here, unlike
+## the client, which keeps a cell pointer in the position (`vslot_002`
+## 0x44b500 reads `*param_4`): it is the cell under the point whose height is
+## nearest the mover's, among the cells at the mover's own level
+## (`_start_cells`) -- OURS, and the same choice `_surface_near` makes for the
+## height. A candidate edge must also be one the
+## move leaves the current cell through (the cell's centroid on the far
+## side), so a move through a vertex shared by several cells cannot bounce
+## between them -- OURS; the client's segment test (`FUN_00447b30`) has no such
+## guard and relies on its recursion budget.
+func _object_walk(oi: int, from: Vector2, to: Vector2, from_y: float) -> Dictionary:
+	var placed: PlacedObject = objects[oi]
+	if (to - from).length_squared() <= 0.0:
+		return {}
+	var starts := _start_cells(placed, from, from_y)
+	if starts.is_empty():
+		return {} # an object with no cells at all; nothing to walk
+	# The cell the mover is in is inferred, and a point a hair from an edge or
+	# vertex counts as under a cell within _triangle_height's tolerance -- on
+	# either side of it. A walk from a point a hair OUTSIDE its cell's sealed
+	# outline edge crosses nothing and walks straight on out. MEASURED (round
+	# 644 review, `walk_probe --sweep=400` with this guard removed): on real
+	# 97/168 `cj_etc[42]` and `cj_luxury[7]`, and at the 105/80 landing inside
+	# the sealed tent `ruin_takla_tent05_01[45]`, a slide along an 0x03
+	# outline edge left the mover at barycentric margin -0.000006, -0.000001
+	# and -0.000002 of its cell, and the next step walked out through the wall.
+	# So a walk that meets nothing must end inside the cell it reached; if it
+	# does not, the next candidate cell AT THE MOVER'S OWN LEVEL is tried, and
+	# if none explains the move it is stopped where it is. (Another level is
+	# never tried: a pier under a deck "explains" any move that stays over it.)
+	for cell in starts:
+		var walked := _walk_cells(placed, oi, cell, from, to)
+		var hit: Dictionary = walked[0]
+		if not hit.is_empty():
+			return hit
+		if _in_cell(placed, int(walked[1]), to):
+			return {}
+	return _stop_in_cell(placed, oi, starts[0], from, to)
+
+## The cells an in-object walk from (from, from_y) may start in, best first
+## (see `_object_walk`). OURS: the client carries its cell and never infers it.
+##
+## - The cells under the point, the one nearest `from_y` first, keeping only
+##   those at that best cell's level (within LEVEL_REACH of its height there:
+##   all cells round a shared edge or vertex are, a part of the mesh above or
+##   below is not).
+## - Unless there is no cell under the point, or the best is further than
+##   SURFACE_REACH_UP from `from_y` -- a push past an outline edge landed a
+##   hair outside every cell of the mover's level (an "enter" at a grazing
+##   angle near a corner; or a deck's end over only its pier). Then the cells
+##   of that level NEAREST the point in plan, so the rest of the step is still
+##   walked rather than taken unchecked.
+##
+## `from_y` is compared with SURFACE_REACH_UP, not LEVEL_REACH, because it is
+## the height at the START of the step: a slide within the step moves the
+## mover along a ramp without updating it (measured: on 105/80
+## `euro_esteuro_port01[3]` a slide substep began 1.0066 from it).
+static func _start_cells(placed: PlacedObject, from: Vector2, from_y: float) -> Array[int]:
+	var under := _cells_under(placed, from.x, from.y, from_y)
+	if not under.is_empty():
+		var best_y := _cell_height_at(placed, under[0], from)
+		if is_nan(from_y) or absf(best_y - from_y) <= SURFACE_REACH_UP:
+			var level: Array[int] = []
+			for c in under:
+				if absf(_cell_height_at(placed, c, from) - best_y) <= LEVEL_REACH:
+					level.append(c)
+			return level
+	return _nearest_cells(placed, from, from_y)
+
+## The cells of `placed` nearest (x, z) in plan, nearest first, keeping only
+## those whose height at their own nearest point is within SURFACE_REACH_UP
+## of `reference_y` when any is (every cell when `reference_y` is NAN). At
+## most three: the cells round the edge or vertex the point is a hair past.
+## OURS.
+static func _nearest_cells(placed: PlacedObject, p: Vector2, reference_y: float) -> Array[int]:
+	var found: Array = []
+	var any_level := false
+	var cell_count := placed.cells.size() / 3
+	for c in range(cell_count):
+		var a: Vector3 = placed.vertices[placed.cells[c * 3]]
+		var b: Vector3 = placed.vertices[placed.cells[c * 3 + 1]]
+		var d: Vector3 = placed.vertices[placed.cells[c * 3 + 2]]
+		var q := _closest_in_triangle(Vector2(a.x, a.z), Vector2(b.x, b.z), Vector2(d.x, d.z), p)
+		var h := _plane_height(a, b, d, q.x, q.y)
+		var at_level := is_nan(reference_y) or absf(h - reference_y) <= SURFACE_REACH_UP
+		any_level = any_level or at_level
+		found.append([snappedf(q.distance_to(p), 0.001), at_level, c])
+	found.sort_custom(func(u: Array, v: Array) -> bool:
+		if u[0] != v[0]:
+			return u[0] < v[0]
+		return u[2] < v[2])
+	var out: Array[int] = []
+	for f in found:
+		if any_level and not bool(f[1]):
+			continue
+		out.append(int(f[2]))
+		if out.size() >= CELL_EDGE_SLOTS:
+			break
+	return out
+
+## The height of cell `cell`'s plane at `p` (p need not be inside it).
+static func _cell_height_at(placed: PlacedObject, cell: int, p: Vector2) -> float:
+	return _plane_height(placed.vertices[placed.cells[cell * 3]], placed.vertices[placed.cells[cell * 3 + 1]], placed.vertices[placed.cells[cell * 3 + 2]], p.x, p.y)
+
+## The point of triangle (a, b, c) nearest `p`, all in plan.
+static func _closest_in_triangle(a: Vector2, b: Vector2, c: Vector2, p: Vector2) -> Vector2:
+	if Geometry2D.point_is_inside_triangle(p, a, b, c):
+		return p
+	var best := Geometry2D.get_closest_point_to_segment(p, a, b)
+	for q in [Geometry2D.get_closest_point_to_segment(p, b, c), Geometry2D.get_closest_point_to_segment(p, c, a)]:
+		if (q as Vector2).distance_squared_to(p) < best.distance_squared_to(p):
+			best = q
+	return best
+
+## One cell-to-cell walk from `cell` (see `_object_walk`): [event or {}, the
+## cell it ended in].
+func _walk_cells(placed: PlacedObject, oi: int, cell: int, from: Vector2, to: Vector2) -> Array:
+	var d := to - from
+	var len2 := d.length_squared()
+	var came_by := -1
+	var t_at := 0.0
+	for _step in range(MAX_CELL_STEPS):
+		var centre := _cell_centroid(placed, cell)
+		var slots: PackedInt32Array = placed.cell_edges[cell]
+		var best_e := -1
+		var best_t := INF
+		var best_p := Vector2.ZERO
+		for k in range(mini(CELL_EDGE_SLOTS, slots.size())):
+			var e := slots[k]
+			if e == came_by:
+				continue
 			var a: Vector2 = placed.edges[e * 2]
 			var b: Vector2 = placed.edges[e * 2 + 1]
+			# Only an edge the move goes out through: the cell's centre on one
+			# side of it, the direction of travel toward the other.
+			var along := b - a
+			if signf(along.cross(d)) == signf(along.cross(centre - a)):
+				continue
 			var hit: Variant = _segment_hit(from, to, a, b)
-			if hit != null:
-				var d: float = from.distance_squared_to(hit)
-				if d < best_d:
-					var inside := _on_from_side(a, b, from, placed.edge_inside[e])
-					if placed.edge_outline[e] != 0:
-						if inside:
-							if (flags & (EDGE_BLOCKS_FROM_INSIDE | EDGE_IGNORED_FROM_OUTSIDE)) != 0:
-								best_d = d
-								best = {"kind": "block", "point": hit, "a": a, "b": b, "object": standing_on, "edge": e}
-							else:
-								best_d = d
-								best = {"kind": "exit", "point": hit, "a": a, "b": b, "object": standing_on, "edge": e}
-						# Crossing our own outline from outside: the mover had
-						# drifted off the footprint while still counted on
-						# the object (a concave outline), and is coming back;
-						# the entry rule applies.
-						elif (flags & EDGE_IGNORED_FROM_OUTSIDE) == 0 and (flags & EDGE_BLOCKS_FROM_OUTSIDE) != 0:
-							best_d = d
-							best = {"kind": "block", "point": hit, "a": a, "b": b, "object": standing_on, "edge": e}
-					else:
-						var bit := EDGE_BLOCKS_FROM_INSIDE if inside else EDGE_BLOCKS_FROM_OUTSIDE
-						if (flags & bit) != 0:
-							best_d = d
-							best = {"kind": "block", "point": hit, "a": a, "b": b, "object": standing_on, "edge": e}
-			e += 1
-	return best
+			if hit == null:
+				continue
+			var t: float = ((hit as Vector2) - from).dot(d) / len2
+			if t < t_at - 1.0e-6 or t >= best_t:
+				continue
+			best_e = e
+			best_t = t
+			best_p = hit
+		if best_e < 0:
+			return [{}, cell]
+		var flags := placed.edge_flags[best_e]
+		var a2: Vector2 = placed.edges[best_e * 2]
+		var b2: Vector2 = placed.edges[best_e * 2 + 1]
+		if placed.edge_outline[best_e] != 0:
+			var kind := "block" if (flags & (EDGE_BLOCKS_FROM_INSIDE | EDGE_IGNORED_FROM_OUTSIDE)) != 0 else "exit"
+			return [{"kind": kind, "point": best_p, "a": a2, "b": b2, "object": oi, "edge": best_e}, cell]
+		var cf := placed.edge_cell_from[best_e]
+		var ct := placed.edge_cell_to[best_e]
+		if ((flags & EDGE_BLOCKS_FROM_INSIDE) != 0 and cf == cell) or ((flags & EDGE_BLOCKS_FROM_OUTSIDE) != 0 and ct == cell):
+			return [{"kind": "block", "point": best_p, "a": a2, "b": b2, "object": oi, "edge": best_e}, cell]
+		var next := ct if cf == cell else cf
+		if next < 0 or next >= placed.cell_edges.size():
+			return [{}, cell]
+		cell = next
+		came_by = best_e
+		t_at = best_t
+	return [{}, cell]
+
+## A move no candidate cell explains (see `_object_walk`): stopped where it
+## starts, against the edge of `cell` nearest where it was going, so the
+## step's slide can still follow that edge. OURS.
+func _stop_in_cell(placed: PlacedObject, oi: int, cell: int, from: Vector2, to: Vector2) -> Dictionary:
+	var slots: PackedInt32Array = placed.cell_edges[cell]
+	var best_e := -1
+	var best_d := INF
+	for k in range(mini(CELL_EDGE_SLOTS, slots.size())):
+		var e := slots[k]
+		var q := Geometry2D.get_closest_point_to_segment(to, placed.edges[e * 2], placed.edges[e * 2 + 1])
+		var dist := q.distance_squared_to(to)
+		if dist < best_d:
+			best_d = dist
+			best_e = e
+	if best_e < 0:
+		return {"kind": "block", "point": from, "a": from, "b": from + Vector2(1.0, 0.0), "object": oi, "edge": -1}
+	return {"kind": "block", "point": from, "a": placed.edges[best_e * 2], "b": placed.edges[best_e * 2 + 1], "object": oi, "edge": best_e}
+
+## The cells of `placed` under (x, z), nearest `reference_y` first (with no
+## reference height, highest first), and among cells at the same height the
+## one the point lies most clearly inside first. OURS: the client carries
+## its cell instead of inferring it (see `_object_walk`).
+static func _cells_under(placed: PlacedObject, x: float, z: float, reference_y: float) -> Array[int]:
+	var found: Array = []
+	var i := 0
+	while i + 2 <= placed.cells.size() - 1:
+		var a: Vector3 = placed.vertices[placed.cells[i]]
+		var b: Vector3 = placed.vertices[placed.cells[i + 1]]
+		var c: Vector3 = placed.vertices[placed.cells[i + 2]]
+		var h := _triangle_height(a, b, c, x, z)
+		if not is_nan(h):
+			var gap := -h if is_nan(reference_y) else absf(h - reference_y)
+			found.append([snappedf(gap, 0.01), -_triangle_margin(a, b, c, x, z), i / 3])
+		i += 3
+	found.sort_custom(func(p: Array, q: Array) -> bool:
+		if p[0] != q[0]:
+			return p[0] < q[0]
+		if p[1] != q[1]:
+			return p[1] < q[1]
+		return p[2] < q[2])
+	var out: Array[int] = []
+	for f in found:
+		out.append(int(f[2]))
+	return out
+
+## Is `p` under cell `cell` of `placed` (within _triangle_height's tolerance)?
+static func _in_cell(placed: PlacedObject, cell: int, p: Vector2) -> bool:
+	if cell < 0 or cell * 3 + 2 >= placed.cells.size():
+		return false
+	return not is_nan(_triangle_height(placed.vertices[placed.cells[cell * 3]], placed.vertices[placed.cells[cell * 3 + 1]], placed.vertices[placed.cells[cell * 3 + 2]], p.x, p.y))
+
+## The smallest barycentric coordinate of (x, z) in triangle (a, b, c) in
+## plan view: positive inside, zero on an edge, negative outside.
+static func _triangle_margin(a: Vector3, b: Vector3, c: Vector3, x: float, z: float) -> float:
+	var v0x := c.x - a.x
+	var v0z := c.z - a.z
+	var v1x := b.x - a.x
+	var v1z := b.z - a.z
+	var den := v0x * v1z - v1x * v0z
+	if absf(den) < 0.000001:
+		return -INF
+	var u := ((x - a.x) * v1z - v1x * (z - a.z)) / den
+	var v := (v0x * (z - a.z) - (x - a.x) * v0z) / den
+	return minf(minf(u, v), 1.0 - u - v)
+
+static func _cell_centroid(placed: PlacedObject, cell: int) -> Vector2:
+	var a: Vector3 = placed.vertices[placed.cells[cell * 3]]
+	var b: Vector3 = placed.vertices[placed.cells[cell * 3 + 1]]
+	var c: Vector3 = placed.vertices[placed.cells[cell * 3 + 2]]
+	return Vector2((a.x + b.x + c.x) / 3.0, (a.z + b.z + c.z) / 3.0)
 
 ## What is left of a move after the push past an edge: nothing, when the
 ## edge was met at the very end of the move and the push overshot it. Without
@@ -947,6 +1255,20 @@ static func _first_crossing(segments: PackedVector2Array, from: Vector2, to: Vec
 
 static func _crosses_any(segments: PackedVector2Array, from: Vector2, to: Vector2) -> bool:
 	return _first_crossing(segments, from, to) >= 0
+
+## Height of the plane of triangle (a, b, c) at (x, z), wherever (x, z) is;
+## NAN for a triangle that is a line in plan.
+static func _plane_height(a: Vector3, b: Vector3, c: Vector3, x: float, z: float) -> float:
+	var v0x := c.x - a.x
+	var v0z := c.z - a.z
+	var v1x := b.x - a.x
+	var v1z := b.z - a.z
+	var den := v0x * v1z - v1x * v0z
+	if absf(den) < 0.000001:
+		return NAN
+	var u := ((x - a.x) * v1z - v1x * (z - a.z)) / den
+	var v := (v0x * (z - a.z) - (x - a.x) * v0z) / den
+	return a.y + u * (c.y - a.y) + v * (b.y - a.y)
 
 ## Height of the plane of triangle (a, b, c) at (x, z), or NAN when (x, z)
 ## lies outside the triangle in plan view.
