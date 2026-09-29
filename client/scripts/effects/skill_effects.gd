@@ -522,10 +522,34 @@ static func attach_aura(owner_key: String, token: int, skill_id: int, host: Node
 		started.append(fx)
 	if not started.is_empty():
 		var now := now_ms if now_ms >= 0 else _now()
-		_auras[_aura_key(owner_key, token)] = {"fx": started,
+		_auras[_aura_key(owner_key, token)] = {"fx": started, "host": host, "skill": skill_id,
 			"expires": now + remaining_ms + AURA_GRACE_MS if remaining_ms > 0 else -1}
 		print("EFFECTS aura on %s token %d: skill %d, %d effect(s)" % [owner_key, token, skill_id, started.size()])
 	return started
+
+## Whether buff `token`'s aura is live on `host`: held, of `skill_id`, with at
+## least one of its effects still drawing under that body (round 646).
+static func has_aura_on(owner_key: String, token: int, skill_id: int, host: Node3D) -> bool:
+	var a: Dictionary = _auras.get(_aura_key(owner_key, token), {})
+	if a.is_empty() or not _valid(host) or a.get("host") != host or int(a.get("skill", -1)) != skill_id:
+		return false
+	for fx in a["fx"]:
+		if is_instance_valid(fx) and not (fx as Node).is_queued_for_deletion() and host.is_ancestor_of(fx):
+			return true
+	return false
+
+## attach_aura, unless the same buff's aura already draws on this body
+## (round 646): a re-sent start (a zone change's replay, a body's re-attach
+## from BuffRoster) keeps the running effects -- the retail client's spawned
+## buff skips its start effect too (FUN_00a53850 with arg4 1, READ) -- and
+## only moves its time bound. Returns the effects started (none when kept).
+static func ensure_aura(owner_key: String, token: int, skill_id: int, host: Node3D,
+		remaining_ms: int = -1, now_ms: int = -1) -> Array:
+	if has_aura_on(owner_key, token, skill_id, host):
+		var now := now_ms if now_ms >= 0 else _now()
+		_auras[_aura_key(owner_key, token)]["expires"] = now + remaining_ms + AURA_GRACE_MS if remaining_ms > 0 else -1
+		return []
+	return attach_aura(owner_key, token, skill_id, host, remaining_ms, now_ms)
 
 ## Ends the aura of buff `token` at once. Returns how many effects it stopped.
 static func detach_aura(owner_key: String, token: int) -> int:

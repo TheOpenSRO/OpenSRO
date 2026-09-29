@@ -7094,6 +7094,309 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-forty-sixth round, review follow-up: a walled caster's teleport landing is one move to a point the server named, and players who arrive during a zone change's load are drawn
+
+The review confirmed the client roster, the replay, the dedup and the READs (`0x9d1300`,
+`FUN_009cf270` skipping the start effect, the server's `FUN_0059cdc0`). It found three things to fix.
+
+### 1. The walled-landing window undid the root (OURS; walls.go, world.go, gm.go)
+
+**What was wrong.** Round 646 took *any* relocated move for 2 minutes after *any* warp, while a
+wall rooted the caster:
+- it was not one-shot;
+- it was not tied to a place;
+- it outlived the wall and the session;
+- it was armed by every `OpChangeZone` and every gate teleport, including gate teleports whose
+  client never sends a landing (`_land_teleport_arrival` sets `_last_sent_pos`).
+
+So a walled player had 2 minutes of free relocations.
+
+**Now** the landing is the reviewer's prototype, tightened:
+- **What arms it.** The warp notes the points the server itself sent the caster to:
+  - the arrival (`noteZoneWarpLanding`), which is also the point the client stands a gate arrival
+    on;
+  - the client's spawn spot in the arrival's centre region, when it has one;
+  - a GM `/tp` or `/goto` point.
+- **The spawn spot is exact.** The ideal was for the server to hold the exact x, z the client uses.
+  `worldmap.LandingSpot` now holds `World3D.ZONE_SPAWN_LOCAL`'s row (97/168 -> local 1002,1020),
+  and `LandingSpotFor` names it in the arrival's frame. For Jangan in its own frame that is (42, -60).
+- **What is taken.** One relocated move within **1 unit** on x and z (`warpLandingTolerance`,
+  OURS) is admitted. The reviewer's ±RegionSpan/2 would have allowed a 960-unit jump.
+  - The client stands the player on the named x, z. MEASURED in round 646: the gate's local
+    957,1508 is exactly the server's -28803,-10148.
+  - It is used up by that move (`CompareAndDelete`). A move elsewhere does not use it up.
+- **When it is forgotten:**
+  - when the wall ends (`wallsEnded`);
+  - on logout (`WorldDisconnectHandler`);
+  - after the grace.
+
+**Not done: moving the server's own arrival onto the spawn spot.** That would change every entry
+and zone-change result that the clients and `TestSingleFrame*` pin, so it is left OPEN for the map
+lane. The server now knows the spot; it does not land there.
+
+### 2. The stale `/unstuck` comment
+
+`_unstuck_player` saved and restored `_last_sent_pos` around `_place_at_zone_landing`. That was a
+no-op after round 646, and it has been removed, with the comment. `restored_entry_test.gd`'s stub of
+`_place_at_region_local` now does what the real one does: it leaves `_last_sent_pos` and sets
+`_relocated_pending`. Its "left for the move sync to report" check still passes, now on the real
+behaviour.
+
+### 3. The two cheap ones
+
+- **Players who arrive during a zone change's load are now drawn.**
+  - From the `OpChangeZoneResult` to the arrival list's layout, `OpEntityEntered` is kept
+    (`_arrival_entries`) instead of being built on the old zone's list and freed.
+  - `OpEntityMoved` updates the kept snapshot.
+  - `OpEntityLeft` takes a player off the result's list (`_arrival_left`).
+  - `_replace_others_for_arrival` lays out the result's list minus those who left, plus those who
+    entered. Their auras come from the roster, as for everyone.
+- **The `/speed`-only `OpBuffEnd` at entry is no longer lost.**
+  - `BuffRoster` keeps each owner's last non-zero run speed (`run_speed_of`). A start's or an end's
+    0 means unchanged, and leaves it.
+  - `_replay_held_buffs` applies this player's own speed after the starts.
+
+### Tests
+
+- **`session/buffreplay646r_test.go`** (wire only, so it compiles on 8b59288):
+  - under `-single-frame`, a walled Aria goes to Donwhang and back;
+  - a relocation to (900, 900) is refused and does not use the landing up;
+  - her landing on Jangan's spawn spot (42, -60) is taken;
+  - a second relocation, to a step away or back to the arrival, is refused;
+  - after the wall is cancelled and cast again, the old landing is not taken;
+  - after a relog, the old landing is not taken.
+- **`buffreplay646_unit_test.go`:**
+  - the tolerance on each axis, one use, the grace, and that an expired landing is dropped;
+  - `LandingSpotFor` in Jangan's frame and in Donwhang's.
+- **`buffreplay646_test.go`.** The walled-landing test now lands on the arrival point (0.5, -0.5)
+  rather than an arbitrary (120, -40), which the one-shot landing now refuses.
+- **`world/buff_persist_test.gd`:**
+  - the roster's run speed;
+  - a `/speed` sent before the scene listened becomes this player's run speed;
+  - Dave, who entered during the load, is drawn where his last move during the load put him;
+  - Bram, on the result's list but gone during the load, is not drawn.
+
+**Negative, against 8b59288** (round 646 before the review; detached worktree and client copy):
+```
+--- FAIL: TestRound646ReviewTheLandingIsOneMoveToANamedPoint (1.09s)
+    buffreplay646r_test.go:50: a relocation to (900, 900), where no warp sent her, moved the walled Aria to (900, 900)
+    buffreplay646r_test.go:58: a second relocation after the landing moved the walled Aria to (60, -60): the landing is one move
+    buffreplay646r_test.go:63: a relocation back to the arrival point after the landing moved her to (0, 0)
+--- FAIL: TestRound646ReviewTheLandingEndsWithTheWall (5.64s)
+    buffreplay646r_test.go:86: a new wall's root took the old warp's landing: Aria at (0.5, 0.5), want (300, 300)
+--- FAIL: TestRound646ReviewTheLandingEndsWithTheLogout (5.84s)
+    buffreplay646r_test.go:109: after a relog the old warp's landing was taken: Aria at (0.5, 0.5), want (300, 300)
+```
+```
+FAIL BuffRoster keeps the owner's run speed (run_speed_of)
+FAIL world entry: the /speed sent before this scene listened is this player's run speed (got 47.8)
+FAIL a player who entered during the load is drawn after the arrival
+FAIL where their last move during the load put them
+FAIL a player on the result's list who left during the load is not drawn
+```
+
+**Checks:**
+- `go build ./... && go vet ./... && go test -count=1 -p 1 ./...`: ok (shared cache).
+- `remote_godot.sh check` (env inline): ALL LOAD, 403 scripts.
+- `tests`: 162 suites, 0 failing.
+
+**Not re-run live.** The landing's point test rests on the transform the gate measured live in
+round 646. The arrival bookkeeping has no live run: the box's synchronous centre-cell build held
+the packets back in both of round 646's runs, which is why the reviewer called it plausible.
+
+## Six-hundred-and-forty-sixth round: other players' skills stay visible after a teleport, a relog or a zone change, where they really stand -- no recast needed
+
+The user's report: "make all skills visible to all players on the server and that persist visually
+through teleportation. If someone has a skill and teleports to where a player is, the player won't
+see the skill until they recast."
+
+### Reproduced first (MEASURED, dev 8658370, two clients, real input)
+
+Setup (`/var/tmp/fxpersist/e2e/run.sh`, run `r1`):
+- two clients side by side on one Xvfb, each through Login -> CharacterSelect, keys and chat sent by
+  xdotool after `windowfocus --sync`;
+- an in-memory server built from dev, `-single-frame -teleport-dir -teleport-free`, with the skills
+  CSV exported from the box's Media.pk2 (deleted afterwards);
+- A = QaTester (level 40, GM): Grass Walk 113, the cold imbue 90 and Fire Wall 136 on keys 1-3;
+- B = QaFriend (level 40, GM): Grass Walk on key 1.
+
+What the logs show, case by case:
+
+| case | measured on dev |
+|---|---|
+| both cast at the Jangan spawn | fine. Each log has `EFFECTS aura on character:<other> token N` for every buff |
+| A `/goto donwhang` and back, into the same bucket | the auras come back in B's log (`QaTester left/entered the zone`, then the two starts and their auras). **But B drew A and its Fire Wall inside the dragon pedestal at the square's centre, while A's own client stood at the spawn spot, local 1002,1020** (shot `base/03_A_back_in_jangan.jpg`: B's half shows only flames on top of the pedestal) |
+| B relogs where a buffed A stands | **no aura**. B.log line 38 is `BUFF start: owner 1 ... skill 113` from NetClient, with no `BUFF start handled` and no aura |
+| A relogs where a buffed B stands | **no aura**. A.log line 38 is the start, then nothing. Shot `base/05_A_relogged.jpg`: A sees B with no Grass Walk ring, and B's own view shows it |
+
+Three causes:
+
+1. **The world-entry replay reached nobody.**
+   - The server sends the zone's buffs right after `OpEnterWorldResult` (round 616's
+     `sendBuffsInView`).
+   - NetClient dispatches everything a read delivers in one loop, while CharacterSelect is still
+     swapping World3D in. `buff_started` has no listener then.
+   - That is the arrival case of the report. World3D also cleared its target book when a zone
+     change's loading screen finished, which could drop a replay that arrived during the await
+     (timing-dependent; the box's synchronous centre-cell build happened to hold the packets back
+     in both runs).
+2. **The arrival placement was never reported.**
+   - `_place_at_region_local` set `_last_sent_pos` to the new spot, so the send loop saw no
+     displacement. Nothing went out until the player walked.
+   - The server, and every other client, kept the character, and its buffs' auras, at the server's
+     arrival point. For Jangan that is the square's centre, inside the dragon's pedestal (the 11.45
+     solid AGENTS.md records at local 1002,917).
+3. **A walled caster's landing was dropped.**
+   - Round 640's root (OURS) drops every move while a wall stands, and a warp's landing is a move.
+   - `/goto donwhang` answered A with `SKILL move: character 1 skill 136 to (-28800, 0, -9600)` and
+     `ROOT: the server holds this player at ...`.
+
+### READ: what retail does (both dumps on the RE box; `docs/protocol/skill_buffs.md` "Entering view")
+
+- **A spawn carries the buffs.**
+  - 0x3015 (`0x8a6ca0` -> `FUN_008a6bd0`) and the group spawn's 0x3018 reach the shared state
+    reader `0x9d1300`.
+  - It reads u8 count, then per buff: u32 skill id, u32 token, and a u8 creator for `efta` rows.
+    For the self player only it also reads the remaining ms.
+- **The spawned buffs are attached like live ones.**
+  - `FUN_009cf270` turns them into `IDecoSkill`s on the new body through `FUN_00a54020(token, obj,
+    skill, 1, 0, creator)`, then `FUN_009cd050`.
+  - That is the factory and the per-object list (`+0x284`, which the target window reads) that
+    0xB0BD uses (`0x8a5d49`).
+  - The difference is arg4 1: `FUN_00a53850` skips the start effect and plays the lasting one
+    (`0xa538e3..0xa538fb`).
+- **The server writes the block.** `FUN_0059cdc0` writes it from the book at `obj+0xa30`. It
+  counts records with Param1 3, in state 2, and not an `lnks` link. Observers get no remaining time.
+- **OPEN:** whether a retail teleport re-spawns the object for observers. The view wrappers
+  `0x534340` / `0x5344b0` were not traced to the teleport code.
+
+### What changed
+
+**Client:**
+- `net/buff_roster.gd` (**new**, `BuffRoster`) keeps every owner's active buffs per connection:
+  - OpBuffStart adds;
+  - OpBuffEnd removes;
+  - an owner's OpEntityLeft or a monster's death drops that owner;
+  - a successful OpEnterWorldResult or OpChangeZoneResult starts it over, since the server re-sends
+    after each;
+  - connect and disconnect clear it.
+
+  NetClient updates it before emitting each signal. A replayed start's time left is counted down
+  from its arrival, and a run-out timed buff is not replayed (OURS).
+- **World3D:**
+  - `_replay_held_buffs` runs once the handlers are connected in `_ready`, over the ordinary start
+    handler: auras, target book, own ownership and run speed.
+  - `_build_buff_board` seeds the bar from the roster. The board keys by token.
+  - `_fx_resync_owner` runs whenever a body is built: another player's in `_spawn_or_update_other`,
+    a monster's, and every owner after a zone change's arrival list (`_replace_others_for_arrival`,
+    split out of `_on_change_zone_result`, which now rebuilds the book and the DefenseEfp/wall table
+    from the roster).
+  - Only the ACT_L aura is put back, as retail's arg4 1 does.
+- **`SkillEffects.ensure_aura`**: a re-sent start for a buff whose aura already draws on that body
+  keeps it and moves only its time bound. Before this, each zone replay rebuilt the effect.
+- **`_place_at_region_local`** leaves `_last_sent_pos` at the server's position. The spawn-spot
+  placement then goes out at once as a relocated OpMove.
+- QA: `SRREVAMP_QA_CLICK_WAIT=<ticks>` delays the gate click, so a run can cast by real input first.
+
+**Server (OURS, walls.go / world.go / gm.go):**
+- A zone change, a gate teleport or a GM `/tp` or `/goto` marks the next relocated moves of a
+  caster its wall roots, for 2 minutes (`warpLandingGrace`), as the warp's landing. It is taken,
+  stored and relayed.
+- A walk is still dropped, and a relocation with no warp is still dropped.
+- The replay itself (`sendBuffsInView`) was already right. The new tests pin who is sent what on
+  each event.
+
+### Verified (MEASURED, the branch, run `r2`, shots in `fxpersist_shots/fixed/`)
+
+- **Both cast, then A `/goto donwhang` and `/goto jangan`:**
+  - B.log after each warp: `left the zone`, `entered the zone`, then `EFFECTS aura on character:1
+    token 6: skill 113` and `token 7: skill 136`.
+  - A.log after each: B's `token 5` aura. A's own auras are kept (no rebuild line: `ensure_aura`).
+  - A's QA line ends at local 1002,1020. Shot `12_A_jangan.jpg`: **B sees A beside it, burning, at
+    A's real spot**, not in the pedestal.
+- **B relogs where the buffed A stands:**
+  - B.log: `EFFECTS aura on character:1 token 6: skill 113`, `token 7: skill 136`, `EFFECTS resync
+    character:1 (their body was built): 2 buff(s) held, 2 on a drawn body`, `BUFF replay (world
+    entry): 2 buff(s) held for 1 owner(s)`.
+- **A relogs where B (Grass Walk) stands:**
+  - A.log: `EFFECTS aura on character:2 token 8`, then `BUFF replay (world entry): 1 buff(s)`.
+  - Shot `14_A_relogged.jpg` shows B's ring in A's view. On dev the same case (`base/05`) had none.
+- **The target window:** A's click on B gives `HudTarget: buffs of character:2 -- 1 main, 0
+  second: 113@(0, 0)` (shot `15`).
+- **A real gate:**
+  - B `/goto donwhang`. A starts at the Jangan gate (local 1230,1380) with `SRREVAMP_QA_CLICK=gate
+    SRREVAMP_QA_TELEPORT=2`, casts Grass Walk and Fire Wall by keys, then the gate's Move sends
+    `1 -> 2`.
+  - Server: `teleport ... from=GATE_CH dest=GATE_WC zone=donwhang`.
+  - B.log: `QaTester left/entered the zone`, `EFFECTS aura on character:1 token 9: skill 113`.
+  - A.log, at `RealTerrain_102_153` local (957, 1508): `EFFECTS aura on character:2 token 8`.
+  - The wall had ended before the gate, when its MP drain ran out (`toggle: MP short of the drain,
+    ended`), so only Grass Walk crossed.
+  - The two stood ~550 units apart, so shot `17` shows each alone. The logs are the measurement.
+- **Same-zone relocation:** under `-single-frame` every `/goto` and gate here is one. The body is
+  rebuilt (left, entered) and the aura re-attached, as above.
+- **Not applicable: walking out of view and back.** srrevamp's server has no view range; a zone
+  (under `-single-frame`, the world) is one broadcast bucket.
+- **Imbue:** covered in the first cast only. Its 15 s had 3.3 s left at the first warp, and the
+  replay carried it (`skill 90 ... remaining 3335 ms`, aura on B's side, then its end).
+
+### Tests
+
+- **Server, `session/buffreplay646_test.go` (two players, wire order checked):**
+  - an arrival gets the buffs of those already there, the timed one counted down and the wall
+    untimed, and the others get none for it;
+  - a zone change into another bucket: the watcher hears EntityEntered, then the mover's starts,
+    and the mover hears its result, then its own starts and the zone's;
+  - a warp inside the one bucket: left, entered, starts, in that order;
+  - a relog ends the buffs for everyone;
+  - a walled caster's warp landing is taken, relayed relocated, and a later walk is still answered
+    with the held spot.
+- **Server, `buffreplay646_unit_test.go`:** a relocation with no warp stays rooted; the grace's
+  bounds.
+- **Client, `world/buff_persist_test.gd`:**
+  - the roster, and NetClient keeping it;
+  - the world entry;
+  - a re-sent start keeping its effect;
+  - a body built after its buffs;
+  - leave and re-enter;
+  - a zone change whose replay came during the load.
+
+**Negative, against dev 8658370.** The server test ran in a detached worktree, with a stub for the
+branch's cleanup helper:
+```
+--- FAIL: TestRound646AWalledCastersWarpLandingIsTaken (0.95s)
+    buffreplay646_test.go:390: the walled Aria's warp landing left her at {X:0 Y:0 Z:0}, want (120, 3, -40): the zone sees her wall where she is not
+    buffreplay646_test.go:395: Bram did not hear Aria's landing
+    buffreplay646_test.go:404: the walk's answer &{CharacterID:1 SkillID:136 X:0 Y:0 Z:0}, <nil>, want the wall's hold at x 120
+    buffreplay646_test.go:407: after a walk with the wall up Aria stands at {X:0 Y:0 Z:0}, want the landing x 120
+```
+The other five wire tests pass on dev: the server's replay was already right. The client suite ran
+on dev's client copy (`/opt/srrevamp-client-fxpersist-base`), 9 failures:
+```
+FAIL BuffRoster exists (client/scripts/net/buff_roster.gd)
+FAIL NetClient keeps a buff_roster
+FAIL world entry: Bram's Grass Walk and wall, sent before this scene listened, draw on his body (got 0, 0)
+FAIL world entry: the target window's book has Bram's two buffs (got [])
+FAIL world entry: this player's own Grass Walk draws on this player
+FAIL a re-sent start for a buff whose aura draws on the body starts no second effect (made 1)
+FAIL a body built after its owner's buff arrived takes the aura at once (got 0)
+FAIL zone change: Bram's buff, re-sent during the load, draws on his new body (got 0)
+FAIL zone change: the target window's book has it (got [])
+```
+The arrival placement's report (cause 2) has no headless test; it needs a region's walkable graph.
+It is measured live above.
+
+**Checks:**
+- `go build ./... && go vet ./... && go test -count=1 -p 1 ./...`: ok.
+- `remote_godot.sh check`: ALL LOAD, 403 scripts.
+- `tests`: 162 suites, 0 failing.
+
+**Still OPEN** (docs/TODO.md, "Buffs on entering view"):
+- whether retail's teleport re-spawns the object for observers;
+- OpEntityEntered carrying the buff block itself, as retail's spawn does (a contract change);
+- the `efta` creator byte;
+- view ranges.
+
 ## Six-hundred-and-forty-second round, review follow-up: a teleport is served only within the retail interaction range, never from an instanced gate, and walking away closes the gate's talk box
 
 The review confirmed round 642's READ claims. It also verified with real input a paid non-GM ferry

@@ -288,6 +288,12 @@ func (t *motionTracker) moved(characterID int64, now time.Time) (accepted, leftS
 	if wallRoots(characterID) {
 		return false, false
 	}
+	return t.movedUnrooted(characterID, now)
+}
+
+// movedUnrooted is moved without the wall's root (round 646): a warp's own
+// landing (walls.go warpLandingAdmits) is taken while the wall stands.
+func (t *motionTracker) movedUnrooted(characterID int64, now time.Time) (accepted, leftSit bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	e := t.entryLocked(characterID, now)

@@ -56,11 +56,71 @@ move land on one character.
 **Coordinates (review).** A ground point, or an `OpMove`, with a NaN or an infinity in it is
 refused (the cast, before any cost) or dropped (the move).
 
-**Entering view** (OURS; whether retail re-sends is OPEN): after `OpEnterWorldResult` and after a
-zone change, the arriving session is sent an `OpBuffStart` for every active buff of everyone in
-its zone, its own included, and everyone already there is sent the arriving character's. A record
-that writes the run speed carries its owner's current speed; the others carry 0. A logout sends
-nothing extra: `OpEntityLeft` takes the owner's buffs with it.
+**Entering view** (srrevamp's messages OURS; the retail mechanism READ in round 646): after
+`OpEnterWorldResult` and after a zone change, the arriving session is sent an `OpBuffStart` for
+every active buff of everyone in its zone, its own included, and everyone already there is sent
+the arriving character's -- always after the `OpEntityEntered` / arrival list that names the
+body. A record that writes the run speed carries its owner's current speed; the others carry 0.
+A logout sends nothing extra: `OpEntityLeft` takes the owner's buffs with it.
+
+**What retail does (READ, round 646; `sro_client.exe` and `SR_GameServer.exe` dumps on the RE box):**
+- **The spawn carries the buffs.** 0x3015 (`0x8a6ca0` -> `FUN_008a6bd0(stream, 1)`) and the group
+  spawn's end 0x3018 (`0x8ac3d0` -> `0x8a6d20`: u16 count, `FUN_008a6bd0(stream, 0)` each) build the
+  object and call its body reader (vslot `0x64`: CICUser `0x9de2f0`, CICMonster `0x9d3850`, the
+  self CICPlayer `0x9d9a80`). The shared state reader `0x9d1300` (CICharactor vslot `0x5c`) reads
+  four state bytes (`+0x271`, `+0x273`, `+0x272`, `+0x470`), three f32 speeds (`+0x254`, `+0x258`,
+  `+0x4e8`), then **u8 buffCount** and per buff **u32 skill id**, **u32 token** (when the row's
+  Basic_Activity, row copy `+0x61`, is not 0 -- MEASURED: no Param1-3 row has Activity 0), for the
+  self player only a **u32 remaining ms**, and **u8 creator** when the row carries `efta`
+  (`+0x2c8`; 14 families -- the Bard guards and dances, the Cleric group recovery).
+- **Applied to the new body.** The post-build vslot `0x6c` reaches `0x9d17e0` -> **`FUN_009cf270`**
+  (`0x9cf280..0x9cf2d5`): per pending entry `deco = (*0x110a820)()`,
+  `deco->FUN_00a54020(token, obj, skillId, 1, 0, creator)`, `obj->FUN_009cd050(deco)` -- the same
+  factory and the same per-object list (`obj+0x284`, which the target window's buff viewer reads)
+  as 0xB0BD (`0x8a59e0`, `FUN_00a54020(token, owner, skill, 0, token==0, creator)` at `0x8a5d49`).
+  The one difference is arg4: `FUN_00a53850` plays the start effect `effect[+0xc8+idx*4]` only
+  for arg4 0 (`0xa538e3..0xa538fb`) and the sustained one `effect[+0xcc+idx*4]` either way -- **a
+  buff a spawn carries shows its lasting effect, not its start burst.** 0xB0BD attaches only when
+  owner `+0x21c` != -1; the spawn path has no such test.
+- **The server writes it.** The 0x3015 builder `0x533f70` and the group builder `0x533910` call
+  body vslot 294 with flag 2; CGObjChar vslot 293 `0x4a9b70` writes the state bytes and speeds and
+  calls **`FUN_0059cdc0`** on the book `obj+0xa30`: it counts the records whose row Param1 (`+0x168`)
+  is 3, whose state (`+0xc`) is 2 (engaged), and that are not an `lnks` link with effect `+0x20` ==
+  1, and writes u8 count, then per record `u32 [rec+0x14]+8` (the skill id, INFERRED from the
+  client's reading), `u32 [rec+0x18]+0xc` (the token), **only for flag 1** a u32 remaining ms, and the
+  creator byte for an `efta` row. **Observers get no remaining time**; the self record (0x3013,
+  `FUN_004e3bb0`, flag 1) does, and feeds the buff bar through `FUN_00799860` / `FUN_008048c0`.
+- **OPEN:** whether a retail teleport shows observers a despawn (0x3016) and a fresh 0x3015 -- the
+  view wrappers `0x534340` / `0x5344b0` are reached indirectly and were not traced to the teleport
+  code. INFERRED that it does, since every buff an observer sees rides a spawn or a 0xB0BD.
+
+srrevamp's `OpEntityEntered` carries no buff block (its layout predates buffs, and changing it is a
+contract change), so the replay is the separate `OpBuffStart`s above, sent right after it; the
+client keeps them per connection (`BuffRoster`, round 646) and applies them to the body when it is
+built, drawing the ACT_L aura only -- the spawned buff's lasting effect, as `FUN_00a53850`'s arg4 1
+does. srrevamp also sends observers the time left (the aura's grace bound); retail does not.
+
+**A walled caster's warp (round 646 and its review, OURS, with the root):**
+- **Arming.** A zone change, a gate teleport or a GM `/tp` or `/goto` names the points the client
+  will stand the caster on:
+  - the arrival;
+  - the client's own spawn spot in the arrival's centre region (`worldmap.LandingSpot`, which
+    mirrors `World3D.ZONE_SPAWN_LOCAL`: Jangan's local 1002,1020);
+  - the GM's point.
+
+  This is done only while the caster's wall roots it.
+- **What is taken.** ONE relocated `OpMove` within 1 unit on x and z of one of those points is
+  taken, stored and relayed, and that uses the landing up.
+- **What is dropped.** A walk, a relocation anywhere else, and a second relocation are dropped.
+- **When it lapses.** The landing is forgotten when the wall ends, on logout, and after 2 minutes
+  (`warpLandingGrace`).
+- **Why.** Before round 646 the root dropped the landing, and the zone drew the caster and its wall
+  at the server's arrival point while its own client stood it elsewhere (MEASURED live in round
+  646). Round 646 then took *any* relocated move for 2 minutes after any warp, which the review
+  found undid the root.
+- **Not changed:** the server's own arrival stays `worldmap.Landing`'s region middle. Moving it to
+  the spawn spot would change the entry and zone-change results every client and test pins. OPEN,
+  as a follow-up for the map lane.
 
 ## The data: skill CSV columns 47..61
 

@@ -245,6 +245,37 @@ func Landing(zone string, frameX, frameY int) (x, z float64, ok bool) {
 	return x, z, true
 }
 
+// LandingSpot is where the client stands an arrival in a zone whose centre
+// region is the key, in that region's local coordinates -- World3D.gd's
+// ZONE_SPAWN_LOCAL, row for row (OURS, the client's choice: Jangan's square a
+// little north of the dragon's plinth, which is a solid 11.45 tall at local
+// 1002,917). The server's own landing stays Landing's region middle; this
+// table only tells it where the client will put the player, so a walled
+// caster's landing there can be recognised (session.warpLandingAdmits, round
+// 646's review). A zone with no row is left where the server lands it.
+var LandingSpot = map[[2]int][2]float64{
+	{97, 168}: {1002, 1020},
+}
+
+// LandingSpotFor names zone's LandingSpot in the frame the arrival
+// (landingX, landingZ) -- Landing's region middle in some frame -- is named
+// in. ok is false for a zone with no frame or no spot.
+func LandingSpotFor(zone string, landingX, landingZ float64) (x, z float64, ok bool) {
+	rx, ry, found := FrameFor(zone)
+	if !found {
+		return 0, 0, false
+	}
+	spot, has := LandingSpot[[2]int{rx, ry}]
+	if !has {
+		return 0, 0, false
+	}
+	// ToWorld is a translation per frame: the spot's offset from the middle
+	// is the same in every frame.
+	mx, mz := ToWorld(rx, ry, halfSpan, halfSpan, rx, ry)
+	sx, sz := ToWorld(rx, ry, spot[0], spot[1], rx, ry)
+	return landingX + (sx - mx), landingZ + (sz - mz), true
+}
+
 // Rebase names a world point given in the frame centred on region
 // (fromX, fromY) in the frame centred on (toX, toY): the same place, other
 // coordinates. The shift is the from-region's middle as the to-frame sees it,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
@@ -213,6 +214,12 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		}
 
 		out := deps.Run(ctx, actor, req.Line)
+		// A /tp or /goto puts the GM where its client then stands it; a wall's
+		// root takes that landing as a warp's (round 646, walls.go
+		// noteWarpLanding, OURS).
+		if out.HasPos && !out.Refused {
+			noteWarpLanding(characterID, time.Now(), [2]float64{out.X, out.Z})
+		}
 
 		// A GM /kill removes the monster server-side; tell the rest of the
 		// zone it is gone, the same broadcast a combat kill sends. The GM's
