@@ -102,7 +102,8 @@ func _make_world() -> Node:
 		"\tplaced.append([region_x, region_y, local_x, local_z])",
 		"\tvar at: Vector2 = RegionGridState.frame_world(region_x, region_y, local_x, local_z, 97, 168)",
 		"\tplayer.position = Vector3(at.x, 0.0, at.y)",
-		"\t_last_sent_pos = player.position",
+		"\t# as the real one since round 646: _last_sent_pos is left for the move sync",
+		"\t_relocated_pending = true",
 		"\treturn true",
 		""]))
 	_check(sub.reload() == OK and sub.can_instantiate(), "a recording subclass of World3D.gd compiles")

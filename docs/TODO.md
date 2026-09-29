@@ -1407,6 +1407,10 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
         the separate replay stands in for it);
       - the `efta` creator byte (the Bard guards and dances, the Cleric group recovery pick a
         different effect variant for their caster, `FUN_00a53850` `+0xbc`), not on srrevamp's wire;
+      - the server's own arrival is still the centre region's middle (`worldmap.Landing`), and the
+        client moves a Jangan arrival onto its spawn spot itself. Since the review, the server knows
+        that spot (`worldmap.LandingSpot`, kept in step with `ZONE_SPAWN_LOCAL` by hand), but it
+        does not land there;
       - view ranges: srrevamp's server has none (a zone -- under `-single-frame` the whole world --
         is one broadcast bucket), so "walks out of view and back" does not occur yet.
 

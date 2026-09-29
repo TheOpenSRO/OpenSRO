@@ -218,7 +218,7 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		// root takes that landing as a warp's (round 646, walls.go
 		// noteWarpLanding, OURS).
 		if out.HasPos && !out.Refused {
-			noteWarpLanding(characterID, time.Now())
+			noteWarpLanding(characterID, time.Now(), [2]float64{out.X, out.Z})
 		}
 
 		// A GM /kill removes the monster server-side; tell the rest of the

@@ -7,6 +7,8 @@ package session
 import (
 	"testing"
 	"time"
+
+	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
 )
 
 func clearWarpLanding(id int64) { warpLandings.Delete(id) }
@@ -27,7 +29,7 @@ func TestRound646ARelocationWithoutAWarpIsStillRooted(t *testing.T) {
 	}
 	// The grace is a warp's: a landing noted while no wall stood admits
 	// nothing either.
-	if warpLandingAdmits(w.aria.id, true, time.Now()) {
+	if warpLandingAdmits(w.aria.id, true, float64(before.Pos.X)+30, 0, time.Now()) {
 		t.Error("a rooted caster that never warped has a landing grace")
 	}
 }
@@ -36,19 +38,54 @@ func TestRound646WarpLandingGrace(t *testing.T) {
 	const id int64 = 646646
 	now := time.Now()
 	buffBooks.EndAll(id)
-	noteWarpLanding(id, now) // no wall: nothing noted
-	if warpLandingAdmits(id, true, now) {
+	noteWarpLanding(id, now, [2]float64{0, 0}) // no wall: nothing noted
+	if warpLandingAdmits(id, true, 0, 0, now) {
 		t.Fatal("a warp with no wall noted a landing")
 	}
-	warpLandings.Store(id, now.Add(warpLandingGrace))
+	arm := func() {
+		warpLandings.Store(id, &warpLanding{points: [][2]float64{{100, -200}}, deadline: now.Add(warpLandingGrace)})
+	}
+	arm()
 	t.Cleanup(func() { warpLandings.Delete(id) })
-	if warpLandingAdmits(id, false, now) {
+	if warpLandingAdmits(id, false, 100, -200, now) {
 		t.Error("a walk was taken as a landing")
 	}
-	if !warpLandingAdmits(id, true, now.Add(warpLandingGrace-time.Second)) {
-		t.Error("a relocation inside the grace was not taken")
+	if warpLandingAdmits(id, true, 100+warpLandingTolerance+0.5, -200, now) {
+		t.Error("a relocation past the tolerance on x was taken")
 	}
-	if warpLandingAdmits(id, true, now.Add(warpLandingGrace+time.Second)) {
+	if warpLandingAdmits(id, true, 100, -200-warpLandingTolerance-0.5, now) {
+		t.Error("a relocation past the tolerance on z was taken")
+	}
+	if !warpLandingAdmits(id, true, 100.4, -199.6, now.Add(warpLandingGrace-time.Second)) {
+		t.Error("the landing inside the grace and the tolerance was not taken")
+	}
+	if warpLandingAdmits(id, true, 100, -200, now) {
+		t.Error("a second relocation to the same point was taken: the landing is one move")
+	}
+	arm()
+	if warpLandingAdmits(id, true, 100, -200, now.Add(warpLandingGrace+time.Second)) {
 		t.Error("a relocation after the grace was taken")
+	}
+	if _, ok := warpLandings.Load(id); ok {
+		t.Error("an expired landing was kept")
+	}
+}
+
+// Round 646's review: the spawn spot the client stands a Jangan arrival on
+// (World3D.ZONE_SPAWN_LOCAL, local 1002,1020 of 97/168) named from the
+// server's landing, in Jangan's frame and in another.
+func TestRound646LandingSpotFor(t *testing.T) {
+	x, z, ok := worldmap.LandingSpotFor("jangan", 0, 0)
+	if !ok || x != 42 || z != -60 {
+		t.Fatalf("Jangan's spot from its landing (0, 0): (%g, %g, %v), want (42, -60): local 1002,1020 against the middle 960,960, z mirrored", x, z, ok)
+	}
+	lx, lz, _ := worldmap.Landing("jangan", 102, 153)
+	x, z, ok = worldmap.LandingSpotFor("jangan", lx, lz)
+	wx, wz := worldmap.ToWorld(97, 168, 1002, 1020, 102, 153)
+	if !ok || x != wx || z != wz {
+		t.Fatalf("Jangan's spot in Donwhang's frame: (%g, %g), want ToWorld's (%g, %g)", x, z, wx, wz)
+	}
+	if _, _, ok := worldmap.LandingSpotFor("donwhang", 0, 0); ok {
+		t.Error("Donwhang has a spot, but the client has none for it")
 	}
 }

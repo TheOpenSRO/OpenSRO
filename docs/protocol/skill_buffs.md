@@ -100,11 +100,27 @@ client keeps them per connection (`BuffRoster`, round 646) and applies them to t
 built, drawing the ACT_L aura only -- the spawned buff's lasting effect, as `FUN_00a53850`'s arg4 1
 does. srrevamp also sends observers the time left (the aura's grace bound); retail does not.
 
-**A walled caster's warp (round 646, OURS, with the root):** a zone change, a gate teleport or a
-GM `/tp` / `/goto` marks the next relocated `OpMove`s of a caster its wall roots, for 2 minutes
-(`warpLandingGrace`, OURS), as the warp's landing: taken, stored and relayed. A walk is still
-dropped. Before this the root dropped the landing, and the zone drew the caster and its wall at
-the server's arrival point while its own client stood it elsewhere (MEASURED live in round 646).
+**A walled caster's warp (round 646 and its review, OURS, with the root):**
+- **Arming.** A zone change, a gate teleport or a GM `/tp` or `/goto` names the points the client
+  will stand the caster on:
+  - the arrival;
+  - the client's own spawn spot in the arrival's centre region (`worldmap.LandingSpot`, which
+    mirrors `World3D.ZONE_SPAWN_LOCAL`: Jangan's local 1002,1020);
+  - the GM's point.
+
+  This is done only while the caster's wall roots it.
+- **What is taken.** ONE relocated `OpMove` within 1 unit on x and z of one of those points is
+  taken, stored and relayed, and that uses the landing up.
+- **What is dropped.** A walk, a relocation anywhere else, and a second relocation are dropped.
+- **When it lapses.** The landing is forgotten when the wall ends, on logout, and after 2 minutes
+  (`warpLandingGrace`).
+- **Why.** Before round 646 the root dropped the landing, and the zone drew the caster and its wall
+  at the server's arrival point while its own client stood it elsewhere (MEASURED live in round
+  646). Round 646 then took *any* relocated move for 2 minutes after any warp, which the review
+  found undid the root.
+- **Not changed:** the server's own arrival stays `worldmap.Landing`'s region middle. Moving it to
+  the spawn spot would change the entry and zone-change results every client and test pins. OPEN,
+  as a follow-up for the map lane.
 
 ## The data: skill CSV columns 47..61
 

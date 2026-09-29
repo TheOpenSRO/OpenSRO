@@ -43,6 +43,7 @@ package session
 import (
 	"context"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -53,6 +54,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
 )
 
 // MotionProtectionWall is MOTIONSTATE_SKILL_PROTECTIONWALL (0x11, the
@@ -85,7 +87,7 @@ func rootedMoveAnswer(sess *gateway.Session, e world.Entity) {
 	_ = sess.Send(&proto.Packet{Opcode: OpSkillMove, Data: msg.Encode()})
 }
 
-// warpLandings holds, per rooted character, until when a relocated move is
+// warpLandings holds, per rooted character, the one relocated move that is
 // its warp's landing (round 646, OURS -- the root is OURS too). A zone change
 // or a gate teleport lands the character at the server's arrival point, and
 // the client then stands it on its own walkable ground (the zone's spawn
@@ -97,26 +99,73 @@ func rootedMoveAnswer(sess *gateway.Session, e world.Entity) {
 // 1002,1020, the server and B's client at the town's landing). A warp is not
 // a walk; the root holds a caster in place, it does not hold it where it
 // never stood.
-var warpLandings sync.Map // int64 -> time.Time (the deadline)
+//
+// The review of round 646: the landing is ONE move, to a point the server
+// itself named -- the warp's arrival, the client's own spawn spot in the
+// arrival's region (worldmap.LandingSpotFor, the client's ZONE_SPAWN_LOCAL),
+// or a GM /tp or /goto point -- within warpLandingTolerance on x and z (the
+// height is the client's; the server has none). It is used up by the move it
+// admits, and forgotten when the wall ends, on logout, and after the grace.
+// Until the review any relocated move was taken for two minutes after any
+// warp, wherever it went: a free walk for a walled caster.
+var warpLandings sync.Map // int64 -> *warpLanding
+
+// warpLanding is one pending landing: the points the server sent the caster
+// to, and until when one of them is taken.
+type warpLanding struct {
+	points   [][2]float64
+	deadline time.Time
+}
 
 // warpLandingGrace is how long after a warp its landing is taken. OURS: long
 // enough for a slow machine's zone load (round 646's box took 5-18 s).
 const warpLandingGrace = 2 * time.Minute
 
-// noteWarpLanding marks characterID's next relocated moves, until the grace
-// runs out, as its warp's landing -- only while its wall roots it.
-func noteWarpLanding(characterID int64, now time.Time) {
-	if wallRoots(characterID) {
-		warpLandings.Store(characterID, now.Add(warpLandingGrace))
+// warpLandingTolerance is how far, on x and on z, a landing may lie from the
+// point it names. OURS: the client stands the player at the named x, z (the
+// gate's point, the spawn spot, the GM's point -- MEASURED in round 646: the
+// gate's local 957,1508 is the server's -28803,-10148 exactly); a float32 at
+// the far towns' 170,880 units steps by 1/64, so one unit is room for the
+// wire and the client's transform and nothing more.
+const warpLandingTolerance = 1.0
+
+// noteWarpLanding adds the points pts (x, z pairs) as characterID's warp
+// landing, for the grace -- only while its wall roots it. A second warp
+// inside the grace keeps the first's points (a GM /goto names its point,
+// then the zone change its arrival).
+func noteWarpLanding(characterID int64, now time.Time, pts ...[2]float64) {
+	if !wallRoots(characterID) {
+		warpLandings.Delete(characterID)
 		return
 	}
-	warpLandings.Delete(characterID)
+	l := &warpLanding{deadline: now.Add(warpLandingGrace)}
+	if v, ok := warpLandings.Load(characterID); ok && now.Before(v.(*warpLanding).deadline) {
+		l.points = append(l.points, v.(*warpLanding).points...)
+	}
+	l.points = append(l.points, pts...)
+	warpLandings.Store(characterID, l)
 }
 
-// warpLandingAdmits reports whether a move is a rooted character's warp
-// landing: relocated, inside the grace after its last warp. A walk is never
-// one -- the root still drops it.
-func warpLandingAdmits(characterID int64, relocated bool, now time.Time) bool {
+// noteZoneWarpLanding is noteWarpLanding for a warp's arrival at pos in zone:
+// the arrival itself (a gate's point, which the client stands the player at)
+// and, when the client has a spawn spot in the zone's centre region, that
+// spot (worldmap.LandingSpotFor).
+func noteZoneWarpLanding(characterID int64, zone string, pos world.Position, now time.Time) {
+	pts := [][2]float64{{pos.X, pos.Z}}
+	if x, z, ok := worldmap.LandingSpotFor(zone, pos.X, pos.Z); ok {
+		pts = append(pts, [2]float64{x, z})
+	}
+	noteWarpLanding(characterID, now, pts...)
+}
+
+// forgetWarpLanding drops a pending landing: the wall ended, or the
+// character left the world.
+func forgetWarpLanding(characterID int64) { warpLandings.Delete(characterID) }
+
+// warpLandingAdmits reports whether a move to (x, z) is a rooted character's
+// warp landing -- relocated, inside the grace, at one of the points the
+// server named -- and uses the landing up when it is. A walk is never one.
+func warpLandingAdmits(characterID int64, relocated bool, x, z float64, now time.Time) bool {
 	if !relocated {
 		return false
 	}
@@ -124,11 +173,17 @@ func warpLandingAdmits(characterID int64, relocated bool, now time.Time) bool {
 	if !ok {
 		return false
 	}
-	if now.After(v.(time.Time)) {
-		warpLandings.Delete(characterID)
+	l := v.(*warpLanding)
+	if now.After(l.deadline) {
+		warpLandings.CompareAndDelete(characterID, v)
 		return false
 	}
-	return true
+	for _, p := range l.points {
+		if math.Abs(x-p[0]) <= warpLandingTolerance && math.Abs(z-p[1]) <= warpLandingTolerance {
+			return warpLandings.CompareAndDelete(characterID, v)
+		}
+	}
+	return false
 }
 
 // wallTeleRefusal answers a 'tele'/'tel2'/'tel3' cast (Ghost Walk) while the
@@ -169,6 +224,8 @@ func wallsEnded(ownerID int64, ended []buff.Record) {
 	for _, r := range ended {
 		if r.HasWall {
 			motions.endWall(ownerID, time.Now())
+			// The root ends, and with it a pending landing (round 646's review).
+			forgetWarpLanding(ownerID)
 			return
 		}
 	}

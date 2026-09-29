@@ -5018,6 +5018,11 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# would send the old gate's links from there; the server has no range test
 	# (session/teleport.go's header).
 	_close_gate_ui()
+	# From here to the arrival list's layout (_replace_others_for_arrival),
+	# who enters or leaves is kept for it (round 646's review).
+	_arrival_pending = true
+	_arrival_entries.clear()
+	_arrival_left.clear()
 	# A zone change is a loading screen: music and ambient stop, the area is
 	# cleared (round 612, FUN_0084ab20), whether or not the screen is shown.
 	var zone_music := _audio_music()
@@ -5120,10 +5125,35 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 				unlanded.x, unlanded.y])
 			_teleport_landing = null
 
+## A zone change is loading: OpEntityEntered / OpEntityLeft are kept for its
+## arrival list (round 646's review) -- id -> snapshot, and the ids that left.
+var _arrival_pending := false
+var _arrival_entries: Dictionary = {}
+var _arrival_left: Dictionary = {}
+
 ## A zone change's arrival list replaces whoever was drawn (split out of
 ## _on_change_zone_result in round 646, so a test can run it without a
 ## loading screen).
 func _replace_others_for_arrival(others: Array, seated: Array) -> void:
+	# Who entered during the load joins the list; who left during it is
+	# taken out of it (round 646's review: an arrival's body used to be built
+	# on the old zone's list and freed here, and stayed undrawn until they
+	# re-entered).
+	var list: Array = []
+	for o in others:
+		if not _arrival_left.has(int(o.character_id)):
+			list.append(o)
+	var listed := {}
+	for o in list:
+		listed[int(o.character_id)] = true
+	for id in _arrival_entries:
+		if not listed.has(int(id)):
+			list.append(_arrival_entries[id])
+	if _arrival_pending:
+		print("World3D: arrival list %d, %d entered and %d left during the load" % [others.size(), _arrival_entries.size(), _arrival_left.size()])
+	_arrival_pending = false
+	_arrival_entries.clear()
+	_arrival_left.clear()
 	# Whoever was rendered as an "other" belonged to the *old* zone -- the
 	# server only broadcasts OpEntityLeft to people left behind, never back
 	# to the mover, so without this their stale capsules/bodies would keep
@@ -5143,7 +5173,7 @@ func _replace_others_for_arrival(others: Array, seated: Array) -> void:
 	# below, and this player's, takes its auras from it.
 	_target_buff_book.clear()
 	_fx_owner_buffs.clear()
-	_spawn_result_others(others, seated)
+	_spawn_result_others(list, seated)
 	_fx_resync_all("the zone change's arrival")
 
 ## Everything in the world that plays an animation -- NPCs and monsters.
@@ -12724,6 +12754,14 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	_fx_resync_owner(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER), "their body was built")
 
 func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
+	# During a zone change's load the old zone's bodies are still drawn and
+	# the arrival list is not laid out yet: an arrival is kept for it
+	# (round 646's review, _replace_others_for_arrival), not built to be freed.
+	if _arrival_pending:
+		_arrival_left.erase(snapshot.character_id)
+		_arrival_entries[snapshot.character_id] = snapshot
+		_log_system("%s entered the zone." % snapshot.char_name)
+		return
 	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.equipped, snapshot.gender, snapshot.heading)
 	_log_system("%s entered the zone." % snapshot.char_name)
 
@@ -12740,6 +12778,12 @@ func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 ## client places an object at a message's source position (FUN_009e11e0)
 ## without aiming it; a turn already in progress goes on.
 func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
+	if _arrival_pending and _arrival_entries.has(moved.character_id):
+		var kept: WorldNet.EntitySnapshot = _arrival_entries[moved.character_id]
+		kept.x = moved.x
+		kept.y = moved.y
+		kept.z = moved.z
+		return
 	if _other_bodies.has(moved.character_id):
 		var to := Vector3(moved.x, moved.y, moved.z)
 		_other_body_targets[moved.character_id] = to
@@ -12750,6 +12794,9 @@ func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 		_aim_remote_body(body, to - body.position, 0.0)
 
 func _on_entity_left(character_id: int) -> void:
+	if _arrival_pending:
+		_arrival_entries.erase(character_id)
+		_arrival_left[character_id] = true
 	if character_id == _selected_character:
 		_selected_character = -1
 		_clear_target()
@@ -14088,15 +14135,12 @@ func _unstuck_player() -> void:
 	player.velocity = Vector3.ZERO
 	# A restored entry's point is where the character logged out (round 573)
 	# -- the very spot a player may be wedged at -- so /unstuck lands it at
-	# the current zone's landing instead. _place_at_region_local marks the
-	# landing as already sent; it is not, so the mark is put back and the move
-	# sync reports the landing, as it reports the entry point below.
+	# the current zone's landing instead. The move sync reports the landing,
+	# as it reports the entry point below: _place_at_region_local leaves
+	# _last_sent_pos alone since round 646.
 	if result.restored:
-		var sent := _last_sent_pos
 		var zone: String = NetClient.current_zone if NetClient.current_zone != "" else result.zone
 		if _place_at_zone_landing(zone):
-			_last_sent_pos = sent
-			_walked_since_send = 0.0
 			_log_system("Unstuck: returned to the zone's landing spot.")
 			return
 	player.position = Vector3(result.x, result.y, result.z)
@@ -15764,6 +15808,13 @@ func _replay_held_buffs(why: String) -> void:
 	print("BUFF replay (%s): %d buff(s) held for %d owner(s)" % [why, starts.size(), roster.owners().size()])
 	for bs in starts:
 		_on_buff_started(bs)
+	# This player's run speed as the last packet said -- a /speed-only
+	# OpBuffEnd carries no token for the replay above (round 646's review).
+	_sync_own_id()
+	if _own_id() >= 0:
+		var speed := roster.run_speed_of(_fx_owner_key(_own_id(), SkillNet.OWNER_CHARACTER))
+		if speed > 0:
+			_apply_buff_run_speed(speed, "the run speed held from before this world existed")
 
 ## OpBuffEnd: each ended token's aura ends at once.
 func _fx_on_buff_ended(ended: SkillNet.BuffEnd) -> void:

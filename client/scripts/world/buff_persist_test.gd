@@ -112,12 +112,12 @@ func _start_bytes(owner: int, skill: int, token: int, dura: int, left: int) -> P
 func _buff_start(owner: int, skill: int, token: int, dura: int = 355462, left: int = 300000) -> void:
 	_net.call("_dispatch", Packet.new(0x00F5, _start_bytes(owner, skill, token, dura, left)))
 
-func _buff_end(owner: int, tokens: Array) -> void:
+func _buff_end(owner: int, tokens: Array, speed: int = 0) -> void:
 	var out := _u64(owner)
 	out.append(tokens.size())
 	for t in tokens:
 		out.append_array(_u32(int(t)))
-	out.append_array(_u32(0))
+	out.append_array(_u32(speed))
 	out.append(0)
 	_net.call("_dispatch", Packet.new(0x00F6, out))
 
@@ -155,6 +155,23 @@ func _test_roster() -> void:
 	_check(r.starts_of("character:%d" % BRAM, 9000).is_empty(), "an owner that left is dropped")
 	r.clear()
 	_check(r.count() == 0, "clear empties it")
+	# Round 646's review: the owner's latest run speed is kept.
+	if not r.has_method("run_speed_of"):
+		_check(false, "BuffRoster keeps the owner's run speed (run_speed_of)")
+		return
+	var fast := _decode(_start_bytes(OWN, GRASS, 51, 355462, 300000))
+	fast.run_speed = 60
+	r.start(fast, 0)
+	var be2 := SkillNet.BuffEnd.new()
+	be2.owner_id = OWN
+	be2.run_speed = 0
+	r.end(be2)
+	_check(r.run_speed_of("character:%d" % OWN) == 60, "a start's run speed is kept, and a 0 (unchanged) leaves it")
+	be2.run_speed = 90
+	r.end(be2)
+	_check(r.run_speed_of("character:%d" % OWN) == 90, "a /speed-only end (no tokens) sets it")
+	r.clear()
+	_check(r.run_speed_of("character:%d" % OWN) == 0, "clear forgets it")
 
 # --- NetClient keeps it -------------------------------------------------------------
 
@@ -339,6 +356,8 @@ func _test_world() -> void:
 	_buff_start(BRAM, GRASS, 21)
 	_buff_start(BRAM, WALL, 22, -1, -1)
 	_buff_start(OWN, GRASS, 23)
+	# A GM's /speed at entry: an OpBuffEnd with no token (round 636).
+	_buff_end(OWN, [], 90)
 	var world := _make_world()
 	if world == null:
 		return
@@ -355,6 +374,9 @@ func _test_world() -> void:
 	_check(_book_tokens(world, BRAM) == [21, 22], "world entry: the target window's book has Bram's two buffs (got %s)" % str(_book_tokens(world, BRAM)))
 	_check(_live_on("grass_keep.efp", world.get("player")) == 1, "world entry: this player's own Grass Walk draws on this player")
 	_check(_live_on("grass_burst.efp", bram) == 0, "a replayed buff plays no act on the body (retail's spawned buff skips its start effect)")
+
+	_check(is_equal_approx(float(world.get("_move_speed")), 90.0),
+		"world entry: the /speed sent before this scene listened is this player's run speed (got %s)" % str(world.get("_move_speed")))
 
 	# --- 2. A re-sent start keeps the running aura. ----------------------------
 	var before := _made.size()
@@ -412,6 +434,31 @@ func _test_world() -> void:
 		"zone change: Bram's buff, re-sent during the load, draws on his new body (got %d)" % _live_on("grass_keep.efp", new_bram))
 	_check(_book_tokens(world, BRAM) == [41], "zone change: the target window's book has it (got %s)" % str(_book_tokens(world, BRAM)))
 	_check(_live_on("grass_keep.efp", world.get("player")) == 1, "zone change: this player's own aura is still one")
+
+	# --- 6. Who enters or leaves during a zone change's load (round 646's
+	# review): Dave enters after the result, Bram (on the result's list)
+	# leaves; the arrival lays out Dave and not Bram.
+	world.set("_arrival_pending", true)
+	var dave := WorldNet.EntitySnapshot.new()
+	dave.character_id = 7171
+	dave.char_name = "Dave"
+	dave.x = 70.0
+	world.call("_on_entity_entered", dave)
+	world.call("_on_entity_left", BRAM)
+	var moved := WorldNet.EntityMoved.new()
+	moved.character_id = 7171
+	moved.x = 75.0
+	world.call("_on_entity_moved", moved)
+	var snap2 := WorldNet.EntitySnapshot.new()
+	snap2.character_id = BRAM
+	snap2.char_name = "Bram"
+	if world.has_method("_replace_others_for_arrival"):
+		world.call("_replace_others_for_arrival", [snap2], [])
+	await process_frame
+	var dave_body := _body(world, 7171)
+	_check(dave_body != null, "a player who entered during the load is drawn after the arrival")
+	_check(dave_body != null and is_equal_approx(dave_body.position.x, 75.0), "where their last move during the load put them")
+	_check(_body(world, BRAM) == null, "a player on the result's list who left during the load is not drawn")
 
 	_disconnect(done)
 	SkillEffects.reset()

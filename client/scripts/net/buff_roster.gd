@@ -25,6 +25,10 @@ extends RefCounted
 ## "character:<id>" / "monster:<id>" -> {token: {"start": BuffStart,
 ## "at_ms": when it arrived}}, arrival order.
 var _owners: Dictionary = {}
+## owner key -> the last non-zero runSpeed an OpBuffStart or OpBuffEnd
+## carried for it (round 646's review): the owner's current run speed, which
+## a /speed-only OpBuffEnd (no tokens) at world entry carries too.
+var _speeds: Dictionary = {}
 
 static func key_of(owner_id: int, owner_kind: int) -> String:
 	return "%s:%d" % ["monster" if owner_kind == SkillNet.OWNER_MONSTER else "character", owner_id]
@@ -34,6 +38,8 @@ func start(bs: SkillNet.BuffStart, now_ms: int) -> void:
 	if bs == null or bs.token == 0:
 		return
 	var key := key_of(bs.owner_id, bs.owner_kind)
+	if bs.run_speed > 0:
+		_speeds[key] = bs.run_speed
 	var m: Dictionary = _owners.get(key, {})
 	m[bs.token] = {"start": bs, "at_ms": now_ms}
 	_owners[key] = m
@@ -43,6 +49,8 @@ func end(be: SkillNet.BuffEnd) -> void:
 	if be == null:
 		return
 	var key := key_of(be.owner_id, be.owner_kind)
+	if be.run_speed > 0:
+		_speeds[key] = be.run_speed
 	var m: Dictionary = _owners.get(key, {})
 	for t in be.tokens:
 		m.erase(int(t))
@@ -53,9 +61,16 @@ func end(be: SkillNet.BuffEnd) -> void:
 ## its body; if it comes back, the server sends them again.
 func drop(key: String) -> void:
 	_owners.erase(key)
+	_speeds.erase(key)
 
 func clear() -> void:
 	_owners.clear()
+	_speeds.clear()
+
+## The owner's run speed as the last packet that set one said; 0 when none
+## did since the roster started over.
+func run_speed_of(key: String) -> int:
+	return int(_speeds.get(key, 0))
 
 func owners() -> Array:
 	return _owners.keys()

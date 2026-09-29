@@ -7094,6 +7094,116 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-forty-sixth round, review follow-up: a walled caster's teleport landing is one move to a point the server named, and players who arrive during a zone change's load are drawn
+
+The review confirmed the client roster, the replay, the dedup and the READs (`0x9d1300`,
+`FUN_009cf270` skipping the start effect, the server's `FUN_0059cdc0`). It found three things to fix.
+
+### 1. The walled-landing window undid the root (OURS; walls.go, world.go, gm.go)
+
+**What was wrong.** Round 646 took *any* relocated move for 2 minutes after *any* warp, while a
+wall rooted the caster:
+- it was not one-shot;
+- it was not tied to a place;
+- it outlived the wall and the session;
+- it was armed by every `OpChangeZone` and every gate teleport, including gate teleports whose
+  client never sends a landing (`_land_teleport_arrival` sets `_last_sent_pos`).
+
+So a walled player had 2 minutes of free relocations.
+
+**Now** the landing is the reviewer's prototype, tightened:
+- **What arms it.** The warp notes the points the server itself sent the caster to:
+  - the arrival (`noteZoneWarpLanding`), which is also the point the client stands a gate arrival
+    on;
+  - the client's spawn spot in the arrival's centre region, when it has one;
+  - a GM `/tp` or `/goto` point.
+- **The spawn spot is exact.** The ideal was for the server to hold the exact x, z the client uses.
+  `worldmap.LandingSpot` now holds `World3D.ZONE_SPAWN_LOCAL`'s row (97/168 -> local 1002,1020),
+  and `LandingSpotFor` names it in the arrival's frame. For Jangan in its own frame that is (42, -60).
+- **What is taken.** One relocated move within **1 unit** on x and z (`warpLandingTolerance`,
+  OURS) is admitted. The reviewer's ±RegionSpan/2 would have allowed a 960-unit jump.
+  - The client stands the player on the named x, z. MEASURED in round 646: the gate's local
+    957,1508 is exactly the server's -28803,-10148.
+  - It is used up by that move (`CompareAndDelete`). A move elsewhere does not use it up.
+- **When it is forgotten:**
+  - when the wall ends (`wallsEnded`);
+  - on logout (`WorldDisconnectHandler`);
+  - after the grace.
+
+**Not done: moving the server's own arrival onto the spawn spot.** That would change every entry
+and zone-change result that the clients and `TestSingleFrame*` pin, so it is left OPEN for the map
+lane. The server now knows the spot; it does not land there.
+
+### 2. The stale `/unstuck` comment
+
+`_unstuck_player` saved and restored `_last_sent_pos` around `_place_at_zone_landing`. That was a
+no-op after round 646, and it has been removed, with the comment. `restored_entry_test.gd`'s stub of
+`_place_at_region_local` now does what the real one does: it leaves `_last_sent_pos` and sets
+`_relocated_pending`. Its "left for the move sync to report" check still passes, now on the real
+behaviour.
+
+### 3. The two cheap ones
+
+- **Players who arrive during a zone change's load are now drawn.**
+  - From the `OpChangeZoneResult` to the arrival list's layout, `OpEntityEntered` is kept
+    (`_arrival_entries`) instead of being built on the old zone's list and freed.
+  - `OpEntityMoved` updates the kept snapshot.
+  - `OpEntityLeft` takes a player off the result's list (`_arrival_left`).
+  - `_replace_others_for_arrival` lays out the result's list minus those who left, plus those who
+    entered. Their auras come from the roster, as for everyone.
+- **The `/speed`-only `OpBuffEnd` at entry is no longer lost.**
+  - `BuffRoster` keeps each owner's last non-zero run speed (`run_speed_of`). A start's or an end's
+    0 means unchanged, and leaves it.
+  - `_replay_held_buffs` applies this player's own speed after the starts.
+
+### Tests
+
+- **`session/buffreplay646r_test.go`** (wire only, so it compiles on 8b59288):
+  - under `-single-frame`, a walled Aria goes to Donwhang and back;
+  - a relocation to (900, 900) is refused and does not use the landing up;
+  - her landing on Jangan's spawn spot (42, -60) is taken;
+  - a second relocation, to a step away or back to the arrival, is refused;
+  - after the wall is cancelled and cast again, the old landing is not taken;
+  - after a relog, the old landing is not taken.
+- **`buffreplay646_unit_test.go`:**
+  - the tolerance on each axis, one use, the grace, and that an expired landing is dropped;
+  - `LandingSpotFor` in Jangan's frame and in Donwhang's.
+- **`buffreplay646_test.go`.** The walled-landing test now lands on the arrival point (0.5, -0.5)
+  rather than an arbitrary (120, -40), which the one-shot landing now refuses.
+- **`world/buff_persist_test.gd`:**
+  - the roster's run speed;
+  - a `/speed` sent before the scene listened becomes this player's run speed;
+  - Dave, who entered during the load, is drawn where his last move during the load put him;
+  - Bram, on the result's list but gone during the load, is not drawn.
+
+**Negative, against 8b59288** (round 646 before the review; detached worktree and client copy):
+```
+--- FAIL: TestRound646ReviewTheLandingIsOneMoveToANamedPoint (1.09s)
+    buffreplay646r_test.go:50: a relocation to (900, 900), where no warp sent her, moved the walled Aria to (900, 900)
+    buffreplay646r_test.go:58: a second relocation after the landing moved the walled Aria to (60, -60): the landing is one move
+    buffreplay646r_test.go:63: a relocation back to the arrival point after the landing moved her to (0, 0)
+--- FAIL: TestRound646ReviewTheLandingEndsWithTheWall (5.64s)
+    buffreplay646r_test.go:86: a new wall's root took the old warp's landing: Aria at (0.5, 0.5), want (300, 300)
+--- FAIL: TestRound646ReviewTheLandingEndsWithTheLogout (5.84s)
+    buffreplay646r_test.go:109: after a relog the old warp's landing was taken: Aria at (0.5, 0.5), want (300, 300)
+```
+```
+FAIL BuffRoster keeps the owner's run speed (run_speed_of)
+FAIL world entry: the /speed sent before this scene listened is this player's run speed (got 47.8)
+FAIL a player who entered during the load is drawn after the arrival
+FAIL where their last move during the load put them
+FAIL a player on the result's list who left during the load is not drawn
+```
+
+**Checks:**
+- `go build ./... && go vet ./... && go test -count=1 -p 1 ./...`: ok (shared cache).
+- `remote_godot.sh check` (env inline): ALL LOAD, 403 scripts.
+- `tests`: 162 suites, 0 failing.
+
+**Not re-run live.** The landing's point test rests on the transform the gate measured live in
+round 646. The arrival bookkeeping has no live run: the box's synchronous centre-cell build held
+the packets back in both of round 646's runs, which is why the reviewer called it plausible.
+
 ## Six-hundred-and-forty-sixth round: other players' skills stay visible after a teleport, a relog or a zone change, where they really stand -- no recast needed
 
 The user's report: "make all skills visible to all players on the server and that persist visually

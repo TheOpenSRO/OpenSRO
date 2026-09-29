@@ -363,7 +363,10 @@ func TestRound646ARelogEndsTheBuffsForEveryone(t *testing.T) {
 }
 
 // A walled caster warps (the root is OURS, round 640): its client's landing,
-// a relocated OpMove, is taken -- the hub holds it and the zone hears it --
+// a relocated OpMove at the point the server sent it to (Donwhang's arrival,
+// (0, 0, 0) in its own frame; the review of round 646 moved this test's
+// landing there from an arbitrary (120, -40), which the one-shot landing now
+// refuses), is taken -- the hub holds it and the zone hears it --
 // while a walk after it is still dropped and answered with the held spot.
 // Before round 646 the landing was dropped too, and the zone saw the caster
 // and its wall at the server's arrival point while its own client stood it
@@ -380,30 +383,30 @@ func TestRound646AWalledCastersWarpLandingIsTaken(t *testing.T) {
 	drain(t, w.aria, 200*time.Millisecond)
 	drain(t, w.bram, 200*time.Millisecond)
 
-	w.aria.send(t, OpMove, (&MoveRequest{X: 120, Y: 3, Z: -40, Relocated: true}).Encode())
+	w.aria.send(t, OpMove, (&MoveRequest{X: 0.5, Y: 3, Z: -0.5, Relocated: true}).Encode())
 	time.Sleep(150 * time.Millisecond)
 	e, ok := w.hub.EntityByCharacterID(w.aria.id)
 	if !ok {
 		t.Fatal("Aria is not in the world")
 	}
-	if e.Pos.X != 120 || e.Pos.Z != -40 {
-		t.Errorf("the walled Aria's warp landing left her at %+v, want (120, 3, -40): the zone sees her wall where she is not", e.Pos)
+	if e.Pos.X != 0.5 || e.Pos.Z != -0.5 {
+		t.Errorf("the walled Aria's warp landing left her at %+v, want (0.5, 3, -0.5), the arrival point where her client stands her: the zone sees her wall where she is not", e.Pos)
 	}
 	bGot := drain(t, w.bram, 200*time.Millisecond)
 	moved := indexOf(bGot, OpEntityMoved)
 	if moved < 0 {
 		t.Errorf("Bram did not hear Aria's landing")
-	} else if em, err := DecodeEntityMoved(bGot[moved].Data); err != nil || em.X != 120 || !em.Relocated {
-		t.Errorf("Bram heard %+v, %v, want Aria relocated to x 120", em, err)
+	} else if em, err := DecodeEntityMoved(bGot[moved].Data); err != nil || em.X != 0.5 || !em.Relocated {
+		t.Errorf("Bram heard %+v, %v, want Aria relocated to x 0.5", em, err)
 	}
 
 	// A walk is still dropped by the root.
-	w.aria.send(t, OpMove, (&MoveRequest{X: 150, Y: 3, Z: -40}).Encode())
+	w.aria.send(t, OpMove, (&MoveRequest{X: 30, Y: 3, Z: -0.5}).Encode())
 	sm, err := DecodeSkillMove(w.aria.expect(t, OpSkillMove).Data)
-	if err != nil || sm.SkillID != 136 || sm.X != 120 {
-		t.Errorf("the walk's answer %+v, %v, want the wall's hold at x 120", sm, err)
+	if err != nil || sm.SkillID != 136 || sm.X != 0.5 {
+		t.Errorf("the walk's answer %+v, %v, want the wall's hold at x 0.5", sm, err)
 	}
-	if e, _ := w.hub.EntityByCharacterID(w.aria.id); e.Pos.X != 120 {
-		t.Errorf("after a walk with the wall up Aria stands at %+v, want the landing x 120", e.Pos)
+	if e, _ := w.hub.EntityByCharacterID(w.aria.id); e.Pos.X != 0.5 {
+		t.Errorf("after a walk with the wall up Aria stands at %+v, want the landing x 0.5", e.Pos)
 	}
 }
