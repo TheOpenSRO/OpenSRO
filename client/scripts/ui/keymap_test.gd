@@ -410,7 +410,7 @@ func _check_pure(keymap: GDScript) -> void:
 	_check(str(keymap.call("camera_view_string", 1)) == "UIIT_STT_CHANGED_SIGHT_THIRD_PERSON_DESC", "F9 announces the view with the client's own line")
 	var name := str(keymap.call("screenshot_name", {"year": 2026, "month": 9, "day": 6, "hour": 7, "minute": 8, "second": 9}, 1234))
 	_check(name == "SRO[2026-09-06 07-08-09]_34.jpg", "the screenshot is named as 0xba7240 names it (got %s)" % name)
-	_check(str(keymap.call("reply_line", "ttFriend", "ttMe")) == "/w ttFriend ", "R's line whispers the last whisperer")
+	_check(str(keymap.call("reply_line", "ttFriend", "ttMe")) == "$ttFriend ", "R's line whispers the last whisperer, retail's \"$name \" (0x7ab470)")
 	_check(str(keymap.call("reply_line", "", "ttMe")) == "" and str(keymap.call("reply_line", "ttMe", "ttMe")) == "",
 		"R does nothing with no whisper, or when the last whisperer is you")
 	var underbar := load(UNDERBAR_PATH) as GDScript

@@ -1132,6 +1132,32 @@ bars use `pmi_hp.ddj` / `pmi_mp.ddj`. Left:
       activation. OPEN: body mode 2 (the revive / entry invincibility and its berserk error 4);
       other players' body modes are not drawn.
 
+### Chat (round 634) -- **the retail window, channels, globals and notices built; these are left**
+
+docs/protocol/chat.md has every address. Built: the five tabs with their filters and lamps, the
+per-type colours and captions, the hanging wrap indent, the left scroll bar (arrows, thumb, wheel,
+drag), the channel marks `# @ % & $`, R's `$name ` reply, the sender's echo and the 0xB025
+refusals, the global chatting item's "Chat to all" window, the GM notice's line and banner, and
+`/notice`.
+
+- **Union and academy chat have no audience**: srrevamp forms no alliances and has no academy, so
+  the server refuses both (the client shows the game's own refusal lines).
+- **Built in the review follow-up**: the size modes and button, bottom-stacked lines, grey idle
+  tabs, the hover bar, the client-side group refusals, first-row-wins for the text table.
+- **Not built**: the whisper list pop-up (`GDR_WHISPERLIST`, 0x7acfd0), the chat-mode button and
+  viewer (IDs 41/42), the hide button, the "*" name prefix (0x877810/0x877340, the sender's vslot
+  0xac state not identified), speech balloons over heads (0x9c77c0), the flood block
+  (0x7a9bb0), the global window's text filter (0x8c4020), the system message window (interface
+  child 0x44) -- srrevamp's own "* ..." lines and refusals go to the All tab (OURS).
+- **Open questions**: whether the client strips CSV quote marks from a text row (24 first rows on
+  the box's archive keep them since first-row-wins); whether retail's server strips the channel mark from the text; the
+  range of ordinary chat (srrevamp: the zone bucket); the wheel
+  step. The user's screenshot (a private server) draws notices cyan (0, 174, 195) without the
+  "(Notice):" prefix; the binary says pink `0xffffaec3` with the prefix -- srrevamp follows the
+  binary; the private client's source for the cyan is not known.
+- "Remaining turns" in the global window overruns into its count (the authored static is 55 px
+  wide; our font draws the caption wider).
+
 ### Seasonal event decorations — **hidden by default (round 583)**
 The user decided on 2026-09-26 that early testing gets no seasonal decorations. Christmas,
 Halloween, the China open-beta (OBT) event set and the summer festival set are left out of every

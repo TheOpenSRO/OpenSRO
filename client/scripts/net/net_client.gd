@@ -144,9 +144,11 @@ signal guild_points_result(result: GuildNet.PointsResult)
 ## (round 528).
 signal guild_level_result(result: GuildNet.LevelResult)
 
-signal chat_message(message: ChatNet.Message)
-signal chat_whisper_result(ok: bool, reason: String)
-signal chat_whisper_message(message: ChatNet.Message)
+## A chat line arrived (round 634): any type -- ordinary, whisper, party,
+## guild, global, notice.
+signal chat_update(update: ChatNet.Update)
+## The server's answer to a line this client sent (0xB025's fields).
+signal chat_result(result: ChatNet.Result)
 
 signal quest_list_result(entries: Array, error: String)
 signal quest_accept_result(ok: bool, reason: String)
@@ -596,11 +598,24 @@ func guild_points(char_name: String) -> void:
 func guild_level(char_name: String, level_up: bool = false) -> void:
 	_send(GuildNet.OP_LEVEL, GuildNet.encode_level(char_name, level_up))
 
-func say(message_text: String) -> void:
-	_send(ChatNet.OP_SAY, ChatNet.encode_say(message_text))
+## Sends one chat line of `type` (HudChat's TYPE_*): the index comes back
+## in the result so the sender's own line can be shown (round 634).
+func send_chat(type: int, index: int, target_name: String, message_text: String) -> void:
+	_send(ChatNet.OP_SEND, ChatNet.encode_send(type, index, target_name, message_text))
 
+## Ordinary chat (type 1) with index 0, for callers that do not track the
+## echo (the QA command hook).
+func say(message_text: String) -> void:
+	send_chat(0x01, 0, "", message_text)
+
+## A whisper (type 2) with index 0 (the console's /w).
 func whisper(target_name: String, message_text: String) -> void:
-	_send(ChatNet.OP_WHISPER, ChatNet.encode_whisper(target_name, message_text))
+	send_chat(0x02, 0, target_name, message_text)
+
+## A global: the global chatting item in `inventory_slot` carries the text to
+## every player (the item use 0x704c, round 634).
+func send_global(inventory_slot: int, message_text: String) -> void:
+	_send(ChatNet.OP_GLOBAL, ChatNet.encode_global(inventory_slot, message_text))
 
 ## Sends a GM console command line (the server gates and runs it). An empty
 ## line is the enter-world probe that asks whether this account is a GM.
@@ -922,13 +937,14 @@ func _dispatch(p: Packet) -> void:
 			guild_points_result.emit(GuildNet.decode_points_result(p.data))
 		GuildNet.OP_LEVEL_RESULT:
 			guild_level_result.emit(GuildNet.decode_level_result(p.data))
-		ChatNet.OP_MESSAGE:
-			chat_message.emit(ChatNet.decode_message(p.data))
-		ChatNet.OP_WHISPER_RESULT:
-			var r := ChatNet.decode_whisper_result(p.data)
-			chat_whisper_result.emit(r.ok, r.reason if r.error == "" else r.error)
-		ChatNet.OP_WHISPER_MESSAGE:
-			chat_whisper_message.emit(ChatNet.decode_message(p.data))
+		ChatNet.OP_UPDATE:
+			var u := ChatNet.decode_update(p.data)
+			if u != null:
+				chat_update.emit(u)
+		ChatNet.OP_RESULT:
+			var r := ChatNet.decode_result(p.data)
+			if r != null:
+				chat_result.emit(r)
 		QuestNet.OP_LIST_RESULT:
 			var r := QuestNet.decode_list_result(p.data)
 			if r.error == "":

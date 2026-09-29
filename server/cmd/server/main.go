@@ -1359,7 +1359,9 @@ func main() {
 		session.RaiseMasteryHandler(chars, skills),
 		session.PartyHandler(chars, parties),
 		session.GuildHandler(chars, guilds, hub),
-		session.ChatHandler(hub),
+		// Chat (round 634): the five channels, whispers, the global
+		// chatting item and the GM's type-3 line.
+		session.ChatHandler(session.ChatDeps{Hub: hub, Parties: parties, Guilds: guilds, Inv: inv, Items: refItems, Gate: gmGate}),
 		session.QuestHandler(chars, quests),
 		session.DuelHandler(chars, eq, refItems, hub, duels),
 		session.TradeHandler(chars, inv, refItems, hub, trades),

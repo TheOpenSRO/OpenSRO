@@ -157,6 +157,9 @@ type Result struct {
 	// LevelUp is set when /level raised the character, carrying what the
 	// combat path's OpLevelUp carries.
 	LevelUp *LevelUp
+	// Notice is /notice's text, for the session layer to broadcast to every
+	// character as a chat type-7 line (round 634, session.BroadcastNotice).
+	Notice string
 }
 
 // LevelUp mirrors the combat path's level-up announcement.
@@ -194,13 +197,15 @@ const MaxSpawn = 20
 
 // Help is the one-line list of server-side commands, what the client shows
 // a GM. Kept here so the list and the dispatcher cannot drift apart.
-const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /kill, /durability <slot> <n>, /sp <n>, /hwan <0-5>"
+const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /kill, /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>"
 
 // Run executes one command line for actor. The leading slash is optional;
 // the first word is the command. The caller has already checked the gate.
 func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 	line = strings.TrimSpace(line)
-	line = strings.TrimPrefix(line, "/")
+	// Trimmed again after the slash, so "/ notice hi" keeps its text whole:
+	// /notice slices the line after its first word (round 634's review).
+	line = strings.TrimSpace(strings.TrimPrefix(line, "/"))
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
 		return refuse("empty command. " + Help)
@@ -231,6 +236,8 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = d.sp(ctx, actor, args)
 	case "hwan":
 		res = d.hwan(ctx, actor, args)
+	case "notice":
+		res = notice(line[len(fields[0]):])
 	default:
 		res = refuse("unknown GM command /" + cmd + ". " + Help)
 	}
@@ -271,6 +278,19 @@ func (d *Deps) hwan(ctx context.Context, actor Actor, args []string) Result {
 }
 
 func refuse(text string) Result { return Result{Text: text, Refused: true} }
+
+// notice is /notice <text> (round 634, OURS as a command: retail's GM tool
+// that raises a notice was not read). The text goes out exactly as typed
+// after the command word, inner spaces kept; the session layer sends it to
+// every character as chat type 7, which the client shows as a
+// "(Notice):" line and in GDR_NOTICE (docs/protocol/chat.md).
+func notice(rest string) Result {
+	text := strings.TrimSpace(rest)
+	if text == "" {
+		return refuse("usage: /notice <text>")
+	}
+	return Result{Text: "notice sent: " + text, Notice: text}
+}
 
 func (d *Deps) tp(actor Actor, args []string) Result {
 	if len(args) != 2 {

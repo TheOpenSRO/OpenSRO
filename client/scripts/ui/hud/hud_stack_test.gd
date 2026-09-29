@@ -139,6 +139,10 @@ func _run() -> void:
 	var chat: Control = (load(CHAT_PATH) as GDScript).new(builder)
 	ui.add_child(chat)
 	chat.call("setup")
+	# The tallest size mode (6, the layout's own geometry; round 634), so
+	# the chat reaches under the window this test stacks over it.
+	if chat.has_method("set_mode"):
+		chat.call("set_mode", 6)
 	chat.position = Vector2(2, 648 - 68 - chat.size.y)
 	var stacks := panels.has_method("stack_over")
 	_check(stacks, "HudPanels can put the chat below its windows (stack_over)")
@@ -147,7 +151,7 @@ func _run() -> void:
 	var world_src := FileAccess.get_file_as_string(WORLD_PATH)
 	_check(world_src.contains("_hud_panels.stack_over(_hud_chat)"), "World3D stacks the windows over the chat after adding it")
 	await process_frame
-	_check(chat.get_rect() == Rect2(2, 182, 399, 398), "the chat is 399x398 at (2, 182) (got %s)" % chat.get_rect())
+	_check(chat.get_rect() == Rect2(2, 181, 399, 399), "the chat in mode 6 is 399x399 at (2, 181) (got %s)" % chat.get_rect())
 	_check(chat.get_index() == panels.get_index() - 1,
 		"the chat sits directly below the windows (chat %d, panels %d): above nothing it was not above" % [chat.get_index(), panels.get_index()])
 

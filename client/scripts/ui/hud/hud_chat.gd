@@ -1,7 +1,9 @@
 extends Control
 class_name HudChat
 
-## The in-world chat window, built from `resinfo\ifchatviewer.txt`.
+## The in-world chat window, built from `resinfo\ifchatviewer.txt` and
+## CIFChatViewer's own code (round 634; docs/protocol/chat.md has every
+## address).
 ##
 ## The registry places it bottom-left: `GDR_CHAT_BOARD` is a `CIFChatViewer`
 ## at `0,546,399,398` in the registry's own 1600x1200 reference screen. The
@@ -9,67 +11,221 @@ class_name HudChat
 ## anchor below reproduces, the same way the underbar's horizontal centring
 ## is authored and its flush-to-the-bottom is a choice.
 ##
-## The layout gives the whole window:
+## The layout gives:
 ##
 ##   GDR_CHAT_BG_UP/_MID/_DOWN   three bands of `chat_window.ddj`, sliced by
 ##                               UV into thirds and stretched -- a 3-slice
-##   GDR_LIST_CHATTING           the message area, 365x343 at 27,28, with
-##                               four more text boxes stacked on the same
-##                               rect for the party, guild, alliance and
-##                               apprentice channels
-##   GDR_STATIC_*LAMP            the per-channel tab lamps along the top
+##   GDR_LIST_CHATTING ...       the five message lists, all 365x343 at 27,28:
+##                               IDs 16 (all), 17 (party), 18 (guild), 19
+##                               (alliance) and 30 (apprentice)
+##   GDR_STATIC_*LAMP            the five tab lamps
+##   GDR_CHAT_VSCROLL            the scroll bar, 16x308 at 0,36
 ##   GDR_CHAT_INPUTBOX           the input line, 360x20 at 38,378
 ##   GDR_CHAT_MODE_BTN           the channel selector left of it, 20x20 at
 ##                               18,378
 ##
-## Only the "all" channel is wired to anything: the server has one chat
-## stream and one whisper stream, and the other four tabs would be empty
-## rather than filtered.
+## **The tabs are built in code** (CIFChatViewer::Create, 0x7ab920): five
+## CIFSelectableAreas, IDs 100..104, each `chat_long_tab.ddj` at
+## (45 + 70 i, 0, 71, 20), captioned UIIT_CTL_CHAT_ALL,
+## UIIT_CTL_CHATMENU_PARTY / _GUILD / _ALLY / _TRAININGCAMP; tab 0 starts
+## selected (0x64cc30(1), which sets the font style 2 -- the bold variant,
+## 0x8b2cc0 -- where the others get 0x64cc30(0)). Create then moves the lamps
+## to (48 + 70 i, 6) (vslot 0x98 at 0x7ac098..0x7ac0f5), one per tab, and the
+## tab switch (0x7aa690) shows only the selected tab's lamp and list.
 ##
-## **One list at a time, the "all" one first** (round 585,
-## docs/RE_COMPLETION.md). CIFChatViewer::Create (0x7ab920) fetches the five
-## lists -- IDs 16 (all), 17 (party), 18 (guild), 19 (alliance) and 30
-## (apprentice) -- and its loop at 0x7abe80..0x7abf4b shows the first and
-## hides the other four; a tab switch (0x7aa690) hides all five and shows
-## the selected one. The tabs are built in code and this client has none, so
-## the four are hidden and stay hidden (HIDDEN_LISTS).
+## **What each tab shows** is 0x7aca30's routing (the chat-add function):
+## every line goes to the All list; a party line (type 4) also to #Party,
+## guild (5) to @Guild, union (0x0b) to %Union, academy (0x10) to &Academy;
+## and a whisper (2), a GM line (3, which a notice becomes), type 10 and a
+## system line (0xff) go to all five. Each list keeps 100 lines (+0x3a0 =
+## 100, 0x7abed8; 0x64f8a0 drops the oldest past it).
 ##
-## **Read with UI_UPDATE_2009_FIRST defined.** The same Create fetches IDs
-## 30, 31, 41 and 42, which the layout declares only under
-## `#ifdef UI_UPDATE_2009_FIRST`, and calls on each without a null check --
-## the child fetch returns 0 for an ID the layout lacks, so a build reading
-## the other branch would crash there. That is inferred from the code, not
-## read from a define table (the client's own table, at 0xeed4e0, is
-## consulted by 0x5004a0 and referenced by nothing else in the file). The
-## define's one visible effect here is the input line's rect: the `#else`
-## branch puts it at 18,378,381,20, under the mode button.
+## **The input line picks its channel from its first character** (0x7ad400):
+## `#` party, `@` guild, `%` union, `&` academy, `$name text` a whisper
+## (0x7ab230 splits the name at the first space), `/` a command, anything
+## else ordinary chat -- type 3 when the player is a GM (0x9d4c40). See
+## parse_line.
+##
+## Read with UI_UPDATE_2009_FIRST defined (round 585): the same Create
+## fetches IDs 30, 31, 41 and 42, which the layout declares only under that
+## define.
 
 const UiBuilder = preload("res://scripts/ui/ui_builder.gd")
 const UiLayoutParser = preload("res://scripts/ui/ui_layout_parser.gd")
 
-## Emitted when the player presses Enter on a non-empty input line.
+## Emitted when the player presses Enter on a non-empty line the chat sends:
+## a command (it starts with "/") or a chat line; World3D turns a chat line
+## into its request through request_for.
 signal message_submitted(text: String)
+## The selected tab changed (0..4).
+signal tab_changed(index: int)
 
 const LAYOUT_PATH := "resinfo\\ifchatviewer.txt"
 const REGISTRY_NAME := "GDR_CHAT_BOARD"
 const LAYOUT_DEFINES := ["UI_UPDATE_2009_FIRST"]
-## The channel lists Create hides; see the header.
-const HIDDEN_LISTS := ["GDR_LIST_CHATPARTY", "GDR_LIST_CHATGUILD",
-	"GDR_LIST_CHATALLIACNE", "GDR_LIST_APPRENTICE"]
 
 ## Fallback size if the registry is unreadable; the registry's own is used
 ## when it is there.
 const SIZE_WIDTH := 399.0
 const SIZE_HEIGHT := 398.0
 
-## How many lines the message area keeps. The window shows about twenty at
-## the authored 343-pixel height and a 12-pixel line, and holding a few
-## screens of history is what makes the scrollback worth having.
-const MAX_LINES := 200
+# --- The chat types (READ: 0x7ad400, 0x877810, 0x876810) ------------------
+
+const TYPE_ALL := 0x01
+const TYPE_WHISPER := 0x02
+const TYPE_ALL_GM := 0x03
+const TYPE_PARTY := 0x04
+const TYPE_GUILD := 0x05
+const TYPE_GLOBAL := 0x06
+const TYPE_NOTICE := 0x07
+const TYPE_STALL := 0x09
+const TYPE_ASK := 0x0a
+const TYPE_UNION := 0x0b
+const TYPE_NPC := 0x0d
+const TYPE_ACADEMY := 0x10
+const TYPE_SYSTEM := 0xff
+## Not a chat type: a line this client could not send (lone prefix, a
+## whisper with no text) -- 0x7ad400 ends the input without sending.
+const TYPE_INCOMPLETE := -1
+## Not a chat type: a "/" command, handled by the console.
+const TYPE_COMMAND := -2
+
+## The line colour per type, ARGB: 0x876810's switch (0x876a61..0x876a99).
+## Types it does not list are white.
+const TYPE_COLORS := {
+	TYPE_WHISPER: 0xff9ffffe,
+	TYPE_ASK: 0xff9ffffe,
+	TYPE_ALL_GM: 0xffffaec3,
+	TYPE_NOTICE: 0xffffaec3,
+	TYPE_PARTY: 0xff9affd0,
+	TYPE_GUILD: 0xffffb541,
+	TYPE_GLOBAL: 0xffffff00,
+	TYPE_UNION: 0xffc2f573,
+	TYPE_NPC: 0xffdbadf8,
+	TYPE_ACADEMY: 0xff64c7ff,
+}
+## A refusal's line: 0x7781b0 colours its messages 0xffdbc99b (the message
+## window it writes to, interface child 0x44, is not built here; the line
+## goes to the All list instead -- OURS).
+const REFUSAL_COLOR := 0xffdbc99b
+
+## The five tabs, in order: their lists' layout names, lamps' names,
+## captions and the channel mark each puts in an empty input line
+## (0x7aa690's switch: "", "#", "@", "%", "&").
+const LIST_NAMES := ["GDR_LIST_CHATTING", "GDR_LIST_CHATPARTY", "GDR_LIST_CHATGUILD",
+	"GDR_LIST_CHATALLIACNE", "GDR_LIST_APPRENTICE"]
+const LAMP_NAMES := ["GDR_STATIC_ALLLAMP", "GDR_STATIC_PARTYLAMP", "GDR_STATIC_GUILDLAMP",
+	"GDR_STATIC_ALLYLAMP", "GDR_STATIC_APPRENTICE"]
+const TAB_CAPTIONS := ["UIIT_CTL_CHAT_ALL", "UIIT_CTL_CHATMENU_PARTY", "UIIT_CTL_CHATMENU_GUILD",
+	"UIIT_CTL_CHATMENU_ALLY", "UIIT_CTL_CHATMENU_TRAININGCAMP"]
+## Used when the archive has no text table (the English column's own words,
+## textuisystem.txt).
+const TAB_FALLBACKS := ["All", "#Party", "@Guild", "%Union", "&Academy"]
+## Rows a private server's archive puts FIRST for a key, which the client's
+## first-row-wins loader (UiTextTable, round 634's review) would show. The
+## box's archive has UIIT_CTL_CHATMENU_TRAININGCAMP "&Team" first and
+## "&Academy" after it; the vanilla archive has only "&Academy", and the user
+## asked for Academy ("Job/Team is another private server modification").
+## So these captions fall back to the vanilla word (OURS, a labelled
+## override).
+const PRIVATE_SERVER_CAPTIONS := {"UIIT_CTL_CHATMENU_TRAININGCAMP": ["&Team", "Job/Team", "&Job/Team"]}
+const TAB_PREFIX := ["", "#", "@", "%", "&"]
+## The characters 0x7aa690 treats as "only a channel mark" when it swaps the
+## mark on a tab switch (its jump table at 0x7aa9dc: index 0 for these).
+const LONE_MARKS := "#$%&/@^~"
+
+const TAB_DDJ := "interface\\chattingwnd\\chat_long_tab.ddj"
+const TAB_X0 := 45.0
+const TAB_STEP := 70.0
+const TAB_SIZE := Vector2(71, 20)
+const LAMP_X0 := 48.0
+const LAMP_Y := 6.0
+
+## Continuation lines are indented by as many spaces as fit in 20 pixels,
+## at least one (0x64e930: `local_a8 = 0x14 / space_width`, the space's
+## advance from 0x8b2cc0's high word; enabled by +0x3cc, which Create sets
+## through 0x64e380(1)).
+const WRAP_INDENT_PX := 20.0
+## Lines per list (+0x3a0 = 100 at 0x7abed8).
+const MAX_LINES := 100
+## The line pitch: +0x39c = 14, set by 0x638c20(0xe) at 0x7abeb8 and added
+## per line by the draw (0x639ab0).
+const LINE_PITCH := 14
+## A list's hover row is drawn under a 40%-white bar (+0x3c8 = 0x66ffffff,
+## 0x638cf0 at 0x7abf37; the draw 0x639ab0 -> 0x63b0e0, the row from the
+## mouse-move slot 17 0x63ad10, enabled by +0x3aa and +0x386).
+const HOVER_COLOR := 0x66ffffff
+## An unselected tab's caption is text state 3 (0x8b4750(3) at 0x7aa79d),
+## the grey 0xffb4b4b4 the CIFStatic constructor sets for it (0x64d64f); the
+## selected one is state 0, white.
+const TAB_TEXT_SELECTED := 0xffffffff
+const TAB_TEXT_UNSELECTED := 0xffb4b4b4
+
+## The window's size modes (0x7aac20). The constructor starts at mode 2
+## (+0x428 = 2 at 0x7ad385); GDR_BTN_CHAT_SIZE (ID 15, its event-map entry
+## at 0xebebf0) runs 0x7ac2a0, which steps the mode 0..6 and back to 0. For a
+## mode m > 0: the lists are m * 56 + 7 tall and show m * 4 rows, the scroll
+## bar's length is m * 56 - 28, the middle band m * 56 + 12, and the window
+## is placed at y = screen height - 0x1d3 + (6 - m) * 56 with its bottom on
+## the bar (height (H - 0x44) - y, so 399 - (6 - m) * 56). Mode 0 is the
+## input row alone, 0x15 tall at H - 0x59, the tabs hidden (0x7a9a80(1)).
+## Mode 6 is the layout's own geometry.
+const MODE_DEFAULT := 2
+const MODE_MAX := 6
+const MODE_STEP := 56
+const ROWS_PER_MODE := 4
+const MODE0_HEIGHT := 21
+
+## The scroll bar (GDR_CHAT_VSCROLL, a CIFVerticalScroll): its layout,
+## ifverticalscroll.txt, is the up arrow at (0,-16), the down arrow and the
+## 16x16 thumb `com_scroll_button.ddj`; the bar's own art is
+## `com_scroll_bar.ddj` (0x65a9c0). Create gives it a length of 308 (0x134,
+## 0x7abf60 into 0x65a390) -- mode 6's; the size mode then sets m * 56 - 28
+## (0x7aac20, see MODE_DEFAULT). The length puts the thumb's travel at the bar's top
+## plus 0..308 (0x659150: `(pos - min) * length / (max - min)`) and the down
+## arrow at the bar's top + 308 + 16 (0x65a40f).
+const SCROLL_TOP := Vector2(0, 36)
+const SCROLL_LENGTH := 308.0
+const SCROLL_BUTTON := Vector2(16, 16)
+const ARROW_UP_DDJ := "interface\\chattingwnd\\chat_arrow_up.ddj"
+const ARROW_DOWN_DDJ := "interface\\chattingwnd\\chat_arrow_down.ddj"
+const SCROLL_BAR_DDJ := "interface\\ifcommon\\com_scroll_bar.ddj"
+const SCROLL_THUMB_DDJ := "interface\\ifcommon\\com_scroll_button.ddj"
+
+## MEASURED from the retail screenshot (docs/protocol/chat.md): every glyph
+## pixel's lower-right neighbour is black -- a one-pixel drop shadow.
+const SHADOW_OFFSET := Vector2(1, 1)
 
 var _builder: UiBuilder
-var _messages: RichTextLabel
 var _input: LineEdit
+var _root: Control
+var _lists: Array = []
+## What each list's visibility is switched on: its authored box, or the list
+## itself when the layout had none.
+var _list_boxes: Array = []
+var _lamps: Array = []
+var _tabs: Array = []
+var _scroll: ChatScroll
+var _tab := 0
+## The size mode (0..6); see MODE_DEFAULT.
+var mode := MODE_DEFAULT
+## Whether the player is in the group a channel needs: called with TYPE_PARTY,
+## TYPE_GUILD or TYPE_ACADEMY. Unset, every line goes to the server, which
+## refuses it itself.
+var group_check: Callable
+var _font: Font
+var _bold: Font
+var _font_size := 12
+
+## The player's own name, for the lines a sent message echoes.
+var own_name := ""
+## Whether the player is a GM, so an unmarked line goes out as type 3.
+var is_gm := false
+
+## Sent lines waiting for the server's answer, by index (0x787c10 keeps them
+## for 0xB025's handler, which looks them up through 0x787db0).
+var _pending := {}
+var _next_index := 0
 
 func _init(builder: UiBuilder = null) -> void:
 	_builder = builder
@@ -84,73 +240,138 @@ func setup() -> void:
 	size = panel_size
 	# The window blocks the world behind it -- clicking on chat should not
 	# also walk the character -- while its own children keep their filters,
-	# so the input line and the buttons still work. STOP, as HudWindow uses
-	# (its comment has the reasoning): Godot hit-tests the deepest control
-	# first, so the input line and the mode button still get their clicks,
-	# and STOP only catches what they did not want. This was PASS, which
-	# delivers the click here AND keeps propagating it, so a click on the
-	# scrollback or the frame reached World3D._unhandled_input: it walked the
-	# character, and since round 522 it also took the chat line's focus away
-	# mid-message (take_focus_back; measured by round 522's review).
+	# so the input line, the tabs and the scroll bar still work. STOP, as
+	# HudWindow uses: Godot hit-tests the deepest control first, and STOP
+	# only catches what the children did not want (round 522's review).
 	mouse_filter = Control.MOUSE_FILTER_STOP
 
+	if _builder != null:
+		_font = _builder.font_at(0)
+		_font_size = UiBuilder.FONT_SIZES[0]
+	if _font == null:
+		_font = ThemeDB.fallback_font
+	var bold := FontVariation.new()
+	bold.base_font = _font
+	# The client's bold variant is the same face at weight 600 (UiBuilder's
+	# FONT_SIZES note); Godot's embolden stands in for it (OURS).
+	bold.variation_embolden = 0.6
+	_bold = bold
+
 	if _builder == null:
+		_apply_mode(mode, false)
 		return
 	var layout := _builder.load_layout(LAYOUT_PATH, PackedStringArray(LAYOUT_DEFINES), true)
 	if layout == null:
 		return
-	var root := _builder.build_section(layout, "Create")
-	if root == null:
+	_root = _builder.build_section(layout, "Create")
+	if _root == null:
 		return
-	add_child(root)
-	UiBuilder.settle_authored_rects(root)
+	add_child(_root)
+	UiBuilder.settle_authored_rects(_root)
 
 	# The whisper list is authored *above* the window (y=-152) and is a
 	# pop-up, not part of the resting window. Hidden until there is
-	# something to put in it.
-	var whisper := root.get_node_or_null("GDR_WHISPERLIST")
+	# something to put in it (not built yet -- OPEN).
+	var whisper := _root.get_node_or_null("GDR_WHISPERLIST")
 	if whisper is CanvasItem:
 		(whisper as CanvasItem).visible = false
-	for list_name in HIDDEN_LISTS:
-		var list := root.get_node_or_null(list_name)
-		if list is CanvasItem:
-			(list as CanvasItem).visible = false
 
-	_install_message_area(root)
-	_install_input(root)
+	_install_lists()
+	_install_lamps()
+	_install_tabs()
+	_install_scroll()
+	_install_input()
+	var size_btn := _root.get_node_or_null("GDR_BTN_CHAT_SIZE") as BaseButton
+	print("HudChat: size button %s" % ("GDR_BTN_CHAT_SIZE (%s)" % size_btn.get_class() if size_btn != null else "missing"))
+	if size_btn != null:
+		size_btn.pressed.connect(cycle_mode)
+		# No keyboard focus on buttons (the client has none; round 606).
+		size_btn.focus_mode = Control.FOCUS_NONE
+	_apply_mode(mode, false)
 
-## Replaces the authored message box with a scrolling text view at exactly
-## its rect.
+## A ChatList over each authored list box, at exactly its rect.
 ##
-## `GDR_LIST_CHATTING` is a `CIFTextBox`, which UiBuilder builds as a plain
-## container -- the control is a scrolling list of styled lines and there is
-## no Godot node that is one. A RichTextLabel in its place keeps the
-## authored geometry and gains the scrollback.
-func _install_message_area(root: Control) -> void:
-	var box := root.get_node_or_null("GDR_LIST_CHATTING") as Control
-	if box == null:
-		return
-	_messages = RichTextLabel.new()
-	_messages.name = "Messages"
-	_messages.bbcode_enabled = true
-	_messages.scroll_following = true
-	_messages.fit_content = false
-	_messages.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_messages.mouse_filter = Control.MOUSE_FILTER_IGNORE
+## The five `GDR_LIST_*` are `CIFTextBox`es, which UiBuilder builds as plain
+## containers; each gets a ChatList child that draws its lines.
+func _install_lists() -> void:
+	for i in LIST_NAMES.size():
+		var box := _root.get_node_or_null(LIST_NAMES[i]) as Control
+		var list := ChatList.new()
+		list.name = "Messages" if i == 0 else "Messages%d" % i
+		list.font = _font
+		list.font_size = _font_size
+		list.set_anchors_preset(Control.PRESET_FULL_RECT)
+		# PASS: the list sees the mouse move for its hover bar; clicks and the
+		# wheel carry on to the window.
+		list.mouse_filter = Control.MOUSE_FILTER_PASS
+		list.changed.connect(_on_list_changed.bind(list))
+		if box != null:
+			box.add_child(list)
+			_list_boxes.append(box)
+		else:
+			# No layout box (an archive without the #ifdef branch): keep the
+			# list so lines are not lost, at the authored rect.
+			list.position = Vector2(27, 28)
+			list.size = Vector2(365, 343)
+			_root.add_child(list)
+			_list_boxes.append(list)
+		_lists.append(list)
+
+func _install_lamps() -> void:
+	for i in LAMP_NAMES.size():
+		var lamp := _root.get_node_or_null(LAMP_NAMES[i]) as Control
+		if lamp != null:
+			# The settle pass re-applies the authored rect, so the moved one
+			# becomes the authored one.
+			var sz := lamp.size
+			if lamp.has_meta(UiBuilder.AUTHORED_RECT_META):
+				sz = (lamp.get_meta(UiBuilder.AUTHORED_RECT_META) as Rect2).size
+			var rect := Rect2(Vector2(LAMP_X0 + TAB_STEP * i, LAMP_Y), sz)
+			lamp.set_meta(UiBuilder.AUTHORED_RECT_META, rect)
+			lamp.position = rect.position
+		_lamps.append(lamp)
+
+func _install_tabs() -> void:
+	var tex: Texture2D = _builder.load_texture(TAB_DDJ) if _builder != null else null
+	for i in TAB_CAPTIONS.size():
+		var tab := ChatTab.new()
+		tab.name = "ChatTab%d" % i
+		tab.texture = tex
+		tab.caption = caption_for(TAB_CAPTIONS[i], _text(TAB_CAPTIONS[i], TAB_FALLBACKS[i]), TAB_FALLBACKS[i])
+		tab.font = _font
+		tab.bold_font = _bold
+		tab.font_size = _font_size
+		tab.position = Vector2(TAB_X0 + TAB_STEP * i, 0)
+		tab.size = TAB_SIZE
+		tab.pressed.connect(select_tab.bind(i))
+		_root.add_child(tab)
+		# Under the layout's controls: the lamps (and the two buttons at the
+		# left) draw over the tab art, as the retail screenshot shows.
+		_root.move_child(tab, i)
+		_tabs.append(tab)
+
+func _install_scroll() -> void:
+	_scroll = ChatScroll.new()
+	_scroll.name = "ChatScroll"
 	if _builder != null:
-		var font := _builder.font_at(0)
-		if font != null:
-			_messages.add_theme_font_override("normal_font", font)
-		_messages.add_theme_font_size_override("normal_font_size", UiBuilder.FONT_SIZES[0])
-	box.add_child(_messages)
+		_scroll.up_texture = _builder.load_texture(ARROW_UP_DDJ)
+		_scroll.down_texture = _builder.load_texture(ARROW_DOWN_DDJ)
+		_scroll.bar_texture = _builder.load_texture(SCROLL_BAR_DDJ)
+		_scroll.thumb_texture = _builder.load_texture(SCROLL_THUMB_DDJ)
+	_scroll.length = SCROLL_LENGTH
+	# The up arrow sits 16 above the bar's top (its layout rect 0,-16).
+	_scroll.position = SCROLL_TOP - Vector2(0, SCROLL_BUTTON.y)
+	_scroll.size = Vector2(SCROLL_BUTTON.x, SCROLL_BUTTON.y * 3 + SCROLL_LENGTH)
+	_scroll.moved.connect(_on_scroll_moved)
+	_root.add_child(_scroll)
 
 ## Puts a real editable line over the authored input box.
 ##
 ## `GDR_CHAT_INPUTBOX` is a `CIFEInputChatBox` carrying an atlas slice of
 ## `window_all.ddj` for its own background, which UiBuilder already draws.
 ## What it needs is somewhere to type.
-func _install_input(root: Control) -> void:
-	var box := root.get_node_or_null("GDR_CHAT_INPUTBOX") as Control
+func _install_input() -> void:
+	var box := _root.get_node_or_null("GDR_CHAT_INPUTBOX") as Control
 	if box == null:
 		return
 	_input = LineEdit.new()
@@ -158,59 +379,516 @@ func _install_input(root: Control) -> void:
 	_input.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_input.flat = true
 	_input.caret_blink = true
-	if _builder != null:
-		var font := _builder.font_at(0)
-		if font != null:
-			_input.add_theme_font_override("font", font)
-		_input.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+	if _font != null:
+		_input.add_theme_font_override("font", _font)
+	_input.add_theme_font_size_override("font_size", _font_size)
 	_input.text_submitted.connect(_on_submitted)
 	box.add_child(_input)
 
-## Enter in the line (round 606). The client's key handler for its input box
-## (0x7ad400, CIFChatViewer's; the viewer's own caller at 0x7af463 feeds it
-## 0x0d after setting the box's text through vslot 0xb4) reads the box's text
-## and, when it is empty (the length test at 0x7ad544, `je 0x7ad598`), ends
-## the input: 0x7a9a40 gives the Win32 focus back to the main window
-## (SetFocus) and moves the UI focus to the viewer's +0x30 (0xb9d9f0; that
-## +0x30 is its parent is **inferred**). The test is on the raw text: vslot
-## 0xb8 (0x634da0) returns the box's buffer and 0x46e3d0 copies it by its
-## wcslen, with no trim (traced by round 606's review), so a line of spaces is
-## not empty -- it takes the send path like any other line, and is sent as
-## typed here too. A line with text is sent. In the handler 0x7a9a40 is
-## called at only three places (0x7ad4dd, 0x7ad59a, 0x7ad7e4): Escape, the
-## empty line, and, from 0x7ad7d3 and 0x7ad82e, a mode-2 line missing one of
-## the two parts 0x7ab230 parses out and a line of length 1 in the modes that
-## reach 0x7ad826 (what those modes and lines are was not read). So after a
-## line is sent the box keeps the focus, as this LineEdit does. Escape in the
-## box ends the input too (0x7ad4dd); Godot's LineEdit already releases its
-## focus on ui_cancel and consumes the key. The client's flood block (a
-## fourth way the input ends, docs/RE_COMPLETION.md round 606) is not built.
+## A tab's caption: the text table's, unless it is a known private-server
+## row (PRIVATE_SERVER_CAPTIONS), which gives way to the vanilla word.
+static func caption_for(key: String, resolved: String, vanilla: String) -> String:
+	if (PRIVATE_SERVER_CAPTIONS.get(key, []) as Array).has(resolved):
+		return vanilla
+	return resolved
+
+func _text(key: String, fallback: String) -> String:
+	if _builder == null:
+		return fallback
+	var s := _builder.resolve_text(key)
+	return fallback if s == "" or s == key else s
+
+# --- Tabs ----------------------------------------------------------------
+
+## Switches to tab `index` (0x7aa690): only its list and its lamp shown, the
+## scroll bar bound to it and at the bottom (0x65a5c0(999)), its caption
+## bold; and an input line that is empty or holds only a channel mark gets
+## this tab's mark.
+func select_tab(index: int) -> void:
+	if index < 0 or index >= LIST_NAMES.size():
+		return
+	_tab = index
+	for i in _list_boxes.size():
+		(_list_boxes[i] as Control).visible = i == index and mode > 0
+	for i in _lamps.size():
+		if _lamps[i] != null:
+			(_lamps[i] as CanvasItem).visible = i == index and mode > 0
+	for i in _tabs.size():
+		(_tabs[i] as ChatTab).selected = i == index
+	if index < _lists.size():
+		(_lists[index] as ChatList).scroll_to_bottom()
+		_sync_scroll()
+	if _input != null:
+		var t := _input.text
+		if t == "" or (t.length() == 1 and LONE_MARKS.contains(t)):
+			_input.text = TAB_PREFIX[index]
+			_input.caret_column = _input.text.length()
+	tab_changed.emit(index)
+
+func current_tab() -> int:
+	return _tab
+
+# --- Size modes (0x7aac20) ------------------------------------------------
+
+## The geometry of mode `m`, in window-local pixels (see MODE_DEFAULT).
+static func mode_geometry(m: int) -> Dictionary:
+	if m <= 0:
+		return {"height": MODE0_HEIGHT, "row_y": 0, "rows": 0}
+	return {
+		"height": 399 - (MODE_MAX - m) * MODE_STEP,
+		"list_h": m * MODE_STEP + 7,
+		"rows": m * ROWS_PER_MODE,
+		"scroll_len": m * MODE_STEP - 28,
+		"mid_h": m * MODE_STEP + 12,
+		"down_y": m * MODE_STEP + 37,
+		"row_y": m * MODE_STEP + 42,
+	}
+
+## The size button (0x7ac2a0): the next mode, 6 wrapping to 0.
+func cycle_mode() -> void:
+	var m := mode + 1
+	if m > MODE_MAX:
+		m = 0
+	print("CHAT MODE %d -> %d" % [mode, m])
+	_apply_mode(m, true)
+
+func set_mode(m: int) -> void:
+	_apply_mode(clampi(m, 0, MODE_MAX), true)
+
+## Lays the window out for mode `m`. With `keep_bottom` the window's bottom
+## edge stays where it is (the client places it on the bar in every mode).
+func _apply_mode(m: int, keep_bottom: bool) -> void:
+	mode = m
+	var g := mode_geometry(m)
+	var bottom := position.y + size.y
+	var h := float(g["height"])
+	custom_minimum_size = Vector2(size.x, h)
+	size = Vector2(size.x, h)
+	if keep_bottom:
+		position.y = bottom - h
+	if _root == null:
+		return
+	var open := m > 0
+	# 0x7a9a80: the tabs shown unless mode 0.
+	for t in _tabs:
+		(t as Control).visible = open
+	for n in ["GDR_CHAT_BG_UP", "GDR_CHAT_BG_MID", "GDR_CHAT_BG_DOWN", "GDR_BUTTON_WHISPERLIST",
+			"GDR_BUTTON_CHATTABHIDE"]:
+		var c := _root.get_node_or_null(n) as Control
+		if c != null:
+			c.visible = open
+	if _scroll != null:
+		_scroll.visible = open
+	# The authored scroll control is a plain container here (ChatScroll
+	# draws and takes the input); at its layout height, 308, it lay over the
+	# size button in the smaller modes and ate its click (found on the live
+	# run). It follows the mode's length, as the real one does (0x65a500).
+	var vscroll := _root.get_node_or_null("GDR_CHAT_VSCROLL") as Control
+	if vscroll != null:
+		vscroll.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vscroll.visible = open
+		if open:
+			_place("GDR_CHAT_VSCROLL", -1, float(g["scroll_len"]))
+	var row_y := float(g["row_y"])
+	for n in ["GDR_BTN_CHAT_SIZE", "GDR_CHAT_MODE_BTN", "GDR_CHAT_INPUTBOX"]:
+		_place(n, row_y)
+	# The penalty line keeps its authored 2 below the row.
+	_place("GDR_CHAT_STA_PENALTY", row_y + 2)
+	if not open:
+		for b in _list_boxes:
+			(b as Control).visible = false
+		for l in _lamps:
+			if l != null:
+				(l as CanvasItem).visible = false
+		return
+	_place("GDR_CHAT_BG_MID", -1, float(g["mid_h"]))
+	_place("GDR_CHAT_BG_DOWN", float(g["down_y"]))
+	for i in _lists.size():
+		(_lists[i] as ChatList).rows = int(g["rows"])
+		var box: Control = _list_boxes[i]
+		if box != _lists[i]:
+			_place(String(box.name), -1, float(g["list_h"]))
+		else:
+			box.size.y = float(g["list_h"])
+	if _scroll != null:
+		_scroll.length = float(g["scroll_len"])
+		_scroll.size = Vector2(SCROLL_BUTTON.x, SCROLL_BUTTON.y * 3 + _scroll.length)
+		_scroll.queue_redraw()
+	# 0x7aac20 ends with the tab switch.
+	select_tab(_tab)
+
+## Moves (y >= 0) and sizes (h >= 0) one layout control, keeping its settling
+## rect in step (UiBuilder.settle_authored_rects re-applies it).
+func _place(control_name: String, y: float, h: float = -1.0) -> void:
+	var c := _root.get_node_or_null(control_name) as Control
+	if c == null:
+		return
+	var r := Rect2(c.position, c.size)
+	if c.has_meta(UiBuilder.AUTHORED_RECT_META):
+		r = c.get_meta(UiBuilder.AUTHORED_RECT_META)
+	if y >= 0.0:
+		r.position.y = y
+	if h >= 0.0:
+		r.size.y = h
+	c.set_meta(UiBuilder.AUTHORED_RECT_META, r)
+	c.position = r.position
+	c.size = r.size
+
+func _current_list() -> ChatList:
+	return _lists[_tab] if _tab < _lists.size() else null
+
+# --- Lines ---------------------------------------------------------------
+
+## Which lists a line of `type` goes to (0x7aca30), as tab indices.
+static func lists_for(type: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	match type:
+		TYPE_ALL, TYPE_WHISPER, TYPE_ALL_GM, TYPE_GLOBAL, TYPE_ASK, TYPE_NPC, TYPE_SYSTEM, \
+				TYPE_PARTY, TYPE_GUILD, TYPE_UNION, 0x08, TYPE_ACADEMY:
+			out.append(0)
+		_:
+			# 0x7aca30's default: nothing is added anywhere.
+			return out
+	match type:
+		TYPE_PARTY:
+			out.append(1)
+		TYPE_GUILD:
+			out.append(2)
+		TYPE_UNION:
+			out.append(3)
+		TYPE_ACADEMY:
+			out.append(4)
+		TYPE_WHISPER, TYPE_SYSTEM, TYPE_ASK, TYPE_ALL_GM:
+			out.append_array(PackedInt32Array([1, 2, 3, 4]))
+	return out
+
+static func color_for(type: int) -> Color:
+	return argb(int(TYPE_COLORS.get(type, 0xffffffff)))
+
+static func argb(v: int) -> Color:
+	return Color8((v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff, (v >> 24) & 0xff)
+
+## The line 0x876810 shows for one message, as {type, text, color}: the type
+## is the one the line is FILED under (a notice goes out as type 3, a GM's
+## ";" line as type 1), or TYPE_INCOMPLETE for a type the dispatcher shows
+## nothing for.
+##
+##   name + ":" + text                      1, 6, 9 (and 0xd, 3)
+##   name + "(" + FROM|TO + "):" + text     2 -- TO for the sender's own echo
+##   name + "(Party):" + text               4   (UIIT_CTL_PARTY)
+##   name + "(Guild):" + text               5   (UIIT_CTL_GUILD)
+##   "(Notice):" + text                     7   (UIIT_MSG_NOTIFY), filed as 3
+##   name + "(ASK):" + text                 0x0a
+##   name + "(Union" + text                 0x0b (the sender's client puts
+##                                           "-<guild>): " in the text,
+##                                           0x7ada5a)
+##   name + "(Academy):" + text             0x10 (UIIT_CTL_TC_TRAININGCAMP)
+##
+## A type-3 line whose text starts with ";" loses the ";" and is shown as an
+## ordinary white line (0x876cc4). Line breaks in the text -- a real one or a
+## written "\n" -- are dropped first (0x876930's two loops).
+func format_line(type: int, name: String, message: String, sent: bool = false) -> Dictionary:
+	var text := message.replace("\\n", "").replace("\n", "").replace("\r", "")
+	var filed := type
+	var color := color_for(type)
+	var suffix := ""
+	match type:
+		TYPE_ALL, TYPE_GLOBAL, TYPE_STALL, TYPE_NPC:
+			suffix = ":"
+		TYPE_ALL_GM:
+			suffix = ":"
+			if text.begins_with(";"):
+				text = text.substr(1)
+				filed = TYPE_ALL
+				color = argb(0xffffffff)
+		TYPE_WHISPER:
+			suffix = "(%s):" % (_text("UIIT_CHATERR_WHISPER_TO_MESSAGE", "TO") if sent
+				else _text("UIIT_CHATERR_WHISPER_FROM_MESSAGE", "FROM"))
+		TYPE_PARTY:
+			suffix = "(%s):" % _text("UIIT_CTL_PARTY", "Party")
+		TYPE_GUILD:
+			suffix = "(%s):" % _text("UIIT_CTL_GUILD", "Guild")
+		TYPE_NOTICE:
+			return {"type": TYPE_ALL_GM, "color": color,
+				"text": "(%s):%s" % [_text("UIIT_MSG_NOTIFY", "Notice"), text]}
+		TYPE_ASK:
+			suffix = "(ASK):"
+		TYPE_UNION:
+			suffix = "(%s" % _text("UIIT_STT_GUILD_RESPECT_ALLY", "Union")
+		TYPE_ACADEMY:
+			suffix = "(%s):" % _text("UIIT_CTL_TC_TRAININGCAMP", "Academy")
+		TYPE_SYSTEM:
+			return {"type": TYPE_SYSTEM, "color": argb(0xffffffff), "text": text}
+		_:
+			return {"type": TYPE_INCOMPLETE, "color": color, "text": ""}
+	return {"type": filed, "color": color, "text": name + suffix + text}
+
+## Adds one message of `type` from `name` to the lists 0x7aca30 files it in.
+## `sent` marks the sender's own echo (a whisper then reads "(TO)").
+func add_chat(type: int, name: String, message: String, sent: bool = false) -> void:
+	var line := format_line(type, name, message, sent)
+	if int(line["type"]) == TYPE_INCOMPLETE:
+		return
+	_add_to(lists_for(int(line["type"])), String(line["text"]), line["color"])
+
+## Adds one line to the All list only, the way CIFChatViewer's vslot 49
+## (0x7aaa50) does. `speaker` empty makes it a system line (this client's
+## own "* ..." lines -- OURS: retail writes its system messages to a separate
+## window, interface child 0x44, that is not built).
+func add_message(speaker: String, text: String, color: Color = Color.WHITE) -> void:
+	var line := text
+	if speaker != "":
+		line = "%s:%s" % [speaker, text]
+	_add_to(PackedInt32Array([0]), line, color)
+
+## Kept for callers of the old API: a received whisper.
+func add_whisper(speaker: String, text: String) -> void:
+	add_chat(TYPE_WHISPER, speaker, text)
+
+func _add_to(targets: PackedInt32Array, text: String, color: Color) -> void:
+	for i in targets:
+		if i < _lists.size():
+			(_lists[i] as ChatList).add_line(text, color)
+
+## The lines a list holds now, wrapped, for tests and the QA dump.
+func list_lines(index: int) -> Array:
+	if index < 0 or index >= _lists.size():
+		return []
+	return (_lists[index] as ChatList).lines.duplicate()
+
+func list_messages(index: int) -> Array:
+	if index < 0 or index >= _lists.size():
+		return []
+	return (_lists[index] as ChatList).messages.duplicate()
+
+# --- Scrolling -----------------------------------------------------------
+
+func _on_list_changed(list: ChatList) -> void:
+	if list == _current_list():
+		_sync_scroll()
+
+func _sync_scroll() -> void:
+	var list := _current_list()
+	if _scroll == null or list == null:
+		return
+	_scroll.set_range(list.max_first(), list.first)
+
+func _on_scroll_moved(pos: int) -> void:
+	var list := _current_list()
+	if list != null:
+		list.set_first(pos)
+
+## One line per wheel notch (OURS: the list's wheel step was not read; the
+## arrows' step is 1, 0x6592a0's fourth argument at 0x7abf51).
+func _gui_input(event: InputEvent) -> void:
+	var mb := event as InputEventMouseButton
+	if mb == null or not mb.pressed:
+		return
+	var list := _current_list()
+	if list == null:
+		return
+	if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+		list.set_first(list.first - 1)
+		_sync_scroll()
+		accept_event()
+	elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		list.set_first(list.first + 1)
+		_sync_scroll()
+		accept_event()
+
+func scroll_by(lines: int) -> void:
+	var list := _current_list()
+	if list != null:
+		list.set_first(list.first + lines)
+		_sync_scroll()
+
+func scroll_position() -> int:
+	var list := _current_list()
+	return list.first if list != null else 0
+
+func scroll_max() -> int:
+	var list := _current_list()
+	return list.max_first() if list != null else 0
+
+func scroll_bar() -> ChatScroll:
+	return _scroll
+
+# --- Input ---------------------------------------------------------------
+
+## What a typed line asks for (0x7ad400), as {type, target, message}:
+##
+##   ""                 TYPE_INCOMPLETE (the input just ends)
+##   "/..."             TYPE_COMMAND
+##   "#text"            party      "@text"  guild
+##   "%text"            union      "&text"  academy
+##   "$name text"       whisper (0x7ab230: the name runs to the first
+##                      space; "$name" or "$" alone is TYPE_INCOMPLETE)
+##   anything else      ordinary chat, type 3 for a GM
+##
+## A channel mark with nothing after it is TYPE_INCOMPLETE (the length-1
+## test at 0x7ad7dc). The mark is not sent as part of the text (INFERRED:
+## 0x7ad904 copies the raw line when the split left the message empty;
+## whether retail's server strips it was not read -- srrevamp's client does).
+static func parse_line(text: String, gm: bool = false) -> Dictionary:
+	var out := {"type": TYPE_INCOMPLETE, "target": "", "message": ""}
+	if text == "":
+		return out
+	var first := text[0]
+	match first:
+		"/":
+			out["type"] = TYPE_COMMAND
+			out["message"] = text
+			return out
+		"#", "@", "%", "&":
+			if text.length() == 1:
+				return out
+			out["type"] = {"#": TYPE_PARTY, "@": TYPE_GUILD, "%": TYPE_UNION, "&": TYPE_ACADEMY}[first]
+			out["message"] = text.substr(1)
+			return out
+		"$":
+			var body := text.substr(1)
+			var space := body.find(" ")
+			if space <= 0:
+				return out
+			var target := body.substr(0, space)
+			var message := body.substr(space + 1)
+			if message == "":
+				return out
+			out["type"] = TYPE_WHISPER
+			out["target"] = target
+			out["message"] = message
+			return out
+	out["type"] = TYPE_ALL_GM if gm else TYPE_ALL
+	out["message"] = text
+	return out
+
+## The line the input box holds after `sent` went out (0x7add04..0x7ade70):
+## empty after ordinary chat or a global, ";" after a GM's ";" line, the
+## whisper's "$name " again, the channel's own mark after a channel line --
+## and then, on any tab but All, that tab's mark instead.
+static func line_after_send(sent: Dictionary, tab: int) -> String:
+	var t := ""
+	match int(sent.get("type", TYPE_ALL)):
+		TYPE_ALL_GM:
+			t = ";" if String(sent.get("message", "")).begins_with(";") else ""
+		TYPE_WHISPER:
+			t = "$%s " % String(sent.get("target", ""))
+		TYPE_PARTY:
+			t = "#"
+		TYPE_GUILD:
+			t = "@"
+		TYPE_UNION:
+			t = "%"
+		TYPE_ACADEMY:
+			t = "&"
+	if tab >= 1 and tab < TAB_PREFIX.size():
+		t = TAB_PREFIX[tab]
+	return t
+
+## Enter in the line (round 606): an empty box ends the input -- 0x7ad400's
+## length test at 0x7ad544 gives the focus back to the game (0x7a9a40); a
+## line of spaces is not empty (no trim) and is sent. A line with only a
+## channel mark, or a whisper with no text, ends the input the same way
+## without sending (0x7ad7e2). A line that goes out leaves the box focused
+## with the line line_after_send gives. Escape ends the input too (0x7ad4dd;
+## LineEdit releases its focus on ui_cancel). The flood block (0x7a9bb0 after
+## four lines in 4 s or six in 10 s) is not built.
 func _on_submitted(text: String) -> void:
-	_input.clear()
 	if text == "":
 		_input.release_focus()
 		return
+	var parsed := parse_line(text, is_gm)
+	var type := int(parsed["type"])
+	if type == TYPE_INCOMPLETE:
+		_input.release_focus()
+		return
+	# 0x7ad400 refuses a party, guild or academy line itself when the player
+	# is in no such group (0x987070 / 0x9870e0 / 0x987140), shows the refusal
+	# (0x7781b0) and empties the box (SetText "" at 0x7ad875).
+	if type in [TYPE_PARTY, TYPE_GUILD, TYPE_ACADEMY] and group_check.is_valid() \
+			and not bool(group_check.call(type)):
+		add_message("", group_refusal(type), argb(REFUSAL_COLOR))
+		_input.text = ""
+		return
+	_input.clear()
 	message_submitted.emit(text)
+	var after := "" if type == TYPE_COMMAND else line_after_send(parsed, _tab)
+	if type == TYPE_COMMAND and _tab >= 1:
+		after = TAB_PREFIX[_tab]
+	_input.text = after
+	_input.caret_column = after.length()
 
-## Adds one line. `speaker` empty makes it a system line.
-func add_message(speaker: String, text: String) -> void:
-	if _messages == null:
+## The request for a chat line World3D sends (OpChatSend), with the index the
+## server's answer carries back; {} for a command or a line that is not sent.
+## The line is kept until that answer (on_result).
+func request_for(text: String) -> Dictionary:
+	var parsed := parse_line(text, is_gm)
+	var type := int(parsed["type"])
+	if type == TYPE_INCOMPLETE or type == TYPE_COMMAND:
+		return {}
+	_next_index = (_next_index % 255) + 1
+	parsed["index"] = _next_index
+	_pending[_next_index] = parsed
+	return parsed
+
+## The server's answer to a sent line (0xB025, 0x877340): on success the
+## player's own line appears -- their name, or the whisper's target read
+## "(TO)" -- and on failure the refusal, in the client's own words.
+func on_result(ok: bool, type: int, index: int, code: int, target: String) -> void:
+	var sent: Dictionary = _pending.get(index, {})
+	_pending.erase(index)
+	if ok:
+		if sent.is_empty():
+			return
+		var t := int(sent["type"])
+		if t == TYPE_WHISPER:
+			add_chat(t, String(sent["target"]), String(sent["message"]), true)
+		else:
+			add_chat(t, own_name, String(sent["message"]), true)
 		return
-	var line := text
-	if speaker != "":
-		line = "%s: %s" % [speaker, text]
-	_messages.append_text(line + "\n")
-	_trim()
+	var line := refusal_text(code, target if target != "" else String(sent.get("target", "")))
+	if line != "":
+		add_message("", line, argb(REFUSAL_COLOR))
 
-## Adds a whisper, which the client shows apart from open chat.
-func add_whisper(speaker: String, text: String) -> void:
-	add_message("[%s]" % speaker, text)
+## The line 0x7ad400 shows for a channel line with no group behind it.
+func group_refusal(type: int) -> String:
+	match type:
+		TYPE_PARTY:
+			return _text("UIIT_MSG_PARTYERR_CANT_FIND_PARTY", "Cannot find the corresponding party.")
+		TYPE_GUILD:
+			return _text("UIIT_MSG_GUILD_NON_EXISTING",
+				"Cannot carry this function out because you do not belong to the guild.")
+		TYPE_ACADEMY:
+			return _text("UIIT_MSG_TC_ERROR_NOT_POSITION", "You do not belong to an Academy.")
+	return ""
 
-func _trim() -> void:
-	if _messages == null:
-		return
-	while _messages.get_line_count() > MAX_LINES and _messages.get_paragraph_count() > 0:
-		_messages.remove_paragraph(0)
+## The refusal line for a result code (0x877340's switch; the guild and
+## academy ones are 0x7ad400's own client-side refusals, which srrevamp's
+## server answers -- see server/internal/session/chat.go).
+func refusal_text(code: int, target: String) -> String:
+	match code:
+		0x0003:
+			return _text("UIIT_CHATERR_CANT_FIND_TARGET", "Cannot find [%s].").replace("%s", target)
+		0x2006:
+			return _text("UIIT_CHATERR_YOU_ARE_SQUELCHED", "[%s]'s whisper function is turn off.").replace("%s", target)
+		0x2008:
+			return _text("UIIT_CHATERR_INVALID_COMMAND", "Invalid chat command.")
+		0x200a:
+			return _text("UIIT_CHATERR_NOT_A_PARTY_MEMBER", "Not in the party status.")
+		0x200b, 0x200c:
+			return _text("UIIT_CHATERR_ALLIANCE_PERMISSION_DENIED",
+				"Cannot use the Ally Chat because the selected guild is not your ally.")
+		0x200d:
+			return _text("UIIT_STT_CANT_CHATTING", "Chat Restricted: %d seconds").replace("%d", "10")
+		0x200e:
+			return _text("UIIT_MSG_GUILD_UNION_CHAT_LIMIT", "You do not have union chatting authority, so you cannot chat.")
+		0xf001:
+			return group_refusal(TYPE_GUILD)
+		0xf002:
+			return group_refusal(TYPE_ACADEMY)
+		0xf003:
+			return "No global chatting item in that slot."
+	return ""
 
 ## Whether the player is typing, so the world should not treat their keys as
 ## movement.
@@ -232,6 +910,10 @@ func open_with(text: String) -> bool:
 	_input.grab_focus()
 	_input.caret_column = text.length()
 	return true
+
+## The input line's current text (tests, the QA dump).
+func input_text() -> String:
+	return _input.text if _input != null else ""
 
 ## Enter with no text line holding the keyboard opens the chat line (round
 ## 606), read from the client's in-game key handler 0x78b660: a key the key
@@ -267,3 +949,321 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	focus_input()
 	get_viewport().set_input_as_handled()
+
+
+## One message list: CIFTextBox's lines, laid out the way 0x64e930 lays them
+## out -- each message wrapped to the box's width, every continuation line
+## starting with as many spaces as fit in WRAP_INDENT_PX -- and drawn from the
+## scroll position down, one line per font height, with a one-pixel shadow.
+class ChatList extends Control:
+	signal changed
+
+	var font: Font
+	var font_size := 12
+	## The messages, oldest first: {text, color}.
+	var messages: Array = []
+	## The wrapped lines drawn, oldest first: {text, color}.
+	var lines: Array = []
+	## The first line drawn (the scroll position).
+	var first := 0
+	## The rows the list shows (+0x3a4, the mode's m * 4).
+	var rows := HudChat.MODE_DEFAULT * HudChat.ROWS_PER_MODE:
+		set(v):
+			var follow := at_bottom()
+			rows = maxi(1, v)
+			first = max_first() if follow else clampi(first, 0, max_first())
+			queue_redraw()
+			changed.emit()
+	## The row under the mouse, or -1 (0x63ad10 sets it on a mouse move).
+	var hover := -1
+	var _laid_width := -1.0
+
+	func _ready() -> void:
+		mouse_exited.connect(func() -> void:
+			hover = -1
+			queue_redraw())
+
+	func line_height() -> float:
+		return float(HudChat.LINE_PITCH)
+
+	func visible_lines() -> int:
+		return rows
+
+	func max_first() -> int:
+		return maxi(0, lines.size() - visible_lines())
+
+	func at_bottom() -> bool:
+		return first >= max_first()
+
+	## Where the first drawn line's top sits: with fewer lines than rows they
+	## stack from the bottom -- 0x639ab0 adds pitch * (rows - count) when
+	## +0x3a8 is set (0x639d20..0x639d52), which Create sets (0x638b50(1) at
+	## 0x7abeee).
+	func top_offset() -> float:
+		var n := lines.size()
+		return line_height() * float(rows - n) if n < rows else 0.0
+
+	## The line under local y, or -1 (0x63ad10's row: (y - top) / pitch,
+	## shifted for the bottom stacking, plus the scroll position).
+	func line_at(y: float) -> int:
+		var rel := y - top_offset()
+		if rel < 0.0:
+			return -1
+		var row := int(floor(rel / line_height()))
+		if row >= rows:
+			return -1
+		var idx := first + row
+		return idx if idx < lines.size() else -1
+
+	func set_first(pos: int) -> void:
+		var clamped := clampi(pos, 0, max_first())
+		if clamped != first:
+			first = clamped
+			queue_redraw()
+		changed.emit()
+
+	func scroll_to_bottom() -> void:
+		first = max_first()
+		queue_redraw()
+		changed.emit()
+
+	func add_line(text: String, color: Color) -> void:
+		var follow := at_bottom()
+		messages.append({"text": text, "color": color})
+		while messages.size() > HudChat.MAX_LINES:
+			messages.pop_front()
+		_relayout()
+		if follow:
+			first = max_first()
+		else:
+			first = clampi(first, 0, max_first())
+		queue_redraw()
+		changed.emit()
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED and size.x != _laid_width:
+			var follow := at_bottom()
+			_relayout()
+			first = max_first() if follow else clampi(first, 0, max_first())
+			queue_redraw()
+			changed.emit()
+
+	func _gui_input(event: InputEvent) -> void:
+		var mm := event as InputEventMouseMotion
+		if mm != null:
+			var h := line_at(mm.position.y)
+			if h != hover:
+				hover = h
+				queue_redraw()
+
+	func _relayout() -> void:
+		_laid_width = size.x
+		lines.clear()
+		for m in messages:
+			for l in HudChat.wrap(String(m["text"]), font, font_size, size.x):
+				lines.append({"text": l, "color": m["color"]})
+
+	func _draw() -> void:
+		if font == null:
+			return
+		var h := line_height()
+		var ascent := font.get_ascent(font_size)
+		var y0 := top_offset()
+		for i in visible_lines():
+			var idx := first + i
+			if idx >= lines.size():
+				break
+			var l: Dictionary = lines[idx]
+			var top := y0 + i * h
+			if idx == hover:
+				# The bar is the line's text height (+0x384 unset: 0x639ab0
+				# takes the extent's height, not the pitch).
+				draw_rect(Rect2(0, top, size.x, font.get_height(font_size)), HudChat.argb(HudChat.HOVER_COLOR))
+			var at := Vector2(0, top + ascent)
+			draw_string(font, at + HudChat.SHADOW_OFFSET, String(l["text"]), HORIZONTAL_ALIGNMENT_LEFT, -1,
+				font_size, Color(0, 0, 0, (l["color"] as Color).a))
+			draw_string(font, at, String(l["text"]), HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, l["color"])
+
+## Splits one message into the lines 0x64e930 draws: as much as fits in
+## `width`, broken at a space where there is one (MEASURED from the retail
+## screenshot: every wrapped line there breaks between words); a
+## continuation line starts with floor(20 / space width) spaces (at least
+## one) and has that much less room.
+static func wrap(text: String, font: Font, font_size: int, width: float) -> PackedStringArray:
+	var out := PackedStringArray()
+	if font == null or width <= 0.0:
+		out.append(text)
+		return out
+	var space_w := font.get_string_size(" ", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+	var indent_n := maxi(1, int(WRAP_INDENT_PX / space_w)) if space_w > 0.0 else 1
+	var indent := " ".repeat(indent_n)
+	var rest := text
+	var first_line := true
+	while true:
+		var prefix := "" if first_line else indent
+		var line := prefix + rest
+		if font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= width:
+			out.append(line)
+			break
+		# The longest head of `rest` that fits after the prefix.
+		var lo := 1
+		var hi := rest.length()
+		while lo < hi:
+			var mid := (lo + hi + 1) / 2
+			if font.get_string_size(prefix + rest.substr(0, mid), HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= width:
+				lo = mid
+			else:
+				hi = mid - 1
+		var cut := lo
+		var brk := rest.substr(0, cut + 1).rfind(" ")
+		if brk > 0:
+			out.append(prefix + rest.substr(0, brk))
+			rest = rest.substr(brk + 1)
+		else:
+			out.append(prefix + rest.substr(0, cut))
+			rest = rest.substr(cut)
+		first_line = false
+		if rest == "":
+			break
+	return out
+
+
+## One tab: `chat_long_tab.ddj` stretched over 71x20 with its caption
+## centred on it (the centring is MEASURED from the retail screenshot), bold
+## and white while selected (0x64cc30(1), text state 0), grey 0xffb4b4b4
+## otherwise (text state 3, 0x8b4750(3)).
+class ChatTab extends Control:
+	signal pressed
+
+	var texture: Texture2D
+	var caption := ""
+	var font: Font
+	var bold_font: Font
+	var font_size := 12
+	var selected := false:
+		set(v):
+			selected = v
+			queue_redraw()
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_STOP
+
+	func _draw() -> void:
+		if texture != null:
+			draw_texture_rect(texture, Rect2(Vector2.ZERO, size), false)
+		var f := bold_font if selected and bold_font != null else font
+		if f == null or caption == "":
+			return
+		var w := f.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+		var y := (size.y - f.get_height(font_size)) / 2.0 + f.get_ascent(font_size)
+		draw_string(f, Vector2(round((size.x - w) / 2.0), round(y)), caption, HORIZONTAL_ALIGNMENT_LEFT, -1,
+			font_size, text_color())
+
+	func text_color() -> Color:
+		return HudChat.argb(HudChat.TAB_TEXT_SELECTED if selected else HudChat.TAB_TEXT_UNSELECTED)
+
+	func _gui_input(event: InputEvent) -> void:
+		var mb := event as InputEventMouseButton
+		if mb != null and mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			pressed.emit()
+			accept_event()
+
+
+## The chat's scroll bar: up arrow, the bar, the 16x16 thumb, the down arrow,
+## top to bottom, positioned as 0x65a390 and 0x659150 place them.
+class ChatScroll extends Control:
+	signal moved(pos: int)
+
+	var up_texture: Texture2D
+	var down_texture: Texture2D
+	var bar_texture: Texture2D
+	var thumb_texture: Texture2D
+	var length := 308.0
+	var maximum := 0
+	var pos := 0
+	var _dragging := false
+	var _drag_dy := 0.0
+
+	const B := 16.0
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_STOP
+
+	func set_range(max_pos: int, at: int) -> void:
+		maximum = maxi(0, max_pos)
+		pos = clampi(at, 0, maximum)
+		queue_redraw()
+
+	## The thumb's top, relative to this control (0x659150: the thumb moves
+	## (pos - min) * length / (max - min) below the bar's top).
+	func thumb_y() -> float:
+		var off := 0.0
+		if maximum > 0:
+			off = floor(float(pos) * length / float(maximum))
+		return B + off
+
+	func down_y() -> float:
+		return B + length + B
+
+	func _draw() -> void:
+		if bar_texture != null:
+			draw_texture_rect(bar_texture, Rect2(0, B, B, length + B), false)
+		if up_texture != null:
+			draw_texture_rect(up_texture, Rect2(0, 0, B, B), false)
+		if thumb_texture != null:
+			draw_texture_rect(thumb_texture, Rect2(0, thumb_y(), B, B), false)
+		if down_texture != null:
+			draw_texture_rect(down_texture, Rect2(0, down_y(), B, B), false)
+
+	func _step(delta: int) -> void:
+		var np := clampi(pos + delta, 0, maximum)
+		if np != pos:
+			pos = np
+			queue_redraw()
+		moved.emit(pos)
+
+	func _pos_for_thumb_top(y: float) -> int:
+		if maximum <= 0:
+			return 0
+		return clampi(int(round((y - B) * float(maximum) / length)), 0, maximum)
+
+	## The arrows step one line (0x6592a0's step 1). A click on the bar jumps
+	## the thumb there and starts a drag (OURS: the bar's own click was not
+	## read).
+	func _gui_input(event: InputEvent) -> void:
+		var mb := event as InputEventMouseButton
+		if mb != null and mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed:
+				var y := mb.position.y
+				if y < B:
+					_step(-1)
+				elif y >= down_y():
+					_step(1)
+				else:
+					var ty := thumb_y()
+					_drag_dy = y - ty if (y >= ty and y < ty + B) else B / 2.0
+					_dragging = true
+					var np := _pos_for_thumb_top(y - _drag_dy)
+					if np != pos:
+						pos = np
+						queue_redraw()
+						moved.emit(pos)
+			else:
+				_dragging = false
+			accept_event()
+			return
+		var mm := event as InputEventMouseMotion
+		if mm != null and _dragging:
+			var np := _pos_for_thumb_top(mm.position.y - _drag_dy)
+			if np != pos:
+				pos = np
+				queue_redraw()
+				moved.emit(pos)
+			accept_event()
+			return
+		if mb != null and mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+			_step(-1)
+			accept_event()
+		elif mb != null and mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_step(1)
+			accept_event()

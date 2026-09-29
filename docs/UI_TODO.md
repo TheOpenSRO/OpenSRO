@@ -455,9 +455,10 @@ buttons, a scrollback over `GDR_LIST_CHATTING` and a real input line over `GDR_C
 and the developer ChatPanel is retired. Verified end to end: a message typed by the QA run went to
 the server and came back into the window.
 
-Still there: the Change Zone box, which has to stay until there is another way to travel. The
-four other chat channels (party, guild, alliance, apprentice) are built but not fed -- the server
-has one chat stream, so filtering them would only produce four empty tabs.
+Still there: the Change Zone box, which has to stay until there is another way to travel. Since
+round 634 the chat has its five code-built tabs, each list fed by type as CIFChatViewer files it,
+the left scroll bar and the channel marks (docs/protocol/chat.md; what is left is in TODO.md's
+"Chat (round 634)").
 
 ### 4. Panels with no server behind them
 `action`, `partymatch`, `academy`, `autopotion` and `alchemy` open and draw, but there is nothing
