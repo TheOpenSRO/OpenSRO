@@ -788,10 +788,6 @@ func useSkillHandler(
 		if !knows {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "skill not known"}).Encode()})
 		}
-		// THE CATEGORY END (round 636, buffs.go endCategoryOnSkillUse): a
-		// skill use ends the caster's records its 'skc' / 0x1d-0x23 bytes
-		// name, before any of the gate's refusals below.
-		endCategoryOnSkillUse(hub, characterID, castRow)
 
 		// THE WEAPON GATE, recovered from FUN_0058d480: a skill names up to two
 		// weapon type codes and the engine refuses the cast with error 0x300d
@@ -1067,8 +1063,10 @@ func useSkillHandler(
 		// The recast rule after the costs' test, as the gate orders them
 		// (round 636, READ): 0x58e292 NOTENOUGHHP and 0x58e2b1 NOTENOUGHMP
 		// come before row 16's 0x300c at 0x58e2fd.
-		if isBuff && buffBooks.CheckOverlap(buffOwner, buffSpec(castRow, characterID)) != buff.NotRefused {
-			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: overlapRefusal}).Encode()})
+		if isBuff {
+			if r := buffBooks.CheckOverlap(buffOwner, buffSpec(castRow, characterID)); r != buff.NotRefused {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: refusalText(r)}).Encode()})
+			}
 		}
 		// A character target is measured as a monster one is (round 622,
 		// characterInReach), before the costs.
@@ -1083,6 +1081,27 @@ func useSkillHandler(
 			keepUp.Cancel(characterID)
 			res := echoed(req, &AttackResult{MonsterID: req.TargetMonsterID, Error: "too far away"})
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: res.Encode()})
+		}
+		// THE CATEGORY END (round 636, corrected by its review; buffs.go
+		// endCategoryOnSkillUse): once every refusal above has passed. READ:
+		// the gate runs at request time (0x4acc40, 0x4aced4); the skill
+		// tick's case 2 then posts 0x7070 -> vslot 383 FUN_004b21b0 ->
+		// FUN_0059b7c0 -> FUN_0059b480, whose category end (0x59b745) runs
+		// just before SkillActionHandler. A refused cast ends nothing.
+		if isBuff && buffOwner == characterID {
+			endCategoryOnSkillUseLocked(hub, characterID, castRow) // the caster's buff lock is held
+		} else {
+			endCategoryOnSkillUse(hub, characterID, castRow)
+		}
+		// SkillAction_Buff's sub-state 0 bit test (round 636's review,
+		// buff.Books.CheckEngage): on the caster's book, before the costs; a
+		// hit ends the cast silently and charges nothing.
+		if isBuff {
+			if r := buffBooks.CheckEngage(characterID, buffOwner, buffSpec(castRow, characterID)); r == buff.RefusedSilent {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: silentRefusal}).Encode()})
+			} else if r != buff.NotRefused {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: refusalText(r)}).Encode()})
+			}
 		}
 
 		// Pay the skill's real HEALTH cost first. The engine checks health
@@ -1276,10 +1295,10 @@ func useSkillHandler(
 			// re-use timer is not re-armed, disclosed) and answer a refusal.
 			done := true
 			if isBuff && friendly {
-				done = startBuffOnLocked(hub, castRow, characterID, friendTarget.CharacterID, now)
+				done = startBuffOnLocked(hub, castRow, characterID, friendTarget.CharacterID, now) != startFailed
 			} else if isBuff {
 				e, _ := hub.EntityBySession(sess.ID())
-				done = startCasterBuffLocked(hub.EntitiesInZone(e.Zone), castRow, characterID, now)
+				done = startCasterBuffLocked(hub.EntitiesInZone(e.Zone), castRow, characterID, now) != startFailed
 			}
 			if isGround && done {
 				done = moveBySkill(sess, hub, chars, req.SkillID, groundDest, now)

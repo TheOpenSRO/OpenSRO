@@ -1255,11 +1255,15 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       and `ovl2` fill (`SkillBook::SetGroupBits` 0x59dc00 / `FUN_0059db10`). Fire Protection no longer
       stacks; a second Grass Walk variant is refused 0x300c while one runs, as retail refuses it. The
       whole table is driven by `TestRecastRuleCensus` (`SRREVAMP_SKILLS_CSV`). Still open:
-      - the `lnks` path `FUN_0059dc80` (32 Target_Required 0 `lnks` rows get no recast check; it
-        needs a linked second object);
+      - the `lnks` path `FUN_0059dc80` is built (round 636's review and its follow-up: the gate's
+        call for the 32 trap rows, the target test's for the 276 Target_Required 1 rows, through
+        the caster's link entries). Still open there: retail's link record ending the target's
+        record when it ends (a caster's death or logout leaves the target's buff running here);
+        whether a trap's record ends with its object;
       - row 16's `hide` rule (the caster's vslot 0x100 state 4: which state is not read);
       - the running-action half of `FUN_0059db10` (a buff between its cast and its engage; srrevamp
         engages at the cast);
+      - the buff restore through `CTJ_SkillKeeper` slot 12 (`FUN_00650e70`, a SetGroupBits caller);
       - the category end's other callers: movement (mask 1) and berserk (mask 4) end nothing by the
         data (no `skc` carries them) and are not wired; `GObjPC::FUN_004d2200`'s mask (8,
         `SKILL_FORT_REPAIR_KIT`) was not traced.

@@ -7155,6 +7155,147 @@ Tahoma: its first row says Arial) and hud_panels.gd (the doll's turn direction i
 Not done: the dungeon light (`Map::FUN_00a255c0` gives the object shader an ambient-only light in a
 dungeon). This client loads no dungeon, so there is nowhere for it to apply yet (OPEN).
 
+## Six-hundred-and-thirty-sixth round, review follow-up: a refused cast no longer ends a stealth, a Fire Trap or a Warrior guard link can't be doubled, and a second Fire Detect is charged and does nothing, as retail does
+
+The review of ff30b8b confirmed:
+- the bit set;
+- the per-record set and clear;
+- the branches;
+- the gate order;
+- the lower-level refusal;
+- `/speed` and the CSV.
+
+It found five things wrong or missing. Labels: READ, MEASURED, INFERRED, OURS, OPEN. The detail is
+in `docs/protocol/skill_buffs.md`.
+
+**1. The category end ran before the gate (READ; fixed).**
+- Round 636 called `FUN_005a16c0` as soon as a known skill was named. So a refused cast ended a
+  stealth: a lower level of it, or a Grass Walk inside its re-use delay.
+- Retail's gate runs at request time (`GObjPC::HandleCharacterActionRequest_7074` 0x4acc40,
+  0x4aced4).
+- The skill tick's case 2 then posts 0x7070 → vslot 383 `FUN_004b21b0` → `FUN_0059b7c0` →
+  `FUN_0059b480`. That function runs the category end at 0x59b745, just before
+  `SkillActionHandler`.
+- srrevamp now runs it once every refusal has passed: after the gate, the cost test and the reach
+  test.
+- The review's probe is folded in as `TestRound636ReviewLowerStealthIsRefused` and
+  `TestRound636ReviewRefusedCastKeepsStealth`.
+
+**2. `FUN_0059dc80` for the trap rows (READ; the review's diff, checked against the asm).**
+- I applied the reviewer's `buff.linkLocked`: skill CSV columns 77..81, the Postgres columns, the
+  refusal texts 0x3029/0x3037 (MEASURED) and its tests.
+- Checked against 0x59dc80..0x59dde2, every path:
+  - **same skill:** neither row with `lks2` → count, or 0x300c on the linked object. Both with it →
+    0x300c on a match, no count. One with it → no count.
+  - **another skill:** neither with `lks2` and a non-zero `lnks` value[0] → 0x300c. Both with it →
+    count on a match.
+  - the count check (0x59dd77) against the new row's `lnks` value[2]. 0x3037 needs both `qest`
+    (`+0x49c`) and `trap` (`+0x4a0`).
+- The diff never checks at the non-counting paths. That is equivalent, because the count cannot
+  change there.
+- Gate row 16 calls it only for an `lnks` row with an `efr` of kind 3, with argument 0 (0x58e308 →
+  0x58e315).
+- The doc paragraph's three errors are fixed by the rewrite:
+  - it now names the book it walks and the argument;
+  - it gives the per-branch counting;
+  - it gives the `qest`+`trap` pair.
+
+**3. The target test's `FUN_0059dc80` (READ; built).**
+- The census row "160 `lks2`, nothing stops, READ" was wrong. All 160 carry `lnks` and are
+  Target_Required 1 (MEASURED: 142 `SKILL_EU_WARLOCK_DOTA_*`, 18 `SKILL_EU_BARD_BATTLAA_MPSTEAL_A`).
+- The target test calls `FUN_0059dc80` for every `lnks` row (0x58d27d..0x58d2a6) on the **caster's**
+  book, with the target as the object (0x58d294 `push ebp`). 276 rows meet it.
+- It counts the second records that SkillAction_Buff's Target_Required 1 branch builds for the
+  caster (READ: link struct `+0xc` the caster, `+0x10` the target).
+- srrevamp keeps them as the caster's link entries (`buff.Books.links`). This is contained:
+  - they are out of the visible book (OURS);
+  - they are added with the target's record and dropped when it ends (INFERRED);
+  - they are dropped at the caster's teardown.
+- A Warrior guard (`lnks` 1 . 2) now links two party members. A third is 0x3029, the same one again
+  0x300c, and another level of the guard 0x300c.
+- The census drives all 106 friendly rows with a non-zero value[2] to their limit.
+- OPEN: retail's link record ends the target's record when it ends; srrevamp leaves it running.
+- The Warlock DOTs have no friendly group, so srrevamp still starts none.
+
+**4. The 18 `dttp` rows with a state byte (READ; matched).** These are `SKILL_CH_FIRE_DETECT_*`
+(byte 0x2f) and `SKILL_CH_FIRE_DESCRY_*` (0x2e).
+- They pass the gate on the owner shortcut (0x59d937).
+- SkillAction_Buff's sub-state 0 (0x583ffb..0x584044) tests the **caster's** book for `ovl2` and
+  Action_Overlap before it spends (vslot 0x308).
+  - On a hit it sends 0xB071 kind 2 with error 0.
+  - The client's kind-2 path (`FUN_00a56680` → `FUN_00a50a00`) ends the cast with no text.
+- That test is skipped for an `efr` kind-3 row. It is also skipped for an `efr` kind-1 row whose
+  Basic_Activity is not 1: the collector path spends first and tests each target with
+  `FUN_0059d870`.
+- All 18 rows carry `efr` kind 1 with Activity 2 (MEASURED; new CSV column 82 `Efr1`). So retail
+  **charges a second Fire Detect, answers success, and starts nothing**, because the engage finds
+  0x2f set.
+- srrevamp:
+  - `buff.Books.CheckEngage` is the sub-state 0 test. It runs after the category end and before the
+    costs. A hit answers with `session.silentRefusal`, a marker the client ends the cast on without
+    logging (OURS: our reply has no "error 0"; `SelfCast.SILENT_END_TEXT`).
+  - `buff.RefusedEngage` from `Start` keeps the costs and answers success.
+  - Round 636 refunded and said "the skill could not be used" (OURS), which matched neither branch.
+
+**5. The smaller fixes.**
+- `SkillBook::SetGroupBits` has **nine** callers. The last two are `CTJ_SkillKeeper` slot 12
+  `FUN_00650e70` (0x651178/0x651194), a buff restore (OPEN).
+- The `stackColumns` comment now says 64..76.
+- The `/speed` comment now says 0.1 ≤ x ≤ 10.
+- `/speed` is pruned when the character leaves the world, so a demoted GM keeps nothing
+  (`TestGMSpeedPrunedOnLogout`).
+- §9's chat note is re-filed as the harness artifact it is: `xdotool --window` sends the Return
+  release by XSendEvent, so X autorepeats; use `windowfocus --sync` and keys without `--window`.
+- `SkillBook::CheckLinkRecast` (0x59dc80) is filed in `recovered_names.tsv`.
+
+**Census (MEASURED, the box's export, deleted afterwards):**
+
+| rows | rule |
+|---:|---|
+| 1,341 | GroupID |
+| 397 | `cbuf` with a byte |
+| 276 | `lnks` Target_Required 1 |
+| 82 | `efr` 2 |
+| 36 | `dttp` |
+| 32 | `lnks` Target_Required 0 with `efr` 3 |
+| 31 | GroupID 0 with a byte |
+| 1 | `msch` 1 |
+| 76 | `cbuf` with no byte (READ, stack) |
+| 76 | GroupID 0 with no byte (READ, stack) |
+
+All 311,259 byte-sharing pairs across groups are refused as the second, save the READ exceptions.
+
+**Tests.**
+- `buff/link_test.go`: the traps (the review's) and `TestLinkTargetTestGuard`.
+- `TestEngageTests`.
+- `session/buffstack636r_test.go`, `TestGMSpeedPrunedOnLogout`, the census and `friend_cast_test.gd`
+  (the marker).
+- Results:
+  - `go test -count=1 -race ./internal/buff ./internal/session` passes.
+  - `go test -count=1 -p 1 ./...` is green.
+  - The three reported flakes (`TestNPCServicesRefusedWhileTrading`,
+    `TestCounterTestsHoldWithTheStrikePushOn`, `TestTradeOfferRefusesUntradeableItem`) pass three
+    times over on this branch and in both full runs.
+  - `remote_godot.sh check`: ALL LOAD. `friend_cast_test` and `self_cast_test`: ALL PASS.
+
+**The negative.** `session/buffstack636r_test.go` compiles against ff30b8b. There it fails:
+
+    buffstack636r_test.go:146: stealth lv1 over lv5: "", want the overlap refusal
+    buffstack636r_test.go:149: records [9374], want stealth lv5 alone
+    --- FAIL: TestRound636ReviewLowerStealthIsRefused
+    buffstack636r_test.go:171: a refused cast ended the stealth: records [113]
+    --- FAIL: TestRound636ReviewRefusedCastKeepsStealth
+    buffstack636r_test.go:188: the second Fire Detect: "the skill could not be used", want the success retail sends
+    buffstack636r_test.go:191: MP 8249 after the second, want 7975 (charged)
+    buffstack636r_test.go:202: the second synthetic detect: "the skill could not be used", want the silent end
+    --- FAIL: TestRound636ReviewFireDetectRecast
+
+On this branch all three pass. The guard-link negative is at the `buff` level (its API is new);
+the census drives it over every row.
+
+**srrevamp-01** must re-export and re-import the skills again: the CSV is now 83 columns
+(deploy/README.md).
+
 ## Six-hundred-and-thirty-sixth round: Fire Protection no longer stacks, one Grass Walk runs at a time, and a GM's /speed makes testing faster
 
 The user's report on v0.1.460:
@@ -7240,7 +7381,7 @@ byte pairs with the new row's (`FUN_005a1840`). The events:
 | 4 | berserk (0x515c43) | none | no: no row carries 4 (MEASURED) |
 
 Mask 2 ends the EU stealth, invisibility, transform and illusion rows on any skill use, and a Bard
-dance ends the dance before it. Its place, before the gate, is INFERRED from `FUN_0059b480`'s order.
+dance ends the dance before it. Its place, before the gate, is INFERRED from `FUN_0059b480`'s order. **Wrong: see the review follow-up; it runs after the gate.**
 
 **5. srrevamp.**
 - `buff.Books` keeps the bit set and applies the whole function (`overlapLocked`) on the caster's
@@ -7252,7 +7393,7 @@ dance ends the dance before it. Its place, before the gate, is INFERRED from `FU
   every state byte loads 0 and the old behaviour returns.
 - Not modelled:
   - the running-action half of `FUN_0059db10` (srrevamp engages at the cast);
-  - `FUN_0059dc80`, the `lnks` path (OPEN; 32 Target_Required 0 `lnks` rows get no recast check);
+  - `FUN_0059dc80`, the `lnks` path (OPEN; 32 Target_Required 0 `lnks` rows get no recast check) -- **built in the review follow-up**;
   - the `hide` rule;
   - category masks 1, 4 and 8.
 
@@ -7264,7 +7405,7 @@ dance ends the dance before it. Its place, before the gate, is INFERRED from `FU
 - The change reaches the client as an `OpBuffEnd` with no tokens and the new speed, which the
   existing client applies (`World3D._on_buff_ended`). No client change was needed beyond the
   console's GM list.
-- It outlives a zone change, a death and a reconnect. `sendBuffsInView` resends it.
+- It outlives a zone change, a death and a reconnect. `sendBuffsInView` resends it. (The review follow-up prunes it on logout.)
 - The server has no movement-speed check to accept it (re-measured by grep: `handleMove` stores what
   the client sends).
 - It is documented in DEBUG_TOOLS.md.
@@ -7280,7 +7421,7 @@ dance ends the dance before it. Its place, before the gate, is INFERRED from `FU
   | 36 | `dttp` |
   | 31 | GroupID 0 with a byte |
   | 1 | `msch` 1 |
-  | 160 | `lks2` with no byte |
+  | 160 | `lks2` with no byte (**wrong**: these are Target_Required 1 `lnks` rows; see the review follow-up) |
   | 76 | `cbuf` with no byte |
   | 76 | GroupID 0 with no byte |
   | 32 | `lnks`/Target_Required 0 (OPEN) |
@@ -7337,9 +7478,11 @@ On the branch all three pass.
   Protection. It is a picture for a human; the log lines above are the measurement.
 - An earlier run without `/speed` gave 77 (50 × 1.53) for Grass Walk alone. `/speed 3` gave 150 and
   `/speed off` 50.
-- Observed, not this lane's: typed chat after skill hotkeys sometimes left the keys going to the game
-  (`KEY typing ...` followed by `KEY Slash ... focus none`). The `/speed` chat was moved before the
-  casts. OPEN for the chat lane.
+- Re-filed by the review: typed chat after skill hotkeys sometimes let the keys reach the game
+  (`KEY typing ...` followed by `KEY Slash ... focus none`). This is a **harness artifact, not a
+  client bug**. `xdotool key --window` sends the Return release through XSendEvent, so X
+  autorepeats. The fix is `xdotool windowfocus --sync` and keys sent without `--window`. The `/speed`
+  chat was moved before the casts for this run.
 
 **The walls** (the user's follow-up): parked to round 640 at the coordinator's instruction. What
 they need is in docs/TODO.md.

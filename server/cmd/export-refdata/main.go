@@ -945,7 +945,7 @@ func skillRecord(cols []string) ([]string, bool) {
 		cooldownGroup(cols),        // 45 CooldownGroup -- Overlap's high byte, CRefSkill+0x8f (round 504)
 		sitGate(cols),              // 46 SitGate -- the skill gate's motion-state refusals (round 607)
 		// 47..61: the buff and self-cast columns (round 616, buffColumns).
-	}, append(append(buffColumns(cols), targetHeal(cols)...), stackColumns(cols)...)...), true
+	}, append(append(append(buffColumns(cols), targetHeal(cols)...), stackColumns(cols)...), linkColumns(cols)...)...), true
 }
 
 // targetHeal is skill CSV columns 62/63 (round 622), TargetHealHP and
@@ -1082,7 +1082,7 @@ func buffColumns(cols []string) []string {
 	return append(out, "0")
 }
 
-// stackColumns are skill CSV columns 64..75 (round 636,
+// stackColumns are skill CSV columns 64..76 (round 636,
 // docs/protocol/skill_buffs.md "The recast rule"): what FUN_0059d870, its
 // bit test FUN_0059db10, SkillBook::SetGroupBits (0x59dc00) and the category
 // end FUN_005a16c0 read off a row, in refdata.skillCSVColumns order:
@@ -1183,6 +1183,65 @@ func stackColumns(cols []string) []string {
 		b(efr2), b(off), b(msch1), b(hide),
 		strconv.FormatInt(skc, 10),
 	}, append(tail, b(dtt))...)
+}
+
+// linkColumns are skill CSV columns 77..82 (round 636's review): what
+// FUN_0059dc80, the 'lnks' rows' recast check, reads off a row, in
+// refdata.skillCSVColumns order:
+//
+//	77 LnksGroup  'lnks' (+0x370) value[0]: the records it compares
+//	78 LnksMax    'lnks' value[2]: the count that refuses
+//	79 Efr3       an 'efr' run with value[0] == 3, the field +0x294: gate row
+//	              16 calls FUN_0059dc80 for an 'lnks' row only with it
+//	              (0x58e308)
+//	80 Qest       'qest' (+0x49c) present
+//	81 Trap       'trap' (+0x4a0) present: with Qest, 0x3037 instead of 0x3029
+//	82 Efr1       an 'efr' run with value[0] == 1, the field +0x28c (the
+//	              follow-up of round 636's review): SkillAction_Buff's
+//	              sub-state 0 takes an 'efr' kind-1 row whose Basic_Activity
+//	              is not 1 down the target-collector path (0x5830b0, READ),
+//	              which charges before any bit test, instead of the bit test
+//	              at 0x583ffb..0x584044
+//
+// An older export loads zero for all of them: the check never refuses.
+func linkColumns(cols []string) []string {
+	words, ok := paramWords(cols)
+	if !ok {
+		return []string{"0", "0", "0", "0", "0", "0"}
+	}
+	entries, _, _ := skillparam.Walk(words)
+	value := func(e skillparam.Entry, k int) int64 {
+		if e.Index+1+k >= len(words) || k+1 >= e.Run {
+			return 0
+		}
+		return int64(words[e.Index+1+k])
+	}
+	var group, max int64
+	var efr1, efr3, qest, trap bool
+	for _, e := range entries {
+		switch e.Code {
+		case "lnks":
+			group, max = value(e, 0), value(e, 2)
+		case "efr":
+			switch value(e, 0) {
+			case 1:
+				efr1 = true
+			case 3:
+				efr3 = true
+			}
+		case "qest":
+			qest = true
+		case "trap":
+			trap = true
+		}
+	}
+	b := func(v bool) string {
+		if v {
+			return "1"
+		}
+		return "0"
+	}
+	return []string{strconv.FormatInt(group, 10), strconv.FormatInt(max, 10), b(efr3), b(qest), b(trap), b(efr1)}
 }
 
 // offensiveCodes is FUN_00589d20 (READ, round 636): with no 'abnb' (+0x41c)

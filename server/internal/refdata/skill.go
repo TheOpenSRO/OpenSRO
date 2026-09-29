@@ -340,6 +340,21 @@ type Skill struct {
 	BasicGroup    string
 	Activity      int
 	Dtt           bool
+	// FUN_0059dc80's columns (the review of round 636; CSV 77..81,
+	// cmd/export-refdata linkColumns): LnksGroup and LnksMax are 'lnks'
+	// value[0] and value[2] (+0x370), Efr3 an 'efr' of kind 3 (+0x294), Qest
+	// 'qest' (+0x49c), Trap 'trap' (+0x4a0). A suffix after Dtt; an older
+	// export loads zero for all of them, and the check never refuses.
+	LnksGroup int64
+	LnksMax   int64
+	Efr3      bool
+	Qest      bool
+	Trap      bool
+	// Efr1 is an 'efr' of kind 1 (+0x28c; CSV 82, round 636's review
+	// follow-up): with a Basic_Activity other than 1 SkillAction_Buff's
+	// sub-state 0 collects targets and charges before any bit test
+	// (0x5830b0, READ). An older export loads false.
+	Efr1 bool
 
 	// The mastery this skill belongs to and the mastery level required to learn
 	// it (ReqCommon_Mastery1 / ReqCommon_MasteryLevel1). These are what the

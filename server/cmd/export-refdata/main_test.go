@@ -748,8 +748,8 @@ func TestSelfHealColumns(t *testing.T) {
 			if !ok {
 				t.Fatal("skillRecord rejected a valid row")
 			}
-			if len(rec) != 77 {
-				t.Fatalf("record has %d fields, want 77 (SelfHealHP at 43, SelfHealMP at 44, CooldownGroup at 45, SitGate at 46, the buff columns 47-61, TargetHealHP/MP at 62/63, the recast-rule columns 64-76)", len(rec))
+			if len(rec) != 83 {
+				t.Fatalf("record has %d fields, want 83 (SelfHealHP at 43, SelfHealMP at 44, CooldownGroup at 45, SitGate at 46, the buff columns 47-61, TargetHealHP/MP at 62/63, the recast-rule columns 64-76, the lnks columns 77-82)", len(rec))
 			}
 			if rec[43] != tc.hp || rec[44] != tc.mp {
 				t.Errorf("record[43:45] = %v, want [%s %s]", rec[43:45], tc.hp, tc.mp)
@@ -838,7 +838,7 @@ func TestSitGateColumn(t *testing.T) {
 			t.Errorf("%s: sitGate = %s, want %s", c.name, got, c.want)
 		}
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 77 || rec[46] != c.want {
+		if !ok || len(rec) != 83 || rec[46] != c.want {
 			t.Errorf("%s: record column 46 = %v (ok %v, %d fields), want %s", c.name, rec, ok, len(rec), c.want)
 			continue
 		}
@@ -879,7 +879,7 @@ func TestBuffColumns(t *testing.T) {
 		{"nbuf, lnks, defr and lks2", marked, []string{"3", "0", "0", "0", "0", "0", "0", "0", "1", "0", "1", "0", "0", "defr:10,12", "1"}},
 	} {
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 77 {
+		if !ok || len(rec) != 83 {
 			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
 		}
 		if got := strings.Join(rec[47:62], "|"); got != strings.Join(c.want, "|") {
@@ -922,7 +922,7 @@ func TestTargetHealColumns(t *testing.T) {
 		{"a resurrection", res, "0", "0"},
 	} {
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 77 {
+		if !ok || len(rec) != 83 {
 			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
 		}
 		if rec[43] != c.self || rec[62] != c.target || rec[63] != "0" {
@@ -970,7 +970,7 @@ func TestStackColumns(t *testing.T) {
 		{"att is offensive", attack, "0|0|0|0|0|1|1|0|0|0|0|0|0"},
 	} {
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 77 {
+		if !ok || len(rec) != 83 {
 			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
 		}
 		if got := strings.Join(rec[64:77], "|"); got != c.want {
@@ -1027,6 +1027,50 @@ func TestOffensiveCodesAreTheFieldsFUN00589d20Reads(t *testing.T) {
 	for off := range want {
 		if !got[off] {
 			t.Errorf("0x%x missing", off)
+		}
+	}
+}
+
+// The review of round 636: columns 77..81, FUN_0059dc80's (linkColumns). The
+// rows are the retail Fire Trap A lv1 (SKILL_EU_WIZARD_FIREA_TRAP_A_01, id
+// 10283) and a quest trap (SKILL_QNO_EU_IVY_2_01_01, id 7116), their Param
+// blocks as the retail skilldata carries them (MEASURED).
+func TestLinkColumns(t *testing.T) {
+	w := skillparam.WordOf
+	fireTrap := skillRow(w("dura"), 120000, w("lnks"), 14, 300, 1, 1, w("trap"), w("efr"), 3, 1, 50, 1, 0, 24,
+		w("att"), 8, 439, 55, 67, 0, w("efr"), 1, 1, 70, 5, 35, 24)
+	questTrap := skillRow(w("qest"), 1, 14913, 0, 0, w("lnks"), 0, 300, 1, 0, w("dura"), 300000,
+		w("efr"), 3, 1, 20, 1, 0, 16, w("trap"))
+	plain := skillRow(w("dura"), 355462, w("hste"), 20)
+	for _, c := range []struct {
+		name string
+		row  []string
+		want string
+	}{
+		{"Fire Trap A lv1", fireTrap, "14|1|1|0|1|1"},
+		{"a quest trap", questTrap, "0|1|1|1|1|0"},
+		{"Grass Walk - Flow", plain, "0|0|0|0|0|0"},
+	} {
+		rec, ok := skillRecord(c.row)
+		if !ok || len(rec) != 83 {
+			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
+		}
+		if got := strings.Join(rec[77:83], "|"); got != c.want {
+			t.Errorf("%s: columns 77..82 = %s, want %s", c.name, got, c.want)
+		}
+		var buf strings.Builder
+		cw := csv.NewWriter(&buf)
+		cw.Write(rec)
+		cw.Flush()
+		skills, err := refdata.LoadSkillsCSV(strings.NewReader(buf.String()))
+		if err != nil || len(skills) != 1 {
+			t.Fatalf("%s: the importer rejected the export: %v", c.name, err)
+		}
+		sk := skills[0]
+		got := strings.Join([]string{strconv.FormatInt(sk.LnksGroup, 10), strconv.FormatInt(sk.LnksMax, 10),
+			b01(sk.Efr3), b01(sk.Qest), b01(sk.Trap), b01(sk.Efr1)}, "|")
+		if got != c.want {
+			t.Errorf("%s: imported %s, want %s", c.name, got, c.want)
 		}
 	}
 }

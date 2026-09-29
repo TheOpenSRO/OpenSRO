@@ -85,6 +85,27 @@ func buffLock(ownerID int64) *sync.Mutex {
 // the retail textuisystem.txt.
 const overlapRefusal = "The selected item cannot be used together or the skill is already in use."
 
+// overlapCountRefusal and trapExistsRefusal are FUN_0059dc80's other two
+// answers (the review of round 636): 0x3029
+// UIIT_STT_SKILL_USE_FAIL_OVERLAP_COUNT and 0x3037
+// UIIT_MSG_QUEST_ERR_CANNOT_MAKE_TRAP, their texts MEASURED in the retail
+// textuisystem.txt's English column.
+const (
+	overlapCountRefusal = "The available number of people for this skill is maxed."
+	trapExistsRefusal   = "Cannot set a trap because a set trap already exists."
+)
+
+// refusalText is a recast refusal's client text.
+func refusalText(r buff.Refusal) string {
+	switch r {
+	case buff.RefusedOverlapCount:
+		return overlapCountRefusal
+	case buff.RefusedTrapExists:
+		return trapExistsRefusal
+	}
+	return overlapRefusal
+}
+
 // groundRefusal answers a ground cast of a skill with no ground move, and a
 // 'tele' skill cast without a point: FUN_005862e0 returns 0 when the cast
 // context's position list is empty, and the context builder aborts (READ).
@@ -97,6 +118,29 @@ const groundRefusal = "select a location on the ground"
 const (
 	notInWorldRefusal = "not in world"
 	castFailedRefusal = "the skill could not be used"
+)
+
+// silentRefusal ends a cast that retail ends with 0xB071 kind 2 and error 0
+// (SkillAction_Buff's sub-state 0 bit test, round 636's review): the retail
+// client ends the cast deco and shows no text (FUN_00a56680 reads the u16 and
+// drops it; FUN_00a50a00). OURS: srrevamp's reply carries this marker, which
+// the client (SelfCast.SILENT_END_TEXT) ends the cast on without logging.
+const silentRefusal = "the skill action ended"
+
+// startOutcome is what starting a buff after the costs came to.
+type startOutcome int
+
+const (
+	// startDone: the buff started and the zone heard it.
+	startDone startOutcome = iota
+	// startNoEngage: SkillAction_Buff's engage (sub-state 1) found an
+	// Action_Overlap byte set and returned 2 without the buff, after the
+	// costs and the cast's success (READ; buff.RefusedEngage). The costs
+	// stay and the answer is the success.
+	startNoEngage
+	// startFailed: nothing could start (the owner left, or a refusal that
+	// the checks before the costs would have given): the costs go back.
+	startFailed
 )
 
 // targetRefusal answers a targetType 0 cast of a skill that needs a hostile
@@ -273,6 +317,9 @@ func buffSpec(ref *refdata.Skill, casterID int64) buff.Spec {
 		HasDttp: ref.HasDttp, Dttp0: uint32(ref.Dttp0), Dttp1: uint32(ref.Dttp1),
 		Efr2: ref.Efr2, Offensive: ref.Offensive, Msch1: ref.Msch1, Dtt: ref.Dtt,
 		BasicGroup: ref.BasicGroup, Activity: ref.Activity, SkcEnd: uint8(ref.SkcEnd),
+		// The review of round 636: what FUN_0059dc80 reads.
+		LnksGroup: uint32(ref.LnksGroup), LnksMax: uint32(ref.LnksMax),
+		Efr3: ref.Efr3, Qest: ref.Qest, Trap: ref.Trap, Efr1: ref.Efr1,
 	}
 	if v, ok := ref.BuffParam("hste"); ok && len(v) > 0 {
 		s.HasHste, s.Hste = true, v[0]
@@ -367,25 +414,28 @@ func broadcastBuffEnd(to []world.Entity, ownerID int64, ended []buff.Record, sp 
 // startCasterBuffLocked applies ref to casterID at now and tells zone: an
 // OpBuffEnd for the record the recast rule ended, then the OpBuffStart. The
 // caller holds buffLock(casterID) from its own buffBooks.CheckOverlap to
-// here, so the refusal cannot change in between; false is returned only if
-// it did anyway.
-func startCasterBuffLocked(zone []world.Entity, ref *refdata.Skill, casterID int64, now time.Time) bool {
+// here, so the refusal cannot change in between; startFailed is returned
+// only if it did anyway.
+func startCasterBuffLocked(zone []world.Entity, ref *refdata.Skill, casterID int64, now time.Time) startOutcome {
 	return startCasterBuffOn(zone, ref, casterID, casterID, now)
 }
 
 // startCasterBuffOn starts ref's buff, cast by casterID, on ownerID's book and
 // tells zone (the owner's). The caller holds ownerID's buff lock. Round 622:
 // the owner is the named character for a friendly Target_Required 1 row.
-func startCasterBuffOn(zone []world.Entity, ref *refdata.Skill, casterID, ownerID int64, now time.Time) bool {
+func startCasterBuffOn(zone []world.Entity, ref *refdata.Skill, casterID, ownerID int64, now time.Time) startOutcome {
 	rec, ended, refused, sp := buffBooks.Start(ownerID, buffSpec(ref, casterID), now)
+	if refused == buff.RefusedEngage {
+		return startNoEngage
+	}
 	if refused != buff.NotRefused {
-		return false
+		return startFailed
 	}
 	// Both packets carry the speed the one operation left: the end's and the
 	// start's agree, whichever the client applies last.
 	broadcastBuffEnd(zone, ownerID, ended, sp)
 	sendToAll(zone, OpBuffStart, buffStartPacket(rec, now, speedField(sp)))
-	return true
+	return startDone
 }
 
 // endCategoryOnSkillUse is FUN_0059b480's category end (0x59b745,
@@ -394,9 +444,12 @@ func startCasterBuffOn(zone []world.Entity, ref *refdata.Skill, casterID, ownerI
 // non-zero Basic_Activity, whose 'skc' value[1] carries bit 2 (MEASURED: the
 // EU stealth, invisibility, transform and illusion rows) or whose
 // Action_Overlap byte pairs with the new row's 0x1d / 0x23 byte
-// (FUN_005a1840; the Bard songs and dances). FUN_0059b480 builds the skill
-// use's context, before the gate (Skill_CheckUseConditions) runs, so the
-// ends stand even when the cast is then refused (INFERRED from that order).
+// (FUN_005a1840; the Bard songs and dances). Corrected by round 636's
+// review: FUN_0059b480 runs AFTER the request's gate -- the gate at request
+// time (0x4acc40, 0x4aced4), then the skill tick's case 2 posts 0x7070 ->
+// vslot 383 FUN_004b21b0 -> FUN_0059b7c0 -> FUN_0059b480, and the category
+// end runs just before SkillActionHandler -- so the caller runs it once
+// every refusal has passed, and a refused cast ends nothing.
 func endCategoryOnSkillUse(hub *world.Hub, casterID int64, row *refdata.Skill) {
 	if row == nil {
 		return
@@ -404,6 +457,15 @@ func endCategoryOnSkillUse(hub *world.Hub, casterID int64, row *refdata.Skill) {
 	l := buffLock(casterID)
 	l.Lock()
 	defer l.Unlock()
+	endCategoryOnSkillUseLocked(hub, casterID, row)
+}
+
+// endCategoryOnSkillUseLocked is endCategoryOnSkillUse for a caller that
+// holds the caster's buff lock.
+func endCategoryOnSkillUseLocked(hub *world.Hub, casterID int64, row *refdata.Skill) {
+	if row == nil {
+		return
+	}
 	ended, sp := buffBooks.EndCategory(casterID, buff.CategorySkillUse, uint32(row.ActionOverlap), true)
 	if len(ended) > 0 {
 		broadcastBuffEnd(zoneOf(hub, casterID), casterID, ended, sp)
@@ -520,7 +582,8 @@ func sendBuffsInView(hub *world.Hub, arriving world.Entity, now time.Time) {
 		}
 	}
 	// A /speed multiplier (round 636, OURS) outlives a zone change, a death
-	// and a reconnect; the arriving client learns it here, since a buff
+	// and a reconnect that replaces a live session (a logout clears it,
+	// world.go); the arriving client learns it here, since a buff
 	// packet carries a speed only for a record that writes one.
 	if _, ok := buffBooks.GMSpeedFactor(arriving.CharacterID); ok && arriving.Session != nil {
 		msg := &BuffEnd{OwnerID: arriving.CharacterID, RunSpeed: buffBooks.RunSpeed(arriving.CharacterID), OwnerKind: OwnerCharacter}

@@ -22,8 +22,9 @@ import (
 // Target_Required 1 row also by another caster -- and requires that the
 // second cast never leaves two records of the same skill, except where READ
 // code allows it: the 'dttp' branch's owner-cast stack, and the rows whose
-// gate check is FUN_0059dc80 (an 'lnks' row with Target_Required 0), which
-// srrevamp does not model (OPEN). Those are listed. It also casts every
+// gate check is FUN_0059dc80 (an 'lnks' row with Target_Required 0) and
+// which carry no 'efr' of kind 3, for which the gate runs no check at all
+// (0x58e308). The 'lnks' rows are listed. It also casts every
 // pair of rows that share a state byte and different groups, and requires
 // the second to be refused.
 func TestRecastRuleCensus(t *testing.T) {
@@ -47,7 +48,7 @@ func TestRecastRuleCensus(t *testing.T) {
 	class := map[string]int{}
 	var stacked, open []string
 	byByte := map[byte][]*refdata.Skill{}
-	kind3, notStarted := 0, 0
+	kind3, notStarted, linkRows := 0, 0, 0
 	for i := range rows {
 		r := &rows[i]
 		if r.ActionKind != 3 {
@@ -93,8 +94,8 @@ func TestRecastRuleCensus(t *testing.T) {
 				switch {
 				case r.HasDttp && caster == 1:
 					why = "dttp: the owner's own cast stacks (READ, 0x59d937)"
-				case r.Lnks && !r.TargetRequired:
-					why = "lnks, Target_Required 0: FUN_0059dc80 not modelled (OPEN)"
+				case r.Lnks && !r.TargetRequired && !r.Efr3:
+					why = "lnks, Target_Required 0, no efr 3: the gate runs no check (READ, 0x58e308)"
 				case strings.Contains(recastClass(r), "nothing stops"):
 					why = "READ: " + recastClass(r)
 				}
@@ -104,6 +105,24 @@ func TestRecastRuleCensus(t *testing.T) {
 				}
 				stacked = append(stacked, line)
 			}
+		}
+		// A friendly Target_Required 1 'lnks' row (the round 636 review's
+		// target-test FUN_0059dc80): one caster, lnks value[2] targets pass,
+		// the next is 0x3029; the same target again is 0x300c.
+		if r.Lnks && r.TargetRequired && (r.TargetAlly || r.TargetParty) && r.LnksMax > 0 && !r.Lks2 {
+			b := buff.NewBooks(50)
+			for i := int64(0); i < r.LnksMax; i++ {
+				if _, _, rf, _ := b.Start(10+i, buffSpec(r, 2), t0); rf != buff.NotRefused {
+					t.Errorf("%s: target %d of %d refused %v", r.BasicCode, i+1, r.LnksMax, rf)
+				}
+			}
+			if rf := b.CheckOverlap(100, buffSpec(r, 2)); rf != buff.RefusedOverlapCount {
+				t.Errorf("%s: target %d past lnks value[2]: %v, want RefusedOverlapCount", r.BasicCode, r.LnksMax+1, rf)
+			}
+			if rf := b.CheckOverlap(10, buffSpec(r, 2)); rf != buff.RefusedOverlap {
+				t.Errorf("%s: the same target again: %v, want RefusedOverlap", r.BasicCode, rf)
+			}
+			linkRows++
 		}
 		if r.Lnks && !r.TargetRequired {
 			open = append(open, r.BasicCode)
@@ -123,7 +142,7 @@ func TestRecastRuleCensus(t *testing.T) {
 					continue
 				}
 				_, _, rf, _ := b.Start(1, buffSpec(c, 1), t0)
-				if rf == buff.RefusedOverlap {
+				if rf == buff.RefusedOverlap || rf == buff.RefusedEngage {
 					refused++
 					continue
 				}
@@ -145,12 +164,13 @@ func TestRecastRuleCensus(t *testing.T) {
 		t.Logf("  %5d  %s", class[k], k)
 	}
 	t.Logf("state-byte pairs of different groups: %d, refused %d", pairs, refused)
+	t.Logf("friendly Target_Required 1 lnks rows driven to their lnks value[2]: %d", linkRows)
 	sort.Strings(stacked)
 	t.Logf("a same-skill recast leaves two records (%d):", len(stacked))
 	for _, s := range dedupeStrip(stacked) {
 		t.Logf("  %s", s)
 	}
-	t.Logf("rows whose gate check is FUN_0059dc80 (OPEN): %d, e.g. %s", len(open), strings.Join(first(open, 8), ", "))
+	t.Logf("rows whose gate check is FUN_0059dc80 (linkLocked): %d, e.g. %s", len(open), strings.Join(first(open, 8), ", "))
 }
 
 // recastClass names the rule that decides a recast of r against its own
@@ -158,8 +178,12 @@ func TestRecastRuleCensus(t *testing.T) {
 func recastClass(r *refdata.Skill) string {
 	bits := r.ActionOverlap&0xffffff != 0 || r.Ovl2 != 0
 	switch {
+	case r.Lnks && r.TargetRequired:
+		return "lnks, TR 1: FUN_0059dc80 on the caster's book (the target test), then FUN_0059d870 on the target's"
+	case r.Lnks && !r.TargetRequired && r.Efr3:
+		return "lnks, TR 0, efr 3: FUN_0059dc80 (linkLocked)"
 	case r.Lnks && !r.TargetRequired:
-		return "lnks, TR 0: FUN_0059dc80 (OPEN, no check)"
+		return "lnks, TR 0, no efr 3: no check (READ, 0x58e308)"
 	case r.Msch1:
 		return "msch 1: the bit test only"
 	case r.Cbuf && bits:

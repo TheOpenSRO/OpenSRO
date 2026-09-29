@@ -384,15 +384,15 @@ func healCharacter(ctx context.Context, hub *world.Hub, chars character.Store, e
 // Target_Required 1 row gets no overlap check at the gate (row 16 tests only
 // Target_Required 0 rows without 'lnks'; skill_buffs.md, "The recast rule"),
 // so buff.Books.Start is asked for none. The caller holds ownerID's buff lock.
-func startBuffOnLocked(hub *world.Hub, ref *refdata.Skill, casterID, ownerID int64, now time.Time) bool {
+func startBuffOnLocked(hub *world.Hub, ref *refdata.Skill, casterID, ownerID int64, now time.Time) startOutcome {
 	// The target is looked at again under its buff lock (round 622's
 	// review): one that died or left since the target test gets no record.
 	if e, ok := hub.EntityByCharacterID(ownerID); !ok || e.Life != world.LifeAlive {
-		return false
+		return startFailed
 	}
 	zone := zoneOf(hub, ownerID)
 	if zone == nil {
-		return false
+		return startFailed
 	}
 	return startCasterBuffOn(zone, ref, casterID, ownerID, now)
 }

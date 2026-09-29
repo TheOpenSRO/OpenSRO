@@ -226,7 +226,6 @@
 1	0074b4b0	FUN_0074b4b0	467	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
 1	00513250	FUN_00513250	437	docs/protocol/described_but_unnamed.tsv,docs/protocol/event_log.md,docs/protocol/handler_payloads.tsv,docs/protocol/recovered_names.tsv,docs/protocol/server_handlers.tsv
 1	0074bc70	FUN_0074bc70	432	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
-1	0059dc80	FUN_0059dc80	354	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv
 1	0050eff0	GObjPC::FUN_0050eff0	311	docs/protocol/described_but_unnamed.tsv,docs/protocol/error_codes.md,docs/protocol/handler_payloads.tsv,docs/protocol/message_handlers.tsv,docs/protocol/server_handlers.tsv
 1	005e0790	CMainProcess::FUN_005e0790	304	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/manager_singletons.md
 1	009db500	FUN_009db500	265	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv

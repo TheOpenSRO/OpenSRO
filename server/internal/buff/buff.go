@@ -114,6 +114,18 @@ type Spec struct {
 	// byte (+0x490 -> +4): the category end FUN_005a16c0 reads both.
 	Activity int
 	SkcEnd   uint8
+	// What FUN_0059dc80 reads (the review of round 636, see linkLocked):
+	// LnksGroup and LnksMax are 'lnks' value[0] and value[2] (+0x370 -> +0
+	// and +8); Efr3 an 'efr' of kind 3 (+0x294), which gate row 16 requires
+	// before it calls FUN_0059dc80 for an 'lnks' row (0x58e308); Qest and
+	// Trap are 'qest' (+0x49c) and 'trap' (+0x4a0), which pick 0x3037 over
+	// 0x3029.
+	LnksGroup, LnksMax uint32
+	Efr3, Qest, Trap   bool
+	// Efr1 is an 'efr' of kind 1 (+0x28c): with Activity != 1 SkillAction_Buff's
+	// sub-state 0 takes the target-collector path, which charges before any bit
+	// test (see CheckEngage).
+	Efr1 bool
 }
 
 // Record is one active buff.
@@ -148,6 +160,17 @@ type Record struct {
 	BasicGroup    string
 	Activity      int
 	SkcEnd        uint8
+	// FUN_0059dc80's fields (see linkLocked): the row's 'lnks' value[0] and
+	// 'lks2', whether the record carries retail's link struct (ctx+0x68), and
+	// the struct's linked object id (+0x10) -- always 0 here: srrevamp
+	// creates no object for an 'efr' kind-3 row.
+	LnksGroup    uint32
+	Lks2         bool
+	Linked       bool
+	LinkedObject int64
+	// LinkSource is a record a Target_Required 1 'lnks' row put on another
+	// character: its caster holds a link for it (Books.links) until it ends.
+	LinkSource bool
 }
 
 // Timed reports whether the record ends on its own.
@@ -347,11 +370,13 @@ type Books struct {
 	base float64
 	// gmSpeed is the GM console's /speed multiplier per owner (OURS).
 	gmSpeed map[int64]float64
+	// links are each caster's link records (linkEntry), by caster.
+	links map[int64][]linkEntry
 }
 
 // NewBooks returns an empty set of books whose owners run at baseRunSpeed.
 func NewBooks(baseRunSpeed float64) *Books {
-	return &Books{books: map[int64]*book{}, base: baseRunSpeed, gmSpeed: map[int64]float64{}}
+	return &Books{books: map[int64]*book{}, base: baseRunSpeed, gmSpeed: map[int64]float64{}, links: map[int64][]linkEntry{}}
 }
 
 // NextToken allocates a server-unique token, never 0 (0 means "any" in a
@@ -388,7 +413,8 @@ const MaxGMSpeedFactor = 10.0
 // SetGMSpeedFactor is the GM console's /speed (OURS, a test tool; no retail
 // counterpart, and nothing retail-shaped is claimed for it): a multiplier on
 // ownerID's run speed on top of its buffs, kept outside the book so a death
-// or a logout (EndAll) leaves it; 1 or less than or equal to 0 clears it. It
+// (EndAll) leaves it; the session layer clears it when the character leaves
+// the world (round 636's review). 1, or a factor <= 0, clears it. It
 // returns the owner's run speed afterwards, Changed when it moved.
 func (b *Books) SetGMSpeedFactor(ownerID int64, f float64) Speed {
 	b.mu.Lock()
@@ -422,7 +448,149 @@ const (
 	NotRefused Refusal = iota
 	// RefusedOverlap is 0x300c SKILL_USE_FAIL_OVERLAP.
 	RefusedOverlap
+	// RefusedOverlapCount is 0x3029 UIIT_STT_SKILL_USE_FAIL_OVERLAP_COUNT,
+	// FUN_0059dc80's count reaching 'lnks' value[2].
+	RefusedOverlapCount
+	// RefusedTrapExists is 0x3037 UIIT_MSG_QUEST_ERR_CANNOT_MAKE_TRAP: the
+	// same count, for a row carrying both 'qest' and 'trap'.
+	RefusedTrapExists
+	// RefusedSilent is SkillAction_Buff sub-state 0's bit test on the caster's
+	// book (0x583ffb..0x584044, READ): an 'ovl2' or Action_Overlap byte set.
+	// Retail ends the action with 0xB071 kind 2 and error 0 BEFORE the costs
+	// are taken (vslot 0x308 runs only on the other path), and the client's
+	// kind-2 handler (FUN_00a56680 -> FUN_00a50a00) ends the cast without a
+	// refusal text. See CheckEngage.
+	RefusedSilent
+	// RefusedEngage is sub-state 1's test (the engage): Action_Overlap set on
+	// the owner's book. Retail has taken the costs by then and has sent the
+	// cast's success; the buff just does not start.
+	RefusedEngage
 )
+
+// linkEntry is the second record retail's Target_Required 1 branch of
+// SkillAction_Buff builds for the CASTER of an 'lnks' row cast on another
+// character (0x5830b0, READ: a record with the link struct at ctx+0x68,
+// +0xc the caster's id, +0x10 the target's id; ctx+0x20 FUN_005a9ae0's
+// default 1). srrevamp keeps it out of the caster's visible book (OURS: no
+// icon, no bits -- an 'lnks' record cast on oneself sets none, READ) and
+// ends it with the target's record (INFERRED); FUN_0059dc80 counts it.
+type linkEntry struct {
+	SkillID     int64
+	LnksGroup   uint32
+	Lks2        bool
+	Activity    int
+	Object      int64
+	Owner       int64
+	TargetToken uint32
+}
+
+// linked is whether a record of spec that ownerID holds carries retail's
+// 'lnks' link struct (ctx+0x68) with its ctx+0x20 == 1 -- the records
+// FUN_0059dc80 counts. SkillAction_Buff (0x5830b0) builds that struct in two
+// places (READ): the 'efr' kind-3 branch (a Target_Required 0 row, whose
+// record is the caster's own; ctx+0x20 keeps FUN_005a9ae0's default 1), with
+// +0x10 the id of the object that branch creates; and the Target_Required 1
+// branch, as a second record for the caster whose +0x10 is the target's id.
+// srrevamp creates no object: the first is the 'lnks' + 'efr' kind-3 row's
+// own record, cast by its owner (INFERRED that srrevamp's record stands for
+// retail's link record; retail's also ends when the object goes, which is
+// OPEN here); the second is a linkEntry (Books.links).
+func linked(spec Spec, ownerID int64) bool {
+	return spec.Lnks && spec.Efr3 && spec.CasterID == ownerID
+}
+
+// linkGateApplies is gate row 16's call of FUN_0059dc80 (0x58e2db..0x58e324,
+// READ): a row with 'lnks' (+0x370) and an 'efr' of kind 3 (+0x294), with 0
+// as the linked object. Its other caller is linkTargetApplies.
+func linkGateApplies(spec Spec) bool {
+	return spec.Lnks && !spec.TargetRequired && spec.Efr3
+}
+
+// linkTargetApplies is the target test's call of FUN_0059dc80
+// (FUN_0058cc70, 0x58d27d..0x58d2a6, READ): every 'lnks' row, on the
+// CASTER's book, with the target as the linked object, before the target's
+// FUN_0059d870 (0x58d2d3).
+func linkTargetApplies(spec Spec) bool {
+	return spec.Lnks && spec.TargetRequired
+}
+
+// linkLocked is FUN_0059dc80 (READ, asm 0x59dc80..0x59dde2; EAX the book, EBX
+// the new row, the stack argument the linked object -- 0 from the gate). It
+// walks the book's list (book+0x268) and considers a record only when its
+// skill has a non-zero Basic_Activity (+0x65), its ctx+0x20 is 1 and it
+// carries the link struct (ctx+0x68), and its 'lnks' value[0] equals the new
+// row's. For such a record:
+//
+//   - the same skill id (+4): with neither row carrying 'lks2' (+0x374) the
+//     record is counted (0x59dd72), unless the object argument names the
+//     record's linked object (link+0x10), which refuses 0x300c; with both
+//     carrying it, that same match refuses 0x300c and nothing is counted;
+//     with only one carrying it, nothing is counted;
+//   - another skill id: with neither carrying 'lks2', a non-zero 'lnks'
+//     value[0] refuses 0x300c at once (0x59dda3..0x59ddae); with both
+//     carrying it, a match on the linked object is counted; otherwise the
+//     record is passed over.
+//
+// After each record that reaches the count (0x59dd77), a non-zero 'lnks'
+// value[2] equal to the count refuses: 0x3037 when the row carries both
+// 'qest' (+0x49c) and 'trap' (+0x4a0), else 0x3029. The gate passes no
+// object (linkedID 0 is "none"); the target test passes the target, which a
+// caster's link entry names.
+func linkLocked(bk *book, links []linkEntry, spec Spec, linkedID int64) Refusal {
+	var cands []linkEntry
+	if bk != nil {
+		for _, r := range bk.records {
+			if r.SelfCast() && r.Linked {
+				cands = append(cands, linkEntry{SkillID: r.SkillID, LnksGroup: r.LnksGroup, Lks2: r.Lks2,
+					Activity: r.Activity, Object: r.LinkedObject})
+			}
+		}
+	}
+	// The caster's link records follow its own records (INFERRED order:
+	// retail registers each after the cast that made it).
+	cands = append(cands, links...)
+	count := uint32(0)
+	for _, r := range cands {
+		if r.Activity == 0 || r.LnksGroup != spec.LnksGroup {
+			continue
+		}
+		match := linkedID != 0 && linkedID == r.Object
+		if r.SkillID == spec.SkillID {
+			switch {
+			case !spec.Lks2 && !r.Lks2:
+				if match {
+					return RefusedOverlap
+				}
+				count++
+			case spec.Lks2 && r.Lks2:
+				if match {
+					return RefusedOverlap
+				}
+			}
+		} else {
+			switch {
+			case !spec.Lks2 && !r.Lks2:
+				if r.LnksGroup != 0 {
+					return RefusedOverlap
+				}
+				continue
+			case spec.Lks2 && r.Lks2:
+				if match {
+					count++
+				}
+			default:
+				continue
+			}
+		}
+		if spec.LnksMax != 0 && count == spec.LnksMax {
+			if spec.Qest && spec.Trap {
+				return RefusedTrapExists
+			}
+			return RefusedOverlapCount
+		}
+	}
+	return NotRefused
+}
 
 // overlapLocked is FUN_0059d870 (READ in full in round 636; asm
 // 0x59d870..0x59db06). It is reached two ways:
@@ -476,10 +644,8 @@ const (
 // Walk - Speed while Grass Walk - Flow runs (groups 260 and 262 differ; both
 // carry byte 6) -- MEASURED on the retail rows, docs/protocol/skill_buffs.md.
 //
-// Not modelled: the gate's 'lnks' call FUN_0059dc80, which walks the
-// caster's records carrying a 'lnks' link object (ctx+0x68 with a linked
-// character) and compares 'lnks' values, skill ids and 'lks2' (0x300c,
-// 0x3029, 0x3037) -- srrevamp links no second character (OPEN).
+// Both calls of FUN_0059dc80 -- the gate's and the target test's -- are
+// linkLocked (gateLocked).
 func overlapLocked(bk *book, ownerID int64, spec Spec) ([]int, Refusal) {
 	if bk == nil {
 		return nil, NotRefused
@@ -542,7 +708,8 @@ func overlapLocked(bk *book, ownerID int64, spec Spec) ([]int, Refusal) {
 // gateApplies is whether a cast of spec meets FUN_0059d870 at all: gate row
 // 16 calls it for a row with no 'lnks' and Target_Required 0; the target
 // test calls it for every Target_Required 1 row. A Target_Required 0 row with
-// 'lnks' meets FUN_0059dc80 instead (not modelled, OPEN).
+// 'lnks' meets FUN_0059dc80 instead when it carries an 'efr' of kind 3
+// (linkGateApplies), and no check at all otherwise (0x58e308 -> 0x58e32d).
 func gateApplies(spec Spec) bool {
 	return !(spec.Lnks && !spec.TargetRequired)
 }
@@ -553,11 +720,83 @@ func gateApplies(spec Spec) bool {
 func (b *Books) CheckOverlap(ownerID int64, spec Spec) Refusal {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	return b.gateLocked(ownerID, spec)
+}
+
+// gateLocked is the request's recast checks: FUN_0059dc80 then
+// FUN_0059d870, as gate row 16 and the target test call them.
+func (b *Books) gateLocked(ownerID int64, spec Spec) Refusal {
+	if linkGateApplies(spec) {
+		return linkLocked(b.books[ownerID], b.links[ownerID], spec, 0)
+	}
+	if linkTargetApplies(spec) {
+		if r := linkLocked(b.books[spec.CasterID], b.links[spec.CasterID], spec, ownerID); r != NotRefused {
+			return r
+		}
+	}
 	if !gateApplies(spec) {
 		return NotRefused
 	}
 	_, r := overlapLocked(b.books[ownerID], ownerID, spec)
 	return r
+}
+
+// CheckEngage is SkillAction_Buff's sub-state 0 bit test (0x583ffb..0x584044,
+// READ), run on the CASTER's book (EDI = param_2 + 0xa30, the acting
+// character) after the casting time and before the costs: 'ovl2' value[0],
+// then Action_Overlap, through FUN_0059db10. A hit ends the action silently
+// and charges nothing (RefusedSilent). It is not run for an 'efr' kind-3 row
+// (the trap branch, `puVar12[0xa5] != 0`) nor for an 'efr' kind-1 row whose
+// Basic_Activity is not 1 (the collector branch, which charges first and
+// tests each target with FUN_0059d870 instead). On the caster's own book the
+// records the gate ends are gone by then (INFERRED order, as in Start).
+func (b *Books) CheckEngage(casterID, ownerID int64, spec Spec) Refusal {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if spec.Efr3 || (spec.Efr1 && spec.Activity != 1) {
+		return NotRefused
+	}
+	bk := b.books[casterID]
+	if bk == nil {
+		return NotRefused
+	}
+	scratch := *bk
+	if casterID == ownerID && gateApplies(spec) {
+		ends, r := overlapLocked(bk, ownerID, spec)
+		if r != NotRefused {
+			return r
+		}
+		for _, i := range ends {
+			scratch.setGroupBits(bk.records[i].endBits(), true)
+			scratch.setGroupBits(bk.records[i].Ovl2, true)
+		}
+	}
+	if spec.Ovl2 != 0 && scratch.bitsHit(spec.Ovl2) {
+		return RefusedSilent
+	}
+	if scratch.bitsHit(spec.ActionOverlap) {
+		return RefusedSilent
+	}
+	return NotRefused
+}
+
+// unlinkLocked drops the caster's link record for r, a record that ended.
+func (b *Books) unlinkLocked(r Record) {
+	if !r.LinkSource {
+		return
+	}
+	ls := b.links[r.CasterID]
+	for i, l := range ls {
+		if l.TargetToken == r.Token && l.Owner == r.OwnerID {
+			ls = append(ls[:i:i], ls[i+1:]...)
+			break
+		}
+	}
+	if len(ls) == 0 {
+		delete(b.links, r.CasterID)
+	} else {
+		b.links[r.CasterID] = ls
+	}
 }
 
 // Start applies spec to ownerID at now. It returns the new record, the
@@ -569,8 +808,10 @@ func (b *Books) CheckOverlap(ownerID int64, spec Spec) Refusal {
 //
 // The engage itself (SkillAction_Buff sub-state 1, READ) tests
 // Action_Overlap once more, for every row but an 'lnks' row cast on oneself,
-// and does not engage when a bit is set (it returns 2 without the buff); a
-// refusal here is that. Then it sets engageBits and 'ovl2' value[0] in the
+// and does not engage when a bit is set (it returns 2 without the buff):
+// RefusedEngage, after the costs (the caller keeps them). Start also runs
+// both calls of FUN_0059dc80 (gateLocked's) and, for a Target_Required 1
+// 'lnks' row cast on another, files the caster's link entry. Then it sets engageBits and 'ovl2' value[0] in the
 // bit set.
 func (b *Books) Start(ownerID int64, spec Spec, now time.Time) (rec Record, ended []Record, refused Refusal, sp Speed) {
 	b.mu.Lock()
@@ -582,6 +823,16 @@ func (b *Books) Start(ownerID int64, spec Spec, now time.Time) (rec Record, ende
 	}
 	before := b.speedLocked(ownerID, bk)
 	var ends []int
+	if linkGateApplies(spec) {
+		if refused = linkLocked(bk, b.links[ownerID], spec, 0); refused != NotRefused {
+			return Record{}, nil, refused, Speed{RunSpeed: before}
+		}
+	}
+	if linkTargetApplies(spec) {
+		if refused = linkLocked(b.books[spec.CasterID], b.links[spec.CasterID], spec, ownerID); refused != NotRefused {
+			return Record{}, nil, refused, Speed{RunSpeed: before}
+		}
+	}
 	if gateApplies(spec) {
 		ends, refused = overlapLocked(bk, ownerID, spec)
 		if refused != NotRefused {
@@ -598,7 +849,7 @@ func (b *Books) Start(ownerID int64, spec Spec, now time.Time) (rec Record, ende
 			scratch.setGroupBits(bk.records[i].Ovl2, true)
 		}
 		if scratch.bitsHit(spec.ActionOverlap) {
-			return Record{}, nil, RefusedOverlap, Speed{RunSpeed: before}
+			return Record{}, nil, RefusedEngage, Speed{RunSpeed: before}
 		}
 	}
 	if len(ends) > 0 {
@@ -607,6 +858,7 @@ func (b *Books) Start(ownerID int64, spec Spec, now time.Time) (rec Record, ende
 			old := bk.records[i]
 			bk.records = append(bk.records[:i], bk.records[i+1:]...)
 			bk.endLocked(old)
+			b.unlinkLocked(old)
 			ended = append([]Record{old}, ended...)
 		}
 	}
@@ -636,6 +888,10 @@ func (b *Books) Start(ownerID int64, spec Spec, now time.Time) (rec Record, ende
 		BasicGroup:    spec.BasicGroup,
 		Activity:      spec.Activity,
 		SkcEnd:        spec.SkcEnd,
+		LnksGroup:     spec.LnksGroup,
+		Lks2:          spec.Lks2,
+		Linked:        linked(spec, ownerID),
+		LinkSource:    linkTargetApplies(spec) && spec.CasterID != ownerID,
 	}
 	if spec.DuraMs > 0 {
 		rec.Dura = time.Duration(spec.DuraMs) * time.Millisecond
@@ -661,6 +917,11 @@ func (b *Books) Start(ownerID int64, spec Spec, now time.Time) (rec Record, ende
 		rec.Contributions = append(rec.Contributions, speedPair(spec.Hst3)...)
 	}
 	bk.records = append(bk.records, rec)
+	if rec.LinkSource {
+		b.links[spec.CasterID] = append(b.links[spec.CasterID], linkEntry{SkillID: spec.SkillID,
+			LnksGroup: spec.LnksGroup, Lks2: spec.Lks2, Activity: spec.Activity, Object: ownerID,
+			Owner: ownerID, TargetToken: rec.Token})
+	}
 	after := b.speedLocked(ownerID, bk)
 	return rec, ended, NotRefused, Speed{RunSpeed: after, Changed: after != before}
 }
@@ -763,6 +1024,7 @@ func (b *Books) endWhere(ownerID int64, end func(Record) bool) ([]Record, Speed)
 		if r := bk.records[i]; end(r) {
 			bk.records = append(bk.records[:i], bk.records[i+1:]...)
 			bk.endLocked(r)
+			b.unlinkLocked(r)
 			ended = append(ended, r)
 			continue
 		}
@@ -824,10 +1086,19 @@ func (b *Books) EndAll(ownerID int64) ([]Record, Speed) {
 	defer b.mu.Unlock()
 	bk := b.books[ownerID]
 	if bk == nil {
+		delete(b.links, ownerID)
 		return nil, Speed{RunSpeed: b.speedLocked(ownerID, nil)}
 	}
 	before := b.speedLocked(ownerID, bk)
 	delete(b.books, ownerID)
+	for _, r := range bk.records {
+		b.unlinkLocked(r)
+	}
+	// The owner's own link records go with its book (the book teardown
+	// FUN_0059c820). Retail's link record also ends the target's record when
+	// it ends (SkillAction_BuffEnd's ctx+0x68 branch); srrevamp leaves the
+	// target's record to its own end (OPEN).
+	delete(b.links, ownerID)
 	after := b.speedLocked(ownerID, nil)
 	return append([]Record(nil), bk.records...), Speed{RunSpeed: after, Changed: after != before}
 }

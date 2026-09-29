@@ -1668,10 +1668,11 @@ func _try_initialize_pk2_ui() -> void:
 		# Only a result that actually reports health may move the bar. Death is
 		# unaffected: a real death is a successful result whose player_hp is 0
 		# and whose monster/attack fields are filled in.
-		if result != null and result.error != "":
+		if result != null and result.error != "" and result.error != SelfCast.SILENT_END_TEXT:
 			# Say why. A refused swing or cast used to do nothing visible at
 			# all, so "no distance checking" and "nothing happened" looked the
-			# same from the outside.
+			# same from the outside. (A cast retail ends without a text --
+			# SelfCast.SILENT_END_TEXT, round 636's review -- stays silent.)
 			_log_system(result.error)
 			if OS.get_environment("SRREVAMP_QA_HOTKEY") != "":
 				print("QA ATTACK RESULT: refused (%s)" % result.error)

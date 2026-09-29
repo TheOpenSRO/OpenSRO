@@ -101,6 +101,12 @@ rm -f itemdata_* skilldata_* npcpos.txt teleport*.txt   # the extracted tables a
 # Until then every state byte loads 0 and Fire Protection stacks and the Grass Walks run together,
 # as before. Check: `SELECT count(*) FROM skills WHERE action_overlap <> 0;` answers 1835 on a
 # retail archive.
+# ROUND 636'S REVIEW (one trap at a time, one guard link too many) adds six more, FUN_0059dc80's and
+# the collector flag (the CSV is 83 columns; the store adds skills.lnks_group, lnks_max, efr3, qest,
+# trap, efr1): the same re-export and re-import. Until then a Fire Trap can be cast again while one
+# runs and a Warrior guard links any number of party members. Check:
+# `SELECT count(*) FROM skills WHERE efr3 AND lnks;` answers 32 on a retail archive (every one a
+# Target_Required 0 row: the Fire Traps and seven quest traps).
 # ROUND 632 (berserk potions, the Energy of life scroll) NEEDS THE ITEMS RE-EXPORT ON srrevamp-01:
 # re-run `export-refdata -mode items` with the NEW binary (step 1; items.csv grows to 72 columns --
 # column 70 CodeName, round 497, which an older CSV may also lack, and the new column 71

@@ -912,3 +912,25 @@ func TestGMSpeedCommand(t *testing.T) {
 		t.Fatalf("/speed 0 accepted: %+v", res)
 	}
 }
+
+// /speed is pruned when the character leaves the world (round 636's
+// review): a logout leaves no multiplier behind for the next login.
+func TestGMSpeedPrunedOnLogout(t *testing.T) {
+	w := startBuffWorld(t)
+	w.write(t, OpGMCommand, (&GMCommandRequest{Name: "Aria", Line: "/speed 4"}).Encode())
+	if res, err := DecodeGMCommandResult(w.expect(t, OpGMCommandResult).Data); err != nil || res.Refused {
+		t.Fatalf("/speed 4: %+v %v", res, err)
+	}
+	if _, ok := buffBooks.GMSpeedFactor(w.aria); !ok {
+		t.Fatal("no multiplier after /speed 4")
+	}
+	w.conn.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := buffBooks.GMSpeedFactor(w.aria); !ok {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the multiplier outlived the logout")
+}

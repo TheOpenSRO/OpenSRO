@@ -146,8 +146,8 @@ buff starts. `deploy/README.md` has the steps and a check query.
 - a row **with `lnks`** instead calls `FUN_0059dc80(0)` -- only when it also carries an `efr` of
   kind 3 (`+0x294`, round 636: the field `efr` value[0] == 3 files) -- which walks the self-cast records carrying an attached object (`ctx+0x68`) and
   compares `lnks` values, skill ids, `lks2` and the attached object's id (answers `0x300c`,
-  `0x3029`, `0x3037`). srrevamp keeps no attached objects, so **an `lnks` row gets no overlap check
-  (OPEN)**;
+  `0x3029`, `0x3037`; below). An `lnks` row without `efr` kind 3 gets no check at all
+  (0x58e308 -> 0x58e32d). srrevamp: `buff.linkLocked` (the review of round 636);
 - a Target_Required 1 row gets no check at this gate, **but the target test runs the same
   function on each target's book** (READ in round 622's review): `FUN_0058cc70`, for each target,
   calls `FUN_0059d870(target+0xa30, skill, caster)` (0x58d2ca..0x58d2d3) and refuses `0x300c` on a 0
@@ -195,8 +195,8 @@ is set in the book's **state bit set** at `book+0x1b0` (`pc+0xbe0`; four 64-bit 
 running action (`book+0x1d8`, a buff between its cast and its engage).
 
 **The bit set** is written only by `SkillBook::SetGroupBits(mask, clear)` (`0x59dc00`): each non-zero
-low byte's bit set, or cleared (not counted: a clear clears it whoever set it). Its callers (every
-one of the seven, READ):
+low byte's bit set, or cleared (not counted: a clear clears it whoever set it). Its callers (all
+nine, READ; round 636 listed seven and missed the last two):
 - SkillAction_Buff sub-state 1 (the engage, 0x5842ce/0x5842ea): for every record but an `lnks` one
   cast on oneself it first runs `FUN_0059db10(Action_Overlap)` and **does not engage** on a 1
   (`return 2`); then it sets `local_d0` -- Action_Overlap; 0 for an `lnks` record cast on oneself;
@@ -206,7 +206,27 @@ one of the seven, READ):
   the `lnks` link struct (ctx `+0x68`, which SkillAction_Buff builds for every `lnks` row) that is
   not on another character; `ovl2` value[0] for a record on another character whose row has it --
   and `ovl2` value[0];
-- 0x584d5a, 0x585128, 0x58533f: the `ovl2` / pulse paths inside SkillAction_Buff (not needed here).
+- 0x584d5a, 0x585128, 0x58533f: the `ovl2` / pulse paths inside SkillAction_Buff (not needed here);
+- `CTJ_SkillKeeper` slot 12, `FUN_00650e70` (0x651178, 0x651194): a buff restore (not modelled:
+  srrevamp restores no buffs, OPEN with the login restore below).
+
+**SkillAction_Buff's sub-state 0 (READ in round 636's review, 0x583ffb..0x584044).** After the
+casting time, for a row with no `efr` of kind 3 (`+0x294`, the trap branch) that is not an `efr`
+kind-1 row (`+0x28c`) with a Basic_Activity other than 1 (the collector branch), it tests the
+**caster's** book (EDI = `param_2 + 0xa30`, the acting character -- also for a cast on another
+character): `FUN_0059db10(ovl2 value[0])`, then `FUN_0059db10(Action_Overlap)`. A hit ends the
+action with `FUN_0059ae10(2, 0, id, 0)` -- 0xB071 kind 2 with error 0 -- **before the costs**: the
+spend (vslot `0x308`) runs only on the other path. The retail client's kind-2 handler
+(`FUN_00a56680` -> `FUN_00a50a00`) ends the cast deco and shows no text. The collector branch
+instead spends first (vslot `0x308`), sends 0xB071 kind 1 and runs `FUN_0059d870` on each target;
+the record then meets the engage's test (sub-state 1, above) and, on a hit, simply does not start.
+srrevamp: `buff.Books.CheckEngage`, after the category end and before the costs; a hit answers the
+cast with `session.silentRefusal`, a marker the client ends the cast on without logging (OURS, since
+srrevamp's reply has no "error 0"); a collector row's engage refusal (`buff.RefusedEngage`) keeps
+the costs and answers the success, as retail does. MEASURED: the 18 `dttp` rows with a state byte
+(`SKILL_CH_FIRE_DETECT_*` byte 0x2f, `SKILL_CH_FIRE_DESCRY_*` 0x2e) carry `efr` kind 1 with
+Activity 2 -- the collector branch: a second cast while one runs passes the gate (the `dttp` owner
+shortcut), is charged, and starts nothing.
 
 **What the bytes are (MEASURED, round 636, over the 33,698 exported rows).** Only action-kind-3 rows
 carry a state byte (1,835 rows). Each byte names a family: 1 every imbue (`*_GIGONGTA_*`, 20
@@ -238,13 +258,11 @@ carries `hide` (`+0x428`), `0x300c` at once. Which state 4 is was not read -- **
 (OPEN)**. And the gate orders its rows HP (0x58e292), MP (0x58e2b1), then row 16: srrevamp now
 tests the costs before the recast rule (round 636; until then the other way round).
 
-srrevamp: `buff.Books.CheckOverlap` / `Start` (`overlapLocked`, `gateApplies`, the bit set in the
-book, `engageBits` / `endBits`). The ended records leave the book (their bits with them) before the
-new one's engage test -- INFERRED order, as before. **Not modelled:** the running-action half of
-`FUN_0059db10` (srrevamp engages a buff at its cast, so there is none); `FUN_0059dc80` for an `lnks`
-row (OPEN, below); the `hide` rule above. When the engage test refuses after the gate passed (only
-possible when a replacing branch leaves another record's byte set), srrevamp refunds and answers
-"the skill could not be used" (OURS; retail's engage returns 2 silently).
+srrevamp: `buff.Books.CheckOverlap` / `CheckEngage` / `Start` (`gateLocked`, `linkLocked`,
+`overlapLocked`, `gateApplies`, the bit set in the book, `engageBits` / `endBits`). The ended records
+leave the book (their bits with them) before the new one's tests -- INFERRED order, as before.
+**Not modelled:** the running-action half of `FUN_0059db10` (srrevamp engages a buff at its cast, so
+there is none); the `hide` rule above.
 
 ### Every row, by rule (round 636)
 
@@ -254,31 +272,77 @@ the RE box's export, the 2,348 action-kind-3 rows by the rule that decides a rec
 
 | rows | rule | srrevamp |
 |---:|---|---|
-| 1,457 | GroupID branch; other groups meet the bit test | modelled |
+| 1,341 | GroupID branch; other groups meet the bit test | modelled |
 | 397 | `cbuf`: the list passes them over; the bit test refuses | modelled (Fire / Cold Protection) |
 | 82 | `efr` kind 2 (then the bit test) | modelled (the Bard dances and songs) |
 | 36 | `dttp` | modelled (`SKILL_CH_FIRE_DESCRY_*`, `_DETECT_*`, the EU detects) |
 | 31 | GroupID 0: the bit test only | modelled |
 | 1 | `msch` 1: the bit test only | modelled |
-| 160 | `lks2` with no state byte: nothing stops a recast | modelled -- READ: the Warlock DOTs and the Bard MP steal stack |
 | 76 | `cbuf` with no state byte: nothing stops a recast | modelled -- READ (socket stones, the WANTED rows, mall scrolls) |
 | 76 | GroupID 0 with no state byte: nothing stops a recast | modelled -- READ (monster `MSKILL_*` rows) |
-| 32 | `lnks` with Target_Required 0: the gate calls `FUN_0059dc80` | **OPEN** (no check) |
+| 32 | `lnks` with Target_Required 0 and `efr` kind 3: the gate calls `FUN_0059dc80` | modelled (`linkLocked`, the review) |
+| 276 | `lnks` with Target_Required 1: the target test calls `FUN_0059dc80` on the caster's book, then `FUN_0059d870` on the target's | modelled (the review's follow-up: a caster's link records) |
+
+Round 636 filed 160 of the 276 as "`lks2` with no state byte: nothing stops a recast, READ". That
+was wrong: every one of the 160 carries `lnks` and is Target_Required 1 (142
+`SKILL_EU_WARLOCK_DOTA_*`, 18 `SKILL_EU_BARD_BATTLAA_MPSTEAL_A`), and the target test calls
+`FUN_0059dc80` for every `lnks` row (0x58d27d..0x58d2a6). The Warlock DOTs have no friendly group,
+so srrevamp does not start them at all (a debuff on a monster).
 
 202 of them are Target_Required 1 rows with only hostile groups, which srrevamp does not start
 (debuffs on a monster, not modelled). Every pair of rows that share a state byte and differ in
 group -- 311,259 pairs -- is refused as the second, except where the first is an `lnks` row cast on
 oneself (it sets no bits, READ) or the second is a `dttp` or `lnks`/Target_Required 0 row. A
-same-skill recast leaves two records only for the `dttp` owner-cast stack (READ) and the "nothing
-stops" rows above.
+same-skill recast leaves two records only for the `dttp` owner-cast stack of the rows with no state
+byte (READ; the EU detects) and the "nothing stops" rows above. The 106 friendly Target_Required 1
+`lnks` rows with a non-zero `lnks` value[2] (the Warrior guards, the Cleric blessings, the damage
+divides, the Rogue point, the Warlock stun link) are driven to their limit: value[2] targets pass,
+the next is `0x3029`, and the same target again is `0x300c`.
 
-**`FUN_0059dc80` (the `lnks` rows) -- OPEN.** It walks the caster's records whose skill has a
-non-zero Basic_Activity and ctx `+0x20 == 1` and a link object (ctx `+0x68`); for one with the same
-`lnks` value[0] it compares skill ids, `lks2` on both rows and the linked object's id (`+0x10`)
-against its argument (0 from the gate row), counts matches against `lnks` value[2], and answers
-`0x300c`, `0x3029` or `0x3037` (with `+0x49c` and `+0x4a0`). srrevamp links no second object, so it
-does not model it; the 32 Target_Required 0 `lnks` rows (`SKILL_QNO_*`, `SKILL_EU_WIZARD_FIREA_TRAP_*`
-...) get no recast check, and a Target_Required 1 `lnks` row cast on oneself sets no bits (READ).
+**`FUN_0059dc80` (the `lnks` rows) -- READ in round 636's review** (asm 0x59dc80..0x59dde2; EAX
+the book, EBX the new row, one stack argument: the linked object, 0 from the gate at 0x58e315, the
+target from the target test at 0x58d294). It walks the book's list (`book+0x268`) and considers a
+record only when its skill's Basic_Activity (`+0x65`) is non-zero, its ctx `+0x20` is 1, it carries
+the link struct (ctx `+0x68`), and its `lnks` value[0] equals the new row's. For such a record:
+
+- **the same skill id** (`+4`): neither row carrying `lks2` (`+0x374`) -> the record is counted
+  (0x59dd72), unless the argument's id (`+8`) is the struct's linked object (`+0x10`): `0x300c`;
+  both carrying it -> that same match is `0x300c`, and nothing is counted; one carrying it ->
+  nothing is counted;
+- **another skill id**: neither carrying `lks2` and a non-zero `lnks` value[0] -> `0x300c` at once
+  (0x59dda3..0x59ddae); both carrying it -> a match on the linked object is counted; otherwise
+  the record is passed over.
+
+After each record that reaches the count (0x59dd77), a non-zero `lnks` value[2] equal to the count
+refuses: `0x3037` `UIIT_MSG_QUEST_ERR_CANNOT_MAKE_TRAP` when the row carries both `qest` (`+0x49c`)
+and `trap` (`+0x4a0`), else `0x3029` `UIIT_STT_SKILL_USE_FAIL_OVERLAP_COUNT` ("The available
+number of people for this skill is maxed.", MEASURED). The link struct (`FUN_005a9d60`) is built
+by SkillAction_Buff (0x5830b0, READ) on the record of an `lnks` row in its `efr` kind-3 branch,
+`+0xc` the caster's id and `+0x10` the id of the object that branch makes (`FUN_00485e70`); that
+record's ctx `+0x20` keeps `FUN_005a9ae0`'s default 1 (READ). The Target_Required 1 branch builds
+one too, on a second record for the caster, `+0x10` the target's id.
+
+MEASURED: all 32 Target_Required 0 `lnks` rows carry `efr` kind 3 and `trap`, and none `lks2`: the
+25 `SKILL_EU_WIZARD_FIREA_TRAP_A/B_*` rows (`lnks` 14 300 1 1) and 7 `SKILL_QNO_*` rows (`lnks` 0
+300 1 0, with `qest`). So a second Fire Trap of the same skill is `0x3029`, any other Fire Trap
+`0x300c`, and a second quest trap of the same skill `0x3037` (quest traps of other skills pass:
+value[0] is 0). **srrevamp** (`buff.linkLocked`, skill CSV columns 77..81): an `lnks` + `efr`
+kind-3 record its owner cast is the link record (INFERRED); srrevamp makes no object, and the
+gate passes none, so the linked id never matters there. Whether retail's record also ends when
+its object goes was not read (OPEN); srrevamp's lasts its `dura` (120 s for a Fire Trap).
+
+**The target test's call (the review's follow-up).** For a Target_Required 1 `lnks` row the
+target test calls `FUN_0059dc80` on the **caster's** book with the target as the linked object
+(0x58d294: `push ebp` the target, EAX `caster+0xa30`), before `FUN_0059d870` on the target's book.
+The records it counts are the second records SkillAction_Buff's Target_Required 1 branch builds for
+the caster (READ, the link struct `+0xc` the caster's id, `+0x10` the target's id). srrevamp keeps
+them as the caster's link entries (`buff.Books.links`): out of the caster's visible book (OURS: no
+icon; an `lnks` record cast on oneself sets no bits, READ), added when the target's record starts,
+dropped when it ends (INFERRED) or at the caster's teardown. So a Warrior's guard (`lnks` 1 . 2)
+links two party members; a third is `0x3029`, the same one again `0x300c`, and another level of the
+guard `0x300c` while a link stands. **OPEN:** retail's link record, when it ends, also ends the
+target's record (SkillAction_BuffEnd's ctx `+0x68` branch, `FUN_0059eff0(1)`); srrevamp does not
+end the target's buff when its caster dies or leaves.
 
 ### The run speed (READ, and one MEASURED base)
 
@@ -313,8 +377,9 @@ what the client should move by.
 **`/speed` (round 636, OURS: a GM test tool, no retail counterpart).** A per-owner multiplier kept
 beside the book (`buff.Books.SetGMSpeedFactor`, 0.1..10) multiplies the speed every packet above
 reports. The change itself goes out as an `OpBuffEnd` with no tokens and the new `runSpeed`; the
-arriving client learns it in `sendBuffsInView`. It survives a death, a zone change and a reconnect
-until `/speed off` or a server restart.
+arriving client learns it in `sendBuffsInView`. It survives a death and a zone change, and is
+cleared when the character leaves the world (round 636's review: pruned on logout, so a GM demoted by
+a restart without the account in `-gm-accounts` keeps nothing), or by `/speed off`.
 
 **Other publishing codes — OPEN.** srrevamp computes damage, defence and HP/MP without a
 ParamKeeper, so nothing there has a slot to take a buff's contribution. The next ones to wire,
@@ -367,15 +432,19 @@ the book today.
   `FUN_005a1840(row, record's row)` answers 1: per byte position (shifts 0, 8, 16), the row's
   Action_Overlap byte `0x1d` against the record's `0x1d`, or its `0x23` against the record's `0x23`
   or `0x1d`. Each ended record's token goes out as `0xB072`. Callers: the movement handler
-  `GObjPC::FUN_004b0ea0` (slot 377; mask 1, no row), `FUN_0059b480` (mask 2, the skill's row -- it
-  builds a skill use's context: `FUN_0046c1f0(skill id)` then the category end, before the gate
-  runs), the berserk handler `0x515b30` (mask 4, no row) and `GObjPC::FUN_004d2200` (the pet
+  `GObjPC::FUN_004b0ea0` (slot 377; mask 1, no row), `FUN_0059b480` (mask 2, the skill's row), the
+  berserk handler `0x515b30` (mask 4, no row) and `GObjPC::FUN_004d2200` (the pet
   control handler; its mask register was not traced -- OPEN). MEASURED: `skc` value[1] is 2 on the
   EU transform and illusion rows, 10 on the EU hiding and invisibility rows, 8 on
   `SKILL_FORT_REPAIR_KIT`; no row carries 1 or 4, so a move and a berserk end nothing.
-  **srrevamp**: `buff.Books.EndCategory`, run with mask 2 on every `OpUseSkill` of a known skill
-  (`endCategoryOnSkillUse`), before the gate's refusals -- so a stealth ends on any skill use and a
-  Bard dance ends the dance before it. Movement, berserk and mask 8 are not wired (nothing carries
+  **Where `FUN_0059b480` runs (corrected by round 636's review, READ):** not before the gate. The
+  gate runs at request time (`GObjPC::HandleCharacterActionRequest_7074` 0x4acc40, 0x4aced4); the
+  skill tick's case 2 then posts 0x7070 -> vslot 383 `FUN_004b21b0` -> `FUN_0059b7c0` ->
+  `FUN_0059b480`, which builds the use's context and runs the category end at 0x59b745 just before
+  `SkillActionHandler`. So a refused cast ends nothing. **srrevamp**: `buff.Books.EndCategory` with
+  mask 2, run once every refusal of `OpUseSkill` has passed (after the gate, the cost test and the
+  reach test; before the sub-state 0 test and the costs) -- so a cast that goes through ends a
+  stealth, and a Bard dance ends the dance before it. Movement, berserk and mask 8 are not wired (nothing carries
   them but the repair kit).
 
 ## Ghost Walk (READ, one piece not modelled)

@@ -137,6 +137,7 @@ func _test_plan() -> void:
 	var consts: Dictionary = sc.get_script_constant_map()
 	_check(String(consts.get("NO_TARGET_TEXT", "")) == "The target is not selected.", "the 0x3011 text is the retail English one")
 	_check(String(consts.get("INVALID_TARGET_TEXT", "")) == "Invalid target", "the 0x3006 text is the retail English one")
+	_check(String(consts.get("SILENT_END_TEXT", "")) == "the skill action ended", "the silent-end marker matches the server's (session.silentRefusal)")
 
 # --- bytes ----------------------------------------------------------------------
 

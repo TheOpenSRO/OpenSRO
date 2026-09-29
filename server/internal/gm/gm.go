@@ -268,7 +268,7 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 
 // speed multiplies the GM's own run speed (OURS, a test tool with no
 // retail counterpart; round 636, at the user's request): /speed <x> sets a
-// multiplier on top of the buffs (0 < x <= buff.MaxGMSpeedFactor, 10),
+// multiplier on top of the buffs (0.1 <= x <= 10, buff.MaxGMSpeedFactor),
 // /speed off (or 1) clears it, /speed alone shows it. The new speed reaches
 // the client through the buff path's runSpeed (an OpBuffEnd with no
 // tokens); the server does not police movement speed, so nothing else has
