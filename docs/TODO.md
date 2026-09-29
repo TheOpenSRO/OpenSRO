@@ -994,16 +994,18 @@ bars use `pmi_hp.ddj` / `pmi_mp.ddj`. Left:
       (`FUN_007b7740`); which of the floats 0.2 / 6.5 / 30.0 / 0.1 is distance, lift and field of
       view is not settled (READ the camera build in `FUN_00a5a8c0` next). Then a SubViewport with
       its own World3D and a copy of the player's skeleton and worn meshes.
-- [ ] **Hit rate / Parry ratio** stay empty in both the panel and the character window: the server
-      sends neither (engine params 11 / 9).
+- [x] **Hit rate / Parry ratio** -- round 629's review: the stats packet's fifth and sixth tails,
+      the rates combat already uses (innate 10 + level + weapon HitRateMin / armour parry), in both
+      windows. Still OPEN: retail adds buffs and masteries to params 11 / 9; ours does not.
 - [ ] **Buffs do not change the panel's numbers** because the server's buff book only records the
       run-speed contributions (`internal/buff`); the panel already re-asks on OpBuffStart/End.
 - [ ] **Hwan-level art** (`pmi_jahwan_02*`, blue) needs a Hwan level (`player+0x764`, INFERRED
       `_CHAR.HwanLevel`); the berserk display's extra seconds (`player+0x20f8`, Hwan socket stones)
       likewise. The "+" button's blink (`FUN_00655ec0(1)`) is not drawn.
-- [ ] The orb count at login rides the stats packet's fourth tail now, but the END of a berserk
-      (retail's `FUN_007b5300`) still reaches the client only through the next AttackResult; the
-      display drains on its own 60 s clock meanwhile, which matches the server's Duration.
+- [x] **The berserk end** -- round 629's review: the server pushes 0x30BF kind 4 (body mode) on
+      at activation and off when it runs out; the display ends on its own timer 2, and on death and
+      zone reset (`FUN_007b5300`). OPEN: the value-1 extra byte (chardata+5) is sent as 0; other
+      players' body modes are not drawn.
 
 ### Seasonal event decorations — **hidden by default (round 583)**
 The user decided on 2026-09-26 that early testing gets no seasonal decorations. Christmas,

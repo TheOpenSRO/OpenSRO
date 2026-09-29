@@ -8,11 +8,11 @@ class_name StatsNet
 ## (`resinfo\ifplayerinfo_trijob2.txt`, the layout CIFPlayerInfo loads, in
 ## the main popup) shows the rows the server can state -- level,
 ## exp and exp-to-next, Str/Int and the unspent stat points, HP/MP, both
-## attack ranges, both defence sums, and the balance percentages the client
-## computes from Str/Int and the level (round 629) -- and leaves the rest as
-## the layout drew them: hit rate and parry (engine params the server does not carry
-## per instance and the engine never reads), the job grades and honour (no
-## such systems here). See HudPanels._apply_stats for the row-by-row reasons.
+## attack ranges, both defence sums, hit rate and parry (params 11 / 9, the
+## rates combat places blows with; round 629's review), and the balance
+## percentages the client computes from Str/Int and the level (round 629) --
+## and leaves the job grades and honour as the layout drew them (no such
+## systems here). See HudPanels._apply_stats for the row-by-row reasons.
 
 const OP_STATS := 0x00EE        # client -> server
 const OP_STATS_RESULT := 0x00EF # server -> client
@@ -59,6 +59,12 @@ class Stats:
 	## from a server too old to send it.
 	var hwan_count: int = 0
 	var has_hwan_count: bool = false
+	## Hit rate and parry ratio (params 11 and 9, retail's 0x303D +0x14/+0x16):
+	## the fifth and sixth tails (round 629's review). has_rates is false from
+	## a server too old to send them.
+	var hit_rate: int = 0
+	var parry_rate: int = 0
+	var has_rates: bool = false
 
 	## The EXP gauge fill, 0..100, or 0 when exp-to-next is unknown.
 	func exp_percent() -> float:
@@ -118,6 +124,11 @@ static func decode_result(data: PackedByteArray) -> Stats:
 	if offset + 88 <= data.size():
 		stats.hwan_count = data.decode_s32(offset + 84)
 		stats.has_hwan_count = true
+	# Hit rate and parry follow; an 88-byte result omits them.
+	if offset + 96 <= data.size():
+		stats.hit_rate = data.decode_s32(offset + 88)
+		stats.parry_rate = data.decode_s32(offset + 92)
+		stats.has_rates = true
 	return stats
 
 ## Encodes an OpSpendStatPoints request: the name, then how many points go

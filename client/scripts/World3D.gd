@@ -1332,14 +1332,13 @@ func _ready() -> void:
 	NetClient.inventory_list_result.connect(_on_inventory_list_result)
 	NetClient.equipment_result.connect(_on_equipment_result)
 	# Round 629: the player block's stat panel keeps up with what changes the
-	# numbers while it is open -- equip / unequip (the equipment reply), a
-	# buff starting or ending. Level-up, a stat-point spend and a kill already
-	# bring a stats packet, which _on_world_stats applies.
-	NetClient.equipment_result.connect(func(_items: Array, error: String) -> void:
-		if error == "":
-			_refresh_stat_panel("equipment changed"))
-	NetClient.buff_started.connect(func(_start) -> void: _refresh_stat_panel("buff started"))
-	NetClient.buff_ended.connect(func(_ended) -> void: _refresh_stat_panel("buff ended"))
+	# numbers while it is open -- a real change of what is worn (not every
+	# equipment list: opening the bag asks for one), and this player's own
+	# buffs starting or ending (_on_buff_started / _on_buff_ended, behind
+	# SelfCast's ownership test -- zone entry replays everyone's). Level-up,
+	# a stat-point spend and a kill already bring a stats packet, which
+	# _on_world_stats applies.
+	NetClient.equipment_result.connect(_stat_panel_on_equipment)
 	NetClient.quest_list_result.connect(_on_quest_list_result)
 	NetClient.quest_accept_result.connect(_on_quest_accept_result)
 	NetClient.quest_completed.connect(_on_quest_completed)
@@ -1661,7 +1660,9 @@ func _try_initialize_pk2_ui() -> void:
 		if result != null and result.error == "" and _last_enter_world_max_hp > 0:
 			if _hud_player_info != null:
 				_hud_player_info.set_hp(result.player_hp, _last_enter_world_max_hp)
-				_hud_player_info.set_berserk(result.berserk_gauge, result.berserk_active)
+				# The count only (round 629's review): an AttackResult is not a
+				# start, and a running display ends on its own timers.
+				_hud_player_info.set_berserk(result.berserk_gauge, false)
 				if OS.get_environment("SRREVAMP_QA_HOTKEY") != "":
 					# The orbs as drawn: an unlit orb is hidden (round 629).
 					var lit := 0
@@ -1694,7 +1695,9 @@ func _try_initialize_pk2_ui() -> void:
 	NetClient.berserk_result.connect(func(activated: bool, gauge: int, active: bool) -> void:
 		print("World3D: berserk result: activated %s, gauge %d, active %s" % [str(activated), gauge, str(active)])
 		if _hud_player_info != null:
-			_hud_player_info.set_berserk(gauge, active)
+			# The activation reply starts the display; a refusal passes the
+			# count, which FUN_00778ae0 leaves alone when it is 0.
+			_hud_player_info.set_berserk(gauge, activated)
 		_audio_set_hwan(active)
 		if activated:
 			_log_system("Berserk!")
@@ -4695,6 +4698,10 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	if result != null and result.ok:
 		# The server stands a character that changes zone (round 607).
 		_sit.reset()
+		# Retail's zone reset (FUN_00787860) runs FUN_007b5300: a running
+		# berserk display fades out (round 629's review).
+		if _hud_player_info != null:
+			_hud_player_info.reset_hwan_display()
 	if not result.ok:
 		# An accepted teleport whose move failed (warpTo's "not in the world";
 		# the server refunds the fee): the request is over, so a destination
@@ -12541,7 +12548,13 @@ func _on_gm_command_result(result: GmNet.Result) -> void:
 ## position now. Movement is client-authoritative, so placing the player and
 ## letting the move sync inform the server is the same path /unstuck uses.
 func _apply_gm_move(result: GmNet.Result) -> void:
-	if result.zone != "" and (NetClient.last_enter_world_result == null or result.zone != NetClient.last_enter_world_result.zone):
+	# The zone the player is in NOW (round 629's review): comparing with the
+	# enter-world zone took a /goto back to the starting town, after a zone
+	# change, for "already there" and never moved the player.
+	var here := NetClient.current_zone
+	if here == "" and NetClient.last_enter_world_result != null:
+		here = NetClient.last_enter_world_result.zone
+	if result.zone != "" and result.zone != here:
 		if result.has_pos:
 			_pending_gm_pos = Vector2(result.x, result.z)
 		NetClient.change_zone(result.zone)
@@ -14540,6 +14553,11 @@ func _enter_dead_state(exp_lost: int) -> void:
 		return
 	_player_dead = true
 	_sit.reset()
+	# Retail's death (0x30BF kind 0 value 2 -> FUN_0077b000) runs FUN_007b5300:
+	# the berserk display fades out (round 629's review).
+	if _hud_player_info != null:
+		_hud_player_info.reset_hwan_display()
+		print("World3D: death -- berserk display reset (active now %s)" % str(_hud_player_info.hwan_display_active()))
 	_drop_pending_attack()
 	_has_move_target = false
 	_left_steering = false
@@ -15326,6 +15344,7 @@ func _on_buff_started(start: SkillNet.BuffStart) -> void:
 	print("BUFF start handled: owner %d is %s" % [start.owner_id, "this player" if mine else "someone else"])
 	if mine:
 		_apply_buff_run_speed(start.run_speed, "OpBuffStart skill %d token %d" % [start.skill_id, start.token])
+		_refresh_stat_panel("own buff started")
 	_fx_on_buff_started(start)
 
 ## Buffs ended (OpBuffEnd, round 617): this player's run speed, as for a start.
@@ -15335,6 +15354,7 @@ func _on_buff_ended(ended: SkillNet.BuffEnd) -> void:
 	print("BUFF end handled: owner %d is %s" % [ended.owner_id, "this player" if mine else "someone else"])
 	if mine:
 		_apply_buff_run_speed(ended.run_speed, "OpBuffEnd tokens %s" % str(ended.tokens))
+		_refresh_stat_panel("own buff ended")
 	_fx_on_buff_ended(ended)
 
 ## OpSelfId arrived (round 617's review): this player's own id, for the buff
@@ -15439,6 +15459,9 @@ func _settle_skill_move_footing(to: Vector3) -> Dictionary:
 ## player's body.
 func _on_state_changed(change: WorldNet.StateChange) -> void:
 	_sync_own_id()
+	if change != null and change.kind == WorldNet.STATE_KIND_BODY_MODE:
+		_on_body_mode(change)
+		return
 	if change == null or change.kind != WorldNet.STATE_KIND_MOTION:
 		return
 	match _sit.classify(change.object_id, _other_bodies.has(change.object_id), _player_anim_time):
@@ -15448,6 +15471,17 @@ func _on_state_changed(change: WorldNet.StateChange) -> void:
 			_apply_player_motion(change.value)
 		_:
 			print("SIT: state change for unknown id %d (value %d) ignored" % [change.object_id, change.value])
+
+## 0x30BF kind 4, the body mode (round 629's review). READ, 0x8a80a0: for this
+## player and value 1 the client runs FUN_00778ae0(0, 1) -- the orbs' berserk
+## display starts, the count now 0; value 0 ends the body mode and leaves the
+## display to its own timer. Other players' body modes are not drawn here.
+func _on_body_mode(change: WorldNet.StateChange) -> void:
+	var own := _own_id()
+	var mine := own >= 0 and change.object_id == own
+	print("World3D: body mode %d for %d (%s)" % [change.value, change.object_id, "this player" if mine else "someone else"])
+	if mine and change.value == 1 and _hud_player_info != null:
+		_hud_player_info.set_hwan(0, true)
 
 ## The server's answer for this player: sit (4) or stand (0), through the 1.5 s
 ## transition in which it refuses a move.
@@ -15678,11 +15712,46 @@ func _on_level_up(new_level: int, _stat_points: int) -> void:
 
 ## Asks for fresh stats while the player block's stat panel is open, the
 ## way the client's own panel rewrites its rows every frame (vslot_012).
+## Coalesced (round 629's review): any number of causes in one frame make one
+## request, sent from a deferred call at the frame's end.
 func _refresh_stat_panel(why: String) -> void:
 	if _hud_player_info == null or not _hud_player_info.is_stat_panel_open():
 		return
-	print("World3D: player stat panel refresh (%s)" % why)
+	_stat_panel_refresh_causes.append(why)
+	if _stat_panel_refresh_causes.size() == 1:
+		call_deferred("_flush_stat_panel_refresh")
+
+var _stat_panel_refresh_causes: Array = []
+## How many stats requests the panel has sent -- the QA log's measure of a storm.
+var _stat_panel_refresh_sent := 0
+
+func _flush_stat_panel_refresh() -> void:
+	if _stat_panel_refresh_causes.is_empty():
+		return
+	_stat_panel_refresh_sent += 1
+	print("World3D: player stat panel refresh #%d (%s)" % [_stat_panel_refresh_sent, ", ".join(PackedStringArray(_stat_panel_refresh_causes))])
+	_stat_panel_refresh_causes.clear()
 	_request_world_stats()
+
+## What was worn at the last non-empty equipment list, as "slot:item" pairs.
+var _stat_panel_worn_sig := ""
+
+## An equipment list refreshes the panel only when what is worn CHANGED. Every
+## list is not a change: opening the bag asks for one, and an equip's
+## acknowledgement is an empty list followed by the real one, so an empty
+## list is skipped and the next real one is compared with the last.
+func _stat_panel_on_equipment(items: Array, error: String) -> void:
+	if error != "" or items.is_empty():
+		return
+	var pairs: Array = []
+	for e in items:
+		pairs.append("%d:%d" % [e.slot, e.item_id])
+	pairs.sort()
+	var sig := ",".join(PackedStringArray(pairs))
+	var changed := _stat_panel_worn_sig != "" and sig != _stat_panel_worn_sig
+	_stat_panel_worn_sig = sig
+	if changed:
+		_refresh_stat_panel("equipment changed")
 
 ## The race emblem on the player block: the body's characterdata row's
 ## Country (column 14), 0 China / 1 Europe -- the byte CIFPlayerMiniInfo
@@ -15741,11 +15810,12 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 			stats.has_hwan_count = false
 		_hud_player_info.set_stats(stats)
 		if _hud_player_info.is_stat_panel_open():
-			print("World3D: player stat panel: str %s int %s phy %s def %s mag %s def %s bal %s / %s (level %d)" % [
+			print("World3D: player stat panel: str %s int %s phy %s def %s mag %s def %s bal %s / %s hit %s parry %s (level %d)" % [
 				_hud_player_info.stat_value("GDR_PMI_TXT_STRDAT"), _hud_player_info.stat_value("GDR_PMI_TXT_INTDAT"),
 				_hud_player_info.stat_value("GDR_PMI_TXT_PHYATTDAT"), _hud_player_info.stat_value("GDR_PMI_TXT_PHYDEFDAT"),
 				_hud_player_info.stat_value("GDR_PMI_TXT_MAGATTDAT"), _hud_player_info.stat_value("GDR_PMI_TXT_MAGDEFDAT"),
-				_hud_player_info.stat_value("GDR_PMI_TXT_PHYBALDAT"), _hud_player_info.stat_value("GDR_PMI_TXT_MAGBALDAT"), stats.level])
+				_hud_player_info.stat_value("GDR_PMI_TXT_PHYBALDAT"), _hud_player_info.stat_value("GDR_PMI_TXT_MAGBALDAT"),
+				_hud_player_info.stat_value("GDR_PMI_TXT_HITDAT"), _hud_player_info.stat_value("GDR_PMI_TXT_PARRYDAT"), stats.level])
 	if _hud_underbar != null:
 		_hud_underbar.set_level(stats.level)
 		_hud_underbar.set_exp(stats.exp_percent())

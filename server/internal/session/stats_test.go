@@ -77,8 +77,8 @@ func TestCharacterStatsResultCarriesCharacterRows(t *testing.T) {
 		PhysAttackMin: 12, MagAttackMin: 0, MagAttackMax: 0, MagDefense: 4,
 	}
 	encoded := in.Encode()
-	if got := len(encoded) - 2; got != 88 {
-		t.Fatalf("body is %d bytes, want 88", got)
+	if got := len(encoded) - 2; got != 96 {
+		t.Fatalf("body is %d bytes, want 96", got)
 	}
 	out, err := DecodeCharacterStatsResult(encoded)
 	if err != nil {
@@ -126,6 +126,40 @@ func TestCharacterStatsResultCarriesHwanCount(t *testing.T) {
 	}
 	if built.HwanCount != 5 {
 		t.Fatalf("buildCharacterStats: HwanCount %d, want the character's 5", built.HwanCount)
+	}
+}
+
+// Hit rate and parry are the fifth and sixth tails (round 629's review): the
+// numbers combat places blows with -- the innate 10, the level and the weapon's
+// HitRateMin; the same over the body armour's parry -- round-tripped, absent
+// from an 88-byte result, and built by buildCharacterStats. Retail sends them
+// in 0x303D (params 11 and 9).
+func TestCharacterStatsResultCarriesHitAndParry(t *testing.T) {
+	in := &CharacterStatsResult{HP: 10, MaxHP: 10, Level: 2, HwanCount: 1, HitRate: 36, ParryRate: 35}
+	encoded := in.Encode()
+	out, err := DecodeCharacterStatsResult(encoded)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.HitRate != 36 || out.ParryRate != 35 {
+		t.Fatalf("hit/parry did not survive: got %d/%d, want 36/35", out.HitRate, out.ParryRate)
+	}
+	old, err := DecodeCharacterStatsResult(encoded[:2+88])
+	if err != nil {
+		t.Fatalf("decoding an 88-byte result: %v", err)
+	}
+	if old.HitRate != 0 || old.ParryRate != 0 || old.HwanCount != 1 {
+		t.Fatalf("an 88-byte result should keep HwanCount and leave hit/parry 0: %+v", old)
+	}
+
+	ctx, eq, items := armedAttacker(t, 24)
+	built, err := buildCharacterStats(ctx, &character.Character{ID: 1, Level: 2, HP: 10, Str: 20, Int: 20}, 1, eq, items, nil, nil)
+	if err != nil {
+		t.Fatalf("buildCharacterStats: %v", err)
+	}
+	// 10 + level 2 + the weapon's 24; no body armour, so parry is 10 + 2.
+	if built.HitRate != 36 || built.ParryRate != 12 {
+		t.Fatalf("built hit/parry %d/%d, want 36/12", built.HitRate, built.ParryRate)
 	}
 }
 

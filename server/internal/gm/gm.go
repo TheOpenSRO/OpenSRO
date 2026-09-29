@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/OpenSRO/srrevamp/server/internal/berserk"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
@@ -178,6 +179,8 @@ type Deps struct {
 	// (world.Entity.Level, round 555); nil leaves the cache alone.
 	World   *world.Hub
 	Mana    *mana.Tracker
+	// Berserk is the orb tracker /hwan sets; nil refuses it.
+	Berserk *berserk.Tracker
 	Levels  *leveldata.Table
 	Species []Species
 	// Zones are the named zones /goto accepts (worldmap.ZoneCentre's keys).
@@ -191,7 +194,7 @@ const MaxSpawn = 20
 
 // Help is the one-line list of server-side commands, what the client shows
 // a GM. Kept here so the list and the dispatcher cannot drift apart.
-const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /kill, /durability <slot> <n>, /sp <n>"
+const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /kill, /durability <slot> <n>, /sp <n>, /hwan <0-5>"
 
 // Run executes one command line for actor. The leading slash is optional;
 // the first word is the command. The caller has already checked the gate.
@@ -226,6 +229,8 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = d.durability(ctx, actor, args)
 	case "sp":
 		res = d.sp(ctx, actor, args)
+	case "hwan":
+		res = d.hwan(ctx, actor, args)
 	default:
 		res = refuse("unknown GM command /" + cmd + ". " + Help)
 	}
@@ -234,6 +239,30 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 			"line", line, "refused", res.Refused, "reply", res.Text)
 	}
 	return res
+}
+
+// hwan sets the berserk orbs held (OURS, a test tool; round 629's review): the
+// live tracker and the persisted _CHAR.RemainHwanCount together, so the stats
+// packet the client then asks for carries the new count.
+func (d *Deps) hwan(ctx context.Context, actor Actor, args []string) Result {
+	if len(args) != 1 {
+		return refuse("usage: /hwan <0-5>")
+	}
+	n, err := strconv.Atoi(args[0])
+	if err != nil || n < 0 || n > berserk.Orbs {
+		return refuse("usage: /hwan <0-5>")
+	}
+	if d.Berserk == nil || d.Chars == nil {
+		return refuse("no berserk tracker")
+	}
+	if c, err := d.Chars.GetByID(ctx, actor.CharacterID); err == nil {
+		d.Berserk.EnsureSeeded(actor.CharacterID, c.HwanCount)
+	}
+	n = d.Berserk.SetCharges(actor.CharacterID, n)
+	if err := d.Chars.SetHwanCount(ctx, actor.CharacterID, n); err != nil {
+		return refuse("could not store the orb count: " + err.Error())
+	}
+	return Result{Text: fmt.Sprintf("berserk orbs now %d", n), RefreshStats: true}
 }
 
 func refuse(text string) Result { return Result{Text: text, Refused: true} }

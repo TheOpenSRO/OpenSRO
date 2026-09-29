@@ -255,13 +255,14 @@ func _set_bar(gauge: TextureProgressBar, label: Label, current: int, maximum: in
 #     ms) and fades one orb and its flame out over 1.0 s, CIRCLE0/SLOT0
 #     (the top) first. After the fifth everything hides and the face and
 #     glow fade out over 3.0 s.
-#   * The end from the server (FUN_007b5300) fades whatever is still shown.
+#   * FUN_007b5300 fades whatever is still shown and stops the drain; retail
+#     runs it on the player's death and on a zone reset (reset_hwan_display).
+#     The server's body-mode end (0x30BF kind 4 value 0) does not touch it.
 #
 # OPEN, labelled: the drain period uses the READ 60 s base only -- this
 # server keeps neither player+0x20f8 nor Hwan socket stones. The base agrees
 # with the server's own berserk.Duration (60 s, recovered from the server
-# binary independently). The end the server reports ends the display
-# through set_berserk(_, false). The Hwan-level art swap
+# binary independently). The Hwan-level art swap
 # (FUN_007b5f40, pmi_jahwan_02*.ddj when the byte at player+0x764 is not 0;
 # INFERRED to be _CHAR.HwanLevel, as its setter 0x009ca930 builds the Hwan
 # title through the hwanleveldata table) is not driven: this server has no
@@ -360,34 +361,37 @@ static func charges_for_gauge(gauge: int) -> int:
 	@warning_ignore("integer_division")
 	return clampi(gauge / per, 0, BERSERK_ORBS)
 
-## The berserk state from the server: the gauge on its wire scale and
-## whether berserk is on. Kept under this name for World3D's callers.
-func set_berserk(gauge: int, active: bool) -> void:
-	set_hwan(charges_for_gauge(gauge), active)
+## The berserk state from the server: the gauge on its wire scale, and
+## whether this message STARTS a berserk (the activation reply, or the body
+## mode going to 1). An AttackResult's "active" flag is not a start: it is
+## passed as false, since retail's attack packets carry no such flag and the
+## display runs on its own timers once started.
+func set_berserk(gauge: int, starts: bool) -> void:
+	set_hwan(charges_for_gauge(gauge), starts)
 
-## The orb count the stats packet carries (_CHAR.RemainHwanCount). While
-## berserk is on the server has spent the orbs and reports 0; the display
-## keeps draining on its own clock then, as the client's does.
+## The orb count the stats packet carries (_CHAR.RemainHwanCount).
 func set_hwan_count(charges: int) -> void:
-	if _hwan_active:
-		return
 	set_hwan(charges, false)
 
-func set_hwan(charges: int, active: bool) -> void:
+## FUN_00778ae0(count, flag), READ (0x00778ae0): stores the count; with the
+## flag set runs the activation FUN_007b4f40(1) -- which itself does nothing
+## while timer 2 (the drain) is running -- else, with a count that is not 0,
+## the refresh FUN_007b4f40(0); a count of 0 without the flag refreshes
+## NOTHING (round 629's review). So a berserk display, once started, is ended
+## only by its own drain or by reset_hwan_display (death, zone reset).
+func set_hwan(charges: int, starts: bool) -> void:
 	_hwan_known = true
-	var was_active := _hwan_active
 	_hwan_charges = clampi(charges, 0, BERSERK_ORBS)
-	if active and not was_active:
-		_start_hwan()
-	elif not active and was_active:
-		_end_hwan()
-	elif not active:
+	if starts:
+		if not _hwan_active:
+			_start_hwan()
+	elif _hwan_charges != 0:
 		_refresh_hwan()
 
-## Whether the ready circle is up: the client's own test before it asks for
-## berserk (0x00778ac0: player+0x886 >= 5).
+## Whether the client would ask for berserk: 0x00778ac0 tests the count only
+## (player+0x886 >= 5), not whether a display is running.
 func hwan_ready() -> bool:
-	return _hwan_charges >= BERSERK_ORBS and not _hwan_active
+	return _hwan_charges >= BERSERK_ORBS
 
 func hwan_known() -> bool:
 	return _hwan_known
@@ -395,10 +399,20 @@ func hwan_known() -> bool:
 func hwan_charges() -> int:
 	return _hwan_charges
 
+func hwan_display_active() -> bool:
+	return _hwan_active
+
 ## FUN_007b4f40(0).
 func _refresh_hwan() -> void:
+	_kill_fades()
+	_hwan_active = false
 	for b in _burns:
 		(b as CanvasItem).visible = false
+		(b as CanvasItem).modulate.a = 1.0
+	for fx in [_hwan_face, _hwan_glow]:
+		if fx != null:
+			fx.visible = false
+			fx.modulate.a = 1.0
 	if _btn_jahwan != null:
 		_btn_jahwan.visible = _hwan_charges >= BERSERK_ORBS
 	var lit := lit_circles(_hwan_charges)
@@ -409,6 +423,7 @@ func _refresh_hwan() -> void:
 
 ## FUN_007b4f40(1).
 func _start_hwan() -> void:
+	_kill_fades()
 	_hwan_active = true
 	_hwan_drained = 0
 	_drain_clock = 0.0
@@ -429,13 +444,22 @@ func _start_hwan() -> void:
 			fx.visible = true
 			_fade(fx, 0.0, 1.0, HWAN_FACE_FADE_SEC)
 
-## FUN_007b5300, then the refresh the next count brings.
-func _end_hwan() -> void:
+## FUN_007b5300, READ: the reset retail runs on the player's death
+## (0x8a80a0 kind 0 value 2 -> FUN_0077b000) and on a zone reset
+## (FUN_00787860). While the drain runs, every shown orb and flame fades
+## 255 -> 0 over 1.0 s, a fully shown face and glow over 3.0 s, and the drain
+## stops. The count is left as it is.
+func reset_hwan_display() -> void:
+	if not _hwan_active:
+		return
 	_hwan_active = false
+	for i in range(_circles.size()):
+		for item in [_circles[i], _burns[i] if i < _burns.size() else null]:
+			if item != null and (item as CanvasItem).visible:
+				_fade(item as CanvasItem, (item as CanvasItem).modulate.a, 0.0, HWAN_ORB_FADE_SEC, true)
 	for fx in [_hwan_face, _hwan_glow]:
 		if fx != null and fx.visible:
 			_fade(fx, fx.modulate.a, 0.0, HWAN_FACE_FADE_SEC, true)
-	_refresh_hwan()
 
 func _show_burn_frame(i: int) -> void:
 	var slot := _burns[i] as Control
@@ -452,17 +476,35 @@ func _show_burn_frame(i: int) -> void:
 	@warning_ignore("integer_division")
 	atlas.region = Rect2(Vector2((f % cols) * HWAN_BURN_FRAME.x, (f / cols) * HWAN_BURN_FRAME.y), Vector2(HWAN_BURN_FRAME))
 
+## The running fade of each item, so a new fade, a refresh or a new start
+## kills the old one first (round 629's review): an old fade-out's hide
+## callback must not land on an orb a new berserk has just shown.
+var _fades: Dictionary = {}
+
+func _kill_fades() -> void:
+	for tw in _fades.values():
+		if tw != null and (tw as Tween).is_valid():
+			(tw as Tween).kill()
+	_fades.clear()
+
 func _fade(item: CanvasItem, from: float, to: float, seconds: float, hide_after: bool = false) -> void:
+	var old = _fades.get(item)
+	if old != null and (old as Tween).is_valid():
+		(old as Tween).kill()
+	_fades.erase(item)
 	item.modulate.a = from
 	if not is_inside_tree():
 		item.modulate.a = to
 		if hide_after:
 			item.visible = false
+			item.modulate.a = 1.0
 		return
 	var tw := create_tween()
+	_fades[item] = tw
 	tw.tween_property(item, "modulate:a", to, seconds)
-	if hide_after:
-		tw.tween_callback(func() -> void:
+	tw.tween_callback(func() -> void:
+		_fades.erase(item)
+		if hide_after:
 			item.visible = false
 			item.modulate.a = 1.0)
 
@@ -477,11 +519,12 @@ func _process(delta: float) -> void:
 			_show_burn_frame(i)
 	_drain_clock += delta
 	var period := HWAN_DISPLAY_BASE_SEC / float(BERSERK_ORBS)
-	while _drain_clock >= period and _hwan_drained < BERSERK_ORBS:
+	while _hwan_active and _drain_clock >= period and _hwan_drained < BERSERK_ORBS:
 		_drain_clock -= period
 		_drain_one()
 
-## vslot_005 case 2: one orb and its flame fade out, the top one first.
+## vslot_005 case 2 (client timer 2): one orb and its flame fade out, the top
+## one first; the fifth ends the display and its timers.
 func _drain_one() -> void:
 	var k := _hwan_drained
 	if k < _circles.size():
@@ -490,12 +533,14 @@ func _drain_one() -> void:
 		_fade(_burns[k] as CanvasItem, 1.0, 0.0, HWAN_ORB_FADE_SEC)
 	_hwan_drained += 1
 	if _hwan_drained >= BERSERK_ORBS:
-		for orb in _circles:
-			(orb as CanvasItem).visible = false
-			(orb as CanvasItem).modulate.a = 1.0
-		for b in _burns:
-			(b as CanvasItem).visible = false
-			(b as CanvasItem).modulate.a = 1.0
+		_hwan_active = false
+		for item in _circles + _burns:
+			var old = _fades.get(item)
+			if old != null and (old as Tween).is_valid():
+				(old as Tween).kill()
+			_fades.erase(item)
+			(item as CanvasItem).visible = false
+			(item as CanvasItem).modulate.a = 1.0
 		for fx in [_hwan_face, _hwan_glow]:
 			if fx != null and fx.visible:
 				_fade(fx, fx.modulate.a, 0.0, HWAN_FACE_FADE_SEC, true)
@@ -577,11 +622,11 @@ func is_stat_panel_open() -> bool:
 ##   mag = ftol(  Int * 100.0             /        ( (L + 7) * 5 * 0.8 ) )
 ##
 ## each shown as "%d %%" and capped at 120 (`cmp eax,0x78; jge -> 0x78`). L is
-## the byte at player+0x20d8, which FUN_009d4d50 keeps as max(itself, the
-## level at +0x868): the highest level reached. Checked against a retail
-## screenshot (Str 21, Int 21, Lv 2 -> 72 % and 58 %: MEASURED).
-## INFERRED: this server never lowers a level, so the current level is that
-## maximum.
+## the byte at player+0x20d8 -- the server-sent MaxLevel (READ, round 629's
+## review), which FUN_009d4d50 keeps as max(itself, the level at +0x868).
+## Checked against a retail screenshot (Str 21, Int 21, Lv 2 -> 72 % and
+## 58 %: MEASURED). INFERRED: this server never lowers a level and sends no
+## MaxLevel, so the current level stands in for it.
 static func balance_percent(stat: int, level: int, magical: bool) -> int:
 	var v: float
 	if magical:
@@ -593,9 +638,8 @@ static func balance_percent(stat: int, level: int, magical: bool) -> int:
 	return 120 if pct >= 120 else pct
 
 ## Fills the panel from the same stats packet the character window reads
-## (StatsNet.Stats). Rows the server does not send stay empty: Hit rate and
-## Parry ratio (engine params 11 / 9, not carried -- see
-## HudPanels._fill_character_window).
+## (StatsNet.Stats). Hit rate and Parry ratio are the server's params 11 / 9
+## (round 629's review); a server too old to send them leaves them empty.
 func set_stats(s: StatsNet.Stats) -> void:
 	if s == null or s.error != "":
 		return
@@ -608,8 +652,10 @@ func set_stats(s: StatsNet.Stats) -> void:
 		_set_value("GDR_PMI_TXT_PHYBALDAT", "%d %%" % balance_percent(s.str, s.level, false))
 		_set_value("GDR_PMI_TXT_MAGBALDAT", "%d %%" % balance_percent(s.intel, s.level, true))
 	_set_value("GDR_PMI_TXT_PHYDEFDAT", "%d" % s.phys_defense)
-	_set_value("GDR_PMI_TXT_HITDAT", "")
-	_set_value("GDR_PMI_TXT_PARRYDAT", "")
+	# Hit rate / Parry ratio: "%d" of the u16s retail's 0x303D carries; empty
+	# from a server too old to send them.
+	_set_value("GDR_PMI_TXT_HITDAT", "%d" % s.hit_rate if s.has_rates else "")
+	_set_value("GDR_PMI_TXT_PARRYDAT", "%d" % s.parry_rate if s.has_rates else "")
 	if _stat_up != null:
 		_stat_up.visible = s.has_character_rows and s.stat_points > 0
 	if s.has_hwan_count:
@@ -635,8 +681,8 @@ func _set_value(control_name: String, text: String) -> void:
 # 2026-09-16), characterdata column 14: all 26 CHAR_CH_* rows read 0 and all
 # 26 CHAR_EU_* rows 1 (MEASURED, round 629).
 # GDR_PMI_BTN_STATUP (id 34) is shown by vslot_012 while the u16 at
-# player+0x884 is not 0 -- INFERRED to be the unspent stat points, which is
-# what its press (the character page) spends. Its blink (FUN_00655ec0(1)) is
+# player+0x884 is not 0 -- the unspent stat points, which the server sends in
+# 0x304E type 3 (READ, round 629's review). Its blink (FUN_00655ec0(1)) is
 # not reproduced: OPEN.
 # ---------------------------------------------------------------------------
 

@@ -74,7 +74,7 @@ func _shown_circles(pmi: Node) -> Array:
 ## A stats payload as the server encodes it (88 body bytes, round 629).
 func _stats_payload(str_: int, int_: int, level: int, hwan: int) -> PackedByteArray:
 	var out := PackedByteArray()
-	out.resize(2 + 88)
+	out.resize(2 + 96)
 	out.encode_u16(0, 0)
 	var o := 2
 	out.encode_s64(o, 1000)
@@ -96,6 +96,8 @@ func _stats_payload(str_: int, int_: int, level: int, hwan: int) -> PackedByteAr
 	out.encode_s32(o + 76, 37)
 	out.encode_s32(o + 80, 25)
 	out.encode_s32(o + 84, hwan)
+	out.encode_s32(o + 88, 36)
+	out.encode_s32(o + 92, 35)
 	return out
 
 func _initialize() -> void:
@@ -146,8 +148,38 @@ func _initialize() -> void:
 	_check(_visible(pmi, "GDR_PMI_HWAN_EFF_FACE") and _visible(pmi, "GDR_PMI_HWAN_EFF_GLOW"), "berserk on: the face and glow show")
 	pmi.set_hwan_count(0)
 	_check(_shown_circles(pmi) == [0, 1, 2, 3, 4], "berserk on: a stats count of 0 does not clear the orbs")
+	# FUN_00778ae0(0, 0) refreshes nothing: a count of 0 with no start (an
+	# AttackResult during berserk, the body mode's end) leaves the display
+	# running (NEGATIVE against round 629's first commit, which ended it).
 	pmi.set_berserk(0, false)
-	_check(_shown_circles(pmi).is_empty() and not _visible(pmi, "GDR_PMI_DECO_HWAN_SLOT0"), "berserk off at 0: orbs and flames gone")
+	_check(bool(pmi.get("_hwan_active")) and _visible(pmi, "GDR_PMI_DECO_HWAN_SLOT0"), "a count of 0 without a start leaves the berserk display running")
+	# The display ends on its own drain: five ticks of timer 2.
+	pmi._process(HudPlayerInfo.HWAN_DISPLAY_BASE_SEC + 0.1)
+	_check(not bool(pmi.get("_hwan_active")) and _shown_circles(pmi).is_empty() and not _visible(pmi, "GDR_PMI_DECO_HWAN_SLOT4"),
+		"the drain ends the display: orbs and flames gone (active %s, orbs %s)" % [str(bool(pmi.get("_hwan_active"))), _shown_circles(pmi)])
+	# Death / zone reset (FUN_007b5300) fades a running display out ...
+	pmi.set_berserk(100, false)
+	pmi.set_berserk(0, true)
+	pmi.reset_hwan_display()
+	_check(not bool(pmi.get("_hwan_active")), "a reset stops the display")
+	# ... and a berserk started straight after is not hidden by the old
+	# fade's callback (the tweens are killed on a new start).
+	pmi.set_berserk(100, false)
+	pmi.set_berserk(0, true)
+	await create_timer(1.3).timeout
+	var shown := 0
+	for i in range(5):
+		if _visible(pmi, "GDR_PMI_DECO_HWAN_SLOT%d" % i) and _visible(pmi, "GDR_PMI_CIRCLE%d" % i):
+			shown += 1
+	_check(shown == 5, "a new berserk right after a reset keeps its five orbs and flames (got %d)" % shown)
+	pmi.set_berserk(60, false)
+	_check(_shown_circles(pmi) == [2, 3, 4] and not bool(pmi.get("_hwan_active")), "a count after the display refreshes it: three orbs")
+	pmi.set_hwan_count(0)
+	_check(_shown_circles(pmi) == [2, 3, 4], "a count of 0 without a start refreshes nothing (FUN_00778ae0(0,0))")
+	pmi.set_berserk(0, true)
+	pmi.reset_hwan_display()
+	await create_timer(1.3).timeout
+	pmi.set_hwan(0, false)
 	_check(pmi.lit_circles(2) == [3, 4], "lit_circles(2) is [3, 4]")
 
 	# --- The stat panel.
@@ -158,6 +190,7 @@ func _initialize() -> void:
 		cinfo.pressed.emit()
 	_check(_visible(pmi, "GDR_PMI_STA_CINFOBG") and _visible(pmi, "GDR_PMI_TXT_PARRY"), "a press opens it")
 	var s := StatsNet.decode_result(_stats_payload(21, 21, 2, 3))
+	_check(s.has_rates and s.hit_rate == 36 and s.parry_rate == 35, "the stats packet carries hit rate and parry")
 	_check(s.has_hwan_count and s.hwan_count == 3, "the stats packet's fourth tail carries the orb count (got %d)" % s.hwan_count)
 	pmi.set_stats(s)
 	_check(pmi.stat_value("GDR_PMI_TXT_STRDAT") == "21" and pmi.stat_value("GDR_PMI_TXT_INTDAT") == "21", "Str / Int from the packet")
@@ -167,7 +200,8 @@ func _initialize() -> void:
 	_check(pmi.stat_value("GDR_PMI_TXT_PHYBALDAT") == "72 %" and pmi.stat_value("GDR_PMI_TXT_MAGBALDAT") == "58 %",
 		"balances by the client's formula: 72 %% / 58 %% for Str 21 Int 21 Lv 2 (got %s / %s)" % [
 			pmi.stat_value("GDR_PMI_TXT_PHYBALDAT"), pmi.stat_value("GDR_PMI_TXT_MAGBALDAT")])
-	_check(pmi.stat_value("GDR_PMI_TXT_HITDAT") == "" and pmi.stat_value("GDR_PMI_TXT_PARRYDAT") == "", "hit rate and parry stay empty (not sent)")
+	_check(pmi.stat_value("GDR_PMI_TXT_HITDAT") == "36" and pmi.stat_value("GDR_PMI_TXT_PARRYDAT") == "35",
+		"hit rate and parry from the packet's fifth and sixth tails (got %s / %s)" % [pmi.stat_value("GDR_PMI_TXT_HITDAT"), pmi.stat_value("GDR_PMI_TXT_PARRYDAT")])
 	_check(_shown_circles(pmi) == [2, 3, 4], "the packet's orb count lights three (got %s)" % [_shown_circles(pmi)])
 	_check(_visible(pmi, "GDR_PMI_BTN_STATUP"), "the stat-point '+' shows with points to spend")
 	pmi.set_stats(StatsNet.decode_result(_stats_payload(22, 21, 2, 3)))
@@ -189,6 +223,12 @@ func _initialize() -> void:
 	var reader = NpcTableReader.new()
 	var countries: Dictionary = reader.parse_country_by_code(utf16)
 	_check(countries.get("CHAR_CH_MAN_FIGHTER", -1) == 0 and countries.get("CHAR_EU_MAN_ADVENTURER", -1) == 1, "characterdata column 14 read per code (got %s)" % [countries])
+
+	# 0x30BF kind 4 value 1 carries one more byte (0x8a80a0 reads it only then).
+	var on := PackedByteArray([7, 0, 0, 0, 4, 1, 9])
+	var sc = WorldNet.decode_state_change(on)
+	_check(sc != null and sc.kind == 4 and sc.value == 1 and sc.get("extra") == 9, "a body-mode-on change decodes its extra byte")
+	_check(WorldNet.decode_state_change(on.slice(0, 6)) == null, "a body-mode-on change without its extra byte is refused")
 
 	print("hud_player_info_test: %d failure(s)" % _failures)
 	quit(1 if _failures > 0 else 0)

@@ -63,6 +63,7 @@ and changes nothing.
 | `/kill` | Kills the monster you have selected. No exp, gold, drops or quest credit — a GM kill is not a kill. |
 | `/durability <slot> <n>` | Sets a worn item's durability. Slots: 0 helm, 1 mail, 2 shoulder, 3 gauntlet, 4 pants, 5 boots, 6 weapon, 7 shield, 8 job suit. |
 | `/sp <n>` | Adds skill points (a negative number takes them away). |
+| `/hwan <0-5>` | Sets the berserk orbs held (round 629; a test tool, not a retail command). Five light the ready circle. |
 
 `/goto` and `/spawn` with no valid name list the zones and monster code names
 they accept. `/give` takes the item's numeric id; the client resolves an item

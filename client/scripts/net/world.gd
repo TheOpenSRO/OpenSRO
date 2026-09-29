@@ -42,6 +42,9 @@ const OP_REVIVE_RESULT := 0x0029       # server -> client
 const OP_MOTION_REQUEST := 0x704F      # client -> server, u8
 const OP_STATE_CHANGE := 0x30BF        # server -> client, broadcast
 const STATE_KIND_MOTION := 1
+## 0x30BF kind 4: the body mode, 1 = berserk (CGObjChar::SetBodyMode). A value-1
+## change carries one more byte (chardata+5), read only then (0x8a80a0).
+const STATE_KIND_BODY_MODE := 4
 ## MOTIONSTATE values, named by the server's own table at .rdata 0x00c63f90.
 const MOTION_STAND := 0
 const MOTION_SIT := 4
@@ -332,6 +335,8 @@ class StateChange:
 	var object_id: int
 	var kind: int
 	var value: int
+	## The kind-4 value-1 byte (chardata+5 on the server; OPEN what it is).
+	var extra: int = 0
 
 ## Encodes an OP_MOTION_REQUEST: the one requested byte (4 toggles sitting).
 static func encode_motion_request(value: int) -> PackedByteArray:
@@ -348,6 +353,10 @@ static func decode_state_change(data: PackedByteArray) -> StateChange:
 	s.object_id = data.decode_u32(0)
 	s.kind = data.decode_u8(4)
 	s.value = data.decode_u8(5)
+	if s.kind == STATE_KIND_BODY_MODE and s.value == 1:
+		if data.size() < 7:
+			return null
+		s.extra = data.decode_u8(6)
 	return s
 
 ## Decodes an OpEntityLeft broadcast payload, returning the character ID

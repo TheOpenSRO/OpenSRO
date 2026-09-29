@@ -48,8 +48,11 @@ A left press anywhere else on the block is `vslot_030` (0x007b4be0), selecting t
 
 ## The berserk (Hwan) gauge
 
-- **The count** is `player+0x886`, `_CHAR.RemainHwanCount` (0..5); the setter 0x00778ae0 stores
-  it and refreshes the block (READ).
+- **The count** is `player+0x886`, `_CHAR.RemainHwanCount` (0..5), which the server sends in
+  0x304E type 4 (READ, round 629's review). The setter `FUN_00778ae0(count, flag)` stores it; with
+  the flag it runs the activation `FUN_007b4f40(1)`, else with a count that is not 0 the refresh
+  `FUN_007b4f40(0)`, and with `(0, 0)` it refreshes NOTHING (READ). The berserk request's gate,
+  0x00778ac0, tests the count only (`>= 5`), not whether a display is running.
 - **The refresh**, `FUN_007b4f40(0)` (READ): the five flames hide; the ready circle shows exactly
   when the count is 5; the loop starts at +0x3b0 (CIRCLE4, the bottom orb at 31,60) and walks up to
   +0x3a0 (CIRCLE0, the top one at 7,13), SHOWING one orb per charge and HIDING the rest. So the
@@ -61,11 +64,19 @@ A left press anywhere else on the block is `vslot_030` (0x007b4be0), selecting t
   on frame `rand() % 12`, shows, and fades 0 -> 255 over 1.0 s (`FUN_006526e0(0, 0xff, 1.0f)`);
   the face and glow show and fade in over 3.0 s (the float at 0x00d8adc4).
 - **While on** (`vslot_005`, READ): case 1 advances every flame one frame (`FUN_00634300`, wraps
-  at 12) and re-arms 50 ms; case 2 fades orb `k` and flame `k` 255 -> 0 over 1.0 s, `k` counting
+  at 12) and re-arms 50 ms; case 2 -- CLIENT timer 2, every duration/5, 12 s at the 60 s base --
+  fades orb `k` and flame `k` 255 -> 0 over 1.0 s, `k` counting
   up from 0 (the top first); at the fifth it hides all ten, fades the face and glow out over 3.0 s,
   and kills both timers.
-- **The end from the server**, `FUN_007b5300` (READ; called from 0x0077b02c and 0x00787930):
-  fades whatever still shows and kills timer 2.
+- **The reset**, `FUN_007b5300` (READ): fades whatever still shows and kills timer 2. It is NOT the
+  server's end: it runs on the player's DEATH (0x30BF kind 0 value 2 -> `FUN_0077b000`, the call
+  at 0x0077b02c) and on a ZONE RESET (`FUN_00787860`, the call at 0x00787930).
+- **The body mode**, 0x30BF kind 4 (READ; server `CGObjChar::SetBodyMode` 0x4a9fc0 ->
+  `GObjPC::BroadcastStateChange` 0x4a8340, client handler 0x8a80a0): value 1 = berserk on, with
+  one more byte (chardata+5; OPEN what it holds) that the client reads only for value 1, and for
+  its own player `FUN_00778ae0(0, 1)` -- the display starts; value 0 = off, which ends the body mode
+  and leaves the display to timer 2. srrevamp's server sends both (round 629's review): on at
+  activation, off when the tracker's activation runs out (`scheduleBerserkEnd`).
 - **Hwan level art**, `FUN_007b5f40` (READ): when the byte at `player+0x764` is not 0 the orbs,
   flames, button, face and glow swap to `pmi_jahwan_02*.ddj` (blue). INFERRED: that byte is
   `_CHAR.HwanLevel` -- its setter 0x009ca930 builds the Hwan title through `hwanleveldata`.
@@ -81,14 +92,15 @@ A left press anywhere else on the block is `vslot_030` (0x007b4be0), selecting t
 | Phy. def. | `%d` | +0x10 |
 | Mag. atk | `%d ~ %d` | +8 / +0xc |
 | Mag. def. | `%d` | +0x12 |
-| Hit rate / Parry ratio | `%d` | +0x14 / +0x16 |
+| Hit rate / Parry ratio | `%d` | +0x14 / +0x16: the u16s the server sends in 0x303D (client `FUN_00880f80`), built by `CGObjPC::vslot_334` (0x4ebe30) from params 11 and 9 |
 | Phy. balance | `%d %%` | computed, below |
 | Mag. balance | `%d %%` | computed, below |
 
 The balances (READ, 0x007b802c..0x007b81d0; the character window's CIFPlayerInfo computes the
 same at 0x006b8ee3..0x006b90fc):
 
-    L   = the byte at player+0x20d8 (FUN_009d4d70); FUN_009d4d50 keeps it max(itself, +0x868 level)
+    L   = the byte at player+0x20d8 (FUN_009d4d70): the server-sent MaxLevel (READ, round 629's
+          review); FUN_009d4d50 keeps it max(itself, +0x868 level)
     phy = ftol( (Str + 2L + 14) * 100.0 / float32( ((L - 1) * 7.0 + 56.0) * 0.8571428656578064 ) )
     mag = ftol(  Int * 100.0 / ( (L + 7) * 5 * 0.8 ) )
     each capped: >= 120 shows 120
@@ -97,8 +109,8 @@ same at 0x006b8ee3..0x006b90fc):
 Str 21, Int 21, level 2 gives 72 % and 58 %, as shown. The one-time fill 0x007b6fd0 uses the
 current level and a cap of 100; the per-frame rewrite above replaces it at once.
 
-`GDR_PMI_BTN_STATUP` shows while the u16 at `player+0x884` is not 0 (INFERRED: the unspent stat
-points) and blinks (`FUN_00655ec0(1)`, OPEN here).
+`GDR_PMI_BTN_STATUP` shows while the u16 at `player+0x884` is not 0 -- the unspent stat points,
+which the server sends in 0x304E type 3 (READ, round 629's review) -- and blinks (`FUN_00655ec0(1)`, OPEN here).
 
 ## The race emblem (READ, 0x007b6fd0 -> `FUN_0098caa0`)
 

@@ -88,6 +88,13 @@ const (
 // broadcast passes 1.
 const StateKindMotion byte = 1
 
+// StateKindBodyMode is 0x30bf's kind for CGObjChar::SetBodyMode (0x4a9fc0),
+// whose value 1 is berserk and 0 its end (round 629's review). READ from
+// GObjPC::BroadcastStateChange (0x4a8340): for kind 4 value 1 it appends one
+// more byte, chardata+5, and the client's handler 0x8a80a0 reads that byte
+// only then.
+const StateKindBodyMode byte = 4
+
 // MotionChangeDuration is the sit/stand transition, `.rdata 0x00b45c10` = 1.5,
 // in seconds (the AJStateChanger record is counted down by the update's dt).
 const MotionChangeDuration = 1500 * time.Millisecond
@@ -97,11 +104,18 @@ const MotionChangeDuration = 1500 * time.Millisecond
 // moves (World3D.MIN_SEND_INTERVAL), so ten intervals without one is a stop.
 const movingWindow = 500 * time.Millisecond
 
-// StateChange is the OpStateChange payload.
+// StateChange is the OpStateChange payload. Extra is the byte a kind-4
+// value-1 change carries after the value (chardata+5 in the engine; OPEN what
+// it is -- srrevamp sends 0); it is on the wire only for that pair.
 type StateChange struct {
 	ObjectID uint32
 	Kind     byte
 	Value    byte
+	Extra    byte
+}
+
+func (s *StateChange) hasExtra() bool {
+	return s.Kind == StateKindBodyMode && s.Value == 1
 }
 
 func (s *StateChange) Encode() []byte {
@@ -109,6 +123,9 @@ func (s *StateChange) Encode() []byte {
 	binary.LittleEndian.PutUint32(out[0:4], s.ObjectID)
 	out[4] = s.Kind
 	out[5] = s.Value
+	if s.hasExtra() {
+		out = append(out, s.Extra)
+	}
 	return out
 }
 
@@ -116,7 +133,14 @@ func DecodeStateChange(data []byte) (*StateChange, bool) {
 	if len(data) < 6 {
 		return nil, false
 	}
-	return &StateChange{ObjectID: binary.LittleEndian.Uint32(data[0:4]), Kind: data[4], Value: data[5]}, true
+	s := &StateChange{ObjectID: binary.LittleEndian.Uint32(data[0:4]), Kind: data[4], Value: data[5]}
+	if s.hasExtra() {
+		if len(data) < 7 {
+			return nil, false
+		}
+		s.Extra = data[6]
+	}
+	return s, true
 }
 
 // motionEntry is one character's motion: STAND, SIT or CHANGEMOTION (with the
