@@ -2436,9 +2436,19 @@ func paper_doll_shown() -> bool:
 # right arrow) adds to the yaw and 0x6ab920 (the left) subtracts, both through
 # 0xa5a8c0 -> vslot 0x30 -> CCompChar::FUN_00c26e70, the model's Y rotation;
 # PaperDoll.set_yaw has the mapping into Godot (round 633's review).
+#
+# **The step is OURS (round 639, the user's request).** Retail's step, one
+# frame's worth (frame_ms * 0.0015 rad, about 1.4 degrees a click at 60 fps),
+# "moves too slow"; the user asked for 36 degrees a click, so ten clicks make
+# a full turn. Each repeat of a held arrow steps the same 36 degrees at the
+# retail timing above (the first after 1000 ms, then every 50 ms -- so a held
+# arrow turns 720 degrees a second once it repeats). The reset still returns
+# the yaw to 0 (0x6ab9a0).
 signal paper_doll_yaw_changed(yaw: float)
+## Retail's rate, kept for the record (0xda6fa8; not used since round 639).
 const DOLL_YAW_PER_MS := 0.0015
-const DOLL_FRAME_MS_MAX := 3000
+## OURS (the user's request, round 639): one click, one tenth of a turn.
+const DOLL_STEP_DEGREES := 36.0
 const DOLL_REPEAT_DELAY_MS := 1000
 const DOLL_REPEAT_MS := 50
 const DOLL_BTN_LEFT := "GDR_EQ_BTN_ROTATE_LEFT"
@@ -2471,17 +2481,6 @@ func _wire_doll_rotation(window: HudWindow) -> void:
 	if reset != null:
 		reset.pressed.connect(func() -> void: set_paper_doll_yaw(0.0))
 
-## The frame's duration as 0x110f7f8 holds it: whole milliseconds, at most
-## 3000.
-func _doll_frame_ms() -> int:
-	if test_doll_frame_ms >= 0:
-		return mini(test_doll_frame_ms, DOLL_FRAME_MS_MAX)
-	return mini(int(get_process_delta_time() * 1000.0), DOLL_FRAME_MS_MAX)
-
-## A test hook: the frame duration the arrows read, instead of the real one
-## (-1).
-var test_doll_frame_ms := -1
-
 ## `measure` logs the yaw and asks for the pose line: on an arrow's press and
 ## release and on the reset, not on each 50 ms repeat of a held arrow (which
 ## wrote about 40 lines a second into the tester log).
@@ -2500,9 +2499,14 @@ func _measure_paper_doll() -> void:
 ## review: the weapon hand and the turn direction are measured, not seen).
 signal paper_doll_measure_requested
 
-## One arrow command: 0x6ab920 (dir -1) or 0x6ab960 (dir +1).
+## One arrow command, 0x6ab920 (dir -1) or 0x6ab960 (dir +1), stepping
+## DOLL_STEP_DEGREES (OURS, see above) instead of retail's frame's worth. The
+## yaw is kept in [0, TAU) so ten steps land back on exactly 0.
 func _doll_turn_step(dir: int, measure: bool = false) -> void:
-	set_paper_doll_yaw(paper_doll_yaw + float(dir) * float(_doll_frame_ms()) * DOLL_YAW_PER_MS, measure)
+	var yaw := fposmod(paper_doll_yaw + float(dir) * deg_to_rad(DOLL_STEP_DEGREES), TAU)
+	if is_equal_approx(yaw, TAU) or absf(yaw) < 1e-6 or absf(yaw - TAU) < 1e-6:
+		yaw = 0.0
+	set_paper_doll_yaw(yaw, measure)
 
 func _doll_turn_start(dir: int) -> void:
 	_doll_turn = dir
@@ -4502,6 +4506,20 @@ func _missing_prerequisites(s: SkillDataReader.BaseSkill, level: int) -> Array:
 			var label := other.display_name(_skill_text_table()) if other != null else "skill %d" % group_id
 			out.append("%s Lv %d" % [label, need])
 	return out
+
+## The icon path (under `icon\`) of the skill whose per-level id is
+## `skill_id`, or "" when the tables do not carry it -- what the quick-slot
+## bar restores a saved skill's icon from (round 639).
+func skill_icon_path(skill_id: int) -> String:
+	_load_skill_catalog()
+	for key in _skill_grid:
+		for entry in _skill_grid[key]:
+			var bs: SkillDataReader.BaseSkill = entry
+			if bs.level_ids.has(skill_id):
+				if bs.icon_path == "":
+					return ""
+				return bs.icon_path if bs.icon_path.to_lower().begins_with("icon\\") else "icon\\" + bs.icon_path
+	return ""
 
 ## The board's BaseSkill for a skill group id (skilldata GroupID / base id),
 ## or null when the archive's board does not carry it.

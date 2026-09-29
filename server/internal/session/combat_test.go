@@ -62,13 +62,35 @@ func TestAttackResultCarriesMonsterID(t *testing.T) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 	// An older server's payload: cut the trailing id (and round 616's
-	// targetType byte after it) off.
-	old, err := DecodeAttackResult(enc[:len(enc)-9])
+	// targetType byte and round 639's two experience fields after it) off.
+	old, err := DecodeAttackResult(enc[:len(enc)-25])
 	if err != nil {
 		t.Fatalf("DecodeAttackResult(old): %v", err)
 	}
 	if old.MonsterID != 0 || old.MonsterDamage != 12 || !old.PlayerCritical {
 		t.Fatalf("old payload decoded as %+v; want MonsterID 0 and the rest intact", old)
+	}
+}
+
+// Round 639: a kill's experience and skill experience ride at the end, and a
+// result cut before them (a round-616 server) decodes with both 0.
+func TestAttackResultCarriesTheKillsExperience(t *testing.T) {
+	want := &AttackResult{MonsterID: 7, MonsterDamage: 40, MonsterDied: true, PlayerHP: 120,
+		ExpGained: 0x1_0000_0005, SkillExpGained: 321}
+	enc := want.Encode()
+	got, err := DecodeAttackResult(enc)
+	if err != nil {
+		t.Fatalf("DecodeAttackResult: %v", err)
+	}
+	if *got != *want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	old, err := DecodeAttackResult(enc[:len(enc)-16])
+	if err != nil {
+		t.Fatalf("DecodeAttackResult(old): %v", err)
+	}
+	if old.ExpGained != 0 || old.SkillExpGained != 0 || old.MonsterID != 7 || !old.MonsterDied {
+		t.Fatalf("a round-616 payload decoded as %+v; want no experience and the rest intact", old)
 	}
 }
 
@@ -1372,6 +1394,13 @@ func TestLevelUpMovesTheEntityLevel(t *testing.T) {
 	ar, err := DecodeAttackResult(sendFor(OpAttack, (&AttackRequest{CharacterName: "Aria", TargetMonsterID: target.ID}).Encode(), OpAttackResult).Data)
 	if err != nil || ar.Error != "" || !ar.MonsterDied {
 		t.Fatalf("kill: err=%v result=%+v", err, ar)
+	}
+	// Round 639: the result says what the kill earned -- the table's exp_unit
+	// (5000) after the mastery scale (applyMasteryExpScale), and the same
+	// amount of skill experience (the disclosed M = 1) -- for the client's
+	// system window.
+	if ar.ExpGained <= 0 || ar.ExpGained > 5000 || ar.SkillExpGained != ar.ExpGained {
+		t.Fatalf("the kill's result carries exp %d / skill exp %d, want 0 < exp <= 5000 and equal skill exp", ar.ExpGained, ar.SkillExpGained)
 	}
 	after, err := chars.GetByID(ctx, c.ID)
 	if err != nil {

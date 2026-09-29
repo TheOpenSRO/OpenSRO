@@ -561,15 +561,16 @@ func TestAttackResultEchoesTargetType(t *testing.T) {
 		t.Fatalf("an old-format Smash answered %+v", ar)
 	}
 	// On the wire: the byte after MonsterID; a 42-byte result decodes as 1.
+	// Round 639's two experience s64s follow it (16 bytes).
 	enc := (&AttackResult{MonsterID: 5, TargetType: TargetGround, HasTargetType: true}).Encode()
-	if enc[len(enc)-1] != TargetGround {
-		t.Fatalf("the trailing byte is %d", enc[len(enc)-1])
+	if enc[len(enc)-17] != TargetGround {
+		t.Fatalf("the targetType byte is %d", enc[len(enc)-17])
 	}
-	if old, err := DecodeAttackResult(enc[:len(enc)-1]); err != nil || old.EchoedTargetType() != TargetEntity || old.MonsterID != 5 {
+	if old, err := DecodeAttackResult(enc[:len(enc)-17]); err != nil || old.EchoedTargetType() != TargetEntity || old.MonsterID != 5 {
 		t.Fatalf("an older result decoded %+v, %v", old, err)
 	}
-	if plain := (&AttackResult{}).Encode(); plain[len(plain)-1] != TargetEntity {
-		t.Fatalf("a swing's result ends %d, want 1", plain[len(plain)-1])
+	if plain := (&AttackResult{}).Encode(); plain[len(plain)-17] != TargetEntity {
+		t.Fatalf("a swing's result's targetType byte is %d, want 1", plain[len(plain)-17])
 	}
 }
 

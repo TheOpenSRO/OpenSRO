@@ -137,9 +137,10 @@ answers; the server still refuses with its own codes.
 
 **Not built (OPEN):** the whisper list (`GDR_WHISPERLIST`, `0x7acfd0` adds to it), the chat-mode
 button and viewer (IDs 41/42), the hide button, speech balloons
-(`0x9c77c0` for types 1, 3, 6, 0xd), the system message window (interface child 0x44, `0x7781b0`,
-colours `0xffdbc99b` / `0xffbacff2`) -- srrevamp writes its system lines and refusals into the All
-list (OURS).
+(`0x9c77c0` for types 1, 3, 6, 0xd). The system message window (interface child 0x44, `0x7781b0`)
+is built since round 639 (docs/protocol/system_message.md): the chat's refusals go there, the
+group refusals with type 4 (`0x7ad866`) and the server's with type 0 (`0x877798`), and srrevamp's
+system lines with them; the All list no longer gets them.
 
 ## Globals (READ)
 

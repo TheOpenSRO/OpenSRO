@@ -1199,6 +1199,13 @@ var _hud_panels: HudPanels
 var _hud_chat: HudChat
 ## GDR_NOTICE (round 634) and the "Chat to all" window, built on first use.
 var _hud_notice: HudNotice
+## The system message window, bottom right (round 639): where this client's
+## system lines go, as retail's 0x7781b0 writes its own (HudSystemMessage).
+var _hud_syslog: HudSystemMessage
+## GDR_WARNING_WND, interface child 0x23 (a CIFNotify like GDR_NOTICE): the
+## level-up line goes there (0x8a9c26 -> 0x77b580 -> 0x7b3eb0), not to the
+## system window (round 639).
+var _hud_warning: HudNotice
 ## Whether the last party answer put this player in a party (chat's #).
 var _chat_in_party := false
 var _hud_whole_chat: HudWholeChat
@@ -1677,6 +1684,13 @@ func _try_initialize_pk2_ui() -> void:
 				print("QA ATTACK RESULT: refused (%s)" % result.error)
 		if result != null and result.error == "":
 			_audio_set_hwan(result.berserk_active)
+			# Round 639: what the kill earned, in the system window, as
+			# retail's EXP handler writes it (exp_gain_lines).
+			if result.exp_gained > 0 or result.skill_exp_gained > 0:
+				var exp_t := _ui_text_table.get_text("UIIT_MSG_STATE_GAIN_EXP", "") if _ui_text_table != null else ""
+				var sexp_t := _ui_text_table.get_text("UIIT_MSG_STATE_GET_SKILL_EXP", "") if _ui_text_table != null else ""
+				for line in exp_gain_lines(result.exp_gained, result.skill_exp_gained, exp_t, sexp_t):
+					_log_system(line, HudSystemMessage.TYPE_GAIN)
 		if result != null and result.error == "" and _last_enter_world_max_hp > 0:
 			if _hud_player_info != null:
 				_hud_player_info.set_hp(result.player_hp, _last_enter_world_max_hp)
@@ -1796,7 +1810,7 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.teleport_requested.connect(_on_teleport_requested)
 	# The Revive button (round 548): the one click a dead player has.
 	_hud_panels.revive_requested.connect(_on_revive_requested)
-	# A server refusal the panels hear about (a mastery raise) goes to chat.
+	# A server refusal the panels hear about (a mastery raise) goes to the system window (round 639).
 	_hud_panels.system_notice.connect(_log_system)
 	# M: the world map's toggle, the same one the minimap's map button calls
 	# (KeyMap's slot 7 and HudPanels' world_map_toggle_requested have the
@@ -1846,11 +1860,34 @@ func _try_initialize_pk2_ui() -> void:
 			HudChat.TYPE_GUILD:
 				return NetClient.last_guild_result != null and NetClient.last_guild_result.guild_id != 0
 		return false
+	# The system message window (round 639), bottom right at 0x7b87a0's
+	# offsets; the chat's own 0x7781b0 lines (its refusals) go there too.
+	_hud_syslog = HudSystemMessage.new(_ui_builder)
+	_hud_syslog.name = "HudSystemMessage"
+	ui_control.add_child(_hud_syslog)
+	_hud_syslog.setup()
+	_hud_syslog.anchor_bottom_right()
+	_hud_panels.stack_over(_hud_syslog)
+	_hud_chat.system_sink = func(t: int, text: String) -> void: _log_system(text, t)
+	print("World3D: system message window at %s (mode %d), underbar %s" % [
+		str(Rect2(_hud_syslog.position, _hud_syslog.size)), _hud_syslog.mode,
+		str(_hud_underbar.size) if _hud_underbar != null else "none"])
+	# The quick-slot bar as this character left it (round 639, HotbarStore):
+	# the bar and the panels (for the icons) both exist now.
+	_restore_hotbar()
 	# GDR_NOTICE, the GM notice banner (round 634), over everything else.
 	_hud_notice = HudNotice.new()
 	_hud_notice.name = "HudNotice"
 	ui_control.add_child(_hud_notice)
 	_hud_notice.setup(_ui_builder)
+	# GDR_WARNING_WND (round 639): the same CIFNotify class, for the level-up
+	# line. Its y is the class's +0x7d4, which the constructor sets to 0 (round
+	# 634's reading of GDR_NOTICE; no writer for this instance was looked for
+	# -- OPEN), so it shares the notice's top-centre spot.
+	_hud_warning = HudNotice.new()
+	_hud_warning.name = "HudWarning"
+	ui_control.add_child(_hud_warning)
+	_hud_warning.setup(_ui_builder)
 	# The global chatting item opens "Chat to all" (round 634).
 	_hud_panels.global_chat_requested.connect(_on_global_chat_requested)
 	_setup_console_and_help()
@@ -7409,7 +7446,11 @@ func _on_skill_assign_requested(skill_id: int, basic_code: String, icon: Texture
 		if not _quickslot_skills.has(slot) and not _quickslot_items.has(slot):
 			_quickslot_skills[slot] = {"id": skill_id, "code": basic_code}
 			_hud_underbar.set_slot_item(slot, icon)
-			_log_system("Assigned skill to quickslot %s -- click it (or its key) to cast." % HudUnderbar.slot_label(slot))
+			# Retail writes no line when a slot is filled (CNIFUnderMenuBar's
+			# 0x60a000..0x60efff has no call to the system window's adds --
+			# round 639); the log file keeps it.
+			print("World3D: quickslot %d <- skill %d (%s)" % [slot, skill_id, basic_code])
+			_save_hotbar()
 			return
 	_log_system("Quickslots are full.")
 
@@ -7425,7 +7466,8 @@ func _on_skill_drop_requested(at: Vector2, skill_id: int, basic_code: String, ic
 	_quickslot_items.erase(slot)
 	_quickslot_skills[slot] = {"id": skill_id, "code": basic_code}
 	_hud_underbar.set_slot_item(slot, icon)
-	_log_system("Assigned skill to quickslot %s." % HudUnderbar.slot_label(slot))
+	print("World3D: quickslot %d <- skill %d (%s), dropped" % [slot, skill_id, basic_code])
+	_save_hotbar()
 
 ## Whether a skill may go on the hotbar: the server has to have said the
 ## character knows it.
@@ -7483,8 +7525,8 @@ func _on_item_drop_requested(at: Vector2, item_id: int, inventory_slot: int, ico
 	_quickslot_skills.erase(slot)
 	_quickslot_items[slot] = {"item": item_id, "slot": inventory_slot}
 	_hud_underbar.set_slot_item(slot, icon)
-	_log_system("Put the item on quickslot %s." % HudUnderbar.slot_label(slot))
 	print("World3D: quickslot %d <- item %d from bag slot %d" % [slot, item_id, inventory_slot])
+	_save_hotbar()
 
 ## Keeps the bar's item slots pointing at the right bag slots, and clears any
 ## whose item is gone (spent, sold, moved). Called whenever the bag is redrawn.
@@ -7492,6 +7534,7 @@ func _resync_quickslot_items(slots: Array) -> void:
 	if _hud_underbar == null or _quickslot_items.is_empty():
 		return
 	var by_slot := {}
+	var changed := false
 	for entry in slots:
 		var sl: InventoryNet.Slot = entry
 		by_slot[sl.slot_index] = sl.item_id
@@ -7500,10 +7543,71 @@ func _resync_quickslot_items(slots: Array) -> void:
 		var bag := int(_quickslot_items[qs]["slot"])
 		var found := HudUnderbar.resolve_item_binding(want, bag, by_slot)
 		if found >= 0:
+			if found != bag:
+				changed = true
 			_quickslot_items[qs]["slot"] = found
 		else:
 			_quickslot_items.erase(qs)
 			_hud_underbar.set_slot_item(qs, null)
+			changed = true
+	if changed:
+		_save_hotbar()
+
+## The quick-slot file's entry for this character on this server (round
+## 639, HotbarStore -- OURS: retail keeps the bar on the server, 0x7158).
+func _hotbar_key() -> String:
+	var server := "%s:%d" % [NetClient.server_host, NetClient.server_port]
+	return HotbarStore.key_for(server, NetClient.current_character_name)
+
+## Set while _restore_hotbar fills the bar, so the fill is not written back.
+var _hotbar_restoring := false
+
+## Writes the bar -- every skill and item slot on every page -- on each
+## change (a skill or item put on it, an item's bag slot followed or its
+## binding dropped).
+func _save_hotbar() -> void:
+	if _hotbar_restoring or NetClient.current_character_name == "":
+		return
+	var ok := HotbarStore.save(_hotbar_key(), _quickslot_skills, _quickslot_items)
+	print("World3D: hotbar saved (%d skills, %d items) for %s: %s" % [_quickslot_skills.size(),
+		_quickslot_items.size(), _hotbar_key(), "ok" if ok else "FAILED"])
+
+## Fills the bar from the file: skills with their icons from the skill
+## tables, items with theirs from the item table, bound to the bag slot they
+## were saved with and re-resolved against the bag when it is known (now, or
+## on its next list, _resync_quickslot_items).
+func _restore_hotbar() -> void:
+	if _hud_underbar == null or NetClient.current_character_name == "":
+		return
+	var bar := HotbarStore.load_bar(_hotbar_key())
+	var skills: Dictionary = bar["skills"]
+	var items: Dictionary = bar["items"]
+	_hotbar_restoring = true
+	for slot in skills:
+		var e: Dictionary = skills[slot]
+		_quickslot_items.erase(slot)
+		_quickslot_skills[slot] = {"id": int(e["id"]), "code": String(e["code"])}
+		var icon: Texture2D = null
+		if _hud_panels != null and _ui_builder != null:
+			var path := _hud_panels.skill_icon_path(int(e["id"]))
+			if path != "":
+				icon = _ui_builder.load_texture(path)
+		_hud_underbar.set_slot_item(int(slot), icon)
+		SkillEffects.preload_skill(int(e["id"]))
+	for slot in items:
+		var e: Dictionary = items[slot]
+		_quickslot_skills.erase(slot)
+		_quickslot_items[slot] = {"item": int(e["item"]), "slot": int(e["slot"])}
+		var icon: Texture2D = null
+		if _hud_panels != null and _ui_builder != null:
+			var path := _hud_panels.item_icon_path(int(e["item"]))
+			if path != "":
+				icon = _ui_builder.load_texture(path)
+		_hud_underbar.set_slot_item(int(slot), icon)
+	print("World3D: hotbar restored for %s: skills %s, items %s" % [_hotbar_key(), str(skills), str(items)])
+	if not _inventory_slots.is_empty():
+		_resync_quickslot_items(_inventory_slots)
+	_hotbar_restoring = false
 
 ## SRREVAMP_QA_LEARN's steps (see the hook in _qa_step): "<mastery>x<n>"
 ## raises that mastery n times, "<id>" learns that skill; each waits for its
@@ -12560,8 +12664,18 @@ func _on_global_chat_requested(slot: int, count: int) -> void:
 		_hud_whole_chat.refused.connect(_log_system)
 	_hud_whole_chat.open_for(slot, count)
 
-func _log_system(text: String) -> void:
-	if _hud_chat != null:
+## A system line (round 639): to the system message window, as retail's
+## 0x7781b0(type, text) writes its own -- `type` is the window's filter type
+## (HudSystemMessage.TYPE_*; 0 always shows). Every line this client writes
+## here is either retail's own message for the same event (the pickup, EXP and
+## party lines, refusals) or srrevamp's own (the help hints, the dev tools,
+## the quickslot and zone lines; docs/protocol/system_message.md lists them).
+## Before the window exists (and on a bare World3D) the chat's All list
+## takes it, as before.
+func _log_system(text: String, type: int = HudSystemMessage.TYPE_ALWAYS) -> void:
+	if _hud_syslog != null:
+		_hud_syslog.add_message(type, text)
+	elif _hud_chat != null:
 		_hud_chat.add_message("", "* " + text)
 	# Null on a bare World3D (the headless suites drive one with no scene).
 	if chat_log != null:
@@ -14061,14 +14175,19 @@ func _on_pick_up_result(result: GroundItemsNet.PickUpResult) -> void:
 			if result.gold:
 				what = "%d gold" % result.quantity
 				print("World3D: picked up %s (ground item %d, item %d)" % [what, result.ground_id, result.item_id])
-				# No self-gold acquire key was found in the UI text table
-				# (UIIT_MSG_PARTYGET_GOLD is the party share), so this line is ours.
-				_log_system("Picked up %s." % what)
+				# Retail's own line (round 639, READ): the ground-item handler
+				# 0x87ba20 writes UIIT_MSG_STATE_GAIN_GOLD ("[%d]gold gained.")
+				# for the gold kind (0xfe) through 0x778210 with type 1, the
+				# GAIN filter (0x87bef4..0x87bf20).
+				var gold_t := _ui_text_table.get_text("UIIT_MSG_STATE_GAIN_GOLD", "") if _ui_text_table != null else ""
+				_log_system(gold_t.replace("%d", str(result.quantity)) if gold_t.contains("%d") else "Picked up %s." % what,
+					HudSystemMessage.TYPE_GAIN)
 			else:
 				var label := _item_label_for_line(result.item_id)
 				what = ("%dx %s" % [result.quantity, label]) if label != "" else ("%dx" % result.quantity)
 				print("World3D: picked up %s (ground item %d, item %d)" % [what, result.ground_id, result.item_id])
-				_log_system(_acquired_item_line(label, result.quantity))
+				# 0x87ba20's item lines are type 1 too (0x87bec4..0x87becf).
+				_log_system(_acquired_item_line(label, result.quantity), HudSystemMessage.TYPE_GAIN)
 			if NetClient.is_connected_to_server():
 				if result.gold:
 					NetClient.character_stats(NetClient.current_character_name)
@@ -14867,7 +14986,7 @@ func _hold_player_one_shot(die: BanReader.ParsedAnimation) -> void:
 		_player_one_shot_hold = true
 
 ## This player has been left dead: every walk and attack under way ends, the
-## input locks (_player_dead), the death line goes to chat and the HUD shows
+## input locks (_player_dead), the death line goes to the system window and the HUD shows
 ## the Revive button. The pose itself is played when the killing blow lands
 ## (_play_player_struck), on the counter's own timing. Idempotent: a push that
 ## repeats a result's kill (MonsterStrikes.CLAIM_HELD) reaches here twice.
@@ -15611,8 +15730,8 @@ func _key_whisper_reply() -> String:
 	return "chat line opened with '%s'" % line
 
 ## F9: the next camera view (KeyMap.next_camera_view), announced with the
-## client's own line for it (0x780420 shows it through 0x7781b0(0, text);
-## that this is the chat's system line is inferred).
+## client's own line for it (0x780420 shows it through 0x7781b0(0, text),
+## the system message window's add -- READ in round 639).
 func _key_cycle_camera() -> String:
 	var current := maxi(CAMERA_VIEWS.find(_camera_view), 0)
 	var next := KeyMap.next_camera_view(current)
@@ -16022,15 +16141,16 @@ func _begin_monster_death(monster_id: int) -> void:
 ## handler does not need to push it anywhere -- it is here so the signal's
 ## full payload is on record at the call site.
 func _on_level_up(new_level: int, _stat_points: int) -> void:
-	var msg := "You have advanced to level %d." % new_level
-	if _ui_text_table != null:
-		# The real string is UIIT_MSG_STRGERR_LEVEL "You have advanced to
-		# level [%d]." -- recovered from textuisystem.txt. Substitute the
-		# level into its own placeholder rather than hardcoding the English.
-		var template := _ui_text_table.get_text("UIIT_MSG_STRGERR_LEVEL", "")
-		if template != "":
-			msg = template.replace("[%d]", str(new_level))
-	_log_system(msg)
+	var msg := level_up_line(new_level, _ui_text_table.get_text("UIIT_MSG_STRGERR_LEVEL", "") if _ui_text_table != null else "")
+	# Round 639: retail's Client_ApplyExpAndLevelUp formats this with swprintf
+	# (0x8a9bd3, 0x80 wide chars) and hands it to GDR_WARNING_WND, interface
+	# child 0x23 (0x8a9c26 -> 0x77b580 -> CIFNotify 0x7b3eb0) -- not to the
+	# system window. Logged for the tester's file all the same.
+	print("SYSLOG warning: %s" % msg)
+	if _hud_warning != null:
+		_hud_warning.show_notice(msg)
+	else:
+		_log_system(msg)
 	# 0x3054's handler 0x8a7020: snd_levup, 2-D (read; UiSounds.level_up).
 	UiSounds.level_up("level up to %d" % new_level)
 	_play_level_up_effect()
@@ -16159,6 +16279,38 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 		# and 19). The bar's real fill is progress toward the next skill
 		# point, which the server does not send yet.
 		_hud_underbar.set_sp(stats.skill_points)
+
+## The level-up line: UIIT_MSG_STRGERR_LEVEL ("You have advanced to level
+## [%d].") through swprintf, as 0x8a9bd3 formats it -- so the brackets stay
+## ("level [5]."). Until round 639 this replaced "[%d]" whole and dropped them.
+static func level_up_line(new_level: int, template: String) -> String:
+	if template == "" or not template.contains("%d"):
+		return "You have advanced to level [%d]." % new_level
+	return template.replace("%d", str(new_level))
+
+## The lines a kill's experience writes to the system window, as
+## Client_ApplyExpAndLevelUp (0x8a97c0) writes them: UIIT_MSG_STATE_GAIN_EXP
+## ("[%I64d]Experience Points gained.") when the experience is above 0
+## (0x8a9a45..0x8a9a76) and UIIT_MSG_STATE_GET_SKILL_EXP ("[%u]skill
+## experience point gained.") when the skill experience is (0x8a9cc3..
+## 0x8a9cfa), both with type 1 (the GAIN filter). An empty template (no
+## archive) falls back to that English.
+static func exp_gain_lines(exp_gained: int, skill_exp_gained: int, exp_template: String,
+		skill_template: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	if exp_gained > 0:
+		out.append(_printf_one(exp_template if exp_template != "" else "[%I64d]Experience Points gained.",
+			["%I64d", "%lld", "%d"], exp_gained))
+	if skill_exp_gained > 0:
+		out.append(_printf_one(skill_template if skill_template != "" else "[%u]skill experience point gained.",
+			["%u", "%d"], skill_exp_gained))
+	return out
+
+static func _printf_one(template: String, specs: Array, value: int) -> String:
+	for spec in specs:
+		if template.contains(String(spec)):
+			return template.replace(String(spec), str(value))
+	return template
 
 ## Spawns the real level-up burst on the player, sized to the player's own
 ## rendered height. Does nothing (beyond the message already logged) when the
@@ -16328,7 +16480,7 @@ func _on_loot_dropped(dropped: CombatNet.LootDropped) -> void:
 	if dropped == null:
 		return
 	for d in dropped.drops:
-		_log_system(_acquired_item_line(_item_label_for_line(d.item_id), d.quantity))
+		_log_system(_acquired_item_line(_item_label_for_line(d.item_id), d.quantity), HudSystemMessage.TYPE_GAIN)
 	NetClient.list_inventory(NetClient.current_character_name)
 
 # --- Inventory tab ---------------------------------------------------------
@@ -16550,11 +16702,17 @@ func _on_party_leave_result(ok: bool, reason: String) -> void:
 func _on_party_member_joined(member: PartyNet.MemberJoined) -> void:
 	if member == null:
 		return
-	_log_system("%s joined your party." % member.member_name)
+	# UI_PARTY 0x886b10 writes UIIT_MSG_PARTY_JOIN ("[%s]joined the party.")
+	# with type 4, the PARTY filter (round 639, READ).
+	var join_t := _ui_text_table.get_text("UIIT_MSG_PARTY_JOIN", "") if _ui_text_table != null else ""
+	_log_system(join_t.replace("%s", member.member_name) if join_t.contains("%s") else "%s joined your party." % member.member_name,
+		HudSystemMessage.TYPE_PARTY)
 	NetClient.party_info(NetClient.current_character_name)
 
 func _on_party_member_left(character_id: int) -> void:
-	_log_system("A party member left (character #%d)." % character_id)
+	# Retail's UIIT_MSG_PARTY_SECEDE names the member; this push carries only
+	# the id, so the line is ours -- with retail's type 4 (0x886b10).
+	_log_system("A party member left (character #%d)." % character_id, HudSystemMessage.TYPE_PARTY)
 	NetClient.party_info(NetClient.current_character_name)
 
 # --- Guild tab -------------------------------------------------------------

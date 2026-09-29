@@ -1147,8 +1147,8 @@ refusals, the global chatting item's "Chat to all" window, the GM notice's line 
 - **Not built**: the whisper list pop-up (`GDR_WHISPERLIST`, 0x7acfd0), the chat-mode button and
   viewer (IDs 41/42), the hide button, the "*" name prefix (0x877810/0x877340, the sender's vslot
   0xac state not identified), speech balloons over heads (0x9c77c0), the flood block
-  (0x7a9bb0), the global window's text filter (0x8c4020), the system message window (interface
-  child 0x44) -- srrevamp's own "* ..." lines and refusals go to the All tab (OURS).
+  (0x7a9bb0), the global window's text filter (0x8c4020). The system message window is built
+  (round 639; its own list is below).
 - **Open questions**: whether the client strips CSV quote marks from a text row (24 first rows on
   the box's archive keep them since first-row-wins); whether retail's server strips the channel mark from the text; the
   range of ordinary chat (srrevamp: the zone bucket); the wheel
@@ -1157,6 +1157,31 @@ refusals, the global chatting item's "Chat to all" window, the GM notice's line 
   binary; the private client's source for the cyan is not known.
 - "Remaining turns" in the global window overruns into its count (the authored static is 55 px
   wide; our font draws the caption wider).
+
+### The system message window and the saved quick slots (round 639) — **built; these are left**
+
+What round 639 read and built is in `docs/protocol/system_message.md`.
+
+- **The filter board** (GDR_SYETEM_MESSAGE_OPTBOARD, CIFChatOptionBoard, `ifchatoptionboard.txt`):
+  its five checkboxes, their art (set in code, not read) and `Setting\chop.dat`. The filter button
+  does nothing yet; the filters stay at the no-file defaults (FIGHT off, the rest on).
+- **The frame's hover-only option** (`0x4f9d00`+7, `0x77b385..0x77b3db`): which option it is and its
+  default. The frame always shows here.
+- **Guide lines and unique notices.** The window shows retail's type-6 "[Guide]" tips
+  (`0x789e53`) and the uniques' appearance and death lines (`0x874ea0`) when they arrive; srrevamp's
+  server sends neither.
+- **Retail's messages for srrevamp's refusals.** The server sends English text; retail sends a code
+  that `0x7b8b40` turns into the UIIT_ message. The party-leave line lacks the name retail shows.
+- **Quest EXP** writes no line (only a kill's result carries the EXP).
+- **GDR_WARNING_WND's position** (the level-up line): the CIFNotify class's +0x7d4, read as 0 for
+  GDR_NOTICE; no writer for this instance was looked for.
+- **The quick slots on the server.** Retail saves them with 0x7158 and loads them from the character
+  data (`0x8a7c50`); srrevamp keeps them client-side at the user's request (OURS,
+  `user://quickslots.cfg`). A new character's default slots (`0x786f30`) and dragging a slot off the
+  bar to clear it (vslot 26 `0x60c1b0`) are still not wired, as before.
+- **The paper doll's step** is 36 degrees a click at the user's request (OURS); a held arrow repeats
+  it at retail's 1000/50 ms, so it turns 720 degrees a second once repeating. Retail's step is a
+  frame's worth, frame_ms * 0.0015 rad.
 
 ### The inventory window (round 633) — **pages, purse colours, slot art, avatar view, preview built; these are left**
 

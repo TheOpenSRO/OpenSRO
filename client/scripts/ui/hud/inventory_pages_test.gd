@@ -306,7 +306,10 @@ func _rotation_checks(panels: Control) -> void:
 	if not panels.has_method("_doll_turn_tick"):
 		_check(false, "HudPanels turns the paper doll (_doll_turn_tick)")
 		return
-	panels.set("test_doll_frame_ms", 16)
+	# Round 639 (OURS, the user's request): 36 degrees a click, whatever the
+	# frame time, so ten clicks make a full turn; a held arrow repeats the
+	# same step at retail's 1000 ms / 50 ms timing.
+	var step := deg_to_rad(36.0)
 	panels.call("set_paper_doll_yaw", 0.0)
 	# The measurement (a log line and the pose line) runs on the press and the
 	# release, not on each 50 ms repeat (rounds 633-635 integration review).
@@ -315,35 +318,44 @@ func _rotation_checks(panels: Control) -> void:
 		panels.connect("paper_doll_measure_requested", func() -> void: measured[0] += 1)
 	panels.call("_doll_turn_start", 1)
 	var t0 := int(panels.get("_doll_turn_last_ms"))
-	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 0.024), "a press on the right arrow turns 16 ms * 0.0015 = 0.024")
+	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), step), "a press on the right arrow turns 36 degrees (got %.4f)" % float(panels.get("paper_doll_yaw")))
 	panels.call("_doll_turn_tick", t0 + 999)
-	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 0.024), "no repeat before 1000 ms")
+	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), step), "no repeat before 1000 ms")
 	panels.call("_doll_turn_tick", t0 + 1000)
-	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 0.048), "the first repeat at 1000 ms")
+	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 2.0 * step), "the first repeat at 1000 ms steps 36 degrees more")
 	panels.call("_doll_turn_tick", t0 + 1049)
-	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 0.048), "no repeat 49 ms later")
+	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 2.0 * step), "no repeat 49 ms later")
 	panels.call("_doll_turn_tick", t0 + 1050)
-	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 0.072), "the next repeat 50 ms after the first")
+	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 3.0 * step), "the next repeat 50 ms after the first")
 	panels.set("_doll_turn_hovered", false)
 	panels.call("_doll_turn_tick", t0 + 2000)
-	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 0.072), "off the button the repeat pauses")
+	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 3.0 * step), "off the button the repeat pauses")
 	panels.set("_doll_turn_hovered", true)
 	_check(measured[0] == 1, "one measurement for the press and its two repeats (got %d)" % measured[0])
 	panels.call("_doll_turn_stop", 1)
 	_check(measured[0] == 2, "one more on the release (got %d)" % measured[0])
 	panels.call("_doll_turn_tick", t0 + 3000)
-	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 0.072), "the release stops it")
+	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 3.0 * step), "the release stops it")
 	panels.call("_doll_turn_start", -1)
-	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 0.048), "the left arrow turns back")
+	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 2.0 * step), "the left arrow turns back 36 degrees")
 	panels.call("_doll_turn_stop", -1)
 	var reset := (panels.call("open", "inventory") as Control).call("node", "GDR_EQ_BTN_ROTATE_RESET") as BaseButton
 	if reset != null:
 		reset.pressed.emit()
 	_check(float(panels.get("paper_doll_yaw")) == 0.0, "the circle sets the yaw to 0")
-	panels.set("test_doll_frame_ms", 5000)
-	panels.call("_doll_turn_start", 1)
-	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 4.5), "a frame is clamped to 3000 ms (0xba4101)")
-	panels.call("_doll_turn_stop", 1)
+	# Ten clicks, each a press and a release, make one full turn: the yaw
+	# passes through 36, 72 .. 324 degrees and lands back on 0.
+	var seen: Array = []
+	for i in 10:
+		panels.call("_doll_turn_start", 1)
+		panels.call("_doll_turn_stop", 1)
+		seen.append(snappedf(rad_to_deg(float(panels.get("paper_doll_yaw"))), 0.001))
+	_check(seen == [36.0, 72.0, 108.0, 144.0, 180.0, 216.0, 252.0, 288.0, 324.0, 0.0],
+		"ten clicks step 36 degrees each and come back to 0 (got %s)" % [seen])
+	panels.call("_doll_turn_start", -1)
+	panels.call("_doll_turn_stop", -1)
+	_check(is_equal_approx(rad_to_deg(float(panels.get("paper_doll_yaw"))), 324.0), "the left arrow from 0 goes to 324 degrees")
+	panels.call("set_paper_doll_yaw", 0.0)
 
 func _doll_checks() -> void:
 	var doll_script := load(DOLL_PATH) as GDScript

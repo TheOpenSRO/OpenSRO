@@ -401,6 +401,18 @@ type AttackResult struct {
 	// fields zero. Read it through EchoedTargetType.
 	TargetType    uint8
 	HasTargetType bool
+
+	// ExpGained and SkillExpGained are what a kill earned the attacker (round
+	// 639): the experience added to the character and the skill experience
+	// the 400:1 conversion was fed (leveldata.SkillExpPerPoint), 0 for a blow
+	// that killed nothing or a server with no level table. Two trailing s64s
+	// after the targetType byte, so a client that stops there still decodes.
+	// The client writes them to its system-message window as retail's
+	// Client_ApplyExpAndLevelUp (0x8a97c0) does with UIIT_MSG_STATE_GAIN_EXP
+	// and UIIT_MSG_STATE_GET_SKILL_EXP. Retail carries them in its own EXP
+	// packet; carrying them here is OURS (docs/protocol/system_message.md).
+	ExpGained      int64
+	SkillExpGained int64
 }
 
 // EchoedTargetType is the targetType the result carries on the wire.
@@ -442,6 +454,9 @@ func (r *AttackResult) Encode() []byte {
 	buf = append(buf, encodeInt64(r.MonsterID)...)
 	// Trailing again (round 616): the echoed targetType.
 	buf = append(buf, r.EchoedTargetType())
+	// And again (round 639): the kill's experience and skill experience.
+	buf = append(buf, encodeInt64(r.ExpGained)...)
+	buf = append(buf, encodeInt64(r.SkillExpGained)...)
 	return append(out, buf...)
 }
 
@@ -484,6 +499,10 @@ func DecodeAttackResult(data []byte) (*AttackResult, error) {
 	}
 	if len(rest) >= 43 && rest[42] != TargetEntity {
 		r.TargetType, r.HasTargetType = rest[42], true
+	}
+	if len(rest) >= 59 {
+		r.ExpGained = int64(binary.LittleEndian.Uint64(rest[43:51]))
+		r.SkillExpGained = int64(binary.LittleEndian.Uint64(rest[51:59]))
 	}
 	return r, nil
 }
@@ -1498,6 +1517,10 @@ func performAttack(
 				if _, _, err := skills.AddSkillExp(ctx, characterID, gainedExp); err != nil {
 					return fmt.Errorf("combat: granting skill experience: %w", err)
 				}
+				result.SkillExpGained = gainedExp
+			}
+			if gainedExp > 0 {
+				result.ExpGained = gainedExp
 			}
 			newLevel, newExp, gained := levelTable.Advance(char.Level, char.Exp, gainedExp)
 			newStatPoints := char.StatPoints + gained*leveldata.StatPointsPerLevel

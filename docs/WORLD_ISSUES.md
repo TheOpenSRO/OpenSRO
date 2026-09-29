@@ -7094,6 +7094,112 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirty-ninth round: system messages have their own window at the bottom right, the hotbar is still there after a relog, and the preview turns a tenth of a circle per click
+
+The user's three requests on v0.1.460. The full reading is in `docs/protocol/system_message.md`;
+labels READ, MEASURED, INFERRED, OURS, OPEN as there.
+
+**1. The system message window (READ).** Retail writes its system lines through `0x7781b0(type,
+text)` to interface child 0x44, `GDR_SYSTEM_MESSAGE_VIEW`, a `CIFSystemMessage` built from
+`resinfo\ifsystemmessage.txt` (Create `0x7bc150`). Round 634 had put ours in the chat's All list.
+
+- **Layout and size.** It has the chat's three `chat_window.ddj` bands, a 316-wide text box (pitch 14,
+  100 lines, bottom-stacked, hanging-indent wrap) and a scroll bar and filter and size buttons at
+  x 337.
+  - The constructor starts at mode 2; the size button (`0x7b89c0`) steps 1..6 and wraps.
+  - `0x7b87a0` places it at x = W - 357 and y = H - 375 + (6 - m) * 42, with its bottom at H - 90.
+  - The text box is m * 42 tall with m * 3 rows; the scroll bar is m * 42 - 57, hidden in mode 1.
+- **Filter and colours.** `0x7b85f0` passes types 0 and 6 always, 1..5 and 7 by the filter board's
+  GAIN, FIGHT, STATUS, PARTY and GAME boxes, and nothing else. With no `Setting\chop.dat`, only FIGHT
+  is off (`0x7a95f0`; the CIFCheckBox constructor checks by default). Type 6 is `0xffbacff2`,
+  everything else `0xffdbc99b`.
+- **The census.** Every direct call of the adds was sorted: 457 of `0x7781b0`, 50 of `0x778210`,
+  17 of `0x778280`, 223 of the error-code path `0x778190`. From it:
+  - type 1: EXP and skill EXP gained (`Client_ApplyExpAndLevelUp` `0x8a97c0`), gold and item
+    pickups (`0x87ba20`);
+  - type 4: party joins and leaves (`0x886b10`), and the chat's own party, guild and academy
+    refusals (one `push 0x4`, `0x7ad866`);
+  - type 0: the chat's server refusals (`0x877798`), the "Chat to all" refusals, the camera-view
+    line, and the error codes;
+  - type 6: one caller, the guide tip (`0x789e53`, INFERRED to be the screenshot's "[Guide]"
+    lines).
+  - The level-up line is not a system line: it goes to `GDR_WARNING_WND` (`0x77b580`, child 0x23,
+    a CIFNotify), formatted by swprintf, so "level [40]." keeps its brackets. Ours dropped them.
+- **Built.** `HudSystemMessage` implements all of the above; World3D anchors it bottom-right at
+  those offsets. `_log_system(text, type)` writes there, not to the chat; HudChat's refusals go
+  through `system_sink`. The level-up line shows on a second HudNotice for GDR_WARNING_WND, and
+  the gold pickup reads "[N]gold gained." (retail's string; the old line was ours).
+- **EXP after a kill.** The server appends `ExpGained` and `SkillExpGained` (two s64s) to
+  OpAttackResult after the targetType byte; the carrier is OURS, since retail has its own EXP
+  packet. The client writes retail's two lines from them, type 1. Skill EXP is `combat.go`'s
+  disclosed M = 1.
+- **Our own lines.** "Assigned skill to quickslot N ..." and "Put the item on quickslot N." are
+  removed from the screen and go to the log: the live bar (`0x60a000..0x60efff`) calls none of the
+  adds. The rest of ours stay in the window with type 0; the doc lists them.
+- **Not built (OPEN).** The filter board and `chop.dat` (the button only logs), the frame's
+  hover-only option (`0x4f9d00`+7), GDR_WARNING_WND's own y, guide lines and unique notices (our
+  server sends neither).
+
+**2. The hotbar is saved (READ: retail saves it on the server; ours is client-side, OURS).**
+
+- **Retail.** CNIFUnderMenuBar `0x60bea0` sends 0x7158 on every change: slot 0..50, kind, and a u32
+  (the skill id, or the item's bag slot, `0x666800`). The character-data handler `0x8ab0e0` reads
+  them back through `0x8a7c50`: u8 flag, u8 count, count x {u8 slot, u8 kind, u32}; `0x60b260`
+  fills the bar from them.
+- **Ours.** At the user's request, `HotbarStore` keeps every skill slot (id, Basic_Code) and item
+  slot (item id, bag slot) on every page, one entry per server:port and character, in
+  `user://quickslots.cfg`. It is written on every change and read once the bar exists.
+- **Items.** An item is re-resolved against the bag: its slot first, as retail binds it, then the
+  same item anywhere.
+
+**3. The preview's step (OURS, the user's request).** 36 degrees per arrow command instead of
+retail's frame_ms * 0.0015 rad. A held arrow repeats the step at retail's 1000/50 ms, which is 720
+degrees a second once repeating. The yaw wraps in [0, 360), and the reset still sets 0.
+
+**MEASURED, real X input on the box** (Login route, the round's server in memory, 1280x720, display
+:87, `/var/tmp/syslog/live.sh` and `x.sh`; renders in the scratchpad's `syslog_shots/`):
+
+- The window sits at (923, 513) 350x117 in mode 2.
+- Four real clicks on its size button step 2 -> 3 -> 4 -> 5 -> 6, the bottom staying at 630.
+  `compare_ref_vs_mode6.png` puts mode 6 beside the user's crop.
+- Kills by the QA attack loop write "[1]Experience Points gained." / "[1]skill experience point
+  gained." (level 40 on level-1..7 monsters).
+- G writes "[99]gold gained.". A typed "#hello" without a party writes "Cannot find the
+  corresponding party." with type 4. Key 1 pressed three times fast writes the server's "skill on
+  cooldown".
+- The level-up (GM /level 40) goes to the warning window.
+- The hotbar: a skill window click put skill 90 on slot 1. Real drags put 90 on 3, 114 on 5, 114 on
+  page 2's slot 12, and the potion (item 4) on 7. The file was written each time.
+  - The in-client Restart (Escape, System, Restart) and a new process both restored all five.
+  - Key 7 then used the potion (snd_potion), and F2 showed slot 12.
+- Ten real clicks on the right rotate arrow logged yaw 0.6283, 1.2566, ... 5.6549, 0.0000. After
+  five clicks the doll shows its back.
+
+**Tests.**
+
+- New client suites: `hud_system_message_test.gd` (geometry, anchor, filter, colours, 100 lines,
+  refusal routing, EXP and level-up formats) and `hotbar_store_test.gd`.
+- Extended: `combat_test.gd` (the EXP tail) and `inventory_pages_test.gd` (36 degrees, ten clicks).
+- Go: `TestAttackResultCarriesTheKillsExperience`; `TestLevelUpMovesTheEntityLevel` checks the
+  kill's ExpGained; the two tail-offset tests moved to the new length.
+
+The negative, against dev 5a82339 (the same tests in a base worktree):
+
+    FAIL the system message window exists (hud_system_message.gd)
+    FAIL HudSystemMessage.mode_geometry lays out the size modes (0x7b87a0)
+    FAIL HudChat hands its refusals to the system window (system_sink)
+    FAIL World3D.exp_gain_lines writes the kill's EXP lines
+    FAIL World3D.level_up_line formats the level-up line
+    FAIL the quick-slot bar is kept between sessions (hotbar_store.gd)
+    SCRIPT ERROR: Invalid get index 'exp_gained' (on base: 'RefCounted (AttackResult)').
+    FAIL a press on the right arrow turns 36 degrees (got 0.0075)
+    FAIL ten clicks step 36 degrees each and come back to 0 (got [0.43, 0.859, 1.289, 1.719, 2.149, 2.578, 3.008, 3.438, 3.867, 4.297])
+    internal/session/combat_test.go:79:3: unknown field ExpGained in struct literal of type AttackResult
+    FAIL	github.com/OpenSRO/srrevamp/server/internal/session [build failed]
+
+On the round: `remote_godot.sh check` ALL LOAD (396 scripts); `remote_godot.sh tests` ran 158
+suites, 0 failing; `go build ./... && go test -count=1 -p 1 ./...` all ok.
+
 ## Rounds 633-635 integration review (int/ui2): nothing new lands past a lowered bag size, the portrait's ambient is clamped, the chat's penalty line sits where the client puts it, and the text table loads rows as the client does
 
 The final review of int/ui2 (dev b9bbf07 + rounds 633-635 and their follow-ups, merged at 14c4889)
