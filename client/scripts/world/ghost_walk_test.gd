@@ -173,9 +173,13 @@ func _test_aniset_parse() -> void:
 		head % "OTHER" + "\tnone\tANI_SKILL_7\tnone",
 	]))
 	var sets: Dictionary = ser.call("parse_aniset", _utf16(text))
-	_check(sets.get("SKILL_TEST_NONE", {}) == {"group": "default", "ready": [], "wait": [], "shot": []}, "an all-none row has three empty lists and its AniGroup")
+	# Round 640 adds "priority" (col 3) and, when col 13 names one, "defense"
+	# to a row; the lists and the group are what this test is about.
+	var lists := func(row: Dictionary) -> Dictionary:
+		return {"group": row.get("group"), "ready": row.get("ready"), "wait": row.get("wait"), "shot": row.get("shot")}
+	_check(lists.call(sets.get("SKILL_TEST_NONE", {})) == {"group": "default", "ready": [], "wait": [], "shot": []}, "an all-none row has three empty lists and its AniGroup")
 	_check(sets.get("SKILL_TEST_WAIT", {}).get("wait", []) == [32], "ANI_SKILL_7 is action type 32 (0x20, FUN_009e5240)")
-	_check(sets.get("SKILL_TEST_LIST", {}) == {"group": "default", "ready": [43], "wait": [94], "shot": [26, 68]},
+	_check(lists.call(sets.get("SKILL_TEST_LIST", {})) == {"group": "default", "ready": [43], "wait": [94], "shot": [26, 68]},
 		"lists split on commas, ANI_READY04 43, ANI_WAIT04 94, and ANI_SHOT (not in the map) is dropped (got %s)" % str(sets.get("SKILL_TEST_LIST", {})))
 	_check(not sets.has("SKILL_TEST_OTHER"), "rows of other sections are not animation rows")
 	_check(ser.call("aniset_for", sets, "SKILL_TEST_WAIT_03") == sets.get("SKILL_TEST_WAIT", {}), "a level suffix is tolerated")

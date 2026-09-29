@@ -51,6 +51,30 @@ func _initialize() -> void:
 	world.set("_left_steering", false)
 	_check(not bool(world.get("_has_move_target")), "rooted: a held-button steer sets none either")
 
+	# The server's answer to a move it dropped (OURS): OpSkillMove naming the
+	# wall puts this player where the server holds it.
+	player.position = Vector3(30, 0, 30)
+	var held := SkillNet.SkillMove.new()
+	held.character_id = 7
+	held.skill_id = 136
+	held.x = 10.0
+	held.y = 0.0
+	held.z = 10.0
+	world.call("_on_skill_moved", held)
+	_check(is_equal_approx(player.position.x, 10.0) and is_equal_approx(player.position.z, 10.0),
+		"the held position from the server snaps the player back (got %s)" % str(player.position))
+
+	# The toggle-off reply ends a cast this client drew (the server decides).
+	world.set("_fx_self_cast", {"skill": 136, "ground": false, "acted": false})
+	var reply := CombatNet.AttackResult.new()
+	reply.target_type = 0
+	reply.target_type_echoed = true
+	reply.player_hp = 100
+	reply.wall = CombatNet.WallHit.new()
+	reply.wall.toggled_off = true
+	world.call("_on_attack_result", reply)
+	_check((world.get("_fx_self_cast") as Dictionary).is_empty(), "the toggle-off reply ends the drawn cast")
+
 	world.call("_forget_owner_buffs", "character:7", [2])
 	_check(int(world.call("_wall_root")) == 0, "the wall's OpBuffEnd frees the player (another player's wall does not root this one)")
 

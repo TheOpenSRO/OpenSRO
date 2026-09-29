@@ -757,6 +757,15 @@ func useSkillHandler(
 				}
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: toggledOffResult(req, hp).Encode()})
 			}
+			// READ (round 640's review): Skill_CheckUseConditions refuses a row
+			// carrying 'tele', 'tel2' or 'tel3' while the caster's book holds a
+			// wall (book+0x1dc), 0x3009 (0x58e033..0x58e061) -- before the
+			// cooldown test (0x58e08c) and the motion-state gate (0x58e0a0).
+			// So Ghost Walk cannot carry a walled caster away. This is retail's
+			// rule, not the OURS root (walls.go wallRoots).
+			if ref.HasTele() && buffBooks.HoldsWall(characterID) {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: wallTeleRefusal}).Encode()})
+			}
 			if seatedCastRefused(ref.SitGate, characterID, time.Now()) {
 				refusal := seatedRefusal
 				if motions.state(characterID, time.Now()) == MotionProtectionWall {
@@ -1013,11 +1022,6 @@ func useSkillHandler(
 			// refuses it (the move itself, moveBySkill, stands a seated one).
 			if motions.state(characterID, now) == MotionChangeMotion {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: seatedRefusal}).Encode()})
-			}
-			// Round 640, OURS: a wall roots its caster (walls.go wallRoots),
-			// so a ground move is refused too, before anything is spent.
-			if wallRoots(characterID) {
-				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: rootedRefusal}).Encode()})
 			}
 			groundDest = ghostWalkDestination(e.Pos,
 				world.Position{X: float64(req.X), Y: float64(req.Y), Z: float64(req.Z)}, float64(castRow.Tele1))

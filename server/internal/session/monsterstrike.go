@@ -339,38 +339,44 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	// is a player, which is the point of it being one function.
 	// THE PROTECTION WALL (round 640, walls.go). Combat_ResolveDamage
 	// (0x58e5f0, READ) looks at the target's wall (pc+0xc0c) before anything
-	// else touches the target's own entry: while the wall has HP it resolves
-	// the blow against the wall -- FUN_0040ebe0 / FUN_0040eef0, the
-	// mitigation formulas with the defender's params 5 and 7 replaced by
-	// 'pw' value[2] (flat) and value[3] (percent), the critical flag shared
-	// with the target's entry -- and when the blow's type is one the wall
+	// else touches the target's own entry. While the wall has HP it resolves
+	// the blow against the wall -- FUN_0040ebe0 / FUN_0040eef0, the mitigation
+	// formulas with the defender's params 5 and 7 replaced by 'pw' value[2]
+	// (flat) and value[3] (percent), the critical flag shared with the
+	// target's entry -- and accumulates that damage on the wall BEFORE the
+	// absorb test (buff.Books.HitWall). When the blow's type is one the wall
 	// covers (buff.WallAbsorbs) the target's entry is marked 8 and skips the
 	// rest: no block roll, no mitigation, no armour or shield wear, no HP.
-	// Combat_ApplyActionEffects then takes the damage off the wall's HP.
-	// Otherwise the wall is not touched and the blow lands as below.
+	// Otherwise the blow lands as below. The wall is looked for first
+	// (round 640's review): monsterBlowType reads the skill table, which a
+	// blow on an unwalled player never needs.
 	var wallCrit bool
-	if hit, ok := buffBooks.HitWall(characterID, monsterBlowType(ctx, monster, skill), func(w buff.Wall) int {
-		b := resolveBlow(raw, w.DefPct, w.Def,
-			combat.EvadedChance(monster.Critical, playerEvasion), 0,
-			monster.Level, playerLevel, monster.ID, characterID)
-		wallCrit = b.Critical
-		return b.Damage
-	}); ok {
-		hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
-		if err != nil {
-			return monsterStrikeOutcome{}, fmt.Errorf("combat: reading the walled target: %w", err)
+	if buffBooks.HoldsWall(characterID) {
+		hit, ok := buffBooks.HitWall(characterID, monsterBlowType(ctx, monster, skill), func(w buff.Wall) int {
+			b := resolveBlow(raw, w.DefPct, w.Def,
+				combat.EvadedChance(monster.Critical, playerEvasion), 0,
+				monster.Level, playerLevel, monster.ID, characterID)
+			wallCrit = b.Critical
+			return b.Damage
+		})
+		if ok {
+			out.wall = WallInfo{Absorbed: hit.Absorbed, Broke: hit.Broke, Critical: wallCrit,
+				Damage: int32(hit.Damage), HP: int32(hit.HP), Max: int32(hit.Max)}
 		}
-		out.hp = hp
-		out.critical = wallCrit
-		out.wall = WallInfo{Absorbed: true, Broke: hit.Broke, Critical: wallCrit,
-			Damage: int32(hit.Damage), HP: int32(hit.HP), Max: int32(hit.Max)}
-		slog.Info("wall: took a blow", "character", characterID, "monster", monster.ID, "damage", hit.Damage,
-			"wall", hit.HP, "max", hit.Max, "critical", wallCrit, "caster hp", hp)
-		// A broken wall is ended by the caller once this blow's messages are
-		// out (endBrokenWall), as retail's book update ends it after the
-		// action's packet: the client draws the breaking blow on the wall
-		// first, then the wall's end. The toggle ticker catches any other.
-		return out, nil
+		if ok && hit.Absorbed {
+			hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
+			if err != nil {
+				return monsterStrikeOutcome{}, fmt.Errorf("combat: reading the walled target: %w", err)
+			}
+			out.hp = hp
+			out.critical = wallCrit
+			slog.Info("wall: took a blow", "character", characterID, "monster", monster.ID, "damage", hit.Damage,
+				"wall", hit.HP, "max", hit.Max, "critical", wallCrit, "caster hp", hp)
+			// A broken wall is ended by the caller once this blow's
+			// messages are out (endBrokenWall), as retail's book update
+			// ends it after the action's packet.
+			return out, nil
+		}
 	}
 	counter := resolveBlow(raw, playerMitigationPercent, armor,
 		combat.EvadedChance(monster.Critical, playerEvasion),

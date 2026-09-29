@@ -15012,8 +15012,11 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 				_log_system(result.error)
 		elif result.wall != null and result.wall.toggled_off:
 			# Round 640: the recast switched a running toggle off; its
-			# OpBuffEnd ends the icon and the aura, and no cast is drawn.
+			# OpBuffEnd ends the icon and the aura. The server's answer
+			# decides (review): a cast this client drew because it did not
+			# know the toggle was running is ended here.
 			print("CAST reply: the toggle was switched off (no cast, no cost), HP %d" % result.player_hp)
+			_fx_self_cast_refused()
 		else:
 			print("CAST reply: self/ground cast (targetType %d, %s) accepted, HP %d" % [result.target_type,
 				"echoed" if result.target_type_echoed else "from the request queue", result.player_hp])
@@ -15674,18 +15677,21 @@ func _fx_on_buff_ended(ended: SkillNet.BuffEnd) -> void:
 # "The protection walls"):
 #   - the wall's aura is the buff's own ACT_L loop, held by its token (above);
 #   - a blow the wall took arrives as a damage entry of kind 7 (FUN_00a55e00):
-#     its number shows over the caster as an ordinary damage number
-#     (FUN_00a47720, display type 0, or 1 for a critical), the HP bar does not
-#     move (FUN_00a49290 skips FUN_009c78b0 for kind 7) and no hit reaction
-#     plays (state 0xb is skipped too); the wall's remaining HP is shown
-#     nowhere (its two u16s are not kept);
-#   - while a buff deco whose skill names a DefenseEfp is attached, a blow on
-#     that body plays that efp in place of the attacker's hit effect
-#     (IDecoSkill::FUN_009cd480, the highest Priority);
-#   - nothing stops the walled player from moving: neither the client's move
-#     gates (FUN_009eb140's body-state mask 0x2476, the 500 ms send lock,
-#     the modal checks) nor the server's movement handler read the wall.
-#     So this client does not refuse a move while a wall stands either.
+#     its number shows over the caster as an ordinary damage number -- always
+#     display type 0, never the critical style (FUN_00a47720 sets type 1 only
+#     for kinds 0 and 4) -- the HP bar does not move (FUN_00a49290 skips
+#     FUN_009c78b0 for kind 7) and no hit reaction plays (state 0xb is skipped
+#     too); the wall's remaining HP is shown nowhere (its two u16s are not
+#     kept);
+#   - while any skill deco whose aniset row names a DefenseEfp is attached, a
+#     blow on that body plays that efp in place of the attacker's hit effect
+#     (IDecoSkill::FUN_009cd480, the highest Priority); with none, the
+#     attacker's DamageEfp plays;
+#   - nothing in retail stops the walled player from moving (neither the
+#     client's move gates -- FUN_009eb140's body-state mask 0x2476, the 500 ms
+#     lock the 0x7074 senders set through FUN_009eb130, the modal checks --
+#     nor the server's movement handler read the wall). The root below
+#     (_wall_root) is OURS, at the user's request.
 
 ## owner key -> {token: skill id} of every buff this client has seen start
 ## and not end: which DefenseEfp a blow on that body plays.
@@ -15766,11 +15772,15 @@ func _draw_wall_blow(anchor: Node3D, owner_key: String, wall: CombatNet.WallHit,
 	if anchor == null or not is_instance_valid(anchor):
 		return
 	var efp := _defense_efp_on(owner_key)
-	print("WALL: monster %d's blow on %s taken by the wall: %d%s, wall HP %d/%d%s; DefenseEfp '%s'" % [monster, who,
-		wall.damage, " CRIT" if wall.critical else "", wall.hp, wall.max_hp, " -- BROKEN" if wall.broke else "", efp])
+	print("WALL: monster %d's blow on %s taken by the wall: %d, wall HP %d/%d%s; DefenseEfp '%s'" % [monster, who,
+		wall.damage, wall.hp, wall.max_hp, " -- BROKEN" if wall.broke else "",
+		efp if efp != "" else "none: the attacker's hit effect"])
 	_audio_monster_blow(monster, wall.critical, "blow on %s's wall" % who)
-	if efp != "":
-		_play_hit_efp_on(anchor, 2.0 * PLAYER_SCALE_RATIO, efp)
+	# With no DefenseEfp on the body (the wall's buff already ended by the
+	# breaking blow, say), retail plays the attacker's DamageEfp. The
+	# monster's skill is not on srrevamp's wire, so HitEffect's default
+	# layers stand in for it (OURS).
+	_play_hit_efp_on(anchor, 2.0 * PLAYER_SCALE_RATIO, efp)
 	_floating_damage(anchor, 2.0 * PLAYER_SCALE_RATIO, wall.damage, DAMAGE_TAKEN_COLOUR)
 
 ## This player's self or ground cast whose effects wait for the server's
@@ -16412,6 +16422,20 @@ func _on_skill_moved(moved: SkillNet.SkillMove) -> void:
 		_other_body_targets[moved.character_id] = to
 		print("SKILL move handled: player %d snapped to (%.1f, %.1f, %.1f) by skill %d" % [
 			moved.character_id, to.x, to.y, to.z, moved.skill_id])
+		return
+	# Round 640, OURS: the server dropped a move its wall's root refused and
+	# answered with the position it holds -- this player stays there.
+	if moved.character_id == _own_id() and moved.skill_id != 0 and moved.skill_id == _wall_root():
+		_drop_pending_attack()
+		_has_move_target = false
+		player.velocity = Vector3.ZERO
+		var held: Dictionary = _settle_skill_move_footing(to)
+		player.position = held["to"]
+		_last_sent_pos = player.position
+		_walked_since_send = 0.0
+		_time_since_send = 0.0
+		print("ROOT: the server holds this player at (%.1f, %.1f, %.1f) -- its wall (skill %d) roots it" % [
+			player.position.x, player.position.y, player.position.z, moved.skill_id])
 		return
 	if not _self_cast.claims_move(moved.character_id, moved.skill_id, _other_bodies, Time.get_ticks_msec()):
 		print("SKILL move handled: character %d is neither drawn here nor this player's cast -- ignored" % moved.character_id)

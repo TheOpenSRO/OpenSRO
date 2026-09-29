@@ -31,11 +31,12 @@ package session
 //
 // THE ROOT IS OURS (round 640, the user's choice "Root while walled", asked
 // after the probes above came back empty): while a 'pw' wall record is
-// active its caster's moves are dropped -- silently, the way handleMove
-// drops a move in the sit/stand transition (retail's own early returns in
-// FUN_004b0ea0 answer nothing either) -- and a ground-move cast (Ghost Walk)
-// is refused before it costs anything. Attacks and other skills are not
-// touched: the ordinary reach rules decide them. Whatever ends the record
+// active its caster's moves are dropped (handleMove -> motions.moved), and
+// the dropped move is answered with the position the server holds
+// (rootedMoveAnswer) so a client whose walk was cut short by the wall snaps
+// back rather than drifting out of step. Attacks and skills are not touched:
+// the ordinary reach rules decide them. (Ghost Walk is refused while walled
+// by retail's own gate -- READ, not the root: wallTeleRefusal.) Whatever ends the record
 // (a cancel, a recast, the wall's HP, the MP drain, a death, a logout) ends
 // the root with it.
 
@@ -47,6 +48,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/buff"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
+	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
@@ -68,9 +70,25 @@ func wallRoots(characterID int64) bool {
 	return buffBooks.HoldsWall(characterID)
 }
 
-// rootedRefusal answers a ground-move cast (Ghost Walk) while the caster's
-// wall roots it. OURS, as the root is.
-const rootedRefusal = "cannot move while a wall is up"
+// rootedMoveAnswer answers a move the root dropped (OURS): OpSkillMove to
+// the mover's own session only, carrying the wall's skill id and the
+// position the server holds, which the client takes as "stay here"
+// (World3D._on_skill_moved). Retail sends no such thing -- it has no root.
+func rootedMoveAnswer(sess *gateway.Session, e world.Entity) {
+	rec, ok := buffBooks.WallRecord(e.CharacterID)
+	if !ok || sess == nil {
+		return
+	}
+	msg := &SkillMove{CharacterID: e.CharacterID, SkillID: rec.SkillID,
+		X: float32(e.Pos.X), Y: float32(e.Pos.Y), Z: float32(e.Pos.Z)}
+	_ = sess.Send(&proto.Packet{Opcode: OpSkillMove, Data: msg.Encode()})
+}
+
+// wallTeleRefusal answers a 'tele'/'tel2'/'tel3' cast (Ghost Walk) while the
+// caster's book holds a wall: READ, Skill_CheckUseConditions 0x58e033..
+// 0x58e061 answers 0x3009 (round 640's review). The client's string for
+// 0x3009 is not identified, so the wording is OURS.
+const wallTeleRefusal = "cannot use that skill while a wall is up"
 
 // wallStateRefusal answers an 'ao'/'pw' cast refused because its caster
 // stands in SKILL_PROTECTIONWALL. The engine answers 0x3009 there, as for a
@@ -153,10 +171,15 @@ func toggledOffResult(req *UseSkillRequest, hp int32) *AttackResult {
 // blow (performAttack's counter, the AI's strike), and the toggle ticker
 // catches any other within its poll.
 func endBrokenWall(hub *world.Hub, ownerID int64) {
+	endBrokenWallBy(hub, ownerID, time.Now())
+}
+
+// endBrokenWallBy ends ownerID's walls broken at or before cutoff.
+func endBrokenWallBy(hub *world.Hub, ownerID int64, cutoff time.Time) {
 	l := buffLock(ownerID)
 	l.Lock()
 	defer l.Unlock()
-	ended, sp := buffBooks.EndBrokenWalls(ownerID)
+	ended, sp := buffBooks.EndBrokenWalls(ownerID, cutoff)
 	if len(ended) > 0 {
 		slog.Info("wall: broken, ended", "character", ownerID, "skill", ended[0].SkillID, "token", ended[0].Token)
 		broadcastBuffEnd(zoneOf(hub, ownerID), ownerID, ended, sp)
@@ -296,7 +319,9 @@ func RunToggleTicker(ctx context.Context, hub *world.Hub, chars character.Store,
 // togglePass is one pass of RunToggleTicker at now.
 func togglePass(ctx context.Context, hub *world.Hub, chars character.Store, deps RegenDeps, now time.Time) {
 	for _, owner := range buffBooks.DueToggles(now) {
-		endBrokenWall(hub, owner)
+		// A wall broken in the last BrokenGrace is left to the strike that
+		// broke it, which ends it after the blow's messages (review).
+		endBrokenWallBy(hub, owner, now.Add(-buff.BrokenGrace))
 		drainOwner(ctx, hub, chars, deps, owner, now)
 	}
 }
@@ -314,10 +339,13 @@ func drainOwner(ctx context.Context, hub *world.Hub, chars character.Store, deps
 	if deps.Mana == nil || chars == nil {
 		return
 	}
-	due := buffBooks.DueDrains(ownerID, now)
-	if len(due) == 0 {
+	if len(buffBooks.DueDrains(ownerID, now)) == 0 {
 		return
 	}
+	// The row read first, outside the owner's buff lock (a store read); the
+	// due records are then read again under the lock, so a toggle a cancel,
+	// a recast or a break ended in between is not charged (round 640's
+	// review).
 	c, err := chars.GetByID(ctx, ownerID)
 	if err != nil || c == nil {
 		return
@@ -326,7 +354,7 @@ func drainOwner(ctx context.Context, hub *world.Hub, chars character.Store, deps
 	drained := false
 	l := buffLock(ownerID)
 	l.Lock()
-	for _, r := range due {
+	for _, r := range buffBooks.DueDrains(ownerID, now) {
 		if left, ok := deps.Mana.Spend(ownerID, maxMP, r.OnffMP); ok {
 			buffBooks.Drained(ownerID, r.Token, now)
 			drained = true

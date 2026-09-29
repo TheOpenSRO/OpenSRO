@@ -190,6 +190,8 @@ type Record struct {
 	HasWall bool
 	Wall    Wall
 	WallHP  int
+	// BrokenAt is when a blow took the wall's HP to 0 (zero until then).
+	BrokenAt time.Time
 }
 
 // Wall is a row's 'pw' (+0x2b4), READ (docs/protocol/skill_buffs.md "The

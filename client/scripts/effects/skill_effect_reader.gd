@@ -105,11 +105,12 @@ static func hit_efp_for(effects: Dictionary, basic_code: String) -> String:
 
 const ANIM_SECTIONS := ["skillaniset", "skillaniset2"]
 ## Priority (col 3) and DefenseEfp (col 13), round 640. The retail client
-## plays, on a body hit while it holds a buff deco, the highest-Priority
-## attached deco's efp at anim-set +0x80 in place of the attacker's hit
-## effect (IDecoSkill::FUN_009cd480 from FUN_00a4f720, READ); that +0x80 is
-## this column is INFERRED -- it sits beside +0x84, which FUN_00a54f00 reads
-## as the hit efp (DamageEfp, col 14). The walls' rows name one
+## plays, on a body hit while any skill deco is attached to it, the
+## highest-Priority attached deco's efp at anim-set +0x80 in place of the
+## attacker's hit effect (IDecoSkill::FUN_009cd480 from FUN_00a4f720, READ).
+## +0x80 IS this column (READ in the review: the aniset loader FUN_00a9c470
+## files column 13, whose header the table names "DefenseEfp", at +0x80, and
+## column 14, DamageEfp, at +0x84). The walls' rows name one
 ## (SKILL_CH_FIRE_HWABYEOK_A: skill\china\fire_ganggi_damage_a.efp,
 ## SKILL_CH_COLD_BINGBYEOK_A: hiteffect\hit_2_ice.efp -- MEASURED).
 const A_PRIORITY := 3

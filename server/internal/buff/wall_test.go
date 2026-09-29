@@ -71,7 +71,13 @@ func TestHitWallTakesDamageOffItsHP(t *testing.T) {
 	if _, ok := b.HitWall(7, TypeMagical, func(Wall) int { return 1 }); ok {
 		t.Fatal("a broken wall absorbed another blow")
 	}
-	ended, _ := b.EndBrokenWalls(7)
+	if ended, _ := b.EndBrokenWalls(7, time.Now().Add(-BrokenGrace)); len(ended) != 0 {
+		t.Fatal("the ticker's cutoff ended a wall broken just now (the strike's report must go first)")
+	}
+	if due := b.DueToggles(time.Unix(1001, 0)); len(due) != 0 { // no drain due yet at 1 s
+		t.Fatalf("a wall broken just now is due to the ticker: %v", due)
+	}
+	ended, _ := b.EndBrokenWalls(7, time.Now())
 	if len(ended) != 1 || ended[0].Token != rec.Token {
 		t.Fatalf("EndBrokenWalls: %+v", ended)
 	}
@@ -177,5 +183,26 @@ func TestASecondWallIsRefusedByTheStateByte(t *testing.T) {
 	b.Start(7, fireWallSpec(7), now)
 	if r := b.CheckOverlap(7, coldWallSpec(7)); r != RefusedOverlap {
 		t.Fatalf("Crystal Wall over Fire Wall: %v, want RefusedOverlap", r)
+	}
+}
+
+// Round 640's review: the wall's damage is accumulated before the absorb
+// test (0x58f00b / 0x58f015 precede 0x58f03e). A blow sharing no type with
+// the wall never asks for its damage; a mixed 4|8 blow on a one-type wall
+// costs the wall the shared half and is not absorbed.
+func TestTheWallIsChargedBeforeTheAbsorbTest(t *testing.T) {
+	b := NewBooks(50)
+	b.Start(7, fireWallSpec(7), time.Unix(1000, 0))
+	asked := false
+	if _, ok := b.HitWall(7, TypePhysical, func(Wall) int { asked = true; return 100 }); ok || asked {
+		t.Fatalf("a physical blow on Fire Wall: touched %v, damage asked %v", ok, asked)
+	}
+	hit, ok := b.HitWall(7, TypePhysical|TypeMagical, func(Wall) int { return 100 })
+	if !ok || hit.Absorbed || hit.Damage != 100 || hit.HP != 1059 {
+		t.Fatalf("a mixed blow on Fire Wall: %+v %v, want the wall charged 100 and nothing absorbed", hit, ok)
+	}
+	hit, ok = b.HitWall(7, 0, func(Wall) int { return 100 })
+	if !ok || !hit.Absorbed || hit.Damage != 0 || hit.HP != 1059 {
+		t.Fatalf("a blow with no 'att' type: %+v %v, want absorbed at no cost to the wall (both twins return 0)", hit, ok)
 	}
 }

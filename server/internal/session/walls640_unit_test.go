@@ -62,12 +62,17 @@ func TestRound640FireWallAbsorbsMagicUntilItBreaks(t *testing.T) {
 	if !broke {
 		t.Fatal("the wall never broke")
 	}
-	// The break's end comes after the blow's messages (the strike's caller,
-	// or the toggle ticker's next pass -- driven here).
+	// The break's end comes after the blow's messages: the strike's caller
+	// ends it (driven here); the toggle ticker leaves a wall broken this
+	// instant alone (buff.BrokenGrace), so it cannot overtake the report.
 	if n := len(buffBooks.Active(w.aria)); n != 1 {
 		t.Fatalf("%d records right after the breaking blow, want the wall still listed until the end runs", n)
 	}
 	togglePass(context.Background(), w.hub, w.chars, RegenDeps{Mana: w.mp}, time.Now())
+	if n := len(buffBooks.Active(w.aria)); n != 1 {
+		t.Fatalf("the ticker ended a wall broken this instant (%d records)", n)
+	}
+	endBrokenWall(w.hub, w.aria)
 	end, err := DecodeBuffEnd(w.expect(t, OpBuffEnd).Data)
 	if err != nil || len(end.Tokens) != 1 || end.Tokens[0] != start.Token {
 		t.Fatalf("OpBuffEnd %+v %v, want the wall's token", end, err)

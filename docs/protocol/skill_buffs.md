@@ -19,7 +19,7 @@ All little-endian, in srrevamp's own encoders (`session/wire.go`: a string is u1
 |---|---|---|---|
 | `OpUseSkill 0x0072` (extended) | C→S | `{name, i64 skillId, i64 targetMonsterId, u8 targetType, [targetType 2: f32 x, f32 y, f32 z]}` — targetType 0 none/self, 1 entity (a monster), 2 ground, **3 a character (round 622): the id field names a character**, no point follows. **A request without the suffix decodes as targetType 1.** Any other targetType, or a ground point cut short, is a malformed request (a server before round 622 answers a type-3 request so). | 0x7074 kind 4 |
 | `OpAttackResult` (extended) | S→C, the requester | the existing payload, then a trailing `u8 targetType`: a skill reply echoes the request's 0, 1 or 2 (an old-format request: 1); a plain swing, a keep-up repeat, a duel blow and a monster-initiated result carry 1. A 42-byte result from an older server decodes as 1 | — |
-| `OpAttackResult` / `OpMonsterAttacked` wall suffix (round 640) | S→C | present **only** when the blow met a protection wall, or on the reply to a toggle-off: `u8 flags` (1 absorbed, 2 the wall broke, 4 critical, 8 toggled off), `i32` the damage the wall took, `i32` the wall's HP left, `i32` its maximum -- after `targetType` on `OpAttackResult`, after the 33 bytes of `OpMonsterAttacked`. A payload without it decodes as no wall (OURS layout) | the damage entry of kind 7 (`FUN_00a55e00`: `u32` hit type \| damage << 8, `u16` remaining, `u16` maximum; 0x80 on the kind for a break) |
+| `OpAttackResult` / `OpMonsterAttacked` wall suffix (round 640) | S→C | present **only** when the blow met a protection wall, or on the reply to a toggle-off: `u8 flags` (1 absorbed, 2 the wall broke, 4 critical, 8 toggled off), `i32` the damage the wall took, `i32` the wall's HP left, `i32` its maximum -- on `OpAttackResult` after round 639's 16-byte EXP tail (the payload's offset 59 after the error string), after the 33 bytes of `OpMonsterAttacked`. A payload without it decodes as no wall (OURS layout) | the damage entry of kind 7 (`FUN_00a55e00`: `u32` hit type \| damage << 8, `u16` remaining, `u16` maximum; 0x80 on the kind for a break) |
 | `OpBuffStart 0x00F5` | S→C, every session in the owner's zone | `{i64 ownerId, i64 skillId, u32 token, i64 durationMs, i64 remainingMs, u32 runSpeed, u8 ownerKind}` — 41 bytes; `ownerKind` 0 a character, 1 a monster (monster ids from `combat.Hub` and character ids from the database overlap; every buff is a character's today); a 40-byte payload decodes as a character; `durationMs`/`remainingMs` are −1 for a buff with no `dura`; `runSpeed` is the owner's new run speed when this buff wrote to it, else 0 (unchanged) | 0xB0BD |
 | `OpBuffEnd 0x00F6` | S→C, the owner's zone | `{i64 ownerId, u8 count, count × u32 token, u32 runSpeed, u8 ownerKind}` — `ownerKind` as in `OpBuffStart`, optional to a decoder; `runSpeed` the owner's new run speed when an ended buff had written to it, else 0 | 0xB072 |
 | `OpBuffCancel 0x00F7` | C→S | `{name, i64 skillId, u32 token}` — token 0 cancels the first record of that skill, as retail matches any record for a zero token. **No reply**: success is the `OpBuffEnd` broadcast; a refusal is silent, as retail's is | 0x7074 kind 5 |
@@ -683,9 +683,11 @@ The same code runs all of them:
   (0x58528a..0x5852cb) -- the MP test is against the unscaled cost. **Not modelled (OPEN):** srrevamp
   keeps none of the passive entries that map holds.
 - **The recast is the switch-off** -- `CGCharAutoCommandActor::Tick_UseSkill` phase 0
-  (0x4ae622..0x4ae64d): for a row with `onff`, `FUN_0059ef90` finds the first record of the skill on
-  the caster's book; when its ctx `+0x20 == 1`, `FUN_0059eff0(0)` ends it and the tick returns 0 --
-  before `Skill_CheckUseConditions`, so no gate, no cost and no cooldown; and the 0x7074 handler skips
+  (0x4ae622..0x4ae64d): after its first two refusals (0x3003 for a missing skill, 0x3030 from
+  `FUN_0049a1b0`), for a row with `onff`, `FUN_0059ef90` finds the first record of the skill on the
+  caster's book in sub-state 1 (the running toggle); when its ctx `+0x20 == 1`, `FUN_0059eff0(0)`
+  zeroes its end flag `+0x10` -- the next book update ends it and sends 0xB072 -- and the tick
+  returns 0, before `Skill_CheckUseConditions`, so no gate, no cost and no cooldown; and the 0x7074 handler skips
   its own gate for an `onff` row (`cmp [edi+0x284],0` at 0x4acec0). No 0xB070 follows (phase 2's
   0x7070 is never posted), so no cast is drawn.
 - **Other ends:** a cancel from the buff bar (the dispel, above -- no wall row carries `nbuf`), a
@@ -728,11 +730,17 @@ into `pc+0xc0c` (`in_EAX[0x303]`, book `+0x1dc`) and `Combat_ResolveDamage` read
    0x80 on its kind when `HP <= accumulated`.
 3. **Absorbed** when `(att has no bit 4 or pw has bit 4) and (att has no bit 8 or pw has bit 8)`:
    the target's own entry is marked 8 and jumps past the block roll, the mitigation, the durability
-   counters and the damage (`goto LAB_005905fb`). A second-record term (`att +0x10` with the
-   context's `+0x78`) joins the second clause -- **not modelled (OPEN)**, srrevamp's blows have none.
-4. Not absorbed: the wall entry is marked 8 (nothing), the blow resolves on the target as usual, and
-   the halves `pw` covers are zeroed (bit 4 physical, bit 8 magical) -- the covered half of a
-   single-type blow that is not absorbed is 0 anyway.
+   counters and the damage (`goto LAB_005905fb`). **The wall is charged before this test**: the
+   entry's `+0x10 = 1` (0x58f00b) and `+0x18 += damage` (0x58f015) are written first, so a blow
+   that is not absorbed still costs the wall the half it shares with it. The second clause has a
+   second term, **the attacker's imbue**: with `att` value[4] set and the context's `+0x78` (filled
+   from the attacker's `book[0x79]`, the running imbue record) non-zero, the imbue's damage is
+   added to the wall entry scaled by `att[4]/100` and its magical half is tested too
+   (0x58ef1f..0x58f03e). srrevamp's monsters carry no imbue: **not modelled**.
+4. Not absorbed: the wall entry is marked 8, the blow resolves on the target as usual, and the
+   halves `pw` covers are zeroed (bit 4 physical, bit 8 magical). A mixed 4|8 blow on a one-type
+   wall would split -- the wall pays the shared half, the target the other -- but no `att` row
+   carries both bits (MEASURED, 0 of 31,605), so srrevamp's single-type blows never split.
 5. `Combat_ApplyActionEffects`, the wall entry (`+0x10 != 0`): `if (HP < dmg) HP = 0; else HP -= dmg`.
    The caster's HP is untouched; no stand-up, no wear.
 6. `SkillAction_Buff` sub-state 2 (0x5851e9..0x585372): a record whose wall object's HP is 0 clears
@@ -760,7 +768,8 @@ nothing (`CGObjPC::vslot_362` only in STAND and SIT). `SkillAction_BuffEnd` for 
 - The 11 byte compares with 0x11 in `srv.asm` (`cmp r8,0x11`) sit in item-use checks, inventory
   and storage operation code and the skill gate -- none in movement.
 - The client's move gates -- the body-state mask `FUN_009eb140` (`(player+0x65c & 0x2476) == 0`), the
-  500 ms lock after a send (move manager `+0x48`), the modal checks `FUN_0077c8e0` -- read neither
+  500 ms lock the 0x7074 senders set through `FUN_009eb130` (move manager `+0x48`), the modal checks
+  `FUN_0077c8e0` -- read neither
   `pw` (client `+0x90`) nor `onff` (`+0x58`); no bit of 0x2476 is set for a wall (every setter of
   states 1, 2, 4, 6, 10, 13 listed; state 2, the cast deco's, clears when its shot animation ends;
   the 0xB0BD buff deco sets no state); the client's 0x30BF motion handler has no case for 0x11.
@@ -770,14 +779,15 @@ nothing (`CGObjPC::vslot_362` only in STAND and SIT). `SkillAction_BuffEnd` for 
 **The root is OURS (round 640, the user's choice "Root while walled", asked after the probes above
 came back empty).** srrevamp departs from retail here, on purpose:
 - **Server** (`session/walls.go` `wallRoots`, checked in `motions.moved`): while a `pw` record is
-  active on the caster's book (`buff.Books.HoldsWall`), an `OpMove` is dropped -- silently, the way
-  a move in the sit/stand transition is (retail's own movement refusals answer nothing either); a
-  Ghost Walk (`tele`) cast is refused before any cost, `"cannot move while a wall is up"` (OURS text).
+  active on the caster's book (`buff.Books.HoldsWall`), an `OpMove` is dropped, and answered to the
+  mover alone with an `OpSkillMove` carrying the wall's skill id and the position the server holds
+  (`rootedMoveAnswer`), so a walk the wall cut short snaps back rather than drifting out of step.
 - **Client** (`World3D._wall_root`, from its own buffs whose catalog row carries `pw`): a ground
   click or a held-button steer sets no move target (no walk, no walk clip) and logs `ROOT: ...
   refused`; a walk already under way stops; an attack, a friendly cast or a pick-up out of reach is
   sent from where the player stands instead of walking, and the server's ordinary reach rules answer
-  it (`"too far away"` or the blow).
+  it (`"too far away"` or the blow); an `OpSkillMove` naming its own wall puts it back where the
+  server holds it (`ROOT: the server holds this player at ...`).
 - **Attacks and skills** are not refused for the root.
 - **Its end** is the record's end: a right-click cancel, a recast (the toggle-off), the wall's HP
   reaching 0, the MP drain running short, a death or a logout.
@@ -785,12 +795,14 @@ came back empty).** srrevamp departs from retail here, on purpose:
 **The client (READ, `sro_client.exe`).** The wall's aura is the buff's ACT_L loop
 (`fire_hwabyeok_keep_a.efp`, `cold_bingbyeok_keep_a.efp`). A kind-7 entry (`FUN_00a55e00`) clears the
 entry's dead flag even with 0x80; `FUN_00a49290` skips the HP change (`FUN_009c78b0`) and the hit
-reaction (state 0xb) for it, and `FUN_00a47720` shows its damage as an ordinary number (display type
-0, or 1 critical). The wall's HP is shown nowhere. While a buff deco whose anim set has `+0x80` is
-attached, a blow on that body plays the highest-Priority deco's `+0x80` efp (`IDecoSkill::FUN_009cd480`
-from `FUN_00a4f720`); that `+0x80` is skillaniset2's DefenseEfp column is INFERRED (it sits beside
-`+0x84`, the DamageEfp `FUN_00a54f00` reads) -- `fire_ganggi_damage_a.efp` and `hit_2_ice.efp` for the
-walls.
+reaction (state 0xb) for it, and `FUN_00a47720` shows its damage as an ordinary number -- always
+display type 0 (type 1, the critical style, is set only for kinds 0 and 4). The wall's HP is shown
+nowhere. While any skill deco whose anim set has `+0x80` is attached, a blow on that body plays the
+highest-Priority deco's `+0x80` efp (`IDecoSkill::FUN_009cd480` from `FUN_00a4f720`), else the
+attacker's DamageEfp. `+0x80` is skillaniset2's **DefenseEfp** column, READ: the aniset loader
+`FUN_00a9c470` files column 13 (the table's header: "DefenseEfp") there and column 14 (DamageEfp) at
+`+0x84` -- `fire_ganggi_damage_a.efp` and `hit_2_ice.efp` for the walls. srrevamp plays HitEffect's
+default layers in place of the attacker's DamageEfp (OURS: the monster's skill is not on its wire).
 
 **srrevamp.** `buff.Books.HitWall` / `EndBrokenWalls` (the holder `book.wallHolder`);
 `session.monsterStrike` resolves an absorbed blow with `resolveBlow(raw, pw[3], pw[2], crit, 0, ...)`
@@ -803,4 +815,19 @@ takes the monster's first skill whose range is the monster's own (INFERRED: the 
 an unknown type is physical (OURS, `combat.AttackType`'s reading of 0). The motion tracker keeps
 SKILL_PROTECTIONWALL (`motions.setWall` / `endWall`); the gate answers `"cannot use that skill while a
 wall is up"` (OURS text; the engine's 0x3009 string is not identified).
+
+**What else a wall refuses (READ in round 640's review).**
+- **Ghost Walk**: `Skill_CheckUseConditions` refuses a row carrying `tele`, `tel2` or `tel3` while the
+  caster's book holds a wall (`book+0x1dc`), 0x3009 (0x58e033..0x58e061), before the cooldown test and
+  the motion gate. srrevamp: `useSkillHandler` (`wallTeleRefusal`, OURS text) -- this is retail's
+  rule, not the OURS root.
+- **Summons and mounts**: a COS/pet summon, a mercenary scroll and mounting are refused while walled
+  (0x4931d6, 0x49be6f, 0x49b507, 0x4fc52a). srrevamp has none of them: **OPEN**.
+- **Knockback and knockdown** are skipped on a walled target (0x58fee5; `FUN_0058e540`). srrevamp's
+  monster blows carry neither: **OPEN**.
+- **Potions are not refused.**
+- The toggle ticker ends a broken wall only once `buff.BrokenGrace` (1 s, OURS) has passed since the
+  break; the strike that broke it ends it right after its own messages, so the end never overtakes
+  the report. A drain re-reads the due records under the owner's buff lock, so a toggle ended
+  meanwhile is not charged.
 

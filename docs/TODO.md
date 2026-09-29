@@ -1382,8 +1382,12 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       movement handler never tests 0x11; the client's move gates read neither `pw` nor `onff`;
       `pc+0xc44` is the `stns` stun holder). **The user then chose "Root while walled", built as
       OURS** (the server drops a walled caster's moves and refuses Ghost Walk; the client sends no
-      move while its own wall stands; attacks and skills go out where the player stands). Left open:
-      - the absorb test's second-record term (`att +0x10` with the context's `+0x78`);
+      move while its own wall stands; attacks and skills go out where the player stands; a move it
+      dropped is answered with the held position). Ghost Walk is refused while walled (READ,
+      0x3009). Left open:
+      - summons, mercenary scrolls and mounting while walled (retail refuses them; srrevamp has
+        none), and knockback/knockdown skipped on a walled target (srrevamp's blows have none);
+      - the attacker's-imbue term of the absorb test;
       - player-versus-player blows on a wall (srrevamp has none);
       - which sounds retail plays for a kind-7 entry (the monster's blow sound is kept).
 - [ ] **The duration extension** (`ctx+0x24`): `RPBU`/`STDU`/`DTDR` through `FUN_005a0330`'s map at

@@ -1221,6 +1221,11 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	// nor the zone hears a refused one, as for the dead.
 	if e, inWorld := hub.EntityBySession(sess.ID()); inWorld {
 		if accepted, _ := motions.moved(e.CharacterID, time.Now()); !accepted {
+			// Round 640, OURS: a move the wall's root dropped is answered
+			// with the held position (walls.go rootedMoveAnswer).
+			if wallRoots(e.CharacterID) {
+				rootedMoveAnswer(sess, e)
+			}
 			return nil
 		}
 	}

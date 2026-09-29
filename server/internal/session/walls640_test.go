@@ -41,12 +41,13 @@ const walls640CSV = `99,246,SKILL_CH_COLD_BINGBYEOK_A_01,0,1,0,0,1000,1000,1000,
 // monster's blow on her needs.
 type wallWorld struct {
 	stackWorld
-	ref   csvSkillRef
-	chars *character.MemStore
-	eq    equipment.Store
-	items stubCombatItems
-	mp    *mana.Tracker
-	hub   *world.Hub
+	ref    csvSkillRef
+	chars  *character.MemStore
+	eq     equipment.Store
+	items  stubCombatItems
+	mp     *mana.Tracker
+	hub    *world.Hub
+	skills *skill.MemStore
 }
 
 func startWallWorld(t *testing.T) *wallWorld {
@@ -103,7 +104,7 @@ func startWallWorld(t *testing.T) *wallWorld {
 	conn := dialTestServer(t, addr)
 	t.Cleanup(func() { conn.Close() })
 	w := &wallWorld{stackWorld: stackWorld{aria: c.ID, conn: conn, r: bufio.NewReader(conn)},
-		ref: ref, chars: chars, eq: eq, items: items, mp: mp, hub: hub}
+		ref: ref, chars: chars, eq: eq, items: items, mp: mp, hub: hub, skills: skills}
 	t.Cleanup(func() {
 		buffBooks.EndAll(c.ID)
 		motions.clear(c.ID)

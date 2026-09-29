@@ -7094,6 +7094,74 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-fortieth round, review follow-up: Ghost Walk is refused while walled as retail refuses it, a wall is charged before its absorb test, and a rooted client that walked on is put back
+
+The review confirmed, in both binaries, that nothing roots a walled caster. So the root stays OURS,
+at the user's request. It also confirmed the `pw` meanings, the wall HP, the `onff` drain, 0x11 and
+the lifecycle. Labels as before; the detail is in `docs/protocol/skill_buffs.md`, "The protection
+walls".
+
+**READ:**
+- **Ghost Walk.** While the caster's book holds a wall (`book+0x1dc`), `Skill_CheckUseConditions`
+  refuses a row carrying `tele`, `tel2` or `tel3` with 0x3009 (0x58e033..0x58e061). This runs
+  before the cooldown test and the motion gate. It is retail's own rule, now in `useSkillHandler`
+  (`wallTeleRefusal`, OURS text). It replaces round 640's OURS ground-move refusal.
+- **The wall is charged before the absorb test.** The entry's `+0x10 = 1` is written at 0x58f00b
+  and `+0x18 += damage` at 0x58f015, both before 0x58f03e.
+  - `buff.Books.HitWall` now does the same: a blow sharing a type with the wall charges it, and
+    only then is absorbed or not.
+  - A mixed 4|8 blow would split. No `att` row has both bits (MEASURED), so srrevamp's blows never
+    do.
+  - A blow of no `att` type is absorbed at no cost to the wall, since both twins return 0.
+- **The imbue term.** The absorb test's second term is the attacker's imbue: the context's `+0x78`
+  comes from `book[0x79]`, is gated by `att[4]` and scaled by `att[4]/100`. It is named, not
+  modelled: srrevamp's monsters carry no imbue.
+- **Client (kind 7 and DefenseEfp).** A kind-7 number is always display type 0, never the critical
+  style. The DefenseEfp is READ (`FUN_00a9c470` files column 13, "DefenseEfp", at +0x80) and plays
+  with any attached skill deco; with none, the attacker's DamageEfp plays. srrevamp stands
+  HitEffect's default in for that DamageEfp (OURS: the monster's skill is not on the wire).
+- **Doc corrections.**
+  - The toggle-off runs after phase 0's 0x3003/0x3030 refusals. `FUN_0059ef90` matches a
+    sub-state-1 record. `FUN_0059eff0(0)` only zeroes its end flag `+0x10`; the book update ends it.
+  - The client's 500 ms lock is set by the 0x7074 senders, through `FUN_009eb130`.
+- **OPEN, not modelled.** srrevamp has none of these:
+  - summons, mercenary scrolls and mounting, all refused while walled (0x4931d6, 0x49be6f,
+    0x49b507, 0x4fc52a);
+  - knockback and knockdown, skipped on a walled target (0x58fee5, `FUN_0058e540`).
+
+  Potions are not refused.
+
+**Fixed:**
+- **The drain race.** The drain now re-reads the due records under the owner's buff lock, after the
+  store read. A toggle a cancel, recast or break ended meanwhile is not charged.
+- **Broken-wall order.** The strike that breaks a wall ends it after its own messages. The toggle
+  ticker leaves a wall broken within `buff.BrokenGrace` (1 s, OURS) alone, so the end never overtakes
+  the report.
+- **Performance.** `monsterStrike` checks for a wall before `monsterBlowType`, so an unwalled
+  player's blow never reads the skill table.
+- **Toggle-off.** The server's answer decides: a toggle-off reply ends any cast the client drew.
+- **The root's desync (OURS).** A move the root drops is answered to the mover alone with an
+  `OpSkillMove` carrying the wall's skill and the position the server holds. The client snaps back
+  (`ROOT: the server holds this player at ...`).
+- **ghost_walk_test** compared whole aniset rows, which now carry `priority` (and `defense`). It
+  compares the lists and the group.
+
+**The wire.** Merged `int/r640` (rounds 637-639): the wall suffix now follows round 639's 16-byte
+EXP tail on `OpAttackResult`. Both decoders read it at offset 59.
+
+**Tests.**
+- `walls640_review_test.go` covers Ghost Walk refused while walled then allowed, and the held
+  position answering a rooted move. The negative against 70ff079 (the merge, before this commit):
+  ```
+  --- FAIL: TestRound640GhostWalkIsRefusedWhileWalled (0.10s)
+      walls640_review_test.go:43: Ghost Walk with a wall up: &{Error:cannot move while a wall is up ...}, want "cannot use that skill while a wall is up"
+  --- FAIL: TestRound640ARootedMoveIsAnsweredWithTheHeldPosition (2.40s)
+      walls640_review_test.go:67: waiting for 0x00F8: read tcp ...: i/o timeout
+  ```
+- `buff/wall_test.go` covers the order: the charge before the absorb test, and the ticker's grace.
+- `client/scripts/world/wall_root_test.gd` covers the snap-back and the toggle-off reply.
+- The full Go suite passes; the client `check` loads all 401 scripts, and `tests` runs 161 suites with 0 failing.
+
 ## Six-hundred-and-fortieth round, the root: a wall roots its caster (OURS, the user's choice)
 
 Round 640 found nothing in either binary that roots a walled caster. Asked, the user chose **"Root
