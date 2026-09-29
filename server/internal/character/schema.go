@@ -112,7 +112,7 @@ var EngineOnlyColumns = map[string]string{
 	"MP":                "SEE internal/mana: the engine PERSISTS current MP and srrevamp does not",
 	"AppointedTeleport": "a bound return point",
 	"AutoInvestExp":     "automatic stat investment",
-	"InventorySize":     "a per-character inventory width; srrevamp's is fixed",
+	"InventorySize":     "kept per character since round 633, but not on Character: the characters table's inventory_size column through InventorySizeStore, as the bag's slots without the engine's 13 equipment slots",
 	"DailyPK":           "the PK economy, which srrevamp has no part of",
 	"TotalPK":           "the PK economy",
 	"PKPenaltyPoint":    "the PK economy",

@@ -612,6 +612,21 @@ func envBool(name string) (bool, error) {
 	return b, nil
 }
 
+// envInt reads an integer setting from the environment. Unset or empty is
+// def; a value that does not parse is def too, with the error returned so
+// main can WARN once the logger exists.
+func envInt(name string, def int) (int, error) {
+	v := os.Getenv(name)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def, err
+	}
+	return n, nil
+}
+
 // monsterBattleAllowed decides whether -monster-battle takes effect: only
 // with -monster-ai on (the chase and the swing run in the AI tick) and
 // -monster-strike-push on (each swing reaches the zone only as an
@@ -768,9 +783,21 @@ func main() {
 			"entry lands at the zone spawn with the wire as it was. Needs a client release that carries "+
 			"round 573: an older one moves a restored Jangan entry on to Jangan's landing spot. See "+
 			"deploy/README.md, \"Saved position (off by default)\".")
+	inventorySizeEnv, inventorySizeEnvErr := envInt("SRREVAMP_INVENTORY_SIZE", inventory.DefaultBagSlots)
+	inventorySize := flag.Int("inventory-size", inventorySizeEnv,
+		"the bag's size in slots for every character without one of its own (env SRREVAMP_INVENTORY_SIZE): "+
+			"the client shows it as pages of 32, at most three (IFInventory 0x6b6620), and locks the "+
+			"slots of the last page past it. 1..96. Default 96, three full pages -- OURS, the test "+
+			"server's choice (round 633); the retail starting size is a database default neither "+
+			"executable carries. A GM's /invsize or the inventory expansion item gives a character its "+
+			"own. See deploy/README.md, \"Inventory size\".")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	if inventorySizeEnvErr != nil {
+		logger.Warn("SRREVAMP_INVENTORY_SIZE is not a number; the bag keeps its default unless -inventory-size is given",
+			"err", inventorySizeEnvErr, "default", inventory.DefaultBagSlots)
+	}
 	if teleportFreeEnvErr != nil {
 		logger.Warn("SRREVAMP_TELEPORT_FREE is not a boolean; teleports stay charged unless -teleport-free is given",
 			"err", teleportFreeEnvErr)
@@ -1050,6 +1077,21 @@ func main() {
 		guilds, quests, friends = sqlGuilds, sqlQuests, sqlFriends
 		logger.Info("postgres storage ready")
 	}
+
+	// The bag's size per character (round 633): the character's own
+	// (character.InventorySizeStore -- a GM's /invsize, an expansion item) or
+	// -inventory-size, bounded to what the client can page. Every store
+	// operation on the bag -- add, move, a slot's durability -- is held to it.
+	bagDefault := inventory.ClampBagSlots(*inventorySize)
+	bagSizes, _ := chars.(character.InventorySizeStore)
+	if sized, ok := inv.(interface{ SetCapacityFunc(inventory.CapacityFunc) }); ok {
+		// Never below a held slot (inventory.KeepHeld, round 633's review): a
+		// lower -inventory-size must not strand what a character carries.
+		held, _ := inv.(inventory.HighestSlotter)
+		sized.SetCapacityFunc(inventory.KeepHeld(held, inventory.BagCapacity(bagSizes, bagDefault), logger))
+	}
+	logger.Info("inventory size", "defaultSlots", bagDefault, "pages", (bagDefault+inventory.BagPageSlots-1)/inventory.BagPageSlots,
+		"perCharacter", bagSizes != nil)
 
 	shopSvc := &shop.Service{Gold: chars, Inv: inv, Items: refItems}
 	storageSvc := &storage.Service{Bag: inv, Warehouse: warehouse, Gold: chars, Accounts: storageGold, ChestSizes: chestSizes}

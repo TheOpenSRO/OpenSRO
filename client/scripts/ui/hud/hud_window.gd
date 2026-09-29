@@ -282,6 +282,21 @@ func _add_registry_frame(def: UiLayoutParser.ControlDef) -> void:
 		return
 	registry_frame.name = "RegistryFrame"
 	registry_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# The frame is always drawn (round 633). The registry entry is the
+	# WINDOW, not a control inside it: CGInterface creates GDR_MAINPOPUP,
+	# GDR_STORAGEROOM, GDR_EXCHANGE, GDR_GAMEGUIDE and the rest from
+	# ginterface.txt through the same builder, and the builder's Style 0x40
+	# test (0x8b5710..0x8b5726: 0x652da0(0x40), then vslot 0x5c
+	# ShowWindow(0)) hides that window object as it creates it -- 43 of
+	# ginterface's entries carry Style 64, GDR_MAINPOPUP among them. The
+	# window's own ShowWindow(1) (an I, C, P key, an NPC's storage) shows it
+	# again, and with it the frame it draws. Here the window is the HudWindow,
+	# which HudPanels hides and shows; the frame is a child drawn with it.
+	# build_control applied the bit to this child instead (round 630), and
+	# nothing ever showed it again: the inventory, character, party, skill,
+	# action and academy panes, the warehouse, the exchange and the help
+	# window lost their frames and caption strips.
+	registry_frame.visible = true
 	add_child(registry_frame)
 	move_child(registry_frame, 0)
 

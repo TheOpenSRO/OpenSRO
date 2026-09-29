@@ -1033,7 +1033,8 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// A container expansion (round 498): its Param block is a slot count
 		// and a container, never a restore amount.
 		if container, n, ok := it.ContainerExpansion(); ok {
-			return useExpansion(ctx, sess, fail, inv, warehouse, characterID, held, have, container, n)
+			sizes, _ := chars.(character.InventorySizeStore)
+			return useExpansion(ctx, sess, fail, inv, warehouse, sizes, characterID, held, have, container, n)
 		}
 		// A berserk potion (round 632): slot 308's TypeID4 8 branch, which
 		// fills the orbs instead of the pools.
@@ -1192,15 +1193,21 @@ const errStorageExpansionRefused = "the storage cannot be expanded that far"
 // `count <= cap - size` (0x4e197e `sub eax,ecx ; cmp eax,esi ; jl` refused)
 // and `size + count <= 0x63` (0x4e1986 `cmp ecx,0x63 ; jg` refused). The
 // engine's size counts the 13 equipment slots as well as the backpack
-// (inventory.go, "HOW TO READ THE BOUNDS BELOW"), so srrevamp's is
-// SlotsPerCharacter + MaxEquipSlots = 63. cap is MaxSlotsDefault, 77: the
-// quest flag that raises it to 99 (GObjPC::HasInventoryExpansionQuest,
-// inventory.ExpansionQuestCodes) is not modelled -- srrevamp keeps no quest
-// status 8. With srrevamp's fixed bag the 32-slot item never fits (32 > 14).
-func bagExpansionAllowed(slots int) bool {
-	size := inventory.SlotsPerCharacter + equipment.MaxEquipSlots
+// (inventory.go, "HOW TO READ THE BOUNDS BELOW"), so srrevamp's is the bag's
+// own size (`bag`, the character's -- round 633) + MaxEquipSlots. cap is
+// MaxSlotsDefault, 77: the quest flag that raises it to 99
+// (GObjPC::HasInventoryExpansionQuest, inventory.ExpansionQuestCodes) is not
+// modelled -- srrevamp keeps no quest status 8. So the 32-slot item fits a bag
+// of at most 32 (32 + 13 + 32 = 77), and never the test server's 96.
+func bagExpansionAllowed(bag, slots int) bool {
+	size := bag + equipment.MaxEquipSlots
 	return slots <= inventory.MaxSlotsDefault-size && size+slots < inventory.SlotsHardLimit
 }
+
+// bagExpansionCeiling is the largest bag an expansion item may leave: the
+// engine's default cap less the equipment's 13 slots (64), which is also
+// inside what the client can page (inventory.MaxBagSlots).
+var bagExpansionCeiling = min(inventory.MaxSlotsDefault-equipment.MaxEquipSlots, inventory.MaxBagSlots)
 
 // useExpansion applies a container expansion item -- CGItemExpendable::UseByKind
 // (0x0049c2b0) case 0x11 (round 498): ExpandInventory with the row's Param1
@@ -1212,10 +1219,11 @@ func bagExpansionAllowed(slots int) bool {
 //     item untouched; the item is then taken and the size grown atomically,
 //     and a refusal there (a second use racing this one) gives it back.
 //   - The bag (ITEM_MALL_INVENTORY_ADDITION, +32) runs the engine's kind-0
-//     test, which srrevamp's fixed 63-slot array always fails; the item is
-//     refused and kept. A smaller amount that passed would still be refused:
-//     srrevamp's bag cannot grow (inventory.SlotsPerCharacter) -- a DISCLOSED
-//     GAP.
+//     test on the character's own bag size (round 633; the bag used to be a
+//     fixed 50) and grows the stored size the same way: taken, grown
+//     atomically against bagExpansionCeiling, given back on a refusal. The
+//     client redraws the bag, and its list carries the new size, which adds
+//     the page (the original's 0x6b7020 does the same on the size packet).
 //
 // Not modelled: UseByKind's opening refusal 0x186b
 // UIIT_MSG_STRGERR_CANT_OPERATE_REQUESTED_JOB_DURING_LOGOUT (the byte at
@@ -1230,12 +1238,28 @@ func bagExpansionAllowed(slots int) bool {
 // reopened or an accepted deposit/withdraw relists it (hud_panels.gd takes
 // the capacity only from the storage list) -- a DISCLOSED gap.
 func useExpansion(ctx context.Context, sess *gateway.Session, fail func(string) error, inv inventory.Store,
-	warehouse *storage.Service, characterID int64, held inventory.Slot, have, container, slots int) error {
+	warehouse *storage.Service, sizes character.InventorySizeStore, characterID int64, held inventory.Slot, have, container, slots int) error {
 	if container == refdata.ExpansionContainerBag {
-		if !bagExpansionAllowed(slots) {
+		bag := inventory.CapacityOf(ctx, inv, characterID)
+		if !bagExpansionAllowed(bag, slots) {
 			return fail(errStorageExpansionRefused)
 		}
-		return fail("the bag cannot be expanded")
+		if sizes == nil {
+			return fail("the bag cannot be expanded here")
+		}
+		if err := inv.RemoveItem(ctx, characterID, held.Index, 1); err != nil {
+			return fail("using failed")
+		}
+		if _, err := sizes.ExpandInventory(ctx, characterID, bag, slots, bagExpansionCeiling); err != nil {
+			if backErr := inv.AddItemInstance(ctx, characterID, held.ItemID, 1, held.Instance()); backErr != nil {
+				return fail("using failed, and the item could not be returned")
+			}
+			if errors.Is(err, character.ErrInventoryFull) {
+				return fail(errStorageExpansionRefused)
+			}
+			return fail("using failed")
+		}
+		return sess.Send(&proto.Packet{Opcode: OpUseItemResult, Data: (&UseItemResult{Remaining: int32(have - 1)}).Encode()})
 	}
 	if warehouse == nil {
 		return fail("the storage cannot be expanded here")

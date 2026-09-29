@@ -511,8 +511,9 @@ func TestUseItemScalesPotionByLevelAndStr(t *testing.T) {
 //     heals nothing and is consumed; OpStorageList then reports the new size.
 //   - At 200 the next use is refused with 0x18fe (200 + 30 is not below
 //     0xd3, ExpandInventory 0x4e194d) and the item is kept.
-//   - The bag item fails ExpandInventory's kind-0 test against srrevamp's
-//     fixed 63-slot array (32 > 77 - 63) and is refused with 0x18fe, kept.
+//   - The bag item fails ExpandInventory's kind-0 test against a 50-slot bag
+//     (a 63-slot array: 32 > 77 - 63) and is refused with 0x18fe, kept. (A
+//     bag of 32 or fewer takes it: TestUseBagExpansionItem, round 633.)
 //
 // Before this round both were refused as "that cannot be used" (round 491),
 // and before round 491 both healed the user by their Param1.
@@ -675,16 +676,21 @@ func TestUseWarehouseExpansionItem(t *testing.T) {
 	}
 }
 
-// ExpandInventory's kind-0 test (0x4e195f..0x4e1989) against srrevamp's
-// 63-slot array (50 backpack + 13 equipment) and the default cap 77: at most
-// 14 slots fit, so the real item's 32 never does.
+// ExpandInventory's kind-0 test (0x4e195f..0x4e1989) against the engine's
+// array (the bag + 13 equipment) and the default cap 77: a 50-slot bag takes
+// at most 14 more, so the real item's 32 never fits it; a 32-slot bag takes
+// exactly 32 (77); the test server's 96 takes nothing.
 func TestBagExpansionAllowedFollowsExpandInventory(t *testing.T) {
 	for _, tc := range []struct {
-		slots int
-		want  bool
-	}{{inventory.InventoryAdditionSlots, false}, {14, true}, {15, false}, {1, true}} {
-		if got := bagExpansionAllowed(tc.slots); got != tc.want {
-			t.Errorf("bagExpansionAllowed(%d) = %v, want %v", tc.slots, got, tc.want)
+		bag, slots int
+		want       bool
+	}{
+		{50, inventory.InventoryAdditionSlots, false}, {50, 14, true}, {50, 15, false}, {50, 1, true},
+		{32, inventory.InventoryAdditionSlots, true}, {33, inventory.InventoryAdditionSlots, false},
+		{inventory.MaxBagSlots, 1, false},
+	} {
+		if got := bagExpansionAllowed(tc.bag, tc.slots); got != tc.want {
+			t.Errorf("bagExpansionAllowed(%d, %d) = %v, want %v", tc.bag, tc.slots, got, tc.want)
 		}
 	}
 }
@@ -1844,5 +1850,113 @@ func TestUseItemIsRefusedWhileDead(t *testing.T) {
 	}
 	if res := f.use(fixtureHPPotion); res.Error != "" || res.RestoredHP <= 0 {
 		t.Errorf("the revived character's potion answered %+v, want a heal", res)
+	}
+}
+
+// Round 633: the bag expansion item (ITEM_MALL_INVENTORY_ADDITION, 24365,
+// Param1 32, Param2 0) grows the character's own bag now that it has one.
+// From a 32-slot bag (one page) the engine's kind-0 test passes (32 + 13 + 32
+// = 77, the default cap): the item is spent, the bag is 64 (two pages), and
+// the bag list says so. A second use from 64 fails the test (64 + 13 + 32 >
+// 77): refused with 0x18fe and kept, the bag still 64.
+func TestUseBagExpansionItem(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	acc, err := accounts.Add("alice", "hunter2")
+	if err != nil {
+		t.Fatalf("add account: %v", err)
+	}
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, acc.ID, "Aria")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	const bagAddition = 24365
+	items := refdata.NewMemStore()
+	if err := items.ImportItems(ctx, []refdata.Item{
+		{ID: bagAddition, MaxStack: 1, TypeID1: 3, TypeID2: 3, TypeID3: 13, TypeID4: 17, RestoreHP: 32, RestoreHPPct: 0, CanUse: true},
+	}); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	inv := inventory.NewMemStore(items)
+	inv.SetCapacityFunc(inventory.BagCapacity(chars, 32))
+	if err := inv.AddItem(ctx, c.ID, bagAddition, 2); err != nil {
+		t.Fatalf("add bag items: %v", err)
+	}
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), nil, nil, nil, nil, nil, nil), InventoryHandler(chars, inv, nil))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	send := func(op uint16, data []byte) *proto.Packet {
+		t.Helper()
+		if err := proto.Write(conn, &proto.Packet{Opcode: op, Data: data}, nil, nil); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return resp
+	}
+	if lr, err := DecodeLoginResult(send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("login: %v %+v", err, lr)
+	}
+	held := func() (slot, n int) {
+		t.Helper()
+		slots, err := inv.List(ctx, c.ID)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		slot = -1
+		for _, sl := range slots {
+			if sl.ItemID == bagAddition {
+				if slot < 0 {
+					slot = sl.Index
+				}
+				n += sl.Quantity
+			}
+		}
+		return slot, n
+	}
+	use := func() *UseItemResult {
+		t.Helper()
+		slot, _ := held()
+		res, err := DecodeUseItemResult(send(OpUseItem, (&UseItemRequest{CharacterName: "Aria", InventorySlot: int32(slot)}).Encode()).Data)
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return res
+	}
+	bagSize := func() int {
+		t.Helper()
+		res, err := DecodeStorageListResult(send(OpInventoryList, (&CharacterNameRequest{Name: "Aria"}).Encode()).Data)
+		if err != nil || res.Error != "" {
+			t.Fatalf("list: %v %+v", err, res)
+		}
+		return res.Capacity
+	}
+	if got := bagSize(); got != 32 {
+		t.Fatalf("the bag starts at %d, want 32", got)
+	}
+	if res := use(); res.Error != "" {
+		t.Fatalf("the first expansion from 32: refused %q", res.Error)
+	}
+	if _, n := held(); n != 1 {
+		t.Errorf("%d expansion items left after one use, want 1", n)
+	}
+	if got := bagSize(); got != 64 {
+		t.Errorf("after one expansion the bag is %d, want 64", got)
+	}
+	if res := use(); res.Error != errStorageExpansionRefused {
+		t.Errorf("the second expansion from 64: %+v, want the 0x18fe refusal", res)
+	}
+	if _, n := held(); n != 1 {
+		t.Errorf("the refused item was spent: %d left, want 1", n)
+	}
+	if got := bagSize(); got != 64 {
+		t.Errorf("after the refusal the bag is %d, want 64", got)
 	}
 }

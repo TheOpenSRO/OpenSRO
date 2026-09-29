@@ -1158,6 +1158,32 @@ refusals, the global chatting item's "Chat to all" window, the GM notice's line 
 - "Remaining turns" in the global window overruns into its count (the authored static is 55 px
   wide; our font draws the caption wider).
 
+### The inventory window (round 633) — **pages, purse colours, slot art, avatar view, preview built; these are left**
+
+What round 633 read and built is in `docs/protocol/inventory_window.md`.
+
+- **Carrying an item across pages the way the client does.** Round 633's review read the two
+  IFInventory handlers that name DraggedTab/DraggedPage: `0x6b4610` is a confirm box's answer and
+  `0x6b62d0` is the split box's. Neither turns a page. Ours turns the page when a drag passes over a
+  tab (OURS).
+- **The selected tab's text flag 2** (`0x64cc30` → `0x8b44b0(0,2)` → the glyph mode in
+  `0x8b39e0`). What it draws is not read, so nothing is drawn for it.
+- **The preview's pose advances while hidden.** It no longer renders while hidden (round 633's
+  review), but the idle is still stepped by World3D. Retail steps it only while shown
+  (`vslot_012` `0x6ab6b0` tests `0xb8f530`).
+- **The academy's rank and leader marks.** Their show code is read (`0x6e9de3..0x6e9e6f`, the rank
+  byte's art) but not built: this client keeps no academy data. The party's are built.
+- **The party race mark always shows China's art**, because the server does not send the leader's
+  race.
+- **The avatar skill strip** (`GDR_AVATAR_SKILL_WND`, ID 500) needs avatar items with its type
+  bit. This server has none.
+- **The retail starting inventory size** is a `_CHAR.InventorySize` database default that neither
+  executable carries. `-inventory-size` 96 is ours. The engine's growth caps (77, or 99 with the
+  quest, counting 13 equipment slots) mean retail never fills the third page by its own means.
+- **The exchange window's gold boxes** are coloured and filled from the trade events. The
+  exchange window itself is still not opened by a trade (World3D's debug trade labels do that
+  work).
+
 ### Seasonal event decorations — **hidden by default (round 583)**
 The user decided on 2026-09-26 that early testing gets no seasonal decorations. Christmas,
 Halloween, the China open-beta (OBT) event set and the summer festival set are left out of every

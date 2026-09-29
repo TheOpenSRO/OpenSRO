@@ -948,7 +948,7 @@ func tradeSpaceShortfall(ctx context.Context, inv inventory.Store, sess *trade.S
 		if err != nil {
 			return "", fmt.Errorf("checking inventory space for %s: %w", side.name, err)
 		}
-		if len(occupied) >= inventory.SlotsPerCharacter {
+		if len(occupied) >= inventory.CapacityOf(ctx, inv, side.recipient) {
 			return side.name + "'s inventory is full", nil
 		}
 	}

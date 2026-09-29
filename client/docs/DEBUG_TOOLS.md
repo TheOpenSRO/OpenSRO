@@ -65,6 +65,7 @@ and changes nothing.
 | `/sp <n>` | Adds skill points (a negative number takes them away). |
 | `/hwan <0-5>` | Sets the berserk orbs held (round 629; a test tool, not a retail command). Five light the ready circle. |
 | `/notice <text>` | Sends a GM notice to every player (round 634): a pink "(Notice):" line in every chat tab and the notice banner at the top of the screen for 7 seconds. The command is ours; the line and banner are the game's. |
+| `/invsize [1-96\|default]` | Shows or sets your bag's size in slots (round 633; a test tool, not a retail command). The bag shows 32 slots a page, up to three pages, and locks the slots of the last page past the size. `default` goes back to the server's `-inventory-size` (96 unless the operator set another). Refused below a slot that holds an item. |
 
 `/goto` and `/spawn` with no valid name list the zones and monster code names
 they accept. `/give` takes the item's numeric id; the client resolves an item

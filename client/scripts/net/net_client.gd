@@ -38,6 +38,9 @@ signal inventory_list_result(slots: Array, error: String)
 ## signal. Empty against a server too old to send the trailing block.
 var last_inventory_durabilities: Array = []
 var last_equipment_durabilities: Array = []
+## The bag's size in slots from the most recent bag list or move reply (their
+## trailing capacity, round 633); 0 until a server that sends it answers.
+var last_inventory_capacity: int = 0
 ## The bag after a move_item (the server's own list, not an assumption), or
 ## why the move was refused.
 signal inventory_move_result(slots: Array, error: String)
@@ -741,10 +744,14 @@ func _dispatch(p: Packet) -> void:
 		InventoryNet.OP_LIST_RESULT:
 			var r := InventoryNet.decode_list_result(p.data)
 			last_inventory_durabilities = r.durabilities
+			if r.capacity > 0:
+				last_inventory_capacity = r.capacity
 			inventory_list_result.emit(r.slots, r.error)
 		InventoryNet.OP_MOVE_RESULT:
 			var r := InventoryNet.decode_list_result(p.data)
 			last_inventory_durabilities = r.durabilities
+			if r.capacity > 0:
+				last_inventory_capacity = r.capacity
 			inventory_move_result.emit(r.slots, r.error)
 		StatsNet.OP_STATS_RESULT:
 			character_stats_result.emit(StatsNet.decode_result(p.data))

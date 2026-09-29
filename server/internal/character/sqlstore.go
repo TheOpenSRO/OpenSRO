@@ -49,6 +49,10 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS latest_frame TEXT NOT NULL DEFAU
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS pos_x DOUBLE PRECISION NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS pos_y DOUBLE PRECISION NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS pos_z DOUBLE PRECISION NOT NULL DEFAULT 0;
+-- The bag's size in slots (round 633), the engine's _CHAR.InventorySize
+-- (charData+0xac) less its 13 equipment slots. 0 is "none stored": the
+-- server's -inventory-size default applies (InventorySizeStore).
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS inventory_size INTEGER NOT NULL DEFAULT 0;
 CREATE UNIQUE INDEX IF NOT EXISTS characters_name_lower ON characters (LOWER(name));
 CREATE INDEX IF NOT EXISTS characters_account_id ON characters(account_id);
 `

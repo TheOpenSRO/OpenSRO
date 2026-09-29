@@ -159,13 +159,27 @@ func InventoryHandler(chars character.Store, store inventory.Store, items ItemLo
 			})
 		}
 
-		snaps := make([]InventorySlotSnapshot, len(slots))
-		for i, sl := range slots {
-			snaps[i] = InventorySlotSnapshot{Slot: sl.Index, ItemID: sl.ItemID, Quantity: sl.Quantity}
-		}
 		return sess.Send(&proto.Packet{
 			Opcode: OpInventoryListResult,
-			Data:   (&InventoryListResult{Slots: snaps, Durabilities: inventoryDurabilities(ctx, slots, items)}).Encode(),
+			Data:   bagListResult(ctx, store, characterID, slots, items).Encode(),
 		})
+	}
+}
+
+// bagListResult is the bag as a list reply: its occupied slots, their
+// durabilities and -- since round 633 -- the bag's own size as the trailing
+// u16 capacity (StorageListResult's shape, which the warehouse list has
+// carried since round 498). The client pages its 32-slot lattice by it and
+// locks the slots past it, as the original does with the InventorySize the
+// character data carries (IFInventory 0x6b6620). An older client stops
+// reading after the durability block and never sees it.
+func bagListResult(ctx context.Context, store inventory.Store, characterID int64, slots []inventory.Slot, items ItemLookup) *StorageListResult {
+	snaps := make([]InventorySlotSnapshot, len(slots))
+	for i, sl := range slots {
+		snaps[i] = InventorySlotSnapshot{Slot: sl.Index, ItemID: sl.ItemID, Quantity: sl.Quantity}
+	}
+	return &StorageListResult{
+		InventoryListResult: InventoryListResult{Slots: snaps, Durabilities: inventoryDurabilities(ctx, slots, items)},
+		Capacity:            inventory.CapacityOf(ctx, store, characterID),
 	}
 }

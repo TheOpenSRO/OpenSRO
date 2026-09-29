@@ -473,3 +473,45 @@ func TestHwan(t *testing.T) {
 		t.Error("five orbs from /hwan do not activate")
 	}
 }
+
+// Round 633: /invsize shows and sets the GM's own bag size, the one the client
+// pages (32 to a page, at most three) and every bag operation is held to.
+// "default" goes back to the store's own; a size that would leave an item
+// past the end is refused and changes nothing.
+func TestInvsize(t *testing.T) {
+	f := newFixture(t)
+	f.inv.SetCapacityFunc(inventory.BagCapacity(f.chars, inventory.DefaultBagSlots))
+	if res := f.run(t, "/invsize"); res.Refused || res.Text != "inventory size 96 slots (3 pages)" {
+		t.Fatalf("/invsize: %+v", res)
+	}
+	for _, bad := range []string{"/invsize 0", "/invsize 97", "/invsize x", "/invsize 1 2"} {
+		if res := f.run(t, bad); !res.Refused {
+			t.Errorf("%s accepted: %+v", bad, res)
+		}
+	}
+	res := f.run(t, "/invsize 40")
+	if res.Refused || !res.RefreshInventory || res.Text != "inventory size now 40 slots (2 pages)" {
+		t.Fatalf("/invsize 40: %+v", res)
+	}
+	if got := inventory.CapacityOf(f.ctx, f.inv, f.actor.CharacterID); got != 40 {
+		t.Errorf("the bag's capacity is %d, want 40", got)
+	}
+	if err := f.inv.AddItem(f.ctx, f.actor.CharacterID, 3, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.inv.MoveItem(f.ctx, f.actor.CharacterID, 0, 39); err != nil {
+		t.Fatalf("moving into slot 39 of 40: %v", err)
+	}
+	if err := f.inv.MoveItem(f.ctx, f.actor.CharacterID, 39, 40); err == nil {
+		t.Error("slot 40 of a 40-slot bag took an item")
+	}
+	if res := f.run(t, "/invsize 32"); !res.Refused {
+		t.Errorf("/invsize 32 with an item in slot 39: %+v, want refused", res)
+	}
+	if got := inventory.CapacityOf(f.ctx, f.inv, f.actor.CharacterID); got != 40 {
+		t.Errorf("a refused shrink left the bag at %d, want 40", got)
+	}
+	if res := f.run(t, "/invsize default"); res.Refused || res.Text != "inventory size now 96 slots (3 pages)" {
+		t.Errorf("/invsize default: %+v", res)
+	}
+}

@@ -197,7 +197,7 @@ const MaxSpawn = 20
 
 // Help is the one-line list of server-side commands, what the client shows
 // a GM. Kept here so the list and the dispatcher cannot drift apart.
-const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /kill, /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>"
+const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /kill, /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default]"
 
 // Run executes one command line for actor. The leading slash is optional;
 // the first word is the command. The caller has already checked the gate.
@@ -238,6 +238,8 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = d.hwan(ctx, actor, args)
 	case "notice":
 		res = notice(line[len(fields[0]):])
+	case "invsize":
+		res = d.invsize(ctx, actor, args)
 	default:
 		res = refuse("unknown GM command /" + cmd + ". " + Help)
 	}
@@ -275,6 +277,61 @@ func (d *Deps) hwan(ctx context.Context, actor Actor, args []string) Result {
 		return refuse("could not store the orb count: " + err.Error())
 	}
 	return Result{Text: fmt.Sprintf("berserk orbs now %d", n), RefreshStats: true}
+}
+
+// invsize shows or sets the GM's own bag size in slots (OURS, a test tool;
+// round 633): the client pages it 32 to a page, at most three (IFInventory
+// 0x6b6620), and locks the slots past it. "default" clears the character's own
+// size, so the server's -inventory-size applies again. A size below an
+// occupied slot is refused: the store would hold the item where no operation
+// may reach it (every one is bounded by the size).
+func (d *Deps) invsize(ctx context.Context, actor Actor, args []string) Result {
+	const usage = "usage: /invsize [1-96|default]"
+	sizes, ok := d.Chars.(character.InventorySizeStore)
+	if !ok || d.Inv == nil {
+		return refuse("no inventory size store")
+	}
+	current := inventory.CapacityOf(ctx, d.Inv, actor.CharacterID)
+	if len(args) == 0 {
+		return Result{Text: fmt.Sprintf("inventory size %d slots (%d pages)", current, pagesOf(current))}
+	}
+	if len(args) != 1 {
+		return refuse(usage)
+	}
+	want := 0
+	if strings.ToLower(args[0]) != "default" {
+		n, err := strconv.Atoi(args[0])
+		if err != nil || n < 1 || n > inventory.MaxBagSlots {
+			return refuse(usage)
+		}
+		want = n
+	}
+	slots, err := d.Inv.List(ctx, actor.CharacterID)
+	if err != nil {
+		return refuse("could not read the bag: " + err.Error())
+	}
+	// The check is against the size asked for, not the store's answer after
+	// the change: the server keeps a bag at or above its highest held slot
+	// (inventory.KeepHeld), which would hide the shrink here.
+	if want > 0 {
+		for _, sl := range slots {
+			if sl.Index >= want {
+				return refuse(fmt.Sprintf("bag slot %d holds an item; empty it before making the bag smaller than %d", sl.Index, sl.Index+1))
+			}
+		}
+	}
+	if err := sizes.SetInventorySize(ctx, actor.CharacterID, want); err != nil {
+		return refuse("could not store the size: " + err.Error())
+	}
+	after := inventory.CapacityOf(ctx, d.Inv, actor.CharacterID)
+	return Result{Text: fmt.Sprintf("inventory size now %d slots (%d pages)", after, pagesOf(after)), RefreshInventory: true}
+}
+
+func pagesOf(slots int) int {
+	if slots <= 1 {
+		return 1
+	}
+	return (slots-1)/inventory.BagPageSlots + 1
 }
 
 func refuse(text string) Result { return Result{Text: text, Refused: true} }

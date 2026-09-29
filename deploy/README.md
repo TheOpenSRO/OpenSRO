@@ -581,3 +581,27 @@ untracked `docker-compose.override.yml` (or append `- "-teleport-free=true"` to 
 restated `command:` list), then run `docker compose up -d`; the boot log then reads `teleport free
 on: every gate teleport costs nothing ...`. Remove the line (or set it to `"0"`) and run
 `docker compose up -d` to charge fees again.
+
+## Inventory size
+
+Round 633 gave every character its own bag size, and the client pages the bag by it: 32 slots a
+page, up to three pages ("Page 1 / Page 2 / Page 3" above the grid, the client's own tabs), with the
+slots of the last page past the size drawn locked, as the original draws them.
+
+- `-inventory-size` (env `SRREVAMP_INVENTORY_SIZE`) is the size of every character nobody has sized:
+  **96 by default, three full pages** -- our choice for the test server, not a retail value. Set
+  it lower (for example 32, one page) with `- "-inventory-size=32"` in the override's `command`, or
+  the env variable, and `docker compose up -d`.
+- A GM changes their own with `/invsize <1-96>`, or `/invsize default` to go back to the flag.
+  `/invsize` alone prints it.
+- The inventory expansion item (ITEM_MALL_INVENTORY_ADDITION, +32) grows a character's bag the way
+  the engine allows: only while the engine's array (bag + 13 equipment) stays within 77, so from a
+  bag of 32 or fewer. With the 96 default it is refused and kept.
+
+Lowering the size never strands what a character already carries: the server keeps a character's
+bag at or above its highest held slot + 1, logs that once
+(`bag size below a held slot: kept at the highest held slot + 1`), and applies the lower size once
+those slots are emptied.
+
+The retail starting size is not known: it is a `_CHAR.InventorySize` database default, and neither
+the client nor the server executable carries it.
