@@ -18,8 +18,12 @@ extends SceneTree
 ##
 ##   animates   what THIS client plays (round 645): a skeletal model whose
 ##              `default` group has a type-0 entry (MapAnimation.clip_entry,
-##              READ from the client) and at least one skinned piece. Absent
-##              on a client without MapAnimation, where nothing moves.
+##              READ from the client), built through ObjectLoader.load_object
+##              with its player in place. Absent on a client without
+##              MapAnimation, where nothing moves.
+##   clip_fails a type-0 clip is named but the model builds still (a `.bsk`
+##              or `.ban` that does not parse, or no skin bound); a
+##              `CLIPFAIL <path>: <why>` line says which
 ##
 ## Output lines:
 ##   MODEL <path> class=<c,..> type=<t> skel=<bsk> anims=<n> [<ban> <ms> cyc=<0|1>]..
@@ -117,6 +121,8 @@ func _initialize() -> void:
 			if not classes.has(c):
 				classes[c] = {"models": 0, "placements": 0, "regions": {}}
 			classes[c]["models"] += 1
+			if places > 0:
+				classes[c]["placed_models"] = int(classes[c].get("placed_models", 0)) + 1
 			classes[c]["placements"] += places
 			for r in where:
 				classes[c]["regions"][r] = true
@@ -135,7 +141,8 @@ func _initialize() -> void:
 	var names := classes.keys()
 	names.sort()
 	for c in names:
-		print("CLASS %-10s models=%d placements=%d regions=%d" % [c, classes[c]["models"], classes[c]["placements"], (classes[c]["regions"] as Dictionary).size()])
+		print("CLASS %-10s models=%d placed_models=%d placements=%d regions=%d" % [c, classes[c]["models"],
+			classes[c].get("placed_models", 0), classes[c]["placements"], (classes[c]["regions"] as Dictionary).size()])
 	if _arg("--regions") != "":
 		var rs := region_models.keys()
 		rs.sort()
@@ -250,6 +257,18 @@ func _model_info(data: Pk2Reader, path: String, cache: Dictionary) -> Dictionary
 			info["skinned"] += 1
 		if mesh.vertex_motion.size() > 0 and not cls.has("motion"):
 			cls.append("motion")
+	# The true answer (round 645 review): build the model the way the world
+	# does and look for its player -- a clip whose `.bsk` or `.ban` does not
+	# parse, or whose skins do not bind, leaves the model still.
 	if planned and info["skinned"] > 0:
-		cls.append("animates")
+		var before := ObjectLoader.missing_count
+		var built := ObjectLoader.load_object(data, path)
+		if built != null and not MA.players_of(built).is_empty():
+			cls.append("animates")
+		else:
+			cls.append("clip_fails")
+			var why: Array = ObjectLoader.missing_recent.slice(maxi(0, ObjectLoader.missing_recent.size() - (ObjectLoader.missing_count - before)))
+			print("CLIPFAIL %s: %s" % [path, "; ".join(why) if not why.is_empty() else "no skin bound"])
+		if built != null:
+			built.free()
 	return info

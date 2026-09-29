@@ -14,6 +14,15 @@ const MA_PATH := "res://scripts/world/map_animation.gd"
 
 var _failures := 0
 
+## The named static function's argument count on `script`, or -1 when it
+## has none -- so this suite reports a missing or older API as FAIL lines
+## instead of stopping on a script error.
+func _args(script, fname: String) -> int:
+	for m in (script as GDScript).get_script_method_list():
+		if m["name"] == fname:
+			return (m["args"] as Array).size()
+	return -1
+
 func _check(cond: bool, msg: String) -> void:
 	if cond:
 		print("ok  " + msg)
@@ -311,20 +320,23 @@ func _initialize() -> void:
 	_check(ask.get_bone_pose_rotation(ask.find_bone("BoneC")).is_equal_approx(held),
 		"r645: a copy keeps the baked pose")
 
-	# --- the clock: t = 0 at placement, paused until in range ---
+	# --- the clock: t = 0 at placement, hidden and paused until visited ---
 	root.add_child(a)
 	# The tree is live only once the first frame runs.
+	await process_frame
+	var cam := Camera3D.new()
+	root.add_child(cam)
 	await process_frame
 	if MA != null:
 		var driver = MA.Driver.new()
 		_check(driver.add(a, false) == 1, "r645: the driver registers the copy's clip")
-		_check(pa.current_animation == "default" and is_zero_approx(pa.current_animation_position) and not pa.active,
-			"r645: it starts at t = 0 (READ: no random phase), paused")
-		driver.tick(Vector3(0, 0, 10), [], true)
-		_check(pa.active and driver.running == 1, "r645: in range, it runs")
-		driver.tick(Vector3(0, 0, 3000), [], true)
-		_check(not pa.active and driver.running == 0, "r645: past 2500 + its radius, it is paused")
-		driver.tick(Vector3(0, 0, 10), [], true)
+		_check(pa.current_animation == "default" and is_zero_approx(pa.current_animation_position) and not pa.active and not a.visible,
+			"r645: it starts at t = 0 (READ: no random phase), paused and hidden (fade state 0)")
+		# The copy stands at the origin, in the sector cell 0..320 x 0..320.
+		# A camera at (160, 0, 600) looks down -Z, across that cell.
+		cam.position = Vector3(160, 0, 600)
+		driver.tick(cam.global_position, cam.get_frustum())
+		_check(pa.active and a.visible and driver.running == 1, "r645: its sector in view and in range, it runs and is drawn")
 		# Half a second in: BoneB is half way from 0 to 90 degrees
 		# -- the same pose the character path's apply_ban_pose_at gives.
 		pa.advance(0.5)
@@ -338,31 +350,99 @@ func _initialize() -> void:
 		got = ask.get_bone_pose_rotation(ask.find_bone("BoneB"))
 		_check(got.is_equal_approx(want), "r645: and it wraps at the Duration (2.5 s == 0.5 s)")
 		ref.free()
+		# Turned away: the sector is not visited -- its clock stops, and its
+		# fade state (drawn) stays as it was (READ, the +0xba2 walk).
+		cam.rotation_degrees = Vector3(0, 180, 0)
+		driver.tick(cam.global_position, cam.get_frustum())
+		_check(not pa.active and a.visible and driver.running == 0,
+			"r645 review: a sector out of view pauses its clocks and leaves them drawn")
+		# Facing it again from past the range: paused AND hidden.
+		cam.rotation_degrees = Vector3.ZERO
+		cam.position = Vector3(0, 0, 2100)
+		driver.tick(cam.global_position, cam.get_frustum())
+		_check(not pa.active and not a.visible, "r645 review: out of range it is paused and not drawn (retail draws a state-0 object not at all)")
+		cam.position = Vector3(0, 0, 2020)
+		driver.tick(cam.global_position, cam.get_frustum())
+		_check(pa.active and a.visible, "r645 review: 2020 from its origin, less its 0.71 radius, is in range")
 
-		# --- the range test, READ: dist - radius < range; flag bit 0 always ---
-		_check(MA.in_range(Vector3.ZERO, 10.0, 10.0, Vector3(2505, 0, 0), [], false), "r645: 2505 away with radius 10 is in range")
-		_check(not MA.in_range(Vector3.ZERO, 10.0, 10.0, Vector3(2511, 0, 0), [], false), "r645: 2511 away is not")
-		_check(MA.in_range(Vector3.ZERO, 10.0, 10.0, Vector3(9000, 0, 0), [], true), "r645: object.ifo flag bit 0 runs at any range")
-		var behind := [Plane(Vector3(0, 0, 1), -50.0)] # everything above z = -50 is outside
-		_check(not MA.in_range(Vector3.ZERO, 10.0, 10.0, Vector3(0, 0, 100), behind, false), "r645: outside the view it is paused")
-		# The frustum as the world passes it: Camera3D.get_frustum(), whose
-		# normals must point OUT for the test's sign. A camera at the origin
-		# looks down -Z.
-		var cam := Camera3D.new()
-		root.add_child(cam)
-		var planes: Array = cam.get_frustum()
-		_check(MA.in_range(Vector3(0, 0, -100), 1.0, 1.0, Vector3.ZERO, planes, false)
-				and not MA.in_range(Vector3(0, 0, 100), 1.0, 1.0, Vector3.ZERO, planes, false),
-			"r645: in front of a real camera runs, behind it pauses (frustum normals outward)")
-		cam.free()
+		# --- the range test, READ: dist - radius < 2500 - 480, strictly ---
+		_check(is_equal_approx(MA.OBJECT_RANGE, 2020.0), "r645 review: the range is DAT_00ec54b0 - 480 = 2020 (got %s)" % MA.OBJECT_RANGE)
+		# --- READ: the LAST type-0 entry wins (FUN_00c0f470 overwrites in
+		# place), and a last entry with no clip plays nothing ---
+		var two := BsrReader.parse(_build_bsr(["prim\\leaf.bms"], ["prim\\sway.ban", "prim\\once.ban"], "prim\\sway.bsk", [[0, 0], [0, 1]]))
+		var e2 = MA.clip_entry(two)
+		_check(e2 != null and e2.path == "prim\\once.ban", "r645 review: of two type-0 entries the last plays (got %s)" % (e2.path if e2 != null else "none"))
+		var none_last := BsrReader.parse(_build_bsr(["prim\\leaf.bms"], ["prim\\sway.ban"], "prim\\sway.bsk", [[0, 0], [0, -1]]))
+		_check(MA.clip_entry(none_last) == null, "r645 review: a last type-0 entry with no clip plays nothing")
+
+		var review: bool = _args(MA, "in_range") == 4 and _args(MA, "sector_of") == 2 and "_sectors" in driver \
+			and typeof(MA.get("disabled")) == TYPE_BOOL
+		_check(review, "r645 review: in_range(origin, radius, eye), sector_of, the per-sector driver and the NO_MAP_ANIM switch exist")
+		if not review:
+			a.free()
+			cam.free()
+			b.free()
+			node.free()
+			once.free()
+			t60.free()
+			_finish()
+			return
+		_check(MA.in_range(Vector3.ZERO, 10.0, Vector3(2029.9, 0, 0)), "r645 review: 2029.9 away with radius 10 is in range")
+		_check(not MA.in_range(Vector3.ZERO, 10.0, Vector3(2030, 0, 0)), "r645 review: 2030 away with radius 10 is not (strict <)")
+		_check(not MA.in_range(Vector3.ZERO, 10.0, Vector3(2505, 0, 0)), "r645 review: 2505 away is out (it was in at 2500)")
+		_check(MA.in_range(Vector3(0, 100, 0), 0.0, Vector3(0, 2119, 0)), "r645 review: the distance is 3D, from the placement origin")
+		var entry_origin: Vector3 = (driver._sectors.values()[0][1] as Array)[0][2]
+		_check(entry_origin.is_equal_approx(a.global_position), "r645 review: measured from the placement origin, not the mesh centre")
 		_check(is_equal_approx(MA.xz_radius(AABB(Vector3.ZERO, Vector3(6, 100, 8))), 5.0),
 			"r645: the radius is half the X-Z diagonal, height ignored (READ, asm 0xa389f0)")
+
+		# --- the view test is per sector, so a clip that travels from its
+		# placement is not frozen while its sector is in view ---
+		var sector: Array = MA.sector_of(Vector3(300, 0, 10), Transform3D.IDENTITY)
+		_check((sector[1] as Vector3).is_equal_approx(Vector3(160, 0, 160)), "r645 review: a placement's sector is its 320-unit cell")
+		cam.position = Vector3(160, 0, 1000)
+		_check(MA.sector_in_view(sector[1], cam.get_frustum()), "r645 review: a sector in front of the camera is in view")
+		cam.rotation_degrees = Vector3(0, 180, 0)
+		_check(not MA.sector_in_view(sector[1], cam.get_frustum()), "r645 review: behind it, it is not")
+
+		# --- object.ifo flag bit 0: runs and is drawn at any range ---
+		var driver2 = MA.Driver.new()
+		driver2.add(b, true)
+		root.add_child(b)
+		await process_frame
+		driver2.tick(Vector3(9000, 0, 0), cam.get_frustum())
+		_check(pb.active and b.visible, "r645: object.ifo flag bit 0 runs at any range")
+
+		# The cost probe (QA only): entries() lists what the driver holds,
+		# and a halted driver leaves the objects as the probe set them.
+		_check(driver.entries().size() == 1 and driver.entries()[0][0] == pa, "r645 cost: entries() lists the registered clip")
+		driver.halted = true
+		cam.position = Vector3(0, 0, 9000)
+		driver.tick(cam.global_position, cam.get_frustum())
+		_check(pa.active and a.visible, "r645 cost: a halted driver changes nothing")
+		driver.halted = false
+		cam.position = Vector3(160, 0, 600)
 		# A freed copy is dropped, not ticked.
+		cam.rotation_degrees = Vector3.ZERO
+		cam.position = Vector3(160, 0, 600)
 		a.free()
-		driver.tick(Vector3.ZERO, [], true)
+		driver.tick(cam.global_position, cam.get_frustum())
 		_check(driver.size() == 0, "r645: a freed object leaves the driver")
+
+		# --- SRREVAMP_NO_MAP_ANIM builds the pre-645 object: no skeleton,
+		# no skin, no player -- a clean A/B baseline ---
+		MA.disabled = true
+		var plain := ObjectLoader.load_object(archive, "res\\sway.bsr")
+		MA.disabled = false
+		var plain_leaf := plain.get_node_or_null("leaf") as MeshInstance3D if plain != null else null
+		_check(plain != null and plain.get_node_or_null("MapSkeleton") == null and plain.get_node_or_null("MapAnimation") == null
+				and plain_leaf != null and plain_leaf.skin == null,
+			"r645 review: SRREVAMP_NO_MAP_ANIM builds the object as before 645")
+		if plain != null:
+			plain.free()
 	else:
 		a.free()
+	cam.free()
 	b.free()
 	node.free()
 	once.free()

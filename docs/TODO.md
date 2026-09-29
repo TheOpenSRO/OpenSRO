@@ -1488,8 +1488,9 @@ Still open, by the files each would add:
 
 ### Trees and materials (round 625 and its review): leaves load, and the material rule is the client's (flag word, env map, MTRL mod, two passes). These are left:
 
-- **Tree sway — done in round 645.** Trees, reeds, tentacles and the other 146 skeletal map models
-  (2,276 placements) play their `default` type-0 clip as retail does. See the next section.
+- **Tree sway — done in round 645.** Trees, reeds, tentacles (the Tarim thorn vines and the
+  Taklamakan pits) and the other skeletal map models play their `default` type-0 clip as retail
+  does: 144 models, 2,275 placements. See the next section.
 - **MTRL mod details:**
   - its animated colour (the keyframes) replaces the layer's in retail, and that is not drawn;
   - the TEXTUREFACTOR argument is taken as white;
@@ -1501,8 +1502,22 @@ Still open, by the files each would add:
 
 ### Map objects that move (round 645): the skeletal clips play as retail plays them. These are left:
 
-- **After a one-shot.** What retail shows when a map object's one-shot clip ends (IsCyclic 0: the
-  `chinaetc_horse*` bodies, several scenery NPCs) is OPEN. The client holds the last key.
+- **The alpha fade.** Retail fades an animated (and every list-2) object in and out over 255/512 s
+  at the 2,020 edge (`SWorld::FUN_00a38a50`). The client switches it.
+- **2,020 for still scenery.** Retail's fade state applies to every list-2 object, not only the
+  animated ones: still scenery also ends at `dist - radius < 2020` from the camera. That is a
+  visibility change for the loading lane; the client applies it to animated objects only.
+- **The reeds' cost.** At 98/157, 57 running reeds cost about +2.9 ms at 320×180 (MEASURED,
+  WORLD_ISSUES "Where the reeds' cost goes"):
+  - driver 0.20 ms;
+  - mixers 0.53 ms;
+  - skeleton and skin-bone updates about 0.6 ms;
+  - Godot's cost of drawing the visible skinned instances about 1.6 ms, which is inherent.
+
+  Open: share one skeleton between copies whose clocks are equal. Retail's per-object pause means
+  the groups must split on every pause, and it would save about 0.6 ms.
+- **`cj_ferry_boat_old`.** Its `.bsk` is a root with no other bone, which `BskReader` refuses
+  (1 placement).
 - **Rigid pieces of a skeletal object.** 20 animated models, such as `bagh_city_portal` and the
   Tarim rope bridges, have unskinned pieces that stay put. Whether retail hangs them on a bone is
   OPEN; mesh+0x3c bit 0x400 is the lead.
@@ -1512,8 +1527,8 @@ Still open, by the files each would add:
   including the Taklamakan `ruin_takla_tent*`). Not read.
 - **`.o2` list +0x24** objects update only in the 9 nearest sectors at range 480. This client does
   not draw the list (round 75).
-- **The view-distance option** (object range 1,200 / 2,000 / 2,500) does not exist here; the range
-  is its 2,500 default.
+- **The view-distance option** does not exist here. It sets `DAT_00ec54b0` to 1,200 / 2,000 /
+  2,500, which makes the animation and draw range 720 / 1,520 / 2,020; the client uses 2,020.
 
 ## Parked, with the state written down
 

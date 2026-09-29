@@ -26,6 +26,7 @@ func _initialize() -> void:
 		quit(2)
 		return
 	Engine.max_fps = 0
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	OS.low_processor_usage_mode = false
 	OS.low_processor_usage_mode_sleep_usec = 0
 	var count := int(_arg("--count", "50"))
@@ -62,10 +63,10 @@ func _initialize() -> void:
 			placed += 1
 		template.free()
 	print("BENCH %d copies, %d tracks per template set" % [placed, tracks])
-	driver.tick(Vector3.ZERO, [], true)
+	driver.tick(Vector3.ZERO, [])
 	await process_frame
 	var on := await _time(frames)
-	driver.tick(Vector3(1e6, 0, 0), [], true)
+	driver.tick(Vector3(1e6, 0, 0), [])
 	await process_frame
 	var paused := await _time(frames)
 	print("BENCH frame us: none %.1f, %d clips running %.1f (+%.1f, %.2f us a clip), all paused %.1f (+%.1f)" % [
@@ -74,9 +75,14 @@ func _initialize() -> void:
 
 ## Mean wall-clock microseconds per frame over `frames` idle frames, with
 ## the frame cap and low-processor sleep off (_initialize), so a frame
-## costs what its work costs.
+## costs what its work costs. Also prints the mean process time
+## (Performance.TIME_PROCESS), which a run with a renderer separates from
+## the draw.
 func _time(frames: int) -> float:
 	var t0 := Time.get_ticks_usec()
+	var process := 0.0
 	for _i in range(frames):
 		await process_frame
+		process += Performance.get_monitor(Performance.TIME_PROCESS)
+	print("BENCH   process us %.1f" % (process * 1e6 / frames))
 	return float(Time.get_ticks_usec() - t0) / frames

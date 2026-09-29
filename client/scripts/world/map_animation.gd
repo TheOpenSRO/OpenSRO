@@ -16,28 +16,39 @@ class_name MapAnimation
 ##   action type 0, looked up by `AniMixer::FUN_00c551a0`. **No fallback**:
 ##   a model whose `default` group has no type-0 entry does not move
 ##   (`rok_key03_01`, `euro_esteuro_viking20` and others carry only a
-##   type-60 entry).
+##   type-60 entry). Two type-0 entries: the LAST wins -- the group reader
+##   (`ResObject::FUN_00c0f500` -> `FUN_00c0f470`, asm 0xc0f4e6) overwrites
+##   an existing type's clip in place; a file index below 0 leaves it null
+##   (asm 0xc0f58d), so nothing plays.
 ## - **Looping.** The clip's own `.ban` IsCyclic word picks CRTAniCyclic or
-##   CRTAniOneShot. A one-shot plays once. What retail shows after it ends
-##   is OPEN; this holds its last keyframe (OURS).
+##   CRTAniOneShot. A one-shot plays once; at its end the mixer unlinks it
+##   (`AniMixer::FUN_00c53e80`), and with no clip left the pose evaluation
+##   (`AniMixer::FUN_00c54200`) only clears the bones' blend weights
+##   (`CRTBone::vslot_004`, asm 0xc47a20) -- neither the apply (vslot_005)
+##   nor the skeleton update (`FUN_00c4c320`) runs -- so the body keeps its
+##   last evaluated pose (READ). Here it holds the clip's last key.
 ## - **Speed and clock.** 1.0, in the `.ban`'s milliseconds, wrapping at its
 ##   Duration (`CRTAniCyclic::vslot_002`). The authored FPS is not used.
 ## - **Phase.** No random phase: a clip starts at t = 0 when its sector's
 ##   objects are started, so one sector's objects move in step. Here the
 ##   clock starts at 0 when the region's objects are placed (OURS: region,
 ##   not sector, granularity).
-## - **Cull.** `SWorld::vslot_004` updates an object only while its fade
-##   state is not 0 -- `dist - radius < range` (`SWorld::FUN_00a38a50`),
-##   the 3D distance from the camera, the radius half the object's X-Z
-##   bounds diagonal, range `DAT_00ec54b0`, 2500 at start -- and only in
-##   sectors the view frustum touches. Outside, the clock is PAUSED, not
-##   skipped; a state-0 object is not drawn either, so the pause cannot be
-##   seen. Objects whose object.ifo flag has bit 0 (the region-level list)
-##   are updated every frame regardless. The frustum test here is on the
-##   object's own bounding sphere, not its 320-unit sector: an in-range
-##   object just off screen in a visible sector runs in retail and is
-##   paused here (OURS: it is not drawn in either, so only its phase
-##   differs).
+## - **Range, and drawing.** `SWorld::vslot_004` visits only the sectors the
+##   view frustum touches, and there runs each list-2 object's fade state
+##   (`SWorld::FUN_00a38a50`): in range while `dist - radius < range`,
+##   strictly, where `dist` is the 3D distance from the camera to the
+##   object's placement origin (asm 0xa2d92a: camera +0x20a6.. minus obj
+##   +0x57..), `radius` half its mesh bounds' X-Z diagonal (asm 0xa389f0)
+##   and `range` = `DAT_00ec54b0 - 480.0` (asm 0xa2d961/0xa2d967: 2500 -
+##   the double at 0xde4f58) = **2020**. The object is updated (its clock
+##   runs) and drawn (`Map::FUN_00a1e530`) only while that state is not 0;
+##   out of range the clock PAUSES. Objects whose object.ifo flag has bit 0
+##   (the region-level list) are updated every frame regardless.
+##   Here: the camera distance from the placement origin with its X-Z
+##   radius, the sector's 320-unit cell against the view frustum, the
+##   clock paused and the object HIDDEN out of range. OURS: retail fades an
+##   object in and out over 255/512 s of alpha (and pops it straight in
+##   within two thirds of the range); here it is switched.
 ##
 ## How it is built, efficiently: ObjectLoader's prepare reads the `.bsk` and
 ## the one `.ban` off the main thread; the commit adds a Skeleton3D, a Skin
@@ -51,29 +62,43 @@ class_name MapAnimation
 const GROUP := "default"
 const ACTION_TYPE := 0
 
-## DAT_00ec54b0's initial value: the object range (READ). The view-distance
-## option can lower it to 1200 or 2000; this client has no such option.
-const OBJECT_RANGE := 2500.0
+## The object range the fade state is tested against (READ, asm
+## 0xa2d961/0xa2d967): `DAT_00ec54b0` minus the double 480.0 at 0xde4f58.
+## DAT_00ec54b0 starts at 2500; the view-distance option can set it to
+## min(0.8 x view, 2500) -- 1200 / 2000 / 2500 -- which this client has no
+## option for, so the range is 2020 (720 / 1520 / 2020 per setting).
+const OBJECT_RANGE_SETTING := 2500.0
+const OBJECT_RANGE_MARGIN := 480.0
+const OBJECT_RANGE := OBJECT_RANGE_SETTING - OBJECT_RANGE_MARGIN
+
+## A region's `.o2` sector: its 6 x 6 grid over 1920 units (MAPO2_FORMAT.md).
+## The frame's sector list (+0x2783) is taken to be this grid (INFERRED).
+const SECTOR_SIZE := 1920.0 / 6.0
+
+## SRREVAMP_NO_MAP_ANIM=1: every model is built as before round 645, still,
+## with no skeleton, skin or player -- the A/B baseline. Not a player option.
+static var disabled := OS.get_environment("SRREVAMP_NO_MAP_ANIM") != ""
 
 ## Node names in a template, and the meta keys that mark one.
 const SKELETON_NODE := "MapSkeleton"
 const PLAYER_NODE := "MapAnimation"
 const CLIP_NAME := "default"
 const META_ANIMATED := "srrevamp_map_animated"
-const META_CENTER := "srrevamp_map_anim_center"
 const META_RADIUS := "srrevamp_map_anim_radius"
-const META_BOUND := "srrevamp_map_anim_bound"
 
 ## The entry the map plays for `obj`, or null when it does not move: no
 ## skeleton, no animation, or no `default` type-0 entry.
 static func clip_entry(obj: BsrReader.ParsedObject) -> BsrReader.AnimationEntry:
 	if obj == null or obj.skeleton_path == "" or obj.animation_paths.is_empty():
 		return null
+	var last: BsrReader.AnimationEntry = null
 	for entry in obj.animation_groups.get(GROUP, []):
 		var e := entry as BsrReader.AnimationEntry
-		if e.action_type == ACTION_TYPE and e.path != "":
-			return e
-	return null
+		if e.action_type == ACTION_TYPE:
+			last = e
+	if last == null or last.path == "":
+		return null
+	return last
 
 ## The PREPARE half, on the objects job's worker (THE PREPARE-THREAD RULE:
 ## readers' structs only). Adds `node["anim"] = {"skeleton": ParsedSkeleton,
@@ -82,6 +107,8 @@ static func clip_entry(obj: BsrReader.ParsedObject) -> BsrReader.AnimationEntry:
 ## pieces carry "bones" and "object_space". What could not be read goes in
 ## `missing`, and the object is then drawn still, as before.
 static func prepare(archive: Pk2Reader, obj: BsrReader.ParsedObject, node: Dictionary, missing: Array) -> void:
+	if disabled:
+		return
 	var entry := clip_entry(obj)
 	if entry == null:
 		return
@@ -151,11 +178,7 @@ static func commit(root: Node3D, anim: Dictionary, pieces: Array) -> bool:
 	# bounds, height ignored. The client takes a skinned mesh's bounds in
 	# its pose at creation; this takes the bind pose (INFERRED close: a
 	# sway moves a tree's leaves a few units).
-	root.set_meta(META_CENTER, box.get_center())
 	root.set_meta(META_RADIUS, xz_radius(box))
-	# The frustum test's sphere takes the whole box (OURS: the client tests
-	# sectors, not objects).
-	root.set_meta(META_BOUND, box.size.length() * 0.5)
 	return true
 
 ## The clip as a Godot Animation over `skeleton`'s bones, on the `.ban`'s
@@ -234,98 +257,162 @@ static func start(player: AnimationPlayer) -> void:
 	player.seek(0.0, true)
 	player.active = false
 
-## Whether an object at `center` is updated this frame: the client's
-## fade-state test `dist - radius < range` from the camera `eye`
-## (SWorld::FUN_00a38a50, `radius` its X-Z radius) and, standing in for its
-## frustum-touched sectors, a sphere of `bound` against the view `planes`
-## (Camera3D.get_frustum(), normals outward; empty skips the test).
-## `always` is object.ifo flag bit 0: updated every frame.
-static func in_range(center: Vector3, radius: float, bound: float, eye: Vector3, planes: Array, always: bool, object_range: float = OBJECT_RANGE) -> bool:
-	if always:
-		return true
-	if center.distance_to(eye) - radius >= object_range:
-		return false
+## The client's fade-state test (SWorld::FUN_00a38a50, READ): in range while
+## `dist - radius < range`, strictly -- `dist` from the camera `eye` to the
+## placement `origin`, `radius` the object's X-Z radius (xz_radius).
+static func in_range(origin: Vector3, radius: float, eye: Vector3, object_range: float = OBJECT_RANGE) -> bool:
+	return origin.distance_to(eye) - radius < object_range
+
+## The sector cell holding a placement at region-local `local`: its key and
+## the centre of the cell (at the placement's height) in the space
+## `to_world` maps region-local coordinates into.
+static func sector_of(local: Vector3, to_world: Transform3D) -> Array:
+	var cx := floori(local.x / SECTOR_SIZE)
+	var cz := floori(local.z / SECTOR_SIZE)
+	var centre := to_world * Vector3((cx + 0.5) * SECTOR_SIZE, local.y, (cz + 0.5) * SECTOR_SIZE)
+	return ["%d:%d:%d" % [roundi(centre.x), roundi(centre.z), cx * 8 + cz], centre]
+
+## Half the X-Z diagonal of a sector cell: the sphere sector_in_view tests.
+const SECTOR_RADIUS := SECTOR_SIZE * 0.7071068
+
+## Whether a sector's cell touches the view (the client's per-sector flag,
+## set by rasterising the frustum onto the sector grid, `Map::FUN_00a2b370`):
+## here the cell's X-Z circle, at its object's height, against the frustum
+## planes (Camera3D.get_frustum(), normals outward). OURS: a sphere, not the
+## ground footprint. Empty `planes` passes everything.
+static func sector_in_view(centre: Vector3, planes: Array) -> bool:
 	for plane in planes:
-		if (plane as Plane).distance_to(center) > bound:
+		if (plane as Plane).distance_to(centre) > SECTOR_RADIUS:
 			return false
 	return true
 
-## The world's animated map objects: registers each placed copy and runs
-## the clock of those in range, pausing the rest (`in_range`). One per
-## World3D; entries whose object has gone (a region streamed out) are
-## dropped as they are found.
+## The world's animated map objects, run as the client runs them: each frame
+## a sector the view touches has its objects' fade state tested; an object in
+## range runs its clock and is drawn, one out of range is paused and hidden.
+## A sector out of view is not visited: its objects' clocks stop and their
+## fade state (here, whether they are drawn) stays as it was -- READ, the
+## update loop only walks the sectors whose +0xba2 flag is set. object.ifo
+## flag bit 0 objects always run and are always drawn. One per World3D;
+## entries whose object has gone (a region streamed out) are dropped as
+## they are found.
 ##
-## Cost (round 645, MEASURED in Jangan's 25 regions, 456 clips): testing
-## every clip every frame took about 1.05 ms of GDScript. A placed map
-## object never moves, so its world centre is taken once, at add; and each
-## frame tests one SLICE_FRAMES-th of the list, so a clip's run/pause state
-## follows the camera within SLICE_FRAMES frames (OURS: retail tests every
-## object every frame; a 4-frame lag at an edge the object is invisible
-## beyond -- a state-0 object is not drawn -- shifts only its phase).
+## Cost: the placement never moves, so its origin and sector are taken once,
+## at add, and the view is tested once per sector, not per object.
 class Driver:
 	extends RefCounted
-	const SLICE_FRAMES := 4
-	## [player, object root, world centre, X-Z radius, bound, always] per clip.
-	var _entries: Array = []
-	var _cursor := 0
+	## sector key -> [cell centre, [[player, object root, world origin,
+	## X-Z radius], ..], in view last frame] for the range-tested objects.
+	var _sectors := {}
+	## [player, object root] of the object.ifo flag bit 0 objects: always on.
+	var _always: Array = []
+	var _count := 0
 	## Clips running, and the time the last tick took (us), for the QA line
 	## and the frame-cost measurement.
 	var running := 0
 	var tick_usec := 0
+	## Set by MapAnimationProbe (SRREVAMP_QA_MAPANIM_SPLIT): the driver stops
+	## testing, leaving the probe's state in place. Never set in play.
+	var halted := false
+
+	## Every registered entry, [player, object root, ..] -- for the probe.
+	func entries() -> Array:
+		var out: Array = []
+		for key in _sectors:
+			out.append_array(_sectors[key][1])
+		out.append_array(_always)
+		return out
 
 	## Registers `node`'s clips (players_of), started at t = 0. `node` must
-	## be placed (in the tree, at its final transform). `always`: object.ifo
-	## flag bit 0. Returns how many were registered.
+	## be placed (in the tree, at its final transform, its `position` the
+	## region-local placement and its parent the region's container).
+	## `always`: object.ifo flag bit 0. Returns how many were registered.
 	func add(node: Node3D, always: bool) -> int:
 		var added := 0
+		var parent := node.get_parent() as Node3D
+		var to_world := parent.global_transform if parent != null else Transform3D.IDENTITY
+		var sector := MapAnimation.sector_of(node.position, to_world)
 		for player in MapAnimation.players_of(node):
 			var root: Node3D = (player as Node).get_parent()
 			MapAnimation.start(player)
-			var xf := root.global_transform
-			var scale := absf(xf.basis.get_scale().x)
-			_entries.append([player, root, xf * (root.get_meta(MapAnimation.META_CENTER, Vector3.ZERO) as Vector3),
-				float(root.get_meta(MapAnimation.META_RADIUS, 0.0)) * scale,
-				float(root.get_meta(MapAnimation.META_BOUND, 0.0)) * scale, always])
 			added += 1
+			if always:
+				(player as AnimationPlayer).active = true
+				running += 1
+				_always.append([player, root])
+				continue
+			# Hidden until its sector is first visited, as the client's fade
+			# state starts at 0.
+			root.visible = false
+			if not _sectors.has(sector[0]):
+				_sectors[sector[0]] = [sector[1], [], false]
+			var scale := absf(root.global_transform.basis.get_scale().x)
+			(_sectors[sector[0]][1] as Array).append([player, root, node.global_position,
+				float(root.get_meta(MapAnimation.META_RADIUS, 0.0)) * scale])
+		_count += added
 		return added
 
 	func size() -> int:
-		return _entries.size()
+		return _count
 
-	## One frame: `eye` is where the range is measured from (the camera),
-	## `planes` the view frustum (Camera3D.get_frustum(), [] for none). Tests
-	## the next slice of the list; `all` tests every entry (the tests).
-	func tick(eye: Vector3, planes: Array, all: bool = false) -> void:
+	## One frame: `eye` is the camera's position, `planes` its frustum
+	## (Camera3D.get_frustum(), [] for none). Every sector in view has its
+	## objects tested; a sector out of view is left as it was.
+	func tick(eye: Vector3, planes: Array) -> void:
 		var sw := Time.get_ticks_usec()
-		var n := _entries.size()
-		if n == 0:
+		if _count == 0 or halted:
 			tick_usec = 0
 			return
-		var count := n if all else ceili(float(n) / SLICE_FRAMES)
 		var dead := false
-		for _k in range(count):
-			if _cursor >= n:
-				_cursor = 0
-			var entry: Array = _entries[_cursor]
-			_cursor += 1
-			# Test the raw Variant first: a freed player raises on a typed
-			# assignment (World3D._tick_idle_animations, round 214).
-			if not is_instance_valid(entry[0]) or not is_instance_valid(entry[1]):
-				dead = true
+		for key in _sectors:
+			var sector: Array = _sectors[key]
+			if not MapAnimation.sector_in_view(sector[0], planes):
+				if sector[2]:
+					# Just left the view: the clocks stop, the drawing stays.
+					sector[2] = false
+					for entry in sector[1]:
+						if is_instance_valid(entry[0]) and (entry[0] as AnimationPlayer).active:
+							(entry[0] as AnimationPlayer).active = false
+							running -= 1
 				continue
-			var player: AnimationPlayer = entry[0]
-			var on := MapAnimation.in_range(entry[2], entry[3], entry[4], eye, planes, entry[5])
-			if player.active != on:
-				player.active = on
-				running += 1 if on else -1
+			sector[2] = true
+			for entry in sector[1]:
+				# Test the raw Variant first: a freed player raises on a typed
+				# assignment (World3D._tick_idle_animations, round 214).
+				if not is_instance_valid(entry[0]) or not is_instance_valid(entry[1]):
+					dead = true
+					continue
+				var player: AnimationPlayer = entry[0]
+				var root: Node3D = entry[1]
+				var on := MapAnimation.in_range(entry[2], entry[3], eye)
+				if root.visible != on:
+					root.visible = on
+				if player.active != on:
+					player.active = on
+					running += 1 if on else -1
 		if dead:
+			_prune()
+		tick_usec = Time.get_ticks_usec() - sw
+
+	## Drops every entry whose object has been freed, everywhere, and
+	## recounts.
+	func _prune() -> void:
+		running = 0
+		_count = 0
+		for key in _sectors.keys():
 			var alive: Array = []
-			running = 0
-			for entry in _entries:
+			for entry in _sectors[key][1]:
 				if is_instance_valid(entry[0]) and is_instance_valid(entry[1]):
 					alive.append(entry)
-					if (entry[0] as AnimationPlayer).active:
-						running += 1
-			_entries = alive
-			_cursor = 0
-		tick_usec = Time.get_ticks_usec() - sw
+					running += 1 if (entry[0] as AnimationPlayer).active else 0
+			if alive.is_empty():
+				_sectors.erase(key)
+			else:
+				_sectors[key][1] = alive
+			_count += alive.size()
+		var still: Array = []
+		for entry in _always:
+			if is_instance_valid(entry[0]) and is_instance_valid(entry[1]):
+				still.append(entry)
+				running += 1
+		_always = still
+		_count += still.size()

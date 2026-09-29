@@ -5406,18 +5406,32 @@ func _tick_map_animations() -> void:
 		var cam := get_viewport().get_camera_3d() if get_viewport() != null else null
 		var eye: Vector3 = cam.global_position if cam != null else (player.global_position if player != null else Vector3.ZERO)
 		_map_animations.tick(eye, cam.get_frustum() if cam != null else [])
+		# SRREVAMP_QA_MAPANIM_SPLIT=<frame> + _MODE=<mode>: the cost split
+		# (MapAnimationProbe). QA only.
+		var split := int(OS.get_environment("SRREVAMP_QA_MAPANIM_SPLIT"))
+		if split > 0:
+			var mode := OS.get_environment("SRREVAMP_QA_MAPANIM_MODE")
+			if Engine.get_process_frames() == split:
+				MapAnimationProbe.apply(_map_animations, mode)
+			if mode == "manual" and Engine.get_process_frames() > split:
+				MapAnimationProbe.step(_map_animations, get_process_delta_time())
 	# SRREVAMP_QA_MAPANIM=n: every n ticks, the clips registered and running
-	# and what the frame cost -- the measurement behind round 645's cost
-	# figures, compared against a run with SRREVAMP_NO_MAP_ANIM=1.
+	# and what the frame cost -- process time, and the viewport's measured
+	# render time on the CPU and the GPU (the skinning and the draws) -- the
+	# measurement behind round 645's cost figures.
 	var every := int(OS.get_environment("SRREVAMP_QA_MAPANIM"))
-	if every > 0 and Engine.get_process_frames() % every == 0:
-		print("QA MAPANIM frame %d registered=%d running=%d driver_us=%d process_ms=%.3f fps=%.1f" % [
-			Engine.get_process_frames(), _map_animations.size(), _map_animations.running, _map_animations.tick_usec,
-			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, Engine.get_frames_per_second()])
-
-## SRREVAMP_NO_MAP_ANIM=1 leaves every map object still, as before round 645:
-## the A/B switch its frame-cost measurement runs against. Not a player option.
-var _map_animations_off := OS.get_environment("SRREVAMP_NO_MAP_ANIM") != ""
+	if every > 0:
+		var vp := get_viewport().get_viewport_rid()
+		if Engine.get_process_frames() <= 1:
+			RenderingServer.viewport_set_measure_render_time(vp, true)
+		if Engine.get_process_frames() % every == 0:
+			print("QA MAPANIM frame %d registered=%d running=%d driver_us=%d mix_us=%d process_ms=%.3f render_cpu_ms=%.3f render_gpu_ms=%.3f draws=%d objects=%d" % [
+				Engine.get_process_frames(), _map_animations.size(), _map_animations.running, _map_animations.tick_usec,
+				MapAnimationProbe.mix_usec, Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0,
+				RenderingServer.viewport_get_measured_render_time_cpu(vp),
+				RenderingServer.viewport_get_measured_render_time_gpu(vp),
+				int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)),
+				int(Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME))])
 ## monster id -> the assembled character behind its body, for playing its
 ## own hit and death animations by type.
 var _monster_assembled: Dictionary = {}
@@ -9184,7 +9198,7 @@ func _objects_commit(job: Dictionary) -> void:
 		container.add_child(node)
 		# Round 645: its clip starts at t = 0 now, as a sector's objects do
 		# in retail; object.ifo flag bit 0 keeps it running at any range.
-		if (node.has_meta(MapAnimation.META_ANIMATED) or entry.path.to_lower().ends_with(".cpd")) and not _map_animations_off:
+		if node.has_meta(MapAnimation.META_ANIMATED) or entry.path.to_lower().ends_with(".cpd"):
 			_map_animations.add(node, (entry.flags & 1) != 0)
 		loaded += 1
 	_prepared_models = {}
@@ -9656,7 +9670,10 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_MAPANIM=n  every n frames, `QA MAPANIM ... registered=
 ##                          running= driver_us= process_ms=`: the animated
 ##                          map objects (round 645) and what the frame cost;
-##                          SRREVAMP_NO_MAP_ANIM=1 leaves them still (the A/B)
+##                          SRREVAMP_NO_MAP_ANIM=1 leaves them still (the A/B);
+##                          SRREVAMP_QA_MAPANIM_SPLIT=<frame> with _MODE=<mode>
+##                          switches them to one probe state at that frame
+##                          (MapAnimationProbe: the cost split)
 ##   SRREVAMP_QA_ANIM=1     play the real character animation (off by
 ##                          default -- it still renders wrongly, see
 ##                          docs/WORLD_ISSUES.md's ninetieth round)
