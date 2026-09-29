@@ -1488,8 +1488,8 @@ Still open, by the files each would add:
 
 ### Trees and materials (round 625 and its review): leaves load, and the material rule is the client's (flag word, env map, MTRL mod, two passes). These are left:
 
-- **Tree sway:** swaying trees now expose their `.bsk` and `.ban`, but pieces are still placed
-  rigid and skinned leaves draw in bind pose.
+- **Tree sway — done in round 645.** Trees, reeds, tentacles and the other 146 skeletal map models
+  (2,276 placements) play their `default` type-0 clip as retail does. See the next section.
 - **MTRL mod details:**
   - its animated colour (the keyframes) replaces the layer's in retail, and that is not drawn;
   - the TEXTUREFACTOR argument is taken as white;
@@ -1498,6 +1498,22 @@ Still open, by the files each would add:
 - **Unread flag bits:** `0x40`, `0x100` and `0x2000` are not read. `0x4` (specular) and `0x8`
   (lighting off) are read but not drawn.
 - **Mod sets:** only the always-on `ambient` set is applied; clip-bound sets are not.
+
+### Map objects that move (round 645): the skeletal clips play as retail plays them. These are left:
+
+- **After a one-shot.** What retail shows when a map object's one-shot clip ends (IsCyclic 0: the
+  `chinaetc_horse*` bodies, several scenery NPCs) is OPEN. The client holds the last key.
+- **Rigid pieces of a skeletal object.** 20 animated models, such as `bagh_city_portal` and the
+  Tarim rope bridges, have unskinned pieces that stay put. Whether retail hangs them on a bone is
+  OPEN; mesh+0x3c bit 0x400 is the lead.
+- **TEXANI sprite animation** (52 models, 253 placements). READ in outline in BSR_FORMAT.md, "How a
+  map object animates". It needs the material path to offset the UV by the frame grid.
+- **Cloth**, the DYVERTEX/DYJOINT/DYLATTICE mods (143 models, 550 placements: tents, sails, banners,
+  including the Taklamakan `ruin_takla_tent*`). Not read.
+- **`.o2` list +0x24** objects update only in the 9 nearest sectors at range 480. This client does
+  not draw the list (round 75).
+- **The view-distance option** (object range 1,200 / 2,000 / 2,500) does not exist here; the range
+  is its 2,500 default.
 
 ## Parked, with the state written down
 

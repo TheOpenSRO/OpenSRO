@@ -5393,6 +5393,31 @@ static func _loop_ms(anim: BanReader.ParsedAnimation, seconds: float) -> float:
 	return fposmod(seconds * 1000.0, float(anim.duration_ms))
 
 var _idle_anim_time := 0.0
+
+## The map objects that move (round 645): MapAnimation.Driver runs each clip
+## while its object is in range and in view, as retail's update does.
+var _map_animations := MapAnimation.Driver.new()
+
+## The object range is measured from the camera, as retail's is (READ: the
+## camera struct's +0x4, SWorld::vslot_004); the camera's frustum stands in
+## for the sectors the view touches (see MapAnimation).
+func _tick_map_animations() -> void:
+	if _map_animations.size() > 0:
+		var cam := get_viewport().get_camera_3d() if get_viewport() != null else null
+		var eye: Vector3 = cam.global_position if cam != null else (player.global_position if player != null else Vector3.ZERO)
+		_map_animations.tick(eye, cam.get_frustum() if cam != null else [])
+	# SRREVAMP_QA_MAPANIM=n: every n ticks, the clips registered and running
+	# and what the frame cost -- the measurement behind round 645's cost
+	# figures, compared against a run with SRREVAMP_NO_MAP_ANIM=1.
+	var every := int(OS.get_environment("SRREVAMP_QA_MAPANIM"))
+	if every > 0 and Engine.get_process_frames() % every == 0:
+		print("QA MAPANIM frame %d registered=%d running=%d driver_us=%d process_ms=%.3f fps=%.1f" % [
+			Engine.get_process_frames(), _map_animations.size(), _map_animations.running, _map_animations.tick_usec,
+			Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, Engine.get_frames_per_second()])
+
+## SRREVAMP_NO_MAP_ANIM=1 leaves every map object still, as before round 645:
+## the A/B switch its frame-cost measurement runs against. Not a player option.
+var _map_animations_off := OS.get_environment("SRREVAMP_NO_MAP_ANIM") != ""
 ## monster id -> the assembled character behind its body, for playing its
 ## own hit and death animations by type.
 var _monster_assembled: Dictionary = {}
@@ -9157,6 +9182,10 @@ func _objects_commit(job: Dictionary) -> void:
 		# _qa_look_report, which reads these names straight back.
 		node.name = "Obj_%s_%d" % [entry.path.get_file().get_basename(), loaded]
 		container.add_child(node)
+		# Round 645: its clip starts at t = 0 now, as a sector's objects do
+		# in retail; object.ifo flag bit 0 keeps it running at any range.
+		if (node.has_meta(MapAnimation.META_ANIMATED) or entry.path.to_lower().ends_with(".cpd")) and not _map_animations_off:
+			_map_animations.add(node, (entry.flags & 1) != 0)
 		loaded += 1
 	_prepared_models = {}
 	# Retail's reflection draws the scenery too (round 628 review).
@@ -9624,6 +9653,10 @@ func _update_blob_shadow() -> void:
 ##                          one region over -- how round 563's tour crossed
 ##                          boundaries in 28 ticks a hop
 ##   SRREVAMP_QA_RADIUS=n   load an n-region radius instead of the default
+##   SRREVAMP_QA_MAPANIM=n  every n frames, `QA MAPANIM ... registered=
+##                          running= driver_us= process_ms=`: the animated
+##                          map objects (round 645) and what the frame cost;
+##                          SRREVAMP_NO_MAP_ANIM=1 leaves them still (the A/B)
 ##   SRREVAMP_QA_ANIM=1     play the real character animation (off by
 ##                          default -- it still renders wrongly, see
 ##                          docs/WORLD_ISSUES.md's ninetieth round)
@@ -12427,6 +12460,8 @@ func _physics_step(delta: float) -> void:
 	# with the real animation.
 	# NPCs and monsters, playing their own standing animations.
 	_tick_idle_animations(delta)
+	# Map objects that move -- trees, reeds, tentacles (round 645).
+	_tick_map_animations()
 
 	if _player_skeleton != null and _character_assets.has(_player_gender):
 		# The game's default gait is a run -- `chinaman_fighter_runforward`

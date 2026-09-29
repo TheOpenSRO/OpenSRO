@@ -7094,6 +7094,225 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-forty-fifth round: the map moves — trees sway, the Taklamakan tentacles writhe, and reeds, grass, flowers, lanterns, boats and grazing animals play their own animations
+
+A player reported on v0.1.461 that "some map assets around the game world are animated, like these
+tentacles", with a screenshot of spiked tentacles in the Taklamakan. They also said there are "more
+parts of the map that you'll need to find". Round 625 had left the trees still: their `.bsk` and
+`.ban` were read, but the pieces were placed rigid and the skinned leaves drew in bind pose. This
+round counted what moves, read how retail plays it, and plays it the same way.
+
+### 1. What moves: the census (MEASURED)
+
+`client/tools/mapanim_census.gd` (new) reads every model in Map.pk2's `object.ifo` the way
+ObjectLoader reads it, with a `.cpd` read through its children. It counts each model's placements
+over all 4,050 regions' `.o` and `.o2` list-2 records, de-duplicated by model and position. The
+classes:
+
+| Class | Models | Placements | Regions |
+|---|---:|---:|---:|
+| skeletal (a `.bsk` and at least one `.ban`) | 152 | 2,281 | 231 |
+| **animates** (what this client now plays, §2) | **146** | **2,276** | **226** |
+| skeleton, no clip | 15 | 76 | 15 |
+| TEXANI mod (texture sprite animation) | 52 | 253 | 69 |
+| DYVERTEX/DYJOINT/DYLATTICE mod (cloth: tents, sails, banners) | 143 | 550 | 175 |
+| per-vertex motion section in a mesh | 139 | 767 | 174 |
+
+Before this round, **0** placements animated.
+
+**What is in the skeletal set:**
+- **The tentacles** are `res\nature\ruins\taklamakan des\edimmu\ruin_takla_edimmu1_1.bsr`: 4 skinned
+  pieces, a 41-bone skeleton, and `ruin_takla_edimmu1.ban` (6,666 ms, cyclic). It is placed four
+  times in the Taklamakan, at 100/131, 100/134, 100/135 and 101/130. A placement is a pit ringed
+  with tentacles (the picture below). `ruin_takla_edimmu3`/`3_1` (8 placements) have no skeleton and
+  stand still.
+- **Trees:**
+  - Every Jangan tree: `tre_maple01`/`02`/`03`/`03_big`, `tre_tree01`/`02`, `tre_smalltree01`,
+    `tre_bank*`, `tre_frie01`, `tre_willow*`, `tre_leaf01`.
+  - `tre_bamboo04` (98 placements).
+  - The Tarim thorn trees, `oas_tarim_thorng01_01`.
+- **Ground cover:**
+  - Dunhuang reeds, `fw_cd_reeds_l` (444 placements, the most placed);
+  - pond grass `grs_water_big` (256), `grs_weed02`/`04`;
+  - `c_pondflower` (153), `flw_s01_*_ani`.
+- **Other Taklamakan and Tarim objects:** the robber tower and the two rope bridges
+  `oas_tarim_rob_*_brid*`.
+- **Lanterns:** `cj_pub01_light01..03`, `cj_adult04_light01`, `cj_luxu_light` and `cj_pub03_light`.
+- **Boats:** the Dunhuang boats `w_cd_boat`/`w_cd_ani_boat`, the ferries `cj_ferry_boat_*` and
+  `rock_mt_ship`.
+- **Gates and portals:** `bagh_city_portal`, `alex_portal`/`fportal`, the fortress gates, and the
+  Baghdad bridge.
+- **Animals and people:**
+  - the Central Asian sheep, the Alexandria camels and horses, and `hawk`;
+  - the Jangan chickens and goldfish;
+  - `chinaetc_horse1..4`, the NPC bodies placed as scenery.
+
+The densest regions are Jangan's 97/167 (135 placements), Donwhang's 124/237 (134) and 98/169
+(120).
+
+### 2. How retail plays a map object (READ, sro_client.exe)
+
+The addresses and excerpts are in docs/protocol/BSR_FORMAT.md, "How a map object animates".
+
+- **One path for every type.** The compound factory `ResourceMgr::FUN_00be92b0` builds CCompChar,
+  CCompBldg or CCompSimple. All three share the animation slots (update 0xc33230, play 0xc2bbb0).
+  `FUN_00c2b930` creates the AniMixer only when the `.bsr` has a skeleton **and** at least one
+  animation.
+- **The clip.** A sector's objects are started by `Map::FUN_00a34140`/`00a342b0`/`00a34a90`, which
+  call `Map::FUN_00a38dc0(obj, "default", 0)` (the string is built from 0xd9bac8). So the clip is
+  animation group `default`, **action type 0**, and there is **no fallback**
+  (`AniMixer::FUN_00c551a0`).
+  - Six skeletal models carry only a type-60 entry and do not move in retail:
+    `rok_key03..05_01`, `euro_esteuro_viking20`, `big_gate_ja_01` and `fort_stone_ht`. That is
+    why 146 of the 152 play.
+- **Looping.** The `.ban`'s own IsCyclic word (prim +0x60) picks CRTAniCyclic or CRTAniOneShot. A
+  one-shot plays once.
+- **Speed and clock.** Speed is 1.0. Time is in ms, wrapping at the `.ban` Duration
+  (`CRTAniCyclic::vslot_002` 0xc74790). The authored FPS is unused.
+- **Phase.** There is **no random phase**: no `rand()` is on the start path. The clip starts at
+  t = 0 when its sector's objects are started.
+- **Cull.** `SWorld::vslot_004` (0xa2cf60) updates a list-2 object only while its fade state
+  obj+0x1e is not 0 (`SWorld::FUN_00a38a50`). That test is `dist - radius < range`:
+  - `dist` is the full 3D distance from the camera (camera struct +0x4);
+  - `radius` is `sqrt((dx/2)² + (dz/2)²)` of the object's mesh bounds (asm 0xa389f0);
+  - `range` is `DAT_00ec54b0`, 2,500 at start, `min(0.8 × view distance, 2500)`.
+
+  The update also covers only sectors the view frustum touches. Out of range the clock **pauses**,
+  and the object is not drawn either (`Map::FUN_00a1e530`), so the pause cannot be seen. An
+  object.ifo flag bit 0 object is updated every frame; 2 of the 146 have it (`rok_key01_01`,
+  `naruter_fish01`). No separate animation-LOD distance exists. The every-Nth-frame skip
+  (`DAT_01113194`) has no writer, so it is INFERRED off.
+- **Skinning.** It is the characters' path: AniMixer, then the runtime skeleton, then
+  CObjRendererVS with its SKIN permutations. Whether an unskinned piece of a skeletal object follows
+  a bone is OPEN.
+- **Tree sway is skeletal.** Round 625's per-mesh word (mesh+0x1f8) is **not** animation: its only
+  readers are the object ray test (`FUN_00bd3c50`) and `FUN_00bd3130`, so it marks meshes that take
+  ray hits. No wind, sway or wave strings are in the exe, and no wave shader permutation exists.
+
+### 3. What was built (OURS where marked)
+
+- **`client/scripts/world/map_animation.gd` (new).** The PREPARE half reads the `.bsk` and the one
+  `.ban` on the objects job's worker. The COMMIT half:
+  - gives the template a `Skeleton3D` (`Skeleton3DBuilder.build_skeleton3d`, the characters'
+    builder);
+  - gives each skinned piece a `Skin` (`build_skin`);
+  - adds an `AnimationPlayer` whose `Animation` is built from the `.ban` key times.
+
+  A track whose keys never change is baked into the template skeleton's pose instead of played.
+  Tree clips are mostly held poses: a maple is 1 track out of 5 bones, the tentacles 53 tracks out
+  of 41 bones × 2.
+- **Shared by every placement.** Placements are `duplicate()`s of the template, so they share the
+  Animation, the Skins and the meshes. Each owns only its skeleton and its player.
+- **The driver.** `MapAnimation.Driver`, one per World3D:
+  - it starts each placed clip at t = 0 when the region's objects are placed (READ that retail has
+    no phase; OURS that it starts per region, not per sector);
+  - it runs a clip only while `dist - radius < 2500` from the camera and the object is in view;
+  - ifo flag bit 0 runs at any range.
+
+  The view test is on the object's own bounding sphere, not its sector (OURS: an in-range object
+  just off screen keeps its clock in retail and is paused here; neither draws it). The driver tests
+  a quarter of the list each frame (OURS, a lag of 4 frames at most; see §4).
+- **ObjectLoader.** It keeps each skinned piece's bone palette and calls the two halves.
+  - An animated object binds its pieces before any two-pass twin is made, so the twin shares the
+    skin.
+  - A still object is built exactly as before.
+- **What a one-shot shows after it ends** is OPEN. It holds the last key (OURS). This affects the
+  horses (`chinaetc_horse*_basic`, IsCyclic 0), several scenery NPCs and nothing else in the census.
+- `SRREVAMP_QA_MAPANIM=n` prints `QA MAPANIM frame .. registered running driver_us process_ms`.
+  `SRREVAMP_NO_MAP_ANIM=1` leaves everything still, for the A/B.
+
+### 4. Verified
+
+**Motion, measured.** Pixel change is `compare -metric AE -fuzz 3%` inside the object's rectangle
+in 640×360 movie frames (60 per second), against frame 200 of the held last viewpoint, beside a
+ground control rectangle.
+
+- **Tentacles**, at 101/130 (the pit at local 715.9, 635.8), with the `high` viewpoint:
+
+  | After | This branch | Base |
+  |---|---|---|
+  | +0.5 s | 1,401 | 0 |
+  | +1.0 s | 2,490 | 0 |
+  | +1.5 s | 3,081 | 0 |
+  | +2.0 s | 3,090 | 0 |
+  | +2.5 s | 3,657 | 0 |
+  | +3.0 s | 4,144 | 0 |
+
+  The control rectangle was 0 in both runs.
+- **Jangan maples**, at 97/168 (the round-625 grass strip), in the lower canopy rectangle:
+
+  | After | This branch | Base |
+  |---|---|---|
+  | +1 s | 5,137 | 364 |
+  | +2 s | 6,665 | 645 |
+  | +3 s | 7,474 | 804 |
+
+  The base's change is sky and clouds through the leaves. The control rectangle was 0 in both
+  runs.
+- **Pictures** (for a human; the table is the measurement) are in the session scratchpad under
+  `mapanim_shots/`:
+  - `tent_motion.gif` and `maple_motion.gif` (frames 200–398);
+  - `tent_n_base_vs_new.png` and `maple_base_vs_new.png`;
+  - `tentB_views.png`, the pit from four sides.
+
+  GL was the RX 5700 XT through VirtualGL. `SCRIPT ERROR` count was 0, and the `ERROR:` lines
+  matched the base's.
+
+**Cost, measured.**
+- **Headless, uncapped (`client/tools/mapanim_bench.gd`, new).** Per running clip per frame: maple
+  1.5 µs, pond grass 1.9 µs, reeds 6.2 µs, sheep 7.3 µs, tentacles 29 µs. 500 mixed clips cost
+  4.8 ms. A paused clip costs nothing measurable (+0.2 to 1.2 µs for the whole set).
+- **In Jangan's 25 regions, 456 clips registered.**
+  - The driver took 1,050 µs a frame testing every clip.
+  - With world centres cached and a quarter tested per frame it takes about 200 µs.
+  - 182 clips run from the maple viewpoint.
+  - Process time over 44 samples was 20.3 ms mean against 17.7 ms with `SRREVAMP_NO_MAP_ANIM=1`.
+    That is +2.6 ms on a box shared with other lanes; the p10–p90 bands were 17.6–22.1 and
+    15.6–19.0.
+
+**Tests.**
+- New: `client/scripts/world/map_animation_test.gd`, on a synthetic tree, synthetic `.bsk`/`.ban`/
+  skinned `.bms` and an in-memory archive. It checks:
+  - the default/type-0 choice and its missing fallback;
+  - the bound skin;
+  - loop by IsCyclic;
+  - the baked held track;
+  - the shared Animation and Skin;
+  - t = 0 and paused at start;
+  - the range and flag-bit-0 tests;
+  - a real Camera3D frustum's sign;
+  - the pose at 0.5 s and 2.5 s against `Skeleton3DBuilder.apply_ban_pose_at` (the character path);
+  - that a freed object leaves the driver.
+- Box: `remote_godot.sh check` gives ALL LOAD, and `tests` ran **162 suites, 0 failing**. Go:
+  `go build ./... && go test -count=1 -p 1 ./...` is green: 60 packages ok, exit 0.
+
+**NEGATIVE: the suite against dev 8658370** (copied into a base client on the box):
+
+```
+FAIL r645: MapAnimation exists (res://scripts/world/map_animation.gd)
+FAIL r645: the tree gets its skeleton (got <Object#null>)
+FAIL r645: the skinned leaves are bound to it, not drawn in bind pose (skin <Object#null>, skeleton '..')
+FAIL r645: the tree gets a player with its clip
+FAILURES: 4
+```
+
+### Open
+
+- **What a one-shot map clip leaves** when it ends: bind pose or its last key. It holds the last
+  key here.
+- **Whether an unskinned piece of a skeletal object follows a bone.** 20 of the animated models have
+  rigid pieces, such as `bagh_city_portal` with 5 of 8 and the Tarim rope bridges with 6 and 7. They
+  stay put here.
+- **TEXANI sprite animation** (52 models, 253 placements) is READ in outline and not drawn: a
+  frame grid, 1000/fps ms a frame, loop/ping-pong flags, and a UV offset uploaded to VS register
+  0x17.
+- **Cloth** (DYVERTEX/DYJOINT/DYLATTICE, 143 models: tents, sails, banners, including the
+  Taklamakan `ruin_takla_tent*` and `ruin_takla_ship_01`) is not read.
+- **The `.o2` list +0x24 objects** update only in the 9 nearest sectors with a range of 480
+  (`DAT_00de4f64`). This client does not draw that list (round 75).
+- **The view-distance option** that lowers the range to 1,200 or 2,000 does not exist in this
+  client.
+
 ## Rounds 636-640 integration review (feat/walls): a death ends the wall on the default respawn path, a re-bound hotbar slot takes its level's code, and the wall's refusal tests 'tel2' and 'tel3'
 
 The final review of feat/walls (dev 5a82339 + rounds 636-640 and their follow-ups, at b38b358) read
