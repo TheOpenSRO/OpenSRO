@@ -1083,6 +1083,31 @@ count or gold at box+0x8b8 and sends the move.
   - MsgBoxDivideCount (mode 5, Shift+click a stack): retail's stack split, which this client
     does not have.
 
+### The player block (round 629) — **berserk orbs, stat panel, race emblem done; these are left**
+Round 629 rebuilt the top-left block from `CIFPlayerMiniInfo` (`docs/protocol/player_mini_info.md`):
+the orbs fill bottom-up and an empty one is hidden, the ready circle shows at five and a click on it
+is the berserk key, activation lights the flames/face/glow and drains one orb per 12 s, the "E"
+button toggles the stat panel (live from the stats packet, balances by the client's own formula),
+the race emblem follows characterdata's Country, the "+" opens the character window, and the HP/MP
+bars use `pmi_hp.ddj` / `pmi_mp.ddj`. Left:
+- [ ] **The portrait** is the frame's empty socket. Retail renders the player's own model, posed
+      with animation 0x3c, from a camera at the `Bip01 Head` bone into a 128x128 buffer
+      (`FUN_007b7740`); which of the floats 0.2 / 6.5 / 30.0 / 0.1 is distance, lift and field of
+      view is not settled (READ the camera build in `FUN_00a5a8c0` next). Then a SubViewport with
+      its own World3D and a copy of the player's skeleton and worn meshes.
+- [x] **Hit rate / Parry ratio** -- round 629's review: the stats packet's fifth and sixth tails,
+      the rates combat already uses (innate 10 + level + weapon HitRateMin / armour parry), in both
+      windows. Still OPEN: retail adds buffs and masteries to params 11 / 9; ours does not.
+- [ ] **Buffs do not change the panel's numbers** because the server's buff book only records the
+      run-speed contributions (`internal/buff`); the panel already re-asks on OpBuffStart/End.
+- [ ] **Hwan-level art** (`pmi_jahwan_02*`, blue) needs a Hwan level (`player+0x764`, INFERRED
+      `_CHAR.HwanLevel`); the berserk display's extra seconds (`player+0x20f8`, Hwan socket stones)
+      likewise. The "+" button's blink (`FUN_00655ec0(1)`) is not drawn.
+- [x] **The berserk end** -- round 629's review: the server pushes 0x30BF kind 4 (body mode) on
+      at activation and off when it runs out; the display ends on its own timer 2, and on death and
+      zone reset (`FUN_007b5300`). OPEN: the value-1 extra byte (chardata+5) is sent as 0; other
+      players' body modes are not drawn.
+
 ### Seasonal event decorations — **hidden by default (round 583)**
 The user decided on 2026-09-26 that early testing gets no seasonal decorations. Christmas,
 Halloween, the China open-beta (OBT) event set and the summer festival set are left out of every

@@ -7094,6 +7094,233 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-twenty-ninth round, review follow-up: hit rate and parry show numbers, the stat panel no longer floods the server, and a berserk ends the way the client ends it
+
+The review confirmed every READ claim of round 629 byte for byte and a real-X run of E, +, Tab and
+the ready circle. It found six things; this follow-up fixes them. Labels as in the round.
+
+**1. Hit rate and Parry ratio have numbers.** READ (the reviewer's): retail's server sends both in
+0x303D -- the client's `FUN_00880f80` stores the u16 hit rate at +0x14 and parry at +0x16 of the
+stats block both windows draw -- built by `CGObjPC::vslot_334` (0x4ebe30) from params 11 and 9.
+srrevamp already computes the two for combat (rounds 378/379): `combat.CharacterRate(level, the
+weapon's HitRateMin)` and `CharacterRate(level, defenderParryRate)`. They are now the stats
+packet's fifth and sixth tails (`characterRates`, rounded), decoded by `StatsNet` and drawn in
+`GDR_PMI_TXT_HITDAT`/`PARRYDAT` and the character window's `GDR_PI_TEXT_HIT_DAT`/`PARRY_DAT`. The
+stats.go comment that "the engine never reads these two" was wrong and is gone. OPEN: retail also
+adds buffs and masteries to params 11 and 9; ours carries neither.
+
+**2. No refresh storm.** The panel asked for stats on EVERY OpBuffStart/End in the zone, and zone
+entry replays everyone's buffs; and every equipment list counted as an equip change, which opening
+the bag also sends. Now: only this player's buffs (behind `SelfCast.claims_start/claims_end`), only
+a real change of what is worn (an empty acknowledgement list is skipped and the next real list is
+compared with the last), and every cause in one frame makes ONE request (a deferred flush).
+
+**3. The berserk end.** READ: the client's 0x30BF handler (0x8a80a0), kind 4 (the body mode):
+value 1 reads one more byte and, for its own player, calls `FUN_00778ae0(0, 1)` -- the display
+starts; value 0 ends the body mode and does not touch the display. The server's side is
+`CGObjChar::SetBodyMode` (0x4a9fc0) -> `GObjPC::BroadcastStateChange` (0x4a8340), which appends
+chardata+5 for kind 4 value 1. `FUN_007b5300` -- which round 629 called "the end from the server"
+-- is the reset run on DEATH (kind 0 value 2 -> `FUN_0077b000`) and on a ZONE RESET
+(`FUN_00787860`). Now:
+- the server broadcasts 0x30BF kind 4 value 1 (extra byte 0, OPEN what chardata+5 holds) at
+  activation and value 0 when the activation runs out -- the tracker expires lazily, so a timer
+  (`scheduleBerserkEnd`) pushes it, standing down if a newer activation moved `ActiveUntil`;
+- the client decodes the extra byte, starts the display on its own value 1, ends it on its own
+  timer 2 (the 12 s drain), and fades it out on death and on a zone change (`reset_hwan_display`);
+- an AttackResult's `berserk_active` no longer starts or ends anything -- retail's attack packets
+  carry no such flag -- and the berserk request's gate tests the count only, as 0x00778ac0 does.
+
+**4. Fade conflicts.** Each item's running fade is kept and killed on a new fade, a refresh or a
+start, so an old fade-out's hide callback cannot hide the orbs of a berserk started after it.
+
+**5. The setter** is `FUN_00778ae0` exactly: `(0, 0)` refreshes nothing; a non-zero count without
+the flag refreshes; the flag starts the display unless timer 2 is running.
+
+**6. Docs** (`docs/protocol/player_mini_info.md`): `FUN_007b5300` is the death/zone reset; the
+12 s drain is client timer 2; the count arrives in 0x304E type 4; `+0x884` (stat points, 0x304E
+type 3) and `+0x20d8` (the server-sent MaxLevel) are READ now, not INFERRED.
+
+**Found on the way.** A GM `/goto` compared the destination with the ENTER-WORLD zone, so after
+one zone change `/goto jangan` answered "travelling" and left the player where they were
+(`_apply_gm_move`); it compares with the current zone now. `/hwan <0-5>` is a new GM test tool
+(OURS, not a retail command) that sets the orbs in the tracker and on the row.
+
+### Real input (xdotool on an Xvfb display, through Login -> Character select)
+
+Run 1, a quiet server: a click at the "E" button, `/goto hotan`, `/goto jangan` typed into chat:
+
+    World3D: player stat panel open
+    GM REPLY: travelling to hotan
+    World3D: zone hotan (92/135) is built in its own frame -- the server's FrameRegion 92/135
+    GM REPLY: travelling to jangan
+    World3D: zone jangan (97/168) is built in its own frame -- the server's FrameRegion 97/168
+    stats packets applied with the panel open: 1;  panel refresh requests: 0
+    World3D: player stat panel: str 20 int 20 phy 21 ~ 23 def 6 mag 35 ~ 40 def 12 bal 75 % / 62 % hit 35 parry 11 (level 1)
+
+(level 1: hit 10 + 1 + the starter blade's HitRateMin 24 = 35; parry 10 + 1 + no armour parry = 11.)
+
+Run 2, `-monster-ai -monster-battle -monster-aggro -player-dead-state`: `/hwan 5`, Tab, `/spawn
+Earth Ghost 3`:
+
+    GM REPLY: berserk orbs now 5
+    KEYMAP Tab -> berserk 8: berserk requested
+    World3D: body mode 1 for 1 (this player)
+    World3D: berserk result: activated true, gauge 0, active true
+    GM REPLY: spawned 3 x Earth Ghost (level 27, HP 1451) at 48, -2 -- ids 25,26,27; no respawn
+    World3D: death -- berserk display reset (active now false)
+
+The frames (panel open, back in Jangan, ready, berserk on, dead with the orbs faded) are in the
+round's review contact sheet; the log lines are the measurement.
+
+### Tests and negatives
+
+`hud_player_info_test.gd` grew the setter, drain, reset, fade-conflict, hit/parry and 0x30BF-extra
+checks. Run against round 629's first commit (1dfb95e):
+
+    FAIL a count of 0 without a start leaves the berserk display running
+    SCRIPT ERROR: Invalid call. Nonexistent function 'reset_hwan_display' in base 'Control (HudPlayerInfo)'.
+    FAIL the live checks never reported (a script error stopped them)
+
+Go: `TestCharacterStatsResultCarriesHitAndParry` (36 / 12 built for a level-2 character with a
+HitRateMin-24 weapon), `TestBodyModeStateChangeLayout`, `TestBerserkBroadcastsBodyModeOnAndOff`
+(on to both players, then off from the timer), `TestHwan`; against 1dfb95e they do not build
+(`undefined: StateKindBodyMode`, `undefined: berserkEndDelay`, `out.HitRate undefined`).
+`hud_main_popup_test.gd` now checks the character window's two new rows -- and caught an
+indentation slip in this round that had turned the old-server fallback into the `has_rates` else.
+`remote_godot.sh check`: ALL LOAD; `remote_godot.sh tests`: 149 suites, 0 failing;
+`go test -count=1 -p 1 ./...`: all pass.
+
+## Six-hundred-and-twenty-ninth round: the berserk orbs fill from the bottom and light a ready circle you can click, the "E" button opens a live stat panel, and the race emblem sits on the portrait
+
+The report on v0.1.458: the berserk gauge ran backwards, the ready circle never appeared, the small
+button under the orbs did nothing, and there was no race emblem. Every one of these is the client's
+own `CIFPlayerMiniInfo`, and every value below is read out of it (`docs/protocol/player_mini_info.md`
+has the full account). Labels: READ, MEASURED, INFERRED, OURS, OPEN.
+
+### The gauge ran the wrong way, and dimmed what the client hides
+
+READ, `FUN_007b4f40(0)` (called from the count setter 0x00778ae0 and the one-time fill): the loop
+starts at member +0x3b0, which Create filled with control id 11 -- `GDR_PMI_CIRCLE4`, the bottom
+orb at (31,60) -- and walks up to +0x3a0, `CIRCLE0` at (7,13). One orb is SHOWN per charge
+(`player+0x886`, `_CHAR.RemainHwanCount`), the rest are HIDDEN (vtable +0x5c with 0). Ours lit
+`CIRCLE0` first and drew the unlit ones at 25 % alpha, which is the reversed fill the tester saw and
+the dark-red "empty" orbs in `ours_playerinfo.png`; retail's empty sockets are the frame's own black
+(`retail_stats.png`). The same refresh shows `GDR_PMI_BTN_JAHWAN` (id 13, `pmi_jahwan_button.ddj`,
+20x20 at 16,-5 -- the big circle) exactly when the count is 5.
+
+The click on that circle: the class's message map, read out of `.data` (entries of 0x28 bytes from
+0x00ebf1e8, pointers filled at 0x00d71d40), sends message 1 for ids 13..13 to 0x007b4f00, a jump
+to 0x00778ac0 -- `if (player+0x886 >= 5) FUN_0081e690(1)`, the berserk request, and nothing at all
+below five. The same map sends id 20 (`GDR_PMI_BTN_CINFO`) to the panel toggle 0x007b4c60 and id 34
+(`GDR_PMI_BTN_STATUP`) to 0x007b4c10, which opens the main popup on its character page.
+
+Activation (`FUN_007b4f40(1)`), the running timers (`vslot_005`) and the end (`FUN_007b5300`) are
+now drawn: the ready circle hides; five `pmi_jahwan_burn.ddj` flames (16x28 frames, 12 of them,
+each starting on `rand() % 12`) fade in over 1.0 s and step every 50 ms; the face and glow fade in
+over 3.0 s (0x00d8adc4); every duration/5 one orb and its flame fade out, the top one first. The
+duration is `60 + player+0x20f8 + a Hwan socket-stone bonus` seconds; the 60 is READ at 0x00d880d8
+and agrees with the server's own `berserk.Duration`, recovered from the server binary long ago.
+
+The refusal path: Tab and the click now run the client's own gate first -- with fewer than five
+known orbs nothing is sent and nothing is said, as 0x00778ac0 does. The server's "not full yet"
+reply stays for a client whose count was stale. The count is known from the moment the world loads
+now: the stats packet grew a fourth tail, `HwanCount` (the persisted `RemainHwanCount`), where before
+it arrived only with the first AttackResult.
+
+### The stat panel is live, from the character window's own source
+
+READ: Create hides `GDR_PMI_STA_CINFOBG` and the twenty `GDR_PMI_TXT_*` rows; the toggle flips the
+background and gives every row its state, so the panel stays open until the button is pressed
+again. `vslot_012` rewrites the values every frame: Str/Int (`+0x87c/+0x87e`), `%d ~ %d` attack
+ranges, `%d` defences, hit rate and parry from the stats block, and the two balances computed on
+the spot. Ours fills the rows from the same `StatsNet.Stats` the character window uses, on every
+stats packet, and asks for one when the panel opens, when the equipment reply arrives, and on
+OpBuffStart/End; level-up, a stat-point spend and a kill already bring one.
+
+The balance formula, READ at 0x007b802c..0x007b81d0 and again in the character window at
+0x006b8ee3..0x006b90fc (constants read from the exe: 100.0, 7.0, 56.0, 0.8571428656578064, 0.8,
+cap 0x78):
+
+    phy = ftol( (Str + 2L + 14) * 100 / float32( ((L-1)*7 + 56) * 0.857142866 ) ),  max 120
+    mag = ftol(  Int * 100 / ( (L+7)*5 * 0.8 ) ),                                   max 120
+
+`L` is `player+0x20d8`, which round 211 called "a stored byte whose source is unread" and left the
+two rows blank over. `FUN_009d4d50` keeps it at `max(itself, the level at +0x868)`: it is the highest
+level reached (READ), and this server never lowers a level, so the current level stands in
+(INFERRED). MEASURED against `retail_stats.png`: Str 21, Int 21, level 2 gives 72 % and 58 %, as the
+screenshot shows. The character window's `Phy./Mag. balance` rows are filled by the same function
+now.
+
+Hit rate and Parry ratio stay empty in both windows: the server sends neither (OPEN, as before). A
+buff starting or ending re-asks, but the numbers cannot move yet -- the server's buff book records
+only run-speed contributions (OPEN).
+
+### The race emblem, and the HP/MP art
+
+READ, the one-time fill 0x007b6fd0: `GDR_PMI_RACE_MARK` (id 15, 24x24 at 53,41, no DDJ in the
+layout) takes `FUN_0098caa0(race, 0)` -- 0 `com_kindred_china.ddj`, 1 `com_kindred_europe.ddj`. The
+race byte is the reference object's +0x9c, `_RefObjCommon.Country`. MEASURED: characterdata
+column 14 is 0 on all 26 `CHAR_CH_*` rows and 1 on all 26 `CHAR_EU_*` rows; the client now reads
+that column (`NpcTableReader.parse_country_by_code`) for the player's body row. The blue orbs of the
+European screenshot (`retail_eu.png`, level 110) are not the race: `FUN_007b5f40` swaps every Hwan
+piece to `pmi_jahwan_02*.ddj` when `player+0x764` is not 0, INFERRED to be `_CHAR.HwanLevel`; this
+server has none (OPEN).
+
+The HP and MP fills were `ifcommon\quick_hp.ddj` / `quick_mp.ddj`, found by searching the archive.
+Create itself hands the two gauges `playerminiinfo\pmi_hp.ddj` and `pmi_mp.ddj` (0x007b589a,
+0x007b58d1; 124x12, the gauges' own size), and those are drawn now.
+
+### The portrait (OPEN)
+
+Retail draws the player's own model there: `FUN_007b7740` poses it with animation 0x3c, finds
+`Bip01 Head`, and renders it alone into the 128x128 buffer Create made, over `pmi_face.ddj` (a black
+48x48 disc). The camera floats (0.2, 6.5, 30.0, 0.1, and +1.0 on the head's y) are read but which is
+the distance, the lift and the field of view is not settled from the decompile, so this round does
+not draw it. `docs/TODO.md` has the next step.
+
+### Measured on the box
+
+One `qa_shot.sh --server` boot (the round's own server build, port 15929), `SRREVAMP_QA_PMI=360,45`
+walking the block through its states; the stat panel opened by a mouse click pushed through the
+viewport at the button's rect (viewport input, not an X event). The log:
+
+    QA PMI ch_gauge0 frame 373 (panel false, orbs 0, ready false, emblem ...com_kindred_china.ddj)
+    QA PMI ch_gauge2 frame 418 (panel false, orbs 2, ready false, ...)
+    QA PMI: clicked GDR_PMI_BTN_CINFO at (55, 73)
+    World3D: player stat panel: str 20 int 20 phy 21 ~ 23 def 5 mag 35 ~ 40 def 11 bal 75 % / 62 % (level 1)
+    World3D: player stat panel refresh (equipment changed)          <- the weapon taken off
+    World3D: player stat panel: str 20 int 20 phy 5 ~ 5 def 5 mag 0 ~ 0 def 11 bal 75 % / 62 % (level 1)
+    World3D: player stat panel refresh (equipment changed)          <- and put back
+    World3D: player stat panel: str 20 int 20 phy 21 ~ 23 def 5 mag 35 ~ 40 def 11 bal 75 % / 62 % (level 1)
+    World3D: berserk circle pressed -- berserk requested
+    World3D: berserk result: activated false, gauge 0, active false
+    QA PMI eu_full_panel frame 688 (panel true, orbs 5, ready true, emblem ...com_kindred_europe.ddj)
+
+Level 1, Str 20: (20+2+14)*100/48 = 75, and 2000/32 = 62 -- the formula, checked by hand. The
+frames (gauge 0, two orbs, full with the panel open, the panel after unequip and re-equip, berserk
+on, the European emblem) are the round's contact sheet; they show what happened, the log lines and
+the test are the measurement. The ready circle's click reached the server, which refused: the QA
+state set five orbs on the client while the fresh QA character holds none -- the fallback path
+working as intended.
+
+### Tests
+
+`client/scripts/ui/hud/hud_player_info_test.gd` (new): orbs bottom-up and hidden when unlit, the
+ready circle at five and its click, activation, a stats count of 0 not clearing an active
+display, the panel toggle and every row from a synthetic 88-byte stats payload (72 % / 58 % at Str
+21 Int 21 Lv 2), the 120 cap, the two emblems, and characterdata column 14. Against the base
+(dev cfddf39, a second worktree) it fails:
+
+    FAIL gauge 0: no orb shows (got [0, 1, 2, 3, 4])
+    FAIL one orb: CIRCLE4, the bottom one (got [0, 1, 2, 3, 4])
+    FAIL three orbs: CIRCLE2..4 (got [0, 1, 2, 3, 4])
+    SCRIPT ERROR: Invalid call. Nonexistent function 'hwan_ready' in base 'Control (HudPlayerInfo)'.
+    FAIL the live checks never reported (a script error stopped them)
+
+`TestCharacterStatsResultCarriesHwanCount` (Go): the tail round-trips, an 84-byte result decodes
+with it 0, and `buildCharacterStats` takes the character's `HwanCount`. `remote_godot.sh tests`:
+149 suites, 0 failing; `go test -count=1 -p 1 ./...`: all pass.
+
 ## Six-hundred-and-thirty-second round, composite review follow-up: a grant's icon goes when the grant ends, the window has its Cancel, and a failed store changes nothing
 
 The review of 5b362d2 confirmed every READ claim. It also confirmed, with real input, the GM
@@ -7969,6 +8196,7 @@ Unique, animal, party and quest-NPC signs and the party/quest arrows; the tiles'
 (`0x9edd60`'s colour times 400); dungeon regions (`minimap_d\`); Style bit 0x40 across the other
 windows (92 controls, 49 outside ginterface.txt, 15 of them in ifplayerminiinfo.txt, round 629's
 window); the text measurement with Tahoma. All in `docs/TODO.md` item 4.
+
 
 ## Six-hundred-and-twenty-eighth round, review follow-up: the reflection is as bright as the game's, clips at the water, leaves out characters, and the sky is the game's cloud layer
 

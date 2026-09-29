@@ -1,6 +1,11 @@
 package session
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/OpenSRO/srrevamp/server/internal/character"
+)
 
 func TestCharacterStatsResultRoundTrip(t *testing.T) {
 	in := &CharacterStatsResult{
@@ -72,8 +77,8 @@ func TestCharacterStatsResultCarriesCharacterRows(t *testing.T) {
 		PhysAttackMin: 12, MagAttackMin: 0, MagAttackMax: 0, MagDefense: 4,
 	}
 	encoded := in.Encode()
-	if got := len(encoded) - 2; got != 84 {
-		t.Fatalf("body is %d bytes, want 84", got)
+	if got := len(encoded) - 2; got != 96 {
+		t.Fatalf("body is %d bytes, want 96", got)
 	}
 	out, err := DecodeCharacterStatsResult(encoded)
 	if err != nil {
@@ -91,6 +96,70 @@ func TestCharacterStatsResultCarriesCharacterRows(t *testing.T) {
 	}
 	if old.Str != 0 || old.StatPoints != 0 || old.PhysAttackMin != 0 || old.MagDefense != 0 {
 		t.Errorf("older result should leave the character rows at 0: %+v", old)
+	}
+}
+
+// The berserk orb count is the fourth tail (round 629): it round-trips, an
+// 84-byte result from an older server decodes with it 0, and the builder takes
+// it from the character's persisted _CHAR.RemainHwanCount -- so the player
+// block's orbs are right at world entry, before any blow.
+func TestCharacterStatsResultCarriesHwanCount(t *testing.T) {
+	in := &CharacterStatsResult{HP: 10, MaxHP: 10, Level: 3, Str: 22, Int: 21, HwanCount: 4}
+	encoded := in.Encode()
+	out, err := DecodeCharacterStatsResult(encoded)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.HwanCount != 4 {
+		t.Fatalf("HwanCount did not survive: got %d, want 4", out.HwanCount)
+	}
+	old, err := DecodeCharacterStatsResult(encoded[:2+84])
+	if err != nil {
+		t.Fatalf("decoding an 84-byte result: %v", err)
+	}
+	if old.HwanCount != 0 || old.Str != 22 {
+		t.Fatalf("an 84-byte result should keep the rows and leave HwanCount 0: %+v", old)
+	}
+	built, err := buildCharacterStats(context.Background(), &character.Character{ID: 7, Level: 3, HP: 10, Str: 22, Int: 21, HwanCount: 5}, 7, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("buildCharacterStats: %v", err)
+	}
+	if built.HwanCount != 5 {
+		t.Fatalf("buildCharacterStats: HwanCount %d, want the character's 5", built.HwanCount)
+	}
+}
+
+// Hit rate and parry are the fifth and sixth tails (round 629's review): the
+// numbers combat places blows with -- the innate 10, the level and the weapon's
+// HitRateMin; the same over the body armour's parry -- round-tripped, absent
+// from an 88-byte result, and built by buildCharacterStats. Retail sends them
+// in 0x303D (params 11 and 9).
+func TestCharacterStatsResultCarriesHitAndParry(t *testing.T) {
+	in := &CharacterStatsResult{HP: 10, MaxHP: 10, Level: 2, HwanCount: 1, HitRate: 36, ParryRate: 35}
+	encoded := in.Encode()
+	out, err := DecodeCharacterStatsResult(encoded)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.HitRate != 36 || out.ParryRate != 35 {
+		t.Fatalf("hit/parry did not survive: got %d/%d, want 36/35", out.HitRate, out.ParryRate)
+	}
+	old, err := DecodeCharacterStatsResult(encoded[:2+88])
+	if err != nil {
+		t.Fatalf("decoding an 88-byte result: %v", err)
+	}
+	if old.HitRate != 0 || old.ParryRate != 0 || old.HwanCount != 1 {
+		t.Fatalf("an 88-byte result should keep HwanCount and leave hit/parry 0: %+v", old)
+	}
+
+	ctx, eq, items := armedAttacker(t, 24)
+	built, err := buildCharacterStats(ctx, &character.Character{ID: 1, Level: 2, HP: 10, Str: 20, Int: 20}, 1, eq, items, nil, nil)
+	if err != nil {
+		t.Fatalf("buildCharacterStats: %v", err)
+	}
+	// 10 + level 2 + the weapon's 24; no body armour, so parry is 10 + 2.
+	if built.HitRate != 36 || built.ParryRate != 12 {
+		t.Fatalf("built hit/parry %d/%d, want 36/12", built.HitRate, built.ParryRate)
 	}
 }
 

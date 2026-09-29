@@ -406,11 +406,10 @@ authored presentation instead:
   half reinforced by Str, the magical by Int — the parameter graph), `Phy. def.`/`Mag. def.` as
   the armour sums. The old `Phy. atk` was a single ROLL of the range on every request. Left as the
   layout drew them, each with a stated reason (see `HudPanels._fill_character_window`):
-  **Phy./Mag. balance** — the client shows a stored byte (`CICPlayer+0x20d8`) whose source is
-  unread and this server computes no balance; **Hit rate / Parry ratio** — engine params 11/9,
-  a base of 10.0 plus each worn item's own *per-instance* rate (needs the item variance this server
-  does not carry), and params the engine never reads (RE_COMPLETION, "Attack rate and parry are
-  DEAD params"); **Trader/Hunter/Thief grades** and **Honor point** — no job or honour system here.
+  **Phy./Mag. balance** — *done in round 629*: the client computes both from Str/Int and the
+  level (`HudPlayerInfo.balance_percent`, read at 0x006b8ee3 and 0x007b802c; `CICPlayer+0x20d8`
+  is the highest level reached, not an unread source); **Hit rate / Parry ratio** — *done in round 629's review* (params 11/9 as combat uses them;
+  buffs and masteries not added, OPEN); **Trader/Hunter/Thief grades** and **Honor point** — no job or honour system here.
 - **Party / Community / Guild** — the row controls exist (`CIFPartySlot` builds as a slot); they
   need one row per member with name, level and HP.
 - **Skill** — *done (window + economy + per-skill learning, v0.1.121)*: the real `CIFSkillBoard`

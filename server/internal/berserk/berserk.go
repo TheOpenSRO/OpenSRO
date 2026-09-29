@@ -521,6 +521,22 @@ func (t *Tracker) Add(characterID int64, delta int) int {
 	return after - before
 }
 
+// SetCharges puts the character's orb count at n, clamped to 0..Orbs -- the
+// GM console's /hwan (OURS, a test tool; round 629's review). It does not
+// touch an active berserk.
+func (t *Tracker) SetCharges(characterID int64, n int) int {
+	if n < 0 {
+		n = 0
+	}
+	if n > Orbs {
+		n = Orbs
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.charges[characterID] = n
+	return n
+}
+
 // Activate goes berserk if all Orbs charges are held, spending all of them
 // (the handler's FUN_004e4d00(-5)) and returning true. Fewer charges leave
 // the count untouched and return false (the handler's error 1).
@@ -538,6 +554,15 @@ func (t *Tracker) Activate(characterID int64) bool {
 	}
 	t.activeUntil[characterID] = now.Add(d)
 	return true
+}
+
+// ActiveUntil is when the character's current (or last) berserk ends; the
+// zero time for one never activated. The end push compares it, so a berserk
+// that was started again is not ended by the older one's timer.
+func (t *Tracker) ActiveUntil(characterID int64) time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.activeUntil[characterID]
 }
 
 // Active reports whether the character is currently berserk.

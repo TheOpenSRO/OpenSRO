@@ -112,7 +112,7 @@ func DecodeBerserkResult(data []byte) (*BerserkResult, error) {
 	}, nil
 }
 
-func handleBerserk(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, zerk *berserk.Tracker) error {
+func handleBerserk(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, hub *world.Hub, zerk *berserk.Tracker) error {
 	if zerk == nil {
 		return sess.Send(&proto.Packet{Opcode: OpBerserkResult, Data: (&BerserkResult{}).Encode()})
 	}
@@ -137,10 +137,54 @@ func handleBerserk(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 		if err := chars.SetHwanCount(ctx, characterID, zerk.Charges(characterID)); err != nil {
 			return fmt.Errorf("combat: persisting berserk spend: %w", err)
 		}
+		// The body-mode change, as the engine's SetBodyMode broadcasts it:
+		// on now, and off when the berserk runs out (round 629's review).
+		broadcastBodyMode(hub, characterID, 1)
+		scheduleBerserkEnd(hub, zerk, characterID)
 	}
 	return sess.Send(&proto.Packet{Opcode: OpBerserkResult, Data: (&BerserkResult{
 		Activated: activated, Gauge: int32(zerk.Gauge(characterID)), Active: zerk.Active(characterID),
 	}).Encode()})
+}
+
+// broadcastBodyMode sends 0x30bf {id, kind 4, value[, 0]} to the character's
+// zone, the character included -- GObjPC::BroadcastStateChange as
+// CGObjChar::SetBodyMode calls it. The client's handler (0x8a80a0) runs
+// FUN_00778ae0(0, 1) for its own player on value 1, which starts the orbs'
+// berserk display; value 0 ends the body mode and leaves the display to its
+// own timer. A character not in the hub (tests, a disconnect) hears nothing.
+func broadcastBodyMode(hub *world.Hub, characterID int64, value byte) {
+	if hub == nil {
+		return
+	}
+	e, ok := hub.EntityByCharacterID(characterID)
+	if !ok {
+		return
+	}
+	msg := (&StateChange{ObjectID: uint32(characterID), Kind: StateKindBodyMode, Value: value}).Encode()
+	for _, other := range hub.EntitiesInZone(e.Zone) {
+		if other.Session != nil {
+			_ = other.Session.Send(&proto.Packet{Opcode: OpStateChange, Data: msg})
+		}
+	}
+}
+
+// berserkEndDelay is how long after activation the end is pushed: until the
+// tracker's ActiveUntil. A variable so a test can shorten it.
+var berserkEndDelay = func(until time.Time) time.Duration { return time.Until(until) }
+
+// scheduleBerserkEnd pushes the body-mode end when this activation runs out.
+// The tracker expires lazily (Active compares the clock), so nothing else
+// would say it; the engine's SetBodyMode timer does. A later activation moves
+// ActiveUntil, and the older timer then stands down.
+func scheduleBerserkEnd(hub *world.Hub, zerk *berserk.Tracker, characterID int64) {
+	until := zerk.ActiveUntil(characterID)
+	time.AfterFunc(berserkEndDelay(until), func() {
+		if !zerk.ActiveUntil(characterID).Equal(until) {
+			return
+		}
+		broadcastBodyMode(hub, characterID, 0)
+	})
 }
 
 // levelTable is the EXP curve the server was started with, or nil if the
@@ -830,7 +874,7 @@ func combatHandler(
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpBerserk:
-			return handleBerserk(ctx, sess, p, chars, zerk)
+			return handleBerserk(ctx, sess, p, chars, hub, zerk)
 		case OpAttack:
 			req, err := DecodeAttackRequest(p.Data)
 			if err != nil {

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/OpenSRO/srrevamp/server/internal/berserk"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
@@ -442,5 +443,33 @@ func TestDeadActorCannotTeleport(t *testing.T) {
 	f.actor.Dead = false
 	if res := f.run(t, "/tp -300 -880"); res.Refused || !res.HasPos {
 		t.Errorf("/tp for a living actor: %+v, want the move", res)
+	}
+}
+
+// /hwan sets the berserk orbs in the tracker and on the character row, and
+// asks the client to re-read its stats (round 629's review; a test tool).
+func TestHwan(t *testing.T) {
+	f := newFixture(t)
+	if res := f.run(t, "/hwan 5"); !res.Refused {
+		t.Fatalf("/hwan with no tracker: %+v, want refused", res)
+	}
+	f.deps.Berserk = berserk.NewTracker()
+	for _, bad := range []string{"/hwan", "/hwan 6", "/hwan -1", "/hwan x"} {
+		if res := f.run(t, bad); !res.Refused {
+			t.Errorf("%s accepted: %+v", bad, res)
+		}
+	}
+	res := f.run(t, "/hwan 5")
+	if res.Refused || !res.RefreshStats {
+		t.Fatalf("/hwan 5: %+v", res)
+	}
+	if got := f.deps.Berserk.Charges(f.actor.CharacterID); got != 5 {
+		t.Errorf("tracker holds %d, want 5", got)
+	}
+	if c, _ := f.chars.GetByID(f.ctx, f.actor.CharacterID); c.HwanCount != 5 {
+		t.Errorf("row holds %d, want 5", c.HwanCount)
+	}
+	if !f.deps.Berserk.Activate(f.actor.CharacterID) {
+		t.Error("five orbs from /hwan do not activate")
 	}
 }

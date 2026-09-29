@@ -146,6 +146,8 @@ func _equipment() -> String:
 func _playerinfo() -> String:
 	return _layout(_control("GDR_PI_JOB_ALIAS", "CIFStatic", "147,273,99,15", "", 70)
 		+ _control("GDR_PI_TEXT_PHYATT_DAT", "CIFStatic", "75,171,98,15", "", 34)
+		+ _control("GDR_PI_TEXT_HIT_DAT", "CIFStatic", "75,233,98,15", "", 37)
+		+ _control("GDR_PI_TEXT_PARRY_DAT", "CIFStatic", "263,233,98,15", "", 45)
 		+ _control("GDR_PI_TEXT_INTELLECT_DAT", "CIFStatic", "84,143,30,12", "", 19)
 		+ _control("GDR_PI_TEXT_STRENGTH_DAT", "CIFStatic", "84,114,30,12", "", 18)
 		+ _control("GDR_PI_TEXT_HP_DAT", "CIFStatic", "153,114,228,11", "", 12)
@@ -456,13 +458,17 @@ func _popup_checks(panels_script: GDScript) -> void:
 	stats.phys_attack_min = 3
 	stats.phys_attack = 9
 	stats.has_character_rows = true
+	stats.hit_rate = 36
+	stats.parry_rate = 35
+	stats.has_rates = true
 	panels.call("_apply_stats", stats)
 	var got := {}
 	for n in ["GDR_PI_TEXT_STRENGTH_DAT", "GDR_PI_TEXT_INTELLECT_DAT", "GDR_PI_TEXT_HP_DAT",
-			"GDR_PI_TEXT_STAT2", "GDR_PI_TEXT_PHYATT_DAT"]:
+			"GDR_PI_TEXT_STAT2", "GDR_PI_TEXT_PHYATT_DAT", "GDR_PI_TEXT_HIT_DAT", "GDR_PI_TEXT_PARRY_DAT"]:
 		var label := window.call("node", n) as Label
 		got[n] = label.text if label != null else null
 	_check(got == {"GDR_PI_TEXT_STRENGTH_DAT": "42", "GDR_PI_TEXT_INTELLECT_DAT": "21",
-		"GDR_PI_TEXT_HP_DAT": "50 / 100", "GDR_PI_TEXT_STAT2": "3", "GDR_PI_TEXT_PHYATT_DAT": "3 ~ 9"},
+		"GDR_PI_TEXT_HP_DAT": "50 / 100", "GDR_PI_TEXT_STAT2": "3", "GDR_PI_TEXT_PHYATT_DAT": "3 ~ 9",
+		"GDR_PI_TEXT_HIT_DAT": "36", "GDR_PI_TEXT_PARRY_DAT": "35"},
 		"the character pane's rows carry the server's stats (got %s)" % [got])
 	panels.free()
