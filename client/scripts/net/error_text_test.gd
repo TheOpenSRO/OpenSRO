@@ -36,8 +36,9 @@ func _init() -> void:
 		_row("UIIT_MSG_STRGERR_BUSY", "Fixture busy"),
 		_row("UIIT_MSG_STRGERR_INVALID_TARGET", "Fixture invalid target"),
 		_row("UIIT_STT_ERR_COMMON_TOO_FAR", "Fixture too far"),
-		# A row with no usable text anywhere: the parser stores the token
-		# itself as its value, which must never reach the player.
+		# A row with no usable text anywhere: the parser stores its language
+		# column's "0" filler, as the client's loader does (0x8c6a90 keeps the
+		# field as it stands) -- never the token.
 		"1\tUIIT_MSG_INTERACTION_FAIL_CANNOT_BE_REVIVED\t0\t0\t0\t0\t0\t0\t0\t0",
 	]))
 
@@ -103,10 +104,12 @@ func _init() -> void:
 	var missing := ErrorText.pick_up_line(0x1839, sparse)
 	_check(missing == "That item cannot be picked up.", "a table without CANNOT_BE_PICKED gives the fallback (got %s)" % missing)
 	_check(missing.find("UIIT_") < 0, "the raw token is never shown for a missing key")
-	# ...and for a row whose stored value is the token itself (the fixture's
-	# empty REVIVED row; the same code with text is checked above).
+	# ...and a row with no usable text (the fixture's all-"0" REVIVED row)
+	# shows what the client draws for it, the "0" filler, never the token
+	# (rounds 633-635 integration review; no real key ErrorText resolves has
+	# such a first row on the box's archive).
 	var revived := ErrorText.repair_line(0x1c12, fixture)
-	_check(revived == "That item cannot be revived.", "a row with no usable text gives the fallback (got %s)" % revived)
+	_check(revived == "0" and revived.find("UIIT_") < 0, "a row with no usable text shows the client's \"0\", not the token (got %s)" % revived)
 
 	# No table at all (an archive not loaded yet).
 	var no_table := ErrorText.pick_up_line(0x1812, null)

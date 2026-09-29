@@ -114,11 +114,16 @@ Neither turns a page, and the tab (CIFSelectableArea) answers only a press
 retail carries an item to another page is still not read. Ours (OURS) turns
 the page when a drag passes over a tab.
 
-**Held slots are never stranded** (OURS, round 633's review). The server keeps
-a bag's size at or above its highest held slot + 1 (`inventory.KeepHeld`,
-logged once per character and size). So a lower `-inventory-size` leaves the
-items reachable, and the size falls to the configured one once they are moved
-out. The original has no such case: its size only grows.
+**Held slots are never stranded** (OURS, round 633's review, tightened by the
+rounds 633-635 integration review). An item held past a lowered size stays
+REACHABLE -- listed (the list's size is the highest held slot + 1), moved or
+merged out, removed, its durability written -- but nothing new is placed past
+the size: AddItem's stacking and free-slot search, a move's target, a swap
+into the held slot and the trade's space check all keep to the configured
+size (`inventory.SetKeepHeld`, logged once per character and size). So the
+size falls to the configured one as the player empties those slots, and
+nothing refills them; an expansion item grows the configured size, not the
+reach. The original has no such case: its size only grows.
 
 **Starting size.** The retail starting size is not in either executable: it is
 the `_CHAR.InventorySize` database default. The engine's own growth caps are

@@ -196,3 +196,21 @@ UIIT_CTL_CHATMENU_TRAININGCAMP "&Team"; login and install messages worded "SRO" 
 "Silkroad-Online"; twelve 2013 avatar item names ("Grey Warlord Hat (M)" for "Grey Dragon Soul
 Helm (M)"); about 40 rows whose first copy is Korean mangled to "?", and 24 whose first copy keeps
 CSV quote marks (`"""<sml2>...`).
+
+The rest of the loader (READ, rounds 633-635 integration review), which UiTextTable follows:
+
+- **The service column.** A row is loaded only when column 0 reads 1 (`0xb9cc80(0, 1)`, then
+  `cmp eax,1; jne` at `0x8cb110..0x8cb118`). The continuation lines of a value that spans lines
+  fail it and never become keys.
+- **One column, as it stands.** The value is the field at column `0x8c5370(language)` -- 2 for
+  language 0, 8 by default, 9 for language 5, and so on. `0x8c6a90` compares a first-choice
+  column's field with L"0" (`DAT_00e1804c`) and falls back to the second column when it is empty
+  or "0"; but the CGame loads (`0x849215..0x8493ad`) pass -1 as the first choice and `0x8cace6`
+  sets that slot to -1, so only the second is ever read, and its field is kept whatever it holds.
+  A key whose first row has no English therefore shows that column's "0" filler (or nothing):
+  the box's Rebecca Event Hats read "0". UiTextTable still picks the English column by content
+  (column 8, else the first Latin field after it), which gives the client's column on every
+  displayed key checked; for a row with no Latin text it keeps column 8's field, not the Korean
+  column 2 or the token.
+- **No quote handling.** Fields split on tab, CR and NUL only (`0xb9d580`), so a CSV-quoted field
+  reaches the client with its quotes, as it reaches ours.

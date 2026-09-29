@@ -74,7 +74,8 @@ class_name PlayerPortrait
 ##     world+0x2e54 is set, halved when world+0x26bb is set -- both OPEN, taken
 ##     as clear) at 0x00a1d1b6..0x00a1d20b;
 ##   * ambient: world+0x6853.., environment channel 3 (ObjectAmbientColor;
-##     record +0x124, 0x00a1bc29), put in the light at 0x00a19262;
+##     record +0x124, 0x00a1bc29) clamped to [0, 1] in the same block
+##     (0x00a1cc50..0x00a1cc88), put in the light at 0x00a19262;
 ##   * when world+0x2eb4 is 1 the targets are constants instead (0x00a1be9f,
 ##     OPEN what that mode is).
 ## The skinned-object vertex shader (`vertexshader2.c`) lights a vertex as
@@ -370,10 +371,13 @@ static func shade(texel: float, material: float, object: float, ambient: float, 
 	return clampf(MODULATE_SCALE * texel * lit, 0.0, 1.0)
 
 ## The world light's colours from the zone's environment channels: diffuse =
-## channel 2 clamped to [0, 1] x 0.6, ambient = channel 3 as it is.
+## channel 2 clamped to [0, 1] x 0.6, ambient = channel 3 clamped to [0, 1]
+## (Map::FUN_00a1baf0 clamps both world fields, 0x00a1cb96.. and
+## 0x00a1cc50..0x00a1cc88).
 static func zone_light_colors(diffuse_channel: Color, ambient_channel: Color) -> Dictionary:
 	var d := Color(clampf(diffuse_channel.r, 0.0, 1.0), clampf(diffuse_channel.g, 0.0, 1.0), clampf(diffuse_channel.b, 0.0, 1.0)) * DIFFUSE_SCALE
-	return {"diffuse": Vector3(d.r, d.g, d.b), "ambient": Vector3(ambient_channel.r, ambient_channel.g, ambient_channel.b)}
+	var a := Vector3(clampf(ambient_channel.r, 0.0, 1.0), clampf(ambient_channel.g, 0.0, 1.0), clampf(ambient_channel.b, 0.0, 1.0))
+	return {"diffuse": Vector3(d.r, d.g, d.b), "ambient": a}
 
 ## The zone's light (World3D, on world entry and on each zone load). Re-renders
 ## a dressed portrait when the colours change: retail re-renders on world

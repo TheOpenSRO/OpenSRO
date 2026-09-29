@@ -1240,7 +1240,10 @@ var bagExpansionCeiling = min(inventory.MaxSlotsDefault-equipment.MaxEquipSlots,
 func useExpansion(ctx context.Context, sess *gateway.Session, fail func(string) error, inv inventory.Store,
 	warehouse *storage.Service, sizes character.InventorySizeStore, characterID int64, held inventory.Slot, have, container, slots int) error {
 	if container == refdata.ExpansionContainerBag {
-		bag := inventory.CapacityOf(ctx, inv, characterID)
+		// The configured or stored size, not the reach a held slot past it
+		// raises (inventory.SetKeepHeld): the reach must neither be stored as
+		// the new size nor refuse an expansion the size allows.
+		bag := inventory.PlacementCapacityOf(ctx, inv, characterID)
 		if !bagExpansionAllowed(bag, slots) {
 			return fail(errStorageExpansionRefused)
 		}

@@ -1960,3 +1960,74 @@ func TestUseBagExpansionItem(t *testing.T) {
 		t.Errorf("after the refusal the bag is %d, want 64", got)
 	}
 }
+
+// Rounds 633-635 integration review: the bag expansion grows the CONFIGURED
+// size, not the reach an item held past it raises (inventory.SetKeepHeld).
+// With -inventory-size lowered to 32 while an item sits in slot 60 (reach 61),
+// the expansion from 32 passes the engine's test and stores 64 -- not 61 + 32,
+// and not the 0x18fe refusal that testing 61 would give.
+func TestBagExpansionGrowsTheConfiguredSizeNotTheReach(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	acc, err := accounts.Add("alice", "hunter2")
+	if err != nil {
+		t.Fatalf("add account: %v", err)
+	}
+	chars := character.NewMemStore()
+	c, err := chars.Create(ctx, acc.ID, "Aria")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	const bagAddition, sword = 24365, 71
+	items := refdata.NewMemStore()
+	if err := items.ImportItems(ctx, []refdata.Item{
+		{ID: bagAddition, MaxStack: 1, TypeID1: 3, TypeID2: 3, TypeID3: 13, TypeID4: 17, RestoreHP: 32, RestoreHPPct: 0, CanUse: true},
+		{ID: sword, MaxStack: 1},
+	}); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	inv := inventory.NewMemStore(items)
+	inv.SetCapacityFunc(inventory.BagCapacity(chars, 96))
+	inv.SetKeepHeld(nil)
+	if err := inv.AddItem(ctx, c.ID, sword, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := inv.MoveItem(ctx, c.ID, 0, 60); err != nil {
+		t.Fatal(err)
+	}
+	if err := inv.AddItem(ctx, c.ID, bagAddition, 1); err != nil {
+		t.Fatal(err)
+	}
+	inv.SetCapacityFunc(inventory.BagCapacity(chars, 32)) // the operator lowers the size
+	if got := inventory.CapacityOf(ctx, inv, c.ID); got != 61 {
+		t.Fatalf("reach %d, want 61", got)
+	}
+	handle := gateway.Chain(LoginHandler(accounts), UseItemHandler(chars, inv, items, mana.NewTracker(), nil, nil, nil, nil, nil, nil))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	send := func(op uint16, data []byte) *proto.Packet {
+		t.Helper()
+		if err := proto.Write(conn, &proto.Packet{Opcode: op, Data: data}, nil, nil); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		resp, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return resp
+	}
+	if lr, err := DecodeLoginResult(send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode()).Data); err != nil || !lr.OK {
+		t.Fatalf("login: %v %+v", err, lr)
+	}
+	res, err := DecodeUseItemResult(send(OpUseItem, (&UseItemRequest{CharacterName: "Aria", InventorySlot: 0}).Encode()).Data)
+	if err != nil || res.Error != "" {
+		t.Fatalf("the expansion from a configured 32: %v %+v", err, res)
+	}
+	if got, _ := chars.InventorySize(ctx, c.ID); got != 64 {
+		t.Errorf("stored size %d after the expansion, want 32 + 32 = 64", got)
+	}
+}

@@ -73,13 +73,23 @@ func ClampBagSlots(n int) int {
 }
 
 // OwnerCapacity is a store that can say one owner's slot count (its
-// CapacityFunc's answer, or its own Capacity()).
+// CapacityFunc's answer, or its own Capacity()). With SetKeepHeld it is the
+// REACH -- never below the owner's highest held slot + 1 -- which is what the
+// bag list reports, so an item held past the size stays visible.
 type OwnerCapacity interface {
 	CapacityFor(ctx context.Context, owner int64) int
 }
 
+// PlacementCapacity is a store that can say the size NEW placements are held
+// to: the CapacityFunc's answer (the configured or stored size), never raised
+// for held items. See SetKeepHeld.
+type PlacementCapacity interface {
+	PlacementCapacityFor(ctx context.Context, owner int64) int
+}
+
 // CapacityOf is owner's slot count in store: its per-owner answer when it has
-// one, its Capacity() otherwise.
+// one, its Capacity() otherwise. For the bag this is the reach (see
+// OwnerCapacity); PlacementCapacityOf is the size new items are held to.
 func CapacityOf(ctx context.Context, store Store, owner int64) int {
 	if oc, ok := store.(OwnerCapacity); ok {
 		return oc.CapacityFor(ctx, owner)
@@ -88,6 +98,16 @@ func CapacityOf(ctx context.Context, store Store, owner int64) int {
 		return 0
 	}
 	return store.Capacity()
+}
+
+// PlacementCapacityOf is the size a new item may be placed within for owner:
+// the configured or stored size, NOT raised for items held past it
+// (SetKeepHeld). Stores without the distinction answer CapacityOf.
+func PlacementCapacityOf(ctx context.Context, store Store, owner int64) int {
+	if pc, ok := store.(PlacementCapacity); ok {
+		return pc.PlacementCapacityFor(ctx, owner)
+	}
+	return CapacityOf(ctx, store, owner)
 }
 
 // CapacityFor implements OwnerCapacity.
@@ -100,44 +120,66 @@ func (s *SQLStore) CapacityFor(ctx context.Context, owner int64) int {
 	return s.capacityFor(ctx, owner)
 }
 
+// PlacementCapacityFor implements PlacementCapacity.
+func (m *MemStore) PlacementCapacityFor(ctx context.Context, owner int64) int {
+	return m.placeCapacityFor(ctx, owner)
+}
+
+// PlacementCapacityFor implements PlacementCapacity.
+func (s *SQLStore) PlacementCapacityFor(ctx context.Context, owner int64) int {
+	return s.placeCapacityFor(ctx, owner)
+}
+
 // HighestSlotter answers the highest occupied slot index an owner has in a
 // container, -1 when it holds nothing.
 type HighestSlotter interface {
 	HighestSlot(ctx context.Context, owner int64) (int, error)
 }
 
-// KeepHeld wraps a bag's CapacityFunc so the size it answers is never below
-// the owner's highest occupied slot + 1 (round 633's review). Without it a
-// lower -inventory-size, or a stored size below what a character already
-// holds, would strand the items past it: every store operation is bounded by
-// the capacity, so they could be neither listed, moved nor removed. The
-// original has no such case -- its size only grows (ExpandInventory) -- so
-// this is OURS, the safe reading of a size an operator set: an item already
-// held stays reachable, and the size falls to the configured one once the
-// slots past it are emptied. Each raise is logged once per owner and size.
-func KeepHeld(store HighestSlotter, f CapacityFunc, logger *slog.Logger) CapacityFunc {
-	var logged sync.Map
-	return func(ctx context.Context, owner int64) int {
-		n := f(ctx, owner)
-		if store == nil {
-			return n
-		}
-		hi, err := store.HighestSlot(ctx, owner)
-		if err != nil || hi < n {
-			return n
-		}
-		raised := hi + 1
-		type key struct {
-			owner        int64
-			size, raised int
-		}
-		if _, seen := logged.LoadOrStore(key{owner, n, raised}, true); !seen && logger != nil {
-			logger.Warn("bag size below a held slot: kept at the highest held slot + 1 so the items stay reachable",
-				"character", owner, "size", n, "highestSlot", hi, "kept", raised)
-		}
-		return raised
-	}
+// heldReach is SetKeepHeld's state (round 633's review, OURS): a bag whose
+// size was set below what a character already holds -- a lower
+// -inventory-size, a stored size below a held slot -- keeps the items past
+// the size REACHABLE: listed, removed, moved out, their durability written.
+// It does not make room for new ones. Every new placement -- AddItem's
+// stacking and free-slot search, a move's target, the trade space check --
+// stays within the configured size (placeCapacityFor), so the bag falls back
+// to that size as the player empties the slots past it, and nothing can
+// refill them. The original has no such case -- its size only grows
+// (ExpandInventory) -- so this is the safe reading of a size an operator set.
+type heldReach struct {
+	on     bool
+	logger *slog.Logger
+	logged sync.Map
 }
+
+// raise answers the reach for owner: n, or the highest held slot + 1 when that
+// is more. Each raise is logged once per owner and size.
+func (h *heldReach) raise(ctx context.Context, store HighestSlotter, owner int64, n int) int {
+	if !h.on {
+		return n
+	}
+	hi, err := store.HighestSlot(ctx, owner)
+	if err != nil || hi < n {
+		return n
+	}
+	raised := hi + 1
+	type key struct {
+		owner        int64
+		size, raised int
+	}
+	if _, seen := h.logged.LoadOrStore(key{owner, n, raised}, true); !seen && h.logger != nil {
+		h.logger.Warn("bag size below a held slot: the items past it stay reachable, nothing new is placed there",
+			"character", owner, "size", n, "highestSlot", hi, "reach", raised)
+	}
+	return raised
+}
+
+// SetKeepHeld turns on the held-slot reach (see heldReach) for this store:
+// the bag's. Set once, before the store is used.
+func (m *MemStore) SetKeepHeld(logger *slog.Logger) { m.reach.on, m.reach.logger = true, logger }
+
+// SetKeepHeld turns on the held-slot reach (see heldReach) for this store.
+func (s *SQLStore) SetKeepHeld(logger *slog.Logger) { s.reach.on, s.reach.logger = true, logger }
 
 // HighestSlot implements HighestSlotter.
 func (m *MemStore) HighestSlot(_ context.Context, owner int64) (int, error) {

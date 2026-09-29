@@ -224,7 +224,7 @@ No object draw reads that light:
 |---|---|---|
 | Direction | DAT_01109510..18 = normalize(−1, −1, 0) | `Map::FUN_00a2f370`, 0x00a300c2..0x00a301c4 |
 | Diffuse | world+0x6847.. clamped to [0, 1] (0x00a1cb96..), × 0.6 (0x00d86fc0) | 0x00a1d1b6..0x00a1d20b |
-| Ambient | world+0x6853.. | put in the light at 0x00a19262 |
+| Ambient | world+0x6853.. clamped to [0, 1] (0x00a1cc50..0x00a1cc88) | put in the light at 0x00a19262 |
 
 - `Map::FUN_00a1baf0` evaluates the zone's environment record: +0xf0 (**channel 2**,
   DiffuseColor, 0x00a1bbf3) into the target for +0x6847, and +0x124 (**channel 3**,

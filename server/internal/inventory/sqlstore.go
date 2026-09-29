@@ -59,6 +59,7 @@ type SQLStore struct {
 	owner        string       // the owner column: character_id (bag) or account_id (warehouse)
 	capacity     int          // this container's slot count (SlotsPerCharacter unless SetCapacity said otherwise)
 	capacityOf   CapacityFunc // per-owner slot counts, when set (SetCapacityFunc)
+	reach        heldReach    // keeps slots held past the size reachable (SetKeepHeld)
 	durabilities DurabilityLookup
 	// Rand is the source the instance rolls draw from; tests set it.
 	Rand durability.Rand
@@ -133,15 +134,23 @@ func (s *SQLStore) Capacity() int { return s.capacity }
 // zero or less. Set once, before the store is used.
 func (s *SQLStore) SetCapacityFunc(f CapacityFunc) { s.capacityOf = f }
 
-// capacityFor is owner's slot count. It is asked outside any transaction of
-// this store's: f may reach another table.
-func (s *SQLStore) capacityFor(ctx context.Context, owner int64) int {
+// placeCapacityFor is owner's configured slot count, the bound on every NEW
+// placement. It is asked outside any transaction of this store's: f may
+// reach another table.
+func (s *SQLStore) placeCapacityFor(ctx context.Context, owner int64) int {
 	if s.capacityOf != nil {
 		if n := s.capacityOf(ctx, owner); n > 0 {
 			return n
 		}
 	}
 	return s.capacity
+}
+
+// capacityFor is owner's reach: placeCapacityFor, raised to the highest held
+// slot + 1 under SetKeepHeld -- the bound on reading, removing and moving OUT
+// what is already held. Asked outside any transaction, like placeCapacityFor.
+func (s *SQLStore) capacityFor(ctx context.Context, owner int64) int {
+	return s.reach.raise(ctx, s, owner, s.placeCapacityFor(ctx, owner))
 }
 
 // DB exposes the connection for a one-off migration (storage.MigrateToAccounts)
@@ -257,7 +266,9 @@ func (s *SQLStore) addItem(ctx context.Context, characterID, itemID int64, quant
 	if maxStack <= 0 {
 		maxStack = 1 // an item with no configured stack limit doesn't stack
 	}
-	capacity := s.capacityFor(ctx, characterID)
+	// New items go only within the configured size, never into the slots a
+	// held item keeps reachable past it (SetKeepHeld).
+	capacity := s.placeCapacityFor(ctx, characterID)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -278,7 +289,7 @@ func (s *SQLStore) addItem(ctx context.Context, characterID, itemID int64, quant
 			break
 		}
 		sl := &existing[i]
-		if sl.ItemID != itemID || sl.Quantity >= maxStack {
+		if sl.Index >= capacity || sl.ItemID != itemID || sl.Quantity >= maxStack {
 			continue
 		}
 		room := maxStack - sl.Quantity
@@ -359,9 +370,14 @@ func (s *SQLStore) RemoveItem(ctx context.Context, characterID int64, slot int, 
 
 // MoveItem implements Store. See the interface for the three outcomes. One
 // transaction, so a swap can never be observed half-done.
+//
+// `from` may be any reachable slot; `to` must be within the configured size,
+// and a slot held past it (SetKeepHeld) may be emptied or merged from but not
+// swapped into -- a swap would place the other item there.
 func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int) error {
-	capacity := s.capacityFor(ctx, characterID)
-	if from < 0 || from >= capacity || to < 0 || to >= capacity {
+	reach := s.capacityFor(ctx, characterID)
+	place := s.placeCapacityFor(ctx, characterID)
+	if from < 0 || from >= reach || to < 0 || to >= place {
 		return ErrInvalidSlot
 	}
 	if from == to {
@@ -436,6 +452,9 @@ func (s *SQLStore) MoveItem(ctx context.Context, characterID int64, from, to int
 			moved, characterID, from); err != nil {
 			return fmt.Errorf("inventory: decrementing slot %d: %w", from, err)
 		}
+	case from >= place:
+		// A swap would put the other item into a slot past the size.
+		return ErrInvalidSlot
 	default:
 		// Swap. (character_id, slot) is the primary key, so the two rows are
 		// rewritten rather than renumbered past each other.

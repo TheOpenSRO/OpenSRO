@@ -13967,7 +13967,9 @@ func _object_names() -> UiTextTable:
 
 ## The client's own English name for an item id, resolved the way the
 ## tooltips resolve it (ItemTableReader.Item.display_name through the
-## object-name table), or "" -- never an id, never a row of question marks.
+## object-name table), or "" -- never an id. A key whose first row has no
+## English resolves to what the client draws for it, typically "0"
+## (UiTextTable.parse).
 ## A name plate or a chat line that gets "" shows nothing for the name.
 func _item_display_name(item_id: int) -> String:
 	var row = _item_rows.get(item_id)

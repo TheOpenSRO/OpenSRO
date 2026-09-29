@@ -948,7 +948,16 @@ func tradeSpaceShortfall(ctx context.Context, inv inventory.Store, sess *trade.S
 		if err != nil {
 			return "", fmt.Errorf("checking inventory space for %s: %w", side.name, err)
 		}
-		if len(occupied) >= inventory.CapacityOf(ctx, inv, side.recipient) {
+		// Room is counted within the configured size: a slot held past it
+		// (inventory.SetKeepHeld) takes nothing new.
+		place := inventory.PlacementCapacityOf(ctx, inv, side.recipient)
+		room := place
+		for _, sl := range occupied {
+			if sl.Index < place {
+				room--
+			}
+		}
+		if room <= 0 {
 			return side.name + "'s inventory is full", nil
 		}
 	}

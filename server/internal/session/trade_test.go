@@ -1067,3 +1067,42 @@ func TestTradeRequestTimesOut(t *testing.T) {
 		t.Fatalf("Bram accepted a timed-out request: %+v (err %v)", rr, err)
 	}
 }
+
+// Rounds 633-635 integration review: the trade's space check counts room
+// within the configured size. B's bag is 4 slots with 3 of them full and an
+// item held in slot 10 (reach 11, inventory.SetKeepHeld): one slot is free,
+// so B can receive. Fill it and B is full, though the reach (11) exceeds the
+// 5 items B holds -- the old check, len(slots) against the reach, let that
+// trade through into a slot past the size.
+func TestTradeSpaceCountsRoomWithinTheConfiguredSize(t *testing.T) {
+	ctx := context.Background()
+	size := 16
+	inv := inventory.NewMemStore(nil)
+	inv.SetCapacityFunc(func(context.Context, int64) int { return size })
+	inv.SetKeepHeld(nil)
+	const bob = 2
+	for i := int64(0); i < 4; i++ {
+		if err := inv.AddItem(ctx, bob, 100+i, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := inv.MoveItem(ctx, bob, 3, 10); err != nil {
+		t.Fatal(err)
+	}
+	size = 4
+	sess := &trade.Session{
+		A:      trade.Member{CharacterID: 1, Name: "Aria"},
+		B:      trade.Member{CharacterID: bob, Name: "Bram"},
+		OfferA: trade.Offer{ItemSlot: 0, Quantity: 1},
+		OfferB: trade.Offer{ItemSlot: -1},
+	}
+	if msg, err := tradeSpaceShortfall(ctx, inv, sess); err != nil || msg != "" {
+		t.Fatalf("one free slot within the size: %q %v, want room", msg, err)
+	}
+	if err := inv.AddItem(ctx, bob, 200, 1); err != nil {
+		t.Fatal(err)
+	}
+	if msg, err := tradeSpaceShortfall(ctx, inv, sess); err != nil || msg != "Bram's inventory is full" {
+		t.Fatalf("slots 0..3 full, slot 10 held past the size: %q %v, want full", msg, err)
+	}
+}

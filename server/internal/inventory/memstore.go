@@ -23,6 +23,8 @@ type MemStore struct {
 	// capacityOf, when set, answers each owner's own slot count (the
 	// warehouse's per-account size); see SetCapacityFunc.
 	capacityOf CapacityFunc
+	// reach keeps slots held past the size reachable (SetKeepHeld).
+	reach heldReach
 	// durabilities rolls a fresh item's instance and initialises legacy
 	// rows; nil leaves every instance Untracked (see SetDurabilityLookup).
 	durabilities DurabilityLookup
@@ -53,15 +55,22 @@ func (m *MemStore) Capacity() int { return m.capacity }
 // zero or less. Set once, before the store is used.
 func (m *MemStore) SetCapacityFunc(f CapacityFunc) { m.capacityOf = f }
 
-// capacityFor is owner's slot count. It is called BEFORE m.mu is taken: f may
-// reach another store.
-func (m *MemStore) capacityFor(ctx context.Context, owner int64) int {
+// placeCapacityFor is owner's configured slot count, the bound on every NEW
+// placement. It is called BEFORE m.mu is taken: f may reach another store.
+func (m *MemStore) placeCapacityFor(ctx context.Context, owner int64) int {
 	if m.capacityOf != nil {
 		if n := m.capacityOf(ctx, owner); n > 0 {
 			return n
 		}
 	}
 	return m.capacity
+}
+
+// capacityFor is owner's reach: placeCapacityFor, raised to the highest held
+// slot + 1 under SetKeepHeld -- the bound on reading, removing and moving OUT
+// what is already held. Called before m.mu is taken (HighestSlot locks).
+func (m *MemStore) capacityFor(ctx context.Context, owner int64) int {
+	return m.reach.raise(ctx, m, owner, m.placeCapacityFor(ctx, owner))
 }
 
 // SetDurabilityLookup gives the store the reference data it needs to roll a
@@ -132,7 +141,9 @@ func (m *MemStore) addItem(ctx context.Context, characterID, itemID int64, quant
 			maxStack = n
 		}
 	}
-	capacity := m.capacityFor(ctx, characterID)
+	// New items go only within the configured size, never into the slots a
+	// held item keeps reachable past it (SetKeepHeld).
+	capacity := m.placeCapacityFor(ctx, characterID)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -227,9 +238,14 @@ func (m *MemStore) maxStackFor(ctx context.Context, itemID int64) (int, error) {
 }
 
 // MoveItem implements Store. See the interface for the three outcomes.
+//
+// `from` may be any reachable slot; `to` must be within the configured size,
+// and a slot held past it (SetKeepHeld) may be emptied or merged from but not
+// swapped into -- a swap would place the other item there.
 func (m *MemStore) MoveItem(ctx context.Context, characterID int64, from, to int) error {
-	capacity := m.capacityFor(ctx, characterID)
-	if from < 0 || from >= capacity || to < 0 || to >= capacity {
+	reach := m.capacityFor(ctx, characterID)
+	place := m.placeCapacityFor(ctx, characterID)
+	if from < 0 || from >= reach || to < 0 || to >= place {
 		return ErrInvalidSlot
 	}
 	if from == to {
@@ -272,7 +288,11 @@ func (m *MemStore) MoveItem(ctx context.Context, characterID int64, from, to int
 		}
 	}
 
-	// Different items, or nowhere to merge into: swap the two slots.
+	// Different items, or nowhere to merge into: swap the two slots -- unless
+	// that would put the other item into a slot past the size.
+	if from >= place {
+		return ErrInvalidSlot
+	}
 	src.Index, dst.Index = to, from
 	held[to], held[from] = src, dst
 	return nil

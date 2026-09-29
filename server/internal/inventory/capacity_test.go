@@ -64,3 +64,75 @@ func TestCapacityFuncBoundsEachOwner(t *testing.T) {
 		}
 	}
 }
+
+// Round 633's integration review: a bag whose size falls below a held slot
+// (SetKeepHeld) keeps that slot REACHABLE -- listed, its durability written,
+// emptied by a move or merge -- but places nothing new past the size. A lower
+// -inventory-size of 32 with an item in slot 60: new items (topping up a stack
+// included) fill only 0..31, no move may target 32..60, the held slot cannot
+// be swapped into, and once it is emptied the bag is 32 again.
+func TestKeepHeldReachesHeldSlotsButPlacesWithinTheSize(t *testing.T) {
+	ctx := context.Background()
+	for name, s := range moveStores(t, stubMaxStacks{100: 50}) {
+		t.Run(name, func(t *testing.T) {
+			size := 96
+			f := func(context.Context, int64) int { return size }
+			switch st := s.(type) {
+			case *MemStore:
+				st.SetCapacityFunc(f)
+				st.SetKeepHeld(nil)
+			case *SQLStore:
+				st.SetCapacityFunc(f)
+				st.SetKeepHeld(nil)
+			}
+			if err := s.AddItem(ctx, 1, 100, 10); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.MoveItem(ctx, 1, 0, 60); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.AddItem(ctx, 1, 300, 1); err != nil {
+				t.Fatal(err)
+			}
+			size = 32 // the operator lowers the size
+			if got := CapacityOf(ctx, s, 1); got != 61 {
+				t.Fatalf("reach %d, want 61", got)
+			}
+			if got := PlacementCapacityOf(ctx, s, 1); got != 32 {
+				t.Fatalf("placement size %d, want 32", got)
+			}
+			// A stack of the held item goes to a new slot within the size,
+			// not onto slot 60.
+			if err := s.AddItem(ctx, 1, 100, 5); err != nil {
+				t.Fatal(err)
+			}
+			wantSlots(t, s, 1, "0:300x1", "1:100x5", "60:100x10")
+			for i := int64(0); i < 30; i++ {
+				if err := s.AddItem(ctx, 1, 400+i, 1); err != nil {
+					t.Fatalf("item %d of the 30 that fill slots 2..31: %v", i+1, err)
+				}
+			}
+			if err := s.AddItem(ctx, 1, 500, 1); !errors.Is(err, ErrNoRoom) {
+				t.Fatalf("a 33rd item within a size of 32: got %v, want ErrNoRoom", err)
+			}
+			for _, to := range []int{32, 59, 60} {
+				if err := s.MoveItem(ctx, 1, 2, to); !errors.Is(err, ErrInvalidSlot) {
+					t.Fatalf("moving slot 2 to %d past the size: got %v, want ErrInvalidSlot", to, err)
+				}
+			}
+			if err := s.MoveItem(ctx, 1, 60, 0); !errors.Is(err, ErrInvalidSlot) {
+				t.Fatalf("swapping item 300 into held slot 60: got %v, want ErrInvalidSlot", err)
+			}
+			if err := s.SetDurability(ctx, 1, 60, 3); err != nil {
+				t.Fatalf("the held slot's durability: %v", err)
+			}
+			// Merged onto slot 1's stack, slot 60 empties and the size is 32.
+			if err := s.MoveItem(ctx, 1, 60, 1); err != nil {
+				t.Fatalf("merging the held stack back: %v", err)
+			}
+			if got := CapacityOf(ctx, s, 1); got != 32 {
+				t.Fatalf("reach after emptying slot 60: %d, want 32", got)
+			}
+		})
+	}
+}

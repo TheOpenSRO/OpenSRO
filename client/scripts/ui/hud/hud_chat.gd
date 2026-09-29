@@ -492,8 +492,10 @@ func _apply_mode(m: int, keep_bottom: bool) -> void:
 	var row_y := float(g["row_y"])
 	for n in ["GDR_BTN_CHAT_SIZE", "GDR_CHAT_MODE_BTN", "GDR_CHAT_INPUTBOX"]:
 		_place(n, row_y)
-	# The penalty line keeps its authored 2 below the row.
-	_place("GDR_CHAT_STA_PENALTY", row_y + 2)
+	# The penalty line (ID 52, +0x468) at the size button's y + 3, its own x
+	# kept (0x7ab1b0..0x7ab1d6: `add ecx,0x3` on +0x464's y) -- not its
+	# authored 380, 2 below the button's 378.
+	_place("GDR_CHAT_STA_PENALTY", row_y + 3)
 	if not open:
 		for b in _list_boxes:
 			(b as Control).visible = false

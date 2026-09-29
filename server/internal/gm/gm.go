@@ -291,9 +291,8 @@ func (d *Deps) invsize(ctx context.Context, actor Actor, args []string) Result {
 	if !ok || d.Inv == nil {
 		return refuse("no inventory size store")
 	}
-	current := inventory.CapacityOf(ctx, d.Inv, actor.CharacterID)
 	if len(args) == 0 {
-		return Result{Text: fmt.Sprintf("inventory size %d slots (%d pages)", current, pagesOf(current))}
+		return Result{Text: "inventory size " + sizeText(ctx, d.Inv, actor.CharacterID)}
 	}
 	if len(args) != 1 {
 		return refuse(usage)
@@ -311,8 +310,8 @@ func (d *Deps) invsize(ctx context.Context, actor Actor, args []string) Result {
 		return refuse("could not read the bag: " + err.Error())
 	}
 	// The check is against the size asked for, not the store's answer after
-	// the change: the server keeps a bag at or above its highest held slot
-	// (inventory.KeepHeld), which would hide the shrink here.
+	// the change: the server keeps the slots held past a size reachable
+	// (inventory.SetKeepHeld), which would hide the shrink here.
 	if want > 0 {
 		for _, sl := range slots {
 			if sl.Index >= want {
@@ -323,8 +322,19 @@ func (d *Deps) invsize(ctx context.Context, actor Actor, args []string) Result {
 	if err := sizes.SetInventorySize(ctx, actor.CharacterID, want); err != nil {
 		return refuse("could not store the size: " + err.Error())
 	}
-	after := inventory.CapacityOf(ctx, d.Inv, actor.CharacterID)
-	return Result{Text: fmt.Sprintf("inventory size now %d slots (%d pages)", after, pagesOf(after)), RefreshInventory: true}
+	return Result{Text: "inventory size now " + sizeText(ctx, d.Inv, actor.CharacterID), RefreshInventory: true}
+}
+
+// sizeText is the bag's size for /invsize: the configured or stored size new
+// items are held to, and, when items are held past it (only after "default"
+// under a lowered -inventory-size), how far they stay reachable.
+func sizeText(ctx context.Context, inv inventory.Store, owner int64) string {
+	size := inventory.PlacementCapacityOf(ctx, inv, owner)
+	text := fmt.Sprintf("%d slots (%d pages)", size, pagesOf(size))
+	if reach := inventory.CapacityOf(ctx, inv, owner); reach > size {
+		text += fmt.Sprintf("; items held up to slot %d stay reachable until moved or used", reach-1)
+	}
+	return text
 }
 
 func pagesOf(slots int) int {

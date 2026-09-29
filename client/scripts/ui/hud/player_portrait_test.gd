@@ -189,6 +189,10 @@ func _shading(script) -> void:
 	var z: Dictionary = script.zone_light_colors(Color(0.7, 0.6, 1.3), Color(0.58, 0.58, 0.58))
 	_check(_near3(z["diffuse"], Vector3(0.42, 0.36, 0.6)), "diffuse = clamp(channel 2) x 0.6: %s" % str(z["diffuse"]))
 	_check(_near3(z["ambient"], Vector3(0.58, 0.58, 0.58)), "ambient = channel 3")
+	# Both world fields are clamped to [0, 1] (FUN_00a1baf0, 0x00a1cc50..): an
+	# ambient channel above 1 or below 0 lights as 1 or 0.
+	var zc: Dictionary = script.zone_light_colors(Color(0.7, 0.6, 1.3), Color(1.3, -0.2, 0.5))
+	_check(_near3(zc["ambient"], Vector3(1.0, 0.0, 0.5)), "ambient = clamp(channel 3): %s" % str(zc["ambient"]))
 	# Face front: 2 x 0.5 x (0.6 x 0.58).
 	_check(_near(script.shade(0.5, 0.588, 0.6, 0.58, 0.42, 0.0), 0.348), "face texel 0.5 -> 0.348 (ambient only)")
 	# Square to the light: + 0.588 x 0.42.

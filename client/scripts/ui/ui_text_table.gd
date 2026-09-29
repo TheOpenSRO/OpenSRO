@@ -17,8 +17,9 @@ class_name UiTextTable
 ##   19 cols  UIIT_STT_PHYSICAL_ATTACK  [8]="0"          [9]="Phy. atk"
 ##
 ## Reading index 8 unconditionally returned "0" for the second, and since
-## later rows overwrite earlier ones, every stat label in the character
-## panel rendered as the digit 0.
+## this parser then let later rows overwrite earlier ones, every stat label
+## in the character panel rendered as the digit 0. (It now keeps the FIRST
+## row of a key, as the client does -- see parse.)
 ##
 ## So the column is chosen by content: column 8 when it holds real Latin
 ## text, and otherwise the first usable Latin field to its right, then the
@@ -38,6 +39,11 @@ class_name UiTextTable
 ## 19 Jangan NPC names on the single-language archive and English on the
 ## other.
 
+## Column 0 is the row's service flag: the client loads a row only when it
+## reads as 1 (TextStringManager 0x8cac30: `0xb9cc80(0, 1)`, then `cmp eax,1;
+## jne` at 0x8cb110..0x8cb118). The continuation lines of a value that spans
+## lines fail it too, so they never become keys.
+const COL_SERVICE := 0
 const COL_TOKEN := 1
 ## The conventional position of the English column, and the first one tried.
 const COL_ENGLISH := 8
@@ -72,19 +78,25 @@ static func parse(data: PackedByteArray, lang_col: int = COL_ENGLISH, keep_first
 		var cols := line.split("\t")
 		if cols.size() <= COL_TOKEN:
 			continue
+		if cols[COL_SERVICE].strip_edges().to_int() != 1:
+			continue
 		var token := cols[COL_TOKEN].strip_edges()
 		if token.is_empty():
 			continue
 
 		var val := _pick_language_column(cols, lang_col)
 		if val == "":
-			# Nothing usable in any language column: fall back to the Korean
-			# original, then to the token itself, so a label shows *something*
-			# recognisable rather than an empty box.
-			if cols.size() > 2 and _is_usable(cols[2]):
-				val = cols[2].strip_edges()
-			else:
-				val = token
+			# No Latin text in any language column: the client shows its
+			# language column's own content, raw -- 0x8c6a90 copies the field
+			# whatever it holds, the "0" filler included (its compare with
+			# L"0", DAT_00e1804c, only chooses between two columns, and the
+			# CGame loads pass -1 for the first). So the English column's
+			# field is the value, as the client would draw it: "0", blank,
+			# or a mangled string -- never the Korean column 2 nor the token,
+			# which retail never shows (rounds 633-635 integration review:
+			# SN_ITEM_ETC_E060823_SATGAT_INT3_M's first row is all "0", and
+			# the client names the hat "0").
+			val = cols[lang_col].strip_edges() if lang_col < cols.size() else ""
 
 		# The FIRST row for a key wins (round 634's review, READ): the
 		# client's loader TextStringManager 0x8cac30 -- which reads

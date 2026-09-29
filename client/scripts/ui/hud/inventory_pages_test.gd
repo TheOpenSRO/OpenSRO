@@ -308,6 +308,11 @@ func _rotation_checks(panels: Control) -> void:
 		return
 	panels.set("test_doll_frame_ms", 16)
 	panels.call("set_paper_doll_yaw", 0.0)
+	# The measurement (a log line and the pose line) runs on the press and the
+	# release, not on each 50 ms repeat (rounds 633-635 integration review).
+	var measured := [0]
+	if panels.has_signal("paper_doll_measure_requested"):
+		panels.connect("paper_doll_measure_requested", func() -> void: measured[0] += 1)
 	panels.call("_doll_turn_start", 1)
 	var t0 := int(panels.get("_doll_turn_last_ms"))
 	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 0.024), "a press on the right arrow turns 16 ms * 0.0015 = 0.024")
@@ -323,7 +328,9 @@ func _rotation_checks(panels: Control) -> void:
 	panels.call("_doll_turn_tick", t0 + 2000)
 	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 0.072), "off the button the repeat pauses")
 	panels.set("_doll_turn_hovered", true)
+	_check(measured[0] == 1, "one measurement for the press and its two repeats (got %d)" % measured[0])
 	panels.call("_doll_turn_stop", 1)
+	_check(measured[0] == 2, "one more on the release (got %d)" % measured[0])
 	panels.call("_doll_turn_tick", t0 + 3000)
 	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 0.072), "the release stops it")
 	panels.call("_doll_turn_start", -1)

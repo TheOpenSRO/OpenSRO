@@ -53,13 +53,13 @@ const (
 // The failure codes 0xB025's handler (0x877340) names, with the string it
 // shows for each.
 const (
-	ChatErrCantFindTarget   uint16 = 0x0003 // UIIT_CHATERR_CANT_FIND_TARGET, "Cannot find [%s]."
-	ChatErrSquelched        uint16 = 0x2006 // UIIT_CHATERR_YOU_ARE_SQUELCHED
-	ChatErrInvalidCommand   uint16 = 0x2008 // UIIT_CHATERR_INVALID_COMMAND
-	ChatErrNotPartyMember   uint16 = 0x200a // UIIT_CHATERR_NOT_A_PARTY_MEMBER
-	ChatErrAllianceDenied   uint16 = 0x200b // UIIT_CHATERR_ALLIANCE_PERMISSION_DENIED (0x200c too)
-	ChatErrCantChat         uint16 = 0x200d // UIIT_STT_CANT_CHATTING
-	ChatErrGuildUnionLimit  uint16 = 0x200e // UIIT_MSG_GUILD_UNION_CHAT_LIMIT
+	ChatErrCantFindTarget  uint16 = 0x0003 // UIIT_CHATERR_CANT_FIND_TARGET, "Cannot find [%s]."
+	ChatErrSquelched       uint16 = 0x2006 // UIIT_CHATERR_YOU_ARE_SQUELCHED
+	ChatErrInvalidCommand  uint16 = 0x2008 // UIIT_CHATERR_INVALID_COMMAND
+	ChatErrNotPartyMember  uint16 = 0x200a // UIIT_CHATERR_NOT_A_PARTY_MEMBER
+	ChatErrAllianceDenied  uint16 = 0x200b // UIIT_CHATERR_ALLIANCE_PERMISSION_DENIED (0x200c too)
+	ChatErrCantChat        uint16 = 0x200d // UIIT_STT_CANT_CHATTING
+	ChatErrGuildUnionLimit uint16 = 0x200e // UIIT_MSG_GUILD_UNION_CHAT_LIMIT
 	// OURS: the retail client refuses these two itself before it sends
 	// (0x7ad400 asks 0x9870e0 / 0x987140 and shows UIIT_MSG_GUILD_NON_EXISTING
 	// / UIIT_MSG_TC_ERROR_NOT_POSITION); srrevamp's client does not hold the

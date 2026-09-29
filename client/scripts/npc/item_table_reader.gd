@@ -223,8 +223,11 @@ class Item:
 	## for weapons and armour but Korean for many consumables, and in this
 	## archive the Korean is already mangled to question marks in the file
 	## itself (`ITEM_ETC_HP_POTION_01`'s column 3 is literally "HP ?? ??").
-	## Otherwise "" -- a player is shown the client's own name or nothing,
-	## never an id and never a row of question marks.
+	## Otherwise "" -- never an id. A name the table resolves is shown as the
+	## client shows it, even when the key's first row carries no English: the
+	## client then draws that row's language column as it stands, typically
+	## the "0" filler (UiTextTable.parse; the box archive's Rebecca Event Hats
+	## read "0").
 	func display_name(names: UiTextTable = null) -> String:
 		if names != null and name_strid != "":
 			var resolved := names.get_text(name_strid)

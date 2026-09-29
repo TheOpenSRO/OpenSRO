@@ -150,7 +150,7 @@ func TestBagCapacityDefaultsAndClamps(t *testing.T) {
 // not strand the items. With the default lowered to 32 while an item sits in
 // slot 60, the bag list still reports 61 and the item can be moved back onto
 // page 1; once slot 60 is empty the size falls to the configured 32. The
-// wiring is cmd/server's: KeepHeld(store, BagCapacity(...)).
+// wiring is cmd/server's: SetCapacityFunc(BagCapacity(...)) and SetKeepHeld.
 func TestLowerSizeKeepsHeldItemsReachable(t *testing.T) {
 	ctx := context.Background()
 	accounts := account.NewMemStore()
@@ -158,7 +158,8 @@ func TestLowerSizeKeepsHeldItemsReachable(t *testing.T) {
 	chars := character.NewMemStore()
 	c, _ := chars.Create(ctx, 1, "Aria")
 	inv := inventory.NewMemStore(nil)
-	inv.SetCapacityFunc(inventory.KeepHeld(inv, inventory.BagCapacity(chars, 96), nil))
+	inv.SetCapacityFunc(inventory.BagCapacity(chars, 96))
+	inv.SetKeepHeld(nil)
 	if err := inv.AddItem(ctx, c.ID, 100, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +167,7 @@ func TestLowerSizeKeepsHeldItemsReachable(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The operator lowers the default: the character has no size of its own.
-	inv.SetCapacityFunc(inventory.KeepHeld(inv, inventory.BagCapacity(chars, 32), nil))
+	inv.SetCapacityFunc(inventory.BagCapacity(chars, 32))
 
 	handle := gateway.Chain(LoginHandler(accounts), InventoryHandler(chars, inv, nil), InventoryMoveHandler(chars, inv, nil))
 	addr, cleanup := startTestServer(t, handle)

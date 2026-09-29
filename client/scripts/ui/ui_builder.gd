@@ -1213,11 +1213,14 @@ func load_texture_region(ddj_path: String, uv_lt: Vector2, uv_rb: Vector2) -> Te
 ##   is in ESI for all five `GNFontChar::FUN_004927b0(index, size)` calls.
 ## - `FUN_00baa110` then does `CreateFontIndirectA` with that `lfFaceName`.
 ##
-## In a real Media.pk2 `UIC_STT_FONTNAME` is **Tahoma** in the English column
-## ("굴림체" in the Korean one; an older row says Arial). The bundled files
-## are TaeUtum, SeUtum, Arial Rounded MT Bold (`fonts\\`) and Arial
-## (`vplus\\vfont.ttf`) -- none is Tahoma, which is a Windows system font, so
-## the real client renders the English UI in the *system's* Tahoma.
+## The box's Media.pk2 has two `UIC_STT_FONTNAME` rows: the file's FIRST
+## line says **Arial** in the English columns, and a later row says Tahoma
+## ("굴림체" in its Korean one). The client keeps a key's first row
+## (TextStringManager 0x8cac30, UiTextTable.parse -- round 634's review), so
+## it asks GDI for Arial there; an archive whose first row says Tahoma gets
+## Tahoma. The bundled files are TaeUtum, SeUtum, Arial Rounded MT Bold
+## (`fonts\\`) and Arial (`vplus\\vfont.ttf`); Tahoma, if named, is a
+## Windows system font, which the real client takes from the system.
 ##
 ## Resolution, in the client's own order: a bundled file whose family IS the
 ## named face; else the system's font of that name (what the real client

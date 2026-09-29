@@ -43,6 +43,7 @@ func _chat_layout() -> String:
 	body += _control("GDR_BUTTON_CHATTABHIDE", "CIFButton", 12, "30,0,16,20")
 	body += _control("GDR_CHAT_INPUTBOX", "CIFEInputChatBox", 11, "38,378,360,20")
 	body += _control("GDR_BTN_CHAT_SIZE", "CIFButton", 15, "0,378,16,20")
+	body += _control("GDR_CHAT_STA_PENALTY", "CIFStatic", 52, "404,380,160,20")
 	return "Interface Text\n\nSection = Create,\"0,0,0,0\",\"0\"\n{\n" + body + "}\n"
 
 func _builder() -> UiBuilder:
@@ -203,6 +204,11 @@ func _window_checks(chat_script: Script) -> void:
 	_check(chat.size.y == 175.0 and box != null and box.size.y == 119.0 and inbox != null and inbox.position.y == 154.0,
 		"the window opens in mode 2: 175 tall, lists 119, the input row at 154 (got %s, %s, %s)" % [chat.size.y,
 		box.size.y if box != null else -1.0, inbox.position.y if inbox != null else -1.0])
+	# The penalty line at the size button's y + 3 (0x7ab1cb `add ecx,0x3`),
+	# its own x kept: 157 in mode 2, not the authored 2 below the row.
+	var penalty := chat.find_child("GDR_CHAT_STA_PENALTY", true, false) as Control
+	_check(penalty != null and penalty.position == Vector2(404, 157),
+		"the penalty line sits at (404, row + 3 = 157) (got %s)" % [penalty.position if penalty != null else null])
 	if not tabs.has(null) and not tabs[0].has_method("text_color"):
 		_check(false, "the selected caption is white, the others grey 0xffb4b4b4 (ChatTab.text_color)")
 	elif not tabs.has(null):

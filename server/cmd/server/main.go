@@ -1085,10 +1085,14 @@ func main() {
 	bagDefault := inventory.ClampBagSlots(*inventorySize)
 	bagSizes, _ := chars.(character.InventorySizeStore)
 	if sized, ok := inv.(interface{ SetCapacityFunc(inventory.CapacityFunc) }); ok {
-		// Never below a held slot (inventory.KeepHeld, round 633's review): a
-		// lower -inventory-size must not strand what a character carries.
-		held, _ := inv.(inventory.HighestSlotter)
-		sized.SetCapacityFunc(inventory.KeepHeld(held, inventory.BagCapacity(bagSizes, bagDefault), logger))
+		sized.SetCapacityFunc(inventory.BagCapacity(bagSizes, bagDefault))
+	}
+	// A lower -inventory-size must not strand what a character carries: the
+	// slots held past the size stay reachable (listed, removed, moved out),
+	// while every new placement keeps to the size (inventory.heldReach, round
+	// 633's review).
+	if kh, ok := inv.(interface{ SetKeepHeld(*slog.Logger) }); ok {
+		kh.SetKeepHeld(logger)
 	}
 	logger.Info("inventory size", "defaultSlots", bagDefault, "pages", (bagDefault+inventory.BagPageSlots-1)/inventory.BagPageSlots,
 		"perCharacter", bagSizes != nil)

@@ -78,6 +78,35 @@ func _init() -> void:
 	_check(multi_table.get_text("SN_NPC_DANGSAM") == "Soldier Dangsam",
 		"an Arabic column carrying the Latin name does not beat column 8 (got %s)" % multi_table.get_text("SN_NPC_DANGSAM"))
 
+	# The service column (TextStringManager 0x8cac30, 0x8cb110..0x8cb118): a
+	# row loads only when column 0 reads 1. A disabled first row gives way to
+	# the enabled one after it, and a continuation line of a multi-line value
+	# (column 0 "<font ...") never becomes a key.
+	var svc := PackedStringArray([
+		"0\tUIIT_STT_SVC\t\u1355\t0\t0\t0\t0\t0\tDisabled row\t0",
+		"1\tUIIT_STT_SVC\t\u1355\t0\t0\t0\t0\t0\tEnabled row\t0",
+		"<font color=red>\tFRAGMENT_KEY\t0\t0\t0\t0\t0\t0\tFragment\t0",
+	])
+	var svc_table := UiTextTable.parse(("\n".join(svc)).to_utf16_buffer())
+	_check(svc_table.get_text("UIIT_STT_SVC") == "Enabled row",
+		"a row whose service column is not 1 is skipped (got %s)" % svc_table.get_text("UIIT_STT_SVC"))
+	_check(not svc_table.has("FRAGMENT_KEY"), "a continuation line never becomes a key")
+
+	# A first row with no Latin text anywhere: the client shows its language
+	# column's own field ("0" here), not the Korean column 2 nor the token, and
+	# the English row after it is ignored (first row wins). The shape is the
+	# box archive's SN_ITEM_ETC_E060823_SATGAT_INT3_M.
+	var hat := PackedStringArray([
+		"1\tSN_ITEM_HAT\t??? ?? (?)\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0",
+		"1\tSN_ITEM_HAT\t\t\t\t\t\t\t\tRebecca Event Hat (M)\t\t\t\t\t\t\t",
+		"1\tSN_ITEM_BLANK\t\u1355\t\t\t\t\t\t\t\t",
+	])
+	var hat_table := UiTextTable.parse(("\n".join(hat)).to_utf16_buffer())
+	_check(hat_table.get_text("SN_ITEM_HAT") == "0",
+		"a no-Latin first row holds its language column's \"0\", as the client draws it (got %s)" % hat_table.get_text("SN_ITEM_HAT"))
+	_check(hat_table.has("SN_ITEM_BLANK") and hat_table.get_text("SN_ITEM_BLANK", "x") == "",
+		"a no-Latin first row with a blank language column holds \"\" (got %s)" % hat_table.get_text("SN_ITEM_BLANK", "x"))
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

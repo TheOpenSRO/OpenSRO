@@ -7094,6 +7094,67 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Rounds 633-635 integration review (int/ui2): nothing new lands past a lowered bag size, the portrait's ambient is clamped, the chat's penalty line sits where the client puts it, and the text table loads rows as the client does
+
+The final review of int/ui2 (dev b9bbf07 + rounds 633-635 and their follow-ups, merged at 14c4889)
+confirmed the follow-ups' READs against the decompiles and ran two clients with real input through
+Login (the portrait in Jangan and after `/goto donwhang`, every window's frame, the bag's pages, a
+drag across pages and to a quickslot, the doll's arrows, gold colours, every chat channel, the
+notice, a global, the size modes). It found these; all are fixed here. Before is 14c4889.
+
+**1. A lowered bag size placed new items past itself (OURS rule, tightened).** round 633's
+`inventory.KeepHeld` raised the size every operation used to the highest held slot + 1, so with
+`-inventory-size 32` and an item in slot 60, pickups, buys, trades and withdrawals filled slots
+32..59 and any item could be moved to 59: the bag never came back to 32 (a throwaway test: 28
+extra adds succeeded). Now the stores keep two bounds (`SetKeepHeld`): the REACH (size, raised to
+the highest held slot + 1) for listing, removing, durability and moving OUT, and the configured size
+for every NEW placement -- AddItem's stacking and free-slot search, a move's target, a swap into a
+held slot (refused), and the trade's space check (`inventory.PlacementCapacityOf`, counting only
+slots within the size). `TestKeepHeldReachesHeldSlotsButPlacesWithinTheSize` (both stores): 32
+items fill 0..31, the 33rd is ErrNoRoom, moves to 32/59/60 and the swap into 60 are refused, a
+stack of the held item goes to slot 1 rather than onto 60, and emptying 60 brings the size to 32.
+
+**2. The bag expansion grew the reach.** `useExpansion` took `CapacityOf` (the raised reach) as its
+base, so with no stored size it stored 61 + 32, or refused an expansion the configured 32 allows.
+It takes `PlacementCapacityOf` now; `TestBagExpansionGrowsTheConfiguredSizeNotTheReach` stores 64
+(and fails against the old base with the 0x18fe refusal). `/invsize` shows the configured size and,
+when items are held past it, how far they stay reachable.
+
+**3. The doll's measurement lines flooded the log.** Every 50 ms repeat of a held arrow printed the
+yaw and a three-bone pose line (~40 lines a second, measured on the live run). They print on an
+arrow's press and release and on the reset now.
+
+**4. The portrait's ambient is clamped (READ).** `Map::FUN_00a1baf0` clamps world+0x6853..0x685b to
+[0, 1] in the same block as the diffuse (0x00a1cc50..0x00a1cc88); `zone_light_colors` passed
+channel 3 through. No change on the box's archive (its highest channel-3 component is 0.925); an
+archive above 1 would have lit the face too bright.
+
+**5. The chat's penalty line (READ).** 0x7ab1b0..0x7ab1d6 places +0x468 (ID 52,
+GDR_CHAT_STA_PENALTY) at its own x and +0x464's (ID 15, the size button's) y + 3 (`add ecx,0x3`);
+it was at + 2, the authored 380 - 378.
+
+**6. The text table loads rows as TextStringManager 0x8cac30 does (READ).**
+- The service column: a row is loaded only when column 0 reads 1 (`0xb9cc80(0, 1)`, `cmp eax,1`
+  at 0x8cb110..0x8cb118). On the box's archive no real key changes; the rows skipped are the
+  continuation lines of multi-line values (57 in textuisystem, 129 in textdata_object), which had
+  been read as keys.
+- A first row with no English: the loader reads ONE column, 0x8c5370(language) -- the CGame loads
+  (0x849215..0x8493ad) pass -1 as the first-choice language, and 0x8cace6 sets that slot to -1, so
+  0x8c6a90's compare with L"0" (DAT_00e1804c) never chooses -- and stores the field as it stands.
+  So a key whose first row has no English holds that column's "0" filler (or blank) in the
+  client. Ours fell back to the Korean column 2 or the token; it keeps the English column's own
+  field now. The box's Rebecca Event Hats (SN_ITEM_ETC_E060823_SATGAT_INT3_M/F), whose first row is
+  all "0" and whose English row comes after it, read "0", as in the client (were "??? ?? (?)").
+  On the box's archive this is 450 textuisystem keys (313 of them "0"), 2179 object names (1849
+  "0"), 490 speech lines; of the Jangan-area names, seven (event NPCs, two Tiger Woman variants
+  and a Strong Mangnyang).
+
+**7. Stale comments** in ui_text_table.gd (last row wins), ui_builder.gd (the archive's font is
+Tahoma: its first row says Arial) and hud_panels.gd (the doll's turn direction is READ).
+
+Not done: the dungeon light (`Map::FUN_00a255c0` gives the object shader an ambient-only light in a
+dungeon). This client loads no dungeon, so there is nowhere for it to apply yet (OPEN).
+
 ## Six-hundred-and-thirty-fifth round, review follow-up: the portrait is lit by the zone's light, as the client lights it, and every body layer draws
 
 The review of acd31b6 confirmed the camera, the yaw, the mask, the dirty triggers, the re-render on

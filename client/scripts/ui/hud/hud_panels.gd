@@ -2432,8 +2432,10 @@ func paper_doll_shown() -> bool:
 # has passed since it last fired, once per tick (0xb933d0). The circle is a
 # plain button: it acts on the release.
 #
-# Which way a positive yaw turns the model on screen rests on vslot 0x30 being
-# the model's plain Y rotation (not read): PaperDoll.set_yaw has the mapping.
+# Which way a positive yaw turns the model on screen is READ: 0x6ab960 (the
+# right arrow) adds to the yaw and 0x6ab920 (the left) subtracts, both through
+# 0xa5a8c0 -> vslot 0x30 -> CCompChar::FUN_00c26e70, the model's Y rotation;
+# PaperDoll.set_yaw has the mapping into Godot (round 633's review).
 signal paper_doll_yaw_changed(yaw: float)
 const DOLL_YAW_PER_MS := 0.0015
 const DOLL_FRAME_MS_MAX := 3000
@@ -2480,11 +2482,18 @@ func _doll_frame_ms() -> int:
 ## (-1).
 var test_doll_frame_ms := -1
 
-func set_paper_doll_yaw(yaw: float) -> void:
+## `measure` logs the yaw and asks for the pose line: on an arrow's press and
+## release and on the reset, not on each 50 ms repeat of a held arrow (which
+## wrote about 40 lines a second into the tester log).
+func set_paper_doll_yaw(yaw: float, measure: bool = true) -> void:
 	paper_doll_yaw = yaw
 	paper_doll_yaw_changed.emit(yaw)
-	# The measurement a real-input run reads (round 633).
-	print("HudPanels: doll yaw %.4f at %d ms" % [yaw, Time.get_ticks_msec()])
+	if measure:
+		_measure_paper_doll()
+
+## The measurement a real-input run reads (round 633).
+func _measure_paper_doll() -> void:
+	print("HudPanels: doll yaw %.4f at %d ms" % [paper_doll_yaw, Time.get_ticks_msec()])
 	paper_doll_measure_requested.emit()
 
 ## Asks World3D to log where the doll's hands and head land (round 633's
@@ -2492,19 +2501,20 @@ func set_paper_doll_yaw(yaw: float) -> void:
 signal paper_doll_measure_requested
 
 ## One arrow command: 0x6ab920 (dir -1) or 0x6ab960 (dir +1).
-func _doll_turn_step(dir: int) -> void:
-	set_paper_doll_yaw(paper_doll_yaw + float(dir) * float(_doll_frame_ms()) * DOLL_YAW_PER_MS)
+func _doll_turn_step(dir: int, measure: bool = false) -> void:
+	set_paper_doll_yaw(paper_doll_yaw + float(dir) * float(_doll_frame_ms()) * DOLL_YAW_PER_MS, measure)
 
 func _doll_turn_start(dir: int) -> void:
 	_doll_turn = dir
 	_doll_turn_hovered = true
-	_doll_turn_step(dir)
+	_doll_turn_step(dir, true)
 	_doll_turn_last_ms = Time.get_ticks_msec()
 	_doll_turn_period_ms = DOLL_REPEAT_DELAY_MS
 
 func _doll_turn_stop(dir: int) -> void:
 	if _doll_turn == dir:
 		_doll_turn = 0
+		_measure_paper_doll()
 
 ## The repeat timers, run each frame while an arrow is held.
 func _doll_turn_tick(now_ms: int) -> void:
