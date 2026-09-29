@@ -79,6 +79,103 @@ func _ramp(rise: float, run: float, width: float) -> BmsReader.CollisionMesh:
 		Vector3(width, rise, run), Vector3(0.0, rise, run),
 	], [0, 3, 0, 3])
 
+## Round 644: one object whose navigation mesh is a deck 40 up, 30 wide and
+## 100 long (open at both ends, 0x10 along its sides, as the Black Robber Den
+## bridges are), plus a sealed pier footprint on the ground under its middle
+## -- two parts of one mesh that overlap in plan, as `oas_tarim_rob_s_brid`'s
+## do. Vertices 0-3 the deck, 4-7 the pier; cells 0-1 the deck, 2-3 the pier.
+func _deck_over_pier() -> BmsReader.CollisionMesh:
+	var cm := BmsReader.CollisionMesh.new()
+	for p in [
+		Vector3(0.0, 40.0, 0.0), Vector3(30.0, 40.0, 0.0), Vector3(30.0, 40.0, 100.0), Vector3(0.0, 40.0, 100.0),
+		Vector3(-10.0, 0.0, 40.0), Vector3(40.0, 0.0, 40.0), Vector3(40.0, 0.0, 60.0), Vector3(-10.0, 0.0, 60.0),
+	]:
+		var v := BmsReader.CollisionVertex.new()
+		v.position = p
+		cm.vertices.append(v)
+	for tri in [[0, 1, 2], [0, 2, 3], [4, 5, 6], [4, 6, 7]]:
+		var c := BmsReader.CollisionCell.new()
+		c.a = tri[0]
+		c.b = tri[1]
+		c.c = tri[2]
+		cm.cells.append(c)
+	# The deck: open ends (z 0 and z 100), 0x10 sides.
+	cm.outline_edges.append(_cedge(0, 1, 0, BmsReader.NO_CELL, 0x00))
+	cm.outline_edges.append(_cedge(1, 2, 0, BmsReader.NO_CELL, 0x10))
+	cm.outline_edges.append(_cedge(2, 3, 1, BmsReader.NO_CELL, 0x00))
+	cm.outline_edges.append(_cedge(3, 0, 1, BmsReader.NO_CELL, 0x10))
+	# The pier: sealed.
+	cm.outline_edges.append(_cedge(4, 5, 2, BmsReader.NO_CELL, 0x03))
+	cm.outline_edges.append(_cedge(5, 6, 2, BmsReader.NO_CELL, 0x03))
+	cm.outline_edges.append(_cedge(6, 7, 3, BmsReader.NO_CELL, 0x03))
+	cm.outline_edges.append(_cedge(7, 4, 3, BmsReader.NO_CELL, 0x03))
+	cm.internal_edges.append(_cedge(0, 2, 0, 1, 0x04))
+	cm.internal_edges.append(_cedge(4, 6, 2, 3, 0x04))
+	return cm
+
+func _bridge_over_its_own_pier(region: NvmReader.ParsedRegion) -> void:
+	var placed := NavGraph.place(_deck_over_pier(), 0, Vector3(100.0, 0.0, 200.0), 0.0)
+	# The loader's slots: every edge naming the cell, outline list first.
+	# Read through get() so this file still runs against a NavGraph without
+	# the field, and says so as a failure.
+	var slots: Variant = placed.get("cell_edges")
+	_check(slots is Array and (slots as Array).size() == 4 and Array((slots as Array)[0]) == [0, 1, 8] and Array((slots as Array)[3]) == [6, 7, 9],
+		"each cell keeps the edges that name it, outline first, in file order (got %s)" % [slots])
+	var g := NavGraph.build(region, _placed_list(placed))
+
+	# Along the deck from one end to the other, straight over the pier.
+	var pos := Vector3(115.0, 40.0, 205.0)
+	var on := 0
+	var walls := 0
+	for _i in range(90):
+		var r := g.step_tracked(pos, Vector2(0.0, 1.0), on)
+		if r.blocked:
+			walls += 1
+		pos = r.position
+		on = r.standing_on
+	_check(walls == 0 and on == 0 and absf(pos.z - 295.0) < 0.01 and absf(pos.y - 40.0) < 0.01,
+		"a mover on a bridge deck crosses over the bridge's own pier below it (walls %d, z %.2f, y %.2f, on %d)" % [walls, pos.z, pos.y, on])
+	_check(not g.blocked(Vector2(115.0, 230.0), Vector2(115.0, 270.0), 0),
+		"the pier's outline is no wall to someone on the deck above it")
+
+	# The deck's own walls still hold: off its side through a 0x10 edge.
+	var side := g.step_tracked(Vector3(115.0, 40.0, 220.0), Vector2(30.0, 0.0), 0, false)
+	_check(side.blocked and side.standing_on == 0 and side.position.x < 130.0,
+		"the deck's 0x10 side still stops someone on it (x %.2f)" % side.position.x)
+	# And off its far end, open, back onto the terrain.
+	var off_end := g.step_tracked(Vector3(115.0, 40.0, 290.0), Vector2(0.0, 20.0), 0)
+	_check(off_end.exited == 0 and off_end.standing_on == NavGraph.ON_TERRAIN and absf(off_end.position.z - 310.0) < 0.01,
+		"the deck's open end lets them off onto the terrain (z %.2f, on %d)" % [off_end.position.z, off_end.standing_on])
+
+	# The pier is still solid to someone on the ground walking into it.
+	var ground := g.step_tracked(Vector3(115.0, 0.0, 225.0), Vector2(0.0, 30.0), NavGraph.ON_TERRAIN)
+	_check(ground.blocked and ground.standing_on == NavGraph.ON_TERRAIN and ground.position.z < 240.0,
+		"the pier stops someone on the ground under the bridge (z %.2f)" % ground.position.z)
+
+	# A sealed square (a lamp base) with its diagonal from the corner a mover
+	# slides into: from inside, pushed into the wall beside that corner, it
+	# must stay inside. Round 644's sweep caught the cell walk leaking out
+	# through the shared vertex on real `cj_field_lamp`.
+	var box := NavGraph.place(_quad([
+		Vector3(0.0, 0.0, 0.0), Vector3(8.0, 0.0, 0.0), Vector3(8.0, 0.0, 8.0), Vector3(0.0, 0.0, 8.0),
+	], [3, 3, 3, 3]), 0, Vector3(100.0, 0.0, 200.0), 0.0)
+	var g_box := NavGraph.build(region, _placed_list(box))
+	var in_box := Vector3(101.0, 0.0, 201.5)
+	var box_on := 0
+	for _i in range(40):
+		var r := g_box.step_tracked(in_box, Vector2(-0.94, -0.339), box_on)
+		in_box = r.position
+		box_on = r.standing_on
+	_check(box_on == 0 and in_box.x >= 100.0 and in_box.z >= 200.0,
+		"a mover pressed into the corner of a sealed base stays inside it (%.3f, %.3f, on %d)" % [in_box.x, in_box.z, box_on])
+
+	# A move that runs exactly along an internal edge, and one through the
+	# vertex three cells would share, ends where it should rather than
+	# bouncing between cells.
+	var diag := g.step_tracked(Vector3(101.0, 40.0, 203.333), Vector2(27.0, 90.0), 0)
+	_check(not diag.blocked and diag.standing_on == 0 and absf(diag.position.x - 128.0) < 0.01,
+		"a move along the deck's diagonal ends on the deck (x %.2f, z %.2f, on %d)" % [diag.position.x, diag.position.z, diag.standing_on])
+
 func _placed_list(placed: NavGraph.PlacedObject) -> Array[NavGraph.PlacedObject]:
 	var out: Array[NavGraph.PlacedObject] = [placed]
 	return out
@@ -406,6 +503,8 @@ func _initialize() -> void:
 	var landing := g_deck.landing_height_at(110.0, 239.0)
 	_check(landing > NavGraph.SURFACE_REACH_UP,
 		"landing_height_at comes to rest on top of it instead (got %.2f)" % landing)
+
+	_bridge_over_its_own_pier(region)
 
 	if _failures == 0:
 		print("ALL PASS")

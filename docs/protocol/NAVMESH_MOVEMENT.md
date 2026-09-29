@@ -46,6 +46,19 @@ its cell has. Walking *under* something is expressed by the `0x10` flag, not by 
 From the current cell, test the move against the cell's three edges (minus the one just
 crossed). At the first crossed edge, with `bVar5 = flags`:
 
+**A cell's three edges are its own slots (round 644, READ).** The deserializer
+(`RTNavMeshObj::FUN_004489b0`) hands every edge, outline list first and in file order, to its
+`cell_from` cell and, when `cell_to != 0xFFFF`, to its `cell_to` cell through
+`RTNavMeshObj::FUN_0045dcf0`, which appends the edge pointer to the cell's slot list at `+0x28`
+while the count at `+0x24` is below 4. The walk reads slots 0..2 (`CRTNavCellTri::FUN_0045dec0`,
+the loop counter `iVar11` 0..2), skips the edge it came in by (`param_8`), and on an open internal
+edge recurses into `CRTNavCellTri::FUN_0045ded0` -- the edge's other cell. So a mover on an object
+meets **only the edges of the cells its walk passes through**. Nothing of the object that is not
+connected to the mover's cell is tested -- which matters wherever one mesh holds parts that
+overlap in plan: `oas_tarim_rob_s_brid`'s navigation mesh is a deck at y 620 and a sealed pier
+footprint (outline `0x03`) on the canyon floor at y 156 directly beneath it. The crossing test is
+`FUN_00447b30` (returns 2 for a crossing within both segments, ends included).
+
 ```
 event gates:     the wide-record extra byte of the edge (+0x38) and of the cells (+0x8b) is
                  checked against the region's event state when its 0xc0 bits are set
@@ -140,8 +153,37 @@ printing every doorway and wall (headless, ~10 s a run). Against the weapon shop
   terrain**. This is the case the old height-inferred rule got wrong — the yard floor sits within
   reach, so it lifted the character through the wall onto it, and the yard's walls then held them.
 
+## Which mesh is the navigation mesh (round 644, READ)
+
+The map loader switches on the last letter of the object index's path (`FUN_0042ce60`): `.cpd`
+-> `MapLoader::FUN_0042bc00`, `.bsr` -> `MapLoader::FUN_0042c4a0`, `.bms` -> `FUN_0042cbc0`.
+For a `.bsr`, `FUN_0042c4a0` reads the header (`FUN_0043bfb0`: the 12-byte magic then fifteen
+words) and tests the word at **file offset 0x28** (`mov edi,[esp+0x5c]` at `0x42c73d` against the
+buffer pushed as `esp+0x2c`; the decompiler shows the wrong local). Zero: no navigation mesh.
+Otherwise it seeks there, reads one length-prefixed string (`FUN_0043c250`) -- the path that opens
+the bounding-box block, the "mesh path" BSR_FORMAT.md lists before the bounding box -- and hands it
+to `FUN_0042cbc0`, which reads that `.bms`'s 0x3c-byte header and deserializes the collision
+section at its word 0x28, with its word 0x38 as the record-size bits. **One mesh.** Rounds 505-643
+merged the collision sections of every mesh the `.bsr` lists; `client/tools/navmesh_source_census.gd`
+over Data.pk2's `navmesh\object.ifo` (3,268 entries) finds that agreed on 2,039 objects and
+differed on 4 (`NavObjectSource`, `client/scripts/nav/nav_object_source.gd`, names them). The graph
+now loads the one mesh.
+
+## Census: edges the old rule met from the wrong part (round 644, MEASURED)
+
+`client/tools/nav_phantom_census.gd` counts, over every object navigation mesh, the (cell, edge)
+pairs where an edge that is not one of the cell's own slots crosses the cell's interior in plan
+and would have stopped (phantom wall) or unseated (phantom exit) a mover there under the
+pre-644 all-edges rule. See WORLD_ISSUES.md's six-hundred-and-forty-fourth round for the counts.
+
 ## What is not implemented
 
+- The mover's cell is not carried from step to step; `NavGraph._cells_under` infers it from the
+  position and height, and a walk that leaves its cell without crossing an edge (through a vertex
+  shared by several cells) is retried from the next candidate cell or stopped. The client keeps a
+  cell pointer in the position instead.
+- `.cpd` compound objects (the loader's 'd' case, `MapLoader::FUN_0042bc00`) get no navigation
+  mesh: 105 entries of the navigation index.
 - Linked edges (`0x08`) are not followed through the `.nvm` link table; the mover exits the one
   span and the neighbouring span's own coincident edge (also `0x08`, so enterable) takes it,
   with a same-height hand-off covering the exactly-coincident case.
