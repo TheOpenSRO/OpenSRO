@@ -136,7 +136,13 @@ static func load_bar(key: String, path: String = PATH) -> Dictionary:
 ##   withdrawal): every skill slot (kinds 0x49 and 0x19) holding exactly that
 ##   id is cleared; every other slot of the same group (record +4) takes it.
 ## Retail saves each changed slot (0x60bea0); World3D saves the file after.
-static func rebind_for_skill(skills: Dictionary, new_id: int, learned: bool, level_ids: PackedInt64Array) -> Array:
+##
+## `new_code` is new_id's own Basic_Code (skilldata column 3, the level's
+## row), which a changed slot takes with the id (rounds 636-640 integration
+## review: a slot re-bound to level 2 kept level 1's code). Empty -- the
+## skill index not ready -- keeps the slot's code, as before.
+static func rebind_for_skill(skills: Dictionary, new_id: int, learned: bool, level_ids: PackedInt64Array,
+		new_code: String = "") -> Array:
 	var changed: Array = []
 	var at := level_ids.find(new_id)
 	if at < 0:
@@ -149,7 +155,7 @@ static func rebind_for_skill(skills: Dictionary, new_id: int, learned: bool, lev
 			return changed
 		for slot in skills.keys():
 			if int((skills[slot] as Dictionary)["id"]) == prev:
-				skills[slot] = {"id": new_id, "code": String((skills[slot] as Dictionary).get("code", ""))}
+				skills[slot] = {"id": new_id, "code": _rebound_code(skills[slot], new_code)}
 				changed.append(slot)
 	else:
 		for slot in skills.keys():
@@ -158,6 +164,13 @@ static func rebind_for_skill(skills: Dictionary, new_id: int, learned: bool, lev
 				skills.erase(slot)
 				changed.append(slot)
 			elif level_ids.has(id):
-				skills[slot] = {"id": new_id, "code": String((skills[slot] as Dictionary).get("code", ""))}
+				skills[slot] = {"id": new_id, "code": _rebound_code(skills[slot], new_code)}
 				changed.append(slot)
 	return changed
+
+## The code a re-bound slot keeps: new_code, or the slot's own when that is
+## empty.
+static func _rebound_code(entry, new_code: String) -> String:
+	if new_code != "":
+		return new_code
+	return String((entry as Dictionary).get("code", ""))

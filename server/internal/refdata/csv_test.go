@@ -587,7 +587,7 @@ func TestSkillCSVBuffColumnsAreAStrictSuffix(t *testing.T) {
 	if err != nil || sk.ActionKind != 0 || sk.TargetLand || sk.DuraMs != 0 || sk.HasTele() || sk.BuffParams != "" || sk.Lks2 {
 		t.Fatalf("an export predating the buff columns: %+v, %v", sk, err)
 	}
-	if skillCSVColumns[47] != "ActionKind" || skillCSVColumns[60] != "BuffParams" || skillCSVColumns[61] != "Lks2" || skillCSVColumns[63] != "TargetHealMP" || skillCSVColumns[64] != "ActionOverlap" || skillCSVColumns[76] != "Dtt" || skillCSVColumns[81] != "Trap" || skillCSVColumns[82] != "Efr1" || skillCSVColumns[86] != "Pw3" || len(skillCSVColumns) != 87 {
+	if skillCSVColumns[47] != "ActionKind" || skillCSVColumns[60] != "BuffParams" || skillCSVColumns[61] != "Lks2" || skillCSVColumns[63] != "TargetHealMP" || skillCSVColumns[64] != "ActionOverlap" || skillCSVColumns[76] != "Dtt" || skillCSVColumns[81] != "Trap" || skillCSVColumns[82] != "Efr1" || skillCSVColumns[86] != "Pw3" || skillCSVColumns[88] != "Tel3" || len(skillCSVColumns) != 89 {
 		t.Fatalf("test premise: columns %q..%q, %d in all", skillCSVColumns[47], skillCSVColumns[len(skillCSVColumns)-1], len(skillCSVColumns))
 	}
 	// Round 622's TargetHealHP/MP after them: absent, no heal on a target.

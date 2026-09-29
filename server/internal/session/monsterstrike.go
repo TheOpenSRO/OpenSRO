@@ -480,6 +480,13 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	// Death ends the action queue with everything else: no repeat
 	// fires for a character who has just been put back on their feet.
 	keepUp.Cancel(characterID)
+	// A death ends every buff on this path too (the rounds 636-640
+	// integration review), as markDead's does on the dead-state path (round
+	// 616's rule, OURS) -- the protection wall and its root with it: before,
+	// a player killed through Crystal Wall by magical blows respawned still
+	// walled, rooted, in state 0x11 and drained. Under the kill lock, the
+	// same order markDead takes (kill lock, then buff lock).
+	endBuffsOf(deps.hub, characterID)
 	// Back at character.RespawnFraction of the maximum, not all of
 	// it: the game restores a character whose stored pool is zero --
 	// which is what death leaves -- to 40%, for HP and MP alike. See

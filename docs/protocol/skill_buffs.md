@@ -81,6 +81,7 @@ an instant action, no buff, no ground move, no marker):
 | 62-63 | TargetHealHP / TargetHealMP | round 622: what one cast restores to **each character it names** (`skillparam.TargetHealAmounts`, heal.md): a Target_Required 1, action kind 0 row with one flat `heal` and none of `efr`/`nmh`/`mwhh`/`mwmh`/getv `HLRU`/`resu`/a combat parameter, v1 = 0 for HP and v3 = 0 for MP. MEASURED on the box's export (33,698 rows): 27 rows, `SKILL_CH_WATER_HEAL_A/B/C_01..09`; Heal A lv1 (id 149) 369 HP, 0 MP |
 | 64-76 | ActionOverlap, Ovl2, HasDttp, Dttp0, Dttp1, Efr2, Offensive, Msch1, Hide, SkcEnd, BasicGroup, Activity, Dtt | round 636, the recast rule's: Action_Overlap `+0x8c` AND `0xffffff`, `ovl2` value[0] `+0x37c`, `dttp` `+0x424`, an `efr` of kind 2 (`+0x290`), `FUN_00589d20`, `msch` value[0] == 1, `hide` `+0x428`, `skc` value[1] & 0xff, Basic_Group (column 5, `+0x44`), Basic_Activity (column 8, `+0x65`), `dtt` `+0x420` (`cmd/export-refdata` `stackColumns`). An older export loads them zero: no state bytes |
 | 83-86 | Pw0, Pw1, Pw2, Pw3 | round 640: `pw` value[0..3] (`+0x2b4`, `cmd/export-refdata` `wallColumns`) -- the wall's damage-type mask, HP, flat defence and defence percent ("The protection walls" below). MEASURED on the export: 55 rows, 28 Crystal Wall (`SKILL_CH_COLD_BINGBYEOK_*`, mask 7) and 27 Fire Wall (`SKILL_CH_FIRE_HWABYEOK_*`, mask 11). An older export loads 0: no wall. `onff` needs no column: `BuffParams` (60) already carries it |
+| 87-88 | Tel2, Tel3 | the rounds 636-640 integration review: `tel2` (`+0x2f0`) and `tel3` (`+0x2f4`) present (`cmd/export-refdata` `teleColumns`), for the wall's 0x3009 refusal below (`refdata.Skill.HasTeleport`). MEASURED on the box's Media.pk2 (60 plain shards, 33,709 ids, every walk finished, the literal words agree): `tel2` on 7 rows (`SKILL_EU_WIZARD_PSYCHICA_TELEPORT_A_01..03`, `_B_01..02`, `SKILL_EU_WARLOCK_PSYCHICA_TELEPORT_A_01`, `SKILL_EU_BARD_PSYCHICA_TELEPORT_A_01`), `tel3` on 21 (`SKILL_EU_WARRIOR_FRENZYA_TOUNT_SPRINT_A_01..21`), `tele` on 20. An older export loads false: only `tele` is tested |
 
 The Param block is walked (`skillparam.Walk`), never scanned.
 
@@ -418,7 +419,9 @@ the book today.
   cancelled; your own can.**
   (The retail client refuses every `nbuf` row without `lnks` before sending — spec §3.2; that is the
   buff bar's rule, round 618.)
-- **Death**: srrevamp ends every buff (`markDead` → OpBuffEnd). **OURS**: `GObjPC_OnDeath`
+- **Death**: srrevamp ends every buff (`markDead` → OpBuffEnd under `-player-dead-state`; on the
+  default respawn path `monsterStrike` does the same since the rounds 636-640 integration review --
+  before it that path ended none). **OURS**: `GObjPC_OnDeath`
   (`0x4e6980`) clears no book, and `CGObjChar::SetLifeState` (`0x4a9c80`) on state 2 calls slot 4
   of an unidentified member at `+0x188`; the retail death rule was not traced.
 - **Logout**: the book is dropped on disconnect -- unless the character is still in the world on
@@ -790,7 +793,10 @@ came back empty).** srrevamp departs from retail here, on purpose:
   server holds it (`ROOT: the server holds this player at ...`).
 - **Attacks and skills** are not refused for the root.
 - **Its end** is the record's end: a right-click cancel, a recast (the toggle-off), the wall's HP
-  reaching 0, the MP drain running short, a death or a logout.
+  reaching 0, the MP drain running short, a death or a logout. A death ends the book on both death
+  paths: `markDead` with `-player-dead-state`, and the default respawn in `monsterStrike` (the
+  rounds 636-640 integration review; before it a player killed through a wall respawned still
+  walled).
 
 **The client (READ, `sro_client.exe`).** The wall's aura is the buff's ACT_L loop
 (`fire_hwabyeok_keep_a.efp`, `cold_bingbyeok_keep_a.efp`). A kind-7 entry (`FUN_00a55e00`) clears the
@@ -820,7 +826,9 @@ wall is up"` (OURS text; the engine's 0x3009 string is not identified).
 - **Ghost Walk**: `Skill_CheckUseConditions` refuses a row carrying `tele`, `tel2` or `tel3` while the
   caster's book holds a wall (`book+0x1dc`), 0x3009 (0x58e033..0x58e061), before the cooldown test and
   the motion gate. srrevamp: `useSkillHandler` (`wallTeleRefusal`, OURS text) -- this is retail's
-  rule, not the OURS root.
+  rule, not the OURS root. All three are tested (`refdata.Skill.HasTeleport`, CSV 87/88 for
+  `tel2`/`tel3`); the `tel2`/`tel3` rows are EU skills (MEASURED, the table above), so a walled
+  Chinese caster meets it through Ghost Walk's `tele`.
 - **Summons and mounts**: a COS/pet summon, a mercenary scroll and mounting are refused while walled
   (0x4931d6, 0x49be6f, 0x49b507, 0x4fc52a). srrevamp has none of them: **OPEN**.
 - **Knockback and knockdown** are skipped on a walled target (0x58fee5; `FUN_0058e540`). srrevamp's

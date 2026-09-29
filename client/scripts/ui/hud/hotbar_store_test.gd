@@ -99,6 +99,20 @@ func _review_checks(store: Script) -> void:
 	changed.sort()
 	_check(changed == [1, 2] and not bar.has(2) and bar[1]["id"] == 1101 and bar[5]["id"] == 114,
 		"a withdrawal clears the slots holding the named id and moves the group's others to it (got %s)" % [bar])
+	# Rounds 636-640 integration review: the re-bound slot takes the new
+	# level's own Basic_Code with its id; an unknown code keeps the slot's.
+	bar = {1: {"id": 90, "code": "SKILL_X_01"}, 5: {"id": 114, "code": "L"}}
+	changed = store.call("rebind_for_skill", bar, 1101, true, levels, "SKILL_X_02")
+	_check(changed == [1] and bar[1]["id"] == 1101 and bar[1]["code"] == "SKILL_X_02" and bar[5]["code"] == "L",
+		"learning level 2 re-binds the slot to level 2's code (got %s)" % [bar])
+	bar = {1: {"id": 1102, "code": "SKILL_X_03"}}
+	changed = store.call("rebind_for_skill", bar, 1101, false, levels, "SKILL_X_02")
+	_check(changed == [1] and bar[1]["id"] == 1101 and bar[1]["code"] == "SKILL_X_02",
+		"a withdrawal re-binds the group's other slot to the named level's code (got %s)" % [bar])
+	bar = {1: {"id": 90, "code": "SKILL_X_01"}}
+	store.call("rebind_for_skill", bar, 1101, true, levels, "")
+	_check(bar[1]["id"] == 1101 and bar[1]["code"] == "SKILL_X_01",
+		"with no code known (the index not ready) the slot keeps its code (got %s)" % [bar])
 
 func _has(script: Script, method: String) -> bool:
 	for d in script.get_script_method_list():

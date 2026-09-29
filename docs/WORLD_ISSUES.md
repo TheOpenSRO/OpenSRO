@@ -7094,6 +7094,59 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Rounds 636-640 integration review (feat/walls): a death ends the wall on the default respawn path, a re-bound hotbar slot takes its level's code, and the wall's refusal tests 'tel2' and 'tel3'
+
+The final review of feat/walls (dev 5a82339 + rounds 636-640 and their follow-ups, at b38b358) read
+the unreviewed commits (76cb92d, b38b358, 3bbe05a) and the merges, and ran two clients through
+Login with real input against a server built from the branch: buff stacking, `/speed`, remote
+facing and the arrival list's headings, the target row with the premium, EXP in the system
+window, the hotbar across relogs and an upgrade, the doll's ten clicks, and the walls (the root,
+attacks while rooted, the absorb to the break, the drain, the toggle-off, Ghost Walk refused). No
+SCRIPT ERROR in six logs. It found these; all are fixed here. Before is b38b358.
+
+**1. A death on the default path left the wall up (OURS rule, now applied on both paths).** With
+`-player-dead-state` off -- the deploy default -- `monsterStrike` respawned a killed player without
+ending the book; only `markDead` (the dead-state path) did. A player killed through Crystal Wall
+(physical only) by magical blows respawned still walled: rooted, in state 0x11 (no regen), drained
+41 MP every 5 s. MEASURED with a throwaway test on b38b358: `dead-state false, died true, HP now 80,
+rooted true, motion 0x11, records 1`. The respawn path now calls `endBuffsOf` under the kill lock,
+as `markDead` does (kill lock, then buff lock). Every buff ends there now, as on the dead-state
+path (round 616's rule, OURS: the retail death rule was not traced). `rv636_640_test.go`
+`TestRound640ADeathOnTheRespawnPathEndsTheWall` kills Aria through Crystal Wall and wants the
+wall's OpBuffEnd, no records, no root, STAND and a move that goes through; against b38b358 it
+fails `waiting for 0x00F6: ... i/o timeout`.
+
+**2. A re-bound hotbar slot kept the old level's code (round 639).** `HotbarStore.rebind_for_skill`
+changed a slot's id and kept its code: live, slot 6 became `{1287, SKILL_CH_LIGHTNING_GYEONGGONG_B_01}`
+and was saved so. It takes `new_code` now, the new id's own Basic_Code (skilldata column 3 of that
+level's row, `SkillBuffCatalog.info(id)["basic_code"]`, `World3D._skill_basic_code`); an empty code
+(the index not ready) keeps the slot's, as before. `hotbar_store_test.gd` checks the learn and the
+withdrawal re-binds and the empty-code fallback. (Casting was not affected: the clip name drops the
+level suffix.)
+
+**3. The wall's 0x3009 refusal tested 'tele' alone.** `Skill_CheckUseConditions` refuses a row
+carrying `tele`, `tel2` or `tel3` while the book holds a wall (READ, `srv.asm` 0x58e033..0x58e061:
+`cmp [edx+0x1dc],0`, then `+0x2ec`, `+0x2f0`, `+0x2f4`, each `jne 0x58dae4`, `mov ax,0x3009`);
+`refdata.Skill.HasTele` read only `tele`. The export now carries `tel2`/`tel3` presence as CSV
+columns 87/88 (`teleColumns`, a strict suffix: an older CSV loads false), the SQL store keeps them,
+and the gate asks `Skill.HasTeleport`. `HasTele` -- the ground-cast move -- is unchanged, so no EU
+row starts moving. MEASURED on the box's Media.pk2 (60 plain skilldata shards, 33,709 ids, every
+Param walk finished, the literal words agree): `tel2` on 7 rows
+(SKILL_EU_WIZARD_PSYCHICA_TELEPORT_A_01..03, _B_01..02, SKILL_EU_WARLOCK_PSYCHICA_TELEPORT_A_01,
+SKILL_EU_BARD_PSYCHICA_TELEPORT_A_01), `tel3` on 21 (SKILL_EU_WARRIOR_FRENZYA_TOUNT_SPRINT_A_01..21),
+`tele` on 20. All `tel2`/`tel3` rows are EU skills, so a walled Chinese caster meets the refusal
+through Ghost Walk; the fix makes the gate match the read rule. `TestTeleColumns` (export ->
+import -> HasTele/HasTeleport) and `TestRound640ATel2RowIsRefusedWhileWalled` (a `tel2`-only row
+refused while walled; against the old `HasTele` gate it answers "select a location on the ground").
+**Deploy:** the refusal for `tel2`/`tel3` rows needs a re-export of the skill CSV; an old CSV
+behaves as before.
+
+**Not changed (noted by the review).** The skill window's click assigns `BaseSkill.basic_code` for
+any learned level, as before; only the rebind now writes the level's own code.
+
+**Checks.** Go: build, vet and `go test -count=1 -p 1 ./...` pass (shared cache). Client: `check`
+loads all 401 scripts; `tests` runs 161 suites, 0 failing.
+
 ## Six-hundred-and-fortieth round, review follow-up: Ghost Walk is refused while walled as retail refuses it, a wall is charged before its absorb test, and a rooted client that walked on is put back
 
 The review confirmed, in both binaries, that nothing roots a walled caster. So the root stays OURS,

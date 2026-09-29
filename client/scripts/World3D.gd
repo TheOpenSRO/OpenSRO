@@ -7629,7 +7629,7 @@ func _on_skill_learned_for_hotbar(skill_id: int, ok: bool) -> void:
 	if not ok or _hud_panels == null or _quickslot_skills.is_empty():
 		return
 	var levels := _hud_panels.skill_level_ids(skill_id)
-	var changed := HotbarStore.rebind_for_skill(_quickslot_skills, skill_id, true, levels)
+	var changed := HotbarStore.rebind_for_skill(_quickslot_skills, skill_id, true, levels, _skill_basic_code(skill_id))
 	_apply_skill_rebind(changed)
 
 ## The withdrawal's half of the same rebind (0x880db0 -> 0x778840(id, 0)).
@@ -7639,7 +7639,14 @@ func _on_skill_withdrawn_for_hotbar(skill_id: int) -> void:
 	if _hud_panels == null or _quickslot_skills.is_empty():
 		return
 	var levels := _hud_panels.skill_level_ids(skill_id)
-	_apply_skill_rebind(HotbarStore.rebind_for_skill(_quickslot_skills, skill_id, false, levels))
+	_apply_skill_rebind(HotbarStore.rebind_for_skill(_quickslot_skills, skill_id, false, levels, _skill_basic_code(skill_id)))
+
+## A per-level skill id's own Basic_Code (skilldata column 3, the level's row;
+## SkillBuffCatalog's index), or "" while the index is not ready.
+func _skill_basic_code(skill_id: int) -> String:
+	if _hud_buff_board == null or _hud_buff_board.catalog == null:
+		return ""
+	return String(_hud_buff_board.catalog.info(skill_id).get("basic_code", ""))
 
 func _apply_skill_rebind(changed: Array) -> void:
 	if changed.is_empty() or _hud_underbar == null:

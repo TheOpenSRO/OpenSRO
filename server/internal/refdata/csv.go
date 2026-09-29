@@ -467,6 +467,10 @@ var skillCSVColumns = []string{
 	// Appended in round 640: 'pw' value[0..3] (Skill.Pw0..Pw3), the protection
 	// walls. A strict suffix: an older export loads 0, no wall.
 	"Pw0", "Pw1", "Pw2", "Pw3",
+	// Appended in the rounds 636-640 integration review: whether the row
+	// carries 'tel2' / 'tel3' (Skill.Tel2, Skill.Tel3). A strict suffix: an
+	// older export loads false, and only 'tele' is tested, as before.
+	"Tel2", "Tel3",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -700,6 +704,8 @@ func parseSkillRow(f []string) (Skill, error) {
 	int64At(84, &sk.Pw1)
 	int64At(85, &sk.Pw2)
 	int64At(86, &sk.Pw3)
+	boolAt(87, &sk.Tel2)
+	boolAt(88, &sk.Tel3)
 
 	if err != nil {
 		return Skill{}, err

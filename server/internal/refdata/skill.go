@@ -361,6 +361,12 @@ type Skill struct {
 	// defence percent -- all READ, docs/protocol/skill_buffs.md "The
 	// protection walls". All zero on a row without the run (HasWall false).
 	Pw0, Pw1, Pw2, Pw3 int64
+	// Tel2 and Tel3 are whether the row carries 'tel2' (+0x2f0) and 'tel3'
+	// (+0x2f4) (CSV 87/88, the rounds 636-640 integration review):
+	// Skill_CheckUseConditions refuses 'tele', 'tel2' and 'tel3' rows alike
+	// while the caster holds a wall (HasTeleport). srrevamp moves nobody by
+	// them (their own actions are not modelled). An older export loads false.
+	Tel2, Tel3 bool
 
 	// The mastery this skill belongs to and the mastery level required to learn
 	// it (ReqCommon_Mastery1 / ReqCommon_MasteryLevel1). These are what the
@@ -422,6 +428,12 @@ func (s *Skill) HasWall() bool { return s != nil && s.Pw0 != 0 }
 
 // HasTele reports whether the row carries 'tele', the ground-cast move.
 func (s *Skill) HasTele() bool { return s != nil && (s.Tele0 != 0 || s.Tele1 != 0) }
+
+// HasTeleport reports whether the row carries any of 'tele', 'tel2' and
+// 'tel3' -- the three fields (+0x2ec, +0x2f0, +0x2f4) Skill_CheckUseConditions
+// tests when it refuses a cast 0x3009 while the caster's book holds a wall
+// (0x58e033..0x58e061, READ).
+func (s *Skill) HasTeleport() bool { return s != nil && (s.HasTele() || s.Tel2 || s.Tel3) }
 
 // The SitGate bits.
 const (

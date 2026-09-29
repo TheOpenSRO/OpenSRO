@@ -762,8 +762,11 @@ func useSkillHandler(
 			// wall (book+0x1dc), 0x3009 (0x58e033..0x58e061) -- before the
 			// cooldown test (0x58e08c) and the motion-state gate (0x58e0a0).
 			// So Ghost Walk cannot carry a walled caster away. This is retail's
-			// rule, not the OURS root (walls.go wallRoots).
-			if ref.HasTele() && buffBooks.HoldsWall(characterID) {
+			// rule, not the OURS root (walls.go wallRoots). All three fields
+			// are tested (refdata.Skill.HasTeleport; 'tel2'/'tel3' from CSV
+			// 87/88 -- MEASURED on 7 and 21 EU rows, which a walled Chinese
+			// caster cannot know, so in practice it is Ghost Walk's 'tele').
+			if ref.HasTeleport() && buffBooks.HoldsWall(characterID) {
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: wallTeleRefusal}).Encode()})
 			}
 			if seatedCastRefused(ref.SitGate, characterID, time.Now()) {

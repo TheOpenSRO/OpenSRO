@@ -944,8 +944,9 @@ func skillRecord(cols []string) ([]string, bool) {
 		healMP,                     // 44 SelfHealMP -- 'heal' value[2], its MP half
 		cooldownGroup(cols),        // 45 CooldownGroup -- Overlap's high byte, CRefSkill+0x8f (round 504)
 		sitGate(cols),              // 46 SitGate -- the skill gate's motion-state refusals (round 607)
-		// 47..61: the buff and self-cast columns (round 616, buffColumns).
-	}, append(append(append(append(buffColumns(cols), targetHeal(cols)...), stackColumns(cols)...), linkColumns(cols)...), wallColumns(cols)...)...), true
+		// 47..61: the buff and self-cast columns (round 616, buffColumns); then
+		// 62..88 (targetHeal, stackColumns, linkColumns, wallColumns, teleColumns).
+	}, append(append(append(append(append(buffColumns(cols), targetHeal(cols)...), stackColumns(cols)...), linkColumns(cols)...), wallColumns(cols)...), teleColumns(cols)...)...), true
 }
 
 // targetHeal is skill CSV columns 62/63 (round 622), TargetHealHP and
@@ -1279,6 +1280,44 @@ func wallColumns(cols []string) []string {
 			out[k] = strconv.FormatInt(int64(words[e.Index+1+k]), 10)
 		}
 		break
+	}
+	return out
+}
+
+// teleColumns are skill CSV columns 87..88 (the rounds 636-640 integration
+// review): whether the row carries 'tel2' (+0x2f0) and 'tel3' (+0x2f4), the
+// two fields Skill_CheckUseConditions tests beside 'tele' (+0x2ec) when it
+// refuses a cast 0x3009 while the caster's book holds a wall (0x58e033..
+// 0x58e061, READ). Decided as the markers are: the walk's run, or -- for a
+// walk that does not finish -- the literal word anywhere in the row.
+//
+// MEASURED on the box's Media.pk2 (the 60 plain skilldata shards, 33,709
+// ids): 'tel2' on 7 rows (SKILL_EU_WIZARD_PSYCHICA_TELEPORT_A_01..03 and
+// _B_01..02, SKILL_EU_WARLOCK_PSYCHICA_TELEPORT_A_01,
+// SKILL_EU_BARD_PSYCHICA_TELEPORT_A_01), 'tel3' on 21
+// (SKILL_EU_WARRIOR_FRENZYA_TOUNT_SPRINT_A_01..21), 'tele' on 20; every
+// walk finished and the literal words agree. An older export loads both 0.
+func teleColumns(cols []string) []string {
+	out := []string{"0", "0"}
+	words, ok := paramWords(cols)
+	if !ok {
+		return out
+	}
+	entries, _, complete := skillparam.Walk(words)
+	for i, c := range []skillparam.Code{"tel2", "tel3"} {
+		found := false
+		for _, e := range entries {
+			if e.Code == c {
+				found = true
+				break
+			}
+		}
+		if !found && !complete && !literalAbsent(cols, []skillparam.Code{c}) {
+			found = true
+		}
+		if found {
+			out[i] = "1"
+		}
 	}
 	return out
 }
