@@ -1476,11 +1476,19 @@ func _ready() -> void:
 		_loading_screen.cover_siblings()
 	await _drain_initial_load(_t_region, screen_frames)
 
-## Where the minimap sits: the top-right corner, 136x175 (the frame's size,
-## HudMinimap.setup), 14 in from the right edge and 10 down. Our own
-## placement, unchanged from before it was a function; the scene's Hide UI
-## button is placed clear of it (see _toggle_ui_visibility). Static so the
-## suite can place a minimap exactly where the world does (round 531).
+## Where the minimap sits: flush with the screen's top-right corner, as the
+## client puts it. 0x79f030 (the interface's HUD placement, called from
+## 0x78cf13) fetches GDR_MINIMAP (id 10) and calls its SetPos (vslot 0x98)
+## with (screen width - 0x81, 0) (0x79f059..0x79f095). The window is 140x184
+## (ginterface.txt, and mm_window.ddj's own size) but its art is opaque only
+## over columns 0..128 and rows 0..171 (measured, round 630), so at
+## x = width - 129 the art's right edge is the screen's and its top the
+## screen's; the 11 transparent columns hang off the right edge. It used to
+## sit 14 in and 10 down at 136x175, our own placement, with the world
+## showing above and right of it. The scene's Hide UI button stays clear of
+## it (hud_click_routing_test.gd). Static so the suite can place a minimap
+## exactly where the world does (round 531).
+const MINIMAP_RIGHT_INSET := 0x81
 static func place_minimap(minimap: Control) -> void:
 	minimap.anchors_preset = Control.PRESET_TOP_RIGHT
 	minimap.anchor_left = 1.0
@@ -1489,10 +1497,10 @@ static func place_minimap(minimap: Control) -> void:
 	minimap.anchor_bottom = 0.0
 	minimap.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	minimap.grow_vertical = Control.GROW_DIRECTION_END
-	minimap.offset_left = -150.0
-	minimap.offset_right = -14.0
-	minimap.offset_top = 10.0
-	minimap.offset_bottom = 185.0
+	minimap.offset_left = -float(MINIMAP_RIGHT_INSET)
+	minimap.offset_right = -float(MINIMAP_RIGHT_INSET) + HudMinimap.FRAME_SIZE.x
+	minimap.offset_top = 0.0
+	minimap.offset_bottom = HudMinimap.FRAME_SIZE.y
 
 ## Initializes authentic Silkroad UI components (minimap, underbar) from Media.pk2 if available.
 func _try_initialize_pk2_ui() -> void:
@@ -2124,21 +2132,88 @@ func _refresh_zone_label_position() -> void:
 	if zone_label != null:
 		zone_label.text = "Zone: %s%s" % [_current_zone_name, _zone_label_position_suffix()]
 
-	if _hud_minimap != null and is_instance_valid(_hud_minimap):
-		var pair := _nav_graph_for(player.global_position)
-		if not pair.is_empty():
-			var group: Node3D = pair[1]
-			var local: Vector3 = group.to_local(player.global_position)
-			var parts := String(group.name).replace("RealTerrain_", "").split("_")
-			if parts.size() >= 2:
-				var rx: int = parts[0].to_int()
-				var ry: int = parts[1].to_int()
-				_hud_minimap.update_player(rx, ry, local, player.rotation_degrees.y)
-				_hud_minimap.set_area_name(_current_zone_name)
-				_hud_minimap.update_signs(player.global_position, _minimap_npc_positions(),
-					_minimap_body_positions(_monster_bodies), _minimap_body_positions(_other_bodies))
-				if _hud_worldmap != null and is_instance_valid(_hud_worldmap):
-					_hud_worldmap.update_player(rx, ry, local)
+	_minimap_npcs_cache = _minimap_npc_positions()
+
+## The minimap and the world map follow the player every physics frame
+## (round 630). OURS: the client refreshes its minimap's position through
+## 0x661ce0 from 0x777a70, which CICPlayer::vslot_015(3) sends when the
+## player's heading changes, and from vslot_012 (0x662510) while a zoom walks
+## (it returns early otherwise); a per-frame refresh shows the same thing
+## and does not depend on which events this client raises. It used to ride
+## the zoom label's tenth-frame throttle, which made the arrow step. The NPC
+## walk (every region's Npc_* holders) stays on that throttle, in
+## _minimap_npcs_cache; NPCs do not move.
+var _minimap_npcs_cache: Array = []
+## The region group the player was last found in, and its region (x, y),
+## parsed from the group's name once rather than every frame; the lists the
+## signs are gathered into, reused (round 630 review).
+var _minimap_group: Node3D = null
+var _minimap_region := Vector2i(-1, -1)
+var _minimap_group_name := StringName()
+var _minimap_monsters: Array = []
+var _minimap_others: Array = []
+
+func _refresh_minimap() -> void:
+	if player == null or _hud_minimap == null or not is_instance_valid(_hud_minimap):
+		return
+	var pos := player.global_position
+	var local := Vector3.ZERO
+	var inside := false
+	if _minimap_group != null and is_instance_valid(_minimap_group) and _minimap_group.is_inside_tree() \
+			and _minimap_group.name == _minimap_group_name:
+		local = _minimap_group.to_local(pos)
+		inside = local.x >= 0.0 and local.z >= 0.0 and local.x <= REGION_SPAN and local.z <= REGION_SPAN
+	if not inside:
+		var pair := _nav_graph_for(pos)
+		if pair.is_empty():
+			return
+		var group: Node3D = pair[1]
+		var parts := String(group.name).trim_prefix("RealTerrain_").split("_")
+		if parts.size() < 2:
+			return
+		_minimap_group = group
+		_minimap_group_name = group.name
+		_minimap_region = Vector2i(parts[0].to_int(), parts[1].to_int())
+		local = group.to_local(pos)
+	var rx := _minimap_region.x
+	var ry := _minimap_region.y
+	var facing := minimap_facing(player.global_transform.basis, _minimap_group.global_transform.basis)
+	_hud_minimap.update_player(rx, ry, local, facing)
+	_hud_minimap.set_area_name(_current_zone_name)
+	_minimap_fill_positions(_monster_bodies, _minimap_monsters)
+	_minimap_fill_positions(_other_bodies, _minimap_others)
+	_hud_minimap.update_signs(pos, _minimap_npcs_cache, _minimap_monsters, _minimap_others)
+	# The world map every frame only while it is open; hidden, on the old
+	# tenth-frame beat, so it is current when it opens.
+	if _hud_worldmap != null and is_instance_valid(_hud_worldmap) \
+			and (_hud_worldmap.is_visible_in_tree() or _zone_label_tick % 10 == 0):
+		_hud_worldmap.update_player(rx, ry, local, facing)
+	# SRREVAMP_QA_WALK runs log what the minimap was told, twice a second,
+	# so a facing test is read from the log, not a frame (round 630).
+	if _qa_walk != "" and _zone_label_tick % 30 == 0:
+		print("QA MINIMAP %d/%d local (%.0f, %.0f) facing (%.2f, %.2f) arrow %.0f deg" % [
+			rx, ry, local.x, local.z, facing.x, facing.y, rad_to_deg(HudMinimap.arrow_rotation(facing))])
+
+## Fills `out` (kept, cleared and refilled) with the world positions of the live bodies in an id -> Node3D map (monsters,
+## other players), skipping ones that are gone or hidden (a dead monster).
+## A body held V hides still counts: whether the retail minimap reads V's
+## flag was not read, so the minimap is left as it was.
+func _minimap_fill_positions(bodies: Dictionary, out: Array) -> void:
+	out.clear()
+	for id in bodies:
+		var body: Node3D = bodies[id] as Node3D
+		if body != null and is_instance_valid(body) and (body.visible or _objects_hidden):
+			out.append(body.global_position)
+
+## The way the player faces as a region-local ground vector (x east, z
+## north), for the minimap's and world map's arrow. The player's front is its
+## node's local +Z (_physics_process sets rotation.y = atan2(dir.x, dir.z) to
+## face `dir`); the region group's basis carries the world's z -> -z mirror,
+## so the vector is taken into the group's frame rather than read off
+## rotation.y, which is what the minimap used to do (round 630).
+static func minimap_facing(player_basis: Basis, group_basis: Basis) -> Vector2:
+	var front := group_basis.inverse() * player_basis.z
+	return Vector2(front.x, front.z)
 
 ## World positions of every placed NPC, for the minimap's signs: the `Npc_*`
 ## holders under each loaded region group (the same walk _qa_npc_body_report
@@ -2151,18 +2226,6 @@ func _minimap_npc_positions() -> Array:
 		for holder in group.get_children():
 			if holder is Node3D and String(holder.name).begins_with("Npc_"):
 				out.append((holder as Node3D).global_position)
-	return out
-
-## World positions of the live bodies in an id -> Node3D map (monsters,
-## other players), skipping ones that are gone or hidden (a dead monster).
-## A body held V hides still counts: whether the retail minimap reads V's
-## flag was not read, so the minimap is left as it was.
-func _minimap_body_positions(bodies: Dictionary) -> Array:
-	var out: Array = []
-	for id in bodies:
-		var body: Node3D = bodies[id] as Node3D
-		if body != null and is_instance_valid(body) and (body.visible or _objects_hidden):
-			out.append(body.global_position)
 	return out
 
 ## Bone positions of the first few animated characters, so two calls can be
@@ -11664,6 +11727,7 @@ func _physics_step(delta: float) -> void:
 	_maybe_stream_regions()
 	_process_stream_queue()
 	_refresh_zone_label_position()
+	_refresh_minimap()
 	_update_blob_shadow()
 
 	_time_since_send += delta

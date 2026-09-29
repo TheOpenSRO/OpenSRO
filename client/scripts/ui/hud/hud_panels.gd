@@ -2158,9 +2158,11 @@ func _on_storage_gold_result(ok: bool, reason: String, carried: int, stored: int
 func _update_storage_gold_labels() -> void:
 	var window: HudWindow = _windows.get("storage")
 	if window != null:
-		var stored_label := window.node("GDR_STORAGE_STA_GOLD") as Label
-		if stored_label != null:
-			stored_label.text = _grouped(_storage_stored)
+		# The amount goes on GDR_STORAGE_STA_MONEY (id 10, its ClientRect
+		# "95,7,44,6" right-aligning it at x 104..192); GDR_STORAGE_STA_GOLD
+		# keeps its authored "Gold" (UIIT_STT_GOLD) after it. It used to be
+		# written over the "Gold" (round 630 review).
+		_set_purse_text(window, "GDR_STORAGE_STA_MONEY", _grouped(_storage_stored))
 		var dialog_bal := window.get_node_or_null("GoldDialog/VB/GoldBal") as Label
 		if dialog_bal != null:
 			dialog_bal.text = "Carried: %s     Stored: %s" % [_grouped(_storage_carried), _grouped(_storage_stored)]
@@ -2169,9 +2171,20 @@ func _update_storage_gold_labels() -> void:
 		_stats.gold = _storage_carried
 	var inventory: HudWindow = _windows.get("inventory")
 	if inventory != null:
-		var carried_label := inventory.node("GDR_INVENTORY_STA_GOLD") as Label
-		if carried_label != null:
-			carried_label.text = _grouped(_storage_carried)
+		_set_purse_text(inventory, "GDR_INVENTORY_STA_MONEY", _grouped(_storage_carried))
+
+## Writes a purse amount where the client does. READ: the amount is its own
+## static -- ifinventory's GDR_INVENTORY_STA_MONEY (0,305 176x28 over
+## int_window_downbox, ClientRect "36,7,39,5", HAlign 2, so right-aligned
+## ending at x 137), ifstorageroom's GDR_STORAGE_STA_MONEY -- and the
+## 24-pixel GDR_*_STA_GOLD beside it carries the word "Gold". The amount
+## was written into the "Gold" label, whose 24 pixels a large purse
+## overran (round 630 review). UiBuilder.set_static_text puts the text in
+## the static's ClientRect by the client's layout.
+func _set_purse_text(window: HudWindow, control_name: String, text: String) -> Label:
+	if window == null or _builder == null:
+		return null
+	return _builder.set_static_text(window.node(control_name) as Control, text)
 
 ## The gold dialog: an amount to deposit into or withdraw from the warehouse.
 ## Stays open so several moves can be made; the balances line refreshes from
@@ -4502,9 +4515,8 @@ func _apply_stats(stats: StatsNet.Stats) -> void:
 
 	var inventory: HudWindow = _windows.get("inventory")
 	if inventory != null:
-		var gold := inventory.node("GDR_INVENTORY_STA_GOLD") as Label
+		var gold := _set_purse_text(inventory, "GDR_INVENTORY_STA_MONEY", _grouped(stats.gold))
 		if gold != null:
-			gold.text = _grouped(stats.gold)
 			# The number on the authored gold row, so a render's log can be
 			# held against the frame (and against the server's own value).
 			print("HudPanels: inventory gold readout %s (server gold %d)" % [gold.text, stats.gold])

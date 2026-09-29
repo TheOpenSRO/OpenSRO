@@ -227,3 +227,11 @@ So the region and `pos_` columns are the ones to use. `WorldmapGuideReader` keep
   `CNIFWorldMap` from `res_ui\worldmapguide.2dt` since round 599 (`docs/RE_COMPLETION.md`).
   The caption's name comes from the client's map record, +0x94 (`0x612fd0`); which column fills
   it was not traced. What is left on the window is in `docs/UI_TODO.md`.
+
+## The player's marker turns (round 630)
+
+READ: the marker is `interface\minimap\mm_sign_character.ddj` (art pointing right, MEASURED), a
+16x16 quad (+-8) turned by `-(+0x97c8)` through `0x8b5c50` (`0x6200de..0x620236`), with `+0x97c8 =
+player+0x8c - pi / 2` (`0x60f6a5`, `0x610a05`) -- the minimap arrow's rule
+([minimap.md](minimap.md)). `HudWorldmap.update_player` takes the facing and turns it; it was drawn
+unturned before.

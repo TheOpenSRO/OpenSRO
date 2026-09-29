@@ -777,7 +777,17 @@ func _placeholder(at: Vector2, tile: Vector2) -> Control:
 ## a marker needs no fitting: the map says which world box it covers and
 ## the position falls where it falls. With auto-move on, the map follows
 ## (vslot_013's step, _follow_player).
-func update_player(region_x: int, region_y: int, local_pos: Vector3) -> void:
+##
+## `local_facing` is the way the player faces, a region-local ground vector
+## (x east, z north). The marker is the minimap's arrow and is turned the
+## same way: CNIFWorldMap keeps the heading less pi / 2 at +0x97c8 (0x60f6a5,
+## 0x610a05) and turns the marker's 16x16 quad (+-8, 0xd99a70 / 0xd89240) by
+## -(+0x97c8) through 0x8b5c50 (0x6200de..0x620236) -- HudMinimap.
+## arrow_rotation has the reading. It was never turned before (round 630).
+func update_player(region_x: int, region_y: int, local_pos: Vector3,
+		local_facing: Vector2 = Vector2.ZERO) -> void:
+	if _marker != null and not local_facing.is_zero_approx():
+		_marker.rotation = HudMinimap.arrow_rotation(local_facing)
 	_player_world = Vector2(
 		(region_y - WorldmapInfoReader.REGION_Y_ORIGIN) * WorldmapInfoReader.REGION_SPAN
 			+ local_pos.x / 10.0,
