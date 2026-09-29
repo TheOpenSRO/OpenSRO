@@ -35,9 +35,10 @@ const (
 // exp-to-next (the real leveldata curve), Str/Int and the unspent stat points,
 // HP/MaxHP and MP/MaxMP (the game's own formulas), the physical and magical
 // attack RANGES (combat.WeaponRange, the engine's own parameter graph), and
-// the two defence sums combat already fights with. Not stated, and left as
-// the layout drew them: physical/magical BALANCE (the client shows a stored
-// byte whose source is unread), HIT RATE and PARRY (engine params 11/9 --
+// the two defence sums combat already fights with. Physical/magical BALANCE
+// needs no field: the client computes it from Str/Int and the level (round
+// 629 read the formula in both CIFPlayerInfo and CIFPlayerMiniInfo). Not
+// stated, and left as the layout drew them: HIT RATE and PARRY (engine params 11/9 --
 // base 10.0 plus each item's own per-instance rate; the variance is carried
 // now, but the engine never reads these two, so they stay unstated),
 // the three job grades and honour (no job or honour system here).
@@ -92,11 +93,18 @@ type CharacterStatsResult struct {
 	MagAttackMin  int32
 	MagAttackMax  int32
 	MagDefense    int32
+
+	// HwanCount is the berserk orbs held, the persisted _CHAR.RemainHwanCount
+	// (0..berserk.Orbs) -- the fourth tail (round 629). The client draws the
+	// player block's orbs from it (CIFPlayerMiniInfo reads the same count,
+	// player+0x886, every refresh), so they are right from the moment the
+	// world loads rather than only after the first blow's AttackResult.
+	HwanCount int32
 }
 
 func (r *CharacterStatsResult) Encode() []byte {
 	out := encodeStrings(r.Error)
-	buf := make([]byte, 84)
+	buf := make([]byte, 88)
 	binary.LittleEndian.PutUint64(buf[0:8], uint64(r.Gold))
 	binary.LittleEndian.PutUint32(buf[8:12], uint32(r.HP))
 	binary.LittleEndian.PutUint32(buf[12:16], uint32(r.MaxHP))
@@ -115,6 +123,7 @@ func (r *CharacterStatsResult) Encode() []byte {
 	binary.LittleEndian.PutUint32(buf[72:76], uint32(r.MagAttackMin))
 	binary.LittleEndian.PutUint32(buf[76:80], uint32(r.MagAttackMax))
 	binary.LittleEndian.PutUint32(buf[80:84], uint32(r.MagDefense))
+	binary.LittleEndian.PutUint32(buf[84:88], uint32(r.HwanCount))
 	return append(out, buf...)
 }
 
@@ -157,6 +166,10 @@ func DecodeCharacterStatsResult(data []byte) (*CharacterStatsResult, error) {
 		r.MagAttackMin = int32(binary.LittleEndian.Uint32(rest[72:76]))
 		r.MagAttackMax = int32(binary.LittleEndian.Uint32(rest[76:80]))
 		r.MagDefense = int32(binary.LittleEndian.Uint32(rest[80:84]))
+	}
+	// The orb count is the fourth tail; an 84-byte result decodes with it 0.
+	if len(rest) >= 88 {
+		r.HwanCount = int32(binary.LittleEndian.Uint32(rest[84:88]))
 	}
 	return r, nil
 }
@@ -245,6 +258,7 @@ func buildCharacterStats(ctx context.Context, owned *character.Character, charac
 		Str:        int32(owned.Str),
 		Int:        int32(owned.Int),
 		StatPoints: int32(owned.StatPoints),
+		HwanCount:  int32(owned.HwanCount),
 	}
 	if levelTable.Loaded() {
 		if toNext, ok := levelTable.ExpToNext(owned.Level); ok {

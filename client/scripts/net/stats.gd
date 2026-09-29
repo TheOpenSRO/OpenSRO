@@ -8,9 +8,9 @@ class_name StatsNet
 ## (`resinfo\ifplayerinfo_trijob2.txt`, the layout CIFPlayerInfo loads, in
 ## the main popup) shows the rows the server can state -- level,
 ## exp and exp-to-next, Str/Int and the unspent stat points, HP/MP, both
-## attack ranges, both defence sums -- and leaves the rest as the layout drew
-## them: the balance percentages (the client shows a stored byte whose source
-## is unread), hit rate and parry (engine params the server does not carry
+## attack ranges, both defence sums, and the balance percentages the client
+## computes from Str/Int and the level (round 629) -- and leaves the rest as
+## the layout drew them: hit rate and parry (engine params the server does not carry
 ## per instance and the engine never reads), the job grades and honour (no
 ## such systems here). See HudPanels._apply_stats for the row-by-row reasons.
 
@@ -53,6 +53,12 @@ class Stats:
 	var mag_defense: int = 0
 	## True when the server sent the character rows at all.
 	var has_character_rows: bool = false
+	## The berserk orbs held, _CHAR.RemainHwanCount (0..5) -- the fourth tail
+	## (round 629), so the player block's orbs are right from the moment the
+	## world loads rather than from the first blow. has_hwan_count is false
+	## from a server too old to send it.
+	var hwan_count: int = 0
+	var has_hwan_count: bool = false
 
 	## The EXP gauge fill, 0..100, or 0 when exp-to-next is unknown.
 	func exp_percent() -> float:
@@ -108,6 +114,10 @@ static func decode_result(data: PackedByteArray) -> Stats:
 		stats.mag_attack_max = data.decode_s32(offset + 76)
 		stats.mag_defense = data.decode_s32(offset + 80)
 		stats.has_character_rows = true
+	# The orb count is the fourth tail; an 84-byte result omits it.
+	if offset + 88 <= data.size():
+		stats.hwan_count = data.decode_s32(offset + 84)
+		stats.has_hwan_count = true
 	return stats
 
 ## Encodes an OpSpendStatPoints request: the name, then how many points go

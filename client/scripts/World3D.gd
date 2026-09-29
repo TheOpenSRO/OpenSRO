@@ -982,6 +982,9 @@ var _time_since_send := 0.0
 
 var _player_skeleton: Skeleton3D
 var _player_gender := DEFAULT_GENDER
+## characterdata's Country (column 14) for the player bodies (CHAR_ rows),
+## keyed by code name: the race emblem's source (round 629).
+var _country_by_code: Dictionary = {}
 var _player_anim_time := 0.0
 ## A one-shot the player's body is in the middle of -- a hit reaction --
 ## and when it started; the tick plays it instead of stand or run until it
@@ -1328,6 +1331,15 @@ func _ready() -> void:
 	NetClient.pick_up_result.connect(_on_pick_up_result)
 	NetClient.inventory_list_result.connect(_on_inventory_list_result)
 	NetClient.equipment_result.connect(_on_equipment_result)
+	# Round 629: the player block's stat panel keeps up with what changes the
+	# numbers while it is open -- equip / unequip (the equipment reply), a
+	# buff starting or ending. Level-up, a stat-point spend and a kill already
+	# bring a stats packet, which _on_world_stats applies.
+	NetClient.equipment_result.connect(func(_items: Array, error: String) -> void:
+		if error == "":
+			_refresh_stat_panel("equipment changed"))
+	NetClient.buff_started.connect(func(_start) -> void: _refresh_stat_panel("buff started"))
+	NetClient.buff_ended.connect(func(_ended) -> void: _refresh_stat_panel("buff ended"))
 	NetClient.quest_list_result.connect(_on_quest_list_result)
 	NetClient.quest_accept_result.connect(_on_quest_accept_result)
 	NetClient.quest_completed.connect(_on_quest_completed)
@@ -1570,6 +1582,20 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_player_info.position = Vector2(4, 7)
 	_hud_player_info.setup()
 	_hud_player_info.self_pressed.connect(_select_self)
+	# Round 629: the ready circle runs the berserk key's own path, the "+"
+	# opens the character window, and opening the stat panel asks for fresh
+	# numbers (CIFPlayerMiniInfo's message map; see hud_player_info.gd).
+	_hud_player_info.berserk_pressed.connect(func() -> void:
+		print("World3D: berserk circle pressed -- %s" % _run_key_action("berserk", 0)))
+	_hud_player_info.stat_up_pressed.connect(func() -> void:
+		if _hud_panels != null and not _hud_panels.is_open("character"):
+			_hud_panels.open("character")
+		print("World3D: stat-up pressed -- character window open"))
+	_hud_player_info.stat_panel_toggled.connect(func(open: bool) -> void:
+		print("World3D: player stat panel %s" % ("open" if open else "closed"))
+		if open:
+			_request_world_stats())
+	_apply_player_race()
 	_hud_player_info.set_character(NetClient.current_character_name, 1)
 
 	# The active-buff icons right of the player block (round 618): retail's
@@ -1637,11 +1663,11 @@ func _try_initialize_pk2_ui() -> void:
 				_hud_player_info.set_hp(result.player_hp, _last_enter_world_max_hp)
 				_hud_player_info.set_berserk(result.berserk_gauge, result.berserk_active)
 				if OS.get_environment("SRREVAMP_QA_HOTKEY") != "":
-					# The orbs as drawn: a lit orb is at full alpha.
+					# The orbs as drawn: an unlit orb is hidden (round 629).
 					var lit := 0
 					var orbs: Array = _hud_player_info.get("_berserk_orbs")
 					for orb in orbs:
-						if orb is CanvasItem and (orb as CanvasItem).modulate.a >= 1.0:
+						if orb is CanvasItem and (orb as CanvasItem).visible:
 							lit += 1
 					print("QA BERSERK: gauge %d active %s, %d of %d orbs lit (monster %d, damage %d)" % [
 						result.berserk_gauge, str(result.berserk_active), lit, orbs.size(), result.monster_id, result.monster_damage])
@@ -6615,6 +6641,7 @@ func _load_character_assets() -> void:
 			bodies = NpcTableReader.parse_models_by_code(bytes, bodies)
 			speeds = NpcTableReader.parse_speeds_by_code(bytes, speeds)
 			_bc_radius_by_code = NpcTableReader.parse_bc_radius_by_code(bytes, _bc_radius_by_code)
+			_country_by_code = NpcTableReader.parse_country_by_code(bytes, _country_by_code)
 	# Every row's BCRadius (column 50), for the attack approach: the player's
 	# body and the monsters' species both feed the reach band.
 	print("World3D: %d BCRadius row(s) from characterdata column 50 (%s: %s)" % [
@@ -6908,6 +6935,7 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	# name over it (playtest 2026-09-20, item 18).
 	_refresh_player_name_plate()
 	_player_gender = gender
+	_apply_player_race()
 	_player_weapon_group = _weapon_group_for(equipped)
 	# The body's sounds: the footstep material is the cell the walk carries
 	# (_nav_footing), the swing's token the weapon just equipped.
@@ -9212,6 +9240,70 @@ var _qa_input_seen: Array = []
 var _qa_input_count := 0
 ## SRREVAMP_QA_BERSERK=tab: Tab pushed once the gauge filled.
 var _qa_berserk_tab_sent := false
+
+## SRREVAMP_QA_PMI="<start tick>,<hold ticks>" (round 629): walks the player
+## block through its states for a render, one every <hold> ticks from
+## <start>, printing `QA PMI <state> frame <n>` for each: the gauge at 0, at
+## two orbs, full with the stat panel opened by a mouse click pushed through
+## the viewport at the button's rect, the weapon taken off and put back (with
+## a server) so the open panel's numbers change, the ready circle clicked,
+## berserk on, and the European emblem. QA only; never set in real play.
+var _qa_pmi_spec := OS.get_environment("SRREVAMP_QA_PMI")
+var _qa_pmi_state := -1
+
+func _qa_pmi_click(control_name: String) -> void:
+	var c := _hud_player_info.find_child(control_name, true, false) as Control
+	if c == null:
+		print("QA PMI: no %s to click" % control_name)
+		return
+	var at := c.get_global_rect().get_center()
+	for pressed in [true, false]:
+		var ev := InputEventMouseButton.new()
+		ev.button_index = MOUSE_BUTTON_LEFT
+		ev.pressed = pressed
+		ev.position = at
+		ev.global_position = at
+		get_viewport().push_input(ev)
+	print("QA PMI: clicked %s at %s" % [control_name, at])
+
+func _qa_pmi_step() -> void:
+	if _hud_player_info == null:
+		return
+	var parts := _qa_pmi_spec.split(",")
+	var start := int(parts[0]) if parts.size() > 0 else 400
+	var hold := int(parts[1]) if parts.size() > 1 else 40
+	if _qa_tick < start or (_qa_tick - start) % hold != 0:
+		return
+	_qa_pmi_state += 1
+	var who := NetClient.current_character_name
+	var states := ["ch_gauge0", "ch_gauge2", "ch_full_panel", "unequip_weapon", "equip_weapon", "click_ready", "berserk_on", "eu_full_panel"]
+	if _qa_pmi_state >= states.size():
+		return
+	var state: String = states[_qa_pmi_state]
+	match state:
+		"ch_gauge0":
+			_hud_player_info.set_berserk(0, false)
+		"ch_gauge2":
+			_hud_player_info.set_berserk(40, false)
+		"ch_full_panel":
+			_hud_player_info.set_berserk(100, false)
+			_qa_pmi_click("GDR_PMI_BTN_CINFO")
+		"unequip_weapon":
+			if who != "" and NetClient.is_connected_to_server():
+				NetClient.unequip(who, EquipmentNet.SLOT_WEAPON)
+		"equip_weapon":
+			if who != "" and NetClient.is_connected_to_server():
+				NetClient.equip(who, EquipmentNet.SLOT_WEAPON, 0)
+		"click_ready":
+			_qa_pmi_click("GDR_PMI_BTN_JAHWAN")
+		"berserk_on":
+			_hud_player_info.set_berserk(0, true)
+		"eu_full_panel":
+			_hud_player_info.set_berserk(100, false)
+			_hud_player_info.set_race(1)
+	print("QA PMI %s frame %d (panel %s, orbs %d, ready %s, emblem %s)" % [state, Engine.get_frames_drawn(),
+		str(_hud_player_info.is_stat_panel_open()), _hud_player_info.hwan_charges(), str(_hud_player_info.hwan_ready()),
+		_hud_player_info.race_mark_path()])
 ## Where KeyInput.dispatched stood when the current action was pushed.
 var _qa_input_keymap_mark := 0
 
@@ -9800,6 +9892,8 @@ func _qa_step() -> void:
 			_qa_ground_rays_report(samples)
 
 	_qa_tick += 1
+	if _qa_pmi_spec != "":
+		_qa_pmi_step()
 	# The load summary every ten seconds of game time (round 561): the window
 	# since the last one, so the play after the entry -- a boundary crossing
 	# -- is reported apart from the entry itself. _qa_step runs for every
@@ -14977,6 +15071,12 @@ func _run_key_action(action: String, arg: int) -> String:
 		"berserk":
 			if NetClient.current_character_name == "" or not NetClient.is_connected_to_server():
 				return "not connected"
+			# The client's own gate (0x00778ac0, READ): with fewer than five
+			# orbs held it asks for nothing and says nothing. The count is the
+			# HUD's, from the stats packet and every AttackResult; before any
+			# has arrived it is unknown and the server decides.
+			if _hud_player_info != null and _hud_player_info.hwan_known() and not _hud_player_info.hwan_ready():
+				return "not requested: %d of 5 orbs held" % _hud_player_info.hwan_charges()
 			# The server judges the five-orb gauge (the berserk_result
 			# handler says "not full yet"); the retail client tests +0x886 >= 5
 			# itself first (0x778ac0, read).
@@ -15576,6 +15676,27 @@ func _on_level_up(new_level: int, _stat_points: int) -> void:
 	# label, the reset EXP gauge and any new SP all come from the stats packet.
 	_request_world_stats()
 
+## Asks for fresh stats while the player block's stat panel is open, the
+## way the client's own panel rewrites its rows every frame (vslot_012).
+func _refresh_stat_panel(why: String) -> void:
+	if _hud_player_info == null or not _hud_player_info.is_stat_panel_open():
+		return
+	print("World3D: player stat panel refresh (%s)" % why)
+	_request_world_stats()
+
+## The race emblem on the player block: the body's characterdata row's
+## Country (column 14), 0 China / 1 Europe -- the byte CIFPlayerMiniInfo
+## picks the emblem by (hud_player_info.gd, set_race).
+func _apply_player_race() -> void:
+	if _hud_player_info == null:
+		return
+	var code: String = GENDER_BODY_CODE.get(_player_gender, GENDER_BODY_CODE[DEFAULT_GENDER])
+	if not _country_by_code.has(code):
+		print("World3D: no characterdata Country for %s -- no race emblem" % code)
+		return
+	_hud_player_info.set_race(int(_country_by_code[code]))
+	print("World3D: race emblem %s (%s Country %d)" % [_hud_player_info.race_mark_path(), code, int(_country_by_code[code])])
+
 ## Requests the character's full stats (level, exp, SP, HP max) so the HUD
 ## gauges stay live. Cheap; called on enter-world, each kill, and level-up.
 func _request_world_stats() -> void:
@@ -15612,6 +15733,19 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 		# number; a server too old to send it still gets the blank bar.
 		if stats.max_mp > 0:
 			_hud_player_info.set_mp(stats.mp, stats.max_mp)
+		# The stat panel, the orbs and the "+" -- the same packet the
+		# character window reads, applied on every arrival (round 629).
+		# SRREVAMP_QA_PMI drives the orbs itself; the server's count would
+		# undo each state it sets.
+		if _qa_pmi_spec != "":
+			stats.has_hwan_count = false
+		_hud_player_info.set_stats(stats)
+		if _hud_player_info.is_stat_panel_open():
+			print("World3D: player stat panel: str %s int %s phy %s def %s mag %s def %s bal %s / %s (level %d)" % [
+				_hud_player_info.stat_value("GDR_PMI_TXT_STRDAT"), _hud_player_info.stat_value("GDR_PMI_TXT_INTDAT"),
+				_hud_player_info.stat_value("GDR_PMI_TXT_PHYATTDAT"), _hud_player_info.stat_value("GDR_PMI_TXT_PHYDEFDAT"),
+				_hud_player_info.stat_value("GDR_PMI_TXT_MAGATTDAT"), _hud_player_info.stat_value("GDR_PMI_TXT_MAGDEFDAT"),
+				_hud_player_info.stat_value("GDR_PMI_TXT_PHYBALDAT"), _hud_player_info.stat_value("GDR_PMI_TXT_MAGBALDAT"), stats.level])
 	if _hud_underbar != null:
 		_hud_underbar.set_level(stats.level)
 		_hud_underbar.set_exp(stats.exp_percent())

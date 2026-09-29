@@ -1,6 +1,11 @@
 package session
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/OpenSRO/srrevamp/server/internal/character"
+)
 
 func TestCharacterStatsResultRoundTrip(t *testing.T) {
 	in := &CharacterStatsResult{
@@ -72,8 +77,8 @@ func TestCharacterStatsResultCarriesCharacterRows(t *testing.T) {
 		PhysAttackMin: 12, MagAttackMin: 0, MagAttackMax: 0, MagDefense: 4,
 	}
 	encoded := in.Encode()
-	if got := len(encoded) - 2; got != 84 {
-		t.Fatalf("body is %d bytes, want 84", got)
+	if got := len(encoded) - 2; got != 88 {
+		t.Fatalf("body is %d bytes, want 88", got)
 	}
 	out, err := DecodeCharacterStatsResult(encoded)
 	if err != nil {
@@ -91,6 +96,36 @@ func TestCharacterStatsResultCarriesCharacterRows(t *testing.T) {
 	}
 	if old.Str != 0 || old.StatPoints != 0 || old.PhysAttackMin != 0 || old.MagDefense != 0 {
 		t.Errorf("older result should leave the character rows at 0: %+v", old)
+	}
+}
+
+// The berserk orb count is the fourth tail (round 629): it round-trips, an
+// 84-byte result from an older server decodes with it 0, and the builder takes
+// it from the character's persisted _CHAR.RemainHwanCount -- so the player
+// block's orbs are right at world entry, before any blow.
+func TestCharacterStatsResultCarriesHwanCount(t *testing.T) {
+	in := &CharacterStatsResult{HP: 10, MaxHP: 10, Level: 3, Str: 22, Int: 21, HwanCount: 4}
+	encoded := in.Encode()
+	out, err := DecodeCharacterStatsResult(encoded)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.HwanCount != 4 {
+		t.Fatalf("HwanCount did not survive: got %d, want 4", out.HwanCount)
+	}
+	old, err := DecodeCharacterStatsResult(encoded[:2+84])
+	if err != nil {
+		t.Fatalf("decoding an 84-byte result: %v", err)
+	}
+	if old.HwanCount != 0 || old.Str != 22 {
+		t.Fatalf("an 84-byte result should keep the rows and leave HwanCount 0: %+v", old)
+	}
+	built, err := buildCharacterStats(context.Background(), &character.Character{ID: 7, Level: 3, HP: 10, Str: 22, Int: 21, HwanCount: 5}, 7, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("buildCharacterStats: %v", err)
+	}
+	if built.HwanCount != 5 {
+		t.Fatalf("buildCharacterStats: HwanCount %d, want the character's 5", built.HwanCount)
 	}
 }
 

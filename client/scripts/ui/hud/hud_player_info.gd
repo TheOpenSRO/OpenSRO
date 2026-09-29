@@ -8,10 +8,11 @@ class_name HudPlayerInfo
 ## `interface\ifcommon\window_all.ddj` and the rect `4,7,212,70`. Its 53
 ## child controls come from resinfo\ifplayerminiinfo.txt, of which the ones
 ## that matter here are GDR_PMI_PICTURE, GDR_PMI_TXT_ID, GDR_PMI_TXT_LEVEL,
-## and the HP/MP gauge and text pairs. The rest of that file is the
-## expandable character panel (GDR_PMI_STA_CINFOBG and the GDR_PMI_TXT_*DAT
-## stat rows) and the Hwan decorations, which the Character window covers
-## instead.
+## and the HP/MP gauge and text pairs. Since round 629 it also drives the
+## berserk orbs with their ready circle and flames, the expandable stat
+## panel (GDR_PMI_BTN_CINFO toggling GDR_PMI_STA_CINFOBG and the
+## GDR_PMI_TXT_* rows), the race emblem and the stat-point "+" -- each from
+## the client's own code; see the sections at the end of this file.
 ##
 ## **window_all.ddj is a 1024x512 atlas**, and the registry entry's own
 ## `UV_LT`/`UV_RB` name this window's slice of it: `0.723633,0` to
@@ -49,8 +50,24 @@ const SHOWN_CONTROLS := [
 	"GDR_PMI_TXT_MP",
 ]
 
-## The five berserk orbs (GDR_PMI_CIRCLE0..4), lit as the gauge fills.
+## The five berserk orbs, GDR_PMI_CIRCLE0..4 in layout order (CIRCLE0 is the
+## top one at 7,13, CIRCLE4 the bottom one at 31,60). Kept for the QA log.
 var _berserk_orbs: Array = []
+
+## A click on the ready circle, GDR_PMI_BTN_JAHWAN (id 13). READ: the
+## mini-info message map (initialised at 0x00d71d40, entries 0x28 bytes from
+## 0x00ebf1e8) routes message 1 for control ids 13..13 to 0x007b4f00, which
+## jumps to 0x00778ac0: `if (player+0x886 >= 5) FUN_0081e690(1)` -- the
+## same activation the berserk key runs. World3D sends it through that path.
+signal berserk_pressed
+## A click on GDR_PMI_BTN_STATUP (id 34, com_plus_button.ddj). READ: the
+## same map sends id 34 to 0x007b4c10, which shows the main popup and selects
+## its character page (FUN_006a1f70(0x4b)). World3D opens the character
+## window.
+signal stat_up_pressed
+## The stat panel was opened or closed by its button (GDR_PMI_BTN_CINFO).
+## World3D asks the server for fresh stats when it opens.
+signal stat_panel_toggled(open: bool)
 
 ## A left press on the block (round 622's review): retail's
 ## CIFPlayerMiniInfo::vslot_030 -- the WM_LBUTTONDOWN slot of the window
@@ -148,52 +165,24 @@ func setup() -> void:
 	_set_gauge_fill(_hp_gauge, GAUGE_FILL_HP)
 	_set_gauge_fill(_mp_gauge, GAUGE_FILL_MP)
 
-	# The berserk orbs: the layout's own five circles, shown (they're outside
-	# SHOWN_CONTROLS' allow-list) and driven by set_berserk. Start empty.
-	_berserk_orbs.clear()
-	for i in range(BERSERK_ORBS):
-		var orb := root.find_child("GDR_PMI_CIRCLE%d" % i, true, false) as CanvasItem
-		if orb != null:
-			orb.visible = true
-			_berserk_orbs.append(orb)
-	set_berserk(0, false)
-
-## Lights the berserk orbs for a gauge (0..BERSERK_MAX) and tints them when
-## berserk is active. An unlit orb is dimmed; a lit one full; all glow while
-## active.
-const BERSERK_ORBS := 5
-const BERSERK_MAX := 100
-func set_berserk(gauge: int, active: bool) -> void:
-	var per_orb: int = BERSERK_MAX / BERSERK_ORBS
-	for i in range(_berserk_orbs.size()):
-		var orb := _berserk_orbs[i] as CanvasItem
-		if orb == null:
-			continue
-		var lit: bool = gauge >= (i + 1) * per_orb
-		if active:
-			orb.modulate = Color(1.6, 0.7, 0.3) # a fiery glow while berserk
-		elif lit:
-			orb.modulate = Color(1, 1, 1, 1)
-		else:
-			orb.modulate = Color(1, 1, 1, 0.25) # dim: an empty orb
+	_setup_hwan(root)
+	_setup_cinfo(root)
+	_setup_race_and_statup(root)
 
 ## Fills a gauge with the client's own bar artwork.
 ##
-## `GDR_PMI_GAUGE_HP` and `_MP` name no `DDJ`, and the frame atlas supplies
-## the *slot* they sit in rather than a fill -- so an earlier version of
-## this file invented a red and a blue and said so. It did not need to: the
-## client hardcodes these two textures rather than declaring them in the
-## layout, which is why searching the layouts for them found nothing. They
-## are 4x4 solid swatches meant to be stretched along the bar, and their
-## colours are the game's, not ours:
-##
-##   interface\\ifcommon\\quick_hp.ddj   4x4   RGB(230, 0, 0)
-##   interface\\ifcommon\\quick_mp.ddj   4x4   RGB(0, 80, 230)
-##
-## Loading them rather than copying the numbers keeps this correct if the
-## player's archive differs.
-const GAUGE_FILL_HP := "interface\\ifcommon\\quick_hp.ddj"
-const GAUGE_FILL_MP := "interface\\ifcommon\\quick_mp.ddj"
+## `GDR_PMI_GAUGE_HP` and `_MP` name no `DDJ`; the client sets their art
+## itself. READ (round 629): CIFPlayerMiniInfo::Create (0x007b5600) takes
+## control 0 (GDR_PMI_GAUGE_HP) into +0x394 and control 1 (_MP) into +0x398,
+## then hands each a path through the control's set-texture slot (+0x34 of
+## the interface at +0x84, the slot 0x007b5f40 also uses to swap the orbs'
+## art): `interface\playerminiinfo\pmi_hp.ddj` at 0x007b589a and
+## `interface\playerminiinfo\pmi_mp.ddj` at 0x007b58d1. Both are 124x12,
+## the gauges' own authored size. An earlier version loaded
+## `ifcommon\quick_hp.ddj` / `quick_mp.ddj`, 4x4 swatches found by
+## searching the archive, not by reading this code.
+const GAUGE_FILL_HP := "interface\\playerminiinfo\\pmi_hp.ddj"
+const GAUGE_FILL_MP := "interface\\playerminiinfo\\pmi_mp.ddj"
 
 func _set_gauge_fill(gauge: TextureProgressBar, texture_path: String) -> void:
 	if gauge == null:
@@ -240,3 +229,462 @@ func _set_bar(gauge: TextureProgressBar, label: Label, current: int, maximum: in
 		gauge.value = clampf(float(current) / float(maximum) * 100.0, 0.0, 100.0)
 	if label != null:
 		label.text = "%d / %d" % [current, maximum]
+
+# ---------------------------------------------------------------------------
+# The berserk (Hwan) gauge, round 629.
+#
+# READ from CIFPlayerMiniInfo (docs/protocol/player_mini_info.md has the full
+# account with addresses):
+#
+#   * The gauge is a COUNT, player+0x886 (_CHAR.RemainHwanCount), 0..5. The
+#     refresh FUN_007b4f40(0) walks the circles from +0x3b0 (CIRCLE4, the
+#     BOTTOM one) up to +0x3a0 (CIRCLE0, the top), showing one per charge
+#     and HIDING the rest -- so the orbs fill from the bottom up, and an
+#     empty socket shows the frame's own dark socket, not a dimmed orb.
+#   * GDR_PMI_BTN_JAHWAN (the big circle above the orbs, pmi_jahwan_button
+#     .ddj) is shown exactly when the count is 5 -- "ready".
+#   * Activation, FUN_007b4f40(1): the ready circle hides; the five
+#     GDR_PMI_DECO_HWAN_SLOT0..4 show pmi_jahwan_burn.ddj -- 16x28 frames,
+#     12 of them (FUN_00633b90(16,28), FUN_00633970(12)), each started on a
+#     random frame (rand() % 12) and faded in 0 -> 255 over 1.0 s; timer 1
+#     advances every flame one frame each 50 ms (0x32, vslot_005 case 1);
+#     GDR_PMI_HWAN_EFF_FACE and _GLOW show and fade in over 3.0 s (the float
+#     at 0x00d8adc4).
+#   * While berserk, timer 2 fires every duration/5 (the period is
+#     round((60 + player+0x20f8 + a Hwan socket-stone bonus) * 1000 / 5)
+#     ms) and fades one orb and its flame out over 1.0 s, CIRCLE0/SLOT0
+#     (the top) first. After the fifth everything hides and the face and
+#     glow fade out over 3.0 s.
+#   * The end from the server (FUN_007b5300) fades whatever is still shown.
+#
+# OPEN, labelled: the drain period uses the READ 60 s base only -- this
+# server keeps neither player+0x20f8 nor Hwan socket stones. The base agrees
+# with the server's own berserk.Duration (60 s, recovered from the server
+# binary independently). The end the server reports ends the display
+# through set_berserk(_, false). The Hwan-level art swap
+# (FUN_007b5f40, pmi_jahwan_02*.ddj when the byte at player+0x764 is not 0;
+# INFERRED to be _CHAR.HwanLevel, as its setter 0x009ca930 builds the Hwan
+# title through the hwanleveldata table) is not driven: this server has no
+# Hwan level. The blue orbs of a high-level European screenshot are that
+# art, not the race.
+# ---------------------------------------------------------------------------
+
+const BERSERK_ORBS := 5
+## The wire scale of the server's gauge (internal/berserk: Gauge = charges *
+## Max/Orbs). set_berserk takes that scale; the display works in charges.
+const BERSERK_MAX := 100
+
+const HWAN_BURN_DDJ := "interface\\playerminiinfo\\pmi_jahwan_burn.ddj"
+const HWAN_BURN_FRAME := Vector2i(16, 28)
+const HWAN_BURN_FRAMES := 12
+const HWAN_BURN_FRAME_SEC := 0.05
+const HWAN_ORB_FADE_SEC := 1.0
+const HWAN_FACE_FADE_SEC := 3.0
+## READ base of the client's display duration (0x007b4f40: `+ 60.0`, the
+## double at 0x00d880d8); see the header for what is not added to it.
+const HWAN_DISPLAY_BASE_SEC := 60.0
+
+var _circles: Array = []   # CIRCLE0..4 (top..bottom)
+var _burns: Array = []     # DECO_HWAN_SLOT0..4, each a TextureRect over an AtlasTexture
+var _burn_frame: Array = []
+var _btn_jahwan: BaseButton
+var _hwan_face: CanvasItem
+var _hwan_glow: CanvasItem
+var _hwan_charges := 0
+var _hwan_known := false
+var _hwan_active := false
+var _hwan_drained := 0
+var _burn_clock := 0.0
+var _drain_clock := 0.0
+
+func _setup_hwan(root: Control) -> void:
+	_circles.clear()
+	_burns.clear()
+	_burn_frame.clear()
+	for i in range(BERSERK_ORBS):
+		var orb := root.find_child("GDR_PMI_CIRCLE%d" % i, true, false) as CanvasItem
+		if orb != null:
+			_circles.append(orb)
+	_berserk_orbs = _circles
+	var burn_tex := _builder.load_texture(HWAN_BURN_DDJ) if _builder != null else null
+	for i in range(BERSERK_ORBS):
+		var slot := root.find_child("GDR_PMI_DECO_HWAN_SLOT%d" % i, true, false) as Control
+		if slot == null:
+			continue
+		var rect := slot as TextureRect
+		if rect == null:
+			rect = TextureRect.new()
+			rect.name = "Flame"
+			rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+			slot.add_child(rect)
+		rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		rect.stretch_mode = TextureRect.STRETCH_SCALE
+		if burn_tex != null:
+			var atlas := AtlasTexture.new()
+			atlas.atlas = burn_tex
+			rect.texture = atlas
+		_burns.append(slot)
+		_burn_frame.append(0)
+		slot.visible = false
+	_btn_jahwan = root.find_child("GDR_PMI_BTN_JAHWAN", true, false) as BaseButton
+	if _btn_jahwan != null:
+		_btn_jahwan.mouse_filter = Control.MOUSE_FILTER_STOP
+		_btn_jahwan.pressed.connect(func() -> void: berserk_pressed.emit())
+	_hwan_face = root.find_child("GDR_PMI_HWAN_EFF_FACE", true, false) as CanvasItem
+	_hwan_glow = root.find_child("GDR_PMI_HWAN_EFF_GLOW", true, false) as CanvasItem
+	for fx in [_hwan_face, _hwan_glow]:
+		if fx != null:
+			fx.visible = false
+			(fx as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hwan_active = false
+	_refresh_hwan()
+
+## Which circles (by CIRCLE index, 0 = top) show for `charges`: READ from
+## FUN_007b4f40(0), which lights from CIRCLE4 upwards.
+static func lit_circles(charges: int) -> Array:
+	var out := []
+	var left := clampi(charges, 0, BERSERK_ORBS)
+	var i := BERSERK_ORBS - 1
+	while i >= 0 and left > 0:
+		out.append(i)
+		left -= 1
+		i -= 1
+	out.sort()
+	return out
+
+## The server's gauge (0..BERSERK_MAX, a multiple of Max/Orbs) as a count.
+static func charges_for_gauge(gauge: int) -> int:
+	@warning_ignore("integer_division")
+	var per: int = BERSERK_MAX / BERSERK_ORBS
+	@warning_ignore("integer_division")
+	return clampi(gauge / per, 0, BERSERK_ORBS)
+
+## The berserk state from the server: the gauge on its wire scale and
+## whether berserk is on. Kept under this name for World3D's callers.
+func set_berserk(gauge: int, active: bool) -> void:
+	set_hwan(charges_for_gauge(gauge), active)
+
+## The orb count the stats packet carries (_CHAR.RemainHwanCount). While
+## berserk is on the server has spent the orbs and reports 0; the display
+## keeps draining on its own clock then, as the client's does.
+func set_hwan_count(charges: int) -> void:
+	if _hwan_active:
+		return
+	set_hwan(charges, false)
+
+func set_hwan(charges: int, active: bool) -> void:
+	_hwan_known = true
+	var was_active := _hwan_active
+	_hwan_charges = clampi(charges, 0, BERSERK_ORBS)
+	if active and not was_active:
+		_start_hwan()
+	elif not active and was_active:
+		_end_hwan()
+	elif not active:
+		_refresh_hwan()
+
+## Whether the ready circle is up: the client's own test before it asks for
+## berserk (0x00778ac0: player+0x886 >= 5).
+func hwan_ready() -> bool:
+	return _hwan_charges >= BERSERK_ORBS and not _hwan_active
+
+func hwan_known() -> bool:
+	return _hwan_known
+
+func hwan_charges() -> int:
+	return _hwan_charges
+
+## FUN_007b4f40(0).
+func _refresh_hwan() -> void:
+	for b in _burns:
+		(b as CanvasItem).visible = false
+	if _btn_jahwan != null:
+		_btn_jahwan.visible = _hwan_charges >= BERSERK_ORBS
+	var lit := lit_circles(_hwan_charges)
+	for i in range(_circles.size()):
+		var orb := _circles[i] as CanvasItem
+		orb.modulate = Color.WHITE
+		orb.visible = i in lit
+
+## FUN_007b4f40(1).
+func _start_hwan() -> void:
+	_hwan_active = true
+	_hwan_drained = 0
+	_drain_clock = 0.0
+	_burn_clock = 0.0
+	if _btn_jahwan != null:
+		_btn_jahwan.visible = false
+	for orb in _circles:
+		(orb as CanvasItem).visible = true
+		(orb as CanvasItem).modulate = Color.WHITE
+	for i in range(_burns.size()):
+		_burn_frame[i] = randi() % HWAN_BURN_FRAMES
+		_show_burn_frame(i)
+		var b := _burns[i] as CanvasItem
+		b.visible = true
+		_fade(b, 0.0, 1.0, HWAN_ORB_FADE_SEC)
+	for fx in [_hwan_face, _hwan_glow]:
+		if fx != null:
+			fx.visible = true
+			_fade(fx, 0.0, 1.0, HWAN_FACE_FADE_SEC)
+
+## FUN_007b5300, then the refresh the next count brings.
+func _end_hwan() -> void:
+	_hwan_active = false
+	for fx in [_hwan_face, _hwan_glow]:
+		if fx != null and fx.visible:
+			_fade(fx, fx.modulate.a, 0.0, HWAN_FACE_FADE_SEC, true)
+	_refresh_hwan()
+
+func _show_burn_frame(i: int) -> void:
+	var slot := _burns[i] as Control
+	var rect := slot as TextureRect
+	if rect == null:
+		rect = slot.get_node_or_null("Flame") as TextureRect
+	if rect == null or not (rect.texture is AtlasTexture):
+		return
+	var atlas := rect.texture as AtlasTexture
+	var tex_w: int = atlas.atlas.get_width() if atlas.atlas != null else HWAN_BURN_FRAME.x * 8
+	@warning_ignore("integer_division")
+	var cols: int = maxi(1, tex_w / HWAN_BURN_FRAME.x)
+	var f: int = int(_burn_frame[i])
+	@warning_ignore("integer_division")
+	atlas.region = Rect2(Vector2((f % cols) * HWAN_BURN_FRAME.x, (f / cols) * HWAN_BURN_FRAME.y), Vector2(HWAN_BURN_FRAME))
+
+func _fade(item: CanvasItem, from: float, to: float, seconds: float, hide_after: bool = false) -> void:
+	item.modulate.a = from
+	if not is_inside_tree():
+		item.modulate.a = to
+		if hide_after:
+			item.visible = false
+		return
+	var tw := create_tween()
+	tw.tween_property(item, "modulate:a", to, seconds)
+	if hide_after:
+		tw.tween_callback(func() -> void:
+			item.visible = false
+			item.modulate.a = 1.0)
+
+func _process(delta: float) -> void:
+	if not _hwan_active:
+		return
+	_burn_clock += delta
+	while _burn_clock >= HWAN_BURN_FRAME_SEC:
+		_burn_clock -= HWAN_BURN_FRAME_SEC
+		for i in range(_burns.size()):
+			_burn_frame[i] = (int(_burn_frame[i]) + 1) % HWAN_BURN_FRAMES
+			_show_burn_frame(i)
+	_drain_clock += delta
+	var period := HWAN_DISPLAY_BASE_SEC / float(BERSERK_ORBS)
+	while _drain_clock >= period and _hwan_drained < BERSERK_ORBS:
+		_drain_clock -= period
+		_drain_one()
+
+## vslot_005 case 2: one orb and its flame fade out, the top one first.
+func _drain_one() -> void:
+	var k := _hwan_drained
+	if k < _circles.size():
+		_fade(_circles[k] as CanvasItem, 1.0, 0.0, HWAN_ORB_FADE_SEC)
+	if k < _burns.size():
+		_fade(_burns[k] as CanvasItem, 1.0, 0.0, HWAN_ORB_FADE_SEC)
+	_hwan_drained += 1
+	if _hwan_drained >= BERSERK_ORBS:
+		for orb in _circles:
+			(orb as CanvasItem).visible = false
+			(orb as CanvasItem).modulate.a = 1.0
+		for b in _burns:
+			(b as CanvasItem).visible = false
+			(b as CanvasItem).modulate.a = 1.0
+		for fx in [_hwan_face, _hwan_glow]:
+			if fx != null and fx.visible:
+				_fade(fx, fx.modulate.a, 0.0, HWAN_FACE_FADE_SEC, true)
+
+# ---------------------------------------------------------------------------
+# The stat panel, round 629.
+#
+# READ: Create takes GDR_PMI_BTN_CINFO (id 20, pmi_button.ddj at 41,56) and
+# the twenty panel controls -- GDR_PMI_STA_CINFOBG (id 21, window_all.ddj's
+# 135x189 slice) and the ten label/value pairs -- into +0x3cc..+0x420, hides
+# the twenty, and gives the button the tooltip
+# UIIT_STT_CHARACTER_ABILITY_VIEW_OFF. The message map sends a press of id 20
+# to 0x007b4c60, which flips the background's visibility and gives every row
+# the background's new state: a plain toggle, open until pressed again.
+# vslot_012 (0x007b7c60), run every frame, rewrites the values from the
+# character: "%d" Str (+0x87c) and Int (+0x87e); "%d ~ %d" Phy. atk; "%d"
+# Phy. def.; "%d ~ %d" Mag. atk; "%d" Mag. def., Hit rate, Parry ratio; and
+# the two balances computed right there (balance_percent below).
+# ---------------------------------------------------------------------------
+
+const CINFO_BUTTON := "GDR_PMI_BTN_CINFO"
+const CINFO_BG := "GDR_PMI_STA_CINFOBG"
+const CINFO_ROWS := [
+	"GDR_PMI_TXT_STR", "GDR_PMI_TXT_INT", "GDR_PMI_TXT_PHYATT", "GDR_PMI_TXT_PHYDEF",
+	"GDR_PMI_TXT_MAGATT", "GDR_PMI_TXT_MAGDEF", "GDR_PMI_TXT_HIT", "GDR_PMI_TXT_PARRY",
+	"GDR_PMI_TXT_PHYBAL", "GDR_PMI_TXT_MAGBAL",
+	"GDR_PMI_TXT_STRDAT", "GDR_PMI_TXT_INTDAT", "GDR_PMI_TXT_PHYATTDAT", "GDR_PMI_TXT_PHYDEFDAT",
+	"GDR_PMI_TXT_MAGATTDAT", "GDR_PMI_TXT_MAGDEFDAT", "GDR_PMI_TXT_HITDAT", "GDR_PMI_TXT_PARRYDAT",
+	"GDR_PMI_TXT_PHYBALDAT", "GDR_PMI_TXT_MAGBALDAT",
+]
+const CINFO_TOOLTIP := "UIIT_STT_CHARACTER_ABILITY_VIEW_OFF"
+
+var _cinfo_nodes: Array = []
+var _cinfo_values: Dictionary = {}
+var _cinfo_open := false
+
+func _setup_cinfo(root: Control) -> void:
+	_cinfo_nodes.clear()
+	_cinfo_values.clear()
+	var bg := root.find_child(CINFO_BG, true, false) as Control
+	if bg != null:
+		# OURS: the panel hangs below the block's 212x70 rect, so it takes its
+		# own clicks rather than let them walk the character (round 529's
+		# reasoning for the block itself).
+		bg.mouse_filter = Control.MOUSE_FILTER_STOP
+		_cinfo_nodes.append(bg)
+	for n in CINFO_ROWS:
+		var c := root.find_child(n, true, false) as Control
+		if c != null:
+			_cinfo_nodes.append(c)
+			if n.ends_with("DAT") and c is Label:
+				_cinfo_values[n] = c
+	var btn := root.find_child(CINFO_BUTTON, true, false) as BaseButton
+	if btn != null:
+		btn.visible = true
+		btn.mouse_filter = Control.MOUSE_FILTER_STOP
+		if _builder != null:
+			var tip := _builder.resolve_text(CINFO_TOOLTIP)
+			if tip != "" and tip != CINFO_TOOLTIP:
+				btn.tooltip_text = tip
+		btn.pressed.connect(toggle_stat_panel)
+	set_stat_panel_open(false)
+
+func toggle_stat_panel() -> void:
+	set_stat_panel_open(not _cinfo_open)
+	stat_panel_toggled.emit(_cinfo_open)
+
+func set_stat_panel_open(open: bool) -> void:
+	_cinfo_open = open
+	for c in _cinfo_nodes:
+		(c as CanvasItem).visible = open
+
+func is_stat_panel_open() -> bool:
+	return _cinfo_open
+
+## Phy./Mag. balance as vslot_012 computes them (READ, 0x007b802c..0x007b81d0):
+##
+##   phy = ftol( (Str + 2*L + 14) * 100.0 / float32( ((L - 1) * 7.0 + 56.0) * 0.8571428656578064 ) )
+##   mag = ftol(  Int * 100.0             /        ( (L + 7) * 5 * 0.8 ) )
+##
+## each shown as "%d %%" and capped at 120 (`cmp eax,0x78; jge -> 0x78`). L is
+## the byte at player+0x20d8, which FUN_009d4d50 keeps as max(itself, the
+## level at +0x868): the highest level reached. Checked against a retail
+## screenshot (Str 21, Int 21, Lv 2 -> 72 % and 58 %: MEASURED).
+## INFERRED: this server never lowers a level, so the current level is that
+## maximum.
+static func balance_percent(stat: int, level: int, magical: bool) -> int:
+	var v: float
+	if magical:
+		v = float(stat) * 100.0 / (float((level + 7) * 5) * 0.8)
+	else:
+		var den := PackedFloat32Array([(float(level - 1) * 7.0 + 56.0) * 0.8571428656578064])[0]
+		v = float(stat + 2 * level + 14) * 100.0 / den
+	var pct := int(v)
+	return 120 if pct >= 120 else pct
+
+## Fills the panel from the same stats packet the character window reads
+## (StatsNet.Stats). Rows the server does not send stay empty: Hit rate and
+## Parry ratio (engine params 11 / 9, not carried -- see
+## HudPanels._fill_character_window).
+func set_stats(s: StatsNet.Stats) -> void:
+	if s == null or s.error != "":
+		return
+	if s.has_character_rows:
+		_set_value("GDR_PMI_TXT_STRDAT", "%d" % s.str)
+		_set_value("GDR_PMI_TXT_INTDAT", "%d" % s.intel)
+		_set_value("GDR_PMI_TXT_PHYATTDAT", "%d ~ %d" % [s.phys_attack_min, s.phys_attack])
+		_set_value("GDR_PMI_TXT_MAGATTDAT", "%d ~ %d" % [s.mag_attack_min, s.mag_attack_max])
+		_set_value("GDR_PMI_TXT_MAGDEFDAT", "%d" % s.mag_defense)
+		_set_value("GDR_PMI_TXT_PHYBALDAT", "%d %%" % balance_percent(s.str, s.level, false))
+		_set_value("GDR_PMI_TXT_MAGBALDAT", "%d %%" % balance_percent(s.intel, s.level, true))
+	_set_value("GDR_PMI_TXT_PHYDEFDAT", "%d" % s.phys_defense)
+	_set_value("GDR_PMI_TXT_HITDAT", "")
+	_set_value("GDR_PMI_TXT_PARRYDAT", "")
+	if _stat_up != null:
+		_stat_up.visible = s.has_character_rows and s.stat_points > 0
+	if s.has_hwan_count:
+		set_hwan_count(s.hwan_count)
+
+func stat_value(control_name: String) -> String:
+	var l := _cinfo_values.get(control_name) as Label
+	return l.text if l != null else ""
+
+func _set_value(control_name: String, text: String) -> void:
+	var l := _cinfo_values.get(control_name) as Label
+	if l != null:
+		l.text = text
+
+# ---------------------------------------------------------------------------
+# The race emblem and the stat-point button, round 629.
+#
+# READ: the one-time fill 0x007b6fd0 takes GDR_PMI_RACE_MARK (id 15, 53,41,
+# 24x24, no DDJ in the layout), shows it, and sets its art from
+# FUN_0098caa0(race byte of the character's reference object +0x9c, 0):
+# 0 -> interface\ifcommon\com_kindred_china.ddj, 1 -> com_kindred_europe.ddj.
+# That byte is _RefObjCommon.Country (0 China / 1 Europe; RE_COMPLETION
+# 2026-09-16), characterdata column 14: all 26 CHAR_CH_* rows read 0 and all
+# 26 CHAR_EU_* rows 1 (MEASURED, round 629).
+# GDR_PMI_BTN_STATUP (id 34) is shown by vslot_012 while the u16 at
+# player+0x884 is not 0 -- INFERRED to be the unspent stat points, which is
+# what its press (the character page) spends. Its blink (FUN_00655ec0(1)) is
+# not reproduced: OPEN.
+# ---------------------------------------------------------------------------
+
+const RACE_MARK := "GDR_PMI_RACE_MARK"
+const RACE_MARK_DDJ := ["interface\\ifcommon\\com_kindred_china.ddj", "interface\\ifcommon\\com_kindred_europe.ddj"]
+
+var _race_mark: TextureRect
+var _race_holder: Control
+var _stat_up: BaseButton
+var _race := -1
+
+func _setup_race_and_statup(root: Control) -> void:
+	var mark := root.find_child(RACE_MARK, true, false) as Control
+	if mark != null:
+		_race_holder = mark
+		_race_mark = mark as TextureRect
+		if _race_mark == null:
+			_race_mark = TextureRect.new()
+			_race_mark.name = "Emblem"
+			_race_mark.set_anchors_preset(Control.PRESET_FULL_RECT)
+			mark.add_child(_race_mark)
+		_race_mark.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		_race_mark.stretch_mode = TextureRect.STRETCH_SCALE
+		_race_mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		mark.visible = false
+	_stat_up = root.find_child("GDR_PMI_BTN_STATUP", true, false) as BaseButton
+	if _stat_up != null:
+		_stat_up.visible = false
+		_stat_up.mouse_filter = Control.MOUSE_FILTER_STOP
+		_stat_up.pressed.connect(func() -> void: stat_up_pressed.emit())
+	if _race >= 0:
+		set_race(_race)
+
+## The emblem for a Country value (0 China, 1 Europe); any other value shows
+## nothing, as FUN_0098caa0 builds an empty path for it.
+func set_race(country: int) -> void:
+	_race = country
+	if _race_mark == null:
+		return
+	var holder := _race_holder
+	if country < 0 or country >= RACE_MARK_DDJ.size():
+		holder.visible = false
+		return
+	var tex := _builder.load_texture(RACE_MARK_DDJ[country]) if _builder != null else null
+	_race_mark.texture = tex
+	holder.visible = true
+	_race_mark.visible = true
+
+func race_mark_path() -> String:
+	return RACE_MARK_DDJ[_race] if _race >= 0 and _race < RACE_MARK_DDJ.size() else ""

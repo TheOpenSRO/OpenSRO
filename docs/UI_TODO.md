@@ -406,8 +406,9 @@ authored presentation instead:
   half reinforced by Str, the magical by Int — the parameter graph), `Phy. def.`/`Mag. def.` as
   the armour sums. The old `Phy. atk` was a single ROLL of the range on every request. Left as the
   layout drew them, each with a stated reason (see `HudPanels._fill_character_window`):
-  **Phy./Mag. balance** — the client shows a stored byte (`CICPlayer+0x20d8`) whose source is
-  unread and this server computes no balance; **Hit rate / Parry ratio** — engine params 11/9,
+  **Phy./Mag. balance** — *done in round 629*: the client computes both from Str/Int and the
+  level (`HudPlayerInfo.balance_percent`, read at 0x006b8ee3 and 0x007b802c; `CICPlayer+0x20d8`
+  is the highest level reached, not an unread source); **Hit rate / Parry ratio** — engine params 11/9,
   a base of 10.0 plus each worn item's own *per-instance* rate (needs the item variance this server
   does not carry), and params the engine never reads (RE_COMPLETION, "Attack rate and parry are
   DEAD params"); **Trader/Hunter/Thief grades** and **Honor point** — no job or honour system here.

@@ -982,6 +982,29 @@ burst and sound, right-click cancel and the tooltip. The record is in
         static var, so a setting can flip it; icons already on the board keep their look until
         rebuilt. No UI was added.
 
+### The player block (round 629) — **berserk orbs, stat panel, race emblem done; these are left**
+Round 629 rebuilt the top-left block from `CIFPlayerMiniInfo` (`docs/protocol/player_mini_info.md`):
+the orbs fill bottom-up and an empty one is hidden, the ready circle shows at five and a click on it
+is the berserk key, activation lights the flames/face/glow and drains one orb per 12 s, the "E"
+button toggles the stat panel (live from the stats packet, balances by the client's own formula),
+the race emblem follows characterdata's Country, the "+" opens the character window, and the HP/MP
+bars use `pmi_hp.ddj` / `pmi_mp.ddj`. Left:
+- [ ] **The portrait** is the frame's empty socket. Retail renders the player's own model, posed
+      with animation 0x3c, from a camera at the `Bip01 Head` bone into a 128x128 buffer
+      (`FUN_007b7740`); which of the floats 0.2 / 6.5 / 30.0 / 0.1 is distance, lift and field of
+      view is not settled (READ the camera build in `FUN_00a5a8c0` next). Then a SubViewport with
+      its own World3D and a copy of the player's skeleton and worn meshes.
+- [ ] **Hit rate / Parry ratio** stay empty in both the panel and the character window: the server
+      sends neither (engine params 11 / 9).
+- [ ] **Buffs do not change the panel's numbers** because the server's buff book only records the
+      run-speed contributions (`internal/buff`); the panel already re-asks on OpBuffStart/End.
+- [ ] **Hwan-level art** (`pmi_jahwan_02*`, blue) needs a Hwan level (`player+0x764`, INFERRED
+      `_CHAR.HwanLevel`); the berserk display's extra seconds (`player+0x20f8`, Hwan socket stones)
+      likewise. The "+" button's blink (`FUN_00655ec0(1)`) is not drawn.
+- [ ] The orb count at login rides the stats packet's fourth tail now, but the END of a berserk
+      (retail's `FUN_007b5300`) still reaches the client only through the next AttackResult; the
+      display drains on its own 60 s clock meanwhile, which matches the server's Duration.
+
 ### Seasonal event decorations — **hidden by default (round 583)**
 The user decided on 2026-09-26 that early testing gets no seasonal decorations. Christmas,
 Halloween, the China open-beta (OBT) event set and the summer festival set are left out of every

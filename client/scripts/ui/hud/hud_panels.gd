@@ -4445,10 +4445,15 @@ var _stat_buttons_wired := false
 ##   Mag. atk         mag_attack_min ~ max  combat.WeaponRange, magical (Int reinforce)
 ##   Phy. def.        phys_defense          the armour sum combat mitigates with
 ##   Mag. def.        mag_defense           the same sum over the magical column
+##   Phy./Mag. balance   computed from Str/Int and the level by the client's
+##                    own formula (HudPlayerInfo.balance_percent; round 629
+##                    READ it in CIFPlayerInfo at 0x006b8ee3..0x006b90fc, the
+##                    same code as the player block's). CICPlayer+0x20d8, which
+##                    an earlier note called a stored byte of unknown source,
+##                    is only its level input: FUN_009d4d50 keeps it at
+##                    max(itself, the level).
 ##
 ## LEFT AS THE LAYOUT DREW THEM, each with its reason:
-##   Phy./Mag. balance   the client shows a stored byte (CICPlayer+0x20d8) whose
-##                       source is unread; this server computes no balance.
 ##   Hit rate / Parry    engine params 11 / 9: a base of 10.0 plus each worn
 ##                       item's own per-instance rate, which needs the item
 ##                       variance this server does not carry -- and the engine
@@ -4474,6 +4479,8 @@ func _fill_character_window(window: HudWindow, s: StatsNet.Stats) -> void:
 		_set_label(window, "GDR_PI_TEXT_PHYATT_DAT", "%d ~ %d" % [s.phys_attack_min, s.phys_attack])
 		_set_label(window, "GDR_PI_TEXT_MAGATT_DAT", "%d ~ %d" % [s.mag_attack_min, s.mag_attack_max])
 		_set_label(window, "GDR_PI_TEXT_MAGDEF_DAT", str(s.mag_defense))
+		_set_label(window, "GDR_PI_TEXT_PHYBAL_DAT", "%d %%" % HudPlayerInfo.balance_percent(s.str, s.level, false))
+		_set_label(window, "GDR_PI_TEXT_MAGBAL_DAT", "%d %%" % HudPlayerInfo.balance_percent(s.intel, s.level, true))
 	else:
 		# A server too old to send the rows: the one number it does send.
 		_set_label(window, "GDR_PI_TEXT_PHYATT_DAT", str(s.phys_attack))

@@ -202,6 +202,29 @@ static func parse_speeds_by_code(data: PackedByteArray, into: Dictionary = {}, p
 		into[code] = [float(walk), float(run)]
 	return into
 
+## _RefObjCommon.Country: 0 for the China race, 1 for Europe (characterdata
+## and itemdata share the common head; ItemTableReader.COL_COUNTRY is the
+## same column). MEASURED on the real parts (round 629): the 26 CHAR_CH_*
+## rows read 0, the 26 CHAR_EU_* rows 1.
+const COL_COUNTRY := 14
+
+## Parses one characterdata part into {code name -> Country} for rows whose
+## code starts with `prefix`, merging into `into`. A row whose column is not a
+## number is skipped rather than read as China.
+static func parse_country_by_code(data: PackedByteArray, into: Dictionary = {}, prefix: String = "CHAR_") -> Dictionary:
+	for line in _lines(data):
+		var cols := line.split("\t")
+		if cols.size() <= COL_COUNTRY:
+			continue
+		var code := cols[COL_CODE_NAME].strip_edges()
+		if code == "" or not code.begins_with(prefix):
+			continue
+		var country := cols[COL_COUNTRY].strip_edges()
+		if not country.is_valid_int():
+			continue
+		into[code] = int(country)
+	return into
+
 ## Parses one characterdata part into {code name -> BCRadius} (world units,
 ## COL_BC_RADIUS) for rows whose code starts with `prefix`, merging into
 ## `into`. "" takes every row -- the player bodies (CHAR_) and the monsters
