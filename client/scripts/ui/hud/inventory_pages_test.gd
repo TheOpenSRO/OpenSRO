@@ -323,10 +323,14 @@ func _rotation_checks(panels: Control) -> void:
 	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), step), "no repeat before 1000 ms")
 	panels.call("_doll_turn_tick", t0 + 1000)
 	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 2.0 * step), "the first repeat at 1000 ms steps 36 degrees more")
-	panels.call("_doll_turn_tick", t0 + 1049)
-	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 2.0 * step), "no repeat 49 ms later")
+	# Round 639's review (OURS): the hold repeats every 250 ms, not retail's
+	# 50 ms -- 144 degrees a second.
 	panels.call("_doll_turn_tick", t0 + 1050)
-	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 3.0 * step), "the next repeat 50 ms after the first")
+	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 2.0 * step), "no repeat 50 ms later (retail's period is not used)")
+	panels.call("_doll_turn_tick", t0 + 1249)
+	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 2.0 * step), "no repeat 249 ms later")
+	panels.call("_doll_turn_tick", t0 + 1250)
+	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 3.0 * step), "the next repeat 250 ms after the first")
 	panels.set("_doll_turn_hovered", false)
 	panels.call("_doll_turn_tick", t0 + 2000)
 	_check(is_equal_approx(float(panels.get("paper_doll_yaw")), 3.0 * step), "off the button the repeat pauses")

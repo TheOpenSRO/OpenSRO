@@ -94,6 +94,26 @@ func TestAttackResultCarriesTheKillsExperience(t *testing.T) {
 	}
 }
 
+// Round 639's review: the EXP a result reports is what was added -- the
+// levels passed plus the progress -- so a character held at the cap reports
+// only what fitted.
+func TestExpAddedCountsLevelsAndTheCap(t *testing.T) {
+	tbl, err := leveldata.ParseCSV(strings.NewReader("level,exp\n1,10\n2,20\n3,30\n"))
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+	if got := expAdded(tbl, 1, 5, 1, 9); got != 4 {
+		t.Fatalf("within a level: %d, want 4", got)
+	}
+	if got := expAdded(tbl, 1, 5, 3, 7); got != 5+20+7 {
+		t.Fatalf("across two levels: %d, want 32", got)
+	}
+	lvl, exp, _ := tbl.Advance(3, 25, 1000)
+	if got := expAdded(tbl, 3, 25, lvl, exp); got != exp-25 || got >= 1000 {
+		t.Fatalf("at the cap: %d added (held at %d/%d), want only what fitted", got, lvl, exp)
+	}
+}
+
 func TestMonsterDamagedRoundTrip(t *testing.T) {
 	want := &MonsterDamaged{MonsterID: 1, Damage: 10, RemainingHP: 90}
 	got, err := DecodeMonsterDamaged(want.Encode())

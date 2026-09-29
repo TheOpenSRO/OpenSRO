@@ -60,8 +60,51 @@ func _initialize() -> void:
 	_check(HudUnderbar.resolve_item_binding(9, 20, {20: 9, 21: 4}) == 20, "an unmoved item keeps its bag slot")
 	_check(HudUnderbar.resolve_item_binding(9, 20, {20: 4, 25: 9}) == 25, "a moved item is found at its new slot")
 	_check(HudUnderbar.resolve_item_binding(9, 20, {20: 4}) == -1, "a spent item drops its binding")
+	_review_checks(store)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(TMP))
 	_finish()
+
+## Round 639's review: type-checked fields, no overwrite after a failed load,
+## an atomic write, and retail's rebind after a skill is learned or withdrawn.
+func _review_checks(store: Script) -> void:
+	var dec: Dictionary = store.call("decode", [{"slot": "3", "kind": "skill", "id": 3},
+		{"slot": 4, "kind": "skill", "id": [1], "code": "X"}, {"slot": 5, "kind": 7, "id": 3},
+		{"slot": 6, "kind": "item", "item": {"a": 1}, "bag": 2}, {"slot": 7, "kind": "skill", "id": 9, "code": 5},
+		{"slot": 8, "kind": "skill", "id": 11, "code": "OK"}])
+	_check((dec["skills"] as Dictionary) == {8: {"id": 11, "code": "OK"}} and (dec["items"] as Dictionary).is_empty(),
+		"a field of the wrong type skips its entry and the rest still load (got %s)" % [dec])
+	var bad := "user://quickslots_bad_test.cfg"
+	var f := FileAccess.open(bad, FileAccess.WRITE)
+	f.store_string("[quickslots]\nsomeone=\"half written")
+	f.close()
+	var before := FileAccess.get_file_as_string(bad)
+	_check(not bool(store.call("save", "k", {1: {"id": 3, "code": "X"}}, {}, bad)), "a file that does not load is not saved over")
+	_check(FileAccess.get_file_as_string(bad) == before, "and it is left as it was")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(bad))
+	_check(bool(store.call("save", "k", {1: {"id": 3, "code": "X"}}, {}, TMP)) and not FileAccess.file_exists(TMP + ".tmp"),
+		"the write goes through a temporary file that is renamed away")
+	if not _has(store, "rebind_for_skill"):
+		_check(false, "HotbarStore.rebind_for_skill follows a learned or withdrawn skill (0x60c230)")
+		return
+	var levels := PackedInt64Array([90, 1101, 1102])
+	var bar := {1: {"id": 90, "code": "C"}, 3: {"id": 90, "code": "C"}, 5: {"id": 114, "code": "L"}}
+	var changed: Array = store.call("rebind_for_skill", bar, 1101, true, levels)
+	changed.sort()
+	_check(changed == [1, 3] and bar[1]["id"] == 1101 and bar[3]["id"] == 1101 and bar[5]["id"] == 114,
+		"learning level 2 swaps every slot holding level 1 (got %s, %s)" % [changed, bar])
+	changed = store.call("rebind_for_skill", bar, 90, true, levels)
+	_check(changed.is_empty(), "a level-1 skill changes nothing")
+	bar = {1: {"id": 1102, "code": "C"}, 2: {"id": 1101, "code": "C"}, 5: {"id": 114, "code": "L"}}
+	changed = store.call("rebind_for_skill", bar, 1101, false, levels)
+	changed.sort()
+	_check(changed == [1, 2] and not bar.has(2) and bar[1]["id"] == 1101 and bar[5]["id"] == 114,
+		"a withdrawal clears the slots holding the named id and moves the group's others to it (got %s)" % [bar])
+
+func _has(script: Script, method: String) -> bool:
+	for d in script.get_script_method_list():
+		if d["name"] == method:
+			return true
+	return false
 
 func _finish() -> void:
 	if _failures == 0:

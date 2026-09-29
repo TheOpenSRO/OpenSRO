@@ -199,6 +199,12 @@ func _world_checks() -> void:
 			"a kill writes the EXP and skill EXP lines in the archive's words (got %s)" % [l])
 		_check((world.call("exp_gain_lines", 0, 0, "", "") as PackedStringArray).is_empty(), "no experience, no line")
 		_check(world.call("exp_gain_lines", 0, 5, "", "")[0] == "[5]skill experience point gained.", "the English stands in without a table")
+	if not _has(world, "exp_loss_line"):
+		_check(false, "World3D.exp_loss_line writes retail's EXP-loss line")
+	else:
+		_check(world.call("exp_loss_line", 25900, "[%I64d]Experience Points lost.") == "[25900]Experience Points lost.",
+			"a death's loss is UIIT_MSG_STATE_LOSE_EXP's line")
+		_check(world.call("exp_loss_line", 0, "[%I64d]Experience Points lost.") == "", "no loss, no line")
 	if not _has(world, "level_up_line"):
 		_check(false, "World3D.level_up_line formats the level-up line")
 	else:

@@ -7094,6 +7094,86 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirty-ninth round, review follow-up: the saved bar follows skill upgrades and bag moves, a death writes retail's EXP-loss line, and a held arrow turns at an aimable speed
+
+The review confirmed round 639's READ claims. It found the following, each fixed here.
+
+1. **The bar follows a learned skill (READ).** AddLearnedSkill `0x880be0` -> `0x778840(id, 1)` ->
+   CNIFUnderMenuBar `0x60c230`:
+   - It finds the new record's previous level (level byte +0x60 less one; `0x93f770(group, level)`).
+   - Every skill slot (kind 0x49) holding that level's id takes the new id and icon, and is saved.
+   - A level-1 skill changes nothing.
+
+   The withdrawal `0x880db0` passes the id it names, which is the group's skill after the
+   withdrawal, with 0. Slots holding exactly that id are cleared; the group's other slots take it.
+   - Built as `HotbarStore.rebind_for_skill`. It runs on every successful learn: the learn result
+     names no skill, so NetClient queues the requested ids and emits `learn_skill_done(id, ok)`.
+   - This server has no withdrawal, so that half is built and tested but reached by nothing (OPEN).
+   - Reproduced before the fix: skill 90 upgraded to 1101 still cast 90, even after a relog.
+2. **The bar follows a bag move (READ).** `0x60c430` re-binds the item slots bound to a bag slot, by
+   the item's ref id through the whole bag or at that slot. It is called from the item results at
+   `0x87b613`, `0x88bd53` and `0x88c20b`. Ours re-resolved only on bag lists; it now also does so
+   on every move answer (`_on_inventory_move_for_hotbar`) and saves.
+3. **A death writes UIIT_MSG_STATE_LOSE_EXP (READ).** The line is "[N]Experience Points lost.",
+   type 1, as `0x8a9b76..0x8a9baa` writes it, instead of our "You were killed. Lost N experience.".
+   The revive prompt and the status label keep ours.
+4. **The saved file is robust (OURS).**
+   - Every field is type-checked on load; a bad entry is skipped and the rest load. Before, a
+     non-integer field aborted the decode with a script error.
+   - A file that exists but does not load is never written over, so no other character's entry is
+     lost.
+   - The write goes to `quickslots.cfg.tmp`, which is then renamed over the old file.
+5. **The reload flag (READ).** In `0x8a7c50`, a flag other than 7 discards the list
+   (`0x8a7ce7..0x8a7d08`), so the bar starts empty. This is recorded in the doc.
+6. **The held arrow (OURS).** A click still turns 36 degrees. A held arrow repeats after retail's
+   1000 ms and then every **250 ms**, which is **144 degrees a second**. Retail's 50 ms made 720
+   degrees a second.
+7. **Smaller fixes.**
+   - The party-leave line is UIIT_MSG_PARTY_SECEDE, "[%s] has left the party.", with the name
+     from the party list the client now keeps. Ours remains only for an unknown id.
+   - The EXP a result reports is what was actually added (`session.expAdded`: the levels passed
+     plus the progress). At the cap it is only what fitted, and 0 (no line) once full. What
+     retail's server sends at the cap was not read (OPEN).
+   - The window's mouse: CGWndBase's mouse slot (`0xb91440`) keeps a message inside the window's
+     rect (`0xb8f3d0`, a rect test, not an art test). The whole-rect STOP matches. INFERRED: the
+     window's own handler reports it handled.
+
+**MEASURED, real X input on the box** (Login route, the round's rebuilt server in memory).
+- Skill 90 was put on slot 1 by a click and on slot 4 by a drag. A real click on its ADD learned
+  level 2, and both slots became 1101 and were saved.
+- The potion was put on slot 7 from bag slot 0. A real drag moved it to bag slot 10, and the log
+  showed "quickslot 7 follows item 4 from bag slot 0 to 10" and a save. Key 7 then "uses item 4 at
+  bag slot 10" (snd_potion).
+- After Escape, Restart, the bar restored {1: 1101, 4: 1101, 7: item 4 at 10}. Key 1 "casts skill
+  1101" (CAST send: skill 1101), and key 7 used the potion again.
+- Holding the right arrow for 2077 ms turned the doll 0.6283 -> 3.7699 rad: the press, then repeats
+  at 1000, 1250, 1500, 1750 and 2000 ms, six steps of 36 degrees.
+
+**Tests.**
+- `hotbar_store_test.gd`: bad field types, no overwrite after a failed load, no leftover temp
+  file, and learn/withdraw rebinds.
+- `inventory_pages_test.gd`: the 250 ms repeat.
+- `hud_system_message_test.gd`: the loss line.
+- Go: `TestExpAddedCountsLevelsAndTheCap`.
+
+The negative, against af79fe9 (round 639 before this follow-up):
+
+    FAIL World3D.exp_loss_line writes retail's EXP-loss line
+    SCRIPT ERROR: Invalid call. Nonexistent 'int' constructor.
+    SCRIPT ERROR: Invalid get index 'skills' (on base: 'Dictionary').
+    FAIL no repeat 50 ms later (retail's period is not used)
+    FAIL the next repeat 250 ms after the first
+    internal/session/combat_test.go:105:12: undefined: expAdded
+    FAIL	github.com/OpenSRO/srrevamp/server/internal/session [build failed]
+
+The two SCRIPT ERRORs are the old decode aborting on a bad field. The runner counts them as
+failures.
+
+On this commit:
+- `remote_godot.sh check`: ALL LOAD.
+- `remote_godot.sh tests`: 158 suites, 0 failing.
+- `go test -count=1 -p 1 ./...`: all ok.
+
 ## Six-hundred-and-thirty-ninth round: system messages have their own window at the bottom right, the hotbar is still there after a relog, and the preview turns a tenth of a circle per click
 
 The user's three requests on v0.1.460. The full reading is in `docs/protocol/system_message.md`;

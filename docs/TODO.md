@@ -1171,7 +1171,7 @@ What round 639 read and built is in `docs/protocol/system_message.md`.
   (`0x789e53`) and the uniques' appearance and death lines (`0x874ea0`) when they arrive; srrevamp's
   server sends neither.
 - **Retail's messages for srrevamp's refusals.** The server sends English text; retail sends a code
-  that `0x7b8b40` turns into the UIIT_ message. The party-leave line lacks the name retail shows.
+  that `0x7b8b40` turns into the UIIT_ message.
 - **Quest EXP** writes no line (only a kill's result carries the EXP).
 - **GDR_WARNING_WND's position** (the level-up line): the CIFNotify class's +0x7d4, read as 0 for
   GDR_NOTICE; no writer for this instance was looked for.
@@ -1180,8 +1180,12 @@ What round 639 read and built is in `docs/protocol/system_message.md`.
   `user://quickslots.cfg`). A new character's default slots (`0x786f30`) and dragging a slot off the
   bar to clear it (vslot 26 `0x60c1b0`) are still not wired, as before.
 - **The paper doll's step** is 36 degrees a click at the user's request (OURS); a held arrow repeats
-  it at retail's 1000/50 ms, so it turns 720 degrees a second once repeating. Retail's step is a
-  frame's worth, frame_ms * 0.0015 rad.
+  it after 1000 ms and then every 250 ms (144 degrees a second, OURS). Retail's step is a frame's
+  worth, frame_ms * 0.0015 rad, repeated every 50 ms.
+- **Skill withdrawal** has no server side here; the bar's withdrawal rebind (`0x60c230` with 0) is
+  built and tested but reached by nothing.
+- **The EXP line at the level cap** reports what was added (0 once full); what retail's server
+  sends there was not read.
 
 ### The inventory window (round 633) — **pages, purse colours, slot art, avatar view, preview built; these are left**
 

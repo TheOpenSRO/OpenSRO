@@ -100,6 +100,12 @@ signal pick_up_result(result: GroundItemsNet.PickUpResult)
 ## unspent stat points. Sent only to the character that levelled.
 signal level_up(new_level: int, stat_points: int)
 signal learn_skill_result(ok: bool, reason: String)
+## The same answer with the skill it was for (round 639): the result names no
+## skill, so the ids are queued as the requests go out and matched in order
+## (the server answers each request in turn). The quick-slot bar's rebind
+## (HotbarStore.rebind_for_skill) needs the id.
+signal learn_skill_done(skill_id: int, ok: bool)
+var _pending_learns: Array[int] = []
 signal skill_list_result(skills: Array, error: String)
 signal skill_state_result(state: SkillNet.SkillState)
 signal raise_mastery_result(result: SkillNet.RaiseMasteryResult)
@@ -328,6 +334,7 @@ func disconnect_from_server() -> void:
 	_tls_handshaking = false
 	_attack_targets_in_flight.clear()
 	_attack_types_in_flight.clear()
+	_pending_learns.clear()
 	own_character_id = -1
 	_forget_session_lists()
 	disconnected.emit()
@@ -520,6 +527,10 @@ func pick_up(char_name: String, ground_id: int) -> void:
 	_send(GroundItemsNet.OP_PICK_UP, GroundItemsNet.encode_pick_up(char_name, ground_id))
 
 func learn_skill(char_name: String, skill_id: int) -> void:
+	if not is_connected_to_server():
+		push_error("NetClient: learn_skill called while not connected")
+		return
+	_pending_learns.append(skill_id)
 	_send(SkillNet.OP_LEARN, SkillNet.encode_learn(char_name, skill_id))
 
 ## Response arrives as attack_result (see SkillNet's doc comment: using a
@@ -860,6 +871,8 @@ func _dispatch(p: Packet) -> void:
 		SkillNet.OP_LEARN_RESULT:
 			var r := SkillNet.decode_learn_result(p.data)
 			learn_skill_result.emit(r.ok, r.reason if r.error == "" else r.error)
+			if not _pending_learns.is_empty():
+				learn_skill_done.emit(_pending_learns.pop_front(), r.ok)
 		SkillNet.OP_LIST_RESULT:
 			var r := SkillNet.decode_list_result(p.data)
 			skill_list_result.emit(r.skills, r.error)

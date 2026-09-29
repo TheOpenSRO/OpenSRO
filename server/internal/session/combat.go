@@ -415,6 +415,22 @@ type AttackResult struct {
 	SkillExpGained int64
 }
 
+// expAdded is the experience a character gained going from (level, exp) to
+// (newLevel, newExp): the requirements of the levels passed plus the change in
+// progress; never below 0.
+func expAdded(t *leveldata.Table, level int, exp int64, newLevel int, newExp int64) int64 {
+	added := newExp - exp
+	for l := level; l < newLevel; l++ {
+		if need, ok := t.ExpToNext(l); ok {
+			added += need
+		}
+	}
+	if added < 0 {
+		return 0
+	}
+	return added
+}
+
 // EchoedTargetType is the targetType the result carries on the wire.
 func (r *AttackResult) EchoedTargetType() uint8 {
 	if r.HasTargetType {
@@ -1519,10 +1535,11 @@ func performAttack(
 				}
 				result.SkillExpGained = gainedExp
 			}
-			if gainedExp > 0 {
-				result.ExpGained = gainedExp
-			}
 			newLevel, newExp, gained := levelTable.Advance(char.Level, char.Exp, gainedExp)
+			// What the character actually gained (round 639's review): at the
+			// level cap Advance holds the EXP below the requirement, so the
+			// line reports what was added, not what the kill was worth.
+			result.ExpGained = expAdded(levelTable, char.Level, char.Exp, newLevel, newExp)
 			newStatPoints := char.StatPoints + gained*leveldata.StatPointsPerLevel
 			// Str and Int rise by one each per level, automatically and without
 			// the player choosing -- on top of the three spendable points.

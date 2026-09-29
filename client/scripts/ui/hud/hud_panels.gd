@@ -2441,16 +2441,19 @@ func paper_doll_shown() -> bool:
 # frame's worth (frame_ms * 0.0015 rad, about 1.4 degrees a click at 60 fps),
 # "moves too slow"; the user asked for 36 degrees a click, so ten clicks make
 # a full turn. Each repeat of a held arrow steps the same 36 degrees at the
-# retail timing above (the first after 1000 ms, then every 50 ms -- so a held
-# arrow turns 720 degrees a second once it repeats). The reset still returns
-# the yaw to 0 (0x6ab9a0).
+# retail's first delay (1000 ms) and then every 250 ms -- 144 degrees a second
+# (OURS, round 639's review: retail's 50 ms made 720 degrees a second, too fast
+# to aim). The reset still returns the yaw to 0 (0x6ab9a0).
 signal paper_doll_yaw_changed(yaw: float)
 ## Retail's rate, kept for the record (0xda6fa8; not used since round 639).
 const DOLL_YAW_PER_MS := 0.0015
 ## OURS (the user's request, round 639): one click, one tenth of a turn.
 const DOLL_STEP_DEGREES := 36.0
 const DOLL_REPEAT_DELAY_MS := 1000
+## Retail's repeat period (OnTimer 0x655f40), kept for the record.
 const DOLL_REPEAT_MS := 50
+## OURS (round 639's review): the held arrow's repeat, 36 degrees every 250 ms.
+const DOLL_HOLD_REPEAT_MS := 250
 const DOLL_BTN_LEFT := "GDR_EQ_BTN_ROTATE_LEFT"
 const DOLL_BTN_RIGHT := "GDR_EQ_BTN_ROTATE_RIGHT"
 const DOLL_BTN_RESET := "GDR_EQ_BTN_ROTATE_RESET"
@@ -2527,7 +2530,7 @@ func _doll_turn_tick(now_ms: int) -> void:
 	if now_ms - _doll_turn_last_ms < _doll_turn_period_ms:
 		return
 	_doll_turn_last_ms = now_ms
-	_doll_turn_period_ms = DOLL_REPEAT_MS
+	_doll_turn_period_ms = DOLL_HOLD_REPEAT_MS
 	_doll_turn_step(_doll_turn)
 
 func _process(_delta: float) -> void:
@@ -4520,6 +4523,18 @@ func skill_icon_path(skill_id: int) -> String:
 					return ""
 				return bs.icon_path if bs.icon_path.to_lower().begins_with("icon\\") else "icon\\" + bs.icon_path
 	return ""
+
+## Every level's id of the skill whose per-level id is `skill_id` (index i =
+## level i + 1), or empty -- the group the quick-slot rebind walks (round
+## 639's review, HotbarStore.rebind_for_skill).
+func skill_level_ids(skill_id: int) -> PackedInt64Array:
+	_load_skill_catalog()
+	for key in _skill_grid:
+		for entry in _skill_grid[key]:
+			var bs: SkillDataReader.BaseSkill = entry
+			if bs.level_ids.has(skill_id):
+				return bs.level_ids
+	return PackedInt64Array()
 
 ## The board's BaseSkill for a skill group id (skilldata GroupID / base id),
 ## or null when the archive's board does not carry it.

@@ -1208,6 +1208,9 @@ var _hud_syslog: HudSystemMessage
 var _hud_warning: HudNotice
 ## Whether the last party answer put this player in a party (chat's #).
 var _chat_in_party := false
+## The party's members by character id, from the party answers and join
+## pushes, so the leave line can name who left (round 639's review).
+var _party_names := {}
 var _hud_whole_chat: HudWholeChat
 ## The chat-input slash console (scripts/ui/console.gd) and the in-client
 ## Help window (scripts/ui/help_window.gd). GM state comes from the server's
@@ -1342,6 +1345,10 @@ func _ready() -> void:
 	NetClient.ground_item_owner_released.connect(_on_ground_item_owner_released)
 	NetClient.pick_up_result.connect(_on_pick_up_result)
 	NetClient.inventory_list_result.connect(_on_inventory_list_result)
+	# A bag move answers with the whole bag: the bar's items follow it, as
+	# retail's 0x60c430 re-binds them on its move and item results (round
+	# 639's review).
+	NetClient.inventory_move_result.connect(_on_inventory_move_for_hotbar)
 	NetClient.equipment_result.connect(_on_equipment_result)
 	# Round 629: the player block's stat panel keeps up with what changes the
 	# numbers while it is open -- a real change of what is worn (not every
@@ -1356,6 +1363,7 @@ func _ready() -> void:
 	NetClient.quest_completed.connect(_on_quest_completed)
 	NetClient.skill_list_result.connect(_on_skill_list_result)
 	NetClient.learn_skill_result.connect(_on_learn_skill_result)
+	NetClient.learn_skill_done.connect(_on_skill_learned_for_hotbar)
 	NetClient.shop_list_result.connect(_on_shop_list_result)
 	NetClient.shop_buy_result.connect(_on_shop_buy_result)
 
@@ -7498,6 +7506,7 @@ func _on_quickslot_activated(slot_index: int) -> void:
 			("skill %d" % int(entry["id"])) if entry != null else ("item" if _quickslot_items.has(slot_index) else "empty"),
 			_last_attack_target])
 	if entry != null:
+		print("World3D: quickslot %d casts skill %d" % [slot_index, int(entry["id"])])
 		_cast_skill(int(entry["id"]), String(entry["code"]))
 		return
 	# A CONSUMABLE on the bar. The quickslots held skills only until now, so a
@@ -7506,6 +7515,7 @@ func _on_quickslot_activated(slot_index: int) -> void:
 	# 2026-09-20).
 	var item = _quickslot_items.get(slot_index)
 	if item != null and NetClient.current_character_name != "":
+		print("World3D: quickslot %d uses item %d at bag slot %d" % [slot_index, int(item["item"]), int(item["slot"])])
 		if _hud_panels != null:
 			UiSounds.expect_use(_hud_panels.bag_item_types(int(item["slot"])))
 		NetClient.use_item(NetClient.current_character_name, int(item["slot"]))
@@ -7545,13 +7555,60 @@ func _resync_quickslot_items(slots: Array) -> void:
 		if found >= 0:
 			if found != bag:
 				changed = true
+				print("World3D: quickslot %d follows item %d from bag slot %d to %d" % [qs, want, bag, found])
 			_quickslot_items[qs]["slot"] = found
 		else:
 			_quickslot_items.erase(qs)
 			_hud_underbar.set_slot_item(qs, null)
 			changed = true
+			print("World3D: quickslot %d cleared: item %d is no longer in the bag" % [qs, want])
 	if changed:
 		_save_hotbar()
+
+## A skill was learned (NetClient.learn_skill_done): every bar slot holding
+## its previous level takes the new one, as retail's 0x60c230 does after
+## AddLearnedSkill (HotbarStore.rebind_for_skill), and the bar is saved.
+func _on_skill_learned_for_hotbar(skill_id: int, ok: bool) -> void:
+	if not ok or _hud_panels == null or _quickslot_skills.is_empty():
+		return
+	var levels := _hud_panels.skill_level_ids(skill_id)
+	var changed := HotbarStore.rebind_for_skill(_quickslot_skills, skill_id, true, levels)
+	_apply_skill_rebind(changed)
+
+## The withdrawal's half of the same rebind (0x880db0 -> 0x778840(id, 0)).
+## This server has no skill withdrawal, so nothing calls it yet (OPEN); it is
+## here, tested, for when one lands.
+func _on_skill_withdrawn_for_hotbar(skill_id: int) -> void:
+	if _hud_panels == null or _quickslot_skills.is_empty():
+		return
+	var levels := _hud_panels.skill_level_ids(skill_id)
+	_apply_skill_rebind(HotbarStore.rebind_for_skill(_quickslot_skills, skill_id, false, levels))
+
+func _apply_skill_rebind(changed: Array) -> void:
+	if changed.is_empty() or _hud_underbar == null:
+		return
+	for slot in changed:
+		if _quickslot_skills.has(slot):
+			var id := int(_quickslot_skills[slot]["id"])
+			var icon: Texture2D = null
+			var path := _hud_panels.skill_icon_path(id)
+			if path != "" and _ui_builder != null:
+				icon = _ui_builder.load_texture(path)
+			_hud_underbar.set_slot_item(int(slot), icon)
+			SkillEffects.preload_skill(id)
+		else:
+			_hud_underbar.clear_slot(int(slot))
+	print("World3D: hotbar rebind for a skill change: slots %s -> %s" % [str(changed), str(_quickslot_skills)])
+	_save_hotbar()
+
+## A bag move's answer (the whole bag): keep the bar's item slots on their
+## items (0x60c430's re-bind, called from the move and item results at
+## 0x87b613, 0x88bd53 and 0x88c20b).
+func _on_inventory_move_for_hotbar(slots: Array, error: String) -> void:
+	if error != "":
+		return
+	_inventory_slots.assign(slots)
+	_resync_quickslot_items(slots)
 
 ## The quick-slot file's entry for this character on this server (round
 ## 639, HotbarStore -- OURS: retail keeps the bar on the server, 0x7158).
@@ -15011,7 +15068,15 @@ func _enter_dead_state(exp_lost: int) -> void:
 	_qa_dead_tick = _qa_tick
 	_qa_revive_sent = false
 	var line := _death_line(exp_lost)
-	_log_system(line)
+	# The system window gets retail's own line for the loss (round 639's
+	# review): Client_ApplyExpAndLevelUp writes UIIT_MSG_STATE_LOSE_EXP
+	# ("[%I64d]Experience Points lost.") with type 1 when the EXP goes down
+	# (0x8a9b76..0x8a9baa). No other death line was found among the system
+	# window's callers; the revive prompt keeps ours.
+	var loss := exp_loss_line(exp_lost, _ui_text_table.get_text("UIIT_MSG_STATE_LOSE_EXP", "") if _ui_text_table != null else "")
+	if loss != "":
+		_log_system(loss, HudSystemMessage.TYPE_GAIN)
+	print("World3D: %s" % line)
 	if _hud_panels != null:
 		_hud_panels.player_dead = true # the bag's right-click use (round 550)
 		_hud_panels.show_revive_prompt(line)
@@ -16280,6 +16345,14 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 		# point, which the server does not send yet.
 		_hud_underbar.set_sp(stats.skill_points)
 
+## The EXP-loss line (UIIT_MSG_STATE_LOSE_EXP, "[%I64d]Experience Points
+## lost."), or "" when nothing was lost.
+static func exp_loss_line(exp_lost: int, template: String) -> String:
+	if exp_lost <= 0:
+		return ""
+	return _printf_one(template if template != "" else "[%I64d]Experience Points lost.",
+		["%I64d", "%lld", "%d"], exp_lost)
+
 ## The level-up line: UIIT_MSG_STRGERR_LEVEL ("You have advanced to level
 ## [%d].") through swprintf, as 0x8a9bd3 formats it -- so the brackets stay
 ## ("level [5]."). Until round 639 this replaced "[%d]" whole and dropped them.
@@ -16669,6 +16742,11 @@ func _on_party_result(result: PartyNet.Result) -> void:
 		party_status_label.text = "Error: %s" % result.error
 		return
 	_chat_in_party = result.party_id != 0
+	_party_names.clear()
+	for m in result.members:
+		var pm: PartyNet.Member = m
+		if pm != null:
+			_party_names[pm.character_id] = pm.member_name
 	if result.party_id == 0:
 		party_status_label.text = "Not in a party."
 		party_list.clear()
@@ -16702,6 +16780,7 @@ func _on_party_leave_result(ok: bool, reason: String) -> void:
 func _on_party_member_joined(member: PartyNet.MemberJoined) -> void:
 	if member == null:
 		return
+	_party_names[member.character_id] = member.member_name
 	# UI_PARTY 0x886b10 writes UIIT_MSG_PARTY_JOIN ("[%s]joined the party.")
 	# with type 4, the PARTY filter (round 639, READ).
 	var join_t := _ui_text_table.get_text("UIIT_MSG_PARTY_JOIN", "") if _ui_text_table != null else ""
@@ -16710,9 +16789,19 @@ func _on_party_member_joined(member: PartyNet.MemberJoined) -> void:
 	NetClient.party_info(NetClient.current_character_name)
 
 func _on_party_member_left(character_id: int) -> void:
-	# Retail's UIIT_MSG_PARTY_SECEDE names the member; this push carries only
-	# the id, so the line is ours -- with retail's type 4 (0x886b10).
-	_log_system("A party member left (character #%d)." % character_id, HudSystemMessage.TYPE_PARTY)
+	# UI_PARTY 0x886b10 writes UIIT_MSG_PARTY_SECEDE ("[%s] has left the
+	# party.") with type 4. The push carries only the id; the name comes from
+	# the party list this client keeps (round 639's review). An unknown id
+	# keeps our own line.
+	var left_name := String(_party_names.get(character_id, ""))
+	_party_names.erase(character_id)
+	var secede_t := _ui_text_table.get_text("UIIT_MSG_PARTY_SECEDE", "") if _ui_text_table != null else ""
+	if left_name != "" and secede_t.contains("%s"):
+		_log_system(secede_t.replace("%s", left_name), HudSystemMessage.TYPE_PARTY)
+	elif left_name != "":
+		_log_system("[%s] has left the party." % left_name, HudSystemMessage.TYPE_PARTY)
+	else:
+		_log_system("A party member left (character #%d)." % character_id, HudSystemMessage.TYPE_PARTY)
 	NetClient.party_info(NetClient.current_character_name)
 
 # --- Guild tab -------------------------------------------------------------

@@ -52,6 +52,13 @@ option set, CGInterface's update (`0x77b385..0x77b3db`) shows the frame only whi
 over the window (`0x7b85a0`). Which option +7 is, and its default, are OPEN; srrevamp always shows
 the frame, as the user's screenshot does.
 
+**The mouse (READ, with one inference).** CGWndBase's mouse slot (vslot 17, `0xb91440`) offers a
+message to the children first, then keeps it for the window when the point is inside the
+window's rect (`0xb8f3d0`, the rect less the client insets) -- a rect test, not an art test. So a
+click anywhere in the system window's rect is the window's, as srrevamp's MOUSE_FILTER_STOP over
+the whole rect has it (INFERRED that the window's own handler, vslot 0x44, then reports it
+handled, so the world does not also get it).
+
 **The filter board.** The filter button's handler `0x7b8680` shows the board when it is hidden and
 hides it otherwise. `CIFChatOptionBoard::Create` (`0x7a95f0`) loads `resinfo\ifchatoptionboard.txt`:
 five checkboxes kept at +0x36c..+0x37c, IDs 10..14 -- GAIN (UIIT_STT_CHATTING_GAIN_MSG), FIGHT
@@ -130,7 +137,8 @@ lines. With retail's own message and type:
 | "[N]gold gained." | 1 | the pickup result (READ string; until now "Picked up N gold.", ours) |
 | "item [..]gained." | 1 | the pickup and loot results (READ strings, round 614) |
 | "[name]joined the party." | 4 | the party join push (READ string) |
-| "A party member left (character #N)." | 4 | ours: the push carries no name for UIIT_MSG_PARTY_SECEDE |
+| "[name] has left the party." | 4 | UIIT_MSG_PARTY_SECEDE, the name from the client's party list (round 639's review); ours ("A party member left (character #N).") only for an id the list does not know |
+| "[N]Experience Points lost." | 1 | UIIT_MSG_STATE_LOSE_EXP on a death with a loss (round 639's review; was our "You were killed. Lost N experience.", which the revive prompt keeps) |
 | the chat's party/guild/academy refusals | 4 | HudChat.system_sink (READ) |
 | the chat's server refusals, the global chat's refusals | 0 | READ |
 | the camera-view line (F9) | 0 | READ |
@@ -152,7 +160,12 @@ only.
 opcode was not looked up). srrevamp appends two s64s to
 OpAttackResult after the targetType byte: ExpGained and SkillExpGained, what the server granted
 (`session.AttackResult`, `CombatNet.AttackResult.exp_gained / skill_exp_gained`). The skill EXP is
-the disclosed M = 1 of `combat.go` (a kill's skill EXP is not recovered). Quest rewards' EXP writes
+the disclosed M = 1 of `combat.go` (a kill's skill EXP is not recovered). ExpGained is what the
+character actually gained -- the requirements of the levels passed plus the change in progress
+(`session.expAdded`) -- so at the level cap, where the EXP is held below the requirement, it is
+only what fitted (0 once full, and then no line). Retail's client prints whatever its packet
+carries (`0x8a9a45` runs after the level loop); what retail's server sends at the cap was not read
+(OPEN). Quest rewards' EXP writes
 no line yet (OPEN).
 
 ## The quick-slot bar's save (READ; ours is client-side)
@@ -166,15 +179,39 @@ Retail keeps the bar **on the server**:
   (< 0xd or < 5) for the COS kinds.
 - **Load.** The character-data handler `0x8ab0e0` calls `0x8a7c50`, which reads a u8 flag
   (`!= 7` sets 0xef1b64), a u8 count and count x 6 bytes {u8 slot, u8 kind, u32 data} into
-  0xef1b68 / 0xef1b6c; CNIFUnderMenuBar `0x60b260` fills the 51 slots from it. `0x8a7bd0` right
+  0xef1b68 / 0xef1b6c; CNIFUnderMenuBar `0x60b260` fills the 51 slots from it. **A flag other
+  than 7 discards the list**: with 0xef1b64 set, `0x8a7ce7..0x8a7d08` frees it and zeroes the
+  count, so the bar starts empty (round 639's review). `0x8a7bd0` right
   after it reads the auto-potion settings (0xef1b70..0xef1b76).
-- **Moved items.** `0x60c430` re-binds a moved item.
+- **Moved items.** `0x60c430(bag slot, item id, search)` re-binds every item slot (kind 0x46)
+  bound to that bag slot: with `search` set it looks for the item (its ref id, `0x8ba470`)
+  through the whole bag, otherwise only at that slot; found, the slot takes the new bag slot and
+  the item's icon; not found, it is cleared; each change is saved (`0x60bea0`). It is called from
+  the item results at `0x87b613` (search 1), `0x88bd53` and `0x88c20b`.
+- **Learned and withdrawn skills.** AddLearnedSkill `0x880be0` and the withdrawal `0x880db0` both
+  end in `0x778840(id, learned)` -> `0x60c230`:
+  - learned (1): the new record's level byte +0x60 less one; at 0 (a level-1 skill) nothing
+    happens; else `0x93f770(group +4, level)` gives the previous level's record, and every skill
+    slot (kind 0x49) holding its id takes the new id and icon (+0x108), and is saved;
+  - withdrawn (0): the id is the one the result names (`0x880dde`), the group's skill after the
+    withdrawal (`0x9c1750` replaces the learned one with it, or removes the group when they are
+    equal); every slot of kind 0x49 or 0x19 holding exactly that id is cleared, and every other
+    slot of the same group (record +4) takes it; each is saved.
 - `Setting\SRExtQSOption.dat` / `SRExtQSOption2.dat` exist on the box but are not the slots
   (not read further).
 
+srrevamp (round 639's review) follows both: `HotbarStore.rebind_for_skill` on every successful
+learn (NetClient queues the requested ids, since the learn result names no skill), and the item
+re-resolve on every bag move's answer as well as every bag list. This server has no skill
+withdrawal, so the withdrawal half is built and tested but reached by nothing (OPEN). Where retail
+re-binds one bag slot, ours re-resolves every item slot (slot first, then the item anywhere).
+
 srrevamp (OURS, the user's request): `HotbarStore` writes `user://quickslots.cfg`, one entry per
 `server:port/character` (percent-encoded), holding every skill slot (id, Basic_Code) and item slot
-(item id, bag slot) on every page and the "m" slot, on every change; World3D restores it once the
+(item id, bag slot) on every page and the "m" slot, on every change -- each field type-checked
+on load (a bad entry is skipped, the rest load), nothing written over a file that does not load
+(so a corrupt file never costs the other characters' entries), and the write made through a
+temporary file renamed over the old one; World3D restores it once the
 bar exists and re-resolves each item against the bag when the inventory arrives -- its saved slot
 first, as retail binds it, then the same item anywhere, else the binding is dropped. MEASURED on the
 box: 4 skills (slots 1, 3, 5 and page 2's 12) and a potion (slot 7) put on by real mouse drags came
