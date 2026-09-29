@@ -890,7 +890,40 @@ commit them on the main thread, and round 567 makes the terrain's collision a he
       (round 566's follow-up). A playtest diagnostic; it could sit behind a QA variable like the
       rest of the load instrumentation.
 
-### Town teleporters (rounds 576-578, 603)
+### Town teleporters (rounds 576-578, 603) and teleport NPCs (round 642)
+
+Round 642 made all 32 NPCs with teleportdata points work: the ferries, boats, airships (Roc
+Mountain), tunnels, Jangan's gate soldiers, Constantinople's guides and the two Thief Town NPCs
+(`docs/protocol/teleport_network.md`, "Teleport NPCs (round 642)"). Still open:
+
+- [ ] **Which objects offer id 8 is stood in for.** Retail registers id 8 ("Select teleport area") on
+      a link source's object when a byte of the point's record (`+0x34`, the last
+      `RefTeleport_ExtractData` reads, `0x6a7f45`) is 1. The client's teleportdata.txt has no column
+      for it. srrevamp offers the line on every point with an outgoing link, server and client. The
+      server's database column is the source, and this project has no copy of it.
+- [ ] **Walk-in portals are not served.** 69 retail links leave a point with no associated object:
+      64 in and out of the Qin-Shi tomb (`GATE_JINSI_*`), two for the Donwhang cave
+      (`GATE_DUNGEON_DH_*`), the two desert temples' exits, and the Roc gate's return. Retail
+      moves a player through them from a region event, not a talk: `CGObjPC::vslot_309` (`0x4ef480`) compares its event's string with `"TELEPORT"` and takes the
+      link from `GObjPC::FUN_004f88d0`. The server refuses such a point with code 2, and the client
+      offers nothing there. MEASURED over the export: 68 of the 69 start or end in a dungeon (a negative
+      region), which srrevamp cannot place, and the 69th is the Roc gate's return from world 40.
+- [ ] **Instanced destinations are refused** (OURS; code 0, nothing charged): every destination
+      whose teleportdata column 12 (`WorldID`) is not 1. That covers the fortress gates (worlds 2,
+      4, 7), the Roc gate (40), the Pharaoh tombs (57-59), the desert temples (60) and the survival,
+      arena and garden maps. Retail enters the world (`GameWorldMgr_FindByID`, `0x5137ac`);
+      srrevamp has one world.
+- [ ] **Open-world gate structures beyond the seven town gates are served but not clickable.** The
+      server now serves any point with an associated object. The client still binds only the
+      id-7 buildings (round 577's rule). That leaves the Delta, Storm Desert and King's Valley gates
+      (`STORE_DELTA_GATE_E/W`, `STORE_STORMDESERT_GATE`, `STORE_KINGSVALLEY_GATE`: 4 links, world
+      1, free) and the Roc Mountain gate (`STORE_RC_TAHOMET_GATE`: needs the Roc quest item) with
+      nothing to click. Binding them needs the placed object each one is, which is unread (round
+      577's nearest-object stand-in was withdrawn for them).
+- [ ] **A charged NPC teleport under real input.** Round 642's real-input runs used the GM
+      account `qa`, which is free by the user's rule. The fees are proven by the Go tests, including
+      every retail link at its lowest allowed level, not by a paid click. A second, non-GM account
+      with gold would need a way to fund it that is not a GM command.
 
 - [ ] **The server serves any OpTeleportUse whose gate id it knows, wherever the player stands**
       (round 603's review). A session's packets are handled one at a time, in order

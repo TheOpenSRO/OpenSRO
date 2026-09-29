@@ -833,6 +833,7 @@ func _fill_npc_talk(window: HudWindow, npc_name: String, greeting: String, servi
 	# The text on top is kept for a gate's destination list (open_teleport_list).
 	window.set_meta(TALK_TEXT_META, lines[0])
 	window.set_meta(TELEPORT_LIST_META, false)
+	_qa_print_talk_lines.call_deferred(body)
 
 func _on_npc_talk_choice(meta: Variant) -> void:
 	var key := str(meta)
@@ -1255,7 +1256,26 @@ func open_teleport_list(gate_name: String, entries: Array) -> bool:
 	body.text = "\n".join(lines)
 	window.set_meta(TELEPORT_LIST_META, true)
 	print("HudPanels: teleport list for %s -- %d destination(s) in the talk box" % [gate_name, entries.size()])
+	_qa_print_talk_lines.call_deferred(body)
 	return true
+
+## SRREVAMP_QA_TALK_LINES (round 642): each paragraph of the talk box as drawn,
+## with the screen point at its middle, so a real X click can be aimed at a
+## line (`QA TALK LINE <n> at x,y: <text>`). QA only; prints nothing without
+## the variable.
+func _qa_print_talk_lines(body: RichTextLabel) -> void:
+	if OS.get_environment("SRREVAMP_QA_TALK_LINES") == "" or not is_instance_valid(body):
+		return
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var texts := body.get_parsed_text().split("\n")
+	var count: int = body.get_paragraph_count()
+	var rect := body.get_global_rect()
+	for i in range(count):
+		var top: float = body.get_paragraph_offset(i)
+		var bottom: float = body.get_paragraph_offset(i + 1) if i + 1 < count else float(body.get_content_height())
+		var text: String = texts[i] if i < texts.size() else ""
+		print("QA TALK LINE %d at %d,%d: %s" % [i, int(rect.position.x + 40.0), int(rect.position.y + (top + bottom) * 0.5), text])
 
 ## Whether the talk box is up and shows a gate's destinations.
 func teleport_list_shown() -> bool:

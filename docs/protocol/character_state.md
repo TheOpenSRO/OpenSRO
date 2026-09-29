@@ -944,6 +944,18 @@ allocates 0x1c and then passes the result of `FUN_0071fff0` on it, so either the
 recorded size belongs to a handle rather than the record, or the table
 attribution is wrong. **Id 8 is therefore not attributed to a table here.**
 
+**Resolved in round 642** (`teleport_network.md`, "Teleport NPCs (round 642)"). Both halves were
+right. `FUN_006b5200` is the `_REFTELELINK` inserter, and the 0x1c bytes are the link it builds
+(`FUN_006a7460` fills it). The record `0x6a7f70` reads is a different one: EAX is the link's
+**source `CRefTeleport`**, which `FUN_004f89f0` resolves from the id `FUN_006a7460` returns
+(`mov eax,esi` at `0x6b528d`).
+- `+0x30` is the teleport record's associated ref object.
+- `+0x34` is its last byte (`RefTeleport_ExtractData`, `0x6a7f45`).
+- `+0x38` is its link vector.
+
+So id 8, the client's "Select teleport area" (item 0xa), is registered per link on the source
+point's object when that byte is 1. The byte has no column in the client's `teleportdata.txt`.
+
 ## The interaction-id vocabulary, from the NPCs themselves (round 455)
 
 Round 454 left a weak negative: only three registration sites were found (ids 7,

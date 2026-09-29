@@ -9605,6 +9605,7 @@ func _update_blob_shadow() -> void:
 ##                          NetClient's own dispatch (_qa_mob_strike)
 ##   SRREVAMP_QA_PARTY=create|join:<id>  form a party at tick 70 (round 634)
 ##   SRREVAMP_QA_COMMANDS="/a;/b"  feed these lines through the chat console
+##                          ("wait <seconds>" pauses the list, round 642)
 ##                          (docs/DEBUG_TOOLS.md) 2 s after boot; each prints
 ##                          "QA COMMAND: <line>" and a GM reply "GM REPLY: ..."
 ##   SRREVAMP_QA_HELP=1     open the in-client Help window 2 s after boot
@@ -11147,10 +11148,16 @@ func _qa_mob_strike(monster: int, result: CombatNet.AttackResult) -> void:
 ## point and which path took the click. That is the measurement behind
 ## "clicking a monster opened the talk window": the node, not the impression.
 ## "gate" (round 577) clicks the nearest bound teleport gate (_qa_gate_target).
+## "npc:<CODE>" (round 642) the nearest NPC with that codename. With
+## SRREVAMP_QA_AIM_ONLY=1 nothing is dispatched: the player is stood and the
+## camera aimed as for a click, and `QA AIM <kind>: click at x,y` gives the
+## point for a real X click.
 var _qa_click_queue: Array = []
 var _qa_click_stage := 0
 var _qa_click_wait := 0
 var _qa_click_target: Dictionary = {}
+## How many times an "npc:<CODE>" target has been looked for and not found.
+var _qa_click_retries := 0
 ## True only while a QA click is being dispatched, so the pickers print
 ## what their rays hit without spamming real play.
 var _qa_click_logging := false
@@ -11163,9 +11170,17 @@ func _qa_advance_click() -> void:
 	if _qa_click_stage == 0:
 		_qa_click_target = _qa_click_target_for(kind)
 		if _qa_click_target.is_empty():
+			# A named NPC may be in a region still streaming in after a /tp
+			# (round 642): look again for up to a minute before giving up.
+			if kind.begins_with("npc:") and _qa_click_retries < 60:
+				_qa_click_retries += 1
+				_qa_click_wait = 60
+				return
 			print("QA CLICK %s: no such target in the world (monsters %d)" % [kind, _monster_bodies.size()])
 			_qa_click_queue.pop_front()
+			_qa_click_retries = 0
 			return
+		_qa_click_retries = 0
 		if kind != "ground":
 			# Stand 40 units short of the target, on the walkable surface, and
 			# look along +Z at it with a shallow camera so it sits mid-frame.
@@ -11195,6 +11210,14 @@ func _qa_advance_click() -> void:
 		print("QA CLICK %s: '%s' at world %s -> screen %s%s" % [kind, str(_qa_click_target["name"]), str(aim.round()), str(screen.round()),
 			"" if on_screen else " (OFF-SCREEN: not a click a player could make)"])
 		_probe_click_rays(screen)
+		# SRREVAMP_QA_AIM_ONLY (round 642): stand and aim, print the point,
+		# and leave the click to real X input (the e2e harness's xdotool).
+		if OS.get_environment("SRREVAMP_QA_AIM_ONLY") != "":
+			print("QA AIM %s: click at %d,%d" % [kind, int(round(screen.x)), int(round(screen.y))])
+			_qa_click_queue.pop_front()
+			_qa_click_stage = 0
+			_qa_click_wait = 30
+			return
 		_qa_click_logging = true
 		var took := _dispatch_left_click(screen)
 		_qa_click_logging = false
@@ -11232,7 +11255,7 @@ func _qa_advance_teleport() -> void:
 		return
 	if _qa_teleport_stage == 0:
 		if _hud_panels.is_open("npctalk") and _teleport_reader != null \
-				and _teleport_reader.point_for_building(_talk_npc_code) != null:
+				and _teleport_point_for_code(_talk_npc_code) != null:
 			print("QA TELEPORT: choosing the teleport line at %s" % _talk_npc_code)
 			_hud_panels._on_npc_talk_choice("teleport")
 			_qa_teleport_stage = 1
@@ -11250,6 +11273,26 @@ func _qa_advance_teleport() -> void:
 ## The nearest target of a kind: {pos, half_height, name}, or {} if none.
 ## "ground" is a spot 30 units ahead of the player.
 func _qa_click_target_for(kind: String) -> Dictionary:
+	# "npc:<CODE>" (round 642): the nearest NPC holder with that codename --
+	# a teleport NPC among a dock's other NPCs.
+	if kind.begins_with("npc:"):
+		var want := kind.substr(4).strip_edges().to_upper()
+		var best: Node3D = null
+		var best_d := INF
+		for group in get_children():
+			if not (group is Node3D) or not String(group.name).begins_with("RealTerrain_"):
+				continue
+			for holder in group.get_children():
+				if not (holder is Node3D) or str(holder.get_meta("npc_code", "")).to_upper() != want:
+					continue
+				var d := (holder as Node3D).global_position.distance_to(player.global_position)
+				if d < best_d:
+					best_d = d
+					best = holder
+		if best == null:
+			return {}
+		return {"pos": best.global_position, "half_height": _qa_click_half_height(best, "Body"),
+			"name": str(best.get_meta("npc_name"))}
 	match kind:
 		"monster":
 			var best_m: Node3D = null
@@ -13275,6 +13318,12 @@ func _run_qa_commands(list: String) -> void:
 		var line := String(raw).strip_edges()
 		if line == "":
 			continue
+		# "wait <seconds>" (round 642): pause the list, so a /tp can follow a
+		# /goto's zone load instead of racing it.
+		if line.begins_with("wait "):
+			print("QA COMMAND: %s" % line)
+			await get_tree().create_timer(maxf(float(line.substr(5)), 0.0)).timeout
+			continue
 		print("QA COMMAND: %s" % line)
 		if line.begins_with("/") and _console != null:
 			_console.submit(line)
@@ -13791,12 +13840,45 @@ func _npc_services(code: String) -> Array:
 	# leaves it (NpcServiceReader.gate_services). "teleport" lists the
 	# destinations in the talk box (_open_teleport_list, round 603); the recall lines fall to
 	# _on_npc_service_selected's default until they have a server.
-	if _teleport_reader != null:
-		var point := _teleport_reader.point_for_building(code)
-		if point != null:
-			out.append_array(NpcServiceReader.gate_services(
-				not _teleport_reader.links_from(point.id).is_empty(), point.interaction7, point.interaction9))
+	#
+	# Since round 642 a teleport NPC gets the same lines: the ferry, airship
+	# and tunnel ticket sellers, Jangan's gate soldiers and Constantinople's
+	# guides are the associated objects of their teleportdata points
+	# (_teleport_point_for_code), and the engine serves them as it serves a
+	# gate (docs/protocol/teleport_network.md, "Teleport NPCs (round 642)").
+	# Their points carry neither registration flag, so they list the
+	# teleport line and the end line.
+	var point := _teleport_point_for_code(code)
+	if point != null:
+		out.append_array(NpcServiceReader.gate_services(
+			not _teleport_reader.links_from(point.id).is_empty(), point.interaction7, point.interaction9))
 	return out
+
+## The teleport point the thing being talked to stands for: a gate
+## structure's (its teleportbuilding code, round 577) or, since round 642, an
+## NPC's -- the point whose associated object is the NPC's characterdata id
+## (teleportdata column 3; GATE_NPC_CH_FERRY names 2011, NPC_CH_FERRY). The
+## NPC's id comes from its code through the NPC tables (_npc_codes, the
+## reverse of what places it). null when neither names a point.
+func _teleport_point_for_code(code: String) -> TeleportReader.Point:
+	if _teleport_reader == null or code == "":
+		return null
+	var point := _teleport_reader.point_for_building(code)
+	if point != null:
+		return point
+	var up := code.strip_edges().to_upper()
+	if _npc_ids_built_from != _npc_codes.size():
+		_npc_ids_by_code.clear()
+		for npc_id in _npc_codes:
+			_npc_ids_by_code[str(_npc_codes[npc_id]).to_upper()] = int(npc_id)
+		_npc_ids_built_from = _npc_codes.size()
+	return _teleport_reader.point_for_object(int(_npc_ids_by_code.get(up, 0)))
+
+## codename (upper) -> characterdata id, the reverse of _npc_codes, rebuilt
+## when that grows (_teleport_point_for_code).
+var _npc_ids_by_code: Dictionary = {}
+## _npc_codes' size when _npc_ids_by_code was built (-1: never).
+var _npc_ids_built_from := -1
 
 ## Rebuilds the talk menu if it is still open, after the player's guild state
 ## changed (round 521): a guild NPC's lines depend on it. It rebuilds in place
@@ -13873,7 +13955,7 @@ func _open_teleport_list() -> void:
 	# gate to list, and nothing to say.
 	if _teleport_reader == null or _hud_panels == null or _talk_npc_code == "":
 		return
-	var point := _teleport_reader.point_for_building(_talk_npc_code)
+	var point := _teleport_point_for_code(_talk_npc_code)
 	if point == null:
 		_log_system("This gate has no teleport point.")
 		return

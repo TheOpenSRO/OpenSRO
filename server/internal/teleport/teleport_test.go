@@ -237,3 +237,45 @@ func TestLoadReadsADirectory(t *testing.T) {
 		t.Error("Load accepted a directory without teleportlink.csv")
 	}
 }
+
+// Round 642: teleportdata.csv's twelfth column, WorldID (teleportdata.txt
+// column 12, Point.WorldID), is read; a CSV exported before round 642 ends at
+// Interaction9 and still loads, every point's WorldID 0 (unknown). A header
+// with any other twelfth name is still refused. And PointByObject finds a
+// point by its NPC as well as by its building.
+func TestReadTakesTheWorldColumnAndTheOlderHeader(t *testing.T) {
+	withWorld := strings.Replace(fixturePoints, "Interaction9\n", "Interaction9,WorldID\n", 1)
+	withWorld = strings.Replace(withWorld, "70,1,0\n", "70,1,0,1\n", 1)
+	withWorld = strings.Replace(withWorld, "70,1,1\n", "70,1,1,2\n", 1)
+	withWorld = strings.Replace(withWorld, "30,0,0\n", "30,0,0,1\n", 1)
+	withWorld = strings.Replace(withWorld, "50,0,0\n", "50,0,0,1\n", 1)
+	tb, err := Read(strings.NewReader(withWorld), strings.NewReader(fixtureLinks), strings.NewReader(fixtureBuildings))
+	if err != nil {
+		t.Fatalf("Read with WorldID: %v", err)
+	}
+	if p, _ := tb.PointByID(2); p.WorldID != 2 {
+		t.Errorf("point 2's WorldID = %d; want 2", p.WorldID)
+	}
+	if p, _ := tb.PointByID(1); p.WorldID != MainWorld {
+		t.Errorf("point 1's WorldID = %d; want %d", p.WorldID, MainWorld)
+	}
+	old := readFixture(t)
+	for _, p := range old.Points {
+		if p.WorldID != 0 {
+			t.Errorf("an 11-column CSV gave point %d WorldID %d; want 0 (unknown)", p.ID, p.WorldID)
+		}
+	}
+	bad := strings.Replace(withWorld, "Interaction9,WorldID\n", "Interaction9,World\n", 1)
+	if _, err := Read(strings.NewReader(bad), strings.NewReader(fixtureLinks), strings.NewReader(fixtureBuildings)); err == nil {
+		t.Error("Read accepted a twelfth column that is not WorldID")
+	}
+	if p, ok := tb.PointByObject(4242); !ok || p.Code != "GATE_NPC_TEST_FERRY" {
+		t.Errorf("PointByObject(4242) = %+v, %v; want the NPC's point", p, ok)
+	}
+	if p, ok := tb.PointByObject(9001); !ok || p.ID != 1 {
+		t.Errorf("PointByObject(9001) = %+v, %v; want the building's point", p, ok)
+	}
+	if _, ok := tb.PointByObject(0); ok {
+		t.Error("PointByObject(0) found a point: 0 is 'no object'")
+	}
+}

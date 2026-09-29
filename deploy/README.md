@@ -164,6 +164,17 @@ links=292 buildings=77`, and a directory that is configured but does not load (a
 header that is not the exporter's, a link to a point the table lacks) stops the server at boot, as a
 bad `-npcpos-csv` does. Without the directory every teleport is refused.
 
+**Re-export the teleport directory after round 642.** teleportdata.csv gained a twelfth column,
+`WorldID` (teleportdata.txt column 12). A directory exported before round 642 still loads, and every
+NPC teleporter works with it. But without the column, a link into an instanced area is not refused
+up front: the fortress, tomb, temple, survival and Roc gates. To re-export:
+1. Re-run the `pk2list` loop and the `export-refdata -mode teleport` line from step 1 into a
+   directory named `teleport`.
+2. Copy it over `~/srrevamp-data/teleport` on the server host. It is mounted as `/data/teleport`.
+3. Run `docker compose up -d`.
+
+The new `teleportdata.csv` header ends in `Interaction9,WorldID`. There is no database step.
+
 Reference data is otherwise not touched by the update loop.
 
 ## Monster AI (off by default)
@@ -581,6 +592,19 @@ It needs the teleport directory above (`-teleport-dir`). There is no flag for th
 the request is new, and a client release before round 576's client half never sends it, so pushing
 to `dev` changes nothing for tagged clients until the release that carries the gate and its board
 (round 578: Talk -> 'Select teleport area' -> the Dimensional Teleporter -> Move).
+
+**The teleport NPCs (round 642)** use the same request and rules. These are:
+- the ferry and boat ticket sellers at the river crossings (500 gold);
+- the airship sellers between Hotan's Karakoram docks, Roc Mountain and Central Asia (500);
+- the Samarkand/Taklamakan tunnel managers (500);
+- the Constantinople harbour and the pirates (500, or 5,000 and level 95 to Alexandria's Paros
+  Light House);
+- Jangan's four gate soldiers and Constantinople's three guides (free);
+- the two NPCs that lead to Thief Town (free).
+
+Talk to one, then 'Select teleport area', then a destination. The log names the NPC's point:
+`gate=GATE_NPC_CH_FERRY`. A destination in an instanced area (a fortress, tomb, temple, arena or
+survival map) is refused with nothing charged: srrevamp has only the open world.
 
 **Who pays.** Everyone pays the link's fee from the table (5,000 gold from Jangan to Donwhang),
 except:

@@ -154,6 +154,13 @@ func _init() -> void:
 				e += 1
 
 	var columns := _arg("--column")
+	var mapm: MapmReader.ParsedRegion = null
+	if columns != "" and map_path != "":
+		var m_archive := Pk2Reader.open(map_path)
+		if m_archive != null:
+			var m_entry := ObjectLoader.find_file(m_archive, "%s\\%s.m" % [rp[0], rp[1]])
+			if m_entry != null:
+				mapm = MapmReader.parse(m_archive.read_file(m_entry))
 	if columns != "":
 		for spec in columns.split("+", false):
 			var c := _vec2(spec)
@@ -164,6 +171,16 @@ func _init() -> void:
 				if not is_nan(h):
 					print("   %s[%d] surface %.3f" % [names.get(oi, "?"), oi, h])
 			print("   landing height %.3f" % graph.landing_height_at(c.x, c.y))
+			# The drawn water over the column (round 642): the .m block's
+			# PlaneType/PlaneHeight, as MapmWater.build draws it -- so a
+			# landing spot can be told from a river bed by a number.
+			if mapm != null and mapm.blocks.size() == MapmReader.BLOCK_COUNT:
+				var bx := clampi(int(floorf(c.x / MapmWater.BLOCK_SPAN)), 0, MapmReader.BLOCKS_PER_SIDE - 1)
+				var bz := clampi(int(floorf(c.y / MapmWater.BLOCK_SPAN)), 0, MapmReader.BLOCKS_PER_SIDE - 1)
+				var block: MapmReader.Block = mapm.blocks[bz * MapmReader.BLOCKS_PER_SIDE + bx]
+				var kind := MapmWater.block_kind(block)
+				var drawn := "none drawn" if kind == MapmWater.PLANE_NONE else ("water" if kind == MapmWater.PLANE_WATER else "still")
+				print("   water: block %d,%d plane type %d height %.3f (%s)" % [bx, bz, block.plane_type, block.plane_height, drawn])
 
 	var ghost := _arg("--ghost")
 	if ghost != "":

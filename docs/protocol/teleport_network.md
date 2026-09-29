@@ -25,7 +25,7 @@ file had been extracted, and the file existed.
 | 6, 7, 8 | local x, y, z | `969, 0, 1369` |
 | 9 | radius | `70` (85 rows), `10`, `150`, `200`, `50`, `30` |
 | 10, 11 | interaction flags | registrations of interaction ids 7 and 9 (round 454, below) |
-| 12 | a small integer | `1` ×153, up to `170`; the client's parser never reads it; unread |
+| 12 | **the point's game world** (round 642) | `1` ×153 (every open-world row), up to `170`; the client's parser never reads it; the server's `+0x48` word, which the teleport hands to `GameWorldMgr_FindByID` -- "Teleport NPCs (round 642)" |
 
 **The positions decode, and that is checked rather than assumed.** Using this
 project's own region transform — `regionId = (x << 8) | y`,
@@ -243,8 +243,9 @@ result that follows an accepted receipt as the teleport's arrival
 zone change does, but keeps the server's position (below).
 
 **The order is the engine's where it has one** (`session.teleporter.use`): the
-character in the world and alive; the gate point, which must belong to a
-teleportbuilding row (a ferry's object is an NPC, so a ferry point is not a gate);
+character in the world and alive; the gate point, which must have an associated
+object -- a teleportbuilding row whose own point it is, or (round 642) an NPC, such as a
+ferry seller;
 the link (`teleport.Table.LinkBetween`) -- refused with the engine's own code `2`
 when there is none, `GObjPC::HandleTeleportUse`'s `uStack_2c = 2` at `0x513910`;
 the link's restrictions (`teleport.CheckRestrictions`, run before the fee as on
@@ -255,7 +256,8 @@ GM account and `-teleport-free`, own design); the charge, refused `0x1c07` with
 nothing moved -- `HandleTeleportUse` refuses on the gold compare (`0x513749`)
 before it sets the teleport state; then the receipt and the move.
 
-**The arrival spot is an inference, disclosed.** A destination row carries one
+**The arrival spot is READ since round 642** ("Teleport NPCs (round 642)": `0x407760` copies
+the point's region and x/y/z, no radius term). What round 576 wrote: A destination row carries one
 position, its teleportdata point (region + local x, y, z + radius), and srrevamp
 lands the player there: `worldmap.ToWorld(region, x, z, frame)` at height 0, which
 the client replaces with its walkable graph's landing height at that point
@@ -442,6 +444,150 @@ player; see `docs/TODO.md`, "Town teleporters". Not reproduced,
 disclosed: the line colours (`0xffefdaa4` and `0xffff8a00`, `0xff969696` greyed; the talk box
 draws every line in one colour), the tomb gate's greying, the surcharge, and the client-side
 checks that end in messages `0x1c1c`/`0x1c1e`.
+
+### Teleport NPCs (round 642)
+
+Since round 642 the NPCs that teleport work as the town gates do: the ferry, boat, airship and tunnel
+ticket sellers, Jangan's gate soldiers, Constantinople's guides and the two NPCs that lead to Thief
+Town. Their talk box lists "Select teleport area", that line lists their links in the talk box, and
+a click on one sends `OpTeleportUse` with the NPC's teleportdata point as the gate.
+
+**The census (MEASURED, read-only over the box's `/var/tmp/tables`, round 642).** 32 serviced
+teleportdata points name a characterdata NPC as their associated object (column 3) and have at least
+one link. Every one of the 32 NPCs is placed by npcpos. The NPC stands near its point, not on it: the
+point is where a player **arrives** when going there.
+
+| point | NPC (textdata_object) | NPC at (npcpos) | point (region, local x, z) | links: destination, fee |
+|---|---|---|---|---|
+| 3 `GATE_NPC_CH_FERRY` | `NPC_CH_FERRY` Ferry Ticket Seller Doji | 97/161 (362, 1761) | 97/161 (560, 1460) | 4, 500 |
+| 4 `GATE_NPC_WC_FERRY` | `NPC_WC_FERRY` Ferry Ticket Seller Tayun | 100/161 (513, 1281) | 100/161 (636, 1482) | 3, 500 |
+| 9 `GATE_NPC_CH_FERRY2` | `NPC_CH_FERRY2` Ferry Ticket Seller Chau | 96/158 (330, 1607) | 96/158 (523, 1267) | 6, 500 |
+| 6 `GATE_NPC_WC_FERRY2` | `NPC_WC_FERRY2` Ferry Ticket Seller Hageuk | 98/156 (920, 367) | 98/156 (1025, 601) | 9, 500 |
+| 12 `GATE_NPC_KT_FERRY2` | `NPC_KT_FERRY2` Boat Ticket Seller Rahan | 91/140 (1189, 1325) | 91/140 (904, 1412) | 14, 500 |
+| 14 `GATE_NPC_WC_FERRY3` | `NPC_WC_FERRY3` Boat Ticket Seller Salmai | 91/143 (323, 1748) | 91/143 (583, 1858) | 12, 500 |
+| 13 `GATE_NPC_KT_FERRY3` | `NPC_KT_FERRY3` Boat Ticket Seller Asimo | 90/140 (1644, 753) | 90/140 (1413, 769) | 15, 500 |
+| 15 `GATE_NPC_WC_FERRY4` | `NPC_WC_FERRY4` Boat Ticket Seller Asa | 90/143 (276, 888) | 90/143 (464, 879) | 13, 500 |
+| 16 `GATE_NPC_KT_FLYSHIP1` | `NPC_KT_FLYSHIP1` Airship Ticket Seller Dawari (Karakoram North Dock) | 94/121 (616, 27) | 93/121 (862, 1623) | 18, 19, 28; 500 each |
+| 17 `GATE_NPC_KT_FLYSHIP2` | `NPC_KT_FLYSHIP2` Airship Ticket Seller Poy | 86/121 (852, 1033) | 86/121 (1168, 824) | 18, 19; 500 each |
+| 18 `GATE_NPC_RM_FLYSHIP1` | `NPC_RM_FLYSHIP1` Aircraft Ticket Seller Ajati (Roc Mountain Northeast Dock) | 95/118 (1121, 313) | 95/118 (888, 538) | 16, 17, 28; 500 each |
+| 19 `GATE_NPC_RM_FLYSHIP2` | `NPC_RM_FLYSHIP2` Aircraft Ticket Seller Sayun | 86/118 (920, 1903) | 87/118 (909, 267) | 16, 17; 500 each |
+| 28 `GATE_NPC_CA_FLYSHIP` | `NPC_CA_FLYSHIP` Aircraft Ticket Seller Saena | 101/119 (1369, 1336) | 101/119 (1367, 1626) | 18, 16; 500 each |
+| 24 `GATE_NPC_AM_FLYSHIP` | `NPC_AM_FLYSHIP` Aircraft Ticket Seller Shard | 97/102 (1504, 71) | 97/102 (1279, 92) | 31, 500 |
+| 31 `GATE_NPC_RM_FLYSHIP3` | `NPC_RM_FLYSHIP3` Aircraft Ticket Seller Sangnia | 95/104 (1662, 583) | 95/104 (1902, 657) | 24, 500 |
+| 26 `GATE_NPC_CA_TUNNEL_NO` | `NPC_CA_TUNNEL_NO` Tunnel Manager Topni | 105/120 (1195, 1827) | 105/120 (1072, 1822) | 29, 500 |
+| 29 `GATE_NPC_TK_TUNNEL_NO` | `NPC_TK_TUNNEL_NO` Tunnel Manager Asui | 102/125 (158, 615) | 102/125 (362, 599) | 26, 500 |
+| 27 `GATE_NPC_CA_TUNNEL_SO` | `NPC_CA_TUNNEL_SO` Tunnel Manager Salhap | 102/120 (1490, 1843) | 102/120 (1372, 1844) | 30, 500 |
+| 30 `GATE_NPC_TK_TUNNEL_SO` | `NPC_TK_TUNNEL_SO` Tunnel Manager Maryokuk | 99/125 (183, 437) | 99/125 (376, 486) | 27, 500 |
+| 21 `GATE_NPC_EU_FERRY2` | `NPC_EU_FERRY2` Harbor Manager Gale | 98/75 (958, 99) | 98/75 (734, 168) | 22, 23: 500; 177: 5,000, level 95+ |
+| 22 `GATE_NPC_AM_FERRY1` | `NPC_AM_FERRY1` Pirate Morgun | 103/89 (1331, 909) | 103/89 (1254, 1114) | 21: 500; 177: 5,000, level 95+ |
+| 23 `GATE_NPC_AM_FERRY2` | `NPC_AM_FERRY2` Priate Blackbeard | 101/89 (1323, 1000) | 101/89 (1246, 1210) | 21: 500; 177: 5,000, level 95+ |
+| 177 `GATE_NPC_SD_M_AREA_FERRY` | `NPC_SD_M_AREA_FERRY` Harbor Manager Marwa | 93/48 (1623, 1795) | 93/48 (1525, 1688) | 22, 23, 21; 5,000 each |
+| 42 `GATE_NPC_CH_SOLDIER_EM1` | `NPC_CH_SOLDIER_EM1` Soldier Choiyoung [Teleport] | 97/168 (1010, 1903) | 97/168 (976, 1834) | 43, 44, 45; free |
+| 43 `GATE_NPC_CH_SOLDIER_EA2` | `NPC_CH_SOLDIER_EA2` Solder Sangnam [Teleport] | 97/169 (1387, 1765) | 97/169 (1340, 1817) | 42, 44, 45; free |
+| 44 `GATE_NPC_CH_SOLDIER_SO1` | `NPC_CH_SOLDIER_SO1` Soldier Jingyo [Teleport] | 97/168 (930, 31) | 97/168 (983, 77) | 42, 43, 45; free |
+| 45 `GATE_NPC_CH_SOLDIER_WE1` | `NPC_CH_SOLDIER_WE1` Soldier Hogang [Teleport] | 98/167 (335, 34) | 97/167 (386, 1900) | 42, 43, 44; free |
+| 39 `GATE_NPC_EU_ADVICE` | `NPC_EU_ADVICE` Guide Lipria | 107/79 (1349, 413) | 107/79 (1321, 422) | 40, 41; free |
+| 40 `GATE_NPC_EU_ADVICE3` | `NPC_EU_ADVICE3` Guide Riise | 105/79 (563, 1139) | 105/79 (542, 1147) | 39, 41; free |
+| 41 `GATE_NPC_EU_ADVICE2` | `NPC_EU_ADVICE2` Guide Raffy | 105/77 (1650, 1332) | 105/77 (1609, 1381) | 39, 40; free |
+| 7 `GATE_NPC_CH_KISAENG6` | `NPC_CH_KISAENG6` Gisaeng Yumi | 97/167 (648, 368) | region 0 (a source only) | 8 `GATE_TD` Thief Town, free |
+| 34 `GATE_NPC_EU_SOLDIER_PO2` | `NPC_EU_SOLDIER_PO2` Soldier Kartino | 104/80 (652, 1690) | region 0 (a source only) | 8 `GATE_TD` Thief Town, free |
+
+The 56 links out of these points carry four rule sets (MEASURED over the exported CSV):
+- none, on 33: the ferry, boat, airship and tunnel links, the four between the Constantinople
+  harbour and the two pirates, and the three out of the Paros Light House;
+- `(1, 0, 999)` with the trade-cart rule `(2, 0, 0)`, on the 18 soldier and guide links;
+- `(1, 95, 999)` with `(7, 0, 0)`, on the three links into the Paros Light House;
+- the cart rule `(2, 0, 0)` alone, on the two Thief Town links.
+
+**The directions are the table's own.** Every link out of an NPC point has its reverse except the
+two into Thief Town (`7 -> 8` and `34 -> 8`), whose destination `GATE_TD` has no link out. 62 of the
+292 retail links are one-way; those two are the only ones out of an NPC point. srrevamp reads the
+same directed table and adds nothing.
+
+"Roc Mountain" in the user's request is the airship network: Hotan's Karakoram docks (16, 17) to the
+Roc Mountain docks (18, 19). `GATE_RC_MOUNTAIN_GATE -> GATE_RC_ROC_GATE` is the Roc quest gate, not a
+route: its link needs `ITEM_QNO_RM_MEETROC_6_01`, and its destination is in world 40 (below).
+
+**Why the NPCs work, READ.**
+- `RefTeleport_ExtractData` (`0x6a7be0`) looks up the associated ref object and sets its `+0x190` to
+  the teleport record (`mov [edx+0x190],ebx` at `0x6a7ce7`). It does this for any object, with no
+  class test, so an NPC is joined exactly as a building is.
+- `GObjPC::HandleTeleportUse` (`0x513590`) finds the talked-to object (`FUN_00485d90`), requires it to
+  offer interaction 8, 0x1c, 9 or 0x1e (`FUN_00485d00`, refusing 3), and takes the link through
+  `+0x190` (`Gate_LinkForTeleportUse`).
+- **Where id 8 comes from.** This settles `character_state.md`'s "One discrepancy left open".
+  `CGameServer::FUN_006b5200` is the `_REFTELELINK` row inserter:
+  - it allocates the **0x1c-byte link**, and `FUN_006a7460` fills it from the row: the destination,
+    the fee, three bytes, then the triples. That is the 0x1c record `refdata_tables.md` lists.
+  - `FUN_006a7460` returns the row's **source** id, which `FUN_004f89f0` resolves to the source
+    `CRefTeleport` (`0x6b527c`).
+  - `RefRow_AddInteraction8` (`0x6a7f70`) runs with **EAX = that teleport record**, so the `+0x30`,
+    `+0x34` and `+0x38` it reads are the teleport record's. `+0x38` is its link vector, which
+    `FUN_006aec40` appends to. `+0x30` is the associated ref object. `+0x34` is a byte: when it is 1,
+    id 8 is inserted into that object's set.
+
+  So **id 8 is registered on the associated object of every link's source point whose `+0x34` byte
+  is 1**. That byte is the last one `RefTeleport_ExtractData` reads (`0x6a7f45`, after the word it
+  stores at `+0x48`). The client's `teleportdata.txt` has no column for it; its 13 columns end at
+  column 12, which is the `+0x48` word (below). So which points set it is not in the player's data.
+  srrevamp keeps the stand-in the gate lines use: **a point with an outgoing link offers id 8**, on
+  the server (`gateObject`, then `LinkBetween`) and the client (`NpcServiceReader.gate_services`).
+  Disclosed.
+
+**The arrival point, READ.** `HandleTeleportUse` calls `0x4e0a40` at `0x513779` with EDI = the link's
+target record, and it calls `0x407760`. `0x407760` copies the record's region word (`+0x20`) and its
+x/y/z words (`+0x26/+0x28/+0x2a`, `movsx` then `fild`) into the arrival, and the `+0x48` word into a
+second out-parameter. There is no radius term. The one place the server scatters an arrival over a
+point's radius is the battle arena's `FUN_00662380`, which uses `rand()` over `+/- radius` on x and z.
+So a gate or NPC teleport lands **on the point exactly**. srrevamp sends (region, x, z) and the
+client stands the player on its walkable graph there. Until round 642 this page called the
+arrival an inference.
+
+**Column 12 is the destination's game world.** The word `0x407760` hands back is passed to
+`GameWorldMgr_FindByID` (`0x5f6b80`, call at `0x5137ac`, EAX = the word). A world that is not found is
+refusal 2 (`0x513802`). It is the `w` that `RefTeleport_ExtractData` stores at `+0x48` (`0x6a7f21`),
+the token after the two flag bytes (READ). That the client text's column 12 carries it is INFERRED
+from its position and its values: 1 on all 153 open-world rows (every town gate, ferry, airship,
+tunnel, soldier and guide), and other small numbers on the fortress (2, 4, 7), Roc (40), tomb
+(57-59), temple (60) and arena or survival rows (95-170). srrevamp exports it as `WorldID` and
+**refuses a destination in any world but 1** with code 0 (OURS: srrevamp has the open world only).
+This covers the fortress, tomb, temple, survival and Roc instances. A CSV exported before round 642
+has no `WorldID`. It still loads, and then only the negative-region test (dungeons) refuses.
+
+**Walkable, MEASURED.** `walk_probe.gd --column` was run at every open-world destination point, 42 of
+them: the NPC points above plus the town, Alexandria, Delta, Storm Desert, King's Valley and Roc
+Mountain gates. It reports the surfaces over the point, the landing height and the `.m` block's
+drawn water.
+- At 33 points the landing height is within one unit of the table's own y. That the heights agree at
+  the exact local x/z confirms the region and axis conversion (AGENTS.md) independently.
+- The nine that differ:
+  - `GATE_CH` 0 against -32.6, `GATE_WC` -80 against -106.8, and `GATE_KT` 250 against 244.3;
+  - the four Chinese river ferries, 140 or 160 against 38.6 to 73.5 on dry ground (no water block);
+  - `GATE_NPC_AM_FLYSHIP` 587 against 596.4, and `GATE_NPC_EU_ADVICE` 82 against a building step
+    at 84.3.
+- Six points have drawn water in their block. At every one the landing is 6.7 to 85 units above the
+  water plane, so no point lands in water.
+- Only three points have an object surface over them: Jangan's gate, Hotan's plaza and the
+  Constantinople building step.
+
+The table's y is not used; the client lands on the graph (`World3D._land_teleport_arrival`).
+
+**srrevamp.**
+- Server: `session.gateObject` accepts a point whose associated object is not a building row, and
+  names it by the point's code in the log. `teleport.Point.WorldID` and `teleport.MainWorld` carry the
+  world, and `Table.PointByObject` and `Table.BuildingByID` are the lookups.
+- Client: `TeleportReader.point_for_object` and `World3D._teleport_point_for_code` find the point by
+  building code or by the NPC's characterdata id (the reverse of `_npc_codes`). `_npc_services`,
+  `_open_teleport_list` and the QA teleport hook use them.
+- A ferry seller's menu is "1. Select teleport area", then the end line. Its point registers neither
+  id 7 nor id 9. The client does not offer id 2 ("Talk to this person"), unread as before.
+
+**Not modelled, disclosed:**
+- the interaction range, as for the gates;
+- the `+0x34` byte, stood in for as above;
+- the instanced worlds.
+- The Thief Town arrival (`GATE_TD`, 96/182) moves the player like any other. srrevamp has no thief
+  town rules.
 
 ### The teleport board (round 578) -- superseded by round 603
 
@@ -666,6 +812,7 @@ checked against the retail rows on the render box (`/var/tmp/tables`, round 575)
 |---|---|---|---|
 | teleportdata | 1, 2, 3, 4 | ID, Code, ObjectID, ZoneName | the client's `RefParse_teleportdata` (`0x976840`) reads id, codename, associated object, zone name in this order |
 | teleportdata | 5, 6, 7, 8, 9 | Region, X, Y, Z, Radius | the same parser's next five tokens; the server's `RefTeleport_ExtractData` (`0x6a7be0`) reads them as five words (`wwwww`); 98 rows carry a negative (dungeon) region |
+| teleportdata | 12 | WorldID | round 642: the `+0x48` word `0x407760` passes to `GameWorldMgr_FindByID`; column position and values INFERRED ("Teleport NPCs (round 642)"). A CSV without it still loads (WorldID 0) |
 | teleportdata | 10, 11 | Interaction7, Interaction9 | the two tokens the client throws away; the server's `bb`, registering interaction ids 7 and 9 (round 454 numbered them 9/10, as if the server's copy had no zone name; whether it lacks that column or skips it is not settled -- `RefTeleport_ExtractData` calls the column-skip helper `FUN_006b1a80` right after the associated-object dword -- and either way its two bytes follow its five words, so they are the two tokens after radius). 7 rows set the first, 1 row the second |
 | teleportlink | 1, 2, 3 | From, To, Fee | the fee's use-site (above) |
 | teleportlink | 7..21 | Rule1Type .. Rule5Data2 | the evaluator (above); a type-0 slot is empty and is not loaded as a rule |

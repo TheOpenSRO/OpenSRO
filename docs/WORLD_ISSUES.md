@@ -7094,6 +7094,167 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-forty-second round: the ferries, airships, tunnels and every other teleport NPC take a player to their linked point
+
+The user asked for every teleport NPC across the map to work and to go to the right place. The
+examples were the river ferries and the way to the Roc Mountain region. The whole record is in
+`docs/protocol/teleport_network.md`, "Teleport NPCs (round 642)". Labels: READ = recovered from a
+binary, MEASURED = counted or run, INFERRED = argued from shape, OURS = this project's choice.
+
+**Before (MEASURED on dev 8658370).** 32 NPCs are the associated object (teleportdata column 3) of a
+point with links. The census:
+- 8 ferry and boat sellers, 7 airship sellers, 4 tunnel managers;
+- the Constantinople harbour, the two pirates and the Paros Light House harbour;
+- Jangan's four `[Teleport]` gate soldiers and Constantinople's three guides;
+- the two NPCs that lead to Thief Town.
+
+All 32 are placed by npcpos. None worked:
+- the server refused every one with code 2, "no such gate". `session.gateBuilding` required a
+  teleportbuilding row, and its own comment said "a ferry point is not a gate";
+- the client offered no teleport line. `_npc_services` looked the code up only as a building.
+
+**READ (server, `/var/tmp/srgs.asm` and the dump):**
+- **An NPC is served as a gate is.** `RefTeleport_ExtractData` sets `+0x190` of any associated ref
+  object to the teleport record (`0x6a7ce7`), with no class test.
+  - `HandleTeleportUse` requires the talked-to object to offer interaction 8, 0x1c, 9 or 0x1e
+    (`FUN_00485d00`, refusal 3).
+  - It then takes the link through `+0x190`.
+- **Id 8's registrar, settled.** This was `character_state.md`'s open discrepancy.
+  - `FUN_006b5200` builds the 0x1c-byte `_REFTELELINK` link, which `FUN_006a7460` fills.
+  - It calls `0x6a7f70` with EAX = the link's source `CRefTeleport` (`FUN_004f89f0`, `0x6b527c`).
+  - So id 8 goes on a source point's object when that point's `+0x34` byte is 1. The byte is the
+    last one `0x6a7be0` reads, and the client's `teleportdata.txt` has no column for it.
+  - Stand-in, disclosed on both sides: a point with an outgoing link offers id 8.
+- **The arrival is the point, exactly.** `0x407760`, called through `0x4e0a40` at `0x513779` with
+  the link's target, copies the region word and x/y/z words, with no radius term. The one radius
+  scatter in the server is the battle arena's `FUN_00662380`. This replaces round 576's
+  "arrival is an inference".
+- **teleportdata column 12 is the destination's game world.** `0x407760` hands the `+0x48` word to
+  `GameWorldMgr_FindByID` (`0x5137ac`; no world means refusal 2, `0x513802`), and `0x6a7be0`
+  stores it at `0x6a7f21`. The word is READ.
+  - The column is INFERRED to be that word, from its position and its values: 1 on all 153
+    open-world rows, 2/4/7 on the fortresses, 40 on Roc, 57-60 on the tombs and temples, 95-170 on
+    the arenas and survival.
+
+**Fixed:**
+- **Server.** `session.gateObject` serves a point whose object is an NPC, and still refuses a
+  point with no object.
+  - A destination whose `WorldID` is not 1 is refused with code 0 and nothing charged (OURS: one
+    world). It is checked after the restrictions and before the charge.
+  - `teleport.Point.WorldID` is the export's new twelfth column. An 11-column CSV still loads, with
+    WorldID 0.
+  - New lookups: `Table.PointByObject` and `Table.BuildingByID`.
+- **Client.**
+  - `TeleportReader.point_for_object` and `World3D._teleport_point_for_code` find a point by
+    building code or by NPC id, through the reverse of `_npc_codes`.
+  - A ferry seller's talk box reads "1. Select a teleport area:", then the end line. Its list is
+    the point's links, in file order, with their fees.
+- **QA.**
+  - `SRREVAMP_QA_CLICK=npc:<CODE>` targets a named NPC, retrying while its region streams in.
+  - `SRREVAMP_QA_AIM_ONLY` stands the player and prints the click point instead of dispatching.
+  - `SRREVAMP_QA_TALK_LINES` prints each talk-box paragraph's screen point.
+  - `SRREVAMP_QA_COMMANDS` takes `wait <s>`.
+  - `walk_probe.gd --column` also prints the `.m` block's drawn water.
+
+**Directions (MEASURED over the export).** Every link out of an NPC point has its reverse, except
+the two into Thief Town (`7 -> 8`, `34 -> 8`), whose destination has no link out. So there was no
+one-way link to fix. 62 of the 292 retail links are one-way. srrevamp adds none.
+
+**Fees and levels (MEASURED over the export).** 33 of the NPC links carry no rule: the ferries,
+boats, airships, tunnels, the Constantinople harbour with the pirates, and the Paros Light House's
+way out. The costs:
+- 500 gold on the ferry, boat, airship, tunnel and pirate links;
+- 5,000 and level 95 or more, with the cart rule `(7,0,0)`, into the Paros Light House, and 5,000
+  on its three links out;
+- free, with `(1,0,999)` and the cart rule `(2,0,0)`, at the soldiers and guides.
+
+The fee is waived below level 21 (engine) and for GM accounts (OURS, the user's rule).
+
+**Walkable (MEASURED, `walk_probe.gd --column` at all 42 open-world destination points).**
+- At 33 points the landing height is within one unit of the table's own y. That also checks the
+  region and axis conversion at the exact local x/z.
+- 9 differ. Three are town gates; four are the Chinese river ferries, 38.6 to 73.5 on dry land
+  where the table says 140 or 160; one is an airship dock (596.4 against 587); one is a
+  Constantinople building step (84.3 against 82).
+- 6 points have drawn water in their block, and every one lands 6.7 to 85 units above it.
+
+**Real input (the Login route, xdotool clicks on the NPC, on "Select a teleport area" and on the
+destination; lane server in memory, wire tap).** Screenshots are in the session's
+`scratchpad/teleport_shots/`.
+
+Each run clicked the talk target, the teleport line and the destination with xdotool. Results:
+
+| run | the talk target | the list shown | chosen | arrival (client log) | server log |
+|---|---|---|---|---|---|
+| Jangan gate soldier | `NPC_CH_SOLDIER_EM1` at 97/168 | East, South, West Gate, "(no cost)" | West Gate | `RealTerrain_97_167` local (386.0, 1900.0) | `gate=GATE_NPC_CH_SOLDIER_EM1 dest=GATE_NPC_CH_SOLDIER_WE1 zone=jangan fee=0` |
+| Jangan river ferry (after `/tp` to the dock) | `NPC_CH_FERRY` at 97/161 | "Teleport to [Western China East Ferry] for [500] Gold." | that | `RealTerrain_100_161` local (636.0, 1482.0); the minimap reads "Donwhang Ferry" | `gate=GATE_NPC_CH_FERRY dest=GATE_NPC_WC_FERRY zone=100/161 fee=0 waiver=2` |
+| Karakoram airship (after `/goto hotan`, `/tp`) | `NPC_KT_FLYSHIP1` at 94/121 | Roc Mountain Northeast Dock, Southeast Dock, Central Asia Aircraft Dock, 500 each | Roc Mountain Northeast Dock | `RealTerrain_95_118` local (888.0, 538.0) | `gate=GATE_NPC_KT_FLYSHIP1 dest=GATE_NPC_RM_FLYSHIP1 zone=95/118 fee=0 waiver=2` |
+| Donwhang gate (after `/goto donwhang`) | `STORE_WC_GATE` | ten destinations, 5,000 each | Hotan | `RealTerrain_92_135` local (1138.0, 153.0) | `gate=STORE_WC_GATE dest=GATE_KT zone=hotan fee=0 waiver=2` |
+| Hotan gate (after `/goto hotan`) | `STORE_KT_GATE` | six destinations: Donwhang, Samarkand, Jangan 5,000, Alexandria 30,000, Constantinople 500 | Donwhang | `RealTerrain_102_153` local (957.0, 1508.0) | `gate=STORE_KT_GATE dest=GATE_WC zone=donwhang fee=0 waiver=2` |
+
+Every arrival is the destination point's local x/z to the unit. The account is the GM `qa`
+(`-gm-accounts qa`), so the lists show the fee and the receipt says "(no cost)", waiver 2 (GM, the
+user's rule). The first airship run showed a fault in the harness, not the game: a
+`/goto` followed at once by a `/tp` lost the `/tp` behind the zone load. The run was repeated with
+`wait 45` between the two.
+
+One click was not aimed on-screen. Hotan's gate aim point was (640, -34), as round 577 found.
+xdotool puts the pointer at the top row, where the portal's pieces fill the frame, and that click
+opened the gate's talk box. The frame is `01_before_click.png`. QA's stand rule put the player
+inside the portal's basin.
+
+**Tests.**
+- `session/teleport_npc_test.go`:
+  - the ferries, the Karakoram -> Roc Mountain airship, a soldier and the harbour each move to
+    their point, under the zone label and frame `teleportZoneFor` gives;
+  - the refusals: level 94 at the harbour, a GM at level 94, an instanced destination, a missing
+    link;
+  - a GM crossing free;
+  - `TestTeleportEveryRetailLink` drives all 292 links of an operator export (with
+    `SRREVAMP_TELEPORT_DIR`) through one character at each link's lowest allowed level. The result:
+    154 moved to their point with their fee (all 56 NPC links among them), 69 refused as having no
+    object at the source, 68 as instanced or dungeon, and 1 by the Roc rules.
+- `teleport_test.go`: the WorldID column and the older header.
+- `export-refdata`: the column round-trips.
+- `teleport_reader_test.gd` (e): the ferry's point by object, its lines, and a smith's.
+- The old refusal case now uses a point with no object.
+
+**The negative against dev 8658370** (a detached worktree). The same test file is used, with the
+fixture's WorldID column dropped and `WorldID` read from the round-642 export. The base has
+neither. The base refuses every NPC with code 2. It also moves a player through the fortress gate
+into world 2's coordinates, which is why the retail walk then falls out of step on the unread
+arrival.
+```
+--- FAIL: TestTeleportNPCsMoveToTheLinkedPoint (0.96s)
+        teleport_npc_test.go:103: receipt &{OK:false Code:2 Waiver:0 Fee:0 Destination: Reason:no such gate}; want ok, fee 500
+        (the same for all seven cases: ferries, airships, the soldier, the harbour)
+--- FAIL: TestTeleportNPCRefusals (0.86s)
+        teleport_npc_test.go:140: result &{OK:false Code:2 Waiver:0 Fee:0 Destination: Reason:no such gate}; want refused with code 0x1c15 and a reason
+        teleport_npc_test.go:140: result &{OK:true Code:0 Waiver:0 Fee:0 Destination:SN_ZONE_41008 Reason:}; want refused with code 0x0 and a reason
+--- FAIL: TestTeleportNPCFreeForGMs (0.16s)
+    teleport_npc_test.go:155: receipt &{OK:false Code:2 Waiver:0 Fee:0 Destination: Reason:no such gate}; want ok, free, the GM waiver
+--- FAIL: TestTeleportEveryRetailLink (0.94s)
+    teleport_npc_test.go:254: link 3 GATE_NPC_CH_FERRY -> 4 GATE_NPC_WC_FERRY (level 21): &{OK:false Code:2 Waiver:0 Fee:0 Destination: Reason:no such gate}; want ok with fee 500
+    (53 such lines, one per NPC link in file order up to the first fortress gate)
+    teleport_npc_test.go:238: link 46 GATE_CH_FORT_GATE1 -> 49 GATE_JA_FORT_GATE1 (level 21): &{OK:true Code:0 ... Destination:SN_ZONE_41008 Reason:}; want refused with code 0x0
+    teleport_npc_test.go:223: reply opcode 0x0027, want OpTeleportResult 0x00f4
+```
+
+**Checks.** The Go suite passes: `go build ./...` and `go test -count=1 -p 1 ./...` (shared cache, Postgres
+up), and `SRREVAMP_TELEPORT_DIR=<export> go test -count=1 ./internal/session/ -run Teleport`. The
+client `check` loads all 401 scripts, and `tests` runs 161 suites with 0 failing.
+
+**Deploy.** Re-export the teleport directory for the `WorldID` column (`deploy/README.md`). An old
+export works for every NPC but does not refuse instanced destinations up front.
+
+**OPEN:** `docs/TODO.md`, "Town teleporters ... and teleport NPCs (round 642)".
+- the `+0x34` byte;
+- walk-in portals (69 no-object links, 68 of them dungeon);
+- instanced worlds;
+- the Delta, Storm Desert, King's Valley and Roc gate structures, which are served but not
+  clickable;
+- a charged fee under real input.
+
 ## Rounds 636-640 integration review (feat/walls): a death ends the wall on the default respawn path, a re-bound hotbar slot takes its level's code, and the wall's refusal tests 'tel2' and 'tel3'
 
 The final review of feat/walls (dev 5a82339 + rounds 636-640 and their follow-ups, at b38b358) read
