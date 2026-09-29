@@ -374,3 +374,22 @@ func TestRebaseIsTheSamePlaceInTheOtherFrame(t *testing.T) {
 		}
 	}
 }
+
+// FromWorld inverts ToWorld (round 642's review): every local point of a
+// region comes back as the same region and local x/z, in two frames, and the
+// local coordinates stay in [0, RegionSpan) on the region's edges.
+func TestFromWorldInvertsToWorld(t *testing.T) {
+	frames := [][2]int{{97, 168}, {102, 153}}
+	for _, f := range frames {
+		for _, r := range [][2]int{{97, 168}, {97, 161}, {100, 161}, {95, 118}, {93, 48}} {
+			for _, l := range [][2]float64{{0, 0}, {636, 1482}, {1919.5, 1919.5}, {960, 0}, {0, 1919}} {
+				x, z := ToWorld(r[0], r[1], l[0], l[1], f[0], f[1])
+				rx, ry, lx, lz := FromWorld(x, z, f[0], f[1])
+				if rx != r[0] || ry != r[1] || math.Abs(lx-l[0]) > 1e-6 || math.Abs(lz-l[1]) > 1e-6 {
+					t.Fatalf("frame %v: ToWorld(%v, %v) = (%v, %v) -> FromWorld %d/%d (%v, %v)",
+						f, r, l, x, z, rx, ry, lx, lz)
+				}
+			}
+		}
+	}
+}

@@ -81,11 +81,11 @@ so the layouts here are the server's, not the files'.
 | `0x6a6aa0` | `_RefMonster_AssignedItemRndDrop` | 10 (1) | `bddbbbddd` | 0x34 | `0x6b68f0` | `0x6e1580` |
 | `0x6a6d10` | `_RefCustomizingReservedItemDropForMonster` | 5 (0) | `dbdbd` | 0x24 | `0x6b67e0` | `0x6e1440` |
 | `0x6a6e10` | (SetMagicMask / MagicGroupID rows) | 9 (4) | `bdbdd` | 0x14 | `0x6b6db0` | `0x6e0690` |
-| `0x6a7460` | | 10 (0) | `ddddbbbddd` | 0x1c | `0x6b5200` | `0x6e04e0` |
+| `0x6a7460` | `_RefTeleLink` (round 642: the source id it returns, then target, fee, three bytes, the triples; `teleport_network.md`, "Teleport NPCs") | 10 (0) | `ddddbbbddd` | 0x1c | `0x6b5200` | `0x6e04e0` |
 | `0x6a7650` | (`TELEPORT` string, `dwID != 0`) | 6 (3) | `ddd` | 0xe0 | `0x6e3650` | `0x6e3650` |
 | `0x6a7980` | (`dwID != 0`) | 4 (2) | `bd` | 0x3c | `0x6e3730` | `0x6e3730` |
 | `0x6a7ab0` | | 5 (1) | `bdbb` | 0x24 | `0x6e3810` | `0x6e3810` |
-| `0x6a7be0` | `_RefTeleport` | 13 (1) | `dd S d wwwww bb w b` | 0x4c | `0x6e3570` | `0x6e3570` |
+| `0x6a7be0` | `_RefTeleport` (round 642: the trailing `w` is the game world at `+0x48`, the trailing `b` the id-8 flag at `+0x34`) | 13 (1) | `dd S d wwwww bb w b` | 0x4c | `0x6e3570` | `0x6e3570` |
 | `0x6a8300` | `_RefTreatItemOfShop` | 3 (1) | `bd` | 0xd4 (shop family case 3) | `0x6b4590` | `0x6dfcb0` |
 | `0x6a84d0` | `_RefAccessPermissionOfShop` | 3 (1) | `bd` | 0x94 (shop family case 2) | `0x6b4590` | `0x6dfcb0` |
 | `0x6a8690` | `_RefRewardPolicyToSellPackageItem` | 3 (1) | `bd` | 0x94 (package family case 3) | `0x6b41b0` | `0x6dfac0` |

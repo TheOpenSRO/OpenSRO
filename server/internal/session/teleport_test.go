@@ -30,23 +30,25 @@ import (
 // 26265, 957,1508) and Samarkand's GATE_CA (19555, 106/108 = 27244,
 // 270,1421), and their three buildings, each read on the render box's
 // teleportdata.txt / teleportbuilding.txt this round; the three links carry
-// Jangan's retail fees and rules. The rest is made up for the refusals: a
-// ferry point whose object is an NPC, a dungeon point (negative region) and
-// the links to them.
+// Jangan's retail fees and rules. The rest is made up: a ferry point whose
+// object is an NPC, a dungeon point (negative region), a point with no
+// object, and the links to them.
 const (
 	teleportPointsCSV = "ID,Code,ObjectID,ZoneName,Region,X,Y,Z,Radius,Interaction7,Interaction9\n" +
 		"1,GATE_CH,2094,SN_ZONE_22001,25000,969,0,1369,150,1,0\n" +
 		"2,GATE_WC,2095,SN_ZONE_22002,26265,957,-80,1508,200,1,0\n" +
 		"25,GATE_CA,19555,SN_ZONE_22005,27244,270,180,1421,120,1,0\n" +
 		"40,GATE_NPC_CH_FERRY,2011,SN_ZONE_22001,25000,500,0,500,10,0,0\n" +
-		"50,GATE_DUNGEON_FIXTURE,0,SN_ZONE_FIXTURE,-32000,100,0,100,10,0,0\n"
+		"50,GATE_DUNGEON_FIXTURE,0,SN_ZONE_FIXTURE,-32000,100,0,100,10,0,0\n" +
+		"55,GATE_WALKIN_FIXTURE,0,SN_ZONE_FIXTURE,26284,960,111,1662,50,0,0\n"
 	teleportLinksCSV = "From,To,Fee,Rule1Type,Rule1Data1,Rule1Data2,Rule2Type,Rule2Data1,Rule2Data2," +
 		"Rule3Type,Rule3Data1,Rule3Data2,Rule4Type,Rule4Data1,Rule4Data2,Rule5Type,Rule5Data1,Rule5Data2\n" +
 		"1,2,5000,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n" +
 		"1,25,5000,1,1,110,2,0,0,0,0,0,0,0,0,0,0,0\n" +
 		"2,1,5000,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n" +
 		"1,50,5000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n" +
-		"40,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n"
+		"40,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n" +
+		"55,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n"
 	teleportBuildingsCSV = "ID,Code,NameStrID,Region,X,Y,Z,Fortress\n" +
 		"2094,STORE_CH_GATE,SN_NPC_CH_GATE,25000,1254,-6,1374,xxx\n" +
 		"2095,STORE_WC_GATE,SN_NPC_WC_GATE,26521,962,-35,8,xxx\n" +
@@ -378,8 +380,11 @@ func TestTeleportRefusals(t *testing.T) {
 		{"level 111 on a (1,1,110) link", teleportRigOpts{level: 111, gold: 10000}, 1, 25, false, teleport.ErrLevelRange},
 		{"no link to that destination", teleportRigOpts{level: 30, gold: 10000}, 1, 99, false, teleportNoLink},
 		{"no such gate", teleportRigOpts{level: 30, gold: 10000}, 99, 2, false, teleportNoLink},
-		// A link exists (40 -> 2), but point 40's object is an NPC, not a gate.
-		{"a ferry point is not a gate", teleportRigOpts{level: 30, gold: 10000}, 40, 2, false, teleportNoLink},
+		// A link exists (55 -> 2), but point 55 has no associated object -- a
+		// walk-in portal's shape (GATE_JINSI_OUT) -- so nothing a player
+		// talks to stands for it. (Until round 642 point 40, a ferry, was
+		// refused here too; round 642's teleport_npc_test.go serves it.)
+		{"a point with no object is not a gate", teleportRigOpts{level: 30, gold: 10000}, 55, 2, false, teleportNoLink},
 		{"a dungeon destination", teleportRigOpts{level: 30, gold: 10000}, 1, 50, false, 0},
 		{"no teleport network loaded", teleportRigOpts{level: 30, gold: 10000}, 1, 2, false, 0},
 		{"dead", teleportRigOpts{level: 30, gold: 10000}, 1, 2, true, 0},
@@ -440,6 +445,9 @@ func TestTeleportToSamarkandArrivesInTheTownsFrame(t *testing.T) {
 // World3D._land_teleport_arrival).
 func TestTeleportToJanganSendsTheGatePoint(t *testing.T) {
 	rig := newTeleportRig(t, teleportRigOpts{network: teleportFixture(t), level: 30, gold: 10000})
+	// Beside Donwhang's gate structure (building 2095, 103/153 local 962, 8):
+	// the teleport measures the range from the requester (round 642's review).
+	rig.standAt(26521, 962, 40)
 	if res := rig.use(2, 1); !res.OK {
 		t.Fatalf("receipt %+v; want ok", res)
 	}
@@ -513,3 +521,33 @@ func TestTeleportWireShapes(t *testing.T) {
 
 // teleportTestLabel spells a region "x/y", as frameFor does.
 func teleportTestLabel(x, y int) string { return fmt.Sprintf("%d/%d", x, y) }
+
+// standAt moves Aria to region-local (lx, lz) of region `region`, named in the
+// frame of the zone the hub keeps her in, the way the client reports a
+// position (OpMove, relocated), and waits until the hub holds it. Round 642's
+// review: the teleport measures the interaction range from there.
+func (rig *teleportRig) standAt(region int, lx, lz float64) {
+	rig.t.Helper()
+	id := rig.players["Aria"].charID
+	e, ok := rig.hub.EntityByCharacterID(id)
+	if !ok {
+		rig.t.Fatal("Aria is not in the world")
+	}
+	fx, fy, ok := entityFrame(e.Zone)
+	if !ok {
+		rig.t.Fatalf("zone %q has no frame", e.Zone)
+	}
+	rx, ry := worldmap.RegionXY(region)
+	x, z := worldmap.ToWorld(rx, ry, lx, lz, fx, fy)
+	if err := proto.Write(rig.players["Aria"].conn, &proto.Packet{Opcode: OpMove,
+		Data: (&MoveRequest{X: float32(x), Z: float32(z), Relocated: true}).Encode()}, nil, nil); err != nil {
+		rig.t.Fatalf("Write OpMove: %v", err)
+	}
+	for i := 0; i < 200; i++ {
+		if e, _ := rig.hub.EntityByCharacterID(id); math.Abs(e.Pos.X-float64(float32(x))) < 0.01 && math.Abs(e.Pos.Z-float64(float32(z))) < 0.01 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	rig.t.Fatalf("the hub never took Aria's move to %d/%d (%v, %v)", rx, ry, lx, lz)
+}

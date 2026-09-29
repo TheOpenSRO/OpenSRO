@@ -2006,6 +2006,12 @@ const (
 	tpRadius       = 9
 	tpInteraction7 = 10
 	tpInteraction9 = 11
+	// Column 12 is the point's game world (round 642, teleport.Point.WorldID):
+	// the word RefTeleport_ExtractData reads after the two flags into +0x48
+	// (0x6a7f21), which the gate teleport hands to GameWorldMgr_FindByID with
+	// the arrival (0x407760 -> 0x5137ac). The column's identity is INFERRED
+	// from its position and its values (1 on every open-world row).
+	tpWorld = 12
 
 	// teleportlink.txt, 23 fields: source, destination, the fee (the word the
 	// server compares to gold, 0x513590, and the client's dialog shows,
@@ -2070,9 +2076,9 @@ func exportTeleport(outDir string, paths []string) error {
 		record  func([]string) []string
 	}
 	tables := []table{
-		{"teleportdata.txt", teleport.PointsFile, teleport.PointCSVColumns, tpInteraction9 + 1, true, func(c []string) []string {
+		{"teleportdata.txt", teleport.PointsFile, teleport.PointCSVColumns, tpWorld + 1, true, func(c []string) []string {
 			return []string{c[tpID], c[tpCode], c[tpObject], c[tpZoneName], c[tpRegion],
-				c[tpX], c[tpY], c[tpZ], c[tpRadius], c[tpInteraction7], c[tpInteraction9]}
+				c[tpX], c[tpY], c[tpZ], c[tpRadius], c[tpInteraction7], c[tpInteraction9], c[tpWorld]}
 		}},
 		{"teleportlink.txt", teleport.LinksFile, teleport.LinkCSVColumns, tlRules + 15, true, func(c []string) []string {
 			rec := []string{c[tlFrom], c[tlTo], c[tlFee]}

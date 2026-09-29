@@ -88,6 +88,9 @@ extends RefCounted
 ##           (0x7bbc87) is 0x41, the entry that sends it to the same default,
 ##           0x7b913a; error_codes.md has no row for it.
 ## Those codes keep our own wording, below.
+## Category 0xd's message for code 4 (round 642's review; see teleport_line).
+const TOO_FAR_KEY := "UIIT_MSG_INTERACTION_FAIL_TOO_FAR"
+
 const UIIT_BY_CODE := {
 	0x1812: "UIIT_MSG_STRGERR_LOCKED_BY_OTHER_ONE",
 	0x1839: "UIIT_MSG_STRGERR_CANNOT_BE_PICKED",
@@ -211,6 +214,20 @@ static func teleport_line(code: int, table: UiTextTable, reason: String) -> Stri
 			return resolve(code, table, "Your level does not allow that destination.")
 		2:
 			return "No such destination."
+		4:
+			# Too far (round 642's review: the server's interaction range).
+			# Category 0xd's compare chain gives 4 UIIT_MSG_INTERACTION_FAIL_TOO_FAR
+			# (0x7ba03b cmp eax,4; 0x7ba044 push 0xdc2628) -- read by key,
+			# since 4 means other things in other categories (UIIT_BY_CODE).
+			if table != null and table.has(TOO_FAR_KEY):
+				var text := table.get_text(TOO_FAR_KEY).strip_edges()
+				if text != "" and text != TOO_FAR_KEY:
+					return text
+			return "You are too far away."
+		3:
+			# Not near the gate (the region test). Category 0xd sends 3 to its
+			# default (0x7b913a): the real client shows nothing. Our words.
+			return "You are not near that gate."
 	if reason != "":
 		return resolve(code, table, reason)
 	return resolve(code, table, "Teleport refused (code 0x%x)." % code)

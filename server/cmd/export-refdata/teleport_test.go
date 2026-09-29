@@ -95,7 +95,7 @@ func TestExportTeleportRoundTripsThroughTheLoader(t *testing.T) {
 	// service-0 row's 7.
 	p, ok := tb.PointByBuildingCode("STORE_TEST_A_GATE")
 	want := teleport.Point{ID: 1, Code: "GATE_TEST_A", ObjectID: 9001, ZoneName: "SN_ZONE_TEST_A", Region: 12345,
-		X: 100, Y: 5, Z: 200, Radius: 70, Interaction7: true}
+		X: 100, Y: 5, Z: 200, Radius: 70, Interaction7: true, WorldID: 3}
 	if !ok || p != want {
 		t.Errorf("PointByBuildingCode(STORE_TEST_A_GATE) = %+v, %v; want %+v", p, ok, want)
 	}

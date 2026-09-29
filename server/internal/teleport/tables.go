@@ -31,8 +31,14 @@ const (
 	BuildingsFile = "teleportbuilding.csv"
 )
 
-// PointCSVColumns is teleportdata.csv's header.
-var PointCSVColumns = []string{"ID", "Code", "ObjectID", "ZoneName", "Region", "X", "Y", "Z", "Radius", "Interaction7", "Interaction9"}
+// PointCSVColumns is teleportdata.csv's header. Since round 642 the export
+// writes a twelfth column, WorldID; Read also takes a CSV exported before
+// then, which ends at Interaction9, and leaves every point's WorldID 0
+// (unknown) -- see Point.WorldID.
+var PointCSVColumns = []string{"ID", "Code", "ObjectID", "ZoneName", "Region", "X", "Y", "Z", "Radius", "Interaction7", "Interaction9", "WorldID"}
+
+// pointCSVColumnsBefore642 is the header an export before round 642 wrote.
+var pointCSVColumnsBefore642 = PointCSVColumns[:11]
 
 // LinkCSVColumns is teleportlink.csv's header: the source and destination
 // point, the fee, then the five restriction triples as the table holds them.
@@ -70,7 +76,25 @@ type Point struct {
 	// turns into NPC interaction ids 7 and 9 on the associated object (round
 	// 454). Which services 7 and 9 are is NOT read, so they are named by id.
 	Interaction7, Interaction9 bool
+	// WorldID is the game world the point is in (round 642): teleportdata.txt
+	// column 12, the token after the two flags. The server's
+	// RefTeleport_ExtractData reads a word after its two flag bytes into the
+	// record's +0x48 (0x6a7f21), and the gate teleport passes the
+	// destination's +0x48 on with the arrival point (0x407760, called from
+	// GObjPC::HandleTeleportUse through 0x4e0a40 at 0x513779) to
+	// GameWorldMgr_FindByID (0x5f6b80, call at 0x5137ac), refusing with code 2
+	// when no such world exists (0x513802). READ. That column 12 is that word
+	// is INFERRED from its position (the client's text has no column for the
+	// server's trailing byte at +0x34) and its values: 1 on all 153 rows in
+	// the open world -- every town gate, ferry, airship and tunnel point --
+	// and other small numbers on the fortress, tomb, arena and survival rows
+	// (2, 4, 7, 40, 57..60, 95..170). 0 means the CSV predates the column.
+	WorldID int
 }
+
+// MainWorld is the WorldID of the open world (INFERRED, above): the one world
+// srrevamp models. A point in any other world is an instanced area.
+const MainWorld = 1
 
 // Rule is one restriction triple of a link: a type and two data words, walked
 // in order by the server's evaluator FUN_00513a70 (rules.go).
@@ -121,6 +145,42 @@ type Table struct {
 	buildingByCode map[string]int
 	linksFrom      map[int][]int
 	linkByPair     map[[2]int]int
+	// objectPlaces is where each associated NPC stands (round 642's review),
+	// set by the server from its npcpos table (SetObjectPlaces); a building's
+	// place is its own row.
+	objectPlaces map[int][]Place
+}
+
+// SetObjectPlaces records where an associated object that is not a building
+// row stands -- an NPC's npcpos placements (cmd/server, from -npcpos-csv) --
+// for the interaction range (Reach). It replaces what was set before.
+func (t *Table) SetObjectPlaces(objectID int, places []Place) {
+	if t.objectPlaces == nil {
+		t.objectPlaces = map[int][]Place{}
+	}
+	t.objectPlaces[objectID] = append([]Place(nil), places...)
+}
+
+// ObjectPlaces returns where associated object `objectID` stands: its
+// teleportbuilding row's region and offset for a gate structure, else the
+// places SetObjectPlaces recorded (none when the server has no npcpos).
+func (t *Table) ObjectPlaces(objectID int) []Place {
+	if b, ok := t.BuildingByID(objectID); ok {
+		return []Place{{Region: b.Region, X: float64(b.X), Y: float64(b.Y), Z: float64(b.Z)}}
+	}
+	return t.objectPlaces[objectID]
+}
+
+// HasWorldIDs reports whether any point carries a WorldID -- false for a
+// teleportdata.csv exported before round 642, whose points all read 0, so
+// instanced destinations are not refused (cmd/server warns at boot).
+func (t *Table) HasWorldIDs() bool {
+	for _, p := range t.Points {
+		if p.WorldID != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Load reads the three CSVs from dir. A configured directory that cannot be
@@ -180,7 +240,7 @@ func Read(points, links, buildings io.Reader) (*Table, error) {
 		t.Buildings = append(t.Buildings, b)
 	}
 
-	rows, err = readCSV(points, PointCSVColumns, PointsFile)
+	rows, err = readCSV(points, PointCSVColumns, PointsFile, pointCSVColumnsBefore642)
 	if err != nil {
 		return nil, err
 	}
@@ -236,6 +296,30 @@ func (t *Table) PointByID(id int) (Point, bool) {
 	return t.Points[i], true
 }
 
+// PointByObject returns the point whose associated object is that ref object
+// id -- a building's (2094 STORE_CH_GATE -> GATE_CH) or an NPC's (2011
+// NPC_CH_FERRY -> GATE_NPC_CH_FERRY).
+func (t *Table) PointByObject(id int) (Point, bool) {
+	if id == 0 {
+		return Point{}, false
+	}
+	i, ok := t.pointByObject[id]
+	if !ok {
+		return Point{}, false
+	}
+	return t.Points[i], true
+}
+
+// BuildingByID returns the teleportbuilding row with that id.
+func (t *Table) BuildingByID(id int) (Building, bool) {
+	for _, b := range t.Buildings {
+		if b.ID == id {
+			return b, true
+		}
+	}
+	return Building{}, false
+}
+
 // PointByBuildingCode returns the point whose associated object is the
 // building with that code: STORE_CH_GATE (2094) -> GATE_CH.
 func (t *Table) PointByBuildingCode(code string) (Point, bool) {
@@ -272,21 +356,34 @@ func (t *Table) LinkBetween(from, to int) (Link, bool) {
 }
 
 // readCSV reads one table's CSV and checks its header against want, name by
-// name, so a file of the wrong table (or none) cannot load as this one.
-func readCSV(r io.Reader, want []string, name string) ([][]string, error) {
+// name, so a file of the wrong table (or none) cannot load as this one. An
+// older header in `also` is accepted too; the rows then have its width.
+func readCSV(r io.Reader, want []string, name string, also ...[]string) ([][]string, error) {
 	cr := csv.NewReader(r)
 	cr.FieldsPerRecord = -1
 	header, err := cr.Read()
 	if err != nil {
 		return nil, fmt.Errorf("teleport: %s: reading header: %w", name, err)
 	}
-	if len(header) != len(want) {
-		return nil, fmt.Errorf("teleport: %s: not a %s CSV (header %q)", name, name, header)
-	}
-	for i := range want {
-		if strings.TrimSpace(header[i]) != want[i] {
-			return nil, fmt.Errorf("teleport: %s: not a %s CSV (header %q)", name, name, header)
+	matches := func(cols []string) bool {
+		if len(header) != len(cols) {
+			return false
 		}
+		for i := range cols {
+			if strings.TrimSpace(header[i]) != cols[i] {
+				return false
+			}
+		}
+		return true
+	}
+	ok := matches(want)
+	for _, older := range also {
+		if !ok && matches(older) {
+			ok, want = true, older
+		}
+	}
+	if !ok {
+		return nil, fmt.Errorf("teleport: %s: not a %s CSV (header %q)", name, name, header)
 	}
 	var rows [][]string
 	for line := 2; ; line++ {
@@ -329,11 +426,19 @@ func parsePoint(rec []string) (Point, error) {
 	if err != nil {
 		return Point{}, err
 	}
-	return Point{
+	p := Point{
 		ID: n[0], Code: rec[1], ObjectID: n[1], ZoneName: rec[3],
 		Region: n[2], X: n[3], Y: n[4], Z: n[5], Radius: n[6],
 		Interaction7: flags[0] != 0, Interaction9: flags[1] != 0,
-	}, nil
+	}
+	if len(rec) > 11 {
+		w, err := ints(rec, PointCSVColumns, 11)
+		if err != nil {
+			return Point{}, err
+		}
+		p.WorldID = w[0]
+	}
+	return p, nil
 }
 
 func parseLink(rec []string) (Link, error) {

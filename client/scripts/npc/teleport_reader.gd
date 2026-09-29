@@ -188,6 +188,15 @@ func point_for_building(code: String) -> Point:
 		return null
 	return _point_by_object.get(b.id)
 
+## The teleport point whose associated object (teleportdata column 3) is ref
+## object `object_id` -- a gate building's id or, since round 642, an NPC's
+## characterdata id (2011 NPC_CH_FERRY -> GATE_NPC_CH_FERRY). null for 0 or an
+## object no point names.
+func point_for_object(object_id: int) -> Point:
+	if object_id == 0:
+		return null
+	return _point_by_object.get(object_id)
+
 ## The links leaving a point, in file order (the order the retail dialog
 ## numbers them in, FUN_00976a30(k) for k = 0..count-1).
 func links_from(point_id: int) -> Array:

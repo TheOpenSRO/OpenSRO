@@ -890,25 +890,51 @@ commit them on the main thread, and round 567 makes the terrain's collision a he
       (round 566's follow-up). A playtest diagnostic; it could sit behind a QA variable like the
       rest of the load instrumentation.
 
-### Town teleporters (rounds 576-578, 603)
+### Town teleporters (rounds 576-578, 603) and teleport NPCs (round 642)
 
-- [ ] **The server serves any OpTeleportUse whose gate id it knows, wherever the player stands**
-      (round 603's review). A session's packets are handled one at a time, in order
-      (`gateway.serveConn`), so a second request can never overlap a warp in flight: it waits,
-      and is served after `warpTo` has moved the player. Nothing then ties the request to the
-      player's position. `session/teleport.go` has no interaction-range test and no "already
-      teleporting" state, so a stale second request from the old gate is charged and moves the
-      player again. The client closes the gap on its side: round 603 keeps the request pending
-      from the click to the arrival's zone change. A hand-built client is not closed out.
-      Candidates, none trivial:
-      - the retail range test, `GObjPC::IsWithinInteractionRange` (0x4a8e10), unread;
-      - refusing a gate whose point is not in the requester's zone bucket, which does nothing
-        under `-single-frame`, where every town shares one bucket;
-      - a teleport state like the engine's 0x1c14 (`IGObj::GetTeleportState`), which needs its
-        lifetime read.
+Round 642 made all 32 NPCs with teleportdata points work: the ferries, boats, airships (Roc
+Mountain), tunnels, Jangan's gate soldiers, Constantinople's guides and the two Thief Town NPCs
+(`docs/protocol/teleport_network.md`, "Teleport NPCs (round 642)"). Still open:
 
-      The check is a session test that sends two OpTeleportUse back to back and expects one
-      charge.
+- [ ] **Which objects offer id 8 is stood in for.** Retail registers id 8 ("Select teleport area") on
+      a link source's object when a byte of the point's record (`+0x34`, the last
+      `RefTeleport_ExtractData` reads, `0x6a7f45`) is 1. The client's teleportdata.txt has no column
+      for it. srrevamp offers the line on every point with an outgoing link, server and client. The
+      server's database column is the source, and this project has no copy of it.
+- [ ] **Walk-in portals are not served.** 69 retail links leave a point with no associated object:
+      64 in and out of the Qin-Shi tomb (`GATE_JINSI_*`), two for the Donwhang cave
+      (`GATE_DUNGEON_DH_*`), the two desert temples' exits, and the Roc gate's return. Retail
+      moves a player through them from a region event, not a talk: `CGObjPC::vslot_309` (`0x4ef480`) compares its event's string with `"TELEPORT"` and takes the
+      link from `GObjPC::FUN_004f88d0`. The server refuses such a point with code 2, and the client
+      offers nothing there. MEASURED over the export: 68 of the 69 start or end in a dungeon (a negative
+      region), which srrevamp cannot place, and the 69th is the Roc gate's return from world 40.
+- [ ] **Instanced destinations are refused** (OURS; code 0, nothing charged): every destination
+      whose teleportdata column 12 (`WorldID`) is not 1. That covers the fortress gates (worlds 2,
+      4, 7), the Roc gate (40), the Pharaoh tombs (57-59), the desert temples (60) and the survival,
+      arena and garden maps. Retail enters the world (`GameWorldMgr_FindByID`, `0x5137ac`);
+      srrevamp has one world.
+- [ ] **Open-world gate structures beyond the seven town gates are served but not clickable.** The
+      server now serves any point with an associated object. The client still binds only the
+      id-7 buildings (round 577's rule). That leaves the Delta, Storm Desert and King's Valley gates
+      (`STORE_DELTA_GATE_E/W`, `STORE_STORMDESERT_GATE`, `STORE_KINGSVALLEY_GATE`: 4 links, world
+      1, free) and the Roc Mountain gate (`STORE_RC_TAHOMET_GATE`: needs the Roc quest item) with
+      nothing to click. Binding them needs the placed object each one is, which is unread (round
+      577's nearest-object stand-in was withdrawn for them).
+- [x] **A charged NPC teleport under real input** -- closed by round 642's review, which ran a
+      paid non-GM ferry (gold 1000 -> 500) and the level-95 refusal at the harbour with real input.
+- [x] **The server serves any OpTeleportUse whose gate id it knows, wherever the player stands**
+      (round 603's review) -- closed by round 642's review. The engine's range test is read
+      (`GObjPC::IsWithinInteractionRange`, 0x4a8e10) and applied (`session.reach`,
+      `teleport.Reach`), so a stale second request from the old gate is refused 3 with nothing
+      charged (`TestTeleportInteractionRange`). OURS within it: the height term is dropped, and an
+      NPC the server has no npcpos row for is not measured.
+- [ ] **The engine's "already teleporting" state** (0x1c14, `IGObj::GetTeleportState`, the first
+      test in `HandleTeleportUse`) is still not modelled: a srrevamp teleport completes inside one
+      request. With the range in place it no longer lets a second request through from the old
+      gate; its lifetime is unread.
+- [ ] **The talk range of other NPCs.** Round 642's review closes a gate's or teleport NPC's talk
+      box beyond the READ range (300 NPC, 800 structure). Whether retail's talk box for a shop or a
+      warehouse closes by the same range is not read, so those talk boxes still stay open.
 
 ### Saved position (map/travel epic, round 573)
 

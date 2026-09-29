@@ -17,6 +17,8 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/grounditem"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/session"
+	"github.com/OpenSRO/srrevamp/server/internal/spawn"
+	"github.com/OpenSRO/srrevamp/server/internal/teleport"
 	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
 )
 
@@ -949,5 +951,37 @@ func TestMonsterAggroAllowed(t *testing.T) {
 			t.Errorf("monsterAggroAllowed(aggro %v, battleOn %v, dead %v) = %v, %q; want %v with a reason: %v",
 				c.aggro, c.battleOn, c.dead, on, why, c.want, c.reason)
 		}
+	}
+}
+
+// teleportObjectPlaces (round 642's review) records each teleport NPC's npcpos
+// rows on the network for the interaction range, and leaves the gate
+// structures (their own teleportbuilding place) and object-less points alone.
+func TestTeleportObjectPlacesFromNpcpos(t *testing.T) {
+	network, err := teleport.Read(
+		strings.NewReader("ID,Code,ObjectID,ZoneName,Region,X,Y,Z,Radius,Interaction7,Interaction9,WorldID\n"+
+			"1,GATE_TEST,9001,SN_A,25000,969,0,1369,150,1,0,1\n"+
+			"3,GATE_NPC_TEST_FERRY,2011,SN_B,24993,560,140,1460,200,0,0,1\n"+
+			"4,GATE_TEST_CAVE,0,SN_C,25000,1,0,1,10,0,0,1\n"),
+		strings.NewReader("From,To,Fee,Rule1Type,Rule1Data1,Rule1Data2,Rule2Type,Rule2Data1,Rule2Data2,Rule3Type,Rule3Data1,Rule3Data2,Rule4Type,Rule4Data1,Rule4Data2,Rule5Type,Rule5Data1,Rule5Data2\n"),
+		strings.NewReader("ID,Code,NameStrID,Region,X,Y,Z,Fortress\n9001,STORE_TEST_GATE,SN_G,25000,1254,-6,1374,xxx\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	npcs := spawn.Table{
+		2011: {{ObjectID: 2011, RegionID: 24993, LocalX: 362.3, LocalY: 72, LocalZ: 1761.33}},
+		9001: {{ObjectID: 9001, RegionID: 1, LocalX: 1, LocalZ: 1}},
+	}
+	if n := teleportObjectPlaces(network, npcs); n != 1 {
+		t.Fatalf("placed %d NPCs; want 1 (the ferry)", n)
+	}
+	if got := network.ObjectPlaces(2011); len(got) != 1 || got[0].Region != 24993 || got[0].X != 362.3 || got[0].Z != 1761.33 {
+		t.Errorf("the ferry's places = %+v; want its npcpos row", got)
+	}
+	if got := network.ObjectPlaces(9001); len(got) != 1 || got[0].X != 1254 || got[0].Z != 1374 {
+		t.Errorf("the gate's places = %+v; want its teleportbuilding row, not an npcpos row", got)
+	}
+	if teleportObjectPlaces(network, nil) != 0 {
+		t.Error("no npcpos table placed something")
 	}
 }

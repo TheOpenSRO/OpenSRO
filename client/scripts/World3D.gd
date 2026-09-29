@@ -5007,8 +5007,8 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# talk box and the destinations it lists go, and so does the NPC it
 	# names -- a talk box left up here would list the old gate's destinations
 	# in the new zone (its teleport line reads _talk_npc_code), and a click
-	# would send the old gate's links from there; the server has no range test
-	# (session/teleport.go's header).
+	# would send the old gate's links from there (the server would now refuse
+	# it by range, round 642's review, but the lines must not be offered).
 	_close_gate_ui()
 	# A zone change is a loading screen: music and ambient stop, the area is
 	# cleared (round 612, FUN_0084ab20), whether or not the screen is shown.
@@ -9605,6 +9605,7 @@ func _update_blob_shadow() -> void:
 ##                          NetClient's own dispatch (_qa_mob_strike)
 ##   SRREVAMP_QA_PARTY=create|join:<id>  form a party at tick 70 (round 634)
 ##   SRREVAMP_QA_COMMANDS="/a;/b"  feed these lines through the chat console
+##                          ("wait <seconds>" pauses the list, round 642)
 ##                          (docs/DEBUG_TOOLS.md) 2 s after boot; each prints
 ##                          "QA COMMAND: <line>" and a GM reply "GM REPLY: ..."
 ##   SRREVAMP_QA_HELP=1     open the in-client Help window 2 s after boot
@@ -11147,10 +11148,16 @@ func _qa_mob_strike(monster: int, result: CombatNet.AttackResult) -> void:
 ## point and which path took the click. That is the measurement behind
 ## "clicking a monster opened the talk window": the node, not the impression.
 ## "gate" (round 577) clicks the nearest bound teleport gate (_qa_gate_target).
+## "npc:<CODE>" (round 642) the nearest NPC with that codename. With
+## SRREVAMP_QA_AIM_ONLY=1 nothing is dispatched: the player is stood and the
+## camera aimed as for a click, and `QA AIM <kind>: click at x,y` gives the
+## point for a real X click.
 var _qa_click_queue: Array = []
 var _qa_click_stage := 0
 var _qa_click_wait := 0
 var _qa_click_target: Dictionary = {}
+## How many times an "npc:<CODE>" target has been looked for and not found.
+var _qa_click_retries := 0
 ## True only while a QA click is being dispatched, so the pickers print
 ## what their rays hit without spamming real play.
 var _qa_click_logging := false
@@ -11163,9 +11170,17 @@ func _qa_advance_click() -> void:
 	if _qa_click_stage == 0:
 		_qa_click_target = _qa_click_target_for(kind)
 		if _qa_click_target.is_empty():
+			# A named NPC may be in a region still streaming in after a /tp
+			# (round 642): look again for up to a minute before giving up.
+			if kind.begins_with("npc:") and _qa_click_retries < 60:
+				_qa_click_retries += 1
+				_qa_click_wait = 60
+				return
 			print("QA CLICK %s: no such target in the world (monsters %d)" % [kind, _monster_bodies.size()])
 			_qa_click_queue.pop_front()
+			_qa_click_retries = 0
 			return
+		_qa_click_retries = 0
 		if kind != "ground":
 			# Stand 40 units short of the target, on the walkable surface, and
 			# look along +Z at it with a shallow camera so it sits mid-frame.
@@ -11195,6 +11210,14 @@ func _qa_advance_click() -> void:
 		print("QA CLICK %s: '%s' at world %s -> screen %s%s" % [kind, str(_qa_click_target["name"]), str(aim.round()), str(screen.round()),
 			"" if on_screen else " (OFF-SCREEN: not a click a player could make)"])
 		_probe_click_rays(screen)
+		# SRREVAMP_QA_AIM_ONLY (round 642): stand and aim, print the point,
+		# and leave the click to real X input (the e2e harness's xdotool).
+		if OS.get_environment("SRREVAMP_QA_AIM_ONLY") != "":
+			print("QA AIM %s: click at %d,%d" % [kind, int(round(screen.x)), int(round(screen.y))])
+			_qa_click_queue.pop_front()
+			_qa_click_stage = 0
+			_qa_click_wait = 30
+			return
 		_qa_click_logging = true
 		var took := _dispatch_left_click(screen)
 		_qa_click_logging = false
@@ -11232,7 +11255,7 @@ func _qa_advance_teleport() -> void:
 		return
 	if _qa_teleport_stage == 0:
 		if _hud_panels.is_open("npctalk") and _teleport_reader != null \
-				and _teleport_reader.point_for_building(_talk_npc_code) != null:
+				and _teleport_point_for_code(_talk_npc_code) != null:
 			print("QA TELEPORT: choosing the teleport line at %s" % _talk_npc_code)
 			_hud_panels._on_npc_talk_choice("teleport")
 			_qa_teleport_stage = 1
@@ -11250,6 +11273,26 @@ func _qa_advance_teleport() -> void:
 ## The nearest target of a kind: {pos, half_height, name}, or {} if none.
 ## "ground" is a spot 30 units ahead of the player.
 func _qa_click_target_for(kind: String) -> Dictionary:
+	# "npc:<CODE>" (round 642): the nearest NPC holder with that codename --
+	# a teleport NPC among a dock's other NPCs.
+	if kind.begins_with("npc:"):
+		var want := kind.substr(4).strip_edges().to_upper()
+		var best: Node3D = null
+		var best_d := INF
+		for group in get_children():
+			if not (group is Node3D) or not String(group.name).begins_with("RealTerrain_"):
+				continue
+			for holder in group.get_children():
+				if not (holder is Node3D) or str(holder.get_meta("npc_code", "")).to_upper() != want:
+					continue
+				var d := (holder as Node3D).global_position.distance_to(player.global_position)
+				if d < best_d:
+					best_d = d
+					best = holder
+		if best == null:
+			return {}
+		return {"pos": best.global_position, "half_height": _qa_click_half_height(best, "Body"),
+			"name": str(best.get_meta("npc_name"))}
 	match kind:
 		"monster":
 			var best_m: Node3D = null
@@ -12182,6 +12225,7 @@ func _physics_process(delta: float) -> void:
 ## One physics step of the world: the sky, the monsters' legs, the player's
 ## input and walk, the QA hooks, region streaming and the position send.
 func _physics_step(delta: float) -> void:
+	_check_talk_range()
 	if _sky_dome != null:
 		# READ: u += frac(GetTickCount() / 500000); the layer itself follows
 		# the eye in its shader.
@@ -12868,9 +12912,10 @@ func _on_teleport_result(result: TeleportNet.Result) -> void:
 		# 603's review): the server sends this receipt, then warpTo does its
 		# per-entity work before OpChangeZoneResult, so the two can land in
 		# different frames, and a click on a destination line between them
-		# would send a second OpTeleportUse that the server (no range test)
-		# serves and charges again. _close_gate_ui clears it on the arrival;
-		# a refused zone change clears it (_on_change_zone_result; the server
+		# would send a second OpTeleportUse -- which the server, measuring the
+		# range from where the first put the player (round 642's review),
+		# refuses, but the click must not go out. _close_gate_ui clears it on
+		# the arrival; a refused zone change clears it (_on_change_zone_result; the server
 		# refunds a move that failed).
 		var receipt := TeleportNet.receipt_line(_teleport_place_name(result.destination), result.fee, _ui_text_table)
 		_log_system(receipt)
@@ -13162,8 +13207,14 @@ func _run_ground_probe(mode: String = "full") -> PackedStringArray:
 func _where_report() -> PackedStringArray:
 	var out: PackedStringArray = []
 	var p := player.global_position
-	var result = NetClient.last_enter_world_result
-	var zone: String = result.zone if result != null else "?"
+	# The zone the server last put the player in -- a zone change or a
+	# teleport's arrival as well as the entry (NetClient.current_zone, set by
+	# both results). Until round 642's review this read the entry's result
+	# alone, so after a ferry /where still named the zone the session began in.
+	var zone: String = NetClient.current_zone
+	if zone == "":
+		var result = NetClient.last_enter_world_result
+		zone = result.zone if result != null else "?"
 	out.append("zone: %s" % zone)
 	# The region is whichever loaded cell's own space contains the player --
 	# each RealTerrain_<x>_<y> node's local space IS that region's real
@@ -13274,6 +13325,12 @@ func _run_qa_commands(list: String) -> void:
 	for raw in list.split(";", false):
 		var line := String(raw).strip_edges()
 		if line == "":
+			continue
+		# "wait <seconds>" (round 642): pause the list, so a /tp can follow a
+		# /goto's zone load instead of racing it.
+		if line.begins_with("wait "):
+			print("QA COMMAND: %s" % line)
+			await get_tree().create_timer(maxf(float(line.substr(5)), 0.0)).timeout
 			continue
 		print("QA COMMAND: %s" % line)
 		if line.begins_with("/") and _console != null:
@@ -13759,6 +13816,7 @@ func _try_talk_to_npc(screen_pos: Vector2) -> bool:
 	var code := str(node.get_meta("npc_code")) if node.has_meta("npc_code") else ""
 	_talk_npc_name = npc_name
 	_talk_npc_code = code
+	_talk_node = node as Node3D
 	# Talking supersedes an attack still walking into reach: the attack would
 	# otherwise go out behind the talk window.
 	_drop_pending_attack()
@@ -13791,12 +13849,45 @@ func _npc_services(code: String) -> Array:
 	# leaves it (NpcServiceReader.gate_services). "teleport" lists the
 	# destinations in the talk box (_open_teleport_list, round 603); the recall lines fall to
 	# _on_npc_service_selected's default until they have a server.
-	if _teleport_reader != null:
-		var point := _teleport_reader.point_for_building(code)
-		if point != null:
-			out.append_array(NpcServiceReader.gate_services(
-				not _teleport_reader.links_from(point.id).is_empty(), point.interaction7, point.interaction9))
+	#
+	# Since round 642 a teleport NPC gets the same lines: the ferry, airship
+	# and tunnel ticket sellers, Jangan's gate soldiers and Constantinople's
+	# guides are the associated objects of their teleportdata points
+	# (_teleport_point_for_code), and the engine serves them as it serves a
+	# gate (docs/protocol/teleport_network.md, "Teleport NPCs (round 642)").
+	# Their points carry neither registration flag, so they list the
+	# teleport line and the end line.
+	var point := _teleport_point_for_code(code)
+	if point != null:
+		out.append_array(NpcServiceReader.gate_services(
+			not _teleport_reader.links_from(point.id).is_empty(), point.interaction7, point.interaction9))
 	return out
+
+## The teleport point the thing being talked to stands for: a gate
+## structure's (its teleportbuilding code, round 577) or, since round 642, an
+## NPC's -- the point whose associated object is the NPC's characterdata id
+## (teleportdata column 3; GATE_NPC_CH_FERRY names 2011, NPC_CH_FERRY). The
+## NPC's id comes from its code through the NPC tables (_npc_codes, the
+## reverse of what places it). null when neither names a point.
+func _teleport_point_for_code(code: String) -> TeleportReader.Point:
+	if _teleport_reader == null or code == "":
+		return null
+	var point := _teleport_reader.point_for_building(code)
+	if point != null:
+		return point
+	var up := code.strip_edges().to_upper()
+	if _npc_ids_built_from != _npc_codes.size():
+		_npc_ids_by_code.clear()
+		for npc_id in _npc_codes:
+			_npc_ids_by_code[str(_npc_codes[npc_id]).to_upper()] = int(npc_id)
+		_npc_ids_built_from = _npc_codes.size()
+	return _teleport_reader.point_for_object(int(_npc_ids_by_code.get(up, 0)))
+
+## codename (upper) -> characterdata id, the reverse of _npc_codes, rebuilt
+## when that grows (_teleport_point_for_code).
+var _npc_ids_by_code: Dictionary = {}
+## _npc_codes' size when _npc_ids_by_code was built (-1: never).
+var _npc_ids_built_from := -1
 
 ## Rebuilds the talk menu if it is still open, after the player's guild state
 ## changed (round 521): a guild NPC's lines depend on it. It rebuilds in place
@@ -13873,7 +13964,7 @@ func _open_teleport_list() -> void:
 	# gate to list, and nothing to say.
 	if _teleport_reader == null or _hud_panels == null or _talk_npc_code == "":
 		return
-	var point := _teleport_reader.point_for_building(_talk_npc_code)
+	var point := _teleport_point_for_code(_talk_npc_code)
 	if point == null:
 		_log_system("This gate has no teleport point.")
 		return
@@ -13900,17 +13991,59 @@ func _open_teleport_list() -> void:
 ## Closes the gate's UI -- the talk box and the destinations it lists -- and
 ## forgets the NPC being talked to and the list's gate, so
 ## nothing from a gate left behind can send its links (round 578's review).
-## Called on a zone change (_on_change_zone_result). Walking away from a gate
-## does NOT close them: the retail interaction range is unread (0x4a8e10), so
-## no distance is guessed here -- disclosed beside the server's missing range
-## test in docs/protocol/teleport_network.md.
+## Called on a zone change (_on_change_zone_result), and since round 642's
+## review when the player walks out of the interaction range of the gate or
+## teleport NPC being talked to (_check_talk_range).
 func _close_gate_ui() -> void:
 	if _hud_panels != null:
 		_hud_panels.close("npctalk")
 	_talk_npc_code = ""
 	_talk_npc_name = ""
+	_talk_node = null
 	_teleport_gate_point_id = 0
 	_teleport_request_pending = false
+
+## The object the open talk box was opened on by a click (an NPC holder or a
+## bound gate), for _check_talk_range; null for a QA talk box.
+var _talk_node: Node3D = null
+
+## The interaction range, READ (round 642's review): the server's
+## GObjPC::IsWithinInteractionRange (0x4a8e10), which HandleTeleportUse
+## applies -- 300.0 for an NPCNPC (.rdata 0xb45c40), 800.0 for a structure
+## (0xb46190), a 3-D length. The server refuses a teleport beyond it (4, "too
+## far"); the client closes the talk box of a gate or teleport NPC once the
+## player walks beyond it, so its destination lines cannot be clicked from
+## where the server would refuse them. Only a talk box whose target is a
+## teleport point: that the other NPCs' talk uses the same range is not read
+## (OURS, disclosed). The server measures horizontally (session reach); this
+## check is 3-D, which is never shorter, so it closes no talk box the server
+## would still serve.
+const TALK_RANGE_NPC := 300.0
+const TALK_RANGE_STRUCTURE := 800.0
+
+func _check_talk_range() -> void:
+	if _talk_node == null or _hud_panels == null or player == null:
+		return
+	if not is_instance_valid(_talk_node) or not _talk_node.is_inside_tree():
+		_talk_node = null
+		return
+	if not _hud_panels.is_open("npctalk"):
+		_talk_node = null
+		return
+	if _teleport_point_for_code(_talk_npc_code) == null:
+		return
+	var structure := _talk_node.has_meta("gate_point_id")
+	if talk_out_of_range(player.global_position, _talk_node.global_position, structure):
+		print("World3D: walked %.0f from %s (range %.0f) -- the talk box closes" % [
+			player.global_position.distance_to(_talk_node.global_position), _talk_npc_code,
+			TALK_RANGE_STRUCTURE if structure else TALK_RANGE_NPC])
+		_close_gate_ui()
+
+## Whether `from` is beyond the interaction range of a target at `to`: 800 for
+## a structure (a bound gate), else 300 (an NPC); the 3-D length, retail's
+## `fVar9 <= limit` passing (0x4a8e10).
+static func talk_out_of_range(from: Vector3, to: Vector3, structure: bool) -> bool:
+	return from.distance_to(to) > (TALK_RANGE_STRUCTURE if structure else TALK_RANGE_NPC)
 
 ## A destination line clicked in a gate's talk box (round 603; the board's
 ## Move in round 578): asks the server to travel from the list's gate to

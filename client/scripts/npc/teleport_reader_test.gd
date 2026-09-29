@@ -304,6 +304,59 @@ func _initialize() -> void:
 			group.free()
 			group2.free()
 			template.free()
+
+		# (e) Round 642: a teleport NPC. GATE_NPC_CH_FERRY's associated object
+		# is 2011, NPC_CH_FERRY's characterdata id (teleportdata column 3), and
+		# its link leaves for the far bank (3 -> 4, 500 gold). The ferry
+		# seller's talk box offers the teleport line and nothing else -- its
+		# point registers neither id 7 nor id 9 -- and the destination list is
+		# its point's. A smith, whose id no point names, still gets no gate
+		# line, and a ferry the NPC tables do not know gets none either.
+		var ferry_reader: Object = (load(READER_PATH) as GDScript).new()
+		ferry_reader.call("parse",
+			_table(_data_rows() + [
+				_row(14, {0: 1, 1: 3, 2: "GATE_NPC_CH_FERRY", 3: 2011, 4: "SN_ZONE_21002", 5: 24993,
+					6: 560, 7: 140, 8: 1460, 9: 200, 10: 0, 11: 0, 12: 1}),
+				_row(14, {0: 1, 1: 4, 2: "GATE_NPC_WC_FERRY", 3: 2056, 4: "SN_ZONE_21004", 5: 25761,
+					6: 636, 7: 160, 8: 1482, 9: 200, 10: 0, 11: 0, 12: 1})]),
+			_table(_link_rows() + [_row(23, {0: 1, 1: 3, 2: 4, 3: 500}), _row(23, {0: 1, 1: 4, 2: 3, 3: 500})]),
+			_table(_building_rows()))
+		var by_object = ferry_reader.call("point_for_object", 2011)
+		_check(by_object != null and by_object.code == "GATE_NPC_CH_FERRY",
+			"point_for_object(2011) is the ferry's point (got %s)" % [by_object.code if by_object != null else "null"])
+		_check(ferry_reader.call("point_for_object", 0) == null and ferry_reader.call("point_for_object", 4242) == null,
+			"point_for_object(0) and an object no point names give null")
+		_check(ferry_reader.call("point_for_building", "NPC_CH_FERRY") == null,
+			"the ferry is not a building (point_for_building does not find it)")
+		world.set("_teleport_reader", ferry_reader)
+		world.set("_npc_codes", {2011: "NPC_CH_FERRY", 2056: "NPC_WC_FERRY", 2000: "NPC_CH_SMITH"})
+		var ferry_keys: Array = (world.call("_npc_services", "NPC_CH_FERRY") as Array).map(func(s): return s.key)
+		_check(ferry_keys == ["teleport"], "the ferry seller offers the teleport line alone (got %s)" % [ferry_keys])
+		var smith_keys: Array = (world.call("_npc_services", "NPC_CH_SMITH") as Array).map(func(s): return s.key)
+		_check(not ("teleport" in smith_keys), "the smith still offers no teleport line (got %s)" % [smith_keys])
+		var ferry_point = world.call("_teleport_point_for_code", "npc_ch_ferry")
+		_check(ferry_point != null and ferry_point.id == 3, "the codename is matched without case")
+		var dests: Array = (ferry_reader.call("links_from", 3) as Array).map(func(l): return [l.to_id, l.fee])
+		_check(dests == [[4, 500]], "the ferry lists the far bank for 500 (got %s)" % [dests])
+		world.set("_npc_codes", {2056: "NPC_WC_FERRY"})
+		_check((world.call("_npc_services", "NPC_CH_FERRY") as Array).is_empty(),
+			"a ferry the NPC tables do not know gets no line")
+		world.set("_teleport_reader", reader)
+
+		# (f) Round 642's review: the talk box of a teleport NPC or gate closes
+		# beyond the READ interaction range (0x4a8e10): 300 from an NPC, 800
+		# from a structure, the 3-D length, the limit itself still inside.
+		var near := Vector3(100, 0, 100)
+		_check(not bool(world_script.call("talk_out_of_range", near, near + Vector3(300, 0, 0), false)),
+			"300 from an NPC is within its range")
+		_check(bool(world_script.call("talk_out_of_range", near, near + Vector3(300.5, 0, 0), false)),
+			"300.5 from an NPC is beyond it")
+		_check(bool(world_script.call("talk_out_of_range", near, near + Vector3(200, 250, 0), false)),
+			"the height counts: 200 across and 250 up is 320 from an NPC")
+		_check(not bool(world_script.call("talk_out_of_range", near, near + Vector3(0, 0, 790), true)),
+			"790 from a gate structure is within its 800")
+		_check(bool(world_script.call("talk_out_of_range", near, near + Vector3(0, 0, 810), true)),
+			"810 from a gate structure is beyond it")
 		world.free()
 
 	if _failures == 0:
