@@ -224,12 +224,15 @@ the set of objects the retail loader builds (every region `.o2`'s lists 1 and 2,
 one per key -- docs/protocol/MAPO2_FORMAT.md, "Round 643") and says which of them the client's
 placement rule draws. Without `-ownerframe` it reproduces the rule before round 643 (the `.o`,
 `.o2` list 2, the height filter); `-ownerframe` is the rule since. `-grep bridge` or
-`-region 92/135` lists the undrawn keys; `-dumpmodels <file>` writes every model with its key
-count for the second half:
+`-region 92/135` lists the undrawn keys (and the placements it counts as moved into their
+owner's frame); `-media <Media.pk2>` adds `force_addobject.txt`'s rows, the second object source
+(round 643's review); `-key 97/168#43009` lists every record of one key, skip-bit ones included;
+`-dumpmodels <file>` writes every model with its key count for the second half:
 
 ```
-cd server && go run ./cmd/mapobjcensus -map /opt/sro-files/client/Map.pk2 [-ownerframe] \
-  [-grep stab] [-region 91/135] [-dumpmodels /var/tmp/<lane>/models.tsv]
+cd server && go run ./cmd/mapobjcensus -map /opt/sro-files/client/Map.pk2 \
+  -media /opt/sro-files/client/Media.pk2 [-ownerframe] [-grep stab] [-region 91/135] [-key 97/168#43009] \
+  [-dumpmodels /var/tmp/<lane>/models.tsv]
 ```
 
 **Loading**, in GDScript (2 minutes for 2,567 models): `map_object_census.gd` prepares each model

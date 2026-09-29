@@ -1598,6 +1598,11 @@ them. Left open:
   reads the texture (the MTRL animated colour is still open, round 625) decides whether retail
   draws it.
 - **Two regions with a populated `.o` and no `.o2`** (51/84, 93/211) draw no objects, as retail.
+- **force_addobject.txt's fortress state** (round 643's review; MAPO2_FORMAT.md, "Round 643's
+  review"). Every loaded row is drawn (32 fortress flags, 3 Bijeokdan bridges). Whether a fortress
+  state hides a row is OPEN: the world's callback (`LAB_004ff8c0`) was read up to its vtable
+  calls. The flags wear no guild or alliance emblem (OURS); the emblem needs the fortress
+  owner, which the server does not send yet.
 
 Round 583 read three record fields in the loader (`FUN_00a361b0`;
 [protocol/MAPO2_FORMAT.md](protocol/MAPO2_FORMAT.md), "Corrected (round 583)"). Bytes 22-23 are

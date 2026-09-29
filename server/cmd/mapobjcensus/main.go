@@ -17,6 +17,11 @@
 // then -- unless -nofilter -- the ownership filter by height
 // (_placements_belonging_here) over `.o2` placements.
 //
+// With -media, force_addobject.txt's loaded rows join the retail set (round
+// 643's review; READ chain: Client_LoadRefDataFile type 0x3d -> FUN_00927620
+// -> SWorld::vslot_045 -> the tail of FUN_00a361b0), keyed as the loader
+// keys them, at their own position, in regions that have a .o2.
+//
 // A retail key counts as drawn when the client set holds a placement in the
 // key's owner region with the same type id and a local position within 0.01.
 //
@@ -34,6 +39,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/OpenSRO/srrevamp/server/internal/mapm"
 	"github.com/OpenSRO/srrevamp/server/internal/mapo"
@@ -54,6 +60,7 @@ type rec struct {
 	uid    uint16
 	owner  region
 	skip   bool
+	path   string // force_addobject rows: the row's own path
 }
 
 func (r rec) key() uint32 { return uint32(r.owner.a)<<24 | uint32(r.owner.b)<<16 | uint32(r.uid) }
@@ -67,6 +74,8 @@ type placement struct {
 
 func main() {
 	mapPath := flag.String("map", "", "Map.pk2")
+	mediaPath := flag.String("media", "", "Media.pk2: add force_addobject.txt's rows to the retail set (round 643 review)")
+	keyFlag := flag.String("key", "", "print every record of this key, as <owner a>/<owner b>#<uid>")
 	lists := flag.String("lists", "2", "the .o2 lists the client reads, comma separated (MapO2Reader numbering)")
 	useO := flag.Bool("o", true, "the client also places the region's .o")
 	noFilter := flag.Bool("nofilter", false, "skip the ownership-by-height filter")
@@ -163,8 +172,8 @@ func main() {
 
 	var recs []rec
 	var oCount, o2Files, oFiles, oOnly int
-	listCount := [3]int{}
-	skipCount := [3]int{}
+	listCount := [4]int{}
+	skipCount := [4]int{}
 	client := map[region][]placement{}
 	filtered := 0
 	maxPerRegion, maxRegion := 0, region{}
@@ -275,6 +284,50 @@ func main() {
 			maxPerRegion, maxRegion = len(dedup), r
 		}
 	}
+	// force_addobject.txt (READ: Client_LoadRefDataFile type 0x3d ->
+	// FUN_00927620 -> SWorld::vslot_045 -> the tail of FUN_00a361b0): each
+	// loaded row is built as the region's object when that region's .o2
+	// loads, by the key (region, sector bits | a per-sector counter from
+	// 0x3ff down), at the row's position as given. Recorded as "list" 3.
+	forced := 0
+	if *mediaPath != "" {
+		media, err := pk2.Open(*mediaPath)
+		must(err)
+		rows := parseForceAddObject(readFile(media, "server_dep\\silkroad\\textdata\\force_addobject.txt"))
+		media.Close()
+		byPath := map[string]uint32{}
+		for _, e := range table.Entries {
+			if _, ok := byPath[strings.ToLower(e.Path)]; !ok {
+				byPath[strings.ToLower(e.Path)] = e.TypeID
+			}
+		}
+		counters := map[region]map[int]int{}
+		for _, row := range rows {
+			if f := all[row.region]; f == nil || f.o2 == nil {
+				fmt.Printf("  force_addobject row %s in %s: the region has no .o2, so it is not built\n", row.path, row.region)
+				continue
+			}
+			if counters[row.region] == nil {
+				counters[row.region] = map[int]int{}
+			}
+			ri, ci := (int(row.pos[2])/320)&7, (int(row.pos[0])/320)&7
+			sector := ci + ri*6
+			c, ok := counters[row.region][sector]
+			if !ok {
+				c = 0x3ff
+			}
+			counters[row.region][sector] = c - 1
+			typeID, ok := byPath[strings.ToLower(row.path)]
+			if !ok {
+				typeID = 0xffffffff
+			}
+			recs = append(recs, rec{file: row.region, list: 3, typeID: typeID, pos: row.pos, yaw: row.yaw,
+				uid: uint16((ri*8+ci)<<10 | (c & 0x3ff)), owner: row.region, path: row.path})
+			listCount[3]++
+			forced++
+		}
+	}
+
 	if *ownerFrame {
 		// Owner frame: each key once, in its owner region, skip bit honoured.
 		seen := map[uint32]bool{}
@@ -298,6 +351,7 @@ func main() {
 	for li := 0; li < 3; li++ {
 		fmt.Printf("  .o2 list %d: %d records, %d with the skip bit\n", li, listCount[li], skipCount[li])
 	}
+	fmt.Printf("  force_addobject rows built: %d\n", forced)
 	fmt.Printf("client options: lists=%s o=%v filter=%v ownerframe=%v; the height filter dropped %d; largest region %s places %d (MAX_MAP_OBJECTS 2000)\n",
 		*lists, *useO && !*ownerFrame, !*noFilter && !*ownerFrame, *ownerFrame, filtered, maxRegion, maxPerRegion)
 
@@ -305,7 +359,7 @@ func main() {
 	type keyInfo struct {
 		first   rec
 		files   map[region]bool
-		lists   [3]int
+		lists   [4]int
 		samePos bool
 	}
 	keys := map[uint32]*keyInfo{}
@@ -351,6 +405,7 @@ func main() {
 			ownerLists++
 		}
 		switch {
+		case k.lists[3] > 0:
 		case k.lists[1] > 0 && k.lists[2] > 0:
 			both++
 		case k.lists[1] > 0:
@@ -392,11 +447,16 @@ func main() {
 		path := "<type id not in object.ifo>"
 		if e, ok := table.Lookup(x.typeID); ok {
 			path = e.Path
+		} else if x.path != "" {
+			path = x.path
 		}
 		undrawn[path]++
 		why := "list 1 only"
 		if k.lists[2] > 0 {
 			why = "in a list 2"
+		}
+		if k.lists[3] > 0 {
+			why = "a force_addobject row"
 		}
 		if (*grep != "" && strings.Contains(strings.ToLower(path), strings.ToLower(*grep))) || (*only != "" && x.owner.String() == *only) {
 			listed = append(listed, fmt.Sprintf("  undrawn %s uid %d (%.1f, %.1f, %.1f) yaw %.3f type %d %s -- %s; listed by %d file(s)",
@@ -431,12 +491,44 @@ func main() {
 		x := k.first
 		world[wk{x.typeID, q(x.pos[0] + float32(x.owner.b)*1920), q(x.pos[2] + float32(x.owner.a)*1920)}] = true
 	}
-	extra, extraElsewhere := 0, 0
+	// The same type at the same LOCAL position under another owner: the
+	// placement drawn in the wrong region's frame, which the owner rule
+	// moves (e.g. tre_maple03_big, 97/167#5121, drawn in 97/168's frame).
+	type lk struct {
+		typeID  uint32
+		x, y, z int64
+	}
+	localOwners := map[lk][]region{}
+	for _, k := range keys {
+		x := k.first
+		l := lk{x.typeID, q(x.pos[0]), q(x.pos[1]), q(x.pos[2])}
+		localOwners[l] = append(localOwners[l], x.owner)
+	}
+	extra, extraElsewhere, extraMoved := 0, 0, 0
 	extraByModel := map[string]int{}
 	for p := range drawn {
 		if !matchedPK[p] {
 			if world[wk{p.typeID, p.x + int64(p.r.b)*192000, p.z + int64(p.r.a)*192000}] {
 				extraElsewhere++
+				continue
+			}
+			var owners []region
+			for _, o := range localOwners[lk{p.typeID, p.x, p.y, p.z}] {
+				if o != p.r && o.a-p.r.a <= 1 && p.r.a-o.a <= 1 && o.b-p.r.b <= 1 && p.r.b-o.b <= 1 {
+					owners = append(owners, o)
+				}
+			}
+			if len(owners) > 0 {
+				extraMoved++
+				if *grep != "" || *only != "" {
+					path := ""
+					if e, ok := table.Lookup(p.typeID); ok {
+						path = e.Path
+					}
+					if (*only != "" && p.r.String() == *only) || (*grep != "" && strings.Contains(strings.ToLower(path), strings.ToLower(*grep))) {
+						listed = append(listed, fmt.Sprintf("  moved %s (%.1f, %.1f, %.1f) type %d %s -> owner %v", p.r, float64(p.x)/100, float64(p.y)/100, float64(p.z)/100, p.typeID, path, owners))
+					}
+				}
 				continue
 			}
 			extra++
@@ -475,8 +567,15 @@ func main() {
 			fmt.Printf("  orphan key: owner %s uid %d type %d %s listed by %v lists %v (%.1f, %.1f, %.1f)\n", x.owner, x.uid, x.typeID, path, fs, k.lists, x.pos[0], x.pos[1], x.pos[2])
 		}
 	}
-	fmt.Printf("drawn by the client: %d of %d retail keys; UNDRAWN %d; client placements matching no retail key: %d (and %d more matching a key's world spot in another region's frame)\n",
-		len(keys)-undrawnKeys, len(keys), undrawnKeys, extra, extraElsewhere)
+	fmt.Printf("drawn by the client: %d of %d retail keys; UNDRAWN %d; client placements matching no retail key: %d (and %d more matching a key's world spot in another region's frame, %d a key's type and local position under a NEIGHBOURING owner: moved into the owner's frame)\n",
+		len(keys)-undrawnKeys, len(keys), undrawnKeys, extra, extraElsewhere, extraMoved)
+	if *keyFlag != "" {
+		for _, x := range recs {
+			if fmt.Sprintf("%s#%d", x.owner, x.uid) == *keyFlag {
+				fmt.Printf("  key %s: file %s list %d skip %v type %d (%.1f, %.1f, %.1f)\n", *keyFlag, x.file, x.list, x.skip, x.typeID, x.pos[0], x.pos[1], x.pos[2])
+			}
+		}
+	}
 	type mc struct {
 		path string
 		n    int
@@ -497,6 +596,49 @@ func main() {
 	for _, l := range listed {
 		fmt.Println(l)
 	}
+}
+
+type forceRow struct {
+	path   string
+	region region
+	pos    [3]float32
+	yaw    float32
+}
+
+// parseForceAddObject reads force_addobject.txt (UTF-16LE): 11 tab-separated
+// columns -- service, path, region X, region Y, X, Y, Z, rotation, type,
+// guild/alliance, fortress -- and keeps the rows whose service is not 0. The
+// row's region is (regionY << 8) | regionX, the <regionY>\<regionX> folder.
+func parseForceAddObject(data []byte) []forceRow {
+	if len(data) < 2 {
+		return nil
+	}
+	u := make([]uint16, 0, len(data)/2)
+	for i := 0; i+1 < len(data); i += 2 {
+		u = append(u, uint16(data[i])|uint16(data[i+1])<<8)
+	}
+	text := string(utf16.Decode(u))
+	var rows []forceRow
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimRight(line, "\r")
+		line = strings.TrimPrefix(line, "\ufeff")
+		if strings.HasPrefix(line, "//") {
+			continue
+		}
+		c := strings.Split(line, "\t")
+		if len(c) < 11 {
+			continue
+		}
+		service, err := strconv.Atoi(strings.TrimSpace(c[0]))
+		if err != nil || service == 0 {
+			continue
+		}
+		f := func(i int) float32 { v, _ := strconv.ParseFloat(strings.TrimSpace(c[i]), 32); return float32(v) }
+		rx, _ := strconv.Atoi(strings.TrimSpace(c[2]))
+		ry, _ := strconv.Atoi(strings.TrimSpace(c[3]))
+		rows = append(rows, forceRow{strings.TrimSpace(c[1]), region{ry, rx}, [3]float32{f(4), f(5), f(6)}, f(7)})
+	}
+	return rows
 }
 
 const (

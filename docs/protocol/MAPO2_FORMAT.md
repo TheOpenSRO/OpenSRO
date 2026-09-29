@@ -184,7 +184,9 @@ They are `uStack_135a` at +0x16, `bStack_1355` at +0x1b and `uStack_1354` at +0x
     - `res\dun\jupiter\piety\piety_golddoor.bsr` (2).
     - The paths sum to 240: 120 + 48 + 46 + 24 + 2.
   
-  **Since round 643 this client tests the bit** (`MapO2Reader.Entry.skipped()`,
+  **What the skip bit is for, in part (round 643's review):** the three `bagh_masin_bridge01`
+  records of 124/247 carry it, and `force_addobject.txt` builds those bridges instead, at their
+  own Y (section "Round 643's review" below). **Since round 643 this client tests the bit** (`MapO2Reader.Entry.skipped()`,
   `World3D.region_placements`): those 240 `lists[2]` records and the 760 `lists[1]` ones are not
   built. Whatever puts them in the world (a siege, an event) is not traced; it stays open in
   `docs/TODO.md`. No seasonal record has the bit set. The
@@ -230,6 +232,78 @@ So **a record's position is local to its owner region** (bytes 28-29), not to th
 local x and its first steps local z, one 1920-unit span each, as `World3D._cell_offset` steps
 the terrain groups.
 
+The navmesh loader reads the same frame (READ, round 643's review). `MapLoader::FUN_0042a6e0`
+reads the region's 30-byte records and, for each, calls
+`CRegionManagerBody::vslot_013` (0x412ba0, vtable slot 13) with the record's owner (bytes
+28-29), the region being loaded and an out vector. That function writes
+`x = ((region & 0xff) - (owner & 0xff)) * span`, `z = ((region >> 8) - (owner >> 8)) * span`,
+`y = 0` (span: the float at 0xe1b800), and the loader subtracts it from the record's position.
+The result is `position + (owner - region) * span` per axis, the same arithmetic as
+`owner_offset`.
+
+## Round 643's review: `force_addobject.txt`, the second object source
+
+The map loader builds one more set of objects besides the `.o2` lists (READ). Media.pk2's
+`server_dep\silkroad\textdata\force_addobject.txt` is loaded by `Client_LoadAllRefData`
+(`GlobalDataManager::Client_LoadRefDataFile`, type 0x3d).
+- **Columns** (the file's own Korean header): service, BSR path, region X, region Y, X, Y, Z,
+  rotation, type (flag 0 / structure 1), guild 0 / alliance 1, fortress id.
+- A row whose service is 0 is not loaded. Of the file's 55 rows, 35 load: 32 `fortress_flag`
+  and the three `bagh_masin_bridge01` bridges of 124/247 (FORTRESS_BIJEOKDAN).
+- Region X is stored at the row's +0x1c and region Y at +0x1d, so the region is
+  `(regionY << 8) | regionX`, the `<regionY>\<regionX>` folder.
+- The fortress id is resolved (`FUN_00927350`, asserted), and the row keeps
+  `type << 24 | guild << 16 | fortress` at +0x38.
+
+**How a row becomes an object:**
+1. `FUN_00927620` passes each row to `SWorld::vslot_045` (0xa284d0), with the path, the region,
+   the position, the rotation and that word.
+2. `vslot_045` looks the path up in the world's object-path table, the 0x20-stride vector that
+   `object.ifo` fills, with `CompareStringA` and `NORM_IGNORECASE`. A missing path is appended
+   as a new type.
+3. It files a record with the `.o2` layout under the row's region: the type; the position as
+   given; the rotation at +18; and a uid whose bits 13-15 are `int(z) / 320 & 7` and bits 10-12
+   `int(x) / 320 & 7`. 320.0 is the double at 0xe1b908.
+4. When that region's `.o2` loads, the tail of `FUN_00a361b0` numbers each filed record's low
+   10 bits from a per-sector counter that starts at 0x3ff and counts down.
+5. It then builds the record by `CONCAT22(region, uid)` through `Map::FUN_00a1a1d0`, the same
+   cache as the lists, whose creator is `FUN_00a33530`: installed at world+0x2407, map+0x28.
+   The creator copies the 30-byte record verbatim, so **the position is used as given, Y
+   included**.
+6. The word is stored at the object's +0x37, and the object is appended to the sector's
+   list-1 array. This path makes no skip-bit test.
+
+**The bridges' Y, resolved:**
+- The `.o2` lists `bagh_masin_bridge01` at 124/247 in `lists[1]` with the skip bit set: keys
+  7cf7#5121, #18433 and #40961, Y 53.7 / 52.8 / 53.7. So the map loader does not build them;
+  the three force rows build them, at Y 848.
+- MEASURED: the model's drawn vertices span local y -1686.2 .. -784.4 (tall piers down to the
+  ravine floor). At Y 848 its top is at 63.6.
+- The region's `.nvm` lists the same three bridges at Y 53.7 (objects #5, #6, #19). The
+  bridge's own navmesh is a plane at local y 5.3, so the walkable deck is at 59.0.
+- At Y 53.7 the drawn top would be at -730.6, 790 units under the deck, 19 above the heightmap
+  (-749.1 at bridge 1).
+- So the 848 goes with the drawn object and the 53.7 with the navigation copy. Both are the
+  file's own numbers.
+
+**Collision:** this path attaches no navmesh (the creator copies the record only). The bridges'
+walkable surface comes from the `.nvm`'s own objects, which the navigation code reads as for any
+region.
+
+**The fortress state (OPEN).** Traced as far as this:
+- Creation and the sector-array insert are unconditional (READ).
+- For an object whose +0x37 word is neither 0 nor -1, the loader calls the world's callback
+  (world+0x7b34, installed through `SWorld::vslot_011` as `LAB_004ff8c0`). On add, that
+  callback keeps the object in a list. Then:
+  - for type 0 (a flag) it sets a texture through the object's vtable+0x104, using the guild's
+    or the alliance's emblem (`FUN_00789300`);
+  - for type 1 (a structure) it looks the fortress up (`FUN_00938a10`) and calls
+    `FUN_0052d4e0` with arguments chosen by the fortress record's +0x20 bits. `FUN_0052d4e0`'s
+    shape (vtable+0xa8 find, then +0x70/+0x74/+0x78) is that of a clip lookup and play:
+    INFERRED, not read further.
+- No write to the object's visibility was found in that branch. The vtable calls were not
+  followed, so whether a fortress state hides a row is not known.
+
 `lists[1]` is not "cross-references to other regions' objects", as the seventy-eighth round took
 it: 52,366 of the objects retail builds are listed there and nowhere else, among them Hotan's
 stable (`oas_hot_stab`, 91/135), its north and south bridges (`oas_hot_b1_bridge` 90/135,
@@ -263,5 +337,9 @@ the owner's frame. `World3D._placed_objects` keeps each key once across the load
 first region to commit it places it, later ones share it), and a region streaming out hands what
 it holds to a region still listing it (`_release_region_objects`). `MapO2Reader.Entry` carries
 `owner_region`, `build_flags`, `skipped()` and `object_key()`; `mapo.Entry2` has `OwnerRegion()`,
-`Skipped()` and `Key()`. `server/cmd/mapobjcensus` compares the client's placement rule with the
-retail set over every region (`-ownerframe` is the rule since round 643).
+`Skipped()` and `Key()`. `ForceAddObjectReader` reads `force_addobject.txt`, and
+`World3D._force_rows_for` adds a region's rows to its objects job. `server/cmd/mapobjcensus`
+compares the client's placement rule with the retail set over every region:
+- `-ownerframe` is the rule since round 643;
+- `-media` adds the force rows;
+- `-key` lists one key's records.

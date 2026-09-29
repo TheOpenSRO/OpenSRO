@@ -8888,6 +8888,14 @@ static func _objects_prepare(job: Dictionary) -> void:
 	var deduped: Array = taken["placements"]
 	(job["log"] as Array).append(["out", "World3D: %s -- %d object(s) from %d record(s) of lists 1 and 2 (%d listed again by another sector, %d with the skip bit, %d owned by a neighbour and placed in its frame)" % [
 		mapo2_path, deduped.size(), taken["records"], taken["repeats"], taken["skipped"], taken["foreign"]]])
+	# The region's force_addobject rows (ForceAddObjectReader, round 643's
+	# review; READ: the tail of FUN_00a361b0 builds them when the region's
+	# `.o2` loads, so a region without one gets none).
+	var forced: Array = job.get("force_rows", [])
+	if not forced.is_empty():
+		deduped = deduped + forced
+		(job["log"] as Array).append(["out", "World3D: %s -- %d force_addobject object(s) (%s)" % [
+			mapo2_path, forced.size(), ", ".join(PackedStringArray(forced.map(func(p): return String(p["path"]).get_file())))]])
 	# Seasonal event decorations left out (round 583, SeasonalObjects): before
 	# the model loop, so their models and textures are never even read. Each
 	# piece carries its own collision (_objects_commit), so not placing it
@@ -8938,14 +8946,14 @@ static func _objects_prepare(job: Dictionary) -> void:
 	for placement in placements:
 		if resolved >= MAX_MAP_OBJECTS:
 			break
-		var entry := table.lookup(placement["type_id"])
-		if entry == null:
+		var model_path := placement_model_path(placement, table)
+		if model_path == "":
 			continue
 		resolved += 1
-		var model_key: String = entry.path.to_lower()
+		var model_key: String = model_path.to_lower()
 		if models.has(model_key) or held.has(model_key):
 			continue
-		models[model_key] = ObjectLoader.prepare_object(data_archive, entry.path, known, textures)
+		models[model_key] = ObjectLoader.prepare_object(data_archive, model_path, known, textures)
 	job["placements"] = placements
 	job["models"] = models
 	job["textures"] = textures
@@ -9014,6 +9022,15 @@ static func region_placements(region2: MapO2Reader.ParsedRegion, coords: Diction
 				placements.append({"type_id": e.type_id, "position": pos, "rotation": e.rotation, "key": key})
 	return {"placements": placements, "records": records, "repeats": repeats, "skipped": skipped, "foreign": foreign}
 
+## The model a placement names: its object-index entry's path, or -- for a
+## force_addobject row whose path the index does not list (vslot_045 then
+## appends it as a new type, READ) -- the row's own path. "" when neither.
+static func placement_model_path(placement: Dictionary, table: ObjidxReader.Table) -> String:
+	var entry := table.lookup(int(placement["type_id"])) if table != null and int(placement["type_id"]) >= 0 else null
+	if entry != null and entry.path != "":
+		return entry.path
+	return String(placement.get("path", ""))
+
 ## An objects job for mapo_path, built on the main thread (round 566): the
 ## placement the commit needs, the readers, the object index (loaded here if
 ## this is the world's first region; _terrain_job loads the same table), and
@@ -9043,6 +9060,7 @@ func _objects_job(mapo_path: String, world_offset: Vector3, node_suffix: String)
 		"data_pk2": _open_pk2_if_set(),
 		"object_index": table,
 		"seasonal_hidden": _seasonal_hidden_for(table),
+		"force_rows": _force_rows_for(coords, table),
 		"heightmaps": heightmaps,
 		"new_heightmaps": {},
 		"here": null,
@@ -9055,6 +9073,29 @@ func _objects_job(mapo_path: String, world_offset: Vector3, node_suffix: String)
 	}
 	_load_timings.lap("objects", "snapshot", sw)
 	return job
+
+## force_addobject.txt's rows (ForceAddObjectReader, round 643's review),
+## read once per world from Media.pk2 on the main thread. Empty when the
+## archive or the file is missing. Every loaded row is drawn: whether a
+## fortress state hides one is OPEN, and the flags wear no emblem (OURS) --
+## see ForceAddObjectReader's doc comment.
+var _force_add_objects: Array[ForceAddObjectReader.Row] = []
+var _force_add_objects_load_attempted := false
+
+## One region's force_addobject rows as placements (plain data, for the
+## objects job).
+func _force_rows_for(coords: Dictionary, table: ObjidxReader.Table) -> Array:
+	if coords.is_empty():
+		return []
+	if not _force_add_objects_load_attempted:
+		_force_add_objects_load_attempted = true
+		var archive := _open_media_pk2_if_set()
+		if archive != null:
+			var bytes := AssetSource.read_bytes(ForceAddObjectReader.PATH, archive)
+			_force_add_objects = ForceAddObjectReader.parse(bytes)
+			print("World3D: %d force_addobject row(s) loaded from %s" % [_force_add_objects.size(), ForceAddObjectReader.PATH])
+	var rows := ForceAddObjectReader.rows_for(_force_add_objects, int(coords["x"]), int(coords["y"]))
+	return ForceAddObjectReader.placements(rows, table)
 
 ## The seasonal event pieces to leave out of this world's regions (round
 ## 583): type id -> set name over the object index's own paths
@@ -9174,8 +9215,8 @@ func _objects_commit(job: Dictionary) -> void:
 	for placement in placements:
 		if loaded >= MAX_MAP_OBJECTS:
 			break
-		var entry := table.lookup(placement["type_id"])
-		if entry == null:
+		var model_path := placement_model_path(placement, table)
+		if model_path == "":
 			skipped_unresolved += 1
 			continue
 		# One object per key in the world, as the retail loader's refcounted
@@ -9189,12 +9230,12 @@ func _objects_commit(job: Dictionary) -> void:
 				shared_here += 1
 				continue
 
-		var model_key: String = entry.path.to_lower()
+		var model_key: String = model_path.to_lower()
 		if not models_here.has(model_key):
 			models_here[model_key] = true
 			if _object_templates.has(model_key):
 				reused_here += 1
-		var node := _object_templates.instance(entry.path, mapo_path)
+		var node := _object_templates.instance(model_path, mapo_path)
 		if node == null:
 			continue
 		# Real, absolute-within-its-region position -- see this function's
@@ -9214,7 +9255,7 @@ func _objects_commit(job: Dictionary) -> void:
 		# out what a piece of geometry in front of the camera was, was to
 		# match it against placement coordinates by hand -- see
 		# _qa_look_report, which reads these names straight back.
-		node.name = "Obj_%s_%d" % [entry.path.get_file().get_basename(), loaded]
+		node.name = "Obj_%s_%d" % [model_path.get_file().get_basename(), loaded]
 		container.add_child(node)
 		loaded += 1
 		if key >= 0:
@@ -11513,76 +11554,73 @@ func _qa_rig_report() -> void:
 ## Reports placed objects standing clear of the ground under them, worst
 ## first -- scenery hanging in mid-air.
 ##
-## Each object is measured against the terrain of the region it is
-## actually parented to, so a neighbouring region's own vertical placement
-## is judged on its own terms rather than against the region the player
-## happens to be standing in.
+## Each object is measured against the terrain of the region that OWNS it
+## (its `.o2` key's owner, MapO2Reader.Entry.object_key; round 643's review),
+## in that region's own space, so a neighbouring region's own vertical
+## placement is judged on its own terms rather than against the region the
+## player happens to be standing in. Since round 643 a region's container
+## can hold a neighbour's object (the first loaded lister places a key, and
+## a region streaming out hands its objects on), so walking the containers
+## and measuring against the holder skipped every neighbour-owned object:
+## the ray landed on the owner's ground, not the holder's. The report walks
+## _placed_objects instead, and counts the objects whose owner is not
+## loaded (no ground of their own to measure against).
 func _qa_float_report(radius: float) -> void:
 	var origin := player.global_position
 	var found: Array = []
-	for group in get_children():
-		if not String(group.name).begins_with("RealTerrain"):
+	var owner_unloaded := 0
+	var measured := 0
+	var measured_foreign := 0
+	var space := get_viewport().world_3d.direct_space_state
+	for key in _placed_objects:
+		var held: Dictionary = _placed_objects[key]
+		var node3d: Node3D = held["node"]
+		if not is_instance_valid(node3d) or not node3d.is_inside_tree():
 			continue
-		var region_group := group as Node3D
-		var graph: NavGraph = null
-		for entry in _grid.nav_graph_pairs():
-			if entry[1] == region_group:
-				graph = entry[0]
-				break
-		if graph == null:
+		if origin.distance_to(node3d.global_position) > radius:
 			continue
-		for container in region_group.get_children():
-			if not String(container.name).begins_with("RealMapObjects"):
-				continue
-			for node in container.get_children():
-				var node3d := node as Node3D
-				if origin.distance_to(node3d.global_position) > radius:
-					continue
-				var local := node3d.position
-				# Against the *rendered* ground, not the navigation mesh:
-				# the two are different surfaces, and what a player sees
-				# scenery hanging over is the rendered one.
-				var space := get_viewport().world_3d.direct_space_state
-				var at := node3d.global_position
-				# Off the heightfield's grid lines
-				# (TerrainCollision.vertical_ray, round 572).
-				var hit := TerrainCollision.vertical_ray(space, at.x, at.z, at.y + 400.0, at.y - 400.0,
-					TERRAIN_COLLISION_LAYER, [player.get_rid()])
-				if hit.is_empty():
-					continue
-				# Only the object's *own* region counts. Each region node
-				# carries its own vertical anchor, so measuring an object
-				# against a neighbour's terrain and then expressing that in
-				# this region's local space reports the difference between
-				# two anchors as if it were scenery floating -- which is
-				# what an earlier version of this report did, producing
-				# gaps of hundreds of units that clustered by region and
-				# meant nothing.
-				# Only the object's own region's *terrain* counts, and
-				# terrain is specifically the body under this region's
-				# SubPatch. Two ways this went wrong before: measuring
-				# against a neighbouring region reports the difference
-				# between two vertical anchors as if it were floating
-				# scenery, and placed objects carry collision on the
-				# default layer -- which TERRAIN_COLLISION_LAYER includes --
-				# so a ray dropped near a tree lands on its canopy 350
-				# units up and calls everything beneath it buried.
-				var hit_collider = hit["collider"]
-				if hit_collider == null:
-					continue
-				var collider_parent := (hit_collider as Node).get_parent()
-				if collider_parent == null or String(collider_parent.name) != "SubPatch":
-					continue
-				if not region_group.is_ancestor_of(hit_collider as Node):
-					continue
-				var ground := region_group.to_local(hit["position"] as Vector3).y
-				var gap := local.y - ground
-				if absf(gap) < FLOATING_TOLERANCE:
-					continue
-				found.append([gap, String(node.name), String(region_group.name), local, ground])
+		var owner_region := (int(key) >> 16) & 0xFFFF
+		var region_group := get_node_or_null("RealTerrain_%d_%d" % [owner_region >> 8, owner_region & 0xFF]) as Node3D
+		if region_group == null:
+			owner_unloaded += 1
+			continue
+		var local := region_group.to_local(node3d.global_position)
+		# Against the *rendered* ground, not the navigation mesh: the two
+		# are different surfaces, and what a player sees scenery hanging
+		# over is the rendered one. Off the heightfield's grid lines
+		# (TerrainCollision.vertical_ray, round 572).
+		var at := node3d.global_position
+		var hit := TerrainCollision.vertical_ray(space, at.x, at.z, at.y + 400.0, at.y - 400.0,
+			TERRAIN_COLLISION_LAYER, [player.get_rid()])
+		if hit.is_empty():
+			continue
+		# Only the owner region's *terrain* counts, and terrain is
+		# specifically the body under that region's SubPatch. Two ways this
+		# went wrong before: measuring against a neighbouring region reports
+		# the difference between two vertical anchors as if it were floating
+		# scenery, and placed objects carry collision on the default layer
+		# -- which TERRAIN_COLLISION_LAYER includes -- so a ray dropped near
+		# a tree lands on its canopy 350 units up and calls everything
+		# beneath it buried.
+		var hit_collider = hit["collider"]
+		if hit_collider == null:
+			continue
+		var collider_parent := (hit_collider as Node).get_parent()
+		if collider_parent == null or String(collider_parent.name) != "SubPatch":
+			continue
+		if not region_group.is_ancestor_of(hit_collider as Node):
+			continue
+		var ground := region_group.to_local(hit["position"] as Vector3).y
+		measured += 1
+		if String(held["holder"]) != String(region_group.name).trim_prefix("RealTerrain"):
+			measured_foreign += 1
+		var gap := local.y - ground
+		if absf(gap) < FLOATING_TOLERANCE:
+			continue
+		found.append([gap, String(node3d.name), String(region_group.name), local, ground])
 	found.sort_custom(func(a, b): return absf(a[0]) > absf(b[0]))
-	print("QA FLOAT: %d placed object(s) within %.0f sit more than %.0f off their own region's ground" % [
-		found.size(), radius, FLOATING_TOLERANCE])
+	print("QA FLOAT: %d placed object(s) within %.0f sit more than %.0f off their own region's ground (%d measured, %d of them held by a region other than their owner; %d skipped: owner region not loaded)" % [
+		found.size(), radius, FLOATING_TOLERANCE, measured, measured_foreign, owner_unloaded])
 	for i in range(mini(found.size(), QA_FLOAT_MAX_ROWS)):
 		var where: Vector3 = found[i][3]
 		print("QA FLOAT   %+7.1f  %-30s %-20s local (%.0f, %.0f) placed y %.1f, ground %.1f" % [
