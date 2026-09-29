@@ -157,7 +157,9 @@ the client's own code gives). The user's retail screenshot is mode 5 (its down a
     list's rect above the window (16,-152,141,153) counts even while the list is hidden.
 
   If the frame is not wanted, it is set to +0x48c (`0x7a9bd0(+0x48c)`). If it is wanted, it is shown
-  unless the lock already shows it. In short, shown = locked or wanted.
+  unless the lock already shows it. In short, shown = locked or wanted. Retail calls `0x7a9bd0(1)` on every frame the
+  frame is wanted and unlocked (`0x77b407`), not only on a change; its show is idempotent
+  (`0x652b70` returns when the flag already matches), so srrevamp's call-on-change is equivalent.
 - **No delay, no fade.** The test runs every frame, and `0x7a9bd0` calls each control's show
   (vslot 0x5c). CIFWnd's show `0x652b70` flips the flag and redraws, with no timer.
   CIFChatViewer's own slot 23 (`0x7a9b60`) shows its ID-12 button along with the whole window.
@@ -180,6 +182,8 @@ the client's own code gives). The user's retail screenshot is mode 5 (its down a
   A mouse event also runs the test at once, at its own position (`HudChat.FrameWatch`; OURS: retail
   tests only once a frame), so a click that comes with the move into the window finds the line
   shown.
+  The window keeps clicks on its inclusive right and bottom edges (`_has_point`, as `0xb8f3d0`;
+  Godot's own test is half-open). `SRREVAMP_QA_FRAME_LOG` logs each frame change with the rect.
 - **MEASURED on the box**, by real X input through Login -> CharacterSelect (round 641):
   - the frame hid with the mouse on the world and showed on hover over the chat;
   - Enter showed it with the frame hidden, and a sent line kept it;

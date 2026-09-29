@@ -235,9 +235,14 @@ func frame_wanted(point: Vector2) -> bool:
 	var board := _root.get_node_or_null(OPTBOARD) as Control if _root != null else null
 	return board != null and board.visible and HudChat._inside(board.get_global_rect(), point)
 
+## The window keeps a click on its inclusive edges, as 0xb8f3d0 does
+## (HudChat._has_point).
+func _has_point(point: Vector2) -> bool:
+	return HudChat._inside(Rect2(Vector2.ZERO, size), point)
+
 ## 0x7b84e0(show).
 func set_frame_shown(show: bool) -> void:
-	if show != frame_shown and is_inside_tree():
+	if show != frame_shown and is_inside_tree() and HudChat.frame_log():
 		print("SYSTEM FRAME %s rect=%s" % ["shown" if show else "hidden", get_global_rect()])
 	frame_shown = show
 	if _root == null:

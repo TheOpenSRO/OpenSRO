@@ -7198,6 +7198,16 @@ rules; a pushed mouse move. The negative, against dev 8658370 with the new test 
 - the Game options checkbox, which srrevamp does not offer, by the user's choice;
 - the whisper list (ID 51) and its button, not built.
 
+**Review follow-up.**
+- **The edge pixel.** `0xb8f3d0` is inclusive, but Godot's hit test is half-open, so a click on
+  x = end.x reached the world. Both windows now override `_has_point` with the inclusive test.
+- **Log noise.** `CHAT FRAME` / `SYSTEM FRAME` print only with `SRREVAMP_QA_FRAME_LOG` set.
+  `CHAT LOCK` stays.
+- **The update's cadence.** Retail calls `0x7a9bd0(1)` on every frame while the frame is wanted and
+  unlocked (`0x77b407`). Its show returns early when nothing changes (`0x652b70`), so calling only
+  on a change is equivalent. Noted in chat.md.
+- The test now has 42 checks.
+
 **Checks.**
 - Client: `check` loads 402 scripts, and `tests` runs 162 suites with 0 failing.
 - Go: build, vet and `go test -count=1 -p 1 ./...` pass (60 packages ok; no server change).

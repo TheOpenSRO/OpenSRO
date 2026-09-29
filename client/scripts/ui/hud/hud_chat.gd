@@ -412,9 +412,21 @@ func frame_wanted(point: Vector2) -> bool:
 static func _inside(r: Rect2, p: Vector2) -> bool:
 	return p.x >= r.position.x and p.x <= r.end.x and p.y >= r.position.y and p.y <= r.end.y
 
+## The window keeps a click on its inclusive right and bottom edges too, as
+## 0xb8f3d0 does. Godot's own hit test is half-open (x < end.x), which let a
+## click on x = end.x through to the world.
+func _has_point(point: Vector2) -> bool:
+	return _inside(Rect2(Vector2.ZERO, size), point)
+
+## SRREVAMP_QA_FRAME_LOG set: each frame change is logged with the window's
+## rect (the round-641 e2e's measurement). Off by default: hovering would
+## otherwise write a line on every pass over a window.
+static func frame_log() -> bool:
+	return OS.get_environment("SRREVAMP_QA_FRAME_LOG") != ""
+
 ## 0x7a9bd0(show).
 func set_frame_shown(show: bool) -> void:
-	if show != frame_shown and is_inside_tree():
+	if show != frame_shown and is_inside_tree() and frame_log():
 		print("CHAT FRAME %s rect=%s" % ["shown" if show else "hidden", get_global_rect()])
 	frame_shown = show
 	if _root != null and not show:

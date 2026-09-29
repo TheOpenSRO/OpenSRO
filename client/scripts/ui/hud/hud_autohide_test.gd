@@ -174,6 +174,9 @@ func _chat_checks(chat_script: Script) -> void:
 	_check(bool(chat.call("frame_wanted", r.end)) and bool(chat.call("frame_wanted", r.position)),
 		"0xb8f3d0 is inclusive: both corners count")
 	_check(not bool(chat.call("frame_wanted", r.end + Vector2(1, 0))), "one pixel right of the rect does not")
+	_check(chat.has_method("_has_point") and bool(chat.call("_has_point", chat.size))
+		and not bool(chat.call("_has_point", chat.size + Vector2(1, 0))),
+		"the window keeps a click on its inclusive right/bottom edge (Godot's own test is half-open)")
 	var whisper_pt := r.position + Vector2(20, -100)
 	_check(bool(chat.call("frame_wanted", whisper_pt)),
 		"the hidden whisper list's rect (16,-152,141,153) above the window counts (0x7a9d3f)")
@@ -273,6 +276,7 @@ func _syslog_checks(sys: Script) -> void:
 		"mouse over the window: the frame and the scroll bar (mode 2) show")
 	_check(bool(w.call("frame_wanted", r.end)) and not bool(w.call("frame_wanted", r.end + Vector2(0, 1))),
 		"the rect test is inclusive, and ends there")
+	_check(w.has_method("_has_point") and bool(w.call("_has_point", w.size)), "the system window keeps a click on its inclusive edge")
 	# A mode change while hidden leaves the scroll bar hidden (0x7b8885).
 	w.call("update_frame", outside)
 	w.call("set_mode", 3)
