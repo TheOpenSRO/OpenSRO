@@ -1085,7 +1085,10 @@ func main() {
 	bagDefault := inventory.ClampBagSlots(*inventorySize)
 	bagSizes, _ := chars.(character.InventorySizeStore)
 	if sized, ok := inv.(interface{ SetCapacityFunc(inventory.CapacityFunc) }); ok {
-		sized.SetCapacityFunc(inventory.BagCapacity(bagSizes, bagDefault))
+		// Never below a held slot (inventory.KeepHeld, round 633's review): a
+		// lower -inventory-size must not strand what a character carries.
+		held, _ := inv.(inventory.HighestSlotter)
+		sized.SetCapacityFunc(inventory.KeepHeld(held, inventory.BagCapacity(bagSizes, bagDefault), logger))
 	}
 	logger.Info("inventory size", "defaultSlots", bagDefault, "pages", (bagDefault+inventory.BagPageSlots-1)/inventory.BagPageSlots,
 		"perCharacter", bagSizes != nil)

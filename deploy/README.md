@@ -598,5 +598,10 @@ slots of the last page past the size drawn locked, as the original draws them.
   the engine allows: only while the engine's array (bag + 13 equipment) stays within 77, so from a
   bag of 32 or fewer. With the 96 default it is refused and kept.
 
+Lowering the size never strands what a character already carries: the server keeps a character's
+bag at or above its highest held slot + 1, logs that once
+(`bag size below a held slot: kept at the highest held slot + 1`), and applies the lower size once
+those slots are emptied.
+
 The retail starting size is not known: it is a `_CHAR.InventorySize` database default, and neither
 the client nor the server executable carries it.

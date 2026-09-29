@@ -3528,6 +3528,11 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# re-renders when it changes -- a zone load is world entry or a teleport,
 	# when retail's FUN_00786f30 -> FUN_006abc50 dirties it.
 	_portrait_zone_light = [diffuse_color, ambient_color]
+	# The equipment window's preview draws with the same world light (round
+	# 633's review: its own D3DLIGHT9 goes to fixed-function state no draw
+	# reads -- PaperDoll's header).
+	if _paper_doll != null:
+		_paper_doll.set_zone_light(diffuse_color, ambient_color)
 	if _hud_player_info != null:
 		_hud_player_info.set_portrait_zone_light(diffuse_color, ambient_color)
 		var pp := _hud_player_info.portrait()
@@ -7158,11 +7163,17 @@ func _refresh_paper_doll(equipped: Dictionary, gender: String) -> void:
 		_paper_doll = PaperDoll.new()
 		_paper_doll.name = "PaperDoll"
 		add_child(_paper_doll)
-		# The client's own camera and light for this view (round 633), and the
-		# yaw the pane's rotate arrows and circle set (HudPanels).
+		# The client's own camera for this view and the zone's light (round
+		# 633 and its review), the yaw the pane's rotate arrows and circle set,
+		# and rendering only while the pane shows (HudPanels).
 		_paper_doll.use_equipment_view()
+		if _portrait_zone_light.size() == 2:
+			_paper_doll.set_zone_light(_portrait_zone_light[0], _portrait_zone_light[1])
 		_paper_doll.set_yaw(_hud_panels.paper_doll_yaw)
 		_hud_panels.paper_doll_yaw_changed.connect(_paper_doll.set_yaw)
+		_paper_doll.set_active(_hud_panels.paper_doll_shown())
+		_hud_panels.paper_doll_shown_changed.connect(_paper_doll.set_active)
+		_hud_panels.paper_doll_measure_requested.connect(_log_paper_doll_pose)
 	var doll_skeleton := _build_assembled_character(equipped, gender)
 	if doll_skeleton == null:
 		return
@@ -7195,6 +7206,19 @@ func _refresh_player_portrait(body: Skeleton3D, equipped: Dictionary, gender: St
 	print("World3D: portrait dressed (%s, pose %s, %d us, %d material(s) left as they were)" % [
 		gender, _body_animation_path(gender, PlayerPortrait.ANI_POSE, _weapon_group_for(equipped)),
 		p.last_build_usec if p != null else -1, p.unmapped_materials if p != null else -1])
+
+## The doll's hands and head in its 176x318 picture, and where the weapon
+## hangs: the log line a render is checked against (round 633's review). The
+## character's right hand drawn on the screen's LEFT is the client's view of
+## a model facing the camera.
+func _log_paper_doll_pose() -> void:
+	if _paper_doll == null:
+		return
+	var r := _paper_doll.bone_on_screen("Bip01 R Hand")
+	var l := _paper_doll.bone_on_screen("Bip01 L Hand")
+	var h := _paper_doll.bone_on_screen("Bip01 Head")
+	print("World3D: doll pose: R hand %s, L hand %s, head %s, face turned %+.1f px (right +), yaw %.3f (picture 176x318)" % [
+		r.round(), l.round(), h.round(), _paper_doll.facing_screen_dx(), _hud_panels.paper_doll_yaw])
 
 ## Switches another player's looping animation between stand and run as
 ## their body starts and stops moving. The entry keeps its phase so a
@@ -7436,6 +7460,7 @@ func _on_item_drop_requested(at: Vector2, item_id: int, inventory_slot: int, ico
 	_quickslot_items[slot] = {"item": item_id, "slot": inventory_slot}
 	_hud_underbar.set_slot_item(slot, icon)
 	_log_system("Put the item on quickslot %s." % HudUnderbar.slot_label(slot))
+	print("World3D: quickslot %d <- item %d from bag slot %d" % [slot, item_id, inventory_slot])
 
 ## Keeps the bar's item slots pointing at the right bag slots, and clears any
 ## whose item is gone (spent, sold, moved). Called whenever the bag is redrawn.
@@ -16409,8 +16434,14 @@ func _on_party_result(result: PartyNet.Result) -> void:
 	if result.party_id == 0:
 		party_status_label.text = "Not in a party."
 		party_list.clear()
+		if _hud_panels != null:
+			_hud_panels.set_party_marks(false)
 		return
 	party_status_label.text = "Party #%d (%d member(s))." % [result.party_id, result.members.size()]
+	# The pane's leader marks (IFParty::FUN_006d6640). Every playable body
+	# here is Chinese (race 0); the server does not send the leader's race.
+	if _hud_panels != null:
+		_hud_panels.set_party_marks(true, 0)
 	_refresh_party_list(result)
 
 func _on_party_join_pressed() -> void:
@@ -16424,6 +16455,8 @@ func _on_party_leave_result(ok: bool, reason: String) -> void:
 	if ok:
 		party_status_label.text = "Left the party."
 		party_list.clear()
+		if _hud_panels != null:
+			_hud_panels.set_party_marks(false)
 	else:
 		party_status_label.text = "Leave failed: %s" % reason
 

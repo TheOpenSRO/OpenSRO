@@ -7365,6 +7365,115 @@ Results on feat/portrait:
 - `remote_godot.sh tests`: 154 suites, 0 failing.
 
 The server is untouched.
+## Six-hundred-and-thirty-third round, review follow-up: the preview is lit by the zone and turns the right way with the weapon in the right hand, a drop after a page turn carries its item, tabs act on the press, and a lower bag size strands nothing
+
+The review confirmed the frame fix, the pages and growth caps, the gold colours (all 11 boundaries
+rendered), equipment slots 8–12, the camera rect and field of view, the arrow timing, and
+BagCapacity on every write path. It found the following. `feat/portrait` (e2677e0) was merged
+first. Labels used below: READ, MEASURED, INFERRED, OURS.
+
+**1. The light was wrong: it is the zone's (READ).**
+- `0x6ad9e8` is the device's fixed-function SetLight, and nothing draws with it.
+- The model is drawn by CObjRendererVS (`vslot_038` `0xbf5830`). Its light constants
+  (`0x1112e18`/`0x1112e28`) are written only by `vslot_025` (`0xbeecc0`), which only the world draw
+  calls. This is round 635's portrait finding.
+- PaperDoll now reuses PlayerPortrait's materials: the zone's channel 2 clamped × 0.6 as diffuse,
+  channel 3 as ambient, to-light (0.707, 0.707, 0), object colour 0.6, MODULATE2X.
+- World3D hands it the zone light with the portrait's.
+- Round 633's 0.7/0.3 Godot light, its 0.89 calibration and `measure_doll_light.gd` are gone.
+- **MEASURED** in Jangan, the median of the shirt in the preview: (101,100,96) before, (149,147,138)
+  now.
+
+**2. The direction and the hand (READ).**
+- The yaw setter `CCompChar::FUN_00c26e70` has forward (sin, 0, -cos). So the right arrow
+  (`0x6ab960`, yaw up) turns the face to the screen's right; ours turned it left.
+- The doll also lacked the z → -z node, so it was a mirror image with the sword in the wrong hand.
+- The fix is the portrait's approach: a (1,1,-1) node, the camera at (0,9,40), and rotation.y = -yaw
+  under it.
+- **MEASURED** (`World3D: doll pose`, real input):
+  - at yaw 0, R hand x 55 and L hand x 133 of 176: the character's right hand, which holds the
+    sword, is on the screen's left, as a model facing the viewer shows it;
+  - with the right arrow held, a point in front of the face runs +1.2 → +23.1 px to the right as
+    the yaw goes 0.024 → 0.510.
+
+**3. Cross-page lookups.**
+- `_bag_item_id_at_slot` and the icon now read the server's bag list (`_bag_slots`), not the shown
+  page's cells.
+- A drop carries the item the drag armed with.
+- **MEASURED:** dragging bag slot 1 over the Page 2 tab and onto quickslot 1 logs
+  `World3D: quickslot 1 <- item 11 from bag slot 1`. Before, the item id was -1, and the move and use
+  sounds were lost for an off-page slot.
+
+**4. Retail's cross-page mechanism: READ, and it is not one.**
+- `0x6b4610` (message 0x8074) is a confirm box's answer after a drag between windows. It reads
+  "DraggedTab", "DraggedPage" and "DraggedItemIndex" back to address a store slot
+  (`index + (page + tab*8)*0x1e`).
+- `0x6b62d0` (message 0x8076) is the split box's OK, moving into the first empty slot (`0x6b6280`).
+- Neither turns a page, and the tab answers only a press and hover. So ours stays OURS, as labelled.
+
+**5. Tabs act on the press.** `0x64cb80` answers 0x201, so the tabs use `ACTION_MODE_BUTTON_PRESS`.
+**MEASURED:** with the button held down and not released, the log reads `bag page 2 of 3` (shot
+`02_tab_pressed_not_released`).
+
+**6. The preview renders only while shown.**
+- `PaperDoll.set_active`, driven by the doll's visibility (`paper_doll_shown_changed`): UPDATE_ALWAYS
+  while the pane shows, UPDATE_DISABLED otherwise.
+- Its idle pose still steps while it is hidden (OPEN).
+
+**7. A lower size strands nothing (OURS).** I chose to keep the size up, rather than letting
+operations past capacity through, because it leaves every store bound untouched:
+- `inventory.KeepHeld` raises the answered size to the highest held slot + 1, logged once per
+  character and size.
+- Once those slots are emptied, the configured size applies again.
+- `/invsize` now checks the requested size itself, since the store's answer is kept up.
+
+**8. Docs.** `docs/protocol/inventory_window.md` now has:
+- that `0x6b45b0` matches the tab by handle (`+0x2c`) and acts on the press;
+- the frame table's reason: GDR_COMMUNITY, GDR_STORE and GDR_ALCHEMYBOX carry Style 64 but are not
+  registry-built here;
+- the Light and the Direction sections, rewritten;
+- the two drag handlers.
+
+**9. The leader marks.**
+- **Party (READ, built):** `IFParty::FUN_006d6640` shows GDR_PTY_PARTY_LEADER (ID 14, `+0x3a8`) and
+  its race mark (ID 15, `+0x3ac`) while the party manager's in-party byte (`0x987070`) is set, and
+  hides both otherwise. The race art is `com_kindred_china16`/`europe16` by race (`0x98caa0`).
+  `HudPanels.set_party_marks` does the same, from World3D's party results. China is always used:
+  the server sends no race.
+- **Academy (OPEN):** the rank mark (`+0x390`) is textured from the rank byte and shown at
+  `0x6e9de3..0x6e9e6f`. This client has no academy data, so it is not built.
+
+### Tests and negatives
+
+`inventory_pages_test.gd` (80 checks) gained:
+- the mirror, eye and turn direction;
+- the zone light on the doll's materials;
+- update only while active;
+- tab press mode;
+- cross-page ids;
+- party marks.
+
+Against c740205 (round 633 merged with 635):
+
+    FAIL HudPanels shows the party leader marks (set_party_marks)
+    FAIL a tab acts on the press (0x64cb80 answers 0x201)
+    FAIL an item's id resolves on any page (slot 0 -> 1, slot 37 -> 2, empty slot 5 -> -1)
+    FAIL PaperDoll has the equipment view lit by the zone (use_equipment_view, set_zone_light)
+
+Go: `TestLowerSizeKeepsHeldItemsReachable` (session). Its negative against c740205, wired as round
+633's main.go was:
+
+    strandneg_test.go:45: the list says capacity 32 with an item in slot 60; want 61
+    strandneg_test.go:48: moving the item out of slot 60: refused "invalid slot"
+
+Runs:
+- `remote_godot.sh check`: 390 scripts, ALL LOAD.
+- `tests`: 155 suites, 0 failing.
+- `go vet ./...`: clean.
+- `go test -count=1 -p 1 ./...`: 60 packages ok.
+
+Shots are in `inv_shots/review/` and `sheet_review.png`.
+
 ## Six-hundred-and-thirty-third round: the inventory has its frame again, three pages of 32 slots, purse colours, the real equipment slot art and avatar view, and a bright preview that turns with the arrows
 
 The user's report on v0.1.459 had five parts, and the coordinator added a sixth:

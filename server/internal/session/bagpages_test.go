@@ -145,3 +145,56 @@ func TestBagCapacityDefaultsAndClamps(t *testing.T) {
 		t.Errorf("an unknown character with a 500 default: %d, want %d", got, inventory.MaxBagSlots)
 	}
 }
+
+// Round 633's review: a size set below what a character already holds must
+// not strand the items. With the default lowered to 32 while an item sits in
+// slot 60, the bag list still reports 61 and the item can be moved back onto
+// page 1; once slot 60 is empty the size falls to the configured 32. The
+// wiring is cmd/server's: KeepHeld(store, BagCapacity(...)).
+func TestLowerSizeKeepsHeldItemsReachable(t *testing.T) {
+	ctx := context.Background()
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "hunter2")
+	chars := character.NewMemStore()
+	c, _ := chars.Create(ctx, 1, "Aria")
+	inv := inventory.NewMemStore(nil)
+	inv.SetCapacityFunc(inventory.KeepHeld(inv, inventory.BagCapacity(chars, 96), nil))
+	if err := inv.AddItem(ctx, c.ID, 100, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := inv.MoveItem(ctx, c.ID, 0, 60); err != nil {
+		t.Fatal(err)
+	}
+	// The operator lowers the default: the character has no size of its own.
+	inv.SetCapacityFunc(inventory.KeepHeld(inv, inventory.BagCapacity(chars, 32), nil))
+
+	handle := gateway.Chain(LoginHandler(accounts), InventoryHandler(chars, inv, nil), InventoryMoveHandler(chars, inv, nil))
+	addr, cleanup := startTestServer(t, handle)
+	defer cleanup()
+	conn := dialTestServer(t, addr)
+	defer conn.Close()
+	r := bufio.NewReader(conn)
+	send := func(op uint16, data []byte) *StorageListResult {
+		t.Helper()
+		proto.Write(conn, &proto.Packet{Opcode: op, Data: data}, nil, nil)
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		p, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, _ := DecodeStorageListResult(p.Data)
+		return res
+	}
+	send(OpLogin, (&LoginRequest{Username: "alice", Password: "hunter2"}).Encode())
+	got := send(OpInventoryList, (&CharacterNameRequest{Name: "Aria"}).Encode())
+	if got.Capacity != 61 || len(got.Slots) != 1 || got.Slots[0].Slot != 60 {
+		t.Fatalf("with the default lowered to 32 the list says capacity %d, slots %+v; want 61 and the item in 60", got.Capacity, got.Slots)
+	}
+	moved := send(OpInventoryMove, (&InventoryMoveRequest{CharacterName: "Aria", From: 60, To: 5}).Encode())
+	if moved.Error != "" || moved.Slots[0].Slot != 5 {
+		t.Fatalf("moving the stranded item back to page 1: %+v", moved)
+	}
+	if moved.Capacity != 32 {
+		t.Errorf("once slot 60 is empty the size is %d, want the configured 32", moved.Capacity)
+	}
+}

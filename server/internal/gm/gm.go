@@ -303,21 +303,20 @@ func (d *Deps) invsize(ctx context.Context, actor Actor, args []string) Result {
 	if err != nil {
 		return refuse("could not read the bag: " + err.Error())
 	}
-	stored, err := sizes.InventorySize(ctx, actor.CharacterID)
-	if err != nil {
-		return refuse("could not read the size: " + err.Error())
+	// The check is against the size asked for, not the store's answer after
+	// the change: the server keeps a bag at or above its highest held slot
+	// (inventory.KeepHeld), which would hide the shrink here.
+	if want > 0 {
+		for _, sl := range slots {
+			if sl.Index >= want {
+				return refuse(fmt.Sprintf("bag slot %d holds an item; empty it before making the bag smaller than %d", sl.Index, sl.Index+1))
+			}
+		}
 	}
 	if err := sizes.SetInventorySize(ctx, actor.CharacterID, want); err != nil {
 		return refuse("could not store the size: " + err.Error())
 	}
 	after := inventory.CapacityOf(ctx, d.Inv, actor.CharacterID)
-	for _, sl := range slots {
-		if sl.Index >= after {
-			// Put the stored size back: the item would be out of reach.
-			_ = sizes.SetInventorySize(ctx, actor.CharacterID, stored)
-			return refuse(fmt.Sprintf("bag slot %d holds an item; empty it before making the bag smaller than %d", sl.Index, sl.Index+1))
-		}
-	}
 	return Result{Text: fmt.Sprintf("inventory size now %d slots (%d pages)", after, pagesOf(after)), RefreshInventory: true}
 }
 

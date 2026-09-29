@@ -1,6 +1,10 @@
 package inventory
 
-import "context"
+import (
+	"context"
+	"log/slog"
+	"sync"
+)
 
 // The bag's pages, READ from the client (round 633). IFInventory 0x6b6620
 // builds the bag from its size -- the character's InventorySize less the 13
@@ -94,4 +98,66 @@ func (m *MemStore) CapacityFor(ctx context.Context, owner int64) int {
 // CapacityFor implements OwnerCapacity.
 func (s *SQLStore) CapacityFor(ctx context.Context, owner int64) int {
 	return s.capacityFor(ctx, owner)
+}
+
+// HighestSlotter answers the highest occupied slot index an owner has in a
+// container, -1 when it holds nothing.
+type HighestSlotter interface {
+	HighestSlot(ctx context.Context, owner int64) (int, error)
+}
+
+// KeepHeld wraps a bag's CapacityFunc so the size it answers is never below
+// the owner's highest occupied slot + 1 (round 633's review). Without it a
+// lower -inventory-size, or a stored size below what a character already
+// holds, would strand the items past it: every store operation is bounded by
+// the capacity, so they could be neither listed, moved nor removed. The
+// original has no such case -- its size only grows (ExpandInventory) -- so
+// this is OURS, the safe reading of a size an operator set: an item already
+// held stays reachable, and the size falls to the configured one once the
+// slots past it are emptied. Each raise is logged once per owner and size.
+func KeepHeld(store HighestSlotter, f CapacityFunc, logger *slog.Logger) CapacityFunc {
+	var logged sync.Map
+	return func(ctx context.Context, owner int64) int {
+		n := f(ctx, owner)
+		if store == nil {
+			return n
+		}
+		hi, err := store.HighestSlot(ctx, owner)
+		if err != nil || hi < n {
+			return n
+		}
+		raised := hi + 1
+		type key struct {
+			owner        int64
+			size, raised int
+		}
+		if _, seen := logged.LoadOrStore(key{owner, n, raised}, true); !seen && logger != nil {
+			logger.Warn("bag size below a held slot: kept at the highest held slot + 1 so the items stay reachable",
+				"character", owner, "size", n, "highestSlot", hi, "kept", raised)
+		}
+		return raised
+	}
+}
+
+// HighestSlot implements HighestSlotter.
+func (m *MemStore) HighestSlot(_ context.Context, owner int64) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	hi := -1
+	for idx := range m.slots[owner] {
+		if idx > hi {
+			hi = idx
+		}
+	}
+	return hi, nil
+}
+
+// HighestSlot implements HighestSlotter.
+func (s *SQLStore) HighestSlot(ctx context.Context, owner int64) (int, error) {
+	var hi int
+	err := s.db.QueryRowContext(ctx, s.q(`SELECT COALESCE(MAX(slot), -1) FROM %s WHERE character_id = $1`), owner).Scan(&hi)
+	if err != nil {
+		return -1, err
+	}
+	return hi, nil
 }

@@ -113,7 +113,7 @@ func _builder() -> UiBuilder:
 	var textures: Dictionary = builder.get("_texture_cache")
 	for piece in MFRAME_PIECES:
 		textures[(MFRAME + piece + ".ddj").to_lower()] = _texture(40, 48)
-	for path in TAB_ART:
+	for path in TAB_ART + ["interface\\ifcommon\\com_kindred_china16.ddj"]:
 		textures[path.to_lower()] = _texture(60, 24)
 	return builder
 
@@ -130,6 +130,7 @@ func _initialize() -> void:
 	root.add_child(panels)
 	await process_frame
 	await _registry_checks(panels)
+	_party_mark_checks(panels)
 	await _page_checks(panels, builder)
 	_gold_checks(panels)
 	_backdrop_checks(panels)
@@ -164,6 +165,18 @@ func _registry_checks(panels: Control) -> void:
 		storage.hide()
 	panels.call("open", "inventory")
 	await process_frame
+
+func _party_mark_checks(panels: Control) -> void:
+	if not panels.has_method("set_party_marks"):
+		_check(false, "HudPanels shows the party leader marks (set_party_marks)")
+		return
+	var window: Control = panels.call("open", "party")
+	var mark := window.call("node", "GDR_PTY_PARTY_LEADER") as CanvasItem
+	panels.call("set_party_marks", true, 0)
+	_check(mark != null and mark.is_visible_in_tree(), "in a party the leader mark shows (IFParty 0x6d6640)")
+	panels.call("set_party_marks", false)
+	_check(mark != null and not mark.visible, "out of a party it hides again")
+	panels.call("open", "inventory")
 
 func _page_checks(panels: Control, builder: UiBuilder) -> void:
 	if not panels.has_method("select_bag_page"):
@@ -222,6 +235,12 @@ func _page_checks(panels: Control, builder: UiBuilder) -> void:
 	var c8 := (grid.get_child(8) as Control).get_global_rect().get_center()
 	_check(int(panels.call("_bag_slot_at", c5)) == 37 and int(panels.call("_bag_slot_at", c8)) == -1,
 		"a drop lands on the shown page's slot, and not on a locked one")
+	_check(t0.action_mode == BaseButton.ACTION_MODE_BUTTON_PRESS, "a tab acts on the press (0x64cb80 answers 0x201)")
+	# With page 2 shown, slot 0 (page 1) still resolves: the drop onto the
+	# quickslot and the sounds read the bag list, not the cells.
+	_check(int(panels.call("_bag_item_id_at_slot", 0)) == 1 and int(panels.call("_bag_item_id_at_slot", 37)) == 2
+		and int(panels.call("_bag_item_id_at_slot", 5)) == -1,
+		"an item's id resolves on any page (slot 0 -> 1, slot 37 -> 2, empty slot 5 -> -1)")
 	panels.call("select_bag_page", 2)
 	_check(int(panels.call("bag_page")) == 1, "a page the size does not have cannot be selected")
 	net.set("last_inventory_capacity", 0)
@@ -322,8 +341,8 @@ func _rotation_checks(panels: Control) -> void:
 func _doll_checks() -> void:
 	var doll_script := load(DOLL_PATH) as GDScript
 	var doll: SubViewport = doll_script.new()
-	if not doll.has_method("use_equipment_view"):
-		_check(false, "PaperDoll has the equipment view")
+	if not doll.has_method("use_equipment_view") or not doll.has_method("set_zone_light"):
+		_check(false, "PaperDoll has the equipment view lit by the zone (use_equipment_view, set_zone_light)")
 		doll.free()
 		return
 	root.add_child(doll)
@@ -332,10 +351,43 @@ func _doll_checks() -> void:
 	_check(doll.size == Vector2i(176, 318), "the doll renders at the pane's 176x318")
 	_check(cam.projection == Camera3D.PROJECTION_PERSPECTIVE and is_equal_approx(cam.fov, 30.0)
 		and cam.keep_aspect == Camera3D.KEEP_HEIGHT, "a perspective camera with a 30-degree vertical field")
-	_check(cam.position.is_equal_approx(Vector3(0, 9, -40)) and (-cam.transform.basis.z).is_equal_approx(Vector3(0, 0, 1)),
-		"the camera stands at (0, 9, -40) looking down +Z at (0, 9, 0)")
+	# The client's eye (0, 9, -40) in its left-handed space is (0, 9, 40)
+	# under the (1, 1, -1) node, looking back at (0, 9, 0).
+	_check(cam.position.is_equal_approx(Vector3(0, 9, 40)) and (-cam.transform.basis.z).is_equal_approx(Vector3(0, 0, -1)),
+		"the camera stands at the mirrored eye (0, 9, 40) looking at (0, 9, 0) (got %s)" % cam.position)
+	var mirror := doll.get("_mirror") as Node3D
+	var pivot := doll.get("_pivot") as Node3D
+	_check(mirror != null and mirror.scale == Vector3(1, 1, -1) and pivot.get_parent() == mirror,
+		"the model hangs under a (1, 1, -1) node, the client's handedness")
 	doll.call("set_yaw", 0.5)
-	_check(is_equal_approx((doll.get("_pivot") as Node3D).rotation.y, -0.5), "a yaw of 0.5 turns the model by -0.5 in Godot")
+	_check(is_equal_approx(pivot.rotation.y, -0.5), "a yaw of 0.5 is a Godot rotation of -0.5 under the mirror")
+	# The setter's forward (sin, 0, -cos) at yaw 0.5, through the pivot and the
+	# mirror, seen from the camera: the face turns to the screen's right.
+	var forward_d3d := Vector3(0, 0, -1)
+	var fwd := (mirror.global_transform.basis * pivot.transform.basis * forward_d3d)
+	var right := cam.global_transform.basis.x
+	_check(fwd.dot(right) > 0.4, "a growing yaw (the right arrow) turns the face toward screen-right (dot %.3f)" % fwd.dot(right))
+	doll.call("set_zone_light", Color(0.5, 0.25, 1.4), Color(0.4, 0.4, 0.4))
+	var light: Dictionary = doll.call("zone_light")
+	_check((light.get("diffuse", Vector3.ZERO) as Vector3).is_equal_approx(Vector3(0.3, 0.15, 0.6))
+		and (light.get("ambient", Vector3.ZERO) as Vector3).is_equal_approx(Vector3(0.4, 0.4, 0.4)),
+		"the doll's light is the zone's: channel 2 clamped x 0.6, channel 3 (got %s)" % [light])
+	var skel := Skeleton3D.new()
+	var mi := MeshInstance3D.new()
+	mi.mesh = BoxMesh.new()
+	var sm := StandardMaterial3D.new()
+	sm.albedo_color = Color(0.588, 0.588, 0.588)
+	mi.material_override = sm
+	skel.add_child(mi)
+	doll.call("set_character", skel)
+	var mat := mi.material_override as ShaderMaterial
+	_check(mat != null and (mat.get_shader_parameter("light_diffuse") as Vector3).is_equal_approx(Vector3(0.3, 0.15, 0.6)),
+		"a body material becomes the zone-lit one, with the zone's diffuse")
+	_check(doll.render_target_update_mode == SubViewport.UPDATE_DISABLED, "the doll does not render until it is shown")
+	doll.call("set_active", true)
+	_check(doll.render_target_update_mode == SubViewport.UPDATE_ALWAYS, "shown, it renders every frame")
+	doll.call("set_active", false)
+	_check(doll.render_target_update_mode == SubViewport.UPDATE_DISABLED, "hidden again, it stops")
 	doll.queue_free()
 
 func _capacity_checks() -> void:

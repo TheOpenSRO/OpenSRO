@@ -1136,19 +1136,19 @@ bars use `pmi_hp.ddj` / `pmi_mp.ddj`. Left:
 
 What round 633 read and built is in `docs/protocol/inventory_window.md`.
 
-- **Carrying an item across pages the way the client does.** Its dragged-item model
-  (`CIFDraggedStatic`, `IFInventory`'s `vslot_028`) is not read. Ours turns the page when a drag
-  passes over a tab (OURS).
+- **Carrying an item across pages the way the client does.** Round 633's review read the two
+  IFInventory handlers that name DraggedTab/DraggedPage: `0x6b4610` is a confirm box's answer and
+  `0x6b62d0` is the split box's. Neither turns a page. Ours turns the page when a drag passes over a
+  tab (OURS).
 - **The selected tab's text flag 2** (`0x64cc30` → `0x8b44b0(0,2)` → the glyph mode in
   `0x8b39e0`). What it draws is not read, so nothing is drawn for it.
-- **The preview's turn direction** rests on the model's vslot `0x30` being a plain
-  `D3DXMatrixRotationY(yaw)` (INFERRED). Reading vslot `0x30` of the object at
-  `CObjCharacter+4` would settle it.
-- **The preview's inherited render state**: `D3DRS_AMBIENT` and `SPECULARENABLE`, set by whatever
-  drew before. Our lights match the client's only at the two ends: a face turned full on
-  (MEASURED 128/128) and one lit by ambient alone (34 against 38).
-- **The preview advances its idle only while the pane is visible** (`vslot_012` `0x6ab6b0` tests
-  `0xb8f530`). Ours runs whenever the world ticks.
+- **The preview's pose advances while hidden.** It no longer renders while hidden (round 633's
+  review), but the idle is still stepped by World3D. Retail steps it only while shown
+  (`vslot_012` `0x6ab6b0` tests `0xb8f530`).
+- **The academy's rank and leader marks.** Their show code is read (`0x6e9de3..0x6e9e6f`, the rank
+  byte's art) but not built: this client keeps no academy data. The party's are built.
+- **The party race mark always shows China's art**, because the server does not send the leader's
+  race.
 - **The avatar skill strip** (`GDR_AVATAR_SKILL_WND`, ID 500) needs avatar items with its type
   bit. This server has none.
 - **The retail starting inventory size** is a `_CHAR.InventorySize` database default that neither

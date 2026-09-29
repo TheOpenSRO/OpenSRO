@@ -272,6 +272,33 @@ func set_equipment_avatar_mode(avatar: bool) -> void:
 	_set_shown(window, AVATAR_SKILL_STRIP, false)
 	_show_equipment_backdrops()
 
+## The party pane's leader marks (round 633's review). Both are Style 64 in
+## ifparty.txt, so the builder hides them at creation; CIFParty's refresh
+## shows them. READ: Create keeps GDR_PTY_PARTY_LEADER (ID 14) at +0x3a8 and
+## GDR_PTY_PARTY_LEADER_RACE_MARK (ID 15) at +0x3ac (0x6d70b6..0x6d70e0).
+## IFParty::FUN_006d6640 asks the party manager (0xeeebd8) whether the player
+## is in a party (0x987070: its state's byte +0xe) and shows both
+## (ShowWindow(1), 0x6d6676..0x6d6687) or hides both (0x6d6cdc..0x6d6ced);
+## in a party it gives the race mark the leader's race art (0x6d67fb..0x6d682c:
+## the object's race byte +0x9c into 0x98caa0(.., race, 1) --
+## com_kindred_china16.ddj for 0, com_kindred_europe16.ddj for 1).
+const PARTY_LEADER_MARK := "GDR_PTY_PARTY_LEADER"
+const PARTY_RACE_MARK := "GDR_PTY_PARTY_LEADER_RACE_MARK"
+const PARTY_RACE_ART := ["interface\\ifcommon\\com_kindred_china16.ddj", "interface\\ifcommon\\com_kindred_europe16.ddj"]
+
+## Shows or hides the party pane's leader marks as FUN_006d6640 does.
+## `leader_race` is 0 (China) or 1 (Europe).
+func set_party_marks(in_party: bool, leader_race: int = 0) -> void:
+	var window: HudWindow = _windows.get("party")
+	if window == null:
+		return
+	_set_shown(window, PARTY_LEADER_MARK, in_party)
+	_set_shown(window, PARTY_RACE_MARK, in_party)
+	if in_party and _builder != null and leader_race >= 0 and leader_race < PARTY_RACE_ART.size():
+		var mark := window.node(PARTY_RACE_MARK) as TextureRect
+		if mark != null:
+			mark.texture = _builder.load_texture(PARTY_RACE_ART[leader_race])
+
 ## Whether the equipment window is showing its avatar slots.
 func is_equipment_avatar_mode() -> bool:
 	return _equipment_avatar_mode
@@ -2354,7 +2381,24 @@ func _place_paper_doll_docked() -> void:
 		doll.size = PAPER_DOLL_RECT.size
 		eq_root.add_child(doll)
 		eq_root.move_child(doll, _after_equipment_background(eq_root))
+		# Its visibility follows the pane and the window (a hidden parent
+		# propagates visibility_changed to its children).
+		doll.visibility_changed.connect(func() -> void:
+			paper_doll_shown_changed.emit(doll.is_visible_in_tree()))
 	doll.texture = _paper_doll_texture
+	paper_doll_shown_changed.emit(doll.is_visible_in_tree())
+
+## Emitted when the paper doll comes on screen or leaves it: the preview
+## renders only while it shows (PaperDoll.set_active; CIFEquipment's model is
+## drawn by its window's draw, and its pose steps only while it is visible,
+## vslot_012 0x6ab6b0 testing 0xb8f530).
+signal paper_doll_shown_changed(shown: bool)
+
+## Whether the paper doll is on screen now.
+func paper_doll_shown() -> bool:
+	var root := _equipment_root()
+	var doll := root.get_node_or_null("PaperDoll") as CanvasItem if root != null else null
+	return doll != null and doll.is_visible_in_tree()
 
 # --- Turning the paper doll (round 633) ---------------------------------------
 #
@@ -2437,6 +2481,11 @@ func set_paper_doll_yaw(yaw: float) -> void:
 	paper_doll_yaw_changed.emit(yaw)
 	# The measurement a real-input run reads (round 633).
 	print("HudPanels: doll yaw %.4f at %d ms" % [yaw, Time.get_ticks_msec()])
+	paper_doll_measure_requested.emit()
+
+## Asks World3D to log where the doll's hands and head land (round 633's
+## review: the weapon hand and the turn direction are measured, not seen).
+signal paper_doll_measure_requested
 
 ## One arrow command: 0x6ab920 (dir -1) or 0x6ab960 (dir +1).
 func _doll_turn_step(dir: int) -> void:
@@ -3135,6 +3184,9 @@ func _build_bag_tabs() -> void:
 		tab.ignore_texture_size = true
 		tab.stretch_mode = TextureButton.STRETCH_SCALE
 		tab.focus_mode = Control.FOCUS_NONE
+		# READ: CIFSelectableArea acts on the press (0x64cb80 answers message
+		# 0x201, WM_LBUTTONDOWN), not the release.
+		tab.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
 		tab.position = rect.position
 		tab.size = rect.size
 		tab.custom_minimum_size = rect.size
@@ -3550,6 +3602,7 @@ func _input(event: InputEvent) -> void:
 		var dragging := _bag_drag_preview != null
 		var from := _bag_drag_slot
 		var worn_from := _bag_drag_worn_slot
+		var carried := _bag_drag_item_id
 		var at := (event as InputEventMouseButton).global_position
 		_cancel_bag_drag()
 		if not dragging:
@@ -3558,7 +3611,9 @@ func _input(event: InputEvent) -> void:
 		if worn_from >= 0:
 			_drop_worn_item(worn_from, at)
 		else:
+			_dropping_item_id = carried
 			_drop_bag_item(from, at)
+			_dropping_item_id = -1
 
 ## A worn item dragged off the paper doll and released. Anywhere over the bag
 ## takes it off; a release back on the doll, or outside the window, does
@@ -3593,6 +3648,12 @@ func _over_inventory_window(at: Vector2) -> bool:
 		return false
 	return win.get_global_rect().has_point(at)
 
+## The item id a bag drag from `from` carries: the one the drag armed with
+## (_input captures it before the drag is cleared), else the bag list's.
+var _dropping_item_id := -1
+func _bag_drag_item_id_or(from: int) -> int:
+	return _dropping_item_id if _dropping_item_id > 0 else _bag_item_id_at_slot(from)
+
 ## Resolves where a bag drag ended and asks the server for it.
 func _drop_bag_item(from: int, at: Vector2) -> void:
 	var who := NetClient.current_character_name
@@ -3615,36 +3676,27 @@ func _drop_bag_item(from: int, at: Vector2) -> void:
 		return
 	# Neither a bag slot nor the doll: offer it to the quickslot bar, which
 	# World3D owns. It ignores a release that is not over a slot.
-	var icon := _bag_icon_at_slot(from)
-	item_drop_requested.emit(at, _bag_item_id_at_slot(from), from, icon)
+	# The item the drag carries (it may have come from another page).
+	var item_id := _bag_drag_item_id_or(from)
+	var icon := _item_icon(item_id) if item_id >= 0 else null
+	item_drop_requested.emit(at, item_id, from, icon)
 
-## The ItemIcon drawn for a bag slot, or null. The icons live on the cells of
-## the inventory lattice and carry inv_slot/inv_item_id metadata, which is what
-## _fill_inventory_grid puts there.
-func _bag_icon_node(slot: int) -> TextureRect:
-	var window: HudWindow = _windows.get("inventory")
-	if window == null:
-		return null
-	var grid := window.node("GDR_INVENTORY_LATTICE") as Control
-	if grid == null:
-		return null
-	for cell in grid.get_children():
-		var icon := cell.get_node_or_null("ItemIcon") as TextureRect
-		if icon != null and icon.has_meta("inv_slot") and int(icon.get_meta("inv_slot")) == slot:
-			return icon
-	return null
-
-## The icon texture currently drawn in a bag slot, or null.
+## The icon of the item in a bag slot, or null -- from the bag as the server
+## last sent it, on any page (round 633's review: the cells only hold the
+## shown page, so a drag carried to another page lost its item).
 func _bag_icon_at_slot(slot: int) -> Texture2D:
-	var icon := _bag_icon_node(slot)
-	return icon.texture if icon != null else null
+	var id := _bag_item_id_at_slot(slot)
+	return _item_icon(id) if id >= 0 else null
 
-## The item id in a bag slot, or -1.
+## The item id in a bag slot on any page, or -1: the server's last bag list
+## (_bag_slots), not the lattice's cells.
 func _bag_item_id_at_slot(slot: int) -> int:
-	var icon := _bag_icon_node(slot)
-	if icon == null or not icon.has_meta("inv_item_id"):
-		return -1
-	return int(icon.get_meta("inv_item_id"))
+	for entry in _bag_slots:
+		var index = _first_field(entry, ["slot", "slot_index", "index"])
+		if index != null and int(index) == slot:
+			var item_id = _first_field(entry, ["item_id", "id"])
+			return int(item_id) if item_id != null else -1
+	return -1
 
 ## The server's answer to a move: the whole bag as it now stands, or the
 ## refusal. Drawn from the answer, so a refused move leaves the grid as it was.

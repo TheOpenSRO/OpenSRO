@@ -24,13 +24,36 @@ drawn with it (`RegistryFrame`). Round 630 applied the bit to that child, and
 nothing ever showed it again. Round 633 keeps the frame visible and leaves the
 window's showing to HudPanels.
 
+Which windows it reached: those this client frames from a registry entry
+**and** whose entry carries Style 64 -- GDR_MAINPOPUP, GDR_STORAGEROOM,
+GDR_EXCHANGE, GDR_GAMEGUIDE. GDR_COMMUNITY, GDR_STORE and GDR_ALCHEMYBOX carry
+Style 64 too, but this client never builds them from the registry (the guild
+and community are 2dt windows, the store is self-framed, the alchemy window is
+CNIFEnchantWnd), so their windows were untouched.
+
 MEASURED with `client/tools/dump_visible_panels.gd`, v0.1.458 against v0.1.459:
 
 - On the popup's inventory, character, skill, action, party and academy tabs,
   and on the warehouse and the exchange, exactly the nine `RegistryFrame` nodes
   went missing.
 - The party and academy leader marks (Style 64 in their layouts) were hidden
-  by the same rule, and that is correct.
+  by the same rule, and that is correct: the client hides them at creation too.
+  It then shows them from code:
+  - **party** (built, round 633's review): CIFParty::Create keeps
+    GDR_PTY_PARTY_LEADER (ID 14) at `+0x3a8` and
+    GDR_PTY_PARTY_LEADER_RACE_MARK (ID 15) at `+0x3ac`
+    (`0x6d70b6..0x6d70e0`). The refresh `IFParty::FUN_006d6640` asks the party
+    manager (`0xeeebd8`, `0x987070`: its state's byte `+0xe`) whether the
+    player is in a party, and shows both (`0x6d6676..0x6d6687`) or hides both
+    (`0x6d6cdc..0x6d6ced`). In a party the race mark gets the leader's race art
+    (`0x6d67fb..0x6d682c`: race byte `+0x9c` into `0x98caa0(.., race, 1)`,
+    `com_kindred_china16.ddj` / `com_kindred_europe16.ddj`);
+  - **academy** (OPEN): CIFApprenticeShip keeps the rank mark (ID 15) at
+    `+0x390` (fetched at `0x6e98cb` with the ID in ebp). `0x6e9de3..0x6e9e6f`
+    sets its texture from a path formatted with the member's rank byte
+    (`[ebp+0x34]`, format `0xdaabb0`) and shows it. `0x6e8cdc` hides it. No
+    fetch of ID 14 was found in the module. This client keeps no academy data,
+    so neither is built.
 
 ## The bag's pages
 
@@ -66,15 +89,36 @@ MEASURED with `client/tools/dump_visible_panels.gd`, v0.1.458 against v0.1.459:
   `interface\pet\pt_block.ddj` and is disabled (`0xb8f540(0)`).
 - **Showing a page.** `0x6b3d00(page)` selects the tab, keeps the page at
   `+0x3cc`, and shows that page's 32 slots while hiding every other slot. The
-  bag starts on page 0 (`0x6b6d16`). A tab click goes through `0x6b45b0`, which
-  matches the clicked control's ID. An expansion re-selects `+0x3cc`
-  (`0x6b75d3`).
+  bag starts on page 0 (`0x6b6d16`). A tab click goes through `0x6b45b0`,
+  which matches the clicked control by its handle (`+0x2c`, read through
+  `0xb8f4d0` against the event's `0xb9dc30`). An expansion re-selects
+  `+0x3cc` (`0x6b75d3`). A tab acts on the **press**: CIFSelectableArea's
+  `0x64cb80` answers message `0x201` (WM_LBUTTONDOWN).
 - **Create** (`0x6b2440`) keeps control ID 10 (`GDR_INVENTORY_STA_MONEY`) at
   `+0x388` and ID 11 (the money button) at `+0x398`. The lattice is art only.
 
-**OPEN: carrying an item across pages.** How the retail client does it (its
-dragged-item model, `CIFDraggedStatic`) is not read. Ours (OURS) turns the page
-when a drag passes over a tab.
+**OPEN: carrying an item across pages.** The two IFInventory handlers that
+name "DraggedTab", "DraggedPage" and "DraggedItemIndex" do not define it
+(round 633's review):
+
+- `0x6b4610` (message `0x8074`) is the confirm box's answer after an item was
+  dragged between windows. It reads those keys back from the box and sends
+  the move, addressing a store slot as `index + (page + tab*8)*0x1e` and a
+  warehouse slot as `index + page*0x1e`.
+- `0x6b62d0` (message `0x8076`) is the split box's OK. It moves the chosen
+  quantity from the slot at `+0x384` into the first empty bag slot
+  (`0x6b6280`).
+
+Neither turns a page, and the tab (CIFSelectableArea) answers only a press
+(`0x64cb80`) and hover (`vslot_019`: messages `0x4009`/`0x400a`). So how
+retail carries an item to another page is still not read. Ours (OURS) turns
+the page when a drag passes over a tab.
+
+**Held slots are never stranded** (OURS, round 633's review). The server keeps
+a bag's size at or above its highest held slot + 1 (`inventory.KeepHeld`,
+logged once per character and size). So a lower `-inventory-size` leaves the
+items reachable, and the size falls to the configured one once they are moved
+out. The original has no such case: its size only grows.
 
 **Starting size.** The retail starting size is not in either executable: it is
 the `_CHAR.InventorySize` database default. The engine's own growth caps are
@@ -165,17 +209,26 @@ and tile (ID 5), then the 3D model, then the slot backdrops, then the children.
     pitch or roll: eye (0, 9, -40), through `LookAtLH` `0xaa4bad`;
   - aspect is the viewport's own;
   - nothing depends on the model's size.
-- **Light** (`this + 0x510`, Create `0x6aca1c..0x6acae3`, SetLight(0) at
-  `0x6ad9e8`):
-  - directional, pointing (0, 0, 1);
-  - diffuse 0.7 (`0xd82f04`), ambient 0.3 (`0xd82f00`), specular 1;
-  - range 10000.
-  - `D3DRS_AMBIENT` and `SPECULARENABLE` are inherited from earlier draws
-    (OPEN).
-- **Our key light's energy.** MEASURED with `client/tools/measure_doll_light.gd`
-  in GL Compatibility on the box's RX 5700 XT. At energy 0.89, a 0.5-grey quad
-  facing the camera renders 128 of 255, matching the client's
-  0.5 × (0.3 + 0.7). With the light off it renders 34, against the client's 38.
+- **Light: the zone's** (round 633's review). The draw does fill a D3DLIGHT9
+  at `this + 0x510` (Create `0x6aca1c..0x6acae3`: directional (0,0,1),
+  diffuse 0.7, ambient 0.3). But it hands it to the device's SetLight
+  (`0x6ad9e8`), which is fixed-function state no draw reads:
+  - the model is drawn by CObjRendererVS (`vslot_038` `0xbf5830`) through a
+    vertex shader;
+  - that shader's light constants (`0x1112e18` / `0x1112e28`) are written only
+    by `vslot_025` (`0xbeecc0`), which only the world draw calls.
+
+  So the preview is lit exactly as round 635's portrait is
+  (`docs/protocol/player_mini_info.md`):
+  - diffuse = environment channel 2, clamped, × 0.6;
+  - ambient = channel 3;
+  - to-light (0.707, 0.707, 0) in the file's coordinates;
+  - `oD0 = object colour 0.6 × ambient + max(0, n·l) × material colour ×
+    diffuse`;
+  - stage 0 MODULATE2X.
+
+  PaperDoll reuses PlayerPortrait's materials. Round 633's first version
+  (a 0.7/0.3 Godot light with its energy calibrated to 0.89) is gone.
 - **Pose.** Animation type 0, stand (`0xa5b550(group, 0, ...)` at
   `0x8a94b2..0x8a9545`).
 
@@ -199,6 +252,20 @@ and tile (ID 5), then the 3D model, then the slot backdrops, then the children.
   - release: no click;
   - moving off the button pauses the repeat (`0xb93290` / `0xb93240`).
 - **Reset** fires on release, like any plain button.
-- **Direction.** Which way a positive yaw turns on screen is INFERRED: it
-  assumes vslot `0x30` is `D3DXMatrixRotationY(yaw)`, which turns the face
-  toward the screen's left. The round-633 render matches that inference.
+- **Direction and handedness** (round 633's review, READ). The yaw setter
+  `CCompChar::FUN_00c26e70` builds the row-vector matrix
+  `[[c,0,s],[0,1,0],[-s,0,c]]`, so the model's forward is (sin, 0, -cos). At
+  yaw 0 it faces the camera (at -z), and a growing yaw (the right arrow,
+  `0x6ab960`) turns the face toward +x, which is the screen's right in the
+  client's left-handed view.
+  - The client is left-handed and the assembled body is in the file's own
+    coordinates. So the model hangs under a (1, 1, -1) node and the camera
+    stands at the mirrored eye (0, 9, 40), as the portrait does.
+  - Without that node the picture was retail's mirror image, the one-handed
+    weapon in the wrong hand.
+  - Under the mirror the setter's matrix is a Godot rotation by -yaw.
+  - MEASURED in the review's real-input run (`World3D: doll pose`):
+    - at yaw 0 the right hand is drawn at x 55 and the left at x 133 of 176:
+      the character's right hand on the screen's left, facing the camera;
+    - with the right arrow held, a point in front of the face moves
+      +1.2 … +23.1 px right as the yaw grows 0.024 … 0.510.
