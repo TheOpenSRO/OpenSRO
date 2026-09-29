@@ -1,0 +1,247 @@
+extends SceneTree
+
+## Round 631: this client's own confirm boxes on the store and the warehouse
+## (buy, sell, deposit/withdraw, the warehouse gold dialog) must not free
+## themselves from inside their own button's `pressed`. Each box is an
+## ancestor of its buttons, so a synchronous free() deleted the Button while
+## BaseButton was still emitting and the Viewport still routing the click. A
+## real X click on Sell (Login -> CharacterSelect route, render box) printed
+## "~Object: ... freed ... while a signal is being emitted" and then
+## "Program crashed with signal 11" on dev cfddf39.
+##
+##   (a) Every action and Cancel/Close button of the four boxes, pressed
+##       through its connected handler: the button survives the call, and the
+##       box is hidden and queued for deletion instead.
+##   (b) The totals line of the buy and sell boxes is filled (the refresh
+##       lambda called the static _grouped unqualified: "Nonexistent function
+##       '_grouped' in base 'Nil'", measured in the same real-input run).
+##   (c) A click on Sell pushed through the live viewport (press + release,
+##       the OS path): the process survives it, and the box is gone a frame
+##       later.
+##   (d) The store's and the warehouse's authored slot controls
+##       (GDR_STORE_SLOT_100.. / GDR_STORAGE_SLOT_100.., ifstore.txt /
+##       ifstorageroom.txt) sit on their lattice cells and come later in the
+##       tree; a click on a good must still reach the cell's ItemIcon, which
+##       is what opens the buy / withdraw box. Measured on a synthetic window
+##       laid out like the authored one (slot 100 at 21,71,32,32).
+##
+## Synthetic item only, no archive:
+##   godot4 --headless --path client --script res://scripts/ui/hud/confirm_box_test.gd
+
+var _failures := 0
+var _panels: Node
+var _store: HudWindow
+var _frame := 0
+var _live_box: Control
+var _live_button: Button
+
+const ITEM_ID := 7
+
+func _check(cond: bool, msg: String) -> void:
+	if cond:
+		print("ok  " + msg)
+	else:
+		print("FAIL " + msg)
+		_failures += 1
+
+func _find_button(node: Node, text: String) -> Button:
+	if node is Button and (node as Button).text == text:
+		return node as Button
+	for child in node.get_children():
+		var found := _find_button(child, text)
+		if found != null:
+			return found
+	return null
+
+func _find_label_prefix(node: Node, prefix: String) -> Label:
+	if node is Label and (node as Label).text.begins_with(prefix):
+		return node as Label
+	for child in node.get_children():
+		var found := _find_label_prefix(child, prefix)
+		if found != null:
+			return found
+	return null
+
+## Runs a button's connected handlers the way its `pressed` emission would,
+## without emitting (an emission from a freed Button is the crash itself).
+func _press_handlers(button: Button) -> void:
+	for c in button.pressed.get_connections():
+		(c["callable"] as Callable).call()
+
+func _window(window_name: String) -> HudWindow:
+	var w := HudWindow.new()
+	w.name = window_name
+	w.size = Vector2(400, 400)
+	_panels.add_child(w)
+	(_panels.get("_windows") as Dictionary)[window_name] = w
+	return w
+
+func _item() -> ItemTableReader.Item:
+	var item := ItemTableReader.Item.new()
+	item.id = ITEM_ID
+	item.code_name = "ITEM_QA_SYNTHETIC"
+	item.max_stack = 50
+	item.sell_price = 148
+	return item
+
+## (a) One box: open it, press `button_text`, then check the button outlived
+## its own handler and the box is on its way out.
+func _check_press(label: String, box_name: String, window: HudWindow, open: Callable, button_text: String) -> void:
+	open.call()
+	var box := window.get_node_or_null(box_name) as Control
+	_check(box != null, "%s: the %s box opens" % [label, box_name])
+	if box == null:
+		return
+	var button := _find_button(box, button_text)
+	_check(button != null, "%s: the box has a %s button" % [label, button_text])
+	if button == null:
+		return
+	_press_handlers(button)
+	# NEGATIVE (fails on dev cfddf39: the handler freed the box, and the
+	# button with it, while the button was the one emitting).
+	_check(is_instance_valid(button), "%s: the %s button is not freed by its own press" % [label, button_text])
+	_check(is_instance_valid(box) and box.is_queued_for_deletion() and not box.visible,
+		"%s: %s closes by hiding and queue_free" % [label, box_name])
+
+func _initialize() -> void:
+	pass
+
+## (a) and (b), on the first frame, once the root is in the tree (the boxes
+## wait a frame to centre themselves and read the tree for their sounds).
+func _build_and_press() -> void:
+	var panels_script := load("res://scripts/ui/hud/hud_panels.gd") as GDScript
+	var compiled := panels_script != null and panels_script.can_instantiate()
+	_check(compiled, "HudPanels compiles")
+	if not compiled:
+		return
+	_panels = panels_script.new()
+	_panels.set("_items_loaded", true)
+	(_panels.get("_items") as Dictionary)[ITEM_ID] = _item()
+	(_panels.get("_shop_prices") as Dictionary)[ITEM_ID] = 600
+	root.add_child(_panels)
+	_store = _window("store")
+	var storage := _window("storage")
+
+	# (b) the totals lines, read before any box is closed.
+	_panels.call("_confirm_buy", ITEM_ID)
+	var buy_box := _store.get_node_or_null("BuyConfirm")
+	var buy_total := _find_label_prefix(buy_box, "Total:") if buy_box != null else null
+	# NEGATIVE (fails on dev cfddf39: the line stayed empty).
+	_check(buy_total != null and buy_total.text == "Total: 600 gold",
+		"the buy box shows its total (%s)" % (buy_total.text if buy_total != null else "no Total line"))
+	_panels.call("_confirm_sell", 3, ITEM_ID, 15)
+	var sell_box := _store.get_node_or_null("SellConfirm")
+	var sell_get := _find_label_prefix(sell_box, "Get:") if sell_box != null else null
+	_check(sell_get != null and sell_get.text == "Get: 148 gold",
+		"the sell box shows what it pays (%s)" % (sell_get.text if sell_get != null else "no Get line"))
+
+	# (a) every close path of the four boxes.
+	var buy := func() -> void: _panels.call("_confirm_buy", ITEM_ID)
+	var sell := func() -> void: _panels.call("_confirm_sell", 3, ITEM_ID, 15)
+	var deposit := func() -> void: _panels.call("_confirm_deposit", 4, ITEM_ID, 15)
+	var withdraw := func() -> void: _panels.call("_confirm_withdraw", 5, ITEM_ID, 15)
+	var gold := func() -> void: _panels.call("_open_gold_dialog")
+	_check_press("buy", "BuyConfirm", _store, buy, "Buy")
+	_check_press("buy", "BuyConfirm", _store, buy, "Cancel")
+	_check_press("sell", "SellConfirm", _store, sell, "Sell")
+	_check_press("sell", "SellConfirm", _store, sell, "Cancel")
+	_check_press("deposit", "DepositConfirm", storage, deposit, "Deposit")
+	_check_press("deposit", "DepositConfirm", storage, deposit, "Cancel")
+	_check_press("withdraw", "WithdrawConfirm", storage, withdraw, "Withdraw")
+	_check_press("withdraw", "WithdrawConfirm", storage, withdraw, "Cancel")
+	_check_press("gold", "GoldDialog", storage, gold, "Close")
+
+## (c) the OS path, over a few frames: the box needs a frame to lay out.
+func _process(_delta: float) -> bool:
+	_frame += 1
+	if _frame == 1:
+		_build_and_press()
+		if _panels == null:
+			return _finish()
+	elif _frame == 2:
+		# (d) before (c): on dev cfddf39, (c) ends the process.
+		_check_lattice_clicks("GDR_STORE_SLOT_")
+		_check_lattice_clicks("GDR_STORAGE_SLOT_")
+	elif _frame == 3:
+		# The warehouse window was added after the store and covers it.
+		(_panels.get("_windows") as Dictionary)["storage"].hide()
+		_panels.call("_confirm_sell", 3, ITEM_ID, 15)
+		_live_box = _store.get_node_or_null("SellConfirm") as Control
+		_check(_live_box != null, "(c) a fresh sell box opens")
+	elif _frame == 6:
+		if _live_box == null:
+			return _finish()
+		_live_button = _find_button(_live_box, "Sell")
+		var at := _live_button.get_global_rect().get_center()
+		print("    (c) Sell at %s, box %s" % [at, _live_box.get_global_rect()])
+		for pressed in [true, false]:
+			var ev := InputEventMouseButton.new()
+			ev.button_index = MOUSE_BUTTON_LEFT
+			ev.pressed = pressed
+			ev.position = at
+			ev.global_position = at
+			root.push_input(ev, true)
+		# Reaching this line is part of the check: on dev cfddf39 a click here
+		# can end the process with signal 11.
+		_check(true, "(c) the process survives a click on Sell through the viewport")
+		_check(not is_instance_valid(_live_box) or not _live_box.visible, "(c) the click reached Sell: the box is closing")
+	elif _frame == 8:
+		_check(not is_instance_valid(_live_box), "(c) the clicked box is gone a frame later")
+		return _finish()
+	return false
+
+## (d) A window shaped like ifstore/ifstorageroom: a lattice cell with its
+## ItemIcon (STOP, as _fill_shop_grid sets it), then the authored slot over
+## it (PASS, as UiBuilder._build_slot builds every slot).
+func _check_lattice_clicks(prefix: String) -> void:
+	var w := HudWindow.new()
+	w.position = Vector2(600, 20)
+	w.size = Vector2(260, 300)
+	w.panel_root = Control.new()
+	w.panel_root.size = w.size
+	w.add_child(w.panel_root)
+	var cell := Control.new()
+	cell.mouse_filter = Control.MOUSE_FILTER_PASS
+	cell.position = Vector2(21, 71)
+	cell.size = Vector2(32, 32)
+	var icon := TextureRect.new()
+	icon.name = "ItemIcon"
+	icon.mouse_filter = Control.MOUSE_FILTER_STOP
+	icon.size = Vector2(32, 32)
+	cell.add_child(icon)
+	w.panel_root.add_child(cell)
+	var slot := Control.new()
+	slot.name = prefix + "100"
+	slot.mouse_filter = Control.MOUSE_FILTER_PASS
+	slot.position = Vector2(21, 71)
+	slot.size = Vector2(32, 32)
+	w.panel_root.add_child(slot)
+	_panels.add_child(w)
+	var hits: Array = []
+	icon.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed:
+			hits.append(ev))
+	var has := _panels.has_method("_lattice_takes_clicks")
+	# NEGATIVE (fails on dev cfddf39: no such step, and the click stops at
+	# the slot).
+	_check(has, "HudPanels has _lattice_takes_clicks")
+	if has:
+		_panels.call("_lattice_takes_clicks", w, prefix)
+	var at := icon.get_global_rect().get_center()
+	for pressed in [true, false]:
+		var ev := InputEventMouseButton.new()
+		ev.button_index = MOUSE_BUTTON_LEFT
+		ev.pressed = pressed
+		ev.position = at
+		ev.global_position = at
+		root.push_input(ev, true)
+	_check(hits.size() == 1, "(d) a click on the first good under %s100 reaches its ItemIcon (%d press(es))" % [prefix, hits.size()])
+	w.free()
+
+func _finish() -> bool:
+	if _failures == 0:
+		print("ALL PASS")
+	else:
+		print("%d FAILED" % _failures)
+	quit(1 if _failures > 0 else 0)
+	return true

@@ -982,6 +982,71 @@ burst and sound, right-click cancel and the tooltip. The record is in
         static var, so a setting can flip it; icons already on the board keep their look until
         rebuilt. No UI was added.
 
+### Store and warehouse confirm boxes — **crash fixed (round 631); next: the retail CIFMessageBox**
+Round 631 fixed the crash the user hit on v0.1.458 (a box freed from its own button: SIGSEGV).
+It also made the store's goods and the warehouse's items clickable again: their authored
+`*_SLOT_100..129` controls had been covering the lattice cells. Evidence is in WORLD_ISSUES.md's
+six-hundred-and-thirty-first round.
+
+Every box below is still **this client's own** gold-edged `PanelContainer`. None of them is a
+Godot `Window`. The next round replaces them with the retail windows.
+
+Retail equivalents were READ from the client dump and the `resinfo` layouts (round 631). Every
+store and warehouse box is a **CIFMessageBox** built from `resinfo\ifmessagebox.txt`
+(`CIFMessageBox::Create` 0x63e380). Two numbers configure it:
+- the **layout mode**, via `0x643c20`, which picks the section of that file;
+- the **purpose**, via `0x63ea80`, jump table 0x63ff38, which sets the title and button labels.
+
+The inventory owns the box (`FUN_006af530`, 308x148). Its OK press (`FUN_006b4627`) reads the
+count or gold at box+0x8b8 and sends the move.
+
+- [ ] **Buy**, `hud_panels.gd` `_confirm_buy`.
+  - Retail (READ): drag a store good onto the bag. `CIFInventory::vslot_028` 0x6b5b80 →
+    `0x6b24c0(1)` opens `ifinventory.txt` "ConfirmBuy" = `CItemMallConfirmBuy` (ID 400,
+    `ifitemmallconfirmbuy.txt`).
+  - Its controls: title `UIIT_STT_CONFIRM_BOX` ("Confirmation window"), icon, name, a "Quantity"
+    edit (id 42) with spin up/down (ids 50/51), Price (44), Total (45), Buy (61), Cancel (62).
+  - OPEN: whether its silk-mall rows show for an NPC store.
+  - Ctrl+click on a store slot buys at once, with no box (`CIFSlotWithHelp::vslot_029` 0x680fa0).
+- [ ] **Sell**, `_confirm_sell`.
+  - Retail (READ): drag a bag item onto the store. `CIFStore::vslot_028` 0x6d1400 → `0x6b07d0`:
+    mode 6 **MsgBoxStoreConfirm**, purpose 2 (OK `UIIT_STT_SELL`).
+  - Its controls: icon (72/73), name (79), "Quantity" (78) with count edit 80 and spins 81/82,
+    Price (85/86), Gold (87), Sell (83), Cancel (84).
+  - Ctrl+click sells at once. The exception is an item that cannot be bought back: it gets the
+    generic Yes/No box with `UIIT_MSG_CANNOT_BUYBACK_ITEM_SELL`.
+- [ ] **Deposit / Withdraw an item**, `_confirm_deposit` / `_confirm_withdraw` →
+  `_quantity_move_confirm`.
+  - Retail (READ): the same MsgBoxStoreConfirm layout, count edit id 80. Deposit is purpose 5
+    (OK `UIIT_STT_DEPOSIT` "Deposit"), from `CIFStorageRoom::vslot_028` 0x6cd350 → `0x6b0e90`.
+    Withdraw is purpose 6 (OK `UIIT_STT_WITHDRAW` "Take"), via `0x6b15b0`.
+  - Guild storage uses purposes 0x10 / 0x11.
+  - The deposit box fills its price field with a fee (INFERRED from `price*n/2`, not traced).
+- [ ] **Warehouse gold**, `_open_gold_dialog` (ours: one box with Deposit, Withdraw and Close).
+  - Retail (READ): two separate boxes, both mode 3 **MsgBoxStoreMoney**. Purpose 3 deposits
+    (`0x6b2800`, caption `UIIT_STT_DEPOSITMONEY`); purpose 4 withdraws (`0x6b29f0`, "Take").
+  - Both show `interface\icon\moneyicon.ddj`, with the amount edit (id 3) resized to 121x24. OK is
+    id 215, Cancel id 216. The OK sends via `0x825f50` with a 64-bit amount.
+- [ ] **Buff cancel**, `hud_buff_board.gd` `_open_confirm`. Already titled `UIIT_STT_CONFIRM_BOX`.
+  - Retail's generic box (READ): `GInterface::0x788270` → CIFMessageBox mode 9 **MsgBoxSimple**,
+    280x144. Text id 251, buttons 252/253.
+  - Its style byte +0x908 picks the buttons: 0 = Confirm, 1 = Yes/No, 2 = Cancel.
+  - Already closes with `queue_free` (safe).
+- [ ] **Guild name / leave prompts** (`open_guild_name_prompt`, `open_guild_leave_prompt`) and the
+  **revive prompt** (`show_revive_prompt`). All ours, all close with `queue_free` (safe).
+  - Retail windows not read: `ifguild*.txt` has candidates. The revive box is OPEN.
+- [ ] **The only Godot-native dialog**: `Boot.gd` `_on_update_available`, a `ConfirmationDialog`
+  for the auto-updater. It is embedded (the project keeps the default
+  `display/window/subwindows/embed_subwindows=true`), is not in the game, and has no retail
+  equivalent. It can stay.
+- [ ] OPEN from the reading:
+  - which mouse event `vslot_029` is;
+  - which store class is live under `#ifdef RENEWAL_SHOP_SYSTEM`;
+  - the four 64-bit amount fields (partly traced);
+  - `0x643e50`'s geometry for MsgBoxSimple;
+  - MsgBoxDivideCount (mode 5, Shift+click a stack): retail's stack split, which this client
+    does not have.
+
 ### Seasonal event decorations — **hidden by default (round 583)**
 The user decided on 2026-09-26 that early testing gets no seasonal decorations. Christmas,
 Halloween, the China open-beta (OBT) event set and the summer festival set are left out of every

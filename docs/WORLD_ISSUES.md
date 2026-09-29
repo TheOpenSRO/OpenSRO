@@ -7094,6 +7094,177 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirty-first round: confirming a sale, a purchase or a warehouse move no longer crashes the game, and the store's goods can be clicked again
+
+The user reported this on v0.1.458: "when I try to interact with shops or storage and use the
+native gui to confirm things it causes the game to crash." The crash was reproduced with a real
+click. It is fixed at its root, and a test pins it. The same run found two more faults in the
+same boxes and fixed them too. Replacing the boxes with the retail windows is the next round;
+the retail equivalents were READ and are listed in `docs/TODO.md` and
+`docs/protocol/message_box.md`.
+
+### Reproduced with real input (MEASURED)
+
+**Setup.**
+- Box: Xvfb `:89`, the release route `res://scenes/Login.tscn` with
+  `SRREVAMP_QA_RECONNECT_VIA_LOGIN=1`, GPU through vglrun.
+- Server: an in-memory server built from dev cfddf39.
+- Client: the Jangan spawn (97/168 at 1002,1020), with `SRREVAMP_QA_SHOP=NPC_CH_POTION` and
+  `SRREVAMP_QA_SHOP_BUY=1`. The hook buys a stack and leaves the sell box open.
+- Input: a real `xdotool click` on the box's **Sell** button (screen 474,412). The script is
+  `/var/tmp/confirmcrash/cc.sh`.
+
+**Result.** The client exited with status 134. The log (`/var/tmp/confirmcrash/base_sell_crash.log`)
+ends with:
+
+```
+ERROR: Object <Object#13437661318602> was freed or unreferenced while a signal is being emitted from it. Try connecting to the signal using 'CONNECT_DEFERRED' flag, or use queue_free() to free the object (if this object is a Node) to avoid this error and potential crashes.
+   at: ~Object (core/object/object.cpp:2006)
+handle_crash: Program crashed with signal 11
+```
+
+**Cause (READ in `hud_panels.gd`).** Seven handlers freed the box synchronously from inside the
+`pressed` of one of its own buttons:
+- Buy and its Cancel;
+- Sell and its Cancel;
+- Deposit/Withdraw and their Cancel;
+- the warehouse gold dialog's Close.
+
+The box is the button's ancestor, so `panel.free()` deleted the Button while BaseButton was still
+emitting `pressed` and the Viewport was still routing the click. Godot 4.2.2 then touches the
+freed button, which is a use-after-free.
+
+The crash was reproduced on Linux. On Windows (the user's build) the same engine path is
+INFERRED to crash the same way, as an access violation. It is not a Windows-only case: no
+Godot `Window` is involved.
+
+The first line above is Godot's own warning and goes to the log file. So if a crash like this
+comes back, the tester's `logs/srrevamp.log` will end with that "freed ... while a signal is
+being emitted" line.
+
+### Two more faults in the same boxes (MEASURED in the same run)
+
+**The totals were never shown.** The buy box's "Total" and the sell box's "Get" line stayed
+empty. Every time a box opened, the log said:
+
+```
+SCRIPT ERROR: Invalid call. Nonexistent function '_grouped' in base 'Nil'.
+```
+
+The static `_grouped` was called unqualified from inside the refresh lambda. It is now
+`HudPanels._grouped`. After the fix, the sell box reads "Get: 148 gold" and the buy box reads
+"Total: 600 gold".
+
+**No good in the store could be clicked.** Buying had never worked with the mouse.
+- **Why.** `ifstore.txt` authors 30 `GDR_STORE_SLOT_100..129:CIFSlotWithHelp` controls, READ:
+  slot 100 is at 21,71,32,32 and the rest step by 36. They sit exactly on the 30 cells of
+  `GDR_STORE_LAT`. `ifstorageroom.txt` does the same with `GDR_STORAGE_SLOT_*`.
+- **What happens.** The slot controls come later in the tree, so Godot hit-tests them first.
+  With `MOUSE_FILTER_PASS` a click passes on to their parents, never to the cell underneath.
+- **Measured.** A hit-walk debug print on a real click at 426,271 listed `GDR_STORE_SLOT_100`
+  as the topmost hit. `_on_shop_cell_input` never ran. Every earlier "buy" was a QA hook.
+- **Fix (OURS).** `_lattice_takes_clicks` sets those slots to `MOUSE_FILTER_IGNORE` when the
+  store or the warehouse opens. The goods are drawn and clicked in the lattice cells, so the
+  slots stay drawn but no longer take the mouse. Which of the two controls takes the click is
+  this client's arrangement, not the original's.
+  - The original clicks the `CIFSlotWithHelp` itself, READ: `vslot_029` 0x680fa0 handles
+    Ctrl+click buying.
+
+**A small error when two boxes close at once.** In that case `_message_box_sounds` connected
+the same bound Callable twice ("Signal 'process_frame' is already connected"). It now checks
+first.
+
+### The fix
+
+- `HudPanels._close_confirm_box` hides the box and `queue_free`s it. The engine deletes it at
+  the end of the frame, after the click is done with it.
+- The box's one-frame centring now checks `is_instance_valid(panel)` first. On base, 11
+  `Invalid get index 'size' (on base: 'previously freed')` errors came from it.
+- The guild prompts and the buff board's cancel box already used `queue_free`, and never crashed.
+
+### Real-input check of the fix (MEASURED)
+
+All of these were real `xdotool` clicks on fixed builds, three sessions in all. The client
+stayed alive after every click.
+
+| Box | Clicks | Result |
+|---|---|---|
+| Sell | + x2, Sell | the stack went 15 → 12, "Sold for 444 gold" (3 × 148) |
+| Sell (second session) | Sell | 15 → 14, +148 |
+| Buy | clicked the first good, box showed "Total: 600 gold"; + x2, Buy | 3 X-Large HP potions in the bag, gold 994,488 → 992,688 |
+| Buy | Cancel | closed |
+| Sell | Cancel | closed |
+| Warehouse gold | typed 100, Withdraw | stored 250 → 150 |
+| Warehouse gold | Close | closed |
+| Deposit | + x4, Deposit | "deposit accepted", the warehouse lists 5 items, the bag 20 → 15 |
+| Withdraw | clicked the stored stack (only possible after the lattice fix), + x1, Withdraw | "withdraw accepted", the warehouse lists 3 |
+
+`grep` found none of these in any of the three logs: `SCRIPT ERROR`, `signal is being emitted`,
+`already connected`, `previously freed`, `handle_crash`.
+
+### Test: `client/scripts/ui/hud/confirm_box_test.gd`
+
+It uses a synthetic item and no archive. It checks:
+- **(a)** every action and Cancel/Close button of the four boxes: the button survives its own
+  handler, and the box is hidden and queued for deletion;
+- **(b)** the Total and Get lines;
+- **(c)** a click on Sell pushed through the live viewport;
+- **(d)** a click on the first good under `GDR_STORE_SLOT_100` and under
+  `GDR_STORAGE_SLOT_100` reaches the cell's ItemIcon.
+
+**The negative on dev cfddf39.** The test was run in a detached worktree. It exited 134 with:
+
+```
+FAIL the buy box shows its total (no Total line)
+FAIL the sell box shows what it pays (no Get line)
+FAIL buy: the Buy button is not freed by its own press
+FAIL buy: BuyConfirm closes by hiding and queue_free
+FAIL buy: the Cancel button is not freed by its own press
+FAIL buy: BuyConfirm closes by hiding and queue_free
+FAIL sell: the Sell button is not freed by its own press
+FAIL sell: SellConfirm closes by hiding and queue_free
+FAIL sell: the Cancel button is not freed by its own press
+FAIL sell: SellConfirm closes by hiding and queue_free
+FAIL deposit: the Deposit button is not freed by its own press
+FAIL deposit: DepositConfirm closes by hiding and queue_free
+FAIL deposit: the Cancel button is not freed by its own press
+FAIL deposit: DepositConfirm closes by hiding and queue_free
+FAIL withdraw: the Withdraw button is not freed by its own press
+FAIL withdraw: WithdrawConfirm closes by hiding and queue_free
+FAIL withdraw: the Cancel button is not freed by its own press
+FAIL withdraw: WithdrawConfirm closes by hiding and queue_free
+FAIL gold: the Close button is not freed by its own press
+FAIL gold: GoldDialog closes by hiding and queue_free
+FAIL HudPanels has _lattice_takes_clicks
+FAIL (d) a click on the first good under GDR_STORE_SLOT_100 reaches its ItemIcon (0 press(es))
+FAIL HudPanels has _lattice_takes_clicks
+FAIL (d) a click on the first good under GDR_STORAGE_SLOT_100 reaches its ItemIcon (0 press(es))
+ERROR: Object <Object#62042146297> was freed or unreferenced while a signal is being emitted from it. ...
+handle_crash: Program crashed with signal 11
+```
+
+That is 24 FAIL lines, and then the crash. The fixed tree prints ALL PASS.
+
+### The native-dialog question
+
+The client has exactly one Godot `Window` dialog: `Boot.gd`'s `ConfirmationDialog` for the
+auto-updater. It is embedded, because `embed_subwindows` is left at its default of true. It is not
+part of the store or the warehouse.
+
+The boxes the user calls "native" are this client's own `PanelContainer` boxes. The export
+presets set nothing that touches subwindows (READ `client/export_presets.cfg`).
+
+### Left open
+
+The retail replacement is next. It uses:
+- `CIFMessageBox` from `ifmessagebox.txt`: MsgBoxStoreConfirm for sell, deposit and withdraw;
+  MsgBoxStoreMoney for gold; MsgBoxSimple for the generic confirm;
+- `CItemMallConfirmBuy` for buy.
+
+Retail's input is **drag** for every action that asks for confirmation. Ctrl+click buys or sells
+at once, with no box. This client clicks instead. See `docs/TODO.md`.
+
+
 ## Six-hundred-and-twenty-eighth round, review follow-up: the reflection is as bright as the game's, clips at the water, leaves out characters, and the sky is the game's cloud layer
 
 The review confirmed the mirror's geometry: its marker's reflection lands where predicted, within

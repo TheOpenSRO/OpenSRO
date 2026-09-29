@@ -1280,6 +1280,7 @@ func open_shop(npc_name: String, tabs: Array, npc_code: String = "") -> void:
 	_build_shop_purse(window)
 	_wire_repair_buttons(window)
 	_show_repair_buttons(window, npc_code)
+	_lattice_takes_clicks(window, "GDR_STORE_SLOT_")
 	_select_shop_tab(0)
 	window.show()
 	window.move_to_front()
@@ -1362,6 +1363,24 @@ func _build_shop_tab_strip(window: HudWindow) -> void:
 			lbl.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
 		btn.add_child(lbl)
 		strip.add_child(btn)
+
+## The store and the warehouse each author 30 CIFSlotWithHelp controls,
+## GDR_STORE_SLOT_100..129 (ifstore.txt) and GDR_STORAGE_SLOT_100..129
+## (ifstorageroom.txt), on exactly the 30 cells of their lattice (READ: slot
+## 100 at 21,71,32,32 = the lattice's first cell, step 36). This client draws
+## and clicks the goods in the lattice cells (_fill_shop_grid,
+## _fill_storage_grid). The slot controls come later in the tree, so Godot
+## hit-tests them first, and with MOUSE_FILTER_PASS a click goes on to the
+## slot's PARENTS, never to the cell under it: round 631 MEASURED a real X
+## click on the first good land on GDR_STORE_SLOT_100 and never reach the
+## cell's ItemIcon, so no good could be clicked to buy. The slots stay drawn;
+## they just stop taking the mouse. OURS: which of the two controls takes the
+## click is this client's arrangement, not the original's.
+func _lattice_takes_clicks(window: HudWindow, slot_prefix: String) -> void:
+	if window == null or window.panel_root == null:
+		return
+	for slot in window.panel_root.find_children(slot_prefix + "*", "Control", true, false):
+		(slot as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 ## Selects a tab: marks it (the `on` texture) and fills the grid with its goods.
 func _select_shop_tab(index: int) -> void:
@@ -1596,7 +1615,7 @@ func _confirm_buy(item_id: int) -> void:
 	var refresh := func() -> void:
 		var q: int = qty_box[0]
 		if price >= 0:
-			total_label.text = "Total: %s gold" % _grouped(price * q)
+			total_label.text = "Total: %s gold" % HudPanels._grouped(price * q)
 			var afford: bool = gold < 0 or price * q <= gold
 			total_label.add_theme_color_override("font_color", Color(0.95, 0.85, 0.45) if afford else Color(0.95, 0.5, 0.45))
 			buy.disabled = not afford
@@ -1636,12 +1655,12 @@ func _confirm_buy(item_id: int) -> void:
 	box.add_child(row)
 	buy.pressed.connect(func() -> void:
 		var q: int = qty_box[0]
-		panel.free()
+		_close_confirm_box(panel)
 		_do_buy(item_id, q))
 	row.add_child(buy)
 	var cancel := Button.new()
 	cancel.text = "Cancel"
-	cancel.pressed.connect(func() -> void: panel.free())
+	cancel.pressed.connect(func() -> void: _close_confirm_box(panel))
 	row.add_child(cancel)
 
 	window.add_child(panel)
@@ -1649,7 +1668,8 @@ func _confirm_buy(item_id: int) -> void:
 	# Centre it over the window once it has a size.
 	panel.reset_size()
 	await panel.get_tree().process_frame
-	panel.position = ((window.size - panel.size) * 0.5).round()
+	if is_instance_valid(panel) and is_instance_valid(window):
+		panel.position = ((window.size - panel.size) * 0.5).round()
 
 func _shop_label(text: String, colour: Color) -> Label:
 	var lbl := Label.new()
@@ -1730,7 +1750,7 @@ func _confirm_sell(slot: int, item_id: int, slot_qty: int) -> void:
 	var qty_box := [1]
 	var total_label := _shop_label("", Color(0.95, 0.85, 0.45))
 	var refresh := func() -> void:
-		total_label.text = "Get: %s gold" % _grouped(unit * qty_box[0]) if unit > 0 else ""
+		total_label.text = "Get: %s gold" % HudPanels._grouped(unit * qty_box[0]) if unit > 0 else ""
 
 	if max_qty > 1:
 		var qrow := HBoxContainer.new()
@@ -1767,19 +1787,20 @@ func _confirm_sell(slot: int, item_id: int, slot_qty: int) -> void:
 	sell.text = "Sell"
 	sell.pressed.connect(func() -> void:
 		var q: int = qty_box[0]
-		panel.free()
+		_close_confirm_box(panel)
 		_do_sell(slot, q))
 	row.add_child(sell)
 	var cancel := Button.new()
 	cancel.text = "Cancel"
-	cancel.pressed.connect(func() -> void: panel.free())
+	cancel.pressed.connect(func() -> void: _close_confirm_box(panel))
 	row.add_child(cancel)
 
 	window.add_child(panel)
 	_message_box_sounds(panel)
 	panel.reset_size()
 	await panel.get_tree().process_frame
-	panel.position = ((window.size - panel.size) * 0.5).round()
+	if is_instance_valid(panel) and is_instance_valid(window):
+		panel.position = ((window.size - panel.size) * 0.5).round()
 
 func _do_sell(slot: int, quantity: int) -> void:
 	var who := NetClient.current_character_name
@@ -1900,6 +1921,7 @@ func open_storage(npc_name: String) -> void:
 	window.set_title(npc_name)
 	_wire_storage_money_button(window)
 	_wire_storage_page_spinner(window)
+	_lattice_takes_clicks(window, "GDR_STORAGE_SLOT_")
 	window.show()
 	window.move_to_front()
 	# 0x79dbd0 with the storage (registry 0x13): the helper on it (0x79dd8f).
@@ -2055,19 +2077,20 @@ func _quantity_move_confirm(dialog_name: String, title: String, max_qty: int, ac
 	act.text = action_label
 	act.pressed.connect(func() -> void:
 		var q: int = qty_box[0]
-		panel.free()
+		_close_confirm_box(panel)
 		on_action.call(q))
 	row.add_child(act)
 	var cancel := Button.new()
 	cancel.text = "Cancel"
-	cancel.pressed.connect(func() -> void: panel.free())
+	cancel.pressed.connect(func() -> void: _close_confirm_box(panel))
 	row.add_child(cancel)
 
 	window.add_child(panel)
 	_message_box_sounds(panel)
 	panel.reset_size()
 	await panel.get_tree().process_frame
-	panel.position = ((window.size - panel.size) * 0.5).round()
+	if is_instance_valid(panel) and is_instance_valid(window):
+		panel.position = ((window.size - panel.size) * 0.5).round()
 
 func _do_deposit(bag_slot: int, quantity: int) -> void:
 	var who := NetClient.current_character_name
@@ -2197,14 +2220,15 @@ func _open_gold_dialog() -> void:
 	row.add_child(withdraw)
 	var close := Button.new()
 	close.text = "Close"
-	close.pressed.connect(func() -> void: panel.free())
+	close.pressed.connect(func() -> void: _close_confirm_box(panel))
 	row.add_child(close)
 
 	window.add_child(panel)
 	_message_box_sounds(panel)
 	panel.reset_size()
 	await panel.get_tree().process_frame
-	panel.position = ((window.size - panel.size) * 0.5).round()
+	if is_instance_valid(panel) and is_instance_valid(window):
+		panel.position = ((window.size - panel.size) * 0.5).round()
 
 func _do_gold(op: int, amount: int) -> void:
 	if amount <= 0:
@@ -2663,6 +2687,21 @@ func _load_items() -> void:
 		_object_names = UiTextTable.parse(archive.read_file(names_entry))
 	print("HudPanels: %d item(s) resolvable by id" % _items.size())
 
+## Closes one of this client's own confirm boxes from its own buttons (Buy,
+## Sell, Deposit/Withdraw, Cancel, the gold dialog's Close). The box is an
+## ANCESTOR of the pressed button, so freeing it there deletes the Button
+## while BaseButton is still emitting `pressed` and the Viewport is still
+## routing the click: round 631 reproduced that with a real X click on Sell as
+## "~Object: ... was freed or unreferenced while a signal is being emitted from
+## it" followed by "Program crashed with signal 11" (MEASURED, Godot 4.2.2).
+## So the box is hidden now and deleted by the engine at the end of the frame,
+## after the click has finished with it.
+func _close_confirm_box(box: Control) -> void:
+	if not is_instance_valid(box) or box.is_queued_for_deletion():
+		return
+	box.hide()
+	box.queue_free()
+
 ## The confirm boxes this client draws itself (buy, sell, a quantity to
 ## move, the warehouse's gold). Retail's CIFMessageBox sounds
 ## snd_window_open when shown and snd_window_close when hidden, if the
@@ -2676,9 +2715,16 @@ func _message_box_sounds(box: Control) -> void:
 	var what := "message box %s hidden (0x63b630)" % box.name
 	var window_ref: WeakRef = weakref(box.get_parent())
 	var tree := get_tree()
+	# Two boxes of one name leaving in one frame (a reopen over a box that is
+	# already closing) bind the same arguments, so the second connect is the
+	# same Callable: Godot errors "already connected" (round 631, measured in
+	# confirm_box_test.gd). One close sound for them is enough.
 	box.tree_exiting.connect(func() -> void:
-		if tree != null:
-			tree.process_frame.connect(UiSounds.message_box_left.bind(window_ref, what), CONNECT_ONE_SHOT))
+		if tree == null:
+			return
+		var left := UiSounds.message_box_left.bind(window_ref, what)
+		if not tree.process_frame.is_connected(left):
+			tree.process_frame.connect(left, CONNECT_ONE_SHOT))
 
 ## An item's TypeID1..4 (itemdata), or empty when the item is not known.
 func item_types(item_id: int) -> PackedInt32Array:
