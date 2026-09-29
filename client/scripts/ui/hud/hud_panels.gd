@@ -1274,6 +1274,7 @@ func open_shop(npc_name: String, tabs: Array, npc_code: String = "") -> void:
 	if window == null:
 		return
 	window.set_title(npc_name)
+	_close_window_boxes(window)
 	_shop_tabs = tabs
 	_shop_selected = 0
 	_build_shop_tab_strip(window)
@@ -1664,6 +1665,7 @@ func _confirm_buy(item_id: int) -> void:
 	row.add_child(cancel)
 
 	window.add_child(panel)
+	_track_confirm_boxes(window)
 	_message_box_sounds(panel)
 	# Centre it over the window once it has a size.
 	panel.reset_size()
@@ -1796,6 +1798,7 @@ func _confirm_sell(slot: int, item_id: int, slot_qty: int) -> void:
 	row.add_child(cancel)
 
 	window.add_child(panel)
+	_track_confirm_boxes(window)
 	_message_box_sounds(panel)
 	panel.reset_size()
 	await panel.get_tree().process_frame
@@ -1919,6 +1922,7 @@ func open_storage(npc_name: String) -> void:
 	if window == null:
 		return
 	window.set_title(npc_name)
+	_close_window_boxes(window)
 	_wire_storage_money_button(window)
 	_wire_storage_page_spinner(window)
 	_lattice_takes_clicks(window, "GDR_STORAGE_SLOT_")
@@ -2086,6 +2090,7 @@ func _quantity_move_confirm(dialog_name: String, title: String, max_qty: int, ac
 	row.add_child(cancel)
 
 	window.add_child(panel)
+	_track_confirm_boxes(window)
 	_message_box_sounds(panel)
 	panel.reset_size()
 	await panel.get_tree().process_frame
@@ -2212,11 +2217,17 @@ func _open_gold_dialog() -> void:
 	box.add_child(row)
 	var deposit := Button.new()
 	deposit.text = "Deposit"
-	deposit.pressed.connect(func() -> void: _do_gold(StorageNet.GOLD_DEPOSIT, int(amount.text)))
+	# Retail's gold box is one move per box: OK sends it and the box closes
+	# (round 631 review), so a second click cannot send the amount again.
+	deposit.pressed.connect(func() -> void:
+		_close_confirm_box(panel)
+		_do_gold(StorageNet.GOLD_DEPOSIT, int(amount.text)))
 	row.add_child(deposit)
 	var withdraw := Button.new()
 	withdraw.text = "Withdraw"
-	withdraw.pressed.connect(func() -> void: _do_gold(StorageNet.GOLD_WITHDRAW, int(amount.text)))
+	withdraw.pressed.connect(func() -> void:
+		_close_confirm_box(panel)
+		_do_gold(StorageNet.GOLD_WITHDRAW, int(amount.text)))
 	row.add_child(withdraw)
 	var close := Button.new()
 	close.text = "Close"
@@ -2224,6 +2235,7 @@ func _open_gold_dialog() -> void:
 	row.add_child(close)
 
 	window.add_child(panel)
+	_track_confirm_boxes(window)
 	_message_box_sounds(panel)
 	panel.reset_size()
 	await panel.get_tree().process_frame
@@ -2699,8 +2711,37 @@ func _load_items() -> void:
 func _close_confirm_box(box: Control) -> void:
 	if not is_instance_valid(box) or box.is_queued_for_deletion():
 		return
+	# Out of the name lookups at once (open_shop, a reopen of the same box),
+	# so a new box keeps its plain name and a closing one is never reused.
+	box.name = "%s_closing" % box.name
 	box.hide()
 	box.queue_free()
+
+## The confirm boxes a store or warehouse window can carry, by node name.
+const CONFIRM_BOXES := ["BuyConfirm", "SellConfirm", "DepositConfirm", "WithdrawConfirm", "GoldDialog"]
+
+## Closes every confirm box on `window`. A box holds what it was opened on --
+## the sell box a bag SLOT, not the item -- so one left behind a closed
+## window and shown again on reopen acted on whatever had moved into that
+## slot since (round 631 review). Called when the window hides (Escape, its
+## X, close()) and when open_shop/open_storage reuse it for a new NPC.
+func _close_window_boxes(window: HudWindow) -> void:
+	if window == null:
+		return
+	for box_name in CONFIRM_BOXES:
+		var box := window.get_node_or_null(box_name) as Control
+		if box != null:
+			_close_confirm_box(box)
+
+## Hooks `window`'s hide to _close_window_boxes, once per window.
+func _track_confirm_boxes(window: HudWindow) -> void:
+	var on_hidden := _on_box_host_visibility.bind(window)
+	if not window.visibility_changed.is_connected(on_hidden):
+		window.visibility_changed.connect(on_hidden)
+
+func _on_box_host_visibility(window: HudWindow) -> void:
+	if is_instance_valid(window) and not window.visible:
+		_close_window_boxes(window)
 
 ## The confirm boxes this client draws itself (buy, sell, a quantity to
 ## move, the warehouse's gold). Retail's CIFMessageBox sounds

@@ -574,7 +574,12 @@ func _refresh_caption() -> void:
 func _build_place_labels(info: WorldmapInfoReader.MapInfo) -> void:
 	var old := _canvas.get_node_or_null("PlaceLabels")
 	if old != null:
-		old.free()
+		# Off the tree now, deleted at the end of the frame: a plate's own
+		# click lands here (_on_plate_input -> _show_map), and a synchronous
+		# free() deleted the plate while it was still emitting gui_input
+		# (round 631 review, measured with a real click).
+		_canvas.remove_child(old)
+		old.queue_free()
 	if _table == null or info != _table.world():
 		return
 	var layer := Control.new()
@@ -660,12 +665,21 @@ func _name_plate(text: String) -> Control:
 	return plate
 
 ## A plate pressed: a left press anywhere in the map area turns auto-move
-## off (0x6235ad, below), and the plate's map is shown.
+## off (0x6235ad, below), and the plate's map is shown on the release.
+##
+## Round 631 review: both halves of the click stay the plate's. World3D walks
+## on a left RELEASE that reaches _unhandled_input, and Godot sends a release
+## only to the control that took the press; switching maps on the press
+## dropped the plate, so the release went to the world and walked the player
+## (measured with a real click on the Jangan plate). Switching on the release
+## is this client's choice (OURS; the plates are ours).
 func _on_plate_input(event: InputEvent, info: WorldmapInfoReader.MapInfo) -> void:
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
-			and (event as InputEventMouseButton).pressed:
-		_mouse_turns_auto_off()
-		_show_map(info)
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		accept_event()
+		if (event as InputEventMouseButton).pressed:
+			_mouse_turns_auto_off()
+		else:
+			_show_map(info)
 
 ## Builds the tiles that overlap what can be seen, and no others. The world
 ## map is 363 tiles; at 128x128 apiece that is a lot of texture to hold for

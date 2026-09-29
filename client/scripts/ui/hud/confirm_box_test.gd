@@ -18,6 +18,14 @@ extends SceneTree
 ##   (c) A click on Sell pushed through the live viewport (press + release,
 ##       the OS path): the process survives it, and the box is gone a frame
 ##       later.
+##   (e) Round 631 review: a box does not outlive its window. Hiding the
+##       store (Escape, its X, close()) closes its sell box, so showing it
+##       again shows no stale box that would sell whatever has since moved
+##       into the captured bag slot; open_shop / open_storage reusing the
+##       window for a new NPC drop any box too.
+##   (f) Round 631 review: the gold dialog closes on Deposit / Withdraw, as
+##       retail's MsgBoxStoreMoney closes on OK, so a double click cannot
+##       move the amount twice.
 ##   (d) The store's and the warehouse's authored slot controls
 ##       (GDR_STORE_SLOT_100.. / GDR_STORAGE_SLOT_100.., ifstore.txt /
 ##       ifstorageroom.txt) sit on their lattice cells and come later in the
@@ -150,6 +158,32 @@ func _build_and_press() -> void:
 	_check_press("withdraw", "WithdrawConfirm", storage, withdraw, "Withdraw")
 	_check_press("withdraw", "WithdrawConfirm", storage, withdraw, "Cancel")
 	_check_press("gold", "GoldDialog", storage, gold, "Close")
+	# (f) NEGATIVE (fails on dev cfddf39: the dialog stayed up on Deposit
+	# and Withdraw, and a second click sent the amount again).
+	_check_press("gold", "GoldDialog", storage, gold, "Deposit")
+	_check_press("gold", "GoldDialog", storage, gold, "Withdraw")
+
+	# (e) the window closing takes its boxes with it.
+	for pair in [[_store, "SellConfirm", sell], [_store, "BuyConfirm", buy],
+			[storage, "DepositConfirm", deposit], [storage, "WithdrawConfirm", withdraw],
+			[storage, "GoldDialog", gold]]:
+		var host: HudWindow = pair[0]
+		(pair[2] as Callable).call()
+		var box := host.get_node_or_null(pair[1]) as Control
+		host.hide()
+		# NEGATIVE (fails on dev cfddf39: hiding only hid the window).
+		_check(box != null and (not is_instance_valid(box) or box.is_queued_for_deletion()),
+			"hiding its window closes %s" % pair[1])
+		host.show()
+		var again := host.get_node_or_null(pair[1]) as Control
+		_check(again == null, "showing the window again shows no stale %s" % pair[1])
+	# open_shop reusing an open store for another NPC.
+	sell.call()
+	var stale := _store.get_node_or_null("SellConfirm") as Control
+	if _panels.has_method("_close_window_boxes"):
+		_panels.call("_close_window_boxes", _store)
+	_check(_panels.has_method("_close_window_boxes") and stale != null and stale.is_queued_for_deletion(),
+		"_close_window_boxes (called by open_shop / open_storage) closes a box left on the window")
 
 ## (c) the OS path, over a few frames: the box needs a frame to lay out.
 func _process(_delta: float) -> bool:

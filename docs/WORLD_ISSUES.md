@@ -7094,6 +7094,132 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirty-first round, review follow-up: a world-map name plate no longer frees itself mid-click or walks the player, a confirm box closes with its window, and the gold box moves the amount once
+
+The review confirmed the round's fix for the seven store and warehouse handlers, and that it
+works with real input. It found five more issues; all are addressed here.
+
+### 1. The world map's name plates (MEASURED)
+
+**Before (dev cfddf39).** A real click on the Jangan plate (M, the globe, the plate) did two
+things wrong:
+- It logged "freed or unreferenced while a signal is being emitted" for the same reason as
+  the store boxes. The call chain is `_on_plate_input` → `_show_map` → `_build_place_labels`,
+  whose `old.free()` deleted the plate's own layer while the plate was emitting.
+- It walked the player.
+
+**Two faults, found in two steps.**
+1. The layer is now removed from the map and `queue_free`d.
+2. With that alone, the real click still walked the player. The session log (fix 1 only) showed
+   `PICK: click at (0, 0)`, a footstep sound, and the minimap moving from X:6436 to X:6447.
+   - World3D walks on a left **release** that reaches `_unhandled_input`.
+   - Godot sends a release only to the control that took the press.
+   - Switching maps on the press removed the plate, so the release went to the world.
+
+   The plate now takes both halves of the click (`accept_event`) and switches the map on the
+   release. Doing it on the release is OURS; the plates are ours.
+
+**The edit is small.** Two hunks in `hud_worldmap.gd` (`_build_place_labels`,
+`_on_plate_input`), away from the player-arrow code that round 630 is changing.
+
+**After, with a real click on the fixed build.** The regional map of Jangan opened. The minimap
+stayed at X:6436 Y:1062. There was no PICK line, no footstep, and no error lines in the whole
+log.
+
+**Test.** `client/scripts/ui/hud/worldmap_plate_test.gd` uses worldmap_window_test.gd's
+synthetic fixture; the town is given a one-region box so that it gets a plate. It pushes a
+press and a release through the live viewport, with a recorder standing in for World3D's
+`_unhandled_input`. On dev cfddf39:
+
+```
+ERROR: Object <Object#48167388722> was freed or unreferenced while a signal is being emitted from it. ...
+FAIL the clicked plate is not freed inside its own gui_input
+FAIL its PlaceLabels layer leaves the map and is deleted at the end of the frame
+FAIL neither half of the click falls through to the world (1 press(es), 1 release(s) reached _unhandled_input)
+```
+
+The fixed tree prints ALL PASS.
+
+### 2. A box outlived its window (MEASURED on base; the fix is OURS)
+
+**The bug.**
+- `open_shop` and `open_storage` never dropped an existing box.
+- Escape, the window's X and `close()` only hide the window.
+- So a sell box, which holds a bag *slot* rather than the item, came back stale on reopen and
+  sold whatever had moved into that slot.
+
+**The fix.** `_close_window_boxes` closes every box on the window (Buy, Sell, Deposit, Withdraw,
+Gold):
+- when the window hides (its `visibility_changed`; the window's own flag, so hiding the whole
+  HUD with F10 keeps the box);
+- when `open_shop` or `open_storage` reuses the window.
+
+A closing box is also renamed at once, so a lookup never finds it and a new box keeps its plain
+name.
+
+**What retail does is OPEN.** The hide branch of `CIFStore::vslot_023` does not touch the box.
+The storage, the inventory and ConfirmBuy have no ShowWindow override. No `[+0x390]` hide was
+found in store, storage or NPC code (`docs/protocol/message_box.md`).
+
+**Real input, fixed build.**
+- The sell box was open when the store's X was clicked. Talking to the storage keeper and
+  choosing Buy reopened the store with no sell box.
+- A sell box, then Escape: the store and the box both closed.
+- In the warehouse, the deposit box was open when the storage's X was clicked. Talking to the
+  keeper and choosing Deposit reopened the storage with no deposit box.
+
+### 3. The gold box closes on OK (READ, then matched)
+
+**Retail.** CIFMessageBox's message map (`.rdata 0xd9b174`) sends every OK and Cancel to a
+handler that posts to the owner and then hides the box. For the gold box these are OK 215 →
+0x63d7f0 and Cancel 216 → 0x63bc50.
+
+**Ours.** Deposit and Withdraw now close the dialog before sending.
+
+**Real input.** A double-click on Deposit with 100 typed moved the stored gold 250 → 350,
+once.
+
+### 4 and 5. The protocol document
+
+`docs/protocol/message_box.md` is rewritten for the **RENEWAL** branch:
+- **Only RENEWAL controls.** MsgBoxStoreConfirm and ConfirmBuy's contents exist only under
+  `#ifdef RENEWAL_SHOP_SYSTEM`. Their `#else` controls are gone from the tables.
+- **The branch is INFERRED from the code.** It loads MsgBoxStoreConfirm at 0x640300. ConfirmBuy's
+  control 400 is read without a null check. The only filler of the `#else`-only 44/45
+  (0x7c2a20) is dead code. The resinfo parser's define map (0xeed4e0) was not traced.
+- **Where the code puts Buy and Cancel.** Under RENEWAL, ConfirmBuy's buttons are 0,0,0,0 in the
+  file. `FUN_007c3f70` adds a row per price type and moves Buy to (X+82, Y+H-40) and Cancel to
+  (X+170, Y+H-40) (asm 0x7c47ef..0x7c4871).
+- **The review's nits, fixed:**
+  - modes 10-13 carry their MsgBox names;
+  - the title is `UIIT_STT_CONFIRM_BOX` for purposes 1-10, 14 and 16-20, and other purposes
+    have their own titles;
+  - DEPOSITMONEY and WITHDRAWMONEY are NAME1's caption;
+  - "exchange gold" and "drop gold" are INFERRED from their callers;
+  - MsgBoxSimple is created at 280x144 and then resized to 360x151 by 0x643e50 (READ);
+  - the +0x908 style byte is READ at 0x643e94.
+
+### Tests
+
+**New negatives in `confirm_box_test.gd`.** On dev cfddf39 they are among its 37 FAIL lines:
+
+```
+FAIL gold: GoldDialog closes by hiding and queue_free          (Deposit, then Withdraw)
+FAIL hiding its window closes SellConfirm
+FAIL showing the window again shows no stale SellConfirm
+FAIL hiding its window closes BuyConfirm
+FAIL showing the window again shows no stale BuyConfirm
+FAIL hiding its window closes DepositConfirm
+FAIL showing the window again shows no stale DepositConfirm
+FAIL hiding its window closes WithdrawConfirm
+FAIL showing the window again shows no stale WithdrawConfirm
+FAIL hiding its window closes GoldDialog
+FAIL showing the window again shows no stale GoldDialog
+FAIL _close_window_boxes (called by open_shop / open_storage) closes a box left on the window
+```
+
+The fixed tree prints ALL PASS.
+
 ## Six-hundred-and-thirty-first round: confirming a sale, a purchase or a warehouse move no longer crashes the game, and the store's goods can be clicked again
 
 The user reported this on v0.1.458: "when I try to interact with shops or storage and use the

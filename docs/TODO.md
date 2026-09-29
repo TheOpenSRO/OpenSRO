@@ -985,8 +985,18 @@ burst and sound, right-click cancel and the tooltip. The record is in
 ### Store and warehouse confirm boxes — **crash fixed (round 631); next: the retail CIFMessageBox**
 Round 631 fixed the crash the user hit on v0.1.458 (a box freed from its own button: SIGSEGV).
 It also made the store's goods and the warehouse's items clickable again: their authored
-`*_SLOT_100..129` controls had been covering the lattice cells. Evidence is in WORLD_ISSUES.md's
-six-hundred-and-thirty-first round.
+`*_SLOT_100..129` controls had been covering the lattice cells.
+
+The review follow-up fixed three more things:
+- the same free-while-emitting on the world map's name plates, whose click also walked the
+  player;
+- a box left open behind a closed window. It now closes with its window, which is OURS; what
+  retail does on close is OPEN (see message_box.md);
+- the gold dialog now closes on OK, as retail's box does, so a double click moves the amount
+  once.
+
+Evidence for all of it is in WORLD_ISSUES.md's six-hundred-and-thirty-first round and its
+review follow-up.
 
 Every box below is still **this client's own** gold-edged `PanelContainer`. None of them is a
 Godot `Window`. The next round replaces them with the retail windows.
@@ -1004,9 +1014,12 @@ count or gold at box+0x8b8 and sends the move.
   - Retail (READ): drag a store good onto the bag. `CIFInventory::vslot_028` 0x6b5b80 →
     `0x6b24c0(1)` opens `ifinventory.txt` "ConfirmBuy" = `CItemMallConfirmBuy` (ID 400,
     `ifitemmallconfirmbuy.txt`).
-  - Its controls: title `UIIT_STT_CONFIRM_BOX` ("Confirmation window"), icon, name, a "Quantity"
-    edit (id 42) with spin up/down (ids 50/51), Price (44), Total (45), Buy (61), Cancel (62).
-  - OPEN: whether its silk-mall rows show for an NPC store.
+  - Its RENEWAL-branch controls (the live build's; INFERRED from the code): title
+    `UIIT_STT_CONFIRM_BOX` ("Confirmation window"), icon, name, a "Quantity" edit (id 42) with
+    spins 50/51, and background 4 at 16,40,295,106.
+  - `FUN_007c3f70` adds one 22-tall price row per price-type flag, then places Buy (61) at
+    (X+82, Y+H-40) and Cancel (62) at (X+170, Y+H-40).
+  - Price/Total (44/45) and the silk rows are `#else`-only, so they are not in the live build.
   - Ctrl+click on a store slot buys at once, with no box (`CIFSlotWithHelp::vslot_029` 0x680fa0).
 - [ ] **Sell**, `_confirm_sell`.
   - Retail (READ): drag a bag item onto the store. `CIFStore::vslot_028` 0x6d1400 → `0x6b07d0`:
@@ -1022,14 +1035,17 @@ count or gold at box+0x8b8 and sends the move.
     Withdraw is purpose 6 (OK `UIIT_STT_WITHDRAW` "Take"), via `0x6b15b0`.
   - Guild storage uses purposes 0x10 / 0x11.
   - The deposit box fills its price field with a fee (INFERRED from `price*n/2`, not traced).
-- [ ] **Warehouse gold**, `_open_gold_dialog` (ours: one box with Deposit, Withdraw and Close).
+- [ ] **Warehouse gold**, `_open_gold_dialog` (ours: one box with Deposit, Withdraw and Close;
+  it closes on Deposit or Withdraw since the round 631 review, as retail's does on OK).
   - Retail (READ): two separate boxes, both mode 3 **MsgBoxStoreMoney**. Purpose 3 deposits
     (`0x6b2800`, caption `UIIT_STT_DEPOSITMONEY`); purpose 4 withdraws (`0x6b29f0`, "Take").
-  - Both show `interface\icon\moneyicon.ddj`, with the amount edit (id 3) resized to 121x24. OK is
-    id 215, Cancel id 216. The OK sends via `0x825f50` with a 64-bit amount.
+  - Both show `interface\icon\moneyicon.ddj`, with the amount edit (id 3) resized to 121x24.
+    The captions go to NAME1 (control 1); the title is `UIIT_STT_CONFIRM_BOX`. OK is id 215,
+    Cancel id 216, and the OK sends via `0x825f50` with a 64-bit amount.
 - [ ] **Buff cancel**, `hud_buff_board.gd` `_open_confirm`. Already titled `UIIT_STT_CONFIRM_BOX`.
-  - Retail's generic box (READ): `GInterface::0x788270` → CIFMessageBox mode 9 **MsgBoxSimple**,
-    280x144. Text id 251, buttons 252/253.
+  - Retail's generic box (READ): `GInterface::0x788270` → CIFMessageBox mode 9 **MsgBoxSimple**.
+    It is created 280x144 and then resized to 360x151 by `0x643e50`. Text id 251, buttons
+    252/253.
   - Its style byte +0x908 picks the buttons: 0 = Confirm, 1 = Yes/No, 2 = Cancel.
   - Already closes with `queue_free` (safe).
 - [ ] **Guild name / leave prompts** (`open_guild_name_prompt`, `open_guild_leave_prompt`) and the
