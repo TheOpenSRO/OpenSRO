@@ -1090,11 +1090,14 @@ is the berserk key, activation lights the flames/face/glow and drains one orb pe
 button toggles the stat panel (live from the stats packet, balances by the client's own formula),
 the race emblem follows characterdata's Country, the "+" opens the character window, and the HP/MP
 bars use `pmi_hp.ddj` / `pmi_mp.ddj`. Left:
-- [ ] **The portrait** is the frame's empty socket. Retail renders the player's own model, posed
-      with animation 0x3c, from a camera at the `Bip01 Head` bone into a 128x128 buffer
-      (`FUN_007b7740`); which of the floats 0.2 / 6.5 / 30.0 / 0.1 is distance, lift and field of
-      view is not settled (READ the camera build in `FUN_00a5a8c0` next). Then a SubViewport with
-      its own World3D and a copy of the player's skeleton and worn meshes.
+- [x] **The portrait** (round 635): the player's own dressed body, posed with ANI_POSE, from the
+      READ camera (the head + 1.0, a 0.2 rad yaw, 6.5 away, 30 degree vertical FOV; the avatar
+      at 0.1 rad) and light (0.7 diffuse / 0.3 ambient, frontal, through the object shader's
+      MODULATE2X), rendered once per dress into 128x128 and shown through `pmi_face.ddj`'s
+      alpha (`player_portrait.gd`). Still OPEN: whether a vertex-shader device lights it with
+      the zone's light instead (the portrait sets only the device light; `vslot_025` feeds the
+      shader); the game camera's near/far; the party and academy slots' portraits (same
+      constants, not drawn); the device-reset re-render (Godot keeps the buffer).
 - [x] **Hit rate / Parry ratio** -- round 629's review: the stats packet's fifth and sixth tails,
       the rates combat already uses, in both windows. Since the 629-632 integration review each
       item's OWN value: the weapon's HitRateMin..Max by its variance group 3, the body armour's

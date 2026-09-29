@@ -7094,6 +7094,162 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirty-fifth round: the player block's circle shows the character's own face, bright, the way the client renders it
+
+The user asked for the black circle at the top left to show the character, bright and visible.
+Retail's screenshots show a face there. Round 629 had read that `FUN_007b7740` renders the
+player's model from the `Bip01 Head` bone into a 128x128 buffer, but not which camera float
+did what. This round finishes the read and draws the portrait. Labels: READ, MEASURED,
+INFERRED, OURS, OPEN. Addresses are in `docs/protocol/player_mini_info.md`, "The portrait".
+
+**1. The model is the equipment window's avatar (READ).**
+- `IFMainPopup::FUN_006a1d50` returns the CIFEquipment page (popup +0x7c0).
+- Its CCObjAnimation at +0x36c is the model, the same dressed body the equipment window turns.
+- The render plays animation 0x3c on it and steps it once (`FUN_00a5ac80(1, 0.0)`).
+- 0x3c is 60, which is ANI_POSE in the client's name map.
+- MEASURED (`client/tools/probe_portrait.gd`): every player body tested lists ANI_POSE in its
+  `default` group only. CHAR_CH_MAN_FIGHTER and CHAR_EU_MAN_WARRIOR use `man_pose.ban`;
+  CHAR_CH_WOMAN_FIGHTER uses `woman_pose.ban`.
+- After the render, the model's yaw and animation 0 are restored.
+
+**2. The camera (READ from 0x007b7875..0x007b790a and `CGFXVideo3d::FUN_00bae810` /
+`FUN_00bae580`).** The render copies the game camera and changes these fields:
+
+| field | value | address |
+|---|---|---|
+| +0x10, the look-at target | the head bone + (0, 1.0, 0) | 0x00e1b7f0 |
+| +0x34 | 0 | |
+| +0x38 | 0.2 | 0x00da95f8 |
+| +0x3c | 0 | |
+| +0x40, the distance | 6.5 | 0x00da95f4 |
+| +0x50, the vertical field of view | 30.0 degrees | 0x00d82ef0 |
+
+- The field of view goes through pi/180 (0x00e1b8d8) into `FUN_00aa4ef0`, a
+  `PerspectiveFovLH`: `cot(fov/2)/aspect`.
+- FUN_00bae580 builds `R = RotZ(+0x3c) * RotX(+0x34) * RotY(+0x38)`.
+- The eye is `target - (0, 0, distance) * R`, and the up vector is `(0, 1, 0) * R`.
+- So 0.2 is a yaw about the head, and the look is level.
+- INFERRED: which D3DX rotation each dispatch pointer is. 0x00ec7798, 0x00ec779c and 0x00ec77a0
+  are D3DX's X, Y and Z in its own order. The camera-mode presets in the same function only
+  make sense that way: RotX(±pi/2) looks up or down, and RotY(pi/2, 3pi/2, pi) looks to the
+  sides and back.
+- The avatar is turned to 0.1 rad (`FUN_00a5a8c0(0.1)`, 0x00e1b7fc). The CCompoundObj yaw
+  setter (slot 12, `CCompChar::FUN_00c26e70`) builds `[[c,0,s],[0,1,0],[-s,0,c]]`.
+- INFERRED: the avatar object belongs to that family.
+
+**3. The light (READ, 0x007b796d..0x007b7a64).**
+- A D3DLIGHT9 of type 3, set as light 0 and enabled:
+
+| part | value | address |
+|---|---|---|
+| direction | (0, 0, 1) | |
+| diffuse | 0.7 | 0x00d82f04 |
+| specular | 0.58 | 0x00da95f0 |
+| ambient | 0.3 | 0x00d82f00 |
+| range | 1000 | 0x00da95ec |
+
+- The render also sets LIGHTING on, z on and blending off.
+- It sets fog start = end = 1000 through `CObjRendererVS::vslot_014`, vertex constant c16.
+- The skinned-object vertex shader (`vertexshader2.c`, READ) lights with
+  `oD0 = c10 + max(0, N.c9) * c11`.
+- `vslot_025` stores the light direction times -1.0 (0x00e1b8e8) for c9.
+- `vslot_038` multiplies the ambient by the material colour for c10 (0x00bf59e1).
+- The object draw sets stage 0 to MODULATE2X (0x00bf5e1e).
+- MEASURED: every player body material is ambient = diffuse = 0.588. A face square to the light
+  therefore draws at `2 x 0.588 x texture`, brighter than the texture itself.
+- INFERRED / OPEN: the portrait calls the DEVICE's SetLight. The vertex-shader renderer takes its
+  light from `vslot_025`, which the world's environment code calls (`Map::FUN_00a19160`) and
+  the portrait does not. On a vertex-shader device, retail may light the portrait with the
+  zone's own light.
+- We use the light the portrait's own code sets.
+- One retail screenshot (`retail_eu.png`) shows a black circle, so retail itself does not
+  always draw it.
+
+**4. The clear and the mask (READ, MEASURED).**
+- BufRender's begin (`FUN_009edb60`) clears to 0xff000000.
+- `CIFStaticWithPictureClip::vslot_013` draws one quad over the control with both textures at
+  full UV.
+- Stage 0 takes its colour from the render. Its alpha comes from CURRENT, which is 1.0 with the
+  FVF 0x204 (no diffuse).
+- Stage 1 takes its alpha from `pmi_face.ddj`.
+- MEASURED: that file is 48x48 ARGB8888, every texel black. Alpha is 255 on a disc of 1804
+  texels and 0 on the other 500. It is a hard round mask, not a picture, so "the black circle"
+  was an empty buffer.
+- INFERRED: the UI's usual SRCALPHA blend and linear filtering (the draw sets neither).
+
+**5. When it renders (READ).**
+- The block renders only while its dirty byte (+0x38c) is set. `vslot_012` checks it every frame
+  (0x007b83ef).
+- The byte is set:
+  - in the constructor;
+  - on a device reset;
+  - by `FUN_007b4c00`, which is called after the item-move reply (five sites in `FUN_0087ba20`,
+    after the avatar's refresh `FUN_006ab690`) and by the avatar's reset `FUN_006abc50`;
+  - again, when the avatar has not loaded yet.
+- Nothing in the berserk code sets it. The berserk face is the HWAN_EFF_FACE overlay, not a
+  re-render.
+- So retail renders once per dress, not every frame.
+
+**What shipped.**
+- A new script, `PlayerPortrait` (`client/scripts/ui/hud/player_portrait.gd`), a 128x128
+  SubViewport:
+  - it holds a copy of the player's dressed body under a z -> -z node (the world's handedness
+    fix, round 61), posed with ANI_POSE at its first key and turned by the READ yaw;
+  - the camera is built from the READ constants;
+  - its own shader does the vertex-shader lighting and MODULATE2X in the client's gamma space;
+  - it renders with `UPDATE_ONCE`.
+- `HudPlayerInfo` shows the buffer in GDR_PMI_PICTURE through `pmi_face.ddj`'s alpha.
+- `World3D._refresh_player_portrait` hands over a copy of the body on every dress, and on the
+  block's creation when the body came first.
+- MEASURED (the calibration in `client/tools/portrait_shot.gd`): in this renderer's SubViewport
+  a texel reaches the shader as stored, and ALBEDO reaches the buffer as written. The first
+  version converted to linear and back, and a 0.5 grey quad at the READ light came out 183
+  against 150 expected. After the fix it comes out 150, as expected.
+- OURS: the camera's near and far are 0.5 and 1000 (retail copies the game camera's; OPEN).
+- OURS: the pose is the clip's first key, which is INFERRED to be within one frame's step of
+  retail's.
+
+**Verification** (renders on the box, RX 5700 XT via VirtualGL; `scratchpad/portrait_shots/`).
+- `portrait_shot.gd` rendered four bodies:
+  - CHAR_CH_MAN_FIGHTER with the starting kit;
+  - CHAR_CH_WOMAN_FIGHTER with the starting kit;
+  - CHAR_EU_MAN_WARRIOR in ITEM_EU_M_CLOTHES_01;
+  - CHAR_EU_WOMAN_KNIGHT in ITEM_EU_W_CLOTHES_01.
+- Each came out as a lit face and shoulders filling the circle. Between 5476 and 7049 of the
+  16384 buffer texels are not black, and 0 materials were left unmapped.
+- Compared against `retail_stats.png` / `s2.jpg` by eye only: similar framing and brightness,
+  and the face turned slightly the same way. This is a picture, not a measurement.
+- An in-world `qa_shot` run (Jangan spawn, `--equip` starting kit) logged `portrait dressed
+  (china_man, pose man_pose.ban, 1338 us, 0 material(s) left as they were)` and drew the face
+  in the block.
+- Cost, MEASURED (`--cost`, 200 frames each, vsync off):
+  - idle: 1640 / 1612 us a frame;
+  - re-rendering every frame: 1820 us a frame, of which the viewport itself measured 0.21 ms
+    CPU and 0.08 ms GPU;
+  - shipped: one render per dress, so nothing in steady state;
+  - a dress costs 1.3-1.7 ms of CPU (copy, pose, materials).
+
+**Other players.** The same camera constants (0x00da95f4/f8, 0x00d82ef0, 0x00e1b7f0) and
+BufRender buffers appear in the party slots (`IFQuickPartyWnd::FUN_006d8bf0`,
+`CIFQuickPartySlot::Create`) and the academy slots (`CIFApprenticeShipSlot::FUN_006eb740`). No
+target-window code creates a BufRender, so the target window has no such portrait (INFERRED from
+the xref list). Only the player's portrait is drawn here.
+
+**Tests.** `player_portrait_test.gd`, run against b9bbf07 (base worktree, test file copied in):
+
+    FAIL player_portrait.gd exists
+    FAIL GDR_PMI_PICTURE carries the portrait view
+    FAIL HudPlayerInfo.set_portrait exists
+    player_portrait_test: 3 failure(s)
+
+Results on feat/portrait:
+- `player_portrait_test.gd`: 0 failures;
+- `hud_player_info_test.gd`: 0 failures;
+- `remote_godot.sh check`: 386 scripts, ALL LOAD;
+- `remote_godot.sh tests`: 154 suites, 0 failing.
+
+The server is untouched.
+
 ## Rounds 629-632 integration review (int/ui): the berserk display lasts as long as the berserk, a revive or a zone change ends it on the server, hit rate and parry are the item's own, and the panel follows every change of what is worn
 
 The final review of int/ui (dev cfddf39 + rounds 629-632, merged at 1a7e84d) confirmed every READ

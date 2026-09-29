@@ -133,12 +133,135 @@ path. The race is the byte at the character's reference object +0x9c, `_RefObjCo
 (RE_COMPLETION 2026-09-16). MEASURED: characterdata column 14 reads 0 on all 26 `CHAR_CH_*` rows
 and 1 on all 26 `CHAR_EU_*` rows.
 
-## The portrait (READ; OPEN in srrevamp)
+## The portrait (READ; drawn since round 635)
 
-`UI_SILKMALL::FUN_007b7740` renders the player's own model into the 128x128 buffer whenever the
-block is marked dirty (+0x38c): it plays animation 0x3c on the model, finds the `Bip01 Head` bone,
-builds a camera from the head's position (+1.0 on y, the double at 0x00e1b7f0) with the floats
-0.2, 6.5 and 30.0 (0x00da95f8, 0x00da95f4, 0x00d82ef0) and 0.1 (0x00e1b7fc), renders the model
-alone, and restores the model's animation. `pmi_face.ddj` (48x48, a black disc) is the picture
-behind it. Which of the camera floats is the distance, the height offset and the field of view is
-not settled from the decompile alone (OPEN), and srrevamp does not draw this render yet.
+`UI_SILKMALL::FUN_007b7740` renders the portrait. srrevamp's version is
+`client/scripts/ui/hud/player_portrait.gd`.
+
+**The model (READ).** `IFMainPopup::FUN_006a1d50` returns the popup's +0x7c0, the CIFEquipment
+page. Its CCObjAnimation at +0x36c (the object at +0x370) is the equipment window's own dressed
+avatar. When `vt+0x98` says the avatar is not ready, the dirty byte stays set and the render
+tries again next frame.
+
+**The render, step by step (READ):**
+1. Play animation 0x3c (`vt+0xc(0x3c, 0, 0, 0, 1.0, 1.0)`). 0x3c = 60 = ANI_POSE, per
+   `FUN_009e5240`'s name map.
+2. Step it once: `FUN_00a5ac80(1, 0.0)` calls the object's `vt+0x38` with the frame time.
+3. Find `Bip01 Head` (`vt+0x44`, the string at 0x00da95fc) and take its matrix's translation
+   (+0x30..+0x38).
+4. Build the camera and set the avatar's yaw to 0.1 (`FUN_00a5a8c0`, the float at 0x00e1b7fc).
+5. Begin the buffer (`BufRender::FUN_009edb60`). This sets the target and depth and clears both
+   to 0xff000000 / 1.0.
+6. Set the camera (`vt+0x5c` of the manager at 0x0110f7ec) and the view/projection
+   (`FUN_00bbdbd0`).
+7. Queue the avatar on the object renderer (slot 10), draw (slots 3, 5 and 6), then end the
+   buffer (`FUN_009edc90`).
+8. Restore the yaw from CIFEquipment +0x578 (its rotate buttons' angle,
+   `FUN_006ab920`/`FUN_006ab960`), stop 0x3c and play animation 0.
+
+MEASURED: every player body lists ANI_POSE in its `default` group. CHAR_CH_MAN_FIGHTER and
+CHAR_EU_MAN_WARRIOR use `prim\ani\char\china\man\man_pose.ban`; CHAR_CH_WOMAN_FIGHTER and
+CHAR_EU_WOMAN_KNIGHT use `...\woman\woman_pose.ban`. The EU bodies share the China skeletons and
+clips. Measured with `client/tools/probe_portrait.gd` and `portrait_shot.gd`.
+
+**The camera (READ: 0x007b7875..0x007b790a, `CGFXVideo3d::FUN_00bae810`, `FUN_00bae580`).** The
+render starts from a copy of the game camera (copy constructor `FUN_006d8000`) and sets:
+
+| field | value | meaning |
+|---|---|---|
+| +0x10 | head + (0, 1.0, 0) (the double at 0x00e1b7f0) | the look-at target |
+| +0x34 | 0 | rotation about X |
+| +0x38 | 0.2 (0x00da95f8) | rotation about Y: a yaw around the head |
+| +0x3c | 0 | rotation about Z |
+| +0x40 | 6.5 (0x00da95f4) | the distance |
+| +0x50 | 30.0 (0x00d82ef0) | the vertical field of view in degrees |
+
+- `FUN_00bae580` builds `R = RotZ(+0x3c) * RotX(+0x34) * RotY(+0x38)`.
+- It sets the up vector to `(0,1,0) * R` and the eye to `target - (0, 0, +0x40) * R`.
+- When the byte at +0x44 is 0, the distance is 10000.0 instead (0x00d82efc).
+- A switch on the camera mode (+0x0) picks a preset rotation, but the multiply overwrites it
+  (the product's output is the same matrix).
+- The projection is `FUN_00aa4ef0(+0x50 * pi/180, aspect, +0x48, +0x4c)`, a `PerspectiveFovLH`
+  (0x00e1b8d8 = pi/180; `cot(fov * 0.5)`). Byte +0x44 set selects it; when it is clear,
+  `FUN_00aa5134` uses +0x3c as a width.
+- The aspect is the viewport's (INFERRED 1.0: `SetRenderTarget` resets the viewport to the
+  128x128 surface before `FUN_00bae810(1)` reads it).
+- Near and far (+0x48/+0x4c) are the game camera's (OPEN).
+- INFERRED: that 0x00ec7798 / 779c / 77a0 are D3DX RotationX / Y / Z. They are D3DX's
+  declaration order, and the mode presets (RotX ±pi/2 up/down, RotY pi/2, 3pi/2, pi) only make
+  sense that way.
+
+**The avatar's yaw (READ).** `FUN_00a5a8c0(f)` calls `vt+0x30(f)` on the object. For the
+CCompoundObj family (`CCompChar::FUN_00c26e70`, vtable slot 12) that setter builds the rotation
+`[[cos,0,sin],[0,1,0],[-sin,0,cos]]` (cos 0x00b44a10, sin 0x00b44b40). INFERRED: the avatar
+object is of that family.
+
+**The light (READ, 0x007b796d..0x007b7a64).** The D3DLIGHT9 at `esp+0x2c`:
+
+| part | value | address |
+|---|---|---|
+| Type | 3 (directional) | |
+| Diffuse | 0.7, 0.7, 0.7 (alpha 0) | 0x00d82f04 |
+| Specular | 0.58 x3 | 0x00da95f0 |
+| Ambient | 0.3 x3 | 0x00d82f00 |
+| Direction | (0, 0, 1) | |
+| Range | 1000.0 | 0x00da95ec |
+
+The render then:
+- sets `SetLight(0)` and `LightEnable(0, 1)`;
+- sets render states 0x24/0x25 (fog start/end) to 1000.0, and the renderer's fog slot
+  (`CObjRendererVS::vslot_014`, vertex constant c16) to (1000, 1000, 0);
+- sets 0x89 LIGHTING = 1, 0x1b ALPHABLENDENABLE = 0 and 7 ZENABLE = 1;
+- sets stage 0 to MODULATE(TEXTURE, CURRENT) and disables stage 1.
+
+**How the object renderer uses it.**
+- The skinned-object vertex shader (`vertexshader2.c`) lights with
+  `oD0 = c10 + max(0, N.c9) * c11`.
+- `CObjRendererVS::vslot_025` (0x00beecc0) is the renderer's light setter. It stores
+  Direction x -1.0 (0x00e1b8e8) at renderer+0x130 for c9, and Diffuse and Ambient in globals
+  (0x01112e18, 0x01112e28).
+- `vslot_038` multiplies the material colour by those for c10 (0x00bf59e1). It uploads c9 in
+  object space and sets stage 0 to D3DTOP_MODULATE2X (0x00bf5e1e).
+- MEASURED: player body materials are ambient = diffuse = 0.588, so a lit face is
+  `2 x 0.588 x texel`.
+- INFERRED / OPEN: the portrait calls the device's SetLight, not `vslot_025`. The world's
+  environment code calls both (`Map::FUN_00a19160`). On a vertex-shader device, retail may
+  therefore light the portrait with the zone's current light. srrevamp uses the portrait's own
+  READ light.
+- The specular term is not drawn: the shader writes no oD1 from it.
+
+**The picture control (READ).**
+- Create (0x007b5600) gives GDR_PMI_PICTURE (a `CIFStaticWithPictureClip`) the texture
+  `pmi_face.ddj` at +0x380, and the buffer's texture through `+0x84 -> vt+0x3c` into +0x15c.
+- `CIFStaticWithPictureClip::vslot_013` (0x0064de80) draws one XYZRHW|TEX2 quad (FVF 0x204) over
+  the control's rect with both UV pairs 0..1:
+  - stage 0: colour SELECTARG1(TEXTURE) (the render), alpha SELECTARG1(CURRENT) = 1.0;
+  - stage 1: colour SELECTARG1(CURRENT), alpha SELECTARG1(TEXTURE) (the mask);
+  - alpha blending on.
+- MEASURED: `pmi_face.ddj` is 48x48 ARGB8888, all texels black. Alpha is 255 on 1804 texels (a
+  disc) and 0 on 500. It is the mask, not an image.
+
+**When it renders (READ).**
+- The byte +0x38c is tested by `vslot_012` (0x007b83ef) and cleared by the render.
+- It is set by:
+  - the constructor (0x007b4a48);
+  - the device-reset handler (message 0x802, 0x007b4b80);
+  - the render itself when the avatar is not ready;
+  - `CIFPlayerMiniInfo::FUN_007b4c00`, called by the item-move reply `FUN_0087ba20` (five sites,
+    each after the avatar's refresh `FUN_006ab690`) and by the avatar's reset `FUN_006abc50`
+    (called from `FUN_00786f30`; INFERRED world entry).
+- Nothing in the berserk code writes it.
+
+**Other portraits.** The party slots (`IFQuickPartyWnd::FUN_006d8bf0`, buffers in
+`CIFQuickPartySlot::Create`) and the academy slots (`IFApprenticeShip::FUN_006ea0c0`,
+`CIFApprenticeShipSlot::FUN_006eb740`) use the same camera and light constants. No target-window
+code creates a BufRender (INFERRED from the xref list of `BufRender::FUN_009edae0`).
+
+**srrevamp** (round 635), in `client/scripts/ui/hud/player_portrait.gd`:
+- it copies the player's dressed body and hangs it under a z -> -z node;
+- it poses ANI_POSE at the first key (INFERRED: within one frame of retail's step);
+- it applies the READ camera, yaw and light;
+- its own shader does the lighting and MODULATE2X in gamma space. MEASURED: the SubViewport
+  neither decodes nor encodes sRGB (a 0.5-grey calibration quad came out at the expected 150);
+- it renders with `UPDATE_ONCE` on every dress;
+- the camera's near and far are OURS (0.5 / 1000).
