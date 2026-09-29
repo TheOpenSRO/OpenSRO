@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"encoding/binary"
 	"testing"
 )
@@ -94,5 +95,38 @@ func TestRelocationIsRelayedAndKeepsTheHeading(t *testing.T) {
 	}
 	if got := binary.LittleEndian.Uint16(tail); got != 0 {
 		t.Errorf("after the relocation the wire angle is %d, want 0 (heading pi/2 kept from the walk, not pi toward the jump)", got)
+	}
+}
+
+// The arrival lists (round 637's review follow-up, "headings in the arrival
+// lists"): someone arriving where a character already stands sees it facing
+// the way it last walked. The ChangeZoneResult's tail after the frame is the
+// always-written Seated (a zero count), then the headings: a count of 1 and
+// Aria's wire angle, 16384 for heading pi (her last walk toward -z).
+func TestArrivalListCarriesTheHeadingsOfThoseStanding(t *testing.T) {
+	f := startDeadWorldFixture(t)
+	f.send(t, f.connA, OpMove, (&MoveRequest{X: 100, Y: 0, Z: 200}).Encode())
+	f.send(t, f.connA, OpMove, (&MoveRequest{X: 100, Y: 0, Z: 190}).Encode())
+	for i := 0; i < 2; i++ { // both walks are in the hub once Bram has heard them
+		if p := f.read(t, f.connB, f.rB); p.Opcode != OpEntityMoved {
+			t.Fatalf("Bram's packet %d is %#04x, want OpEntityMoved", i, p.Opcode)
+		}
+	}
+	if czr := changeZone(t, f, f.connB, f.rB, "donwhang"); !czr.OK {
+		t.Fatalf("Bram's change to donwhang refused: %+v", czr)
+	}
+	f.send(t, f.connB, OpChangeZone, (&ChangeZoneRequest{Zone: "jangan"}).Encode())
+	p := f.read(t, f.connB, f.rB)
+	if p.Opcode != OpChangeZoneResult {
+		t.Fatalf("Bram's change back answered %#04x, want OpChangeZoneResult", p.Opcode)
+	}
+	czr, err := DecodeChangeZoneResult(p.Data)
+	if err != nil || !czr.OK || len(czr.Others) != 1 {
+		t.Fatalf("Bram's change back: %+v, %v; want Aria in the list", czr, err)
+	}
+	want := []byte{0, 0, 1, 0, 0x00, 0x40}
+	if !bytes.HasSuffix(p.Data, want) {
+		t.Errorf("the arrival list ends % x, want the tail % x (no one seated, 1 heading, wire angle 16384)",
+			p.Data[max(0, len(p.Data)-6):], want)
 	}
 }

@@ -7094,6 +7094,87 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-thirty-seventh round, headings in the arrival lists: the players already standing where you arrive face the way they face, and you re-enter facing the way you left
+
+Same user-visible bug, last case: the players listed in `EnterWorldResult` and `ChangeZoneResult`
+(already in the zone when you enter it or change into it) were drawn facing heading 0. The follow-
+up above sent a heading only on `OpEntityEntered`. Labels: READ, MEASURED, INFERRED, OURS.
+
+**The tail (OURS protocol, READ conversion).**
+- Both results carry a headings tail after `Seated`: a u16 count equal to `len(Others)`, and one
+  u16 wire angle per other in list order. The angle is `proto.EncodeMovementAngle(world.WireAngle(h))`,
+  as `OpEntityEntered`'s.
+- `EnterWorldResult` then adds the entering character's own wire angle.
+- `Seated` is always written when the tail follows (a zero count), and so is `Restored` before it,
+  as `Seated`'s own doc comment asks of the next field.
+- The tail is written only when a snapshot carries a heading (the server's always do,
+  `entitySnapshotFromWorld`). So a result built without one is byte for byte the older payload,
+  and the round-570/573/607 compatibility tests stand unchanged.
+- Older decoders stop after the seated list. Checked on both sides: the b5911a1 client decodes the
+  new payloads without an error (its "decodes" check passes; only the heading checks fail), and
+  the Go test reads the new tail with the Seated reader, which stops before the headings.
+  `decodeSeated` became `decodeSeatedRest`, returning what follows: the orphans probe
+  (`internal/systems`) refused the old name once only a test called it.
+- A count that does not match the list is a decode error, in Go and GDScript.
+- The client reads each angle with `RemoteFacing.from_wire_angle` and places the listed body facing
+  it (`_spawn_result_others` -> `_spawn_or_update_other`). That is the spawn's bare
+  `FUN_009c4260`, READ in the follow-up above.
+
+**Persistence (OURS).**
+- `character.HeadingStore` is implemented by the MemStore and the SQLStore; the SQLStore adds a
+  `heading DOUBLE PRECISION NOT NULL DEFAULT 0` column. It is kept off `Character`, as
+  `InventorySizeStore` is, so the `_CHAR` mapping is unchanged. `_CHAR` declares no heading
+  column, and whether retail keeps a facing across a logout is not read.
+- `savePosition` saves the heading with the position.
+- `handleEnterWorld` restores it when the position is restored (`restoredHeading`,
+  `Hub.SetHeading`). It then sends it on the entering character's `OpEntityEntered`, in the lists'
+  own tail, and to its own client, which faces it (`World3D`'s entry reads `result.heading`).
+- With `-persist-position` off, an entry faces 0 as before.
+
+**Tests.**
+- Go `session/facing_test.go` `TestArrivalListCarriesTheHeadingsOfThoseStanding`, end to end:
+  - Aria walks toward -z (the relayed moves are read first, so both are in the hub).
+  - Bram changes to Donwhang and back.
+  - His `ChangeZoneResult` ends `00 00 01 00 00 40`: no one seated, one heading, wire angle 16384
+    (heading pi).
+- Go `session/facing_codec_test.go`:
+  - both results round-trip the headings and the own heading;
+  - the tail is the older payload plus `Seated`(0) and the angles;
+  - a Seated read of the new tail stops before the headings;
+  - a mismatched count is refused;
+  - `TestPersistPositionKeepsTheHeading`: a walk toward +x, a logout, the store holds pi/2, and the
+    re-entry's own heading and the hub's are pi/2.
+- Client `net/world_test.gd` `_test_decode_headings`: the enter-world tail (Bram pi, own pi/2),
+  the zone-change tail with Bram seated (pi/2), a mismatched count, and an older payload (NAN).
+- Client `remote_facing_test.gd`: a listed body with heading pi is drawn facing -z.
+- NEGATIVE against b5911a1 (the follow-up's commit):
+
+      --- FAIL: TestArrivalListCarriesTheHeadingsOfThoseStanding (0.19s)
+          facing_test.go:129: the arrival list ends 39 37 2f 31 36 38, want the tail 00 00 01 00 00 40 (no one seated, 1 heading, wire angle 16384)
+      FAIL Bram, standing there, faces heading pi (got nan)
+      FAIL and this player re-enters facing pi/2 (got <null>)
+      FAIL a zone-change result's tail seats Bram and faces him pi/2 (seated [42], heading nan, error )
+      FAIL a headings count that does not match the list is a decode error
+      4 FAILURES
+      FAIL someone in the arrival list with heading pi is drawn facing -z (rotation 0)
+      1 FAILURES
+
+  (The older payload ends at the frame "97/168"; the older client decodes the new one without
+  error.)
+
+**Real input, measured (two clients on the box, this branch's server and client).**
+- A signed in through Login -> CharacterSelect and walked by real clicks: east, then south-west.
+  A stopped facing **124.17 degrees**, its own model and its last movement agreeing (124.16).
+- Then B signed in. B's first sample of A, from `EnterWorldResult`'s list, faced **124.17
+  degrees**, at A's own position (31.039, -65.343).
+- A first attempt lost its Xvfb display partway (the X server on `:97` was gone when B started);
+  the rerun is the measurement.
+- Screenshot: `facing_shots/lists_B_enters_sees_A.jpg`. The numbers are the evidence.
+
+**Checks.**
+- `check`: ALL LOAD. `tests`: 157 suites, 0 failing.
+- Go: every package ok, run with the shared cache.
+
 ## Six-hundred-and-thirty-seventh round, review follow-up: your own character turns as others do, an arrival faces the way it last walked, and a teleport turns nobody
 
 The review confirmed the round's core: the 3 pi rate, the millisecond clock, the shorter way, the
@@ -7149,7 +7230,7 @@ things. Labels: READ, MEASURED, INFERRED, OURS, OPEN.
   - It goes AFTER the snapshot rather than after x/y/z. An older client's
     `decode_entity_entered` reads one snapshot and stops. The same snapshot sits inside the
     `EnterWorldResult`/`ChangeZoneResult` lists, which have fields after them, so those lists carry
-    no heading (OPEN in TODO).
+    no heading here. They do now, in a tail of their own (the entry above).
 - Client:
   - `WorldNet.decode_entity_entered` reads the angle with `RemoteFacing.from_wire_angle`: READ
     `FUN_008a5640` + `FUN_009c40b0`, the wire angle times 360/65535 degrees, plus pi/2, wrapped

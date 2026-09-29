@@ -1308,6 +1308,11 @@ func _ready() -> void:
 		player.position = Vector3(result.x, result.y, result.z)
 		_last_sent_pos = player.position
 		_walked_since_send = 0.0
+		# Facing the way this character left (round 637's review follow-up:
+		# the heading restored with the position, OURS), when the server sends
+		# one.
+		if not is_nan(result.heading):
+			player.rotation.y = RemoteFacing.yaw_of(result.heading, 0.0)
 		_spawn_result_others(result.others, result.seated)
 
 	NetClient.entity_entered.connect(_on_entity_entered)
@@ -16114,7 +16119,9 @@ func _leave_sit_by_moving() -> void:
 ## drawn seated takes the sitting loop without the sit-down clip.
 func _spawn_result_others(others: Array, seated: Array) -> void:
 	for other in others:
-		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped, other.gender)
+		# Each faces its heading from the list's tail (round 637's review
+		# follow-up; NAN from an older server).
+		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped, other.gender, other.heading)
 	for id in seated:
 		if not _other_bodies.has(int(id)):
 			continue

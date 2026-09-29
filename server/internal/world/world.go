@@ -268,6 +268,21 @@ func (h *Hub) SetLevel(characterID int64, level int) bool {
 	return false
 }
 
+// SetHeading sets sess's character's heading -- a restored one at world entry
+// (round 637's review follow-up; character.HeadingStore). Reports whether the
+// session is in the world.
+func (h *Hub) SetHeading(sess *gateway.Session, heading float64) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	e, exists := h.bySession[sess.ID()]
+	if !exists {
+		return false
+	}
+	e.Heading = heading
+	return true
+}
+
 // EntitiesInZone returns a snapshot of every entity currently in zone.
 // Used by other systems (e.g. combat) that need to broadcast to everyone
 // present rather than "everyone except the session that triggered this".

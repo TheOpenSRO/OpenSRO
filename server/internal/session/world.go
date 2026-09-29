@@ -224,6 +224,9 @@ func entitySnapshotFromWorld(ctx context.Context, eq equipment.Store, chars char
 		X:           float32(e.Pos.X), Y: float32(e.Pos.Y), Z: float32(e.Pos.Z),
 		Equipped: equippedItems(ctx, eq, e.CharacterID),
 		Gender:   genderOf(ctx, chars, e.CharacterID),
+		// Sent in the arrival lists' headings tail (round 637's review
+		// follow-up), not by Encode.
+		Heading: e.Heading, HasHeading: true,
 	}
 }
 
@@ -296,6 +299,11 @@ type EnterWorldResult struct {
 	// sits -- exactly as Seated made Restored always written, or a decoder
 	// reads the new field's bytes as a seated list.
 	Seated []int64
+	// Heading is the entering character's own heading, restored with its
+	// position (character.HeadingStore; OURS); HasHeading marks a server that
+	// sends one. It is the last field of the headings tail (encodeHeadings).
+	Heading    float64
+	HasHeading bool
 }
 
 func (r *EnterWorldResult) Encode() []byte {
@@ -319,14 +327,91 @@ func (r *EnterWorldResult) Encode() []byte {
 		out = append(out, o.Encode()...)
 	}
 	out = append(out, encodeStrings(r.FrameRegion)...)
-	if r.Restored || len(r.Seated) > 0 {
+	heads := r.HasHeading || anyHeading(r.Others)
+	if r.Restored || len(r.Seated) > 0 || heads {
 		b := byte(0)
 		if r.Restored {
 			b = 1
 		}
 		out = append(out, b)
 	}
-	return append(out, encodeSeated(r.Seated)...)
+	if !heads {
+		return append(out, encodeSeated(r.Seated)...)
+	}
+	out = append(out, encodeSeatedAlways(r.Seated)...)
+	out = append(out, encodeHeadings(r.Others)...)
+	return appendWireAngle(out, r.Heading)
+}
+
+// The headings tail (round 637's review follow-up): the Others' headings, so
+// the players already standing where one arrives face the way they face. It
+// trails Seated, which is then always written (a zero count when nobody
+// sits), as the Seated field's own doc comment requires; an older decoder
+// stops after the seated list and reads the same. A u16 count, equal to
+// len(Others), and one u16 wire angle per other in list order (world.WireAngle
+// through proto.EncodeMovementAngle, as OpEntityEntered's). Written only when
+// a snapshot carries a heading (the server's always do), so a result built
+// without one is byte for byte the older payload. EnterWorldResult adds the
+// entering character's own wire angle after the list.
+func anyHeading(others []EntitySnapshot) bool {
+	for _, o := range others {
+		if o.HasHeading {
+			return true
+		}
+	}
+	return false
+}
+
+func appendWireAngle(out []byte, heading float64) []byte {
+	a := proto.EncodeMovementAngle(world.WireAngle(heading))
+	return append(out, byte(a), byte(a>>8))
+}
+
+func encodeHeadings(others []EntitySnapshot) []byte {
+	out := []byte{byte(len(others)), byte(len(others) >> 8)}
+	for _, o := range others {
+		out = appendWireAngle(out, o.Heading)
+	}
+	return out
+}
+
+// headingOfWire is the client's heading for a wire angle: the angle plus pi/2,
+// wrapped into [0, 2 pi) (FUN_008a5640, FUN_009c40b0).
+func headingOfWire(a uint16) float64 {
+	return math.Mod(float64(a)/65535.0*2*math.Pi+math.Pi/2, 2*math.Pi)
+}
+
+// decodeHeadings reads the headings tail into others, and returns what
+// follows it. Nothing left is an older server: the snapshots keep HasHeading
+// false.
+func decodeHeadings(rest []byte, others []EntitySnapshot) ([]byte, error) {
+	if len(rest) == 0 {
+		return rest, nil
+	}
+	if len(rest) < 2 {
+		return nil, errors.New("truncated heading count")
+	}
+	n := int(binary.LittleEndian.Uint16(rest))
+	rest = rest[2:]
+	if n != len(others) {
+		return nil, fmt.Errorf("%d headings for %d others", n, len(others))
+	}
+	if len(rest) < 2*n {
+		return nil, errors.New("truncated headings")
+	}
+	for i := range others {
+		others[i].Heading = headingOfWire(binary.LittleEndian.Uint16(rest[2*i:]))
+		others[i].HasHeading = true
+	}
+	return rest[2*n:], nil
+}
+
+// encodeSeatedAlways is encodeSeated with a zero count written too.
+func encodeSeatedAlways(ids []int64) []byte {
+	if len(ids) == 0 {
+		return []byte{0, 0}
+	}
+	return encodeSeated(ids)
 }
 
 // encodeSeated is the Seated tail of EnterWorldResult and ChangeZoneResult:
@@ -342,13 +427,15 @@ func encodeSeated(ids []int64) []byte {
 	return out
 }
 
-// decodeSeated reads a Seated tail; empty input is no sitters.
-func decodeSeated(rest []byte) ([]int64, error) {
+// decodeSeatedRest reads a Seated tail -- empty input is no sitters -- and
+// returns what follows the list (the headings tail, round 637's review
+// follow-up).
+func decodeSeatedRest(rest []byte) ([]int64, []byte, error) {
 	if len(rest) == 0 {
-		return nil, nil
+		return nil, rest, nil
 	}
 	if len(rest) < 2 {
-		return nil, errors.New("truncated seated count")
+		return nil, nil, errors.New("truncated seated count")
 	}
 	n := int(binary.LittleEndian.Uint16(rest))
 	rest = rest[2:]
@@ -356,12 +443,12 @@ func decodeSeated(rest []byte) ([]int64, error) {
 	for i := 0; i < n; i++ {
 		id, after, err := decodeInt64(rest)
 		if err != nil {
-			return nil, fmt.Errorf("seated %d: %w", i, err)
+			return nil, nil, fmt.Errorf("seated %d: %w", i, err)
 		}
 		ids = append(ids, id)
 		rest = after
 	}
-	return ids, nil
+	return ids, rest, nil
 }
 
 func DecodeEnterWorldResult(data []byte) (*EnterWorldResult, error) {
@@ -434,8 +521,18 @@ func DecodeEnterWorldResult(data []byte) (*EnterWorldResult, error) {
 	// a server that did not restore the position or predates the field.
 	r.Restored = len(rest) > 0 && rest[0] != 0
 	if len(rest) > 1 {
-		if r.Seated, err = decodeSeated(rest[1:]); err != nil {
+		var after []byte
+		if r.Seated, after, err = decodeSeatedRest(rest[1:]); err != nil {
 			return nil, fmt.Errorf("session: decoding EnterWorldResult: %w", err)
+		}
+		// The headings tail (round 637's review follow-up), then the
+		// entering character's own wire angle.
+		if after, err = decodeHeadings(after, r.Others); err != nil {
+			return nil, fmt.Errorf("session: decoding EnterWorldResult: %w", err)
+		}
+		if len(after) >= 2 {
+			r.Heading = headingOfWire(binary.LittleEndian.Uint16(after))
+			r.HasHeading = true
 		}
 	}
 	return r, nil
@@ -688,7 +785,13 @@ func (r *ChangeZoneResult) Encode() []byte {
 		out = append(out, o.Encode()...)
 	}
 	out = append(out, encodeStrings(r.FrameRegion)...)
-	return append(out, encodeSeated(r.Seated)...)
+	if !anyHeading(r.Others) {
+		return append(out, encodeSeated(r.Seated)...)
+	}
+	// The headings tail (round 637's review follow-up; EnterWorldResult's
+	// doc): Seated always written, then the Others' wire angles.
+	out = append(out, encodeSeatedAlways(r.Seated)...)
+	return append(out, encodeHeadings(r.Others)...)
 }
 
 func DecodeChangeZoneResult(data []byte) (*ChangeZoneResult, error) {
@@ -740,7 +843,11 @@ func DecodeChangeZoneResult(data []byte) (*ChangeZoneResult, error) {
 	if r.FrameRegion, rest, err = decodeFrameRegion(rest); err != nil {
 		return nil, fmt.Errorf("session: decoding ChangeZoneResult: %w", err)
 	}
-	if r.Seated, err = decodeSeated(rest); err != nil {
+	var after []byte
+	if r.Seated, after, err = decodeSeatedRest(rest); err != nil {
+		return nil, fmt.Errorf("session: decoding ChangeZoneResult: %w", err)
+	}
+	if _, err = decodeHeadings(after, r.Others); err != nil {
 		return nil, fmt.Errorf("session: decoding ChangeZoneResult: %w", err)
 	}
 	return r, nil
@@ -916,6 +1023,12 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		zone, bucket, pos, frame = savedZone, savedBucket, savedPos, savedFrame
 	}
 	others := hub.Enter(sess, owned.ID, owned.Name, owned.Level, bucket, pos)
+	// The heading comes back with a restored position (round 637's review
+	// follow-up; character.HeadingStore, OURS): the zone sees the character
+	// facing the way it left, and so does its own client (the result's own
+	// wire angle). A fresh arrival faces 0.
+	heading := restoredHeading(ctx, chars, owned.ID, restored)
+	hub.SetHeading(sess, heading)
 	rememberPlace(sess, zone, frame, time.Now())
 	// Standing, with the regen timer at 0 elapsed: the engine's constructor
 	// registers the timer and calls SetMotionState(STAND) (round 607,
@@ -936,18 +1049,20 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		FrameRegion: frame,
 		Restored:    restored,
 		Seated:      seatedAmong(others),
+		Heading:     heading,
+		HasHeading:  true,
 	}
 	if err := sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: result.Encode()}); err != nil {
 		return err
 	}
 
-	// A fresh entry faces heading 0: the hub's new entity has no heading,
-	// and none is saved with the position (world.Entity.Heading).
+	// The entry faces the restored heading, or 0 on a fresh arrival.
 	entered := &EntitySnapshot{
 		CharacterID: owned.ID, Name: owned.Name,
 		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
 		Equipped:   equippedItems(ctx, eq, owned.ID),
 		Gender:     owned.Gender,
+		Heading:    heading,
 		HasHeading: true,
 	}
 	for _, other := range others {

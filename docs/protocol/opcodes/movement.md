@@ -215,7 +215,12 @@ Read from `sro_client.exe` (`docs/WORLD_ISSUES.md`, 637th round, has the full tr
     clients stop at the gender and ignore it).
   - `OpMove`/`OpEntityMoved` carry a trailing relocated flag, so a placement is relayed as one and
     turns nobody.
-  - Lists (`EnterWorldResult` and `ChangeZoneResult` others) carry no heading yet.
+  - The lists (`EnterWorldResult` and `ChangeZoneResult` others) carry the headings in a tail
+    after `Seated`, which is then always written. The tail is a u16 count equal to the list's and
+    a u16 wire angle per other. `EnterWorldResult` then adds the entering character's own. Older
+    decoders stop at `Seated`.
+  - The heading is saved with `-persist-position`'s position (`character.HeadingStore`). `_CHAR`
+    declares no heading column; retail's persistence of facing is not read.
 
 ## Not read
 

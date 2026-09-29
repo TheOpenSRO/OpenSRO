@@ -137,6 +137,10 @@ class EnterWorldResult:
 	## The ids among `others` who sit or are sitting down (round 607), from the
 	## tail after Restored; empty when nobody sits or from an older server.
 	var seated: Array[int] = []
+	## This player's own heading, restored with its position (round 637's
+	## review follow-up; the last field of the headings tail); NAN from a
+	## server that sends none.
+	var heading: float = NAN
 	var error: String # decode error, distinct from a well-formed "not ok" response
 
 ## Parses one EntitySnapshot from data starting at offset, returning it
@@ -276,6 +280,14 @@ static func decode_enter_world_result(data: PackedByteArray) -> EnterWorldResult
 		var seated := _decode_seated(data, after_frame + 1)
 		result.seated = seated[0]
 		result.error = seated[1]
+		# The headings tail (round 637's review follow-up), then this
+		# player's own wire angle.
+		if result.error == "":
+			var heads := _decode_headings(data, int(seated[2]), result.others)
+			result.error = heads[0]
+			var own: int = heads[1]
+			if result.error == "" and own + 2 <= data.size():
+				result.heading = RemoteFacing.from_wire_angle(data.decode_u16(own))
 	return result
 
 ## Reads the Seated tail of an OpEnterWorldResult or OpChangeZoneResult (round
@@ -284,17 +296,37 @@ static func decode_enter_world_result(data: PackedByteArray) -> EnterWorldResult
 static func _decode_seated(data: PackedByteArray, offset: int) -> Array:
 	var ids: Array[int] = []
 	if offset >= data.size():
-		return [ids, ""]
+		return [ids, "", offset]
 	if offset + 2 > data.size():
-		return [ids, "truncated seated count"]
+		return [ids, "truncated seated count", offset]
 	var n := data.decode_u16(offset)
 	offset += 2
 	for i in range(n):
 		if offset + 8 > data.size():
-			return [ids, "truncated seated %d" % i]
+			return [ids, "truncated seated %d" % i, offset]
 		ids.append(data.decode_s64(offset))
 		offset += 8
-	return [ids, ""]
+	return [ids, "", offset]
+
+## Reads the headings tail after the Seated list of an OpEnterWorldResult or
+## OpChangeZoneResult (round 637's review follow-up; the server's
+## decodeHeadings): a u16 count equal to the list's length and one u16 wire
+## angle per other, set as each snapshot's heading (RemoteFacing.
+## from_wire_angle). Nothing there is an older server. Returns [error, next].
+static func _decode_headings(data: PackedByteArray, offset: int, others: Array) -> Array:
+	if offset >= data.size():
+		return ["", offset]
+	if offset + 2 > data.size():
+		return ["truncated heading count", offset]
+	var n := data.decode_u16(offset)
+	offset += 2
+	if n != others.size():
+		return ["%d headings for %d others" % [n, others.size()], offset]
+	if offset + 2 * n > data.size():
+		return ["truncated headings", offset]
+	for i in range(n):
+		(others[i] as EntitySnapshot).heading = RemoteFacing.from_wire_angle(data.decode_u16(offset + 2 * i))
+	return ["", offset + 2 * n]
 
 ## Reads the FrameRegion that trails an OpEnterWorldResult or an
 ## OpChangeZoneResult (round 570; server/internal/session/world.go's
@@ -488,6 +520,8 @@ static func decode_change_zone_result(data: PackedByteArray) -> ChangeZoneResult
 		var seated := _decode_seated(data, frame[2])
 		result.seated = seated[0]
 		result.error = seated[1]
+		if result.error == "":
+			result.error = _decode_headings(data, int(seated[2]), result.others)[0]
 	return result
 
 ## Encodes an OpRevive request: nothing. The server knows who asks from the

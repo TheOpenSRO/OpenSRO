@@ -290,6 +290,18 @@ func _test_review_paths(world_script: GDScript) -> void:
 		"a spawn with heading pi/2 is placed facing +x (rotation %s)" % (str(spawned.rotation.y) if spawned != null else "none"))
 	if spawned != null:
 		_check(not (world.get("_remote_turns") as Dictionary).has(spawned.get_instance_id()), "and is not turning")
+	# The arrival list's heading ("headings in the arrival lists"): someone
+	# already standing there is drawn facing it.
+	var listed := WorldNet.EntitySnapshot.new()
+	listed.character_id = 11
+	listed.char_name = "Cyra"
+	listed.x = 30.0
+	listed.z = 40.0
+	listed.set("heading", PI)
+	world.call("_spawn_result_others", [listed], [])
+	var standing: Node3D = (world.get("_other_bodies") as Dictionary).get(11)
+	_check(standing != null and absf(absf(standing.rotation.y) - PI) < 1e-4,
+		"someone in the arrival list with heading pi is drawn facing -z (rotation %s)" % (str(standing.rotation.y) if standing != null else "none"))
 	others.free()
 	# A monster's stop snaps to the turn's target and ends it.
 	var mob := Node3D.new()

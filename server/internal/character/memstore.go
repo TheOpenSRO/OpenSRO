@@ -15,6 +15,8 @@ type MemStore struct {
 	// invSize is each character's own bag size (InventorySizeStore); a
 	// character with no entry has none stored (0).
 	invSize map[int64]int
+	// headings is each character's saved heading (HeadingStore); none is 0.
+	headings map[int64]float64
 }
 
 // NewMemStore returns an empty MemStore.

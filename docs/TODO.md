@@ -981,12 +981,11 @@ READ and measured in `docs/WORLD_ISSUES.md`'s 637th round; the rule is `RemoteFa
       `OpEntityEntered`**. The server keeps a heading per character (`world.Entity.Heading`, from
       each walk) and carries it through a zone change. The arrival snaps to it (`FUN_009d17e0` ->
       `FUN_009c4260`). Left:
-  - [ ] **The lists carry no heading.** `EnterWorldResult` and `ChangeZoneResult` embed
-        snapshots with fields after the list, so a per-snapshot value would shift them for an older
-        client. Someone already standing in the zone you enter still faces heading 0 until they
-        move. A trailing heading block after `Seated` (with `Seated` always written) would carry
-        it.
-  - [ ] **A fresh world entry faces heading 0.** A heading is not saved with the position.
+  - [x] ~~The lists carry no heading~~ -- **done ("headings in the arrival lists")**: a tail
+        after `Seated`, with `Seated` always written.
+  - [x] ~~A fresh world entry faces heading 0~~ -- **done under `-persist-position`**: the heading
+        is saved with the position (`character.HeadingStore`, OURS: `_CHAR` has no such column)
+        and restored with it. With the flag off, an entry still faces 0.
 - [ ] **The retail re-aim guard is not applied.** `0xB021` aims only when the order is in effect
       (mover `+0xac`, `obj+0x714`) or the destination is more than 5 units (squared 25.0) from the
       mover's current POSITION (`+0x54/+0x58`). srrevamp streams positions about 2.5 units apart
