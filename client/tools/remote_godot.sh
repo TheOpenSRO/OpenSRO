@@ -43,8 +43,14 @@ sync_client() {
 # ghidra, so the lock file stays ghidra's); a second caller waits its turn.
 GODOT_LOCK="${GODOT_LOCK:-/var/tmp/godot-lock/lock}"
 
+# GODOT_TIME_LIMIT, when set, wraps the Godot run (not the wait for the
+# lock) in `timeout`, so a run that hangs ends instead of holding the lock.
 remote_godot() {
-  ssh -n "$RENDER_HOST" "su - ghidra -c \"flock '$GODOT_LOCK' $RENDER_GODOT --headless --path '$RENDER_DIR' $*\""
+  local limit=""
+  if [ -n "${GODOT_TIME_LIMIT:-}" ]; then
+    limit="timeout -k 10 $GODOT_TIME_LIMIT"
+  fi
+  ssh -n "$RENDER_HOST" "su - ghidra -c \"flock '$GODOT_LOCK' $limit $RENDER_GODOT --headless --path '$RENDER_DIR' $*\""
 }
 
 import_project() {
@@ -108,8 +114,16 @@ case "$cmd" in
     while IFS= read -r path; do
       count=$((count + 1))
       rel="res://${path#client/}"
-      if ! out=$(remote_godot "--script '$rel'" 2>&1) || echo "$out" | grep -qE "$fail_re"; then
+      # A suite that hangs is a failure, not a wait: on 2026-09-29 a
+      # World3D.gd that did not parse left water_reflection_test.gd running
+      # for 13 minutes, holding the lane's lock, until it was killed by hand.
+      # SUITE_TIMEOUT seconds (600 unless set; OURS, far above any suite's
+      # run) ends it, and the suite reports as failed with the reason.
+      if ! out=$(GODOT_TIME_LIMIT="${SUITE_TIMEOUT:-600}" remote_godot "--script '$rel'" 2>&1) || echo "$out" | grep -qE "$fail_re"; then
         echo "FAILED: $rel"
+        if [ -z "$(echo "$out" | grep -E "$fail_re" || true)" ]; then
+          echo "  (no FAIL line: the run exited non-zero -- 124 is a timeout after ${SUITE_TIMEOUT:-600} s)"
+        fi
         # `|| true`: a grep with no match exits 1, and under `set -e` with
         # `pipefail` that ended the whole run at the first suite whose only
         # failure was a SCRIPT ERROR -- no summary line, the suites after it
