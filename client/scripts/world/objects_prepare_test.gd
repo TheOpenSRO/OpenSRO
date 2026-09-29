@@ -14,10 +14,11 @@ extends SceneTree
 ##   holds no Node and no Resource other than an Image before the task and
 ##   after it; the caches reach it as snapshots -- the templates held by
 ##   path, the uploaded textures by key and fourCC, never the texture;
-## - the task did the work: the `.o` and `.o2` read, merged and
-##   de-duplicated, the `.o2` placement standing on a neighbour's ground
-##   dropped (the neighbour's heightmap read and parsed ON the task, under
-##   Pk2Reader's lock, and handed back for the grid's cache), each distinct
+## - the task did the work: the `.o2` read, its lists 1 and 2 taken one
+##   object per key with the skip bit honoured (round 643: the world reads
+##   no `.o`, and the height test that handed placements to a neighbour is
+##   gone), the region's own heightmap read and parsed ON the task, under
+##   Pk2Reader's lock, and handed back for the grid's cache, each distinct
 ##   model prepared once, their shared texture decoded once, the laps in
 ##   order;
 ## - the commit places what the synchronous path placed, from ONE template
@@ -89,10 +90,8 @@ func _test_objects_off_the_main_thread(S: GDScript) -> void:
 	var map_path := "user://srrevamp_r566_objects_map.pk2"
 	var data_path := "user://srrevamp_r566_objects_data.pk2"
 	_write_pk2(map_path, {
-		"97\\168.o": _build_mapo(),
 		"97\\168.o2": _build_mapo2(),
 		"97\\168.m": _build_flat_mapm(0.0),
-		"97\\167.m": _build_flat_mapm(50.0),
 	})
 	_write_pk2(data_path, {
 		"prim\\wall.bsr": _build_bsr("Wall", "prim\\wall.bms", "prim\\scenery.bmt", []),
@@ -131,21 +130,18 @@ func _test_objects_off_the_main_thread(S: GDScript) -> void:
 	bad = _forbidden(job)
 	_check(bad.is_empty(), "after the task the job still holds no Node and no Resource but Image (found %s)" % str(bad))
 	var placements: Array = job.get("placements", [])
-	# .o: wall, wall, tree, an unresolved type; .o2 list 2: a repeat of the
-	# first wall (de-duplicated), a tree on this region's ground (kept) and
-	# one 50 above it, on 97/167's (dropped).
-	_check(placements.size() == 5, "7 placements read, 1 repeat merged, 1 handed to its neighbour: 5 kept (got %d)" % placements.size())
+	# .o2 list 1: wall, wall, tree, an unresolved type; list 2: the first
+	# wall's key again (one object), a tree, and a record with the skip bit.
+	_check(placements.size() == 5, "7 records read, 1 key listed again, 1 skipped: 5 objects (got %d)" % placements.size())
 	var lines := PackedStringArray()
 	for line in job["log"]:
 		lines.append(line[1])
 	var text := "\n".join(lines)
-	_check(text.contains("dropped 1 duplicate real placements (7 -> 6)")
-			and text.contains("dropped 1 real .o2 placement(s) that stand on a neighbouring region's ground"),
+	_check(text.contains("5 object(s) from 7 record(s) of lists 1 and 2 (1 listed again by another sector, 1 with the skip bit, 0 owned by a neighbour"),
 		"the prepare's lines are in the job for the commit to print, not printed (got %s)" % text)
 	var new_maps: Dictionary = job.get("new_heightmaps", {})
-	_check(new_maps.size() == 9 and new_maps["97_168"] is MapmReader.ParsedRegion and new_maps["97_167"] is MapmReader.ParsedRegion
-			and new_maps["96_167"] == null,
-		"the region and its eight neighbours' heightmaps read on the task, the two that exist parsed (got %s)" % str(new_maps.keys()))
+	_check(new_maps.size() == 1 and new_maps["97_168"] is MapmReader.ParsedRegion,
+		"the region's own heightmap read on the task, and no neighbour's (got %s)" % str(new_maps.keys()))
 	var models: Dictionary = job.get("models", {})
 	_check(models.size() == 2 and models.has("prim\\wall.bsr") and models.has("prim\\tree.bsr"),
 		"each distinct model prepared once, the unresolved type skipped (got %s)" % str(models.keys()))
@@ -171,7 +167,7 @@ func _test_objects_off_the_main_thread(S: GDScript) -> void:
 	_check(world_textures.size() == 1 and world_textures.values()[0]["texture"] is ImageTexture,
 		"the texture uploaded into the world's cache on the main thread")
 	var grid = w.get("_grid")
-	_check(grid.parsed_heightmaps.size() == 9 and grid.parsed_heightmaps["97_167"] == new_maps["97_167"],
+	_check(grid.parsed_heightmaps.size() == 1 and grid.parsed_heightmaps["97_168"] == new_maps["97_168"],
 		"the heightmaps the task parsed went into the grid's cache")
 	if container != null and container.get_child_count() > 0:
 		var first: Node = container.get_child(0)
@@ -185,7 +181,7 @@ func _test_objects_off_the_main_thread(S: GDScript) -> void:
 	_check(job2["templates_held"] == {"prim\\wall.bsr": true, "prim\\tree.bsr": true}
 			and (job2["known_textures"] as Dictionary).size() == 1 and _forbidden(job2).is_empty(),
 		"the snapshot names the held templates and textures, never a Node or texture")
-	_check(job2["heightmaps"].size() == 9, "and hands the job the grid's heightmaps")
+	_check(job2["heightmaps"].size() == 1, "and hands the job the grid's heightmap of the region")
 	job2["threaded"] = true
 	var task2 := WorkerThreadPool.add_task(Callable(w, "_objects_prepare").bind(job2), true, "r566 objects prepare test 2")
 	WorkerThreadPool.wait_for_task_completion(task2)
@@ -194,7 +190,20 @@ func _test_objects_off_the_main_thread(S: GDScript) -> void:
 		"nothing prepared, decoded or parsed again")
 	w.call("_objects_commit", job2)
 	_check(templates.loads == 2 and int(w.get("_templates_unprepared")) == 0,
-		"the second commit placed its copies from the held templates")
+		"the second commit built no template")
+	# Round 643: the same keys are one object each in the world, so a second
+	# region listing them shares what the first placed.
+	var second_container: Node = w.get_node_or_null("RealMapObjects_97_168_b")
+	_check(second_container != null and second_container.get_child_count() == 0
+			and (w.get("_placed_objects") as Dictionary).size() == 4,
+		"the second commit places none of the 4 keys the first placed (got %s)" % (str(second_container.get_child_count()) if second_container != null else "null"))
+	# The first streams out: its objects pass to the second, still listing them.
+	w.call("_release_region_objects", "_97_168")
+	_check(second_container != null and second_container.get_child_count() == 4
+			and container.get_child_count() == 0,
+		"the first region streaming out hands its 4 objects to the second")
+	w.call("_release_region_objects", "_97_168_b")
+	_check((w.get("_placed_objects") as Dictionary).is_empty(), "and when no lister is left the keys are forgotten")
 
 	# A template released between the snapshot and the commit is rebuilt,
 	# whole, on the main thread -- and the objects line says so.
@@ -248,7 +257,8 @@ func _test_objects_off_the_main_thread(S: GDScript) -> void:
 ## `known` branch, image null), so it is not counted even when the
 ## job's models are; (b) the region's own heightmap taken over from the
 ## terrain prepare's parse (job["here"], _cell_prepare) was not parsed by the
-## objects prepare, so of a cell's 9 heightmaps only its 8 neighbours count.
+## objects prepare, so it does not count (since round 643 the objects
+## prepare parses no neighbour's, so a cell counts none).
 func _test_prepared_again(S: GDScript, map_pk2: Pk2Reader, data_pk2: Pk2Reader) -> void:
 	var w: Node = S.new()
 	_check(w.has_method("_prepared_again"), "World3D.gd has _prepared_again (absent before round 566's review)")
@@ -276,24 +286,25 @@ func _test_prepared_again(S: GDScript, map_pk2: Pk2Reader, data_pk2: Pk2Reader) 
 	var cell_task := WorkerThreadPool.add_task(Callable(w, "_cell_prepare").bind(cell), true, "r566 prepared-again cell test")
 	WorkerThreadPool.wait_for_task_completion(cell_task)
 	_check((second["models"] as Dictionary).size() == 2 and (second["textures"] as Dictionary).size() == 1
-			and (second["new_heightmaps"] as Dictionary).size() == 9,
-		"a second job from the same snapshot prepares the same 2 models, 1 texture and 9 heightmaps")
+			and (second["new_heightmaps"] as Dictionary).size() == 1,
+		"a second job from the same snapshot prepares the same 2 models, 1 texture and 1 heightmap")
 	var cell_objects: Dictionary = cell["objects"]
 	var cell_maps: Dictionary = cell_objects.get("new_heightmaps", {})
 	_check(cell_objects.get("prepared", false) and cell.get("region") != null
-			and cell_maps.size() == 9 and cell_maps.get("97_168") == cell["region"],
-		"the cell's objects hold 9 heightmaps, 97/168's the terrain prepare's own parse (got %s)" % str(cell_maps.keys()))
+			and cell_maps.size() == 1 and cell_maps.get("97_168") == cell["region"],
+		"the cell's objects hold 1 heightmap, 97/168's, the terrain prepare's own parse (got %s)" % str(cell_maps.keys()))
 	var got: Dictionary = w.call("_prepared_again", {"objects": second})
 	_check(got == none, "before either commits nothing is counted (got %s)" % str(got))
 	w.call("_objects_commit", first)
 	got = w.call("_prepared_again", {"objects": second})
-	_check(got == {"tiles": 0, "navmesh": 0, "collisions": 0, "heightmaps": 9, "models": 2, "textures": 1},
-		"after the first commits, the second's 9 heightmaps, 2 models and 1 texture are counted as prepared again (got %s)" % str(got))
-	# NEGATIVE (b): the objects prepare parsed 8 of the cell's heightmaps; the
-	# 9th is the terrain's parse, which the cell needs whatever the snapshot.
+	_check(got == {"tiles": 0, "navmesh": 0, "collisions": 0, "heightmaps": 1, "models": 2, "textures": 1},
+		"after the first commits, the second's 1 heightmap, 2 models and 1 texture are counted as prepared again (got %s)" % str(got))
+	# NEGATIVE (b): the objects prepare parsed none of the cell's heightmaps;
+	# its one is the terrain's parse, which the cell needs whatever the
+	# snapshot.
 	got = w.call("_prepared_again", {"objects": cell_objects})
-	_check(got == {"tiles": 0, "navmesh": 0, "collisions": 0, "heightmaps": 8, "models": 2, "textures": 1},
-		"the region's own heightmap taken over from the terrain prepare is not counted: 8 heightmaps, not 9 (got %s)" % str(got))
+	_check(got == {"tiles": 0, "navmesh": 0, "collisions": 0, "heightmaps": 0, "models": 2, "textures": 1},
+		"the region's own heightmap taken over from the terrain prepare is not counted: 0 heightmaps, not 1 (got %s)" % str(got))
 	var third: Dictionary = w.call("_objects_job", "97\\168.o", Vector3.ZERO, "_97_168_g")
 	third["threaded"] = true
 	var task3 := WorkerThreadPool.add_task(Callable(w, "_objects_prepare").bind(third), true, "r566 prepared-again test 3")
@@ -317,6 +328,9 @@ func _test_prepared_again(S: GDScript, map_pk2: Pk2Reader, data_pk2: Pk2Reader) 
 	_check((fourth["models"] as Dictionary).size() == 2 and fourth_textures.size() == 1
 			and fourth_textures.values()[0]["image"] == null,
 		"its prepare prepares the 2 models and names the held texture without decoding it")
+	# The first region streams out (round 643: a key another region still
+	# holds is shared, not placed, so nothing would rebuild the templates).
+	w.call("_release_region_objects", "_97_168_e")
 	w.call("_objects_commit", second)
 	got = w.call("_prepared_again", {"objects": fourth})
 	_check(got == {"tiles": 0, "navmesh": 0, "collisions": 0, "heightmaps": 0, "models": 2, "textures": 0},
@@ -536,48 +550,42 @@ func _walk(v: Variant, seen: Dictionary, path: String, out: Array) -> void:
 				if int(prop["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE:
 					_walk(o.get(prop["name"]), seen, "%s.%s" % [path, prop["name"]], out)
 
-## A real-shaped `.o` (MAPO_FORMAT.md; MapoReader): the magic and version,
-## the two header words, then 28-byte records -- type, position, a 2-byte
-## flag, the yaw, 6 bytes -- back to back. Wall, wall, tree and a type the
-## index does not list.
-func _build_mapo() -> PackedByteArray:
-	var buf := PackedByteArray()
-	buf.append_array((MapoReader.MAGIC + "1001").to_ascii_buffer())
-	buf.resize(buf.size() + 8)
-	for rec in [[1, Vector3(100, 0, 100), 0.0], [1, Vector3(200, 0, 100), 1.0],
-			[2, Vector3(300, 0, 300), 0.0], [3, Vector3(400, 0, 400), 0.0]]:
-		var r := PackedByteArray()
-		r.resize(MapoReader.FIXED_RECORD_LEN)
-		r.encode_u32(0, rec[0])
-		r.encode_float(4, rec[1].x)
-		r.encode_float(8, rec[1].y)
-		r.encode_float(12, rec[1].z)
-		r.encode_float(MapoReader.POS_FIELD_LEN + 2, rec[2])
-		buf.append_array(r)
-	return buf
-
 ## A real-shaped `.o2` (MAPO2_FORMAT.md; MapO2Reader): 36 sectors of four
-## counted fields; sector 0's list 2 (field 3) holds a repeat of the first
-## wall, a tree at this region's ground height and one 50 above it.
+## counted fields, every record owned by 97/168 (bytes 28-29 = 0x61a8).
+## Sector 0's list 1 (field 2) holds a wall (uid 1), a second wall turned 1
+## rad (uid 2), a tree (uid 3) and an unresolved type (uid 4); its list 2
+## (field 3) the first wall's key again, a tree (uid 5) and a tree whose
+## byte 27 has the loader's skip bit (uid 6). Round 643: the world reads
+## these two lists and no `.o`.
 func _build_mapo2() -> PackedByteArray:
 	var buf := PackedByteArray()
 	buf.append_array((MapO2Reader.MAGIC + "1001").to_ascii_buffer())
-	var entries := [[1, Vector3(100, 0, 100), 0.0], [2, Vector3(500, 0, 500), 0.0], [2, Vector3(600, 50, 600), 0.0]]
+	var list1 := [[1, Vector3(100, 0, 100), 0.0, 1, 0], [1, Vector3(200, 0, 100), 1.0, 2, 0],
+		[2, Vector3(300, 0, 300), 0.0, 3, 0], [3, Vector3(400, 0, 400), 0.0, 4, 0]]
+	var list2 := [[1, Vector3(100, 0, 100), 0.0, 1, 0], [2, Vector3(500, 0, 500), 0.0, 5, 0],
+		[2, Vector3(600, 0, 600), 0.0, 6, 1]]
 	for sector in range(MapO2Reader.SECTORS_PER_SIDE * MapO2Reader.SECTORS_PER_SIDE):
 		for field in range(MapO2Reader.FIELDS_PER_SECTOR):
-			var count := entries.size() if sector == 0 and field == 3 else 0
+			var entries: Array = []
+			if sector == 0 and field == 2:
+				entries = list1
+			elif sector == 0 and field == 3:
+				entries = list2
 			var c := PackedByteArray()
 			c.resize(2)
-			c.encode_u16(0, count)
+			c.encode_u16(0, entries.size())
 			buf.append_array(c)
-			for i in range(count):
+			for rec in entries:
 				var e := PackedByteArray()
 				e.resize(MapO2Reader.ENTRY_LEN)
-				e.encode_u32(0, entries[i][0])
-				e.encode_float(4, entries[i][1].x)
-				e.encode_float(8, entries[i][1].y)
-				e.encode_float(12, entries[i][1].z)
-				e.encode_float(18, entries[i][2])
+				e.encode_u32(0, rec[0])
+				e.encode_float(4, rec[1].x)
+				e.encode_float(8, rec[1].y)
+				e.encode_float(12, rec[1].z)
+				e.encode_float(18, rec[2])
+				e.encode_u16(22, rec[3])
+				e[27] = rec[4]
+				e.encode_u16(28, (97 << 8) | 168)
 				buf.append_array(e)
 	return buf
 

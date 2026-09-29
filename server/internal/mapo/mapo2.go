@@ -79,6 +79,24 @@ type Entry2 struct {
 	Raw      [entryLen]byte
 }
 
+// OwnerRegion is the packed region that owns the object, Raw[28:30]
+// little-endian: (first << 8) | second of the owner's "<first>\\<second>"
+// folder (READ in round 583). The record's position is local to it, which
+// is not always the file's own region (round 643, measured: 10,682 of the
+// 10,703 keys several regions list sit at the identical local position in
+// every file).
+func (e Entry2) OwnerRegion() uint16 { return binary.LittleEndian.Uint16(e.Raw[28:]) }
+
+// Skipped is the retail loader's skip test (FUN_00a361b0): a record of the
+// second or third stored list (Lists[1], Lists[2]) with Raw[27] bit 0 set
+// is not built.
+func (e Entry2) Skipped() bool { return e.Raw[27]&1 != 0 }
+
+// Key is the 32-bit key the loader files the object under,
+// CONCAT22(Raw[28:30], Raw[22:24]): the owner region and the uid. Records
+// sharing a key are one object (Map::FUN_00a1a1d0's refcounted cache).
+func (e Entry2) Key() uint32 { return uint32(e.OwnerRegion())<<16 | uint32(e.Index) }
+
 // Sector2 holds the 3 real, stored per-sector lists (file fields 1-3), in
 // real file order. Which is which is not confirmed — see
 // docs/protocol/MAPO2_FORMAT.md (only one field held any real data in the

@@ -217,6 +217,41 @@ client/tools/remote_godot.sh script res://tools/foliage_census.gd -- \
   --pk2=/opt/sro-files/client/Data.pk2 --map=/opt/sro-files/client/Map.pk2 [--under=res/item --all]
 ```
 
+### Map objects: are they placed, and do they draw? (round 643)
+
+Two halves, both over every region. **Placement**, in Go on the box (5 s): `mapobjcensus` builds
+the set of objects the retail loader builds (every region `.o2`'s lists 1 and 2, skip bit clear,
+one per key -- docs/protocol/MAPO2_FORMAT.md, "Round 643") and says which of them the client's
+placement rule draws. Without `-ownerframe` it reproduces the rule before round 643 (the `.o`,
+`.o2` list 2, the height filter); `-ownerframe` is the rule since. `-grep bridge` or
+`-region 92/135` lists the undrawn keys (and the placements it counts as moved into their
+owner's frame); `-media <Media.pk2>` adds `force_addobject.txt`'s rows, the second object source
+(round 643's review); `-key 97/168#43009` lists every record of one key, skip-bit ones included;
+`-dumpmodels <file>` writes every model with its key count for the second half:
+
+```
+cd server && go run ./cmd/mapobjcensus -map /opt/sro-files/client/Map.pk2 \
+  -media /opt/sro-files/client/Media.pk2 [-ownerframe] [-grep stab] [-region 91/135] [-key 97/168#43009] \
+  [-dumpmodels /var/tmp/<lane>/models.tsv]
+```
+
+**Loading**, in GDScript (2 minutes for 2,567 models): `map_object_census.gd` prepares each model
+of that list through `ObjectLoader.prepare_object` and classes it `LOAD_FAILED` (with the reason:
+file absent, reader refused, `.bms` version), `MESH_LESS`, `PIECE_MISSING`, `ZERO_TRIS`,
+`NO_MATERIAL`, `NO_TEXTURE`, `HEADER_SCAN` (the forward scan read it) or `CUT_AWAY` (the alpha test
+keeps under 1 % of the texels), weighted by the keys behind it:
+
+```
+client/tools/remote_godot.sh script res://tools/map_object_census.gd -- \
+  --pk2=/opt/sro-files/client/Data.pk2 --models=/var/tmp/<lane>/models.tsv [--verbose] [--match=bridge]
+```
+
+In the world, `SRREVAMP_QA_OBJECTS=<fragment>,...` prints at every `--shots` viewpoint one
+`QA OBJECT <shot> <node> key <owner>#<uid> held by <region> (listed by N) at world (..)
+region-local (..) of <region>: P piece(s), T triangle(s), visible <b>, in frustum <b>, <d> from
+the camera` per placed object whose node name holds a fragment, or `<fragment>: none placed` --
+the triangles are the drawn surfaces' own index counts.
+
 ### Particle effects: the `.efp` census
 
 `EfpReader.decode` (and its Go twin `efp.Decode`) reads the typed tree of every particle
@@ -332,7 +367,7 @@ cost is read from its own line. Three lines carry it:
   templates, place]`; streamed, `objects O [textures, templates, place]` with `; off the main
   thread: terrain P [...], objects Q [parse, own, models]` after the groups (a lap with nothing to
   do is left out: a cell whose models the world already holds has no `templates`, one with no
-  `.o` stops after `parse`). The objects line of a streamed cell (`World3D: loaded N/M real map
+  `.o2` stops after `parse`). The objects line of a streamed cell (`World3D: loaded N/M real map
   objects from ...`) ends `-- prepared off the main thread, dispatched at frame f; K template(s)
   built unprepared`: K counts the templates the commit had to build whole on the main thread
   (one released or evicted between the dispatch and the commit), and is 0 when the prepare
@@ -350,9 +385,11 @@ cost is read from its own line. Three lines carry it:
   lap); `collision` the shape alone -- since round 567 the `HeightMapShape3D` (`TerrainCollision.make_shape`),
   until then and under `SRREVAMP_TERRAIN_TRIMESH=1` the `ConcavePolygonShape3D.set_faces` (round
   156's bottleneck, before round 160's archive fix); `wallshape` the walls' shape and body; `water`; `graph` the walkable
-  graph's registration. The objects': `snapshot` the job's; `parse` the `.o` and `.o2` read,
-  parsed, merged and de-duplicated; `own` the placement-ownership test, whose neighbour heightmaps
-  it reads and parses under Pk2Reader's lock when the grid does not hold them; `models`
+  graph's registration. The objects': `snapshot` the job's; `parse` the `.o2` read and parsed,
+  and its lists 1 and 2 taken one object per key in the owner's frame (`World3D.region_placements`,
+  round 643; the `.o` and `.o2` merged until then); `own` the region's own heightmap, read and
+  parsed under Pk2Reader's lock when the grid does not hold it (until round 643 the
+  placement-ownership test by height, over the eight neighbours' heightmaps too); `models`
   `ObjectLoader.prepare_object` for every model the world holds no template for (the `.bsr`,
   `.bms`, `.bmt` parsed, the mesh arrays and trimesh faces built, the textures decoded to Images
   and their alpha classified on them); then `textures` the ImageTexture uploads; `templates`

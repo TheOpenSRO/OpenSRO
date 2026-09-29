@@ -7397,6 +7397,378 @@ It is measured live above.
 - the `efta` creator byte;
 - view ranges.
 
+## Six-hundred-and-forty-third round: Hotan's stable and bridges, the Fertility Temple and its bridges, and 12,847 other placed objects are drawn -- the world builds what the map's `.o2` builds, once each, in its owner's frame
+
+*Updated in place by the round's review follow-up:*
+- force_addobject.txt, the second object source (section 3a);
+- the "removed" list corrected: 143 placements, `tre_maple03_big` among them, were moved, not
+  removed;
+- the nav-only `cj_pal_lamp`;
+- `_qa_float_report` over neighbour-owned objects;
+- the navmesh loader's owner-frame read.
+
+The user reported: "please fix invisible structures. Some examples are the stable in Hotan and
+missing structures in Taklaman. Also there's invisible bridges that need fixed: the north and
+south bridges of Hotan, and the bridges by the fertility temple. ... there's probably more across
+the map that you need to find."
+
+### 1. The census: 17 % of the map's objects were never placed (MEASURED)
+
+Two new tools, over every region (client/tools/README.md, "Map objects"):
+
+- `server/cmd/mapobjcensus` builds the set the retail loader builds (section 2) from Map.pk2's
+  4,559 region `.o2` files, and reproduces the client's placement rule to say which of it the
+  client draws.
+- `client/tools/map_object_census.gd` prepares every model of that set through
+  `ObjectLoader.prepare_object`, the world's own path, and classes it.
+
+**Placement (dev 8658370's rule: the `.o`, then `.o2` list 2 only, both in the file region's
+frame, then the height filter):**
+
+| | |
+|---|---|
+| objects retail builds (distinct keys) | 75,564 |
+| drawn by the client | 62,717 |
+| **never placed** | **12,847** (1,220 models) |
+| client placements matching no object retail builds | 1,064 |
+| `.o2` placements the height filter dropped | 1,709 |
+
+Of the 12,847, the reported ones, each with its key (owner region #uid):
+
+| Report | Model | Key | Where |
+|---|---|---|---|
+| Hotan stable | `oas_hot_stab.bsr` | 91/135#46093 | local (1701.5, 240.6, 1901.4) |
+| Hotan north bridge | `oas_hot_b1_bridge.bsr` | 90/135#44034 | (1139.1, -6.5, 1605.5) |
+| Hotan south bridge | `oas_hot_b2_bridge.bsr` | 93/135#11265 | (1134.7, -132.8, 400.2) |
+| Fertility Temple | `ruin_takla_temple_01.bsr` | 102/135#24578 | (49.2, -83.9, 1145.2) |
+| its two bridges | `ruin_takla_tembrig_01.bsr` | 101/135#34818, 102/134#41985 | (687.6, -83.5, 1553.1), (419.7, -83.7, 1701.9) |
+
+Every one sits in the `.o2`'s `lists[1]` alone and in no `.o`. The "Fertility Temple" is READ
+from Media.pk2's `textzonename.txt`: region ids 25990, 25991, 26246, 26247, 26502 and 26503 --
+101-103/134-135 -- are "Temple of fertility", and `RN_TK_TEMPLE_01` is "Fertility Temple". It sits
+inside the Taklamakan zone (`regioninfo.txt`'s 타클라마칸 section, 118 regions), where 165
+objects were undrawn: the temple, ruins (`res\bldg\ruins\taklamakan des\...`), shipwrecks
+(`ruin_takl_ship_*`), tents, portal stones and edimmu rocks. Around Hotan (86-96/128-142), 343.
+
+**Loading (MEASURED, 2,567 models, 2 minutes):** OK 2,529 models (75,249 keys). The rest:
+
+| Class | Models | Keys | What |
+|---|---|---|---|
+| `LOAD_FAILED` | 20 | 222 | all "not in the archive": `res\dun\asiam\r2_cv\field\` ruins and statues, `st_part01`..`03`, `pha_crypt`, `res\testsize\aa.bsr` |
+| `MESH_LESS` | 14 | 32 | particle markers (`bagh_masin_paticle`, the `wreck_*_in_*` compounds' particle member; the compounds' 204-230 other pieces draw) |
+| `HEADER_SCAN` | 14 | 32 | the same particle-only `.bsr` files: round 625's 41 header failures reach no placed mesh |
+| `NO_TEXTURE` | 3 | 60 | `bagh_barricade_block` and one `st_egyptent` layer name no texture; `rock_mt_teleport_04.ddj` is absent. Drawn untextured, not invisible |
+| `CUT_AWAY` | 1 | 1 | `oas_hot_etc03`: an MTRL mod tests at 128 and its DXT3 alpha is below 128 everywhere (OPEN) |
+
+No placed model failed on a `.bsr` or `.bms` the readers refused, and none drew zero triangles.
+**So the missing structures were a placement fault, not a loading one.**
+
+### 2. The retail rule (READ, then MEASURED)
+
+- **Both populated lists are built.** `FUN_00a361b0` (MapCallBack.cpp) reads, per sector, a bare
+  `uint16` and three counted lists. `lists[0]` goes through `FUN_00a34c50`; `lists[1]` and
+  `lists[2]` each go through `Map::FUN_00a1a1d0` into the sector's arrays at +0x14 and +0x24.
+  Only byte 27 bit 0 keeps a record out (round 583).
+- **One object per key.** `Map::FUN_00a1a1d0` looks the record's key, `CONCAT22(bytes 28-29,
+  bytes 22-23)` (the owner region and the uid, round 583), up in a map. It adds one to a found
+  entry's count and returns its object; otherwise it calls the map's creator (+0x28) and inserts
+  the result.
+- **No `.o`.** `strings` over `sro_client.exe` gives `%d\%d.m`, `%d\%d.o2` and `K%d\%d.t`, and
+  no `%d\%d.o`; the decompile has the same three.
+- **The owner's frame (MEASURED).** 10,703 keys are listed by more than one region, and 10,682 of
+  them sit at the identical local position and type in every file; 75,543 of the 75,564 are
+  listed by their owner's own file. A record's position is local to its owner region.
+  The navmesh loader reads the same frame (READ, review follow-up): `MapLoader::FUN_0042a6e0`
+  passes each record's owner to `CRegionManagerBody::vslot_013` (0x412ba0), which returns
+  `((region - owner) & per byte) * span`, and subtracts it from the position -- the arithmetic of
+  `MapO2Reader.owner_offset`.
+- **What was wrong.** 52,366 keys are in `lists[1]` alone, 23,191 in `lists[2]` alone, and 7 in
+  both. The seventy-eighth round's reading, "list 2 is a region's own objects; the others
+  cross-reference objects belonging elsewhere", held for its sector statistic (91 % against
+  46 %), but `lists[1]` is where most of the map lives: a big object is listed by every sector
+  it reaches, which is what lowered its figure.
+
+### 3. What changed
+
+- **`World3D.region_placements` (READ rule):** a region's objects are its `.o2`'s `lists[1]`
+  and `lists[2]`, skip bit clear, one per key. A neighbour-owned record moves by
+  `MapO2Reader.owner_offset`: the owner's second number steps local x and its first steps local
+  z, one span each, as `_cell_offset` steps the terrain groups. The `.o` is no longer read, and
+  the height filter (`_placements_belonging_here`) and its eight neighbour heightmaps are gone.
+  The objects prepare parses the region's own heightmap only, for the grid's cache.
+- **`World3D._placed_objects` (READ semantics; the handover is OURS):** a key is placed once in
+  the world. The first region to commit it holds it, and later ones share it (`N already placed
+  by a loaded region` on the objects line). A region streaming out hands each object it holds to
+  another loaded region that lists it, keeping its place (`_release_region_objects`; the log line
+  is `region x/y unloaded -- N object(s) it held handed to a region still listing them, M
+  dropped`). Retail keeps a refcount instead; the object is drawn while any lister is loaded,
+  either way. The registry is cleared with the grid.
+- **`MapO2Reader.Entry`** gains `owner_region`, `build_flags`, `skipped()` and `object_key()`,
+  and `mapo.Entry2` gains `OwnerRegion()`, `Skipped()` and `Key()`.
+- **`SRREVAMP_QA_OBJECTS`**: at each `--shots` viewpoint, one `QA OBJECT` line per matching
+  placed object -- its key, the holding region, its position, pieces, triangles, visibility and
+  frustum -- counted from the drawn surfaces' own index arrays.
+- `foliage_census.gd --near` and `probe_seasonal.gd` follow the same rule.
+- **`_qa_float_report` (review item 4):** it walked each region's container and measured
+  against the holding region's ground. Since the key handover, a container can hold a
+  neighbour's object, whose ray lands on the owner's ground, so such objects were skipped. It
+  now walks `_placed_objects` and measures each object against its owner region's terrain, in
+  that region's space.
+  - It prints `(N measured, K of them held by a region other than their owner; M skipped:
+    owner region not loaded)`.
+  - Hotan, `--radius 1`, `SRREVAMP_QA_FLOAT=4000`: `0 placed object(s) ... (132 measured, 5 of
+    them held by a region other than their owner; 12 skipped: owner region not loaded)`.
+  - Those 5 were skipped before.
+
+### 3a. The second object source: `force_addobject.txt` (review follow-up; READ unless marked)
+
+The review found a second path that places map objects, and that the round had dropped three
+bridges the report was about.
+
+**The path** (full chain, addresses and layout in MAPO2_FORMAT.md, "Round 643's review"):
+Client_LoadAllRefData loads Media.pk2's `server_dep\silkroad\textdata\force_addobject.txt`
+(`Client_LoadRefDataFile` type 0x3d), then `FUN_00927620` → `SWorld::vslot_045` → the tail of
+`FUN_00a361b0`.
+- A row with service 0 is not loaded. 35 of the file's 55 rows load: 32 `fortress_flag` and 3
+  `bagh_masin_bridge01` at 124/247 (FORTRESS_BIJEOKDAN).
+- Each loaded row becomes an object of region `(regionY << 8) | regionX` when that region's
+  `.o2` loads. It is keyed by (region, `int(z)/320 & 7` in uid bits 13-15, `int(x)/320 & 7` in
+  bits 10-12, and a per-sector counter from 0x3ff down).
+- It goes through the same cache and creator as the `.o2` records. The creator
+  (`FUN_00a33530`) copies the record verbatim, **so the Y is the row's own**.
+- The path is found in the object-path table case-insensitively (`CompareStringA`,
+  `NORM_IGNORECASE`). `fortress_flag.bsr` is not in `object.ifo`, and `vslot_045` appends such a
+  path as a new type.
+
+**The Y: 848 against 53.7 (READ, then MEASURED).**
+- The `.o2` lists the three bridges in `lists[1]` with **the skip bit set** (7cf7#5121, #18433
+  and #40961, Y 53.7 / 52.8 / 53.7), so the map loader does not build them. The force rows build
+  them at Y 848.
+- The model's drawn vertices span local y -1686.2 .. -784.4: piers down to the ravine floor.
+  At Y 848 its top is at 63.6.
+- The `.nvm` lists the three at Y 53.7, with the bridge's own navmesh a plane at local y 5.3,
+  so the walkable deck is at 59.0.
+- At dev's Y 53.7 (from the `.o`), the drawn top sits at -730.6: 790 under the walkable deck
+  and 19 above the heightmap (-749.1).
+- So the two numbers are two copies of one bridge: the drawn object at 848, the navigation copy
+  at 53.7. Dev "drew" the bridges, but buried in the ravine. That is the invisible bridge the
+  user describes, and the review's "regression" was a drop from buried to absent.
+
+**Collision:** this path attaches none (the creator copies the record only). The walkable deck
+is the `.nvm`'s object, which the navigation code already reads. The drawn bridge carries the
+trimesh every placed object carries.
+
+**The fortress state: OPEN, not READ.**
+- Creation and the insert into the sector's list-1 array are unconditional (READ).
+- For an object whose +0x37 word (`type << 24 | guild << 16 | fortress`) is neither 0 nor -1,
+  the loader calls the world's callback (world+0x7b34, installed through `SWorld::vslot_011` as
+  `LAB_004ff8c0`). On add, that callback:
+  - for a flag, sets a texture from the guild's or the alliance's emblem (object vtable+0x104,
+    `FUN_00789300`);
+  - for a structure, looks the fortress up (`FUN_00938a10`) and calls `FUN_0052d4e0` with
+    arguments chosen by the fortress record's +0x20 bits. `FUN_0052d4e0`'s shape is a clip
+    lookup and play (INFERRED).
+- No visibility write was found, but the vtable calls were not followed. So whether a fortress
+  state hides a row is OPEN.
+- This client draws every loaded row, the flags with their own texture and no emblem (OURS).
+  The code says so at `ForceAddObjectReader` and `World3D._force_rows_for`.
+
+**Implemented:**
+- `ForceAddObjectReader` (`client/scripts/mapo/force_addobject_reader.gd`): `parse`,
+  `rows_for`, `uid_for` and `placements`.
+- `World3D._force_rows_for`: the table is read once per world from Media.pk2. A region's rows
+  are handed to its objects job on the main thread, and `_objects_prepare` appends them only
+  when the region's `.o2` loads, as the READ tail does.
+- `placement_model_path`: a row whose path the index lacks is drawn by its own path.
+- `server/cmd/mapobjcensus -media` adds the rows to the retail set.
+
+**In the world (MEASURED):** 124/247 at `--radius 1`, four viewpoints, branch against the
+round's first commit 4744ab5, GPU path, 0 script errors.
+- The objects line reads `124\247.o2 -- 3 force_addobject object(s)`.
+- `QA OBJECT`: `Obj_bagh_masin_bridge01` keys 124/247#6143, #19455 and #41983. Each has 4
+  pieces and 1,082 triangles, and is visible and in the frustum at its own viewpoint.
+- The stand report on bridge 3 (local 206, 1783):
+
+| Commit | Stand report |
+|---|---|
+| dev 8658370 | `on object bagh_masin_bridge01 at 59.0 ... drawn surface: none found` |
+| 4744ab5 | `on object bagh_masin_bridge01 at 59.0 ... drawn surface: none found` |
+| this follow-up | `on object bagh_masin_bridge01 at 59.0 ... drawn Obj_bagh_masin_bridge01_86 at 58.1 (-1.0 above the graph's)` |
+
+- The side-by-sides were viewed and then deleted to free the disk. The picture shows the deck
+  spanning the ravine, where 4744ab5 shows open space.
+
+**After, the same census (`-ownerframe -media`, with section 3a's force rows):** 75,599 of 75,599
+keys drawn (75,564 `.o2` keys plus 35 force rows), 0 undrawn, and 0 placements matching no key.
+The largest region places 485 objects (86/86), under `MAX_MAP_OBJECTS` 2,000.
+
+What the 1,064 placements dev drew with no matching key became (**corrected by the review
+follow-up**, which found that `tre_maple03_big` had been moved, not removed):
+- **143 moved, not removed.** These are the same type at the same local position as a key owned
+  by a neighbouring region. Dev drew them in the wrong region's frame; they are now drawn in the
+  owner's. Among them is Jangan's `tre_maple03_big` (key 97/167#5121, listed by 96/167, 97/167
+  and 97/168). Dev drew it at 97/168's local (1701.2, 187.5); it now stands at 97/167's.
+- 1 matches a key's world spot through another region's frame.
+- **920 are built by no retail path:**
+  - 372 seasonal `.o` placements (hidden anyway since round 583);
+  - 292 in the two regions with a `.o` and no `.o2`: 51/84 (106), and 93/211 (186), a stray copy
+    of Constantinople's buildings;
+  - 256 others, including:
+    - guild and arena pieces (`palace_start01` 32, `headquarters_00` 28,
+      `big_defensive_position_00` 20, `desert_start01` 15, barricades);
+    - `togui_door02`;
+    - records the `.o` scan misreads, such as `cj_pal_south_brid03` at (0.0, 2048.2, -512.0) in
+      five regions far from Jangan;
+    - the `.o` copies of the three `bagh_masin_bridge01` at Y 53.7, whose retail object is the
+      force row at Y 848 (section 3a).
+- Also not drawn: 1,000 skip-bit records (Baghdad's `bagh_masin_lightwall`, the guild
+  barricades, the three bridges' `.o2` copies, ...).
+
+**`cj_pal_lamp` at 97/168 (review item 3): authentically nav-only.**
+- The `.nvm` lists five lamps (objects #47, #50, #53, #58, #61).
+- The `.o2` lists four of them, keys 61a8#40962, #41985, #44033 and #46081, all drawn.
+- The fifth, `.nvm` #53, is uid 43009 at (791.5, -3.5, 1888.8). Its key 61a8#43009 is in no
+  record of any region's `.o2`, skip-bit records included. MEASURED: `mapobjcensus -key` finds
+  nothing, and the same probe on 61a8#40962 finds its record. It is not a force_addobject row
+  either.
+- The two builders READ above are the only ones that make drawn map objects. So retail draws
+  nothing for it and walks its collision from the `.nvm` (INFERRED from those two READ paths).
+- Dev drew it from the `.o`. It is no longer drawn.
+
+### 4. In the world (MEASURED on the box; the pictures are for a human)
+
+Two `--shots` runs, on the branch and on dev 8658370, at 960x540, with the GPU through VirtualGL
+and 0 `SCRIPT ERROR`s:
+- Hotan: `--region 92\135 --radius 2`, 10 viewpoints;
+- the Fertility Temple: `--region 102\135 --radius 1`, 10 viewpoints.
+
+`QA OBJECT` on the branch:
+
+| Object | Held by | Pieces | Triangles | Visible |
+|---|---|---|---|---|
+| `oas_hot_stab` 91/135#46093 | 92/135 (listed by 2) | 11 | 2,350 | true |
+| `oas_hot_b1_bridge` 90/135#44034 | 91/135 (listed by 2) | 13 | 2,006 | true |
+| `oas_hot_b2_bridge` 93/135#11265 | 93/135 | 9 | 1,992 | true |
+| `ruin_takla_temple_01` 102/135#24578 | 102/135 (listed by 6) | 10 | 4,429 | true |
+| `ruin_takla_tembrig_01` 101/135#34818 | 102/135 (listed by 4) | 3 | 2,814 | true |
+| `ruin_takla_tembrig_01` 102/134#41985 | 102/134 (listed by 4) | 3 | 2,814 | true |
+| `ruin_takl_ship_s_01` 102/134#25601 | 102/134 | 9 | 471 | true |
+
+Each is in the frustum at its own viewpoints. The world's own per-tick stand report is a vertical
+ray from above the player through the drawn geometry, against the navmesh surface underfoot. It
+settles "walkable but invisible":
+
+| Spot | dev 8658370 | this round |
+|---|---|---|
+| 90/135 (1139, 1605), on nav object `oas_hot_b1_bridge` at 10.7 | `drawn surface: none found` | `drawn Obj_oas_hot_b1_bridge_1 at 10.1 (-0.6 above the graph's)` |
+| 101/135 (688, 1553), on nav object `ruin_takla_tembrig_01` at -30.0 | `drawn @StaticBody3D@240 at -408.0 (-377.9 above the graph's)`: the canyon floor | `drawn Obj_ruin_takla_tembrig_01_0 at -30.0 (-0.0 above the graph's)` |
+| 102/134 (420, 1702), on the other bridge at -30.2 | `drawn @StaticBody3D@237 at -515.1 (-485.0 ...)` | `drawn Obj_ruin_takla_tembrig_01_1 at -30.2 (-0.0 ...)` |
+| 91/135 (1701, 1880), on nav object `oas_hot_stab` at 245.9 | the terrain, 2.1 below | `drawn Obj_oas_hot_stab_24 at 323.5`: its roof, 77.6 above |
+
+Base-against-branch side-by-sides of all 20 viewpoints are in the session scratchpad,
+`invis_shots/{H,T}_<shot>_base_vs_new.jpg`. Dev is on the left.
+
+**Streaming:** walking the Hotan tour unloaded 95/135 (5 objects handed on, 69 dropped), 95/136
+(7, 50), 94/135 (9, 65) and 94/136 (4, 18), with 0 script errors.
+
+### 5. Load benchmark (MEASURED)
+
+The README's runs (a) and (b), branch against base, on a box other lanes were also using:
+
+| | entry objects (main thread) | entry objects (off thread) | entry grid | crossing: longest work frame in play | crossing objects (off thread) |
+|---|---|---|---|---|---|
+| dev 8658370 | 1,811 ms | 3,733 ms | 18,931 ms | 93 ms | 3,893 ms |
+| this round | 1,588 ms | 3,158 ms | 20,878 ms | 79 ms | 2,790 ms |
+
+Jangan's entry places 2,690 objects over 25 cells, against 2,608. The objects phases are no
+slower. The grid total moved with the off-thread terrain (7,539 against 10,423 ms), which this
+round does not touch: box contention, not this change.
+
+### 6. Tests
+
+- New: `client/scripts/world/map_object_keys_test.gd` covers:
+  - the reader's owner, skip byte, key and frame offset;
+  - `region_placements` over both lists, the skip bit, a repeated key and a neighbour's object;
+  - the owner frame through `TerrainCollision.place_group` over `_cell_offset`;
+  - one object per key across two regions' commits, handed over in place when its holder
+    streams out, and forgotten when no lister is left.
+- New: Go `TestEntry2Key`.
+- New (review follow-up): `client/scripts/world/force_addobject_test.gd`. On a synthetic
+  UTF-16LE table with comments, a service-0 row, two structure rows in 124/247 and a flag in
+  96/168, it checks:
+  - which rows load;
+  - the packed region and the Y as given;
+  - the uid bits and the counter (6143, then 6142);
+  - the case-insensitive type, and the path kept when the index lacks it;
+  - `_objects_prepare` adding the rows to an empty `.o2`, and the commit placing both at Y 848;
+  - a region without an `.o2` building none.
+- Updated for the new rule:
+  - `objects_prepare_test.gd`: synthetic `.o2` lists 1 and 2 with owner, uid and a skip-bit
+    record; one heightmap, not nine; the second region shares the first's keys and inherits
+    them;
+  - `seasonal_objects_test.gd`: its region is a `.o2`;
+  - `load_timings_test.gd`: `region_placements` in place of the removed filter.
+- Box: `check` ALL LOAD (405 scripts after the review follow-up); `tests` ran 163 suites, 0 failing. Go:
+  `go build ./...` and `go test -count=1 -p 1 ./...` pass.
+
+**NEGATIVE, against dev 8658370** (the new and updated suites copied into a `git archive` of the
+base on the box):
+
+```
+FAIL MapO2Reader.Entry has owner_region and build_flags (absent before round 643)
+FAIL MapO2Reader.Entry has object_key() and skipped() (absent before round 643)
+FAIL World3D.gd has region_placements (absent before round 643)
+FAIL World3D.gd has _release_region_objects (absent before round 643)
+FAIL the task prepared the objects (error: World3D: could not find map objects at 97\168.o)
+FAIL 7 records read, 1 key listed again, 1 skipped: 5 objects (got 0)
+FAIL the region's own heightmap read on the task, and no neighbour's (got [])
+FAIL the commit placed the 4 resolvable placements (got -1)
+FAIL by default the wall and arabia_fouad are placed, the Christmas and Halloween pieces are not (got [])
+FAIL the second listing of one key was merged before the filter (got )
+```
+
+Go against base: `internal/mapo/mapo2_test.go:171:14: e.OwnerRegion undefined (type Entry2 has
+no field or method OwnerRegion)`.
+
+**NEGATIVE of the review follow-up, against the round's first commit 4744ab5** (the new suite
+copied into a `git archive` of it on the box):
+
+```
+FAIL force_addobject_reader.gd exists (absent before round 643's review)
+FAIL World3D.gd has _force_rows_for and placement_model_path (absent before round 643's review)
+FAILURES: 2
+```
+
+### 7. Open
+
+- **AGENTS.md's "Facts that were expensive to establish" still says "`.o2` list 2 is a region's
+  own objects; the other lists cross-reference objects belonging elsewhere".** This round's READ
+  and MEASURED evidence (section 2) replaces it. The line needs the user's edit; an agent does
+  not change AGENTS.md.
+- **What separates `lists[1]` from `lists[2]`.** They are built alike; `lists[1]` records whose
+  object has +0x1a bit 0 take a link step through a map at +0x247b (a portal or warp candidate),
+  not read further.
+- **What builds the skip-bit records**, if anything (a siege, an event). Only in part: the three
+  `bagh_masin_bridge01` records are built by force_addobject instead (section 3a). The other 997
+  are not traced (round 583).
+- **The fortress state** (section 3a): whether a state hides a force_addobject row, and the
+  emblem a flag should wear. OPEN. Every loaded row is drawn, the flags without an emblem (OURS).
+- **The 21 keys not in their owner's own file** (`alex_harbor`, `alex_paros`, `alex_obelisk`,
+  `pha_maze*`, two `tre_tree02`, seasonal pieces) are placed by whichever lister commits first.
+  That is retail's behaviour, but not measured in the world.
+- **`oas_hot_etc03`** (section 1), and the MTRL mod's stage alpha behind it (round 625's open
+  item).
+- **Scenery off the ground** (eighty-fifth round: 60 objects) is not re-counted under the owner
+  rule.
+- **Lanes:**
+  - 644 (invisible walls) owns the navmesh side of the same places; this round touches no
+    navigation code.
+  - 645 (animated map assets) may load the same skinned objects. This round changed no model
+    loading: every object it now places draws through the existing `ObjectLoader` path, static.
+    The waterfalls (`cj_waterfall0x.cpd`, `oa_ho_waterfall01.cpd`) newly placed around Hotan are
+    compounds 645 may animate.
+
+
 ## Six-hundred-and-forty-second round, review follow-up: a teleport is served only within the retail interaction range, never from an instanced gate, and walking away closes the gate's talk box
 
 The review confirmed round 642's READ claims. It also verified with real input a paid non-GM ferry
@@ -7772,7 +8144,6 @@ rules; a pushed mouse move. The negative, against dev 8658370 with the new test 
 **Checks.**
 - Client: `check` loads 402 scripts, and `tests` runs 162 suites with 0 failing.
 - Go: build, vet and `go test -count=1 -p 1 ./...` pass (60 packages ok; no server change).
-
 
 ## Rounds 636-640 integration review (feat/walls): a death ends the wall on the default respawn path, a re-bound hotbar slot takes its level's code, and the wall's refusal tests 'tel2' and 'tel3'
 

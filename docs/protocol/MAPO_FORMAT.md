@@ -5,6 +5,14 @@ and, in some regions, `.o2`/`.t` files not yet inspected at all) are the **objec
 list** for that region — this is very likely where a `.bsr` object actually gets positioned in
 the game world, since `.bsr` itself carries no such data (see [BSR_FORMAT.md](BSR_FORMAT.md)).
 
+> **Round 643: the world no longer reads `.o`.** The retail client does not either: its
+> executable names `%d\%d.m`, `%d\%d.o2` and `%d\%d.t` and no `%d\%d.o`, and the `.o2` loader
+> (`FUN_00a361b0`) is the only map-object reader (MAPO2_FORMAT.md, "Round 643"). Measured over
+> every region, the `.o` files hold 1,064 placements that match no object the `.o2` files build
+> (stale copies and objects retail does not place from the map) while 12,847 of the objects the
+> `.o2` builds were missing from the world. Two regions (51/84, 93/211) have a populated `.o` and
+> no `.o2`; retail places nothing there. The reader and its tests stay, for the format record.
+
 No decompiled loader was found for this format in either `sro_client.exe` or `EternityLib.dll`
 (both fully Ghidra-analyzed, RTTI class names checked — same negative result as `.m`, see
 [MAPM_FORMAT.md](MAPM_FORMAT.md)), so this is confirmed entirely empirically, the same way
