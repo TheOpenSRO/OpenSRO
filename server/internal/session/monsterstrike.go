@@ -51,6 +51,10 @@ const (
 	StrikeCritical   uint8 = 0x01 // the monster's critical (AttackResult.MonsterCritical)
 	StrikeBlocked    uint8 = 0x02 // the target's shield blocked it (AttackResult.PlayerBlocked)
 	StrikeTargetDied uint8 = 0x04 // the blow killed the target (AttackResult.PlayerDied)
+	// StrikeStatusTick (round 659's review, OURS): not a swing but a state's
+	// damage tick (status.go) -- the client draws no monster attack for it.
+	// Retail's message for a death by a tick is not read (OPEN).
+	StrikeStatusTick uint8 = 0x08
 )
 
 // MonsterAttacked is the OpMonsterAttacked payload: monster MonsterID struck
@@ -66,8 +70,11 @@ type MonsterAttacked struct {
 	Critical          bool
 	Blocked           bool
 	TargetDied        bool
-	TargetHP          int32
-	DeathExpLost      int64
+	// StatusTick marks a state's damage tick rather than a blow
+	// (StrikeStatusTick).
+	StatusTick   bool
+	TargetHP     int32
+	DeathExpLost int64
 	// Wall is the blow's meeting with the target's protection wall (round
 	// 640, walls.go): a strict suffix after the 33 bytes, present only when
 	// the blow met a wall.
@@ -88,6 +95,9 @@ func (m *MonsterAttacked) Encode() []byte {
 	}
 	if m.TargetDied {
 		flags |= StrikeTargetDied
+	}
+	if m.StatusTick {
+		flags |= StrikeStatusTick
 	}
 	out[20] = flags
 	binary.LittleEndian.PutUint32(out[21:25], uint32(m.TargetHP))
@@ -115,6 +125,7 @@ func DecodeMonsterAttacked(data []byte) (*MonsterAttacked, error) {
 		Critical:          flags&StrikeCritical != 0,
 		Blocked:           flags&StrikeBlocked != 0,
 		TargetDied:        flags&StrikeTargetDied != 0,
+		StatusTick:        flags&StrikeStatusTick != 0,
 		TargetHP:          int32(binary.LittleEndian.Uint32(data[21:25])),
 		DeathExpLost:      int64(binary.LittleEndian.Uint64(data[25:33])),
 		Wall:              wallFrom(data[33:]),
@@ -261,7 +272,7 @@ func (o monsterStrikeOutcome) message(monsterID, targetID int64) *MonsterAttacke
 // The zero value -- performAttack's counter, and a monster with no skill list
 // -- is the primary range, monster.AttackMin/AttackMax, as before.
 func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster, skill combat.MonsterSkill, characterID int64, playerLevel int) (monsterStrikeOutcome, error) {
-	chars, eq, items, mp := deps.chars, deps.eq, deps.items, deps.mp
+	chars, eq, items := deps.chars, deps.eq, deps.items
 	var out monsterStrikeOutcome
 	armor, err := defenderArmor(ctx, characterID, eq, items)
 	if err != nil {
@@ -289,6 +300,11 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 				return monsterStrikeOutcome{}, fmt.Errorf("combat: applying counterattack: %w", err)
 			}
 			out.hp = hp
+			// A zero-damage skill's states still land (round 659): this is
+			// MSKILL_CH_WATERGHOST_ATTACK02's poison.
+			if hp > 0 {
+				statusFX.applyToCharacter(ctx, deps, monster, skill, characterID)
+			}
 			return out, nil
 		}
 	}
@@ -409,6 +425,11 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 		// roll -- which kills nobody whatever pool it found and is reported
 		// as it is, at the HP it found.
 		out.hp = hp
+		// The skill's states land on a living target (round 659, status.go);
+		// a blocked blow applies none.
+		if hp > 0 && !counter.Blocked {
+			statusFX.applyToCharacter(ctx, deps, monster, skill, characterID)
+		}
 		return out, nil
 	}
 	// The blow's damage left the pool at 0. Whether it is THE kill is decided
@@ -421,6 +442,15 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	// penalty, flag on or off. The lock is held through the death below, so
 	// the second of two racing kills reads the first's life state 2 or its
 	// RespawnHP, never the pool between the two.
+	return finishKill(ctx, deps, characterID, out)
+}
+
+// finishKill decides and completes a death: a blow or a state's damage tick
+// (status.go) has left characterID's pool at 0, and out is what it did so
+// far. monsterStrike's tail moved here unchanged in round 659 so the
+// damage-over-time kill takes the same lock, penalty and death.
+func finishKill(ctx context.Context, deps strikeDeps, characterID int64, out monsterStrikeOutcome) (monsterStrikeOutcome, error) {
+	chars, mp := deps.chars, deps.mp
 	l := killLock(characterID)
 	l.Lock()
 	defer l.Unlock()
@@ -432,6 +462,8 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 		return monsterStrikeOutcome{dropped: true}, nil
 	}
 	out.died = true
+	// Her states end with her (round 659, status.go).
+	statusFX.endCharacter(deps.hub, characterID)
 	// Dying costs experience, above level 10. Real: GObjPC_OnDeath
 	// multiplies the level's EXP unit -- the same field a kill is
 	// paid from -- by 100 when a monster did the killing and the

@@ -62,6 +62,14 @@ const (
 	ChanceBlock
 )
 
+// ChanceStatus is the accumulator of one abnormal state, by its kind (1..25,
+// statuseffect.State.Kind). Combat_ApplyStatusEffects (0x590680) rolls every
+// state through the same dice as a critical -- GObjPC::RollChance 0x5a1a20 ->
+// FUN_00599cc0 -- keyed `kind << 24` in the TARGET's map (`mov ecx,
+// 0xN000000; lea edx,[esi+0xa30]` before each call), so each state keeps its
+// own streak on each target. READ (round 659).
+func ChanceStatus(kind int) ChanceKind { return ChanceKind(0x40 + kind&0x3f) }
+
 type chanceKey struct {
 	actor int64
 	kind  ChanceKind

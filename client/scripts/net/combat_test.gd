@@ -266,6 +266,21 @@ func _test_encode_monster_list_announces_pages() -> void:
 	var req := CombatNet.encode_monster_list()
 	_check(req.size() == 1 and (req[0] & CombatNet.MONSTER_LIST_FLAG_PAGED) != 0, "the list request carries the paged-list flag")
 
+## Round 660: the list request asks for the party flag, and a record's rarity
+## word carries it in bit 8 -- the rank is the rest.
+func _test_party_flag_in_the_rarity_word() -> void:
+	var req := CombatNet.encode_monster_list()
+	_check(req.size() == 1 and (req[0] & CombatNet.MONSTER_LIST_FLAG_PARTY) != 0, "the list request carries the party flag")
+	var payload := _build_monster_list_result("", [
+		{"id": 1, "name": "Party champion", "max_hp": 100, "hp": 100, "level": 40, "rarity": 0x101},
+		{"id": 2, "name": "Giant", "max_hp": 100, "hp": 100, "level": 40, "rarity": 4},
+	])
+	var r := CombatNet.decode_monster_list_result(payload)
+	_check(r.monsters.size() == 2, "both records decode")
+	if r.monsters.size() == 2:
+		_check(r.monsters[0].rarity == 1 and r.monsters[0].party, "0x101 is a party champion (rarity %d, party %s)" % [r.monsters[0].rarity, r.monsters[0].party])
+		_check(r.monsters[1].rarity == 4 and not r.monsters[1].party, "4 is a giant, no party flag")
+
 ## Round 656: OpMonsterLeft is u16 n, then n s64 ids; an id cut short is
 ## dropped.
 func _test_decode_monster_left() -> void:
@@ -562,6 +577,7 @@ func _init() -> void:
 	_test_decode_monster_list_page_trailer()
 	_test_decode_monster_left()
 	_test_encode_monster_list_announces_pages()
+	_test_party_flag_in_the_rarity_word()
 	_test_approach_band()
 	_test_in_reach()
 	_test_skill_tick_approaches()

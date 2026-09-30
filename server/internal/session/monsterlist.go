@@ -36,6 +36,26 @@ import (
 // (monsterListNearestThatFit). OURS, an additive capability byte.
 const MonsterListFlagPaged byte = 0x01
 
+// MonsterListFlagParty is bit 1 of the same byte (round 660): the client
+// reads the party flag in the rarity word (MonsterRarityPartyBit). Only a
+// session whose request carries it is sent the flag, in the list, the spawn
+// push and the area of interest's enter; an older client is sent the rank
+// alone.
+const MonsterListFlagParty byte = 0x02
+
+// monsterListPartyAsked reads MonsterListFlagParty off a request.
+func monsterListPartyAsked(data []byte) bool {
+	return len(data) >= 1 && data[0]&MonsterListFlagParty != 0
+}
+
+// noteMonsterListCaps records what a list request's capability byte says
+// the session reads beyond the list itself: the party flag.
+func noteMonsterListCaps(sess *gateway.Session, data []byte) {
+	if monsterListPartyAsked(data) {
+		sess.Set(monsterPartyKey, true)
+	}
+}
+
 // monsterListPagedAsked reads the request's capability byte.
 func monsterListPagedAsked(data []byte) bool {
 	return len(data) >= 1 && data[0]&MonsterListFlagPaged != 0
@@ -155,11 +175,12 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 	}
 	snapshots := make([]MonsterSnapshot, len(listed))
 	for i, m := range listed {
-		snapshots[i] = monsterSnapshotOf(m)
+		snapshots[i] = monsterSnapshotFor(sess, m)
 	}
-	// The pages and the motion pages go as one batch (round 662): queued
-	// together, no other frame for this session -- a chat line, a stat
-	// update, anything not under the wire lock -- comes between them.
+	// The pages, the motion pages and the statuses go as one batch (round
+	// 662): queued together, no other frame for this session -- a chat
+	// line, a stat update, anything not under the wire lock -- comes between
+	// them.
 	var frames []*proto.Packet
 	for _, page := range monsterListPages(snapshots) {
 		frames = append(frames, &proto.Packet{Opcode: OpMonsterListResult, Data: page})
@@ -173,5 +194,8 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 			motion.Entries = motion.Entries[n:]
 		}
 	}
+	// After the list and its legs, in the same batch: the masks already on
+	// (round 659, status.go; one batch since round 662's review).
+	frames = append(frames, statusPacketsOfList(hub, listed, entity.Zone)...)
 	return sess.SendBatch(frames...)
 }

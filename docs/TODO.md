@@ -181,8 +181,10 @@ In order. Each is checked off here when it ships in a release, with its round in
       - **round 655**: whether the retail CLIENT draws the Org row's model (col 4) for the 156
         species whose own model (col 52) is "xxx" -- 89 of them are placed (4,649 npcpos rows).
         The table records the Org's model and `ModelFromOrg`; nothing draws by it yet.
-      - **round 657**: place every nest -- npcpos names 355 species of the table (12,110 rows),
-        the roster 11.
+      - ~~place every nest~~ -- **done for the field (round 660, `-full-map`)**: 10,124 field rows
+        as nests (10,109 since the review); the dungeons (1,915 rows) and the unique-class rows
+      (rarity 3: 71; rarity 8, the Egypt field bosses: 15 -- round 661) are not placed. See
+        "The monster world's nests (round 660)" below.
       - cols 75 'era' and 77 'hra' per species: combat still computes both as `2*level + 25`
         (`combat.MonsterRate`), which holds for both columns on 2,581 of the 7,604 species (MEASURED,
         round 654; round 380 had ~37 % over its own row set). The table
@@ -1085,8 +1087,97 @@ interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
       client: round 662's send queue.)
 - [ ] **The request paths' broadcasts still copy the zone's entities** (`monsterWatchers` filters
       `EntitiesInZone`): fine at 100 players; the AI tick uses the runtime's watcher index instead.
-- [ ] **The respawn is still the flat 10 s** (`respawnDelay`, disclosed): round 659 brings the READ
-      nest rules into the one scheduler.
+- [x] ~~The respawn is still the flat 10 s~~ -- round 660 runs the READ nest rules in the one
+      scheduler (`internal/nest`); 10 s is now only the stand-in nest's window.
+
+### The monster world's nests (round 660) — **built: every field row a nest, the DB's numbers where a row joins one, champion/giant/party, per-monster tactics; these are left**
+
+Round 660 (`docs/protocol/monster_ai.md`, "Nests on the map"; WORLD_ISSUES.md, round 660). Left:
+
+- [ ] **The uniques (round 661).** 71 rarity-3 rows and 15 rarity-8 rows (the SD field bosses:
+      SPHINX, SEKHMET, NEPHTHYS, HORUS, OSIRIS in three variants each, and APIS) are left out. The hive model is built for them:
+      `nest.Hive{TotalCap: 1, Pinned: ...}` is the total-1 rotation hive (the capped pass hatches
+      from the pinned nest alone); the re-pin on death (FUN_0055eec0) and the re-armed timers
+      (0x560e50) are 661's.
+- [ ] **The dungeons.** 1,915 npcpos rows in regions >= 0x8000 are not placed (only 330 of them
+      have a shard nest at their spot, round 658).
+- [x] ~~The swapped spots run stand-in nests~~ -- the user's decision (round 660's review): the
+      6,041 swapped spots take their own DB nest's cap, window, radii and champion chance
+      (EXTERNAL); `-nest-swapped-stand-in` (OURS) is the one-monster fallback. Left: 3,695 of them
+      run the stand-in behaviour (their species has no tactics row left in the shard), and a
+      swapped nest's hive cap is not applied (the shard regrouped those nests).
+- [ ] **132 matched nests have a cap of 0** (MOB_OA_DESERTTRUNKZ 60, its _CLON2 46, the Jangan
+      bandits 22, ...): the pass's `alive < cap` never holds, so they hatch nothing, in the shard
+      too. Faithful to the DB; whether retail's rows were 0 is unknown.
+- [ ] **Not modelled from the hatch path**: the hive population rate (`btKeepMonsterCountType` 1 on
+      2,355 of the placed nests' hives; its region sample is unread; it would only shorten a 1-3 s
+      window); the event-monster substitution; the level > 110 refusal; a failed placement (no
+      server navmesh -- `nest.HalvedDelayMs` is tested, never reached).
+- [ ] **Tactics columns carried but not run**: column 9's retarget by hate (every matched row says
+      2; the runtime keeps the first attacker until the threat table has hate values), column 39
+      `btAggressTypeOnHoming` (no reader found), column 34 `btTraceType` (2 on 66 rows, no reader),
+      and the flag word's bits 2/7 give-up gate (`ai.GiveUpCode`; no placed row sets them).
+- [ ] **Champion, giant and party rewards**: a champion or giant pays the level table's EXP and
+      the species' gold like a normal one. Retail's reward scaling by rank is unread. Where to
+      start (round 660's review): `Formula_MonsterExpReward` 0x4105d0 has no rank factor, but its
+      only callers are `GObjPC_OnDeath` 0x4e6980 and `FUN_004e6d60`, which may be the PvP path --
+      so the real monster-kill EXP path is not located yet.
+- [ ] **The party arming's reference point is INFERRED** (the dead monster, 1000 units): the object
+      GObjPC::FUN_005bca60 measures from was read as the victim, not proved.
+- [ ] **The client**: the species' own scale percent (ref+0x110, column unread) is not applied on
+      top of the class scale; the party mark's size is ours (the plate is ours); the target
+      window's party re-centring (0x69b890..0x69b98d) is not done; class 7's "Elite" name prefix
+      on the overhead plate is not drawn (no class-7 monster is placed).
+- [ ] **Scale at full occupancy**: with the swapped spots on their nests the densest window holds
+      4,716 monsters (region cell -116/8; 1,516 at cell -59/3 before the review). The client's build
+      budget (round 655) was sized for ~500 in view; see the entry's measurement.
+- [ ] **The join is one row per nest, greedily** (own species first, then nearest; OURS): 5 placed
+      rows have more than one nest within the 1.0 tolerance (co-located nests), none lost its nest.
+
+### Status effects on monsters and players (round 659) — **built: receive, give, DoT kills, stun/freeze/sleep/root/slow, the 0x3057 mask and its icons; these are left**
+
+Round 659 (`docs/protocol/status_effects.md`, "What srrevamp does"; WORLD_ISSUES.md round 659).
+Left:
+
+- [ ] **Burn deals 0 a tick.** Its damage is `table[value2]` from the server binary's 0xc63c94 word
+      table, which is not copied into the repository (docs/LEGAL.md). `statuseffect.SetBurnTable`
+      takes it; nothing loads it yet (an operator-supplied file, read from their own binary).
+- [ ] **The client draws a state only as a target-window icon.** READ but not built: the per-bit
+      body effect (`0x9cd5e0` -> `0xa950a0("PARAM_<label>")` -> `0xa54020`), the colour lerps
+      (`vtable +0x48`, 1000 ms; the colours are the floats at `0xde2488..0xde24c4`), freeze's pose
+      (`+0xbd`, animation state 9) and the animation-speed change for frostbite and slow (`+0xc0`).
+      Nor does the player's own buff bar show its abnormal states (`UI_STATE::0x7836d0`), nor the
+      tooltip's description line.
+- [ ] **A character resists nothing.** Params 27..32 / 145..150 (item magic options, buffs) are not
+      published; `statuseffect.Target` takes them.
+- [ ] **Unpublished params**: myopia's range cut (183, `combat.ApproachBand`), dark's attack rate
+      (11), electric shock's parry (9), the curses (3, 4, 5, 6, 178..181), param 140 under
+      frostbite/slow, and all of them on a character. The mask shows; the numbers do not move.
+- [ ] **Unread blocks**: the halving loop the slow, bleeding and stun blocks run on the chance (its
+      count; srrevamp rolls the base chance, never lower than retail's); the stun block's own guards
+      (`[esp+0x43]`, the call's fifth argument); 'tb' (+0x474, not applied) and 'csmp' (no
+      applier, not applied); the target flags word whose bits 4 and 8 withhold states
+      (`0x58f3f4`); fear's AI message 0x14.
+- [ ] **A player's speed is not slowed**: the client moves its own character; the server applies
+      frostbite and slow only to monster legs (a moving monster's leg is restarted at the new speed
+      on the next AI tick, up to 100 ms after retail's immediate republish).
+- [ ] **A death by a tick is reported as `OpMonsterAttacked` with the status-tick flag 0x08** (OURS,
+      round 659's review): retail's message for it is not read. The victim's client enters the dead
+      state from it, and other clients play her hit clip, as for a blow's death.
+- [ ] **One status application per cast** when any of its hits got through (OURS): retail's call
+      sites sit per hit (`0x58f429`..`0x58feda`), whether each unblocked hit rolls again is not read.
+- [ ] **INFERRED**: that a frozen, stunned or sleeping monster starts no attack (the motion state is
+      read; the attack path's test on it is not), and that a DoT tick naming its caster is the
+      monster's struck event and is booked on its damage list (vslot 0x4fc,
+      `Char_ForwardToAttachedObject` 0x4a7500, forwards to an unread object). Sleep is not broken
+      by damage (unread). A death by a tick releases every monster in BATTLE on her, a blow's
+      death only its killer (OURS). A zero-damage status cast is
+      measured for reach like a damaging one (the gate's exemption, if any, is unread).
+- [ ] **OURS**: the 100 ms pass (`StatusTick`); the first tick one interval after the state lands
+      (`record+0x68`'s first value is unread); states ending at logout; character masks going to
+      the whole zone (monster masks go to the area of interest's watchers).
+- [ ] **A kill by a tick shows no EXP line** in the killer's system window: the reward is granted
+      and `OpLevelUp` sent, but no `OpAttackResult` carries `ExpGained` for it.
 
 ### Other bodies' facing (round 637 and its review follow-up) — **built: every body, this player's too, turns to face where it goes at 3 pi rad/s, and an arrival faces the way it last walked; these are left**
 

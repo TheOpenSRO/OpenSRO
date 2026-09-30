@@ -70,6 +70,13 @@ var knownOrphans = map[string]string{
 	"FaceAfterHit": "the threat table's retarget rules, col 9 = 0/1/2 (Handler_0fc 0x548090, round " +
 		"259) -- wired by mob-threat-retarget.",
 	"Clear": "the threat table's SetTarget(0) reset (round 259) -- wired by mob-threat-retarget.",
+	"SetBurnTable": "installs the 0xc63c94 word table burn's tick divides (round 659). The table " +
+		"is read out of the operator's own server binary and is not copied into the repository " +
+		"(docs/LEGAL.md); no loader supplies it yet, so a burn lands, shows and expires but deals 0 " +
+		"a tick -- OPEN in docs/TODO.md.",
+	"StateByBit": "the client-bit -> state lookup of the round-278 vocabulary. The server works in " +
+		"skill codes and slots (StateByCode, SlotForBit); the client resolves bits itself " +
+		"(StatusNet). Knowledge, not a gap; the tests hold the table to it.",
 	"TriggerHPBelowHolds": "a tactics-bound skill's HP-threshold trigger (0x5611d0, round 260) -- " +
 		"wired by mob-ai-skill-triggers.",
 	"DwellRange": "the closed [min, max] of each AIState_DwellMs arm; the tick draws with " +
@@ -144,7 +151,6 @@ var baseline = map[string]string{
 	"PackTag":             "internal/combat/paramtags.go",
 	"ReinforceRates":      "internal/refdata/item.go",
 	"ReplyOpcode":         "internal/proto/opcodes.go",
-	"ScaleHPForMonster":   "internal/combat/rarity.go",
 	"SessionOf":           "internal/trade/trade.go",
 	"SetBlocked":          "internal/account/memstore.go",
 	"SetSecurity":         "internal/gateway/gateway.go",

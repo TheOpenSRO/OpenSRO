@@ -129,6 +129,10 @@ type MonsterAIConfig struct {
 	// with -monster-battle on. cmd/server passes the one hub every handler
 	// shares.
 	Parties *party.Hub
+	// TickStats logs the tick's cost once a minute -- p50, p99 and the
+	// longest pass, with the monsters alive and the brains run (round 660,
+	// SRREVAMP_AI_TICK_STATS). Off by default.
+	TickStats bool
 	// Sleep lets the brains of monsters no player is near sleep (round 656,
 	// cmd/server's -monster-sleep, on by default there): a monster whose
 	// region cell is outside every player's window -- the AOIRadius square of
@@ -362,6 +366,20 @@ type brain struct {
 	// CAIState_HOMING::OnEnter 0x55a60e..0x55a63e), set on each entry;
 	// ReaggroWindowPassed (0x55a720) is `now - enteredAt > +0x1c`, strict.
 	homingBlackoutMs int
+
+	// The tactics the brain runs by (round 660): the monster's own
+	// (combat.Monster.Tactics -- a _RefTactics row, EXTERNAL, and its nest's
+	// radius) when it hatched with one, else the OURS stand-ins, internal/ai's
+	// Tactics* constants and MonsterRoamRadius. Fixed at the brain's birth.
+	//
+	// giveUp and chaseSwitch are columns 36/35 (TraceData, btTraceBoundary),
+	// reachRule column 40 (btFleeType), roamRule column 37 (btHomingType) and
+	// roamRadius ctx+0x1cc (the nest's column 9, Attach 0x53f2a0).
+	giveUp      float64
+	chaseSwitch uint8
+	reachRule   uint8
+	roamRule    uint8
+	roamRadius  float64
 }
 
 // strikeJob is one swing handed to a monster's strike worker: the monster as
@@ -398,20 +416,54 @@ type monsterPush struct {
 func RunMonsterAI(ctx context.Context, hub *world.Hub, monsters *combat.Hub, logger *slog.Logger, cfg MonsterAIConfig) {
 	a := newMonsterAI(hub, monsters, logger, cfg, rand.New(rand.NewSource(time.Now().UnixNano())), nil)
 	monsterAIRuntime.Store(a)
-	go a.run(ctx)
+	go a.run(ctx, cfg.TickStats)
 }
 
-func (a *monsterAI) run(ctx context.Context) {
+// tickStatsPeriod is how often TickStats logs. OURS.
+const tickStatsPeriod = time.Minute
+
+func (a *monsterAI) run(ctx context.Context, stats bool) {
 	ticker := time.NewTicker(MonsterAITick)
 	defer ticker.Stop()
+	var took []time.Duration
+	var since time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
+			start := time.Now()
 			monsterAITick(now)
+			if !stats {
+				continue
+			}
+			took = append(took, time.Since(start))
+			if since.IsZero() {
+				since = now
+			}
+			if now.Sub(since) >= tickStatsPeriod {
+				a.logTickStats(took)
+				took, since = took[:0], now
+			}
 		}
 	}
+}
+
+// logTickStats writes one TickStats line.
+func (a *monsterAI) logTickStats(took []time.Duration) {
+	if a.logger == nil || len(took) == 0 {
+		return
+	}
+	sorted := append([]time.Duration(nil), took...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	pct := func(p float64) float64 {
+		return float64(sorted[min(len(sorted)-1, int(p*float64(len(sorted))))].Microseconds()) / 1000
+	}
+	a.mu.Lock()
+	brains := len(a.brains)
+	a.mu.Unlock()
+	a.logger.Info("monster AI tick", "ticks", len(sorted), "p50_ms", pct(0.5), "p99_ms", pct(0.99),
+		"max_ms", float64(sorted[len(sorted)-1].Microseconds())/1000, "monsters", a.monsters.Count(), "brains", brains)
 }
 
 // newMonsterAI builds a runtime. push nil means the zone broadcast
@@ -532,6 +584,8 @@ func (a *monsterAI) tick(now time.Time) {
 				a.insistent[id] = struct{}{}
 			}
 		}
+		// Round 659: nor does one its states hold (status.go).
+		statusFX.addHeld(a.insistent, a.brains)
 	}
 
 	// 1. The mover (combat.MoverStep: the 160 cap and the no-overshoot clamp),
@@ -856,8 +910,21 @@ func (a *monsterAI) linkAggro(b *brain, attacker int64) {
 	}
 }
 
+// tacticsID is t's row id for a trace line, 0 for the stand-ins.
+func tacticsID(t *combat.Tactics) int64 {
+	if t == nil {
+		return 0
+	}
+	return t.ID
+}
+
 // update is one state's OnUpdate.
 func (a *monsterAI) update(b *brain) {
+	// A stunned, frozen or sleeping monster does nothing (round 659,
+	// status.go heldByStatus).
+	if a.heldByStatus(b) {
+		return
+	}
 	elapsed := int(a.now.Sub(b.enteredAt) / time.Millisecond)
 	switch b.machine.State() {
 	case ai.StateIdle:
@@ -1066,11 +1133,12 @@ func (a *monsterAI) acquire(b *brain) bool {
 	}
 	b.target = pick.ID
 	fromHome := math.Hypot(b.m.X-b.m.HomeX, b.m.Z-b.m.HomeZ)
-	if !ai.TargetWithinChaseRange(dist, ai.TacticsChaseSwitch, ai.TacticsGiveUpDistance, true, a.roamRadius, fromHome) {
+	if !ai.TargetWithinChaseRange(dist, b.chaseSwitch, b.giveUp, true, b.roamRadius, fromHome) {
 		a.tracef("ai: monster %d noticed %d at %.0f, out of chase range (%.0f from home)", b.id, pick.ID, dist, fromHome)
 		return false
 	}
-	a.tracef("ai: monster %d noticed %d at %.0f, engaging", b.id, pick.ID, dist)
+	a.tracef("ai: monster %d noticed %d at %.0f, engaging (%s rank %d party %v tactics %d)", b.id, pick.ID, dist,
+		b.m.CodeName, b.m.Rarity, b.m.Party, tacticsID(b.m.Tactics))
 	a.dispatch(b, ai.MsgEnemyInRange)
 	return true
 }
@@ -1123,11 +1191,13 @@ func (a *monsterAI) battleTick(b *brain) {
 	dist := math.Hypot(e.Pos.X-b.m.X, e.Pos.Z-b.m.Z)
 	fromHome := math.Hypot(b.m.X-b.m.HomeX, b.m.Z-b.m.HomeZ)
 
-	// 2. The reach test. Every srrevamp placement is a nest whose position is
-	// the spawn point and whose radius is the roam radius (MonsterRoamRadius,
-	// own design), so this is the nest path: inclusive against the give-up
-	// distance reduced by the excess beyond 1.5 x the radius (ai.ChaseRange).
-	if !ai.TargetWithinChaseRange(dist, ai.TacticsChaseSwitch, ai.TacticsGiveUpDistance, true, a.roamRadius, fromHome) {
+	// 2. The reach test. Every srrevamp placement is a nest -- its DB nest's
+	// position and radius (round 660), or a stand-in's spawn point and
+	// MonsterRoamRadius -- so this is the nest path: inclusive against the
+	// give-up distance reduced by the excess beyond 1.5 x the radius
+	// (ai.ChaseRange), under the row's reach rule (ai.TargetOutOfReach).
+	if ai.TargetOutOfReach(b.reachRule, float64(b.m.HP)/math.Max(1, float64(b.m.MaxHP)),
+		ai.TargetWithinChaseRange(dist, b.chaseSwitch, b.giveUp, true, b.roamRadius, fromHome)) {
 		a.tracef("ai: monster %d released (out of reach: target %.0f away, %.0f from home)", b.id, dist, fromHome)
 		a.dispatch(b, ai.MsgUnused27)
 		return
@@ -1138,7 +1208,7 @@ func (a *monsterAI) battleTick(b *brain) {
 	// GiveUpCheckPeriodMs after each consumption.
 	if !a.now.Before(b.giveUpDueAt) {
 		b.giveUpDueAt = a.now.Add(ai.GiveUpCheckPeriodMs * time.Millisecond)
-		if ai.GiveUpCode(dist, ai.TacticsChaseSwitch, ai.TacticsGiveUpDistance) == 1 {
+		if ai.GiveUpCode(dist, b.chaseSwitch, b.giveUp) == 1 {
 			a.tracef("ai: monster %d released (give-up: target %.0f away)", b.id, dist)
 			a.dispatch(b, ai.MsgBodyChanged) // 0x2a with code 1: IDLE (CAIState::OnMsg_0x2a 0x559ad0)
 			return
@@ -1458,16 +1528,26 @@ func (a *monsterAI) keptUpOn(b *brain) bool {
 // brain knew, so a spawn push could not have carried it.
 func (a *monsterAI) newBrain(m combat.Monster) *brain {
 	b := &brain{id: m.ID, m: m, heading: m.Heading}
+	// The tactics (round 660): the monster's own row when it hatched with
+	// one (EXTERNAL values, READ columns), else the OURS stand-ins.
+	sight, mode, pct, flags := ai.TacticsDetectionDistance, ai.TacticsAggressionMode, ai.TacticsAggressionPct, ai.TacticsFlags
+	b.giveUp, b.chaseSwitch, b.reachRule, b.roamRule, b.roamRadius = ai.TacticsGiveUpDistance, ai.TacticsChaseSwitch, ai.TacticsReachRule, 0, a.roamRadius
+	if t := m.Tactics; t != nil {
+		sight, mode, pct, flags = t.SightRange, t.AggressType, t.AggressData, t.Flags
+		b.giveUp, b.chaseSwitch, b.reachRule, b.roamRule, b.roamRadius = float64(t.TraceData), t.TraceBoundary, t.FleeType, t.HomingType, t.RoamRadius
+	}
 	// The acquisition radius, ctx+0x15c (BindSkillsAndRanges 0x53fa23..
-	// 0x53fa4f): BCRadius + the detection distance, the stand-in for a
-	// server-database column (ai.TacticsDetectionDistance). Under -monster-
-	// aggro, AI::CTactics::Init's two rolls in its order: the aggression byte
-	// (0x53f5be..0x53f5e1), then tactics timer 1's period (0x53f745..
-	// 0x53f765 -> ArmTimer), which starts fired (scanDueAt zero).
-	b.detection, _ = ai.DetectionRadius(m.BCRadius, ai.TacticsDetectionDistance)
+	// 0x53fa4f): BCRadius + the detection distance, column 6 (nSightRange);
+	// 0 for a row with none, which installs no acquire behaviour. Under
+	// -monster-aggro, AI::CTactics::Init's two rolls in its order: the
+	// aggression byte (0x53f5be..0x53f5e1: column 7, rolled against column 8
+	// under mode 2), then tactics timer 1's period (0x53f745..0x53f765 ->
+	// ArmTimer, column 42's fast-scan bits), which starts fired (scanDueAt
+	// zero).
+	b.detection, _ = ai.DetectionRadius(m.BCRadius, sight)
 	if a.aggro {
-		b.aggressive = ai.Aggressive(a.rng, ai.TacticsAggressionMode, ai.TacticsAggressionPct)
-		b.scanPeriodMs = ai.ScanPeriodMs(a.rng, ai.TacticsFlags)
+		b.aggressive = ai.Aggressive(a.rng, mode, pct)
+		b.scanPeriodMs = ai.ScanPeriodMs(a.rng, flags)
 	}
 	var states [ai.StateCount]ai.Enterer
 	states[ai.StateIdle] = &brainState{a: a, b: b, state: ai.StateIdle, enter: func() { a.enterIdle(b) }}
@@ -1530,10 +1610,12 @@ func (a *monsterAI) dispatch(b *brain, msg ai.Message) {
 	}
 }
 
-// withinRoam is AITactics_IsWithinRoamRadius (0x00545f70) from the spawn
-// point, rule 0, MonsterRoamRadius (OWN DESIGN, see there).
+// withinRoam is AITactics_IsWithinRoamRadius (0x00545f70) from the home the
+// monster hatched with -- its nest's position -- by the brain's roam radius
+// and rule: the nest's column 9 and the tactics row's column 37 (round 660),
+// or MonsterRoamRadius and rule 0 (OWN DESIGN, see there).
 func (a *monsterAI) withinRoam(b *brain) bool {
-	return ai.WithinRoamRadius(b.m.HomeX, b.m.HomeZ, b.m.X, b.m.Z, a.roamRadius, 0)
+	return ai.WithinRoamRadius(b.m.HomeX, b.m.HomeZ, b.m.X, b.m.Z, b.roamRadius, b.roamRule)
 }
 
 // enterIdle is CAIState_IDLE::OnEnter (0x00559c80): the dwell
@@ -1577,7 +1659,7 @@ func (a *monsterAI) enterWander(b *brain) {
 // 0x55a5e0 and the +0x164 sign.
 func (a *monsterAI) enterHoming(b *brain) {
 	b.dwellMs = ai.DwellMs(a.rng, ai.StateHoming)
-	b.homingDestX, b.homingDestZ = ai.HomeDestination(a.rng, b.m.HomeX, b.m.HomeZ, b.m.X, b.m.Z, a.roamRadius)
+	b.homingDestX, b.homingDestZ = ai.HomeDestination(a.rng, b.m.HomeX, b.m.HomeZ, b.m.X, b.m.Z, b.roamRadius)
 	b.homingBlackoutMs = ai.HomingReaggroDelayMs(b.detection, b.m.RunSpeed)
 	if a.aggro && b.aggressive {
 		a.tracef("ai: monster %d homing, noticing nobody for %d ms", b.id, b.homingBlackoutMs)
@@ -1640,6 +1722,11 @@ func (a *monsterAI) startLeg(b *brain, destX, destZ float64, mode uint8, what st
 	speed := b.m.WalkSpeed
 	if mode != 0 {
 		speed = b.m.RunSpeed
+	}
+	// Its states slow the leg, or forbid it (round 659, status.go).
+	speed, may := statusSpeed(b.id, speed)
+	if !may {
+		return
 	}
 	m, ok := a.monsters.SetMotion(b.id, destX, destZ, speed, mode)
 	if !ok {

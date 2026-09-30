@@ -1,6 +1,8 @@
 // Package statuseffect carries the abnormal-state rules recovered from
-// SR_GameServer.exe (round 275, 2026-09-20). srrevamp has no status-effect
-// system yet; this is the spec for one, with every number cited.
+// SR_GameServer.exe (round 275, 2026-09-20), with every number cited. Since
+// round 659 it is also the system: apply.go lands a skill's status runs
+// (Resolve), holder.go keeps an object's records and ticks them (Holder), and
+// session/status.go wires both to monsters and characters.
 //
 // See docs/protocol/status_effects.md for the evidence.
 //
@@ -157,17 +159,22 @@ func ElectricShockParryPercent(value2 int) int {
 // The duration itself comes from a CFormulae switch (0x410b40) that every one
 // of the six elemental blocks calls the same way:
 //
-//	mov cx, WORD PTR [ebx+0x1a]     ; the resist-reduced chance it just computed
+//	mov cx, WORD PTR [ebx+0x1a]     ; the resist-reduced STRENGTH it just computed
 //	mov al, <slot>                  ; freeze 0, frostbite 1, burn 2,
 //	call 0x410b40                   ;   electric shock 3, poison 4, zombie 5
 //	mov [ebx+0xc], eax              ; the duration, in milliseconds
 //
-// **The number that decides whether the state lands also decides how long it
-// lasts.** The kind byte is the SLOT, not the client bit -- burn passes 2 and
-// electric shock 3 -- which is a fourth independent agreement with the mask
-// table (see MaskForSlot).
+// CORRECTED in round 659: record+0x1a is value[0] after resistance, not the
+// chance the state lands with. The landing chance is value[1], rolled BEFORE
+// this through GObjPC::RollChance (0x5a1a20) with the chance-memory dice --
+// see apply.go. Round 276 read "+0x1a" as the chance and concluded that the
+// number which decides whether a state lands also decides how long it lasts;
+// it does not. The kind byte is the SLOT, not the client bit -- burn passes 2
+// and electric shock 3 -- which is a fourth independent agreement with the
+// mask table (see MaskForSlot).
 
-// DurationUnitMs is the milliseconds-per-chance-point a slot's states last.
+// DurationUnitMs is the milliseconds per point of strength a slot's states
+// last.
 // The six values are the engine's own literals in the switch: 0x61, 0xfa,
 // 0x2ee (twice), 500 and 1000. Slots 2 and 5 share one case.
 func DurationUnitMs(slot int) (int, bool) {
@@ -188,17 +195,18 @@ func DurationUnitMs(slot int) (int, bool) {
 	return 0, false
 }
 
-// DurationMs is the state's lifetime: the chance the block computed times the
-// slot's unit. The engine masks the chance to 16 bits before multiplying.
-func DurationMs(slot, chance int) (int, bool) {
+// DurationMs is the state's lifetime: the strength the block computed
+// (value[0] after resistance, record+0x1a) times the slot's unit. The engine
+// masks it to 16 bits before multiplying.
+func DurationMs(slot, strength int) (int, bool) {
 	unit, ok := DurationUnitMs(slot)
 	if !ok {
 		return 0, false
 	}
-	if chance < 0 {
+	if strength < 0 {
 		return 0, true
 	}
-	return (chance & 0xffff) * unit, true
+	return (strength & 0xffff) * unit, true
 }
 
 // DefaultTickIntervalMs is what a block writes into record+0x10 when the skill

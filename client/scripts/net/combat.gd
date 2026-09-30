@@ -67,6 +67,10 @@ class MonsterAttacked:
 	var critical: bool
 	var blocked: bool
 	var target_died: bool
+	## Round 659's review: not a swing but a state's damage tick (poison,
+	## burn, bleeding) -- the server's StrikeStatusTick, OURS. No monster
+	## attack is drawn for it.
+	var status_tick: bool
 	## The target's HP after the blow -- after a death, the HP it was put
 	## back on its feet with (character.RespawnFraction), as PlayerHP is.
 	var target_hp: int
@@ -231,6 +235,11 @@ class MonsterSnapshot:
 	## 1 champion, 3/8 unique, 4 giant, 5 titan, 6 elite. The target window's
 	## rank gem is picked from it (mapping recovered from the retail client).
 	var rarity: int
+	## The party-monster flag (round 660): retail's +0x7ad, the high nibble
+	## of the class byte (CICMonster::vslot_025 0x9d3850). srrevamp's server
+	## sends it in bit 8 of the rarity word, and only to a client whose list
+	## request carries MONSTER_LIST_FLAG_PARTY.
+	var party: bool
 
 ## Result of decode_monster_list_result().
 class MonsterListResult:
@@ -543,11 +552,17 @@ static func decode_loot_dropped(data: PackedByteArray) -> LootDropped:
 ## client gathers a paged list (NetClient). A server answers a request
 ## without it in the old form, one frame of the nearest monsters.
 const MONSTER_LIST_FLAG_PAGED := 0x01
+## Bit 1 (round 660): this client reads the party flag in the rarity word
+## (MONSTER_RARITY_PARTY_BIT); a server sends it only then.
+const MONSTER_LIST_FLAG_PARTY := 0x02
+## Where the rarity word carries the party flag (round 660): bit 8, above
+## every rank.
+const MONSTER_RARITY_PARTY_BIT := 0x100
 
 ## Encodes an OpMonsterList request: the capability byte only -- the server
 ## resolves the requester's zone and window from world.Hub.
 static func encode_monster_list() -> PackedByteArray:
-	return PackedByteArray([MONSTER_LIST_FLAG_PAGED])
+	return PackedByteArray([MONSTER_LIST_FLAG_PAGED | MONSTER_LIST_FLAG_PARTY])
 
 static func _decode_monster_snapshot(data: PackedByteArray, offset: int) -> Array:
 	if offset + 8 > data.size():
@@ -586,7 +601,9 @@ static func _decode_monster_snapshot(data: PackedByteArray, offset: int) -> Arra
 	m.max_hp = data.decode_u32(offset)
 	m.hp = data.decode_u32(offset + 4)
 	m.level = data.decode_u32(offset + 8)
-	m.rarity = data.decode_u32(offset + 12)
+	var rarity_word := data.decode_u32(offset + 12)
+	m.rarity = rarity_word & ~MONSTER_RARITY_PARTY_BIT
+	m.party = (rarity_word & MONSTER_RARITY_PARTY_BIT) != 0
 	offset += 16
 
 	return [m, offset]
@@ -669,6 +686,7 @@ const MONSTER_ATTACKED_SIZE := 33
 const STRIKE_CRITICAL := 0x01
 const STRIKE_BLOCKED := 0x02
 const STRIKE_TARGET_DIED := 0x04
+const STRIKE_STATUS_TICK := 0x08
 
 ## Decodes an OpMonsterAttacked payload, or null when it is shorter than 33
 ## bytes. Past the 33rd, only round 640's wall suffix is read.
@@ -683,6 +701,7 @@ static func decode_monster_attacked(data: PackedByteArray) -> MonsterAttacked:
 	m.critical = (flags & STRIKE_CRITICAL) != 0
 	m.blocked = (flags & STRIKE_BLOCKED) != 0
 	m.target_died = (flags & STRIKE_TARGET_DIED) != 0
+	m.status_tick = (flags & STRIKE_STATUS_TICK) != 0
 	m.target_hp = data.decode_s32(21)
 	m.death_exp_lost = data.decode_s64(25)
 	# Round 640: the wall suffix, only when the blow met one.

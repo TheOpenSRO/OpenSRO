@@ -104,7 +104,10 @@ extends Control
 ##   `swprintf_s(.., L"Lv %d", level)` into ID 4 (`GDR_TWSM_LEVEL`), the level
 ##   from the object's reference data (GlobalDataManager 0x93f630).
 ##   RANK_TEXT_BY_RARITY has the texts. A party monster (+0x7ad == 1) also
-##   gets UIIT_STT_PARTYMOB_TARGET appended; the server sends no such flag.
+##   gets UIIT_STT_PARTYMOB_TARGET's text appended with no separator (0x69b834:
+##   Text() then wstring::append 0x4782a0; retail English "(Party)", so
+##   "Champion(Party)") -- PARTY_TEXT_KEY, round 660, now that the server
+##   sends the flag.
 ## - The gem and the name colour come together from one classifier,
 ##   `FUN_007780c0(targetLevel)`: `d = targetLevel - playerLevel`; d < -6 ->
 ##   `tw_gem_weak2` and 0x87d2ff, d < -3 -> `weak1` and 0xa5e0ce, d <= 0 ->
@@ -209,11 +212,15 @@ const CLOSE_BUTTON_AT := Vector2(176 + 0x28, 9)
 ##   text (+0x378, ID 2) to (x + 0x69, y + 0x38) before its rarity switch
 ##   (0x69b52f..0x69b57a), x and y being the piece's own (0xb8f420 at
 ##   0x69b52a): (85, 54) and (105, 56), not the layout's (65, 54), (85, 56).
-## For a party monster it then re-centres the rank row by the text's width
-## (0x69b890..0x69b98d); the server sends no party flag, so that is not done.
+## For a party monster of a class other than 0 it then re-centres the rank row
+## by the text's width (0x69b890..0x69b98d); that re-centring is not done here
+## (round 660: the text is appended, the row stays where the switch put it).
 const SPECIAL_GAUGE_SIZE := Vector2(0xd0, 4)
 const SPECIAL_RANK_ICON_AT := Vector2(0x55, 0x36)
 const SPECIAL_RANK_TEXT_AT := Vector2(0x69, 0x38)
+## The party monster's rank-row suffix (0x69b834, the key at 0xda58c8).
+const PARTY_TEXT_KEY := "UIIT_STT_PARTYMOB_TARGET"
+
 ## Rarity 7's name prefix (0x6997b9..0x699834): the target's name becomes
 ## UIIT_STT_MOB_STRONG + L" " (0xe19330) + name before 0x69b380 sets it.
 const STRONG_NAME_KEY := "UIIT_STT_MOB_STRONG"
@@ -471,7 +478,7 @@ func set_player_level(level: int) -> void:
 ## name colour), rarity (which window, and the rank icon on the special one),
 ## and HP. All server values.
 func show_target(target_name: String, level: int, rarity: int, hp: int, max_hp: int,
-		owner_key: String = "") -> void:
+		owner_key: String = "", party := false) -> void:
 	if _common == null and _special == null:
 		return
 	# Only CIFTargetWindow's CICMonster branch is followed: this window shows
@@ -490,7 +497,7 @@ func show_target(target_name: String, level: int, rarity: int, hp: int, max_hp: 
 	if _level_row != null:
 		_level_row.text = LEVEL_FORMAT % level
 	if _rank_row != null:
-		_rank_row.text = rank_text(rarity)
+		_rank_row.text = rank_text(rarity, party)
 		_rank_row.add_theme_color_override("font_color", Color.WHITE)
 	set_hp(hp, max_hp)
 	visible = true
@@ -544,17 +551,25 @@ func monster_name(target_name: String, rarity: int) -> String:
 	return prefix + " " + target_name
 
 ## The rank row's text for a rarity, through the client's text table, or ""
-## where 0x69b4c0 sets none.
-func rank_text(rarity: int) -> String:
+## where 0x69b4c0 sets none; a party monster's has PARTY_TEXT_KEY's text
+## appended with no separator (round 660).
+func rank_text(rarity: int, party := false) -> String:
 	var key: String = RANK_TEXT_BY_RARITY.get(rarity, "")
 	if key == "":
 		return ""
-	var text := key
+	var text := _resolve(key)
+	if party:
+		text += _resolve(PARTY_TEXT_KEY)
+	return text
+
+## A text key through the client's text table, the key itself when it does
+## not resolve (our fallback).
+func _resolve(key: String) -> String:
 	if _builder != null:
 		var resolved := _builder.resolve_text(key)
 		if resolved != "":
-			text = resolved
-	return text
+			return resolved
+	return key
 
 ## The gauge is the server's hp/max, nothing else. Logged during QA runs so
 ## a frame can be checked against the number it should show.

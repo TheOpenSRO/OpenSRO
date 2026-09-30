@@ -1373,6 +1373,7 @@ func _ready() -> void:
 	_berserk_resync_all("world entry")
 	NetClient.monster_damaged.connect(_on_monster_damaged)
 	NetClient.monster_died.connect(_on_monster_died)
+	NetClient.object_status.connect(_on_object_status)
 	NetClient.level_up.connect(_on_level_up)
 	NetClient.loot_dropped.connect(_on_loot_dropped)
 	NetClient.ground_item_list_result.connect(_on_ground_item_list_result)
@@ -1696,6 +1697,7 @@ func _try_initialize_pk2_ui() -> void:
 				_hud_buff_board.clear()
 			# And every other owner's (round 638): the zone re-sends them.
 			_target_buff_book.clear()
+			_abnormal_states.clear()
 			# And no target carries over (round 638 review): whatever was
 			# selected belonged to the entry that ended.
 			_last_attack_target = -1
@@ -5266,6 +5268,7 @@ func _replace_others_for_arrival(others: Array, seated: Array) -> void:
 	# zone (BuffRoster, started over at the result), and each body built
 	# below, and this player's, takes its auras from it.
 	_target_buff_book.clear()
+	_abnormal_states.clear()
 	_fx_owner_buffs.clear()
 	_spawn_result_others(list, seated)
 	_fx_resync_all("the zone change's arrival")
@@ -5857,6 +5860,43 @@ func _name_plate(text: String, above: float) -> Label3D:
 	_apply_name_plate_range(label)
 	return label
 
+## The party monster's mark (round 660): retail's CICMonster vslot 15
+## (0x9d3e70) draws, in its name pass, one 16 x 16 quad of
+## `icon\item\etc\europe_partymob.ddj` (the name table 0xec7570, index 5)
+## 20 px left of the name box's left edge -- so 4 px clear of it -- top-aligned
+## with the box, for a monster whose +0x7ad is 1 (0x9d3f2a). READ. The name
+## plate itself is ours (see below), so the mark is sized to its text's line
+## height, with the gap kept at the retail 4 : 16 of the icon (OURS), and is
+## drawn as the plate is: billboarded, fixed size, over the scene.
+const PARTY_MARK_TEXTURE := "icon\\item\\etc\\europe_partymob.ddj"
+const PARTY_MARK_PX := 16.0
+const PARTY_MARK_GAP_PX := 4.0
+
+func _party_mark(label: Label3D) -> Sprite3D:
+	if _ui_builder == null:
+		return null
+	var tex: Texture2D = _ui_builder.load_texture(PARTY_MARK_TEXTURE)
+	if tex == null:
+		return null
+	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
+	var text_size := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size)
+	var k := text_size.y / PARTY_MARK_PX  # icon pixels -> the plate's font pixels
+	var mark := Sprite3D.new()
+	mark.name = "PartyMark"
+	mark.texture = tex
+	mark.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	mark.fixed_size = true
+	mark.pixel_size = label.pixel_size * k * float(PARTY_MARK_PX) / float(tex.get_height())
+	mark.no_depth_test = true
+	mark.render_priority = label.render_priority
+	# The plate is centred on its node: the mark's centre is half the text, the
+	# gap and half itself to the left, in its own texture pixels.
+	var tex_px := float(tex.get_height()) / PARTY_MARK_PX
+	mark.offset = Vector2(-(text_size.x * 0.5 / k + PARTY_MARK_GAP_PX + PARTY_MARK_PX * 0.5) * tex_px, 0.0)
+	mark.add_to_group("name_plates")
+	_apply_name_plate_range(mark)
+	return mark
+
 ## Where a name sits over a model, how large it draws, and in what colour.
 ##
 ## Ours, not recovered: nothing in the archive places a name plate, because
@@ -5934,6 +5974,30 @@ var _hud_target: HudTarget = null
 ## monster or player (HudTargetBuffs.Book; retail keeps them on each object,
 ## 0xB0BD -> 0x9cd050).
 var _target_buff_book := HudTargetBuffs.Book.new()
+## Every object's abnormal states, from OpObjectStatus (round 659, StatusNet;
+## retail's 0x3057 stores the mask on the object, +0x2c4): owner key ->
+## {"mask": int, "levels": bit -> level}. The buff viewer shows them after
+## the owner's skill buffs (_owner_buffs_and_states).
+var _abnormal_states := {}
+
+## The viewer's list for an owner: its buffs, then its abnormal states.
+func _owner_buffs_and_states(owner_key: String) -> Array:
+	var out: Array = _target_buff_book.list_of(owner_key)
+	var st: Dictionary = _abnormal_states.get(owner_key, {})
+	if not st.is_empty():
+		out.append_array(HudTargetBuffs.abnormal_entries(int(st["mask"]), st["levels"]))
+	return out
+
+func _on_object_status(st: StatusNet.ObjectStatus) -> void:
+	var key := _fx_owner_key(st.owner_id, st.owner_kind)
+	if st.mask == 0:
+		_abnormal_states.erase(key)
+	else:
+		_abnormal_states[key] = {"mask": st.mask, "levels": st.levels}
+	var labels := PackedStringArray()
+	for bit in StatusNet.drawn_bits(st.mask):
+		labels.append(StatusNet.label(bit))
+	print("World3D: %s abnormal mask 0x%x [%s]" % [key, st.mask, ", ".join(labels)])
 
 func _build_target_window() -> void:
 	_hud_target = HudTarget.new(_ui_builder)
@@ -5942,7 +6006,7 @@ func _build_target_window() -> void:
 	# zone's buffs by owner (round 638).
 	if _hud_buff_board != null:
 		_hud_target.buff_catalog = _hud_buff_board.catalog
-	_hud_target.buff_source = _target_buff_book.list_of
+	_hud_target.buff_source = _owner_buffs_and_states
 	# CIFTargetWindow::vslot_012's per-frame lookup (round 638 review): a
 	# target that no longer exists hides the window, and the selection goes.
 	_hud_target.target_exists = _target_exists
@@ -5980,7 +6044,7 @@ func _show_target(monster_id: int) -> void:
 		_hud_target.clear()
 		return
 	_hud_target.show_target(snap.monster_name, snap.level, snap.rarity, snap.hp, snap.max_hp,
-		_fx_owner_key(monster_id, SkillNet.OWNER_MONSTER))
+		_fx_owner_key(monster_id, SkillNet.OWNER_MONSTER), snap.party)
 
 func _set_target_hp(hp: int, max_hp: int) -> void:
 	if _hud_target != null:
@@ -13555,6 +13619,7 @@ func _on_entity_left(character_id: int) -> void:
 	_other_gaits.erase(character_id)
 	SkillEffects.detach_owner(_fx_owner_key(character_id, 0))
 	_target_buff_book.drop(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER))
+	_abnormal_states.erase(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER))
 	_fx_owner_buffs.erase(_fx_owner_key(character_id, 0))
 	_other_seated.erase(character_id)
 	# A monster's blow on this player may cross the notice (round 546,
@@ -15329,7 +15394,15 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 			label_height = _monster_templates.label_height_of(monster_model)
 			monster_skeleton.set_meta(MonsterDraw.META_CULL, true)
 			monster_skeleton.set_meta(MonsterDraw.META_HIDE, true)
-			monster_skeleton.set_meta(MonsterDraw.META_RADIUS, _monster_templates.radius_of(monster_model))
+			# The class's model scale (round 660, MonsterDraw.class_scale:
+			# champion 1.5, giant 3.0, elite 1.7 -- READ, CICMonster::vslot_025
+			# 0x9d3995), with the label, the cull radius and the collider
+			# grown by it.
+			var class_scale := MonsterDraw.class_scale(monster.rarity)
+			if class_scale != 1.0:
+				monster_skeleton.scale = Vector3.ONE * class_scale
+				label_height *= class_scale
+			monster_skeleton.set_meta(MonsterDraw.META_RADIUS, _monster_templates.radius_of(monster_model) * class_scale)
 			_animate(assembled)
 	# Says which of the three ways a monster can come out wrong happened:
 	# the species not in the tables, the model not assembling, or a real
@@ -15369,6 +15442,11 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 		label_height / (1.0 + NAME_PLATE_CLEARANCE_FRACTION))
 	label.name = "Label"
 	body.add_child(label)
+	# A party monster's mark beside its name (round 660, _party_mark).
+	if monster.party:
+		var mark := _party_mark(label)
+		if mark != null:
+			label.add_child(mark)
 	# The HP bar sits just under the name, at the model's own top.
 	var bar := _hp_bar(label_height * 0.9)
 	body.add_child(bar)
@@ -16579,6 +16657,13 @@ func _draw_counter_from_result(monster: int, result: CombatNet.AttackResult) -> 
 func _on_monster_attacked(attacked: CombatNet.MonsterAttacked) -> void:
 	if attacked == null:
 		return
+	# A state's damage tick (round 659's review, STRIKE_STATUS_TICK): the
+	# server sends one when a tick kills. No swing is drawn and no counter
+	# claimed; the target takes it as a blow's report -- the HUD, the death
+	# line and the dead state for this player, the hit clip for another.
+	if attacked.status_tick:
+		_on_status_tick_strike(attacked)
+		return
 	var claim := MonsterStrikes.CLAIM_NONE
 	if not _other_bodies.has(attacked.target_character_id):
 		claim = MonsterStrikes.claim(_strike_waits, attacked)
@@ -16616,6 +16701,20 @@ func _on_monster_attacked(attacked: CombatNet.MonsterAttacked) -> void:
 		_draw_monster_strike(attacked, true)
 		return
 	_draw_monster_strike(attacked, false)
+
+## A state's damage tick reported as OpMonsterAttacked (round 659's review):
+## on this player, _show_own_strike (bar, death line, dead state) and the hit
+## -- or held die -- clip; on another drawn player, their hit clip.
+func _on_status_tick_strike(attacked: CombatNet.MonsterAttacked) -> void:
+	var own := attacked.target_character_id == _own_id()
+	print("World3D: a state's tick on %d for %d (HP %d)%s -- %s" % [
+		attacked.target_character_id, attacked.damage, attacked.target_hp,
+		", died" if attacked.target_died else "", "this player" if own else "another player"])
+	if own:
+		_show_own_strike(attacked)
+		_play_player_struck()
+	elif _other_bodies.has(attacked.target_character_id):
+		_play_other_hit(attacked.target_character_id)
 
 ## A blow on this player, from a push that claimed a counter still waiting for
 ## its blow to land (CLAIM_HELD): the HUD's HP from the push's target HP, and
@@ -18198,6 +18297,7 @@ func _begin_monster_death(monster_id: int) -> void:
 		_clear_target()
 		_last_attack_target = -1
 	_target_buff_book.drop(_fx_owner_key(monster_id, SkillNet.OWNER_MONSTER))
+	_abnormal_states.erase(_fx_owner_key(monster_id, SkillNet.OWNER_MONSTER))
 	# A kill of the monster this player was walking to: no attack to send,
 	# and no reason to keep walking.
 	if not _pending_attack.is_empty() and int(_pending_attack["monster"]) == monster_id:

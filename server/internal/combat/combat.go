@@ -170,6 +170,18 @@ type Monster struct {
 	// level gap, so a monster contributes only its Level. There is no mob
 	// experience column to recover.
 	ExpReward int64
+	// Party is the party-monster flag, the high nibble of the class byte the
+	// engine keeps at +0x1cd8 (MonsterType 1, IsPartySupportMonster, slot 193;
+	// rarity.go): a nest armed by a party's kill hatches its next rarity-0
+	// monster as one at 50 % (Nest_Hatch 0x5607b0; round 660, internal/nest).
+	// Its HP is ten times the rank's (MonsterHPPercent). READ.
+	Party bool
+	// Tactics is the AI configuration the monster hatched with (round 660,
+	// internal/nest): a _RefTactics row (EXTERNAL, Eternity DB) with its
+	// nest's roam radius, or nil for a monster spawned without one -- the GM's
+	// /spawn, a test's, a server with no DB files -- whose brain runs the OURS
+	// stand-ins (internal/ai's Tactics* constants). Fixed at the spawn.
+	Tactics *Tactics
 	// SPReward is the disclosed whole-point fallback (SPFor), used only when no
 	// level table is loaded. Normally the skill economy is fed by skill
 	// EXPERIENCE converted at leveldata.SkillExpPerPoint -- see that constant,
@@ -743,6 +755,33 @@ type Hub struct {
 	// the order they first hit it (round 657; see Hit). Kept until the
 	// monster dies, when ApplyDamageFrom hands it to the caller.
 	hits map[int64][]Hit
+	// deathLog, when on (LogDeaths), records every kill's id in deaths until
+	// DrainDeaths takes them: how the nest scheduler (round 660) learns of a
+	// loss without polling every monster it keeps.
+	deathLog bool
+	deaths   []int64
+}
+
+// LogDeaths turns the death log on: from now on every monster ApplyDamage
+// kills is recorded until DrainDeaths takes it. cmd/server turns it on for
+// the nest scheduler, its only reader; off (the default), nothing is kept.
+func (h *Hub) LogDeaths(on bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.deathLog = on
+	if !on {
+		h.deaths = nil
+	}
+}
+
+// DrainDeaths appends the ids of the monsters killed since the last drain to
+// dst, oldest first, and forgets them.
+func (h *Hub) DrainDeaths(dst []int64) []int64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	dst = append(dst, h.deaths...)
+	h.deaths = h.deaths[:0]
+	return dst
 }
 
 // Hit is one attacker's accumulated damage on one monster -- an entry of the
@@ -888,6 +927,10 @@ type MonsterSkill struct {
 	ReuseMs, Range int
 	AttMin, AttMax int
 	Chance         int
+	// Status is the skill's status runs, refdata.Skill.StatusParams
+	// (statuseffect.ParseRuns reads it): what a blow of this skill applies to
+	// the character it lands on (round 659). "" applies nothing.
+	Status string
 }
 
 // SpawnSpecies is Spawn with the species' code name carried along, so the
@@ -904,14 +947,71 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 	// The engine scales a ranked monster's HP by its rank (champion x2, elite
 	// x4, giant x20, titan x100 -- RarityHPPercent, read from CGObjMob::
 	// PublishStats); the authored row is the general's figure.
-	maxHP = ScaleHPForRarity(maxHP, species.Rarity)
+	return h.SpawnHatched(zone, species, x, y, z, maxHP, defense, attack, goldReward, Hatch{HomeX: x, HomeZ: z})
+}
+
+// Hatch is what a nest's hatch adds to a spawn (round 660, internal/nest):
+// where the monster's home is -- the nest's own position, which AI::CTactics::
+// Attach stores at ctx+0x1b4 and the roam radius and HOMING measure from,
+// while the monster itself hatches up to the nest's generate radius away
+// (GObjPC::FUN_00531240) -- the party flag, and the tactics it runs under.
+type Hatch struct {
+	HomeX, HomeZ float64
+	Party        bool
+	Tactics      *Tactics
+}
+
+// Tactics is the slice of a _RefTactics row (EXTERNAL: the Eternity DB, round
+// 658; the columns' meanings READ off RefTactics_ExtractData 0x6aaab0 and
+// their readers, docs/protocol/monster_ai.md) the monster AI runs a monster
+// by, with the roam radius its nest gives it. internal/nest builds it; the
+// session's brain reads it in place of internal/ai's stand-in constants.
+type Tactics struct {
+	ID int64
+	// SightRange is column 6 (+0x14), the detection distance: the acquisition
+	// radius is BCRadius + this; 0 installs no acquire behaviour.
+	SightRange int
+	// AggressType/AggressData are columns 7/8 (+0x18/+0x1c): the aggression
+	// byte AI::CTactics::Init copies to ctx+0x168 (mode 2 rolls it against
+	// the percent), and AITactics_AcquireTarget scans only while it is 0 or 3
+	// -- so 0 is aggressive and 1 passive (ai.Aggressive, READ 0x53f5be,
+	// 0x547958).
+	AggressType uint8
+	AggressData int
+	// ChangeTarget is column 9 (+0x20), the retarget rule. Carried; the
+	// runtime keeps its first-attacker stand-in (the threat table has no hate
+	// values yet).
+	ChangeTarget uint8
+	// TraceBoundary/TraceData are columns 35/36 (+0x79/+0x7c): the chase
+	// switch and the give-up distance (ai.TargetWithinChaseRange, GiveUpCode).
+	TraceBoundary uint8
+	TraceData     int
+	// HomingType is column 37 (+0x80), the roam-radius rule
+	// (ai.WithinRoamRadius: 0 the radius, 1 x1.5, >= 2 never home).
+	HomingType uint8
+	// FleeType is column 40 (+0x89), the reach rule
+	// (AITactics_TargetOutOfReach 0x548120).
+	FleeType uint8
+	// Flags is column 42 (+0x90), the flag word (the scan's fast timer).
+	Flags uint32
+	// RoamRadius is ctx+0x1cc as AI::CTactics::Attach (0x53f2a0) stores it
+	// for a monster with a nest: the nest row's column 9 (+0x20).
+	RoamRadius float64
+}
+
+// SpawnHatched is SpawnSpecies with a nest's hatch: the home the monster roams
+// from and runs back to, its party flag -- ten times the rank's HP
+// (ScaleHPForMonster) -- and its tactics.
+func (h *Hub) SpawnHatched(zone string, species Species, x, y, z float64, maxHP, defense, attack int, goldReward int64, hatch Hatch) *Monster {
+	maxHP = ScaleHPForMonster(maxHP, species.Rarity, hatch.Party)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	id := h.nextID.Add(1)
 	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, RefObjID: species.RefObjID, Level: species.Level, Rarity: species.Rarity, BCRadius: species.BCRadius, AttackReuseMs: species.AttackReuseMs, AttackRange: species.AttackRange, Critical: species.Critical, Block: species.Block, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
 		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP),
-		WalkSpeed: species.WalkSpeed, RunSpeed: species.RunSpeed, Skills: species.Skills, HomeX: x, HomeZ: z, DestX: x, DestZ: z}
+		WalkSpeed: species.WalkSpeed, RunSpeed: species.RunSpeed, Skills: species.Skills, HomeX: hatch.HomeX, HomeZ: hatch.HomeZ, DestX: x, DestZ: z,
+		Party: hatch.Party, Tactics: hatch.Tactics}
 	// The hatch heading. Nest_Hatch (0x005607b0) rolls a random one only for
 	// a species of the roster's TypeID shape whose rarity is not 3: `cmp
 	// [edi+0x89],3` at 0x5609b6, whose `jne` at 0x5609bd jumps to the rand()
@@ -1024,6 +1124,9 @@ func (h *Hub) ApplyDamageFrom(id, attacker int64, amount int) (monster Monster, 
 		delete(h.facing, id)
 		delete(h.lastBlow, id) // a dead monster's re-use gate is never asked again
 		h.unfileLocked(id)
+		if h.deathLog {
+			h.deaths = append(h.deaths, id)
+		}
 		hits = h.hits[id]
 		delete(h.hits, id)
 		return result, true, true, hits
