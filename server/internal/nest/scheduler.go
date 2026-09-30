@@ -35,6 +35,10 @@ type Slot struct {
 	Level int
 	// Data is the caller's: what to hatch and where.
 	Data any
+	// Index is the nest's place among its hive's nests, in the order they
+	// were added (Scheduler.Add sets it): the index the unique rotation's
+	// dice pick (round 661).
+	Index int
 
 	stamp  time.Time
 	baseMs int
@@ -52,10 +56,15 @@ func (s *Slot) Alive() int { return s.alive }
 type Hive struct {
 	ID       int64
 	TotalCap int
-	// Pinned, when set, is the one nest the capped pass hatches from.
+	// Pinned, when set, is the one nest the capped pass hatches from. A
+	// total-1 hive pins nothing at build unless it has one nest (PinAtBuild,
+	// CMainProcess::FUN_0055efe0) and re-pins at each death out of a full hive
+	// (Repin, AI::CNest::FUN_0055eec0) -- the unique rotation (round 661).
 	Pinned *Slot
 	nests  []*Slot
 	alive  int
+	// built is whether the pass has made the hive's build-time pin.
+	built bool
 }
 
 // Alive is how many of the hive's monsters are alive.
@@ -88,6 +97,21 @@ type Scheduler struct {
 	graveyard [2]map[int64]*Slot
 	hatched   int64
 	deaths    int64
+	// rotations is the re-pins since the last DrainRotations (round 661).
+	rotations []Rotation
+}
+
+// Rotation is one re-arm of a capped hive at a death out of a full hive
+// (Repin): the hive, the nest pinned (nil for a hive whose total is not 1,
+// which re-arms its timers but pins nothing) and the pinned nest's wait.
+type Rotation struct {
+	Hive   *Hive
+	Pinned *Slot
+	// Roll is the nest index the dice picked (after the clamp), -1 for a
+	// hive with no nests; for a total-1 hive it is the pinned nest's Index.
+	Roll   int
+	At     time.Time
+	WaitMs int
 }
 
 // NewScheduler makes a scheduler drawing its dice from rng.
@@ -107,6 +131,7 @@ func (s *Scheduler) Add(slot *Slot) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if h := slot.Hive; h != nil {
+		slot.Index = len(h.nests)
 		h.nests = append(h.nests, slot)
 		if h.TotalCap > 0 {
 			if len(h.nests) == 1 {
@@ -176,6 +201,12 @@ func (s *Scheduler) Pass(now time.Time, dst []int64) []int64 {
 		}
 	}
 	for _, h := range s.capped {
+		if !h.built {
+			h.built = true
+			if h.Pinned == nil {
+				h.Pinned = PinAtBuild(s.dice, h)
+			}
+		}
 		if h.alive >= h.TotalCap {
 			continue
 		}
@@ -256,10 +287,100 @@ func (s *Scheduler) Died(id int64, now time.Time) {
 	if sl.alive > 0 {
 		sl.alive--
 	}
-	if h := sl.Hive; h != nil && h.alive > 0 {
-		h.alive--
+	if h := sl.Hive; h != nil {
+		if h.TotalCap > 0 && h.alive == h.TotalCap {
+			s.rotations = append(s.rotations, Repin(s.dice, h, now))
+		}
+		if h.alive > 0 {
+			h.alive--
+		}
 	}
 	s.deaths++
+}
+
+// DrainRotations appends the re-pins since the last call to dst and forgets
+// them: the caller's log of the unique rotation (round 661).
+func (s *Scheduler) DrainRotations(dst []Rotation) []Rotation {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dst = append(dst, s.rotations...)
+	s.rotations = s.rotations[:0]
+	return dst
+}
+
+// PinAtBuild is CMainProcess::FUN_0055efe0, the pin a total-1 hive makes when
+// it is built (its caller 0x54bd7d stores the answer at hive+0x3c). READ from
+// srv.asm 0x55efe0..0x55f077 (round 661's review; round 661 had misread it):
+//
+//	n == 1       -> nests[0]
+//	n >= 2       -> k = abs(rand()) % n            ; 0x55f02f..0x55f041, the die is thrown
+//	                eax = 0 ; k <= 0 -> NULL        ; 0x55f047..0x55f04b
+//	                cmp eax,k; je FOUND             ; 0x55f04d, reached only on entry
+//	                loop: add eax,1 ... cmp eax,k; jl loop   ; 0x55f051..0x55f05d re-enters PAST the compare
+//	                -> NULL                         ; 0x55f05f
+//
+// so a hive of two or more nests pins NOTHING at build, whatever the die. The
+// capped pass then hatches the first due nest in the hive's order (every
+// stamp is 0 at build, 0x54bd2f): the unique's first appearance after a boot
+// is nests[0]. A hive whose total is not 1, or with no nests, throws nothing.
+func PinAtBuild(dice Dice, h *Hive) *Slot {
+	n := len(h.nests)
+	if h.TotalCap != 1 || n == 0 {
+		return nil
+	}
+	if n == 1 {
+		return h.nests[0]
+	}
+	_ = dice() % n // thrown and dropped: the loop never matches
+	return nil
+}
+
+// Repin is AI::CNest::FUN_0055eec0, run at a death out of a capped hive
+// (+0x30 == 1, which AIHive::Init sets for a non-zero col 3) that was full
+// (`alive == row+0x08`, before its own decrement). READ from srv.asm
+// 0x55eec0..0x55efce (round 661):
+//
+//	k = abs(rand()) % (n + 1)                 ; 0x55eeee..0x55eefd: div by n+1
+//	if k >= n - 1: k = n - 1                  ; 0x55eeff..0x55ef0a: `cmp edx,eax; jb`
+//	for i, nest in nests:                     ; the hive's nest list, in order
+//	    if i == k and row+0x08 == 1:
+//	        hive+0x3c = nest                  ; the pin, 0x55ef77
+//	        RollHatchDelay(slot)              ; 0x55ef7a: a roll, overwritten below
+//	    RearmHatchTimer(slot)                 ; 0x55ef82 -> 0x560e50: stamp = now,
+//	                                          ; base = RollHatchDelay (the [col12, col13] window)
+//
+// So every nest of the hive waits a fresh uniform window from the death, and a
+// total-1 hive moves its one monster to nests[k]. The pick is NOT uniform:
+// rand() % (n + 1) has n + 1 outcomes and the clamp folds the last two onto
+// nest n - 1, which is chosen twice as often as any other (2 in n + 1). Kept
+// as read. Each roll throws a die only when the window's two ends differ
+// (NestSlot_RollHatchDelay's `cmp esi,edi; ja`), so the dice are thrown in
+// the engine's order: k, then per nest the pinned nest's discarded roll and
+// its re-arm roll.
+func Repin(dice Dice, h *Hive, now time.Time) Rotation {
+	n := len(h.nests)
+	rot := Rotation{Hive: h, At: now, Roll: -1}
+	if n == 0 {
+		return rot
+	}
+	k := dice() % (n + 1)
+	if k >= n-1 {
+		k = n - 1
+	}
+	rot.Roll = k
+	for i, sl := range h.nests {
+		if i == k && h.TotalCap == 1 {
+			h.Pinned = sl
+			rot.Pinned = sl
+			HatchDelayMs(dice, sl.DelayMin, sl.DelayMax, 0) // 0x55ef7a: thrown, then overwritten
+		}
+		sl.stamp = now
+		sl.baseMs = HatchDelayMs(dice, sl.DelayMin, sl.DelayMax, 0)
+		if sl == rot.Pinned {
+			rot.WaitMs = sl.baseMs
+		}
+	}
+	return rot
 }
 
 // nestOfLocked is the nest monster id hatched from, alive or dead in the

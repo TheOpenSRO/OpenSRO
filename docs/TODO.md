@@ -182,9 +182,9 @@ In order. Each is checked off here when it ships in a release, with its round in
         species whose own model (col 52) is "xxx" -- 89 of them are placed (4,649 npcpos rows).
         The table records the Org's model and `ModelFromOrg`; nothing draws by it yet.
       - ~~place every nest~~ -- **done for the field (round 660, `-full-map`)**: 10,124 field rows
-        as nests (10,109 since the review); the dungeons (1,915 rows) and the unique-class rows
-      (rarity 3: 71; rarity 8, the Egypt field bosses: 15 -- round 661) are not placed. See
-        "The monster world's nests (round 660)" below.
+        as nests; the dungeons (1,915 rows) are not placed; the uniques rotate over their 70
+        spots (round 661), and the Pharaoh temple's 90 rows are left to their instance worlds.
+        See "The monster world's nests (round 660)" below.
       - cols 75 'era' and 77 'hra' per species: combat still computes both as `2*level + 25`
         (`combat.MonsterRate`), which holds for both columns on 2,581 of the 7,604 species (MEASURED,
         round 654; round 380 had ~37 % over its own row set). The table
@@ -1096,11 +1096,30 @@ interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
 
 Round 660 (`docs/protocol/monster_ai.md`, "Nests on the map"; WORLD_ISSUES.md, round 660). Left:
 
-- [ ] **The uniques (round 661).** 71 rarity-3 rows and 15 rarity-8 rows (the SD field bosses:
-      SPHINX, SEKHMET, NEPHTHYS, HORUS, OSIRIS in three variants each, and APIS) are left out. The hive model is built for them:
-      `nest.Hive{TotalCap: 1, Pinned: ...}` is the total-1 rotation hive (the capped pass hatches
-      from the pinned nest alone); the re-pin on death (FUN_0055eec0) and the re-armed timers
-      (0x560e50) are 661's.
+- [x] ~~The uniques~~ -- **round 661**: the seven field uniques rotate over their 70 spots (the
+      build pin 0x55efe0, the re-pin at death with its last-nest bias 0x55eec0, every nest of a
+      capped hive re-armed 0x560e50), fight with their own skills under their tactics, summon by
+      Summon_A/B, and Captain Ivy's trigger fires; only Cerberus's summons spawn (its Ladons --
+      the other six uniques' tuples read 0..0, and the READ executor spawns nothing for them).
+      What is left:
+  - [ ] **Minions accumulate.** Nothing removes a minion (READ: no list, and the unbinding command
+        0xc's one sender is the pet path 0x4d2109). At retail's counts only Cerberus summons, about
+        2..3 Ladons at each of its tenths above 80 % and 1..2 elites between 40 and 60 %, so an
+        abandoned fight leaves a bounded pack (`TestMinionsFromManyKillsAreBoundedBySpawns`).
+  - [ ] **The leader-bound behaviours are OPEN.** `combat.Monster.Leader` (the minion's ctx+0x14c,
+        command 0xb) is written but never read. The engine reads ctx+0x14c in 0x540d20, 0x5460d0,
+        0x5485b0, 0x5487b0 and 0x5488b0 (the follow and give-up gates: a leader too far away,
+        200.0 or the leader's own radius + a constant, returns 2) and in PickWanderLeg's bias
+        (0x5459f0); what their return codes do to the state machine is unread.
+  - [ ] **Summon_C** (tactics 0x970e/0x9722) is not modelled: no field unique runs it.
+  - [ ] The summon has no cast push: the client sees the minions appear, not the unique cast.
+        The periodic trigger's phase alignment (round 260) is simplified.
+  - [ ] `/spawnunique`'s uniques still carry the disclosed attack curve and no skills; a rotation's
+        unique carries its own.
+  - [ ] **MOB_SD_APIS** (rarity 8, region 74/73) has no nest of its own in the shard (its spot's
+        nest is the shard's DEADWARRIOR at cap 0); not placed until a real nest is known.
+  - [ ] **The Pharaoh temple** (worlds 57-59, `INS_PHARAOH_*`, EXTERNAL): its 90 npcpos rows --
+        the SD elites and the fifteen bosses -- belong to instance worlds srrevamp does not run.
 - [ ] **The dungeons.** 1,915 npcpos rows in regions >= 0x8000 are not placed (only 330 of them
       have a shard nest at their spot, round 658).
 - [x] ~~The swapped spots run stand-in nests~~ -- the user's decision (round 660's review): the
@@ -1519,11 +1538,13 @@ What round 639 read and built is in `docs/protocol/system_message.md`.
   srrevamp's server sends none. (The unique notices are built: round 657.)
 - **Unique notices (round 657, open parts).** Built: 0x0C05/0x0C06 in `OpUniqueNotice 0x0110`, the
   top-damage-group killer, the line choice and the blue GDR_WARNING_WND banner
-  (`docs/protocol/unique_notice.md`). OPEN: no unique is placed (round 660's rotation), so only
-  `/spawnunique` announces; the killer's `vtable +0x53c` (silences a kill) and `+0xec`/`+0xf0` (which
+  (`docs/protocol/unique_notice.md`). Round 661's rotation announces each hatch through the spawn
+  hook (live-checked). OPEN: the killer's `vtable +0x53c` (silences a kill) and `+0xec`/`+0xf0` (which
   name); the tie order of the damage list; whether the damage-list credit `0x52a940` is passed the
   blow clipped to the HP left (ours books it unclipped); a unique spawned by
-  `/spawnunique` carries the disclosed attack curve and no attack skill. A GM-spawned unique's model load stalls the frame (round 657's live check).
+  `/spawnunique` carries the disclosed attack curve and no attack skill. A GM-spawned unique's model
+  load stalls the frame (round 657's live check); round 661 measured a rotation's respawn in view
+  (see its WORLD_ISSUES entry).
 - **Retail's messages for srrevamp's refusals.** The server sends English text; retail sends a code
   that `0x7b8b40` turns into the UIIT_ message.
 - **Quest EXP** writes no line (only a kill's result carries the EXP).

@@ -126,8 +126,80 @@ class Templates:
 	var assemble_usec := 0
 	var instance_usec := 0
 
+	## Round 661: assemblies off the main thread. request() starts one
+	## WorkerThreadPool task per model; poll() adopts the finished ones and
+	## answers their models. A species' first body used to assemble its model
+	## on the main thread inside the frame that drew it -- Tiger Girl's 844 ms,
+	## a rotation's respawn in view froze the game for 862 ms (round 661's
+	## live check). instance() still assembles on the spot a model nobody
+	## requested (the synchronous path, SRREVAMP_SYNC_LOAD=1, the tests).
+	var _tasks := {} # model -> WorkerThreadPool task id
+	var _done := {} # model -> [AssembledCharacter or null, usec], written by the task
+	var _lock := Mutex.new()
+
 	func has(model: String) -> bool:
 		return _by_model.has(model)
+
+	## Whether model is being assembled off the main thread.
+	func pending(model: String) -> bool:
+		return _tasks.has(model)
+
+	## Starts model's assembly on a WorkerThreadPool task, unless it is
+	## assembled or under way.
+	func request(model: String, assemble: Callable) -> void:
+		if _by_model.has(model) or _tasks.has(model):
+			return
+		_tasks[model] = WorkerThreadPool.add_task(_assemble_task.bind(model, assemble), true, "monster template %s" % model)
+
+	func _assemble_task(model: String, assemble: Callable) -> void:
+		var sw := Time.get_ticks_usec()
+		var built = assemble.call(model)
+		var usec := Time.get_ticks_usec() - sw
+		_lock.lock()
+		_done[model] = [built, usec]
+		_lock.unlock()
+
+	## Adopts every finished assembly as its model's template; answers the
+	## models that became ready (a failed one too: it is then a capsule).
+	func poll() -> Array[String]:
+		var ready: Array[String] = []
+		if _tasks.is_empty():
+			return ready
+		for model in _tasks.keys():
+			if not WorkerThreadPool.is_task_completed(_tasks[model]):
+				continue
+			_finish(model)
+			ready.append(model)
+		return ready
+
+	## Waits for model's task and adopts what it built (round 661's review:
+	## also what a synchronous instance() of a pending model does, so it never
+	## assembles a second copy for the task to overwrite).
+	func _finish(model: String) -> void:
+		WorkerThreadPool.wait_for_task_completion(_tasks[model])
+		_tasks.erase(model)
+		_lock.lock()
+		var r = _done.get(model)
+		_done.erase(model)
+		_lock.unlock()
+		_adopt(model, r[0] if r != null else null, int(r[1]) if r != null else 0)
+
+	func _adopt(model: String, built, usec: int) -> void:
+		assemble_usec += usec
+		assembles += 1
+		if _by_model.has(model):
+			# Already a template: the new copy is freed, never leaked.
+			var extra := built as SkinnedBsrAssembler.AssembledCharacter
+			if extra != null and is_instance_valid(extra.skeleton):
+				extra.skeleton.free()
+			return
+		var made := built as SkinnedBsrAssembler.AssembledCharacter
+		if made != null and made.skeleton == null:
+			made = null
+		_by_model[model] = made
+		if made != null:
+			_label_heights[model] = MonsterDraw.label_height(made.skeleton)
+			_radii[model] = MonsterDraw.cull_radius(made.skeleton, float(_label_heights[model]))
 
 	func size() -> int:
 		return _by_model.size()
@@ -136,18 +208,12 @@ class Templates:
 	## duplicate of the template's, sharing everything else. Null when the
 	## model does not assemble.
 	func instance(model: String, assemble: Callable) -> SkinnedBsrAssembler.AssembledCharacter:
+		if not _by_model.has(model) and _tasks.has(model):
+			_finish(model) # round 661's review: the pending assembly, not a second one
 		if not _by_model.has(model):
 			var sw := Time.get_ticks_usec()
 			var built = assemble.call(model)
-			assemble_usec += Time.get_ticks_usec() - sw
-			assembles += 1
-			var made := built as SkinnedBsrAssembler.AssembledCharacter
-			if made != null and made.skeleton == null:
-				made = null
-			_by_model[model] = made
-			if made != null:
-				_label_heights[model] = MonsterDraw.label_height(made.skeleton)
-				_radii[model] = MonsterDraw.cull_radius(made.skeleton, float(_label_heights[model]))
+			_adopt(model, built, Time.get_ticks_usec() - sw)
 		var template: SkinnedBsrAssembler.AssembledCharacter = _by_model[model]
 		if template == null:
 			return null
@@ -167,6 +233,15 @@ class Templates:
 	## Frees every template's detached skeleton (they are never parented, so
 	## nothing else would); returns how many.
 	func free_all() -> int:
+		# An assembly still under way is waited for, then freed with the rest.
+		for model in _tasks.keys():
+			WorkerThreadPool.wait_for_task_completion(_tasks[model])
+		_tasks.clear()
+		for r in _done.values():
+			var orphan := (r as Array)[0] as SkinnedBsrAssembler.AssembledCharacter
+			if orphan != null and is_instance_valid(orphan.skeleton):
+				orphan.skeleton.free()
+		_done.clear()
 		var freed := 0
 		for t in _by_model.values():
 			var template := t as SkinnedBsrAssembler.AssembledCharacter

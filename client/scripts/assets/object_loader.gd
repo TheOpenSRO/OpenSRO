@@ -33,12 +33,19 @@ class_name ObjectLoader
 static var missing_count := 0
 static var missing_recent: Array[String] = []
 const MISSING_RECENT_KEPT := 12
+## Guards the static state (missing_count/missing_recent, _mod_shaders): the
+## scenery prepare and, since round 661, the monster templates run loader
+## functions on WorkerThreadPool tasks beside the main thread (round 661's
+## review). Mutex is reentrant.
+static var _static_lock := Mutex.new()
 
 static func _missing(what: String) -> void:
+	_static_lock.lock()
 	missing_count += 1
 	missing_recent.append(what)
 	if missing_recent.size() > MISSING_RECENT_KEPT:
 		missing_recent.pop_front()
+	_static_lock.unlock()
 	push_error("ObjectLoader: %s" % what)
 
 ## Loads the real object at path within archive and returns a Node3D.
@@ -741,8 +748,11 @@ static func stage_ops_handled(rule: Dictionary) -> bool:
 
 static func _mod_shader(cull: String, godot_blend: String, zwrite: bool) -> Shader:
 	var key := "%s/%s/%s" % [cull, godot_blend, zwrite]
-	if _mod_shaders.has(key):
-		return _mod_shaders[key]
+	_static_lock.lock()
+	var cached: Shader = _mod_shaders.get(key)
+	_static_lock.unlock()
+	if cached != null:
+		return cached
 	var opaque := godot_blend == "opaque"
 	var modes := ["cull_" + cull]
 	if not opaque:
@@ -879,7 +889,12 @@ void fragment() {
 	}
 }
 """ % [", ".join(modes), "" if opaque else "ALPHA = clamp(out_a, 0.0, 1.0);"]
-	_mod_shaders[key] = shader
+	_static_lock.lock()
+	if _mod_shaders.has(key):
+		shader = _mod_shaders[key] # another thread built it first: one shader per key
+	else:
+		_mod_shaders[key] = shader
+	_static_lock.unlock()
 	return shader
 
 ## The material for an MTRL mod's rule, and its second pass when the object

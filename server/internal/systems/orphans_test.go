@@ -77,8 +77,6 @@ var knownOrphans = map[string]string{
 	"StateByBit": "the client-bit -> state lookup of the round-278 vocabulary. The server works in " +
 		"skill codes and slots (StateByCode, SlotForBit); the client resolves bits itself " +
 		"(StatusNet). Knowledge, not a gap; the tests hold the table to it.",
-	"TriggerHPBelowHolds": "a tactics-bound skill's HP-threshold trigger (0x5611d0, round 260) -- " +
-		"wired by mob-ai-skill-triggers.",
 	"DwellRange": "the closed [min, max] of each AIState_DwellMs arm; the tick draws with " +
 		"ai.DwellMs, and the tests hold every draw to this range. No item needs the range itself at " +
 		"run time: knowledge, not a gap.",
@@ -139,7 +137,6 @@ var baseline = map[string]string{
 	"DeriveSeed":          "internal/proto/security.go",
 	"EquipmentHandler":    "internal/session/equipment.go",
 	"EquippedIn":          "internal/session/world.go",
-	"Find":                "internal/skillparam/paramblock.go",
 	"Has":                 "internal/guild/guild.go",
 	"IntForMaxRatio":      "internal/combat/statratio.go",
 	"IntLevelDamageRatio": "internal/combat/statratio.go",

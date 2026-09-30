@@ -3684,3 +3684,152 @@ overhead name's colour does not depend on the class (no colour write in 0x9d0a80
 0x9d3e70, the test at 0x9d3f2a; srrevamp sizes it to its own plate's line height, OURS), and its
 target window's rank row gets UIIT_STT_PARTYMOB_TARGET's text appended with no separator (0x69b834,
 "Champion(Party)").
+
+## The unique rotation and the minions (round 661)
+
+Labels as everywhere here: READ (SR_GameServer.exe: `/var/tmp/decomp_server`, `/var/tmp/srv.asm`
+and `objdump -s` of the executable on the render box), MEASURED, INFERRED, OURS, and EXTERNAL for
+the rows of the user's shard DB (the Eternity backup, round 658).
+
+### The rotation (READ)
+
+A unique's hive (EXTERNAL: one per field unique, `dwOverwriteMaxTotalCount` 1, one nest per npcpos
+spot, cap 1, `btRespawn` 1, the window below) runs the capped pass (`AIHive_HatchPass_TotalCapped`
+0x55ec10) with a pinned nest (hive `+0x3c`):
+
+- **At build**, `CMainProcess::FUN_0055efe0` (asm 0x55efe0..0x55f077; stored by its caller 0x54bd7d
+  at hive+0x3c): with the hive row's `+0x08` (col 3) equal to 1 and n nests, the only nest when n is
+  1; for n >= 2 it throws `abs(rand()) % n` (0x55f041) and returns NULL -- `k == 0` jumps straight
+  to `xor eax,eax; ret` (0x55f049), and the search loop re-enters at `add eax,1` (0x55f051), past the
+  `cmp eax,edx; je` (0x55f04d), so it never matches and falls out at 0x55f05f. No pin: the capped
+  pass hatches the first due nest in hive order, and every stamp is 0 at build (0x54bd2f), so the
+  unique's first appearance is nests[0] (`nest.PinAtBuild`). *Round 661 first read this as
+  `nests[abs(rand()) % n]`; corrected in its review.*
+- **At a death out of the full hive**, `AI::CNest::FUN_0055eec0` (asm 0x55eec0..0x55efce): only for
+  a capped hive (`+0x30 == 1`, which `AIHive::Init` sets for a non-zero col 3) whose alive count
+  equals its total before the decrement:
+
+		k = abs(rand()) % (n + 1)          ; div by n+1 (0x55eefd)
+		if k >= n - 1: k = n - 1           ; `cmp edx,eax; jb` (0x55ef02)
+		for i, nest in nests:
+		    if i == k and row+0x08 == 1:
+		        hive+0x3c = nest ; RollHatchDelay(slot)     ; 0x55ef77, 0x55ef7a: thrown, then overwritten
+		    RearmHatchTimer(slot)          ; 0x560e50: stamp = now, base = RollHatchDelay
+
+  so the unique moves to `nests[min(rand() % (n+1), n-1)]` -- the last nest twice as likely as any
+  other, kept -- and EVERY nest of the hive, in any capped hive (not only a total-1 one), waits a
+  fresh uniform window from the death (`nest.Repin`). `RollHatchDelay` throws a die only when the
+  window's ends differ (`cmp esi,edi; ja` 0x560395).
+- A nest row's direction faces a rank-3 hatch (Nest_Hatch 0x5609bf), and the unique hatches up to
+  the nest's generate radius from it like any hatch (0x531240).
+
+**Windows (EXTERNAL):** 1,200-1,400 s for 1954 TIGERWOMAN, 1982 URUCHI, 2002 ISYUTARU, 5871
+KERBEROS and 14936 IVY; 2,100-2,200 s for 3810 BONELORD and 3875 TAHOMET. Spots (npcpos, READ;
+every one joined to its own species' nest within 0.0002 units, MEASURED): 11, 11, 11, 10, 6, 13, 8.
+The `_STR` twins' hives (43969-43975, EXTERNAL) stand on the same spots under custom species and
+are never placed. `-unique-respawn` replaces the window (OURS, testing).
+
+**The field world builds only its own hives.** `CMainProcess::CreateHivesForWorld` 0x54b8d0 builds a
+world's hives from the rows whose GameWorldID (+0x1a) is that world's (READ, round 241). The field
+world is `INS_DEFAULT`, id 1; the 90 field-coordinate npcpos rows of the Pharaoh temple -- the SD
+elites and the fifteen bosses (SPHINX, SEKHMET, NEPHTHYS, HORUS and OSIRIS in three variants each:
+fourteen of rarity 8, OSIRIS_3 of rarity 3) -- all join nests of hives in worlds 57/58/59, `INS_PHARAOH_NOVICE/EXPERT/
+MASTER` (EXTERNAL, `_RefGame_World`), in separate region blocks (y 114-124, x 179-196), each boss one
+nest of cap 1 on a 10,800 s window in an uncapped hive: no rotation. None of them hatches in the
+field world. MOB_SD_APIS (rarity 8, region 74/73) has no nest of its own in the DB; the only nest
+on its spot is the shard's custom DEADWARRIOR at cap 0 (EXTERNAL) -- its real nest is unknown, so it
+is not placed. Rank 8 is not announced: both notice gates compare the rank with 3 (`cmp al,3` at
+0x5f71d4, spawn, and 0x4c1ccb, kill).
+
+### The selector (READ)
+
+`AI::CTactics::BindSkillsAndRanges` picks the AI-skill selector by TacticsID (immediates, asm
+0x53f7bd..0x53f8cf): 0x71, 0x9a, 0xb9 -> `CAISkill_Unique_Summon_B` (0x562330); 0x21, 0x3f, 0xe5,
+0x67e8, 0x8084, 0x80e8, 0x814c, 0x81b0, 0x8214, 0x82dc -> `Summon_A` (0x561f20); 0x970e, 0x9722 ->
+`Summon_C` (0x5626d0); any other keeps `CAISkill_Basic`. The shard's uniques run 33 TIGERWOMAN, 63
+URUCHI, 229 KERBEROS, 26600 IVY (A) and 113 ISYUTARU, 154 BONELORD, 185 TAHOMET (B) -- exactly the
+ids in the code (EXTERNAL rows, READ ids).
+
+Registration, each of the owner's skill columns in order: a skill with a `_RefAISkill` row under
+the tactics is a trigger (every selector's `param_3 != 0` branch); else a skill with an `ssou`
+block goes to the summon store; else to the attack list.
+
+- `Summon_A::RegisterSkill` 0x562060: slot by AI_AttackChance / 100.0 against 0.2/0.4/0.6/0.8
+  (0xb45be8/be0/bd8/bd0): < 0.4 -> 3, < 0.6 -> 2, < 0.8 -> 1, else 0, into a vector of four
+  (resized by 0x562e80); a taken slot keeps its first skill and the later one is dropped from both
+  lists (`jne 0x56219c`). Cerberus's R1_00 and R2_20 are dropped (MEASURED).
+- `Summon_B::RegisterSkill` 0x562470: every `ssou` skill appended to the list at `+0x5c`.
+
+**The pick** (`Summon_A::PickSkill` 0x5621b0, `Summon_B::PickSkill` 0x562570, before the Basic
+pick): the context's damage total `ctx+0xb0` (`AITactics_CreditAttacker` adds each blow's damage)
+over MaxHP (slot 68, at least 1) times 100.0, as a float, `>= 10.0` (0xb45b44, `fcomp; test ah,5;
+jp`). Then the HP bucket (`AITactics_HPBucket` 0x541d70 -> 0x541fd0: < 0.2 -> 0, < 0.4 -> 1, < 0.6
+-> 2, < 0.8 -> 3, else 4):
+
+- A (jump table 0x562310): bucket 4 -> slot 0, 3 -> 1, 2 -> 2, 0/1 -> 3; an empty slot falls to
+  the Basic pick.
+- B: `rand() % 1000 < 500` picks set offset 0, else 4 (0x56261f..0x56263a); jump table 0x5626b4:
+  bucket 4 -> index 3, 3 -> off, 2 -> off+1, 0/1 -> off+2 -- the uniques' "R1"/"R2" skill names.
+
+The armed skill is used like a swing; slot 6 (`FUN_00562540`, reached through the tactics' wrapper
+0x540cf0 from the command handler 0x558f70) zeroes `ctx+0xb0` when the used skill has an `ssou`
+block. **So a unique summons each time it loses another tenth of its MaxHP**, with the skill its HP
+bucket names -- about nine times a kill (A: 90 and 80 % slot 0, 70 and 60 % slot 1, 50 and 40 % slot
+2, below slot 3) -- not once per bucket as the brief had it.
+
+**The triggers** (`_RefAISkill`, EXTERNAL rows; rules round 260): the only field unique with one is
+Captain Ivy, `MSKILL_AM_IVY_ATTACK05` type 0 at 50 % -- fired once a life when her HP falls to half,
+and never drawn otherwise.
+
+### The executor (READ, FUN_00596e50)
+
+Reached from EngageSkill when the caster is a monster and the skill's `+0x354` is set. `+0x354` is
+the cursor the Param parser stores just past the `ssou` code word before returning (0x5890cb..
+0x5890e5), so the tuples are the Param words after `ssou`: nine at most, 16 bytes each,
+`{refObjID, class (low nibble), min, max}`. Per tuple with a non-zero id (the id must be a monster,
+TypeID 1/2/1, else assert):
+
+	radius = rand() / 32767.0 * float(2 pi) + 0.0         ; 0xb45af8, 0xb45c18, 0xb45ab0 -- thrown first
+	n = min + abs(rand()) % (max - min + 1)               ; max < min asserts
+	n > 50 -> log "Oooops!!!! Spawn Monster Count is over 50!!!!" and n = 50
+	n < 1  -> nothing
+	n times: spawn routine 0x5f6eb0 at the unique's position (its vslot 0x14), class, announce 1,
+	         ring radius `radius`, minimum = unique slot 344 (0x560, BCRadius) + 30 + minion +0xee (BCRadius)
+	         then the minion's command 0xb {2, unique id}
+
+The spawn routine's 0x531240 gives each minion its own angle and, with the radius at most 2 pi,
+the minimum as its distance: every minion stands exactly BC + 30 + BC from the unique. The spawn
+routine goes through the world's slot 6 (0x5f6eb0 -> `[vt+0x18]`), the field world's class clamp
+0x5eb9a0. Special cases by code name (MOB_RM_WINGTRIBEKNIGHT / MOB_RM_TAHOMET_ROC only log;
+MOB_SD_HAROERIS / MOB_SD_SETH swap to their `_SUMMON`/`_DROP` rows) touch no field unique.
+
+**The binding**, command 0xb -> `CAIState` slot 14 (0x5591b0, every state's): the object must answer
+slot 62; `ctx+0x14c` = its id (the leader); kind 2 calls the tactics' slot 19; `ChangeState(1)` IDLE.
+The leader biases a WANDER leg toward it (`PickWanderLeg`, 0x5459f0..0x545a50) and is tested by the
+behaviours 0x5487b0/0x5488b0 (distance tests; not modelled). **Nothing removes a minion when its
+unique dies:** the executor keeps no list, and the only sender of the unbinding command 0xc
+(`CAIState` slot 15, 0x559260) is the pet path (0x4d2109; two probes -- the decompile's
+`0x1c))(0xc,` pattern and an asm scan for `push 0xc` before a register call through `[..+0x1c]`).
+A minion never respawns: it has no nest.
+
+**The counts (MEASURED, re-verified).** The tuple layout is right: across the client's 292
+`ssou` skills, 309 tuples carry real counts (the Qin Shi tomb guardians' `{id, 0, 3, 3}`, `{id, 1,
+1, 1}`, ...). The seven field uniques' 130 tuples (123 once Summon_A's two dropped skills are left out) read 0..0 but two: Cerberus's Ladon (5866) 2..3 in
+R1_80 and 1..2 (class 6) in R1_40. The executor spawns nothing for a 0..0 tuple -- `n = min +
+abs(rand()) % (0 + 1) = 0` (0x597060..0x59707f), then `test esi,esi; jle 0x597844` skips the spawn
+loop (0x59776b) -- after throwing its radius and count dice. srrevamp does exactly that
+(`nest.ExecuteSummon`): **only Cerberus summons**, its Ladons; the other six use their summon skills
+and nothing appears. (Round 661's first commit gave 0..0 tuples a 2..3 stand-in; the review removed
+it -- the "decision" behind it was a planner's proposal.) The DB's `_RefSkill` blocks are the client's word for word for every unique's
+summon skill (286 of the 292 `ssou` skills identical; the six that differ are none of theirs), and
+`_RefAISkill` carries no counts, so nothing replaces the stand-in.
+
+### srrevamp
+
+`internal/nest` (`PinAtBuild`, `Repin`, the join's rotation spots and world filter, the summon
+loaders and executor arithmetic), `internal/ai` (`HPBucket`, `SummonDue`, `SummonAIndex`,
+`SummonBIndex`), `session/summon.go` (the damage total read off the HP, the pick before the draw,
+the summon on the swing's cooldown with no reach, the minions pushed after the pass) and
+`cmd/server/unique.go` (the selector's filing, the minion species with their own DB tactics).
+Not modelled: the leader's behaviours and WANDER bias, `Summon_C`, the periodic trigger's
+phase-alignment, the summon's cast push to the client.
