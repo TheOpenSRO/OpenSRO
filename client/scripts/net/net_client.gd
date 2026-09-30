@@ -68,6 +68,8 @@ signal attack_result(result: CombatNet.AttackResult)
 signal berserk_result(activated: bool, gauge: int, active: bool)
 signal monster_damaged(damaged: CombatNet.MonsterDamaged)
 signal monster_died(monster_id: int)
+## An object's abnormal-state mask (round 659, StatusNet: retail's 0x3057).
+signal object_status(status: StatusNet.ObjectStatus)
 signal loot_dropped(dropped: CombatNet.LootDropped)
 signal monster_list_result(monsters: Array, error: String)
 ## Round 656: monsters that left the player's area of interest, to be dropped
@@ -875,6 +877,10 @@ func _dispatch(p: Packet) -> void:
 			if died >= 0:
 				buff_roster.drop(BuffRoster.key_of(died, SkillNet.OWNER_MONSTER))
 			monster_died.emit(died)
+		StatusNet.OP_OBJECT_STATUS:
+			var st := StatusNet.decode_object_status(p.data)
+			if st.error == "":
+				object_status.emit(st)
 		CombatNet.OP_LOOT_DROPPED:
 			loot_dropped.emit(CombatNet.decode_loot_dropped(p.data))
 		CombatNet.OP_MONSTER_LIST_RESULT:

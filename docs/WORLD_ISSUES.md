@@ -7396,6 +7396,235 @@ Tests: `cd server && go vet ./... && go test -count=1 -p 1 ./...`: vet clean, 62
 -count=1 -race ./internal/nest ./internal/session`: ok, no race. `remote_godot.sh tests`: 175
 suites, 0 failing.
 
+## Six-hundred-and-fifty-ninth round: monsters give and receive status effects -- a stun stops a monster, a bleeding kills it and pays its caster, a water ghost's bite poisons the player, and the target window shows each state
+
+The user (2026-09-30), part of the monster request: "Also make sure monsters give and receive
+status effects." Server and target-window UI; no world drawing changed, so **no performance gate**
+(`World3D.gd` only gains a dictionary of masks and a log line). Labels: READ (the binaries),
+MEASURED (the archives), INFERRED, OURS, OPEN. The full record is
+`docs/protocol/status_effects.md`, "What srrevamp does (round 659)".
+
+### 1. The correction: value[1] is the chance (READ)
+
+The freeze block of `Combat_ApplyStatusEffects` (`0x590756..0x590889`) loads **value[1]** (plus
+the target's param 169, the disease gate) into EAX, `kind << 24` into ECX and `[esi+0xa30]` into
+EDX -- ESI the CASTER (corrected by the review, §6: this entry first said the target's map), and calls `0x5a1a20` -- `GObjPC::RollChance`, whose `FUN_00599cc0` is the
+chance-memory dice the critical already uses (`combat/chancememory.go`). Only then does it read the
+resist percent and compute `ftol((100 - resist) / 100 * value[0]) - flat` into `record+0x1a`,
+which `0x410b40` multiplies into the duration. So value[1] is the landing chance and value[0] the
+strength. Rounds 249 and 276 had it as "level = value[1]" and "+0x1a is the chance -- the number
+that decides whether a state lands decides how long it lasts"; `internal/statuseffect` and the
+protocol doc are corrected. MEASURED on the retail skilldata through the exporter's new column 90
+(33,698 rows): `MSKILL_CH_WATERGHOST_ATTACK02 ps:34,100,16` (always lands), `SKILL_CH_COLD_
+GIGONGTA_A_01 fz:30,5;fb:30,25` (5 % and 25 %), `MSKILL_CH_TIGERWOMAN_ATTACK03 zb:72,100`. 11,551
+rows carry a status run, 3,107 of them monster skills: bl 559, es 347, ps 245, bu 223, st 201,
+dn 197, ds 189, fb 181, cssr 178, fz 170, cshp 168, fe 157, rt 147, my 142, and fewer of the rest.
+The non-elemental blocks roll the same dice (sleep `mov ecx,0x7000000` at `0x59106f`, stun
+`0xf000000` at `0x592051`) with round 277's chance; bleeding writes `+0x38 = value[3]`, `+0x40 =
+value[4]`, `+0x10` = 'puls' or 2000 (`0x591bd7`).
+
+### 2. What a state stops (READ, the vslots the brief left unread)
+
+The two vtables were located by their known slot 342/344 entries in `SR_GameServer.exe` (CGObjPC
+`0xaf59fc`, CGObjMob `0xaeddac`); both hold the same two functions:
+
+- **vslot 0x55c** (slot 343) `GObjPC::FUN_004a9d00` is SetMotionState: freeze passes 10 FROZEN,
+  stun 9 STUN, sleep 0x13, each back to 0 STAND on removal (freeze with a 1.5 s delay, the float
+  at `0xb45c10`).
+- **vslot 0x570** (slot 348) `GObjPC::FUN_004aa340` stops a moving object (`0x4c0` / `0x4b0`) and
+  cancels its running action through the action queue at `+0xa30`.
+- The movement handler `GObjPC::FUN_004b0ea0` (slot 377 of every mobile class) refuses a move for
+  mask bits `0xc1` (freeze, sleep, root) and `0x4000` (stun).
+
+So a frozen, stunned or sleeping monster stops at once and is refused moves; a rooted one only
+moves no more. INFERRED: that no new attack starts under those motion states (the attack path's
+test is not read). Frostbite writes walk/run speed at 50.0 and slow at 75.0 in the scale slot
+(`0xb4603c`, `0xb45de0`), slow only while no frostbite bit is set; 100.0 on removal.
+
+### 3. What was built
+
+- **Export**: skill CSV column 90 `StatusParams` (every status run and 'puls', walked, not
+  scanned), `refdata.Skill.StatusParams`, the `status_params` column, `species` -> 
+  `combat.MonsterSkill.Status`.
+- **`internal/statuseffect`**: `Resolve`/`ResolveAll` (both shapes, the engine's roll order),
+  `Holder` (one record per slot -- each block fetches its slot's record, `0x5aa450(cl = slot)`, so
+  a state replaces itself), `Step` (expiry first, then the ticks: poison and burn at >= 2001 ms,
+  bleeding at > its interval; poison stops at 1 HP and credits nobody, a fatal burn or bleeding
+  tick names its source), `CanMove`, `CanAct`, `SpeedPercent`, `DefenceCut`. 'tb' and 'csmp' are
+  not applied (unread block / no applier).
+- **`session/status.go`**: a player's cast lands its runs on the monster it hits (and a
+  zero-damage cast -- the stun rows -- on its target); a monster's attack skill lands its runs on
+  the character it hits, not when blocked, never on a dead one (OURS; §6 corrects the citation); `RunStatusEffects` steps every holder each 100 ms (OURS). A monster
+  tick goes through round 656/657's `damageMonsterWatched` -- booked on the damage list to its
+  source when the engine keeps one (corrected in §6: a living caster on every tick), so a unique killed
+  by a tick credits its caster -- and a kill runs the SAME `grantKill` and `announceKill` a blow
+  does (performAttack's kill branch moved into them unchanged), with `AnnounceUniqueKill`; the
+  killer is sent `OpMonsterDied` too, having no attack result. A character's fatal tick is
+  `finishKill`, monsterStrike's death tail moved out unchanged. A death ends the states (monster:
+  `grantKill`; character: `finishKill`); a respawn is a new monster.
+- **The AI**: `update` returns while a monster cannot act (`heldByStatus`, which also ends its leg
+  when it cannot move); `startLeg` scales the leg's speed and refuses one for a rooted monster; the
+  synchronous counter is skipped likewise; under `-monster-sleep` a held monster stays awake, as
+  one in BATTLE does. Bleeding takes its flat defence off the monster in performAttack.
+- **The wire**: `OpObjectStatus 0x3057` -- retail's number and its flag-4 block (u32 mask, then a
+  level byte per set bit in `0x17fefc0`, READ in `0x8a9e30` / `0x9d2220`) after an OURS head (owner
+  kind, i64 id). A monster's mask goes to its area-of-interest watchers under the monster wire
+  lock, and with its enter message and the monster list; a character's to its zone.
+- **The client**: `StatusNet` decodes it; `World3D` keeps each object's mask; the target window's
+  buff viewer adds one icon per bit after the skill buffs, in the second list (`0x699480` ->
+  `0x7fd2e0`), the icon from `0x7fdab0` (`icon\stateodd\s_<name>_icon.ddj`, the same 20x20 point
+  sampling), the tooltip `0x7fc260` kind 2: `PARAM_<label>` text, ` <level><UIIT_STT_GRADE>`, then
+  the category's text and `UIIT_STT_MACROPOTION_ABNORMAL`. The body effects and colour lerps
+  `0x9cd5e0` applies per bit are READ in outline and NOT built (OPEN, TODO.md).
+
+### 4. Tests, and the negative
+
+- Go (`internal/statuseffect/apply_test.go`): value[1] is the dice's chance and value[0] the
+  strength; resist cuts after the roll; stun's shape and falloff; unread states not applied; puls;
+  one state per slot; poison ticks at 2001 ms, stops at 1 HP, expires before its tick; a fatal
+  bleeding credits its source; mask, level bytes, speed, CanMove/CanAct.
+- Go (`session/status_test.go`): the 0x3057 fixture byte for byte; **a DoT kill pays the killer
+  exactly once** (gold +77 once over four passes, `OpMonsterDied` to killer and bystander, one
+  `OpMonsterDamaged` for the non-fatal tick, the states gone with the monster); **a stunned monster
+  does not counter** and does again once the stun is gone; **a stunned monster in BATTLE neither
+  moves nor strikes** under the AI, and swings once released; **a monster's skill poisons a
+  player** (mask 0x10 to the zone, 16 a tick, stops at 1 HP, a dead player is not poisoned). The
+  export and CSV columns: `TestSkillStatusParamsColumn`, `TestSkillCSVStatusParamsIsAStrictSuffix`.
+- Client (`net/status_net_test.gd`, 31 checks): the fixture, the level bits, the icon/label/category
+  table, the tooltip, and the viewer's second-list icons and their diff.
+- **The negative, against the base int/mob 345e375** (a second worktree): the Go tests do not build
+  there --
+
+      internal/statuseffect/apply_test.go:32:13: undefined: Resolve
+      FAIL	github.com/OpenSRO/srrevamp/server/internal/statuseffect [build failed]
+      internal/session/status_test.go:25:37: undefined: statusRuntime
+      internal/session/status_test.go:43:56: undefined: ObjectStatus
+      FAIL	github.com/OpenSRO/srrevamp/server/internal/session [build failed]
+
+  -- the export test in a form the base compiles fails at run time:
+
+      neg659_test.go:15: a poison bite's export: 90 fields, no column 90 carrying ps:34,100,16
+      FAIL	github.com/OpenSRO/srrevamp/server/cmd/export-refdata
+
+  -- and the client suite, run on the base's client on the box:
+
+      FAIL status_net.gd exists (the 0x3057 abnormal-state decoder)
+      FAIL the buff viewer takes abnormal states (abnormal_entries)
+      2 FAILURE(S)
+
+- `cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...` on the tree merged with int/mob 345e375 (rounds 656 and 657 in): 61 packages ok, none failing.
+- `remote_godot.sh tests` (lane dir `/opt/srrevamp-client-status659`): 176 suites, 0 failing;
+  `remote_godot.sh check`: ALL LOAD.
+
+### 5. Left (docs/TODO.md, "Status effects on monsters and players")
+
+Burn deals 0 a tick until the operator supplies the `0xc63c94` table (not copied into the repo);
+the client's body effects, colour lerps and the buff bar's own abnormal icons; character resists;
+the params the mask does not yet move (myopia, dark, electric shock, the curses); the unread
+halving loop in the slow/bleeding/stun blocks, 'tb', fear's AI message; a player's own speed; no
+EXP line for a kill by a tick.
+
+### 6. The review's follow-up (a second commit, after merging int/mob 1ea6b02)
+
+The adversarial review of 9007108 found three HIGH and three MEDIUM defects and four LOW ones.
+Each fix has a test in `session/status659r_test.go` (or `statuseffect/apply_test.go`) that fails on
+9007108; the FAIL lines are quoted below.
+
+- **H1, a stun on a moving monster sent no stop.** `applyToMonster` ended the leg on the hub itself,
+  so the next AI tick found the monster standing and `heldByStatus` never queued the stop; clients
+  kept drawing the leg. The applier no longer touches the hub: the tick ends the leg and sends the
+  stop (vslot 0x570's stop, READ, as the AI's own push).
+- **H2, a zero-damage status cast landed from any distance and in any zone.** A cast that resolves
+  no blow but carries states for a monster now passes `statusCastRefusal` before its costs: the
+  monster alive in the caster's zone ("target not found") and within `skillInReach` ("too far
+  away"), and `applyToMonster` refuses a monster outside the caster's zone. INFERRED that retail
+  measures it so (the gate's exemption for a zero-damage row, if any, is unread).
+- **H3, a character killed by a tick was never told.** After `finishKill` the victim and her zone
+  now get the `OpMonsterAttacked` a blow's death sends (TargetDied, the death's HP and EXP loss),
+  flagged `StrikeStatusTick 0x08` (OURS; retail's message for this death is not read) so no client
+  draws a swing. The client decodes `status_tick` and routes it to `_on_status_tick_strike`: the
+  bar, the death line and the dead state for this player, the hit clip for another.
+- **M1, the dice are the caster's.** In `0x590680` the map is `[esi+0xa30]` with ESI the SOURCE
+  (`[esi+8]` goes to record+0x4c; ESI = `[esp+0x124]` at `0x58f412`, the object the critical roll
+  uses at `0x58ed76`), and the key is `kind << 24` with no id bits. `statusRoller` now keys
+  `chanceMemory` by the caster; §1 above is corrected.
+- **M2, the source rule.** vslot 0xf8 is `CGObj::GetLifeState` (`0x485ee0`). While the record's
+  latch `+0x6c` is clear, a caster alive (life state neither 2 nor 3) is named on EVERY tick,
+  poison's included; a dead or gone one latches the record, after which burn and bleeding name it
+  only on a fatal tick and poison never (READ). `statuseffect.SourceRule` / `CasterLookup`: every
+  tick of a living caster is booked on the damage list (so DoT damage counts toward the unique
+  notice) and is the monster's struck event -- both INFERRED: the appliers pass the named source
+  to vslot 0x4fc, `CGObjChar::Char_ForwardToAttachedObject` (0x4a7500), which forwards to an
+  object not read (the re-review's L2).
+  This supersedes the first commit's "book only a fatal tick".
+- **M3, `0x5906c0` is the blocked flag.** `cmp [edi+5],2` tests the hit record's blocked byte
+  (`[ebp+5] = 2` after the block roll at `0x58f0ef`), so a blocked blow applies nothing, both ways.
+  `performAttack` now reports `blowReport{Landed, Blocked}` and a cast whose every hit was blocked
+  lands no state (938 species carry block 20). "Never on a dead character" is relabelled OURS.
+- **L1**: fatal is decided against the HP the monster has at the damage call, and the kill is
+  credited from its `died` result. **L2**: the pass reads the character store before taking the
+  runtime's lock. **L3**: frostbite and slow restart a moving monster's leg at the new speed on the
+  next AI tick (`heldByStatus`, `legPct`), as the appliers' vslots 0x4e8/0x4ec republish it at
+  once. **L4**: the runtime's deps comment says what the code does, and a freeze that ends holds
+  its monster from acting 1.5 s more (`Holder.CanActAt`, the float 1.5 at `0xb45c10`).
+
+The tests against 9007108 (a worktree at that commit, the new files copied in):
+
+    --- FAIL: TestStatusStunOnAMovingMonsterSendsAStop
+        a stun on a chasing monster: 0 stops on the wire (moves []), still moving false; want one stop where it stands
+    --- FAIL: TestStatusFrostbiteSlowsTheLegAtOnce
+        frostbite on a running monster: []; want one leg at half the run speed (11) on the next tick
+    --- FAIL: TestStatusTickBooksALivingCaster
+        Aria's bleeding took 200 off a living monster; the damage list books her 0 (hits [])
+    --- FAIL: TestStatusTickDrawsTheMonsterOntoItsCaster
+        a bleeding tick from Aria left the monster in IDLE; want BATTLE (the struck event)
+    --- FAIL: TestStatusDiceAreTheCasters
+        the frostbite roll kept no streak on its caster (0x590680 rolls in [esi+0xa30], ESI the source)
+        the frostbite roll kept a streak on its target
+    --- FAIL: TestStatusFreezeThawHoldsTheMonster
+        a freeze that ended this instant let its monster act; retail holds FROZEN 1.5 s more (0xb45c10)
+    --- FAIL: TestStatusPassDoesNotHoldTheLockOnAStoreRead
+        the AI's state read waited on a character store read the pass made under the runtime's lock
+    --- FAIL: TestStatusTickDeathIsReportedLikeABlowDeath
+        Aria was not told of Aria's death by a tick like a blow's death: <nil>
+        Bram was not told of Aria's death by a tick like a blow's death: <nil>
+    --- FAIL: TestStatusZeroDamageCastNeedsReachAndZone
+        a zero-damage stun 5000 away: "", stunned true; want refused as too far, no state
+        a zero-damage stun at a monster in another zone: "", stunned true; want refused, no state
+    --- FAIL: TestStatusBlockedBlowLandsNoState
+        a stun whose blow the monster blocked: "", stunned true; want no state (0x5906c0 tests the blocked flag)
+    statuseffect/apply_test.go:132:35: too many arguments in call to h.Step   (the source rule and the thaw)
+    status659r_flag_test.go:10:91: unknown field StatusTick in struct literal of type MonsterAttacked
+    client, status_net_test.gd on 9007108's client: FAIL OpMonsterAttacked flags 0x0c: a death by a state's tick (status_tick), not a swing
+
+Results on the merged tree: `cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...`, 61
+packages ok, none failing. `go test -race ./internal/session ./internal/statuseffect`:
+both ok, no race. The new tests also ran three times under `-race`, clean. Client, `remote_godot.sh tests`:
+176 suites, 0 failing.
+
+### 7. The re-review (a third commit)
+
+- **A death by a tick released no monster.** Without `-player-dead-state` (the default) she is back
+  on her feet at once, and battleTick releases its target only on the strike worker's `a.kills` or
+  on LifeDead -- so the monster whose bleeding killed her stayed in BATTLE on her.
+  `dealCharacterTick` now marks the kill for every monster in BATTLE on her (`releaseTargetsOf`),
+  as the strike worker marks it for its killer. (A blow's death still releases only its killer:
+  unchanged, OURS either way.)
+- **With `-monster-ai` off**, a stun on a moving monster ends the hub's leg in `applyToMonster`
+  again (no AI tick exists to do it, and nothing draws the leg to stop).
+- The damage-list and struck-event readings are relabelled INFERRED (vslot 0x4fc, above).
+
+Against c5d267c:
+
+    --- FAIL: TestStatusTickDeathReleasesTheMonster
+        the monster whose bleeding killed Aria is still in BATTLE on her; a kill must release it (a.kills)
+    --- FAIL: TestStatusStunStopsALegWithTheAIOff
+        with -monster-ai off a stunned monster is still on its leg
+
+`cd server && go test -count=1 -p 1 ./...` from scratch after the dev machine's disk was freed:
+61 packages ok, none failing, no Postgres "connection refused" or "no space" line. `-race` on the
+status tests (session) and on `internal/statuseffect`: ok. No client change.
+
 ## Six-hundred-and-fifty-seventh round: a unique's appearance and its killer are announced to every player in the original's blue banner at the top of the screen
 
 The user (2026-09-30), part of the monster request: "if you kill a unique make sure you announce it

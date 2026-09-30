@@ -50,6 +50,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/skillparam"
 	"github.com/OpenSRO/srrevamp/server/internal/spawn"
 	"github.com/OpenSRO/srrevamp/server/internal/species"
+	"github.com/OpenSRO/srrevamp/server/internal/statuseffect"
 	"github.com/OpenSRO/srrevamp/server/internal/teleport"
 )
 
@@ -968,7 +969,41 @@ func skillRecord(cols []string) ([]string, bool) {
 	// PickSkill, READ (docs/protocol/monster_ai.md, "The skill choice";
 	// ai.PickSkill). Round 654: the species loader builds every monster's
 	// attack list from this export (internal/species).
-	return append(rec, get(skAIAttackChance)), true
+	// 90: every status run of the Param block (round 659), statusParams.
+	return append(rec, get(skAIAttackChance), statusParams(cols)), true
+}
+
+// statusParams is skill CSV column 90 (round 659): every run of the row's
+// Param block whose code is one of the 23 abnormal states
+// (statuseffect.States) or 'puls' -- the bleeding tick interval the block
+// writes to record+0x10 -- as `code:v0,v1,...;code:...`, the values after
+// the code word in block order, the same shape as BuffParams (column 60).
+// These are the fields Combat_ApplyStatusEffects (0x590680) reads; the block
+// is WALKED (skillparam.Walk), never scanned. A row whose walk does not
+// finish exports what the walk reached (none fails on the 33,632 retail rows,
+// skill_params.md).
+func statusParams(cols []string) string {
+	words, ok := paramWords(cols)
+	if !ok {
+		return ""
+	}
+	entries, _, _ := skillparam.Walk(words)
+	var runs []string
+	for _, e := range entries {
+		if _, isState := statuseffect.StateByCode(string(e.Code)); !isState && e.Code != "puls" {
+			continue
+		}
+		vals := make([]string, 0, e.Run-1)
+		for k := 0; k+1 < e.Run; k++ {
+			v := "0"
+			if e.Index+1+k < len(words) {
+				v = strconv.Itoa(int(words[e.Index+1+k]))
+			}
+			vals = append(vals, v)
+		}
+		runs = append(runs, string(e.Code)+":"+strings.Join(vals, ","))
+	}
+	return strings.Join(runs, ";")
 }
 
 // targetHeal is skill CSV columns 62/63 (round 622), TargetHealHP and

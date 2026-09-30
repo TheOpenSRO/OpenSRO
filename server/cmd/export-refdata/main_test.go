@@ -748,8 +748,8 @@ func TestSelfHealColumns(t *testing.T) {
 			if !ok {
 				t.Fatal("skillRecord rejected a valid row")
 			}
-			if len(rec) != 90 {
-				t.Fatalf("record has %d fields, want 90 (SelfHealHP at 43, SelfHealMP at 44, CooldownGroup at 45, SitGate at 46, the buff columns 47-61, TargetHealHP/MP at 62/63, the recast-rule columns 64-76, the lnks columns 77-82, the wall columns 83-86, tel2/tel3 at 87/88, AI_AttackChance at 89)", len(rec))
+			if len(rec) != 91 {
+				t.Fatalf("record has %d fields, want 91 (SelfHealHP at 43, SelfHealMP at 44, CooldownGroup at 45, SitGate at 46, the buff columns 47-61, TargetHealHP/MP at 62/63, the recast-rule columns 64-76, the lnks columns 77-82, the wall columns 83-86, tel2/tel3 at 87/88, AI_AttackChance at 89, StatusParams at 90)", len(rec))
 			}
 			if rec[43] != tc.hp || rec[44] != tc.mp {
 				t.Errorf("record[43:45] = %v, want [%s %s]", rec[43:45], tc.hp, tc.mp)
@@ -838,7 +838,7 @@ func TestSitGateColumn(t *testing.T) {
 			t.Errorf("%s: sitGate = %s, want %s", c.name, got, c.want)
 		}
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 90 || rec[46] != c.want {
+		if !ok || len(rec) != 91 || rec[46] != c.want {
 			t.Errorf("%s: record column 46 = %v (ok %v, %d fields), want %s", c.name, rec, ok, len(rec), c.want)
 			continue
 		}
@@ -879,7 +879,7 @@ func TestBuffColumns(t *testing.T) {
 		{"nbuf, lnks, defr and lks2", marked, []string{"3", "0", "0", "0", "0", "0", "0", "0", "1", "0", "1", "0", "0", "defr:10,12", "1"}},
 	} {
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 90 {
+		if !ok || len(rec) != 91 {
 			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
 		}
 		if got := strings.Join(rec[47:62], "|"); got != strings.Join(c.want, "|") {
@@ -922,7 +922,7 @@ func TestTargetHealColumns(t *testing.T) {
 		{"a resurrection", res, "0", "0"},
 	} {
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 90 {
+		if !ok || len(rec) != 91 {
 			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
 		}
 		if rec[43] != c.self || rec[62] != c.target || rec[63] != "0" {
@@ -970,7 +970,7 @@ func TestStackColumns(t *testing.T) {
 		{"att is offensive", attack, "0|0|0|0|0|1|1|0|0|0|0|0|0"},
 	} {
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 90 {
+		if !ok || len(rec) != 91 {
 			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
 		}
 		if got := strings.Join(rec[64:77], "|"); got != c.want {
@@ -1052,7 +1052,7 @@ func TestLinkColumns(t *testing.T) {
 		{"Grass Walk - Flow", plain, "0|0|0|0|0|0"},
 	} {
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 90 {
+		if !ok || len(rec) != 91 {
 			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
 		}
 		if got := strings.Join(rec[77:83], "|"); got != c.want {
@@ -1092,7 +1092,7 @@ func TestWallColumns(t *testing.T) {
 		{"Grass Walk - Flow lv1", skillRow(w("dura"), 355462, w("hste"), 20), "0|0|0|0"},
 	} {
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 90 {
+		if !ok || len(rec) != 91 {
 			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
 		}
 		if got := strings.Join(rec[83:87], "|"); got != c.want {
@@ -1140,7 +1140,7 @@ func TestTeleColumns(t *testing.T) {
 		{"Grass Walk - Flow lv1", skillRow(w("dura"), 355462, w("hste"), 20), "0|0", false, false},
 	} {
 		rec, ok := skillRecord(c.row)
-		if !ok || len(rec) != 90 {
+		if !ok || len(rec) != 91 {
 			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
 		}
 		if got := strings.Join(rec[87:89], "|"); got != c.want {
@@ -1170,7 +1170,7 @@ func TestSkillAIAttackChanceColumn(t *testing.T) {
 		row := skillRow()
 		row[skAIAttackChance] = want
 		rec, ok := skillRecord(row)
-		if !ok || len(rec) != 90 {
+		if !ok || len(rec) != 91 {
 			t.Fatalf("col 66 = %s: %d fields (ok %v)", want, len(rec), ok)
 		}
 		if rec[89] != want {
@@ -1190,5 +1190,43 @@ func TestSkillAIAttackChanceColumn(t *testing.T) {
 	}
 	if skAIAttackChance != 66 {
 		t.Fatalf("skAIAttackChance = %d, want skilldata column 66", skAIAttackChance)
+	}
+}
+
+// Round 659: skill CSV column 90 is every status run of the Param block, in
+// block order, with 'puls' -- and nothing else (an 'att' or a 'dura' run is
+// not a state). SYNTHETIC rows, shaped like the real ones this round measured
+// (MSKILL_CH_WATERGHOST_ATTACK02 carries att then ps:34,100,16; a bleeding
+// row carries bl with five values and may carry puls).
+func TestSkillStatusParamsColumn(t *testing.T) {
+	w := skillparam.WordOf
+	for _, c := range []struct {
+		name string
+		row  []string
+		want string
+	}{
+		{"a poison bite", skillRow(w("att"), 9, 0, 0, 0, 100, w("ps"), 34, 100, 16), "ps:34,100,16"},
+		{"a bleeding with its tick", skillRow(w("bl"), 30000, 18, 8, 156, 20, w("puls"), 3000), "bl:30000,18,8,156,20;puls:3000"},
+		{"freeze and frostbite", skillRow(w("fz"), 30, 5, w("fb"), 30, 25), "fz:30,5;fb:30,25"},
+		{"no state at all", skillRow(w("dura"), 355462, w("hste"), 20), ""},
+	} {
+		rec, ok := skillRecord(c.row)
+		if !ok || len(rec) != 91 {
+			t.Fatalf("%s: %d fields (ok %v)", c.name, len(rec), ok)
+		}
+		if rec[90] != c.want {
+			t.Errorf("%s: column 90 = %q, want %q", c.name, rec[90], c.want)
+		}
+		var buf strings.Builder
+		cw := csv.NewWriter(&buf)
+		cw.Write(rec)
+		cw.Flush()
+		skills, err := refdata.LoadSkillsCSV(strings.NewReader(buf.String()))
+		if err != nil || len(skills) != 1 {
+			t.Fatalf("%s: the importer rejected the export: %v", c.name, err)
+		}
+		if skills[0].StatusParams != c.want {
+			t.Errorf("%s: StatusParams %q, want %q", c.name, skills[0].StatusParams, c.want)
+		}
 	}
 }

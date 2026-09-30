@@ -1108,6 +1108,18 @@ func useSkillHandler(
 				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "too far away"}).Encode()})
 			}
 		}
+		// A cast that resolves no blow but carries states for a monster (a
+		// zero-damage stun or debuff) is measured as a damaging one is, and
+		// refused at a monster not in the caster's zone or not alive (round
+		// 659's review, H2: it landed from any distance and in any zone).
+		// INFERRED that retail measures it the same: the gate's reach test is
+		// not read to exempt a zero-damage row.
+		if statusCastAtMonster(castRow, isBuff, isGround, selfTarget, friendly) && (noCombat || zeroDmg) {
+			if refusal := statusCastRefusal(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange); refusal != "" {
+				keepUp.Cancel(characterID)
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{MonsterID: req.TargetMonsterID, Error: refusal}).Encode()})
+			}
+		}
 		if !isBuff && !isGround && !selfTarget && !friendly && !noCombat && !zeroDmg && !skillInReach(ctx, sess, eq, items, hub, monsters, characterID, req.TargetMonsterID, skillRange) {
 			keepUp.Cancel(characterID)
 			res := echoed(req, &AttackResult{MonsterID: req.TargetMonsterID, Error: "too far away"})
@@ -1354,6 +1366,11 @@ func useSkillHandler(
 			}
 			// The zone sees the cast (round 622, OpSkillCast).
 			announceCast(hub, characterID, req, castRow)
+			// A cast at a monster that resolves no blow -- a zero-damage stun,
+			// a debuff -- still lands its states (round 659, status.go).
+			if statusCastAtMonster(castRow, isBuff, isGround, selfTarget, friendly) {
+				statusFX.applyToMonster(combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}, characterID, castRow, req.TargetMonsterID, now)
+			}
 			return nil
 		}
 
@@ -1370,16 +1387,23 @@ func useSkillHandler(
 		// (Action_Range, refdata.Skill.Range). Nothing there is new
 		// arithmetic; the skill path simply never called it.
 
-		landed := false
-		if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, potions, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType, &landed); err != nil {
+		var blow blowReport
+		if err := performAttack(ctx, sess, chars, eq, items, hub, monsters, quests, inv, skills, zerk, mp, parties, ground, dropSrc, potions, characterID, req.TargetMonsterID, damageBonus, damagePercent, masteryPercent, hits, attackType, &blow); err != nil {
 			return err
 		}
 		// The zone sees the cast (round 622, OpSkillCast) -- only when its
 		// blow landed (round 622's review): a cast performAttack refused
 		// after the costs ("target not found") is the requester's refusal
 		// alone, as retail's 0xB070 result 2 is.
-		if landed {
+		if blow.Landed {
 			announceCast(hub, characterID, req, castRow)
+		}
+		// The blow's states (round 659, status.go): on the monster it landed
+		// on, if it lives -- and not when the monster blocked it (round 659's
+		// review, M3: 0x5906c0 tests the hit record's blocked flag; OURS: one
+		// application for the cast, when any of its hits got through).
+		if blow.Landed && !blow.Blocked {
+			statusFX.applyToMonster(combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}, characterID, castRow, req.TargetMonsterID, now)
 		}
 		// The skill tick's hand-off (round 256, keepup.go): a row with
 		// AutoAttackType 1 and no Basic_ChainCode leaves a plain attack

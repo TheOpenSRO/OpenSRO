@@ -475,6 +475,10 @@ var skillCSVColumns = []string{
 	// (Skill.AIAttackChance). A strict suffix: an older export loads -1,
 	// unknown -- not 0, which is a real "never drawn".
 	"AIAttackChance",
+	// Appended in round 659: every status run of the Param block
+	// (Skill.StatusParams, statuseffect.ParseRuns). A strict suffix: an older
+	// export loads "", no status.
+	"StatusParams",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -712,6 +716,9 @@ func parseSkillRow(f []string) (Skill, error) {
 	boolAt(88, &sk.Tel3)
 	sk.AIAttackChance = -1
 	intAt(89, &sk.AIAttackChance)
+	if len(f) > 90 {
+		sk.StatusParams = strings.TrimSpace(f[90])
+	}
 
 	if err != nil {
 		return Skill{}, err

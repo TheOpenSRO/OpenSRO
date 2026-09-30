@@ -1300,10 +1300,13 @@ func performAttack(
 	// combat.AttackPhysical with no base row (plainSwingOf). See
 	// combat.AttackType.
 	attackType combat.AttackType,
-	// landed, when not nil, is set true once the blow is applied to the
-	// monster (round 622's review): a cast refused here after its costs
-	// ("target not found", a damage failure) is not announced to the zone.
-	landed *bool,
+	// landed, when not nil, is set once the blow is applied to the monster
+	// (round 622's review): a cast refused here after its costs ("target not
+	// found", a damage failure) is not announced to the zone. Its Blocked
+	// says every hit was blocked (round 659's review): a blocked hit applies
+	// no state (Combat_ApplyStatusEffects' `cmp [edi+5],2` on the hit
+	// record's blocked flag, 0x5906c0).
+	landed *blowReport,
 ) error {
 	monster, ok := monsters.Get(targetMonsterID)
 	if !ok {
@@ -1367,7 +1370,9 @@ func performAttack(
 	// monster's own block chance is characterdata col 76, which reads 0 for
 	// every species on the Jangan ladder (938 monsters elsewhere carry 20), so
 	// it is a real zero rather than an unmodelled one.
-	blow := resolveBlow(raw, monster.DefensePercent, monster.Defense,
+	// Bleeding takes its flat defence off (round 659, status.go).
+	monsterDefence := monster.Defense - statusFX.monsterDefenceCut(monster.ID)
+	blow := resolveBlow(raw, monster.DefensePercent, monsterDefence,
 		combat.EvadedChance(attackerCritical(ctx, characterID, eq, items), monsterEvasion),
 		combat.EvadedChance(monster.Block, playerEvasion),
 		playerLevel, monster.Level, characterID, monster.ID)
@@ -1378,6 +1383,7 @@ func performAttack(
 	// base row (plainSwingOf).
 	net := combat.ApplySkillPercent(blow.Damage, damagePercent)
 	playerCrit := blow.Critical
+	allBlocked := blow.Blocked
 
 	// A multi-hit skill strikes again, and each strike is INDEPENDENT: the
 	// engine runs its whole damage resolution inside
@@ -1388,12 +1394,13 @@ func performAttack(
 	//
 	// The first strike is the blow already resolved above; this adds the rest.
 	for i := 1; i < hits; i++ {
-		extra := resolveBlow(raw, monster.DefensePercent, monster.Defense,
+		extra := resolveBlow(raw, monster.DefensePercent, monsterDefence,
 			combat.EvadedChance(attackerCritical(ctx, characterID, eq, items), monsterEvasion),
 			combat.EvadedChance(monster.Block, playerEvasion),
 			playerLevel, monster.Level, characterID, monster.ID)
 		net += combat.ApplySkillPercent(extra.Damage, damagePercent)
 		playerCrit = playerCrit || extra.Critical
+		allBlocked = allBlocked && extra.Blocked
 	}
 	// Berserk multiplies the blow AFTER mitigation, which is the order
 	// Formula_MitigatePhysicalDamage uses: it divides by the percentage term,
@@ -1451,7 +1458,7 @@ func performAttack(
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found", MonsterID: targetMonsterID}).Encode()})
 	}
 	if landed != nil {
-		*landed = true
+		landed.Landed, landed.Blocked = true, allBlocked
 	}
 	// The kill's word to the nests (round 660, nestkill.go): the killer's
 	// party near the monster may arm its nest for a party monster.
@@ -1499,196 +1506,13 @@ func performAttack(
 	// A dead monster can't counterattack. A surviving one always hits
 	// back -- there's no dodge/evade system yet, see docs' open items.
 	if monsterDied {
-		// The monster's object is gone, so its blocking streak goes with it.
-		// The engine's accumulator lives on the object; nothing survives it.
-		chanceMemory.Forget(targetMonsterID)
-		// Hwan (berserk orbs) are earned on the KILLING blow, by chance:
-		// 8% base, decaying for a victim more than three levels below the
-		// killer, x5 for a giant, x2 for an elite, all five orbs for a
-		// unique -- the rule read off FUN_00410880 (see internal/berserk).
-		// The killer's level is the character's; a store that cannot say
-		// leaves the base chance, disclosed here rather than guessed.
-		if zerk != nil {
-			killerLevel := 0
-			if kc, err := chars.GetByID(ctx, characterID); err == nil {
-				killerLevel = kc.Level
-				// The stored orbs are the starting point for this character;
-				// seed-once, so orbs earned this session are not undone.
-				zerk.EnsureSeeded(characterID, kc.HwanCount)
-			}
-			releaseTurn := zerk.Turn(characterID)
-			if gained := zerk.EarnOnKill(characterID, berserk.Kill{
-				KillerLevel: killerLevel, VictimLevel: monster.Level,
-				VictimIsMonster: true, VictimRarity: monster.Rarity,
-			}); gained > 0 {
-				// The engine's count is a character-row column, so a gain has
-				// to reach the row -- see character.Character.HwanCount.
-				if err := chars.SetHwanCount(ctx, characterID, zerk.Charges(characterID)); err != nil {
-					releaseTurn()
-					return fmt.Errorf("combat: persisting berserk orbs: %w", err)
-				}
-			}
-			releaseTurn()
-			result.BerserkGauge = int32(zerk.Gauge(characterID))
+		// The kill reward (round 659: one function, grantKill, that the
+		// damage-over-time kill in status.go pays through too).
+		lu, kg, kerr := grantKill(ctx, combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}, characterID, monster, result)
+		if kerr != nil {
+			return kerr
 		}
-		// No damage taken, but the client still wants to know current HP.
-		hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
-		if err != nil {
-			return fmt.Errorf("combat: reading player hp: %w", err)
-		}
-		result.PlayerHP = int32(hp)
-
-		// Granted before the result packet goes out, not after. The kill
-		// reward is part of the state the attack result announces, so a
-		// client that reads the character back as soon as it sees
-		// OpAttackResult must already find the gold there. Awarding it
-		// afterwards left a real window where the attacker had been told
-		// the monster died but the reward had not landed yet -- an
-		// intermittent CI failure (gold 1000 where 1500 was expected, i.e.
-		// the starting balance with the reward missing) that reproduced
-		// only under load, since locally the write always won the race.
-		// Gold is rolled in the real per-level range (levelgold) when the
-		// monster has one, falling back to the disclosed flat reward.
-		gold := rollGold(monster.GoldMin, monster.GoldMax, monster.GoldReward)
-		// The server's own DropGoldAmountCoef knob, default 1x and capped at
-		// 2.5 -- see internal/rates.
-		if g := rates.Current().Gold; g != 1 {
-			gold = int64(math.Round(float64(gold) * g))
-		}
-		killGold = gold
-		// With a ground-item hub the gold lands on the ground as the pile the
-		// engine spawns (ITEM_ETC_GOLD_03) and is picked up, so nothing is
-		// credited here -- see the drop block below. Without one (tests, an
-		// older wiring) it is credited directly as before.
-		if ground == nil {
-			if err := chars.AddGold(ctx, characterID, gold); err != nil {
-				return fmt.Errorf("combat: granting gold reward: %w", err)
-			}
-		}
-
-		// Skill points from the kill are granted BELOW, out of the kill's own
-		// experience, because the game grants skill EXPERIENCE and converts it
-		// at leveldata.SkillExpPerPoint. Without a level table there is no
-		// experience to convert, so that path falls back to the disclosed
-		// per-kill default -- see the else branch.
-
-		// Experience, and a level-up if it crosses the curve -- only when the
-		// server has a leveldata curve loaded (SetLevelTable). Without one, no
-		// exp is tracked, the same way an empty item table means flat damage.
-		// A level-up refills HP and is announced with OpLevelUp after the
-		// attack result below.
-		if levelTable.Loaded() {
-			char, err := chars.GetByID(ctx, characterID)
-			if err != nil {
-				return fmt.Errorf("combat: reading character for exp: %w", err)
-			}
-			// What the kill is worth. The level table's own EXP unit when it
-			// has one, taken at the MINIMUM of the two levels -- the game's
-			// anti-powerlevelling rule, recovered from
-			// Formula_MonsterExpReward. Falls back to the disclosed
-			// toughness-derived ExpReward only for a table with no exp_unit
-			// column (an export that predates it). A killer in a party also
-			// earns the diff scaler's gap bonus -- see killExpFor.
-			gainedExp := monster.ExpReward
-			if unit, ok := killExpFor(levelTable, parties, characterID, char.Level, monster.Level); ok {
-				gainedExp = unit
-			}
-			gainedExp = applyMasteryExpScale(ctx, skills, characterID, char.Level, gainedExp)
-			gainedExp = applyPartyExpBonus(parties, characterID, gainedExp)
-			// The server's ExpRatio / ExpRatioParty knob. The engine picks
-			// ONE of the two by party membership rather than multiplying
-			// both -- see rates.Rates.ExpFor.
-			if m := rates.Current().ExpFor(inParty(parties, characterID)); m != 1 {
-				gainedExp = int64(math.Round(float64(gainedExp) * m))
-			}
-			// The skill economy's income. The game grants skill EXPERIENCE,
-			// carries it on the character and converts whole points out of the
-			// running total at 400:1 -- see leveldata.SkillExpPerPoint, which
-			// is the recovered part.
-			//
-			// How much skill experience a KILL is worth is NOT recovered, and
-			// the search for it is now exhaustive rather than partial. Every
-			// route into the skill-point currency has been enumerated:
-			//
-			//   - _CHAR.SExpOffset (charData+0x70), the carried total, has
-			//     exactly ONE writer in the binary -- the 400:1 conversion
-			//     inside GObjPC_GainExpAndLevel. The only other function that
-			//     touches it, FUN_0049efc0, reads it into a packet.
-			//   - Of the 42 call sites of GainExpAndLevel, only four pass a
-			//     non-zero skill-exp argument (it is the FOURTH argument, and
-			//     every ordinary exp grant passes zero there). None is a kill:
-			//     they are a quest reward, its party distribution, and two
-			//     others off the same quest path.
-			//   - Every positive caller of AddSkillPoints is either that
-			//     conversion or a skill/mastery WITHDRAWAL refund.
-			//
-			// So no kill path in this binary feeds the currency at all, and
-			// there is no M to read for a kill. srrevamp takes M = 1 -- a kill
-			// is worth its own experience in skill experience -- which is a
-			// DISCLOSED choice and the single knob to turn if a kill-side
-			// source is ever found.
-			//
-			// Guild points inherit that M = 1 (round 525): cmd/server hands
-			// this path NewGuildPointSkills' wrapper, which credits a member's
-			// guild 1:1 with the points this call converts, so the disclosed
-			// M also sets how fast GatheredSP grows from kills.
-			if skills != nil && gainedExp > 0 {
-				if _, _, err := skills.AddSkillExp(ctx, characterID, gainedExp); err != nil {
-					return fmt.Errorf("combat: granting skill experience: %w", err)
-				}
-				result.SkillExpGained = gainedExp
-			}
-			newLevel, newExp, gained := levelTable.Advance(char.Level, char.Exp, gainedExp)
-			// What the character actually gained (round 639's review): at the
-			// level cap Advance holds the EXP below the requirement, so the
-			// line reports what was added, not what the kill was worth.
-			result.ExpGained = expAdded(levelTable, char.Level, char.Exp, newLevel, newExp)
-			newStatPoints := char.StatPoints + gained*leveldata.StatPointsPerLevel
-			// Str and Int rise by one each per level, automatically and without
-			// the player choosing -- on top of the three spendable points.
-			// GObjPC_SetLevel grants five points and immediately calls
-			// SpendStatPoints(levels, levels), which is `Str += levels` and
-			// `Int += levels`; the asm is `movzx ecx,[eax+0x74]; add cx,si;
-			// call SetStr`, and it publishes ParamKeeper param 1 (Str)
-			// afterwards. See leveldata.StatPointsPerLevel for the full
-			// arithmetic and docs/GROUNDING_AUDIT.md for why this took a tick
-			// of its own: it moves every derived HP and MP number.
-			newStr := char.Str + gained*character.StatGrowthPerLevel
-			newInt := char.Int + gained*character.StatGrowthPerLevel
-			if err := chars.SetLeveling(ctx, characterID, newLevel, newExp, newStatPoints, newStr, newInt); err != nil {
-				return fmt.Errorf("combat: applying experience: %w", err)
-			}
-			if gained > 0 {
-				// The world entity's cached level follows the row (round 555):
-				// the monster AI's aggro link and swings read it there, never
-				// the store, and this is one of the two places a level moves
-				// (gm's /level is the other).
-				hub.SetLevel(characterID, newLevel)
-				if err := chars.ResetHP(ctx, characterID); err != nil {
-					return fmt.Errorf("combat: refilling hp on level up: %w", err)
-				}
-				// Healed to the NEW level's higher maximum -- and mana with
-				// it. Both derive from the character's own Str/Int, so read
-				// the level off the advance rather than the stale record.
-				// The new Str/Int, not the stale record's: the level-up
-				// raised them, and the engine's refill goes to the maximum
-				// those give (GObjPC_SetLevel heals by GetMaxHP - GetCurHP).
-				result.PlayerHP = int32(character.MaxHPFor(newStr, newLevel))
-				if mp != nil {
-					mp.Refill(characterID, character.MaxMPFor(newInt, newLevel))
-				}
-				levelUp = &LevelUp{NewLevel: int32(newLevel), StatPoints: int32(newStatPoints)}
-			}
-		} else if skills != nil && monster.SPReward > 0 {
-			// No level table, so no experience to convert: fall back to the
-			// disclosed whole-point default (combat.SPFor). This is the only
-			// path that still hands out points directly, and it exists so a
-			// deployment that has imported no leveldata still has a skill
-			// economy at all.
-			if _, err := skills.AddSkillPoints(ctx, characterID, int(monster.SPReward)); err != nil {
-				return fmt.Errorf("combat: granting skill points: %w", err)
-			}
-		}
+		levelUp, killGold = lu, kg
 	} else if monsterBattle.Load() {
 		// -monster-battle (round 546): the monster's blow is its own, from the
 		// AI tick's BATTLE -- it chases to its attack band and swings on its
@@ -1697,7 +1521,9 @@ func performAttack(
 		// result carries no counter and PlayerHP stays the seeded truth. Off,
 		// the synchronous counter below is what it was (mob-counter-retire
 		// deletes it).
-	} else if !monsters.CounterattackReady(monster.ID, time.Now()) {
+	} else if !monsters.CounterattackReady(monster.ID, time.Now()) || !monsterMayAct(monster.ID) {
+		// ...or its states stop it: stunned, frozen or asleep (round 659,
+		// status.go).
 		// Inside its attack skill's re-use delay: the real monster is still
 		// in that skill's action and cannot strike again yet (combat.Hub.
 		// CounterattackReady). The player's blow landed; there is no reply.
@@ -1760,44 +1586,7 @@ func performAttack(
 	}
 
 	if monsterDied {
-		// The kill reward itself was already granted above, before the
-		// result packet went out -- see the comment there.
-		msg := &MonsterDied{MonsterID: targetMonsterID}
-		for _, e := range others {
-			sendMonsterPush(e.Session, &proto.Packet{Opcode: OpMonsterDied, Data: msg.Encode()})
-		}
-		// A unique's death is announced to the whole world (round 657): the
-		// top-damage member of the top-damage group is named. Nothing for
-		// any other rank.
-		AnnounceUniqueKill(hub, parties, updated, killHits)
-
-		completedQuests, err := quests.RecordKill(ctx, characterID, monster.Name)
-		if err != nil {
-			return fmt.Errorf("combat: recording quest kill: %w", err)
-		}
-		for _, q := range completedQuests {
-			if err := chars.AddGold(ctx, characterID, q.GoldReward); err != nil {
-				return fmt.Errorf("combat: granting quest reward: %w", err)
-			}
-			completedMsg := &QuestCompleted{QuestID: q.ID, GoldReward: q.GoldReward}
-			if err := sess.Send(&proto.Packet{Opcode: OpQuestCompleted, Data: completedMsg.Encode()}); err != nil {
-				return err
-			}
-		}
-
-		if ground != nil {
-			// The kill's gold and loot lie on the ground near the corpse,
-			// owned by the killer for the 30 s window, announced to the zone.
-			dropKillLoot(ground, hub, monster, characterID, killGold, dropsForKill(ctx, dropSrc, monster))
-			return nil
-		}
-		if drops := rollLoot(ctx, inv, characterID, monster, dropSrc); len(drops) > 0 {
-			lootMsg := &LootDropped{MonsterID: targetMonsterID, Drops: drops}
-			if err := sess.Send(&proto.Packet{Opcode: OpLootDropped, Data: lootMsg.Encode()}); err != nil {
-				return err
-			}
-		}
-		return nil
+		return announceKill(ctx, combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}, sess, others, characterID, monster, killGold, updated, killHits)
 	}
 
 	msg := &MonsterDamaged{MonsterID: targetMonsterID, Damage: int32(net), RemainingHP: int32(updated.HP)}
@@ -2244,3 +2033,262 @@ func resolveBlow(base, mitigationPercent, flat, critChance, blockChance, attacke
 // the object, so it cannot outlive one); a character's persists across fights,
 // which is what the engine does.
 var chanceMemory = combat.NewChanceTracker()
+
+// blowReport is what performAttack tells a cast about its blow.
+type blowReport struct {
+	Landed  bool // the blow reached the monster
+	Blocked bool // and the monster blocked every hit of it
+}
+
+// grantKill pays characterID for killing monster: the berserk orb roll, the
+// gold, the experience with its level-up, and the skill experience, writing
+// what the attacker's OpAttackResult reports into result. It is performAttack's
+// kill branch moved here unchanged in round 659, so that a kill by a state's
+// damage tick (status.go) pays exactly what a kill by a blow does.
+func grantKill(ctx context.Context, d combatDeps, characterID int64, monster combat.Monster, result *AttackResult) (levelUp *LevelUp, killGold int64, err error) {
+	chars, zerk, ground, parties, skills, mp, hub := d.chars, d.zerk, d.ground, d.parties, d.skills, d.mp, d.hub
+
+	// The monster's object is gone, so its blocking streak goes with it.
+	// The engine's accumulator lives on the object; nothing survives it.
+	chanceMemory.Forget(monster.ID)
+	// And its states end with it (round 659, status.go).
+	statusFX.forgetMonster(monster.ID)
+	// Hwan (berserk orbs) are earned on the KILLING blow, by chance:
+	// 8% base, decaying for a victim more than three levels below the
+	// killer, x5 for a giant, x2 for an elite, all five orbs for a
+	// unique -- the rule read off FUN_00410880 (see internal/berserk).
+	// The killer's level is the character's; a store that cannot say
+	// leaves the base chance, disclosed here rather than guessed.
+	if zerk != nil {
+		killerLevel := 0
+		if kc, err := chars.GetByID(ctx, characterID); err == nil {
+			killerLevel = kc.Level
+			// The stored orbs are the starting point for this character;
+			// seed-once, so orbs earned this session are not undone.
+			zerk.EnsureSeeded(characterID, kc.HwanCount)
+		}
+		releaseTurn := zerk.Turn(characterID)
+		if gained := zerk.EarnOnKill(characterID, berserk.Kill{
+			KillerLevel: killerLevel, VictimLevel: monster.Level,
+			VictimIsMonster: true, VictimRarity: monster.Rarity,
+		}); gained > 0 {
+			// The engine's count is a character-row column, so a gain has
+			// to reach the row -- see character.Character.HwanCount.
+			if err := chars.SetHwanCount(ctx, characterID, zerk.Charges(characterID)); err != nil {
+				releaseTurn()
+				return nil, 0, fmt.Errorf("combat: persisting berserk orbs: %w", err)
+			}
+		}
+		releaseTurn()
+		result.BerserkGauge = int32(zerk.Gauge(characterID))
+	}
+	// No damage taken, but the client still wants to know current HP.
+	hp, _, err := chars.ApplyDamage(ctx, characterID, 0)
+	if err != nil {
+		return nil, 0, fmt.Errorf("combat: reading player hp: %w", err)
+	}
+	result.PlayerHP = int32(hp)
+
+	// Granted before the result packet goes out, not after. The kill
+	// reward is part of the state the attack result announces, so a
+	// client that reads the character back as soon as it sees
+	// OpAttackResult must already find the gold there. Awarding it
+	// afterwards left a real window where the attacker had been told
+	// the monster died but the reward had not landed yet -- an
+	// intermittent CI failure (gold 1000 where 1500 was expected, i.e.
+	// the starting balance with the reward missing) that reproduced
+	// only under load, since locally the write always won the race.
+	// Gold is rolled in the real per-level range (levelgold) when the
+	// monster has one, falling back to the disclosed flat reward.
+	gold := rollGold(monster.GoldMin, monster.GoldMax, monster.GoldReward)
+	// The server's own DropGoldAmountCoef knob, default 1x and capped at
+	// 2.5 -- see internal/rates.
+	if g := rates.Current().Gold; g != 1 {
+		gold = int64(math.Round(float64(gold) * g))
+	}
+	killGold = gold
+	// With a ground-item hub the gold lands on the ground as the pile the
+	// engine spawns (ITEM_ETC_GOLD_03) and is picked up, so nothing is
+	// credited here -- see the drop block below. Without one (tests, an
+	// older wiring) it is credited directly as before.
+	if ground == nil {
+		if err := chars.AddGold(ctx, characterID, gold); err != nil {
+			return nil, 0, fmt.Errorf("combat: granting gold reward: %w", err)
+		}
+	}
+
+	// Skill points from the kill are granted BELOW, out of the kill's own
+	// experience, because the game grants skill EXPERIENCE and converts it
+	// at leveldata.SkillExpPerPoint. Without a level table there is no
+	// experience to convert, so that path falls back to the disclosed
+	// per-kill default -- see the else branch.
+
+	// Experience, and a level-up if it crosses the curve -- only when the
+	// server has a leveldata curve loaded (SetLevelTable). Without one, no
+	// exp is tracked, the same way an empty item table means flat damage.
+	// A level-up refills HP and is announced with OpLevelUp after the
+	// attack result below.
+	if levelTable.Loaded() {
+		char, err := chars.GetByID(ctx, characterID)
+		if err != nil {
+			return nil, 0, fmt.Errorf("combat: reading character for exp: %w", err)
+		}
+		// What the kill is worth. The level table's own EXP unit when it
+		// has one, taken at the MINIMUM of the two levels -- the game's
+		// anti-powerlevelling rule, recovered from
+		// Formula_MonsterExpReward. Falls back to the disclosed
+		// toughness-derived ExpReward only for a table with no exp_unit
+		// column (an export that predates it). A killer in a party also
+		// earns the diff scaler's gap bonus -- see killExpFor.
+		gainedExp := monster.ExpReward
+		if unit, ok := killExpFor(levelTable, parties, characterID, char.Level, monster.Level); ok {
+			gainedExp = unit
+		}
+		gainedExp = applyMasteryExpScale(ctx, skills, characterID, char.Level, gainedExp)
+		gainedExp = applyPartyExpBonus(parties, characterID, gainedExp)
+		// The server's ExpRatio / ExpRatioParty knob. The engine picks
+		// ONE of the two by party membership rather than multiplying
+		// both -- see rates.Rates.ExpFor.
+		if m := rates.Current().ExpFor(inParty(parties, characterID)); m != 1 {
+			gainedExp = int64(math.Round(float64(gainedExp) * m))
+		}
+		// The skill economy's income. The game grants skill EXPERIENCE,
+		// carries it on the character and converts whole points out of the
+		// running total at 400:1 -- see leveldata.SkillExpPerPoint, which
+		// is the recovered part.
+		//
+		// How much skill experience a KILL is worth is NOT recovered, and
+		// the search for it is now exhaustive rather than partial. Every
+		// route into the skill-point currency has been enumerated:
+		//
+		//   - _CHAR.SExpOffset (charData+0x70), the carried total, has
+		//     exactly ONE writer in the binary -- the 400:1 conversion
+		//     inside GObjPC_GainExpAndLevel. The only other function that
+		//     touches it, FUN_0049efc0, reads it into a packet.
+		//   - Of the 42 call sites of GainExpAndLevel, only four pass a
+		//     non-zero skill-exp argument (it is the FOURTH argument, and
+		//     every ordinary exp grant passes zero there). None is a kill:
+		//     they are a quest reward, its party distribution, and two
+		//     others off the same quest path.
+		//   - Every positive caller of AddSkillPoints is either that
+		//     conversion or a skill/mastery WITHDRAWAL refund.
+		//
+		// So no kill path in this binary feeds the currency at all, and
+		// there is no M to read for a kill. srrevamp takes M = 1 -- a kill
+		// is worth its own experience in skill experience -- which is a
+		// DISCLOSED choice and the single knob to turn if a kill-side
+		// source is ever found.
+		//
+		// Guild points inherit that M = 1 (round 525): cmd/server hands
+		// this path NewGuildPointSkills' wrapper, which credits a member's
+		// guild 1:1 with the points this call converts, so the disclosed
+		// M also sets how fast GatheredSP grows from kills.
+		if skills != nil && gainedExp > 0 {
+			if _, _, err := skills.AddSkillExp(ctx, characterID, gainedExp); err != nil {
+				return nil, 0, fmt.Errorf("combat: granting skill experience: %w", err)
+			}
+			result.SkillExpGained = gainedExp
+		}
+		newLevel, newExp, gained := levelTable.Advance(char.Level, char.Exp, gainedExp)
+		// What the character actually gained (round 639's review): at the
+		// level cap Advance holds the EXP below the requirement, so the
+		// line reports what was added, not what the kill was worth.
+		result.ExpGained = expAdded(levelTable, char.Level, char.Exp, newLevel, newExp)
+		newStatPoints := char.StatPoints + gained*leveldata.StatPointsPerLevel
+		// Str and Int rise by one each per level, automatically and without
+		// the player choosing -- on top of the three spendable points.
+		// GObjPC_SetLevel grants five points and immediately calls
+		// SpendStatPoints(levels, levels), which is `Str += levels` and
+		// `Int += levels`; the asm is `movzx ecx,[eax+0x74]; add cx,si;
+		// call SetStr`, and it publishes ParamKeeper param 1 (Str)
+		// afterwards. See leveldata.StatPointsPerLevel for the full
+		// arithmetic and docs/GROUNDING_AUDIT.md for why this took a tick
+		// of its own: it moves every derived HP and MP number.
+		newStr := char.Str + gained*character.StatGrowthPerLevel
+		newInt := char.Int + gained*character.StatGrowthPerLevel
+		if err := chars.SetLeveling(ctx, characterID, newLevel, newExp, newStatPoints, newStr, newInt); err != nil {
+			return nil, 0, fmt.Errorf("combat: applying experience: %w", err)
+		}
+		if gained > 0 {
+			// The world entity's cached level follows the row (round 555):
+			// the monster AI's aggro link and swings read it there, never
+			// the store, and this is one of the two places a level moves
+			// (gm's /level is the other).
+			hub.SetLevel(characterID, newLevel)
+			if err := chars.ResetHP(ctx, characterID); err != nil {
+				return nil, 0, fmt.Errorf("combat: refilling hp on level up: %w", err)
+			}
+			// Healed to the NEW level's higher maximum -- and mana with
+			// it. Both derive from the character's own Str/Int, so read
+			// the level off the advance rather than the stale record.
+			// The new Str/Int, not the stale record's: the level-up
+			// raised them, and the engine's refill goes to the maximum
+			// those give (GObjPC_SetLevel heals by GetMaxHP - GetCurHP).
+			result.PlayerHP = int32(character.MaxHPFor(newStr, newLevel))
+			if mp != nil {
+				mp.Refill(characterID, character.MaxMPFor(newInt, newLevel))
+			}
+			levelUp = &LevelUp{NewLevel: int32(newLevel), StatPoints: int32(newStatPoints)}
+		}
+	} else if skills != nil && monster.SPReward > 0 {
+		// No level table, so no experience to convert: fall back to the
+		// disclosed whole-point default (combat.SPFor). This is the only
+		// path that still hands out points directly, and it exists so a
+		// deployment that has imported no leveldata still has a skill
+		// economy at all.
+		if _, err := skills.AddSkillPoints(ctx, characterID, int(monster.SPReward)); err != nil {
+			return nil, 0, fmt.Errorf("combat: granting skill points: %w", err)
+		}
+	}
+	return levelUp, killGold, nil
+}
+
+// announceKill tells the zone a monster died and settles the rest of the
+// kill: the unique notice, the quest credit and the drops. others is who is sent OpMonsterDied
+// -- the zone less the attacker, whose OpAttackResult already said so, or the
+// whole zone for a kill with no attack result (status.go). sess is the
+// killer's, and may be nil for a killer no longer in the world: then nothing
+// is sent to them. performAttack's announcement moved here unchanged in round
+// 659.
+func announceKill(ctx context.Context, d combatDeps, sess *gateway.Session, others []world.Entity, characterID int64, monster combat.Monster, killGold int64, updated combat.Monster, killHits []combat.Hit) error {
+	chars, quests, hub, ground, inv, dropSrc, parties := d.chars, d.quests, d.hub, d.ground, d.inv, d.dropSrc, d.parties
+	// The kill reward itself was already granted above, before the
+	// result packet went out -- see the comment there.
+	msg := &MonsterDied{MonsterID: monster.ID}
+	for _, e := range others {
+		sendMonsterPush(e.Session, &proto.Packet{Opcode: OpMonsterDied, Data: msg.Encode()})
+	}
+	// A unique's death is announced to the whole world (round 657): the
+	// top-damage member of the top-damage group is named. Nothing for
+	// any other rank. updated and killHits are the killing blow's
+	// (damageMonsterWatched).
+	AnnounceUniqueKill(hub, parties, updated, killHits)
+
+	completedQuests, err := quests.RecordKill(ctx, characterID, monster.Name)
+	if err != nil {
+		return fmt.Errorf("combat: recording quest kill: %w", err)
+	}
+	for _, q := range completedQuests {
+		if err := chars.AddGold(ctx, characterID, q.GoldReward); err != nil {
+			return fmt.Errorf("combat: granting quest reward: %w", err)
+		}
+		completedMsg := &QuestCompleted{QuestID: q.ID, GoldReward: q.GoldReward}
+		if err := sess.Send(&proto.Packet{Opcode: OpQuestCompleted, Data: completedMsg.Encode()}); err != nil {
+			return err
+		}
+	}
+
+	if ground != nil {
+		// The kill's gold and loot lie on the ground near the corpse,
+		// owned by the killer for the 30 s window, announced to the zone.
+		dropKillLoot(ground, hub, monster, characterID, killGold, dropsForKill(ctx, dropSrc, monster))
+		return nil
+	}
+	if drops := rollLoot(ctx, inv, characterID, monster, dropSrc); len(drops) > 0 {
+		lootMsg := &LootDropped{MonsterID: monster.ID, Drops: drops}
+		if err := sess.Send(&proto.Packet{Opcode: OpLootDropped, Data: lootMsg.Encode()}); err != nil {
+			return err
+		}
+	}
+	return nil
+}

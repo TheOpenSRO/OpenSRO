@@ -927,6 +927,10 @@ type MonsterSkill struct {
 	ReuseMs, Range int
 	AttMin, AttMax int
 	Chance         int
+	// Status is the skill's status runs, refdata.Skill.StatusParams
+	// (statuseffect.ParseRuns reads it): what a blow of this skill applies to
+	// the character it lands on (round 659). "" applies nothing.
+	Status string
 }
 
 // SpawnSpecies is Spawn with the species' code name carried along, so the

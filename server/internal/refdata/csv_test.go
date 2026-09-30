@@ -588,7 +588,7 @@ func TestSkillCSVBuffColumnsAreAStrictSuffix(t *testing.T) {
 	if err != nil || sk.ActionKind != 0 || sk.TargetLand || sk.DuraMs != 0 || sk.HasTele() || sk.BuffParams != "" || sk.Lks2 {
 		t.Fatalf("an export predating the buff columns: %+v, %v", sk, err)
 	}
-	if skillCSVColumns[47] != "ActionKind" || skillCSVColumns[60] != "BuffParams" || skillCSVColumns[61] != "Lks2" || skillCSVColumns[63] != "TargetHealMP" || skillCSVColumns[64] != "ActionOverlap" || skillCSVColumns[76] != "Dtt" || skillCSVColumns[81] != "Trap" || skillCSVColumns[82] != "Efr1" || skillCSVColumns[86] != "Pw3" || skillCSVColumns[88] != "Tel3" || skillCSVColumns[89] != "AIAttackChance" || len(skillCSVColumns) != 90 {
+	if skillCSVColumns[47] != "ActionKind" || skillCSVColumns[60] != "BuffParams" || skillCSVColumns[61] != "Lks2" || skillCSVColumns[63] != "TargetHealMP" || skillCSVColumns[64] != "ActionOverlap" || skillCSVColumns[76] != "Dtt" || skillCSVColumns[81] != "Trap" || skillCSVColumns[82] != "Efr1" || skillCSVColumns[86] != "Pw3" || skillCSVColumns[88] != "Tel3" || skillCSVColumns[89] != "AIAttackChance" || skillCSVColumns[90] != "StatusParams" || len(skillCSVColumns) != 91 {
 		t.Fatalf("test premise: columns %q..%q, %d in all", skillCSVColumns[47], skillCSVColumns[len(skillCSVColumns)-1], len(skillCSVColumns))
 	}
 	// Round 622's TargetHealHP/MP after them: absent, no heal on a target.
@@ -660,5 +660,23 @@ func TestSkillCSVAIAttackChanceIsAStrictSuffix(t *testing.T) {
 		if sk, err = parseSkillRow(withChance); err != nil || sk.AIAttackChance != want {
 			t.Fatalf("column 89 = %d: AIAttackChance %d (err %v)", want, sk.AIAttackChance, err)
 		}
+	}
+}
+
+// Round 659: StatusParams is a strict suffix -- an export predating it loads
+// "", no status. SYNTHETIC values.
+func TestSkillCSVStatusParamsIsAStrictSuffix(t *testing.T) {
+	row := make([]string, 90) // through AIAttackChance
+	for i := range row {
+		row[i] = "0"
+	}
+	row[2] = "MSKILL_TEST_ATTACK"
+	sk, err := parseSkillRow(row)
+	if err != nil || sk.StatusParams != "" {
+		t.Fatalf("an export predating the column: StatusParams %q (err %v), want empty", sk.StatusParams, err)
+	}
+	with := append(append([]string{}, row...), "ps:34,100,16")
+	if sk, err = parseSkillRow(with); err != nil || sk.StatusParams != "ps:34,100,16" {
+		t.Fatalf("column 90: StatusParams %q (err %v)", sk.StatusParams, err)
 	}
 }

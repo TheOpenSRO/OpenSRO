@@ -1295,6 +1295,12 @@ func main() {
 		logger.Info("player dead state off (-player-dead-state / SRREVAMP_PLAYER_DEAD_STATE)")
 	}
 	monsters := combat.NewHub()
+	// Abnormal states (round 659, session/status.go): every monster's and
+	// character's states expire and deal their damage ticks here, started
+	// once the monster hub exists: a tick's caster is looked up in it.
+	go session.RunStatusEffects(ctx, logger, session.RegenDeps{
+		Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
+	}, monsters)
 	// Every monster hatches facing Nest_Hatch's heading, rand() / 32767.0 *
 	// 2pi (0x5609ee..0x560a15, ai.SpawnHeading): the roster's species are all
 	// the TypeID shape that takes it, and none is rarity 3, whose heading is

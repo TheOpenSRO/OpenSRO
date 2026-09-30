@@ -694,6 +694,8 @@ type SkillRow struct {
 	AttMin, AttMax int
 	Chance         int
 	ChanceKnown    bool
+	// Status is the row's status runs (refdata.Skill.StatusParams, round 659).
+	Status string
 }
 
 // SkillLookup resolves a skilldata id; ok is false for an id the table does
@@ -713,6 +715,7 @@ func RefdataLookup(get func(id int64) (*refdata.Skill, error)) SkillLookup {
 			ReuseMs: sk.ReuseDelayMs, Range: sk.Range,
 			AttMin: sk.DamageMin, AttMax: sk.DamageMax,
 			Chance: sk.AIAttackChance, ChanceKnown: sk.AIAttackChance >= 0,
+			Status: sk.StatusParams,
 		}, true
 	}
 }
@@ -754,7 +757,7 @@ func (r Row) Attacks(lookup SkillLookup) Attacks {
 		if !sr.ChanceKnown {
 			a.WholeList = false
 		}
-		ms := combat.MonsterSkill{ID: id, ReuseMs: sr.ReuseMs, Range: sr.Range, AttMin: sr.AttMin, AttMax: sr.AttMax, Chance: sr.Chance}
+		ms := combat.MonsterSkill{ID: id, ReuseMs: sr.ReuseMs, Range: sr.Range, AttMin: sr.AttMin, AttMax: sr.AttMax, Chance: sr.Chance, Status: sr.Status}
 		if k == 0 {
 			a.Primary, a.HasPrimary = ms, true
 		}
