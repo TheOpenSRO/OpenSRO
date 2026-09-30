@@ -127,11 +127,10 @@ func DecodeEquipRequest(data []byte) (*EquipRequest, error) {
 // and (since round 652) which bag slot the item was dropped on.
 //
 // InventorySlot is the retail client's destination (FUN_007950b0 sends
-// `bag slot + 13` for a worn item dropped on the bag, READ). It is an
-// optional trailing int32: a request without it, or with -1, leaves the
-// placement to the server's first free slot, which is also what retail's
-// own server does with it (CGObjPC::DetachEquipItem, see
-// equipment/placement.go).
+// `bag slot + 13` for a worn item dropped on the bag, READ), an optional
+// trailing int32. The server parses it and, as retail's
+// CGObjPC::DetachEquipItem does, does not use it: the item goes to the first
+// free slot (see equipment/placement.go).
 type UnequipRequest struct {
 	CharacterName string
 	Slot          equipment.Slot
@@ -199,7 +198,7 @@ func EquipmentHandlerWithRules(chars character.Store, store equipment.Store, inv
 		case OpEquip:
 			return handleEquip(ctx, sess, p, chars, store, inv, items, trades)
 		case OpUnequip:
-			return handleUnequip(ctx, sess, p, chars, store, inv, items, trades)
+			return handleUnequip(ctx, sess, p, chars, store, items, trades)
 		default:
 			return nil
 		}
@@ -368,7 +367,7 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 	return sendWornList(ctx, sess, store, items, characterID)
 }
 
-func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup, trades *trade.Hub) error {
+func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, items ItemLookup, trades *trade.Hub) error {
 	req, err := DecodeUnequipRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: "malformed request"}).Encode()})
@@ -382,17 +381,12 @@ func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: tradeEquipLockedReason}).Encode()})
 	}
 
-	// Into the bag slot the item was dropped on (round 652): an empty one
-	// takes it, an occupied one swaps when its item may be worn there, and
-	// anything else goes to the first free slot (equipment.UnequipInto).
-	maySwap := func(bagSlot int) bool {
-		return equipRefusal(ctx, chars, store, inv, items, characterID, req.Slot, bagSlot) == ""
-	}
-	target := -1
-	if req.Targeted {
-		target = req.InventorySlot
-	}
-	if _, err := equipment.UnequipInto(ctx, store, inv, characterID, req.Slot, target, maySwap); err != nil {
+	// The first free bag slot, whatever slot the client named: retail's
+	// CGObjPC::DetachEquipItem overwrites the request's destination with
+	// CGStorage::FindFirstEmptySlot(13) (0x5258c6, READ). req.InventorySlot
+	// is parsed and not used (round 652, the user's choice: the original's
+	// rule).
+	if err := store.Unequip(ctx, characterID, req.Slot); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: equipErrorMessage(err)}).Encode()})
 	}
 	return sendWornList(ctx, sess, store, items, characterID)

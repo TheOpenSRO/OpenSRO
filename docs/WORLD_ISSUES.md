@@ -7094,7 +7094,7 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
-## Six-hundred-and-fifty-second round: every icon is picked up with one click and put down with the next, and a worn item lands in the bag slot you click
+## Six-hundred-and-fifty-second round: every icon is picked up with one click and put down with the next, and a worn item goes into the bag as the original puts it
 
 The user (2026-09-30): "When I try drag an item from my person into the inventory to a slot I want
 it moves it to the next available slot instead. Please let me choose which slot to place the item
@@ -7149,12 +7149,13 @@ gate. The full reading is `docs/protocol/held_icon.md`; the names are filed in
   `CGStorage::SwapItem(bag, worn)`, so the displaced item takes the bag slot the new one left. Ours
   put it in the first free slot.
 
-**Built (OURS, the user asked for it, labelled so in `equipment/placement.go`):** the client sends
-the clicked slot (a trailing int32 on OpUnequip; a request without it is the old one) and the server
-honours it: an empty slot takes the item; an occupied slot **swaps** when its item may be worn in the
-slot being emptied (the wearing rules decide; AttachEquipItem's rule the other way round); anything
-else goes to the first free slot, retail's own placement — nothing is refused that retail allowed.
-**Equip swaps** as AttachEquipItem does (READ), and no longer needs a free bag slot to do it.
+**Built: retail's rule, READ, by the user's choice.** The first build of this round honoured the
+clicked slot (OURS, commit 9b40d12); shown the reading above, the user chose "Match original". So
+the client sends the clicked slot as retail's client does (a trailing int32 on OpUnequip; a request
+without it is the old one), and the server parses it and **does not use it**: the item goes to the
+first free bag slot, as `DetachEquipItem` does, whether the clicked slot is empty or holds an
+item (no swap). **Equip swaps** as AttachEquipItem does (READ), and no longer needs a free bag slot
+to do it.
 
 ### 3. The client: one controller for every icon window
 
@@ -7163,7 +7164,7 @@ replaces round 633's hand-rolled bag drag and the skill window's drag:
 
 | Window | Left click (release) | Put down on it | Right click |
 |---|---|---|---|
-| bag | picks up | bag → move/merge/swap (OP_MOVE); worn → unequip into that slot; store item → buy dialog; warehouse item → withdraw dialog | use (unchanged) |
+| bag | picks up | bag → move/merge/swap (OP_MOVE); worn → unequip (the clicked slot sent, the first free slot used, as retail); store item → buy dialog; warehouse item → withdraw dialog | use (unchanged) |
 | paper doll | picks up | bag item → equip (a swap) | — |
 | NPC store | picks up | bag item → sell dialog | — |
 | warehouse | picks up | bag item → deposit dialog | — |
@@ -7179,19 +7180,27 @@ ours and is gone.
 
 **Server** (`internal/session/unequipslot652_test.go`, through the real handler over TCP; the
 packet is written by hand so the file compiles against the base):
-`TestUnequipLandsInTheClickedSlot`, `TestUnequipOntoAWearableItemSwaps`,
+`TestUnequipIgnoresTheClickedSlotAsRetailDoes` (the clicked slot 10 is parsed, and the suit goes
+to the first free slot 1), `TestUnequipOntoAWearableItemGoesToTheFirstFreeSlot` (no swap),
 `TestUnequipOntoAnUnwearableItemGoesToTheFirstFreeSlot`,
 `TestUnequipWithoutATargetGoesToTheFirstFreeSlot`, `TestEquipOverAWornItemSwapsIntoTheSourceSlot`.
 
-**NEGATIVE against the base (e5bf2ba), MEASURED** — the item goes to the first free slot:
+The unequip rule is the base's own (first free), so those pass on e5bf2ba. They are negatives
+against this round's first build, 9b40d12, which honoured the clicked slot (MEASURED):
 
 ```
---- FAIL: TestUnequipLandsInTheClickedSlot (0.10s)
-    unequipslot652_test.go:160: unequipped item is not in the clicked slot 10: bag map[0:4 1:4842] (the first free slot is 1)
-    unequipslot652_test.go:163: the first free slot (1) was used instead of the clicked one: bag map[0:4 1:4842]
---- FAIL: TestUnequipOntoAWearableItemSwaps (0.10s)
-    unequipslot652_test.go:198: the worn suit did not take the clicked slot 1: bag map[0:4 1:4843 2:4842]
-    unequipslot652_test.go:201: the suit from the clicked slot is not worn now: worn -1
+--- FAIL: TestUnequipIgnoresTheClickedSlotAsRetailDoes (0.10s)
+    unequipslot652_test.go:167: the unequipped suit is not in the first free slot 1: bag map[0:4 10:4842]
+    unequipslot652_test.go:170: the clicked slot 10 was used; retail's server ignores it: bag map[0:4 10:4842]
+--- FAIL: TestUnequipOntoAWearableItemGoesToTheFirstFreeSlot (0.10s)
+    unequipslot652_test.go:194: want the second suit kept in 1 and the worn one in the first free slot 2: bag map[0:4 1:4842]
+    unequipslot652_test.go:197: nothing should be worn after an unequip (no swap): worn 4843
+```
+
+The equip swap is the **NEGATIVE against the base (e5bf2ba), MEASURED** — the displaced item went
+to the first free slot:
+
+```
 --- FAIL: TestEquipOverAWornItemSwapsIntoTheSourceSlot (0.10s)
     unequipslot652_test.go:257: the displaced suit is not in the source slot 1: bag map[0:4842]
     unequipslot652_test.go:260: the displaced suit went to the first free slot 0: bag map[0:4842]
@@ -7200,7 +7209,8 @@ packet is written by hand so the file compiles against the base):
 **Client** (`client/scripts/ui/hud/held_icon_test.gd`): HeldIcon's state machine (pick up, put
 down on a slot, put down on nothing, the right-click cancel, tabs/buttons passing through, what it
 swallows), the encoder's trailing slot, and the bag + paper doll under real viewport input
-(`push_input`): a click on the worn boots then on bag slot 10 sends OP_UNEQUIP naming 10; a bag item
+(`push_input`): a click on the worn boots then on bag slot 10 sends OP_UNEQUIP naming 10 (as
+retail's client does); a bag item
 carried to page 2 through its tab lands in slot 34; a bag item clicked onto the doll sends OP_EQUIP;
 a right click lets go and the next click sends nothing. The tests that expected a left click to fire
 a quick slot now right-click (`hud_underbar_test`, `hud_build_once_test`,
@@ -7225,10 +7235,10 @@ character registered (GM `/level 40`, `/sp`, `/gold`, Bicheon raised and Smash l
 Login → Character Select route under Xvfb with the smith's store open (`SRREVAMP_QA_SHOP`).
 xdotool clicks the coordinates the client itself prints (`SRREVAMP_QA_SLOTS`, F11):
 
-| Step (run r3) | What the log measured |
+| Step (run r5, the retail rule) | What the log measured |
 |---|---|
-| click the worn boots (item 3645), then bag slot 10 of an EMPTY bag (first free: 0) | `HudPanels: unequip worn slot 5 into bag slot 10`; the next print `QA SLOT bag:10 ... item 3645` |
-| click bag 10, then a cell of the smith's store; the dialog reads "Sell Cotton Shoes? Get: 1 gold"; click Sell | bag 10 empty; gold 1,001,000 → 1,001,001 |
+| click the worn boots (item 3645), then bag slot 10 of an EMPTY bag | the client sends it (`HudPanels: unequip worn slot 5 into bag slot 10`); the boots land in **bag slot 0**, the first free (`QA SLOT bag:0 ... item 3645`), and slot 10 stays empty -- retail's rule. (Run r3, on the first build, put them in 10.) |
+| click bag 0, then a cell of the smith's store; the dialog reads "Sell Cotton Shoes? Get: 1 gold"; click Sell | bag 0 empty; gold 1,001,000 → 1,001,001 |
 | click a store item (221, Strong Iron Bow), then bag slot 12; click Buy | the bow in bag slot **0**, the server's choice (retail's buy names no slot either); gold 1,001,001 → 984,001 |
 | Shift+F11 opens the warehouse over the store; click bag 0, then the warehouse; click Deposit | `QA SLOT storage:0 ... item 221` |
 | S; click Smash (skill 3), then quick slot 1 | `World3D: quickslot 1 <- skill 3 (SKILL_CH_SWORD_SMASH_A_01), dropped` |
@@ -7237,14 +7247,15 @@ xdotool clicks the coordinates the client itself prints (`SRREVAMP_QA_SLOTS`, F1
 **Run r2 found a bug** the unit tests had not: the warehouse opens over the store, and a bag item
 put down on the warehouse opened the store's SELL dialog — the drop took the first window whose
 rect held the point. Drops and the tab/button pass-through now go to the frontmost window
-(`_topmost_window_at`, tested in `held_icon_test.gd`); r3 above is after the fix. Run r1 had two
+(`_topmost_window_at`, tested in `held_icon_test.gd`); r3 and r5 are after the fix. Run r1 had two
 harness mistakes (Smash needs Bicheon above level 1; a parse of the bought item's slot).
 
 ### 6. Checks
 
-- `client/tools/remote_godot.sh tests`: **168 suites, 0 failing** (after the frontmost-window
-  fix; `held_icon_test.gd` alone: 51 ok lines, ALL PASS).
-- `go build ./... && go test -count=1 -p 1 ./...`, local Postgres: **60 packages ok, exit 0**.
+- `client/tools/remote_godot.sh tests`: **168 suites, 0 failing** (after the frontmost-window fix,
+  and again after the switch to retail's unequip rule).
+- `go build ./... && go test -count=1 -p 1 ./...`, local Postgres: **60 packages ok, exit 0**
+  (again after the switch: no failing package).
   A first run on the box (Postgres reached through an ssh tunnel while the local disk was at
   66 MB) failed `TestSkillFullFlow`, `TestSkillCooldownGroupIsShared` and
   `TestCounterTestsHoldWithTheStrikePushOn` on "want 'skill on cooldown'"; the base e5bf2ba fails

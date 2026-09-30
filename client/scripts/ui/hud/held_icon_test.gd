@@ -12,7 +12,8 @@ extends SceneTree
 ##   and what it swallows.
 ## - The bag and the paper doll under REAL viewport input (push_input): a
 ##   click on the worn boots then a click on bag slot 10 sends OP_UNEQUIP
-##   naming slot 10; a bag item carried to page 2 through its tab; a bag item
+##   naming slot 10 (retail's client does; the server, like retail's, still
+##   uses the first free slot); a bag item carried to page 2 through its tab; a bag item
 ##   put on the doll. The packets are read back off NetClient's peer.
 ## - The encoder: the unequip's trailing target slot.
 ##
@@ -348,7 +349,7 @@ func _panel_checks() -> void:
 	if unequips.size() == 1:
 		var f := _unequip_fields(unequips[0][1])
 		_check(f[0] == 5 and f[1] == 10,
-			"... taking off worn slot 5 INTO BAG SLOT 10, the one clicked (got worn %d, target %d)" % [f[0], f[1]])
+			"... taking off worn slot 5 and naming bag slot 10, the one clicked, as retail's client does (got worn %d, target %d)" % [f[0], f[1]])
 	_check(held != null and not bool(held.call("is_holding")), "... and the cursor is empty again")
 
 	# A bag item carried to page 2: click it, click the Page 2 tab (it passes

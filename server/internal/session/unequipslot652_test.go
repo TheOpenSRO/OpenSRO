@@ -19,11 +19,13 @@ import (
 // Round 652: "When I try drag an item from my person into the inventory to a
 // slot I want it moves it to the next available slot instead."
 //
-// The unequip packet here is written by hand -- name, worn slot, then the
-// clicked bag slot as a trailing int32, which is what the client sends since
-// round 652 -- so this file compiles against the base too, where the trailing
-// word is ignored and the item goes to the first free slot. That is the
-// negative: on the base, "lands in the clicked slot" FAILs.
+// The user then chose the original's rule over a chosen slot. READ: the
+// retail client names the clicked slot (FUN_007950b0, `bag slot + 13`), and
+// retail's CGObjPC::DetachEquipItem overwrites it with the first empty bag
+// slot (0x5258c6). So the unequip packet here carries the clicked slot -- by
+// hand, as the client sends it -- and the server must IGNORE it. Equipping
+// over a worn item swaps into the source slot (AttachEquipItem's SwapItem);
+// that test is the negative against the base, which used the first free slot.
 
 func unequipTo(name string, slot equipment.Slot, bagSlot int) []byte {
 	out := encodeStrings(name)
@@ -144,8 +146,13 @@ func (r *unequipRig) wear(itemID int64, slot equipment.Slot) {
 }
 
 // The user's case: the worn suit is dropped on bag slot 10 while slot 0
-// holds a potion. It must land in 10, not in the first free slot (1).
-func TestUnequipLandsInTheClickedSlot(t *testing.T) {
+// holds a potion. Retail's server ignores the 10 and uses the first free
+// slot, 1 (DetachEquipItem, 0x5258c6).
+func TestUnequipIgnoresTheClickedSlotAsRetailDoes(t *testing.T) {
+	req, err := DecodeUnequipRequest(unequipTo("Aria", equipment.SlotMail, 10))
+	if err != nil || !req.Targeted || req.InventorySlot != 10 {
+		t.Fatalf("the clicked slot is still parsed (the packet stays compatible): %+v, %v", req, err)
+	}
 	r, done := newUnequipRig(t)
 	defer done()
 	r.wear(4842, equipment.SlotMail)
@@ -153,14 +160,14 @@ func TestUnequipLandsInTheClickedSlot(t *testing.T) {
 		t.Fatalf("AddItem: %v", err)
 	}
 	if got := r.result(r.send(OpUnequip, unequipTo("Aria", equipment.SlotMail, 10))); got != "" {
-		t.Fatalf("unequip into slot 10 refused: %q", got)
+		t.Fatalf("unequip refused: %q", got)
 	}
 	bag := r.bag()
-	if bag[10] != 4842 {
-		t.Errorf("unequipped item is not in the clicked slot 10: bag %v (the first free slot is 1)", bag)
+	if bag[1] != 4842 {
+		t.Errorf("the unequipped suit is not in the first free slot 1: bag %v", bag)
 	}
-	if _, stray := bag[1]; stray {
-		t.Errorf("the first free slot (1) was used instead of the clicked one: bag %v", bag)
+	if _, used := bag[10]; used {
+		t.Errorf("the clicked slot 10 was used; retail's server ignores it: bag %v", bag)
 	}
 	if r.worn(equipment.SlotMail) != -1 {
 		t.Errorf("the suit is still worn")
@@ -168,37 +175,26 @@ func TestUnequipLandsInTheClickedSlot(t *testing.T) {
 }
 
 // Dropped on a bag slot holding something that goes in the same worn slot:
-// the two change places (AttachEquipItem's SwapItem, the other direction).
-func TestUnequipOntoAWearableItemSwaps(t *testing.T) {
+// no swap -- the worn item goes to the first free slot and the bag item stays.
+func TestUnequipOntoAWearableItemGoesToTheFirstFreeSlot(t *testing.T) {
 	r, done := newUnequipRig(t)
 	defer done()
 	r.wear(4842, equipment.SlotMail)
-	for i := 0; i < 4; i++ { // slots 0..3 potions, the second suit in 4
-		if err := r.inv.AddItem(r.ctx, r.id, 4, 1); err != nil {
-			t.Fatalf("AddItem: %v", err)
-		}
-	}
-	if err := r.inv.AddItem(r.ctx, r.id, 4843, 1); err != nil {
+	if err := r.inv.AddItem(r.ctx, r.id, 4, 1); err != nil { // slot 0, a potion
 		t.Fatalf("AddItem: %v", err)
 	}
-	// Potions stack: slot 0 holds all four, so the suit is at slot 1.
-	suitAt := -1
-	for idx, id := range r.bag() {
-		if id == 4843 {
-			suitAt = idx
-		}
+	if err := r.inv.AddItem(r.ctx, r.id, 4843, 1); err != nil { // slot 1, the second suit
+		t.Fatalf("AddItem: %v", err)
 	}
-	if suitAt < 0 {
-		t.Fatalf("the second suit is not in the bag: %v", r.bag())
-	}
-	if got := r.result(r.send(OpUnequip, unequipTo("Aria", equipment.SlotMail, suitAt))); got != "" {
+	if got := r.result(r.send(OpUnequip, unequipTo("Aria", equipment.SlotMail, 1))); got != "" {
 		t.Fatalf("unequip onto the second suit refused: %q", got)
 	}
-	if bag := r.bag(); bag[suitAt] != 4842 {
-		t.Errorf("the worn suit did not take the clicked slot %d: bag %v", suitAt, bag)
+	bag := r.bag()
+	if bag[1] != 4843 || bag[2] != 4842 {
+		t.Errorf("want the second suit kept in 1 and the worn one in the first free slot 2: bag %v", bag)
 	}
-	if w := r.worn(equipment.SlotMail); w != 4843 {
-		t.Errorf("the suit from the clicked slot is not worn now: worn %d", w)
+	if w := r.worn(equipment.SlotMail); w != -1 {
+		t.Errorf("nothing should be worn after an unequip (no swap): worn %d", w)
 	}
 }
 

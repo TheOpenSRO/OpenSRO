@@ -119,6 +119,13 @@ Neither turns a page, and the tab (CIFSelectableArea) answers only a press
 is turned by the click the held icon lets through. (Round 633's hover-turn,
 OURS, is gone.)
 
+**Taking an item off the doll: READ in round 652** (`held_icon.md`). The
+client names the clicked bag slot (`FUN_007950b0`, `bag slot + 13`), and the
+server's `CGObjPC::DetachEquipItem` puts the item in the first free bag slot
+anyway (`0x5258c6`). Ours does both, by the user's choice of the original's
+rule. Putting a bag item on the doll swaps: what was worn takes the bag slot
+it came from (`AttachEquipItem` -> `SwapItem`).
+
 **Held slots are never stranded** (OURS, round 633's review, tightened by the
 rounds 633-635 integration review). An item held past a lowered size stays
 REACHABLE -- listed (the list's size is the highest held slot + 1), moved or

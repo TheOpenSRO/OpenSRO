@@ -1320,10 +1320,9 @@ What round 633 read and built is in `docs/protocol/inventory_window.md`.
 
 What round 652 read and built is in `docs/protocol/held_icon.md`.
 
-- **Retail's server puts an unequipped item in the first free slot** (`DetachEquipItem`
-  `0x5258c6`). Ours honours the clicked slot because the user asked for it (OURS, labelled in
-  `equipment/placement.go`). If a retail-exact mode is ever wanted, it is `UnequipInto` with a
-  negative target.
+- ~~Honour the clicked slot on an unequip~~ -- **decided: the original's rule.** Retail's server
+  puts an unequipped item in the first free slot (`DetachEquipItem` `0x5258c6`); the user chose
+  "Match original", so ours does too. The client still sends the clicked slot, as retail's does.
 - **The stack split.** Shift+click on a stack opens retail's split box (`0x6b3fa0`); its OK moves
   the amount into the first empty slot (`0x6b62d0`). Not built: our move op has no quantity.
 - **Ctrl+click quick-sell / quick-store** (`0x680fa0`'s Ctrl branch). Not built; a click now picks

@@ -114,9 +114,10 @@ moving anything.
 
 - In the bag: click an item, then another slot (to swap or stack). To reach
   another page, click the page's tab while holding the item, then the slot.
-- Worn gear: click it on the character, then the bag slot it should go into.
-  A bag item clicked onto the character is put on (swapping with what was
-  worn).
+- Worn gear: click it on the character, then the bag. As in the original, it
+  goes into the first free slot of the bag, whichever slot you click. A bag
+  item clicked onto the character is put on, and what was worn takes the bag
+  slot it came from.
 - At a shop: click a bag item, then the shop window, to sell it; click a shop
   item, then your bag, to buy it.
 - At the warehouse: click a bag item, then the warehouse, to store it; click a

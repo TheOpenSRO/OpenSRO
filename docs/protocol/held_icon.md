@@ -119,7 +119,7 @@ slots are sent as `slot + 13` (the 13 worn slots come first).
 |---|---|---|---|
 | bag → bag | 0 (0x27 / 0x28 in two stack cases not read) | bag + 13 | bag + 13; quantity the whole stack |
 | bag → worn | 0 | bag + 13 | worn slot |
-| **worn → bag** | 0 | worn slot | **bag + 13: the clicked slot** |
+| **worn → bag** | 0 | worn slot | **bag + 13: the clicked slot** (the server ignores it, below) |
 | worn → worn | 0 | worn | worn |
 | bag → ground | 7 | bag + 13 | — |
 | worn → ground | 7 | worn | — (the world refuses it first, above) |
@@ -148,12 +148,12 @@ slots are sent as `slot + 13` (the 13 worn slots come first).
   therefore puts an unequipped item in the first free slot whatever was
   clicked.
 
-srrevamp (OURS, at the user's request, 2026-09-30: "please let me choose which
-slot to place the item in the inventory"): the clicked slot is honoured
-(`equipment.UnequipInto`). An empty slot takes the item; an occupied one
-swaps when its item may be worn in the emptied slot (AttachEquipItem's rule,
-the other way round); anything else goes to the first free slot, retail's own
-placement. Equip swaps as AttachEquipItem does.
+srrevamp does the same (READ, by the user's choice, 2026-09-30: "Match
+original"): the client sends the clicked slot as retail's does (a trailing
+int32 on OpUnequip), and the server parses it and puts the item in the first
+free bag slot, as DetachEquipItem does -- no swap onto an occupied slot. Equip
+swaps as AttachEquipItem does. (Round 652's first build, 9b40d12, honoured the
+clicked slot as OURS; that is gone.)
 
 ## Not read
 

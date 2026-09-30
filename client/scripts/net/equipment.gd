@@ -70,7 +70,8 @@ static func encode_equip(character_name: String, slot: int, inventory_slot: int)
 ## Encodes an OpUnequip request. `to_bag_slot` is the bag slot the worn
 ## item was put down on (round 652), sent as a trailing int32 -- the retail
 ## client names it too (FUN_007950b0, 0x47 -> 0x46: `bag slot + 13`). -1
-## sends none, and the server picks the first free slot.
+## sends none. Either way the server puts the item in the first free slot,
+## as retail's CGObjPC::DetachEquipItem does (0x5258c6, READ).
 static func encode_unequip(character_name: String, slot: int, to_bag_slot: int = -1) -> PackedByteArray:
 	var name_bytes := character_name.to_utf8_buffer()
 	var out := PackedByteArray()

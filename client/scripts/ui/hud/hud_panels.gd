@@ -3578,12 +3578,13 @@ func _on_held_dropped(what: Dictionary, at: Vector2) -> void:
 		"quickslot":
 			held_dropped_outside.emit(what, at)
 
-## A worn item put down. On a bag cell: taken off INTO THAT CELL (the
-## clicked slot goes to the server; round 652, the user's report -- see
-## equipment/placement.go for retail's server, which does not). Elsewhere
-## over the bag window: taken off, the server choosing the slot (OURS, the
-## playtest 2026-09-20 fix: a click a few pixels into a gutter still takes it
-## off). Back on the doll, or outside the window: nothing.
+## A worn item put down. On a bag cell: taken off, the clicked slot sent as
+## retail's client sends it (FUN_007950b0, `bag slot + 13`); the server puts
+## the item in the first free slot anyway, as retail's DetachEquipItem does
+## (0x5258c6, READ -- round 652, the user chose the original's rule; see
+## equipment/placement.go). Elsewhere over the bag window: taken off with no
+## slot named (OURS, the playtest 2026-09-20 fix: a click a few pixels into a
+## gutter still takes it off). Back on the doll, or outside the window: nothing.
 func _drop_worn_item(worn_slot: int, at: Vector2) -> void:
 	var who := NetClient.current_character_name
 	if who == "" or not NetClient.is_connected_to_server():
