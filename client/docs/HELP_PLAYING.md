@@ -103,7 +103,8 @@ the two clicks. Right-click a skill in the window to cast it. The number keys
 **1..9 and 0** cast the current page's ten quickslots, or **right-click** a
 slot; a left click picks the slot's icon up (click another slot to swap the
 two, or anywhere off the bar to take it off). The arrows beside the slots flip
-between four pages. A skill needs a **target**: click a monster first, then
+between four pages -- also while an icon is on the cursor, to put it on another
+page. A skill needs a **target**: click a monster first, then
 cast.
 
 ## Moving items

@@ -65,6 +65,10 @@ var _ghost: TextureRect = null
 var _source: CanvasItem = null
 var _source_modulate := Color.WHITE
 
+## The control the held icon came from (dimmed while held), or null.
+func source() -> CanvasItem:
+	return _source if _source != null and is_instance_valid(_source) else null
+
 func is_holding() -> bool:
 	return not payload.is_empty()
 

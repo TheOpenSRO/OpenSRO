@@ -63,7 +63,7 @@ held window first, through its vslot 18 (`+0x48`, CIFWnd's `0x6523d0`):
 |---|---|
 | `0x200` mouse move | passes on (returns 0) |
 | `0x100` / `0x101` / `0x104` / `0x105` keys | pass on |
-| `0x201` left press | swallowed, unless the window under the cursor is a `CIFButton` (`0xee9828`) or a `CIFSelectableArea` (`0xee96c0`, the bag's page tabs) |
+| `0x201` left press | swallowed, unless the window under the cursor is a `CIFButton` (`0xee9828`, any button: the quick slot bar's page arrows too) or a `CIFSelectableArea` (`0xee96c0`, the bag's page tabs) |
 | `0x202` left release | over a capturing CIFButton or a CIFSelectableArea: passes on. Otherwise the held window is offered to the window under the cursor and then to each of its parents (vslot 28, `+0x70`, with the depth) until one returns true; then **let go whatever the answer** (`0xb9db10(0)`) |
 | `0x204` right press | let go: **the cancel** |
 | anything else | swallowed (double clicks, the right release, the wheel) |
@@ -156,6 +156,16 @@ swaps as AttachEquipItem does. (Round 652's first build, 9b40d12, honoured the
 clicked slot as OURS; that is gone.)
 
 ## Not read
+
+- **What a cancelled quick slot does.** `CIFUnderBar::vslot_026` clears the
+  let-go slot when `+0x3b1` is set, and `vslot_028` sets it for every drop but
+  a slot-to-slot swap; so a quick slot let go with the right button (no drop)
+  is probably removed in retail too. The flag's meaning is INFERRED; ours
+  keeps a cancelled quick slot on the bar (OPEN).
+- **When retail lets go on its own.** Ours lets go of the held icon on a
+  death, a zone change or teleport, when the window it came from closes, and
+  when the bag or worn slot it came from changes (OURS, so no stale drop can
+  act on a slot that changed); what retail does in these cases is not read.
 
 - What creates a `CIFDraggedStatic`, and what the slot left behind looks like
   while its icon is on the cursor (ours dims it).

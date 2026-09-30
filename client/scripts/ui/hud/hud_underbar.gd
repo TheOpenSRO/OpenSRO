@@ -815,6 +815,25 @@ func slot_has_item(slot_index: int) -> bool:
 func slot_node(slot_index: int) -> Control:
 	return _slot_nodes.get(slot_index)
 
+## Whether an enabled, visible button of the bar (the page arrows, the menu
+## button, the menu's lines) is under a global point. HudPanels lets a click
+## there through while an icon is held (retail's held-icon filter 0x6523d0
+## lets any CIFButton take its click, READ), so a quick slot or a skill can be
+## carried to another page of the bar.
+func button_at(at: Vector2) -> bool:
+	return _button_under(self, at)
+
+static func _button_under(node: Node, at: Vector2) -> bool:
+	for child in node.get_children():
+		if child is CanvasItem and not (child as CanvasItem).visible:
+			continue
+		if child is BaseButton and not (child as BaseButton).disabled \
+				and (child as Control).get_global_rect().has_point(at):
+			return true
+		if _button_under(child, at):
+			return true
+	return false
+
 ## A quick slot's icon texture, or null.
 func slot_icon(slot_index: int) -> Texture2D:
 	var rect := slot_icon_rect(slot_index)
@@ -834,3 +853,8 @@ func qa_print_slots() -> void:
 		if node.is_visible_in_tree():
 			var p := node.get_global_rect().get_center().round()
 			print("QA SLOT quick:%d at %d,%d filled %s" % [int(i), int(p.x), int(p.y), str(slot_has_item(int(i)))])
+	for pair in [["up", ID_PAGE_UP], ["down", ID_PAGE_DOWN]]:
+		var b := _nodes.get(pair[1]) as Control
+		if b != null and b.is_visible_in_tree():
+			var c := b.get_global_rect().get_center().round()
+			print("QA SLOT barpage:%s at %d,%d page %d" % [pair[0], int(c.x), int(c.y), current_page()])

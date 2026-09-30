@@ -491,9 +491,10 @@ func _test_hud_revive_prompt() -> void:
 	icon.set_meta("inv_slot", 3)
 	icon.set_meta("inv_item_id", 4)
 	icon.set_meta("inv_qty", 1)
+	# The use is on the right RELEASE (round 652: CIFSlotWithHelp's vslot 33).
 	var right := InputEventMouseButton.new()
 	right.button_index = MOUSE_BUTTON_RIGHT
-	right.pressed = true
+	right.pressed = false
 	panels.set("player_dead", true)
 	panels.call("_on_inventory_cell_input", right, icon)
 	_check(notices.size() == 1 and notices[0] == "You are dead. Revive first.", "a right-click on a bag item while dead says so in chat (got %s)" % str(notices))

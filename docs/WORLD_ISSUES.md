@@ -7164,12 +7164,12 @@ replaces round 633's hand-rolled bag drag and the skill window's drag:
 
 | Window | Left click (release) | Put down on it | Right click |
 |---|---|---|---|
-| bag | picks up | bag → move/merge/swap (OP_MOVE); worn → unequip (the clicked slot sent, the first free slot used, as retail); store item → buy dialog; warehouse item → withdraw dialog | use (unchanged) |
+| bag | picks up | bag → move/merge/swap (OP_MOVE); worn → unequip (the clicked slot sent, the first free slot used, as retail); store item → buy dialog; warehouse item → withdraw dialog | use (on the release since the review follow-up, READ) |
 | paper doll | picks up | bag item → equip (a swap) | — |
 | NPC store | picks up | bag item → sell dialog | — |
 | warehouse | picks up | bag item → deposit dialog | — |
 | skill window | picks up a learned skill | — | **casts it** (READ) |
-| quick slot bar | **picks up** (was: cast) | skill/bag item → goes on; quick slot → the two change places | **uses it** (READ; was the left click) |
+| quick slot bar | **picks up** (was: cast) | skill/bag item → goes on; quick slot → the two change places; its page arrows and menu button take their click | **uses it** (READ; was the left click) |
 | the world | — | worn item → the `0x186d` line; quick slot → comes off the bar | — |
 
 A page tab or any button takes its click while something is held (READ). The source slot is dimmed
@@ -7216,7 +7216,8 @@ a right click lets go and the next click sends nothing. The tests that expected 
 a quick slot now right-click (`hud_underbar_test`, `hud_build_once_test`,
 `npc_service_reader_test`), and a left click on a filled quick slot asks to pick it up.
 
-**NEGATIVE against the base, MEASURED:**
+**NEGATIVE against the base, MEASURED** (re-run with the final test file; the first quote here had
+6 lines, the run gives 10 and a script error):
 
 ```
 FAIL the held-icon controller exists (res://scripts/ui/hud/held_icon.gd)
@@ -7225,7 +7226,13 @@ FAIL one click on the worn boots puts them on the cursor
 FAIL the second click, on bag slot 10, sends one OP_UNEQUIP (got 0)
 FAIL ... and the cursor is empty again
 FAIL a click on bag slot 3 picks it up
-6 FAILURES
+FAIL a click on the Page 2 tab turns the page and keeps holding it
+FAIL a click on page 2's third cell sends one OP_MOVE (got 0)
+FAIL a bag item clicked onto the doll's mail slot sends one OP_EQUIP (got 0)
+FAIL a right click lets the held item go
+SCRIPT ERROR: Invalid call. Nonexistent function '_topmost_window_at (via call)' in base 'Control (HudPanels)'.
+          at: _panel_checks (res://scripts/ui/hud/held_icon_test.gd:411)
+10 FAILURES
 ```
 
 ### 5. Live, real X clicks (MEASURED)
@@ -7262,10 +7269,49 @@ harness mistakes (Smash needs Bicheon above level 1; a parse of the bought item'
   the same three the same way through the tunnel (the round trip outlasts the cooldown), and they
   pass locally.
 
-### 7. Open (docs/TODO.md, "The icon on the cursor")
+### 7. The review's follow-up
 
-The split box, Ctrl+click, the ground drop, warehouse slot placement, a worn item on the bar, a
-window closed under the held icon, and how retail draws the slot left behind.
+- **The quick slot bar's buttons take a click while an icon is held** (MEDIUM, found live by the
+  review: with quick slot 1 held, a click on the bar's page arrow was taken as the drop and
+  REMOVED the slot, and the page did not turn). The pass-through only looked at HudPanels' own
+  windows. Retail lets any CIFButton take the click (`0x6523d0`, READ), so HudUnderbar now answers
+  `button_at(at)` and World3D registers it with HudPanels (`click_pass_through`). A quick slot or a
+  skill can be carried to another page of the bar.
+- **Nothing stale stays on the cursor** (OURS; when retail lets go is not read): a death
+  (`HudPanels.player_dead`'s setter), a zone change or teleport (`_on_change_zone_result`), the
+  source window hiding (its closing, or its tab switched away), and the bag or worn slot changing
+  under a held item (the list and equipment replies) each let go, so a drop can never act on a
+  slot that changed.
+- **A bag item is used on the right RELEASE, over the slot** (READ: CIFSlotWithHelp's right press,
+  vslot 32, only captures; its release, vslot 33, uses), as the quick slots already were.
+- **OPEN, recorded:** a quick slot let go with the right button is probably removed in retail
+  (`CIFUnderBar::vslot_026` clears the slot when `+0x3b1` is set; the flag's meaning INFERRED).
+  Ours keeps it.
+
+Tests (`held_icon_test.gd`): dying and closing the bag let the held item go; the bar's page arrow is
+a button to let through and its quick slot is not; a click on the arrow while holding quick slot 1
+turns the page, keeps the slot held and filled, and drops nothing. **NEGATIVE against 9b40d12,
+MEASURED:**
+
+```
+FAIL dying lets the held item go
+FAIL closing the bag lets its held item go
+FAIL the bar's page arrow is a button to let through; its quick slot is not
+FAIL a click on the page arrow while holding it turns the bar's page (1 -> 1)
+FAIL ... and the quick slot stays on the cursor, not put down (drops [{ "kind": "quickslot", "slot": 1, "icon": <ImageTexture#...> }])
+5 FAILURES
+```
+
+Live, real X clicks (`/var/tmp/icons652/bar_e2e.sh b1`, MEASURED): Smash on quick slot 1 (page
+1); click quick slot 1 (`HeldIcon: picked up quickslot:1`); click the bar's page-up arrow → the
+next print reads `barpage:up ... page 2` and the last HeldIcon line is still the pick-up; click
+the new page's first slot → `World3D: quickslots 1 and 11 changed places`.
+
+### 8. Open (docs/TODO.md, "The icon on the cursor")
+
+The split box, Ctrl+click, the ground drop, warehouse slot placement, a worn item on the bar, the
+cancelled quick slot (`+0x3b1`), when retail lets go on its own, and how retail draws the slot left
+behind.
 
 ## Six-hundred-and-forty-seventh round: the Jangan spawn draws at 85 fps instead of 71 with every tree swaying exactly as before, and a zone change no longer leaves the old zone's animated objects behind
 

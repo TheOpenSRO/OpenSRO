@@ -429,7 +429,42 @@ func _ensure_held_icon() -> HeldIcon:
 
 ## Picks an icon up onto the cursor (a left click on a filled slot).
 func pick_up_icon(what: Dictionary, icon: Texture2D, source: CanvasItem, at: Vector2) -> bool:
-	return _ensure_held_icon().pick_up(what, icon, source, at)
+	if not _ensure_held_icon().pick_up(what, icon, source, at):
+		return false
+	# Let go when the window the icon came from goes away (closed, or its
+	# tab switched): a drop after that would act on a slot nobody sees. A
+	# quick slot is exempt -- the bar's page arrows hide the slot while its
+	# icon is carried to another page. OURS (retail's handling not read).
+	if String(what.get("kind", "")) != "quickslot":
+		_watch_held_source(source)
+	return true
+
+## Watches a control an icon can be picked up from: when it stops being
+## visible (its window closed, its tab switched) while it is the held icon's
+## source, the icon is let go. Connected once per control.
+func _watch_held_source(source: CanvasItem) -> void:
+	if source == null or source.has_meta("held_watch"):
+		return
+	source.set_meta("held_watch", true)
+	source.visibility_changed.connect(func() -> void: _on_held_source_visibility(source))
+
+func _on_held_source_visibility(source: CanvasItem) -> void:
+	if held_icon != null and held_icon.is_holding() and held_icon.source() == source \
+			and is_instance_valid(source) and not source.is_visible_in_tree():
+		cancel_held_icon("its window closed")
+
+## Lets go of whatever is on the cursor (a death, a zone change, a window
+## closing, the slot's contents changing under it). OURS: when retail lets go
+## in these cases is not read; ours does so nothing stale is ever dropped.
+func cancel_held_icon(why: String = "") -> void:
+	if held_icon != null and held_icon.is_holding():
+		print("HudPanels: the held icon is let go (%s)" % why)
+		held_icon.cancel()
+
+## Extra places a click passes through while an icon is held, each a
+## Callable(at: Vector2) -> bool: the quick slot bar's buttons, which are not
+## one of these windows (World3D registers HudUnderbar.button_at).
+var click_pass_through: Array[Callable] = []
 
 ## Shows a panel, building it the first time it is asked for. Does nothing
 ## if its authored layout isn't in the archive -- a missing panel is a real
@@ -1184,7 +1219,13 @@ const REVIVE_PROMPT := "RevivePrompt"
 ## and cleared by _leave_dead_state; round 550). The bag's right-click use
 ## reads it: the server refuses a dead player's OpUseItem (Item_HandleUseItem
 ## 0x510980 answers 0x1889 unless GetLifeState() == 1), so nothing goes out.
-var player_dead := false
+var player_dead := false:
+	set(value):
+		player_dead = value
+		# Nothing stays on the cursor through a death (round 652's review:
+		# a stale drop could move whatever is in the slot by then).
+		if value:
+			cancel_held_icon("death")
 
 ## The chat line for an item tried while dead: World3D.DEAD_INPUT_LINE's
 ## wording (World3D has no class_name to read it from).
@@ -3323,6 +3364,11 @@ func select_bag_page(page: int) -> void:
 ## cell, each with a named "ItemIcon" child.
 func _fill_inventory_grid(slots: Array) -> void:
 	_bag_slots = slots
+	# A held bag item whose slot no longer holds it (spent, moved, sold by
+	# another path): let go rather than drop from a slot that changed.
+	if held_icon != null and held_icon.kind() == "bag" \
+			and _bag_item_id_at_slot(int(held_icon.payload.get("slot", -1))) != int(held_icon.payload.get("item_id", -2)):
+		cancel_held_icon("its bag slot changed")
 	var capacity := int(NetClient.last_inventory_capacity) if NetClient != null else 0
 	if capacity > 0 and capacity != _bag_size:
 		set_bag_size(capacity)
@@ -3399,6 +3445,7 @@ func _draw_bag_page() -> void:
 			# The slot the held icon came from stays dimmed across a page turn.
 			if held_icon != null and held_icon.kind() == "bag" and int(held_icon.payload.get("slot", -1)) == index:
 				held_icon.retarget_source(icon)
+				_watch_held_source(icon)
 			if not icon.has_meta("inv_click_wired"):
 				icon.set_meta("inv_click_wired", true)
 				icon.gui_input.connect(func(ev: InputEvent) -> void: _on_inventory_cell_input(ev, icon))
@@ -3429,7 +3476,11 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 	var slot := int(icon.get_meta("inv_slot"))
 	var item_id := int(icon.get_meta("inv_item_id"))
 	var qty := int(icon.get_meta("inv_qty"))
-	if mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
+	# Used on the right RELEASE, over the slot: CIFSlotWithHelp's right press
+	# (vslot 32, 0x6665b0) only captures the mouse and its release (vslot 33,
+	# 0x685ee0) uses (READ) -- the same as the quick slots.
+	if mb.button_index == MOUSE_BUTTON_RIGHT and not mb.pressed \
+			and (not icon.is_inside_tree() or icon.get_global_rect().has_point(mb.global_position)):
 		if player_dead:
 			system_notice.emit(DEAD_INPUT_LINE)
 			return
@@ -3460,8 +3511,9 @@ func _is_pick_click_on(event: InputEvent, control: Control) -> bool:
 # this is where they are routed. The server owns every outcome: a bag drop is
 # OP_MOVE (move / merge / swap), a doll drop OP_EQUIP (a swap when the slot is
 # filled, refused for the wrong kind of item), a worn item dropped on the bag
-# OP_UNEQUIP with the clicked slot, and the windows redraw from what it
-# answers, never from what the drop assumed.
+# OP_UNEQUIP naming the clicked slot (the server, like retail's, puts it in
+# the first free slot), and the windows redraw from what it answers, never
+# from what the drop assumed.
 
 func _input(event: InputEvent) -> void:
 	# Before anything else, and without consuming the press (see the function).
@@ -3486,7 +3538,12 @@ func _input(event: InputEvent) -> void:
 ## item to another page of the bag: turn the page, then click the slot.
 func _click_passes_through(at: Vector2) -> bool:
 	var win := _topmost_window_at(at)
-	return win != null and _button_under(win, at)
+	if win != null:
+		return _button_under(win, at)
+	for extra in click_pass_through:
+		if extra.is_valid() and bool(extra.call(at)):
+			return true
+	return false
 
 func _button_under(node: Node, at: Vector2) -> bool:
 	for child in node.get_children():
@@ -4910,9 +4967,10 @@ func _fill_equipment_slots(items: Array) -> void:
 				icon.modulate = Color.WHITE
 			icon.mouse_filter = Control.MOUSE_FILTER_STOP
 			# A left click picks the worn item up onto the cursor; the next
-			# click on a bag cell takes it off into THAT cell (HeldIcon,
-			# round 652). Without a handler here the worn icons took clicks
-			# and did nothing (playtest 2026-09-20, item 7).
+			# click on the bag takes it off -- into the first free slot, as
+			# retail's server puts it (HeldIcon, round 652). Without a
+			# handler here the worn icons took clicks and did nothing
+			# (playtest 2026-09-20, item 7).
 			icon.set_meta("worn_slot", int(slot_index))
 			icon.set_meta("worn_item_id", int(item_id))
 			if not icon.has_meta("worn_click_wired"):
@@ -4946,6 +5004,16 @@ func connect_net() -> void:
 			print("HudPanels: equipment refused: %s" % error)
 			return
 		_equipped_items = items
+		if held_icon != null and held_icon.kind() == "worn":
+			var still := false
+			for e in items:
+				var es = _first_field(e, ["slot", "slot_index", "index"])
+				var ei = _first_field(e, ["item_id", "id"])
+				if es != null and ei != null and int(es) == int(held_icon.payload.get("slot", -1)) \
+						and int(ei) == int(held_icon.payload.get("item_id", -2)):
+					still = true
+			if not still:
+				cancel_held_icon("the worn slot changed")
 		# A list (not an equip/unequip ack, which carries no items and no
 		# durability) is the worn durability as it stands.
 		if not items.is_empty() or not NetClient.last_equipment_durabilities.is_empty():

@@ -414,7 +414,73 @@ func _panel_checks() -> void:
 		_check(panels.call("_topmost_window_at", p) == window, "... and the bag once it is in front again")
 		storage.hide()
 
+	# Nothing stale stays on the cursor (round 652's review): a death, and the
+	# source window closing, let the held item go.
+	panels.call("open", "inventory")
+	await process_frame
+	await _click((grid.get_child(3) as Control).get_global_rect().get_center())
+	_check(held != null and bool(held.call("is_holding")), "the probe: bag slot 3 is on the cursor")
+	panels.set("player_dead", true)
+	_check(held != null and not bool(held.call("is_holding")), "dying lets the held item go")
+	panels.set("player_dead", false)
+	if held != null:
+		held.call("cancel")
+	await _click((grid.get_child(3) as Control).get_global_rect().get_center())
+	_check(held != null and bool(held.call("is_holding")), "the probe: bag slot 3 is on the cursor again")
+	panels.call("close", "inventory")
+	await process_frame
+	_check(held != null and not bool(held.call("is_holding")), "closing the bag lets its held item go")
+	_sent(net)
+	panels.call("open", "inventory")
+	await process_frame
+	await _bar_checks(panels, held)
+
 	net.set("_connected", false)
 	net.set("_peer", null)
 	net.set("last_inventory_capacity", 0)
 	net.set_process(true)
+
+## The quick slot bar's own buttons take a click while an icon is held, as
+## any CIFButton does in retail (0x6523d0): its page arrow turns the page and
+## the held quick slot stays held and filled -- so an icon can be carried to
+## another page of the bar. (Round 652's review: the arrow's click was taken
+## as the drop and the slot was removed.)
+func _bar_checks(panels: Control, held) -> void:
+	if held != null:
+		held.call("cancel")  # start clean whatever the checks above left
+	var Fixture = load("res://scripts/ui/hud/underbar_fixture.gd")
+	var bar := HudUnderbar.new(Fixture.builder(), null, null)
+	root.add_child(bar)
+	bar.position = Vector2(560, 900)
+	await process_frame
+	if bar.has_method("button_at"):
+		(panels.get("click_pass_through") as Array).append(bar.button_at)
+	# World3D's glue: a left click on a filled quick slot puts it on the cursor.
+	bar.quickslot_pick_requested.connect(func(i: int) -> void:
+		panels.call("pick_up_icon", {"kind": "quickslot", "slot": i, "icon": bar.slot_icon(i)}, bar.slot_icon(i),
+			bar.slot_icon_rect(i), bar.slot_node(i).get_global_rect().get_center()))
+	var drops: Array = []
+	panels.connect("held_dropped_outside", func(what: Dictionary, _at: Vector2) -> void: drops.append(what))
+	bar.set_slot_item(1, _texture(32, 32))
+	var s1 := bar.slot_node(1)
+	var up := bar.control([19])
+	_check(s1 != null and up != null, "the probe: the bar has quick slot 1 and its page-up arrow")
+	if s1 == null or up == null:
+		return
+	_check(bar.has_method("button_at") and not bool(bar.call("button_at", s1.get_global_rect().get_center()))
+		and bool(bar.call("button_at", up.get_global_rect().get_center())),
+		"the bar's page arrow is a button to let through; its quick slot is not")
+	await _click(s1.get_global_rect().get_center())
+	_check(held != null and bool(held.call("is_holding")) and String(held.call("kind")) == "quickslot",
+		"a click on filled quick slot 1 puts it on the cursor")
+	var page0 := bar.current_page()
+	await _click(up.get_global_rect().get_center())
+	_check(bar.current_page() != page0, "a click on the page arrow while holding it turns the bar's page (%d -> %d)" % [page0, bar.current_page()])
+	_check(held != null and bool(held.call("is_holding")) and drops.is_empty(),
+		"... and the quick slot stays on the cursor, not put down (drops %s)" % [drops])
+	_check(bar.slot_has_item(1), "... and quick slot 1 still holds its icon")
+	if held != null:
+		held.call("cancel")
+	bar.queue_free()
+	await process_frame
+

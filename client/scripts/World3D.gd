@@ -1844,6 +1844,9 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.skill_use_requested.connect(_on_skill_use_requested)
 	if _hud_underbar != null:
 		_hud_underbar.quickslot_pick_requested.connect(_on_quickslot_pick_requested)
+		# The bar's own buttons take a click while an icon is held (READ,
+		# 0x6523d0: any CIFButton), e.g. its page arrows.
+		_hud_panels.click_pass_through.append(_hud_underbar.button_at)
 	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
 	_hud_panels.guild_create_requested.connect(_on_guild_create_requested)
 	_hud_panels.guild_leave_requested.connect(_on_guild_leave_requested)
@@ -5046,6 +5049,10 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	var teleport_arrival := _teleport_arrival_pending
 	_teleport_arrival_pending = false
 	if result != null and result.ok:
+		# A zone change or a teleport lets go of the icon on the cursor
+		# (round 652's review; OURS -- retail's handling is not read).
+		if _hud_panels != null:
+			_hud_panels.cancel_held_icon("zone change")
 		# A new object in the new zone: no movement order (round 637's review
 		# follow-up, _player_move_order).
 		_player_move_order = false

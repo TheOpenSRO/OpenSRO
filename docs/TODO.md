@@ -1332,7 +1332,11 @@ What round 652 read and built is in `docs/protocol/held_icon.md`.
 - **Warehouse slots.** Retail's deposit and withdraw name the target slot (types 2 and 3); ours
   carry none, so the server places them, and warehouse-to-warehouse moves (type 1) do nothing.
 - **A worn item on the quick slot bar** (CIFUnderBar takes kind 0x47). Nothing happens.
-- **Closing a window under the held icon** leaves it held; what retail does is not read.
+- **A cancelled quick slot.** Retail's bar probably removes a quick slot let go with the right
+  button (`CIFUnderBar::vslot_026` clears the slot when `+0x3b1` is set; the flag's meaning is
+  INFERRED). Ours keeps it on the bar.
+- **When retail lets go on its own** (death, zone change, the source window closing, the slot
+  changing) is not read; ours lets go in all of them (OURS).
 - **The slot left behind** is dimmed (OURS); how retail draws it while its icon is on the cursor
   is not read.
 
