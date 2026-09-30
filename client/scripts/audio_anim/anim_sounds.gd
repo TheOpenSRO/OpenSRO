@@ -152,6 +152,18 @@ func unregister(skeleton: Object) -> void:
 	_owners.erase(skeleton.get_instance_id())
 	_state.erase(skeleton.get_instance_id())
 
+## Round 664: a registered body that is not advanced this frame because it
+## is out of hearing (MonsterCrowd.hearable). Its next advance -- whenever it
+## comes back -- fires nothing for the time it was away, loop or one-shot:
+## it carries on from where its clip is then.
+func rest(skeleton: Object) -> void:
+	if skeleton == null:
+		return
+	var id := skeleton.get_instance_id()
+	if _state.get(id) != null or not _state.has(id):
+		if _owners.has(id):
+			_state[id] = null
+
 func owner_of(skeleton: Object) -> Owner:
 	if skeleton == null:
 		return null
@@ -179,7 +191,8 @@ func advance(skeleton: Object, anim: Object, start: float, clip_ms: float, loops
 	var prev: float
 	if same:
 		prev = float(state[2])
-	elif loops:
+	elif loops or (state == null and _state.has(id)):
+		# A loop's first frame, or a body back from rest(): nothing passed.
 		prev = clip_ms
 	else:
 		prev = -1.0

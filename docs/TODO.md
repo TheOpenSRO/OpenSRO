@@ -1052,11 +1052,14 @@ interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
       that fit, which is short of the window once about 480 monsters share it (round 657's full
       map). It ignores `OpMonsterLeft` 0x00B5, so bodies that leave its window stay drawn where
       they were last seen. Release the round-656 client before round 657's flip.
-- [ ] **The AOI radius and the sleep are OURS.** 2 regions (the client's `REGION_LOAD_RADIUS`) and
-      "a monster no player's window holds does not run" stand in for retail's visibility and
-      object-update rules, both UNREAD. A monster left mid-leg by the last player resumes the leg
-      when one returns; one that was chasing a player who teleported away resumes BATTLE and then
-      releases on its target test.
+- [x] **The AOI window is retail's since round 664** (READ): the 3 x 3 message blocks of 320
+      units around the player's block (`combat.CellSpan`, `AOIRadius` = 1;
+      docs/protocol/monster_ai.md, "What a player is sent: retail's message blocks").
+- [ ] **The sleep is OURS.** "A monster no player's window holds does not run" stands in for
+      retail's object-update rule, UNREAD; since round 664 the window is 960 units wide, so the
+      awake area around each player is too. A monster left mid-leg by the last player resumes the
+      leg when one returns; one that was chasing a player who teleported away resumes BATTLE and
+      then releases on its target test.
 - [ ] **The client still asks for the whole window's list after every hit** (World3D ~15825,
       ~17529) -- up to 60 KB for a dense window. Round 655's lane (the client's monster drawing).
 - [x] **A slow or stalled client held its writers up to its blocking budget** -- fixed in round
@@ -1983,6 +1986,28 @@ Still open, by the files each would add:
   not draw the list (round 75).
 - **The view-distance option** does not exist here. It sets `DAT_00ec54b0` to 1,200 / 2,000 /
   2,500, which makes the animation and draw range 720 / 1,520 / 2,020; the client uses 2,020.
+
+### Dense monster fields (round 664) — **built: retail's 3 x 3 message-block window on the server (READ); the clip tick once per rendered frame, sounds only within the core's 600 cull (READ), indexed posing, far bodies posed every 2nd/4th frame, quiet bodies tested every 2nd frame, the minimap once a frame; these are left**
+
+- [ ] **The `crowd` gate site (2,500 monsters within 1,920 of the Jangan spawn) is over 16.7 ms.**
+      Round 664 took it from 176 ms to about 25 (WORLD_ISSUES round 664 has the split); the Jangan
+      scene alone is 9.6. What is left a frame: the clip tick's walk over every animated body
+      (about 4 ms at 2,500, GDScript's cost per body), the pose and the renderer's re-skin of the
+      ~46 bodies posed (about 2 + 5 ms), the minimap's walk over every body (1.7 ms). The next
+      step is to stop walking the bodies nobody sees: an engine-side on-screen set
+      (VisibleOnScreenNotifier3D) and a periodic pass for range and hearing, or AnimationPlayer
+      clips (C++) for monsters as MapAnimation plays map objects. With the READ window a server
+      no longer sends a player a crowd like this one (the live check in WORLD_ISSUES round 664).
+- [ ] **Retail's mesh LOD is not drawn.** sro_client passes the object's distance / 800
+      (0x9c4c05) to the model's draw when graphics option 0x17 is on, and the draw picks an index
+      set (`pFDB->Indices[iLOD]`). Which files carry the LOD index sets, and what option 0x17 is
+      in the options window, are not read.
+- [ ] **The animation LOD is OURS** (`MonsterCrowd.pose_interval`: every frame within 300 of the
+      camera, every 2nd to 900, every 4th to 2,020). Retail's own rule for character animation
+      updates is unread.
+- [ ] **Object regions (dungeons) and far-sent objects.** The READ window is the field's
+      (`CRgnTerrain`'s 6 x 6 blocks). The `CMsgBlockObject` blocks of `CRgnObject` regions and any
+      object sent from farther (uniques, structures) were not read.
 
 ### Many monsters (round 655) — **built: species templates, budgeted builds, posing culled, bodies only in loaded regions, no list per hit; these are left**
 

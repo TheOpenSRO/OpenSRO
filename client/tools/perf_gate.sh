@@ -29,7 +29,12 @@
 # real species over the 5 x 5-region window, delivered during the loading
 # drain as a server's list would be -- the density the server will send;
 # round 655. A base without the hook draws no monsters there: gate it against
-# a base that has the hook).
+# a base that has the hook), crowd (the Jangan spawn with 2,500 monsters of 17
+# real species packed within 1,920 of the player -- SRREVAMP_QA_MOBS=2500 and
+# SRREVAMP_QA_MOBS_SPREAD=1920 -- the density round 660's swapped spots put in
+# view: 1,378 bodies at the Europe starter field, 2,412 at the densest window;
+# round 664. A base without the SPREAD hook spreads them over the whole load
+# window instead: gate it against a base that has the hook).
 #
 # How it measures (the method the reviews of rounds 645-647 settled on):
 # - runs are interleaved base, head, base, head ... so drift hits both;
@@ -67,7 +72,7 @@ while [ $# -gt 0 ]; do
     --sites) sites="$2"; shift 2 ;;
     --runs) runs="$2"; shift 2 ;;
     --frames) frames="$2"; shift 2 ;;
-    *) echo "usage: $0 [--base REV] [--head REV] [--sites jangan,reeds,cross,hotan,ferry,mobs] [--runs N] [--frames N]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--base REV] [--head REV] [--sites jangan,reeds,cross,hotan,ferry,mobs,crowd] [--runs N] [--frames N]" >&2; exit 2 ;;
   esac
 done
 cd "$repo_root"
@@ -83,7 +88,7 @@ box_base="/opt/srrevamp-client-perf-base-${base_full_rev:0:12}"
 box_head="/opt/srrevamp-client-perf-${lane}-head"
 work="/var/tmp/perf-${lane}"
 
-# The fixed views: MAPM path | QA_AT (region-local x,z) | yaw | walk heading ('' = stand) | [frames, at least] | [one extra VAR=value].
+# The fixed views: MAPM path | QA_AT (region-local x,z) | yaw | walk heading ('' = stand) | [frames, at least] | [extra VAR=value ..., space-separated].
 view() {
   case "$1" in
     jangan) echo '97\168.m|1002,1020|0|' ;;   # the game's own spawn
@@ -92,6 +97,7 @@ view() {
     hotan)  echo '92\135.m|960,960|0|' ;;     # Hotan, the zone landing
     ferry)  echo '90\143.m|464,879|270||12000' ;;   # Donwhang-region ferry GATE_NPC_WC_FERRY4, looking at the dock over the reeds (round 648); 12000 frames: at 2.6 ms a frame 3000 gave 8 samples, under the minimum of 10 (the figure averages the last 30)
     mobs)   echo '97\168.m|1002,1020|0||3000|SRREVAMP_QA_MOBS=500' ;;   # the spawn with 500 monsters (round 655)
+    crowd)  echo '97\168.m|1002,1020|0||3000|SRREVAMP_QA_MOBS=2500 SRREVAMP_QA_MOBS_SPREAD=1920' ;;   # 2,500 monsters within 1,920 (round 664)
     *) echo "unknown site $1" >&2; exit 2 ;;
   esac
 }
@@ -131,7 +137,7 @@ export SRREVAMP_PK2_PATH=$PK2_DIR/Data.pk2 SRREVAMP_MAP_PK2_PATH=$PK2_DIR/Map.pk
 export SRREVAMP_PARTICLES_PK2_PATH=$PK2_DIR/Particles.pk2 SRREVAMP_MUSIC_PK2_PATH=$PK2_DIR/Music.pk2
 export SRREVAMP_MAPM_PATH="\$3" SRREVAMP_QA_AT="\$4" SRREVAMP_QA_YAW="\$5" SRREVAMP_QA_FORCE_LOADING=1
 [ -n "\${6:-}" ] && export SRREVAMP_QA_WALK="\$6"
-[ -n "\${8:-}" ] && export "\$8"
+for kv in \${8:-}; do export "\$kv"; done
 # Another lane's Godot, rendered or headless (both load the CPU, the shared
 # resource): a Godot process whose --path is not this run's client dir.
 DIR="\$1"   # captured here: inside others() \$1 is the function's own (empty) argument

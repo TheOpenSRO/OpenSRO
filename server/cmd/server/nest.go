@@ -310,7 +310,8 @@ type fullMapReport struct {
 	// not build (should be 0: the join asks the same table).
 	missingSpecies int
 	// densest is the most monsters one player's area of interest (the
-	// session.AOIRadius square of region cells around the cell it stands in)
+	// session.AOIRadius square of cells -- retail's message blocks -- around
+	// the cell it stands in)
 	// can hold with every nest full, and densestCell that cell -- the longest
 	// monster list the map can send.
 	densest     int

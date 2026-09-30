@@ -179,8 +179,9 @@ func TestMonsterListLargerThanAFramePages(t *testing.T) {
 	const n = 1500
 	want := map[int64]bool{}
 	for i := 0; i < n; i++ {
+		// 12 units apart (round 664): all 1,500 inside the 3 x 3 block window.
 		m := monsters.SpawnSpecies("jangan", combat.Species{Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", Level: 1},
-			float64(i%40)*20-400, 0, float64(i/40)*20-400, 30, 1, 1, 1)
+			float64(i%40)*12-240, 0, float64(i/40)*12-240, 30, 1, 1, 1)
 		want[m.ID] = true
 	}
 	r := newListRig(t, monsters)

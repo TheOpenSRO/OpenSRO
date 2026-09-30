@@ -7094,6 +7094,233 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-sixty-fourth round: dense monster fields hold 60 fps -- a player is sent only the monsters of the 3 x 3 blocks around it, as retail sends them, and a 2,500-monster crowd draws at 40 fps instead of 6
+
+Round 660's follow-up measured the full map with the shard DB: 1,378 bodies drawn at the Europe
+starter field (region 108/77) ran the client at 100 ms a frame, and 2,412 at the densest window
+(cell -116/8) at 143. The user chose to ship that population ("DB numbers now"), so the client
+has to hold it. The round read what retail sends and draws, measured where the frame went, and
+fixed both ends.
+
+Labels: READ (SR_GameServer.exe / sro_client.exe, the decompiles and objdump on the render box),
+MEASURED (render box, 1280x720), INFERRED, OURS.
+
+### 1. What retail shows (READ; docs/protocol/monster_ai.md, "What a player is sent: retail's message blocks")
+
+**The server's visibility window is the 3 x 3 message blocks of 320 units around the player's
+block** -- a 960-unit square reaching 320 to 640 units from the player on each axis. Ours was 5 x
+5 regions of 1,920 (round 656, OURS): 100 times the area.
+
+- A field region (`CRgnTerrain`) holds 6 x 6 `CMsgBlockTerrain` (0x24 blocks of 0x98 bytes at
+  +0x2c, the constructor 0x53a850).
+- A position's block is its region-local (x, z) divided by **320.0** (the double at 0xb45ae8;
+  `CRgnTerrain::vslot_006` 0x53ad30, `fdiv` at 0x53ad90, each index asserted 0..5).
+- Each block is linked once to its 8 neighbours (the (dx, dz) table at **0xc64090**, read back
+  with objdump), across region lines (`CRgnTerrain::vslot_016` 0x53ab90 -> `FUN_0053ac20` ->
+  the neighbour region by 0x430900, the block `(i + 6) % 6`), into the list at block+0x10
+  (`CMsgBlock` slot 5, 0x5336e0).
+- An object put into a block (`CMsgBlock` slot 2, 0x534340) is, for each neighbour and the block
+  itself, sent that block's objects if it is a player (the group spawn 0x3017/0x3018, 0x533e70)
+  and announced to its players (0x3015, 0x533f70); taken out (slot 3, 0x5344b0), it is despawned
+  to the same nine (0x3016, 0x534050).
+
+**The client draws what it holds.** The per-frame entity list (`CEntityManagerClient::vslot_011`
+0x9c4770) lists every object; the object draw (0x9c4aa0) tests the frustum and, with graphics
+option 0x17 on, passes distance / **800.0** (0xd83080, `fdiv` at 0x9c4c05) to the model draw as a
+**mesh** LOD factor (`pFDB->Indices[iLOD]`). No distance rule on animating a character was
+found. Round 655's 2,020 pose range stays OURS; the animation LOD below is OURS.
+
+### 2. Where the frame went (MEASURED, before any fix)
+
+A new QA hook, `SRREVAMP_QA_MOBSPLIT=<frames>`, prints one line of the frame's split every
+`<frames>` rendered frames (`MonsterCrowd.Split`): physics steps a frame, the clip tick
+(`_tick_idle_animations`) and inside it the pose and the sound calls, the height stepping, the
+build pump, the minimap, the renderer's own CPU and GPU time, draws and primitives, and
+Godot's `TIME_PROCESS` (which holds the draw). `SRREVAMP_QA_MOBSPLIT_OFF=pose,sound,labels,
+collide,mesh` switches parts of every body off for the A/B. The stress case is the new gate
+site `crowd`: the Jangan spawn with **2,500 monsters of 17 real species within 1,920 of the
+player** (`SRREVAMP_QA_MOBS=2500 SRREVAMP_QA_MOBS_SPREAD=1920`). int/mob 46559e0's code, medians
+of the steady lines:
+
+| run | ms/frame (`--print-fps`, median) | physics steps a frame | clip tick a step | renderer CPU / GPU | what it shows |
+|---|---|---|---|---|---|
+| all | 167 | 8.0 (capped) | 16.3 ms | 6.6 / 6.4 ms | |
+| no clip sounds advanced | 45 | 2.7 | 7.3 ms | 6.9 / 6.7 | **advancing 2,500 bodies' sounds: 9.1 ms a step** |
+| no posing | 143 | 8.0 | 13.5 ms | 1.7 / 1.6 | **posing the 70 in view: 2.8 ms a step, plus the re-skinning in the draw** |
+| no posing, no sounds | 18.5 | 1.0 | 4.4 ms | 1.4 / 1.4 | **the loop's own tests over 2,500 bodies: 4.4 ms** |
+| no monsters | 9.6 | 1.0 | 0.3 ms | 0.8 / 0.9 | the Jangan scene itself |
+
+The meshes / plates / colliders A/B in that regime (200 ms each, slower than "all") overlapped
+another lane's render and is noise; taken again at the fix's midpoint (the tick already once a
+frame, 39.2 ms): meshes hidden 30.9 ms, name plates and HP bars hidden 37.8 (within noise --
+they are already range-culled at 80), click colliders removed no change. So the bodies' meshes
+cost ~8 ms there, and nearly all of it is the posed ones (posing off: renderer CPU 6.6 -> 1.7).
+
+**The multiplier:** the clip tick ran in every PHYSICS step. At 60 steps a second a 100 ms frame
+runs six steps and a 176 ms frame the capped eight, so every millisecond of per-step cost was
+paid up to eight times -- the slower the frame, the more steps, the slower the frame. Round 660's
+100 and 143 ms were this spiral. The minimap walked every body in every step too (2.2 ms a step
+at 2,500). Height stepping, the build pump and the label and collider nodes were not the cost.
+
+### 3. The fixes
+
+**Server (READ):** `combat.CellSpan` = 320 (retail's block; the cell index was region-sized) and
+`session.AOIRadius` = 1: a player is listed, spawned, moved, struck and despawned only the
+monsters of the 3 x 3 blocks around its own (`server/internal/combat/cells.go`,
+`server/internal/session/aoi.go`). The enter/leave pushes, the paged list and the sleep are
+round 656's, on the new cell. The awake area around each player shrinks with it (the sleep stays
+OURS). Round 656's tests are rescaled to the block (their positions were region multiples);
+`nest660_test`'s densest window is now one nest's 6 (the two synthetic nests stand 1,216 apart).
+
+**Client** (`client/scripts/world/monster_crowd.gd`, new; `World3D.gd`; `anim_sounds.gd`):
+
+1. **The clip tick once per rendered frame** (`MonsterCrowd.TickGate`): it runs in the first
+   physics step of a frame with every step's time since the last run -- no second of any clip is
+   lost, and at 60 frames a second nothing changes. OURS, as retail has no physics step
+   (INFERRED from its once-a-frame entity list, 0x9c4770).
+2. **Clip sounds only within hearing** (`MonsterCrowd.hearable`): a body's sound tracks are
+   advanced only within 600 of the listener (READ: the core plays no positioned sound beyond 600,
+   0xda98fc, `SoundTable.culled`). A body going out of hearing is rested once
+   (`AnimSounds.rest`) and comes back without firing what passed while it was away.
+3. **Posing without the bone search** (`MonsterCrowd.pose_at`): a monster body's clips map
+   tracks to bone indices once per clip and model (every body is a duplicate of its species'
+   template, `META_LAYOUT`), and the skeleton recomputes its transforms once at the end of the
+   frame instead of at every pose. The pose is bone-for-bone the old one (the test compares them).
+4. **The loop's tests from a cache** (`MonsterCrowd.CullCache`): a culled skeleton's radius, hide
+   flag, resting flag and slot are read once; the range and frustum tests are MonsterDraw's,
+   written out; a loop neither in view nor in hearing does nothing more; one that was quiet at
+   its last test is tested every second frame (`recheck_due`; OURS: a body coming into view is
+   posed at most one frame late).
+5. **Far bodies posed less often** (`MonsterCrowd.pose_interval`, OURS): every frame within 300 of
+   the camera, every second frame to 900, every fourth to the 2,020 range, each on its own slot.
+   A skipped frame is not a slower clip: the next pose is where the clip has got to.
+6. **The minimap once a rendered frame**, fed only the bodies that can land in its sign circle
+   (the circle's radius at the drawn zoom, x1.01; the circle's own test still decides).
+
+**What changed in `monster_draw.gd`: nothing.** Round 661's Templates change is untouched; the
+round's client rules live in the new `monster_crowd.gd`, and World3D sets one meta on a monster's
+skeleton at build (`MonsterCrowd.META_LAYOUT` = its model path) next to round 655's metas.
+
+### 4. After (MEASURED, the `crowd` site, same split)
+
+| | before | after |
+|---|---|---|
+| ms/frame (`--print-fps`) | 167 | **~25** |
+| physics steps a frame | 8.0 | 1.5 |
+| clip tick a frame | 130 ms | 7.3 ms (pose 2.0 for 46 bodies, sounds 1.2 for the ~190 within 600, the loop 4) |
+| minimap a frame | ~18 ms (2.2 a step x 8) | 1.7 ms |
+| renderer CPU / GPU | 6.6 / 6.4 | 4.7 / 4.6 |
+
+With posing and sounds switched off the site runs at 14.5-15.4 ms: the rest of the ~25 is the ~46
+bodies posed a frame -- 2 ms of GDScript and ~7 ms of Godot's re-skinning and drawing of the
+bodies that changed, about 0.2 ms a posed body. **The `crowd` site is still over 16.7 ms**; the
+Jangan scene alone is 9.6 of it. That is OPEN below, with the next step.
+
+### 5. The live check (MEASURED; the full map with the shard DB, one client, sleep on)
+
+Round 660's follow-up setup (`/var/tmp/dense664/live.sh`, from `/var/tmp/nest660/live.sh`): the
+server with `-full-map`, the shard's nests and the six monster switches, 65,321 monsters alive;
+one QA client at `SRREVAMP_QA_RADIUS=1`, `/tp` to the spot, 150-180 s, `--print-fps` (vsync on,
+as round 660's, so 16.66 is the 60 Hz ceiling), the medians of the last 60 once-a-second samples.
+"Before" is int/mob 46559e0's server and client (the client with only the split line added,
+to count the bodies); "after" is this round's. Another lane's render ran during part of these.
+
+| spot | build | bodies drawn | client ms/frame (median / p90) | AI tick p50 / p99 | brains awake |
+|---|---|---|---|---|---|
+| Europe starter field, `/tp -174720 -21120` | before | 1,256-1,261 | 22.2 / 23.8 | 1.99 / 2.59 ms | 3,084 |
+| same | after | 21 | **16.66 / 16.66** | 0.025 / 0.066 ms | 47 |
+| densest window, cell -116/8, `/tp -222720 15360` | before | 2,305-2,322 | 22.7 / 24.4 | 3.83 / 5.14 ms | 5,640 |
+| same | after | 0-13 (Sand Raiders walking out of the 3 x 3 blocks) | **16.66 / 16.66** | 0.011 / 0.034 ms | 16 |
+
+Two things differ from round 660's numbers. Its 100 and 143 ms at the same spots were int/mob
+before rounds 659, 661 and 662; today's int/mob holds them at ~22 ms with the same bodies (at the
+densest window about one body is posed a frame: its Sand Raiders draw as capsules, no model). And the READ
+window is what takes the fields to 60 fps: a player at the densest window is sent the dozen
+monsters of its nine blocks, not the 2,300 of 25 regions -- as retail sends them. The server's
+tick falls with it (the sleep wakes only the nine blocks around each player).
+
+
+### 6. Performance gate
+
+A new site, `crowd` (above; `client/tools/perf_gate.sh`, whose extra field now takes several
+VAR=value). int/mob has no SPREAD hook, so the gate's base is **d0995c3**: int/mob 46559e0 plus
+only that hook (unmerged branch `perf/dense664-base`), for all three sites.
+`client/tools/perf_gate.sh --base d0995c3 --sites jangan,mobs,crowd` (1280x720, medians of 3
+interleaved runs; one mobs base run repeated after another lane's render overlapped it):
+
+```
+jangan  frame ms   base 9.73  head 9.79  (+0.1)  SAME
+jangan  entry ms   base 9609  head 9610  (+1.0)  SAME
+jangan  freeze ms  base 3383  head 3377  (-6.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+mobs    frame ms   base 10.79  head 10.80  (+0.0)  SAME
+mobs    entry ms   base 10672  head 10595  (-77.0)  SAME
+mobs    freeze ms  base 3403  head 3399  (-4.0)  SAME
+mobs    hitches    base 5  head 5  (+0.0)  SAME
+crowd   frame ms   base 177.77  head 25.24  (-152.5)  FASTER
+crowd   entry ms   base 11212  head 10766  (-446.0)  SAME
+crowd   freeze ms  base 3396  head 3376  (-20.0)  SAME
+crowd   hitches    base 2950  head 5  (-2945.0)  FASTER
+```
+
+**The crowd site's target, 16.7 ms, is not met: 25.2.** 9.7 of it is the Jangan scene; ~10 is
+the ~46 bodies posed a frame (their pose and re-skin); ~5 is walking 2,500 bodies each frame
+(the clip tick's loop and the minimap). OPEN, below.
+
+
+### 7. Tests
+
+- Client, new: `client/scripts/world/monster_crowd_test.gd` -- the tick gate (three steps, one
+  tick, no time lost), hearing at 600 / 600.5, the indexed pose against the name-searched one
+  bone by bone (loop, wrap, one-shot, held last key; a missing bone; an empty track), one bone map
+  per clip and model, the cull cache (radius, hide, rest, slot, quiet; a write sticks; freed
+  entries pruned), the LOD bands and slots, the quiet recheck; in the world: 400 bodies posed
+  exactly as `MonsterDraw.pose_wanted` names them within four ticks and hidden exactly out of
+  range, every near body posed on the first tick, a camera turn caught up within six ticks, a
+  body 300 from the listener advanced and one 700 away rested, and the minimap fill. And
+  `anim_sounds_test.gd`: a rested loop and a rested one-shot fire nothing they missed, a body
+  rested before its first advance, and the negative (not rested, 300 -> 640 fires 619).
+- Server, new: `TestAOIWindowIsRetailsMessageBlocks` (six monsters inside the 3 x 3 blocks of a
+  player at (10, 10), six just outside); `TestCellOfFollowsTheBlockLines` (renamed, the block's
+  lines and `CellSpan`).
+
+**The NEGATIVES**, the new tests on int/mob 46559e0 (the client files shipped onto a clean copy
+of it, the Go test copied into a second worktree):
+
+```
+FAIL MonsterCrowd exists
+FAIL one tick: of 35 wanted bodies farther out, 35 are posed -- the rest wait for their frame
+FAIL one tick after the turn, some bodies now in view still wait for their recheck or LOD frame (0)
+FAIL a body 700 from the listener (in the old 2,020 range) is rested, not advanced ([<RefCounted#-9223371900103686142>, 0, 620])
+FAIL the minimap is fed the bodies within its sign reach: 5 of 10 within 450 (0)
+5 FAILURES
+FAIL AnimSounds.rest exists
+--- FAIL: TestAOIWindowIsRetailsMessageBlocks (0.02s)
+    aoi664_test.go:50: the monster 650 east (outside the 3 x 3 blocks) was listed
+    aoi664_test.go:50: the monster 330 west (outside the 3 x 3 blocks) was listed
+    aoi664_test.go:50: the monster 650 north (outside the 3 x 3 blocks) was listed
+    aoi664_test.go:50: the monster 330 south (outside the 3 x 3 blocks) was listed
+    aoi664_test.go:50: the monster 1,000 east (outside the 3 x 3 blocks) was listed
+    aoi664_test.go:50: the monster a region on (outside the 3 x 3 blocks) was listed
+    aoi664_test.go:54: listed 12 monsters, want the window's 6
+```
+
+**Runs:** `client/tools/remote_godot.sh tests` in lane dense664: **177 suites, 0 failing**.
+`cd server && go build ./... && go vet ./... && go test -count=1 -p 1 -timeout 30m ./...`:
+vet clean, **62 packages ok**.
+
+
+### 8. Open (docs/TODO.md, "Dense monster fields (round 664)")
+
+- The `crowd` site over 16.7 ms (~25): the next step is to stop walking the bodies nobody sees
+  (an engine-side on-screen set, or AnimationPlayer clips in C++ as the map objects play) --
+  posing and re-skinning cost ~0.2 ms a posed body under GL compatibility.
+- Retail's mesh LOD (distance / 800, option 0x17) is not drawn: the LOD index sets were not read.
+- The animation LOD and the quiet recheck are OURS; retail's character update rule is unread.
+- The READ window is the field's; the object regions' blocks (`CMsgBlockObject`) and any object
+  sent from farther were not read. The sleep stays OURS.
+
+
 ## Six-hundred-and-sixty-second round: a player whose connection is slow can no longer freeze everyone else's monsters -- the server writes to each player from that player's own queue
 
 The monster-world epic (2026-09-30). Round 656's reviews (§7-§9) left one thing standing: a

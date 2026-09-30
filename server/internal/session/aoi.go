@@ -21,8 +21,9 @@ import (
 // -single-frame the bucket is the whole world (worldmap.WorldBucket) -- so
 // with round 657's full map (~10,200 field monsters) every player would have
 // been sent every monster's list record and every monster's every leg. Now a
-// player hears about the monsters within AOIRadius region cells of the cell
-// it stands in (combat.CellOf; a square window), and nothing else:
+// player hears about the monsters within AOIRadius cells of the cell it
+// stands in (combat.CellOf; a square window -- retail's 3 x 3 message blocks
+// since round 664), and nothing else:
 //
 //   - the monster list (handleMonsterList) lists that window, paged over as
 //     many frames as it needs (monsterlist.go);
@@ -30,7 +31,7 @@ import (
 //     the death go only to the players whose window holds the monster's cell
 //     (monsterWatchers, and the AI tick's delivery, monsterai.go);
 //   - a monster that comes into a player's window -- the player walked over
-//     a region line, or the monster did -- is sent to it as an
+//     a cell line, or the monster did -- is sent to it as an
 //     OpMonsterSpawned (its list record and the way it faces) followed by its
 //     current leg as an OpMonsterMoved when it is walking; one that goes out
 //     of it is named in an OpMonsterLeft, which the client answers by
@@ -53,12 +54,25 @@ import (
 // where the server is whatever order two goroutines' messages reach the
 // socket in.
 
-// AOIRadius is the area of interest's half-width in region cells: a player
-// sees the monsters of the (2 x 2 + 1)^2 = 25 regions around the one it
-// stands in. OURS: it is the client's REGION_LOAD_RADIUS (World3D.gd), so a
-// player hears about the monsters of exactly the regions its client streams
-// in. Retail's own visibility rule is unread.
-const AOIRadius = 2
+// AOIRadius is the area of interest's half-width in cells (combat.CellSpan,
+// retail's 320-unit message block): a player sees the monsters of the
+// (2 x 1 + 1)^2 = 9 blocks around the one it stands in -- a 960 x 960 square,
+// so between 320 and 640 units on each side of the player.
+//
+// READ (round 664; docs/protocol/monster_ai.md, "What a player is sent:
+// retail's message blocks"). SR_GameServer.exe links every block to its 8
+// neighbours once, at load: CRgnTerrain::vslot_016 (0x53ab90) walks the 6 x 6
+// blocks and, for each of the 8 (dx, dz) offsets in the table at 0xc64090
+// ((-1,-1) (0,-1) (1,-1) (-1,0) (1,0) (-1,1) (0,1) (1,1)), finds the block
+// (CRgnTerrain::FUN_0053ac20, across a region line through the neighbour
+// region 0x430900 picks, index (i + 6) % 6) and adds it with CMsgBlock slot 5
+// (0x5336e0, the list at block+0x10). An object put in a block (CMsgBlock
+// slot 2, 0x534340) is, for each neighbour and then the block itself, sent
+// that block's objects if it is a player (the group spawn 0x3017/0x3019/0x3018,
+// 0x533e70) and announced to that block's players (0x3015, 0x533f70); taking
+// it out (slot 3, 0x5344b0) sends 0x3016 (0x534050) to the same nine. Until
+// round 664 this was OURS: 2 region cells, the client's REGION_LOAD_RADIUS.
+const AOIRadius = 1
 
 // AOITick is how often the runtime moves each player's view to the cell it
 // stands in (reconcile). OURS: the monster AI's MonsterAITick, so a region
@@ -395,7 +409,7 @@ func (v *monsterAOI) step(dt float64, awake func(int64, combat.Cell) bool, dst [
 // production.
 var aoiStepHook func()
 
-// crossingsLocked turns the region lines a step carried monsters over into what
+// crossingsLocked turns the cell lines a step carried monsters over into what
 // each watching player is owed: an enter for a player whose window holds the
 // new cell and not the old, a leave for one whose window holds the old and
 // not the new. Called with v.mu held for reading, by step, so no view moves between the

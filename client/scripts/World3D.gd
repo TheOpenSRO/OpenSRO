@@ -1257,6 +1257,7 @@ func _ready() -> void:
 	# process environment (SRREVAMP_WORLD_ENTRY), never a static.
 	_world_entry = GroundProbe.next_entry()
 	print(GroundProbe.entry_line(_world_entry, get_instance_id()))
+	_qa_split_init()
 	# The Water Reflection option (round 628): the node always exists, so
 	# SRREVAMP_QA_WATER_TIMING can time a run with the option off too.
 	_water_reflection_on = WaterReflection.enabled()
@@ -2431,6 +2432,8 @@ var _minimap_region := Vector2i(-1, -1)
 var _minimap_group_name := StringName()
 var _minimap_monsters: Array = []
 var _minimap_others: Array = []
+## The rendered frame the minimap was last refreshed in (round 664).
+var _minimap_frame := -1
 
 func _refresh_minimap() -> void:
 	if player == null or _hud_minimap == null or not is_instance_valid(_hud_minimap):
@@ -2459,8 +2462,13 @@ func _refresh_minimap() -> void:
 	var facing := minimap_facing(player.global_transform.basis, _minimap_group.global_transform.basis)
 	_hud_minimap.update_player(rx, ry, local, facing)
 	_hud_minimap.set_area_name(_current_zone_name)
-	_minimap_fill_positions(_monster_bodies, _minimap_monsters)
-	_minimap_fill_positions(_other_bodies, _minimap_others)
+	# Only bodies that can land inside the sign circle (round 664): HudMinimap
+	# draws a sign only under SIGN_RADIUS pixels from the centre, which at
+	# the drawn zoom is this many world units (a hair over, so the circle's
+	# own test still decides the edge).
+	var reach := HudMinimap.SIGN_RADIUS / maxf(_hud_minimap.tile_px(), 0.001) * HudMinimap.REGION_SPAN * 1.01
+	_minimap_fill_positions(_monster_bodies, _minimap_monsters, pos, reach)
+	_minimap_fill_positions(_other_bodies, _minimap_others, pos, reach)
 	_hud_minimap.update_signs(pos, _minimap_npcs_cache, _minimap_monsters, _minimap_others)
 	# The world map every frame only while it is open; hidden, on the old
 	# tenth-frame beat, so it is current when it opens.
@@ -2477,12 +2485,17 @@ func _refresh_minimap() -> void:
 ## other players), skipping ones that are gone or hidden (a dead monster).
 ## A body held V hides still counts: whether the retail minimap reads V's
 ## flag was not read, so the minimap is left as it was.
-func _minimap_fill_positions(bodies: Dictionary, out: Array) -> void:
+func _minimap_fill_positions(bodies: Dictionary, out: Array, centre: Vector3 = Vector3.ZERO, reach: float = INF) -> void:
 	out.clear()
+	var reach_sq := reach * reach
 	for id in bodies:
 		var body: Node3D = bodies[id] as Node3D
 		if body != null and is_instance_valid(body) and (body.visible or _objects_hidden):
-			out.append(body.global_position)
+			var at := body.global_position
+			var dx := at.x - centre.x
+			var dz := at.z - centre.z
+			if dx * dx + dz * dz < reach_sq:
+				out.append(at)
 
 ## The way the player faces as a region-local ground vector (x east, z
 ## north), for the minimap's and world map's arrow. The player's front is its
@@ -5524,7 +5537,29 @@ func _tick_idle_animations(delta: float) -> void:
 	var cam := get_viewport().get_camera_3d() if is_inside_tree() and get_viewport() != null else null
 	var eye: Vector3 = cam.global_position if cam != null else Vector3.ZERO
 	var planes: Array = cam.get_frustum() if cam != null else []
+	# The sound listener (AudioService: the player), for the hearing gate.
+	var listener: Vector3 = player.global_position if player != null and player.is_inside_tree() else eye
+	# Round 664: the range and frustum tests below are MonsterDraw.pose_wanted's
+	# and in_range's, written out (the six planes unrolled) and fed from a
+	# per-skeleton cache of its metas (MonsterCrowd.CullCache) -- the same
+	# answers without three meta reads and three script calls a body, since
+	# the loop visits every body every frame (monster_crowd_test holds the
+	# two to the same verdicts).
+	var have_planes := planes.size() == 6
+	var p0: Plane = planes[0] if have_planes else Plane()
+	var p1: Plane = planes[1] if have_planes else Plane()
+	var p2: Plane = planes[2] if have_planes else Plane()
+	var p3: Plane = planes[3] if have_planes else Plane()
+	var p4: Plane = planes[4] if have_planes else Plane()
+	var p5: Plane = planes[5] if have_planes else Plane()
+	var pose_range := MonsterDraw.POSE_RANGE
+	_crowd_cull.tick()
+	var pose_tick := _crowd_cull.ticks()
+	var cull_ids: Dictionary = _crowd_cull.by_id()
+	var lod_skipped := 0
 	var posed := 0
+	var timing := _qa_split != null
+	var t0 := 0
 	var culled := 0
 	var alive: Array = []
 	for entry in _animated:
@@ -5540,28 +5575,77 @@ func _tick_idle_animations(delta: float) -> void:
 			continue
 		var pose := true
 		var audible := true
-		if cam != null and skeleton.has_meta(MonsterDraw.META_CULL):
+		var info: Array = MonsterCrowd.CullCache.NONE
+		if cam != null:
+			var cached = cull_ids.get(skeleton.get_instance_id())
+			info = cached if cached != null else _crowd_cull.info(skeleton)
+		if not info.is_empty():
+			# A looping body that was neither in view nor in hearing at its
+			# last test is tested every second frame, on its slot (round 664,
+			# MonsterCrowd.recheck_due; OURS): one coming into view is posed at
+			# most a frame late.
+			if info[4] > 0.0 and entry[4] and not MonsterCrowd.recheck_due(pose_tick, int(info[3])):
+				culled += 1
+				alive.append(entry)
+				continue
 			var origin := skeleton.global_position
-			var radius := float(skeleton.get_meta(MonsterDraw.META_RADIUS, 1.0))
-			audible = MonsterDraw.in_range(origin, radius, eye)
-			pose = audible and MonsterDraw.pose_wanted(origin, radius, eye, planes)
+			var radius: float = info[0]
+			var dist := origin.distance_to(eye)
+			var in_range := dist - radius < pose_range
+			pose = in_range
+			if in_range and have_planes:
+				pose = p0.distance_to(origin) <= radius and p1.distance_to(origin) <= radius \
+					and p2.distance_to(origin) <= radius and p3.distance_to(origin) <= radius \
+					and p4.distance_to(origin) <= radius and p5.distance_to(origin) <= radius
+			elif in_range:
+				pose = MonsterDraw.pose_wanted(origin, radius, eye, planes)
 			# A monster's model out of range is hidden, as MapAnimation hides a
 			# map object (round 655's review; OURS): unposed, a walking body
 			# would slide without its gait.
-			if skeleton.has_meta(MonsterDraw.META_HIDE) and skeleton.visible != audible:
-				skeleton.visible = audible
+			if info[1] > 0.0 and skeleton.visible != in_range:
+				skeleton.visible = in_range
+			# Its clip's sounds only within the core's cull of the listener
+			# (round 664, MonsterCrowd.hearable: READ, 600 units): farther, no
+			# key it fires could play. Rested once as it goes, it resumes
+			# silently.
+			audible = in_range and origin.distance_squared_to(listener) <= SoundTable.CULL_DISTANCE_SQ
+			if audible != (info[2] == 0.0):
+				info[2] = 0.0 if audible else 1.0
+				if not audible:
+					_anim_sounds.rest(skeleton)
+			# Far bodies posed every second or fourth frame (round 664,
+			# MonsterCrowd.pose_interval; OURS): within 300 of the camera,
+			# every frame as before.
+			info[4] = 0.0 if pose or audible else 1.0
+			if pose and not MonsterCrowd.pose_due(pose_tick, int(info[3]), MonsterCrowd.pose_interval(dist)):
+				pose = false
+				lod_skipped += 1
+		if _qa_split != null:
+			if pose and _qa_split_off.has("pose"):
+				pose = false
+			if audible and _qa_split_off.has("sound"):
+				audible = false
 		if pose:
 			posed += 1
 		else:
 			culled += 1
+			# A loop neither posed nor heard this frame has nothing more to do
+			# (round 664): only a one-shot's hand-back runs unseen.
+			if not audible and entry[4]:
+				alive.append(entry)
+				continue
 		var anim: BanReader.ParsedAnimation = entry[1]
 		var phase: float = entry[3]
 		var loops: bool = entry[4]
 		if loops:
 			if pose:
-				Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, _idle_anim_time + phase, true)
+				if timing: t0 = Time.get_ticks_usec()
+				MonsterCrowd.pose_at(skeleton, anim, _idle_anim_time + phase, true)
+				if timing: _qa_split.pose_usec += Time.get_ticks_usec() - t0
 			if audible:
+				if timing: t0 = Time.get_ticks_usec()
 				_anim_sounds.advance(skeleton, anim, float(entry[5]), _loop_ms(anim, _idle_anim_time + phase), true)
+				if timing: _qa_split.sound_usec += Time.get_ticks_usec() - t0
 		else:
 			# A one-shot runs from when it started, on the clip's own clock,
 			# and holds its last keyframe; once there, hand back to what it
@@ -5571,30 +5655,44 @@ func _tick_idle_animations(delta: float) -> void:
 				# Its last tracks first: the frame that ends it is the frame
 				# that would pass them.
 				if audible:
+					if timing: t0 = Time.get_ticks_usec()
 					_anim_sounds.advance(skeleton, anim, float(entry[5]), float(anim.duration_ms), false)
+					if timing: _qa_split.sound_usec += Time.get_ticks_usec() - t0
 				var resume: Array = entry[6]
 				resume[5] = _idle_anim_time
 				alive.append(resume)
 				if pose:
-					Skeleton3DBuilder.apply_ban_pose_at(skeleton, resume[1], _idle_anim_time + float(resume[3]), true)
+					if timing: t0 = Time.get_ticks_usec()
+					MonsterCrowd.pose_at(skeleton, resume[1], _idle_anim_time + float(resume[3]), true)
+					if timing: _qa_split.pose_usec += Time.get_ticks_usec() - t0
 				if audible:
+					if timing: t0 = Time.get_ticks_usec()
 					_anim_sounds.advance(skeleton, resume[1], float(resume[5]),
 						_loop_ms(resume[1], _idle_anim_time + float(resume[3])), true)
+					if timing: _qa_split.sound_usec += Time.get_ticks_usec() - t0
 				continue
 			if pose:
-				Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, elapsed, false)
+				if timing: t0 = Time.get_ticks_usec()
+				MonsterCrowd.pose_at(skeleton, anim, elapsed, false)
+				if timing: _qa_split.pose_usec += Time.get_ticks_usec() - t0
 			if audible:
+				if timing: t0 = Time.get_ticks_usec()
 				_anim_sounds.advance(skeleton, anim, float(entry[5]), elapsed * 1000.0, false)
+				if timing: _qa_split.sound_usec += Time.get_ticks_usec() - t0
 		alive.append(entry)
 	if alive.size() != _animated.size():
 		_animated = alive
 	_anim_posed_last = posed
 	_anim_culled_last = culled
+	_anim_lod_skipped_last = lod_skipped
 
 ## How many clips the last _tick_idle_animations posed and culled (round
 ## 655), for the QA ANIM line and the test.
 var _anim_posed_last := 0
 var _anim_culled_last := 0
+## Of the culled, how many were in view but skipped by the animation LOD
+## this frame (round 664, MonsterCrowd.pose_interval).
+var _anim_lod_skipped_last := 0
 
 ## Where a loop posed at `seconds` is in its clip, in milliseconds -- the
 ## wrap apply_ban_pose_at makes for a looping clip.
@@ -5604,6 +5702,10 @@ static func _loop_ms(anim: BanReader.ParsedAnimation, seconds: float) -> float:
 	return fposmod(seconds * 1000.0, float(anim.duration_ms))
 
 var _idle_anim_time := 0.0
+## Round 664: the clip tick runs once per rendered frame (MonsterCrowd.TickGate),
+## and reads each culled skeleton's metas from one cache (MonsterCrowd.CullCache).
+var _idle_tick_gate := MonsterCrowd.TickGate.new()
+var _crowd_cull := MonsterCrowd.CullCache.new()
 
 ## The map objects that move (round 645): MapAnimation.Driver runs each clip
 ## while its object is in range and in view, as retail's update does.
@@ -11881,6 +11983,13 @@ func _qa_mobs_step() -> void:
 	var span := 1920.0
 	var centre := _grid_origin_world + Vector3(span / 2.0, 0.0, -span / 2.0)
 	var half := span * (float(radius) + 0.5)
+	# SRREVAMP_QA_MOBS_SPREAD=<half-width> (round 664): the crowd in a square
+	# of that half-width around the player instead, as a dense field packs
+	# its nests (the perf gate's `crowd` site).
+	var spread := OS.get_environment("SRREVAMP_QA_MOBS_SPREAD")
+	if spread.is_valid_float() and float(spread) > 0.0:
+		centre = player.position
+		half = float(spread)
 	var list: Array = []
 	for i in range(int(spec)):
 		var m := CombatNet.MonsterSnapshot.new()
@@ -11896,6 +12005,52 @@ func _qa_mobs_step() -> void:
 	print("QA MOBS: %d monster(s) of %d species over %.0f x %.0f around (%.0f, %.0f): %s" % [
 		list.size(), species.size(), half * 2.0, half * 2.0, centre.x, centre.z, ", ".join(PackedStringArray(species))])
 	_on_monster_list_result(list, "")
+
+## SRREVAMP_QA_MOBSPLIT=<frames> (round 664): the frame split, one line every
+## <frames> rendered frames (MonsterCrowd.Split). SRREVAMP_QA_MOBSPLIT_OFF, a
+## comma list, switches parts of every monster body off for the A/B that
+## splits the renderer's share: `pose` (no clip is posed), `labels` (name and
+## HP bar hidden), `collide` (no click collider), `mesh` (the model hidden,
+## still posed), `sound` (no clip's sound tracks advanced). QA only.
+var _qa_split: MonsterCrowd.Split = null
+var _qa_split_off := PackedStringArray()
+func _qa_split_init() -> void:
+	var every := int(OS.get_environment("SRREVAMP_QA_MOBSPLIT"))
+	if every <= 0:
+		return
+	_qa_split = MonsterCrowd.Split.new(every)
+	var off := OS.get_environment("SRREVAMP_QA_MOBSPLIT_OFF")
+	if off != "":
+		_qa_split_off = off.split(",", false)
+	RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
+	print("QA MOBSPLIT on: a line every %d frame(s); off: %s" % [every, ",".join(_qa_split_off) if not _qa_split_off.is_empty() else "nothing"])
+
+func _qa_split_print() -> void:
+	var vp := get_viewport().get_viewport_rid()
+	print(_qa_split.line(Engine.get_frames_drawn(), _monster_bodies.size(),
+		RenderingServer.viewport_get_measured_render_time_cpu(vp),
+		RenderingServer.viewport_get_measured_render_time_gpu(vp),
+		int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)),
+		int(Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME)),
+		int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)),
+		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0,
+		Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0))
+
+## The QA split's switches on one freshly built monster body.
+func _qa_split_strip(body: Node3D, skeleton: Skeleton3D) -> void:
+	if _qa_split_off.has("labels"):
+		for n in ["Label", "HpBar"]:
+			var node := body.get_node_or_null(n) as Node3D
+			if node != null:
+				node.visible = false
+	if _qa_split_off.has("collide"):
+		var click := body.get_node_or_null("ClickBody")
+		if click != null:
+			body.remove_child(click)
+			click.free()
+	if _qa_split_off.has("mesh") and skeleton != null:
+		for mi in skeleton.find_children("*", "MeshInstance3D", true, false):
+			(mi as MeshInstance3D).visible = false
 
 ## SRREVAMP_QA_MOB_STRIKE=1: stands in for a server with the strike push
 ## (OpMonsterAttacked 0x007D), which a server sends only with its
@@ -13007,6 +13162,8 @@ func _is_typing() -> bool:
 ## client/tools/README.md, "Load benchmark".
 func _physics_process(delta: float) -> void:
 	var sw := Time.get_ticks_usec()
+	if _qa_split != null:
+		_qa_split.on_step(Engine.get_frames_drawn())
 	SkillEffects.tick(delta)
 	BerserkLook.tick(delta)
 	_berserk_flash_step(delta)
@@ -13017,6 +13174,10 @@ func _physics_process(delta: float) -> void:
 	var frame := Engine.get_frames_drawn()
 	_load_timings.note_frame((now - sw - (_load_timings.cell_work_usec - cells_before)) / 1000.0, frame, "")
 	_load_timings.note_wall(frame, now)
+	if _qa_split != null:
+		_qa_split.physics_usec += Time.get_ticks_usec() - sw
+		if _qa_split.due():
+			_qa_split_print()
 
 ## One physics step of the world: the sky, the monsters' legs, the player's
 ## input and walk, the QA hooks, region streaming and the position send.
@@ -13034,11 +13195,17 @@ func _physics_step(delta: float) -> void:
 	# reach test below measures to where they are drawn this frame; the
 	# ground items still waiting for ground share the frame's height budget
 	# with them (_step_heights).
+	var split_sw := Time.get_ticks_usec()
 	_step_heights(delta)
+	if _qa_split != null:
+		_qa_split.heights_usec += Time.get_ticks_usec() - split_sw
 	# SRREVAMP_QA_MOBS (round 655): a dense monster list, once.
 	_qa_mobs_step()
 	# The monster bodies a list queued, a frame's budget of them (round 655).
+	split_sw = Time.get_ticks_usec()
 	_pump_monster_builds()
+	if _qa_split != null:
+		_qa_split.pump_usec += Time.get_ticks_usec() - split_sw
 	# V and Z, while held (round 608).
 	_apply_key_holds()
 
@@ -13157,7 +13324,14 @@ func _physics_step(delta: float) -> void:
 	_maybe_stream_regions()
 	_process_stream_queue()
 	_refresh_zone_label_position()
-	_refresh_minimap()
+	# The minimap once per rendered frame, like the clip tick (round 664):
+	# its signs walk every body, and a slow frame ran it in each physics step.
+	if _minimap_frame != Engine.get_process_frames():
+		_minimap_frame = Engine.get_process_frames()
+		split_sw = Time.get_ticks_usec()
+		_refresh_minimap()
+		if _qa_split != null:
+			_qa_split.minimap_usec += Time.get_ticks_usec() - split_sw
 	_update_blob_shadow()
 
 	_time_since_send += delta
@@ -13253,8 +13427,15 @@ func _physics_step(delta: float) -> void:
 	# wrong side's bone (see CharacterAssembler._attach_paired). With both
 	# fixed the character stands correctly, arms at its sides, and moves
 	# with the real animation.
-	# NPCs and monsters, playing their own standing animations.
-	_tick_idle_animations(delta)
+	# NPCs and monsters, playing their own standing animations -- once per
+	# rendered frame, with every step's time (round 664, MonsterCrowd.TickGate).
+	var idle_delta := _idle_tick_gate.take(Engine.get_process_frames(), delta)
+	if idle_delta >= 0.0:
+		split_sw = Time.get_ticks_usec()
+		_tick_idle_animations(idle_delta)
+		if _qa_split != null:
+			_qa_split.idle_usec += Time.get_ticks_usec() - split_sw
+			_qa_split.posed += _anim_posed_last
 	# Map objects that move -- trees, reeds, tentacles (round 645).
 	_tick_map_animations()
 
@@ -15408,6 +15589,9 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 			label_height = _monster_templates.label_height_of(monster_model)
 			monster_skeleton.set_meta(MonsterDraw.META_CULL, true)
 			monster_skeleton.set_meta(MonsterDraw.META_HIDE, true)
+			# Every body of this model has its template's bones (round 664,
+			# MonsterCrowd.pose_at): its clips' bone indices are found once.
+			monster_skeleton.set_meta(MonsterCrowd.META_LAYOUT, monster_model)
 			# The class's model scale (round 660, MonsterDraw.class_scale:
 			# champion 1.5, giant 3.0, elite 1.7 -- READ, CICMonster::vslot_025
 			# 0x9d3995), with the label, the cull radius and the collider
@@ -15473,6 +15657,8 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	body.set_meta("model", monster_model if monster_skeleton != null else "")
 	body.add_child(_monster_collider(label_height))
 
+	if _qa_split != null and not _qa_split_off.is_empty():
+		_qa_split_strip(body, monster_skeleton)
 	other_entities.add_child(body)
 	_monster_bodies[monster.monster_id] = body
 	_monster_builds += 1

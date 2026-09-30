@@ -135,7 +135,7 @@ type MonsterAIConfig struct {
 	TickStats bool
 	// Sleep lets the brains of monsters no player is near sleep (round 656,
 	// cmd/server's -monster-sleep, on by default there): a monster whose
-	// region cell is outside every player's window -- the AOIRadius square of
+	// cell is outside every player's window -- the AOIRadius square of
 	// cells around the cell each player stands in -- is neither stepped nor
 	// updated, and picks up where it stopped when a player comes within that
 	// window. OURS: retail's rule for which objects it runs is unread; this
@@ -239,7 +239,7 @@ type monsterAI struct {
 	// over thousands of monsters allocates next to nothing: live is the pass's
 	// monsters in id order, awake the cells some player's window holds (with
 	// sleep on), players the living and dead players by the cell they stand
-	// in, crossed the region lines this pass's step carried monsters over,
+	// in, crossed the cell lines this pass's step carried monsters over,
 	// cellBuf/candBuf/sessBuf scratch space.
 	live  []combat.Monster
 	awake map[combat.Cell]struct{}
@@ -419,7 +419,7 @@ type strikeHandoff struct {
 }
 
 // monsterPush is one push collected during a pass, sent after it: the zone
-// and the region cell of the monster it is about (round 656: the cell picks
+// and the cell of the monster it is about (round 656: the cell picks
 // its recipients, deliver).
 type monsterPush struct {
 	zone   string
@@ -577,7 +577,7 @@ func monsterAITick(now time.Time) {
 // Round 656: the pass reads the players once (indexPlayers: by the region
 // cell each stands in), and with sleep on (MonsterAIConfig.Sleep) steps and
 // runs only the monsters in cells some player's window holds; the step
-// reports the region lines it carried monsters over, and the area of
+// reports the cell lines it carried monsters over, and the area of
 // interest turns those into enter and leave messages (aoi.go crossings),
 // sent before the pass's pushes. The monsters are read into a buffer the
 // runtime keeps (live), not a fresh copy of the whole hub each tick.
@@ -719,7 +719,7 @@ func (a *monsterAI) tick(now time.Time) {
 	}
 }
 
-// indexPlayers files every player by the region cell it stands in (players)
+// indexPlayers files every player by the cell it stands in (players)
 // and, with sleep on, marks the cells within AOIRadius of each as awake. Once
 // a pass, under a.mu; the acquire scan reads players instead of copying the
 // zone's entities for every monster that scans.

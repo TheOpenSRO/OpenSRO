@@ -15,10 +15,11 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
 
-// Round 656: the monsters' area of interest (aoi.go). A cell k spans world
-// [1920k - 960, 1920k + 960) on each axis, so cellX(k) is a point well
-// inside it.
-func cellX(k int) float64 { return float64(k) * 1920 }
+// Round 656: the monsters' area of interest (aoi.go). Since round 664 a cell
+// is retail's 320-unit message block (combat.CellSpan) and the window 3 x 3
+// of them (AOIRadius 1). Cell k counted from the origin's spans world
+// [320k, 320k + 320) on each axis, so cellX(k) is its middle.
+func cellX(k int) float64 { return float64(k)*combat.CellSpan + combat.CellSpan/2 }
 
 func spawnAt(t *testing.T, monsters *combat.Hub, zone string, x, z float64) int64 {
 	t.Helper()
@@ -107,15 +108,15 @@ func aoiFrames(t *testing.T, frames []*proto.Packet) (left, entered []int64, leg
 	return left, entered, legs
 }
 
-// The list is the window: the monsters of the 5x5 cells around the player,
+// The list is the window: the monsters of the 3x3 cells around the player,
 // in its zone -- not the one two cells out, nor another zone's.
 func TestMonsterListIsTheAreaOfInterest(t *testing.T) {
 	monsters := combat.NewHub()
 	here := spawnAt(t, monsters, "jangan", 10, 10)
-	edgeE := spawnAt(t, monsters, "jangan", cellX(2)+900, 0) // cell (2, 0), 4,740 away
-	edgeS := spawnAt(t, monsters, "jangan", 0, cellX(-2))    // cell (0, -2)
-	spawnAt(t, monsters, "jangan", cellX(3)-900, 0)          // cell (3, 0): 4,860 away, out
-	spawnAt(t, monsters, "jangan", cellX(1), cellX(-3))      // cell (1, -3): out
+	edgeE := spawnAt(t, monsters, "jangan", cellX(1)+150, 0) // cell (1, 0), 630 away
+	edgeS := spawnAt(t, monsters, "jangan", 0, cellX(-1))    // cell (0, -1)
+	spawnAt(t, monsters, "jangan", cellX(2)-150, 0)          // cell (2, 0): 650 away, out
+	spawnAt(t, monsters, "jangan", cellX(1), cellX(-2))      // cell (1, -2): out
 	spawnAt(t, monsters, "donwhang", 0, 0)                   // another bucket
 	r := newListRig(t, monsters)
 	c := r.join(t, 1, 0, 0)
@@ -128,16 +129,16 @@ func TestMonsterListIsTheAreaOfInterest(t *testing.T) {
 	}
 }
 
-// A player walking over a region line is sent the difference: the monsters of
+// A player walking over a cell line is sent the difference: the monsters of
 // the column of cells its window gained, each as an OpMonsterSpawned (and its
 // leg, when it walks), and an OpMonsterLeft for those of the column it lost.
 // Monsters in both windows are not mentioned. Walking back reverses it.
 func TestAOIEnterLeaveAsThePlayerMoves(t *testing.T) {
 	monsters := combat.NewHub()
-	west := spawnAt(t, monsters, "jangan", cellX(-2), 0)  // in the window at 0, out at 1
-	east := spawnAt(t, monsters, "jangan", cellX(3), 300) // out at 0, in at 1
-	both := spawnAt(t, monsters, "jangan", cellX(1), 0)   // in both
-	if _, ok := monsters.SetMotion(east, cellX(3)+200, 300, 8, 0); !ok {
+	west := spawnAt(t, monsters, "jangan", cellX(-1), 0) // in the window at 0, out at 1
+	east := spawnAt(t, monsters, "jangan", cellX(2), 50) // out at 0, in at 1
+	both := spawnAt(t, monsters, "jangan", cellX(1), 0)  // in both
+	if _, ok := monsters.SetMotion(east, cellX(2)+100, 50, 8, 0); !ok {
 		t.Fatal("precondition: the east monster walks")
 	}
 	r := newListRig(t, monsters)
@@ -153,14 +154,14 @@ func TestAOIEnterLeaveAsThePlayerMoves(t *testing.T) {
 	}
 
 	sess := r.session(1)
-	r.hub.Move(sess, world.Position{X: cellX(1) - 900, Z: 0}) // over the line at x = 960
+	r.hub.Move(sess, world.Position{X: cellX(1) - 150, Z: 0}) // over the line at x = 320
 	v.reconcile()
 	left, entered, legs := aoiFrames(t, c.quiet(t, 200*time.Millisecond))
 	if !sameIDs(left, []int64{west}) || !sameIDs(entered, []int64{east}) {
 		t.Fatalf("crossing east: left %v entered %v, want left [%d] entered [%d]", left, entered, west, east)
 	}
-	if len(legs) != 1 || legs[0].MonsterID != east || legs[0].DestX != float32(cellX(3)+200) {
-		t.Fatalf("the walking monster's leg: %+v, want one leg for %d to x %.0f", legs, east, cellX(3)+200)
+	if len(legs) != 1 || legs[0].MonsterID != east || legs[0].DestX != float32(cellX(2)+100) {
+		t.Fatalf("the walking monster's leg: %+v, want one leg for %d to x %.0f", legs, east, cellX(2)+100)
 	}
 
 	r.hub.Move(sess, world.Position{X: 0, Z: 0})
@@ -171,15 +172,15 @@ func TestAOIEnterLeaveAsThePlayerMoves(t *testing.T) {
 	}
 }
 
-// A monster the step carries over a region line enters or leaves a player's
+// A monster the step carries over a cell line enters or leaves a player's
 // window through the AI tick: the one walking out is named in an
 // OpMonsterLeft, the one walking in arrives as an OpMonsterSpawned followed by
 // its leg. And the tick's pushes about monsters outside the window do not
 // reach the player at all.
 func TestAOIEnterLeaveAsAMonsterCrosses(t *testing.T) {
 	monsters := combat.NewHub()
-	out := spawnAt(t, monsters, "jangan", cellX(2)+900, 0) // cell 2, walking into cell 3
-	in := spawnAt(t, monsters, "jangan", cellX(3)-900, 50) // cell 3, walking into cell 2
+	out := spawnAt(t, monsters, "jangan", cellX(1)+150, 0) // cell 1, walking into cell 2
+	in := spawnAt(t, monsters, "jangan", cellX(2)-150, 50) // cell 2, walking into cell 1
 	far := spawnAt(t, monsters, "jangan", cellX(6), 0)
 	r := newListRig(t, monsters)
 	v := installAOIForTest(t, r.hub, monsters)
@@ -188,9 +189,9 @@ func TestAOIEnterLeaveAsAMonsterCrosses(t *testing.T) {
 	a := installMonsterAIForTest(t, r.hub, monsters, 1, nil) // nil: the production push
 	a.tick(aiT0)                                             // brains; no step on the first pass
 	c.quiet(t, 100*time.Millisecond)
-	monsters.SetMotion(out, cellX(3)-800, 0, 1000, 1)
-	monsters.SetMotion(in, cellX(2)+800, 50, 1000, 1)
-	a.tick(aiT0.Add(MonsterAITick)) // one 160-unit step each, over x = 4,800
+	monsters.SetMotion(out, cellX(3), 0, 1000, 1)
+	monsters.SetMotion(in, cellX(0), 50, 1000, 1)
+	a.tick(aiT0.Add(MonsterAITick)) // one 100-unit step each, over x = 640, still walking
 	left, entered, legs := aoiFrames(t, c.quiet(t, 200*time.Millisecond))
 	if !sameIDs(left, []int64{out}) || !sameIDs(entered, []int64{in}) {
 		t.Fatalf("left %v entered %v, want left [%d] entered [%d]", left, entered, out, in)
@@ -203,9 +204,9 @@ func TestAOIEnterLeaveAsAMonsterCrosses(t *testing.T) {
 	a.emit(monsterPush{zone: "jangan", cell: combat.CellOf("jangan", cellX(6), 0),
 		packet: &proto.Packet{Opcode: OpMonsterMoved, Data: (&MonsterMoved{MonsterID: far}).Encode()}}, nil)
 	if got := c.quiet(t, 150*time.Millisecond); len(got) != 0 {
-		t.Fatalf("a push about a monster six regions away reached the player: %d frame(s)", len(got))
+		t.Fatalf("a push about a monster six cells away reached the player: %d frame(s)", len(got))
 	}
-	a.emit(monsterPush{zone: "jangan", cell: combat.CellOf("jangan", cellX(2), 0),
+	a.emit(monsterPush{zone: "jangan", cell: combat.CellOf("jangan", cellX(1), 0),
 		packet: &proto.Packet{Opcode: OpMonsterMoved, Data: (&MonsterMoved{MonsterID: in}).Encode()}}, nil)
 	if got := c.quiet(t, 150*time.Millisecond); len(got) != 1 {
 		t.Fatalf("a push about a monster in the window: %d frame(s), want 1", len(got))
@@ -221,8 +222,8 @@ func TestMonsterWatchersAreTheWindowsHolders(t *testing.T) {
 	near := gateway.NewTestSession(1)
 	farAway := gateway.NewTestSession(2)
 	other := gateway.NewTestSession(3)
-	hub.Enter(near, 1, "near", 1, "jangan", world.Position{X: cellX(2), Z: 0})
-	hub.Enter(farAway, 2, "far", 1, "jangan", world.Position{X: cellX(5), Z: 0})
+	hub.Enter(near, 1, "near", 1, "jangan", world.Position{X: cellX(1), Z: 0})
+	hub.Enter(farAway, 2, "far", 1, "jangan", world.Position{X: cellX(2), Z: 0})
 	hub.Enter(other, 3, "other", 1, "donwhang", world.Position{})
 	m, _ := monsters.Get(spawnAt(t, monsters, "jangan", 0, 0))
 	var got []int64
