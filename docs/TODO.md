@@ -932,6 +932,17 @@ Mountain), tunnels, Jangan's gate soldiers, Constantinople's guides and the two 
       test in `HandleTeleportUse`) is still not modelled: a srrevamp teleport completes inside one
       request. With the range in place it no longer lets a second request through from the old
       gate; its lifetime is unread.
+- [x] **Donwhang's and Samarkand's gates could not be clicked** (round 650). Round 643's one-object-
+      per-key placement put their portals in the neighbouring region's container, where the gate
+      bind did not look. The bind now searches every loaded region in world x/z and retries after
+      each later commit (`World3D._bind_gate`, `_rebind_pending_gates`), and the real-input run
+      Hotan -> Donwhang -> Jangan went through.
+- [ ] **Alexandria (North)'s gate `STORE_SD_GATE2` is not clickable**, on dev e5bf2ba and after round
+      650. Whether it was before round 643 is not known: round 577 did not run Alexandria. MEASURED
+      (boot at GATE_SD2, 92/51 (111, 524), radius 1): the nearest placed object to the table's point
+      (92/50 (1719, 760)) is `alex_portal` at 15.1 units, past the 10-unit stand-in radius. Whether
+      that portal is the gate is not established. Widening the radius would be a guess. Alexandria
+      (South) binds its `alex_portal` at 8.4.
 - [ ] **The talk range of other NPCs.** Round 642's review closes a gate's or teleport NPC's talk
       box beyond the READ range (300 NPC, 800 structure). Whether retail's talk box for a shop or a
       warehouse closes by the same range is not read, so those talk boxes still stay open.

@@ -372,6 +372,33 @@ drawn box, and for Samarkand (640, -1013), Constantinople (640, -1838) and Hotan
 the layer and the talk path, **not a click a player could make there**. The QA log
 now marks such a point `OFF-SCREEN`.
 
+**Where the portal is held (round 650).** Round 643 made each map object exist once
+in the world, placed by the first loaded region whose `.o2` lists its key, in that
+region's container and frame (`World3D._placed_objects`). A portal near a region edge
+is listed by both regions, so the region that loads first holds it. The bind looked
+only in the building region's own container, so three town gates came out unbound
+(MEASURED on dev e5bf2ba, a boot at each gate's arrival point, radius 1):
+
+| gate | building region | arrival (point) region | dev e5bf2ba | round 650 |
+|---|---|---|---|---|
+| `STORE_CH_GATE` Jangan | 97/168 | 97/168 | `cj_portal`, 3.6 | same |
+| `STORE_WC_GATE` Donwhang | 103/153 (962, 8) | 102/153 | **unbound** | `w_cd_portal` in `RealMapObjects_102_153`, 3.3 |
+| `STORE_KT_GATE` Hotan | 92/135 | 92/135 | `oas_hot_portal`, 0.7 | same |
+| `STORE_EU_GATE` Constantinople | 105/79 | 105/79 | `euro_esteuro_fountain01`, 2.6 | same |
+| `STORE_CA_GATE` Samarkand | 107/107 (1917, 108) | 106/108 | **unbound** | `samarkand_center_01` in `RealMapObjects_106_108`, 1.0 |
+| `STORE_SD_GATE1` Alexandria S | 90/48 | 90/48 | `alex_portal`, 8.4 | same |
+| `STORE_SD_GATE2` Alexandria N | 92/50 (1719, 760) | 92/51 | unbound | still unbound: the nearest object is `alex_portal` at 15.1 (OPEN, `docs/TODO.md`) |
+
+The round-650 column is the same object and distance round 577 measured when each
+region placed its own copy. The bind now takes the table point into the world through
+the building region's terrain group and searches every loaded region's container in
+world x/z (`_bind_gate`, `_nearest_placed_object`). A gate left unbound is tried again
+after every later region's commit (`_rebind_pending_gates`). That retry is defensive: round
+650's review measured that each of the seven gate portals is also listed by its building's own
+region, so whichever commits first places it and the first bind finds it (INFERRED to be needed
+only for a portal no loaded region lists yet; its live work today is Alexandria North, which
+never binds). `teleport_reader_test.gd` (g) holds both orders.
+
 **Every piece of the bound object is talkable.** The layer goes on every piece
 body under the object, and the talk ray runs before the walk ray. Samarkand's bind
 covered all 10 piece bodies of `samarkand_center_01`, Constantinople's 7 of the

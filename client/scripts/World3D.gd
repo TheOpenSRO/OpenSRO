@@ -4051,6 +4051,8 @@ func _clear_region_grid() -> void:
 	# take the new zone's objects in with the old zone's stale ones.
 	_placed_objects.clear()
 	_object_containers.clear()
+	# The town gates' bindings go with them (round 650, _bind_region_gates).
+	_gate_bindings.clear()
 	_map_animations.reset()
 	for child in get_children():
 		if child.name.begins_with("RealTerrain") or child.name.begins_with("RealMapObjects"):
@@ -6279,40 +6281,133 @@ const GATE_BIND_RADIUS := 10.0
 ## both bits) and the camera arm masks layer 1 only, so nothing else about
 ## the gate's collision changes.
 ##
-## Nothing within GATE_BIND_RADIUS (a region without its .o, a gate whose
-## model is placed by the neighbouring region): the gate is left unbound --
-## not clickable -- and the log says so. No stand-in collider is added: the
-## talk layer is the navmesh-wall bit the player's body masks, so any body put
+## Nothing within GATE_BIND_RADIUS (a region without its `.o2`, or a portal
+## no loaded region has placed yet): the gate is left unbound -- not
+## clickable -- and the log says so. No stand-in collider is added: the talk
+## layer is the navmesh-wall bit the player's body masks, so any body put
 ## there is a wall where retail has none.
+##
+## **Where the portal is held (round 650).** Since round 643 a map object
+## exists once in the world, placed by the FIRST loaded region whose `.o2`
+## lists its key, in that region's container and frame (_placed_objects,
+## region_placements). A portal on a region edge is listed by both regions,
+## so it is often held by the neighbour: Donwhang's STORE_WC_GATE stands in
+## 103/153 at local (962, 8), eight units from the edge, and a player
+## arriving at GATE_WC (102/153) has 102/153 load first, which places
+## Obj_w_cd_portal in RealMapObjects_102_153 (MEASURED on the render box:
+## `no placed object within 10 units of the table's point (962, 8) in
+## 103/153; left unbound`, and no OpTeleportUse from the tester's session
+## after the arrival). Until round 650 this looked in the building region's
+## own container only, so the gate was never bound there. Now the table
+## point is taken into the world through the building region's terrain group
+## and every loaded region's container is searched in world x/z
+## (_nearest_placed_object); and a gate left unbound -- its portal held by a
+## region that has not committed yet -- is tried again after every region's
+## commit (_rebind_pending_gates), since a later region may be the one that
+## places it.
 func _bind_region_gates(region_x: int, region_y: int, group: Node3D) -> void:
 	if _teleport_reader == null:
 		return
-	var container := group.get_node_or_null("RealMapObjects_%d_%d" % [region_x, region_y]) as Node3D
 	for building_v in _teleport_reader.buildings_in_region(region_x, region_y):
 		var building: TeleportReader.Building = building_v
 		var point := _teleport_reader.point_for_building(building.code)
 		if point == null or not point.interaction7:
 			continue
-		var spot := Vector2(building.x, building.z)
-		var best: Node3D = null
-		var best_d := GATE_BIND_RADIUS
-		if container != null:
-			for child in container.get_children():
-				var node := child as Node3D
-				if node == null:
-					continue
-				var d := Vector2(node.position.x, node.position.z).distance_to(spot)
-				if d <= best_d:
-					best_d = d
-					best = node
-		var gate_name := _gate_display_name(building)
-		if best != null:
-			var bodies := _tag_gate(best, building.code, gate_name, point.id)
-			print("World3D: teleport gate %s bound to %s (%.1f units from the table's point; point %d, %d piece bod(ies) on the talk layer)" % [
-				building.code, best.name, best_d, point.id, bodies])
-		else:
-			print("World3D: teleport gate %s -- no placed object within %.0f units of the table's point (%.0f, %.0f) in %d/%d; left unbound (not clickable)" % [
-				building.code, GATE_BIND_RADIUS, building.x, building.z, region_x, region_y])
+		_gate_bindings[building.code] = {"rx": region_x, "ry": region_y, "node": null}
+		if not _bind_gate(building, point, group):
+			# The nearest placed object at any distance, for the log.
+			var spot := _chain_transform(group) * Vector3(building.x, 0.0, building.z)
+			var nearest := _nearest_placed_object(_object_containers.values(), spot, INF)
+			var nearest_text := "none loaded" if nearest.is_empty() else "the nearest is %s at %.1f" % [(nearest["node"] as Node).name, nearest["distance"]]
+			print("World3D: teleport gate %s -- no placed object within %.0f units of the table's point (%.0f, %.0f) in %d/%d (%s); left unbound (not clickable) until a region that places it loads" % [
+				building.code, GATE_BIND_RADIUS, building.x, building.z, region_x, region_y, nearest_text])
+	_rebind_pending_gates(region_x, region_y)
+
+## The town gates of the loaded regions (round 650): building code ->
+## {"rx", "ry" (the building's region), "node" (the placed object it is bound
+## to, or null while unbound)}. Set by _bind_region_gates, retried by
+## _rebind_pending_gates, cleared with the grid (_clear_region_grid).
+var _gate_bindings := {}
+
+## Binds one town gate to the placed object nearest its table point, in any
+## loaded region's container (see _bind_region_gates); true when bound.
+## `group` is the building region's terrain group, whose frame the table's
+## region-local point is in.
+func _bind_gate(building: TeleportReader.Building, point: TeleportReader.Point, group: Node3D) -> bool:
+	var spot := _chain_transform(group) * Vector3(building.x, 0.0, building.z)
+	var containers: Array = _object_containers.values()
+	# The building region's own container first, as before round 650: also
+	# when _object_containers does not list it (a test's bare group).
+	var own := group.get_node_or_null("RealMapObjects%s" % String(group.name).trim_prefix("RealTerrain"))
+	if own != null and not containers.has(own):
+		containers.push_front(own)
+	var found := _nearest_placed_object(containers, spot, GATE_BIND_RADIUS)
+	if found.is_empty():
+		return false
+	var best: Node3D = found["node"]
+	var bodies := _tag_gate(best, building.code, _gate_display_name(building), point.id)
+	if _gate_bindings.has(building.code):
+		_gate_bindings[building.code]["node"] = best
+	print("World3D: teleport gate %s bound to %s in %s (%.1f units from the table's point; point %d, %d piece bod(ies) on the talk layer)" % [
+		building.code, best.name, best.get_parent().name, found["distance"], point.id, bodies])
+	return true
+
+## The placed object whose origin is nearest `spot` (a world point) in x/z,
+## within `radius`, over the children of `containers`: {"node", "distance"},
+## or {} when none. Positions are composed up the tree by hand
+## (_chain_transform), so this holds for nodes outside the tree too.
+static func _nearest_placed_object(containers: Array, spot: Vector3, radius: float) -> Dictionary:
+	var best: Node3D = null
+	var best_d := radius
+	for c in containers:
+		if not is_instance_valid(c) or (c as Node).is_queued_for_deletion():
+			continue
+		var container := c as Node3D
+		if container == null:
+			continue
+		var frame := _chain_transform(container)
+		for child in container.get_children():
+			var node := child as Node3D
+			if node == null:
+				continue
+			var at := frame * node.position
+			var d := Vector2(at.x, at.z).distance_to(Vector2(spot.x, spot.z))
+			if d <= best_d:
+				best_d = d
+				best = node
+	if best == null:
+		return {}
+	return {"node": best, "distance": best_d}
+
+## Tries again every town gate of a loaded region that is unbound -- its
+## portal not placed when its region committed, or freed since with a region
+## that held it (round 650, _bind_region_gates). Called after each region's
+## gates are bound; `skip_x`/`skip_y` is that region, already tried. A gate
+## whose region is no longer loaded is forgotten (its region binds it again
+## when it streams back in).
+func _rebind_pending_gates(skip_x: int, skip_y: int) -> void:
+	if _teleport_reader == null:
+		return
+	for code in _gate_bindings.keys():
+		var entry: Dictionary = _gate_bindings[code]
+		var node = entry["node"]
+		if is_instance_valid(node) and not (node as Node).is_queued_for_deletion() and (node as Node3D).has_meta("gate_point_id"):
+			continue
+		entry["node"] = null
+		var rx: int = entry["rx"]
+		var ry: int = entry["ry"]
+		if rx == skip_x and ry == skip_y:
+			continue
+		var group := get_node_or_null("RealTerrain_%d_%d" % [rx, ry]) as Node3D
+		if group == null or group.is_queued_for_deletion():
+			_gate_bindings.erase(code)
+			continue
+		var building := _teleport_reader.building_by_code(code)
+		var point := _teleport_reader.point_for_building(code)
+		if building == null or point == null:
+			_gate_bindings.erase(code)
+			continue
+		_bind_gate(building, point, group)
 
 ## What a gate is called: its building's name string (SN_NPC_CH_GATE) through
 ## textdata_object, as an NPC's is; "" when the row has none ("xxx") or the
@@ -9923,6 +10018,8 @@ func _update_blob_shadow() -> void:
 ##                          (round 577) is the nearest teleport gate
 ##                          _bind_region_gates bound, aimed at the middle of
 ##                          its drawn box
+##                          "wait:<ticks>" (round 650) in the list pauses
+##                          between two clicks ("gate,wait:2400,gate")
 ##   SRREVAMP_QA_CLICK_WAIT=<ticks> (round 646) the ticks before the first
 ##                          click (default 120)
 ##   SRREVAMP_QA_TELEPORT=<dest id> (round 578; with SRREVAMP_QA_CLICK=gate
@@ -11522,6 +11619,15 @@ func _qa_advance_click() -> void:
 		_qa_click_wait -= 1
 		return
 	var kind: String = _qa_click_queue[0]
+	# "wait:<ticks>" (round 650): a pause between two clicks, so a live run
+	# can aim at one gate, teleport by real input, and aim at the next gate
+	# after the arrival (SRREVAMP_QA_CLICK="gate,wait:2400,gate").
+	if kind.begins_with("wait:"):
+		_qa_click_queue.pop_front()
+		_qa_click_stage = 0
+		_qa_click_wait = maxi(0, kind.substr(5).to_int())
+		print("QA CLICK wait %d tick(s)" % _qa_click_wait)
+		return
 	if _qa_click_stage == 0:
 		_qa_click_target = _qa_click_target_for(kind)
 		if _qa_click_target.is_empty():
@@ -11697,8 +11803,9 @@ func _qa_click_target_for(kind: String) -> Dictionary:
 				for node in candidates:
 					if not (node is Node3D) or not node.has_meta("npc_code"):
 						continue
-					var gate_code := str(node.get_meta("npc_code"))
-					if not (gate_code.begins_with("STORE_") and gate_code.ends_with("_GATE")):
+					# Any bound town gate (round 650: STORE_SD_GATE1/2 end in a
+					# digit, which the old "_GATE" suffix test missed).
+					if not node.has_meta("gate_point_id"):
 						continue
 					var d := (node as Node3D).global_position.distance_to(player.global_position)
 					if d < best_gd:

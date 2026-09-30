@@ -357,6 +357,70 @@ func _initialize() -> void:
 			"790 from a gate structure is within its 800")
 		_check(bool(world_script.call("talk_out_of_range", near, near + Vector3(0, 0, 810), true)),
 			"810 from a gate structure is beyond it")
+
+		# (g) Round 650: Donwhang's gate. STORE_WC_GATE stands in 103/153 at
+		# local (962, 8), eight units from the edge with 102/153, where the
+		# player arrives (GATE_WC). Since round 643 a map object exists once,
+		# held by the first loaded region whose .o2 lists it, in THAT region's
+		# container and frame -- so the portal is in RealMapObjects_102_153 at
+		# 8 + 1920 on z (MapO2Reader.owner_offset). The groups stand as
+		# TerrainCollision.place_group puts them (the frame region 102/153 at
+		# cell (0, 0), 103/153 one cell over on region x, scale.z -1).
+		var has_rebind := world.has_method("_rebind_pending_gates")
+		_check(has_rebind, "World3D has _rebind_pending_gates (round 650)")
+		var dw := _donwhang_grid(world_script)
+		world.set("_object_containers", {"_102_153": dw["c102"], "_103_153": dw["c103"]})
+		for g in [dw["g102"], dw["g103"]]:
+			world.add_child(g)
+		world.set("_gate_bindings", {})
+		var dw_portal: Node3D = _piece_object("w_cd_portal")
+		dw_portal.name = "Obj_w_cd_portal_0"
+		dw_portal.position = Vector3(962.0 + 2.0, -35.0, 8.0 + 1920.0 + 2.5)
+		(dw["c102"] as Node3D).add_child(dw_portal)
+		# A decoy at the building's local numbers in the WRONG region's frame
+		# (102/153's own (962, 8), 1,920 units away in the world).
+		var decoy: Node3D = _piece_object("w_cd_house")
+		decoy.position = Vector3(962.0, 0.0, 8.0)
+		(dw["c102"] as Node3D).add_child(decoy)
+		world.call("_bind_region_gates", 103, 153, dw["g103"])
+		_check(dw_portal.get_meta("npc_code", "") == "STORE_WC_GATE" and dw_portal.get_meta("gate_point_id", 0) == 2,
+			"Donwhang's gate binds to the portal the neighbour 102/153 holds (got npc_code '%s')" % str(dw_portal.get_meta("npc_code", "")))
+		_check(_body_layer(dw_portal) == (1 | layer), "and the portal's body is on the talk layer")
+		_check(not decoy.has_meta("npc_code"), "the object at the same local numbers in the other region's frame is not taken")
+		for g in [dw["g102"], dw["g103"]]:
+			world.remove_child(g)
+			g.free()
+
+		# The other order: 103/153 commits before the region holding the
+		# portal (defensive: no real gate needs it, round 650 review). It is unbound then, and
+		# bound once 102/153's commit places the portal -- 102/153 has no gate
+		# of its own, so only the retry can bind it.
+		var dw2 := _donwhang_grid(world_script)
+		world.set("_object_containers", {"_103_153": dw2["c103"]})
+		world.add_child(dw2["g103"])
+		world.set("_gate_bindings", {})
+		world.call("_bind_region_gates", 103, 153, dw2["g103"])
+		var late_portal: Node3D = _piece_object("w_cd_portal")
+		late_portal.position = Vector3(962.0 + 2.0, -35.0, 8.0 + 1920.0 + 2.5)
+		(dw2["c102"] as Node3D).add_child(late_portal)
+		world.add_child(dw2["g102"])
+		world.set("_object_containers", {"_102_153": dw2["c102"], "_103_153": dw2["c103"]})
+		_check(not late_portal.has_meta("npc_code"), "before 102/153 commits, nothing is bound")
+		world.call("_bind_region_gates", 102, 153, dw2["g102"])
+		_check(late_portal.get_meta("npc_code", "") == "STORE_WC_GATE",
+			"a gate left unbound is bound when a later region places its portal (got '%s')" % str(late_portal.get_meta("npc_code", "")))
+		# NEGATIVE: a portal 12 units off in the neighbour is still not taken.
+		late_portal.free()
+		var off_portal: Node3D = _piece_object("w_cd_portal")
+		off_portal.position = Vector3(962.0 + 12.0, -35.0, 8.0 + 1920.0)
+		(dw2["c102"] as Node3D).add_child(off_portal)
+		world.call("_bind_region_gates", 102, 153, dw2["g102"])
+		_check(not off_portal.has_meta("npc_code") and _body_layer(off_portal) == 1,
+			"a neighbour's object 12 units off the point is not taken")
+		for g in [dw2["g102"], dw2["g103"]]:
+			world.remove_child(g)
+			g.free()
+		world.set("_object_containers", {})
 		world.free()
 
 	if _failures == 0:
@@ -380,6 +444,26 @@ func _piece_object(root_name: String) -> Node3D:
 	piece.add_child(body)
 	root.add_child(piece)
 	return root
+
+## Donwhang's two regions as the grid builds them for a player arriving at
+## GATE_WC (round 650): RealTerrain_102_153 (the frame, cell 0,0) and
+## RealTerrain_103_153 (one cell over on region x), each with its
+## RealMapObjects container, placed by TerrainCollision.place_group at anchor
+## height 0. The groups are returned outside any tree.
+func _donwhang_grid(world_script: GDScript) -> Dictionary:
+	var out := {}
+	for spec in [[102, 0], [103, 1]]:
+		var rx: int = spec[0]
+		var dx: int = spec[1]
+		var g := Node3D.new()
+		g.name = "RealTerrain_%d_153" % rx
+		TerrainCollision.place_group(g, world_script.call("_cell_offset", dx, 0), 0.0)
+		var c := Node3D.new()
+		c.name = "RealMapObjects_%d_153" % rx
+		g.add_child(c)
+		out["g%d" % rx] = g
+		out["c%d" % rx] = c
+	return out
 
 func _body_layer(root: Node) -> int:
 	var bodies := root.find_children("*", "StaticBody3D", true, false)
