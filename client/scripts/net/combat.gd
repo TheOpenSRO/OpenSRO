@@ -25,6 +25,10 @@ const OP_MONSTER_MOVED := 0x007c        # server -> every session in the zone, o
 const OP_MONSTER_ATTACKED := 0x007d     # server -> every session in the zone, the attacker too: one monster's blow
 const OP_MONSTER_SPAWNED := 0x007e      # server -> every session in the zone: a monster that has just appeared
 const OP_MONSTER_MOTION_LIST := 0x007f  # server -> the requester, right after an OpMonsterListResult
+## Round 656: the monsters that left this player's area of interest (the
+## 5x5 regions around it): u16 n, then n s64 ids. The body goes as on a zone
+## change, with no death.
+const OP_MONSTER_LEFT := 0x00b5         # server -> one session
 
 ## Result of decode_monster_moved(): one monster's new leg. (x, z) is where the
 ## server had the monster when it issued the move; the body walks from there to
@@ -232,6 +236,11 @@ class MonsterSnapshot:
 class MonsterListResult:
 	var error: String
 	var monsters: Array[MonsterSnapshot] = []
+	## The paging trailer (round 656): a list too big for one frame comes as
+	## `pages` frames, page 0 first. 0/0 on a list that carries no trailer,
+	## which is the whole list. NetClient gathers the pages.
+	var page: int = 0
+	var pages: int = 0
 
 ## Result of decode_monster_spawned(): a monster that has just appeared (a
 ## respawn, a GM /spawn), in the monster list's own record, and the heading it
@@ -607,7 +616,25 @@ static func decode_monster_list_result(data: PackedByteArray) -> MonsterListResu
 		result.monsters.append(decoded[0])
 		offset = decoded[1]
 
+	# The paging trailer, u16 page and u16 pages, when the frame carries one.
+	if offset + 4 <= data.size():
+		result.page = data.decode_u16(offset)
+		result.pages = data.decode_u16(offset + 2)
 	return result
+
+## Decodes an OpMonsterLeft payload (round 656) into the ids it names; an id
+## cut short is dropped with everything after it.
+static func decode_monster_left(data: PackedByteArray) -> Array[int]:
+	var out: Array[int] = []
+	if data.size() < 2:
+		return out
+	var count := data.decode_u16(0)
+	for i in range(count):
+		var at := 2 + 8 * i
+		if at + 8 > data.size():
+			break
+		out.append(data.decode_s64(at))
+	return out
 
 ## The size of an OpMonsterMoved payload: s64 id, five f32 (x, z, dest_x,
 ## dest_z, speed) and the u8 mode.

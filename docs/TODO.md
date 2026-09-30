@@ -986,12 +986,12 @@ position (off by default)").
 (`docs/RE_COMPLETION.md`, round 571; `deploy/README.md`, "Single world frame (off by default)",
 whose flip conditions these items feed).
 
-- [ ] **A hard guard on the monster list before the flip** (round 571's review). The list is one
-      packet, capped at 32,767 payload bytes; under the flag the one bucket's 413 roster monsters
-      are 28,189 bytes, so 72 more Mangyang-sized GM spawns (four `/spawn 20`s) push it over, and
-      then EVERY player's list fails in `proto.Write` and the gateway closes each session on its
-      next request. A cap, or a split over several packets in `handleMonsterList`, closes it; a
-      test that lists more monsters than one packet holds is the check.
+- [x] **A hard guard on the monster list before the flip** (round 571's review) -- **done in round
+      656**: the list is the player's area of interest (the 5x5 regions around it) and is paged
+      over as many frames as it needs (`session/monsterlist.go`; `docs/protocol/monster_ai.md`,
+      "The area of interest, the paged list and the sleep"). `TestMonsterListLargerThanAFramePages`
+      lists 1,500 monsters in several frames; on the base it fails with `proto: payload of 96004
+      bytes too large for a single frame`.
 - [ ] **Round 571's height gate, to be accepted explicitly before the flip** (round 571's review).
       The item asked for every town whose radius-2 regions leave +-1000 / -500 under the one frame
       to be gated; round 571 gated none, because Jangan's own 99/170 (1075.41) breaks that
@@ -1005,6 +1005,30 @@ whose flip conditions these items feed).
       snap to the ground, 104.07 above Donwhang's drawn landing and 86.23 to 246.32 below the
       others' under the one frame, until the mover's own client lifts or drops it and sends an
       `OpMove`. Snapping another player's body the way a monster's is snapped would close it.
+
+### Monster scale: the area of interest (round 656) — **built: cell index, AOI, paged list, sleep, one respawn scheduler, send deadline; these are left**
+
+Round 656 made the server carry ~10,000 monsters (`docs/protocol/monster_ai.md`, "The area of
+interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
+
+- [ ] **The client must carry round 656 before a server lists more than one frame.** An older
+      client reads each page of a paged list as the whole list (its sync drops every body the page
+      does not name) and ignores `OpMonsterLeft` 0x00B5 (bodies that leave its window stay drawn
+      where they were last seen). Lists stay one frame until about 480 monsters share a window, so
+      round 657's full map is the first to need it.
+- [ ] **The AOI radius and the sleep are OURS.** 2 regions (the client's `REGION_LOAD_RADIUS`) and
+      "a monster no player's window holds does not run" stand in for retail's visibility and
+      object-update rules, both UNREAD. A monster left mid-leg by the last player resumes the leg
+      when one returns; one that was chasing a player who teleported away resumes BATTLE and then
+      releases on its target test.
+- [ ] **The client still asks for the whole window's list after every hit** (World3D ~15825,
+      ~17529) -- up to 60 KB for a dense window. Round 655's lane (the client's monster drawing).
+- [ ] **A stalled client holds the AI tick up to `gateway.SendTimeout` (2 s, OURS), once**, before
+      its connection is closed. A per-session send queue would remove even that; not built.
+- [ ] **The request paths' broadcasts still copy the zone's entities** (`monsterWatchers` filters
+      `EntitiesInZone`): fine at 100 players; the AI tick uses the runtime's watcher index instead.
+- [ ] **The respawn is still the flat 10 s** (`respawnDelay`, disclosed): round 659 brings the READ
+      nest rules into the one scheduler.
 
 ### Other bodies' facing (round 637 and its review follow-up) — **built: every body, this player's too, turns to face where it goes at 3 pi rad/s, and an arrival faces the way it last walked; these are left**
 

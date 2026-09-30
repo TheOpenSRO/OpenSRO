@@ -14,6 +14,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 )
@@ -61,7 +62,27 @@ type Session struct {
 	// (session/keepup.go) -- and proto.Write is two writes (header, body)
 	// that must not interleave with another packet's.
 	sendMu sync.Mutex
+	// stalled is set when a Send ran past SendTimeout (round 656): the
+	// connection is closed then, and every later Send fails at once rather
+	// than waiting out the deadline again.
+	stalled atomic.Bool
 }
+
+// SendTimeout is how long one Send may block on a client that is not reading
+// before the session is given up (round 656). OURS, an engineering bound, not
+// a retail number: a Send only blocks once the kernel's socket buffers --
+// several hundred KB to a few MB each way -- are full, which a client that
+// reads at all never lets happen at the rates this server sends, so the
+// deadline only ever trips on a peer that has stopped reading. Without it one
+// such peer held its writer forever: the monster AI's tick (session/
+// monsterai.go) pushes to every watching player from one goroutine, and a
+// zone broadcast from another player's handler waited on it too. A variable
+// so a test can shorten it; 0 turns the deadline off.
+var SendTimeout = 2 * time.Second
+
+// ErrSendStalled is what Send returns on a session whose earlier Send ran past
+// SendTimeout: its connection has been closed.
+var ErrSendStalled = errors.New("gateway: session stalled: an earlier send ran past its deadline and the connection was closed")
 
 // SetSecurity installs this session's real per-direction RollingByte/
 // PacketChecksum generators (see proto.Read/Write) once a handshake derives
@@ -121,12 +142,31 @@ func (s *Session) Get(key string) (any, bool) {
 	return v, ok
 }
 
-// Send writes a packet back to this session's client.
+// Send writes a packet back to this session's client. It gives up after
+// SendTimeout (round 656): a write that has not gone out by then closes the
+// connection -- a frame cut part-way leaves the stream unreadable anyway --
+// so the session's read loop ends and OnDisconnect cleans up, and every Send
+// after it returns ErrSendStalled without touching the socket.
 func (s *Session) Send(p *proto.Packet) error {
+	if s.stalled.Load() {
+		return ErrSendStalled
+	}
 	sendRoll, sendSum, _, _ := s.security()
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
-	return proto.Write(s.conn, p, sendRoll, sendSum)
+	if s.stalled.Load() {
+		return ErrSendStalled
+	}
+	if SendTimeout > 0 {
+		_ = s.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
+	}
+	err := proto.Write(s.conn, p, sendRoll, sendSum)
+	var ne net.Error
+	if err != nil && errors.As(err, &ne) && ne.Timeout() {
+		s.stalled.Store(true)
+		_ = s.conn.Close()
+	}
+	return err
 }
 
 // Close closes the underlying connection.

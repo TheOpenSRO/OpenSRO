@@ -3300,3 +3300,93 @@ unarmoured character.
 
 **Deploy note.** Nothing to flip. The draw is live wherever `-monster-battle` is on; that flag's
 own conditions (`deploy/README.md`, "Monster battle (off by default)") are unchanged.
+
+## The area of interest, the paged list and the sleep (round 656)
+
+Round 657 places every npcpos field row (about 10,200 monsters) under `-single-frame`, whose one
+bucket is the whole world. Before this round every monster message went to every player in the
+bucket and the list was one frame. None of what follows is read from retail: retail's visibility
+rule and the rule for which objects it runs are both UNREAD. Everything here is OURS and
+labelled that way in the code (`server/internal/session/aoi.go`, `monsterlist.go`,
+`monsterai.go`; `server/internal/combat/cells.go`).
+
+**Cells.** `combat.Hub` files each live monster under `(zone, cx, cz)`, where `cx =
+floor((x + 960) / 1920)` and the same for z: one cell per region of the zone's frame, so the cell
+lines are the region lines (960 + 1920k, `worldmap.ToWorld`). A cell's numbers are relative to the
+frame, not the region's own x/y. The spawn files a monster, a step that carries one over a line
+re-files it and reports a `CellChange`, and a kill removes it. `InZone` reads the zone's cells.
+Only monsters on a leg are stepped (a moving set).
+
+**The window.** A player sees the monsters of the cells within `AOIRadius` = **2** of its view
+cell, on both axes (a 5 x 5 square, 25 regions). OURS: 2 is the client's `REGION_LOAD_RADIUS`,
+so a player is told about the monsters of exactly the regions its client streams in. The
+runtime moves each player's **view** to the cell it stands in every `AOITick` (100 ms, OURS, the
+AI tick) and on each list request. With the runtime off (unit tests) the view is the cell the
+player stands in, read at each send.
+
+| Message | Who gets it |
+|---|---|
+| `OpMonsterListResult` 0x0066 | the requester: the window's monsters, in id order, paged |
+| `OpMonsterMotionList` 0x007F | the requester: the listed monsters' legs, at most 1,560 a frame |
+| `OpMonsterSpawned` 0x007E (respawn, `/spawn`) | players whose window holds the monster's cell |
+| `OpMonsterMoved` 0x007C, `OpMonsterAttacked` 0x007D | the same, by the monster's cell at the push |
+| `OpMonsterDamaged` 0x0062, `OpMonsterDied` 0x0063 | the same, the attacker excluded as before |
+| `OpMonsterSpawned` + `OpMonsterMoved` (enter) | a player whose window gained the monster |
+| `OpMonsterLeft` **0x00B5** (leave) | a player whose window lost the monster |
+
+**The paged list.** A frame's payload is at most `proto.MaxPayload` = 32,767 bytes (the Size
+field's low 15 bits). A list that fits is sent exactly as before. A bigger one is sent as `pages`
+frames, each an ordinary `OpMonsterListResult` with its share of the records followed by a
+4-byte trailer:
+
+```
+u16 error_len (0) | u16 count | count records | u16 page | u16 pages
+```
+
+Both decoders stop after the counted records, so a client that does not know the trailer reads
+a one-page list as before. The client (`NetClient`, round 656) collects pages 0..pages-1 and
+emits `monster_list_result` once, with every page's records. The list and its motion list are
+written under the session's monster wire lock, as before.
+
+**Enter and leave.** When a view moves within a zone, the player is sent the difference between
+the old window and the new one: each monster of the cells it gained, as an `OpMonsterSpawned`
+(the list record plus the monster's current facing, `combat.Hub.Facing`) followed by an
+`OpMonsterMoved` from where it stands when it is walking; and one or more `OpMonsterLeft` naming
+the monsters of the cells it lost:
+
+```
+OpMonsterLeft 0x00B5:  u16 n | n x s64 id        (at most 4,095 ids a frame)
+```
+
+A monster the AI's step carries over a region line enters or leaves the same way, for each player
+whose window holds one of its two cells and not the other. A zone change moves the view without
+messages: the client drops every body and asks for the new zone's list itself.
+
+Enter and leave are **checked at the send**, under the session's monster wire lock: an enter goes
+only for a monster that is alive and in the view's window at that moment (with the hub's record at
+that moment), and a leave only for one that is not. Death, damage and the request paths' other
+monster messages take the same lock (`sendMonsterPush`), so a death sent after the check can
+never be followed by an enter for the dead monster. Every change -- a view moving, a monster
+crossing a line, a list -- produces its own messages after it, so the client ends where the
+server is whatever order two goroutines' messages reach the socket.
+
+**The sleep** (`MonsterAIConfig.Sleep`, cmd/server's `-monster-sleep`, default on; OURS). A
+monster whose cell is outside every player's window is neither stepped nor run. Its brain is made
+the first time a player comes that near, and a brain whose cells are left behind keeps its state
+and its leg and resumes when a player returns. With it off (the zero config: every test before
+this round), every monster runs every tick.
+
+**The respawn scheduler.** One goroutine checks every placement once a second, where there was
+a goroutine and a ticker per placement (`maintainMonster`). The timing is the old loop's: the first
+check after a death notes it, and the first check at least `respawnDelay` (10 s, disclosed OURS)
+later hatches the placement again. Round 659 replaces the delay with the READ nest rules.
+
+**The send deadline.** `gateway.Session.Send` gives up after `gateway.SendTimeout` (2 s, OURS).
+A Send blocks only once the kernel socket buffers are full, which only happens with a peer that
+has stopped reading. On the timeout the connection is closed, so the read loop ends and
+OnDisconnect runs, and every later Send returns `ErrSendStalled` at once. A stalled client can
+hold the AI tick for at most 2 s, once.
+
+**Measured** (`BenchmarkMonsterAITick`, 12,000 monsters over a 40 x 30 grid of regions in one
+bucket, players on real TCP; i7-13700K; the same file run against the base with a no-op setup):
+see the round's WORLD_ISSUES entry for the table.

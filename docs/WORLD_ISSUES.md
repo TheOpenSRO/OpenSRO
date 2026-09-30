@@ -7094,6 +7094,165 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-fifty-sixth round: the server carries ten thousand monsters -- each player hears only about the monsters around it, the list comes in pages, and far-off monsters sleep
+
+The monster-world epic (2026-09-30, the user: "Please add all monsters to the map like the original
+server would have it..."). Round 657 places every npcpos field row -- about 10,200 monsters --
+under `-single-frame`, whose one bucket is the whole world. This round makes the server able to
+carry that. Server round, plus the client's list parsing and a leave handler. No world, map,
+object, effect, animation, movement or loading code on the client, so no performance gate.
+
+### 1. What stood in the way (READ from the code at ab66d9c)
+
+- **The monster list was one frame.** `handleMonsterList` sent every monster of the bucket in one
+  `OpMonsterListResult`. A frame carries at most 32,767 payload bytes (`proto.Write`, the Size
+  field's 15 bits), and a record is ~64-68 bytes, so ~480 fit. Past that, `proto.Write` failed,
+  the handler returned the error, and the gateway closed the session on every list request
+  (TODO.md, "A hard guard on the monster list", round 571's review).
+- **No area of interest anywhere.** Every monster push -- spawn, leg, stop, blow, damage, death --
+  went to `EntitiesInZone(zone)`. Under the flag, that is every player in the world.
+- **`combat.Hub` was one mutex over one map**, and `InZone` walked every monster.
+- **The AI tick** copied `All()` (every monster: the base allocates 6.6 MB a tick at 12,000 in the benchmark below), sorted it, built a
+  `seen` map, and pushed each leg to every player in the zone, on one goroutine. `acquire` copied
+  the zone's entities for every scan, and `linkAggro` copied the zone's monsters.
+- **`Send` had no write deadline**: one client that stopped reading held its writer, and so the
+  tick, forever.
+- **One goroutine and one 1 s ticker per placement** (`maintainMonster`).
+
+### 2. What was built (OURS unless marked)
+
+- **The cell index** (`combat/cells.go`). Each monster is filed under `(zone, floor((x+960)/1920),
+  floor((z+960)/1920))`: one cell per region of the zone's frame, with the region lines as its
+  edges (READ: `worldmap.ToWorld`'s measured transform puts the frame's centre region's middle at
+  the origin). The spawn files a monster, `StepCells` re-files one whose step crosses a line and
+  reports the crossing, and the kill removes it. The hub's lock is an RWMutex. Only monsters on a
+  leg are stepped (the moving set).
+- **The area of interest** (`session/aoi.go`). A player hears about the monsters within
+  `AOIRadius` = 2 cells of its view cell on both axes: 25 regions. **OURS:** 2 is the client's
+  `REGION_LOAD_RADIUS`, and retail's visibility rule is unread. The runtime (`RunMonsterAOI`,
+  always installed by cmd/server) moves each player's view to the cell it stands in every 100 ms
+  and on each list request. The list, the spawn push, the legs, the blows, the damage and the
+  death go only to the players whose window holds the monster's cell. When a view moves, the player
+  is sent the monsters its window gained, each as `OpMonsterSpawned` (with the monster's current
+  facing) plus its leg if it is walking, and one `OpMonsterLeft` **0x00B5** (u16 n, n × s64)
+  naming the monsters it lost. A monster that walks over a line enters or leaves the same way.
+  Enter and leave are **checked at the send**, under the session's monster wire lock (alive and in
+  the window, or not), and death and damage take the same lock. So two goroutines' messages
+  cannot leave a stale body, whatever order they reach the socket in.
+- **The paged list** (`session/monsterlist.go`). A list that fits a frame is byte for byte what it
+  was. A bigger one goes as several ordinary `OpMonsterListResult` frames, each with a 4-byte
+  trailer after its records (u16 page, u16 pages). The motion list is split at 1,560 legs a
+  frame. The aggro scan and the aggro link's candidates read the cells their radius can reach
+  (`CellsWithin`), which keeps exactly the candidates the radius test keeps.
+- **The sleep** (`MonsterAIConfig.Sleep`, `-monster-sleep`, default ON; **OURS**, retail's rule
+  is unread). A monster whose cell no player's window holds is neither stepped nor run. Its brain
+  is made when a player first comes that near, and it keeps its state and its leg while asleep.
+  With sleep off (the zero config, every earlier test), every monster runs as before.
+- **One respawn scheduler** (`cmd/server`). One goroutine checks every placement once a second,
+  with the old loop's timing: `respawnDelay` 10 s, disclosed. `maintainMonster` is gone; its
+  test drives the scheduler with one placement.
+- **The send deadline** (`gateway.SendTimeout` = 2 s, OURS). A Send blocked that long closes the
+  connection, and every later Send returns `ErrSendStalled` at once. A stalled client holds the
+  tick at most 2 s, once.
+- **`-qa-spread-monsters N` / `-qa-spread-radius R`** (QA only): N more placements of Jangan's
+  roster species at fixed-seed spots over the (2R+1)² regions around Jangan, for load checks.
+- **Client, list parsing only** (plus the leave handler). `combat.gd` reads the trailer (lines
+  239-243, 619-622) and decodes `OP_MONSTER_LEFT` (28-31, 625-638). `net_client.gd` gathers the
+  pages and emits `monster_list_result` once, on the last (73-79, 877-889), and emits
+  `monster_left`. `World3D.gd` connects it (line 1350) and drops each body as
+  `_sync_monster_bodies` drops one the list no longer names (`_on_monster_left`, 15376-15412, a new
+  function after `_on_monster_list_result`). None of round 655's lines (`_spawn_or_update_monster`,
+  the list pulls) are touched.
+
+### 3. Tests
+
+- **NEGATIVE**, `TestMonsterListLargerThanAFramePages`: 1,500 monsters around one player are
+  listed over TCP and must all arrive, in more than one frame, ungarbled. The same file against
+  ab66d9c (a second worktree), MEASURED:
+
+```
+--- FAIL: TestMonsterListLargerThanAFramePages (0.02s)
+    monsterlist656_test.go:181: handleMonsterList: proto: payload of 96004 bytes too large for a single frame
+FAIL
+FAIL	github.com/OpenSRO/srrevamp/server/internal/session	0.019s
+```
+
+- `TestMonsterListIsTheAreaOfInterest` (the window, not a cell further out, not another zone);
+  `TestAOIEnterLeaveAsThePlayerMoves` (a walk over x = 960: left `[west]`, entered `[east]` with
+  its leg, nothing about the monster in both windows; back again reverses it);
+  `TestAOIEnterLeaveAsAMonsterCrosses` (through the AI tick: one leaves, one enters with its leg;
+  a push six regions away reaches nobody); `TestMonsterWatchersAreTheWindowsHolders`;
+  `TestSleepingBrainsWaitForAPlayer` and `TestSleepOffRunsEveryMonster`;
+  `TestSendGivesUpOnAStalledClient` (gateway: the timeout, then `ErrSendStalled` at once, then the
+  disconnect); `TestCellOfFollowsTheRegionLines`, `TestCellIndexFollowsSpawnStepAndKill` (combat);
+  `TestRespawnSchedulerKeepsEveryPlacement`, `TestQASpreadInstances` (cmd/server); client
+  `combat_test.gd` (the trailer, `decode_monster_left`).
+- Existing tests: every one passes unchanged in what it asserts. Four were re-pointed at
+  replacements of removed code: `StepAll` → `StepCells(dt, nil, nil)` and `All()` →
+  `AppendAll(nil)` (the orphan check refuses exported functions with no caller), the one test that
+  installed round 537's zone-wide `broadcast` now installs the production push, and
+  `TestMaintainMonsterReportsEverySpawn` drives the scheduler.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...`: 60 packages ok, 0 FAIL.
+  `client/tools/remote_godot.sh check`: ALL LOAD (428 scripts). `remote_godot.sh tests`: 172
+  suites, 0 failing.
+
+### 4. The benchmark (MEASURED, `BenchmarkMonsterAITick`)
+
+One AI tick, its pushes written, at 12,000 monsters (testMangyang) spread evenly over 40 × 30
+regions in one bucket. 50 or 100 players are connected over real TCP on localhost, each client
+draining its socket. "spread" puts the players anywhere on the grid, "town" puts them all within
+Jangan's 5 × 5 regions. "aggro" turns `-monster-battle` and `-monster-aggro` on. There are 50
+warm-up ticks. The same file ran against ab66d9c with a no-op setup stub
+(`aitick656_setup_test.go`). The branch installs the AOI runtime (its reconcile runs before each
+tick) and the sleep. i7-13700K, 30 ticks (base) / 100 ticks (branch):
+
+| players | layout | aggro | base ms/tick | base B/tick | base allocs | branch ms/tick | branch B/tick | branch allocs |
+|---|---|---|---|---|---|---|---|---|
+| 50 | spread | off | 34.11 | 6,618,659 | 7,702 | 3.55 | 35,748 | 819 |
+| 50 | spread | on | 50.20 | 30,017,093 | 25,660 | 3.33 | 53,947 | 1,532 |
+| 50 | town | off | 33.06 | 6,618,659 | 7,702 | 0.57 | 20,303 | 328 |
+| 50 | town | on | 56.43 | 30,021,487 | 25,677 | 0.53 | 24,776 | 485 |
+| 100 | spread | off | 58.91 | 9,060,227 | 13,666 | 5.56 | 65,128 | 1,308 |
+| 100 | spread | on | 95.64 | 57,418,539 | 33,750 | 6.47 | 97,603 | 2,483 |
+| 100 | town | off | 73.33 | 9,060,228 | 13,666 | 1.18 | 38,939 | 575 |
+| 100 | town | on | 195.0 | 57,391,116 | 33,680 | 1.57 | 43,541 | 733 |
+
+The base's tick at 100 players with aggro on (195 ms) is longer than the tick period (100 ms), so
+it falls behind. On the branch, "spread" keeps nearly every cell awake (100 windows of 25 cover
+most of the 1,200 regions), so the gain there is the area of interest and the index. "town" also
+sleeps the rest of the map. One earlier branch run of the same file gave 13.7 ms for 100/spread/off.
+Localhost TCP timing varies between runs, so treat single figures as ±2×.
+
+### 5. Live on the render box (MEASURED, `/var/tmp/aoi656/live.sh r1`)
+
+The server was built from this branch: `-in-memory -single-frame -monster-ai -monster-spawn-push
+-qa-spread-monsters 5000 -qa-spread-radius 7`. The client came from this branch
+(`/opt/srrevamp-client-aoi656`, World3D with the QA sign-in), `SRREVAMP_QA_AT=1850,1020` (world x
+890, 70 units west of the region line at 960) and `SRREVAMP_QA_WALK=90` (east), for 180 s:
+
+- `roster spawned monsters=5024` (the 24 roster anchors + 5,000 spread).
+- The client's one list: `World3D: server reports 594 monster(s)`. That is the 25-region window. The spread
+  cycles Jangan's ten roster species, whose records are 56-79 bytes (Weasel smallest; 68.5
+  average), so 594 records are at least 33,264 bytes: more than one 32,767-byte frame. They came
+  as pages and were gathered into one `monster_list_result` (one line, not two).
+- The walk over the line: `aoi: view moved character=1 zone=world from=0,0 to=1,0 entering=118
+  leaving=107`. The client printed 118 `spawned (push)` lines and 43 leave lines naming 151
+  monsters: the crossing's 107, plus 44 that wandered out of the window during the run.
+- One `session connected` at 09:17:37, and the only disconnect is at 09:20:35, when the script
+  killed the client (`connection reset by peer`). No handler error, no stall, and no `unhandled
+  opcode` in the client log. Server RSS 66 MB, 0.8 % CPU averaged over the run with the AI on.
+- The player stopped after the first line: the walk met something east of x ≈ 960, which is not
+  investigated here. The tests above cover crossings both ways.
+
+### 6. Open (docs/TODO.md, "Monster scale: the area of interest (round 656)")
+
+- An older client reads each page as the whole list and ignores 0x00B5. Lists stay one frame until
+  about 480 monsters share a window, so round 657's full map is the first that needs this client.
+- The AOI radius and the sleep rule are OURS. Retail's are unread.
+- The client still asks for the whole window's list after every hit (round 655's lane).
+- A stalled client can hold the tick up to 2 s, once. A per-session send queue would remove that.
+- The respawn is still the flat 10 s; round 659 brings the nest rules.
+
 ## Six-hundred-and-fifty-second round: every icon is picked up with one click and put down with the next, and a worn item goes into the bag as the original puts it
 
 The user (2026-09-30): "When I try drag an item from my person into the inventory to a slot I want

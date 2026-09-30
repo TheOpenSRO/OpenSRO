@@ -70,6 +70,13 @@ signal monster_damaged(damaged: CombatNet.MonsterDamaged)
 signal monster_died(monster_id: int)
 signal loot_dropped(dropped: CombatNet.LootDropped)
 signal monster_list_result(monsters: Array, error: String)
+## Round 656: monsters that left the player's area of interest, to be dropped
+## without a death.
+signal monster_left(ids: Array)
+## The pages of a monster list gathered so far (round 656): a list too big for
+## one frame arrives as several, and monster_list_result fires once, on the
+## last, with all of them.
+var _monster_list_pages: Array = []
 ## srrevamp's own monster movement (CombatNet.OP_MONSTER_MOVED /
 ## OP_MONSTER_MOTION_LIST): one monster's new leg, and the legs of the listed
 ## monsters sent right after a monster list. The server sends both only with
@@ -867,7 +874,19 @@ func _dispatch(p: Packet) -> void:
 			loot_dropped.emit(CombatNet.decode_loot_dropped(p.data))
 		CombatNet.OP_MONSTER_LIST_RESULT:
 			var r := CombatNet.decode_monster_list_result(p.data)
-			monster_list_result.emit(r.monsters, r.error)
+			if r.error != "" or r.pages <= 1:
+				_monster_list_pages.clear()
+				monster_list_result.emit(r.monsters, r.error)
+			else:
+				if r.page == 0:
+					_monster_list_pages.clear()
+				_monster_list_pages.append_array(r.monsters)
+				if r.page + 1 >= r.pages:
+					var whole := _monster_list_pages.duplicate()
+					_monster_list_pages.clear()
+					monster_list_result.emit(whole, "")
+		CombatNet.OP_MONSTER_LEFT:
+			monster_left.emit(CombatNet.decode_monster_left(p.data))
 		CombatNet.OP_MONSTER_MOVED:
 			var moved := CombatNet.decode_monster_moved(p.data)
 			if moved != null:

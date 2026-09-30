@@ -742,9 +742,19 @@ func decodeMonsterSnapshot(data []byte) (*MonsterSnapshot, []byte, error) {
 }
 
 // MonsterListResult is the OpMonsterListResult payload.
+//
+// Page and Pages are the paging trailer (round 656, monsterlist.go): a list
+// too big for one frame goes as Pages frames, page 0 first, each one this
+// payload with its share of the records and, after them, u16 Page and u16
+// Pages. A list that fits one frame carries no trailer -- Pages 0 on both
+// sides, the payload byte for byte what it always was -- and a client that
+// predates the trailer reads a one-page list exactly as before (both decoders
+// stop after the counted records).
 type MonsterListResult struct {
 	Error    string
 	Monsters []MonsterSnapshot
+	Page     uint16
+	Pages    uint16
 }
 
 func (r *MonsterListResult) Encode() []byte {
@@ -757,6 +767,9 @@ func (r *MonsterListResult) Encode() []byte {
 	out = append(out, countBuf...)
 	for _, m := range r.Monsters {
 		out = append(out, m.Encode()...)
+	}
+	if r.Pages > 1 {
+		out = append(out, byte(r.Page), byte(r.Page>>8), byte(r.Pages), byte(r.Pages>>8))
 	}
 	return out
 }
@@ -783,6 +796,11 @@ func DecodeMonsterListResult(data []byte) (*MonsterListResult, error) {
 			return nil, fmt.Errorf("session: decoding MonsterListResult: monster %d: %w", i, err)
 		}
 		r.Monsters = append(r.Monsters, *snap)
+	}
+	// The paging trailer, when the page carries one (round 656).
+	if len(rest) >= 4 {
+		r.Page = binary.LittleEndian.Uint16(rest[0:2])
+		r.Pages = binary.LittleEndian.Uint16(rest[2:4])
 	}
 	return r, nil
 }
@@ -882,11 +900,13 @@ func BroadcastMonsterSpawned(hub *world.Hub, monsters *combat.Hub, id int64) {
 	}
 	msg := &MonsterSpawned{Monster: monsterSnapshotOf(m), Heading: float32(m.Heading)}
 	p := &proto.Packet{Opcode: OpMonsterSpawned, Data: msg.Encode()}
-	for _, e := range hub.EntitiesInZone(m.Zone) {
+	// Round 656: to the players whose area of interest holds the new
+	// monster's cell (aoi.go), each under its monster wire lock.
+	for _, e := range monsterWatchers(hub, monsters, m) {
 		if e.Session == nil {
 			continue
 		}
-		_ = e.Session.Send(p)
+		sendMonsterPush(e.Session, p)
 	}
 }
 
@@ -1068,40 +1088,6 @@ func combatHandler(
 			return nil
 		}
 	}
-}
-
-// handleMonsterList responds with every live monster in the requesting
-// session's current zone (via world.Hub -- same "who am I / where am I"
-// resolution chat/duel/trade already use). Without this, a client has no
-// way to discover a monster's ID to attack it at all.
-//
-// With the monster AI on (-monster-ai, round 537) ONE OpMonsterMotionList
-// follows the result, carrying the listed monsters' legs (n may be 0), and
-// both are built and written under the session's wire lock -- the lock the AI
-// tick takes to push to this session -- so a push for a newer leg can never
-// arrive ahead of a list built before it (monsterAI.wireLock). With it off the
-// reply is exactly what it always was.
-func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.Hub) error {
-	entity, ok := hub.EntityBySession(sess.ID())
-	if !ok {
-		return sess.Send(&proto.Packet{Opcode: OpMonsterListResult, Data: (&MonsterListResult{Error: "not in the world"}).Encode()})
-	}
-	rt := monsterAIRuntime.Load()
-	if rt != nil {
-		wire := rt.wireLock(sess)
-		wire.Lock()
-		defer wire.Unlock()
-	}
-
-	inZone := monsters.InZone(entity.Zone)
-	snapshots := make([]MonsterSnapshot, len(inZone))
-	for i, m := range inZone {
-		snapshots[i] = monsterSnapshotOf(m)
-	}
-	if err := sess.Send(&proto.Packet{Opcode: OpMonsterListResult, Data: (&MonsterListResult{Monsters: snapshots}).Encode()}); err != nil || rt == nil {
-		return err
-	}
-	return sess.Send(&proto.Packet{Opcode: OpMonsterMotionList, Data: motionListOf(inZone).Encode()})
 }
 
 // performAttack computes damage (the attacker's base weapon/unarmed damage
@@ -1690,9 +1676,11 @@ func performAttack(
 	}
 
 	// The attacker already got the richer OpAttackResult above; only
-	// broadcast to everyone *else* in the zone, not back to them too.
+	// broadcast to everyone *else* in the zone, not back to them too -- and
+	// since round 656 only to those whose area of interest holds the monster
+	// (aoi.go monsterWatchers), at the position the swing found it.
 	var others []world.Entity
-	for _, e := range hub.EntitiesInZone(monster.Zone) {
+	for _, e := range monsterWatchers(hub, monsters, updated) {
 		if e.Session.ID() != sess.ID() {
 			others = append(others, e)
 		}
@@ -1703,7 +1691,7 @@ func performAttack(
 		// result packet went out -- see the comment there.
 		msg := &MonsterDied{MonsterID: targetMonsterID}
 		for _, e := range others {
-			e.Session.Send(&proto.Packet{Opcode: OpMonsterDied, Data: msg.Encode()})
+			sendMonsterPush(e.Session, &proto.Packet{Opcode: OpMonsterDied, Data: msg.Encode()})
 		}
 
 		completedQuests, err := quests.RecordKill(ctx, characterID, monster.Name)
@@ -1737,7 +1725,7 @@ func performAttack(
 
 	msg := &MonsterDamaged{MonsterID: targetMonsterID, Damage: int32(net), RemainingHP: int32(updated.HP)}
 	for _, e := range others {
-		e.Session.Send(&proto.Packet{Opcode: OpMonsterDamaged, Data: msg.Encode()})
+		sendMonsterPush(e.Session, &proto.Packet{Opcode: OpMonsterDamaged, Data: msg.Encode()})
 	}
 	// The monster's blow, to the attacker and to the same `others` this
 	// swing's OpMonsterDamaged just went to -- the one zone snapshot above,

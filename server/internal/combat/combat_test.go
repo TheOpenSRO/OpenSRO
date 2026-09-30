@@ -48,7 +48,7 @@ func TestSpawnSpeciesRollsTheHatchHeading(t *testing.T) {
 	if calls != 2 || a.Heading != 1.5 || b.Heading != 4.25 {
 		t.Fatalf("headings %g, %g after %d rolls, want 1.5 and 4.25 after 2", a.Heading, b.Heading, calls)
 	}
-	h.StepAll(1) // nothing moving; the heading is fixed at the spawn
+	h.StepCells(1, nil, nil) // nothing moving; the heading is fixed at the spawn
 	if got, _ := h.Get(a.ID); got.Heading != 1.5 {
 		t.Fatalf("Get's copy carries heading %g, want 1.5", got.Heading)
 	}

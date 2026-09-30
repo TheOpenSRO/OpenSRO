@@ -244,6 +244,37 @@ func _test_decode_monster_list_result_error() -> void:
 	_check(result.error == "not in the world", "error round-trips")
 	_check(result.monsters.size() == 0, "no monsters alongside an error")
 
+## Round 656: a page of a paged list carries u16 page and u16 pages after its
+## records; a list with no trailer decodes as 0/0 (the whole list), as before.
+func _test_decode_monster_list_page_trailer() -> void:
+	var one := _build_monster_list_result("", [{"id": 7, "name": "Mangyang", "max_hp": 30, "hp": 30}])
+	var whole := CombatNet.decode_monster_list_result(one)
+	_check(whole.error == "" and whole.monsters.size() == 1, "an unpaged list still decodes")
+	_check(whole.page == 0 and whole.pages == 0, "an unpaged list reads as 0 of 0")
+	var paged := one.duplicate()
+	var trailer := PackedByteArray()
+	trailer.resize(4)
+	trailer.encode_u16(0, 2)
+	trailer.encode_u16(2, 3)
+	paged.append_array(trailer)
+	var page := CombatNet.decode_monster_list_result(paged)
+	_check(page.error == "" and page.monsters.size() == 1 and page.monsters[0].monster_id == 7, "a page's records decode")
+	_check(page.page == 2 and page.pages == 3, "the trailer reads as page 2 of 3")
+
+## Round 656: OpMonsterLeft is u16 n, then n s64 ids; an id cut short is
+## dropped.
+func _test_decode_monster_left() -> void:
+	var data := PackedByteArray()
+	data.resize(2 + 8 * 2)
+	data.encode_u16(0, 2)
+	data.encode_s64(2, 41)
+	data.encode_s64(10, 9000000001)
+	var ids := CombatNet.decode_monster_left(data)
+	_check(ids.size() == 2 and ids[0] == 41 and ids[1] == 9000000001, "both ids decode")
+	var cut := data.slice(0, 2 + 8 + 3)
+	_check(CombatNet.decode_monster_left(cut).size() == 1, "an id cut short is dropped")
+	_check(CombatNet.decode_monster_left(PackedByteArray()).is_empty(), "an empty payload is no ids")
+
 ## The attack-distance rule, mirrored from server/internal/combat/reach.go
 ## (Tick_Attack 0x004ad8e0 phase 0, Action_IsTargetWithinReach 0x004ad4a0).
 ## The expected pairs are reach.go's own band cases: a sword (6) against a
@@ -523,6 +554,8 @@ func _init() -> void:
 	_test_decode_loot_dropped_empty()
 	_test_decode_monster_list_result()
 	_test_decode_monster_list_result_error()
+	_test_decode_monster_list_page_trailer()
+	_test_decode_monster_left()
 	_test_approach_band()
 	_test_in_reach()
 	_test_skill_tick_approaches()

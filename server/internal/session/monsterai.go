@@ -129,6 +129,16 @@ type MonsterAIConfig struct {
 	// with -monster-battle on. cmd/server passes the one hub every handler
 	// shares.
 	Parties *party.Hub
+	// Sleep lets the brains of monsters no player is near sleep (round 656,
+	// cmd/server's -monster-sleep, on by default there): a monster whose
+	// region cell is outside every player's window -- the AOIRadius square of
+	// cells around the cell each player stands in -- is neither stepped nor
+	// updated, and picks up where it stopped when a player comes within that
+	// window. OURS: retail's rule for which objects it runs is unread; this
+	// one runs every monster any player could see and no other, so nothing a
+	// client draws behaves differently. Off (the zero value, every unit test
+	// that does not ask for it), every monster runs every tick, as before.
+	Sleep bool
 }
 
 // monsterBattle is cmd/server's -monster-battle (SRREVAMP_MONSTER_BATTLE),
@@ -180,7 +190,7 @@ var monsterAIRuntime atomic.Pointer[monsterAI]
 
 // monsterAI is the runtime's state.
 type monsterAI struct {
-	// mu serialises the tick's pass -- from StepAll to the last push it
+	// mu serialises the tick's pass -- from StepCells to the last push it
 	// collects -- with noteStruck, so a blow's stop and the struck record
 	// land wholly before or wholly after a pass. Nothing is sent under it.
 	mu sync.Mutex
@@ -188,9 +198,6 @@ type monsterAI struct {
 	// keeping the FIRST attacker. It is drained every tick and so holds at
 	// most one entry per live monster; there is no queue.
 	struck map[int64]struckEvent
-
-	// wireMu guards only the creation of a session's wire lock (wireLock).
-	wireMu sync.Mutex
 
 	// kills holds, by monster id, the targets a strike worker killed since the
 	// last tick (runStrike writes it, the BATTLE tick drains it): the kill
@@ -222,6 +229,21 @@ type monsterAI struct {
 	// production. Set before the first tick: a worker starts on its
 	// monster's first swing and reads it from then on.
 	strikeDone func(monster int64)
+	// sleep is MonsterAIConfig.Sleep.
+	sleep bool
+	// The tick's reusable buffers and per-pass indexes (round 656), so a pass
+	// over thousands of monsters allocates next to nothing: live is the pass's
+	// monsters in id order, awake the cells some player's window holds (with
+	// sleep on), players the living and dead players by the cell they stand
+	// in, crossed the region lines this pass's step carried monsters over,
+	// cellBuf/candBuf/sessBuf scratch space.
+	live       []combat.Monster
+	awake      map[combat.Cell]struct{}
+	players    map[combat.Cell][]world.Entity
+	crossed    []combat.CellChange
+	cellBuf    []combat.Cell
+	candBuf    []ai.Candidate
+	sessBuf    []*gateway.Session
 	logger     *slog.Logger
 	trace      bool
 	roamRadius float64
@@ -252,9 +274,12 @@ type struckEvent struct {
 
 // brain is one monster's AI.
 type brain struct {
-	id      int64
-	m       combat.Monster // as of this tick, refreshed after every move
-	machine *ai.Machine
+	id int64
+	// seenTick is the last pass that ran this brain (round 656): a brain the
+	// pass did not see is dead, or with sleep on asleep.
+	seenTick uint64
+	m        combat.Monster // as of this tick, refreshed after every move
+	machine  *ai.Machine
 	// heading is the unit heading the engine keeps at the owner's
 	// +0x24/+0x2c, in radians from +x toward +z: the one the monster hatched
 	// facing at first (combat.Monster.Heading, Nest_Hatch's ai.SpawnHeading
@@ -354,9 +379,12 @@ type strikeHandoff struct {
 	job strikeJob
 }
 
-// monsterPush is one push collected during a pass, sent after it.
+// monsterPush is one push collected during a pass, sent after it: the zone
+// and the region cell of the monster it is about (round 656: the cell picks
+// its recipients, deliver).
 type monsterPush struct {
 	zone   string
+	cell   combat.Cell
 	packet *proto.Packet
 }
 
@@ -397,11 +425,14 @@ func newMonsterAI(hub *world.Hub, monsters *combat.Hub, logger *slog.Logger, cfg
 		logger:     logger,
 		trace:      cfg.Trace,
 		roamRadius: MonsterRoamRadius,
+		sleep:      cfg.Sleep,
+		awake:      map[combat.Cell]struct{}{},
+		players:    map[combat.Cell][]world.Entity{},
 	}
+	// nil is the production push, to the players whose window holds the
+	// monster (deliver); a test passes a recorder, or sets a.push itself.
+	// Round 537's zone-wide broadcast is gone: deliver replaced it.
 	a.push = push
-	if a.push == nil {
-		a.push = a.broadcast
-	}
 	return a
 }
 
@@ -421,7 +452,7 @@ func newMonsterAI(hub *world.Hub, monsters *combat.Hub, logger *slog.Logger, cfg
 // A narrower drift remains, disclosed rather than closed (round 537's review,
 // re-checked in round 539): the OpAttack handler measures the reach
 // (firstSwingInReach) without this lock, and this stop comes only after
-// performAttack's ApplyDamage. A tick whose StepAll lands between the two
+// performAttack's ApplyDamage. A tick whose StepCells lands between the two
 // still moves the monster up to MonsterAITick x speed before the stop -- so
 // one struck at the very edge of reach can still leave it. The window is the
 // handler's own work between the two calls, not a tick. Closing it means
@@ -467,6 +498,14 @@ func monsterAITick(now time.Time) {
 // each brain once, and only then -- outside every lock -- sends what the pass
 // collected and, last, hands the pass's swings to their strike workers.
 // Brains run in monster-id order so a seeded rng replays.
+//
+// Round 656: the pass reads the players once (indexPlayers: by the region
+// cell each stands in), and with sleep on (MonsterAIConfig.Sleep) steps and
+// runs only the monsters in cells some player's window holds; the step
+// reports the region lines it carried monsters over, and the area of
+// interest turns those into enter and leave messages (aoi.go crossings),
+// sent before the pass's pushes. The monsters are read into a buffer the
+// runtime keeps (live), not a fresh copy of the whole hub each tick.
 func (a *monsterAI) tick(now time.Time) {
 	a.mu.Lock()
 	dt := 0.0
@@ -477,35 +516,58 @@ func (a *monsterAI) tick(now time.Time) {
 	a.tickN++
 	a.battle = monsterBattle.Load()
 	a.aggro = monsterAggro.Load()
+	a.indexPlayers()
 
-	// 1. The mover (combat.MoverStep: the 160 cap and the no-overshoot clamp).
-	a.monsters.StepAll(dt)
+	// 1. The mover (combat.MoverStep: the 160 cap and the no-overshoot clamp),
+	// over the awake cells only when sleep is on.
+	var awake func(combat.Cell) bool
+	if a.sleep {
+		awake = a.isAwake
+	}
+	a.crossed = a.monsters.StepCells(dt, awake, a.crossed[:0])
 
 	// 2. A brain per live monster. A new one faces the heading it hatched
 	// with (combat.Monster.Heading) and leaves SPAWN at once: message 0x21's
 	// default transition is IDLE. OWN DESIGN: SPAWN::OnUpdate's timing is
-	// unread, so it leaves on the first tick that sees it.
-	live := a.monsters.All()
+	// unread, so it leaves on the first tick that sees it. With sleep on a
+	// monster no player is near gets its brain when one first comes near.
+	if a.sleep {
+		a.cellBuf = a.cellBuf[:0]
+		for c := range a.awake {
+			a.cellBuf = append(a.cellBuf, c)
+		}
+		a.live = a.monsters.InCells(a.live[:0], a.cellBuf)
+	} else {
+		a.live = a.monsters.AppendAll(a.live[:0])
+	}
+	live := a.live
 	sort.Slice(live, func(i, j int) bool { return live[i].ID < live[j].ID })
-	seen := make(map[int64]bool, len(live))
-	for _, m := range live {
-		seen[m.ID] = true
+	for i := range live {
+		m := &live[i]
 		if b := a.brains[m.ID]; b != nil {
-			b.m = m
+			b.m = *m
+			b.seenTick = a.tickN
 			continue
 		}
-		b := a.newBrain(m)
+		b := a.newBrain(*m)
+		b.seenTick = a.tickN
 		a.brains[m.ID] = b
 		a.dispatch(b, ai.MsgSpawned)
 	}
 	for id, b := range a.brains {
-		if !seen[id] {
-			if b.strikes != nil {
-				close(b.strikes) // the strike worker ends after what is queued
-			}
-			delete(a.brains, id)
-			delete(a.kills, id)
+		if b.seenTick == a.tickN {
+			continue
 		}
+		// Not in this pass: dead, or -- sleep on -- asleep. A sleeping brain
+		// keeps its state for when it wakes.
+		if a.sleep && a.monsters.Exists(id) {
+			continue
+		}
+		if b.strikes != nil {
+			close(b.strikes) // the strike worker ends after what is queued
+		}
+		delete(a.brains, id)
+		delete(a.kills, id)
 	}
 
 	// 3. The blows.
@@ -516,19 +578,33 @@ func (a *monsterAI) tick(now time.Time) {
 	}
 
 	// 4. Each brain once.
-	for _, m := range live {
-		if b := a.brains[m.ID]; b != nil {
+	for i := range live {
+		if b := a.brains[live[i].ID]; b != nil && b.seenTick == a.tickN {
 			a.update(b)
 		}
 	}
 
 	pending, handoffs := a.pending, a.handoffs
 	a.pending, a.handoffs = nil, nil
+	var entered []viewEvents
+	if a.push == nil {
+		if v := aoiFor(a.monsters); v != nil {
+			entered = v.crossings(a.crossed)
+		}
+	}
 	a.mu.Unlock()
 
-	// 5. The pushes, after the pass.
+	// 5. The pushes, after the pass: first what each player is owed for the
+	// monsters that crossed into or out of its window (round 656), then the
+	// legs and stops, each to the players whose window holds the monster.
+	if len(entered) > 0 {
+		v := aoiFor(a.monsters)
+		for _, ev := range entered {
+			v.deliverViewEvents(ev)
+		}
+	}
 	for _, p := range pending {
-		a.push(p.zone, p.packet)
+		a.sessBuf = a.emit(p, a.sessBuf)
 	}
 	// 6. The swings, after the pushes (round 547): a stop this pass queued --
 	// the in-band stop of a monster still on a leg -- is on the wire before
@@ -540,6 +616,38 @@ func (a *monsterAI) tick(now time.Time) {
 	for _, h := range handoffs {
 		a.handStrike(h)
 	}
+}
+
+// indexPlayers files every player by the region cell it stands in (players)
+// and, with sleep on, marks the cells within AOIRadius of each as awake. Once
+// a pass, under a.mu; the acquire scan reads players instead of copying the
+// zone's entities for every monster that scans.
+func (a *monsterAI) indexPlayers() {
+	for c, list := range a.players {
+		a.players[c] = list[:0]
+	}
+	clear(a.awake)
+	if a.world == nil {
+		return
+	}
+	for _, e := range a.world.AllEntities() {
+		c := combat.CellOf(e.Zone, e.Pos.X, e.Pos.Z)
+		a.players[c] = append(a.players[c], e)
+		if !a.sleep {
+			continue
+		}
+		for x := c.X - AOIRadius; x <= c.X+AOIRadius; x++ {
+			for z := c.Z - AOIRadius; z <= c.Z+AOIRadius; z++ {
+				a.awake[combat.Cell{Zone: c.Zone, X: x, Z: z}] = struct{}{}
+			}
+		}
+	}
+}
+
+// isAwake reports whether cell c is in some player's window this pass.
+func (a *monsterAI) isAwake(c combat.Cell) bool {
+	_, ok := a.awake[c]
+	return ok
 }
 
 // sortedIDs is the keys of a blow set in ascending order.
@@ -672,18 +780,22 @@ func (a *monsterAI) linkAggro(b *brain, attacker int64) {
 		return // the attacker must resolve (FUN_00485d90 at the routine's head)
 	}
 	radius := ai.LevelScaledRadius(b.detection, b.m.Level, self.Level)
+	// Round 656: the candidates are the monsters of the cells a radius can
+	// reach (combat.CellsWithin), not every monster of the zone -- the same
+	// ones GatherWithin keeps, since it drops anything farther than radius.
 	var cands []ai.Candidate
-	for _, m := range a.monsters.InZone(b.m.Zone) {
+	near := a.monsters.InWindow(nil, combat.CellOf(b.m.Zone, b.m.X, b.m.Z), combat.CellsWithin(float64(radius)))
+	for _, m := range near {
 		if m.ID == b.id || a.brains[m.ID] == nil {
 			continue
 		}
 		cands = append(cands, ai.Candidate{ID: m.ID, X: m.X, Z: m.Z})
 	}
 	gathered := ai.GatherWithin(cands, b.m.X, b.m.Z, radius)
-	near := 0
+	members := 0
 	for _, mem := range p.Members {
 		if mem.CharacterID == attacker {
-			near++
+			members++
 			continue
 		}
 		e, ok := a.world.EntityByCharacterID(mem.CharacterID)
@@ -691,12 +803,12 @@ func (a *monsterAI) linkAggro(b *brain, attacker int64) {
 			continue
 		}
 		if math.Hypot(e.Pos.X-self.Pos.X, e.Pos.Z-self.Pos.Z) <= ai.AggroLinkMemberRange {
-			near++
+			members++
 		}
 	}
-	n := ai.AggroLinkCount(near, len(gathered))
+	n := ai.AggroLinkCount(members, len(gathered))
 	a.tracef("ai: monster %d struck by %d of a party: %d member(s) within %.0f, %d neighbour(s) within %d, linking %d",
-		b.id, attacker, near, ai.AggroLinkMemberRange, len(gathered), radius, n)
+		b.id, attacker, members, ai.AggroLinkMemberRange, len(gathered), radius, n)
 	for i := 0; i < n; i++ {
 		nb := a.brains[gathered[i].ID]
 		switch st := nb.machine.State(); {
@@ -898,13 +1010,23 @@ func (a *monsterAI) acquire(b *brain) bool {
 	if !b.aggressive {
 		return false // the timer consumed, the byte read after it (0x54793f before 0x547958)
 	}
-	var cands []ai.Candidate
-	for _, e := range a.world.EntitiesInZone(b.m.Zone) {
-		if e.Life != world.LifeAlive {
-			continue
+	// Round 656: the players of the cells the radius can reach, off the
+	// pass's player index (indexPlayers), not a copy of the zone's entities
+	// per scan; Nearest drops anything past the radius either way.
+	cands := a.candBuf[:0]
+	home := combat.CellOf(b.m.Zone, b.m.X, b.m.Z)
+	reach := combat.CellsWithin(b.detection)
+	for x := home.X - reach; x <= home.X+reach; x++ {
+		for z := home.Z - reach; z <= home.Z+reach; z++ {
+			for _, e := range a.players[combat.Cell{Zone: home.Zone, X: x, Z: z}] {
+				if e.Life != world.LifeAlive {
+					continue
+				}
+				cands = append(cands, ai.Candidate{ID: e.CharacterID, X: e.Pos.X, Z: e.Pos.Z})
+			}
 		}
-		cands = append(cands, ai.Candidate{ID: e.CharacterID, X: e.Pos.X, Z: e.Pos.Z})
 	}
+	a.candBuf = cands
 	sort.Slice(cands, func(i, j int) bool { return cands[i].ID < cands[j].ID })
 	pick, dist, ok := ai.Nearest(cands, b.m.X, b.m.Z, b.detection)
 	if !ok {
@@ -1242,7 +1364,8 @@ func (a *monsterAI) runStrike(id int64, job strikeJob) {
 		}
 		a.mu.Unlock()
 	}
-	a.push(job.m.Zone, &proto.Packet{Opcode: OpMonsterAttacked, Data: out.message(id, job.target).Encode()})
+	a.emit(monsterPush{zone: job.m.Zone, cell: combat.CellOf(job.m.Zone, job.m.X, job.m.Z),
+		packet: &proto.Packet{Opcode: OpMonsterAttacked, Data: out.message(id, job.target).Encode()}}, nil)
 	// Round 640: a blow that broke the target's wall ends it now, after the
 	// push that reports the blow (walls.go endBrokenWall).
 	if out.wall.Broke {
@@ -1512,25 +1635,45 @@ func (a *monsterAI) queueStop(m combat.Monster) {
 }
 
 func (a *monsterAI) queue(zone string, mv *MonsterMoved) {
-	a.pending = append(a.pending, monsterPush{zone: zone, packet: &proto.Packet{Opcode: OpMonsterMoved, Data: mv.Encode()}})
+	a.pending = append(a.pending, monsterPush{zone: zone, cell: combat.CellOf(zone, float64(mv.X), float64(mv.Z)),
+		packet: &proto.Packet{Opcode: OpMonsterMoved, Data: mv.Encode()}})
 }
 
-// broadcast is the default push: every session in the zone, each under its
-// wire lock. OWN DESIGN: zone-wide, no interest management. A stalled client
-// blocks the send, as RunRegen's do (gateway.Session.Send has no write
-// deadline); the kill switch is the mitigation. With -monster-battle on the
-// pass's swings wait behind these sends too (tick step 6), so a stalled
-// session delays the pass's blows as well as the tick.
-func (a *monsterAI) broadcast(zone string, p *proto.Packet) {
-	if a.world == nil {
-		return
+// emit sends one push: to a.push when a test has installed one, else to the
+// players whose window holds the monster's cell (deliver). buf is scratch
+// space for the recipients, returned for the caller to keep.
+func (a *monsterAI) emit(p monsterPush, buf []*gateway.Session) []*gateway.Session {
+	if a.push != nil {
+		a.push(p.zone, p.packet)
+		return buf
 	}
-	for _, e := range a.world.EntitiesInZone(zone) {
-		if e.Session == nil {
-			continue
+	return a.deliver(p, buf)
+}
+
+// deliver is the production push (round 656): every session whose area of
+// interest holds p's cell (aoi.go), each under its wire lock -- the AOI
+// runtime's watcher index when it is installed, else the zone's players
+// filtered by the cell each stands in. Until round 656 it went to every
+// session in the zone, which under -single-frame is the whole world.
+//
+// A stalled client no longer blocks the tick for ever: gateway.Session.Send
+// gives up after gateway.SendTimeout and closes that connection, so the
+// tick waits at most that long once and then goes on without it (round 656).
+func (a *monsterAI) deliver(p monsterPush, buf []*gateway.Session) []*gateway.Session {
+	buf = buf[:0]
+	if v := aoiFor(a.monsters); v != nil {
+		buf = v.appendWatchers(buf, p.cell)
+	} else if a.world != nil {
+		for _, e := range a.world.EntitiesInZone(p.zone) {
+			if e.Session != nil && combat.CellOf(e.Zone, e.Pos.X, e.Pos.Z).Near(p.cell, AOIRadius) {
+				buf = append(buf, e.Session)
+			}
 		}
-		a.sendUnderWireLock(e.Session, p)
 	}
+	for _, sess := range buf {
+		a.sendUnderWireLock(sess, p.packet)
+	}
+	return buf
 }
 
 // sendUnderWireLock writes p to sess under its wire lock, released by defer
@@ -1545,28 +1688,16 @@ func (a *monsterAI) sendUnderWireLock(sess *gateway.Session, p *proto.Packet) {
 	_ = sess.Send(p)
 }
 
-// monsterWireKey is where a session keeps its wire lock.
-const monsterWireKey = "session.monsterAIWire"
-
-// wireLock is sess's motion-wire lock. The tick holds it while it writes a
-// push to sess, and handleMonsterList holds it from reading the hub until
-// both of its replies are written, so a push for a newer leg can never reach
-// a client ahead of a list built before that leg began: the client would take
-// the list's older destination last and walk the body there (round 537).
-// Per session, so a stalled client holds up only its own replies and the
-// tick, never another session's reader. It lives on the session and goes
-// with it.
+// wireLock is sess's motion-wire lock (monsterWireLock, aoi.go). The tick
+// holds it while it writes a push to sess, and handleMonsterList holds it
+// from reading the hub until both of its replies are written, so a push for a
+// newer leg can never reach a client ahead of a list built before that leg
+// began: the client would take the list's older destination last and walk
+// the body there (round 537). Per session, so a stalled client holds up only
+// its own replies and the tick, never another session's reader. It lives on
+// the session and goes with it.
 func (a *monsterAI) wireLock(sess *gateway.Session) *sync.Mutex {
-	a.wireMu.Lock()
-	defer a.wireMu.Unlock()
-	if v, ok := sess.Get(monsterWireKey); ok {
-		if l, ok := v.(*sync.Mutex); ok {
-			return l
-		}
-	}
-	l := &sync.Mutex{}
-	sess.Set(monsterWireKey, l)
-	return l
+	return monsterWireLock(sess)
 }
 
 // motionListOf is the OpMonsterMotionList for a list's monsters: the legs of

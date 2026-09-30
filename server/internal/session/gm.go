@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/gm"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
@@ -224,11 +225,14 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		// A GM /kill removes the monster server-side; tell the rest of the
 		// zone it is gone, the same broadcast a combat kill sends. The GM's
 		// own client learns it from RefreshMonsters in this reply.
+		// Round 656: to the players whose area of interest held the monster
+		// (monsterWatchers), each under its monster wire lock.
 		if out.KilledMonsterID != 0 && hub != nil {
 			msg := (&MonsterDied{MonsterID: out.KilledMonsterID}).Encode()
-			for _, e := range hub.EntitiesInZone(out.Zone) {
+			dead := combat.Monster{ID: out.KilledMonsterID, Zone: out.Zone, X: out.KilledX, Z: out.KilledZ}
+			for _, e := range monsterWatchers(hub, deps.Monsters, dead) {
 				if e.Session.ID() != sess.ID() {
-					e.Session.Send(&proto.Packet{Opcode: OpMonsterDied, Data: msg})
+					sendMonsterPush(e.Session, &proto.Packet{Opcode: OpMonsterDied, Data: msg})
 				}
 			}
 		}
