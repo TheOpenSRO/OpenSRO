@@ -33,6 +33,29 @@ only the Dunhuang reeds at 320x180.
 | Performance check per world round (`perf_gate.sh`) | none; round 645's +3.3 ms surfaced 3.5 h late | **~6 min** (`--sites jangan`), ~15 min all views | Proof: 8658370 vs c306c51 reports `frame SLOWER (+3.0)`, exit 1. Same build against itself: 12 of 12 numbers SAME, exit 0. |
 | A hung suite holding a lane's lock (`SUITE_TIMEOUT`) | 13 min until killed by hand | fails after 600 s (default) | A script-less boot ended at 21 s with a 20 s limit, nothing left running. |
 
+## The second batch: rounds 648-652 (2026-09-30 06:14 to 08:17)
+
+**2 h 03 min from the request to the release (v0.1.463), against the baseline's 8 h 34 min, for the
+same number of rounds (five).** The loop ran on the new render box (28 cores, docs/RENDER_BOX.md)
+with every change above.
+
+| | Baseline (641-647) | Rounds 648-652 |
+|---|---|---|
+| Request to release | 8 h 34 min | **2 h 03 min** |
+| Agent time, all agents | 1,401 min | **473 min** |
+| Agents waiting in foreground loops on box jobs | 283 min | **28 min** |
+| A builder's round, start to reviewed | 66-187 min | 67-82 min |
+| One review | 19-81 min | 7-20 min |
+| Rounds added late to fix something the reviews missed | 1 (round 647, ~3.5 h) | **0** |
+
+What still cost time, measured:
+- The perf-gate queue: four builders reached the gate together and queued for ~25 min, all
+  re-measuring the same base. One of them (a server/UI round) should not have run it at all; the
+  brief now says so. Caching a base revision's numbers per view is the next change (below).
+- Go tests share one local Postgres; two builders saw internal/session fail under contention and
+  pass alone.
+- The final review waited for round 648's own review to finish before its last gate runs.
+
 ## What the render box is short of (measured 2026-09-30)
 
 `amdgpu_top` (installed on the box; `gpu_sample` logs it once a second) and `vmstat 1`, one Jangan
