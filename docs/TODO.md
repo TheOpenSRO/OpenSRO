@@ -173,6 +173,39 @@ In order. Each is checked off here when it ships in a release, with its round in
       the amount into the purchase record (`+0xa8`), and the reduction of the guild's total after
       that was not traced. `OpShopBuy` names only the item, which is all a price-keyed check needs.
       See `character_state.md`, "What the server checks at a guild store (round 530)".
+- [ ] **The monster world (the 2026-09-30 request): every species, every nest.** Round 654 built
+      the base: `export-refdata -mode monsters` and `-monsters-csv` (`server/internal/species`)
+      hold all 7,604 characterdata monster species (TypeID 1,2,1,x), the roster's eleven re-derive
+      from it exactly (`roster_changed=0` on a retail export), and a GM `/spawn` takes any of them
+      by code name, id or English name. Who spawns where is unchanged. Open, each with its round:
+      - **round 655**: whether the retail CLIENT draws the Org row's model (col 4) for the 156
+        species whose own model (col 52) is "xxx" -- 89 of them are placed (4,649 npcpos rows).
+        The table records the Org's model and `ModelFromOrg`; nothing draws by it yet.
+      - **round 657**: place every nest -- npcpos names 355 species of the table (12,110 rows),
+        the roster 11.
+      - cols 75 'era' and 77 'hra' per species: combat still computes both as `2*level + 25`
+        (`combat.MonsterRate`), which holds for both columns on 2,581 of the 7,604 species (MEASURED,
+        round 654; round 380 had ~37 % over its own row set). The table
+        carries both (`Col75`, `Col77`); the next step is reading which param the hit roll uses.
+      - col 76 'bri' (block) is carried but not handed to combat (`combatSpeciesOf`): fix the
+        blocked-hit item below first.
+      - TypeID4 (1 field, 2/3 job-trade thieves/hunters, 4 structures and quest rows) is carried;
+        what the server does with it -- and where a monster's party-support nibble
+        (`+0x1cd8 & 0xf0`, combat.MonsterHPPercent) comes from -- is not read.
+      - 18 species name 49 skill ids the skills export does not hold; they swing what resolves.
+      - with a skills table from before round 654 (no AI_AttackChance) a non-roster species
+        swings its primary skill only; srrevamp-01 needs the re-export (deploy/README.md).
+      - the classic uniques in this archive are the "[INT]" rows at level 110 -- MOB_CH_TIGERWOMAN
+        is "Tiger Girl[INT]" -- so `/spawn tiger girl` finds nothing; the code name (or id) works.
+        188 display names are shared by 7,087 rows, and a name picks the first in table order;
+        the reply names the code and id it picked.
+      - GM-ONLY caveat: a spawned monster's fallback EXP is the disclosed `combat.ExpFor(maxHP)`
+        over the rarity-scaled HP -- paid when no level table with an exp_unit column is loaded
+        (session/combat.go's kill path; with one, the real leveldata col 5 at min(levels) wins) --
+        so a giant-HP species pays absurd EXP there (MOB_TQ_WHITESNAKE: 250M). Nothing the roster
+        spawns is affected. Settle it before round 657 places table species.
+      - a GM-spawned rarity-3 or non-(1,2,1) species hatches at a random heading, where the
+        engine takes its nest row's (combat.SpawnSpecies' DISCLOSED note).
 - [ ] **Monsters move only with `-monster-ai` on, and do not chase or notice anyone yet.** They
       strike only when struck (round 254's cadence cap; the counter is still a synchronous reply in
       the player's attack handler). **Round 537 built the monster AI tick** (`session.RunMonsterAI`,
@@ -362,7 +395,8 @@ In order. Each is checked off here when it ships in a release, with its round in
       past the damage switch and its floor of 1, when the defender's `+0xd2c` (not identified) is
       0. Casts have had this since their percentages arrived, and round 505 gave plain swings a
       percentage too. No spawned monster blocks today (`combatSpeciesOf` never sets `Species.Block`), so
-      nothing reaches it. Next: skip `ApplySkillPercent` for a blocked blow, with a test, before
+      nothing reaches it -- though since round 654 the species table carries col 76 for every species
+      (938 species read 20, one 40), so wiring it is one field once this is fixed. Next: skip `ApplySkillPercent` for a blocked blow, with a test, before
       monster block is wired.
 - [ ] **Mastery on the real rows: export `getv MAAT`.** Stage 1 of the damage pipeline scales
       the roll by the caster's mastery level, but `Skill_GetRequiredMasteryLevel` (`0x59e770`)

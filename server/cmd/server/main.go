@@ -37,6 +37,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/shop"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
 	"github.com/OpenSRO/srrevamp/server/internal/spawn"
+	"github.com/OpenSRO/srrevamp/server/internal/species"
 	"github.com/OpenSRO/srrevamp/server/internal/storage"
 	"github.com/OpenSRO/srrevamp/server/internal/teleport"
 	"github.com/OpenSRO/srrevamp/server/internal/trade"
@@ -120,8 +121,15 @@ type monsterSpec struct {
 	// because the two rows that differ (0 and 20) prove it is a real column
 	// and not a shared default.
 	Critical int
-	X, Z     float64 // own-design spawn anchor (see the roster comment)
-	Count    int     // how many to keep alive around the anchor (default 1)
+	// Block is the species' block chance, characterdata col 76 ('bri',
+	// param 10): 0 for all eleven roster species (READ, so it is not typed
+	// below), 20 on 938 other monster rows. The species table (round 654)
+	// carries it for every species, but combatSpeciesOf does NOT hand it to
+	// combat yet: docs/TODO.md's "A blocked hit with a skill percentage deals
+	// 1, not 0" is to be fixed before any spawned monster blocks.
+	Block int
+	X, Z  float64 // own-design spawn anchor (see the roster comment)
+	Count int     // how many to keep alive around the anchor (default 1)
 	// Spawns are the species' REAL placements, straight out of the client's
 	// own npcpos table, as the table states them: a region id and a position
 	// local to that region. When a species has these, they replace the
@@ -531,15 +539,6 @@ func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Log
 func gmSpecies() []gm.Species {
 	out := make([]gm.Species, 0, len(monsterSpecs))
 	for _, spec := range monsterSpecs {
-		attack, gold := monsterStatsForLevel(spec.Level, spec.Rarity)
-		defense := spec.Defense
-		if defense < 1 {
-			defense = 1 + spec.Level/3
-		}
-		maxHP := spec.MaxHP
-		if maxHP < 1 {
-			maxHP = 1
-		}
 		x, z, placed := anchorWorld(spec)
 		if len(spec.Spawns) > 0 {
 			if wx, wz, ok := realSpawnWorld(spec.Zone, spec.Spawns[0]); ok {
@@ -549,10 +548,9 @@ func gmSpecies() []gm.Species {
 		if !placed {
 			continue
 		}
-		out = append(out, gm.Species{
-			Species: combatSpeciesOf(spec),
-			Zone:    spec.Zone, MaxHP: maxHP, Defense: defense, Attack: attack, Gold: gold, X: x, Z: z,
-		})
+		sp := gmSpeciesOf(spec)
+		sp.X, sp.Z = x, z
+		out = append(out, sp)
 	}
 	return out
 }
@@ -723,6 +721,12 @@ func main() {
 		"path to the game's monster placements (from cmd/export-refdata -mode npcpos on a client's "+
 			"own npcpos.txt). Every roster species with rows in it stands where the game puts it; "+
 			"without the file the species keep their own-design anchors near the town.")
+	monstersCSV := flag.String("monsters-csv", os.Getenv("SRREVAMP_MONSTERS_CSV"),
+		"path to the monster species table (from cmd/export-refdata -mode monsters on a client's own "+
+			"characterdata parts, levelgold.txt and textdata_object.txt; round 654). Every roster species "+
+			"takes its numbers from its row, and the GM console's /spawn knows every species in it by code "+
+			"name, id or English name. Who spawns where does not change. Without it the hand-typed roster is all "+
+			"the server knows. A configured path that does not load is fatal.")
 	teleportDir := flag.String("teleport-dir", os.Getenv("SRREVAMP_TELEPORT_DIR"),
 		"directory holding the game's teleport network as teleportdata.csv, teleportlink.csv and "+
 			"teleportbuilding.csv (from cmd/export-refdata -mode teleport on a client's own "+
@@ -1218,6 +1222,37 @@ func main() {
 	parties := party.NewHub()
 	duels := duel.NewHub()
 	trades := trade.NewHub()
+	// The monster species table (round 654), when the operator supplies it:
+	// the roster's species numbers come from it, re-derived, and the GM
+	// console knows every species in it. Loaded before the placements so
+	// that what -npcpos-csv places is the overlaid roster. A configured path
+	// that does not load is fatal, the npcpos rule. The attack lists resolve
+	// through the same skill store the casts use (the -skills-csv memory
+	// store, or PostgreSQL).
+	var speciesTable *species.Table
+	speciesSkills := species.RefdataLookup(func(id int64) (*refdata.Skill, error) { return refItems.GetSkill(ctx, id) })
+	if *monstersCSV != "" {
+		table, err := species.LoadCSV(*monstersCSV)
+		if err != nil {
+			logger.Error("loading the monster species table", "path", *monstersCSV, "err", err)
+			os.Exit(1)
+		}
+		speciesTable = table
+		ov := overlaySpeciesTable(monsterSpecs, table, speciesSkills)
+		logger.Info("monster species table loaded", "path", *monstersCSV, "species", table.Len(),
+			"roster_overlaid", ov.Overlaid, "roster_missing", len(ov.Missing), "roster_changed", len(ov.Changed))
+		for _, m := range ov.Missing {
+			logger.Warn("roster species not in the monster table: it keeps its hand-typed numbers", "name", m)
+		}
+		for _, c := range ov.Changed {
+			logger.Warn("roster species numbers differ from the monster table: the table's are used", "change", c)
+		}
+		for _, k := range ov.Kept {
+			logger.Warn("roster species kept hand-typed fields the table could not supply (re-export skills/levelgold/textdata_object, deploy/README.md)", "kept", k)
+		}
+	} else {
+		logger.Info("no monster species table (-monsters-csv / SRREVAMP_MONSTERS_CSV): the hand-typed roster is every species the server knows")
+	}
 	// The game's own placements, when the operator supplies them: every
 	// species with rows takes them all, replacing both the embedded rows and
 	// the own-design anchor. A configured path that does not load is fatal
@@ -1243,7 +1278,14 @@ func main() {
 			monsterSpecs[i].Spawns = real
 			applied++
 		}
-		logger.Info("npcpos placements loaded", "species_in_table", len(table), "roster_species_placed", applied)
+		inMonsterTable := 0
+		for id := range table {
+			if _, ok := speciesTable.ByID(id); ok {
+				inMonsterTable++
+			}
+		}
+		logger.Info("npcpos placements loaded", "species_in_table", len(table), "roster_species_placed", applied,
+			"npcpos_species_in_monster_table", inMonsterTable)
 	}
 	// The game's teleport network, when the operator supplies it (round 575).
 	// Loaded and checked here so a bad export fails at boot, the npcpos rule;
@@ -1390,6 +1432,10 @@ func main() {
 		Chars: chars, Inv: inv, Equip: eq, Items: refItems, Skills: skills,
 		Monsters: monsters, World: hub, Mana: manaTracker, Berserk: zerkTracker, Levels: levelTable,
 		Species: gmSpecies(), Zones: worldmap.ZoneNames(), Logger: logger,
+	}
+	if speciesTable != nil {
+		gmDeps.LookupSpecies = gmSpeciesLookup(speciesTable, speciesSkills)
+		gmDeps.LookupCount = speciesTable.Len()
 	}
 
 	// Guild points (round 525): the skill points a guild member converts out

@@ -136,6 +136,58 @@ assumption) `shop.Price()`'s own existing formula-from-stats approach -- real Si
 were plausibly always computed from item stats client/server-side too, not looked up from a static
 table. Updated `shop.Price()`'s doc comment to state this as a checked fact, not an unexplored gap.
 
+## `_RefObjChar` monsters: the species export (round 654)
+
+`cmd/export-refdata -mode monsters` writes every client `characterdata_*.txt` row of TypeID
+(1,2,1,x) as one CSV row; `server/internal/species` holds the column map, the exporter and the
+loader, and `cmd/server -monsters-csv` loads it. Column numbers are 0-indexed (field 0 is the
+service flag). How each is known:
+
+| characterdata col | CSV column | meaning | how known |
+|---|---|---|---|
+| 1 | ID | row id, what npcpos places by | READ (_RefObjCommon prefix) |
+| 2 | CodeName | code name, unique per row | READ |
+| 4 | OrgCodeName / OrgID | OrgObjCodeName: the row it names, resolved over EVERY characterdata row | READ as a position (the deserialiser's third string read); what the client does with it is OPEN (round 655) |
+| 5 | NameKey / Name | NameStrID; Name is textdata_object's English for it by the client's own rule (service-1 rows, first row wins, column 8 else the first Latin field) | READ position; resolution MEASURED on the ladder |
+| 9-12 | (filter) / TypeID4 | TypeID; a monster is 1,2,1,x | READ position, MEASURED |
+| 12 | TypeID4 | 1 field monsters (1,790), 2 and 3 the job-trade thieves and hunters (2,800 each), 4 structures and quest rows (213), 5 one event row | census MEASURED; its use is OPEN |
+| 15 | Rarity | rank: 0 normal, 1 champion, 3/8 unique, 4 giant, 5 titan, 6 elite, 7 rank 7 | READ (FUN_0069b4c0, CGObjMob::PublishStats) |
+| 46 / 47 | WalkSpeed / RunSpeed | Speed1/Speed2, units per second | READ, MEASURED (round 536) |
+| 50 | BCRadius | collision radius | READ (round 247) |
+| 52 | Model | own .bsr, or "xxx" | MEASURED |
+| 57 | Level | level | READ (CRefObjChar+0x198) |
+| 59 | MaxHP | MaxHP | READ (the m_dwMaxHP > 0 assert) |
+| 71-78 | Col71..Col78 | ParamKeeper params 5..12: 71 flat physical absorption (READ), 73 physical percentage (READ), 72/74 their magical pair (INFERRED), 75 'era', 76 'bri' (block), 77 'hra', 78 'cri' (critical) -- tags READ | GObjMob_PublishStats |
+| 83-92 | Skill1..Skill10 | attack-skill ids | READ (BindSkillsAndRanges) |
+| -- | ModelFromOrg | 1 when col 52 is "xxx" and the Org row has a model, which Model then carries | OURS as a record; nothing draws by it this round |
+| levelgold.txt | GoldMin / GoldMax | (level, min, max) at col 57 | rows READ; the join to the kill gold INFERRED (combat.RollGold), as the hand-typed roster already did |
+
+Skill CSV column 89 is new with it: **AI_AttackChance, skilldata column 66** (CRefSkill+0x164), the
+weight `AI::CAISkill_Basic::PickSkill` draws the attack list by (monster_ai.md). An export or a
+database from before round 654 loads -1 (unknown), never 0.
+
+**A retail archive, MEASURED (2026-09-30, Media.pk2 on the render box, parts fed in
+characterdata.txt's order, last definition of an id kept):**
+
+- 33,948 characterdata rows over the 63 listed parts (20 of them empty, a BOM only), 17,868 ids; 16,080 rows
+  repeat an id, and every repeat differs from the earlier copy in WIDTH (104 against 105 fields,
+  the 105th empty) -- only **2** differ in a value: MOB_SD_OSIRIS_3's rarity (8 in
+  characterdata_39000, 3 in characterdata_40000, which is kept) and NPC_SOSUN's model.
+- **7,604 monster species.** Rarity: 0 = 6,421, 1 = 85, 3 = 813, 4 = 2, 6 = 111, 7 = 91, 8 = 81.
+  Levels 1..140; every level has a levelgold row. 7,509 name keys resolve (7,494 to Latin text).
+- Models: 1,848 own; **156** "xxx" with an Org row that has one; 5,600 with neither (all the
+  MOB_THIEF_NPC / MOB_HUNTER_NPC job-trade rows). 6,956 Org columns name a row, 33 name none.
+- 7,412 species carry a col-83 skill; 7,394 of those resolve every skill id against the
+  33,698-row skills export, 18 name 49 distinct ids it does not hold. 26,650 skills have a
+  non-zero AI_AttackChance.
+- npcpos names 589 ids; **355 are monster species in this table**, placed by 12,110 rows. 89 of
+  the 355 (85 of them `_CLON`) have model "xxx" and all 89 have an Org row with a model; they
+  are placed by 4,649 rows. (The round-654 plan counted 80 species and 4,554 rows by another
+  de-duplication; these are the index-order, last-wins numbers the server loads.)
+- The eleven roster species re-derive exactly: `TestSpeciesTableMatchesTheRealExport` with
+  `SRREVAMP_MONSTERS_CSV`/`SRREVAMP_SKILLS_CSV` set reports overlaid 11, missing 0, changed 0,
+  kept 0 -- names, gold and the full skill lists (chances included) as monsterSpecs types them.
+
 ## Other reference tables found (not yet schema-inspected)
 
 `_RefPackageItem` (3,130), `_RefSkillGroup` (933), and ~40 more smaller tables — see

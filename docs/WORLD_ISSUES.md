@@ -7094,6 +7094,163 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-fifty-fourth round: the server knows every monster species in the game, and a GM can spawn any of them
+
+The user (2026-09-30): "Please add all monsters to the map like the original server would have it
+... Also make sure you add all the monster types like champion, giant, party, etc. Make sure this
+includes uniques as well ..." This round is the base of that epic: the server's species came from
+eleven hand-typed rows (`monsterSpecs`); it now loads all of them from the client's own table.
+**Who spawns where does not change** -- round 657 places the nests.
+
+Server and tooling only (no client file touched), so no performance gate.
+
+### 1. What shipped
+
+- `export-refdata -mode monsters` (OURS, `server/internal/species`): every characterdata row of
+  TypeID (1,2,1,x), parts fed in `characterdata.txt`'s order, last definition of an id kept (the
+  items/skills rule), into a 35-column CSV with a checked header: id, code name, Org code name and
+  the id of the row it names, name key and its English (textdata_object, the client's own
+  `UiTextTable` rule ported), TypeID4, rarity, level, HP, walk/run speed, BCRadius, cols 71-78,
+  skills 83-92, the model or -- for an "xxx" row -- the Org row's (flagged `ModelFromOrg`), and the
+  levelgold range at its level. The export loads itself back before it returns.
+- Skill CSV column 89: AI_AttackChance, skilldata column 66 (READ, CRefSkill+0x164,
+  monster_ai.md). An older export or database reads -1, UNKNOWN, never 0 (0 is a real "never
+  drawn": `ai.SkillWeight` enters nothing for it). The store adds `skills.ai_attack_chance`
+  (default -1).
+- `cmd/server -monsters-csv` (env `SRREVAMP_MONSTERS_CSV`): each roster species takes every
+  species number from its row (`specFromRow`) and keeps its zone, anchor and placements; a
+  difference from the hand-typed value is logged as a WARN; what the table cannot supply (no
+  textdata_object, no levelgold, a skill store without AI_AttackChance) keeps the hand-typed value
+  and says `kept`. The GM console's `/spawn` finds any species by code name, characterdata id or
+  English name (`/spawn 1933 3`), with its level, rarity-scaled HP and rarity; `/goto` refuses a
+  species the server does not place. The usage line names the roster and the table's count, not
+  7,604 names.
+- `monsterSpecs` is the fallback: without the flag the server is what it was.
+
+Column labels (the full table is `docs/protocol/refdata_schema.md`, "`_RefObjChar` monsters"):
+READ -- id, code name, Org position (col 4), name-key position (5), TypeID (9-12), rarity (15),
+speeds (46/47), BCRadius (50), level (57), MaxHP (59), cols 71-78 -> params 5-12 with 71/73 and
+the four tags read, skills (83-92), AI_AttackChance (skill col 66). INFERRED -- 72/74 as the
+magical pair; levelgold as the kill gold (as before). OPEN -- TypeID4's use; whether the client
+draws the Org's model (round 655); cols 75/77 per species in the hit roll.
+
+Col 76 ('bri', block) is carried as data but **not** handed to combat: docs/TODO.md's "A blocked
+hit with a skill percentage deals 1, not 0" says to fix that before any monster blocks, and 938
+species read 20.
+
+### 2. The export on a retail archive (MEASURED, 2026-09-30)
+
+Media.pk2 on the render box, tables streamed read-only (`pk2list -extract ... -out /dev/stdout`)
+into local scratch, deleted after:
+
+```
+export-refdata: read 33948 characterdata rows (17868 ids, 16080 repeated, 2 of them with different fields; last kept), skipped 0 non-rows
+export-refdata: wrote 7604 monster species (TypeID 1,2,1,x); 0 too short to map
+export-refdata: models: 1848 own, 156 from the Org row (col 52 "xxx", col 4 names a row with one), 5600 none
+export-refdata: Org (col 4): 6956 name a row, 33 name none; 7412 carry a col-83 attack skill
+export-refdata: rarity (col 15): 0=6421 1=85 3=813 4=2 6=111 7=91 8=81; TypeID4: 1=1790 2=2800 3=2800 4=213 5=1
+export-refdata: 7604 species' levels have a levelgold row
+export-refdata: 7509 species' name keys resolve in textdata_object
+export-refdata: wrote 33698 skill rows, skipped 0 non-skill rows
+```
+
+- The 16,080 repeats all differ in WIDTH (104 against 105 fields, the 105th empty); a first cut
+  counted every one as a conflict. Only two differ in a value: MOB_SD_OSIRIS_3's rarity (8 in
+  part 39000, 3 in part 40000, kept) and NPC_SOSUN's model.
+- The 5,600 species with no model at all are the job-trade MOB_THIEF_NPC / MOB_HUNTER_NPC rows
+  (TypeID4 2 and 3).
+- npcpos names 589 ids; **355 are species of this table**, placed by 12,110 rows. 89 of the 355
+  (85 `_CLON`) are "xxx" with an Org row that has a model, placed by 4,649 rows -- the plan counted
+  80 and 4,554 by another de-duplication; these are the numbers the server loads.
+- 7,394 of the 7,412 species with a col-83 skill resolve every skill id; 18 name 49 ids the
+  skills export does not hold. 26,650 skills carry a non-zero AI_AttackChance.
+- Cols 75 and 77 both equal `2*level + 25` (combat.MonsterRate) on 2,581 of the 7,604 species.
+
+### 3. The roster re-derives exactly (MEASURED)
+
+`TestSpeciesTableMatchesTheRealExport`, pointed at the two real CSVs (skipped in CI -- no game
+data is committed):
+
+```
+SRREVAMP_MONSTERS_CSV=.../monsters.csv SRREVAMP_SKILLS_CSV=.../skills.csv go test -run TestSpeciesTableMatchesTheRealExport -v ./cmd/server/
+    species_test.go:251: real export: 7604 species, 33698 skills; roster overlaid 11, missing 0, changed 0, kept 0
+--- PASS: TestSpeciesTableMatchesTheRealExport (0.13s)
+```
+
+Every field of all eleven -- names, level, rarity, HP, defence, critical, BCRadius, speeds, gold
+and the whole skill list with its chances (Mangyang 160+161, the Water Ghost's 169 at chance 10,
+Yeoha's 177) -- as monsterSpecs types them.
+
+A boot with `-in-memory -monsters-csv -skills-csv -npcpos-csv` on the real CSVs:
+
+```
+msg="monster species table loaded" ... species=7604 roster_overlaid=11 roster_missing=0 roster_changed=0
+msg="npcpos placements loaded" species_in_table=589 roster_species_placed=11 npcpos_species_in_monster_table=355
+```
+
+and **413 monsters spawned, with the table and without it**; the `name`/`zone`/`level` multiset of
+the two boots' `monster spawned` lines hashes the same (7bfe1a2f...). Placement unchanged.
+
+### 4. Tests, and the negative
+
+New: `internal/species` (column indices against a sentinel line whose neighbours carry -999; the
+Org fallback on synthetic `_CLON` rows, the Org row in a later part; monsters-only and
+last-part-wins with a width-only repeat; the textdata_object rule; the levelgold join; header
+checks; the attack list), `cmd/server` (`TestSpeciesTableRederivesTheRoster`: the eleven written
+back out as synthetic tables and taken through export, CSV and loader come back DeepEqual, and a
+wrong MaxHP column is reported; `TestSpeciesTableKeepsWhatItCannotSupply`;
+`TestGMSpawnsAnyTableSpecies`), `export-refdata` (`TestSkillAIAttackChanceColumn`), `refdata`
+(`TestSkillCSVAIAttackChanceIsAStrictSuffix`). All synthetic.
+
+The same test files against the base (ab66d9c, a detached worktree):
+
+```
+internal/species/species_test.go:22:29: undefined: ColOrgCodeName
+internal/species/species_test.go:35:34: undefined: Exporter
+FAIL	github.com/OpenSRO/srrevamp/server/internal/species [build failed]
+FAIL	github.com/OpenSRO/srrevamp/server/cmd/server [build failed]
+cmd/export-refdata/main_test.go:1171:7: undefined: skAIAttackChance
+cmd/export-refdata/main_test.go:1187:36: skills[0].AIAttackChance undefined (type refdata.Skill has no field or method AIAttackChance)
+FAIL	github.com/OpenSRO/srrevamp/server/cmd/export-refdata [build failed]
+internal/refdata/csv_test.go:655:22: sk.AIAttackChance undefined (type Skill has no field or method AIAttackChance)
+FAIL	github.com/OpenSRO/srrevamp/server/internal/refdata [build failed]
+```
+
+and the base exporter itself: `export-refdata -mode monsters` prints its usage and exits 2.
+
+The first full run caught two things: `internal/systems`' README probe (the new flag was not in
+server/README.md) and its orphan baseline -- a field named `Complete` made `equipment.SetProgress
+.Complete`, a baselined orphan, look called; the field is `WholeList` now.
+
+### 5. The review's follow-up
+
+The review reproduced the numbers (0 mismatches over 7,604 species, every column shift caught,
+413 spawns identical) and asked for four fixes, made in a second commit:
+
+- Two comment figures in `species.go` were wrong or out of their set: 104-field rows are 16,080
+  (7,329 of them monsters) across 34 part files, not "2,111"; and col 73 equals the level on
+  7,088 of this table's 7,604 species (93.2 %; the 516 others mostly rarity 3/8 at level 110) --
+  round 380's 99.45 % was over the 7,495 MOB_ rows.
+- `/spawn`'s reply printed the row's raw HP; SpawnSpecies scales it by rarity
+  (`/spawn MOB_EVE_STRONG_KK_YETI_CLON` said 7634 for a 229,020-HP monster). It now prints the
+  scaled HP, the rarity, and the code name and id picked -- 188 display names are shared by 7,087
+  rows. `TestGMSpawnsAnyTableSpecies` pins "(MOB_TEST_GIANT, id 99001; level 12, rarity 4, HP
+  6000)".
+- `species.Read` required exactly 35 columns. The header is now a strict PREFIX
+  (`RequiredCSVColumns` = 35; unknown trailing columns ignored, a row must match its header's
+  width), so a later round can append columns; `TestReadTakesALongerCSV`.
+- The recipe's `rm` line now removes the extracted `characterdata.txt` index too.
+
+Recorded in TODO.md: the classic uniques are the "[INT]" rows at level 110 (`/spawn tiger girl`
+finds nothing; MOB_CH_TIGERWOMAN does), and a GM-spawned giant-HP species pays the disclosed
+`ExpFor(maxHP)` fallback where no exp_unit level table is loaded (MOB_TQ_WHITESNAKE 250M).
+
+### 6. Open
+
+docs/TODO.md, "The monster world": round 655 (the Org model on the client), round 657 (every
+nest), cols 75/77 per species, block, TypeID4 and the party-support nibble, the 18 species with
+unresolved skills, and srrevamp-01's re-export (deploy/README.md, "ROUND 654").
+
 ## Six-hundred-and-fifty-second round: every icon is picked up with one click and put down with the next, and a worn item goes into the bag as the original puts it
 
 The user (2026-09-30): "When I try drag an item from my person into the inventory to a slot I want

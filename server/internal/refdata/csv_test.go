@@ -1,6 +1,7 @@
 package refdata
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -587,7 +588,7 @@ func TestSkillCSVBuffColumnsAreAStrictSuffix(t *testing.T) {
 	if err != nil || sk.ActionKind != 0 || sk.TargetLand || sk.DuraMs != 0 || sk.HasTele() || sk.BuffParams != "" || sk.Lks2 {
 		t.Fatalf("an export predating the buff columns: %+v, %v", sk, err)
 	}
-	if skillCSVColumns[47] != "ActionKind" || skillCSVColumns[60] != "BuffParams" || skillCSVColumns[61] != "Lks2" || skillCSVColumns[63] != "TargetHealMP" || skillCSVColumns[64] != "ActionOverlap" || skillCSVColumns[76] != "Dtt" || skillCSVColumns[81] != "Trap" || skillCSVColumns[82] != "Efr1" || skillCSVColumns[86] != "Pw3" || skillCSVColumns[88] != "Tel3" || len(skillCSVColumns) != 89 {
+	if skillCSVColumns[47] != "ActionKind" || skillCSVColumns[60] != "BuffParams" || skillCSVColumns[61] != "Lks2" || skillCSVColumns[63] != "TargetHealMP" || skillCSVColumns[64] != "ActionOverlap" || skillCSVColumns[76] != "Dtt" || skillCSVColumns[81] != "Trap" || skillCSVColumns[82] != "Efr1" || skillCSVColumns[86] != "Pw3" || skillCSVColumns[88] != "Tel3" || skillCSVColumns[89] != "AIAttackChance" || len(skillCSVColumns) != 90 {
 		t.Fatalf("test premise: columns %q..%q, %d in all", skillCSVColumns[47], skillCSVColumns[len(skillCSVColumns)-1], len(skillCSVColumns))
 	}
 	// Round 622's TargetHealHP/MP after them: absent, no heal on a target.
@@ -637,5 +638,27 @@ func TestSkillCSVBuffColumnsAreAStrictSuffix(t *testing.T) {
 	stack := append(append(append([]string{}, grass...), "0", "0"), "6", "0", "0", "0", "0", "0", "0", "0", "0", "0", "SKILL_CH_LIGHTNING_GYEONGGONG_A", "1", "0")
 	if sk, err = parseSkillRow(stack); err != nil || sk.ActionOverlap != 6 || sk.BasicGroup != "SKILL_CH_LIGHTNING_GYEONGGONG_A" || sk.Activity != 1 || sk.Efr2 || sk.Dtt {
 		t.Fatalf("Grass Walk's recast columns: %+v, %v", sk, err)
+	}
+}
+
+// Round 654's AI_AttackChance (CSV 89, skilldata column 66) is a strict
+// suffix, and an export that predates it loads -1 -- UNKNOWN -- rather than
+// 0, which is a real "never drawn" (ai.SkillWeight enters no skill with a 0).
+// The values are SYNTHETIC; the column's meaning is monster_ai.md's.
+func TestSkillCSVAIAttackChanceIsAStrictSuffix(t *testing.T) {
+	row := make([]string, 89) // through Tel3
+	for i := range row {
+		row[i] = "0"
+	}
+	row[2] = "MSKILL_TEST_ATTACK"
+	sk, err := parseSkillRow(row)
+	if err != nil || sk.AIAttackChance != -1 {
+		t.Fatalf("an export predating the column: AIAttackChance %d (err %v), want -1 (unknown)", sk.AIAttackChance, err)
+	}
+	for _, want := range []int{0, 10, 100} {
+		withChance := append(append([]string{}, row...), strconv.Itoa(want))
+		if sk, err = parseSkillRow(withChance); err != nil || sk.AIAttackChance != want {
+			t.Fatalf("column 89 = %d: AIAttackChance %d (err %v)", want, sk.AIAttackChance, err)
+		}
 	}
 }

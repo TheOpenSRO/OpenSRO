@@ -42,12 +42,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf16"
 
 	"github.com/OpenSRO/srrevamp/server/internal/skillparam"
 	"github.com/OpenSRO/srrevamp/server/internal/spawn"
+	"github.com/OpenSRO/srrevamp/server/internal/species"
 	"github.com/OpenSRO/srrevamp/server/internal/teleport"
 )
 
@@ -440,17 +442,22 @@ const (
 	// takes only rows whose +0x65 is non-zero.
 	skBasicGroup    = 5
 	skBasicActivity = 8
+	// AI_AttackChance (skilldata column 66, CRefSkill+0x164): skill CSV
+	// column 89, round 654. Every retail row reaches it (118 or 119 fields,
+	// MEASURED); a shorter one exports 0 through get's default.
+	skAIAttackChance = 66
 	// The highest field skillRecord reads; a shorter row isn't a real skill.
 	skMax = 62
 )
 
 func main() {
 	out := flag.String("out", "-", "output CSV path, or - for stdout")
-	mode := flag.String("mode", "items", "which reference table the input files are: items, skills, npcpos or teleport")
+	mode := flag.String("mode", "items", "which reference table the input files are: items, skills, npcpos, teleport or monsters")
 	flag.Parse()
-	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport") {
+	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters") {
 		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills|npcpos] -out out.csv <data_*.txt> ...")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt teleportbuilding.txt")
+		fmt.Fprintln(os.Stderr, "       export-refdata -mode monsters -out monsters.csv characterdata_*.txt [levelgold.txt] [textdata_object.txt]")
 		os.Exit(2)
 	}
 	record, noun := itemRecord, "item"
@@ -462,6 +469,15 @@ func main() {
 		// has dozens of them. Every row goes out, in file order, under the
 		// header spawn.NpcPosCSVColumns.
 		exportNpcPos(*out)
+		return
+	case "monsters":
+		// Every characterdata row of TypeID (1,2,1,x), one CSV row per
+		// species under species.CSVColumns: what cmd/server's -monsters-csv
+		// loads (round 654).
+		if err := exportMonsters(*out, flag.Args()); err != nil {
+			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	case "teleport":
 		// Three tables in, three CSVs out, into the directory -out names:
@@ -895,7 +911,7 @@ func skillRecord(cols []string) ([]string, bool) {
 	atkType, pct, dmgMin, dmgMax := attackParam(cols)
 	hits := hitCountParam(cols)
 	healHP, healMP := selfHeal(cols)
-	return append([]string{
+	rec := append([]string{
 		get(skID),             // 0  ID
 		get(skGroupID),        // 1  GroupID
 		get(skBasicCode),      // 2  Basic_Code
@@ -946,7 +962,13 @@ func skillRecord(cols []string) ([]string, bool) {
 		sitGate(cols),              // 46 SitGate -- the skill gate's motion-state refusals (round 607)
 		// 47..61: the buff and self-cast columns (round 616, buffColumns); then
 		// 62..88 (targetHeal, stackColumns, linkColumns, wallColumns, teleColumns).
-	}, append(append(append(append(append(buffColumns(cols), targetHeal(cols)...), stackColumns(cols)...), linkColumns(cols)...), wallColumns(cols)...), teleColumns(cols)...)...), true
+	}, append(append(append(append(append(buffColumns(cols), targetHeal(cols)...), stackColumns(cols)...), linkColumns(cols)...), wallColumns(cols)...), teleColumns(cols)...)...)
+	// 89: AI_AttackChance, skilldata column 66 (CRefSkill+0x164), the weight a
+	// monster's attack-list draw gives the skill -- AI::CAISkill_Basic::
+	// PickSkill, READ (docs/protocol/monster_ai.md, "The skill choice";
+	// ai.PickSkill). Round 654: the species loader builds every monster's
+	// attack list from this export (internal/species).
+	return append(rec, get(skAIAttackChance)), true
 }
 
 // targetHeal is skill CSV columns 62/63 (round 622), TargetHealHP and
@@ -2158,4 +2180,101 @@ func exportTeleport(outDir string, paths []string) error {
 	fmt.Fprintf(os.Stderr, "export-refdata: teleport network loads back: %d points, %d links, %d buildings\n",
 		len(t.Points), len(t.Links), len(t.Buildings))
 	return nil
+}
+
+// exportMonsters writes the monster species table (round 654): every
+// characterdata row of TypeID (1,2,1,x) as one CSV row under
+// species.CSVColumns -- the mapping, its column numbers and what each is
+// labelled (READ / MEASURED / OPEN) live in internal/species, where the
+// server's loader reads them back.
+//
+// The inputs are the characterdata parts, fed in the index file's order
+// (characterdata.txt) because the parts overlap and the LAST definition of an
+// id wins, as for items and skills; plus, recognised by file name, two
+// optional tables that fill two column groups:
+//
+//   - levelgold.txt: GoldMin/GoldMax at the row's level (the join the
+//     hand-typed roster made; its linkage to the kill gold is INFERRED, see
+//     combat.RollGold). Without it both are 0 and the server keeps its
+//     fallback reward for a species that is not on the roster.
+//   - textdata_object.txt: Name, the English the client draws for the row's
+//     SN_ key (the client's UiTextTable rule, ported). Without it Name is ""
+//     and the server names a species by its code name.
+//
+// The output is read back through species.Read before this returns, so a
+// table the server cannot load fails at export time, not at boot.
+func exportMonsters(out string, paths []string) error {
+	ex := species.NewExporter()
+	var gold species.LevelGold
+	var names species.ObjectNames
+	skipped := 0
+	for _, path := range paths {
+		rows, err := readTable(path)
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", path, err)
+		}
+		switch strings.ToLower(filepath.Base(path)) {
+		case "levelgold.txt":
+			gold = species.ParseLevelGold(rows)
+			continue
+		case "textdata_object.txt":
+			names = species.ParseObjectNames(rows)
+			continue
+		}
+		for _, cols := range rows {
+			if !ex.Add(cols) {
+				skipped++
+			}
+		}
+	}
+	recs, st := ex.Records(gold, names)
+	var buf strings.Builder
+	w := csv.NewWriter(&buf)
+	if err := w.Write(species.CSVColumns); err != nil {
+		return err
+	}
+	if err := w.WriteAll(recs); err != nil {
+		return err
+	}
+	if _, err := species.Read(strings.NewReader(buf.String())); err != nil {
+		return fmt.Errorf("the export does not load back: %w", err)
+	}
+	if out == "-" {
+		if _, err := os.Stdout.WriteString(buf.String()); err != nil {
+			return err
+		}
+	} else if err := os.WriteFile(out, []byte(buf.String()), 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "export-refdata: read %d characterdata rows (%d ids, %d repeated, %d of them with different fields; last kept), skipped %d non-rows\n",
+		ex.Rows, ex.Rows-ex.Dupes, ex.Dupes, ex.Conflicts, skipped)
+	fmt.Fprintf(os.Stderr, "export-refdata: wrote %d monster species (TypeID 1,2,1,x); %d too short to map\n", st.Monsters, st.Short)
+	fmt.Fprintf(os.Stderr, "export-refdata: models: %d own, %d from the Org row (col 52 \"xxx\", col 4 names a row with one), %d none\n", st.OwnModel, st.OrgModel, st.NoModel)
+	fmt.Fprintf(os.Stderr, "export-refdata: Org (col 4): %d name a row, %d name none; %d carry a col-83 attack skill\n", st.WithOrgRow, st.OrgUnmatched, st.WithSkill)
+	fmt.Fprintf(os.Stderr, "export-refdata: rarity (col 15): %s; TypeID4: %s\n", countList(st.ByRarity), countList(st.ByTypeID4))
+	if gold == nil {
+		fmt.Fprintln(os.Stderr, "export-refdata: no levelgold.txt among the inputs: GoldMin/GoldMax are 0")
+	} else {
+		fmt.Fprintf(os.Stderr, "export-refdata: %d species' levels have a levelgold row\n", st.Gold)
+	}
+	if names == nil {
+		fmt.Fprintln(os.Stderr, "export-refdata: no textdata_object.txt among the inputs: Name is empty")
+	} else {
+		fmt.Fprintf(os.Stderr, "export-refdata: %d species' name keys resolve in textdata_object\n", st.Named)
+	}
+	return nil
+}
+
+// countList renders a count map as "k=n k=n ..." in key order.
+func countList(m map[int]int) string {
+	keys := make([]int, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%d=%d", k, m[k]))
+	}
+	return strings.Join(parts, " ")
 }
