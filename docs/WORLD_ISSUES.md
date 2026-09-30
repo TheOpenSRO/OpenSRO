@@ -7094,6 +7094,142 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-sixty-sixth round: the deploy guide matches the release -- the skills re-import, the nest files' permissions and the full monster population -- and the server stops keeping a brain for every monster a player has passed
+
+The final release review of the monster epic (rounds 653-665) found the deploy guide out of step
+with the release and a few small server faults. Server and docs only, so no performance gate.
+Round 665 (the retail resurrect choices) ran in parallel; nothing here touches its files.
+
+Labels: READ (the binaries, the decompiles), MEASURED (here, on the dev machine), INFERRED, OURS.
+
+### 1. The deploy guide (deploy/README.md, server/README.md)
+
+- **M1, the monster population.** The guide still called `-nest-swapped-stand-in` "the setting for
+  a public server" and quoted round 660's 7-10 fps. It now says what the user decided (round 660's
+  review, "DB numbers now"): srrevamp-01 runs the full population with the stand-in OFF, round 664
+  having made the dense fields hold 60 fps; the stand-in is an optional OURS fallback.
+- **M2, the skills re-import.** The guide said the skills CSV "grows to 90 columns". It has 91:
+  column 90 is StatusParams (`refdata/csv.go`, the column list and `f[90]`), stored as
+  `skills.status_params`. A table imported before round 659 loads '' in every row and no skill
+  lands a status, silently. The guide now says the release needs the skills re-exported and
+  re-imported, with the two checks (`status_params <> ''` above 0; `ai_attack_chance > 0` about
+  26650). The server also warns at every boot while no skill carries status params (§2).
+- **M3, the nest files' permissions.** The image runs as distroless `nonroot` (`server/Dockerfile`);
+  the export runs under `umask 077` and scp keeps 0600, so the container cannot read the CSVs and
+  the boot crash-loops. The guide now has `chmod 755 ~/srrevamp-data/nestdb; chmod 644
+  ~/srrevamp-data/nestdb/*.csv`, and the boot error says so (§2).
+- **Stale lines corrected**: "No unique is placed in the world yet" (they are, with `-full-map` and
+  `-nest-db-dir`, round 661); "Who spawns where does not change" (only without `-full-map`); "a
+  client that stops reading stalls the tick" (not since round 662's per-session queue); the Monster
+  AI section's pre-660 description (the DB tactics, battle, aggro, uniques, the area of interest);
+  "4,068 rows" (this release's boot logs `matched=4063`; the review's number, not re-derived here);
+  step 2's `rm` left `itemdata.txt`, `skilldata.txt` and `leveldata.txt` behind (added).
+  server/README.md had the same staleness in `-monsters-csv`, `-monster-ai`, `-monster-sleep` ("5x5
+  regions") and `-nest-swapped-stand-in`; corrected.
+- **The srrevamp-01 procedure**: a numbered section, "Deploying the monster-epic release to
+  srrevamp-01 (round 666)", with the seven steps the final reviewer verified (build with
+  `CGO_ENABLED=0`; export; copy skills/monsters/npcpos and the importer; copy exactly the five shard
+  files and chmod; re-import the skills and run the checks; the override's command with
+  `-monsters-csv -nest-db-dir -full-map` and the six monster flags, no stand-in and no
+  `-unique-respawn`; the expected boot lines: `nest DB loaded ... tactics=1743 nests=16381
+  hives=1170 ai_skill_tactics=132 skills=36144`, `placed=10104`, seven `unique rotation`, seven
+  `unique hatched`). The expected numbers are the reviewer's, not re-measured in this round. The
+  `docker compose exec postgres psql` line of step 5 is ours (the compose file's service, user and
+  database), not one the reviewer ran.
+
+### 2. Server fixes (OURS unless labelled)
+
+- **M4, sleeping brains are dropped** (`session/monsterai.go`). Brains were walked every pass (the
+  insistent scan and the reconcile loop) and freed only at a death, so a player crossing the map
+  left a brain per monster passed. Now a brain whose monster falls asleep (no watcher, nothing
+  insistent) is dropped, and what it must keep is filed as a `brainMemory`: the state it slept in
+  (IDLE or WANDER; BATTLE, HOMING and a status-held monster never sleep), its entry time and dwell,
+  the target and the run home, the heading, the cooldown (`lastSwing`, `swungReuseMs`), tactics
+  timers 1 and 6, the aggression roll (a re-roll could turn a passive monster aggressive), and a
+  unique's damage total and triggers (an HP trigger fires once a life). The wake rebuilds the rest
+  from the monster -- home, tactics, radii and detection are arithmetic over `combat.Monster` --
+  and resumes the machine in the filed state with the new `ai.Machine.Resume` (no OnEnter, no new
+  dwell, no rng draw). The leg stays in the monster hub, as before. The status hold still wakes a
+  filed monster (`addHeld` asks `hasBrain`, which counts a filed memory), and so does a blow: a
+  damage-over-time tick whose caster walked away is the monster's struck event (round 659), and the
+  retained brain took it and chased; `wakeStruck` rebuilds a filed brain before the blow is drained,
+  so it still does (`TestFiledMonsterTakesADoTBlow`, a guard, not a negative). Memories of monsters that
+  die asleep are swept 64 a pass (`asleepSweepPerTick`); ids are never reused, so a stale one can
+  never wake into another monster.
+  MEASURED (a throwaway test, not committed: 66,000 monsters given brains by one sleep-off pass,
+  then sleep on with one player): **base 66,000 brains, 6.05 ms a pass; this round 4 brains,
+  0.063 ms**. (The review's 13.2 ms was its own run and machine.)
+- **Strike workers end with the fight.** A monster's strike goroutine lived as long as the monster
+  (the review counted 14 left in r1 from `handStrike`). `leaveBattle` now queues the brain, and
+  after the pass's swings are handed over the channel of each brain that is still out of BATTLE is
+  closed (`retireWorkers`); the worker ends after what it holds, and the next fight's first swing
+  starts a new one. A sleep closes it too, as a death did.
+- **A DoT kill arms the party nest.** `dealMonsterTick` never called `noteMonsterKilled`; it now
+  does, with the tick's credited applier as the killer (0 for a tick that names nobody, which
+  counts no party -- `statuseffect.SourceRule`, READ), as a killing blow does.
+- **M2's boot warning.** `statusParamsWarning` (cmd/server): with no skill carrying status params,
+  every boot logs `skills store has NO status params (N skills, 0 with status_params): no skill
+  lands a status ... RE-EXPORT skills.csv ... (91 columns, column 90 StatusParams) and RE-IMPORT
+  it ...`, naming the monsters too under `-monster-ai`. Status effects have no switch
+  (`RunStatusEffects` is started unconditionally), so the check runs on every boot, from both the
+  PostgreSQL store (`CountSkillsWithStatusParams`, `WHERE status_params <> ''`) and the in-memory
+  one.
+- **M3's boot error.** `nest.openDBFile` wraps a refused open: `... permission denied: chmod 644
+  the nest DB's CSVs and chmod 755 their directory (the server runs as a nonroot user ...)`,
+  still wrapping the `fs.ErrPermission`. MEASURED here, both builds run as `nobody` against a
+  root-owned 0600 `Tab_RefTactics.csv`: base `err="open .../Tab_RefTactics.csv: permission
+  denied"`; this round `err=".../Tab_RefTactics.csv: permission denied: chmod 644 the nest DB's
+  CSVs and chmod 755 their directory ..."`.
+- **`-monster-sleep`'s help** said "the 5x5 regions"; it is now built from `session.AOIRadius` and
+  `combat.CellSpan` ("the 3x3 blocks of 320 units", round 664's READ window) so it cannot drift again.
+- **The densest-window boot line** took whichever tied cell the map's iteration met first; a tie
+  now goes to the lowest cell (zone, X, Z) (`densestWindow`).
+
+### 3. The tests, and the negatives against c41c6ae
+
+New: `session/round666_test.go` (`TestSleepingBrainsFallBackToTheAwake`,
+`TestWokenBrainKeepsWhatItFiled`, `TestFiledMonsterTakesADoTBlow`, `TestStrikeWorkerEndsWithTheFight`,
+`TestStatusTickKillArmsThePartyNest`), `nest/perm666_test.go`
+(`TestUnreadableNestFileSaysChmod`; the tests run as root, which the kernel never refuses, so the
+refusal is injected at `openFile` -- the real refusal is the `nobody` measurement above),
+`cmd/server/round666_test.go` (`TestStatusParamsWarning`, `TestMonsterSleepHelpNamesTheWindow`,
+`TestDensestWindowTieIsTheLowestCell`), `refdata`'s `TestCountSkillsWithStatusParams`.
+`TestSleepingBrainsWaitForAPlayer` (round 656) asserted the monster left behind KEEPS its brain;
+it now asserts the brain is dropped and its memory filed.
+
+Run against the base (a second worktree at c41c6ae; the brains test without its memory check,
+which names a round-666 symbol):
+
+```
+--- FAIL: TestSleepingBrainsFallBackToTheAwake (0.01s)
+    round666_test.go:89: brains after the player walked on: got 40, want 1 (the monsters the player's window holds)
+--- FAIL: TestStrikeWorkerEndsWithTheFight (2.01s)
+    round666_test.go:155: strike workers after the fight ended: 1, want 0 (the worker should end with the fight)
+--- FAIL: TestStatusTickKillArmsThePartyNest (0.27s)
+    round666_test.go:191: the kill observer was told [] (monster 0); want one kill of monster 1 with 2 party members near
+--- FAIL: TestDensestWindowTieIsTheLowestCell (0.00s)
+    round666_test.go:32: run 12: densest 1 at {Zone:world X:60 Z:5}; want 1 at the lower cell {Zone:world X:0 Z:5} (not {Zone:world X:60 Z:5})
+```
+
+`TestUnreadableNestFileSaysChmod`, `TestStatusParamsWarning`, `TestMonsterSleepHelpNamesTheWindow`,
+`TestWokenBrainKeepsWhatItFiled`, `TestFiledMonsterTakesADoTBlow` and `TestCountSkillsWithStatusParams` do not compile on the base
+(`undefined: openFile`, and the functions they test are new); their base behaviour is the
+`nobody` measurement, the base's `-h` ("the 5x5 regions around the region a player stands in") and
+its boot log (no status-params line).
+
+Results: `cd server && go build ./... && go vet ./... && go test -count=1 -p 1 -timeout 30m ./...`
+-- 62 packages ok, none failed; `go test -race -count=1` over the touched session tests (sleep,
+AOI, battle, strike, status, summon, nest) and `./internal/nest ./internal/ai` -- ok, no race.
+
+### 4. Open
+
+- The deploy procedure's expected boot numbers are the final reviewer's; this round did not run
+  srrevamp-01's deploy.
+- A memory of a monster that dies asleep is swept 64 a pass, not at its death (OURS bound).
+- The aggro link never gathers a sleeping monster now; before, it gathered one only when its brain
+  survived an earlier visit. Which of the owner's regions the engine wakes is UNREAD.
+- The sleep itself stays OURS (docs/TODO.md, "Monster scale").
+
 ## Six-hundred-and-sixty-fourth round: dense monster fields hold 60 fps -- a player is sent only the monsters of the 3 x 3 blocks around it, as retail sends them, and a 2,500-monster crowd draws at 40 fps instead of 6
 
 Round 660's follow-up measured the full map with the shard DB: 1,378 bodies drawn at the Europe

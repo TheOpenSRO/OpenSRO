@@ -218,7 +218,19 @@ type monsterAI struct {
 
 	// The rest belongs to the tick (monsterAITick), which holds mu while it
 	// touches it.
-	brains   map[int64]*brain
+	//
+	// brains is the monsters the tick runs: with sleep on, only the awake
+	// ones and the insistent ones (round 666: a monster that falls asleep
+	// loses its brain, and what must survive the sleep waits in asleep).
+	brains map[int64]*brain
+	// asleep is, with sleep on, what a sleeping monster's brain must keep for
+	// when it wakes (brainMemory), by monster id (round 666). It is never
+	// walked by a pass: the wake looks an id up, and a bounded sweep a tick
+	// (asleepSweepPerTick) drops the entries of monsters that died asleep.
+	asleep map[int64]brainMemory
+	// retire is the brains that left BATTLE this pass: their strike workers
+	// are ended after the pass's swings are handed over (round 666).
+	retire   []*brain
 	rng      *rand.Rand
 	monsters *combat.Hub
 	world    *world.Hub
@@ -359,6 +371,10 @@ type brain struct {
 	// aggressive is the aggression byte's verdict, ctx+0x168 (ai.Aggressive,
 	// rolled at Init 0x53f5be..0x53f5e1), fixed for the monster's life.
 	aggressive bool
+	// rolled is whether Init's two rolls (aggressive, scanPeriodMs) were
+	// drawn: under -monster-aggro, at the brain's birth (round 666 files it
+	// with them across a sleep, brainMemory).
+	rolled bool
 	// scanPeriodMs is tactics timer 1's period, rolled once at Init
 	// (ai.ScanPeriodMs; 1001..1500 ms under the stand-in flags), and scanDueAt
 	// is when the timer is next due: zero is "due", the first-table arming's
@@ -492,6 +508,7 @@ func newMonsterAI(hub *world.Hub, monsters *combat.Hub, logger *slog.Logger, cfg
 		kills:      map[int64]struct{}{},
 		deps:       strikeDeps{chars: cfg.Chars, eq: cfg.Equipment, items: cfg.Items, mp: cfg.Mana, hub: hub, potions: cfg.Potions},
 		brains:     map[int64]*brain{},
+		asleep:     map[int64]brainMemory{},
 		rng:        rng,
 		monsters:   monsters,
 		world:      hub,
@@ -603,7 +620,7 @@ func (a *monsterAI) tick(now time.Time) {
 			}
 		}
 		// Round 659: nor does one its states hold (status.go).
-		statusFX.addHeld(a.insistent, a.brains)
+		statusFX.addHeld(a.insistent, a.hasBrain)
 	}
 
 	// 1. The mover (combat.MoverStep: the 160 cap and the no-overshoot clamp),
@@ -654,6 +671,15 @@ func (a *monsterAI) tick(now time.Time) {
 			b.seenTick = a.tickN
 			continue
 		}
+		// Round 666: a monster waking from sleep gets its brain back as it
+		// fell asleep (wake), not a new one out of SPAWN.
+		if mem, ok := a.asleep[m.ID]; ok {
+			delete(a.asleep, m.ID)
+			b := a.wake(*m, mem)
+			b.seenTick = a.tickN
+			a.brains[m.ID] = b
+			continue
+		}
 		b := a.newBrain(*m)
 		b.seenTick = a.tickN
 		a.brains[m.ID] = b
@@ -663,22 +689,29 @@ func (a *monsterAI) tick(now time.Time) {
 		if b.seenTick == a.tickN {
 			continue
 		}
-		// Not in this pass: dead, or -- sleep on -- asleep. A sleeping brain
-		// keeps its state for when it wakes.
+		// Not in this pass: dead, or -- sleep on -- asleep. Round 666: a
+		// sleeping monster's brain is dropped too, and only what it must keep
+		// for when it wakes is filed (brainMemory). Until this round the whole
+		// brain stayed in the map and every pass walked it (the insistent scan
+		// above and this loop): a player crossing the full map left one brain
+		// per monster it had passed -- 66,000 measured, 13.2 ms a pass.
 		if a.sleep && a.monsters.Exists(id) {
-			continue
+			a.asleep[id] = b.memory()
 		}
 		if b.strikes != nil {
 			close(b.strikes) // the strike worker ends after what is queued
+			b.strikes = nil
 		}
 		delete(a.brains, id)
 		delete(a.kills, id)
 	}
+	a.sweepAsleep()
 
 	// 3. The blows.
 	struck := a.struck
 	a.struck = map[int64]struckEvent{}
 	for _, id := range sortedIDs(struck) {
+		a.wakeStruck(id)
 		a.onStruck(id, struck[id])
 	}
 
@@ -717,6 +750,83 @@ func (a *monsterAI) tick(now time.Time) {
 	for _, h := range handoffs {
 		a.handStrike(h)
 	}
+	// 7. The strike workers of the monsters that left BATTLE this pass end
+	// after what they hold (round 666), once this pass's swings are handed
+	// over: one handed over above still runs.
+	a.retireWorkers()
+}
+
+// wakeStruck gives a sleeping monster that was struck its brain back before
+// the blow is drained (round 666). A blow on a monster no player's window
+// holds is a damage-over-time tick whose caster walked away (status.go's
+// struck event); until round 666 the sleeping brain was still in the map and
+// took it -- BATTLE, and so insistent, awake and chasing -- and it still does.
+// The brain is not run this pass (it is not in the pass's live list); from
+// the next it is insistent.
+func (a *monsterAI) wakeStruck(id int64) {
+	if a.brains[id] != nil {
+		return
+	}
+	mem, ok := a.asleep[id]
+	if !ok {
+		return
+	}
+	m, alive := a.monsters.Get(id)
+	if !alive {
+		return
+	}
+	delete(a.asleep, id)
+	b := a.wake(m, mem)
+	b.seenTick = a.tickN
+	a.brains[id] = b
+}
+
+// retireWorkers closes the strike channel of every brain that left BATTLE
+// this pass and has not gone back into it, so its worker ends after what it
+// holds; the next BATTLE's first swing starts a new one (handStrike). OURS,
+// round 666: until then a worker lived as long as its monster, and a monster
+// that fought once kept an idle goroutine until it died (14 of them left in
+// round 663's run 1). On the tick goroutine, like every other use of a
+// brain's channel; the retire list itself is a.mu's.
+func (a *monsterAI) retireWorkers() {
+	a.mu.Lock()
+	retire := a.retire
+	a.retire = nil
+	var done []chan strikeJob
+	for _, b := range retire {
+		if b.strikes != nil && b.machine.State() != ai.StateBattle {
+			done = append(done, b.strikes)
+			b.strikes = nil
+		}
+	}
+	a.mu.Unlock()
+	for _, ch := range done {
+		close(ch)
+	}
+}
+
+// asleepSweepPerTick is how many sleeping monsters' memories a pass checks
+// for a monster that has died asleep (sweepAsleep). OURS, round 666: a
+// bound, so the sweep's cost is flat however many monsters sleep; Go's map
+// iteration starts at a random place each time, so every entry is checked
+// sooner or later (66,000 memories at 64 a pass is about one full sweep in
+// 100 s of passes).
+const asleepSweepPerTick = 64
+
+// sweepAsleep drops the memories of up to asleepSweepPerTick sleeping
+// monsters that no longer exist -- killed while asleep (a damage-over-time
+// tick, a GM's /kill). Ids are never reused (combat.Hub's nextID), so a stale
+// memory can never be woken into another monster; this is only memory hygiene.
+func (a *monsterAI) sweepAsleep() {
+	n := 0
+	for id := range a.asleep {
+		if n++; n > asleepSweepPerTick {
+			break
+		}
+		if !a.monsters.Exists(id) {
+			delete(a.asleep, id)
+		}
+	}
 }
 
 // indexPlayers files every player by the cell it stands in (players)
@@ -743,6 +853,17 @@ func (a *monsterAI) indexPlayers() {
 			}
 		}
 	}
+}
+
+// hasBrain reports whether monster id has a brain, awake or filed asleep
+// (brainMemory): the monsters the status runtime's hold keeps awake (addHeld).
+// Under a.mu.
+func (a *monsterAI) hasBrain(id int64) bool {
+	if _, ok := a.brains[id]; ok {
+		return true
+	}
+	_, ok := a.asleep[id]
+	return ok
 }
 
 // isAwake reports whether monster id, standing in cell c, runs this pass:
@@ -1558,6 +1679,12 @@ func (a *monsterAI) keptUpOn(b *brain) bool {
 // until round 542 it drew ai.SpawnHeading here, a heading nothing outside the
 // brain knew, so a spawn push could not have carried it.
 func (a *monsterAI) newBrain(m combat.Monster) *brain {
+	return a.buildBrain(m, true)
+}
+
+// buildBrain is newBrain, with Init's two rolls only when roll is set (wake
+// passes false for a brain whose rolls were drawn before it slept).
+func (a *monsterAI) buildBrain(m combat.Monster, roll bool) *brain {
 	b := &brain{id: m.ID, m: m, heading: m.Heading}
 	// The tactics (round 660): the monster's own row when it hatched with
 	// one (EXTERNAL values, READ columns), else the OURS stand-ins.
@@ -1576,7 +1703,8 @@ func (a *monsterAI) newBrain(m combat.Monster) *brain {
 	// ArmTimer, column 42's fast-scan bits), which starts fired (scanDueAt
 	// zero).
 	b.detection, _ = ai.DetectionRadius(m.BCRadius, sight)
-	if a.aggro {
+	if a.aggro && roll {
+		b.rolled = true
 		b.aggressive = ai.Aggressive(a.rng, mode, pct)
 		b.scanPeriodMs = ai.ScanPeriodMs(a.rng, flags)
 	}
@@ -1588,6 +1716,84 @@ func (a *monsterAI) newBrain(m combat.Monster) *brain {
 		leave: func() { a.leaveBattle(b) }}
 	states[ai.StateHoming] = &brainState{a: a, b: b, state: ai.StateHoming, enter: func() { a.enterHoming(b) }}
 	b.machine = ai.NewMachine(states)
+	return b
+}
+
+// brainMemory is what a sleeping monster's brain keeps for when it wakes
+// (round 666, -monster-sleep): everything in a brain that a rebuild from the
+// monster (newBrain's arithmetic over combat.Monster: the home, the tactics
+// and its radii, the detection radius) would not give back as it was.
+//
+//   - the state it slept in, its entry time and dwell, and the per-state
+//     fields: a monster sleeps only in IDLE or WANDER -- BATTLE, HOMING and a
+//     monster its states hold are insistent and never sleep (tick) -- but the
+//     target and the run home are filed too, so no state loses anything;
+//   - the heading, which each leg turns and the next wander leg starts from;
+//   - the action machine's cooldown (lastSwing, swungReuseMs) and tactics
+//     timer 6 (giveUpDueAt), both for the monster's life, not a fight's;
+//   - the aggression roll and tactics timer 1 (aggressive, scanPeriodMs,
+//     scanDueAt), rolled once at Init: re-rolled on a wake, a passive
+//     monster could come back aggressive;
+//   - a unique's damage total and triggers (damageTaken, lastHP, hpSeen,
+//     trigFired, trigLast): an HP trigger fires once a life.
+//
+// Left out, each zero outside BATTLE or rebuilt: the armed pick (leaveBattle
+// zeroes it), the chase aim and the hold's counters (enterBattle resets
+// them), the strike channel (closed at the sleep; the next swing starts a
+// worker) and seenTick.
+type brainMemory struct {
+	state            ai.State
+	enteredAt        time.Time
+	dwellMs          int
+	target           int64
+	heading          float64
+	homingDestX      float64
+	homingDestZ      float64
+	homingBlackoutMs int
+	lastSwing        time.Time
+	swungReuseMs     int
+	giveUpDueAt      time.Time
+	rolled           bool // the aggression roll and timer 1 were drawn (newBrain under -monster-aggro)
+	aggressive       bool
+	scanPeriodMs     int
+	scanDueAt        time.Time
+	damageTaken      int64
+	lastHP           int
+	hpSeen           bool
+	trigFired        []bool
+	trigLast         []time.Time
+}
+
+// memory is b's brainMemory, filed when its monster falls asleep.
+func (b *brain) memory() brainMemory {
+	return brainMemory{
+		state: b.machine.State(), enteredAt: b.enteredAt, dwellMs: b.dwellMs, target: b.target, heading: b.heading,
+		homingDestX: b.homingDestX, homingDestZ: b.homingDestZ, homingBlackoutMs: b.homingBlackoutMs,
+		lastSwing: b.lastSwing, swungReuseMs: b.swungReuseMs, giveUpDueAt: b.giveUpDueAt,
+		rolled: b.rolled, aggressive: b.aggressive, scanPeriodMs: b.scanPeriodMs, scanDueAt: b.scanDueAt,
+		damageTaken: b.damageTaken, lastHP: b.lastHP, hpSeen: b.hpSeen, trigFired: b.trigFired, trigLast: b.trigLast,
+	}
+}
+
+// wake rebuilds a sleeping monster's brain from the monster as it stands now
+// and what the old brain filed (mem): newBrain's arithmetic without its rolls
+// when they were drawn before, and the machine resumed in the state it slept
+// in -- no OnEnter, no new dwell, no SPAWN message -- so the woken monster
+// carries on exactly where the retained brain of rounds 656-665 would have.
+// OURS (round 666), like the sleep itself.
+func (a *monsterAI) wake(m combat.Monster, mem brainMemory) *brain {
+	b := a.buildBrain(m, !mem.rolled)
+	if mem.rolled {
+		b.rolled, b.aggressive, b.scanPeriodMs, b.scanDueAt = true, mem.aggressive, mem.scanPeriodMs, mem.scanDueAt
+	}
+	b.enteredAt, b.dwellMs, b.target, b.heading = mem.enteredAt, mem.dwellMs, mem.target, mem.heading
+	b.homingDestX, b.homingDestZ, b.homingBlackoutMs = mem.homingDestX, mem.homingDestZ, mem.homingBlackoutMs
+	b.lastSwing, b.swungReuseMs, b.giveUpDueAt = mem.lastSwing, mem.swungReuseMs, mem.giveUpDueAt
+	b.damageTaken, b.lastHP, b.hpSeen, b.trigFired, b.trigLast = mem.damageTaken, mem.lastHP, mem.hpSeen, mem.trigFired, mem.trigLast
+	if !b.machine.Resume(mem.state) {
+		a.dispatch(b, ai.MsgSpawned) // cannot happen: a filed state is a machine's own
+	}
+	a.tracef("ai: monster %d wakes in %s", b.id, mem.state)
 	return b
 }
 
@@ -1740,6 +1946,10 @@ func (a *monsterAI) enterBattle(b *brain) {
 func (a *monsterAI) leaveBattle(b *brain) {
 	b.armed, b.hasArmed = combat.MonsterSkill{}, false
 	b.armedSummon = nil
+	// Round 666: its strike worker ends after the pass (retireWorkers).
+	if b.strikes != nil {
+		a.retire = append(a.retire, b)
+	}
 }
 
 // startLeg starts a leg to (destX, destZ) in clip mode (0 walk, 1 run) and

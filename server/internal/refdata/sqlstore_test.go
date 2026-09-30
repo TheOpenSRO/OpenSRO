@@ -363,3 +363,27 @@ func TestSkillDamageSurvivesTheSQLRoundTrip(t *testing.T) {
 			got.HitCount, got.HitsFor())
 	}
 }
+
+// Round 666: the boot check's count. A table imported before round 659 holds
+// the empty string in every status_params (the column's default); one row with a status
+// block counts 1. Synthetic rows.
+func TestCountSkillsWithStatusParams(t *testing.T) {
+	ctx := context.Background()
+	for _, store := range []interface {
+		ImportSkills(context.Context, []Skill) error
+		CountSkillsWithStatusParams(context.Context) (int, error)
+	}{openTestSQLStore(t), NewMemStore()} {
+		if err := store.ImportSkills(ctx, []Skill{{ID: 1}, {ID: 2}}); err != nil {
+			t.Fatalf("ImportSkills: %v", err)
+		}
+		if n, err := store.CountSkillsWithStatusParams(ctx); err != nil || n != 0 {
+			t.Fatalf("%T: %d skills with status params (err %v), want 0 before any carries one", store, n, err)
+		}
+		if err := store.ImportSkills(ctx, []Skill{{ID: 2, StatusParams: "bl:30000,100,1,200,0"}}); err != nil {
+			t.Fatalf("ImportSkills: %v", err)
+		}
+		if n, err := store.CountSkillsWithStatusParams(ctx); err != nil || n != 1 {
+			t.Fatalf("%T: %d skills with status params (err %v), want 1", store, n, err)
+		}
+	}
+}

@@ -466,6 +466,22 @@ func fullMapSlots(npcs spawn.Table, table *species.Table, lookup species.SkillLo
 		perCell[combat.CellOf(spec.Zone, spec.X, spec.Z)] += sl.Cap
 		out = append(out, sl)
 	}
+	rep.densest, rep.densestCell = densestWindow(perCell)
+	sort.Slice(hiveIDs, func(i, k int) bool { return hiveIDs[i] < hiveIDs[k] })
+	rep.cappedHives = len(hiveIDs)
+	for _, ur := range uniqueReps {
+		rep.uniques = append(rep.uniques, *ur)
+	}
+	return out, rep
+}
+
+// densestWindow is the most monsters one player's area of interest can hold
+// (the session.AOIRadius square of cells around a cell holding some), and
+// that cell. A tie goes to the lowest cell -- by zone, then X, then Z -- so
+// the boot line names the same cell every boot (round 666: it took whichever
+// tied cell the map's random iteration met first).
+func densestWindow(perCell map[combat.Cell]int) (int, combat.Cell) {
+	best, bestCell, found := 0, combat.Cell{}, false
 	for c := range perCell {
 		n := 0
 		for x := c.X - session.AOIRadius; x <= c.X+session.AOIRadius; x++ {
@@ -473,16 +489,22 @@ func fullMapSlots(npcs spawn.Table, table *species.Table, lookup species.SkillLo
 				n += perCell[combat.Cell{Zone: c.Zone, X: x, Z: z}]
 			}
 		}
-		if n > rep.densest {
-			rep.densest, rep.densestCell = n, c
+		if !found || n > best || (n == best && cellLess(c, bestCell)) {
+			best, bestCell, found = n, c, true
 		}
 	}
-	sort.Slice(hiveIDs, func(i, k int) bool { return hiveIDs[i] < hiveIDs[k] })
-	rep.cappedHives = len(hiveIDs)
-	for _, ur := range uniqueReps {
-		rep.uniques = append(rep.uniques, *ur)
+	return best, bestCell
+}
+
+// cellLess orders cells by zone, then X, then Z.
+func cellLess(a, b combat.Cell) bool {
+	if a.Zone != b.Zone {
+		return a.Zone < b.Zone
 	}
-	return out, rep
+	if a.X != b.X {
+		return a.X < b.X
+	}
+	return a.Z < b.Z
 }
 
 // rankEightTotal is the rarity-8 rows left out, all species.

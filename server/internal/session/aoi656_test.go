@@ -237,7 +237,8 @@ func TestMonsterWatchersAreTheWindowsHolders(t *testing.T) {
 
 // With sleep on, a monster no player is near has no brain and does not move;
 // the one beside the player wanders. When the player walks to the sleeper it
-// wakes, and the monster left behind keeps its brain but stops.
+// wakes, and the monster left behind stops. Since round 666 the one left
+// behind loses its brain too, and what it must keep is filed (a.asleep).
 func TestSleepingBrainsWaitForAPlayer(t *testing.T) {
 	hub := world.NewHub()
 	monsters := newAIHub(3)
@@ -280,15 +281,18 @@ func TestSleepingBrainsWaitForAPlayer(t *testing.T) {
 		}
 		// A monster in BATTLE or HOMING never sleeps (round 656's review):
 		// the one left behind is parked from its last such tick on.
-		if st := a.brains[near].machine.State(); st == ai.StateBattle || st == ai.StateHoming {
-			parked, _ = monsters.Get(near)
+		if b := a.brains[near]; b != nil {
+			if st := b.machine.State(); st == ai.StateBattle || st == ai.StateHoming {
+				parked, _ = monsters.Get(near)
+			}
 		}
 	}
 	if a.brains[sleeper] == nil || !sleeperMoved {
 		t.Fatalf("the sleeper did not wake: brain %v, moved %v", a.brains[sleeper] != nil, sleeperMoved)
 	}
-	if a.brains[near] == nil {
-		t.Fatal("the monster left behind lost its brain; it should only sleep")
+	if _, filed := a.asleep[near]; a.brains[near] != nil || !filed {
+		t.Fatalf("the monster left behind: brain %v, memory filed %v; want its brain dropped and its memory filed (round 666)",
+			a.brains[near] != nil, filed)
 	}
 	if m, _ := monsters.Get(near); m.X != parked.X || m.Z != parked.Z {
 		t.Fatalf("the monster left behind kept walking: %.1f,%.1f -> %.1f,%.1f", parked.X, parked.Z, m.X, m.Z)

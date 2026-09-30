@@ -711,6 +711,16 @@ func (s *SQLStore) CountSkills(ctx context.Context) (int, error) {
 	return n, err
 }
 
+// CountSkillsWithStatusParams returns how many skills carry status params
+// (skills.status_params, the skills CSV's column 90, round 659). 0 on a
+// table imported before round 659: the column exists (the store adds it)
+// but every row holds the empty string.
+func (s *SQLStore) CountSkillsWithStatusParams(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM skills WHERE status_params <> ''`).Scan(&n)
+	return n, err
+}
+
 // ImportMonsterDrops upserts every drop in drops (by MonsterID+ItemGroupID),
 // inside one transaction.
 func (s *SQLStore) ImportMonsterDrops(ctx context.Context, drops []MonsterDrop) error {
