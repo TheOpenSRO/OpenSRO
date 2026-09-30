@@ -9694,18 +9694,17 @@ func _move_on_nav_graph(delta: float) -> bool:
 			print("NAV %4d: footing settled on %s at local %.1f, %.1f (y %.1f)" % [
 				_qa_tick, _nav_footing_name(graph, _nav_footing), local.x, local.z, local.y])
 	var asked := Vector2(target.x - local.x, target.z - local.z)
-	# Round 653: a heading run does not slide along a wall -- it stops at it
-	# (the no-slide walk; READ, SkyRun's doc: retail's query answers a
-	# blocking edge with the crossing point and bit 0, and the mover ends).
-	var heading_run := _has_move_target and _move_heading_run
-	var step := graph.step_tracked(local, asked, _nav_footing, not heading_run)
-	if heading_run and SkyRun.blocked_ends(step.blocked):
-		_end_blocked_click_walk(graph, step)
-	# Round 649: a click walk the graph stops dead ends here, as retail's does
-	# (ClickWalk.blocked_ends; READ, FUN_009e0e60) -- not held with the run
-	# playing on the spot.
-	elif step.blocked and _has_move_target and _pending_attack.is_empty() and _pending_friend_cast.is_empty() \
-			and ClickWalk.blocked_ends(Vector2(step.position.x - local.x, step.position.z - local.z).length(), asked.length()):
+	# Round 653 and its follow-up: an order in effect does not slide along a
+	# wall -- it stops at it and ends (the no-slide walk and
+	# ClickWalk.blocked_ends; READ: retail's collision query answers a
+	# blocking edge with the crossing point, nudged at most 0.2 toward the
+	# cell centre, and bit 0, which ends the mover's movement, for every
+	# movement kind). An attack's or friendly cast's approach is re-issued on
+	# the next tick by _step_move_order. Only the QA walk (SRREVAMP_QA_WALK, a
+	# measurement path with no order) still slides.
+	var slide := _qa_walk != "" and not _has_move_target
+	var step := graph.step_tracked(local, asked, _nav_footing, slide)
+	if _has_move_target and ClickWalk.blocked_ends(step.blocked):
 		_end_blocked_click_walk(graph, step)
 	if trace and OS.get_environment("SRREVAMP_QA_NAVTRACE") == "2":
 		print("NAV %4d: %.2f, %.2f -> %.2f, %.2f (y %.2f) on %s" % [
@@ -9727,6 +9726,56 @@ func _move_on_nav_graph(delta: float) -> bool:
 	_nav_footing_pos = player.global_position
 	player.velocity.y = 0.0
 	return true
+
+## One tick of the movement order in effect (the click walk, the heading run,
+## an attack's or friendly cast's approach, a pick-up walk). Round 653's
+## follow-up moved it out of _physics_process so the approach's retry can be
+## tested: a walk now ends at the first blocked step (ClickWalk.blocked_ends,
+## READ), and an attack or friendly cast walking into reach is re-issued here
+## on the next tick even though the wall ended its move -- retail's attack
+## tick re-issues MoveTowardObject on every pass while out of reach
+## (docs/protocol/auto_command.md, phase 1, READ). Against a wall that keeps
+## it out of reach the body therefore stands at the wall facing its target,
+## re-aiming every tick, until the target comes into reach or the player
+## gives another order; what a retail body shows then was not read.
+func _step_move_order(delta: float) -> void:
+	# An attack walking into reach: Tick_Attack's phase 1 tests the reach
+	# on every tick of the walk, so this does too, and the blow goes out
+	# on the first frame in reach -- stopped, the position flushed, the
+	# request sent -- before the send gate below could follow it with an
+	# OpMove, which would cancel the keep-up it starts (_attack_monster).
+	if not _pending_attack.is_empty():
+		_step_pending_attack()
+	if not _pending_friend_cast.is_empty():
+		_step_pending_friend_cast()
+	if _pending_attack.is_empty() and _pending_friend_cast.is_empty():
+		_approach_blocked_at = Vector3.INF
+	elif _has_move_target and _approach_blocked_at != Vector3.INF \
+			and Vector2(_move_target.x - _approach_blocked_at.x, _move_target.z - _approach_blocked_at.z).length() < APPROACH_BLOCKED_HOLD:
+		# OURS: the re-issued approach aims where the one a wall just ended
+		# aimed -- the target has not moved -- so the body stands at the
+		# wall, facing it, and the reach is still tested every tick. Stepping
+		# again would only meet the same wall, and each no-slide stop nudges
+		# the body up to 0.2 toward its cell's centre (READ, FUN_004472d0),
+		# which at 60 re-issues a second creeps it along the wall (MEASURED
+		# in click_walk_test.gd: 22.7 units in 2 s). How often retail's
+		# client re-shows a server-side re-issue was not read.
+		_has_move_target = false
+		_aim_local_player(Vector3(_move_target.x - player.position.x, 0.0, _move_target.z - player.position.z))
+	if not _has_move_target:
+		# The pending attack went out this frame, or its target went away.
+		player.velocity.x = 0.0
+		player.velocity.z = 0.0
+	elif _step_click_walk(delta):
+		_ask_pickup_after_walk()
+		# Arrived at the stop distance with the attack still pending. The
+		# stop is never beyond the reach, so the test above fires first;
+		# this only keeps an attack from being stranded, and the server
+		# still judges it.
+		if not _pending_attack.is_empty():
+			_release_pending_attack()
+		if not _pending_friend_cast.is_empty():
+			_release_friend_cast()
 
 ## One tick of the click walk (round 649, ClickWalk.step): the player's
 ## horizontal velocity toward _move_target for this tick, cut on the tick that
@@ -9762,22 +9811,33 @@ func _step_click_walk(delta: float) -> bool:
 	_aim_local_player(Vector3(to_target.x, 0.0, to_target.y).normalized())
 	return false
 
-## Ends a click walk the navigation graph refused to advance (round 649; see
-## ClickWalk.blocked_ends): the order cleared and the body stopped where the
-## graph left it, as an arrival does, and a walk to a ground item asks for it
-## from here (the server judges the 10 units). An attack or friendly cast
-## walking into reach is not ended here: retail's attack tick re-issues its
-## approach on every pass while out of reach (docs/protocol/auto_command.md,
-## phase 1, READ), and _step_pending_attack does the same.
+## Ends an order at the wall that blocked its step (round 649; round 653's
+## follow-up for every order; ClickWalk.blocked_ends, READ): the order cleared
+## and the body stopped where the no-slide walk left it, as an arrival does,
+## and a walk to a ground item asks for it from here (the server judges the 10
+## units). An attack's or friendly cast's approach keeps its pending action:
+## _step_move_order re-issues the approach on the next tick, as retail's
+## attack tick re-issues MoveTowardObject on every pass while out of reach
+## (docs/protocol/auto_command.md, phase 1, READ).
 func _end_blocked_click_walk(graph: NavGraph, step: NavGraph.StepResult) -> void:
 	var was_run := _move_heading_run
+	var approach := not _pending_attack.is_empty() or not _pending_friend_cast.is_empty()
+	if approach:
+		_approach_blocked_at = _move_target
 	_has_move_target = false
 	_move_heading_run = false
 	player.velocity.x = 0.0
 	player.velocity.z = 0.0
 	if _qa_move_log or _qa_walk != "" or OS.get_environment("SRREVAMP_QA_NAVTRACE") != "":
-		print("NAV: the %s is blocked at local %.2f, %.2f (on %s) -- ended, as retail's mover ends a refused step" % [
-			"heading run" if was_run else "walk", step.position.x, step.position.z, _nav_footing_name(graph, step.standing_on)])
+		# An approach meets its wall on every tick it is re-issued: logged
+		# once a second at most.
+		var now_ms := Time.get_ticks_msec()
+		if not approach or now_ms - _approach_block_logged_ms >= 1000:
+			if approach:
+				_approach_block_logged_ms = now_ms
+			print("NAV: the %s is blocked at local %.2f, %.2f (on %s) -- ended, as retail's mover ends at a wall%s" % [
+				"heading run" if was_run else ("approach" if approach else "walk"), step.position.x, step.position.z,
+				_nav_footing_name(graph, step.standing_on), "; re-issued next tick" if approach else ""])
 	_ask_pickup_after_walk()
 
 ## A walk up to a ground item we were too far from is over: ask again from
@@ -9786,6 +9846,17 @@ func _ask_pickup_after_walk() -> void:
 	if _pending_pickup_id != -1 and not _pickup_inflight and NetClient.is_connected_to_server():
 		_pickup_inflight = true
 		NetClient.pick_up(NetClient.current_character_name, _pending_pickup_id)
+
+## When a blocked approach was last logged (it is re-issued every tick).
+var _approach_block_logged_ms := -100000
+## Where the approach a wall last ended was aiming (round 653's follow-up), or
+## INF: a re-issue aiming within APPROACH_BLOCKED_HOLD of it stands at the
+## wall instead of stepping into it again (_step_move_order). OURS.
+var _approach_blocked_at := Vector3.INF
+## How far the approach's point must move (the target moving) before a
+## blocked approach steps again. OURS: well under any monster's step, well
+## over float noise.
+const APPROACH_BLOCKED_HOLD := 0.5
 
 ## What the walk believes the player stands on: NavGraph.ON_TERRAIN or a real
 ## object index into the current graph's region. See _move_on_nav_graph.
@@ -12774,30 +12845,10 @@ func _physics_step(delta: float) -> void:
 	# every frame so it follows the pointer while held.
 	if _left_steering and not locked:
 		_try_set_move_target(get_viewport().get_mouse_position())
-	if _has_move_target:
-		# An attack walking into reach: Tick_Attack's phase 1 tests the reach
-		# on every tick of the walk, so this does too, and the blow goes out
-		# on the first frame in reach -- stopped, the position flushed, the
-		# request sent -- before the send gate below could follow it with an
-		# OpMove, which would cancel the keep-up it starts (_attack_monster).
-		if not _pending_attack.is_empty():
-			_step_pending_attack()
-		if not _pending_friend_cast.is_empty():
-			_step_pending_friend_cast()
-		if not _has_move_target:
-			# The pending attack went out this frame, or its target went away.
-			player.velocity.x = 0.0
-			player.velocity.z = 0.0
-		elif _step_click_walk(delta):
-			_ask_pickup_after_walk()
-			# Arrived at the stop distance with the attack still pending. The
-			# stop is never beyond the reach, so the test above fires first;
-			# this only keeps an attack from being stranded, and the server
-			# still judges it.
-			if not _pending_attack.is_empty():
-				_release_pending_attack()
-			if not _pending_friend_cast.is_empty():
-				_release_friend_cast()
+	# Round 653's follow-up: an approach whose move a wall ended is re-issued
+	# here on the next tick (_step_move_order).
+	if _has_move_target or not _pending_attack.is_empty() or not _pending_friend_cast.is_empty():
+		_step_move_order(delta)
 	elif _qa_walk != "" and not _player_dead:
 		# SRREVAMP_QA_WALK: walk on a fixed world heading (its own path; no
 		# key moves the character since round 608), so a render shows the
@@ -12836,9 +12887,10 @@ func _physics_step(delta: float) -> void:
 			_try_step_up(delta)
 			player.move_and_slide()
 			# Round 653, OURS: with no navigation graph under the player (a
-			# region with no .nvm, or before one streams in) a heading run
-			# that meets a physics wall ends there too, rather than sliding.
-			if _has_move_target and _move_heading_run and player.is_on_wall():
+			# region with no .nvm, or before one streams in) an order that
+			# meets a physics wall ends there too, as retail's mover ends at
+			# a wall (ClickWalk.blocked_ends); an approach is re-issued.
+			if _has_move_target and player.is_on_wall():
 				_has_move_target = false
 				_move_heading_run = false
 				player.velocity.x = 0.0

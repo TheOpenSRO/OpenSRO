@@ -257,12 +257,14 @@ Read from `sro_client.exe`'s decompile on the RE box (`/var/tmp/decomp_client`).
 - **A refused step ends the move** (round 649's follow-up). This is the failure path above:
   bit `0x10000000`. srrevamp's walk now ends a click walk whose step the navigation graph blocks
   dead (`ClickWalk.blocked_ends`), instead of holding its order with the run animation playing.
-  - OURS: srrevamp's graph slides along a wall (`NavGraph.step_tracked`). "Dead" therefore means
-    a blocked step that covers no more than 1 % of what was asked. Whether retail's query slides
-    was not read.
-  - An attack's or friendly cast's approach is left walking. The retail attack tick re-issues
-    `MoveTowardObject` on every pass while out of reach (`docs/protocol/auto_command.md`,
-    phase 1, READ).
+  - ~~OURS: srrevamp's graph slides along a wall. "Dead" means a blocked step that covers no more
+    than 1 % of what was asked.~~ Superseded by round 653's follow-up. Retail's query does not
+    slide (see "The stop at a wall" below). Every srrevamp order now walks with the no-slide walk
+    and ends at its first blocked step (`ClickWalk.blocked_ends`).
+  - An attack's or friendly cast's approach ends at the wall like any walk. Its pending action is
+    kept, and `World3D._step_move_order` re-issues it on the next tick. This follows retail's
+    attack tick, which re-issues `MoveTowardObject` on every pass while out of reach
+    (`docs/protocol/auto_command.md`, phase 1, READ).
 - **Not read:** what the collision query tests, which of its bits mean what beyond the two above,
   and whether a server-driven mover uses this same tick.
 
@@ -384,10 +386,18 @@ srrevamp's movement is client-authoritative positions (`OpMove`/`OpEntityMoved`)
 - OURS: while a run is in effect, `_move_target` is the pick's reach along the heading, for the
   ground click's own filter. What retail's destination record holds during a heading move was not
   read.
-- OURS: with no navigation graph under the player (the physics fallback), a run that meets a
-  physics wall (`is_on_wall`) ends too.
-- Click walks still slide (round 649's OURS). This reading says retail's mover stops at the wall
-  for any movement kind. Changing click walks is left to a decision (`docs/TODO.md`).
+- OURS: with no navigation graph under the player (the physics fallback), an order that meets
+  a physics wall (`is_on_wall`) ends too.
+- **Every order stops at the wall** (round 653's follow-up), as this reading says retail's mover
+  does for any movement kind. This covers a click walk, a pick-up walk and an attack's or friendly
+  cast's approach. A walk at an angle into a door frame now stops at the frame, where it used to
+  slide into the doorway.
+  - A blocked approach keeps its pending action and is re-issued every tick.
+  - OURS: while its point stays within 0.5 of the one the wall stopped, it stands at the wall
+    facing the target instead of stepping into the wall again. Each no-slide stop nudges the body
+    up to 0.2 toward its cell's centre, and at 60 re-issues a second that crept it along the wall
+    by 22.7 units in 2 s (MEASURED, `click_walk_test.gd`).
+  - Only the QA walk (`SRREVAMP_QA_WALK`, no order) still slides.
 
 ## Not read
 

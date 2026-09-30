@@ -7094,7 +7094,7 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
-## Six-hundred-and-fifty-third round: a click on the sky, or on ground too far away, runs the character that way until a wall stops it, and every other player sees the run and the stop
+## Six-hundred-and-fifty-third round: a click on the sky, or on ground too far away, runs the character that way until a wall stops it, every other player sees the run and the stop, and every walk now stops at a wall instead of sliding along it
 
 The user (2026-09-30): "Also add sky clicking to the game. If clicked out far enough or above the
 land in the sky the character would run indefinitely in that direction until stopped or a
@@ -7308,16 +7308,99 @@ FAILURES: 7
 The runs, frame ms, base against head: 11.28 / 11.15, 11.44 / 11.15, 11.22 / 11.29. The gate stands
 still, and a heading run adds nothing to a frame that is not moving. The −0.1 is noise.
 
+### Follow-up: every walk stops at the wall, as retail's does
+
+The first commit (287e394) left click walks sliding (round 649, OURS) and asked the user. The
+user's request decides it: "when the character collides with a wall or something that stops it
+make sure you stop the running as well and make the character stop in place like the original
+game". The reading above holds for **every movement kind**. The query answers a blocking edge with
+the crossing point, nudged at most 0.2, and bit 0, which ends the move.
+
+**What changed.**
+- `ClickWalk.blocked_ends(blocked)` is retail's rule: any blocked step ends the order. Round 649's
+  1 % threshold (OURS) is gone, and so is `SkyRun.blocked_ends`.
+- `_move_on_nav_graph` walks every order with the no-slide walk (`step_tracked(..., false)`) and
+  ends it at the first blocked step. Only the QA walk (`SRREVAMP_QA_WALK`, no order) still slides.
+- **Approaches.** An attack's or friendly cast's approach ends at the wall like any walk, but keeps
+  its pending action.
+  - The order's tick, `World3D._step_move_order`, was moved out of `_physics_process` so it can be
+    tested. It runs while an approach is pending even with no move in effect, and re-issues the
+    approach on the next tick. Retail's attack tick re-issues `MoveTowardObject` on every pass
+    while out of reach (auto_command.md, phase 1, READ).
+  - OURS: while the re-issued approach aims within 0.5 of where the wall stopped it (the target has
+    not moved), the body stands at the wall facing the target, and the reach is tested every tick.
+  - Without that hold, the body **crept along the wall**: each no-slide stop nudges it up to 0.2
+    toward its cell's centre, which came to 22.7 units in 2 s at 60 re-issues a second (MEASURED,
+    the synthetic fixture). How often retail's client shows a server-side re-issue (every 30 ms at
+    most) was not read.
+  - It walks on as soon as the target moves clear.
+- **The pick-up walk** ends at the wall and asks for the item from there (`_ask_pickup_after_walk`,
+  unchanged). The server judges the 10 units.
+- **A doorway at an angle:** a walk whose line meets the door frame now stops at the frame. Round
+  649's walk slid along the frame into the doorway and through. This is retail's behaviour, as
+  read. A walk whose line passes through the gap goes through.
+- The physics fallback (no `.nvm`) ends any order on `is_on_wall` (OURS; it was the heading run
+  alone).
+
+**Tests.** `client/scripts/world/click_walk_test.gd`:
+- The fixture is now two cells split at x = 100 with the blocking edge on their boundary. That is
+  the shape a real region has. The no-slide stop nudges toward the mover's own cell centre, which
+  in the old one-cell fixture lay across the wall (MEASURED: x 100.141).
+- It now checks:
+  - a walk at an angle stops at first contact (z 110.2 of a point at z 120);
+  - a steeper one at 200 u/s stops at its crossing (z 125.2, not the point's 150);
+  - the approach is re-issued on 120 of 120 ticks, stays pending, and stands at x 99.988 with
+    0.00000 drift after the stop;
+  - it walks on when the target moves clear (z 100.20 → 132.88 in 10 ticks);
+  - a walk into a door frame stops at the frame (z 90.2);
+  - a walk through the gap goes through (x 128.0).
+- Round 649's oblique check, which expected the slide, is replaced.
+
+**NEGATIVE, against 287e394** (a worktree at the first commit, with the new test copied in):
+
+```
+ok  a walk at 50 u/s straight into a blocking edge ends there (13 ticks, x 99.990, order false)
+FAIL a walk at an angle into the edge stops at first contact, not sliding along it (x 99.993, z 119.910, 74 ticks)
+FAIL and a steeper one at 200 u/s stops at its crossing, z 125, not at its point's z 150 (x 99.996, z 149.945, 27 ticks)
+FAIL World3D._step_move_order exists (the order's tick)
+FAIL a walk at an angle into a door frame stops at the frame (x 128.468, z 118.984), as retail's mover stops -- it does not slide into the doorway
+ok  a walk aimed through the doorway (crossing at z 105) goes through (x 128.013, z 119.007)
+FAILURES: 4
+```
+
+On the branch: ALL PASS. `remote_godot.sh check`: ALL LOAD (430 scripts). `remote_godot.sh
+tests`: 173 suites, 0 failing. `go test -count=1 -p 1 ./...`: 60 packages ok (the server is
+unchanged by the follow-up). The perf gate was not re-run for the follow-up: it measures a
+standing view, and the change only touches a walk's blocked step.
+
+**Live (MEASURED, `/var/tmp/sky653/sky653walk.sh`, real xdotool clicks, default camera).**
+- Three ground clicks at angles past the `cj_jang_gate` edge north of the spawn each stop dead on
+  the straight line to the point.
+- The first ran from (41.463, −59.362) toward (−17.260, 10.426). On that line, z 5.421 falls at
+  x −13.05, and it stopped there:
+
+```
+MOVE self t=636 ms=25932 pos=(-12.727,5.039) dest=(-17.260,10.426) order=true ... gait=run
+NAV: the walk is blocked at local 946.95, 954.58 (on object cj_jang_gate) -- ended, as retail's mover ends at a wall
+MOVE send t=637 ms=25949 pos=(-13.048,5.421)
+MOVE self t=637 ms=25949 pos=(-13.048,5.421) dest=(-17.260,10.426) order=false ... gait=stand
+MOVE self t=639 ms=25981 pos=(-13.048,5.421) dest=(-17.260,10.426) order=false ... gait=stand
+```
+
+- The other two stopped at local (971.49, 954.08) and (944.28, 954.63), each in the tick it met
+  the edge.
+- B received the stop as `MOVE recv 1 ms=20945 pos=(-13.048,5.421)`.
+- Round 649's base, at /speed 1, slid along this edge for several ticks before stopping (its
+  entry).
+
 ### Open
 
-- **Click walks still slide** along a wall (round 649, OURS). Retail's query stops every movement
-  kind at the wall, as read above. Stopping them too is a decision for the user (`docs/TODO.md`),
-  because it changes doorway walks and attack approaches.
+- **What a retail body shows while its approach is held at a wall** was not read; srrevamp's
+  stands. Nor was retail's pick-up approach.
 - **The server does not step the run itself.** srrevamp is client-authoritative. Whether retail's
   server sends its own stop to the watchers was not read.
 - The arrow keys' heading-form commands (READ) are not bound. `0x70c5` (the other sender) is not
   built.
-
 ## Six-hundred-and-fifty-second round: every icon is picked up with one click and put down with the next, and a worn item goes into the bag as the original puts it
 
 The user (2026-09-30): "When I try drag an item from my person into the inventory to a slot I want

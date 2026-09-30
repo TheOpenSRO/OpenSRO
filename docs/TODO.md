@@ -1054,20 +1054,25 @@ The rule is `ClickWalk.step`, READ from the mover tick `FUN_009e0e60` (`docs/pro
       follow-up**. A click walk the graph blocks dead now ends, as retail's mover ends a refused
       step (READ: bit `0x10000000` in `FUN_009e0e60`). The live run measured 0 held episodes;
       the base had 26.
-  - [ ] **What "dead" means is OURS**: at most 1 % of the step's asked length. **Round 653 read
-        the query: retail does not slide.** `CRegionManagerBody::vslot_012` -> the terrain walk
-        `0x4047a0` answers a blocking edge with the crossing point (nudged at most 0.2) and bit 0,
-        and the mover then ends. That holds for every movement kind (`movement.md`, "The stop at a
-        wall"). The heading run now stops that way. **A decision for the user:** should click walks
-        stop at the wall too, instead of sliding along it? That is retail's rule. It would also
-        change walks through doorways at an angle, and every attack approach that currently slides
-        round a corner.
-  - [ ] **An attack's approach against a wall still holds** (and so does a friendly cast's). It
-        re-aims on every tick, as retail's attack tick re-issues its approach while out of reach
-        (phase 1, READ). What a retail body shows then (running or standing) was not read. The
-        server-side mover would say: `CGObjMoverByDest` in SR_GameServer.exe.
-  - [ ] **The physics fallback walk is unchanged.** That is the walk in a region with no `.nvm`,
-        using `move_and_slide`.
+  - [x] ~~What "dead" means is OURS (1 % of the step)~~ -- **decided and done in round 653's
+        follow-up**. Round 653 read the query: retail does not slide. `CRegionManagerBody::vslot_012`
+        -> the terrain walk `0x4047a0` answers a blocking edge with the crossing point (nudged at
+        most 0.2) and bit 0, and the mover then ends, for every movement kind. The user's request
+        decided it: "stop in place like the original game". Every order now walks with the no-slide
+        walk and ends at its first blocked step. A walk at an angle into a door frame now stops at
+        the frame, where it used to slide into the doorway (`click_walk_test.gd`, synthetic doorway).
+  - [x] ~~An attack's approach against a wall still holds~~ -- round 653's follow-up. The wall ends
+        the approach's move. `World3D._step_move_order` re-issues it on the next tick, as retail's
+        attack tick re-issues `MoveTowardObject` (phase 1, READ). While the approach's point stays
+        within 0.5 of the one the wall stopped (OURS), the body stands at the wall facing its target
+        and the reach is tested every tick. It walks on when the target moves.
+    - [ ] **What a retail body shows then** (the client's display of a server-side re-issue every
+          30 ms at most) was not read. srrevamp's body stands.
+    - [ ] **The pick-up walk** ends at the wall and asks for the item from there
+          (`_ask_pickup_after_walk`); the server judges the 10 units. Retail's pick-up approach was
+          not read.
+  - [ ] **The physics fallback walk** (a region with no `.nvm`, `move_and_slide`) ends an order on
+        `is_on_wall` (round 653's follow-up, OURS). It still slides for the tick that meets the wall.
 - [ ] **The early stop (`MOVE_TARGET_STOP_DISTANCE`, 2.39) is OURS.** Retail lands on the point
       exactly. The stop is kept only because `CombatNet.approach_aim` is built on it.
 - [ ] **The server does not police speed** (round 636, `gm.go`). It relays whatever a client sends.
@@ -1089,8 +1094,9 @@ Read in `docs/protocol/opcodes/movement.md`, "The heading move". The code is `Sk
       not bound (the key table's `NOT_BOUND`, round 608).
 - [ ] **`0x70c5`** is sent in place of `0x7021` when `FUN_00b94b90(0xef1b44)` is false (probably a
       ride or transport). Not built.
-- [ ] **The physics fallback** (no `.nvm`) ends a run on `is_on_wall` (OURS).
-- [ ] **Click walks still slide** (round 649, OURS). See the decision above.
+- [ ] **The physics fallback** (no `.nvm`) ends any order on `is_on_wall` (OURS).
+- [x] ~~Click walks still slide~~ -- round 653's follow-up: every order stops at the wall, as retail's
+      does (the section above).
 
 ### The buff bar — **built (round 618); these are left**
 `HudBuffBoard` is retail's `CIFMagicStateBoard`. It has the icons, the draining time bar, the end

@@ -43,7 +43,8 @@ extends RefCounted
 ##   (`CRTNavMeshTerrain::vslot_002`, `0x4047a0`) answers a blocking edge with
 ##   the crossing point nudged at most 0.2 (`FUN_004472d0`, `0xe1b850`) and
 ##   bit 0: the body **stops at the wall**, it does not slide along it
-##   (NavGraph.step_tracked's no-slide walk has the same reading).
+##   (NavGraph.step_tracked's no-slide walk has the same reading; ClickWalk
+##   .blocked_ends ends every walk this way).
 ## - The server steps its own heading mover the same way: `CGObjMoverByCmd`
 ##   (server `0x48c1b0`) steps while the forward bit is set, along the
 ##   object's heading times the speed (`CGObjMoverByDest::FUN_0048bff0`), with
@@ -97,11 +98,6 @@ static func click_rule(moving: bool, current: float, target: float) -> String:
 ## `+0x80 == 1`, a destination; the heading form sets 2).
 static func velocity(h: float, speed: float) -> Vector2:
 	return RemoteFacing.facing_of(h) * speed
-
-## Whether a heading run's step ends the run: any step the navigation graph
-## blocked (the no-slide walk stopped it at the wall), READ as above.
-static func blocked_ends(blocked: bool) -> bool:
-	return blocked
 
 ## The u16 the heading form carries for heading `h`: FUN_009c4060 takes pi/2
 ## off (0xe1b8f0) and adds 2 pi (0xd81930) while negative; FUN_009ebbf0 then
