@@ -68,6 +68,13 @@ const positionSaveTimeout = 5 * time.Second
 // and the frame the client was told are remembered here.
 const placeKey = "session.world.place"
 
+// placeSavedKey holds when the session's position was last saved, apart from
+// the place itself (round 665's review, M1): the move handler's periodic save
+// used to read the place and write it back with a new time, so a warp run off
+// the session goroutine (returnAfterKill) that set a new place between the two
+// had its label overwritten with the old one. The save now writes only this.
+const placeSavedKey = "session.world.placeSaved"
+
 // place is the zone label and FrameRegion a session's character entered or
 // last changed zone with, and when its position was last saved.
 type place struct {
@@ -79,6 +86,7 @@ type place struct {
 // an enter or a zone change, whose arrival position is what a save would
 // write, so the clock starts there too.
 func rememberPlace(sess *gateway.Session, zone, frame string, now time.Time) {
+	sess.Set(placeSavedKey, now)
 	sess.Set(placeKey, place{zone: zone, frame: frame, saved: now})
 }
 
@@ -144,12 +152,20 @@ func savePositionEvery(chars character.Store, sess *gateway.Session, e world.Ent
 		return
 	}
 	p, ok := placeOf(sess)
-	if !ok || now.Sub(p.saved) < positionSaveInterval {
+	if !ok {
+		return
+	}
+	last := p.saved
+	if v, ok := sess.Get(placeSavedKey); ok {
+		if t, ok := v.(time.Time); ok && t.After(last) {
+			last = t
+		}
+	}
+	if now.Sub(last) < positionSaveInterval {
 		return
 	}
 	if savePosition(chars, sess, e) {
-		p.saved = now
-		sess.Set(placeKey, p)
+		sess.Set(placeSavedKey, now)
 	}
 }
 

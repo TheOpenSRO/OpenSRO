@@ -431,16 +431,23 @@ back among its killers; the one other flag-independent piece is the entry revive
 (the last paragraph). It does not
 depend on the monster flags: it covers the counterattack inside the attacker's result and the
 monster's own swings under `-monster-battle` alike. After an update the boot log reads
-`player dead state off (-player-dead-state / SRREVAMP_PLAYER_DEAD_STATE)`.
+`player dead state off (-player-dead-state / SRREVAMP_PLAYER_DEAD_STATE): a monster's kill respawns
+the player at once at the return point`.
 
 **Turn it on only when both of these hold:**
 
-1. A client release that carries round 548 is tagged, CI is green for it (`gh run list`), and its
-   zips are published. An older client sees HP 0 and no Revive button after a kill, and since
-   round 665 nothing frees it; a client between rounds 548 and 665 has one Revive button, which
-   the server reads as the present point at level 10 or under and the return point above it.
-2. The live check in that `monster_ai.md` section passes on the render box. It has not been run
-   yet.
+1. A client release that carries round 665 is tagged, CI is green for it (`gh run list`), and its
+   zips are published. **A client older than round 548 stays dead until it logs out**: it sees
+   HP 0 and no Revive button after a kill, and since round 665 nothing revives a player unasked;
+   it comes back alive (at 40 %) only by logging in again, at its return point with
+   `-persist-position`, else at the world entry. Retail is the same above level 10 for a player
+   who never picks a button. A client between rounds 548 and 665 has one Revive button, which the
+   server reads as the present point at level 10 or under and the return point above it.
+2. Round 665's live check (`docs/WORLD_ISSUES.md`, round 665, section 4: a death in the densest
+   window, "Resurrect at the specified point.", the arrival in Jangan alive with one EXP loss)
+   passes on the render box with the release's server and client. It passed on 2026-09-30 with
+   the round's own build. (The round-549 check in `monster_ai.md` asserted the 30 s auto-revive,
+   which is gone.)
 
 **On.** Add `SRREVAMP_PLAYER_DEAD_STATE: "1"` under the server's `environment:` in the untracked
 `docker-compose.override.yml`, the same way as `SRREVAMP_MONSTER_AI` above, then run

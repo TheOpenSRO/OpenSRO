@@ -5,15 +5,18 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"sync/atomic"
 	"time"
 
+	"github.com/OpenSRO/srrevamp/server/internal/berserk"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
 )
 
 // The player's dead state, the server half (round 549; the client half is
@@ -136,19 +139,31 @@ import (
 //   - The server answers with no message of its own: the handler's paths
 //     end in Revive and ApplyHPMPDelta, whose state and pool changes are
 //     what the client hears. srrevamp's OpReviveResult stands for them.
-//   - No timed revive in the open world. GObjPC::Revive has ten call sites
-//     (srv.asm 0x406181, 0x4158de, 0x46ccd0, 0x49ff54, 0x4f2c95, 0x5100e7,
-//     0x51018b, 0x510210, 0x51e5af, 0x51e67b): the resurrect handler, the
-//     resurrection scroll (FUN_0049ff20), a transaction's reply
-//     (trs_wait_response::vslot_002, 0x46cb30: Revive(1) on a PC in state 2,
-//     GameEventLog 0x15/3 -- INFERRED another player's resurrection), the GM
-//     command
-//     dispatcher, the siege countdown, the flag world's checker, a scripted
-//     warp job (AJStateChanger::vslot_002 kind 0xb/0, 0x405f70, whose
-//     creators were not traced) and two CMainProcess paths. The PC's
-//     one-second tick (CGObjPC::PeriodicUpdate, 0x52aa90) calls none of them;
-//     its state-2 branch is the SetCharacterState(0xf) one. Only
-//     PeriodicUpdateInSiege counts a dead player down.
+//   - No timed revive in the open world. GObjPC::Revive has THIRTEEN call
+//     sites (`call 0x4df290` in srv.asm: 0x406181, 0x4158de, 0x46ccd0,
+//     0x49ff54, 0x4f2c95, 0x5100e7, 0x51018b, 0x510210, 0x51e5af, 0x51e67b,
+//     0x52d9ff, 0x5f0e6f, 0x662b17 -- round 665 first counted ten; its review
+//     found the last three): the resurrect handler (three), the resurrection
+//     scroll (FUN_0049ff20), a transaction's reply (trs_wait_response::
+//     vslot_002, 0x46cb30: Revive(1) on a PC in state 2, GameEventLog 0x15/3
+//     -- INFERRED another player's resurrection), the GM command dispatcher
+//     (two), the siege countdown (0x52d9ff, PeriodicUpdateInSiege), the flag
+//     world's checker (0x5f0e6f), the battle arena's own timed revive
+//     (0x662b17, CBattleArenaInfo::vslot_004 0x662a20: a GetTickCount
+//     deadline, then Revive(1)), a scripted warp job (AJStateChanger::
+//     vslot_002 kind 0xb/0, 0x405f70, whose creators were not traced) and two
+//     CMainProcess paths. The PC's one-second tick (CGObjPC::PeriodicUpdate,
+//     0x52aa90) calls none of them; its state-2 branch is the
+//     SetCharacterState(0xf) one. Only a fortress war and the battle arena
+//     revive on a timer -- not the open world.
+//   - The handler's other two arms (round 665's review): a message with
+//     nothing left to read (+0x103e == +0x103c) takes the PC out of the world
+//     (FUN_004df050(4), the leave path) before any option is read; and a
+//     death of cause 2 (the byte at +0x72d, leveldata.DeathCauseNoPenalty)
+//     revives in place whatever the option and the level. srrevamp's dead
+//     state only ever follows a monster's kill (cause 3), so the cause-2 arm
+//     is not reached; its empty request is the pre-665 client's, read as the
+//     level's one choice (ReviveOption), not as a disconnect (OURS).
 //   - Revive(0) (option 1) resolves the return point through
 //     CGObjPC::FUN_004e08a0 (above): FUN_004260b0 looks
 //     `_CHAR.AppointedTeleport` up as a ref object, whose +0x190 is its
@@ -485,6 +500,10 @@ func sendRevived(ctx context.Context, sess *gateway.Session, c *character.Charac
 	if sess == nil {
 		return nil
 	}
+	if c == nil {
+		// Never a success without a character (round 665's review, H1).
+		return sess.Send(&proto.Packet{Opcode: OpReviveResult, Data: (&ReviveResult{Error: "revive failed"}).Encode()})
+	}
 	res := &ReviveResult{HP: int32(c.HP), MP: int32(mpNow)}
 	if err := sess.Send(&proto.Packet{Opcode: OpReviveResult, Data: res.Encode()}); err != nil {
 		return err
@@ -537,9 +556,12 @@ func ReviveHandler(chars character.Store, hub *world.Hub, deps RegenDeps) gatewa
 		)
 		switch ReviveOption(p.Data, e.Level) {
 		case ReviveOptionReturnPoint:
-			moved, err := returnToPoint(ctx, sess, chars, hub, deps)
-			if err != nil || !moved {
-				return err // !moved: warpTo has answered "not in the world"
+			// werr, not err: an inner `err :=` here shadowed the switch's err,
+			// so a failed revive below reached sendRevived with a nil
+			// character (round 665's review, H1).
+			moved, werr := returnToPoint(ctx, sess, chars, hub, deps)
+			if werr != nil || !moved {
+				return werr // !moved: warpTo has answered "not in the world"
 			}
 			c, mpNow, err = reviveWith(ctx, chars, deps.Mana, hub, e.CharacterID, true)
 		case ReviveOptionPresentPoint:
@@ -581,8 +603,103 @@ func returnPoint() (zone, bucket string, pos world.Position, frame string) {
 // state travels with it (world.Hub.ChangeZone), so a dead character arrives
 // dead and a living one alive. It reports whether anything moved.
 func returnToPoint(ctx context.Context, sess *gateway.Session, chars character.Store, hub *world.Hub, deps RegenDeps) (bool, error) {
+	return warpHome(ctx, sess, deps.Equipment, chars, hub, deps.Berserk)
+}
+
+// warpHome is the move to the return point both paths make (option 1 and
+// returnAfterKill), guarded against the mover's own stale moves
+// (returnGuard): armed before the move, bound to the arrival after it.
+func warpHome(ctx context.Context, sess *gateway.Session, eq equipment.Store, chars character.Store, hub *world.Hub, zerk *berserk.Tracker) (bool, error) {
 	zone, bucket, pos, frame := returnPoint()
-	return warpTo(ctx, sess, deps.Equipment, chars, hub, deps.Berserk, zone, bucket, pos, frame)
+	armReturnGuard(sess, zone, pos, time.Now())
+	moved, err := warpTo(ctx, sess, eq, chars, hub, zerk, zone, bucket, pos, frame)
+	if arrived, in := hub.EntityBySession(sess.ID()); moved && in {
+		bindReturnGuard(sess, arrived.Arrival)
+	} else {
+		sess.Set(returnGuardKey, (*returnGuard)(nil))
+	}
+	return moved, err
+}
+
+// returnGuard drops the moves a character's client sent from where it fell
+// after the server has moved it home (round 665's review, M1). The move to
+// the return point is the server's own -- with -player-dead-state off it is
+// made from the kill's goroutine, a monster's strike worker or the status
+// tick, while the client, never told it died, may still be walking -- and
+// handleMove takes a client's position as it comes, so a walk step in flight
+// would put the server's character back among its killers while its client
+// loads the town. So from the move until a move arrives near a landing point
+// (the arrival, or the spot the client stands a player at in that zone,
+// worldmap.LandingSpotFor), moves anywhere else are dropped. It lives on the
+// session (returnGuardKey), so it goes with the connection. OURS: retail's
+// server moves its own objects and has no client position to distrust.
+type returnGuard struct {
+	points   [][2]float64
+	deadline time.Time
+	// arrival is the hub's Arrival stamp of the move (world.Entity.Arrival),
+	// 0 while the move is under way; a later zone change stamps another, and
+	// the guard no longer applies.
+	arrival uint64
+}
+
+// returnGuardKey is the session value holding the *returnGuard (nil: none).
+const returnGuardKey = "session.dead.returnGuard"
+
+// returnGuardRadius is how near, on x and on z, to a landing point a move
+// must be to end the guard. OURS: the client stands the player at the
+// point or the zone's spot (round 646 measured it exact), and a move from
+// where it fell lies regions away; 400 units leaves room for a first step.
+const returnGuardRadius = 400.0
+
+// returnGuardGrace is how long the guard holds with no move near a landing.
+// OURS, warpLandingGrace's two minutes: a slow machine's zone load.
+const returnGuardGrace = warpLandingGrace
+
+func armReturnGuard(sess *gateway.Session, zone string, pos world.Position, now time.Time) {
+	pts := [][2]float64{{pos.X, pos.Z}}
+	if x, z, ok := worldmap.LandingSpotFor(zone, pos.X, pos.Z); ok {
+		pts = append(pts, [2]float64{x, z})
+	}
+	sess.Set(returnGuardKey, &returnGuard{points: pts, deadline: now.Add(returnGuardGrace)})
+}
+
+func returnGuardOf(sess *gateway.Session) *returnGuard {
+	v, ok := sess.Get(returnGuardKey)
+	if !ok {
+		return nil
+	}
+	g, _ := v.(*returnGuard)
+	return g
+}
+
+func bindReturnGuard(sess *gateway.Session, arrival uint64) {
+	if g := returnGuardOf(sess); g != nil {
+		bound := *g
+		bound.arrival = arrival
+		sess.Set(returnGuardKey, &bound)
+	}
+}
+
+// returnGuardDrops reports whether a move of e's (on sess) to (x, z) is
+// dropped: a guard stands for e's current arrival (or its move is under
+// way), inside the grace, and (x, z) is near none of its landing points. A
+// move near one ends the guard and is taken.
+func returnGuardDrops(sess *gateway.Session, e world.Entity, x, z float64, now time.Time) bool {
+	g := returnGuardOf(sess)
+	if g == nil {
+		return false
+	}
+	if now.After(g.deadline) || (g.arrival != 0 && g.arrival != e.Arrival) {
+		sess.Set(returnGuardKey, (*returnGuard)(nil))
+		return false
+	}
+	for _, p := range g.points {
+		if math.Abs(x-p[0]) <= returnGuardRadius && math.Abs(z-p[1]) <= returnGuardRadius {
+			sess.Set(returnGuardKey, (*returnGuard)(nil))
+			return false
+		}
+	}
+	return true
 }
 
 // returnAfterKill is the flag-off death's second half (round 665): a kill
@@ -606,8 +723,7 @@ func returnAfterKill(ctx context.Context, chars character.Store, eq equipment.St
 	if !ok || e.Session == nil || e.Life != world.LifeAlive {
 		return
 	}
-	zone, bucket, pos, frame := returnPoint()
-	_, _ = warpTo(ctx, e.Session, eq, chars, hub, nil, zone, bucket, pos, frame)
+	_, _ = warpHome(ctx, e.Session, eq, chars, hub, nil)
 }
 
 // savedPlace is e as a leaving session saves it (-persist-position): a

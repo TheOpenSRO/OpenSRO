@@ -348,16 +348,28 @@ sets `AppointedTeleport`; its server side and a new character's default value ar
 (`FUN_004f9950` / `FUN_004f9920` / `FUN_004f9850`, `0x4df194`..`0x4df1ae`). A player who logs out
 dead comes back at the return point.
 
-**No timed revive in the open world (READ, one probe per caller).** `GObjPC::Revive` has ten call
-sites (`srv.asm`: `0x406181`, `0x4158de`, `0x46ccd0`, `0x49ff54`, `0x4f2c95`, `0x5100e7`,
-`0x51018b`, `0x510210`, `0x51e5af`, `0x51e67b`): the resurrect handler (three), the resurrection
-scroll (`FUN_0049ff20`), a transaction's reply (`trs_wait_response::vslot_002`: `Revive(1)` on a
-PC in state 2 with `GameEventLog 0x15/3` -- INFERRED another player's resurrection), the GM
-command dispatcher, the siege countdown (`CGObjPC::PeriodicUpdateInSiege`), the flag world's
-checker, a scripted warp job (`AJStateChanger::vslot_002` kind 0xb / 0, whose creators were not
-traced) and two `CMainProcess` paths. The PC's one-second tick (`CGObjPC::PeriodicUpdate`,
-`0x52aa90`) calls none of them. Only a fortress war counts a dead player down, and its client text
-says so ("automatically made after three minutes", `UIIT_MSG_FORT_REVIVE_PENALTY_TEXT_02`).
+**No timed revive in the open world (READ, one probe per caller).** `GObjPC::Revive` has
+**thirteen** call sites (`call 0x4df290` in `srv.asm`: `0x406181`, `0x4158de`, `0x46ccd0`,
+`0x49ff54`, `0x4f2c95`, `0x5100e7`, `0x51018b`, `0x510210`, `0x51e5af`, `0x51e67b`, `0x52d9ff`,
+`0x5f0e6f`, `0x662b17`; round 665 first counted ten, its review found the last three): the
+resurrect handler (three), the resurrection scroll (`FUN_0049ff20`), a transaction's reply
+(`trs_wait_response::vslot_002`: `Revive(1)` on a PC in state 2 with `GameEventLog 0x15/3` --
+INFERRED another player's resurrection), the GM command dispatcher (two), the siege countdown
+(`0x52d9ff`, `CGObjPC::PeriodicUpdateInSiege`), the flag world's checker (`0x5f0e6f`), the battle
+arena's timed revive (`0x662b17` in `CBattleArenaInfo::vslot_004`, `0x662a20`: a `GetTickCount`
+deadline, then `Revive(1)`), a scripted warp job (`AJStateChanger::vslot_002` kind 0xb / 0, whose
+creators were not traced) and two `CMainProcess` paths. The PC's one-second tick
+(`CGObjPC::PeriodicUpdate`, `0x52aa90`) calls none of them. Only a fortress war and the battle
+arena revive on a timer -- not the open world; the fortress's client text says so ("automatically
+made after three minutes", `UIIT_MSG_FORT_REVIVE_PENALTY_TEXT_02`).
+
+**The handler's other two arms (READ, round 665's review).** A request with nothing left to read
+(the message's read position `+0x103e` equal to its end `+0x103c`) takes the PC out of the world
+(`FUN_004df050(4)`, the leave path) before any option is read. A death of **cause 2** (the byte at
+`+0x72d`, `leveldata.DeathCauseNoPenalty`, not a monster's kill) revives in place whatever the
+option and the level. srrevamp's dead state only ever follows a monster's kill (cause 3), so that
+arm is not reached; srrevamp's empty request is the pre-665 client's and is read as the level's one
+choice, not as a disconnect (OURS).
 
 **Protection after the revive (READ; not modelled).** `Revive(1)` sets body mode 2
 (`BODYMODE_INVINCIBLE`) for 6.0 s (`0xb45b78`; 11.0 s, `0xb45bb8`, in the other world kind). A

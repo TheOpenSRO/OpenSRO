@@ -7135,10 +7135,16 @@ and `server/internal/session/deadstate.go`, "THE CHOICES".
   service's server side and a new character's default are NOT read.
 - **Leaving dead**: `FUN_004df050` (`cmp al,0x2` at `0x4df129`) resolves the return point
   (`call 0x4e08a0` at `0x4df188`) and saves it (`0x4df194`..`0x4df1ae`).
-- **No timed revive in the open world**: of `GObjPC::Revive`'s ten call sites (listed in the doc)
-  none is on the PC's one-second tick (`CGObjPC::PeriodicUpdate`, `0x52aa90`); only
-  `PeriodicUpdateInSiege` counts a dead player down (a fortress war). The scripted warp job
+- **No timed revive in the open world**: of `GObjPC::Revive`'s thirteen call sites (listed in the
+  doc; this entry first said ten -- the review found `0x52d9ff`, `0x5f0e6f` and `0x662b17`) none is
+  on the PC's one-second tick (`CGObjPC::PeriodicUpdate`, `0x52aa90`); only a fortress war
+  (`PeriodicUpdateInSiege`) and the battle arena (`CBattleArenaInfo::vslot_004`, `0x662a20`, a
+  `GetTickCount` deadline then `Revive(1)`) revive on a timer. The scripted warp job
   `AJStateChanger::vslot_002` (kind 0xb / 0) also calls `Revive(0)`; its creators were not traced.
+- **The handler's other arms** (the review): an empty 0x3053 takes the PC out of the world
+  (`FUN_004df050(4)`) before any option is read, and a cause-2 death (`+0x72d`, no penalty)
+  revives in place whatever the option and level. srrevamp's dead state is only a monster's kill
+  (cause 3); its empty request is the pre-665 client's (OURS, the level's one choice).
 - **Protection**: `Revive(1)` sets body mode 2 (invincible) for 6.0 s (`0xb45b78`; 11.0 s,
   `0xb45bb8`, in the other world kind); a return to the return point is a world re-entry, where
   `CGObjPC::vslot_391` (`0x4df9e0`) sets body mode 2 for the world's own time (slot `0x70`, not
@@ -7271,6 +7277,96 @@ holds no error or panic.
 another player or a scroll, the retail message-box art, and whether `-player-dead-state` should
 default on (retail has one death; a user decision). `deploy/README.md`'s dead-state section is
 updated to match.
+
+### 6. The review follow-up (ddfe5b9's review)
+
+- **H1, option 1 with a failing store crashed the server.** `ReviveHandler`'s option-1 arm
+  declared `moved, err :=`, shadowing the switch's `err`; a failed revive then reached
+  `sendRevived` with a nil character, and the gateway does not recover a handler's panic, so every
+  player was disconnected. Now `werr`, and `sendRevived` answers "revive failed" for a nil
+  character. The round's other new code has no shadowed error (`reviveWith` redeclares in its own
+  scope; `returnAfterKill`, `savedPlace` and the guard return none).
+  Test: `TestReviveOptionOneWithAFailingStoreIsRefused`.
+- **M1, a stale move could pull her back (flag off).** `returnAfterKill` warps from a strike
+  worker or the status tick, while her client, never told she died, may still be walking; a step
+  handled after the warp put her back where she fell. Now the move home arms a **return guard** on
+  her session (`warpHome`: armed before `warpTo`, bound to the hub's `Arrival` stamp after it):
+  until a move arrives within 400 units (x and z; OURS) of the arrival or the zone's client spawn
+  spot (`worldmap.LandingSpotFor`), moves elsewhere are dropped; a later zone change or two minutes
+  (OURS, `warpLandingGrace`) ends it. The guard lives on the session, so it goes with the
+  connection. The periodic position save no longer writes the place back
+  (`placeSavedKey` holds its time apart), so a warp's new label cannot be overwritten by a move
+  handler's read-modify-write. Test: `TestAStaleMoveDoesNotUndoTheReturn` (a step from (705, 700)
+  after the warp is dropped; the client's landing and the walk after it are taken).
+- **M2, a timed revive coming back would not have been caught.** `TestADeadPlayerStaysDeadUnasked`
+  kills her with the flag on and waits 3 s: still dead, HP 0, sent nothing.
+- **L1**: `GObjPC::Revive` has 13 call sites, not ten (`0x52d9ff` siege, `0x5f0e6f` flag world,
+  `0x662b17` the battle arena's `GetTickCount` timed revive in `CBattleArenaInfo::vslot_004`
+  `0x662a20`). Corrected here, in `deadstate.go` and in `character_state.md`; the open world still
+  has no timed revive.
+- **L2**: the handler's empty-message arm (`FUN_004df050(4)`, the leave path) and its cause-2 arm
+  (in place whatever the option) are documented in both places.
+- **L3**: `TestEmptyReviveAtTheLevelTenBoundary` (levels 10 and 11) and
+  `TestATickKillWithTheFlagOffReturnsHome` (a bleed kill, flag off).
+- **L4**: stale "auto-revive" text in `monsterstrike.go`, `monster_ai.md` (the client half's
+  stand-ins and the round-549 live check, marked superseded) and `deploy/README.md` (the live
+  check a flag flip waits on is now this round's). Round 666's entry (feat/docs666) says nothing in
+  it touches this round's files; both edit `session/monsterai.go`, `session/status.go` and
+  `deploy/README.md`, in different hunks -- the reviewer found the merge clean.
+- **L5**: `TestOptionOneChargesNoSecondPenalty` sends option 1 over the wire after a real
+  `finishKill` with the flag on: one penalty.
+- **L6**: `deploy/README.md` now says plainly that a client older than round 548 stays dead until it
+  logs in again.
+
+**The negative** (the new file `revive665r_test.go` on ddfe5b9, a detached worktree):
+
+```
+panic: runtime error: invalid memory address or nil pointer dereference
+	/tmp/claude-0/-root-srrevamp/7d4252ff-ae87-4058-aec0-7dceba9ec162/scratchpad/wt-neg665r/server/internal/session/deadstate.go:488 +0x77
+	/tmp/claude-0/-root-srrevamp/7d4252ff-ae87-4058-aec0-7dceba9ec162/scratchpad/wt-neg665r/server/internal/session/deadstate.go:561 +0x3ca
+FAIL	github.com/OpenSRO/srrevamp/server/internal/session	0.367s
+FAIL
+--- FAIL: TestAStaleMoveDoesNotUndoTheReturn (0.35s)
+    revive665r_test.go:128: after a step sent from where she fell: Aria at {X:705 Y:0 Z:700}, want still at the return point {X:0 Y:0 Z:0}
+FAIL
+FAIL	github.com/OpenSRO/srrevamp/server/internal/session	4.856s
+FAIL
+```
+
+(The H1 test takes the test binary down on ddfe5b9, as it took the server down.) The other four
+pass on ddfe5b9 -- they guard against regressions, and each kills a mutant, applied to ddfe5b9:
+`time.AfterFunc(1.5 s, revivePlayer)` in `markDead`, `level < PresentPointMaxLevel` in
+`ReviveOption`, and `returnAfterKill` removed from `status.go`:
+
+```
+--- FAIL: TestADeadPlayerStaysDeadUnasked (3.66s)
+    revive665r_test.go:163: 3 s after the kill: life 1, want still dead -- retail revives no one unasked outside a fortress war
+    revive665r_test.go:166: 3 s after the kill: HP 81, want 0
+--- FAIL: TestEmptyReviveAtTheLevelTenBoundary (0.73s)
+    revive665r_test.go:190: level 10, empty request: first answer 0x0027, want the revive in place (option 2)
+--- FAIL: TestATickKillWithTheFlagOffReturnsHome (0.53s)
+    revive665r_test.go:217: after a bleed killed her with the flag off: HP 80, life 1 at {X:700 Y:0 Z:700}; want respawned alive at the return point {X:0 Y:0 Z:0}, not where she bled out ({X:700 Y:0 Z:700})
+FAIL
+FAIL	github.com/OpenSRO/srrevamp/server/internal/session	4.939s
+FAIL
+```
+
+**Results**: `go build ./... && go vet ./...` clean; `go test -count=1 -p 1 -timeout 30m ./...`
+IN FULL after the last change: 62 packages ok, exit 0; `go test -race -count=1 -run
+'Revive|Dead|Death|Leaving|Status|Move|Stale|Penalty|Boundary|Tick' ./internal/session/` ok, no
+race. The client is unchanged by the follow-up (its suites passed at ddfe5b9: 178, 0 failing).
+
+**Live, again** (render box, this build, `/var/tmp/revive665/live/r2` and `r3`):
+
+- **Flag on (r2)**: level 30, the densest window (cell -692, 57): dead 0.4 s after the teleport
+  (one `Experience Points lost`), option 1 4.3 s later, `World3D: revived (HP 348, MP 870)`, then
+  `/where` 60 s on says `zone: jangan` with HP 438 -> 444 regenerating: `deaths=1 exp_lost_lines=1
+  revives=1`.
+- **Flag off (r3)**, the default: a level-1 GM with the QA attack loop in the densest window (cell
+  -697, 46). The one killing blow (`0x007d` `TargetDied`, `TargetHP` 80 = 40 % of 200) and, in the
+  same millisecond after it, `0x0027` to jangan; `/where` 50 s later says `zone: jangan`, HP 80 ->
+  94 regenerating, and no other blow on her in the whole run (1 `0x007d` naming her). Before this
+  round she respawned where she fell.
 
 ## Six-hundred-and-sixty-fourth round: dense monster fields hold 60 fps -- a player is sent only the monsters of the 3 x 3 blocks around it, as retail sends them, and a 2,500-monster crowd draws at 40 fps instead of 6
 

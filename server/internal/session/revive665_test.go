@@ -243,8 +243,10 @@ func TestADeathAtTheReturnPointCostsOnePenalty(t *testing.T) {
 				if e.Life != world.LifeDead || e.Pos != far {
 					t.Fatalf("flag on: life %d at %+v, want dead where she fell", e.Life, e.Pos)
 				}
-				// The revive the client's option 1 asks for, moved first as
-				// the handler does.
+				// Option 1 over the wire, and its penalty count, is
+				// TestOptionOneChargesNoSecondPenalty (this fixture's
+				// sessions cannot send); here the in-place revive charges
+				// nothing either.
 				if _, _, err := revivePlayer(ctx, f.chars, nil, f.hub, f.aria); err != nil {
 					t.Fatal(err)
 				}

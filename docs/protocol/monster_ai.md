@@ -2604,35 +2604,36 @@ round 540/544; a blow on itself is recognised by the pairing and by elimination 
   `"dead"`); every attack, click or quickslot cast or QA loop (`_attack_monster`); a quickslot item
   (`_on_quickslot_activated`, with `DEAD_INPUT_LINE` in chat). `_enter_dead_state` also ends the walk
   and attack under way and stops the QA attack loop.
-- **The Revive button** (`HudPanels.show_revive_prompt`, on the HUD itself so no window hides it):
+- **[Superseded in round 665: retail's two-button dead window, `character_state.md`, "The resurrect
+  choices (round 665)".]** **The Revive button** (`HudPanels.show_revive_prompt`, on the HUD itself so no window hides it):
   the death line and one button; the click emits `revive_requested`, and `World3D._on_revive_requested`
   sends `OpRevive` -- only while dead and connected.
 - **`OpReviveResult`** (`_on_revive_result`): no error -> `_leave_dead_state` (the flag, the hold,
   the prompt), the HP painted from the result, the MP through the stats refresh (the scene keeps no
-  MP maximum), "Revived." in chat; an error -> the server's string in chat, the state unchanged. A
-  result that arrives unasked -- the server half's auto-revive fallback for a session that never
-  sent `OpRevive` -- is taken the same way.
+  MP maximum), "Revived." in chat; an error -> the server's string in chat, the state unchanged.
+  [Round 665: no result arrives unasked any more -- the server's auto-revive fallback is gone.]
 - **`SRREVAMP_QA_REVIVE_AFTER=n`**: n physics frames after a kill left the player dead, send
   `OpRevive` as the button would; once per death.
 
 **Stand-ins, each disclosed at its code:**
 
-- **The request carries no option and revives in place at any level.** Retail's 0x7053 carries
+- **[Superseded in round 665: the request carries retail's option byte, and option 1 goes to a
+  return point; the retail opcode is 0x3053.]** **The request carries no option and revives in place at any level.** Retail's 0x7053 carries
   the u8 above, and reviving in place is for a max level of 10 or under (or a no-penalty death);
   everyone else returns to a return point srrevamp does not have. The option byte and the return
   point are a later round's, under `PROTOCOL_DECISION.md`.
-- **The button, its placement and its wording** are this project's: the retail resurrection
+- **[Superseded in round 665: the dialogue is read and its texts are retail's.]** **The button, its placement and its wording** are this project's: the retail resurrection
   dialogue was not read. `DEAD_INPUT_LINE` and "Revived." likewise.
 - **The death clip's type** is the body table's type-4 entry; which clip the retail client plays
   at a death was not read.
-- **The auto-revive fallback** (a disclosed 30 s in the plan) is the server half's; the client only
+- **[Removed in round 665.]** **The auto-revive fallback** (a disclosed 30 s in the plan) is the server half's; the client only
   takes its result.
 - **The button needs the pk2 HUD.** It is wired when `_hud_panels` initialises (the archives
-  present); without archives a dead player has `SRREVAMP_QA_REVIVE_AFTER` and the server half's
-  fallback (round 550's note). Consistent with the client requiring archives.
+  present); without archives a dead player has `SRREVAMP_QA_REVIVE_AFTER` (round 550's note; the
+  server half's fallback is gone since round 665). Consistent with the client requiring archives.
 
-**Not modelled:** the return point (option 1), the siege countdown gate, the cause-2 branch, the
-`+0x55c`/`+0x318`/`+0x378` calls inside `Revive`.
+**Not modelled:** ~~the return point (option 1)~~ (built in round 665, with a stand-in point), the
+siege countdown gate, the cause-2 branch, the `+0x55c`/`+0x318`/`+0x378` calls inside `Revive`.
 
 **Tests** (`client/tools/remote_godot.sh tests`): `world_test.gd` pins the pair as 0x0028/0x0029,
 `OpRevive` as empty and `decode_revive_result` on the fixtures above (a revive, a refusal with and
@@ -2848,7 +2849,9 @@ with ONLY the kill branch of `monsterStrike` reverted, `TestMonsterKillLeavesThe
 on `TargetHP:80 ... want 0`, `HP after the kill = 80, want 0`, `life 1` and the surviving potion
 queue, and `TestCounterKillLeavesThePlayerDeadUntilRevived` on `PlayerHP 80, want 0`.
 
-**Live check (not yet run).** On the render box, server built with `SRREVAMP_PLAYER_DEAD_STATE=1`
+**[Superseded in round 665: its second half checked the removed auto-revive. Round 665's live
+check (WORLD_ISSUES round 665, section 4) replaces it: a death in the densest window, option 1,
+the arrival in Jangan alive.]** **Live check (not yet run).** On the render box, server built with `SRREVAMP_PLAYER_DEAD_STATE=1`
 (and the monster flags as wanted), a client carrying round 548: `SRREVAMP_QA_COMMANDS='/spawn earth
 ghost'` beside a fresh character, `--attack`, `SRREVAMP_QA_REVIVE_AFTER=120`; assert in the client
 log the death line at HP 0 with no `strikes <self>` line until "Revived.", then a swing that lands;

@@ -1291,6 +1291,11 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	// SetMotionState(WALK/RUN) does (round 607, motion.go). Neither the store
 	// nor the zone hears a refused one, as for the dead.
 	if e, inWorld := hub.EntityBySession(sess.ID()); inWorld {
+		// A step from where the character fell, sent before the server
+		// moved it home, is dropped (round 665's review, returnGuard).
+		if returnGuardDrops(sess, e, float64(req.X), float64(req.Z), time.Now()) {
+			return nil
+		}
 		moved := motions.moved
 		// Round 646, OURS: a rooted caster's warp landing is taken
 		// (walls.go warpLandingAdmits) -- once, at a point the server named;
