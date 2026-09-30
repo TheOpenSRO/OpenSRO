@@ -693,7 +693,21 @@ type MonsterSnapshot struct {
 	// 1 champion, 3/8 unique, 4 giant, 5 titan, 6 elite -- the target window
 	// picks its rank gem from it (mapping recovered from the retail client).
 	Rarity int32
+	// Party is the party-monster flag (round 660, combat.Monster.Party). It
+	// travels in bit 8 of the rarity word (MonsterRarityPartyBit), and only to
+	// a session that asked for it (MonsterListFlagParty): an older client
+	// reads the word whole as the rank, and a party monster's 0x101 would
+	// show it no rank at all (hud_target's table has no such rarity).
+	Party bool
 }
+
+// MonsterRarityPartyBit is where the rarity word carries the party flag
+// (round 660): bit 8, above every rank (0..8). OURS, an additive placeholder
+// like every srrevamp field (docs/protocol/PROTOCOL_DECISION.md). Retail
+// sends one byte, `class | party << 4` (CICMonster::vslot_025 0x9d3850: `and
+// cl,0xf` to +0x7ac at 0x9d38e1, `shr al,4` to +0x7ad at 0x9d38e7); srrevamp's
+// rarity word is a u32 already, so the flag rides in its second byte.
+const MonsterRarityPartyBit = 0x100
 
 func (m *MonsterSnapshot) Encode() []byte {
 	out := append(encodeInt64(m.ID), encodeStrings(m.Name, m.CodeName)...)
@@ -704,7 +718,11 @@ func (m *MonsterSnapshot) Encode() []byte {
 	binary.LittleEndian.PutUint32(buf[0:4], uint32(m.MaxHP))
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(m.HP))
 	binary.LittleEndian.PutUint32(buf[8:12], uint32(m.Level))
-	binary.LittleEndian.PutUint32(buf[12:16], uint32(m.Rarity))
+	rarity := uint32(m.Rarity)
+	if m.Party {
+		rarity |= MonsterRarityPartyBit
+	}
+	binary.LittleEndian.PutUint32(buf[12:16], rarity)
 	return append(out, buf...)
 }
 
@@ -732,12 +750,14 @@ func decodeMonsterSnapshot(data []byte) (*MonsterSnapshot, []byte, error) {
 	if len(rest) < 16 {
 		return nil, nil, errors.New("truncated hp/level/rarity fields")
 	}
+	rarity := binary.LittleEndian.Uint32(rest[12:16])
 	return &MonsterSnapshot{
 		ID: id, Name: names[0], CodeName: names[1], X: x, Y: y, Z: z,
 		MaxHP:  int32(binary.LittleEndian.Uint32(rest[0:4])),
 		HP:     int32(binary.LittleEndian.Uint32(rest[4:8])),
 		Level:  int32(binary.LittleEndian.Uint32(rest[8:12])),
-		Rarity: int32(binary.LittleEndian.Uint32(rest[12:16])),
+		Rarity: int32(rarity &^ MonsterRarityPartyBit),
+		Party:  rarity&MonsterRarityPartyBit != 0,
 	}, rest[16:], nil
 }
 
@@ -807,12 +827,37 @@ func DecodeMonsterListResult(data []byte) (*MonsterListResult, error) {
 
 // monsterSnapshotOf is a live monster as one OpMonsterListResult record, the
 // record OpMonsterSpawned carries too.
+// The party flag is left off: monsterSnapshotFor adds it for a session that
+// asked.
 func monsterSnapshotOf(m combat.Monster) MonsterSnapshot {
 	return MonsterSnapshot{
 		ID: m.ID, Name: m.Name, CodeName: m.CodeName,
 		X: float32(m.X), Y: float32(m.Y), Z: float32(m.Z),
 		MaxHP: int32(m.MaxHP), HP: int32(m.HP), Level: int32(m.Level), Rarity: int32(m.Rarity),
 	}
+}
+
+// monsterSnapshotFor is m's record as sess is sent it: with the party flag
+// when sess asked for it (monsterPartyAsked, round 660).
+func monsterSnapshotFor(sess *gateway.Session, m combat.Monster) MonsterSnapshot {
+	s := monsterSnapshotOf(m)
+	s.Party = m.Party && monsterPartyAsked(sess)
+	return s
+}
+
+// monsterPartyKey is the session value that records a client's
+// MonsterListFlagParty.
+const monsterPartyKey = "session.monsterParty"
+
+// monsterPartyAsked reports whether sess's monster list requests carry
+// MonsterListFlagParty: it reads the party flag in the rarity word.
+func monsterPartyAsked(sess *gateway.Session) bool {
+	if sess == nil {
+		return false
+	}
+	v, ok := sess.Get(monsterPartyKey)
+	b, _ := v.(bool)
+	return ok && b
 }
 
 // The spawn push (round 542): the server half of round 540's client
@@ -900,6 +945,11 @@ func BroadcastMonsterSpawned(hub *world.Hub, monsters *combat.Hub, id int64) {
 	}
 	msg := &MonsterSpawned{Monster: monsterSnapshotOf(m), Heading: float32(m.Heading)}
 	p := &proto.Packet{Opcode: OpMonsterSpawned, Data: msg.Encode()}
+	var withParty *proto.Packet
+	if m.Party {
+		msg.Monster.Party = true
+		withParty = &proto.Packet{Opcode: OpMonsterSpawned, Data: msg.Encode()}
+	}
 	// Round 656: to the players whose area of interest holds the new
 	// monster's cell (aoi.go). Under the area-of-interest runtime it goes as
 	// the checked enter (deliverViewEvents: sent only if the monster is alive
@@ -913,6 +963,10 @@ func BroadcastMonsterSpawned(hub *world.Hub, monsters *combat.Hub, id int64) {
 		}
 		if v != nil {
 			v.deliverViewEvents(viewEvents{sess: e.Session, enters: []int64{id}})
+			continue
+		}
+		if withParty != nil && monsterPartyAsked(e.Session) {
+			sendMonsterPush(e.Session, withParty)
 			continue
 		}
 		sendMonsterPush(e.Session, p)
@@ -1092,6 +1146,7 @@ func combatHandler(
 			}
 			return nil
 		case OpMonsterList:
+			noteMonsterListCaps(sess, p.Data)
 			return handleMonsterList(sess, hub, monsters, monsterListPagedAsked(p.Data))
 		default:
 			return nil
@@ -1397,6 +1452,11 @@ func performAttack(
 	}
 	if landed != nil {
 		*landed = true
+	}
+	// The kill's word to the nests (round 660, nestkill.go): the killer's
+	// party near the monster may arm its nest for a party monster.
+	if monsterDied {
+		noteMonsterKilled(hub, parties, characterID, updated)
 	}
 	// The monster AI's struck event (round 537, monsterai.go): a surviving
 	// monster is attacked (CAIState::OnAttacked 0x558ea0) and stopped at the

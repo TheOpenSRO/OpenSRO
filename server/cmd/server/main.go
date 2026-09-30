@@ -28,6 +28,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
+	"github.com/OpenSRO/srrevamp/server/internal/nest"
 	"github.com/OpenSRO/srrevamp/server/internal/party"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
@@ -456,15 +457,18 @@ var monsterSpecs = []monsterSpec{
 		Skills: []combat.MonsterSkill{{ID: 210, ReuseMs: 2000, Range: 7, AttMin: 219, AttMax: 261, Chance: 100}}, X: 70, Z: -50, Count: 1},
 }
 
-// respawnDelay is DISCLOSED, own design. The real game respawns per NEST
-// (`_RefNest`, a server-only table): each nest keeps up to its alive cap of
-// monsters, and when a full nest loses one, a timer armed at that death runs
-// for a delay drawn uniformly between the nest row's two delay columns (in
-// seconds, re-rolled every hatch) before one monster hatches per scheduler
+// respawnDelay is DISCLOSED, own design: the stand-in nest's respawn window,
+// both ends (a user decision, monster_decisions.md D3). The real game respawns
+// per NEST (`_RefNest`, a server-only table): each nest keeps up to its alive
+// cap of monsters, and when a full nest loses one, a timer armed at that death
+// runs for a delay drawn uniformly between the nest row's two delay columns
+// (in seconds, re-rolled every hatch) before one monster hatches per scheduler
 // pass -- read off AIHive_HatchPass / NestSlot_RollHatchDelay, round 239,
-// docs/protocol/monster_ai.md. The client's npcpos.txt carries only the
-// nests' ids and positions, so the window itself is data this project does
-// not hold; 10 s stands in for it.
+// docs/protocol/monster_ai.md. Round 660 runs that rule (internal/nest) for
+// every placement: a nest joined to the operator's DB rows (-nest-db-dir,
+// EXTERNAL) takes its own window; every other one -- the roster's, and every
+// npcpos row without a DB nest -- is a stand-in nest of one monster with this
+// window.
 const respawnDelay = 10 * time.Second
 
 // qaSpreadInstances is -qa-spread-monsters' synthetic crowd (round 656, QA
@@ -507,109 +511,6 @@ func qaSpreadInstances(n, radius int, specs []monsterSpec) []monsterSpec {
 		out = append(out, inst)
 	}
 	return out
-}
-
-// respawnScheduler keeps every roster placement's monster alive from ONE
-// goroutine (round 656). Until then main ran maintainMonster's loop once per
-// placement -- a goroutine and a one-second ticker each, which at round 657's
-// ~10,200 field placements is ten thousand timers waking every second. The
-// behaviour is the one loop's, unchanged (respawnDelay, disclosed): every
-// placement spawns at once, and each check -- once a second -- that finds a
-// placement's monster gone notes the time, and the first check at least
-// respawnDelay after that spawns it again. Round 659 replaces the flat delay
-// with the READ nest rules.
-type respawnScheduler struct {
-	monsters *combat.Hub
-	logger   *slog.Logger
-	spawned  func(id int64)
-	places   []*placement
-	// quiet logs only a count for the first fill of a large roster instead
-	// of a line per monster (the respawns are still logged one by one).
-	quiet bool
-}
-
-// placement is one roster instance and the monster that stands for it now.
-type placement struct {
-	spec      monsterSpec
-	maxHP     int
-	defense   int
-	attack    int
-	gold      int64
-	currentID int64
-	deadSince time.Time
-}
-
-func newRespawnScheduler(monsters *combat.Hub, logger *slog.Logger, spawned func(id int64)) *respawnScheduler {
-	return &respawnScheduler{monsters: monsters, logger: logger, spawned: spawned}
-}
-
-// add registers one placement; run spawns it.
-func (s *respawnScheduler) add(spec monsterSpec) {
-	attack, gold := monsterStatsForLevel(spec.Level, spec.Rarity)
-	// Real flat absorption from characterdata col 71. A spec that forgot it
-	// falls back to the old disclosed curve rather than spawning a monster
-	// with no defence at all.
-	defense := spec.Defense
-	if defense < 1 {
-		defense = 1 + spec.Level/3
-	}
-	// Real HP from characterdata col 59 (see monsterSpecs). A spec that
-	// forgot it would otherwise spawn a 0-HP monster that dies on sight.
-	maxHP := spec.MaxHP
-	if maxHP < 1 {
-		maxHP = 1
-	}
-	s.places = append(s.places, &placement{spec: spec, maxHP: maxHP, defense: defense, attack: attack, gold: gold})
-}
-
-// spawn hatches p's monster and reports it.
-func (s *respawnScheduler) spawn(p *placement, log bool) {
-	m := s.monsters.SpawnSpecies(p.spec.Zone, combatSpeciesOf(p.spec), p.spec.X, 0, p.spec.Z, p.maxHP, p.defense, p.attack, p.gold)
-	p.currentID, p.deadSince = m.ID, time.Time{}
-	if log {
-		s.logger.Info("monster spawned", "id", m.ID, "name", m.Name, "zone", m.Zone, "level", m.Level)
-	}
-	if s.spawned != nil {
-		s.spawned(m.ID)
-	}
-}
-
-// run spawns every placement, then checks them once a second until ctx ends.
-func (s *respawnScheduler) run(ctx context.Context) {
-	for _, p := range s.places {
-		s.spawn(p, !s.quiet)
-	}
-	if s.quiet {
-		s.logger.Info("roster spawned", "monsters", len(s.places))
-	}
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case now := <-ticker.C:
-			s.check(now)
-		}
-	}
-}
-
-// check is one pass over the placements at now: a monster found gone starts
-// its placement's wait, and a wait of respawnDelay or more ends in a spawn.
-func (s *respawnScheduler) check(now time.Time) {
-	for _, p := range s.places {
-		if s.monsters.Exists(p.currentID) {
-			p.deadSince = time.Time{}
-			continue
-		}
-		if p.deadSince.IsZero() {
-			p.deadSince = now
-			continue
-		}
-		if now.Sub(p.deadSince) >= respawnDelay {
-			s.spawn(p, true)
-		}
-	}
 }
 
 // gmSpecies converts the running monster roster into the species the GM
@@ -781,6 +682,21 @@ func envBoolDefault(name string, def bool) (bool, error) {
 		return def, err
 	}
 	return b, nil
+}
+
+// envDuration reads a duration setting (time.ParseDuration: "10s", "2m")
+// from the environment. Unset or empty is def; a value that does not parse is
+// def too, with the error returned so main can WARN once the logger exists.
+func envDuration(name string, def time.Duration) (time.Duration, error) {
+	v := os.Getenv(name)
+	if v == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return def, err
+	}
+	return d, nil
 }
 
 func envInt(name string, def int) (int, error) {
@@ -982,6 +898,31 @@ func main() {
 	qaSpreadRadius := flag.Int("qa-spread-radius", qaSpreadRadiusEnv,
 		"QA ONLY (env SRREVAMP_QA_SPREAD_RADIUS): how many regions out from Jangan's region -qa-spread-monsters "+
 			"spreads its monsters, on each axis (default 7: a 15x15-region square).")
+	fullMapEnv, fullMapEnvErr := envBool("SRREVAMP_FULL_MAP")
+	fullMap := flag.Bool("full-map", fullMapEnv,
+		"place every field monster of the game (env SRREVAMP_FULL_MAP, round 660): each monster row of -npcpos-csv "+
+			"outside the dungeons, but the unique-class monsters (rarity 3 and 8, placed through their hives by a later "+
+			"round) and the shard's custom species, becomes a nest hatching its species from -monsters-csv -- with -nest-db-dir, the DB nest's "+
+			"window, radius, cap, champion chance and tactics (EXTERNAL); without it one monster per row, "+
+			"respawning after 10 s, with the stand-in behaviour. Needs -npcpos-csv and -monsters-csv (forced off "+
+			"with a WARN otherwise) and turns -single-frame on. Default OFF: off, the hand-typed roster stands "+
+			"where it always has.")
+	nestDBDir := flag.String("nest-db-dir", os.Getenv("SRREVAMP_NEST_DB_DIR"),
+		"directory holding the shard DB's AI tables as Tab_RefTactics.csv, tab_refnest.csv and tab_refhive.csv "+
+			"(round 660; EXTERNAL: exported from the user's VSRO shard backup, never committed -- deploy/README.md). "+
+			"With -full-map every npcpos row joins the DB nest at its spot. A configured directory that does not load "+
+			"is fatal.")
+	swappedStandInEnv, swappedStandInEnvErr := envBool("SRREVAMP_NEST_SWAPPED_STAND_IN")
+	swappedStandIn := flag.Bool("nest-swapped-stand-in", swappedStandInEnv,
+		"with -full-map and -nest-db-dir, place each of the 6,042 spots whose shard nest was repointed to "+
+			"the shard's own monsters as a one-monster stand-in nest (10 s, radius 200, no champion roll; OURS) "+
+			"instead of on that nest's own cap, window, radii and champion chance (EXTERNAL, the default; "+
+			"round 660's review, the user's decision). Env SRREVAMP_NEST_SWAPPED_STAND_IN.")
+	nestRespawnEnv, nestRespawnEnvErr := envDuration("SRREVAMP_NEST_RESPAWN", 0)
+	nestRespawn := flag.Duration("nest-respawn", nestRespawnEnv,
+		"every nest's respawn window, both ends, in whole seconds (env SRREVAMP_NEST_RESPAWN, round 660): an "+
+			"override for testing. Default 0: each DB nest's own [min, max] window (1-3 s on most, EXTERNAL) and 10 s "+
+			"for a stand-in nest.")
 	inventorySizeEnv, inventorySizeEnvErr := envInt("SRREVAMP_INVENTORY_SIZE", inventory.DefaultBagSlots)
 	inventorySize := flag.Int("inventory-size", inventorySizeEnv,
 		"the bag's size in slots for every character without one of its own (env SRREVAMP_INVENTORY_SIZE): "+
@@ -998,7 +939,7 @@ func main() {
 			"err", inventorySizeEnvErr, "default", inventory.DefaultBagSlots)
 	}
 	for name, err := range map[string]error{"SRREVAMP_MONSTER_SLEEP": sleepEnvErr, "SRREVAMP_QA_SPREAD_MONSTERS": qaSpreadEnvErr,
-		"SRREVAMP_QA_SPREAD_RADIUS": qaSpreadRadiusEnvErr} {
+		"SRREVAMP_QA_SPREAD_RADIUS": qaSpreadRadiusEnvErr, "SRREVAMP_FULL_MAP": fullMapEnvErr, "SRREVAMP_NEST_SWAPPED_STAND_IN": swappedStandInEnvErr, "SRREVAMP_NEST_RESPAWN": nestRespawnEnvErr} {
 		if err != nil {
 			logger.Warn(name+" does not parse; its flag keeps its default unless given", "err", err)
 		}
@@ -1489,6 +1430,31 @@ func main() {
 	} else {
 		logger.Info("teleport free off (-teleport-free / SRREVAMP_TELEPORT_FREE): a teleport charges its link's fee, waived below level 21 and for GM accounts")
 	}
+	// The full map (round 660): every field monster row, as nests. It needs the
+	// placements and the species table, and the one world frame -- its rows
+	// cover the whole map, not one zone's frame.
+	if *fullMap && (npcPlacements == nil || speciesTable == nil) {
+		logger.Warn("full map forced off: it needs -npcpos-csv (where every monster stands) and -monsters-csv (what each species is)")
+		*fullMap = false
+	}
+	var nestDB *nest.DB
+	if *nestDBDir != "" {
+		db, err := nest.LoadDir(*nestDBDir)
+		if err != nil {
+			logger.Error("loading the nest DB", "dir", *nestDBDir, "err", err)
+			os.Exit(1)
+		}
+		nestDB = db
+		logger.Info("nest DB loaded (EXTERNAL: the user's shard backup, round 658)", "dir", *nestDBDir,
+			"tactics", len(db.Tactics), "nests", len(db.Nests), "hives", len(db.Hives))
+		if !*fullMap {
+			logger.Warn("nest DB loaded but -full-map is off: the roster's stand-in nests do not use it")
+		}
+	}
+	if *fullMap && !*singleFrame {
+		logger.Info("full map: turning -single-frame on (its placements are named in the one world frame)")
+		*singleFrame = true
+	}
 	// The one world frame (round 571), behind its own flag. Set before the
 	// roster spawns and before gmSpecies: both read it for their monsters'
 	// zone and coordinates (rosterInstances), and the world handlers for every
@@ -1548,10 +1514,32 @@ func main() {
 	//
 	// One respawn scheduler for all of them (round 656), where there was a
 	// goroutine per placement.
+	if err := checkNestRespawn(*nestRespawn); err != nil {
+		logger.Error("-nest-respawn / SRREVAMP_NEST_RESPAWN refused", "err", err)
+		os.Exit(1)
+	}
 	respawns := newRespawnScheduler(monsters, logger, spawned)
-	for _, spec := range monsterSpecs {
-		for _, inst := range rosterInstances(spec, logger) {
-			respawns.add(inst)
+	respawns.delayOverride = *nestRespawn
+	if *nestRespawn > 0 {
+		logger.Info(fmt.Sprintf("nest respawn override: every nest's window is %v at both ends (-nest-respawn, for testing)", *nestRespawn))
+	}
+	if *fullMap {
+		// Round 660: every field monster row as a nest, replacing the roster's
+		// placements (the roster's species are rows of npcpos too).
+		nestSwappedStandIn = *swappedStandIn
+		if *swappedStandIn {
+			logger.Info("full map: -nest-swapped-stand-in: the swapped spots run one-monster stand-in nests (OURS)")
+		}
+		slots, rep := fullMapSlots(npcPlacements, speciesTable, speciesSkills, nestDB)
+		for _, sl := range slots {
+			respawns.addSlot(sl)
+		}
+		logFullMap(logger, rep, nestDB != nil)
+	} else {
+		for _, spec := range monsterSpecs {
+			for _, inst := range rosterInstances(spec, logger) {
+				respawns.add(inst)
+			}
 		}
 	}
 	// The QA spread (round 656, -qa-spread-monsters): N more placements over
@@ -1559,7 +1547,15 @@ func main() {
 	for _, inst := range qaSpreadInstances(*qaSpread, *qaSpreadRadius, monsterSpecs) {
 		respawns.add(inst)
 	}
-	respawns.quiet = len(respawns.places) > 200
+	respawns.quiet = respawns.nests > 200
+	// The kill's party arming (round 660): a kill with more than one of the
+	// killer's party members within 1000 units arms the nest for a party
+	// monster (session/nestkill.go, internal/nest). Only with -full-map: the
+	// roster's stand-in placements keep what they hatched before (round
+	// 660's review), so a deploy without the flag is unchanged.
+	if *fullMap {
+		session.SetMonsterKillObserver(respawns.armParty)
+	}
 	go respawns.run(ctx)
 
 	// The monster's own BATTLE (round 546), behind its own flag, which needs
@@ -1589,7 +1585,7 @@ func main() {
 	}
 	session.SetMonsterAggro(aggroOn)
 	if aggroOn {
-		logger.Info(fmt.Sprintf("monster aggro on: a monster notices the nearest living player within its collision radius + %d units (own design) every 1001-1500 ms while idle, wandering or home from its blackout, and engages it", ai.TacticsDetectionDistance))
+		logger.Info(fmt.Sprintf("monster aggro on: an aggressive monster notices the nearest living player within its collision radius + its tactics row's sight (EXTERNAL; %d units for a monster without one, own design) every 1001-1500 ms while idle, wandering or home from its blackout, and engages it; a passive one fights only when struck", ai.TacticsDetectionDistance))
 	} else {
 		logger.Info("monster aggro off (-monster-aggro / SRREVAMP_MONSTER_AGGRO)")
 	}
@@ -1606,6 +1602,8 @@ func main() {
 			Parties: parties,
 			// The sleep (round 656, -monster-sleep).
 			Sleep: *monsterSleep,
+			// The tick's cost, once a minute (round 660).
+			TickStats: os.Getenv("SRREVAMP_AI_TICK_STATS") != "",
 		})
 		logger.Info(fmt.Sprintf("monster AI on: tick %v (own design), roam radius %.0f (own design), sleep %v (own design)",
 			session.MonsterAITick, session.MonsterRoamRadius, *monsterSleep))

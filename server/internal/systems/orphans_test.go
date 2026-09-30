@@ -144,7 +144,6 @@ var baseline = map[string]string{
 	"PackTag":             "internal/combat/paramtags.go",
 	"ReinforceRates":      "internal/refdata/item.go",
 	"ReplyOpcode":         "internal/proto/opcodes.go",
-	"ScaleHPForMonster":   "internal/combat/rarity.go",
 	"SessionOf":           "internal/trade/trade.go",
 	"SetBlocked":          "internal/account/memstore.go",
 	"SetSecurity":         "internal/gateway/gateway.go",

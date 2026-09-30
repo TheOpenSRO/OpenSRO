@@ -53,6 +53,25 @@ const META_RADIUS := "srrevamp_pose_radius"
 ## is only left unposed.
 const META_HIDE := "srrevamp_hide_out_of_range"
 
+## The model scale a monster's class gives it (round 660), READ from the
+## retail spawn parser CICMonster::vslot_025 (0x9d3850): the scale starts at
+## 1.0 (`fld1` 0x9d38c9) and a switch on class - 1 (0x9d3995..0x9d39cb, table
+## 0x9d3c70) multiplies it -- champion (1) by 1.5 (float 0xd819ec =
+## 0x3fc00000), giant (4) by 3.0 (0xd8adc4 = 0x40400000), elite (6) by 1.7
+## (0xde2818 = 0x3fd9999a); every other class, the party flag and the uniques
+## keep 1.0. Not modelled: the species' own percent (ref+0x110, whose
+## characterdata column is unread) that multiplies it, and the TypeID4 2/3
+## monsters that skip the class scale (none of them is a field monster).
+static func class_scale(rarity: int) -> float:
+	match rarity:
+		1:
+			return 1.5
+		4:
+			return 3.0
+		6:
+			return 1.7
+	return 1.0
+
 ## Whether a body at `origin` with bounding radius `radius` is posed this
 ## frame: in POSE_RANGE of the camera `eye` (the map objects' strict
 ## `dist - radius < range`) and its sphere inside every frustum plane

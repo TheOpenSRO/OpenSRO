@@ -9,47 +9,44 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 )
 
-// Round 656: one scheduler keeps every placement alive, with the one loop's
-// timing unchanged -- a death is noticed at a check, and the first check at
-// least respawnDelay after that spawns the placement again, in the same
-// place, with a new id. The other placements are left alone.
+// Round 656: one scheduler keeps every placement alive -- since round 660
+// each placement a stand-in nest (internal/nest): the first pass hatches every
+// one, a death out of the full nest arms its timer at the pass that drains
+// it, and the first pass respawnDelay after that hatches it again, in the
+// same place, with a new id. The other placements are left alone.
 func TestRespawnSchedulerKeepsEveryPlacement(t *testing.T) {
 	monsters := combat.NewHub()
 	var reported []int64
 	s := newRespawnScheduler(monsters, slog.New(slog.NewTextHandler(io.Discard, nil)), func(id int64) { reported = append(reported, id) })
+	s.quiet = true
 	const n = 300
 	for i := 0; i < n; i++ {
 		spec := monsterSpecs[i%len(monsterSpecs)]
 		spec.X, spec.Z = float64(i)*10, 0
 		s.add(spec)
 	}
-	for _, p := range s.places {
-		s.spawn(p, false)
-	}
+	t0 := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	s.check(t0)
 	if monsters.Count() != n || len(reported) != n {
 		t.Fatalf("first fill: %d alive, %d reported, want %d", monsters.Count(), len(reported), n)
 	}
-	victim := s.places[17]
-	first := victim.currentID
+	first := reported[17]
 	m, _ := monsters.Get(first)
 	monsters.ApplyDamage(first, m.HP)
 
-	t0 := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
-	s.check(t0) // notices the death
-	s.check(t0.Add(respawnDelay - time.Second))
+	t1 := t0.Add(time.Second)
+	s.check(t1) // drains the death: the full nest's timer starts here
+	s.check(t1.Add(respawnDelay - time.Millisecond))
 	if monsters.Count() != n-1 {
 		t.Fatalf("respawned before respawnDelay: %d alive", monsters.Count())
 	}
-	s.check(t0.Add(respawnDelay))
-	if monsters.Count() != n || victim.currentID == first {
-		t.Fatalf("after respawnDelay: %d alive, id %d (was %d)", monsters.Count(), victim.currentID, first)
+	s.check(t1.Add(respawnDelay))
+	if monsters.Count() != n || len(reported) != n+1 || reported[n] == first {
+		t.Fatalf("after respawnDelay: %d alive, %d reported", monsters.Count(), len(reported))
 	}
-	again, _ := monsters.Get(victim.currentID)
-	if again.X != 170 || again.Name != m.Name {
+	again, _ := monsters.Get(reported[n])
+	if again.X != 170 || again.Name != m.Name || again.HomeX != 170 {
 		t.Fatalf("respawned %+v, want a %s back at x 170", again, m.Name)
-	}
-	if len(reported) != n+1 || reported[n] != victim.currentID {
-		t.Fatalf("the respawn was not reported: %d reports", len(reported))
 	}
 }
 

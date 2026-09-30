@@ -3519,7 +3519,8 @@ this round), every monster runs every tick.
 **The respawn scheduler.** One goroutine checks every placement once a second, where there was
 a goroutine and a ticker per placement (`maintainMonster`). The timing is the old loop's: the first
 check after a death notes it, and the first check at least `respawnDelay` (10 s, disclosed OURS)
-later hatches the placement again. Round 659 replaces the delay with the READ nest rules.
+later hatches the placement again. Round 660 replaced the delay with the READ nest rules (next
+section).
 
 **The send deadline.** `gateway.Session.Send` gives up after `gateway.SendTimeout` (10 s, OURS;
 2 s as first built, raised by the review so a client busy loading a region is not dropped).
@@ -3544,3 +3545,130 @@ in order, when Send returns (the wire lock's ordering, the list's pages), so it 
 bucket, players on real TCP; i7-13700K; the same file run against the base with a no-op setup):
 see the round's WORLD_ISSUES entry for the table. The players never move in it, so it measures no
 view moves or player-driven enters and leaves.
+
+## Nests on the map (round 660)
+
+Round 660 places every field monster row of npcpos as a NEST and runs the engine's hive pass over
+them (`server/internal/nest`, cmd/server's `-full-map`). The numbers come from the user's shard DB
+(`-nest-db-dir`, EXTERNAL: "External shard DB" above) where a row joins one; every other placement
+is a stand-in nest (OURS). What was READ this round, beyond rounds 238-241:
+
+**Aggression: column 7 = 0 is aggressive, 1 passive (re-read).** `AI::CTactics::Init` (0x53f4d0)
+copies the row's `+0x18` into ctx+0x168 (mode 2 rolls it: `pct <= rand() % 100` makes it 1), and
+`AITactics_AcquireTarget` (0x5478f0) scans only while that byte is 0 or 3 (`*(char *)(ctx + 0x168)
+== '\0' || == '\x03'`, the decompile, and 0x547958..0x547964). So `btAggressType` 0 is
+aggressive and 1 passive, as round 552 recorded. (The round-660 brief's planning notes read the
+DB the other way round -- "~31 % aggressive (mode 1)"; the code settles it.) Of the 4,068 placed
+matched nests (round 660's review: rarity 8 left out), 2,491 run an aggressive row and 1,577 a
+passive one (EXTERNAL), and the pattern reads as
+retail play does: Jangan's Mangyang nests run a passive row (their champion row is aggressive), and
+across the map a base species' row is aggressive where its `_CLON` is passive (MEASURED, round
+660's census). Passive does not mean harmless: `CAIState::OnAttacked` (0x558ea0) engages any
+monster that is struck, with no aggression test.
+
+**The hatch spot: `nGenerateRadius` is a scatter ring.** Nest_Hatch pushes the nest row's
+column 10 as a float (`fild [esi+0x24]` at 0x560c51) and 0.0 (`fldz` 0x560c37) into the spawn
+routine `GObjPC::FUN_005f6eb0`, whose first call (0x5f6f1b) is `GObjPC::FUN_00531240(radius, ?,
+min)` on the nest's position:
+
+    radius <= 1e-6 (float 0xb45c84 = 358637bd)  -> no offset
+    r = max(radius, 1.0) ; third = r / 3.0         (QWORD 0xb45ab8 = 3.0)
+    roll = rand() % 101
+    base = roll < 70 ? 2*third : (roll > 89 ? 0 : third)   (`cmp edx,0x46`, `cmp edx,0x5a`)
+    d = rand()/32767.0 * third + base ; d = max(d, min)    (QWORD 0xb45af8 = 32767.0)
+    a = rand()/32767.0 * 2pi + 0.0                          (0xb45c18 = float32(2pi), 0xb45ab0 = 0.0)
+    x += FUN_00489490(a) * d ; z += FUN_004894b0(a) * d
+
+So 70 of 101 hatches land in the outer third of the circle. The two trig helpers are taken as cos
+and sin (INFERRED; the spread is the same either way). `nest.HatchOffset`. The monster's HOME --
+what the roam radius and HOMING measure from -- stays the nest's own position (Attach's ctx+0x1b4),
+not the hatch spot (`combat.Hatch`).
+
+**The field world clamps the class by level.** The spawn reaches `CGameWorld_Default` slot 6
+(0x5eb9a0, the unstripped base the field world runs, round 658), which rewrites the class byte by
+the species' level (refChar+0x198) before the object is made (asm 0x5eb9f3..0x5eba7e, a switch on
+level/10 through the table 0x5ebf14 = 5eba3e/5eba48/5eba57/5eba6a, whose cases fall through):
+
+    level <= 10 and rank 4 (giant) -> rank 1 (champion), party nibble kept   (`and bl,0xf1; or bl,1`)
+    level 0-9  : party dropped
+    level 0-19 : party dropped unless the rank is 0
+    level 0-29 : party dropped unless the rank is 0 or 1
+    level 0-39 : party dropped unless the rank is 0, 1, 4 or 6
+    level 40+  : unchanged
+
+`nest.ClampClassByLevel`. Nest_Hatch's own disarm (`nest+0x30 = 0`) reads its roll from before the
+clamp.
+
+**The party roll's species test.** `FUN_00561020` is the TID-word shape `(w & 2) && (w & 0x1c) == 4
+&& (w & 0x60) == 0x40 && (w & 0x780) == 0x80 && (w & 0xf800) == 0x2000` -- TypeID (1,2,1,4): a
+species whose TypeID4 is 4 never hatches as a party monster. 17 of the 249 field species are.
+
+**Which pass a hive runs.** `AIHive::Init` (0x55e5b0, named `CMainProcess::Init` in the dump)
+installs both passes and sets hive+0x30 = 1 when the row's `dwOverwriteMaxTotalCount` is non-zero
+(0x55e73d): such a hive runs `AIHive_HatchPass_TotalCapped` (0x55ec10), which hatches while the
+hive's alive count is under that cap, from its pinned nest (+0x3c) alone when one is pinned, else
+from each nest in turn with only the timer and alive-cap tests (no col16/col17/budget test), and
+stops as soon as the cap is reached. Every other hive runs the plain pass. On the shard, 10 hives
+of the placed nests carry a cap (80-130); the unique rotation is the capped pass with a cap of 1 and
+a pinned nest (round 661).
+
+**Not modelled, disclosed.** The level > 110 refusal under `FUN_005f9930` (a config test); the
+event-monster substitution list (`DAT_00d6a9b4`, `FUN_005f85a0`); the placement's navmesh query
+(the spawn routine's `[cc387c]+0x30` call at 0x5f7068, whose bit 0 is Nest_Hatch's out-flag 1 and
+halves the delay) -- srrevamp has no server-side navigation mesh, so no placement fails, and
+`nest.HalvedDelayMs` is exercised by a test only; the hive population rate (col 2 = 1, 2,355 of the
+placed nests' hives: it only shortens a 1-3 s window, and its region sample is unread); column 39
+`btAggressTypeOnHoming` (no reader found) and column 9's retarget rule (the threat table has no hate
+values yet).
+
+**What the runtime does** (`internal/nest`, `cmd/server/nest.go`). One goroutine runs the pass
+every 250 ms (OURS; the engine's hive tick is unread): drain the hub's death log
+(`combat.Hub.LogDeaths/DrainDeaths`) into `Scheduler.Died` (the first loss out of a full nest
+stamps the timer), then `Scheduler.Pass` (one hatch per due nest), then the spawn push for each new
+monster (through main's `spawned` hook, which also announces a unique hatched from a nest). A
+matched row's slot is its nest: cap col 14, window cols 12/13 (1-3 s on 3,513 of the placed nests,
+8-12 s on 459; `-nest-respawn` overrides every window), generate radius col 10, champion chance
+col 11, tactics its row with the nest's col 9 as the roam radius, the champion row col 41. A row
+whose nest the shard repointed to another species keeps the npcpos species and runs its own
+tactics row when it has one (`DB.OwnTactics`: the lowest-id row that is no row's champion row;
+OURS), else the stand-in behaviour -- and, by the user's decision in round 660's review ("Use the
+DB nest numbers"), that nest's own cap, window, radius, generate radius and champion chance
+(EXTERNAL), the champion roll gated by column 41 of the row the monster runs; the nest's hive cap
+is not applied. The 6,041 such nests (MEASURED): caps summing to 37,360, windows of 1-3 s on
+4,835, champion chance 10 % on 4,522. `-nest-swapped-stand-in` (OURS) falls back to the stand-in
+nest: one monster, `respawnDelay` (10 s) at both ends, no scatter, roam radius
+`MonsterRoamRadius`, no champion roll.
+
+**The join, one row per nest** (round 660's review). Every (row, nest) pair within
+`JoinTolerance` is ranked -- the row's own species first, then the nearest, then the row's and the
+nest's order (OURS) -- and taken greedily, so no nest is claimed twice: the shard has co-located
+nests (three at one point under SD_OSIRIS/MUMMY_RAGE/MUMMY_HUBRIS, two under SD_MONTKILLER and
+SD_HIKE, two 0.713 from a MOB_KK_PLANAR row), and the first version let MONTKILLER and HIKE both
+claim nest 29723. Rarity 8 is left out with rarity 3: both are unique-class (`combat.
+RarityHPPercent`'s `case 3, 8`). The brain (`session/monsterai.go`) reads the row in
+place of `internal/ai`'s stand-in constants: sight (col 6), aggression (7/8), the chase switch and
+give-up distance (35/36), the roam rule (37), the reach rule (40, `ai.TargetOutOfReach`) and the
+scan's fast-timer bits (42).
+
+**The kill's party count** (`session/nestkill.go`). The engine hands its death command the count of
+the killer's exp-sharing party members that are alive and within 1000.0 units (GObjPC::
+FUN_005bca60; the double at 0xb45c68), and `FUN_00558f20` arms the nest when it is above 1. The
+range is measured from the dead monster (INFERRED: the object FUN_005bca60 shares experience out
+of). srrevamp counts the members in the world, alive, in the monster's zone, on the ground plane.
+
+**The wire: the party flag.** Retail sends one class byte, `rank | party << 4` (CICMonster::
+vslot_025 0x9d3850: `and cl,0xf` to +0x7ac at 0x9d38e1, `shr al,4` to +0x7ad at 0x9d38e7).
+srrevamp's list record carries the rank in a u32 already, so the party flag rides in bit 8 of that
+word (`session.MonsterRarityPartyBit`, OURS) -- in the list, the spawn push and the area of
+interest's enter -- and only to a session whose list request set bit 1 of the capability byte
+(`MonsterListFlagParty` 0x02). An older client is sent the rank alone.
+
+**The client** (READ, sro_client.exe): the model scale starts at 1.0 (`fld1` 0x9d38c9) and a
+switch on class - 1 (0x9d3995, table 0x9d3c70) multiplies it: champion 1.5 (0xd819ec), giant 3.0
+(0xd8adc4), elite 1.7 (0xde2818); everything else keeps 1.0 (`MonsterDraw.class_scale`). The
+overhead name's colour does not depend on the class (no colour write in 0x9d0a80 reads +0x7ac or
++0x7ad); class 7 alone prefixes UIIT_STT_MOB_STRONG ("Elite"). A party monster gets
+`icon\item\etc\europe_partymob.ddj`, 16 x 16, 20 px left of its name box, top-aligned (vslot 15
+0x9d3e70, the test at 0x9d3f2a; srrevamp sizes it to its own plate's line height, OURS), and its
+target window's rank row gets UIIT_STT_PARTYMOB_TARGET's text appended with no separator (0x69b834,
+"Champion(Party)").

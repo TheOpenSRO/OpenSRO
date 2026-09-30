@@ -5857,6 +5857,43 @@ func _name_plate(text: String, above: float) -> Label3D:
 	_apply_name_plate_range(label)
 	return label
 
+## The party monster's mark (round 660): retail's CICMonster vslot 15
+## (0x9d3e70) draws, in its name pass, one 16 x 16 quad of
+## `icon\item\etc\europe_partymob.ddj` (the name table 0xec7570, index 5)
+## 20 px left of the name box's left edge -- so 4 px clear of it -- top-aligned
+## with the box, for a monster whose +0x7ad is 1 (0x9d3f2a). READ. The name
+## plate itself is ours (see below), so the mark is sized to its text's line
+## height, with the gap kept at the retail 4 : 16 of the icon (OURS), and is
+## drawn as the plate is: billboarded, fixed size, over the scene.
+const PARTY_MARK_TEXTURE := "icon\\item\\etc\\europe_partymob.ddj"
+const PARTY_MARK_PX := 16.0
+const PARTY_MARK_GAP_PX := 4.0
+
+func _party_mark(label: Label3D) -> Sprite3D:
+	if _ui_builder == null:
+		return null
+	var tex: Texture2D = _ui_builder.load_texture(PARTY_MARK_TEXTURE)
+	if tex == null:
+		return null
+	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
+	var text_size := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size)
+	var k := text_size.y / PARTY_MARK_PX  # icon pixels -> the plate's font pixels
+	var mark := Sprite3D.new()
+	mark.name = "PartyMark"
+	mark.texture = tex
+	mark.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	mark.fixed_size = true
+	mark.pixel_size = label.pixel_size * k * float(PARTY_MARK_PX) / float(tex.get_height())
+	mark.no_depth_test = true
+	mark.render_priority = label.render_priority
+	# The plate is centred on its node: the mark's centre is half the text, the
+	# gap and half itself to the left, in its own texture pixels.
+	var tex_px := float(tex.get_height()) / PARTY_MARK_PX
+	mark.offset = Vector2(-(text_size.x * 0.5 / k + PARTY_MARK_GAP_PX + PARTY_MARK_PX * 0.5) * tex_px, 0.0)
+	mark.add_to_group("name_plates")
+	_apply_name_plate_range(mark)
+	return mark
+
 ## Where a name sits over a model, how large it draws, and in what colour.
 ##
 ## Ours, not recovered: nothing in the archive places a name plate, because
@@ -5980,7 +6017,7 @@ func _show_target(monster_id: int) -> void:
 		_hud_target.clear()
 		return
 	_hud_target.show_target(snap.monster_name, snap.level, snap.rarity, snap.hp, snap.max_hp,
-		_fx_owner_key(monster_id, SkillNet.OWNER_MONSTER))
+		_fx_owner_key(monster_id, SkillNet.OWNER_MONSTER), snap.party)
 
 func _set_target_hp(hp: int, max_hp: int) -> void:
 	if _hud_target != null:
@@ -15329,7 +15366,15 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 			label_height = _monster_templates.label_height_of(monster_model)
 			monster_skeleton.set_meta(MonsterDraw.META_CULL, true)
 			monster_skeleton.set_meta(MonsterDraw.META_HIDE, true)
-			monster_skeleton.set_meta(MonsterDraw.META_RADIUS, _monster_templates.radius_of(monster_model))
+			# The class's model scale (round 660, MonsterDraw.class_scale:
+			# champion 1.5, giant 3.0, elite 1.7 -- READ, CICMonster::vslot_025
+			# 0x9d3995), with the label, the cull radius and the collider
+			# grown by it.
+			var class_scale := MonsterDraw.class_scale(monster.rarity)
+			if class_scale != 1.0:
+				monster_skeleton.scale = Vector3.ONE * class_scale
+				label_height *= class_scale
+			monster_skeleton.set_meta(MonsterDraw.META_RADIUS, _monster_templates.radius_of(monster_model) * class_scale)
 			_animate(assembled)
 	# Says which of the three ways a monster can come out wrong happened:
 	# the species not in the tables, the model not assembling, or a real
@@ -15369,6 +15414,11 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 		label_height / (1.0 + NAME_PLATE_CLEARANCE_FRACTION))
 	label.name = "Label"
 	body.add_child(label)
+	# A party monster's mark beside its name (round 660, _party_mark).
+	if monster.party:
+		var mark := _party_mark(label)
+		if mark != null:
+			label.add_child(mark)
 	# The HP bar sits just under the name, at the model's own top.
 	var bar := _hp_bar(label_height * 0.9)
 	body.add_child(bar)

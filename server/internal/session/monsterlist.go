@@ -36,6 +36,26 @@ import (
 // (monsterListNearestThatFit). OURS, an additive capability byte.
 const MonsterListFlagPaged byte = 0x01
 
+// MonsterListFlagParty is bit 1 of the same byte (round 660): the client
+// reads the party flag in the rarity word (MonsterRarityPartyBit). Only a
+// session whose request carries it is sent the flag, in the list, the spawn
+// push and the area of interest's enter; an older client is sent the rank
+// alone.
+const MonsterListFlagParty byte = 0x02
+
+// monsterListPartyAsked reads MonsterListFlagParty off a request.
+func monsterListPartyAsked(data []byte) bool {
+	return len(data) >= 1 && data[0]&MonsterListFlagParty != 0
+}
+
+// noteMonsterListCaps records what a list request's capability byte says
+// the session reads beyond the list itself: the party flag.
+func noteMonsterListCaps(sess *gateway.Session, data []byte) {
+	if monsterListPartyAsked(data) {
+		sess.Set(monsterPartyKey, true)
+	}
+}
+
 // monsterListPagedAsked reads the request's capability byte.
 func monsterListPagedAsked(data []byte) bool {
 	return len(data) >= 1 && data[0]&MonsterListFlagPaged != 0
@@ -155,7 +175,7 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 	}
 	snapshots := make([]MonsterSnapshot, len(listed))
 	for i, m := range listed {
-		snapshots[i] = monsterSnapshotOf(m)
+		snapshots[i] = monsterSnapshotFor(sess, m)
 	}
 	for _, page := range monsterListPages(snapshots) {
 		if err := sess.Send(&proto.Packet{Opcode: OpMonsterListResult, Data: page}); err != nil {

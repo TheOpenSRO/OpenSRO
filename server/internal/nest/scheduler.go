@@ -1,0 +1,295 @@
+package nest
+
+import (
+	"math/rand"
+	"sync"
+	"time"
+)
+
+// Slot is one nest at run time: what the hive pass reads of its row and the
+// per-nest slot CMainProcess::BuildHiveNestSlots (0x54bbf0) builds for it,
+// {stamp, base, alive, pct, variance, col17 == 0, col16, col14} (READ, round
+// 239). A stand-in nest -- an npcpos row with no DB nest -- is a Slot too,
+// with the OURS numbers cmd/server gives it.
+type Slot struct {
+	// ID is the DB nest id, 0 for a stand-in.
+	ID int64
+	// Hive is the nest's hive, nil for none.
+	Hive *Hive
+	// Cap is col 14, the alive cap (and, with Respawn off, the budget).
+	Cap int
+	// Respawn is col 16 != 0; Active is col 17 == 0.
+	Respawn, Active bool
+	// Budget is how many hatches a non-respawning nest has left.
+	Budget int
+	// DelayMin/DelayMax are the respawn window in seconds (cols 12/13, or the
+	// operator's override).
+	DelayMin, DelayMax int
+	// GenerateRadius is col 10, how far from the nest a hatch lands.
+	GenerateRadius float64
+	// Input is what the class roll reads (the species' rank and TypeID4, the
+	// tactics' champion row, the nest's champion chance); PartyArmed is kept
+	// in it.
+	Input HatchInput
+	// Level is the species' level, for the world's class clamp.
+	Level int
+	// Data is the caller's: what to hatch and where.
+	Data any
+
+	stamp  time.Time
+	baseMs int
+	alive  int
+}
+
+// Alive is how many of the nest's monsters are alive.
+func (s *Slot) Alive() int { return s.alive }
+
+// Hive is a hive at run time. Only a hive with a total cap (the row's col 3,
+// dwOverwriteMaxTotalCount) changes anything: its nests run the hive-capped
+// pass, AIHive_HatchPass_TotalCapped (0x55ec10), which stops once TotalCap of
+// the hive's monsters are alive, and can pin one nest (+0x3c) -- the unique
+// rotation's total-1 hive is that pass with a pinned nest (round 661).
+type Hive struct {
+	ID       int64
+	TotalCap int
+	// Pinned, when set, is the one nest the capped pass hatches from.
+	Pinned *Slot
+	nests  []*Slot
+	alive  int
+}
+
+// Alive is how many of the hive's monsters are alive.
+func (h *Hive) Alive() int { return h.alive }
+
+// Nests is the hive's nests in the order they were added.
+func (h *Hive) Nests() []*Slot { return h.nests }
+
+// Hatcher makes the monster for one hatch: the slot, the class roll and the
+// offset from the nest (HatchOffset). It answers the monster's id and
+// whether it was made; failed reports a placement that failed as the
+// engine's out-flag 1 does, which halves the nest's delay.
+type Hatcher func(s *Slot, roll HatchRoll, dx, dz float64) (id int64, ok, failed bool)
+
+// Scheduler is every nest's hatch pass, run from one goroutine (round 656's
+// single respawn scheduler; no goroutine per nest). Pass and Died are the
+// scheduler goroutine's; ArmParty is safe from any goroutine.
+type Scheduler struct {
+	mu    sync.Mutex
+	dice  Dice
+	hatch Hatcher
+	// GiantRatio is GiantMonster_SpawnRatio (GiantMonsterSpawnRatio).
+	GiantRatio int
+	plain      []*Slot // nests in no capped hive, in the order added
+	capped     []*Hive // hives with a total cap, in the order first seen
+	byMonster  map[int64]*Slot
+	// graveyard keeps the nests of the monsters that died in the last two
+	// passes, so a kill's party arming (ArmParty) finds the nest even when
+	// the pass drained the death first.
+	graveyard [2]map[int64]*Slot
+	hatched   int64
+	deaths    int64
+}
+
+// NewScheduler makes a scheduler drawing its dice from rng.
+func NewScheduler(rng *rand.Rand, hatch Hatcher) *Scheduler {
+	return NewSchedulerDice(RandDice(rng), hatch)
+}
+
+// NewSchedulerDice makes a scheduler throwing dice.
+func NewSchedulerDice(dice Dice, hatch Hatcher) *Scheduler {
+	return &Scheduler{dice: dice, hatch: hatch, GiantRatio: GiantMonsterSpawnRatio,
+		byMonster: map[int64]*Slot{}, graveyard: [2]map[int64]*Slot{{}, {}}}
+}
+
+// Add registers a nest. A nest whose hive has a total cap runs that hive's
+// capped pass; every other nest runs the plain pass.
+func (s *Scheduler) Add(slot *Slot) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if h := slot.Hive; h != nil {
+		h.nests = append(h.nests, slot)
+		if h.TotalCap > 0 {
+			if len(h.nests) == 1 {
+				s.capped = append(s.capped, h)
+			}
+			return
+		}
+	}
+	s.plain = append(s.plain, slot)
+}
+
+// Nests is how many nests the scheduler runs.
+func (s *Scheduler) Nests() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := len(s.plain)
+	for _, h := range s.capped {
+		n += len(h.nests)
+	}
+	return n
+}
+
+// Alive is how many of the scheduler's monsters are alive.
+func (s *Scheduler) Alive() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.byMonster)
+}
+
+// Counts is how many monsters the scheduler has hatched and lost so far.
+func (s *Scheduler) Counts() (hatched, deaths int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hatched, s.deaths
+}
+
+// due is the slot's timer test, `stamp + base <= GetTickCount()`.
+func (sl *Slot) due(now time.Time) bool {
+	return !now.Before(sl.stamp.Add(time.Duration(sl.baseMs) * time.Millisecond))
+}
+
+// Pass is one hive pass at now over every nest, appending the new monsters'
+// ids to dst. AIHive_HatchPass (0x55ea90) for a plain nest: it hatches one
+// monster when
+//
+//	col17 == 0 && (col16 != 0 || budget > 0) && stamp + base <= now && alive < col14
+//
+// and AIHive_HatchPass_TotalCapped (0x55ec10) for a capped hive's nests: while
+// fewer than the hive's cap are alive, the pinned nest alone or each nest in
+// turn, when stamp + base <= now && alive < col14 (no col17/col16/budget
+// test), stopping once the cap is reached. READ (round 239; the capped pass
+// re-read in round 660). One monster per nest per pass.
+func (s *Scheduler) Pass(now time.Time, dst []int64) []int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.graveyard[1], s.graveyard[0] = s.graveyard[0], s.graveyard[1]
+	clear(s.graveyard[0])
+	for _, sl := range s.plain {
+		if !sl.Active || !(sl.Respawn || sl.Budget > 0) || !sl.due(now) || sl.alive >= sl.Cap {
+			continue
+		}
+		if id, ok := s.hatchOne(sl, now); ok {
+			dst = append(dst, id)
+			if !sl.Respawn {
+				sl.Budget--
+			}
+		}
+	}
+	for _, h := range s.capped {
+		if h.alive >= h.TotalCap {
+			continue
+		}
+		if h.Pinned != nil {
+			if sl := h.Pinned; sl.due(now) && sl.alive < sl.Cap {
+				if id, ok := s.hatchOne(sl, now); ok {
+					dst = append(dst, id)
+				}
+			}
+			continue
+		}
+		for _, sl := range h.nests {
+			if !sl.due(now) || sl.alive >= sl.Cap {
+				continue
+			}
+			if id, ok := s.hatchOne(sl, now); ok {
+				dst = append(dst, id)
+			}
+			if h.alive >= h.TotalCap {
+				break
+			}
+		}
+	}
+	return dst
+}
+
+// hatchOne is Nest_Hatch (0x5607b0) for one nest: the class roll, the spot,
+// the monster, and on success the slot's alive count, stamp and a fresh
+// delay (NestSlot_IncAlive, `*param_4 = GetTickCount()`, RollHatchDelay);
+// on a failed placement the halved delay (NestSlot_HalveHatchDelay). A party
+// hatch disarms the nest (`nest+0x30 = 0` when the class's high nibble is
+// 0x10, 0x560d4b). The world's level clamp (ClampClassByLevel) runs on the
+// class the monster is made with, after the nest decided -- the disarm reads
+// the nest's own roll, as the engine's does.
+func (s *Scheduler) hatchOne(sl *Slot, now time.Time) (int64, bool) {
+	roll := RollClass(s.dice, sl.Input, s.GiantRatio)
+	decided := roll.Class
+	roll.Class = ClampClassByLevel(roll.Class, sl.Level)
+	dx, dz := HatchOffset(s.dice, sl.GenerateRadius)
+	id, ok, failed := s.hatch(sl, roll, dx, dz)
+	if !ok {
+		if failed {
+			sl.baseMs = HalvedDelayMs(sl.baseMs)
+		}
+		return 0, false
+	}
+	sl.alive++
+	if sl.Hive != nil {
+		sl.Hive.alive++
+	}
+	sl.stamp = now
+	sl.baseMs = HatchDelayMs(s.dice, sl.DelayMin, sl.DelayMax, 0)
+	if decided.Party() {
+		sl.Input.PartyArmed = false
+	}
+	s.byMonster[id] = sl
+	s.hatched++
+	return id, true
+}
+
+// Died is AI::CNest::vslot_004, the alive-count decrement, for monster id at
+// now: the nest's timer is re-armed from this death only when the nest was
+// full (`alive == col14`), so a full nest's first loss starts the wait and
+// later ones do not. READ (round 239). A monster the scheduler did not hatch
+// is ignored.
+func (s *Scheduler) Died(id int64, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sl, ok := s.byMonster[id]
+	if !ok {
+		return
+	}
+	delete(s.byMonster, id)
+	s.graveyard[0][id] = sl
+	if sl.alive == sl.Cap {
+		sl.stamp = now
+	}
+	if sl.alive > 0 {
+		sl.alive--
+	}
+	if h := sl.Hive; h != nil && h.alive > 0 {
+		h.alive--
+	}
+	s.deaths++
+}
+
+// nestOfLocked is the nest monster id hatched from, alive or dead in the
+// last two passes.
+func (s *Scheduler) nestOfLocked(id int64) (*Slot, bool) {
+	if sl, ok := s.byMonster[id]; ok {
+		return sl, true
+	}
+	for _, g := range s.graveyard {
+		if sl, ok := g[id]; ok {
+			return sl, true
+		}
+	}
+	return nil, false
+}
+
+// ArmParty arms the nest monster id hatched from for a party monster -- the
+// death command's `nest+0x30 = 1` (FUN_00558f20) when its count of the
+// killer's party members is above 1 (PartyArmCount). It reports whether a
+// nest was armed.
+func (s *Scheduler) ArmParty(id int64, members int) bool {
+	if members < PartyArmCount {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sl, ok := s.nestOfLocked(id)
+	if !ok {
+		return false
+	}
+	sl.Input.PartyArmed = true
+	return true
+}
