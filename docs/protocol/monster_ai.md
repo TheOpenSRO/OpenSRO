@@ -415,6 +415,104 @@ what `AI::CNest::ValidateRegion` returns for each nest -- a per-region word from
 `FUN_005347c0` (region object `+0x28` table) averaged over two ticks; by the
 shape a population count, **not read** as such.
 
+## External shard DB (user-supplied, 2026-09-30; round 658)
+
+**EXTERNAL.** Everything in this section comes from a private server's database
+backup the user supplied (`SRO_VT_SHARD.bak`; the backup's own name for the
+database is `__ETERNITY_SRO_VT_SHARD`, taken 2023-12-02). It is not retail and
+not read from the executable. The CSVs live only on the render box
+(`/opt/sro-files/db/csv/`); the restore and export recipe is in
+`deploy/README.md`. Nothing from the DB is in this repo beyond the counts below.
+
+**Structure: it matches the parsers above.** `Tab_RefTactics` has 43 columns,
+`tab_refnest` 17 and `Tab_RefAISkill` 5, and every column's SQL width agrees with
+the parser's read width (the tinyint/smallint/int/real/varchar positions line up
+one for one). `tab_refhive` has **10** columns: the first 9 match
+`RefHive_ExtractData`, and the 10th is `szDescString128`, which the parser does
+not read. The DB's own column names agree with the meanings read from the code:
+tactics 6 `nSightRange` (detection distance), 7/8 `btAggressType`/`AggressData`,
+9 `btChangeTarget`, 10/11 `btHelpRequestTo`/`btHelpResponseTo`, 35/36
+`btTraceBoundary`/`TraceData` (give-up), 37/38 `btHomingType`/`HomingData`, 41
+`dwChampionTacticsID`, 42 `AdditionOptionFlag`; nest 9 `nRadius`, 10
+`nGenerateRadius`, 11 `nChampionGenPercentage`, 12/13
+`dwDelayTimeMin`/`dwDelayTimeMax`, 14 `dwMaxTotalCount`, 15-17
+`btFlag`/`btRespawn`/`btType`; hive 2-9 `btKeepMonsterCountType`,
+`dwOverwriteMaxTotalCount`, `fMonsterCountPerPC`, `dwSpawnSpeedIncreaseRate`,
+`dwMaxIncreaseRate`, `btFlag`, `GameWorldID`, `HatchObjType`; AI skill 3-5
+`ExcuteConditionType`/`ExcuteConditionData`/`Option`. Row counts: tactics 1,743,
+nests 16,381, hives 1,170, AI skills 200.
+
+**Monster stats match our client, but that is not evidence of retail.** All
+7,604 monster rows (TypeID 1,2,1) of our `Media.pk2` characterdata equal the DB's
+`_RefObjCommon`+`_RefObjChar` rows on all 104 characterdata columns. A negative
+control (each row compared with the next id's DB row) matched 0 of 7,603. Our
+`Media.pk2` itself, though, carries this shard's own objects:
+`MOB_ETERNITY_DEADWARRIOR` (62584), `MOB_TQ_SNAKEMAN_ETERNITY` (62587), the seven
+`_STR` twins of the field uniques (43969-43975) and the `ANTHEIA` monsters. So the
+client and the DB share a lineage, and matching each other says nothing about
+retail. Skills: 33,578 of our 33,698 skilldata rows are identical. The DB
+disables 66 (`Service` 1 -> 0: EU warrior blocks/intercept and cleric
+heal-shield/bless) and changes about 54 others' params (for example
+`MSKILL_ARABIA_GEENIE` Param5 9040 -> 4520, `SKILL_LUCK` 3,600,000 -> 600,000).
+
+**Nests against npcpos: the positions are ours, and 59% of the species are not.**
+Every one of npcpos's 10,195 field monster rows has a nest at exactly its spot
+(same region, x/z within 0.01). At 4,153 of them it is the same species. At 6,042
+the species was replaced: 4,734 by the custom `MOB_ETERNITY_DEADWARRIOR`, done by
+repointing 88 tactics rows' `dwObjID` (47 npcpos species have no tactics row left
+at all), and 1,308 by Egypt `MOB_SD_*` species. The DB also adds 3,069 field nests
+at no npcpos spot (3,045 of them DEADWARRIOR). Dungeon regions match 330 of
+1,915 npcpos rows; the other 1,585 have no nest at their spot.
+
+**The seven field uniques** each have one nest per npcpos spot (Tiger Girl 11,
+Uruchi 11, Isyutaru 11, Yarkan 10, Shaitan 6, Cerberus 13, Ivy 8; all match
+npcpos exactly). Each nest has cap 1, respawns, a 1,000 radius and champion 0%.
+Each species' nests form one hive with `dwOverwriteMaxTotalCount` = **1**, the
+total-1 rotation hive the hatch section inferred. Delays: **1,200-1,400 s** for
+1954/1982/2002/5871/14936 and **2,100-2,200 s** for 3810/3875. The shard's own
+`_UniqueKillList` (45,215 kills, Jan-Mar 2023) agrees: the 10th-percentile gap
+between kills is 1,295-1,400 s and 2,244-2,372 s respectively. So these are the
+delays the shard actually ran. They are not one-minute test timers, but no
+second source says retail used the same values. The shard also runs a **second,
+concurrent** `_STR` twin of every one of the seven, from its own total-1 hive on
+the same spots. That is a mod.
+
+**Distributions** (13,279 field world-1 monster nests): delay pairs `(1,3)`
+8,351, `(2,3)` 3,633, `(8,12)` 429; 11,988 nests have a maximum of 3 s or less.
+3,630 of the 3,633 `(2,3)` pairs are custom DEADWARRIOR nests; the 4,153 nests that
+match npcpos exactly are `(1,3)` 3,513 and `(8,12)` 459. Champion percent: 10 on
+10,200 nests, 0 on 3,077, 100 on one (`MOB_WC_HYEONGCHEON`, nest 2065). Tactics
+column 41 is set on 239 of 1,743 rows and never names its own row. Aggression
+mode: 0 on 9,099 nests and 1 on 4,180; **mode 2 appears nowhere**. Give-up
+(`TraceData`): 500 on all but one. Detection: 100 (6,361), 200 (2,858), 130, 115,
+and so on. Roam radius: 350/200 (the DEADWARRIOR nests), 700/600/500 elsewhere.
+Hives: 74 use population scaling (`btKeepMonsterCountType` 1; rate 30, cap 80).
+There are 518 nests with `btType` 1 (trigger-driven) and 1,683 with `btRespawn`
+0. 145 nests have a NULL `fLocalPosY`.
+
+**`_RefHWANLevel`** (256 rows): `SPDU` 200 on every level, and `DABR` 10/15/20/25/30/35
+on levels 1-6, then 15 on levels 7-255. Level 0 has `SPDU` 200 and no `DABR`.
+**World config**: the field world `INS_DEFAULT` (id 1) has config group `xxx`, so
+none of the three keys is set for it. `PARTYMONSTER_SPAWN` is OFF in the Pharaoh,
+God-temple and Arabia instance groups and ON in the Jupiter groups (Service 0).
+`CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG` is ON in the instance groups. The
+`PARTYMONSTER_SPAWN` gate is READ as instance-only: the stripping override
+`0x609900` is `CDataDrivenGameWorld`'s slot 6, while `CGameWorld_Default`'s slot 6
+is the unstripped base `0x5eb9a0`. `GiantMonster_SpawnRatio` is in no table of
+this DB (it is a `LoadServerConfig` key), so the default of 14 stands.
+
+**Trust.** The column layouts can be used as they are. The unique rotation
+shape (total-1 hives, one nest per npcpos spot) and the unique delays are
+consistent and corroborated by the shard's kill log. Present them as EXTERNAL
+values, not retail. The general nest rows are usable only for the 4,153 spots
+whose species matches npcpos, and their 1-3 s delays are unverified against
+retail. The replaced species, the `_STR` twins, the custom nests and the
+DEADWARRIOR tactics are this shard's mods and must not be imported. The drop
+tables look like a custom economy: `_RefDropGold.DropProb` is 0.0001 on all 140
+levels, the potion/scroll/ammo class-select tables are all zero, and custom
+`ITEM_11_NORMAL`/`ITEM_11_NOVA` groups sit on 2,309 monsters. Do not use them
+without the user's OK.
+
 ## WANDER's leg and every state's dwell time (round 251)
 
 `CAIState_WANDER::OnEnter` (`0x559df0`) refuses (returns -1, so `ChangeState` drops the
@@ -3300,3 +3398,117 @@ unarmoured character.
 
 **Deploy note.** Nothing to flip. The draw is live wherever `-monster-battle` is on; that flag's
 own conditions (`deploy/README.md`, "Monster battle (off by default)") are unchanged.
+
+## The area of interest, the paged list and the sleep (round 656)
+
+Round 657 places every npcpos field row (about 10,200 monsters) under `-single-frame`, whose one
+bucket is the whole world. Before this round every monster message went to every player in the
+bucket and the list was one frame. None of what follows is read from retail: retail's visibility
+rule and the rule for which objects it runs are both UNREAD. Everything here is OURS and
+labelled that way in the code (`server/internal/session/aoi.go`, `monsterlist.go`,
+`monsterai.go`; `server/internal/combat/cells.go`).
+
+**Cells.** `combat.Hub` files each live monster under `(zone, cx, cz)`, where `cx =
+floor((x + 960) / 1920)` and the same for z: one cell per region of the zone's frame, so the cell
+lines are the region lines (960 + 1920k, `worldmap.ToWorld`). A cell's numbers are relative to the
+frame, not the region's own x/y. The spawn files a monster, a step that carries one over a line
+re-files it and reports a `CellChange`, and a kill removes it. `InZone` reads the zone's cells.
+Only monsters on a leg are stepped (a moving set).
+
+**The window.** A player sees the monsters of the cells within `AOIRadius` = **2** of its view
+cell, on both axes (a 5 x 5 square, 25 regions). OURS: 2 is the client's `REGION_LOAD_RADIUS`,
+so a player is told about the monsters of exactly the regions its client streams in. The
+runtime moves each player's **view** to the cell it stands in every `AOITick` (100 ms, OURS, the
+AI tick) and on each list request. With the runtime off (unit tests) the view is the cell the
+player stands in, read at each send.
+
+| Message | Who gets it |
+|---|---|
+| `OpMonsterListResult` 0x0066 | the requester: the window's monsters, in id order, paged |
+| `OpMonsterMotionList` 0x007F | the requester: the listed monsters' legs, at most 1,560 a frame |
+| `OpMonsterSpawned` 0x007E (respawn, `/spawn`) | players whose window holds the monster's cell |
+| `OpMonsterMoved` 0x007C, `OpMonsterAttacked` 0x007D | the same, by the monster's cell at the push |
+| `OpMonsterDamaged` 0x0062, `OpMonsterDied` 0x0063 | the same, the attacker excluded as before |
+| `OpMonsterSpawned` + `OpMonsterMoved` (enter) | a player whose window gained the monster |
+| `OpMonsterLeft` **0x00B5** (leave) | a player whose window lost the monster |
+
+**The paged list.** A frame's payload is at most `proto.MaxPayload` = 32,767 bytes (the Size
+field's low 15 bits). A list that fits is sent exactly as before. A bigger one is sent as `pages`
+frames, each an ordinary `OpMonsterListResult` with its share of the records followed by a
+4-byte trailer:
+
+```
+u16 error_len (0) | u16 count | count records | u16 page | u16 pages
+```
+
+Pages go only to a client that asks for them. The `OpMonsterList` request carries one optional
+byte (round 656's review):
+
+```
+OpMonsterList 0x0065 (client -> server):  [u8 flags]    bit 0 (0x01) = gathers a paged list
+```
+
+A request without the byte (every client before round 656: the payload was empty) is answered in
+the old form: one frame, no trailer. When the window holds more than a frame's worth, it holds the
+monsters nearest the player that fit (`monsterListNearestThatFit`). The rest of that window reach
+such a client only as enter messages or not at all, which is degraded but never a closed session.
+The client (`CombatNet.encode_monster_list`, `NetClient`, round 656) sends 0x01, collects pages
+0..pages-1, and emits `monster_list_result` once, with every page's records. The list and its motion list are
+written under the session's monster wire lock, as before.
+
+**Enter and leave.** When a view moves within a zone, the player is sent the difference between
+the old window and the new one: each monster of the cells it gained, as an `OpMonsterSpawned`
+(the list record plus the monster's current facing, `combat.Hub.Facing`) followed by an
+`OpMonsterMoved` from where it stands when it is walking; and one or more `OpMonsterLeft` naming
+the monsters of the cells it lost:
+
+```
+OpMonsterLeft 0x00B5:  u16 n | n x s64 id        (at most 4,095 ids a frame)
+```
+
+A monster the AI's step carries over a region line enters or leaves the same way, for each player
+whose window holds one of its two cells and not the other. The step and the computation of what
+its crossings owe run as one step under the area of interest's read lock (`monsterAOI.step`,
+round 656's review). A view that moved between the two had read the monster's new cell in its own
+difference and then found no crossing to answer for, which lost an enter or a leave. A zone change moves the view without
+messages: the client drops every body and asks for the new zone's list itself.
+
+Enter and leave are **checked at the send**, under the session's monster wire lock: an enter goes
+only for a monster that is alive and in the view's window at that moment (with the hub's record at
+that moment), and a leave only for one that is not. Death, damage and the request paths' other
+monster messages take the same lock (`sendMonsterPush`), so a death sent after the check can
+never be followed by an enter for the dead monster. A blow's recipients are the players watching
+the monster before it AND those watching where it stands after (`damageMonsterWatched`; the GM
+`/kill` likewise). Otherwise a view that moved off a monster in between, whose leave then no
+longer found the dead monster in its cells, kept a ghost. The spawn push goes through the same
+checked enter (round 656's review), so it is never delivered to a view that does not see its
+cell. A push's cell is taken from the monster's float64 position, never the float32 copy on the
+wire. Every change -- a view moving, a monster
+crossing a line, a list -- produces its own messages after it, so the client ends where the
+server is whatever order two goroutines' messages reach the socket.
+
+**The sleep** (`MonsterAIConfig.Sleep`, cmd/server's `-monster-sleep`, default on; OURS). A
+monster whose cell is outside every player's window is neither stepped nor run. Its brain is made
+the first time a player comes that near, and a brain whose cells are left behind keeps its state
+and its leg and resumes when a player returns. A monster in BATTLE or HOMING never sleeps
+(round 656's review): a chase or a run home is finished wherever it goes. With it off (the zero config: every test before
+this round), every monster runs every tick.
+
+**The respawn scheduler.** One goroutine checks every placement once a second, where there was
+a goroutine and a ticker per placement (`maintainMonster`). The timing is the old loop's: the first
+check after a death notes it, and the first check at least `respawnDelay` (10 s, disclosed OURS)
+later hatches the placement again. Round 659 replaces the delay with the READ nest rules.
+
+**The send deadline.** `gateway.Session.Send` gives up after `gateway.SendTimeout` (10 s, OURS;
+2 s as first built, raised by the review so a client busy loading a region is not dropped).
+A Send blocks only once the kernel socket buffers are full, which only happens with a peer that
+has stopped reading. On the timeout the connection is closed, so the read loop ends and
+OnDisconnect runs, and every later Send returns `ErrSendStalled` at once. A stalled client can
+hold the AI tick for at most 10 s, once. A per-session send queue would remove even that, but every
+Send caller relies on the frame being on the wire, in order, when Send returns (the wire lock's
+ordering, the list's pages), so it is not built.
+
+**Measured** (`BenchmarkMonsterAITick`, 12,000 monsters over a 40 x 30 grid of regions in one
+bucket, players on real TCP; i7-13700K; the same file run against the base with a no-op setup):
+see the round's WORLD_ISSUES entry for the table. The players never move in it, so it measures no
+view moves or player-driven enters and leaves.

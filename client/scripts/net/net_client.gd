@@ -70,6 +70,13 @@ signal monster_damaged(damaged: CombatNet.MonsterDamaged)
 signal monster_died(monster_id: int)
 signal loot_dropped(dropped: CombatNet.LootDropped)
 signal monster_list_result(monsters: Array, error: String)
+## Round 656: monsters that left the player's area of interest, to be dropped
+## without a death.
+signal monster_left(ids: Array)
+## The pages of a monster list gathered so far (round 656): a list too big for
+## one frame arrives as several, and monster_list_result fires once, on the
+## last, with all of them.
+var _monster_list_pages: Array = []
 ## srrevamp's own monster movement (CombatNet.OP_MONSTER_MOVED /
 ## OP_MONSTER_MOTION_LIST): one monster's new leg, and the legs of the listed
 ## monsters sent right after a monster list. The server sends both only with
@@ -429,8 +436,10 @@ func enter_world(char_name: String) -> void:
 	own_character_id = -1
 	_send(WorldNet.OP_ENTER_WORLD, WorldNet.encode_enter_world(char_name))
 
-func move_to(x: float, y: float, z: float, relocated: bool = false) -> void:
-	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z, relocated))
+## `heading_wire` (round 653) is a heading run's u16 wire angle
+## (SkyRun.wire_angle), or -1 for a position with no run in effect.
+func move_to(x: float, y: float, z: float, relocated: bool = false, heading_wire: int = -1) -> void:
+	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z, relocated, heading_wire))
 
 ## Asks to sit down or stand up (WorldNet.OP_MOTION_REQUEST [4], the N key).
 func request_motion(value: int) -> void:
@@ -870,7 +879,19 @@ func _dispatch(p: Packet) -> void:
 			loot_dropped.emit(CombatNet.decode_loot_dropped(p.data))
 		CombatNet.OP_MONSTER_LIST_RESULT:
 			var r := CombatNet.decode_monster_list_result(p.data)
-			monster_list_result.emit(r.monsters, r.error)
+			if r.error != "" or r.pages <= 1:
+				_monster_list_pages.clear()
+				monster_list_result.emit(r.monsters, r.error)
+			else:
+				if r.page == 0:
+					_monster_list_pages.clear()
+				_monster_list_pages.append_array(r.monsters)
+				if r.page + 1 >= r.pages:
+					var whole := _monster_list_pages.duplicate()
+					_monster_list_pages.clear()
+					monster_list_result.emit(whole, "")
+		CombatNet.OP_MONSTER_LEFT:
+			monster_left.emit(CombatNet.decode_monster_left(p.data))
 		CombatNet.OP_MONSTER_MOVED:
 			var moved := CombatNet.decode_monster_moved(p.data)
 			if moved != null:

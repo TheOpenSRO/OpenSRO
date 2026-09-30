@@ -173,6 +173,39 @@ In order. Each is checked off here when it ships in a release, with its round in
       the amount into the purchase record (`+0xa8`), and the reduction of the guild's total after
       that was not traced. `OpShopBuy` names only the item, which is all a price-keyed check needs.
       See `character_state.md`, "What the server checks at a guild store (round 530)".
+- [ ] **The monster world (the 2026-09-30 request): every species, every nest.** Round 654 built
+      the base: `export-refdata -mode monsters` and `-monsters-csv` (`server/internal/species`)
+      hold all 7,604 characterdata monster species (TypeID 1,2,1,x), the roster's eleven re-derive
+      from it exactly (`roster_changed=0` on a retail export), and a GM `/spawn` takes any of them
+      by code name, id or English name. Who spawns where is unchanged. Open, each with its round:
+      - **round 655**: whether the retail CLIENT draws the Org row's model (col 4) for the 156
+        species whose own model (col 52) is "xxx" -- 89 of them are placed (4,649 npcpos rows).
+        The table records the Org's model and `ModelFromOrg`; nothing draws by it yet.
+      - **round 657**: place every nest -- npcpos names 355 species of the table (12,110 rows),
+        the roster 11.
+      - cols 75 'era' and 77 'hra' per species: combat still computes both as `2*level + 25`
+        (`combat.MonsterRate`), which holds for both columns on 2,581 of the 7,604 species (MEASURED,
+        round 654; round 380 had ~37 % over its own row set). The table
+        carries both (`Col75`, `Col77`); the next step is reading which param the hit roll uses.
+      - col 76 'bri' (block) is carried but not handed to combat (`combatSpeciesOf`): fix the
+        blocked-hit item below first.
+      - TypeID4 (1 field, 2/3 job-trade thieves/hunters, 4 structures and quest rows) is carried;
+        what the server does with it -- and where a monster's party-support nibble
+        (`+0x1cd8 & 0xf0`, combat.MonsterHPPercent) comes from -- is not read.
+      - 18 species name 49 skill ids the skills export does not hold; they swing what resolves.
+      - with a skills table from before round 654 (no AI_AttackChance) a non-roster species
+        swings its primary skill only; srrevamp-01 needs the re-export (deploy/README.md).
+      - the classic uniques in this archive are the "[INT]" rows at level 110 -- MOB_CH_TIGERWOMAN
+        is "Tiger Girl[INT]" -- so `/spawn tiger girl` finds nothing; the code name (or id) works.
+        188 display names are shared by 7,087 rows, and a name picks the first in table order;
+        the reply names the code and id it picked.
+      - GM-ONLY caveat: a spawned monster's fallback EXP is the disclosed `combat.ExpFor(maxHP)`
+        over the rarity-scaled HP -- paid when no level table with an exp_unit column is loaded
+        (session/combat.go's kill path; with one, the real leveldata col 5 at min(levels) wins) --
+        so a giant-HP species pays absurd EXP there (MOB_TQ_WHITESNAKE: 250M). Nothing the roster
+        spawns is affected. Settle it before round 657 places table species.
+      - a GM-spawned rarity-3 or non-(1,2,1) species hatches at a random heading, where the
+        engine takes its nest row's (combat.SpawnSpecies' DISCLOSED note).
 - [ ] **Monsters move only with `-monster-ai` on, and do not chase or notice anyone yet.** They
       strike only when struck (round 254's cadence cap; the counter is still a synchronous reply in
       the player's attack handler). **Round 537 built the monster AI tick** (`session.RunMonsterAI`,
@@ -278,14 +311,14 @@ In order. Each is checked off here when it ships in a release, with its round in
       the retail shape srrevamp's placeholder push will eventually give way to
       (`PROTOCOL_DECISION.md`); the server's unprompted pushes are the 0x3NNN group of
       `docs/protocol/server_senders.tsv` (round 368).
-- [ ] **Four roster species are drawn as capsules: their characterdata rows name no model (round
-      533).** `MOB_CH_BIGEYEGHOST_CLON` (Small-eyed Ghost), `MOB_CH_GYO_CLON` (Old Weasel),
-      `MOB_CH_WATERGHOST_CLON` (Water Ghost slave) and `MOB_CH_TOMBSTONE_CLON` (Tomb Stone Ghost)
-      carry `xxx` in cols 52-56 of `characterdata_5000.txt`, and their display names resolve to no
-      row that has a model (`probe_monster_front.gd`, round 533). Their base species
-      (`MOB_CH_BIGEYEGHOST` ...) have models, but reusing one would be a guess until the retail
-      client's handling of a `_CLON` row is read: find where the client resolves a character's
-      `.bsr` and what it does with `xxx`.
+- [x] **Four roster species are drawn as capsules: their characterdata rows name no model (round
+      533).** Done in round 655: the client draws a row whose own model (col 52) is `xxx` with the
+      model of the row its col 4 (OrgObjCodeName) names, one level only (READ,
+      `CICMonster::vslot_025` 0x9d3850; docs/protocol/characterdata.md). The four now draw as
+      bigeyeghost, gyo, waterghost and tombstone; 120 of the table's 142 `MOB_*_CLON` rows take
+      their Org's model (MEASURED, `probe_monster_build.gd`). Still open: col 48 (Scale), which
+      CICMonster applies as scale / 100 from the row's own record (a `_CLON` is often smaller than
+      its base: `MOB_CH_TIGER_CLON` is 80), is not applied to any monster.
 - [ ] **NPC facing is a stand-in until `Tab_RefNest` is imported.** Round 510: the game faces each
       NPC by its nest row's `wInitialDir` (u16 at +0x1c, read by `Nest_Hatch` `0x5607b0`; radians =
       `wInitialDir / 65535 * 360 * pi/180`), which lives only in the server database -- no shipped
@@ -362,7 +395,8 @@ In order. Each is checked off here when it ships in a release, with its round in
       past the damage switch and its floor of 1, when the defender's `+0xd2c` (not identified) is
       0. Casts have had this since their percentages arrived, and round 505 gave plain swings a
       percentage too. No spawned monster blocks today (`combatSpeciesOf` never sets `Species.Block`), so
-      nothing reaches it. Next: skip `ApplySkillPercent` for a blocked blow, with a test, before
+      nothing reaches it -- though since round 654 the species table carries col 76 for every species
+      (938 species read 20, one 40), so wiring it is one field once this is fixed. Next: skip `ApplySkillPercent` for a blocked blow, with a test, before
       monster block is wired.
 - [ ] **Mastery on the real rows: export `getv MAAT`.** Stage 1 of the damage pipeline scales
       the roll by the caster's mastery level, but `Skill_GetRequiredMasteryLevel` (`0x59e770`)
@@ -986,12 +1020,12 @@ position (off by default)").
 (`docs/RE_COMPLETION.md`, round 571; `deploy/README.md`, "Single world frame (off by default)",
 whose flip conditions these items feed).
 
-- [ ] **A hard guard on the monster list before the flip** (round 571's review). The list is one
-      packet, capped at 32,767 payload bytes; under the flag the one bucket's 413 roster monsters
-      are 28,189 bytes, so 72 more Mangyang-sized GM spawns (four `/spawn 20`s) push it over, and
-      then EVERY player's list fails in `proto.Write` and the gateway closes each session on its
-      next request. A cap, or a split over several packets in `handleMonsterList`, closes it; a
-      test that lists more monsters than one packet holds is the check.
+- [x] **A hard guard on the monster list before the flip** (round 571's review) -- **done in round
+      656**: the list is the player's area of interest (the 5x5 regions around it) and is paged
+      over as many frames as it needs (`session/monsterlist.go`; `docs/protocol/monster_ai.md`,
+      "The area of interest, the paged list and the sleep"). `TestMonsterListLargerThanAFramePages`
+      lists 1,500 monsters in several frames; on the base it fails with `proto: payload of 96004
+      bytes too large for a single frame`.
 - [ ] **Round 571's height gate, to be accepted explicitly before the flip** (round 571's review).
       The item asked for every town whose radius-2 regions leave +-1000 / -500 under the one frame
       to be gated; round 571 gated none, because Jangan's own 99/170 (1075.41) breaks that
@@ -1005,6 +1039,32 @@ whose flip conditions these items feed).
       snap to the ground, 104.07 above Donwhang's drawn landing and 86.23 to 246.32 below the
       others' under the one frame, until the mover's own client lifts or drops it and sends an
       `OpMove`. Snapping another player's body the way a monster's is snapped would close it.
+
+### Monster scale: the area of interest (round 656) — **built: cell index, AOI, paged list, sleep, one respawn scheduler, send deadline; these are left**
+
+Round 656 made the server carry ~10,000 monsters (`docs/protocol/monster_ai.md`, "The area of
+interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
+
+- [ ] **An older client gets a degraded view.** Pages go only to a request carrying the capability
+      byte (0x01, round 656's review). An older client gets one frame holding the nearest monsters
+      that fit, which is short of the window once about 480 monsters share it (round 657's full
+      map). It ignores `OpMonsterLeft` 0x00B5, so bodies that leave its window stay drawn where
+      they were last seen. Release the round-656 client before round 657's flip.
+- [ ] **The AOI radius and the sleep are OURS.** 2 regions (the client's `REGION_LOAD_RADIUS`) and
+      "a monster no player's window holds does not run" stand in for retail's visibility and
+      object-update rules, both UNREAD. A monster left mid-leg by the last player resumes the leg
+      when one returns; one that was chasing a player who teleported away resumes BATTLE and then
+      releases on its target test.
+- [ ] **The client still asks for the whole window's list after every hit** (World3D ~15825,
+      ~17529) -- up to 60 KB for a dense window. Round 655's lane (the client's monster drawing).
+- [ ] **A stalled client holds the AI tick up to `gateway.SendTimeout` (10 s, OURS; raised from 2 s
+      by the review), once**, before its connection is closed. A per-session send queue would
+      remove even that, but every Send caller relies on in-order, on-the-wire-at-return sends; not
+      built.
+- [ ] **The request paths' broadcasts still copy the zone's entities** (`monsterWatchers` filters
+      `EntitiesInZone`): fine at 100 players; the AI tick uses the runtime's watcher index instead.
+- [ ] **The respawn is still the flat 10 s** (`respawnDelay`, disclosed): round 659 brings the READ
+      nest rules into the one scheduler.
 
 ### Other bodies' facing (round 637 and its review follow-up) — **built: every body, this player's too, turns to face where it goes at 3 pi rad/s, and an arrival faces the way it last walked; these are left**
 
@@ -1054,18 +1114,54 @@ The rule is `ClickWalk.step`, READ from the mover tick `FUN_009e0e60` (`docs/pro
       follow-up**. A click walk the graph blocks dead now ends, as retail's mover ends a refused
       step (READ: bit `0x10000000` in `FUN_009e0e60`). The live run measured 0 held episodes;
       the base had 26.
-  - [ ] **What "dead" means is OURS**: at most 1 % of the step's asked length. Whether retail's
-        collision query slides along a wall, as ours does, was not read.
-  - [ ] **An attack's approach against a wall still holds** (and so does a friendly cast's). It
-        re-aims on every tick, as retail's attack tick re-issues its approach while out of reach
-        (phase 1, READ). What a retail body shows then (running or standing) was not read. The
-        server-side mover would say: `CGObjMoverByDest` in SR_GameServer.exe.
-  - [ ] **The physics fallback walk is unchanged.** That is the walk in a region with no `.nvm`,
-        using `move_and_slide`.
+  - [x] ~~What "dead" means is OURS (1 % of the step)~~ -- **decided and done in round 653's
+        follow-up**. Round 653 read the query: retail does not slide. `CRegionManagerBody::vslot_012`
+        -> the terrain walk `0x4047a0` answers a blocking edge with the crossing point (nudged at
+        most 0.2) and bit 0, and the mover then ends, for every movement kind. The user's request
+        decided it: "stop in place like the original game". Every order now walks with the no-slide
+        walk and ends at its first blocked step. A walk at an angle into a door frame now stops at
+        the frame, where it used to slide into the doorway (`click_walk_test.gd`, synthetic doorway).
+  - [x] ~~An attack's approach against a wall still holds~~ -- round 653's follow-up. The wall ends
+        the approach's move. `World3D._step_move_order` re-issues it on the next tick, as retail's
+        attack tick re-issues `MoveTowardObject` (phase 1, READ). While the approach's point stays
+        within 0.5 of the one the wall stopped (OURS), the body stands at the wall facing its target
+        and the reach is tested every tick. It walks on when the target moves.
+    - [ ] **What a retail body shows then** (the client's display of a server-side re-issue every
+          30 ms at most) was not read. srrevamp's body stands.
+    - [ ] **The pick-up walk** ends at the wall and asks for the item from there
+          (`_ask_pickup_after_walk`); the server judges the 10 units. Retail's pick-up approach was
+          not read.
+  - [ ] **The physics fallback walk** (a region with no `.nvm`, `move_and_slide`) ends an order on
+        `is_on_wall` (round 653's follow-up, OURS). It still slides for the tick that meets the wall.
 - [ ] **The early stop (`MOVE_TARGET_STOP_DISTANCE`, 2.39) is OURS.** Retail lands on the point
       exactly. The stop is kept only because `CombatNet.approach_aim` is built on it.
 - [ ] **The server does not police speed** (round 636, `gm.go`). It relays whatever a client sends.
       A client that still has the old rule (a release before this round) ping-pongs for everyone.
+
+### The sky click (round 653) — **built: a click on the sky, or on ground beyond 1000 units, runs the character on its heading until a wall stops it; these are left**
+
+Read in `docs/protocol/opcodes/movement.md`, "The heading move". The code is `SkyRun` and
+`World3D._move_by_pick_ray` / `_start_heading_run`.
+
+- [ ] **The server does not run the heading move itself.** srrevamp's movement is client-authoritative
+      positions. The server relays each position with the heading form and faces the character that
+      way, but it does not step a `CGObjMoverByCmd` of its own.
+- [ ] **Whether retail's server tells the watchers of the stop** (a stop message when its own
+      navmesh ends the run) was not read. srrevamp's watchers settle on the last position.
+- [x] ~~`+0x6e8`~~ is the mover's `+0x80`, the move kind (round 653's review, READ). The window
+      keeps only a heading run, and srrevamp tests `_has_move_target and _move_heading_run`.
+      `+0x65c` bit 9 meaning "moving" is still INFERRED.
+- [ ] **Requests that do not end a run yet** (round 653's review; retail's skill-start and
+      pick-up-start paths were not read for a mover stop): a self or ground cast, an attack sent
+      with no walk (the `no_walk`, no-BCRadius and wall-root paths), a friendly skill on a
+      monster, an in-reach pick-up, and an NPC talk.
+- [ ] **The arrow keys** send the same heading form, with commands 1, 0x10 and 0x20 (READ). They are
+      not bound (the key table's `NOT_BOUND`, round 608).
+- [ ] **`0x70c5`** is sent in place of `0x7021` when `FUN_00b94b90(0xef1b44)` is false (probably a
+      ride or transport). Not built.
+- [ ] **The physics fallback** (no `.nvm`) ends any order on `is_on_wall` (OURS).
+- [x] ~~Click walks still slide~~ -- round 653's follow-up: every order stops at the wall, as retail's
+      does (the section above).
 
 ### The buff bar — **built (round 618); these are left**
 `HudBuffBoard` is retail's `CIFMagicStateBoard`. It has the icons, the draining time bar, the end
@@ -1751,6 +1847,36 @@ Still open, by the files each would add:
   not draw the list (round 75).
 - **The view-distance option** does not exist here. It sets `DAT_00ec54b0` to 1,200 / 2,000 /
   2,500, which makes the animation and draw range 720 / 1,520 / 2,020; the client uses 2,020.
+
+### Many monsters (round 655) — **built: species templates, budgeted builds, posing culled, bodies only in loaded regions, no list per hit; these are left**
+
+The server will send hundreds of monsters per view (the densest 5 x 5-region window of the field
+spawns holds about 500). Round 655 made the client draw them: one template per species model
+(`MonsterDraw.Templates`), bodies built a frame budget at a time, clips posed only in range and in
+view, no body outside the loaded regions, and no full monster list after a hit, a kill or an own
+attack result. `SRREVAMP_QA_MOBS=<N>` and the perf gate's `mobs` site measure it.
+
+- [ ] **A species seen for the first time is still assembled on the main thread**: 4-14 ms for most
+      Chinese field species, 133 ms for the first (cold archive) and 791 ms for
+      `MOB_CH_TIGERWOMAN` (69 bones, 7 pieces; MEASURED, `probe_monster_build.gd`). The budget
+      lets one through per frame, so each new species is one freeze of that length. Next: prepare
+      the `.bsr`/`.bsk`/`.bms`/texture reads on a WorkerThreadPool task (the objects job's pattern,
+      rounds 565-566) and commit on the main thread.
+- [ ] **The pose range is OURS**: the map objects' READ range (2020 from the camera) applied to
+      characters. Retail's render slot for a monster (`CICMonster` slot 10, 0x9d20d0) has no
+      distance test and the object slot `FUN_009c4aa0` only a frustum test; the entity manager's
+      per-frame tick was not read. Monster models out of range are hidden (OURS, as map objects
+      are); NPCs out of range are drawn, not posed. A capsule monster or one with no idle clip is
+      never hidden (the rule runs in the idle tick).
+- [ ] **Respawns on a server without the spawn push.** With no list per hit, a respawn appears
+      through OpMonsterSpawned (`-monster-spawn-push`, off by default, on on the public server),
+      a move for an unknown monster (`-monster-ai`, rate-limited list), a zone change, a GM
+      refresh, or -- until a spawn push has been seen -- one list after a death has played out,
+      at most every 10 s (OURS). A respawn with no death after it waits. The AOI lane's enter
+      pushes remove the limit.
+- [ ] **A monster walking out of the loaded regions keeps its body** until its region unloads
+      (the region gate runs when a cell loads or unloads, not per step).
+- [ ] **Scale (characterdata col 48)** is not applied to any monster (see the `_CLON` item above).
 
 ## Parked, with the state written down
 

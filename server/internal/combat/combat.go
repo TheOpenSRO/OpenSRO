@@ -77,7 +77,7 @@ type Monster struct {
 	// fixed from then on; 0 on a hub given no roll. The monster AI's brain
 	// starts from it, and OpMonsterSpawned carries it (round 542).
 	Heading float64
-	// The current leg, set by Hub.SetMotion and advanced by Hub.StepAll
+	// The current leg, set by Hub.SetMotion and advanced by Hub.StepCells
 	// (motion.go): the destination, the speed the leg walks at (world units
 	// per second), the clip mode (0 walk, 1 run -- AITactics_Handler_110's
 	// byte, ai.MotionMode) and whether the monster is still on its way. A
@@ -714,10 +714,26 @@ func SPFor(maxHP int) int64 {
 // Hub tracks all live monsters, grouped by zone. Safe for concurrent use.
 // In-memory only, same reasoning as world.Hub -- monster state resetting
 // on restart is normal, not a bug.
+//
+// Round 656: the lock is a RWMutex (the reads -- Get, the lists, the window
+// queries -- share it), and beside byID the hub keeps the region-cell index
+// (cells.go: cells, zoneCells, cellOf), the moving set StepCells walks, and
+// each monster's facing. All five are kept by the calls that change them:
+// SpawnSpecies files a monster, StepCells re-files it when a step carries it
+// over a region line, ApplyDamage's kill takes it out.
 type Hub struct {
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	byID   map[int64]*Monster
 	nextID atomic.Int64
+	// cells, zoneCells and cellOf are the region-cell index (cells.go).
+	cells     map[Cell]cellSet
+	zoneCells map[string]map[Cell]struct{}
+	cellOf    map[int64]Cell
+	// moving is every monster on a leg (Monster.Moving), the only ones a
+	// step moves.
+	moving map[int64]*Monster
+	// facing is each live monster's current facing (Facing).
+	facing map[int64]float64
 	// lastBlow is when each monster last struck: the re-use gate below.
 	lastBlow map[int64]time.Time
 	// headingRoll draws a hatch heading (SetSpawnHeadingRoll); nil gives 0.
@@ -745,7 +761,9 @@ type Hit struct {
 
 // NewHub returns an empty Hub.
 func NewHub() *Hub {
-	return &Hub{byID: make(map[int64]*Monster), lastBlow: make(map[int64]time.Time), hits: make(map[int64][]Hit)}
+	return &Hub{byID: make(map[int64]*Monster), lastBlow: make(map[int64]time.Time), hits: make(map[int64][]Hit),
+		cells: make(map[Cell]cellSet), zoneCells: make(map[string]map[Cell]struct{}), cellOf: make(map[int64]Cell),
+		moving: make(map[int64]*Monster), facing: make(map[int64]float64)}
 }
 
 // SetSpawnHeadingRoll installs the roll SpawnSpecies draws each monster's
@@ -876,7 +894,7 @@ type MonsterSkill struct {
 // client can resolve the model without depending on the display name.
 //
 // Both return the hub's LIVE record, not a copy. Its position and motion
-// (StepAll, SetMotion, StopMotion -- the monster AI moves it every tick while
+// (StepCells, SetMotion, StopMotion -- the monster AI moves it every tick while
 // -monster-ai is on) and its HP (ApplyDamage) change under h.mu, so a holder
 // may read without the lock only what is fixed at spawn: the id, the species
 // fields, the zone and the Heading. Everything else is read through Get (round 539; round
@@ -915,13 +933,15 @@ func (h *Hub) SpawnSpecies(zone string, species Species, x, y, z float64, maxHP,
 		m.Heading = h.headingRoll()
 	}
 	h.byID[id] = m
+	h.facing[id] = m.Heading
+	h.fileLocked(m, CellOf(zone, x, z))
 	return m
 }
 
 // Get returns a copy of the monster with the given ID, if it's still alive.
 func (h *Hub) Get(id int64) (Monster, bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 
 	m, ok := h.byID[id]
 	if !ok {
@@ -935,13 +955,18 @@ func (h *Hub) Get(id int64) (Monster, bool) {
 // client has no way to learn a monster's ID at all (it's never broadcast
 // on its own; only Attack's responses reference an ID the caller already
 // supplied).
+//
+// Round 656: it reads the zone's cells (cells.go) rather than every monster
+// alive, and the monster list no longer calls it -- a player is sent the
+// monsters of its area of interest (session/aoi.go). What it returns is
+// unchanged: every monster of the zone, in no particular order.
 func (h *Hub) InZone(zone string) []Monster {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 
 	var out []Monster
-	for _, m := range h.byID {
-		if m.Zone == zone {
+	for c := range h.zoneCells[zone] {
+		for _, m := range h.cells[c] {
 			out = append(out, *m)
 		}
 	}
@@ -995,6 +1020,10 @@ func (h *Hub) ApplyDamageFrom(id, attacker int64, amount int) (monster Monster, 
 
 	if m.HP == 0 {
 		delete(h.byID, id)
+		delete(h.moving, id)
+		delete(h.facing, id)
+		delete(h.lastBlow, id) // a dead monster's re-use gate is never asked again
+		h.unfileLocked(id)
 		hits = h.hits[id]
 		delete(h.hits, id)
 		return result, true, true, hits

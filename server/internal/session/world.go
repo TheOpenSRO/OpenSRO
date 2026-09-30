@@ -645,16 +645,71 @@ type MoveRequest struct {
 	// client turns the body toward it: the retail client places an object at
 	// a message's source position (FUN_009e11e0) without aiming it.
 	Relocated bool
+	// Run (round 653) is set on a position sent while a heading run is in
+	// effect -- the sky click (client SkyRun). The flags byte's bit 1 then
+	// says retail's own HEADING FORM of 0x7021 follows
+	// (docs/protocol/opcodes/movement.md; proto.Movement): kind 0, the
+	// command byte (RunCommand, proto.MovementCommandForward from the sky
+	// click) and the u16 wire angle (RunAngle). The framing -- a heading form
+	// riding on a position -- is OURS: srrevamp's movement is client-
+	// authoritative positions, retail's is 0x7021 requests the server steps.
+	Run        bool
+	RunCommand byte
+	RunAngle   uint16
+}
+
+// The trailing flags byte's bits (OURS framing).
+const (
+	moveFlagRelocated byte = 1
+	moveFlagRun       byte = 2
+)
+
+// encodeMoveTail appends the flags byte and, for a run, the heading form --
+// shared by MoveRequest and EntityMoved. Nothing is appended for a plain
+// walked position, which is the three floats an older peer expects.
+func encodeMoveTail(out []byte, relocated, run bool, command byte, angle uint16) []byte {
+	var flags byte
+	if relocated {
+		flags |= moveFlagRelocated
+	}
+	if run {
+		flags |= moveFlagRun
+	}
+	if flags == 0 {
+		return out
+	}
+	out = append(out, flags)
+	if run {
+		// proto.Movement's heading form with no extra byte, the angle already
+		// on the wire (the client computed it): kind, command, u16 LE.
+		out = append(out, proto.MovementKindHeading, command, byte(angle), byte(angle>>8))
+	}
+	return out
+}
+
+// decodeMoveTail reads encodeMoveTail's bytes. A run flag whose heading form
+// is short or not the heading kind is no run: the position still stands.
+func decodeMoveTail(rest []byte) (relocated, run bool, command byte, angle uint16) {
+	if len(rest) == 0 {
+		return false, false, 0, 0
+	}
+	flags := rest[0]
+	relocated = flags&moveFlagRelocated != 0
+	if flags&moveFlagRun == 0 {
+		return relocated, false, 0, 0
+	}
+	m, a, err := proto.DecodeMovement(rest[1:], false)
+	if err != nil || m.Kind != proto.MovementKindHeading {
+		return relocated, false, 0, 0
+	}
+	return relocated, true, m.HeadingByte, a
 }
 
 func (r *MoveRequest) Encode() []byte {
 	out := encodeFloat32(r.X)
 	out = append(out, encodeFloat32(r.Y)...)
 	out = append(out, encodeFloat32(r.Z)...)
-	if r.Relocated {
-		out = append(out, 1)
-	}
-	return out
+	return encodeMoveTail(out, r.Relocated, r.Run, r.RunCommand, r.RunAngle)
 }
 
 func DecodeMoveRequest(data []byte) (*MoveRequest, error) {
@@ -670,7 +725,9 @@ func DecodeMoveRequest(data []byte) (*MoveRequest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding MoveRequest: z: %w", err)
 	}
-	return &MoveRequest{X: x, Y: y, Z: z, Relocated: len(rest) > 0 && rest[0]&1 != 0}, nil
+	r := &MoveRequest{X: x, Y: y, Z: z}
+	r.Relocated, r.Run, r.RunCommand, r.RunAngle = decodeMoveTail(rest)
+	return r, nil
 }
 
 // EntityMoved is the OpEntityMoved broadcast payload.
@@ -681,6 +738,11 @@ type EntityMoved struct {
 	// 0), sent only when set, which an older client (decode_entity_moved
 	// reads 20 bytes) ignores.
 	Relocated bool
+	// Run, RunCommand and RunAngle are MoveRequest's relayed (round 653):
+	// the watcher's client faces the run's heading.
+	Run        bool
+	RunCommand byte
+	RunAngle   uint16
 }
 
 func (r *EntityMoved) Encode() []byte {
@@ -688,10 +750,7 @@ func (r *EntityMoved) Encode() []byte {
 	out = append(out, encodeFloat32(r.X)...)
 	out = append(out, encodeFloat32(r.Y)...)
 	out = append(out, encodeFloat32(r.Z)...)
-	if r.Relocated {
-		out = append(out, 1)
-	}
-	return out
+	return encodeMoveTail(out, r.Relocated, r.Run, r.RunCommand, r.RunAngle)
 }
 
 func DecodeEntityMoved(data []byte) (*EntityMoved, error) {
@@ -711,7 +770,9 @@ func DecodeEntityMoved(data []byte) (*EntityMoved, error) {
 	if err != nil {
 		return nil, fmt.Errorf("session: decoding EntityMoved: %w", err)
 	}
-	return &EntityMoved{CharacterID: id, X: x, Y: y, Z: z, Relocated: len(rest) > 0 && rest[0]&1 != 0}, nil
+	m := &EntityMoved{CharacterID: id, X: x, Y: y, Z: z}
+	m.Relocated, m.Run, m.RunCommand, m.RunAngle = decodeMoveTail(rest)
+	return m, nil
 }
 
 // ChangeZoneRequest is the OpChangeZone payload: a target zone identifier,
@@ -1251,10 +1312,18 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	}
 	pos := world.Position{X: float64(req.X), Y: float64(req.Y), Z: float64(req.Z)}
 	// A walk turns the character to face the way it moved; a relocation keeps
-	// its heading (round 637's review follow-up; world.Hub.MoveFacing).
+	// its heading (round 637's review follow-up; world.Hub.MoveFacing); a
+	// heading run faces the run's own heading (round 653, world.Hub
+	// .MoveHeading) -- a relocation still wins, as it aims nothing.
 	move := hub.MoveFacing
-	if req.Relocated {
+	switch {
+	case req.Relocated:
 		move = hub.Move
+	case req.Run:
+		heading := world.HeadingFromWire(req.RunAngle)
+		move = func(s *gateway.Session, p world.Position) (world.Entity, []world.Entity, bool) {
+			return hub.MoveHeading(s, p, heading)
+		}
 	}
 	entity, others, ok := move(sess, pos)
 	if !ok {
@@ -1267,7 +1336,10 @@ func handleMove(sess *gateway.Session, p *proto.Packet, hub *world.Hub, chars ch
 	// positionSaveInterval (round 573), so a crash loses little of it.
 	savePositionEvery(chars, sess, entity, time.Now())
 
-	msg := &EntityMoved{CharacterID: entity.CharacterID, X: req.X, Y: req.Y, Z: req.Z, Relocated: req.Relocated}
+	// A heading run is relayed with its heading form (round 653), so the
+	// watchers face its heading; a relocation carries none.
+	msg := &EntityMoved{CharacterID: entity.CharacterID, X: req.X, Y: req.Y, Z: req.Z, Relocated: req.Relocated,
+		Run: req.Run && !req.Relocated, RunCommand: req.RunCommand, RunAngle: req.RunAngle}
 	for _, other := range others {
 		other.Session.Send(&proto.Packet{Opcode: OpEntityMoved, Data: msg.Encode()})
 	}

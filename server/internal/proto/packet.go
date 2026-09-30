@@ -33,6 +33,11 @@ const (
 	sizeMask    = sizeFlagBit - 1
 )
 
+// MaxPayload is the largest payload one frame carries: the Size field's low
+// 15 bits (sizeMask). Write refuses anything longer, so a message that can
+// outgrow it -- the monster list, round 656 -- is split by its sender.
+const MaxPayload = sizeMask
+
 // ErrEncrypted is returned by Read when a frame's Size field has the real
 // confirmed top flag bit set, since payload decryption isn't implemented
 // yet. Callers should treat this as "not supported yet", not malformed

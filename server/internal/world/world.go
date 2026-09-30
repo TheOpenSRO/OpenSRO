@@ -181,6 +181,22 @@ func (h *Hub) MoveFacing(sess *gateway.Session, pos Position) (entity Entity, ot
 	return *e, h.othersInZoneLocked(e.Zone, sess.ID()), true
 }
 
+// MoveHeading is Move for a position on a heading run (round 653, the sky
+// click): the character faces the run's own heading, which the client sent
+// with the position, rather than the direction of the step.
+func (h *Hub) MoveHeading(sess *gateway.Session, pos Position, heading float64) (entity Entity, others []Entity, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	e, exists := h.bySession[sess.ID()]
+	if !exists {
+		return Entity{}, nil, false
+	}
+	e.Heading = heading
+	e.Pos = pos
+	return *e, h.othersInZoneLocked(e.Zone, sess.ID()), true
+}
+
 // ChangeZone moves sess's character to newZone at pos, the same discrete
 // "leave the old zone, appear fresh in the new one" semantics as Leave
 // followed by Enter, but as one atomic operation (no window where the

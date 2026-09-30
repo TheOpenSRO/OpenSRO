@@ -117,6 +117,10 @@ type Species struct {
 	Attack  int
 	Gold    int64
 	X, Z    float64
+	// Unplaced marks a species the server keeps nowhere -- one the monster
+	// table (round 654, -monsters-csv) holds but the roster does not spawn:
+	// /spawn puts it next to the GM, /goto has nowhere to go.
+	Unplaced bool
 }
 
 // deadRefusal is what /tp and /goto answer a dead actor (round 549). OWN
@@ -158,6 +162,10 @@ type Result struct {
 	// holds only the blows players struck before it.
 	Killed   *combat.Monster
 	KillHits []combat.Hit
+	// KilledX/KilledZ are where it stood (round 656): the session layer
+	// announces the kill to the players whose area of interest holds that
+	// spot, not to the whole zone.
+	KilledX, KilledZ float64
 	// SpawnedMonsterIDs are the monsters /spawn made, in order, for the
 	// session layer to push to the zone (session.BroadcastMonsterSpawned,
 	// round 542, behind -monster-spawn-push); empty for every other command.
@@ -200,6 +208,12 @@ type Deps struct {
 	// Uniques are the unique monsters /spawnunique knows (round 657): none
 	// is placed in the world yet, so the console is how one is met.
 	Uniques []Species
+	// LookupSpecies resolves a species the roster (Species) does not hold,
+	// by a lower-cased code name, display name or characterdata id: the
+	// monster table's (round 654). Nil: only the roster. LookupCount is how
+	// many species it knows, for the usage lines.
+	LookupSpecies func(want string) (Species, bool)
+	LookupCount   int
 	// Zones are the named zones /goto accepts (worldmap.ZoneCentre's keys).
 	Zones  []string
 	Logger *slog.Logger
@@ -468,6 +482,9 @@ func (d *Deps) gotoSpot(actor Actor, args []string) Result {
 		}
 	}
 	if sp, ok := d.findSpecies(want); ok {
+		if sp.Unplaced {
+			return refuse(fmt.Sprintf("%s (%s, id %d) is not placed anywhere by the server; /spawn puts one next to you", sp.Name, sp.CodeName, sp.RefObjID))
+		}
 		res := Result{Text: fmt.Sprintf("going to %s at %.0f, %.0f in %s", sp.Name, sp.X, sp.Z, sp.Zone), HasPos: true, X: sp.X, Z: sp.Z}
 		if sp.Zone != actor.Zone {
 			res.Zone = sp.Zone
@@ -651,7 +668,13 @@ func (d *Deps) spawn(actor Actor, args []string) Result {
 		spawned = append(spawned, m.ID)
 	}
 	return Result{
-		Text:              fmt.Sprintf("spawned %d x %s (level %d, HP %d) at %.0f, %.0f -- ids %s; no respawn", n, sp.Name, sp.Level, sp.MaxHP, actor.X+6, actor.Z, strings.Join(ids, ",")),
+		// The HP the monsters really have: SpawnSpecies scales the row's by the
+		// rarity (combat.ScaleHPForRarity), and the code name and id say which
+		// row a shared display name picked (round 654's review: 188 names are
+		// shared by 7,087 rows).
+		Text: fmt.Sprintf("spawned %d x %s (%s, id %d; level %d, rarity %d, HP %d) at %.0f, %.0f -- ids %s; no respawn",
+			n, sp.Name, sp.CodeName, sp.RefObjID, sp.Level, sp.Rarity, combat.ScaleHPForRarity(sp.MaxHP, sp.Rarity),
+			actor.X+6, actor.Z, strings.Join(ids, ",")),
 		RefreshMonsters:   true,
 		SpawnedMonsterIDs: spawned,
 	}
@@ -679,6 +702,8 @@ func (d *Deps) kill(actor Actor) Result {
 		Text:            fmt.Sprintf("killed %s (#%d); no exp, gold, drops or quest credit from a GM kill", m.Name, m.ID),
 		RefreshMonsters: true,
 		KilledMonsterID: m.ID,
+		KilledX:         m.X,
+		KilledZ:         m.Z,
 		Zone:            m.Zone,
 		Killed:          &dead,
 		KillHits:        hits,
@@ -732,6 +757,20 @@ func uniqueNames(us []Species) string {
 	return strings.Join(names, ", ")
 }
 
+// CommandTarget is the monster a console line acts on: /damage's explicit id
+// when it names one, else the selected monster -- so the session layer can
+// take the watchers of the right monster before the command runs (round 656's
+// before/after union, round 657's /damage).
+func CommandTarget(line string, selected int64) int64 {
+	fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "/"))
+	if len(fields) == 3 && strings.ToLower(fields[0]) == "damage" {
+		if id, err := strconv.ParseInt(strings.TrimPrefix(fields[2], "#"), 10, 64); err == nil && id > 0 {
+			return id
+		}
+	}
+	return selected
+}
+
 // damage deals n damage to the selected monster -- or to the monster whose
 // id follows n, as /spawnunique's reply prints it -- booked to the GM on the
 // monster's damage list as a blow of the GM's (OURS, a test tool: round 657).
@@ -759,6 +798,10 @@ func (d *Deps) damage(actor Actor, args []string) Result {
 	if d.Monsters == nil {
 		return refuse("no monster hub")
 	}
+	before, alive := d.Monsters.Get(target)
+	if !alive {
+		return refuse(fmt.Sprintf("monster %d is not alive", target))
+	}
 	after, died, ok, hits := d.Monsters.ApplyDamageFrom(target, actor.CharacterID, n)
 	if !ok {
 		return refuse(fmt.Sprintf("monster %d is not alive", target))
@@ -773,6 +816,8 @@ func (d *Deps) damage(actor Actor, args []string) Result {
 		Text:            fmt.Sprintf("%s (#%d) took %d and died; no exp, gold, drops or quest credit from a GM kill", after.Name, after.ID, n),
 		RefreshMonsters: true,
 		KilledMonsterID: after.ID,
+		KilledX:         before.X,
+		KilledZ:         before.Z,
 		Zone:            after.Zone,
 		Killed:          &after,
 		KillHits:        hits,
@@ -818,17 +863,33 @@ func (d *Deps) sp(ctx context.Context, actor Actor, args []string) Result {
 	return Result{Text: fmt.Sprintf("skill points now %d", total), RefreshStats: true}
 }
 
-// findSpecies matches a lower-cased code name or display name.
+// findSpecies matches a lower-cased code name, display name or characterdata
+// id against the roster first, then the monster table (LookupSpecies).
 func (d *Deps) findSpecies(want string) (Species, bool) {
 	for _, sp := range d.Species {
-		if strings.ToLower(sp.CodeName) == want || strings.ToLower(sp.Name) == want {
+		if strings.ToLower(sp.CodeName) == want || strings.ToLower(sp.Name) == want ||
+			(sp.RefObjID != 0 && strconv.FormatInt(sp.RefObjID, 10) == want) {
 			return sp, true
 		}
+	}
+	if d.LookupSpecies != nil {
+		return d.LookupSpecies(want)
 	}
 	return Species{}, false
 }
 
+// speciesNames is the roster's code names, and -- with the monster table --
+// how to name any other species. The table's thousands are not listed: a
+// usage line that long helps nobody.
 func (d *Deps) speciesNames() string {
+	names := d.rosterNames()
+	if d.LookupSpecies != nil {
+		names += fmt.Sprintf(" (or any of the monster table's %d species by code name or id)", d.LookupCount)
+	}
+	return names
+}
+
+func (d *Deps) rosterNames() string {
 	names := make([]string, 0, len(d.Species))
 	seen := map[string]bool{}
 	for _, sp := range d.Species {

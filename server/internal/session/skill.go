@@ -1302,6 +1302,12 @@ func useSkillHandler(
 			res := echoed(req, &AttackResult{MonsterID: req.TargetMonsterID})
 			if selfTarget || friendly {
 				res.MonsterID = 0 // no monster: the field is ignored for a targetType 0 cast and names a character for type 3
+			} else if m, ok := monsters.Get(req.TargetMonsterID); ok {
+				// No blow landed, so the monster's health is what it was: sent
+				// as it is (round 655's review), not the zero value, which a
+				// client applying the result's health would paint as a dead bar
+				// (a zero-damage stun, SKILL_EU_WARRIOR_DUALA_STUN_A_01..05).
+				res.MonsterRemainingHP = int32(m.HP)
 			}
 			if owned, err := chars.GetByID(ctx, characterID); err == nil && owned != nil {
 				res.PlayerHP = int32(owned.HP)

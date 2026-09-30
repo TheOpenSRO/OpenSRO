@@ -119,7 +119,7 @@ func TestHubDamageList(t *testing.T) {
 		t.Fatalf("first blow: died %v hits %v", died, hits)
 	}
 	h.ApplyDamageFrom(m.ID, 8, 20)
-	h.ApplyDamage(m.ID, 5) // credited to nobody
+	h.ApplyDamageFrom(m.ID, 0, 5) // credited to nobody
 	h.ApplyDamageFrom(m.ID, 7, 10)
 	if got := h.Hits(m.ID); len(got) != 2 || got[0] != (combat.Hit{AttackerID: 7, Damage: 40}) || got[1] != (combat.Hit{AttackerID: 8, Damage: 20}) {
 		t.Fatalf("list so far = %+v", got)
@@ -241,7 +241,7 @@ func TestUniqueNoticeGMSpawnAndKill(t *testing.T) {
 			t.Fatalf("spawn notice = %+v", n)
 		}
 	}
-	id := w.monsters.All()[0].ID
+	id := w.monsters.AppendAll(nil)[0].ID
 	if r := w.a.gm("/damage 100", id); r.Refused {
 		t.Fatalf("/damage refused: %q", r.Text)
 	}
@@ -259,7 +259,7 @@ func TestUniqueNoticeGMSpawnAndKill(t *testing.T) {
 	}
 	w.b.uniqueNotice()
 	var second int64
-	for _, m := range w.monsters.All() {
+	for _, m := range w.monsters.AppendAll(nil) {
 		second = m.ID
 	}
 	if r := w.a.gm("/kill", second); r.Refused {
@@ -307,7 +307,7 @@ func TestUniqueNoticeCombatKill(t *testing.T) {
 		t.Fatalf("a GM spawn with the key ON = %+v, want the spawn notice", n)
 	}
 	var id int64
-	for _, m := range w.monsters.All() {
+	for _, m := range w.monsters.AppendAll(nil) {
 		id = m.ID
 	}
 	nest := w.monsters.SpawnSpecies("jangan", combat.Species{Name: "Nest Unique", RefObjID: 1954, Rarity: 3}, 0, 0, 0, 20, 0, 0, 0)
@@ -323,7 +323,7 @@ func TestUniqueNoticeCombatKill(t *testing.T) {
 func (w *uniqueWorld) uniqueOn(t *testing.T) int64 {
 	t.Helper()
 	before := map[int64]bool{}
-	for _, m := range w.monsters.All() {
+	for _, m := range w.monsters.AppendAll(nil) {
 		before[m.ID] = true
 	}
 	if r := w.a.gm("/spawnunique 1954", 0); r.Refused {
@@ -334,7 +334,7 @@ func (w *uniqueWorld) uniqueOn(t *testing.T) int64 {
 			c.uniqueNotice()
 		}
 	}
-	for _, m := range w.monsters.All() {
+	for _, m := range w.monsters.AppendAll(nil) {
 		if !before[m.ID] {
 			return m.ID
 		}
@@ -412,7 +412,7 @@ func TestUniqueNoticeOtherZone(t *testing.T) {
 	if n := w.b.uniqueNotice(); n.Kind != UniqueNoticeSpawn {
 		t.Fatalf("Bram in %q heard %+v", b.Zone, n)
 	}
-	id := w.monsters.All()[0].ID
+	id := w.monsters.AppendAll(nil)[0].ID
 	w.a.gm("/damage 999999 #"+strconv.FormatInt(id, 10), 0)
 	if n := w.b.uniqueNotice(); *n != (UniqueNotice{Kind: UniqueNoticeKill, RefObjID: 1954, Killer: "Aria"}) {
 		t.Fatalf("Bram in %q heard %+v", b.Zone, n)

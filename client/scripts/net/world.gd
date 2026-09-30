@@ -95,14 +95,31 @@ static func encode_enter_world(character_name: String) -> PackedByteArray:
 ## 0: the position is one the player was put at, not walked to
 ## (World3D._position_relocated). Sent only when set; an older server reads
 ## the three floats and ignores it.
-static func encode_move(x: float, y: float, z: float, relocated: bool = false) -> PackedByteArray:
+##
+## `heading_wire` (round 653, OURS framing of a READ form): a position sent
+## while a heading run is in effect (SkyRun, the sky click) sets the flags
+## byte's bit 1 and appends retail's own heading form of 0x7021
+## (docs/protocol/opcodes/movement.md): kind 0, the command byte
+## (SkyRun.COMMAND_FORWARD) and the u16 wire angle. -1 sends none. An older
+## server reads bit 0 alone and ignores the rest.
+const MOVE_FLAG_RELOCATED := 1
+const MOVE_FLAG_HEADING_RUN := 2
+const MOVEMENT_KIND_HEADING := 0
+
+static func encode_move(x: float, y: float, z: float, relocated: bool = false, heading_wire: int = -1) -> PackedByteArray:
 	var out := PackedByteArray()
-	out.resize(13 if relocated else 12)
+	out.resize(12)
 	out.encode_float(0, x)
 	out.encode_float(4, y)
 	out.encode_float(8, z)
-	if relocated:
-		out[12] = 1
+	var flags := (MOVE_FLAG_RELOCATED if relocated else 0) | (MOVE_FLAG_HEADING_RUN if heading_wire >= 0 else 0)
+	if flags != 0:
+		out.append(flags)
+	if heading_wire >= 0:
+		out.append(MOVEMENT_KIND_HEADING)
+		out.append(SkyRun.COMMAND_FORWARD)
+		out.append(heading_wire & 0xff)
+		out.append((heading_wire >> 8) & 0xff)
 	return out
 
 ## Result of decode_enter_world_result(): either an error, or the assigned
@@ -373,6 +390,10 @@ class EntityMoved:
 	## a trailing flags byte; round 637's review follow-up): the body is placed
 	## and not turned. False from an older server.
 	var relocated: bool = false
+	## Round 653: the mover is on a heading run (the sky click) and this is
+	## its u16 wire angle (retail's heading form, relayed: flags bit 1), or
+	## -1. The body faces the run's heading rather than the next position.
+	var heading_wire: int = -1
 
 static func decode_entity_moved(data: PackedByteArray) -> EntityMoved:
 	if data.size() < 20:
@@ -382,7 +403,10 @@ static func decode_entity_moved(data: PackedByteArray) -> EntityMoved:
 	m.x = data.decode_float(8)
 	m.y = data.decode_float(12)
 	m.z = data.decode_float(16)
-	m.relocated = data.size() > 20 and (data[20] & 1) != 0
+	var flags := int(data[20]) if data.size() > 20 else 0
+	m.relocated = (flags & MOVE_FLAG_RELOCATED) != 0
+	if (flags & MOVE_FLAG_HEADING_RUN) != 0 and data.size() >= 25 and data[21] == MOVEMENT_KIND_HEADING:
+		m.heading_wire = data.decode_u16(23)
 	return m
 
 ## One OP_STATE_CHANGE broadcast: whose state, which kind, what value.

@@ -510,6 +510,10 @@ func TestSkillCastHandsOffToPlainSwings(t *testing.T) {
 	// REFUSAL 2: a ZeroDamage row resolves no blow and does not hand off.
 	if ar := cast(53, zeroTarget.ID); ar.MonsterDamage != 0 {
 		t.Fatalf("zero-damage cast: %+v; want no damage", ar)
+	} else if ar.MonsterRemainingHP != 1000 {
+		// Round 655's review: the no-blow reply carries the monster's health
+		// as it is, not the zero value, which the client applies to its bar.
+		t.Errorf("zero-damage cast reports MonsterRemainingHP %d; want the monster's unchanged 1000", ar.MonsterRemainingHP)
 	}
 	noHandOff("a ZeroDamage row", zeroDamage, zeroTarget.ID, 1000)
 
