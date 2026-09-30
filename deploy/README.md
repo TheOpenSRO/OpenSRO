@@ -413,17 +413,22 @@ die pose, locks movement and attacks, and shows a Revive button. While dead the 
 character's moves (neither stored nor relayed), attacks, casts, items, pick-ups, duel blows, trade
 requests, zone changes, GM `/tp`/`/goto` and guild founding and level-ups, empties its potion
 queue, and no monster targets it.
-`OpRevive 0x0028` (the button) brings it back where it lies -- HP at 1 + 40 % of the maximum
-(truncated; the retail resurrect handler's own arithmetic, round 550) and MP at 40 % -- which
-retail grants in place only up to max level 10; above that
-srrevamp's in-place revive is a disclosed stand-in for a return point it does not model. A session
-that never sends `OpRevive` is revived unasked after 30 s (the auto-revive fallback, own design).
-What is grounded and what is a stand-in is in `docs/protocol/monster_ai.md`, "The player's dead
-state: the server half (round 549)".
+Since round 665 the client offers retail's two choices and `OpRevive 0x0028` carries the
+option: "Resurrect at the specified point." takes the character to its return point and revives
+it there at 40 % HP -- srrevamp's return point is the world entry in Jangan, a stand-in for
+retail's designated gate -- and "Resurrect at the present point." revives it where it lies (HP at
+1 + 40 % of the maximum, the retail handler's arithmetic), at level 10 or under only, as retail.
+Nothing revives a dead player unasked any more: retail has no timed revive outside a fortress war,
+and round 549's 30 s in-place fallback revived players among the monsters that had killed them.
+A character that logs out dead is saved at the return point (with `-persist-position`).
+What is grounded and what is a stand-in is in `docs/protocol/character_state.md`, "The
+resurrect choices (round 665)".
 
 It is behind the `-player-dead-state` flag (env `SRREVAMP_PLAYER_DEAD_STATE`), and **the default
-is off**. Off, a kill respawns the player at once and the kill's wire is what it was; the one
-flag-independent piece is the entry revive of a stored HP 0 (the last paragraph). It does not
+is off**. Off, a kill respawns the player at once, and since round 665 the respawn is moved to the
+return point after the kill's messages (an `OpChangeZoneResult` to Jangan), so it no longer comes
+back among its killers; the one other flag-independent piece is the entry revive of a stored HP 0
+(the last paragraph). It does not
 depend on the monster flags: it covers the counterattack inside the attacker's result and the
 monster's own swings under `-monster-battle` alike. After an update the boot log reads
 `player dead state off (-player-dead-state / SRREVAMP_PLAYER_DEAD_STATE)`.
@@ -431,8 +436,9 @@ monster's own swings under `-monster-battle` alike. After an update the boot log
 **Turn it on only when both of these hold:**
 
 1. A client release that carries round 548 is tagged, CI is green for it (`gh run list`), and its
-   zips are published. An older client sees HP 0 and no Revive button after a kill; only the 30 s
-   fallback frees it, and until then its walk is not relayed and its attacks are refused.
+   zips are published. An older client sees HP 0 and no Revive button after a kill, and since
+   round 665 nothing frees it; a client between rounds 548 and 665 has one Revive button, which
+   the server reads as the present point at level 10 or under and the return point above it.
 2. The live check in that `monster_ai.md` section passes on the render box. It has not been run
    yet.
 
@@ -600,11 +606,11 @@ What changes for players with it on:
   from Jangan toward Donwhang under `-single-frame`, where the label stays "jangan" -- is outside
   the grid the entry builds around the label's centre; the stream then builds around the player,
   as after a GM `/tp` far away. Not measured.
-- With `-player-dead-state` on as well, a character that logs out dead is saved where it fell and
-  re-enters there -- possibly beside the monster that killed it -- revived to 40 % by the entry
-  rule that applies whatever the flags say (`handleEnterWorld`'s revive of a stored HP 0,
-  `character.RespawnFraction`). That is the in-place revive stand-in `-player-dead-state` already
-  uses (`deadstate.go`), now across a logout (round 573's review, recorded in round 574).
+- With `-player-dead-state` on as well, a character that logs out dead is saved at its return
+  point (round 665; retail's leave path writes the return point for a dead PC, `FUN_004df050`) and
+  re-enters there, revived to 40 % by the entry rule that applies whatever the flags say
+  (`handleEnterWorld`'s revive of a stored HP 0, `character.RespawnFraction`). Before round 665 it
+  was saved where it fell and re-entered beside the monster that killed it.
 
 It is behind the `-persist-position` flag (env `SRREVAMP_PERSIST_POSITION`), and **the default is
 off**: off, nothing is saved or read, every entry lands at the zone spawn, and the wire is what it

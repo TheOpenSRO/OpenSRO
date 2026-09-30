@@ -1344,8 +1344,8 @@ on 2026-09-24 neither appeared in any non-test file under `server/internal` or
 | `OpMonsterMotionList 0x007f` | s→requester | u16 n, then n entries of {s64 id, f32 dest_x, f32 dest_z, f32 speed, u8 mode} (21 bytes each); sent right after an `OpMonsterListResult`, ONE packet per list |
 | `OpMonsterAttacked 0x007d` | s→zone, the attacker included | s64 monster id, s64 target character id, s32 damage (0 when blocked), u8 flags (bit 0 the monster's critical, bit 1 blocked, bit 2 the target died), s32 target HP after the blow (after a death, the HP it was put back on its feet with -- or 0 under `-player-dead-state`, round 549), s64 death exp lost -- 33 bytes; sent right AFTER the attacker's `OpAttackResult`, from the same goroutine, and after the zone's `OpMonsterDamaged` for the same swing; only with `-monster-strike-push` on (round 541). With `-monster-battle` on as well (round 546) the same message carries the monster's OWN swing, from the AI tick's strike worker, with no `OpAttackResult` before it; the layout is unchanged |
 | `OpMonsterSpawned 0x007e` | s→zone | one record in `OpMonsterListResult`'s own encoding (s64 id, u16-prefixed name, u16-prefixed code name, f32 x/y/z, u32 max HP, HP, level, rarity), then f32 heading (radians, srrevamp's world frame: from +x toward +z); sent when a monster appears -- a roster respawn or a GM `/spawn` -- only with `-monster-spawn-push` on (round 542) |
-| `OpRevive 0x0028` | c→s | empty: asks to be revived where the character lies. Sent by the Revive button (`HudPanels.show_revive_prompt` -> `World3D._on_revive_requested` -> `NetClient.revive`) and by `SRREVAMP_QA_REVIVE_AFTER` (round 548). The retail request 0x7053 carries a u8 option instead ("The player's dead state", below); not carried here, a disclosed stand-in. The 0x7053 rests on the project's `0x7000 \| op` precedent for handler `_053` (`recovered_names.tsv`'s `0x0a7` -> wire `0x70a7`; `observed_opcodes.md`'s `0x70xx` family), not on a read of `0x053`'s dispatch entry (round 550) |
-| `OpReviveResult 0x0029` | s→requester | u16-prefixed error string (empty on success), then s32 HP and s32 MP -- HP `1 + trunc(0.4 x MaxHP)`, the retail handler's additive arithmetic from 0 (round 550, `session.reviveHPDelta`), MP `character.RespawnMP` (0.4 of the maximum, a disclosed stand-in for the same additive rule); the decoder takes a refusal with or without the tail. Sent only with `-player-dead-state` on (the server half): after an `OpRevive`, or unasked by that half's auto-revive fallback |
+| `OpRevive 0x0028` | c→s | one u8 option since round 665, retail's own byte: 1 the return point, 2 the present point (level 10 or under). Sent by the dead window's two buttons (`HudPanels.show_revive_prompt` -> `World3D._on_revive_requested(option)` -> `NetClient.revive(option)`) and by `SRREVAMP_QA_REVIVE_AFTER` with `SRREVAMP_QA_REVIVE_OPTION`. An empty request (a client before round 665) is option 2 at level 10 or under and option 1 above it. The retail request is **0x3053** {u8} (the client's `FUN_00797d90`, `push 0x3053` at `0x797e30`; round 665 -- the 0x7053 written here before was the `0x7000 \| op` precedent, never a read). `character_state.md`, "The resurrect choices (round 665)" |
+| `OpReviveResult 0x0029` | s→requester | u16-prefixed error string (empty on success), then s32 HP and s32 MP -- HP `1 + trunc(0.4 x MaxHP)`, the retail handler's additive arithmetic from 0 (round 550, `session.reviveHPDelta`), MP `character.RespawnMP` (0.4 of the maximum, a disclosed stand-in for the same additive rule); the decoder takes a refusal with or without the tail. Sent only with `-player-dead-state` on (the server half), and only after an `OpRevive`: round 665 removed the auto-revive fallback. For option 1 it follows the `OpChangeZoneResult` to the return point and carries the load path's HP `trunc(0.4 x MaxHP)` |
 
 Fixtures, pinned by `client/scripts/net/combat_test.gd`:
 
@@ -2773,7 +2773,7 @@ with its last stored position as the fallback.
 
 **Stand-ins, each disclosed at its line (`session/deadstate.go`'s header):**
 
-- **Reviving in place at any level.** Grounded as retail's option 2 for a max level of 10 or under;
+- **[Superseded in round 665: both options are served -- option 1 to the return point (a stand-in point, the world entry's), option 2 in place at level 10 or under only.]** **Reviving in place at any level.** Grounded as retail's option 2 for a max level of 10 or under;
   above that retail offers only the return point, which srrevamp cannot build: no
   `_CHAR.AppointedTeleport` and no teleport gates (a `LatestRegion`/`Pos`-shaped last position is
   kept on the row since round 573, under `-persist-position`, but it is where the character already
@@ -2796,7 +2796,7 @@ with its last stored position as the fallback.
   the handler's +1: that wire is what an older client's tests pin, and the compression of a death
   and a revive into one call is the stand-in there, not the number (round 550).
 - **The empty request** against retail 0x7053's u8 option (round 548's contract).
-- **The auto-revive fallback, `AutoReviveAfter` = 30 s** (`RunAutoRevive`, a one-second pass): a
+- **[Removed in round 665: retail has no timed revive in the open world, and this one revived players among the monsters that had killed them -- `character_state.md`, "The resurrect choices (round 665)".]** **The auto-revive fallback, `AutoReviveAfter` = 30 s** (`RunAutoRevive`, a one-second pass): a
   session that never sends `OpRevive` -- a client older than round 548 -- is revived unasked and
   sent the same result and stats push. Own design and a user decision; the engine's nearest thing is
   the fortress-war countdown (`CGObjPC::PeriodicUpdateInSiege` -> `GObjPC::Revive`), a per-second

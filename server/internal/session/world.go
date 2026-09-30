@@ -1006,7 +1006,9 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 		if stillLive {
 			return
 		}
-		savePosition(chars, sess, left)
+		// A character leaving dead is saved at its return point (round 665,
+		// savedPlace).
+		savePosition(chars, sess, savedPlace(sess, left))
 		msg := &EntityLeft{CharacterID: left.CharacterID}
 		for _, other := range remaining {
 			other.Session.Send(&proto.Packet{Opcode: OpEntityLeft, Data: msg.Encode()})

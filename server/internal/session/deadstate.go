@@ -5,12 +5,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log/slog"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
@@ -27,13 +26,17 @@ import (
 // emptied and its keep-up cancelled; while dead its moves are neither stored
 // nor relayed and its attacks, casts, items, pick-ups, duel blows, trade
 // requests, zone changes and GM teleports are refused; the monster AI treats
-// it as no target. It comes back through OpRevive -- in place, HP at
-// 1 + trunc(0.4 x MaxHP) as the retail handler's arithmetic lands it
-// (reviveHPDelta, round 550), MP at character.RespawnMP -- or, for a session
-// that never sends one (a client older than round 548), through the
-// auto-revive fallback after AutoReviveAfter. With the flag off nothing
-// changes ON A KILL: it respawns at once and the kill's wire is what it was;
-// the one flag-independent piece is the entry revive of a stored HP 0
+// it as no target. It comes back through OpRevive and retail's two choices
+// (round 665, "THE CHOICES" below): option 1 returns it to its return point,
+// alive at the load path's trunc(0.4 x MaxHP), and option 2 -- level 10 or
+// under only -- revives it where it lies, HP at 1 + trunc(0.4 x MaxHP) as
+// the retail handler's arithmetic lands it (reviveHPDelta, round 550), MP at
+// character.RespawnMP. Nothing revives it unasked: retail has no timed
+// revive outside a fortress war, so round 549's 30 s in-place auto-revive
+// is gone (it revived players among their killers, who killed them again).
+// With the flag off a kill still respawns at once, but at the return point
+// since round 665 (returnAfterKill), not in place; the one other
+// flag-independent piece is the entry revive of a stored HP 0
 // (handleEnterWorld, the last stand-in below).
 //
 // GROUNDING, re-read on the RE box for this round (2026-09-24):
@@ -101,20 +104,78 @@ import (
 //     (0x5154e0) asks the REQUESTER's GetLifeState (0x515607; `cmp al,0x1` at
 //     0x515611) and answers 0x181d otherwise.
 //
+// THE CHOICES (round 665), READ from both binaries on the RE box:
+//
+//   - The client's dead window is message box kind 3, built by
+//     UI_SILKMALL::FUN_00644c90's case 3: the line
+//     UIIT_MSG_MSGBOX_ASK_SELF_REBIRTH_2 ("Choose a method to resurrect
+//     yourself.") outside a fortress war, and two buttons. Control 0xc9
+//     (the box's +0x800) is UIIT_MSG_MSGBOX_REBIRTH_POINT_BUTTON ("Resurrect
+//     at the specified point.") -- the literal 0xd9d340 pushed at 0x6455ed;
+//     REBIRTH_STANDING_BUTTON (0xd9d390) when the builder's ebx is 2, and
+//     UIIT_MSG_FLAGWAR_GO_TO_REVIVAL (0xd9d3e0) in a flag world. Control 0xca
+//     (+0x804, drawn with msgbox_rebirth_button.ddj) is
+//     UIIT_MSG_MSGBOX_REBIRTH_STANDING_BUTTON ("Resurrect at the present
+//     point.") while the player's MaxLevel (FUN_009d4d70, the byte at
+//     player+0x20d8) is at most 10 (`cmp al,0xa; ja` at 0x645688), else
+//     UIIT_MSG_MSGBOX_REBIRTH_HELP_BUTTON ("Waiting for other player's
+//     help.", 0xd9d2f8).
+//   - The box's event map (entries of 0x28 bytes at 0xeb5e88 and 0xeb5eb0,
+//     their handlers stored by the initializer at 0xd6a82b / 0xd6a835) sends
+//     control 0xc9 to FUN_0063b6e0, which records result 1, and 0xca to
+//     FUN_0063b8b0, which records 0; both hand it to FUN_00777dd0 ->
+//     FUN_00797d90(kind 3, result), whose case (the kind-3 entry of the jump
+//     table at 0x798a8c) asks the MaxLevel again (0x797e1c): at 10 or under,
+//     result 1 sends 0x3053 with the byte 1 (0x797e30 push 0x3053 -> 0x841780,
+//     Net_SendRequestPacket) and any other result sends 0x3053 with the byte 2
+//     (0x797eec `mov BYTE PTR [esp+0x16],0x2`); above 10, result 1 sends the
+//     byte 1 (0x797f06..0x797f4a) and any other sends NOTHING (0x797efd `jne
+//     0x798a61`). So the request is 0x3053 {u8 option}, the handler's one
+//     byte; "0x7053" in earlier rounds was the project's 0x7000|op
+//     precedent, not a read. srrevamp keeps its placeholder OpRevive.
+//   - The server answers with no message of its own: the handler's paths
+//     end in Revive and ApplyHPMPDelta, whose state and pool changes are
+//     what the client hears. srrevamp's OpReviveResult stands for them.
+//   - No timed revive in the open world. GObjPC::Revive has ten call sites
+//     (srv.asm 0x406181, 0x4158de, 0x46ccd0, 0x49ff54, 0x4f2c95, 0x5100e7,
+//     0x51018b, 0x510210, 0x51e5af, 0x51e67b): the resurrect handler, the
+//     resurrection scroll (FUN_0049ff20), a transaction's reply
+//     (trs_wait_response::vslot_002, 0x46cb30: Revive(1) on a PC in state 2,
+//     GameEventLog 0x15/3 -- INFERRED another player's resurrection), the GM
+//     command
+//     dispatcher, the siege countdown, the flag world's checker, a scripted
+//     warp job (AJStateChanger::vslot_002 kind 0xb/0, 0x405f70, whose
+//     creators were not traced) and two CMainProcess paths. The PC's
+//     one-second tick (CGObjPC::PeriodicUpdate, 0x52aa90) calls none of them;
+//     its state-2 branch is the SetCharacterState(0xf) one. Only
+//     PeriodicUpdateInSiege counts a dead player down.
+//   - Revive(0) (option 1) resolves the return point through
+//     CGObjPC::FUN_004e08a0 (above): FUN_004260b0 looks
+//     `_CHAR.AppointedTeleport` up as a ref object, whose +0x190 is its
+//     teleport record (RefTeleport_ExtractData, teleport_network.md), and
+//     FUN_004e0a40 -> FUN_00407760 reads that record's region (+0x20),
+//     X/Y/Z (+0x26/+0x28/+0x2a, shorts) and world (+0x48) -- the same
+//     arrival the gate teleport uses (0x513779). It then leaves through
+//     slot 0x378 (CGObjPC::vslot_222, 0x4df590), which stores the
+//     destination and takes the PC out of the world (FUN_004df050) to enter
+//     it again there; Revive(0) itself sets no life state and no pool. The
+//     re-entry's load path restores a stored zero pool to 40 %
+//     (GObjPC::FUN_004e1120, character.RespawnFraction), so the character
+//     arrives alive at trunc(0.4 x MaxHP).
+//
 // STAND-INS, each disclosed at its line and in the round's section:
 //
-//   - Reviving IN PLACE at any level. The retail handler revives in place
-//     (option 2) only while GetMaxLevel is at most 10; above that the client
-//     offers the return point (option 1), which srrevamp cannot build: it has
-//     no `_CHAR.AppointedTeleport` and no teleport gates. (The last-resort
-//     LatestRegion/Pos is kept on the row since round 573, under
-//     -persist-position -- but it is where the character already stands, so
-//     it builds no return point either.) So a character of level 11 or
-//     more revives where it fell, a stand-in; one of 10 or under revives as
-//     retail's option 2 does. No level test is made: both take the one
-//     in-place path, and GetMaxLevel is not modelled (srrevamp's Level
-//     would equal it -- a death never costs a level, GObjPC_OnDeath leaves
-//     CurLevel alone -- but nothing here reads it).
+//   - The return point is the character's entry point (returnPoint), not
+//     its appointed gate. Retail's is `_CHAR.AppointedTeleport` (above),
+//     which a gate's "Designate as return/recall point" line sets
+//     (UIIT_CTL_RECALL_POSITION, interaction id 7; teleport_network.md);
+//     srrevamp stores no such column and does not serve that line yet, and
+//     every character enters the world at spawnZone's arrival, so that is
+//     "home" here. What a new character's AppointedTeleport holds is not
+//     read (the value is written on the database side).
+//   - The level test reads Level for GetMaxLevel (+0x128). They are equal
+//     here: a death never costs a level (GObjPC_OnDeath leaves CurLevel
+//     alone) and srrevamp has no other way down.
 //   - The revived MP. Retail ADDS trunc(0.4 x MaxMP) to the MP the character
 //     died with (ApplyHPMPDelta above); srrevamp SETS the tracker to
 //     character.RespawnMP, a stand-in. (Corrected round 607: this used to
@@ -130,14 +191,23 @@ import (
 //     what an older client's tests pin, and the compression of a death and
 //     a revive into one call is the stand-in there, not the number.
 //   - The empty request. Round 548's client sends OpRevive with no payload;
-//     retail's 0x7053 carries the u8 option. An empty request is option-2
-//     semantics by that round's contract, and any payload is ignored here so
-//     an option byte can be added later without breaking either side.
-//   - The auto-revive fallback and its 30 s (AutoReviveAfter). The engine's
-//     nearest thing is the siege countdown (CGObjPC::PeriodicUpdateInSiege ->
-//     GObjPC::Revive), a per-second countdown whose start value is unread and
-//     which runs only during a fortress war. Own design, so an older client
-//     -- no button, no OpRevive -- is never stuck dead.
+//     retail's request carries the u8 option, and since round 665 srrevamp's
+//     does too (the option's first byte). An empty request -- a client from
+//     before round 665 with its one Revive button -- is read as option 2 at
+//     level 10 or under and option 1 above it: the one choice retail offers
+//     at that level, so it neither loops nor is refused. OURS.
+//   - A refused option 2 above level 10 is answered with a reason
+//     (reviveRefusedLevel). Retail's handler does nothing at all (the
+//     `bVar3 < 0xb` test at 0x51017f falls out of the handler), and its
+//     client never sends it (FUN_00797d90 sends nothing for that button above
+//     level 10); srrevamp answers so a stray request does not hang.
+//   - The protection after a revive is not modelled (OPEN). Retail's
+//     Revive(1) sets body mode 2, BODYMODE_INVINCIBLE, for 6.0 s (0xb45b78;
+//     11.0 s, 0xb45bb8, in the other world kind), and a return to the return
+//     point is a world re-entry, whose CGObjPC::vslot_391 (0x4df9e0) sets body
+//     mode 2 for the world's own time (its slot 0x70, not read; 6.0 s when no
+//     world is found). srrevamp has no body mode 2 (berserk.go, combat.go
+//     endBerserk).
 //   - The refusal strings (deadRefusal, "not dead") and the pick-up, duel,
 //     zone-change and GM-teleport refusals, whose retail handlers were not
 //     read for a life-state test (the pick-up handler 0x034 is a vtable
@@ -166,21 +236,45 @@ func SetPlayerDeadState(on bool) { playerDeadState.Store(on) }
 // 548 (grep, 2026-09-24) and the client half pins them
 // (client/scripts/net/world.gd OP_REVIVE / OP_REVIVE_RESULT).
 const (
-	OpRevive       uint16 = 0x0028 // client -> server, empty: revive me where I lie
-	OpReviveResult uint16 = 0x0029 // server -> the requester (or unasked, from the fallback)
+	OpRevive       uint16 = 0x0028 // client -> server, u8 option (empty from a client before round 665)
+	OpReviveResult uint16 = 0x0029 // server -> the requester
 )
 
-// AutoReviveAfter is how long a dead character waits before the server
-// revives it unasked (RunAutoRevive). OWN DESIGN and a user decision, the
-// plan's disclosed 30 s: it exists so a client without round 548's Revive
-// button is never stuck dead. Retail has no such fallback outside a fortress
-// war's countdown (character_state.md, "The siege revive").
-const AutoReviveAfter = 30 * time.Second
+// The resurrect options, retail's own byte (GObjPC_HandleResurrectMsg_053
+// 0x50fee0; the client's FUN_00797d90 sends 1 or 2 -- "THE CHOICES" above).
+const (
+	// ReviveOptionReturnPoint is "Resurrect at the specified point.":
+	// GObjPC::Revive(0), to the return point.
+	ReviveOptionReturnPoint byte = 1
+	// ReviveOptionPresentPoint is "Resurrect at the present point.":
+	// GObjPC::Revive(1) where the character lies, honoured only while the
+	// max level is at most PresentPointMaxLevel.
+	ReviveOptionPresentPoint byte = 2
+)
 
-// autoReviveTickInterval is how often RunAutoRevive looks. OWN DESIGN; the
-// siege countdown is decremented on the PC's one-second tick, so the
-// fallback is honoured to within a second.
-const autoReviveTickInterval = time.Second
+// PresentPointMaxLevel is the highest max level option 2 revives at: the
+// server's `bVar3 < 0xb` on IGObj::GetMaxLevel (+0x128; `cmp al,0xa; ja` at
+// 0x51017f) and the client's `cmp al,0xa; ja` at 0x645688 (the button's
+// label) and 0x797e21 (the send). READ.
+const PresentPointMaxLevel = 10
+
+// reviveRefusedLevel answers option 2 above PresentPointMaxLevel. The
+// wording is OURS: retail's handler does nothing for it.
+const reviveRefusedLevel = "you can resurrect at the present point only up to level 10"
+
+// ReviveOption is the option an OpRevive payload asks for: its first byte,
+// or -- for the empty payload of a client before round 665 -- the one
+// choice retail offers at the character's level (option 2 at level
+// PresentPointMaxLevel or under, else option 1; the header's stand-in).
+func ReviveOption(data []byte, level int) byte {
+	if len(data) > 0 {
+		return data[0]
+	}
+	if level <= PresentPointMaxLevel {
+		return ReviveOptionPresentPoint
+	}
+	return ReviveOptionReturnPoint
+}
 
 // deadRefusal is the error string a request refused for being dead carries.
 // srrevamp's own wording; the engine answers a code (0x1889 for an item,
@@ -324,6 +418,19 @@ func reviveHPDelta(maxHP int) int {
 // death, so the character is dead again for the next attempt rather than
 // alive at 0. It returns the character as it stands and its MP.
 func revivePlayer(ctx context.Context, chars character.Store, mp *mana.Tracker, hub *world.Hub, characterID int64) (*character.Character, int, error) {
+	return reviveWith(ctx, chars, mp, hub, characterID, false)
+}
+
+// reviveWith is revivePlayer with the pools chosen by where the character
+// comes back. In place (option 2) they are the handler's, as revivePlayer
+// says. At the return point (option 1, returnToPoint) they are the load
+// path's, the one a retail Revive(0) ends in (the world re-entry; "THE
+// CHOICES" in the header): a stored zero pool comes back at
+// trunc(0.4 x maximum), at least 1 HP (Store.RespawnHP's rule, which
+// character.RespawnFraction records), and a pool above zero is kept -- so
+// the dead character's HP, which is 0, is restored, and its MP, which a
+// death leaves where it was, is restored only if it is empty.
+func reviveWith(ctx context.Context, chars character.Store, mp *mana.Tracker, hub *world.Hub, characterID int64, returnToPoint bool) (*character.Character, int, error) {
 	if hub == nil {
 		return nil, 0, errNotDead
 	}
@@ -345,7 +452,11 @@ func revivePlayer(ctx context.Context, chars character.Store, mp *mana.Tracker, 
 	if err != nil {
 		return stillDead(err)
 	}
-	hp, err := chars.Heal(ctx, characterID, reviveHPDelta(c.MaxHP()), c.MaxHP())
+	delta := reviveHPDelta(c.MaxHP())
+	if returnToPoint {
+		delta = max(1, int(float64(c.MaxHP())*character.RespawnFraction))
+	}
+	hp, err := chars.Heal(ctx, characterID, delta, c.MaxHP())
 	if err != nil {
 		return stillDead(err)
 	}
@@ -356,6 +467,11 @@ func revivePlayer(ctx context.Context, chars character.Store, mp *mana.Tracker, 
 	mpNow := 0
 	if mp != nil {
 		mpNow = character.RespawnMP(c.MaxMP())
+		if returnToPoint {
+			if cur := mp.Current(characterID, c.MaxMP()); cur > 0 {
+				mpNow = cur
+			}
+		}
 		mp.Refill(characterID, mpNow)
 	}
 	return c, mpNow, nil
@@ -379,11 +495,26 @@ func sendRevived(ctx context.Context, sess *gateway.Session, c *character.Charac
 	return nil
 }
 
-// ReviveHandler returns a gateway.Handler implementing OpRevive: the session's
-// own in-world character, dead, is revived where it lies (revivePlayer) and
-// answered with an OpReviveResult; a living one is answered "not dead", as the
-// retail handler's `cmp al,0x2` does nothing for it. The request's payload is
-// not read (the stand-in note above). deps build the stats push.
+// ReviveHandler returns a gateway.Handler implementing OpRevive, retail's two
+// choices (round 665; "THE CHOICES" in the header). The session's own
+// in-world character must be dead -- a living one is answered "not dead", as
+// the retail handler's `cmp al,0x2` does nothing for it. Then by the option
+// (ReviveOption):
+//
+//   - 1, the return point: the character is moved there while still dead
+//     (returnToPoint: the zone change the client reloads on, as a warp does),
+//     so no monster can take it for a target between the two, and then
+//     revived there with the load path's pools (reviveWith). Retail's
+//     Revive(0) likewise moves first and lives again on the re-entry.
+//   - 2, the present point: revived where it lies (revivePlayer) -- only at
+//     level PresentPointMaxLevel or under; above it the request is refused
+//     (reviveRefusedLevel) and the character stays dead.
+//   - anything else: refused, the character stays dead (the handler has no
+//     other arm).
+//
+// Either revive is answered with an OpReviveResult and the stats push. deps
+// build the push, and deps.Equipment the snapshots of the characters the
+// return point's zone holds.
 func ReviveHandler(chars character.Store, hub *world.Hub, deps RegenDeps) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpRevive {
@@ -396,7 +527,29 @@ func ReviveHandler(chars character.Store, hub *world.Hub, deps RegenDeps) gatewa
 		if !ok {
 			return refuse("not in the world")
 		}
-		c, mpNow, err := revivePlayer(ctx, chars, deps.Mana, hub, e.CharacterID)
+		if e.Life != world.LifeDead {
+			return refuse("not dead")
+		}
+		var (
+			c     *character.Character
+			mpNow int
+			err   error
+		)
+		switch ReviveOption(p.Data, e.Level) {
+		case ReviveOptionReturnPoint:
+			moved, err := returnToPoint(ctx, sess, chars, hub, deps)
+			if err != nil || !moved {
+				return err // !moved: warpTo has answered "not in the world"
+			}
+			c, mpNow, err = reviveWith(ctx, chars, deps.Mana, hub, e.CharacterID, true)
+		case ReviveOptionPresentPoint:
+			if e.Level > PresentPointMaxLevel {
+				return refuse(reviveRefusedLevel)
+			}
+			c, mpNow, err = revivePlayer(ctx, chars, deps.Mana, hub, e.CharacterID)
+		default:
+			return refuse("no such resurrect option")
+		}
 		if errors.Is(err, errNotDead) {
 			return refuse("not dead")
 		}
@@ -409,70 +562,71 @@ func ReviveHandler(chars character.Store, hub *world.Hub, deps RegenDeps) gatewa
 	}
 }
 
-// RunAutoRevive is the fallback for a session that never sends OpRevive: every
-// autoReviveTickInterval it revives, unasked, every character dead for
-// AutoReviveAfter or longer and sends it the same OpReviveResult the handler
-// would, which round 548's client takes the same way and an older client
-// never needed (it never saw itself dead: its HP is simply back). cmd/server
-// runs it only with -player-dead-state on; with the flag off nobody is ever
-// dead and it would find nothing.
-func RunAutoRevive(ctx context.Context, hub *world.Hub, chars character.Store, deps RegenDeps, logger *slog.Logger) {
-	ticker := time.NewTicker(autoReviveTickInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case now := <-ticker.C:
-			autoReviveTick(ctx, hub, chars, deps, now, logger)
-		}
-	}
+// returnPoint is where option 1 takes a character: the zone label, hub
+// bucket, position and frame of its arrival. OURS, disclosed in the header:
+// retail's is the character's appointed teleport gate
+// (`_CHAR.AppointedTeleport`, CGObjPC::FUN_004e08a0), which srrevamp does not
+// store; this is the place every character enters the world at, spawnZone's
+// arrival (handleEnterWorld), so a player killed in the field goes back to
+// town. Every character shares it until a bind point is kept.
+func returnPoint() (zone, bucket string, pos world.Position, frame string) {
+	bucket, pos, frame, _ = arrival(spawnZone)
+	return spawnZone, bucket, pos, frame
 }
 
-// autoReviveWarned holds the characters whose auto-revive has failed and been
-// logged, so a store that keeps failing is logged ONCE per character rather
-// than every pass (round 550). An entry lives exactly as long as the failures
-// do: a pass keeps only the characters whose revive FAILED on it and prunes
-// every other entry, so the entry goes on the very pass that revives her,
-// finds her revived on request, or no longer lists her. (The first cut kept
-// every DUE character, the one it had just revived included, so her entry
-// outlived the revive by a pass -- and, this being package state, reached the
-// next test's fresh store with the same id and suppressed its WARN; the
-// batch-18 review caught it as the test failing on -count=3.)
-var autoReviveWarned sync.Map
+// returnToPoint moves the character on sess to its return point: the same
+// arrival a zone change or a gate makes (warpTo) -- the mover's
+// OpChangeZoneResult, the old zone's OpEntityLeft, the new zone's
+// OpEntityEntered, the position saved under -persist-position. The life
+// state travels with it (world.Hub.ChangeZone), so a dead character arrives
+// dead and a living one alive. It reports whether anything moved.
+func returnToPoint(ctx context.Context, sess *gateway.Session, chars character.Store, hub *world.Hub, deps RegenDeps) (bool, error) {
+	zone, bucket, pos, frame := returnPoint()
+	return warpTo(ctx, sess, deps.Equipment, chars, hub, deps.Berserk, zone, bucket, pos, frame)
+}
 
-// autoReviveTick is one pass at now. Split out so a test can drive it with
-// its own clock.
-func autoReviveTick(ctx context.Context, hub *world.Hub, chars character.Store, deps RegenDeps, now time.Time, logger *slog.Logger) {
-	if hub == nil || chars == nil {
+// returnAfterKill is the flag-off death's second half (round 665): a kill
+// with -player-dead-state off respawns the character at once
+// (finishKill's RespawnHP), and this then moves it to its return point, so it
+// no longer comes back among the monsters that just killed it and dies again
+// (the final release review's loop). OURS, disclosed: retail has one death,
+// the dead state and the choice window; this compresses it and option 1 --
+// the choice every level has -- into the kill. The pools stay the respawn's,
+// trunc(0.4 x MaxHP) and 40 % MP, which are the load path's that a retail
+// option 1 ends in. Each caller runs it after the kill's own messages
+// (the result, the push), so the client hears the blow before the zone
+// change; it does nothing with the flag on (the character is dead and asks
+// for itself), for a character not in the world, or for one already dead
+// again.
+func returnAfterKill(ctx context.Context, chars character.Store, eq equipment.Store, hub *world.Hub, characterID int64) {
+	if playerDeadState.Load() || hub == nil {
 		return
 	}
-	failing := map[int64]bool{}
-	for _, e := range hub.AllEntities() {
-		if e.Life != world.LifeDead || e.DiedAt.IsZero() || now.Sub(e.DiedAt) < AutoReviveAfter {
-			continue
-		}
-		c, mpNow, err := revivePlayer(ctx, chars, deps.Mana, hub, e.CharacterID)
-		if errors.Is(err, errNotDead) {
-			continue // revived on request between the listing and now
-		}
-		if err != nil {
-			failing[e.CharacterID] = true
-			if _, warned := autoReviveWarned.LoadOrStore(e.CharacterID, struct{}{}); !warned && logger != nil {
-				logger.Warn("auto-revive failed", "character", e.CharacterID, "err", err)
-			}
-			continue
-		}
-		if logger != nil {
-			logger.Info("auto-revive", "character", e.CharacterID, "after", now.Sub(e.DiedAt), "hp", c.HP)
-		}
-		endBerserk(hub, deps.Berserk, e.CharacterID)
-		_ = sendRevived(ctx, e.Session, c, mpNow, deps)
+	e, ok := hub.EntityByCharacterID(characterID)
+	if !ok || e.Session == nil || e.Life != world.LifeAlive {
+		return
 	}
-	autoReviveWarned.Range(func(k, _ any) bool {
-		if id, ok := k.(int64); !ok || !failing[id] {
-			autoReviveWarned.Delete(k)
-		}
-		return true
-	})
+	zone, bucket, pos, frame := returnPoint()
+	_, _ = warpTo(ctx, e.Session, eq, chars, hub, nil, zone, bucket, pos, frame)
+}
+
+// savedPlace is e as a leaving session saves it (-persist-position): a
+// character leaving the world dead is saved at its return point, not where it
+// fell, so it re-enters in town (alive, handleEnterWorld's revive of a stored
+// HP 0) and not beside the monster that killed it. READ: the PC's leave path
+// FUN_004df050 asks the life state (`cmp al,0x2` at 0x4df129) and, for a dead
+// PC in the main world, resolves the return point (CGObjPC::FUN_004e08a0,
+// `call 0x4e08a0` at 0x4df188) and writes it as the saved region, position
+// and world (0x4df194 FUN_004f9950, 0x4df1a0 FUN_004f9920, 0x4df1ae
+// FUN_004f9850). The point itself is returnPoint's stand-in. It also points
+// the session's remembered place at the return point's label and frame, which
+// savePosition writes under.
+func savedPlace(sess *gateway.Session, e world.Entity) world.Entity {
+	if e.Life != world.LifeDead || sess == nil {
+		return e
+	}
+	zone, _, pos, frame := returnPoint()
+	rememberPlace(sess, zone, frame, time.Now())
+	e.Pos = pos
+	return e
 }

@@ -1203,14 +1203,24 @@ func open_guild_leave_prompt(npc_name: String) -> void:
 # and sends OpRevive (NetClient.revive); the server's OpReviveResult takes the
 # prompt down (hide_revive_prompt).
 #
-# THIS PROJECT'S OWN DESIGN. The retail client's resurrection dialogue -- the
-# one behind 0x7053, whose server handler GObjPC_HandleResurrectMsg_053
-# (0x50fee0) reads a u8 option: 1 return to the return point, 2 revive here,
-# the latter only for a max level of 10 or under (docs/protocol/monster_ai.md,
-# "The player's dead state") -- was not read, and srrevamp's server revives in
-# place at any level (a disclosed stand-in), so there is one choice to offer.
-# The panel is the talk prompts' dark, gold-edged box (_talk_prompt), and its
-# wording is this project's.
+# RETAIL'S CHOICES (round 665; docs/protocol/character_state.md, "The
+# resurrect choices"). READ: the retail dead window is message box kind 3
+# (UI_SILKMALL::FUN_00644c90 case 3): the line UIIT_MSG_MSGBOX_ASK_SELF_REBIRTH_2
+# ("Choose a method to resurrect yourself.") and two buttons. Control 0xc9 is
+# UIIT_MSG_MSGBOX_REBIRTH_POINT_BUTTON ("Resurrect at the specified point.",
+# pushed at 0x6455ed) and sends the option 1; control 0xca is
+# UIIT_MSG_MSGBOX_REBIRTH_STANDING_BUTTON ("Resurrect at the present point.")
+# while the player's max level is at most 10 (`cmp al,0xa; ja` at 0x645688)
+# and sends the option 2, else UIIT_MSG_MSGBOX_REBIRTH_HELP_BUTTON ("Waiting
+# for other player's help.") and sends nothing (FUN_00797d90: 0x797e30 /
+# 0x797eec / 0x797efd). The wording is the player's own textuisystem.txt
+# through _resolve_ui; the English fallbacks are that table's English column.
+# OURS: the panel is the talk prompts' dark, gold-edged box, not the retail
+# msgbox art (interface\messagebox\msgbox_rebirth_button.ddj is not drawn);
+# our death line stays above retail's; and the help button is shown disabled
+# and the box stays up, where retail's click closes the box (INFERRED, the
+# result goes through FUN_00777dd0) -- no one can resurrect another player in
+# srrevamp yet, so the return point must stay one click away.
 
 ## The prompt's node name under this HUD; at most one is up at a time.
 const REVIVE_PROMPT := "RevivePrompt"
@@ -1231,13 +1241,28 @@ var player_dead := false:
 ## wording (World3D has no class_name to read it from).
 const DEAD_INPUT_LINE := "You are dead. Revive first."
 
-## The Revive button was clicked. World3D sends OpRevive (_on_revive_requested).
-signal revive_requested
+## A resurrect button was clicked, with retail's option byte: 1 the return
+## point, 2 the present point. World3D sends OpRevive (_on_revive_requested).
+signal revive_requested(option: int)
 
-## Puts the Revive prompt over the world: `line` (World3D's death line) and
-## the button. Replaces a prompt already up. Sits on this HUD, not on a
-## window, so it stays while every window closes and is never hidden with one.
-func show_revive_prompt(line: String) -> void:
+## Retail's options (the server's GObjPC_HandleResurrectMsg_053 byte).
+const REVIVE_OPTION_RETURN_POINT := 1
+const REVIVE_OPTION_PRESENT_POINT := 2
+## The highest max level the present point is offered at (READ, 0x645688).
+const REVIVE_PRESENT_POINT_MAX_LEVEL := 10
+
+## The buttons' node names, for the suite and the QA hooks.
+const REVIVE_BUTTON_POINT := "RevivePoint"
+const REVIVE_BUTTON_HERE := "ReviveHere"
+const REVIVE_BUTTON_HELP := "ReviveHelp"
+
+## Puts the dead window over the world: `line` (World3D's death line), retail's
+## "Choose a method" line and its two buttons for a character of max level
+## `level` (0: unknown, taken as 10 or under -- the server refuses the
+## present point above it anyway). Replaces a prompt already up. Sits on this
+## HUD, not on a window, so it stays while every window closes and is never
+## hidden with one.
+func show_revive_prompt(line: String, level: int = 0) -> void:
 	hide_revive_prompt()
 	var panel := PanelContainer.new()
 	panel.name = REVIVE_PROMPT
@@ -1253,15 +1278,27 @@ func show_revive_prompt(line: String) -> void:
 	box.add_theme_constant_override("separation", 8)
 	panel.add_child(box)
 	box.add_child(_shop_label(line, Color(0.95, 0.9, 0.72)))
-	var row := HBoxContainer.new()
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	box.add_child(row)
-	var btn := Button.new()
-	btn.name = "Revive"
-	btn.text = "Revive"
-	btn.custom_minimum_size = Vector2(96, 0)
-	btn.pressed.connect(func() -> void: revive_requested.emit())
-	row.add_child(btn)
+	box.add_child(_shop_label(_resolve_ui("UIIT_MSG_MSGBOX_ASK_SELF_REBIRTH_2",
+		"Choose a method to resurrect yourself."), Color(0.95, 0.9, 0.72)))
+	var col := VBoxContainer.new()
+	col.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.add_theme_constant_override("separation", 4)
+	box.add_child(col)
+	var point := Button.new()
+	point.name = REVIVE_BUTTON_POINT
+	point.text = _resolve_ui("UIIT_MSG_MSGBOX_REBIRTH_POINT_BUTTON", "Resurrect at the specified point.")
+	point.pressed.connect(func() -> void: revive_requested.emit(REVIVE_OPTION_RETURN_POINT))
+	col.add_child(point)
+	var second := Button.new()
+	if level <= REVIVE_PRESENT_POINT_MAX_LEVEL:
+		second.name = REVIVE_BUTTON_HERE
+		second.text = _resolve_ui("UIIT_MSG_MSGBOX_REBIRTH_STANDING_BUTTON", "Resurrect at the present point.")
+		second.pressed.connect(func() -> void: revive_requested.emit(REVIVE_OPTION_PRESENT_POINT))
+	else:
+		second.name = REVIVE_BUTTON_HELP
+		second.text = _resolve_ui("UIIT_MSG_MSGBOX_REBIRTH_HELP_BUTTON", "Waiting for other player's help.")
+		second.disabled = true
+	col.add_child(second)
 	add_child(panel)
 	panel.reset_size()
 	# Outside the scene tree (the headless suite drives this on a bare HUD)

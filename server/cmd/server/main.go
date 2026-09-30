@@ -839,11 +839,13 @@ func main() {
 	deadState := flag.Bool("player-dead-state", deadStateEnv,
 		"leave a player a monster kills dead (env SRREVAMP_PLAYER_DEAD_STATE): life state 2 at HP 0, "+
 			"its potion queue emptied, its moves, attacks, casts, items, pick-ups, duel blows, trade "+
-			"requests, zone changes and GM teleports refused, and no monster's target, until it sends "+
-			"OpRevive 0x0028 (revived in place at 40% of each maximum) or 30 s pass (the auto-revive "+
-			"fallback). Default OFF: off, a kill respawns the player at once and the wire is what it "+
-			"was. Needs a client release that carries round 548 (the Revive button); an older client "+
-			"is freed by the fallback alone. See deploy/README.md, \"Player dead state (off by default)\".")
+			"requests, zone changes and GM teleports refused, and no monster's target, until it asks for "+
+			"one of retail's resurrect choices with OpRevive 0x0028: option 1 returns it to its return point "+
+			"(the world's entry point in town) at 40% HP, option 2 revives it where it lies, at level 10 or "+
+			"under only. Nothing revives it unasked. Default OFF: off, a kill respawns the player at once at "+
+			"the return point. Needs a client release that carries round 665 (the two buttons); an older "+
+			"client's one Revive button gets option 2 at level 10 or under and option 1 above. See "+
+			"deploy/README.md, \"Player dead state (off by default)\".")
 	aggroEnv, aggroEnvErr := envBool("SRREVAMP_MONSTER_AGGRO")
 	aggro := flag.Bool("monster-aggro", aggroEnv,
 		"let monsters notice players (env SRREVAMP_MONSTER_AGGRO): a monster idle, wandering or, once "+
@@ -1289,17 +1291,16 @@ func main() {
 		Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
 	}, logger)
 	// The player's dead state (round 549), behind its own flag: a monster's
-	// kill leaves the character dead until OpRevive or the auto-revive
-	// fallback, which runs only with the flag on (with it off nobody is ever
-	// dead). Set before the gateway serves, like the monster flags below.
+	// kill leaves the character dead until it asks for one of retail's two
+	// resurrect choices (OpRevive; round 665). Nothing revives it unasked --
+	// retail has no timed revive outside a fortress war, so round 549's 30 s
+	// in-place fallback is gone. Set before the gateway serves, like the
+	// monster flags below.
 	session.SetPlayerDeadState(*deadState)
 	if *deadState {
-		go session.RunAutoRevive(ctx, hub, chars, session.RegenDeps{
-			Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker, Berserk: zerkTracker,
-		}, logger)
-		logger.Info(fmt.Sprintf("player dead state on: a monster's kill leaves the player dead (life state 2, HP 0) until OpRevive 0x0028 or the %v auto-revive fallback (own design)", session.AutoReviveAfter))
+		logger.Info("player dead state on: a monster's kill leaves the player dead (life state 2, HP 0) until OpRevive 0x0028 -- option 1 to the return point, option 2 where it lies at level 10 or under")
 	} else {
-		logger.Info("player dead state off (-player-dead-state / SRREVAMP_PLAYER_DEAD_STATE)")
+		logger.Info("player dead state off (-player-dead-state / SRREVAMP_PLAYER_DEAD_STATE): a monster's kill respawns the player at once at the return point")
 	}
 	monsters := combat.NewHub()
 	// Abnormal states (round 659, session/status.go): every monster's and

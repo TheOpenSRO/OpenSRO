@@ -7094,6 +7094,184 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-sixty-fifth round: a player killed among monsters is no longer trapped reviving and dying -- retail's two resurrect choices, "the specified point" taking it back to town
+
+The final release review (run r3) watched a GM under `-player-dead-state` auto-revived in place
+at 366.0, 397.0, 428.0 and 459.0 s and killed again within 0.1-0.5 s each time, losing 933,800
+EXP per death; `/tp` is refused while dead, and a level-30 player looped the same way. srrevamp
+only revived in place: round 549's 30 s auto-revive, and a Revive button that sent an empty
+`OpRevive`. This round read retail's resurrect flow in both binaries and built its choices.
+
+Labels: READ (SR_GameServer.exe / sro_client.exe: the decompiles, `srv.asm`, `sro_client.asm`,
+and wide strings read out of the client executable on the render box), MEASURED, INFERRED, OURS.
+The reading is filed in `docs/protocol/character_state.md`, "The resurrect choices (round 665)",
+and `server/internal/session/deadstate.go`, "THE CHOICES".
+
+### 1. What retail does (READ)
+
+- **The window**: message box kind 3 (`UI_SILKMALL::FUN_00644c90` case 3). The line
+  `UIIT_MSG_MSGBOX_ASK_SELF_REBIRTH_2`, "Choose a method to resurrect yourself.", and two buttons.
+  Control 0xc9 is `UIIT_MSG_MSGBOX_REBIRTH_POINT_BUTTON`, "Resurrect at the specified point."
+  (`push 0xd9d340` at `0x6455ed`). Control 0xca is `UIIT_MSG_MSGBOX_REBIRTH_STANDING_BUTTON`,
+  "Resurrect at the present point.", while the player's max level (`FUN_009d4d70`, the byte at
+  `player+0x20d8`) is at most 10 (`cmp al,0xa; ja` at `0x645688`), and
+  `UIIT_MSG_MSGBOX_REBIRTH_HELP_BUTTON`, "Waiting for other player's help." (`0xd9d2f8`) above.
+- **The request**: the box's event map (`0xeb5e88` 0xc9 -> `FUN_0063b6e0`, result 1; `0xeb5eb0`
+  0xca -> `FUN_0063b8b0`, result 0) -> `FUN_00777dd0` -> `FUN_00797d90(kind 3, result)`. At max
+  level 10 or under, result 1 sends **0x3053 {u8 1}** (`push 0x3053` at `0x797e30`) and the other
+  button **{u8 2}** (`0x797eec`); above 10, result 1 sends {u8 1} and the other button sends
+  **nothing** (`jne 0x798a61` at `0x797efd`). The opcode is 0x3053: the "0x7053" in earlier rounds
+  was the project's `0x7000 | op` precedent, never a read.
+- **The handler** (`GObjPC_HandleResurrectMsg_053`, `0x50fee0`, round 550's reading re-checked):
+  state 2 only; option 2 revives in place only while `GetMaxLevel` is under 11 and otherwise does
+  nothing; option 1 is `GObjPC::Revive(0)`. No reply message of its own.
+- **The return point**: `Revive(0)` -> `CGObjPC::FUN_004e08a0` looks `_CHAR.AppointedTeleport` up
+  as a ref object (`FUN_004260b0`), its `+0x190` teleport record read by `FUN_004e0a40` ->
+  `FUN_00407760` (region +0x20, X/Y/Z +0x26/+0x28/+0x2a, world +0x48: a gate's arrival), and
+  leaves through slot `0x378` (`CGObjPC::vslot_222`, `0x4df590`: the destination stored, the PC
+  taken out of the world by `FUN_004df050` to enter again there). `Revive(0)` sets no state and no
+  pool; the re-entry's load path restores a stored zero pool to 40 % (`GObjPC::FUN_004e1120`).
+  The point is set by a gate's "Designate as return/recall point" line (interaction id 7); that
+  service's server side and a new character's default are NOT read.
+- **Leaving dead**: `FUN_004df050` (`cmp al,0x2` at `0x4df129`) resolves the return point
+  (`call 0x4e08a0` at `0x4df188`) and saves it (`0x4df194`..`0x4df1ae`).
+- **No timed revive in the open world**: of `GObjPC::Revive`'s ten call sites (listed in the doc)
+  none is on the PC's one-second tick (`CGObjPC::PeriodicUpdate`, `0x52aa90`); only
+  `PeriodicUpdateInSiege` counts a dead player down (a fortress war). The scripted warp job
+  `AJStateChanger::vslot_002` (kind 0xb / 0) also calls `Revive(0)`; its creators were not traced.
+- **Protection**: `Revive(1)` sets body mode 2 (invincible) for 6.0 s (`0xb45b78`; 11.0 s,
+  `0xb45bb8`, in the other world kind); a return to the return point is a world re-entry, where
+  `CGObjPC::vslot_391` (`0x4df9e0`) sets body mode 2 for the world's own time (slot `0x70`, not
+  read). Not modelled (OPEN).
+- **EXP**: the penalty is charged once, at the kill (`GObjPC_OnDeath`); neither revive path
+  charges anything.
+
+### 2. What shipped
+
+Server (`session/deadstate.go`):
+
+- `OpRevive` carries retail's option byte (`ReviveOption`). **Option 1** moves the dead character
+  to its return point first (`returnToPoint` -> `warpTo`: the mover's `OpChangeZoneResult`, the
+  zones' left/entered, the position saved) -- still dead, so no monster can take it between the
+  two -- then revives it there at the load path's pools (`reviveWith`: HP `trunc(0.4 x MaxHP)`, at
+  least 1; MP kept, or 40 % if empty). **Option 2** revives in place (round 550's 1 +
+  `trunc(0.4 x MaxHP)`) at level 10 or under (`PresentPointMaxLevel`) and is refused above it.
+- **The return point is OURS**: srrevamp keeps no `AppointedTeleport`, so it is the place every
+  character enters the world at, `spawnZone`'s arrival (`returnPoint`).
+- **The 30 s in-place auto-revive is removed** (`RunAutoRevive`, `autoReviveTick`,
+  `AutoReviveAfter`; cmd/server no longer starts it).
+- An empty request (a client before this round) is option 2 at level 10 or under and option 1
+  above it (OURS), so an old client neither loops nor is refused.
+- A character leaving dead is saved at its return point (`savedPlace`, READ above), on disconnect
+  and on server stop, under `-persist-position`.
+- **Flag off** (`-player-dead-state` off, the default): the kill's instant respawn is moved to the
+  return point after the kill's own messages (`returnAfterKill`, called by the strike worker, the
+  attacker's counter and the status tick) -- OURS, the dead state compressed with option 1; before,
+  the player came back at 40 % where it fell.
+
+Client: the dead window has retail's line and two buttons, their text resolved from the player's
+own textuisystem.txt (`HudPanels.show_revive_prompt(line, level)`; the second button is the
+present point at level 10 or under, else the disabled help button), and `NetClient.revive(option)`
+sends the byte. `SRREVAMP_QA_REVIVE_OPTION` picks the QA hook's button (default 1).
+
+OURS in the window: the talk prompts' box instead of the retail message-box art; our death line
+kept above retail's; the help button disabled and the box left up, where retail's click closes it
+(INFERRED: its result goes through `FUN_00777dd0`), because no one can resurrect another player
+in srrevamp yet.
+
+### 3. Tests
+
+`server/internal/session/revive665_test.go` (wire-level, compiling on the base) and
+`server/cmd/server/revive665_test.go`:
+
+- `TestReviveOptionOneReturnsToTheReturnPoint`: level 30, killed in donwhang, option 1 -> the zone
+  change to jangan first, then the revive at `trunc(0.4 x MaxHP)`, the stats push, the hub entity
+  alive at the return point, Bram in jangan sees her arrive.
+- `TestReviveOptionTwoOnlyUpToLevelTen`: level 10 in place; level 11 refused, still dead at 0 in
+  donwhang, then option 1 takes her home.
+- `TestEmptyReviveAboveLevelTenReturnsToTheReturnPoint`.
+- `TestReviveRequestFromTheLivingIsRefused` (options 1, 2 and empty: "not dead", nobody moved).
+- `TestTeleportWhileDeadStaysRefused` (a dead GM's `/tp` over the wire).
+- `TestADeathAtTheReturnPointCostsOnePenalty` (flag on and off: one EXP penalty, none from the
+  revive; flag off, the respawn is at the return point, not at (700, 700) where she fell).
+- `TestLeavingDeadSavesTheReturnPoint` (the disconnect handler saves jangan's arrival).
+- `TestServerStartsNoAutoRevive` (main.go names no session auto-revive).
+
+Updated: `TestMonsterStrikePushCarriesTheFlags` (flag off: the push, then the zone change home);
+round 549's two auto-revive tests are deleted with the feature. Client:
+`monster_strikes_test.gd` (`_test_hud_revive_prompt`: retail's texts, option 1 and 2 at level 10,
+no present point and a disabled help button at 11) and `net/world_test.gd` (`encode_revive(1)` /
+`(2)` are one byte).
+
+**The negative** (the new test files on c41c6ae, a detached worktree):
+
+```
+--- FAIL: TestReviveOptionOneReturnsToTheReturnPoint (0.36s)
+    revive665_test.go:65: option 1's first answer is 0x0029, want OpChangeZoneResult to the return point (a revive in place answers OpReviveResult first)
+--- FAIL: TestReviveOptionTwoOnlyUpToLevelTen (0.38s)
+    --- FAIL: TestReviveOptionTwoOnlyUpToLevelTen/level_11_refused (0.18s)
+        revive665_test.go:128: level 11's option 2 answered &{Error: HP:98 MP:0} (err <nil>), want a refusal
+--- FAIL: TestEmptyReviveAboveLevelTenReturnsToTheReturnPoint (0.18s)
+    revive665_test.go:153: an empty request at level 30 answered 0x0029 first, want the zone change to the return point
+--- FAIL: TestADeathAtTheReturnPointCostsOnePenalty (0.00s)
+    --- FAIL: TestADeathAtTheReturnPointCostsOnePenalty/dead_state_off (0.00s)
+        revive665_test.go:252: flag off: life 1 at {X:700 Y:0 Z:700}, want respawned alive at the return point {X:0 Y:0 Z:0}, not where she fell ({X:700 Y:0 Z:700})
+--- FAIL: TestLeavingDeadSavesTheReturnPoint (2.18s)
+    revive665_test.go:283: Aria left dead in donwhang and was saved in "donwhang" at (0, 0), want the return point "jangan" at (0, 0)
+FAIL
+FAIL	github.com/OpenSRO/srrevamp/server/internal/session	91.130s
+FAIL
+--- FAIL: TestServerStartsNoAutoRevive (0.00s)
+    revive665_test.go:33: main.go:1297:6: main.go uses session.RunAutoRevive: a dead player must stay dead until it chooses retail's return point or present point
+    revive665_test.go:33: main.go:1300:179: main.go uses session.AutoReviveAfter: a dead player must stay dead until it chooses retail's return point or present point
+FAIL
+FAIL	github.com/OpenSRO/srrevamp/server/cmd/server	0.005s
+FAIL
+```
+
+Client suites on c41c6ae's client with the new tests:
+
+```
+SCRIPT ERROR: Invalid call to function 'show_revive_prompt (via call)' in base 'Control (HudPanels)'. Expected 1 arguments.
+ALL PASS
+SCRIPT ERROR: Parse Error: Too many arguments for "encode_revive()" call. Expected at most 0 but received 1.
+SCRIPT ERROR: Parse Error: Too many arguments for "encode_revive()" call. Expected at most 0 but received 1.
+(the runner counts a SCRIPT ERROR as a failure: the base's `show_revive_prompt` takes no level and its `encode_revive` no option)
+```
+
+Results on the head: `go build ./... && go vet ./...` clean; `go test -count=1 -p 1 -timeout 30m ./...` 62 packages ok (the first full run failed `TestMonsterCounterReachesTheZone` on an over-broad edit of this round, fixed; `internal/session` then re-run alone: ok, 191 s); client `remote_godot.sh check` ALL LOAD (441 scripts, 5 scenes)
+and `remote_godot.sh tests` 178 suites, 0 failing. No world drawing changed, so no perf gate (a UI
+dialog and a server flow).
+
+### 4. Live (MEASURED, render box, lane revive665, `/var/tmp/revive665/live/r1`)
+
+The final review's r3 setup (the full map with the DB's nests -- the nestdb files are EXTERNAL,
+read from `/var/tmp/final664/nestdb`, never committed -- `-monster-ai -monster-battle
+-monster-aggro -player-dead-state`, the wire tap `f664tap`) with this round's server and client:
+one GM, level 30, `/tp` to the densest 3 x 3 window the boot log names, the QA hook choosing option
+1 240 frames after the death.
+
+| time (s after the GM reply `teleporting to -222240.0, 17440.0`) | what | where it is recorded |
+|---|---|---|
+| +0.51 | `SYSLOG [1] [84200]Experience Points lost.` and `World3D: left dead (HP 0)`: killed within half a second of arriving among the 192 monsters of cell (-692, 57) | `A.log` |
+| +5.04 | `QA REVIVE: sending OpRevive option 1 240 frames after the death` -> c2s `0x0028` `01` | `A.log`, `wireA.jsonl` |
+| +5.04 (same ms) | s2c `0x0027` OK, zone `jangan`, (0, 0, 0), frame `97/168`; 1 ms later s2c `0x0029` HP 0x15c = **348** (= trunc(0.4 x 870)), MP 870 | `wireA.jsonl` |
+| +9.27 | `World3D: revived (HP 348, MP 870)`, after the zone's loading screen | `A.log` |
+| +9.3 .. +75 | alive in Jangan: `QA STATS` HP 348 -> 444 -> 450 -> 456 of 870 (regenerating, never struck) | `A.log` |
+| +75 | `deaths=1 exp_lost_lines=1 revives=1` | `steps.log` |
+
+Against r3's loop (revived in place every 31 s, dead again within 0.5 s, 933,800 EXP a death)
+the player died once, lost EXP once, came back in town alive and stayed alive. The server log
+holds no error or panic.
+
+### 5. OPEN
+
+`docs/TODO.md` (the mob-player-dead-state entry, "Round 665"): the bind point
+(`AppointedTeleport` and the gate's designate line), body mode 2 after a revive, resurrection by
+another player or a scroll, the retail message-box art, and whether `-player-dead-state` should
+default on (retail has one death; a user decision). `deploy/README.md`'s dead-state section is
+updated to match.
+
 ## Six-hundred-and-sixty-fourth round: dense monster fields hold 60 fps -- a player is sent only the monsters of the 3 x 3 blocks around it, as retail sends them, and a 2,500-monster crowd draws at 40 fps instead of 6
 
 Round 660's follow-up measured the full map with the shard DB: 1,378 bodies drawn at the Europe

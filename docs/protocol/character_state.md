@@ -292,6 +292,97 @@ not read** — `pc[0x735]` is decremented once per one-second tick, so the unit 
 seconds, but nothing here says what it is initialised to.
 
 
+## The resurrect choices (round 665)
+
+What a dead player may do, read from both binaries on the render box (the server's decompile
+and `srv.asm`, the client's decompile and `sro_client.asm`, the client's wide strings read out
+of `sro_client.exe`). srrevamp's implementation is `server/internal/session/deadstate.go`
+("THE CHOICES") and `client/scripts/ui/hud/hud_panels.gd` (`show_revive_prompt`).
+
+**The window (client, READ).** Message box kind 3, built by `UI_SILKMALL::FUN_00644c90` case 3:
+
+| part | what it is | where |
+|---|---|---|
+| line | `UIIT_MSG_MSGBOX_ASK_SELF_REBIRTH_2`, "Choose a method to resurrect yourself." (outside a fortress war; the `UIIT_MSG_FORT_REVIVE_*` lines in one) | `FUN_00644c90` case 3 |
+| button 0xc9 (`+0x800`) | `UIIT_MSG_MSGBOX_REBIRTH_POINT_BUTTON`, "Resurrect at the specified point." (`push 0xd9d340`, `0x6455ed`); `..._REBIRTH_STANDING_BUTTON` (`0xd9d390`) when the builder's `ebx` is 2; `UIIT_MSG_FLAGWAR_GO_TO_REVIVAL` (`0xd9d3e0`) in a flag world | `0x6455be`..`0x6455ed` |
+| button 0xca (`+0x804`, `msgbox_rebirth_button.ddj`) | `UIIT_MSG_MSGBOX_REBIRTH_STANDING_BUTTON`, "Resurrect at the present point.", while the player's max level is at most 10; else `UIIT_MSG_MSGBOX_REBIRTH_HELP_BUTTON`, "Waiting for other player's help." (`0xd9d2f8`) | `FUN_009d4d70` (the byte at `player+0x20d8`, the server-sent MaxLevel), `cmp al,0xa; ja` at `0x645688` |
+
+**The request (client, READ).** The box's event map -- 0x28-byte entries whose control ids sit
+at +0x18 (`0xeb5e88`: 0xc9, `0xeb5eb0`: 0xca), their handlers stored by the initializer at
+`0xd6a82b` / `0xd6a835` -- sends 0xc9 to `FUN_0063b6e0` (result 1) and 0xca to `FUN_0063b8b0`
+(result 0). Both pass the result to `FUN_00777dd0` -> `FUN_00797d90(kind 3, result)`, whose kind-3
+case (the jump table at `0x798a8c`, index table `0x798afc`) reads the MaxLevel again (`0x797e1c`):
+
+| max level | result 1 (0xc9) | any other (0xca) |
+|---|---|---|
+| 10 or under | `0x3053` {u8 **1**} (`push 0x3053` at `0x797e30`, `Net_SendRequestPacket` `0x841780`) | `0x3053` {u8 **2**} (`mov BYTE PTR [esp+0x16],0x2` at `0x797eec`) |
+| above 10 | `0x3053` {u8 **1**} (`0x797f06`..`0x797f4a`) | **nothing** (`jne 0x798a61` at `0x797efd`) |
+
+So the wire request is **0x3053** with one byte. Earlier rounds wrote 0x7053 from the project's
+`0x7000 | op` precedent for handler `_053`; that was never a read, and the client's push says
+0x3053. srrevamp keeps its placeholder `OpRevive 0x0028`, now carrying the byte.
+
+**The handler (server, READ, round 550's reading re-checked).** `GObjPC_HandleResurrectMsg_053`
+(`0x50fee0`): life state 2 only; a siege countdown above 0xa5 blocks it; death cause 2 revives
+in place whatever the option; option 2 revives in place only while `GetMaxLevel` (+0x128) is
+under 11 (`bVar3 < 0xb`), and otherwise does **nothing** (no reply); option 1 calls
+`GObjPC::Revive(0)`. There is no reply message of its own: what the client hears is the state and
+pool changes the revive makes.
+
+**The return point (server, READ).** `Revive(0)` asks `CGObjPC::FUN_004e08a0` for a region, a
+position and a world: outside a fortress war it looks `_CHAR.AppointedTeleport` up as a ref object
+(`FUN_004260b0`), whose `+0x190` is its teleport record (`RefTeleport_ExtractData`,
+`teleport_network.md`), and `FUN_004e0a40` -> `FUN_00407760` reads the record's region (+0x20),
+X/Y/Z shorts (+0x26/+0x28/+0x2a) and world (+0x48) -- the arrival a gate teleport uses. An
+unknown gate logs "someone designated unknown teleport gate: %d" and falls back to `LatestRegion`
+/ `PosX/Y/Z` / `WorldID`. `Revive(0)` then leaves through slot `0x378` (`CGObjPC::vslot_222`,
+`0x4df590`), which stores the destination and takes the PC out of the world (`FUN_004df050`) to
+enter it again there; it sets no life state and no pool itself. The re-entry's load path restores
+a stored zero pool to 40 % (`GObjPC::FUN_004e1120`, `character.RespawnFraction`). The gate's
+"Designate as return/recall point" line (`UIIT_CTL_RECALL_POSITION`, interaction id 7) is what
+sets `AppointedTeleport`; its server side and a new character's default value are **not read**.
+
+**Leaving dead (server, READ).** `FUN_004df050`, the PC's leave path, asks the life state
+(`cmp al,0x2` at `0x4df129`) and, for a dead PC in the main world, resolves the return point
+(`call 0x4e08a0` at `0x4df188`) and writes it as the saved region, position and world
+(`FUN_004f9950` / `FUN_004f9920` / `FUN_004f9850`, `0x4df194`..`0x4df1ae`). A player who logs out
+dead comes back at the return point.
+
+**No timed revive in the open world (READ, one probe per caller).** `GObjPC::Revive` has ten call
+sites (`srv.asm`: `0x406181`, `0x4158de`, `0x46ccd0`, `0x49ff54`, `0x4f2c95`, `0x5100e7`,
+`0x51018b`, `0x510210`, `0x51e5af`, `0x51e67b`): the resurrect handler (three), the resurrection
+scroll (`FUN_0049ff20`), a transaction's reply (`trs_wait_response::vslot_002`: `Revive(1)` on a
+PC in state 2 with `GameEventLog 0x15/3` -- INFERRED another player's resurrection), the GM
+command dispatcher, the siege countdown (`CGObjPC::PeriodicUpdateInSiege`), the flag world's
+checker, a scripted warp job (`AJStateChanger::vslot_002` kind 0xb / 0, whose creators were not
+traced) and two `CMainProcess` paths. The PC's one-second tick (`CGObjPC::PeriodicUpdate`,
+`0x52aa90`) calls none of them. Only a fortress war counts a dead player down, and its client text
+says so ("automatically made after three minutes", `UIIT_MSG_FORT_REVIVE_PENALTY_TEXT_02`).
+
+**Protection after the revive (READ; not modelled).** `Revive(1)` sets body mode 2
+(`BODYMODE_INVINCIBLE`) for 6.0 s (`0xb45b78`; 11.0 s, `0xb45bb8`, in the other world kind). A
+return to the return point is a world re-entry, and `CGObjPC::vslot_391` (`0x4df9e0`) sets body
+mode 2 there for the world's own time (its slot `0x70`, not read; 6.0 s when no world is found).
+srrevamp has no body mode 2.
+
+**What srrevamp does, and what is OURS.**
+
+- Option 1 moves the dead character to its return point (the zone change a warp makes) and then
+  revives it there at the load path's pools: HP `trunc(0.4 x MaxHP)` (at least 1), MP kept, or
+  40 % if empty. The **return point is OURS**: srrevamp keeps no `AppointedTeleport`, so it is the
+  place every character enters the world at (`spawnZone`'s arrival, Jangan).
+- Option 2 revives in place at 1 + `trunc(0.4 x MaxHP)` (round 550) at level 10 or under, and is
+  refused with a reason above it (retail says nothing; OURS).
+- An empty request (a client before round 665) is option 2 at level 10 or under and option 1
+  above it (OURS).
+- Round 549's 30 s in-place auto-revive is **gone**: retail has none.
+- A character leaving dead is saved at the return point (READ above), under `-persist-position`.
+- With `-player-dead-state` off, a kill still respawns at once, but the respawn is moved to the
+  return point after the kill's messages (OURS: the dead state compressed with option 1).
+- The window is drawn as the talk prompts' box, not retail's message box art; the help button is
+  shown disabled and the box stays up (retail's click closes it, INFERRED) -- no one can
+  resurrect another player in srrevamp yet (OURS).
+
 ## Life-state 2 is the character's DEAD state, closed with a typed receiver (round 413)
 
 Rounds 411 and 412 could not close this because every census grouped by the

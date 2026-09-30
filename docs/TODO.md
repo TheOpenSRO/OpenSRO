@@ -283,6 +283,22 @@ In order. Each is checked off here when it ships in a release, with its round in
         dead (`(tid & 0xf800) == 0x3000` in `Item_HandleUseItem`), the duel's own death path (still
         `ResetHP`, alive: which death kind a duel is remains unread), and revive at entry rather than
         staying dead across sessions. Not modelled: the siege countdown gate, the cause-2 branch.
+        **Round 665 (retail's resurrect choices, `character_state.md`, "The resurrect choices"):**
+        the dead window offers retail's two buttons and `OpRevive` carries retail's option byte --
+        option 1 to the return point, option 2 in place at level 10 or under; the 30 s in-place
+        auto-revive is gone (retail has none); a character leaving dead is saved at the return
+        point; with the flag off a kill's respawn is moved to the return point. **OPEN, in order**:
+        (1) the bind point -- `_CHAR.AppointedTeleport`, set by a gate's "Designate as
+        return/recall point" line (interaction id 7, `UIIT_CTL_RECALL_POSITION`, whose server side
+        is not read) -- so the return point is the character's own town and not every
+        character's Jangan entry (OURS today); a new character's default is also unread;
+        (2) body mode 2 after a revive, 6.0 s invincible (`0xb45b78`) and the world entry's own
+        time (world slot `0x70`, unread) -- srrevamp has no body mode 2; (3) resurrection by
+        another player and by scroll (`trs_wait_response::vslot_002`, `FUN_0049ff20`), which the
+        "Waiting for other player's help." button stands for -- shown disabled today, while
+        retail's click closes the box; (4) the retail message box art
+        (`msgbox_rebirth_button.ddj`) for the window; (5) whether to default `-player-dead-state`
+        on -- retail has one death, the dead state (a user decision).
       - **mob-acquire** -- BUILT in round 552 behind `-monster-aggro` (default off; forced off
         unless `-monster-battle` is in effect and `-player-dead-state` is on): target acquisition
         (round 257: radius = BCRadius + `_RefTactics.+0x14`, the nearest player, no level term) with

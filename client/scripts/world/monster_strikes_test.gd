@@ -459,9 +459,13 @@ func _clip(frames: int) -> BanReader.ParsedAnimation:
 	anim.bones.append(bone)
 	return anim
 
-## Round 548, the Revive button on a bare HUD (no archive, not in the tree):
-## show puts one prompt up with a Revive button whose click emits
-## revive_requested; a second show replaces the first; hide takes it down.
+## Round 548's prompt, since round 665 retail's dead window (message box kind
+## 3, UI_SILKMALL::FUN_00644c90 case 3), on a bare HUD (no archive, not in the
+## tree): "Resurrect at the specified point." sends option 1 at any level;
+## the second button is "Resurrect at the present point." (option 2) at max
+## level 10 or under and the disabled "Waiting for other player's help." above
+## it, which sends nothing (FUN_00797d90, 0x797efd). A second show replaces
+## the first; hide takes it down.
 func _test_hud_revive_prompt() -> void:
 	var panels_script := load("res://scripts/ui/hud/hud_panels.gd") as GDScript
 	var panels_ok := panels_script != null and panels_script.can_instantiate()
@@ -469,16 +473,37 @@ func _test_hud_revive_prompt() -> void:
 	if not panels_ok:
 		return
 	var panels: Control = panels_script.new()
-	var fired := [0]
-	panels.connect("revive_requested", func() -> void: fired[0] += 1)
-	panels.call("show_revive_prompt", "You were killed.")
+	var options := []
+	panels.connect("revive_requested", func(option: int) -> void: options.append(option))
+	panels.call("show_revive_prompt", "You were killed.", 10)
 	var prompt := panels.get_node_or_null("RevivePrompt")
 	_check(prompt != null, "show_revive_prompt puts the prompt on the HUD")
-	var button: Button = prompt.find_child("Revive", true, false) as Button if prompt != null else null
-	_check(button != null, "with a Revive button")
-	if button != null:
-		button.pressed.emit()
-	_check(fired[0] == 1, "clicking it emits revive_requested once (got %d)" % fired[0])
+	var point: Button = prompt.find_child("RevivePoint", true, false) as Button if prompt != null else null
+	var here: Button = prompt.find_child("ReviveHere", true, false) as Button if prompt != null else null
+	_check(point != null and point.text == "Resurrect at the specified point.",
+		"level 10: the return-point button, retail's UIIT_MSG_MSGBOX_REBIRTH_POINT_BUTTON text (got %s)" % (point.text if point != null else "none"))
+	_check(here != null and here.text == "Resurrect at the present point.",
+		"level 10: the present-point button, UIIT_MSG_MSGBOX_REBIRTH_STANDING_BUTTON (got %s)" % (here.text if here != null else "none"))
+	var labels := prompt.find_children("*", "Label", true, false) if prompt != null else []
+	_check(labels.any(func(l: Node) -> bool: return (l as Label).text == "Choose a method to resurrect yourself."),
+		"with retail's line UIIT_MSG_MSGBOX_ASK_SELF_REBIRTH_2")
+	if point != null:
+		point.pressed.emit()
+	if here != null:
+		here.pressed.emit()
+	_check(options == [1, 2], "the buttons send option 1 and option 2 (got %s)" % str(options))
+	options.clear()
+	panels.call("show_revive_prompt", "You were killed.", 11)
+	prompt = panels.get_node_or_null("RevivePrompt")
+	point = prompt.find_child("RevivePoint", true, false) as Button if prompt != null else null
+	var help: Button = prompt.find_child("ReviveHelp", true, false) as Button if prompt != null else null
+	_check(prompt != null and prompt.find_child("ReviveHere", true, false) == null,
+		"level 11: no present-point button (the handler honours option 2 only up to 10)")
+	_check(help != null and help.disabled and help.text == "Waiting for other player's help.",
+		"level 11: the second button is UIIT_MSG_MSGBOX_REBIRTH_HELP_BUTTON, and it sends nothing")
+	if point != null:
+		point.pressed.emit()
+	_check(options == [1], "level 11: the return point still sends option 1 (got %s)" % str(options))
 	panels.call("show_revive_prompt", "You were killed.")
 	var prompts := panels.get_children().filter(func(c: Node) -> bool: return c.name == "RevivePrompt")
 	_check(prompts.size() == 1, "a second show replaces the first (%d prompt(s) on the HUD)" % prompts.size())

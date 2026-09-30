@@ -1504,6 +1504,11 @@ func (a *monsterAI) runStrike(id int64, job strikeJob) {
 	if out.wall.Broke {
 		endBrokenWall(a.world, job.target)
 	}
+	// Flag off, a kill respawned her: to the return point, after the push
+	// (round 665, returnAfterKill).
+	if out.died {
+		returnAfterKill(ctx, a.deps.chars, a.deps.eq, a.world, job.target)
+	}
 }
 
 // heldKey names one keep-up as the release test sees it: the monster it is
