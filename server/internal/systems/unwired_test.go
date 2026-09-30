@@ -53,15 +53,14 @@ var parked = map[string]string{
 
 	// Recovered rule sets with no system in srrevamp to attach to. Each one
 	// says so in its own package doc; this is the index of them.
-	"academy":      "recovered training-camp rules; srrevamp has no training camp",
-	"alchemy":      "recovered reinforce success model; srrevamp has no reinforcement",
-	"arena":        "recovered battle-arena shape; its own doc opens 'srrevamp has no arena'",
-	"cos":          "recovered summon rules for pets/carts/mercenaries; srrevamp summons nothing",
-	"jobs":         "recovered trade-route job rules; srrevamp has no job system",
-	"persistence":  "the recovered DB surface of the real server, a specification rather than a store",
-	"siege":        "recovered fortress-war rules; its own doc says srrevamp 'is not about to grow one'",
-	"statuseffect": "recovered abnormal-state rules; its own doc says 'this is the spec for one'",
-	"timedjob":     "recovered expiry machinery; srrevamp has no timed jobs to expire",
+	"academy":     "recovered training-camp rules; srrevamp has no training camp",
+	"alchemy":     "recovered reinforce success model; srrevamp has no reinforcement",
+	"arena":       "recovered battle-arena shape; its own doc opens 'srrevamp has no arena'",
+	"cos":         "recovered summon rules for pets/carts/mercenaries; srrevamp summons nothing",
+	"jobs":        "recovered trade-route job rules; srrevamp has no job system",
+	"persistence": "the recovered DB surface of the real server, a specification rather than a store",
+	"siege":       "recovered fortress-war rules; its own doc says srrevamp 'is not about to grow one'",
+	"timedjob":    "recovered expiry machinery; srrevamp has no timed jobs to expire",
 
 	// "ai" left this map in round 537: session/monsterai.go imports it and
 	// drives the state machine behind cmd/server's -monster-ai (off by

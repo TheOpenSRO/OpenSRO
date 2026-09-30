@@ -416,6 +416,10 @@ func sendMonsterEnter(sess *gateway.Session, m combat.Monster, facing float64) e
 	if err := sess.Send(&proto.Packet{Opcode: OpMonsterSpawned, Data: msg.Encode()}); err != nil {
 		return err
 	}
+	// Its abnormal states, if any (round 659, status.go).
+	if err := sendMonsterStatus(sess, m.ID); err != nil {
+		return err
+	}
 	if !m.Moving {
 		return nil
 	}

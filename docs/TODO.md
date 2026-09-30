@@ -1066,6 +1066,40 @@ interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
 - [ ] **The respawn is still the flat 10 s** (`respawnDelay`, disclosed): round 659 brings the READ
       nest rules into the one scheduler.
 
+### Status effects on monsters and players (round 659) — **built: receive, give, DoT kills, stun/freeze/sleep/root/slow, the 0x3057 mask and its icons; these are left**
+
+Round 659 (`docs/protocol/status_effects.md`, "What srrevamp does"; WORLD_ISSUES.md round 659).
+Left:
+
+- [ ] **Burn deals 0 a tick.** Its damage is `table[value2]` from the server binary's 0xc63c94 word
+      table, which is not copied into the repository (docs/LEGAL.md). `statuseffect.SetBurnTable`
+      takes it; nothing loads it yet (an operator-supplied file, read from their own binary).
+- [ ] **The client draws a state only as a target-window icon.** READ but not built: the per-bit
+      body effect (`0x9cd5e0` -> `0xa950a0("PARAM_<label>")` -> `0xa54020`), the colour lerps
+      (`vtable +0x48`, 1000 ms; the colours are the floats at `0xde2488..0xde24c4`), freeze's pose
+      (`+0xbd`, animation state 9) and the animation-speed change for frostbite and slow (`+0xc0`).
+      Nor does the player's own buff bar show its abnormal states (`UI_STATE::0x7836d0`), nor the
+      tooltip's description line.
+- [ ] **A character resists nothing.** Params 27..32 / 145..150 (item magic options, buffs) are not
+      published; `statuseffect.Target` takes them.
+- [ ] **Unpublished params**: myopia's range cut (183, `combat.ApproachBand`), dark's attack rate
+      (11), electric shock's parry (9), the curses (3, 4, 5, 6, 178..181), param 140 under
+      frostbite/slow, and all of them on a character. The mask shows; the numbers do not move.
+- [ ] **Unread blocks**: the halving loop the slow, bleeding and stun blocks run on the chance (its
+      count; srrevamp rolls the base chance, never lower than retail's); the stun block's own guards
+      (`[esp+0x43]`, the call's fifth argument); 'tb' (+0x474, not applied) and 'csmp' (no
+      applier, not applied); the target flags word whose bits 4 and 8 withhold states
+      (`0x58f3f4`); fear's AI message 0x14.
+- [ ] **A player's speed is not slowed**: the client moves its own character; the server applies
+      frostbite and slow only to monster legs.
+- [ ] **INFERRED**: that a frozen, stunned or sleeping monster starts no attack (the motion state is
+      read; the attack path's test on it is not). Sleep is not broken by damage (unread).
+- [ ] **OURS**: the 100 ms pass (`StatusTick`); the first tick one interval after the state lands
+      (`record+0x68`'s first value is unread); states ending at logout; character masks going to
+      the whole zone (monster masks go to the area of interest's watchers).
+- [ ] **A kill by a tick shows no EXP line** in the killer's system window: the reward is granted
+      and `OpLevelUp` sent, but no `OpAttackResult` carries `ExpGained` for it.
+
 ### Other bodies' facing (round 637 and its review follow-up) — **built: every body, this player's too, turns to face where it goes at 3 pi rad/s, and an arrival faces the way it last walked; these are left**
 
 READ and measured in `docs/WORLD_ISSUES.md`'s 637th round; the rule is `RemoteFacing`.

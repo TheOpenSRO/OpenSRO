@@ -26,8 +26,11 @@ class_name HudTargetBuffs
 ## which the 0xB0BD buff-start handler calls for EVERY owner it finds, not
 ## only this player -- and type 3 (0xa53fc0, from 0xB0BE, a buff carrying a
 ## name; srrevamp sends none). Then the abnormal-state bits of +0x2c4
-## (0x7fd2e0, into the second list; srrevamp sends no one's abnormal states:
-## OPEN). The premium IS a skill buff (round 638 review): the premium items
+## (0x7fd2e0, into the second list), one icon per set bit, low to high --
+## since round 659 srrevamp sends every object's mask (StatusNet, 0x3057), and
+## World3D hands them in as entries with a negative id (abnormal_id): the
+## icon is icon\stateodd\ + 0x7fdab0's file, drawn like a skill icon, and
+## the tooltip StatusNet.tooltip's (0x7fc260 kind 2, READ in part). The premium IS a skill buff (round 638 review): the premium items
 ## carry [USU1:SKILL_MALL_PRE_APRU_4W_01], whose job engages the skill and
 ## sends 0xB0BD, so it shows here as any buff does. Only the buff bar's
 ## item-time kinds 3/4/5 (the UIL1/UIU1 grants) never reach this viewer.
@@ -81,6 +84,24 @@ class_name HudTargetBuffs
 ## CIFWnd's empty stubs, and so are CIFStateSlot's own. Only the buff bar
 ## (CIFMagicStateBoard::vslot_033) cancels a buff.
 
+## An abnormal state's entry id: -1 - its mask bit, so it can never meet a
+## skill id (0x9d25e0 skips a skill id that is not > 0). OURS.
+static func abnormal_id(bit: int) -> int:
+	return -1 - bit
+
+## The mask bit of an abnormal entry id, -1 for a skill.
+static func abnormal_bit(id: int) -> int:
+	return -1 - id if id < 0 else -1
+
+## An object's abnormal states as viewer entries, in 0x699480's order (bit 0
+## up): [{skill_id: abnormal_id(bit), token: 0, level}]. `levels` is
+## StatusNet's bit -> level.
+static func abnormal_entries(mask: int, levels: Dictionary) -> Array:
+	var out: Array = []
+	for bit in StatusNet.drawn_bits(mask):
+		out.append({"skill_id": abnormal_id(bit), "token": 0, "level": int(levels.get(bit, 0))})
+	return out
+
 const COLUMNS := 8
 const PITCH := Vector2(23, 23)
 const ICON_SIZE := Vector2(20, 20)
@@ -103,6 +124,8 @@ const NAME_ONLY_CODES := [
 class Entry:
 	var skill_id: int
 	var token: int
+	## An abnormal state's level (the 0x3057 byte; 0 for none or a skill).
+	var level: int
 	var main_list: bool
 	var slot: Slot
 
@@ -189,7 +212,7 @@ func ready_to_fill() -> bool:
 func rebuild(buffs: Array) -> void:
 	clear_all()
 	for b in buffs:
-		_add(int(b["skill_id"]), int(b.get("token", 0)))
+		_add(int(b["skill_id"]), int(b.get("token", 0)), int(b.get("level", 0)))
 	_layout()
 
 ## The per-second diff (0x7fd640), see the header.
@@ -207,6 +230,7 @@ func sync(buffs: Array) -> void:
 					break
 			if at >= 0:
 				e.token = int(left[at].get("token", e.token))
+				e.level = int(left[at].get("level", e.level))
 				left.remove_at(at)
 				i += 1
 			else:
@@ -214,7 +238,7 @@ func sync(buffs: Array) -> void:
 				list.remove_at(i)
 				changed = true
 	for b in left:
-		_add(int(b["skill_id"]), int(b.get("token", 0)))
+		_add(int(b["skill_id"]), int(b.get("token", 0)), int(b.get("level", 0)))
 		changed = true
 	if changed:
 		_layout()
@@ -233,11 +257,19 @@ func _free_slot(e: Entry) -> void:
 		e.slot.queue_free()
 	e.slot = null
 
-func _add(skill_id: int, token: int) -> void:
-	var info: Dictionary = catalog.info(skill_id) if catalog != null else {}
+func _add(skill_id: int, token: int, level: int = 0) -> void:
+	var bit := abnormal_bit(skill_id)
+	var info: Dictionary = {}
+	if bit >= 0:
+		# 0x7fd2e0: an abnormal slot, always in the second list; its icon is
+		# 0x7fdab0's (kind 2 of 0x7ff240).
+		info = {"icon": StatusNet.icon_path(bit), "bbuf": true}
+	elif catalog != null:
+		info = catalog.info(skill_id)
 	var e := Entry.new()
 	e.skill_id = skill_id
 	e.token = token
+	e.level = level
 	e.main_list = not bool(info.get("bbuf", false))
 	e.slot = _make_slot(skill_id, info)
 	add_child(e.slot)
@@ -269,6 +301,14 @@ func _layout() -> void:
 
 ## The tooltip text (0x7fc260, kind 1), see the header.
 func tooltip_for(skill_id: int) -> String:
+	var bit := abnormal_bit(skill_id)
+	if bit >= 0:
+		var level := 0
+		for list in [_main, _second]:
+			for e in list:
+				if (e as Entry).skill_id == skill_id:
+					level = (e as Entry).level
+		return StatusNet.tooltip(bit, level, _ui_text)
 	var info: Dictionary = catalog.info(skill_id) if catalog != null else {}
 	var code := String(info.get("name_code", ""))
 	var skill_name: String = catalog.text_of(code) if catalog != null else ""
@@ -283,6 +323,18 @@ func tooltip_for(skill_id: int) -> String:
 	if desc != "":
 		text += desc + "\n\n"
 	return text.strip_edges(false, true)
+
+## A UI text lookup for the abnormal tooltip (tests replace ui_text).
+var ui_text: Callable = Callable()
+
+func _ui_text(token: String) -> String:
+	if ui_text.is_valid():
+		return String(ui_text.call(token))
+	if _builder != null:
+		var s := _builder.resolve_text(token)
+		if s != "" and s != token:
+			return s
+	return token
 
 func _icon_texture(path: String) -> Texture2D:
 	var full := HudBuffBoard.icon_path(path)

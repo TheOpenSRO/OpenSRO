@@ -1373,6 +1373,7 @@ func _ready() -> void:
 	_berserk_resync_all("world entry")
 	NetClient.monster_damaged.connect(_on_monster_damaged)
 	NetClient.monster_died.connect(_on_monster_died)
+	NetClient.object_status.connect(_on_object_status)
 	NetClient.level_up.connect(_on_level_up)
 	NetClient.loot_dropped.connect(_on_loot_dropped)
 	NetClient.ground_item_list_result.connect(_on_ground_item_list_result)
@@ -1696,6 +1697,7 @@ func _try_initialize_pk2_ui() -> void:
 				_hud_buff_board.clear()
 			# And every other owner's (round 638): the zone re-sends them.
 			_target_buff_book.clear()
+			_abnormal_states.clear()
 			# And no target carries over (round 638 review): whatever was
 			# selected belonged to the entry that ended.
 			_last_attack_target = -1
@@ -5266,6 +5268,7 @@ func _replace_others_for_arrival(others: Array, seated: Array) -> void:
 	# zone (BuffRoster, started over at the result), and each body built
 	# below, and this player's, takes its auras from it.
 	_target_buff_book.clear()
+	_abnormal_states.clear()
 	_fx_owner_buffs.clear()
 	_spawn_result_others(list, seated)
 	_fx_resync_all("the zone change's arrival")
@@ -5934,6 +5937,30 @@ var _hud_target: HudTarget = null
 ## monster or player (HudTargetBuffs.Book; retail keeps them on each object,
 ## 0xB0BD -> 0x9cd050).
 var _target_buff_book := HudTargetBuffs.Book.new()
+## Every object's abnormal states, from OpObjectStatus (round 659, StatusNet;
+## retail's 0x3057 stores the mask on the object, +0x2c4): owner key ->
+## {"mask": int, "levels": bit -> level}. The buff viewer shows them after
+## the owner's skill buffs (_owner_buffs_and_states).
+var _abnormal_states := {}
+
+## The viewer's list for an owner: its buffs, then its abnormal states.
+func _owner_buffs_and_states(owner_key: String) -> Array:
+	var out: Array = _target_buff_book.list_of(owner_key)
+	var st: Dictionary = _abnormal_states.get(owner_key, {})
+	if not st.is_empty():
+		out.append_array(HudTargetBuffs.abnormal_entries(int(st["mask"]), st["levels"]))
+	return out
+
+func _on_object_status(st: StatusNet.ObjectStatus) -> void:
+	var key := _fx_owner_key(st.owner_id, st.owner_kind)
+	if st.mask == 0:
+		_abnormal_states.erase(key)
+	else:
+		_abnormal_states[key] = {"mask": st.mask, "levels": st.levels}
+	var labels := PackedStringArray()
+	for bit in StatusNet.drawn_bits(st.mask):
+		labels.append(StatusNet.label(bit))
+	print("World3D: %s abnormal mask 0x%x [%s]" % [key, st.mask, ", ".join(labels)])
 
 func _build_target_window() -> void:
 	_hud_target = HudTarget.new(_ui_builder)
@@ -5942,7 +5969,7 @@ func _build_target_window() -> void:
 	# zone's buffs by owner (round 638).
 	if _hud_buff_board != null:
 		_hud_target.buff_catalog = _hud_buff_board.catalog
-	_hud_target.buff_source = _target_buff_book.list_of
+	_hud_target.buff_source = _owner_buffs_and_states
 	# CIFTargetWindow::vslot_012's per-frame lookup (round 638 review): a
 	# target that no longer exists hides the window, and the selection goes.
 	_hud_target.target_exists = _target_exists
@@ -13555,6 +13582,7 @@ func _on_entity_left(character_id: int) -> void:
 	_other_gaits.erase(character_id)
 	SkillEffects.detach_owner(_fx_owner_key(character_id, 0))
 	_target_buff_book.drop(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER))
+	_abnormal_states.erase(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER))
 	_fx_owner_buffs.erase(_fx_owner_key(character_id, 0))
 	_other_seated.erase(character_id)
 	# A monster's blow on this player may cross the notice (round 546,
@@ -18198,6 +18226,7 @@ func _begin_monster_death(monster_id: int) -> void:
 		_clear_target()
 		_last_attack_target = -1
 	_target_buff_book.drop(_fx_owner_key(monster_id, SkillNet.OWNER_MONSTER))
+	_abnormal_states.erase(_fx_owner_key(monster_id, SkillNet.OWNER_MONSTER))
 	# A kill of the monster this player was walking to: no attack to send,
 	# and no reason to keep walking.
 	if not _pending_attack.is_empty() and int(_pending_attack["monster"]) == monster_id:

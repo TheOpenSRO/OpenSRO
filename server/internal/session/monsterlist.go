@@ -153,6 +153,9 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 	if !paged {
 		listed = monsterListNearestThatFit(listed, entity.Pos.X, entity.Pos.Z)
 	}
+	// After the list and its legs, still under the wire lock: the masks
+	// already on (round 659, status.go).
+	defer sendStatusesOfList(sess, hub, listed, entity.Zone)
 	snapshots := make([]MonsterSnapshot, len(listed))
 	for i, m := range listed {
 		snapshots[i] = monsterSnapshotOf(m)

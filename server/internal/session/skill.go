@@ -1354,6 +1354,11 @@ func useSkillHandler(
 			}
 			// The zone sees the cast (round 622, OpSkillCast).
 			announceCast(hub, characterID, req, castRow)
+			// A cast at a monster that resolves no blow -- a zero-damage stun,
+			// a debuff -- still lands its states (round 659, status.go).
+			if !isBuff && !isGround && !selfTarget && !friendly {
+				statusFX.applyToMonster(combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}, characterID, castRow, req.TargetMonsterID, now)
+			}
 			return nil
 		}
 
@@ -1380,6 +1385,9 @@ func useSkillHandler(
 		// alone, as retail's 0xB070 result 2 is.
 		if landed {
 			announceCast(hub, characterID, req, castRow)
+			// The blow's states (round 659, status.go): on the monster it
+			// landed on, if it lives.
+			statusFX.applyToMonster(combatDeps{chars: chars, eq: eq, items: items, hub: hub, monsters: monsters, quests: quests, inv: inv, skills: skills, zerk: zerk, mp: mp, parties: parties, ground: ground, dropSrc: dropSrc, potions: potions}, characterID, castRow, req.TargetMonsterID, now)
 		}
 		// The skill tick's hand-off (round 256, keepup.go): a row with
 		// AutoAttackType 1 and no Basic_ChainCode leaves a plain attack

@@ -531,6 +531,8 @@ func (a *monsterAI) tick(now time.Time) {
 				a.insistent[id] = struct{}{}
 			}
 		}
+		// Round 659: nor does one its states hold (status.go).
+		statusFX.addHeld(a.insistent, a.brains)
 	}
 
 	// 1. The mover (combat.MoverStep: the 160 cap and the no-overshoot clamp),
@@ -857,6 +859,11 @@ func (a *monsterAI) linkAggro(b *brain, attacker int64) {
 
 // update is one state's OnUpdate.
 func (a *monsterAI) update(b *brain) {
+	// A stunned, frozen or sleeping monster does nothing (round 659,
+	// status.go heldByStatus).
+	if a.heldByStatus(b) {
+		return
+	}
 	elapsed := int(a.now.Sub(b.enteredAt) / time.Millisecond)
 	switch b.machine.State() {
 	case ai.StateIdle:
@@ -1639,6 +1646,11 @@ func (a *monsterAI) startLeg(b *brain, destX, destZ float64, mode uint8, what st
 	speed := b.m.WalkSpeed
 	if mode != 0 {
 		speed = b.m.RunSpeed
+	}
+	// Its states slow the leg, or forbid it (round 659, status.go).
+	speed, may := statusSpeed(b.id, speed)
+	if !may {
+		return
 	}
 	m, ok := a.monsters.SetMotion(b.id, destX, destZ, speed, mode)
 	if !ok {

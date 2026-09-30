@@ -1324,6 +1324,11 @@ func main() {
 	// Timed buffs end at their end time (round 616): the book's expiry
 	// pass, broadcasting OpBuffEnd and the owner's new run speed.
 	go session.RunBuffTicker(ctx, hub, logger)
+	// Abnormal states (round 659, session/status.go): every monster's and
+	// character's states expire and deal their damage ticks here.
+	go session.RunStatusEffects(ctx, logger, session.RegenDeps{
+		Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
+	})
 	// The toggles and the protection walls (round 640, session/walls.go):
 	// each 'onff' toggle's MP drain and its end when the MP runs short, and
 	// a wall's end once its HP is gone. The walls read the monster skills'

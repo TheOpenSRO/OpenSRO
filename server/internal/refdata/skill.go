@@ -374,6 +374,13 @@ type Skill struct {
 	// that predates the column, where 0 would wrongly read as "never drawn".
 	// A Skill built in code (a test's) leaves it 0, a real 0.
 	AIAttackChance int
+	// StatusParams is every run of the row's Param block whose code is one of
+	// the 23 abnormal states (statuseffect.States) or 'puls', as
+	// `code:v0,v1,...;code:...` -- the values after the code word, in block
+	// order (CSV 90, round 659). Combat_ApplyStatusEffects (0x590680) reads
+	// these fields; statuseffect.ParseRuns reads the string. "" is no status,
+	// which is also what an export predating the column loads.
+	StatusParams string
 
 	// The mastery this skill belongs to and the mastery level required to learn
 	// it (ReqCommon_Mastery1 / ReqCommon_MasteryLevel1). These are what the
