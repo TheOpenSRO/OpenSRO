@@ -6,10 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"net"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1120,53 +1118,6 @@ func TestDeadCharacterCannotChangeZoneUntilRevived(t *testing.T) {
 	}
 }
 
-// The auto-revive fallback (round 549, own design): a session that never sends
-// OpRevive -- a client older than round 548, with no Revive button -- is
-// revived unasked once AutoReviveAfter has passed since the kill, and sent the
-// same OpReviveResult and stats push the handler sends. A tick a second early
-// does nothing; a tick after the revive finds nobody.
-func TestAutoReviveFallbackFreesAnOlderClient(t *testing.T) {
-	f := startDeadWorldFixture(t)
-	ctx := context.Background()
-	t0 := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
-	f.kill(t, f.aria, t0)
-
-	autoReviveTick(ctx, f.hub, f.chars, RegenDeps{}, t0.Add(AutoReviveAfter-time.Second), nil)
-	if !f.nothing(t, f.connA, f.rA) {
-		t.Fatal("the fallback revived a character a second early")
-	}
-	if e, _ := f.hub.EntityByCharacterID(f.aria); e.Life != world.LifeDead {
-		t.Fatalf("life state %d a second before the fallback is due, want 2", e.Life)
-	}
-
-	autoReviveTick(ctx, f.hub, f.chars, RegenDeps{}, t0.Add(AutoReviveAfter), nil)
-	p := f.read(t, f.connA, f.rA)
-	if p.Opcode != OpReviveResult {
-		t.Fatalf("the fallback sent %#04x, want OpReviveResult", p.Opcode)
-	}
-	rr, err := DecodeReviveResult(p.Data)
-	if err != nil || rr.Error != "" {
-		t.Fatalf("the fallback's result %+v (err %v), want a success", rr, err)
-	}
-	c, _ := f.chars.GetByID(ctx, f.aria)
-	if want := reviveHPDelta(c.MaxHP()); c.HP != want || int(rr.HP) != want {
-		t.Errorf("the fallback revived at HP %d (result %d), want %d (1 + trunc(0.4 x max), round 550)", c.HP, rr.HP, want)
-	}
-	if p := f.read(t, f.connA, f.rA); p.Opcode != OpCharacterStatsResult {
-		t.Errorf("after the fallback's result Aria received %#04x, want the stats push", p.Opcode)
-	}
-	if e, _ := f.hub.EntityByCharacterID(f.aria); e.Life != world.LifeAlive || !e.DiedAt.IsZero() {
-		t.Errorf("after the fallback: life %d, died at %v; want 1 and no time of death", e.Life, e.DiedAt)
-	}
-	autoReviveTick(ctx, f.hub, f.chars, RegenDeps{}, t0.Add(2*AutoReviveAfter), nil)
-	if !f.nothing(t, f.connA, f.rA) {
-		t.Error("a second pass revived a living character")
-	}
-	if !f.nothing(t, f.connB, f.rB) {
-		t.Error("Bram, alive throughout, was sent something by the fallback")
-	}
-}
-
 // A character logged out dead enters alive at character.RespawnFraction --
 // the load path's own rule for a stored zero pool (GObjPC::FUN_004e1120, the
 // 0.4 at 0x4e1141) -- with -player-dead-state on and off alike: the rule is
@@ -1235,79 +1186,6 @@ func (s *failingPoolStore) RespawnHP(ctx context.Context, id int64) error {
 		return errors.New("test: the pool write failed")
 	}
 	return s.Store.RespawnHP(ctx, id)
-}
-
-// resetAutoReviveWarned starts the test from an empty autoReviveWarned and
-// leaves one behind. The map is package state: an entry another test's
-// failing store left -- or, before round 550's review fix, the one a pass
-// kept for the character it had just revived -- reaches the next fixture's
-// Aria, id 1 in every fresh MemStore, and suppresses the WARN this test
-// counts (the test failed on -count=3 that way).
-func resetAutoReviveWarned(t *testing.T) {
-	t.Helper()
-	empty := func() {
-		autoReviveWarned.Range(func(k, _ any) bool {
-			autoReviveWarned.Delete(k)
-			return true
-		})
-	}
-	empty()
-	t.Cleanup(empty)
-}
-
-// A store that keeps failing the auto-revive is logged ONCE for the character
-// (round 550), not every pass; each failed attempt leaves her dead with her
-// time of death (revivePlayer puts the state back, so the next pass tries
-// again), and the pass on which the store recovers revives her, logs it and
-// forgets the warning -- so a later death of the same character that fails
-// again is logged again. Before this round every failing pass logged its own
-// WARN; the first cut of the fix kept the entry a pass past the revive.
-func TestAutoReviveWarnsOncePerCharacter(t *testing.T) {
-	resetAutoReviveWarned(t)
-	f := startDeadWorldFixture(t)
-	ctx := context.Background()
-	t0 := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
-	f.kill(t, f.aria, t0)
-	store := &failingPoolStore{Store: f.chars}
-	store.fails.Store(2)
-	var log lockedBuffer
-	logger := slog.New(slog.NewTextHandler(&log, nil))
-
-	for i := 1; i <= 2; i++ {
-		autoReviveTick(ctx, f.hub, store, RegenDeps{}, t0.Add(AutoReviveAfter+time.Duration(i)*time.Second), logger)
-		if e, _ := f.hub.EntityByCharacterID(f.aria); e.Life != world.LifeDead || !e.DiedAt.Equal(t0) {
-			t.Fatalf("after failed attempt %d: life %d, died at %v; want still dead since %v (the state put back)", i, e.Life, e.DiedAt, t0)
-		}
-		if c, _ := f.chars.GetByID(ctx, f.aria); c.HP != 0 {
-			t.Fatalf("after failed attempt %d: HP %d, want 0", i, c.HP)
-		}
-	}
-	if !f.nothing(t, f.connA, f.rA) {
-		t.Fatal("a failed attempt sent Aria something")
-	}
-	if n := strings.Count(log.String(), "auto-revive failed"); n != 1 {
-		t.Errorf("%d 'auto-revive failed' line(s) over two failing passes, want 1 (once per character); log:\n%s", n, log.String())
-	}
-
-	autoReviveTick(ctx, f.hub, store, RegenDeps{}, t0.Add(AutoReviveAfter+3*time.Second), logger)
-	if p := f.read(t, f.connA, f.rA); p.Opcode != OpReviveResult {
-		t.Fatalf("the pass on which the store recovered sent %#04x, want OpReviveResult", p.Opcode)
-	}
-	if e, _ := f.hub.EntityByCharacterID(f.aria); e.Life != world.LifeAlive {
-		t.Errorf("after the recovered pass: life %d, want 1", e.Life)
-	}
-	if c, _ := f.chars.GetByID(ctx, f.aria); c.HP != reviveHPDelta(c.MaxHP()) {
-		t.Errorf("after the recovered pass: HP %d, want %d", c.HP, reviveHPDelta(c.MaxHP()))
-	}
-	if n := strings.Count(log.String(), "auto-revive failed"); n != 1 {
-		t.Errorf("%d 'auto-revive failed' line(s) in all, want 1", n)
-	}
-	if !strings.Contains(log.String(), "msg=auto-revive ") {
-		t.Errorf("no 'auto-revive' line for the pass that revived her; log:\n%s", log.String())
-	}
-	if _, lingering := autoReviveWarned.Load(f.aria); lingering {
-		t.Error("Aria's 'warned' entry outlived the pass that revived her: a later failure of the same character inside that pass would go unlogged, and the next test's Aria inherits it")
-	}
 }
 
 // Guild work is refused while dead (round 550), on the life state the world

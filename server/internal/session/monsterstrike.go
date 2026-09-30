@@ -496,7 +496,8 @@ func finishKill(ctx context.Context, deps strikeDeps, characterID int64, out mon
 		// STAYS dead -- life state 2, HP where ApplyDamage left it (0),
 		// the potion lists emptied and the keep-up ended, as
 		// GObjPC::FUN_004e67b0 and the engine's death path do -- until
-		// OpRevive or the auto-revive fallback. The result and the push
+		// it asks for one of the resurrect choices (OpRevive; round 665 removed
+		// the auto-revive fallback). The result and the push
 		// therefore carry HP 0, which is how round 548's client knows
 		// (MonsterStrikes.leaves_dead). The compare-and-swap inside
 		// cannot lose to another kill or a revive: both take the kill

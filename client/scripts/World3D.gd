@@ -10310,8 +10310,11 @@ func _update_blob_shadow() -> void:
 ##                          so regeneration is measured from the log
 ##   SRREVAMP_QA_REVIVE_AFTER=n  with a server whose -player-dead-state is on:
 ##                          once a killing blow has left the player dead, send
-##                          OpRevive n physics frames later, as the Revive
-##                          button would (round 548; _on_revive_requested)
+##                          OpRevive n physics frames later, as a dead-window
+##                          button would (round 548; _on_revive_requested),
+##                          with SRREVAMP_QA_REVIVE_OPTION's option (round 665;
+##                          1, the default, the return point; 2 the present
+##                          point)
 ##   SRREVAMP_QA_MOB_MOVE="dx,dz,speed,mode"  send the nearest monster on a
 ##                          server-style leg (OpMonsterMoved, built and decoded
 ##                          here) from where it stands; with --server the list
@@ -11182,8 +11185,11 @@ func _qa_step() -> void:
 	if qa_revive_after != "" and _player_dead and not _qa_revive_sent and _qa_dead_tick >= 0 \
 			and _qa_tick - _qa_dead_tick >= int(qa_revive_after) and NetClient.is_connected_to_server():
 		_qa_revive_sent = true
-		print("QA REVIVE: sending OpRevive %d frames after the death" % (_qa_tick - _qa_dead_tick))
-		_on_revive_requested()
+		# SRREVAMP_QA_REVIVE_OPTION picks the button (round 665): 1, the
+		# default, the return point; 2 the present point.
+		var qa_option := int(OS.get_environment("SRREVAMP_QA_REVIVE_OPTION")) if OS.get_environment("SRREVAMP_QA_REVIVE_OPTION") != "" else 1
+		print("QA REVIVE: sending OpRevive option %d %d frames after the death" % [qa_option, _qa_tick - _qa_dead_tick])
+		_on_revive_requested(qa_option)
 	if not _qa_mob_move_done and OS.get_environment("SRREVAMP_QA_MOB_MOVE") != "":
 		_qa_mob_move()
 	if not _qa_click_queue.is_empty():
@@ -16978,10 +16984,12 @@ func _show_own_strike(attacked: CombatNet.MonsterAttacked) -> void:
 # x 0.4 through ApplyHPMPDelta (`fmul QWORD PTR ds:0xb460f0` at 0x5100fa and
 # 0x510130; 0xb460f0 = 00 00 00 a0 99 99 d9 3f, the double 0.4). Its u8 option
 # -- 1 return to the return point, 2 revive in place while the max level is at
-# most 10 -- and the return point itself are not modelled: srrevamp revives in
-# place at any level (docs/protocol/monster_ai.md, "The player's dead state").
-# Against today's server none of this fires: a kill arrives with the respawned
-# HP above 0 (MonsterStrikes.leaves_dead), and no OpReviveResult ever comes.
+# most 10 -- is carried since round 665: the dead window offers retail's two
+# buttons (HudPanels.show_revive_prompt) and option 1 comes back as a zone
+# change to the return point followed by the OpReviveResult. With the flag
+# off a kill arrives with the respawned HP above 0
+# (MonsterStrikes.leaves_dead) and is followed by the zone change to the
+# return point; no OpReviveResult comes.
 
 ## The player's own reaction to a blow that has just landed on it: the hit
 ## clip (type 3) once, over stand or run -- or, when the blow left the player
@@ -17054,7 +17062,7 @@ func _enter_dead_state(exp_lost: int) -> void:
 	print("World3D: %s" % line)
 	if _hud_panels != null:
 		_hud_panels.player_dead = true # the bag's right-click use (round 550)
-		_hud_panels.show_revive_prompt(line)
+		_hud_panels.show_revive_prompt(line, _player_level)
 	print("World3D: left dead (HP 0) t=%.2f -- input locked until the revive" % _idle_anim_time)
 
 ## Back on its feet: an OpReviveResult with no error (_on_revive_result). The
@@ -17069,21 +17077,23 @@ func _leave_dead_state() -> void:
 		_hud_panels.player_dead = false
 		_hud_panels.hide_revive_prompt()
 
-## The Revive button (HudPanels.revive_requested), or the QA hook: ask the
-## server (OpRevive 0x0028, empty). Only while dead -- the server refuses it
+## A dead-window button (HudPanels.revive_requested, round 665), or the QA
+## hook: ask the server (OpRevive 0x0028) with retail's option -- 1 the
+## return point, 2 the present point. Only while dead -- the server refuses it
 ## otherwise, as the retail handler acts only in life state 2 (0x510077).
-func _on_revive_requested() -> void:
+## Option 1 is answered with the zone change to the return point first and
+## then the OpReviveResult (_on_revive_result).
+func _on_revive_requested(option: int = 1) -> void:
 	if not _player_dead or not NetClient.is_connected_to_server():
 		return
-	NetClient.revive()
-	print("World3D: revive requested")
+	NetClient.revive(option)
+	print("World3D: revive requested (option %d)" % option)
 
 ## OpReviveResult 0x0029: the character is back at character.RespawnFraction
 ## of each maximum (WorldNet.ReviveResult), or the server refused. The HP is
 ## painted from the result; the MP through the stats refresh, which carries
-## its maximum (this scene keeps none). A result that arrives unasked -- the
-## server half's auto-revive fallback for a session that never sent OpRevive
-## -- is taken the same way.
+## its maximum (this scene keeps none). A refusal (option 2 above level 10)
+## leaves the dead window up.
 func _on_revive_result(result: WorldNet.ReviveResult) -> void:
 	if result == null:
 		return

@@ -658,6 +658,9 @@ func (s *statusRuntime) dealCharacterTick(ctx context.Context, d strikeDeps, st 
 			}
 		}
 	}
+	// Flag off, the tick's kill respawned her: to the return point, after
+	// the push (round 665, returnAfterKill).
+	returnAfterKill(ctx, d.chars, d.eq, d.hub, ct.id)
 	return true
 }
 

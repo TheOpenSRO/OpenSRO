@@ -1604,6 +1604,12 @@ func performAttack(
 		if strike.Wall.Broke {
 			endBrokenWall(hub, characterID)
 		}
+		// With -player-dead-state off a counter that killed has respawned
+		// her; she goes to her return point now, after the messages that
+		// report the blow (round 665, returnAfterKill).
+		if strike.TargetDied {
+			returnAfterKill(ctx, chars, eq, hub, characterID)
+		}
 	}
 	return nil
 }

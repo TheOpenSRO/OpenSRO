@@ -410,8 +410,10 @@ func TestMonsterStrikePushCarriesTheFlags(t *testing.T) {
 	if *got != *want {
 		t.Errorf("the killing push %+v, want %+v", got, want)
 	}
-	if ops := opcodesOf(ariaAfter); len(ops) != 1 || ops[0] != OpMonsterAttacked {
-		t.Fatalf("after her result Aria received %#04x, want exactly one OpMonsterAttacked", ops)
+	// Then, the flag being off, the respawn's move to her return point
+	// (round 665, returnAfterKill): after the push, never before it.
+	if ops := opcodesOf(ariaAfter); len(ops) != 2 || ops[0] != OpMonsterAttacked || ops[1] != OpChangeZoneResult {
+		t.Fatalf("after her result Aria received %#04x, want one OpMonsterAttacked and then the OpChangeZoneResult to her return point", ops)
 	}
 	if flags := ariaAfter[0].Data[20]; flags != StrikeCritical|StrikeTargetDied {
 		t.Errorf("the killing push's flags %#02x, want 0x05", flags)

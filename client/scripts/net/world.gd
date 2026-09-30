@@ -23,13 +23,15 @@ const OP_CHANGE_ZONE_RESULT := 0x0027  # server -> client
 ## server sends the result only with its -player-dead-state flag on (the
 ## server half; off by default), to the reviving session alone.
 ##
-## The retail request is 0x7053 -> GObjPC_HandleResurrectMsg_053 (0x50fee0,
-## docs/protocol/server_handlers.tsv), which reads ONE u8 option: 1 returns
-## the character to its return point (GObjPC::Revive(0)), 2 revives it where
-## it lies -- only while its max level is at most 10 (`cmp al,0xa` at
-## 0x51017f on IGObj::GetMaxLevel, vtable +0x128). srrevamp's placeholder
-## carries no option and revives in place at any level: a disclosed stand-in.
-const OP_REVIVE := 0x0028              # client -> server, empty
+## The retail request is 0x3053 (the client's FUN_00797d90 pushes 0x3053 at
+## 0x797e30; round 665 -- "0x7053" before it was the 0x7000|op precedent) ->
+## GObjPC_HandleResurrectMsg_053 (0x50fee0), which reads ONE u8 option: 1
+## returns the character to its return point (GObjPC::Revive(0)), 2 revives it
+## where it lies -- only while its max level is at most 10 (`cmp al,0xa` at
+## 0x51017f on IGObj::GetMaxLevel, vtable +0x128). Since round 665
+## srrevamp's placeholder carries that byte (encode_revive); an empty request
+## (a client before it) is read by the server as the one choice the level has.
+const OP_REVIVE := 0x0028              # client -> server, u8 option
 const OP_REVIVE_RESULT := 0x0029       # server -> client
 
 ## Sitting down and standing up (round 607), on the RETAIL opcodes: the payloads
@@ -561,10 +563,11 @@ static func decode_change_zone_result(data: PackedByteArray) -> ChangeZoneResult
 			result.error = _decode_headings(data, int(seated[2]), result.others)[0]
 	return result
 
-## Encodes an OpRevive request: nothing. The server knows who asks from the
-## session, and the retail option byte is not carried (see OP_REVIVE).
-static func encode_revive() -> PackedByteArray:
-	return PackedByteArray()
+## Encodes an OpRevive request: retail's one option byte (see OP_REVIVE) --
+## 1 the return point, 2 the present point. The server knows who asks from
+## the session.
+static func encode_revive(option: int) -> PackedByteArray:
+	return PackedByteArray([option & 0xff])
 
 ## Result of decode_revive_result(): the HP and MP the character came back
 ## with -- character.RespawnFraction (0.4) of each maximum, the same double

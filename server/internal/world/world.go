@@ -62,8 +62,9 @@ type Entity struct {
 	// monster's killing blow sets LifeDead (session/monsterstrike.go, behind
 	// -player-dead-state) and a revive sets LifeAlive again.
 	Life LifeState
-	// DiedAt is when Life last became LifeDead, for the auto-revive fallback
-	// (session.RunAutoRevive); the zero time while alive.
+	// DiedAt is when Life last became LifeDead (a failed revive puts it back
+	// with the state); the zero time while alive. Round 549's auto-revive
+	// read it; round 665 removed that fallback.
 	DiedAt time.Time
 	// Level is the character's level as the character store holds it, cached
 	// here so the monster AI reads it off the entity instead of the store on
@@ -221,8 +222,9 @@ func (h *Hub) ChangeZone(sess *gateway.Session, newZone string, pos Position) (o
 	remainingOld = h.othersInZoneLocked(old.Zone, sess.ID())
 
 	// The life state, the level and the heading travel with the character: a zone change
-	// is refused while dead (session.handleChangeZone), so this carries
-	// LifeAlive in practice, but a state is never reset by a move.
+	// is refused while dead (session.handleChangeZone), but the return to the
+	// return point moves a dead character before it revives it (round 665,
+	// session.ReviveHandler), and a state is never reset by a move.
 	h.arrivals++
 	next := &Entity{Session: sess, CharacterID: old.CharacterID, Name: old.Name, Zone: newZone, Pos: pos, Life: old.Life, DiedAt: old.DiedAt, Level: old.Level, Arrival: h.arrivals, Heading: old.Heading}
 	h.bySession[sess.ID()] = next

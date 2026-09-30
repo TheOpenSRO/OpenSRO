@@ -339,7 +339,9 @@ func _test_decode_change_zone_result_failure() -> void:
 ## "The player's dead state", whose fixtures these bytes are).
 func _test_encode_revive() -> void:
 	_check(WorldNet.OP_REVIVE == 0x0028 and WorldNet.OP_REVIVE_RESULT == 0x0029, "the revive pair is 0x0028/0x0029")
-	_check(WorldNet.encode_revive().is_empty(), "an OpRevive request carries nothing")
+	# Round 665: retail's option byte (FUN_00797d90 sends 0x3053 {u8}).
+	_check(WorldNet.encode_revive(1) == PackedByteArray([1]), "option 1 (the return point) is the one byte 1")
+	_check(WorldNet.encode_revive(2) == PackedByteArray([2]), "option 2 (the present point) is the one byte 2")
 
 func _test_decode_revive_result() -> void:
 	# Revived at 80 HP and 40 MP: 00 00 | 50 00 00 00 | 28 00 00 00.

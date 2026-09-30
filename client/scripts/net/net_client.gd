@@ -94,8 +94,8 @@ signal monster_spawned(spawned: CombatNet.MonsterSpawned)
 ## The player's own revive (WorldNet.OP_REVIVE_RESULT, round 548): the HP and
 ## MP the character came back with, or the server's refusal. Only a server
 ## with its -player-dead-state flag on sends it (the dead state's server
-## half; off by default) -- after an OpRevive from this client, or on its own
-## when its auto-revive fallback brings a session back that never asked.
+## half; off by default), and only after an OpRevive from this client: since
+## round 665 nothing revives a dead player unasked.
 signal revive_result(result: WorldNet.ReviveResult)
 ## Items on the ground (GroundItemsNet): the zone's list, one appearing, one
 ## leaving (picked or expired), one whose owner window passed, and the
@@ -453,11 +453,12 @@ func request_motion(value: int) -> void:
 func change_zone(zone: String) -> void:
 	_send(WorldNet.OP_CHANGE_ZONE, WorldNet.encode_change_zone(zone))
 
-## Asks to be revived where the character lies (WorldNet.OP_REVIVE, empty):
-## the Revive button, or the SRREVAMP_QA_REVIVE_AFTER hook. The reply is
-## revive_result. A server without the dead state answers nothing.
-func revive() -> void:
-	_send(WorldNet.OP_REVIVE, WorldNet.encode_revive())
+## Asks to be revived (WorldNet.OP_REVIVE) with retail's option: 1 at the
+## return point, 2 where the character lies (round 665). Sent by the dead
+## window's buttons or the SRREVAMP_QA_REVIVE_AFTER hook. The reply is
+## revive_result -- after the zone change to the return point for option 1.
+func revive(option: int) -> void:
+	_send(WorldNet.OP_REVIVE, WorldNet.encode_revive(option))
 
 func list_inventory(char_name: String) -> void:
 	_send(InventoryNet.OP_LIST, InventoryNet.encode_list_request(char_name))
