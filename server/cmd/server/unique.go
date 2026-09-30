@@ -32,10 +32,10 @@ type uniqueAI struct {
 	triggers []combat.AITrigger
 	attacks  []combat.MonsterSkill
 	// dropped is the summon skills Summon_A dropped for a taken slot, and
-	// standIn how many tuples took the stand-in count.
-	dropped []int64
-	standIn int
-	tuples  int
+	// zeroCount how many tuples give 0..0 and so spawn nothing.
+	dropped   []int64
+	zeroCount int
+	tuples    int
 }
 
 // minionCatalog builds each minion species once.
@@ -72,8 +72,9 @@ func (c *minionCatalog) get(id int64) *combat.MinionSpec {
 //     (nest.SummonASlot; a taken slot drops it) or Summon_B's list;
 //   - else -> the attack list the draw reads.
 //
-// Tuples giving 0..0 take the stand-in count (nest.SummonCountStandIn*, OURS,
-// decision D10).
+// Every tuple keeps the count its row gives (READ executor, round 661's
+// review): a 0..0 tuple spawns nothing -- 128 of the seven uniques' 130 --
+// and only Cerberus's two Ladon tuples summon.
 func buildUniqueAI(row species.Row, tac *nest.TacticsRow, db *nest.DB, lookup species.SkillLookup, minions *minionCatalog) *uniqueAI {
 	u := &uniqueAI{kind: nest.SummonKindFor(tac.ID)}
 	var ai map[string]nest.AISkillRow
@@ -119,9 +120,8 @@ func buildUniqueAI(row species.Row, tac *nest.TacticsRow, db *nest.DB, lookup sp
 					continue
 				}
 				ct := combat.SummonTuple{RefObjID: t.RefObjID, Class: t.Class, Min: t.Min, Max: t.Max, Minion: minions.get(t.RefObjID)}
-				if t.Min == 0 && t.Max == 0 {
-					ct.Min, ct.Max, ct.StandIn = nest.SummonCountStandInMin, nest.SummonCountStandInMax, true
-					u.standIn++
+				if t.Max <= 0 {
+					u.zeroCount++ // READ: spawns nothing (n = min + rand % 1 = 0)
 				}
 				u.tuples++
 				ss.Tuples = append(ss.Tuples, ct)
@@ -174,7 +174,7 @@ type uniqueReport struct {
 	kind               nest.SummonKind
 	summonSkills       int
 	triggers, attacks  int
-	tuples, standIn    int
+	tuples, zeroCount  int
 	dropped            []int64
 	hive               int64
 	missingMinionSpecs []int64
@@ -193,7 +193,7 @@ func logUniques(logger *slog.Logger, reps []uniqueReport, override time.Duration
 			window = fmt.Sprintf("%v (OURS, -unique-respawn)", override)
 		}
 		logger.Info("unique rotation", "unique", r.name, "id", r.id, "hive", r.hive, "spots", r.spots, "window", window,
-			"selector", r.kind.String(), "summon_skills", r.summonSkills, "tuples", r.tuples, "stand_in_counts", r.standIn,
+			"selector", r.kind.String(), "summon_skills", r.summonSkills, "tuples", r.tuples, "zero_count_tuples", r.zeroCount,
 			"dropped_summons", r.dropped, "triggers", r.triggers, "attack_skills", r.attacks, "minions_unknown", r.missingMinionSpecs)
 	}
 	if !withSkills {

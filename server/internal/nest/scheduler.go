@@ -57,9 +57,9 @@ type Hive struct {
 	ID       int64
 	TotalCap int
 	// Pinned, when set, is the one nest the capped pass hatches from. A
-	// total-1 hive pins one at build (PinAtBuild, CMainProcess::FUN_0055efe0)
-	// and re-pins at each death out of a full hive (Repin, AI::CNest::
-	// FUN_0055eec0) -- the unique rotation (round 661).
+	// total-1 hive pins nothing at build unless it has one nest (PinAtBuild,
+	// CMainProcess::FUN_0055efe0) and re-pins at each death out of a full hive
+	// (Repin, AI::CNest::FUN_0055eec0) -- the unique rotation (round 661).
 	Pinned *Slot
 	nests  []*Slot
 	alive  int
@@ -309,16 +309,20 @@ func (s *Scheduler) DrainRotations(dst []Rotation) []Rotation {
 }
 
 // PinAtBuild is CMainProcess::FUN_0055efe0, the pin a total-1 hive makes when
-// it is built: with the hive row's col 3 (dwOverwriteMaxTotalCount, row +0x08)
-// equal to 1 and at least one nest, the only nest when there is one, else the
-// nest at |rand()| % n -- uniform. READ from the decompile (round 661):
+// it is built (its caller 0x54bd7d stores the answer at hive+0x3c). READ from
+// srv.asm 0x55efe0..0x55f077 (round 661's review; round 661 had misread it):
 //
-//	if (row+8 == 1 && n != 0)
-//	    n == 1 ? nests[0] : nests[abs(rand()) % n]
+//	n == 1       -> nests[0]
+//	n >= 2       -> k = abs(rand()) % n            ; 0x55f02f..0x55f041, the die is thrown
+//	                eax = 0 ; k <= 0 -> NULL        ; 0x55f047..0x55f04b
+//	                cmp eax,k; je FOUND             ; 0x55f04d, reached only on entry
+//	                loop: add eax,1 ... cmp eax,k; jl loop   ; 0x55f051..0x55f05d re-enters PAST the compare
+//	                -> NULL                         ; 0x55f05f
 //
-// A hive whose total is not 1 pins nothing (nil). The pin is made on the
-// pass that first sees the hive, before its first hatch, so the unique's
-// first appearance is at a random one of its spots.
+// so a hive of two or more nests pins NOTHING at build, whatever the die. The
+// capped pass then hatches the first due nest in the hive's order (every
+// stamp is 0 at build, 0x54bd2f): the unique's first appearance after a boot
+// is nests[0]. A hive whose total is not 1, or with no nests, throws nothing.
 func PinAtBuild(dice Dice, h *Hive) *Slot {
 	n := len(h.nests)
 	if h.TotalCap != 1 || n == 0 {
@@ -327,7 +331,8 @@ func PinAtBuild(dice Dice, h *Hive) *Slot {
 	if n == 1 {
 		return h.nests[0]
 	}
-	return h.nests[dice()%n]
+	_ = dice() % n // thrown and dropped: the loop never matches
+	return nil
 }
 
 // Repin is AI::CNest::FUN_0055eec0, run at a death out of a capped hive

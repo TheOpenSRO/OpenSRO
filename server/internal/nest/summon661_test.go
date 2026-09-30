@@ -166,3 +166,48 @@ func TestLoadOptionalSkillFiles(t *testing.T) {
 		t.Fatal("a malformed Tab_RefAISkill.csv loaded")
 	}
 }
+
+// Round 661's review, H1: a 0..0 tuple -- 128 of the seven uniques' 130 --
+// throws its radius and count dice and places nothing; Cerberus's Ladon
+// tuple (2..3) places its count, three dice each. The strict script fails on
+// any other number of throws.
+func TestExecuteSummonZeroCountThrowsItsDice(t *testing.T) {
+	tuples := []SummonTuple{{RefObjID: 1953}, {RefObjID: 0, Min: 3}, {RefObjID: 5866, Min: 2, Max: 3}}
+	bc := func(int) int { return 12 }
+	dice := script(t,
+		16000, 7, // the 0..0 tuple: radius, count -> 0 + 7 % 1 = 0
+		// the zero-id tuple: nothing thrown
+		16000, 1, // Ladon: radius, count -> 2 + 1 % 2 = 3
+		0, 0, 100, 0, 0, 200, 0, 0, 300) // three minions: ring roll, distance, angle
+	got := ExecuteSummon(dice, tuples, 33, bc)
+	if len(got) != 3 {
+		t.Fatalf("%d minions, want Ladon's 3 and none from the 0..0 tuple", len(got))
+	}
+	for _, s := range got {
+		if s.Tuple != 2 {
+			t.Fatalf("a minion from tuple %d, want only the Ladon tuple's", s.Tuple)
+		}
+		if d := math.Hypot(s.DX, s.DZ); math.Abs(d-75) > 1e-4 {
+			t.Fatalf("a Ladon stands %g off, want 33 + 30 + 12", d)
+		}
+	}
+}
+
+// Round 661's review, L2: a tuple the server cannot build still throws its
+// dice (its spawns come back for the caller to drop), so the next tuple's
+// throws are the engine's.
+func TestExecuteSummonThrowsForAnUnbuildableTuple(t *testing.T) {
+	tuples := []SummonTuple{{RefObjID: 9999, Min: 1, Max: 1}, {RefObjID: 5866, Min: 2, Max: 2}}
+	bc := func(i int) int {
+		if i == 0 {
+			return 0 // unknown to the server
+		}
+		return 12
+	}
+	dice := script(t, 16000, 0, 0, 0, 0, // tuple 0: radius, count, one minion's three dice
+		16000, 0, 0, 0, 0, 0, 0, 0) // tuple 1: radius, count, two minions
+	got := ExecuteSummon(dice, tuples, 33, bc)
+	if len(got) != 3 || got[0].Tuple != 0 || got[1].Tuple != 1 {
+		t.Fatalf("spawns %+v, want tuple 0's one (for the caller to drop) and tuple 1's two", got)
+	}
+}

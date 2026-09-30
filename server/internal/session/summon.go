@@ -138,6 +138,7 @@ func (a *monsterAI) fireSummon(b *brain) {
 //
 //	radius = rand() / 32767.0 * float(2 pi)        ; nest.SummonRadius
 //	n      = min + abs(rand()) % (max - min + 1)   ; nest.MinionCount, cap 50, < 1 none
+//	                                               ; (a 0..0 tuple: both dice, no minion)
 //	n times: the spawn routine 0x5f6eb0 around the unique (its vslot 0x14),
 //	    ring radius `radius`, minimum uniqueBC + 30 + minionBC
 //	    (nest.HatchOffsetMin with nest.SummonDistance), class = the tuple's
@@ -153,28 +154,29 @@ func (a *monsterAI) fireSummon(b *brain) {
 // (READ, round 661). Its home is where it appeared (OURS: the engine's
 // HOMING asks a nest-less monster's spawn record, 0x558af0).
 func (a *monsterAI) spawnMinions(b *brain, ss *combat.SummonSkill) []int64 {
-	dice := nest.RandDice(a.rng)
-	var ids []int64
+	tuples := make([]nest.SummonTuple, len(ss.Tuples))
 	for i, t := range ss.Tuples {
-		if i >= nest.SummonTuplesMax {
-			break
+		tuples[i] = nest.SummonTuple{RefObjID: t.RefObjID, Class: t.Class, Min: t.Min, Max: t.Max}
+	}
+	bc := func(i int) int {
+		if m := ss.Tuples[i].Minion; m != nil {
+			return m.Species.BCRadius
 		}
-		if t.RefObjID == 0 || t.Minion == nil {
-			continue
+		return 0
+	}
+	var ids []int64
+	for _, p := range nest.ExecuteSummon(nest.RandDice(a.rng), tuples, b.m.BCRadius, bc) {
+		t := ss.Tuples[p.Tuple]
+		if t.Minion == nil {
+			continue // the dice were thrown; the server cannot build the species
 		}
-		radius := nest.SummonRadius(dice)
-		n := nest.MinionCount(dice, t.Min, t.Max)
-		minimum := nest.SummonDistance(b.m.BCRadius, t.Minion.Species.BCRadius)
-		for k := 0; k < n; k++ {
-			dx, dz := nest.HatchOffsetMin(dice, radius, minimum)
-			sp := t.Minion.Species
-			sp.Rarity = nest.ClampClassByLevel(nest.Class(t.Class), sp.Level).Rank()
-			x, z := b.m.X+dx, b.m.Z+dz
-			m := a.monsters.SpawnHatched(b.m.Zone, sp, x, 0, z, t.Minion.MaxHP, t.Minion.Defense, t.Minion.Attack, t.Minion.Gold,
-				combat.Hatch{HomeX: x, HomeZ: z, Tactics: t.Minion.Tactics, Leader: b.id})
-			ids = append(ids, m.ID)
-			a.minions = append(a.minions, m.ID)
-		}
+		sp := t.Minion.Species
+		sp.Rarity = nest.ClampClassByLevel(nest.Class(t.Class), sp.Level).Rank()
+		x, z := b.m.X+p.DX, b.m.Z+p.DZ
+		m := a.monsters.SpawnHatched(b.m.Zone, sp, x, 0, z, t.Minion.MaxHP, t.Minion.Defense, t.Minion.Attack, t.Minion.Gold,
+			combat.Hatch{HomeX: x, HomeZ: z, Tactics: t.Minion.Tactics, Leader: b.id})
+		ids = append(ids, m.ID)
+		a.minions = append(a.minions, m.ID)
 	}
 	return ids
 }

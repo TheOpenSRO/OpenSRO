@@ -99,8 +99,8 @@ func uniqueWorld661(t *testing.T) (spawn.Table, *species.Table, species.SkillLoo
 // twin's -- with the hive's window, the nest row's direction, and the unique's
 // own skills filed as its selector files them: the attack list without the
 // summons and the trigger skill, Summon_A's four slots by AI_AttackChance,
-// the trigger from the tactics' _RefAISkill row, 0..0 tuples at the
-// stand-in's 2..3 and a real count kept.
+// the trigger from the tactics' _RefAISkill row, and every tuple's count as
+// its row gives it (0..0 kept: the executor spawns nothing for it).
 func TestFullMapPlacesTheUniqueRotation(t *testing.T) {
 	npcs, tab, lookup, db := uniqueWorld661(t)
 	slots, rep := fullMapSlots(npcs, tab, lookup, db)
@@ -130,13 +130,13 @@ func TestFullMapPlacesTheUniqueRotation(t *testing.T) {
 		}
 	}
 	s1 := sp.Summon.Skills[0].Tuples
-	if len(s1) != 2 || !s1[0].StandIn || s1[0].Min != 2 || s1[0].Max != 3 || s1[1].Class != 1 || s1[0].Minion == nil {
-		t.Fatalf("slot 0 tuples %+v: want the two non-zero tuples at the stand-in 2..3 with a minion", s1)
+	if len(s1) != 2 || s1[0].Min != 0 || s1[0].Max != 0 || s1[1].Class != 1 || s1[0].Minion == nil {
+		t.Fatalf("slot 0 tuples %+v: want the two non-zero-id tuples kept at the rows' 0..0 (READ: they spawn nothing) with a minion", s1)
 	}
 	if m := s1[0].Minion; m.Species.RefObjID != 7201 || m.Tactics == nil || m.Tactics.ID != 500 || m.MaxHP != 2000 {
 		t.Fatalf("minion spec %+v", m)
 	}
-	if s2 := sp.Summon.Skills[1].Tuples; s2[0].StandIn || s2[0].Min != 2 || s2[0].Max != 3 {
+	if s2 := sp.Summon.Skills[1].Tuples; s2[0].Min != 2 || s2[0].Max != 3 {
 		t.Fatalf("a real count was replaced: %+v", s2)
 	}
 	if s4 := sp.Summon.Skills[3].Tuples; s4[0].Minion != nil || len(rep.uniques[0].missingMinionSpecs) != 1 {
@@ -228,5 +228,18 @@ func TestUniqueRotationRespawnAnnouncedOnce(t *testing.T) {
 	}
 	if !onSpot {
 		t.Fatalf("the unique came back at (%.1f, %.1f), not one of its spots", all[0].X, all[0].Z)
+	}
+}
+
+// Round 661's review, L3: a -unique-respawn under 1 s would truncate to a 0 s
+// wait; it is refused at boot, as -nest-respawn is.
+func TestUniqueRespawnUnderASecondIsRefused(t *testing.T) {
+	for _, c := range []struct {
+		d  time.Duration
+		ok bool
+	}{{0, true}, {time.Second, true}, {60 * time.Second, true}, {500 * time.Millisecond, false}, {-time.Second, false}} {
+		if err := checkUniqueRespawn(c.d); (err == nil) != c.ok {
+			t.Errorf("checkUniqueRespawn(%v) = %v, want ok %v", c.d, err, c.ok)
+		}
 	}
 }

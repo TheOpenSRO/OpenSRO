@@ -223,3 +223,87 @@ func TestHPTriggerFiresOnceAtItsThreshold(t *testing.T) {
 		t.Fatalf("the trigger skill armed %d times over 20 s at 50 %% HP, want exactly once", n)
 	}
 }
+
+// Round 661's review, H1: Tiger Girl's tuples read 0..0, and the executor
+// spawns nothing for them -- but the summon is still the skill she uses: it
+// fires on its tenth of HP and zeroes the damage total, and no minion appears.
+func TestZeroCountSummonFiresAndSpawnsNothing(t *testing.T) {
+	battleForTest(t, true)
+	f := startBattleFixture(t, 6616, 0, 0)
+	u := tigerGirl661()
+	for k := range u.summons {
+		for i := range u.summons[k].tuples {
+			u.summons[k].tuples[i].min, u.summons[k].tuples[i].max = 0, 0
+		}
+	}
+	m := spawnUnique661(f.monsters, 5, 0, 100000, u)
+	now := engage661(t, f, m.ID)
+	f.monsters.ApplyDamage(m.ID, 10000)
+	now, ok := tickUntilSummons(f, now, 1)
+	if !ok {
+		t.Fatal("the 0..0 summon was never used")
+	}
+	if n := len(minionsOf661(f.monsters, m.ID)); n != 0 {
+		t.Fatalf("%d minions from 0..0 tuples, want none", n)
+	}
+	for i := 0; i < 100; i++ {
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+	}
+	if n := summons661(f.a); n != 1 {
+		t.Fatalf("%d summons with no more damage, want 1: the total was zeroed by the empty summon", n)
+	}
+}
+
+// Round 661's review, M2: nothing removes a minion (READ), so kills pile them
+// up -- bounded by what the summons spawned. Five Cerberus kills, each
+// summoning at 90, 80 and 70 % with Ladon's 2..3: every minion still alive is
+// one of those spawned, and at most 3 a summon.
+func TestMinionsFromManyKillsAreBoundedBySpawns(t *testing.T) {
+	battleForTest(t, true)
+	f := startBattleFixture(t, 6617, 0, 0)
+	cerberus := tigerGirl661()
+	for k := range cerberus.summons {
+		cerberus.summons[k].tuples = []tuple661{{id: int64(5866 + k), min: 2, max: 3, bc: 12, level: 90}}
+	}
+	spawned := map[int64]bool{}
+	var summons int64
+	now := aiT0
+	for kill := 0; kill < 5; kill++ {
+		m := spawnUnique661(f.monsters, 5, 0, 100000, cerberus)
+		monsterAITick(now) // its brain
+		now = now.Add(MonsterAITick)
+		noteStruck(f.monsters, m.ID, f.aria)
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+		for tenth := 1; tenth <= 3; tenth++ {
+			f.monsters.ApplyDamage(m.ID, 10000)
+			var ok bool
+			if now, ok = tickUntilSummons(f, now, summons+1); !ok {
+				t.Fatalf("kill %d, tenth %d: no summon", kill, tenth)
+			}
+			summons++
+		}
+		for _, mm := range minionsOf661(f.monsters, m.ID) {
+			spawned[mm.ID] = true
+		}
+		if _, died, _ := f.monsters.ApplyDamage(m.ID, 1000000); !died {
+			t.Fatal("the unique did not die")
+		}
+		monsterAITick(now)
+		now = now.Add(MonsterAITick)
+	}
+	alive := 0
+	for _, mm := range f.monsters.AppendAll(nil) {
+		if mm.Rarity == 3 {
+			continue
+		}
+		if !spawned[mm.ID] {
+			t.Fatalf("monster %d alive and not a spawned minion", mm.ID)
+		}
+		alive++
+	}
+	if alive != len(spawned) || int64(alive) > 3*summons || alive < 2*int(summons) {
+		t.Fatalf("%d minions alive of %d spawned by %d summons: want every one still there, 2..3 a summon", alive, len(spawned), summons)
+	}
+}

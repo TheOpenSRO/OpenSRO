@@ -743,7 +743,9 @@ Pharaoh temple's 90 rows (their nests belong to the temple's instance worlds, ro
 npcpos spots at a time (its shard hive has a total of 1, EXTERNAL) and, killed, reappears at another
 after its hive's window -- 1,200-1,400 s for Tiger Girl, Uruchi, Isyutaru, Cerberus and Captain
 Ivy, 2,100-2,200 s for Lord Yarkan and Demon Shaitan (EXTERNAL). It fights with its own skills and
-summons its minions each time it loses a tenth of its HP; for that the directory also needs
+uses its summon skills each time it loses a tenth of its HP -- but only Cerberus's summon anything
+(its Ladons): the other six uniques' tuples give a count of 0..0 and the engine's executor spawns
+nothing for them (READ). For the summons and Captain Ivy's trigger the directory also needs
 `Tab_RefAISkill.csv` and `_RefSkill.csv` (below). Without those two files the uniques still rotate
 and fight but summon nothing, and the boot log says so. `-unique-respawn=60s` (env
 `SRREVAMP_UNIQUE_RESPAWN`) shortens the wait for testing (OURS); `-nest-respawn` does not reach

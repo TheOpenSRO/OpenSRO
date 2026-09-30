@@ -166,22 +166,33 @@ class Templates:
 		if _tasks.is_empty():
 			return ready
 		for model in _tasks.keys():
-			var task: int = _tasks[model]
-			if not WorkerThreadPool.is_task_completed(task):
+			if not WorkerThreadPool.is_task_completed(_tasks[model]):
 				continue
-			WorkerThreadPool.wait_for_task_completion(task)
-			_tasks.erase(model)
-			_lock.lock()
-			var r = _done.get(model)
-			_done.erase(model)
-			_lock.unlock()
-			_adopt(model, r[0] if r != null else null, int(r[1]) if r != null else 0)
+			_finish(model)
 			ready.append(model)
 		return ready
+
+	## Waits for model's task and adopts what it built (round 661's review:
+	## also what a synchronous instance() of a pending model does, so it never
+	## assembles a second copy for the task to overwrite).
+	func _finish(model: String) -> void:
+		WorkerThreadPool.wait_for_task_completion(_tasks[model])
+		_tasks.erase(model)
+		_lock.lock()
+		var r = _done.get(model)
+		_done.erase(model)
+		_lock.unlock()
+		_adopt(model, r[0] if r != null else null, int(r[1]) if r != null else 0)
 
 	func _adopt(model: String, built, usec: int) -> void:
 		assemble_usec += usec
 		assembles += 1
+		if _by_model.has(model):
+			# Already a template: the new copy is freed, never leaked.
+			var extra := built as SkinnedBsrAssembler.AssembledCharacter
+			if extra != null and is_instance_valid(extra.skeleton):
+				extra.skeleton.free()
+			return
 		var made := built as SkinnedBsrAssembler.AssembledCharacter
 		if made != null and made.skeleton == null:
 			made = null
@@ -197,6 +208,8 @@ class Templates:
 	## duplicate of the template's, sharing everything else. Null when the
 	## model does not assemble.
 	func instance(model: String, assemble: Callable) -> SkinnedBsrAssembler.AssembledCharacter:
+		if not _by_model.has(model) and _tasks.has(model):
+			_finish(model) # round 661's review: the pending assembly, not a second one
 		if not _by_model.has(model):
 			var sw := Time.get_ticks_usec()
 			var built = assemble.call(model)

@@ -63,6 +63,7 @@ func _initialize() -> void:
 		_test_org_rule_world(world)
 		await _test_class_scale(world)
 		await _test_async_template(world)
+		await _test_sync_while_pending(world)
 		_unstub_net()
 		root.remove_child(world)
 		world.free()
@@ -548,3 +549,22 @@ func _test_async_template(world: Node) -> void:
 	_check(_assembled - before == 1, "the species was assembled once (%d)" % (_assembled - before))
 	world.set("_monster_async_with_hook", false)
 	await _clear_monsters(world)
+
+## Round 661's review: a synchronous instance() of a model whose off-thread
+## assembly is still under way waits for that assembly and adopts it -- one
+## assembly, one template -- instead of assembling a second copy and letting
+## the finished task overwrite (and leak) the first.
+func _test_sync_while_pending(world: Node) -> void:
+	var templates = world.get("_monster_templates")
+	var before := _assembled
+	templates.call("request", "synthetic\\mob_8.bsr", _synthetic_model)
+	var body = templates.call("instance", "synthetic\\mob_8.bsr", _synthetic_model)
+	var frames := 0
+	while bool(templates.call("pending", "synthetic\\mob_8.bsr")) and frames < 300:
+		await process_frame
+		templates.call("poll")
+		frames += 1
+	_check(body != null, "a synchronous instance while the assembly is pending gets a body")
+	_check(_assembled - before == 1, "the model was assembled once, not twice (%d)" % (_assembled - before))
+	if body != null and body.skeleton != null:
+		body.skeleton.free()

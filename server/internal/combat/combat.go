@@ -951,15 +951,14 @@ type SummonSkill struct {
 }
 
 // SummonTuple is one {refObjID, class, min, max} of an 'ssou' block
-// (internal/nest.SummonTuple, READ layout) with what the server spawns for
-// it. StandIn marks a count taken from the stand-in (the row gives 0..0;
-// nest.SummonCountStandIn*, OURS). Minion is nil for a species the server
-// cannot build; such a tuple spawns nothing.
+// (internal/nest.SummonTuple, READ layout), its counts as the row gives them
+// -- 0..0 spawns nothing, as the executor's own arithmetic does -- with what
+// the server spawns for it. Minion is nil for a species the server cannot
+// build; such a tuple throws its dice and spawns nothing.
 type SummonTuple struct {
 	RefObjID int64
 	Class    uint8
 	Min, Max int
-	StandIn  bool
 	Minion   *MinionSpec
 }
 

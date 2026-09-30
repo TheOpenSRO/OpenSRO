@@ -15335,6 +15335,10 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	# when poll() reports the model), its snapshot kept.
 	var wanted_model := _monster_model_path(monster.code_name, monster.monster_name)
 	if wanted_model != "" and _monster_async_wanted() and not _monster_templates.has(wanted_model):
+		# Round 661's review: the archive is opened here, on the main thread,
+		# never lazily by the worker (_assemble_monster_model's open).
+		if not _monster_assemble.is_valid() and _data_pk2 == null:
+			_data_pk2 = _open_pk2_if_set()
 		_monster_templates.request(wanted_model, _monster_assemble if _monster_assemble.is_valid() else _assemble_monster_model)
 		var waiters: Dictionary = _monster_template_waiters.get(wanted_model, {})
 		waiters[monster.monster_id] = true

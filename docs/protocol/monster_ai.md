@@ -3685,8 +3685,14 @@ A unique's hive (EXTERNAL: one per field unique, `dwOverwriteMaxTotalCount` 1, o
 spot, cap 1, `btRespawn` 1, the window below) runs the capped pass (`AIHive_HatchPass_TotalCapped`
 0x55ec10) with a pinned nest (hive `+0x3c`):
 
-- **At build**, `CMainProcess::FUN_0055efe0`: with the hive row's `+0x08` (col 3) equal to 1 and n
-  nests, the only nest when n is 1, else `nests[abs(rand()) % n]` -- uniform (`nest.PinAtBuild`).
+- **At build**, `CMainProcess::FUN_0055efe0` (asm 0x55efe0..0x55f077; stored by its caller 0x54bd7d
+  at hive+0x3c): with the hive row's `+0x08` (col 3) equal to 1 and n nests, the only nest when n is
+  1; for n >= 2 it throws `abs(rand()) % n` (0x55f041) and returns NULL -- `k == 0` jumps straight
+  to `xor eax,eax; ret` (0x55f049), and the search loop re-enters at `add eax,1` (0x55f051), past the
+  `cmp eax,edx; je` (0x55f04d), so it never matches and falls out at 0x55f05f. No pin: the capped
+  pass hatches the first due nest in hive order, and every stamp is 0 at build (0x54bd2f), so the
+  unique's first appearance is nests[0] (`nest.PinAtBuild`). *Round 661 first read this as
+  `nests[abs(rand()) % n]`; corrected in its review.*
 - **At a death out of the full hive**, `AI::CNest::FUN_0055eec0` (asm 0x55eec0..0x55efce): only for
   a capped hive (`+0x30 == 1`, which `AIHive::Init` sets for a non-zero col 3) whose alive count
   equals its total before the decrement:
@@ -3794,12 +3800,15 @@ unique dies:** the executor keeps no list, and the only sender of the unbinding 
 `0x1c))(0xc,` pattern and an asm scan for `push 0xc` before a register call through `[..+0x1c]`).
 A minion never respawns: it has no nest.
 
-**The counts (MEASURED, D10 re-verified).** The tuple layout is right: across the client's 292
+**The counts (MEASURED, re-verified).** The tuple layout is right: across the client's 292
 `ssou` skills, 309 tuples carry real counts (the Qin Shi tomb guardians' `{id, 0, 3, 3}`, `{id, 1,
 1, 1}`, ...). The seven field uniques' 130 tuples (123 once Summon_A's two dropped skills are left out) read 0..0 but two: Cerberus's Ladon (5866) 2..3 in
-R1_80 and 1..2 (class 6) in R1_40. With the rows as they are the executor spawns nothing for a 0..0
-tuple, so srrevamp gives those 2..3, Ladon's count (**OURS**, the user's decision D10), and keeps
-the two real ones. The DB's `_RefSkill` blocks are the client's word for word for every unique's
+R1_80 and 1..2 (class 6) in R1_40. The executor spawns nothing for a 0..0 tuple -- `n = min +
+abs(rand()) % (0 + 1) = 0` (0x597060..0x59707f), then `test esi,esi; jle 0x597844` skips the spawn
+loop (0x59776b) -- after throwing its radius and count dice. srrevamp does exactly that
+(`nest.ExecuteSummon`): **only Cerberus summons**, its Ladons; the other six use their summon skills
+and nothing appears. (Round 661's first commit gave 0..0 tuples a 2..3 stand-in; the review removed
+it -- the "decision" behind it was a planner's proposal.) The DB's `_RefSkill` blocks are the client's word for word for every unique's
 summon skill (286 of the 292 `ssou` skills identical; the six that differ are none of theirs), and
 `_RefAISkill` carries no counts, so nothing replaces the stand-in.
 

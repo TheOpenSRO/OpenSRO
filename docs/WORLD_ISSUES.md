@@ -7094,7 +7094,7 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
-## Six-hundred-and-sixty-first round: each unique stands at one of its spots, comes back at another after its real wait, fights with its own skills and summons its minions
+## Six-hundred-and-sixty-first round: each unique stands at one of its spots, comes back at another after its real wait, fights with its own skills -- and Cerberus summons its Ladons
 
 The user (2026-09-30): "Make sure this includes uniques as well where they spawn on their usual
 rotation at one of their possible spots. Make sure the uniques spawn additional mobs if that's what
@@ -7110,7 +7110,7 @@ this commit; the tests use synthetic rows.
 Under `-full-map` with `-nest-db-dir`, each field unique's npcpos spots are the nests of its shard
 hive (total 1, EXTERNAL), and the READ rotation runs them:
 
-| unique | id | spots | window (EXTERNAL) | selector (READ) | summon skills | tuples (stand-in counts) | triggers | attack skills |
+| unique | id | spots | window (EXTERNAL) | selector (READ) | summon skills | tuples (of them 0..0: spawn nothing) | triggers | attack skills |
 |---|---|---|---|---|---|---|---|---|
 | Tiger Girl | 1954 | 11 | 1,200-1,400 s | Summon_A | 4 | 14 (14) | 0 | 3 |
 | Uruchi | 1982 | 11 | 1,200-1,400 s | Summon_A | 4 | 14 (14) | 0 | 3 |
@@ -7135,8 +7135,10 @@ are optional: without them the uniques rotate and fight but summon nothing, and 
 
 ### 2. What was READ this round
 
-- **The rotation.** Build pin `CMainProcess::FUN_0055efe0`: `nests[abs(rand()) % n]` for a total-1
-  hive. Re-pin `AI::CNest::FUN_0055eec0` (asm 0x55eec0..0x55efce): only when the capped hive was
+- **The rotation.** Build pin `CMainProcess::FUN_0055efe0`: a hive of one nest pins it; a hive of
+  two or more throws `abs(rand()) % n` and pins NOTHING -- its loop re-enters past the compare
+  (0x55f041..0x55f05f; *corrected by the review, section 8: this line read `nests[abs(rand()) % n]`*)
+  -- so the first appearance after a boot is the hive's first due nest, nests[0]. Re-pin `AI::CNest::FUN_0055eec0` (asm 0x55eec0..0x55efce): only when the capped hive was
   full before the death; `k = abs(rand()) % (n+1)`, clamped to n-1 -- the last nest comes up twice as
   often as any other, kept -- and EVERY nest of the hive re-armed (`RearmHatchTimer` 0x560e50:
   stamp now, a fresh uniform [col12, col13] roll; the pinned nest throws one roll more, discarded,
@@ -7177,18 +7179,21 @@ are optional: without them the uniques rotate and fight but summon nothing, and 
   `[..+0x1c]`; the second found 0x4d2109 and 0x440679, the latter a `+0x500` call, not a command).
   A minion stays, bound, until killed, and never respawns.
 
-### 3. The minion counts -- decision D10 re-verified (MEASURED)
+### 3. The minion counts, re-verified (MEASURED) -- only Cerberus summons
 
 The parse is right: across the client's 292 `ssou` skills, 309 tuples carry real counts (the Qin Shi
 tomb guardians' `{14964, 0, 3, 3}`, `{14964, 1, 1, 1}`, `{14964, 6, 1, 1}`, `{14964, 4, 1, 1}`, ...).
 The seven field uniques' 130 tuples read 0..0 except Cerberus's Ladon (5866): 2..3 in R1_80 and
 1..2 as elite in R1_40. The shard DB's `_RefSkill` carries the same blocks word for word (286 of the
 292 `ssou` skills identical, every unique's among them), and `_RefAISkill` has no counts. With the
-rows as they are the executor would spawn nothing for a 0..0 tuple, so -- the user's decision D10 --
-srrevamp gives each 0..0 tuple Ladon's 2..3 (**OURS**, `nest.SummonCountStandIn*`, flagged per tuple
-as `StandIn`) and keeps the two real ones. Consequence, disclosed: a Tiger Girl kill summons about
-nine waves of 4..12 minions (her slots hold 2 or 4 tuples), champions, giants and elites among
-them, and since nothing removes minions an abandoned fight leaves them standing.
+rows as they are the executor spawns nothing for a 0..0 tuple (`n = min + abs(rand()) % 1 = 0`,
+then `test esi,esi; jle` past the spawn loop, 0x597060..0x59707f, 0x59776b; READ), and srrevamp
+does the same: **of the seven field uniques only Cerberus summons** -- Ladon 2..3 with R1_80 and
+1..2 elites with R1_40 (the counts READ from the tuples, EXTERNAL where they come from the DB
+rows). The other six still use their summon skills on each tenth of HP (the dice are thrown, the
+damage total zeroed) and nothing appears. *The first commit of this round gave the 0..0 tuples a
+2..3 stand-in labelled a user decision ("D10"); it was the planner's proposal, never the user's,
+and the review removed it (section 8).*
 
 ### 4. What was built
 
@@ -7282,8 +7287,8 @@ one client (`World3D.tscn`, QA sign-in) in its own Xvfb, following Tiger Girl by
   spot=2 of=11`. GM `/damage 40000` (HP 259,360/299,360), a teleport beside her and the QA attack
   loop engaged her: `18:33:30.757 unique summons monster=9767 skill=3049 hp=259358 bucket=4
   spawned=5 minions=[33847 .. 33851]` -- SUMMON01 (Summon_A slot 0, HP above 80 %), her two tuples
-  at the stand-in 2..3. The client: `monster 33847 spawned (push) White Tiger at (-21396.8,12181.0)`
-  and the five bodies drawn. GM kill at 18:34:20: the client's kill banner `[Unique661] killed Tiger
+  at the since-removed stand-in 2..3; the client drew the five White Tigers. *This is the retracted
+  behaviour: with the review's fix she summons nothing (section 8's live check).* GM kill at 18:34:20: the client's kill banner `[Unique661] killed Tiger
   girl from Tiger Mountain.`; the server `unique rotation: re-pinned hive=193 spot=8 of=11 nest=5906
   respawn_in=1m0s`; `18:35:21.017 unique hatched id=34008 nest=5906 spot=8` -- 60.25 s after the
   death, on the re-pinned spot (423 units from the nest, inside its generate radius) -- and the
@@ -7326,6 +7331,58 @@ In `docs/TODO.md`, "The monster world's nests (round 660)": retail's real minion
 say 0..0); the leader's WANDER bias and distance behaviours; Summon_C; the summon's cast push; the
 periodic trigger's phase alignment; `/spawnunique`'s uniques without skills; MOB_SD_APIS; the
 Pharaoh temple's instance worlds.
+
+### 8. Round 661's review (on top of the int/mob merge c0f6667)
+
+- **H1 -- the 0..0 stand-in is gone.** The executor spawns nothing for a 0..0 tuple (section 3), and
+  so does srrevamp now: `nest.ExecuteSummon` throws each tuple's radius and count dice in the
+  engine's order and places `min + rand % (max-min+1)` minions -- none for 0..0; the summon skill is
+  still used (cooldown, damage total zeroed). `SummonCountStandIn*` and the `StandIn` flag are
+  deleted; the boot line reports `zero_count_tuples`. Only Cerberus summons.
+- **M1 -- no build pin.** `PinAtBuild` throws its die and pins nothing for a hive of two or more
+  nests (section 2); the first appearance is nests[0]. The re-pin at death is unchanged (verified).
+- **M2 -- minions accumulate** (no cleanup is READ): a test holds the bound (every live minion is
+  one a summon spawned, 2..3 each); the leader-bound gates stay OPEN in `docs/TODO.md`.
+- **L1 -- the client's off-thread assembly**: Data.pk2 is opened on the main thread before a task
+  starts; ObjectLoader's static state (`_mod_shaders`, `missing_count/missing_recent`) is behind a
+  Mutex; a synchronous `instance()` of a pending model waits for and adopts the task's result, and
+  a second copy is freed, never leaked.
+- **L2** -- a tuple the server cannot build still throws its dice. **L3** -- `-unique-respawn` under
+  1 s is refused at boot.
+
+FAIL lines of the new tests on c0f6667 (before the fixes):
+
+```
+--- FAIL: TestUniqueFirstHatchIsTheFirstNestWithNoBuildPin (0.00s)
+    rotation661_test.go:73: the unique is alive at spot 3, want 0 (no build pin: the first due nest)
+--- FAIL: TestFullMapPlacesTheUniqueRotation (0.00s)
+    unique661_test.go:134: slot 0 tuples [{RefObjID:7201 Class:0 Min:2 Max:3 StandIn:true ...} {RefObjID:7201 Class:1 Min:2 Max:3 StandIn:true ...}]: want the two non-zero-id tuples kept at the rows' 0..0 (READ: they spawn nothing) with a minion
+FAIL the model was assembled once, not twice (2)          (monster_draw_test.gd, the client)
+cmd/server/unique661_test.go:241:13: undefined: checkUniqueRespawn          (L3: build failed)
+```
+
+`TestExecuteSummonZeroCountThrowsItsDice` and `TestExecuteSummonThrowsForAnUnbuildableTuple` name
+the new `nest.ExecuteSummon` (a build failure on c0f6667). `TestZeroCountSummonFiresAndSpawnsNothing`
+and `TestMinionsFromManyKillsAreBoundedBySpawns` pass on c0f6667 too -- the session layer never
+applied the stand-in; they hold the READ behaviour from now on. The two L1 races (the pk2 open, the
+static caches) have no deterministic test.
+
+Results: `go test -count=1 -p 1 -timeout 30m ./...` 62 packages ok, exit 0; `-race` with `-run` on
+the nest, unique, summon and join tests over nest, session and cmd/server: ok, no race; client
+`check` ALL LOAD, `tests` 175 suites 0 failing, `monster_draw_test.gd` ALL PASS. No perf gate: the
+client change is a lock and an early open around the off-thread assembly the gate above measured.
+
+Live check (`live2.sh` r5, `live2c.sh` r6; `-unique-respawn=60s`):
+- Tiger Girl (r5): boot `unique hatched ... nest=5908 spot=0 of=11` (nests[0], no build pin);
+  `/damage 40000` and the QA attack: `unique summons monster=9767 skill=3049 bucket=4 spawned=0
+  minions=[]` -- the negative of section 6's five White Tigers (the client's White Tiger pushes in
+  that run are the Tiger Mountain field nests'). Kill banner; `re-pinned spot=0 of=11`; respawn 60 s
+  later with its spawn banner.
+- Cerberus (r6): `unique hatched ... nest=8563 spot=0 of=13`; `unique summons monster=9785
+  skill=3666 bucket=4 spawned=3 minions=[60395 60396 60397]` (R1_80, the Ladon tuple 2..3); the
+  client: `monster 60395 spawned (push) Simos Ladon`, and 60396, 60397. Kill banner `[Unique661] has
+  killed [Cerberus[INT]].`; `re-pinned spot=11 of=13 nest=8558`; `unique hatched ... nest=8558
+  spot=11` 60.25 s later; spawn banner `[Cerberus[INT]] has appeared.`
 
 ## Six-hundred-and-sixtieth round: every field monster of the game stands in its nest, comes back on the nest's own timer, is aggressive or passive and gives up as its data says, and hatches champions, giants and party monsters
 

@@ -136,6 +136,16 @@ func checkNestRespawn(d time.Duration) error {
 	return nil
 }
 
+// checkUniqueRespawn is checkNestRespawn for -unique-respawn (round 661's
+// review): a wait under 1 s would truncate to 0 s and re-hatch the unique on
+// the pass after each death.
+func checkUniqueRespawn(d time.Duration) error {
+	if err := checkNestRespawn(d); err != nil {
+		return fmt.Errorf("%v is under 1s: the uniques' wait is whole seconds, and 0 s would re-hatch a unique on the pass after its death", d)
+	}
+	return nil
+}
+
 // addSlot registers a nest, applying -nest-respawn.
 func (s *respawnScheduler) addSlot(sl *nest.Slot) {
 	override := s.delayOverride
@@ -411,7 +421,7 @@ func fullMapSlots(npcs spawn.Table, table *species.Table, lookup species.SkillLo
 				ur := uniqueReps[row.ID]
 				if ur == nil {
 					ur = &uniqueReport{id: row.ID, name: uniqueName(spec), minS: n.DelayMin, maxS: n.DelayMax, kind: u.kind,
-						triggers: len(u.triggers), attacks: len(u.attacks), tuples: u.tuples, standIn: u.standIn, dropped: u.dropped}
+						triggers: len(u.triggers), attacks: len(u.attacks), tuples: u.tuples, zeroCount: u.zeroCount, dropped: u.dropped}
 					if sl.Hive != nil {
 						ur.hive = sl.Hive.ID
 					}

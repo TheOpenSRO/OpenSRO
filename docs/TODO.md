@@ -1084,16 +1084,18 @@ Round 660 (`docs/protocol/monster_ai.md`, "Nests on the map"; WORLD_ISSUES.md, r
 - [x] ~~The uniques~~ -- **round 661**: the seven field uniques rotate over their 70 spots (the
       build pin 0x55efe0, the re-pin at death with its last-nest bias 0x55eec0, every nest of a
       capped hive re-armed 0x560e50), fight with their own skills under their tactics, summon by
-      Summon_A/B, and Captain Ivy's trigger fires. What is left:
-  - [ ] **Minion counts.** The seven uniques' tuples read 0..0 in the client's skilldata AND the
-        shard DB (130 tuples, all but Cerberus's two Ladon tuples); the executor spawns nothing for
-        those, so srrevamp gives them Ladon's 2..3 (OURS, decision D10). Retail's real counts are
-        OPEN. With it a Tiger Girl kill summons about nine times, 4..12 minions each (MEASURED
-        arithmetic, not a live count) -- and nothing removes minions (READ), so an unkilled pack
-        stays.
-  - [ ] **The leader** (`ctx+0x14c`, command 0xb): stored (`combat.Monster.Leader`) but not used --
-        the WANDER leg's bias toward the unique (0x5459f0) and the distance behaviours 0x5487b0 /
-        0x5488b0 are not modelled.
+      Summon_A/B, and Captain Ivy's trigger fires; only Cerberus's summons spawn (its Ladons --
+      the other six uniques' tuples read 0..0, and the READ executor spawns nothing for them).
+      What is left:
+  - [ ] **Minions accumulate.** Nothing removes a minion (READ: no list, and the unbinding command
+        0xc's one sender is the pet path 0x4d2109). At retail's counts only Cerberus summons, about
+        2..3 Ladons at each of its tenths above 80 % and 1..2 elites between 40 and 60 %, so an
+        abandoned fight leaves a bounded pack (`TestMinionsFromManyKillsAreBoundedBySpawns`).
+  - [ ] **The leader-bound behaviours are OPEN.** `combat.Monster.Leader` (the minion's ctx+0x14c,
+        command 0xb) is written but never read. The engine reads ctx+0x14c in 0x540d20, 0x5460d0,
+        0x5485b0, 0x5487b0 and 0x5488b0 (the follow and give-up gates: a leader too far away,
+        200.0 or the leader's own radius + a constant, returns 2) and in PickWanderLeg's bias
+        (0x5459f0); what their return codes do to the state machine is unread.
   - [ ] **Summon_C** (tactics 0x970e/0x9722) is not modelled: no field unique runs it.
   - [ ] The summon has no cast push: the client sees the minions appear, not the unique cast.
         The periodic trigger's phase alignment (round 260) is simplified.

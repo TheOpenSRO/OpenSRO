@@ -56,18 +56,24 @@ func aliveAt(nests []*Slot) int {
 
 var t661 = time.Date(2026, 9, 30, 18, 0, 0, 0, time.UTC)
 
-// A total-1 hive pins one nest at build -- nests[rand() % n], CMainProcess::
-// FUN_0055efe0 -- and hatches there alone: one unique alive, never more,
-// however many passes run and whatever the other nests' caps (Lord Yarkan's
-// hive has a nest of cap 7).
-func TestUniqueRotationOneAliveAtItsPinnedSpot(t *testing.T) {
+// A total-1 hive of two or more nests pins NOTHING at build: CMainProcess::
+// FUN_0055efe0 throws `abs(rand()) % n` but its loop re-enters past the
+// compare and returns NULL (srv.asm 0x55f041..0x55f05f; round 661's review).
+// With no pin the capped pass hatches the first due nest in hive order --
+// every stamp is 0 at build -- so the unique first appears at nests[0], and
+// only one is ever alive, whatever the other nests' caps (Lord Yarkan's hive
+// has a nest of cap 7).
+func TestUniqueFirstHatchIsTheFirstNestWithNoBuildPin(t *testing.T) {
 	s, f, h, nests := rotationHive(lenient(3), 5, 1200, 1400)
 	nests[4].Cap = 7
 	for i := 0; i < 20; i++ {
 		s.Pass(t661.Add(time.Duration(i)*time.Hour), nil)
 	}
-	if got := aliveAt(nests); got != 3 {
-		t.Fatalf("the unique is alive at spot %d, want 3 (the build pin's throw 3 %% 5)", got)
+	if got := aliveAt(nests); got != 0 {
+		t.Fatalf("the unique is alive at spot %d, want 0 (no build pin: the first due nest)", got)
+	}
+	if h.Pinned != nil {
+		t.Fatalf("the hive pinned spot %d at build, want no pin", h.Pinned.Index)
 	}
 	if h.Alive() != 1 || len(f.rolls) != 1 {
 		t.Fatalf("hive alive %d, hatched %d times: want one unique, hatched once", h.Alive(), len(f.rolls))

@@ -1526,6 +1526,10 @@ func main() {
 		logger.Error("-nest-respawn / SRREVAMP_NEST_RESPAWN refused", "err", err)
 		os.Exit(1)
 	}
+	if err := checkUniqueRespawn(*uniqueRespawn); err != nil {
+		logger.Error("-unique-respawn / SRREVAMP_UNIQUE_RESPAWN refused", "err", err)
+		os.Exit(1)
+	}
 	respawns := newRespawnScheduler(monsters, logger, spawned)
 	respawns.delayOverride = *nestRespawn
 	if *nestRespawn > 0 {

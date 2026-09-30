@@ -286,17 +286,6 @@ func SummonASlot(chance int) int {
 	return 0
 }
 
-// SummonCountStandIn is the count both ends of a tuple whose row gives
-// 0..0 take: Kerberos's Ladon's 2..3, the only field unique's tuple with a
-// count (its R1_80 summon; its R1_40 one gives Ladon 1..2). OURS, the user's
-// decision D10 (docs/WORLD_ISSUES.md round 661): with the rows as they are,
-// the executor spawns nothing for a 0..0 tuple (`if (n < 1) skip`), so no
-// field unique but Cerberus would ever summon.
-const (
-	SummonCountStandInMin = 2
-	SummonCountStandInMax = 3
-)
-
 // SummonCountCap is the executor's cap: a count of 51 or more logs "Oooops!!!!
 // Spawn Monster Count is over 50!!!!" and spawns 50 (0x597745..0x597763).
 // READ.
@@ -338,4 +327,44 @@ func SummonRadius(dice Dice) float64 {
 // a float. READ (round 661): `(float)(slot344() + 0x1e + *(ushort*)(ref+0xee))`.
 func SummonDistance(uniqueBC, minionBC int) float64 {
 	return float64(float32(uniqueBC + 30 + minionBC))
+}
+
+// SummonSpawn is one minion the executor places: its tuple's index and its
+// offset from the unique.
+type SummonSpawn struct {
+	Tuple  int
+	DX, DZ float64
+}
+
+// ExecuteSummon is the minion executor's arithmetic, FUN_00596e50 (READ, round
+// 661), in its dice order: for each of up to SummonTuplesMax tuples with a
+// non-zero id,
+//
+//	radius = SummonRadius(dice)                    ; thrown first (the iVar9 rand)
+//	n      = MinionCount(dice, min, max)           ; thrown whatever the ends
+//	n times: HatchOffsetMin(dice, radius, SummonDistance(uniqueBC, minionBC(i)))
+//
+// A 0..0 tuple throws its two dice and places nothing (`n = min + abs(rand) %
+// 1 = 0`, then `test esi,esi; jle 0x597844` skips the spawn loop: srv.asm
+// 0x597060..0x59707f, 0x59776b). The dice are thrown for a tuple the caller
+// cannot spawn too (the caller's minionBC answers 0 for it and it drops the
+// spawns), so the throws after it keep the engine's order.
+func ExecuteSummon(dice Dice, tuples []SummonTuple, uniqueBC int, minionBC func(i int) int) []SummonSpawn {
+	var out []SummonSpawn
+	for i, t := range tuples {
+		if i >= SummonTuplesMax {
+			break
+		}
+		if t.RefObjID == 0 {
+			continue
+		}
+		radius := SummonRadius(dice)
+		n := MinionCount(dice, t.Min, t.Max)
+		minimum := SummonDistance(uniqueBC, minionBC(i))
+		for k := 0; k < n; k++ {
+			dx, dz := HatchOffsetMin(dice, radius, minimum)
+			out = append(out, SummonSpawn{Tuple: i, DX: dx, DZ: dz})
+		}
+	}
+	return out
 }
