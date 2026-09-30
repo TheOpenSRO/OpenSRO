@@ -7151,7 +7151,8 @@ object, effect, animation, movement or loading code on the client, so no perform
 - **One respawn scheduler** (`cmd/server`). One goroutine checks every placement once a second,
   with the old loop's timing: `respawnDelay` 10 s, disclosed. `maintainMonster` is gone; its
   test drives the scheduler with one placement.
-- **The send deadline** (`gateway.SendTimeout` = 2 s, OURS; 10 s since the review, §7). A Send blocked that long closes the
+- **The send deadline** (`gateway.SendTimeout` = 2 s, OURS; 10 s since the review, §7, and a
+  per-session blocking budget since the second review, §8). A Send blocked that long closes the
   connection, and every later Send returns `ErrSendStalled` at once. A stalled client holds the
   tick at most 2 s, once.
 - **`-qa-spread-monsters N` / `-qa-spread-radius R`** (QA only): N more placements of Jangan's
@@ -7252,7 +7253,8 @@ The server was built from this branch: `-in-memory -single-frame -monster-ai -mo
   Round 657's full map is the first to show it.
 - The AOI radius and the sleep rule are OURS. Retail's are unread.
 - The client still asks for the whole window's list after every hit (round 655's lane).
-- A stalled client can hold the tick up to 10 s (since §7), once. A per-session send queue would remove that.
+- A slow or stalled client can hold its writers up to its 3 s blocking budget (since §8). A
+  per-session send queue would remove that.
 - The respawn is still the flat 10 s; round 659 brings the nest rules.
 
 ### 7. The review's follow-up
@@ -7267,7 +7269,9 @@ are fixed.
   computed against the new view, found nothing to answer for. Now the step and its crossings run
   as one step under the area of interest's read lock (`monsterAOI.step`), so a view move lands
   wholly before or wholly after.
-  `TestAOIStepAndViewMoveKeepTheEnter` / `...KeepTheLeave` run both orders.
+  `TestAOIStepAndViewMoveKeepTheEnter` / `...KeepTheLeave` run the reconcile wholly before and
+  wholly after the step. Both orders already passed on d3963cf, so they pin that neither regressed
+  and do not test the fix. The second review's `TestAOIReconcileWaitsForTheStep` (§8) does.
 - **A kill could leave a ghost.** The death went to the watchers of where the monster died, read
   after `ApplyDamage`. A view that moved off it in between had also missed the leave, because the
   dead monster was no longer in its lost cells. The death now goes to the watchers before the blow
@@ -7277,7 +7281,8 @@ are fixed.
 
 Also: a push's cell is taken from the monster's float64 position, not the wire's float32. A
 monster in BATTLE or HOMING never sleeps (`TestHomingMonsterNeverSleeps`). `gateway.SendTimeout`
-is raised from 2 s to 10 s, so a client busy loading is not dropped (OURS). A per-session queue
+is raised from 2 s to 10 s, so a client busy loading is not dropped (OURS). §8 bounds the whole
+session, not just one write. A per-session queue
 was not built, because every Send caller relies on the frame being on the wire, in order, when
 Send returns.
 
@@ -7295,9 +7300,80 @@ frames 48401, view {jangan 2 1} stand {jangan 2 1}, client bodies 174, truth 174
 missing 0 [], unknown moves 285, spawn-after-death 0, leave-unknown 1194, dead 127
 ```
 
-"unknown moves" and "leave-unknown" are harmless: a leg for a body the client never had, and a leave
-for one it had already dropped. `go test -race` on the AOI tests reports no race. The benchmark
-players never move (see §4).
+"leave-unknown" is harmless: a leave for a body the client had already dropped. "Unknown moves"
+are NOT harmless, as this section first claimed: the real client answers a leg for a body it does
+not have by asking for the whole list. §8 checks legs at the send, and the stress test now asserts
+none. `go test -race` on the AOI tests reports no race. The benchmark players never move (see §4).
+
+### 8. The second review's follow-up
+
+The re-review verified all three ordering fixes and found no new correctness bug. It raised two
+MEDIUMs and three LOWs, all closed here.
+
+- **One slow reader still stalled everyone** (MEDIUM). The deadline was set fresh on every write,
+  so a trickle reader finished each write inside 10 s and was never closed. Meanwhile the AI tick,
+  the respawn scheduler's spawn push and other players' blows each waited on it in turn. Now each
+  session has a **blocking budget**: `gateway.SendBlockBudget` = **3 s**, draining 3 s per
+  `SendBlockWindow` = 30 s, **OURS**. Every write's time on the socket adds to the session's debt,
+  and each write's deadline is capped at what is left. At the budget the session is closed. A
+  per-session queue was not built (§7's reason). `TestASlowSteadyReaderIsClosedWithinItsBudget`: a
+  peer reading 16 KB every 10 ms, a fan-out writing 16 KB to it and to a fast peer. Budget 300 ms
+  in the test: it held the fan-out 301 ms and was closed, and the fast peer was unaffected.
+  **NEGATIVE against 7a92b1c** (a stub returns `SendTimeout` as the budget; MEASURED):
+
+```
+slowreader656_test.go:86: the slow reader held the fan-out 5.203s, then: <nil>
+    slowreader656_test.go:88: the slow reader was never closed: it held the fan-out 5.203s over 5 s (budget 1s)
+--- FAIL: TestASlowSteadyReaderIsClosedWithinItsBudget (5.22s)
+FAIL
+FAIL	github.com/OpenSRO/srrevamp/server/internal/gateway	5.219s
+FAIL
+```
+
+- **The two step/view-move tests did not test the fix** (MEDIUM). §7 is corrected. A test hook
+  inside `monsterAOI.step`, between the hub's step and the crossings (`aoiStepHook`, nil in
+  production), starts a reconcile on another goroutine. `TestAOIReconcileWaitsForTheStep` asserts
+  that the reconcile waits until the step is done, and that the player then gets both messages:
+  M1 walks from cell 3 into cell 2 and M2 from cell -2 into cell -3, while the player moves from
+  cell 0 to cell 1. **NEGATIVE** against a shim of d3963cf's order (the step unlocked, then the
+  hook, then the crossings under the lock), MEASURED:
+
+```
+aoistress656_test.go:354: the reconcile ran inside the step: nothing kept a view move out from between the step and its crossings
+    aoistress656_test.go:358: entered [], want [1]: the monster that walked into the window was never sent
+    aoistress656_test.go:361: left [], want [2]: the monster that walked out of the window stays a ghost
+--- FAIL: TestAOIReconcileWaitsForTheStep (0.32s)
+FAIL
+FAIL	github.com/OpenSRO/srrevamp/server/internal/session	0.320s
+FAIL
+```
+
+- **Unknown moves** (LOW). `monsterAI.deliver` checks each recipient at the send (`mayShowLeg`:
+  alive, in the window, no enter still owed), and a view move marks the monsters it gains as
+  pending until their enter goes out. The stress test asserts 0 unknown moves, and six runs
+  MEASURED 0. It had 285 in one run before the check, and 2-7 a run with the check but with
+  respawns wandering. The remaining source was the test's own fake clock: it runs a 2001 ms IDLE
+  dwell in a few milliseconds of wall time, so a brain could leg a respawn before the goroutine
+  that spawned it had sent the spawn push. The stress test's respawns therefore do not wander on
+  their own. In the server the push leaves at once and the first leg waits out the dwell in real
+  time. With `-monster-spawn-push` off (the default) a respawn is never announced, and its first
+  leg reaches clients that do not know it: the pre-656 discovery path, recorded in TODO.
+- **Every monster-damage path goes through `damageMonsterWatched`** (LOW).
+  `TestMonsterDamageGoesThroughDamageMonsterWatched` parses every non-test file and fails on a
+  two-argument `.ApplyDamage(` (the monster hub's; the character stores take a context first)
+  outside `aoi.go` and the GM `/kill` in `gm/gm.go`. Its name and signature are in
+  `docs/protocol/monster_ai.md` for rounds 659 and 660.
+- **GM `/kill`'s before-watchers** (LOW). `TestGMKillReachesTheWatchersBeforeIt`: a hook after the
+  command (`gmAfterRunHook`) moves Bram's view far off before the announcement, and Bram still
+  hears the death. With the before-watchers dropped, MEASURED: `Bram, watching the monster when
+  the GM killed it, was never told it died`.
+
+Tests: `go test -count=1 -p 1` on session, combat, gm, gateway, systems and cmd/server: all ok.
+`go test -race` on the AOI, stress, sleep, GM-kill and guard tests, and on gateway: no data race,
+and 20 stress runs in a row pass. One earlier -race run showed a single ghost. The client model
+had not yet read the server's last frames when the test's fixed 500 ms settle ran out (45,848
+frames under -race, against ~80,000 without). The settle now waits until the reader has been quiet
+for 300 ms.
 
 ## Six-hundred-and-fifty-second round: every icon is picked up with one click and put down with the next, and a worn item goes into the bag as the original puts it
 

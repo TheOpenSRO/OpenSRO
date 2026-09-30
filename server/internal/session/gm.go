@@ -224,6 +224,9 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 			}
 		}
 		out := deps.Run(ctx, actor, req.Line)
+		if gmAfterRunHook != nil {
+			gmAfterRunHook()
+		}
 		// A /tp or /goto puts the GM where its client then stands it; a wall's
 		// root takes that landing as a warp's (round 646, walls.go
 		// noteWarpLanding, OURS).
@@ -298,3 +301,8 @@ func boolByte(b bool) byte {
 	}
 	return 0
 }
+
+// gmAfterRunHook, when set, runs right after a GM command has run and before
+// its announcements: a test's window between a /kill and its death broadcast
+// (TestGMKillReachesTheWatchersBeforeIt). nil in production.
+var gmAfterRunHook func()

@@ -55,7 +55,13 @@ func TestAOIStressClientMatchesTheWindow(t *testing.T) {
 		unknownMoves, spawnAfterDeath, leftUnknown int
 		pages                                      []int64
 		frames                                     int64
+		listed                                     = make(chan struct{})
+		listedOnce                                 sync.Once
+		announced                                  sync.Map
 	)
+	for _, m := range monsters.AppendAll(nil) {
+		announced.Store(m.ID, true)
+	}
 	readerDone := make(chan struct{})
 	go func() {
 		defer close(readerDone)
@@ -89,6 +95,7 @@ func TestAOIStressClientMatchesTheWindow(t *testing.T) {
 				for _, id := range ids {
 					bodies[id] = true
 				}
+				listedOnce.Do(func() { close(listed) })
 			case OpMonsterSpawned:
 				s, _ := DecodeMonsterSpawned(p.Data)
 				if dead[s.Monster.ID] {
@@ -117,6 +124,15 @@ func TestAOIStressClientMatchesTheWindow(t *testing.T) {
 			mu.Unlock()
 		}
 	}()
+
+	// The client's own first list, as World3D asks for one on entering the
+	// world, before anything moves.
+	proto.Write(c.conn, &proto.Packet{Opcode: OpMonsterList, Data: []byte{MonsterListFlagPaged}}, nil, nil)
+	select {
+	case <-listed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the first list never arrived")
+	}
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -154,6 +170,12 @@ func TestAOIStressClientMatchesTheWindow(t *testing.T) {
 		all := monsters.AppendAll(nil)
 		for i := 0; i < 20 && len(all) > 0; i++ {
 			m := all[rr.Intn(len(all))]
+			// Only a monster whose spawn has been announced: in the server a
+			// new monster's brain waits out an IDLE dwell (2001 ms or more)
+			// before its first leg, and the spawn push goes out at once.
+			if _, ok := announced.Load(m.ID); !ok {
+				continue
+			}
 			dx, dz := randPos(rr, 4.5)
 			monsters.SetMotion(m.ID, dx, dz, 1600, 1)
 		}
@@ -178,7 +200,15 @@ func TestAOIStressClientMatchesTheWindow(t *testing.T) {
 			}
 		}
 		x, z := randPos(rr, 4.5)
-		BroadcastMonsterSpawned(r.hub, monsters, spawnAt(t, monsters, "jangan", x, z))
+		// A respawn cannot wander on its own here (no run speed): the test's
+		// clock runs a 2001 ms IDLE dwell in a few milliseconds of wall
+		// time, so a brain could leg a monster before the goroutine that
+		// spawned it had sent its spawn push -- in the server the push goes
+		// out at once and the first leg waits out that dwell in real time.
+		// The forced legs above move it once it is announced.
+		id := monsters.SpawnSpecies("jangan", combat.Species{Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", Level: 1, BCRadius: 6}, x, 0, z, 30, 1, 1, 1).ID
+		BroadcastMonsterSpawned(r.hub, monsters, id)
+		announced.Store(id, true)
 		time.Sleep(time.Duration(rr.Intn(2)) * time.Millisecond)
 	}, 5)
 
@@ -190,7 +220,17 @@ func TestAOIStressClientMatchesTheWindow(t *testing.T) {
 		monsters.StopMotion(m.ID)
 	}
 	v.reconcile()
-	time.Sleep(500 * time.Millisecond)
+	// Settle until the client has read everything: no frame for 300 ms (at
+	// most 10 s). Under -race the reader can trail the server by more than a
+	// fixed wait, and a leave still in its socket would read as a ghost.
+	for last, quietSince, give := atomic.LoadInt64(&frames), time.Now(), time.Now().Add(10*time.Second); time.Now().Before(give); {
+		time.Sleep(50 * time.Millisecond)
+		if n := atomic.LoadInt64(&frames); n != last {
+			last, quietSince = n, time.Now()
+		} else if time.Since(quietSince) >= 300*time.Millisecond {
+			break
+		}
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -214,17 +254,19 @@ func TestAOIStressClientMatchesTheWindow(t *testing.T) {
 	}
 	t.Logf("frames %d, view %v stand %v, client bodies %d, truth %d, ghosts %d %v, missing %d %v, unknown moves %d, spawn-after-death %d, leave-unknown %d, dead %d",
 		atomic.LoadInt64(&frames), cell, standCell, len(bodies), len(truth), len(ghosts), ghosts, len(missing), missing, unknownMoves, spawnAfterDeath, leftUnknown, len(dead))
-	if len(ghosts) > 0 || len(missing) > 0 || spawnAfterDeath > 0 {
+	// A leg for a body the client was never told about makes the real client
+	// ask for the whole list (World3D._on_monster_moved), so none may reach
+	// it (round 656's second review: mayShowLeg).
+	if len(ghosts) > 0 || len(missing) > 0 || spawnAfterDeath > 0 || unknownMoves > 0 {
 		t.Errorf("client diverged from the server's window")
 	}
 }
 
-// The review's two orderings (a monster's step over a region line, the view
-// moving over another). Before the fix the tick's step, a reconcile and the
-// tick's crossings could interleave in that order and lose the enter or the
-// leave. The step and its crossings are now one step under the view lock
-// (monsterAOI.step), so a reconcile lands wholly before or wholly after it;
-// both orders must end with the right message.
+// A monster's step over a region line and a view moving over another, with
+// the reconcile wholly before or wholly after monsterAOI.step. Both orders
+// already passed on d3963cf: these pin that neither regressed. The order that
+// lost messages -- the hub's step, then a reconcile, then the crossings -- is
+// TestAOIReconcileWaitsForTheStep's.
 func rv656Interleave(t *testing.T, reconcileFirst bool, playerFrom, playerTo, monFrom, monTo float64) (left, entered []int64, id int64) {
 	monsters := combat.NewHub()
 	id = spawnAt(t, monsters, "jangan", monFrom, 0)
@@ -271,5 +313,61 @@ func TestAOIStepAndViewMoveKeepTheLeave(t *testing.T) {
 		if !sameIDs(left, []int64{id}) || len(entered) != 0 {
 			t.Errorf("reconcile first %v: left %v entered %v, want monster %d left once", first, left, entered, id)
 		}
+	}
+}
+
+// Round 656's second review: the losing order, made to happen. The test hook
+// inside monsterAOI.step (aoiStepHook) runs between the hub's step and the
+// crossings and starts a reconcile on another goroutine: the reconcile must
+// wait until the step is done (it needs the view lock the step holds), and the
+// player must then hear both messages. M1 walks from cell 3, outside the
+// window at 0, into cell 2, which both windows hold; M2 from cell -2, which
+// only the old window holds, into cell -3, which neither does; the player
+// moves from cell 0 to cell 1. On d3963cf's order (step, reconcile,
+// crossings) the reconcile reads both monsters already in their new cells and
+// owes nothing, and the crossings, read against the new view, owe nothing
+// either: M1 is never entered and M2 never left.
+func TestAOIReconcileWaitsForTheStep(t *testing.T) {
+	monsters := combat.NewHub()
+	m1 := spawnAt(t, monsters, "jangan", cellX(3)-900+50, 0)
+	m2 := spawnAt(t, monsters, "jangan", cellX(-2)-960+50, 0)
+	r := newListRig(t, monsters)
+	v := installAOIForTest(t, r.hub, monsters)
+	c := r.join(t, 1, 0, 0)
+	r.list(t, c, 1)
+	c.quiet(t, 100*time.Millisecond)
+	monsters.SetMotion(m1, cellX(2), 0, 1600, 1)
+	monsters.SetMotion(m2, cellX(-3), 0, 1600, 1)
+	r.hub.Move(r.session(1), world.Position{X: cellX(1) - 900, Z: 0})
+
+	reconciled := make(chan struct{})
+	waited := false
+	aoiStepHook = func() {
+		go func() { v.reconcile(); close(reconciled) }()
+		select {
+		case <-reconciled:
+		case <-time.After(150 * time.Millisecond):
+			waited = true
+		}
+	}
+	t.Cleanup(func() { aoiStepHook = nil })
+	changes, owed := v.step(0.1, nil, nil) // 160 units each: over the lines
+	aoiStepHook = nil
+	if len(changes) != 2 {
+		t.Fatalf("precondition: two crossings, got %v", changes)
+	}
+	for _, ev := range owed {
+		v.deliverViewEvents(ev)
+	}
+	<-reconciled
+	if !waited {
+		t.Error("the reconcile ran inside the step: nothing kept a view move out from between the step and its crossings")
+	}
+	left, entered, _ := aoiFrames(t, c.quiet(t, 200*time.Millisecond))
+	if !sameIDs(entered, []int64{m1}) {
+		t.Errorf("entered %v, want [%d]: the monster that walked into the window was never sent", entered, m1)
+	}
+	if !sameIDs(left, []int64{m2}) {
+		t.Errorf("left %v, want [%d]: the monster that walked out of the window stays a ghost", left, m2)
 	}
 }

@@ -3385,7 +3385,26 @@ the monster before it AND those watching where it stands after (`damageMonsterWa
 longer found the dead monster in its cells, kept a ghost. The spawn push goes through the same
 checked enter (round 656's review), so it is never delivered to a view that does not see its
 cell. A push's cell is taken from the monster's float64 position, never the float32 copy on the
-wire. Every change -- a view moving, a monster
+wire.
+
+**Legs and blows are checked too** (round 656's second review). The real client answers an
+`OpMonsterMoved` for a body it does not have by asking for the whole list, at most every 5 s
+(`World3D._on_monster_moved`). So the AI's pushes (legs, stops, blows) go to a watcher only if, at
+the send and under its wire lock, the monster is alive, its cell is in the watcher's window, and
+no enter for it is still owed (`mayShowLeg`). A view move marks the monsters it gains as
+**pending** until their enter goes out, since the enter carries the leg. A list clears them.
+
+**For every new monster-damage path (rounds 659, 660, ...):** call
+
+```go
+func damageMonsterWatched(hub *world.Hub, monsters *combat.Hub, id int64, amount int) (updated combat.Monster, died, ok bool, watchers []world.Entity)
+```
+
+(`server/internal/session/aoi.go`), never `combat.Hub.ApplyDamage` itself. Send the damage or the
+death to `watchers`, each with `sendMonsterPush` (under the monster wire lock). `watchers` are the
+players watching the monster before the blow and after it, each once.
+`TestMonsterDamageGoesThroughDamageMonsterWatched` fails on any other call of the monster hub's
+`ApplyDamage` outside `aoi.go` and the GM `/kill`. Every change -- a view moving, a monster
 crossing a line, a list -- produces its own messages after it, so the client ends where the
 server is whatever order two goroutines' messages reach the socket.
 
@@ -3405,10 +3424,19 @@ later hatches the placement again. Round 659 replaces the delay with the READ ne
 2 s as first built, raised by the review so a client busy loading a region is not dropped).
 A Send blocks only once the kernel socket buffers are full, which only happens with a peer that
 has stopped reading. On the timeout the connection is closed, so the read loop ends and
-OnDisconnect runs, and every later Send returns `ErrSendStalled` at once. A stalled client can
-hold the AI tick for at most 10 s, once. A per-session send queue would remove even that, but every
-Send caller relies on the frame being on the wire, in order, when Send returns (the wire lock's
-ordering, the list's pages), so it is not built.
+OnDisconnect runs, and every later Send returns `ErrSendStalled` at once.
+
+The deadline bounds one write, not a session. A peer that reads slowly but steadily finishes every
+write inside it, while every writer that fans out to it waits on it write after write: the AI
+tick, the respawn scheduler's spawn push, other players' blows. So each session also has a
+**blocking budget** (`gateway.SendBlockBudget` = 3 s, draining 3 s per `SendBlockWindow` = 30 s;
+OURS, round 656's second review). Every write's time on the socket adds to the session's debt,
+the debt drains at 0.1 s a second, and each write's deadline is capped at what is left of the
+budget. A session whose debt reaches the budget is closed. Its writers together wait about 3 s,
+plus the drain, before it is gone. A reading client's writes take microseconds, so only a peer
+that keeps the kernel buffers full runs its debt up. A per-session send queue would take the
+waiting off the writers altogether, but every Send caller relies on the frame being on the wire,
+in order, when Send returns (the wire lock's ordering, the list's pages), so it is not built.
 
 **Measured** (`BenchmarkMonsterAITick`, 12,000 monsters over a 40 x 30 grid of regions in one
 bucket, players on real TCP; i7-13700K; the same file run against the base with a no-op setup):
