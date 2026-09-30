@@ -142,6 +142,12 @@ rm -f itemdata_* skilldata_* npcpos.txt teleport*.txt   # the extracted tables a
 docker compose up -d
 ```
 
+**At a host's boot** Docker restarts the server and postgres containers together and ignores the
+compose file's `depends_on: condition: service_healthy`, which applies only to `docker compose up`.
+The server therefore waits for postgres itself: `-postgres-wait` (default 60s) retries every second,
+logging `waiting for postgres` each time. Before this, every reboot of srrevamp-01 logged one
+`opening account store ... connection refused` and a Docker restart of the server.
+
 The boot log then reads `loaded EXP curve path=/data/leveldata.csv maxLevel=140` and
 `reference data in PostgreSQL items=15338 skills=33698 ...`; an empty items table logs a WARN
 naming this section. Verified on the public server on 2026-09-19 by a level-1 QA character at a

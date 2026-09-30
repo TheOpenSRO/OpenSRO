@@ -703,6 +703,10 @@ func main() {
 		"PostgreSQL connection string for account/character storage")
 	tlsCert := flag.String("tls-cert", "", "path to a TLS certificate (PEM); if set with -tls-key, the gateway serves TLS instead of plain TCP")
 	tlsKey := flag.String("tls-key", "", "path to a TLS private key (PEM); see -tls-cert")
+	postgresWait := flag.Duration("postgres-wait", 60*time.Second,
+		"how long to wait at startup for PostgreSQL to accept connections, retrying every second "+
+			"(0: one try, as before). At a host's boot Docker starts the server and postgres "+
+			"together, ignoring compose's depends_on, so postgres may not be up yet")
 	inMemory := flag.Bool("in-memory", false,
 		"run with in-memory storage instead of PostgreSQL: nothing is persisted, and every "+
 			"account, character, guild and friendship is gone when the process exits. For "+
@@ -981,6 +985,10 @@ func main() {
 		friends = friend.NewMemStore()
 		logger.Warn("in-memory storage ready -- nothing will be persisted")
 	} else {
+		if err := waitForDatabase(pingPostgres(*postgresDSN), *postgresWait, time.Second, time.Sleep, logger); err != nil {
+			logger.Error("opening account store", "error", err)
+			os.Exit(1)
+		}
 		sqlAccounts, err := account.OpenSQLStore(*postgresDSN)
 		if err != nil {
 			logger.Error("opening account store", "error", err)

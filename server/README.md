@@ -29,6 +29,7 @@ in `deploy/README.md` and `docs/HANDOFF_OPENSRO.md`.
 |---|---|---|
 | `-addr` | — | listen address for the gateway (`:15779`) |
 | `-postgres-dsn` | — | PostgreSQL DSN; the persisted store for accounts, characters, inventory, equipment, storage, guilds, friends, quests, skills, reference items/skills/drops |
+| `-postgres-wait` | `60s` | how long to wait at startup for PostgreSQL to accept connections, retrying every second (`0`: one try). At a host's boot Docker starts the server and postgres together, ignoring compose's `depends_on`, so postgres may not be up yet (deploy/README.md) |
 | `-in-memory` | — | run with in-memory stores instead of PostgreSQL (QA renders, tests, local play; nothing survives a restart) |
 | `-tls-cert` / `-tls-key` | — | serve TLS on the gateway instead of plain TCP |
 | `-leveldata-csv` | `SRREVAMP_LEVELDATA_CSV` | the EXP curve (`export-leveldata`); **without it characters never level** |
