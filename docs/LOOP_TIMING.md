@@ -31,6 +31,7 @@ only the Dunhuang reeds at 320x180.
 |---|---|---|---|
 | Full client test suite (`remote_godot.sh tests`), 8 suites at a time in one ssh (`run_suites.sh`) | 251 s | **59 s** (4.3x) | Same tree, back to back: 167 suites, 0 failing both ways. A deliberate FAIL suite and a hanging suite are both reported, exit 1. |
 | Performance check per world round (`perf_gate.sh`) | none; round 645's +3.3 ms surfaced 3.5 h late | **~6 min** (`--sites jangan`), ~15 min all views | Proof: 8658370 vs c306c51 reports `frame SLOWER (+3.0)`, exit 1. Same build against itself: 12 of 12 numbers SAME, exit 0. |
+| perf gate: a base revision measured once, its client copy shared | 216 s a gate (2 runs a side, Jangan) | **170 s**; 4 boots instead of 6 at the default 3 runs | Two gates back to back on 56e8e24: the second reported "reusing the shared base copy" and "cached run(s) ... using them"; the fresh check was 11.22 ms against a cached median of 11.23. |
 | A hung suite holding a lane's lock (`SUITE_TIMEOUT`) | 13 min until killed by hand | fails after 600 s (default) | A script-less boot ended at 21 s with a 20 s limit, nothing left running. |
 
 ## The second batch: rounds 648-652 (2026-09-30 06:14 to 08:17)

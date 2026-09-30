@@ -371,6 +371,14 @@ is what lanes share (one render uses about 3.3 of the box's 10 cores; six at onc
 busy and ran 2.8x slower a frame, while the GPU averaged 37 %; 2026-09-30, `amdgpu_top` and
 `vmstat`). Gates queue on `/var/tmp/perf-gate.lock`. The logs stay in `/var/tmp/perf-<lane>/`.
 
+**A base is measured once (2026-09-30).** The base revision's numbers are cached per (revision,
+view, frames) in `/var/tmp/perf-cache/` on the box, and its client copy is shared as
+`/opt/srrevamp-client-perf-base-<rev12>` (shipped and imported once, under a per-revision lock). A
+later gate runs one fresh base run first and keeps the cache only if that run is within the gate's
+own SLOWER threshold of the cached median; otherwise the box has drifted and the base is measured
+again in full. Measured at Jangan with 2 runs a side: 216 s without either, 180 s with the cached
+numbers, 170 s with the shared copy too; with the default 3 runs a gate boots 4 times instead of 6.
+
 The proof, 2026-09-30, three runs each (ms per frame 11.49/11.05/11.04 against 14.43/13.91/14.06):
 
 ```

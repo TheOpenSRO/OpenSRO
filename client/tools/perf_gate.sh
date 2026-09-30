@@ -70,7 +70,11 @@ cd "$repo_root"
 base_short="$(git rev-parse --short "$base")"
 head_label="${head:-working tree}"
 lane="${PERF_LANE:-$(git rev-parse --abbrev-ref HEAD | tr -c 'a-zA-Z0-9\n' '-')}"
-box_base="/opt/srrevamp-client-perf-${lane}-base"
+# The base is a fixed revision, so its client copy is shared by every lane and
+# gate that measures it: shipped and imported once, reused after (the ship and
+# the import were a large part of each gate).
+base_full_rev="$(git rev-parse "$base")"
+box_base="/opt/srrevamp-client-perf-base-${base_full_rev:0:12}"
 box_head="/opt/srrevamp-client-perf-${lane}-head"
 work="/var/tmp/perf-${lane}"
 
@@ -100,7 +104,16 @@ ship() { # $1 box dir, $2 rev ('' = working tree)
 
 echo "perf gate: base $base_short vs head $head_label; sites $sites; $runs run(s) each; box dirs $box_base, $box_head"
 ssh -n "$RENDER_HOST" "mkdir -p '$work' && chown ghidra:ghidra '$work'"
-ship "$box_base" "$base"
+# The shared base copy: built once, under a per-revision lock on the box, and
+# marked .shipped when complete. A gate that finds it complete (or waits for
+# another lane to finish it) just discards its own stream.
+ssh -n "$RENDER_HOST" "mkdir -p /var/tmp/perf-cache"
+git -C "$repo_root" archive "$base" $files | ssh "$RENDER_HOST" "flock '/var/tmp/perf-cache/ship-${base_full_rev:0:12}.lock' sh -c '
+  if [ -f \"$box_base/.shipped\" ]; then cat >/dev/null; echo \"perf gate: reusing the shared base copy $box_base\";
+  else rm -rf \"$box_base\" && mkdir -p \"$box_base\" && tar xf - -C \"$box_base\" --strip-components=1 &&
+    chown -R ghidra:ghidra \"$box_base\" &&
+    { su - ghidra -c \"$GODOT --headless --path $box_base --import --quit\" >/dev/null 2>&1 || true; } &&
+    touch \"$box_base/.shipped\" && echo \"perf gate: shipped the shared base copy $box_base\"; fi'"
 ship "$box_head" "$head"
 
 # One run on the box: waits until no other lane runs Godot, boots,
@@ -153,31 +166,74 @@ verdict() {
 ssh -n "$RENDER_HOST" "touch /var/tmp/perf-gate.lock"
 slower=0
 report=""
+base_full="$(git rev-parse "$base")"
+cache="/var/tmp/perf-cache"
+ssh -n "$RENDER_HOST" "mkdir -p '$cache'"
+
+# one1 <base|head> <run tag>: one booted run, repeated if another lane's Godot
+# overlapped it; prints "ms entry freeze hitches" (progress goes to stderr).
+one1() {
+  local b=$1 tag=$2 dir="$box_base" out ms entry freeze hitches seen
+  [ "$b" = head ] && dir="$box_head"
+  for try in 1 2 3; do
+    out=$(ssh -n "$RENDER_HOST" "flock /var/tmp/perf-gate.lock '$work/run1.sh' '$dir' '$work/${s}_${b}_$tag.log' '$mapm' '$at' '$yaw' '$walk' '$run_frames'")
+    read -r ms entry freeze hitches seen <<<"$out"
+    if [ "$ms" = none ] || [ "$entry" = none ] || [ "$freeze" = none ]; then
+      echo "  $s $b run $tag: missing numbers ($out) -- see $RENDER_HOST:$work/${s}_${b}_$tag.log" >&2; exit 1
+    fi
+    [ "$seen" = 0 ] && break
+    echo "  $s $b run $tag: another render overlapped it ($seen) -- repeating" >&2
+  done
+  echo "  $s $b run $tag: frame $ms ms, entry $entry ms, freeze $freeze ms, $hitches hitch(es)" >&2
+  echo "$ms $entry $freeze $hitches"
+}
+add() { # add <base|head> "<ms entry freeze hitches>"
+  local ms entry freeze hitches; read -r ms entry freeze hitches <<<"$2"
+  vals[$1.frame]="${vals[$1.frame]:-} $ms"; vals[$1.entry]="${vals[$1.entry]:-} $entry"
+  vals[$1.freeze]="${vals[$1.freeze]:-} $freeze"; vals[$1.hitches]="${vals[$1.hitches]:-} $hitches"
+}
+
 for s in ${sites//,/ }; do
   IFS='|' read -r mapm at yaw walk site_frames <<<"$(view "$s")"
   # A cheap view (the ferry: 2.6 ms a frame) is over before 3000 frames give
-  # the 30 once-a-second samples the frame number needs, so a site may ask
-  # for more: max(--frames, the site's own).
+  # enough once-a-second samples (the minimum is 10), so a site may ask for
+  # more: max(--frames, the site's own).
   run_frames=$frames
   [ -n "$site_frames" ] && [ "$site_frames" -gt "$frames" ] && run_frames=$site_frames
   declare -A vals=()
+  # A base revision's numbers are the same for every lane that branches from
+  # it: on 2026-09-30 four lanes re-measured dev's base at Jangan and queued
+  # ~25 min for it. So a base is measured in full once per (revision, view,
+  # frames) and cached on the box; a later gate runs ONE fresh base run first
+  # and keeps the cache only if that run's frame time is within the gate's own
+  # SLOWER threshold of the cached median -- a drifted box is measured again.
+  cfile="$cache/${base_full}_${s}_${run_frames}.vals"
+  cached=$(ssh -n "$RENDER_HOST" "cat '$cfile' 2>/dev/null" || true)
+  ncached=$(printf '%s\n' "$cached" | grep -c . || true)
+  use_cache=0
+  if [ "$ncached" -ge "$runs" ]; then
+    fresh=$(one1 base check) || exit 1
+    cmed=$(printf '%s\n' "$cached" | awk '{print $1}' | median)
+    if awk -v f="${fresh%% *}" -v c="$cmed" 'BEGIN {t = 0.05 * c; if (t < 0.5) t = 0.5; d = f - c; if (d < 0) d = -d; exit !(d <= t)}'; then
+      use_cache=1
+      echo "  $s base: $ncached cached run(s) for ${base_full:0:7}; the fresh check (${fresh%% *} ms) is within the threshold of their median ($cmed ms) -- using them" >&2
+      while IFS= read -r line; do [ -n "$line" ] && add base "$line"; done <<<"$cached"
+      add base "$fresh"
+    else
+      echo "  $s base: the fresh check (${fresh%% *} ms) is off the cached median ($cmed ms) -- the box drifted; measuring the base in full" >&2
+      ssh -n "$RENDER_HOST" "rm -f '$cfile'"
+    fi
+  fi
+  newbase=""
   for i in $(seq 1 "$runs"); do
-    for b in base head; do
-      dir="$box_base"; [ $b = head ] && dir="$box_head"
-      for try in 1 2 3; do
-        out=$(ssh -n "$RENDER_HOST" "flock /var/tmp/perf-gate.lock '$work/run1.sh' '$dir' '$work/${s}_${b}_$i.log' '$mapm' '$at' '$yaw' '$walk' '$run_frames'")
-        read -r ms entry freeze hitches seen <<<"$out"
-        if [ "$ms" = none ] || [ "$entry" = none ] || [ "$freeze" = none ]; then
-          echo "  $s $b run $i: missing numbers ($out) -- see $RENDER_HOST:$work/${s}_${b}_$i.log" >&2; exit 1
-        fi
-        [ "$seen" = 0 ] && break
-        echo "  $s $b run $i: another render overlapped it ($seen) -- repeating" >&2
-      done
-      echo "  $s $b run $i: frame $ms ms, entry $entry ms, freeze $freeze ms, $hitches hitch(es)"
-      vals[$b.frame]="${vals[$b.frame]:-} $ms"; vals[$b.entry]="${vals[$b.entry]:-} $entry"
-      vals[$b.freeze]="${vals[$b.freeze]:-} $freeze"; vals[$b.hitches]="${vals[$b.hitches]:-} $hitches"
-    done
+    if [ $use_cache = 0 ]; then
+      r=$(one1 base "$i") || exit 1; add base "$r"; newbase="$newbase$r"$'\n'
+    fi
+    r=$(one1 head "$i") || exit 1; add head "$r"
   done
+  if [ $use_cache = 0 ] && [ -n "$newbase" ]; then
+    printf '%s' "$newbase" | ssh "$RENDER_HOST" "cat > '$cfile'"
+  fi
   for m in "frame ms|0.5|0.05" "entry ms|1000|0.10" "freeze ms|100|0.25" "hitches|2|0"; do
     IFS='|' read -r label abs rel <<<"$m"; key=${label%% *}
     line=$(verdict "${vals[base.$key]}" "${vals[head.$key]}" "$abs" "$rel")
