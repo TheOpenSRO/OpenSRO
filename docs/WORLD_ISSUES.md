@@ -7163,10 +7163,13 @@ instance on it by transform feedback (`drivers/gles3/storage/mesh_storage.cpp`,
   `mesh_instance_3d.cpp` `_resolve_skeleton_path`), so a member stays where it is placed.
   - A member whose clock stops **leaves at once**: its own player is seeked to the group's clock
     (its own clock) and its pieces bound back. The group runs until its last member stops.
-  - A start **never joins a running group.** A group already processing advances in the frame a
-    newly started clip does not, because Godot copies the process list before the frame's first
-    node (READ, `scene/main/scene_tree.cpp` `_process_group`, "Make a copy"). For the same reason a
-    group node released in a frame is pooled only at the next tick.
+  - A start **never joins a running group** (OURS, conservative): joining would need the start's
+    clock to equal the group's exactly, and the rule avoids having to prove it. The reason first
+    given here (Godot copies the process list before the frame's first node, so a group would run a
+    frame ahead) is wrong: the driver ticks from `_physics_process`, before the frame's idle
+    processing, so a clip started in the tick advances in that same frame (the release review,
+    2026-09-30). A group node released in a frame is pooled only at the next tick; that is
+    conservative too, and no test pins it.
   - One-shot clips (`LOOP_NONE`, the horses) and object.ifo flag bit 0 objects keep their own
     player.
 - **Per-sector range bounds.** With `rho` the farthest origin from a sector's centre and
@@ -7216,6 +7219,10 @@ with another lane. Base in `/opt/srrevamp-client-animperf-base` from `git archiv
 |---|---|---|---|---|---|---|
 | Jangan spawn | c306c51 | 13.61 | 14.54 | 13.99 | **14.05** (71 fps) | +2.86 |
 | | round 647 | 11.72 | 11.65 | 12.00 | **11.79** (85 fps) | +0.60 |
+
+The release review re-measured the same view (3 interleaved runs a build, 2026-09-30): c306c51
+13.96 / 14.58 / 14.21, mean **14.25** ms; round 647 (merged, 5a705a7) 12.21 / 12.05 / 12.56, mean
+**12.27** ms -- a saving of 1.98 ms, about 12 % less than the 2.26 above.
 | | round 647, NO_SHARE | 13.00 | 13.32 | 13.87 | 13.40 | +2.21 |
 | | round 647, NO_MAP_ANIM | 11.33 | 11.11 | 11.13 | 11.19 | — |
 | Reeds 98/157 | c306c51 | 12.31 | 12.10 | 12.21 | **12.21** | +6.04 |
@@ -8281,7 +8288,11 @@ The setup:
 
 Base client: `NAV 629: wall at local 980.0, 477.7 (on object oas_tarim_rob_s_brid)`, and it
 stayed there. This build: no wall line, and it was still on the deck at (980.0, 1186.7) when the
-clicks ran out.
+clicks ran out. (Correction, the release review, 2026-09-30: the clicks had not run out, they were
+dropped. At x = 980 = 49 x 20 with yaw 0 the centre-column click ray lies in a heightfield grid
+plane and finds no ground, so every click after the first was lost -- a pre-existing click-picking
+fault, not a nav wall; see docs/TODO.md. With clicks off the centre column the same walk left the
+deck at (1006.3, 1279.1) onto the ring around the tower and on into 92/148.)
 
 Hotan's south bridge, this build: from 90/135 (1139, 1250) over the deck into 91/135, onto
 `oas_hot_c1_castle`'s ramp and up to the town at y 243.8 (91/135 local z 1610), with no wall. Only

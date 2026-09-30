@@ -1323,6 +1323,18 @@ Round 644 made the on-object walk go cell by cell, as the client's does, and loa
 one navigation mesh (the `.bsr` header word 0x28). The Black Robber Den's four bridges and the
 Temple of fertility's two cross end to end; Hotan's four were already walkable (their problem is
 drawing, round 643). Left:
+- **A click whose ray lies exactly in a heightfield grid plane finds no ground and is dropped**
+  (pre-existing; the release review, 2026-09-30, MEASURED). `_ground_point_at` does not use round
+  572's grid-line workaround: at the den's south bridge, x = 980 = 49 x 20 with yaw 0, every
+  centre-column click after the first found no ground on any layer, and the player stood still --
+  round 644's live walk read that as the clicks running out. A real player needs a camera ray exactly
+  in a grid plane, rare but possible from spots on the grid (Jangan's spawn z 1020 = 51 x 20). Fix:
+  nudge the ray off the grid, or fall back to `TerrainCollision`'s method.
+- **The Temple of fertility bridge's navmesh has 39 of 139 cells with nothing drawn over or under
+  them** (the release review, MEASURED from the drawn triangles, the same on every placement; the
+  terrain is 141-393 below). Either the model's navmesh is walkable over a gap, or a drawn piece is
+  dropped. OPEN. The den's, Bijeokdan's and Hotan's bridges put every walkable cell on the drawn
+  deck (the den's other cells are its pier feet).
 - **`.cpd` compound objects get no navigation mesh.** 105 entries of the navigation index; the
   client loads them through `MapLoader::FUN_0042bc00` (not read). Where one is placed a player
   walks through it.
@@ -1617,6 +1629,14 @@ Still open, by the files each would add:
   frustum (MEASURED there; not re-measured in round 647). The per-sector rule is retail's (READ);
   the sphere standing in for the sector's footprint is OURS, and whether retail's rasterised
   footprint would cover that object is OPEN.
+- **The pose pool is never trimmed within a zone** (the release review, 2026-09-30, MEASURED).
+  `Driver._pool` is keyed by the Animation, but a region release frees that region's templates, so
+  their Animations never come back: over a 12-hop region tour the pose nodes grew 19 -> 60 (32 idle
+  at the end) and the pooled clip keys 1 -> 28, holding the freed templates' Animations and skeleton
+  copies until the next zone change (which does reset them). Fix: key the pool by model path, drop a
+  clip's pooled nodes when `ObjectTemplateCache.release_region` frees its template, or free nodes
+  idle for N ticks. Also unpinned by any test: pooling a released group node only at the next tick
+  (a mutation that pools it in the same tick passes ALL PASS).
 - **`cj_ferry_boat_old`.** Its `.bsk` is a root with no other bone, which `BskReader` refuses
   (1 placement).
 - **Rigid pieces of a skeletal object.** 20 animated models, such as `bagh_city_portal` and the

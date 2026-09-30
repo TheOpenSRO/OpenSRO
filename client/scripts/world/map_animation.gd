@@ -607,10 +607,11 @@ class Driver:
 	## at its own clock). Shareable clips with the same Animation and the
 	## same clock start as one pose group; any other runs on its own player.
 	## A start never joins a group already running: its clock would have to
-	## equal the group's exactly, and a group already processing this frame
-	## advances in it while a newly started clip does not (the tree's process
-	## list is copied before the frame's first node, scene_tree.cpp 4.2.2
-	## `_process_group`) -- so it would run a frame ahead.
+	## equal the group's exactly, which this conservative rule (OURS) avoids
+	## having to prove. (Not because of the tree's process-list copy, as
+	## first written: the driver ticks from _physics_process, so a clip
+	## started in the tick advances in that same frame -- the release
+	## review, 2026-09-30.)
 	func _start_all(starting: Array) -> void:
 		var buckets := {}
 		for o in starting:

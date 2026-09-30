@@ -279,9 +279,10 @@ keeps retail's per-object pause and per-frame dt and saves work three exact ways
   (READ, Godot 4.2.2 `scene/3d/skeleton_3d.cpp` and `mesh_instance_3d.cpp`
   `_resolve_skeleton_path`), so a member stands and turns where it is placed. A member whose clock
   stops leaves at once: its own player is set to the group's clock and its pieces are bound back.
-  A start never joins a group already running (a group already processing advances in that frame
-  and a newly started clip does not: Godot copies the process list before the frame's first node,
-  `scene_tree.cpp` `_process_group`). One-shot clips are never shared.
+  A start never joins a group already running: OURS and conservative, since joining would need its
+  clock to equal the group's exactly (the process-list reason round 647 first gave is wrong -- the
+  driver ticks from `_physics_process`, so a clip started in the tick advances that frame; the
+  release review, 2026-09-30). One-shot clips are never shared.
 - **Per-sector range bounds.** With `rho` the farthest origin from a sector's centre, every object
   is in range when `d + rho - rmin < 2020 - 1` and out when `d - rho - rmax >= 2020 + 1` (a 1-unit
   guard band); a sector decided the same way as last frame is not visited, and a sector wholly out
