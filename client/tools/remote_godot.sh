@@ -2,7 +2,7 @@
 # Runs Godot on the render box, never on the developer's machine.
 #
 # AGENTS.md's hard rule: "Never run Godot on the host machine. Godot is only
-# run on the dedicated render/RE box (192.168.5.78, see docs/RENDER_BOX.md)."
+# run on the dedicated render/RE box (192.168.10.78, see docs/RENDER_BOX.md)."
 # This ships the working copy there and runs the command, so following the
 # rule is one line rather than five.
 #
@@ -18,7 +18,7 @@
 # Environment: RENDER_HOST, RENDER_DIR, RENDER_GODOT, PK2_DIR.
 set -euo pipefail
 
-RENDER_HOST="${RENDER_HOST:-root@192.168.5.78}"
+RENDER_HOST="${RENDER_HOST:-root@192.168.10.78}"
 RENDER_DIR="${RENDER_DIR:-/opt/srrevamp-client}"
 RENDER_GODOT="${RENDER_GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
@@ -108,13 +108,13 @@ case "$cmd" in
     # 3 the dummy renderer's leaked-RID report at exit (character_assembler,
     # monster_assembler, hud_window -- the last from the Label, gauge and
     # lattice it builds, so the 23 stand before and after its fix).
-    # TEST_JOBS suites at a time on the box (default 8; the box has 10
+    # TEST_JOBS suites at a time on the box (default 16; the box has 28
     # cores and the suites are headless), in one ssh holding the lane's lock:
     # client/tools/run_suites.sh. TEST_JOBS=0 keeps the old one-at-a-time loop
     # below, one ssh per suite (a median 318 s for 167 suites).
-    if [ "${TEST_JOBS:-8}" != 0 ]; then
+    if [ "${TEST_JOBS:-16}" != 0 ]; then
       (cd "$repo_root" && find client -name '*_test.gd' | sort | sed 's|^client/||') \
-        | ssh "$RENDER_HOST" "su - ghidra -c \"flock '$GODOT_LOCK' '$RENDER_DIR/tools/run_suites.sh' '$RENDER_DIR' '$RENDER_GODOT' '${TEST_JOBS:-8}' '${SUITE_TIMEOUT:-600}'\""
+        | ssh "$RENDER_HOST" "su - ghidra -c \"flock '$GODOT_LOCK' '$RENDER_DIR/tools/run_suites.sh' '$RENDER_DIR' '$RENDER_GODOT' '${TEST_JOBS:-16}' '${SUITE_TIMEOUT:-600}'\""
       exit $?
     fi
     fail_re='FAIL|FAILURES|Parse Error|SCRIPT ERROR'

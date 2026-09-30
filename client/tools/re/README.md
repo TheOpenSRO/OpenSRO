@@ -13,11 +13,11 @@ this is just what each file is.
 ## Deploying them
 
     for f in rebox.py vtindex.py vtq.py; do
-      ssh root@192.168.5.78 "rm -f /var/tmp/$f"
-      ssh root@192.168.5.78 "cat > /var/tmp/$f" < client/tools/re/$f
-      ssh root@192.168.5.78 "chown ghidra:ghidra /var/tmp/$f"
+      ssh root@192.168.10.78 "rm -f /var/tmp/$f"
+      ssh root@192.168.10.78 "cat > /var/tmp/$f" < client/tools/re/$f
+      ssh root@192.168.10.78 "chown ghidra:ghidra /var/tmp/$f"
     done
-    ssh root@192.168.5.78 'cd /var/tmp && python3 vtindex.py build \
+    ssh root@192.168.10.78 'cd /var/tmp && python3 vtindex.py build \
       /var/tmp/SR_GameServer.exe /var/tmp/vt_server.json'
 
 `/var/tmp` on the box is owned by `ghidra` and sticky, so `scp` over an existing

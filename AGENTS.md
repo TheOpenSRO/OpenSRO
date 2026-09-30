@@ -12,7 +12,7 @@ file is what an agent needs before touching anything. It is tool-neutral; `CLAUD
   of real data or recovered from the binary, either verify it or leave it out — and say which it
   is. Fabricated constants dressed as findings have cost this project more time than missing
   features.
-- **Never run Godot on the host machine.** Godot is only run on the dedicated render/RE box (`192.168.5.78`, see `docs/RENDER_BOX.md`), never locally on the developer's machine.
+- **Never run Godot on the host machine.** Godot is only run on the dedicated render/RE box (`192.168.10.78`, see `docs/RENDER_BOX.md`), never locally on the developer's machine.
 - **Branch policy**: work on `dev`, never push to `main` directly. See `CONTRIBUTING.md`.
 
 ## Layout
@@ -104,7 +104,7 @@ The whole run is about 15 minutes of box time (3 views x 3 runs x 2 builds); `--
 
 ## Commands
 
-Commands running Godot are executed on the render box (`192.168.5.78`), not on the local machine:
+Commands running Godot are executed on the render box (`192.168.10.78`), not on the local machine:
 
 ```
 godot4 --headless --path client --import --quit                 # compile check on render box (see traps)

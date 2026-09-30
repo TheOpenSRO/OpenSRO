@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # core_reach.py -- measure the GAME-LOGIC CORE of SR_GameServer.exe, with and
-# without virtual dispatch. RUNS ON THE RE BOX (192.168.5.78), where the dump
+# without virtual dispatch. RUNS ON THE RE BOX (192.168.10.78), where the dump
 # lives; it reads /var/tmp/decomp_server and /var/tmp/roots408.txt (the 163
 # handler addresses, column 2 of docs/protocol/server_handlers.tsv).
 #
-#     scp tools/core_reach.py root@192.168.5.78:/var/tmp/
+#     scp tools/core_reach.py root@192.168.10.78:/var/tmp/
 #     cut -f2 docs/protocol/server_handlers.tsv | grep -E "^[0-9a-f]{8}$" \
-#       | ssh root@192.168.5.78 "cat > /var/tmp/roots408.txt"
-#     ssh root@192.168.5.78 "cd /var/tmp && python3 core_reach.py"
+#       | ssh root@192.168.10.78 "cat > /var/tmp/roots408.txt"
+#     ssh root@192.168.10.78 "cd /var/tmp && python3 core_reach.py"
 #
 # It lives in the repo rather than only in /var/tmp because /var/tmp on that box
 # has been cleared before (the full-disk trap in AGENTS.md), and round 408's

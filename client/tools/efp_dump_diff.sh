@@ -13,7 +13,7 @@
 # dumps part, compare `efpcensus -dumpone <path>` with
 # `efp_dump.gd -- --pk2=... --one=<path>`.
 set -euo pipefail
-RENDER_HOST="${RENDER_HOST:-root@192.168.5.78}"
+RENDER_HOST="${RENDER_HOST:-root@192.168.10.78}"
 PK2="${PK2:-/opt/sro-files/client/Particles.pk2}"
 WORK="${WORK:-/var/tmp/efp-dump-diff}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

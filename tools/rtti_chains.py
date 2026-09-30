@@ -9,10 +9,10 @@
 # The client resolves 977 of 977 classes. **Do not join the two binaries' class
 # names by string**: the client's CGObj is `CGObj : CObjChild : CObj` and the
 # server's is `CGObj : IGObj : CBase` -- same name, unrelated hierarchies.
-# RUNS ON THE RE BOX (192.168.5.78). Writes /var/tmp/chd_chains.json.
+# RUNS ON THE RE BOX (192.168.10.78). Writes /var/tmp/chd_chains.json.
 #
-#     scp tools/rtti_chains.py root@192.168.5.78:/var/tmp/
-#     ssh root@192.168.5.78 'cd /var/tmp && python3 rtti_chains.py'
+#     scp tools/rtti_chains.py root@192.168.10.78:/var/tmp/
+#     ssh root@192.168.10.78 'cd /var/tmp && python3 rtti_chains.py'
 #
 # WHY IT EXISTS. The dump's own "RTTI hierarchy:" plates are TRUNCATED -- they
 # routinely stop before the root. `CGObjCOS_Mercenary`'s plate reads

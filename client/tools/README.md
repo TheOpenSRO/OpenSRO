@@ -190,7 +190,7 @@ each 8-, 16- and 24-bit kind, and two music files):
 
 ```
 client/tools/remote_godot.sh sync
-ssh root@192.168.5.78 'su - ghidra -c "cd /opt/srrevamp-client && P=/opt/sro-files/client; \
+ssh root@192.168.10.78 'su - ghidra -c "cd /opt/srrevamp-client && P=/opt/sro-files/client; \
   SRREVAMP_PK2_PATH=\$P/Data.pk2 SRREVAMP_MEDIA_PK2_PATH=\$P/Media.pk2 SRREVAMP_MUSIC_PK2_PATH=\$P/Music.pk2 \
   /opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64 --headless --path . --script res://tools/probe_audio.gd"'
 ```
@@ -889,7 +889,7 @@ type ID to a resource path has been found anywhere in this project's data (see
 ## Godot runs on the render box, never here
 
 AGENTS.md's hard rule. `remote_godot.sh` ships the working copy to
-`192.168.5.78` and runs the command there, so following it is one line:
+`192.168.10.78` and runs the command there, so following it is one line:
 
 ```
 client/tools/remote_godot.sh check     # every script and scene compiles

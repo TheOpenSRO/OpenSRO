@@ -150,7 +150,7 @@ means renders just got 5–10× slower; fix that before waiting on anything.
 
 ## The render box
 
-`192.168.5.78`, reachable as `root` over ssh. `docs/RENDER_BOX.md` is authoritative; the short
+`192.168.10.78`, reachable as `root` over ssh. `docs/RENDER_BOX.md` is authoritative; the short
 version:
 
 | Path | What |

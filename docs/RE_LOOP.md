@@ -32,8 +32,8 @@ box will import.
 
 Write the one-off locally in the scratchpad, then:
 
-	scp -q scratchpad/probe.py root@192.168.5.78:/var/tmp/ && \
-	  ssh root@192.168.5.78 'cd /var/tmp && python3 probe.py'
+	scp -q scratchpad/probe.py root@192.168.10.78:/var/tmp/ && \
+	  ssh root@192.168.10.78 'cd /var/tmp && python3 probe.py'
 
 Never inline Python in an ssh heredoc. Quoting collisions between the local
 shell, ssh and the heredoc have cost this project four separate debugging
@@ -209,8 +209,8 @@ pidfile, so `/opt/srrevamp-re/lock` is present whether or not a tick is running.
 existing file fails with "Permission denied" even as root. Delete first, or
 pipe:
 
-	ssh root@192.168.5.78 'cat > /var/tmp/f' < local_f
-	ssh root@192.168.5.78 'chown ghidra:ghidra /var/tmp/f'
+	ssh root@192.168.10.78 'cat > /var/tmp/f' < local_f
+	ssh root@192.168.10.78 'chown ghidra:ghidra /var/tmp/f'
 
 **There is no `sudo` on the box.** Use `su ghidra -s /bin/bash -c "…"`.
 
@@ -306,10 +306,10 @@ they would stop being invisible. Run this after any round that files a name.
 holds 191 hardcoded names, 152 of them found nowhere else, applied by
 `ApplyKnownNames.java` rather than by the script below.
 
-	ssh root@192.168.5.78 'rm -f /var/tmp/recovered_names.tsv'
-	ssh root@192.168.5.78 'cat > /var/tmp/recovered_names.tsv' < docs/protocol/recovered_names.tsv
-	ssh root@192.168.5.78 'chown ghidra:ghidra /var/tmp/recovered_names.tsv'
-	ssh root@192.168.5.78 'cd /var/tmp && su ghidra -s /bin/bash -c \
+	ssh root@192.168.10.78 'rm -f /var/tmp/recovered_names.tsv'
+	ssh root@192.168.10.78 'cat > /var/tmp/recovered_names.tsv' < docs/protocol/recovered_names.tsv
+	ssh root@192.168.10.78 'chown ghidra:ghidra /var/tmp/recovered_names.tsv'
+	ssh root@192.168.10.78 'cd /var/tmp && su ghidra -s /bin/bash -c \
 	  "/opt/ghidra_12.1.3_PUBLIC/support/analyzeHeadless /home/ghidra/re_server \
 	   SR_GameServer_re -noanalysis -process SR_GameServer.exe -scriptPath /var/tmp \
 	   -postScript ApplyRecoveredNames.java /var/tmp/recovered_names.tsv server"'
@@ -337,7 +337,7 @@ stay filed but unapplied. `re_tick.sh` line 94 is the authority:
 
 	redump client re_client sro_client_re "$CLIENT_BIN" /var/tmp/decomp_client
 
-	ssh root@192.168.5.78 'cd /var/tmp && su ghidra -s /bin/bash -c \
+	ssh root@192.168.10.78 'cd /var/tmp && su ghidra -s /bin/bash -c \
 	  "/opt/ghidra_12.1.3_PUBLIC/support/analyzeHeadless /home/ghidra/re_client \
 	   sro_client_re -noanalysis -process sro_client.exe -scriptPath /var/tmp \
 	   -postScript ApplyRecoveredNames.java /var/tmp/recovered_names.tsv client"'
@@ -347,7 +347,7 @@ other binary's rows as `other binary N` and skips them.
 
 **Then invalidate the dump cache yourself:**
 
-	ssh root@192.168.5.78 'rm -f /var/tmp/decomp_*/PROJSTAMP'
+	ssh root@192.168.10.78 'rm -f /var/tmp/decomp_*/PROJSTAMP'
 
 **A `-readOnly` run of your own still costs a rebuild (round 305).** Running
 `SymbolReport.java` to measure coverage dirties the project exactly as an apply
@@ -356,7 +356,7 @@ sees the dump as stale and spends ~9 minutes rebuilding both. It is
 self-correcting, because the rebuild re-stamps, but it costs a tick. **After any
 read-only analyzeHeadless run, re-stamp instead of leaving it:**
 
-	ssh root@192.168.5.78 'for d in server client; do find /home/ghidra/re_$d -type f \
+	ssh root@192.168.10.78 'for d in server client; do find /home/ghidra/re_$d -type f \
 	  -printf "%T@\n" | sort -rn | head -1 | cut -d. -f1 > /var/tmp/decomp_$d/PROJSTAMP; done'
 
 Only do that when you have NOT changed the project -- after an apply the dump

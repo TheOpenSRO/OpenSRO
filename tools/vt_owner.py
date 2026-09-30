@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # vt_owner.py -- which class DECLARES a function that many vtables share.
-# RUNS ON THE RE BOX (192.168.5.78): reads /var/tmp/vt_server.json (the cached
+# RUNS ON THE RE BOX (192.168.10.78): reads /var/tmp/vt_server.json (the cached
 # vtable index vtq.py uses) and /var/tmp/decomp_server/index.txt.
 #
-#     scp tools/vt_owner.py root@192.168.5.78:/var/tmp/
-#     ssh root@192.168.5.78 'cd /var/tmp && python3 vt_owner.py'
+#     scp tools/vt_owner.py root@192.168.10.78:/var/tmp/
+#     ssh root@192.168.10.78 'cd /var/tmp && python3 vt_owner.py'
 #
 # WHY IT EXISTS. docs/RE_LOOP.md instructs "`vtq.py owner <addr>` decides
 # between the two" when a name sits on a folded or inherited function.
