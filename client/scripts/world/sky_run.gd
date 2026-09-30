@@ -26,7 +26,11 @@ extends RefCounted
 ##   heading `+0x8c`. The difference is taken raw, not wrapped: `|cur - h|`
 ##   (`fsub`, then `fmul -1.0` `0xe1b8e8` when negative). Bit 9 is the state
 ##   `FUN_009c9920(9, 0)` sets on every movement echo (`FUN_008a5750`); that
-##   it means "moving" is INFERRED.
+##   it means "moving" is INFERRED. `+0x6e8` is the mover's `+0x80` (the mover
+##   is at `obj+0x668`): the move kind, 1 a walk to a point, 2 a heading
+##   (round 653's review, READ; `FUN_009ebec0` returns early only when it is
+##   2). So only a heading run in effect keeps its heading: a sky click within
+##   5 degrees during a ground walk starts a run.
 ##
 ## READ, the run (the client's mover and the server's):
 ## - The echo's heading form reaches the mover as `FUN_009e08a0`: `+0x80 = 2`
@@ -86,7 +90,7 @@ static func heading_of_ray(current: float, ray_dir: Vector3) -> float:
 	return RemoteFacing.heading_toward(current, ray_dir)
 
 ## FUN_0078f8d0's test before it sends a heading move: "keep" when the player
-## is moving and `target` is within RESEND_MAX_ANGLE of `current` (raw
+## is on a heading run (moving, and the move kind +0x6e8 is not 1) and `target` is within RESEND_MAX_ANGLE of `current` (raw
 ## difference, as retail's), else "run".
 static func click_rule(moving: bool, current: float, target: float) -> String:
 	if moving and absf(current - target) <= RESEND_MAX_ANGLE:

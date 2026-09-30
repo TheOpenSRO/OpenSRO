@@ -308,6 +308,10 @@ srrevamp follows it in `client/scripts/world/sky_run.gd` (`SkyRun`) and `World3D
   The difference is raw: `fsub`, then `fmul −1.0` (`0xe1b8e8`) when negative, with no wrap. Bit 9
   is state 9 of the object's state machine. `FUN_009c9920(9, 0)` sets it on every `0xB021` echo
   (`FUN_008a5750`), of either form. That it means "moving" is INFERRED.
+  - **`+0x6e8` is the mover's `+0x80`**, the move kind: the mover sits at `obj+0x668`, and
+    `+0x80` is 1 for a walk to a point and 2 for a heading. This is round 653's review, READ.
+  - `FUN_009ebec0` returns early only when it is 2. So the window keeps only a **heading run**. A
+    sky click within 5° of the facing during a ground walk starts a run.
 - After sending, `FUN_00777b90` → `FUN_00b93320(7, 500)`; what that does was not read.
 
 ### The `+0x14` byte is the movement command (READ, the server's mover)
@@ -409,7 +413,8 @@ srrevamp's movement is client-authoritative positions (`OpMove`/`OpEntityMoved`)
   × distance), not the wire form it sends.
 - **The server mover's step cap** (`0xb45ea8`, `FUN_0048bff0`), and whether the server sends a stop
   of its own when its navmesh ends a heading move.
-- **Bit 9 of `+0x65c`** (state 9) and `+0x6e8`, which gate the sky click's no-resend window.
+- **Bit 9 of `+0x65c`** (state 9), which gates the sky click's no-resend window. That it means
+  "moving" is INFERRED. `+0x6e8` is read: the move kind (round 653's review).
 - **What the optional `extra` byte at `+1` carries.** Which caller emits it is now known; what it
   means is not.
 - **Vtable slot `0xfc`**, whose 8 / 0x10 / 0x12 returns block movement.

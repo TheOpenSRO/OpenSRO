@@ -7152,7 +7152,9 @@ The open items are in `docs/TODO.md`, "The sky click (round 653)".
     - OURS: in the physics fallback (no `.nvm`) a run ends on `is_on_wall`.
   - A ground click, an attack's or friendly cast's approach, a pick-up walk and the QA retreat each
     set a point and clear the run. Anything that clears `_has_move_target` ends it too: death,
-    typing, the sit transition, the wall root, a skill's move, a zone change, the void recovery.
+    typing, the sit transition, the wall root, a skill's move and the void recovery. A zone change
+    or teleport ends it too since the review follow-up below.
+  - Several requests do NOT end a run yet; they are OPEN, listed in the review follow-up below.
   - A click while holding an icon (round 652) never reaches the world: `HeldIcon.handle` swallows
     it, and `_on_held_dropped_outside` neither walks nor runs.
 - **Wire** (OURS framing of a READ form). Each `OpMove` sent while a run is in effect sets bit 1 of
@@ -7392,6 +7394,47 @@ MOVE self t=639 ms=25981 pos=(-13.048,5.421) dest=(-17.260,10.426) order=false .
 - B received the stop as `MOVE recv 1 ms=20945 pos=(-13.048,5.421)`.
 - Round 649's base, at /speed 1, slid along this edge for several ticks before stopping (its
   entry).
+
+### Review follow-up (the review of 287e394)
+
+- **The 5° rule now tests the move kind (READ).** Retail keeps its heading only when `+0x6e8 != 1`.
+  `+0x6e8` is the mover's `+0x80` (mover at `obj+0x668`): 1 is a walk to a point, 2 a heading.
+  `FUN_009ebec0` returns early only when it is 2. So a sky click within 5° of the facing during a
+  ground **walk** starts a run. Ours dropped that click; it now calls
+  `SkyRun.click_rule(_has_move_target and _move_heading_run, ...)`.
+- **An accepted zone change or teleport ends the run.** `_on_change_zone_result` now calls
+  `_end_move_order_for_arrival`. Before, a heading run went on into the new zone.
+- **Running off the loaded world (OURS).** When `_move_on_nav_graph` has no graph and there is no
+  terrain above `WORLD_FLOOR_Y` under the next step, a heading run ends (`_end_run_off_world`).
+  Before, it fell under gravity until the void recovery. `VoidCatchFloor` (top at y −1995) is
+  below that line and does not count as ground. What retail's mover does at an unloaded edge was
+  not read.
+- **A sky click and a ground click drop a pending pick-up walk** (`_pending_pickup_id = -1`). Before,
+  a later wall stop or arrival asked for the item from wherever the new order ended.
+- **OPEN, not built.** These requests do not end a run: a self or ground cast, an attack sent with
+  no walk (the `no_walk`, no-BCRadius and wall-root paths), a friendly skill on a monster, an
+  in-reach pick-up, and an NPC talk. Retail's skill-start and pick-up-start paths were not read for
+  a mover stop (`docs/TODO.md`).
+- **Tests** (`sky_run_test.gd`): a walk plus a sky click 3.4° off gives "run"; both clicks drop the
+  pick-up; the arrival ends the run; a run with ground ahead goes on, and one with none ahead (x
+  2010.5, past the fixture's edge) ends. **NEGATIVE against d12fca6:**
+
+```
+FAIL walking to a point, a sky click 3.4 degrees off the facing starts a run (+0x6e8 == 1 is not kept) (keep)
+FAIL a sky click drops a pending pick-up
+FAIL and so does a ground click
+SCRIPT ERROR: Invalid call. Nonexistent function '_end_move_order_for_arrival (via call)' in base 'Node3D (...)'.
+```
+
+  The base has no `_end_move_order_for_arrival`, so its run stops at that script error. On the
+  branch: ALL PASS.
+- **The suites.**
+  - `remote_godot.sh check`: ALL LOAD.
+  - `remote_godot.sh tests`: 173 suites, 0 failing.
+  - The first run of `tests` caught two suites (`teleport_board_test`, `ground_probe_ab_test`).
+    They drive `_on_change_zone_result` with no player, so the new stop now guards the velocity
+    against a null player.
+  - `go test -count=1 -p 1 ./...`: all packages ok. The server is unchanged.
 
 ### Open
 

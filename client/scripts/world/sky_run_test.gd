@@ -198,6 +198,49 @@ func _test_clicks(world: Node) -> void:
 	_check(r == "keep" and absf(_num(world, "_move_heading") - PI / 2.0) < 1e-6, "running, a sky click 3.4 degrees off the facing changes nothing (%s)" % r)
 	r = String(world.call("_start_heading_run", Vector3(1.0, 0.2, 1.0)))
 	_check(r == "run" and absf(_num(world, "_move_heading") - PI / 4.0) < 1e-3, "running, one 45 degrees off starts a new run on it (%s, %.4f)" % [r, _num(world, "_move_heading")])
+	# Round 653's review: retail keeps the run only when the move kind is
+	# not a walk (+0x6e8 != 1). A sky click within 5 degrees of the facing
+	# during a ground WALK starts a run.
+	world.set("_move_heading_run", false)
+	world.set("_has_move_target", true)
+	player.rotation.y = RemoteFacing.yaw_of(PI / 2.0, 0.0)
+	r = String(world.call("_start_heading_run", Vector3(1.0, 0.2, 0.06)))
+	_check(r == "run" and _flag(world, "_move_heading_run"),
+		"walking to a point, a sky click 3.4 degrees off the facing starts a run (+0x6e8 == 1 is not kept) (%s)" % r)
+	# A sky click and a ground click each drop a pending pick-up walk.
+	world.set("_pending_pickup_id", 7)
+	world.call("_start_heading_run", Vector3(-1.0, 0.2, 0.0))
+	_check(int(world.get("_pending_pickup_id")) == -1, "a sky click drops a pending pick-up")
+	world.set("_pending_pickup_id", 7)
+	_click_toward(world, eye, Vector3(0.0, 0.0, -800.0))
+	_check(int(world.get("_pending_pickup_id")) == -1, "and so does a ground click")
+	world.set("_pending_pickup_id", -1)
+	# An accepted zone change or teleport ends the run.
+	world.set("_has_move_target", true)
+	world.set("_move_heading_run", true)
+	player.velocity = Vector3(50.0, 0.0, 0.0)
+	world.call("_end_move_order_for_arrival")
+	var zsrc := (load("res://scripts/World3D.gd") as GDScript).source_code
+	var zbody := zsrc.substr(zsrc.find("func _on_change_zone_result"), 2500)
+	_check(not bool(world.get("_has_move_target")) and not _flag(world, "_move_heading_run") and player.velocity.x == 0.0
+		and zbody.find("_end_move_order_for_arrival()") != -1,
+		"an accepted zone change or teleport ends the run (_on_change_zone_result -> _end_move_order_for_arrival)")
+	# Running off the loaded world: no graph and no ground ahead ends the run;
+	# ground ahead does not.
+	for case in [[Vector3(0.0, 0.0, 0.0), false], [Vector3(2010.5, 0.0, 0.0), true]]:
+		player.global_position = case[0]
+		player.rotation.y = 0.0
+		world.set("_has_move_target", false)
+		world.set("_move_speed", 50.0)
+		world.call("_start_heading_run", Vector3(1.0, 0.2, 0.0))
+		world.call("_step_click_walk", TICK)
+		var ended := bool(world.call("_end_run_off_world", TICK))
+		_check(ended == bool(case[1]) and bool(world.get("_has_move_target")) != bool(case[1]),
+			"a run at x %.1f with %s ahead %s" % [(case[0] as Vector3).x, "no ground" if case[1] else "ground",
+				"ends there" if case[1] else "goes on"])
+	world.set("_has_move_target", false)
+	world.set("_move_heading_run", false)
+	player.global_position = Vector3.ZERO
 	# A ground click ends the run: the order is the point.
 	_click_toward(world, eye, Vector3(0.0, 0.0, -800.0))
 	_check(bool(world.get("_has_move_target")) and not _flag(world, "_move_heading_run"),

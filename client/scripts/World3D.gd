@@ -5075,8 +5075,10 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		if _hud_panels != null:
 			_hud_panels.cancel_held_icon("zone change")
 		# A new object in the new zone: no movement order (round 637's review
-		# follow-up, _player_move_order).
+		# follow-up, _player_move_order) -- and no walk or run in effect
+		# (round 653's review): a heading run carried on into the new zone.
 		_player_move_order = false
+		_end_move_order_for_arrival()
 		# The server stands a character that changes zone (round 607).
 		_sit.reset()
 		# Retail's zone reset (FUN_00787860) runs FUN_007b5300: a running
@@ -9777,6 +9779,38 @@ func _step_move_order(delta: float) -> void:
 		if not _pending_friend_cast.is_empty():
 			_release_friend_cast()
 
+## A zone change or teleport was accepted (round 653's review): no walk or run
+## goes on into the new zone. A heading run carried on there before.
+func _end_move_order_for_arrival() -> void:
+	_has_move_target = false
+	_move_heading_run = false
+	if player != null:
+		player.velocity.x = 0.0
+		player.velocity.z = 0.0
+
+## Round 653's review (OURS): a heading run whose next step has no navigation
+## graph under it and no terrain either -- it ran off the loaded world --
+## ends here, rather than falling under gravity until the void recovery puts
+## the player back. Retail's world is always loaded around the player; what
+## its mover does at an unloaded edge was not read. Returns whether it ended.
+func _end_run_off_world(delta: float) -> bool:
+	if not (_has_move_target and _move_heading_run):
+		return false
+	var next := player.position + Vector3(player.velocity.x, 0.0, player.velocity.z) * delta
+	# Down to WORLD_FLOOR_Y, the void recovery's own line: VoidCatchFloor
+	# (top at y -1995) is below it and is no ground.
+	var hit := TerrainCollision.vertical_ray(get_world_3d().direct_space_state, next.x, next.z,
+		player.position.y + 10.0, WORLD_FLOOR_Y, TERRAIN_ONLY_COLLISION_MASK, [player.get_rid()])
+	if not hit.is_empty():
+		return false
+	_has_move_target = false
+	_move_heading_run = false
+	player.velocity.x = 0.0
+	player.velocity.z = 0.0
+	if _qa_move_log:
+		print("MOVE run ended: no graph and no ground ahead at (%.3f, %.3f)" % [next.x, next.z])
+	return true
+
 ## One tick of the click walk (round 649, ClickWalk.step): the player's
 ## horizontal velocity toward _move_target for this tick, cut on the tick that
 ## would reach or pass the point so the body lands on it (READ, retail's mover
@@ -12879,7 +12913,10 @@ func _physics_step(delta: float) -> void:
 		_step_teleport_landing()
 	else:
 		var walk_from := player.position
-		if not _move_on_nav_graph(delta):
+		var on_graph := _move_on_nav_graph(delta)
+		if not on_graph:
+			_end_run_off_world(delta)
+		if not on_graph:
 			if not player.is_on_floor():
 				player.velocity.y -= GRAVITY * delta
 			else:
@@ -14748,6 +14785,9 @@ func _move_by_pick_ray(from: Vector3, dir: Vector3, space: PhysicsDirectSpaceSta
 	_pending_attack = {}
 	_released_attack = {}
 	_pending_friend_cast = {}
+	# And a walk to a ground item (round 653's review): its arrival or wall
+	# stop would ask for the item from wherever this walk ends.
+	_pending_pickup_id = -1
 	# The client's own click filter (FUN_009eb2a0, round 637's review
 	# follow-up; RemoteFacing.click_rule): with no movement order in effect a
 	# click under 5 units away is not sent -- nothing moves; a far click
@@ -14771,13 +14811,20 @@ func _move_by_pick_ray(from: Vector3, dir: Vector3, space: PhysicsDirectSpaceSta
 func _start_heading_run(dir: Vector3) -> String:
 	var current := RemoteFacing.heading_of_yaw(player.rotation.y, 0.0)
 	var h := SkyRun.heading_of_ray(current, dir)
-	if SkyRun.click_rule(_has_move_target, current, h) == "keep":
+	# READ: retail keeps the run only while the player moves (state bit 9)
+	# AND its move kind is not a walk to a point (+0x6e8 != 1; +0x6e8 is the
+	# mover's +0x80: 1 a destination, 2 a heading). A sky click within 5
+	# degrees during a ground walk therefore starts a run.
+	if SkyRun.click_rule(_has_move_target and _move_heading_run, current, h) == "keep":
 		return "keep"
 	# The click supersedes an attack or friendly cast walking into reach, as
 	# a ground click does.
 	_pending_attack = {}
 	_released_attack = {}
 	_pending_friend_cast = {}
+	# And a walk to a ground item (round 653's review): the run is the order
+	# now, so a wall that stops it must not ask for the item from there.
+	_pending_pickup_id = -1
 	var flat := RemoteFacing.facing_of(h)
 	_player_move_order = true
 	_move_heading_run = true
