@@ -296,6 +296,41 @@ func _init() -> void:
 	_check(AnimSoundsScript.key_for(no_cell, "snd_walk1")["key"] == "", "a body with no cell source counts as having no cell")
 	mob_cell[0] = 0
 
+	# Round 664: a body out of hearing is rested (AnimSounds.rest) and comes
+	# back without firing what it missed. The run loop's footstep is at 619.
+	_check(sounds.has_method("rest"), "AnimSounds.rest exists")
+	if sounds.has_method("rest"):
+		stub.calls.clear()
+		sounds.advance(mob_skel, run_anim, 0.0, 300.0, true)
+		sounds.call("rest", mob_skel)
+		sounds.advance(mob_skel, run_anim, 0.0, 640.0, true)
+		_check(stub.keys().is_empty(), "a rested loop back at 640 does not fire the 619 it passed while away (%s)" % str(stub.keys()))
+		sounds.advance(mob_skel, run_anim, 0.0, 10.0, true)
+		sounds.advance(mob_skel, run_anim, 0.0, 630.0, true)
+		_check(stub.keys() == ["MOB_MANGNYANG:snd_run1:-:-:-:-", "MOB_MANGNYANG:snd_run1:-:-:-:-"],
+			"and from there fires as before: 10 -> 630 passes 289 and 619 (%s)" % str(stub.keys()))
+		stub.calls.clear()
+		sounds.advance(mob_skel, die, 3.0, 0.0, false)
+		sounds.call("rest", mob_skel)
+		sounds.advance(mob_skel, die, 3.0, 1600.0, false)
+		_check(stub.keys() == ["MOB_MANGNYANG:voc_death:-:-:-:-"], "a rested one-shot does not fire its 1500 ms key late (%s)" % str(stub.keys()))
+		var fresh := Node3D.new()
+		sounds.register(fresh, mob)
+		stub.calls.clear()
+		sounds.call("rest", fresh)
+		sounds.advance(fresh, die, 4.0, 1600.0, false)
+		_check(stub.keys().is_empty(), "a body rested before its first advance, met mid one-shot: nothing fires (%s)" % str(stub.keys()))
+		stub.calls.clear()
+		sounds.advance(fresh, die, 5.0, 0.0, false)
+		_check(stub.keys() == ["MOB_MANGNYANG:voc_death:-:-:-:-"], "its next one-shot fires from 0 as before (%s)" % str(stub.keys()))
+		# The negative: without the rest, the same return fires the missed key.
+		stub.calls.clear()
+		sounds.advance(mob_skel, run_anim, 0.0, 300.0, true)
+		sounds.advance(mob_skel, run_anim, 0.0, 640.0, true)
+		_check(stub.keys() == ["MOB_MANGNYANG:snd_run1:-:-:-:-"], "not rested, 300 -> 640 fires 619 (the rest is what stops it)")
+		sounds.unregister(fresh)
+		fresh.free()
+
 	# Track-fired pick-up and blocking (retail's own tracks: 66 and 67 of them).
 	var pickup = BsrReaderScript.SoundTrack.new()
 	pickup.name = "snd_pickup"

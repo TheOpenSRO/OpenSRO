@@ -1499,11 +1499,13 @@ func main() {
 		logger.Info("monster spawn push off (-monster-spawn-push / SRREVAMP_MONSTER_SPAWN_PUSH)")
 	}
 	// The monsters' area of interest (round 656): each player hears about the
-	// monsters of the 5x5 regions around it, and is told as they come into and
-	// go out of that window. Always on; installed before the first spawn.
+	// monsters of the 3x3 message blocks around it (retail's, READ in round
+	// 664: 320-unit blocks and their 8 neighbours), and is told as they come
+	// into and go out of that window. Always on; installed before the first
+	// spawn.
 	session.RunMonsterAOI(ctx, hub, monsters, logger)
-	logger.Info(fmt.Sprintf("monster area of interest: %d regions each way around a player (own design: the client's REGION_LOAD_RADIUS); list paged, enter/leave pushed",
-		session.AOIRadius))
+	logger.Info(fmt.Sprintf("monster area of interest: %d block(s) of %.0f units each way around a player (retail's message blocks, READ); list paged, enter/leave pushed",
+		session.AOIRadius, combat.CellSpan))
 	// The unique notices (round 657): on unless -unique-notice-off. A roster
 	// unique's hatch is announced from the same spawn hook as the push.
 	session.SetUniqueNoticeOff(*uniqueNoticeOff)

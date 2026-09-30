@@ -149,7 +149,10 @@ func TestFullMapTakesTheDBNest(t *testing.T) {
 		ds.tactics.RoamRadius != 350 || ds.spec.RefObjID != 7002 || swapped.Input.HasChampionTactics || swapped.Hive != nil {
 		t.Fatalf("swapped slot %+v, tactics %+v", swapped, ds.tactics)
 	}
-	if rep.passive != 1 || rep.aggressive != 1 || rep.standIn != 0 || rep.densest != 9 {
+	// densest: one nest's 6 -- the two synthetic nests stand 1,216 apart, and
+	// retail's 3 x 3 message-block window (960 wide, round 664) never holds
+	// both (it did the 5 x 5 regions before).
+	if rep.passive != 1 || rep.aggressive != 1 || rep.standIn != 0 || rep.densest != 6 {
 		t.Fatalf("report %+v", rep)
 	}
 }

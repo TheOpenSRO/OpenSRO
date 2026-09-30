@@ -6,38 +6,49 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
 )
 
-// The hub's region-cell index (round 656): every live monster is filed under
-// its zone and the region cell its X/Z falls in, so a question about one part
-// of the world -- which monsters a player can see, which lie near a monster
-// struck -- reads the cells around that point instead of every monster alive.
-// round 657+ places every field row of npcpos (10,195 monsters, docs/TODO.md);
-// before this, InZone and All walked all of them for every list, every tick
-// and every aggro scan.
+// The hub's cell index (round 656; the cell is retail's message block since
+// round 664): every live monster is filed under its zone and the cell its X/Z
+// falls in, so a question about one part of the world -- which monsters a
+// player can see, which lie near a monster struck -- reads the cells around
+// that point instead of every monster alive. round 657+ places every field
+// row of npcpos (10,195 monsters, docs/TODO.md); before this, InZone and All
+// walked all of them for every list, every tick and every aggro scan.
 //
-// A cell is one region of the world frame the zone's coordinates are named
-// in: worldmap.RegionSpan (1920, READ: a region's mesh is 97 vertices at
-// TILE_SIZE) on a side, with the frame's centre region's middle at the
-// origin (worldmap.ToWorld), so the cell lines are the region lines, at
-// 960 + k x 1920 on both axes. The cell's numbers are frame-relative, not
-// the region's own x/y: (0, 0) is the frame's centre region. That is all the
-// index needs -- two positions in one zone are in one frame -- and it keeps
-// the index free of which frame a zone is named in (-single-frame).
+// A cell is one of retail's message blocks (READ, round 664, SR_GameServer.exe;
+// docs/protocol/monster_ai.md, "What a player is sent: retail's message
+// blocks"): a field region (CRgnTerrain) holds 6 x 6 CMsgBlockTerrain -- the
+// array of 0x24 blocks of 0x98 bytes built at +0x2c by 0x53a850 -- and a
+// position's block is (x / 320, z / 320) of its region-local coordinates
+// (CRgnTerrain::vslot_006 0x53ad30: `fdiv` by the double 320.0 at 0xb45ae8,
+// each index asserted 0..5). So CellSpan = RegionSpan / 6 = 320. The frame's
+// centre region's middle is the origin (worldmap.ToWorld), so the region
+// lines 960 + k x 1920 are block lines too, and every block line is a
+// multiple of 320. The cell's numbers are frame-relative, not the region's
+// own x/y. That is all the index needs -- two positions in one zone are in
+// one frame -- and it keeps the index free of which frame a zone is named in
+// (-single-frame). (A point exactly on a line: this index files it in the
+// cell above on both axes; retail's region-local z runs against world z, so
+// on a z line retail files it in the cell below. INFERRED immaterial.)
 
-// Cell is one region-sized square of a zone's world frame: the hub bucket
+// CellSpan is one cell's extent in world units, on both axes: retail's
+// message block, RegionSpan / 6 = 320 (READ, above).
+const CellSpan = worldmap.RegionSpan / 6
+
+// Cell is one CellSpan square of a zone's world frame: the hub bucket
 // (Monster.Zone) and the cell's column along world X and row along world Z.
 type Cell struct {
 	Zone string
 	X, Z int
 }
 
-// CellOf is the cell world point (x, z) of zone falls in. The boundary
-// 960 + k x 1920 belongs to the cell above it, on both axes (floor).
+// CellOf is the cell world point (x, z) of zone falls in. A line belongs to
+// the cell above it, on both axes (floor).
 func CellOf(zone string, x, z float64) Cell {
 	return Cell{Zone: zone, X: cellCoord(x), Z: cellCoord(z)}
 }
 
 func cellCoord(v float64) int {
-	return int(math.Floor((v + worldmap.RegionSpan/2) / worldmap.RegionSpan))
+	return int(math.Floor((v + worldmap.RegionSpan/2) / CellSpan))
 }
 
 // Near reports whether other is within radius cells of c on both axes (the
@@ -51,18 +62,18 @@ func (c Cell) Near(other Cell, radius int) bool {
 }
 
 // CellsWithin is how many cells a radius of dist world units can reach past
-// the cell a point stands in: ceil(dist / RegionSpan), at least 0. A scan of
+// the cell a point stands in: ceil(dist / CellSpan), at least 0. A scan of
 // every point within dist of a monster reads the square of that many cells
 // around it.
 func CellsWithin(dist float64) int {
 	if !(dist > 0) {
 		return 0
 	}
-	return int(math.Ceil(dist / worldmap.RegionSpan))
+	return int(math.Ceil(dist / CellSpan))
 }
 
 // CellChange is a monster whose cell changed in a step: StepCells reports one
-// for each monster whose move carried it over a region line.
+// for each monster whose move carried it over a cell line.
 type CellChange struct {
 	ID       int64
 	From, To Cell

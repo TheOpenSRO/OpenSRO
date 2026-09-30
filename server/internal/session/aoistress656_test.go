@@ -27,7 +27,7 @@ import (
 func TestAOIStressClientMatchesTheWindow(t *testing.T) {
 	monsters := combat.NewHub()
 	rng := rand.New(rand.NewSource(1))
-	span := 1920.0
+	span := combat.CellSpan
 	randPos := func(r *rand.Rand, cells float64) (float64, float64) {
 		return (r.Float64()*2 - 1) * cells * span, (r.Float64()*2 - 1) * cells * span
 	}
@@ -262,7 +262,7 @@ func TestAOIStressClientMatchesTheWindow(t *testing.T) {
 	}
 }
 
-// A monster's step over a region line and a view moving over another, with
+// A monster's step over a cell line and a view moving over another, with
 // the reconcile wholly before or wholly after monsterAOI.step. Both orders
 // already passed on d3963cf: these pin that neither regressed. The order that
 // lost messages -- the hub's step, then a reconcile, then the crossings -- is
@@ -295,21 +295,21 @@ func rv656Interleave(t *testing.T, reconcileFirst bool, playerFrom, playerTo, mo
 }
 
 // The enter: M walks from cell 3 (outside the window at 0) into cell 2 while
-// the player moves from cell 0 to cell 1 (whose window holds both).
+// the player moves from cell 0 to cell 1 (whose window holds cell 2).
 func TestAOIStepAndViewMoveKeepTheEnter(t *testing.T) {
 	for _, first := range []bool{true, false} {
-		left, entered, id := rv656Interleave(t, first, 0, cellX(1)-900, cellX(3)-900+50, cellX(2))
+		left, entered, id := rv656Interleave(t, first, 0, cellX(1)-150, cellX(3)-150+50, cellX(2))
 		if !sameIDs(entered, []int64{id}) || len(left) != 0 {
 			t.Errorf("reconcile first %v: left %v entered %v, want monster %d entered once", first, left, entered, id)
 		}
 	}
 }
 
-// The leave: M walks from cell 2 into cell 3 while the player moves from cell
+// The leave: M walks from cell 1 into cell 2 while the player moves from cell
 // 0 to cell -1 (whose window holds neither).
 func TestAOIStepAndViewMoveKeepTheLeave(t *testing.T) {
 	for _, first := range []bool{true, false} {
-		left, entered, id := rv656Interleave(t, first, 0, cellX(-1), cellX(3)-960-50, cellX(3))
+		left, entered, id := rv656Interleave(t, first, 0, cellX(-1), cellX(2)-160-50, cellX(2))
 		if !sameIDs(left, []int64{id}) || len(entered) != 0 {
 			t.Errorf("reconcile first %v: left %v entered %v, want monster %d left once", first, left, entered, id)
 		}
@@ -321,24 +321,24 @@ func TestAOIStepAndViewMoveKeepTheLeave(t *testing.T) {
 // crossings and starts a reconcile on another goroutine: the reconcile must
 // wait until the step is done (it needs the view lock the step holds), and the
 // player must then hear both messages. M1 walks from cell 3, outside the
-// window at 0, into cell 2, which both windows hold; M2 from cell -2, which
-// only the old window holds, into cell -3, which neither does; the player
+// window at 0, into cell 2, which the new window holds; M2 from cell -1, which
+// only the old window holds, into cell -2, which neither does; the player
 // moves from cell 0 to cell 1. On d3963cf's order (step, reconcile,
 // crossings) the reconcile reads both monsters already in their new cells and
 // owes nothing, and the crossings, read against the new view, owe nothing
 // either: M1 is never entered and M2 never left.
 func TestAOIReconcileWaitsForTheStep(t *testing.T) {
 	monsters := combat.NewHub()
-	m1 := spawnAt(t, monsters, "jangan", cellX(3)-900+50, 0)
-	m2 := spawnAt(t, monsters, "jangan", cellX(-2)-960+50, 0)
+	m1 := spawnAt(t, monsters, "jangan", cellX(3)-150+50, 0)
+	m2 := spawnAt(t, monsters, "jangan", cellX(-1)-160+50, 0)
 	r := newListRig(t, monsters)
 	v := installAOIForTest(t, r.hub, monsters)
 	c := r.join(t, 1, 0, 0)
 	r.list(t, c, 1)
 	c.quiet(t, 100*time.Millisecond)
 	monsters.SetMotion(m1, cellX(2), 0, 1600, 1)
-	monsters.SetMotion(m2, cellX(-3), 0, 1600, 1)
-	r.hub.Move(r.session(1), world.Position{X: cellX(1) - 900, Z: 0})
+	monsters.SetMotion(m2, cellX(-2), 0, 1600, 1)
+	r.hub.Move(r.session(1), world.Position{X: cellX(1) - 150, Z: 0})
 
 	reconciled := make(chan struct{})
 	waited := false

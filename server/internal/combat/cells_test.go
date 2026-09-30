@@ -5,23 +5,28 @@ import (
 	"testing"
 )
 
-// Round 656: the region-cell index. The cell lines are the region lines of
-// the frame, 960 + 1920k on both axes (worldmap.ToWorld puts the frame's
-// centre region's middle at the origin); a line belongs to the cell above it.
-func TestCellOfFollowsTheRegionLines(t *testing.T) {
+// Round 656: the cell index; since round 664 its cell is retail's 320-unit
+// message block (RegionSpan / 6, READ). The frame's centre region's middle is
+// the origin (worldmap.ToWorld), so the region lines 960 + 1920k are block
+// lines and every block line is a multiple of 320; a line belongs to the cell
+// above it.
+func TestCellOfFollowsTheBlockLines(t *testing.T) {
 	for _, c := range []struct {
 		x, z   float64
 		cx, cz int
 	}{
-		{0, 0, 0, 0}, {959.9, -959.9, 0, 0}, {960, -960, 1, 0}, {-960.1, 0, -1, 0},
-		{2879.9, 2880, 1, 2}, {-2880, -2880.1, -1, -2},
+		{0, 0, 3, 3}, {319.9, -0.1, 3, 2}, {320, 0, 4, 3}, {959.9, -960, 5, 0}, {960, -960.1, 6, -1},
+		{-960.1, 2880, -1, 12},
 	} {
 		if got := CellOf("z", c.x, c.z); got != (Cell{"z", c.cx, c.cz}) {
 			t.Errorf("CellOf(%v, %v) = %+v, want (%d, %d)", c.x, c.z, got, c.cx, c.cz)
 		}
 	}
-	if CellsWithin(0) != 0 || CellsWithin(111) != 1 || CellsWithin(1920) != 1 || CellsWithin(1921) != 2 {
-		t.Error("CellsWithin is ceil(dist / 1920)")
+	if CellSpan != 320 {
+		t.Errorf("CellSpan %v, want retail's 320 (1920 / 6)", CellSpan)
+	}
+	if CellsWithin(0) != 0 || CellsWithin(111) != 1 || CellsWithin(320) != 1 || CellsWithin(321) != 2 || CellsWithin(1920) != 6 {
+		t.Error("CellsWithin is ceil(dist / 320)")
 	}
 }
 
@@ -50,19 +55,19 @@ func TestCellIndexFollowsSpawnStepAndKill(t *testing.T) {
 	}
 	h.SetMotion(a.ID, 1100, 0, 1000, 1)
 	h.SetMotion(b.ID, 1920*3+100, 0, 1000, 1)
-	// B's cell asleep: only A moves.
-	changes := h.StepCells(0.5, func(_ int64, cell Cell) bool { return cell.X == 0 }, nil)
-	if len(changes) != 1 || changes[0].ID != a.ID || changes[0].From != (Cell{"jangan", 0, 0}) || changes[0].To != (Cell{"jangan", 1, 0}) {
-		t.Fatalf("changes %+v, want A from (0,0) to (1,0)", changes)
+	// B's cell asleep: only A moves, over the line at x = 960 (cell 5 -> 6).
+	changes := h.StepCells(0.5, func(_ int64, cell Cell) bool { return cell.X < 10 }, nil)
+	if len(changes) != 1 || changes[0].ID != a.ID || changes[0].From != (Cell{"jangan", 5, 3}) || changes[0].To != (Cell{"jangan", 6, 3}) {
+		t.Fatalf("changes %+v, want A from (5,3) to (6,3)", changes)
 	}
 	if m, _ := h.Get(b.ID); m.X != 1920*3 || !m.Moving {
 		t.Fatalf("the sleeping cell's monster stepped: %+v", m)
 	}
-	if cell, _ := h.CellOfMonster(a.ID); cell != (Cell{"jangan", 1, 0}) {
+	if cell, _ := h.CellOfMonster(a.ID); cell != (Cell{"jangan", 6, 3}) {
 		t.Fatalf("A is filed under %+v", cell)
 	}
-	if got := ids(h.InWindow(nil, Cell{"jangan", 3, 0}, 2)); len(got) != 2 {
-		t.Fatalf("window around (3,0) after the step: %v, want A and B", got)
+	if got := ids(h.InWindow(nil, Cell{"jangan", 14, 3}, 8)); len(got) != 2 {
+		t.Fatalf("window around (14,3) after the step: %v, want A and B", got)
 	}
 	if h.Facing(a.ID) != 0 {
 		t.Errorf("A walks along +x, facing %v, want 0", h.Facing(a.ID))

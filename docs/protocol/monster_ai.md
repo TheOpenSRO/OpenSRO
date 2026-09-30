@@ -3403,24 +3403,27 @@ own conditions (`deploy/README.md`, "Monster battle (off by default)") are uncha
 
 Round 657 places every npcpos field row (about 10,200 monsters) under `-single-frame`, whose one
 bucket is the whole world. Before this round every monster message went to every player in the
-bucket and the list was one frame. None of what follows is read from retail: retail's visibility
-rule and the rule for which objects it runs are both UNREAD. Everything here is OURS and
-labelled that way in the code (`server/internal/session/aoi.go`, `monsterlist.go`,
-`monsterai.go`; `server/internal/combat/cells.go`).
+bucket and the list was one frame. Round 656 built what follows as OURS; **round 664 READ
+retail's visibility rule** and the cell and the window are now retail's (the next section).
+The rule for which objects retail runs is still UNREAD, so the sleep stays OURS. The code:
+`server/internal/session/aoi.go`, `monsterlist.go`, `monsterai.go`;
+`server/internal/combat/cells.go`.
 
 **Cells.** `combat.Hub` files each live monster under `(zone, cx, cz)`, where `cx =
-floor((x + 960) / 1920)` and the same for z: one cell per region of the zone's frame, so the cell
-lines are the region lines (960 + 1920k, `worldmap.ToWorld`). A cell's numbers are relative to the
-frame, not the region's own x/y. The spawn files a monster, a step that carries one over a line
-re-files it and reports a `CellChange`, and a kill removes it. `InZone` reads the zone's cells.
-Only monsters on a leg are stepped (a moving set).
+floor((x + 960) / 320)` and the same for z: one cell per retail message block (`combat.CellSpan`
+= 1920 / 6 = 320, READ, next section), so the region lines (960 + 1920k, `worldmap.ToWorld`)
+are cell lines and every cell line is a multiple of 320. (Round 656's cell was a whole region,
+`floor((x + 960) / 1920)`.) A cell's numbers are relative to the frame, not the region's own x/y.
+The spawn files a monster, a step that carries one over a line re-files it and reports a
+`CellChange`, and a kill removes it. `InZone` reads the zone's cells. Only monsters on a leg are
+stepped (a moving set).
 
-**The window.** A player sees the monsters of the cells within `AOIRadius` = **2** of its view
-cell, on both axes (a 5 x 5 square, 25 regions). OURS: 2 is the client's `REGION_LOAD_RADIUS`,
-so a player is told about the monsters of exactly the regions its client streams in. The
-runtime moves each player's **view** to the cell it stands in every `AOITick` (100 ms, OURS, the
-AI tick) and on each list request. With the runtime off (unit tests) the view is the cell the
-player stands in, read at each send.
+**The window.** A player sees the monsters of the cells within `AOIRadius` = **1** of its view
+cell, on both axes: the 3 x 3 message blocks around its own, a 960 x 960 square -- 320 to 640
+units on each side of the player (READ, round 664; round 656's OURS window was 2 region cells,
+5 x 5 regions, the client's `REGION_LOAD_RADIUS`). The runtime moves each player's **view** to
+the cell it stands in every `AOITick` (100 ms, OURS, the AI tick) and on each list request.
+With the runtime off (unit tests) the view is the cell the player stands in, read at each send.
 
 | Message | Who gets it |
 |---|---|
@@ -3557,6 +3560,60 @@ a handler's error still arrives; the writer then exits and the queue is freed.
 bucket, players on real TCP; i7-13700K; the same file run against the base with a no-op setup):
 see the round's WORLD_ISSUES entry for the table. The players never move in it, so it measures no
 view moves or player-driven enters and leaves.
+
+## What a player is sent: retail's message blocks (round 664)
+
+READ from SR_GameServer.exe (the decompile in `/var/tmp/decomp_server`, objdump for the
+constants), round 664. The chain, bottom up:
+
+- **A field region holds 6 x 6 message blocks.** The `CRgnTerrain` constructor
+  (`CMainProcess::FUN_0053a850` 0x53a850) builds `_eh_vector_constructor_iterator_(this + 0xb,
+  0x98, 0x24, ..., CMsgBlockTerrain::FUN_005377b0)`: 0x24 = 36 `CMsgBlockTerrain` of 0x98 bytes
+  at +0x2c. `CRgnTerrain::vslot_012` (0x53a820) indexes them `(x + z * 6) * 0x98 + 0x2c`.
+- **A block is 320 units.** `CRgnTerrain::vslot_006` (0x53ad30) asserts a region-local position
+  in [0, 1920) (the double 1920.0 at 0xb45ad0), divides both coordinates by the double at
+  0xb45ae8 -- **320.0** (0x4074000000000000; `fdiv st(1),st` at 0x53ad90) -- truncates each
+  (0x9fbb40), asserts each index 0..5 (0x53ada2..0x53adb0) and returns the block. Region-local
+  x and z, so the blocks are aligned with the regions.
+- **Each block is linked to its 8 neighbours, across region lines.** `CRgnTerrain::vslot_016`
+  (0x53ab90) walks the 6 x 6 blocks and, for each, the 8 `(dx, dz)` pairs of the table at
+  **0xc64090**: (-1,-1) (0,-1) (1,-1) (-1,0) (1,0) (-1,1) (0,1) (1,1) (read back with objdump:
+  `ffffffff ffffffff 00000000 ffffffff 01000000 ffffffff ffffffff 00000000 01000000 00000000
+  ffffffff 01000000 00000000 01000000 01000000 01000000`). `CRgnTerrain::FUN_0053ac20` finds the
+  neighbour block: the neighbour region by `CRgnTerrain::FUN_00430900` (0x430900: (dx, dz) in
+  [-1, 1] -> region link 0..8, 8 itself, asserting |d| <= 1) and the block `((i + 6) % 6, (j +
+  6) % 6)` in it (its vslot 0x30). Each is added with `CMsgBlock` slot 5 (0x5336e0) to the
+  block's neighbour list at +0x10. `CRgnTerrain::vslot_014`/`vslot_015` link the regions
+  (`"LINK_REGION ERROR [(%d,%d) -> (%d,%d)]"`).
+- **An object's messages go to its block and those 8.** Putting an object into a block,
+  `CMsgBlock` slot 2 (0x534340), walks the block's neighbour list and then the block itself,
+  and for each: if the object is a player, `FUN_00533e70(1)` sends it that block's objects (the
+  group spawn: 0x3017 begin, the data frames, 0x3018 end, 0x533e70 -> 0x533910 / 0x533b90), and
+  `FUN_00533f70` (0x533f70) announces the object's spawn **0x3015** to that block's players
+  (`FUN_005341e0` -> `FUN_005342a0`, `CAgentMsg__AddtargetClient` per player). Taking it out,
+  slot 3 (0x5344b0), sends **0x3016** (`FUN_00534050` 0x534050, the object's id) to the same
+  nine blocks' players. With their third argument set, both slots walk instead a list looked
+  up in a map at block+0x1c (`FUN_00666520`) -- INFERRED to be a move between two blocks, sent
+  only to the blocks the two windows do not share; not traced further.
+
+So: **a player holds the objects of the 3 x 3 blocks of 320 around the block it stands in** --
+a 960-unit square, reaching 320 to 640 units from the player on each axis depending on where in
+its block it stands. srrevamp: `combat.CellSpan` = 320, `session.AOIRadius` = 1
+(`TestAOIWindowIsRetailsMessageBlocks`).
+
+Not read, OPEN: whether any object kind is sent from farther (a unique, a structure); the
+`CMsgBlockObject` blocks of the object regions (dungeons, `CRgnObject`), whose layout was not
+followed; the rule for which objects the server RUNS (the sleep stays OURS).
+
+**The client draws what it holds** (READ, sro_client.exe, round 664): the per-frame entity
+list (`CEntityManagerClient::vslot_011` 0x9c4770) lists every object once a frame; the object
+draw slot (`GlobalDataManager::FUN_009c4aa0` 0x9c4aa0) tests the view frustum (the view's
+vslot 0x14) and, when graphics option 0x17 is on, passes a LOD factor -- the object's vslot 0x44
+divided by the double **800.0** at 0xd83080 (`fdiv` at 0x9c4c05) -- to the model's draw
+(vslot 8), with a GM log line `"[%s] LOD Level Change [scale : %f ] (%d) => (%d)"`. That is a
+mesh LOD (the draw indexes `pFDB->Indices[iLOD]`), not an animation one; srrevamp has no LOD
+meshes (OPEN). No distance test on posing a character was found; srrevamp's animation LOD
+(`MonsterCrowd.pose_interval`) is OURS.
 
 ## Nests on the map (round 660)
 
