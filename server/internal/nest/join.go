@@ -74,14 +74,43 @@ type Joined struct {
 	Tactics *TacticsRow // Matched: the nest's; SwappedOwn: the species' own; else nil
 	// DBSpecies is the species the DB nest at the spot names (Swapped*).
 	DBSpecies int64
+	// Rotation marks a unique's spot (rarity 3) joined to its own species'
+	// nest in a hive with a total cap: one of the spots the unique's hive
+	// rotates over (round 661). Always Matched.
+	Rotation bool
 }
+
+// FieldWorldID is the field world's GameWorldID. CMainProcess::
+// CreateHivesForWorld (0x54b8d0) builds a world's hives from the _RefHive
+// rows whose +0x1a (col 8, GameWorldID) equals that world's id -- READ,
+// monster_ai.md "The _RefAISkill and _RefHive rows" -- so a nest in a hive of
+// another world never hatches in the field. That the field world's id is 1
+// is EXTERNAL: 13,666 of the shard's 16,381 nests sit in world-1 hives, and
+// every field monster row but the Egyptian temples' 90 joins one (round 661).
+const FieldWorldID = 1
 
 // JoinReport counts what Join did, for the boot log and the round's evidence.
 type JoinReport struct {
 	Rows       int // npcpos rows handed in
 	NotMonster int // species not in the monster table (NPCs, structures)
 	Dungeon    int // monster rows in dungeon regions (>= DungeonRegion), not placed
-	Unique     int // rarity-3 rows, not placed: round 661's rotation
+	// Unique is the rarity-3 rows NOT placed: without a DB, or whose spot
+	// joins no nest of their own species in a world-1 hive with a total cap.
+	Unique int
+	// UniqueSpots is the rarity-3 rows placed as rotation spots, by species
+	// (round 661).
+	UniqueSpots map[int64]int
+	// Rank8 is the rarity-8 rows (the unique-class bosses: combat.
+	// RarityHPPercent keeps their authored HP, as rank 3's) NOT placed:
+	// without a DB, or with no nest of their own species in a field-world hive
+	// -- the shard's MOB_SD_APIS spot, whose only nest is the shard's custom
+	// monster at cap 0 (round 661). One on its own world-1 nest is placed as
+	// an ordinary nest.
+	Rank8 int
+	// OtherWorld is the rows whose joined nest's hive belongs to another game
+	// world (FieldWorldID): the Egyptian temples' instance worlds 57-59 in the
+	// shard (EXTERNAL). Not placed (round 661; round 660 placed them).
+	OtherWorld int
 	Custom     int // custom species (IsCustomSpecies), never placed
 	Placed     int
 	Matched    int
@@ -116,7 +145,7 @@ func IsCustomSpecies(code string) bool {
 // nil: every row a stand-in). species answers for a species id; false leaves
 // the row out as not a monster. The rows come back in the order given.
 func Join(spots []Spot, db *DB, species func(id int64) (SpeciesInfo, bool)) ([]Joined, JoinReport) {
-	rep := JoinReport{Rows: len(spots), SwappedTo: map[int64]int{}}
+	rep := JoinReport{Rows: len(spots), SwappedTo: map[int64]int{}, UniqueSpots: map[int64]int{}}
 	var byRegion map[int][]int
 	if db != nil {
 		byRegion = map[int][]int{}
@@ -142,8 +171,11 @@ func Join(spots []Spot, db *DB, species func(id int64) (SpeciesInfo, bool)) ([]J
 		case IsCustomSpecies(sp.CodeName):
 			rep.Custom++
 			continue
-		case sp.Rarity == 3:
+		case sp.Rarity == 3 && db == nil:
 			rep.Unique++
+			continue
+		case sp.Rarity == 8 && db == nil:
+			rep.Rank8++
 			continue
 		}
 		j := Joined{Spot: s, Cat: StandIn}
@@ -165,6 +197,41 @@ func Join(spots []Spot, db *DB, species func(id int64) (SpeciesInfo, bool)) ([]J
 				if t := db.Tactics[n.TacticsID]; t != nil && t.ObjID == s.ObjectID && d < sameD {
 					same, sameD = k, d
 				}
+			}
+			// A spot whose nest's hive is another world's is not in the
+			// field (FieldWorldID).
+			if k := same; k >= 0 || near >= 0 {
+				if k < 0 {
+					k = near
+				}
+				if h := db.Hives[db.Nests[k].HiveID]; h != nil && h.WorldID != FieldWorldID {
+					used[k] = true
+					rep.OtherWorld++
+					continue
+				}
+			}
+			// A unique is placed only on its own nest in a hive with a total
+			// cap: the rotation (round 661). Its twin (_STR) hives name
+			// another species, never the npcpos row's, so they never match.
+			if sp.Rarity == 8 && same < 0 {
+				// A boss on no nest of its own: no window or cap to give it.
+				if near >= 0 {
+					used[near] = true
+				}
+				rep.Rank8++
+				continue
+			}
+			if sp.Rarity == 3 {
+				if same < 0 {
+					rep.Unique++
+					continue
+				}
+				if h := db.Hives[db.Nests[same].HiveID]; h == nil || h.OverwriteMax <= 0 {
+					rep.Unique++
+					continue
+				}
+				j.Rotation = true
+				rep.UniqueSpots[s.ObjectID]++
 			}
 			switch {
 			case same >= 0:

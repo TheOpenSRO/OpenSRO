@@ -156,4 +156,4 @@ configures each CIFNotify after creating it:
 - Killer `vtable +0x53c` (no notice when 1), `+0xec` / `+0xf0` (which name for which kind).
 - Whether the damage-list credit (`0x52a940`) is passed the clipped damage.
 - The order ties are met in (the damage list's map order).
-- The uniques' placement and rotation (round 660); until then only a GM spawn is announced.
+- ~~The uniques' placement and rotation~~ -- round 661: a rotation's hatch goes through the same spawn hook (`AnnounceUniqueSpawn(..., true)`), announced once per spawn (live-checked; `monster_ai.md`, "The unique rotation and the minions").

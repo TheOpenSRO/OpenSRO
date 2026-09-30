@@ -78,6 +78,14 @@ func HalvedDelayMs(base int) int {
 // (INFERRED from the pair and their use; with a uniform angle the spread is
 // the same either way).
 func HatchOffset(dice Dice, radius float64) (dx, dz float64) {
+	return HatchOffsetMin(dice, radius, 0)
+}
+
+// HatchOffsetMin is FUN_00531240 with its minimum: the same ring, the
+// distance raised to minimum after the roll (`d = max(d, minimum)`). Nest_Hatch
+// passes 0.0; the minion executor (0x596e50) passes the unique's and the
+// minion's collision radii plus 30 (SummonDistance, round 661).
+func HatchOffsetMin(dice Dice, radius, minimum float64) (dx, dz float64) {
 	if radius <= 1e-6 {
 		return 0, 0
 	}
@@ -93,8 +101,8 @@ func HatchOffset(dice Dice, radius float64) (dx, dz float64) {
 		base = third
 	}
 	d := float64(dice())/CRandMax*third + base
-	if d < 0 {
-		d = 0
+	if d < minimum {
+		d = minimum
 	}
 	a := float64(dice())/CRandMax*float64(float32(2*math.Pi)) + 0.0
 	return math.Cos(a) * d, math.Sin(a) * d

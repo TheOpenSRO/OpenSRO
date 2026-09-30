@@ -269,6 +269,12 @@ type monsterAI struct {
 	// first release test and stale -- rebuilt -- on any other tick.
 	held     map[heldKey]struct{}
 	heldTick uint64
+	// minions is the minions this pass's summons spawned (round 661,
+	// summon.go), pushed after the pass; onMinion, when set, replaces that
+	// push (a test's recorder). summons counts the summons fired.
+	minions  []int64
+	onMinion func(id int64)
+	summons  int64
 }
 
 // struckEvent is a blow the tick has not seen yet.
@@ -380,6 +386,18 @@ type brain struct {
 	reachRule   uint8
 	roamRule    uint8
 	roamRadius  float64
+
+	// A unique's summons and triggers (round 661, summon.go): damageTaken is
+	// the context's damage total (+0xb0) since the last summon, read off the
+	// HP (lastHP, hpSeen); armedSummon the summon skill armed, when the armed
+	// skill is one; trigFired/trigLast each trigger row's once-a-life flag
+	// and period clock.
+	damageTaken int64
+	lastHP      int
+	hpSeen      bool
+	armedSummon *combat.SummonSkill
+	trigFired   []bool
+	trigLast    []time.Time
 }
 
 // strikeJob is one swing handed to a monster's strike worker: the monster as
@@ -669,8 +687,8 @@ func (a *monsterAI) tick(now time.Time) {
 		}
 	}
 
-	pending, handoffs := a.pending, a.handoffs
-	a.pending, a.handoffs = nil, nil
+	pending, handoffs, minions := a.pending, a.handoffs, a.minions
+	a.pending, a.handoffs, a.minions = nil, nil, nil
 	a.mu.Unlock()
 
 	// 5. The pushes, after the pass: first what each player is owed for the
@@ -685,6 +703,8 @@ func (a *monsterAI) tick(now time.Time) {
 	for _, p := range pending {
 		a.sessBuf = a.emit(p, a.sessBuf)
 	}
+	// Round 661: the minions this pass's summons spawned (summon.go).
+	a.announceMinions(minions)
 	// 6. The swings, after the pushes (round 547): a stop this pass queued --
 	// the in-band stop of a monster still on a leg -- is on the wire before
 	// the blow the same pass decided on. Until this round the worker was
@@ -1220,6 +1240,11 @@ func (a *monsterAI) battleTick(b *brain) {
 	if !ok {
 		return
 	}
+	// Round 661: a summon has no reach to close (summon.go).
+	if b.armedSummon != nil {
+		a.fireSummon(b)
+		return
+	}
 	// The band is the attack-distance rule with the monster as the caster
 	// (combat.ApproachBand: Tick_Attack 0x4ad8e0 / Tick_UseSkill 0x4ae590,
 	// rounds 247/256/488): its BCRadius plus the player's, and the armed
@@ -1279,8 +1304,14 @@ func (a *monsterAI) battleTick(b *brain) {
 // or at the action's end) is not read; only that Handler_0e8 reads the armed
 // pick before it asks for a new one.
 func (a *monsterAI) armSkill(b *brain, dist float64) (combat.MonsterSkill, bool) {
+	a.creditDamage(b) // round 661: a unique's damage total, summon.go
 	if b.hasArmed {
 		return b.armed, true
+	}
+	// Round 661: a unique's summon, then any trigger row, before the draw
+	// (summon.go).
+	if sk, ok := a.armUniqueSkill(b); ok {
+		return sk, true
 	}
 	if len(b.m.Skills) == 0 {
 		return combat.MonsterSkill{ReuseMs: b.m.AttackReuseMs, Range: b.m.AttackRange, AttMin: b.m.AttackMin, AttMax: b.m.AttackMax}, true
@@ -1701,6 +1732,7 @@ func (a *monsterAI) enterBattle(b *brain) {
 // (lastSwing) is the action machine's, not a threat seat, and persists.
 func (a *monsterAI) leaveBattle(b *brain) {
 	b.armed, b.hasArmed = combat.MonsterSkill{}, false
+	b.armedSummon = nil
 }
 
 // startLeg starts a leg to (destX, destZ) in clip mode (0 walk, 1 run) and

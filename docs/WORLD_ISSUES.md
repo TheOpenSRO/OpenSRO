@@ -7094,6 +7094,239 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-sixty-first round: each unique stands at one of its spots, comes back at another after its real wait, fights with its own skills and summons its minions
+
+The user (2026-09-30): "Make sure this includes uniques as well where they spawn on their usual
+rotation at one of their possible spots. Make sure the uniques spawn additional mobs if that's what
+they did." The reading is `docs/protocol/monster_ai.md`, "The unique rotation and the minions
+(round 661)"; the operator's side is `deploy/README.md`, "The full map (round 660)".
+
+Labels: READ (SR_GameServer.exe: the dump, `srv.asm`, `objdump -s`), MEASURED, INFERRED, OURS, and
+EXTERNAL for the user's shard DB (the Eternity backup, round 658). No DB row, CSV or game data is in
+this commit; the tests use synthetic rows.
+
+### 1. What shipped (MEASURED at boot on the render box: npcpos + characterdata of our archive, the shard's CSVs)
+
+Under `-full-map` with `-nest-db-dir`, each field unique's npcpos spots are the nests of its shard
+hive (total 1, EXTERNAL), and the READ rotation runs them:
+
+| unique | id | spots | window (EXTERNAL) | selector (READ) | summon skills | tuples (stand-in counts) | triggers | attack skills |
+|---|---|---|---|---|---|---|---|---|
+| Tiger Girl | 1954 | 11 | 1,200-1,400 s | Summon_A | 4 | 14 (14) | 0 | 3 |
+| Uruchi | 1982 | 11 | 1,200-1,400 s | Summon_A | 4 | 14 (14) | 0 | 3 |
+| Isyutaru | 2002 | 11 | 1,200-1,400 s | Summon_B | 7 | 26 (26) | 0 | 3 |
+| Lord Yarkan | 3810 | 10 | 2,100-2,200 s | Summon_B | 7 | 18 (18) | 0 | 2 |
+| Demon Shaitan | 3875 | 6 | 2,100-2,200 s | Summon_B | 8 | 24 (24) | 0 | 2 |
+| Cerberus | 5871 | 13 | 1,200-1,400 s | Summon_A (R1_00, R2_20 dropped) | 4 | 18 (16) | 0 | 3 |
+| Captain Ivy | 14936 | 8 | 1,200-1,400 s | Summon_A (slot 3 empty) | 3 | 9 (9) | 1 (ATTACK05 at 50 %) | 5 |
+
+Every spot joins its own species' nest (the join's 1.0-unit tolerance; round 660 measured every
+nest within 0.00014); the `_STR` twins' hives on the same spots are never placed. One boot's join:
+12,367 rows; 257 not monsters; 1,915 dungeon; **70 unique spots placed, 0 left out**; **90 rows of
+the Pharaoh temple left out** (their nests' hives are worlds 57-59, below); **1 rank-8 row left out**
+(MOB_SD_APIS); 10,104 nests placed (4,063 matched, 2,346 swapped with their own tactics, 3,695
+swapped stand-ins); 17 capped hives (round 660's 10 plus the seven unique hives); at most 34,384
+alive. The boot log writes one `unique rotation` line per unique, and each `unique hatched`,
+`unique rotation: re-pinned` and `unique summons`.
+
+`-unique-respawn=<dur>` (env `SRREVAMP_UNIQUE_RESPAWN`, OURS, testing) replaces the uniques' wait;
+`-nest-respawn` no longer reaches them. The two new DB files (`Tab_RefAISkill.csv`, `_RefSkill.csv`)
+are optional: without them the uniques rotate and fight but summon nothing, and the boot log says so.
+
+### 2. What was READ this round
+
+- **The rotation.** Build pin `CMainProcess::FUN_0055efe0`: `nests[abs(rand()) % n]` for a total-1
+  hive. Re-pin `AI::CNest::FUN_0055eec0` (asm 0x55eec0..0x55efce): only when the capped hive was
+  full before the death; `k = abs(rand()) % (n+1)`, clamped to n-1 -- the last nest comes up twice as
+  often as any other, kept -- and EVERY nest of the hive re-armed (`RearmHatchTimer` 0x560e50:
+  stamp now, a fresh uniform [col12, col13] roll; the pinned nest throws one roll more, discarded,
+  at 0x55ef7a). The re-arm is any capped hive's, not only a total-1 one: round 660's ten capped
+  hives now wait a window from a loss out of a full hive too (a correction to round 660).
+- **Rank 8** (the coordinator's check): fourteen of the fifteen rarity-8 field rows, with OSIRIS_3
+  (rarity 3), are the Pharaoh temple's bosses (SPHINX, SEKHMET, NEPHTHYS, HORUS, OSIRIS, three
+  variants each). Their nests sit in hives of GameWorldID 57/58/59, which the DB's
+  `_RefGame_World` names `INS_PHARAOH_NOVICE/EXPERT/MASTER` (EXTERNAL), in separate region blocks
+  (y 114-124, x 179-196), each a single nest of cap 1 on a 10,800 s window in an uncapped hive -- no
+  rotation. `CreateHivesForWorld` 0x54b8d0 builds only the hives of the world being built (READ,
+  round 241), and the field world is `INS_DEFAULT`, id 1: **none of them hatches in the field**, so
+  all 90 temple rows (the SD elites and bosses) are left out. MOB_SD_APIS has no nest of its own in
+  the DB -- its spot's only nest is the shard's DEADWARRIOR at cap 0 -- so it is not placed on a
+  stand-in either. Rank 8 is never announced: both notice gates are `cmp al,3` (0x5f71d4 spawn,
+  0x4c1ccb kill). So rank 8 is NOT placed "the same way as rarity 3", by the READ world rule and the
+  data; the coordinator's note assumed field nests they do not have.
+- **The selector**: `BindSkillsAndRanges` chooses Summon_A / B / C by TacticsID immediates
+  (0x53f7bd..0x53f8cf); the shard's seven unique tactics ids are exactly seven of them. Summon_A
+  files a summon skill by AI_AttackChance into four slots (0x562060), Summon_B lists them (0x562470);
+  a skill with a `_RefAISkill` row is a trigger in every selector.
+- **The summon's timing -- a correction to the brief.** Both PickSkills (0x5621b0, 0x562570) summon
+  when the damage taken since the last summon (`ctx+0xb0`) reaches 10 % of MaxHP (float 10.0 at
+  0xb45b44), picking the skill by the HP bucket (0x541d70: 0.2/0.4/0.6/0.8); slot 6 (0x562540)
+  zeroes `ctx+0xb0` when an `ssou` skill is used. So a unique summons about nine times a kill, the
+  bucket choosing which wave -- not once at each of 0.8/0.6/0.4/0.2. Summon_B throws `rand() % 1000
+  < 500` for its R1/R2 set.
+- **The executor** (0x596e50): tuples `{id, class nibble, min, max}` after the `ssou` word (the
+  parser stores that cursor at +0x354 and returns, 0x5890cb..0x5890e5); per tuple a radius die, then
+  `n = min + abs(rand()) % (max-min+1)`, over 50 logged and set to 50, under 1 nothing; each minion
+  from the spawn routine at exactly unique BC + 30 + minion BC (the ring's radius is at most 2 pi,
+  under the minimum), its own angle, the world's class clamp (0x5f6eb0 calls the world's slot 6),
+  then command 0xb binding it to the unique (`CAIState` slot 14, 0x5591b0: `ctx+0x14c` = the
+  unique, IDLE).
+- **Minions are not cleaned up.** The executor keeps no list, and the unbinding command 0xc
+  (slot 15, 0x559260) has one sender, the pet path (0x4d2109): two probes with different failure
+  modes (the decompile's `0x1c))(0xc,` and an asm scan for `push 0xc` before a register call through
+  `[..+0x1c]`; the second found 0x4d2109 and 0x440679, the latter a `+0x500` call, not a command).
+  A minion stays, bound, until killed, and never respawns.
+
+### 3. The minion counts -- decision D10 re-verified (MEASURED)
+
+The parse is right: across the client's 292 `ssou` skills, 309 tuples carry real counts (the Qin Shi
+tomb guardians' `{14964, 0, 3, 3}`, `{14964, 1, 1, 1}`, `{14964, 6, 1, 1}`, `{14964, 4, 1, 1}`, ...).
+The seven field uniques' 130 tuples read 0..0 except Cerberus's Ladon (5866): 2..3 in R1_80 and
+1..2 as elite in R1_40. The shard DB's `_RefSkill` carries the same blocks word for word (286 of the
+292 `ssou` skills identical, every unique's among them), and `_RefAISkill` has no counts. With the
+rows as they are the executor would spawn nothing for a 0..0 tuple, so -- the user's decision D10 --
+srrevamp gives each 0..0 tuple Ladon's 2..3 (**OURS**, `nest.SummonCountStandIn*`, flagged per tuple
+as `StandIn`) and keeps the two real ones. Consequence, disclosed: a Tiger Girl kill summons about
+nine waves of 4..12 minions (her slots hold 2 or 4 tuples), champions, giants and elites among
+them, and since nothing removes minions an abandoned fight leaves them standing.
+
+### 4. What was built
+
+- `internal/nest`: `PinAtBuild`, `Repin`, `Scheduler.DrainRotations`, `Slot.Index`; the join places
+  rarity-3 rows on their own nest in a capped world-1 hive (`Joined.Rotation`, `UniqueSpots`), leaves
+  out other worlds' nests (`FieldWorldID`, `OtherWorld`) and rank-8 rows with no nest of their own
+  (`Rank8`); `summon.go`: the two optional loaders, `ParseSummon` (by the engine's Param walk),
+  `SummonKindFor`, `SummonASlot`, `MinionCount`, `SummonRadius`, `SummonDistance`;
+  `HatchOffsetMin` (0x531240 with its minimum).
+- `internal/ai/summon.go`: `HPBucket`, `SummonDue`, `SummonAIndex`, `SummonBIndex`.
+- `internal/combat`: `SummonAI`/`SummonSkill`/`SummonTuple`/`MinionSpec`/`AITrigger` on the
+  species and the monster, `Monster.Leader`, `Hatch.Heading` (a unique faces its nest row's
+  direction, Nest_Hatch 0x5609bf).
+- `session/summon.go`: the damage total read off the HP from the unique's MaxHP, the summon and the
+  triggers before the draw, the summon on the swing's cooldown without a reach test (INFERRED: it has
+  no target), the executor, the minions pushed after the pass.
+- The client: `MonsterDraw.Templates.request`/`poll`/`pending` and `World3D`'s template waiters
+  (section 6).
+- `cmd/server/unique.go`: the selector's filing of a unique's ten skill columns (attack list without
+  summons and triggers), the minion species with their own DB tactics, the boot report;
+  `-unique-respawn`; the rotation's log lines.
+
+### 5. Tests
+
+- Go (synthetic rows): `internal/nest` rotation661 (one alive at the pinned spot; the re-pin's
+  last-nest bias over all n+1 throws; the respawn at min with a 0 throw and max with CRandMax, not a
+  millisecond earlier; every nest of a capped hive re-armed; the join places a unique's spots and
+  never its twin, and leaves out a temple boss and an APIS-like boss) and summon661 (the parse, the
+  count and cap, the slots and selector, the minion distance, Repin's dice order, the optional
+  files); `internal/ai` summon (buckets, the 10 % gate, both index tables); `session` summon661 (a
+  summon at a tenth of the HP and not before, its minions at exactly 70 and bound; one summon per
+  tenth by bucket 1000,1000,1001,1001,1002,1002,1003,1003,1003; the cap of 50 and the champion
+  class; minions outlive their unique; the HP trigger once); `cmd/server` unique661 (the join's slots,
+  window, heading, filing and stand-in counts; `-unique-respawn` and `-nest-respawn`; the rotation's
+  respawn through the spawn hook, once, at one of the spots).
+- GDScript: `monster_draw_test.gd` gains the off-thread template (a new species' first monster has
+  no body in its frame, its template is pending, the body comes 2 frames later, a second body at
+  once, one assembly).
+- `cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...`: 62 packages ok,
+  exit 0 (rerun after the dev box's disk filled and stopped the test Postgres mid-run);
+  `go test -count=1 -race -timeout 40m ./internal/nest ./internal/session`: ok (session 560 s), no race.
+  `remote_godot.sh check`: all scripts load; `remote_godot.sh tests`: 175 suites, 0 failing.
+
+**The negative** (base 4bcc2cf, a separate worktree; the nest file uses only round 660's API, the
+session file runs through a stub shim that spawns the unique plainly):
+
+```
+--- FAIL: TestUniqueRotationOneAliveAtItsPinnedSpot (0.00s)
+    rotation661_test.go:70: the unique is alive at spot 0, want 3 (the build pin's throw 3 % 5)
+--- FAIL: TestUniqueRepinKeepsTheLastNestBias (0.00s)
+    rotation661_test.go:99: death throw 1: the unique came back at spot 0, want 1 (min(k, n-1))
+--- FAIL: TestUniqueTimersRearmedWithinTheWindow (0.00s)
+    rotation661_test.go:132: a throw of 0: the unique reappeared at spot 1 before its 20m0s wait
+--- FAIL: TestCappedHiveRearmsEveryNestAtALoss (0.00s)
+    rotation661_test.go:161: a nest hatched 9.999s after the loss, inside the 10 s window every nest was re-armed to
+--- FAIL: TestJoinPlacesUniqueSpotsNotTheirTwins (0.00s)
+    rotation661_test.go:229: row 0 joined {Spot:{ObjectID:5006 Region:29376 ...} Cat:matched ...} (hive &{ID:611 ... WorldID:57 ...}), want the unique on its own hive 193
+FAIL	github.com/OpenSRO/srrevamp/server/internal/nest
+--- FAIL: TestUniqueSummonsAtATenthOfItsHP (0.00s)
+    summon661_test.go:79: no summon within 30 s of losing a tenth of its HP
+--- FAIL: TestUniqueSummonsEachTenthByBucket (0.00s)
+    summon661_test.go:118: tenth 1: no summon
+--- FAIL: TestSummonCountCapOf50 (0.00s)
+    summon661_test.go:148: no summon
+--- FAIL: TestMinionsOutliveTheirUnique (0.00s)
+    summon661_test.go:170: no summon
+--- FAIL: TestHPTriggerFiresOnceAtItsThreshold (0.00s)
+    summon661_test.go:219: the trigger skill armed 5 times at 50.001 % HP, want 0
+FAIL	github.com/OpenSRO/srrevamp/server/internal/session
+```
+
+and the client test against round 660's client (`monster_draw_test.gd` on a base copy):
+
+```
+FAIL a new species' first monster has no body in the frame it arrives
+FAIL its template is assembling off the main thread
+2 FAILURES
+```
+
+The pure-function files (`summon661_test.go`, `ai/summon_test.go`, `cmd/server/unique661_test.go`)
+name functions the base does not have and are not part of the negative.
+
+### 6. Live check (render box, lane unique661; `/var/tmp/unique661/live2.sh`, `live3.sh`)
+
+Server: the full map with the shard's CSVs (EXTERNAL, on the box only) and `-unique-respawn=60s`;
+one client (`World3D.tscn`, QA sign-in) in its own Xvfb, following Tiger Girl by the server's log
+(the pin is random each boot). The evidence is the server's and the client's logs; the screenshots
+(`/var/tmp/unique661/e2e/r2/1_summoned.png`, `2_killed.png`, `3_respawned.png`) are for a human.
+
+- **Rotation and respawn (r2).** Boot: `unique hatched id=9767 name="Tiger Girl[INT]" nest=5909
+  spot=2 of=11`. GM `/damage 40000` (HP 259,360/299,360), a teleport beside her and the QA attack
+  loop engaged her: `18:33:30.757 unique summons monster=9767 skill=3049 hp=259358 bucket=4
+  spawned=5 minions=[33847 .. 33851]` -- SUMMON01 (Summon_A slot 0, HP above 80 %), her two tuples
+  at the stand-in 2..3. The client: `monster 33847 spawned (push) White Tiger at (-21396.8,12181.0)`
+  and the five bodies drawn. GM kill at 18:34:20: the client's kill banner `[Unique661] killed Tiger
+  girl from Tiger Mountain.`; the server `unique rotation: re-pinned hive=193 spot=8 of=11 nest=5906
+  respawn_in=1m0s`; `18:35:21.017 unique hatched id=34008 nest=5906 spot=8` -- 60.25 s after the
+  death, on the re-pinned spot (423 units from the nest, inside its generate radius) -- and the
+  client's one spawn banner `Tiger Girl has appeared on Tiger Mountain.` (0x0C05 once). r1 and r3
+  re-pinned spot 1 -> 1 and 3 -> 6, r4 10 -> 3: four deaths, four re-pins, each respawn 60 s later
+  on its re-pinned nest.
+- **The frame when she reappears in view (r3/r4, the brief's measurement).** A client that had not
+  met Tiger Girl in the session waited at the re-pinned spot. **Before the client change (r3):** her
+  push arrived, the species' template was assembled on the main thread -- templates 7 -> 8,
+  assembly time 168 -> 1,012 ms, **844 ms for her model** -- and the load summary for that window
+  reads `longest work frame 28 ms ... longest wall gap 862 ms at frame 3816`: an 862 ms freeze (the
+  work-frame clock does not see it; the wall gap does). **After it (r4):** templates 7 -> 8 with
+  490 -> 1,367 ms (her 877 ms on a WorkerThreadPool task), her body built in 1.5 ms, and the window's
+  summary `longest work frame 8 ms ... 0 over 100 ms; longest wall gap 26 ms`. A client that has
+  met her already (r2, r1) built the respawn's body in 0.9 ms either way.
+
+**The client change** (`MonsterDraw.Templates.request/poll`, `World3D._build_monster_body`): a
+species' first body no longer assembles its model on the main thread; the model is assembled on a
+WorkerThreadPool task (the Pk2 reader is locked since round 565; the object prepare already builds
+meshes and materials off the main thread) and the monster waits for it, its snapshot kept; the pump
+queues the waiters when the task finishes. `SRREVAMP_SYNC_LOAD=1` keeps the old path, as do round
+655's tests with their own assembler. This is every species' first body, not only a unique's.
+
+**Perf gate** (`client/tools/perf_gate.sh --base 4bcc2cf --sites jangan,mobs`, 1280x720, median of 3):
+
+| site | measure | base 4bcc2cf | head | | verdict |
+|---|---|---|---|---|---|
+| jangan | frame ms | 9.65 | 9.90 | +0.2 | SAME |
+| jangan | entry ms | 9547 | 9552 | +5 | SAME |
+| jangan | freeze ms | 3383 | 3398 | +15 | SAME |
+| jangan | hitches | 5 | 5 | 0 | SAME |
+| mobs | frame ms | 10.73 | 10.74 | 0 | SAME |
+| mobs | entry ms | 11408 | 10648 | -760 | SAME |
+| mobs | freeze ms | 3380 | 3389 | +9 | SAME |
+| mobs | hitches | 6 | 5 | -1 | SAME |
+
+### 7. Open
+
+In `docs/TODO.md`, "The monster world's nests (round 660)": retail's real minion counts (the rows
+say 0..0); the leader's WANDER bias and distance behaviours; Summon_C; the summon's cast push; the
+periodic trigger's phase alignment; `/spawnunique`'s uniques without skills; MOB_SD_APIS; the
+Pharaoh temple's instance worlds.
+
 ## Six-hundred-and-sixtieth round: every field monster of the game stands in its nest, comes back on the nest's own timer, is aggressive or passive and gives up as its data says, and hatches champions, giants and party monsters
 
 The user (2026-09-30): "Please add all monsters to the map like the original server would have it.

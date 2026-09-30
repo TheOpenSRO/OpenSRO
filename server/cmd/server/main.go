@@ -901,22 +901,28 @@ func main() {
 	fullMapEnv, fullMapEnvErr := envBool("SRREVAMP_FULL_MAP")
 	fullMap := flag.Bool("full-map", fullMapEnv,
 		"place every field monster of the game (env SRREVAMP_FULL_MAP, round 660): each monster row of -npcpos-csv "+
-			"outside the dungeons, but the uniques (rarity 3, their rotation is a later round) and the shard's custom "+
-			"species, becomes a nest hatching its species from -monsters-csv -- with -nest-db-dir, the DB nest's "+
+			"outside the dungeons and the shard's custom species becomes a nest hatching its species from "+
+			"-monsters-csv (a unique, rarity 3, rotates over its spots through its DB hive, round 661) -- with -nest-db-dir, the DB nest's "+
 			"window, radius, cap, champion chance and tactics (EXTERNAL); without it one monster per row, "+
 			"respawning after 10 s, with the stand-in behaviour. Needs -npcpos-csv and -monsters-csv (forced off "+
 			"with a WARN otherwise) and turns -single-frame on. Default OFF: off, the hand-typed roster stands "+
 			"where it always has.")
 	nestDBDir := flag.String("nest-db-dir", os.Getenv("SRREVAMP_NEST_DB_DIR"),
 		"directory holding the shard DB's AI tables as Tab_RefTactics.csv, tab_refnest.csv and tab_refhive.csv "+
-			"(round 660; EXTERNAL: exported from the user's VSRO shard backup, never committed -- deploy/README.md). "+
+			"(round 660; EXTERNAL: exported from the user's VSRO shard backup, never committed -- deploy/README.md), "+
+			"and optionally Tab_RefAISkill.csv and _RefSkill.csv (round 661: the uniques' triggers and summons). "+
 			"With -full-map every npcpos row joins the DB nest at its spot. A configured directory that does not load "+
 			"is fatal.")
 	nestRespawnEnv, nestRespawnEnvErr := envDuration("SRREVAMP_NEST_RESPAWN", 0)
 	nestRespawn := flag.Duration("nest-respawn", nestRespawnEnv,
-		"every nest's respawn window, both ends, in whole seconds (env SRREVAMP_NEST_RESPAWN, round 660): an "+
+		"every nest's respawn window but the uniques', both ends, in whole seconds (env SRREVAMP_NEST_RESPAWN, round 660): an "+
 			"override for testing. Default 0: each DB nest's own [min, max] window (1-3 s on most, EXTERNAL) and 10 s "+
 			"for a stand-in nest.")
+	uniqueRespawnEnv, uniqueRespawnEnvErr := envDuration("SRREVAMP_UNIQUE_RESPAWN", 0)
+	uniqueRespawn := flag.Duration("unique-respawn", uniqueRespawnEnv,
+		"the uniques' respawn wait after a death, both ends, in whole seconds (env SRREVAMP_UNIQUE_RESPAWN, round 661): "+
+			"an OURS override for testing. Default 0: the hive's nests' own window (EXTERNAL: 1,200-1,400 s for Tiger Girl, "+
+			"Uruchi, Isyutaru, Cerberus and Captain Ivy; 2,100-2,200 s for Lord Yarkan and Demon Shaitan).")
 	inventorySizeEnv, inventorySizeEnvErr := envInt("SRREVAMP_INVENTORY_SIZE", inventory.DefaultBagSlots)
 	inventorySize := flag.Int("inventory-size", inventorySizeEnv,
 		"the bag's size in slots for every character without one of its own (env SRREVAMP_INVENTORY_SIZE): "+
@@ -933,7 +939,8 @@ func main() {
 			"err", inventorySizeEnvErr, "default", inventory.DefaultBagSlots)
 	}
 	for name, err := range map[string]error{"SRREVAMP_MONSTER_SLEEP": sleepEnvErr, "SRREVAMP_QA_SPREAD_MONSTERS": qaSpreadEnvErr,
-		"SRREVAMP_QA_SPREAD_RADIUS": qaSpreadRadiusEnvErr, "SRREVAMP_FULL_MAP": fullMapEnvErr, "SRREVAMP_NEST_RESPAWN": nestRespawnEnvErr} {
+		"SRREVAMP_QA_SPREAD_RADIUS": qaSpreadRadiusEnvErr, "SRREVAMP_FULL_MAP": fullMapEnvErr, "SRREVAMP_NEST_RESPAWN": nestRespawnEnvErr,
+		"SRREVAMP_UNIQUE_RESPAWN": uniqueRespawnEnvErr} {
 		if err != nil {
 			logger.Warn(name+" does not parse; its flag keeps its default unless given", "err", err)
 		}
@@ -1440,7 +1447,8 @@ func main() {
 		}
 		nestDB = db
 		logger.Info("nest DB loaded (EXTERNAL: the user's shard backup, round 658)", "dir", *nestDBDir,
-			"tactics", len(db.Tactics), "nests", len(db.Nests), "hives", len(db.Hives))
+			"tactics", len(db.Tactics), "nests", len(db.Nests), "hives", len(db.Hives),
+			"ai_skill_tactics", len(db.AISkills), "skills", len(db.Skills))
 		if !*fullMap {
 			logger.Warn("nest DB loaded but -full-map is off: the roster's stand-in nests do not use it")
 		}
@@ -1511,7 +1519,11 @@ func main() {
 	respawns := newRespawnScheduler(monsters, logger, spawned)
 	respawns.delayOverride = *nestRespawn
 	if *nestRespawn > 0 {
-		logger.Info(fmt.Sprintf("nest respawn override: every nest's window is %v at both ends (-nest-respawn, for testing)", *nestRespawn))
+		logger.Info(fmt.Sprintf("nest respawn override: every nest's window but the uniques' is %v at both ends (-nest-respawn, for testing)", *nestRespawn))
+	}
+	respawns.uniqueOverride = *uniqueRespawn
+	if *uniqueRespawn > 0 {
+		logger.Info(fmt.Sprintf("unique respawn override: a unique reappears %v after its death (-unique-respawn, OURS, for testing)", *uniqueRespawn))
 	}
 	if *fullMap {
 		// Round 660: every field monster row as a nest, replacing the roster's
@@ -1521,6 +1533,7 @@ func main() {
 			respawns.addSlot(sl)
 		}
 		logFullMap(logger, rep, nestDB != nil)
+		logUniques(logger, rep.uniques, *uniqueRespawn, nestDB != nil && nestDB.Skills != nil)
 	} else {
 		for _, spec := range monsterSpecs {
 			for _, inst := range rosterInstances(spec, logger) {

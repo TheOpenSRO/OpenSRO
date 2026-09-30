@@ -15330,6 +15330,16 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 ## _spawn_or_update_monster; the body comes from its species' template,
 ## MonsterDraw.Templates). The caller has checked its region is loaded.
 func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
+	# Round 661: a species met for the first time has its template assembled
+	# off the main thread; the monster waits for it (the pump queues it again
+	# when poll() reports the model), its snapshot kept.
+	var wanted_model := _monster_model_path(monster.code_name, monster.monster_name)
+	if wanted_model != "" and _monster_async_wanted() and not _monster_templates.has(wanted_model):
+		_monster_templates.request(wanted_model, _monster_assemble if _monster_assemble.is_valid() else _assemble_monster_model)
+		var waiters: Dictionary = _monster_template_waiters.get(wanted_model, {})
+		waiters[monster.monster_id] = true
+		_monster_template_waiters[wanted_model] = waiters
+		return
 	# The ray finds no ground where the monster's region has not committed its
 	# terrain collision yet -- the list asked for in _ready routinely arrives
 	# before the neighbour cells do -- and nothing else re-places a standing
@@ -15461,6 +15471,17 @@ var _monster_templates := MonsterDraw.Templates.new()
 ## How a template is assembled: the model's own `.bsr` out of Data.pk2. A
 ## Callable so the headless test can hand it a synthetic model.
 var _monster_assemble := Callable()
+## Round 661: a species' template is assembled on a WorkerThreadPool task
+## (MonsterDraw.Templates.request) and its first bodies wait for it, instead
+## of the frame that met the species assembling it on the main thread. On
+## whenever the threaded load is (SRREVAMP_SYNC_LOAD unset) and the model
+## comes from the archive; a test with its own assembler sets it itself.
+var _monster_async_templates := true
+## Whether the off-thread assembly also runs a test's own assembler
+## (_monster_assemble); round 655's tests keep the synchronous path.
+var _monster_async_with_hook := false
+## Monsters waiting for their species' template: model -> {monster id: true}.
+var _monster_template_waiters := {}
 ## Monsters listed but not built yet, oldest first, and the same ids as a set.
 var _monster_build_queue: Array[int] = []
 var _monster_build_queued := {}
@@ -15480,6 +15501,12 @@ var _monster_region_drops := 0
 var _monster_queue_started_usec := -1
 var _monster_queue_frames := 0
 var _monster_queue_longest_usec := 0
+
+## Whether a species' template is assembled off the main thread (round 661):
+## the flag, the threaded load, and -- unless a test forces it -- the
+## archive's own assembler.
+func _monster_async_wanted() -> bool:
+	return _monster_async_templates and _threaded_load() and (not _monster_assemble.is_valid() or _monster_async_with_hook)
 
 func _assemble_monster_model(model: String) -> SkinnedBsrAssembler.AssembledCharacter:
 	if _data_pk2 == null:
@@ -15515,6 +15542,13 @@ func _queue_monster_build(monster_id: int) -> void:
 ## monster gone from the snapshots (dead, or left the list) is skipped; one
 ## whose region is not loaded is deferred. Returns the bodies built.
 func _pump_monster_builds(budget_usec: int = MonsterDraw.BUILD_BUDGET_USEC) -> int:
+	# Round 661: the templates assembled off the main thread since the last
+	# frame, and the monsters that waited for them back on the queue.
+	for model in _monster_templates.poll():
+		var waiters: Dictionary = _monster_template_waiters.get(model, {})
+		_monster_template_waiters.erase(model)
+		for monster_id in waiters.keys():
+			_queue_monster_build(monster_id)
 	if _monster_cells_dirty:
 		_monster_cells_dirty = false
 		_monster_cells_changed()

@@ -21,7 +21,11 @@ extends SceneTree
 ## - a hit (OpMonsterDamaged), a kill (OpMonsterDied) and an own attack
 ##   result ask for no monster list, and the pushed health is applied;
 ## - a clip is posed only in range and in view (MonsterDraw.pose_wanted);
-## - a `_CLON` row with no model takes its Org row's (READ, one level).
+## - a `_CLON` row with no model takes its Org row's (READ, one level);
+## - round 661: a species met for the first time is assembled OFF the main
+##   thread -- its first body waits for the template instead of the frame
+##   assembling it (a unique's rotation respawn in view froze the game for
+##   862 ms, round 661's live check) -- and later bodies of it are immediate.
 ##
 ## NEGATIVES, on the base (ab66d9c): no template cache (every body is an
 ## assembly, and the synthetic hook does not exist, so every body is a
@@ -58,6 +62,7 @@ func _initialize() -> void:
 		await _test_culling(world)
 		_test_org_rule_world(world)
 		await _test_class_scale(world)
+		await _test_async_template(world)
 		_unstub_net()
 		root.remove_child(world)
 		world.free()
@@ -512,3 +517,34 @@ func _test_org_rule_world(world: Node) -> void:
 	world.set("_monster_org_by_code", {"MOB_CH_GHOST_CLON": "MOB_CH_GHOST"})
 	var got = world.call("_monster_model_path", "MOB_CH_GHOST_CLON", "Small-eyed Ghost")
 	_check(got == "synthetic\\ghost.bsr", "the world draws a `_CLON` with its Org row's model (got '%s')" % got)
+
+## Round 661: the off-thread template. A new species' first monster gets no
+## body in the frame it arrives -- its template is assembling on a
+## WorkerThreadPool task (MonsterDraw.Templates.pending) -- and gets it a few
+## frames later from the pump; a second monster of the species is built at
+## once from the template, with no second assembly.
+func _test_async_template(world: Node) -> void:
+	await _clear_monsters(world)
+	var models: Dictionary = world.get("_monster_models_by_code")
+	models["MOB_TEST_9"] = "synthetic\\mob_9.bsr"
+	world.set("_monster_async_with_hook", true)
+	var bodies: Dictionary = world.get("_monster_bodies")
+	var templates = world.get("_monster_templates")
+	var before := _assembled
+	world.call("_sync_monster_bodies", [_snapshot(9001, 9, 4.0, 4.0)])
+	_check(not bodies.has(9001), "a new species' first monster has no body in the frame it arrives")
+	_check(templates != null and templates.has_method("pending") and bool(templates.call("pending", "synthetic\\mob_9.bsr")),
+		"its template is assembling off the main thread")
+	var frames := 0
+	while not bodies.has(9001) and frames < 300:
+		await process_frame
+		_pump(world)
+		frames += 1
+	var assembled: Dictionary = world.get("_monster_assembled")
+	_check(bodies.has(9001) and assembled.has(9001),
+		"the body is built from the template once it is ready (%d frame(s))" % frames)
+	world.call("_sync_monster_bodies", [_snapshot(9001, 9, 4.0, 4.0), _snapshot(9002, 9, 8.0, 4.0)])
+	_check(bodies.has(9002), "a second monster of the species is built at once from the template")
+	_check(_assembled - before == 1, "the species was assembled once (%d)" % (_assembled - before))
+	world.set("_monster_async_with_hook", false)
+	await _clear_monsters(world)

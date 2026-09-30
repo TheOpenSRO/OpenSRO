@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/rand"
 	"sort"
 	"time"
@@ -51,6 +52,11 @@ type hatchData struct {
 	gold                   int64
 	homeX, homeZ           float64
 	tactics, champion      *combat.Tactics
+	// rotation marks a unique's spot (round 661): its window is
+	// -unique-respawn's, not -nest-respawn's, and its hatch faces the nest
+	// row's direction (heading) and is logged.
+	rotation bool
+	heading  float64
 }
 
 // hatchDataOf is spec's hatch at its own X/Z: the stats a spawn carries, with
@@ -80,12 +86,15 @@ type respawnScheduler struct {
 	// quiet logs counts instead of a line per hatch (a large world).
 	quiet bool
 	// delayOverride, when above zero, is every nest's window at both ends
-	// (-nest-respawn).
-	delayOverride time.Duration
-	nests         int
-	capTotal      int
-	deaths        []int64
-	pending       []int64
+	// (-nest-respawn) but the uniques'; uniqueOverride the uniques' window
+	// (-unique-respawn, round 661). OURS, for testing.
+	delayOverride  time.Duration
+	uniqueOverride time.Duration
+	rotations      []nest.Rotation
+	nests          int
+	capTotal       int
+	deaths         []int64
+	pending        []int64
 	// byRank and party count the hatches by the rank and the party flag
 	// they came out with, for the summary line (a champion's rate is the
 	// nest's chance times the tactics row's champion row; a giant's is 15 in
@@ -116,8 +125,12 @@ func (s *respawnScheduler) add(spec monsterSpec) {
 
 // addSlot registers a nest, applying -nest-respawn.
 func (s *respawnScheduler) addSlot(sl *nest.Slot) {
-	if s.delayOverride > 0 {
-		secs := int(s.delayOverride / time.Second)
+	override := s.delayOverride
+	if d, ok := sl.Data.(*hatchData); ok && d.rotation {
+		override = s.uniqueOverride
+	}
+	if override > 0 {
+		secs := int(override / time.Second)
 		sl.DelayMin, sl.DelayMax = secs, secs
 	}
 	s.sched.Add(sl)
@@ -149,7 +162,15 @@ func (s *respawnScheduler) hatch(sl *nest.Slot, roll nest.HatchRoll, dx, dz floa
 		}
 	}
 	m := s.monsters.SpawnHatched(d.spec.Zone, sp, d.homeX+dx, 0, d.homeZ+dz, d.maxHP, d.defense, d.attack, d.gold,
-		combat.Hatch{HomeX: d.homeX, HomeZ: d.homeZ, Party: roll.Class.Party(), Tactics: tac})
+		combat.Hatch{HomeX: d.homeX, HomeZ: d.homeZ, Party: roll.Class.Party(), Tactics: tac, Heading: d.heading, HasHeading: d.rotation})
+	if d.rotation {
+		n := 0
+		if sl.Hive != nil {
+			n = len(sl.Hive.Nests())
+		}
+		s.logger.Info("unique hatched", "id", m.ID, "name", m.Name, "nest", sl.ID, "spot", sl.Index, "of", n,
+			"x", math.Round(m.X*10)/10, "z", math.Round(m.Z*10)/10, "max_hp", m.MaxHP)
+	}
 	if sp.Rarity >= 0 && sp.Rarity < len(s.byRank) {
 		s.byRank[sp.Rarity]++
 	}
@@ -197,6 +218,21 @@ func (s *respawnScheduler) check(now time.Time) {
 	s.deaths = s.monsters.DrainDeaths(s.deaths[:0])
 	for _, id := range s.deaths {
 		s.sched.Died(id, now)
+	}
+	// Round 661: each re-arm of a capped hive -- a unique's death moves it
+	// to its next spot.
+	s.rotations = s.sched.DrainRotations(s.rotations[:0])
+	for _, r := range s.rotations {
+		if r.Pinned == nil {
+			continue
+		}
+		name, x, z := "", 0.0, 0.0
+		if d, ok := r.Pinned.Data.(*hatchData); ok {
+			name, x, z = d.spec.Name, d.homeX, d.homeZ
+		}
+		s.logger.Info("unique rotation: re-pinned", "unique", name, "hive", r.Hive.ID, "spot", r.Roll,
+			"of", len(r.Hive.Nests()), "nest", r.Pinned.ID, "x", math.Round(x*10)/10, "z", math.Round(z*10)/10,
+			"respawn_in", time.Duration(r.WaitMs)*time.Millisecond)
 	}
 	s.pending = s.sched.Pass(now, s.pending[:0])
 	if s.spawned != nil {
@@ -249,6 +285,8 @@ type fullMapReport struct {
 	// monster list the map can send.
 	densest     int
 	densestCell combat.Cell
+	// uniques is each placed unique species' rotation (round 661).
+	uniques []uniqueReport
 }
 
 // fullMapSlots is -full-map's nests: every field monster row of npcs joined
@@ -274,6 +312,10 @@ func fullMapSlots(npcs spawn.Table, table *species.Table, lookup species.SkillLo
 	rep := fullMapReport{join: jr}
 	specs := map[int64]monsterSpec{}
 	hives := map[int64]*nest.Hive{}
+	// Round 661: the uniques' skills and minions, once per species.
+	uniques := map[int64]*uniqueAI{}
+	uniqueReps := map[int64]*uniqueReport{}
+	minions := &minionCatalog{table: table, lookup: lookup, db: db, byID: map[int64]*combat.MinionSpec{}}
 	perCell := map[combat.Cell]int{}
 	var hiveIDs []int64
 	out := make([]*nest.Slot, 0, len(joined))
@@ -321,6 +363,41 @@ func fullMapSlots(npcs spawn.Table, table *species.Table, lookup species.SkillLo
 			if t.ChampionTacticsID != 0 && n.ChampionPct > 0 {
 				rep.championable++
 			}
+			if j.Rotation {
+				// A unique's spot (round 661): its skills, selector and
+				// triggers, its nest's direction, its rotation window.
+				u := uniques[row.ID]
+				if u == nil {
+					u = buildUniqueAI(row, t, db, lookup, minions)
+					uniques[row.ID] = u
+				}
+				applyUniqueAI(data, u)
+				data.rotation, data.heading = true, nestHeading(n.Dir)
+				ur := uniqueReps[row.ID]
+				if ur == nil {
+					ur = &uniqueReport{id: row.ID, name: uniqueName(spec), minS: n.DelayMin, maxS: n.DelayMax, kind: u.kind,
+						triggers: len(u.triggers), attacks: len(u.attacks), tuples: u.tuples, standIn: u.standIn, dropped: u.dropped}
+					if sl.Hive != nil {
+						ur.hive = sl.Hive.ID
+					}
+					if u.summon != nil {
+						for _, ss := range u.summon.Skills {
+							if ss.Skill.ID == 0 {
+								continue
+							}
+							ur.summonSkills++
+							for _, tu := range ss.Tuples {
+								if tu.Minion == nil {
+									ur.missingMinionSpecs = append(ur.missingMinionSpecs, tu.RefObjID)
+								}
+							}
+						}
+					}
+					uniqueReps[row.ID] = ur
+				}
+				ur.spots++
+				ur.minS, ur.maxS = min(ur.minS, n.DelayMin), max(ur.maxS, n.DelayMax)
+			}
 		case nest.SwappedOwn:
 			data.tactics = combatTactics(j.Tactics, float64(session.MonsterRoamRadius))
 			if id := j.Tactics.ChampionTacticsID; id != 0 {
@@ -357,6 +434,9 @@ func fullMapSlots(npcs spawn.Table, table *species.Table, lookup species.SkillLo
 	}
 	sort.Slice(hiveIDs, func(i, k int) bool { return hiveIDs[i] < hiveIDs[k] })
 	rep.cappedHives = len(hiveIDs)
+	for _, ur := range uniqueReps {
+		rep.uniques = append(rep.uniques, *ur)
+	}
 	return out, rep
 }
 
@@ -364,7 +444,8 @@ func fullMapSlots(npcs spawn.Table, table *species.Table, lookup species.SkillLo
 func logFullMap(logger *slog.Logger, rep fullMapReport, withDB bool) {
 	j := rep.join
 	logger.Info("full map: npcpos joined to nests", "rows", j.Rows, "not_monster", j.NotMonster, "dungeon_not_placed", j.Dungeon,
-		"unique_not_placed", j.Unique, "custom_not_placed", j.Custom, "placed", j.Placed,
+		"unique_not_placed", j.Unique, "unique_spots", j.UniqueSpots, "rank8_not_placed", j.Rank8, "other_world_not_placed", j.OtherWorld,
+		"custom_not_placed", j.Custom, "placed", j.Placed,
 		"matched", j.Matched, "swapped_own_tactics", j.SwappedOwn, "swapped_stand_in", j.SwappedStandIn, "stand_in", j.StandIn,
 		"zero_cap_nests", j.ZeroCap, "db_nests_not_placed", j.Unjoined)
 	if withDB {

@@ -736,7 +736,19 @@ the client nor the server executable carries it.
 Each monster row of `-npcpos-csv` outside the dungeon regions becomes a nest hatching its species
 from `-monsters-csv`, run by the engine's own hatch rules (`server/internal/nest`,
 `docs/protocol/monster_ai.md`, "Nests on the map"). Left out: the dungeons (1,915 rows), the
-uniques (71 rows; their rotation is round 661) and the shard's custom species.
+Pharaoh temple's 90 rows (their nests belong to the temple's instance worlds, round 661), MOB_SD_APIS
+(no nest of its own) and the shard's custom species.
+
+**The uniques (round 661)** need `-nest-db-dir`: each of the seven field uniques stands at one of its
+npcpos spots at a time (its shard hive has a total of 1, EXTERNAL) and, killed, reappears at another
+after its hive's window -- 1,200-1,400 s for Tiger Girl, Uruchi, Isyutaru, Cerberus and Captain
+Ivy, 2,100-2,200 s for Lord Yarkan and Demon Shaitan (EXTERNAL). It fights with its own skills and
+summons its minions each time it loses a tenth of its HP; for that the directory also needs
+`Tab_RefAISkill.csv` and `_RefSkill.csv` (below). Without those two files the uniques still rotate
+and fight but summon nothing, and the boot log says so. `-unique-respawn=60s` (env
+`SRREVAMP_UNIQUE_RESPAWN`) shortens the wait for testing (OURS); `-nest-respawn` does not reach
+the uniques. The boot log has one `unique rotation` line per unique, and every hatch, re-pin and
+summon is logged (`unique hatched`, `unique rotation: re-pinned`, `unique summons`).
 
 - **With `-nest-db-dir`** (env `SRREVAMP_NEST_DB_DIR`, the three CSVs of the section below, mounted
   at `/data/nestdb`): a row whose spot's shard nest hatches the same species (4,082 rows) takes that
@@ -759,7 +771,7 @@ list) or as environment variables:
 #         - "-npcpos-csv=/data/npcpos.csv"
 #         - "-monsters-csv=/data/monsters.csv"
 #         - "-skills-csv=/data/skills.csv"        # only with -in-memory; PostgreSQL holds the skills
-#         - "-nest-db-dir=/data/nestdb"           # EXTERNAL, the three shard CSVs
+#         - "-nest-db-dir=/data/nestdb"           # EXTERNAL, the three shard CSVs (+ the two of round 661)
 #         - "-full-map=true"                      # turns -single-frame on itself
 #         - "-monster-ai=true"
 #         - "-monster-strike-push=true"
@@ -768,7 +780,8 @@ list) or as environment variables:
 #         - "-player-dead-state=true"
 #         - "-monster-aggro=true"
 #         # -monster-sleep is on by default; keep it on at this size.
-#         # -nest-respawn=30s overrides every nest's window, for testing only.
+#         # -nest-respawn=30s overrides every nest's window but the uniques', for testing only.
+#         # -unique-respawn=60s shortens the uniques' wait after a death, for testing only.
 ```
 
 A client must be a release that carries round 656 (the paged list and the enter/leave pushes) for
@@ -847,6 +860,8 @@ Traps:
 `-full-map` with `-nest-db-dir` joins every npcpos row to its shard nest (see "The full map
 (round 660)" below). It reads three of the CSVs step 4 writes, under the table's own name, with the
 DB's own column names as the header: `Tab_RefTactics.csv`, `tab_refnest.csv`, `tab_refhive.csv`.
+Round 661 reads two more when they are there -- `Tab_RefAISkill.csv` (the uniques' triggers) and
+`_RefSkill.csv` (their summon skills' Param blocks; 14 MB) -- and boots without them.
 Round 658's full export (`/opt/sro-files/db/validation/export_db.py` on the render box) writes them;
 to export only those three from the restored database (CT 104, step 4's venv):
 
@@ -861,7 +876,7 @@ cur = cn.cursor()
 def f32(v):  # the shortest decimal that round-trips the float32 (a SQL `real`)
     b = struct.pack("<f", v)
     return next((s for s in ("%.*g" % (p, v) for p in range(6, 10)) if struct.pack("<f", float(s)) == b), repr(v))
-for t in ("Tab_RefTactics", "tab_refnest", "tab_refhive"):
+for t in ("Tab_RefTactics", "tab_refnest", "tab_refhive", "Tab_RefAISkill", "_RefSkill"):
     cur.execute("SELECT c.name, ty.name FROM sys.columns c JOIN sys.types ty ON ty.user_type_id=c.user_type_id "
                 "WHERE c.object_id=OBJECT_ID(%s) ORDER BY c.column_id", ("dbo." + t,))
     cols = cur.fetchall()
@@ -871,9 +886,11 @@ for t in ("Tab_RefTactics", "tab_refnest", "tab_refhive"):
         for row in cur:
             w.writerow(["" if v is None else f32(v) if cols[i][1] == "real" else str(v) for i, v in enumerate(row)])
 PY
-# From the host: pct pull 104 /srv/export/tab_refnest.csv ./tab_refnest.csv (and the other two), then
-# copy the three to the server host's ~/srrevamp-data/nestdb/ -- mounted as /data/nestdb:
-scp Tab_RefTactics.csv tab_refnest.csv tab_refhive.csv srrevamp@<server-host>:~/srrevamp-data/nestdb/
+# From the host: pct pull 104 /srv/export/tab_refnest.csv ./tab_refnest.csv (and the other four), then
+# copy the five to the server host's ~/srrevamp-data/nestdb/ -- mounted as /data/nestdb:
+scp Tab_RefTactics.csv tab_refnest.csv tab_refhive.csv Tab_RefAISkill.csv _RefSkill.csv \
+  srrevamp@<server-host>:~/srrevamp-data/nestdb/
+# The render box already holds all five, from round 658's full export: /opt/sro-files/db/csv/.
 ```
 
 They are EXTERNAL data from a private shard's backup, like the rest of this section: never commit

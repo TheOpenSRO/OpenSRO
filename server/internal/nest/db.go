@@ -135,6 +135,11 @@ type DB struct {
 	byObj map[int64][]*TacticsRow
 	// championRow marks the rows some row names as its champion row.
 	championRow map[int64]bool
+	// AISkills is Tab_RefAISkill by tactics id, and Skills _RefSkill's ids,
+	// codes and summon blocks -- the two optional files of round 661 (nil
+	// when the directory does not hold them; summon.go).
+	AISkills map[int64][]AISkillRow
+	Skills   map[int64]*SkillRow
 }
 
 // LoadDir reads the three files from dir. A file that is missing or does not
@@ -171,7 +176,11 @@ func LoadDir(dir string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", HiveFile, err)
 	}
-	return NewDB(tactics, nests, hives), nil
+	db := NewDB(tactics, nests, hives)
+	if err := loadOptional(db, dir); err != nil {
+		return nil, err
+	}
+	return db, nil
 }
 
 // NewDB indexes the three tables.

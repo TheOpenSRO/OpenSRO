@@ -182,6 +182,14 @@ type Monster struct {
 	// /spawn, a test's, a server with no DB files -- whose brain runs the OURS
 	// stand-ins (internal/ai's Tactics* constants). Fixed at the spawn.
 	Tactics *Tactics
+	// Summon and Triggers are a unique's AI skills (round 661, Species.Summon
+	// and Species.Triggers); nil for every other monster. Fixed at the spawn.
+	Summon   *SummonAI
+	Triggers []AITrigger
+	// Leader is the monster a summoned minion is bound to (the executor's
+	// command 0xb, which stores the unique's id at the minion's ctx+0x14c --
+	// CAIState slot 14, 0x5591b0; round 661), 0 for any other monster.
+	Leader int64
 	// SPReward is the disclosed whole-point fallback (SPFor), used only when no
 	// level table is loaded. Normally the skill economy is fed by skill
 	// EXPERIENCE converted at leveldata.SkillExpPerPoint -- see that constant,
@@ -907,6 +915,75 @@ type Species struct {
 	// none carries a third (cmd/server's roster, read from the retail tables
 	// 2026-09-25).
 	Skills []MonsterSkill
+	// Summon is a unique's summon selector (round 661): which of its skills
+	// summon minions and what they summon. nil for every other species. Its
+	// summon skills and its trigger skills are not in Skills (the selectors'
+	// RegisterSkill files them apart: Summon_A 0x562060, Summon_B 0x562470,
+	// Basic 0x5614d0).
+	Summon *SummonAI
+	// Triggers is the species' _RefAISkill rows under its tactics (round 661,
+	// EXTERNAL rows; the trigger rules READ, round 260), in row order.
+	Triggers []AITrigger
+}
+
+// SummonKind names a unique's AI-skill selector (internal/nest.SummonKindFor).
+type SummonKind uint8
+
+const (
+	SummonKindA SummonKind = 1 // AI::CAISkill_Unique_Summon_A
+	SummonKindB SummonKind = 2 // AI::CAISkill_Unique_Summon_B
+)
+
+// SummonAI is a unique's summon selector (round 661). For SummonKindA,
+// Skills has exactly four entries, the slots by AI_AttackChance (a zero
+// Skill.ID is an empty slot); for SummonKindB, Skills is every summon skill
+// in registration order (characterdata cols 83..92).
+type SummonAI struct {
+	Kind   SummonKind
+	Skills []SummonSkill
+}
+
+// SummonSkill is one summon skill: the skill as the AI arms it (its
+// ReuseDelay paces it like a swing) and its 'ssou' tuples.
+type SummonSkill struct {
+	Skill  MonsterSkill
+	Tuples []SummonTuple
+}
+
+// SummonTuple is one {refObjID, class, min, max} of an 'ssou' block
+// (internal/nest.SummonTuple, READ layout) with what the server spawns for
+// it. StandIn marks a count taken from the stand-in (the row gives 0..0;
+// nest.SummonCountStandIn*, OURS). Minion is nil for a species the server
+// cannot build; such a tuple spawns nothing.
+type SummonTuple struct {
+	RefObjID int64
+	Class    uint8
+	Min, Max int
+	StandIn  bool
+	Minion   *MinionSpec
+}
+
+// MinionSpec is a minion species as a spawn needs it: the species, its
+// stats and the tactics it runs under (its own DB row, or nil for the
+// stand-ins).
+type MinionSpec struct {
+	Species                Species
+	MaxHP, Defense, Attack int
+	Gold                   int64
+	Tactics                *Tactics
+}
+
+// AITrigger is one _RefAISkill row bound to a skill of the monster's list:
+// AI::CAISkill_Basic's trigger entry (RegisterSkill 0x5614d0 files a skill
+// with a row there, not on the attack list), checked before the draw
+// (CheckTriggers 0x561a50). Type 0 fires once a life when the HP percent is
+// at or below Data; type 1 every Data ms (Option bit 0: at the first
+// evaluation).
+type AITrigger struct {
+	Skill  MonsterSkill
+	Type   uint8
+	Data   int
+	Option int
 }
 
 // MonsterSkill is one attack skill as the monster AI draws and fires it:
@@ -955,6 +1032,13 @@ type Hatch struct {
 	HomeX, HomeZ float64
 	Party        bool
 	Tactics      *Tactics
+	// Heading, when HasHeading, replaces the random hatch heading: a unique
+	// (rank 3) faces its nest row's own direction (Nest_Hatch 0x5609bf, the
+	// row's +0x1c word / 65535 x 360 degrees; round 661 -- see SpawnHatched).
+	Heading    float64
+	HasHeading bool
+	// Leader is Monster.Leader (a summoned minion's unique, round 661).
+	Leader int64
 }
 
 // Tactics is the slice of a _RefTactics row (EXTERNAL: the Eternity DB, round
@@ -1007,7 +1091,7 @@ func (h *Hub) SpawnHatched(zone string, species Species, x, y, z float64, maxHP,
 	m := &Monster{ID: id, Name: species.Name, CodeName: species.CodeName, RefObjID: species.RefObjID, Level: species.Level, Rarity: species.Rarity, BCRadius: species.BCRadius, AttackReuseMs: species.AttackReuseMs, AttackRange: species.AttackRange, Critical: species.Critical, Block: species.Block, Zone: zone, X: x, Y: y, Z: z, MaxHP: maxHP, HP: maxHP, Defense: defense, DefensePercent: species.Level, Attack: attack, AttackMin: species.AttackMin, AttackMax: species.AttackMax,
 		GoldReward: goldReward, GoldMin: species.GoldMin, GoldMax: species.GoldMax, ExpReward: ExpFor(maxHP), SPReward: SPFor(maxHP),
 		WalkSpeed: species.WalkSpeed, RunSpeed: species.RunSpeed, Skills: species.Skills, HomeX: hatch.HomeX, HomeZ: hatch.HomeZ, DestX: x, DestZ: z,
-		Party: hatch.Party, Tactics: hatch.Tactics}
+		Party: hatch.Party, Tactics: hatch.Tactics, Summon: species.Summon, Triggers: species.Triggers, Leader: hatch.Leader}
 	// The hatch heading. Nest_Hatch (0x005607b0) rolls a random one only for
 	// a species of the roster's TypeID shape whose rarity is not 3: `cmp
 	// [edi+0x89],3` at 0x5609b6, whose `jne` at 0x5609bd jumps to the rand()
@@ -1025,7 +1109,11 @@ func (h *Hub) SpawnHatched(zone string, species Species, x, y, z float64, maxHP,
 	// random heading the engine would not give it. Every roster species
 	// today is that shape and rank 0 (ai.SpawnHeading's note; cmd/server's
 	// roster), so no spawned monster is affected.
-	if h.headingRoll != nil {
+	if hatch.HasHeading {
+		// Round 661: a unique hatched from its DB nest faces the row's
+		// direction, the engine's path for rank 3 (0x5609bf above).
+		m.Heading = hatch.Heading
+	} else if h.headingRoll != nil {
 		m.Heading = h.headingRoll()
 	}
 	h.byID[id] = m
