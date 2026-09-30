@@ -24,7 +24,12 @@
 # Sites: jangan (the spawn, the densest town), reeds (Dunhuang, the most
 # animated objects in view), cross (a walk west from 97/168 into 97/167, so a
 # region streams in during play -- where a freeze is felt), hotan, ferry (the
-# Donwhang-region ferry landing 90/143, reeds and river in view; round 648).
+# Donwhang-region ferry landing 90/143, reeds and river in view; round 648),
+# mobs (the Jangan spawn with SRREVAMP_QA_MOBS=500: a 500-monster list of 24
+# real species over the 5 x 5-region window, delivered during the loading
+# drain as a server's list would be -- the density the server will send;
+# round 655. A base without the hook draws no monsters there: gate it against
+# a base that has the hook).
 #
 # How it measures (the method the reviews of rounds 645-647 settled on):
 # - runs are interleaved base, head, base, head ... so drift hits both;
@@ -62,7 +67,7 @@ while [ $# -gt 0 ]; do
     --sites) sites="$2"; shift 2 ;;
     --runs) runs="$2"; shift 2 ;;
     --frames) frames="$2"; shift 2 ;;
-    *) echo "usage: $0 [--base REV] [--head REV] [--sites jangan,reeds,cross,hotan,ferry] [--runs N] [--frames N]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--base REV] [--head REV] [--sites jangan,reeds,cross,hotan,ferry,mobs] [--runs N] [--frames N]" >&2; exit 2 ;;
   esac
 done
 cd "$repo_root"
@@ -78,7 +83,7 @@ box_base="/opt/srrevamp-client-perf-base-${base_full_rev:0:12}"
 box_head="/opt/srrevamp-client-perf-${lane}-head"
 work="/var/tmp/perf-${lane}"
 
-# The fixed views: MAPM path | QA_AT (region-local x,z) | yaw | walk heading ('' = stand) | [frames, at least].
+# The fixed views: MAPM path | QA_AT (region-local x,z) | yaw | walk heading ('' = stand) | [frames, at least] | [one extra VAR=value].
 view() {
   case "$1" in
     jangan) echo '97\168.m|1002,1020|0|' ;;   # the game's own spawn
@@ -86,6 +91,7 @@ view() {
     cross)  echo '97\168.m|120,1020|270|270' ;; # walk west into 97/167 (client/tools/README.md, "Load benchmark" (b))
     hotan)  echo '92\135.m|960,960|0|' ;;     # Hotan, the zone landing
     ferry)  echo '90\143.m|464,879|270||12000' ;;   # Donwhang-region ferry GATE_NPC_WC_FERRY4, looking at the dock over the reeds (round 648); 12000 frames: at 2.6 ms a frame 3000 gave 8 samples, under the minimum of 10 (the figure averages the last 30)
+    mobs)   echo '97\168.m|1002,1020|0||3000|SRREVAMP_QA_MOBS=500' ;;   # the spawn with 500 monsters (round 655)
     *) echo "unknown site $1" >&2; exit 2 ;;
   esac
 }
@@ -120,11 +126,12 @@ ship "$box_head" "$head"
 # and prints "<frame ms> <entry ms> <freeze ms> <hitches> <other renders seen>".
 ssh "$RENDER_HOST" "cat > '$work/run1.sh'" <<EOF
 #!/bin/bash
-# run1.sh <client dir> <log> <mapm> <x,z> <yaw> [walk heading] [frames]
+# run1.sh <client dir> <log> <mapm> <x,z> <yaw> [walk heading] [frames] [VAR=value]
 export SRREVAMP_PK2_PATH=$PK2_DIR/Data.pk2 SRREVAMP_MAP_PK2_PATH=$PK2_DIR/Map.pk2 SRREVAMP_MEDIA_PK2_PATH=$PK2_DIR/Media.pk2
 export SRREVAMP_PARTICLES_PK2_PATH=$PK2_DIR/Particles.pk2 SRREVAMP_MUSIC_PK2_PATH=$PK2_DIR/Music.pk2
 export SRREVAMP_MAPM_PATH="\$3" SRREVAMP_QA_AT="\$4" SRREVAMP_QA_YAW="\$5" SRREVAMP_QA_FORCE_LOADING=1
 [ -n "\${6:-}" ] && export SRREVAMP_QA_WALK="\$6"
+[ -n "\${8:-}" ] && export "\$8"
 # Another lane's Godot, rendered or headless (both load the CPU, the shared
 # resource): a Godot process whose --path is not this run's client dir.
 DIR="\$1"   # captured here: inside others() \$1 is the function's own (empty) argument
@@ -176,7 +183,7 @@ one1() {
   local b=$1 tag=$2 dir="$box_base" out ms entry freeze hitches seen
   [ "$b" = head ] && dir="$box_head"
   for try in 1 2 3; do
-    out=$(ssh -n "$RENDER_HOST" "flock /var/tmp/perf-gate.lock '$work/run1.sh' '$dir' '$work/${s}_${b}_$tag.log' '$mapm' '$at' '$yaw' '$walk' '$run_frames'")
+    out=$(ssh -n "$RENDER_HOST" "flock /var/tmp/perf-gate.lock '$work/run1.sh' '$dir' '$work/${s}_${b}_$tag.log' '$mapm' '$at' '$yaw' '$walk' '$run_frames' '$extra'")
     read -r ms entry freeze hitches seen <<<"$out"
     if [ "$ms" = none ] || [ "$entry" = none ] || [ "$freeze" = none ]; then
       echo "  $s $b run $tag: missing numbers ($out) -- see $RENDER_HOST:$work/${s}_${b}_$tag.log" >&2; exit 1
@@ -194,7 +201,7 @@ add() { # add <base|head> "<ms entry freeze hitches>"
 }
 
 for s in ${sites//,/ }; do
-  IFS='|' read -r mapm at yaw walk site_frames <<<"$(view "$s")"
+  IFS='|' read -r mapm at yaw walk site_frames extra <<<"$(view "$s")"
   # A cheap view (the ferry: 2.6 ms a frame) is over before 3000 frames give
   # enough once-a-second samples (the minimum is 10), so a site may ask for
   # more: max(--frames, the site's own).

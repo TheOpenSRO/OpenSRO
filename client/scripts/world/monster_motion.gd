@@ -56,9 +56,10 @@ const MODE_RUN := 1
 ## (CHAR_CH_MAN_FIGHTER, whose front World3D turns by PI) as the control -- it
 ## read -Z, so the probe counts. Keyed by the model World3D draws (the .bsr
 ## path, lowercase), not the code: the four `_CLON` roster rows carry `xxx`
-## for a model and resolve to none, so they are drawn as the capsule and have
-## nothing to face. A model not listed here is FACING UNMEASURED and is left
-## unturned (front_of returns "").
+## for a model and, since round 655, are drawn with their Org row's model
+## (docs/protocol/characterdata.md), so they face as that model does. A model
+## not listed here is FACING UNMEASURED and is left unturned (front_of
+## returns "").
 const FRONT_BY_MODEL := {
 	"mob\\china\\mangnyang.bsr": "-Z",
 	"mob\\china\\bigeyeghost.bsr": "-Z",

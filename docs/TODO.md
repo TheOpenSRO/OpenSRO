@@ -278,14 +278,14 @@ In order. Each is checked off here when it ships in a release, with its round in
       the retail shape srrevamp's placeholder push will eventually give way to
       (`PROTOCOL_DECISION.md`); the server's unprompted pushes are the 0x3NNN group of
       `docs/protocol/server_senders.tsv` (round 368).
-- [ ] **Four roster species are drawn as capsules: their characterdata rows name no model (round
-      533).** `MOB_CH_BIGEYEGHOST_CLON` (Small-eyed Ghost), `MOB_CH_GYO_CLON` (Old Weasel),
-      `MOB_CH_WATERGHOST_CLON` (Water Ghost slave) and `MOB_CH_TOMBSTONE_CLON` (Tomb Stone Ghost)
-      carry `xxx` in cols 52-56 of `characterdata_5000.txt`, and their display names resolve to no
-      row that has a model (`probe_monster_front.gd`, round 533). Their base species
-      (`MOB_CH_BIGEYEGHOST` ...) have models, but reusing one would be a guess until the retail
-      client's handling of a `_CLON` row is read: find where the client resolves a character's
-      `.bsr` and what it does with `xxx`.
+- [x] **Four roster species are drawn as capsules: their characterdata rows name no model (round
+      533).** Done in round 655: the client draws a row whose own model (col 52) is `xxx` with the
+      model of the row its col 4 (OrgObjCodeName) names, one level only (READ,
+      `CICMonster::vslot_025` 0x9d3850; docs/protocol/characterdata.md). The four now draw as
+      bigeyeghost, gyo, waterghost and tombstone; 120 of the table's 142 `MOB_*_CLON` rows take
+      their Org's model (MEASURED, `probe_monster_build.gd`). Still open: col 48 (Scale), which
+      CICMonster applies as scale / 100 from the row's own record (a `_CLON` is often smaller than
+      its base: `MOB_CH_TIGER_CLON` is 80), is not applied to any monster.
 - [ ] **NPC facing is a stand-in until `Tab_RefNest` is imported.** Round 510: the game faces each
       NPC by its nest row's `wInitialDir` (u16 at +0x1c, read by `Nest_Hatch` `0x5607b0`; radians =
       `wInitialDir / 65535 * 360 * pi/180`), which lives only in the server database -- no shipped
@@ -1747,6 +1747,32 @@ Still open, by the files each would add:
   not draw the list (round 75).
 - **The view-distance option** does not exist here. It sets `DAT_00ec54b0` to 1,200 / 2,000 /
   2,500, which makes the animation and draw range 720 / 1,520 / 2,020; the client uses 2,020.
+
+### Many monsters (round 655) — **built: species templates, budgeted builds, posing culled, bodies only in loaded regions, no list per hit; these are left**
+
+The server will send hundreds of monsters per view (the densest 5 x 5-region window of the field
+spawns holds about 500). Round 655 made the client draw them: one template per species model
+(`MonsterDraw.Templates`), bodies built a frame budget at a time, clips posed only in range and in
+view, no body outside the loaded regions, and no full monster list after a hit, a kill or an own
+attack result. `SRREVAMP_QA_MOBS=<N>` and the perf gate's `mobs` site measure it.
+
+- [ ] **A species seen for the first time is still assembled on the main thread**: 4-14 ms for most
+      Chinese field species, 133 ms for the first (cold archive) and 791 ms for
+      `MOB_CH_TIGERWOMAN` (69 bones, 7 pieces; MEASURED, `probe_monster_build.gd`). The budget
+      lets one through per frame, so each new species is one freeze of that length. Next: prepare
+      the `.bsr`/`.bsk`/`.bms`/texture reads on a WorkerThreadPool task (the objects job's pattern,
+      rounds 565-566) and commit on the main thread.
+- [ ] **The pose range is OURS**: the map objects' READ range (2020 from the camera) applied to
+      characters. Retail's render slot for a monster (`CICMonster` slot 10, 0x9d20d0) has no
+      distance test and the object slot `FUN_009c4aa0` only a frustum test; the entity manager's
+      per-frame tick was not read. Bodies out of range are still drawn, only not posed.
+- [ ] **Respawns need the spawn push.** With no list per hit, a respawn appears only through
+      OpMonsterSpawned (`-monster-spawn-push`, off by default), a move for an unknown monster
+      (`-monster-ai`, rate-limited list), a zone change or a GM refresh. The monster-world epic's
+      server turns the push on, or sends the view's monsters itself (the AOI lane).
+- [ ] **A monster walking out of the loaded regions keeps its body** until its region unloads
+      (the region gate runs when a cell loads or unloads, not per step).
+- [ ] **Scale (characterdata col 48)** is not applied to any monster (see the `_CLON` item above).
 
 ## Parked, with the state written down
 
