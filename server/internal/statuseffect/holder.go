@@ -8,6 +8,10 @@ package statuseffect
 // slot per block). Not safe for concurrent use; the owner locks.
 type Holder struct {
 	recs [32]*Record
+	// thawUntilMs is when a freeze that has ended lets go of the motion
+	// state (FreezeThawMs); thawing says one is pending.
+	thawUntilMs uint32
+	thawing     bool
 }
 
 // ResolveAll resolves every run of a skill against a target and returns the
@@ -67,6 +71,10 @@ func (h *Holder) Get(slot int) (Record, bool) {
 // Empty reports whether no state is on.
 func (h *Holder) Empty() bool { return h.Mask() == 0 }
 
+// Idle reports whether the holder has nothing left to do at nowMs: no state,
+// and no freeze thawing.
+func (h *Holder) Idle(nowMs uint32) bool { return h.Empty() && !h.Thawing(nowMs) }
+
 // Mask is the owner mask the client draws: the OR of MaskForSlot over every
 // active slot (AbnormalState_DeactivateSlotAndRebuildMask 0x4a5660). READ.
 func (h *Holder) Mask() uint32 {
@@ -102,31 +110,84 @@ func (h *Holder) Levels() []byte {
 type Tick struct {
 	Code   string
 	Damage int
-	// Credited is whether the tick names its source (so a killing tick pays
-	// SourceID). Poison never does; burn and bleeding only on a fatal tick.
-	Credited        bool
+	// Source is what the applier makes of record+0x4c for this tick (see
+	// SourceRule); SourceID names the caster whatever the rule.
+	Source          SourceRule
 	SourceID        int64
 	SourceIsMonster bool
+	// NeverKills marks poison: its damage is min(value, HP-1) against the HP
+	// the owner has when the tick is dealt.
+	NeverKills bool
 }
+
+// Credited reports whether the tick names its source when it deals damage
+// that is fatal (fatal) or not.
+func (t Tick) Credited(fatal bool) bool {
+	return t.Source == SourceKept || (t.Source == SourceIfFatal && fatal)
+}
+
+// SourceRule is the three damage appliers' verdict on the caster (READ,
+// round 659's review: burn 0x4a46f0, poison 0x4a4940, bleeding 0x4a4cc0,
+// each the same shape). The applier resolves record+0x4c (0x485d90) and,
+// while the record's latch +0x6c is clear:
+//
+//   - no such object: the damage is dealt with no source;
+//   - an object whose life state (vslot 0xf8, CGObj::GetLifeState 0x485ee0)
+//     is neither 2 DEAD nor 3 GONE: the damage is dealt WITH it, every tick,
+//     poison included -- so a living caster is booked every tick;
+//   - dead or gone: the latch is set, for good.
+//
+// Latched, burn and bleeding keep the source only for a fatal tick (`if
+// damage < curHP: source = nil`), and poison drops it always.
+type SourceRule int
+
+const (
+	// SourceNone: the tick names nobody.
+	SourceNone SourceRule = iota
+	// SourceKept: the tick names its caster, fatal or not.
+	SourceKept
+	// SourceIfFatal: the tick names its caster only if it kills.
+	SourceIfFatal
+)
+
+// CasterState is what 0x485d90 and GetLifeState answer for a record's
+// caster.
+type CasterState int
+
+const (
+	CasterGone  CasterState = iota // no such object any more
+	CasterAlive                    // life state neither 2 nor 3
+	CasterDead                     // life state 2 or 3
+)
+
+// CasterLookup answers for a record's caster.
+type CasterLookup func(sourceID int64, isMonster bool) CasterState
 
 // Step is one pass of AbnormalState_UpdateOwnerClear (0x4a4390) at nowMs over
 // an owner whose current HP is curHP: an expired state is removed FIRST (the
 // engine's order -- no last tick for it), then each live one is given its
 // mode-1 tick. It returns the damage ticks, in slot order, and whether the
 // mask changed. The damage is not applied here; each tick is computed against
-// curHP less the ticks before it in this pass.
-func (h *Holder) Step(nowMs uint32, curHP int) (ticks []Tick, changed bool) {
+// curHP less the ticks before it in this pass. caster may be nil (every
+// caster gone).
+func (h *Holder) Step(nowMs uint32, curHP int, caster CasterLookup) (ticks []Tick, changed bool) {
 	hp := curHP
 	for i, r := range h.recs {
 		if r == nil {
 			continue
 		}
 		if Expired(nowMs, r.StartMs, r.DurationMs) {
+			if i == SlotFreeze {
+				// Freeze's removal leaves the motion state FROZEN for 1.5 s
+				// (AbnormalState_Apply00 mode 2: vslot 0x55c(10, 0, 1.5), the
+				// float at 0xb45c10) -- READ; CanActAt holds it.
+				h.thawUntilMs, h.thawing = nowMs+FreezeThawMs, true
+			}
 			h.recs[i] = nil
 			changed = true
 			continue
 		}
-		t, ok := r.tick(nowMs, hp)
+		t, ok := r.tick(nowMs, hp, caster)
 		if !ok {
 			continue
 		}
@@ -136,13 +197,37 @@ func (h *Holder) Step(nowMs uint32, curHP int) (ticks []Tick, changed bool) {
 	return ticks, changed
 }
 
+// FreezeThawMs is how long a freeze's FROZEN motion state outlasts it.
+const FreezeThawMs = 1500
+
+// source is the applier's verdict (SourceRule) for this tick, latching the
+// record when its caster is dead or gone from the living.
+func (r *Record) source(caster CasterLookup, poison bool) SourceRule {
+	if !r.latched {
+		st := CasterGone
+		if caster != nil && r.SourceID != 0 {
+			st = caster(r.SourceID, r.SourceIsMonster)
+		}
+		switch st {
+		case CasterGone:
+			return SourceNone
+		case CasterAlive:
+			return SourceKept
+		}
+		r.latched = true
+	}
+	if poison {
+		return SourceNone
+	}
+	return SourceIfFatal
+}
+
 // tick is the slot's mode-1 applier for the three damaging states.
-func (r *Record) tick(nowMs uint32, curHP int) (Tick, bool) {
+func (r *Record) tick(nowMs uint32, curHP int, caster CasterLookup) (Tick, bool) {
 	switch r.Slot {
 	case SlotPoison:
 		// AbnormalState_Apply04 (0x4a4940): `GetTickCount() - +0x68 < 0x7d1`
-		// returns, so it fires once 2001 ms have passed; min(value, HP-1), no
-		// source. READ.
+		// returns, so it fires once 2001 ms have passed; min(value, HP-1).
 		if nowMs-r.LastTickMs < TickIntervalMs {
 			return Tick{}, false
 		}
@@ -151,11 +236,11 @@ func (r *Record) tick(nowMs uint32, curHP int) (Tick, bool) {
 		if d <= 0 {
 			return Tick{}, false
 		}
-		return Tick{Code: r.Code, Damage: d}, true
+		return Tick{Code: r.Code, Damage: d, NeverKills: true, Source: r.source(caster, true), SourceID: r.SourceID, SourceIsMonster: r.SourceIsMonster}, true
 	case SlotBurn:
-		// AbnormalState_Apply02 (0x4a46f0): the same 2001 ms; the source is
-		// dropped unless the blow is fatal. Param 8 is 0 on everything
-		// srrevamp spawns, and the factor is the 1.0 the block writes. READ.
+		// AbnormalState_Apply02 (0x4a46f0): the same 2001 ms. Param 8 is 0
+		// on everything srrevamp spawns, and the factor is the 1.0 the block
+		// writes. READ.
 		if nowMs-r.LastTickMs < TickIntervalMs {
 			return Tick{}, false
 		}
@@ -164,14 +249,11 @@ func (r *Record) tick(nowMs uint32, curHP int) (Tick, bool) {
 		if d <= 0 {
 			return Tick{}, false
 		}
-		return Tick{Code: r.Code, Damage: d, Credited: d >= curHP, SourceID: r.SourceID, SourceIsMonster: r.SourceIsMonster}, true
+		return Tick{Code: r.Code, Damage: d, Source: r.source(caster, false), SourceID: r.SourceID, SourceIsMonster: r.SourceIsMonster}, true
 	case SlotBleeding:
 		// AbnormalState_Apply11 (0x4a4cc0): `GetTickCount() - +0x68 <= +0x10`
 		// returns -- strictly MORE than the interval must pass -- then
-		// value[3], the source dropped when `+0x38 < curHP` (not fatal).
-		// READ. (Its +0x6c latch, which keeps a source of some object kinds
-		// on a non-fatal tick, is not modelled: a non-fatal tick credits
-		// nothing either way.)
+		// value[3]. READ.
 		iv := r.TickIntervalMs
 		if iv <= 0 {
 			iv = DefaultTickIntervalMs
@@ -183,7 +265,7 @@ func (r *Record) tick(nowMs uint32, curHP int) (Tick, bool) {
 		if r.TickValue <= 0 {
 			return Tick{}, false
 		}
-		return Tick{Code: r.Code, Damage: r.TickValue, Credited: r.TickValue >= curHP, SourceID: r.SourceID, SourceIsMonster: r.SourceIsMonster}, true
+		return Tick{Code: r.Code, Damage: r.TickValue, Source: r.source(caster, false), SourceID: r.SourceID, SourceIsMonster: r.SourceIsMonster}, true
 	}
 	return Tick{}, false
 }
@@ -236,6 +318,21 @@ func (h *Holder) CanMove() bool {
 // monster's attack path is not read.
 func (h *Holder) CanAct() bool {
 	return !h.Holds(SlotFreeze) && !h.Holds(SlotStun) && !h.Holds(SlotSleep)
+}
+
+// CanActAt is CanAct at nowMs, holding a thawing freeze's FROZEN motion state
+// for FreezeThawMs after the freeze has gone (the mask no longer shows it).
+func (h *Holder) CanActAt(nowMs uint32) bool {
+	if h.thawing && int32(nowMs-h.thawUntilMs) < 0 {
+		return false
+	}
+	return h.CanAct()
+}
+
+// Thawing reports whether a freeze that has ended still holds its owner at
+// nowMs.
+func (h *Holder) Thawing(nowMs uint32) bool {
+	return h.thawing && int32(nowMs-h.thawUntilMs) < 0
 }
 
 // DefenceCut is the flat defence bleeding takes off (params 5 and 6,

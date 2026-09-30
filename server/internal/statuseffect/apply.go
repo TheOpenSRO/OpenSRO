@@ -186,6 +186,9 @@ type Record struct {
 	// id when SourceIsMonster.
 	SourceID        int64
 	SourceIsMonster bool
+	// latched is record+0x6c: set once the caster was found dead or gone
+	// (Record.source).
+	latched bool
 }
 
 // Resolve decides one run against a target at nowMs: whether it lands, and

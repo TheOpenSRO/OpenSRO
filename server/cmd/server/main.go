@@ -1324,11 +1324,6 @@ func main() {
 	// Timed buffs end at their end time (round 616): the book's expiry
 	// pass, broadcasting OpBuffEnd and the owner's new run speed.
 	go session.RunBuffTicker(ctx, hub, logger)
-	// Abnormal states (round 659, session/status.go): every monster's and
-	// character's states expire and deal their damage ticks here.
-	go session.RunStatusEffects(ctx, logger, session.RegenDeps{
-		Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
-	})
 	// The toggles and the protection walls (round 640, session/walls.go):
 	// each 'onff' toggle's MP drain and its end when the MP runs short, and
 	// a wall's end once its HP is gone. The walls read the monster skills'
@@ -1359,6 +1354,12 @@ func main() {
 		logger.Info("player dead state off (-player-dead-state / SRREVAMP_PLAYER_DEAD_STATE)")
 	}
 	monsters := combat.NewHub()
+	// Abnormal states (round 659, session/status.go): every monster's and
+	// character's states expire and deal their damage ticks here, started
+	// once the monster hub exists: a tick's caster is looked up in it.
+	go session.RunStatusEffects(ctx, logger, session.RegenDeps{
+		Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker,
+	}, monsters)
 	// Every monster hatches facing Nest_Hatch's heading, rand() / 32767.0 *
 	// 2pi (0x5609ee..0x560a15, ai.SpawnHeading): the roster's species are all
 	// the TypeID shape that takes it, and none is rarity 3, whose heading is

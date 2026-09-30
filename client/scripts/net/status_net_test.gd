@@ -97,6 +97,22 @@ func _init() -> void:
 		_check(v.count(false) == 1 and v.slot_of(Viewer.abnormal_id(4)) == kept, "diff: the ended state goes, the other keeps its slot")
 		v.free()
 
+	# --- Round 659's review (H3): a death by a state's tick arrives as
+	# OpMonsterAttacked with the status-tick flag 0x08, which draws no swing. ---
+	var raw := PackedByteArray()
+	raw.resize(33)
+	raw.encode_s64(0, 7)
+	raw.encode_s64(8, 42)
+	raw.encode_s32(16, 16)
+	raw[20] = 0x0c
+	raw.encode_s32(21, 0)
+	var ma = CombatNet.decode_monster_attacked(raw)
+	_check(ma != null and ma.target_died and ma.get("status_tick") == true and not ma.critical and not ma.blocked,
+		"OpMonsterAttacked flags 0x0c: a death by a state's tick (status_tick), not a swing")
+	raw[20] = 0x04
+	var blow = CombatNet.decode_monster_attacked(raw)
+	_check(blow != null and blow.target_died and blow.get("status_tick") != true, "flags 0x04: a blow's death, no tick")
+
 	if _failures == 0:
 		print("ALL PASS")
 	else:

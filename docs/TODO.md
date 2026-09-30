@@ -1100,9 +1100,17 @@ Left:
       applier, not applied); the target flags word whose bits 4 and 8 withhold states
       (`0x58f3f4`); fear's AI message 0x14.
 - [ ] **A player's speed is not slowed**: the client moves its own character; the server applies
-      frostbite and slow only to monster legs.
+      frostbite and slow only to monster legs (a moving monster's leg is restarted at the new speed
+      on the next AI tick, up to 100 ms after retail's immediate republish).
+- [ ] **A death by a tick is reported as `OpMonsterAttacked` with the status-tick flag 0x08** (OURS,
+      round 659's review): retail's message for it is not read. The victim's client enters the dead
+      state from it, and other clients play her hit clip, as for a blow's death.
+- [ ] **One status application per cast** when any of its hits got through (OURS): retail's call
+      sites sit per hit (`0x58f429`..`0x58feda`), whether each unblocked hit rolls again is not read.
 - [ ] **INFERRED**: that a frozen, stunned or sleeping monster starts no attack (the motion state is
-      read; the attack path's test on it is not). Sleep is not broken by damage (unread).
+      read; the attack path's test on it is not), and that a DoT tick naming its caster is the
+      monster's struck event. Sleep is not broken by damage (unread). A zero-damage status cast is
+      measured for reach like a damaging one (the gate's exemption, if any, is unread).
 - [ ] **OURS**: the 100 ms pass (`StatusTick`); the first tick one interval after the state lands
       (`record+0x68`'s first value is unread); states ending at logout; character masks going to
       the whole zone (monster masks go to the area of interest's watchers).

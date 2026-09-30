@@ -36,7 +36,8 @@ func (s *statusRuntime) resetForTest() {
 	defer s.mu.Unlock()
 	s.mobs = map[int64]*statuseffect.Holder{}
 	s.pcs = map[int64]*statuseffect.Holder{}
-	s.cdeps, s.sdeps, s.stats = combatDeps{}, strikeDeps{}, RegenDeps{}
+	s.legPct = map[int64]int{}
+	s.cdeps, s.sdeps, s.stats, s.mons = combatDeps{}, strikeDeps{}, RegenDeps{}, nil
 }
 
 // statusesIn decodes the OpObjectStatus packets among pkts.

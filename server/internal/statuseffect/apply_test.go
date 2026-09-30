@@ -129,38 +129,96 @@ func TestPoisonTicksAndExpires(t *testing.T) {
 	if h.Mask() != 0x10 {
 		t.Fatalf("poison mask %#x, want 0x10", h.Mask())
 	}
-	if ticks, _ := h.Step(3000, 100); len(ticks) != 0 {
+	if ticks, _ := h.Step(3000, 100, nil); len(ticks) != 0 {
 		t.Errorf("a tick at 2000 ms: %+v; the engine waits for 2001", ticks)
 	}
-	ticks, changed := h.Step(3001, 100)
-	if len(ticks) != 1 || ticks[0].Damage != 16 || ticks[0].Credited || changed {
-		t.Fatalf("at 2001 ms: %+v changed %v; want one uncredited 16", ticks, changed)
+	ticks, changed := h.Step(3001, 100, nil)
+	if len(ticks) != 1 || ticks[0].Damage != 16 || ticks[0].Source != SourceNone || changed {
+		t.Fatalf("at 2001 ms: %+v changed %v; want one 16 naming nobody (no caster)", ticks, changed)
 	}
-	if ticks, _ := h.Step(5002, 10); len(ticks) != 1 || ticks[0].Damage != 9 {
+	if ticks, _ := h.Step(5002, 10, nil); len(ticks) != 1 || ticks[0].Damage != 9 {
 		t.Errorf("poison at 10 HP dealt %+v; want 9 -- it stops at 1", ticks)
 	}
-	if ticks, changed := h.Step(6001, 1); len(ticks) != 0 || !changed || h.Mask() != 0 {
+	if ticks, changed := h.Step(6001, 1, nil); len(ticks) != 0 || !changed || h.Mask() != 0 {
 		t.Errorf("past 5000 ms: ticks %+v changed %v mask %#x; want the state removed, no tick", ticks, changed, h.Mask())
 	}
 }
 
-// Bleeding ticks its value[3] every MORE than its interval, and a fatal tick
-// names its source.
-func TestBleedingKillsAndCreditsItsSource(t *testing.T) {
+// Bleeding ticks its value[3] every MORE than its interval. Round 659's
+// review (M2): a LIVING caster is named on every tick, fatal or not; a dead
+// one latches the record, after which only a fatal tick names it.
+func TestBleedingNamesALivingCasterEveryTick(t *testing.T) {
 	var h Holder
 	rec, _ := Resolve(Run{Code: "bl", Values: []int{30000, 100, 1, 200, 0}}, Target{}, 0, always)
 	rec.SourceID = 42
 	h.Put(rec)
-	if ticks, _ := h.Step(2000, 500); len(ticks) != 0 {
+	state := CasterAlive
+	caster := func(id int64, _ bool) CasterState {
+		if id != 42 {
+			return CasterGone
+		}
+		return state
+	}
+	if ticks, _ := h.Step(2000, 500, caster); len(ticks) != 0 {
 		t.Errorf("a bleeding tick at exactly its interval: %+v", ticks)
 	}
-	ticks, _ := h.Step(2001, 500)
-	if len(ticks) != 1 || ticks[0].Damage != 200 || ticks[0].Credited {
-		t.Fatalf("a non-fatal bleed: %+v; want 200, uncredited", ticks)
+	ticks, _ := h.Step(2001, 500, caster)
+	if len(ticks) != 1 || ticks[0].Damage != 200 || ticks[0].Source != SourceKept || ticks[0].SourceID != 42 || !ticks[0].Credited(false) {
+		t.Fatalf("a non-fatal bleed from a living caster: %+v; want 200 naming 42", ticks)
 	}
-	ticks, _ = h.Step(4002, 150)
-	if len(ticks) != 1 || !ticks[0].Credited || ticks[0].SourceID != 42 {
-		t.Errorf("the fatal bleed: %+v; want it credited to 42", ticks)
+	state = CasterDead
+	ticks, _ = h.Step(4002, 500, caster)
+	if len(ticks) != 1 || ticks[0].Source != SourceIfFatal || ticks[0].Credited(false) || !ticks[0].Credited(true) {
+		t.Fatalf("the caster dead: %+v; want the source only for a fatal tick", ticks)
+	}
+	state = CasterAlive // revived: the latch holds
+	if ticks, _ = h.Step(6003, 500, caster); len(ticks) != 1 || ticks[0].Source != SourceIfFatal {
+		t.Errorf("the latch let go when the caster revived: %+v", ticks)
+	}
+}
+
+// Poison names a living caster too, and nobody once it has latched; a caster
+// who is gone is named by no damage applier.
+func TestPoisonSourceRule(t *testing.T) {
+	var h Holder
+	rec, _ := Resolve(Run{Code: "ps", Values: []int{60, 100, 5}}, Target{}, 0, always)
+	rec.SourceID = 7
+	rec.SourceIsMonster = true
+	h.Put(rec)
+	alive := func(int64, bool) CasterState { return CasterAlive }
+	if ticks, _ := h.Step(2001, 100, alive); len(ticks) != 1 || ticks[0].Source != SourceKept || !ticks[0].SourceIsMonster || !ticks[0].NeverKills {
+		t.Fatalf("poison from a living monster: %+v", ticks)
+	}
+	dead := func(int64, bool) CasterState { return CasterDead }
+	if ticks, _ := h.Step(4002, 100, dead); len(ticks) != 1 || ticks[0].Source != SourceNone {
+		t.Errorf("poison from a dead caster: %+v; want nobody", ticks)
+	}
+	var g Holder
+	b, _ := Resolve(Run{Code: "bl", Values: []int{30000, 100, 1, 200, 0}}, Target{}, 0, always)
+	b.SourceID = 9
+	g.Put(b)
+	if ticks, _ := g.Step(2001, 100, func(int64, bool) CasterState { return CasterGone }); len(ticks) != 1 || ticks[0].Source != SourceNone || ticks[0].Credited(true) {
+		t.Errorf("a bleed whose caster is gone: %+v; want nobody, even fatal", ticks)
+	}
+}
+
+// A freeze that ends holds its owner FROZEN for 1.5 s more (L4).
+func TestFreezeThawHoldsFor1500ms(t *testing.T) {
+	var h Holder
+	rec, _ := Resolve(Run{Code: "fz", Values: []int{10, 100}}, Target{}, 0, always) // 970 ms
+	h.Put(rec)
+	if h.CanActAt(500) {
+		t.Fatal("frozen, yet able to act")
+	}
+	h.Step(971, 100, nil)
+	if h.Mask() != 0 {
+		t.Fatalf("the freeze outlived its 970 ms: mask 0x%x", h.Mask())
+	}
+	if h.CanActAt(1000) || h.CanActAt(2470) || h.Idle(2000) {
+		t.Error("the thaw let go before 1.5 s")
+	}
+	if !h.CanActAt(2471) || !h.Idle(2471) {
+		t.Error("still held 1.5 s after the freeze ended")
 	}
 }
 

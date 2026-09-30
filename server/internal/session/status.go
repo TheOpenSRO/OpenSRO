@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
+	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
@@ -122,11 +123,18 @@ type statusRuntime struct {
 	mobs map[int64]*statuseffect.Holder
 	pcs  map[int64]*statuseffect.Holder
 	// cdeps are what a kill by a tick pays through (grantKill, announceKill),
-	// bound by the first player cast that applies a state; sdeps what a
-	// character's death by a tick goes through (finishKill), bound by the
-	// first monster blow that does. Both are the process's one set of stores.
+	// rebound by every player cast that lands a state; sdeps what a
+	// character's death by a tick goes through (finishKill), rebound by every
+	// monster blow that does. Each call passes the process's one set of
+	// stores, so the latest is the same as the first. mons is the monster
+	// hub a tick's caster is looked up in (RunStatusEffects, or the latest
+	// cast's).
 	cdeps combatDeps
 	sdeps strikeDeps
+	mons  *combat.Hub
+	// legPct is the speed percent each monster's current leg was started at
+	// (statusSpeed), for the republish when its states change (heldByStatus).
+	legPct map[int64]int
 	// stats are the stores the stats push reads (RunStatusEffects' deps,
 	// regen.go's shape), so a bar a tick moved keeps its SP and MP lines.
 	stats  RegenDeps
@@ -135,7 +143,7 @@ type statusRuntime struct {
 }
 
 func newStatusRuntime() *statusRuntime {
-	return &statusRuntime{mobs: map[int64]*statuseffect.Holder{}, pcs: map[int64]*statuseffect.Holder{}, epoch: time.Now()}
+	return &statusRuntime{mobs: map[int64]*statuseffect.Holder{}, pcs: map[int64]*statuseffect.Holder{}, legPct: map[int64]int{}, epoch: time.Now()}
 }
 
 // statusFX is the process's runtime, package-level like buffBooks and
@@ -148,14 +156,20 @@ func (s *statusRuntime) ms(t time.Time) uint32 {
 	return uint32(t.Sub(s.epoch) / time.Millisecond)
 }
 
-// statusRoller is the chance-memory dice for one target: the same
+// statusRoller is the chance-memory dice for one CASTER: the same
 // accumulators and generator as a blow's critical and block, under a kind of
-// their own per state (combat.ChanceStatus).
-func statusRoller(targetID int64) statuseffect.Roller {
+// their own per state (combat.ChanceStatus). READ (round 659's review): in
+// Combat_ApplyStatusEffects the map is `[esi+0xa30]` with ESI the SOURCE --
+// `[esi+8]` is what the block writes to record+0x4c, the id the appliers
+// resolve as the caster, and the caller sets ESI from `[esp+0x124]` at
+// 0x58f412, the object whose +0xa30 the critical roll uses at 0x58ed76 --
+// and the key is `kind << 24` with no id bits. So a caster keeps one streak
+// per state across all its targets.
+func statusRoller(casterID int64) statuseffect.Roller {
 	return func(chance, kind int) bool {
 		damageRollMu.Lock()
 		defer damageRollMu.Unlock()
-		return combat.RollChanceTracked(chance, damageRollNG, chanceMemory, targetID, combat.ChanceStatus(kind))
+		return combat.RollChanceTracked(chance, damageRollNG, chanceMemory, casterID, combat.ChanceStatus(kind))
 	}
 }
 
@@ -173,14 +187,21 @@ func (s *statusRuntime) applyToMonster(d combatDeps, characterID int64, castRow 
 	if !ok || m.HP <= 0 {
 		return
 	}
+	// Only in the caster's own zone (round 659's review, H2): the cast paths
+	// test reach and zone before here; this is the last guard.
+	if d.hub != nil {
+		if e, in := d.hub.EntityByCharacterID(characterID); !in || e.Zone != m.Zone {
+			return
+		}
+	}
 	// A monster resists nothing: characterdata cols 61-66 read 0 on every
 	// row (MEASURED), so the resist arrays stay zero.
-	recs := statuseffect.ResolveAll(runs, statuseffect.Target{Level: m.Level}, s.ms(now), statusRoller(monsterID))
+	recs := statuseffect.ResolveAll(runs, statuseffect.Target{Level: m.Level}, s.ms(now), statusRoller(characterID))
 	if len(recs) == 0 {
 		return
 	}
 	s.mu.Lock()
-	s.cdeps = d
+	s.cdeps, s.mons = d, d.monsters
 	h := s.mobs[monsterID]
 	if h == nil {
 		h = &statuseffect.Holder{}
@@ -194,12 +215,39 @@ func (s *statusRuntime) applyToMonster(d combatDeps, characterID int64, castRow 
 	msg := &ObjectStatus{OwnerKind: OwnerMonster, OwnerID: monsterID, Mask: h.Mask(), Levels: h.Levels()}
 	s.mu.Unlock()
 	s.tracef("status: monster %d took %v from character %d (mask %#x -> %#x)", monsterID, codesOf(recs), characterID, before, msg.Mask)
-	if !canAct(msg.Mask) || !canMove(msg.Mask) {
-		// The applier stops the move at once (vslot 0x570, READ); the AI's
-		// next tick sends the stop (heldByStatus).
-		d.monsters.StopMotion(monsterID)
-	}
+	// The applier stops the move at once (vslot 0x570, READ). The stop is the
+	// AI tick's (heldByStatus): it ends the leg AND puts the stop on the wire.
+	// Ending it here instead (round 659, before its review) left the next
+	// tick to find the monster already standing, so no stop was ever sent
+	// and the clients kept drawing the leg (review H1).
 	pushMonsterStatus(d.hub, d.monsters, m, msg)
+}
+
+// statusCastAtMonster reports whether a cast lands states on a monster
+// target: a row carrying status runs that is no buff, ground cast, self cast
+// or friendly cast.
+func statusCastAtMonster(castRow *refdata.Skill, isBuff, isGround, selfTarget, friendly bool) bool {
+	return castRow != nil && castRow.StatusParams != "" && !isBuff && !isGround && !selfTarget && !friendly
+}
+
+// statusCastRefusal is the target test for a cast that resolves no blow but
+// lands states on a monster (round 659's review, H2): the monster must be
+// alive in the caster's own zone ("target not found", performAttack's words
+// for either) and within the skill's reach (skillInReach, the damaging
+// cast's own test; "too far away").
+func statusCastRefusal(ctx context.Context, sess *gateway.Session, eq equipment.Store, items combat.ItemLookup, hub *world.Hub, monsters *combat.Hub, characterID, target int64, skillRange int) string {
+	if hub == nil || monsters == nil {
+		return ""
+	}
+	m, ok := monsters.Get(target)
+	caster, in := hub.EntityBySession(sess.ID())
+	if !ok || m.HP <= 0 || !in || caster.Zone != m.Zone {
+		return "target not found"
+	}
+	if !skillInReach(ctx, sess, eq, items, hub, monsters, characterID, target, skillRange) {
+		return "too far away"
+	}
+	return ""
 }
 
 // pushMonsterStatus sends a monster's mask to the players whose window holds
@@ -216,9 +264,10 @@ func pushMonsterStatus(hub *world.Hub, monsters *combat.Hub, m combat.Monster, m
 }
 
 // applyToCharacter lands a monster skill's status runs on characterID. Never
-// on a dead character: Combat_ApplyStatusEffects returns at once for a target
-// whose life state is not alive (its prologue, 0x5906c0 `cmp [edi+5],2`), and
-// so does this.
+// on a dead character -- OURS: what the prologue of Combat_ApplyStatusEffects
+// tests first is not read to be the life state (0x5906c0 `cmp [edi+5],2` is
+// the HIT RECORD's blocked flag -- `[ebp+5] = 2` after the block roll at
+// 0x58f0ef -- so a blocked blow applies nothing, which monsterStrike keeps).
 func (s *statusRuntime) applyToCharacter(ctx context.Context, d strikeDeps, monster combat.Monster, skill combat.MonsterSkill, characterID int64) {
 	if skill.Status == "" || d.chars == nil {
 		return
@@ -234,7 +283,7 @@ func (s *statusRuntime) applyToCharacter(ctx context.Context, d strikeDeps, mons
 	// OPEN: a character's resist params (27-32, 145-150) are not published
 	// by srrevamp, so every character resists nothing for now.
 	now := time.Now()
-	recs := statuseffect.ResolveAll(runs, statuseffect.Target{Level: c.Level}, s.ms(now), statusRoller(characterID))
+	recs := statuseffect.ResolveAll(runs, statuseffect.Target{Level: c.Level}, s.ms(now), statusRoller(monster.ID))
 	if len(recs) == 0 {
 		return
 	}
@@ -264,11 +313,6 @@ func monsterMayAct(id int64) bool {
 	return act
 }
 
-func canMove(mask uint32) bool { return mask&(0xc1|0x4000) == 0 }
-
-// canAct mirrors Holder.CanAct on a mask: freeze 0x1, sleep 0x40, stun 0x4000.
-func canAct(mask uint32) bool { return mask&(0x1|0x40|0x4000) == 0 }
-
 // monsterState reports what monsterID's states allow: moving, acting, and the
 // speed percent of its next leg.
 func (s *statusRuntime) monsterState(id int64) (move, act bool, speed int) {
@@ -278,7 +322,7 @@ func (s *statusRuntime) monsterState(id int64) (move, act bool, speed int) {
 	if h == nil {
 		return true, true, 100
 	}
-	return h.CanMove(), h.CanAct(), h.SpeedPercent()
+	return h.CanMove(), h.CanActAt(s.ms(time.Now())), h.SpeedPercent()
 }
 
 // addHeld adds to insistent every monster with a brain whose states stop it
@@ -288,8 +332,9 @@ func (s *statusRuntime) monsterState(id int64) (move, act bool, speed int) {
 func (s *statusRuntime) addHeld(insistent map[int64]struct{}, brains map[int64]*brain) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	nowMs := s.ms(time.Now())
 	for id, h := range s.mobs {
-		if _, ok := brains[id]; ok && (!h.CanMove() || !h.CanAct()) {
+		if _, ok := brains[id]; ok && (!h.CanMove() || !h.CanActAt(nowMs)) {
 			insistent[id] = struct{}{}
 		}
 	}
@@ -311,16 +356,16 @@ func (s *statusRuntime) monsterDefenceCut(id int64) int {
 func (s *statusRuntime) forgetMonster(id int64) {
 	s.mu.Lock()
 	delete(s.mobs, id)
+	delete(s.legPct, id)
 	s.mu.Unlock()
 }
 
 // monsterTick is one damage tick on a monster, computed under the runtime's
 // lock and dealt after it.
 type monsterTick struct {
-	zone   string
-	id     int64
-	tick   statuseffect.Tick
-	killer int64 // the character a fatal tick pays; 0 nobody
+	zone string
+	id   int64
+	tick statuseffect.Tick
 }
 
 // characterTick is one damage tick on a character.
@@ -336,11 +381,47 @@ type statusPush struct {
 	msg     *ObjectStatus
 }
 
+// casterLookup answers the damage appliers' question about a record's caster
+// (statuseffect.SourceRule): a character in the world is alive unless her
+// life state is DEAD; a monster is alive while the hub holds it -- srrevamp
+// removes a monster at its death, where the engine keeps the object a while
+// in state 2, so a dead monster reads as gone (INFERRED equivalent: either
+// way a poison it left names nobody).
+func casterLookup(hub *world.Hub, mons *combat.Hub) statuseffect.CasterLookup {
+	return func(id int64, isMonster bool) statuseffect.CasterState {
+		if isMonster {
+			if _, ok := monsterOf(mons, id); ok {
+				return statuseffect.CasterAlive
+			}
+			return statuseffect.CasterGone
+		}
+		e, ok := entityOf(hub, id)
+		switch {
+		case !ok:
+			return statuseffect.CasterGone
+		case e.Life == world.LifeDead:
+			return statuseffect.CasterDead
+		}
+		return statuseffect.CasterAlive
+	}
+}
+
+// pcNow is what the pass needs of an afflicted character, read from the
+// stores BEFORE the runtime's lock is taken (round 659's review, L2: a slow
+// store read under it stalled every cast and the AI tick).
+type pcNow struct {
+	e     world.Entity
+	in    bool
+	alive bool
+	hp    int
+}
+
 // step is one pass over every holder at now. Under the runtime's lock it only
 // expires and ticks the records (Holder.Step) and notes what to deal and what
-// to announce; the damage, the kills and the sends happen after it, outside
-// the lock -- the monster AI's tick reads the runtime under its own lock
-// (heldByStatus), so this pass never holds ours while it takes another.
+// to announce; the store reads come before it and the damage, the kills and
+// the sends after it, outside the lock -- the monster AI's tick reads the
+// runtime under its own lock (heldByStatus), so this pass never holds ours
+// while it takes another's or waits on a store.
 func (s *statusRuntime) step(ctx context.Context, now time.Time) {
 	nowMs := s.ms(now)
 	var pushes []statusPush
@@ -348,66 +429,86 @@ func (s *statusRuntime) step(ctx context.Context, now time.Time) {
 	var cticks []characterTick
 
 	s.mu.Lock()
-	cd, sd, st := s.cdeps, s.sdeps, s.stats
+	cd, sd, st, mons := s.cdeps, s.sdeps, s.stats, s.mons
+	ids := make([]int64, 0, len(s.pcs))
+	for id := range s.pcs {
+		ids = append(ids, id)
+	}
+	s.mu.Unlock()
+	if mons == nil {
+		mons = cd.monsters
+	}
+	hub := cd.hub
+	if hub == nil {
+		hub = sd.hub
+	}
+	pcs := make(map[int64]pcNow, len(ids))
+	for _, id := range ids {
+		var p pcNow
+		p.e, p.in = entityOf(sd.hub, id)
+		if sd.chars != nil && p.in && p.e.Life != world.LifeDead {
+			if c, err := sd.chars.GetByID(ctx, id); err == nil && c != nil && c.HP > 0 {
+				p.hp, p.alive = c.HP, true
+			}
+		}
+		pcs[id] = p
+	}
+	caster := casterLookup(hub, mons)
+
+	s.mu.Lock()
+	for id := range s.legPct {
+		if _, ok := monsterOf(mons, id); !ok {
+			delete(s.legPct, id)
+		}
+	}
 	for id, h := range s.mobs {
-		m, ok := monsterOf(cd.monsters, id)
+		m, ok := monsterOf(mons, id)
 		if !ok || m.HP <= 0 {
 			delete(s.mobs, id)
 			continue
 		}
-		ticks, changed := h.Step(nowMs, m.HP)
+		ticks, changed := h.Step(nowMs, m.HP, caster)
 		for _, t := range ticks {
-			mt := monsterTick{zone: m.Zone, id: id, tick: t}
-			if t.Credited && !t.SourceIsMonster {
-				mt.killer = t.SourceID
-			}
-			mticks = append(mticks, mt)
+			mticks = append(mticks, monsterTick{zone: m.Zone, id: id, tick: t})
 		}
 		if changed {
 			pushes = append(pushes, statusPush{monster: true, zone: m.Zone, msg: &ObjectStatus{OwnerKind: OwnerMonster, OwnerID: id, Mask: h.Mask(), Levels: h.Levels()}})
 		}
-		if h.Empty() {
+		if h.Idle(nowMs) {
 			delete(s.mobs, id)
 		}
 	}
 	for id, h := range s.pcs {
-		e, inWorld := entityOf(sd.hub, id)
-		hp, alive := 0, false
-		if sd.chars != nil && inWorld && e.Life != world.LifeDead {
-			if c, err := sd.chars.GetByID(ctx, id); err == nil && c != nil && c.HP > 0 {
-				hp, alive = c.HP, true
-			}
+		p, seen := pcs[id]
+		if !seen {
+			continue // afflicted after the reads: the next pass
 		}
-		if !alive {
+		if !p.alive {
 			// Dead, or gone from the world: the states end (OURS for the
 			// logout; a death clears them as a monster's does).
-			if h.EndAll() && inWorld {
-				pushes = append(pushes, statusPush{zone: e.Zone, msg: &ObjectStatus{OwnerKind: OwnerCharacter, OwnerID: id}})
+			if h.EndAll() && p.in {
+				pushes = append(pushes, statusPush{zone: p.e.Zone, msg: &ObjectStatus{OwnerKind: OwnerCharacter, OwnerID: id}})
 			}
 			delete(s.pcs, id)
 			continue
 		}
-		ticks, changed := h.Step(nowMs, hp)
+		ticks, changed := h.Step(nowMs, p.hp, caster)
 		for _, t := range ticks {
 			cticks = append(cticks, characterTick{id: id, tick: t})
 		}
 		if changed {
-			pushes = append(pushes, statusPush{zone: e.Zone, msg: &ObjectStatus{OwnerKind: OwnerCharacter, OwnerID: id, Mask: h.Mask(), Levels: h.Levels()}})
+			pushes = append(pushes, statusPush{zone: p.e.Zone, msg: &ObjectStatus{OwnerKind: OwnerCharacter, OwnerID: id, Mask: h.Mask(), Levels: h.Levels()}})
 		}
-		if h.Empty() {
+		if h.Idle(nowMs) {
 			delete(s.pcs, id)
 		}
 	}
 	s.mu.Unlock()
 
-	hub := cd.hub
-	if hub == nil {
-		hub = sd.hub
-	}
 	for _, p := range pushes {
 		if p.monster {
-			if m, ok := monsterOf(cd.monsters, p.msg.OwnerID); ok {
-				pushMonsterStatus(hub, cd.monsters, m, p.msg)
+			if m, ok := monsterOf(mons, p.msg.OwnerID); ok {
+				pushMonsterStatus(hub, mons, m, p.msg)
 			}
 			continue
 		}
@@ -423,7 +524,7 @@ func (s *statusRuntime) step(ctx context.Context, now time.Time) {
 				s.logger.Warn("status: a monster's damage tick", "monster", mt.id, "err", err)
 			}
 		}
-		if _, alive := monsterOf(cd.monsters, mt.id); !alive {
+		if _, alive := monsterOf(mons, mt.id); !alive {
 			dead[mt.id] = true
 		}
 	}
@@ -441,51 +542,66 @@ func (s *statusRuntime) step(ctx context.Context, now time.Time) {
 // dealMonsterTick deals one tick through damageMonsterWatched -- the area of
 // interest's damage path (round 656), which tells the players whose window
 // held the monster before the tick and after it -- and settles a kill.
-// A poison tick is clamped against the HP the monster has NOW: it never
-// kills (statuseffect.PoisonTickDamage), and a blow may have landed since the
-// pass read its HP.
+//
+// The tick is booked on the monster's damage list (round 657) to its caster
+// whenever the applier names one (statuseffect.SourceRule, READ): a living
+// caster on every tick, poison's included, so a DoT's damage counts toward
+// the unique notice's killer; a dead caster only on a fatal burn or bleeding
+// tick. A named tick that does not kill is the monster's struck event, as a
+// blow is (INFERRED: the damage virtual 0x4fc with a source is the one a blow
+// reaches), so a DoT-only debuff draws the monster onto its caster. Whether
+// the tick is fatal is decided against the HP the monster has NOW (review L1),
+// and a kill is credited from the damage call's own died result.
 func (s *statusRuntime) dealMonsterTick(ctx context.Context, d combatDeps, mt monsterTick) error {
+	m, ok := monsterOf(d.monsters, mt.id)
+	if !ok {
+		return nil
+	}
 	dmg := mt.tick.Damage
-	if mt.tick.Code == "ps" {
-		m, ok := monsterOf(d.monsters, mt.id)
-		if !ok {
-			return nil
-		}
+	if mt.tick.NeverKills {
 		if dmg = min(dmg, m.HP-1); dmg <= 0 {
 			return nil
 		}
 	}
-	before, _ := monsterOf(d.monsters, mt.id)
-	// Booked on the monster's damage list (round 657) to the tick's source
-	// only when the engine keeps one: a fatal burn or bleeding tick names its
-	// applier, which is how a kill by a tick is credited -- the unique notice
-	// included; a non-fatal tick and every poison tick drop the source (READ,
-	// the appliers 0x4a46f0 / 0x4a4cc0 / 0x4a4940), so they book nobody.
-	updated, died, ok, watchers, hits := damageMonsterWatched(d.hub, d.monsters, mt.id, mt.killer, dmg)
+	var attacker int64
+	if !mt.tick.SourceIsMonster && mt.tick.Credited(dmg >= m.HP) {
+		attacker = mt.tick.SourceID
+	}
+	updated, died, ok, watchers, hits := damageMonsterWatched(d.hub, d.monsters, mt.id, attacker, dmg)
 	if !ok {
 		return nil
 	}
-	s.tracef("status: monster %d %s tick %d (HP %d)", mt.id, mt.tick.Code, dmg, updated.HP)
+	s.tracef("status: monster %d %s tick %d (HP %d, booked to %d)", mt.id, mt.tick.Code, dmg, updated.HP, attacker)
 	if !died {
+		if attacker != 0 {
+			noteStruck(d.monsters, mt.id, attacker)
+		}
 		msg := &MonsterDamaged{MonsterID: mt.id, Damage: int32(dmg), RemainingHP: int32(updated.HP)}
 		for _, e := range watchers {
 			sendMonsterPush(e.Session, &proto.Packet{Opcode: OpMonsterDamaged, Data: msg.Encode()})
 		}
 		return nil
 	}
+	var killer int64
+	if !mt.tick.SourceIsMonster && mt.tick.Credited(true) {
+		killer = mt.tick.SourceID
+	}
 	s.forgetMonster(mt.id)
-	return s.settleKill(ctx, d, statusKill{monster: before, killer: mt.killer, damage: dmg, updated: updated, hits: hits}, watchers)
+	return s.settleKill(ctx, d, statusKill{monster: m, killer: killer, damage: dmg, updated: updated, hits: hits}, watchers)
 }
 
 // dealCharacterTick deals one tick to a character and, when it leaves her at
-// 0, completes the death as a monster's blow would (finishKill). It reports
-// whether she died.
+// 0, completes the death as a monster's blow would: finishKill (the lock, the
+// penalty, the dead state or the respawn), then the same OpMonsterAttacked a
+// killing blow sends, to her and her zone, flagged StrikeStatusTick so no
+// client draws a swing (round 659's review, H3: before it she was told only
+// her new HP, and never entered the dead state). It reports whether she died.
 func (s *statusRuntime) dealCharacterTick(ctx context.Context, d strikeDeps, st RegenDeps, ct characterTick) bool {
 	if d.chars == nil || deadCharacter(d.hub, ct.id) {
 		return true
 	}
 	dmg := ct.tick.Damage
-	if ct.tick.Code == "ps" {
+	if ct.tick.NeverKills {
 		c, err := d.chars.GetByID(ctx, ct.id)
 		if err != nil || c == nil {
 			return false
@@ -511,7 +627,23 @@ func (s *statusRuntime) dealCharacterTick(ctx context.Context, d strikeDeps, st 
 		return true
 	}
 	s.tracef("status: character %d died of a %s tick (dropped %v, exp lost %d)", ct.id, ct.tick.Code, out.dropped, out.deathExpLost)
-	pushStats(ctx, d, st, ct.id)
+	if out.dropped {
+		return true // another kill got there first and reported itself
+	}
+	var monsterID int64
+	if ct.tick.SourceIsMonster {
+		monsterID = ct.tick.SourceID
+	}
+	msg := out.message(monsterID, ct.id)
+	msg.StatusTick = true
+	p := &proto.Packet{Opcode: OpMonsterAttacked, Data: msg.Encode()}
+	if e, ok := entityOf(d.hub, ct.id); ok {
+		for _, o := range d.hub.EntitiesInZone(e.Zone) {
+			if o.Session != nil {
+				sendMonsterPush(o.Session, p)
+			}
+		}
+	}
 	return true
 }
 
@@ -662,9 +794,12 @@ func sendStatusesOfList(sess *gateway.Session, hub *world.Hub, listed []combat.M
 // RunStatusEffects steps every object's states every StatusTick until ctx
 // ends. cmd/server starts it once; deps are what the stats push after a
 // damage tick reads, as RunRegen's.
-func RunStatusEffects(ctx context.Context, logger *slog.Logger, deps RegenDeps) {
+func RunStatusEffects(ctx context.Context, logger *slog.Logger, deps RegenDeps, monsters *combat.Hub) {
 	statusFX.mu.Lock()
 	statusFX.logger, statusFX.stats = logger, deps
+	if monsters != nil {
+		statusFX.mons = monsters
+	}
 	statusFX.mu.Unlock()
 	t := time.NewTicker(StatusTick)
 	defer t.Stop()
@@ -682,21 +817,48 @@ func RunStatusEffects(ctx context.Context, logger *slog.Logger, deps RegenDeps) 
 // states stop from acting does nothing this tick, and one they stop from
 // moving has its leg ended where it stands. READ/INFERRED as Holder.CanMove
 // and Holder.CanAct say.
+//
+// Its speed changes at once, too (round 659's review, L3): frostbite's and
+// slow's appliers republish the speed on apply and on removal (vslots
+// 0x4e8/0x4ec after the params, READ), so a monster on a leg whose speed no
+// longer matches its states has the leg restarted from where it stands at
+// the right speed, which puts a new OpMonsterMoved on the wire.
 func (a *monsterAI) heldByStatus(b *brain) bool {
-	move, act, _ := statusFX.monsterState(b.id)
+	move, act, pct := statusFX.monsterState(b.id)
 	if !move && b.m.Moving {
 		if m, ok := a.monsters.StopMotion(b.id); ok {
 			b.m = m
 			a.queueStop(m)
 		}
 	}
+	if move && b.m.Moving && statusFX.legPercent(b.id) != pct {
+		a.startLeg(b, b.m.DestX, b.m.DestZ, b.m.MoveMode, "status speed")
+	}
 	return !act
+}
+
+// legPercent is the speed percent monster id's current leg was started at
+// (statusSpeed), 100 when no state touched it.
+func (s *statusRuntime) legPercent(id int64) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if p, ok := s.legPct[id]; ok {
+		return p
+	}
+	return 100
 }
 
 // statusSpeed scales a leg's speed by the monster's states (monsterai.go
 // startLeg), and says whether it may start one at all.
 func statusSpeed(id int64, speed float64) (float64, bool) {
 	move, _, pct := statusFX.monsterState(id)
+	statusFX.mu.Lock()
+	if pct == 100 {
+		delete(statusFX.legPct, id)
+	} else {
+		statusFX.legPct[id] = pct
+	}
+	statusFX.mu.Unlock()
 	return speed * float64(pct) / 100, move
 }
 

@@ -1245,10 +1245,13 @@ func performAttack(
 	// combat.AttackPhysical with no base row (plainSwingOf). See
 	// combat.AttackType.
 	attackType combat.AttackType,
-	// landed, when not nil, is set true once the blow is applied to the
-	// monster (round 622's review): a cast refused here after its costs
-	// ("target not found", a damage failure) is not announced to the zone.
-	landed *bool,
+	// landed, when not nil, is set once the blow is applied to the monster
+	// (round 622's review): a cast refused here after its costs ("target not
+	// found", a damage failure) is not announced to the zone. Its Blocked
+	// says every hit was blocked (round 659's review): a blocked hit applies
+	// no state (Combat_ApplyStatusEffects' `cmp [edi+5],2` on the hit
+	// record's blocked flag, 0x5906c0).
+	landed *blowReport,
 ) error {
 	monster, ok := monsters.Get(targetMonsterID)
 	if !ok {
@@ -1325,6 +1328,7 @@ func performAttack(
 	// base row (plainSwingOf).
 	net := combat.ApplySkillPercent(blow.Damage, damagePercent)
 	playerCrit := blow.Critical
+	allBlocked := blow.Blocked
 
 	// A multi-hit skill strikes again, and each strike is INDEPENDENT: the
 	// engine runs its whole damage resolution inside
@@ -1341,6 +1345,7 @@ func performAttack(
 			playerLevel, monster.Level, characterID, monster.ID)
 		net += combat.ApplySkillPercent(extra.Damage, damagePercent)
 		playerCrit = playerCrit || extra.Critical
+		allBlocked = allBlocked && extra.Blocked
 	}
 	// Berserk multiplies the blow AFTER mitigation, which is the order
 	// Formula_MitigatePhysicalDamage uses: it divides by the percentage term,
@@ -1398,7 +1403,7 @@ func performAttack(
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found", MonsterID: targetMonsterID}).Encode()})
 	}
 	if landed != nil {
-		*landed = true
+		landed.Landed, landed.Blocked = true, allBlocked
 	}
 	// The monster AI's struck event (round 537, monsterai.go): a surviving
 	// monster is attacked (CAIState::OnAttacked 0x558ea0) and stopped at the
@@ -1968,6 +1973,12 @@ func resolveBlow(base, mitigationPercent, flat, critChance, blockChance, attacke
 // the object, so it cannot outlive one); a character's persists across fights,
 // which is what the engine does.
 var chanceMemory = combat.NewChanceTracker()
+
+// blowReport is what performAttack tells a cast about its blow.
+type blowReport struct {
+	Landed  bool // the blow reached the monster
+	Blocked bool // and the monster blocked every hit of it
+}
 
 // grantKill pays characterID for killing monster: the berserk orb roll, the
 // gold, the experience with its level-up, and the skill experience, writing

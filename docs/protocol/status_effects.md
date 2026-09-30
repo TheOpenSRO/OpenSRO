@@ -86,7 +86,10 @@ state lands also decides how long it lasts". Both are wrong. The freeze block, i
 	record+0x1a = di ; record+0x14 = value[1] ; record+0xc = 0x410b40(slot 0, di)
 
 So **value[1] is the percent chance**, rolled through the same bad-luck-protected dice as a
-critical (`combat.RollChanceTracked`), one accumulator per state kind on the target; **value[0] is
+critical (`combat.RollChanceTracked`), one accumulator per state kind **on the CASTER** (round 659's review:
+ESI is the source -- `[esi+8]` goes to record+0x4c -- and the caller loads it from `[esp+0x124]` at
+`0x58f412`, the object whose `+0xa30` the critical roll uses at `0x58ed76`; the key has no id bits);
+**value[0] is
 the strength** that the resist cuts and the duration multiplies. The retail rows agree (MEASURED,
 33,698 skilldata rows through `export-refdata`'s new column 90): `MSKILL_CH_WATERGHOST_ATTACK02`
 carries `ps:34,100,16` (always lands, 34 s, 16 a tick), `SKILL_CH_COLD_GIGONGTA_A_01`
@@ -100,6 +103,23 @@ own buffs take off), that lookup's percent cut, and the disease bonus. `record+0
 (byte)value[2]`, the level. Bleeding (`0x591a11..0x591c52`) also writes `+0x38 = value[3]` (the
 damage a tick), `+0x40 = value[4]` (the flat defence cut) and `+0x10` = 'puls' or 2000.
 
+### Whom a damage tick names (READ, round 659's review)
+
+Burn (`0x4a46f0`), poison (`0x4a4940`) and bleeding (`0x4a4cc0`) share one shape. They resolve
+`record+0x4c` (`0x485d90`) and, while the record's latch `+0x6c` is clear: no object -> the damage
+goes with no source; an object whose life state (vslot `0xf8`, `CGObj::GetLifeState` `0x485ee0`) is
+neither 2 DEAD nor 3 GONE -> the damage goes **with** it, every tick, poison's included; dead or
+gone -> the latch is set for good. Latched, burn and bleeding keep the source only for a fatal
+tick, and poison drops it always. So a living caster is booked every tick (the damage list, the
+struck event), and a kill by a tick is credited to its caster even after the caster has died.
+`statuseffect.SourceRule`. (Round 659 first read "the source is dropped unless fatal" alone.)
+
+### The blocked flag, not a life state (READ, round 659's review)
+
+`0x5906c0 cmp [edi+5],2` in the prologue tests the HIT RECORD's blocked flag (`[ebp+5] = 2` is
+written after the block roll at `0x58f0ef`, where the damage is zeroed): a blocked blow applies no
+state, in both directions. That srrevamp never afflicts a dead character is OURS.
+
 ### What a state stops (READ)
 
 - **Movement**: the movement handler (`GObjPC::FUN_004b0ea0`, slot 377 of every mobile class,
@@ -110,12 +130,15 @@ damage a tick), `+0x40 = value[4]` (the flat defence cut) and `+0x10` = 'puls' o
   the move (`vslot 0x4c0` moving? then `0x4b0`), cancel the running action through the action queue
   at `+0xa30`, and **vslot 0x55c**, `GObjPC::FUN_004a9d00` (slot 343): SetMotionState to 10 FROZEN,
   9 STUN or 0x13 (sleep; past the MOTIONSTATE table's 18), back to 0 STAND on removal -- freeze's
-  removal passes a 1.5 s AJStateChanger delay (`_DAT_00b45c10` = 1.5, not modelled). INFERRED:
+  removal passes a 1.5 s AJStateChanger delay (`_DAT_00b45c10` = 1.5): srrevamp holds a thawing
+monster from acting for those 1.5 s (`Holder.CanActAt`). INFERRED:
   that no new attack starts while the motion state is one of those -- the refusing test on the
   monster's attack path is not read. `Holder.CanAct`.
 - **Speed**: frostbite writes params 23/24 (walk, run) at 50.0 in the abnormal context's scale slot
   (`push 5; push 3`, `0xb4603c`), slow at 75.0 (`0xb45de0`) only while no frostbite bit is set,
-  its tick taking over once frostbite lets go; 100.0 (`0xb45e10`) on removal. Both also write
+  its tick taking over once frostbite lets go; 100.0 (`0xb45e10`) on removal. Each then republishes
+the speed at once (vslots `0x4e8`/`0x4ec`); srrevamp restarts a moving monster's leg at the new
+speed on the next AI tick. Both also write
   param 140 (200.0 / 125.0, unnamed; not modelled). `Holder.SpeedPercent`.
 - **Root** (`0x4a4a50`) stops a moving object (`0x4c0`/`0x4b0`) and nothing else.
 - **Fear** (`0x4a4bd0`) sends the object's AI message 0x14 with the source -- what the AI does with

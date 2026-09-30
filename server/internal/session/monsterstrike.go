@@ -51,6 +51,10 @@ const (
 	StrikeCritical   uint8 = 0x01 // the monster's critical (AttackResult.MonsterCritical)
 	StrikeBlocked    uint8 = 0x02 // the target's shield blocked it (AttackResult.PlayerBlocked)
 	StrikeTargetDied uint8 = 0x04 // the blow killed the target (AttackResult.PlayerDied)
+	// StrikeStatusTick (round 659's review, OURS): not a swing but a state's
+	// damage tick (status.go) -- the client draws no monster attack for it.
+	// Retail's message for a death by a tick is not read (OPEN).
+	StrikeStatusTick uint8 = 0x08
 )
 
 // MonsterAttacked is the OpMonsterAttacked payload: monster MonsterID struck
@@ -66,8 +70,11 @@ type MonsterAttacked struct {
 	Critical          bool
 	Blocked           bool
 	TargetDied        bool
-	TargetHP          int32
-	DeathExpLost      int64
+	// StatusTick marks a state's damage tick rather than a blow
+	// (StrikeStatusTick).
+	StatusTick   bool
+	TargetHP     int32
+	DeathExpLost int64
 	// Wall is the blow's meeting with the target's protection wall (round
 	// 640, walls.go): a strict suffix after the 33 bytes, present only when
 	// the blow met a wall.
@@ -88,6 +95,9 @@ func (m *MonsterAttacked) Encode() []byte {
 	}
 	if m.TargetDied {
 		flags |= StrikeTargetDied
+	}
+	if m.StatusTick {
+		flags |= StrikeStatusTick
 	}
 	out[20] = flags
 	binary.LittleEndian.PutUint32(out[21:25], uint32(m.TargetHP))
@@ -115,6 +125,7 @@ func DecodeMonsterAttacked(data []byte) (*MonsterAttacked, error) {
 		Critical:          flags&StrikeCritical != 0,
 		Blocked:           flags&StrikeBlocked != 0,
 		TargetDied:        flags&StrikeTargetDied != 0,
+		StatusTick:        flags&StrikeStatusTick != 0,
 		TargetHP:          int32(binary.LittleEndian.Uint32(data[21:25])),
 		DeathExpLost:      int64(binary.LittleEndian.Uint64(data[25:33])),
 		Wall:              wallFrom(data[33:]),

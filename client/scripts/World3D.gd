@@ -16607,6 +16607,13 @@ func _draw_counter_from_result(monster: int, result: CombatNet.AttackResult) -> 
 func _on_monster_attacked(attacked: CombatNet.MonsterAttacked) -> void:
 	if attacked == null:
 		return
+	# A state's damage tick (round 659's review, STRIKE_STATUS_TICK): the
+	# server sends one when a tick kills. No swing is drawn and no counter
+	# claimed; the target takes it as a blow's report -- the HUD, the death
+	# line and the dead state for this player, the hit clip for another.
+	if attacked.status_tick:
+		_on_status_tick_strike(attacked)
+		return
 	var claim := MonsterStrikes.CLAIM_NONE
 	if not _other_bodies.has(attacked.target_character_id):
 		claim = MonsterStrikes.claim(_strike_waits, attacked)
@@ -16644,6 +16651,20 @@ func _on_monster_attacked(attacked: CombatNet.MonsterAttacked) -> void:
 		_draw_monster_strike(attacked, true)
 		return
 	_draw_monster_strike(attacked, false)
+
+## A state's damage tick reported as OpMonsterAttacked (round 659's review):
+## on this player, _show_own_strike (bar, death line, dead state) and the hit
+## -- or held die -- clip; on another drawn player, their hit clip.
+func _on_status_tick_strike(attacked: CombatNet.MonsterAttacked) -> void:
+	var own := attacked.target_character_id == _own_id()
+	print("World3D: a state's tick on %d for %d (HP %d)%s -- %s" % [
+		attacked.target_character_id, attacked.damage, attacked.target_hp,
+		", died" if attacked.target_died else "", "this player" if own else "another player"])
+	if own:
+		_show_own_strike(attacked)
+		_play_player_struck()
+	elif _other_bodies.has(attacked.target_character_id):
+		_play_other_hit(attacked.target_character_id)
 
 ## A blow on this player, from a push that claimed a counter still waiting for
 ## its blow to land (CLAIM_HELD): the HUD's HP from the push's target HP, and
