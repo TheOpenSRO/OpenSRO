@@ -1057,10 +1057,23 @@ interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
       releases on its target test.
 - [ ] **The client still asks for the whole window's list after every hit** (World3D ~15825,
       ~17529) -- up to 60 KB for a dense window. Round 655's lane (the client's monster drawing).
-- [ ] **A slow or stalled client holds its writers up to its blocking budget**
-      (`gateway.SendBlockBudget` 10 s, draining 10 s per 60 s, OURS; sized against a client frozen
-      by a load, WORLD_ISSUES round 656 §9) before its connection is closed. A per-session send queue would remove even that, but every Send caller relies on
-      in-order, on-the-wire-at-return sends; not built.
+- [x] **A slow or stalled client held its writers up to its blocking budget** -- fixed in round
+      662: every session has its own outbound queue and writer goroutine, so no sender waits on a
+      peer. A client is closed when its queue passes `gateway.SendQueueLimit` (2 MB, OURS, about 8x
+      the measured busiest 4 s) or its writer's blocked time passes the budget (unchanged).
+- [ ] **The client's packet reader waits for a whole payload in the kernel buffer** (round 662 §4,
+      MEASURED). `packet_reader.gd` reads a frame only once `get_available_bytes()` covers its
+      payload. Over loopback a server that wrote its queue in one write left the client's receive
+      buffer full of part-read ~52 KB segments (skmem r137152 of rb138172) holding 31,250 bytes,
+      short of a 32,735-byte list page: both sides stopped. The server now writes a frame per write,
+      which avoids it; the reader should still read what is available into its own buffer (client
+      lane).
+- [ ] **The send queue's limit and drain are OURS** (round 662). `SendQueueLimit` 2 MB was sized
+      from one live client over loopback at ~50 monsters a region; a real link was not measured, and
+      a legitimate burst bigger than the paged list (none is known) would close its client.
+      `SendDrainTimeout` 2 s bounds how long an ending session writes out what is queued. There is
+      no kick, no logout reply (`OpLogoutRequest` 0x7005 is unhandled) and no shutdown notice; a
+      future one must send and then end the session through the gateway's drain, not `Close`.
 - [ ] **A session the server closes lands on the login screen with no reason given.**
       `NetClient` finds the peer no longer connected, `World3D._on_disconnected` changes to
       `Login.tscn`, and the screen shows its remembered fields and nothing else. A "connection
@@ -1068,8 +1081,8 @@ interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
 - [ ] **With `-monster-spawn-push` off (the default), a respawn is never announced.** Its first leg
       then reaches clients that do not have the body, and they ask for the list: the pre-656
       discovery path, kept. With the push on, the push leaves at once and a brain's first leg waits
-      out an IDLE dwell (2001 ms or more), unless the respawn scheduler is itself held up on a slow
-      client for longer than that.
+      out an IDLE dwell (2001 ms or more). (The respawn scheduler can no longer be held up on a slow
+      client: round 662's send queue.)
 - [ ] **The request paths' broadcasts still copy the zone's entities** (`monsterWatchers` filters
       `EntitiesInZone`): fine at 100 players; the AI tick uses the runtime's watcher index instead.
 - [ ] **The respawn is still the flat 10 s** (`respawnDelay`, disclosed): round 659 brings the READ

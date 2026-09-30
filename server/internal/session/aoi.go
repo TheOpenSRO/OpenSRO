@@ -489,15 +489,14 @@ func (v *monsterAOI) deliverViewEvents(ev viewEvents) {
 // then the leg it is walking as an OpMonsterMoved from where it is now.
 func sendMonsterEnter(sess *gateway.Session, m combat.Monster, facing float64) error {
 	msg := &MonsterSpawned{Monster: monsterSnapshotOf(m), Heading: float32(facing)}
-	if err := sess.Send(&proto.Packet{Opcode: OpMonsterSpawned, Data: msg.Encode()}); err != nil {
-		return err
-	}
+	enter := &proto.Packet{Opcode: OpMonsterSpawned, Data: msg.Encode()}
 	if !m.Moving {
-		return nil
+		return sess.Send(enter)
 	}
 	mv := &MonsterMoved{MonsterID: m.ID, X: float32(m.X), Z: float32(m.Z),
 		DestX: float32(m.DestX), DestZ: float32(m.DestZ), Speed: float32(m.MoveSpeed), Mode: m.MoveMode}
-	return sess.Send(&proto.Packet{Opcode: OpMonsterMoved, Data: mv.Encode()})
+	// The enter and its leg as one batch (round 662): nothing comes between.
+	return sess.SendBatch(enter, &proto.Packet{Opcode: OpMonsterMoved, Data: mv.Encode()})
 }
 
 // monsterWireMu guards the creation of a session's monster wire lock.

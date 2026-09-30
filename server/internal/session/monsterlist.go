@@ -128,7 +128,7 @@ func monsterListPages(snaps []MonsterSnapshot) [][]byte {
 //
 // With the monster AI on (-monster-ai, round 537) the listed monsters' legs
 // follow as OpMonsterMotionList frames (n may be 0; one frame per
-// monsterMotionPageMax legs), and everything is built and written under the
+// monsterMotionPageMax legs), and everything is built and queued under the
 // session's monster wire lock -- the lock the AI tick takes to push to this
 // session -- so a push for a newer leg can never arrive ahead of a list built
 // before it (monsterWireLock). With it off no motion list is sent.
@@ -157,22 +157,21 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 	for i, m := range listed {
 		snapshots[i] = monsterSnapshotOf(m)
 	}
+	// The pages and the motion pages go as one batch (round 662): queued
+	// together, no other frame for this session -- a chat line, a stat
+	// update, anything not under the wire lock -- comes between them.
+	var frames []*proto.Packet
 	for _, page := range monsterListPages(snapshots) {
-		if err := sess.Send(&proto.Packet{Opcode: OpMonsterListResult, Data: page}); err != nil {
-			return err
+		frames = append(frames, &proto.Packet{Opcode: OpMonsterListResult, Data: page})
+	}
+	if rt != nil {
+		motion := motionListOf(listed)
+		for first := true; first || len(motion.Entries) > 0; first = false {
+			n := min(len(motion.Entries), monsterMotionPageMax)
+			page := &MonsterMotionList{Entries: motion.Entries[:n]}
+			frames = append(frames, &proto.Packet{Opcode: OpMonsterMotionList, Data: page.Encode()})
+			motion.Entries = motion.Entries[n:]
 		}
 	}
-	if rt == nil {
-		return nil
-	}
-	motion := motionListOf(listed)
-	for first := true; first || len(motion.Entries) > 0; first = false {
-		n := min(len(motion.Entries), monsterMotionPageMax)
-		page := &MonsterMotionList{Entries: motion.Entries[:n]}
-		if err := sess.Send(&proto.Packet{Opcode: OpMonsterMotionList, Data: page.Encode()}); err != nil {
-			return err
-		}
-		motion.Entries = motion.Entries[n:]
-	}
-	return nil
+	return sess.SendBatch(frames...)
 }
