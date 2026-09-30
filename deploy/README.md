@@ -709,3 +709,69 @@ the bag is at the lower size once those slots are emptied.
 
 The retail starting size is not known: it is a `_CHAR.InventorySize` database default, and neither
 the client nor the server executable carries it.
+
+## External shard DB: restore and export (user-supplied, EXTERNAL)
+
+The monster AI's four tables (`Tab_RefTactics`, `tab_refnest`, `tab_refhive`, `Tab_RefAISkill`)
+and a few others exist only as SQL Server rows. The client carries none of them
+(`docs/protocol/monster_ai.md`). Round 658 restored a private shard's backup the user supplied and
+exported it to CSV. **The backup, the database and the CSVs never enter this repo.** The CSVs live
+on the render box at `/opt/sro-files/db/csv/`. What the export is worth (its layouts match the
+parsers, but much of it is modded) is in `monster_ai.md`, "External shard DB".
+
+SQL Server needs about 2 GB of RAM, so run it in a throwaway container on the Proxmox host, not on
+the render box or the dev machine. Round 658 used CT 104 `mssql-temp` on `pve`: Debian 13, 4 cores,
+8 GB, 40 GB on local-lvm, unprivileged with `nesting=1,keyctl=1`. **It is left stopped, not
+deleted.** `pct start 104` brings it back with the database already restored.
+
+```
+# 1. The container (on the Proxmox host):
+pct create 104 local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst --hostname mssql-temp \
+  --cores 4 --memory 8192 --swap 2048 --rootfs local-lvm:40 --unprivileged 1 \
+  --features nesting=1,keyctl=1 --net0 name=eth0,bridge=vmbr0,ip=dhcp \
+  --ssh-public-keys /root/.ssh/authorized_keys --ostype debian --onboot 0
+pct start 104
+
+# 2. Inside it: docker and SQL Server 2022. The SA password is generated here, is kept only
+#    in /root/.sa_pass (mode 600), and is never written anywhere else.
+apt-get update && apt-get install -y docker.io python3-venv
+umask 077; echo "Sa$(openssl rand -hex 12)#9x" > /root/.sa_pass
+mkdir -p /srv/mssql/data /srv/mssql/backup && chown -R 10001:0 /srv/mssql
+docker run -d --name mssql -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$(cat /root/.sa_pass)" \
+  -e MSSQL_MEMORY_LIMIT_MB=6144 -v /srv/mssql/data:/var/opt/mssql -v /srv/mssql/backup:/backup \
+  mcr.microsoft.com/mssql/server:2022-latest
+
+# 3. Copy the .bak into /srv/mssql/backup/ (check its md5sum on both ends), then restore.
+#    FILELISTONLY gives the logical names that MOVE needs (this backup: SRO_VT_SHARD_Data / _Log).
+S="docker exec mssql /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P $(cat /root/.sa_pass)"
+$S -Q "RESTORE FILELISTONLY FROM DISK=N'/backup/SRO_VT_SHARD.bak'"
+$S -Q "RESTORE DATABASE SRO_VT_SHARD FROM DISK=N'/backup/SRO_VT_SHARD.bak' WITH
+       MOVE N'SRO_VT_SHARD_Data' TO N'/var/opt/mssql/data/SRO_VT_SHARD.mdf',
+       MOVE N'SRO_VT_SHARD_Log'  TO N'/var/opt/mssql/data/SRO_VT_SHARD_log.ldf', STATS=20"
+
+# 4. Export with pymssql (python3 -m venv /root/venv && /root/venv/bin/pip install pymssql).
+#    One CSV per table, header = the DB's own column names, written with Python's csv module.
+#    Cells: NULL is empty, a SQL `real` is written as the shortest decimal that round-trips the
+#    float32, and binary is 0x-hex. Also write _tables.csv (every table with its rows and
+#    columns from sys.partitions/sys.columns). Round 658 exported the four AI tables,
+#    _RefHWANLevel, the drop tables (_RefMonster_AssignedItemDrop, _RefMonster_AssignedItemRndDrop,
+#    _RefDropGold, _RefDropItemAssign, _RefDropItemGroup, _RefDropOptLvlSel,
+#    _RefCustomizingReservedItemDropForMonster, every _RefDropClassSel_*), _RefObjCommon,
+#    _RefObjChar, _RefSkill, _UniqueInfo, _RefGame_World, _RefGame_World_Config,
+#    _RefGameWorldGroup_Config, _RefServerEventReward_SpawnMonster and _RefGameWorldNPC. It also
+#    wrote world_config_keys.csv (the PARTYMONSTER_SPAWN / GiantMonster* /
+#    CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG rows) and _UniqueKillList_summary.csv (kills and gaps
+#    between kills for each unique; the per-character rows are not exported).
+#    Tar the directory to the render box's /opt/sro-files/db/csv/.
+
+# 5. When done: pct stop 104 (on the host). pct destroy 104 only once nobody needs the DB.
+```
+
+Traps:
+
+- The Korean description strings (`szDescString128` and similar) are cp949 bytes in
+  `SQL_Latin1_General_CP1_CI_AS` varchar columns, so they export as mojibake. Nothing reads
+  them. Recover a string with `.encode('latin1').decode('cp949')` if one is ever needed.
+- `nRegionDBID` is a signed smallint. Mask it with `& 0xffff` before comparing it with
+  npcpos's region: dungeon regions (>= 0x8000) come out negative.
+- `tab_refnest.fLocalPosY` is NULL on 145 rows.
