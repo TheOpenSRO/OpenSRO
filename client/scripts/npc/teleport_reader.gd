@@ -177,6 +177,10 @@ func buildings_in_region(rx: int, ry: int) -> Array:
 			out.append(b)
 	return out
 
+## The gate structure named `code` (teleportbuilding's codename), or null.
+func building_by_code(code: String) -> Building:
+	return _building_by_code.get(code.strip_edges().to_upper())
+
 ## The teleport point a gate structure is, joined by its id: teleportdata's
 ## associated object (column 3) is the building's id (GATE_CH's 2094 is
 ## STORE_CH_GATE's row -- docs/protocol/teleport_network.md,

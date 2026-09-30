@@ -461,6 +461,41 @@ func TestTeleportToJanganSendsTheGatePoint(t *testing.T) {
 	}
 }
 
+// Round 650, the tester's path: a teleport into Donwhang, then Donwhang's gate
+// asked from where the arrival put her, with no move in between (the client
+// sends none after landing). GATE_WC's point is in 102/153 and the gate
+// structure (2095) in 103/153 at local (962, 8): IsWithinInteractionRange's
+// offset crosses the region line (local z 8 + 1920 - 1508 = 420 on z, 5 on
+// x), inside the structure's 800. NEGATIVE: 400 further south (the point's
+// z - 400 in 102/153) the gate is 820 away, refused 4 with nothing charged.
+func TestTeleportDonwhangGateFromItsArrival(t *testing.T) {
+	tab := teleportFixture(t)
+	rig := newTeleportRig(t, teleportRigOpts{network: tab, level: 30, gold: 20000})
+	rig.standAt(25000, 1254, 1400) // beside Jangan's gate structure
+	if res := rig.use(1, 2); !res.OK {
+		t.Fatalf("Jangan -> Donwhang: %+v; want ok", res)
+	}
+	wantAt(t, rig.arrival(), 26265, 957, 1508)
+	// No move: the hub still holds the arrival.
+	if res := rig.use(2, 1); !res.OK {
+		t.Fatalf("Donwhang -> Jangan from GATE_WC's point (420 from the gate across 102/153 -> 103/153): %+v; want ok", res)
+	}
+	wantAt(t, rig.arrival(), 25000, 969, 1369)
+	// Back (GATE_CH's point is 285 from Jangan's gate), then 400 south.
+	if res := rig.use(1, 2); !res.OK {
+		t.Fatalf("Jangan -> Donwhang from GATE_CH's point: %+v; want ok", res)
+	}
+	wantAt(t, rig.arrival(), 26265, 957, 1508)
+	rig.standAt(26265, 957, 1508-400)
+	gold := rig.gold()
+	if res := rig.use(2, 1); res.OK || res.Code != teleport.ErrTooFar {
+		t.Fatalf("Donwhang's gate from 820 away: %+v; want refused with code %d", res, teleport.ErrTooFar)
+	}
+	if g := rig.gold(); g != gold {
+		t.Fatalf("gold %d after a refusal; want %d", g, gold)
+	}
+}
+
 // Under -single-frame the arrival is the same point named in the one world
 // frame (97/168) and kept in the world bucket, as every framed zone is.
 func TestTeleportUnderSingleFrame(t *testing.T) {

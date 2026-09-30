@@ -7094,6 +7094,136 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-fiftieth round: Donwhang's and Samarkand's Dimensional Gates can be clicked again
+
+The user reported: "The donwhang teleporter seems broken now too." Labels: READ = recovered from a
+binary, MEASURED = counted or run, INFERRED = argued from shape, OURS = this project's choice.
+
+**What was broken (MEASURED).**
+- **The tester's session.** The public server's log (srrevamp-01, the session of 2026-09-30) has
+  one teleport, Hotan -> Donwhang at 06:06:19 (`gate=STORE_KT_GATE dest=GATE_WC`). After it, no
+  `OpTeleportUse` (opcode 243) arrived and no refusal was logged. So Donwhang's gate never sent a
+  request: the break is on the client, before the server.
+- **The client.** A boot at GATE_WC's point (102/153 (957, 1508), radius 1) on dev e5bf2ba logs
+  `teleport gate STORE_WC_GATE -- no placed object within 10 units of the table's point (962, 8)
+  in 103/153; left unbound (not clickable)`. Round 642's own Donwhang run had bound
+  `Obj_w_cd_portal_0` in `RealMapObjects_103_153`, 3.3 units off.
+- **The cause is round 643, not round 642.** Round 643 made a map object exist once, placed by the
+  first loaded region whose `.o2` lists its key, in that region's container and frame
+  (`_placed_objects`). Donwhang's portal stands 8 units from the 102/153 edge and both regions list
+  it. A player arriving at GATE_WC has 102/153 load first, so the portal is held in
+  `RealMapObjects_102_153`. `_bind_region_gates` looked only in the building region's own
+  container. The same boot logs `103/153.o2 ... 5 already placed by a loaded region`.
+- **Every town (MEASURED, a boot at each gate's arrival point, radius 1, dev e5bf2ba):**
+
+| gate | building region | arrival region | dev e5bf2ba | round 650 |
+|---|---|---|---|---|
+| Jangan `STORE_CH_GATE` | 97/168 | 97/168 | `cj_portal`, 3.6 | same |
+| Donwhang `STORE_WC_GATE` | 103/153 | 102/153 | **unbound** | `w_cd_portal` in 102/153, 3.3 |
+| Hotan `STORE_KT_GATE` | 92/135 | 92/135 | `oas_hot_portal`, 0.7 | same |
+| Constantinople `STORE_EU_GATE` | 105/79 | 105/79 | `euro_esteuro_fountain01`, 2.6 | same |
+| Samarkand `STORE_CA_GATE` | 107/107 | 106/108 | **unbound** | `samarkand_center_01` in 106/108, 1.0 |
+| Alexandria S `STORE_SD_GATE1` | 90/48 | 90/48 | `alex_portal`, 8.4 | same |
+| Alexandria N `STORE_SD_GATE2` | 92/50 | 92/51 | unbound | unbound: nearest `alex_portal` at 15.1 (OPEN) |
+
+  Round 650's bound objects and distances are round 577's, when each region still placed its own
+  copy.
+
+**Candidates tested and ruled out.**
+- **The server's range** (MEASURED). The request from GATE_WC's point to the gate structure
+  crosses the region line: 5 on x and 8 + 1920 - 1508 = 420 on z, inside the structure's 800. The
+  live run below was served from the arrival point with the player not moved on the server.
+  `TestTeleportDonwhangGateFromItsArrival` holds it, with 820 away refused 4. It passes on the
+  base too; it is coverage, not the negative.
+- **WorldID / instance refusal.** GATE_WC reads WorldID 1. No refusal was logged, and no request
+  was sent at all.
+- **The talk box closing at once.** No box opened, because the gate was not clickable.
+- **Data.** The box's export (`/var/tmp/teleports/csv`) and srrevamp-01's
+  `~/srrevamp-data/teleport` have the same md5 for all three CSVs. The client reads its tables
+  from Media.pk2.
+
+**Why round 642's tests missed it.**
+- Round 642's Donwhang and Hotan real-input runs were made on its own branch, before round 643 was
+  merged; round 643 then went in beside it in int/r646.
+- Round 642's review ran real input at the ferry and the harbour, not at a town gate.
+- `teleport_reader_test.gd` (b)-(d) put the portal in the building region's own container, which
+  was the only arrangement before round 643. No test put a gate's portal in a neighbour's
+  container.
+- Round 643 counted what it placed, not what the gate bind then found.
+
+**Fixed (client, OURS within round 577's disclosed stand-in).**
+- `_bind_region_gates` takes the table point into the world through the building region's
+  terrain group and searches every loaded region's container in world x/z
+  (`_bind_gate`, `_nearest_placed_object`). The radius is still 10.
+- A gate left unbound is tried again after every later region's commit
+  (`_rebind_pending_gates`). The region that places the portal can commit after the building's
+  region: a player centred east of the gate.
+- An unbound gate's log line names the nearest placed object and its distance.
+- QA: `SRREVAMP_QA_CLICK` takes `wait:<ticks>` between two clicks; the `gate` target takes any
+  bound gate, including `STORE_SD_GATE1`/`2`.
+- Retail has no counterpart to read for this: retail's gate is a server-spawned structure, and the
+  nearest-object bind is round 577's disclosed stand-in. The fix restores what that stand-in bound
+  before round 643.
+
+**Live, real input (xdotool on Xvfb, Login -> CharacterSelect; in-memory server built from this
+branch with the WorldID export and srrevamp-01's npcpos; GM account `qa650`, level 40, `/goto
+hotan`).** The run clicks Hotan's gate, "Select a teleport area" and "[Donwhang]", then after the
+arrival Donwhang's gate, the teleport line and "[Jangan]".
+
+| step | dev e5bf2ba (`base-062955`) | round 650 (`fix-062655`) |
+|---|---|---|
+| Hotan -> Donwhang | server `gate=STORE_KT_GATE dest=GATE_WC zone=donwhang`; arrival 102/153 (957.0, 1508.0) | the same |
+| Donwhang's gate bind | `STORE_WC_GATE -- no placed object within 10 units ... left unbound` | `STORE_WC_GATE bound to Obj_w_cd_portal_71 in RealMapObjects_102_153 (3.3 units ...)` |
+| click Donwhang's gate | `QA CLICK gate: no such target in the world`; nothing to click | aim (640, 313), on-screen; the talk box lists the ten destinations |
+| choose [Jangan] | no request (the server log ends at the first teleport, as the tester's did) | client `teleport requested 2 -> 1`; server `gate=STORE_WC_GATE from=GATE_WC dest=GATE_CH zone=jangan`; arrival 97/168 (969.0, 1369.0) |
+
+The base run's harness carried only the QA `wait:` hook, patched into a copy of e5bf2ba. Its
+logs are on the box under `/var/tmp/tele650/e2e/`.
+
+**Tests.**
+- `teleport_reader_test.gd` (g):
+  - Donwhang's two regions stand as `TerrainCollision.place_group` puts them, with the portal in
+    102/153's container at 8 + 1920 on z. The gate binds to it.
+  - A decoy at the building's local numbers in the wrong region's frame is not taken.
+  - The other order: 103/153 commits first and the gate stays unbound. It binds when 102/153's
+    commit places the portal.
+  - A neighbour's object 12 units off is not taken.
+- `session/teleport_test.go`: `TestTeleportDonwhangGateFromItsArrival`.
+
+**The negative against e5bf2ba.** The new test file was run in a copy of the base on the box:
+```
+FAIL World3D has _rebind_pending_gates (round 650)
+FAIL Donwhang's gate binds to the portal the neighbour 102/153 holds (got npc_code '')
+FAIL and the portal's body is on the talk layer
+FAIL a gate left unbound is bound when a later region places its portal (got '')
+4 FAILURES
+```
+
+**Checks.**
+- Go: `go build ./...`, `go vet ./internal/session/` and `go test -count=1 -p 1 ./...` pass, with
+  the shared cache and Postgres up.
+- Client, on the box with the lane env: `check` loads all 418 scripts; `tests` runs 167 suites
+  with 0 failing.
+
+**perf gate: not applicable (server/UI round).** The coordinator stopped it. The client change
+is in `World3D.gd`'s gate bind, which runs once per region commit. An unbound gate adds one x/z scan
+over the loaded containers' children. For the record, the three completed Jangan runs per side,
+before the stop (MEASURED, not a full gate):
+
+| site | number | base e5bf2ba (median) | head (median) |
+|---|---|---|---|
+| jangan | frame | 11.39 ms | 11.29 ms |
+| jangan | entry | 9,585 ms | 9,563 ms |
+| jangan | freeze | 3,392 ms | 3,386 ms |
+| jangan | hitches | 5 | 5 |
+
+The cross site was cut off at two base runs and one head run: frame 9.64 and 10.70 ms base against
+9.23 ms head, entry 10,258 and 10,570 ms against 10,282 ms.
+
+**OPEN** (`docs/TODO.md`, "Town teleporters"):
+- Alexandria (North)'s gate: the nearest object is 15.1 from its point;
+- the gate is still bound by nearness (round 577's stand-in), not by the server's structure.
+
 ## Six-hundred-and-forty-seventh round: the Jangan spawn draws at 85 fps instead of 71 with every tree swaying exactly as before, and a zone change no longer leaves the old zone's animated objects behind
 
 Round 645 made the map's skeletal objects move. The rounds 641–646 integration review MEASURED what
