@@ -8011,9 +8011,22 @@ vertex landed 1e24 away. The vertices weighted partly to the object-space bind d
 What retail does (READ, a sub-agent on the decompile; BSK_FORMAT.md, "How the client skins"):
 - The skin matrix is `InvBind_file x W` in `RTSkeleton::FUN_00c49f20`, `CRTBone::FUN_00c48fe0` and
   `FUN_00c4bcb0`. That is the file's own inverse bind; nothing inverts a composed rest.
-- `AniMixer::FUN_00c54200` builds a keyed bone's local from the keys alone. The stored local is
-  used only for a bone no track touches.
-- So retail never reads the reeds' unset value.
+- A keyed bone's local comes from the keys alone: `RTSkeleton::FUN_00c49f20` copies the prim's
+  stored local only when the bone's blend weight (+0x98) is 0, and builds it from the blended
+  quaternion and vector otherwise (`AniMixer::FUN_00c54200` is the loop that blends the tracks;
+  round 648's review corrected the attribution).
+- So retail never reads the reeds' unset local. Their unset inverse binds are garbage too, so this
+  holds only while no vertex is weighted to the root (INFERRED; the reeds' posed size matching
+  their still size says it holds for them).
+
+**Round 648's review (MEASURED):**
+- Six monster species did not assemble at all on the base (`none of its 9 mesh piece(s) loaded`:
+  every bone at 1e24 or NaN, so no piece found a bone) and were drawn as capsule placeholders:
+  thief_boss, planar, elemental, uruchidragon, flame_spirit, venefica. They now build as their real
+  models and pose sensibly (thief_boss's skirt at y 9.9-29.5 against a rest of 12.3-32.0).
+- The reeds site's own gate, which the round had not run: frame 10.72 -> **4.50 ms (FASTER)**;
+  entry 7,255 -> 7,236 ms, freeze 2,137 -> 2,116 ms, hitches 2 -> 2 (SAME). The streak triangles,
+  1e24 wide, cost about 6 ms a frame at Dunhuang.
 
 **The census** (new `client/tools/census_bsk_bind.gd`, every `.bsk` in Data.pk2, MEASURED):
 - 1,208 skeletons; 11 have an unset root: a component from 2.7e20 to 7.7e31, or NaN.

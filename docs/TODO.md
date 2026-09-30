@@ -1727,8 +1727,10 @@ Still open, by the files each would add:
   BSK_FORMAT.md, "How the client skins"). This client binds to the inverse of the rest it composes
   from the locals (OURS). The two agree only where the file's world binds match the composed rest:
   855 of Data.pk2's 1,208 skeletons have a bone more than 0.05 units or 1 degree apart (MEASURED,
-  `client/tools/census_bsk_bind.gd`). Round 648 fixed the 11 whose root is unset (the reeds' streaks,
-  the Tarim rope bridge, thief_boss and others). Whether the other 844 draw visibly off, and whether
+  `client/tools/census_bsk_bind.gd`). Round 648 fixed the roots of the 11 whose root is unset (the
+  reeds' streaks, the Tarim rope bridge, thief_boss and others); after it, 850 skeletons are still
+  off (round 648's review), among them `Spine_Base` in thief_boss, flame_spirit, elemental,
+  penon_die and uruchidragon (8-41 units, 130-180 degrees). Whether those draw visibly off, and whether
   moving to the stored binds is safe for characters (the "two spaces" history in BSK_FORMAT.md), is
   OPEN. Also not read: the skeleton scale at skeleton+0xa4 (`FUN_00c4bcb0`), and who sets a
   bone's `+0x84` bit 2, whose palette `RTSkeleton::FUN_00c4a180` scales by `+0x88`.

@@ -168,8 +168,8 @@ srrevamp composes each bone's rest from the locals and binds the skin to its inv
 retail's use of the stored inverse bind). An unset root therefore put every bind 1e24 units away,
 and the reeds and the bridge were drawn as streaks. Since round 648, `Skeleton3DBuilder` takes an
 unusable root's rest from what its children's stored world binds imply. The wider difference stays
-open: 855 of the 1,208 skeletons have some bone whose composed rest is more than 0.05 units or
-1 degree off its stored world bind (docs/TODO.md).
+open: 855 of the 1,208 skeletons had some bone whose composed rest is more than 0.05 units or
+1 degree off its stored world bind; 850 still do after round 648 (docs/TODO.md).
 
 ## Implementation notes
 

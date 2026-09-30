@@ -78,10 +78,10 @@ work="/var/tmp/perf-${lane}"
 view() {
   case "$1" in
     jangan) echo '97\168.m|1002,1020|0|' ;;   # the game's own spawn
-    reeds)  echo '98\157.m|900,900|0|' ;;     # Dunhuang reeds (round 647)
+    reeds)  echo '98\157.m|900,900|0||9000' ;;     # Dunhuang reeds (round 647); 9000 frames: at 4.5 ms a frame (round 648) 3000 gave 13 samples, barely over the minimum of 10
     cross)  echo '97\168.m|120,1020|270|270' ;; # walk west into 97/167 (client/tools/README.md, "Load benchmark" (b))
     hotan)  echo '92\135.m|960,960|0|' ;;     # Hotan, the zone landing
-    ferry)  echo '90\143.m|464,879|270||12000' ;;   # Donwhang-region ferry GATE_NPC_WC_FERRY4, looking at the dock over the reeds (round 648); 12000 frames: at 2.6 ms a frame 3000 gave 8 samples
+    ferry)  echo '90\143.m|464,879|270||12000' ;;   # Donwhang-region ferry GATE_NPC_WC_FERRY4, looking at the dock over the reeds (round 648); 12000 frames: at 2.6 ms a frame 3000 gave 8 samples, under the minimum of 10 (the figure averages the last 30)
     *) echo "unknown site $1" >&2; exit 2 ;;
   esac
 }

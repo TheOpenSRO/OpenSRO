@@ -81,7 +81,8 @@ static func build_skeleton3d(skel: BskReader.ParsedSkeleton) -> Skeleton3D:
 		# every bone hung on it stores a world bind equal to its local, so
 		# the root is at the origin (root_rest_from_children). Retail never
 		# meets the unset value: a keyed bone takes its local from the keys
-		# alone (AniMixer::FUN_00c54200), and each skin matrix is the
+		# alone (RTSkeleton::FUN_00c49f20's weight test at +0x98), and each
+		# skin matrix is the
 		# FILE's inverse bind times the bone's world (RTSkeleton::
 		# FUN_00c49f20), never an inverse of composed rests (READ, round
 		# 648; docs/protocol/BSK_FORMAT.md). This client composes the rests
