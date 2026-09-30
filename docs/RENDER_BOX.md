@@ -9,7 +9,10 @@ missing, ask the repo owner rather than storing a password.
 ## The machines
 
 **Since 2026-09-30 the box is CT 103 on the new host at the other house.** The old box is kept
-as a fallback (`RENDER_HOST=root@192.168.5.78`) until it is retired.
+as a fallback (`RENDER_HOST=root@192.168.5.78`) until it is retired. **The RE work moved too:** the
+old box's 15-minute tick is off (its crontab is saved as `/root/crontab.bak-20260930` there), so the
+new box's Ghidra projects are the only ones anything writes to. Everything under the old box's
+`/var/tmp` came across except rendered frames and temp dirs (9,686 files, matched by name and size).
 
 | Address | What |
 |---|---|
