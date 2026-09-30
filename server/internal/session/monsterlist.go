@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/binary"
+	"sort"
 
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
@@ -26,6 +27,48 @@ import (
 // at most monsterMotionPageMax entries a frame; its pages need no trailer,
 // since each entry stands on its own (World3D._on_monster_motion_list applies
 // each to its body).
+
+// MonsterListFlagPaged is bit 0 of the OpMonsterList request's one optional
+// byte (round 656's review): the client gathers a paged list. Only a request
+// that carries it is answered in pages; an older client sends an empty request
+// and gets the old form -- one frame, no trailer -- and, when its window holds
+// more than a frame's worth, only the monsters nearest to it that fit
+// (monsterListNearestThatFit). OURS, an additive capability byte.
+const MonsterListFlagPaged byte = 0x01
+
+// monsterListPagedAsked reads the request's capability byte.
+func monsterListPagedAsked(data []byte) bool {
+	return len(data) >= 1 && data[0]&MonsterListFlagPaged != 0
+}
+
+// monsterListNearestThatFit keeps, of listed, the monsters nearest to (x, z)
+// whose records fit one frame with the list's 4-byte header, for a client that
+// cannot take pages. listed comes back in id order when it all fits, else
+// nearest first.
+func monsterListNearestThatFit(listed []combat.Monster, x, z float64) []combat.Monster {
+	size := 4
+	for _, m := range listed {
+		s := monsterSnapshotOf(m)
+		size += len(s.Encode())
+	}
+	if size <= proto.MaxPayload {
+		return listed
+	}
+	sort.SliceStable(listed, func(i, j int) bool {
+		di := (listed[i].X-x)*(listed[i].X-x) + (listed[i].Z-z)*(listed[i].Z-z)
+		dj := (listed[j].X-x)*(listed[j].X-x) + (listed[j].Z-z)*(listed[j].Z-z)
+		return di < dj
+	})
+	size = 4
+	for i, m := range listed {
+		s := monsterSnapshotOf(m)
+		size += len(s.Encode())
+		if size > proto.MaxPayload {
+			return listed[:i]
+		}
+	}
+	return listed
+}
 
 // monsterListTrailer is the paging trailer's length.
 const monsterListTrailer = 4
@@ -89,7 +132,10 @@ func monsterListPages(snaps []MonsterSnapshot) [][]byte {
 // session's monster wire lock -- the lock the AI tick takes to push to this
 // session -- so a push for a newer leg can never arrive ahead of a list built
 // before it (monsterWireLock). With it off no motion list is sent.
-func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.Hub) error {
+//
+// paged is the request's capability byte (MonsterListFlagPaged): without it
+// the reply is the old single frame (monsterListNearestThatFit).
+func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.Hub, paged bool) error {
 	entity, ok := hub.EntityBySession(sess.ID())
 	if !ok {
 		return sess.Send(&proto.Packet{Opcode: OpMonsterListResult, Data: (&MonsterListResult{Error: "not in the world"}).Encode()})
@@ -104,6 +150,9 @@ func handleMonsterList(sess *gateway.Session, hub *world.Hub, monsters *combat.H
 		v.setView(sess, cell)
 	}
 	listed := monsterWindow(monsters, cell)
+	if !paged {
+		listed = monsterListNearestThatFit(listed, entity.Pos.X, entity.Pos.Z)
+	}
 	snapshots := make([]MonsterSnapshot, len(listed))
 	for i, m := range listed {
 		snapshots[i] = monsterSnapshotOf(m)

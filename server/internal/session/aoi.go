@@ -311,11 +311,26 @@ func windowDiff(from, to combat.Cell, radius int) (gained, lost []combat.Cell) {
 	return gained, lost
 }
 
-// crossings turns the region lines a step carried monsters over into what
+// step is the monster step and the enter and leave messages its region
+// crossings owe, as one step against view moves (round 656's review): the
+// hub's StepCells and crossingsLocked under v.mu held for reading, so no
+// reconcile or list can move a view between them. A view that moved between
+// the two would have read the monster's new cell in its own difference and
+// then found no crossing to answer for, and the client would have missed an
+// enter or a leave. The monster AI's tick steps through it.
+func (v *monsterAOI) step(dt float64, awake func(int64, combat.Cell) bool, dst []combat.CellChange) ([]combat.CellChange, []viewEvents) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	dst = v.monsters.StepCells(dt, awake, dst)
+	return dst, v.crossingsLocked(dst)
+}
+
+// crossingsLocked turns the region lines a step carried monsters over into what
 // each watching player is owed: an enter for a player whose window holds the
 // new cell and not the old, a leave for one whose window holds the old and
-// not the new. The monster AI's tick calls it after its step (monsterai.go).
-func (v *monsterAOI) crossings(changes []combat.CellChange) []viewEvents {
+// not the new. Called with v.mu held for reading, by step, so no view moves between the
+// step and this (round 656's review).
+func (v *monsterAOI) crossingsLocked(changes []combat.CellChange) []viewEvents {
 	if len(changes) == 0 {
 		return nil
 	}
@@ -330,7 +345,6 @@ func (v *monsterAOI) crossings(changes []combat.CellChange) []viewEvents {
 		}
 		return ev
 	}
-	v.mu.RLock()
 	for _, ch := range changes {
 		for _, view := range v.watchers[ch.To] {
 			if !view.cell.Near(ch.From, AOIRadius) {
@@ -345,7 +359,6 @@ func (v *monsterAOI) crossings(changes []combat.CellChange) []viewEvents {
 			}
 		}
 	}
-	v.mu.RUnlock()
 	out := make([]viewEvents, 0, len(order))
 	for _, id := range order {
 		out = append(out, *bySess[id])
@@ -487,4 +500,43 @@ func sendMonsterPush(sess *gateway.Session, p *proto.Packet) {
 	wire.Lock()
 	defer wire.Unlock()
 	_ = sess.Send(p)
+}
+
+// unionWatchers is a and b with each session once, a's first (round 656's
+// review: a kill's recipients are the watchers before the blow and after it).
+func unionWatchers(a, b []world.Entity) []world.Entity {
+	seen := make(map[uint64]struct{}, len(a)+len(b))
+	out := make([]world.Entity, 0, len(a)+len(b))
+	for _, list := range [][]world.Entity{a, b} {
+		for _, e := range list {
+			if e.Session == nil {
+				continue
+			}
+			if _, dup := seen[e.Session.ID()]; dup {
+				continue
+			}
+			seen[e.Session.ID()] = struct{}{}
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// damageMonsterWatched is combat.Hub.ApplyDamage with the players to tell
+// about it (round 656's review): those whose window held the monster before
+// the blow, then those whose window holds where it stands after it, each once.
+// A kill is announced to both, so a view that moved off the monster between
+// the two -- whose leave no longer finds the dead monster in its cells --
+// still hears the death rather than keeping a ghost. performAttack's blows go
+// through it.
+func damageMonsterWatched(hub *world.Hub, monsters *combat.Hub, id int64, amount int) (updated combat.Monster, died, ok bool, watchers []world.Entity) {
+	var before []world.Entity
+	if m, alive := monsters.Get(id); alive {
+		before = monsterWatchers(hub, monsters, m)
+	}
+	updated, died, ok = monsters.ApplyDamage(id, amount)
+	if !ok {
+		return updated, died, ok, nil
+	}
+	return updated, died, ok, unionWatchers(before, monsterWatchers(hub, monsters, updated))
 }

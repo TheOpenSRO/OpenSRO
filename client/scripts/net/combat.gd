@@ -539,10 +539,15 @@ static func decode_loot_dropped(data: PackedByteArray) -> LootDropped:
 		offset += 12
 	return result
 
-## Encodes an OpMonsterList request (no payload -- the server resolves the
-## requester's zone from world.Hub).
+## Bit 0 of the OpMonsterList request's one byte (round 656's review): this
+## client gathers a paged list (NetClient). A server answers a request
+## without it in the old form, one frame of the nearest monsters.
+const MONSTER_LIST_FLAG_PAGED := 0x01
+
+## Encodes an OpMonsterList request: the capability byte only -- the server
+## resolves the requester's zone and window from world.Hub.
 static func encode_monster_list() -> PackedByteArray:
-	return PackedByteArray()
+	return PackedByteArray([MONSTER_LIST_FLAG_PAGED])
 
 static func _decode_monster_snapshot(data: PackedByteArray, offset: int) -> Array:
 	if offset + 8 > data.size():

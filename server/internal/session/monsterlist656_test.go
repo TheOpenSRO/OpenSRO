@@ -51,7 +51,7 @@ func newListRig(t *testing.T, monsters *combat.Hub) *listRig {
 			r.mu.Unlock()
 			return nil
 		case OpMonsterList:
-			err := handleMonsterList(sess, r.hub, r.monsters)
+			err := handleMonsterList(sess, r.hub, r.monsters, monsterListPagedAsked(p.Data))
 			r.errs <- err
 			return err
 		}
@@ -129,12 +129,19 @@ func (c *listClient) read(t *testing.T) *proto.Packet {
 	return p
 }
 
-// list asks for the monster list and gathers every OpMonsterListResult frame
+// list asks for the monster list, announcing that it takes pages, and gathers every OpMonsterListResult frame
 // until it holds want records, returning them and how many frames carried
 // them. A handler error fails the test with it.
 func (r *listRig) list(t *testing.T, c *listClient, want int) ([]MonsterSnapshot, int) {
 	t.Helper()
-	if err := proto.Write(c.conn, &proto.Packet{Opcode: OpMonsterList}, nil, nil); err != nil {
+	return r.listAs(t, c, want, []byte{MonsterListFlagPaged})
+}
+
+// listAs is list with the request's payload given: nil is a client that
+// predates the capability byte.
+func (r *listRig) listAs(t *testing.T, c *listClient, want int, req []byte) ([]MonsterSnapshot, int) {
+	t.Helper()
+	if err := proto.Write(c.conn, &proto.Packet{Opcode: OpMonsterList, Data: req}, nil, nil); err != nil {
 		t.Fatalf("asking for the list: %v", err)
 	}
 	select {
@@ -197,5 +204,47 @@ func TestMonsterListLargerThanAFramePages(t *testing.T) {
 	}
 	if len(seen) != n {
 		t.Errorf("%d of %d monsters arrived", len(seen), n)
+	}
+}
+
+// Round 656's review: a client that does not announce MonsterListFlagPaged (an
+// empty request, every client before round 656) gets the old form -- one
+// frame, no trailer -- holding the monsters nearest to it that fit.
+func TestMonsterListWithoutTheFlagIsOneFrameOfTheNearest(t *testing.T) {
+	monsters := combat.NewHub()
+	for i := 0; i < 1500; i++ {
+		monsters.SpawnSpecies("jangan", combat.Species{Name: "Mangyang", CodeName: "MOB_CH_MANGNYANG", Level: 1},
+			float64(i%40)*20-400, 0, float64(i/40)*20-400, 30, 1, 1, 1)
+	}
+	r := newListRig(t, monsters)
+	c := r.join(t, 1, 0, 0)
+	if err := proto.Write(c.conn, &proto.Packet{Opcode: OpMonsterList}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-r.errs; err != nil {
+		t.Fatalf("handleMonsterList: %v", err)
+	}
+	p := c.read(t)
+	lr, err := DecodeMonsterListResult(p.Data)
+	if err != nil || lr.Error != "" {
+		t.Fatalf("%v %+v", err, lr)
+	}
+	if lr.Pages != 0 || len(p.Data) > proto.MaxPayload || len(lr.Monsters) < 400 || len(lr.Monsters) >= 1500 {
+		t.Fatalf("an unflagged list: %d monsters in %d bytes, pages %d; want one frame of the nearest, no trailer",
+			len(lr.Monsters), len(p.Data), lr.Pages)
+	}
+	farthestKept := 0.0
+	kept := map[int64]bool{}
+	for _, m := range lr.Monsters {
+		kept[m.ID] = true
+		farthestKept = max(farthestKept, float64(m.X)*float64(m.X)+float64(m.Z)*float64(m.Z))
+	}
+	for _, m := range monsters.InZone("jangan") {
+		if !kept[m.ID] && m.X*m.X+m.Z*m.Z < farthestKept {
+			t.Fatalf("monster %d at %.0f,%.0f was left out for a farther one", m.ID, m.X, m.Z)
+		}
+	}
+	for _, extra := range c.quiet(t, 150*time.Millisecond) {
+		t.Errorf("a second frame after the unflagged list: %#04x", extra.Opcode)
 	}
 }

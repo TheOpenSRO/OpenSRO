@@ -901,9 +901,18 @@ func BroadcastMonsterSpawned(hub *world.Hub, monsters *combat.Hub, id int64) {
 	msg := &MonsterSpawned{Monster: monsterSnapshotOf(m), Heading: float32(m.Heading)}
 	p := &proto.Packet{Opcode: OpMonsterSpawned, Data: msg.Encode()}
 	// Round 656: to the players whose area of interest holds the new
-	// monster's cell (aoi.go), each under its monster wire lock.
+	// monster's cell (aoi.go). Under the area-of-interest runtime it goes as
+	// the checked enter (deliverViewEvents: sent only if the monster is alive
+	// and in the player's window at the send, round 656's review), so a spawn
+	// cannot reach a view that moved away from its cell meanwhile; without
+	// it, each under the monster wire lock.
+	v := aoiFor(monsters)
 	for _, e := range monsterWatchers(hub, monsters, m) {
 		if e.Session == nil {
+			continue
+		}
+		if v != nil {
+			v.deliverViewEvents(viewEvents{sess: e.Session, enters: []int64{id}})
 			continue
 		}
 		sendMonsterPush(e.Session, p)
@@ -1083,7 +1092,7 @@ func combatHandler(
 			}
 			return nil
 		case OpMonsterList:
-			return handleMonsterList(sess, hub, monsters)
+			return handleMonsterList(sess, hub, monsters, monsterListPagedAsked(p.Data))
 		default:
 			return nil
 		}
@@ -1378,7 +1387,9 @@ func performAttack(
 		net = perHit * n
 	}
 
-	updated, monsterDied, ok := monsters.ApplyDamage(targetMonsterID, net)
+	// The blow, with the players watching the monster before it and after it
+	// (damageMonsterWatched, round 656's review).
+	updated, monsterDied, ok, watchers := damageMonsterWatched(hub, monsters, targetMonsterID, net)
 	if !ok {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found", MonsterID: targetMonsterID}).Encode()})
 	}
@@ -1680,7 +1691,7 @@ func performAttack(
 	// since round 656 only to those whose area of interest holds the monster
 	// (aoi.go monsterWatchers), at the position the swing found it.
 	var others []world.Entity
-	for _, e := range monsterWatchers(hub, monsters, updated) {
+	for _, e := range watchers {
 		if e.Session.ID() != sess.ID() {
 			others = append(others, e)
 		}

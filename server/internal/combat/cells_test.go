@@ -51,7 +51,7 @@ func TestCellIndexFollowsSpawnStepAndKill(t *testing.T) {
 	h.SetMotion(a.ID, 1100, 0, 1000, 1)
 	h.SetMotion(b.ID, 1920*3+100, 0, 1000, 1)
 	// B's cell asleep: only A moves.
-	changes := h.StepCells(0.5, func(cell Cell) bool { return cell.X == 0 }, nil)
+	changes := h.StepCells(0.5, func(_ int64, cell Cell) bool { return cell.X == 0 }, nil)
 	if len(changes) != 1 || changes[0].ID != a.ID || changes[0].From != (Cell{"jangan", 0, 0}) || changes[0].To != (Cell{"jangan", 1, 0}) {
 		t.Fatalf("changes %+v, want A from (0,0) to (1,0)", changes)
 	}

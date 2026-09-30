@@ -7151,7 +7151,7 @@ object, effect, animation, movement or loading code on the client, so no perform
 - **One respawn scheduler** (`cmd/server`). One goroutine checks every placement once a second,
   with the old loop's timing: `respawnDelay` 10 s, disclosed. `maintainMonster` is gone; its
   test drives the scheduler with one placement.
-- **The send deadline** (`gateway.SendTimeout` = 2 s, OURS). A Send blocked that long closes the
+- **The send deadline** (`gateway.SendTimeout` = 2 s, OURS; 10 s since the review, §7). A Send blocked that long closes the
   connection, and every later Send returns `ErrSendStalled` at once. A stalled client holds the
   tick at most 2 s, once.
 - **`-qa-spread-monsters N` / `-qa-spread-radius R`** (QA only): N more placements of Jangan's
@@ -7221,7 +7221,9 @@ The base's tick at 100 players with aggro on (195 ms) is longer than the tick pe
 it falls behind. On the branch, "spread" keeps nearly every cell awake (100 windows of 25 cover
 most of the 1,200 regions), so the gain there is the area of interest and the index. "town" also
 sleeps the rest of the map. One earlier branch run of the same file gave 13.7 ms for 100/spread/off.
-Localhost TCP timing varies between runs, so treat single figures as ±2×.
+Localhost TCP timing varies between runs, so treat single figures as ±2×. **The players never move
+in the benchmark**, so it measures no view moves, and no enters or leaves driven by a player's
+walk (review follow-up).
 
 ### 5. Live on the render box (MEASURED, `/var/tmp/aoi656/live.sh r1`)
 
@@ -7246,12 +7248,56 @@ The server was built from this branch: `-in-memory -single-frame -monster-ai -mo
 
 ### 6. Open (docs/TODO.md, "Monster scale: the area of interest (round 656)")
 
-- An older client reads each page as the whole list and ignores 0x00B5. Lists stay one frame until
-  about 480 monsters share a window, so round 657's full map is the first that needs this client.
+- An older client (no capability byte, §7) gets one frame of the nearest monsters and ignores 0x00B5.
+  Round 657's full map is the first to show it.
 - The AOI radius and the sleep rule are OURS. Retail's are unread.
 - The client still asks for the whole window's list after every hit (round 655's lane).
-- A stalled client can hold the tick up to 2 s, once. A per-session send queue would remove that.
+- A stalled client can hold the tick up to 10 s (since §7), once. A per-session send queue would remove that.
 - The respawn is still the flat 10 s; round 659 brings the nest rules.
+
+### 7. The review's follow-up
+
+The adversarial review found three MEDIUM ordering bugs with a stress test: four goroutines (a
+player walking, jumping and listing; the view reconcile; the AI tick with forced legs over region
+lines; kills and respawns) against a client model that applies every monster message. All three
+are fixed.
+
+- **A step and a view move could lose an enter or a leave.** The tick stepped, a reconcile moved
+  the view and read the monster's new cell in its difference, and then the tick's crossings,
+  computed against the new view, found nothing to answer for. Now the step and its crossings run
+  as one step under the area of interest's read lock (`monsterAOI.step`), so a view move lands
+  wholly before or wholly after.
+  `TestAOIStepAndViewMoveKeepTheEnter` / `...KeepTheLeave` run both orders.
+- **A kill could leave a ghost.** The death went to the watchers of where the monster died, read
+  after `ApplyDamage`. A view that moved off it in between had also missed the leave, because the
+  dead monster was no longer in its lost cells. The death now goes to the watchers before the blow
+  and after it (`damageMonsterWatched`; GM `/kill` the same).
+- **The spawn push was a direct send** to the views whose window held the cell when it was read.
+  It now goes through the checked enter (`deliverViewEvents`).
+
+Also: a push's cell is taken from the monster's float64 position, not the wire's float32. A
+monster in BATTLE or HOMING never sleeps (`TestHomingMonsterNeverSleeps`). `gateway.SendTimeout`
+is raised from 2 s to 10 s, so a client busy loading is not dropped (OURS). A per-session queue
+was not built, because every Send caller relies on the frame being on the wire, in order, when
+Send returns.
+
+**The paged list is opt-in.** The `OpMonsterList` request carries one byte, bit 0 = "gathers a
+paged list" (`MonsterListFlagPaged`; the client sends 0x01). A request without it, from every
+older client, gets the old single frame, holding the monsters nearest the player that fit
+(`TestMonsterListWithoutTheFlagIsOneFrameOfTheNearest`).
+
+The stress test is kept, driving the production paths (`TestAOIStressClientMatchesTheWindow`).
+Six runs in a row MEASURED 0 ghosts, 0 missing and 0 spawns of a dead monster, with 50,288-84,863
+frames a run. One line:
+
+```
+frames 48401, view {jangan 2 1} stand {jangan 2 1}, client bodies 174, truth 174, ghosts 0 [],
+missing 0 [], unknown moves 285, spawn-after-death 0, leave-unknown 1194, dead 127
+```
+
+"unknown moves" and "leave-unknown" are harmless: a leg for a body the client never had, and a leave
+for one it had already dropped. `go test -race` on the AOI tests reports no race. The benchmark
+players never move (see §4).
 
 ## Six-hundred-and-fifty-second round: every icon is picked up with one click and put down with the next, and a worn item goes into the bag as the original puts it
 

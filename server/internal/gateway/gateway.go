@@ -78,7 +78,17 @@ type Session struct {
 // monsterai.go) pushes to every watching player from one goroutine, and a
 // zone broadcast from another player's handler waited on it too. A variable
 // so a test can shorten it; 0 turns the deadline off.
-var SendTimeout = 2 * time.Second
+//
+// 10 s, not the 2 s round 656 shipped with (its review): a client whose main
+// thread is busy -- a region load, a long frame -- stops reading for a while,
+// and 2 s risked dropping a player the kernel buffers would have carried. The
+// price is that a peer that has really stopped holds its writer, the AI tick
+// included, for up to 10 s, once. A per-session send queue would take even
+// that off the tick, but every Send caller today relies on the frame being
+// written, in order with its other sends, when Send returns (the monster wire
+// lock's ordering, the list's pages), so a queue is a change to all of them;
+// not built. OURS.
+var SendTimeout = 10 * time.Second
 
 // ErrSendStalled is what Send returns on a session whose earlier Send ran past
 // SendTimeout: its connection has been closed.

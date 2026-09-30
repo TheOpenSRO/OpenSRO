@@ -214,6 +214,15 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 			}
 		}
 
+		// The selected monster's watchers before the command (round 656's
+		// review): a /kill is announced to them as well as to those watching
+		// where it died.
+		var watchedBefore []world.Entity
+		if hub != nil && deps.Monsters != nil && actor.TargetMonsterID != 0 {
+			if m, alive := deps.Monsters.Get(actor.TargetMonsterID); alive {
+				watchedBefore = monsterWatchers(hub, deps.Monsters, m)
+			}
+		}
 		out := deps.Run(ctx, actor, req.Line)
 		// A /tp or /goto puts the GM where its client then stands it; a wall's
 		// root takes that landing as a warp's (round 646, walls.go
@@ -230,7 +239,10 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		if out.KilledMonsterID != 0 && hub != nil {
 			msg := (&MonsterDied{MonsterID: out.KilledMonsterID}).Encode()
 			dead := combat.Monster{ID: out.KilledMonsterID, Zone: out.Zone, X: out.KilledX, Z: out.KilledZ}
-			for _, e := range monsterWatchers(hub, deps.Monsters, dead) {
+			if out.KilledMonsterID != actor.TargetMonsterID {
+				watchedBefore = nil
+			}
+			for _, e := range unionWatchers(watchedBefore, monsterWatchers(hub, deps.Monsters, dead)) {
 				if e.Session.ID() != sess.ID() {
 					sendMonsterPush(e.Session, &proto.Packet{Opcode: OpMonsterDied, Data: msg})
 				}

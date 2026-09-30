@@ -1011,11 +1011,11 @@ whose flip conditions these items feed).
 Round 656 made the server carry ~10,000 monsters (`docs/protocol/monster_ai.md`, "The area of
 interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
 
-- [ ] **The client must carry round 656 before a server lists more than one frame.** An older
-      client reads each page of a paged list as the whole list (its sync drops every body the page
-      does not name) and ignores `OpMonsterLeft` 0x00B5 (bodies that leave its window stay drawn
-      where they were last seen). Lists stay one frame until about 480 monsters share a window, so
-      round 657's full map is the first to need it.
+- [ ] **An older client gets a degraded view.** Pages go only to a request carrying the capability
+      byte (0x01, round 656's review). An older client gets one frame holding the nearest monsters
+      that fit, which is short of the window once about 480 monsters share it (round 657's full
+      map). It ignores `OpMonsterLeft` 0x00B5, so bodies that leave its window stay drawn where
+      they were last seen. Release the round-656 client before round 657's flip.
 - [ ] **The AOI radius and the sleep are OURS.** 2 regions (the client's `REGION_LOAD_RADIUS`) and
       "a monster no player's window holds does not run" stand in for retail's visibility and
       object-update rules, both UNREAD. A monster left mid-leg by the last player resumes the leg
@@ -1023,8 +1023,10 @@ interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
       releases on its target test.
 - [ ] **The client still asks for the whole window's list after every hit** (World3D ~15825,
       ~17529) -- up to 60 KB for a dense window. Round 655's lane (the client's monster drawing).
-- [ ] **A stalled client holds the AI tick up to `gateway.SendTimeout` (2 s, OURS), once**, before
-      its connection is closed. A per-session send queue would remove even that; not built.
+- [ ] **A stalled client holds the AI tick up to `gateway.SendTimeout` (10 s, OURS; raised from 2 s
+      by the review), once**, before its connection is closed. A per-session send queue would
+      remove even that, but every Send caller relies on in-order, on-the-wire-at-return sends; not
+      built.
 - [ ] **The request paths' broadcasts still copy the zone's entities** (`monsterWatchers` filters
       `EntitiesInZone`): fine at 100 players; the AI tick uses the runtime's watcher index instead.
 - [ ] **The respawn is still the flat 10 s** (`respawnDelay`, disclosed): round 659 brings the READ

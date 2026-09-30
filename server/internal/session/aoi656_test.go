@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OpenSRO/srrevamp/server/internal/ai"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
@@ -276,6 +277,11 @@ func TestSleepingBrainsWaitForAPlayer(t *testing.T) {
 		if m, _ := monsters.Get(sleeper); m.X != cellX(10) || m.Z != 0 {
 			sleeperMoved = true
 		}
+		// A monster in BATTLE or HOMING never sleeps (round 656's review):
+		// the one left behind is parked from its last such tick on.
+		if st := a.brains[near].machine.State(); st == ai.StateBattle || st == ai.StateHoming {
+			parked, _ = monsters.Get(near)
+		}
 	}
 	if a.brains[sleeper] == nil || !sleeperMoved {
 		t.Fatalf("the sleeper did not wake: brain %v, moved %v", a.brains[sleeper] != nil, sleeperMoved)
@@ -305,5 +311,37 @@ func TestSleepOffRunsEveryMonster(t *testing.T) {
 	}
 	if !moved {
 		t.Fatal("with sleep off a monster nobody is near never moved")
+	}
+}
+
+// Round 656's review: a monster running home (HOMING) finishes the run after
+// the last player has walked away, rather than freezing part-way asleep.
+func TestHomingMonsterNeverSleeps(t *testing.T) {
+	hub := world.NewHub()
+	monsters := newAIHub(5)
+	sess := gateway.NewTestSession(1)
+	hub.Enter(sess, 1, "p", 1, "jangan", world.Position{X: 700})
+	id := spawnAt(t, monsters, "jangan", 100, 0)
+	monsters.SetMotion(id, 700, 0, 600, 1)
+	for i := 0; i < 4; i++ {
+		monsters.StepCells(1, nil, nil) // 160 a step (MoverMaxStep): 600 from home, past the 200 roam radius
+	}
+	a := newMonsterAI(hub, monsters, nil, MonsterAIConfig{Sleep: true}, rand.New(rand.NewSource(5)), (&pushRecorder{}).push)
+	monsterAIRuntime.Store(a)
+	t.Cleanup(func() { monsterAIRuntime.Store(nil) })
+	now := aiT0
+	a.tick(now)
+	if st := a.brains[id].machine.State(); st != ai.StateHoming {
+		t.Fatalf("precondition: the strayed monster runs home, state %v", st)
+	}
+	hub.Move(sess, world.Position{X: cellX(20)}) // the player goes far away
+	start, _ := monsters.Get(id)
+	for i := 0; i < 100; i++ {
+		now = now.Add(MonsterAITick)
+		a.tick(now)
+	}
+	m, _ := monsters.Get(id)
+	if m.X >= start.X-100 {
+		t.Fatalf("the homing monster froze when the player left: x %.0f -> %.0f", start.X, m.X)
 	}
 }

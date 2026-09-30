@@ -261,6 +261,11 @@ func _test_decode_monster_list_page_trailer() -> void:
 	_check(page.error == "" and page.monsters.size() == 1 and page.monsters[0].monster_id == 7, "a page's records decode")
 	_check(page.page == 2 and page.pages == 3, "the trailer reads as page 2 of 3")
 
+## Round 656's review: the list request announces that this client takes pages.
+func _test_encode_monster_list_announces_pages() -> void:
+	var req := CombatNet.encode_monster_list()
+	_check(req.size() == 1 and (req[0] & CombatNet.MONSTER_LIST_FLAG_PAGED) != 0, "the list request carries the paged-list flag")
+
 ## Round 656: OpMonsterLeft is u16 n, then n s64 ids; an id cut short is
 ## dropped.
 func _test_decode_monster_left() -> void:
@@ -556,6 +561,7 @@ func _init() -> void:
 	_test_decode_monster_list_result_error()
 	_test_decode_monster_list_page_trailer()
 	_test_decode_monster_left()
+	_test_encode_monster_list_announces_pages()
 	_test_approach_band()
 	_test_in_reach()
 	_test_skill_tick_approaches()

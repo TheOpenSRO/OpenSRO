@@ -99,11 +99,15 @@ func (h *Hub) StopMotion(id int64) (Monster, bool) {
 // alive. A monster whose cell
 // is asleep keeps its leg and its place until its cell wakes (session's
 // monster AI puts a cell to sleep when no player is near it -- OURS).
-func (h *Hub) StepCells(dt float64, awake func(Cell) bool, dst []CellChange) []CellChange {
+//
+// awake is asked with the monster's id as well as its cell (round 656's
+// review): the monster AI keeps a monster in BATTLE or HOMING running wherever
+// it is.
+func (h *Hub) StepCells(dt float64, awake func(id int64, c Cell) bool, dst []CellChange) []CellChange {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for id, m := range h.moving {
-		if awake != nil && !awake(h.cellOf[id]) {
+		if awake != nil && !awake(id, h.cellOf[id]) {
 			continue
 		}
 		var arrived bool

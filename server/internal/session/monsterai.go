@@ -237,8 +237,11 @@ type monsterAI struct {
 	// sleep on), players the living and dead players by the cell they stand
 	// in, crossed the region lines this pass's step carried monsters over,
 	// cellBuf/candBuf/sessBuf scratch space.
-	live       []combat.Monster
-	awake      map[combat.Cell]struct{}
+	live  []combat.Monster
+	awake map[combat.Cell]struct{}
+	// insistent is, with sleep on, the monsters in BATTLE or HOMING this
+	// pass: they run wherever they are (round 656's review).
+	insistent  map[int64]struct{}
 	players    map[combat.Cell][]world.Entity
 	crossed    []combat.CellChange
 	cellBuf    []combat.Cell
@@ -427,6 +430,7 @@ func newMonsterAI(hub *world.Hub, monsters *combat.Hub, logger *slog.Logger, cfg
 		roamRadius: MonsterRoamRadius,
 		sleep:      cfg.Sleep,
 		awake:      map[combat.Cell]struct{}{},
+		insistent:  map[int64]struct{}{},
 		players:    map[combat.Cell][]world.Entity{},
 	}
 	// nil is the production push, to the players whose window holds the
@@ -518,13 +522,34 @@ func (a *monsterAI) tick(now time.Time) {
 	a.aggro = monsterAggro.Load()
 	a.indexPlayers()
 
+	// Round 656's review: a monster in BATTLE or HOMING never sleeps, wherever
+	// it is -- a chase or a run home is finished, not frozen part-way.
+	if a.sleep {
+		clear(a.insistent)
+		for id, b := range a.brains {
+			if st := b.machine.State(); st == ai.StateBattle || st == ai.StateHoming {
+				a.insistent[id] = struct{}{}
+			}
+		}
+	}
+
 	// 1. The mover (combat.MoverStep: the 160 cap and the no-overshoot clamp),
-	// over the awake cells only when sleep is on.
-	var awake func(combat.Cell) bool
+	// over the awake cells only when sleep is on. The step and the enter and
+	// leave messages its region crossings owe are computed under the area of
+	// interest's read lock, as one step (round 656's review): a view that
+	// moved between the two would have read the monster's new cell in its own
+	// difference and then found no crossing to answer for its old one, and
+	// the client would have missed an enter or a leave.
+	var awake func(int64, combat.Cell) bool
 	if a.sleep {
 		awake = a.isAwake
 	}
-	a.crossed = a.monsters.StepCells(dt, awake, a.crossed[:0])
+	var entered []viewEvents
+	if v := aoiFor(a.monsters); v != nil && a.push == nil {
+		a.crossed, entered = v.step(dt, awake, a.crossed[:0])
+	} else {
+		a.crossed = a.monsters.StepCells(dt, awake, a.crossed[:0])
+	}
 
 	// 2. A brain per live monster. A new one faces the heading it hatched
 	// with (combat.Monster.Heading) and leaves SPAWN at once: message 0x21's
@@ -537,6 +562,13 @@ func (a *monsterAI) tick(now time.Time) {
 			a.cellBuf = append(a.cellBuf, c)
 		}
 		a.live = a.monsters.InCells(a.live[:0], a.cellBuf)
+		for id := range a.insistent {
+			if m, ok := a.monsters.Get(id); ok {
+				if _, inAwakeCell := a.awake[combat.CellOf(m.Zone, m.X, m.Z)]; !inAwakeCell {
+					a.live = append(a.live, m)
+				}
+			}
+		}
 	} else {
 		a.live = a.monsters.AppendAll(a.live[:0])
 	}
@@ -586,12 +618,6 @@ func (a *monsterAI) tick(now time.Time) {
 
 	pending, handoffs := a.pending, a.handoffs
 	a.pending, a.handoffs = nil, nil
-	var entered []viewEvents
-	if a.push == nil {
-		if v := aoiFor(a.monsters); v != nil {
-			entered = v.crossings(a.crossed)
-		}
-	}
 	a.mu.Unlock()
 
 	// 5. The pushes, after the pass: first what each player is owed for the
@@ -644,9 +670,14 @@ func (a *monsterAI) indexPlayers() {
 	}
 }
 
-// isAwake reports whether cell c is in some player's window this pass.
-func (a *monsterAI) isAwake(c combat.Cell) bool {
-	_, ok := a.awake[c]
+// isAwake reports whether monster id, standing in cell c, runs this pass:
+// c is in some player's window, or the monster is in BATTLE or HOMING
+// (insistent).
+func (a *monsterAI) isAwake(id int64, c combat.Cell) bool {
+	if _, ok := a.awake[c]; ok {
+		return true
+	}
+	_, ok := a.insistent[id]
 	return ok
 }
 
@@ -1617,7 +1648,7 @@ func (a *monsterAI) startLeg(b *brain, destX, destZ float64, mode uint8, what st
 		b.heading = math.Atan2(dz, dx)
 	}
 	b.m = m
-	a.queue(m.Zone, &MonsterMoved{
+	a.queue(m, &MonsterMoved{
 		MonsterID: m.ID, X: float32(m.X), Z: float32(m.Z),
 		DestX: float32(destX), DestZ: float32(destZ), Speed: float32(speed), Mode: mode,
 	})
@@ -1628,14 +1659,18 @@ func (a *monsterAI) startLeg(b *brain, destX, destZ float64, mode uint8, what st
 // destination = position, with the leg's own speed and mode
 // (docs/protocol/monster_ai.md, "srrevamp's own monster protocol", the stop).
 func (a *monsterAI) queueStop(m combat.Monster) {
-	a.queue(m.Zone, &MonsterMoved{
+	a.queue(m, &MonsterMoved{
 		MonsterID: m.ID, X: float32(m.X), Z: float32(m.Z),
 		DestX: float32(m.X), DestZ: float32(m.Z), Speed: float32(m.MoveSpeed), Mode: m.MoveMode,
 	})
 }
 
-func (a *monsterAI) queue(zone string, mv *MonsterMoved) {
-	a.pending = append(a.pending, monsterPush{zone: zone, cell: combat.CellOf(zone, float64(mv.X), float64(mv.Z)),
+// queue collects mv, a push about m, for after the pass. Its recipients are
+// picked by m's cell from m's own float64 position (round 656's review: not
+// the push's float32 copy, which can round a monster a hair from a region
+// line onto the other side of it).
+func (a *monsterAI) queue(m combat.Monster, mv *MonsterMoved) {
+	a.pending = append(a.pending, monsterPush{zone: m.Zone, cell: combat.CellOf(m.Zone, m.X, m.Z),
 		packet: &proto.Packet{Opcode: OpMonsterMoved, Data: mv.Encode()}})
 }
 
