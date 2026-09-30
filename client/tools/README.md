@@ -355,7 +355,10 @@ boots each at fixed views, interleaved base/head, and reads four numbers from th
 
 A verdict also needs the ranges apart (no head run better than a base run), so a noisy run cannot
 fail it alone. Views: `jangan` (97/168 at 1002,1020), `reeds` (98/157 at 900,900), `cross` (97/168
-from 120,1020 walking west into 97/167: the load benchmark's crossing (b) below), `hotan`.
+from 120,1020 walking west into 97/167: the load benchmark's crossing (b) below), `hotan`, and
+`ferry` (90/143 at 464,879 looking west: the Donwhang-region ferry landing, its reeds and the river;
+round 648). A site may carry its own frame count (the fifth field of `view`); the ferry's 2.6 ms
+frames need 12,000 frames for the 30 once-a-second samples, which 3,000 frames did not give.
 
 ```
 client/tools/perf_gate.sh                                   # all three default views, 3 runs each
@@ -379,6 +382,26 @@ jangan  hitches    base 5  head 5  (+0.0)  SAME
 
 It also shows what a player waits through at every Jangan entry: about 14 s, with a single frame
 of about 4.9 s and five over 100 ms.
+
+### Skinned map objects: where the vertices go (round 648)
+
+`probe_map_anim_pose.gd` builds one map object the way the world does (ObjectLoader, then
+MapAnimation) and CPU-skins every skinned piece at the given clip times, printing each piece's
+box still against posed, and each bone's `.bsk` rest against the clip's first key. The reeds'
+streaks were one line of it: `posed size (3.7e24, ...)` against `still size (154, 22, 104)`.
+`census_bsk_bind.gd` walks every `.bsk` in Data.pk2 and prints the skeletons whose composed rest
+disagrees with the world binds the file stores, and whose root local is unset.
+
+```
+remote_godot.sh script res://tools/probe_map_anim_pose.gd -- --pk2=$PK2/Data.pk2 \
+  '--file=res/nature/china/dunhuang/reed/fw_cd_reeds_l.bsr' --seconds=0,0.5
+remote_godot.sh script res://tools/census_bsk_bind.gd -- --pk2=$PK2/Data.pk2
+```
+
+`SRREVAMP_QA_NOWATER=1` builds no block water, for a pixel diff that measures what the water draws
+(round 648's water-on/off diff). A lane that must not stop other lanes' renders runs its client with
+`xvfb-run -a ... --write-movie` under its own lock instead of `qa_shot.sh`, whose start-up reap
+kills every Godot on the box.
 
 ### Load benchmark
 

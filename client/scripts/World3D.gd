@@ -3259,6 +3259,10 @@ func _add_navmesh_wall_debug_mesh(terrain_group: Node3D, faces: PackedVector3Arr
 ## in 3,846 blocks the `.m` says have none, and leaves out 6,259 the client
 ## draws (MEASURED, waterat -census) -- the `.m` is what the client reads.
 func _try_add_real_water(terrain_group: Node3D, region: MapmReader.ParsedRegion, mapm_path: String) -> void:
+	# SRREVAMP_QA_NOWATER=1 (round 648): build no water at all, so a pixel
+	# diff against a normal run measures exactly what the water draws.
+	if OS.get_environment("SRREVAMP_QA_NOWATER") != "":
+		return
 	var coords := _parse_region_coords(mapm_path)
 	if not coords.is_empty():
 		var region_id := RegionGridState.navmesh_key(int(coords["x"]), int(coords["y"]))
@@ -9624,6 +9628,8 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_FREE=1     let the camera pass through geometry
 ##   SRREVAMP_QA_NOFOG=1    disable fog (for high overview shots)
 ##   SRREVAMP_QA_NOUI=1     hide the HUD (for comparison shots)
+##   SRREVAMP_QA_NOWATER=1  build no block water (round 648: the pixel diff
+##                          that measures what the water draws)
 ##   SRREVAMP_QA_FORCE_LOADING=1  show the "NOW LOADING" screen on a QA run,
 ##                          which builds its grid synchronously and shows
 ##                          none otherwise (_should_show_loading_screen); the

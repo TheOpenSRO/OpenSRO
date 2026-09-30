@@ -73,6 +73,23 @@ static func build_skeleton3d(skel: BskReader.ParsedSkeleton) -> Skeleton3D:
 		root_bone.transform = skel.root_transform
 		root_rotation = SkeletonPose.bone_rotation(root_bone)
 		root_rest = Transform3D(Basis(root_rotation), SkeletonPose.bone_local_position(root_bone))
+		# Round 648: 11 real skeletons (the Dunhuang reeds, the Tarim rope
+		# bridge, thief_boss, planar, elemental...) store an unset root --
+		# a local translation of 3.7e24, or NaN. Composed into every bone's
+		# rest it put each skin's bind 1e24 away, and the reeds were drawn
+		# as streaks across the sand. Their files say where the root is:
+		# every bone hung on it stores a world bind equal to its local, so
+		# the root is at the origin (root_rest_from_children). Retail never
+		# meets the unset value: a keyed bone takes its local from the keys
+		# alone (AniMixer::FUN_00c54200), and each skin matrix is the
+		# FILE's inverse bind times the bone's world (RTSkeleton::
+		# FUN_00c49f20), never an inverse of composed rests (READ, round
+		# 648; docs/protocol/BSK_FORMAT.md). This client composes the rests
+		# (OURS), so it needs the root the file implies.
+		if not root_rest_usable(root_rotation, root_rest.origin):
+			var implied := root_rest_from_children(skel)
+			root_rest = implied
+			root_rotation = implied.basis.get_rotation_quaternion()
 	skeleton.set_bone_rest(root_idx, root_rest)
 	world_rotations[skel.root_name] = root_rotation
 
@@ -139,6 +156,44 @@ static func build_skeleton3d(skel: BskReader.ParsedSkeleton) -> Skeleton3D:
 		skeleton.reset_bone_pose(bone_index[name])
 	skeleton.force_update_all_bone_transforms()
 	return skeleton
+
+## The largest root local translation this treats as authored (OURS: a
+## bound in the measured gap). MEASURED over Data.pk2's 1,208 skeletons
+## (client/tools/census_bsk_bind.gd, round 648): every root is at most
+## 4,767 units from its parent frame (roc_event_cam.bsk), or else has a
+## component of 2.7e20 or more, or NaN -- 11 files, all of whose root
+## children imply the root at the origin.
+const ROOT_TRANSLATION_LIMIT := 1.0e6
+
+## Whether a root's stored local transform can be used: finite, a unit
+## quaternion, and a translation inside ROOT_TRANSLATION_LIMIT.
+static func root_rest_usable(rotation: Quaternion, origin: Vector3) -> bool:
+	if not (is_finite(rotation.x) and is_finite(rotation.y) and is_finite(rotation.z) and is_finite(rotation.w)):
+		return false
+	if absf(rotation.length() - 1.0) > 0.01:
+		return false
+	for c in [origin.x, origin.y, origin.z]:
+		if not is_finite(c) or absf(c) > ROOT_TRANSLATION_LIMIT:
+			return false
+	return true
+
+## The root rest a skeleton's own file implies when the root's stored local
+## is unusable: the first bone hung on the root stores both its local
+## (parent-relative) transform and its world bind (READ, the record's first
+## and second pairs), so root = world_bind * inverse(local). For each of the
+## 11 real skeletons with an unset root, every such bone implies the same
+## root, at the origin (MEASURED, census_bsk_bind.gd). Identity when no bone
+## hangs on the root or the implied one is not finite.
+static func root_rest_from_children(skel: BskReader.ParsedSkeleton) -> Transform3D:
+	for b in skel.bones:
+		if b.parent_name != "" and b.parent_name != skel.root_name:
+			continue
+		var local := Transform3D(Basis(SkeletonPose.bone_rotation(b).normalized()), SkeletonPose.bone_local_position(b))
+		var implied := SkeletonPose.bone_world_bind(b) * local.affine_inverse()
+		if root_rest_usable(implied.basis.get_rotation_quaternion(), implied.origin):
+			return implied.orthonormalized()
+		break
+	return Transform3D.IDENTITY
 
 ## Applies a real .ban Bone track's keyframe[frame_idx] rotation -- taken
 ## as a delta relative to that track's own keyframe[0] -- to the matching

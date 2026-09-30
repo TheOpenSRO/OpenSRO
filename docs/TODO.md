@@ -1637,6 +1637,16 @@ Still open, by the files each would add:
   clip's pooled nodes when `ObjectTemplateCache.release_region` frees its template, or free nodes
   idle for N ticks. Also unpinned by any test: pooling a released group node only at the next tick
   (a mutation that pools it in the same tick passes ALL PASS).
+- **Skin binds: the file's, or composed (round 648).** Retail's skin matrix is the `.bsk`'s own
+  stored inverse bind times the bone's animated world (READ, `RTSkeleton::FUN_00c49f20`;
+  BSK_FORMAT.md, "How the client skins"). This client binds to the inverse of the rest it composes
+  from the locals (OURS). The two agree only where the file's world binds match the composed rest:
+  855 of Data.pk2's 1,208 skeletons have a bone more than 0.05 units or 1 degree apart (MEASURED,
+  `client/tools/census_bsk_bind.gd`). Round 648 fixed the 11 whose root is unset (the reeds' streaks,
+  the Tarim rope bridge, thief_boss and others). Whether the other 844 draw visibly off, and whether
+  moving to the stored binds is safe for characters (the "two spaces" history in BSK_FORMAT.md), is
+  OPEN. Also not read: the skeleton scale at skeleton+0xa4 (`FUN_00c4bcb0`), and who sets a
+  bone's `+0x84` bit 2, whose palette `RTSkeleton::FUN_00c4a180` scales by `+0x88`.
 - **`cj_ferry_boat_old`.** Its `.bsk` is a root with no other bone, which `BskReader` refuses
   (1 placement).
 - **Rigid pieces of a skeletal object.** 20 animated models, such as `bagh_city_portal` and the
@@ -1689,6 +1699,15 @@ Retail draws water from each `.m` block's PlaneType/PlaneHeight, not from the `.
   itself (a `.dof` world) and the `wave1..3.ddj` textures are not traced.
 - **WaterColor's timing.** It is sampled at the fixed environment reference time, and the special
   modes (+0x2eb4, +0x2e5c) are not applied.
+- **Depth precision (round 648).** Retail's world camera has near 1.0, far the view distance
+  (3,500 by default) and a 24-bit depth buffer (READ; MAPM_FORMAT.md, "Depth"). This client's camera
+  keeps Godot's default near 0.05, with far 1920 x (radius + 1) x 2, which gives about 20 times less
+  depth precision at any distance. Water that lies under the ground, hidden only by the depth test,
+  is a few hundred to a few thousand square units a region (MEASURED, `waterat -region y/x -hidden`:
+  the ferry region 90/143 has 45, with 25 of them within 0.1 of the plane). So this was not the
+  user's Donwhang report (the reeds were), but it is a real difference. Moving the near plane to 1.0
+  also moves where the camera clips close geometry, so it needs the camera lane's collision margins
+  checked first.
 - **Walking under water is authentic** (the user, 2026-09-28): it happens in the original game too.
   Leave movement alone.
 

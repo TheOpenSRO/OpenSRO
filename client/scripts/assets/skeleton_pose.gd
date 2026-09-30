@@ -47,6 +47,20 @@ static func bone_local_position(b: BskReader.Bone) -> Vector3:
 		b.transform.slice(off + 4, off + 8).decode_float(0),
 		b.transform.slice(off + 8, off + 12).decode_float(0))
 
+## One bone's stored WORLD bind transform: the record's second (quaternion,
+## vector) pair, at 0x1c / 0x2c (+4 for a root-attached 92-byte record) --
+## READ, the client's loader turns it into the prim bone's second 4x4
+## matrix (PrimSkeleton::FUN_00bf9e60; docs/protocol/BSK_FORMAT.md,
+## "Confirmed from the client's own loader"). bone_position() is its vector.
+static func bone_world_bind(b: BskReader.Bone) -> Transform3D:
+	var off := 0x20 if b.transform.size() > BskReader.BONE_TRANSFORM_LEN else 0x1c
+	var q := Quaternion(
+		b.transform.decode_float(off),
+		b.transform.decode_float(off + 4),
+		b.transform.decode_float(off + 8),
+		b.transform.decode_float(off + 12))
+	return Transform3D(Basis(q.normalized()), bone_position(b))
+
 ## Extracts one bone's local rotation from its raw transform bytes. Offset
 ## is 0x04 for a root-attached (92-byte) bone, 0x00 for an ordinary
 ## (88-byte) bone -- same +4 shift as bone_position(). See
