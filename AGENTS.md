@@ -75,6 +75,33 @@ from a picture, say so explicitly.
 When a negative result comes back, check the probe before believing it — a sweep that found "zero
 openings anywhere" was fired at a height where the ground swallowed every ray.
 
+## Performance: every world round runs the gate
+
+`client/tools/perf_gate.sh` boots the working tree and its base at fixed views on the render box
+(the Jangan spawn, the Dunhuang reeds, a walk across a region boundary; 1280x720) and compares
+four numbers from the client's own log: **ms per frame, seconds to enter the world, the longest
+freeze, and frames over 100 ms**. It exits 1 when the branch is clearly slower.
+
+- **Run it before a round that changes the world or its drawing goes to review** (client world,
+  map, object, terrain, effect, animation or loading code), and put its table in the round's
+  WORLD_ISSUES entry. A UI-only, server-only or docs-only round skips it. The reviewer re-runs
+  only `--sites jangan` (6 minutes), not all three views.
+- **A slowdown is fixed in the round, or recorded with the numbers and taken to the user.** It is
+  never left for the final review to find: round 645's review measured only the reeds at 320x180,
+  the final review found +3.3 ms a frame at Jangan, and fixing it cost a new round and a new
+  review, about 3.5 of that batch's 8.5 hours. The gate reports it as `SLOWER (+3.0)` in about
+  6 minutes (`--base 8658370 --head c306c51 --sites jangan`).
+- **The CPU is what lanes share, not the GPU or RAM** (measured with `amdgpu_top` and `vmstat`,
+  2026-09-30). One render uses about 3.3 of the box's 10 cores and 17 % of the GPU; six at once
+  put the CPU at 89 % busy with a run queue of 12, and ran 2.8x slower a frame, while the GPU
+  averaged 37 % and never reached 90 %, and 11 GB of RAM stayed free. So a speed number taken
+  while another lane runs Godot is noise: the gate waits until no other lane's Godot is running,
+  repeats a run one overlapped, and gates in all lanes queue on one lock. Parallel lanes still
+  finish more work than serial ones (six renders: 148 s at once against ~372 s one by one).
+  `gpu_sample [seconds]` on the box logs the GPU once a second; `amdgpu_top` is the live view.
+
+The whole run is about 15 minutes of box time (3 views x 3 runs x 2 builds); `--sites jangan` is 6.
+
 ## Commands
 
 Commands running Godot are executed on the render box (`192.168.5.78`), not on the local machine:

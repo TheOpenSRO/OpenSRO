@@ -339,6 +339,47 @@ SRREVAMP_QA_NOUI=1 SRREVAMP_QA_CAST=90,113,114,149,3 qa_shot.sh --out /var/tmp/c
   --radius 1 --at 1002,1020 --yaw 30 --pitch -12 --dist 70 --frames 860
 ```
 
+### Performance gate
+
+`perf_gate.sh` is the before/after every world round runs (AGENTS.md, "Performance: every world
+round runs the gate"). It ships the working tree and its base (`git merge-base HEAD origin/dev`,
+or `--base`/`--head` revisions) to `/opt/srrevamp-client-perf-<lane>-{base,head}` on the box,
+boots each at fixed views, interleaved base/head, and reads four numbers from the client's log:
+
+| number | from | SLOWER when (OURS) |
+|---|---|---|
+| frame ms | the mean of the last 30 `--print-fps` samples, standing still | +max(0.5 ms, 5 %) |
+| entry ms | `region grid loaded in N ms`, the real loading drain (`SRREVAMP_QA_FORCE_LOADING=1`) | +max(1 s, 10 %) |
+| freeze ms | the largest `longest work frame W ms` of the run's LoadTimings summaries | +max(100 ms, 25 %) |
+| hitches | the summaries' `H over 100 ms`, summed | +2 |
+
+A verdict also needs the ranges apart (no head run better than a base run), so a noisy run cannot
+fail it alone. Views: `jangan` (97/168 at 1002,1020), `reeds` (98/157 at 900,900), `cross` (97/168
+from 120,1020 walking west into 97/167: the load benchmark's crossing (b) below), `hotan`.
+
+```
+client/tools/perf_gate.sh                                   # all three default views, 3 runs each
+client/tools/perf_gate.sh --sites jangan --runs 3           # ~6 minutes
+client/tools/perf_gate.sh --base 8658370 --head c306c51 --sites jangan   # the proof: SLOWER (+3.0)
+```
+
+Each run waits until no other lane's Godot is running and is repeated if one overlaps it: the CPU
+is what lanes share (one render uses about 3.3 of the box's 10 cores; six at once put it at 89 %
+busy and ran 2.8x slower a frame, while the GPU averaged 37 %; 2026-09-30, `amdgpu_top` and
+`vmstat`). Gates queue on `/var/tmp/perf-gate.lock`. The logs stay in `/var/tmp/perf-<lane>/`.
+
+The proof, 2026-09-30, three runs each (ms per frame 11.49/11.05/11.04 against 14.43/13.91/14.06):
+
+```
+jangan  frame ms   base 11.05  head 14.06  (+3.0)  SLOWER
+jangan  entry ms   base 14310  head 13946  (-364.0)  SAME
+jangan  freeze ms  base 4893  head 4733  (-160.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+```
+
+It also shows what a player waits through at every Jangan entry: about 14 s, with a single frame
+of about 4.9 s and five over 100 ms.
+
 ### Load benchmark
 
 Every map and loading change is measured on the two runs below, before and after, and on nothing
