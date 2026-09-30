@@ -1109,7 +1109,10 @@ Left:
       sites sit per hit (`0x58f429`..`0x58feda`), whether each unblocked hit rolls again is not read.
 - [ ] **INFERRED**: that a frozen, stunned or sleeping monster starts no attack (the motion state is
       read; the attack path's test on it is not), and that a DoT tick naming its caster is the
-      monster's struck event. Sleep is not broken by damage (unread). A zero-damage status cast is
+      monster's struck event and is booked on its damage list (vslot 0x4fc,
+      `Char_ForwardToAttachedObject` 0x4a7500, forwards to an unread object). Sleep is not broken
+      by damage (unread). A death by a tick releases every monster in BATTLE on her, a blow's
+      death only its killer (OURS). A zero-damage status cast is
       measured for reach like a damaging one (the gate's exemption, if any, is unread).
 - [ ] **OURS**: the 100 ms pass (`StatusTick`); the first tick one interval after the state lands
       (`record+0x68`'s first value is unread); states ending at logout; character masks going to

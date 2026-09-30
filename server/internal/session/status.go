@@ -32,6 +32,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/OpenSRO/srrevamp/server/internal/ai"
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
 	"github.com/OpenSRO/srrevamp/server/internal/equipment"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
@@ -213,13 +214,19 @@ func (s *statusRuntime) applyToMonster(d combatDeps, characterID int64, castRow 
 		h.Put(r)
 	}
 	msg := &ObjectStatus{OwnerKind: OwnerMonster, OwnerID: monsterID, Mask: h.Mask(), Levels: h.Levels()}
+	stops := !h.CanMove() || !h.CanAct()
 	s.mu.Unlock()
 	s.tracef("status: monster %d took %v from character %d (mask %#x -> %#x)", monsterID, codesOf(recs), characterID, before, msg.Mask)
 	// The applier stops the move at once (vslot 0x570, READ). The stop is the
 	// AI tick's (heldByStatus): it ends the leg AND puts the stop on the wire.
 	// Ending it here instead (round 659, before its review) left the next
 	// tick to find the monster already standing, so no stop was ever sent
-	// and the clients kept drawing the leg (review H1).
+	// and the clients kept drawing the leg (review H1). With no AI runtime
+	// (-monster-ai off) there is no tick to do it, and no push to send: the
+	// hub's leg is ended here (the re-review's L3).
+	if stops && monsterAIRuntime.Load() == nil {
+		d.monsters.StopMotion(monsterID)
+	}
 	pushMonsterStatus(d.hub, d.monsters, m, msg)
 }
 
@@ -543,13 +550,15 @@ func (s *statusRuntime) step(ctx context.Context, now time.Time) {
 // interest's damage path (round 656), which tells the players whose window
 // held the monster before the tick and after it -- and settles a kill.
 //
-// The tick is booked on the monster's damage list (round 657) to its caster
-// whenever the applier names one (statuseffect.SourceRule, READ): a living
-// caster on every tick, poison's included, so a DoT's damage counts toward
-// the unique notice's killer; a dead caster only on a fatal burn or bleeding
-// tick. A named tick that does not kill is the monster's struck event, as a
-// blow is (INFERRED: the damage virtual 0x4fc with a source is the one a blow
-// reaches), so a DoT-only debuff draws the monster onto its caster. Whether
+// Whom the applier names is READ (statuseffect.SourceRule): a living caster
+// on every tick, poison's included; a dead caster only on a fatal burn or
+// bleeding tick. What the engine does with that name is INFERRED: the
+// appliers hand the damage to vslot 0x4fc, CGObjChar::Char_ForwardToAttached
+// Object (0x4a7500), which forwards it to an object that is not read -- so
+// that a named tick is booked on the monster's damage list (round 657; a
+// DoT's damage then counts toward the unique notice's killer) and is the
+// monster's struck event, as a blow is (a DoT-only debuff draws the monster
+// onto its caster), are srrevamp's reading of it, not the engine's text. Whether
 // the tick is fatal is decided against the HP the monster has NOW (review L1),
 // and a kill is credited from the damage call's own died result.
 func (s *statusRuntime) dealMonsterTick(ctx context.Context, d combatDeps, mt monsterTick) error {
@@ -634,6 +643,11 @@ func (s *statusRuntime) dealCharacterTick(ctx context.Context, d strikeDeps, st 
 	if ct.tick.SourceIsMonster {
 		monsterID = ct.tick.SourceID
 	}
+	// Every monster fighting her lets go, as the strike worker's kill makes
+	// its killer let go (a.kills, battleTick): without -player-dead-state she
+	// is back on her feet at once, and a monster in BATTLE on her would
+	// otherwise never release (the re-review's MEDIUM).
+	releaseTargetsOf(ct.id)
 	msg := out.message(monsterID, ct.id)
 	msg.StatusTick = true
 	p := &proto.Packet{Opcode: OpMonsterAttacked, Data: msg.Encode()}
@@ -645,6 +659,23 @@ func (s *statusRuntime) dealCharacterTick(ctx context.Context, d strikeDeps, st 
 		}
 	}
 	return true
+}
+
+// releaseTargetsOf marks, for every monster in BATTLE on characterID, the
+// kill battleTick releases a monster on (a.kills) -- what runStrike records
+// for the monster whose blow killed her. A no-op with the AI off.
+func releaseTargetsOf(characterID int64) {
+	a := monsterAIRuntime.Load()
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for id, b := range a.brains {
+		if b.target == characterID && b.machine.State() == ai.StateBattle {
+			a.kills[id] = struct{}{}
+		}
+	}
 }
 
 // endCharacter ends a character's states at her death (finishKill) and tells

@@ -7249,9 +7249,11 @@ Each fix has a test in `session/status659r_test.go` (or `statuseffect/apply_test
 - **M2, the source rule.** vslot 0xf8 is `CGObj::GetLifeState` (`0x485ee0`). While the record's
   latch `+0x6c` is clear, a caster alive (life state neither 2 nor 3) is named on EVERY tick,
   poison's included; a dead or gone one latches the record, after which burn and bleeding name it
-  only on a fatal tick and poison never. `statuseffect.SourceRule` / `CasterLookup`: every tick of
-  a living caster is booked on the damage list (so DoT damage counts toward the unique notice) and
-  is the monster's struck event (INFERRED; a DoT-only debuff draws the monster onto its caster).
+  only on a fatal tick and poison never (READ). `statuseffect.SourceRule` / `CasterLookup`: every
+  tick of a living caster is booked on the damage list (so DoT damage counts toward the unique
+  notice) and is the monster's struck event -- both INFERRED: the appliers pass the named source
+  to vslot 0x4fc, `CGObjChar::Char_ForwardToAttachedObject` (0x4a7500), which forwards to an
+  object not read (the re-review's L2).
   This supersedes the first commit's "book only a fatal tick".
 - **M3, `0x5906c0` is the blocked flag.** `cmp [edi+5],2` tests the hit record's blocked byte
   (`[ebp+5] = 2` after the block roll at `0x58f0ef`), so a blocked blow applies nothing, both ways.
@@ -7297,6 +7299,29 @@ Results on the merged tree: `cd server && go build ./... && go vet ./... && go t
 packages ok, none failing. `go test -race ./internal/session ./internal/statuseffect`:
 both ok, no race. The new tests also ran three times under `-race`, clean. Client, `remote_godot.sh tests`:
 176 suites, 0 failing.
+
+### 7. The re-review (a third commit)
+
+- **A death by a tick released no monster.** Without `-player-dead-state` (the default) she is back
+  on her feet at once, and battleTick releases its target only on the strike worker's `a.kills` or
+  on LifeDead -- so the monster whose bleeding killed her stayed in BATTLE on her.
+  `dealCharacterTick` now marks the kill for every monster in BATTLE on her (`releaseTargetsOf`),
+  as the strike worker marks it for its killer. (A blow's death still releases only its killer:
+  unchanged, OURS either way.)
+- **With `-monster-ai` off**, a stun on a moving monster ends the hub's leg in `applyToMonster`
+  again (no AI tick exists to do it, and nothing draws the leg to stop).
+- The damage-list and struck-event readings are relabelled INFERRED (vslot 0x4fc, above).
+
+Against c5d267c:
+
+    --- FAIL: TestStatusTickDeathReleasesTheMonster
+        the monster whose bleeding killed Aria is still in BATTLE on her; a kill must release it (a.kills)
+    --- FAIL: TestStatusStunStopsALegWithTheAIOff
+        with -monster-ai off a stunned monster is still on its leg
+
+`cd server && go test -count=1 -p 1 ./...` from scratch after the dev machine's disk was freed:
+61 packages ok, none failing, no Postgres "connection refused" or "no space" line. `-race` on the
+status tests (session) and on `internal/statuseffect`: ok. No client change.
 
 ## Six-hundred-and-fifty-seventh round: a unique's appearance and its killer are announced to every player in the original's blue banner at the top of the screen
 

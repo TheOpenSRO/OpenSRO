@@ -423,3 +423,57 @@ func TestStatusBlockedBlowLandsNoState(t *testing.T) {
 		t.Errorf("the control, an unblocked stun: %q, stunned %v", ar.Error, held(fx, open.ID))
 	}
 }
+
+// ---- The re-review: a death by a tick releases the monsters fighting her ----
+
+// With -player-dead-state off she is back on her feet at once; the monster
+// whose bleeding killed her must still let go, as a strike kill makes it.
+func TestStatusTickDeathReleasesTheMonster(t *testing.T) {
+	fx := statusFXForTest(t)
+	battleForTest(t, true)
+	deadStateForTest(t, false)
+	ctx := context.Background()
+	z := startStrikeZone(t)
+	rec := &pushRecorder{}
+	installMonsterAIForTest(t, z.hub, z.monsters, 659, rec.push)
+	k := z.monsters.SpawnSpecies("jangan", chaseMangyang, z.aria.x, 0, z.aria.z, 100000, 0, 1, 0)
+	now := aiT0
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	a := monsterAIRuntime.Load()
+	noteStruck(z.monsters, k.ID, z.ariaChar)
+	monsterAITick(now)
+	now = now.Add(MonsterAITick)
+	if st := stateOf(t, a, k.ID); st != ai.StateBattle {
+		t.Fatalf("setup: the monster is in %v, want BATTLE on Aria", st)
+	}
+	deps := strikeDeps{chars: z.chars, eq: z.eq, items: z.items, hub: z.hub}
+	t0 := time.Now()
+	fx.applyToCharacter(ctx, deps, *k, combat.MonsterSkill{ID: 9200, Status: "bl:30000,100,1,100000,0"}, z.ariaChar)
+	fx.step(ctx, t0.Add(2100*time.Millisecond))
+	if c, _ := z.chars.GetByID(ctx, z.ariaChar); c.HP <= 0 {
+		t.Fatalf("setup: with the dead state off she should be back on her feet, HP %d", c.HP)
+	}
+	monsterAITick(now)
+	if st := stateOf(t, a, k.ID); st == ai.StateBattle {
+		t.Errorf("the monster whose bleeding killed Aria is still in BATTLE on her; a kill must release it (a.kills)")
+	}
+}
+
+// ---- The re-review's L3: with the AI off, a stun still ends a leg ----
+
+func TestStatusStunStopsALegWithTheAIOff(t *testing.T) {
+	fx := statusFXForTest(t)
+	if monsterAIRuntime.Load() != nil {
+		t.Fatal("setup: an AI runtime is installed")
+	}
+	monsters := combat.NewHub()
+	m := monsters.SpawnSpecies("jangan", strikeMangyang, 0, 0, 0, 1000, 0, 0, 0)
+	if _, ok := monsters.SetMotion(m.ID, 100, 0, 10, 1); !ok {
+		t.Fatal("setup: no leg")
+	}
+	fx.applyToMonster(combatDeps{monsters: monsters}, 1, &refdata.Skill{ID: 9100, StatusParams: "st:60000,100,2"}, m.ID, time.Now())
+	if got, _ := monsters.Get(m.ID); got.Moving {
+		t.Errorf("with -monster-ai off a stunned monster is still on its leg: %+v", got)
+	}
+}
