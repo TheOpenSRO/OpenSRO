@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -175,7 +173,7 @@ func ReadSkills(r io.Reader) (map[int64]*SkillRow, error) {
 // absent is left out (reported by db.AISkills / db.Skills being nil), one
 // that is there but does not parse is an error.
 func loadOptional(db *DB, dir string) error {
-	f, err := os.Open(filepath.Join(dir, AISkillFile))
+	f, err := openDBFile(dir, AISkillFile)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 	case err != nil:
@@ -188,7 +186,7 @@ func loadOptional(db *DB, dir string) error {
 		}
 		db.AISkills = ai
 	}
-	f, err = os.Open(filepath.Join(dir, SkillFile))
+	f, err = openDBFile(dir, SkillFile)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 	case err != nil:

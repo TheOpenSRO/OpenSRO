@@ -1075,7 +1075,13 @@ interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
       retail's object-update rule, UNREAD; since round 664 the window is 960 units wide, so the
       awake area around each player is too. A monster left mid-leg by the last player resumes the
       leg when one returns; one that was chasing a player who teleported away resumes BATTLE and
-      then releases on its target test.
+      then releases on its target test. Since round 666 a sleeping monster's brain is dropped and
+      only its `brainMemory` is filed (state, dwell, heading, cooldowns, timers 1 and 6, the
+      aggression roll, a unique's triggers), so the brains are the awake monsters. Left: a memory
+      of a monster that died asleep is swept 64 a pass (`asleepSweepPerTick`, OURS), not at the
+      death; and the aggro link now never gathers a sleeping monster (before round 666 it gathered
+      one only if its brain happened to survive from an earlier visit -- history-dependent either
+      way, since the engine walks the owner's regions: UNREAD which it wakes).
 - [ ] **The client still asks for the whole window's list after every hit** (World3D ~15825,
       ~17529) -- up to 60 KB for a dense window. Round 655's lane (the client's monster drawing).
 - [x] **A slow or stalled client held its writers up to its blocking budget** -- fixed in round
@@ -1218,6 +1224,13 @@ Left:
       the whole zone (monster masks go to the area of interest's watchers).
 - [ ] **A kill by a tick shows no EXP line** in the killer's system window: the reward is granted
       and `OpLevelUp` sent, but no `OpAttackResult` carries `ExpGained` for it.
+- [x] ~~A kill by a tick never armed a party nest~~ -- round 666: `dealMonsterTick` tells the nests
+      (`noteMonsterKilled`) with the tick's credited applier as the killer, as a blow's kill does. A
+      tick that names nobody (a dead poisoner, `statuseffect.SourceRule`) counts no party.
+- [ ] **A skills table imported before round 659 lands no status, anywhere.** Round 666 made the
+      boot WARN (`skills store has NO status params`), and the srrevamp-01 procedure
+      (deploy/README.md, "Deploying the monster-epic release to srrevamp-01") re-imports it; the
+      server still boots and runs without statuses on such a table, by design (never an exit).
 
 ### Other bodies' facing (round 637 and its review follow-up) — **built: every body, this player's too, turns to face where it goes at 3 pi rad/s, and an arrival faces the way it last walked; these are left**
 

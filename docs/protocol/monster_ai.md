@@ -3522,6 +3522,20 @@ and its leg and resumes when a player returns. A monster in BATTLE or HOMING nev
 (round 656's review): a chase or a run home is finished wherever it goes. With it off (the zero config: every test before
 this round), every monster runs every tick.
 
+*Round 666: the sleeping brain is dropped.* Until then a sleeping monster's whole brain stayed in
+the runtime's map and every pass walked it, so a player who crossed the full map left one brain
+per monster passed (66,000 measured by the release review, 13.2 ms a pass). Now a brain that falls
+asleep is dropped and what it must keep is filed (`brainMemory`, `monsterai.go`): the state it
+slept in (IDLE or WANDER -- BATTLE, HOMING and a monster its status holds are insistent and never
+sleep), that state's entry time and dwell, the heading, the action machine's cooldown, tactics
+timers 1 and 6, the aggression roll and a unique's damage total and triggers. The wake rebuilds
+the brain from the monster (home, tactics, radii and detection are arithmetic over
+`combat.Monster`) and resumes the machine in the filed state without an OnEnter
+(`ai.Machine.Resume`, OURS), drawing nothing from the rng; a blow on a filed monster (a DoT
+tick whose caster walked away) wakes it first (`wakeStruck`), so it engages as before. The strike worker is closed at the
+sleep, and since the same round also when the monster leaves BATTLE; the next swing starts a new
+one. Every rule here stays OURS.
+
 **The respawn scheduler.** One goroutine checks every placement once a second, where there was
 a goroutine and a ticker per placement (`maintainMonster`). The timing is the old loop's: the first
 check after a death notes it, and the first check at least `respawnDelay` (10 s, disclosed OURS)

@@ -23,8 +23,10 @@ package nest
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -147,7 +149,7 @@ type DB struct {
 // boot, the -npcpos-csv rule.
 func LoadDir(dir string) (*DB, error) {
 	open := func(name string) (*os.File, error) {
-		return os.Open(filepath.Join(dir, name))
+		return openDBFile(dir, name)
 	}
 	f, err := open(TacticsFile)
 	if err != nil {
@@ -181,6 +183,26 @@ func LoadDir(dir string) (*DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+// openFile is os.Open, a variable so a test can refuse a file the way a
+// nonroot server is refused one (the tests run as root, which is never
+// refused).
+var openFile = os.Open
+
+// openDBFile opens one of the directory's CSVs. A file the server may not
+// read gets an error that says what to do (round 666): the release image runs
+// as distroless nonroot (server/Dockerfile), and a CSV copied under `umask
+// 077` keeps mode 0600 through scp, so the container cannot read it and the
+// boot crash-loops on a bare "permission denied".
+func openDBFile(dir, name string) (*os.File, error) {
+	path := filepath.Join(dir, name)
+	f, err := openFile(path)
+	if errors.Is(err, fs.ErrPermission) {
+		return nil, fmt.Errorf("%s: permission denied: chmod 644 the nest DB's CSVs and chmod 755 their directory "+
+			"(the server runs as a nonroot user; deploy/README.md, \"The three files -nest-db-dir reads\"): %w", path, err)
+	}
+	return f, err
 }
 
 // NewDB indexes the three tables.

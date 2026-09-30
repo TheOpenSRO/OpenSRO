@@ -335,13 +335,16 @@ func (s *statusRuntime) monsterState(id int64) (move, act bool, speed int) {
 // addHeld adds to insistent every monster with a brain whose states stop it
 // from moving or acting: under -monster-sleep (round 656) such a monster is
 // kept awake, as one in BATTLE or HOMING is, so its stop and its release are
-// the tick's and not frozen part-way. The monster AI calls it under its lock.
-func (s *statusRuntime) addHeld(insistent map[int64]struct{}, brains map[int64]*brain) {
+// the tick's and not frozen part-way. hasBrain answers for a brain awake or
+// filed asleep (round 666: a sleeping monster's brain is dropped and its
+// memory filed, and a hold still wakes it). The monster AI calls it under its
+// lock.
+func (s *statusRuntime) addHeld(insistent map[int64]struct{}, hasBrain func(id int64) bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	nowMs := s.ms(time.Now())
 	for id, h := range s.mobs {
-		if _, ok := brains[id]; ok && (!h.CanMove() || !h.CanActAt(nowMs)) {
+		if hasBrain(id) && (!h.CanMove() || !h.CanActAt(nowMs)) {
 			insistent[id] = struct{}{}
 		}
 	}
@@ -595,6 +598,12 @@ func (s *statusRuntime) dealMonsterTick(ctx context.Context, d combatDeps, mt mo
 	if !mt.tick.SourceIsMonster && mt.tick.Credited(true) {
 		killer = mt.tick.SourceID
 	}
+	// The kill's word to the nests (round 660, nestkill.go), as a killing
+	// blow's (performAttack): the killer's party near the monster may arm its
+	// nest for a party monster. The killer is the applier the tick is booked
+	// to (statuseffect.SourceRule, READ), 0 when it names nobody -- which
+	// counts no party. Round 666: until then a DoT kill never armed a nest.
+	noteMonsterKilled(d.hub, d.parties, killer, updated)
 	s.forgetMonster(mt.id)
 	return s.settleKill(ctx, d, statusKill{monster: m, killer: killer, damage: dmg, updated: updated, hits: hits}, watchers)
 }

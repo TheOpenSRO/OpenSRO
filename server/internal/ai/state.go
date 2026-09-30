@@ -250,6 +250,24 @@ func NewMachine(states [StateCount]Enterer) *Machine {
 // State returns the current state.
 func (m *Machine) State() State { return m.cur }
 
+// Resume puts a freshly built machine back into s WITHOUT running any
+// OnLeave or OnEnter: the state is being restored, not entered. OURS, not the
+// engine's: srrevamp's -monster-sleep drops the brain of a monster no player is
+// near and rebuilds it when one comes near (session/monsterai.go, round 666),
+// and the rebuilt brain must carry on in the state it slept in, with the
+// timers it slept with, rather than re-enter it and roll a new dwell. An
+// out-of-range s is refused (false) and the machine is left alone, and so is
+// SPAWN: no brain sleeps in it (it leaves SPAWN on its first pass), and a
+// machine resumed there would never leave -- nothing updates SPAWN (round
+// 666's review).
+func (m *Machine) Resume(s State) bool {
+	if !s.Valid() || s == StateSpawn {
+		return false
+	}
+	m.cur = s
+	return true
+}
+
 // ChangeState performs a transition exactly as the engine does:
 //
 //  1. Reject an out-of-range id. The engine asserts here; this returns an

@@ -170,6 +170,20 @@ func (m *MemStore) CountSkills(_ context.Context) (int, error) {
 	return len(m.skills), nil
 }
 
+// CountSkillsWithStatusParams returns how many skills carry status params
+// (Skill.StatusParams, round 659).
+func (m *MemStore) CountSkillsWithStatusParams(_ context.Context) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	n := 0
+	for _, sk := range m.skills {
+		if sk.StatusParams != "" {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // ImportMonsterDrops replaces the drop rows for every monster mentioned in
 // drops.
 func (m *MemStore) ImportMonsterDrops(_ context.Context, drops []MonsterDrop) error {

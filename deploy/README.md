@@ -64,8 +64,9 @@ for f in teleportdata.txt teleportlink.txt teleportbuilding.txt; do
   /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\\silkroad\\textdata\\$f" -out $f; done
 /tmp/export-refdata  -mode teleport -out teleport teleportdata.txt teleportlink.txt teleportbuilding.txt
                      # a DIRECTORY of three CSVs: 222 points, 292 links, 77 buildings; the server reads it with -teleport-dir
-rm -f itemdata_* skilldata_* characterdata.txt characterdata_* levelgold.txt textdata_object.txt npcpos.txt teleport*.txt
-                     # the extracted tables are game data; keep only the CSVs
+rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt characterdata_* leveldata.txt \
+      levelgold.txt textdata_object.txt npcpos.txt teleport*.txt
+                     # the extracted tables are game data; keep only the CSVs (and the teleport/ directory)
 
 # The exporter grows a strict-suffix column now and then (latest: skill columns 47-61, round 616 -- the buff
 # and self-cast columns; before them 45 CooldownGroup, round 504,
@@ -139,6 +140,18 @@ rm -f itemdata_* skilldata_* characterdata.txt characterdata_* levelgold.txt tex
 #   roster_missing=0 roster_changed=0` and `npcpos placements loaded ... roster_species_placed=11
 #   npcpos_species_in_monster_table=355`. A WARN naming `kept` means (a) or the levelgold/
 #   textdata_object inputs of (b) were skipped: those roster fields keep their hand-typed values.
+# ROUND 659 (status effects) -- THE MONSTER-EPIC RELEASE NEEDS THE SKILLS RE-EXPORTED AND
+# RE-IMPORTED, even on a server that did round 654's: the skills CSV is 91 columns, column 90
+# StatusParams (every status run of the Param block), stored as skills.status_params. A skills
+# table imported before round 659 loads with the column empty on every row and NO skill lands a
+# status -- no poison, bleeding, burn, stun or freeze, on players or monsters -- and nothing
+# fails. Re-run `export-refdata -mode skills` with the NEW binary (step 2), then the NEW
+# `import-refdata` (step 3), then restart. Check both:
+#   `SELECT count(*) FROM skills WHERE status_params <> '';` must answer MORE THAN 0, and
+#   `SELECT count(*) FROM skills WHERE ai_attack_chance > 0;` should answer about 26650 (round
+#   654's count on a retail archive).
+# Since round 666 the server also WARNs at every boot while no skill carries status params:
+# `skills store has NO status params (N skills, 0 with status_params) ... RE-EXPORT skills.csv`.
 
 # 3. On the server host (CSVs and import-refdata copied to ~/srrevamp-data; Postgres is pinned to
 #    127.0.0.1:5432 by docker-compose.override.yml):
@@ -213,10 +226,12 @@ ids 83-92, the model (or the Org row's, flagged) and the levelgold range at its 
 
 What it changes, and what it does not:
 
-- **Who spawns where does not change.** The roster in `cmd/server` (eleven species) is still
-  what spawns, where it spawned before; with `-npcpos-csv` those eleven take their real rows as
-  before. Measured on a retail export: 413 monsters spawn with the table and 413 without, the
-  same species, zones and levels.
+- **Without `-full-map`, who spawns where does not change.** The roster in `cmd/server` (eleven
+  species) is still what spawns, where it spawned before; with `-npcpos-csv` those eleven take
+  their real rows as before. Measured on a retail export: 413 monsters spawn with the table and
+  413 without, the same species, zones and levels. **With `-full-map`** (round 660) the table is
+  what every field nest hatches from, and the roster's placements are replaced -- see "The full
+  map (round 660)".
 - Each roster species takes its numbers from its row (level, rarity, HP, the combat columns,
   radius, speeds, gold, and the attack list through the skill store). On a retail export all
   eleven come back identical to the hand-typed values (`roster_changed=0`); a difference is
@@ -235,11 +250,16 @@ the server behaves exactly as before.
 ## Monster AI (off by default)
 
 The server can run the monster AI tick: monsters stand for 2-6 s, then 76 times in 100 walk a
-46-124-unit leg at their walk speed; more than 200 units from their spawn point they run back; a
-monster a player hits stops where it is and stays there while anyone in the zone keeps
-auto-attacking it, then idles. Everyone in the zone sees each move. A monster still strikes back
-only when struck. What is grounded and what is a stand-in is in `docs/protocol/monster_ai.md`,
-"srrevamp's runtime".
+46-124-unit leg at their walk speed, and run home once they stray past their roam radius. Which
+numbers a monster runs by depends on the flags: with `-full-map` and `-nest-db-dir` (round 660)
+each monster takes its DB nest's radius and its tactics row -- aggressive or passive, its sight,
+the 500-unit give-up, its roam rule (EXTERNAL); otherwise the OURS stand-ins (roam radius 200,
+give-up 400, and under `-monster-aggro` every monster aggressive at sight +100). On its own (`-monster-ai` alone) a struck monster stops and
+stands while anyone keeps auto-attacking it (the interim hold); `-monster-battle` (below) makes it
+chase and swing on its own, `-monster-aggro` makes it notice players, and a unique fights with its
+own skills and summons (round 661). The players whose area of interest holds a monster see each
+move (round 664: the 3 x 3 blocks of 320 units around each player). What is grounded and what is a
+stand-in is in `docs/protocol/monster_ai.md`, "srrevamp's runtime" and the rounds after it.
 
 It is behind the `-monster-ai` flag (env `SRREVAMP_MONSTER_AI`), and **the default is off**. Off,
 nothing moves and the wire is exactly what it was, so pushing to `dev` changes nothing until the
@@ -256,9 +276,11 @@ operator turns it on. After an update the boot log reads
    passed: Run 1 in round 538, and Run 2 in round 539. Re-run them after any change to the tick.
 
 Know what it does before turning it on. Legs can cross walls and objects: the server holds no
-collision world yet. A monster hit only by skills that do not hand off to the auto-attack is let go
-between casts and may wander off. A client that stops reading its socket stalls the tick, as it
-already stalls regen.
+collision world yet. Under the interim hold (`-monster-battle` off) a monster hit only by skills
+that do not hand off to the auto-attack is let go between casts and may wander off. A client that
+stops reading its socket no longer stalls the tick: since round 662 every player is written from
+its own queue, and a player whose queue passes 2 MB, or whose writes stay blocked past their
+budget, is closed without holding anyone else.
 
 **On.** Add the variable under the server's `environment:` in the untracked
 `docker-compose.override.yml`, then `docker compose up -d`:
@@ -706,8 +728,10 @@ original does. The kill line names the player who dealt the most damage in the g
 dealt the most. The message is `OpUniqueNotice 0x0110`, carrying the original's `0x300C` payload
 (`0x0C05` appeared / `0x0C06` killed). `docs/protocol/unique_notice.md` has the read.
 
-No unique is placed in the world yet, so today a notice follows only a GM's `/spawnunique <id|name>`
-and its death (`/damage <n>`, `/kill`, or players' blows).
+With `-full-map` and `-nest-db-dir` the seven field uniques are placed and rotate over their spots
+(round 661, "The full map (round 660)" below): each hatch and each kill is announced. Without
+them no unique is placed, and a notice follows only a GM's `/spawnunique <id|name>` and its death
+(`/damage <n>`, `/kill`, or players' blows).
 
 It is on by default, as the original is with its `CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG` key
 absent. The boot log reads `unique notices on: ...`. **Off:** add
@@ -770,7 +794,8 @@ bucket, so local chat, other players' moves and the ground-item lists go world-w
 zone-wide, and players need a client that carries rounds 569-571 (see "Single world frame").
 
 - **With `-nest-db-dir`** (env `SRREVAMP_NEST_DB_DIR`, the three CSVs of the section below, mounted
-  at `/data/nestdb`): a row whose spot's shard nest hatches the same species (4,068 rows) takes that
+  at `/data/nestdb`): a row whose spot's shard nest hatches the same species (`matched=4063` in this release's boot
+  log; round 660 counted 4,068 before round 661's changes) takes that
   nest's numbers -- its cap (up to 17 alive), its respawn window (1-3 s on most, 8-12 s on 459), its
   hatch spread, its champion chance (10 % on most) -- and its tactics: aggressive or passive,
   sight, the 500-unit give-up distance, the roam radius and rule. A row whose nest the shard gave
@@ -782,14 +807,20 @@ zone-wide, and players need a client that carries rounds 569-571 (see "Single wo
 - **Without it**: one monster per row, respawning 10 s after its death, all aggressive with the
   stand-in sight and leash, no champions. The boot log says so.
 
-Measured on the shard (the round's WORLD_ISSUES entry, its review follow-up): 10,109 nests, at
-most 65,982 monsters alive (34,663 with `-nest-swapped-stand-in`). The server carries it: AI tick
-p99 under 2 ms with a player in a matched field, 6.4 ms at the densest window (4,716 monsters),
-RSS 127-165 MB. **The client does not, yet**: where the swapped spots cluster -- the Europe starter
-field (108/77), the densest window (cell -116/8) -- a client draws 1,378-2,412 bodies and falls to
-7-10 fps (100-143 ms a frame), against 60 fps and about 200 bodies with `-nest-swapped-stand-in`.
-Matched fields (Jangan's) are unchanged. Until the client's monster drawing scales (round 655's
-budget was sized for ~500 in view), `-nest-swapped-stand-in` is the setting for a public server.
+Measured on the shard in round 660 (its WORLD_ISSUES entry and review follow-up): 10,109 nests,
+at most 65,982 monsters alive (34,663 with `-nest-swapped-stand-in`), AI tick p99 under 2 ms with
+a player in a matched field and 6.4 ms at the densest window, RSS 127-165 MB. This release's boot
+logs `placed=10104` and `matched=4063` (round 661 changed which rows are placed; the difference is
+not re-derived here).
+
+**The full population is what srrevamp-01 runs** (the user's decision, "DB numbers now", round
+660's review): `-nest-swapped-stand-in` is NOT set there. Round 660 measured the client at 7-10 fps
+where the swapped spots cluster (the Europe starter field 108/77, the densest window) with a
+round-655 client; round 664 then made a player be sent only the monsters of the 3 x 3 blocks of 320
+units around it (retail's message blocks, READ) and made the client draw a dense field at 60 fps
+(its WORLD_ISSUES entry has the numbers). `-nest-swapped-stand-in` stays as an optional OURS
+fallback -- one monster per swapped spot, about half the monsters -- for a host that cannot carry
+the full population; it is off by default and off on srrevamp-01.
 
 The flags srrevamp-01 needs for the monster world, in the override's `command:` (restate the whole
 list) or as environment variables:
@@ -800,7 +831,7 @@ list) or as environment variables:
 #         - "-skills-csv=/data/skills.csv"        # only with -in-memory; PostgreSQL holds the skills
 #         - "-nest-db-dir=/data/nestdb"           # EXTERNAL, the three shard CSVs (+ the two of round 661)
 #         - "-full-map=true"                      # turns -single-frame on itself
-#         # -nest-swapped-stand-in=true           # OURS fallback: one monster per swapped spot
+#         # -nest-swapped-stand-in=true           # OURS fallback, OFF on srrevamp-01: one monster per swapped spot
 #         - "-monster-ai=true"
 #         - "-monster-strike-push=true"
 #         - "-monster-spawn-push=true"
@@ -816,6 +847,108 @@ A client must be a release that carries round 656 (the paged list and the enter/
 a window this dense; one that also carries round 660 gets the party flag and draws champions,
 giants and elites at their retail scale. An older client is sent no party flag and draws every
 rank at its species' size. `SRREVAMP_AI_TICK_STATS=1` logs the AI tick's p50/p99 once a minute.
+
+## Deploying the monster-epic release to srrevamp-01 (round 666)
+
+The release that carries rounds 653-666 changes the reference data, adds the shard's nest files
+and turns the monster world on. The final release review ran steps 1-7; do them in this order.
+`<server-host>` is srrevamp-01 (`srrevamp@192.168.5.25`); the checkout there is `~/srrevamp`, and
+`~/srrevamp-data` is mounted into the server container as `/data`.
+
+0. **First, the host must be running this release's server.** Steps 6-7 pass `-full-map` and
+   `-nest-db-dir`; a server built before them (dev at ab66d9c has neither) exits with `flag
+   provided but not defined`, and Docker restarts it in a loop. srrevamp-01 follows `dev` by
+   itself: `deploy/update.sh` runs from the `srrevamp-update.timer` (enabled there, every 5 min,
+   `OnUnitActiveSec=5min`; checked 2026-09-30), fetches `origin/dev`, fast-forwards, rebuilds and
+   restarts the stack, and rolls back a build that does not come up. So once the release is merged
+   to `dev`, either wait for the timer or run it now, then check the host's commit:
+   ```
+   ssh srrevamp@<server-host> 'sudo systemctl start srrevamp-update.service; journalctl -u srrevamp-update -n 5 --no-pager'
+   ssh srrevamp@<server-host> 'cd ~/srrevamp && git log --oneline -1'
+   ```
+   The journal line `server at <commit> listening on 15779` and a `git log` at the release's
+   commit (or later) mean it is running. (By hand, the same thing: `cd ~/srrevamp && git pull &&
+   docker compose up -d --build`.) Until then, change nothing in the override: the old server
+   runs happily on the old one, and the new server boots on it too (without `-full-map` it places
+   the roster as before).
+1. **Build the tools** on the machine with the client's `Media.pk2`, with `CGO_ENABLED=0` (static
+   binaries, as step 1 of "Reference data" builds them):
+   ```
+   cd server && for t in pk2list export-refdata export-leveldata import-refdata; do
+     CGO_ENABLED=0 GOOS=linux go build -o /tmp/$t ./cmd/$t; done
+   ```
+2. **Export the reference data**: run step 2 of "Reference data" above in full, with these new
+   binaries. It writes `skills.csv`, `monsters.csv`, `npcpos.csv`, `items.csv`, `leveldata.csv`
+   and the `teleport/` directory, and its last `rm` deletes the extracted text tables (`ls *.txt`
+   then finds nothing). `skills.csv` has no header, and a StatusParams cell is quoted with commas
+   inside (`"bl:30000,100,1,200,0"`), so count its columns with a CSV reader, not `tr`:
+   ```
+   python3 -c 'import csv; print(sorted({len(r) for r in csv.reader(open("skills.csv"))}))'
+   ```
+   must print `[91]` (every row 91 columns, column 90 StatusParams).
+3. **Copy the three changed CSVs and the importer** to the host, and make them readable by the
+   container:
+   ```
+   scp skills.csv monsters.csv npcpos.csv /tmp/import-refdata srrevamp@<server-host>:~/srrevamp-data/
+   ssh srrevamp@<server-host> 'chmod 644 ~/srrevamp-data/*.csv'
+   ```
+4. **Copy exactly the five shard files** into `~/srrevamp-data/nestdb/` -- `Tab_RefTactics.csv`,
+   `tab_refnest.csv`, `tab_refhive.csv`, `Tab_RefAISkill.csv`, `_RefSkill.csv` (EXTERNAL; from the
+   render box's `/opt/sro-files/db/csv/`, or exported as in "The three files `-nest-db-dir`
+   reads" below) -- then, on the host:
+   ```
+   chmod 755 ~/srrevamp-data/nestdb; chmod 644 ~/srrevamp-data/nestdb/*.csv
+   ```
+   Without the chmod the nonroot container cannot read them and the server crash-loops (see that
+   section).
+5. **Re-import the skills** into Postgres on the host, then check them. The `psql` goes through
+   compose, so it runs from the checkout (after `ssh` the working directory is `~`, where compose
+   finds no file):
+   ```
+   ~/srrevamp-data/import-refdata -skills-csv ~/srrevamp-data/skills.csv \
+       -postgres-dsn 'postgres://postgres:postgres@127.0.0.1:5432/srrevamp?sslmode=disable'
+   cd ~/srrevamp && docker compose exec postgres psql -U postgres -d srrevamp \
+       -c "SELECT count(*) FROM skills WHERE status_params <> '';" \
+       -c "SELECT count(*) FROM skills WHERE ai_attack_chance > 0;"
+   ```
+   The first count must be **above 0** (0 means the import read an old CSV: no skill would land a
+   status); the second should be about **26650**.
+6. **Edit only the `command:` key of the override** (`~/srrevamp/docker-compose.override.yml`,
+   untracked). Leave its `environment:` and `volumes:` as they are: srrevamp-01's override sets
+   the GM accounts, `SRREVAMP_PERSIST_POSITION` and the six monster flags there (checked
+   2026-09-30), and a pasted `services:` block would drop them. `command` REPLACES the base list,
+   so it restates all of it; add the last three lines below to what is there. No
+   `-nest-swapped-stand-in`, no `-unique-respawn`:
+   ```
+       command:
+         - "-addr=:15779"
+         - "-postgres-dsn=postgres://postgres:postgres@postgres:5432/srrevamp?sslmode=disable"
+         - "-leveldata-csv=/data/leveldata.csv"
+         - "-npcpos-csv=/data/npcpos.csv"
+         - "-teleport-dir=/data/teleport"
+         - "-monsters-csv=/data/monsters.csv"
+         - "-nest-db-dir=/data/nestdb"
+         - "-full-map=true"
+   ```
+   The six monster flags -- `-monster-ai`, `-monster-strike-push`, `-monster-spawn-push`,
+   `-monster-battle`, `-player-dead-state`, `-monster-aggro` -- must be on too: as
+   `SRREVAMP_MONSTER_AI: "1"` and the rest under `environment:` (srrevamp-01's way), or as
+   `- "-monster-ai=true"` lines in `command:`. One of the two is enough.
+7. **Start it and read the boot log**, from the checkout:
+   `cd ~/srrevamp && docker compose up -d && docker compose logs server`.
+   Expect:
+   - `nest DB loaded (EXTERNAL ...) ... tactics=1743 nests=16381 hives=1170 ai_skill_tactics=132 skills=36144`
+   - `full map: npcpos joined to nests ... placed=10104 ...`
+   - seven `unique rotation` lines, one per field unique;
+   - seven `unique hatched` lines;
+   - and NO `skills store has NO status params` WARN (round 666; if it is there, step 5 imported
+     an old CSV).
+
+   A `loading the nest DB ... permission denied: chmod 644 ...` error means step 4's chmod was
+   missed; `flag provided but not defined: -full-map` means step 0 was skipped (put the override's
+   `command:` back and do step 0). **Players need this release's client**: an older one cannot
+   draw the paged list, the area-of-interest pushes or the unique banner (the sections above name
+   the round each needs).
 
 ## External shard DB: restore and export (user-supplied, EXTERNAL)
 
@@ -918,8 +1051,17 @@ PY
 # copy the five to the server host's ~/srrevamp-data/nestdb/ -- mounted as /data/nestdb:
 scp Tab_RefTactics.csv tab_refnest.csv tab_refhive.csv Tab_RefAISkill.csv _RefSkill.csv \
   srrevamp@<server-host>:~/srrevamp-data/nestdb/
+# Then, ON THE SERVER HOST, make them readable by the container:
+chmod 755 ~/srrevamp-data/nestdb; chmod 644 ~/srrevamp-data/nestdb/*.csv
 # The render box already holds all five, from round 658's full export: /opt/sro-files/db/csv/.
 ```
+
+**The chmod is not optional.** The server image runs as distroless `nonroot` (`server/Dockerfile`),
+not as the host user that owns `~/srrevamp-data`. The export above runs under `umask 077`, so its
+CSVs are mode 0600, and scp keeps that mode on a new file: the container cannot read them, the
+boot fails, and Docker restarts it in a loop. Since round 666 that boot error reads
+`loading the nest DB ... permission denied: chmod 644 the nest DB's CSVs and chmod 755 their
+directory ...` (before it, a bare `open ...: permission denied`).
 
 They are EXTERNAL data from a private shard's backup, like the rest of this section: never commit
 them. The loader reads the columns by name (43, 17 and 10 columns; `tab_refhive`'s last,
