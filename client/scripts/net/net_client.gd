@@ -426,8 +426,10 @@ func enter_world(char_name: String) -> void:
 	own_character_id = -1
 	_send(WorldNet.OP_ENTER_WORLD, WorldNet.encode_enter_world(char_name))
 
-func move_to(x: float, y: float, z: float, relocated: bool = false) -> void:
-	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z, relocated))
+## `heading_wire` (round 653) is a heading run's u16 wire angle
+## (SkyRun.wire_angle), or -1 for a position with no run in effect.
+func move_to(x: float, y: float, z: float, relocated: bool = false, heading_wire: int = -1) -> void:
+	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z, relocated, heading_wire))
 
 ## Asks to sit down or stand up (WorldNet.OP_MOTION_REQUEST [4], the N key).
 func request_motion(value: int) -> void:
