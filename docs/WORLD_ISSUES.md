@@ -7126,10 +7126,14 @@ a player arriving while someone was berserk was never told.
   light x colour in place of the mesh material's diffuse (`0xbf0ff1`). The end clears it
   (`FUN_00c258b0`).
 - **The growth**: SCT_CHAR_SCALE (0x1000) -> scale target 1.1 over 1.0 s; the end
-  (`IDecoSkill::FUN_00a4db00`) returns to the saved scale over the same 1.0 s.
+  (`IDecoSkill::FUN_00a4db00`) returns to the saved scale over the same 1.0 s. Linear, READ
+  (review): each frame `FUN_009d1d60` runs `FUN_009c7bc0` on the `+0x72c` record (t += rate x dt,
+  clamped at 1; base + t x delta) and hands it to the render object's scale.
 - **The own flash**: for the own id, `0x8a827b` fades the weather manager's colour to
   (255, 255, 255, 128) in 0.2 s, then (vslot_009) back to alpha 0 in 0.5 s; vslot_010 draws it
-  as a screen quad, TEXTUREFACTOR = the colour, SRCBLEND SRCALPHA, DESTBLEND SRCCOLOR.
+  as a screen quad, TEXTUREFACTOR = the colour, SRCBLEND SRCALPHA, DESTBLEND SRCCOLOR. The fade
+  starts from the manager's current colour (alpha 0 after any finished fade); the constructor's
+  first RGB (`_DAT_00de523c`) was not read, so the starting RGB is OPEN -- srrevamp draws white.
 - **Arriving while someone is berserk**: the spawn state block carries the body mode (client
   `0x9d1300` -> `+0x470`; server `GObjPC::FUN_004a9b70` writes chardata[3]), applied by
   `FUN_009d17e0` with `FUN_009cf880(mode, 1, 0)` -- arg 1 skips the start effect.
@@ -7140,6 +7144,13 @@ a player arriving while someone was berserk was never told.
   in `performAttack`, basic attacks and skills). `TestRound651DamageDoublesOnlyWhileBerserk` pins
   40 -> 80 while berserk and 40 again after the end.
 - **Duration 60 s** + param 195, already right.
+- **Death does not end it** (READ, review): `GObjPC_OnDeath` (`0x4e6980`) and `SetLifeState`
+  (`0x4a9c80`) call no SetBodyMode; only `GObjPC::Revive` does (body mode 2) -- as srrevamp does.
+- **A teleport ends it** (INFERRED, unchanged): `GObjPC::HandleTeleportUse` (`0x513590`) calls no
+  SetBodyMode; the world-entry setter `CGObjPC::vslot_391` (body mode 2 or 4) replaces mode 1, and
+  the teleport reaches it through the re-entry chain (char-data save -> `CharDataSavingCompleted`
+  -> 0x34b5 -> the client's 0x34b6 -> the entry rebuilt), whose first link from the teleport
+  handler is still not traced. So the server keeps sending the mover 0 on a zone change's arrival.
 - **Speed: OPEN.** `CGObjChar::SetBodyMode` (`0x4a9fc0`) entering mode 1 on a PC applies the
   `_RefHWANLevel` row of the byte `+0x1c58` (`FUN_004ac7d0`): `'SPDU'` v -> `SetParam(23/24,
   slot 3, v)` (the percent scale slot; the end, `FUN_004ab060`, writes 100.0 back), `'DABR'` v ->
@@ -7167,6 +7178,10 @@ a player arriving while someone was berserk was never told.
   - `NetClient.body_modes` (`WorldNet.note_body_mode`), cleared/dropped with the buff roster, so a
     body built later -- an arrival list, a relog, a rebuilt body -- takes the look without the burst.
   - QA: `SRREVAMP_QA_BERSERK_PROBE=1` prints each drawn player's chest on screen and its tint.
+  - Review follow-up: the mover's own 0 on a zone change's arrival (`_arrival_pending`) drops its
+    look silently (`BerserkLook.end(host, true)` -> `drop`): no DEACT burst, no `hwanreturn.wav`,
+    colour and size back at once -- the original meets that arrival with a rebuilt object
+    (INFERRED, above). Every other end (the timer, a revive, another player's) plays DEACT.
 
 ### Verified live (MEASURED, real X input, two clients, runs r2 and r3)
 
@@ -7229,17 +7244,30 @@ at e5bf2ba, the file copied in):
 
 (the other three pass on the base: the end, the mover's own end and the x2 were already right.)
 
-Client: `client/scripts/effects/berserk_look_test.gd` -- the rows and scripts from a synthetic
+Client: `client/scripts/net/body_mode_book_test.gd` (review) drives NetClient's own `_dispatch`
+with synthetic packets: a remote kind-4 1 is kept for a body built later, a motion change leaves
+it, a 0 clears only that character, OpEntityLeft drops it. Against e5bf2ba (NetClient there):
+
+    FAIL a remote berserk (kind 4 value 1) is kept for a body built later (book <null>)
+    ok  and still reaches state_changed
+    FAIL a motion change leaves it
+    FAIL its end (value 0) clears only that character (book <null>)
+    FAIL who leaves takes their body mode along (book <null>)
+    4 FAILED
+
+`client/scripts/effects/berserk_look_test.gd` -- the rows and scripts from a synthetic
 skilleffect.txt (only skilleffectset's SYSTEM_CH_HWANMODE rows), the pulse (colour 1, 2, 1 at 0,
 1, 2 x ms; the midpoints), the flash curve, the own start (burst + kept effects + sound, every
 piece tinted, alpha kept, another body untouched, x1.05 at 0.5 s, x1.1 at 1 s), another body
 drawn berserk (kept rows only, no sound), a piece put on mid-berserk, the end (materials back at
-once, the end's burst and sound, the size back over 1 s, the look forgotten), a freed body, and
-WorldNet.note_body_mode. Against the base:
+once, the end's burst and sound, the size back over 1 s, the look forgotten), the arrival's silent
+drop (no burst, no sound, colour and size back at once) beside an ordinary end that still plays
+them, a freed body, and WorldNet.note_body_mode. Against the base:
 
     FAIL berserk_look.gd loads
 
-`remote_godot.sh check`: ALL LOAD (420 scripts). `remote_godot.sh tests`: 168 suites, 0 failing.
+`remote_godot.sh check`: ALL LOAD. `remote_godot.sh tests`: 169 suites, 0 failing (after the
+review follow-up; 168 before it).
 `go build ./... && go test -count=1 -p 1 ./...`: all pass.
 
 ### Open

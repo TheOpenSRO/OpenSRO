@@ -108,8 +108,10 @@ Data.pk2 (`Prim\Snd\Player\`).
 `SCT_CHAR_SCALE` (flag 0x1000): the apply saves the current scale
 (`+0xc8`), sets the target `+0x734` = 1.1 and the time `+0x744` = 1.0 s; the
 end (`IDecoSkill::FUN_00a4db00`) targets the saved scale over the same time.
-The fade itself is a base + delta x t record (`+0x72c..+0x748`), INFERRED
-linear like CGWeatherManager's fader, which is READ.
+The fade is linear, READ (round 651's review): each frame `FUN_009d1d60`
+runs `FUN_009c7bc0` on the `+0x72c` record (t += rate x dt, clamped at 1;
+value = base + t x delta) and hands `+0x72c` to the render object's scale
+(vtable `+0x24`).
 
 ## The flash (READ, own player only)
 
@@ -121,7 +123,12 @@ colour (255.0, 255.0, 255.0, 128.0) (`0xd85284`, `0xd821dc`), fade time 0.2 s
 back to alpha 0, over `+0xc4` when set. While a fade runs, `vslot_010` draws
 a screen quad (`FUN_00a43270`: D3DRS_TEXTUREFACTOR = the colour, SRCBLEND
 SRCALPHA, DESTBLEND SRCCOLOR, DrawPrimitiveUP triangle fan) -- the screen
-gets white x alpha added, up to 128/255 in 0.2 s and back in 0.5 s.
+gets white x alpha added, up to 128/255 in 0.2 s and back in 0.5 s. The fade
+starts from the manager's current colour (`FUN_00a42280` copies it as the
+base). Every finished fade with a non-zero alpha goes back to alpha 0, so the
+alpha starts at 0; the starting RGB is whatever the last fade left, and the
+constructor's first colour (`_DAT_00de523c`) was not read, so it is OPEN.
+srrevamp draws white throughout.
 
 ## The mechanics (READ, server)
 
@@ -129,6 +136,19 @@ gets white x alpha added, up to 128/255 in 0.2 s and back in 0.5 s.
   2026-09-15; `Formula_MitigatePhysicalDamage` `GetParam(189) + 2.0`). Applied
   by `performAttack` to basic attacks and skills.
 - Duration: 60 s plus param 195 (`berserk.Duration`).
+- **Death does not end it (READ, round 651's review):** `GObjPC_OnDeath`
+  (`0x4e6980`) and `SetLifeState` (`0x4a9c80`) call no SetBodyMode; the end
+  comes with the revive (`GObjPC::Revive`, body mode 2), as srrevamp does.
+- **A teleport ends it (INFERRED):** no SetBodyMode caller sits in
+  `GObjPC::HandleTeleportUse` (`0x513590`); the world-entry setter
+  `CGObjPC::vslot_391` (`0x4df9e0`, body mode 2 or 4) is the one that
+  replaces mode 1, and a teleport reaching it is the re-entry chain
+  character-data save -> `CMainProcess::CharDataSavingCompleted` -> 0x34b5 ->
+  the client's 0x34b6 (`FUN_0086e100`) -> the entry handed off and rebuilt,
+  whose link from the teleport handler is still not traced. srrevamp ends a
+  running berserk on a zone change (`endBerserk`) and the mover's client drops
+  its own look silently on that arrival -- no DEACT burst or sound, since the
+  original meets it with a rebuilt object (`BerserkLook.end(host, true)`).
 - **Speed: OPEN (the magnitude).** `CGObjChar::SetBodyMode` (`0x4a9fc0`),
   entering mode 1 on a PC, looks up the `_RefHWANLevel` row of the byte at
   `+0x1c58` (`GObjPC::FUN_004ac7d0`) and applies each `{tag, value}` entry

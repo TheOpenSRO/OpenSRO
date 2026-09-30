@@ -16995,7 +16995,12 @@ func _berserk_apply(object_id: int, value: int, instant: bool) -> void:
 		if mine and not instant:
 			_berserk_flash_t = 0.0
 	else:
-		BerserkLook.stop(body)
+		# The server ends a running berserk with a zone change (endBerserk)
+		# and tells the mover so on arrival. The original client meets that
+		# arrival with a rebuilt object (a teleport is a re-entry, INFERRED),
+		# so no end burst or hwanreturn.wav plays on it (round 651's review):
+		# the mover's own look goes silently (BerserkLook.end).
+		BerserkLook.end(body, mine and _arrival_pending)
 	if mine:
 		_audio_set_hwan(value == 1)
 	elif _other_gaits.has(object_id):

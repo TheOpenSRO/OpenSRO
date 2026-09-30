@@ -59,9 +59,10 @@ extends RefCounted
 ## THE SIZE (READ). `SCT_CHAR_SCALE,s,ms` is flag 0x1000: the apply sets the
 ## character's scale target to s, reached over ms x 0.001 s (FUN_00a513a0,
 ## +0x734/+0x744); the end (IDecoSkill::FUN_00a4db00) sends it back to the
-## scale it saved (+0xc8) over the same time. The in-between is the
-## renderer's own linear fade of the +0x72c..+0x748 record (INFERRED linear,
-## the same base + delta x t record CGWeatherManager's fader is, READ).
+## scale it saved (+0xc8) over the same time. The in-between is linear, READ
+## (round 651's review): each frame FUN_009d1d60 runs FUN_009c7bc0 on the
+## +0x72c record -- t += rate x dt, clamped at 1, value = base + t x delta --
+## and hands +0x72c to the render object's scale (vtable +0x24).
 ##
 ## THE FLASH (READ, own player only): the handler, for the player's own id and
 ## a non-zero mode, starts the weather manager's colour fade (0x8a827b) to
@@ -342,6 +343,29 @@ static func stop(host: Node3D) -> bool:
 		_play(SkillAudio.DEACT, host, bool(look["own"]), true)
 	print("BERSERK look off %s" % host.name)
 	_update(look)
+	return true
+
+## A body mode other than 1 for `host`: the ordinary end (stop), or, when
+## `rebuilt` -- this player's own body on a zone change's arrival -- the
+## silent drop. Returns whether a look was ended.
+static func end(host: Node3D, rebuilt: bool) -> bool:
+	return drop(host) if rebuilt else stop(host)
+
+## `host`'s look goes at once and silently: no DEACT effect or sound, the
+## colour and the size back to its own this frame. For a body the original
+## client rebuilds rather than ends -- this player's own on a zone change's
+## arrival (World3D._berserk_apply): a teleport is a re-entry (INFERRED,
+## docs/protocol/berserk_look.md), whose new object is spawned with its body
+## mode instead of playing the old one's end. Returns whether a look was held.
+static func drop(host: Node3D) -> bool:
+	if host == null or not is_instance_valid(host):
+		return false
+	var key := host.get_instance_id()
+	if not _looks.has(key):
+		return false
+	_restore(_looks[key])
+	_looks.erase(key)
+	print("BERSERK look dropped from %s (no end effect)" % host.name)
 	return true
 
 ## Whether `host` wears the look (and is not on its way out of it).

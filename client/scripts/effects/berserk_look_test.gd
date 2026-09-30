@@ -203,6 +203,28 @@ func _body_checks() -> void:
 	bl.tick(1.1)
 	_check(_near(_albedo(_mesh(other, "suit")), Color(0.59, 0.59, 0.59)) and bl.count() == 0, "the other body is itself again")
 
+	# This player's own berserk ended by a zone change's arrival: the look
+	# goes at once, with no end burst or sound (the rebuilt object).
+	var mover := _body("mover")
+	var mskel := mover.get_child(0) as Skeleton3D
+	var msuit := _mesh(mover, "suit")
+	var mplain := msuit.material_override
+	bl.start(mover, false, true)
+	bl.tick(1.0)
+	made.clear()
+	heard.clear()
+	_check(bl.end(mover, true), "the arrival's end is taken")
+	_check(made.is_empty() and heard.is_empty(), "no end burst or sound on the arrival (%s, %s)" % [made, heard])
+	_check(msuit.material_override == mplain and mskel.scale.is_equal_approx(Vector3(2, 2, 2))
+		and not bl.active(mover) and bl.count() == 0, "colour and size are the body's own at once, the look forgotten")
+	bl.start(mover, true, true)
+	made.clear()
+	heard.clear()
+	_check(bl.end(mover, false) and made == ["fx\\gone.efp"] and heard == ["prim\\snd\\p\\off.wav"],
+		"an ordinary end still plays its burst and sound (%s, %s)" % [made, heard])
+	bl.tick(1.1)
+	mover.free()
+
 	# A body freed while berserk is dropped.
 	var gone := _body("gone")
 	bl.start(gone, true, false)

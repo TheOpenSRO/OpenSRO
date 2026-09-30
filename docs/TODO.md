@@ -1515,6 +1515,11 @@ it from NetClient's `body_modes`. Left:
 - **skillaniset2's SYSTEM_CH_HWANMODE row**: DamageEfp `hiteffect\hit_4_hwan.efp` and the weapon trail
   (160, 200/255/255/255, ONE, `mirage_texture_hwan.ddj`) while berserk -- where the client swaps
   them in is not traced; srrevamp draws neither.
+- **The teleport's first link.** That a zone change ends berserk rests on the re-entry chain
+  (CharDataSavingCompleted -> 0x34b5 -> 0x34b6 -> the entry rebuilt, whose world entry sets body
+  mode 2/4); the step from `GObjPC::HandleTeleportUse` (0x513590) to the char-data save is not traced.
+- **The flash's starting RGB**: the weather manager's constructor colour (`_DAT_00de523c`) is not
+  read; srrevamp flashes white.
 - **The look's light terms.** Retail replaces the material's diffuse and scales the ambient light
   by the pulse colour (c11/c10/c14); srrevamp's one albedo stands for both (INFERRED mapping).
 
