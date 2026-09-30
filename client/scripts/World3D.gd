@@ -9491,7 +9491,14 @@ func _move_on_nav_graph(delta: float) -> bool:
 		if trace:
 			print("NAV %4d: footing settled on %s at local %.1f, %.1f (y %.1f)" % [
 				_qa_tick, _nav_footing_name(graph, _nav_footing), local.x, local.z, local.y])
-	var step := graph.step_tracked(local, Vector2(target.x - local.x, target.z - local.z), _nav_footing)
+	var asked := Vector2(target.x - local.x, target.z - local.z)
+	var step := graph.step_tracked(local, asked, _nav_footing)
+	# Round 649: a click walk the graph stops dead ends here, as retail's does
+	# (ClickWalk.blocked_ends; READ, FUN_009e0e60) -- not held with the run
+	# playing on the spot.
+	if step.blocked and _has_move_target and _pending_attack.is_empty() and _pending_friend_cast.is_empty() \
+			and ClickWalk.blocked_ends(Vector2(step.position.x - local.x, step.position.z - local.z).length(), asked.length()):
+		_end_blocked_click_walk(graph, step)
 	if trace and OS.get_environment("SRREVAMP_QA_NAVTRACE") == "2":
 		print("NAV %4d: %.2f, %.2f -> %.2f, %.2f (y %.2f) on %s" % [
 			_qa_tick, local.x, local.z, step.position.x, step.position.z, step.position.y,
@@ -9536,6 +9543,29 @@ func _step_click_walk(delta: float) -> bool:
 	# follow-up), not snapped: _aim_local_player, _step_local_turn.
 	_aim_local_player(Vector3(to_target.x, 0.0, to_target.y).normalized())
 	return false
+
+## Ends a click walk the navigation graph refused to advance (round 649; see
+## ClickWalk.blocked_ends): the order cleared and the body stopped where the
+## graph left it, as an arrival does, and a walk to a ground item asks for it
+## from here (the server judges the 10 units). An attack or friendly cast
+## walking into reach is not ended here: retail's attack tick re-issues its
+## approach on every pass while out of reach (docs/protocol/auto_command.md,
+## phase 1, READ), and _step_pending_attack does the same.
+func _end_blocked_click_walk(graph: NavGraph, step: NavGraph.StepResult) -> void:
+	_has_move_target = false
+	player.velocity.x = 0.0
+	player.velocity.z = 0.0
+	if _qa_move_log or _qa_walk != "" or OS.get_environment("SRREVAMP_QA_NAVTRACE") != "":
+		print("NAV: the walk is blocked at local %.2f, %.2f (on %s) -- ended, as retail's mover ends a refused step" % [
+			step.position.x, step.position.z, _nav_footing_name(graph, step.standing_on)])
+	_ask_pickup_after_walk()
+
+## A walk up to a ground item we were too far from is over: ask again from
+## where it ended; the server is the judge of the 10 units.
+func _ask_pickup_after_walk() -> void:
+	if _pending_pickup_id != -1 and not _pickup_inflight and NetClient.is_connected_to_server():
+		_pickup_inflight = true
+		NetClient.pick_up(NetClient.current_character_name, _pending_pickup_id)
 
 ## What the walk believes the player stands on: NavGraph.ON_TERRAIN or a real
 ## object index into the current graph's region. See _move_on_nav_graph.
@@ -12521,11 +12551,7 @@ func _physics_step(delta: float) -> void:
 			player.velocity.x = 0.0
 			player.velocity.z = 0.0
 		elif _step_click_walk(delta):
-			# Walked up to a ground item we were too far from: ask again now
-			# that we stand on it; the server is the judge of the 10 units.
-			if _pending_pickup_id != -1 and not _pickup_inflight and NetClient.is_connected_to_server():
-				_pickup_inflight = true
-				NetClient.pick_up(NetClient.current_character_name, _pending_pickup_id)
+			_ask_pickup_after_walk()
 			# Arrived at the stop distance with the attack still pending. The
 			# stop is never beyond the reach, so the test above fires first;
 			# this only keeps an attack from being stranded, and the server

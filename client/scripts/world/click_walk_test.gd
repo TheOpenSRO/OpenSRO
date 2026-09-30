@@ -17,7 +17,15 @@ extends SceneTree
 ##
 ## NEGATIVE: against dev e5bf2ba ClickWalk and World3D._step_click_walk do not
 ## exist; every new name is looked up before it is called, so the base reports
-## FAIL lines rather than a script error.
+## FAIL lines rather than a script error. Those two lines only say the names
+## are missing; the behavioural evidence is `_old_rule`'s replay (it passes on
+## both) and the live base trace (docs/WORLD_ISSUES.md, round 649).
+##
+## Round 649's follow-up: a click walk into a synthetic blocking edge ends
+## there, as retail's mover ends a refused step (ClickWalk.blocked_ends). This
+## part drives World3D._move_on_nav_graph itself, which the base has, with the
+## base's own full-speed velocity, so the base fails it by BEHAVIOUR: its walk
+## holds its order against the edge.
 
 const TICK := 1.0 / 60.0
 const STOP := 0.3 * (14.34 / 1.8) # World3D.MOVE_TARGET_STOP_DISTANCE
@@ -78,6 +86,7 @@ func _initialize() -> void:
 	_check(world_ok, "World3D compiles")
 	if world_ok:
 		_test_world(world_script)
+		await _test_blocked_edge(world_script)
 	if _failures == 0:
 		print("ALL PASS")
 	else:
@@ -155,4 +164,85 @@ func _test_world(world_script: GDScript) -> void:
 			"World3D at %.0f u/s to a point %.2f away: lands on it and stops (%d ticks, %.4f left, %d reversals)" % [
 				speed, dest.length(), ticks, left, _reversals(xs)])
 	player.free()
+	world.free()
+
+## A flat synthetic region, every tile on cell 0, with one blocking edge at
+## local x = 100 from z 0 to 200 (the fixture of nav_graph_test.gd).
+func _walled_graph() -> NavGraph:
+	var r := NvmReader.ParsedRegion.new()
+	r.heights.resize(NvmReader.HEIGHT_COUNT)
+	r.heights.fill(0.0)
+	var cell := NvmReader.Cell.new()
+	cell.rect_min = Vector2.ZERO
+	cell.rect_max = Vector2(1920.0, 1920.0)
+	r.cells.append(cell)
+	for _i in range(NvmReader.TILE_COUNT):
+		var t := NvmReader.Tile.new()
+		t.cell_index = 0
+		r.tiles.append(t)
+	var e := NvmReader.Edge.new()
+	e.flags = 2
+	e.line_min = Vector2(100.0, 0.0)
+	e.line_max = Vector2(100.0, 200.0)
+	r.internal_edges = [e]
+	return NavGraph.build(r, [] as Array[NavGraph.PlacedObject])
+
+## Walks the player from `from` toward `dest` for up to `ticks` ticks through
+## World3D._move_on_nav_graph, with the velocity the base's walk sets (full
+## speed toward the point while the order is in effect). Returns
+## [ticks walked with the order in effect, final position].
+func _walk_into(world: Node, player: CharacterBody3D, from: Vector3, dest: Vector3, speed: float, ticks: int) -> Array:
+	player.global_position = from
+	world.set("_nav_footing_pos", Vector3.INF)
+	world.set("_move_target", dest)
+	world.set("_has_move_target", true)
+	var held := 0
+	for i in range(ticks):
+		if not bool(world.get("_has_move_target")):
+			break
+		var d := Vector3(dest.x - player.global_position.x, 0.0, dest.z - player.global_position.z)
+		if d.length() <= STOP:
+			world.set("_has_move_target", false)
+			break
+		var v := d.normalized() * speed
+		player.velocity = Vector3(v.x, 0.0, v.z)
+		world.call("_move_on_nav_graph", TICK)
+		held += 1
+	return [held, player.global_position]
+
+func _test_blocked_edge(world_script: GDScript) -> void:
+	var world: Node = world_script.new()
+	var player := CharacterBody3D.new()
+	var group := Node3D.new()
+	get_root().add_child(player)
+	get_root().add_child(group)
+	# The nodes are in the tree (global transforms) from the next frame.
+	await process_frame
+	world.set("player", player)
+	var grid = world.get("_grid")
+	grid.call("add_nav_graph", 0, 0, _walled_graph(), group)
+	for speed in [50.0, 200.0, 500.0]:
+		# Straight at the edge, the point 10 beyond it: the walk must end at
+		# the edge, not hold its order there.
+		var r := _walk_into(world, player, Vector3(90.0, 0.0, 100.0), Vector3(110.0, 0.0, 100.0), speed, 240)
+		var pos: Vector3 = r[1]
+		_check(not bool(world.get("_has_move_target")) and pos.x < 100.0 and int(r[0]) < 240,
+			"a walk at %.0f u/s straight into a blocking edge ends there (%d ticks, x %.3f, order %s)" % [
+				speed, int(r[0]), pos.x, str(world.get("_has_move_target"))])
+	# Oblique: the walk slides along the edge while that gets it anywhere,
+	# and ends only where it stops dead, level with its point.
+	var s := _walk_into(world, player, Vector3(90.0, 0.0, 100.0), Vector3(110.0, 0.0, 150.0), 50.0, 600)
+	var sp: Vector3 = s[1]
+	_check(not bool(world.get("_has_move_target")) and sp.x < 100.0 and sp.z > 145.0,
+		"an oblique walk slides along the edge and ends level with its point, not at first contact (x %.3f, z %.3f, %d ticks)" % [sp.x, sp.z, int(s[0])])
+	# An attack walking into reach is not ended here: retail's attack tick
+	# re-issues its approach while out of reach (auto_command.md, phase 1).
+	world.set("_pending_attack", {"monster": 1})
+	var a := _walk_into(world, player, Vector3(90.0, 0.0, 100.0), Vector3(110.0, 0.0, 100.0), 200.0, 60)
+	_check(bool(world.get("_has_move_target")) and int(a[0]) == 60,
+		"an attack's approach walk is left to the attack tick (%d ticks, order %s)" % [int(a[0]), str(world.get("_has_move_target"))])
+	world.set("_pending_attack", {})
+	world.set("_has_move_target", false)
+	player.queue_free()
+	group.queue_free()
 	world.free()

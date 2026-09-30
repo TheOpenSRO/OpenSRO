@@ -1039,14 +1039,18 @@ READ and measured in `docs/WORLD_ISSUES.md`'s 637th round; the rule is `RemoteFa
 Measured in `docs/WORLD_ISSUES.md`'s 649th round (`SRREVAMP_QA_MOVE_LOG=1`, a trace every tick).
 The rule is `ClickWalk.step`, READ from the mover tick `FUN_009e0e60` (`docs/protocol/opcodes/movement.md`).
 
-- [ ] **A walk into something solid holds its order and runs in place.** The base run measured
-      631 to 1,195 ticks per 12 clicks, at every speed, of the body standing still with the order
-      in effect. The clicks were ahead of the Jangan spawn, and the walks stopped against the
-      dragon pedestal's edge. Retail's tick ends the movement when its collision query refuses the
-      step (bit `0x10000000`, READ). Ours has `NavGraph.step_tracked` return `blocked` and keeps
-      walking. Next: end the walk (the order and the run animation) on a blocked step, and check
-      that a slide along a wall is not counted as blocked. Needs its own measurement: a slide
-      that ends the walk early would be a new bug.
+- [x] ~~A walk into something solid holds its order and runs in place~~ -- **done in round 649's
+      follow-up**. A click walk the graph blocks dead now ends, as retail's mover ends a refused
+      step (READ: bit `0x10000000` in `FUN_009e0e60`). The live run measured 0 held episodes;
+      the base had 26.
+  - [ ] **What "dead" means is OURS**: at most 1 % of the step's asked length. Whether retail's
+        collision query slides along a wall, as ours does, was not read.
+  - [ ] **An attack's approach against a wall still holds** (and so does a friendly cast's). It
+        re-aims on every tick, as retail's attack tick re-issues its approach while out of reach
+        (phase 1, READ). What a retail body shows then (running or standing) was not read. The
+        server-side mover would say: `CGObjMoverByDest` in SR_GameServer.exe.
+  - [ ] **The physics fallback walk is unchanged.** That is the walk in a region with no `.nvm`,
+        using `move_and_slide`.
 - [ ] **The early stop (`MOVE_TARGET_STOP_DISTANCE`, 2.39) is OURS.** Retail lands on the point
       exactly. The stop is kept only because `CombatNet.approach_aim` is built on it.
 - [ ] **The server does not police speed** (round 636, `gm.go`). It relays whatever a client sends.

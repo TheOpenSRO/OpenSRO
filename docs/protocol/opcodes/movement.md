@@ -251,6 +251,18 @@ Read from `sro_client.exe`'s decompile on the RE box (`/var/tmp/decomp_client`).
   2.39 units (OURS). With a step longer than 4.78 units (a run speed over about 287 at 60 ticks a
   second), it could jump across that band on every tick and never stop. Round 649 measured this
   live and adopted the cut. The early stop is kept, because the attack approach is built on it.
+- **The same cut on the server** (SR_GameServer.exe): `CGObjMoverByDest::vslot_003` (`0x48c4e0`)
+  also replaces a step longer than what is left with `dest - position`. srrevamp already draws
+  monster legs that way (`client/scripts/world/monster_motion.gd`, `MonsterMotion.step`, READ).
+- **A refused step ends the move** (round 649's follow-up). This is the failure path above:
+  bit `0x10000000`. srrevamp's walk now ends a click walk whose step the navigation graph blocks
+  dead (`ClickWalk.blocked_ends`), instead of holding its order with the run animation playing.
+  - OURS: srrevamp's graph slides along a wall (`NavGraph.step_tracked`). "Dead" therefore means
+    a blocked step that covers no more than 1 % of what was asked. Whether retail's query slides
+    was not read.
+  - An attack's or friendly cast's approach is left walking. The retail attack tick re-issues
+    `MoveTowardObject` on every pass while out of reach (`docs/protocol/auto_command.md`,
+    phase 1, READ).
 - **Not read:** what the collision query tests, which of its bits mean what beyond the two above,
   and whether a server-driven mover uses this same tick.
 

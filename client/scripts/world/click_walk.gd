@@ -42,3 +42,21 @@ static func step(to_target: Vector2, speed: float, delta: float, stop: float) ->
 		# READ (FUN_009e0e60): the step is cut to the distance left.
 		return {"arrived": false, "velocity": dir * (left / delta), "landing": true}
 	return {"arrived": false, "velocity": dir * speed, "landing": false}
+
+## How little of a step's asked length a blocked step may cover and still end
+## the walk (OURS): a step the graph stopped dead. A slide along a wall covers
+## a real part of the step and goes on.
+const BLOCKED_PROGRESS := 0.01
+
+## Round 649, the second half of the same rule: whether a click walk whose
+## step the navigation graph BLOCKED ends here. READ (FUN_009e0e60): the
+## mover's collision query (`[0x111a02c]` vtable +0x30) returning bit
+## 0x10000000 ends the movement -- the retail body stops, it does not keep
+## its order. MEASURED on the base (round 649 and its review): walks held
+## against an edge north of the Jangan spawn (local z 953.6, the trace's
+## footing cj_jang_gate) for 59-219 ticks, 4.7-7.2 units short, the run
+## playing on the spot, at /speed 1 too. OURS: "stopped dead" is a
+## step covering no more than BLOCKED_PROGRESS of what was asked, since our
+## graph slides along a wall where retail's query was not read to.
+static func blocked_ends(moved: float, asked: float) -> bool:
+	return asked > 0.000001 and moved <= asked * BLOCKED_PROGRESS

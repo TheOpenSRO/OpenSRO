@@ -7094,7 +7094,7 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
-## Six-hundred-and-forty-ninth round: at a raised /speed a click lands the character on its point instead of flickering across it, for the mover and for everyone watching
+## Six-hundred-and-forty-ninth round: at a raised /speed a click lands the character on its point instead of flickering across it, for the mover and for everyone watching; a walk into an edge stops instead of running in place
 
 The user's report: "when I increase my /speed sometimes when I click around my character starts
 stuttering back and forth really fast and you can even see it happening from another player. When
@@ -7244,12 +7244,14 @@ Across the whole run:
 - B's receipts: 33 reversals, at most 3 in a row. These are consecutive clicks in different
   directions: the clicks alternate sides of the screen.
 
-**Seen in both runs, not this round's fault (OPEN, docs/TODO.md):**
-- Most clicks landed beyond the dragon pedestal's edge. There the walk stops against the edge and
-  holds its order: 630 to 1,226 ticks per speed stood still with an order in effect, in both runs
-  alike.
-- Retail's tick ends a movement its collision query refuses (bit `0x10000000`, READ). Ours
-  keeps it, so the body runs in place against the edge.
+**Seen in both runs, and fixed by the review follow-up below:**
+- Most of the clicks landed beyond an edge north of the spawn. There the walk stopped and held its
+  order: 630 to 1,226 ticks per speed stood still with an order in effect, in both runs alike.
+  - The edge is at local z 953.6. The follow-up's trace names the footing: `cj_jang_gate`.
+  - A first draft of this entry called it the dragon pedestal's edge. That was a guess and is
+    withdrawn.
+- Retail's tick ends a movement its collision query refuses (bit `0x10000000`, READ). Ours kept
+  the movement, so the body ran in place against the edge.
 - The base run also had small damped wobbles at that edge: 4-11 reversals of about 0.2 units, at
   400-500 u/s. The branch's run has none. They came with 5.6-6.9 units left, which is less than a
   step of 6.67-8.33, so they were the same overshoot with the edge clipping it (INFERRED). The
@@ -7279,6 +7281,13 @@ FAIL World3D._step_click_walk exists (the walk's tick)
 FAILURES: 2
 ```
 
+What the negative shows: its two FAIL lines say only that the new names are missing on the base.
+The behavioural evidence is elsewhere:
+- the `_old_rule` replay above, which passes on both and shows the scenario is the fault;
+- the live base trace (the 113- and 115-tick runs).
+
+The review follow-up below adds checks that fail on the base by behaviour.
+
 - On the branch: ALL PASS. `remote_godot.sh check` gives ALL LOAD (420 scripts).
 - `remote_godot.sh tests`: **168 suites, 0 failing**.
 - The server is untouched, so the Go tests were not run.
@@ -7295,6 +7304,92 @@ FAILURES: 2
 The runs, frame ms, base against head: 13.33 / 11.39, 12.92 / 11.32, 11.34 / 11.81. Other lanes'
 renders overlapped several base runs, and those were repeated. The walk's tick adds one static call
 a frame, so the -1.5 is noise, not a saving.
+
+### Review follow-up: a walk into an edge ends there instead of running in place
+
+The review measured 16 held episodes in one run, at /speed 1 too. In each, the order stayed in
+effect, the body stood 4.7-7.2 short of its point for 59-219 ticks, and the run played on the spot.
+This matches "running in place" in the user's report, so it is fixed now rather than parked.
+
+**The rule (READ, `FUN_009e0e60`).**
+- When the mover's collision query (`[0x111a02c]` vtable `+0x30`) returns bit `0x10000000`, the
+  tick takes the failure path: `+0x84 = 0` and `+0x80 = 0`. The movement ends and the body
+  stops.
+- srrevamp now ends a click walk the same way. `World3D._move_on_nav_graph` checks each step;
+  when `NavGraph.step_tracked` reports it blocked, it calls `ClickWalk.blocked_ends`, and
+  `_end_blocked_click_walk` clears the order.
+- A walk to a ground item asks for it from where the walk ended, as an arrival does
+  (`_ask_pickup_after_walk`). The server judges the 10 units.
+- OURS: our graph slides along a wall and retail's query was not read to. So "blocked" means a
+  step that covers no more than 1 % of what was asked. A slide that gets somewhere goes on.
+- **An attack's or friendly cast's approach is exempt.** Retail's attack tick re-issues
+  `MoveTowardObject` on every pass while out of reach (`docs/protocol/auto_command.md`, phase 1,
+  READ), and `_step_pending_attack` re-aims every tick the same way. Their release-in-reach, their
+  retry on a too-far refusal (`APPROACH_RETRY_CAP`), and the pickup request are untouched. What a
+  retail body shows while its attack approach presses against a wall was not read (docs/TODO.md).
+
+**Base (MEASURED, round 649's base run re-read with the analyser's new count of 30+ tick runs):**
+
+| run speed | held episodes |
+|---|---|
+| 200 | 6 (100-113 ticks, 5.6-7.2 short) |
+| 400 | 10 (108-117 ticks, 4.7-7.2 short) |
+| 500 | 10 (99-218 ticks, 4.7-7.2 short) |
+
+**Branch, live (MEASURED).** Same harness (`sp649.sh blocked 1 4 10`), two clients, real
+xdotool input, the same 12 clicks at each speed:
+
+| run speed | walks ended | held episodes | ping-pong ticks |
+|---|---|---|---|
+| 50 (/speed 1) | 12 | 0 | 0 |
+| 200 | 12 | 0 | 0 |
+| 500 | 12 | 0 | 0 |
+
+- A: 0 reversals across 5,634 ticks. B's drawn body: 0 reversals. B's receipts: 33 reversals, at
+  most 3 in a row; these are consecutive clicks in different directions.
+- 26 of the 36 walks ended at the edge, and the other 10 arrived. The first blocked end:
+
+```
+NAV: the walk is blocked at local 975.73, 953.99 (on object cj_jang_gate) -- ended, as retail's mover ends a refused step
+```
+
+- At /speed 1 an oblique walk slides along the edge for a few ticks before it stops dead:
+
+```
+MOVE self t=1448 ms=39287 pos=(34.580,6.398) dest=(34.547,11.992) order=true speed=50.0 left=5.594
+MOVE self t=1449 ms=39305 pos=(34.592,6.398) dest=(34.547,11.992) order=true speed=50.0 left=5.594
+MOVE self t=1452 ms=39356 pos=(34.619,6.399) dest=(34.547,11.992) order=false speed=50.0 left=5.594
+```
+
+  It is then idle, and nothing more is sent. There were 76 still ticks with the order at /speed 1
+  and 7 at /speed 4, all in runs under 30: the last ticks of such slides.
+- OPEN: whether that edge on `cj_jang_gate`'s navmesh should block at all. That is the
+  invisible-walls question of round 644 (docs/TODO.md), not this round's.
+
+**Tests.** `click_walk_test.gd` gained a synthetic blocking edge: a flat region with one
+flag-2 edge at x = 100, the fixture of `nav_graph_test.gd`. It drives `World3D._move_on_nav_graph`
+itself, with the base's own full-speed velocity:
+- straight in at 50, 200 and 500 u/s, the walk ends at the edge;
+- an oblique walk slides and ends level with its point (z 149.9), not at first contact;
+- an attack's approach is left walking.
+
+**NEGATIVE, against dev e5bf2ba.** These fail by behaviour. The base's walk holds its order for
+all 240 ticks:
+
+```
+FAIL a walk at 50 u/s straight into a blocking edge ends there (240 ticks, x 99.990, order true)
+FAIL a walk at 200 u/s straight into a blocking edge ends there (240 ticks, x 99.990, order true)
+FAIL a walk at 500 u/s straight into a blocking edge ends there (240 ticks, x 99.990, order true)
+FAIL an oblique walk slides along the edge and ends level with its point, not at first contact (x 99.996, z 149.999, 600 ticks)
+ok  an attack's approach walk is left to the attack tick (60 ticks, order true)
+FAILURES: 6
+```
+
+The other two failures are the two missing-name lines above.
+
+On the branch: ALL PASS. `remote_godot.sh check` gives ALL LOAD (420 scripts), and
+`remote_godot.sh tests` gives **168 suites, 0 failing**. No perf gate was run, as the review
+instructed: the change adds one test per blocked step.
 
 ## Six-hundred-and-forty-seventh round: the Jangan spawn draws at 85 fps instead of 71 with every tree swaying exactly as before, and a zone change no longer leaves the old zone's animated objects behind
 
