@@ -206,6 +206,11 @@ func TestGMSpawnsAnyTableSpecies(t *testing.T) {
 		t.Fatalf("/spawn 99001 2: %+v", res)
 	}
 	m, _ := hub.Get(res.SpawnedMonsterIDs[0])
+	// The reply names the row picked and the HP the monster really has: the
+	// giant's 300 scaled x20 (round 654's review; it printed the raw 300).
+	if want := "(MOB_TEST_GIANT, id 99001; level 12, rarity 4, HP 6000)"; !strings.Contains(res.Text, want) || m.MaxHP != 6000 {
+		t.Errorf("/spawn reply %q (monster MaxHP %d), want it to contain %q", res.Text, m.MaxHP, want)
+	}
 	// Block stays 0 on the spawned monster: col 76 is carried (the spec's
 	// Block, checked below) but not handed to combat until the TODO's blocked
 	// skill-percentage item is fixed.

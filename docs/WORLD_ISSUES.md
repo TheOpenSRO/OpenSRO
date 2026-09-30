@@ -7222,7 +7222,30 @@ The first full run caught two things: `internal/systems`' README probe (the new 
 server/README.md) and its orphan baseline -- a field named `Complete` made `equipment.SetProgress
 .Complete`, a baselined orphan, look called; the field is `WholeList` now.
 
-### 5. Open
+### 5. The review's follow-up
+
+The review reproduced the numbers (0 mismatches over 7,604 species, every column shift caught,
+413 spawns identical) and asked for four fixes, made in a second commit:
+
+- Two comment figures in `species.go` were wrong or out of their set: 104-field rows are 16,080
+  (7,329 of them monsters) across 34 part files, not "2,111"; and col 73 equals the level on
+  7,088 of this table's 7,604 species (93.2 %; the 516 others mostly rarity 3/8 at level 110) --
+  round 380's 99.45 % was over the 7,495 MOB_ rows.
+- `/spawn`'s reply printed the row's raw HP; SpawnSpecies scales it by rarity
+  (`/spawn MOB_EVE_STRONG_KK_YETI_CLON` said 7634 for a 229,020-HP monster). It now prints the
+  scaled HP, the rarity, and the code name and id picked -- 188 display names are shared by 7,087
+  rows. `TestGMSpawnsAnyTableSpecies` pins "(MOB_TEST_GIANT, id 99001; level 12, rarity 4, HP
+  6000)".
+- `species.Read` required exactly 35 columns. The header is now a strict PREFIX
+  (`RequiredCSVColumns` = 35; unknown trailing columns ignored, a row must match its header's
+  width), so a later round can append columns; `TestReadTakesALongerCSV`.
+- The recipe's `rm` line now removes the extracted `characterdata.txt` index too.
+
+Recorded in TODO.md: the classic uniques are the "[INT]" rows at level 110 (`/spawn tiger girl`
+finds nothing; MOB_CH_TIGERWOMAN does), and a GM-spawned giant-HP species pays the disclosed
+`ExpFor(maxHP)` fallback where no exp_unit level table is loaded (MOB_TQ_WHITESNAKE 250M).
+
+### 6. Open
 
 docs/TODO.md, "The monster world": round 655 (the Org model on the client), round 657 (every
 nest), cols 75/77 per species, block, TypeID4 and the party-support nibble, the 18 species with

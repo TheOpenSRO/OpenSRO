@@ -98,8 +98,11 @@ const (
 	//	             fetches param 5 as the flat term) -- READ; monsterSpec.Defense
 	//	72 param 6   its magical counterpart -- INFERRED from the pair
 	//	73 param 7   the physical percentage reduction (the same formula divides
-	//	             by 1 + param 7 / 100) -- READ; equals the level on 99.45 %
-	//	             of the rows (MEASURED)
+	//	             by 1 + param 7 / 100) -- READ; equals the level (col 57)
+	//	             on 7,088 of this table's 7,604 species, 93.2 % (MEASURED,
+	//	             round 654's review; the 516 others are mostly rarity 3/8,
+	//	             whose col 57 reads 110). Round 380's 99.45 % was over a
+	//	             different set, the 7,495 MOB_-prefixed rows.
 	//	74 param 8   its magical counterpart -- INFERRED
 	//	75 param 9   tag 'era' -- READ tag; "evasion" is a READING of the tag
 	//	76 param 10  tag 'bri' -- the block chance (combat.Monster.Block)
@@ -118,13 +121,18 @@ const (
 )
 
 // minFields is the shortest characterdata row the exporter maps: every column
-// above must exist. Retail rows are 105 fields (104 for 2,111 rows of the
-// older parts, whose tail column is missing -- MEASURED, and every column
-// read here sits well before it).
+// above must exist. Retail rows are 105 fields, or 104 -- the tail column
+// missing -- for 16,080 rows (7,329 of them monsters) across 34 part files
+// (MEASURED, round 654's review); every column read here sits well before it.
 const minFields = ColSkills + NumSkills
 
 // CSVColumns is the header cmd/export-refdata -mode monsters writes and Read
-// checks. The order is the CSV's; the meanings are the constants above.
+// checks. The order is the CSV's; the meanings are the constants above. A
+// later round APPENDS columns (never inserts): Read requires the first
+// RequiredCSVColumns by name and ignores any it does not know past them, so an
+// older server reads a newer CSV. A column appended here must be optional in
+// parseRecord -- read only when the row has it -- so a newer server still
+// reads an older CSV.
 var CSVColumns = []string{
 	"ID", "CodeName", "OrgCodeName", "OrgID", "NameKey", "Name", "TypeID4", "Rarity",
 	"Level", "MaxHP", "WalkSpeed", "RunSpeed", "BCRadius",
@@ -132,6 +140,10 @@ var CSVColumns = []string{
 	"Skill1", "Skill2", "Skill3", "Skill4", "Skill5", "Skill6", "Skill7", "Skill8", "Skill9", "Skill10",
 	"Model", "ModelFromOrg", "GoldMin", "GoldMax",
 }
+
+// RequiredCSVColumns is the prefix every monsters CSV must carry: the 35
+// columns round 654 wrote.
+const RequiredCSVColumns = 35
 
 // CSV column positions, for the reader and the tests.
 const (
@@ -581,10 +593,13 @@ func Read(r io.Reader) (*Table, error) {
 	if err != nil {
 		return nil, fmt.Errorf("species: reading header: %w", err)
 	}
-	if len(header) != len(CSVColumns) {
-		return nil, fmt.Errorf("species: not a monsters CSV: %d header fields, want %d", len(header), len(CSVColumns))
+	if len(header) < RequiredCSVColumns {
+		return nil, fmt.Errorf("species: not a monsters CSV: %d header fields, want at least %d", len(header), RequiredCSVColumns)
 	}
 	for i, h := range header {
+		if i >= len(CSVColumns) {
+			break // a column a later round added: not read here
+		}
 		if strings.TrimSpace(h) != CSVColumns[i] {
 			return nil, fmt.Errorf("species: not a monsters CSV: header field %d is %q, want %q", i, h, CSVColumns[i])
 		}
@@ -597,6 +612,9 @@ func Read(r io.Reader) (*Table, error) {
 		}
 		if err != nil {
 			return nil, fmt.Errorf("species: line %d: %w", line, err)
+		}
+		if len(rec) != len(header) {
+			return nil, fmt.Errorf("species: line %d: %d fields, the header has %d", line, len(rec), len(header))
 		}
 		row, err := parseRecord(rec)
 		if err != nil {
@@ -613,8 +631,8 @@ func Read(r io.Reader) (*Table, error) {
 }
 
 func parseRecord(rec []string) (Row, error) {
-	if len(rec) != numCSVColumns {
-		return Row{}, fmt.Errorf("%d fields, want %d", len(rec), numCSVColumns)
+	if len(rec) < RequiredCSVColumns {
+		return Row{}, fmt.Errorf("%d fields, want at least %d", len(rec), RequiredCSVColumns)
 	}
 	var firstErr error
 	i64 := func(c int) int64 {

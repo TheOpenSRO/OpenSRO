@@ -255,6 +255,39 @@ func TestLevelGoldJoin(t *testing.T) {
 	}
 }
 
+// TestReadTakesALongerCSV: the header check is a strict PREFIX, so a CSV a
+// later round extends with a trailing column still loads, its known columns
+// read as before -- while a short header, a renamed column or a row that
+// disagrees with its header's width is still refused.
+func TestReadTakesALongerCSV(t *testing.T) {
+	ex := NewExporter()
+	cols := monsterRow(94001, "MOB_TEST_LATER")
+	cols[ColLevel] = "12"
+	ex.Add(cols)
+	recs, _ := ex.Records(nil, nil)
+	var b strings.Builder
+	w := csv.NewWriter(&b)
+	w.Write(append(append([]string{}, CSVColumns...), "SomeLaterColumn"))
+	w.Write(append(recs[0], "42"))
+	w.Flush()
+	tab, err := Read(strings.NewReader(b.String()))
+	if err != nil {
+		t.Fatalf("a CSV with an extra trailing column: %v", err)
+	}
+	if r, ok := tab.ByID(94001); !ok || r.Level != 12 || r.CodeName != "MOB_TEST_LATER" {
+		t.Fatalf("row %+v (%v)", r, ok)
+	}
+	short := strings.Join(append(append([]string{}, CSVColumns...), "SomeLaterColumn"), ",") + "\n" + strings.Join(recs[0], ",") + "\n"
+	if _, err := Read(strings.NewReader(short)); err == nil {
+		t.Error("accepted a row narrower than its header")
+	}
+	// Round 654 wrote 35 columns and requires them all; a later round
+	// appends to CSVColumns and leaves this at 35.
+	if RequiredCSVColumns != 35 || len(CSVColumns) < RequiredCSVColumns {
+		t.Fatalf("RequiredCSVColumns %d, CSVColumns %d", RequiredCSVColumns, len(CSVColumns))
+	}
+}
+
 func TestReadRejectsAnotherCSV(t *testing.T) {
 	for _, in := range []string{
 		"ObjectID,RegionID,LocalX,LocalY,LocalZ\n1,2,3,4,5\n",

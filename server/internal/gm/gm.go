@@ -646,7 +646,13 @@ func (d *Deps) spawn(actor Actor, args []string) Result {
 		spawned = append(spawned, m.ID)
 	}
 	return Result{
-		Text:              fmt.Sprintf("spawned %d x %s (level %d, HP %d) at %.0f, %.0f -- ids %s; no respawn", n, sp.Name, sp.Level, sp.MaxHP, actor.X+6, actor.Z, strings.Join(ids, ",")),
+		// The HP the monsters really have: SpawnSpecies scales the row's by the
+		// rarity (combat.ScaleHPForRarity), and the code name and id say which
+		// row a shared display name picked (round 654's review: 188 names are
+		// shared by 7,087 rows).
+		Text: fmt.Sprintf("spawned %d x %s (%s, id %d; level %d, rarity %d, HP %d) at %.0f, %.0f -- ids %s; no respawn",
+			n, sp.Name, sp.CodeName, sp.RefObjID, sp.Level, sp.Rarity, combat.ScaleHPForRarity(sp.MaxHP, sp.Rarity),
+			actor.X+6, actor.Z, strings.Join(ids, ",")),
 		RefreshMonsters:   true,
 		SpawnedMonsterIDs: spawned,
 	}

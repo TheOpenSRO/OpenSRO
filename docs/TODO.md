@@ -195,6 +195,17 @@ In order. Each is checked off here when it ships in a release, with its round in
       - 18 species name 49 skill ids the skills export does not hold; they swing what resolves.
       - with a skills table from before round 654 (no AI_AttackChance) a non-roster species
         swings its primary skill only; srrevamp-01 needs the re-export (deploy/README.md).
+      - the classic uniques in this archive are the "[INT]" rows at level 110 -- MOB_CH_TIGERWOMAN
+        is "Tiger Girl[INT]" -- so `/spawn tiger girl` finds nothing; the code name (or id) works.
+        188 display names are shared by 7,087 rows, and a name picks the first in table order;
+        the reply names the code and id it picked.
+      - GM-ONLY caveat: a spawned monster's fallback EXP is the disclosed `combat.ExpFor(maxHP)`
+        over the rarity-scaled HP -- paid when no level table with an exp_unit column is loaded
+        (session/combat.go's kill path; with one, the real leveldata col 5 at min(levels) wins) --
+        so a giant-HP species pays absurd EXP there (MOB_TQ_WHITESNAKE: 250M). Nothing the roster
+        spawns is affected. Settle it before round 657 places table species.
+      - a GM-spawned rarity-3 or non-(1,2,1) species hatches at a random heading, where the
+        engine takes its nest row's (combat.SpawnSpecies' DISCLOSED note).
 - [ ] **Monsters move only with `-monster-ai` on, and do not chase or notice anyone yet.** They
       strike only when struck (round 254's cadence cap; the counter is still a synchronous reply in
       the player's attack handler). **Round 537 built the monster AI tick** (`session.RunMonsterAI`,

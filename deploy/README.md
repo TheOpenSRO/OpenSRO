@@ -64,7 +64,7 @@ for f in teleportdata.txt teleportlink.txt teleportbuilding.txt; do
   /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\\silkroad\\textdata\\$f" -out $f; done
 /tmp/export-refdata  -mode teleport -out teleport teleportdata.txt teleportlink.txt teleportbuilding.txt
                      # a DIRECTORY of three CSVs: 222 points, 292 links, 77 buildings; the server reads it with -teleport-dir
-rm -f itemdata_* skilldata_* characterdata_* levelgold.txt textdata_object.txt npcpos.txt teleport*.txt
+rm -f itemdata_* skilldata_* characterdata.txt characterdata_* levelgold.txt textdata_object.txt npcpos.txt teleport*.txt
                      # the extracted tables are game data; keep only the CSVs
 
 # The exporter grows a strict-suffix column now and then (latest: skill columns 47-61, round 616 -- the buff
