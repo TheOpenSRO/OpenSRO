@@ -388,6 +388,7 @@ type strikeHandoff struct {
 type monsterPush struct {
 	zone   string
 	cell   combat.Cell
+	id     int64 // the monster (round 656's second review: mayShowLeg)
 	packet *proto.Packet
 }
 
@@ -1395,7 +1396,7 @@ func (a *monsterAI) runStrike(id int64, job strikeJob) {
 		}
 		a.mu.Unlock()
 	}
-	a.emit(monsterPush{zone: job.m.Zone, cell: combat.CellOf(job.m.Zone, job.m.X, job.m.Z),
+	a.emit(monsterPush{zone: job.m.Zone, cell: combat.CellOf(job.m.Zone, job.m.X, job.m.Z), id: id,
 		packet: &proto.Packet{Opcode: OpMonsterAttacked, Data: out.message(id, job.target).Encode()}}, nil)
 	// Round 640: a blow that broke the target's wall ends it now, after the
 	// push that reports the blow (walls.go endBrokenWall).
@@ -1670,7 +1671,7 @@ func (a *monsterAI) queueStop(m combat.Monster) {
 // the push's float32 copy, which can round a monster a hair from a region
 // line onto the other side of it).
 func (a *monsterAI) queue(m combat.Monster, mv *MonsterMoved) {
-	a.pending = append(a.pending, monsterPush{zone: m.Zone, cell: combat.CellOf(m.Zone, m.X, m.Z),
+	a.pending = append(a.pending, monsterPush{zone: m.Zone, cell: combat.CellOf(m.Zone, m.X, m.Z), id: m.ID,
 		packet: &proto.Packet{Opcode: OpMonsterMoved, Data: mv.Encode()}})
 }
 
@@ -1697,7 +1698,18 @@ func (a *monsterAI) emit(p monsterPush, buf []*gateway.Session) []*gateway.Sessi
 func (a *monsterAI) deliver(p monsterPush, buf []*gateway.Session) []*gateway.Session {
 	buf = buf[:0]
 	if v := aoiFor(a.monsters); v != nil {
+		// Each recipient is checked at the send, under its wire lock (round
+		// 656's second review): the monster alive, in its window, and no
+		// enter for it still owed (mayShowLeg). Without the check a pass could
+		// send a leg for a monster a view move had just brought into the
+		// window before that view's enter went out, and the client answers a
+		// leg for a body it has never been told about by asking for the whole
+		// list (World3D._on_monster_moved).
 		buf = v.appendWatchers(buf, p.cell)
+		for _, sess := range buf {
+			a.sendIfShown(v, sess, p)
+		}
+		return buf
 	} else if a.world != nil {
 		for _, e := range a.world.EntitiesInZone(p.zone) {
 			if e.Session != nil && combat.CellOf(e.Zone, e.Pos.X, e.Pos.Z).Near(p.cell, AOIRadius) {
@@ -1709,6 +1721,18 @@ func (a *monsterAI) deliver(p monsterPush, buf []*gateway.Session) []*gateway.Se
 		a.sendUnderWireLock(sess, p.packet)
 	}
 	return buf
+}
+
+// sendIfShown is sendUnderWireLock for a push about monster p.id, sent only
+// when mayShowLeg allows it at the send. A push with no id is sent as it is.
+func (a *monsterAI) sendIfShown(v *monsterAOI, sess *gateway.Session, p monsterPush) {
+	l := a.wireLock(sess)
+	l.Lock()
+	defer l.Unlock()
+	if p.id != 0 && !v.mayShowLeg(sess.ID(), p.id) {
+		return
+	}
+	_ = sess.Send(p.packet)
 }
 
 // sendUnderWireLock writes p to sess under its wire lock, released by defer

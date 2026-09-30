@@ -66,6 +66,17 @@ type Session struct {
 	// connection is closed then, and every later Send fails at once rather
 	// than waiting out the deadline again.
 	stalled atomic.Bool
+	// blocked is the send-blocking debt (SendBlockBudget): the time this
+	// session's writes have spent on the socket, less SendBlockBudget per
+	// SendBlockWindow since, as of blockedAt. Guarded by sendMu.
+	blocked   time.Duration
+	blockedAt time.Time
+	// The send accounting's own record (round 656's third review), for the
+	// disconnect line and the peak lines: the highest debt reached, the
+	// longest single write, the bytes written. Guarded by sendMu.
+	peakDebt, longestWrite time.Duration
+	sentBytes              int64
+	logger                 *slog.Logger
 }
 
 // SendTimeout is how long one Send may block on a client that is not reading
@@ -81,17 +92,55 @@ type Session struct {
 //
 // 10 s, not the 2 s round 656 shipped with (its review): a client whose main
 // thread is busy -- a region load, a long frame -- stops reading for a while,
-// and 2 s risked dropping a player the kernel buffers would have carried. The
-// price is that a peer that has really stopped holds its writer, the AI tick
-// included, for up to 10 s, once. A per-session send queue would take even
-// that off the tick, but every Send caller today relies on the frame being
-// written, in order with its other sends, when Send returns (the monster wire
-// lock's ordering, the list's pages), so a queue is a change to all of them;
-// not built. OURS.
+// and 2 s risked dropping a player the kernel buffers would have carried.
+//
+// A per-session send queue would take the waiting off the writers
+// altogether, but every Send caller today relies on the frame being written,
+// in order with its other sends, when Send returns (the monster wire lock's
+// ordering, the list's pages), so a queue is a change to all of them; not
+// built. OURS.
+//
+// The deadline alone bounds one write, not a session: a peer that reads
+// slowly but steadily finishes every write inside it and is never closed,
+// while every writer that fans out to it -- the AI tick, the respawn
+// scheduler's spawn push, other players' blows -- waits on it write after
+// write. SendBlockBudget bounds that (round 656's second review), and caps
+// each write's deadline too: what a session may still block is
+// min(SendTimeout, what is left of its budget).
 var SendTimeout = 10 * time.Second
 
+// SendBlockBudget and SendBlockWindow bound how long one session's writes may
+// keep its writers waiting in total (round 656's second review). Every write's
+// time on the socket is added to the session's debt, and the debt drains at
+// SendBlockBudget per SendBlockWindow of wall time (a leaky bucket): a session
+// whose debt reaches the budget is closed, as a timed-out write closes it. So
+// its writers, together, wait at most about SendBlockBudget, plus the drain,
+// before it is gone. Variables so a test can shorten them; a budget of 0
+// turns the bound off.
+//
+// 10 s, draining 10 s per 60 s (round 656's third review). OURS, chosen
+// against what a HEALTHY client does, not guessed: the client reads its
+// socket on the game's main thread (net_client.gd _process), so it reads
+// nothing while a load freezes that thread, and a write blocks once the
+// kernel's buffers fill meanwhile. The perf gate measures a 3.3 s freeze at
+// the Jangan world entry; the live run on the render box -- world entry at a
+// 1,286-monster window with every monster switch on, two zone changes and
+// three uniques' model loads -- measured a peak debt of 1.3 ms (the loopback
+// buffers never filled: 1.3 MB in 3.5 min); a peer frozen for 4 s under a
+// writer that never stops (TestAPeerThatFreezesThenReadsIsNotClosed) runs its
+// debt to about 4 s. 10 s is 3x the measured freeze and 2.5x that test. The
+// 3 s it replaced closed that test's peer. The price: a peer that reads, but
+// slower than it is written to, holds its writers up to about 10 s in all
+// before it is closed; a per-session send queue would remove that (not
+// built, see SendTimeout).
+var (
+	SendBlockBudget = 10 * time.Second
+	SendBlockWindow = 60 * time.Second
+)
+
 // ErrSendStalled is what Send returns on a session whose earlier Send ran past
-// SendTimeout: its connection has been closed.
+// SendTimeout, or whose writes spent its SendBlockBudget: its connection has
+// been closed.
 var ErrSendStalled = errors.New("gateway: session stalled: an earlier send ran past its deadline and the connection was closed")
 
 // SetSecurity installs this session's real per-direction RollingByte/
@@ -153,8 +202,9 @@ func (s *Session) Get(key string) (any, bool) {
 }
 
 // Send writes a packet back to this session's client. It gives up after
-// SendTimeout (round 656): a write that has not gone out by then closes the
-// connection -- a frame cut part-way leaves the stream unreadable anyway --
+// SendTimeout, or once the session's writes have spent SendBlockBudget
+// (round 656 and its second review): a write that has not gone out by then
+// closes the connection -- a frame cut part-way leaves the stream unreadable anyway --
 // so the session's read loop ends and OnDisconnect cleans up, and every Send
 // after it returns ErrSendStalled without touching the socket.
 func (s *Session) Send(p *proto.Packet) error {
@@ -167,16 +217,71 @@ func (s *Session) Send(p *proto.Packet) error {
 	if s.stalled.Load() {
 		return ErrSendStalled
 	}
-	if SendTimeout > 0 {
-		_ = s.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
+	start := time.Now()
+	limit := SendTimeout
+	if SendBlockBudget > 0 {
+		if !s.blockedAt.IsZero() && SendBlockWindow > 0 {
+			drain := time.Duration(float64(start.Sub(s.blockedAt)) * float64(SendBlockBudget) / float64(SendBlockWindow))
+			s.blocked = max(0, s.blocked-drain)
+		}
+		s.blockedAt = start
+		left := SendBlockBudget - s.blocked
+		if left <= 0 {
+			s.stall()
+			return ErrSendStalled
+		}
+		if limit <= 0 || left < limit {
+			limit = left
+		}
+	}
+	if limit > 0 {
+		_ = s.conn.SetWriteDeadline(start.Add(limit))
 	}
 	err := proto.Write(s.conn, p, sendRoll, sendSum)
+	took := time.Since(start)
+	s.sentBytes += int64(len(p.Data)) + 6
+	if took > s.longestWrite {
+		s.longestWrite = took
+	}
+	if SendBlockBudget > 0 {
+		s.blocked += took
+		// A new peak of the debt past SendDebtLogFloor is logged, so a live
+		// run can read how near a session came to its budget.
+		if s.blocked > s.peakDebt {
+			s.peakDebt = s.blocked
+			if s.peakDebt >= SendDebtLogFloor && s.logger != nil {
+				s.logger.Info("send debt peak", "addr", s.conn.RemoteAddr(), "debt", s.peakDebt,
+					"write", took, "bytes", len(p.Data)+6, "budget", SendBlockBudget)
+			}
+		}
+	}
 	var ne net.Error
-	if err != nil && errors.As(err, &ne) && ne.Timeout() {
-		s.stalled.Store(true)
-		_ = s.conn.Close()
+	if (err != nil && errors.As(err, &ne) && ne.Timeout()) || (SendBlockBudget > 0 && s.blocked >= SendBlockBudget) {
+		s.stall()
 	}
 	return err
+}
+
+// SendDebtLogFloor is the least send debt a "send debt peak" line reports
+// (round 656's third review; OURS, a log threshold only).
+var SendDebtLogFloor = 50 * time.Millisecond
+
+// SendStats is the session's send accounting: the highest blocking debt it
+// reached, its longest single write, and the bytes written.
+func (s *Session) SendStats() (peakDebt, longestWrite time.Duration, sentBytes int64) {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	return s.peakDebt, s.longestWrite, s.sentBytes
+}
+
+// stall closes a session whose writes have kept its writers waiting too long
+// (SendTimeout, SendBlockBudget); every later Send returns ErrSendStalled.
+func (s *Session) stall() {
+	if s.logger != nil && !s.stalled.Load() {
+		s.logger.Warn("session send stalled, closing", "addr", s.conn.RemoteAddr(), "debt", s.blocked, "budget", SendBlockBudget)
+	}
+	s.stalled.Store(true)
+	_ = s.conn.Close()
 }
 
 // Close closes the underlying connection.
@@ -256,14 +361,18 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 }
 
 func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logger) {
-	sess := &Session{id: s.nextSessionID.Add(1), conn: conn}
+	sess := &Session{id: s.nextSessionID.Add(1), conn: conn, logger: logger}
 	defer sess.Close()
 	if s.OnDisconnect != nil {
 		defer s.OnDisconnect(sess)
 	}
 
 	logger.Info("session connected", "addr", sess.RemoteAddr())
-	defer logger.Info("session disconnected", "addr", sess.RemoteAddr())
+	defer func() {
+		peak, longest, sent := sess.SendStats()
+		logger.Info("session disconnected", "addr", sess.RemoteAddr(),
+			"send_debt_peak", peak, "longest_write", longest, "sent_bytes", sent)
+	}()
 
 	r := bufio.NewReader(conn)
 	for {
