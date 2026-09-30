@@ -2008,6 +2008,21 @@ Still open, by the files each would add:
 - [ ] **Object regions (dungeons) and far-sent objects.** The READ window is the field's
       (`CRgnTerrain`'s 6 x 6 blocks). The `CMsgBlockObject` blocks of `CRgnObject` regions and any
       object sent from farther (uniques, structures) were not read.
+- [ ] **Players and ground items still use the zone-wide window** (round 664 review, L2).
+      Retail's block insert (slot 2, 0x534340) handles every object kind, so its players and
+      ground items use the same 3 x 3 blocks as monsters. Ours still send them zone-wide
+      (`othersInZoneLocked` in server/internal/world/world.go:154, `EntitiesInZone` in
+      session/grounditem.go:283,500), which under -single-frame is the whole world. A player
+      can see another player fighting 2,000 away but not the monster, or a drop without the
+      monster that dropped it. Move players and ground items onto the block window.
+- [ ] **After a hitch a one-shot clip can start partway through** (round 664 review, L1,
+      PLAUSIBLE, cosmetic). On a frame that runs several physics steps, `TickGate` holds the
+      steps' time for the next frame, and a one-shot started meanwhile records its start before
+      that time is added (World3D.gd ~13430), so it begins up to ~117 ms into its clip.
+- [ ] **Detection can reach past the window's 320 minimum** (round 664 review, L5, PLAUSIBLE;
+      the same geometry as retail). A monster with a very large BCRadius (about 130+ at the
+      x1.4 reach) sleeping 320-640 away on its block's far side cannot acquire a player its
+      radius covers. BCRadius data was not checked.
 
 ### Many monsters (round 655) — **built: species templates, budgeted builds, posing culled, bodies only in loaded regions, no list per hit; these are left**
 
