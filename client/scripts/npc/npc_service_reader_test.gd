@@ -918,8 +918,11 @@ func _initialize() -> void:
 		"a click on the bar's own art (a PASS control) stops at the body")
 	_check(fired.is_empty(), "a left click on the body fires no quickslot (got %s)" % [fired])
 	# The children keep their clicks.
-	_check(not _click_reaches_world(recorder, bar_at + Vector2(277, 34)) and fired == [1],
-		"a click on quick slot 1 fires it and does not reach the world (fired %s)" % [fired])
+	_check(not _click_reaches_world(recorder, bar_at + Vector2(277, 34), MOUSE_BUTTON_RIGHT) and fired == [1],
+		"a right click on quick slot 1 fires it (round 652) and does not reach the world (fired %s)" % [fired])
+	fired.clear()
+	_check(not _click_reaches_world(recorder, bar_at + Vector2(277, 34)) and fired.is_empty(),
+		"a left click on quick slot 1 fires nothing and does not reach the world (fired %s)" % [fired])
 	_check(not _click_reaches_world(recorder, bar_at + Vector2(720, 13)) and bar.is_menu_open(),
 		"the menu button takes its click and opens the menu")
 	var menu := bar.control([59])

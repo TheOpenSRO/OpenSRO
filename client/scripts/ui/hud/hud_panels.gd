@@ -315,16 +315,14 @@ signal system_option_requested
 signal system_restart_requested
 signal system_exit_requested
 signal system_help_requested
-## A learned skill in the window was clicked to put it on the hotbar. World3D
-## assigns it to the next free underbar quickslot (its icon shown there);
-## activating that quickslot is what casts it. basic_code names the cast .ban
-## clip; icon is the skill's already-loaded cell texture for the slot.
+## Put a skill on the next free underbar quickslot. Nothing in the window
+## emits it since round 652 (a click picks the skill up instead; retail has
+## no "next free slot" shortcut); World3D's QA hotbar hook calls its handler.
 signal skill_assign_requested(skill_id: int, basic_code: String, icon: Texture2D)
-## A learned skill was DRAGGED out of the window and released at a screen
-## position: World3D resolves the position against the underbar's quickslots
-## and puts the skill there (the original's way onto the hotbar).
+## A learned skill was put down at a screen position: World3D resolves the
+## position against the underbar's quickslots and puts the skill there.
 signal skill_drop_requested(at: Vector2, skill_id: int, basic_code: String, icon: Texture2D)
-## A BAG ITEM was dragged out of the inventory and released somewhere that is
+## A BAG ITEM was put down somewhere that is
 ## neither a bag slot nor an equipment slot -- World3D resolves the position
 ## against the underbar's quickslots and puts the item there.
 ##
@@ -332,6 +330,17 @@ signal skill_drop_requested(at: Vector2, skill_id: int, basic_code: String, icon
 ## the bar at all: "skills should be drag and drop" and the HP berry that could
 ## not be used from it (playtest 2026-09-20).
 signal item_drop_requested(at: Vector2, item_id: int, inventory_slot: int, icon: Texture2D)
+## The held icon (HeldIcon, round 652) was put down somewhere these windows
+## do not own: the quick slot bar or the world. World3D resolves it -- a
+## skill or a bag item onto a quick slot, a quick slot onto another (the two
+## change places) or off the bar (removed), a worn item on the ground (the
+## retail refusal line). `what` is the HeldIcon payload.
+signal held_dropped_outside(what: Dictionary, at: Vector2)
+## A learned skill in the skill window was RIGHT-clicked: cast it. READ:
+## CIFSlotWithHelp's right-button-up (vslot 33, 0x685ee0) runs 0x682040,
+## whose skill-window case (0x19) is 0x81ba10 -- the same call a quick slot
+## holding a skill makes when used (0x60b850, case 0x19).
+signal skill_use_requested(skill_id: int, basic_code: String)
 ## A talk-box service line other than "End conversation" was chosen; `key` is
 ## the service's stable key (NpcServiceReader.Service.key -- "shop", "storage",
 ## ...). World3D acts on it (opens the shop, ...).
@@ -396,6 +405,31 @@ func _ready() -> void:
 	# A transparent full-screen container: it must not eat world clicks.
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ensure_held_icon()
+	_qa_slots = OS.get_environment("SRREVAMP_QA_SLOTS") != ""
+	if _qa_slots:
+		add_to_group(QA_SLOTS_GROUP)
+
+## SRREVAMP_QA_SLOTS is set (read once): F11 prints the slots, Shift+F11
+## opens the warehouse. QA only.
+var _qa_slots := false
+
+## The one icon-on-the-cursor controller every icon window shares (round
+## 652): see held_icon.gd for what is READ of retail's.
+var held_icon: HeldIcon = null
+
+func _ensure_held_icon() -> HeldIcon:
+	if held_icon == null:
+		held_icon = HeldIcon.new()
+		held_icon.name = "HeldIcon"
+		held_icon.drop_handler = _on_held_dropped
+		held_icon.passes_through = _click_passes_through
+		add_child(held_icon)
+	return held_icon
+
+## Picks an icon up onto the cursor (a left click on a filled slot).
+func pick_up_icon(what: Dictionary, icon: Texture2D, source: CanvasItem, at: Vector2) -> bool:
+	return _ensure_held_icon().pick_up(what, icon, source, at)
 
 ## Shows a panel, building it the first time it is asked for. Does nothing
 ## if its authored layout isn't in the archive -- a missing panel is a real
@@ -1584,11 +1618,13 @@ func _shop_tooltip(item: ItemTableReader.Item) -> String:
 		lines.append("Price: %s gold" % _grouped(_shop_prices[item.id]))
 	return "\n".join(lines)
 
+## A click on a store item picks it up onto the cursor; putting it down on
+## the bag opens the buy dialog (HeldIcon, round 652; CIFInventory::vslot_028
+## 0x6b5b80 takes kind 0x0f, the store, into the buy path).
 func _on_shop_cell_input(event: InputEvent, icon: TextureRect) -> void:
-	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed \
-			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-		if icon.has_meta("shop_item_id"):
-			_confirm_buy(int(icon.get_meta("shop_item_id")))
+	if _is_pick_click_on(event, icon) and icon.has_meta("shop_item_id"):
+		pick_up_icon({"kind": "shop", "item_id": int(icon.get_meta("shop_item_id")), "icon": icon.texture},
+			icon.texture, icon, (event as InputEventMouseButton).global_position)
 
 # --- Purse, buy confirmation, results ---------------------------------------
 ## Where the gold line sits in the store window: the empty band below the grid
@@ -2067,12 +2103,13 @@ func _fill_storage_grid(slots: Array) -> void:
 		if count_label != null and entry.quantity > 1:
 			count_label.text = str(entry.quantity)
 
+## A click on a warehouse item picks it up onto the cursor; putting it down
+## on the bag opens the withdraw dialog (HeldIcon, round 652).
 func _on_storage_cell_input(event: InputEvent, icon: TextureRect) -> void:
-	if not (event is InputEventMouseButton and (event as InputEventMouseButton).pressed \
-			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT):
-		return
-	if icon.has_meta("wh_slot") and icon.has_meta("wh_item_id"):
-		_confirm_withdraw(int(icon.get_meta("wh_slot")), int(icon.get_meta("wh_item_id")), int(icon.get_meta("wh_qty")))
+	if _is_pick_click_on(event, icon) and icon.has_meta("wh_slot") and icon.has_meta("wh_item_id"):
+		pick_up_icon({"kind": "storage", "slot": int(icon.get_meta("wh_slot")), "item_id": int(icon.get_meta("wh_item_id")),
+			"qty": int(icon.get_meta("wh_qty")), "icon": icon.texture},
+			icon.texture, icon, (event as InputEventMouseButton).global_position)
 
 func _confirm_deposit(bag_slot: int, item_id: int, held: int) -> void:
 	_load_items()
@@ -3278,28 +3315,6 @@ func select_bag_page(page: int) -> void:
 	_draw_bag_page()
 	print("HudPanels: bag page %d of %d (size %d)" % [page + 1, bag_pages(_bag_size_shown()), _bag_size])
 
-## OURS, disclosed: an item dragged over a page tab turns to that page, so the
-## drag can be let go on a slot of another page. How the retail client carries
-## an item between pages (its dragged-item model, CIFDraggedStatic) was not
-## read; a plain click on a tab is the client's own (0x6b45b0).
-## Driven from _input's motion while a drag is live: a held mouse button
-## keeps Godot's hover on the control it was pressed on, so the tabs' own
-## mouse_entered never fires during a drag.
-func _bag_drag_over_tab(at: Vector2) -> void:
-	if _bag_drag_preview == null:
-		return
-	var window: HudWindow = _windows.get("inventory")
-	if window == null or not is_open("inventory"):
-		return
-	var strip := window.node(BAG_TABS_NODE) as Control
-	if strip == null:
-		return
-	for i in range(strip.get_child_count()):
-		var tab := strip.get_child(i) as Control
-		if tab != null and tab.get_global_rect().has_point(at) and i != _bag_page:
-			select_bag_page(i)
-			return
-
 ## Fills the inventory window's authored slot grid with the icons of what
 ## the character is carrying: the shown page's 32 slots (see above).
 ##
@@ -3381,10 +3396,9 @@ func _draw_bag_page() -> void:
 			icon.set_meta("inv_slot", index)
 			icon.set_meta("inv_item_id", int(item_id))
 			icon.set_meta("inv_qty", qty)
-			# The slot a live drag came from stays dimmed across a page turn.
-			if _bag_drag_preview != null and index == _bag_drag_slot:
-				icon.modulate = Color(1, 1, 1, 0.35)
-				_bag_drag_icon = icon
+			# The slot the held icon came from stays dimmed across a page turn.
+			if held_icon != null and held_icon.kind() == "bag" and int(held_icon.payload.get("slot", -1)) == index:
+				held_icon.retarget_source(icon)
 			if not icon.has_meta("inv_click_wired"):
 				icon.set_meta("inv_click_wired", true)
 				icon.gui_input.connect(func(ev: InputEvent) -> void: _on_inventory_cell_input(ev, icon))
@@ -3399,21 +3413,23 @@ static func _place_bag_icon(node: Control) -> void:
 	node.position = BAG_SLOT_ICON.position
 	node.size = BAG_SLOT_ICON.size
 
-## A click on an inventory item. Left, while an NPC service window is open:
-## sell it (shop) or deposit it (storage) -- the bag is how the client moves
-## items to a vendor or the warehouse. Right: use it, which is what a potion
-## is for; the server decides whether the item is usable at all, so a
-## right-click on a sword is simply refused rather than doing something odd.
+## A click on an inventory item. LEFT (released, no Ctrl/Shift/Alt): pick it
+## up onto the cursor -- the next click puts it down (HeldIcon, round 652).
+## That holds with a store or the warehouse open too: retail's pick-up
+## (0x652540) does not look at them; the bag item is SOLD by putting it down
+## on the store window and DEPOSITED by putting it down on the warehouse.
+## RIGHT: use it, which is what a potion is for; the server decides whether
+## the item is usable at all, so a right-click on a sword is simply refused.
 func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
-	if not (event is InputEventMouseButton and (event as InputEventMouseButton).pressed):
+	if not (event is InputEventMouseButton):
 		return
 	if not (icon.has_meta("inv_slot") and icon.has_meta("inv_item_id")):
 		return
-	var button := (event as InputEventMouseButton).button_index
+	var mb := event as InputEventMouseButton
 	var slot := int(icon.get_meta("inv_slot"))
 	var item_id := int(icon.get_meta("inv_item_id"))
 	var qty := int(icon.get_meta("inv_qty"))
-	if button == MOUSE_BUTTON_RIGHT:
+	if mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
 		if player_dead:
 			system_notice.emit(DEAD_INPUT_LINE)
 			return
@@ -3424,88 +3440,171 @@ func _on_inventory_cell_input(event: InputEvent, icon: TextureRect) -> void:
 			UiSounds.expect_use(item_types(item_id))
 			NetClient.use_item(NetClient.current_character_name, slot)
 		return
-	if button != MOUSE_BUTTON_LEFT:
-		return
-	var store: HudWindow = _windows.get("store")
-	var storage_win: HudWindow = _windows.get("storage")
-	if store != null and store.visible:
-		_confirm_sell(slot, item_id, qty)
-	elif storage_win != null and storage_win.visible:
-		_confirm_deposit(slot, item_id, qty)
-	else:
-		# No vendor open: a press is the start of a drag -- to another bag
-		# slot (move / merge / swap, the server's call) or onto a worn slot
-		# of the docked paper doll (equip). Nothing is sent until it is
-		# dropped somewhere that means something.
-		_arm_bag_drag(slot, item_id, icon, (event as InputEventMouseButton).global_position)
+	if _is_pick_click_on(event, icon):
+		pick_up_icon({"kind": "bag", "slot": slot, "item_id": item_id, "qty": qty, "icon": icon.texture},
+			icon.texture, icon, mb.global_position)
 
-# --- Dragging in the bag -----------------------------------------------------
+## Whether `event` is the click that picks `control`'s icon up: a plain left
+## release (HeldIcon.is_pick_click, READ) that is still over the control --
+## Godot hands a release to the control the press was on, and a release
+## somewhere else is not a click on this slot (retail's slots take no press
+## at all, so there is no dragging one away; INFERRED).
+func _is_pick_click_on(event: InputEvent, control: Control) -> bool:
+	return HeldIcon.is_pick_click(event) and control != null \
+		and control.get_global_rect().has_point((event as InputEventMouseButton).global_position)
+
+# --- The held icon (round 652) ------------------------------------------------
 #
-# Godot's own drag-and-drop wants _get_drag_data/_can_drop_data on the
-# controls involved, and the bag's cells are plain Controls built from the
-# authored layout by UiBuilder. So the drag is done by hand: a press on a
-# filled cell arms it, moving a few pixels starts it (a copy of the icon
-# follows the mouse), and the release is resolved against the cells' own
-# rects -- the 4x8 lattice at its authored 36-pixel pitch -- or the docked
-# paper doll's worn slots. The server owns the outcome: a bag drop is
-# OP_MOVE (move / merge / swap, its rule), a doll drop is OP_EQUIP (which it
-# refuses for the wrong kind of item), and the window redraws from what it
-# answers, never from what the drag assumed.
+# Retail's icons are clicked up and clicked down, never dragged: see
+# held_icon.gd. The controller swallows the clicks while it holds something;
+# this is where they are routed. The server owns every outcome: a bag drop is
+# OP_MOVE (move / merge / swap), a doll drop OP_EQUIP (a swap when the slot is
+# filled, refused for the wrong kind of item), a worn item dropped on the bag
+# OP_UNEQUIP with the clicked slot, and the windows redraw from what it
+# answers, never from what the drop assumed.
 
-## Pixels the mouse must move before a press becomes a drag, so a plain
-## click never spawns a ghost icon.
-const BAG_DRAG_THRESHOLD := 4.0
-
-var _bag_drag_slot := -1
-## >= 0 while the armed drag started on a WORN item (the paper doll) rather
-## than a bag cell; the value is the EquipmentNet.SLOT_* it came off.
-## Dragging INTO a doll slot already worked, but dragging back out did not
-## exist at all, so worn gear could not be taken off in the window at all
-## (playtest 2026-09-20, item 7).
-var _bag_drag_worn_slot := -1
-var _bag_drag_item_id := 0
-var _bag_drag_icon: TextureRect = null
-var _bag_drag_origin := Vector2.ZERO
-var _bag_drag_preview: TextureRect = null
-
-func _arm_bag_drag(slot: int, item_id: int, icon: TextureRect, at: Vector2) -> void:
-	_cancel_bag_drag()
-	_bag_drag_slot = slot
-	_bag_drag_item_id = item_id
-	_bag_drag_icon = icon
-	_bag_drag_origin = at
-
-func _start_bag_drag() -> void:
-	if _bag_drag_preview != null or _bag_drag_icon == null:
+func _input(event: InputEvent) -> void:
+	# Before anything else, and without consuming the press (see the function).
+	release_text_focus_on_press(event)
+	if held_icon != null and held_icon.handle(event):
+		get_viewport().set_input_as_handled()
 		return
-	var preview := TextureRect.new()
-	preview.texture = _bag_drag_icon.texture
-	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	preview.custom_minimum_size = Vector2(32, 32)
-	preview.size = Vector2(32, 32)
-	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	preview.top_level = true
-	preview.z_index = 4096
-	preview.modulate = Color(1, 1, 1, 0.85)
-	add_child(preview)
-	_bag_drag_preview = preview
-	_bag_drag_icon.modulate = Color(1, 1, 1, 0.35)
-	_position_bag_drag_preview(get_global_mouse_position())
+	if _qa_slots and event is InputEventKey \
+			and (event as InputEventKey).pressed and not (event as InputEventKey).echo \
+			and (event as InputEventKey).keycode == KEY_F11:
+		# QA only: Shift+F11 opens the warehouse (no NPC walk in a run),
+		# F11 prints where every slot is, for xdotool to click.
+		if (event as InputEventKey).shift_pressed:
+			open_storage("Warehouse Keeper")
+		get_tree().call_group(QA_SLOTS_GROUP, "qa_print_slots")
+		get_viewport().set_input_as_handled()
 
-func _position_bag_drag_preview(mouse: Vector2) -> void:
-	if _bag_drag_preview != null:
-		_bag_drag_preview.global_position = mouse - Vector2(16, 16)
+## Whether a left click at `at` goes to the control under it rather than to
+## the held icon: a button, or the bag's page tabs. READ: 0x6523d0 lets a
+## press over a CIFButton (0xee9828) or a CIFSelectableArea (0xee96c0, the
+## tabs) through, and a release over one too -- which is how retail carries an
+## item to another page of the bag: turn the page, then click the slot.
+func _click_passes_through(at: Vector2) -> bool:
+	var win := _topmost_window_at(at)
+	return win != null and _button_under(win, at)
 
-func _cancel_bag_drag() -> void:
-	if _bag_drag_preview != null:
-		_bag_drag_preview.queue_free()
-		_bag_drag_preview = null
-	if _bag_drag_icon != null and is_instance_valid(_bag_drag_icon):
-		_bag_drag_icon.modulate = Color.WHITE
-	_bag_drag_icon = null
-	_bag_drag_slot = -1
-	_bag_drag_worn_slot = -1
-	_bag_drag_item_id = 0
+func _button_under(node: Node, at: Vector2) -> bool:
+	for child in node.get_children():
+		if child is CanvasItem and not (child as CanvasItem).visible:
+			continue
+		if child is BaseButton and (child as Control).get_global_rect().has_point(at) \
+				and not (child as BaseButton).disabled:
+			return true
+		if _button_under(child, at):
+			return true
+	return false
+
+## The frontmost open window under a global point, or null. Windows overlap
+## (the warehouse opens over the store), and a click belongs to the one drawn
+## on top: the windows are siblings under these panels, so the later child
+## (move_to_front) is in front.
+func _topmost_window_at(at: Vector2) -> HudWindow:
+	var best: HudWindow = null
+	for id in _windows:
+		var win: HudWindow = _windows[id]
+		if win == null or not win.is_visible_in_tree() or not win.get_global_rect().has_point(at):
+			continue
+		if best == null or _drawn_above(win, best):
+			best = win
+	return best
+
+static func _drawn_above(a: Control, b: Control) -> bool:
+	if a.z_index != b.z_index:
+		return a.z_index > b.z_index
+	if a.get_parent() == b.get_parent():
+		return a.get_index() > b.get_index()
+	return false
+
+## Whether a global point is over any open window of these panels.
+func _over_any_window(at: Vector2) -> bool:
+	return _topmost_window_at(at) != null
+
+## Whether `panel_id`'s window is the frontmost one under a global point.
+func _over_window(panel_id: String, at: Vector2) -> bool:
+	var win: HudWindow = _windows.get(panel_id)
+	return win != null and win == _topmost_window_at(at)
+
+## Whether a window is on screen (the store or the warehouse a held item
+## came from may have been closed under it).
+func _window_shown(panel_id: String) -> bool:
+	var win: HudWindow = _windows.get(panel_id)
+	return win != null and win.is_visible_in_tree()
+
+## The held icon was put down at `at`: act on what is under it -- in the
+## frontmost window there. Each case names the retail drop handler it follows.
+func _on_held_dropped(what: Dictionary, at: Vector2) -> void:
+	var k := String(what.get("kind", ""))
+	var from := int(what.get("slot", -1))
+	var item_id := int(what.get("item_id", -1))
+	var qty := int(what.get("qty", 1))
+	var on_bag := _over_inventory_window(at)
+	match k:
+		"bag":
+			# CIFInventory::vslot_028 (0x6b5b80) for a bag or doll target,
+			# the store's and the warehouse's for theirs.
+			if on_bag and (_bag_slot_at(at) >= 0 or _equipment_slot_at(at) >= 0):
+				_dropping_item_id = item_id
+				_drop_bag_item(from, at)
+				_dropping_item_id = -1
+			elif _over_window("store", at):
+				_confirm_sell(from, item_id, qty)       # 0x46 -> 0x0f: type 9, sell
+			elif _over_window("storage", at):
+				_confirm_deposit(from, item_id, qty)    # 0x46 -> 0x13: type 2
+			elif not _over_any_window(at):
+				held_dropped_outside.emit(what, at)     # a quick slot, or the ground (OPEN)
+		"worn":
+			if on_bag:
+				_drop_worn_item(from, at)
+			elif not _over_any_window(at):
+				held_dropped_outside.emit(what, at)
+		"storage":
+			# 0x13 -> 0x46 (type 3). The retail packet names the bag slot;
+			# ours has no field for it, so the server places it (OPEN).
+			if on_bag and _window_shown("storage"):
+				_confirm_withdraw(from, item_id, qty)
+		"shop":
+			# 0x0f -> 0x46 (type 8): the retail packet carries no bag slot
+			# (FUN_007950b0 case 0x0f sets none), so the server places it.
+			if on_bag and _window_shown("store"):
+				_confirm_buy(item_id)
+		"skill":
+			if not _over_any_window(at):
+				held_dropped_outside.emit(what, at)
+		"quickslot":
+			held_dropped_outside.emit(what, at)
+
+## A worn item put down. On a bag cell: taken off INTO THAT CELL (the
+## clicked slot goes to the server; round 652, the user's report -- see
+## equipment/placement.go for retail's server, which does not). Elsewhere
+## over the bag window: taken off, the server choosing the slot (OURS, the
+## playtest 2026-09-20 fix: a click a few pixels into a gutter still takes it
+## off). Back on the doll, or outside the window: nothing.
+func _drop_worn_item(worn_slot: int, at: Vector2) -> void:
+	var who := NetClient.current_character_name
+	if who == "" or not NetClient.is_connected_to_server():
+		return
+	if _equipment_slot_at(at) >= 0:
+		return
+	var to := _bag_slot_at(at)
+	if to < 0 and not _over_inventory_window(at):
+		return
+	UiSounds.expect_move(worn_item_types(worn_slot), "unequipped (equipment -> bag)")
+	print("HudPanels: unequip worn slot %d into bag slot %d" % [worn_slot, to])
+	NetClient.unequip(who, worn_slot, to)
+	NetClient.list_inventory(who)
+
+## Whether a global point is over the open inventory window, in front of
+## any other window there.
+func _over_inventory_window(at: Vector2) -> bool:
+	var win: HudWindow = _windows.get("inventory")
+	if win == null or not is_open("inventory"):
+		return false
+	return win == _topmost_window_at(at)
 
 ## Which bag cell (its slot index) is under a screen point, or -1. Cells are
 ## GDR_INVENTORY_LATTICE's children in slot order on the shown page, the same
@@ -3537,179 +3636,20 @@ func _equipment_slot_at(point: Vector2) -> int:
 			return i
 	return -1
 
-## The drag's motion and release arrive here rather than on the cell, since
-## the mouse has left it by then. Nothing is consumed unless a drag actually
-## ends on a release, so ordinary clicks elsewhere are unaffected.
-# --- Dragging a skill out of the skill window --------------------------------
-#
-# The same hand-rolled drag as the bag's: a press on a learned skill arms it,
-# moving past the threshold starts it (a ghost of the icon follows the mouse),
-# and the release is handed to World3D with the screen position -- it owns the
-# underbar and resolves the quickslot. A release without movement is a click,
-# and keeps the "next free slot" shortcut.
-
-var _skill_drag_id := 0
-var _skill_drag_code := ""
-var _skill_drag_icon: Texture2D = null
-var _skill_drag_source: Control = null
-var _skill_drag_origin := Vector2.ZERO
-var _skill_drag_preview: TextureRect = null
-var _skill_drag_armed := false
-
-func _arm_skill_drag(skill_id: int, basic_code: String, icon: Texture2D, source: Control, at: Vector2) -> void:
-	_cancel_skill_drag()
-	_skill_drag_id = skill_id
-	_skill_drag_code = basic_code
-	_skill_drag_icon = icon
-	_skill_drag_source = source
-	_skill_drag_origin = at
-	_skill_drag_armed = true
-
-func _start_skill_drag() -> void:
-	if _skill_drag_preview != null or _skill_drag_icon == null:
-		return
-	var preview := TextureRect.new()
-	preview.texture = _skill_drag_icon
-	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	preview.custom_minimum_size = Vector2(32, 32)
-	preview.size = Vector2(32, 32)
-	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	preview.top_level = true
-	preview.z_index = 4096
-	preview.modulate = Color(1, 1, 1, 0.85)
-	add_child(preview)
-	_skill_drag_preview = preview
-	if _skill_drag_source != null:
-		_skill_drag_source.modulate = Color(1, 1, 1, 0.35)
-	_skill_drag_preview.global_position = get_global_mouse_position() - Vector2(16, 16)
-
-func _cancel_skill_drag() -> void:
-	if _skill_drag_preview != null:
-		_skill_drag_preview.queue_free()
-		_skill_drag_preview = null
-	if _skill_drag_source != null and is_instance_valid(_skill_drag_source):
-		_skill_drag_source.modulate = Color(1, 1, 1, 1)
-	_skill_drag_source = null
-	_skill_drag_armed = false
-
-func _skill_drag_input(event: InputEvent) -> bool:
-	if not _skill_drag_armed:
-		return false
-	if event is InputEventMouseMotion:
-		var motion := event as InputEventMouseMotion
-		if _skill_drag_preview == null:
-			if motion.global_position.distance_to(_skill_drag_origin) >= BAG_DRAG_THRESHOLD:
-				_start_skill_drag()
-		if _skill_drag_preview != null:
-			_skill_drag_preview.global_position = motion.global_position - Vector2(16, 16)
-		return true
-	if event is InputEventKey and (event as InputEventKey).pressed and (event as InputEventKey).keycode == KEY_ESCAPE:
-		if _skill_drag_preview != null:
-			_cancel_skill_drag()
-			get_viewport().set_input_as_handled()
-		return true
-	if event is InputEventMouseButton and not (event as InputEventMouseButton).pressed \
-			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-		var dragging := _skill_drag_preview != null
-		var at := (event as InputEventMouseButton).global_position
-		var id := _skill_drag_id
-		var code := _skill_drag_code
-		var icon := _skill_drag_icon
-		_cancel_skill_drag()
-		if dragging:
-			get_viewport().set_input_as_handled()
-			skill_drop_requested.emit(at, id, code, icon)
-		else:
-			skill_assign_requested.emit(id, code, icon)
-		return true
-	return false
-
-func _input(event: InputEvent) -> void:
-	# Before anything else, and without consuming the press (see the function).
-	release_text_focus_on_press(event)
-	if _skill_drag_input(event):
-		return
-	# A worn drag arms with a bag slot of -1 (it has none), so the guard has
-	# to admit it too or the drag is never driven.
-	if _bag_drag_slot < 0 and _bag_drag_worn_slot < 0:
-		return
-	if event is InputEventMouseMotion:
-		var motion := event as InputEventMouseMotion
-		if _bag_drag_preview == null:
-			if motion.global_position.distance_to(_bag_drag_origin) >= BAG_DRAG_THRESHOLD:
-				_start_bag_drag()
-		_position_bag_drag_preview(motion.global_position)
-		_bag_drag_over_tab(motion.global_position)
-		return
-	if event is InputEventKey and (event as InputEventKey).pressed and (event as InputEventKey).keycode == KEY_ESCAPE:
-		if _bag_drag_preview != null:
-			_cancel_bag_drag()
-			get_viewport().set_input_as_handled()
-		return
-	if event is InputEventMouseButton and not (event as InputEventMouseButton).pressed \
-			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-		var dragging := _bag_drag_preview != null
-		var from := _bag_drag_slot
-		var worn_from := _bag_drag_worn_slot
-		var carried := _bag_drag_item_id
-		var at := (event as InputEventMouseButton).global_position
-		_cancel_bag_drag()
-		if not dragging:
-			return  # a click, not a drag: nothing to do
-		get_viewport().set_input_as_handled()
-		if worn_from >= 0:
-			_drop_worn_item(worn_from, at)
-		else:
-			_dropping_item_id = carried
-			_drop_bag_item(from, at)
-			_dropping_item_id = -1
-
-## A worn item dragged off the paper doll and released. Anywhere over the bag
-## takes it off; a release back on the doll, or outside the window, does
-## nothing rather than erroring.
-##
-## Which bag slot it lands in is the server's to choose, so the drop point
-## inside the grid is not passed on: unequip means "take this off", and the
-## bag redraws from the answer.
-func _drop_worn_item(worn_slot: int, at: Vector2) -> void:
-	var who := NetClient.current_character_name
-	if who == "" or not NetClient.is_connected_to_server():
-		return
-	if _equipment_slot_at(at) >= 0:
-		return
-	# ANYWHERE over the inventory window takes it off, not just dead-on a grid
-	# cell. Requiring an exact cell is why "i cant unequip my clothes" and "when
-	# i drag and unequip my sword, it doesnt go off of my character" were both
-	# reported (playtest 2026-09-20): a release a few pixels into a gutter did
-	# nothing at all, and said nothing either. The server still chooses the bag
-	# slot -- the drop point was never passed on -- so accepting a looser target
-	# changes where you may let go, not where the item lands.
-	if _bag_slot_at(at) < 0 and not _over_inventory_window(at):
-		return
-	UiSounds.expect_move(worn_item_types(worn_slot), "unequipped (equipment -> bag)")
-	NetClient.unequip(who, worn_slot)
-	NetClient.list_inventory(who)
-
-## Whether a global point is over the open inventory window at all.
-func _over_inventory_window(at: Vector2) -> bool:
-	var win: HudWindow = _windows.get("inventory")
-	if win == null or not is_open("inventory"):
-		return false
-	return win.get_global_rect().has_point(at)
-
-## The item id a bag drag from `from` carries: the one the drag armed with
-## (_input captures it before the drag is cleared), else the bag list's.
+## The item id a bag drop from `from` carries: the one it was picked up with
+## (it may have come from another page), else the bag list's.
 var _dropping_item_id := -1
 func _bag_drag_item_id_or(from: int) -> int:
 	return _dropping_item_id if _dropping_item_id > 0 else _bag_item_id_at_slot(from)
 
-## Resolves where a bag drag ended and asks the server for it.
+## Resolves where a bag item was put down and asks the server for it.
 func _drop_bag_item(from: int, at: Vector2) -> void:
 	var who := NetClient.current_character_name
 	if who == "" or not NetClient.is_connected_to_server():
 		return
 	var to := _bag_slot_at(at)
 	if to >= 0:
+		# The same slot sends nothing (FUN_007950b0's src != dst test).
 		if to != from:
 			UiSounds.expect_move(bag_item_types(from), "moved in the bag")
 			NetClient.move_item(who, from, to)
@@ -3717,18 +3657,61 @@ func _drop_bag_item(from: int, at: Vector2) -> void:
 	var worn := _equipment_slot_at(at)
 	if worn >= 0:
 		# Equip out of that bag slot; the server refuses a wrong kind of
-		# item for the slot. Its equipment result redraws the doll, and the
-		# bag is re-read since the item left it.
+		# item for the slot, and swaps with what is worn there. Its
+		# equipment result redraws the doll, and the bag is re-read since
+		# the item left it.
 		UiSounds.expect_move(bag_item_types(from), "equipped (bag -> equipment)")
 		NetClient.equip(who, worn, from)
 		NetClient.list_inventory(who)
 		return
 	# Neither a bag slot nor the doll: offer it to the quickslot bar, which
 	# World3D owns. It ignores a release that is not over a slot.
-	# The item the drag carries (it may have come from another page).
 	var item_id := _bag_drag_item_id_or(from)
 	var icon := _item_icon(item_id) if item_id >= 0 else null
 	item_drop_requested.emit(at, item_id, from, icon)
+
+## QA only (SRREVAMP_QA_SLOTS): where every slot of the open windows is, so a
+## live run can click them with xdotool (HudUnderbar prints the bar's).
+const QA_SLOTS_GROUP := "qa_slots"
+func qa_print_slots() -> void:
+	var inv: HudWindow = _windows.get("inventory")
+	if inv != null and is_open("inventory"):
+		var grid := inv.node("GDR_INVENTORY_LATTICE") as Control
+		if grid != null:
+			for i in range(grid.get_child_count()):
+				var cell := grid.get_child(i) as Control
+				var slot := _bag_page * BAG_PAGE_SLOTS + i
+				if cell != null and cell.is_visible_in_tree() and slot < _bag_size_shown():
+					print("QA SLOT bag:%d at %s item %d" % [slot, _qa_xy(cell), _bag_item_id_at_slot(slot)])
+		for i in range(17):
+			var ws := inv.node("GDR_EQUIPMENT_SLOT_%d" % (EQUIPMENT_SLOT_BASE + i)) as Control
+			if ws != null and ws.is_visible_in_tree():
+				print("QA SLOT worn:%d at %s" % [i, _qa_xy(ws)])
+	for id in _windows:
+		var win: HudWindow = _windows[id]
+		if win != null and win.is_visible_in_tree():
+			print("QA SLOT window:%s at %s rect %s" % [id, _qa_xy(win), str(win.get_global_rect())])
+			for icon in win.find_children("ItemIcon", "TextureRect", true, false):
+				var tr := icon as TextureRect
+				if tr.texture == null or not tr.is_visible_in_tree():
+					continue
+				if tr.has_meta("wh_slot"):
+					print("QA SLOT storage:%d at %s item %d" % [int(tr.get_meta("wh_slot")), _qa_xy(tr), int(tr.get_meta("wh_item_id"))])
+				elif tr.has_meta("shop_item_id"):
+					print("QA SLOT shop:%s at %s item %d" % [tr.get_parent().name, _qa_xy(tr), int(tr.get_meta("shop_item_id"))])
+			for b in win.find_children("*", "BaseButton", true, false):
+				var btn := b as BaseButton
+				if btn.is_visible_in_tree() and btn is Button and (btn as Button).text != "":
+					print("QA SLOT button:%s at %s" % [(btn as Button).text, _qa_xy(btn)])
+	var skill: HudWindow = _windows.get("skill")
+	if skill != null and skill.is_visible_in_tree():
+		for c in skill.find_children("*", "TextureRect", true, false):
+			if (c as Control).has_meta("qa_skill_id") and (c as Control).is_visible_in_tree():
+				print("QA SLOT skill:%d at %s" % [int((c as Control).get_meta("qa_skill_id")), _qa_xy(c as Control)])
+
+static func _qa_xy(c: Control) -> String:
+	var p := c.get_global_rect().get_center().round()
+	return "%d,%d" % [int(p.x), int(p.y)]
 
 ## The icon of the item in a bag slot, or null -- from the bag as the server
 ## last sent it, on any page (round 633's review: the cells only hold the
@@ -4476,12 +4459,20 @@ func _build_group_row(host: Control, mastery: MasteryReader.Mastery, group: Skil
 			var cast_id: int = s.level_ids[learned - 1]
 			var cast_code: String = s.basic_code
 			var cast_icon: Texture2D = icon.texture
-			# A press arms a drag (see _input): moving starts it and the release
-			# drops the skill on a quickslot; a plain click keeps the shortcut of
-			# putting it on the next free slot.
+			# A left click picks the skill up onto the cursor and the next
+			# click puts it on a quick slot (HeldIcon, round 652; the bar's
+			# drop handler CIFUnderBar::vslot_028 takes kind 0x19, the skill
+			# window). A right click casts it (vslot 33 -> 0x682040, case
+			# 0x19 -> 0x81ba10, READ). The old "click puts it on the next
+			# free slot" shortcut was ours and is gone: retail has none.
+			icon.set_meta("qa_skill_id", cast_id)
 			icon.gui_input.connect(func(ev: InputEvent) -> void:
-				if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
-					_arm_skill_drag(cast_id, cast_code, cast_icon, icon, (ev as InputEventMouseButton).global_position))
+				if _is_pick_click_on(ev, icon):
+					pick_up_icon({"kind": "skill", "skill_id": cast_id, "code": cast_code, "icon": cast_icon},
+						cast_icon, icon, (ev as InputEventMouseButton).global_position)
+				elif ev is InputEventMouseButton and not ev.pressed and ev.button_index == MOUSE_BUTTON_RIGHT \
+						and icon.get_global_rect().has_point((ev as InputEventMouseButton).global_position):
+					skill_use_requested.emit(cast_id, cast_code))
 
 		# The "+" appears when the next level is within the current mastery level;
 		# the server enforces the SP cost (refdata ReqLearnSP) and refunds on fail.
@@ -4917,23 +4908,19 @@ func _fill_equipment_slots(items: Array) -> void:
 				icon.tooltip_text = _item_tooltip(int(item_id))
 				icon.modulate = Color.WHITE
 			icon.mouse_filter = Control.MOUSE_FILTER_STOP
-			# Press to arm a drag OFF the doll -- the same hand-rolled drag
-			# the bag uses, with the worn slot as its source. Without this
-			# the worn icons took clicks and did nothing, so nothing could
-			# be removed in the window (playtest 2026-09-20, item 7).
-			var worn_slot := int(slot_index)
-			if not icon.has_meta("worn_drag_wired"):
-				icon.set_meta("worn_drag_wired", true)
+			# A left click picks the worn item up onto the cursor; the next
+			# click on a bag cell takes it off into THAT cell (HeldIcon,
+			# round 652). Without a handler here the worn icons took clicks
+			# and did nothing (playtest 2026-09-20, item 7).
+			icon.set_meta("worn_slot", int(slot_index))
+			icon.set_meta("worn_item_id", int(item_id))
+			if not icon.has_meta("worn_click_wired"):
+				icon.set_meta("worn_click_wired", true)
 				icon.gui_input.connect(func(ev: InputEvent) -> void:
-					if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
-							and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-						_arm_worn_drag(worn_slot, icon, (ev as InputEventMouseButton).global_position))
-
-## Arms a drag that starts on a worn item. The bag's drag machinery does the
-## rest; _bag_drag_worn_slot is what tells the release which way it went.
-func _arm_worn_drag(worn_slot: int, icon: TextureRect, at: Vector2) -> void:
-	_arm_bag_drag(-1, 0, icon, at)
-	_bag_drag_worn_slot = worn_slot
+					if _is_pick_click_on(ev, icon) and icon.texture != null and icon.has_meta("worn_slot"):
+						pick_up_icon({"kind": "worn", "slot": int(icon.get_meta("worn_slot")),
+							"item_id": int(icon.get_meta("worn_item_id", 0)), "icon": icon.texture},
+							icon.texture, icon, (ev as InputEventMouseButton).global_position))
 
 func connect_net() -> void:
 	if _net_connected:

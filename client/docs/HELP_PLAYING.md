@@ -97,11 +97,30 @@ costs the SP shown and needs your mastery at the level shown -- and, as in the
 original, some skills need another skill first (the tooltip says which, e.g.
 *Requires: Power Strike Lv 9*), and each level needs the one before it.
 
-**Drag a learned skill out of the window and drop it on a quickslot** of the
-underbar (a plain click also puts it on the next free slot). The number keys
-**1..9 and 0** cast the current page's ten quickslots, or click a slot; the
-arrows beside the slots flip between four pages. A skill needs a **target**:
-click a monster first, then cast.
+**Click a learned skill to pick it up, then click a quickslot** of the underbar
+to put it there -- as in the original, the icon sticks to the cursor between
+the two clicks. Right-click a skill in the window to cast it. The number keys
+**1..9 and 0** cast the current page's ten quickslots, or **right-click** a
+slot; a left click picks the slot's icon up (click another slot to swap the
+two, or anywhere off the bar to take it off). The arrows beside the slots flip
+between four pages. A skill needs a **target**: click a monster first, then
+cast.
+
+## Moving items
+
+Every icon moves the original's way: **click it once and it sticks to the
+cursor, click again where it should go**. A right click lets go of it without
+moving anything.
+
+- In the bag: click an item, then another slot (to swap or stack). To reach
+  another page, click the page's tab while holding the item, then the slot.
+- Worn gear: click it on the character, then the bag slot it should go into.
+  A bag item clicked onto the character is put on (swapping with what was
+  worn).
+- At a shop: click a bag item, then the shop window, to sell it; click a shop
+  item, then your bag, to buy it.
+- At the warehouse: click a bag item, then the warehouse, to store it; click a
+  stored item, then your bag, to take it out.
 
 ## Chat and commands
 

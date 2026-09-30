@@ -1837,6 +1837,13 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.skill_assign_requested.connect(_on_skill_assign_requested)
 	_hud_panels.skill_drop_requested.connect(_on_skill_drop_requested)
 	_hud_panels.item_drop_requested.connect(_on_item_drop_requested)
+	# The icon on the cursor (round 652): the bar's own icons are picked up
+	# through the panels' HeldIcon, and what it puts down off the panels
+	# (a quick slot, the world) comes back here.
+	_hud_panels.held_dropped_outside.connect(_on_held_dropped_outside)
+	_hud_panels.skill_use_requested.connect(_on_skill_use_requested)
+	if _hud_underbar != null:
+		_hud_underbar.quickslot_pick_requested.connect(_on_quickslot_pick_requested)
 	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
 	_hud_panels.guild_create_requested.connect(_on_guild_create_requested)
 	_hud_panels.guild_leave_requested.connect(_on_guild_leave_requested)
@@ -7765,6 +7772,80 @@ func _on_item_drop_requested(at: Vector2, item_id: int, inventory_slot: int, ico
 	_hud_underbar.set_slot_item(slot, icon)
 	print("World3D: quickslot %d <- item %d from bag slot %d" % [slot, item_id, inventory_slot])
 	_save_hotbar()
+
+## A left click on a filled quick slot (round 652): its icon goes onto the
+## cursor, through the panels' shared HeldIcon.
+func _on_quickslot_pick_requested(slot_index: int) -> void:
+	if _hud_panels == null or _hud_underbar == null:
+		return
+	var tex := _hud_underbar.slot_icon(slot_index)
+	_hud_panels.pick_up_icon({"kind": "quickslot", "slot": slot_index, "icon": tex}, tex,
+		_hud_underbar.slot_icon_rect(slot_index), get_viewport().get_mouse_position())
+
+## The held icon was put down off the panels (round 652): onto the quick slot
+## bar, or the world.
+func _on_held_dropped_outside(what: Dictionary, at: Vector2) -> void:
+	var tex: Texture2D = what.get("icon") as Texture2D
+	match String(what.get("kind", "")):
+		"skill":
+			_on_skill_drop_requested(at, int(what.get("skill_id", 0)), String(what.get("code", "")), tex)
+		"bag":
+			_on_item_drop_requested(at, int(what.get("item_id", -1)), int(what.get("slot", -1)), tex)
+		"quickslot":
+			_on_quickslot_drop_requested(at, int(what.get("slot", -1)))
+		"worn":
+			# On the world, not the bar: retail's CGInterface::vslot_028
+			# (0x78abe0) says 0x186d for a worn item (READ).
+			if _hud_underbar == null or not _hud_underbar.get_global_rect().has_point(at):
+				var line := "UIIT_MSG_STRGERR_CANT_DROP_EQUIPED_ITEM_DIRECTLY"
+				if _ui_builder != null:
+					line = _ui_builder.resolve_text(line)
+				_log_system(line)
+
+## A quick slot's icon was put down (round 652). On another quick slot the
+## two change places (CIFUnderBar::vslot_028, kind 0x0c); on itself nothing
+## changes; anywhere else it comes off the bar (the bar's release hook
+## vslot_026, 0x68d140, clears the slot let go of: READ, the reading of its
+## flag +0x3b1 INFERRED).
+func _on_quickslot_drop_requested(at: Vector2, from: int) -> void:
+	if _hud_underbar == null or from < 0:
+		return
+	var to := _hud_underbar.slot_index_at(at)
+	if to == from:
+		return
+	if to < 0:
+		_quickslot_skills.erase(from)
+		_quickslot_items.erase(from)
+		_hud_underbar.clear_slot(from)
+		print("World3D: quickslot %d removed (put down off the bar)" % from)
+		_save_hotbar()
+		return
+	var from_tex := _hud_underbar.slot_icon(from)
+	var to_tex := _hud_underbar.slot_icon(to)
+	for table in [_quickslot_skills, _quickslot_items]:
+		var a = table.get(from)
+		var b = table.get(to)
+		table.erase(from)
+		table.erase(to)
+		if a != null:
+			table[to] = a
+		if b != null:
+			table[from] = b
+	_hud_underbar.set_slot_item(to, from_tex)
+	_hud_underbar.set_slot_item(from, to_tex)
+	print("World3D: quickslots %d and %d changed places" % [from, to])
+	_save_hotbar()
+
+## A right click on a learned skill in the skill window (round 652): cast it,
+## as a quick slot holding it would (READ: 0x682040 case 0x19 -> 0x81ba10).
+func _on_skill_use_requested(skill_id: int, basic_code: String) -> void:
+	if _player_dead:
+		_log_system(DEAD_INPUT_LINE)
+		return
+	if not _skill_is_assignable(skill_id):
+		return
+	print("World3D: skill window casts skill %d" % skill_id)
+	_cast_skill(skill_id, basic_code)
 
 ## Keeps the bar's item slots pointing at the right bag slots, and clears any
 ## whose item is gone (spent, sold, moved). Called whenever the bag is redrawn.

@@ -123,17 +123,35 @@ func DecodeEquipRequest(data []byte) (*EquipRequest, error) {
 	return &EquipRequest{CharacterName: fields[0], Slot: slot, InventorySlot: invSlot}, nil
 }
 
-// UnequipRequest is the OpUnequip payload: which character, which slot.
+// UnequipRequest is the OpUnequip payload: which character, which slot,
+// and (since round 652) which bag slot the item was dropped on.
+//
+// InventorySlot is the retail client's destination (FUN_007950b0 sends
+// `bag slot + 13` for a worn item dropped on the bag, READ). It is an
+// optional trailing int32: a request without it, or with -1, leaves the
+// placement to the server's first free slot, which is also what retail's
+// own server does with it (CGObjPC::DetachEquipItem, see
+// equipment/placement.go).
 type UnequipRequest struct {
 	CharacterName string
 	Slot          equipment.Slot
+	// Targeted says InventorySlot was sent: a zero value is "no target", not
+	// bag slot 0.
+	Targeted      bool
+	InventorySlot int
 }
 
 func (r *UnequipRequest) Encode() []byte {
 	out := encodeStrings(r.CharacterName)
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, uint32(r.Slot))
-	return append(out, buf...)
+	out = append(out, buf...)
+	if r.Targeted {
+		to := make([]byte, 4)
+		binary.LittleEndian.PutUint32(to, uint32(int32(r.InventorySlot)))
+		out = append(out, to...)
+	}
+	return out
 }
 
 func DecodeUnequipRequest(data []byte) (*UnequipRequest, error) {
@@ -145,7 +163,12 @@ func DecodeUnequipRequest(data []byte) (*UnequipRequest, error) {
 		return nil, errors.New("session: decoding UnequipRequest: truncated")
 	}
 	slot := equipment.Slot(binary.LittleEndian.Uint32(rest))
-	return &UnequipRequest{CharacterName: fields[0], Slot: slot}, nil
+	req := &UnequipRequest{CharacterName: fields[0], Slot: slot, InventorySlot: -1}
+	if len(rest) >= 8 {
+		req.InventorySlot = int(int32(binary.LittleEndian.Uint32(rest[4:8])))
+		req.Targeted = req.InventorySlot >= 0
+	}
+	return req, nil
 }
 
 // EquipmentHandler returns a gateway.Handler implementing
@@ -176,7 +199,7 @@ func EquipmentHandlerWithRules(chars character.Store, store equipment.Store, inv
 		case OpEquip:
 			return handleEquip(ctx, sess, p, chars, store, inv, items, trades)
 		case OpUnequip:
-			return handleUnequip(ctx, sess, p, chars, store, items, trades)
+			return handleUnequip(ctx, sess, p, chars, store, inv, items, trades)
 		default:
 			return nil
 		}
@@ -345,7 +368,7 @@ func handleEquip(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 	return sendWornList(ctx, sess, store, items, characterID)
 }
 
-func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, items ItemLookup, trades *trade.Hub) error {
+func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, store equipment.Store, inv inventory.Store, items ItemLookup, trades *trade.Hub) error {
 	req, err := DecodeUnequipRequest(p.Data)
 	if err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: "malformed request"}).Encode()})
@@ -359,7 +382,17 @@ func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: tradeEquipLockedReason}).Encode()})
 	}
 
-	if err := store.Unequip(ctx, characterID, req.Slot); err != nil {
+	// Into the bag slot the item was dropped on (round 652): an empty one
+	// takes it, an occupied one swaps when its item may be worn there, and
+	// anything else goes to the first free slot (equipment.UnequipInto).
+	maySwap := func(bagSlot int) bool {
+		return equipRefusal(ctx, chars, store, inv, items, characterID, req.Slot, bagSlot) == ""
+	}
+	target := -1
+	if req.Targeted {
+		target = req.InventorySlot
+	}
+	if _, err := equipment.UnequipInto(ctx, store, inv, characterID, req.Slot, target, maySwap); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: equipErrorMessage(err)}).Encode()})
 	}
 	return sendWornList(ctx, sess, store, items, characterID)

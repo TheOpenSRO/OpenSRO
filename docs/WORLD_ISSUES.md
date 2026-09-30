@@ -7094,6 +7094,168 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-fifty-second round: every icon is picked up with one click and put down with the next, and a worn item lands in the bag slot you click
+
+The user (2026-09-30): "When I try drag an item from my person into the inventory to a slot I want
+it moves it to the next available slot instead. Please let me choose which slot to place the item
+in the inventory. Also the click and drag method works differently in the original game. I left
+[click] the item once and it sticks to my cursor then I click again to drop it in a slot I want.
+This works for items for inventory, storage, npcs, and skills. Basically any icon I drag around,
+that's how it's supposed to work."
+
+UI only (no world, map, object, effect, animation, movement or loading code), so no performance
+gate. The full reading is `docs/protocol/held_icon.md`; the names are filed in
+`recovered_names.tsv`.
+
+### 1. How retail holds an icon (READ, sro_client.exe)
+
+- **One global, `0x0110f604`, is the held window.** `0xb9db10(wnd)` sets it: the old one's vslot 26
+  is told it was let go, the new one's vslot 25 is asked whether it may be picked up (a
+  `CIFSlotWithHelp` says no when empty, `0x667ab0`).
+- **The pick-up is a left RELEASE.** CIFWnd's message handler `0x652540` sends WM_LBUTTONUP to
+  `0xb9db10(this)` when the cursor is the normal one (`0x00eb6a48`), none of Ctrl/Shift/Alt is
+  down (`GetKeyState 0x11/0x10/0x12`) and the window is pickable (`+100`; every CIFSlotWithHelp is
+  created pickable, `0x673cf4`). The slot's press and mouse-move handlers return 0 (vtable
+  `0xda18e4` slots 30 and 35, read out of `.rdata`): **there is no press-drag-release**.
+- **While held, every mouse message goes to the held window first** (`0xba4450` → vslot 18,
+  `0x6523d0`): moves and keys pass on; a left press is swallowed unless it is over a `CIFButton`
+  (`0xee9828`) or a `CIFSelectableArea` (`0xee96c0`, the bag's page tabs); a left release offers the
+  held window to the control under the cursor and each parent (vslot 28) and then **lets go
+  whatever the answer**; a **right press cancels**; everything else is swallowed.
+- So **retail carries an item to another bag page by clicking the tab while holding it** — round
+  633's open question (TODO.md, inventory_window.md) is answered, and round 633's hover-turn (OURS)
+  is gone.
+- The icon is drawn centred on the cursor (`CGame 0x8423d0`: `mouse - size/2`).
+- **The right button uses** (`CIFSlotWithHelp` vslot 33, `0x685ee0` → `0x682040`): a quick slot
+  (kind `0x0c`) is used, a skill in the skill window (`0x19`) is **cast**, a bag item is used.
+- The drops: `CIFInventory::vslot_028` (`0x6b5b80`), `CIFUnderBar::vslot_028` (`0x68dd10`: two
+  quick slots swap; a skill or an item goes on), `CIFUnderBar::vslot_026` (`0x68d140`: a quick slot
+  let go of off the bar is cleared — the `+0x3b1` flag's meaning INFERRED),
+  `CGInterface::vslot_028` (`0x78abe0`: the world — a bag item asks the drop warning, a worn item
+  says `0x186d` `UIIT_MSG_STRGERR_CANT_DROP_EQUIPED_ITEM_DIRECTLY`).
+- **Shift+click on a stack** opens the split box (`0x6b3fa0`); its OK moves into the first empty
+  slot (`0x6b62d0`). Not built (TODO).
+
+### 2. Where the unequipped item goes (READ, both binaries)
+
+- **The retail client names the clicked slot.** `FUN_007950b0`, the 0x7034 sender, case worn → bag
+  (`0x47 → 0x46`): type 0, source the worn slot, destination `bag slot + 13`.
+- **The retail server does not honour it.** `FUN_00523860` dispatches worn → bag to
+  `CGObjPC::DetachEquipItem` (`0x5255e0`), which at `0x5258c6` does
+  `push 0xd; call CGStorage::FindFirstEmptySlot; mov [edi+0x4],al` — the request's destination
+  overwritten with the first empty bag slot — before `MoveItem`. The weapon branch does the same.
+  **What the user reported is retail's own server behaviour.**
+- The other direction swaps: `CGObjPC::AttachEquipItem` (`0x524cd0`) calls
+  `CGStorage::SwapItem(bag, worn)`, so the displaced item takes the bag slot the new one left. Ours
+  put it in the first free slot.
+
+**Built (OURS, the user asked for it, labelled so in `equipment/placement.go`):** the client sends
+the clicked slot (a trailing int32 on OpUnequip; a request without it is the old one) and the server
+honours it: an empty slot takes the item; an occupied slot **swaps** when its item may be worn in the
+slot being emptied (the wearing rules decide; AttachEquipItem's rule the other way round); anything
+else goes to the first free slot, retail's own placement — nothing is refused that retail allowed.
+**Equip swaps** as AttachEquipItem does (READ), and no longer needs a free bag slot to do it.
+
+### 3. The client: one controller for every icon window
+
+`HeldIcon` (`client/scripts/ui/hud/held_icon.gd`), owned by HudPanels and fed from its `_input`,
+replaces round 633's hand-rolled bag drag and the skill window's drag:
+
+| Window | Left click (release) | Put down on it | Right click |
+|---|---|---|---|
+| bag | picks up | bag → move/merge/swap (OP_MOVE); worn → unequip into that slot; store item → buy dialog; warehouse item → withdraw dialog | use (unchanged) |
+| paper doll | picks up | bag item → equip (a swap) | — |
+| NPC store | picks up | bag item → sell dialog | — |
+| warehouse | picks up | bag item → deposit dialog | — |
+| skill window | picks up a learned skill | — | **casts it** (READ) |
+| quick slot bar | **picks up** (was: cast) | skill/bag item → goes on; quick slot → the two change places | **uses it** (READ; was the left click) |
+| the world | — | worn item → the `0x186d` line; quick slot → comes off the bar | — |
+
+A page tab or any button takes its click while something is held (READ). The source slot is dimmed
+while its icon is held (OURS). The skill window's "click puts it on the next free slot" shortcut was
+ours and is gone.
+
+### 4. Tests
+
+**Server** (`internal/session/unequipslot652_test.go`, through the real handler over TCP; the
+packet is written by hand so the file compiles against the base):
+`TestUnequipLandsInTheClickedSlot`, `TestUnequipOntoAWearableItemSwaps`,
+`TestUnequipOntoAnUnwearableItemGoesToTheFirstFreeSlot`,
+`TestUnequipWithoutATargetGoesToTheFirstFreeSlot`, `TestEquipOverAWornItemSwapsIntoTheSourceSlot`.
+
+**NEGATIVE against the base (e5bf2ba), MEASURED** — the item goes to the first free slot:
+
+```
+--- FAIL: TestUnequipLandsInTheClickedSlot (0.10s)
+    unequipslot652_test.go:160: unequipped item is not in the clicked slot 10: bag map[0:4 1:4842] (the first free slot is 1)
+    unequipslot652_test.go:163: the first free slot (1) was used instead of the clicked one: bag map[0:4 1:4842]
+--- FAIL: TestUnequipOntoAWearableItemSwaps (0.10s)
+    unequipslot652_test.go:198: the worn suit did not take the clicked slot 1: bag map[0:4 1:4843 2:4842]
+    unequipslot652_test.go:201: the suit from the clicked slot is not worn now: worn -1
+--- FAIL: TestEquipOverAWornItemSwapsIntoTheSourceSlot (0.10s)
+    unequipslot652_test.go:257: the displaced suit is not in the source slot 1: bag map[0:4842]
+    unequipslot652_test.go:260: the displaced suit went to the first free slot 0: bag map[0:4842]
+```
+
+**Client** (`client/scripts/ui/hud/held_icon_test.gd`): HeldIcon's state machine (pick up, put
+down on a slot, put down on nothing, the right-click cancel, tabs/buttons passing through, what it
+swallows), the encoder's trailing slot, and the bag + paper doll under real viewport input
+(`push_input`): a click on the worn boots then on bag slot 10 sends OP_UNEQUIP naming 10; a bag item
+carried to page 2 through its tab lands in slot 34; a bag item clicked onto the doll sends OP_EQUIP;
+a right click lets go and the next click sends nothing. The tests that expected a left click to fire
+a quick slot now right-click (`hud_underbar_test`, `hud_build_once_test`,
+`npc_service_reader_test`), and a left click on a filled quick slot asks to pick it up.
+
+**NEGATIVE against the base, MEASURED:**
+
+```
+FAIL the held-icon controller exists (res://scripts/ui/hud/held_icon.gd)
+FAIL an unequip onto bag slot 10 ends with the worn slot, then 10 (got [])
+FAIL one click on the worn boots puts them on the cursor
+FAIL the second click, on bag slot 10, sends one OP_UNEQUIP (got 0)
+FAIL ... and the cursor is empty again
+FAIL a click on bag slot 3 picks it up
+6 FAILURES
+```
+
+### 5. Live, real X clicks (MEASURED)
+
+`/var/tmp/icons652/icons_e2e.sh` on the box: an in-memory server built from this tree, a
+character registered (GM `/level 40`, `/sp`, `/gold`, Bicheon raised and Smash learned), then the
+Login → Character Select route under Xvfb with the smith's store open (`SRREVAMP_QA_SHOP`).
+xdotool clicks the coordinates the client itself prints (`SRREVAMP_QA_SLOTS`, F11):
+
+| Step (run r3) | What the log measured |
+|---|---|
+| click the worn boots (item 3645), then bag slot 10 of an EMPTY bag (first free: 0) | `HudPanels: unequip worn slot 5 into bag slot 10`; the next print `QA SLOT bag:10 ... item 3645` |
+| click bag 10, then a cell of the smith's store; the dialog reads "Sell Cotton Shoes? Get: 1 gold"; click Sell | bag 10 empty; gold 1,001,000 → 1,001,001 |
+| click a store item (221, Strong Iron Bow), then bag slot 12; click Buy | the bow in bag slot **0**, the server's choice (retail's buy names no slot either); gold 1,001,001 → 984,001 |
+| Shift+F11 opens the warehouse over the store; click bag 0, then the warehouse; click Deposit | `QA SLOT storage:0 ... item 221` |
+| S; click Smash (skill 3), then quick slot 1 | `World3D: quickslot 1 <- skill 3 (SKILL_CH_SWORD_SMASH_A_01), dropped` |
+| click quick slot 1, then quick slot 2 | `World3D: quickslots 1 and 2 changed places` |
+
+**Run r2 found a bug** the unit tests had not: the warehouse opens over the store, and a bag item
+put down on the warehouse opened the store's SELL dialog — the drop took the first window whose
+rect held the point. Drops and the tab/button pass-through now go to the frontmost window
+(`_topmost_window_at`, tested in `held_icon_test.gd`); r3 above is after the fix. Run r1 had two
+harness mistakes (Smash needs Bicheon above level 1; a parse of the bought item's slot).
+
+### 6. Checks
+
+- `client/tools/remote_godot.sh tests`: **168 suites, 0 failing** (after the frontmost-window
+  fix; `held_icon_test.gd` alone: 51 ok lines, ALL PASS).
+- `go build ./... && go test -count=1 -p 1 ./...`, local Postgres: **60 packages ok, exit 0**.
+  A first run on the box (Postgres reached through an ssh tunnel while the local disk was at
+  66 MB) failed `TestSkillFullFlow`, `TestSkillCooldownGroupIsShared` and
+  `TestCounterTestsHoldWithTheStrikePushOn` on "want 'skill on cooldown'"; the base e5bf2ba fails
+  the same three the same way through the tunnel (the round trip outlasts the cooldown), and they
+  pass locally.
+
+### 7. Open (docs/TODO.md, "The icon on the cursor")
+
+The split box, Ctrl+click, the ground drop, warehouse slot placement, a worn item on the bar, a
+window closed under the held icon, and how retail draws the slot left behind.
+
 ## Six-hundred-and-forty-seventh round: the Jangan spawn draws at 85 fps instead of 71 with every tree swaying exactly as before, and a zone change no longer leaves the old zone's animated objects behind
 
 Round 645 made the map's skeletal objects move. The rounds 641–646 integration review MEASURED what

@@ -65,7 +65,18 @@ func _press(node: Control, button: MouseButton) -> void:
 	var ev := InputEventMouseButton.new()
 	ev.button_index = button
 	ev.pressed = true
+	ev.global_position = node.get_global_rect().get_center()
 	node.gui_input.emit(ev)
+
+## A press and its release on the node's centre (round 652: the bar's clicks
+## act on the release).
+func _click_on(node: Control, button: MouseButton) -> void:
+	for pressed in [true, false]:
+		var ev := InputEventMouseButton.new()
+		ev.button_index = button
+		ev.pressed = pressed
+		ev.global_position = node.get_global_rect().get_center()
+		node.gui_input.emit(ev)
 
 func _run() -> void:
 	var Fixture = load(FIXTURE_PATH)
@@ -154,11 +165,27 @@ func _run() -> void:
 	bar.call("activate_key", 2)
 	_check(fired == [3], "key 3 fires quick slot 3 (got %s)" % [fired])
 
-	# --- the mouse: left fires the slot, middle the "m" slot ---
+	# --- the mouse: RIGHT fires the slot (round 652: CIFSlotWithHelp's
+	# right-button-up, vslot 33 -> 0x682040 case 0x0c), LEFT picks it up,
+	# middle fires the "m" slot ---
 	fired.clear()
 	if s1 != null:
-		_press(s1, MOUSE_BUTTON_LEFT)
-	_check(fired == [1], "a left click on slot 1 fires quick slot 1 (got %s)" % [fired])
+		_click_on(s1, MOUSE_BUTTON_RIGHT)
+	_check(fired == [1], "a right click on slot 1 fires quick slot 1 (got %s)" % [fired])
+	fired.clear()
+	var picks: Array = []
+	if bar.has_signal("quickslot_pick_requested"):
+		bar.connect("quickslot_pick_requested", func(idx: int) -> void: picks.append(idx))
+	if s1 != null:
+		_click_on(s1, MOUSE_BUTTON_LEFT)
+	_check(fired.is_empty(), "a left click on slot 1 fires nothing (got %s)" % [fired])
+	_check(picks.is_empty(), "a left click on an EMPTY slot picks nothing up (got %s)" % [picks])
+	if s1 != null and bar.has_method("set_slot_item"):
+		var img := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+		bar.call("set_slot_item", 1, ImageTexture.create_from_image(img))
+		_click_on(s1, MOUSE_BUTTON_LEFT)
+		bar.call("clear_slot", 1)
+	_check(picks == [1], "a left click on a filled slot asks to pick it up (got %s)" % [picks])
 	fired.clear()
 	if s1 != null:
 		_press(s1, MOUSE_BUTTON_MIDDLE)

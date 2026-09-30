@@ -67,8 +67,11 @@ static func encode_equip(character_name: String, slot: int, inventory_slot: int)
 	out.append_array(buf)
 	return out
 
-## Encodes an OpUnequip request.
-static func encode_unequip(character_name: String, slot: int) -> PackedByteArray:
+## Encodes an OpUnequip request. `to_bag_slot` is the bag slot the worn
+## item was put down on (round 652), sent as a trailing int32 -- the retail
+## client names it too (FUN_007950b0, 0x47 -> 0x46: `bag slot + 13`). -1
+## sends none, and the server picks the first free slot.
+static func encode_unequip(character_name: String, slot: int, to_bag_slot: int = -1) -> PackedByteArray:
 	var name_bytes := character_name.to_utf8_buffer()
 	var out := PackedByteArray()
 	out.resize(2)
@@ -78,6 +81,11 @@ static func encode_unequip(character_name: String, slot: int) -> PackedByteArray
 	buf.resize(4)
 	buf.encode_u32(0, slot)
 	out.append_array(buf)
+	if to_bag_slot >= 0:
+		var to := PackedByteArray()
+		to.resize(4)
+		to.encode_s32(0, to_bag_slot)
+		out.append_array(to)
 	return out
 
 static func _decode_equipped(data: PackedByteArray, offset: int) -> Array:

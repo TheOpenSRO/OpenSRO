@@ -141,14 +141,22 @@ func (s *SQLStore) Equip(ctx context.Context, characterID int64, slot Slot, inve
 		return ErrInventorySlotEmpty
 	}
 
-	// Unequip whatever's currently there first (back to inventory), so we
-	// never lose an item by overwriting a populated slot.
-	if err := s.unequipIfPresent(ctx, characterID, slot); err != nil {
-		return err
-	}
-
+	// A swap, as retail's CGObjPC::AttachEquipItem (0x00524cd0) does it
+	// with CGStorage::SwapItem(bag, worn) (round 652, READ): the incoming
+	// item leaves the bag first, then whatever was worn goes back (never
+	// lost) into the bag slot it left.
 	if err := s.inv.RemoveItem(ctx, characterID, inventorySlot, 1); err != nil {
 		return fmt.Errorf("equipment: removing item from inventory: %w", err)
+	}
+	before, _ := s.inv.List(ctx, characterID)
+	displaced := wornItemID(ctx, s, characterID, slot)
+	if err := s.unequipIfPresent(ctx, characterID, slot); err != nil {
+		putBack(ctx, s.inv, characterID, *incoming)
+		return err
+	}
+	if displaced >= 0 {
+		after, _ := s.inv.List(ctx, characterID)
+		settleInto(ctx, s.inv, characterID, landedIndex(before, after, displaced), inventorySlot)
 	}
 
 	if _, err := s.db.ExecContext(ctx,

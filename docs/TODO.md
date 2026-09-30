@@ -1295,10 +1295,9 @@ What round 639 read and built is in `docs/protocol/system_message.md`.
 
 What round 633 read and built is in `docs/protocol/inventory_window.md`.
 
-- **Carrying an item across pages the way the client does.** Round 633's review read the two
-  IFInventory handlers that name DraggedTab/DraggedPage: `0x6b4610` is a confirm box's answer and
-  `0x6b62d0` is the split box's. Neither turns a page. Ours turns the page when a drag passes over a
-  tab (OURS).
+- ~~**Carrying an item across pages the way the client does.**~~ **Read in round 652**: the held
+  icon's filter (`0x6523d0`) lets a click on a page tab through, so retail turns the page with a
+  click while holding the item. Ours does the same since round 652 (the hover-turn is gone).
 - **The selected tab's text flag 2** (`0x64cc30` → `0x8b44b0(0,2)` → the glyph mode in
   `0x8b39e0`). What it draws is not read, so nothing is drawn for it.
 - **The preview's pose advances while hidden.** It no longer renders while hidden (round 633's
@@ -1316,6 +1315,27 @@ What round 633 read and built is in `docs/protocol/inventory_window.md`.
 - **The exchange window's gold boxes** are coloured and filled from the trade events. The
   exchange window itself is still not opened by a trade (World3D's debug trade labels do that
   work).
+
+### The icon on the cursor (round 652) — **click up, click down, for every icon window; these are left**
+
+What round 652 read and built is in `docs/protocol/held_icon.md`.
+
+- **Retail's server puts an unequipped item in the first free slot** (`DetachEquipItem`
+  `0x5258c6`). Ours honours the clicked slot because the user asked for it (OURS, labelled in
+  `equipment/placement.go`). If a retail-exact mode is ever wanted, it is `UnequipInto` with a
+  negative target.
+- **The stack split.** Shift+click on a stack opens retail's split box (`0x6b3fa0`); its OK moves
+  the amount into the first empty slot (`0x6b62d0`). Not built: our move op has no quantity.
+- **Ctrl+click quick-sell / quick-store** (`0x680fa0`'s Ctrl branch). Not built; a click now picks
+  the item up whatever window is open, as retail's does.
+- **The ground drop.** Retail asks `UIIT_MSG_DROP_WARNING_1/2` and sends 0x7034 type 7; our server
+  has no player drop, so a bag item put down on the world does nothing.
+- **Warehouse slots.** Retail's deposit and withdraw name the target slot (types 2 and 3); ours
+  carry none, so the server places them, and warehouse-to-warehouse moves (type 1) do nothing.
+- **A worn item on the quick slot bar** (CIFUnderBar takes kind 0x47). Nothing happens.
+- **Closing a window under the held icon** leaves it held; what retail does is not read.
+- **The slot left behind** is dimmed (OURS); how retail draws it while its icon is on the cursor
+  is not read.
 
 ### Invisible walls on objects (round 644) — **the bridge walls fixed; these are left**
 

@@ -459,8 +459,10 @@ func list_equipment(char_name: String) -> void:
 func equip(char_name: String, slot: int, inventory_slot: int) -> void:
 	_send(EquipmentNet.OP_EQUIP, EquipmentNet.encode_equip(char_name, slot, inventory_slot))
 
-func unequip(char_name: String, slot: int) -> void:
-	_send(EquipmentNet.OP_UNEQUIP, EquipmentNet.encode_unequip(char_name, slot))
+## Takes off what is worn in `slot`; `to_bag_slot` is the bag slot it was
+## put down on (-1: the server picks the first free one).
+func unequip(char_name: String, slot: int, to_bag_slot: int = -1) -> void:
+	_send(EquipmentNet.OP_UNEQUIP, EquipmentNet.encode_unequip(char_name, slot, to_bag_slot))
 
 ## Repairs a worn slot, or every worn item (EquipmentNet.REPAIR_ALL), for
 ## gold. The server answers OP_REPAIR_RESULT -> repair_result.
