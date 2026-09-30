@@ -222,6 +222,38 @@ Read from `sro_client.exe` (`docs/WORLD_ISSUES.md`, 637th round, has the full tr
   - The heading is saved with `-persist-position`'s position (`character.HeadingStore`). `_CHAR`
     declares no heading column; retail's persistence of facing is not read.
 
+## How the client steps a mover and stops it at its destination (round 649)
+
+Read from `sro_client.exe`'s decompile on the RE box (`/var/tmp/decomp_client`). srrevamp's
+`World3D._step_click_walk` follows it through `client/scripts/world/click_walk.gd`.
+
+- **The tick.** `FUN_009e0e60` (the mover, `this` = `obj+0x668`) runs every frame. With no
+  movement in effect (`+0x84 == 0`) it only turns (`FUN_009e0c10`, above). Otherwise it turns,
+  then steps.
+- **The step's length** is `speed * seconds`:
+  - `speed` is the object's `+0x444` when that is non-zero. Otherwise it is the speed slot the
+    mover's `+0x10` picks, times the mover's `+0x8c`.
+  - `seconds` is the frame's elapsed time, the global `0x0110f7fc`.
+- **The destination test.** When the mover walks to a destination (`+0x80 == 1`), the tick
+  measures the ground distance from the mover's record at `+0x4c` to the destination record at
+  `+0x30` with `FUN_009ecc70`. That helper reads a region word at `+8` of each record and the x
+  and z at `+0xc` and `+0x14`, and adjusts for the region difference. The record's full layout
+  was not settled: the step also writes `+0x4c..+0x54`. If that distance is **no more than the step**, then:
+  - the step is **cut to the distance**, so the mover lands on the destination;
+  - the movement ends (`+0x84 = 0`);
+  - and `+0x80` is cleared unless an order is in effect (`+0xac`).
+- **The move.** The new position is the old one (`+0x58..+0x60`) plus the travel direction
+  (`+0x74..+0x7c`) times the step. It is taken only if the collision query (`[0x111a02c]` vtable `+0x30`) does not
+  return bit `0x10000000`. That bit, and the failure path, end the movement. Bit 0 also ends it
+  after the move is taken.
+- **So a retail mover never passes its destination, at any speed.** srrevamp's walk before round
+  649 did pass it. It took a full step every tick until it stood within its own stop distance of
+  2.39 units (OURS). With a step longer than 4.78 units (a run speed over about 287 at 60 ticks a
+  second), it could jump across that band on every tick and never stop. Round 649 measured this
+  live and adopted the cut. The early stop is kept, because the attack approach is built on it.
+- **Not read:** what the collision query tests, which of its bits mean what beyond the two above,
+  and whether a server-driven mover uses this same tick.
+
 ## Not read
 
 - **What the `+0x14` byte in the heading form is.** Its width is settled at one byte; its meaning

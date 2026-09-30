@@ -1034,6 +1034,24 @@ READ and measured in `docs/WORLD_ISSUES.md`'s 637th round; the rule is `RemoteFa
       degrees off for 0.6 s. The client's facing changes only on a message, so this may be right;
       not established.
 
+### The click walk's arrival (round 649) — **the /speed stutter fixed: the step is cut to land on the point, as retail's is; these are left**
+
+Measured in `docs/WORLD_ISSUES.md`'s 649th round (`SRREVAMP_QA_MOVE_LOG=1`, a trace every tick).
+The rule is `ClickWalk.step`, READ from the mover tick `FUN_009e0e60` (`docs/protocol/opcodes/movement.md`).
+
+- [ ] **A walk into something solid holds its order and runs in place.** The base run measured
+      631 to 1,195 ticks per 12 clicks, at every speed, of the body standing still with the order
+      in effect. The clicks were ahead of the Jangan spawn, and the walks stopped against the
+      dragon pedestal's edge. Retail's tick ends the movement when its collision query refuses the
+      step (bit `0x10000000`, READ). Ours has `NavGraph.step_tracked` return `blocked` and keeps
+      walking. Next: end the walk (the order and the run animation) on a blocked step, and check
+      that a slide along a wall is not counted as blocked. Needs its own measurement: a slide
+      that ends the walk early would be a new bug.
+- [ ] **The early stop (`MOVE_TARGET_STOP_DISTANCE`, 2.39) is OURS.** Retail lands on the point
+      exactly. The stop is kept only because `CombatNet.approach_aim` is built on it.
+- [ ] **The server does not police speed** (round 636, `gm.go`). It relays whatever a client sends.
+      A client that still has the old rule (a release before this round) ping-pongs for everyone.
+
 ### The buff bar — **built (round 618); these are left**
 `HudBuffBoard` is retail's `CIFMagicStateBoard`. It has the icons, the draining time bar, the end
 burst and sound, right-click cancel and the tooltip. The record is in

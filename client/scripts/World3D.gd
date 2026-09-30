@@ -405,8 +405,11 @@ func _follow_with_camera(delta: float) -> void:
 			_camera_pivot.rotation.y, player.rotation.y,
 			deg_to_rad(THIRD_PERSON_TURN_DEGREES_PER_SECOND) * delta)
 ## How close player must get to a click-to-move target before it's
-## considered reached and cleared -- without this, the player would
-## oscillate forever trying to reach an exact point every physics frame.
+## considered reached and cleared (OURS; the attack approach, CombatNet.
+## approach_aim, is built on it). It did NOT stop the walk oscillating on its
+## own: a step longer than twice this jumped the band from side to side for
+## ever (round 649). What stops that is retail's own rule, the step cut to the
+## distance left (_step_click_walk, ClickWalk.step; READ, FUN_009e0e60).
 const MOVE_TARGET_STOP_DISTANCE := 0.3 * PLAYER_SCALE_RATIO
 
 var _camera_orbiting := false
@@ -9510,6 +9513,30 @@ func _move_on_nav_graph(delta: float) -> bool:
 	player.velocity.y = 0.0
 	return true
 
+## One tick of the click walk (round 649, ClickWalk.step): the player's
+## horizontal velocity toward _move_target for this tick, cut on the tick that
+## would reach or pass the point so the body lands on it (READ, retail's mover
+## tick FUN_009e0e60), and true -- the walk over, the order cleared, the body
+## stopped -- once it stands within MOVE_TARGET_STOP_DISTANCE. Before round
+## 649 every tick asked for the full speed, and a step longer than the distance
+## left plus the stop (a /speed of about 5.7 or more, or less with a speed buff)
+## could carry the body past the point and back again on every tick, for ever.
+func _step_click_walk(delta: float) -> bool:
+	var to_target := Vector2(_move_target.x - player.position.x, _move_target.z - player.position.z)
+	var r := ClickWalk.step(to_target, _move_speed, delta, MOVE_TARGET_STOP_DISTANCE)
+	if bool(r["arrived"]):
+		_has_move_target = false
+		player.velocity.x = 0.0
+		player.velocity.z = 0.0
+		return true
+	var v: Vector2 = r["velocity"]
+	player.velocity.x = v.x
+	player.velocity.z = v.y
+	# Turned toward the walk at the client's rate (round 637's review
+	# follow-up), not snapped: _aim_local_player, _step_local_turn.
+	_aim_local_player(Vector3(to_target.x, 0.0, to_target.y).normalized())
+	return false
+
 ## What the walk believes the player stands on: NavGraph.ON_TERRAIN or a real
 ## object index into the current graph's region. See _move_on_nav_graph.
 var _nav_footing: int = NavGraph.ON_TERRAIN
@@ -9705,6 +9732,12 @@ func _update_blob_shadow() -> void:
 ##                          and each walking monster's drawn position and the
 ##                          way its model faces (_qa_facing_report), for
 ##                          client/tools/facing_measure.py
+##   SRREVAMP_QA_MOVE_LOG=1  (round 649) every physics tick, this player's
+##                          position, click destination and run speed, each
+##                          position sent, each other player's received
+##                          position and where its body is drawn
+##                          (_qa_move_report) -- the per-frame trace the /speed
+##                          stutter was measured with
 ##   SRREVAMP_QA_MOB_LOG=1  print each monster leg, its progress every 30
 ##                          frames, its arrival, each height resolve's navmesh
 ##                          and terrain-ray answers side by side (round 557),
@@ -12483,16 +12516,11 @@ func _physics_step(delta: float) -> void:
 			_step_pending_attack()
 		if not _pending_friend_cast.is_empty():
 			_step_pending_friend_cast()
-		var to_target := _move_target - player.position
-		to_target.y = 0.0
 		if not _has_move_target:
 			# The pending attack went out this frame, or its target went away.
 			player.velocity.x = 0.0
 			player.velocity.z = 0.0
-		elif to_target.length() <= MOVE_TARGET_STOP_DISTANCE:
-			_has_move_target = false
-			player.velocity.x = 0.0
-			player.velocity.z = 0.0
+		elif _step_click_walk(delta):
 			# Walked up to a ground item we were too far from: ask again now
 			# that we stand on it; the server is the judge of the 10 units.
 			if _pending_pickup_id != -1 and not _pickup_inflight and NetClient.is_connected_to_server():
@@ -12506,13 +12534,6 @@ func _physics_step(delta: float) -> void:
 				_release_pending_attack()
 			if not _pending_friend_cast.is_empty():
 				_release_friend_cast()
-		else:
-			var dir := to_target.normalized()
-			player.velocity.x = dir.x * _move_speed
-			player.velocity.z = dir.z * _move_speed
-			# Turned toward the walk at the client's rate (round 637's review
-			# follow-up), not snapped: _aim_local_player, _step_local_turn.
-			_aim_local_player(dir)
 	elif _qa_walk != "" and not _player_dead:
 		# SRREVAMP_QA_WALK: walk on a fixed world heading (its own path; no
 		# key moves the character since round 608), so a render shows the
@@ -12592,6 +12613,8 @@ func _physics_step(delta: float) -> void:
 	# do either. A real move clears the sit above (_leave_sit_by_moving) first.
 	if _time_since_send >= MIN_SEND_INTERVAL and player.position.distance_to(_last_sent_pos) >= MIN_SEND_DISTANCE \
 			and not _sit.sitting and not _motion_locked():
+		if _qa_move_log:
+			print("MOVE send t=%d ms=%d pos=(%.3f,%.3f)" % [_qa_move_tick + 1, Time.get_ticks_msec(), player.position.x, player.position.z])
 		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
 		_last_sent_pos = player.position
 		_walked_since_send = 0.0
@@ -12618,6 +12641,8 @@ func _physics_step(delta: float) -> void:
 	_step_remote_turns(delta)
 	if _qa_facing_log:
 		_qa_facing_report()
+	if _qa_move_log:
+		_qa_move_report()
 
 	if _real_skeleton != null and _real_skeleton_track.keyframes.size() > 1:
 		_real_skeleton_time += delta
@@ -12786,6 +12811,29 @@ func _step_local_turn(delta: float) -> void:
 ## MonsterMotion.FRONT_BY_MODEL's). client/tools/facing_measure.py turns
 ## consecutive lines into movement-versus-facing angles. Measurement only.
 var _qa_facing_log := OS.get_environment("SRREVAMP_QA_FACING_LOG") != ""
+## SRREVAMP_QA_MOVE_LOG=1 (round 649): see _qa_move_report. Measurement only.
+var _qa_move_log := OS.get_environment("SRREVAMP_QA_MOVE_LOG") != ""
+var _qa_move_tick := 0
+
+## One tick of SRREVAMP_QA_MOVE_LOG (round 649): "MOVE self" is this player
+## after the walk (world x, z, the click destination and whether one is in
+## effect, the run speed, the distance left), "MOVE body" each other player's
+## drawn position and its latest received target. Sends and receipts print
+## their own "MOVE send" / "MOVE recv" lines where they happen.
+func _qa_move_report() -> void:
+	_qa_move_tick += 1
+	var ms := Time.get_ticks_msec()
+	var left := Vector2(_move_target.x - player.position.x, _move_target.z - player.position.z).length()
+	print("MOVE self t=%d ms=%d pos=(%.3f,%.3f) dest=(%.3f,%.3f) order=%s speed=%.1f left=%.3f" % [
+		_qa_move_tick, ms, player.position.x, player.position.z, _move_target.x, _move_target.z,
+		str(_has_move_target), _move_speed, left])
+	for id in _other_bodies:
+		var body: Node3D = _other_bodies[id]
+		if not is_instance_valid(body) or not _other_body_targets.has(id):
+			continue
+		var to: Vector3 = _other_body_targets[id]
+		print("MOVE body %d t=%d ms=%d pos=(%.3f,%.3f) target=(%.3f,%.3f)" % [
+			id, _qa_move_tick, ms, body.position.x, body.position.z, to.x, to.z])
 var _qa_facing_log_ms := 0
 
 func _qa_facing_report() -> void:
@@ -12968,6 +13016,9 @@ func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 ## client places an object at a message's source position (FUN_009e11e0)
 ## without aiming it; a turn already in progress goes on.
 func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
+	if _qa_move_log:
+		print("MOVE recv %d ms=%d pos=(%.3f,%.3f)%s" % [moved.character_id, Time.get_ticks_msec(), moved.x, moved.z,
+			" relocated" if moved.relocated else ""])
 	if _arrival_pending and _arrival_entries.has(moved.character_id):
 		var kept: WorldNet.EntitySnapshot = _arrival_entries[moved.character_id]
 		kept.x = moved.x

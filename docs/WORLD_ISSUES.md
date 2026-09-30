@@ -7094,6 +7094,208 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-forty-ninth round: at a raised /speed a click lands the character on its point instead of flickering across it, for the mover and for everyone watching
+
+The user's report: "when I increase my /speed sometimes when I click around my character starts
+stuttering back and forth really fast and you can even see it happening from another player. When
+I try to record it looks like I'm just running in place but flickers outside of video."
+
+### The mechanism, measured first (MEASURED, dev e5bf2ba plus a trace hook)
+
+**The trace.** `SRREVAMP_QA_MOVE_LOG=1` (new, measurement only) prints one line per physics tick:
+- `MOVE self`: this player's position, the click destination, whether the order is in effect, the
+  run speed and the distance left;
+- `MOVE send`: each `OpMove` sent;
+- `MOVE recv`: each `OpEntityMoved` received;
+- `MOVE body`: where each other player's body is drawn.
+
+**The run.** Two clients on one Xvfb, each through Login -> CharacterSelect, with real X input:
+- A = QaTester (GM) moves; B = QaFriend watches.
+- The server is built from the branch, in memory, `-gm-accounts qa,qa2`.
+- A typed `/speed 4`, `/speed 8` and `/speed 10` in the chat. After each, it made the same 12
+  xdotool clicks around the Jangan spawn (97/168 local 1002, 1020), 1.8 s apart.
+- The harness is `/var/tmp/speed649/sp649.sh` and the analyser `mv649.py`, both on the box.
+
+Base, per speed (A's log; a "ping-pong tick" is a tick whose step and the step before it are both
+over 1 unit long and point in opposite directions while an order is in effect):
+
+| run speed | ticks | arrivals | ping-pong ticks | longest run |
+|---|---|---|---|---|
+| 200 (/speed 4) | 1659 | 7 | 0 | 0 |
+| 400 (/speed 8) | 1662 | 2 | 113 | 113 |
+| 500 (/speed 10) | 1615 | 1 | 118 | 115 |
+
+The 113-tick run, at 400 u/s:
+
+```
+MOVE self t=3304 ms=69033 pos=(39.018,1.404) dest=(36.849,3.857) order=true speed=400.0 left=3.274
+MOVE self t=3305 ms=69049 pos=(34.602,6.399) dest=(36.849,3.857) order=true speed=400.0 left=3.393
+MOVE self t=3306 ms=69065 pos=(39.018,1.404) dest=(36.849,3.857) order=true speed=400.0 left=3.274
+MOVE self t=3307 ms=69082 pos=(34.602,6.399) dest=(36.849,3.857) order=true speed=400.0 left=3.393
+MOVE send t=3304 ms=69033 pos=(39.018,1.404)
+MOVE send t=3307 ms=69082 pos=(34.602,6.399)
+MOVE send t=3310 ms=69132 pos=(39.018,1.404)
+MOVE send t=3313 ms=69182 pos=(34.602,6.399)
+```
+
+B, watching (its own clock):
+
+```
+MOVE recv 1 ms=64033 pos=(39.018,1.404)
+MOVE recv 1 ms=64084 pos=(34.602,6.399)
+MOVE recv 1 ms=64134 pos=(39.018,1.404)
+MOVE recv 1 ms=64183 pos=(34.602,6.399)
+MOVE body 1 t=2995 ms=64078 pos=(37.203,3.512) target=(39.018,1.404)
+MOVE body 1 t=2996 ms=64095 pos=(36.553,4.234) target=(34.602,6.399)
+MOVE body 1 t=2999 ms=64145 pos=(36.529,4.237) target=(39.018,1.404)
+```
+
+Over the whole base run, B received 161 positions. 109 of them reversed the direction of the one
+before, with 41 in a row at the longest. B's drawn body reversed 76 times.
+
+**What that is.**
+- The two points are 6.67 apart, exactly one step at 400 u/s and 60 ticks a second. The
+  destination lies between them, 3.27 from one and 3.39 from the other.
+- Both distances are above `MOVE_TARGET_STOP_DISTANCE` (2.39, OURS). The walk stopped only
+  inside that distance, and it took a full step toward the point on every tick.
+- So each tick jumped over the stop band to the other side, for as long as the order lasted. It
+  ended only at the next click.
+- The fault needs a step longer than twice the stop, 4.78 units: a run speed over about 287.
+  That is /speed 5.74 alone. It is less under a speed buff: /speed 4 under Grass Walk's x1.53 is
+  306.
+- It then catches a destination whose distance on the final approach falls in a band. At /speed
+  10 that band is (2.39, 5.94) of an 8.33 step, which is why it happened "sometimes".
+- /speed 4 alone (200, a 3.33 step) cannot do it, and measured 0.
+
+**Why a video shows a body running in place.**
+- The body alternates between the two points every tick, 60 times a second. A recording at 30 or
+  60 fps samples the same end on every frame, so the character looks still and runs on the spot.
+  INFERRED from the tick period; the video itself was not measured.
+- The position send goes out every third tick (MIN_SEND_INTERVAL 0.05 s). Three is odd, so each
+  send carries the other end: the sends above alternate.
+- The server relays each position and turns the heading toward it (`hub.MoveFacing`). Every other
+  player's body is therefore pulled to and fro 20 times a second.
+
+**What it was not** (each candidate from the brief, tested):
+- *A server speed check.* There is none. `handleMove` stores and relays whatever position the
+  client sends (`gm.go`: "the server does not police movement speed"). It sends the mover no
+  correction; `rootedMoveAnswer` answers only a move made under the player's own wall. The
+  mover's own trace shows the ping-pong before anything reaches the server.
+- *The client re-predicting after a correction.* No correction arrives: A's log has no
+  `MOVE recv` for itself.
+- *The remote interpolation* (rounds 637/638). `lerp` with `min(k·delta, 1)` cannot overshoot.
+  B's body followed what it received, and it received the ping-pong.
+
+### Retail's rule (READ)
+
+The rule is from the client decompile on the RE box. It is filed in
+`docs/protocol/opcodes/movement.md`, "How the client steps a mover and stops it at its
+destination":
+- The mover's tick `FUN_009e0e60` runs every frame. It steps `speed × seconds`: `obj+0x444`, or
+  the speed slot times mover `+0x8c`; the seconds are the global `0x0110f7fc`.
+- For a mover walking to a destination (`+0x80 == 1`), it measures the ground distance to the
+  destination (`FUN_009ecc70`). When that distance is **no more than the step**, it **cuts the
+  step to the distance** and ends the movement (`+0x84 = 0`).
+- So a retail mover lands on its destination and never passes it, at any speed.
+
+### The fix
+
+- `client/scripts/world/click_walk.gd` (`ClickWalk.step`), called by the new
+  `World3D._step_click_walk`:
+  - within the stop distance, the walk is over (as before);
+  - when a full step would reach or pass the point, the velocity is cut to land on it this tick
+    (READ, `FUN_009e0e60`);
+  - otherwise, the full speed toward it.
+- OURS: the early stop at 2.39 units is kept, because `CombatNet.approach_aim` is built on it.
+  Retail lands on the point exactly.
+- The other players are fixed by the same change. What they draw is what the mover sends, and it
+  no longer alternates. The server is unchanged.
+
+### After (MEASURED, the same harness, the same clicks, the branch)
+
+| run speed | ticks | arrivals | ping-pong ticks | longest run |
+|---|---|---|---|---|
+| 200 | 1660 | 7 | 0 | 0 |
+| 400 | 1662 | 3 | 0 | 0 |
+| 500 | 1614 | 2 | 0 | 0 |
+
+The same click, to the same destination (36.849, 3.857), at 400 u/s. It lands in one tick with
+0.000 left and stops:
+
+```
+MOVE self t=3332 ms=70007 pos=(34.602,6.399) dest=(34.462,13.284) order=true speed=400.0 left=6.887
+MOVE self t=3333 ms=70024 pos=(36.849,3.857) dest=(36.849,3.857) order=true speed=400.0 left=0.000
+MOVE self t=3334 ms=70040 pos=(36.849,3.857) dest=(36.849,3.857) order=false speed=400.0 left=0.000
+MOVE send t=3333 ms=70024 pos=(36.849,3.857)
+```
+
+B receives one position and its body settles on it:
+
+```
+MOVE recv 1 ms=65027 pos=(36.849,3.857)
+MOVE body 1 t=3028 ms=65038 pos=(35.249,5.765) target=(36.849,3.857)
+MOVE body 1 t=3034 ms=65138 pos=(36.564,4.197) target=(36.849,3.857)
+MOVE body 1 t=3049 ms=65388 pos=(36.845,3.862) target=(36.849,3.857)
+```
+
+Across the whole run:
+- A: 0 reversals in 5,674 ticks (the base had 323).
+- B's drawn body: 0 reversals (the base had 76).
+- B's receipts: 33 reversals, at most 3 in a row. These are consecutive clicks in different
+  directions: the clicks alternate sides of the screen.
+
+**Seen in both runs, not this round's fault (OPEN, docs/TODO.md):**
+- Most clicks landed beyond the dragon pedestal's edge. There the walk stops against the edge and
+  holds its order: 630 to 1,226 ticks per speed stood still with an order in effect, in both runs
+  alike.
+- Retail's tick ends a movement its collision query refuses (bit `0x10000000`, READ). Ours
+  keeps it, so the body runs in place against the edge.
+- The base run also had small damped wobbles at that edge: 4-11 reversals of about 0.2 units, at
+  400-500 u/s. The branch's run has none. They came with 5.6-6.9 units left, which is less than a
+  step of 6.67-8.33, so they were the same overshoot with the edge clipping it (INFERRED). The
+  slide itself was not changed.
+
+### Tests
+
+- `client/scripts/world/click_walk_test.gd` (new; the fixtures are synthetic):
+  - it replays the pre-649 rule and shows the scenario IS the fault: 118 reversals at 500 u/s
+    against a point 4 ahead, and at 306 u/s against 2.5;
+  - it shows 200 u/s never reverses;
+  - it checks the cut, the full-speed step and the stop;
+  - it sweeps 9 speeds (x1 to x15.3) and 400 distances (0.05 to 40): 0 reversals, 0 overshoot,
+    and every walk ends;
+  - it drives `World3D._step_click_walk` at 500, 306 and 400 u/s: each lands in 1 tick with
+    0.0000 left.
+- **NEGATIVE, against dev e5bf2ba** (the base client on the box, `git archive`, with the new test
+  copied in):
+
+```
+ok  the old rule ping-pongs at /speed 10 against a point 4 ahead (118 reversals, ends at 0.00)
+ok  and at /speed 4 under Grass Walk's x1.53 (306 u/s) against a point 2.5 ahead (118 reversals)
+ok  the old rule at 200 u/s never reverses (worst 0): the fault needs a step over 4.78
+FAIL ClickWalk exists
+ok  World3D compiles
+FAIL World3D._step_click_walk exists (the walk's tick)
+FAILURES: 2
+```
+
+- On the branch: ALL PASS. `remote_godot.sh check` gives ALL LOAD (420 scripts).
+- `remote_godot.sh tests`: **168 suites, 0 failing**.
+- The server is untouched, so the Go tests were not run.
+
+### Performance gate (`client/tools/perf_gate.sh --sites jangan`, base e5bf2ba vs the branch, 3 interleaved runs each)
+
+| site | number | base | head | delta | verdict |
+|---|---|---|---|---|---|
+| jangan | frame ms | 12.92 | 11.39 | -1.5 | SAME |
+| jangan | entry ms | 9826 | 9724 | -102 | SAME |
+| jangan | freeze ms | 3463 | 3416 | -47 | SAME |
+| jangan | hitches | 5 | 5 | 0 | SAME |
+
+The runs, frame ms, base against head: 13.33 / 11.39, 12.92 / 11.32, 11.34 / 11.81. Other lanes'
+renders overlapped several base runs, and those were repeated. The walk's tick adds one static call
+a frame, so the -1.5 is noise, not a saving.
+
 ## Six-hundred-and-forty-seventh round: the Jangan spawn draws at 85 fps instead of 71 with every tree swaying exactly as before, and a zone change no longer leaves the old zone's animated objects behind
 
 Round 645 made the map's skeletal objects move. The rounds 641–646 integration review MEASURED what
