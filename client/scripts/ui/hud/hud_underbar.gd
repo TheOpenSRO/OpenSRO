@@ -47,6 +47,14 @@ const TwoDtBuilder = preload("res://scripts/ui/twodt_builder.gd")
 
 signal quickslot_activated(slot_index: int)
 signal menu_action(action_name: String)
+## A left click on a filled quick slot: pick its icon up onto the cursor
+## (round 652). World3D hands it to the shared HeldIcon; the next click puts
+## it down -- on another quick slot the two change places, anywhere else it
+## comes off the bar. READ: every CIFSlotWithHelp is created pickable
+## (0x673cf4), CIFUnderBar::vslot_028 (0x68dd10) swaps two quick slots (kind
+## 0x0c), and its release hook vslot_026 (0x68d140) clears a slot let go of
+## anywhere else (0x67ece0 -> 0x68cec0).
+signal quickslot_pick_requested(slot_index: int)
 
 const UNDERBAR_2DT := "res_ui\\nifundermenubar.2dt"
 
@@ -219,6 +227,8 @@ func _init(builder: UiBuilder = null, media_pk2: Pk2Reader = null, text_table: U
 
 func _ready() -> void:
 	setup()
+	if OS.get_environment("SRREVAMP_QA_SLOTS") != "":
+		add_to_group("qa_slots")
 
 ## Builds the bar. `file` is a parsed `.2dt` (or its bytes) for a caller that
 ## has one; otherwise the archive's own nifundermenubar.2dt is loaded.
@@ -357,9 +367,19 @@ func _register_slot(index: int, node: Control) -> void:
 	count.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
 	node.add_child(count)
 	node.gui_input.connect(func(event: InputEvent) -> void:
-		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		if not (event is InputEventMouseButton):
+			return
+		var mb := event as InputEventMouseButton
+		var inside := node.get_global_rect().has_point(mb.global_position)
+		# Retail's quick slots are used with the RIGHT button (round 652):
+		# CIFSlotWithHelp's right-button-up (vslot 33, 0x685ee0) runs
+		# 0x682040, whose quick-slot case (0x0c) is the use (0x60bb80). The
+		# LEFT click picks the icon up instead (0x652540's release).
+		if mb.button_index == MOUSE_BUTTON_RIGHT and not mb.pressed and inside:
 			quickslot_activated.emit(index)
-		elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_MIDDLE:
+		elif mb.button_index == MOUSE_BUTTON_LEFT and inside and HeldIcon.is_pick_click(mb) and slot_has_item(index):
+			quickslot_pick_requested.emit(index)
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_MIDDLE:
 			activate_mouse_slot())
 
 func _apply_hover_strings() -> void:
@@ -794,3 +814,47 @@ func slot_has_item(slot_index: int) -> bool:
 ## A quick slot's node, or null.
 func slot_node(slot_index: int) -> Control:
 	return _slot_nodes.get(slot_index)
+
+## Whether an enabled, visible button of the bar (the page arrows, the menu
+## button, the menu's lines) is under a global point. HudPanels lets a click
+## there through while an icon is held (retail's held-icon filter 0x6523d0
+## lets any CIFButton take its click, READ), so a quick slot or a skill can be
+## carried to another page of the bar.
+func button_at(at: Vector2) -> bool:
+	return _button_under(self, at)
+
+static func _button_under(node: Node, at: Vector2) -> bool:
+	for child in node.get_children():
+		if child is CanvasItem and not (child as CanvasItem).visible:
+			continue
+		if child is BaseButton and not (child as BaseButton).disabled \
+				and (child as Control).get_global_rect().has_point(at):
+			return true
+		if _button_under(child, at):
+			return true
+	return false
+
+## A quick slot's icon texture, or null.
+func slot_icon(slot_index: int) -> Texture2D:
+	var rect := slot_icon_rect(slot_index)
+	return rect.texture if rect != null else null
+
+## A quick slot's icon control, or null.
+func slot_icon_rect(slot_index: int) -> TextureRect:
+	if not _slot_nodes.has(slot_index):
+		return null
+	return (_slot_nodes[slot_index] as Control).get_node_or_null(ICON_NODE) as TextureRect
+
+## QA only (SRREVAMP_QA_SLOTS, F11 -- HudPanels): where the shown quick slots
+## are, for a live run's xdotool clicks.
+func qa_print_slots() -> void:
+	for i in _slot_nodes:
+		var node: Control = _slot_nodes[i]
+		if node.is_visible_in_tree():
+			var p := node.get_global_rect().get_center().round()
+			print("QA SLOT quick:%d at %d,%d filled %s" % [int(i), int(p.x), int(p.y), str(slot_has_item(int(i)))])
+	for pair in [["up", ID_PAGE_UP], ["down", ID_PAGE_DOWN]]:
+		var b := _nodes.get(pair[1]) as Control
+		if b != null and b.is_visible_in_tree():
+			var c := b.get_global_rect().get_center().round()
+			print("QA SLOT barpage:%s at %d,%d page %d" % [pair[0], int(c.x), int(c.y), current_page()])

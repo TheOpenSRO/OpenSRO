@@ -58,11 +58,15 @@ func _initialize() -> void:
 	bar.quickslot_activated.connect(func(idx: int) -> void: fired.append(idx))
 	var slot := bar.find_child("Wnd40", true, false) as Control
 	if slot != null:
-		var press := InputEventMouseButton.new()
-		press.button_index = MOUSE_BUTTON_LEFT
-		press.pressed = true
-		slot.gui_input.emit(press)
-	_check(fired == [1], "underbar: a click on quick slot 1 fires it once (got %s)" % [fired])
+		# A right click is the use (round 652: CIFSlotWithHelp's
+		# right-button-up); it acts on the release.
+		for pressed in [true, false]:
+			var click := InputEventMouseButton.new()
+			click.button_index = MOUSE_BUTTON_RIGHT
+			click.pressed = pressed
+			click.global_position = slot.get_global_rect().get_center()
+			slot.gui_input.emit(click)
+	_check(fired == [1], "underbar: a right click on quick slot 1 fires it once (got %s)" % [fired])
 
 	var minimap := HudMinimap.new(UiBuilder.new(null, null), null, null)
 	minimap.setup(_minimap())

@@ -123,17 +123,34 @@ func DecodeEquipRequest(data []byte) (*EquipRequest, error) {
 	return &EquipRequest{CharacterName: fields[0], Slot: slot, InventorySlot: invSlot}, nil
 }
 
-// UnequipRequest is the OpUnequip payload: which character, which slot.
+// UnequipRequest is the OpUnequip payload: which character, which slot,
+// and (since round 652) which bag slot the item was dropped on.
+//
+// InventorySlot is the retail client's destination (FUN_007950b0 sends
+// `bag slot + 13` for a worn item dropped on the bag, READ), an optional
+// trailing int32. The server parses it and, as retail's
+// CGObjPC::DetachEquipItem does, does not use it: the item goes to the first
+// free slot (see equipment/placement.go).
 type UnequipRequest struct {
 	CharacterName string
 	Slot          equipment.Slot
+	// Targeted says InventorySlot was sent: a zero value is "no target", not
+	// bag slot 0.
+	Targeted      bool
+	InventorySlot int
 }
 
 func (r *UnequipRequest) Encode() []byte {
 	out := encodeStrings(r.CharacterName)
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, uint32(r.Slot))
-	return append(out, buf...)
+	out = append(out, buf...)
+	if r.Targeted {
+		to := make([]byte, 4)
+		binary.LittleEndian.PutUint32(to, uint32(int32(r.InventorySlot)))
+		out = append(out, to...)
+	}
+	return out
 }
 
 func DecodeUnequipRequest(data []byte) (*UnequipRequest, error) {
@@ -145,7 +162,12 @@ func DecodeUnequipRequest(data []byte) (*UnequipRequest, error) {
 		return nil, errors.New("session: decoding UnequipRequest: truncated")
 	}
 	slot := equipment.Slot(binary.LittleEndian.Uint32(rest))
-	return &UnequipRequest{CharacterName: fields[0], Slot: slot}, nil
+	req := &UnequipRequest{CharacterName: fields[0], Slot: slot, InventorySlot: -1}
+	if len(rest) >= 8 {
+		req.InventorySlot = int(int32(binary.LittleEndian.Uint32(rest[4:8])))
+		req.Targeted = req.InventorySlot >= 0
+	}
+	return req, nil
 }
 
 // EquipmentHandler returns a gateway.Handler implementing
@@ -359,6 +381,11 @@ func handleUnequip(ctx context.Context, sess *gateway.Session, p *proto.Packet, 
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: tradeEquipLockedReason}).Encode()})
 	}
 
+	// The first free bag slot, whatever slot the client named: retail's
+	// CGObjPC::DetachEquipItem overwrites the request's destination with
+	// CGStorage::FindFirstEmptySlot(13) (0x5258c6, READ). req.InventorySlot
+	// is parsed and not used (round 652, the user's choice: the original's
+	// rule).
 	if err := store.Unequip(ctx, characterID, req.Slot); err != nil {
 		return sess.Send(&proto.Packet{Opcode: OpEquipmentResult, Data: (&EquipmentResult{Error: equipErrorMessage(err)}).Encode()})
 	}

@@ -60,22 +60,33 @@ func (m *MemStore) Equip(ctx context.Context, characterID int64, slot Slot, inve
 		return ErrInventorySlotEmpty
 	}
 
-	// Whatever is worn there goes back to the bag first, so overwriting a
-	// filled slot never loses the item.
-	if err := m.Unequip(ctx, characterID, slot); err != nil && err != ErrSlotEmpty {
+	// A swap, as retail's CGObjPC::AttachEquipItem (0x00524cd0) does it
+	// with CGStorage::SwapItem(bag, worn) (round 652, READ): the incoming
+	// item leaves the bag first, then whatever was worn goes back into the
+	// bag slot it left. Overwriting a filled slot still never loses the item,
+	// and a full bag no longer blocks a swap.
+	if err := m.inv.RemoveItem(ctx, characterID, inventorySlot, 1); err != nil {
 		return err
 	}
-	if err := m.inv.RemoveItem(ctx, characterID, inventorySlot, 1); err != nil {
+	before, _ := m.inv.List(ctx, characterID)
+	displaced := wornItemID(ctx, m, characterID, slot)
+	if err := m.Unequip(ctx, characterID, slot); err != nil && err != ErrSlotEmpty {
+		putBack(ctx, m.inv, characterID, *incoming)
 		return err
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.worn[characterID] == nil {
 		m.worn[characterID] = make(map[Slot]Equipped)
 	}
 	// The instance moves with the item: same variance, same durability.
 	m.worn[characterID][slot] = Equipped{Slot: slot, ItemID: incoming.ItemID, Variance: incoming.Variance, Durability: incoming.Durability}
+	m.mu.Unlock()
+
+	if displaced >= 0 {
+		after, _ := m.inv.List(ctx, characterID)
+		settleInto(ctx, m.inv, characterID, landedIndex(before, after, displaced), inventorySlot)
+	}
 	return nil
 }
 

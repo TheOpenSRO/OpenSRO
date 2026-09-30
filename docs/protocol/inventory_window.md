@@ -97,7 +97,12 @@ MEASURED with `client/tools/dump_visible_panels.gd`, v0.1.458 against v0.1.459:
 - **Create** (`0x6b2440`) keeps control ID 10 (`GDR_INVENTORY_STA_MONEY`) at
   `+0x388` and ID 11 (the money button) at `+0x398`. The lattice is art only.
 
-**OPEN: carrying an item across pages.** The two IFInventory handlers that
+**Carrying an item across pages: READ in round 652** (`held_icon.md`). While
+an icon is held, its message filter (`0x6523d0`) lets a press and a release
+over a CIFSelectableArea (`0xee96c0`, these tabs) or a CIFButton through, so
+the player clicks the page tab with the item on the cursor and then clicks
+the slot. The client does exactly that since round 652. What round 633's
+review had found, kept for the record: the two IFInventory handlers that
 name "DraggedTab", "DraggedPage" and "DraggedItemIndex" do not define it
 (round 633's review):
 
@@ -110,9 +115,16 @@ name "DraggedTab", "DraggedPage" and "DraggedItemIndex" do not define it
   (`0x6b6280`).
 
 Neither turns a page, and the tab (CIFSelectableArea) answers only a press
-(`0x64cb80`) and hover (`vslot_019`: messages `0x4009`/`0x400a`). So how
-retail carries an item to another page is still not read. Ours (OURS) turns
-the page when a drag passes over a tab.
+(`0x64cb80`) and hover (`vslot_019`: messages `0x4009`/`0x400a`); the page
+is turned by the click the held icon lets through. (Round 633's hover-turn,
+OURS, is gone.)
+
+**Taking an item off the doll: READ in round 652** (`held_icon.md`). The
+client names the clicked bag slot (`FUN_007950b0`, `bag slot + 13`), and the
+server's `CGObjPC::DetachEquipItem` puts the item in the first free bag slot
+anyway (`0x5258c6`). Ours does both, by the user's choice of the original's
+rule. Putting a bag item on the doll swaps: what was worn takes the bag slot
+it came from (`AttachEquipItem` -> `SwapItem`).
 
 **Held slots are never stranded** (OURS, round 633's review, tightened by the
 rounds 633-635 integration review). An item held past a lowered size stays
