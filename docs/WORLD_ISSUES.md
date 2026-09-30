@@ -7572,9 +7572,12 @@ FAIL
   time. With `-monster-spawn-push` off (the default) a respawn is never announced, and its first
   leg reaches clients that do not know it: the pre-656 discovery path, recorded in TODO.
 - **Every monster-damage path goes through `damageMonsterWatched`** (LOW).
-  `TestMonsterDamageGoesThroughDamageMonsterWatched` parses every non-test file and fails on a
-  two-argument `.ApplyDamage(` (the monster hub's; the character stores take a context first)
-  outside `aoi.go` and the GM `/kill` in `gm/gm.go`. Its name and signature are in
+  `TestMonsterDamageGoesThroughDamageMonsterWatched` parses every non-test file. It fails on any
+  call of the monster hub's `ApplyDamage(id, amount)` or `ApplyDamageFrom(id, attacker, amount)`
+  (round 657's damage list), except the one inside `damageMonsterWatched` and the GM's `/kill` and
+  `/damage` in `gm/gm.go`. The character stores' `ApplyDamage(ctx, ...)` is told apart by its
+  `ctx`. A probe file calling both on the hub fails it (checked, removed). The merged signature
+  (`id, attacker, amount` → `updated, died, ok, watchers, hits`) is in
   `docs/protocol/monster_ai.md` for rounds 659 and 660.
 - **GM `/kill`'s before-watchers** (LOW). `TestGMKillReachesTheWatchersBeforeIt`: a hook after the
   command (`gmAfterRunHook`) moves Bram's view far off before the announcement, and Bram still

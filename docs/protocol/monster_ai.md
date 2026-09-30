@@ -3495,14 +3495,17 @@ no enter for it is still owed (`mayShowLeg`). A view move marks the monsters it 
 **For every new monster-damage path (rounds 659, 660, ...):** call
 
 ```go
-func damageMonsterWatched(hub *world.Hub, monsters *combat.Hub, id int64, amount int) (updated combat.Monster, died, ok bool, watchers []world.Entity)
+func damageMonsterWatched(hub *world.Hub, monsters *combat.Hub, id, attacker int64, amount int) (updated combat.Monster, died, ok bool, watchers []world.Entity, hits []combat.Hit)
 ```
 
-(`server/internal/session/aoi.go`), never `combat.Hub.ApplyDamage` itself. Send the damage or the
+(`server/internal/session/aoi.go`; round 657 added `attacker`, recorded through
+`combat.Hub.ApplyDamageFrom` in the monster's damage list, and `hits`). Never call
+`combat.Hub.ApplyDamage` or `ApplyDamageFrom` yourself. Send the damage or the
 death to `watchers`, each with `sendMonsterPush` (under the monster wire lock). `watchers` are the
 players watching the monster before the blow and after it, each once.
-`TestMonsterDamageGoesThroughDamageMonsterWatched` fails on any other call of the monster hub's
-`ApplyDamage` outside `aoi.go` and the GM `/kill`. Every change -- a view moving, a monster
+`TestMonsterDamageGoesThroughDamageMonsterWatched` fails on any call of the monster hub's
+`ApplyDamage` or `ApplyDamageFrom` except the one inside `damageMonsterWatched` and the GM
+`/kill` and `/damage` (`internal/gm/gm.go`). Every change -- a view moving, a monster
 crossing a line, a list -- produces its own messages after it, so the client ends where the
 server is whatever order two goroutines' messages reach the socket.
 
