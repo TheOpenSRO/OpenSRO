@@ -1,7 +1,9 @@
 package gateway
 
 import (
+	"bufio"
 	"context"
+	"encoding/binary"
 	"io"
 	"net"
 	"testing"
@@ -14,9 +16,17 @@ import (
 // main thread (net_client.gd _process), so it reads nothing while a load
 // freezes that thread -- 3.3 s at the Jangan world entry by the perf gate --
 // and then everything at once. The send accounting must not close it for
-// that. With the production budget and window (not shortened), a peer that
-// stops reading for 4 s while a fan-out keeps writing to it, and then reads
-// everything quickly, stays connected and receives every frame.
+// that. With the production budget, window and queue limit (not shortened),
+// a peer that stops reading for 4 s while a fan-out keeps writing to it, and
+// then reads everything quickly, stays connected and receives every frame, in
+// order.
+//
+// Round 662: Send only queues, so the fan-out is paced -- 16 KB every 100 ms
+// (160 KB/s, 640 KB over the freeze, under the 2 MB SendQueueLimit; the live
+// client was sent about 6 KB/s, and 132 KB in its busiest 4 s, round 662) -- where round 656's wrote flat out, its pace set by its own
+// blocking. The server's send buffer is cut to 16 KB, so the writer is
+// blocked for most of the freeze and its debt runs up as round 656's did: the budget is
+// exercised, not skipped. No Send waits meanwhile.
 func TestAPeerThatFreezesThenReadsIsNotClosed(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -50,36 +60,60 @@ func TestAPeerThatFreezesThenReadsIsNotClosed(t *testing.T) {
 	frozen := <-sessions
 	fastConn := dial()
 	fast := <-sessions
+	smallBuffers(t, frozen, frozenConn)
 	go io.Copy(io.Discard, fastConn)
-	var got int64
+	var got, outOfOrder int
 	drained := make(chan struct{})
 	go func() { // frozen for 4 s, then reads everything as fast as it can
+		defer close(drained)
 		time.Sleep(4 * time.Second)
-		n, _ := io.Copy(io.Discard, frozenConn)
-		got = n
-		close(drained)
+		br := bufio.NewReader(frozenConn)
+		for {
+			p, err := proto.Read(br, nil, nil)
+			if err != nil {
+				return
+			}
+			if binary.LittleEndian.Uint32(p.Data) != uint32(got) {
+				outOfOrder++
+			}
+			got++
+		}
 	}()
 
-	frame := &proto.Packet{Opcode: 2, Data: make([]byte, 16<<10)}
-	var sent int64
+	var sent int
+	var longest time.Duration
 	end := time.Now().Add(6 * time.Second)
 	for time.Now().Before(end) {
-		if err := frozen.Send(frame); err != nil {
-			peak, longest, _ := frozen.SendStats()
-			t.Fatalf("the freezing peer was closed after %d bytes: %v (debt peak %v, longest write %v, budget %v)",
-				sent, err, peak.Round(time.Millisecond), longest.Round(time.Millisecond), SendBlockBudget)
+		start := time.Now()
+		if err := frozen.Send(seqFrame(2, uint32(sent), 16<<10)); err != nil {
+			peak, longestWrite, _ := frozen.SendStats()
+			t.Fatalf("the freezing peer was closed after %d frames: %v (debt peak %v, longest write %v, budget %v)",
+				sent, err, peak.Round(time.Millisecond), longestWrite.Round(time.Millisecond), SendBlockBudget)
 		}
-		sent += int64(len(frame.Data)) + 6
-		if err := fast.Send(frame); err != nil {
+		sent++
+		if err := fast.Send(seqFrame(2, 0, 16<<10)); err != nil {
 			t.Fatalf("the fast peer: %v", err)
 		}
+		longest = max(longest, time.Since(start))
+		time.Sleep(100 * time.Millisecond)
 	}
-	peak, longest, _ := frozen.SendStats()
-	t.Logf("the freezing peer: debt peak %v, longest write %v, %d bytes written, budget %v",
-		peak.Round(time.Millisecond), longest.Round(time.Millisecond), sent, SendBlockBudget)
+	// Everything queued reaches the peer before the session is let go.
+	if !frozen.flush(5 * time.Second) {
+		t.Errorf("the freezing peer's queue did not drain in 5 s after it began reading")
+	}
+	peak, longestWrite, _ := frozen.SendStats()
+	queuePeak, _ := frozen.QueueStats()
+	t.Logf("the freezing peer: debt peak %v, longest write %v, queue peak %d bytes, %d frames sent, longest send %v, budget %v, limit %d",
+		peak.Round(time.Millisecond), longestWrite.Round(time.Millisecond), queuePeak, sent, longest, SendBlockBudget, SendQueueLimit)
+	if peak < 2*time.Second {
+		t.Errorf("the writer's debt peaked at %v: the freeze never backed it up, so the budget was not exercised", peak)
+	}
+	if longest > 50*time.Millisecond {
+		t.Errorf("a send to the freezing peer took %v: it waited on the socket", longest.Round(time.Millisecond))
+	}
 	frozen.Close()
 	<-drained
-	if got < sent {
-		t.Errorf("the freezing peer read %d of %d bytes", got, sent)
+	if got != sent || outOfOrder > 0 {
+		t.Errorf("the freezing peer read %d of %d frames, %d out of order", got, sent, outOfOrder)
 	}
 }

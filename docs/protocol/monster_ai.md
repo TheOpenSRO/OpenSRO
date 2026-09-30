@@ -3535,11 +3535,23 @@ tick, the respawn scheduler's spawn push, other players' blows. So each session 
 OURS; 3 s per 30 s in round 656's second review, raised in its third so a client frozen by a
 load is not closed. See WORLD_ISSUES round 656 §9 for the measurement). Every write's time on the socket adds to the session's debt,
 the debt drains at 0.1 s a second, and each write's deadline is capped at what is left of the
-budget. A session whose debt reaches the budget is closed. Its writers together wait about 10 s,
-plus the drain, before it is gone. A reading client's writes take microseconds, so only a peer
-that keeps the kernel buffers full runs its debt up. A per-session send queue would take the
-waiting off the writers altogether, but every Send caller relies on the frame being on the wire,
-in order, when Send returns (the wire lock's ordering, the list's pages), so it is not built.
+budget. A session whose debt reaches the budget is closed. A reading client's writes take
+microseconds, so only a peer that keeps the kernel buffers full runs its debt up.
+
+**The send queue (round 662).** `Send` no longer writes: it encodes the frame (rolling byte and
+checksum drawn in call order) into the session's outbound queue and returns, and the session's
+own writer goroutine drains the queue to the socket, a frame per write (one write for the
+lot wedged the real client over loopback: WORLD_ISSUES round 662 §4; a frame per write only
+mitigates that, the client's reader is fixed in round 663). The deadline and the budget above are now
+that writer's, so the AI tick, the respawn scheduler, other players' blows and every broadcast
+never wait on a peer. Frames reach the wire in the order `Send` was called; the wire lock keeps
+its meaning (a check and its send are one step, and queue order is wire order), and
+`SendBatch` queues a multi-frame sequence -- the paged list with its motion pages, a monster's
+enter with its leg -- so that no other frame comes between. A session is also closed when its
+queue would pass `gateway.SendQueueLimit` (OURS, sized from a live measurement: WORLD_ISSUES
+round 662). When a session ends, what is queued is written out for up to
+`gateway.SendDrainTimeout` (2 s, OURS) before the connection closes, so a frame sent just before
+a handler's error still arrives; the writer then exits and the queue is freed.
 
 **Measured** (`BenchmarkMonsterAITick`, 12,000 monsters over a 40 x 30 grid of regions in one
 bucket, players on real TCP; i7-13700K; the same file run against the base with a no-op setup):

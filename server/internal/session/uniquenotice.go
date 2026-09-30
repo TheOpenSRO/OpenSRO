@@ -3,11 +3,9 @@ package session
 import (
 	"encoding/binary"
 	"fmt"
-	"sync"
 	"sync/atomic"
 
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/party"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
@@ -222,9 +220,11 @@ func partyGroupOf(parties *party.Hub) func(int64) int64 {
 
 // broadcastUniqueNotice queues n for every character in the world (READ: the
 // notice is relayed to every world, 0x414970 -> 0x5f8620), returning how many
-// it was queued for. The writes happen off the caller's goroutine (the killing
-// blow's, the GM's, a spawn loop's), so a client that is slow to read stalls
-// only its own queue (noticeQueue).
+// it was queued for. Send only queues (round 662: every session has its own
+// outbound queue and writer), so a client that is slow to read holds up only
+// its own queue, never the caller -- the killing blow's, the GM's, a spawn
+// loop's. Round 657's per-session notice queue did this for the notices
+// alone and is folded into the general one.
 func broadcastUniqueNotice(hub *world.Hub, n *UniqueNotice) int {
 	if hub == nil {
 		return 0
@@ -235,52 +235,10 @@ func broadcastUniqueNotice(hub *world.Hub, n *UniqueNotice) int {
 		if e.Session == nil {
 			continue
 		}
-		notices.push(e.Session, p)
+		_ = e.Session.Send(p)
 		queued++
 	}
 	return queued
-}
-
-// noticeQueue sends each session its notices in the order they were queued,
-// one drainer goroutine per session while it has any pending: order per
-// recipient is kept, and no recipient waits on another.
-type noticeQueue struct {
-	mu      sync.Mutex
-	pending map[*gateway.Session][]*proto.Packet
-}
-
-var notices = &noticeQueue{pending: map[*gateway.Session][]*proto.Packet{}}
-
-func (q *noticeQueue) push(s *gateway.Session, p *proto.Packet) {
-	q.mu.Lock()
-	list := q.pending[s]
-	q.pending[s] = append(list, p)
-	idle := len(list) == 0
-	q.mu.Unlock()
-	if idle {
-		go q.drain(s)
-	}
-}
-
-// drain sends s's queue front to back; the packet being sent stays at the
-// front until it is written, so a push meanwhile sees a busy queue and does
-// not start a second drainer.
-func (q *noticeQueue) drain(s *gateway.Session) {
-	for {
-		q.mu.Lock()
-		list := q.pending[s]
-		if len(list) == 0 {
-			delete(q.pending, s)
-			q.mu.Unlock()
-			return
-		}
-		p := list[0]
-		q.mu.Unlock()
-		_ = s.Send(p)
-		q.mu.Lock()
-		q.pending[s] = q.pending[s][1:]
-		q.mu.Unlock()
-	}
 }
 
 // AnnounceUniqueSpawn tells the world a unique has appeared: nothing for any

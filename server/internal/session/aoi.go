@@ -486,22 +486,24 @@ func (v *monsterAOI) deliverViewEvents(ev viewEvents) {
 // sendMonsterEnter sends m to sess as a monster coming into its window: the
 // list record and facing as an OpMonsterSpawned (the client's spawn push,
 // round 540, which draws or re-places the body and turns a standing one),
-// then the leg it is walking as an OpMonsterMoved from where it is now.
+// its abnormal states as an OpObjectStatus when it has any (round 659), then
+// the leg it is walking as an OpMonsterMoved from where it is now.
 func sendMonsterEnter(sess *gateway.Session, m combat.Monster, facing float64) error {
 	msg := &MonsterSpawned{Monster: monsterSnapshotFor(sess, m), Heading: float32(facing)}
-	if err := sess.Send(&proto.Packet{Opcode: OpMonsterSpawned, Data: msg.Encode()}); err != nil {
-		return err
+	frames := []*proto.Packet{{Opcode: OpMonsterSpawned, Data: msg.Encode()}}
+	// Its abnormal states, if any (round 659, status.go), so a monster that
+	// comes into view already stunned is drawn stunned.
+	if st := monsterStatusPacket(m.ID); st != nil {
+		frames = append(frames, st)
 	}
-	// Its abnormal states, if any (round 659, status.go).
-	if err := sendMonsterStatus(sess, m.ID); err != nil {
-		return err
+	if m.Moving {
+		mv := &MonsterMoved{MonsterID: m.ID, X: float32(m.X), Z: float32(m.Z),
+			DestX: float32(m.DestX), DestZ: float32(m.DestZ), Speed: float32(m.MoveSpeed), Mode: m.MoveMode}
+		frames = append(frames, &proto.Packet{Opcode: OpMonsterMoved, Data: mv.Encode()})
 	}
-	if !m.Moving {
-		return nil
-	}
-	mv := &MonsterMoved{MonsterID: m.ID, X: float32(m.X), Z: float32(m.Z),
-		DestX: float32(m.DestX), DestZ: float32(m.DestZ), Speed: float32(m.MoveSpeed), Mode: m.MoveMode}
-	return sess.Send(&proto.Packet{Opcode: OpMonsterMoved, Data: mv.Encode()})
+	// The enter, its status and its leg as one batch (round 662's review):
+	// queued once, nothing comes between them.
+	return sess.SendBatch(frames...)
 }
 
 // monsterWireMu guards the creation of a session's monster wire lock.

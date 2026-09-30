@@ -774,34 +774,39 @@ func broadcastStatus(hub *world.Hub, zone string, msg *ObjectStatus) {
 	}
 }
 
-// sendMonsterStatus writes a monster's mask to sess when it has one: the
-// area of interest's enter (sendMonsterEnter) and the monster list call it,
-// both under the session's monster wire lock, so a monster that comes into
-// view already stunned is drawn stunned.
-func sendMonsterStatus(sess *gateway.Session, id int64) error {
+// monsterStatusPacket is a monster's mask as an OpObjectStatus, or nil when
+// it has none. The area of interest's enter (sendMonsterEnter) and the
+// monster list (handleMonsterList) put it in their own batch, under the
+// session's monster wire lock, so a monster that comes into view already
+// stunned is drawn stunned, and nothing comes between its enter, its status
+// and its leg (round 662's review: a builder, not a Send, so the caller
+// queues the sequence as one SendBatch).
+func monsterStatusPacket(id int64) *proto.Packet {
 	statusFX.mu.Lock()
 	var msg *ObjectStatus
 	if h := statusFX.mobs[id]; h != nil && !h.Empty() {
 		msg = &ObjectStatus{OwnerKind: OwnerMonster, OwnerID: id, Mask: h.Mask(), Levels: h.Levels()}
 	}
 	statusFX.mu.Unlock()
-	if msg == nil || sess == nil {
+	if msg == nil {
 		return nil
 	}
-	return sess.Send(&proto.Packet{Opcode: OpObjectStatus, Data: msg.Encode()})
+	return &proto.Packet{Opcode: OpObjectStatus, Data: msg.Encode()}
 }
 
-// sendStatusesOfList follows a monster list with the masks of the monsters it
-// named and of every character in the zone (characters are zone-wide in
-// srrevamp's view; OURS). The caller holds the session's monster wire lock.
-func sendStatusesOfList(sess *gateway.Session, hub *world.Hub, listed []combat.Monster, zone string) {
+// statusPacketsOfList is what follows a monster list: the masks of the
+// monsters it named and of every character in the zone (characters are
+// zone-wide in srrevamp's view; OURS). handleMonsterList appends them to the
+// list's own batch, under the session's monster wire lock.
+func statusPacketsOfList(hub *world.Hub, listed []combat.Monster, zone string) []*proto.Packet {
+	var out []*proto.Packet
 	for _, m := range listed {
-		if sendMonsterStatus(sess, m.ID) != nil {
-			return
+		if p := monsterStatusPacket(m.ID); p != nil {
+			out = append(out, p)
 		}
 	}
-	if hub == nil || sess == nil {
-		return
+	if hub == nil {
+		return out
 	}
 	statusFX.mu.Lock()
 	ids := make([]int64, 0, len(statusFX.pcs))
@@ -815,11 +820,10 @@ func sendStatusesOfList(sess *gateway.Session, hub *world.Hub, listed []combat.M
 	statusFX.mu.Unlock()
 	for _, id := range ids {
 		if e, ok := hub.EntityByCharacterID(id); ok && e.Zone == zone {
-			if sess.Send(&proto.Packet{Opcode: OpObjectStatus, Data: msgs[id].Encode()}) != nil {
-				return
-			}
+			out = append(out, &proto.Packet{Opcode: OpObjectStatus, Data: msgs[id].Encode()})
 		}
 	}
+	return out
 }
 
 // RunStatusEffects steps every object's states every StatusTick until ctx

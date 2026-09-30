@@ -15,7 +15,9 @@ import (
 // and a writer that fans out to it and to others (the monster AI's tick, the
 // respawn scheduler, another player's blow) waits on it write after write.
 // SendBlockBudget closes such a session once its writes have kept their
-// writer waiting that long; the other player's sends go on.
+// writer waiting that long; the other player's sends go on. (Since round 662
+// the fan-out does not wait at all, and the slow reader is closed by its
+// queue limit or its own writer's budget: sendqueue662_test.go.)
 func TestASlowSteadyReaderIsClosedWithinItsBudget(t *testing.T) {
 	oldTimeout := SendTimeout
 	SendTimeout = time.Second
@@ -82,6 +84,10 @@ func TestASlowSteadyReaderIsClosedWithinItsBudget(t *testing.T) {
 		if err := fast.Send(frame); err != nil {
 			t.Fatalf("the fast player's send failed: %v", err)
 		}
+		// Round 662: Send only queues, so a flat-out loop would outrun even
+		// the fast player's reader and pass its queue limit; a pass a
+		// millisecond is 16 MB/s to each.
+		time.Sleep(time.Millisecond)
 	}
 	t.Logf("the slow reader held the fan-out %v, then: %v", heldBySlow.Round(time.Millisecond), slowErr)
 	if slowErr == nil {

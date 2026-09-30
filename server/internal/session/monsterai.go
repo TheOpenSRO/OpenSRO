@@ -1779,9 +1779,9 @@ func (a *monsterAI) emit(p monsterPush, buf []*gateway.Session) []*gateway.Sessi
 // filtered by the cell each stands in. Until round 656 it went to every
 // session in the zone, which under -single-frame is the whole world.
 //
-// A stalled client no longer blocks the tick for ever: gateway.Session.Send
-// gives up after gateway.SendTimeout and closes that connection, so the
-// tick waits at most that long once and then goes on without it (round 656).
+// A slow or stalled client never blocks the tick: gateway.Session.Send only
+// queues the frame for that session's own writer (round 662; until then it
+// wrote, and the tick waited up to the session's send budget).
 func (a *monsterAI) deliver(p monsterPush, buf []*gateway.Session) []*gateway.Session {
 	buf = buf[:0]
 	if v := aoiFor(a.monsters); v != nil {

@@ -80,7 +80,8 @@ the roster's (nest) spawns and every kill, not a GM spawn (READ, above). The dam
 `0x485d90`), so a departed top-damager does not win and the notice never carries "???" from a
 player's kill. Every srrevamp party shares experience, and a party of one is no party (the engine
 never makes one), so a group is a party of two or more. The notice goes to every character on the
-server, queued per recipient off the killer's goroutine.
+server, queued per recipient off the killer's goroutine (since round 662 by the general per-session send
+queue; round 657's notice-only queue is folded into it).
 
 GM tools: `/spawnunique <id|name>` is OURS as a command (retail's GM spawn command is its own); its
 announcement follows retail's GM spawn, which passes the announce flag as 1. `/damage <n> [id]`

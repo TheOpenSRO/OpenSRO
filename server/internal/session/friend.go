@@ -411,7 +411,8 @@ func handleFriendRequest(ctx context.Context, sess *gateway.Session, p *proto.Pa
 	}
 
 	received := &FriendRequestReceived{RequesterName: req.CharacterName}
-	return targetEntity.Session.Send(&proto.Packet{Opcode: OpFriendRequestReceived, Data: received.Encode()})
+	sendToPeer(targetEntity.Session, &proto.Packet{Opcode: OpFriendRequestReceived, Data: received.Encode()})
+	return nil
 }
 
 func handleFriendAccept(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, friends friend.Store, hub *world.Hub) error {
@@ -433,7 +434,8 @@ func handleFriendAccept(ctx context.Context, sess *gateway.Session, p *proto.Pac
 
 	if requesterEntity, online := hub.EntityByCharacterID(req.RequesterID); online {
 		accepted := &FriendAccepted{AccepterName: req.CharacterName}
-		return requesterEntity.Session.Send(&proto.Packet{Opcode: OpFriendAccepted, Data: accepted.Encode()})
+		sendToPeer(requesterEntity.Session, &proto.Packet{Opcode: OpFriendAccepted, Data: accepted.Encode()})
+		return nil
 	}
 	return nil
 }
