@@ -287,6 +287,18 @@ static func parse_names(
 		into[int(id_text)] = display
 	return into
 
+## The `SN_` name key of the characterdata row whose id is `id` in one part,
+## or "" -- the key the object's name and the unique notices' choice go by
+## (round 657, UniqueNoticeNet.line_for). Scans only as far as the row.
+static func find_name_key(data: PackedByteArray, id: int) -> String:
+	var want := str(id)
+	for line in _lines(data):
+		var cols := line.split("\t")
+		if cols.size() <= COL_MODEL_ID or cols[COL_MODEL_ID].strip_edges() != want:
+			continue
+		return _find_name_key(cols)
+	return ""
+
 ## The `SN_`-prefixed name key in a characterdata row, found by content for
 ## the same reason the model path is.
 static func _find_name_key(cols: PackedStringArray) -> String:

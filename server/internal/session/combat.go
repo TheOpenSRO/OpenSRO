@@ -1392,7 +1392,10 @@ func performAttack(
 		net = perHit * n
 	}
 
-	updated, monsterDied, ok := monsters.ApplyDamage(targetMonsterID, net)
+	// The blow is booked to the attacker on the monster's damage list, which
+	// the killing blow hands back: the unique kill notice names its killer
+	// from it (round 657, AnnounceUniqueKill below).
+	updated, monsterDied, ok, killHits := monsters.ApplyDamageFrom(targetMonsterID, characterID, net)
 	if !ok {
 		return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: (&AttackResult{Error: "target not found", MonsterID: targetMonsterID}).Encode()})
 	}
@@ -1705,6 +1708,10 @@ func performAttack(
 		for _, e := range others {
 			e.Session.Send(&proto.Packet{Opcode: OpMonsterDied, Data: msg.Encode()})
 		}
+		// A unique's death is announced to the whole world (round 657): the
+		// top-damage member of the top-damage group is named. Nothing for
+		// any other rank.
+		AnnounceUniqueKill(hub, parties, updated, killHits)
 
 		completedQuests, err := quests.RecordKill(ctx, characterID, monster.Name)
 		if err != nil {

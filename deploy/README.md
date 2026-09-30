@@ -636,6 +636,24 @@ restated `command:` list), then run `docker compose up -d`; the boot log then re
 on: every gate teleport costs nothing ...`. Remove the line (or set it to `"0"`) and run
 `docker compose up -d` to charge fees again.
 
+## Unique monster notices (on by default)
+
+Round 657: when a unique monster (characterdata rank 3) appears or dies, every character in the
+world sees it -- a line in the system window and the blue banner at the top of the screen, as the
+original does. The kill line names the player who dealt the most damage in the group (party) that
+dealt the most. The message is `OpUniqueNotice 0x0110`, carrying the original's `0x300C` payload
+(`0x0C05` appeared / `0x0C06` killed). `docs/protocol/unique_notice.md` has the read.
+
+No unique is placed in the world yet, so today a notice follows only a GM's `/spawnunique <id|name>`
+and its death (`/damage <n>`, `/kill`, or players' blows).
+
+It is on by default, as the original is with its `CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG` key
+absent. The boot log reads `unique notices on: ...`. **Off:** add
+`SRREVAMP_UNIQUE_NOTICE_OFF: "1"` under the server's `environment:` in the override (or
+`- "-unique-notice-off=true"` in its `command:`), then `docker compose up -d`; the boot log then
+reads `unique notices off (-unique-notice-off): no 0x0C05/0x0C06 is sent`. A client older than
+round 657 ignores the message and warns "unhandled opcode" once per connection.
+
 ## Inventory size
 
 Round 633 gave every character its own bag size, and the client pages the bag by it: 32 slots a

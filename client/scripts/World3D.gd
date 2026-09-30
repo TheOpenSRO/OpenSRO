@@ -1338,6 +1338,7 @@ func _ready() -> void:
 	NetClient.change_zone_result.connect(_on_change_zone_result)
 	NetClient.teleport_result.connect(_on_teleport_result)
 	NetClient.chat_update.connect(_on_chat_update)
+	NetClient.unique_notice.connect(_on_unique_notice)
 	NetClient.chat_result.connect(_on_chat_result)
 	NetClient.disconnected.connect(_on_disconnected)
 	send_button.pressed.connect(_on_send_pressed)
@@ -1934,13 +1935,13 @@ func _try_initialize_pk2_ui() -> void:
 	ui_control.add_child(_hud_notice)
 	_hud_notice.setup(_ui_builder)
 	# GDR_WARNING_WND (round 639): the same CIFNotify class, for the level-up
-	# line. Its y is the class's +0x7d4, which the constructor sets to 0 (round
-	# 634's reading of GDR_NOTICE; no writer for this instance was looked for
-	# -- OPEN), so it shares the notice's top-centre spot.
+	# line and the unique notices (round 657). CGInterface's setup gives it
+	# its own y (130), its own frame (com_warning_*) and its own fill, a dark
+	# blue (0, 52, 92) -- the blue banner (READ, HudNotice.STYLE_WARNING).
 	_hud_warning = HudNotice.new()
 	_hud_warning.name = "HudWarning"
 	ui_control.add_child(_hud_warning)
-	_hud_warning.setup(_ui_builder)
+	_hud_warning.setup(_ui_builder, HudNotice.STYLE_WARNING)
 	# The global chatting item opens "Chat to all" (round 634).
 	_hud_panels.global_chat_requested.connect(_on_global_chat_requested)
 	_setup_console_and_help()
@@ -17579,6 +17580,56 @@ func _begin_monster_death(monster_id: int) -> void:
 		_dying_until.erase(monster_id)
 		NetClient.list_monsters()
 	print("World3D: monster %d dies, holding %.2fs t=%.2f" % [monster_id, seconds, _idle_anim_time])
+
+## A unique monster appeared or was killed (round 657; UniqueNoticeNet).
+## 0x874ea0 picks the line by the monster's SN_ key and shows it twice: in
+## the system window as a type-0 line (0xffdbc99b) and on GDR_WARNING_WND,
+## the blue banner at the top centre. Both are logged for the tester's file
+## ("UNIQUE NOTICE" / "UNIQUE BANNER"), the banner with the colour it draws.
+func _on_unique_notice(n: UniqueNoticeNet.Notice) -> void:
+	var key := _unique_name_key(n.ref_obj_id)
+	var names := _object_names()
+	var monster_name := ""
+	if names != null and key != "":
+		monster_name = names.get_text(key, "")
+	var table := _ui_text_table
+	var text_of := func(k: String) -> String: return table.get_text(k, "") if table != null else ""
+	var line := UniqueNoticeNet.line_for(n, key, monster_name, text_of)
+	print("UNIQUE NOTICE: kind 0x%04x ref %d key %s text %s killer '%s' line '%s'" % [
+		n.kind, n.ref_obj_id, key if key != "" else "?", UniqueNoticeNet.keys_for(n, key), n.killer, line])
+	if line == "":
+		# No archive text to show (no Media.pk2): nothing retail would draw.
+		return
+	_log_system(line, UniqueNoticeNet.SYSTEM_TYPE)
+	if _hud_warning != null:
+		_hud_warning.show_notice(line)
+		# Where it is on the screen (the harness measures the pixels there).
+		var xf := _hud_warning.get_global_transform_with_canvas()
+		var r := Rect2(xf.origin, _hud_warning.size * xf.get_scale())
+		print("UNIQUE BANNER: %s text '%s' fill #%s alpha %d frame %s at %d,%d size %dx%d system colour 0x%08x" % [
+			_hud_warning.style_name(), line, _hud_warning.fill_color().to_html(false),
+			HudNotice.fill_alpha_for(_hud_warning.alpha()), String(HudNotice.STYLE_WARNING["corner"]),
+			int(r.position.x), int(r.position.y), int(r.size.x), int(r.size.y), HudSystemMessage.COLOR_DEFAULT])
+
+## The SN_ name key of characterdata row `ref_id`, or "": read from the
+## archive's characterdata parts at the first notice for it and kept.
+var _unique_name_keys := {}
+func _unique_name_key(ref_id: int) -> String:
+	if _unique_name_keys.has(ref_id):
+		return _unique_name_keys[ref_id]
+	var key := ""
+	if _media_pk2 == null:
+		_media_pk2 = _open_media_pk2_if_set()
+	if _media_pk2 != null:
+		for path in NpcTableReader.MODEL_TABLE_PATHS:
+			var entry := ObjectLoader.find_file(_media_pk2, path)
+			if entry == null:
+				continue
+			key = NpcTableReader.find_name_key(_media_pk2.read_file(entry), ref_id)
+			if key != "":
+				break
+	_unique_name_keys[ref_id] = key
+	return key
 
 ## The player has advanced a level (server's OpLevelUp, only ever sent to
 ## the character that levelled). Announces it with the client's own recovered

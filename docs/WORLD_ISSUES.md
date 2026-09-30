@@ -7094,6 +7094,146 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-fifty-seventh round: a unique's appearance and its killer are announced to every player in the original's blue banner at the top of the screen
+
+The user (2026-09-30), part of the monster request: "if you kill a unique make sure you announce it
+in a blue banner in the top middle of the screen like the original game". Retail announces a
+unique's appearance too (the monster epic's decision D8: both). UI and server only, so no
+performance gate. The full reading is `docs/protocol/unique_notice.md`.
+
+### 1. The wire and the server rules (READ, SR_GameServer.exe)
+
+- Spawn: `0x5f6eb0` relays `0x300C` / `0x0C05` {u32 RefObjID} for a class-3 object (vslot 300).
+  Kill: CGObjMob vslot 398 `0x4c1c80` sends `0x300C` / `0x0C06` {u32 RefObjID, name}, class 3 only
+  (`cmp al,3` at `0x4c1ccb`), and **only when there is a killer** (`test ebp,ebp; je` at
+  `0x4c1cd7`). A killer that is not a live player is named `"???"` (`0xaedda4`, `0x4c1dd1`).
+- The killer is vslot 399 `0x4c44a0` (called from the death path vslot 311 `0x4c42f0`): over the
+  damage list `+0x1ca4` ({id +0x10, damage +0x14}), pets mapped to owners, non-players skipped,
+  grouped by an experience-sharing party (`+0x72e*4`, flag bit 0) or the player alone, the group
+  with the most damage and in it the member with the most. Both comparisons strict.
+- The suppress key: `CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG` (read at `0x60936f`) equal to `"ON"`
+  (`0xb012f4`) sets the world's `+0x108` (`0x6093b1`, getter `0x608350`); both notices ask the world
+  (`0x5f9910`) and are skipped when set. Absent: both are sent.
+
+### 2. The client (READ, sro_client.exe `0x874ea0`)
+
+- The line is chosen by the monster's SN_ key against five strings -- `SN_MOB_CH_TIGERWOMAN`,
+  `SN_MOB_KK_ISYUTARU`, `SN_MOB_OA_URUCHI`, `SN_MOB_TK_BONELORD`, `SN_MOB_RM_TAHOMET`
+  (`0xdda1f4`..`0xdda090`) -- **five named uniques, not seven**; any other takes the `_UNIC` lines.
+- **ANYONE_DEAD vs DEAD is the killer's name against `"???"`** (`0xdda02c`): DEAD ("... has
+  disappeared") for `"???"`, ANYONE_DEAD ("[%s] killed ...") for a player. It has nothing to do with
+  whether this player made the kill. Tahomet has no DEAD_ line: `"???"` takes DEAD_UNIC with its
+  name (`0x87572e`). The generic kill is ANYONE_DEAD_UNIC (killer, name). The `_L2`/`_L3` rows
+  compare unequal and take the generic lines.
+- Every line goes to the system window, type 0 (`0x7781b0`: colour `0xffdbc99b`), **and** to
+  GDR_WARNING_WND (`0x77b580` -> child `0x23` -> `0x7b3eb0`).
+
+### 3. The banner is blue (READ, then MEASURED)
+
+The brief said the colour was not read and not to assume blue. It is blue, and the blue is not the
+layout's `Color=` line (the resinfo parser reads no such field). CGInterface's setup configures
+each CIFNotify after creating it (`0x78cbbe..0x78ce3b`):
+
+| | GDR_NOTICE (0x14) | GDR_WARNING_WND (0x23) |
+|---|---|---|
+| y (`0x7b3d40`) | 100 (`push 0x64`, `0x78cbbe`) | 130 (`push 0x82`, `0x78cbed`) |
+| frame | com_notice_* (the class's) | com_warning_edge / edge2 / corner (`0xdb977c`, `0xdb9750`, `0xdb9724`) |
+| fill (`0x7b3d10`) | (128, 45, 67) | **(0, 52, 92)** (`push 0x5c; push 0x34; push 0`, `0x78cd00`) |
+
+The class's render (vslot 13 `0x7b3cb0`) draws a quad in the fill colour at alpha
+`-0x80 - (0xff - a) / 2` (128 at full) and then the frame. MEASURED on the box's Media.pk2: every
+texel of the three `com_warning_*.ddj` (A8R8G8B8) is (0, 52, 92), alpha 0..128; every
+`com_notice_*` texel (128, 45, 67). Text: GDR_NOTIFY_TXT's FontColor, white. **Correction to round
+634:** GDR_NOTICE is at y 100, not 0 (the constructor's 0 is overwritten by the setup), and it has
+the maroon fill; round 639's "GDR_WARNING_WND shares the notice's y (OPEN)" is answered: 130.
+
+### 4. What was built
+
+- Server (`session/uniquenotice.go`): `OpUniqueNotice 0x0110` (OURS) carrying 0x300C's payload;
+  sent to every character on a class-3 spawn (roster spawn hook and GM `/spawn`/`/spawnunique`) and
+  on its death (the combat kill; GM `/damage`/`/kill`). `combat.Hub` now keeps each monster's damage
+  list (`ApplyDamageFrom`, first-hit order) and hands it to the killing blow; `UniqueKiller` is the
+  vslot-399 rule over it (a party of two or more is a group; ties: the first in first-hit order,
+  OURS). `-unique-notice-off` (env `SRREVAMP_UNIQUE_NOTICE_OFF`) is the key, default off.
+- GM tools (OURS): `/spawnunique <id|name>` (Tiger Girl 1954, Isyutaru 2002, Uruchi 1982, Lord
+  Yarkan 3810, Demon Shaitan 3875, Cerberus 5871 -- level, HP, defence, radius and speeds READ from
+  the box's characterdata; attack the disclosed curve, no attack skill); `/damage <n> [id]`, a blow
+  booked to the GM; `/kill` with nobody on the list announces `"???"` (OURS: retail has no GM kill).
+- Client: `UniqueNoticeNet` (decode, `line_for` exactly as `0x874ea0`, `sprintf` for swprintf's
+  `%s`), `World3D._on_unique_notice` (system line type 0, banner on `_hud_warning`, the log lines
+  `UNIQUE NOTICE` and `UNIQUE BANNER ... fill #00345c alpha 128 ... at X,Y size WxH`), and
+  `HudNotice` styles per instance (`STYLE_NOTICE`, `STYLE_WARNING`: y, frame, fill, the fill's
+  alpha rule; the fade now drawn per piece instead of by `modulate`).
+
+### 5. Tests
+
+- Go (`session/uniquenotice_test.go`, `uniquenotice_wire_test.go`): the exact bytes both ways and
+  five malformed payloads; the killer rule (party beats a bigger lone attacker, the party's top
+  member, a lone attacker beats a smaller party, ties, no hits -> no killer); class 3 only and the
+  off flag; the hub's damage list; end to end over TCP with three characters -- `/spawnunique`
+  reaches all three as 0x0C05, `/damage` kills and names the GM, `/kill` with nobody on the list
+  names `"???"`, a player's combat kill names the player, a Mangyang's kill sends nothing, and with
+  the flag off nothing is sent.
+- **Negative** (`TestUniqueSpawnReachesTheWorld`, which uses only what the base has), against the
+  base ab66d9c in a second worktree:
+
+  ```
+  --- FAIL: TestUniqueSpawnReachesTheWorld (2.56s)
+      uniquenotice_wire_test.go:52: waiting for 0x0110: read tcp 127.0.0.1:43356->127.0.0.1:38387: i/o timeout
+  FAIL
+  ```
+
+  and `uniquenotice_test.go` there: `undefined: UniqueNotice`, `undefined: DecodeUniqueNotice`
+  (build failed).
+- Client (`net/unique_notice_test.gd`): the opcode and words, decoding, the line for each of the
+  five named uniques, a generic one and an `_L2` row, each spawned / killed by `"???"` / killed by
+  a player, over a SYNTHETIC text table; swprintf's `%s`; STYLE_WARNING's y, frame and fill,
+  STYLE_NOTICE's; the fill alpha rule; the banner's show, fade and end; the wiring.
+  `hud_chat_test.gd`'s GDR_NOTICE y check now expects 100.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...`: every package ok (after `bundle_docs.sh`
+  and the `-unique-notice-off` row in server/README.md, which the doc probes asked for).
+- Client suites on the render box (`remote_godot.sh tests`, lane dir `/opt/srrevamp-client-notice657`):
+  `ran 173 suite(s), 0 failing`; `unique_notice_test.gd` ALL PASS (32 checks). Its negative, the
+  suite against the base ab66d9c's client: `FAIL UniqueNoticeNet exists
+  (res://scripts/net/unique_notice.gd)`, `FAILURES: 1`.
+
+### 6. Live check: two clients, real X input (MEASURED)
+
+`/var/tmp/notice657/e2e.sh` (run `r1-163101`): A (the GM, Qa657a) and B (Qa657b) side by side on
+one Xvfb, both through Login -> Character select; A types into its chat line with xdotool.
+
+- A typed `/spawnunique tiger girl`: **both** logs `UNIQUE NOTICE: kind 0x0c05 ref 1954 key
+  SN_MOB_CH_TIGERWOMAN text UIIT_MSG_APPEAR_TIGER_GIRL ... line 'Tiger Girl has appeared on Tiger
+  Mountain.'` and `UNIQUE BANNER: GDR_WARNING_WND ... fill #00345c alpha 128 ... at 524,130 size
+  232x14 system colour 0xffdbc99b`.
+- `/damage 999999999 #25`: both `kind 0x0c06 ... text UIIT_MSG_ANYONE_DEAD_TIGER_GIRL killer
+  'Qa657a' line '[Qa657a] killed Tiger girl from Tiger Mountain.'`, banner at 517,130.
+- `/spawnunique cerberus` and its `/damage`: both `UIIT_MSG_APPEAR_UNIC` -> `[Cerberus[INT]] has
+  appeared.` and `UIIT_MSG_ANYONE_DEAD_UNIC` -> `[Qa657a] has killed [Cerberus[INT]].` (the name is
+  this archive's textdata_object text, " [INT]" tag included).
+- A non-unique: `/spawn mangyang` then `/damage 999999 #27`: `RESULT non-unique: A notices 4 -> 4,
+  B notices 4 -> 4` -- nothing sent.
+- **The pixels.** `px.py` crops each banner's logged rect out of a frame before it and one with it
+  and fits `after = alpha * F + (1 - alpha) * before` over the non-text pixels:
+
+  | Client, banner | fitted colour F | alpha | non-text px |
+  |---|---|---|---|
+  | A, Tiger Girl kill | (2.4, 52.3, 90.7) | 0.606 | 2762 |
+  | B, Tiger Girl kill | (-1.1, 52.0, 92.6) | 0.572 | 2762 |
+  | B, Tiger Girl spawn | (-1.2, 52.0, 92.7) | 0.571 | 2648 |
+  | B, Cerberus spawn | (-1.5, 51.9, 92.9) | 0.557 | 1821 |
+  | A, Cerberus kill | (-1.8, 52.1, 93.4) | 0.558 | 2122 |
+  | B, Cerberus kill | (-0.9, 52.0, 92.5) | 0.570 | 2122 |
+  | B, after the Mangyang kill | -- | 0.000 (unchanged) | 2702 |
+
+  The drawn colour is the READ (0, 52, 92) within 2 levels; the effective alpha (~0.57) is the
+  fill's 128/255 under the frame pieces' own 0..128 alpha, as the model predicts.
+- Two fits are not in the table: A's Tiger Girl spawn (its "before" frame was taken before the
+  scene settled, a different background, so the fit is degenerate) and A's Cerberus spawn, whose
+  frame 0.4 s after the log line shows no banner on A while B shows it. A's log has the banner
+  line and then, next, the synchronous load of the Cerberus model (`kerberos.bsr`); INFERRED: A
+  had not presented a frame since. Not a notice fault, but the model load's hitch is real.
+
 ## Six-hundred-and-fifty-second round: every icon is picked up with one click and put down with the next, and a worn item goes into the bag as the original puts it
 
 The user (2026-09-30): "When I try drag an item from my person into the inventory to a slot I want

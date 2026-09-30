@@ -60,7 +60,9 @@ and changes nothing.
 | `/level <n>` | Raises you to level *n* through the real level-up path, so stats, HP and MP follow. Only goes up. |
 | `/heal` | Refills HP and MP to their maximums. |
 | `/spawn <monster> [n]` | Spawns *n* of a monster species next to you (no respawn). |
-| `/kill` | Kills the monster you have selected. No exp, gold, drops or quest credit — a GM kill is not a kill. |
+| `/spawnunique <id\|name>` | Spawns one unique monster next to you (round 657; a test tool, not a retail command): Tiger Girl (1954), Isyutaru (2002), Uruchi (1982), Lord Yarkan (3810), Demon Shaitan (3875) or Cerberus (5871), by id or name. Every player sees the appearance notice. No respawn. |
+| `/kill` | Kills the monster you have selected. No exp, gold, drops or quest credit — a GM kill is not a kill. A unique killed this way is announced as "... has disappeared" unless players had hit it, when the player who dealt the most (in the party that dealt the most) is named. |
+| `/damage <n> [id]` | Deals *n* damage to the monster you have selected (or the monster with that id, as `/spawnunique` prints it), as your blow (round 657; a test tool, not a retail command). If it dies it is a GM kill (no rewards), and a unique's death names you when you dealt the most. |
 | `/durability <slot> <n>` | Sets a worn item's durability. Slots: 0 helm, 1 mail, 2 shoulder, 3 gauntlet, 4 pants, 5 boots, 6 weapon, 7 shield, 8 job suit. |
 | `/sp <n>` | Adds skill points (a negative number takes them away). |
 | `/hwan <0-5>` | Sets the berserk orbs held (round 629; a test tool, not a retail command). Five light the ready circle. |

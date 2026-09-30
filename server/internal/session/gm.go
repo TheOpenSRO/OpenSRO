@@ -272,6 +272,26 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		for _, id := range out.SpawnedMonsterIDs {
 			BroadcastMonsterSpawned(hub, deps.Monsters, id)
 		}
+		// A unique a GM spawns or kills is announced to the world as any
+		// unique is (round 657, uniquenotice.go): the spawn by its hatch,
+		// the kill by the damage list. A /kill with no one on the list is
+		// announced with the "???" killer, which the client shows as "...
+		// has disappeared" -- OURS: retail has no GM kill, and its rule
+		// (no killer, no notice) would leave the GM's kill silent.
+		if deps.Monsters != nil {
+			for _, id := range out.SpawnedMonsterIDs {
+				if m, ok := deps.Monsters.Get(id); ok {
+					AnnounceUniqueSpawn(hub, m)
+				}
+			}
+		}
+		if out.Killed != nil {
+			if len(out.KillHits) > 0 {
+				AnnounceUniqueKill(hub, deps.Parties, *out.Killed, out.KillHits)
+			} else if UniqueNoticeFor(out.Killed.Rarity) {
+				broadcastUniqueNotice(hub, &UniqueNotice{Kind: UniqueNoticeKill, RefObjID: uint32(out.Killed.RefObjID), Killer: UnknownKiller})
+			}
+		}
 		return err
 	}
 }

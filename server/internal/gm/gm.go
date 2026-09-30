@@ -34,6 +34,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/inventory"
 	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
+	"github.com/OpenSRO/srrevamp/server/internal/party"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 )
@@ -147,9 +148,16 @@ type Result struct {
 	RefreshInventory bool
 	RefreshEquipment bool
 
-	// KilledMonsterID is the monster /kill removed, for the session layer
-	// to announce to the zone the way a combat kill is announced.
+	// KilledMonsterID is the monster /kill or /damage removed, for the
+	// session layer to announce to the zone the way a combat kill is
+	// announced.
 	KilledMonsterID int64
+	// Killed is that monster as it died, and KillHits its damage list (the
+	// hub's, combat.Hub.ApplyDamageFrom), for the unique kill notice (round
+	// 657, session.AnnounceUniqueKill). A /kill credits nobody, so its list
+	// holds only the blows players struck before it.
+	Killed   *combat.Monster
+	KillHits []combat.Hit
 	// SpawnedMonsterIDs are the monsters /spawn made, in order, for the
 	// session layer to push to the zone (session.BroadcastMonsterSpawned,
 	// round 542, behind -monster-spawn-push); empty for every other command.
@@ -186,6 +194,12 @@ type Deps struct {
 	Berserk *berserk.Tracker
 	Levels  *leveldata.Table
 	Species []Species
+	// Parties is the party hub the unique kill notice groups attackers by
+	// (round 657, session.AnnounceUniqueKill); nil groups nobody.
+	Parties *party.Hub
+	// Uniques are the unique monsters /spawnunique knows (round 657): none
+	// is placed in the world yet, so the console is how one is met.
+	Uniques []Species
 	// Zones are the named zones /goto accepts (worldmap.ZoneCentre's keys).
 	Zones  []string
 	Logger *slog.Logger
@@ -211,7 +225,7 @@ const MaxSpawn = 20
 
 // Help is the one-line list of server-side commands, what the client shows
 // a GM. Kept here so the list and the dispatcher cannot drift apart.
-const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /kill, /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off]"
+const Help = "GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /spawnunique <id|name>, /kill, /damage <n> [id], /durability <slot> <n>, /sp <n>, /hwan <0-5>, /notice <text>, /invsize [1-96|default], /speed [x|off]"
 
 // Run executes one command line for actor. The leading slash is optional;
 // the first word is the command. The caller has already checked the gate.
@@ -244,6 +258,10 @@ func (d *Deps) Run(ctx context.Context, actor Actor, line string) Result {
 		res = d.spawn(actor, args)
 	case "kill":
 		res = d.kill(actor)
+	case "spawnunique":
+		res = d.spawnUnique(actor, args)
+	case "damage":
+		res = d.damage(actor, args)
 	case "durability":
 		res = d.durability(ctx, actor, args)
 	case "sp":
@@ -653,7 +671,8 @@ func (d *Deps) kill(actor Actor) Result {
 	if !ok {
 		return refuse(fmt.Sprintf("monster %d is not alive", actor.TargetMonsterID))
 	}
-	if _, died, ok := d.Monsters.ApplyDamage(m.ID, m.HP); !ok || !died {
+	dead, died, ok, hits := d.Monsters.ApplyDamageFrom(m.ID, 0, m.HP)
+	if !ok || !died {
 		return refuse(fmt.Sprintf("monster %d could not be killed", m.ID))
 	}
 	return Result{
@@ -661,6 +680,102 @@ func (d *Deps) kill(actor Actor) Result {
 		RefreshMonsters: true,
 		KilledMonsterID: m.ID,
 		Zone:            m.Zone,
+		Killed:          &dead,
+		KillHits:        hits,
+	}
+}
+
+// spawnUnique puts one unique monster 6 units east of the GM (OURS, a test
+// tool: round 657; uniques are not placed in the world until their rotation
+// is built). The argument is the unique's characterdata id or its name or
+// code name. Nothing respawns it. Its hatch is announced to the world as a
+// roster unique's would be (the session layer, AnnounceUniqueSpawn).
+func (d *Deps) spawnUnique(actor Actor, args []string) Result {
+	if len(args) < 1 {
+		return refuse("usage: /spawnunique <id|name>. Uniques: " + uniqueNames(d.Uniques))
+	}
+	if actor.Zone == "" {
+		return refuse("not in the world")
+	}
+	if d.Monsters == nil {
+		return refuse("no monster hub")
+	}
+	want := strings.ToLower(strings.Join(args, " "))
+	var sp *Species
+	for i := range d.Uniques {
+		u := &d.Uniques[i]
+		if want == strconv.FormatInt(u.RefObjID, 10) || want == strings.ToLower(u.Name) || want == strings.ToLower(u.CodeName) {
+			sp = u
+			break
+		}
+	}
+	if sp == nil {
+		return refuse("no unique called " + strings.Join(args, " ") + ". Uniques: " + uniqueNames(d.Uniques))
+	}
+	x := actor.X + 6
+	m := d.Monsters.SpawnSpecies(actor.Zone, sp.Species, x, actor.Y, actor.Z, sp.MaxHP, sp.Defense, sp.Attack, sp.Gold)
+	return Result{
+		Text:              fmt.Sprintf("spawned unique %s (id %d, level %d, HP %d) at %.0f, %.0f -- monster #%d; no respawn", sp.Name, sp.RefObjID, sp.Level, m.MaxHP, x, actor.Z, m.ID),
+		RefreshMonsters:   true,
+		SpawnedMonsterIDs: []int64{m.ID},
+	}
+}
+
+func uniqueNames(us []Species) string {
+	if len(us) == 0 {
+		return "(none)"
+	}
+	names := make([]string, 0, len(us))
+	for _, u := range us {
+		names = append(names, fmt.Sprintf("%s (%d)", u.Name, u.RefObjID))
+	}
+	return strings.Join(names, ", ")
+}
+
+// damage deals n damage to the selected monster -- or to the monster whose
+// id follows n, as /spawnunique's reply prints it -- booked to the GM on the
+// monster's damage list as a blow of the GM's (OURS, a test tool: round 657).
+// A blow that kills is announced like /kill's, and names the GM when the GM
+// tops the list; as with /kill, no exp, gold, drops or quest credit.
+func (d *Deps) damage(actor Actor, args []string) Result {
+	if len(args) < 1 || len(args) > 2 {
+		return refuse("usage: /damage <n> [monster id] -- damage the selected monster, or that one")
+	}
+	n, err := strconv.Atoi(args[0])
+	if err != nil || n < 1 {
+		return refuse("n must be a positive whole number")
+	}
+	target := actor.TargetMonsterID
+	if len(args) == 2 {
+		id, err := strconv.ParseInt(strings.TrimPrefix(args[1], "#"), 10, 64)
+		if err != nil || id < 1 {
+			return refuse("the monster id must be a positive whole number")
+		}
+		target = id
+	}
+	if target == 0 {
+		return refuse("no target selected -- click a monster first, or give its id")
+	}
+	if d.Monsters == nil {
+		return refuse("no monster hub")
+	}
+	after, died, ok, hits := d.Monsters.ApplyDamageFrom(target, actor.CharacterID, n)
+	if !ok {
+		return refuse(fmt.Sprintf("monster %d is not alive", target))
+	}
+	if !died {
+		return Result{
+			Text:            fmt.Sprintf("%s (#%d) took %d: HP %d/%d", after.Name, after.ID, n, after.HP, after.MaxHP),
+			RefreshMonsters: true,
+		}
+	}
+	return Result{
+		Text:            fmt.Sprintf("%s (#%d) took %d and died; no exp, gold, drops or quest credit from a GM kill", after.Name, after.ID, n),
+		RefreshMonsters: true,
+		KilledMonsterID: after.ID,
+		Zone:            after.Zone,
+		Killed:          &after,
+		KillHits:        hits,
 	}
 }
 
