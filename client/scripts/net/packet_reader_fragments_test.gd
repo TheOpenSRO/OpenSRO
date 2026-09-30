@@ -12,8 +12,10 @@ extends SceneTree
 ## its bytes a fragment at a time by poll(), and holds at most `cap` unread
 ## bytes, as a kernel buffer does) in odd fragment sizes; every pattern must
 ## decode to exactly the frames that were sent, in order. Then a real TLS
-## loopback carries a 32,735-byte page. Only poll() and Packet are used, so
-## the file runs against the old reader too (the negative).
+## loopback carries a 32,735-byte page. Only poll(), Packet and the reader's
+## _buf (read with get(), so an older reader without it fails that one check
+## instead of the file) are used, so the file runs against the old reader too
+## (the negative).
 ## Run headless: `godot4 --headless --path client --script res://scripts/net/packet_reader_fragments_test.gd`
 
 var _failures := 0
@@ -131,19 +133,53 @@ func _test_page_through_a_full_receive_buffer() -> void:
 	var why := _same(got, frames)
 	_check(why == "", "a 32,735-byte page through a receive buffer holding 31,250 bytes decodes, and every frame after it%s" % ("" if why == "" else " -- " + why))
 
-## The reader's own buffer stays bounded: one unfinished frame plus one read.
+## The reader's own buffer stays bounded: it reads only while it lacks a
+## whole frame, and drops what it consumed before each read, so _buf never
+## reaches one frame plus one read (PacketReader.MAX_BUFFER). Six full-size
+## frames all waiting at once put the most pressure on it.
 func _test_buffer_is_bounded() -> void:
 	var peer := FakePeer.new()
-	for f in _frames():
-		peer.pending.append_array((f as Packet).encode())
+	for i in range(6):
+		var d := PackedByteArray()
+		d.resize(Packet.MAX_PAYLOAD)
+		d.fill(i)
+		peer.pending.append_array(Packet.new(0x0066, d).encode())
 	peer.frag = 1 << 20
 	var reader := PacketReader.new()
 	var most := 0
-	for i in range(100):
-		reader.poll(peer)
-		if reader.has_method("buffered"):
-			most = maxi(most, reader.call("buffered"))
-	_check(most <= Packet.HEADER_SIZE + Packet.MAX_PAYLOAD + 65536, "the reader holds at most one frame plus one 64 KB read (held %d bytes)" % most)
+	var frames := 0
+	for i in range(40):
+		if reader.poll(peer) != null:
+			frames += 1
+		var buf = reader.get("_buf")
+		most = maxi(most, (buf as PackedByteArray).size() if buf is PackedByteArray else 1 << 30)
+	var bound := Packet.HEADER_SIZE + Packet.MAX_PAYLOAD + 65536
+	_check(frames == 6 and most < bound, "the reader's buffer stays under one frame plus one 64 KB read (%d frames, largest buffer %d bytes, bound %d)" % [frames, most, bound])
+
+## It reads only while it lacks a whole frame: 20 small frames (under one
+## read) followed by 200 KB more are all waiting; the first poll reads once,
+## and the next 19 polls are served from the buffer without reading again.
+func _test_reads_only_when_it_lacks_a_frame() -> void:
+	var peer := FakePeer.new()
+	for i in range(20):
+		peer.pending.append_array(Packet.new(0x007c, "leg %02d".to_utf8_buffer()).encode())
+	var tail := PackedByteArray()
+	tail.resize(Packet.MAX_PAYLOAD)
+	for i in range(6):
+		peer.pending.append_array(Packet.new(0x0066, tail).encode())
+	peer.frag = 1 << 20
+	var reader := PacketReader.new()
+	var first := reader.poll(peer)
+	var waiting := peer.get_available_bytes()
+	var extra_reads := 0
+	for i in range(19):
+		var p := reader.poll(peer)
+		if peer.get_available_bytes() != waiting:
+			extra_reads += 1
+			waiting = peer.get_available_bytes()
+		if p == null or p.opcode != 0x007c:
+			extra_reads += 100
+	_check(first != null and extra_reads == 0, "with 20 whole frames buffered, the next 19 polls read nothing more from the peer (%d reads)" % extra_reads)
 
 ## A real TLS loopback (a self-signed certificate made here): a 32,735-byte
 ## page and a small frame after it. StreamPeerTLS reports only the current
@@ -198,25 +234,86 @@ func _test_tls_page() -> void:
 	var frames := [Packet.new(0x0066, page), Packet.new(0x00f2, "after".to_utf8_buffer())]
 	for f in frames:
 		tls_server.put_data((f as Packet).encode())
+	# Wait, without touching the reader, until every encrypted byte is in the
+	# client's socket: at least the two frames plus a record header each.
+	var want_bytes := 32741 + 11 + 3 * 5
+	var seen := -1
+	var steady := 0
+	for i in range(500):
+		tls_server.poll()
+		tcp_client.poll()
+		var n := tcp_client.get_available_bytes()
+		steady = steady + 1 if n == seen else 0
+		seen = n
+		if n >= want_bytes and steady >= 10:
+			break
+		OS.delay_msec(2)
 	var reader := PacketReader.new()
 	var got: Array = []
+	var polls_for_page := 0
 	var end := Time.get_ticks_msec() + 3000
 	while got.size() < frames.size() and Time.get_ticks_msec() < end:
-		tls_server.poll()
 		var p := reader.poll(tls_client)
+		if got.is_empty():
+			polls_for_page += 1
 		if p != null:
 			got.append(p)
 		else:
 			OS.delay_msec(1)
 	var why := _same(got, frames)
 	_check(why == "", "TLS: a 32,735-byte page and the frame after it decode within 3 s%s" % ("" if why == "" else " -- " + why))
-	tls_client.disconnect_from_stream()
+	# NetClient drains poll() until the first null, once a game frame. The
+	# page spans more than one TLS record; with them all arrived it must come
+	# out of the first poll -- one game frame -- not one record per game frame
+	# (a reader that reads only the current record takes 2 here).
+	_check(polls_for_page == 1, "TLS: with its records all arrived, the page comes out of the first poll (took %d; %d bytes were waiting)" % [polls_for_page, seen])
+	# A clean close (close_notify) ends the stream without an error line.
+	# The reader is polled as NetClient polls it -- only while the peer says
+	# it is connected -- and the runner checks that nothing between the two
+	# marker lines is an ERROR.
+	print("TLS close begins")
 	tls_server.disconnect_from_stream()
+	var after_close: Packet = null
+	for i in range(20):
+		if tls_client.get_status() == StreamPeerTLS.STATUS_CONNECTED:
+			var p := reader.poll(tls_client)
+			if p != null:
+				after_close = p
+		OS.delay_msec(2)
+	_check(after_close == null and tls_client.get_status() != StreamPeerTLS.STATUS_CONNECTED,
+		"TLS: after the server's close_notify the reader returns nothing and the peer is closed")
+	print("TLS close polled")
+	tls_client.disconnect_from_stream()
+
+## Size's top bit is a reserved flag (Packet.MAX_PAYLOAD, PACKET_FORMAT.md):
+## the reader masks it off, as it always has. A frame whose Size field is
+## 0x8000 | 5 carries 5 bytes, and the frame after it is found.
+func _test_size_flag_bit_is_masked() -> void:
+	var raw := PackedByteArray()
+	raw.resize(6)
+	raw.encode_u16(0, 0x8000 | 5)
+	raw.encode_u16(2, 0x1234)
+	raw.append_array("hello".to_utf8_buffer())
+	var after := Packet.new(0x00f2, "after".to_utf8_buffer())
+	raw.append_array(after.encode())
+	var peer := FakePeer.new()
+	peer.pending = raw
+	peer.frag = 1 << 20
+	var reader := PacketReader.new()
+	var got: Array = []
+	for i in range(10):
+		var p := reader.poll(peer)
+		if p != null:
+			got.append(p)
+	var why := _same(got, [Packet.new(0x1234, "hello".to_utf8_buffer()), after])
+	_check(why == "", "a Size field with its top bit set carries its low 15 bits of payload%s" % ("" if why == "" else " -- " + why))
 
 func _init() -> void:
 	_test_fragments()
 	_test_page_through_a_full_receive_buffer()
 	_test_buffer_is_bounded()
+	_test_reads_only_when_it_lacks_a_frame()
+	_test_size_flag_bit_is_masked()
 	_test_tls_page()
 	if _failures == 0:
 		print("ALL PASS")
