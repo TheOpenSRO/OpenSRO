@@ -7094,6 +7094,219 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-fifty-seventh round: a unique's appearance and its killer are announced to every player in the original's blue banner at the top of the screen
+
+The user (2026-09-30), part of the monster request: "if you kill a unique make sure you announce it
+in a blue banner in the top middle of the screen like the original game". Retail announces a
+unique's appearance too (the monster epic's decision D8: both). UI and server only, so no
+performance gate. The full reading is `docs/protocol/unique_notice.md`.
+
+### 1. The wire and the server rules (READ, SR_GameServer.exe)
+
+- Spawn: `0x5f6eb0` relays `0x300C` / `0x0C05` {u32 RefObjID} for a rank-3 object (`vtable +0x12c`,
+  slot 75 -- the rank getter; round 657's review corrected "vslot 300", which was that byte
+  offset in decimal).
+  Kill: CGObjMob vslot 398 `0x4c1c80` sends `0x300C` / `0x0C06` {u32 RefObjID, name}, class 3 only
+  (`cmp al,3` at `0x4c1ccb`), and **only when there is a killer** (`test ebp,ebp; je` at
+  `0x4c1cd7`). A killer whose `vtable +0x1c` answers 0 is named `"???"` (`0xaedda4`,
+  `0x4c1dd1`) -- a branch this caller does not reach, since vslot 399 drops those (review M1).
+- The killer is vslot 399 `0x4c44a0` (called from the death path vslot 311 `0x4c42f0`): over the
+  damage list `+0x1ca4` ({id +0x10, damage +0x14}), each id resolved through `0x485d90` and a
+  missing object skipped, pets mapped to owners, non-players skipped,
+  grouped by an experience-sharing party (`+0x72e*4`, flag bit 0) or the player alone, the group
+  with the most damage and in it the member with the most. Both comparisons strict.
+- The suppress key: `CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG` (read at `0x60936f`) equal to `"ON"`
+  (`0xb012f4`) sets the world's `+0x108` (`0x6093b1`, getter `0x608350`); both notices ask the world
+  (`0x5f9910`) and are skipped when set -- for the spawn, only a nest's hatch asks (review L2, §7).
+  Absent: both are sent.
+
+### 2. The client (READ, sro_client.exe `0x874ea0`)
+
+- The line is chosen by the monster's SN_ key against five strings -- `SN_MOB_CH_TIGERWOMAN`,
+  `SN_MOB_KK_ISYUTARU`, `SN_MOB_OA_URUCHI`, `SN_MOB_TK_BONELORD`, `SN_MOB_RM_TAHOMET`
+  (`0xdda1f4`..`0xdda090`) -- **five named uniques, not seven**; any other takes the `_UNIC` lines.
+- **ANYONE_DEAD vs DEAD is the killer's name against `"???"`** (`0xdda02c`): DEAD ("... has
+  disappeared") for `"???"`, ANYONE_DEAD ("[%s] killed ...") for a player. It has nothing to do with
+  whether this player made the kill. Tahomet has no DEAD_ line: `"???"` takes DEAD_UNIC with its
+  name (`0x87572e`). The generic kill is ANYONE_DEAD_UNIC (killer, name). The `_L2`/`_L3` rows
+  compare unequal and take the generic lines.
+- Every line goes to the system window, type 0 (`0x7781b0`: colour `0xffdbc99b`), **and** to
+  GDR_WARNING_WND (`0x77b580` -> child `0x23` -> `0x7b3eb0`).
+
+### 3. The banner is blue (READ, then MEASURED)
+
+The brief said the colour was not read and not to assume blue. It is blue, and the blue is not the
+layout's `Color=` line (the resinfo parser reads no such field). CGInterface's setup configures
+each CIFNotify after creating it (`0x78cbbe..0x78ce3b`):
+
+| | GDR_NOTICE (0x14) | GDR_WARNING_WND (0x23) |
+|---|---|---|
+| y (`0x7b3d40`) | 100 (`push 0x64`, `0x78cbbe`) | 130 (`push 0x82`, `0x78cbed`) |
+| frame | com_notice_* (the class's) | com_warning_edge / edge2 / corner (`0xdb977c`, `0xdb9750`, `0xdb9724`) |
+| fill (`0x7b3d10`) | (128, 45, 67) | **(0, 52, 92)** (`push 0x5c; push 0x34; push 0`, `0x78cd00`) |
+
+The class's render (vslot 13 `0x7b3cb0`) draws a quad in the fill colour at alpha
+`-0x80 - (0xff - a) / 2` (128 at full) and then the frame. MEASURED on the box's Media.pk2: every
+texel of the three `com_warning_*.ddj` (A8R8G8B8) is (0, 52, 92), alpha 0..128; every
+`com_notice_*` texel (128, 45, 67). Text: GDR_NOTIFY_TXT's FontColor, white. **Correction to round
+634:** GDR_NOTICE is at y 100, not 0 (the constructor's 0 is overwritten by the setup), and it has
+the maroon fill; round 639's "GDR_WARNING_WND shares the notice's y (OPEN)" is answered: 130.
+
+### 4. What was built
+
+- Server (`session/uniquenotice.go`): `OpUniqueNotice 0x0110` (OURS) carrying 0x300C's payload;
+  sent to every character on a class-3 spawn (roster spawn hook and GM `/spawn`/`/spawnunique`) and
+  on its death (the combat kill; GM `/damage`/`/kill`). `combat.Hub` now keeps each monster's damage
+  list (`ApplyDamageFrom`, first-hit order) and hands it to the killing blow; `UniqueKiller` is the
+  vslot-399 rule over it (a party of two or more is a group; ties: the first in first-hit order,
+  OURS). `-unique-notice-off` (env `SRREVAMP_UNIQUE_NOTICE_OFF`) is the key, default off.
+- GM tools (OURS): `/spawnunique <id|name>` (Tiger Girl 1954, Isyutaru 2002, Uruchi 1982, Lord
+  Yarkan 3810, Demon Shaitan 3875, Cerberus 5871 -- level, HP, defence, radius and speeds READ from
+  the box's characterdata; attack the disclosed curve, no attack skill); `/damage <n> [id]`, a blow
+  booked to the GM; `/kill` with nobody on the list announces `"???"` (OURS: retail has no GM kill).
+- Client: `UniqueNoticeNet` (decode, `line_for` exactly as `0x874ea0`, `sprintf` for swprintf's
+  `%s`), `World3D._on_unique_notice` (system line type 0, banner on `_hud_warning`, the log lines
+  `UNIQUE NOTICE` and `UNIQUE BANNER ... fill #00345c alpha 128 ... at X,Y size WxH`), and
+  `HudNotice` styles per instance (`STYLE_NOTICE`, `STYLE_WARNING`: y, frame, fill, the fill's
+  alpha rule; the fade now drawn per piece instead of by `modulate`).
+
+### 5. Tests
+
+- Go (`session/uniquenotice_test.go`, `uniquenotice_wire_test.go`): the exact bytes both ways and
+  five malformed payloads; the killer rule (party beats a bigger lone attacker, the party's top
+  member, a lone attacker beats a smaller party, ties, no hits -> no killer); class 3 only and the
+  off flag; the hub's damage list; end to end over TCP with three characters -- `/spawnunique`
+  reaches all three as 0x0C05, `/damage` kills and names the GM, `/kill` with nobody on the list
+  names `"???"`, a player's combat kill names the player, a Mangyang's kill sends nothing, and with
+  the flag off nothing is sent.
+- **Negative** (`TestUniqueSpawnReachesTheWorld`, which uses only what the base has), against the
+  base ab66d9c in a second worktree:
+
+  ```
+  --- FAIL: TestUniqueSpawnReachesTheWorld (2.56s)
+      uniquenotice_wire_test.go:52: waiting for 0x0110: read tcp 127.0.0.1:43356->127.0.0.1:38387: i/o timeout
+  FAIL
+  ```
+
+  and `uniquenotice_test.go` there: `undefined: UniqueNotice`, `undefined: DecodeUniqueNotice`
+  (build failed).
+- Client (`net/unique_notice_test.gd`): the opcode and words, decoding, the line for each of the
+  five named uniques, a generic one and an `_L2` row, each spawned / killed by `"???"` / killed by
+  a player, over a SYNTHETIC text table; swprintf's `%s`; STYLE_WARNING's y, frame and fill,
+  STYLE_NOTICE's; the fill alpha rule; the banner's show, fade and end; the wiring.
+  `hud_chat_test.gd`'s GDR_NOTICE y check now expects 100.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...`: every package ok (after `bundle_docs.sh`
+  and the `-unique-notice-off` row in server/README.md, which the doc probes asked for).
+- Client suites on the render box (`remote_godot.sh tests`, lane dir `/opt/srrevamp-client-notice657`):
+  `ran 173 suite(s), 0 failing`; `unique_notice_test.gd` ALL PASS (32 checks). Its negative, the
+  suite against the base ab66d9c's client: `FAIL UniqueNoticeNet exists
+  (res://scripts/net/unique_notice.gd)`, `FAILURES: 1`.
+
+### 6. Live check: two clients, real X input (MEASURED)
+
+`/var/tmp/notice657/e2e.sh` (run `r1-163101`): A (the GM, Qa657a) and B (Qa657b) side by side on
+one Xvfb, both through Login -> Character select; A types into its chat line with xdotool.
+
+- A typed `/spawnunique tiger girl`: **both** logs `UNIQUE NOTICE: kind 0x0c05 ref 1954 key
+  SN_MOB_CH_TIGERWOMAN text UIIT_MSG_APPEAR_TIGER_GIRL ... line 'Tiger Girl has appeared on Tiger
+  Mountain.'` and `UNIQUE BANNER: GDR_WARNING_WND ... fill #00345c alpha 128 ... at 524,130 size
+  232x14 system colour 0xffdbc99b`.
+- `/damage 999999999 #25`: both `kind 0x0c06 ... text UIIT_MSG_ANYONE_DEAD_TIGER_GIRL killer
+  'Qa657a' line '[Qa657a] killed Tiger girl from Tiger Mountain.'`, banner at 517,130.
+- `/spawnunique cerberus` and its `/damage`: both `UIIT_MSG_APPEAR_UNIC` -> `[Cerberus[INT]] has
+  appeared.` and `UIIT_MSG_ANYONE_DEAD_UNIC` -> `[Qa657a] has killed [Cerberus[INT]].` (the name is
+  this archive's textdata_object text, " [INT]" tag included).
+- A non-unique: `/spawn mangyang` then `/damage 999999 #27`: `RESULT non-unique: A notices 4 -> 4,
+  B notices 4 -> 4` -- nothing sent.
+- **The pixels.** `px.py` crops each banner's logged rect out of a frame before it and one with it
+  and fits `after = alpha * F + (1 - alpha) * before` over the non-text pixels:
+
+  | Client, banner | fitted colour F | alpha | non-text px |
+  |---|---|---|---|
+  | A, Tiger Girl kill | (2.4, 52.3, 90.7) | 0.606 | 2762 |
+  | B, Tiger Girl kill | (-1.1, 52.0, 92.6) | 0.572 | 2762 |
+  | B, Tiger Girl spawn | (-1.2, 52.0, 92.7) | 0.571 | 2648 |
+  | B, Cerberus spawn | (-1.5, 51.9, 92.9) | 0.557 | 1821 |
+  | A, Cerberus kill | (-1.8, 52.1, 93.4) | 0.558 | 2122 |
+  | B, Cerberus kill | (-0.9, 52.0, 92.5) | 0.570 | 2122 |
+  | B, after the Mangyang kill | -- | 0.000 (unchanged) | 2702 |
+
+  The drawn colour is the READ (0, 52, 92) within 2 levels; the effective alpha (~0.57) is the
+  fill's 128/255 under the frame pieces' own 0..128 alpha, as the model predicts.
+- Two fits are not in the table: A's Tiger Girl spawn (its "before" frame was taken before the
+  scene settled, a different background, so the fit is degenerate) and A's Cerberus spawn, whose
+  frame 0.4 s after the log line shows no banner on A while B shows it. A's log has the banner
+  line and then, next, the synchronous load of the Cerberus model (`kerberos.bsr`); INFERRED: A
+  had not presented a frame since. Not a notice fault, but the model load's hitch is real.
+
+### 7. The review's follow-up (a second commit)
+
+- **M1, a departed attacker (READ, fixed).** Vslot 399 resolves each damage-list id through
+  `0x485d90` -> `0x41ccf0`, a map lookup that answers 0 for an object no longer in the world, and
+  skips a null entry before grouping; it also drops every entry whose `vtable +0x1c` answers 0, so
+  its killer is always a player and vslot 398's "???" branch is not reached from it. Ours kept a
+  departed top-damager and sent "???". `AnnounceUniqueKill` now drops the attackers not in the
+  world hub first (`presentHits`).
+- **M2, tests that catch the mutants.** New: `TestUniqueKillerHasLeft` (Aria deals 70% and
+  disconnects through the world's real disconnect hook; Bram's last 30% makes Bram the killer),
+  `TestUniqueKillerPartyEndToEnd` (a real party.Hub: Aria 1600 + Bram 1000 beat Cato's lone 2400;
+  Aria named), `TestUniqueNoticeOtherZone` (Bram moved to donwhang over OpChangeZone still hears
+  both). Each against its mutant:
+
+  ```
+  == presentHits keeps departed attackers
+  --- FAIL: TestUniqueKillerHasLeft (0.29s)
+      uniquenotice_test.go:370: kill notice = &{Kind:3078 RefObjID:1954 Killer:???}, want Bram named
+  == partyGroupOf always 0
+  --- FAIL: TestUniqueKillerPartyEndToEnd (0.56s)
+      uniquenotice_test.go:394: kill notice = &{Kind:3078 RefObjID:1954 Killer:Cato}, want Aria (the party's top member)
+  == zone-scoped send (the GM's zone)
+  --- FAIL: TestUniqueNoticeOtherZone (2.27s)
+      uniquenotice_test.go:412: waiting for 0x0110: read tcp 127.0.0.1:55996->127.0.0.1:41997: i/o timeout
+  ```
+
+  Client: `unique_notice_test.gd` now checks `NpcTableReader.find_name_key` /
+  `parse_name_keys` on SYNTHETIC UTF-16 characterdata rows and `World3D._unique_name_key` against
+  that index, instead of source strings.
+- **L1.** "vslot 300" was the byte offset `+0x12c` in decimal: slot 75, the rank getter. Every
+  vtable call in the notice's read is now written as its byte offset.
+- **L2, the spawn's announce flag (READ).** 0x5f6eb0's 13th argument (`cmp [esp+0x74],1` at
+  `0x5f71bd`). Nest_Hatch pushes `0x5f9910(world) == 0` (`neg; sbb; add 1` at `0x560c3d`, pushed
+  first at `0x560c44`): the suppress gate, for nest hatches only. The GM command handler
+  (`push 1` at `0x520bd5`), the minion executor (`0x5977a4`), MONSTER_LOAD_MONSTER (`0x5f9107`) and
+  `0x49e620` (`0x49e973`) push a constant 1. So the key silences a nest's hatch and a kill, never a
+  GM spawn: `AnnounceUniqueSpawn(..., fromNest)`, the roster passing true and the console false.
+  `/spawnunique` is OURS as a command; its announcement follows retail's GM spawn.
+- **L3, the name-key lookup (MEASURED, render box, `tools/probe_name_key_cost.gd`, 3 runs).**
+  Before, on the main thread inside the network handler: a known id (1954, found in the 2nd of 7
+  parts) 61.5 / 63.8 / 62.0 ms; an unknown id (all 7 parts) 112.8 / 114.1 / 113.3 ms -- 4 to 7
+  frames. Now the whole {RefObjID -> SN_ key} index (13,239 ids, 9,616,548 bytes) is built once on a
+  WorkerThreadPool task at load (the skill-effect table's pattern; 117.6-120.9 ms in the probe,
+  227 / 233 ms in the live clients, off the main thread); the live check's first notice looked 1954
+  up in 0.022 / 0.026 ms and every later one in 0.004 ms; the probe's lookups of a known and an
+  unknown id took 0.001 ms. A notice that arrives before the index waits on a 0.1 s timer.
+- **L4.** The notice is queued per session and written by that session's own drainer goroutine,
+  in order; the killing blow, the GM's reply and the spawn loop no longer write to anyone.
+- **L5, the credit (READ in part).** The one writer that adds to an entry is `0x52a940`
+  (CGObjNPC's override at `vtable +0x4f4`; the dump's propagated `CanBeEquipedAt` is wrong for
+  it): pets to owners, insert or `+0x14 += damage argument`. Its caller reaches it through the
+  vtable and a thunk (`0x605140`) with no direct call, and was not traced, so whether the argument
+  is clipped to the HP left is OPEN; srrevamp keeps the unclipped blow (INFERRED).
+- **Re-run after the fixes.** Go: session, gm, combat, systems, cmd/server ok (`-count=1 -p 1`).
+  Client: `ran 173 suite(s), 0 failing`. Live (`r2-165614`): both clients got all four notices, the
+  Mangyang kill sent nothing (`A notices 4 -> 4, B notices 4 -> 4`), and the banner fits (0.6, 52.2,
+  91.9) alpha 0.586 and (5.9, 52.4, 88.2) alpha 0.646 on A, (-1.1, 52.0, 92.6) alpha 0.572 and (-0.9,
+  52.0, 92.5) alpha 0.570 on B.
+- **Performance gate** (the index task is new load-time work), `perf_gate.sh --sites jangan`,
+  base ab66d9c vs this tree, median of 3:
+
+  ```
+  jangan  frame ms   base 11.21  head 11.18  (-0.0)  SAME
+  jangan  entry ms   base 9503.00  head 9637  (+134.0)  SAME
+  jangan  freeze ms  base 3364.00  head 3378  (+14.0)  SAME
+  jangan  hitches    base 5.00  head 5  (+0.0)  SAME
+  ```
+
 ## Six-hundred-and-fifty-sixth round: the server carries ten thousand monsters -- each player hears only about the monsters around it, the list comes in pages, and far-off monsters sleep
 
 The monster-world epic (2026-09-30, the user: "Please add all monsters to the map like the original
@@ -7374,6 +7587,752 @@ and 20 stress runs in a row pass. One earlier -race run showed a single ghost. T
 had not yet read the server's last frames when the test's fixed 500 ms settle ran out (45,848
 frames under -race, against ~80,000 without). The settle now waits until the reader has been quiet
 for 300 ms.
+
+## Six-hundred-and-fifty-fifth round: five hundred monsters in view build in a few frames each instead of freezing the game, and the Small-eyed Ghost, Old Weasel, Water Ghost slave and Tomb Stone Ghost are drawn as themselves
+
+Part of the monster-world epic. The server will soon send hundreds of monsters per view: 10,195
+field placements over the map, and about 500 in the densest 5 x 5-region window. Before this
+round the client could not draw that many.
+
+**Labels.** READ: recovered from `sro_client.exe` (the decompile on the render box). MEASURED:
+counted or timed on the box. INFERRED: follows from what was read but was not itself read. OURS:
+this project's choice.
+
+### What the client did with a monster list (READ from World3D.gd at ab66d9c)
+
+- **Every body was a fresh assembly.** `_spawn_or_update_monster` called
+  `SkinnedBsrAssembler.assemble_from_archive` for each monster. That meant the `.bsr`, the `.bsk`,
+  every `.bms`, the `.bmt` and its textures, per body, with no species cache. The NPC path has had
+  one (`_npc_model_cache`) since round 157.
+- **The whole list was built in the frame it arrived**, with a print line and a debug ItemList
+  row for each monster.
+- **A monster outside the loaded terrain was built anyway**, at the server's y. It then sat on
+  the height retry list until its region loaded.
+- **Every idle and one-shot clip was posed in GDScript every frame**, wherever the body stood.
+- **A full monster list was requested** after every own attack result, every `OpMonsterDamaged`,
+  every `OpMonsterDied`, and at the end of every death clip.
+
+**What it cost (MEASURED, `client/tools/probe_monster_build.gd` on the box's archive).** One body
+assembled from its `.bsr`:
+- 4-14 ms for most Chinese field species;
+- 133 ms for the first one (a cold archive);
+- 791 ms for `MOB_CH_TIGERWOMAN` (69 bones, 7 pieces);
+- a mean of **53 ms** over the 21 species tried.
+
+A duplicate of a species template costs **0.33 ms**, 162 times less. So 500 bodies of 21
+species cost about 26.5 s built the old way and about 1.3 s built from templates.
+
+### What changed
+
+- **One template per species model** (`MonsterDraw.Templates`). Each model is assembled once
+  and kept detached. Every body is a `duplicate()` of the template's skeleton: the meshes, skins,
+  materials and textures are shared, and so are the parsed `.bsr`, the idle clip and the
+  per-model animation cache. A model that fails to assemble is remembered as failed. The
+  templates are freed with the world.
+- **Bodies are built over several frames.** A list queues the bodies it names. Each physics frame,
+  `_pump_monster_builds` builds them until 3 ms is spent, and always builds at least one
+  (`BUILD_BUDGET_USEC`, OURS). A species seen for the first time is still one assembly on the main
+  thread, and the at-least-one rule lets it through (OPEN, below). A single push
+  (`OpMonsterSpawned`) still builds its body at once.
+- **Posing is culled** (`MonsterDraw.pose_wanted`, applied in `_tick_idle_animations`). A monster's
+  or NPC's clip is posed only while:
+  - its body is in range of the camera, meaning `dist - radius < 2020`;
+  - its sphere touches the view frustum.
+
+  Its sounds stop out of range, and a monster's model is hidden there (`MonsterDraw.META_HIDE`,
+  OURS, as MapAnimation hides a map object; added after the review, since an unposed walking
+  body slid without its gait). An NPC is only left unposed. The clock keeps running, so a
+  one-shot still hands back to its loop on time. The player, other players and the character window's doll are never culled.
+  - **The range is OURS.** It is the map objects' READ update range (2500 - 480, asm
+    0xa2d961/0xa2d967, round 645) applied to characters. Retail's monster render slot
+    (`CICMonster` slot 10, 0x9d20d0) has no distance test, and the object slot `FUN_009c4aa0`
+    only tests the frustum (READ). The entity manager's per-frame tick was not read.
+  - **The sphere is OURS**: centred on the feet, with a radius of the farthest mesh-bounds corner
+    or the name-plate height, whichever is larger.
+  - Bodies out of range are still drawn, just not posed.
+- **No body outside the loaded regions.** A monster whose cell is not in `_grid.loaded_cells` keeps
+  its snapshot and gets no body (`_monster_deferred`). The body is built when the cell loads and
+  dropped when the cell unloads, which happens in `_monster_cells_changed`, run from the pump after
+  `mark_loaded` or `unload`. A move for a monster that is listed but not yet drawn updates its
+  snapshot and asks for no list.
+- **No full list on hits.** The own attack result's `monster_remaining_hp` is recorded in the
+  snapshot when the result arrives (in wire order with the zone's pushes) and drawn from the
+  snapshot as the blow lands (`_record_monster_hp` / `_paint_monster_hp`), so an older result
+  cannot overwrite a newer `OpMonsterDamaged` that arrived before the landing. Showing it at the
+  landing is OURS; until now it came with the list reply. `OpMonsterDamaged` records and draws at
+  once (`_apply_monster_hp`). **Only a result that reports a blow carries health** (damage > 0
+  or died): the review found that a zero-damage hostile cast (`SKILL_EU_WARRIOR_DUALA_STUN_A_01..05`,
+  and the debuffs this epic adds) was answered with `MonsterRemainingHP` 0 (session/skill.go's
+  no-blow reply), which the list pull used to correct. The client now ignores health on a no-blow
+  result, and the server fills the field with the monster's current HP there. A death removes its body when its clip has run (`_finish_monster_death`),
+  or at once when there is none. The server gives a respawn a new id (`maintainMonster`), so a
+  removed id never comes back. The zone-change list, the GM refresh, the refresh button, the
+  QA hooks and the rate-limited list after a move for an unknown monster all remain. **One
+  throttled pull stays** (review, item 3): until the zone's first `OpMonsterSpawned` is seen, a
+  death that has played out asks for one list, at most every 10 s (`DEATH_PULL_SECONDS`, OURS),
+  so a server with `-monster-spawn-push` off (the default) still shows respawns and GM spawns.
+- **No per-monster prints or rows.** The build line, the "height resolved" line and the list's
+  per-monster lines are printed only with `SRREVAMP_QA_MOB_LOG` or `/wire`. A queue that drains
+  prints one summary. The debug tabs' ItemList is filled only while the tabs are shown.
+
+### The `_CLON` model rule (READ; docs/protocol/characterdata.md has the addresses)
+
+- **`xxx` is stored as an empty string.** The client's characterdata parser (`FUN_00972910`)
+  stores `xxx` as "" (`FUN_0097f860`/`FUN_0097f920`). It stores column 4, OrgObjCodeName, at
+  +0x40, and after the file loads it links that to the Org row's ID at +0x5c (`FUN_0093fb50(5)`).
+- **The pick.** At object creation `CICMonster::vslot_025` (0x9d3850, and three twins) takes the
+  row's own model at +0x124 unless it is empty, and then the Org row's model. It goes one level
+  only; nothing loaded means `res\mob\china\mangnyang.bsr`.
+- **srrevamp.** `NpcTableReader.parse_org_codes` and `model_with_org` implement the rule, and
+  `_monster_model_path` resolves through it before the display-name join.
+  - The Mangyang fallback is not taken. In the real table only the thief, hunter and guild-soldier
+    classes reach it, and retail draws those from their own list (`ICMonster::FUN_009d3470`).
+  - A column-52 cell that names several files now yields the first, as the parser keeps piece 0
+    (asm 0x972f1d).
+- **MEASURED on the box's archive.** 1,731 `MOB_` codes have their own model, and 159 more take
+  their Org's model. 120 of the 142 `MOB_*_CLON` rows take their Org's model. The four roster
+  `_CLON`s now draw as `bigeyeghost`, `gyo`, `waterghost` and `tombstone`. The world's own count
+  at load: `5423 species resolvable by code, 161 more through their Org row`.
+- **Still OPEN.** Column 48 (Scale, applied by CICMonster as scale / 100 from the row's own
+  record) is not applied to any monster.
+
+### Tests
+
+`client/scripts/world/monster_draw_test.gd` runs on synthetic data only. The models are a 40-bone
+skeleton with four skinned 2,400-vertex pieces and a 256 x 256 mipmapped texture, handed to the
+world through its `_monster_assemble` Callable. The NetClient is a subclass that counts
+`list_monsters`. The test covers:
+- 500 snapshots of 5 species: 5 assemblies and 500 modelled bodies; the list is not built in its
+  own frame and drains in 79 frames;
+- a cached body at 377 us against 8,534 us for an assembled one;
+- (review) a result with no blow leaves the health alone; with no spawn push seen, two deaths in a
+  row ask for one list, and with the push seen, none;
+- the region gate: deferred, built on load, dropped on unload with the snapshot kept;
+- no list on a hit, a kill or an own result, with the pushed health applied;
+- posing: in front, behind, past the range, and the rule's strict bound;
+- the Org rule, one level, the first of several files, and through the world.
+
+**The NEGATIVE: the same test against ab66d9c** (its tree, with the new test file added) gives
+19 FAILURES:
+
+```
+FAIL NpcTableReader reads OrgObjCodeName (col 4)
+FAIL MonsterDraw exists
+FAIL a 500-monster list is not built in the frame it arrives (500 built in it, 201.6 ms)
+FAIL 5 species are assembled 5 times for 500 bodies (got 0)
+FAIL every body is its species' model, not a capsule (0 of 500)
+FAIL a cached body costs under a third of an assembled one (-1 us against 8791 us)
+FAIL the build queue drained
+FAIL a monster in a region not loaded has no body
+FAIL and waits for its region
+FAIL a pushed spawn in a region not loaded has no body either
+FAIL and dropped when it unloads
+FAIL a hit (OpMonsterDamaged) asks for no monster list (1 asked)
+FAIL and its health is kept in the snapshot
+FAIL a kill (OpMonsterDied) asks for no monster list (2 asked)
+FAIL and the body goes once its death has played (no die clip here: at once)
+FAIL an own attack result asks for no monster list (3 asked)
+FAIL and the result's health reaches the snapshot (got 50)
+FAIL three bodies built for the culling check
+FAIL the world draws a `_CLON` with its Org row's model (got '')
+```
+
+On the base even 500 capsules (no model assembles there) took 201.6 ms in one frame.
+
+**The review follow-up's server NEGATIVE.** `TestSkillCastHandsOffToPlainSwings` now also checks
+the zero-damage cast's `MonsterRemainingHP`; with the old `skill.go` it fails:
+
+```
+--- FAIL: TestSkillCastHandsOffToPlainSwings (1.27s)
+    keepup_test.go:516: zero-damage cast reports MonsterRemainingHP 0; want the monster's unchanged 1000
+```
+
+The client test against the round's first commit (7954e77, its tree with the new test file):
+
+```
+FAIL a result with no blow (0 damage, not died) leaves the monster's health alone (got 0)
+FAIL the death-pull throttle exists (_spawn_push_seen)
+2 FAILURES
+```
+
+After the follow-up: `monster_draw_test.gd` ALL PASS, `remote_godot.sh tests` 173 suites, 0
+failing, `check` ALL LOAD (431 scripts), and `go test -count=1 -p 1 ./...` 60 packages ok. The
+older-result-over-newer-push ordering (review item 2) has no test: in the headless world the swing
+has no hit event, so the blow lands inside the handler and the window between arrival and landing
+is empty.
+
+`client/tools/remote_godot.sh tests` ran **173 suites, 0 failing**. That includes
+`height_retry_test` (floating and heights), `monster_bodies_test`, `monster_motion_test`,
+`monster_strikes_test` (targeting and counters) and the death-hold tests.
+
+### Performance gate
+
+A new site, `mobs`, is the Jangan spawn with `SRREVAMP_QA_MOBS=500`. That is a 500-monster list
+of the 17 `MOB_CH_` species with a model of their own (13 distinct models), at seeded positions
+over the 5 x 5-region window. It is delivered through `_on_monster_list_result` as soon as the
+grid has its origin, during the loading drain, where a real list asked for in `_ready` lands.
+The base has no hook, so the `mobs` site is gated against **0c2184b**: ab66d9c plus only the
+hook, on the unmerged branch `perf/mobdraw655-base`. The old build path therefore gets the same
+list.
+
+`client/tools/perf_gate.sh --base ab66d9c --sites jangan` (the standard view, no monsters; 1280x720,
+medians of 3 interleaved runs):
+
+| site | number | base ab66d9c | head | verdict |
+|---|---|---|---|---|
+| jangan | frame ms | 11.23 | 9.40 | FASTER (-1.8) |
+| jangan | entry ms | 9502 | 9542 | SAME |
+| jangan | freeze ms | 3370 | 3374 | SAME |
+| jangan | hitches | 5 | 5 | SAME |
+
+The Jangan frame is faster because the town's NPC idles are now culled too (the same rule as the
+monsters: out of range or out of view, not posed). INFERRED: this view has no monsters, so the
+culled NPC clips are the only change on the per-frame path.
+
+`client/tools/perf_gate.sh --base 0c2184b --sites mobs` (500 monsters; one base run repeated after
+another lane's render overlapped it):
+
+| site | number | base 0c2184b (ab66d9c + hook) | head | verdict |
+|---|---|---|---|---|
+| mobs | frame ms | 350.00 | 10.75 | FASTER (-339.2) |
+| mobs | entry ms | 40052 | 11232 | FASTER (-28820) |
+| mobs | freeze ms | 29556 | 3355 | FASTER (-26201) |
+| mobs | hitches | 3000 | 6 | FASTER (-2994) |
+
+On the old path, the 500-body list was one frame of about 29.6 s, inside the loading drain, and
+every frame after that ran at about 350 ms: 500 skeletons posed in GDScript, per-frame height
+retries for the bodies outside loaded terrain, and every body drawn. The head's freeze, 3,355 ms,
+is the Jangan centre cell's own build, which is the same as on the `jangan` site. Its 10.75 ms a
+frame against Jangan's 9.40 ms is what 500 monsters now cost standing still: +1.35 ms (MEASURED
+across the two gates, not interleaved with each other).
+
+**A smoke run of the head** (`SRREVAMP_QA_MOBS=500`, one boot):
+- 87 bodies were built during the drain over 28 frames, and the rest as their cells loaded, in
+  frames of 3.2-3.8 ms.
+- The longest monster frame was 786 ms: the first `MOB_CH_TIGERWOMAN`, one assembly.
+- All 500 were built by frame 443, with 13 templates, 13 assemblies in 1,067 ms, and 500
+  instances in 271 ms.
+- Steady state was 9.9-10.2 ms a frame.
+
+### Left open (docs/TODO.md, "Many monsters (round 655)")
+
+- **A new species is still assembled on the main thread.** The worst is 791 ms. Next step: the
+  objects job's worker-thread prepare.
+- **The pose range for characters is OURS.**
+- **Respawns on a server without the spawn push** show only through the throttled pull after a
+  death (at most every 10 s), so a respawn with no death after it waits for the next kill, a
+  zone change or a GM refresh. `-monster-spawn-push` (on on the public server) or the AOI lane's
+  enter pushes remove the limit.
+- **A body walking out of the loaded window** keeps its body until its region unloads.
+- **Scale (column 48) is not applied.**
+
+## Six-hundred-and-fifty-fourth round: the server knows every monster species in the game, and a GM can spawn any of them
+
+The user (2026-09-30): "Please add all monsters to the map like the original server would have it
+... Also make sure you add all the monster types like champion, giant, party, etc. Make sure this
+includes uniques as well ..." This round is the base of that epic: the server's species came from
+eleven hand-typed rows (`monsterSpecs`); it now loads all of them from the client's own table.
+**Who spawns where does not change** -- round 657 places the nests.
+
+Server and tooling only (no client file touched), so no performance gate.
+
+### 1. What shipped
+
+- `export-refdata -mode monsters` (OURS, `server/internal/species`): every characterdata row of
+  TypeID (1,2,1,x), parts fed in `characterdata.txt`'s order, last definition of an id kept (the
+  items/skills rule), into a 35-column CSV with a checked header: id, code name, Org code name and
+  the id of the row it names, name key and its English (textdata_object, the client's own
+  `UiTextTable` rule ported), TypeID4, rarity, level, HP, walk/run speed, BCRadius, cols 71-78,
+  skills 83-92, the model or -- for an "xxx" row -- the Org row's (flagged `ModelFromOrg`), and the
+  levelgold range at its level. The export loads itself back before it returns.
+- Skill CSV column 89: AI_AttackChance, skilldata column 66 (READ, CRefSkill+0x164,
+  monster_ai.md). An older export or database reads -1, UNKNOWN, never 0 (0 is a real "never
+  drawn": `ai.SkillWeight` enters nothing for it). The store adds `skills.ai_attack_chance`
+  (default -1).
+- `cmd/server -monsters-csv` (env `SRREVAMP_MONSTERS_CSV`): each roster species takes every
+  species number from its row (`specFromRow`) and keeps its zone, anchor and placements; a
+  difference from the hand-typed value is logged as a WARN; what the table cannot supply (no
+  textdata_object, no levelgold, a skill store without AI_AttackChance) keeps the hand-typed value
+  and says `kept`. The GM console's `/spawn` finds any species by code name, characterdata id or
+  English name (`/spawn 1933 3`), with its level, rarity-scaled HP and rarity; `/goto` refuses a
+  species the server does not place. The usage line names the roster and the table's count, not
+  7,604 names.
+- `monsterSpecs` is the fallback: without the flag the server is what it was.
+
+Column labels (the full table is `docs/protocol/refdata_schema.md`, "`_RefObjChar` monsters"):
+READ -- id, code name, Org position (col 4), name-key position (5), TypeID (9-12), rarity (15),
+speeds (46/47), BCRadius (50), level (57), MaxHP (59), cols 71-78 -> params 5-12 with 71/73 and
+the four tags read, skills (83-92), AI_AttackChance (skill col 66). INFERRED -- 72/74 as the
+magical pair; levelgold as the kill gold (as before). OPEN -- TypeID4's use; whether the client
+draws the Org's model (round 655); cols 75/77 per species in the hit roll.
+
+Col 76 ('bri', block) is carried as data but **not** handed to combat: docs/TODO.md's "A blocked
+hit with a skill percentage deals 1, not 0" says to fix that before any monster blocks, and 938
+species read 20.
+
+### 2. The export on a retail archive (MEASURED, 2026-09-30)
+
+Media.pk2 on the render box, tables streamed read-only (`pk2list -extract ... -out /dev/stdout`)
+into local scratch, deleted after:
+
+```
+export-refdata: read 33948 characterdata rows (17868 ids, 16080 repeated, 2 of them with different fields; last kept), skipped 0 non-rows
+export-refdata: wrote 7604 monster species (TypeID 1,2,1,x); 0 too short to map
+export-refdata: models: 1848 own, 156 from the Org row (col 52 "xxx", col 4 names a row with one), 5600 none
+export-refdata: Org (col 4): 6956 name a row, 33 name none; 7412 carry a col-83 attack skill
+export-refdata: rarity (col 15): 0=6421 1=85 3=813 4=2 6=111 7=91 8=81; TypeID4: 1=1790 2=2800 3=2800 4=213 5=1
+export-refdata: 7604 species' levels have a levelgold row
+export-refdata: 7509 species' name keys resolve in textdata_object
+export-refdata: wrote 33698 skill rows, skipped 0 non-skill rows
+```
+
+- The 16,080 repeats all differ in WIDTH (104 against 105 fields, the 105th empty); a first cut
+  counted every one as a conflict. Only two differ in a value: MOB_SD_OSIRIS_3's rarity (8 in
+  part 39000, 3 in part 40000, kept) and NPC_SOSUN's model.
+- The 5,600 species with no model at all are the job-trade MOB_THIEF_NPC / MOB_HUNTER_NPC rows
+  (TypeID4 2 and 3).
+- npcpos names 589 ids; **355 are species of this table**, placed by 12,110 rows. 89 of the 355
+  (85 `_CLON`) are "xxx" with an Org row that has a model, placed by 4,649 rows -- the plan counted
+  80 and 4,554 by another de-duplication; these are the numbers the server loads.
+- 7,394 of the 7,412 species with a col-83 skill resolve every skill id; 18 name 49 ids the
+  skills export does not hold. 26,650 skills carry a non-zero AI_AttackChance.
+- Cols 75 and 77 both equal `2*level + 25` (combat.MonsterRate) on 2,581 of the 7,604 species.
+
+### 3. The roster re-derives exactly (MEASURED)
+
+`TestSpeciesTableMatchesTheRealExport`, pointed at the two real CSVs (skipped in CI -- no game
+data is committed):
+
+```
+SRREVAMP_MONSTERS_CSV=.../monsters.csv SRREVAMP_SKILLS_CSV=.../skills.csv go test -run TestSpeciesTableMatchesTheRealExport -v ./cmd/server/
+    species_test.go:251: real export: 7604 species, 33698 skills; roster overlaid 11, missing 0, changed 0, kept 0
+--- PASS: TestSpeciesTableMatchesTheRealExport (0.13s)
+```
+
+Every field of all eleven -- names, level, rarity, HP, defence, critical, BCRadius, speeds, gold
+and the whole skill list with its chances (Mangyang 160+161, the Water Ghost's 169 at chance 10,
+Yeoha's 177) -- as monsterSpecs types them.
+
+A boot with `-in-memory -monsters-csv -skills-csv -npcpos-csv` on the real CSVs:
+
+```
+msg="monster species table loaded" ... species=7604 roster_overlaid=11 roster_missing=0 roster_changed=0
+msg="npcpos placements loaded" species_in_table=589 roster_species_placed=11 npcpos_species_in_monster_table=355
+```
+
+and **413 monsters spawned, with the table and without it**; the `name`/`zone`/`level` multiset of
+the two boots' `monster spawned` lines hashes the same (7bfe1a2f...). Placement unchanged.
+
+### 4. Tests, and the negative
+
+New: `internal/species` (column indices against a sentinel line whose neighbours carry -999; the
+Org fallback on synthetic `_CLON` rows, the Org row in a later part; monsters-only and
+last-part-wins with a width-only repeat; the textdata_object rule; the levelgold join; header
+checks; the attack list), `cmd/server` (`TestSpeciesTableRederivesTheRoster`: the eleven written
+back out as synthetic tables and taken through export, CSV and loader come back DeepEqual, and a
+wrong MaxHP column is reported; `TestSpeciesTableKeepsWhatItCannotSupply`;
+`TestGMSpawnsAnyTableSpecies`), `export-refdata` (`TestSkillAIAttackChanceColumn`), `refdata`
+(`TestSkillCSVAIAttackChanceIsAStrictSuffix`). All synthetic.
+
+The same test files against the base (ab66d9c, a detached worktree):
+
+```
+internal/species/species_test.go:22:29: undefined: ColOrgCodeName
+internal/species/species_test.go:35:34: undefined: Exporter
+FAIL	github.com/OpenSRO/srrevamp/server/internal/species [build failed]
+FAIL	github.com/OpenSRO/srrevamp/server/cmd/server [build failed]
+cmd/export-refdata/main_test.go:1171:7: undefined: skAIAttackChance
+cmd/export-refdata/main_test.go:1187:36: skills[0].AIAttackChance undefined (type refdata.Skill has no field or method AIAttackChance)
+FAIL	github.com/OpenSRO/srrevamp/server/cmd/export-refdata [build failed]
+internal/refdata/csv_test.go:655:22: sk.AIAttackChance undefined (type Skill has no field or method AIAttackChance)
+FAIL	github.com/OpenSRO/srrevamp/server/internal/refdata [build failed]
+```
+
+and the base exporter itself: `export-refdata -mode monsters` prints its usage and exits 2.
+
+The first full run caught two things: `internal/systems`' README probe (the new flag was not in
+server/README.md) and its orphan baseline -- a field named `Complete` made `equipment.SetProgress
+.Complete`, a baselined orphan, look called; the field is `WholeList` now.
+
+### 5. The review's follow-up
+
+The review reproduced the numbers (0 mismatches over 7,604 species, every column shift caught,
+413 spawns identical) and asked for four fixes, made in a second commit:
+
+- Two comment figures in `species.go` were wrong or out of their set: 104-field rows are 16,080
+  (7,329 of them monsters) across 34 part files, not "2,111"; and col 73 equals the level on
+  7,088 of this table's 7,604 species (93.2 %; the 516 others mostly rarity 3/8 at level 110) --
+  round 380's 99.45 % was over the 7,495 MOB_ rows.
+- `/spawn`'s reply printed the row's raw HP; SpawnSpecies scales it by rarity
+  (`/spawn MOB_EVE_STRONG_KK_YETI_CLON` said 7634 for a 229,020-HP monster). It now prints the
+  scaled HP, the rarity, and the code name and id picked -- 188 display names are shared by 7,087
+  rows. `TestGMSpawnsAnyTableSpecies` pins "(MOB_TEST_GIANT, id 99001; level 12, rarity 4, HP
+  6000)".
+- `species.Read` required exactly 35 columns. The header is now a strict PREFIX
+  (`RequiredCSVColumns` = 35; unknown trailing columns ignored, a row must match its header's
+  width), so a later round can append columns; `TestReadTakesALongerCSV`.
+- The recipe's `rm` line now removes the extracted `characterdata.txt` index too.
+
+Recorded in TODO.md: the classic uniques are the "[INT]" rows at level 110 (`/spawn tiger girl`
+finds nothing; MOB_CH_TIGERWOMAN does), and a GM-spawned giant-HP species pays the disclosed
+`ExpFor(maxHP)` fallback where no exp_unit level table is loaded (MOB_TQ_WHITESNAKE 250M).
+
+### 6. Open
+
+docs/TODO.md, "The monster world": round 655 (the Org model on the client), round 657 (every
+nest), cols 75/77 per species, block, TypeID4 and the party-support nibble, the 18 species with
+unresolved skills, and srrevamp-01's re-export (deploy/README.md, "ROUND 654").
+
+## Six-hundred-and-fifty-third round: a click on the sky, or on ground too far away, runs the character that way until a wall stops it, every other player sees the run and the stop, and every walk now stops at a wall instead of sliding along it
+
+The user (2026-09-30): "Also add sky clicking to the game. If clicked out far enough or above the
+land in the sky the character would run indefinitely in that direction until stopped or a
+collision. Also when the character collides with a wall or something that stops it make sure you
+stop the running as well and make the character stop in place like the original game."
+
+The reading is filed in `docs/protocol/opcodes/movement.md`, "The heading move: a click on the sky".
+The open items are in `docs/TODO.md`, "The sky click (round 653)".
+
+### Before (MEASURED, dev 56e8e24)
+
+- The click-to-move ray (`_ground_point_at`) ran 2000 units from the camera on the terrain layer,
+  and a ray that met nothing returned null. **A sky click did nothing.**
+- A click on ground 1000 to 2000 units away walked to that point.
+- Both are the base's own behaviour through `_dispatch_left_click`: see the negative below.
+
+### Retail's rule (READ, sro_client.exe; the full trace is in movement.md)
+
+- **The click.** `UI_SILKMALL::FUN_0078f8d0` casts the pick through `SWorld::vslot_034`
+  (`0xa01310`). That pick normalises the camera ray and scales it to **1000.0** (`0xd83268`, asm
+  `0xa01333`), so it only answers within 1000 units of the camera.
+- **No hit** (the sky, or ground farther than that): the ray's ground direction (y zeroed at
+  `0x78fb07`) becomes a heading (`FUN_009ed130`), sent by `FUN_009ebec0(h, 1)` as the **heading
+  form of 0x7021**: kind 0, the `+0x14` byte 1, and the u16 angle of h − π/2.
+- **Not re-sent** while moving (state bit 9 of `+0x65c`, INFERRED "moving") when the heading is
+  within 5° (`0xdb9828`) of the facing. The difference is raw, not wrapped.
+- **The `+0x14` byte is the movement command** (the server's `CGObjMoverByCmd`):
+  - bit 0 = forward (vslot_004 sets the stepping flag and vslot_003 steps);
+  - 0x10 and 0x20 = turn at π rad/s (vslot_010);
+  - the arrow keys send 1, 0x10 and 0x20 (`FUN_0077b070` → `FUN_009ebf40`).
+
+  movement.md had it as "not read".
+- **The run.** The echo's heading form sets the mover's `+0x80 = 2` (`FUN_009e08a0`). The tick
+  `FUN_009e0e60` tests a destination only for `+0x80 == 1`, so a heading move steps along its
+  heading for ever. Round 649's cut to the distance left does not apply.
+- **The stop.** The tick copies back whatever point the collision query `CRegionManagerBody::
+  vslot_012` (`0x412660`) left in the proposed record (asm `0x9e0fff..0x9e1027`).
+  - The query's terrain walk (`0x4047a0`) answers a blocking edge with the crossing point, nudged
+    at most 0.2 toward the cell centre (`FUN_004472d0`, `0xe1b850`), and **bit 0**.
+  - Bit 0 ends the movement (`+0x84 = 0`, `+0x80 = 0`). **The body stops at the wall and does not
+    slide.** This is the no-slide walk `NavGraph.step_tracked(..., false)` already follows (rounds
+    616–618).
+  - Nothing in the tick plays a collision clip. The body stands, as after any movement (INFERRED).
+  - The client sends nothing at the stop.
+
+### What shipped
+
+- **Client** (`client/scripts/world/sky_run.gd`, `SkyRun`; `World3D`):
+  - `_move_by_pick_ray` casts the walk's pick 1000 units (READ, was 2000 OURS). A hit walks as
+    before. No hit calls `_start_heading_run`, which starts a run on the ray's ground heading and
+    turns the body to it at 3π rad/s. The 5° no-resend rule is `SkyRun.click_rule`.
+  - `_step_click_walk` steps a run at the full run speed, `/speed` included, with no destination.
+  - `_move_on_nav_graph` walks a run with the no-slide walk and **ends it at the first blocked
+    step** (`SkyRun.blocked_ends`). The order clears and the body plays its stand.
+    - OURS: in the physics fallback (no `.nvm`) a run ends on `is_on_wall`.
+  - A ground click, an attack's or friendly cast's approach, a pick-up walk and the QA retreat each
+    set a point and clear the run. Anything that clears `_has_move_target` ends it too: death,
+    typing, the sit transition, the wall root, a skill's move and the void recovery. A zone change
+    or teleport ends it too since the review follow-up below.
+  - Several requests do NOT end a run yet; they are OPEN, listed in the review follow-up below.
+  - A click while holding an icon (round 652) never reaches the world: `HeldIcon.handle` swallows
+    it, and `_on_held_dropped_outside` neither walks nor runs.
+- **Wire** (OURS framing of a READ form). Each `OpMove` sent while a run is in effect sets bit 1 of
+  the trailing flags byte. Retail's heading form follows it: kind 0, command 1, then the u16 angle
+  (`WorldNet.encode_move`, `session.encodeMoveTail`). A walked position is still 12 bytes, and an
+  older server reads bit 0 alone.
+- **Server**:
+  - `handleMove` faces the character the run's heading (`world.Hub.MoveHeading`,
+    `world.HeadingFromWire`), not the step's direction.
+  - It relays the heading form in `OpEntityMoved`. A relocation still wins and carries no run.
+  - `proto.MovementCommandForward` names the command bit.
+  - `DecodeMovement` now has a caller, so its `knownOrphans` entry is removed.
+- **Watchers**: `_on_entity_moved` turns the body to the relayed heading at 3π rad/s instead of
+  toward the next position. The stop is the last position, sent plain, and the body settles on it.
+
+### Live, two clients, real X input (MEASURED)
+
+**Setup.**
+- The harness is `/var/tmp/sky653/sky653.sh` on the box.
+- Both clients go through Login → CharacterSelect, and the server is the branch's.
+- A = QaTester at the Jangan spawn (97/168 local 1002, 1020); B = QaFriend at (1030, 1060).
+- A levels the camera with a real right-button drag upward and clicks the sky at (640, 40).
+
+**Run 1 (r3).** The sky ahead is north. The run starts, carries its heading on every send, and
+stops at the edge on `cj_jang_gate` (round 649's edge, local z 953.46) with the order cleared and
+the stand playing:
+
+```
+PICK: click at (640, 40), Shift false (self not in the pick): no hit
+MOVE run t=639 ms=24868 heading=0.0000 wire=49151 dir=(0.000,1.000)
+MOVE self t=639 ms=24869 pos=(42.000,-59.167) dest=(42.000,940.000) order=true speed=50.0 left=999.167 run=true facing=0.000 gait=run
+...
+MOVE send t=755 ms=26180 pos=(42.000,5.832) heading=49151
+MOVE self t=755 ms=26180 pos=(42.000,5.832) ... order=true speed=50.0 run=true facing=0.000 gait=run
+NAV: the heading run is blocked at local 1002.00, 953.46 (on object cj_jang_gate) -- ended, as retail's mover ends a refused step
+MOVE self t=756 ms=26196 pos=(42.000,6.542) ... order=false speed=50.0 run=false facing=0.000 gait=stand
+MOVE send t=758 ms=26229 pos=(42.000,6.542)
+```
+
+These lines are r2's, and r3's run 1 is the same: t=639..718, stopping at (42.000, 6.542). There
+are 0.833 units a tick at 50 u/s, and the last step is cut to the wall's contact (0.71). The run
+covered 65.7 units in 79 ticks.
+
+B sees each position with the heading, then the stop as a plain position, and its drawn body
+settles on it:
+
+```
+MOVE recv 1 ms=19885 pos=(42.000,-59.167) heading=49151
+MOVE body 1 t=363 ms=19897 pos=(42.000,-59.792) target=(42.000,-59.167)
+...
+MOVE recv 1 ms=21185 pos=(42.000,5.832) heading=49151
+MOVE recv 1 ms=21235 pos=(42.000,6.542)
+MOVE body 1 t=451 ms=21364 pos=(42.000,6.288) target=(42.000,6.542)
+MOVE body 1 t=467 ms=21631 pos=(42.000,6.539) target=(42.000,6.542)
+```
+
+**Run 2 (r3).**
+- A turns the view 180° with a real right-drag of 600 px (0.3° a pixel) and clicks the sky:
+  `MOVE run t=1115 heading=3.1416 wire=16384 dir=(0.000,-1.000)`.
+- A runs south 297 units in 6 s, from (42, 5.7) to (42.8, −291.0).
+- B received 119 positions with `heading=16384`. B's facing log (`SRREVAMP_QA_FACING_LOG`) shows
+  the body turning from north through east to south in about 0.4 s, which is π at 3π rad/s:
+
+```
+QA FACING player 1 ms=27845 pos=(42.000,6.334) front=(0.1564,0.9877)
+QA FACING player 1 ms=27945 pos=(42.000,3.486) front=(0.8910,0.4540)
+QA FACING player 1 ms=28045 pos=(42.000,-1.131) front=(0.8910,-0.4540)
+QA FACING player 1 ms=28145 pos=(42.000,-5.799) front=(0.1564,-0.9877)
+QA FACING player 1 ms=28245 pos=(42.000,-11.003) front=(0.0000,-1.0000)
+```
+
+**Run 3.** Mid-run, A turned 90° and clicked at (640, 40). That view had ground within the pick
+(817 units away), so it **walked** there, as retail's pick would. The run ended: `order=true
+run=false` from t=1472. B's receipts switch from the heading form to plain positions on the same
+tick:
+
+```
+MOVE recv 1 ms=33717 pos=(42.000,-289.301) heading=16384
+MOVE recv 1 ms=33767 pos=(42.833,-290.967)
+```
+
+**Other lines.**
+- r2's second sky click landed on an NPC (Storage-Keeper Sansan) and talked, as the dispatch
+  order says.
+- r1's clicks at y 80–90 with the default camera pitch all met ground within 1000 units and
+  walked. With the default pitch, the top of the screen is ground, not sky.
+
+### Tests
+
+- `client/scripts/world/sky_run_test.gd` (new; synthetic fixtures: a flat collision box, a camera
+  aimed through the screen centre, and a two-cell region with a blocking edge on the cell boundary).
+  - **The rule:**
+    - the 1000-unit reach;
+    - the ray's ground heading, and a vertical ray keeping the heading;
+    - the 5° window, raw across the 0/2π seam;
+    - the wire angle and its inverse;
+    - the run's velocity at 50, 200 and 500 u/s.
+  - **The codec:** a walk is 12 bytes; a run carries flags 2 and kind 0, command 1, angle; the
+    relay decodes it.
+  - **Clicks through `World3D._dispatch_left_click`:**
+    - ground 800 away walks;
+    - ground 1500 away runs on heading π;
+    - the sky runs on π/2;
+    - running, a sky click 3.4° off changes nothing and one 45° off turns the run;
+    - a ground click and an attack's approach replace the run.
+  - **The run through `_step_click_walk` + `_move_on_nav_graph`:**
+    - on open ground it is still running after 10 s, 500 units on (x 700.00);
+    - it faces its heading;
+    - straight into the edge at 50, 200 and 500 u/s it stops at x 99.988 in 12, 3 and 2 ticks;
+    - **oblique, it stops at first contact (z 110.200) and does not slide**.
+  - **Remote:** a relayed run turns the watcher's body to the heading π/2, not toward the next
+    position.
+  - **Held icon:** press and release are the icon's, and nothing walks or runs.
+- **NEGATIVE, against dev 56e8e24** (a second worktree at the base, with the new test copied in).
+  The click checks fail by BEHAVIOUR: the base walks to the far point and does nothing on the sky.
+  The remote check fails by behaviour too: the base's decoder drops the heading, and the body aims
+  at the position.
+
+```
+FAIL SkyRun exists
+FAIL a run's position carries flags bit 1 and retail's heading form: kind 0, command 1, the u16 angle ([])
+FAIL EntityMoved's heading form decodes to heading_wire 0x4000
+ok  a click on ground 800 away walks to it (target (0.000017, 0, -800.0002))
+FAIL a click on ground 1500 away (beyond the pick's 1000) runs on its heading, pi, rather than walking to the point (order true, run false, target (0.000034, 0, -1499.997))
+FAIL a click on the sky runs the character on the ray's ground heading, pi/2 (order false, run false, heading nan)
+FAIL World3D._start_heading_run exists (the run)
+FAIL a remote heading run turns the body to the run's heading pi/2, not toward its next position (target 0.0000)
+ok  a click while holding an icon is the icon's (press true, release true) and starts no run or walk
+FAILURES: 7
+```
+
+- On the branch: ALL PASS. `remote_godot.sh check`: ALL LOAD (430 scripts, 5 scenes).
+  `remote_godot.sh tests`: **173 suites, 0 failing**.
+- **Server:** `server/internal/session/skyrun653_test.go` (new) checks three things:
+  - the codec: the heading form round-trips; a walk is still 12 and 20 bytes; a short or wrong-kind
+    tail is a plain position; relocated and run together keep both bits;
+  - `HeadingFromWire` inverting `WireAngle`;
+  - the flow: Aria's run faces the hub pi/2 while her step went +z, Bram hears the heading form,
+    and the stop is relayed plain.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...`: all packages ok. The first full
+  run failed `internal/systems`' `TestKnownOrphansHaveNoStaleEntries`: `DecodeMovement` now has a
+  caller. Its entry was removed, as the entry itself asks.
+
+### Performance gate (`client/tools/perf_gate.sh --base 56e8e24 --sites jangan`, 3 interleaved runs each)
+
+| site | number | base | head | delta | verdict |
+|---|---|---|---|---|---|
+| jangan | frame ms | 11.28 | 11.15 | -0.1 | SAME |
+| jangan | entry ms | 9580 | 9536 | -44 | SAME |
+| jangan | freeze ms | 3373 | 3355 | -18 | SAME |
+| jangan | hitches | 5 | 5 | 0 | SAME |
+
+The runs, frame ms, base against head: 11.28 / 11.15, 11.44 / 11.15, 11.22 / 11.29. The gate stands
+still, and a heading run adds nothing to a frame that is not moving. The −0.1 is noise.
+
+### Follow-up: every walk stops at the wall, as retail's does
+
+The first commit (287e394) left click walks sliding (round 649, OURS) and asked the user. The
+user's request decides it: "when the character collides with a wall or something that stops it
+make sure you stop the running as well and make the character stop in place like the original
+game". The reading above holds for **every movement kind**. The query answers a blocking edge with
+the crossing point, nudged at most 0.2, and bit 0, which ends the move.
+
+**What changed.**
+- `ClickWalk.blocked_ends(blocked)` is retail's rule: any blocked step ends the order. Round 649's
+  1 % threshold (OURS) is gone, and so is `SkyRun.blocked_ends`.
+- `_move_on_nav_graph` walks every order with the no-slide walk (`step_tracked(..., false)`) and
+  ends it at the first blocked step. Only the QA walk (`SRREVAMP_QA_WALK`, no order) still slides.
+- **Approaches.** An attack's or friendly cast's approach ends at the wall like any walk, but keeps
+  its pending action.
+  - The order's tick, `World3D._step_move_order`, was moved out of `_physics_process` so it can be
+    tested. It runs while an approach is pending even with no move in effect, and re-issues the
+    approach on the next tick. Retail's attack tick re-issues `MoveTowardObject` on every pass
+    while out of reach (auto_command.md, phase 1, READ).
+  - OURS: while the re-issued approach aims within 0.5 of where the wall stopped it (the target has
+    not moved), the body stands at the wall facing the target, and the reach is tested every tick.
+  - Without that hold, the body **crept along the wall**: each no-slide stop nudges it up to 0.2
+    toward its cell's centre, which came to 22.7 units in 2 s at 60 re-issues a second (MEASURED,
+    the synthetic fixture). How often retail's client shows a server-side re-issue (every 30 ms at
+    most) was not read.
+  - It walks on as soon as the target moves clear.
+- **The pick-up walk** ends at the wall and asks for the item from there (`_ask_pickup_after_walk`,
+  unchanged). The server judges the 10 units.
+- **A doorway at an angle:** a walk whose line meets the door frame now stops at the frame. Round
+  649's walk slid along the frame into the doorway and through. This is retail's behaviour, as
+  read. A walk whose line passes through the gap goes through.
+- The physics fallback (no `.nvm`) ends any order on `is_on_wall` (OURS; it was the heading run
+  alone).
+
+**Tests.** `client/scripts/world/click_walk_test.gd`:
+- The fixture is now two cells split at x = 100 with the blocking edge on their boundary. That is
+  the shape a real region has. The no-slide stop nudges toward the mover's own cell centre, which
+  in the old one-cell fixture lay across the wall (MEASURED: x 100.141).
+- It now checks:
+  - a walk at an angle stops at first contact (z 110.2 of a point at z 120);
+  - a steeper one at 200 u/s stops at its crossing (z 125.2, not the point's 150);
+  - the approach is re-issued on 120 of 120 ticks, stays pending, and stands at x 99.988 with
+    0.00000 drift after the stop;
+  - it walks on when the target moves clear (z 100.20 → 132.88 in 10 ticks);
+  - a walk into a door frame stops at the frame (z 90.2);
+  - a walk through the gap goes through (x 128.0).
+- Round 649's oblique check, which expected the slide, is replaced.
+
+**NEGATIVE, against 287e394** (a worktree at the first commit, with the new test copied in):
+
+```
+ok  a walk at 50 u/s straight into a blocking edge ends there (13 ticks, x 99.990, order false)
+FAIL a walk at an angle into the edge stops at first contact, not sliding along it (x 99.993, z 119.910, 74 ticks)
+FAIL and a steeper one at 200 u/s stops at its crossing, z 125, not at its point's z 150 (x 99.996, z 149.945, 27 ticks)
+FAIL World3D._step_move_order exists (the order's tick)
+FAIL a walk at an angle into a door frame stops at the frame (x 128.468, z 118.984), as retail's mover stops -- it does not slide into the doorway
+ok  a walk aimed through the doorway (crossing at z 105) goes through (x 128.013, z 119.007)
+FAILURES: 4
+```
+
+On the branch: ALL PASS. `remote_godot.sh check`: ALL LOAD (430 scripts). `remote_godot.sh
+tests`: 173 suites, 0 failing. `go test -count=1 -p 1 ./...`: 60 packages ok (the server is
+unchanged by the follow-up). The perf gate was not re-run for the follow-up: it measures a
+standing view, and the change only touches a walk's blocked step.
+
+**Live (MEASURED, `/var/tmp/sky653/sky653walk.sh`, real xdotool clicks, default camera).**
+- Three ground clicks at angles past the `cj_jang_gate` edge north of the spawn each stop dead on
+  the straight line to the point.
+- The first ran from (41.463, −59.362) toward (−17.260, 10.426). On that line, z 5.421 falls at
+  x −13.05, and it stopped there:
+
+```
+MOVE self t=636 ms=25932 pos=(-12.727,5.039) dest=(-17.260,10.426) order=true ... gait=run
+NAV: the walk is blocked at local 946.95, 954.58 (on object cj_jang_gate) -- ended, as retail's mover ends at a wall
+MOVE send t=637 ms=25949 pos=(-13.048,5.421)
+MOVE self t=637 ms=25949 pos=(-13.048,5.421) dest=(-17.260,10.426) order=false ... gait=stand
+MOVE self t=639 ms=25981 pos=(-13.048,5.421) dest=(-17.260,10.426) order=false ... gait=stand
+```
+
+- The other two stopped at local (971.49, 954.08) and (944.28, 954.63), each in the tick it met
+  the edge.
+- B received the stop as `MOVE recv 1 ms=20945 pos=(-13.048,5.421)`.
+- Round 649's base, at /speed 1, slid along this edge for several ticks before stopping (its
+  entry).
+
+### Review follow-up (the review of 287e394)
+
+- **The 5° rule now tests the move kind (READ).** Retail keeps its heading only when `+0x6e8 != 1`.
+  `+0x6e8` is the mover's `+0x80` (mover at `obj+0x668`): 1 is a walk to a point, 2 a heading.
+  `FUN_009ebec0` returns early only when it is 2. So a sky click within 5° of the facing during a
+  ground **walk** starts a run. Ours dropped that click; it now calls
+  `SkyRun.click_rule(_has_move_target and _move_heading_run, ...)`.
+- **An accepted zone change or teleport ends the run.** `_on_change_zone_result` now calls
+  `_end_move_order_for_arrival`. Before, a heading run went on into the new zone.
+- **Running off the loaded world (OURS).** When `_move_on_nav_graph` has no graph and there is no
+  terrain above `WORLD_FLOOR_Y` under the next step, a heading run ends (`_end_run_off_world`).
+  Before, it fell under gravity until the void recovery. `VoidCatchFloor` (top at y −1995) is
+  below that line and does not count as ground. What retail's mover does at an unloaded edge was
+  not read.
+- **A sky click and a ground click drop a pending pick-up walk** (`_pending_pickup_id = -1`). Before,
+  a later wall stop or arrival asked for the item from wherever the new order ended.
+- **OPEN, not built.** These requests do not end a run: a self or ground cast, an attack sent with
+  no walk (the `no_walk`, no-BCRadius and wall-root paths), a friendly skill on a monster, an
+  in-reach pick-up, and an NPC talk. Retail's skill-start and pick-up-start paths were not read for
+  a mover stop (`docs/TODO.md`).
+- **Tests** (`sky_run_test.gd`): a walk plus a sky click 3.4° off gives "run"; both clicks drop the
+  pick-up; the arrival ends the run; a run with ground ahead goes on, and one with none ahead (x
+  2010.5, past the fixture's edge) ends. **NEGATIVE against d12fca6:**
+
+```
+FAIL walking to a point, a sky click 3.4 degrees off the facing starts a run (+0x6e8 == 1 is not kept) (keep)
+FAIL a sky click drops a pending pick-up
+FAIL and so does a ground click
+SCRIPT ERROR: Invalid call. Nonexistent function '_end_move_order_for_arrival (via call)' in base 'Node3D (...)'.
+```
+
+  The base has no `_end_move_order_for_arrival`, so its run stops at that script error. On the
+  branch: ALL PASS.
+- **The suites.**
+  - `remote_godot.sh check`: ALL LOAD.
+  - `remote_godot.sh tests`: 173 suites, 0 failing.
+  - The first run of `tests` caught two suites (`teleport_board_test`, `ground_probe_ab_test`).
+    They drive `_on_change_zone_result` with no player, so the new stop now guards the velocity
+    against a null player.
+  - `go test -count=1 -p 1 ./...`: all packages ok. The server is unchanged.
+
+### Open
+
+- **What a retail body shows while its approach is held at a wall** was not read; srrevamp's
+  stands. Nor was retail's pick-up approach.
+- **The server does not step the run itself.** srrevamp is client-authoritative. Whether retail's
+  server sends its own stop to the watchers was not read.
+- The arrow keys' heading-form commands (READ) are not bound. `0x70c5` (the other sender) is not
+  built.
 
 ## Six-hundred-and-fifty-second round: every icon is picked up with one click and put down with the next, and a worn item goes into the bag as the original puts it
 

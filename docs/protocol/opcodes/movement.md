@@ -257,22 +257,164 @@ Read from `sro_client.exe`'s decompile on the RE box (`/var/tmp/decomp_client`).
 - **A refused step ends the move** (round 649's follow-up). This is the failure path above:
   bit `0x10000000`. srrevamp's walk now ends a click walk whose step the navigation graph blocks
   dead (`ClickWalk.blocked_ends`), instead of holding its order with the run animation playing.
-  - OURS: srrevamp's graph slides along a wall (`NavGraph.step_tracked`). "Dead" therefore means
-    a blocked step that covers no more than 1 % of what was asked. Whether retail's query slides
-    was not read.
-  - An attack's or friendly cast's approach is left walking. The retail attack tick re-issues
-    `MoveTowardObject` on every pass while out of reach (`docs/protocol/auto_command.md`,
-    phase 1, READ).
+  - ~~OURS: srrevamp's graph slides along a wall. "Dead" means a blocked step that covers no more
+    than 1 % of what was asked.~~ Superseded by round 653's follow-up. Retail's query does not
+    slide (see "The stop at a wall" below). Every srrevamp order now walks with the no-slide walk
+    and ends at its first blocked step (`ClickWalk.blocked_ends`).
+  - An attack's or friendly cast's approach ends at the wall like any walk. Its pending action is
+    kept, and `World3D._step_move_order` re-issues it on the next tick. This follows retail's
+    attack tick, which re-issues `MoveTowardObject` on every pass while out of reach
+    (`docs/protocol/auto_command.md`, phase 1, READ).
 - **Not read:** what the collision query tests, which of its bits mean what beyond the two above,
   and whether a server-driven mover uses this same tick.
 
+## The heading move: a click on the sky (round 653)
+
+Read from `sro_client.exe`'s decompile (`/var/tmp/decomp_client`), its disassembly
+(`/var/tmp/sro_client.asm`) and its PE image; the server half from `SR_GameServer.exe`'s decompile.
+srrevamp follows it in `client/scripts/world/sky_run.gd` (`SkyRun`) and `World3D._move_by_pick_ray`.
+
+### The click
+
+- **The world click** is `UI_SILKMALL::FUN_0078f8d0`. For a click that is not on an object it:
+  - builds the pick ray with `FUN_00a5ade0`: the camera's position, and the camera ray through the
+    cursor times **5000.0** (`0xde5188`) added to it;
+  - takes the direction as the difference of the two (`0x78fa2e..0x78fa69`);
+  - calls the world pick, `SWorld::vslot_034` (`0xa01310`; `DAT_01101950`'s vtable `0xde4fb4`,
+    slot 34, offset `0x88`), with the player's position record, the ray's origin and direction, and
+    two out-parameters (region, point).
+- **The pick's reach is 1000 units.** `vslot_034` normalises the direction (`FUN_00410cd0`) and
+  multiplies it by the double at `0xd83268`, **1000.0** (asm `0xa01333..0xa01368`). It tests the
+  terrain blocks (up to 10, `+0x2783`) and then the objects (`[0x111a02c]` vtable `+0x3c`) against
+  the segment origin → origin + direction × 1000. It returns 1 only when something was hit (the best
+  distance stays below its start value `0xe1b85c`, 1e38).
+- **A hit** walks to the point (`FUN_009ec570` → the destination form, as before).
+- **No hit**, whether sky or ground more than 1000 units from the camera, sends the **heading form**:
+  - the direction's y is zeroed (`fldz` into it at `0x78fb07`), the vector is normalised
+    (`FUN_00410cd0`), and `FUN_009ed130` makes a heading of it. This is the same helper as a
+    destination's aim, so a vertical ray keeps the current heading;
+  - `FUN_009ebec0(h, 1)` sends it:
+    - kind 0;
+    - the record's `+0x14` byte = **1** (`local_4 = 1`);
+    - the angle `FUN_009c4060(h)` = h − π/2 (`0xe1b8f0`), with 2π (`0xd81930`) added while negative;
+    - then `FUN_009ebd10` → `0x7021`, with no extra byte.
+  - `FUN_009ebd10` sends `0x70c5` instead, with an object id first, when `FUN_00b94b90(0xef1b44)`
+    is false. What that flag is was not read.
+- **The no-resend window.** The heading is NOT sent when all three of these hold:
+  - bit 9 of the player's state word `+0x65c` is set;
+  - `+0x6e8` is not 1;
+  - `|+0x8c − h|` is 0.0872664600610733 (`0xdb9828`, 5°) or less.
+
+  The difference is raw: `fsub`, then `fmul −1.0` (`0xe1b8e8`) when negative, with no wrap. Bit 9
+  is state 9 of the object's state machine. `FUN_009c9920(9, 0)` sets it on every `0xB021` echo
+  (`FUN_008a5750`), of either form. That it means "moving" is INFERRED.
+  - **`+0x6e8` is the mover's `+0x80`**, the move kind: the mover sits at `obj+0x668`, and
+    `+0x80` is 1 for a walk to a point and 2 for a heading. This is round 653's review, READ.
+  - `FUN_009ebec0` returns early only when it is 2. So the window keeps only a **heading run**. A
+    sky click within 5° of the facing during a ground walk starts a run.
+- After sending, `FUN_00777b90` → `FUN_00b93320(7, 500)`; what that does was not read.
+
+### The `+0x14` byte is the movement command (READ, the server's mover)
+
+The heading form's byte was "not read" above. It is now:
+
+- `CGObjMoverByCmd::vslot_004` (server `0x48c140`) copies the form in. When the byte's **bit 0** is
+  set, it sets the mover's stepping flag `+0xc`.
+- `vslot_003` (`0x48c1b0`) steps while `+0xc == 1`, through `CGObjMoverByDest::FUN_0048bff0`. That
+  step is the object's heading vector (`+0x24`, `+0x2c`) times `|speed × dt|`, capped at the float at
+  `0xb45ea8`, which was not read. It has no distance and no end of its own.
+- `vslot_010` (`0x48c1e0`) turns the heading by `dt × π` (`0xb45c20`) one way for **0x10** and the
+  other way for **0x20**, wrapped by 2π (`0xb45c18`).
+- `vslot_005` keeps the low nibble (it ends a turn); `vslot_006` clears it and `+0xc` (it ends the
+  step).
+- The client's arrow-key handler `FUN_0077b070` (keys `0x26`, `0x25`, `0x27`) calls
+  `FUN_009ebf40` with 1, 0x10 and 0x20. The sky click sends 1 (forward).
+
+`proto.MovementCommandForward` names bit 0.
+
+### The run
+
+- The echo's heading form reaches the local mover as `FUN_009e08a0` (from `FUN_008a5750` when the
+  kind is 0). It sets:
+  - `+0x80 = 2` (no destination);
+  - `+0x84 = 1` (moving);
+  - `+0xac = 1` (an order);
+  - the travel direction at once (`FUN_009e0090`);
+  - the facing turned toward it at 3π rad/s (`FUN_009e02f0`).
+- The mover's tick `FUN_009e0e60` tests a destination only when `+0x80 == 1`. So a heading move
+  steps `speed × seconds` along the travel direction on every frame, with nothing to arrive at.
+  Round 649's cut to the distance left does not apply to it.
+
+### The stop at a wall
+
+- The tick hands the proposed step to the collision query, `CRegionManagerBody::vslot_012`
+  (`0x412660`; the object at `0x115b0c8`, vtable `0xe16184`, slot 12). The call passes the mover's
+  record at `+0x4c` and a proposed record `{0, 0, region, x, y, z}` built on the stack.
+- On success the tick copies the whole proposed record back into `+0x4c..+0x60` (asm
+  `0x9e0fff..0x9e1027`). So the position is **whatever the query left in the record**. The
+  decompile's reading of `+0x4c` as the step's delta is wrong: a `pop ebp` right after the call
+  misled it.
+- `vslot_012` walks the navmesh cell by cell (up to 7 hops) through each cell's resolver. For the
+  terrain this is `CRTNavMeshTerrain::vslot_002`, `0x4047a0`. At an edge whose vslot `+0x10` says
+  blocking, the resolver sets the point to the crossing, moved toward the cell's centre by at most
+  0.2 (`FUN_004472d0`, `0xe1b850`), and **returns 1**.
+- Bit 0 ends the movement after the step is taken (`+0x84 = 0`, `+0x80 = 0`). The body therefore
+  **stops at the wall**. There is no component along the wall in that branch, so it does not
+  slide. This is the same terrain walk `NavGraph.step_tracked`'s no-slide mode already follows
+  (rounds 616–618).
+- Bit `0x10000000` (a refused step) also ends the movement, with the body where it was.
+- The tick does not clear `+0xac` (the order) on either path.
+- **What plays:** the movement ends, so the body is no longer moving. Nothing in the tick plays a
+  collision animation. That it stands with its ordinary stand is INFERRED from the mover's state
+  alone.
+- **What the server is told:** nothing in the client's tick sends anything at the stop. The server
+  runs its own mover (`CGObjMoverByCmd`). Whether it sends its own stop to the watchers when its
+  navmesh refuses a step was not read.
+
+### srrevamp (OURS framing, READ form)
+
+srrevamp's movement is client-authoritative positions (`OpMove`/`OpEntityMoved`), not retail's
+0x7021 requests that the server steps. So:
+
+- **The run is the client's.** A sky click (no pick hit within 1000) starts a heading run
+  (`World3D._start_heading_run`). `_step_click_walk` steps it at the full run speed (`/speed`
+  included). `_move_on_nav_graph` walks it with the no-slide walk and ends it at the first blocked
+  step (`SkyRun.blocked_ends`). The body then plays its stand, as after any walk.
+- **The wire.** Each `OpMove` sent while the run is in effect sets bit 1 of the trailing flags byte.
+  Retail's heading form follows it: kind 0, command 1, then the u16 angle, as
+  `proto.DecodeMovement` reads it. An older server reads bit 0 alone.
+- **The relay.** The server faces the character the run's heading (`world.Hub.MoveHeading`,
+  `world.HeadingFromWire`) and relays the same form in `OpEntityMoved`. A watcher's client turns the
+  body to the heading at 3π rad/s (`_on_entity_moved`), rather than toward the next position.
+- **The stop** is the last position, sent plain. The watcher's body settles on it and stands.
+- OURS: while a run is in effect, `_move_target` is the pick's reach along the heading, for the
+  ground click's own filter. What retail's destination record holds during a heading move was not
+  read.
+- OURS: with no navigation graph under the player (the physics fallback), an order that meets
+  a physics wall (`is_on_wall`) ends too.
+- **Every order stops at the wall** (round 653's follow-up), as this reading says retail's mover
+  does for any movement kind. This covers a click walk, a pick-up walk and an attack's or friendly
+  cast's approach. A walk at an angle into a door frame now stops at the frame, where it used to
+  slide into the doorway.
+  - A blocked approach keeps its pending action and is re-issued every tick.
+  - OURS: while its point stays within 0.5 of the one the wall stopped, it stands at the wall
+    facing the target instead of stepping into the wall again. Each no-slide stop nudges the body
+    up to 0.2 toward its cell's centre, and at 60 re-issues a second that crept it along the wall
+    by 22.7 units in 2 s (MEASURED, `click_walk_test.gd`).
+  - Only the QA walk (`SRREVAMP_QA_WALK`, no order) still slides.
+
 ## Not read
 
-- **What the `+0x14` byte in the heading form is.** Its width is settled at one byte; its meaning
-  is not, and no name is proposed for it.
-- **When a sender picks `kind == 0`** (heading) over a destination. The monster AI always supplies
-  a destination — `AITactics_MoveAlongDirection`'s name describes how it *derives* the point
-  (position + direction × distance), not the wire form it sends.
+- ~~What the `+0x14` byte in the heading form is~~: the movement command (round 653, "The heading
+  move", above).
+- ~~When a sender picks `kind == 0`~~: the client's world click when the pick finds nothing within
+  1000 units, and the arrow keys (round 653, above). The monster AI always supplies a destination —
+  `AITactics_MoveAlongDirection`'s name describes how it *derives* the point (position + direction
+  × distance), not the wire form it sends.
+- **The server mover's step cap** (`0xb45ea8`, `FUN_0048bff0`), and whether the server sends a stop
+  of its own when its navmesh ends a heading move.
+- **Bit 9 of `+0x65c`** (state 9), which gates the sky click's no-resend window. That it means
+  "moving" is INFERRED. `+0x6e8` is read: the move kind (round 653's review).
 - **What the optional `extra` byte at `+1` carries.** Which caller emits it is now known; what it
   means is not.
 - **Vtable slot `0xfc`**, whose 8 / 0x10 / 0x12 returns block movement.
@@ -299,9 +441,9 @@ on events, so movement with no push would make them jump rather than walk (round
       Tested byte-for-byte against the layout table above, and both key
       constants are mutation-checked: replacing 65535 with 65536 makes a full
       turn wrap to 0 and fails, and substituting full-precision 180/π fails.
-- [ ] The `+0x14` byte's meaning (its width is settled at one byte)
+- [x] The `+0x14` byte's meaning: the movement command, bit 0 forward, 0x10/0x20 turn (round 653)
 - [ ] What the optional `extra` byte at `+1` carries, and which callers pass non-zero
-- [ ] When a sender picks the heading form over a destination
+- [x] When a sender picks the heading form over a destination: the sky click, the arrow keys (round 653)
 - [x] The server's response opcode — **`0xB021`, read from the binary** in round 366 and now in
       `opcodes.go` as `OpMovementResponse`. Whether it is an ack, a broadcast or both is not read
 - [x] Which caller emits the optional extra byte — `CGObjMobile::vslot_292`, action kind 3

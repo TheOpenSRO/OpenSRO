@@ -217,9 +217,11 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		// The selected monster's watchers before the command (round 656's
 		// review): a /kill is announced to them as well as to those watching
 		// where it died.
+		// /damage may name its monster by id (gm.CommandTarget).
 		var watchedBefore []world.Entity
-		if hub != nil && deps.Monsters != nil && actor.TargetMonsterID != 0 {
-			if m, alive := deps.Monsters.Get(actor.TargetMonsterID); alive {
+		target := gm.CommandTarget(req.Line, actor.TargetMonsterID)
+		if hub != nil && deps.Monsters != nil && target != 0 {
+			if m, alive := deps.Monsters.Get(target); alive {
 				watchedBefore = monsterWatchers(hub, deps.Monsters, m)
 			}
 		}
@@ -242,7 +244,7 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		if out.KilledMonsterID != 0 && hub != nil {
 			msg := (&MonsterDied{MonsterID: out.KilledMonsterID}).Encode()
 			dead := combat.Monster{ID: out.KilledMonsterID, Zone: out.Zone, X: out.KilledX, Z: out.KilledZ}
-			if out.KilledMonsterID != actor.TargetMonsterID {
+			if out.KilledMonsterID != target {
 				watchedBefore = nil
 			}
 			for _, e := range unionWatchers(watchedBefore, monsterWatchers(hub, deps.Monsters, dead)) {
@@ -290,6 +292,26 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		// exist either way.
 		for _, id := range out.SpawnedMonsterIDs {
 			BroadcastMonsterSpawned(hub, deps.Monsters, id)
+		}
+		// A unique a GM spawns or kills is announced to the world as any
+		// unique is (round 657, uniquenotice.go): the spawn by its hatch,
+		// the kill by the damage list. A /kill with no one on the list is
+		// announced with the "???" killer, which the client shows as "...
+		// has disappeared" -- OURS: retail has no GM kill, and its rule
+		// (no killer, no notice) would leave the GM's kill silent.
+		if deps.Monsters != nil {
+			for _, id := range out.SpawnedMonsterIDs {
+				if m, ok := deps.Monsters.Get(id); ok {
+					AnnounceUniqueSpawn(hub, m, false)
+				}
+			}
+		}
+		if out.Killed != nil {
+			if len(out.KillHits) > 0 {
+				AnnounceUniqueKill(hub, deps.Parties, *out.Killed, out.KillHits)
+			} else if UniqueNoticeFor(out.Killed.Rarity) {
+				broadcastUniqueNotice(hub, &UniqueNotice{Kind: UniqueNoticeKill, RefObjID: uint32(out.Killed.RefObjID), Killer: UnknownKiller})
+			}
 		}
 		return err
 	}

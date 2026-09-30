@@ -37,6 +37,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/shop"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
 	"github.com/OpenSRO/srrevamp/server/internal/spawn"
+	"github.com/OpenSRO/srrevamp/server/internal/species"
 	"github.com/OpenSRO/srrevamp/server/internal/storage"
 	"github.com/OpenSRO/srrevamp/server/internal/teleport"
 	"github.com/OpenSRO/srrevamp/server/internal/trade"
@@ -120,8 +121,15 @@ type monsterSpec struct {
 	// because the two rows that differ (0 and 20) prove it is a real column
 	// and not a shared default.
 	Critical int
-	X, Z     float64 // own-design spawn anchor (see the roster comment)
-	Count    int     // how many to keep alive around the anchor (default 1)
+	// Block is the species' block chance, characterdata col 76 ('bri',
+	// param 10): 0 for all eleven roster species (READ, so it is not typed
+	// below), 20 on 938 other monster rows. The species table (round 654)
+	// carries it for every species, but combatSpeciesOf does NOT hand it to
+	// combat yet: docs/TODO.md's "A blocked hit with a skill percentage deals
+	// 1, not 0" is to be fixed before any spawned monster blocks.
+	Block int
+	X, Z  float64 // own-design spawn anchor (see the roster comment)
+	Count int     // how many to keep alive around the anchor (default 1)
 	// Spawns are the species' REAL placements, straight out of the client's
 	// own npcpos table, as the table states them: a region id and a position
 	// local to that region. When a species has these, they replace the
@@ -621,15 +629,6 @@ func (s *respawnScheduler) check(now time.Time) {
 func gmSpecies() []gm.Species {
 	out := make([]gm.Species, 0, len(monsterSpecs))
 	for _, spec := range monsterSpecs {
-		attack, gold := monsterStatsForLevel(spec.Level, spec.Rarity)
-		defense := spec.Defense
-		if defense < 1 {
-			defense = 1 + spec.Level/3
-		}
-		maxHP := spec.MaxHP
-		if maxHP < 1 {
-			maxHP = 1
-		}
 		x, z, placed := anchorWorld(spec)
 		if len(spec.Spawns) > 0 {
 			if wx, wz, ok := realSpawnWorld(spec.Zone, spec.Spawns[0]); ok {
@@ -639,10 +638,49 @@ func gmSpecies() []gm.Species {
 		if !placed {
 			continue
 		}
-		out = append(out, gm.Species{
-			Species: combatSpeciesOf(spec),
-			Zone:    spec.Zone, MaxHP: maxHP, Defense: defense, Attack: attack, Gold: gold, X: x, Z: z,
-		})
+		sp := gmSpeciesOf(spec)
+		sp.X, sp.Z = x, z
+		out = append(out, sp)
+	}
+	return out
+}
+
+// uniqueSpecs are the unique monsters the GM console's /spawnunique can put
+// down (round 657). None is placed in the world yet -- the uniques' rotation
+// over their nests is a later round -- so this is how a tester meets one and
+// sees the notices (session/uniquenotice.go).
+//
+// READ from the render box's retail characterdata (the row whose code name is
+// the key; the columns as monsterSpec numbers them: RefObjID col 1, Rarity 15,
+// walk/run 46/47, BCRadius 50, Level 57, MaxHP 59, Defense 71, Critical 78).
+// The five named ones are the uniques the client's notice handler names by
+// their SN_ key (0x874ea0: SN_MOB_CH_TIGERWOMAN, SN_MOB_KK_ISYUTARU,
+// SN_MOB_OA_URUCHI, SN_MOB_TK_BONELORD, SN_MOB_RM_TAHOMET); Cerberus is a
+// rarity-3 row it does not name, so it takes the generic lines. The Names are
+// textdata_object's English for each SN_ key with the " [INT]" tag this
+// archive appends to every one of them left off (the client's own lines come
+// from its own tables, not from these). In this archive every base row is
+// level 110; the _L2/_L3 rows carry the lower levels.
+//
+// DISCLOSED: a unique's attack is monsterStatsForLevel's curve and it carries
+// no attack skill (AttackReuseMs, AttackRange and Skills are left unset, so
+// it answers every blow); its real skills (cols 83..92) are not read here.
+var uniqueSpecs = []monsterSpec{
+	{Name: "Tiger Girl", CodeName: "MOB_CH_TIGERWOMAN", RefObjID: 1954, Rarity: 3, Level: 110, MaxHP: 299360, Defense: 42, BCRadius: 28, WalkSpeed: 20, RunSpeed: 90, Critical: 2},
+	{Name: "Isyutaru", CodeName: "MOB_KK_ISYUTARU", RefObjID: 2002, Rarity: 3, Level: 110, MaxHP: 2162306, Defense: 274, BCRadius: 10, WalkSpeed: 35, RunSpeed: 70, Critical: 2},
+	{Name: "Uruchi", CodeName: "MOB_OA_URUCHI", RefObjID: 1982, Rarity: 3, Level: 110, MaxHP: 889764, Defense: 124, BCRadius: 60, WalkSpeed: 28, RunSpeed: 80, Critical: 2},
+	{Name: "Lord Yarkan", CodeName: "MOB_TK_BONELORD", RefObjID: 3810, Rarity: 3, Level: 110, MaxHP: 13382610, Defense: 559, BCRadius: 20, WalkSpeed: 30, RunSpeed: 75, Critical: 2},
+	{Name: "Demon Shaitan", CodeName: "MOB_RM_TAHOMET", RefObjID: 3875, Rarity: 3, Level: 110, MaxHP: 31830150, Defense: 898, BCRadius: 13, WalkSpeed: 23, RunSpeed: 75, Critical: 2},
+	{Name: "Cerberus", CodeName: "MOB_EU_KERBEROS", RefObjID: 5871, Rarity: 3, Level: 110, MaxHP: 346536, Defense: 52, BCRadius: 33, WalkSpeed: 30, RunSpeed: 96, Critical: 2},
+}
+
+// gmUniques is uniqueSpecs as the GM console's species, with the stats a
+// roster spawn of the same row would get (gmSpecies' conversion, no place).
+func gmUniques() []gm.Species {
+	out := make([]gm.Species, 0, len(uniqueSpecs))
+	for _, spec := range uniqueSpecs {
+		attack, gold := monsterStatsForLevel(spec.Level, spec.Rarity)
+		out = append(out, gm.Species{Species: combatSpeciesOf(spec), MaxHP: spec.MaxHP, Defense: spec.Defense, Attack: attack, Gold: gold})
 	}
 	return out
 }
@@ -825,6 +863,12 @@ func main() {
 		"path to the game's monster placements (from cmd/export-refdata -mode npcpos on a client's "+
 			"own npcpos.txt). Every roster species with rows in it stands where the game puts it; "+
 			"without the file the species keep their own-design anchors near the town.")
+	monstersCSV := flag.String("monsters-csv", os.Getenv("SRREVAMP_MONSTERS_CSV"),
+		"path to the monster species table (from cmd/export-refdata -mode monsters on a client's own "+
+			"characterdata parts, levelgold.txt and textdata_object.txt; round 654). Every roster species "+
+			"takes its numbers from its row, and the GM console's /spawn knows every species in it by code "+
+			"name, id or English name. Who spawns where does not change. Without it the hand-typed roster is all "+
+			"the server knows. A configured path that does not load is fatal.")
 	teleportDir := flag.String("teleport-dir", os.Getenv("SRREVAMP_TELEPORT_DIR"),
 		"directory holding the game's teleport network as teleportdata.csv, teleportlink.csv and "+
 			"teleportbuilding.csv (from cmd/export-refdata -mode teleport on a client's own "+
@@ -861,6 +905,11 @@ func main() {
 			"the heading it hatched facing. Default OFF: off, nothing is sent and the wire is what it "+
 			"was, so a respawn appears on each client's next monster list. Needs a client release that "+
 			"carries round 540. See deploy/README.md, \"Monster spawn push (off by default)\".")
+	uniqueOffEnv, uniqueOffEnvErr := envBool("SRREVAMP_UNIQUE_NOTICE_OFF")
+	uniqueNoticeOff := flag.Bool("unique-notice-off", uniqueOffEnv,
+		"silence the unique monster notices (env SRREVAMP_UNIQUE_NOTICE_OFF): retail's "+
+			"CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG=ON. Default OFF: a unique's appearance and its "+
+			"killer are announced to every character, as retail does with the key absent (round 657).")
 	battleEnv, battleEnvErr := envBool("SRREVAMP_MONSTER_BATTLE")
 	battle := flag.Bool("monster-battle", battleEnv,
 		"let a struck monster fight on its own (env SRREVAMP_MONSTER_BATTLE): it chases its attacker "+
@@ -1342,6 +1391,37 @@ func main() {
 	parties := party.NewHub()
 	duels := duel.NewHub()
 	trades := trade.NewHub()
+	// The monster species table (round 654), when the operator supplies it:
+	// the roster's species numbers come from it, re-derived, and the GM
+	// console knows every species in it. Loaded before the placements so
+	// that what -npcpos-csv places is the overlaid roster. A configured path
+	// that does not load is fatal, the npcpos rule. The attack lists resolve
+	// through the same skill store the casts use (the -skills-csv memory
+	// store, or PostgreSQL).
+	var speciesTable *species.Table
+	speciesSkills := species.RefdataLookup(func(id int64) (*refdata.Skill, error) { return refItems.GetSkill(ctx, id) })
+	if *monstersCSV != "" {
+		table, err := species.LoadCSV(*monstersCSV)
+		if err != nil {
+			logger.Error("loading the monster species table", "path", *monstersCSV, "err", err)
+			os.Exit(1)
+		}
+		speciesTable = table
+		ov := overlaySpeciesTable(monsterSpecs, table, speciesSkills)
+		logger.Info("monster species table loaded", "path", *monstersCSV, "species", table.Len(),
+			"roster_overlaid", ov.Overlaid, "roster_missing", len(ov.Missing), "roster_changed", len(ov.Changed))
+		for _, m := range ov.Missing {
+			logger.Warn("roster species not in the monster table: it keeps its hand-typed numbers", "name", m)
+		}
+		for _, c := range ov.Changed {
+			logger.Warn("roster species numbers differ from the monster table: the table's are used", "change", c)
+		}
+		for _, k := range ov.Kept {
+			logger.Warn("roster species kept hand-typed fields the table could not supply (re-export skills/levelgold/textdata_object, deploy/README.md)", "kept", k)
+		}
+	} else {
+		logger.Info("no monster species table (-monsters-csv / SRREVAMP_MONSTERS_CSV): the hand-typed roster is every species the server knows")
+	}
 	// The game's own placements, when the operator supplies them: every
 	// species with rows takes them all, replacing both the embedded rows and
 	// the own-design anchor. A configured path that does not load is fatal
@@ -1367,7 +1447,14 @@ func main() {
 			monsterSpecs[i].Spawns = real
 			applied++
 		}
-		logger.Info("npcpos placements loaded", "species_in_table", len(table), "roster_species_placed", applied)
+		inMonsterTable := 0
+		for id := range table {
+			if _, ok := speciesTable.ByID(id); ok {
+				inMonsterTable++
+			}
+		}
+		logger.Info("npcpos placements loaded", "species_in_table", len(table), "roster_species_placed", applied,
+			"npcpos_species_in_monster_table", inMonsterTable)
 	}
 	// The game's teleport network, when the operator supplies it (round 575).
 	// Loaded and checked here so a bad export fails at boot, the npcpos rule;
@@ -1437,7 +1524,24 @@ func main() {
 	session.RunMonsterAOI(ctx, hub, monsters, logger)
 	logger.Info(fmt.Sprintf("monster area of interest: %d regions each way around a player (own design: the client's REGION_LOAD_RADIUS); list paged, enter/leave pushed",
 		session.AOIRadius))
-	spawned := func(id int64) { session.BroadcastMonsterSpawned(hub, monsters, id) }
+	// The unique notices (round 657): on unless -unique-notice-off. A roster
+	// unique's hatch is announced from the same spawn hook as the push.
+	session.SetUniqueNoticeOff(*uniqueNoticeOff)
+	if uniqueOffEnvErr != nil {
+		logger.Warn("SRREVAMP_UNIQUE_NOTICE_OFF is not a boolean; the unique notices stay on unless -unique-notice-off is given",
+			"error", uniqueOffEnvErr)
+	}
+	if *uniqueNoticeOff {
+		logger.Info("unique notices off (-unique-notice-off): no nest-hatch or kill notice is sent; a GM spawn is still announced")
+	} else {
+		logger.Info("unique notices on: a unique's appearance and death go to every character (OpUniqueNotice 0x0110)")
+	}
+	spawned := func(id int64) {
+		session.BroadcastMonsterSpawned(hub, monsters, id)
+		if m, ok := monsters.Get(id); ok {
+			session.AnnounceUniqueSpawn(hub, m, true)
+		}
+	}
 	// Every species' instances -- a monster per real npcpos row, or a cluster
 	// around the own-design anchor -- in the zone and frame -single-frame
 	// (set above) says: rosterInstances.
@@ -1533,6 +1637,11 @@ func main() {
 		Chars: chars, Inv: inv, Equip: eq, Items: refItems, Skills: skills,
 		Monsters: monsters, World: hub, Mana: manaTracker, Berserk: zerkTracker, Levels: levelTable,
 		Species: gmSpecies(), Zones: worldmap.ZoneNames(), Logger: logger,
+		Uniques: gmUniques(), Parties: parties,
+	}
+	if speciesTable != nil {
+		gmDeps.LookupSpecies = gmSpeciesLookup(speciesTable, speciesSkills)
+		gmDeps.LookupCount = speciesTable.Len()
 	}
 
 	// Guild points (round 525): the skill points a guild member converts out

@@ -226,12 +226,15 @@ the line to every character including the sender.
 Type 7 in `0x876810`: the chat line `(Notice):text`, filed as type 3 (every tab), colour
 `0xffffaec3`; and `0x777bf0` -> interface child 0x14, `GDR_NOTICE` (a CIFNotify, `ifnotify.txt`),
 `0x7b3eb0`: life 7000 ms, the text measured and the window sized to it, placed at
-`x = screen width / 2 - text width / 2`, `y = +0x7d4`, which the constructor `0x7b3c40` sets to 0
-(no other writer found for this class): the top centre. The update `0x7b3e20` fades the alpha to
+`x = screen width / 2 - text width / 2`, `y = +0x7d4`. The constructor `0x7b3c40` sets it to 0,
+which this section first took for the answer; CGInterface's setup then sets it to 100 for this
+instance (`0x7b3d40` with `push 0x64` at `0x78cbbe`, round 657) and gives it a fill of
+(128, 45, 67) drawn at alpha 128 under the frame (`0x7b3d10`, `0x7b3cb0`; see
+`unique_notice.md`, "The banner"). The update `0x7b3e20` fades the alpha to
 `remaining * 255 / 2000` over the last 2000 ms. Frame textures `com_notice_edge.ddj`,
 `com_notice_edge2.ddj`, `com_notice_corner.ddj` (READ); all translucent maroon (128, 45, 67)
 (MEASURED); their arrangement as a stretch frame over the window -- which is the text's extent --
-is INFERRED; no fill of ours.
+is INFERRED. The fill is the class's own (round 657).
 
 srrevamp's `/notice <text>` GM command (OURS) sends type 7 to everyone.
 

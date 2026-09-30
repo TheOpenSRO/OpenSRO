@@ -367,6 +367,13 @@ type Skill struct {
 	// while the caster holds a wall (HasTeleport). srrevamp moves nobody by
 	// them (their own actions are not modelled). An older export loads false.
 	Tel2, Tel3 bool
+	// AIAttackChance is AI_AttackChance, skilldata column 66 (CRefSkill+0x164;
+	// CSV 89, round 654): the weight a monster's attack-list draw gives the
+	// skill (AI::CAISkill_Basic::PickSkill, READ -- ai.PickSkill,
+	// docs/protocol/monster_ai.md). -1 is UNKNOWN: an export or a database
+	// that predates the column, where 0 would wrongly read as "never drawn".
+	// A Skill built in code (a test's) leaves it 0, a real 0.
+	AIAttackChance int
 
 	// The mastery this skill belongs to and the mastery level required to learn
 	// it (ReqCommon_Mastery1 / ReqCommon_MasteryLevel1). These are what the

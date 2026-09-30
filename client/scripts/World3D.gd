@@ -425,6 +425,13 @@ var _left_steering := false
 const LEFT_DRAG_THRESHOLD_PIXELS := 6.0
 var _has_move_target := false
 var _move_target := Vector3.ZERO
+## Round 653: the order in effect is a heading run (SkyRun) -- a click on the
+## sky or on ground beyond the pick's 1000 units -- rather than a walk to
+## _move_target. It runs along _move_heading at the run speed until a click, an
+## attack, a stop or a wall ends it (_step_click_walk, _move_on_nav_graph).
+## Meaningful only while _has_move_target; every order with a point clears it.
+var _move_heading_run := false
+var _move_heading := 0.0
 ## Last position the player was standing at real, sane terrain height (see
 ## WORLD_FLOOR_Y's doc comment) -- updated every physics frame the player
 ## isn't already mid-void-fall, so it always reflects the most recent solid
@@ -1338,6 +1345,7 @@ func _ready() -> void:
 	NetClient.change_zone_result.connect(_on_change_zone_result)
 	NetClient.teleport_result.connect(_on_teleport_result)
 	NetClient.chat_update.connect(_on_chat_update)
+	NetClient.unique_notice.connect(_on_unique_notice)
 	NetClient.chat_result.connect(_on_chat_result)
 	NetClient.disconnected.connect(_on_disconnected)
 	send_button.pressed.connect(_on_send_pressed)
@@ -1568,6 +1576,7 @@ func _try_initialize_pk2_ui() -> void:
 		print("World3D: Media.pk2 not found (path='%s') -- authentic UI skipped" % Pk2Config.media_path())
 		return
 	_preload_skill_effect_table()
+	_preload_name_key_index()
 
 	# Load UI localization strings from Media.pk2
 	var text_entry := ObjectLoader.find_file(_media_pk2, "server_dep\\silkroad\\textdata\\textuisystem.txt")
@@ -1935,13 +1944,13 @@ func _try_initialize_pk2_ui() -> void:
 	ui_control.add_child(_hud_notice)
 	_hud_notice.setup(_ui_builder)
 	# GDR_WARNING_WND (round 639): the same CIFNotify class, for the level-up
-	# line. Its y is the class's +0x7d4, which the constructor sets to 0 (round
-	# 634's reading of GDR_NOTICE; no writer for this instance was looked for
-	# -- OPEN), so it shares the notice's top-centre spot.
+	# line and the unique notices (round 657). CGInterface's setup gives it
+	# its own y (130), its own frame (com_warning_*) and its own fill, a dark
+	# blue (0, 52, 92) -- the blue banner (READ, HudNotice.STYLE_WARNING).
 	_hud_warning = HudNotice.new()
 	_hud_warning.name = "HudWarning"
 	ui_control.add_child(_hud_warning)
-	_hud_warning.setup(_ui_builder)
+	_hud_warning.setup(_ui_builder, HudNotice.STYLE_WARNING)
 	# The global chatting item opens "Chat to all" (round 634).
 	_hud_panels.global_chat_requested.connect(_on_global_chat_requested)
 	_setup_console_and_help()
@@ -2501,7 +2510,7 @@ func _minimap_npc_positions() -> Array:
 var _qa_anim_sample: Dictionary = {}
 
 func _qa_animation_report() -> void:
-	print("QA ANIM %d animated character(s)" % _animated.size())
+	print("QA ANIM %d animated character(s), %d posed and %d culled last frame" % [_animated.size(), _anim_posed_last, _anim_culled_last])
 	var checked := 0
 	for entry in _animated:
 		var skeleton: Skeleton3D = entry[0]
@@ -4159,6 +4168,7 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 	_grid_has_origin = true
 	_grid.loaded_cells.clear()
 	_grid.mark_loaded(cdx, cdy, center_x, center_y)
+	_monster_cells_dirty = true
 	# The centre cell is (cdx, cdy) -- (0, 0) while the frame is the centre;
 	# the neighbours stream in from here. Set the stream cell to it (not the
 	# sentinel) so the queue's stale-guard keeps the neighbours we are about
@@ -4226,6 +4236,8 @@ func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_an
 	_try_spawn_region_npcs(region_x, region_y)
 	_note_cell_built(t0, t1, t2, Time.get_ticks_usec())
 	_grid.mark_loaded(dx, dy, region_x, region_y)
+	# Its monsters waiting for it are built now (round 655).
+	_monster_cells_dirty = true
 
 ## Where a region's terrain group stands (_terrain_commit): the half-span
 ## centring, the vertical anchor and the cell's offset from the frame region
@@ -4402,6 +4414,8 @@ func _maybe_stream_regions() -> void:
 		# heightmap and the object collision meshes only it referenced.
 		# Until this round only the cell key was erased.
 		var dropped := _grid.unload(region_x, region_y)
+		# Its monsters' bodies go with it (round 655), their snapshots kept.
+		_monster_cells_dirty = true
 		print("World3D: region %d/%d forgotten -- %s; %d NPC holder(s) freed with its terrain" % [
 			region_x, region_y, ", ".join(dropped), npcs_freed])
 
@@ -5069,8 +5083,10 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		if _hud_panels != null:
 			_hud_panels.cancel_held_icon("zone change")
 		# A new object in the new zone: no movement order (round 637's review
-		# follow-up, _player_move_order).
+		# follow-up, _player_move_order) -- and no walk or run in effect
+		# (round 653's review): a heading run carried on into the new zone.
 		_player_move_order = false
+		_end_move_order_for_arrival()
 		# The server stands a character that changes zone (round 607).
 		_sit.reset()
 		# Retail's zone reset (FUN_00787860) runs FUN_007b5300: a running
@@ -5139,8 +5155,12 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		_monster_bodies[monster_id].queue_free()
 	_monster_bodies.clear()
 	# Their snapshots too (round 638 review): the old zone's monsters are no
-	# one's target here; the list below refills it.
+	# one's target here; the list below refills it. And any body still
+	# queued or waiting for its region (round 655).
 	_monster_snapshots.clear()
+	_monster_build_queue.clear()
+	_monster_build_queued.clear()
+	_monster_deferred.clear()
 	_monster_motion.clear()
 	_monster_heights_pending.clear()
 	_strike_waits.clear()
@@ -5360,6 +5380,10 @@ func _exit_tree() -> void:
 	if _skill_table_task >= 0:
 		WorkerThreadPool.wait_for_task_completion(_skill_table_task)
 		_skill_table_task = -1
+	# Nor the characterdata name-key index (_preload_name_key_index).
+	if _name_key_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_name_key_task)
+		_name_key_task = -1
 	# Every live skill effect and aura goes with the world, and the bodies
 	# SkillEffects remembers are forgotten (a relog builds a new World3D).
 	SkillEffects.clear_live()
@@ -5386,6 +5410,8 @@ func _exit_tree() -> void:
 			character.skeleton.free()
 			npc_freed += 1
 	_npc_model_cache.clear()
+	# The monster species templates (round 655), never parented either.
+	npc_freed += _monster_templates.free_all()
 	_ground_texture_cache.clear()
 	_water_frames_cache.clear()
 	_water_frames_load_attempted = false
@@ -5408,7 +5434,7 @@ func _exit_tree() -> void:
 	if viewport != null:
 		viewport.debug_draw = Viewport.DEBUG_DRAW_DISABLED
 	print(_load_timings.summary())
-	print("World3D: left the tree -- %d scenery templates and %d NPC templates freed" % [scenery_freed, npc_freed])
+	print("World3D: left the tree -- %d scenery templates and %d NPC and monster templates freed" % [scenery_freed, npc_freed])
 
 ## Registers an assembled character for idle animation, if it has one.
 ##
@@ -5479,10 +5505,24 @@ func _play_once(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, hold: boo
 ## Advances every idle animation. Entries whose skeleton has gone (a region
 ## streamed out, a monster died) are dropped as they are found, which keeps
 ## this from holding freed nodes alive.
+##
+## Round 655: a monster's or NPC's clip (MonsterDraw.META_CULL) is posed only
+## while its body is in MonsterDraw.POSE_RANGE of the camera and touches the
+## view frustum (MonsterDraw.pose_wanted); out of range its clip's sounds stop
+## too, and a monster's model (MonsterDraw.META_HIDE) is hidden. The clock
+## runs on regardless, so a body coming into view is posed
+## where its clip has got to, and a one-shot still hands back to its loop on
+## time. The player, other players and the character window's doll are not
+## culled.
 func _tick_idle_animations(delta: float) -> void:
 	if _animated.is_empty():
 		return
 	_idle_anim_time += delta
+	var cam := get_viewport().get_camera_3d() if is_inside_tree() and get_viewport() != null else null
+	var eye: Vector3 = cam.global_position if cam != null else Vector3.ZERO
+	var planes: Array = cam.get_frustum() if cam != null else []
+	var posed := 0
+	var culled := 0
 	var alive: Array = []
 	for entry in _animated:
 		# A zone change frees every region's skeletons while their entries
@@ -5495,12 +5535,30 @@ func _tick_idle_animations(delta: float) -> void:
 		var skeleton: Skeleton3D = entry[0]
 		if not skeleton.is_inside_tree():
 			continue
+		var pose := true
+		var audible := true
+		if cam != null and skeleton.has_meta(MonsterDraw.META_CULL):
+			var origin := skeleton.global_position
+			var radius := float(skeleton.get_meta(MonsterDraw.META_RADIUS, 1.0))
+			audible = MonsterDraw.in_range(origin, radius, eye)
+			pose = audible and MonsterDraw.pose_wanted(origin, radius, eye, planes)
+			# A monster's model out of range is hidden, as MapAnimation hides a
+			# map object (round 655's review; OURS): unposed, a walking body
+			# would slide without its gait.
+			if skeleton.has_meta(MonsterDraw.META_HIDE) and skeleton.visible != audible:
+				skeleton.visible = audible
+		if pose:
+			posed += 1
+		else:
+			culled += 1
 		var anim: BanReader.ParsedAnimation = entry[1]
 		var phase: float = entry[3]
 		var loops: bool = entry[4]
 		if loops:
-			Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, _idle_anim_time + phase, true)
-			_anim_sounds.advance(skeleton, anim, float(entry[5]), _loop_ms(anim, _idle_anim_time + phase), true)
+			if pose:
+				Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, _idle_anim_time + phase, true)
+			if audible:
+				_anim_sounds.advance(skeleton, anim, float(entry[5]), _loop_ms(anim, _idle_anim_time + phase), true)
 		else:
 			# A one-shot runs from when it started, on the clip's own clock,
 			# and holds its last keyframe; once there, hand back to what it
@@ -5509,19 +5567,31 @@ func _tick_idle_animations(delta: float) -> void:
 			if elapsed >= anim.duration_seconds() and entry[6] != null:
 				# Its last tracks first: the frame that ends it is the frame
 				# that would pass them.
-				_anim_sounds.advance(skeleton, anim, float(entry[5]), float(anim.duration_ms), false)
+				if audible:
+					_anim_sounds.advance(skeleton, anim, float(entry[5]), float(anim.duration_ms), false)
 				var resume: Array = entry[6]
 				resume[5] = _idle_anim_time
 				alive.append(resume)
-				Skeleton3DBuilder.apply_ban_pose_at(skeleton, resume[1], _idle_anim_time + float(resume[3]), true)
-				_anim_sounds.advance(skeleton, resume[1], float(resume[5]),
-					_loop_ms(resume[1], _idle_anim_time + float(resume[3])), true)
+				if pose:
+					Skeleton3DBuilder.apply_ban_pose_at(skeleton, resume[1], _idle_anim_time + float(resume[3]), true)
+				if audible:
+					_anim_sounds.advance(skeleton, resume[1], float(resume[5]),
+						_loop_ms(resume[1], _idle_anim_time + float(resume[3])), true)
 				continue
-			Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, elapsed, false)
-			_anim_sounds.advance(skeleton, anim, float(entry[5]), elapsed * 1000.0, false)
+			if pose:
+				Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, elapsed, false)
+			if audible:
+				_anim_sounds.advance(skeleton, anim, float(entry[5]), elapsed * 1000.0, false)
 		alive.append(entry)
 	if alive.size() != _animated.size():
 		_animated = alive
+	_anim_posed_last = posed
+	_anim_culled_last = culled
+
+## How many clips the last _tick_idle_animations posed and culled (round
+## 655), for the QA ANIM line and the test.
+var _anim_posed_last := 0
+var _anim_culled_last := 0
 
 ## Where a loop posed at `seconds` is in its clip, in milliseconds -- the
 ## wrap apply_ban_pose_at makes for a looping clip.
@@ -6227,6 +6297,9 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 			facing_usec += Time.get_ticks_usec() - facing_started
 		holder.add_child(skeleton)
 		var bounds := _skeleton_bounds(skeleton)
+		# Its idle is posed only while seen (round 655, MonsterDraw).
+		skeleton.set_meta(MonsterDraw.META_CULL, true)
+		skeleton.set_meta(MonsterDraw.META_RADIUS, MonsterDraw.cull_radius(skeleton, maxf(bounds.x, bounds.y)))
 		holder.add_child(_npc_collider(bounds))
 		var npc_name: String = _npc_names.get(spawn.npc_id, "")
 		# Tagged so a click on the collider can name the NPC it talks to
@@ -8458,6 +8531,7 @@ func _step_pending_friend_cast() -> bool:
 	var point := CombatNet.approach_point(here, there, CombatNet.approach_aim(stop, false, MOVE_TARGET_STOP_DISTANCE))
 	_move_target = Vector3(point.x, player.position.y, point.y)
 	_has_move_target = true
+	_move_heading_run = false
 	return false
 
 ## Sends the pending friendly cast from where the player stands.
@@ -8898,6 +8972,7 @@ func _step_pending_attack() -> bool:
 		CombatNet.approach_aim(stop, tight, MOVE_TARGET_STOP_DISTANCE))
 	_move_target = Vector3(point.x, player.position.y, point.y)
 	_has_move_target = true
+	_move_heading_run = false
 	return false
 
 ## Drops an attack still walking into reach, and ends the walk that was for
@@ -9686,12 +9761,17 @@ func _move_on_nav_graph(delta: float) -> bool:
 			print("NAV %4d: footing settled on %s at local %.1f, %.1f (y %.1f)" % [
 				_qa_tick, _nav_footing_name(graph, _nav_footing), local.x, local.z, local.y])
 	var asked := Vector2(target.x - local.x, target.z - local.z)
-	var step := graph.step_tracked(local, asked, _nav_footing)
-	# Round 649: a click walk the graph stops dead ends here, as retail's does
-	# (ClickWalk.blocked_ends; READ, FUN_009e0e60) -- not held with the run
-	# playing on the spot.
-	if step.blocked and _has_move_target and _pending_attack.is_empty() and _pending_friend_cast.is_empty() \
-			and ClickWalk.blocked_ends(Vector2(step.position.x - local.x, step.position.z - local.z).length(), asked.length()):
+	# Round 653 and its follow-up: an order in effect does not slide along a
+	# wall -- it stops at it and ends (the no-slide walk and
+	# ClickWalk.blocked_ends; READ: retail's collision query answers a
+	# blocking edge with the crossing point, nudged at most 0.2 toward the
+	# cell centre, and bit 0, which ends the mover's movement, for every
+	# movement kind). An attack's or friendly cast's approach is re-issued on
+	# the next tick by _step_move_order. Only the QA walk (SRREVAMP_QA_WALK, a
+	# measurement path with no order) still slides.
+	var slide := _qa_walk != "" and not _has_move_target
+	var step := graph.step_tracked(local, asked, _nav_footing, slide)
+	if _has_move_target and ClickWalk.blocked_ends(step.blocked):
 		_end_blocked_click_walk(graph, step)
 	if trace and OS.get_environment("SRREVAMP_QA_NAVTRACE") == "2":
 		print("NAV %4d: %.2f, %.2f -> %.2f, %.2f (y %.2f) on %s" % [
@@ -9714,6 +9794,88 @@ func _move_on_nav_graph(delta: float) -> bool:
 	player.velocity.y = 0.0
 	return true
 
+## One tick of the movement order in effect (the click walk, the heading run,
+## an attack's or friendly cast's approach, a pick-up walk). Round 653's
+## follow-up moved it out of _physics_process so the approach's retry can be
+## tested: a walk now ends at the first blocked step (ClickWalk.blocked_ends,
+## READ), and an attack or friendly cast walking into reach is re-issued here
+## on the next tick even though the wall ended its move -- retail's attack
+## tick re-issues MoveTowardObject on every pass while out of reach
+## (docs/protocol/auto_command.md, phase 1, READ). Against a wall that keeps
+## it out of reach the body therefore stands at the wall facing its target,
+## re-aiming every tick, until the target comes into reach or the player
+## gives another order; what a retail body shows then was not read.
+func _step_move_order(delta: float) -> void:
+	# An attack walking into reach: Tick_Attack's phase 1 tests the reach
+	# on every tick of the walk, so this does too, and the blow goes out
+	# on the first frame in reach -- stopped, the position flushed, the
+	# request sent -- before the send gate below could follow it with an
+	# OpMove, which would cancel the keep-up it starts (_attack_monster).
+	if not _pending_attack.is_empty():
+		_step_pending_attack()
+	if not _pending_friend_cast.is_empty():
+		_step_pending_friend_cast()
+	if _pending_attack.is_empty() and _pending_friend_cast.is_empty():
+		_approach_blocked_at = Vector3.INF
+	elif _has_move_target and _approach_blocked_at != Vector3.INF \
+			and Vector2(_move_target.x - _approach_blocked_at.x, _move_target.z - _approach_blocked_at.z).length() < APPROACH_BLOCKED_HOLD:
+		# OURS: the re-issued approach aims where the one a wall just ended
+		# aimed -- the target has not moved -- so the body stands at the
+		# wall, facing it, and the reach is still tested every tick. Stepping
+		# again would only meet the same wall, and each no-slide stop nudges
+		# the body up to 0.2 toward its cell's centre (READ, FUN_004472d0),
+		# which at 60 re-issues a second creeps it along the wall (MEASURED
+		# in click_walk_test.gd: 22.7 units in 2 s). How often retail's
+		# client re-shows a server-side re-issue was not read.
+		_has_move_target = false
+		_aim_local_player(Vector3(_move_target.x - player.position.x, 0.0, _move_target.z - player.position.z))
+	if not _has_move_target:
+		# The pending attack went out this frame, or its target went away.
+		player.velocity.x = 0.0
+		player.velocity.z = 0.0
+	elif _step_click_walk(delta):
+		_ask_pickup_after_walk()
+		# Arrived at the stop distance with the attack still pending. The
+		# stop is never beyond the reach, so the test above fires first;
+		# this only keeps an attack from being stranded, and the server
+		# still judges it.
+		if not _pending_attack.is_empty():
+			_release_pending_attack()
+		if not _pending_friend_cast.is_empty():
+			_release_friend_cast()
+
+## A zone change or teleport was accepted (round 653's review): no walk or run
+## goes on into the new zone. A heading run carried on there before.
+func _end_move_order_for_arrival() -> void:
+	_has_move_target = false
+	_move_heading_run = false
+	if player != null:
+		player.velocity.x = 0.0
+		player.velocity.z = 0.0
+
+## Round 653's review (OURS): a heading run whose next step has no navigation
+## graph under it and no terrain either -- it ran off the loaded world --
+## ends here, rather than falling under gravity until the void recovery puts
+## the player back. Retail's world is always loaded around the player; what
+## its mover does at an unloaded edge was not read. Returns whether it ended.
+func _end_run_off_world(delta: float) -> bool:
+	if not (_has_move_target and _move_heading_run):
+		return false
+	var next := player.position + Vector3(player.velocity.x, 0.0, player.velocity.z) * delta
+	# Down to WORLD_FLOOR_Y, the void recovery's own line: VoidCatchFloor
+	# (top at y -1995) is below it and is no ground.
+	var hit := TerrainCollision.vertical_ray(get_world_3d().direct_space_state, next.x, next.z,
+		player.position.y + 10.0, WORLD_FLOOR_Y, TERRAIN_ONLY_COLLISION_MASK, [player.get_rid()])
+	if not hit.is_empty():
+		return false
+	_has_move_target = false
+	_move_heading_run = false
+	player.velocity.x = 0.0
+	player.velocity.z = 0.0
+	if _qa_move_log:
+		print("MOVE run ended: no graph and no ground ahead at (%.3f, %.3f)" % [next.x, next.z])
+	return true
+
 ## One tick of the click walk (round 649, ClickWalk.step): the player's
 ## horizontal velocity toward _move_target for this tick, cut on the tick that
 ## would reach or pass the point so the body lands on it (READ, retail's mover
@@ -9723,6 +9885,16 @@ func _move_on_nav_graph(delta: float) -> bool:
 ## left plus the stop (a /speed of about 5.7 or more, or less with a speed buff)
 ## could carry the body past the point and back again on every tick, for ever.
 func _step_click_walk(delta: float) -> bool:
+	if _move_heading_run:
+		# Round 653: a heading run has no point to arrive at -- the full run
+		# speed along its heading every tick (SkyRun.velocity; READ, the
+		# tick's destination test is for +0x80 == 1 only). A wall ends it
+		# (_move_on_nav_graph); the turn toward the heading was started with
+		# the run and goes on in _step_local_turn.
+		var rv := SkyRun.velocity(_move_heading, _move_speed)
+		player.velocity.x = rv.x
+		player.velocity.z = rv.y
+		return false
 	var to_target := Vector2(_move_target.x - player.position.x, _move_target.z - player.position.z)
 	var r := ClickWalk.step(to_target, _move_speed, delta, MOVE_TARGET_STOP_DISTANCE)
 	if bool(r["arrived"]):
@@ -9738,20 +9910,33 @@ func _step_click_walk(delta: float) -> bool:
 	_aim_local_player(Vector3(to_target.x, 0.0, to_target.y).normalized())
 	return false
 
-## Ends a click walk the navigation graph refused to advance (round 649; see
-## ClickWalk.blocked_ends): the order cleared and the body stopped where the
-## graph left it, as an arrival does, and a walk to a ground item asks for it
-## from here (the server judges the 10 units). An attack or friendly cast
-## walking into reach is not ended here: retail's attack tick re-issues its
-## approach on every pass while out of reach (docs/protocol/auto_command.md,
-## phase 1, READ), and _step_pending_attack does the same.
+## Ends an order at the wall that blocked its step (round 649; round 653's
+## follow-up for every order; ClickWalk.blocked_ends, READ): the order cleared
+## and the body stopped where the no-slide walk left it, as an arrival does,
+## and a walk to a ground item asks for it from here (the server judges the 10
+## units). An attack's or friendly cast's approach keeps its pending action:
+## _step_move_order re-issues the approach on the next tick, as retail's
+## attack tick re-issues MoveTowardObject on every pass while out of reach
+## (docs/protocol/auto_command.md, phase 1, READ).
 func _end_blocked_click_walk(graph: NavGraph, step: NavGraph.StepResult) -> void:
+	var was_run := _move_heading_run
+	var approach := not _pending_attack.is_empty() or not _pending_friend_cast.is_empty()
+	if approach:
+		_approach_blocked_at = _move_target
 	_has_move_target = false
+	_move_heading_run = false
 	player.velocity.x = 0.0
 	player.velocity.z = 0.0
 	if _qa_move_log or _qa_walk != "" or OS.get_environment("SRREVAMP_QA_NAVTRACE") != "":
-		print("NAV: the walk is blocked at local %.2f, %.2f (on %s) -- ended, as retail's mover ends a refused step" % [
-			step.position.x, step.position.z, _nav_footing_name(graph, step.standing_on)])
+		# An approach meets its wall on every tick it is re-issued: logged
+		# once a second at most.
+		var now_ms := Time.get_ticks_msec()
+		if not approach or now_ms - _approach_block_logged_ms >= 1000:
+			if approach:
+				_approach_block_logged_ms = now_ms
+			print("NAV: the %s is blocked at local %.2f, %.2f (on %s) -- ended, as retail's mover ends at a wall%s" % [
+				"heading run" if was_run else ("approach" if approach else "walk"), step.position.x, step.position.z,
+				_nav_footing_name(graph, step.standing_on), "; re-issued next tick" if approach else ""])
 	_ask_pickup_after_walk()
 
 ## A walk up to a ground item we were too far from is over: ask again from
@@ -9760,6 +9945,17 @@ func _ask_pickup_after_walk() -> void:
 	if _pending_pickup_id != -1 and not _pickup_inflight and NetClient.is_connected_to_server():
 		_pickup_inflight = true
 		NetClient.pick_up(NetClient.current_character_name, _pending_pickup_id)
+
+## When a blocked approach was last logged (it is re-issued every tick).
+var _approach_block_logged_ms := -100000
+## Where the approach a wall last ended was aiming (round 653's follow-up), or
+## INF: a re-issue aiming within APPROACH_BLOCKED_HOLD of it stands at the
+## wall instead of stepping into it again (_step_move_order). OURS.
+var _approach_blocked_at := Vector3.INF
+## How far the approach's point must move (the target moving) before a
+## blocked approach steps again. OURS: well under any monster's step, well
+## over float noise.
+const APPROACH_BLOCKED_HOLD := 0.5
 
 ## What the walk believes the player stands on: NavGraph.ON_TERRAIN or a real
 ## object index into the current graph's region. See _move_on_nav_graph.
@@ -9992,6 +10188,12 @@ func _update_blob_shadow() -> void:
 ##                          behind each result that reports a counter, the
 ##                          OpMonsterAttacked it would send goes through
 ##                          NetClient's own dispatch (_qa_mob_strike)
+##   SRREVAMP_QA_MOBS=<N>   (round 655) as soon as the region grid has its
+##                          origin, a monster list of N synthetic monsters of
+##                          QA_MOB_SPECIES real species spread over the load
+##                          window goes through _on_monster_list_result, as a
+##                          server's list would (_qa_mobs_step); the perf
+##                          gate's `mobs` site
 ##   SRREVAMP_QA_PARTY=create|join:<id>  form a party at tick 70 (round 634)
 ##   SRREVAMP_QA_COMMANDS="/a;/b"  feed these lines through the chat console
 ##                          ("wait <seconds>" pauses the list, round 642)
@@ -11266,6 +11468,7 @@ func _qa_retreat(monster: int) -> void:
 	_drop_pending_attack()
 	_move_target = spot
 	_has_move_target = true
+	_move_heading_run = false
 	print("QA ATTACK: retreating %.0f from monster %d to %.1f,%.1f,%.1f; no more swings" % [
 		units, monster, spot.x, spot.y, spot.z])
 
@@ -11575,6 +11778,60 @@ func _qa_mob_move() -> void:
 		_after(Vector2(dx, dz).length() / speed / 2.0, func() -> void:
 			print("QA MOB MOVE: asking for the monster list at half the leg")
 			NetClient.list_monsters())
+
+## SRREVAMP_QA_MOBS=<N> (round 655): a list of N monsters, the density the
+## server will send (the densest 5 x 5-region window of the field spawns
+## holds about 500), for the perf gate's `mobs` site. Delivered once, as soon
+## as the grid has its origin -- during the loading drain, where a real list
+## asked for in _ready lands -- through the list handler a server's list
+## takes. The monsters are OURS: QA_MOB_SPECIES real `MOB_CH_` species with a
+## model of their own (every k-th of the sorted codes, so the pick is the
+## same on every build), at positions drawn with a fixed seed uniformly over
+## the (2 * radius + 1)^2 regions of the load window, at the player's height.
+const QA_MOB_SPECIES := 24
+var _qa_mobs_done := false
+func _qa_mobs_step() -> void:
+	if _qa_mobs_done or not _grid_has_origin:
+		return
+	var spec := OS.get_environment("SRREVAMP_QA_MOBS")
+	if spec == "" or not spec.is_valid_int():
+		return
+	_qa_mobs_done = true
+	_monster_model_path("", "") # the species tables
+	var codes: Array = []
+	for code in _monster_models_by_code.keys():
+		if String(code).begins_with("MOB_CH_"):
+			codes.append(code)
+	codes.sort()
+	var species: Array = []
+	if not codes.is_empty():
+		var step := maxi(codes.size() / QA_MOB_SPECIES, 1)
+		for i in range(0, codes.size(), step):
+			if species.size() < QA_MOB_SPECIES:
+				species.append(codes[i])
+	if species.is_empty():
+		species.append("")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 655
+	var radius := _region_load_radius()
+	var span := 1920.0
+	var centre := _grid_origin_world + Vector3(span / 2.0, 0.0, -span / 2.0)
+	var half := span * (float(radius) + 0.5)
+	var list: Array = []
+	for i in range(int(spec)):
+		var m := CombatNet.MonsterSnapshot.new()
+		m.monster_id = 900000 + i
+		m.code_name = species[i % species.size()]
+		m.monster_name = m.code_name if m.code_name != "" else "QA monster"
+		m.x = centre.x + rng.randf_range(-half, half)
+		m.z = centre.z + rng.randf_range(-half, half)
+		m.y = player.position.y
+		m.max_hp = 100
+		m.hp = 100
+		list.append(m)
+	print("QA MOBS: %d monster(s) of %d species over %.0f x %.0f around (%.0f, %.0f): %s" % [
+		list.size(), species.size(), half * 2.0, half * 2.0, centre.x, centre.z, ", ".join(PackedStringArray(species))])
+	_on_monster_list_result(list, "")
 
 ## SRREVAMP_QA_MOB_STRIKE=1: stands in for a server with the strike push
 ## (OpMonsterAttacked 0x007D), which a server sends only with its
@@ -12714,6 +12971,10 @@ func _physics_step(delta: float) -> void:
 	# ground items still waiting for ground share the frame's height budget
 	# with them (_step_heights).
 	_step_heights(delta)
+	# SRREVAMP_QA_MOBS (round 655): a dense monster list, once.
+	_qa_mobs_step()
+	# The monster bodies a list queued, a frame's budget of them (round 655).
+	_pump_monster_builds()
 	# V and Z, while held (round 608).
 	_apply_key_holds()
 
@@ -12747,30 +13008,10 @@ func _physics_step(delta: float) -> void:
 	# every frame so it follows the pointer while held.
 	if _left_steering and not locked:
 		_try_set_move_target(get_viewport().get_mouse_position())
-	if _has_move_target:
-		# An attack walking into reach: Tick_Attack's phase 1 tests the reach
-		# on every tick of the walk, so this does too, and the blow goes out
-		# on the first frame in reach -- stopped, the position flushed, the
-		# request sent -- before the send gate below could follow it with an
-		# OpMove, which would cancel the keep-up it starts (_attack_monster).
-		if not _pending_attack.is_empty():
-			_step_pending_attack()
-		if not _pending_friend_cast.is_empty():
-			_step_pending_friend_cast()
-		if not _has_move_target:
-			# The pending attack went out this frame, or its target went away.
-			player.velocity.x = 0.0
-			player.velocity.z = 0.0
-		elif _step_click_walk(delta):
-			_ask_pickup_after_walk()
-			# Arrived at the stop distance with the attack still pending. The
-			# stop is never beyond the reach, so the test above fires first;
-			# this only keeps an attack from being stranded, and the server
-			# still judges it.
-			if not _pending_attack.is_empty():
-				_release_pending_attack()
-			if not _pending_friend_cast.is_empty():
-				_release_friend_cast()
+	# Round 653's follow-up: an approach whose move a wall ended is re-issued
+	# here on the next tick (_step_move_order).
+	if _has_move_target or not _pending_attack.is_empty() or not _pending_friend_cast.is_empty():
+		_step_move_order(delta)
 	elif _qa_walk != "" and not _player_dead:
 		# SRREVAMP_QA_WALK: walk on a fixed world heading (its own path; no
 		# key moves the character since round 608), so a render shows the
@@ -12801,13 +13042,25 @@ func _physics_step(delta: float) -> void:
 		_step_teleport_landing()
 	else:
 		var walk_from := player.position
-		if not _move_on_nav_graph(delta):
+		var on_graph := _move_on_nav_graph(delta)
+		if not on_graph:
+			_end_run_off_world(delta)
+		if not on_graph:
 			if not player.is_on_floor():
 				player.velocity.y -= GRAVITY * delta
 			else:
 				player.velocity.y = 0.0
 			_try_step_up(delta)
 			player.move_and_slide()
+			# Round 653, OURS: with no navigation graph under the player (a
+			# region with no .nvm, or before one streams in) an order that
+			# meets a physics wall ends there too, as retail's mover ends at
+			# a wall (ClickWalk.blocked_ends); an approach is re-issued.
+			if _has_move_target and player.is_on_wall():
+				_has_move_target = false
+				_move_heading_run = false
+				player.velocity.x = 0.0
+				player.velocity.z = 0.0
 		_walked_since_send += Vector2(player.position.x - walk_from.x, player.position.z - walk_from.z).length()
 
 	# CharacterBody3D.is_on_floor() was observed real, unreliable here (stays
@@ -12850,9 +13103,13 @@ func _physics_step(delta: float) -> void:
 	# do either. A real move clears the sit above (_leave_sit_by_moving) first.
 	if _time_since_send >= MIN_SEND_INTERVAL and player.position.distance_to(_last_sent_pos) >= MIN_SEND_DISTANCE \
 			and not _sit.sitting and not _motion_locked():
+		# A heading run's positions carry its heading (round 653; retail's
+		# heading form relayed, WorldNet.encode_move).
+		var run_wire := SkyRun.wire_angle(_move_heading) if (_has_move_target and _move_heading_run) else -1
 		if _qa_move_log:
-			print("MOVE send t=%d ms=%d pos=(%.3f,%.3f)" % [_qa_move_tick + 1, Time.get_ticks_msec(), player.position.x, player.position.z])
-		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
+			print("MOVE send t=%d ms=%d pos=(%.3f,%.3f)%s" % [_qa_move_tick + 1, Time.get_ticks_msec(), player.position.x, player.position.z,
+				(" heading=%d" % run_wire) if run_wire >= 0 else ""])
+		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated(), run_wire)
 		_last_sent_pos = player.position
 		_walked_since_send = 0.0
 		_time_since_send = 0.0
@@ -13061,9 +13318,13 @@ func _qa_move_report() -> void:
 	_qa_move_tick += 1
 	var ms := Time.get_ticks_msec()
 	var left := Vector2(_move_target.x - player.position.x, _move_target.z - player.position.z).length()
-	print("MOVE self t=%d ms=%d pos=(%.3f,%.3f) dest=(%.3f,%.3f) order=%s speed=%.1f left=%.3f" % [
+	# Round 653: "run" is a heading run in effect (no destination; `left` is
+	# then to its OURS reach point), "facing" the body's heading and "gait"
+	# the locomotion the body plays (run while an order is in effect).
+	print("MOVE self t=%d ms=%d pos=(%.3f,%.3f) dest=(%.3f,%.3f) order=%s speed=%.1f left=%.3f run=%s facing=%.3f gait=%s" % [
 		_qa_move_tick, ms, player.position.x, player.position.z, _move_target.x, _move_target.z,
-		str(_has_move_target), _move_speed, left])
+		str(_has_move_target), _move_speed, left, str(_has_move_target and _move_heading_run),
+		RemoteFacing.heading_of_yaw(player.rotation.y, 0.0), "run" if _has_move_target else "stand"])
 	for id in _other_bodies:
 		var body: Node3D = _other_bodies[id]
 		if not is_instance_valid(body) or not _other_body_targets.has(id):
@@ -13257,8 +13518,8 @@ func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 ## without aiming it; a turn already in progress goes on.
 func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 	if _qa_move_log:
-		print("MOVE recv %d ms=%d pos=(%.3f,%.3f)%s" % [moved.character_id, Time.get_ticks_msec(), moved.x, moved.z,
-			" relocated" if moved.relocated else ""])
+		print("MOVE recv %d ms=%d pos=(%.3f,%.3f)%s%s" % [moved.character_id, Time.get_ticks_msec(), moved.x, moved.z,
+			" relocated" if moved.relocated else "", (" heading=%d" % moved.heading_wire) if moved.heading_wire >= 0 else ""])
 	if _arrival_pending and _arrival_entries.has(moved.character_id):
 		var kept: WorldNet.EntitySnapshot = _arrival_entries[moved.character_id]
 		kept.x = moved.x
@@ -13271,6 +13532,13 @@ func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 		var body: Node3D = _other_bodies[moved.character_id]
 		if moved.relocated:
 			body.position = to
+			return
+		# Round 653: a heading run faces its heading (retail's echo of the
+		# heading form, FUN_008a5750 -> FUN_009e08a0 -> FUN_009e02f0, turns
+		# the mover to it at 3 pi rad/s), not the next position.
+		if moved.heading_wire >= 0:
+			var hf := RemoteFacing.facing_of(RemoteFacing.from_wire_angle(moved.heading_wire))
+			_aim_remote_body(body, Vector3(hf.x, 0.0, hf.y), 0.0)
 			return
 		_aim_remote_body(body, to - body.position, 0.0)
 
@@ -14007,6 +14275,7 @@ func _toggle_ui_visibility() -> void:
 ## narrowed to the bottom-left corner instead of spanning the full width.
 func _toggle_action_panels() -> void:
 	action_tabs.visible = not action_tabs.visible
+	_fill_monster_rows()
 
 ## Releases the viewport's focus owner for a LEFT button press, and says
 ## whether it did. Only the left button: a right drag orbits the camera and the
@@ -14618,9 +14887,27 @@ func _try_set_move_target(screen_pos: Vector2) -> void:
 	if root != 0:
 		_log_root("a move to the clicked point" if not _left_steering else "a held-button steer", root)
 		return
-	var point = _ground_point_at(screen_pos)
-	if point == null:
-		return
+	var from := camera_3d.project_ray_origin(screen_pos)
+	var dir := camera_3d.project_ray_normal(screen_pos)
+	_move_by_pick_ray(from, dir, get_world_3d().direct_space_state)
+
+## The walk's click on the world, from the camera ray `from` + `dir` (round
+## 653; SkyRun has the reading). The pick reaches SkyRun.PICK_LENGTH (1000)
+## from the camera, as retail's SWorld::vslot_034 does: ground or a placed
+## object inside it is walked to; a ray that meets nothing there -- the sky,
+## or ground farther away -- starts a heading run along the ray's ground
+## direction (FUN_0078f8d0 -> FUN_009ebec0). Returns "walk", "run", "keep"
+## (a run already on that heading goes on unchanged) or "ignore".
+func _move_by_pick_ray(from: Vector3, dir: Vector3, space: PhysicsDirectSpaceState3D) -> String:
+	# Only the ground and placed objects can be a destination. Left to the
+	# default mask the ray also hit the player's own capsule, the invisible
+	# navmesh walls (NAVMESH_WALL_COLLISION_LAYER) and NPC capsules, and a
+	# click across the plaza landed on the nearest of those instead -- "the
+	# character does not move to the direction you click".
+	var hit := space.intersect_ray(SkyRun.pick_query(from, dir, TERRAIN_COLLISION_LAYER, [player.get_rid()]))
+	if hit.is_empty():
+		return _start_heading_run(dir)
+	var point: Vector3 = hit["position"]
 	# A click on the ground supersedes an attack that was walking into reach,
 	# and a friendly cast walking to its player (round 622's review) -- even
 	# one the filter below does not send (OURS: where retail drops a pending
@@ -14628,18 +14915,60 @@ func _try_set_move_target(screen_pos: Vector2) -> void:
 	_pending_attack = {}
 	_released_attack = {}
 	_pending_friend_cast = {}
+	# And a walk to a ground item (round 653's review): its arrival or wall
+	# stop would ask for the item from wherever this walk ends.
+	_pending_pickup_id = -1
 	# The client's own click filter (FUN_009eb2a0, round 637's review
 	# follow-up; RemoteFacing.click_rule): with no movement order in effect a
 	# click under 5 units away is not sent -- nothing moves; a far click
 	# within 5 degrees of a far order snaps the heading instead of turning.
-	match RemoteFacing.click_rule(_player_move_order, (point as Vector3) - player.position, _move_target - player.position):
+	match RemoteFacing.click_rule(_player_move_order, point - player.position, _move_target - player.position):
 		"ignore":
-			return
+			return "ignore"
 		"snap":
 			_player_turn_snap = true
 	_player_move_order = true
 	_move_target = point
 	_has_move_target = true
+	_move_heading_run = false
+	return "walk"
+
+## Starts a heading run along the pick ray `dir` (round 653, SkyRun): the ray's
+## ground direction becomes the run's heading, and the body turns to it at the
+## client's rate while it runs (FUN_009e08a0 -> FUN_009e02f0, 3 pi rad/s). Not
+## started -- "keep" -- when the player is moving and the heading is within 5
+## degrees of its facing (FUN_0078f8d0, READ; SkyRun.click_rule).
+func _start_heading_run(dir: Vector3) -> String:
+	var current := RemoteFacing.heading_of_yaw(player.rotation.y, 0.0)
+	var h := SkyRun.heading_of_ray(current, dir)
+	# READ: retail keeps the run only while the player moves (state bit 9)
+	# AND its move kind is not a walk to a point (+0x6e8 != 1; +0x6e8 is the
+	# mover's +0x80: 1 a destination, 2 a heading). A sky click within 5
+	# degrees during a ground walk therefore starts a run.
+	if SkyRun.click_rule(_has_move_target and _move_heading_run, current, h) == "keep":
+		return "keep"
+	# The click supersedes an attack or friendly cast walking into reach, as
+	# a ground click does.
+	_pending_attack = {}
+	_released_attack = {}
+	_pending_friend_cast = {}
+	# And a walk to a ground item (round 653's review): the run is the order
+	# now, so a wall that stops it must not ask for the item from there.
+	_pending_pickup_id = -1
+	var flat := RemoteFacing.facing_of(h)
+	_player_move_order = true
+	_move_heading_run = true
+	_move_heading = h
+	# OURS: the order's point, for the ground click's own filter
+	# (RemoteFacing.click_rule) should a ground click follow: the pick's reach
+	# along the heading. What retail's destination record holds during a
+	# heading move is not read.
+	_move_target = player.position + Vector3(flat.x, 0.0, flat.y) * SkyRun.PICK_LENGTH
+	_has_move_target = true
+	_aim_local_player(Vector3(flat.x, 0.0, flat.y))
+	if _qa_move_log:
+		print("MOVE run t=%d ms=%d heading=%.4f wire=%d dir=(%.3f,%.3f)" % [_qa_move_tick + 1, Time.get_ticks_msec(), h, SkyRun.wire_angle(h), flat.x, flat.y])
+	return "run"
 
 ## The point on the ground or a placed object under a screen point, or null:
 ## the click-to-move ray, shared with the ground-pick cast (round 617).
@@ -14838,6 +15167,9 @@ func _monster_height_found(monster_id: int, height: float) -> void:
 		return
 	var frames: int = Engine.get_physics_frames() - int(_monster_heights_pending[monster_id])
 	_monster_heights_pending.erase(monster_id)
+	# Per monster, so only with the monster log on (round 655).
+	if not _mob_logging():
+		return
 	var snap = _monster_snapshots.get(monster_id)
 	print("World3D: monster %d %s height resolved after %d frame(s): %.2f at frame %d" % [
 		monster_id, snap.monster_name if snap != null else "?", frames, height, Engine.get_frames_drawn()])
@@ -14875,6 +15207,9 @@ func _monster_height_found(monster_id: int, height: float) -> void:
 ## See NpcTableReader.parse_models_by_code / parse_models_by_name.
 var _monster_models_by_code: Dictionary = {}
 var _monster_models_by_name: Dictionary = {}
+## {code name -> OrgObjCodeName} (round 655): the row a `_CLON` takes its
+## model from (NpcTableReader.parse_org_codes / model_with_org).
+var _monster_org_by_code: Dictionary = {}
 var _monster_models_loaded := false
 ## The object name table as parsed from the player's archive, kept so the
 ## debug panel can show what language its columns yield.
@@ -14895,12 +15230,20 @@ func _monster_model_path(code_name: String, species_name: String) -> String:
 					continue
 				var bytes := _media_pk2.read_file(entry)
 				_monster_models_by_code = NpcTableReader.parse_models_by_code(bytes, _monster_models_by_code, "")
+				_monster_org_by_code = NpcTableReader.parse_org_codes(bytes, _monster_org_by_code)
 				if names != null:
 					_monster_models_by_name = NpcTableReader.parse_models_by_name(bytes, names, _monster_models_by_name)
-			print("World3D: %d species resolvable by code, %d by name" % [
-				_monster_models_by_code.size(), _monster_models_by_name.size()])
-	if code_name != "" and _monster_models_by_code.has(code_name):
-		return _monster_models_by_code[code_name]
+			var through_org := 0
+			for code in _monster_org_by_code:
+				if not _monster_models_by_code.has(code) and _monster_models_by_code.has(_monster_org_by_code[code]):
+					through_org += 1
+			print("World3D: %d species resolvable by code, %d more through their Org row, %d by name" % [
+				_monster_models_by_code.size(), through_org, _monster_models_by_name.size()])
+	if code_name != "":
+		# Its own model, else its Org row's (a `_CLON`; READ, round 655).
+		var by_code := NpcTableReader.model_with_org(code_name, _monster_models_by_code, _monster_org_by_code)
+		if by_code != "":
+			return by_code
 	return _monster_models_by_name.get(species_name.to_lower(), "")
 
 func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
@@ -14936,6 +15279,20 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 		_set_hp_bar(existing, monster.hp, monster.max_hp)
 		return
 
+	# Round 655: no body outside the loaded regions. The snapshot is kept, and
+	# the body is built when its region loads (_monster_cells_changed).
+	if not _monster_region_loaded(Vector3(monster.x, monster.y, monster.z)):
+		_monster_build_queued.erase(monster.monster_id)
+		_monster_deferred[monster.monster_id] = true
+		return
+	_monster_deferred.erase(monster.monster_id)
+	_monster_build_queued.erase(monster.monster_id)
+	_build_monster_body(monster)
+
+## Builds the body of one monster that has none (round 655: split from
+## _spawn_or_update_monster; the body comes from its species' template,
+## MonsterDraw.Templates). The caller has checked its region is loaded.
+func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	# The ray finds no ground where the monster's region has not committed its
 	# terrain collision yet -- the list asked for in _ready routinely arrives
 	# before the neighbour cells do -- and nothing else re-places a standing
@@ -14957,25 +15314,35 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	# hand-derived piece-to-bone table. All of that is superseded:
 	# SkinnedBsrAssembler reads the .bsr's own skeleton and meshes, and
 	# computes the bone mapping.
+	#
+	# Round 655: assembled once per model (MonsterDraw.Templates) and
+	# duplicated per body, as the NPCs are (_npc_model_cache).
 	var monster_skeleton: Skeleton3D = null
 	var monster_model := _monster_model_path(monster.code_name, monster.monster_name)
+	var label_height := 2.0 * PLAYER_SCALE_RATIO
 	if monster_model != "":
-		if _data_pk2 == null:
-			_data_pk2 = _open_pk2_if_set()
-		if _data_pk2 != null:
-			var assembled := SkinnedBsrAssembler.assemble_from_archive(_data_pk2, monster_model, true)
-			if assembled != null:
-				monster_skeleton = assembled.skeleton
-				_monster_assembled[monster.monster_id] = assembled
-				_animate(assembled)
+		var assembled := _monster_templates.instance(monster_model,
+			_monster_assemble if _monster_assemble.is_valid() else _assemble_monster_model)
+		if assembled != null:
+			monster_skeleton = assembled.skeleton
+			_monster_assembled[monster.monster_id] = assembled
+			label_height = _monster_templates.label_height_of(monster_model)
+			monster_skeleton.set_meta(MonsterDraw.META_CULL, true)
+			monster_skeleton.set_meta(MonsterDraw.META_HIDE, true)
+			monster_skeleton.set_meta(MonsterDraw.META_RADIUS, _monster_templates.radius_of(monster_model))
+			_animate(assembled)
 	# Says which of the three ways a monster can come out wrong happened:
 	# the species not in the tables, the model not assembling, or a real
-	# model placed somewhere the player will never be.
-	print("World3D: monster %s (%s) -> model '%s' skeleton=%s at %.0f,%.0f,%.0f (%.0f from the player)%s" % [
-		monster.monster_name, monster.code_name if monster.code_name != "" else "no code",
-		monster_model, "yes" if monster_skeleton != null else "NO",
-		pos.x, pos.y, pos.z, pos.distance_to(player.global_position),
-		" (height pending: no ground under it yet)" if _monster_heights_pending.has(monster.monster_id) else ""])
+	# model placed somewhere the player will never be. Per monster, so only
+	# with the monster log on (round 655); the build summary counts them.
+	if monster_skeleton == null:
+		_monster_build_capsules += 1
+	if _mob_logging():
+		print("World3D: monster %s (%s) -> model '%s' skeleton=%s at %.0f,%.0f,%.0f (%.0f from the player)%s" % [
+			monster.monster_name, monster.code_name if monster.code_name != "" else "no code",
+			monster_model, "yes" if monster_skeleton != null else "NO",
+			pos.x, pos.y, pos.z, pos.distance_to(player.global_position),
+			" (height pending: no ground under it yet)" if _monster_heights_pending.has(monster.monster_id) else ""])
 
 	# Real model height varies a lot by species/asset (real monster
 	# skeletons are nowhere near the human PLAYER_SCALE_RATIO-derived
@@ -14983,14 +15350,9 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	# real assembled skeleton's own bone bounds rather than reusing the
 	# capsule-calibrated label offset, which would float the label wildly
 	# too high (or low) above a real model of very different real size.
-	var label_height := 2.0 * PLAYER_SCALE_RATIO
+	# (MonsterDraw.label_height, once per template since round 655.)
 	if monster_skeleton != null:
 		body.add_child(monster_skeleton)
-		var max_y := 0.0
-		for i in range(monster_skeleton.get_bone_count()):
-			if Skeleton3DBuilder.is_skeleton_bone(monster_skeleton, i):
-				max_y = max(max_y, monster_skeleton.get_bone_global_pose(i).origin.y)
-		label_height = max_y + max_y * 0.15
 	else:
 		var mesh := MeshInstance3D.new()
 		var capsule := CapsuleMesh.new()
@@ -15021,6 +15383,7 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 
 	other_entities.add_child(body)
 	_monster_bodies[monster.monster_id] = body
+	_monster_builds += 1
 	# Its buffs' auras, if the zone told any (round 646, BuffRoster).
 	_fx_resync_owner(_fx_owner_key(monster.monster_id, SkillNet.OWNER_MONSTER), "its body was built")
 	# Its sounds: keyed by its own sound object (MOB_CH_MANGNYANG ->
@@ -15036,6 +15399,161 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 		# footstep (0xa6ffc0 returns early without one); its key has no material.
 		sound_owner.material = func() -> int: return _audio_material_at(body.global_position, -2) if is_instance_valid(body) else -1
 		_anim_sounds.register(monster_skeleton, sound_owner)
+
+# --- Many monsters (round 655) ------------------------------------------------
+#
+# MonsterDraw has the rules; what follows is the glue: the species templates,
+# the build queue and its per-frame budget, and the region gate.
+
+## One template per species model (MonsterDraw.Templates), freed with the
+## world (_exit_tree). Kept across zone changes, like _npc_model_cache.
+var _monster_templates := MonsterDraw.Templates.new()
+## How a template is assembled: the model's own `.bsr` out of Data.pk2. A
+## Callable so the headless test can hand it a synthetic model.
+var _monster_assemble := Callable()
+## Monsters listed but not built yet, oldest first, and the same ids as a set.
+var _monster_build_queue: Array[int] = []
+var _monster_build_queued := {}
+## Monsters whose region is not loaded: a snapshot, no body. Built when their
+## region loads (_monster_cells_changed).
+var _monster_deferred := {}
+## Set when a region cell loads or unloads, so the next pump re-sorts the
+## deferred monsters and the bodies against the loaded cells.
+var _monster_cells_dirty := false
+## Bodies built, of them capsules, and bodies dropped with their region --
+## for the build summary line.
+var _monster_builds := 0
+var _monster_build_capsules := 0
+var _monster_region_drops := 0
+## When the queue last became non-empty (usec) and the frames it took, for
+## the summary printed when it drains.
+var _monster_queue_started_usec := -1
+var _monster_queue_frames := 0
+var _monster_queue_longest_usec := 0
+
+func _assemble_monster_model(model: String) -> SkinnedBsrAssembler.AssembledCharacter:
+	if _data_pk2 == null:
+		_data_pk2 = _open_pk2_if_set()
+	if _data_pk2 == null:
+		return null
+	return SkinnedBsrAssembler.assemble_from_archive(_data_pk2, model, true)
+
+## Whether a world position lies in a loaded region cell (the streamed grid's
+## _grid.loaded_cells, RegionGridState.cell_at). With no grid -- a loose dev
+## file, the headless tests -- there is nothing to gate against: true.
+func _monster_region_loaded(pos: Vector3) -> bool:
+	if not _grid_has_origin:
+		return true
+	var cell := RegionGridState.cell_at(pos - _grid_origin_world)
+	return _grid.loaded_cells.has("%d_%d" % [cell.x, cell.y])
+
+## Queues a listed monster's body for _pump_monster_builds.
+func _queue_monster_build(monster_id: int) -> void:
+	if _monster_build_queued.has(monster_id) or _monster_bodies.has(monster_id):
+		return
+	if _monster_build_queue.is_empty():
+		_monster_queue_started_usec = Time.get_ticks_usec()
+		_monster_queue_frames = 0
+		_monster_queue_longest_usec = 0
+		_monster_builds = 0
+		_monster_build_capsules = 0
+	_monster_build_queued[monster_id] = true
+	_monster_build_queue.append(monster_id)
+
+## One frame's share of the body builds: queued monsters until
+## MonsterDraw.BUILD_BUDGET_USEC is spent (at least MIN_BUILDS_PER_FRAME). A
+## monster gone from the snapshots (dead, or left the list) is skipped; one
+## whose region is not loaded is deferred. Returns the bodies built.
+func _pump_monster_builds(budget_usec: int = MonsterDraw.BUILD_BUDGET_USEC) -> int:
+	if _monster_cells_dirty:
+		_monster_cells_dirty = false
+		_monster_cells_changed()
+	if _monster_build_queue.is_empty():
+		return 0
+	var started := Time.get_ticks_usec()
+	var built := 0
+	var taken := 0
+	while taken < _monster_build_queue.size():
+		if built >= MonsterDraw.MIN_BUILDS_PER_FRAME and Time.get_ticks_usec() - started >= budget_usec:
+			break
+		var monster_id: int = _monster_build_queue[taken]
+		taken += 1
+		_monster_build_queued.erase(monster_id)
+		var snap = _monster_snapshots.get(monster_id)
+		if snap == null or _monster_bodies.has(monster_id) or _dying_until.has(monster_id):
+			continue
+		var before := _monster_bodies.size()
+		_spawn_or_update_monster(snap)
+		if _monster_bodies.size() > before:
+			built += 1
+	_monster_build_queue = _monster_build_queue.slice(taken)
+	var spent := Time.get_ticks_usec() - started
+	_monster_queue_frames += 1
+	_monster_queue_longest_usec = maxi(_monster_queue_longest_usec, spent)
+	if _monster_build_queue.is_empty() and _monster_queue_started_usec >= 0:
+		print("World3D: %d monster bod(ies) built over %d frame(s) in %.0f ms, longest frame %.1f ms (%d capsule(s)); %d species template(s), %d assembled in %.0f ms, %d instanced in %.0f ms; %d waiting for their region" % [
+			_monster_builds, _monster_queue_frames, (Time.get_ticks_usec() - _monster_queue_started_usec) / 1000.0,
+			_monster_queue_longest_usec / 1000.0, _monster_build_capsules, _monster_templates.size(),
+			_monster_templates.assembles, _monster_templates.assemble_usec / 1000.0,
+			_monster_templates.instances, _monster_templates.instance_usec / 1000.0, _monster_deferred.size()])
+		_monster_queue_started_usec = -1
+	return built
+
+## A region cell loaded or unloaded: deferred monsters whose region is now
+## loaded are queued, and bodies whose region has gone are dropped (their
+## snapshots kept, deferred until it loads again).
+func _monster_cells_changed() -> void:
+	for monster_id in _monster_deferred.keys():
+		var snap = _monster_snapshots.get(monster_id)
+		if snap == null:
+			_monster_deferred.erase(monster_id)
+			continue
+		if _monster_region_loaded(Vector3(snap.x, snap.y, snap.z)):
+			_monster_deferred.erase(monster_id)
+			_queue_monster_build(monster_id)
+	var dropped := 0
+	for monster_id in _monster_bodies.keys():
+		if _dying_until.has(monster_id):
+			continue
+		var body = _monster_bodies[monster_id]
+		if body == null or not is_instance_valid(body):
+			continue
+		if _monster_region_loaded((body as Node3D).position):
+			continue
+		_free_monster_body(monster_id, true)
+		if _monster_snapshots.has(monster_id):
+			_monster_deferred[monster_id] = true
+		dropped += 1
+	if dropped > 0:
+		_monster_region_drops += dropped
+		print("World3D: %d monster bod(ies) dropped with their region; %d waiting for their region" % [dropped, _monster_deferred.size()])
+
+## Takes one monster's body out of the world and everything kept about the
+## body (not the snapshot): the list's removal, a region unloading, a death
+## played out. `keep_buffs` (a region unloading: the monster lives on) keeps
+## the buffs the zone told of it, so the rebuilt body's auras come back
+## (_fx_resync_owner).
+func _free_monster_body(monster_id: int, keep_buffs: bool = false) -> void:
+	var body = _monster_bodies.get(monster_id)
+	if body != null and is_instance_valid(body):
+		(body as Node).queue_free()
+	_monster_bodies.erase(monster_id)
+	SkillEffects.detach_owner(_fx_owner_key(monster_id, 1))
+	if not keep_buffs:
+		_fx_owner_buffs.erase(_fx_owner_key(monster_id, 1))
+	_monster_assembled.erase(monster_id)
+	_dying_until.erase(monster_id)
+	_monster_motion.erase(monster_id)
+	_monster_heights_pending.erase(monster_id)
+	_strike_waits.erase(monster_id)
+
+## Forgets a monster entirely: its body, its snapshot and any queued or
+## deferred build.
+func _forget_monster(monster_id: int) -> void:
+	_free_monster_body(monster_id)
+	_monster_snapshots.erase(monster_id)
+	_monster_deferred.erase(monster_id)
+	_monster_build_queued.erase(monster_id)
 
 ## A click-target collider for a monster: a capsule as tall as the model,
 ## on the monster layer only, so a ray can pick it out for an attack while
@@ -15315,6 +15833,7 @@ func _pick_up_ground_item(ground_id: int) -> void:
 	if pick_root == 0 and target != Vector3.INF and player.global_position.distance_to(target) > GroundItemsNet.PICK_RANGE:
 		_move_target = target
 		_has_move_target = true
+		_move_heading_run = false
 		_pending_attack = {}
 		_released_attack = {}
 	else:
@@ -15327,48 +15846,77 @@ func _pick_up_ground_item(ground_id: int) -> void:
 
 ## Reconciles _monster_bodies against live, the authoritative full monster
 ## list for the player's current zone (see _on_monster_list_result) --
-## creates/updates a body for everything in live, removes any tracked body
-## no longer present (dead, or the player changed zones), the same
-## snapshot-driven approach world.Hub's own zone-change teardown uses rather
-## than trying to diff individual damaged/died events.
+## updates the body of everything in live that has one, queues a body for
+## the rest (round 655: built over the next frames by _pump_monster_builds,
+## and only in a loaded region), removes any tracked body no longer present
+## (dead, or the player changed zones), the same snapshot-driven approach
+## world.Hub's own zone-change teardown uses rather than trying to diff
+## individual damaged/died events.
 func _sync_monster_bodies(live: Array) -> void:
 	var live_ids := {}
 	for m in live:
 		live_ids[m.monster_id] = true
-		_spawn_or_update_monster(m)
+		if _monster_bodies.has(m.monster_id):
+			_spawn_or_update_monster(m)
+			continue
+		_monster_snapshots[m.monster_id] = m
+		if _dying_until.has(m.monster_id):
+			continue
+		if not _monster_region_loaded(Vector3(m.x, m.y, m.z)):
+			_monster_deferred[m.monster_id] = true
+			continue
+		_monster_deferred.erase(m.monster_id)
+		_queue_monster_build(m.monster_id)
 
+	var removed: Array = []
 	for monster_id in _monster_bodies.keys():
 		# A monster still playing its death is left where it fell until the
-		# animation has run; the timer _begin_monster_death set asks for
-		# another list then, and this removes it (MonsterBodies.should_free).
+		# animation has run; _finish_monster_death removes it then
+		# (MonsterBodies.should_free).
 		if not MonsterBodies.should_free(monster_id, live_ids, _dying_until, _idle_anim_time):
 			continue
-		_monster_bodies[monster_id].queue_free()
-		_monster_bodies.erase(monster_id)
-		SkillEffects.detach_owner(_fx_owner_key(monster_id, 1))
-		_fx_owner_buffs.erase(_fx_owner_key(monster_id, 1))
-		_monster_assembled.erase(monster_id)
-		_dying_until.erase(monster_id)
-		_monster_motion.erase(monster_id)
-		_monster_heights_pending.erase(monster_id)
-		_strike_waits.erase(monster_id)
-		print("World3D: monster %d body removed t=%.2f" % [monster_id, _idle_anim_time])
+		_forget_monster(monster_id)
+		removed.append(monster_id)
+	# One line per body for a few (a kill's timing reads it), one for many.
+	if removed.size() <= 4:
+		for monster_id in removed:
+			print("World3D: monster %d body removed t=%.2f" % [monster_id, _idle_anim_time])
+	else:
+		print("World3D: %d monster bodies removed t=%.2f" % [removed.size(), _idle_anim_time])
+	# Listed before, gone now, and never built (queued or waiting for its
+	# region): forgotten too.
+	for monster_id in _monster_snapshots.keys():
+		if not live_ids.has(monster_id) and not _monster_bodies.has(monster_id):
+			_forget_monster(monster_id)
+	# The first share at once, so a small list is drawn in the frame it came.
+	_pump_monster_builds()
+
+## The debug tabs' monster rows (round 655): filled only while the tabs are
+## shown -- a 500-monster list was 500 ItemList rows rebuilt per list, for a
+## panel nobody had open. _toggle_action_panels fills it when it opens.
+func _fill_monster_rows() -> void:
+	monster_list.clear()
+	if not action_tabs.visible:
+		return
+	for m in _monsters:
+		monster_list.add_item("%s (HP %d/%d)" % [m.monster_name, m.hp, m.max_hp])
 
 func _on_monster_list_result(monsters: Array, error: String) -> void:
 	if error != "":
 		monster_status_label.text = "Error: %s" % error
 		push_warning("World3D: monster list refused: %s" % error)
 		return
+	# One line, not one per monster (round 655); SRREVAMP_QA_MOB_LOG or /wire
+	# lists them.
 	print("World3D: server reports %d monster(s)" % monsters.size())
-	for m in monsters:
-		print("  %s at %.0f, %.0f, %.0f (%d/%d hp)" % [
-			m.monster_name, m.x, m.y, m.z, m.hp, m.max_hp])
+	if _mob_logging():
+		for m in monsters:
+			print("  %s at %.0f, %.0f, %.0f (%d/%d hp)" % [
+				m.monster_name, m.x, m.y, m.z, m.hp, m.max_hp])
 	# Before the sync: it rewrites a walking monster's listed position.
 	var goto_plan := _qa_goto_plan(monsters)
 	_monsters.assign(monsters)
-	monster_list.clear()
-	for m in _monsters:
-		monster_list.add_item("%s (HP %d/%d)" % [m.monster_name, m.hp, m.max_hp])
+	_fill_monster_rows()
 	_sync_monster_bodies(_monsters)
 	if not goto_plan.is_empty():
 		_qa_goto_from_list(goto_plan)
@@ -15435,6 +15983,19 @@ func _monster_is_moving(monster_id: int) -> bool:
 ## UNKNOWN_MOVE_PULL_SECONDS; a dying body ignores it.
 func _on_monster_moved(moved: CombatNet.MonsterMoved) -> void:
 	if moved == null:
+		return
+	# Listed but not drawn (round 655): queued, or waiting for its region. Its
+	# snapshot takes the leg's destination -- where the server will have it
+	# (OURS: the body is built standing there, not mid-leg) -- and it is
+	# queued if that is in a loaded region. No list is asked for: the
+	# client knows this monster.
+	var known = _monster_snapshots.get(moved.monster_id)
+	if known != null and not _monster_bodies.has(moved.monster_id):
+		known.x = moved.dest_x
+		known.z = moved.dest_z
+		if _monster_deferred.has(moved.monster_id) and _monster_region_loaded(Vector3(known.x, known.y, known.z)):
+			_monster_deferred.erase(moved.monster_id)
+			_queue_monster_build(moved.monster_id)
 		return
 	if not _monster_bodies.has(moved.monster_id):
 		var now := Time.get_ticks_msec()
@@ -15796,6 +16357,15 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	if monster != -1:
 		var dealt := result.monster_damage
 		var died := result.monster_died
+		# The result's health is recorded now, in wire order with the zone's
+		# pushes, and painted as the blow lands (round 655 and its review):
+		# a newer OpMonsterDamaged arriving before the landing is not undone
+		# by this older number. Only a result that reports a blow carries
+		# health: a zero-damage cast (a stun, a debuff) resolves none, and a
+		# server before round 655's review sent 0 there.
+		var blow := dealt > 0 or died
+		if blow:
+			_record_monster_hp(monster, result.monster_remaining_hp)
 		_own_hit_until[monster] = Time.get_ticks_msec() + int(lands_after * 1000.0) + 750
 		if died:
 			# The killer is the one player the server never sends
@@ -15821,6 +16391,13 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 					monster, _last_attack_target, monster])
 			# A monster this blow killed plays its die animation as the blow
 			# lands (held by the kill hold above); a surviving one flinches.
+			# The monster's health, as the snapshot has it by now (the result's,
+			# or a newer push's), drawn as the blow lands (round 655): until
+			# then the full list this handler asked for after every result
+			# brought it. OURS: shown with the blow rather than when the reply
+			# arrives.
+			if blow:
+				_paint_monster_hp(monster)
 			if died:
 				_begin_monster_death(monster)
 			else:
@@ -15860,7 +16437,9 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			# back on its feet in the same call (MonsterStrikes.leaves_dead).
 			if MonsterStrikes.leaves_dead(result.player_died, result.player_hp):
 				_enter_dead_state(result.death_exp_lost)
-	NetClient.list_monsters()
+	# No monster list here any more (round 655): the result carries the
+	# monster's health and death, applied as the blow lands, and a full list
+	# of a 500-monster view after every swing was the cost.
 	# OpUseSkill's response reuses this same OpAttackResult (see
 	# SkillNet's doc comment) -- refresh here too so a just-used skill's
 	# updated cooldown shows up in the Skills tab. Harmless no-op extra
@@ -17521,6 +18100,8 @@ func _on_monster_spawned(spawned: CombatNet.MonsterSpawned) -> void:
 	if spawned == null or spawned.monster == null:
 		return
 	var m := spawned.monster
+	# This server pushes spawns: no list after a death is needed (round 655).
+	_spawn_push_seen = true
 	if _dying_until.has(m.monster_id):
 		return
 	var known := _monster_bodies.has(m.monster_id)
@@ -17556,15 +18137,39 @@ func _on_monster_damaged(damaged: CombatNet.MonsterDamaged) -> void:
 		if damaged_assembled != null:
 			_audio_mark_hit(damaged_assembled.skeleton, false)
 		_play_monster_action(damaged.monster_id, BsrReader.AnimationEntry.TYPE_HIT)
-	# Shrink the HP bar at once, before the list round-trip, so it tracks
-	# each hit. The max comes from the last snapshot of this monster.
-	if damaged != null and _monster_bodies.has(damaged.monster_id):
-		var snap = _monster_snapshots.get(damaged.monster_id)
-		var max_hp: int = snap.max_hp if snap != null else damaged.remaining_hp
-		_set_hp_bar(_monster_bodies[damaged.monster_id], damaged.remaining_hp, max_hp)
-		if damaged.monster_id == _last_attack_target:
-			_set_target_hp(damaged.remaining_hp, max_hp)
-	NetClient.list_monsters()
+	# Shrink the HP bar at once, so it tracks each hit. The max comes from
+	# the last snapshot of this monster. No list follows any more (round
+	# 655): the push carries the health, and it is kept in the snapshot.
+	if damaged != null:
+		_apply_monster_hp(damaged.monster_id, damaged.remaining_hp)
+
+## A monster's health as a result or a push reports it (round 655): kept in
+## its snapshot, drawn on its bar and, for the target, in the target window.
+## The max comes from the snapshot; a monster with none shows it full.
+func _apply_monster_hp(monster_id: int, hp: int) -> void:
+	_record_monster_hp(monster_id, hp)
+	_paint_monster_hp(monster_id, hp)
+
+## Keeps a reported health in the monster's snapshot, without drawing it.
+func _record_monster_hp(monster_id: int, hp: int) -> void:
+	var snap = _monster_snapshots.get(monster_id)
+	if snap != null:
+		snap.hp = hp
+
+## Draws a monster's health on its bar and, for the target, in the target
+## window: `hp`, or the snapshot's when -1.
+func _paint_monster_hp(monster_id: int, hp: int = -1) -> void:
+	var snap = _monster_snapshots.get(monster_id)
+	if hp < 0:
+		if snap == null:
+			return
+		hp = snap.hp
+	var max_hp: int = snap.max_hp if snap != null else hp
+	var body = _monster_bodies.get(monster_id)
+	if body != null and is_instance_valid(body):
+		_set_hp_bar(body, hp, max_hp)
+	if monster_id == _last_attack_target:
+		_set_target_hp(hp, max_hp)
 
 ## Runs `what` after `seconds` of scene time -- at once when zero.
 func _after(seconds: float, what: Callable) -> void:
@@ -17574,15 +18179,16 @@ func _after(seconds: float, what: Callable) -> void:
 	get_tree().create_timer(seconds).timeout.connect(what)
 
 ## Someone else's kill (the zone's OpMonsterDied, which the killer never
-## receives): the death plays at once, then the list is refreshed. The
-## killer's own kill comes through _on_attack_result instead.
+## receives): the death plays at once and the body goes when it has run
+## (_finish_monster_death; round 655 -- until then a full list was asked for
+## here). The killer's own kill comes through _on_attack_result instead.
 func _on_monster_died(monster_id: int) -> void:
 	_begin_monster_death(monster_id)
-	NetClient.list_monsters()
 
 ## A monster's death plays its own die animation (type 4 of its `default`
 ## group, docs/protocol/BSR_FORMAT.md) and the body stays on its last frame
-## until that has run; only then is the list refreshed and the body removed.
+## until that has run; only then is the body removed (_finish_monster_death;
+## until round 655 a fresh list removed it).
 ## Reached from a zone's died push (_on_monster_died) and, for the killer, as
 ## the killing blow lands (_on_attack_result).
 func _begin_monster_death(monster_id: int) -> void:
@@ -17610,13 +18216,133 @@ func _begin_monster_death(monster_id: int) -> void:
 		# The hold restarts from the clip's real start, replacing the killer's
 		# predicted one (MonsterBodies.hold_for_kill).
 		_dying_until[monster_id] = _idle_anim_time + seconds
-		get_tree().create_timer(seconds).timeout.connect(NetClient.list_monsters)
-	elif _dying_until.has(monster_id):
-		# Nothing played, yet a kill hold is set: no timer would come to
-		# lift it, so lift it now and let a fresh list remove the body.
-		_dying_until.erase(monster_id)
-		NetClient.list_monsters()
+		get_tree().create_timer(seconds).timeout.connect(_finish_monster_death.bind(monster_id))
+	else:
+		# Nothing to watch (no die clip, a capsule, a monster with no body):
+		# it goes now. Until round 655 a fresh list removed it.
+		_finish_monster_death(monster_id)
 	print("World3D: monster %d dies, holding %.2fs t=%.2f" % [monster_id, seconds, _idle_anim_time])
+
+## A dead monster's clip has run (or it had none): its body and snapshot go.
+## The server has already dropped it -- a respawn is a new monster with a new
+## id (cmd/server maintainMonster) -- so no list is asked for (round 655).
+func _finish_monster_death(monster_id: int) -> void:
+	if not _monster_bodies.has(monster_id) and not _monster_snapshots.has(monster_id):
+		return
+	var had_body := _monster_bodies.has(monster_id)
+	_forget_monster(monster_id)
+	if had_body:
+		print("World3D: monster %d body removed t=%.2f" % [monster_id, _idle_anim_time])
+	_maybe_pull_after_death()
+
+## A server that sends no spawn push (-monster-spawn-push off, the default)
+## tells this client of a respawn or a GM spawn only through a list (round
+## 655's review). So until the zone's first OpMonsterSpawned has been seen,
+## a death that has played out asks for one list, at most once every
+## DEATH_PULL_SECONDS (OURS). A server that pushes spawns is never asked.
+const DEATH_PULL_SECONDS := 10.0
+var _spawn_push_seen := false
+var _death_pull_msec := -1000000
+## How many lists the throttle has asked for (for the log and the test).
+var _death_pulls := 0
+
+func _maybe_pull_after_death() -> void:
+	if _spawn_push_seen or not NetClient.is_connected_to_server():
+		return
+	var now := Time.get_ticks_msec()
+	if now - _death_pull_msec < int(DEATH_PULL_SECONDS * 1000.0):
+		return
+	_death_pull_msec = now
+	_death_pulls += 1
+	NetClient.list_monsters()
+
+## A unique monster appeared or was killed (round 657; UniqueNoticeNet).
+## 0x874ea0 picks the line by the monster's SN_ key and shows it twice: in
+## the system window as a type-0 line (0xffdbc99b) and on GDR_WARNING_WND,
+## the blue banner at the top centre. Both are logged for the tester's file
+## ("UNIQUE NOTICE" / "UNIQUE BANNER"), the banner with the colour it draws.
+func _on_unique_notice(n: UniqueNoticeNet.Notice) -> void:
+	# The RefObjID -> SN_ key index is built off the main thread at load
+	# (_preload_name_key_index). A notice that beats it waits for it on a
+	# timer instead of blocking the frame.
+	if _name_key_task >= 0 and not WorkerThreadPool.is_task_completed(_name_key_task):
+		get_tree().create_timer(0.1).timeout.connect(_on_unique_notice.bind(n))
+		return
+	var looked := Time.get_ticks_usec()
+	var key := _unique_name_key(n.ref_obj_id)
+	print("UNIQUE NAME KEY: ref %d -> %s in %.3f ms on the main thread" % [
+		n.ref_obj_id, key if key != "" else "(none)", (Time.get_ticks_usec() - looked) / 1000.0])
+	var names := _object_names()
+	var monster_name := ""
+	if names != null and key != "":
+		monster_name = names.get_text(key, "")
+	var table := _ui_text_table
+	var text_of := func(k: String) -> String: return table.get_text(k, "") if table != null else ""
+	var line := UniqueNoticeNet.line_for(n, key, monster_name, text_of)
+	print("UNIQUE NOTICE: kind 0x%04x ref %d key %s text %s killer '%s' line '%s'" % [
+		n.kind, n.ref_obj_id, key if key != "" else "?", UniqueNoticeNet.keys_for(n, key), n.killer, line])
+	if line == "":
+		# No archive text to show (no Media.pk2): nothing retail would draw.
+		return
+	_log_system(line, UniqueNoticeNet.SYSTEM_TYPE)
+	if _hud_warning != null:
+		_hud_warning.show_notice(line)
+		# Where it is on the screen (the harness measures the pixels there).
+		var xf := _hud_warning.get_global_transform_with_canvas()
+		var r := Rect2(xf.origin, _hud_warning.size * xf.get_scale())
+		print("UNIQUE BANNER: %s text '%s' fill #%s alpha %d frame %s at %d,%d size %dx%d system colour 0x%08x" % [
+			_hud_warning.style_name(), line, _hud_warning.fill_color().to_html(false),
+			HudNotice.fill_alpha_for(_hud_warning.alpha()), String(HudNotice.STYLE_WARNING["corner"]),
+			int(r.position.x), int(r.position.y), int(r.size.x), int(r.size.y), HudSystemMessage.COLOR_DEFAULT])
+
+## The SN_ name key of characterdata row `ref_id`, or "", from the index
+## _preload_name_key_index builds. Scanning the parts per notice instead cost
+## 62 ms for a known id and 113 ms for an unknown one on the main thread
+## (round 657 review, tools/probe_name_key_cost.gd on the render box); a
+## lookup in the index is under 0.01 ms.
+func _unique_name_key(ref_id: int) -> String:
+	return String(_name_key_index().get(ref_id, ""))
+
+## Starts building {RefObjID -> SN_ key} from the characterdata parts on a
+## WorkerThreadPool task (the skill-effect table's pattern; Pk2Reader locks
+## its reads). 118 ms of parsing on the render box, none of it on the main
+## thread.
+func _preload_name_key_index() -> void:
+	if _name_key_task >= 0 or _name_key_loaded or _media_pk2 == null:
+		return
+	var pk2 := _media_pk2
+	var result := _name_key_result
+	_name_key_task = WorkerThreadPool.add_task(func() -> void:
+		var t := Time.get_ticks_msec()
+		var index := {}
+		for path in NpcTableReader.MODEL_TABLE_PATHS:
+			var entry := ObjectLoader.find_file(pk2, path)
+			if entry != null:
+				NpcTableReader.parse_name_keys(pk2.read_file(entry), index)
+		result["index"] = index
+		result["ms"] = Time.get_ticks_msec() - t)
+
+## The index, collected from the task once it has finished (the caller waits
+## for completion first, _on_unique_notice); empty without an archive.
+func _name_key_index() -> Dictionary:
+	if _name_key_loaded:
+		return _name_key_cache
+	if _name_key_task < 0:
+		_preload_name_key_index()
+	if _name_key_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_name_key_task)
+		_name_key_task = -1
+		_name_key_cache = _name_key_result.get("index", {})
+		print("World3D: characterdata -> %d SN_ name keys (built in %d ms off the main thread)" % [
+			_name_key_cache.size(), int(_name_key_result.get("ms", 0))])
+		_name_key_result.clear()
+	_name_key_loaded = true
+	return _name_key_cache
+
+var _name_key_task := -1
+var _name_key_result: Dictionary = {}
+var _name_key_cache: Dictionary = {}
+var _name_key_loaded := false
 
 ## The player has advanced a level (server's OpLevelUp, only ever sent to
 ## the character that levelled). Announces it with the client's own recovered

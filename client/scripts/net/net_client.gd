@@ -176,6 +176,9 @@ signal guild_level_result(result: GuildNet.LevelResult)
 ## A chat line arrived (round 634): any type -- ordinary, whisper, party,
 ## guild, global, notice.
 signal chat_update(update: ChatNet.Update)
+## A unique monster appeared or was killed somewhere in the world (round 657,
+## retail 0x300C's 0x0C05 / 0x0C06).
+signal unique_notice(notice: UniqueNoticeNet.Notice)
 ## The server's answer to a line this client sent (0xB025's fields).
 signal chat_result(result: ChatNet.Result)
 
@@ -433,8 +436,10 @@ func enter_world(char_name: String) -> void:
 	own_character_id = -1
 	_send(WorldNet.OP_ENTER_WORLD, WorldNet.encode_enter_world(char_name))
 
-func move_to(x: float, y: float, z: float, relocated: bool = false) -> void:
-	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z, relocated))
+## `heading_wire` (round 653) is a heading run's u16 wire angle
+## (SkyRun.wire_angle), or -1 for a position with no run in effect.
+func move_to(x: float, y: float, z: float, relocated: bool = false, heading_wire: int = -1) -> void:
+	_send(WorldNet.OP_MOVE, WorldNet.encode_move(x, y, z, relocated, heading_wire))
 
 ## Asks to sit down or stand up (WorldNet.OP_MOTION_REQUEST [4], the N key).
 func request_motion(value: int) -> void:
@@ -1014,6 +1019,12 @@ func _dispatch(p: Packet) -> void:
 			guild_points_result.emit(GuildNet.decode_points_result(p.data))
 		GuildNet.OP_LEVEL_RESULT:
 			guild_level_result.emit(GuildNet.decode_level_result(p.data))
+		UniqueNoticeNet.OP_UNIQUE_NOTICE:
+			var un := UniqueNoticeNet.decode(p.data)
+			if un != null:
+				unique_notice.emit(un)
+			else:
+				print("NetClient: malformed unique notice (%d bytes)" % p.data.size())
 		ChatNet.OP_UPDATE:
 			var u := ChatNet.decode_update(p.data)
 			if u != null:

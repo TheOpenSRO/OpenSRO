@@ -471,6 +471,10 @@ var skillCSVColumns = []string{
 	// carries 'tel2' / 'tel3' (Skill.Tel2, Skill.Tel3). A strict suffix: an
 	// older export loads false, and only 'tele' is tested, as before.
 	"Tel2", "Tel3",
+	// Appended in round 654: AI_AttackChance, skilldata column 66
+	// (Skill.AIAttackChance). A strict suffix: an older export loads -1,
+	// unknown -- not 0, which is a real "never drawn".
+	"AIAttackChance",
 }
 
 // skillCSVRequiredColumns is the prefix every skill export must carry; the
@@ -706,6 +710,8 @@ func parseSkillRow(f []string) (Skill, error) {
 	int64At(86, &sk.Pw3)
 	boolAt(87, &sk.Tel2)
 	boolAt(88, &sk.Tel3)
+	sk.AIAttackChance = -1
+	intAt(89, &sk.AIAttackChance)
 
 	if err != nil {
 		return Skill{}, err

@@ -33,10 +33,11 @@ extends SceneTree
 ## ("facing unmeasured").
 ##
 ## The facing is the MODEL's (its .bsr), not the code's: four roster rows
-## (the `_CLON` species) carry `xxx` for a model, and the client draws them
-## through the display-name join instead (World3D._monster_model_path,
-## NpcTableReader.parse_models_by_name), so the probe resolves them the same
-## way, by the name the server sends.
+## (the `_CLON` species) carry `xxx` for a model; until round 655 the client
+## drew them through the display-name join (World3D._monster_model_path,
+## NpcTableReader.parse_models_by_name), which is how the probe resolves
+## them. Since round 655 they take their Org row's model
+## (NpcTableReader.model_with_org, docs/protocol/characterdata.md).
 ##
 ## Usage (render box only -- never run Godot on the developer's machine):
 ##   client/tools/remote_godot.sh sync

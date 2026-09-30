@@ -415,6 +415,104 @@ what `AI::CNest::ValidateRegion` returns for each nest -- a per-region word from
 `FUN_005347c0` (region object `+0x28` table) averaged over two ticks; by the
 shape a population count, **not read** as such.
 
+## External shard DB (user-supplied, 2026-09-30; round 658)
+
+**EXTERNAL.** Everything in this section comes from a private server's database
+backup the user supplied (`SRO_VT_SHARD.bak`; the backup's own name for the
+database is `__ETERNITY_SRO_VT_SHARD`, taken 2023-12-02). It is not retail and
+not read from the executable. The CSVs live only on the render box
+(`/opt/sro-files/db/csv/`); the restore and export recipe is in
+`deploy/README.md`. Nothing from the DB is in this repo beyond the counts below.
+
+**Structure: it matches the parsers above.** `Tab_RefTactics` has 43 columns,
+`tab_refnest` 17 and `Tab_RefAISkill` 5, and every column's SQL width agrees with
+the parser's read width (the tinyint/smallint/int/real/varchar positions line up
+one for one). `tab_refhive` has **10** columns: the first 9 match
+`RefHive_ExtractData`, and the 10th is `szDescString128`, which the parser does
+not read. The DB's own column names agree with the meanings read from the code:
+tactics 6 `nSightRange` (detection distance), 7/8 `btAggressType`/`AggressData`,
+9 `btChangeTarget`, 10/11 `btHelpRequestTo`/`btHelpResponseTo`, 35/36
+`btTraceBoundary`/`TraceData` (give-up), 37/38 `btHomingType`/`HomingData`, 41
+`dwChampionTacticsID`, 42 `AdditionOptionFlag`; nest 9 `nRadius`, 10
+`nGenerateRadius`, 11 `nChampionGenPercentage`, 12/13
+`dwDelayTimeMin`/`dwDelayTimeMax`, 14 `dwMaxTotalCount`, 15-17
+`btFlag`/`btRespawn`/`btType`; hive 2-9 `btKeepMonsterCountType`,
+`dwOverwriteMaxTotalCount`, `fMonsterCountPerPC`, `dwSpawnSpeedIncreaseRate`,
+`dwMaxIncreaseRate`, `btFlag`, `GameWorldID`, `HatchObjType`; AI skill 3-5
+`ExcuteConditionType`/`ExcuteConditionData`/`Option`. Row counts: tactics 1,743,
+nests 16,381, hives 1,170, AI skills 200.
+
+**Monster stats match our client, but that is not evidence of retail.** All
+7,604 monster rows (TypeID 1,2,1) of our `Media.pk2` characterdata equal the DB's
+`_RefObjCommon`+`_RefObjChar` rows on all 104 characterdata columns. A negative
+control (each row compared with the next id's DB row) matched 0 of 7,603. Our
+`Media.pk2` itself, though, carries this shard's own objects:
+`MOB_ETERNITY_DEADWARRIOR` (62584), `MOB_TQ_SNAKEMAN_ETERNITY` (62587), the seven
+`_STR` twins of the field uniques (43969-43975) and the `ANTHEIA` monsters. So the
+client and the DB share a lineage, and matching each other says nothing about
+retail. Skills: 33,578 of our 33,698 skilldata rows are identical. The DB
+disables 66 (`Service` 1 -> 0: EU warrior blocks/intercept and cleric
+heal-shield/bless) and changes about 54 others' params (for example
+`MSKILL_ARABIA_GEENIE` Param5 9040 -> 4520, `SKILL_LUCK` 3,600,000 -> 600,000).
+
+**Nests against npcpos: the positions are ours, and 59% of the species are not.**
+Every one of npcpos's 10,195 field monster rows has a nest at exactly its spot
+(same region, x/z within 0.01). At 4,153 of them it is the same species. At 6,042
+the species was replaced: 4,734 by the custom `MOB_ETERNITY_DEADWARRIOR`, done by
+repointing 88 tactics rows' `dwObjID` (47 npcpos species have no tactics row left
+at all), and 1,308 by Egypt `MOB_SD_*` species. The DB also adds 3,069 field nests
+at no npcpos spot (3,045 of them DEADWARRIOR). Dungeon regions match 330 of
+1,915 npcpos rows; the other 1,585 have no nest at their spot.
+
+**The seven field uniques** each have one nest per npcpos spot (Tiger Girl 11,
+Uruchi 11, Isyutaru 11, Yarkan 10, Shaitan 6, Cerberus 13, Ivy 8; all match
+npcpos exactly). Each nest has cap 1, respawns, a 1,000 radius and champion 0%.
+Each species' nests form one hive with `dwOverwriteMaxTotalCount` = **1**, the
+total-1 rotation hive the hatch section inferred. Delays: **1,200-1,400 s** for
+1954/1982/2002/5871/14936 and **2,100-2,200 s** for 3810/3875. The shard's own
+`_UniqueKillList` (45,215 kills, Jan-Mar 2023) agrees: the 10th-percentile gap
+between kills is 1,295-1,400 s and 2,244-2,372 s respectively. So these are the
+delays the shard actually ran. They are not one-minute test timers, but no
+second source says retail used the same values. The shard also runs a **second,
+concurrent** `_STR` twin of every one of the seven, from its own total-1 hive on
+the same spots. That is a mod.
+
+**Distributions** (13,279 field world-1 monster nests): delay pairs `(1,3)`
+8,351, `(2,3)` 3,633, `(8,12)` 429; 11,988 nests have a maximum of 3 s or less.
+3,630 of the 3,633 `(2,3)` pairs are custom DEADWARRIOR nests; the 4,153 nests that
+match npcpos exactly are `(1,3)` 3,513 and `(8,12)` 459. Champion percent: 10 on
+10,200 nests, 0 on 3,077, 100 on one (`MOB_WC_HYEONGCHEON`, nest 2065). Tactics
+column 41 is set on 239 of 1,743 rows and never names its own row. Aggression
+mode: 0 on 9,099 nests and 1 on 4,180; **mode 2 appears nowhere**. Give-up
+(`TraceData`): 500 on all but one. Detection: 100 (6,361), 200 (2,858), 130, 115,
+and so on. Roam radius: 350/200 (the DEADWARRIOR nests), 700/600/500 elsewhere.
+Hives: 74 use population scaling (`btKeepMonsterCountType` 1; rate 30, cap 80).
+There are 518 nests with `btType` 1 (trigger-driven) and 1,683 with `btRespawn`
+0. 145 nests have a NULL `fLocalPosY`.
+
+**`_RefHWANLevel`** (256 rows): `SPDU` 200 on every level, and `DABR` 10/15/20/25/30/35
+on levels 1-6, then 15 on levels 7-255. Level 0 has `SPDU` 200 and no `DABR`.
+**World config**: the field world `INS_DEFAULT` (id 1) has config group `xxx`, so
+none of the three keys is set for it. `PARTYMONSTER_SPAWN` is OFF in the Pharaoh,
+God-temple and Arabia instance groups and ON in the Jupiter groups (Service 0).
+`CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG` is ON in the instance groups. The
+`PARTYMONSTER_SPAWN` gate is READ as instance-only: the stripping override
+`0x609900` is `CDataDrivenGameWorld`'s slot 6, while `CGameWorld_Default`'s slot 6
+is the unstripped base `0x5eb9a0`. `GiantMonster_SpawnRatio` is in no table of
+this DB (it is a `LoadServerConfig` key), so the default of 14 stands.
+
+**Trust.** The column layouts can be used as they are. The unique rotation
+shape (total-1 hives, one nest per npcpos spot) and the unique delays are
+consistent and corroborated by the shard's kill log. Present them as EXTERNAL
+values, not retail. The general nest rows are usable only for the 4,153 spots
+whose species matches npcpos, and their 1-3 s delays are unverified against
+retail. The replaced species, the `_STR` twins, the custom nests and the
+DEADWARRIOR tactics are this shard's mods and must not be imported. The drop
+tables look like a custom economy: `_RefDropGold.DropProb` is 0.0001 on all 140
+levels, the potion/scroll/ammo class-select tables are all zero, and custom
+`ITEM_11_NORMAL`/`ITEM_11_NOVA` groups sit on 2,309 monsters. Do not use them
+without the user's OK.
+
 ## WANDER's leg and every state's dwell time (round 251)
 
 `CAIState_WANDER::OnEnter` (`0x559df0`) refuses (returns -1, so `ChangeState` drops the

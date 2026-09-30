@@ -24,6 +24,10 @@ import (
 // destination form. 0xff trips the original server's own assert.
 const MovementKindHeading byte = 0
 
+// MovementCommandForward is the heading form's command bit that runs the
+// mover along the heading (round 653, READ: Movement.HeadingByte).
+const MovementCommandForward byte = 1
+
 // MovementRegionWorldBit is the bit in the region word that says the three
 // coordinates are float32 world/dungeon coordinates rather than region-local
 // uint16s. Same encoding this project recovered for positions elsewhere:
@@ -78,8 +82,13 @@ type Movement struct {
 	HasExtra bool
 
 	// HeadingByte is the one-byte field at the record's +0x14, emitted
-	// before the angle in the heading form. Its WIDTH is settled; its
-	// MEANING is not read, which is why it has no better name.
+	// before the angle in the heading form: the movement COMMAND (round 653,
+	// READ). The server's CGObjMoverByCmd steps forward while bit 0
+	// (MovementCommandForward) is set (vslot_004 sets its stepping flag on
+	// it, vslot_003 steps) and turns one way or the other at pi rad/s for
+	// 0x10 and 0x20 (vslot_010). The client's sky click sends 1
+	// (FUN_009ebec0); its arrow keys send 1, 0x10 and 0x20 (FUN_0077b070 ->
+	// FUN_009ebf40). The field keeps its old name.
 	HeadingByte byte
 	// AngleRadians is the heading. Encoded through EncodeMovementAngle.
 	AngleRadians float64

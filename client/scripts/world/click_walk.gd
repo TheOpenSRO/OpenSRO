@@ -43,20 +43,26 @@ static func step(to_target: Vector2, speed: float, delta: float, stop: float) ->
 		return {"arrived": false, "velocity": dir * (left / delta), "landing": true}
 	return {"arrived": false, "velocity": dir * speed, "landing": false}
 
-## How little of a step's asked length a blocked step may cover and still end
-## the walk (OURS): a step the graph stopped dead. A slide along a wall covers
-## a real part of the step and goes on.
-const BLOCKED_PROGRESS := 0.01
-
-## Round 649, the second half of the same rule: whether a click walk whose
-## step the navigation graph BLOCKED ends here. READ (FUN_009e0e60): the
-## mover's collision query (`[0x111a02c]` vtable +0x30) returning bit
-## 0x10000000 ends the movement -- the retail body stops, it does not keep
-## its order. MEASURED on the base (round 649 and its review): walks held
-## against an edge north of the Jangan spawn (local z 953.6, the trace's
-## footing cj_jang_gate) for 59-219 ticks, 4.7-7.2 units short, the run
-## playing on the spot, at /speed 1 too. OURS: "stopped dead" is a
-## step covering no more than BLOCKED_PROGRESS of what was asked, since our
-## graph slides along a wall where retail's query was not read to.
-static func blocked_ends(moved: float, asked: float) -> bool:
-	return asked > 0.000001 and moved <= asked * BLOCKED_PROGRESS
+## Round 649, the second half of the same rule, and round 653's follow-up:
+## whether a walk's step that met a blocking edge ends the walk. It does,
+## always. READ (sro_client.exe, docs/protocol/opcodes/movement.md, "The stop
+## at a wall"): the mover's tick FUN_009e0e60 hands the step to the collision
+## query CRegionManagerBody::vslot_012 (0x412660); its terrain walk (0x4047a0)
+## answers a blocking edge with the crossing point, nudged at most 0.2 toward
+## the centre of the cell the mover is in (FUN_004472d0, 0xe1b850), and bit 0;
+## the tick takes that point and bit 0 ends the movement (+0x84 = 0,
+## +0x80 = 0). A refused step (bit 0x10000000) ends it too. There is no
+## component along the wall in that branch: retail's mover does not slide, for
+## any movement kind -- a walk to a point, a heading run, an approach.
+##
+## Round 649 had OURS here: our graph slid along the wall and the walk ended
+## only when a step covered at most 1 % of what was asked. Round 653's
+## follow-up (the user: "when the character collides with a wall or something
+## that stops it make sure you stop the running as well and make the
+## character stop in place like the original game") walks every order with
+## NavGraph.step_tracked's no-slide walk and ends it at the first blocked
+## step. An attack's or friendly cast's approach is re-issued by its own tick
+## on the next pass (World3D._step_move_order), as retail's attack tick
+## re-issues MoveTowardObject while out of reach (auto_command.md, phase 1).
+static func blocked_ends(blocked: bool) -> bool:
+	return blocked
