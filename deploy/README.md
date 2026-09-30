@@ -750,19 +750,31 @@ and fight but summon nothing, and the boot log says so. `-unique-respawn=60s` (e
 the uniques. The boot log has one `unique rotation` line per unique, and every hatch, re-pin and
 summon is logged (`unique hatched`, `unique rotation: re-pinned`, `unique summons`).
 
+**`-full-map` forces `-single-frame` on**: every zone with a frame is one world and one broadcast
+bucket, so local chat, other players' moves and the ground-item lists go world-wide rather than
+zone-wide, and players need a client that carries rounds 569-571 (see "Single world frame").
+
 - **With `-nest-db-dir`** (env `SRREVAMP_NEST_DB_DIR`, the three CSVs of the section below, mounted
-  at `/data/nestdb`): a row whose spot's shard nest hatches the same species (4,082 rows) takes that
+  at `/data/nestdb`): a row whose spot's shard nest hatches the same species (4,068 rows) takes that
   nest's numbers -- its cap (up to 17 alive), its respawn window (1-3 s on most, 8-12 s on 459), its
   hatch spread, its champion chance (10 % on most) -- and its tactics: aggressive or passive,
   sight, the 500-unit give-up distance, the roam radius and rule. A row whose nest the shard gave
-  to its own custom monster (6,042 rows) places the original species, under its own tactics row
-  when it has one (2,346 rows), on a stand-in nest of one monster. EXTERNAL values throughout.
+  to its own custom monster (6,041 rows) places the original species, under its own tactics row
+  when it has one (2,346 rows; the stand-in behaviour otherwise), on that nest's own cap, window,
+  radii and champion chance (the user's decision, round 660's review). EXTERNAL values throughout.
+  `-nest-swapped-stand-in` (env `SRREVAMP_NEST_SWAPPED_STAND_IN`, OURS) puts those rows back on a
+  one-monster stand-in nest each (10 s, no champion roll) -- half the monsters.
 - **Without it**: one monster per row, respawning 10 s after its death, all aggressive with the
   stand-in sight and leash, no champions. The boot log says so.
 
-Measured on the shard (the round's WORLD_ISSUES entry): 10,124 nests, at most 34,678 monsters
-alive, 34,321 of them within the first minute; about 5 % of hatches come out champion and 0.8 %
-giant; the densest player window holds 1,516 monsters with every nest full.
+Measured on the shard (the round's WORLD_ISSUES entry, its review follow-up): 10,109 nests, at
+most 65,982 monsters alive (34,663 with `-nest-swapped-stand-in`). The server carries it: AI tick
+p99 under 2 ms with a player in a matched field, 6.4 ms at the densest window (4,716 monsters),
+RSS 127-165 MB. **The client does not, yet**: where the swapped spots cluster -- the Europe starter
+field (108/77), the densest window (cell -116/8) -- a client draws 1,378-2,412 bodies and falls to
+7-10 fps (100-143 ms a frame), against 60 fps and about 200 bodies with `-nest-swapped-stand-in`.
+Matched fields (Jangan's) are unchanged. Until the client's monster drawing scales (round 655's
+budget was sized for ~500 in view), `-nest-swapped-stand-in` is the setting for a public server.
 
 The flags srrevamp-01 needs for the monster world, in the override's `command:` (restate the whole
 list) or as environment variables:
@@ -773,6 +785,7 @@ list) or as environment variables:
 #         - "-skills-csv=/data/skills.csv"        # only with -in-memory; PostgreSQL holds the skills
 #         - "-nest-db-dir=/data/nestdb"           # EXTERNAL, the three shard CSVs (+ the two of round 661)
 #         - "-full-map=true"                      # turns -single-frame on itself
+#         # -nest-swapped-stand-in=true           # OURS fallback: one monster per swapped spot
 #         - "-monster-ai=true"
 #         - "-monster-strike-push=true"
 #         - "-monster-spawn-push=true"
@@ -858,7 +871,7 @@ Traps:
 ### The three files `-nest-db-dir` reads (round 660)
 
 `-full-map` with `-nest-db-dir` joins every npcpos row to its shard nest (see "The full map
-(round 660)" below). It reads three of the CSVs step 4 writes, under the table's own name, with the
+(round 660)" above). It reads three of the CSVs step 4 writes, under the table's own name, with the
 DB's own column names as the header: `Tab_RefTactics.csv`, `tab_refnest.csv`, `tab_refhive.csv`.
 Round 661 reads two more when they are there -- `Tab_RefAISkill.csv` (the uniques' triggers) and
 `_RefSkill.csv` (their summon skills' Param blocks; 14 MB) -- and boots without them.

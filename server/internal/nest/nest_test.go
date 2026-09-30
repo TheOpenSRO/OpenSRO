@@ -130,7 +130,7 @@ func TestJoinMatchesSwapsAndExcludes(t *testing.T) {
 	if got[0].Cat != Matched || got[0].Nest.ID != 1 || got[0].Tactics.ID != 11 || got[0].Hive.ID != 100 {
 		t.Fatalf("row 0 joined %+v", got[0])
 	}
-	if got[1].Cat != SwappedOwn || got[1].Nest != nil || got[1].Tactics.ID != 30 || got[1].DBSpecies != 9999 {
+	if got[1].Cat != SwappedOwn || got[1].Nest == nil || got[1].Nest.ID != 2 || got[1].Tactics.ID != 30 || got[1].DBSpecies != 9999 {
 		t.Fatalf("row 1 joined %+v", got[1])
 	}
 	if got[2].Cat != SwappedStandIn || got[2].Tactics != nil || got[2].Spot.ObjectID != 5003 {

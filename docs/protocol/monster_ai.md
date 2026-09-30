@@ -3558,8 +3558,9 @@ copies the row's `+0x18` into ctx+0x168 (mode 2 rolls it: `pct <= rand() % 100` 
 `AITactics_AcquireTarget` (0x5478f0) scans only while that byte is 0 or 3 (`*(char *)(ctx + 0x168)
 == '\0' || == '\x03'`, the decompile, and 0x547958..0x547964). So `btAggressType` 0 is
 aggressive and 1 passive, as round 552 recorded. (The round-660 brief's planning notes read the
-DB the other way round -- "~31 % aggressive (mode 1)"; the code settles it.) Of the 4,082 placed
-matched nests, 2,505 run an aggressive row and 1,577 a passive one (EXTERNAL), and the pattern reads as
+DB the other way round -- "~31 % aggressive (mode 1)"; the code settles it.) Of the 4,068 placed
+matched nests (round 660's review: rarity 8 left out), 2,491 run an aggressive row and 1,577 a
+passive one (EXTERNAL), and the pattern reads as
 retail play does: Jangan's Mangyang nests run a passive row (their champion row is aggressive), and
 across the map a base species' row is aggressive where its `_CLON` is passive (MEASURED, round
 660's census). Passive does not mean harmless: `CAIState::OnAttacked` (0x558ea0) engages any
@@ -3630,8 +3631,21 @@ matched row's slot is its nest: cap col 14, window cols 12/13 (1-3 s on 3,513 of
 col 11, tactics its row with the nest's col 9 as the roam radius, the champion row col 41. A row
 whose nest the shard repointed to another species keeps the npcpos species and runs its own
 tactics row when it has one (`DB.OwnTactics`: the lowest-id row that is no row's champion row;
-OURS), on a stand-in nest: one monster, `respawnDelay` (10 s) at both ends, no scatter, roam
-radius `MonsterRoamRadius`, no champion roll. The brain (`session/monsterai.go`) reads the row in
+OURS), else the stand-in behaviour -- and, by the user's decision in round 660's review ("Use the
+DB nest numbers"), that nest's own cap, window, radius, generate radius and champion chance
+(EXTERNAL), the champion roll gated by column 41 of the row the monster runs; the nest's hive cap
+is not applied. The 6,041 such nests (MEASURED): caps summing to 37,360, windows of 1-3 s on
+4,835, champion chance 10 % on 4,522. `-nest-swapped-stand-in` (OURS) falls back to the stand-in
+nest: one monster, `respawnDelay` (10 s) at both ends, no scatter, roam radius
+`MonsterRoamRadius`, no champion roll.
+
+**The join, one row per nest** (round 660's review). Every (row, nest) pair within
+`JoinTolerance` is ranked -- the row's own species first, then the nearest, then the row's and the
+nest's order (OURS) -- and taken greedily, so no nest is claimed twice: the shard has co-located
+nests (three at one point under SD_OSIRIS/MUMMY_RAGE/MUMMY_HUBRIS, two under SD_MONTKILLER and
+SD_HIKE, two 0.713 from a MOB_KK_PLANAR row), and the first version let MONTKILLER and HIKE both
+claim nest 29723. Rarity 8 is left out with rarity 3: both are unique-class (`combat.
+RarityHPPercent`'s `case 3, 8`). The brain (`session/monsterai.go`) reads the row in
 place of `internal/ai`'s stand-in constants: sight (col 6), aggression (7/8), the chase switch and
 give-up distance (35/36), the roam rule (37), the reach rule (40, `ai.TargetOutOfReach`) and the
 scan's fast-timer bits (42).

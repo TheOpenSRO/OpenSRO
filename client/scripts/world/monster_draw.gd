@@ -53,11 +53,6 @@ const META_RADIUS := "srrevamp_pose_radius"
 ## is only left unposed.
 const META_HIDE := "srrevamp_hide_out_of_range"
 
-## Whether a body at `origin` with bounding radius `radius` is posed this
-## frame: in POSE_RANGE of the camera `eye` (the map objects' strict
-## `dist - radius < range`) and its sphere inside every frustum plane
-## (Camera3D.get_frustum(), normals outward). Empty `planes` passes the
-## frustum test (no camera).
 ## The model scale a monster's class gives it (round 660), READ from the
 ## retail spawn parser CICMonster::vslot_025 (0x9d3850): the scale starts at
 ## 1.0 (`fld1` 0x9d38c9) and a switch on class - 1 (0x9d3995..0x9d39cb, table
@@ -77,6 +72,11 @@ static func class_scale(rarity: int) -> float:
 			return 1.7
 	return 1.0
 
+## Whether a body at `origin` with bounding radius `radius` is posed this
+## frame: in POSE_RANGE of the camera `eye` (the map objects' strict
+## `dist - radius < range`) and its sphere inside every frustum plane
+## (Camera3D.get_frustum(), normals outward). Empty `planes` passes the
+## frustum test (no camera).
 static func pose_wanted(origin: Vector3, radius: float, eye: Vector3, planes: Array, pose_range: float = POSE_RANGE) -> bool:
 	if not in_range(origin, radius, eye, pose_range):
 		return false
