@@ -61,6 +61,12 @@ func (h *Hub) SetMotion(id int64, destX, destZ, speed float64, mode uint8) (Mons
 	m.MoveSpeed = speed
 	m.MoveMode = mode
 	m.Moving = true
+	h.moving[id] = m
+	// The facing follows the leg, as the brain's heading does (monsterai.go
+	// startLeg); a leg onto the monster's own spot leaves it as it was.
+	if dx, dz := destX-m.X, destZ-m.Z; dx != 0 || dz != 0 {
+		h.facing[id] = math.Atan2(dz, dx)
+	}
 	return *m, true
 }
 
@@ -78,35 +84,41 @@ func (h *Hub) StopMotion(id int64) (Monster, bool) {
 	}
 	m.DestX, m.DestZ = m.X, m.Z
 	m.Moving = false
+	delete(h.moving, id)
 	return *m, true
 }
 
-// StepAll advances every moving monster by dt seconds with MoverStep and
-// clears Moving on arrival. It holds h.mu for the whole pass, the lock
-// ApplyDamage deletes a killed monster under, so a monster killed mid-leg is
-// simply absent here: it is neither stepped nor brought back.
-func (h *Hub) StepAll(dt float64) {
+// StepCells advances every moving monster whose cell awake answers true for
+// (nil: every monster) by dt seconds with MoverStep and clears Moving on
+// arrival, appending to dst and returning a CellChange for each one the step
+// carried over a region line, re-filed under its new cell. It holds h.mu for
+// the whole pass, the lock ApplyDamage deletes a killed monster under, so a
+// monster killed mid-leg is simply absent here: it is neither stepped nor
+// brought back. Round 656 made it the hub's one step (it was StepAll, every
+// monster, no crossings) and has it walk the moving set, not every monster
+// alive. A monster whose cell
+// is asleep keeps its leg and its place until its cell wakes (session's
+// monster AI puts a cell to sleep when no player is near it -- OURS).
+//
+// awake is asked with the monster's id as well as its cell (round 656's
+// review): the monster AI keeps a monster in BATTLE or HOMING running wherever
+// it is.
+func (h *Hub) StepCells(dt float64, awake func(id int64, c Cell) bool, dst []CellChange) []CellChange {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for _, m := range h.byID {
-		if !m.Moving {
+	for id, m := range h.moving {
+		if awake != nil && !awake(id, h.cellOf[id]) {
 			continue
 		}
 		var arrived bool
 		m.X, m.Z, arrived = MoverStep(m.X, m.Z, m.DestX, m.DestZ, m.MoveSpeed, dt)
 		if arrived {
 			m.Moving = false
+			delete(h.moving, id)
+		}
+		if ch, changed := h.refileLocked(m); changed {
+			dst = append(dst, ch)
 		}
 	}
-}
-
-// All returns a copy of every live monster, in every zone.
-func (h *Hub) All() []Monster {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	out := make([]Monster, 0, len(h.byID))
-	for _, m := range h.byID {
-		out = append(out, *m)
-	}
-	return out
+	return dst
 }

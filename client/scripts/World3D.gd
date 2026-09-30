@@ -1354,6 +1354,7 @@ func _ready() -> void:
 	_setup_keys()
 
 	NetClient.monster_list_result.connect(_on_monster_list_result)
+	NetClient.monster_left.connect(_on_monster_left)
 	NetClient.monster_moved.connect(_on_monster_moved)
 	NetClient.monster_motion_list.connect(_on_monster_motion_list)
 	NetClient.monster_attacked.connect(_on_monster_attacked)
@@ -15913,6 +15914,43 @@ func _on_monster_list_result(monsters: Array, error: String) -> void:
 	_sync_monster_bodies(_monsters)
 	if not goto_plan.is_empty():
 		_qa_goto_from_list(goto_plan)
+
+## Monsters that left the player's area of interest (round 656,
+## OP_MONSTER_LEFT): each body goes as _sync_monster_bodies drops one the list
+## no longer names -- a body still playing its death is left to finish -- and
+## the monster leaves the list the panel shows.
+func _on_monster_left(ids: Array) -> void:
+	var gone := {}
+	for id in ids:
+		gone[int(id)] = true
+	var live_ids := {}
+	for monster_id in _monster_bodies.keys():
+		if not gone.has(monster_id):
+			live_ids[monster_id] = true
+	for monster_id in gone.keys():
+		if not _monster_bodies.has(monster_id) or not MonsterBodies.should_free(monster_id, live_ids, _dying_until, _idle_anim_time):
+			continue
+		_monster_bodies[monster_id].queue_free()
+		_monster_bodies.erase(monster_id)
+		SkillEffects.detach_owner(_fx_owner_key(monster_id, 1))
+		_fx_owner_buffs.erase(_fx_owner_key(monster_id, 1))
+		_monster_assembled.erase(monster_id)
+		_dying_until.erase(monster_id)
+		_monster_motion.erase(monster_id)
+		_monster_heights_pending.erase(monster_id)
+		_strike_waits.erase(monster_id)
+		_monster_snapshots.erase(monster_id)
+	var kept: Array[CombatNet.MonsterSnapshot] = []
+	for m in _monsters:
+		if not gone.has(m.monster_id):
+			kept.append(m)
+	if kept.size() != _monsters.size():
+		_monsters = kept
+		monster_list.clear()
+		for m in _monsters:
+			monster_list.add_item("%s (HP %d/%d)" % [m.monster_name, m.hp, m.max_hp])
+	if _mob_logging():
+		print("World3D: %d monster(s) left the area of interest" % gone.size())
 
 # --- Server-driven monster movement (round 533) ---------------------------
 #

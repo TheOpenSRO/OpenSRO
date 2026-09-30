@@ -154,6 +154,10 @@ type Result struct {
 	// KilledMonsterID is the monster /kill removed, for the session layer
 	// to announce to the zone the way a combat kill is announced.
 	KilledMonsterID int64
+	// KilledX/KilledZ are where it stood (round 656): the session layer
+	// announces the kill to the players whose area of interest holds that
+	// spot, not to the whole zone.
+	KilledX, KilledZ float64
 	// SpawnedMonsterIDs are the monsters /spawn made, in order, for the
 	// session layer to push to the zone (session.BroadcastMonsterSpawned,
 	// round 542, behind -monster-spawn-push); empty for every other command.
@@ -679,6 +683,8 @@ func (d *Deps) kill(actor Actor) Result {
 		Text:            fmt.Sprintf("killed %s (#%d); no exp, gold, drops or quest credit from a GM kill", m.Name, m.ID),
 		RefreshMonsters: true,
 		KilledMonsterID: m.ID,
+		KilledX:         m.X,
+		KilledZ:         m.Z,
 		Zone:            m.Zone,
 	}
 }

@@ -873,7 +873,11 @@ func TestMaintainMonsterReportsEverySpawn(t *testing.T) {
 	defer cancel()
 	spec := monsterSpecs[0]
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	go maintainMonster(ctx, monsters, logger, spec, func(id int64) { ids <- id })
+	// Round 656: the one respawn scheduler, with this one placement, where
+	// maintainMonster was (its loop, unchanged, is the scheduler's).
+	sched := newRespawnScheduler(monsters, logger, func(id int64) { ids <- id })
+	sched.add(spec)
+	go sched.run(ctx)
 
 	next := func(within time.Duration, what string) int64 {
 		t.Helper()

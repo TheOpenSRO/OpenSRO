@@ -34,7 +34,7 @@ func TestStepAllNeverOvershoots(t *testing.T) {
 	if _, ok := h.SetMotion(m.ID, 103, -200, 22, 1); !ok {
 		t.Fatal("SetMotion refused a live monster")
 	}
-	h.StepAll(0.2)
+	h.StepCells(0.2, nil, nil)
 	got, _ := h.Get(m.ID)
 	if got.X != 103 || got.Z != -200 {
 		t.Errorf("after a 4.4-unit step with 3 left: at (%v, %v); want exactly (103, -200) -- %.1f past it",
@@ -44,7 +44,7 @@ func TestStepAllNeverOvershoots(t *testing.T) {
 		t.Error("a monster on its destination is still Moving")
 	}
 	// Arrived is final: another tick does not move it.
-	h.StepAll(0.2)
+	h.StepCells(0.2, nil, nil)
 	if again, _ := h.Get(m.ID); again.X != got.X || again.Z != got.Z {
 		t.Errorf("an arrived monster moved on the next tick from (%v, %v) to (%v, %v)", got.X, got.Z, again.X, again.Z)
 	}
@@ -76,7 +76,7 @@ func TestHubMotionAPI(t *testing.T) {
 	if !ok || origin.X != 100 || origin.Z != -200 || origin.DestX != 140 || origin.MoveSpeed != 8 || origin.MoveMode != 0 || !origin.Moving {
 		t.Fatalf("SetMotion's copy: %+v ok=%v; want the leg from (100,-200) to (140,-200) at 8, mode 0", origin, ok)
 	}
-	h.StepAll(1) // 8 units along +x
+	h.StepCells(1, nil, nil) // 8 units along +x
 	stopped, ok := h.StopMotion(m.ID)
 	if !ok || stopped.X != 108 || stopped.DestX != 108 || stopped.DestZ != -200 || stopped.Moving {
 		t.Errorf("StopMotion after one 8-unit step: %+v; want standing with dest on (108,-200)", stopped)
@@ -84,11 +84,11 @@ func TestHubMotionAPI(t *testing.T) {
 	if stopped.MoveSpeed != 8 || stopped.MoveMode != 0 {
 		t.Errorf("StopMotion changed the leg's speed/mode to %v/%v", stopped.MoveSpeed, stopped.MoveMode)
 	}
-	h.StepAll(1)
+	h.StepCells(1, nil, nil)
 	if still, _ := h.Get(m.ID); still.X != 108 {
 		t.Errorf("a stopped monster moved to x = %v", still.X)
 	}
-	if all := h.All(); len(all) != 1 || all[0].ID != m.ID {
+	if all := h.AppendAll(nil); len(all) != 1 || all[0].ID != m.ID {
 		t.Errorf("All: %d monsters; want the one", len(all))
 	}
 }
@@ -104,12 +104,12 @@ func TestStepAllSkipsAMonsterKilledMidLeg(t *testing.T) {
 	if _, died, _ := h.ApplyDamage(m.ID, 1000); !died {
 		t.Fatal("the blow should kill")
 	}
-	h.StepAll(0.5)
+	h.StepCells(0.5, nil, nil)
 	if _, alive := h.Get(m.ID); alive {
 		t.Error("StepAll brought a killed monster back")
 	}
-	if len(h.All()) != 1 {
-		t.Errorf("All lists %d monsters after the kill; want 1", len(h.All()))
+	if len(h.AppendAll(nil)) != 1 {
+		t.Errorf("All lists %d monsters after the kill; want 1", len(h.AppendAll(nil)))
 	}
 	if o, _ := h.Get(other.ID); o.X != 61 {
 		t.Errorf("the living monster should still step 11 units: x = %v", o.X)

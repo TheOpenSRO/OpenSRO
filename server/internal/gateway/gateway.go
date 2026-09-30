@@ -14,6 +14,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 )
@@ -61,7 +62,37 @@ type Session struct {
 	// (session/keepup.go) -- and proto.Write is two writes (header, body)
 	// that must not interleave with another packet's.
 	sendMu sync.Mutex
+	// stalled is set when a Send ran past SendTimeout (round 656): the
+	// connection is closed then, and every later Send fails at once rather
+	// than waiting out the deadline again.
+	stalled atomic.Bool
 }
+
+// SendTimeout is how long one Send may block on a client that is not reading
+// before the session is given up (round 656). OURS, an engineering bound, not
+// a retail number: a Send only blocks once the kernel's socket buffers --
+// several hundred KB to a few MB each way -- are full, which a client that
+// reads at all never lets happen at the rates this server sends, so the
+// deadline only ever trips on a peer that has stopped reading. Without it one
+// such peer held its writer forever: the monster AI's tick (session/
+// monsterai.go) pushes to every watching player from one goroutine, and a
+// zone broadcast from another player's handler waited on it too. A variable
+// so a test can shorten it; 0 turns the deadline off.
+//
+// 10 s, not the 2 s round 656 shipped with (its review): a client whose main
+// thread is busy -- a region load, a long frame -- stops reading for a while,
+// and 2 s risked dropping a player the kernel buffers would have carried. The
+// price is that a peer that has really stopped holds its writer, the AI tick
+// included, for up to 10 s, once. A per-session send queue would take even
+// that off the tick, but every Send caller today relies on the frame being
+// written, in order with its other sends, when Send returns (the monster wire
+// lock's ordering, the list's pages), so a queue is a change to all of them;
+// not built. OURS.
+var SendTimeout = 10 * time.Second
+
+// ErrSendStalled is what Send returns on a session whose earlier Send ran past
+// SendTimeout: its connection has been closed.
+var ErrSendStalled = errors.New("gateway: session stalled: an earlier send ran past its deadline and the connection was closed")
 
 // SetSecurity installs this session's real per-direction RollingByte/
 // PacketChecksum generators (see proto.Read/Write) once a handshake derives
@@ -121,12 +152,31 @@ func (s *Session) Get(key string) (any, bool) {
 	return v, ok
 }
 
-// Send writes a packet back to this session's client.
+// Send writes a packet back to this session's client. It gives up after
+// SendTimeout (round 656): a write that has not gone out by then closes the
+// connection -- a frame cut part-way leaves the stream unreadable anyway --
+// so the session's read loop ends and OnDisconnect cleans up, and every Send
+// after it returns ErrSendStalled without touching the socket.
 func (s *Session) Send(p *proto.Packet) error {
+	if s.stalled.Load() {
+		return ErrSendStalled
+	}
 	sendRoll, sendSum, _, _ := s.security()
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
-	return proto.Write(s.conn, p, sendRoll, sendSum)
+	if s.stalled.Load() {
+		return ErrSendStalled
+	}
+	if SendTimeout > 0 {
+		_ = s.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
+	}
+	err := proto.Write(s.conn, p, sendRoll, sendSum)
+	var ne net.Error
+	if err != nil && errors.As(err, &ne) && ne.Timeout() {
+		s.stalled.Store(true)
+		_ = s.conn.Close()
+	}
+	return err
 }
 
 // Close closes the underlying connection.

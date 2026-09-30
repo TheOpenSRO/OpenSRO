@@ -203,8 +203,8 @@ func TestMonsterAIHomingFromBeyondTheRoamRadius(t *testing.T) {
 	m := monsters.SpawnSpecies("jangan", testMangyang, 0, 0, 0, 1000, 0, 0, 0)
 	// Carry it 300 units east: two mover steps (the 160-unit cap).
 	monsters.SetMotion(m.ID, 300, 0, 300, 1)
-	monsters.StepAll(1)
-	monsters.StepAll(1)
+	monsters.StepCells(1, nil, nil)
+	monsters.StepCells(1, nil, nil)
 	if got, _ := monsters.Get(m.ID); got.X != 300 || got.Moving {
 		t.Fatalf("setup: the monster is at %g (moving %v), want standing at 300", got.X, got.Moving)
 	}
@@ -1336,7 +1336,7 @@ func TestMonsterBattleReleasesOutOfReachAndWalksHome(t *testing.T) {
 	// Carry it 700 units east: five mover steps under the 160 cap.
 	g.monsters.SetMotion(far.ID, 700, 0, 700, 1)
 	for i := 0; i < 5; i++ {
-		g.monsters.StepAll(1)
+		g.monsters.StepCells(1, nil, nil)
 	}
 	if got, _ := g.monsters.Get(far.ID); got.X != 700 || got.Moving {
 		t.Fatalf("setup: the monster is at %g (moving %v), want standing at 700", got.X, got.Moving)
@@ -1971,7 +1971,7 @@ func TestTwoKillsChargeOneDeathPenalty(t *testing.T) {
 func TestPanickingPushLeavesTheWireLockFree(t *testing.T) {
 	battleForTest(t, true)
 	f := startBattleFixture(t, 37, 0, 0)
-	f.a.push = f.a.broadcast // the real push: each session's Send under its wire lock
+	f.a.push = nil // the real push (deliver, round 656): each watcher's Send under its wire lock
 	var log lockedBuffer
 	f.a.logger = slog.New(slog.NewTextHandler(&log, nil))
 	m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 8, 0, 0, 1000, 0, 15, 0)
@@ -2393,8 +2393,8 @@ func TestHomingMonsterNoticesNobodyInsideItsBlackout(t *testing.T) {
 	f := startBattleFixture(t, 36, 150, 0)
 	m := f.monsters.SpawnSpecies("jangan", chaseMangyang, 0, 0, 0, 1000, 0, 15, 0)
 	f.monsters.SetMotion(m.ID, 300, 0, 300, 1)
-	f.monsters.StepAll(1)
-	f.monsters.StepAll(1)
+	f.monsters.StepCells(1, nil, nil)
+	f.monsters.StepCells(1, nil, nil)
 	if got, _ := f.monsters.Get(m.ID); got.X != 300 || got.Moving {
 		t.Fatalf("setup: the monster is at %g (moving %v), want standing at 300", got.X, got.Moving)
 	}

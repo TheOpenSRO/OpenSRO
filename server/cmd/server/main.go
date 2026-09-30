@@ -467,13 +467,84 @@ var monsterSpecs = []monsterSpec{
 // not hold; 10 s stands in for it.
 const respawnDelay = 10 * time.Second
 
-// maintainMonster keeps exactly one instance of spec's species alive in its
-// zone, respawning it respawnDelay after each death, until ctx is
-// canceled. main() runs one of these per monsterSpecs entry. spawned, when
-// not nil, is called with the new monster's id after the first spawn and
-// after every respawn: main passes session.BroadcastMonsterSpawned, the zone
-// push behind -monster-spawn-push (round 542).
-func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Logger, spec monsterSpec, spawned func(id int64)) {
+// qaSpreadInstances is -qa-spread-monsters' synthetic crowd (round 656, QA
+// only, OURS): n placements of Jangan's roster species, taken in turn, each at
+// a spot drawn from a fixed-seed generator over the (2 x radius + 1)^2
+// regions centred on Jangan's region -- uniform over the square, whatever the
+// terrain. Jangan's region is the origin of both the Jangan zone's frame and
+// -single-frame's (worldmap.WorldOrigin), so the coordinates are the same
+// either way; the bucket is session.ZoneBucket("jangan"). The placements have
+// no npcpos rows: they exist to load the area of interest, the list's paging
+// and the AI, not to stand anywhere a monster really does.
+func qaSpreadInstances(n, radius int, specs []monsterSpec) []monsterSpec {
+	if n <= 0 {
+		return nil
+	}
+	if radius < 0 {
+		radius = 0
+	}
+	var jangan []monsterSpec
+	for _, spec := range specs {
+		if spec.Zone == "jangan" {
+			jangan = append(jangan, spec)
+		}
+	}
+	if len(jangan) == 0 {
+		return nil
+	}
+	rng := rand.New(rand.NewSource(656))
+	span := worldmap.RegionSpan
+	out := make([]monsterSpec, 0, n)
+	for i := 0; i < n; i++ {
+		inst := jangan[i%len(jangan)]
+		kx := rng.Intn(2*radius+1) - radius
+		kz := rng.Intn(2*radius+1) - radius
+		inst.X = float64(kx)*span + (rng.Float64()-0.5)*span
+		inst.Z = float64(kz)*span + (rng.Float64()-0.5)*span
+		inst.Zone = session.ZoneBucket("jangan")
+		inst.Spawns = nil
+		inst.Count = 1
+		out = append(out, inst)
+	}
+	return out
+}
+
+// respawnScheduler keeps every roster placement's monster alive from ONE
+// goroutine (round 656). Until then main ran maintainMonster's loop once per
+// placement -- a goroutine and a one-second ticker each, which at round 657's
+// ~10,200 field placements is ten thousand timers waking every second. The
+// behaviour is the one loop's, unchanged (respawnDelay, disclosed): every
+// placement spawns at once, and each check -- once a second -- that finds a
+// placement's monster gone notes the time, and the first check at least
+// respawnDelay after that spawns it again. Round 659 replaces the flat delay
+// with the READ nest rules.
+type respawnScheduler struct {
+	monsters *combat.Hub
+	logger   *slog.Logger
+	spawned  func(id int64)
+	places   []*placement
+	// quiet logs only a count for the first fill of a large roster instead
+	// of a line per monster (the respawns are still logged one by one).
+	quiet bool
+}
+
+// placement is one roster instance and the monster that stands for it now.
+type placement struct {
+	spec      monsterSpec
+	maxHP     int
+	defense   int
+	attack    int
+	gold      int64
+	currentID int64
+	deadSince time.Time
+}
+
+func newRespawnScheduler(monsters *combat.Hub, logger *slog.Logger, spawned func(id int64)) *respawnScheduler {
+	return &respawnScheduler{monsters: monsters, logger: logger, spawned: spawned}
+}
+
+// add registers one placement; run spawns it.
+func (s *respawnScheduler) add(spec monsterSpec) {
 	attack, gold := monsterStatsForLevel(spec.Level, spec.Rarity)
 	// Real flat absorption from characterdata col 71. A spec that forgot it
 	// falls back to the old disclosed curve rather than spawning a monster
@@ -488,36 +559,55 @@ func maintainMonster(ctx context.Context, monsters *combat.Hub, logger *slog.Log
 	if maxHP < 1 {
 		maxHP = 1
 	}
-	spawn := func() int64 {
-		m := monsters.SpawnSpecies(spec.Zone, combatSpeciesOf(spec), spec.X, 0, spec.Z, maxHP, defense, attack, gold)
-		logger.Info("monster spawned", "id", m.ID, "name", m.Name, "zone", m.Zone, "level", m.Level)
-		if spawned != nil {
-			spawned(m.ID)
-		}
-		return m.ID
-	}
+	s.places = append(s.places, &placement{spec: spec, maxHP: maxHP, defense: defense, attack: attack, gold: gold})
+}
 
-	currentID := spawn()
+// spawn hatches p's monster and reports it.
+func (s *respawnScheduler) spawn(p *placement, log bool) {
+	m := s.monsters.SpawnSpecies(p.spec.Zone, combatSpeciesOf(p.spec), p.spec.X, 0, p.spec.Z, p.maxHP, p.defense, p.attack, p.gold)
+	p.currentID, p.deadSince = m.ID, time.Time{}
+	if log {
+		s.logger.Info("monster spawned", "id", m.ID, "name", m.Name, "zone", m.Zone, "level", m.Level)
+	}
+	if s.spawned != nil {
+		s.spawned(m.ID)
+	}
+}
+
+// run spawns every placement, then checks them once a second until ctx ends.
+func (s *respawnScheduler) run(ctx context.Context) {
+	for _, p := range s.places {
+		s.spawn(p, !s.quiet)
+	}
+	if s.quiet {
+		s.logger.Info("roster spawned", "monsters", len(s.places))
+	}
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
-
-	var deadSince time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			if _, alive := monsters.Get(currentID); alive {
-				deadSince = time.Time{}
-				continue
-			}
-			if deadSince.IsZero() {
-				deadSince = time.Now()
-				continue
-			}
-			if time.Since(deadSince) >= respawnDelay {
-				currentID = spawn()
-			}
+		case now := <-ticker.C:
+			s.check(now)
+		}
+	}
+}
+
+// check is one pass over the placements at now: a monster found gone starts
+// its placement's wait, and a wait of respawnDelay or more ends in a spawn.
+func (s *respawnScheduler) check(now time.Time) {
+	for _, p := range s.places {
+		if s.monsters.Exists(p.currentID) {
+			p.deadSince = time.Time{}
+			continue
+		}
+		if p.deadSince.IsZero() {
+			p.deadSince = now
+			continue
+		}
+		if now.Sub(p.deadSince) >= respawnDelay {
+			s.spawn(p, true)
 		}
 	}
 }
@@ -641,6 +731,18 @@ func envBool(name string) (bool, error) {
 // envInt reads an integer setting from the environment. Unset or empty is
 // def; a value that does not parse is def too, with the error returned so
 // main can WARN once the logger exists.
+// envBoolDefault is envBool with a default for an unset variable.
+func envBoolDefault(name string, def bool) (bool, error) {
+	if os.Getenv(name) == "" {
+		return def, nil
+	}
+	b, err := envBool(name)
+	if err != nil {
+		return def, err
+	}
+	return b, nil
+}
+
 func envInt(name string, def int) (int, error) {
 	v := os.Getenv(name)
 	if v == "" {
@@ -819,6 +921,22 @@ func main() {
 			"entry lands at the zone spawn with the wire as it was. Needs a client release that carries "+
 			"round 573: an older one moves a restored Jangan entry on to Jangan's landing spot. See "+
 			"deploy/README.md, \"Saved position (off by default)\".")
+	sleepEnv, sleepEnvErr := envBoolDefault("SRREVAMP_MONSTER_SLEEP", true)
+	monsterSleep := flag.Bool("monster-sleep", sleepEnv,
+		"with -monster-ai, let the brains of monsters no player is near sleep (env SRREVAMP_MONSTER_SLEEP): a "+
+			"monster whose region is outside every player's area of interest -- the 5x5 regions around the "+
+			"region a player stands in -- is neither moved nor run until a player comes that near (round 656, "+
+			"OURS: retail's rule is unread). Default ON; off, every monster runs every tick as before.")
+	qaSpreadEnv, qaSpreadEnvErr := envInt("SRREVAMP_QA_SPREAD_MONSTERS", 0)
+	qaSpread := flag.Int("qa-spread-monsters", qaSpreadEnv,
+		"QA ONLY (env SRREVAMP_QA_SPREAD_MONSTERS): spawn N more monsters of Jangan's roster species at "+
+			"deterministic pseudo-random spots over the regions around Jangan (-qa-spread-radius), kept alive "+
+			"by the respawn scheduler like the roster -- a synthetic crowd for load tests of the area of "+
+			"interest (round 656). Not a claim about where any monster stands. Default 0: none.")
+	qaSpreadRadiusEnv, qaSpreadRadiusEnvErr := envInt("SRREVAMP_QA_SPREAD_RADIUS", 7)
+	qaSpreadRadius := flag.Int("qa-spread-radius", qaSpreadRadiusEnv,
+		"QA ONLY (env SRREVAMP_QA_SPREAD_RADIUS): how many regions out from Jangan's region -qa-spread-monsters "+
+			"spreads its monsters, on each axis (default 7: a 15x15-region square).")
 	inventorySizeEnv, inventorySizeEnvErr := envInt("SRREVAMP_INVENTORY_SIZE", inventory.DefaultBagSlots)
 	inventorySize := flag.Int("inventory-size", inventorySizeEnv,
 		"the bag's size in slots for every character without one of its own (env SRREVAMP_INVENTORY_SIZE): "+
@@ -833,6 +951,12 @@ func main() {
 	if inventorySizeEnvErr != nil {
 		logger.Warn("SRREVAMP_INVENTORY_SIZE is not a number; the bag keeps its default unless -inventory-size is given",
 			"err", inventorySizeEnvErr, "default", inventory.DefaultBagSlots)
+	}
+	for name, err := range map[string]error{"SRREVAMP_MONSTER_SLEEP": sleepEnvErr, "SRREVAMP_QA_SPREAD_MONSTERS": qaSpreadEnvErr,
+		"SRREVAMP_QA_SPREAD_RADIUS": qaSpreadRadiusEnvErr} {
+		if err != nil {
+			logger.Warn(name+" does not parse; its flag keeps its default unless given", "err", err)
+		}
 	}
 	if teleportFreeEnvErr != nil {
 		logger.Warn("SRREVAMP_TELEPORT_FREE is not a boolean; teleports stay charged unless -teleport-free is given",
@@ -1349,15 +1473,32 @@ func main() {
 	} else {
 		logger.Info("monster spawn push off (-monster-spawn-push / SRREVAMP_MONSTER_SPAWN_PUSH)")
 	}
+	// The monsters' area of interest (round 656): each player hears about the
+	// monsters of the 5x5 regions around it, and is told as they come into and
+	// go out of that window. Always on; installed before the first spawn.
+	session.RunMonsterAOI(ctx, hub, monsters, logger)
+	logger.Info(fmt.Sprintf("monster area of interest: %d regions each way around a player (own design: the client's REGION_LOAD_RADIUS); list paged, enter/leave pushed",
+		session.AOIRadius))
 	spawned := func(id int64) { session.BroadcastMonsterSpawned(hub, monsters, id) }
 	// Every species' instances -- a monster per real npcpos row, or a cluster
 	// around the own-design anchor -- in the zone and frame -single-frame
 	// (set above) says: rosterInstances.
+	//
+	// One respawn scheduler for all of them (round 656), where there was a
+	// goroutine per placement.
+	respawns := newRespawnScheduler(monsters, logger, spawned)
 	for _, spec := range monsterSpecs {
 		for _, inst := range rosterInstances(spec, logger) {
-			go maintainMonster(ctx, monsters, logger, inst, spawned)
+			respawns.add(inst)
 		}
 	}
+	// The QA spread (round 656, -qa-spread-monsters): N more placements over
+	// the regions around Jangan, for the area of interest's live check.
+	for _, inst := range qaSpreadInstances(*qaSpread, *qaSpreadRadius, monsterSpecs) {
+		respawns.add(inst)
+	}
+	respawns.quiet = len(respawns.places) > 200
+	go respawns.run(ctx)
 
 	// The monster's own BATTLE (round 546), behind its own flag, which needs
 	// the tick (the chase runs in it) and the strike push (a swing nobody is
@@ -1401,9 +1542,11 @@ func main() {
 			// party hub the aggro link reads (round 553, with the battle on).
 			Chars: chars, Equipment: eq, Items: refItems, Mana: manaTracker, Potions: potions,
 			Parties: parties,
+			// The sleep (round 656, -monster-sleep).
+			Sleep: *monsterSleep,
 		})
-		logger.Info(fmt.Sprintf("monster AI on: tick %v (own design), roam radius %.0f (own design)",
-			session.MonsterAITick, session.MonsterRoamRadius))
+		logger.Info(fmt.Sprintf("monster AI on: tick %v (own design), roam radius %.0f (own design), sleep %v (own design)",
+			session.MonsterAITick, session.MonsterRoamRadius, *monsterSleep))
 	} else {
 		logger.Info("monster AI off (-monster-ai / SRREVAMP_MONSTER_AI)")
 	}
