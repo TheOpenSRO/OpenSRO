@@ -1494,6 +1494,30 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       - view ranges: srrevamp's server has none (a zone -- under `-single-frame` the whole world --
         is one broadcast bucket), so "walks out of view and back" does not occur yet.
 
+### Berserk's look and mechanics (round 651) -- **the look, the sounds and the view built; the speed is OPEN**
+
+Done (docs/protocol/berserk_look.md): every berserk body -- this player's and every other player's --
+is drawn in the pulsing red of `SYSTEM_CH_HWANMODE`'s SCT_MAT (64,16,0 <-> 140,32,0 every 1 s),
+grows to x1.1 over 1 s, carries the seven kept fire effects, and plays system_hwan_motion.efp +
+hwanchange.wav at the start and system_hwan_disappear.efp + hwanreturn.wav at the end; the own
+player's screen flashes white (alpha 128/255 in 0.2 s, back in 0.5 s). An arrival (world entry,
+zone change, relog) is told who is berserk (`sendBodyModesInView`), and a body built later takes
+it from NetClient's `body_modes`. Left:
+
+- **The berserk move speed (and the defence cut): OPEN, the value.** READ: SetBodyMode(1) applies
+  the `_RefHWANLevel` row of the PC's byte `+0x1c58` -- `'SPDU'` v sets params 23/24's scale slot to
+  v % (undone to 100), `'DABR'` v takes v off params 174-177 -- and republishes the speed. The
+  values are DB rows that neither Media.pk2 nor the box's server package carries. With a value,
+  the change is: scale the run speed by v/100 on activation and back at the end, through the buff
+  book's speed packet (as `/speed` does), and cut 174-177 in the damage pipeline.
+- **The hwan level (`+0x764` client, `+0x1c58` server)**: `SYSTEM_CH_HWAN2MODE` (blue, x1.2) and the
+  party link mode (`SYSTEM_CH_HWAN2LINK*`, extra byte 1) are not drawn; srrevamp has no hwan level.
+- **skillaniset2's SYSTEM_CH_HWANMODE row**: DamageEfp `hiteffect\hit_4_hwan.efp` and the weapon trail
+  (160, 200/255/255/255, ONE, `mirage_texture_hwan.ddj`) while berserk -- where the client swaps
+  them in is not traced; srrevamp draws neither.
+- **The look's light terms.** Retail replaces the material's diffuse and scales the ambient light
+  by the pulse colour (c11/c10/c14); srrevamp's one albedo stands for both (INFERRED mapping).
+
 ### Berserk potions and Energy of life (round 632 and its review) -- **built**
 
 Done: every TypeID 3/3/1/8 bag item fills the five orbs; the Energy of life scroll (23944-23947)

@@ -133,6 +133,12 @@ signal buff_started(start: SkillNet.BuffStart)
 ## auras back. Updated before buff_started / buff_ended / entity_left /
 ## change_zone_result are emitted.
 var buff_roster := BuffRoster.new()
+## Every character's berserk body mode (0x30BF kind 4) as this connection was
+## last told (round 651): character id -> 1 while berserk. Kept, cleared and
+## dropped with buff_roster, and for the same reason -- the server's in-view
+## replay can arrive before World3D listens, and a body built later takes it
+## (World3D._berserk_resync). Updated before state_changed is emitted.
+var body_modes := {}
 signal self_id_received(character_id: int)
 ## This client's own character id from OpSelfId; -1 until one arrives on this
 ## connection (and from a server that does not send it).
@@ -313,6 +319,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	_attack_types_in_flight.clear()
 	own_character_id = -1
 	buff_roster.clear()
+	body_modes.clear()
 	_unhandled_warned.clear()
 	_use_tls = use_tls
 	_tls_host = host
@@ -345,6 +352,7 @@ func disconnect_from_server() -> void:
 	_pending_learns.clear()
 	own_character_id = -1
 	buff_roster.clear()
+	body_modes.clear()
 	_forget_session_lists()
 	disconnected.emit()
 
@@ -746,6 +754,7 @@ func _dispatch(p: Packet) -> void:
 				# The zone's buffs follow this result (round 646): the roster
 				# starts over from them.
 				buff_roster.clear()
+				body_modes.clear()
 			enter_world_result.emit(result)
 		WorldNet.OP_ENTITY_ENTERED:
 			entity_entered.emit(WorldNet.decode_entity_entered(p.data))
@@ -753,8 +762,10 @@ func _dispatch(p: Packet) -> void:
 			entity_moved.emit(WorldNet.decode_entity_moved(p.data))
 		WorldNet.OP_ENTITY_LEFT:
 			var left_id := WorldNet.decode_entity_left(p.data)
-			# Its buffs went with its body (round 646, BuffRoster.drop).
+			# Its buffs went with its body (round 646, BuffRoster.drop), and
+			# its body mode (round 651).
 			buff_roster.drop(BuffRoster.key_of(left_id, SkillNet.OWNER_CHARACTER))
+			body_modes.erase(left_id)
 			entity_left.emit(left_id)
 		WorldNet.OP_CHANGE_ZONE_RESULT:
 			var zone_result := WorldNet.decode_change_zone_result(p.data)
@@ -763,12 +774,14 @@ func _dispatch(p: Packet) -> void:
 				# The new zone's buffs, this player's own included, follow
 				# this result (round 646; sendBuffsInView).
 				buff_roster.clear()
+				body_modes.clear()
 			change_zone_result.emit(zone_result)
 		WorldNet.OP_REVIVE_RESULT:
 			revive_result.emit(WorldNet.decode_revive_result(p.data))
 		WorldNet.OP_STATE_CHANGE:
 			var change := WorldNet.decode_state_change(p.data)
 			if change != null:
+				WorldNet.note_body_mode(body_modes, change)
 				state_changed.emit(change)
 		InventoryNet.OP_LIST_RESULT:
 			var r := InventoryNet.decode_list_result(p.data)

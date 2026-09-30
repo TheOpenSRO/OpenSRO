@@ -1269,6 +1269,10 @@ func _ready() -> void:
 	SkillEffects.set_archive(_open_particles_pk2_if_set())
 	SkillEffects.warm()
 	SkillEffects.own_body = player
+	# Berserk's look (round 651): the SYSTEM_CH_HWANMODE rows of the same
+	# table, drawn from the same Particles.pk2.
+	BerserkLook.set_archive(_open_particles_pk2_if_set())
+	BerserkLook.warm()
 	# Known skills' effect files decode on a worker thread when the skill
 	# state arrives, so a first cast does not (round 620 review).
 	NetClient.skill_state_result.connect(func(state) -> void:
@@ -1354,6 +1358,7 @@ func _ready() -> void:
 	NetClient.self_id_received.connect(_on_self_id_received)
 	# What arrived before this scene could hear it (round 646).
 	_replay_held_buffs("world entry")
+	_berserk_resync_all("world entry")
 	NetClient.monster_damaged.connect(_on_monster_damaged)
 	NetClient.monster_died.connect(_on_monster_died)
 	NetClient.level_up.connect(_on_level_up)
@@ -5334,6 +5339,7 @@ func _exit_tree() -> void:
 	# Every live skill effect and aura goes with the world, and the bodies
 	# SkillEffects remembers are forgotten (a relog builds a new World3D).
 	SkillEffects.clear_live()
+	BerserkLook.clear()
 	_fx_owner_buffs.clear()
 	var exit_music := _audio_music()
 	if exit_music != null:
@@ -12416,6 +12422,9 @@ func _is_typing() -> bool:
 func _physics_process(delta: float) -> void:
 	var sw := Time.get_ticks_usec()
 	SkillEffects.tick(delta)
+	BerserkLook.tick(delta)
+	_berserk_flash_step(delta)
+	_qa_berserk_probe()
 	var cells_before := _load_timings.cell_work_usec
 	_physics_step(delta)
 	var now := Time.get_ticks_usec()
@@ -12902,8 +12911,8 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		_other_gaits[character_id] = {"skeleton": skeleton, "gender": gender, "group": group, "moving": false}
 		# Their sounds come from where their body is; the cell under them is
 		# found from the height (_audio_material_at), not carried as the
-		# local player's is. Berserk is not sent for another player, so their
-		# swings are never the hwan ones here.
+		# local player's is. Their berserk arrives as their body mode (round
+		# 651, _berserk_apply), which turns their swings to the hwan ones.
 		var owner := _audio_pc_owner("player %d" % character_id, gender, equipped, body)
 		owner.material = func() -> int: return _audio_material_at(body.global_position, -2) if is_instance_valid(body) else -1
 		_anim_sounds.register(skeleton, owner)
@@ -12942,6 +12951,9 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	# (round 646): a zone change's arrival list and the world entry build the
 	# body after the server's replay may already have arrived.
 	_fx_resync_owner(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER), "their body was built")
+	# And their berserk, if they are (round 651): the spawn's own body mode,
+	# applied without the start burst (FUN_009cf880(mode, 1, 0), READ).
+	_berserk_resync(character_id, "their body was built")
 
 func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 	# During a zone change's load the old zone's bodies are still drawn and
@@ -14967,6 +14979,8 @@ func _on_pick_up_result(result: GroundItemsNet.PickUpResult) -> void:
 
 ## A server refusal code in words.
 const ErrorText = preload("res://scripts/net/error_text.gd")
+## Round 651: a berserk body's colour, size, fire, sounds and the own flash.
+const BerserkLook = preload("res://scripts/effects/berserk_look.gd")
 
 ## The server's pick-up refusal in words: the game's own message from the UI
 ## text table where the client has one (0x1812, 0x1839), our own wording
@@ -16946,11 +16960,13 @@ func _on_state_changed(change: WorldNet.StateChange) -> void:
 ## 0x30BF kind 4, the body mode (round 629's review). READ, 0x8a80a0: for this
 ## player and value 1 the client runs FUN_00778ae0(0, 1) -- the orbs' berserk
 ## display starts, the count now 0; value 0 ends the body mode and leaves the
-## display to its own timer. Other players' body modes are not drawn here.
+## display to its own timer. Every body's berserk look -- this player's and
+## every other player's -- follows its body mode (round 651, _berserk_apply).
 func _on_body_mode(change: WorldNet.StateChange) -> void:
 	var own := _own_id()
 	var mine := own >= 0 and change.object_id == own
 	print("World3D: body mode %d for %d (%s)" % [change.value, change.object_id, "this player" if mine else "someone else"])
+	_berserk_apply(change.object_id, change.value, false)
 	if mine and change.value == 1 and _hud_player_info != null:
 		var was_running := _hud_player_info.hwan_display_active()
 		_hud_player_info.set_hwan(0, true)
@@ -16958,6 +16974,115 @@ func _on_body_mode(change: WorldNet.StateChange) -> void:
 			print("World3D: berserk display started: drain step %.3f s (bonus %d s), %.3f s in all" % [
 				_hud_player_info.drain_period(), _hud_player_info.hwan_time_bonus(),
 				_hud_player_info.drain_period() * HudPlayerInfo.BERSERK_ORBS])
+
+## Round 651: `object_id`'s berserk look follows its body mode -- on for 1,
+## off for anything else (BerserkLook). The body is this player's when the id
+## is its own, else the other player's drawn body; a body not drawn yet takes
+## it when it is built (_berserk_resync, from NetClient.body_modes). Retail
+## runs the setter on any object in view (0x8a80a0 -> FUN_009cf880, READ).
+## `instant`: the body was already berserk when it came into view -- no start
+## burst, no sound, no flash (the spawn's arg 1, READ). This player's own
+## start also flashes the screen (0x8a827b, READ) and turns its swings to the
+## hwan sounds, as another player's does theirs.
+func _berserk_apply(object_id: int, value: int, instant: bool) -> void:
+	var own := _own_id()
+	var mine := own >= 0 and object_id == own
+	var body: Node3D = player if mine else _other_bodies.get(object_id)
+	if body == null or not is_instance_valid(body):
+		return
+	if value == 1:
+		BerserkLook.start(body, instant, mine)
+		if mine and not instant:
+			_berserk_flash_t = 0.0
+	else:
+		BerserkLook.stop(body)
+	if mine:
+		_audio_set_hwan(value == 1)
+	elif _other_gaits.has(object_id):
+		var skel = _other_gaits[object_id].get("skeleton")
+		if skel != null and is_instance_valid(skel):
+			var snd_owner = _anim_sounds.owner_of(skel)
+			if snd_owner != null:
+				snd_owner.hwan = value == 1
+
+## Round 651: the body mode NetClient holds for `character_id` (the server's
+## word since the last entry or zone change) goes on its freshly built body.
+func _berserk_resync(character_id: int, why: String) -> void:
+	var modes = NetClient.get("body_modes")
+	if modes == null or int((modes as Dictionary).get(character_id, 0)) != 1:
+		return
+	print("BERSERK resync %d (%s): berserk" % [character_id, why])
+	_berserk_apply(character_id, 1, true)
+
+## _berserk_resync for every character NetClient holds a body mode for.
+func _berserk_resync_all(why: String) -> void:
+	var modes = NetClient.get("body_modes")
+	if modes == null:
+		return
+	for id in (modes as Dictionary).keys():
+		_berserk_resync(int(id), why)
+
+## The own activation's screen flash (BerserkLook.flash_alpha, READ): a
+## screen-sized quad adding white x alpha (SRCBLEND SRCALPHA, DESTBLEND
+## SRCCOLOR, READ), drawn over the world and under the HUD (the weather
+## manager draws it in the world pass, INFERRED from where vslot_010 runs).
+## QA (round 651): SRREVAMP_QA_BERSERK_PROBE=1 prints, once a second, where
+## every drawn player's chest is on this client's screen and the colour
+## BerserkLook draws their body with -- the point a live run samples the
+## frame at, so the glow is measured as pixels rather than judged by eye.
+var _qa_berserk_probe_on := OS.get_environment("SRREVAMP_QA_BERSERK_PROBE") != ""
+var _qa_berserk_probe_frame := 0
+
+func _qa_berserk_probe() -> void:
+	if not _qa_berserk_probe_on or camera_3d == null:
+		return
+	_qa_berserk_probe_frame += 1
+	if _qa_berserk_probe_frame % 60 != 0:
+		return
+	var bodies := {"self": player}
+	for id in _other_bodies:
+		bodies[str(id)] = _other_bodies[id]
+	for who in bodies:
+		var body: Node3D = bodies[who]
+		if body == null or not is_instance_valid(body) or not body.is_inside_tree():
+			continue
+		var skel := SkillEffects.skeleton_of(body)
+		var top := _skeleton_top(skel) if skel != null else 1.8 * PLAYER_SCALE_RATIO
+		var chest := body.global_position + Vector3.UP * top * 0.6
+		var on := not camera_3d.is_position_behind(chest)
+		var at := camera_3d.unproject_position(chest)
+		var vp := get_viewport().get_visible_rect().size
+		on = on and at.x >= 0 and at.y >= 0 and at.x < vp.x and at.y < vp.y
+		var tint = BerserkLook.tint_of(body)
+		print("QA BERSERK PROBE %s screen %d,%d of %dx%d %s tint %s scale %.3f" % [who, int(at.x), int(at.y),
+			int(vp.x), int(vp.y), "on" if on else "off", "none" if tint == null else "%d,%d,%d" % [
+			int(round(tint.r * 255)), int(round(tint.g * 255)), int(round(tint.b * 255))], BerserkLook.scale_of(body)])
+
+var _berserk_flash_t := -1.0
+var _berserk_flash: ColorRect = null
+
+func _berserk_flash_step(delta: float) -> void:
+	if _berserk_flash_t < 0.0:
+		return
+	var a := BerserkLook.flash_alpha(_berserk_flash_t)
+	_berserk_flash_t += delta
+	if _berserk_flash == null or not is_instance_valid(_berserk_flash):
+		var layer := CanvasLayer.new()
+		layer.name = "BerserkFlash"
+		layer.layer = -1
+		add_child(layer)
+		_berserk_flash = ColorRect.new()
+		_berserk_flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_berserk_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var add := CanvasItemMaterial.new()
+		add.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+		_berserk_flash.material = add
+		layer.add_child(_berserk_flash)
+	_berserk_flash.color = Color(1, 1, 1, a)
+	_berserk_flash.visible = a > 0.0
+	if _berserk_flash_t >= BerserkLook.FLASH_IN_S + BerserkLook.FLASH_OUT_S:
+		_berserk_flash_t = -1.0
+		_berserk_flash.visible = false
 
 ## The server's answer for this player: sit (4) or stand (0), through the 1.5 s
 ## transition in which it refuses a move.
