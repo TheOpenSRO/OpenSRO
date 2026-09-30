@@ -1054,8 +1054,14 @@ The rule is `ClickWalk.step`, READ from the mover tick `FUN_009e0e60` (`docs/pro
       follow-up**. A click walk the graph blocks dead now ends, as retail's mover ends a refused
       step (READ: bit `0x10000000` in `FUN_009e0e60`). The live run measured 0 held episodes;
       the base had 26.
-  - [ ] **What "dead" means is OURS**: at most 1 % of the step's asked length. Whether retail's
-        collision query slides along a wall, as ours does, was not read.
+  - [ ] **What "dead" means is OURS**: at most 1 % of the step's asked length. **Round 653 read
+        the query: retail does not slide.** `CRegionManagerBody::vslot_012` -> the terrain walk
+        `0x4047a0` answers a blocking edge with the crossing point (nudged at most 0.2) and bit 0,
+        and the mover then ends. That holds for every movement kind (`movement.md`, "The stop at a
+        wall"). The heading run now stops that way. **A decision for the user:** should click walks
+        stop at the wall too, instead of sliding along it? That is retail's rule. It would also
+        change walks through doorways at an angle, and every attack approach that currently slides
+        round a corner.
   - [ ] **An attack's approach against a wall still holds** (and so does a friendly cast's). It
         re-aims on every tick, as retail's attack tick re-issues its approach while out of reach
         (phase 1, READ). What a retail body shows then (running or standing) was not read. The
@@ -1066,6 +1072,25 @@ The rule is `ClickWalk.step`, READ from the mover tick `FUN_009e0e60` (`docs/pro
       exactly. The stop is kept only because `CombatNet.approach_aim` is built on it.
 - [ ] **The server does not police speed** (round 636, `gm.go`). It relays whatever a client sends.
       A client that still has the old rule (a release before this round) ping-pongs for everyone.
+
+### The sky click (round 653) — **built: a click on the sky, or on ground beyond 1000 units, runs the character on its heading until a wall stops it; these are left**
+
+Read in `docs/protocol/opcodes/movement.md`, "The heading move". The code is `SkyRun` and
+`World3D._move_by_pick_ray` / `_start_heading_run`.
+
+- [ ] **The server does not run the heading move itself.** srrevamp's movement is client-authoritative
+      positions. The server relays each position with the heading form and faces the character that
+      way, but it does not step a `CGObjMoverByCmd` of its own.
+- [ ] **Whether retail's server tells the watchers of the stop** (a stop message when its own
+      navmesh ends the run) was not read. srrevamp's watchers settle on the last position.
+- [ ] **`+0x65c` bit 9 and `+0x6e8`** gate the no-resend window. "Moving" is INFERRED, and srrevamp
+      tests `_has_move_target`.
+- [ ] **The arrow keys** send the same heading form, with commands 1, 0x10 and 0x20 (READ). They are
+      not bound (the key table's `NOT_BOUND`, round 608).
+- [ ] **`0x70c5`** is sent in place of `0x7021` when `FUN_00b94b90(0xef1b44)` is false (probably a
+      ride or transport). Not built.
+- [ ] **The physics fallback** (no `.nvm`) ends a run on `is_on_wall` (OURS).
+- [ ] **Click walks still slide** (round 649, OURS). See the decision above.
 
 ### The buff bar — **built (round 618); these are left**
 `HudBuffBoard` is retail's `CIFMagicStateBoard`. It has the icons, the draining time bar, the end

@@ -7094,6 +7094,230 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-fifty-third round: a click on the sky, or on ground too far away, runs the character that way until a wall stops it, and every other player sees the run and the stop
+
+The user (2026-09-30): "Also add sky clicking to the game. If clicked out far enough or above the
+land in the sky the character would run indefinitely in that direction until stopped or a
+collision. Also when the character collides with a wall or something that stops it make sure you
+stop the running as well and make the character stop in place like the original game."
+
+The reading is filed in `docs/protocol/opcodes/movement.md`, "The heading move: a click on the sky".
+The open items are in `docs/TODO.md`, "The sky click (round 653)".
+
+### Before (MEASURED, dev 56e8e24)
+
+- The click-to-move ray (`_ground_point_at`) ran 2000 units from the camera on the terrain layer,
+  and a ray that met nothing returned null. **A sky click did nothing.**
+- A click on ground 1000 to 2000 units away walked to that point.
+- Both are the base's own behaviour through `_dispatch_left_click`: see the negative below.
+
+### Retail's rule (READ, sro_client.exe; the full trace is in movement.md)
+
+- **The click.** `UI_SILKMALL::FUN_0078f8d0` casts the pick through `SWorld::vslot_034`
+  (`0xa01310`). That pick normalises the camera ray and scales it to **1000.0** (`0xd83268`, asm
+  `0xa01333`), so it only answers within 1000 units of the camera.
+- **No hit** (the sky, or ground farther than that): the ray's ground direction (y zeroed at
+  `0x78fb07`) becomes a heading (`FUN_009ed130`), sent by `FUN_009ebec0(h, 1)` as the **heading
+  form of 0x7021**: kind 0, the `+0x14` byte 1, and the u16 angle of h − π/2.
+- **Not re-sent** while moving (state bit 9 of `+0x65c`, INFERRED "moving") when the heading is
+  within 5° (`0xdb9828`) of the facing. The difference is raw, not wrapped.
+- **The `+0x14` byte is the movement command** (the server's `CGObjMoverByCmd`):
+  - bit 0 = forward (vslot_004 sets the stepping flag and vslot_003 steps);
+  - 0x10 and 0x20 = turn at π rad/s (vslot_010);
+  - the arrow keys send 1, 0x10 and 0x20 (`FUN_0077b070` → `FUN_009ebf40`).
+
+  movement.md had it as "not read".
+- **The run.** The echo's heading form sets the mover's `+0x80 = 2` (`FUN_009e08a0`). The tick
+  `FUN_009e0e60` tests a destination only for `+0x80 == 1`, so a heading move steps along its
+  heading for ever. Round 649's cut to the distance left does not apply.
+- **The stop.** The tick copies back whatever point the collision query `CRegionManagerBody::
+  vslot_012` (`0x412660`) left in the proposed record (asm `0x9e0fff..0x9e1027`).
+  - The query's terrain walk (`0x4047a0`) answers a blocking edge with the crossing point, nudged
+    at most 0.2 toward the cell centre (`FUN_004472d0`, `0xe1b850`), and **bit 0**.
+  - Bit 0 ends the movement (`+0x84 = 0`, `+0x80 = 0`). **The body stops at the wall and does not
+    slide.** This is the no-slide walk `NavGraph.step_tracked(..., false)` already follows (rounds
+    616–618).
+  - Nothing in the tick plays a collision clip. The body stands, as after any movement (INFERRED).
+  - The client sends nothing at the stop.
+
+### What shipped
+
+- **Client** (`client/scripts/world/sky_run.gd`, `SkyRun`; `World3D`):
+  - `_move_by_pick_ray` casts the walk's pick 1000 units (READ, was 2000 OURS). A hit walks as
+    before. No hit calls `_start_heading_run`, which starts a run on the ray's ground heading and
+    turns the body to it at 3π rad/s. The 5° no-resend rule is `SkyRun.click_rule`.
+  - `_step_click_walk` steps a run at the full run speed, `/speed` included, with no destination.
+  - `_move_on_nav_graph` walks a run with the no-slide walk and **ends it at the first blocked
+    step** (`SkyRun.blocked_ends`). The order clears and the body plays its stand.
+    - OURS: in the physics fallback (no `.nvm`) a run ends on `is_on_wall`.
+  - A ground click, an attack's or friendly cast's approach, a pick-up walk and the QA retreat each
+    set a point and clear the run. Anything that clears `_has_move_target` ends it too: death,
+    typing, the sit transition, the wall root, a skill's move, a zone change, the void recovery.
+  - A click while holding an icon (round 652) never reaches the world: `HeldIcon.handle` swallows
+    it, and `_on_held_dropped_outside` neither walks nor runs.
+- **Wire** (OURS framing of a READ form). Each `OpMove` sent while a run is in effect sets bit 1 of
+  the trailing flags byte. Retail's heading form follows it: kind 0, command 1, then the u16 angle
+  (`WorldNet.encode_move`, `session.encodeMoveTail`). A walked position is still 12 bytes, and an
+  older server reads bit 0 alone.
+- **Server**:
+  - `handleMove` faces the character the run's heading (`world.Hub.MoveHeading`,
+    `world.HeadingFromWire`), not the step's direction.
+  - It relays the heading form in `OpEntityMoved`. A relocation still wins and carries no run.
+  - `proto.MovementCommandForward` names the command bit.
+  - `DecodeMovement` now has a caller, so its `knownOrphans` entry is removed.
+- **Watchers**: `_on_entity_moved` turns the body to the relayed heading at 3π rad/s instead of
+  toward the next position. The stop is the last position, sent plain, and the body settles on it.
+
+### Live, two clients, real X input (MEASURED)
+
+**Setup.**
+- The harness is `/var/tmp/sky653/sky653.sh` on the box.
+- Both clients go through Login → CharacterSelect, and the server is the branch's.
+- A = QaTester at the Jangan spawn (97/168 local 1002, 1020); B = QaFriend at (1030, 1060).
+- A levels the camera with a real right-button drag upward and clicks the sky at (640, 40).
+
+**Run 1 (r3).** The sky ahead is north. The run starts, carries its heading on every send, and
+stops at the edge on `cj_jang_gate` (round 649's edge, local z 953.46) with the order cleared and
+the stand playing:
+
+```
+PICK: click at (640, 40), Shift false (self not in the pick): no hit
+MOVE run t=639 ms=24868 heading=0.0000 wire=49151 dir=(0.000,1.000)
+MOVE self t=639 ms=24869 pos=(42.000,-59.167) dest=(42.000,940.000) order=true speed=50.0 left=999.167 run=true facing=0.000 gait=run
+...
+MOVE send t=755 ms=26180 pos=(42.000,5.832) heading=49151
+MOVE self t=755 ms=26180 pos=(42.000,5.832) ... order=true speed=50.0 run=true facing=0.000 gait=run
+NAV: the heading run is blocked at local 1002.00, 953.46 (on object cj_jang_gate) -- ended, as retail's mover ends a refused step
+MOVE self t=756 ms=26196 pos=(42.000,6.542) ... order=false speed=50.0 run=false facing=0.000 gait=stand
+MOVE send t=758 ms=26229 pos=(42.000,6.542)
+```
+
+These lines are r2's, and r3's run 1 is the same: t=639..718, stopping at (42.000, 6.542). There
+are 0.833 units a tick at 50 u/s, and the last step is cut to the wall's contact (0.71). The run
+covered 65.7 units in 79 ticks.
+
+B sees each position with the heading, then the stop as a plain position, and its drawn body
+settles on it:
+
+```
+MOVE recv 1 ms=19885 pos=(42.000,-59.167) heading=49151
+MOVE body 1 t=363 ms=19897 pos=(42.000,-59.792) target=(42.000,-59.167)
+...
+MOVE recv 1 ms=21185 pos=(42.000,5.832) heading=49151
+MOVE recv 1 ms=21235 pos=(42.000,6.542)
+MOVE body 1 t=451 ms=21364 pos=(42.000,6.288) target=(42.000,6.542)
+MOVE body 1 t=467 ms=21631 pos=(42.000,6.539) target=(42.000,6.542)
+```
+
+**Run 2 (r3).**
+- A turns the view 180° with a real right-drag of 600 px (0.3° a pixel) and clicks the sky:
+  `MOVE run t=1115 heading=3.1416 wire=16384 dir=(0.000,-1.000)`.
+- A runs south 297 units in 6 s, from (42, 5.7) to (42.8, −291.0).
+- B received 119 positions with `heading=16384`. B's facing log (`SRREVAMP_QA_FACING_LOG`) shows
+  the body turning from north through east to south in about 0.4 s, which is π at 3π rad/s:
+
+```
+QA FACING player 1 ms=27845 pos=(42.000,6.334) front=(0.1564,0.9877)
+QA FACING player 1 ms=27945 pos=(42.000,3.486) front=(0.8910,0.4540)
+QA FACING player 1 ms=28045 pos=(42.000,-1.131) front=(0.8910,-0.4540)
+QA FACING player 1 ms=28145 pos=(42.000,-5.799) front=(0.1564,-0.9877)
+QA FACING player 1 ms=28245 pos=(42.000,-11.003) front=(0.0000,-1.0000)
+```
+
+**Run 3.** Mid-run, A turned 90° and clicked at (640, 40). That view had ground within the pick
+(817 units away), so it **walked** there, as retail's pick would. The run ended: `order=true
+run=false` from t=1472. B's receipts switch from the heading form to plain positions on the same
+tick:
+
+```
+MOVE recv 1 ms=33717 pos=(42.000,-289.301) heading=16384
+MOVE recv 1 ms=33767 pos=(42.833,-290.967)
+```
+
+**Other lines.**
+- r2's second sky click landed on an NPC (Storage-Keeper Sansan) and talked, as the dispatch
+  order says.
+- r1's clicks at y 80–90 with the default camera pitch all met ground within 1000 units and
+  walked. With the default pitch, the top of the screen is ground, not sky.
+
+### Tests
+
+- `client/scripts/world/sky_run_test.gd` (new; synthetic fixtures: a flat collision box, a camera
+  aimed through the screen centre, and a two-cell region with a blocking edge on the cell boundary).
+  - **The rule:**
+    - the 1000-unit reach;
+    - the ray's ground heading, and a vertical ray keeping the heading;
+    - the 5° window, raw across the 0/2π seam;
+    - the wire angle and its inverse;
+    - the run's velocity at 50, 200 and 500 u/s.
+  - **The codec:** a walk is 12 bytes; a run carries flags 2 and kind 0, command 1, angle; the
+    relay decodes it.
+  - **Clicks through `World3D._dispatch_left_click`:**
+    - ground 800 away walks;
+    - ground 1500 away runs on heading π;
+    - the sky runs on π/2;
+    - running, a sky click 3.4° off changes nothing and one 45° off turns the run;
+    - a ground click and an attack's approach replace the run.
+  - **The run through `_step_click_walk` + `_move_on_nav_graph`:**
+    - on open ground it is still running after 10 s, 500 units on (x 700.00);
+    - it faces its heading;
+    - straight into the edge at 50, 200 and 500 u/s it stops at x 99.988 in 12, 3 and 2 ticks;
+    - **oblique, it stops at first contact (z 110.200) and does not slide**.
+  - **Remote:** a relayed run turns the watcher's body to the heading π/2, not toward the next
+    position.
+  - **Held icon:** press and release are the icon's, and nothing walks or runs.
+- **NEGATIVE, against dev 56e8e24** (a second worktree at the base, with the new test copied in).
+  The click checks fail by BEHAVIOUR: the base walks to the far point and does nothing on the sky.
+  The remote check fails by behaviour too: the base's decoder drops the heading, and the body aims
+  at the position.
+
+```
+FAIL SkyRun exists
+FAIL a run's position carries flags bit 1 and retail's heading form: kind 0, command 1, the u16 angle ([])
+FAIL EntityMoved's heading form decodes to heading_wire 0x4000
+ok  a click on ground 800 away walks to it (target (0.000017, 0, -800.0002))
+FAIL a click on ground 1500 away (beyond the pick's 1000) runs on its heading, pi, rather than walking to the point (order true, run false, target (0.000034, 0, -1499.997))
+FAIL a click on the sky runs the character on the ray's ground heading, pi/2 (order false, run false, heading nan)
+FAIL World3D._start_heading_run exists (the run)
+FAIL a remote heading run turns the body to the run's heading pi/2, not toward its next position (target 0.0000)
+ok  a click while holding an icon is the icon's (press true, release true) and starts no run or walk
+FAILURES: 7
+```
+
+- On the branch: ALL PASS. `remote_godot.sh check`: ALL LOAD (430 scripts, 5 scenes).
+  `remote_godot.sh tests`: **173 suites, 0 failing**.
+- **Server:** `server/internal/session/skyrun653_test.go` (new) checks three things:
+  - the codec: the heading form round-trips; a walk is still 12 and 20 bytes; a short or wrong-kind
+    tail is a plain position; relocated and run together keep both bits;
+  - `HeadingFromWire` inverting `WireAngle`;
+  - the flow: Aria's run faces the hub pi/2 while her step went +z, Bram hears the heading form,
+    and the stop is relayed plain.
+- `cd server && go build ./... && go test -count=1 -p 1 ./...`: all packages ok. The first full
+  run failed `internal/systems`' `TestKnownOrphansHaveNoStaleEntries`: `DecodeMovement` now has a
+  caller. Its entry was removed, as the entry itself asks.
+
+### Performance gate (`client/tools/perf_gate.sh --base 56e8e24 --sites jangan`, 3 interleaved runs each)
+
+| site | number | base | head | delta | verdict |
+|---|---|---|---|---|---|
+| jangan | frame ms | 11.28 | 11.15 | -0.1 | SAME |
+| jangan | entry ms | 9580 | 9536 | -44 | SAME |
+| jangan | freeze ms | 3373 | 3355 | -18 | SAME |
+| jangan | hitches | 5 | 5 | 0 | SAME |
+
+The runs, frame ms, base against head: 11.28 / 11.15, 11.44 / 11.15, 11.22 / 11.29. The gate stands
+still, and a heading run adds nothing to a frame that is not moving. The −0.1 is noise.
+
+### Open
+
+- **Click walks still slide** along a wall (round 649, OURS). Retail's query stops every movement
+  kind at the wall, as read above. Stopping them too is a decision for the user (`docs/TODO.md`),
+  because it changes doorway walks and attack approaches.
+- **The server does not step the run itself.** srrevamp is client-authoritative. Whether retail's
+  server sends its own stop to the watchers was not read.
+- The arrow keys' heading-form commands (READ) are not bound. `0x70c5` (the other sender) is not
+  built.
+
 ## Six-hundred-and-fifty-second round: every icon is picked up with one click and put down with the next, and a worn item goes into the bag as the original puts it
 
 The user (2026-09-30): "When I try drag an item from my person into the inventory to a slot I want

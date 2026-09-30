@@ -425,6 +425,13 @@ var _left_steering := false
 const LEFT_DRAG_THRESHOLD_PIXELS := 6.0
 var _has_move_target := false
 var _move_target := Vector3.ZERO
+## Round 653: the order in effect is a heading run (SkyRun) -- a click on the
+## sky or on ground beyond the pick's 1000 units -- rather than a walk to
+## _move_target. It runs along _move_heading at the run speed until a click, an
+## attack, a stop or a wall ends it (_step_click_walk, _move_on_nav_graph).
+## Meaningful only while _has_move_target; every order with a point clears it.
+var _move_heading_run := false
+var _move_heading := 0.0
 ## Last position the player was standing at real, sane terrain height (see
 ## WORLD_FLOOR_Y's doc comment) -- updated every physics frame the player
 ## isn't already mid-void-fall, so it always reflects the most recent solid
@@ -8457,6 +8464,7 @@ func _step_pending_friend_cast() -> bool:
 	var point := CombatNet.approach_point(here, there, CombatNet.approach_aim(stop, false, MOVE_TARGET_STOP_DISTANCE))
 	_move_target = Vector3(point.x, player.position.y, point.y)
 	_has_move_target = true
+	_move_heading_run = false
 	return false
 
 ## Sends the pending friendly cast from where the player stands.
@@ -8897,6 +8905,7 @@ func _step_pending_attack() -> bool:
 		CombatNet.approach_aim(stop, tight, MOVE_TARGET_STOP_DISTANCE))
 	_move_target = Vector3(point.x, player.position.y, point.y)
 	_has_move_target = true
+	_move_heading_run = false
 	return false
 
 ## Drops an attack still walking into reach, and ends the walk that was for
@@ -9685,11 +9694,17 @@ func _move_on_nav_graph(delta: float) -> bool:
 			print("NAV %4d: footing settled on %s at local %.1f, %.1f (y %.1f)" % [
 				_qa_tick, _nav_footing_name(graph, _nav_footing), local.x, local.z, local.y])
 	var asked := Vector2(target.x - local.x, target.z - local.z)
-	var step := graph.step_tracked(local, asked, _nav_footing)
+	# Round 653: a heading run does not slide along a wall -- it stops at it
+	# (the no-slide walk; READ, SkyRun's doc: retail's query answers a
+	# blocking edge with the crossing point and bit 0, and the mover ends).
+	var heading_run := _has_move_target and _move_heading_run
+	var step := graph.step_tracked(local, asked, _nav_footing, not heading_run)
+	if heading_run and SkyRun.blocked_ends(step.blocked):
+		_end_blocked_click_walk(graph, step)
 	# Round 649: a click walk the graph stops dead ends here, as retail's does
 	# (ClickWalk.blocked_ends; READ, FUN_009e0e60) -- not held with the run
 	# playing on the spot.
-	if step.blocked and _has_move_target and _pending_attack.is_empty() and _pending_friend_cast.is_empty() \
+	elif step.blocked and _has_move_target and _pending_attack.is_empty() and _pending_friend_cast.is_empty() \
 			and ClickWalk.blocked_ends(Vector2(step.position.x - local.x, step.position.z - local.z).length(), asked.length()):
 		_end_blocked_click_walk(graph, step)
 	if trace and OS.get_environment("SRREVAMP_QA_NAVTRACE") == "2":
@@ -9722,6 +9737,16 @@ func _move_on_nav_graph(delta: float) -> bool:
 ## left plus the stop (a /speed of about 5.7 or more, or less with a speed buff)
 ## could carry the body past the point and back again on every tick, for ever.
 func _step_click_walk(delta: float) -> bool:
+	if _move_heading_run:
+		# Round 653: a heading run has no point to arrive at -- the full run
+		# speed along its heading every tick (SkyRun.velocity; READ, the
+		# tick's destination test is for +0x80 == 1 only). A wall ends it
+		# (_move_on_nav_graph); the turn toward the heading was started with
+		# the run and goes on in _step_local_turn.
+		var rv := SkyRun.velocity(_move_heading, _move_speed)
+		player.velocity.x = rv.x
+		player.velocity.z = rv.y
+		return false
 	var to_target := Vector2(_move_target.x - player.position.x, _move_target.z - player.position.z)
 	var r := ClickWalk.step(to_target, _move_speed, delta, MOVE_TARGET_STOP_DISTANCE)
 	if bool(r["arrived"]):
@@ -9745,12 +9770,14 @@ func _step_click_walk(delta: float) -> bool:
 ## approach on every pass while out of reach (docs/protocol/auto_command.md,
 ## phase 1, READ), and _step_pending_attack does the same.
 func _end_blocked_click_walk(graph: NavGraph, step: NavGraph.StepResult) -> void:
+	var was_run := _move_heading_run
 	_has_move_target = false
+	_move_heading_run = false
 	player.velocity.x = 0.0
 	player.velocity.z = 0.0
 	if _qa_move_log or _qa_walk != "" or OS.get_environment("SRREVAMP_QA_NAVTRACE") != "":
-		print("NAV: the walk is blocked at local %.2f, %.2f (on %s) -- ended, as retail's mover ends a refused step" % [
-			step.position.x, step.position.z, _nav_footing_name(graph, step.standing_on)])
+		print("NAV: the %s is blocked at local %.2f, %.2f (on %s) -- ended, as retail's mover ends a refused step" % [
+			"heading run" if was_run else "walk", step.position.x, step.position.z, _nav_footing_name(graph, step.standing_on)])
 	_ask_pickup_after_walk()
 
 ## A walk up to a ground item we were too far from is over: ask again from
@@ -11265,6 +11292,7 @@ func _qa_retreat(monster: int) -> void:
 	_drop_pending_attack()
 	_move_target = spot
 	_has_move_target = true
+	_move_heading_run = false
 	print("QA ATTACK: retreating %.0f from monster %d to %.1f,%.1f,%.1f; no more swings" % [
 		units, monster, spot.x, spot.y, spot.z])
 
@@ -12807,6 +12835,14 @@ func _physics_step(delta: float) -> void:
 				player.velocity.y = 0.0
 			_try_step_up(delta)
 			player.move_and_slide()
+			# Round 653, OURS: with no navigation graph under the player (a
+			# region with no .nvm, or before one streams in) a heading run
+			# that meets a physics wall ends there too, rather than sliding.
+			if _has_move_target and _move_heading_run and player.is_on_wall():
+				_has_move_target = false
+				_move_heading_run = false
+				player.velocity.x = 0.0
+				player.velocity.z = 0.0
 		_walked_since_send += Vector2(player.position.x - walk_from.x, player.position.z - walk_from.z).length()
 
 	# CharacterBody3D.is_on_floor() was observed real, unreliable here (stays
@@ -12849,9 +12885,13 @@ func _physics_step(delta: float) -> void:
 	# do either. A real move clears the sit above (_leave_sit_by_moving) first.
 	if _time_since_send >= MIN_SEND_INTERVAL and player.position.distance_to(_last_sent_pos) >= MIN_SEND_DISTANCE \
 			and not _sit.sitting and not _motion_locked():
+		# A heading run's positions carry its heading (round 653; retail's
+		# heading form relayed, WorldNet.encode_move).
+		var run_wire := SkyRun.wire_angle(_move_heading) if (_has_move_target and _move_heading_run) else -1
 		if _qa_move_log:
-			print("MOVE send t=%d ms=%d pos=(%.3f,%.3f)" % [_qa_move_tick + 1, Time.get_ticks_msec(), player.position.x, player.position.z])
-		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated())
+			print("MOVE send t=%d ms=%d pos=(%.3f,%.3f)%s" % [_qa_move_tick + 1, Time.get_ticks_msec(), player.position.x, player.position.z,
+				(" heading=%d" % run_wire) if run_wire >= 0 else ""])
+		NetClient.move_to(player.position.x, player.position.y, player.position.z, _position_relocated(), run_wire)
 		_last_sent_pos = player.position
 		_walked_since_send = 0.0
 		_time_since_send = 0.0
@@ -13060,9 +13100,13 @@ func _qa_move_report() -> void:
 	_qa_move_tick += 1
 	var ms := Time.get_ticks_msec()
 	var left := Vector2(_move_target.x - player.position.x, _move_target.z - player.position.z).length()
-	print("MOVE self t=%d ms=%d pos=(%.3f,%.3f) dest=(%.3f,%.3f) order=%s speed=%.1f left=%.3f" % [
+	# Round 653: "run" is a heading run in effect (no destination; `left` is
+	# then to its OURS reach point), "facing" the body's heading and "gait"
+	# the locomotion the body plays (run while an order is in effect).
+	print("MOVE self t=%d ms=%d pos=(%.3f,%.3f) dest=(%.3f,%.3f) order=%s speed=%.1f left=%.3f run=%s facing=%.3f gait=%s" % [
 		_qa_move_tick, ms, player.position.x, player.position.z, _move_target.x, _move_target.z,
-		str(_has_move_target), _move_speed, left])
+		str(_has_move_target), _move_speed, left, str(_has_move_target and _move_heading_run),
+		RemoteFacing.heading_of_yaw(player.rotation.y, 0.0), "run" if _has_move_target else "stand"])
 	for id in _other_bodies:
 		var body: Node3D = _other_bodies[id]
 		if not is_instance_valid(body) or not _other_body_targets.has(id):
@@ -13256,8 +13300,8 @@ func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 ## without aiming it; a turn already in progress goes on.
 func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 	if _qa_move_log:
-		print("MOVE recv %d ms=%d pos=(%.3f,%.3f)%s" % [moved.character_id, Time.get_ticks_msec(), moved.x, moved.z,
-			" relocated" if moved.relocated else ""])
+		print("MOVE recv %d ms=%d pos=(%.3f,%.3f)%s%s" % [moved.character_id, Time.get_ticks_msec(), moved.x, moved.z,
+			" relocated" if moved.relocated else "", (" heading=%d" % moved.heading_wire) if moved.heading_wire >= 0 else ""])
 	if _arrival_pending and _arrival_entries.has(moved.character_id):
 		var kept: WorldNet.EntitySnapshot = _arrival_entries[moved.character_id]
 		kept.x = moved.x
@@ -13270,6 +13314,13 @@ func _on_entity_moved(moved: WorldNet.EntityMoved) -> void:
 		var body: Node3D = _other_bodies[moved.character_id]
 		if moved.relocated:
 			body.position = to
+			return
+		# Round 653: a heading run faces its heading (retail's echo of the
+		# heading form, FUN_008a5750 -> FUN_009e08a0 -> FUN_009e02f0, turns
+		# the mover to it at 3 pi rad/s), not the next position.
+		if moved.heading_wire >= 0:
+			var hf := RemoteFacing.facing_of(RemoteFacing.from_wire_angle(moved.heading_wire))
+			_aim_remote_body(body, Vector3(hf.x, 0.0, hf.y), 0.0)
 			return
 		_aim_remote_body(body, to - body.position, 0.0)
 
@@ -14617,9 +14668,27 @@ func _try_set_move_target(screen_pos: Vector2) -> void:
 	if root != 0:
 		_log_root("a move to the clicked point" if not _left_steering else "a held-button steer", root)
 		return
-	var point = _ground_point_at(screen_pos)
-	if point == null:
-		return
+	var from := camera_3d.project_ray_origin(screen_pos)
+	var dir := camera_3d.project_ray_normal(screen_pos)
+	_move_by_pick_ray(from, dir, get_world_3d().direct_space_state)
+
+## The walk's click on the world, from the camera ray `from` + `dir` (round
+## 653; SkyRun has the reading). The pick reaches SkyRun.PICK_LENGTH (1000)
+## from the camera, as retail's SWorld::vslot_034 does: ground or a placed
+## object inside it is walked to; a ray that meets nothing there -- the sky,
+## or ground farther away -- starts a heading run along the ray's ground
+## direction (FUN_0078f8d0 -> FUN_009ebec0). Returns "walk", "run", "keep"
+## (a run already on that heading goes on unchanged) or "ignore".
+func _move_by_pick_ray(from: Vector3, dir: Vector3, space: PhysicsDirectSpaceState3D) -> String:
+	# Only the ground and placed objects can be a destination. Left to the
+	# default mask the ray also hit the player's own capsule, the invisible
+	# navmesh walls (NAVMESH_WALL_COLLISION_LAYER) and NPC capsules, and a
+	# click across the plaza landed on the nearest of those instead -- "the
+	# character does not move to the direction you click".
+	var hit := space.intersect_ray(SkyRun.pick_query(from, dir, TERRAIN_COLLISION_LAYER, [player.get_rid()]))
+	if hit.is_empty():
+		return _start_heading_run(dir)
+	var point: Vector3 = hit["position"]
 	# A click on the ground supersedes an attack that was walking into reach,
 	# and a friendly cast walking to its player (round 622's review) -- even
 	# one the filter below does not send (OURS: where retail drops a pending
@@ -14631,14 +14700,46 @@ func _try_set_move_target(screen_pos: Vector2) -> void:
 	# follow-up; RemoteFacing.click_rule): with no movement order in effect a
 	# click under 5 units away is not sent -- nothing moves; a far click
 	# within 5 degrees of a far order snaps the heading instead of turning.
-	match RemoteFacing.click_rule(_player_move_order, (point as Vector3) - player.position, _move_target - player.position):
+	match RemoteFacing.click_rule(_player_move_order, point - player.position, _move_target - player.position):
 		"ignore":
-			return
+			return "ignore"
 		"snap":
 			_player_turn_snap = true
 	_player_move_order = true
 	_move_target = point
 	_has_move_target = true
+	_move_heading_run = false
+	return "walk"
+
+## Starts a heading run along the pick ray `dir` (round 653, SkyRun): the ray's
+## ground direction becomes the run's heading, and the body turns to it at the
+## client's rate while it runs (FUN_009e08a0 -> FUN_009e02f0, 3 pi rad/s). Not
+## started -- "keep" -- when the player is moving and the heading is within 5
+## degrees of its facing (FUN_0078f8d0, READ; SkyRun.click_rule).
+func _start_heading_run(dir: Vector3) -> String:
+	var current := RemoteFacing.heading_of_yaw(player.rotation.y, 0.0)
+	var h := SkyRun.heading_of_ray(current, dir)
+	if SkyRun.click_rule(_has_move_target, current, h) == "keep":
+		return "keep"
+	# The click supersedes an attack or friendly cast walking into reach, as
+	# a ground click does.
+	_pending_attack = {}
+	_released_attack = {}
+	_pending_friend_cast = {}
+	var flat := RemoteFacing.facing_of(h)
+	_player_move_order = true
+	_move_heading_run = true
+	_move_heading = h
+	# OURS: the order's point, for the ground click's own filter
+	# (RemoteFacing.click_rule) should a ground click follow: the pick's reach
+	# along the heading. What retail's destination record holds during a
+	# heading move is not read.
+	_move_target = player.position + Vector3(flat.x, 0.0, flat.y) * SkyRun.PICK_LENGTH
+	_has_move_target = true
+	_aim_local_player(Vector3(flat.x, 0.0, flat.y))
+	if _qa_move_log:
+		print("MOVE run t=%d ms=%d heading=%.4f wire=%d dir=(%.3f,%.3f)" % [_qa_move_tick + 1, Time.get_ticks_msec(), h, SkyRun.wire_angle(h), flat.x, flat.y])
+	return "run"
 
 ## The point on the ground or a placed object under a screen point, or null:
 ## the click-to-move ray, shared with the ground-pick cast (round 617).
@@ -15314,6 +15415,7 @@ func _pick_up_ground_item(ground_id: int) -> void:
 	if pick_root == 0 and target != Vector3.INF and player.global_position.distance_to(target) > GroundItemsNet.PICK_RANGE:
 		_move_target = target
 		_has_move_target = true
+		_move_heading_run = false
 		_pending_attack = {}
 		_released_attack = {}
 	else:

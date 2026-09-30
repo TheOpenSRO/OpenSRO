@@ -51,3 +51,17 @@ func WireAngle(h float64) float64 {
 	}
 	return a
 }
+
+// HeadingFromWire is the inverse of WireAngle as the client computes it
+// (round 653; FUN_008a5640 then FUN_009c40b0, client RemoteFacing
+// .from_wire_angle): (a / 65535) * 360 * 0.01745329238474369 radians, plus
+// pi/2 (1.5707963705062866), less 2 pi (6.2831854820251465) while 2 pi or
+// more. A heading run's u16 (the heading form of 0x7021) becomes the
+// character's heading this way.
+func HeadingFromWire(a uint16) float64 {
+	h := float64(a)/65535.0*360.0*0.01745329238474369 + 1.5707963705062866
+	for h >= 6.2831854820251465 {
+		h -= 6.2831854820251465
+	}
+	return h
+}
