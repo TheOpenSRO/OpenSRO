@@ -135,6 +135,14 @@ colour is a mirrored render of the landscape, bumped by `waterbump3.ddj` and tin
 The water frames are not used. See WORLD_ISSUES.md's six-hundred-and-twenty-eighth round and
 `client/scripts/mapm/water_reflection.gd`.
 
+**Depth (READ, round 648).** The world camera's projection is `FUN_00aa4ef0`, a PerspectiveFovLH,
+with **near 1.0** (`fld1` in the camera constructor `FUN_00bae0a0`, never written again), fovy
+60 degrees (0x00d89ddc) and far set to the view distance (world+0x2729: 1500 / 2500 / **3500** by
+default / 4500 / 5500). The device asks for a 24-bit depth buffer with no stencil (minimum depth
+bits raised to 24 in `CGame::vslot_007`, 0x841ced), so D24X8 where the card has it. The water pass
+writes no depth. srrevamp's camera keeps Godot's default near of 0.05 and a far of 1920 x (radius
++ 1) x 2, about 20 times less depth precision at a given distance (docs/TODO.md).
+
 OPEN: a region-level flag at region+0x2475 makes the loader force -1 on every block; it is set in
 `FUN_00a361b0` from a per-region object list that has not been identified.
 

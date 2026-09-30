@@ -23,7 +23,8 @@
 #   hitches  frames over 100 ms: the summaries' `H over 100 ms`, summed.
 # Sites: jangan (the spawn, the densest town), reeds (Dunhuang, the most
 # animated objects in view), cross (a walk west from 97/168 into 97/167, so a
-# region streams in during play -- where a freeze is felt), hotan.
+# region streams in during play -- where a freeze is felt), hotan, ferry (the
+# Donwhang-region ferry landing 90/143, reeds and river in view; round 648).
 #
 # How it measures (the method the reviews of rounds 645-647 settled on):
 # - runs are interleaved base, head, base, head ... so drift hits both;
@@ -61,7 +62,7 @@ while [ $# -gt 0 ]; do
     --sites) sites="$2"; shift 2 ;;
     --runs) runs="$2"; shift 2 ;;
     --frames) frames="$2"; shift 2 ;;
-    *) echo "usage: $0 [--base REV] [--head REV] [--sites jangan,reeds,cross,hotan] [--runs N] [--frames N]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--base REV] [--head REV] [--sites jangan,reeds,cross,hotan,ferry] [--runs N] [--frames N]" >&2; exit 2 ;;
   esac
 done
 cd "$repo_root"
@@ -73,13 +74,14 @@ box_base="/opt/srrevamp-client-perf-${lane}-base"
 box_head="/opt/srrevamp-client-perf-${lane}-head"
 work="/var/tmp/perf-${lane}"
 
-# The fixed views: MAPM path | QA_AT (region-local x,z) | yaw | walk heading ('' = stand).
+# The fixed views: MAPM path | QA_AT (region-local x,z) | yaw | walk heading ('' = stand) | [frames, at least].
 view() {
   case "$1" in
     jangan) echo '97\168.m|1002,1020|0|' ;;   # the game's own spawn
     reeds)  echo '98\157.m|900,900|0|' ;;     # Dunhuang reeds (round 647)
     cross)  echo '97\168.m|120,1020|270|270' ;; # walk west into 97/167 (client/tools/README.md, "Load benchmark" (b))
     hotan)  echo '92\135.m|960,960|0|' ;;     # Hotan, the zone landing
+    ferry)  echo '90\143.m|464,879|270||12000' ;;   # Donwhang-region ferry GATE_NPC_WC_FERRY4, looking at the dock over the reeds (round 648); 12000 frames: at 2.6 ms a frame 3000 gave 8 samples
     *) echo "unknown site $1" >&2; exit 2 ;;
   esac
 }
@@ -105,7 +107,7 @@ ship "$box_head" "$head"
 # and prints "<frame ms> <entry ms> <freeze ms> <hitches> <other renders seen>".
 ssh "$RENDER_HOST" "cat > '$work/run1.sh'" <<EOF
 #!/bin/bash
-# run1.sh <client dir> <log> <mapm> <x,z> <yaw> [walk heading]
+# run1.sh <client dir> <log> <mapm> <x,z> <yaw> [walk heading] [frames]
 export SRREVAMP_PK2_PATH=$PK2_DIR/Data.pk2 SRREVAMP_MAP_PK2_PATH=$PK2_DIR/Map.pk2 SRREVAMP_MEDIA_PK2_PATH=$PK2_DIR/Media.pk2
 export SRREVAMP_PARTICLES_PK2_PATH=$PK2_DIR/Particles.pk2 SRREVAMP_MUSIC_PK2_PATH=$PK2_DIR/Music.pk2
 export SRREVAMP_MAPM_PATH="\$3" SRREVAMP_QA_AT="\$4" SRREVAMP_QA_YAW="\$5" SRREVAMP_QA_FORCE_LOADING=1
@@ -118,7 +120,7 @@ for i in \$(seq 1 120); do [ "\$(others)" = 0 ] && break; sleep 5; done
 rm -f "\$2.others"
 ( while :; do n=\$(others); [ "\$n" -gt 0 ] && echo \$n >> "\$2.others"; sleep 2; done ) & W=\$!
 xvfb-run -a -s "-screen 0 1280x720x24" vglrun -d egl0 $GODOT --rendering-driver opengl3 \
-  --resolution 1280x720 --path "\$1" res://scenes/World3D.tscn --quit-after $frames \
+  --resolution 1280x720 --path "\$1" res://scenes/World3D.tscn --quit-after "\${7:-$frames}" \
   --print-fps --disable-vsync > "\$2" 2>&1 &
 G=\$!; wait \$G
 kill \$W 2>/dev/null
@@ -152,13 +154,18 @@ ssh -n "$RENDER_HOST" "touch /var/tmp/perf-gate.lock"
 slower=0
 report=""
 for s in ${sites//,/ }; do
-  IFS='|' read -r mapm at yaw walk <<<"$(view "$s")"
+  IFS='|' read -r mapm at yaw walk site_frames <<<"$(view "$s")"
+  # A cheap view (the ferry: 2.6 ms a frame) is over before 3000 frames give
+  # the 30 once-a-second samples the frame number needs, so a site may ask
+  # for more: max(--frames, the site's own).
+  run_frames=$frames
+  [ -n "$site_frames" ] && [ "$site_frames" -gt "$frames" ] && run_frames=$site_frames
   declare -A vals=()
   for i in $(seq 1 "$runs"); do
     for b in base head; do
       dir="$box_base"; [ $b = head ] && dir="$box_head"
       for try in 1 2 3; do
-        out=$(ssh -n "$RENDER_HOST" "flock /var/tmp/perf-gate.lock '$work/run1.sh' '$dir' '$work/${s}_${b}_$i.log' '$mapm' '$at' '$yaw' '$walk'")
+        out=$(ssh -n "$RENDER_HOST" "flock /var/tmp/perf-gate.lock '$work/run1.sh' '$dir' '$work/${s}_${b}_$i.log' '$mapm' '$at' '$yaw' '$walk' '$run_frames'")
         read -r ms entry freeze hitches seen <<<"$out"
         if [ "$ms" = none ] || [ "$entry" = none ] || [ "$freeze" = none ]; then
           echo "  $s $b run $i: missing numbers ($out) -- see $RENDER_HOST:$work/${s}_${b}_$i.log" >&2; exit 1

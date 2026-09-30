@@ -14,6 +14,7 @@
 //	go run ./cmd/waterat -map Map.pk2 -data Data.pk2 -region 97/159 -at 720,900
 //	go run ./cmd/waterat -map Map.pk2 -data Data.pk2 -census
 //	go run ./cmd/waterat -map Map.pk2 -data Data.pk2 -column 159
+//	go run ./cmd/waterat -map Map.pk2 -region 90/143 -hidden   (round 648: the water only the depth test hides)
 package main
 
 import (
@@ -118,6 +119,7 @@ func main() {
 	census := flag.Bool("census", false, "tally every region's block water fields")
 	column := flag.Int("column", -1, "list the water blocks of every region with this y")
 	dump := flag.String("dump", "", "write this Map.pk2 file's raw bytes to stdout (e.g. Water\\water101.ddj)")
+	hidden := flag.Bool("hidden", false, "with -region: measure the drawn water that only the depth test hides (round 648)")
 	flag.Parse()
 	if *mapPath == "" {
 		fmt.Fprintln(os.Stderr, "usage: waterat -map <Map.pk2> [-data <Data.pk2>] (-region x/y [-at x,z] | -census | -column y)")
@@ -163,6 +165,10 @@ func main() {
 	var nv *nvmPlanes
 	if dataArc != nil {
 		nv = readNvm(dataArc, rx, ry)
+	}
+	if *hidden {
+		reportHidden(reg, rx, ry)
+		return
 	}
 	fmt.Printf("region %d/%d (.m version %s)\n", rx, ry, reg.Version)
 	fmt.Printf("%-9s %5s %5s %9s %9s %9s %6s  %s\n", "block", "type", "wave", "plane", "hmin", "hmax", "state", "nvm type/height")
@@ -408,5 +414,76 @@ func must(err error) {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
+	}
+}
+
+// hiddenBuckets are the upper edges of the ground-above-water margins
+// reportHidden tallies.
+var hiddenBuckets = []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, math.Inf(1)}
+
+// reportHidden measures, for one region, the drawn water that lies UNDER the
+// ground and so is hidden only by the depth test (round 648). Water and
+// terrain share the vertex grid and the triangulation (i00,i10,i11 /
+// i00,i11,i01 in both builders), so across each triangle the ground height
+// and the water's shoreline alpha are both linear in the same barycentric
+// coordinates; the triangle is sampled on a 0.5-unit lattice. It prints the
+// area (square units) where the water's alpha is above zero and the ground
+// stands a margin m above the plane, bucketed by m: the depth test must tell
+// the two surfaces apart at every one of those pixels.
+func reportHidden(reg *mapm.Region, rx, ry int) {
+	const step = 0.5
+	area := make([]float64, len(hiddenBuckets))
+	visible := 0.0
+	for i := range reg.Blocks {
+		b := &reg.Blocks[i]
+		if b.PlaneType != 0 {
+			continue
+		}
+		if st, _ := state(b); st == 0 {
+			continue
+		}
+		alpha := func(r, c int) float64 { return float64(nibble(b.PlaneHeight, b.Vertices[r*gridWidth+c].Height)) / 15 }
+		margin := func(r, c int) float64 { return float64(b.Vertices[r*gridWidth+c].Height - b.PlaneHeight) }
+		for r := 0; r < gridWidth-1; r++ {
+			for c := 0; c < gridWidth-1; c++ {
+				a00, a10, a01, a11 := alpha(r, c), alpha(r, c+1), alpha(r+1, c), alpha(r+1, c+1)
+				if a00+a10+a01+a11 == 0 {
+					continue
+				}
+				m00, m10, m01, m11 := margin(r, c), margin(r, c+1), margin(r+1, c), margin(r+1, c+1)
+				for sz := step / 2; sz < tileSpan; sz += step {
+					for sx := step / 2; sx < tileSpan; sx += step {
+						u, v := sx/tileSpan, sz/tileSpan
+						var a, m float64
+						if u >= v { // triangle i00, i10, i11
+							a = a00 + (a10-a00)*u + (a11-a10)*v
+							m = m00 + (m10-m00)*u + (m11-m10)*v
+						} else { // triangle i00, i11, i01
+							a = a00 + (a11-a01)*u + (a01-a00)*v
+							m = m00 + (m11-m01)*u + (m01-m00)*v
+						}
+						if a <= 0 {
+							continue
+						}
+						if m <= 0 {
+							visible += step * step
+							continue
+						}
+						for k, top := range hiddenBuckets {
+							if m <= top {
+								area[k] += step * step
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	fmt.Printf("region %d/%d: water drawn over ground below it %.0f sq units; water under the ground (hidden only by the depth test) by margin:\n", rx, ry, visible)
+	lo := 0.0
+	for k, top := range hiddenBuckets {
+		fmt.Printf("  (%g, %g]: %.0f sq units\n", lo, top, area[k])
+		lo = top
 	}
 }

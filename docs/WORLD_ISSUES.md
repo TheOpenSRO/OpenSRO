@@ -7745,6 +7745,203 @@ On the branch: ALL PASS. `remote_godot.sh check` gives ALL LOAD (420 scripts), a
 `remote_godot.sh tests` gives **168 suites, 0 failing**. No perf gate was run, as the review
 instructed: the change adds one test per blocked step.
 
+## Six-hundred-and-forty-eighth round: the "broken water" by the Donwhang teleports was the reed beds smeared into streaks, and the reeds stand up again
+
+The user (2026-09-30): "the water in the donwhang region appears glitched or something by the
+water ... It happens by all teleports in the region". Their screenshot shows a ferry dock on
+stilts over sand. Near the shore the sand carries dotted, hatched lines, and there is a pale speckle
+around the huts. The brief's guess was water and terrain z-fighting at near-equal heights. **That was
+measured and is not the cause.** The streaks are the Dunhuang reeds, `fw_cd_reeds_l`, the most-placed
+animated map object (444 placements), drawn through a skeleton whose root was never set. Since round
+645 every clump's skin was bound 1e24 units away, and each clump was drawn as lines running off
+toward infinity.
+
+**Labels.** READ: recovered from `sro_client.exe` (decompile and asm on the RE box). MEASURED:
+counted on the box. INFERRED: follows from what was read but was not itself read. OURS: this
+project's choice.
+
+### The place (READ from the teleport table)
+
+`teleportdata` (the server's CSV) has five Donwhang-region points: `GATE_WC` 102/153 (957, 1508),
+`GATE_NPC_WC_FERRY` 100/161 (636, 1482), `..._FERRY2` 98/156 (1025, 601), `..._FERRY3` 91/143
+(583, 1858) and `..._FERRY4` 90/143 (464, 879). `whatishere` near FERRY4 lists the ferry dock
+`naruter_buil` (173, -62.5, 933), two `w_cd_boat` and seven reed clumps within 500 units. The QA
+view at FERRY4 looking west (`--shots w270@464,879:270,-10,45`) shows the user's dock, with the same
+hatched lines on the sand. That this is the dock in their screenshot is INFERRED from the matching
+buildings.
+
+### The water is not it (MEASURED)
+
+- **Heights.** `waterat -region 90/143`: water blocks in column 0 only, PlaneType 0, plane -60,
+  ground -57 to -78. The sand the view looks over is blocks with PlaneType -1: no water is drawn
+  there at all.
+- **Water that only the depth test hides.** New `waterat -hidden`. The terrain and the water share
+  one vertex grid and one triangulation, so the ground and the shoreline alpha are both linear
+  across each triangle. The tool samples every drawn block at 0.5 units and adds up where the
+  water's alpha is above 0 but the ground stands above the plane. For 90/143 that is **45 square
+  units** in the whole region, 25 of them within 0.1 of the plane. A band that small cannot make
+  the user's picture.
+- **A pixel diff with the water on and off** (new `SRREVAMP_QA_NOWATER=1`, same boot and views):
+  - the dock view (frame 38): 1,328 pixels change, all at y 282-315 between the dock's piles, which
+    is the river behind it;
+  - the view back east over the sand (frame 66): **0 pixels change, and the streaks are still
+    there**.
+- **The reeds hidden** (`SRREVAMP_QA_HIDE=reed`, 28 mesh instances): the streaks are gone. Against
+  the normal run, 5,595 pixels differ in frame 38 and 891 in frame 66, and they are exactly the
+  hatched lines and the speckle.
+- **`SRREVAMP_NO_MAP_ANIM=1`** draws the reeds as upright clumps: 60,567 pixels in frame 38 against
+  the reeds hidden. **`SRREVAMP_MAP_ANIM_NO_SHARE=1`** still draws the streaks. So the fault is
+  round 645's skinning, not round 647's shared poses.
+
+### Why the reeds smear (MEASURED, then READ)
+
+New `client/tools/probe_map_anim_pose.gd` builds an object the way the world does and skins it on
+the CPU. On the base:
+
+```
+[root]  rest (0, 0, 0, 1) / (3683467473916534645063680.00, 253813068042076160.00, 4504345567583976629993472.00) | key0 identity / (0, 0, 0)
+piece W_cd_reeds_L  136 verts  still size (154.09, 22.15, 104.39)  posed size (3683467762146910796775424.00, 838098202786791424.00, 4504346144044728933416960.00)
+```
+
+`w_cd_reeds_l.bsk`'s root stores a local translation of (3.7e24, 2.5e17, 4.5e24) (`dump_bsk_raw`).
+Its world bind and inverse bind translations are the same kind of value, so the root was never set.
+Every bone on the root stores a world bind equal to its local, so the file itself puts the root at
+the origin. The clip keys `[root]` at identity.
+
+`Skeleton3DBuilder` composes each bone's rest from the locals, root included, and binds the skin to
+the inverse of that rest. The bind therefore carried -3.7e24, the root's key did not, and each
+vertex landed 1e24 away. The vertices weighted partly to the object-space bind drew the lines.
+
+What retail does (READ, a sub-agent on the decompile; BSK_FORMAT.md, "How the client skins"):
+- The skin matrix is `InvBind_file x W` in `RTSkeleton::FUN_00c49f20`, `CRTBone::FUN_00c48fe0` and
+  `FUN_00c4bcb0`. That is the file's own inverse bind; nothing inverts a composed rest.
+- `AniMixer::FUN_00c54200` builds a keyed bone's local from the keys alone. The stored local is
+  used only for a bone no track touches.
+- So retail never reads the reeds' unset value.
+
+**The census** (new `client/tools/census_bsk_bind.gd`, every `.bsk` in Data.pk2, MEASURED):
+- 1,208 skeletons; 11 have an unset root: a component from 2.7e20 to 7.7e31, or NaN.
+- Those 11 are the reeds, the Tarim rope bridge `oas_tarim_rob_b_brid_01`, `sword_skill_c`, and the
+  monsters `flame_spirit`, `thief_boss`, `venefica`, `elemental`, `penon_die`, `planar`,
+  `planar_die` and `uruchidragon`.
+- In all 11, every bone on the root implies a root at the origin.
+- Every other root is within 4,767 units (`roc_event_cam`).
+
+### The fix
+
+`Skeleton3DBuilder.build_skeleton3d`: when the root's stored local is not usable (not finite, not a
+unit quaternion, or a translation component over `ROOT_TRANSLATION_LIMIT` = 1e6), the root takes
+the rest its children's stored world binds imply, `world_bind x inverse(local)`, from
+`root_rest_from_children`.
+- The limit is OURS, set in the measured gap between 4,767 and 2.7e20.
+- The rule itself uses READ file data.
+- A root that is set keeps its own rest. 376 set roots have children that imply something else,
+  and they animate correctly from their own rest.
+- `SkeletonPose.bone_world_bind` reads the record's second pair.
+- The map objects and the character path (`SkinnedBsrAssembler`, `World3D`) both build through
+  this function, so the monsters in the list are covered too.
+
+After, with the same probe:
+
+| object | t | still size | posed size |
+|---|---|---|---|
+| `fw_cd_reeds_l` | 0 s | (154.09, 22.15, 104.39) | (154.09, 22.15, 104.39) |
+| `fw_cd_reeds_l` | 1.5 s | | (154.07, 22.32, 104.10), the sway |
+| `oas_tarim_rob_b_brid_01`, piece 07 | 0 s | (586.85, 408.10, 383.40) | the same |
+| `oas_tarim_rob_b_brid_01`, piece 07 | 1 s | | (586.85, 425.59, 405.20) |
+
+`thief_boss` (`probe_skinning.gd`, group `default`, t = 0) puts its skirt piece at y 9.9-29.5
+against a rest of 12.3-31.96.
+
+The dock view after the fix draws the reeds as standing clumps: 59,223 pixels against the reeds
+hidden, where the still reeds drew 60,567. The streaks are gone.
+
+### Retail's depth, for the water (READ; not changed)
+
+The world camera's projection has near **1.0** (`fld1` in the camera constructor `FUN_00bae0a0`,
+never written again). Its fovy is 60 degrees and its far is the view distance, 3,500 by default.
+The device asks for a 24-bit depth buffer (`CGame::vslot_007` raises the minimum depth bits to 24,
+0x841ced), and the water pass writes no depth. This client keeps Godot's near of 0.05, which is
+about 20 times less depth precision. That is real but small: the hidden-water census below shows
+little water that the depth test alone keeps out. It is in docs/TODO.md with the reason not to flip
+it blind (the camera's close-geometry clipping).
+
+### Other water, by the same measure (MEASURED, `waterat -hidden`, square units)
+
+| region | water drawn over lower ground | hidden only by depth | of which within 0.1 of the plane |
+|---|---|---|---|
+| 97/168 Jangan town | 93,775 | 0 | 0 |
+| 96/168 Jangan moat | 55,243 | 28,347 | 57 |
+| 97/167 Jangan west | 134,157 | 31,033 | 62 |
+| 98/159 lake | 3,674,679 | 2,306 | 51 |
+| 92/136 Hotan river | 1,349,311 | 27,653 | 13 |
+| 90/143 the ferry | 245,464 | 45 | 25 |
+| 100/161 `WC_FERRY` | 1,402,785 | 13,924 | 401 |
+
+Most of the hidden water lies more than 5 units below the ground, where no depth buffer confuses the two.
+The band within 0.1 units is tens to hundreds of square units a region.
+
+### Tests
+
+- **New `client/scripts/world/map_animation_root_test.gd`** (synthetic: a two-bone `.bsk` under a
+  root at (3e24, 2e17, 4e24), a clip keying the root at the origin, the fixture's skinned
+  triangle, served from memory): 13 ok, ALL PASS.
+- **The negative**, the same file on e5bf2ba:
+
+```
+FAIL r648: an unset root (local translation (3000000041545283565256704, 199999996861349888, 4000000055393711420342272)) rests at the origin its children's world binds imply (got (3000000041545283565256704, 199999996861349888, 4000000055393711420342272))
+FAIL r648: so BoneC's composed rest is its stored world bind (0, 1, 0) (got (3000000041545283565256704, 199999996861349888, 4000000055393711420342272))
+FAIL r648: Skeleton3DBuilder.root_rest_usable / root_rest_from_children exist
+FAIL r648: at t = 0 (the rest) every skinned vertex is drawn where the still mesh has it (worst inf units off)
+FAIL r648: mid-clip the leaf sways by its bone's turn, a unit or two, not 1e24 (worst inf units)
+5 FAILURES
+```
+
+- `remote_godot.sh check`: 421 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 168 suites,
+  0 failing.
+- Go: `go build ./...` and `go vet ./cmd/waterat` are clean. `go test -count=1 -p 1 ./...` passed
+  59 packages. `internal/session` failed in two full runs, on different tests each time:
+  `TestFortressWeaponDealsExactlyOne` and `TestSkillCooldownGroupIsShared` ("skill not known"). It
+  passed on its own, and those two tests passed alone. Other lanes' `go test` runs were live against
+  the same local PostgreSQL at the time. This round changes no server package but `cmd/waterat`.
+
+### Performance gate
+
+`client/tools/perf_gate.sh`, base e5bf2ba against the working tree, 1280x720, medians of 3 runs.
+Other lanes' renders overlapped many runs, which were repeated. One Jangan head run (13.83 ms) ran
+after 18 overlapping renders.
+
+| site | number | base | head | verdict |
+|---|---|---|---|---|
+| jangan | frame ms | 11.79 (12.25, 11.79, 11.12) | 11.53 (11.53, 11.33, 13.83) | SAME |
+| jangan | entry ms | 9,657 | 9,667 | SAME |
+| jangan | freeze ms | 3,404 | 3,414 | SAME |
+| jangan | hitches | 5 | 5 | SAME |
+| ferry | frame ms | 2.60 | 2.58 | SAME |
+| ferry | entry ms | 7,389 | 7,292 | SAME |
+| ferry | freeze ms | 2,576 | 2,585 | SAME |
+| ferry | hitches | 3 | 3 | SAME |
+
+- **The new `ferry` site** is 90/143 at (464, 879), yaw 270, the dock and its reeds.
+- **The Jangan run's verdict lines were not printed.** The first gate stopped at the ferry with
+  "missing numbers": its 2.6 ms frames gave 8 once-a-second samples in 3,000 frames, short of the 30
+  needed. So Jangan's verdicts are applied by hand from the rule above.
+- **The ferry was rerun with `--frames 12000`.** The gate now lets a site carry its own frame
+  count, and the ferry's is 12,000.
+
+### Still OPEN
+
+- **Skin binds in general.** Retail skins from the file's inverse binds, and this client from
+  composed rests. In 855 of the 1,208 skeletons some bone is more than 0.05 units or 1 degree
+  apart. Whether that shows anywhere is not measured (docs/TODO.md).
+- **The near plane**, 0.05 against retail's 1.0 (above; docs/TODO.md).
+- **Not read:** the skeleton scale at skeleton+0xa4 and the `+0x84` bit-2 palette.
+- **Not confirmed by the user:** that the dock in their screenshot is the FERRY4 landing, and that
+  "all teleports in the region" are all reed shores. The other ferry landings have reeds within
+  250 units (`whatishere`: 100/161, 98/156 and 91/143), and `GATE_WC` in the town (102/153) has
+  none within 250.
+
+
 ## Six-hundred-and-forty-seventh round: the Jangan spawn draws at 85 fps instead of 71 with every tree swaying exactly as before, and a zone change no longer leaves the old zone's animated objects behind
 
 Round 645 made the map's skeletal objects move. The rounds 641–646 integration review MEASURED what

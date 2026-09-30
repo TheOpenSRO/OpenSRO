@@ -138,6 +138,39 @@ The 22nd "float" of the 88-byte reading above is this child count. Root records 
 because the empty parent name costs 4; there are not two record shapes, only an empty or
 non-empty parent field.
 
+### How the client skins with those three matrices (read 2026-09-30, round 648)
+
+READ from the decompile on the RE box:
+- `CPrimBone`/`CPrimDummy` slot 1 (`FUN_00bfa240`) allocates three matrices at prim `+0x20`;
+  `FUN_00bf9e60` fills them from the record's local, world bind and inverse bind, with the
+  row-vector quaternion-to-matrix `FUN_00bf9cc0` and the vector in row 3.
+- The runtime `CRTBone` holds its local L, world W and **palette P** at `+0x80`. Every bone update
+  (`RTSkeleton::FUN_00c49f20`, `CRTBone::FUN_00c48fe0`, `FUN_00c4bcb0`) ends with
+  `P = InvBind_file x W` (row vectors). **The inverse bind is the file's, never recomputed**; no
+  update or skinning path reads the stored world bind.
+- The GPU path (`CObjRendererVS::FUN_00bf0310`) uploads each P transposed as 3 constants from c29;
+  the CPU path (`CompoundObj::FUN_00c3afa0`) blends `v x P`.
+- Each frame `AniMixer::FUN_00c54200` clears every bone's weight, blends the tracks the clip has,
+  and then: **a bone some track touched takes its local from the keys alone**; a bone no track
+  touched takes the stored local. So a keyed root never uses its stored local.
+- `W = L x W_parent`; the first bone has no parent (`W = L`, times the skeleton scale at
+  skeleton+0xa4 when that is not 1; its default is not read). There is no forced identity root.
+
+**Unset roots (MEASURED, `client/tools/census_bsk_bind.gd` over Data.pk2's 1,208 `.bsk`).** 11
+skeletons store a root whose local translation was never set: a component of 2.7e20 to 7.7e31, or NaN. They are the
+Dunhuang reeds `w_cd_reeds_l` (444 placements), the Tarim rope bridge `oas_tarim_rob_b_brid_01`,
+`sword_skill_c`, and the monsters `flame_spirit`, `thief_boss`, `venefica`, `elemental`,
+`penon_die`, `planar`, `planar_die` and `uruchidragon`. In every one, each bone hung on the root
+stores a world bind equal to its local, so the file places the root at the origin. Every other
+root's translation is at most 4,767 units (`roc_event_cam.bsk`).
+
+srrevamp composes each bone's rest from the locals and binds the skin to its inverse (OURS, not
+retail's use of the stored inverse bind). An unset root therefore put every bind 1e24 units away,
+and the reeds and the bridge were drawn as streaks. Since round 648, `Skeleton3DBuilder` takes an
+unusable root's rest from what its children's stored world binds imply. The wider difference stays
+open: 855 of the 1,208 skeletons have some bone whose composed rest is more than 0.05 units or
+1 degree off its stored world bind (docs/TODO.md).
+
 ## Implementation notes
 
 - `server/internal/bsk` (Go) and `client/scripts/bsk/bsk_reader.gd` (GDScript) both parse the
