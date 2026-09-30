@@ -103,7 +103,7 @@ func _ifdef_key(path: String, defines: Array) -> String:
 ## "strong").
 func _text_table() -> UiTextTable:
 	var rows := PackedStringArray()
-	for pair in [["UIIT_CTL_WARENETWORK_DETAIL_NORMAL", "General"], ["UIIT_STT_MOB_CHAMPION", "Champion"],
+	for pair in [["UIIT_CTL_WARENETWORK_DETAIL_NORMAL", "General"], ["UIIT_STT_MOB_CHAMPION", "Champion"], ["UIIT_STT_PARTYMOB_TARGET", "(Party)"],
 			["UIIT_STT_MOB_STRONG", "Elite"], ["UIIT_STT_MOB_UNIQUE", "Unique"]]:
 		rows.append("1\t%s\t\t\t\t\t\t\t%s" % pair)
 	return UiTextTable.parse(("\n".join(rows)).to_utf16_buffer())
@@ -228,6 +228,15 @@ func _checks(script: GDScript) -> void:
 	_check(name7 != null and name7.text == "Elite Mangyang", "rarity 7: the name reads 'Elite Mangyang' (got '%s')" % (name7.text if name7 != null else null))
 	target.call("show_target", "Mangyang", 9, 1, 54, 54)
 	_check(name7 != null and name7.text == "Mangyang", "rarity 1: the name is the plain name (got '%s')" % (name7.text if name7 != null else null))
+	# Round 660: a party monster's rank row has UIIT_STT_PARTYMOB_TARGET's
+	# text appended with no separator (0x69b834, wstring::append 0x4782a0).
+	var rank_row := target.find_child("GDR_TWSM_TEXT_LEV", true, false) as Label
+	target.call("show_target", "Mangyang", 9, 1, 54, 54, "", true)
+	_check(rank_row != null and rank_row.text == "Champion(Party)", "a party champion's rank row reads 'Champion(Party)' (got '%s')" % (rank_row.text if rank_row != null else null))
+	target.call("show_target", "Mangyang", 9, 0, 54, 54, "", true)
+	_check(rank_row != null and rank_row.text == "General(Party)", "a party general's rank row reads 'General(Party)' (got '%s')" % (rank_row.text if rank_row != null else null))
+	target.call("show_target", "Mangyang", 9, 1, 54, 54)
+	_check(rank_row != null and rank_row.text == "Champion", "without the flag the row is the rank alone (got '%s')" % (rank_row.text if rank_row != null else null))
 	for rarity in [2, 9]:
 		target.call("show_target", "Nothing", 9, rarity, 54, 54)
 		var any := false

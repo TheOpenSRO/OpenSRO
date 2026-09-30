@@ -7094,6 +7094,198 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-sixtieth round: every field monster of the game stands in its nest, comes back on the nest's own timer, is aggressive or passive and gives up as its data says, and hatches champions, giants and party monsters
+
+The user (2026-09-30): "Please add all monsters to the map like the original server would have it.
+Make sure they can walk around like the original game and respect if they're 'aggro' or not. Also
+make sure you add all the monster types like champion, giant, party, etc. ... Make sure monsters
+respawn after awhile and also make sure the monsters follow for a certain distance like the
+original game." The reading is `docs/protocol/monster_ai.md`, "Nests on the map (round 660)"; the
+operator's side is `deploy/README.md`, "The full map (round 660)".
+
+Labels: READ (SR_GameServer.exe / sro_client.exe), MEASURED, INFERRED, OURS, and EXTERNAL for every
+number that comes from the user's shard DB (the "Eternity" backup, round 658). No DB row, CSV or
+game data is in this commit; the tests use synthetic rows.
+
+### 1. What shipped (MEASURED at boot on the render box, npcpos + characterdata of our archive, the shard's three tables)
+
+`-full-map` (off by default) makes every field monster row of npcpos a nest (`server/internal/nest`,
+`server/cmd/server/nest.go`), run by one scheduler goroutine (round 656's, now the nest scheduler):
+
+| | rows |
+|---|---|
+| npcpos rows | 12,367 (257 not monsters) |
+| dungeon monster rows (region >= 0x8000), not placed | 1,915 |
+| uniques (rarity 3), not placed -- round 661 | 71 |
+| custom species (ETERNITY / ANTHEIA / `_STR`) in npcpos | 0 (the guard is there) |
+| **placed nests** | **10,124** |
+| matched: the spot's shard nest hatches the npcpos species -- its numbers and tactics (EXTERNAL) | 4,082 |
+| swapped, the species' own tactics row, stand-in nest | 2,346 |
+| swapped, no tactics row left, stand-in nest and behaviour | 3,696 |
+| matched nests with cap 0 (hatch nothing, in the shard too) | 132 |
+| shard field nests (world 1, monster species) no row reaches -- never placed | 3,245 |
+
+The swaps: MOB_ETERNITY_DEADWARRIOR 62584 at 4,734 spots, the SD swaps 38244/38191/38219/38223 at
+511/348/290/159. **The join tolerance** (OURS, from the measurement): every placed row's nest stands
+within 0.00014 units of it, the nearest OTHER nest to any placed row 2.10 units off; 1.0 units sits
+between. Of the matched rows 2,505 run an aggressive tactics row and 1,577 a passive one; with the
+swapped rows' own rows, 4,718 aggressive, 1,710 passive, 3,696 stand-in. 2,552 nests can roll a
+champion (a champion row and a chance above 0). 10 shard hives among the matched nests carry a
+total cap (80-130) and run the capped pass. The most monsters alive at once: **34,678** (the
+matched nests' caps, 28,636, plus one a swapped spot).
+
+Without `-nest-db-dir` every row is a stand-in nest: one monster, 10 s at both ends of its window,
+no scatter, the stand-in behaviour (all aggressive, sight 100, give-up 400, roam 200; OURS), no
+champion roll -- and the boot log says so.
+
+### 2. What was READ this round
+
+- **Aggression: `btAggressType` 0 is aggressive, 1 passive.** `AI::CTactics::Init` 0x53f4d0 copies
+  `row+0x18` to ctx+0x168 (mode 2: `pct <= rand() % 100` makes it 1) and `AITactics_AcquireTarget`
+  0x5478f0 scans only while that byte is 0 or 3. This is round 552's recorded reading; **the round's
+  brief read the DB the other way round ("aggressive (mode 1)"), and the code settles it.** The
+  data agrees with play: Jangan's Mangyang nests run a passive row whose champion row is aggressive,
+  and across the map a species' row is aggressive where its `_CLON`'s is passive (MEASURED on the
+  matched nests, round 660's census). A passive monster still fights back: `CAIState::OnAttacked`
+  0x558ea0 engages on any blow.
+- **The hatch spot** (`nest.HatchOffset`): Nest_Hatch pushes col 10 `nGenerateRadius` (`fild
+  [esi+0x24]` 0x560c51) into the spawn routine 0x5f6eb0, whose first call is 0x531240: 70 of 101
+  hatches land in the outer third of the circle, 20 in the middle, 11 in the inner (constants 1e-6,
+  3.0, 32767.0, float32 2pi, 0.0 read with objdump). The monster's home stays the nest's position.
+- **The field world clamps the class by level** (`nest.ClampClassByLevel`; `CGameWorld_Default`
+  slot 6 0x5eb9a0, asm 0x5eb9f3..0x5eba7e, jump table 0x5ebf14 read back): no giant at level 10 or
+  below (it becomes a champion), no party monster below 10, and the party flag only on the ranks
+  each ten-level band allows.
+- **The party roll's species test** `FUN_00561020`: TypeID (1,2,1,4) never hatches a party monster
+  (17 of the 249 field species).
+- **The capped pass**: `AIHive::Init` 0x55e5b0 sets hive+0x30 when `dwOverwriteMaxTotalCount` is
+  non-zero (0x55e73d), and such a hive runs `AIHive_HatchPass_TotalCapped` 0x55ec10: the pinned nest
+  alone or each nest in turn, timer and alive-cap tests only, until the hive's cap.
+- **The client** (a read-only lookup in sro_client.exe): the class scales the model (`fld1`
+  0x9d38c9; switch 0x9d3995, table 0x9d3c70): champion 1.5, giant 3.0, elite 1.7. The overhead
+  name's colour does not change with the class. A party monster draws
+  `icon\item\etc\europe_partymob.ddj` 16 x 16, 20 px left of its name (vslot 15 0x9d3e70, test at
+  0x9d3f2a), and its target window's rank row gets UIIT_STT_PARTYMOB_TARGET's "(Party)" appended with
+  no separator (0x69b834). The wire is one byte, `rank | party << 4` (vslot_025 0x9d3850).
+
+### 3. What was built
+
+- `server/internal/nest`: the three CSV loaders (by the DB's column names, the smallints as u16,
+  NULL y), the join, the READ rules with scripted dice (window, halving, offset, class roll, clamp),
+  the scheduler (the plain and the capped pass, the first-loss timer, the party arming with a
+  two-pass graveyard so a kill arms a nest the pass already buried) and the hive model round 661
+  builds the unique rotation on (`Hive{TotalCap, Pinned}`).
+- `combat.Hub`: `SpawnHatched` (the nest's home, the party flag at x10 HP, the tactics) and a death
+  log the scheduler drains, so it learns of a loss without polling 34,000 monsters.
+- The brain (`session/monsterai.go`) runs the monster's own row where it has one: sight (col 6),
+  aggression (7/8), chase switch and give-up (35/36), roam rule (37) and the nest's radius, reach
+  rule (40, `ai.TargetOutOfReach`), the scan's fast bits (42); the stand-ins, OURS, elsewhere.
+- The kill's party count (`session/nestkill.go`): the killer's party members alive, in the zone and
+  within 1000 units of the dead monster (READ range; the reference point INFERRED) arm its nest.
+- The wire: the party flag in bit 8 of the list record's rarity word (OURS), in the list, the spawn
+  push and the area of interest's enter, only for a session whose list request sets bit 1 of the
+  capability byte (0x02). **An older client** is sent the rank alone and draws every rank at its
+  species' size; it still needs round 656's paged list for windows this dense (the densest holds
+  1,516 monsters with every nest full; an unpaged client gets the ~480 nearest).
+- The client: the class scale (label, collider and cull radius grown with it), the party mark
+  beside the name, "(Party)" in the target window, the capability bit.
+- Flags: `-full-map`, `-nest-db-dir`, `-nest-respawn` (override every window, testing only);
+  `SRREVAMP_AI_TICK_STATS=1` logs the AI tick's p50/p99 once a minute.
+
+### 4. Tests
+
+- Go, new: `internal/nest` (the loaders; the join with matched, swapped-own, swapped-stand-in,
+  stand-in, dungeon, unique, custom and non-monster rows; the window; the halving; the offset
+  bands; the champion/giant/party roll with scripted dice; the clamp; the first-loss timer and the
+  cap; the capped and pinned hive; the party arming); `cmd/server/nest660_test.go` (the fallback
+  without DB files, the matched nest's numbers and tactics, the hatch's rank, HP, party and
+  champion row, the refill and the override); `session/nest660_test.go` (a passive monster does
+  not notice but fights back; the sight from the row; the leash from the row);
+  `session/nest660_wire_test.go` (the party bit and its capability; the kill's party count).
+- `cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...`: vet clean, 62 packages ok (after merging int/mob 1ea6b02).
+- Client: `combat_test.gd` (the capability bit, the rarity word), `monster_draw_test.gd` (the
+  class scale in the world), `hud_target_layout_test.gd` ("Champion(Party)"):
+  `remote_godot.sh tests` in lane nest660: 175 suites, 0 failing.
+
+**The negative** (`session/nest660_test.go` against int/mob 345e375, with a stub of
+`nest660_shim_test.go` that spawns the monster plainly, as the base can):
+
+```
+--- FAIL: TestPassiveMonsterDoesNotNoticeButFightsBack (0.00s)
+    nest660_test.go:31: tick 0: the passive monster noticed Aria 50 units off
+--- FAIL: TestSightRangeFromTactics (0.00s)
+    nest660_test.go:59: a monster seeing 6 + 200 did not notice Aria 150 units off; state IDLE
+--- FAIL: TestLeashFromTactics (0.00s)
+    nest660_test.go:88: still in BATTLE with its target 160 units off and a give-up distance of 150
+FAIL	github.com/OpenSRO/srrevamp/server/internal/session	0.013s
+```
+
+The rest do not build on the base (`no required module provides package .../internal/nest`,
+`FAIL github.com/OpenSRO/srrevamp/server/cmd/server [setup failed]`).
+
+### 5. Scale and the live check (MEASURED, render box)
+
+Scripts on the box: `/var/tmp/nest660/live.sh` (lane display :160, port 16660; the server with
+`-full-map`, the shard's three tables, the six monster switches, `SRREVAMP_AI_TICK_STATS=1` and
+`SRREVAMP_AI_TRACE=1`; one QA client). Our archive's exports (`/var/tmp/rv654/refsrc`), in memory.
+
+- **Fill** (r1): 9,953 monsters hatch on the first pass (one a nest; cap-0 nests excluded), 34,321
+  within the first minute, 34,365 of the 34,678 possible by the second (the 8-12 s and 3 h
+  windows still filling).
+- **Tick cost with every field nest placed** (`monster AI tick`, per minute, 600 ticks each): r1,
+  the player in Jangan (1,185 brains awake): p50 0.78-1.19 ms, p99 1.21-1.59 ms, longest 1.9-6.0
+  ms. r2, the player fighting in the Mangyang field (1,418 brains): p50 1.10-1.25 ms, p99
+  1.42-1.56 ms, longest 1.5-3.1 ms. Sleep on (the default).
+- **Memory**: the server's RSS at the end of each run, 34,365 monsters alive: 103 MB (r1) and
+  106 MB (r2).
+- **The densest window** (`fullMapSlots`, every nest full): 1,516 monsters in the 5x5 regions
+  around region cell (-59, 3) -- about 100 KB, four frames of the paged list; an unpaged client gets the ~480
+  nearest.
+- **Passive against aggressive** (r2, 4 min: `/tp 129 1560` into Jangan's Mangyang field, then
+  QA_ATTACK on Mangyangs). The Mangyang nests run the shard's passive row 2 (AggressType 1) and
+  their champion row 1 (AggressType 0). The server's trace: every acquisition was a champion --
+  `noticed 1 ..., engaging (MOB_CH_MANGNYANG rank 1 party false tactics 1)`, twice -- and no
+  rank-0 Mangyang noticed the player in 4 minutes among them; 15 Mangyangs engaged only when
+  struck (`struck by 1, engaging`), and 16 died and were re-hatched by their nests.
+- **Champion and giant rates** (the whole map's hatches): r1 1,736 champions and 268 giants in
+  34,365; r2 1,685 and 261 in 34,381. The rule predicts 1,702 and 252 for the first fill (each
+  champion-capable nest's cap x its chance / 101, split 86:15 above level 10, all champion at or
+  below it; 20,132 capable slots): **MEASURED within 2 % (champions) and 7 % (giants).** No party monster: one client
+  cannot make a party kill (the arming is covered by the unit tests).
+
+### 6. Performance gate
+
+Client drawing code changed (the rank scale, the party mark), so the gate ran:
+`client/tools/perf_gate.sh --base 345e375 --sites jangan,mobs` (1280x720, median of 3):
+
+```
+jangan  frame ms   base 9.40  head 9.40  (+0.0)  SAME
+jangan  entry ms   base 9517  head 9555  (+38.0)  SAME
+jangan  freeze ms  base 3354  head 3373  (+19.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+mobs    frame ms   base 10.58  head 10.60  (+0.0)  SAME
+mobs    entry ms   base 11274  head 11253  (-21.0)  SAME
+mobs    freeze ms  base 3375  head 3361  (-14.0)  SAME
+mobs    hitches    base 6  head 6  (+0.0)  SAME
+```
+
+### 7. The flags srrevamp-01 needs
+
+`-npcpos-csv`, `-monsters-csv`, `-nest-db-dir=/data/nestdb` (the three shard CSVs, EXTERNAL,
+copied as `deploy/README.md` says), `-full-map` (turns `-single-frame` on itself), and the six
+monster switches it already runs: `-monster-ai`, `-monster-strike-push`, `-monster-spawn-push`,
+`-monster-battle`, `-player-dead-state`, `-monster-aggro`; `-monster-sleep` stays on (default).
+Players need a client with round 656 for the paged list and with this round for the party flag and
+the rank scale.
+
+### 8. Open (docs/TODO.md, "The monster world's nests (round 660)")
+
+The uniques and their rotation (661; the hive model is built); the dungeons; the 6,042 swapped
+spots' stand-in nests (one monster each); the 132 cap-0 nests; the hive population rate, the event
+substitution, the level > 110 refusal and a failed placement (no server navmesh); column 9's
+retarget by hate, 34 and 39; rank-scaled rewards; the party count's reference point (INFERRED); the
+species' own scale percent and the target window's party re-centring on the client.
+
 ## Six-hundred-and-fifty-seventh round: a unique's appearance and its killer are announced to every player in the original's blue banner at the top of the screen
 
 The user (2026-09-30), part of the monster request: "if you kill a unique make sure you announce it

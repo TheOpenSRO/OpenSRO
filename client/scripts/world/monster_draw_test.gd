@@ -57,6 +57,7 @@ func _initialize() -> void:
 		await _test_no_list_pulls(world)
 		await _test_culling(world)
 		_test_org_rule_world(world)
+		await _test_class_scale(world)
 		_unstub_net()
 		root.remove_child(world)
 		world.free()
@@ -467,6 +468,43 @@ func _test_org_rule_table() -> void:
 	_check(reader.call("model_with_org", "MOB_C_OWN", models, orgs) == "mob\\c\\own.bsr", "a row with its own model keeps it, whatever its Org")
 	_check(models.get("MOB_C", "") == "mob\\c\\c1.bsr", "several files in the model column: the first (got %s)" % models.get("MOB_C", ""))
 	_check(reader.call("model_with_org", "MOB_D_NONE", models, orgs) == "", "no model and no Org: none")
+
+## Round 660: a champion is drawn at 1.5, a giant at 3.0 and an elite at 1.7
+## (MonsterDraw.class_scale, READ 0x9d3995), its name plate and cull radius
+## grown with it; the party flag changes no scale.
+func _test_class_scale(world: Node) -> void:
+	await _clear_monsters(world)
+	var bodies: Dictionary = world.get("_monster_bodies")
+	var list: Array = []
+	for r in [[0, false], [1, false], [4, true], [6, false]]:
+		var snap := _snapshot(9000 + int(r[0]), 0, 40.0 * float(r[0]), 0.0)
+		snap.rarity = int(r[0])
+		snap.party = bool(r[1])
+		list.append(snap)
+	world.call("_sync_monster_bodies", list)
+	var frames := 0
+	while bodies.size() < 4 and frames < 50:
+		_pump(world)
+		frames += 1
+	var scale_of := func(id: int) -> float:
+		var body: Node = bodies.get(id)
+		if body == null:
+			return -1.0
+		for c in body.get_children():
+			if c is Skeleton3D:
+				return (c as Skeleton3D).scale.x
+		return -1.0
+	var label_y := func(id: int) -> float:
+		var body: Node = bodies.get(id)
+		return (body.get_node("Label") as Node3D).position.y if body != null else -1.0
+	for r in [[0, 1.0], [1, 1.5], [4, 3.0], [6, 1.7]]:
+		var got: float = scale_of.call(9000 + int(r[0]))
+		_check(is_equal_approx(got, float(r[1])), "rarity %d is drawn at %.1f (got %.2f)" % [r[0], r[1], got])
+	var plain: float = label_y.call(9000)
+	_check(plain > 0.0 and is_equal_approx(label_y.call(9004), plain * 3.0), "the giant's name sits three times as high (%.1f against %.1f)" % [label_y.call(9004), plain])
+	for m in [MonsterDraw.class_scale(0), MonsterDraw.class_scale(3), MonsterDraw.class_scale(5), MonsterDraw.class_scale(7), MonsterDraw.class_scale(8)]:
+		_check(m == 1.0, "normal, unique, titan and strong keep 1.0")
+	await _clear_monsters(world)
 
 func _test_org_rule_world(world: Node) -> void:
 	var models: Dictionary = world.get("_monster_models_by_code")

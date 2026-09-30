@@ -488,7 +488,7 @@ func (v *monsterAOI) deliverViewEvents(ev viewEvents) {
 // round 540, which draws or re-places the body and turns a standing one),
 // then the leg it is walking as an OpMonsterMoved from where it is now.
 func sendMonsterEnter(sess *gateway.Session, m combat.Monster, facing float64) error {
-	msg := &MonsterSpawned{Monster: monsterSnapshotOf(m), Heading: float32(facing)}
+	msg := &MonsterSpawned{Monster: monsterSnapshotFor(sess, m), Heading: float32(facing)}
 	if err := sess.Send(&proto.Packet{Opcode: OpMonsterSpawned, Data: msg.Encode()}); err != nil {
 		return err
 	}

@@ -730,6 +730,52 @@ the bag is at the lower size once those slots are emptied.
 The retail starting size is not known: it is a `_CHAR.InventorySize` database default, and neither
 the client nor the server executable carries it.
 
+## The full map (round 660)
+
+`-full-map` (env `SRREVAMP_FULL_MAP`, off by default) places every field monster of the game.
+Each monster row of `-npcpos-csv` outside the dungeon regions becomes a nest hatching its species
+from `-monsters-csv`, run by the engine's own hatch rules (`server/internal/nest`,
+`docs/protocol/monster_ai.md`, "Nests on the map"). Left out: the dungeons (1,915 rows), the
+uniques (71 rows; their rotation is round 661) and the shard's custom species.
+
+- **With `-nest-db-dir`** (env `SRREVAMP_NEST_DB_DIR`, the three CSVs of the section below, mounted
+  at `/data/nestdb`): a row whose spot's shard nest hatches the same species (4,082 rows) takes that
+  nest's numbers -- its cap (up to 17 alive), its respawn window (1-3 s on most, 8-12 s on 459), its
+  hatch spread, its champion chance (10 % on most) -- and its tactics: aggressive or passive,
+  sight, the 500-unit give-up distance, the roam radius and rule. A row whose nest the shard gave
+  to its own custom monster (6,042 rows) places the original species, under its own tactics row
+  when it has one (2,346 rows), on a stand-in nest of one monster. EXTERNAL values throughout.
+- **Without it**: one monster per row, respawning 10 s after its death, all aggressive with the
+  stand-in sight and leash, no champions. The boot log says so.
+
+Measured on the shard (the round's WORLD_ISSUES entry): 10,124 nests, at most 34,678 monsters
+alive, 34,321 of them within the first minute; about 5 % of hatches come out champion and 0.8 %
+giant; the densest player window holds 1,516 monsters with every nest full.
+
+The flags srrevamp-01 needs for the monster world, in the override's `command:` (restate the whole
+list) or as environment variables:
+
+```
+#         - "-npcpos-csv=/data/npcpos.csv"
+#         - "-monsters-csv=/data/monsters.csv"
+#         - "-skills-csv=/data/skills.csv"        # only with -in-memory; PostgreSQL holds the skills
+#         - "-nest-db-dir=/data/nestdb"           # EXTERNAL, the three shard CSVs
+#         - "-full-map=true"                      # turns -single-frame on itself
+#         - "-monster-ai=true"
+#         - "-monster-strike-push=true"
+#         - "-monster-spawn-push=true"
+#         - "-monster-battle=true"
+#         - "-player-dead-state=true"
+#         - "-monster-aggro=true"
+#         # -monster-sleep is on by default; keep it on at this size.
+#         # -nest-respawn=30s overrides every nest's window, for testing only.
+```
+
+A client must be a release that carries round 656 (the paged list and the enter/leave pushes) for
+a window this dense; one that also carries round 660 gets the party flag and draws champions,
+giants and elites at their retail scale. An older client is sent no party flag and draws every
+rank at its species' size. `SRREVAMP_AI_TICK_STATS=1` logs the AI tick's p50/p99 once a minute.
+
 ## External shard DB: restore and export (user-supplied, EXTERNAL)
 
 The monster AI's four tables (`Tab_RefTactics`, `tab_refnest`, `tab_refhive`, `Tab_RefAISkill`)
@@ -795,3 +841,42 @@ Traps:
 - `nRegionDBID` is a signed smallint. Mask it with `& 0xffff` before comparing it with
   npcpos's region: dungeon regions (>= 0x8000) come out negative.
 - `tab_refnest.fLocalPosY` is NULL on 145 rows.
+
+### The three files `-nest-db-dir` reads (round 660)
+
+`-full-map` with `-nest-db-dir` joins every npcpos row to its shard nest (see "The full map
+(round 660)" below). It reads three of the CSVs step 4 writes, under the table's own name, with the
+DB's own column names as the header: `Tab_RefTactics.csv`, `tab_refnest.csv`, `tab_refhive.csv`.
+Round 658's full export (`/opt/sro-files/db/validation/export_db.py` on the render box) writes them;
+to export only those three from the restored database (CT 104, step 4's venv):
+
+```
+# In CT 104 (pct start 104), with the database restored as above:
+/root/venv/bin/python - /srv/export <<'PY'
+import csv, os, struct, sys, pymssql
+out = sys.argv[1]; os.makedirs(out, exist_ok=True)
+cn = pymssql.connect(server="127.0.0.1", user="sa", password=open("/root/.sa_pass").read().strip(),
+                     database="SRO_VT_SHARD", charset="UTF-8")
+cur = cn.cursor()
+def f32(v):  # the shortest decimal that round-trips the float32 (a SQL `real`)
+    b = struct.pack("<f", v)
+    return next((s for s in ("%.*g" % (p, v) for p in range(6, 10)) if struct.pack("<f", float(s)) == b), repr(v))
+for t in ("Tab_RefTactics", "tab_refnest", "tab_refhive"):
+    cur.execute("SELECT c.name, ty.name FROM sys.columns c JOIN sys.types ty ON ty.user_type_id=c.user_type_id "
+                "WHERE c.object_id=OBJECT_ID(%s) ORDER BY c.column_id", ("dbo." + t,))
+    cols = cur.fetchall()
+    cur.execute("SELECT * FROM dbo.[%s] ORDER BY [%s]" % (t, cols[0][0]))
+    with open(os.path.join(out, t + ".csv"), "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f); w.writerow([c[0] for c in cols])
+        for row in cur:
+            w.writerow(["" if v is None else f32(v) if cols[i][1] == "real" else str(v) for i, v in enumerate(row)])
+PY
+# From the host: pct pull 104 /srv/export/tab_refnest.csv ./tab_refnest.csv (and the other two), then
+# copy the three to the server host's ~/srrevamp-data/nestdb/ -- mounted as /data/nestdb:
+scp Tab_RefTactics.csv tab_refnest.csv tab_refhive.csv srrevamp@<server-host>:~/srrevamp-data/nestdb/
+```
+
+They are EXTERNAL data from a private shard's backup, like the rest of this section: never commit
+them. The loader reads the columns by name (43, 17 and 10 columns; `tab_refhive`'s last,
+`szDescString128`, is not read), masks `nRegionDBID` to the engine's u16 itself, and treats an
+empty `fLocalPosY` as NULL. A missing file or column is fatal at boot.

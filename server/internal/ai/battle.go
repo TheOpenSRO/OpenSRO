@@ -192,3 +192,26 @@ func GiveUpCode(dist float64, chaseSwitch uint8, giveUp float64) uint8 {
 	}
 	return 0
 }
+
+// TargetOutOfReach is AITactics_TargetOutOfReach (0x548120, behaviour
+// +0x100, the reach test BATTLE::OnUpdate runs first) under the tactics row's
+// column 40 (+0x89, btFleeType) -- round 660, when the row is a monster's own
+// (EXTERNAL) rather than TacticsReachRule's stand-in. READ (monster_ai.md,
+// column 40; round 424's asserts): rule 1 or 2 is out of reach at once (`cmp
+// al,2; jbe` to `mov eax,1`); rule 3 is out of reach while AITactics_HPBucket
+// (0x541d70) answers under 2 -- HP under 40 % of the maximum -- and otherwise
+// the chase-range test decides; rule 0 and any other value are the chase-range
+// test (TargetWithinChaseRange, handed in as within) negated. hpFrac is the
+// monster's HP over its maximum. Every row the shard's matched nests use
+// carries rule 0 (the round-660 census), so only the last branch runs today.
+func TargetOutOfReach(rule uint8, hpFrac float64, within bool) bool {
+	switch rule {
+	case 1, 2:
+		return true
+	case 3:
+		if hpFrac < 0.4 {
+			return true
+		}
+	}
+	return !within
+}
