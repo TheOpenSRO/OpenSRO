@@ -1309,8 +1309,9 @@ What round 639 read and built is in `docs/protocol/system_message.md`.
 - **Unique notices (round 657, open parts).** Built: 0x0C05/0x0C06 in `OpUniqueNotice 0x0110`, the
   top-damage-group killer, the line choice and the blue GDR_WARNING_WND banner
   (`docs/protocol/unique_notice.md`). OPEN: no unique is placed (round 660's rotation), so only
-  `/spawnunique` announces; 0x5f6eb0's spawn-kind flag; the killer vslots `0x53c` (silences a kill)
-  and `0xec`/`0xf0` (which name); the tie order of the damage list; a unique spawned by
+  `/spawnunique` announces; the killer's `vtable +0x53c` (silences a kill) and `+0xec`/`+0xf0` (which
+  name); the tie order of the damage list; whether the damage-list credit `0x52a940` is passed the
+  blow clipped to the HP left (ours books it unclipped); a unique spawned by
   `/spawnunique` carries the disclosed attack curve and no attack skill. A GM-spawned unique's model load stalls the frame (round 657's live check).
 - **Retail's messages for srrevamp's refusals.** The server sends English text; retail sends a code
   that `0x7b8b40` turns into the UIIT_ message.

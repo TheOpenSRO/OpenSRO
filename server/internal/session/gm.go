@@ -281,7 +281,7 @@ func GMCommandHandler(chars character.Store, gate *gm.Gate, deps *gm.Deps, hub *
 		if deps.Monsters != nil {
 			for _, id := range out.SpawnedMonsterIDs {
 				if m, ok := deps.Monsters.Get(id); ok {
-					AnnounceUniqueSpawn(hub, m)
+					AnnounceUniqueSpawn(hub, m, false)
 				}
 			}
 		}

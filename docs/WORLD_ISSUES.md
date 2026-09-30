@@ -7103,17 +7103,22 @@ performance gate. The full reading is `docs/protocol/unique_notice.md`.
 
 ### 1. The wire and the server rules (READ, SR_GameServer.exe)
 
-- Spawn: `0x5f6eb0` relays `0x300C` / `0x0C05` {u32 RefObjID} for a class-3 object (vslot 300).
+- Spawn: `0x5f6eb0` relays `0x300C` / `0x0C05` {u32 RefObjID} for a rank-3 object (`vtable +0x12c`,
+  slot 75 -- the rank getter; round 657's review corrected "vslot 300", which was that byte
+  offset in decimal).
   Kill: CGObjMob vslot 398 `0x4c1c80` sends `0x300C` / `0x0C06` {u32 RefObjID, name}, class 3 only
   (`cmp al,3` at `0x4c1ccb`), and **only when there is a killer** (`test ebp,ebp; je` at
-  `0x4c1cd7`). A killer that is not a live player is named `"???"` (`0xaedda4`, `0x4c1dd1`).
+  `0x4c1cd7`). A killer whose `vtable +0x1c` answers 0 is named `"???"` (`0xaedda4`,
+  `0x4c1dd1`) -- a branch this caller does not reach, since vslot 399 drops those (review M1).
 - The killer is vslot 399 `0x4c44a0` (called from the death path vslot 311 `0x4c42f0`): over the
-  damage list `+0x1ca4` ({id +0x10, damage +0x14}), pets mapped to owners, non-players skipped,
+  damage list `+0x1ca4` ({id +0x10, damage +0x14}), each id resolved through `0x485d90` and a
+  missing object skipped, pets mapped to owners, non-players skipped,
   grouped by an experience-sharing party (`+0x72e*4`, flag bit 0) or the player alone, the group
   with the most damage and in it the member with the most. Both comparisons strict.
 - The suppress key: `CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG` (read at `0x60936f`) equal to `"ON"`
   (`0xb012f4`) sets the world's `+0x108` (`0x6093b1`, getter `0x608350`); both notices ask the world
-  (`0x5f9910`) and are skipped when set. Absent: both are sent.
+  (`0x5f9910`) and are skipped when set -- for the spawn, only a nest's hatch asks (review L2, §7).
+  Absent: both are sent.
 
 ### 2. The client (READ, sro_client.exe `0x874ea0`)
 
@@ -7233,6 +7238,74 @@ one Xvfb, both through Login -> Character select; A types into its chat line wit
   frame 0.4 s after the log line shows no banner on A while B shows it. A's log has the banner
   line and then, next, the synchronous load of the Cerberus model (`kerberos.bsr`); INFERRED: A
   had not presented a frame since. Not a notice fault, but the model load's hitch is real.
+
+### 7. The review's follow-up (a second commit)
+
+- **M1, a departed attacker (READ, fixed).** Vslot 399 resolves each damage-list id through
+  `0x485d90` -> `0x41ccf0`, a map lookup that answers 0 for an object no longer in the world, and
+  skips a null entry before grouping; it also drops every entry whose `vtable +0x1c` answers 0, so
+  its killer is always a player and vslot 398's "???" branch is not reached from it. Ours kept a
+  departed top-damager and sent "???". `AnnounceUniqueKill` now drops the attackers not in the
+  world hub first (`presentHits`).
+- **M2, tests that catch the mutants.** New: `TestUniqueKillerHasLeft` (Aria deals 70% and
+  disconnects through the world's real disconnect hook; Bram's last 30% makes Bram the killer),
+  `TestUniqueKillerPartyEndToEnd` (a real party.Hub: Aria 1600 + Bram 1000 beat Cato's lone 2400;
+  Aria named), `TestUniqueNoticeOtherZone` (Bram moved to donwhang over OpChangeZone still hears
+  both). Each against its mutant:
+
+  ```
+  == presentHits keeps departed attackers
+  --- FAIL: TestUniqueKillerHasLeft (0.29s)
+      uniquenotice_test.go:370: kill notice = &{Kind:3078 RefObjID:1954 Killer:???}, want Bram named
+  == partyGroupOf always 0
+  --- FAIL: TestUniqueKillerPartyEndToEnd (0.56s)
+      uniquenotice_test.go:394: kill notice = &{Kind:3078 RefObjID:1954 Killer:Cato}, want Aria (the party's top member)
+  == zone-scoped send (the GM's zone)
+  --- FAIL: TestUniqueNoticeOtherZone (2.27s)
+      uniquenotice_test.go:412: waiting for 0x0110: read tcp 127.0.0.1:55996->127.0.0.1:41997: i/o timeout
+  ```
+
+  Client: `unique_notice_test.gd` now checks `NpcTableReader.find_name_key` /
+  `parse_name_keys` on SYNTHETIC UTF-16 characterdata rows and `World3D._unique_name_key` against
+  that index, instead of source strings.
+- **L1.** "vslot 300" was the byte offset `+0x12c` in decimal: slot 75, the rank getter. Every
+  vtable call in the notice's read is now written as its byte offset.
+- **L2, the spawn's announce flag (READ).** 0x5f6eb0's 13th argument (`cmp [esp+0x74],1` at
+  `0x5f71bd`). Nest_Hatch pushes `0x5f9910(world) == 0` (`neg; sbb; add 1` at `0x560c3d`, pushed
+  first at `0x560c44`): the suppress gate, for nest hatches only. The GM command handler
+  (`push 1` at `0x520bd5`), the minion executor (`0x5977a4`), MONSTER_LOAD_MONSTER (`0x5f9107`) and
+  `0x49e620` (`0x49e973`) push a constant 1. So the key silences a nest's hatch and a kill, never a
+  GM spawn: `AnnounceUniqueSpawn(..., fromNest)`, the roster passing true and the console false.
+  `/spawnunique` is OURS as a command; its announcement follows retail's GM spawn.
+- **L3, the name-key lookup (MEASURED, render box, `tools/probe_name_key_cost.gd`, 3 runs).**
+  Before, on the main thread inside the network handler: a known id (1954, found in the 2nd of 7
+  parts) 61.5 / 63.8 / 62.0 ms; an unknown id (all 7 parts) 112.8 / 114.1 / 113.3 ms -- 4 to 7
+  frames. Now the whole {RefObjID -> SN_ key} index (13,239 ids, 9,616,548 bytes) is built once on a
+  WorkerThreadPool task at load (the skill-effect table's pattern; 117.6-120.9 ms in the probe,
+  227 / 233 ms in the live clients, off the main thread); the live check's first notice looked 1954
+  up in 0.022 / 0.026 ms and every later one in 0.004 ms; the probe's lookups of a known and an
+  unknown id took 0.001 ms. A notice that arrives before the index waits on a 0.1 s timer.
+- **L4.** The notice is queued per session and written by that session's own drainer goroutine,
+  in order; the killing blow, the GM's reply and the spawn loop no longer write to anyone.
+- **L5, the credit (READ in part).** The one writer that adds to an entry is `0x52a940`
+  (CGObjNPC's override at `vtable +0x4f4`; the dump's propagated `CanBeEquipedAt` is wrong for
+  it): pets to owners, insert or `+0x14 += damage argument`. Its caller reaches it through the
+  vtable and a thunk (`0x605140`) with no direct call, and was not traced, so whether the argument
+  is clipped to the HP left is OPEN; srrevamp keeps the unclipped blow (INFERRED).
+- **Re-run after the fixes.** Go: session, gm, combat, systems, cmd/server ok (`-count=1 -p 1`).
+  Client: `ran 173 suite(s), 0 failing`. Live (`r2-165614`): both clients got all four notices, the
+  Mangyang kill sent nothing (`A notices 4 -> 4, B notices 4 -> 4`), and the banner fits (0.6, 52.2,
+  91.9) alpha 0.586 and (5.9, 52.4, 88.2) alpha 0.646 on A, (-1.1, 52.0, 92.6) alpha 0.572 and (-0.9,
+  52.0, 92.5) alpha 0.570 on B.
+- **Performance gate** (the index task is new load-time work), `perf_gate.sh --sites jangan`,
+  base ab66d9c vs this tree, median of 3:
+
+  ```
+  jangan  frame ms   base 11.21  head 11.18  (-0.0)  SAME
+  jangan  entry ms   base 9503.00  head 9637  (+134.0)  SAME
+  jangan  freeze ms  base 3364.00  head 3378  (+14.0)  SAME
+  jangan  hitches    base 5.00  head 5  (+0.0)  SAME
+  ```
 
 ## Six-hundred-and-fifty-second round: every icon is picked up with one click and put down with the next, and a worn item goes into the bag as the original puts it
 

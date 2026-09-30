@@ -1568,6 +1568,7 @@ func _try_initialize_pk2_ui() -> void:
 		print("World3D: Media.pk2 not found (path='%s') -- authentic UI skipped" % Pk2Config.media_path())
 		return
 	_preload_skill_effect_table()
+	_preload_name_key_index()
 
 	# Load UI localization strings from Media.pk2
 	var text_entry := ObjectLoader.find_file(_media_pk2, "server_dep\\silkroad\\textdata\\textuisystem.txt")
@@ -5360,6 +5361,10 @@ func _exit_tree() -> void:
 	if _skill_table_task >= 0:
 		WorkerThreadPool.wait_for_task_completion(_skill_table_task)
 		_skill_table_task = -1
+	# Nor the characterdata name-key index (_preload_name_key_index).
+	if _name_key_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_name_key_task)
+		_name_key_task = -1
 	# Every live skill effect and aura goes with the world, and the bodies
 	# SkillEffects remembers are forgotten (a relog builds a new World3D).
 	SkillEffects.clear_live()
@@ -17587,7 +17592,16 @@ func _begin_monster_death(monster_id: int) -> void:
 ## the blue banner at the top centre. Both are logged for the tester's file
 ## ("UNIQUE NOTICE" / "UNIQUE BANNER"), the banner with the colour it draws.
 func _on_unique_notice(n: UniqueNoticeNet.Notice) -> void:
+	# The RefObjID -> SN_ key index is built off the main thread at load
+	# (_preload_name_key_index). A notice that beats it waits for it on a
+	# timer instead of blocking the frame.
+	if _name_key_task >= 0 and not WorkerThreadPool.is_task_completed(_name_key_task):
+		get_tree().create_timer(0.1).timeout.connect(_on_unique_notice.bind(n))
+		return
+	var looked := Time.get_ticks_usec()
 	var key := _unique_name_key(n.ref_obj_id)
+	print("UNIQUE NAME KEY: ref %d -> %s in %.3f ms on the main thread" % [
+		n.ref_obj_id, key if key != "" else "(none)", (Time.get_ticks_usec() - looked) / 1000.0])
 	var names := _object_names()
 	var monster_name := ""
 	if names != null and key != "":
@@ -17611,25 +17625,54 @@ func _on_unique_notice(n: UniqueNoticeNet.Notice) -> void:
 			HudNotice.fill_alpha_for(_hud_warning.alpha()), String(HudNotice.STYLE_WARNING["corner"]),
 			int(r.position.x), int(r.position.y), int(r.size.x), int(r.size.y), HudSystemMessage.COLOR_DEFAULT])
 
-## The SN_ name key of characterdata row `ref_id`, or "": read from the
-## archive's characterdata parts at the first notice for it and kept.
-var _unique_name_keys := {}
+## The SN_ name key of characterdata row `ref_id`, or "", from the index
+## _preload_name_key_index builds. Scanning the parts per notice instead cost
+## 62 ms for a known id and 113 ms for an unknown one on the main thread
+## (round 657 review, tools/probe_name_key_cost.gd on the render box); a
+## lookup in the index is under 0.01 ms.
 func _unique_name_key(ref_id: int) -> String:
-	if _unique_name_keys.has(ref_id):
-		return _unique_name_keys[ref_id]
-	var key := ""
-	if _media_pk2 == null:
-		_media_pk2 = _open_media_pk2_if_set()
-	if _media_pk2 != null:
+	return String(_name_key_index().get(ref_id, ""))
+
+## Starts building {RefObjID -> SN_ key} from the characterdata parts on a
+## WorkerThreadPool task (the skill-effect table's pattern; Pk2Reader locks
+## its reads). 118 ms of parsing on the render box, none of it on the main
+## thread.
+func _preload_name_key_index() -> void:
+	if _name_key_task >= 0 or _name_key_loaded or _media_pk2 == null:
+		return
+	var pk2 := _media_pk2
+	var result := _name_key_result
+	_name_key_task = WorkerThreadPool.add_task(func() -> void:
+		var t := Time.get_ticks_msec()
+		var index := {}
 		for path in NpcTableReader.MODEL_TABLE_PATHS:
-			var entry := ObjectLoader.find_file(_media_pk2, path)
-			if entry == null:
-				continue
-			key = NpcTableReader.find_name_key(_media_pk2.read_file(entry), ref_id)
-			if key != "":
-				break
-	_unique_name_keys[ref_id] = key
-	return key
+			var entry := ObjectLoader.find_file(pk2, path)
+			if entry != null:
+				NpcTableReader.parse_name_keys(pk2.read_file(entry), index)
+		result["index"] = index
+		result["ms"] = Time.get_ticks_msec() - t)
+
+## The index, collected from the task once it has finished (the caller waits
+## for completion first, _on_unique_notice); empty without an archive.
+func _name_key_index() -> Dictionary:
+	if _name_key_loaded:
+		return _name_key_cache
+	if _name_key_task < 0:
+		_preload_name_key_index()
+	if _name_key_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_name_key_task)
+		_name_key_task = -1
+		_name_key_cache = _name_key_result.get("index", {})
+		print("World3D: characterdata -> %d SN_ name keys (built in %d ms off the main thread)" % [
+			_name_key_cache.size(), int(_name_key_result.get("ms", 0))])
+		_name_key_result.clear()
+	_name_key_loaded = true
+	return _name_key_cache
+
+var _name_key_task := -1
+var _name_key_result: Dictionary = {}
+var _name_key_cache: Dictionary = {}
+var _name_key_loaded := false
 
 ## The player has advanced a level (server's OpLevelUp, only ever sent to
 ## the character that levelled). Announces it with the client's own recovered

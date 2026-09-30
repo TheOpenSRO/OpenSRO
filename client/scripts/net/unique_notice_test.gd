@@ -137,6 +137,10 @@ func _initialize() -> void:
 	else:
 		_check(false, "HudNotice has fill_alpha_for (the class's fill)")
 
+	# The name key a RefObjID resolves to, from SYNTHETIC characterdata rows
+	# (UTF-16LE with a BOM, as the archive's parts are).
+	_name_key_checks()
+
 	# The wiring: the signal, the handler, the warning banner's style.
 	var client_src := FileAccess.get_file_as_string(CLIENT_PATH)
 	_check(client_src.contains("UniqueNoticeNet.OP_UNIQUE_NOTICE") and client_src.contains("signal unique_notice"),
@@ -147,6 +151,45 @@ func _initialize() -> void:
 		"World3D shows it on GDR_WARNING_WND in its own style")
 	_check(world_src.contains("_log_system(line, UniqueNoticeNet.SYSTEM_TYPE)"), "and writes the system line")
 	_finish()
+
+func _name_key_checks() -> void:
+	var reader: Script = load("res://scripts/npc/npc_table_reader.gd")
+	var rows := "1\t1954\tMOB_TEST_A\txxx\tSN_MOB_TEST_A\tmob\\test\\a.bsr\r\n" \
+		+ "1\t77\tMOB_TEST_B_L2\txxx\tSN_MOB_TEST_B_L2\txxx\r\n" \
+		+ "1\t78\tMOB_TEST_C\txxx\txxx\txxx\r\n"
+	var part := PackedByteArray([0xFF, 0xFE])
+	part.append_array(rows.to_utf16_buffer())
+	var has := func(m: String) -> bool:
+		for d in reader.get_script_method_list():
+			if d["name"] == m:
+				return true
+		return false
+	if has.call("find_name_key"):
+		_check(reader.call("find_name_key", part, 1954) == "SN_MOB_TEST_A" and reader.call("find_name_key", part, 77) == "SN_MOB_TEST_B_L2",
+			"find_name_key reads a row's SN_ key by its id")
+		_check(reader.call("find_name_key", part, 78) == "" and reader.call("find_name_key", part, 999999) == "",
+			"and nothing for a row with none or an id no row has")
+	else:
+		_check(false, "NpcTableReader has find_name_key")
+	if not has.call("parse_name_keys"):
+		_check(false, "NpcTableReader has parse_name_keys (the index the notices look up)")
+		return
+	var index: Dictionary = reader.call("parse_name_keys", part, {})
+	_check(index == {1954: "SN_MOB_TEST_A", 77: "SN_MOB_TEST_B_L2"}, "parse_name_keys indexes every row with a key (got %s)" % [index])
+	# World3D looks a notice's RefObjID up in that index (built off the main
+	# thread at load); a bare World3D with the index handed in.
+	var world: Node = load(WORLD_PATH).new()
+	var props := {}
+	for d in world.get_property_list():
+		props[d["name"]] = true
+	if props.has("_name_key_cache") and props.has("_name_key_loaded"):
+		world.set("_name_key_cache", index)
+		world.set("_name_key_loaded", true)
+		_check(world.call("_unique_name_key", 1954) == "SN_MOB_TEST_A" and world.call("_unique_name_key", 5) == "",
+			"World3D._unique_name_key answers from the index")
+	else:
+		_check(false, "World3D keeps the name-key index (_name_key_cache)")
+	world.free()
 
 func _finish() -> void:
 	if _failures == 0:

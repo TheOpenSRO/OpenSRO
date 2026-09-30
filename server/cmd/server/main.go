@@ -1360,14 +1360,14 @@ func main() {
 			"error", uniqueOffEnvErr)
 	}
 	if *uniqueNoticeOff {
-		logger.Info("unique notices off (-unique-notice-off): no 0x0C05/0x0C06 is sent")
+		logger.Info("unique notices off (-unique-notice-off): no nest-hatch or kill notice is sent; a GM spawn is still announced")
 	} else {
 		logger.Info("unique notices on: a unique's appearance and death go to every character (OpUniqueNotice 0x0110)")
 	}
 	spawned := func(id int64) {
 		session.BroadcastMonsterSpawned(hub, monsters, id)
 		if m, ok := monsters.Get(id); ok {
-			session.AnnounceUniqueSpawn(hub, m)
+			session.AnnounceUniqueSpawn(hub, m, true)
 		}
 	}
 	// Every species' instances -- a monster per real npcpos row, or a cluster

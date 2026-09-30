@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"net"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/OpenSRO/srrevamp/server/internal/account"
 	"github.com/OpenSRO/srrevamp/server/internal/character"
@@ -140,7 +142,10 @@ type uniqueWorld struct {
 	a, b, c  *chatClient
 }
 
-func newUniqueWorld(t *testing.T) *uniqueWorld {
+func newUniqueWorld(t *testing.T) *uniqueWorld { return newUniqueWorldGMs(t, "alice") }
+
+// newUniqueWorldGMs is newUniqueWorld with the GM accounts named.
+func newUniqueWorldGMs(t *testing.T, gms string) *uniqueWorld {
 	t.Helper()
 	ctx := context.Background()
 	accounts := account.NewMemStore()
@@ -166,10 +171,20 @@ func newUniqueWorld(t *testing.T) *uniqueWorld {
 		{Species: combat.Species{Name: "Test Unique", CodeName: "MOB_TEST_UNIQUE", RefObjID: 1954, Level: 20, Rarity: 3}, MaxHP: 5000, Defense: 1},
 	}}
 	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, eq, w.hub),
-		GMCommandHandler(chars, gm.ParseAccounts("alice"), deps, w.hub, nil),
+		GMCommandHandler(chars, gm.ParseAccounts(gms), deps, w.hub, nil),
 		CombatHandler(chars, eq, items, w.hub, w.monsters, quest.NewMemStore(), inv, skill.NewMemStore(), nil, nil, w.parties))
-	addr, cleanup := startTestServer(t, handle)
-	t.Cleanup(cleanup)
+	// The world's disconnect hook, as cmd/server wires it, so a closed
+	// connection leaves the world (TestUniqueKillerHasLeft).
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	srvCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	srv := &gateway.Server{Addr: addr, Handle: handle, OnDisconnect: WorldDisconnectHandler(w.hub, nil)}
+	go srv.ListenAndServe(srvCtx)
 	login := func(user, pw, name string) *chatClient {
 		conn := dialTestServer(t, addr)
 		t.Cleanup(func() { conn.Close() })
@@ -200,8 +215,12 @@ func (c *chatClient) uniqueNotice() *UniqueNotice {
 }
 
 func (c *chatClient) gm(line string, selected int64) *GMCommandResult {
+	return c.gmAs("Aria", line, selected)
+}
+
+func (c *chatClient) gmAs(name, line string, selected int64) *GMCommandResult {
 	c.t.Helper()
-	c.send(OpGMCommand, (&GMCommandRequest{Name: "Aria", Line: line, SelectedMonster: selected}).Encode())
+	c.send(OpGMCommand, (&GMCommandRequest{Name: name, Line: line, SelectedMonster: selected}).Encode())
 	r, err := DecodeGMCommandResult(c.next(OpGMCommandResult).Data)
 	if err != nil {
 		c.t.Fatalf("DecodeGMCommandResult: %v", err)
@@ -277,15 +296,125 @@ func TestUniqueNoticeCombatKill(t *testing.T) {
 	}
 	w.b.none(OpUniqueNotice)
 
+	// With the key ON: a nest's hatch and a kill are silent, but a GM's spawn
+	// is still announced (retail's GM spawn passes the flag as 1, 0x520bd5).
 	SetUniqueNoticeOff(true)
 	defer SetUniqueNoticeOff(false)
 	if r := w.a.gm("/spawnunique 1954", 0); r.Refused {
 		t.Fatalf("/spawnunique refused: %q", r.Text)
 	}
+	if n := w.b.uniqueNotice(); n.Kind != UniqueNoticeSpawn {
+		t.Fatalf("a GM spawn with the key ON = %+v, want the spawn notice", n)
+	}
 	var id int64
 	for _, m := range w.monsters.All() {
 		id = m.ID
 	}
+	nest := w.monsters.SpawnSpecies("jangan", combat.Species{Name: "Nest Unique", RefObjID: 1954, Rarity: 3}, 0, 0, 0, 20, 0, 0, 0)
+	if n := AnnounceUniqueSpawn(w.hub, *nest, true); n != 0 {
+		t.Fatalf("a nest hatch with the key ON reached %d", n)
+	}
 	w.a.gm("/damage 999999", id)
 	w.b.none(OpUniqueNotice)
+}
+
+// uniqueOn spawns the test unique through the console and returns its id,
+// draining the spawn notice from every client.
+func (w *uniqueWorld) uniqueOn(t *testing.T) int64 {
+	t.Helper()
+	before := map[int64]bool{}
+	for _, m := range w.monsters.All() {
+		before[m.ID] = true
+	}
+	if r := w.a.gm("/spawnunique 1954", 0); r.Refused {
+		t.Fatalf("/spawnunique refused: %q", r.Text)
+	}
+	for _, c := range []*chatClient{w.a, w.b, w.c} {
+		if c != nil {
+			c.uniqueNotice()
+		}
+	}
+	for _, m := range w.monsters.All() {
+		if !before[m.ID] {
+			return m.ID
+		}
+	}
+	t.Fatal("no unique spawned")
+	return 0
+}
+
+// TestUniqueKillerHasLeft (review M1): an attacker no longer in the world
+// does not count (0x4c44a0 resolves each entry through 0x485d90 and skips
+// the missing). Aria deals 70% and leaves; Bram's last 30% makes Bram the
+// killer, not "???" and not Aria.
+func TestUniqueKillerHasLeft(t *testing.T) {
+	w := newUniqueWorldGMs(t, "alice,bob")
+	id := w.uniqueOn(t)
+	if r := w.a.gm("/damage 3500 #"+strconv.FormatInt(id, 10), 0); r.Refused {
+		t.Fatalf("/damage refused: %q", r.Text)
+	}
+	w.a.conn.Close()
+	for i := 0; ; i++ {
+		if _, in := w.hub.EntityByCharacterID(1); !in {
+			break
+		}
+		if i > 200 {
+			t.Fatal("Aria never left the world")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if r := w.b.gmAs("Bram", "/damage 1500 #"+strconv.FormatInt(id, 10), 0); r.Refused {
+		t.Fatalf("Bram's /damage refused: %q", r.Text)
+	}
+	if n := w.c.uniqueNotice(); *n != (UniqueNotice{Kind: UniqueNoticeKill, RefObjID: 1954, Killer: "Bram"}) {
+		t.Fatalf("kill notice = %+v, want Bram named", n)
+	}
+}
+
+// TestUniqueKillerPartyEndToEnd (review M2): through the console and a real
+// party hub, a party whose members' sum beats a lone player's larger total
+// wins, and its top member is named. Cato deals 2400 alone; Aria 1600 and
+// Bram 1000 together (2600).
+func TestUniqueKillerPartyEndToEnd(t *testing.T) {
+	w := newUniqueWorldGMs(t, "alice,bob,carol")
+	ea, _ := w.hub.EntityByCharacterID(1)
+	eb, _ := w.hub.EntityByCharacterID(2)
+	pt, err := w.parties.Create(party.Member{Session: ea.Session, CharacterID: 1, Name: "Aria", Level: 99})
+	if err != nil {
+		t.Fatalf("party: %v", err)
+	}
+	if _, err := w.parties.Join(pt.ID, party.Member{Session: eb.Session, CharacterID: 2, Name: "Bram", Level: 99}); err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	id := strconv.FormatInt(w.uniqueOn(t), 10)
+	w.c.gmAs("Cato", "/damage 2400 #"+id, 0)
+	w.b.gmAs("Bram", "/damage 1000 #"+id, 0)
+	w.a.gm("/damage 1600 #"+id, 0)
+	if n := w.c.uniqueNotice(); *n != (UniqueNotice{Kind: UniqueNoticeKill, RefObjID: 1954, Killer: "Aria"}) {
+		t.Fatalf("kill notice = %+v, want Aria (the party's top member)", n)
+	}
+}
+
+// TestUniqueNoticeOtherZone (review M2): the notice is world-wide -- Bram,
+// moved to another zone over the wire, still hears the spawn and the kill.
+func TestUniqueNoticeOtherZone(t *testing.T) {
+	w := newUniqueWorld(t)
+	w.b.send(OpChangeZone, (&ChangeZoneRequest{Zone: "donwhang"}).Encode())
+	w.b.next(OpChangeZoneResult)
+	a, _ := w.hub.EntityByCharacterID(1)
+	b, _ := w.hub.EntityByCharacterID(2)
+	if a.Zone == b.Zone {
+		t.Fatalf("Bram is still in %q with Aria", b.Zone)
+	}
+	if r := w.a.gm("/spawnunique 1954", 0); r.Refused {
+		t.Fatalf("/spawnunique refused: %q", r.Text)
+	}
+	if n := w.b.uniqueNotice(); n.Kind != UniqueNoticeSpawn {
+		t.Fatalf("Bram in %q heard %+v", b.Zone, n)
+	}
+	id := w.monsters.All()[0].ID
+	w.a.gm("/damage 999999 #"+strconv.FormatInt(id, 10), 0)
+	if n := w.b.uniqueNotice(); *n != (UniqueNotice{Kind: UniqueNoticeKill, RefObjID: 1954, Killer: "Aria"}) {
+		t.Fatalf("Bram in %q heard %+v", b.Zone, n)
+	}
 }

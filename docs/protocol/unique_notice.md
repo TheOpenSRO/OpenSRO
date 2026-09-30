@@ -24,43 +24,68 @@ READ, client: the handler `0x874ea0` reads the word (`0x874ee4`), then 4 bytes f
 
 ## Server (READ, SR_GameServer.exe)
 
+Vtable calls are written as the byte offset the code uses (`vtable +0x12c` is `call [eax+0x12c]`,
+slot 75); `vslot 398`/`399`/`311` are RTTI slot numbers.
+
 - **Spawn.** `0x5f6eb0` builds the relay message `0x7808` carrying `0x300C` / `0x0C05` and the new
-  object's RefObjID when the object's class (vslot 300, `+0x12c`) is 3 and the spawn's kind flag is
-  1 (`iStack_c == 1`, what that flag means is OPEN). The relay goes to every world (`0x414970` ->
-  `0x5f8620`, the planner's read).
+  object's RefObjID when its 13th argument, the announce flag, is 1 (`cmp [esp+0x74],1` at
+  `0x5f71bd`) and the object's rank is 3 (`vtable +0x12c`, slot 75 -- the rank getter
+  `combat/rarity.go` names -- then `cmp al,3` at `0x5f71d4`). The relay goes to every world
+  (`0x414970` -> `0x5f8620`, the planner's read).
+- **The announce flag (round 657 review, READ).** Nest_Hatch (`0x5607b0`) asks the world at
+  `0x560c32` (`0x5f9910`) and passes `answer == 0` (`neg; sbb; add 1`, pushed first at `0x560c44`,
+  i.e. the 13th argument) -- so a nest's hatch is announced only while the world's suppress flag is
+  clear. The other callers push a constant 1: the GM command handler
+  GObjPC_MsgHandler_SpecialCommand (`push 1` at `0x520bd5`), the minion executor `0x596e50`
+  (`0x5977a4`), the trigger action MONSTER_LOAD_MONSTER (`0x5f9107`), `0x49e620` (`0x49e973`). So a
+  GM-spawned unique is announced whatever the key says; the rank test still limits it to class 3.
 - **Kill.** CGObjMob vslot 398 (`0x4c1c80`), called from the death path vslot 311 (`0x4c42f0`) with
   the killer that vslot 399 (`0x4c44a0`) picks:
-  - class 3 only (`cmp al,3` at `0x4c1ccb`): the rank-8 bosses are not announced;
+  - rank 3 only (`vtable +0x12c`, `cmp al,3` at `0x4c1ccb`): the rank-8 bosses are not announced;
   - no killer, no notice (`test ebp,ebp; je` at `0x4c1cd7`);
-  - a killer for which vslot `0x53c` answers 1 is not announced (what that vslot is: OPEN);
-  - the name: `"???"` (the string at `0xaedda4`) when the killer's vslot `0x1c` answers 0, else
-    the name by vslot `0xec` for a killer whose vslot `0x11c` is 4 and by `0xf0` otherwise (which
-    name each gives: OPEN; srrevamp sends the character's name).
+  - not for a world whose suppress flag is set (`0x5f9910` at `0x4c1d06`);
+  - not when the killer's `vtable +0x53c` answers 1 (what that is: OPEN);
+  - the name: `"???"` (the string at `0xaedda4`, `0x4c1dd1`) when the killer's `vtable +0x1c`
+    answers 0, else the name by `vtable +0xec` for a killer whose `vtable +0x11c` is 4 and by
+    `+0xf0` otherwise (which name each gives: OPEN; srrevamp sends the character's name). Vslot 399
+    has already dropped every entry whose `vtable +0x1c` answers 0, so from this caller the "???"
+    branch is not reached.
 - **The killer (vslot 399, `0x4c44a0`).** Over the monster's damage list (`+0x1ca4`, entries with
-  the attacker id at `+0x10` and its damage at `+0x14`): an attacker that is a pet is mapped to its
-  owner (`+0x736*4`), one that is not a player is skipped (vslot `0x1c`). The group is the player's
-  party when the party shares experience (`+0x72e*4` non-null, flag bit 0), else the player. A
-  group's damage is summed; within it the member with the most damage is kept (`[9] < damage`);
-  the group with the most damage wins (`uVar4 < [6]`) and its kept member is the killer. Both
-  comparisons are strict; the order the entries are met in is a map's, not read (OURS: first-hit
-  order, so the first of a tie wins).
+  the attacker id at `+0x10` and its damage at `+0x14`): each id is resolved to its object
+  (`0x485d90` -> `0x41ccf0`, a map lookup that answers 0 for an object no longer in the world) and
+  a null one is skipped; a pet is mapped to its owner (`+0x736*4`); one whose `vtable +0x1c`
+  answers 0 (not a player) is skipped. The group is the player's party when the party shares
+  experience (`+0x72e*4` non-null, flag bit 0), else the player. A group's damage is summed;
+  within it the member with the most damage is kept (`[9] < damage`); the group with the most
+  damage wins (`uVar4 < [6]`) and its kept member is the killer. Both comparisons are strict; the
+  order the entries are met in is a map's, not read (OURS: first-hit order, so the first of a tie
+  wins).
+- **The damage list's credit (round 657 review, READ; the clipping OPEN).** The only writer that
+  adds to an entry is `0x52a940` (CGObjNPC's override at `vtable +0x4f4`, slot 317; the dump's
+  `CanBeEquipedAt` there is a propagated name, wrong for this override): a pet attacker is mapped to
+  its owner (`+0x736*4`), a new entry is inserted (`0x52b820`) or the found one's `+0x14` gets the
+  damage argument added, and the base `CGObjChar` slot is then called with the same arguments.
+  Whether its caller passes the blow's damage or the damage clipped to the HP left was not traced
+  (its callers reach it through the vtable and a forwarding thunk, `0x605140`, with no direct call).
+  srrevamp books the blow unclipped: INFERRED, so an overkill finisher is credited the whole blow.
 - **The suppress key.** `CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG` is read at `0x60936f`; equal to
-  `"ON"` (`0xb012f4`) it sets the world's `+0x108` (`0x6093b1`), which `0x608350` returns. Both
-  notices ask the world first (`0x5f9910`, a world vslot; INFERRED to be that getter) and are
-  skipped when it is set. Absent, both are sent.
+  `"ON"` (`0xb012f4`) it sets the world's `+0x108` (`0x6093b1`), which `0x608350` returns;
+  `0x5f9910` finds the world and calls a vtable getter (INFERRED to be that one). Absent: nest
+  hatches and kills are announced.
 
-srrevamp (OURS unless marked): `-unique-notice-off` is the key (default off: announce). The damage
-list is `combat.Hub`'s, booked per attacker in first-hit order on every blow a player lands
-(`ApplyDamageFrom`); the booked damage is the blow's as dealt, not clipped to the HP left
-(INFERRED: the engine's credit site was not read). Every srrevamp party shares experience, and a
-party of one is no party (the engine never makes one), so a group is a party of two or more. A
-killer no longer in the world is `"???"` (INFERRED match for vslot `0x1c`). The notice goes to every
-character on the server.
+srrevamp (OURS unless marked): `-unique-notice-off` is the key (default off: announce); it silences
+the roster's (nest) spawns and every kill, not a GM spawn (READ, above). The damage list is
+`combat.Hub`'s, booked per attacker in first-hit order on every blow a player lands
+(`ApplyDamageFrom`). The attackers no longer in the world are dropped before the rule runs (READ:
+`0x485d90`), so a departed top-damager does not win and the notice never carries "???" from a
+player's kill. Every srrevamp party shares experience, and a party of one is no party (the engine
+never makes one), so a group is a party of two or more. The notice goes to every character on the
+server, queued per recipient off the killer's goroutine.
 
-GM tools (OURS, not retail): `/spawnunique <id|name>` puts a unique down beside the GM and
-announces it; `/damage <n>` deals a blow booked to the GM; `/kill` books nothing, and a unique it
-kills with nobody on the list is announced with `"???"` (retail has no GM kill; its rule would say
-nothing).
+GM tools: `/spawnunique <id|name>` is OURS as a command (retail's GM spawn command is its own); its
+announcement follows retail's GM spawn, which passes the announce flag as 1. `/damage <n> [id]`
+(OURS) deals a blow booked to the GM. `/kill` (OURS) books nothing; a unique it kills with nobody
+on the list is announced with `"???"` (retail has no GM kill; its rule would say nothing).
 
 ## Client (READ, sro_client.exe `0x874ea0`)
 
@@ -128,8 +153,7 @@ configures each CIFNotify after creating it:
 
 ## Open
 
-- What `0x5f6eb0`'s kind flag (`iStack_c == 1`) selects, and whether a unique's minions or a
-  quest spawn are announced.
-- Killer vslots `0x53c` (no notice when 1), `0xec` / `0xf0` (which name for which kind).
+- Killer `vtable +0x53c` (no notice when 1), `+0xec` / `+0xf0` (which name for which kind).
+- Whether the damage-list credit (`0x52a940`) is passed the clipped damage.
 - The order ties are met in (the damage list's map order).
 - The uniques' placement and rotation (round 660); until then only a GM spawn is announced.

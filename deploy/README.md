@@ -651,7 +651,9 @@ It is on by default, as the original is with its `CONTROL_NOTIFY_SPAWN_UNIQUE_MO
 absent. The boot log reads `unique notices on: ...`. **Off:** add
 `SRREVAMP_UNIQUE_NOTICE_OFF: "1"` under the server's `environment:` in the override (or
 `- "-unique-notice-off=true"` in its `command:`), then `docker compose up -d`; the boot log then
-reads `unique notices off (-unique-notice-off): no 0x0C05/0x0C06 is sent`. A client older than
+reads `unique notices off (-unique-notice-off): no nest-hatch or kill notice is sent; a GM spawn is still
+announced`. As in the original, the
+key silences a nest's hatch and every kill but not a GM's spawn: `/spawnunique` is still announced. A client older than
 round 657 ignores the message and warns "unhandled opcode" once per connection.
 
 ## Inventory size

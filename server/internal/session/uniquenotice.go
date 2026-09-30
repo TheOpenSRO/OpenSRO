@@ -3,9 +3,11 @@ package session
 import (
 	"encoding/binary"
 	"fmt"
+	"sync"
 	"sync/atomic"
 
 	"github.com/OpenSRO/srrevamp/server/internal/combat"
+	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/party"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
@@ -18,17 +20,28 @@ import (
 //
 // READ, server (SR_GameServer.exe):
 //   - Spawn: 0x5f6eb0 relays 0x300C with the word 0x0C05 and the monster's
-//     RefObjID when the new object's class (vslot 300, `cmp al,3`) is 3.
+//     RefObjID when its 13th argument, the announce flag, is 1
+//     (`cmp [esp+0x74],1` at 0x5f71bd) and the new object's class is 3 (the
+//     call through vtable +0x12c -- slot 75, the rank getter
+//     combat/rarity.go names -- then `cmp al,3` at 0x5f71d4).
+//   - The announce flag: Nest_Hatch (0x5607b0) passes `world flag clear`
+//     (0x5f9910's answer at 0x560c32, `neg; sbb; add 1`, pushed first at
+//     0x560c44), so a nest's hatch is announced unless the key below is ON.
+//     The other callers pass a constant 1 -- among them the GM command
+//     handler GObjPC_MsgHandler_SpecialCommand (`push 1` at 0x520bd5) and
+//     the minion executor 0x596e50 (0x5977a4) -- so a GM-spawned unique is
+//     announced whatever the key says. AnnounceUniqueSpawn's fromNest.
 //   - Kill: CGObjMob vslot 398 (0x4c1c80) sends 0x300C / 0x0C06 {RefObjID,
-//     killer name} when the dead monster's class is 3 and there IS a killer
-//     (`test ebp,ebp; je` at 0x4c1cd7: no killer, no notice). The killer
-//     comes from vslot 399 (0x4c44a0) over the damage list, see UniqueKiller.
-//     A killer that is not a live player (its vslot 0x1c answers 0) is named
-//     "???" (0x4c1dd1: the string at 0xaedda4).
-//   - Both are skipped for a world whose +0x108 flag is set (0x5f9910 asks
-//     the world; 0x608350 returns +0x108), and the flag is set when the world
+//     killer name} when the dead monster's class is 3 (vtable +0x12c again,
+//     `cmp al,3` at 0x4c1ccb) and there IS a killer (`test ebp,ebp; je` at
+//     0x4c1cd7: no killer, no notice), and not for a world whose flag is set
+//     (0x5f9910 at 0x4c1d06). The killer comes from vslot 399 (0x4c44a0), see
+//     UniqueKiller. 0x4c1dd1's "???" (0xaedda4) is for a killer whose vtable
+//     +0x1c answers 0, which vslot 399 has already filtered out, so from this
+//     caller it is not reached.
+//   - The world flag is +0x108 (0x608350 returns it), set when the world
 //     config's CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG equals "ON"
-//     (0x60936f..0x6093b1). Absent, both are announced.
+//     (0x60936f..0x6093b1). Absent, nest hatches and kills are announced.
 //   - Class 3 only: the rank-8 bosses are not announced.
 //
 // READ, client (sro_client.exe): the handler 0x874ea0 reads the word, then
@@ -107,7 +120,8 @@ var uniqueNoticeOff atomic.Bool
 // SetUniqueNoticeOff silences (true) or restores (false) the unique notices.
 func SetUniqueNoticeOff(off bool) { uniqueNoticeOff.Store(off) }
 
-// UniqueNoticeFor reports whether a monster of this rarity is announced.
+// UniqueNoticeFor reports whether a monster of this rarity is announced on a
+// nest hatch or a death: rank 3, with the key not ON.
 func UniqueNoticeFor(rarity int) bool {
 	return rarity == RarityUnique && !uniqueNoticeOff.Load()
 }
@@ -115,10 +129,13 @@ func UniqueNoticeFor(rarity int) bool {
 // UniqueKiller is the character the kill notice names: the top-damage member
 // of the top-damage group, read off CGObjMob vslot 399 (0x4c44a0):
 //
-//   - it walks the monster's damage list (+0x1ca4), skipping any attacker
-//     that is not a player (vslot 0x1c) -- srrevamp's list holds only
-//     characters -- and maps a pet to its owner (+0x736 * 4; srrevamp has no
-//     pet that deals damage);
+//   - it walks the monster's damage list (+0x1ca4), resolving each entry's
+//     id to its object (0x485d90 -> 0x41ccf0, a map lookup that answers 0
+//     for an object no longer in the world) and skipping a null one, maps a
+//     pet to its owner (+0x736 * 4; srrevamp has no pet that deals damage),
+//     and skips any attacker that is not a player (vtable +0x1c). The caller
+//     does the first step: presentHits keeps the characters still in the
+//     world;
 //   - the group is the player's party when the party shares experience
 //     (+0x72e * 4 non-null and its flag bit 0), else the player alone. Every
 //     srrevamp party shares experience, and a party of one is no party (the
@@ -173,6 +190,21 @@ func UniqueKiller(hits []combat.Hit, groupOf func(characterID int64) int64) (kil
 	return top.best, true
 }
 
+// presentHits is hits without the attackers no longer in the world (0x4c44a0
+// resolves each entry through 0x485d90 and skips the ones that are gone).
+func presentHits(hub *world.Hub, hits []combat.Hit) []combat.Hit {
+	if hub == nil {
+		return nil
+	}
+	out := make([]combat.Hit, 0, len(hits))
+	for _, h := range hits {
+		if _, in := hub.EntityByCharacterID(h.AttackerID); in {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
 // partyGroupOf is UniqueKiller's grouping over the party hub: the party's id
 // for a character in a party of two or more, else 0.
 func partyGroupOf(parties *party.Hub) func(int64) int64 {
@@ -188,30 +220,76 @@ func partyGroupOf(parties *party.Hub) func(int64) int64 {
 	}
 }
 
-// broadcastUniqueNotice sends n to every character in the world (READ: the
+// broadcastUniqueNotice queues n for every character in the world (READ: the
 // notice is relayed to every world, 0x414970 -> 0x5f8620), returning how many
-// it reached.
+// it was queued for. The writes happen off the caller's goroutine (the killing
+// blow's, the GM's, a spawn loop's), so a client that is slow to read stalls
+// only its own queue (noticeQueue).
 func broadcastUniqueNotice(hub *world.Hub, n *UniqueNotice) int {
 	if hub == nil {
 		return 0
 	}
 	p := &proto.Packet{Opcode: OpUniqueNotice, Data: n.Encode()}
-	sent := 0
+	queued := 0
 	for _, e := range hub.AllEntities() {
 		if e.Session == nil {
 			continue
 		}
-		if e.Session.Send(p) == nil {
-			sent++
-		}
+		notices.push(e.Session, p)
+		queued++
 	}
-	return sent
+	return queued
+}
+
+// noticeQueue sends each session its notices in the order they were queued,
+// one drainer goroutine per session while it has any pending: order per
+// recipient is kept, and no recipient waits on another.
+type noticeQueue struct {
+	mu      sync.Mutex
+	pending map[*gateway.Session][]*proto.Packet
+}
+
+var notices = &noticeQueue{pending: map[*gateway.Session][]*proto.Packet{}}
+
+func (q *noticeQueue) push(s *gateway.Session, p *proto.Packet) {
+	q.mu.Lock()
+	list := q.pending[s]
+	q.pending[s] = append(list, p)
+	idle := len(list) == 0
+	q.mu.Unlock()
+	if idle {
+		go q.drain(s)
+	}
+}
+
+// drain sends s's queue front to back; the packet being sent stays at the
+// front until it is written, so a push meanwhile sees a busy queue and does
+// not start a second drainer.
+func (q *noticeQueue) drain(s *gateway.Session) {
+	for {
+		q.mu.Lock()
+		list := q.pending[s]
+		if len(list) == 0 {
+			delete(q.pending, s)
+			q.mu.Unlock()
+			return
+		}
+		p := list[0]
+		q.mu.Unlock()
+		_ = s.Send(p)
+		q.mu.Lock()
+		q.pending[s] = q.pending[s][1:]
+		q.mu.Unlock()
+	}
 }
 
 // AnnounceUniqueSpawn tells the world a unique has appeared: nothing for any
-// other rank, or with the notices off. Returns the characters reached.
-func AnnounceUniqueSpawn(hub *world.Hub, m combat.Monster) int {
-	if !UniqueNoticeFor(m.Rarity) {
+// other rank. fromNest is a nest's hatch (cmd/server's roster), announced only
+// with the key not ON; any other spawn -- the GM console's -- is announced
+// whatever the key says, as retail's GM spawn passes the flag as a constant 1
+// (see the top of this file). Returns the characters it was queued for.
+func AnnounceUniqueSpawn(hub *world.Hub, m combat.Monster, fromNest bool) int {
+	if m.Rarity != RarityUnique || (fromNest && uniqueNoticeOff.Load()) {
 		return 0
 	}
 	return broadcastUniqueNotice(hub, &UniqueNotice{Kind: UniqueNoticeSpawn, RefObjID: uint32(m.RefObjID)})
@@ -219,13 +297,14 @@ func AnnounceUniqueSpawn(hub *world.Hub, m combat.Monster) int {
 
 // AnnounceUniqueKill tells the world who killed a unique, from the damage
 // list its killing blow returned (combat.Hub.ApplyDamageFrom). Nothing for
-// any other rank, with the notices off, or with no one on the list (READ:
-// no killer, no notice). A killer no longer in the world is "???".
+// any other rank, with the notices off, or with no one left on the list once
+// the attackers who have left the world are dropped (READ: 0x4c44a0 skips
+// them; no killer, no notice).
 func AnnounceUniqueKill(hub *world.Hub, parties *party.Hub, m combat.Monster, hits []combat.Hit) int {
 	if !UniqueNoticeFor(m.Rarity) {
 		return 0
 	}
-	killer, ok := UniqueKiller(hits, partyGroupOf(parties))
+	killer, ok := UniqueKiller(presentHits(hub, hits), partyGroupOf(parties))
 	if !ok {
 		return 0
 	}
