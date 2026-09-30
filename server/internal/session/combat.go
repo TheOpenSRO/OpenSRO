@@ -169,6 +169,37 @@ func broadcastBodyMode(hub *world.Hub, characterID int64, value byte) {
 	}
 }
 
+// sendBodyModesInView tells an arriving client which characters already in
+// its zone are berserk: a 0x30bf kind 4 value 1 for each (round 651). READ:
+// retail carries the body mode in every spawn's state block -- the client's
+// reader 0x9d1300 reads it to +0x470 after the life and motion bytes, and
+// FUN_009d17e0 applies it through the body-mode setter FUN_009cf880(mode, 1,
+// 0) -- written by the server's GObjPC::FUN_004a9b70 from chardata+3, the
+// byte CGObjChar::SetBodyMode sets. srrevamp's OpEntityEntered and arrival
+// lists are not retail's spawn, so the byte goes as the state change the
+// client already applies (OURS, the carrier), after the snapshots that name
+// the characters, beside the zone's buffs (sendBuffsInView). The arriving
+// character's own mode is not sent: nothing brings a character into a zone
+// berserk (world entry starts it at none, and warpTo ends a running one
+// after this). Each check and send is under that character's berserk turn,
+// so an end pushed at the same moment cannot land before this "on".
+func sendBodyModesInView(hub *world.Hub, zerk *berserk.Tracker, arriving world.Entity) {
+	if hub == nil || zerk == nil || arriving.Session == nil {
+		return
+	}
+	for _, other := range hub.EntitiesInZone(arriving.Zone) {
+		if other.CharacterID == arriving.CharacterID {
+			continue
+		}
+		release := zerk.Turn(other.CharacterID)
+		if zerk.Active(other.CharacterID) {
+			msg := (&StateChange{ObjectID: uint32(other.CharacterID), Kind: StateKindBodyMode, Value: 1}).Encode()
+			_ = arriving.Session.Send(&proto.Packet{Opcode: OpStateChange, Data: msg})
+		}
+		release()
+	}
+}
+
 // berserkEndDelay is how long after activation the end is pushed: until the
 // tracker's ActiveUntil. A variable so a test can shorten it.
 var berserkEndDelay = func(until time.Time) time.Duration { return time.Until(until) }

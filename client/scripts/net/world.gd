@@ -402,6 +402,19 @@ static func encode_motion_request(value: int) -> PackedByteArray:
 	out.encode_u8(0, value)
 	return out
 
+## Round 651: `change` noted in a character id -> body mode book (NetClient's
+## body_modes): a kind-4 value 1 marks the character berserk, any other kind-4
+## value clears it, and other kinds change nothing. Returns whether it was a
+## body mode.
+static func note_body_mode(modes: Dictionary, change: StateChange) -> bool:
+	if change == null or change.kind != STATE_KIND_BODY_MODE:
+		return false
+	if change.value == 1:
+		modes[change.object_id] = 1
+	else:
+		modes.erase(change.object_id)
+	return true
+
 ## Decodes an OP_STATE_CHANGE payload, or null when it is short.
 static func decode_state_change(data: PackedByteArray) -> StateChange:
 	if data.size() < 6:

@@ -7313,6 +7313,202 @@ The split box, Ctrl+click, the ground drop, warehouse slot placement, a worn ite
 cancelled quick slot (`+0x3b1`), when retail lets go on its own, and how retail draws the slot left
 behind.
 
+## Six-hundred-and-fifty-first round: a berserk character glows red, grows, burns and sounds as in the original, and every other player sees it -- including players who arrive while it lasts
+
+The user's report: "my character doesn't glow red when I activate beserk so make all of the color
+and other effects work when activating beserk including audio and extra damage and speed. Make
+sure other players can see it too."
+
+What activation did before this round (dev e5bf2ba): the server spent the five orbs, doubled
+every blow for 60 s and broadcast 0x30BF kind 4 value 1 and, at the end, 0 (rounds 629/632); the
+client used it only for its own orb display. Nothing was drawn on any body, no sound played, and
+a player arriving while someone was berserk was never told.
+
+### READ: what the original client draws (docs/protocol/berserk_look.md has every address)
+
+- **On every body, not only the player's own.** 0x30BF kind 4 (`0x8a80a0`) calls the object's
+  body-mode setter `FUN_009cf880(mode, 0, extra)` for any object in view; mode 1 ->
+  `FUN_009dd620(1, ...)` -> the decoration factory `FUN_00a54020` with key 0x80000000, which the
+  name table at `0x00ec73f8` maps to `SYSTEM_CH_HWANMODE` (hwan level 0; level > 0 uses
+  `SYSTEM_CH_HWAN2MODE`, OPEN here).
+- **Its rows** (MEASURED, Media.pk2 skilleffect.txt `#section skilleffectset`): ACT_S
+  `system_hwan_motion.efp` at Bip01 + `player\hwanchange.wav`; seven ACT_L AT_LOOP rows
+  (`system_hwan_keep.efp` at Bip01 Spine with `SCT_MAT,64,16,0,140,32,0,1000`,
+  `system_hwan_keep_s.efp` at L UpperArm with `SCT_CHAR_SCALE,1.1,1000`, and at R UpperArm,
+  L HandMid, R Finger2, L Calf, R Calf); DEACT `system_hwan_disappear.efp` + `player\hwanreturn.wav`.
+- **The red is a material colour, not a particle.** SCT_MAT is script flag 0x800 (table
+  `0x00ec7378`); the row parser `FUN_00a9d0f0` packs two 0xFFrrggbb colours and an int ms; the
+  apply `IDecoSkill::FUN_00a513a0` hands both colours / 255 and the ms to the character's compound
+  object (`CObjRendererVS::FUN_00c25800`, CCompChar slot 18); `CCompChar::FUN_00c26ff0` lerps
+  colour 1 -> colour 2 over the ms and back (triangle wave, period 2 s); while it runs
+  `FUN_00c27180` uploads c11 = light diffuse x colour, c10 = light ambient x colour, c14 = second
+  light x colour in place of the mesh material's diffuse (`0xbf0ff1`). The end clears it
+  (`FUN_00c258b0`).
+- **The growth**: SCT_CHAR_SCALE (0x1000) -> scale target 1.1 over 1.0 s; the end
+  (`IDecoSkill::FUN_00a4db00`) returns to the saved scale over the same 1.0 s. Linear, READ
+  (review): each frame `FUN_009d1d60` runs `FUN_009c7bc0` on the `+0x72c` record (t += rate x dt,
+  clamped at 1; base + t x delta) and hands it to the render object's scale.
+- **The own flash**: for the own id, `0x8a827b` fades the weather manager's colour to
+  (255, 255, 255, 128) in 0.2 s, then (vslot_009) back to alpha 0 in 0.5 s; vslot_010 draws it
+  as a screen quad, TEXTUREFACTOR = the colour, SRCBLEND SRCALPHA, DESTBLEND SRCCOLOR. The fade
+  starts from the manager's current colour (alpha 0 after any finished fade); the constructor's
+  first RGB (`_DAT_00de523c`) was not read, so the starting RGB is OPEN -- srrevamp draws white.
+- **Arriving while someone is berserk**: the spawn state block carries the body mode (client
+  `0x9d1300` -> `+0x470`; server `GObjPC::FUN_004a9b70` writes chardata[3]), applied by
+  `FUN_009d17e0` with `FUN_009cf880(mode, 1, 0)` -- arg 1 skips the start effect.
+
+### READ: the mechanics
+
+- **Damage x2** was already right (round 223/`berserk.DamageNumerator`, applied after mitigation
+  in `performAttack`, basic attacks and skills). `TestRound651DamageDoublesOnlyWhileBerserk` pins
+  40 -> 80 while berserk and 40 again after the end.
+- **Duration 60 s** + param 195, already right.
+- **Death does not end it** (READ, review): `GObjPC_OnDeath` (`0x4e6980`) and `SetLifeState`
+  (`0x4a9c80`) call no SetBodyMode; only `GObjPC::Revive` does (body mode 2) -- as srrevamp does.
+- **A teleport ends it** (INFERRED, unchanged): `GObjPC::HandleTeleportUse` (`0x513590`) calls no
+  SetBodyMode; the world-entry setter `CGObjPC::vslot_391` (body mode 2 or 4) replaces mode 1, and
+  the teleport reaches it through the re-entry chain (char-data save -> `CharDataSavingCompleted`
+  -> 0x34b5 -> the client's 0x34b6 -> the entry rebuilt), whose first link from the teleport
+  handler is still not traced. So the server keeps sending the mover 0 on a zone change's arrival.
+- **Speed: OPEN.** `CGObjChar::SetBodyMode` (`0x4a9fc0`) entering mode 1 on a PC applies the
+  `_RefHWANLevel` row of the byte `+0x1c58` (`FUN_004ac7d0`): `'SPDU'` v -> `SetParam(23/24,
+  slot 3, v)` (the percent scale slot; the end, `FUN_004ab060`, writes 100.0 back), `'DABR'` v ->
+  params 174-177 slot 2 minus v; then the speed republish (vtable `+0x4e8`). The values are DB
+  rows; Media.pk2's `hwanleveldata.txt` is titles only and the box's server package has no
+  database, so srrevamp changes no speed and applies no DABR. The spawn block's third float is
+  NOT a berserk speed: it is param 140 (InitStats 100.0), which the server's `FUN_005a1a40` uses
+  as a time percentage.
+
+### What changed
+
+- **Server** (`session/combat.go`, `world.go`): `sendBodyModesInView` -- on world entry and on a
+  zone change's arrival, a 0x30BF kind 4 value 1 for each other character in the zone that is
+  berserk, under that character's berserk turn. OURS: the carrier (srrevamp's spawn is not the
+  retail state block); the content is READ.
+- **Client**:
+  - `effects/berserk_look.gd` (new): parses `SYSTEM_CH_HWANMODE`'s rows and Script cells from the
+    player's own skilleffect.txt, and on a body: the burst + sound (not for a body drawn already
+    berserk), the seven kept effects, the pulse colour on every piece of the body (each mesh gets
+    a copy of its material with the albedo replaced; the original goes back at the end -- our
+    albedo stands for both of the client's light terms, INFERRED mapping), the x1.1 over 1 s and
+    back, the end's burst + sound; `flash_alpha` for the own flash.
+  - `World3D._berserk_apply`: on every body mode, for the own body or another player's; the own
+    flash (an additive screen quad under the HUD); the hwan swing sounds for another player too.
+  - `NetClient.body_modes` (`WorldNet.note_body_mode`), cleared/dropped with the buff roster, so a
+    body built later -- an arrival list, a relog, a rebuilt body -- takes the look without the burst.
+  - QA: `SRREVAMP_QA_BERSERK_PROBE=1` prints each drawn player's chest on screen and its tint.
+  - Review follow-up: the mover's own 0 on a zone change's arrival (`_arrival_pending`) drops its
+    look silently (`BerserkLook.end(host, true)` -> `drop`): no DEACT burst, no `hwanreturn.wav`,
+    colour and size back at once -- the original meets that arrival with a rebuilt object
+    (INFERRED, above). Every other end (the timer, a revive, another player's) plays DEACT.
+
+### Verified live (MEASURED, real X input, two clients, runs r2 and r3)
+
+Harness `/var/tmp/berserk651/t651_e2e.sh` on the box: one Xvfb 2560x720, an in-memory server built
+from this branch (`-gm-accounts qa651a,qa651b`), two clients through Login -> Character select side
+by side (A at x 0, B at x 1280), A registered at the Jangan spawn (97/168 local 1002, 1020), B at
+(1020, 1040) facing A (`SRREVAMP_QA_YAW=180`), both with `SRREVAMP_QA_BERSERK_PROBE=1`. A's keys
+went by `xdotool windowfocus --sync` then plain `key`: Return, `/hwan 5`, Return, Return on the
+empty box (a sent line keeps the chat focused, 0x7ad400 -- r1 lost its Tab to that), Tab.
+
+A.log (r3):
+
+    KEYMAP Tab -> berserk 8: berserk requested
+    World3D: body mode 1 for 1 (this player)
+    AUDIO berserk: prim\snd\player\hwanchange.wav at Player
+    BERSERK look on Player: 7 kept effect(s), colour (0.251, 0.0627, 0, 1) -> (0.549, 0.1255, 0, 1) every 1000 ms, size x1.1
+    ...
+    World3D: body mode 0 for 1 (this player)
+    AUDIO berserk: prim\snd\player\hwanreturn.wav at Player
+    BERSERK look off Player
+
+B.log: `body mode 1 for 1 (someone else)`, `AUDIO berserk: ...hwanchange.wav at @Node3D@818`,
+`BERSERK look on @Node3D@818: 7 kept effect(s) ...`; B's probe of A: `tint 70,17,0` then
+`134,31,0`, `scale 1.100`.
+
+**The glow as pixels in B's frame** (a 9x9 mean at A's chest, where B's probe projects it:
+B-window 769,349 = root 2045..2053, 345..353):
+
+| frame | B's view of A's chest (RGB) |
+|---|---|
+| before Tab | 87, 89, 87 |
+| 0.3 s after B drew the look | 89, 29, 42 |
+| 0.8 s | 85, 28, 41 |
+| 1.3 s | 76, 28, 40 |
+| B relogged while A was berserk | 106, 30, 41 |
+| after the end (60 s) | 87, 89, 87 |
+
+Green and blue fall to a third while red holds: the body is drawn red, and back to its own grey
+after the end. In A's own view at its chest (640,376): 168, 135, 163 before; 244, 46, 74 /
+177, 38, 50 / 193, 38, 77 during. (r2, with B standing in front of A, showed the same: A's own
+view 189,159,188 -> 152,33,54; B's view of A's head 56,56,58 -> 69,27,44.) The frames are the
+round's contact sheet; the numbers above are the measurement.
+
+**A late arrival** (B quit and logged in again 8 s into A's berserk): B2.log
+`BERSERK resync 1 (their body was built): berserk`, `BERSERK look on @Node3D@79 (already berserk
+when drawn): 7 kept effect(s) ...` -- no start sound, as the spawn's arg 1 -- and at the end
+`body mode 0 for 1 (someone else)`, `hwanreturn.wav`, `BERSERK look off`. No `SCRIPT ERROR` in
+any of the three logs.
+
+### Tests and negatives
+
+Server: `server/internal/session/berserk_view651_test.go` --
+`TestRound651ArrivalSeesARunningBerserk` (Bram leaves and comes back beside a berserk Aria: exactly
+Aria's 1), `TestRound651ArrivalAfterTheEndHearsNothing`, `TestRound651TheMoverIsNotToldItsOwnBerserk`,
+`TestRound651DamageDoublesOnlyWhileBerserk` (40 -> 80 -> 40). Against the base (a second worktree
+at e5bf2ba, the file copied in):
+
+    --- FAIL: TestRound651ArrivalSeesARunningBerserk (1.13s)
+        berserk_view651_test.go:71: Bram, back beside a berserk Aria, heard body modes []; want exactly Aria's 1
+
+(the other three pass on the base: the end, the mover's own end and the x2 were already right.)
+
+Client: `client/scripts/net/body_mode_book_test.gd` (review) drives NetClient's own `_dispatch`
+with synthetic packets: a remote kind-4 1 is kept for a body built later, a motion change leaves
+it, a 0 clears only that character, OpEntityLeft drops it. Against e5bf2ba (NetClient there):
+
+    FAIL a remote berserk (kind 4 value 1) is kept for a body built later (book <null>)
+    ok  and still reaches state_changed
+    FAIL a motion change leaves it
+    FAIL its end (value 0) clears only that character (book <null>)
+    FAIL who leaves takes their body mode along (book <null>)
+    4 FAILED
+
+`client/scripts/effects/berserk_look_test.gd` -- the rows and scripts from a synthetic
+skilleffect.txt (only skilleffectset's SYSTEM_CH_HWANMODE rows), the pulse (colour 1, 2, 1 at 0,
+1, 2 x ms; the midpoints), the flash curve, the own start (burst + kept effects + sound, every
+piece tinted, alpha kept, another body untouched, x1.05 at 0.5 s, x1.1 at 1 s), another body
+drawn berserk (kept rows only, no sound), a piece put on mid-berserk, the end (materials back at
+once, the end's burst and sound, the size back over 1 s, the look forgotten), the arrival's silent
+drop (no burst, no sound, colour and size back at once) beside an ordinary end that still plays
+them, a freed body, and WorldNet.note_body_mode. Against the base:
+
+    FAIL berserk_look.gd loads
+
+`remote_godot.sh check`: ALL LOAD. `remote_godot.sh tests`: 169 suites, 0 failing (after the
+review follow-up; 168 before it).
+`go build ./... && go test -count=1 -p 1 ./...`: all pass.
+
+### Open
+
+- The berserk move speed and defence cut (the `_RefHWANLevel` values), the hwan level's blue mode
+  and link mode, and skillaniset2's hit effect and weapon trail while berserk: docs/TODO.md.
+
+### Performance gate (`client/tools/perf_gate.sh --sites jangan`, base e5bf2ba vs this branch)
+
+| site | number | base | head | verdict |
+|---|---|---|---|---|
+| jangan | frame ms | 11.29 | 11.24 | SAME |
+| jangan | entry ms | 9633 | 9633 | SAME |
+| jangan | freeze ms | 3394 | 3381 | SAME |
+| jangan | hitches | 5 | 5 | SAME |
+
+Median of 3 interleaved runs each (one base run repeated after another render overlapped it). The
+gate's view has nobody berserk, so it measures the always-on cost (the table parse at world load,
+the per-frame tick over no bodies); a berserk body's own cost -- its seven kept effects and the
+colour written to each of its pieces' material copies every frame -- is not in these numbers.
+
+
 ## Six-hundred-and-fiftieth round: Donwhang's and Samarkand's Dimensional Gates can be clicked again
 
 The user reported: "The donwhang teleporter seems broken now too." Labels: READ = recovered from a
@@ -7940,7 +8136,6 @@ after 18 overlapping renders.
   "all teleports in the region" are all reed shores. The other ferry landings have reeds within
   250 units (`whatishere`: 100/161, 98/156 and 91/143), and `GATE_WC` in the town (102/153) has
   none within 250.
-
 
 ## Six-hundred-and-forty-seventh round: the Jangan spawn draws at 85 fps instead of 71 with every tree swaying exactly as before, and a zone change no longer leaves the old zone's animated objects behind
 

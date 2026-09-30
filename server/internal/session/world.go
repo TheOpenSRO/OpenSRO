@@ -888,7 +888,7 @@ func WorldHandlerWithHook(chars character.Store, eq equipment.Store, hub *world.
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		switch p.Opcode {
 		case OpEnterWorld:
-			return handleEnterWorld(ctx, sess, p, chars, eq, hub, onEnter)
+			return handleEnterWorld(ctx, sess, p, chars, eq, hub, onEnter, zerk)
 		case OpMove:
 			return handleMove(sess, p, hub, chars)
 		case OpChangeZone:
@@ -953,7 +953,7 @@ func WorldDisconnectHandler(hub *world.Hub, chars character.Store) func(sess *ga
 	}
 }
 
-func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, eq equipment.Store, hub *world.Hub, onEnter EnterHook) error {
+func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, eq equipment.Store, hub *world.Hub, onEnter EnterHook, zerk *berserk.Tracker) error {
 	accountID, ok := AuthenticatedAccountID(sess)
 	if !ok {
 		return sess.Send(&proto.Packet{
@@ -1083,6 +1083,8 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	// (round 616, buffs.go; OURS).
 	if e, inWorld := hub.EntityBySession(sess.ID()); inWorld {
 		sendBuffsInView(hub, e, time.Now())
+		// And who is berserk here (round 651, sendBodyModesInView).
+		sendBodyModesInView(hub, zerk, e)
 	}
 	return nil
 }
@@ -1197,6 +1199,7 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 	// new neighbours' (round 616, buffs.go).
 	arrived.Session = sess
 	sendBuffsInView(hub, arrived, time.Now())
+	sendBodyModesInView(hub, zerk, arrived)
 	// A running berserk ends with the zone change (endBerserk: the world
 	// entry's body mode is READ, that a zone change is a re-entry INFERRED),
 	// as the client's display does (FUN_00787860); the new zone and the mover
