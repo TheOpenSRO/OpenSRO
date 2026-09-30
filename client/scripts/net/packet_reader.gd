@@ -29,10 +29,11 @@ class_name PacketReader
 ## ignored -- see Packet.encode()'s note -- in arrival order.
 
 ## The most one read takes (OURS). The reader reads only while its buffer
-## does not yet hold a whole frame, so what it holds is bounded by one
-## unfinished frame (at most HEADER_SIZE + MAX_PAYLOAD = 32,773 bytes) plus one
-## read: under 100 KB.
+## does not yet hold a whole frame, and drops the consumed bytes before each
+## read, so its buffer is at most one unfinished frame (under HEADER_SIZE +
+## MAX_PAYLOAD = 32,773 bytes) plus one read: under 98,309 bytes (MAX_BUFFER).
 const READ_CHUNK := 65536
+const MAX_BUFFER := Packet.HEADER_SIZE + Packet.MAX_PAYLOAD + READ_CHUNK
 
 var _buf := PackedByteArray()
 ## Where the next frame starts in _buf; the bytes before it are consumed.
@@ -51,10 +52,6 @@ func poll(peer: StreamPeer) -> Packet:
 			return null
 	return _take_frame()
 
-## How many bytes are buffered and not yet consumed.
-func buffered() -> int:
-	return _buf.size() - _pos
-
 ## The size of the whole frame at _pos (header + payload), or -1 while the
 ## buffer does not hold it all yet.
 func _frame_size() -> int:
@@ -65,28 +62,46 @@ func _frame_size() -> int:
 	return size if have >= size else -1
 
 ## Reads what peer has, up to READ_CHUNK, onto the buffer. False when nothing
-## came (nothing waiting, or a read error, which is reported).
+## came: nothing waiting, the peer closed (a clean end, not reported: NetClient
+## sees the status next frame), or a read error, which is reported.
 func _read_some(peer: StreamPeer) -> bool:
-	var want := READ_CHUNK
-	if not (peer is StreamPeerTLS):
-		# A TCP peer's count is the kernel's (FIONREAD). A TLS peer's is only
-		# the current record's (see the top), so it is asked for a chunk and
-		# gives what it has; an empty non-blocking read is not an error.
-		var available := peer.get_available_bytes()
-		if available <= 0:
+	if not _is_open(peer):
+		return false
+	var available := peer.get_available_bytes()
+	if available <= 0 and peer is StreamPeerTLS:
+		# A TLS peer counts only the current decrypted record (see the top);
+		# once that is read, poll() decrypts the next one, if it has come --
+		# or finds the peer's close_notify and closes.
+		peer.poll()
+		if not _is_open(peer):
 			return false
-		want = mini(available, READ_CHUNK)
-	var result := peer.get_partial_data(want)
+		available = peer.get_available_bytes()
+	if available <= 0:
+		return false
+	var result := peer.get_partial_data(mini(available, READ_CHUNK))
+	if result[0] == ERR_FILE_EOF:
+		return false
 	if result[0] != OK:
 		push_error("PacketReader: reading: %s" % result[0])
 		return false
 	var got: PackedByteArray = result[1]
 	if got.is_empty():
 		return false
-	if _pos > 0 and _pos >= _buf.size():
-		_buf = PackedByteArray()
+	if _pos > 0:
+		# Only an unfinished frame is left before a read: dropping what was
+		# consumed keeps the buffer within MAX_BUFFER.
+		_buf = _buf.slice(_pos)
 		_pos = 0
 	_buf.append_array(got)
+	return true
+
+## Whether peer is still connected: a closed TCP or TLS peer reports an
+## engine error for every count or read asked of it, so it is not asked.
+func _is_open(peer: StreamPeer) -> bool:
+	if peer is StreamPeerTLS:
+		return (peer as StreamPeerTLS).get_status() == StreamPeerTLS.STATUS_CONNECTED
+	if peer is StreamPeerTCP:
+		return (peer as StreamPeerTCP).get_status() == StreamPeerTCP.STATUS_CONNECTED
 	return true
 
 ## Cuts the whole frame at _pos out of the buffer.
@@ -102,8 +117,5 @@ func _take_frame() -> Packet:
 	_pos = start + size
 	if _pos >= _buf.size():
 		_buf = PackedByteArray()
-		_pos = 0
-	elif _pos >= READ_CHUNK:
-		_buf = _buf.slice(_pos)
 		_pos = 0
 	return Packet.new(opcode, payload)

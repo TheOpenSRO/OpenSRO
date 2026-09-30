@@ -7349,16 +7349,24 @@ runs every frame, so the performance gate was run.
   `poll()` polls the peer, then, while its buffer does not hold a whole frame, reads what the peer
   has, up to `READ_CHUNK` = 64 KB. It then cuts out the next whole frame.
   - A TCP peer is asked for `min(get_available_bytes(), 64 KB)`.
-  - A TLS peer is asked for a chunk with `get_partial_data`, because its count is only the current
-    record's; an empty non-blocking read is not an error.
+  - A TLS peer's count is only the current record's, so once that is read the reader polls the
+    peer again, which decrypts the next record if it has come, and reads that (review follow-up;
+    the first version asked a TLS peer for a blind 64 KB read, which allocated 64 KB on every idle
+    poll).
+  - A peer that is no longer connected is not asked (a closed peer answers every count or read
+    with an engine ERROR line). A read that ends in `ERR_FILE_EOF` (a clean close) returns
+    nothing, without an error line.
 - **The frames are decoded exactly as before.** Size is the field's low 15 bits, then the opcode.
   Header bytes 4 and 5 (RollingByte/ChecksumByte) are ignored, as `Packet.encode()`'s note
   says: the server sends neither. Frames come out in arrival order, one per `poll()`.
   `NetClient._process` still drains `poll()` until it returns null (`net_client.gd`: comments only).
-- **The bound.** The reader reads only while it lacks a whole frame, so it holds at most one
-  unfinished frame (up to 32,773 bytes) plus one read (64 KB). The largest seen in the tests was
-  65,526 bytes. Consumed bytes are dropped when the buffer empties, or compacted once 64 KB of
-  them have gone by.
+- **The bound.** The reader reads only while it lacks a whole frame, and drops the consumed bytes
+  before each read, so its buffer holds less than one frame plus one read:
+  `MAX_BUFFER` = 6 + 32,767 + 65,536 = 98,309 bytes. The largest the test measured was 98,299.
+  (The first version compacted only once 64 KB had been consumed, so its buffer could reach about
+  164 KB, and its comment undercounted: the review's finding. It measured 131,072 under the
+  mutant below.) The copy on each compaction is only the one unfinished frame, done once per
+  frame taken.
 
 ### 3. Tests (`client/scripts/net/packet_reader_fragments_test.gd`)
 
@@ -7375,7 +7383,17 @@ runs every frame, so the performance gate was run.
   Each must decode to exactly the frames sent, in order, byte for byte.
 - **Round 662's wedge.** The same frames in 52 KB pieces go through a receive buffer that holds
   at most 31,250 unread bytes (ss's figure). The page, and every frame after it, must decode.
-- **The bound.** The reader holds at most one frame plus one 64 KB read.
+- **The bound.** Six full-size frames wait at once. The reader's `_buf` itself must stay under
+  98,309 bytes (read with `get("_buf")`).
+- **It reads only while it lacks a frame.** 20 small frames and 200 KB more wait at once. After the
+  first `poll()`, the next 19 must be served from the buffer without reading from the peer.
+- **The Size flag bit.** A frame whose Size field is `0x8000 | 5` carries 5 bytes, and the frame
+  after it is found.
+- **TLS in one poll.** With every record of the page already in the client's socket, the page
+  must come out of the first `poll()`. NetClient drains until the first null, once a game frame,
+  so this is one game frame. A reader that reads only the current record takes 2.
+- **TLS close.** After the server's `close_notify`, the reader, polled as NetClient polls it, returns
+  nothing. The runner checks that no ERROR line appears between the test's two marker lines.
 - **Real TLS loopback.** A self-signed certificate is made in the test. A 32,735-byte page and the
   frame after it must decode within 3 s. The client trusts the test's certificate
   (`client_unsafe(cert)`), because with no chain Godot falls back to its default CA bundle, which a
@@ -7438,10 +7456,12 @@ took the enters first came through. On the server side, every run's writer debt 
 there was no stall line, and the only disconnect is the script ending each client. The fragment
 suite's receive-buffer case (§3) is the deterministic version.
 
-### 5. Performance gate (`perf_gate.sh --base 1ea6b02 --sites jangan,mobs`)
+### 5. Performance gate
 
-Head is this round merged onto int/mob 46559e0; base is 46559e0. 1280x720, median of 3 runs each.
-Other lanes' renders overlapped some runs, and the gate repeated those runs.
+`client/tools/perf_gate.sh --base 46559e0 --sites jangan,mobs`. The head was the working tree of
+5a96f00, which is this round merged onto int/mob 46559e0; the base is 46559e0. 1280x720, median of
+3 runs each. Other lanes' renders overlapped some runs, and the gate repeated those runs. (This
+heading first named `--base 1ea6b02` by mistake; 46559e0 is what was run.)
 
 | site | number | base | head | change | verdict |
 |---|---|---|---|---|---|
@@ -7462,7 +7482,48 @@ Other lanes' renders overlapped some runs, and the gate repeated those runs.
   was not measured.
 - TLS was tested on loopback only. Nothing in the game or `deploy/` turns TLS on yet.
 - This closes round 662's TODO item "The client's packet reader waits for a whole payload in the
-  kernel buffer" (on `feat/sendq662`; the integrator ticks it when both are merged).
+  kernel buffer"; this commit ticks it.
+
+### 7. The review's follow-up
+
+The review found no HIGH or MEDIUM issue. It asked for seven small fixes, all made; §2, §3, §5 and
+§6 above are corrected in place.
+- **The bound** is now true as stated: the reader compacts before each read.
+- **The TLS path** polls for the next record instead of making a blind 64 KB read.
+- **Closed peers** are no longer asked for counts or reads, and a clean close logs nothing.
+- **Four new checks**, each shown failing on its mutant of the reader (MEASURED, box, lane
+  reader663):
+
+```
+compaction before a read removed:
+FAIL the reader's buffer stays under one frame plus one 64 KB read (6 frames, largest buffer 196608 bytes, bound 98309)
+a read on every poll:
+FAIL the reader's buffer stays under one frame plus one 64 KB read (6 frames, largest buffer 131062 bytes, bound 98309)
+FAIL with 20 whole frames buffered, the next 19 polls read nothing more from the peer (3 reads)
+TLS read as TCP (no re-poll for the next record; the review's M5):
+FAIL TLS: with its records all arrived, the page comes out of the first poll (took 2; 32815 bytes were waiting)
+the 0x7FFF mask removed:
+FAIL a Size field with its top bit set carries its low 15 bits of payload -- 0 of 2 frames decoded
+the closed-peer check removed: every check passes, but 3 ERROR lines fall between the close markers
+("Condition "status != STATUS_CONNECTED" is true", stream_peer_mbedtls.cpp:263); with it, 0
+```
+
+The final reader passes all 13 checks, with no ERROR line between the close markers. The
+mbedtls lines there (`returned -30848 (-0x7880)`) are its own debug print of the close_notify, not
+errors.
+
+**Performance gate, re-run on the follow-up**: `client/tools/perf_gate.sh --base 46559e0 --sites
+jangan`. The head is the working tree of this follow-up, byte for byte its commit. 1280x720,
+median of 3:
+
+| site | number | base | head | change | verdict |
+|---|---|---|---|---|---|
+| jangan | frame ms | 9.99 | 9.64 | -0.3 | SAME |
+| jangan | entry ms | 9713 | 9589 | -124 | SAME |
+| jangan | freeze ms | 3384 | 3391 | +7 | SAME |
+| jangan | hitches | 5 | 5 | 0 | SAME |
+
+Client suites on the follow-up: `remote_godot.sh check` ALL LOAD; `remote_godot.sh tests` 177 suites, 0 failing.
 
 ## Six-hundred-and-sixty-second round: a player whose connection is slow can no longer freeze everyone else's monsters -- the server writes to each player from that player's own queue
 
