@@ -6,7 +6,7 @@ extends Node
 ## singleton (see project.godot) so any scene can reach it.
 ##
 ## Frame reads go through a PacketReader (see packet_reader.gd), which
-## tracks partial-frame state across _process() calls instead of blocking
+## buffers what has arrived across _process() calls instead of blocking
 ## the frame loop while a payload is still arriving over the wire.
 
 signal connected
@@ -313,6 +313,9 @@ func _process(_delta: float) -> void:
 
 	# Drain everything currently available; PacketReader.poll returns null
 	# once there's not a full frame buffered yet (never blocks the frame).
+	# Each poll takes whatever the peer holds into the reader's own buffer
+	# (round 663), so a frame larger than what the socket -- or one TLS
+	# record -- holds at once still comes through.
 	while true:
 		var p := _reader.poll(_peer)
 		if p == null:

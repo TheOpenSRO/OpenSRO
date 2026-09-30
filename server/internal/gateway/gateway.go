@@ -493,8 +493,9 @@ func (s *Session) writeLoop() {
 // as it is while a load freezes the client -- Linux's tcp_sendmsg appends
 // each new write into the unsent tail skb, up to its size goal (~64 KB over
 // loopback), so frames coalesce into large segments however they were
-// written, and the same wedge can recur. The fix is the client's: read what
-// is available into its own buffer (round 663, packet_reader.gd).
+// written, and the same wedge can recur. The fix is the client's, and it is
+// done: since round 663 packet_reader.gd reads what is available into its
+// own buffer on every poll, whatever sizes the segments come in.
 func writeFrames(w io.Writer, buf []byte) (int, error) {
 	written := 0
 	for len(buf) >= 6 {
