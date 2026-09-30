@@ -30,7 +30,7 @@ Column 52 is split on `","` (0xd8c364) into a vector at +0x1b0, and each piece g
 
 **`xxx` is stored as an empty string.** The narrow and wide text readers `FUN_0097f860` and
 `FUN_0097f920` compare the cell with `"xxx"` (0xdae70c; `L"xxx"`) and on a match assign `""`
-(`DAT_00e16204`). So a row "with no model" has an empty +0x124, never the text `xxx`. The only
+(`DAT_00e16204` for the narrow reader, `DAT_00e17460` for the wide one). So a row "with no model" has an empty +0x124, never the text `xxx`. The only
 other `xxx` test (0x973218, column 55 before a siege-fortress lookup) has nothing to do with models.
 
 ## The model of a row with none (the `_CLON` rule)

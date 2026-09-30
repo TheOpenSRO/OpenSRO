@@ -108,6 +108,9 @@ func _stub_net() -> void:
 	_net_stub.source_code = "\n".join(PackedStringArray([
 		"extends \"res://scripts/net/net_client.gd\"",
 		"var monster_lists := 0",
+		"var stub_connected := false",
+		"func is_connected_to_server() -> bool:",
+		"\treturn stub_connected",
 		"func list_monsters() -> void:",
 		"\tmonster_lists += 1",
 		"func list_skills(_n: String) -> void:",
@@ -336,6 +339,40 @@ func _test_no_list_pulls(world: Node) -> void:
 	_check(_lists_asked() == before, "an own attack result asks for no monster list (%d asked)" % (_lists_asked() - before))
 	_check(snaps.has(3001) and (snaps[3001] as CombatNet.MonsterSnapshot).hp == 20,
 		"and the result's health reaches the snapshot (got %s)" % (str((snaps[3001] as CombatNet.MonsterSnapshot).hp) if snaps.has(3001) else "none"))
+	# Round 655's review: a zero-damage cast's reply (a stun, a debuff) reports
+	# no blow, and an older server sent its health as 0.
+	var no_blow := CombatNet.AttackResult.new()
+	no_blow.monster_id = 3001
+	no_blow.monster_damage = 0
+	no_blow.monster_remaining_hp = 0
+	world.call("_on_attack_result", no_blow)
+	await create_timer(0.3).timeout
+	_check(snaps.has(3001) and (snaps[3001] as CombatNet.MonsterSnapshot).hp == 20,
+		"a result with no blow (0 damage, not died) leaves the monster's health alone (got %s)" % (str((snaps[3001] as CombatNet.MonsterSnapshot).hp) if snaps.has(3001) else "none"))
+	# A server with no spawn push: a death that has played out asks for ONE
+	# list, at most once every DEATH_PULL_SECONDS; one with the push, none.
+	var net := root.get_node_or_null("NetClient")
+	if net != null and world.get("_spawn_push_seen") != null:
+		net.set("stub_connected", true)
+		world.call("_sync_monster_bodies", [_snapshot(3003, 0, 50.0, 10.0), _snapshot(3004, 0, 60.0, 10.0),
+			_snapshot(3005, 0, 70.0, 10.0)])
+		for i in range(5):
+			_pump(world)
+		world.set("_spawn_push_seen", false)
+		world.set("_death_pull_msec", -1000000)
+		var before_deaths := _lists_asked()
+		world.call("_on_monster_died", 3003)
+		world.call("_on_monster_died", 3004)
+		_check(_lists_asked() - before_deaths == 1,
+			"with no spawn push seen, two deaths in a row ask for one list (got %d)" % (_lists_asked() - before_deaths))
+		world.set("_spawn_push_seen", true)
+		world.set("_death_pull_msec", -1000000)
+		var before_push := _lists_asked()
+		world.call("_on_monster_died", 3005)
+		_check(_lists_asked() == before_push, "with the spawn push seen, a death asks for none")
+		net.set("stub_connected", false)
+	else:
+		_check(false, "the death-pull throttle exists (_spawn_push_seen)")
 	await _clear_monsters(world)
 
 func _test_culling(world: Node) -> void:

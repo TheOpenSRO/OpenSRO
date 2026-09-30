@@ -5493,7 +5493,8 @@ func _play_once(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, hold: boo
 ## Round 655: a monster's or NPC's clip (MonsterDraw.META_CULL) is posed only
 ## while its body is in MonsterDraw.POSE_RANGE of the camera and touches the
 ## view frustum (MonsterDraw.pose_wanted); out of range its clip's sounds stop
-## too. The clock runs on regardless, so a body coming into view is posed
+## too, and a monster's model (MonsterDraw.META_HIDE) is hidden. The clock
+## runs on regardless, so a body coming into view is posed
 ## where its clip has got to, and a one-shot still hands back to its loop on
 ## time. The player, other players and the character window's doll are not
 ## culled.
@@ -5525,6 +5526,11 @@ func _tick_idle_animations(delta: float) -> void:
 			var radius := float(skeleton.get_meta(MonsterDraw.META_RADIUS, 1.0))
 			audible = MonsterDraw.in_range(origin, radius, eye)
 			pose = audible and MonsterDraw.pose_wanted(origin, radius, eye, planes)
+			# A monster's model out of range is hidden, as MapAnimation hides a
+			# map object (round 655's review; OURS): unposed, a walking body
+			# would slide without its gait.
+			if skeleton.has_meta(MonsterDraw.META_HIDE) and skeleton.visible != audible:
+				skeleton.visible = audible
 		if pose:
 			posed += 1
 		else:
@@ -15115,6 +15121,7 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 			_monster_assembled[monster.monster_id] = assembled
 			label_height = _monster_templates.label_height_of(monster_model)
 			monster_skeleton.set_meta(MonsterDraw.META_CULL, true)
+			monster_skeleton.set_meta(MonsterDraw.META_HIDE, true)
 			monster_skeleton.set_meta(MonsterDraw.META_RADIUS, _monster_templates.radius_of(monster_model))
 			_animate(assembled)
 	# Says which of the three ways a monster can come out wrong happened:
@@ -16105,6 +16112,15 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	if monster != -1:
 		var dealt := result.monster_damage
 		var died := result.monster_died
+		# The result's health is recorded now, in wire order with the zone's
+		# pushes, and painted as the blow lands (round 655 and its review):
+		# a newer OpMonsterDamaged arriving before the landing is not undone
+		# by this older number. Only a result that reports a blow carries
+		# health: a zero-damage cast (a stun, a debuff) resolves none, and a
+		# server before round 655's review sent 0 there.
+		var blow := dealt > 0 or died
+		if blow:
+			_record_monster_hp(monster, result.monster_remaining_hp)
 		_own_hit_until[monster] = Time.get_ticks_msec() + int(lands_after * 1000.0) + 750
 		if died:
 			# The killer is the one player the server never sends
@@ -16130,11 +16146,13 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 					monster, _last_attack_target, monster])
 			# A monster this blow killed plays its die animation as the blow
 			# lands (held by the kill hold above); a surviving one flinches.
-			# The monster's health as the result reports it, as the blow lands
-			# (round 655): until then the full list this handler asked for
-			# after every result brought it. OURS: shown with the blow rather
-			# than when the reply arrives.
-			_apply_monster_hp(monster, result.monster_remaining_hp)
+			# The monster's health, as the snapshot has it by now (the result's,
+			# or a newer push's), drawn as the blow lands (round 655): until
+			# then the full list this handler asked for after every result
+			# brought it. OURS: shown with the blow rather than when the reply
+			# arrives.
+			if blow:
+				_paint_monster_hp(monster)
 			if died:
 				_begin_monster_death(monster)
 			else:
@@ -17837,6 +17855,8 @@ func _on_monster_spawned(spawned: CombatNet.MonsterSpawned) -> void:
 	if spawned == null or spawned.monster == null:
 		return
 	var m := spawned.monster
+	# This server pushes spawns: no list after a death is needed (round 655).
+	_spawn_push_seen = true
 	if _dying_until.has(m.monster_id):
 		return
 	var known := _monster_bodies.has(m.monster_id)
@@ -17882,10 +17902,24 @@ func _on_monster_damaged(damaged: CombatNet.MonsterDamaged) -> void:
 ## its snapshot, drawn on its bar and, for the target, in the target window.
 ## The max comes from the snapshot; a monster with none shows it full.
 func _apply_monster_hp(monster_id: int, hp: int) -> void:
+	_record_monster_hp(monster_id, hp)
+	_paint_monster_hp(monster_id, hp)
+
+## Keeps a reported health in the monster's snapshot, without drawing it.
+func _record_monster_hp(monster_id: int, hp: int) -> void:
 	var snap = _monster_snapshots.get(monster_id)
-	var max_hp: int = snap.max_hp if snap != null else hp
 	if snap != null:
 		snap.hp = hp
+
+## Draws a monster's health on its bar and, for the target, in the target
+## window: `hp`, or the snapshot's when -1.
+func _paint_monster_hp(monster_id: int, hp: int = -1) -> void:
+	var snap = _monster_snapshots.get(monster_id)
+	if hp < 0:
+		if snap == null:
+			return
+		hp = snap.hp
+	var max_hp: int = snap.max_hp if snap != null else hp
 	var body = _monster_bodies.get(monster_id)
 	if body != null and is_instance_valid(body):
 		_set_hp_bar(body, hp, max_hp)
@@ -17954,6 +17988,28 @@ func _finish_monster_death(monster_id: int) -> void:
 	_forget_monster(monster_id)
 	if had_body:
 		print("World3D: monster %d body removed t=%.2f" % [monster_id, _idle_anim_time])
+	_maybe_pull_after_death()
+
+## A server that sends no spawn push (-monster-spawn-push off, the default)
+## tells this client of a respawn or a GM spawn only through a list (round
+## 655's review). So until the zone's first OpMonsterSpawned has been seen,
+## a death that has played out asks for one list, at most once every
+## DEATH_PULL_SECONDS (OURS). A server that pushes spawns is never asked.
+const DEATH_PULL_SECONDS := 10.0
+var _spawn_push_seen := false
+var _death_pull_msec := -1000000
+## How many lists the throttle has asked for (for the log and the test).
+var _death_pulls := 0
+
+func _maybe_pull_after_death() -> void:
+	if _spawn_push_seen or not NetClient.is_connected_to_server():
+		return
+	var now := Time.get_ticks_msec()
+	if now - _death_pull_msec < int(DEATH_PULL_SECONDS * 1000.0):
+		return
+	_death_pull_msec = now
+	_death_pulls += 1
+	NetClient.list_monsters()
 
 ## The player has advanced a level (server's OpLevelUp, only ever sent to
 ## the character that levelled). Announces it with the client's own recovered

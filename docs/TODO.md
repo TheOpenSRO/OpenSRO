@@ -1765,11 +1765,15 @@ attack result. `SRREVAMP_QA_MOBS=<N>` and the perf gate's `mobs` site measure it
 - [ ] **The pose range is OURS**: the map objects' READ range (2020 from the camera) applied to
       characters. Retail's render slot for a monster (`CICMonster` slot 10, 0x9d20d0) has no
       distance test and the object slot `FUN_009c4aa0` only a frustum test; the entity manager's
-      per-frame tick was not read. Bodies out of range are still drawn, only not posed.
-- [ ] **Respawns need the spawn push.** With no list per hit, a respawn appears only through
-      OpMonsterSpawned (`-monster-spawn-push`, off by default), a move for an unknown monster
-      (`-monster-ai`, rate-limited list), a zone change or a GM refresh. The monster-world epic's
-      server turns the push on, or sends the view's monsters itself (the AOI lane).
+      per-frame tick was not read. Monster models out of range are hidden (OURS, as map objects
+      are); NPCs out of range are drawn, not posed. A capsule monster or one with no idle clip is
+      never hidden (the rule runs in the idle tick).
+- [ ] **Respawns on a server without the spawn push.** With no list per hit, a respawn appears
+      through OpMonsterSpawned (`-monster-spawn-push`, off by default, on on the public server),
+      a move for an unknown monster (`-monster-ai`, rate-limited list), a zone change, a GM
+      refresh, or -- until a spawn push has been seen -- one list after a death has played out,
+      at most every 10 s (OURS). A respawn with no death after it waits. The AOI lane's enter
+      pushes remove the limit.
 - [ ] **A monster walking out of the loaded regions keeps its body** until its region unloads
       (the region gate runs when a cell loads or unloads, not per step).
 - [ ] **Scale (characterdata col 48)** is not applied to any monster (see the `_CLON` item above).

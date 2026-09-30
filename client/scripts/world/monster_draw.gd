@@ -21,7 +21,8 @@ class_name MonsterDraw
 ##   value.
 ## - **Posing only what is seen** (pose_wanted): an idle or one-shot clip is
 ##   posed only while the body is in POSE_RANGE of the camera and its sphere
-##   touches the view frustum. Out of range its clip also stops sounding.
+##   touches the view frustum. Out of range its clip also stops sounding, and
+##   a monster's model is hidden (META_HIDE).
 ## - **No body outside the loaded regions** (World3D._monster_region_loaded):
 ##   a monster whose region is not loaded keeps its snapshot but gets no body
 ##   until its region loads, and loses its body when its region unloads.
@@ -47,6 +48,10 @@ const POSE_RANGE := MapAnimation.OBJECT_RANGE
 ## its bounding sphere in world units.
 const META_CULL := "srrevamp_pose_cull"
 const META_RADIUS := "srrevamp_pose_radius"
+## Meta on a monster's skeleton: hidden while out of POSE_RANGE (round 655's
+## review; OURS, as MapAnimation hides a map object out of its range). An NPC
+## is only left unposed.
+const META_HIDE := "srrevamp_hide_out_of_range"
 
 ## Whether a body at `origin` with bounding radius `radius` is posed this
 ## frame: in POSE_RANGE of the camera `eye` (the map objects' strict

@@ -7145,8 +7145,10 @@ species cost about 26.5 s built the old way and about 1.3 s built from templates
   - its body is in range of the camera, meaning `dist - radius < 2020`;
   - its sphere touches the view frustum.
 
-  Its sounds stop out of range. The clock keeps running, so a one-shot still hands back to its
-  loop on time. The player, other players and the character window's doll are never culled.
+  Its sounds stop out of range, and a monster's model is hidden there (`MonsterDraw.META_HIDE`,
+  OURS, as MapAnimation hides a map object; added after the review, since an unposed walking
+  body slid without its gait). An NPC is only left unposed. The clock keeps running, so a
+  one-shot still hands back to its loop on time. The player, other players and the character window's doll are never culled.
   - **The range is OURS.** It is the map objects' READ update range (2500 - 480, asm
     0xa2d961/0xa2d967, round 645) applied to characters. Retail's monster render slot
     (`CICMonster` slot 10, 0x9d20d0) has no distance test, and the object slot `FUN_009c4aa0`
@@ -7159,13 +7161,22 @@ species cost about 26.5 s built the old way and about 1.3 s built from templates
   dropped when the cell unloads, which happens in `_monster_cells_changed`, run from the pump after
   `mark_loaded` or `unload`. A move for a monster that is listed but not yet drawn updates its
   snapshot and asks for no list.
-- **No full list on hits.** The own attack result's `monster_remaining_hp` is applied as the blow
-  lands (`_apply_monster_hp`, which updates the snapshot, the bar and the target window). Showing
-  it at that moment is OURS; until now it came with the list reply. `OpMonsterDamaged` does the
-  same when it arrives. A death removes its body when its clip has run (`_finish_monster_death`),
+- **No full list on hits.** The own attack result's `monster_remaining_hp` is recorded in the
+  snapshot when the result arrives (in wire order with the zone's pushes) and drawn from the
+  snapshot as the blow lands (`_record_monster_hp` / `_paint_monster_hp`), so an older result
+  cannot overwrite a newer `OpMonsterDamaged` that arrived before the landing. Showing it at the
+  landing is OURS; until now it came with the list reply. `OpMonsterDamaged` records and draws at
+  once (`_apply_monster_hp`). **Only a result that reports a blow carries health** (damage > 0
+  or died): the review found that a zero-damage hostile cast (`SKILL_EU_WARRIOR_DUALA_STUN_A_01..05`,
+  and the debuffs this epic adds) was answered with `MonsterRemainingHP` 0 (session/skill.go's
+  no-blow reply), which the list pull used to correct. The client now ignores health on a no-blow
+  result, and the server fills the field with the monster's current HP there. A death removes its body when its clip has run (`_finish_monster_death`),
   or at once when there is none. The server gives a respawn a new id (`maintainMonster`), so a
   removed id never comes back. The zone-change list, the GM refresh, the refresh button, the
-  QA hooks and the rate-limited list after a move for an unknown monster all remain.
+  QA hooks and the rate-limited list after a move for an unknown monster all remain. **One
+  throttled pull stays** (review, item 3): until the zone's first `OpMonsterSpawned` is seen, a
+  death that has played out asks for one list, at most every 10 s (`DEATH_PULL_SECONDS`, OURS),
+  so a server with `-monster-spawn-push` off (the default) still shows respawns and GM spawns.
 - **No per-monster prints or rows.** The build line, the "height resolved" line and the list's
   per-monster lines are printed only with `SRREVAMP_QA_MOB_LOG` or `/wire`. A queue that drains
   prints one summary. The debug tabs' ItemList is filled only while the tabs are shown.
@@ -7200,6 +7211,8 @@ world through its `_monster_assemble` Callable. The NetClient is a subclass that
 - 500 snapshots of 5 species: 5 assemblies and 500 modelled bodies; the list is not built in its
   own frame and drains in 79 frames;
 - a cached body at 377 us against 8,534 us for an assembled one;
+- (review) a result with no blow leaves the health alone; with no spawn push seen, two deaths in a
+  row ask for one list, and with the push seen, none;
 - the region gate: deferred, built on load, dropped on unload with the snapshot kept;
 - no list on a hit, a kill or an own result, with the pushed health applied;
 - posing: in front, behind, past the range, and the rule's strict bound;
@@ -7231,6 +7244,28 @@ FAIL the world draws a `_CLON` with its Org row's model (got '')
 ```
 
 On the base even 500 capsules (no model assembles there) took 201.6 ms in one frame.
+
+**The review follow-up's server NEGATIVE.** `TestSkillCastHandsOffToPlainSwings` now also checks
+the zero-damage cast's `MonsterRemainingHP`; with the old `skill.go` it fails:
+
+```
+--- FAIL: TestSkillCastHandsOffToPlainSwings (1.27s)
+    keepup_test.go:516: zero-damage cast reports MonsterRemainingHP 0; want the monster's unchanged 1000
+```
+
+The client test against the round's first commit (7954e77, its tree with the new test file):
+
+```
+FAIL a result with no blow (0 damage, not died) leaves the monster's health alone (got 0)
+FAIL the death-pull throttle exists (_spawn_push_seen)
+2 FAILURES
+```
+
+After the follow-up: `monster_draw_test.gd` ALL PASS, `remote_godot.sh tests` 173 suites, 0
+failing, `check` ALL LOAD (431 scripts), and `go test -count=1 -p 1 ./...` 60 packages ok. The
+older-result-over-newer-push ordering (review item 2) has no test: in the headless world the swing
+has no hit event, so the blow lands inside the handler and the window between arrival and landing
+is empty.
 
 `client/tools/remote_godot.sh tests` ran **173 suites, 0 failing**. That includes
 `height_retry_test` (floating and heights), `monster_bodies_test`, `monster_motion_test`,
@@ -7290,8 +7325,10 @@ across the two gates, not interleaved with each other).
 - **A new species is still assembled on the main thread.** The worst is 791 ms. Next step: the
   objects job's worker-thread prepare.
 - **The pose range for characters is OURS.**
-- **Respawns now need `-monster-spawn-push`** (off by default), or the AOI lane's view updates. A
-  hit no longer brings them in with a list.
+- **Respawns on a server without the spawn push** show only through the throttled pull after a
+  death (at most every 10 s), so a respawn with no death after it waits for the next kill, a
+  zone change or a GM refresh. `-monster-spawn-push` (on on the public server) or the AOI lane's
+  enter pushes remove the limit.
 - **A body walking out of the loaded window** keeps its body until its region unloads.
 - **Scale (column 48) is not applied.**
 
