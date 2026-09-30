@@ -176,6 +176,9 @@ signal guild_level_result(result: GuildNet.LevelResult)
 ## A chat line arrived (round 634): any type -- ordinary, whisper, party,
 ## guild, global, notice.
 signal chat_update(update: ChatNet.Update)
+## A unique monster appeared or was killed somewhere in the world (round 657,
+## retail 0x300C's 0x0C05 / 0x0C06).
+signal unique_notice(notice: UniqueNoticeNet.Notice)
 ## The server's answer to a line this client sent (0xB025's fields).
 signal chat_result(result: ChatNet.Result)
 
@@ -1016,6 +1019,12 @@ func _dispatch(p: Packet) -> void:
 			guild_points_result.emit(GuildNet.decode_points_result(p.data))
 		GuildNet.OP_LEVEL_RESULT:
 			guild_level_result.emit(GuildNet.decode_level_result(p.data))
+		UniqueNoticeNet.OP_UNIQUE_NOTICE:
+			var un := UniqueNoticeNet.decode(p.data)
+			if un != null:
+				unique_notice.emit(un)
+			else:
+				print("NetClient: malformed unique notice (%d bytes)" % p.data.size())
 		ChatNet.OP_UPDATE:
 			var u := ChatNet.decode_update(p.data)
 			if u != null:

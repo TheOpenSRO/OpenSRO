@@ -528,15 +528,18 @@ func unionWatchers(a, b []world.Entity) []world.Entity {
 // A kill is announced to both, so a view that moved off the monster between
 // the two -- whose leave no longer finds the dead monster in its cells --
 // still hears the death rather than keeping a ghost. performAttack's blows go
-// through it.
-func damageMonsterWatched(hub *world.Hub, monsters *combat.Hub, id int64, amount int) (updated combat.Monster, died, ok bool, watchers []world.Entity) {
+// through it. The blow is booked to attacker on the monster's damage list
+// (combat.Hub.ApplyDamageFrom, attacker 0 books nobody), and the killing blow
+// hands the list back in hits: the unique kill notice names its killer from
+// it (round 657, AnnounceUniqueKill).
+func damageMonsterWatched(hub *world.Hub, monsters *combat.Hub, id, attacker int64, amount int) (updated combat.Monster, died, ok bool, watchers []world.Entity, hits []combat.Hit) {
 	var before []world.Entity
 	if m, alive := monsters.Get(id); alive {
 		before = monsterWatchers(hub, monsters, m)
 	}
-	updated, died, ok = monsters.ApplyDamage(id, amount)
+	updated, died, ok, hits = monsters.ApplyDamageFrom(id, attacker, amount)
 	if !ok {
-		return updated, died, ok, nil
+		return updated, died, ok, nil, nil
 	}
-	return updated, died, ok, unionWatchers(before, monsterWatchers(hub, monsters, updated))
+	return updated, died, ok, unionWatchers(before, monsterWatchers(hub, monsters, updated)), hits
 }

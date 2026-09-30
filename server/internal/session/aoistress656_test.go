@@ -170,7 +170,7 @@ func TestAOIStressClientMatchesTheWindow(t *testing.T) {
 			return
 		}
 		m := all[rr.Intn(len(all))]
-		_, died, ok, watchers := damageMonsterWatched(r.hub, monsters, m.ID, 1<<30)
+		_, died, ok, watchers, _ := damageMonsterWatched(r.hub, monsters, m.ID, 0, 1<<30)
 		if ok && died {
 			msg := (&MonsterDied{MonsterID: m.ID}).Encode()
 			for _, e := range watchers {

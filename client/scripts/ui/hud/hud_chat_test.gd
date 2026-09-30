@@ -360,7 +360,8 @@ func _notice_checks() -> void:
 	root.add_child(n)
 	n.call("setup", null)
 	n.call("show_notice", "Server maintenance")
-	_check(n.visible and n.call("remaining_ms") == 7000 and n.position.y == 0.0, "a notice shows for 7000 ms at the top")
+	_check(n.visible and n.call("remaining_ms") == 7000 and n.position.y == 100.0,
+		"a notice shows for 7000 ms at GDR_NOTICE's y, 100 (0x78cbbe; round 657)")
 	var f: Font = ThemeDB.fallback_font
 	_check(n.size.x == f.get_string_size("Server maintenance", HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x,
 		"the banner is the text's extent (0x7b3eb0) (got %s)" % n.size)

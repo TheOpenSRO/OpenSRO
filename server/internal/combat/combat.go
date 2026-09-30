@@ -739,11 +739,29 @@ type Hub struct {
 	// headingRoll draws a hatch heading (SetSpawnHeadingRoll); nil gives 0.
 	// Called under mu, which serialises whatever randomness it holds.
 	headingRoll func() float64
+	// hits is each monster's damage list: who hit it and for how much, in
+	// the order they first hit it (round 657; see Hit). Kept until the
+	// monster dies, when ApplyDamageFrom hands it to the caller.
+	hits map[int64][]Hit
+}
+
+// Hit is one attacker's accumulated damage on one monster -- an entry of the
+// engine's per-monster damage list (CGObjMob+0x1ca4, whose entries carry the
+// attacker's id at +0x10 and its damage at +0x14; read in the killer pick
+// CGObjMob vslot 399 0x4c44a0, round 657). The unique kill notice names its
+// killer from this list (session.UniqueKiller).
+//
+// The damage booked is the blow's own damage as dealt, not clipped to the HP
+// the monster had left (INFERRED: the engine's credit site that fills +0x14
+// was not read).
+type Hit struct {
+	AttackerID int64
+	Damage     int
 }
 
 // NewHub returns an empty Hub.
 func NewHub() *Hub {
-	return &Hub{byID: make(map[int64]*Monster), lastBlow: make(map[int64]time.Time),
+	return &Hub{byID: make(map[int64]*Monster), lastBlow: make(map[int64]time.Time), hits: make(map[int64][]Hit),
 		cells: make(map[Cell]cellSet), zoneCells: make(map[string]map[Cell]struct{}), cellOf: make(map[int64]Cell),
 		moving: make(map[int64]*Monster), facing: make(map[int64]float64)}
 }
@@ -959,13 +977,39 @@ func (h *Hub) InZone(zone string) []Monster {
 // returns the updated monster, whether this hit killed it, and whether the
 // monster existed at all. A dead monster is removed from the hub as part
 // of this call -- callers that want a respawn need to Spawn a new one.
+// The blow is credited to nobody; ApplyDamageFrom credits an attacker.
 func (h *Hub) ApplyDamage(id int64, amount int) (monster Monster, died bool, ok bool) {
+	monster, died, ok, _ = h.ApplyDamageFrom(id, 0, amount)
+	return
+}
+
+// ApplyDamageFrom is ApplyDamage with the blow credited to attacker on the
+// monster's damage list (Hit), attacker 0 crediting nobody. On the killing
+// blow the whole list comes back, in first-hit order, and the hub forgets it
+// with the monster; on any other blow the list is nil.
+func (h *Hub) ApplyDamageFrom(id, attacker int64, amount int) (monster Monster, died bool, ok bool, hits []Hit) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	m, exists := h.byID[id]
 	if !exists {
-		return Monster{}, false, false
+		return Monster{}, false, false, nil
+	}
+
+	if attacker != 0 && amount > 0 {
+		list := h.hits[id]
+		found := false
+		for i := range list {
+			if list[i].AttackerID == attacker {
+				list[i].Damage += amount
+				found = true
+				break
+			}
+		}
+		if !found {
+			list = append(list, Hit{AttackerID: attacker, Damage: amount})
+		}
+		h.hits[id] = list
 	}
 
 	m.HP -= amount
@@ -980,9 +1024,18 @@ func (h *Hub) ApplyDamage(id int64, amount int) (monster Monster, died bool, ok 
 		delete(h.facing, id)
 		delete(h.lastBlow, id) // a dead monster's re-use gate is never asked again
 		h.unfileLocked(id)
-		return result, true, true
+		hits = h.hits[id]
+		delete(h.hits, id)
+		return result, true, true, hits
 	}
-	return result, false, true
+	return result, false, true, nil
+}
+
+// Hits is a copy of monster id's damage list so far, in first-hit order.
+func (h *Hub) Hits(id int64) []Hit {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]Hit(nil), h.hits[id]...)
 }
 
 // ChanceRollSides is the number of distinct values the game's chance roll can

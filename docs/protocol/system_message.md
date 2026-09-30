@@ -176,7 +176,7 @@ lines. With retail's own message and type:
 | the chat's server refusals, the global chat's refusals | 0 | READ |
 | the camera-view line (F9) | 0 | READ |
 | the server's refusals (attack, skill, use item, composite, teleport, pickup) | 0 | retail's path is `0x778190` with a code; srrevamp's server sends English text (OURS wording) |
-| "You have advanced to level [N]." | -- | GDR_WARNING_WND (HudNotice, top centre), READ; the class's y is round 634's reading for GDR_NOTICE, no writer for this instance looked for (OPEN) |
+| "You have advanced to level [N]." | -- | GDR_WARNING_WND (HudNotice, top centre, y 130, the blue banner), READ (round 657: CGInterface's setup, `push 0x82` at `0x78cbed`; `unique_notice.md`) |
 
 OURS, type 0: the help and developer hints at login ("Type /help ...", "Developer tools ...
 Ctrl+F1", "Debug panel ... Ctrl+F3", "Stuck in a wall ... /unstuck"), "Developer tools shown/

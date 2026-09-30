@@ -1400,14 +1400,18 @@ What round 639 read and built is in `docs/protocol/system_message.md`.
   was not found), and the Game options checkbox itself, if the user later wants the toggle.
 - **The chat's whisper list** (ID 51) and its button (ID 14, `0x7a99d0`) are not built. The
   auto-hide's rect test already counts the list's hidden rect above the window (READ, round 641).
-- **Guide lines and unique notices.** The window shows retail's type-6 "[Guide]" tips
-  (`0x789e53`) and the uniques' appearance and death lines (`0x874ea0`) when they arrive; srrevamp's
-  server sends neither.
+- **Guide lines.** The window shows retail's type-6 "[Guide]" tips (`0x789e53`) when they arrive;
+  srrevamp's server sends none. (The unique notices are built: round 657.)
+- **Unique notices (round 657, open parts).** Built: 0x0C05/0x0C06 in `OpUniqueNotice 0x0110`, the
+  top-damage-group killer, the line choice and the blue GDR_WARNING_WND banner
+  (`docs/protocol/unique_notice.md`). OPEN: no unique is placed (round 660's rotation), so only
+  `/spawnunique` announces; the killer's `vtable +0x53c` (silences a kill) and `+0xec`/`+0xf0` (which
+  name); the tie order of the damage list; whether the damage-list credit `0x52a940` is passed the
+  blow clipped to the HP left (ours books it unclipped); a unique spawned by
+  `/spawnunique` carries the disclosed attack curve and no attack skill. A GM-spawned unique's model load stalls the frame (round 657's live check).
 - **Retail's messages for srrevamp's refusals.** The server sends English text; retail sends a code
   that `0x7b8b40` turns into the UIIT_ message.
 - **Quest EXP** writes no line (only a kill's result carries the EXP).
-- **GDR_WARNING_WND's position** (the level-up line): the CIFNotify class's +0x7d4, read as 0 for
-  GDR_NOTICE; no writer for this instance was looked for.
 - **The quick slots on the server.** Retail saves them with 0x7158 and loads them from the character
   data (`0x8a7c50`); srrevamp keeps them client-side at the user's request (OURS,
   `user://quickslots.cfg`). A new character's default slots (`0x786f30`) and dragging a slot off the
