@@ -7466,7 +7466,7 @@ The server was built from this branch: `-in-memory -single-frame -monster-ai -mo
   Round 657's full map is the first to show it.
 - The AOI radius and the sleep rule are OURS. Retail's are unread.
 - The client still asks for the whole window's list after every hit (round 655's lane).
-- A slow or stalled client can hold its writers up to its 3 s blocking budget (since §8). A
+- A slow or stalled client can hold its writers up to its blocking budget (§8; 10 s since §9). A
   per-session send queue would remove that.
 - The respawn is still the flat 10 s; round 659 brings the nest rules.
 
@@ -8336,6 +8336,61 @@ SCRIPT ERROR: Invalid call. Nonexistent function '_end_move_order_for_arrival (v
   server sends its own stop to the watchers was not read.
 - The arrow keys' heading-form commands (READ) are not bound. `0x70c5` (the other sender) is not
   built.
+
+### 9. The third review: the budget must not close a client frozen by a load
+
+§8's 3 s budget could close a HEALTHY client. It reads its socket on the game's main thread
+(`net_client.gd` `_process`), so it reads nothing while a load freezes that thread. The perf gate
+measures a 3.3 s freeze at the Jangan world entry, and zone changes and model loads stall too. If
+the kernel buffers fill meanwhile, writes block and the debt runs up.
+
+**Measured on the render box** (`/var/tmp/aoi656/freeze.sh f1`). The server was built from
+085d03f plus a debug line: every new peak of a session's debt past 50 ms is logged ("send debt
+peak"), and every disconnect carries `send_debt_peak`, `longest_write` and `sent_bytes`. It ran
+with `-qa-spread-monsters 6000 -qa-spread-radius 5` (50 monsters a region, denser than npcpos's
+worst region of 35) and all six monster switches on (`-monster-ai -monster-strike-push
+-monster-spawn-push -monster-battle -player-dead-state -monster-aggro`) under `-single-frame`. One
+real client:
+
+- entered the world at the Jangan spawn (`server reports 1286 monster(s)`);
+- ran `/goto donwhang` and 45 s later `/goto jangan` (`server reports 1253`);
+- then ran `/spawnunique` for Tiger Girl, Cerberus and Uruchi (model loads, each with its
+  banner). The longest gap in the timestamped client log is 1.64 s, before Cerberus's spawn push
+  was drawn.
+
+The session's whole life, 3.5 min: **peak debt 1.3 ms, longest single write 75 µs, 1,314,696
+bytes written**. No "send debt peak" line was logged (none reached 50 ms), and the session was
+not closed until the script ended it. The loopback buffers never filled. At ~6 KB/s a 3.3 s
+freeze leaves about 20 KB unread; the entry list (1,286 records, ~87 KB) is the largest single
+burst.
+
+Over a real link the buffers are smaller, so the rule must survive a freeze with full buffers.
+`TestAPeerThatFreezesThenReadsIsNotClosed`: with the production budget (not shortened), a peer
+stops reading for 4 s while a fan-out keeps writing to it, then reads everything; it must stay
+connected and receive every byte. **NEGATIVE with §8's 3 s budget**, MEASURED:
+
+```
+freezereader656_test.go:69: the freezing peer was closed after 4245010 bytes: write tcp 127.0.0.1:39729->127.0.0.1:38000: i/o timeout (debt peak 3.001s, longest write 2.964s, budget 3s)
+--- FAIL: TestAPeerThatFreezesThenReadsIsNotClosed (3.02s)
+FAIL
+FAIL	github.com/OpenSRO/srrevamp/server/internal/gateway	3.019s
+FAIL
+```
+
+**The rule now** (OURS): `SendBlockBudget` = **10 s**, draining 10 s per `SendBlockWindow` = 60
+s, and each write's deadline is capped at what is left of the budget (up to `SendTimeout`, 10 s).
+The same test passes: debt peak 3.997 s, longest write 3.963 s, all bytes received. 10 s is 3x the
+measured 3.3 s freeze and 2.5x the test's 4 s. The steady slow reader is still closed: that test
+shortens the budget to 300 ms, and it held its writer 301 ms.
+
+The price: a peer that keeps reading, but slower than it is written to, can hold its writers up to
+about 10 s in all before it is closed. A per-session send queue would remove that, and remains
+OPEN.
+
+**What a closed player sees:** `NetClient` finds the peer no longer connected on its next
+`_process`. `World3D._on_disconnected` changes to `Login.tscn`, which shows its remembered server
+and account fields and no reason. That is a clean return to the login screen, not a crash; the
+missing "connection lost" line is recorded in TODO.
 
 ## Six-hundred-and-fifty-second round: every icon is picked up with one click and put down with the next, and a worn item goes into the bag as the original puts it
 

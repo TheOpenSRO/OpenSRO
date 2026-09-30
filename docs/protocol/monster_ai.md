@@ -3530,10 +3530,11 @@ OnDisconnect runs, and every later Send returns `ErrSendStalled` at once.
 The deadline bounds one write, not a session. A peer that reads slowly but steadily finishes every
 write inside it, while every writer that fans out to it waits on it write after write: the AI
 tick, the respawn scheduler's spawn push, other players' blows. So each session also has a
-**blocking budget** (`gateway.SendBlockBudget` = 3 s, draining 3 s per `SendBlockWindow` = 30 s;
-OURS, round 656's second review). Every write's time on the socket adds to the session's debt,
+**blocking budget** (`gateway.SendBlockBudget` = 10 s, draining 10 s per `SendBlockWindow` = 60 s;
+OURS; 3 s per 30 s in round 656's second review, raised in its third so a client frozen by a
+load is not closed. See WORLD_ISSUES round 656 §9 for the measurement). Every write's time on the socket adds to the session's debt,
 the debt drains at 0.1 s a second, and each write's deadline is capped at what is left of the
-budget. A session whose debt reaches the budget is closed. Its writers together wait about 3 s,
+budget. A session whose debt reaches the budget is closed. Its writers together wait about 10 s,
 plus the drain, before it is gone. A reading client's writes take microseconds, so only a peer
 that keeps the kernel buffers full runs its debt up. A per-session send queue would take the
 waiting off the writers altogether, but every Send caller relies on the frame being on the wire,
