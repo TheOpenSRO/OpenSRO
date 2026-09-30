@@ -838,10 +838,26 @@ rank at its species' size. `SRREVAMP_AI_TICK_STATS=1` logs the AI tick's p50/p99
 ## Deploying the monster-epic release to srrevamp-01 (round 666)
 
 The release that carries rounds 653-666 changes the reference data, adds the shard's nest files
-and turns the monster world on. The final release review ran these steps; do them in this order.
-`<server-host>` is srrevamp-01 (`srrevamp@192.168.5.25`); `~/srrevamp-data` there is mounted into
-the server container as `/data`.
+and turns the monster world on. The final release review ran steps 1-7; do them in this order.
+`<server-host>` is srrevamp-01 (`srrevamp@192.168.5.25`); the checkout there is `~/srrevamp`, and
+`~/srrevamp-data` is mounted into the server container as `/data`.
 
+0. **First, the host must be running this release's server.** Steps 6-7 pass `-full-map` and
+   `-nest-db-dir`; a server built before them (dev at ab66d9c has neither) exits with `flag
+   provided but not defined`, and Docker restarts it in a loop. srrevamp-01 follows `dev` by
+   itself: `deploy/update.sh` runs from the `srrevamp-update.timer` (enabled there, every 5 min,
+   `OnUnitActiveSec=5min`; checked 2026-09-30), fetches `origin/dev`, fast-forwards, rebuilds and
+   restarts the stack, and rolls back a build that does not come up. So once the release is merged
+   to `dev`, either wait for the timer or run it now, then check the host's commit:
+   ```
+   ssh srrevamp@<server-host> 'sudo systemctl start srrevamp-update.service; journalctl -u srrevamp-update -n 5 --no-pager'
+   ssh srrevamp@<server-host> 'cd ~/srrevamp && git log --oneline -1'
+   ```
+   The journal line `server at <commit> listening on 15779` and a `git log` at the release's
+   commit (or later) mean it is running. (By hand, the same thing: `cd ~/srrevamp && git pull &&
+   docker compose up -d --build`.) Until then, change nothing in the override: the old server
+   runs happily on the old one, and the new server boots on it too (without `-full-map` it places
+   the roster as before).
 1. **Build the tools** on the machine with the client's `Media.pk2`, with `CGO_ENABLED=0` (static
    binaries, as step 1 of "Reference data" builds them):
    ```
@@ -849,10 +865,14 @@ the server container as `/data`.
      CGO_ENABLED=0 GOOS=linux go build -o /tmp/$t ./cmd/$t; done
    ```
 2. **Export the reference data**: run step 2 of "Reference data" above in full, with these new
-   binaries. It writes `skills.csv` (**91 columns**: `head -1 skills.csv | tr ',' '\n' | wc -l`
-   answers 91), `monsters.csv`, `npcpos.csv`, `items.csv`, `leveldata.csv` and the `teleport/`
-   directory, and its last `rm` deletes the extracted text tables. Check that nothing of them is
-   left (`ls *.txt` finds nothing).
+   binaries. It writes `skills.csv`, `monsters.csv`, `npcpos.csv`, `items.csv`, `leveldata.csv`
+   and the `teleport/` directory, and its last `rm` deletes the extracted text tables (`ls *.txt`
+   then finds nothing). `skills.csv` has no header, and a StatusParams cell is quoted with commas
+   inside (`"bl:30000,100,1,200,0"`), so count its columns with a CSV reader, not `tr`:
+   ```
+   python3 -c 'import csv; print(sorted({len(r) for r in csv.reader(open("skills.csv"))}))'
+   ```
+   must print `[91]` (every row 91 columns, column 90 StatusParams).
 3. **Copy the three changed CSVs and the importer** to the host, and make them readable by the
    container:
    ```
@@ -868,23 +888,25 @@ the server container as `/data`.
    ```
    Without the chmod the nonroot container cannot read them and the server crash-loops (see that
    section).
-5. **Re-import the skills** into Postgres on the host, then check them:
+5. **Re-import the skills** into Postgres on the host, then check them. The `psql` goes through
+   compose, so it runs from the checkout (after `ssh` the working directory is `~`, where compose
+   finds no file):
    ```
    ~/srrevamp-data/import-refdata -skills-csv ~/srrevamp-data/skills.csv \
        -postgres-dsn 'postgres://postgres:postgres@127.0.0.1:5432/srrevamp?sslmode=disable'
-   docker compose exec postgres psql -U postgres -d srrevamp \
+   cd ~/srrevamp && docker compose exec postgres psql -U postgres -d srrevamp \
        -c "SELECT count(*) FROM skills WHERE status_params <> '';" \
        -c "SELECT count(*) FROM skills WHERE ai_attack_chance > 0;"
    ```
    The first count must be **above 0** (0 means the import read an old CSV: no skill would land a
    status); the second should be about **26650**.
-6. **The override's `command:`** (the untracked `docker-compose.override.yml`; `command` REPLACES
-   the base list, so it is the whole list). No `-nest-swapped-stand-in`, no `-unique-respawn`:
+6. **Edit only the `command:` key of the override** (`~/srrevamp/docker-compose.override.yml`,
+   untracked). Leave its `environment:` and `volumes:` as they are: srrevamp-01's override sets
+   the GM accounts, `SRREVAMP_PERSIST_POSITION` and the six monster flags there (checked
+   2026-09-30), and a pasted `services:` block would drop them. `command` REPLACES the base list,
+   so it restates all of it; add the last three lines below to what is there. No
+   `-nest-swapped-stand-in`, no `-unique-respawn`:
    ```
-   services:
-     server:
-       volumes:
-         - /home/srrevamp/srrevamp-data:/data:ro
        command:
          - "-addr=:15779"
          - "-postgres-dsn=postgres://postgres:postgres@postgres:5432/srrevamp?sslmode=disable"
@@ -894,16 +916,13 @@ the server container as `/data`.
          - "-monsters-csv=/data/monsters.csv"
          - "-nest-db-dir=/data/nestdb"
          - "-full-map=true"
-         - "-monster-ai=true"
-         - "-monster-strike-push=true"
-         - "-monster-spawn-push=true"
-         - "-monster-battle=true"
-         - "-player-dead-state=true"
-         - "-monster-aggro=true"
    ```
-   A monster flag the override already sets as an `environment:` variable instead is equivalent;
-   keep one of the two.
-7. **Start it and read the boot log**: `docker compose up -d`, then `docker compose logs server`.
+   The six monster flags -- `-monster-ai`, `-monster-strike-push`, `-monster-spawn-push`,
+   `-monster-battle`, `-player-dead-state`, `-monster-aggro` -- must be on too: as
+   `SRREVAMP_MONSTER_AI: "1"` and the rest under `environment:` (srrevamp-01's way), or as
+   `- "-monster-ai=true"` lines in `command:`. One of the two is enough.
+7. **Start it and read the boot log**, from the checkout:
+   `cd ~/srrevamp && docker compose up -d && docker compose logs server`.
    Expect:
    - `nest DB loaded (EXTERNAL ...) ... tactics=1743 nests=16381 hives=1170 ai_skill_tactics=132 skills=36144`
    - `full map: npcpos joined to nests ... placed=10104 ...`
@@ -913,8 +932,10 @@ the server container as `/data`.
      an old CSV).
 
    A `loading the nest DB ... permission denied: chmod 644 ...` error means step 4's chmod was
-   missed. **Players need this release's client**: an older one cannot draw the paged list, the
-   area-of-interest pushes or the unique banner (the sections above name the round each needs).
+   missed; `flag provided but not defined: -full-map` means step 0 was skipped (put the override's
+   `command:` back and do step 0). **Players need this release's client**: an older one cannot
+   draw the paged list, the area-of-interest pushes or the unique banner (the sections above name
+   the round each needs).
 
 ## External shard DB: restore and export (user-supplied, EXTERNAL)
 

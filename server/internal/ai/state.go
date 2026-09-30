@@ -256,9 +256,12 @@ func (m *Machine) State() State { return m.cur }
 // near and rebuilds it when one comes near (session/monsterai.go, round 666),
 // and the rebuilt brain must carry on in the state it slept in, with the
 // timers it slept with, rather than re-enter it and roll a new dwell. An
-// out-of-range s is refused (false) and the machine is left alone.
+// out-of-range s is refused (false) and the machine is left alone, and so is
+// SPAWN: no brain sleeps in it (it leaves SPAWN on its first pass), and a
+// machine resumed there would never leave -- nothing updates SPAWN (round
+// 666's review).
 func (m *Machine) Resume(s State) bool {
-	if !s.Valid() {
+	if !s.Valid() || s == StateSpawn {
 		return false
 	}
 	m.cur = s

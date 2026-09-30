@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -11,18 +12,41 @@ import (
 
 // Round 666 (M2): a skills store with no status params -- a table imported
 // before round 659 -- is warned about at boot, loudly, naming the re-export;
-// one with any is not.
+// one with any is not. Its review (L3): the warning fits the store (an empty
+// in-memory store is "no skills loaded", with no SQL and no import), and a
+// count that failed is reported as the error, not read as 0.
 func TestStatusParamsWarning(t *testing.T) {
-	w := statusParamsWarning(33698, 0, true)
-	for _, want := range []string{"NO status params", "RE-EXPORT skills.csv", "91 columns", "RE-IMPORT", "status_params <> ''", "-monster-ai"} {
-		if !strings.Contains(w, want) {
-			t.Fatalf("the warning %q does not say %q", w, want)
+	has := func(w string, want ...string) {
+		t.Helper()
+		for _, s := range want {
+			if !strings.Contains(w, s) {
+				t.Fatalf("the warning %q does not say %q", w, s)
+			}
 		}
 	}
-	if w := statusParamsWarning(0, 0, false); w == "" || strings.Contains(w, "-monster-ai") {
-		t.Fatalf("an empty store with the AI off: %q", w)
+	lacks := func(w string, not ...string) {
+		t.Helper()
+		for _, s := range not {
+			if strings.Contains(w, s) {
+				t.Fatalf("the warning %q says %q", w, s)
+			}
+		}
 	}
-	if w := statusParamsWarning(33698, 1, true); w != "" {
+	w := statusParamsWarning(false, 33698, 0, nil, true)
+	has(w, "NO status params", "RE-EXPORT skills.csv", "91 columns", "RE-IMPORT", "status_params <> ''", "-monster-ai")
+	w = statusParamsWarning(false, 0, 0, nil, false)
+	has(w, "EMPTY")
+	lacks(w, "-monster-ai", "before round 659")
+	w = statusParamsWarning(true, 0, 0, nil, false)
+	has(w, "no skills loaded", "-skills-csv")
+	lacks(w, "RE-IMPORT", "SELECT", "before round 659")
+	w = statusParamsWarning(true, 500, 0, nil, false)
+	has(w, "RE-EXPORT skills.csv", "-skills-csv")
+	lacks(w, "RE-IMPORT", "SELECT")
+	w = statusParamsWarning(false, 0, 0, errors.New("connection refused"), false)
+	has(w, "could not count", "connection refused")
+	lacks(w, "RE-IMPORT", "EMPTY")
+	if w := statusParamsWarning(false, 33698, 1, nil, true); w != "" {
 		t.Fatalf("a store with status params warned: %q", w)
 	}
 }

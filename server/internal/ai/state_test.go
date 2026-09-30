@@ -565,3 +565,30 @@ func TestWanderLegBisectsHeadingAndTurn(t *testing.T) {
 		t.Errorf("zeroed heading, t 100: leg (%v, %v); want the unit vector at 100 deg", x, z)
 	}
 }
+
+// Round 666 (and its review): Resume restores a state without OnLeave or
+// OnEnter, and refuses SPAWN -- nothing updates SPAWN, so a brain resumed
+// there would stand for ever -- and an invalid state.
+func TestResumeRestoresWithoutEnteringAndRefusesSpawn(t *testing.T) {
+	var entered []State
+	var states [StateCount]Enterer
+	for i := range states {
+		st := State(i)
+		states[i] = enterRecorder{on: func() { entered = append(entered, st) }}
+	}
+	m := NewMachine(states)
+	if !m.Resume(StateWander) || m.State() != StateWander || len(entered) != 0 {
+		t.Fatalf("Resume(WANDER): state %v, OnEnter calls %v", m.State(), entered)
+	}
+	if m.Resume(StateSpawn) || m.State() != StateWander {
+		t.Fatalf("Resume(SPAWN) was accepted: state %v", m.State())
+	}
+	if m.Resume(State(StateCount)) || m.State() != StateWander {
+		t.Fatalf("Resume(out of range) was accepted: state %v", m.State())
+	}
+}
+
+type enterRecorder struct{ on func() }
+
+func (e enterRecorder) OnEnter(State) bool { e.on(); return true }
+func (e enterRecorder) OnLeave(State)      { e.on() }

@@ -247,6 +247,10 @@ type monsterAI struct {
 	strikeDone func(monster int64)
 	// sleep is MonsterAIConfig.Sleep.
 	sleep bool
+	// workers is the strike workers running now (handStrike starts one,
+	// strikeWorker's return ends it; round 666's review), logged with the
+	// tick stats and read by the tests.
+	workers atomic.Int64
 	// The tick's reusable buffers and per-pass indexes (round 656), so a pass
 	// over thousands of monsters allocates next to nothing: live is the pass's
 	// monsters in id order, awake the cells some player's window holds (with
@@ -494,10 +498,11 @@ func (a *monsterAI) logTickStats(took []time.Duration) {
 		return float64(sorted[min(len(sorted)-1, int(p*float64(len(sorted))))].Microseconds()) / 1000
 	}
 	a.mu.Lock()
-	brains := len(a.brains)
+	brains, asleep := len(a.brains), len(a.asleep)
 	a.mu.Unlock()
 	a.logger.Info("monster AI tick", "ticks", len(sorted), "p50_ms", pct(0.5), "p99_ms", pct(0.99),
-		"max_ms", float64(sorted[len(sorted)-1].Microseconds())/1000, "monsters", a.monsters.Count(), "brains", brains)
+		"max_ms", float64(sorted[len(sorted)-1].Microseconds())/1000, "monsters", a.monsters.Count(), "brains", brains,
+		"asleep", asleep, "strike_workers", a.workers.Load())
 }
 
 // newMonsterAI builds a runtime. push nil means the zone broadcast
@@ -1513,6 +1518,7 @@ func (a *monsterAI) handStrike(h strikeHandoff) {
 	b := h.b
 	if b.strikes == nil {
 		b.strikes = make(chan strikeJob, 1)
+		a.workers.Add(1)
 		go a.strikeWorker(b.id, b.strikes)
 	}
 	select {
@@ -1526,6 +1532,7 @@ func (a *monsterAI) handStrike(h strikeHandoff) {
 // strikeWorker runs monster id's swings in order until its channel closes,
 // telling strikeDone of each one it finishes.
 func (a *monsterAI) strikeWorker(id int64, jobs <-chan strikeJob) {
+	defer a.workers.Add(-1)
 	for job := range jobs {
 		a.runStrike(id, job)
 		if a.strikeDone != nil {
@@ -1791,7 +1798,10 @@ func (a *monsterAI) wake(m combat.Monster, mem brainMemory) *brain {
 	b.lastSwing, b.swungReuseMs, b.giveUpDueAt = mem.lastSwing, mem.swungReuseMs, mem.giveUpDueAt
 	b.damageTaken, b.lastHP, b.hpSeen, b.trigFired, b.trigLast = mem.damageTaken, mem.lastHP, mem.hpSeen, mem.trigFired, mem.trigLast
 	if !b.machine.Resume(mem.state) {
-		a.dispatch(b, ai.MsgSpawned) // cannot happen: a filed state is a machine's own
+		// Resume refuses SPAWN and an invalid state: the brain starts as a
+		// new one does, SPAWN -> IDLE, rather than standing in SPAWN for
+		// ever. No filed brain holds either (it left SPAWN on its first pass).
+		a.dispatch(b, ai.MsgSpawned)
 	}
 	a.tracef("ai: monster %d wakes in %s", b.id, mem.state)
 	return b

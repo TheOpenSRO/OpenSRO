@@ -712,21 +712,37 @@ func envInt(name string, def int) (int, error) {
 }
 
 // statusParamsWarning is the boot's check on the skills store (round 666):
-// "" when some skill carries status params (skills.status_params, the skills
-// CSV's column 90, round 659), else the WARN to log. A skills table imported
-// before round 659 has the column (the store adds it) and an empty string in every row,
-// and nothing else says so: every status skill then lands no state, silently
-// -- a player's poison, bleeding, stun or freeze, and with -monster-ai a
-// monster's too. Status effects themselves have no switch (RunStatusEffects is
-// started unconditionally), so the check runs on every boot; monsterAI only
-// adds the monsters to the message.
-func statusParamsWarning(skills, withStatus int, monsterAI bool) string {
+// "" when some skill carries status params (Skill.StatusParams, the skills
+// CSV's column 90, round 659), else the WARN to log, worded for the store it
+// is about. A PostgreSQL skills table imported before round 659 has the
+// column (the store adds it) and an empty string in every row, and nothing
+// else says so: every status skill then lands no state, silently -- a
+// player's poison, bleeding, stun or freeze, and with -monster-ai a
+// monster's too. Status effects themselves have no switch (RunStatusEffects
+// is started unconditionally), so the check runs on every boot; monsterAI
+// only adds the monsters to the message. err is the count queries' error: a
+// count that failed is reported as that, not read as 0 (round 666's review).
+func statusParamsWarning(inMemory bool, skills, withStatus int, err error, monsterAI bool) string {
+	if err != nil {
+		return fmt.Sprintf("could not count the skills with status params (%v): whether any skill lands a status is unknown", err)
+	}
 	if withStatus > 0 {
 		return ""
 	}
 	who := "no skill lands a status (poison, bleeding, burn, stun, freeze ...) on anyone"
 	if monsterAI {
 		who += ", the monsters' own status skills (-monster-ai) included"
+	}
+	switch {
+	case inMemory && skills == 0:
+		return "no skills loaded (-in-memory with no -skills-csv): no skill can be learned or cast, and " + who
+	case inMemory:
+		return fmt.Sprintf("the skills CSV (-skills-csv) carries NO status params (%d skills, 0 with StatusParams): %s. "+
+			"It was exported before round 659: RE-EXPORT skills.csv with the new export-refdata (91 columns, column 90 "+
+			"StatusParams)", skills, who)
+	case skills == 0:
+		return "skills table is EMPTY: no skill can be learned or cast, and " + who + ". Export skills.csv with " +
+			"cmd/export-refdata and load it with cmd/import-refdata (deploy/README.md, \"Reference data\")"
 	}
 	return fmt.Sprintf("skills store has NO status params (%d skills, 0 with status_params): %s. "+
 		"The skills were imported before round 659: RE-EXPORT skills.csv with the new export-refdata "+
@@ -1141,9 +1157,12 @@ func main() {
 		friends = friend.NewMemStore()
 		logger.Warn("in-memory storage ready -- nothing will be persisted")
 		{
-			n, _ := memRef.CountSkills(context.Background())
-			withStatus, _ := memRef.CountSkillsWithStatusParams(context.Background())
-			if w := statusParamsWarning(n, withStatus, *monsterAI); w != "" {
+			n, err := memRef.CountSkills(context.Background())
+			withStatus, err2 := memRef.CountSkillsWithStatusParams(context.Background())
+			if err == nil {
+				err = err2
+			}
+			if w := statusParamsWarning(true, n, withStatus, err, *monsterAI); w != "" {
 				logger.Warn(w)
 			}
 		}
@@ -1183,7 +1202,7 @@ func main() {
 		{
 			ctx := context.Background()
 			items, _ := sqlRef.Count(ctx)
-			skills, _ := sqlRef.CountSkills(ctx)
+			skills, skillsErr := sqlRef.CountSkills(ctx)
 			drops, _ := sqlRef.CountMonsterDrops(ctx)
 			groups, _ := sqlRef.CountDropGroupEntries(ctx)
 			logger.Info("reference data in PostgreSQL", "items", items, "skills", skills,
@@ -1193,8 +1212,11 @@ func main() {
 					"export the client's itemdata with cmd/export-refdata and load it with cmd/import-refdata " +
 					"(see docs/HANDOFF_OPENSRO.md, 'Where the server actually is today')")
 			}
-			withStatus, _ := sqlRef.CountSkillsWithStatusParams(ctx)
-			if w := statusParamsWarning(skills, withStatus, *monsterAI); w != "" {
+			withStatus, err := sqlRef.CountSkillsWithStatusParams(ctx)
+			if err == nil {
+				err = skillsErr
+			}
+			if w := statusParamsWarning(false, skills, withStatus, err, *monsterAI); w != "" {
 				logger.Warn(w)
 			}
 		}
