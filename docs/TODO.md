@@ -1057,10 +1057,19 @@ interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
       releases on its target test.
 - [ ] **The client still asks for the whole window's list after every hit** (World3D ~15825,
       ~17529) -- up to 60 KB for a dense window. Round 655's lane (the client's monster drawing).
-- [ ] **A stalled client holds the AI tick up to `gateway.SendTimeout` (10 s, OURS; raised from 2 s
-      by the review), once**, before its connection is closed. A per-session send queue would
-      remove even that, but every Send caller relies on in-order, on-the-wire-at-return sends; not
-      built.
+- [ ] **A slow or stalled client holds its writers up to its blocking budget**
+      (`gateway.SendBlockBudget` 10 s, draining 10 s per 60 s, OURS; sized against a client frozen
+      by a load, WORLD_ISSUES round 656 §9) before its connection is closed. A per-session send queue would remove even that, but every Send caller relies on
+      in-order, on-the-wire-at-return sends; not built.
+- [ ] **A session the server closes lands on the login screen with no reason given.**
+      `NetClient` finds the peer no longer connected, `World3D._on_disconnected` changes to
+      `Login.tscn`, and the screen shows its remembered fields and nothing else. A "connection
+      lost" line there is the client's to add.
+- [ ] **With `-monster-spawn-push` off (the default), a respawn is never announced.** Its first leg
+      then reaches clients that do not have the body, and they ask for the list: the pre-656
+      discovery path, kept. With the push on, the push leaves at once and a brain's first leg waits
+      out an IDLE dwell (2001 ms or more), unless the respawn scheduler is itself held up on a slow
+      client for longer than that.
 - [ ] **The request paths' broadcasts still copy the zone's entities** (`monsterWatchers` filters
       `EntitiesInZone`): fine at 100 players; the AI tick uses the runtime's watcher index instead.
 - [ ] **The respawn is still the flat 10 s** (`respawnDelay`, disclosed): round 659 brings the READ

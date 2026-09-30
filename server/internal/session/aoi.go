@@ -131,6 +131,47 @@ type monsterAOI struct {
 type aoiView struct {
 	sess *gateway.Session
 	cell combat.Cell
+	// pending is the monsters a view move has owed this player an enter for
+	// that has not been sent yet (round 656's second review): a leg for one
+	// of them is held back (mayShowLeg) -- the client would answer a leg for a
+	// body it has never been told about by asking for the whole list -- and
+	// the enter carries the leg anyway. Set by reconcile, cleared as each
+	// enter is sent or dropped and by a list. Guarded by pendMu.
+	pendMu  sync.Mutex
+	pending map[int64]struct{}
+}
+
+func (view *aoiView) markPending(ids []int64) {
+	if len(ids) == 0 {
+		return
+	}
+	view.pendMu.Lock()
+	defer view.pendMu.Unlock()
+	if view.pending == nil {
+		view.pending = map[int64]struct{}{}
+	}
+	for _, id := range ids {
+		view.pending[id] = struct{}{}
+	}
+}
+
+func (view *aoiView) unmarkPending(id int64) {
+	view.pendMu.Lock()
+	defer view.pendMu.Unlock()
+	delete(view.pending, id)
+}
+
+func (view *aoiView) isPending(id int64) bool {
+	view.pendMu.Lock()
+	defer view.pendMu.Unlock()
+	_, ok := view.pending[id]
+	return ok
+}
+
+func (view *aoiView) clearPending() {
+	view.pendMu.Lock()
+	defer view.pendMu.Unlock()
+	clear(view.pending)
 }
 
 // RunMonsterAOI installs the area-of-interest runtime before it returns, then
@@ -187,6 +228,9 @@ func (v *monsterAOI) setView(sess *gateway.Session, cell combat.Cell) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	view := v.views[sess.ID()]
+	if view != nil {
+		view.clearPending() // the list names the whole window
+	}
 	if view != nil && view.cell == cell {
 		return
 	}
@@ -196,6 +240,22 @@ func (v *monsterAOI) setView(sess *gateway.Session, cell combat.Cell) {
 		view.cell = cell
 	}
 	v.rebuildLocked()
+}
+
+// mayShowLeg reports whether a leg, blow or other push about monster id may
+// go to the session now (round 656's second review): the monster is alive,
+// its cell is in the session's window, and no enter for it is still owed.
+// Checked under the session's monster wire lock, as the enters are.
+func (v *monsterAOI) mayShowLeg(sessionID uint64, id int64) bool {
+	c, alive := v.monsters.CellOfMonster(id)
+	if !alive {
+		return false
+	}
+	v.mu.RLock()
+	view := v.views[sessionID]
+	near := view != nil && view.cell.Near(c, AOIRadius)
+	v.mu.RUnlock()
+	return near && !view.isPending(id)
 }
 
 // viewCell is sess's view cell, if it has one.
@@ -263,6 +323,7 @@ func (v *monsterAOI) reconcile() {
 		gained, lost := windowDiff(old, cell, AOIRadius)
 		ev := viewEvents{sess: e.Session}
 		ev.enters = v.monsters.IDsInCells(nil, gained)
+		view.markPending(ev.enters)
 		ev.leaves = v.monsters.IDsInCells(nil, lost)
 		if v.logger != nil {
 			v.logger.Info("aoi: view moved", "character", e.CharacterID, "zone", cell.Zone,
@@ -322,8 +383,17 @@ func (v *monsterAOI) step(dt float64, awake func(int64, combat.Cell) bool, dst [
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	dst = v.monsters.StepCells(dt, awake, dst)
+	if aoiStepHook != nil {
+		aoiStepHook()
+	}
 	return dst, v.crossingsLocked(dst)
 }
+
+// aoiStepHook, when set, runs inside step between the hub's step and the
+// crossings, with the view lock held: a test's window into the one ordering
+// the lock exists to exclude (TestAOIReconcileWaitsForTheStep). nil in
+// production.
+var aoiStepHook func()
 
 // crossingsLocked turns the region lines a step carried monsters over into what
 // each watching player is owed: an enter for a player whose window holds the
@@ -396,7 +466,13 @@ func (v *monsterAOI) deliverViewEvents(ev viewEvents) {
 		}
 		left = left[n:]
 	}
+	v.mu.RLock()
+	view := v.views[ev.sess.ID()]
+	v.mu.RUnlock()
 	for _, id := range ev.enters {
+		if view != nil {
+			view.unmarkPending(id)
+		}
 		m, alive := v.monsters.Get(id)
 		if !alive || !v.sees(ev.sess.ID(), combat.CellOf(m.Zone, m.X, m.Z)) {
 			continue
