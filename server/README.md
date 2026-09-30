@@ -36,6 +36,7 @@ in `deploy/README.md` and `docs/HANDOFF_OPENSRO.md`.
 | `-skills-csv` | `SRREVAMP_SKILLS_CSV` | skill reference data (`export-refdata`), in-memory mode; PostgreSQL imports it instead |
 | `-items-csv` | `SRREVAMP_ITEMS_CSV` | item reference data (`export-refdata`), in-memory mode; PostgreSQL imports it instead |
 | `-npcpos-csv` | `SRREVAMP_NPCPOS_CSV` | the game's monster placements (`export-refdata -mode npcpos` on a client's `npcpos.txt`); every roster species with rows stands where the game puts it, otherwise at its own-design anchor near the town |
+| `-monsters-csv` | `SRREVAMP_MONSTERS_CSV` | the monster species table (`export-refdata -mode monsters` on a client's characterdata parts, `levelgold.txt` and `textdata_object.txt`; round 654): every TypeID (1,2,1,x) row, 7,604 on a retail archive. Each roster species takes its numbers from its row (re-derived: `roster_changed=0` on a retail export) and the GM console's `/spawn` finds any species by code name, id or English name; who spawns where does not change. A configured path that does not load is fatal; without it the hand-typed roster is every species the server knows. See `deploy/README.md`, "Monster species table" |
 | `-teleport-dir` | `SRREVAMP_TELEPORT_DIR` | the game's teleport network: a directory holding `teleportdata.csv`, `teleportlink.csv` and `teleportbuilding.csv` (`export-refdata -mode teleport` on a client's own `teleportdata.txt`, `teleportlink.txt` and `teleportbuilding.txt`). Loaded, joined and counted at boot (`level=INFO msg="teleport network loaded" dir=<dir> points=222 links=292 buildings=77` on a retail archive's export); a configured directory that does not load is fatal. The town teleporters use it (round 576): `OpTeleportUse 0x00F3` names a gate and a destination (teleportdata ids), the server checks the link and its restrictions, charges the fee and answers `OpTeleportResult 0x00F4`, then moves the player with an ordinary `OpChangeZoneResult` to the destination gate's point (`session.TeleportHandler`). Without the directory every teleport is refused. Only a client release carrying round 576's client half sends the request (round 575, `internal/teleport`) |
 | `-teleport-free` | `SRREVAMP_TELEPORT_FREE` | **default off**. On, every gate teleport costs nothing: the free-while-testing switch (own design, round 576). Off, a teleport charges its link's fee from the table, waived below level 21 (the engine's own rule, `GObjPC::HandleTeleportUse` 0x513590) and always for GM accounts (`-gm-accounts`, own design). The receipt says which waiver applied (`OpTeleportResult`'s waiver byte: 1 level, 2 GM, 3 this flag), and every teleport is logged (`msg=teleport account=... gate=... dest=... fee=... waiver=...`). The env value is parsed like `-monster-ai`'s; anything else is off with a WARN. The boot log says which (`teleport free on: ...` / `teleport free off ...`). Whether the public server runs it on is the user's call. See `deploy/README.md`, "Town teleporters" |
 | `-gm-accounts` | `SRREVAMP_GM_ACCOUNTS` | comma-separated account usernames allowed to run the in-game GM commands (`/tp`, `/give`, `/level`, ...); case as stored in `accounts.username`; default none. Every command is logged with the account. See `docs/DEBUG_TOOLS.md` |
@@ -66,7 +67,7 @@ The server reads no game text tables directly. The operator generates CSVs from
 their own `Media.pk2` and either passes them on the command line (in-memory) or
 imports them into PostgreSQL:
 
-- `cmd/export-refdata` — itemdata / skilldata text tables → `items.csv`, `skills.csv`
+- `cmd/export-refdata` — itemdata / skilldata / characterdata text tables → `items.csv`, `skills.csv`, `monsters.csv`
   (read in the client's **index order**, not glob order: ids collide across parts);
   `-mode npcpos` → `npcpos.csv`; `-mode teleport -out <dir>` → the three teleport CSVs.
 - `cmd/export-leveldata` — `leveldata.txt` → `leveldata.csv` (the EXP curve).
@@ -82,7 +83,7 @@ The full recipe, as actually run on the public server, is `deploy/README.md`.
 | tool | what |
 |---|---|
 | `server` | the game server |
-| `export-refdata` | itemdata/skilldata, npcpos and the teleport tables → CSV from the player's own archive |
+| `export-refdata` | itemdata/skilldata/characterdata, npcpos and the teleport tables → CSV from the player's own archive |
 | `export-leveldata` | leveldata → CSV (the EXP curve) |
 | `import-refdata` | CSVs → PostgreSQL reference tables |
 | `pk2list` | list paths inside a pk2 archive; `-extract` one file |

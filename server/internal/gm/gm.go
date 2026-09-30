@@ -116,6 +116,10 @@ type Species struct {
 	Attack  int
 	Gold    int64
 	X, Z    float64
+	// Unplaced marks a species the server keeps nowhere -- one the monster
+	// table (round 654, -monsters-csv) holds but the roster does not spawn:
+	// /spawn puts it next to the GM, /goto has nowhere to go.
+	Unplaced bool
 }
 
 // deadRefusal is what /tp and /goto answer a dead actor (round 549). OWN
@@ -186,6 +190,12 @@ type Deps struct {
 	Berserk *berserk.Tracker
 	Levels  *leveldata.Table
 	Species []Species
+	// LookupSpecies resolves a species the roster (Species) does not hold,
+	// by a lower-cased code name, display name or characterdata id: the
+	// monster table's (round 654). Nil: only the roster. LookupCount is how
+	// many species it knows, for the usage lines.
+	LookupSpecies func(want string) (Species, bool)
+	LookupCount   int
 	// Zones are the named zones /goto accepts (worldmap.ZoneCentre's keys).
 	Zones  []string
 	Logger *slog.Logger
@@ -450,6 +460,9 @@ func (d *Deps) gotoSpot(actor Actor, args []string) Result {
 		}
 	}
 	if sp, ok := d.findSpecies(want); ok {
+		if sp.Unplaced {
+			return refuse(fmt.Sprintf("%s (%s, id %d) is not placed anywhere by the server; /spawn puts one next to you", sp.Name, sp.CodeName, sp.RefObjID))
+		}
 		res := Result{Text: fmt.Sprintf("going to %s at %.0f, %.0f in %s", sp.Name, sp.X, sp.Z, sp.Zone), HasPos: true, X: sp.X, Z: sp.Z}
 		if sp.Zone != actor.Zone {
 			res.Zone = sp.Zone
@@ -703,17 +716,33 @@ func (d *Deps) sp(ctx context.Context, actor Actor, args []string) Result {
 	return Result{Text: fmt.Sprintf("skill points now %d", total), RefreshStats: true}
 }
 
-// findSpecies matches a lower-cased code name or display name.
+// findSpecies matches a lower-cased code name, display name or characterdata
+// id against the roster first, then the monster table (LookupSpecies).
 func (d *Deps) findSpecies(want string) (Species, bool) {
 	for _, sp := range d.Species {
-		if strings.ToLower(sp.CodeName) == want || strings.ToLower(sp.Name) == want {
+		if strings.ToLower(sp.CodeName) == want || strings.ToLower(sp.Name) == want ||
+			(sp.RefObjID != 0 && strconv.FormatInt(sp.RefObjID, 10) == want) {
 			return sp, true
 		}
+	}
+	if d.LookupSpecies != nil {
+		return d.LookupSpecies(want)
 	}
 	return Species{}, false
 }
 
+// speciesNames is the roster's code names, and -- with the monster table --
+// how to name any other species. The table's thousands are not listed: a
+// usage line that long helps nobody.
 func (d *Deps) speciesNames() string {
+	names := d.rosterNames()
+	if d.LookupSpecies != nil {
+		names += fmt.Sprintf(" (or any of the monster table's %d species by code name or id)", d.LookupCount)
+	}
+	return names
+}
+
+func (d *Deps) rosterNames() string {
 	names := make([]string, 0, len(d.Species))
 	seen := map[string]bool{}
 	for _, sp := range d.Species {

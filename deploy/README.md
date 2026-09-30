@@ -46,15 +46,17 @@ cd server && for t in pk2list export-refdata export-leveldata import-refdata; do
 #    and the exporter keeps the LAST definition of a duplicated id -- so feed the parts in the
 #    index's order, not glob order (they differ: 1000,2000,... vs 1000,10000,11000,...).
 MEDIA=/path/to/Media.pk2; mkdir refsrc && cd refsrc
-for f in itemdata.txt skilldata.txt leveldata.txt; do
+for f in itemdata.txt skilldata.txt characterdata.txt leveldata.txt levelgold.txt textdata_object.txt; do
   /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\\silkroad\\textdata\\$f" -out $f; done
 /tmp/pk2list -pk2 "$MEDIA" -filter 'textdata\' | awk '{print $2}' \
-  | grep -iE 'textdata\\(itemdata|skilldata)_[0-9]+\.txt$' | while IFS= read -r p; do
+  | grep -iE 'textdata\\(itemdata|skilldata|characterdata)_[0-9]+\.txt$' | while IFS= read -r p; do
     /tmp/pk2list -pk2 "$MEDIA" -extract "$p" -out "$(basename "$(echo "$p" | tr '\\' /)")"; done
 order() { iconv -f UTF-16LE -t UTF-8 "$1" | tr -d '\r' | sed 's/^\xef\xbb\xbf//' | grep -v '^$' \
           | tr 'A-Z' 'a-z' | while read -r n; do [ -f "$n" ] && echo "$n"; done; }
 /tmp/export-refdata  -mode items  -out items.csv  $(order itemdata.txt)     # 15,338 rows from a retail archive
 /tmp/export-refdata  -mode skills -out skills.csv $(order skilldata.txt)    # 33,698 rows
+/tmp/export-refdata  -mode monsters -out monsters.csv $(order characterdata.txt) levelgold.txt textdata_object.txt
+                     # 7,604 monster species (round 654); the server reads it with -monsters-csv
 /tmp/export-leveldata -out leveldata.csv leveldata.txt                      # 140 levels
 /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\npcpos.txt" -out npcpos.txt
 /tmp/export-refdata  -mode npcpos -out npcpos.csv npcpos.txt                # 12,367 placements; the server reads it with -npcpos-csv
@@ -62,7 +64,8 @@ for f in teleportdata.txt teleportlink.txt teleportbuilding.txt; do
   /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\\silkroad\\textdata\\$f" -out $f; done
 /tmp/export-refdata  -mode teleport -out teleport teleportdata.txt teleportlink.txt teleportbuilding.txt
                      # a DIRECTORY of three CSVs: 222 points, 292 links, 77 buildings; the server reads it with -teleport-dir
-rm -f itemdata_* skilldata_* npcpos.txt teleport*.txt   # the extracted tables are game data; keep only the CSVs
+rm -f itemdata_* skilldata_* characterdata_* levelgold.txt textdata_object.txt npcpos.txt teleport*.txt
+                     # the extracted tables are game data; keep only the CSVs
 
 # The exporter grows a strict-suffix column now and then (latest: skill columns 47-61, round 616 -- the buff
 # and self-cast columns; before them 45 CooldownGroup, round 504,
@@ -121,6 +124,21 @@ rm -f itemdata_* skilldata_* npcpos.txt teleport*.txt   # the extracted tables a
 # `[UIL1:ITEM_ETC_SECOND_HWAN,A,3600,1],[UIU1:ITEM_ETC_INCREASE_HWAN_TIME_01]`, and
 # `SELECT code_name FROM items WHERE id = 23937;` answers `ITEM_ETC_SECOND_HWAN`, on a retail
 # archive. A client that predates round 632 ignores the new opcodes 0x0104-0x0108.
+# ROUND 654 (the monster species table) NEEDS THREE THINGS ON srrevamp-01, in this order:
+#   a. re-run `export-refdata -mode skills` with the NEW binary (step 2; the CSV grows to 90
+#      columns -- column 89 is AI_AttackChance, skilldata column 66), then the NEW `import-refdata`
+#      (step 3) -- its store adds skills.ai_attack_chance (default -1, "unknown") before it writes
+#      the rows. Check: `SELECT count(*) FROM skills WHERE ai_attack_chance > 0;` answers 26650,
+#      and `... WHERE ai_attack_chance < 0;` answers 0, on a retail archive.
+#   b. run the NEW `export-refdata -mode monsters` line from step 2 (characterdata parts in the
+#      index's order, plus levelgold.txt and textdata_object.txt) and copy monsters.csv to
+#      ~/srrevamp-data. It reports 7,604 species, 156 of them drawing their Org row's model, 7,604
+#      with a levelgold row and 7,509 whose name key resolves, on a retail archive.
+#   c. add "-monsters-csv=/data/monsters.csv" to the override's command (step 4) and restart.
+#   The boot log then reads `monster species table loaded ... species=7604 roster_overlaid=11
+#   roster_missing=0 roster_changed=0` and `npcpos placements loaded ... roster_species_placed=11
+#   npcpos_species_in_monster_table=355`. A WARN naming `kept` means (a) or the levelgold/
+#   textdata_object inputs of (b) were skipped: those roster fields keep their hand-typed values.
 
 # 3. On the server host (CSVs and import-refdata copied to ~/srrevamp-data; Postgres is pinned to
 #    127.0.0.1:5432 by docker-compose.override.yml):
@@ -139,6 +157,7 @@ rm -f itemdata_* skilldata_* npcpos.txt teleport*.txt   # the extracted tables a
 #         - "-leveldata-csv=/data/leveldata.csv"
 #         - "-npcpos-csv=/data/npcpos.csv"       # real monster placements (round 253); omit for the town anchors
 #         - "-teleport-dir=/data/teleport"       # the teleport network (round 575); the town teleporters use it (round 576)
+#         - "-monsters-csv=/data/monsters.csv"   # the monster species table (round 654); see "Monster species table"
 docker compose up -d
 ```
 
@@ -182,6 +201,36 @@ up front: the fortress, tomb, temple, survival and Roc gates. To re-export:
 The new `teleportdata.csv` header ends in `Interaction9,WorldID`. There is no database step.
 
 Reference data is otherwise not touched by the update loop.
+
+## Monster species table
+
+`-monsters-csv` (env `SRREVAMP_MONSTERS_CSV`, round 654) loads every monster species in the
+client's characterdata: `cmd/export-refdata -mode monsters` writes one row per TypeID (1,2,1,x)
+row -- id, code name, the Org code name and id, the name key and its English, TypeID4, rarity,
+level, HP, walk/run speed, collision radius, the eight combat columns 71-78, the ten attack-skill
+ids 83-92, the model (or the Org row's, flagged) and the levelgold range at its level. See
+`server/internal/species` for what each column is and how it is known.
+
+What it changes, and what it does not:
+
+- **Who spawns where does not change.** The roster in `cmd/server` (eleven species) is still
+  what spawns, where it spawned before; with `-npcpos-csv` those eleven take their real rows as
+  before. Measured on a retail export: 413 monsters spawn with the table and 413 without, the
+  same species, zones and levels.
+- Each roster species takes its numbers from its row (level, rarity, HP, the combat columns,
+  radius, speeds, gold, and the attack list through the skill store). On a retail export all
+  eleven come back identical to the hand-typed values (`roster_changed=0`); a difference is
+  logged as a WARN naming both.
+- The GM console's `/spawn` finds any species in the table by code name, characterdata id or
+  English name (`/spawn 1933 3`, `/spawn MOB_CH_TIGERWOMAN`), with its own level, HP (scaled
+  by rarity as the engine scales it) and rarity in the monster list. `/goto` refuses a species
+  the server does not place.
+- The attack lists need the round-654 skills re-export (AI_AttackChance); with an older skills
+  table a non-roster species swings its primary skill only, and the roster keeps its hand-typed
+  lists (logged as `kept`).
+
+A configured path that does not load is fatal at boot, the `-npcpos-csv` rule. Without the flag
+the server behaves exactly as before.
 
 ## Monster AI (off by default)
 
