@@ -1068,8 +1068,10 @@ interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
       payload. Over loopback a server that wrote its queue in one write left the client's receive
       buffer full of part-read ~52 KB segments (skmem r137152 of rb138172) holding 31,250 bytes,
       short of a 32,735-byte list page: both sides stopped. The server now writes a frame per write,
-      which avoids it; the reader should still read what is available into its own buffer (client
-      lane).
+      which MITIGATES it and does not fix it: under a backlog (the client's window shut by a load
+      freeze) Linux's tcp_sendmsg coalesces writes into the unsent tail skb, so large segments come
+      back. The fix is the reader's -- read what is available into its own buffer -- round 663
+      (client lane, in progress).
 - [ ] **The send queue's limit and drain are OURS** (round 662). `SendQueueLimit` 2 MB was sized
       from one live client over loopback at ~50 monsters a region; a real link was not measured, and
       a legitimate burst bigger than the paged list (none is known) would close its client.

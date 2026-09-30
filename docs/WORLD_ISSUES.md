@@ -7208,7 +7208,7 @@ client frozen 4 s would have queued had the kernel held nothing) and 20x the que
 loopback the kernel buffers take almost everything at once, so the queue's own peak is the one
 batch; a real link was not measured (OPEN). r2 ran at 1 MB and was not closed.
 
-### 4. What the live check found: one write per take froze the real client (MEASURED, fixed)
+### 4. What the live check found: one write per take froze the real client (MEASURED; mitigated here, fixed by the client in round 663)
 
 In r2 and in a repeat (r3), after `/goto jangan` the client drew the ~1,250 pushed monsters and
 then processed nothing more -- no list report, no GM reply for `/heal` or the three
@@ -7234,8 +7234,14 @@ against the client's ~15 ms): with a debug-only 60 ms delay in the list handler 
 order, the base (int/mob 1ea6b02, r7) came through (`server reports 1259 monster(s)`, every GM
 reply) and the one-write branch (r8) froze.
 
-The writer now writes a frame per write (`writeFrames`), as the synchronous Send did, and
-`TestTheWriterWritesAFramePerWrite` pins it (with one write per take: `5 frames went out in 1
+The writer now writes a frame per write (`writeFrames`), as the synchronous Send did. That
+**mitigates** the wedge; it does not fix it (round 662's review): a frame per write keeps a frame
+in segments of its own only while the socket's send queue is drained. Once it is backlogged --
+the client's window shut, as it is while a load freezes the client's main thread -- Linux's
+`tcp_sendmsg` appends each new write into the unsent tail skb, up to its size goal (~64 KB over
+loopback), so frames coalesce into large segments however they were written, and the same wedge
+can recur. The fix is the client's reader (round 663). `TestTheWriterWritesAFramePerWrite`
+pins the mitigation (with one write per take: `5 frames went out in 1
 writes, want one write per frame`). With the fix and the same forced order
 (r9) the client came through: `server reports 1251 monster(s)` after the return, every GM reply,
 the three uniques spawned and listed. The final build without the delay (r10): world entry `server
@@ -7245,8 +7251,8 @@ no `session send stalled` line in any run.
 
 The client's reader has the latent fault whatever the server does: a frame is only read once its
 whole payload fits in the socket's buffer, so anything that fills that buffer with partly-read
-segments can wedge it. Recorded in TODO for the client lane (read what is available into its own
-buffer).
+segments can wedge it. Its fix -- read what is available into its own buffer -- is round 663
+(client lane).
 
 ### 5. Tests
 
@@ -7322,6 +7328,71 @@ session was closed before its queue was written`.
   drain, not `Session.Close`, or its last frame is dropped.
 - `Send` now returns nil for a frame that a later close never delivers. No caller acted on a nil
   error as "delivered"; a future one must not.
+
+### 7. Review follow-up (round 662's adversarial review; merged with int/mob d60c8c3: rounds 659 and 660)
+
+- **The merge with round 659 (M1).** 659 put a monster's status between its enter and its leg in
+  `sendMonsterEnter`, which 662 had made one batch. The conflict's obvious resolution -- keep both
+  sides -- compiles and sends every enter twice. Resolved instead with a builder:
+  `monsterStatusPacket(id)` returns the monster's OpObjectStatus (or nil) where 659's
+  `sendMonsterStatus` sent it, and `sendMonsterEnter` queues ONE `SendBatch` of (enter, status if
+  any, leg if walking). The list does the same: 659's deferred `sendStatusesOfList` becomes
+  `statusPacketsOfList`, appended to the list's own batch after the pages and motion pages, still
+  under the wire lock. Every other status send of 659 (`pushMonsterStatus`, `broadcastStatus`) is a
+  single frame, and 660's `monsterSnapshotFor` only shapes a record inside those two sequences, so
+  no other site needed the rule. `TestAnEnteringMonsterWithAStatusIsOneEnterThenStatusThenLeg`:
+  2,000 enters of a bleeding, walking monster race 20,000 filler frames to one session
+  (`GOMAXPROCS(4)` so the OS interleaves the senders even on a one-core host); every enter is
+  followed by its status, then its leg, and exactly 2,000 enters arrive. Negatives (MEASURED):
+
+  ```
+  keep-both resolution:
+    sendqueue662r_test.go:83: enter 1 was followed by 0x3057 then 0x007e; want OpObjectStatus (0x3057) then OpMonsterMoved (0x007c)
+    sendqueue662r_test.go:102: 150 enters arrived for 200 sent, 300 sequences broken
+  659's separate Sends (enter, status, leg):
+    sendqueue662r_test.go:88: enter 103 was followed by 0x3057 then 0x7ffd; want OpObjectStatus (0x3057) then OpMonsterMoved (0x007c)
+    sendqueue662r_test.go:107: 2000 enters arrived for 2000 sent, 5 sequences broken
+  ```
+  (The first was run at the test's earlier size of 200 enters.)
+- **A frame per write mitigates the client wedge; it does not fix it (M2).** §4 and `writeFrames`'
+  comment now say so and why: under a backlog `tcp_sendmsg` coalesces writes into the unsent tail
+  skb. The fix is the client's reader, round 663.
+- **The rolling byte and checksum follow wire order (L1).** Nothing tested a session with
+  `SetSecurity` (it has no production caller yet), so drawing the byte outside the queue lock
+  passed every test. `TestRollingByteAndChecksumFollowWireOrder`: 8 goroutines x 500 Sends with
+  real generators, read back with generators seeded the same. Against that mutant (encode outside
+  `outMu`, append under it): `after 41 of 4000 frames: proto: rolling byte mismatch for opcode
+  0x006b: got 0x3e, want 0x6c`. The code was already right; the test keeps it so.
+- **The queue limit is checked before the frames are queued (L2).** Until now the batch was
+  encoded and appended, then the total compared, so a queue could hold more than the limit, and a
+  single batch bigger than the limit closed a session whose queue was empty. Now a batch that would
+  take a NON-EMPTY queue past `SendQueueLimit` closes the session without encoding anything (no
+  rolling byte drawn); a batch into an empty queue is always taken (nothing is piling up behind
+  it; the next Send while it waits is then over). `TestTheQueueLimitBoundsAGrowingQueueNotOneBatch`
+  against the round's first commit:
+
+  ```
+  sendqueue662r_test.go:72: a 98319-byte batch into an empty queue (limit 65536): gateway: session stalled: ...
+  (its first half cut) sendqueue662r_test.go:80: the queue held 65560 bytes, past its 65536-byte limit, before the session was closed
+  ```
+- **A partner's Send error no longer closes the sender's session (L3; older than round 662).**
+  An AST walk of every non-test `.Send`/`.SendBatch` in `server/` (the only callers are in
+  `internal/session` and `internal/gateway`) found 13 handlers returning ANOTHER session's Send
+  error as their own, which closes the session they serve: `duel.go` (challenge invite, decline,
+  start, damage, end), `friend.go` (request, accept), `trade.go` (invite, decline, start, offer
+  update, completed, cancelled). With the queue those errors are `ErrSendStalled` for a partner
+  given up for its sends and `ErrSessionClosed` for one leaving; before it, a write timeout or a
+  closed socket, after a wait of up to 10 s. Each now goes through `sendToPeer` (`peersend.go`),
+  which drops the error: the gateway has already logged the partner's stall and closes the
+  partner's own connection. The walk finds none left.
+  `TestAStalledTradePartnerDoesNotDisconnectTheSender`: Bram stops reading and his queue passes
+  its limit; Aria changes her offer twice and gets both results. With the offer update's
+  `return other.Session.Send(...)` put back: `tradepeer662_test.go:56: Write: write tcp ...: write:
+  broken pipe` (Aria's connection was closed after the first).
+- **Runs.** `go build ./... && go vet ./... && go test -count=1 -p 1 -timeout 30m ./...`: 62
+  packages ok, exit 0. `go test -race`: gateway ok (11 s); session with
+  `-run 'AOI|Unique|MonsterList|Send|Stress|Status|Nest'` ok (245 s), no data race. Server-only,
+  so no performance gate.
 
 ## Six-hundred-and-sixtieth round: every field monster of the game stands in its nest, comes back on the nest's own timer, is aggressive or passive and gives up as its data says, and hatches champions, giants and party monsters
 

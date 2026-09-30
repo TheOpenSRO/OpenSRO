@@ -307,7 +307,8 @@ func handleDuelChallenge(ctx context.Context, sess *gateway.Session, p *proto.Pa
 		return err
 	}
 	invite := &DuelInvite{ChallengerName: req.CharacterName}
-	return target.Session.Send(&proto.Packet{Opcode: OpDuelInvite, Data: invite.Encode()})
+	sendToPeer(target.Session, &proto.Packet{Opcode: OpDuelInvite, Data: invite.Encode()})
+	return nil
 }
 
 func handleDuelRespond(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, hub *world.Hub, duels *duel.Hub) error {
@@ -332,13 +333,15 @@ func handleDuelRespond(ctx context.Context, sess *gateway.Session, p *proto.Pack
 
 	if !req.Accept {
 		declined := &DuelDeclined{TargetName: req.CharacterName}
-		return challenger.Session.Send(&proto.Packet{Opcode: OpDuelDeclined, Data: declined.Encode()})
+		sendToPeer(challenger.Session, &proto.Packet{Opcode: OpDuelDeclined, Data: declined.Encode()})
+		return nil
 	}
 
 	if err := sess.Send(&proto.Packet{Opcode: OpDuelStarted, Data: (&DuelStarted{OpponentName: challenger.Name}).Encode()}); err != nil {
 		return err
 	}
-	return challenger.Session.Send(&proto.Packet{Opcode: OpDuelStarted, Data: (&DuelStarted{OpponentName: req.CharacterName}).Encode()})
+	sendToPeer(challenger.Session, &proto.Packet{Opcode: OpDuelStarted, Data: (&DuelStarted{OpponentName: req.CharacterName}).Encode()})
+	return nil
 }
 
 func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, eq equipment.Store, items combat.ItemLookup, hub *world.Hub, duels *duel.Hub) error {
@@ -463,7 +466,8 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 
 	if !opponentDied {
 		damaged := &DuelOpponentDamaged{Damage: int32(damage), RemainingHP: int32(hp)}
-		return opponent.Session.Send(&proto.Packet{Opcode: OpDuelOpponentDamaged, Data: damaged.Encode()})
+		sendToPeer(opponent.Session, &proto.Packet{Opcode: OpDuelOpponentDamaged, Data: damaged.Encode()})
+		return nil
 	}
 
 	// Duel over: the loser's HP was reset under her kill lock above; clear
@@ -498,7 +502,8 @@ func handleDuelAttack(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	if err := sess.Send(&proto.Packet{Opcode: OpDuelEnded, Data: (&DuelEnded{WinnerName: req.CharacterName}).Encode()}); err != nil {
 		return err
 	}
-	return opponent.Session.Send(&proto.Packet{Opcode: OpDuelEnded, Data: (&DuelEnded{WinnerName: req.CharacterName}).Encode()})
+	sendToPeer(opponent.Session, &proto.Packet{Opcode: OpDuelEnded, Data: (&DuelEnded{WinnerName: req.CharacterName}).Encode()})
+	return nil
 }
 
 // DuelDisconnectHandler returns a func suitable for gateway.Server's

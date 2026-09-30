@@ -152,8 +152,9 @@ var (
 )
 
 // SendQueueLimit is the most bytes one session may have waiting in its
-// outbound queue (round 662): a Send that would take it past this closes the
-// session, as a spent SendBlockBudget does. It bounds the memory a client
+// outbound queue (round 662): a Send that would take a non-empty queue past
+// this closes the session, as a spent SendBlockBudget does. A Send into an
+// empty queue is always taken, whatever its size (round 662's review). It bounds the memory a client
 // that reads too slowly can hold, and closes such a client long before its
 // writer's debt would, when the server writes to it faster than it reads.
 // A variable so a test can shorten it; 0 turns the bound off.
@@ -300,6 +301,22 @@ func (s *Session) SendBatch(ps ...*proto.Packet) error {
 		s.outMu.Unlock()
 		return ErrSessionClosed
 	}
+	// The limit is checked before anything is encoded (round 662's review),
+	// so a refused batch draws no rolling byte. It bounds a queue that is
+	// growing: a batch that would take a non-empty queue past the limit
+	// closes the session. A batch into an empty queue is always taken, even
+	// one bigger than the limit on its own (a paged list), since nothing is
+	// piling up behind it; the next Send while it is still waiting is then
+	// over the limit.
+	size := 0
+	for _, p := range ps {
+		size += 6 + len(p.Data)
+	}
+	if pending := len(s.out) + s.inFlight; s.queueLimit > 0 && pending > 0 && pending+size > s.queueLimit {
+		s.stallLocked("queue")
+		s.outMu.Unlock()
+		return ErrSendStalled
+	}
 	before := len(s.out)
 	w := queueWriter{s}
 	for _, p := range ps {
@@ -320,11 +337,6 @@ func (s *Session) SendBatch(ps ...*proto.Packet) error {
 	if b := s.burst.add(time.Now(), added); b > 0 && s.logger != nil && b >= SendBurstLogFloor && b >= 2*s.loggedBurst {
 		s.loggedBurst = b
 		s.logger.Info("send burst peak", "addr", s.conn.RemoteAddr(), "bytes", b, "window", SendBurstWindow)
-	}
-	if s.queueLimit > 0 && waiting > s.queueLimit {
-		s.stallLocked("queue")
-		s.outMu.Unlock()
-		return ErrSendStalled
 	}
 	s.outCond.Signal()
 	s.outMu.Unlock()
@@ -473,8 +485,16 @@ func (s *Session) writeLoop() {
 // return to Jangan -- ~1,250 monsters' enters, legs, then three 32 KB list
 // pages -- the client's receive buffer was full (skmem r137152 of rb138172)
 // holding 31,250 bytes, short of the 32,735-byte page it waited for, the
-// window was shut, and neither side moved again. A frame per write keeps
-// each frame in segments of its own, as the synchronous Send did.
+// window was shut, and neither side moved again.
+//
+// A frame per write MITIGATES that wedge; it does not fix it (round 662's
+// review). It keeps a frame in segments of its own only while the socket's
+// send queue is drained: once it is backlogged -- the client's window shut,
+// as it is while a load freezes the client -- Linux's tcp_sendmsg appends
+// each new write into the unsent tail skb, up to its size goal (~64 KB over
+// loopback), so frames coalesce into large segments however they were
+// written, and the same wedge can recur. The fix is the client's: read what
+// is available into its own buffer (round 663, packet_reader.gd).
 func writeFrames(w io.Writer, buf []byte) (int, error) {
 	written := 0
 	for len(buf) >= 6 {

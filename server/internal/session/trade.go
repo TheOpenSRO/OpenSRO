@@ -490,7 +490,8 @@ func handleTradeRequest(ctx context.Context, sess *gateway.Session, p *proto.Pac
 		return err
 	}
 	invite := &TradeInvite{RequesterName: req.CharacterName}
-	return target.Session.Send(&proto.Packet{Opcode: OpTradeInvite, Data: invite.Encode()})
+	sendToPeer(target.Session, &proto.Packet{Opcode: OpTradeInvite, Data: invite.Encode()})
+	return nil
 }
 
 // cancelPendingTrade ends the pending request characterID is a party to, on
@@ -585,13 +586,15 @@ func handleTradeRespond(ctx context.Context, sess *gateway.Session, p *proto.Pac
 
 	if !req.Accept {
 		declined := &TradeDeclined{TargetName: req.CharacterName}
-		return requester.Session.Send(&proto.Packet{Opcode: OpTradeDeclined, Data: declined.Encode()})
+		sendToPeer(requester.Session, &proto.Packet{Opcode: OpTradeDeclined, Data: declined.Encode()})
+		return nil
 	}
 
 	if err := sess.Send(&proto.Packet{Opcode: OpTradeStarted, Data: (&TradeStarted{PartnerName: requester.Name}).Encode()}); err != nil {
 		return err
 	}
-	return requester.Session.Send(&proto.Packet{Opcode: OpTradeStarted, Data: (&TradeStarted{PartnerName: req.CharacterName}).Encode()})
+	sendToPeer(requester.Session, &proto.Packet{Opcode: OpTradeStarted, Data: (&TradeStarted{PartnerName: req.CharacterName}).Encode()})
+	return nil
 }
 
 func handleTradeSetOffer(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, inv inventory.Store, items ItemLookup, trades *trade.Hub) error {
@@ -634,7 +637,8 @@ func handleTradeSetOffer(ctx context.Context, sess *gateway.Session, p *proto.Pa
 
 	other, _, _ := sessn.Other(characterID)
 	updated := &TradeOfferUpdated{Offer: req.Offer}
-	return other.Session.Send(&proto.Packet{Opcode: OpTradeOfferUpdated, Data: updated.Encode()})
+	sendToPeer(other.Session, &proto.Packet{Opcode: OpTradeOfferUpdated, Data: updated.Encode()})
+	return nil
 }
 
 func handleTradeConfirm(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, inv inventory.Store, items ItemLookup, trades *trade.Hub) error {
@@ -675,7 +679,8 @@ func handleTradeConfirm(ctx context.Context, sess *gateway.Session, p *proto.Pac
 	completedForA := &TradeCompleted{ReceivedGold: tradeSess.OfferB.Gold, ReceivedItemID: itemB, ReceivedQuantity: int32(tradeSess.OfferB.Quantity)}
 	completedForB := &TradeCompleted{ReceivedGold: tradeSess.OfferA.Gold, ReceivedItemID: itemA, ReceivedQuantity: int32(tradeSess.OfferA.Quantity)}
 	tradeSess.A.Session.Send(&proto.Packet{Opcode: OpTradeCompleted, Data: completedForA.Encode()})
-	return tradeSess.B.Session.Send(&proto.Packet{Opcode: OpTradeCompleted, Data: completedForB.Encode()})
+	sendToPeer(tradeSess.B.Session, &proto.Packet{Opcode: OpTradeCompleted, Data: completedForB.Encode()})
+	return nil
 }
 
 func handleTradeCancel(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, hub *world.Hub, trades *trade.Hub) error {
@@ -702,7 +707,8 @@ func handleTradeCancel(ctx context.Context, sess *gateway.Session, p *proto.Pack
 		return cancelPendingTrade(hub, trades, characterID, req.CharacterName, sess)
 	}
 	tradeSess.A.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled.Encode()})
-	return tradeSess.B.Session.Send(&proto.Packet{Opcode: OpTradeCancelled, Data: cancelled.Encode()})
+	sendToPeer(tradeSess.B.Session, &proto.Packet{Opcode: OpTradeCancelled, Data: cancelled.Encode()})
+	return nil
 }
 
 // errOfferInvalid means an offer's item slot no longer has enough of the

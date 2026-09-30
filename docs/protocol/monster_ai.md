@@ -3541,7 +3541,8 @@ microseconds, so only a peer that keeps the kernel buffers full runs its debt up
 **The send queue (round 662).** `Send` no longer writes: it encodes the frame (rolling byte and
 checksum drawn in call order) into the session's outbound queue and returns, and the session's
 own writer goroutine drains the queue to the socket, a frame per write (one write for the
-lot wedged the real client over loopback: WORLD_ISSUES round 662 §4). The deadline and the budget above are now
+lot wedged the real client over loopback: WORLD_ISSUES round 662 §4; a frame per write only
+mitigates that, the client's reader is fixed in round 663). The deadline and the budget above are now
 that writer's, so the AI tick, the respawn scheduler, other players' blows and every broadcast
 never wait on a peer. Frames reach the wire in the order `Send` was called; the wire lock keeps
 its meaning (a check and its send are one step, and queue order is wire order), and
