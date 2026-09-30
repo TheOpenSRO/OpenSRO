@@ -137,7 +137,7 @@ export SRREVAMP_PK2_PATH=$PK2_DIR/Data.pk2 SRREVAMP_MAP_PK2_PATH=$PK2_DIR/Map.pk
 export SRREVAMP_PARTICLES_PK2_PATH=$PK2_DIR/Particles.pk2 SRREVAMP_MUSIC_PK2_PATH=$PK2_DIR/Music.pk2
 export SRREVAMP_MAPM_PATH="\$3" SRREVAMP_QA_AT="\$4" SRREVAMP_QA_YAW="\$5" SRREVAMP_QA_FORCE_LOADING=1
 [ -n "\${6:-}" ] && export SRREVAMP_QA_WALK="\$6"
-for kv in \${8:-}; do export "\$kv"; done
+read -r -a kvs <<< "\${8:-}"; for kv in "\${kvs[@]}"; do export "\$kv"; done  # split on spaces, no globbing
 # Another lane's Godot, rendered or headless (both load the CPU, the shared
 # resource): a Godot process whose --path is not this run's client dir.
 DIR="\$1"   # captured here: inside others() \$1 is the function's own (empty) argument
