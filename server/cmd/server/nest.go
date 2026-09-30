@@ -114,6 +114,19 @@ func (s *respawnScheduler) add(spec monsterSpec) {
 	s.addSlot(standInSlot(hatchDataOf(spec), 1))
 }
 
+// checkNestRespawn refuses a -nest-respawn override that would round to 0 s
+// (the window is whole seconds): every nest would re-hatch on each pass.
+// 0 is "no override"; a negative value is refused too.
+func checkNestRespawn(d time.Duration) error {
+	if d == 0 {
+		return nil
+	}
+	if d < time.Second {
+		return fmt.Errorf("%v is under 1s: the window is whole seconds, and 0 s would re-hatch every nest on each %v pass", d, nestPassPeriod)
+	}
+	return nil
+}
+
 // addSlot registers a nest, applying -nest-respawn.
 func (s *respawnScheduler) addSlot(sl *nest.Slot) {
 	if s.delayOverride > 0 {
@@ -226,6 +239,11 @@ func combatTactics(t *nest.TacticsRow, roamRadius float64) *combat.Tactics {
 		FleeType: t.FleeType, Flags: t.Flags, RoamRadius: roamRadius}
 }
 
+// nestSwappedStandIn is -nest-swapped-stand-in (OURS, round 660's review):
+// the swapped spots fall back to the one-monster stand-in nest instead of
+// their DB nest's numbers. Set by main before fullMapSlots runs.
+var nestSwappedStandIn bool
+
 // fullMapReport is what fullMapSlots built, for the boot log.
 type fullMapReport struct {
 	join nest.JoinReport
@@ -238,8 +256,10 @@ type fullMapReport struct {
 	// column 7 (0 aggressive, 1 passive; READ rule), standIn the rest.
 	aggressive, passive, standIn int
 	// championable is the placements whose roll can make a champion (a
-	// champion row and a chance above 0).
-	championable int
+	// champion row and a chance above 0), championSlots their caps' sum.
+	championable, championSlots int
+	// swappedOnNest is the swapped rows running their DB nest's numbers.
+	swappedOnNest int
 	// missingSpecies is npcpos species the join placed but the table could
 	// not build (should be 0: the join asks the same table).
 	missingSpecies int
@@ -257,6 +277,7 @@ type fullMapReport struct {
 // WorldOrigin, bucket worldmap.WorldBucket -- -full-map needs -single-frame,
 // main forces it on).
 func fullMapSlots(npcs spawn.Table, table *species.Table, lookup species.SkillLookup, db *nest.DB) ([]*nest.Slot, fullMapReport) {
+	swappedStandIn := nestSwappedStandIn
 	var spots []nest.Spot
 	for id, rows := range npcs {
 		for _, r := range rows {
@@ -296,20 +317,31 @@ func fullMapSlots(npcs spawn.Table, table *species.Table, lookup species.SkillLo
 		rx, ry := worldmap.RegionXY(j.Spot.Region)
 		spec.X, spec.Z = worldmap.ToWorld(rx, ry, lx, lz, worldmap.WorldOrigin[0], worldmap.WorldOrigin[1])
 		data := hatchDataOf(spec)
+		// A swapped row runs its own species' row (or the stand-in behaviour)
+		// on its claimed DB nest's numbers (the user's decision, round 660's
+		// review), or on the one-monster stand-in under -nest-swapped-stand-in.
+		n := j.Nest
+		swapped := j.Cat == nest.SwappedOwn || j.Cat == nest.SwappedStandIn
+		if swapped && (swappedStandIn || n == nil) {
+			n = nil
+		}
 		var sl *nest.Slot
-		switch j.Cat {
-		case nest.Matched:
-			n, t := j.Nest, j.Tactics
+		switch {
+		case j.Cat == nest.Matched || (swapped && n != nil):
+			t := j.Tactics // nil for a SwappedStandIn row: the stand-in behaviour
 			data.tactics = combatTactics(t, float64(n.Radius))
-			if t.ChampionTacticsID != 0 {
+			hasChampion := t != nil && t.ChampionTacticsID != 0
+			if hasChampion {
 				data.champion = combatTactics(db.Tactics[t.ChampionTacticsID], float64(n.Radius))
 			}
 			sl = &nest.Slot{ID: n.ID, Cap: n.MaxCount, Respawn: n.Respawn != 0, Active: n.Type == 0, Budget: n.MaxCount,
 				DelayMin: n.DelayMin, DelayMax: n.DelayMax, GenerateRadius: float64(n.GenerateRadius),
-				Input: nest.HatchInput{Rarity: row.Rarity, TypeID4: row.TypeID4, HasChampionTactics: t.ChampionTacticsID != 0,
+				Input: nest.HatchInput{Rarity: row.Rarity, TypeID4: row.TypeID4, HasChampionTactics: hasChampion,
 					ChampionPct: n.ChampionPct},
 				Level: row.Level, Data: data}
-			if h := j.Hive; h != nil && h.OverwriteMax > 0 {
+			// The hive's total cap only for a matched nest: a swapped nest's
+			// hive is the shard's own grouping of its repointed nests.
+			if h := j.Hive; j.Cat == nest.Matched && h != nil && h.OverwriteMax > 0 {
 				rt := hives[h.ID]
 				if rt == nil {
 					rt = &nest.Hive{ID: h.ID, TotalCap: h.OverwriteMax}
@@ -318,16 +350,18 @@ func fullMapSlots(npcs spawn.Table, table *species.Table, lookup species.SkillLo
 				}
 				sl.Hive = rt
 			}
-			if t.ChampionTacticsID != 0 && n.ChampionPct > 0 {
+			// Only a rank-0 species rolls (a ranked one keeps its rank,
+			// nest.RollClass), so only those slots count.
+			if hasChampion && n.ChampionPct > 0 && nest.RollClass(func() int { return 0 }, nest.HatchInput{Rarity: row.Rarity}, 0).Class == 0 {
 				rep.championable++
+				rep.championSlots += n.MaxCount
 			}
-		case nest.SwappedOwn:
+			if swapped {
+				rep.swappedOnNest++
+			}
+		case j.Cat == nest.SwappedOwn:
 			data.tactics = combatTactics(j.Tactics, float64(session.MonsterRoamRadius))
-			if id := j.Tactics.ChampionTacticsID; id != 0 {
-				data.champion = combatTactics(db.Tactics[id], float64(session.MonsterRoamRadius))
-			}
 			sl = standInSlot(data, row.TypeID4)
-			sl.Input.HasChampionTactics = j.Tactics.ChampionTacticsID != 0
 		default:
 			sl = standInSlot(data, row.TypeID4)
 		}
@@ -360,16 +394,25 @@ func fullMapSlots(npcs spawn.Table, table *species.Table, lookup species.SkillLo
 	return out, rep
 }
 
+// rankEightTotal is the rarity-8 rows left out, all species.
+func rankEightTotal(m map[int64]int) int {
+	n := 0
+	for _, c := range m {
+		n += c
+	}
+	return n
+}
+
 // logFullMap writes fullMapSlots' report.
 func logFullMap(logger *slog.Logger, rep fullMapReport, withDB bool) {
 	j := rep.join
 	logger.Info("full map: npcpos joined to nests", "rows", j.Rows, "not_monster", j.NotMonster, "dungeon_not_placed", j.Dungeon,
-		"unique_not_placed", j.Unique, "custom_not_placed", j.Custom, "placed", j.Placed,
+		"unique_not_placed", j.Unique, "rank8_not_placed", rankEightTotal(j.RankEight), "custom_not_placed", j.Custom, "placed", j.Placed,
 		"matched", j.Matched, "swapped_own_tactics", j.SwappedOwn, "swapped_stand_in", j.SwappedStandIn, "stand_in", j.StandIn,
 		"zero_cap_nests", j.ZeroCap, "db_nests_not_placed", j.Unjoined)
 	if withDB {
-		logger.Info(fmt.Sprintf("full map: join tolerance %.1f units; farthest joined nest %.5f, nearest other nest %.2f",
-			nest.JoinTolerance, j.MaxMatchDist, j.NearestOther))
+		logger.Info(fmt.Sprintf("full map: join tolerance %.1f units, one row per nest; farthest joined nest %.5f, nearest OTHER nest to a placed row %.3f; %d rows with more than one nest within the tolerance, %d rows whose nests were all claimed first (stand-in)",
+			nest.JoinTolerance, j.MaxMatchDist, j.NearestOther, j.CoLocated, j.NestTaken))
 		var top []string
 		type kv struct {
 			id int64
@@ -391,7 +434,8 @@ func logFullMap(logger *slog.Logger, rep fullMapReport, withDB bool) {
 	}
 	logger.Info("full map: nests", "nests", rep.nests, "max_alive", rep.capTotal, "capped_hives", rep.cappedHives,
 		"aggressive", rep.aggressive, "passive", rep.passive, "stand_in_behaviour", rep.standIn,
-		"champion_rolls", rep.championable, "species_missing", rep.missingSpecies)
+		"champion_rolls", rep.championable, "champion_slots", rep.championSlots, "swapped_on_db_nest", rep.swappedOnNest,
+		"species_missing", rep.missingSpecies)
 	logger.Info("full map: the densest area of interest, every nest full", "monsters", rep.densest,
 		"cell_x", rep.densestCell.X, "cell_z", rep.densestCell.Z)
 }

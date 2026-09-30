@@ -182,7 +182,8 @@ In order. Each is checked off here when it ships in a release, with its round in
         species whose own model (col 52) is "xxx" -- 89 of them are placed (4,649 npcpos rows).
         The table records the Org's model and `ModelFromOrg`; nothing draws by it yet.
       - ~~place every nest~~ -- **done for the field (round 660, `-full-map`)**: 10,124 field rows
-        as nests; the dungeons (1,915 rows) and the uniques (71, round 661) are not placed. See
+        as nests (10,109 since the review); the dungeons (1,915 rows) and the unique-class rows
+      (rarity 3: 71; rarity 8, the Egypt field bosses: 15 -- round 661) are not placed. See
         "The monster world's nests (round 660)" below.
       - cols 75 'era' and 77 'hra' per species: combat still computes both as `2*level + 25`
         (`combat.MonsterRate`), which holds for both columns on 2,581 of the 7,604 species (MEASURED,
@@ -1080,17 +1081,18 @@ interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
 
 Round 660 (`docs/protocol/monster_ai.md`, "Nests on the map"; WORLD_ISSUES.md, round 660). Left:
 
-- [ ] **The uniques (round 661).** 71 rarity-3 rows are left out. The hive model is built for them:
+- [ ] **The uniques (round 661).** 71 rarity-3 rows and 15 rarity-8 rows (the SD field bosses:
+      SPHINX, SEKHMET, NEPHTHYS, HORUS, OSIRIS in three variants each, and APIS) are left out. The hive model is built for them:
       `nest.Hive{TotalCap: 1, Pinned: ...}` is the total-1 rotation hive (the capped pass hatches
       from the pinned nest alone); the re-pin on death (FUN_0055eec0) and the re-armed timers
       (0x560e50) are 661's.
 - [ ] **The dungeons.** 1,915 npcpos rows in regions >= 0x8000 are not placed (only 330 of them
       have a shard nest at their spot, round 658).
-- [ ] **The 6,042 swapped spots run stand-in nests** (one monster, 10 s, radius 200, no champion
-      roll): the shard's nests there were repointed (and partly re-tuned) to its own monsters, so
-      their numbers are not used. 3,696 of them also run the stand-in behaviour (their species has
-      no tactics row left in the shard). The density there is one monster a spot against the
-      matched nests' caps of up to 17.
+- [x] ~~The swapped spots run stand-in nests~~ -- the user's decision (round 660's review): the
+      6,041 swapped spots take their own DB nest's cap, window, radii and champion chance
+      (EXTERNAL); `-nest-swapped-stand-in` (OURS) is the one-monster fallback. Left: 3,695 of them
+      run the stand-in behaviour (their species has no tactics row left in the shard), and a
+      swapped nest's hive cap is not applied (the shard regrouped those nests).
 - [ ] **132 matched nests have a cap of 0** (MOB_OA_DESERTTRUNKZ 60, its _CLON2 46, the Jangan
       bandits 22, ...): the pass's `alive < cap` never holds, so they hatch nothing, in the shard
       too. Faithful to the DB; whether retail's rows were 0 is unknown.
@@ -1103,16 +1105,21 @@ Round 660 (`docs/protocol/monster_ai.md`, "Nests on the map"; WORLD_ISSUES.md, r
       `btAggressTypeOnHoming` (no reader found), column 34 `btTraceType` (2 on 66 rows, no reader),
       and the flag word's bits 2/7 give-up gate (`ai.GiveUpCode`; no placed row sets them).
 - [ ] **Champion, giant and party rewards**: a champion or giant pays the level table's EXP and
-      the species' gold like a normal one. Retail's reward scaling by rank is unread.
+      the species' gold like a normal one. Retail's reward scaling by rank is unread. Where to
+      start (round 660's review): `Formula_MonsterExpReward` 0x4105d0 has no rank factor, but its
+      only callers are `GObjPC_OnDeath` 0x4e6980 and `FUN_004e6d60`, which may be the PvP path --
+      so the real monster-kill EXP path is not located yet.
 - [ ] **The party arming's reference point is INFERRED** (the dead monster, 1000 units): the object
       GObjPC::FUN_005bca60 measures from was read as the victim, not proved.
 - [ ] **The client**: the species' own scale percent (ref+0x110, column unread) is not applied on
       top of the class scale; the party mark's size is ours (the plate is ours); the target
       window's party re-centring (0x69b890..0x69b98d) is not done; class 7's "Elite" name prefix
       on the overhead plate is not drawn (no class-7 monster is placed).
-- [ ] **Scale at full occupancy**: the densest window holds 1,516 monsters (region cell -59/3);
-      the live measurement stood in Jangan's field. The client's build budget (round 655) was sized
-      for ~500 in view.
+- [ ] **Scale at full occupancy**: with the swapped spots on their nests the densest window holds
+      4,716 monsters (region cell -116/8; 1,516 at cell -59/3 before the review). The client's build
+      budget (round 655) was sized for ~500 in view; see the entry's measurement.
+- [ ] **The join is one row per nest, greedily** (own species first, then nearest; OURS): 5 placed
+      rows have more than one nest within the 1.0 tolerance (co-located nests), none lost its nest.
 
 ### Other bodies' facing (round 637 and its review follow-up) — **built: every body, this player's too, turns to face where it goes at 3 pi rad/s, and an arrival faces the way it last walked; these are left**
 

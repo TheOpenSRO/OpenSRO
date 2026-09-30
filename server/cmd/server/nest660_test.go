@@ -117,11 +117,12 @@ func TestFullMapWithoutDBIsStandIns(t *testing.T) {
 // With the DB: the matched row takes its nest (window, cap, generate radius,
 // champion chance, capped hive) and its tactics with the nest's radius, and
 // its champion row; the swapped row places the npcpos species under its own
-// row, with the stand-in nest.
+// row, on its DB nest's numbers (round 660's review; the stand-in only under
+// -nest-swapped-stand-in, TestSwappedSpotTakesItsNest).
 func TestFullMapTakesTheDBNest(t *testing.T) {
 	npcs, tab := synthWorld(t)
 	slots, rep := fullMapSlots(npcs, tab, nil, synthDB(t))
-	if len(slots) != 2 || rep.join.Matched != 1 || rep.join.SwappedOwn != 1 || rep.cappedHives != 1 || rep.capTotal != 7 {
+	if len(slots) != 2 || rep.join.Matched != 1 || rep.join.SwappedOwn != 1 || rep.cappedHives != 1 || rep.capTotal != 9 {
 		t.Fatalf("%d slots, report %+v %+v", len(slots), rep, rep.join)
 	}
 	var matched, swapped *nest.Slot
@@ -144,11 +145,11 @@ func TestFullMapTakesTheDBNest(t *testing.T) {
 		t.Fatalf("champion tactics %+v", d.champion)
 	}
 	ds := swapped.Data.(*hatchData)
-	if swapped.ID != 0 || swapped.Cap != 1 || swapped.DelayMin != 10 || ds.tactics == nil || ds.tactics.ID != 4 || ds.tactics.TraceData != 450 ||
-		ds.spec.RefObjID != 7002 || swapped.Input.ChampionPct != 0 {
+	if swapped.ID != 12 || swapped.Cap != 3 || swapped.DelayMin != 2 || ds.tactics == nil || ds.tactics.ID != 4 || ds.tactics.TraceData != 450 ||
+		ds.tactics.RoamRadius != 350 || ds.spec.RefObjID != 7002 || swapped.Input.HasChampionTactics || swapped.Hive != nil {
 		t.Fatalf("swapped slot %+v, tactics %+v", swapped, ds.tactics)
 	}
-	if rep.passive != 1 || rep.aggressive != 1 || rep.standIn != 0 || rep.densest != 7 {
+	if rep.passive != 1 || rep.aggressive != 1 || rep.standIn != 0 || rep.densest != 9 {
 		t.Fatalf("report %+v", rep)
 	}
 }
@@ -221,12 +222,91 @@ func TestFullMapNestsRefill(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		s.check(t0.Add(time.Duration(i) * 5 * time.Second))
 	}
-	if monsters.Count() != 7 {
-		t.Fatalf("after 50 s at a 5 s window: %d alive, want the caps' 6 + 1", monsters.Count())
+	if monsters.Count() != 9 {
+		t.Fatalf("after 50 s at a 5 s window: %d alive, want the caps' 6 + 3", monsters.Count())
 	}
 	for _, sl := range slots {
 		if sl.DelayMin != 5 || sl.DelayMax != 5 {
 			t.Fatalf("the override left a window of %d..%d s", sl.DelayMin, sl.DelayMax)
 		}
+	}
+}
+
+// Round 660's review: a -nest-respawn under 1 s would round to a 0 s window
+// and re-hatch every nest each pass; it is refused.
+func TestNestRespawnUnderASecondIsRefused(t *testing.T) {
+	for _, c := range []struct {
+		d  time.Duration
+		ok bool
+	}{{0, true}, {time.Second, true}, {30 * time.Second, true}, {500 * time.Millisecond, false}, {-time.Second, false}} {
+		if err := checkNestRespawn(c.d); (err == nil) != c.ok {
+			t.Errorf("checkNestRespawn(%v) = %v, want ok %v", c.d, err, c.ok)
+		}
+	}
+}
+
+// Round 660's review, the user's decision on the swapped spots: a spot whose
+// shard nest was repointed keeps the npcpos species (and its own tactics row,
+// or the stand-in behaviour) but takes that nest's cap, respawn window, radii
+// and champion chance (EXTERNAL), the champion roll gated by the col 41 of the
+// row the monster runs. Before, it was a one-monster stand-in.
+func TestSwappedSpotTakesItsNest(t *testing.T) {
+	tab := synthSpecies(t,
+		[6]string{"7004", "MOB_SYN_OWN", "0", "40", "800", "1"},
+		[6]string{"7005", "MOB_SYN_NOROW", "0", "40", "800", "1"},
+		[6]string{"9001", "MOB_ETERNITY_SYN", "0", "90", "9000", "1"},
+	)
+	tac, err := nest.ReadTactics(strings.NewReader(synthTactics[:strings.Index(synthTactics, "\n")+1] +
+		"3,9001,100,0,0,2,1,500,0,0,1,0,0,0\n5,7004,120,1,0,2,1,480,0,0,1,0,6,0\n6,7004,120,0,0,2,1,480,0,0,1,0,0,0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ns, err := nest.ReadNests(strings.NewReader(synthNests[:strings.Index(synthNests, "\n")+1] +
+		"21,51,3,25000,300,0,300,0,450,250,20,4,6,5,0,1,0\n22,51,3,25000,700,0,700,0,350,150,10,1,3,7,0,1,0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := nest.NewDB(tac, ns, nil)
+	npcs := spawn.Table{
+		7004: {{ObjectID: 7004, RegionID: 25000, LocalX: 300, LocalZ: 300}},
+		7005: {{ObjectID: 7005, RegionID: 25000, LocalX: 700, LocalZ: 700}},
+	}
+	slots, rep := fullMapSlots(npcs, tab, nil, db)
+	if len(slots) != 2 || rep.capTotal != 12 {
+		t.Fatalf("%d slots, max alive %d; want 2 slots holding their nests' 5 + 7", len(slots), rep.capTotal)
+	}
+	for _, sl := range slots {
+		d := sl.Data.(*hatchData)
+		switch d.spec.RefObjID {
+		case 7004:
+			if sl.Cap != 5 || sl.DelayMin != 4 || sl.DelayMax != 6 || sl.GenerateRadius != 250 || sl.Input.ChampionPct != 20 ||
+				!sl.Input.HasChampionTactics || d.tactics == nil || d.tactics.ID != 5 || d.tactics.RoamRadius != 450 ||
+				d.champion == nil || d.champion.ID != 6 {
+				t.Fatalf("the swapped spot with its own row: slot %+v, tactics %+v, champion %+v", sl, d.tactics, d.champion)
+			}
+		case 7005:
+			if sl.Cap != 7 || sl.DelayMin != 1 || sl.DelayMax != 3 || sl.Input.ChampionPct != 10 || sl.Input.HasChampionTactics || d.tactics != nil {
+				t.Fatalf("the swapped spot with no row: slot %+v, tactics %+v -- its nest's numbers, the stand-in behaviour, no champion row", sl, d.tactics)
+			}
+		default:
+			t.Fatalf("placed species %d", d.spec.RefObjID)
+		}
+	}
+}
+
+// The fallback (OURS): -nest-swapped-stand-in puts the swapped spots back on
+// the one-monster stand-in nest.
+func TestSwappedStandInFlag(t *testing.T) {
+	npcs, tab := synthWorld(t)
+	nestSwappedStandIn = true
+	t.Cleanup(func() { nestSwappedStandIn = false })
+	slots, rep := fullMapSlots(npcs, tab, nil, synthDB(t))
+	for _, sl := range slots {
+		if d := sl.Data.(*hatchData); d.spec.RefObjID == 7002 && (sl.Cap != 1 || sl.DelayMin != 10 || sl.ID != 0 || d.tactics == nil) {
+			t.Fatalf("stand-in swapped slot %+v", sl)
+		}
+	}
+	if rep.capTotal != 7 || rep.swappedOnNest != 0 {
+		t.Fatalf("max alive %d, swapped on a nest %d; want 6 + 1 and none", rep.capTotal, rep.swappedOnNest)
 	}
 }

@@ -901,8 +901,8 @@ func main() {
 	fullMapEnv, fullMapEnvErr := envBool("SRREVAMP_FULL_MAP")
 	fullMap := flag.Bool("full-map", fullMapEnv,
 		"place every field monster of the game (env SRREVAMP_FULL_MAP, round 660): each monster row of -npcpos-csv "+
-			"outside the dungeons, but the uniques (rarity 3, their rotation is a later round) and the shard's custom "+
-			"species, becomes a nest hatching its species from -monsters-csv -- with -nest-db-dir, the DB nest's "+
+			"outside the dungeons, but the unique-class monsters (rarity 3 and 8, placed through their hives by a later "+
+			"round) and the shard's custom species, becomes a nest hatching its species from -monsters-csv -- with -nest-db-dir, the DB nest's "+
 			"window, radius, cap, champion chance and tactics (EXTERNAL); without it one monster per row, "+
 			"respawning after 10 s, with the stand-in behaviour. Needs -npcpos-csv and -monsters-csv (forced off "+
 			"with a WARN otherwise) and turns -single-frame on. Default OFF: off, the hand-typed roster stands "+
@@ -912,6 +912,12 @@ func main() {
 			"(round 660; EXTERNAL: exported from the user's VSRO shard backup, never committed -- deploy/README.md). "+
 			"With -full-map every npcpos row joins the DB nest at its spot. A configured directory that does not load "+
 			"is fatal.")
+	swappedStandInEnv, swappedStandInEnvErr := envBool("SRREVAMP_NEST_SWAPPED_STAND_IN")
+	swappedStandIn := flag.Bool("nest-swapped-stand-in", swappedStandInEnv,
+		"with -full-map and -nest-db-dir, place each of the 6,042 spots whose shard nest was repointed to "+
+			"the shard's own monsters as a one-monster stand-in nest (10 s, radius 200, no champion roll; OURS) "+
+			"instead of on that nest's own cap, window, radii and champion chance (EXTERNAL, the default; "+
+			"round 660's review, the user's decision). Env SRREVAMP_NEST_SWAPPED_STAND_IN.")
 	nestRespawnEnv, nestRespawnEnvErr := envDuration("SRREVAMP_NEST_RESPAWN", 0)
 	nestRespawn := flag.Duration("nest-respawn", nestRespawnEnv,
 		"every nest's respawn window, both ends, in whole seconds (env SRREVAMP_NEST_RESPAWN, round 660): an "+
@@ -933,7 +939,7 @@ func main() {
 			"err", inventorySizeEnvErr, "default", inventory.DefaultBagSlots)
 	}
 	for name, err := range map[string]error{"SRREVAMP_MONSTER_SLEEP": sleepEnvErr, "SRREVAMP_QA_SPREAD_MONSTERS": qaSpreadEnvErr,
-		"SRREVAMP_QA_SPREAD_RADIUS": qaSpreadRadiusEnvErr, "SRREVAMP_FULL_MAP": fullMapEnvErr, "SRREVAMP_NEST_RESPAWN": nestRespawnEnvErr} {
+		"SRREVAMP_QA_SPREAD_RADIUS": qaSpreadRadiusEnvErr, "SRREVAMP_FULL_MAP": fullMapEnvErr, "SRREVAMP_NEST_SWAPPED_STAND_IN": swappedStandInEnvErr, "SRREVAMP_NEST_RESPAWN": nestRespawnEnvErr} {
 		if err != nil {
 			logger.Warn(name+" does not parse; its flag keeps its default unless given", "err", err)
 		}
@@ -1508,6 +1514,10 @@ func main() {
 	//
 	// One respawn scheduler for all of them (round 656), where there was a
 	// goroutine per placement.
+	if err := checkNestRespawn(*nestRespawn); err != nil {
+		logger.Error("-nest-respawn / SRREVAMP_NEST_RESPAWN refused", "err", err)
+		os.Exit(1)
+	}
 	respawns := newRespawnScheduler(monsters, logger, spawned)
 	respawns.delayOverride = *nestRespawn
 	if *nestRespawn > 0 {
@@ -1516,6 +1526,10 @@ func main() {
 	if *fullMap {
 		// Round 660: every field monster row as a nest, replacing the roster's
 		// placements (the roster's species are rows of npcpos too).
+		nestSwappedStandIn = *swappedStandIn
+		if *swappedStandIn {
+			logger.Info("full map: -nest-swapped-stand-in: the swapped spots run one-monster stand-in nests (OURS)")
+		}
 		slots, rep := fullMapSlots(npcPlacements, speciesTable, speciesSkills, nestDB)
 		for _, sl := range slots {
 			respawns.addSlot(sl)
@@ -1536,8 +1550,12 @@ func main() {
 	respawns.quiet = respawns.nests > 200
 	// The kill's party arming (round 660): a kill with more than one of the
 	// killer's party members within 1000 units arms the nest for a party
-	// monster (session/nestkill.go, internal/nest).
-	session.SetMonsterKillObserver(respawns.armParty)
+	// monster (session/nestkill.go, internal/nest). Only with -full-map: the
+	// roster's stand-in placements keep what they hatched before (round
+	// 660's review), so a deploy without the flag is unchanged.
+	if *fullMap {
+		session.SetMonsterKillObserver(respawns.armParty)
+	}
 	go respawns.run(ctx)
 
 	// The monster's own BATTLE (round 546), behind its own flag, which needs

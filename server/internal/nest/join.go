@@ -21,9 +21,10 @@ const DungeonRegion = 0x8000
 
 // JoinTolerance is how far, in local units, a DB nest may stand from an
 // npcpos row and still be that row's nest. OURS, set from a measurement (the
-// round-660 census, docs/WORLD_ISSUES.md): every one of the 10,195 field rows
-// has a nest within 0.00015 units, and the nearest OTHER nest to any row
-// stands 2.1 units off, so 1.0 sits between the two with room either way.
+// round-660 census and its review, docs/WORLD_ISSUES.md): every field row has
+// a nest within 0.00015 units; OTHER nests do stand within it -- co-located
+// nests at the same point, and two at 0.713 from a MOB_KK_PLANAR row -- so the
+// join also keeps one row per nest (Join).
 const JoinTolerance = 1.0
 
 // SpeciesInfo is what the join needs of a species: whether it is a monster
@@ -67,9 +68,13 @@ func (c Category) String() string {
 
 // Joined is one placed row and what it joined to.
 type Joined struct {
-	Spot    Spot
-	Cat     Category
-	Nest    *NestRow    // Matched only
+	Spot Spot
+	Cat  Category
+	// Nest is the DB nest the row claimed: Matched's own species', or --
+	// Swapped* -- the nest the shard repointed, whose numbers (cap, window,
+	// radii, champion chance; EXTERNAL) the row takes by the user's decision
+	// (round 660's review). nil for a stand-in.
+	Nest    *NestRow
 	Hive    *HiveRow    // Matched only, when the nest's hive row exists
 	Tactics *TacticsRow // Matched: the nest's; SwappedOwn: the species' own; else nil
 	// DBSpecies is the species the DB nest at the spot names (Swapped*).
@@ -82,6 +87,9 @@ type JoinReport struct {
 	NotMonster int // species not in the monster table (NPCs, structures)
 	Dungeon    int // monster rows in dungeon regions (>= DungeonRegion), not placed
 	Unique     int // rarity-3 rows, not placed: round 661's rotation
+	// RankEight counts the rarity-8 rows by species, not placed: unique-class
+	// (the Egypt field bosses), round 661's.
+	RankEight  map[int64]int
 	Custom     int // custom species (IsCustomSpecies), never placed
 	Placed     int
 	Matched    int
@@ -91,12 +99,18 @@ type JoinReport struct {
 	// SwappedTo counts the species the DB nests at swapped spots name.
 	SwappedTo map[int64]int
 	// MaxMatchDist is the farthest a joined nest stood from its row;
-	// NearestOther the nearest any OTHER nest stood from a placed row, beyond
-	// the tolerance (0 when none was measured).
+	// NearestOther the nearest any OTHER nest -- not the row's own, at any
+	// distance -- stood from a placed row (0 when none was measured).
 	MaxMatchDist, NearestOther float64
+	// CoLocated is the placed rows with more than one nest within the
+	// tolerance; NestTaken the rows whose every nest within it was claimed by
+	// another row first (they run the stand-in).
+	CoLocated, NestTaken int
 	// ZeroCap is the matched nests whose alive cap (col 14) is 0: the pass's
 	// `alive < cap` never holds, so they hatch nothing -- in the shard too.
 	ZeroCap int
+	// SwappedZeroCap is the same count over the swapped rows' nests.
+	SwappedZeroCap int
 	// Unjoined is the DB's field monster nests of world 1 that no npcpos row
 	// joined: the shard's own additions (round 658: 3,069), never placed.
 	Unjoined int
@@ -116,7 +130,7 @@ func IsCustomSpecies(code string) bool {
 // nil: every row a stand-in). species answers for a species id; false leaves
 // the row out as not a monster. The rows come back in the order given.
 func Join(spots []Spot, db *DB, species func(id int64) (SpeciesInfo, bool)) ([]Joined, JoinReport) {
-	rep := JoinReport{Rows: len(spots), SwappedTo: map[int64]int{}}
+	rep := JoinReport{Rows: len(spots), SwappedTo: map[int64]int{}, RankEight: map[int64]int{}}
 	var byRegion map[int][]int
 	if db != nil {
 		byRegion = map[int][]int{}
@@ -124,9 +138,8 @@ func Join(spots []Spot, db *DB, species func(id int64) (SpeciesInfo, bool)) ([]J
 			byRegion[db.Nests[i].Region] = append(byRegion[db.Nests[i].Region], i)
 		}
 	}
-	used := map[int]bool{}
-	out := make([]Joined, 0, len(spots))
-	nearest := math.Inf(1)
+	// Pass 1: the rows this round places.
+	var rows []Joined
 	for _, s := range spots {
 		// The region id is the engine's u16: an export that read it signed
 		// names a dungeon region (>= 0x8000) with a negative number.
@@ -145,51 +158,116 @@ func Join(spots []Spot, db *DB, species func(id int64) (SpeciesInfo, bool)) ([]J
 		case sp.Rarity == 3:
 			rep.Unique++
 			continue
+		case sp.Rarity == 8:
+			// Unique-class too (combat.RarityHPPercent's `case 3, 8`, the
+			// target window's UIIT_STT_MOB_UNIQUE): the Egypt field bosses,
+			// placed through their hives by round 661.
+			rep.RankEight[s.ObjectID]++
+			continue
 		}
-		j := Joined{Spot: s, Cat: StandIn}
-		if db != nil {
-			same, near := -1, -1
-			sameD, nearD := math.Inf(1), math.Inf(1)
+		rows = append(rows, Joined{Spot: s, Cat: StandIn})
+	}
+	// Pass 2: every (row, nest) pair within the tolerance, then ONE row per
+	// nest and one nest per row, greedily in a deterministic order: a nest
+	// of the row's own species first, then the nearest, then the row's and
+	// the nest's order (OURS: the engine has no such join -- a nest is its
+	// own object). Co-located nests exist: on the shard, spots where two or
+	// three nests stand at the same point, and nests 0.7 units apart.
+	used := map[int]bool{}
+	if db != nil {
+		type pair struct {
+			row, nest int
+			d         float64
+			same      bool
+		}
+		var pairs []pair
+		within := make([]int, len(rows))
+		for i := range rows {
+			s := rows[i].Spot
 			for _, k := range byRegion[s.Region] {
 				n := &db.Nests[k]
 				d := math.Hypot(n.X-s.X, n.Z-s.Z)
 				if d > JoinTolerance {
-					if d < nearest {
-						nearest = d
-					}
 					continue
 				}
-				if d < nearD {
-					near, nearD = k, d
-				}
-				if t := db.Tactics[n.TacticsID]; t != nil && t.ObjID == s.ObjectID && d < sameD {
-					same, sameD = k, d
-				}
+				within[i]++
+				t := db.Tactics[n.TacticsID]
+				pairs = append(pairs, pair{row: i, nest: k, d: d, same: t != nil && t.ObjID == s.ObjectID})
 			}
-			switch {
-			case same >= 0:
-				n := &db.Nests[same]
-				used[same] = true
+		}
+		sort.SliceStable(pairs, func(x, y int) bool {
+			a, b := pairs[x], pairs[y]
+			if a.same != b.same {
+				return a.same
+			}
+			if a.d != b.d {
+				return a.d < b.d
+			}
+			if a.row != b.row {
+				return a.row < b.row
+			}
+			return a.nest < b.nest
+		})
+		own := make([]int, len(rows))
+		for i := range own {
+			own[i] = -1
+		}
+		for _, p := range pairs {
+			if own[p.row] >= 0 || used[p.nest] {
+				continue
+			}
+			own[p.row], used[p.nest] = p.nest, true
+			j := &rows[p.row]
+			n := &db.Nests[p.nest]
+			rep.MaxMatchDist = math.Max(rep.MaxMatchDist, p.d)
+			if p.same {
 				j.Cat, j.Nest, j.Tactics, j.Hive = Matched, n, db.Tactics[n.TacticsID], db.Hives[n.HiveID]
-				rep.MaxMatchDist = math.Max(rep.MaxMatchDist, sameD)
 				if n.MaxCount <= 0 {
 					rep.ZeroCap++
 				}
-			case near >= 0:
-				n := &db.Nests[near]
-				used[near] = true
-				if t := db.Tactics[n.TacticsID]; t != nil {
-					j.DBSpecies = t.ObjID
-					rep.SwappedTo[t.ObjID]++
+				continue
+			}
+			j.Nest = n
+			if n.MaxCount <= 0 {
+				rep.SwappedZeroCap++
+			}
+			if t := db.Tactics[n.TacticsID]; t != nil {
+				j.DBSpecies = t.ObjID
+				rep.SwappedTo[t.ObjID]++
+			}
+			if ownRow := db.OwnTactics(j.Spot.ObjectID); ownRow != nil {
+				j.Cat, j.Tactics = SwappedOwn, ownRow
+			} else {
+				j.Cat = SwappedStandIn
+			}
+		}
+		// The evidence for the tolerance, measured so it can fail: every
+		// OTHER nest's distance from a placed row, near or far.
+		nearest := math.Inf(1)
+		for i := range rows {
+			if within[i] > 1 {
+				rep.CoLocated++
+			}
+			if within[i] > 0 && own[i] < 0 {
+				rep.NestTaken++
+			}
+			s := rows[i].Spot
+			for _, k := range byRegion[s.Region] {
+				if k == own[i] {
+					continue
 				}
-				rep.MaxMatchDist = math.Max(rep.MaxMatchDist, nearD)
-				if own := db.OwnTactics(s.ObjectID); own != nil {
-					j.Cat, j.Tactics = SwappedOwn, own
-				} else {
-					j.Cat = SwappedStandIn
+				n := &db.Nests[k]
+				if d := math.Hypot(n.X-s.X, n.Z-s.Z); d < nearest {
+					nearest = d
 				}
 			}
 		}
+		if !math.IsInf(nearest, 1) {
+			rep.NearestOther = nearest
+		}
+	}
+	out := rows
+	for _, j := range out {
 		switch j.Cat {
 		case Matched:
 			rep.Matched++
@@ -201,10 +279,6 @@ func Join(spots []Spot, db *DB, species func(id int64) (SpeciesInfo, bool)) ([]J
 			rep.StandIn++
 		}
 		rep.Placed++
-		out = append(out, j)
-	}
-	if !math.IsInf(nearest, 1) {
-		rep.NearestOther = nearest
 	}
 	if db != nil {
 		for k := range db.Nests {

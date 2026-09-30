@@ -7126,9 +7126,10 @@ game data is in this commit; the tests use synthetic rows.
 | shard field nests (world 1, monster species) no row reaches -- never placed | 3,245 |
 
 The swaps: MOB_ETERNITY_DEADWARRIOR 62584 at 4,734 spots, the SD swaps 38244/38191/38219/38223 at
-511/348/290/159. **The join tolerance** (OURS, from the measurement): every placed row's nest stands
-within 0.00014 units of it, the nearest OTHER nest to any placed row 2.10 units off; 1.0 units sits
-between. Of the matched rows 2,505 run an aggressive tactics row and 1,577 a passive one; with the
+511/348/290/159. **The join tolerance** (OURS): every placed row's nest stands within 0.00014 units of it.
+(CORRECTED by the review, §9: this said "the nearest OTHER nest to any placed row 2.10 units off",
+from a probe that only measured beyond the tolerance and so could not fail. Other nests do stand
+inside it -- co-located nests at 0.000, two at 0.713 -- and the join now keeps one row per nest.) Of the matched rows 2,505 run an aggressive tactics row and 1,577 a passive one; with the
 swapped rows' own rows, 4,718 aggressive, 1,710 passive, 3,696 stand-in. 2,552 nests can roll a
 champion (a champion row and a chance above 0). 10 shard hives among the matched nests carry a
 total cap (80-130) and run the capped pass. The most monsters alive at once: **34,678** (the
@@ -7285,6 +7286,115 @@ spots' stand-in nests (one monster each); the 132 cap-0 nests; the hive populati
 substitution, the level > 110 refusal and a failed placement (no server navmesh); column 9's
 retarget by hate, 34 and 39; rank-scaled rewards; the party count's reference point (INFERRED); the
 species' own scale percent and the target window's party re-centring on the client.
+
+### 9. The review's follow-up (a second commit)
+
+The review of 4bcc2cf found no HIGH issue. Its findings, and the user's decision on the swapped
+spots:
+
+- **M1, the user's decision ("Use the DB nest numbers").** A swapped spot keeps the npcpos species,
+  under its own tactics row where one exists (else the stand-in behaviour), and now takes its OWN
+  claimed DB nest's cap, window [col12, col13], nRadius, nGenerateRadius and champion % -- the
+  champion roll still gated by column 41 of the row the monster runs (EXTERNAL). The nest's hive
+  cap is not applied (the shard regrouped those nests). The 6,041 nests (MEASURED): caps summing to
+  37,360, windows 1-3 s on 4,835, champion 10 % on 4,522. `-nest-swapped-stand-in` (OURS) falls
+  back to the one-monster stand-in.
+- **M2, rarity 8 is unique-class** (`combat.RarityHPPercent`'s `case 3, 8`). The 15 rarity-8 rows
+  are left out with the uniques, for round 661's hives: MOB_SD_SPHINX, _SPHINX_2, _SPHINX_3,
+  MOB_SD_SEKHMET, _SEKHMET_2, _SEKHMET_3, MOB_SD_NEPHTHYS, _NEPHTHYS_2, _NEPHTHYS_3, MOB_SD_HORUS,
+  _HORUS_2, _HORUS_3, MOB_SD_OSIRIS, _OSIRIS_2 (one row each; 3-hour windows) and MOB_SD_APIS (one
+  row, on a spot the shard gave DEADWARRIOR).
+- **L1, the tolerance's evidence.** §1's "nearest other nest 2.10" came from a probe that measured
+  only beyond the tolerance and so could not fail. Other nests stand inside it: SD_OSIRIS,
+  MUMMY_RAGE and MUMMY_HUBRIS share a point with three nests at 0.000; SD_MONTKILLER and SD_HIKE
+  share one with two, and both claimed nest 29723; MOB_KK_PLANAR has two other nests at 0.713. The
+  join now ranks every (row, nest) pair within 1.0 -- own species first, then nearest, then order
+  (OURS) -- and takes them greedily, one row per nest. MEASURED at boot: the nearest OTHER nest to
+  a placed row is 0.000; 5 placed rows have more than one nest within the tolerance; 0 lost theirs.
+- **L2**: tests that kill three surviving mutants (the brain dropping the nest radius for the 200
+  stand-in; the reach rule ignored; the champion column-41 gate checked on the outcome).
+- **L3**: the kill's party arming is installed only with `-full-map`; a deploy without it is
+  unchanged (the roster's stand-ins hatch no party monsters).
+- **L4**: `-nest-respawn` under 1 s is refused at boot (it rounded to a 0 s window).
+- **L5**: deploy/README says `-full-map` forces `-single-frame`, with what that moves world-wide
+  and the client rounds (569-571) it needs.
+- **L6**: TODO records where the rank-reward search starts (`Formula_MonsterExpReward` 0x4105d0 has
+  no rank factor; its callers 0x4e6980 / 0x4e6d60 may be the PvP path).
+- **L7**: the "see below" cross-reference, the `class_scale` comment's place, and the wording of §3:
+  the class scale grows the model, the name plate and HP bar, the cull radius and the click
+  collider (sized from the plate's height). The champion-capable slots are **19,723** now (rank-0
+  species only, rarity 6/8 excluded), which matches the reviewer's count; §5's 20,132 summed
+  every slot with a champion row, 409 of them at a 0 % chance. The prediction there (1,702 / 252)
+  is unchanged -- those slots add nothing to it.
+
+**The census after the follow-up** (MEASURED, boot on the box): 10,109 nests placed (4,068
+matched, 2,346 swapped with their own row, 3,695 swapped with the stand-in behaviour; 6,041 on
+their DB nest), at most **65,982** alive (34,663 with `-nest-swapped-stand-in`), 19,723
+champion-capable slots, the densest window **4,716** monsters (cell -116/8; 1,516 at cell -59/3
+before).
+
+**New tests' FAIL lines on 4bcc2cf** (the files copied onto it):
+
+```
+--- FAIL: TestJoinCoLocatedNestsOneRowEach (0.00s)
+    review660_test.go:52: placed 5 rows, want 4: the rarity-8 row is unique-class and left out (... SwappedTo:map[8001:3] ... NearestOther:5 ...)
+--- FAIL: TestSwappedSpotTakesItsNest (0.00s)
+    review660_test.go:39: 2 slots, max alive 2; want 2 slots holding their nests' 5 + 7
+```
+
+`TestNestRespawnUnderASecondIsRefused` and `TestSwappedStandInFlag` do not build there
+(`checkNestRespawn`, `nestSwappedStandIn` are new). The mutant tests pass on 4bcc2cf, whose code is
+right, and each fails on its mutant:
+
+```
+== mutant A: stand-in roam radius
+    review660_test.go:31: 300 from its nest with a 700 radius: HOMING, want no HOMING
+== mutant B: reach rule ignored
+    review660_test.go:57: reach rule 1: still in BATTLE, want out of reach at once
+== mutant C: col 41 gate ignored
+    review660_test.go:75: no champion row, every die 0: {Class:4 Champion:true}, want a plain monster
+```
+
+**Re-measured on the box** (full map with the DB, one client, sleep on; `live.sh` r3-r8, 150-180 s
+each; client frame time from `--print-fps`, the median of the last minute):
+
+| run | where | swapped spots | alive | AI tick p50 / p99 (ms) | server RSS | bodies drawn | client ms/frame |
+|---|---|---|---|---|---|---|---|
+| r3 | Jangan's Mangyang field (matched) | DB nests | 65,662 | 1.01-1.26 / 1.73-1.78 | 124 MB | 426 | 16.9 |
+| r4 | same | stand-in | 34,344 | 0.82-1.41 / 1.55-1.84 | 108 MB | 432 | 17.2 |
+| r6 | Europe starter field 108/77 (MOVOI, EDENP) | DB nests | 65,662 | 2.30-2.39 / 3.06-4.05 | 139 MB | 1,378 | **100** |
+| r7 | same | stand-in | 34,343 | 0.52-0.62 / 0.85-0.99 | 107 MB | 208 | 16.7 |
+| r5 | the densest window, cell -116/8 | DB nests | 65,669 | 4.73-4.97 / 5.98-6.42 | 161 MB | 2,412 | **143** |
+| r8 | same | stand-in | 34,344 | 0.62-0.65 / 0.83-0.95 | 111 MB | 202 | 16.7 |
+
+(16.7-17.2 ms is the 60 Hz frame; the Jangan runs hold it either way.) **The server carries the
+decision** -- p99 under 6.5 ms at the densest window, RSS 124-161 MB. **The client does not, where
+the swapped spots cluster:** 1,378 and 2,412 bodies take the Europe starter field to 10 fps and
+the densest window to 7 fps. That is the data, not this commit's code (the perf gate below is
+SAME), and it goes to the user with these numbers: until the client's monster drawing scales past
+round 655's ~500-in-view budget, `-nest-swapped-stand-in` keeps those fields at 60 fps. The densest
+window's list is about 320 KB: ten frames of the paged list.
+
+The perf gate on this commit's code, `perf_gate.sh --base 4bcc2cf --sites jangan,mobs` (the
+client change is a comment's place): SAME on all eight numbers --
+
+```
+jangan  frame ms   base 9.69  head 9.68  (-0.0)  SAME
+jangan  entry ms   base 9668  head 9611  (-57.0)  SAME
+jangan  freeze ms  base 3380  head 3389  (+9.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+mobs    frame ms   base 10.66  head 10.60  (-0.1)  SAME
+mobs    entry ms   base 11349  head 11333  (-16.0)  SAME
+mobs    freeze ms  base 3392  head 3403  (+11.0)  SAME
+mobs    hitches    base 6  head 6  (+0.0)  SAME
+```
+
+-- so the fall in frame rate above is the swapped spots' density, which the gate's fixed sites
+(Jangan, a synthetic 500-monster list) do not carry.
+
+Tests: `cd server && go vet ./... && go test -count=1 -p 1 ./...`: vet clean, 62 packages ok (re-run after the dev machine's disk-full window); `go test
+-count=1 -race ./internal/nest ./internal/session`: ok, no race. `remote_godot.sh tests`: 175
+suites, 0 failing.
 
 ## Six-hundred-and-fifty-seventh round: a unique's appearance and its killer are announced to every player in the original's blue banner at the top of the screen
 
