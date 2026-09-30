@@ -184,6 +184,49 @@ static func parse_models_by_code(data: PackedByteArray, into: Dictionary = {}, p
 		into[code] = model
 	return into
 
+## OrgObjCodeName, the row a `_CLON` (and 34 other rows) takes its model from
+## when its own is `xxx` (round 655; see parse_org_codes).
+const COL_ORG_CODE_NAME := 4
+
+## Parses one characterdata part into {code name -> OrgObjCodeName} for rows
+## whose column 4 names another row, merging into `into`. `xxx` and "" name
+## none: the client's text reader stores `xxx` as an empty string (READ,
+## FUN_0097f860 / FUN_0097f920: lstrcmp against "xxx", then assign "").
+##
+## What the client does with it (READ, round 655, docs/protocol/
+## characterdata.md "The model of a row with none"): when a character is
+## created, its model is its own row's first col-52 file (+0x124) unless that
+## is empty, and then the Org row's (`if (*(rec+0x138) == 0 && org != 0) path
+## = org + 0x124`, CICMonster::vslot_025 0x9d3850 and three twins). One
+## level: the Org row's own Org is never consulted.
+static func parse_org_codes(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
+	for line in _lines(data):
+		var cols := line.split("\t")
+		if cols.size() <= COL_ORG_CODE_NAME:
+			continue
+		var code := cols[COL_CODE_NAME].strip_edges()
+		var org := cols[COL_ORG_CODE_NAME].strip_edges()
+		if code == "" or org == "" or org.to_lower() == "xxx":
+			continue
+		into[code] = org
+	return into
+
+## The model a row is drawn with: its own when it has one, else its Org row's
+## (one level; READ, parse_org_codes). "" when neither has one -- the client
+## would then load `res\mob\china\mangnyang.bsr` (FUN_009c4ec0, 0xde1f90),
+## but in the real table every row that reaches this path with a code whose
+## Org has no model is a thief, hunter or guild soldier, which the client
+## draws through its own model list instead (ICMonster::FUN_009d3470), so the
+## fallback is not taken here.
+static func model_with_org(code: String, models_by_code: Dictionary, org_by_code: Dictionary) -> String:
+	var own: String = models_by_code.get(code, "")
+	if own != "":
+		return own
+	var org: String = org_by_code.get(code, "")
+	if org == "":
+		return ""
+	return models_by_code.get(org, "")
+
 ## Parses one characterdata part into {code name -> [walk, run]} (world units
 ## per second, COL_SPEED_WALK/COL_SPEED_RUN) for rows whose code starts with
 ## `prefix`, merging into `into`. A row missing either column is skipped.
@@ -303,7 +346,11 @@ static func _find_model_path(cols: PackedStringArray) -> String:
 	for col in cols:
 		var trimmed := col.strip_edges()
 		if trimmed.to_lower().ends_with(".bsr"):
-			return trimmed
+			# Several files in the one column (`MOB_SD_HAROERIS`, `MOB_SD_SETH`):
+			# the client splits it on "," and keeps the first as the model
+			# (READ, round 655: RefObjCommon parser FUN_00972910, asm 0x972f1d
+			# copies piece 0 to +0x124).
+			return trimmed.split(",")[0].strip_edges()
 	return ""
 
 static func _lines(data: PackedByteArray) -> PackedStringArray:

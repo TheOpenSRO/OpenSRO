@@ -7094,6 +7094,244 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-fifty-fifth round: five hundred monsters in view build in a few frames each instead of freezing the game, and the Small-eyed Ghost, Old Weasel, Water Ghost slave and Tomb Stone Ghost are drawn as themselves
+
+Part of the monster-world epic. The server will soon send hundreds of monsters per view: 10,195
+field placements over the map, and about 500 in the densest 5 x 5-region window. Before this
+round the client could not draw that many.
+
+**Labels.** READ: recovered from `sro_client.exe` (the decompile on the render box). MEASURED:
+counted or timed on the box. INFERRED: follows from what was read but was not itself read. OURS:
+this project's choice.
+
+### What the client did with a monster list (READ from World3D.gd at ab66d9c)
+
+- **Every body was a fresh assembly.** `_spawn_or_update_monster` called
+  `SkinnedBsrAssembler.assemble_from_archive` for each monster. That meant the `.bsr`, the `.bsk`,
+  every `.bms`, the `.bmt` and its textures, per body, with no species cache. The NPC path has had
+  one (`_npc_model_cache`) since round 157.
+- **The whole list was built in the frame it arrived**, with a print line and a debug ItemList
+  row for each monster.
+- **A monster outside the loaded terrain was built anyway**, at the server's y. It then sat on
+  the height retry list until its region loaded.
+- **Every idle and one-shot clip was posed in GDScript every frame**, wherever the body stood.
+- **A full monster list was requested** after every own attack result, every `OpMonsterDamaged`,
+  every `OpMonsterDied`, and at the end of every death clip.
+
+**What it cost (MEASURED, `client/tools/probe_monster_build.gd` on the box's archive).** One body
+assembled from its `.bsr`:
+- 4-14 ms for most Chinese field species;
+- 133 ms for the first one (a cold archive);
+- 791 ms for `MOB_CH_TIGERWOMAN` (69 bones, 7 pieces);
+- a mean of **53 ms** over the 21 species tried.
+
+A duplicate of a species template costs **0.33 ms**, 162 times less. So 500 bodies of 21
+species cost about 26.5 s built the old way and about 1.3 s built from templates.
+
+### What changed
+
+- **One template per species model** (`MonsterDraw.Templates`). Each model is assembled once
+  and kept detached. Every body is a `duplicate()` of the template's skeleton: the meshes, skins,
+  materials and textures are shared, and so are the parsed `.bsr`, the idle clip and the
+  per-model animation cache. A model that fails to assemble is remembered as failed. The
+  templates are freed with the world.
+- **Bodies are built over several frames.** A list queues the bodies it names. Each physics frame,
+  `_pump_monster_builds` builds them until 3 ms is spent, and always builds at least one
+  (`BUILD_BUDGET_USEC`, OURS). A species seen for the first time is still one assembly on the main
+  thread, and the at-least-one rule lets it through (OPEN, below). A single push
+  (`OpMonsterSpawned`) still builds its body at once.
+- **Posing is culled** (`MonsterDraw.pose_wanted`, applied in `_tick_idle_animations`). A monster's
+  or NPC's clip is posed only while:
+  - its body is in range of the camera, meaning `dist - radius < 2020`;
+  - its sphere touches the view frustum.
+
+  Its sounds stop out of range, and a monster's model is hidden there (`MonsterDraw.META_HIDE`,
+  OURS, as MapAnimation hides a map object; added after the review, since an unposed walking
+  body slid without its gait). An NPC is only left unposed. The clock keeps running, so a
+  one-shot still hands back to its loop on time. The player, other players and the character window's doll are never culled.
+  - **The range is OURS.** It is the map objects' READ update range (2500 - 480, asm
+    0xa2d961/0xa2d967, round 645) applied to characters. Retail's monster render slot
+    (`CICMonster` slot 10, 0x9d20d0) has no distance test, and the object slot `FUN_009c4aa0`
+    only tests the frustum (READ). The entity manager's per-frame tick was not read.
+  - **The sphere is OURS**: centred on the feet, with a radius of the farthest mesh-bounds corner
+    or the name-plate height, whichever is larger.
+  - Bodies out of range are still drawn, just not posed.
+- **No body outside the loaded regions.** A monster whose cell is not in `_grid.loaded_cells` keeps
+  its snapshot and gets no body (`_monster_deferred`). The body is built when the cell loads and
+  dropped when the cell unloads, which happens in `_monster_cells_changed`, run from the pump after
+  `mark_loaded` or `unload`. A move for a monster that is listed but not yet drawn updates its
+  snapshot and asks for no list.
+- **No full list on hits.** The own attack result's `monster_remaining_hp` is recorded in the
+  snapshot when the result arrives (in wire order with the zone's pushes) and drawn from the
+  snapshot as the blow lands (`_record_monster_hp` / `_paint_monster_hp`), so an older result
+  cannot overwrite a newer `OpMonsterDamaged` that arrived before the landing. Showing it at the
+  landing is OURS; until now it came with the list reply. `OpMonsterDamaged` records and draws at
+  once (`_apply_monster_hp`). **Only a result that reports a blow carries health** (damage > 0
+  or died): the review found that a zero-damage hostile cast (`SKILL_EU_WARRIOR_DUALA_STUN_A_01..05`,
+  and the debuffs this epic adds) was answered with `MonsterRemainingHP` 0 (session/skill.go's
+  no-blow reply), which the list pull used to correct. The client now ignores health on a no-blow
+  result, and the server fills the field with the monster's current HP there. A death removes its body when its clip has run (`_finish_monster_death`),
+  or at once when there is none. The server gives a respawn a new id (`maintainMonster`), so a
+  removed id never comes back. The zone-change list, the GM refresh, the refresh button, the
+  QA hooks and the rate-limited list after a move for an unknown monster all remain. **One
+  throttled pull stays** (review, item 3): until the zone's first `OpMonsterSpawned` is seen, a
+  death that has played out asks for one list, at most every 10 s (`DEATH_PULL_SECONDS`, OURS),
+  so a server with `-monster-spawn-push` off (the default) still shows respawns and GM spawns.
+- **No per-monster prints or rows.** The build line, the "height resolved" line and the list's
+  per-monster lines are printed only with `SRREVAMP_QA_MOB_LOG` or `/wire`. A queue that drains
+  prints one summary. The debug tabs' ItemList is filled only while the tabs are shown.
+
+### The `_CLON` model rule (READ; docs/protocol/characterdata.md has the addresses)
+
+- **`xxx` is stored as an empty string.** The client's characterdata parser (`FUN_00972910`)
+  stores `xxx` as "" (`FUN_0097f860`/`FUN_0097f920`). It stores column 4, OrgObjCodeName, at
+  +0x40, and after the file loads it links that to the Org row's ID at +0x5c (`FUN_0093fb50(5)`).
+- **The pick.** At object creation `CICMonster::vslot_025` (0x9d3850, and three twins) takes the
+  row's own model at +0x124 unless it is empty, and then the Org row's model. It goes one level
+  only; nothing loaded means `res\mob\china\mangnyang.bsr`.
+- **srrevamp.** `NpcTableReader.parse_org_codes` and `model_with_org` implement the rule, and
+  `_monster_model_path` resolves through it before the display-name join.
+  - The Mangyang fallback is not taken. In the real table only the thief, hunter and guild-soldier
+    classes reach it, and retail draws those from their own list (`ICMonster::FUN_009d3470`).
+  - A column-52 cell that names several files now yields the first, as the parser keeps piece 0
+    (asm 0x972f1d).
+- **MEASURED on the box's archive.** 1,731 `MOB_` codes have their own model, and 159 more take
+  their Org's model. 120 of the 142 `MOB_*_CLON` rows take their Org's model. The four roster
+  `_CLON`s now draw as `bigeyeghost`, `gyo`, `waterghost` and `tombstone`. The world's own count
+  at load: `5423 species resolvable by code, 161 more through their Org row`.
+- **Still OPEN.** Column 48 (Scale, applied by CICMonster as scale / 100 from the row's own
+  record) is not applied to any monster.
+
+### Tests
+
+`client/scripts/world/monster_draw_test.gd` runs on synthetic data only. The models are a 40-bone
+skeleton with four skinned 2,400-vertex pieces and a 256 x 256 mipmapped texture, handed to the
+world through its `_monster_assemble` Callable. The NetClient is a subclass that counts
+`list_monsters`. The test covers:
+- 500 snapshots of 5 species: 5 assemblies and 500 modelled bodies; the list is not built in its
+  own frame and drains in 79 frames;
+- a cached body at 377 us against 8,534 us for an assembled one;
+- (review) a result with no blow leaves the health alone; with no spawn push seen, two deaths in a
+  row ask for one list, and with the push seen, none;
+- the region gate: deferred, built on load, dropped on unload with the snapshot kept;
+- no list on a hit, a kill or an own result, with the pushed health applied;
+- posing: in front, behind, past the range, and the rule's strict bound;
+- the Org rule, one level, the first of several files, and through the world.
+
+**The NEGATIVE: the same test against ab66d9c** (its tree, with the new test file added) gives
+19 FAILURES:
+
+```
+FAIL NpcTableReader reads OrgObjCodeName (col 4)
+FAIL MonsterDraw exists
+FAIL a 500-monster list is not built in the frame it arrives (500 built in it, 201.6 ms)
+FAIL 5 species are assembled 5 times for 500 bodies (got 0)
+FAIL every body is its species' model, not a capsule (0 of 500)
+FAIL a cached body costs under a third of an assembled one (-1 us against 8791 us)
+FAIL the build queue drained
+FAIL a monster in a region not loaded has no body
+FAIL and waits for its region
+FAIL a pushed spawn in a region not loaded has no body either
+FAIL and dropped when it unloads
+FAIL a hit (OpMonsterDamaged) asks for no monster list (1 asked)
+FAIL and its health is kept in the snapshot
+FAIL a kill (OpMonsterDied) asks for no monster list (2 asked)
+FAIL and the body goes once its death has played (no die clip here: at once)
+FAIL an own attack result asks for no monster list (3 asked)
+FAIL and the result's health reaches the snapshot (got 50)
+FAIL three bodies built for the culling check
+FAIL the world draws a `_CLON` with its Org row's model (got '')
+```
+
+On the base even 500 capsules (no model assembles there) took 201.6 ms in one frame.
+
+**The review follow-up's server NEGATIVE.** `TestSkillCastHandsOffToPlainSwings` now also checks
+the zero-damage cast's `MonsterRemainingHP`; with the old `skill.go` it fails:
+
+```
+--- FAIL: TestSkillCastHandsOffToPlainSwings (1.27s)
+    keepup_test.go:516: zero-damage cast reports MonsterRemainingHP 0; want the monster's unchanged 1000
+```
+
+The client test against the round's first commit (7954e77, its tree with the new test file):
+
+```
+FAIL a result with no blow (0 damage, not died) leaves the monster's health alone (got 0)
+FAIL the death-pull throttle exists (_spawn_push_seen)
+2 FAILURES
+```
+
+After the follow-up: `monster_draw_test.gd` ALL PASS, `remote_godot.sh tests` 173 suites, 0
+failing, `check` ALL LOAD (431 scripts), and `go test -count=1 -p 1 ./...` 60 packages ok. The
+older-result-over-newer-push ordering (review item 2) has no test: in the headless world the swing
+has no hit event, so the blow lands inside the handler and the window between arrival and landing
+is empty.
+
+`client/tools/remote_godot.sh tests` ran **173 suites, 0 failing**. That includes
+`height_retry_test` (floating and heights), `monster_bodies_test`, `monster_motion_test`,
+`monster_strikes_test` (targeting and counters) and the death-hold tests.
+
+### Performance gate
+
+A new site, `mobs`, is the Jangan spawn with `SRREVAMP_QA_MOBS=500`. That is a 500-monster list
+of the 17 `MOB_CH_` species with a model of their own (13 distinct models), at seeded positions
+over the 5 x 5-region window. It is delivered through `_on_monster_list_result` as soon as the
+grid has its origin, during the loading drain, where a real list asked for in `_ready` lands.
+The base has no hook, so the `mobs` site is gated against **0c2184b**: ab66d9c plus only the
+hook, on the unmerged branch `perf/mobdraw655-base`. The old build path therefore gets the same
+list.
+
+`client/tools/perf_gate.sh --base ab66d9c --sites jangan` (the standard view, no monsters; 1280x720,
+medians of 3 interleaved runs):
+
+| site | number | base ab66d9c | head | verdict |
+|---|---|---|---|---|
+| jangan | frame ms | 11.23 | 9.40 | FASTER (-1.8) |
+| jangan | entry ms | 9502 | 9542 | SAME |
+| jangan | freeze ms | 3370 | 3374 | SAME |
+| jangan | hitches | 5 | 5 | SAME |
+
+The Jangan frame is faster because the town's NPC idles are now culled too (the same rule as the
+monsters: out of range or out of view, not posed). INFERRED: this view has no monsters, so the
+culled NPC clips are the only change on the per-frame path.
+
+`client/tools/perf_gate.sh --base 0c2184b --sites mobs` (500 monsters; one base run repeated after
+another lane's render overlapped it):
+
+| site | number | base 0c2184b (ab66d9c + hook) | head | verdict |
+|---|---|---|---|---|
+| mobs | frame ms | 350.00 | 10.75 | FASTER (-339.2) |
+| mobs | entry ms | 40052 | 11232 | FASTER (-28820) |
+| mobs | freeze ms | 29556 | 3355 | FASTER (-26201) |
+| mobs | hitches | 3000 | 6 | FASTER (-2994) |
+
+On the old path, the 500-body list was one frame of about 29.6 s, inside the loading drain, and
+every frame after that ran at about 350 ms: 500 skeletons posed in GDScript, per-frame height
+retries for the bodies outside loaded terrain, and every body drawn. The head's freeze, 3,355 ms,
+is the Jangan centre cell's own build, which is the same as on the `jangan` site. Its 10.75 ms a
+frame against Jangan's 9.40 ms is what 500 monsters now cost standing still: +1.35 ms (MEASURED
+across the two gates, not interleaved with each other).
+
+**A smoke run of the head** (`SRREVAMP_QA_MOBS=500`, one boot):
+- 87 bodies were built during the drain over 28 frames, and the rest as their cells loaded, in
+  frames of 3.2-3.8 ms.
+- The longest monster frame was 786 ms: the first `MOB_CH_TIGERWOMAN`, one assembly.
+- All 500 were built by frame 443, with 13 templates, 13 assemblies in 1,067 ms, and 500
+  instances in 271 ms.
+- Steady state was 9.9-10.2 ms a frame.
+
+### Left open (docs/TODO.md, "Many monsters (round 655)")
+
+- **A new species is still assembled on the main thread.** The worst is 791 ms. Next step: the
+  objects job's worker-thread prepare.
+- **The pose range for characters is OURS.**
+- **Respawns on a server without the spawn push** show only through the throttled pull after a
+  death (at most every 10 s), so a respawn with no death after it waits for the next kill, a
+  zone change or a GM refresh. `-monster-spawn-push` (on on the public server) or the AOI lane's
+  enter pushes remove the limit.
+- **A body walking out of the loaded window** keeps its body until its region unloads.
+- **Scale (column 48) is not applied.**
+
 ## Six-hundred-and-fifty-fourth round: the server knows every monster species in the game, and a GM can spawn any of them
 
 The user (2026-09-30): "Please add all monsters to the map like the original server would have it

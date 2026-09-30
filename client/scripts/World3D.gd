@@ -2507,7 +2507,7 @@ func _minimap_npc_positions() -> Array:
 var _qa_anim_sample: Dictionary = {}
 
 func _qa_animation_report() -> void:
-	print("QA ANIM %d animated character(s)" % _animated.size())
+	print("QA ANIM %d animated character(s), %d posed and %d culled last frame" % [_animated.size(), _anim_posed_last, _anim_culled_last])
 	var checked := 0
 	for entry in _animated:
 		var skeleton: Skeleton3D = entry[0]
@@ -4165,6 +4165,7 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 	_grid_has_origin = true
 	_grid.loaded_cells.clear()
 	_grid.mark_loaded(cdx, cdy, center_x, center_y)
+	_monster_cells_dirty = true
 	# The centre cell is (cdx, cdy) -- (0, 0) while the frame is the centre;
 	# the neighbours stream in from here. Set the stream cell to it (not the
 	# sentinel) so the queue's stale-guard keeps the neighbours we are about
@@ -4232,6 +4233,8 @@ func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_an
 	_try_spawn_region_npcs(region_x, region_y)
 	_note_cell_built(t0, t1, t2, Time.get_ticks_usec())
 	_grid.mark_loaded(dx, dy, region_x, region_y)
+	# Its monsters waiting for it are built now (round 655).
+	_monster_cells_dirty = true
 
 ## Where a region's terrain group stands (_terrain_commit): the half-span
 ## centring, the vertical anchor and the cell's offset from the frame region
@@ -4408,6 +4411,8 @@ func _maybe_stream_regions() -> void:
 		# heightmap and the object collision meshes only it referenced.
 		# Until this round only the cell key was erased.
 		var dropped := _grid.unload(region_x, region_y)
+		# Its monsters' bodies go with it (round 655), their snapshots kept.
+		_monster_cells_dirty = true
 		print("World3D: region %d/%d forgotten -- %s; %d NPC holder(s) freed with its terrain" % [
 			region_x, region_y, ", ".join(dropped), npcs_freed])
 
@@ -5147,8 +5152,12 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		_monster_bodies[monster_id].queue_free()
 	_monster_bodies.clear()
 	# Their snapshots too (round 638 review): the old zone's monsters are no
-	# one's target here; the list below refills it.
+	# one's target here; the list below refills it. And any body still
+	# queued or waiting for its region (round 655).
 	_monster_snapshots.clear()
+	_monster_build_queue.clear()
+	_monster_build_queued.clear()
+	_monster_deferred.clear()
 	_monster_motion.clear()
 	_monster_heights_pending.clear()
 	_strike_waits.clear()
@@ -5394,6 +5403,8 @@ func _exit_tree() -> void:
 			character.skeleton.free()
 			npc_freed += 1
 	_npc_model_cache.clear()
+	# The monster species templates (round 655), never parented either.
+	npc_freed += _monster_templates.free_all()
 	_ground_texture_cache.clear()
 	_water_frames_cache.clear()
 	_water_frames_load_attempted = false
@@ -5416,7 +5427,7 @@ func _exit_tree() -> void:
 	if viewport != null:
 		viewport.debug_draw = Viewport.DEBUG_DRAW_DISABLED
 	print(_load_timings.summary())
-	print("World3D: left the tree -- %d scenery templates and %d NPC templates freed" % [scenery_freed, npc_freed])
+	print("World3D: left the tree -- %d scenery templates and %d NPC and monster templates freed" % [scenery_freed, npc_freed])
 
 ## Registers an assembled character for idle animation, if it has one.
 ##
@@ -5487,10 +5498,24 @@ func _play_once(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, hold: boo
 ## Advances every idle animation. Entries whose skeleton has gone (a region
 ## streamed out, a monster died) are dropped as they are found, which keeps
 ## this from holding freed nodes alive.
+##
+## Round 655: a monster's or NPC's clip (MonsterDraw.META_CULL) is posed only
+## while its body is in MonsterDraw.POSE_RANGE of the camera and touches the
+## view frustum (MonsterDraw.pose_wanted); out of range its clip's sounds stop
+## too, and a monster's model (MonsterDraw.META_HIDE) is hidden. The clock
+## runs on regardless, so a body coming into view is posed
+## where its clip has got to, and a one-shot still hands back to its loop on
+## time. The player, other players and the character window's doll are not
+## culled.
 func _tick_idle_animations(delta: float) -> void:
 	if _animated.is_empty():
 		return
 	_idle_anim_time += delta
+	var cam := get_viewport().get_camera_3d() if is_inside_tree() and get_viewport() != null else null
+	var eye: Vector3 = cam.global_position if cam != null else Vector3.ZERO
+	var planes: Array = cam.get_frustum() if cam != null else []
+	var posed := 0
+	var culled := 0
 	var alive: Array = []
 	for entry in _animated:
 		# A zone change frees every region's skeletons while their entries
@@ -5503,12 +5528,30 @@ func _tick_idle_animations(delta: float) -> void:
 		var skeleton: Skeleton3D = entry[0]
 		if not skeleton.is_inside_tree():
 			continue
+		var pose := true
+		var audible := true
+		if cam != null and skeleton.has_meta(MonsterDraw.META_CULL):
+			var origin := skeleton.global_position
+			var radius := float(skeleton.get_meta(MonsterDraw.META_RADIUS, 1.0))
+			audible = MonsterDraw.in_range(origin, radius, eye)
+			pose = audible and MonsterDraw.pose_wanted(origin, radius, eye, planes)
+			# A monster's model out of range is hidden, as MapAnimation hides a
+			# map object (round 655's review; OURS): unposed, a walking body
+			# would slide without its gait.
+			if skeleton.has_meta(MonsterDraw.META_HIDE) and skeleton.visible != audible:
+				skeleton.visible = audible
+		if pose:
+			posed += 1
+		else:
+			culled += 1
 		var anim: BanReader.ParsedAnimation = entry[1]
 		var phase: float = entry[3]
 		var loops: bool = entry[4]
 		if loops:
-			Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, _idle_anim_time + phase, true)
-			_anim_sounds.advance(skeleton, anim, float(entry[5]), _loop_ms(anim, _idle_anim_time + phase), true)
+			if pose:
+				Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, _idle_anim_time + phase, true)
+			if audible:
+				_anim_sounds.advance(skeleton, anim, float(entry[5]), _loop_ms(anim, _idle_anim_time + phase), true)
 		else:
 			# A one-shot runs from when it started, on the clip's own clock,
 			# and holds its last keyframe; once there, hand back to what it
@@ -5517,19 +5560,31 @@ func _tick_idle_animations(delta: float) -> void:
 			if elapsed >= anim.duration_seconds() and entry[6] != null:
 				# Its last tracks first: the frame that ends it is the frame
 				# that would pass them.
-				_anim_sounds.advance(skeleton, anim, float(entry[5]), float(anim.duration_ms), false)
+				if audible:
+					_anim_sounds.advance(skeleton, anim, float(entry[5]), float(anim.duration_ms), false)
 				var resume: Array = entry[6]
 				resume[5] = _idle_anim_time
 				alive.append(resume)
-				Skeleton3DBuilder.apply_ban_pose_at(skeleton, resume[1], _idle_anim_time + float(resume[3]), true)
-				_anim_sounds.advance(skeleton, resume[1], float(resume[5]),
-					_loop_ms(resume[1], _idle_anim_time + float(resume[3])), true)
+				if pose:
+					Skeleton3DBuilder.apply_ban_pose_at(skeleton, resume[1], _idle_anim_time + float(resume[3]), true)
+				if audible:
+					_anim_sounds.advance(skeleton, resume[1], float(resume[5]),
+						_loop_ms(resume[1], _idle_anim_time + float(resume[3])), true)
 				continue
-			Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, elapsed, false)
-			_anim_sounds.advance(skeleton, anim, float(entry[5]), elapsed * 1000.0, false)
+			if pose:
+				Skeleton3DBuilder.apply_ban_pose_at(skeleton, anim, elapsed, false)
+			if audible:
+				_anim_sounds.advance(skeleton, anim, float(entry[5]), elapsed * 1000.0, false)
 		alive.append(entry)
 	if alive.size() != _animated.size():
 		_animated = alive
+	_anim_posed_last = posed
+	_anim_culled_last = culled
+
+## How many clips the last _tick_idle_animations posed and culled (round
+## 655), for the QA ANIM line and the test.
+var _anim_posed_last := 0
+var _anim_culled_last := 0
 
 ## Where a loop posed at `seconds` is in its clip, in milliseconds -- the
 ## wrap apply_ban_pose_at makes for a looping clip.
@@ -6235,6 +6290,9 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 			facing_usec += Time.get_ticks_usec() - facing_started
 		holder.add_child(skeleton)
 		var bounds := _skeleton_bounds(skeleton)
+		# Its idle is posed only while seen (round 655, MonsterDraw).
+		skeleton.set_meta(MonsterDraw.META_CULL, true)
+		skeleton.set_meta(MonsterDraw.META_RADIUS, MonsterDraw.cull_radius(skeleton, maxf(bounds.x, bounds.y)))
 		holder.add_child(_npc_collider(bounds))
 		var npc_name: String = _npc_names.get(spawn.npc_id, "")
 		# Tagged so a click on the collider can name the NPC it talks to
@@ -10123,6 +10181,12 @@ func _update_blob_shadow() -> void:
 ##                          behind each result that reports a counter, the
 ##                          OpMonsterAttacked it would send goes through
 ##                          NetClient's own dispatch (_qa_mob_strike)
+##   SRREVAMP_QA_MOBS=<N>   (round 655) as soon as the region grid has its
+##                          origin, a monster list of N synthetic monsters of
+##                          QA_MOB_SPECIES real species spread over the load
+##                          window goes through _on_monster_list_result, as a
+##                          server's list would (_qa_mobs_step); the perf
+##                          gate's `mobs` site
 ##   SRREVAMP_QA_PARTY=create|join:<id>  form a party at tick 70 (round 634)
 ##   SRREVAMP_QA_COMMANDS="/a;/b"  feed these lines through the chat console
 ##                          ("wait <seconds>" pauses the list, round 642)
@@ -11708,6 +11772,60 @@ func _qa_mob_move() -> void:
 			print("QA MOB MOVE: asking for the monster list at half the leg")
 			NetClient.list_monsters())
 
+## SRREVAMP_QA_MOBS=<N> (round 655): a list of N monsters, the density the
+## server will send (the densest 5 x 5-region window of the field spawns
+## holds about 500), for the perf gate's `mobs` site. Delivered once, as soon
+## as the grid has its origin -- during the loading drain, where a real list
+## asked for in _ready lands -- through the list handler a server's list
+## takes. The monsters are OURS: QA_MOB_SPECIES real `MOB_CH_` species with a
+## model of their own (every k-th of the sorted codes, so the pick is the
+## same on every build), at positions drawn with a fixed seed uniformly over
+## the (2 * radius + 1)^2 regions of the load window, at the player's height.
+const QA_MOB_SPECIES := 24
+var _qa_mobs_done := false
+func _qa_mobs_step() -> void:
+	if _qa_mobs_done or not _grid_has_origin:
+		return
+	var spec := OS.get_environment("SRREVAMP_QA_MOBS")
+	if spec == "" or not spec.is_valid_int():
+		return
+	_qa_mobs_done = true
+	_monster_model_path("", "") # the species tables
+	var codes: Array = []
+	for code in _monster_models_by_code.keys():
+		if String(code).begins_with("MOB_CH_"):
+			codes.append(code)
+	codes.sort()
+	var species: Array = []
+	if not codes.is_empty():
+		var step := maxi(codes.size() / QA_MOB_SPECIES, 1)
+		for i in range(0, codes.size(), step):
+			if species.size() < QA_MOB_SPECIES:
+				species.append(codes[i])
+	if species.is_empty():
+		species.append("")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 655
+	var radius := _region_load_radius()
+	var span := 1920.0
+	var centre := _grid_origin_world + Vector3(span / 2.0, 0.0, -span / 2.0)
+	var half := span * (float(radius) + 0.5)
+	var list: Array = []
+	for i in range(int(spec)):
+		var m := CombatNet.MonsterSnapshot.new()
+		m.monster_id = 900000 + i
+		m.code_name = species[i % species.size()]
+		m.monster_name = m.code_name if m.code_name != "" else "QA monster"
+		m.x = centre.x + rng.randf_range(-half, half)
+		m.z = centre.z + rng.randf_range(-half, half)
+		m.y = player.position.y
+		m.max_hp = 100
+		m.hp = 100
+		list.append(m)
+	print("QA MOBS: %d monster(s) of %d species over %.0f x %.0f around (%.0f, %.0f): %s" % [
+		list.size(), species.size(), half * 2.0, half * 2.0, centre.x, centre.z, ", ".join(PackedStringArray(species))])
+	_on_monster_list_result(list, "")
+
 ## SRREVAMP_QA_MOB_STRIKE=1: stands in for a server with the strike push
 ## (OpMonsterAttacked 0x007D), which a server sends only with its
 ## -monster-strike-push flag on (round 541; off by default). Right behind each
@@ -12846,6 +12964,10 @@ func _physics_step(delta: float) -> void:
 	# ground items still waiting for ground share the frame's height budget
 	# with them (_step_heights).
 	_step_heights(delta)
+	# SRREVAMP_QA_MOBS (round 655): a dense monster list, once.
+	_qa_mobs_step()
+	# The monster bodies a list queued, a frame's budget of them (round 655).
+	_pump_monster_builds()
 	# V and Z, while held (round 608).
 	_apply_key_holds()
 
@@ -14146,6 +14268,7 @@ func _toggle_ui_visibility() -> void:
 ## narrowed to the bottom-left corner instead of spanning the full width.
 func _toggle_action_panels() -> void:
 	action_tabs.visible = not action_tabs.visible
+	_fill_monster_rows()
 
 ## Releases the viewport's focus owner for a LEFT button press, and says
 ## whether it did. Only the left button: a right drag orbits the camera and the
@@ -15037,6 +15160,9 @@ func _monster_height_found(monster_id: int, height: float) -> void:
 		return
 	var frames: int = Engine.get_physics_frames() - int(_monster_heights_pending[monster_id])
 	_monster_heights_pending.erase(monster_id)
+	# Per monster, so only with the monster log on (round 655).
+	if not _mob_logging():
+		return
 	var snap = _monster_snapshots.get(monster_id)
 	print("World3D: monster %d %s height resolved after %d frame(s): %.2f at frame %d" % [
 		monster_id, snap.monster_name if snap != null else "?", frames, height, Engine.get_frames_drawn()])
@@ -15074,6 +15200,9 @@ func _monster_height_found(monster_id: int, height: float) -> void:
 ## See NpcTableReader.parse_models_by_code / parse_models_by_name.
 var _monster_models_by_code: Dictionary = {}
 var _monster_models_by_name: Dictionary = {}
+## {code name -> OrgObjCodeName} (round 655): the row a `_CLON` takes its
+## model from (NpcTableReader.parse_org_codes / model_with_org).
+var _monster_org_by_code: Dictionary = {}
 var _monster_models_loaded := false
 ## The object name table as parsed from the player's archive, kept so the
 ## debug panel can show what language its columns yield.
@@ -15094,12 +15223,20 @@ func _monster_model_path(code_name: String, species_name: String) -> String:
 					continue
 				var bytes := _media_pk2.read_file(entry)
 				_monster_models_by_code = NpcTableReader.parse_models_by_code(bytes, _monster_models_by_code, "")
+				_monster_org_by_code = NpcTableReader.parse_org_codes(bytes, _monster_org_by_code)
 				if names != null:
 					_monster_models_by_name = NpcTableReader.parse_models_by_name(bytes, names, _monster_models_by_name)
-			print("World3D: %d species resolvable by code, %d by name" % [
-				_monster_models_by_code.size(), _monster_models_by_name.size()])
-	if code_name != "" and _monster_models_by_code.has(code_name):
-		return _monster_models_by_code[code_name]
+			var through_org := 0
+			for code in _monster_org_by_code:
+				if not _monster_models_by_code.has(code) and _monster_models_by_code.has(_monster_org_by_code[code]):
+					through_org += 1
+			print("World3D: %d species resolvable by code, %d more through their Org row, %d by name" % [
+				_monster_models_by_code.size(), through_org, _monster_models_by_name.size()])
+	if code_name != "":
+		# Its own model, else its Org row's (a `_CLON`; READ, round 655).
+		var by_code := NpcTableReader.model_with_org(code_name, _monster_models_by_code, _monster_org_by_code)
+		if by_code != "":
+			return by_code
 	return _monster_models_by_name.get(species_name.to_lower(), "")
 
 func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
@@ -15135,6 +15272,20 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 		_set_hp_bar(existing, monster.hp, monster.max_hp)
 		return
 
+	# Round 655: no body outside the loaded regions. The snapshot is kept, and
+	# the body is built when its region loads (_monster_cells_changed).
+	if not _monster_region_loaded(Vector3(monster.x, monster.y, monster.z)):
+		_monster_build_queued.erase(monster.monster_id)
+		_monster_deferred[monster.monster_id] = true
+		return
+	_monster_deferred.erase(monster.monster_id)
+	_monster_build_queued.erase(monster.monster_id)
+	_build_monster_body(monster)
+
+## Builds the body of one monster that has none (round 655: split from
+## _spawn_or_update_monster; the body comes from its species' template,
+## MonsterDraw.Templates). The caller has checked its region is loaded.
+func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	# The ray finds no ground where the monster's region has not committed its
 	# terrain collision yet -- the list asked for in _ready routinely arrives
 	# before the neighbour cells do -- and nothing else re-places a standing
@@ -15156,25 +15307,35 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	# hand-derived piece-to-bone table. All of that is superseded:
 	# SkinnedBsrAssembler reads the .bsr's own skeleton and meshes, and
 	# computes the bone mapping.
+	#
+	# Round 655: assembled once per model (MonsterDraw.Templates) and
+	# duplicated per body, as the NPCs are (_npc_model_cache).
 	var monster_skeleton: Skeleton3D = null
 	var monster_model := _monster_model_path(monster.code_name, monster.monster_name)
+	var label_height := 2.0 * PLAYER_SCALE_RATIO
 	if monster_model != "":
-		if _data_pk2 == null:
-			_data_pk2 = _open_pk2_if_set()
-		if _data_pk2 != null:
-			var assembled := SkinnedBsrAssembler.assemble_from_archive(_data_pk2, monster_model, true)
-			if assembled != null:
-				monster_skeleton = assembled.skeleton
-				_monster_assembled[monster.monster_id] = assembled
-				_animate(assembled)
+		var assembled := _monster_templates.instance(monster_model,
+			_monster_assemble if _monster_assemble.is_valid() else _assemble_monster_model)
+		if assembled != null:
+			monster_skeleton = assembled.skeleton
+			_monster_assembled[monster.monster_id] = assembled
+			label_height = _monster_templates.label_height_of(monster_model)
+			monster_skeleton.set_meta(MonsterDraw.META_CULL, true)
+			monster_skeleton.set_meta(MonsterDraw.META_HIDE, true)
+			monster_skeleton.set_meta(MonsterDraw.META_RADIUS, _monster_templates.radius_of(monster_model))
+			_animate(assembled)
 	# Says which of the three ways a monster can come out wrong happened:
 	# the species not in the tables, the model not assembling, or a real
-	# model placed somewhere the player will never be.
-	print("World3D: monster %s (%s) -> model '%s' skeleton=%s at %.0f,%.0f,%.0f (%.0f from the player)%s" % [
-		monster.monster_name, monster.code_name if monster.code_name != "" else "no code",
-		monster_model, "yes" if monster_skeleton != null else "NO",
-		pos.x, pos.y, pos.z, pos.distance_to(player.global_position),
-		" (height pending: no ground under it yet)" if _monster_heights_pending.has(monster.monster_id) else ""])
+	# model placed somewhere the player will never be. Per monster, so only
+	# with the monster log on (round 655); the build summary counts them.
+	if monster_skeleton == null:
+		_monster_build_capsules += 1
+	if _mob_logging():
+		print("World3D: monster %s (%s) -> model '%s' skeleton=%s at %.0f,%.0f,%.0f (%.0f from the player)%s" % [
+			monster.monster_name, monster.code_name if monster.code_name != "" else "no code",
+			monster_model, "yes" if monster_skeleton != null else "NO",
+			pos.x, pos.y, pos.z, pos.distance_to(player.global_position),
+			" (height pending: no ground under it yet)" if _monster_heights_pending.has(monster.monster_id) else ""])
 
 	# Real model height varies a lot by species/asset (real monster
 	# skeletons are nowhere near the human PLAYER_SCALE_RATIO-derived
@@ -15182,14 +15343,9 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 	# real assembled skeleton's own bone bounds rather than reusing the
 	# capsule-calibrated label offset, which would float the label wildly
 	# too high (or low) above a real model of very different real size.
-	var label_height := 2.0 * PLAYER_SCALE_RATIO
+	# (MonsterDraw.label_height, once per template since round 655.)
 	if monster_skeleton != null:
 		body.add_child(monster_skeleton)
-		var max_y := 0.0
-		for i in range(monster_skeleton.get_bone_count()):
-			if Skeleton3DBuilder.is_skeleton_bone(monster_skeleton, i):
-				max_y = max(max_y, monster_skeleton.get_bone_global_pose(i).origin.y)
-		label_height = max_y + max_y * 0.15
 	else:
 		var mesh := MeshInstance3D.new()
 		var capsule := CapsuleMesh.new()
@@ -15220,6 +15376,7 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 
 	other_entities.add_child(body)
 	_monster_bodies[monster.monster_id] = body
+	_monster_builds += 1
 	# Its buffs' auras, if the zone told any (round 646, BuffRoster).
 	_fx_resync_owner(_fx_owner_key(monster.monster_id, SkillNet.OWNER_MONSTER), "its body was built")
 	# Its sounds: keyed by its own sound object (MOB_CH_MANGNYANG ->
@@ -15235,6 +15392,161 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 		# footstep (0xa6ffc0 returns early without one); its key has no material.
 		sound_owner.material = func() -> int: return _audio_material_at(body.global_position, -2) if is_instance_valid(body) else -1
 		_anim_sounds.register(monster_skeleton, sound_owner)
+
+# --- Many monsters (round 655) ------------------------------------------------
+#
+# MonsterDraw has the rules; what follows is the glue: the species templates,
+# the build queue and its per-frame budget, and the region gate.
+
+## One template per species model (MonsterDraw.Templates), freed with the
+## world (_exit_tree). Kept across zone changes, like _npc_model_cache.
+var _monster_templates := MonsterDraw.Templates.new()
+## How a template is assembled: the model's own `.bsr` out of Data.pk2. A
+## Callable so the headless test can hand it a synthetic model.
+var _monster_assemble := Callable()
+## Monsters listed but not built yet, oldest first, and the same ids as a set.
+var _monster_build_queue: Array[int] = []
+var _monster_build_queued := {}
+## Monsters whose region is not loaded: a snapshot, no body. Built when their
+## region loads (_monster_cells_changed).
+var _monster_deferred := {}
+## Set when a region cell loads or unloads, so the next pump re-sorts the
+## deferred monsters and the bodies against the loaded cells.
+var _monster_cells_dirty := false
+## Bodies built, of them capsules, and bodies dropped with their region --
+## for the build summary line.
+var _monster_builds := 0
+var _monster_build_capsules := 0
+var _monster_region_drops := 0
+## When the queue last became non-empty (usec) and the frames it took, for
+## the summary printed when it drains.
+var _monster_queue_started_usec := -1
+var _monster_queue_frames := 0
+var _monster_queue_longest_usec := 0
+
+func _assemble_monster_model(model: String) -> SkinnedBsrAssembler.AssembledCharacter:
+	if _data_pk2 == null:
+		_data_pk2 = _open_pk2_if_set()
+	if _data_pk2 == null:
+		return null
+	return SkinnedBsrAssembler.assemble_from_archive(_data_pk2, model, true)
+
+## Whether a world position lies in a loaded region cell (the streamed grid's
+## _grid.loaded_cells, RegionGridState.cell_at). With no grid -- a loose dev
+## file, the headless tests -- there is nothing to gate against: true.
+func _monster_region_loaded(pos: Vector3) -> bool:
+	if not _grid_has_origin:
+		return true
+	var cell := RegionGridState.cell_at(pos - _grid_origin_world)
+	return _grid.loaded_cells.has("%d_%d" % [cell.x, cell.y])
+
+## Queues a listed monster's body for _pump_monster_builds.
+func _queue_monster_build(monster_id: int) -> void:
+	if _monster_build_queued.has(monster_id) or _monster_bodies.has(monster_id):
+		return
+	if _monster_build_queue.is_empty():
+		_monster_queue_started_usec = Time.get_ticks_usec()
+		_monster_queue_frames = 0
+		_monster_queue_longest_usec = 0
+		_monster_builds = 0
+		_monster_build_capsules = 0
+	_monster_build_queued[monster_id] = true
+	_monster_build_queue.append(monster_id)
+
+## One frame's share of the body builds: queued monsters until
+## MonsterDraw.BUILD_BUDGET_USEC is spent (at least MIN_BUILDS_PER_FRAME). A
+## monster gone from the snapshots (dead, or left the list) is skipped; one
+## whose region is not loaded is deferred. Returns the bodies built.
+func _pump_monster_builds(budget_usec: int = MonsterDraw.BUILD_BUDGET_USEC) -> int:
+	if _monster_cells_dirty:
+		_monster_cells_dirty = false
+		_monster_cells_changed()
+	if _monster_build_queue.is_empty():
+		return 0
+	var started := Time.get_ticks_usec()
+	var built := 0
+	var taken := 0
+	while taken < _monster_build_queue.size():
+		if built >= MonsterDraw.MIN_BUILDS_PER_FRAME and Time.get_ticks_usec() - started >= budget_usec:
+			break
+		var monster_id: int = _monster_build_queue[taken]
+		taken += 1
+		_monster_build_queued.erase(monster_id)
+		var snap = _monster_snapshots.get(monster_id)
+		if snap == null or _monster_bodies.has(monster_id) or _dying_until.has(monster_id):
+			continue
+		var before := _monster_bodies.size()
+		_spawn_or_update_monster(snap)
+		if _monster_bodies.size() > before:
+			built += 1
+	_monster_build_queue = _monster_build_queue.slice(taken)
+	var spent := Time.get_ticks_usec() - started
+	_monster_queue_frames += 1
+	_monster_queue_longest_usec = maxi(_monster_queue_longest_usec, spent)
+	if _monster_build_queue.is_empty() and _monster_queue_started_usec >= 0:
+		print("World3D: %d monster bod(ies) built over %d frame(s) in %.0f ms, longest frame %.1f ms (%d capsule(s)); %d species template(s), %d assembled in %.0f ms, %d instanced in %.0f ms; %d waiting for their region" % [
+			_monster_builds, _monster_queue_frames, (Time.get_ticks_usec() - _monster_queue_started_usec) / 1000.0,
+			_monster_queue_longest_usec / 1000.0, _monster_build_capsules, _monster_templates.size(),
+			_monster_templates.assembles, _monster_templates.assemble_usec / 1000.0,
+			_monster_templates.instances, _monster_templates.instance_usec / 1000.0, _monster_deferred.size()])
+		_monster_queue_started_usec = -1
+	return built
+
+## A region cell loaded or unloaded: deferred monsters whose region is now
+## loaded are queued, and bodies whose region has gone are dropped (their
+## snapshots kept, deferred until it loads again).
+func _monster_cells_changed() -> void:
+	for monster_id in _monster_deferred.keys():
+		var snap = _monster_snapshots.get(monster_id)
+		if snap == null:
+			_monster_deferred.erase(monster_id)
+			continue
+		if _monster_region_loaded(Vector3(snap.x, snap.y, snap.z)):
+			_monster_deferred.erase(monster_id)
+			_queue_monster_build(monster_id)
+	var dropped := 0
+	for monster_id in _monster_bodies.keys():
+		if _dying_until.has(monster_id):
+			continue
+		var body = _monster_bodies[monster_id]
+		if body == null or not is_instance_valid(body):
+			continue
+		if _monster_region_loaded((body as Node3D).position):
+			continue
+		_free_monster_body(monster_id, true)
+		if _monster_snapshots.has(monster_id):
+			_monster_deferred[monster_id] = true
+		dropped += 1
+	if dropped > 0:
+		_monster_region_drops += dropped
+		print("World3D: %d monster bod(ies) dropped with their region; %d waiting for their region" % [dropped, _monster_deferred.size()])
+
+## Takes one monster's body out of the world and everything kept about the
+## body (not the snapshot): the list's removal, a region unloading, a death
+## played out. `keep_buffs` (a region unloading: the monster lives on) keeps
+## the buffs the zone told of it, so the rebuilt body's auras come back
+## (_fx_resync_owner).
+func _free_monster_body(monster_id: int, keep_buffs: bool = false) -> void:
+	var body = _monster_bodies.get(monster_id)
+	if body != null and is_instance_valid(body):
+		(body as Node).queue_free()
+	_monster_bodies.erase(monster_id)
+	SkillEffects.detach_owner(_fx_owner_key(monster_id, 1))
+	if not keep_buffs:
+		_fx_owner_buffs.erase(_fx_owner_key(monster_id, 1))
+	_monster_assembled.erase(monster_id)
+	_dying_until.erase(monster_id)
+	_monster_motion.erase(monster_id)
+	_monster_heights_pending.erase(monster_id)
+	_strike_waits.erase(monster_id)
+
+## Forgets a monster entirely: its body, its snapshot and any queued or
+## deferred build.
+func _forget_monster(monster_id: int) -> void:
+	_free_monster_body(monster_id)
+	_monster_snapshots.erase(monster_id)
+	_monster_deferred.erase(monster_id)
+	_monster_build_queued.erase(monster_id)
 
 ## A click-target collider for a monster: a capsule as tall as the model,
 ## on the monster layer only, so a ray can pick it out for an attack while
@@ -15527,48 +15839,77 @@ func _pick_up_ground_item(ground_id: int) -> void:
 
 ## Reconciles _monster_bodies against live, the authoritative full monster
 ## list for the player's current zone (see _on_monster_list_result) --
-## creates/updates a body for everything in live, removes any tracked body
-## no longer present (dead, or the player changed zones), the same
-## snapshot-driven approach world.Hub's own zone-change teardown uses rather
-## than trying to diff individual damaged/died events.
+## updates the body of everything in live that has one, queues a body for
+## the rest (round 655: built over the next frames by _pump_monster_builds,
+## and only in a loaded region), removes any tracked body no longer present
+## (dead, or the player changed zones), the same snapshot-driven approach
+## world.Hub's own zone-change teardown uses rather than trying to diff
+## individual damaged/died events.
 func _sync_monster_bodies(live: Array) -> void:
 	var live_ids := {}
 	for m in live:
 		live_ids[m.monster_id] = true
-		_spawn_or_update_monster(m)
+		if _monster_bodies.has(m.monster_id):
+			_spawn_or_update_monster(m)
+			continue
+		_monster_snapshots[m.monster_id] = m
+		if _dying_until.has(m.monster_id):
+			continue
+		if not _monster_region_loaded(Vector3(m.x, m.y, m.z)):
+			_monster_deferred[m.monster_id] = true
+			continue
+		_monster_deferred.erase(m.monster_id)
+		_queue_monster_build(m.monster_id)
 
+	var removed: Array = []
 	for monster_id in _monster_bodies.keys():
 		# A monster still playing its death is left where it fell until the
-		# animation has run; the timer _begin_monster_death set asks for
-		# another list then, and this removes it (MonsterBodies.should_free).
+		# animation has run; _finish_monster_death removes it then
+		# (MonsterBodies.should_free).
 		if not MonsterBodies.should_free(monster_id, live_ids, _dying_until, _idle_anim_time):
 			continue
-		_monster_bodies[monster_id].queue_free()
-		_monster_bodies.erase(monster_id)
-		SkillEffects.detach_owner(_fx_owner_key(monster_id, 1))
-		_fx_owner_buffs.erase(_fx_owner_key(monster_id, 1))
-		_monster_assembled.erase(monster_id)
-		_dying_until.erase(monster_id)
-		_monster_motion.erase(monster_id)
-		_monster_heights_pending.erase(monster_id)
-		_strike_waits.erase(monster_id)
-		print("World3D: monster %d body removed t=%.2f" % [monster_id, _idle_anim_time])
+		_forget_monster(monster_id)
+		removed.append(monster_id)
+	# One line per body for a few (a kill's timing reads it), one for many.
+	if removed.size() <= 4:
+		for monster_id in removed:
+			print("World3D: monster %d body removed t=%.2f" % [monster_id, _idle_anim_time])
+	else:
+		print("World3D: %d monster bodies removed t=%.2f" % [removed.size(), _idle_anim_time])
+	# Listed before, gone now, and never built (queued or waiting for its
+	# region): forgotten too.
+	for monster_id in _monster_snapshots.keys():
+		if not live_ids.has(monster_id) and not _monster_bodies.has(monster_id):
+			_forget_monster(monster_id)
+	# The first share at once, so a small list is drawn in the frame it came.
+	_pump_monster_builds()
+
+## The debug tabs' monster rows (round 655): filled only while the tabs are
+## shown -- a 500-monster list was 500 ItemList rows rebuilt per list, for a
+## panel nobody had open. _toggle_action_panels fills it when it opens.
+func _fill_monster_rows() -> void:
+	monster_list.clear()
+	if not action_tabs.visible:
+		return
+	for m in _monsters:
+		monster_list.add_item("%s (HP %d/%d)" % [m.monster_name, m.hp, m.max_hp])
 
 func _on_monster_list_result(monsters: Array, error: String) -> void:
 	if error != "":
 		monster_status_label.text = "Error: %s" % error
 		push_warning("World3D: monster list refused: %s" % error)
 		return
+	# One line, not one per monster (round 655); SRREVAMP_QA_MOB_LOG or /wire
+	# lists them.
 	print("World3D: server reports %d monster(s)" % monsters.size())
-	for m in monsters:
-		print("  %s at %.0f, %.0f, %.0f (%d/%d hp)" % [
-			m.monster_name, m.x, m.y, m.z, m.hp, m.max_hp])
+	if _mob_logging():
+		for m in monsters:
+			print("  %s at %.0f, %.0f, %.0f (%d/%d hp)" % [
+				m.monster_name, m.x, m.y, m.z, m.hp, m.max_hp])
 	# Before the sync: it rewrites a walking monster's listed position.
 	var goto_plan := _qa_goto_plan(monsters)
 	_monsters.assign(monsters)
-	monster_list.clear()
-	for m in _monsters:
-		monster_list.add_item("%s (HP %d/%d)" % [m.monster_name, m.hp, m.max_hp])
+	_fill_monster_rows()
 	_sync_monster_bodies(_monsters)
 	if not goto_plan.is_empty():
 		_qa_goto_from_list(goto_plan)
@@ -15598,6 +15939,19 @@ func _monster_is_moving(monster_id: int) -> bool:
 ## UNKNOWN_MOVE_PULL_SECONDS; a dying body ignores it.
 func _on_monster_moved(moved: CombatNet.MonsterMoved) -> void:
 	if moved == null:
+		return
+	# Listed but not drawn (round 655): queued, or waiting for its region. Its
+	# snapshot takes the leg's destination -- where the server will have it
+	# (OURS: the body is built standing there, not mid-leg) -- and it is
+	# queued if that is in a loaded region. No list is asked for: the
+	# client knows this monster.
+	var known = _monster_snapshots.get(moved.monster_id)
+	if known != null and not _monster_bodies.has(moved.monster_id):
+		known.x = moved.dest_x
+		known.z = moved.dest_z
+		if _monster_deferred.has(moved.monster_id) and _monster_region_loaded(Vector3(known.x, known.y, known.z)):
+			_monster_deferred.erase(moved.monster_id)
+			_queue_monster_build(moved.monster_id)
 		return
 	if not _monster_bodies.has(moved.monster_id):
 		var now := Time.get_ticks_msec()
@@ -15959,6 +16313,15 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	if monster != -1:
 		var dealt := result.monster_damage
 		var died := result.monster_died
+		# The result's health is recorded now, in wire order with the zone's
+		# pushes, and painted as the blow lands (round 655 and its review):
+		# a newer OpMonsterDamaged arriving before the landing is not undone
+		# by this older number. Only a result that reports a blow carries
+		# health: a zero-damage cast (a stun, a debuff) resolves none, and a
+		# server before round 655's review sent 0 there.
+		var blow := dealt > 0 or died
+		if blow:
+			_record_monster_hp(monster, result.monster_remaining_hp)
 		_own_hit_until[monster] = Time.get_ticks_msec() + int(lands_after * 1000.0) + 750
 		if died:
 			# The killer is the one player the server never sends
@@ -15984,6 +16347,13 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 					monster, _last_attack_target, monster])
 			# A monster this blow killed plays its die animation as the blow
 			# lands (held by the kill hold above); a surviving one flinches.
+			# The monster's health, as the snapshot has it by now (the result's,
+			# or a newer push's), drawn as the blow lands (round 655): until
+			# then the full list this handler asked for after every result
+			# brought it. OURS: shown with the blow rather than when the reply
+			# arrives.
+			if blow:
+				_paint_monster_hp(monster)
 			if died:
 				_begin_monster_death(monster)
 			else:
@@ -16023,7 +16393,9 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 			# back on its feet in the same call (MonsterStrikes.leaves_dead).
 			if MonsterStrikes.leaves_dead(result.player_died, result.player_hp):
 				_enter_dead_state(result.death_exp_lost)
-	NetClient.list_monsters()
+	# No monster list here any more (round 655): the result carries the
+	# monster's health and death, applied as the blow lands, and a full list
+	# of a 500-monster view after every swing was the cost.
 	# OpUseSkill's response reuses this same OpAttackResult (see
 	# SkillNet's doc comment) -- refresh here too so a just-used skill's
 	# updated cooldown shows up in the Skills tab. Harmless no-op extra
@@ -17684,6 +18056,8 @@ func _on_monster_spawned(spawned: CombatNet.MonsterSpawned) -> void:
 	if spawned == null or spawned.monster == null:
 		return
 	var m := spawned.monster
+	# This server pushes spawns: no list after a death is needed (round 655).
+	_spawn_push_seen = true
 	if _dying_until.has(m.monster_id):
 		return
 	var known := _monster_bodies.has(m.monster_id)
@@ -17719,15 +18093,39 @@ func _on_monster_damaged(damaged: CombatNet.MonsterDamaged) -> void:
 		if damaged_assembled != null:
 			_audio_mark_hit(damaged_assembled.skeleton, false)
 		_play_monster_action(damaged.monster_id, BsrReader.AnimationEntry.TYPE_HIT)
-	# Shrink the HP bar at once, before the list round-trip, so it tracks
-	# each hit. The max comes from the last snapshot of this monster.
-	if damaged != null and _monster_bodies.has(damaged.monster_id):
-		var snap = _monster_snapshots.get(damaged.monster_id)
-		var max_hp: int = snap.max_hp if snap != null else damaged.remaining_hp
-		_set_hp_bar(_monster_bodies[damaged.monster_id], damaged.remaining_hp, max_hp)
-		if damaged.monster_id == _last_attack_target:
-			_set_target_hp(damaged.remaining_hp, max_hp)
-	NetClient.list_monsters()
+	# Shrink the HP bar at once, so it tracks each hit. The max comes from
+	# the last snapshot of this monster. No list follows any more (round
+	# 655): the push carries the health, and it is kept in the snapshot.
+	if damaged != null:
+		_apply_monster_hp(damaged.monster_id, damaged.remaining_hp)
+
+## A monster's health as a result or a push reports it (round 655): kept in
+## its snapshot, drawn on its bar and, for the target, in the target window.
+## The max comes from the snapshot; a monster with none shows it full.
+func _apply_monster_hp(monster_id: int, hp: int) -> void:
+	_record_monster_hp(monster_id, hp)
+	_paint_monster_hp(monster_id, hp)
+
+## Keeps a reported health in the monster's snapshot, without drawing it.
+func _record_monster_hp(monster_id: int, hp: int) -> void:
+	var snap = _monster_snapshots.get(monster_id)
+	if snap != null:
+		snap.hp = hp
+
+## Draws a monster's health on its bar and, for the target, in the target
+## window: `hp`, or the snapshot's when -1.
+func _paint_monster_hp(monster_id: int, hp: int = -1) -> void:
+	var snap = _monster_snapshots.get(monster_id)
+	if hp < 0:
+		if snap == null:
+			return
+		hp = snap.hp
+	var max_hp: int = snap.max_hp if snap != null else hp
+	var body = _monster_bodies.get(monster_id)
+	if body != null and is_instance_valid(body):
+		_set_hp_bar(body, hp, max_hp)
+	if monster_id == _last_attack_target:
+		_set_target_hp(hp, max_hp)
 
 ## Runs `what` after `seconds` of scene time -- at once when zero.
 func _after(seconds: float, what: Callable) -> void:
@@ -17737,15 +18135,16 @@ func _after(seconds: float, what: Callable) -> void:
 	get_tree().create_timer(seconds).timeout.connect(what)
 
 ## Someone else's kill (the zone's OpMonsterDied, which the killer never
-## receives): the death plays at once, then the list is refreshed. The
-## killer's own kill comes through _on_attack_result instead.
+## receives): the death plays at once and the body goes when it has run
+## (_finish_monster_death; round 655 -- until then a full list was asked for
+## here). The killer's own kill comes through _on_attack_result instead.
 func _on_monster_died(monster_id: int) -> void:
 	_begin_monster_death(monster_id)
-	NetClient.list_monsters()
 
 ## A monster's death plays its own die animation (type 4 of its `default`
 ## group, docs/protocol/BSR_FORMAT.md) and the body stays on its last frame
-## until that has run; only then is the list refreshed and the body removed.
+## until that has run; only then is the body removed (_finish_monster_death;
+## until round 655 a fresh list removed it).
 ## Reached from a zone's died push (_on_monster_died) and, for the killer, as
 ## the killing blow lands (_on_attack_result).
 func _begin_monster_death(monster_id: int) -> void:
@@ -17773,13 +18172,45 @@ func _begin_monster_death(monster_id: int) -> void:
 		# The hold restarts from the clip's real start, replacing the killer's
 		# predicted one (MonsterBodies.hold_for_kill).
 		_dying_until[monster_id] = _idle_anim_time + seconds
-		get_tree().create_timer(seconds).timeout.connect(NetClient.list_monsters)
-	elif _dying_until.has(monster_id):
-		# Nothing played, yet a kill hold is set: no timer would come to
-		# lift it, so lift it now and let a fresh list remove the body.
-		_dying_until.erase(monster_id)
-		NetClient.list_monsters()
+		get_tree().create_timer(seconds).timeout.connect(_finish_monster_death.bind(monster_id))
+	else:
+		# Nothing to watch (no die clip, a capsule, a monster with no body):
+		# it goes now. Until round 655 a fresh list removed it.
+		_finish_monster_death(monster_id)
 	print("World3D: monster %d dies, holding %.2fs t=%.2f" % [monster_id, seconds, _idle_anim_time])
+
+## A dead monster's clip has run (or it had none): its body and snapshot go.
+## The server has already dropped it -- a respawn is a new monster with a new
+## id (cmd/server maintainMonster) -- so no list is asked for (round 655).
+func _finish_monster_death(monster_id: int) -> void:
+	if not _monster_bodies.has(monster_id) and not _monster_snapshots.has(monster_id):
+		return
+	var had_body := _monster_bodies.has(monster_id)
+	_forget_monster(monster_id)
+	if had_body:
+		print("World3D: monster %d body removed t=%.2f" % [monster_id, _idle_anim_time])
+	_maybe_pull_after_death()
+
+## A server that sends no spawn push (-monster-spawn-push off, the default)
+## tells this client of a respawn or a GM spawn only through a list (round
+## 655's review). So until the zone's first OpMonsterSpawned has been seen,
+## a death that has played out asks for one list, at most once every
+## DEATH_PULL_SECONDS (OURS). A server that pushes spawns is never asked.
+const DEATH_PULL_SECONDS := 10.0
+var _spawn_push_seen := false
+var _death_pull_msec := -1000000
+## How many lists the throttle has asked for (for the log and the test).
+var _death_pulls := 0
+
+func _maybe_pull_after_death() -> void:
+	if _spawn_push_seen or not NetClient.is_connected_to_server():
+		return
+	var now := Time.get_ticks_msec()
+	if now - _death_pull_msec < int(DEATH_PULL_SECONDS * 1000.0):
+		return
+	_death_pull_msec = now
+	_death_pulls += 1
+	NetClient.list_monsters()
 
 ## The player has advanced a level (server's OpLevelUp, only ever sent to
 ## the character that levelled). Announces it with the client's own recovered
