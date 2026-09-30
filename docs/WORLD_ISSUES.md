@@ -7094,6 +7094,150 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-sixty-third round: the game no longer stops hearing the server when a big monster list arrives behind a burst -- the client reads what has arrived instead of waiting for a whole message
+
+Round 662's live check (WORLD_ISSUES round 662 §4) found a client fault the server had been
+hiding. `packet_reader.gd` read a frame's payload only once `get_available_bytes()` covered all of
+it. A server that wrote its queue in one write wedged the real client for good after a
+`/goto jangan` in a dense crowd. Round 662 fixed the server side, by writing a frame per write.
+This round fixes the reader, so no server write pattern can do it again. Client network code
+runs every frame, so the performance gate was run.
+
+### 1. The fault (MEASURED in round 662; READ for TLS)
+
+- **TCP.** `ss -tmi` on the frozen client showed a full receive buffer:
+  `skmem:(r137152,rb138172,...)` held only 31,250 bytes of data. The kernel charges a segment's
+  whole memory until it is read to its end, and loopback carried the big writes as ~52 KB segments
+  (`rcvmss:52224`). The reader waited for 32,735 bytes (a list page) to be "available". That never
+  happened, because the reader would not read, so the window stayed shut and neither side moved.
+- **TLS (READ, Godot 4.2.2 source).** `StreamPeerTLS.get_available_bytes()` is
+  `mbedtls_ssl_get_bytes_avail` (`modules/mbedtls/stream_peer_mbedtls.cpp`): only the bytes left in
+  the current decrypted record, at most 16,384. So over TLS a payload larger than one record was
+  never all "available", and the old reader could not read any frame over 16 KB (the tests in §3
+  show it: `0 of 2 frames decoded`). Nobody met it because nothing uses TLS: the login screen
+  connects without it (`Login.gd:300`, `use_tls` left false), and `deploy/` sets no TLS (READ).
+
+### 2. What was built (OURS unless marked)
+
+- **`PacketReader` reads into its own buffer** (`client/scripts/net/packet_reader.gd`). Each
+  `poll()` polls the peer, then, while its buffer does not hold a whole frame, reads what the peer
+  has, up to `READ_CHUNK` = 64 KB. It then cuts out the next whole frame.
+  - A TCP peer is asked for `min(get_available_bytes(), 64 KB)`.
+  - A TLS peer is asked for a chunk with `get_partial_data`, because its count is only the current
+    record's; an empty non-blocking read is not an error.
+- **The frames are decoded exactly as before.** Size is the field's low 15 bits, then the opcode.
+  Header bytes 4 and 5 (RollingByte/ChecksumByte) are ignored, as `Packet.encode()`'s note
+  says: the server sends neither. Frames come out in arrival order, one per `poll()`.
+  `NetClient._process` still drains `poll()` until it returns null (`net_client.gd`: comments only).
+- **The bound.** The reader reads only while it lacks a whole frame, so it holds at most one
+  unfinished frame (up to 32,773 bytes) plus one read (64 KB). The largest seen in the tests was
+  65,526 bytes. Consumed bytes are dropped when the buffer empties, or compacted once 64 KB of
+  them have gone by.
+
+### 3. Tests (`client/scripts/net/packet_reader_fragments_test.gd`)
+
+- **Fragment patterns.** A fake peer (a `StreamPeerBuffer` handed its bytes a fragment per
+  `poll()`) carries 11 frames: small ones, an empty one, a 32,735-byte page, a 32,767-byte frame,
+  and the small ones after them. The patterns are:
+  - one byte at a time;
+  - 3-byte fragments, which split every header;
+  - 7-byte fragments;
+  - all frames in one chunk;
+  - 52 KB pieces, as loopback carried round 662's writes;
+  - 16,384-byte pieces, as one TLS record at a time.
+
+  Each must decode to exactly the frames sent, in order, byte for byte.
+- **Round 662's wedge.** The same frames in 52 KB pieces go through a receive buffer that holds
+  at most 31,250 unread bytes (ss's figure). The page, and every frame after it, must decode.
+- **The bound.** The reader holds at most one frame plus one 64 KB read.
+- **Real TLS loopback.** A self-signed certificate is made in the test. A 32,735-byte page and the
+  frame after it must decode within 3 s. The client trusts the test's certificate
+  (`client_unsafe(cert)`), because with no chain Godot falls back to its default CA bundle, which a
+  `--script` run has not loaded ("SSL module failed to initialize!", `init_client`).
+- **NEGATIVE against int/mob 1ea6b02's `packet_reader.gd`** (copied over the lane's copy on the
+  box, run, then restored; MEASURED):
+
+```
+ok  one byte at a time: every frame decodes identically
+...
+ok  16,384-byte pieces (one TLS record at a time): every frame decodes identically
+FAIL a 32,735-byte page through a receive buffer holding 31,250 bytes decodes, and every frame after it -- 7 of 11 frames decoded
+ok  the reader holds at most one frame plus one 64 KB read (held 0 bytes)
+FAIL TLS: a 32,735-byte page and the frame after it decode within 3 s -- 0 of 2 frames decoded
+2 FAILURES
+```
+
+  The fragment patterns pass on the base as well: with no buffer limit, waiting works. They pin
+  that the new reader decodes identically.
+- **On the branch:** all 9 checks `ALL PASS`. `remote_godot.sh check` on the tree merged onto int/mob
+  46559e0: ALL LOAD (439 scripts). `remote_godot.sh tests`: 177 suites, 0 failing; round-trip suites such as `packet_reader_test.gd`
+  (split frames, two frames in one read) pass unchanged.
+
+### 4. The live A/B (MEASURED, render box, `/var/tmp/reader663/live.sh`)
+
+Round 662's forced-order scenario:
+- **The server is a debug build, not committed.** The writer is put back to one write per take (the
+  behaviour that froze the old client), plus a 60 ms sleep at the top of the list handler, so the
+  area of interest's view move nearly always beats the list request.
+- **The run:** `-qa-spread-monsters 6000 -qa-spread-radius 5` with the six monster switches on.
+  One real client enters at the Jangan spawn, runs `/goto donwhang`, `/goto jangan`, then three
+  `/spawnunique`.
+- **"Came through"** means that after the return to Jangan the client printed the list report and
+  all three `GM REPLY: spawned unique ...` lines, which the server logged as sent in every run.
+- **"Enters first"** means the ~1,250 monsters arrived as spawn pushes before the list.
+
+**On round 662's branch (server built from feat/sendq662 with the debug change):**
+
+| run | client | enters first | after the return |
+|---|---|---|---|
+| a1 | int/mob's reader | yes (1,251 pushes) | **wedged**: no list report, no GM reply for `/heal` or the three `/spawnunique` |
+| b1 | this round's reader | yes (1,254) | came through: `server reports 1250 monster(s)`, every GM reply, the three uniques listed |
+
+**On the merged tree (server built from int/mob 46559e0 with the debug change).** The client is the
+round-663 client merged onto 46559e0. For the "old" runs the lane's copy of `packet_reader.gd` was
+replaced with 46559e0's and restored afterwards, so the two clients differ only in the reader.
+
+| run | reader | enters first | after the return |
+|---|---|---|---|
+| a2 | old | yes (1,258 pushes) | came through (`server reports 1254`, 3 GM spawn replies) |
+| a3 | old | yes (1,255) | **wedged**: 2 list reports in all (entry and Donwhang), 0 GM spawn replies |
+| a4 | old | no (4 pushes; the list won the race) | came through |
+| b2 | new | yes (1,252) | came through (`server reports 1248`, every GM reply) |
+| b3 | new | yes (1,260) | came through (6 list reports, 3 GM spawn replies) |
+
+The old reader's wedge is a matter of chance, not a certainty. It needs the enters first, and then
+a receive buffer whose part-read segments hold less than the page. Of the three old-reader runs
+that took the enters first, a1 and a3 wedged and a2 came through. All three new-reader runs that
+took the enters first came through. On the server side, every run's writer debt peaked under 1 ms,
+there was no stall line, and the only disconnect is the script ending each client. The fragment
+suite's receive-buffer case (§3) is the deterministic version.
+
+### 5. Performance gate (`perf_gate.sh --base 1ea6b02 --sites jangan,mobs`)
+
+Head is this round merged onto int/mob 46559e0; base is 46559e0. 1280x720, median of 3 runs each.
+Other lanes' renders overlapped some runs, and the gate repeated those runs.
+
+| site | number | base | head | change | verdict |
+|---|---|---|---|---|---|
+| jangan | frame ms | 9.87 | 9.55 | -0.3 | SAME |
+| jangan | entry ms | 9702 | 9587 | -115 | SAME |
+| jangan | freeze ms | 3383 | 3388 | +5 | SAME |
+| jangan | hitches | 5 | 5 | 0 | SAME |
+| mobs | frame ms | 10.94 | 10.69 | -0.2 | SAME |
+| mobs | entry ms | 10594 | 10636 | +42 | SAME |
+| mobs | freeze ms | 3398 | 3383 | -15 | SAME |
+| mobs | hitches | 5 | 5 | 0 | SAME |
+
+### 6. Open (docs/TODO.md)
+
+- `READ_CHUNK` (64 KB) is OURS.
+- `NetClient._process` still drains every complete frame in one go, as before. A server that sent
+  faster than the client decodes would keep it in that loop. That is unchanged by this round, and
+  was not measured.
+- TLS was tested on loopback only. Nothing in the game or `deploy/` turns TLS on yet.
+- This closes round 662's TODO item "The client's packet reader waits for a whole payload in the
+  kernel buffer" (on `feat/sendq662`; the integrator ticks it when both are merged).
+
 ## Six-hundred-and-sixty-second round: a player whose connection is slow can no longer freeze everyone else's monsters -- the server writes to each player from that player's own queue
 
 The monster-world epic (2026-09-30). Round 656's reviews (§7-§9) left one thing standing: a
@@ -7240,7 +7384,7 @@ in segments of its own only while the socket's send queue is drained. Once it is
 the client's window shut, as it is while a load freezes the client's main thread -- Linux's
 `tcp_sendmsg` appends each new write into the unsent tail skb, up to its size goal (~64 KB over
 loopback), so frames coalesce into large segments however they were written, and the same wedge
-can recur. The fix is the client's reader (round 663). `TestTheWriterWritesAFramePerWrite`
+can recur. The fix is the client's reader, done in round 663. `TestTheWriterWritesAFramePerWrite`
 pins the mitigation (with one write per take: `5 frames went out in 1
 writes, want one write per frame`). With the fix and the same forced order
 (r9) the client came through: `server reports 1251 monster(s)` after the return, every GM reply,
@@ -7251,8 +7395,8 @@ no `session send stalled` line in any run.
 
 The client's reader has the latent fault whatever the server does: a frame is only read once its
 whole payload fits in the socket's buffer, so anything that fills that buffer with partly-read
-segments can wedge it. Its fix -- read what is available into its own buffer -- is round 663
-(client lane).
+segments can wedge it. Its fix -- read what is available into its own buffer -- was made in
+round 663.
 
 ### 5. Tests
 
@@ -7356,7 +7500,7 @@ session was closed before its queue was written`.
   (The first was run at the test's earlier size of 200 enters.)
 - **A frame per write mitigates the client wedge; it does not fix it (M2).** §4 and `writeFrames`'
   comment now say so and why: under a backlog `tcp_sendmsg` coalesces writes into the unsent tail
-  skb. The fix is the client's reader, round 663.
+  skb. The fix is the client's reader, done in round 663.
 - **The rolling byte and checksum follow wire order (L1).** Nothing tested a session with
   `SetSecurity` (it has no production caller yet), so drawing the byte outside the queue lock
   passed every test. `TestRollingByteAndChecksumFollowWireOrder`: 8 goroutines x 500 Sends with

@@ -1063,15 +1063,15 @@ interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
       662: every session has its own outbound queue and writer goroutine, so no sender waits on a
       peer. A client is closed when its queue passes `gateway.SendQueueLimit` (2 MB, OURS, about 8x
       the measured busiest 4 s) or its writer's blocked time passes the budget (unchanged).
-- [ ] **The client's packet reader waits for a whole payload in the kernel buffer** (round 662 §4,
-      MEASURED). `packet_reader.gd` reads a frame only once `get_available_bytes()` covers its
+- [x] **The client's packet reader waited for a whole payload in the kernel buffer** -- fixed in
+      round 663: it reads what is available into its own buffer on every poll. (Round 662 §4,
+      MEASURED). `packet_reader.gd` read a frame only once `get_available_bytes()` covered its
       payload. Over loopback a server that wrote its queue in one write left the client's receive
       buffer full of part-read ~52 KB segments (skmem r137152 of rb138172) holding 31,250 bytes,
       short of a 32,735-byte list page: both sides stopped. The server now writes a frame per write,
       which MITIGATES it and does not fix it: under a backlog (the client's window shut by a load
       freeze) Linux's tcp_sendmsg coalesces writes into the unsent tail skb, so large segments come
-      back. The fix is the reader's -- read what is available into its own buffer -- round 663
-      (client lane, in progress).
+      back.)
 - [ ] **The send queue's limit and drain are OURS** (round 662). `SendQueueLimit` 2 MB was sized
       from one live client over loopback at ~50 monsters a region; a real link was not measured, and
       a legitimate burst bigger than the paged list (none is known) would close its client.
