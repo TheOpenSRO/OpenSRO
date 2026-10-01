@@ -34,16 +34,22 @@ if [ "${#need[@]}" -gt 0 ]; then
     exit 1
   fi
   echo "installing: ${need[*]}"
-  "${sudo[@]}" apt-get update -qq
-  "${sudo[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${need[@]}"
+  timeout 600 "${sudo[@]}" apt-get update -qq
+  timeout 600 "${sudo[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${need[@]}"
 fi
 
 export PATH="$HOME/.cargo/bin:$PATH"
+# Every download aborts on a STALL, not on slowness, and is retried. On 2026-10-01 the zig
+# download from ziglang.org took 4.5 minutes (07:59:27 -> 08:04:00, release run 36831972753)
+# against seconds before, and it finished: a total-time cap would have killed it and restarted it.
+# So a transfer is dropped only when it stays under 10 KB/s for 60 s, with a 30-minute ceiling
+# per file and a 20 s connect limit (all OURS).
+dl=(curl --proto '=https' --tlsv1.2 -sSfL --connect-timeout 20 --speed-limit 10240 --speed-time 60 --max-time 1800 --retry 4 --retry-delay 5 --retry-all-errors)
 if ! command -v rustup >/dev/null 2>&1; then
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+  "${dl[@]}" https://sh.rustup.rs \
     | sh -s -- -y --profile minimal --default-toolchain none --no-modify-path
 fi
-rustup toolchain install "$toolchain" --profile minimal --target x86_64-pc-windows-gnu
+timeout 900 rustup toolchain install "$toolchain" --profile minimal --target x86_64-pc-windows-gnu
 rustup default "$toolchain"
 if [ -n "${GITHUB_PATH:-}" ]; then echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; fi
 
@@ -53,12 +59,12 @@ tools="$HOME/.local/srrevamp-ci"
 zig_dir="$tools/zig-x86_64-linux-0.15.2"
 if [ ! -x "$zig_dir/zig" ]; then
   mkdir -p "$tools"
-  curl -sSfL -o "$tools/zig.tar.xz" https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz
+  "${dl[@]}" -o "$tools/zig.tar.xz" https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz
   echo "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239  $tools/zig.tar.xz" | sha256sum -c -
   tar -xJf "$tools/zig.tar.xz" -C "$tools" && rm "$tools/zig.tar.xz"
 fi
 if [ ! -x "$HOME/.cargo/bin/cargo-zigbuild" ]; then
-  curl -sSfL -o "$tools/czb.tar.xz" https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.23.4/cargo-zigbuild-x86_64-unknown-linux-musl.tar.xz
+  "${dl[@]}" -o "$tools/czb.tar.xz" https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.23.4/cargo-zigbuild-x86_64-unknown-linux-musl.tar.xz
   echo "9e3cf73485edbd45905c8aadbc0fdf869c7ddc3848f0c898229f2680db52e44b  $tools/czb.tar.xz" | sha256sum -c -
   tar -xJf "$tools/czb.tar.xz" -C "$tools"
   install -m 755 "$tools/cargo-zigbuild-x86_64-unknown-linux-musl/cargo-zigbuild" "$HOME/.cargo/bin/"
@@ -68,7 +74,7 @@ fi
 # full licence texts for THIRD_PARTY_NOTICES.txt (native/third_party_notice.sh).
 if [ ! -x "$HOME/.cargo/bin/cargo-about" ]; then
   mkdir -p "$tools"
-  curl -sSfL -o "$tools/about.tar.gz" https://github.com/EmbarkStudios/cargo-about/releases/download/0.9.2/cargo-about-0.9.2-x86_64-unknown-linux-musl.tar.gz
+  "${dl[@]}" -o "$tools/about.tar.gz" https://github.com/EmbarkStudios/cargo-about/releases/download/0.9.2/cargo-about-0.9.2-x86_64-unknown-linux-musl.tar.gz
   echo "9099a59e820c38a68b9d65f300662a567d56562f9a10f6aa4c7e86c17c2566af  $tools/about.tar.gz" | sha256sum -c -
   tar -xzf "$tools/about.tar.gz" -C "$tools"
   install -m 755 "$tools/cargo-about-0.9.2-x86_64-unknown-linux-musl/cargo-about" "$HOME/.cargo/bin/"

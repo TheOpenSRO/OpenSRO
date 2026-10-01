@@ -11,6 +11,8 @@ jobs:
   server:
     name: Build & test server (Go)
     runs-on: kakariko-runner
+    # Bounded (OURS): a stalled step held the only runner for 10+ min on 2026-10-01.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: server
@@ -53,6 +55,8 @@ jobs:
   client:
     name: Validate client (Godot)
     runs-on: kakariko-runner
+    # Bounded (OURS): a stalled step held the only runner for 10+ min on 2026-10-01.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - name: Set up Godot
@@ -80,6 +84,8 @@ jobs:
   native:
     name: Native readers (Rust) and the suites with the library loaded
     runs-on: kakariko-runner
+    # Bounded (OURS): a stalled step held the only runner for 10+ min on 2026-10-01.
+    timeout-minutes: 40
     env:
       # Same pin as release.yml.
       RUST_TOOLCHAIN: "1.98.1"
@@ -93,6 +99,7 @@ jobs:
       # 36807629459).
       - name: Install the native build toolchain
         run: bash native/ci_toolchain.sh
+        timeout-minutes: 15
       - name: Test the native core (Blowfish, pk2, ddj; no Godot)
         working-directory: native
         run: cargo test --locked --no-default-features
@@ -121,6 +128,8 @@ jobs:
   no-assets-check:
     name: Guard against committed pk2/game assets
     runs-on: kakariko-runner
+    # Bounded (OURS): a stalled step held the only runner for 10+ min on 2026-10-01.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - name: Fail if any pk2/original asset files are committed

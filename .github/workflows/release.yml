@@ -17,6 +17,8 @@ jobs:
   release:
     name: Build & Release Client
     runs-on: kakariko-runner
+    # Bounded (OURS): a stalled step held the only runner for 10+ min on 2026-10-01.
+    timeout-minutes: 45
     permissions:
       contents: write
     env:
@@ -76,6 +78,7 @@ jobs:
       # 36807629459).
       - name: Install the native build toolchain
         run: bash native/ci_toolchain.sh
+        timeout-minutes: 15
 
       - name: Build the native readers (Linux .so, Windows .dll)
         run: |
