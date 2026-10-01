@@ -7379,6 +7379,90 @@ not change it.
   once-a-second samples after it (base Jangan run 1, §4). That is a gate issue, not a cost of this
   round. It is noted here, not fixed.
 
+### 8. Review follow-up (round 667's review: M1-M3, L1, L5, L6)
+
+The review had no HIGH findings, and the reviewer reproduced the gain in its own lane (entry 9,800
+-> 5,958 ms, freeze 3,408 -> 1,673). It asked for the fixes below. Round 668 (CI and shipping the
+DLL) takes L2, the MPL notice and the CI build.
+
+**M1. The ordinary gate could credit any round with the native speed-up.** `perf_gate.sh` shipped
+`client/native_bin` to the head copy whenever the working tree had one, and a base revision never
+has one. The rule now (perf_gate.sh header; client/tools/README.md, "Native readers A/B"):
+- In base/head mode, NEITHER side gets the library or the `.gdextension`.
+- In `--ab-env` mode, one copy has the working tree's library. `--head REV` and a tree without
+  `client/native_bin/libsrrevamp_native.so` are refused.
+- Every run's `NativeAssets: native readers ...` line is read back. In `--ab-env` mode a head run
+  must say ON; any other run must not.
+
+MEASURED, d7b4aba's gate against this one, `--sites jangan --runs 1 --frames 1500`:
+
+```
+d7b4aba, base/head mode, client/native_bin built -- the native gain credited to the round:
+jangan  entry ms   base 10023  head 5983  (-4040.0)  FASTER      (head log: native readers ON)
+now, the same:
+  jangan head run 1: frame 9.81 ms, entry 9945 ms, freeze 3388 ms, 5 hitch(es), native readers OFF
+jangan  entry ms   base 9932.00  head 9945  (+13.0)  SAME
+
+d7b4aba, --ab-env with no library built -- GDScript against GDScript, passed as a comparison:
+jangan  entry ms   base 9812  head 9861  (+49.0)  SAME           exit 0
+now: --ab-env: no client/native_bin/libsrrevamp_native.so -- run native/build.sh first, or both sides read in GDScript   (exit 2)
+now, --ab-env --head HEAD: --ab-env needs the working tree's built library: --head REV carries none, so both sides would read in GDScript   (exit 2)
+now, PERF_SELFTEST_DROP_LIB=1 (the copy shipped without its library):
+  jangan head run 1: FAIL native readers OFF, this side must be ON -- the comparison would not be what it says   (exit 1)
+```
+
+**M2. A stale library was used silently.** `client/native_bin` is git-ignored and survives a pull,
+and the box's copy survived every `remote_godot.sh` sync. The fixes:
+- **An interface number.** `API` in `native/src/core/mod.rs` and `NATIVE_API` in
+  `native_assets.gd` are the same constant, now 2. The client uses a library only when its `api()`
+  returns exactly that. Otherwise it reads in GDScript and logs one line.
+- **Sync mirrors the box copy.** `sync_client` deletes the box's `native_bin` first and ships it
+  again only if the local tree has one.
+
+MEASURED:
+- **This client with d7b4aba's own library**, sha256 `1a082918...`, which has no `api()`:
+  `NativeAssets: native readers OFF (library REFUSED: API 0, this client needs API 2 -- a stale
+  library, rebuild it with native/build.sh)`. native_assets_test.gd: `ok  a refused library is not
+  used`.
+- **The new suite on d7b4aba's client:** `SCRIPT ERROR: Parse Error: Static function
+  "api_verdict()" not found in base "NativeAssets".` and `Cannot find member "NATIVE_API"`.
+- **The sync, with no library in the local tree:** d7b4aba's `remote_godot.sh sync` left
+  `box native_bin: libsrrevamp_native.so`. Now: `ls: cannot access '.../native_bin': No such file
+  or directory`.
+
+**M3. An entry's size went straight to an allocation.** `Archive::read` allocated `size` bytes as
+the archive stated them, up to 4 GiB, and Rust aborts on a failed allocation. Now:
+- the file's length is recorded at open;
+- every read is clamped to it, so the result is what `FileAccess.get_buffer` gives;
+- a read past the end returns nothing;
+- the remaining allocation is fallible (`try_reserve_exact`).
+
+New test `oversize_entry_reads_only_what_the_file_holds`. On d7b4aba:
+
+```
+panicked at src/core/pk2.rs:380:9: allocated 4294967295 bytes for a 10521-byte file
+under `ulimit -v 3000000`: memory allocation of 4294967295 bytes failed ... (signal: 6, SIGABRT: process abort signal)
+```
+
+Now it passes, under the limit too.
+
+**L1. A mask wider than 56 bits overflowed `value * 255`.** The arithmetic is now u128. New test
+`wide_masks_do_not_overflow`; on d7b4aba: `panicked at src/core/ddj.rs:26:10: attempt to multiply
+with overflow`.
+
+**L5.** native_assets.gd named `--base-env`; the flag is `--ab-env`. **L6.** The Linux library
+needs **GLIBC_2.34** (`dlsym`, `pthread_key_*`), because it was built on Ubuntu 24.04. This is
+noted in native/README.md; where the release's library is built is round 668's decision.
+
+**Re-run after the fixes (MEASURED):**
+- `cargo test`: 11 pass. With `parity-negative`: 5 of 11 fail.
+- Box `check`: ALL LOAD. `tests`: 179 suites, 0 failing.
+- `native_parity.gd`: PARITY PASS, the same counts as §3.
+- `perf_gate.sh --ab-env SRREVAMP_NATIVE=0 --sites jangan`: entry 9,941 -> 6,258 ms and freeze
+  3,484 -> 1,680 ms FASTER, frame SAME; every head run logged `native readers ON` and every base
+  run OFF. Other lanes were rendering during it: base run 3 was repeated twice for overlap, and
+  head run 1's entry was 7,387 ms.
+
 ## Six-hundred-and-sixty-sixth round: the deploy guide matches the release -- the skills re-import, the nest files' permissions and the full monster population -- and the server stops keeping a brain for every monster a player has passed
 
 The final release review of the monster epic (rounds 653-665) found the deploy guide out of step

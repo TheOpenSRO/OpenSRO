@@ -411,8 +411,20 @@ PERF_LANE=native667 client/tools/perf_gate.sh --ab-env SRREVAMP_NATIVE=0 --sites
   `posix_fadvise(DONTNEED)`, because the box's container cannot write `/proc/sys/vm/drop_caches`.
   `fincore` records what stayed resident in `<log>.cold`. This is the storage-bound case. Godot
   and the project stay cached.
-- The working tree ships `client/*.gdextension` and `client/native_bin` when built. A `--head`
-  revision ships no library.
+- **Both sides carry the same library state, and the gate checks it** (round 667's review, M1).
+  Each run's log line `NativeAssets: native readers ON|OFF` is read back:
+  - **The ordinary base/head gate ships the library to NEITHER side**, nor the `.gdextension`, so
+    both sides read in GDScript. A world round's gate then measures that round and never the
+    native speed-up. Before this rule, a working tree with `client/native_bin` built got the
+    library on the head only. A run whose log says ON fails the gate.
+  - **`--ab-env` ships one copy with the working tree's library.** It refuses `--head REV` (a
+    revision carries no library), and refuses a tree without
+    `client/native_bin/libsrrevamp_native.so`. Every head run must log ON and every base run must
+    not, or the gate fails with
+    `FAIL native readers <state>, this side must be <ON|not ON>`.
+  - The self-test is `PERF_SELFTEST_DROP_LIB=1 client/tools/perf_gate.sh --ab-env SRREVAMP_NATIVE=0
+    --sites jangan --runs 1`. It ships the copy without its library and must fail on the first
+    head run.
 
 Per function, `SRREVAMP_PARSE_PROFILE=1` makes the client print `PARSEPROF` lines
 (`client/scripts/pk2/parse_profile.gd`): a table of every reader's time on the main thread and on

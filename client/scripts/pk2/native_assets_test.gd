@@ -109,8 +109,16 @@ func _ddj(four_cc: String, bpp: int, masks: Array, w: int, h: int, pixels: Packe
 	return t
 
 func _init() -> void:
-	var loaded := NativeAssets.library_loaded()
-	print("native library loaded: %s" % loaded)
+	# The interface check (round 667's review, M2): a stale library -- API 0,
+	# built before the number existed, or any other number -- is refused.
+	_check(NativeAssets.api_verdict(NativeAssets.NATIVE_API) == "", "a library speaking API %d is accepted" % NativeAssets.NATIVE_API)
+	_check(NativeAssets.api_verdict(0).contains("stale"), "a library without api() (API 0) is refused as stale")
+	_check(NativeAssets.api_verdict(NativeAssets.NATIVE_API + 1) != "", "a library from newer sources is refused too")
+	_check(NativeAssets.api_verdict(-1) == "not loaded", "no library is 'not loaded'")
+	var loaded := NativeAssets.library_usable()
+	print("native library loaded: %s, API %d (client %d)" % [NativeAssets.library_loaded(), NativeAssets.library_api(), NativeAssets.NATIVE_API])
+	if NativeAssets.library_loaded() and not loaded:
+		_check(not NativeAssets.available(), "a refused library is not used")
 	var path := "user://srrevamp_native_test.pk2"
 	var body := _build(path)
 

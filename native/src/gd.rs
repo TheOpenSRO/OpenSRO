@@ -139,6 +139,12 @@ pub struct SrNativeParsers {}
 
 #[godot_api]
 impl SrNativeParsers {
+    /// The interface number (core::API); the client refuses a library whose number is not its own.
+    #[func]
+    fn api(&self) -> i64 {
+        crate::core::API
+    }
+
     #[func]
     fn version(&self) -> GString {
         GString::from(concat!("srrevamp_native ", env!("CARGO_PKG_VERSION")))

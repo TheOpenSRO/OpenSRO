@@ -36,6 +36,27 @@ native/build.sh windows    # Windows: client/native_bin/srrevamp_native.dll
 `client/native_bin/`, `native/target/` and every `.so`/`.dll` are git-ignored. **Never commit a
 built library.**
 
+**The interface number.** `API` in `src/core/mod.rs` and `NATIVE_API` in
+`client/scripts/pk2/native_assets.gd` are the same constant. **Bump both** with any change to a
+binding's name, arguments or results, or to what a parser returns.
+
+The client uses a library only when its `api()` returns exactly its own number. Since
+`client/native_bin` is git-ignored, it survives a pull, so a stale library is the expected failure.
+The client refuses it with one log line naming both numbers, then reads in GDScript:
+
+```
+NativeAssets: native readers OFF (library REFUSED: API 0, this client needs API 2 -- a stale library, rebuild it with native/build.sh)
+```
+
+Round 667's builds before the number existed answer API 0. `remote_godot.sh` also mirrors
+`client/native_bin` onto the box exactly: when the local tree has no library, the box's copy is
+deleted.
+
+**glibc.** The Linux library needs the glibc of the machine that built it. Built on the `claude`
+LXC (Ubuntu 24.04), it needs **GLIBC_2.34** (`dlsym`, `pthread_key_*`; checked with
+`objdump -T`), so it will not load on an older distribution. The render box (Debian 13, glibc
+2.41) is fine. Where the release's Linux build is made is a decision for CI (round 668).
+
 Why `experimental-threads`: World3D calls the readers from WorkerThreadPool tasks while the main
 thread also calls them. Without the feature, gdext's instance binding is single-threaded. Every
 method takes `&self`. The archive keeps its directory cache behind a mutex, and it reads by
@@ -73,7 +94,8 @@ against it, and so must `cargo test --features parity-negative`.
 
 `SRREVAMP_NATIVE=0` forces the GDScript path in a build that has the library. The client logs
 `NativeAssets: native readers ON|OFF (...)` once. `client/tools/README.md`, "Native readers A/B",
-gives the perf-gate recipe (`--ab-env`, `--cold`).
+gives the perf-gate recipe (`--ab-env`, `--cold`). The same section has the rule that keeps the
+ordinary gate from crediting a round with the native speed-up.
 
 ## Windows
 

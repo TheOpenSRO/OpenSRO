@@ -41,8 +41,8 @@ func _init() -> void:
 			pk2_dir = a.substr(10)
 		elif a.begins_with("--only="):
 			only = a.substr(7)
-	if not NativeAssets.library_loaded():
-		print("PARITY FAIL: the native library did not load -- nothing to compare (is client/native_bin shipped?)")
+	if not NativeAssets.library_usable():
+		print("PARITY FAIL: no usable native library (%s) -- nothing to compare (is a current client/native_bin shipped?)" % NativeAssets.api_verdict(NativeAssets.library_api()))
 		quit(1)
 		return
 	NativeAssets.available()

@@ -70,8 +70,21 @@
 # much stayed resident (written to <log>.cold). Godot, the project and the
 # shader cache stay cached: the archives are what a load reads.
 #
-# The working tree ships the native readers when built: client/*.gdextension
-# and client/native_bin (native/build.sh). A --head revision ships neither.
+# The native library (round 667, and its review's M1). The rule: BOTH sides
+# of a comparison carry the same library state, and the gate checks it from
+# each run's own log line (`NativeAssets: native readers ON|OFF`).
+# - base/head mode (the ordinary gate): NEITHER side gets the library or the
+#   .gdextension -- a working tree's client/native_bin is not shipped. Both
+#   sides read in GDScript, so the gate measures the round's own change and
+#   never credits it with the native speed-up. A run whose log says ON fails.
+# - --ab-env mode: one copy with the library (the working tree's
+#   client/native_bin, which must exist; --head REV is refused, since a
+#   revision carries no library). Every head run's log must say ON and every
+#   base run's must not, or the gate fails rather than compare GDScript with
+#   GDScript and print SAME.
+# PERF_SELFTEST_DROP_LIB=1 ships the --ab-env copy without its library: the
+# self-test that the per-run check catches a head that is not native
+# (client/tools/README.md, "Native readers A/B").
 #
 # Environment: RENDER_HOST, PK2_DIR, PERF_LANE (dir suffix; default: branch).
 set -euo pipefail
@@ -97,7 +110,11 @@ done
 cd "$repo_root"
 if [ -n "$ab_env" ]; then
   [ -z "$base" ] || { echo "--ab-env compares the head with itself: give no --base" >&2; exit 2; }
-  base="${head:-HEAD}"
+  [ -z "$head" ] || { echo "--ab-env needs the working tree's built library: --head REV carries none, so both sides would read in GDScript" >&2; exit 2; }
+  if [ ! -f client/native_bin/libsrrevamp_native.so ] && [ "${PERF_SELFTEST_DROP_LIB:-0}" != 1 ]; then
+    echo "--ab-env: no client/native_bin/libsrrevamp_native.so -- run native/build.sh first, or both sides read in GDScript" >&2; exit 2
+  fi
+  base="HEAD"
 fi
 [ -n "$base" ] || base="$(git merge-base HEAD origin/dev 2>/dev/null || git merge-base HEAD dev)"
 base_short="$(git rev-parse --short "$base")"
@@ -129,7 +146,11 @@ for s in ${sites//,/ }; do view "$s" >/dev/null; done
 
 files="client/scripts client/tools client/scenes client/docs client/project.godot"
 # The native readers, when the working tree has them built (round 667).
-native_files="$(cd "$repo_root" && { ls client/*.gdextension 2>/dev/null; [ -d client/native_bin ] && echo client/native_bin; } || true)"
+# Only in --ab-env mode (see the rule in the header).
+native_files=""
+if [ -n "$ab_env" ]; then
+  native_files="$(cd "$repo_root" && { ls client/*.gdextension 2>/dev/null; [ "${PERF_SELFTEST_DROP_LIB:-0}" != 1 ] && [ -d client/native_bin ] && echo client/native_bin; } || true)"
+fi
 ship() { # $1 box dir, $2 rev ('' = working tree)
   ssh -n "$RENDER_HOST" "rm -rf '$1' && mkdir -p '$1'"
   if [ -z "$2" ]; then
@@ -191,7 +212,8 @@ ms=\$(grep -o "([0-9.]* mspf)" "\$2" | tr -d "(" | awk '{print \$1}' | tail -30 
 entry=\$(grep -m1 -o "region grid loaded in [0-9]* ms" "\$2" | grep -o "[0-9]*" || echo none)
 freeze=\$(grep -o "longest work frame [0-9.]* ms" "\$2" | grep -o "[0-9.]*" | sort -n | tail -1 | grep . || echo none)
 hitches=\$(grep -o "; [0-9]* over 100 ms" "\$2" | grep -o "[0-9]* over" | grep -o "[0-9]*" | awk '{s+=\$1} END {print s+0}')
-echo "\$ms \$entry \$freeze \$hitches \$(sort -n "\$2.others" 2>/dev/null | tail -1 | grep . || echo 0)"
+native=\$(grep -m1 -o "native readers [A-Z]*" "\$2" | awk '{print \$3}'); native=\${native:-none}
+echo "\$ms \$entry \$freeze \$hitches \$(sort -n "\$2.others" 2>/dev/null | tail -1 | grep . || echo 0) \$native"
 EOF
 ssh -n "$RENDER_HOST" "chmod +x '$work/run1.sh'"
 
@@ -229,14 +251,20 @@ one1() {
     local env="$extra"
     [ "$b" = base ] && [ -n "$ab_env" ] && env="$(echo "$extra $ab_env" | xargs)"
     out=$(ssh -n "$RENDER_HOST" "flock /var/tmp/perf-gate.lock '$work/run1.sh' '$dir' '$work/${s}_${b}_$tag.log' '$mapm' '$at' '$yaw' '$walk' '$run_frames' '$env' '$cold'")
-    read -r ms entry freeze hitches seen <<<"$out"
+    read -r ms entry freeze hitches seen native <<<"$out"
     if [ "$ms" = none ] || [ "$entry" = none ] || [ "$freeze" = none ]; then
       echo "  $s $b run $tag: missing numbers ($out) -- see $RENDER_HOST:$work/${s}_${b}_$tag.log" >&2; exit 1
+    fi
+    # The library state the rule in the header requires of this side.
+    local want="not ON"
+    [ -n "$ab_env" ] && [ "$b" = head ] && want="ON"
+    if { [ "$want" = ON ] && [ "$native" != ON ]; } || { [ "$want" != ON ] && [ "$native" = ON ]; }; then
+      echo "  $s $b run $tag: FAIL native readers $native, this side must be $want -- the comparison would not be what it says (see $RENDER_HOST:$work/${s}_${b}_$tag.log)" >&2; exit 1
     fi
     [ "$seen" = 0 ] && break
     echo "  $s $b run $tag: another render overlapped it ($seen) -- repeating" >&2
   done
-  echo "  $s $b run $tag: frame $ms ms, entry $entry ms, freeze $freeze ms, $hitches hitch(es)" >&2
+  echo "  $s $b run $tag: frame $ms ms, entry $entry ms, freeze $freeze ms, $hitches hitch(es), native readers $native" >&2
   echo "$ms $entry $freeze $hitches"
 }
 add() { # add <base|head> "<ms entry freeze hitches>"

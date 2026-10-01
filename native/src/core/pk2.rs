@@ -86,6 +86,9 @@ pub struct Stats {
 
 pub struct Archive {
     file: File,
+    /// The file's length at open: every read is clamped to it (an entry's size is the archive's
+    /// word, not the file's -- round 667's review, M3).
+    len: u64,
     encrypted: bool,
     cipher: Option<Blowfish>,
     root: u64,
@@ -130,10 +133,12 @@ impl Archive {
         if !header.starts_with(MAGIC_PREFIX) {
             return Err(format!("pk2: {path} is not a pk2 archive (bad magic)"));
         }
+        let len = file.metadata().map_err(|e| format!("pk2: reading {path}: {e}"))?.len();
         let encrypted = header[0x22] != 0;
         let cipher = if encrypted { Some(Blowfish::new(&effective_key(DEFAULT_KEY))) } else { None };
         Ok(Archive {
             file,
+            len,
             encrypted,
             cipher,
             root: HEADER_SIZE as u64,
@@ -231,9 +236,17 @@ impl Archive {
         None
     }
 
-    /// size bytes from offset -- fewer at the end of the file, as FileAccess.get_buffer.
+    /// size bytes from offset -- fewer at the end of the file, as FileAccess.get_buffer, and
+    /// nothing from past it. Never allocates more than the file holds from `offset`, and the
+    /// allocation itself is fallible: an untrusted size must not abort the process (Rust aborts
+    /// on a failed infallible allocation, which no catch_unwind sees -- round 667's review, M3).
     pub fn read(&self, offset: u64, size: u64) -> io::Result<Vec<u8>> {
-        let mut buf = vec![0u8; size as usize];
+        let want = size.min(self.len.saturating_sub(offset));
+        let want = usize::try_from(want).map_err(|_| io::Error::new(io::ErrorKind::OutOfMemory, "pk2: read too large"))?;
+        let mut buf = Vec::new();
+        buf.try_reserve_exact(want)
+            .map_err(|_| io::Error::new(io::ErrorKind::OutOfMemory, format!("pk2: cannot allocate {want} bytes")))?;
+        buf.resize(want, 0);
         let got = read_full_at(&self.file, &mut buf, offset)?;
         buf.truncate(got);
         self.stats.file_reads.fetch_add(1, Ordering::Relaxed);
@@ -363,6 +376,23 @@ mod tests {
             // Reading past the end gives what is there, as get_buffer does.
             assert_eq!(a.read(x.offset + 20, 100).unwrap(), body[20..].to_vec());
         }
+    }
+
+    /// An entry's size is the archive's word, not the file's: a read must never allocate more
+    /// than the file holds (round 667's review, M3 -- `vec![0; 0xFFFFFFFF]` aborted the process
+    /// under a memory limit, which no unwind can catch). The read returns what is there, as
+    /// FileAccess.get_buffer does, and an offset past the end returns nothing.
+    #[test]
+    fn oversize_entry_reads_only_what_the_file_holds() {
+        let (path, body) = build(false);
+        let a = Archive::open(path.0.to_str().unwrap()).unwrap();
+        let x = a.find("Data\\Sub\\x.bin").unwrap();
+        let file_len = std::fs::metadata(&path.0).unwrap().len();
+        let v = a.read(x.offset, 0xFFFF_FFFF).unwrap();
+        assert_eq!(v, body);
+        assert!(v.capacity() as u64 <= file_len, "allocated {} bytes for a {file_len}-byte file", v.capacity());
+        let past = a.read(file_len + 10, 0xFFFF_FFFF).unwrap();
+        assert!(past.is_empty() && past.capacity() == 0, "a read past the end allocates nothing");
     }
 
     #[test]

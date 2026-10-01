@@ -35,9 +35,10 @@ native_files() {
 }
 
 sync_client() {
-  if [ "${NO_NATIVE:-0}" = 1 ]; then
-    ssh -n "$RENDER_HOST" "rm -rf '$RENDER_DIR/native_bin'"
-  fi
+  # The box's native_bin mirrors the local tree's exactly (round 667's review,
+  # M2): removed first, then shipped again only if it exists here -- a lane
+  # never keeps a library from an older build.
+  ssh -n "$RENDER_HOST" "rm -rf '$RENDER_DIR/native_bin'"
   # shellcheck disable=SC2046
   tar cf - -C "$repo_root" client/scripts client/tools client/scenes client/docs client/project.godot $(native_files) \
     | ssh "$RENDER_HOST" "tar xf - -C '$RENDER_DIR' --strip-components=1 \

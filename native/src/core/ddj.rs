@@ -23,7 +23,8 @@ fn scale(masked: u64, shift: u32, max: u64) -> u8 {
     if max == 0 {
         255
     } else {
-        (((masked >> shift) * 255) / max) as u8
+        // u128: a mask wider than 56 bits would overflow u64 here (round 667's review, L1).
+        ((((masked >> shift) as u128) * 255) / max as u128) as u8
     }
 }
 
@@ -149,6 +150,20 @@ mod tests {
             decode_masked(&[1, 2], 1, 1, 32, &none).unwrap_err(),
             "ddj: uncompressed payload is 2 bytes, need 4 for 1x1 at 32 bpp"
         );
+    }
+
+    /// A mask wider than 56 bits (a negative int from GDScript becomes one through the binding)
+    /// must not overflow `value * 255` (round 667's review, L1).
+    #[test]
+    fn wide_masks_do_not_overflow() {
+        let px = [0xffu8; 8];
+        let m = Masks { r: u64::MAX, g: 0, b: 0, a: 0 };
+        // An empty colour mask reads full (255), as _scale_channel's `channel_max <= 0` does.
+        assert_eq!(decode_masked(&px, 1, 1, 64, &m).unwrap(), vec![255, 255, 255, 255]);
+        let m = Masks { r: u64::MAX, g: 0xff, b: 0xff00, a: 0 };
+        let px = [0x80u8, 0x40, 0, 0, 0, 0, 0, 0];
+        // r: 0x4080 * 255 / (2^64 - 1) rounds down to 0.
+        assert_eq!(decode_masked(&px, 1, 1, 64, &m).unwrap(), vec![0, 0x80, 0x40, 255]);
     }
 
     #[test]
