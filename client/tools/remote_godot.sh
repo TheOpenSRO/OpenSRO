@@ -93,11 +93,32 @@ case "$cmd" in
       echo "usage: $0 script [--script] res://tools/<tool>.gd [-- --flag=value ...]" >&2
       exit 2
     fi
+    # A script that hits a SCRIPT ERROR before its quit() never exits under
+    # `--script`, and it holds the lane lock and counts as "another lane's
+    # Godot" for every perf gate on the box: an orphaned native_tables_test
+    # run stalled round 670's gate for 30+ minutes (2026-10-01). So a script
+    # run is time-limited like a suite: SCRIPT_TIMEOUT seconds, 3600 unless
+    # set (OURS; the longest real run, round 670's full terrain parity, took
+    # 940 s), or GODOT_TIME_LIMIT if the caller set that.
+    GODOT_TIME_LIMIT="${GODOT_TIME_LIMIT:-${SCRIPT_TIMEOUT:-3600}}"
+    # Godot's exit status does not carry a script's verdict (a parity tool
+    # that printed PARITY FAIL exited 0, rounds 669-671), so the output's own
+    # verdict line decides: any "PARITY FAIL" line makes this exit 1.
+    out_file=$(mktemp)
     case "$*" in
-      *--script*) remote_godot "$@" ;;
-      res://*)    remote_godot "--script" "$@" ;;
-      *)          remote_godot "$@" ;;
+      *--script*) remote_godot "$@" | tee "$out_file" ;;
+      res://*)    remote_godot "--script" "$@" | tee "$out_file" ;;
+      *)          remote_godot "$@" | tee "$out_file" ;;
     esac
+    rc=${PIPESTATUS[0]}
+    if grep -qE 'PARITY FAIL' "$out_file"; then
+      echo "remote_godot.sh: the run printed PARITY FAIL -- exit 1" >&2
+      rc=1
+    elif [ "$rc" = 124 ]; then
+      echo "remote_godot.sh: the script ran past ${GODOT_TIME_LIMIT} s and was stopped (timeout 124)" >&2
+    fi
+    rm -f "$out_file"
+    exit "$rc"
     ;;
   tests)
     sync_client
