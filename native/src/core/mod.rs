@@ -14,3 +14,4 @@ mod blowfish_constants;
 pub mod ddj;
 pub mod pk2;
 pub mod tables;
+pub mod terrain;

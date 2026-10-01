@@ -164,6 +164,61 @@ static func _pp_parse(data: PackedByteArray) -> ParsedRegion:
 
 	return r
 
+## The same parse through the native decode (round 670): the bytes decoded in
+## Rust (native/src/core/terrain.rs, a one-to-one port of _pp_parse, held to
+## it on every real `.m` by tools/native_parity_terrain.gd) and this reader's
+## ParsedRegion built from the columns. Null without the native readers.
+##
+## NOT on the load path. Round 670 measured it: the decode takes about 0.1
+## ms a file, but building this reader's objects from the columns costs as
+## much as the whole GDScript parse (WORLD_ISSUES, round 670), so parse()
+## stays in GDScript. It is the decode a later round needs once the
+## region's readers move onto the columns (docs/TODO.md).
+static func parse_native(data: PackedByteArray) -> ParsedRegion:
+	var native := NativeAssets.terrain()
+	if native == null:
+		return null
+	return _from_native(native.call("mapm_parse", data))
+
+## The ParsedRegion of a native decode (SrNativeTerrain.mapm_parse): the
+## same objects the GDScript parse builds, field for field; null, with the
+## GDScript parse's own error, on {error}.
+static func _from_native(d: Dictionary) -> ParsedRegion:
+	if d.has("error"):
+		push_error(d["error"])
+		return null
+	var r := ParsedRegion.new()
+	r.version = d["version"]
+	var flags: PackedInt64Array = d["flags"]
+	var env_ids: PackedInt32Array = d["environment_ids"]
+	var plane_types: PackedInt32Array = d["plane_types"]
+	var wave_ids: PackedInt32Array = d["wave_ids"]
+	var plane_heights: PackedFloat32Array = d["plane_heights"]
+	var height_max: PackedFloat32Array = d["height_max"]
+	var height_min: PackedFloat32Array = d["height_min"]
+	var heights: PackedFloat32Array = d["heights"]
+	var extras: PackedByteArray = d["extras"]
+	var extra_len: int = int(d["vertex_len"]) - 4
+	var i := 0
+	for b in range(BLOCK_COUNT):
+		var block := Block.new()
+		block.flag = flags[b]
+		block.environment_id = env_ids[b]
+		block.vertices.resize(VERTEX_COUNT)
+		for v in range(VERTEX_COUNT):
+			var vertex := Vertex.new()
+			vertex.height = heights[i]
+			vertex.extra = extras.slice(i * extra_len, i * extra_len + extra_len)
+			block.vertices[v] = vertex
+			i += 1
+		block.plane_type = plane_types[b]
+		block.wave_id = wave_ids[b]
+		block.plane_height = plane_heights[b]
+		block.height_max = height_max[b]
+		block.height_min = height_min[b]
+		r.blocks.append(block)
+	return r
+
 ## Reports [vertex_len, reserved_len] implied by data's own total size, or
 ## null if it matches neither known real layout. Real files fit exactly
 ## one of the two candidate exact totals, or that total plus a real,

@@ -7413,6 +7413,250 @@ library, `SRREVAMP_NATIVE=0` (the log says `forced off by SRREVAMP_NATIVE=0`) an
 182 suites, 0 failing each; the Windows DLL still `stands alone, exports gdext_rust_init,
 stripped`.
 
+## Six-hundred-and-seventieth round: the terrain's lightmap loop in Rust, 28 ms a region down to 1.2; the `.m` and `.nvm` decodes ported and proven, but left off the load path because they gain nothing
+
+The user (2026-10-01): "I'd actually like to start moving over the tasks you think are worth having
+in rust so we can squeeze more performance out of this." This round is the terrain and navigation
+lane. It covers `.m`, `.nvm`, the `.o2`/`.ifo` lists, and the terrain prepare's other loops. Rounds
+669 (models) and 671 (text tables) ran beside it. The module: native/README.md, "The terrain
+parsers". What is left: docs/TODO.md, "Native (Rust) readers".
+
+Labels: MEASURED (the render box, real archives at /opt/sro-files/client, 1280x720, the loading
+screen forced, `SRREVAMP_PARSE_PROFILE=1`), READ (this repo), OURS.
+
+### 1. Where the terrain time goes, ranked, native readers ON, before porting
+
+Two profiling hooks were added for this (OURS, profiling only):
+- every prepare lap (`_job_lap`) now also lands in the PARSEPROF table as `prep.terrain.*` /
+  `prep.objects.*`;
+- `MapmTerrainBuilder.lightmap_term` is timed as `mapm.lightmap_term`.
+
+The 10-second `LoadTimings` summary now prints a PARSEPROF `window` table and resets it. At the
+`cross` site the walk crosses into 97/167 during the loading drain, so its 30 cells (against
+Jangan's 25) are all in the entry window.
+
+The Jangan entry, round 667's build with the hooks (MEASURED, run p0; runs p1 and p2 within 3 %).
+Times are main thread / workers in ms, with the call count for the workers:
+
+| key | Jangan entry | cross entry | what it is | ported? |
+|---|---|---|---|---|
+| `prep.terrain.mesh` | 90 / **2,878** (24) | 95 / 3,635 (29) | `build_full_region_surfaces_textured`: grid, normals, light, texture passes | no: geometry, not a parse (§4) |
+| `mapm.lightmap_term` | 27 / **710** (24) | 28 / 863 (29) | a per-byte LUT loop over the `.t` lightmap's RGB8 bytes, 29.6 ms a region | **yes** |
+| `mapm.parse` | 16 / 524 (24) | 17 / 633 (29) | 10,404 `Vertex` objects a region | ported, **not switched on** (§3) |
+| `nvm.parse` | 12 / 460 (24) | 12 / 590 (29) | 9,216 `Tile` objects plus cells and edges | ported, **not switched on** (§3) |
+| `prep.terrain.navgraph` | 18 / 188 | 18 / 199 | `NavGraph.build` over the parsed objects | no: not a parse |
+| `prep.terrain.heights` | 2 / 89 | 3 / 109 | `TerrainCollision.heights_from_region`, reading `Vertex` objects | no: an object walk, not a byte loop (§4) |
+| `mapt.parse` | 1 / 32 | 1 / 37 | the `.t`: mostly the engine's own DXT1 decompress | no: under the bar |
+| `o2.parse` | 0.6 / 12 | 0.6 / 13 | the `.o2` lists | no: under the bar |
+| `objidx.parse` | 7 / 0 | 8 / 0 | `object.ifo`, once | no: under the bar |
+| `prep.terrain.walls` | 0.1 / 9 | 0.2 / 19 | `NvmCollision` wall triangles | no: under the bar |
+| `tile2d.parse` | 1.8 / 0 | 1.9 / 0 | `tile2d.ifo`, once | no: under the bar |
+
+The bar is the brief's: under about 20 ms an entry is not ported.
+
+### 2. What was built
+
+- **`native/src/core/terrain.rs`** (plain Rust): `parse_mapm`, `parse_nvm` and `lightmap_add`.
+  - They are one-to-one ports of `MapmReader._pp_parse`, `NvmReader._pp_parse` and
+    `_parse_edges`, and of `lightmap_term`'s loop.
+  - They make the same checks in the same order, with the same error messages.
+  - Results are flat columns.
+  - **Floats keep GDScript's bits.** `decode_float` widens a float32 to a 64-bit float, and the
+    float32 fields narrow it back. On x86-64 that sets a signalling NaN's quiet bit, and
+    `f32_gd` does the same.
+  - No `unsafe`. Every offset is checked before it is read. Every allocation is fallible and
+    clamped to what the remaining bytes could hold, so an `.nvm` declaring 4 billion cells is an
+    error, not an allocation.
+- **`native/src/gd_terrain.rs`**: the class `SrNativeTerrain`, with `mapm_parse`, `nvm_parse`
+  (one Dictionary of packed arrays, or `{error}`) and `lightmap_add` (a PackedByteArray).
+  `lib.rs` and `core/mod.rs` gained only their `mod` lines. **`API` is 3**, in both `core/mod.rs`
+  and `NATIVE_API`.
+- **`NativeAssets.terrain()`**: the shared instance, made under a mutex on the first call,
+  because the first call may come from two terrain tasks at once.
+- **`MapmTerrainBuilder.lightmap_term`** hands its loop to `lightmap_add` when the readers are
+  on. It falls back to the GDScript loop on an empty answer.
+- **`MapmReader.parse_native` / `NvmReader.parse_native`**: the native decode, then the reader's
+  own `ParsedRegion` built from the columns (`_from_native`). They are **not called by `parse()`**
+  (§3).
+
+### 3. The `.m` and `.nvm` ports gain nothing while the readers keep their objects (MEASURED)
+
+`_bench670.gd` (scratch, not committed) parsed the 25 Jangan-window regions three times each way.
+All three repeats agreed within 0.3 ms:
+
+| per file | GDScript `parse()` | native decode (the call) | building the objects from the columns |
+|---|---|---|---|
+| `.m` | 12.7-13.0 ms | **0.10 ms** | 12.9-13.2 ms |
+| `.nvm` | 13.0-13.1 ms | **0.14 ms** | 11.7 ms |
+
+The Rust decode is about 100 times faster than the GDScript one. But the GDScript parse's cost is
+not the decode: it is the `Vertex`, `Tile`, `Cell` and `Edge` objects, plus a sliced `extra`
+for every vertex. Built from packed columns, they cost the same.
+
+The parity runs' interleaved timing (§5) put the native path behind:
+- `.m`: 10.2 / 10.6 ms against 8.0 / 8.2 ms;
+- `.nvm`: 9.8 / 11.5 ms against 9.0 / 9.3 ms.
+
+So `parse()` stays in GDScript.
+
+The port is kept, proven on every real file, as `parse_native`. It is the decode the next step
+needs: keep the columns on `ParsedRegion` and move its readers onto them (docs/TODO.md, an API
+change this round's brief left out). At stake: 524 + 460 + 89 ms of worker time a Jangan entry,
+plus whatever the mesh build saves from reading packed arrays instead of `[height, extra]`
+pairs.
+
+### 4. The prepare's other loops
+
+The brief asked whether the prepare's height, normal and lightmap loops are parse-like byte
+loops.
+- **The lightmap term is one**: a LUT over every byte of a 512x512 RGB8 image (262,144 pixels a term: 5,446,303,744 / 20,776 in §5; docs/protocol/MAPM_FORMAT.md). It is ported.
+- **The height grid is not.** `heights_from_region` walks `Vertex` objects, so it moves with §3's
+  column step.
+- **The mesh is not.** It is geometry and lighting in float32 vectors and colours: normals,
+  per-vertex light, the texture passes. At 2.9 s of worker time a Jangan entry it is the largest
+  item in the terrain prepare, and it has its own TODO entry.
+
+### 5. Parity on the real archives (MEASURED)
+
+`client/tools/native_parity_terrain.gd` (new) compares the two paths on every file of each type.
+Floats are compared by bit pattern: 64-bit for the readers' `float` fields, packed float32 for
+vectors, heights and planes.
+
+| type | files | compared | truncations refused both ways | mismatches | GDScript / native |
+|---|---|---|---|---|---|
+| `.m` (Map.pk2) | **4,719** (0 refused) | 49,096,476 vertices: height bits and extra bytes; every block's 7 fields | 564 | **0** | 8.0 / 10.2 ms a file |
+| `.nvm` (Data.pk2) | **6,543** (101 refused by both) | 50,580 objects, 2,769 linked edges, 1,700,356 cells, 3,745,298 edges, 59,369,472 tiles, every height and plane | 744 | **0** | 9.0 / 9.8 ms a file |
+| `.t` lightmaps (Map.pk2) | **5,198** (5,194 decoded) | 20,776 terms under 4 shadow colours, 5,446,303,744 pixels | -- | **0** | **27.4 / 1.1 ms** a term |
+
+The run printed `PARITY PASS` and took 940 s. An earlier run of the same comparisons, before the
+`--only`/`--limit` switches and the per-type counts were added, also passed (1,009 s).
+
+**The negative.** `--features parity-negative` gains two terrain bugs:
+- one float in the file's offsets (13 modulo 97) is read a bit off;
+- a lightmap's green saturates at 254.
+
+Run with `--limit=150` (the first 150 files of each type):
+
+```
+FAIL mapm '50.m': float 30 is 1480.36828613281 in GDScript, 1480.3681640625 native (bits differ)
+FAIL mapm '51.m': float 30 is 1494.57043457031 in GDScript, 1494.5703125 native (bits differ)
+...
+PARITY mapm: 150 mismatches; 150 .m files compared (0 refused both ways), 1560600 vertices; ...
+PARITY nvm: 374 mismatches; 150 .nvm files compared (0 refused both ways): 968 objects, ...
+PARITY lightmap: 588 mismatches; 150 .t files, 150 lightmaps decoded, 600 terms compared (157286400 pixels); ...
+PARITY FAIL 1112
+```
+
+`terrain_native_test.gd` fails 9 of its 15 checks against the negative build (every `.m` and `.nvm` that parses, all 3 lightmap terms and the threaded parses) against the negative build, and
+`cargo test --no-default-features --features parity-negative` fails 7 of 17 (2 of them
+terrain).
+
+Tests:
+- `cargo test --no-default-features`: 17 pass. The synthetic `.m` (both vertex sizes, a zero and
+  a non-zero trailer, a signalling NaN) and `.nvm` tests are new. So are every 7th truncation of
+  each, 400 xorshift-garbage files behind each magic, the largest declarable counts, and the
+  lightmap saturation.
+- `client/scripts/mapm/terrain_native_test.gd` (new, synthetic only):
+  - with the library: 15 checks, ALL PASS. Both paths agree on 7 `.m` cases, every truncation
+    of a `.m` (93) and of a `.nvm` (338), a trailing byte, and 3 lightmap terms. 16 parses on 8
+    WorkerThreadPool threads agree, the first making the shared object.
+  - without the library: the accessor is null and the GDScript readers parse.
+- Box suites: with the library, `check` ALL LOAD (453 scripts) and `tests` 182 suites, 0
+  failing. With `NO_NATIVE=1`, 182 suites, 0 failing.
+- `native/build.sh windows` then `check_native_library.sh ... windows`: it stands alone (only
+  system DLLs), exports `gdext_rust_init` and is stripped.
+
+### 6. Before and after (MEASURED)
+
+**The bucket.** "Before" is round 667's library (API 2) and readers with this round's profiling
+hooks; "after" is this round. Both are native ON, two runs each, interleaved, so only this
+round's port differs. Times are main thread / workers in ms:
+
+| | Jangan before (p1, p2) | Jangan after (p1, p2) | cross before | cross after |
+|---|---|---|---|---|
+| `mapm.lightmap_term` | 27.7 / 717; 30.1 / 713 | **1.2 / 48; 1.2 / 50** | 27.4 / 869; 27.5 / 886 | **1.2 / 59; 1.2 / 61** |
+| centre cell's `lightmap` lap | 28; 30 | **2; 2** | 28; 28 | **2; 2** |
+| centre cell built in | 1,691; 1,676 | 1,678; 1,660 | 1,675; 1,688 | 1,651; 1,657 |
+| entry (`region grid loaded in`) | 6,310; 6,053 | 5,980; 5,924 | 7,131; 6,733 | 6,563; 6,926 |
+
+So the port takes about 0.67 s of worker time and 27 ms of the centre cell's main thread off a
+Jangan entry, and about 0.82 s and 26 ms off the cross entry. The entry wall time moves by less
+than its run-to-run spread. The workers are not the drain's critical path at Jangan (round 667's
+centre cell is), so the saving shows as CPU freed rather than as seconds.
+
+**The A/B gate.** `PERF_LANE=terrain670 perf_gate.sh --ab-env SRREVAMP_NATIVE=0 --sites
+jangan,mobs,cross` compares this build native (head) against the same build in GDScript (base),
+3 runs a side. It measures everything native, round 667's pk2 and ddj included:
+
+```
+jangan  frame ms   base 9.49  head 9.73  (+0.2)  SAME
+jangan  entry ms   base 10104  head 5838  (-4266.0)  FASTER
+jangan  freeze ms  base 3441  head 1655  (-1786.0)  FASTER
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+mobs    frame ms   base 10.93  head 10.71  (-0.2)  SAME
+mobs    entry ms   base 11173  head 6780  (-4393.0)  FASTER
+mobs    freeze ms  base 3443  head 1883  (-1560.0)  FASTER
+mobs    hitches    base 5  head 5  (+0.0)  SAME
+cross   frame ms   base 7.30  head 7.10  (-0.2)  SAME
+cross   entry ms   base 10563  head 6510  (-4053.0)  FASTER
+cross   freeze ms  base 3402  head 1635  (-1767.0)  FASTER
+cross   hitches    base 5  head 5  (+0.0)  SAME
+```
+
+- **Frame time is SAME at every site.** Cross base run 2 was repeated because another lane's
+  render overlapped it.
+- Round 667's same gate measured these entries:
+  - Jangan: 9,966 / 6,097 ms (base / head).
+  - mobs: 11,162 / 7,006 ms.
+
+  This round's head entries are 5,838 and 6,780 ms. That is 259 and 226 ms lower, but on
+  another day's box load, so it is not this round's number. The bucket table above is.
+
+### 7. OPEN
+
+- **The columns step.** Keep the `.m` and `.nvm` columns on `ParsedRegion`, and move its readers
+  onto them. `parse_native` is the proven decode for it. It is an API change, so it was out of
+  this round's scope. At stake: about 1.07 s of worker time a Jangan entry.
+- **The terrain mesh build**: 2.9 s of worker time and 90 ms of the centre cell's main thread a
+  Jangan entry. It is not a parse, and porting it needs float32 vector and colour parity or an
+  agreed tolerance.
+- **101 `.nvm` files** in Data.pk2 are refused by both readers (the review's finding, MEASURED).
+  - All of them are in `navmesh\`, and all fail with "truncated reading the real HeightMap".
+  - They are a short-heightmap variant: after valid tiles come only 952 bytes, which hold 193
+    height floats, 36 zero plane types and 36 plane heights of -20.0.
+  - None of those regions has a `.m`, so no loaded region loses its navigation.
+  - docs/TODO.md has it for the server lane.
+- **The lightmap port has not run on Windows.** The DLL builds and passes
+  `check_native_library.sh`.
+
+### 8. Review follow-up
+
+- **`terrain_native_test.gd` failed under `SRREVAMP_NATIVE=0`** (MEDIUM). It asked
+  `library_usable()`, which is true for a library that is loaded but forced off, so it printed 7
+  FAILs. It now asks `NativeAssets.terrain() != null`, which is what the client itself uses.
+- **A native lightmap that always fell back went unseen** (LOW).
+  - An always-`Err` `lightmap_add` still passed both checks, because `lightmap_term`'s fallback
+    made both sides GDScript.
+  - The test now calls `lightmap_add` directly and requires a non-empty answer with the GDScript
+    loop's bytes.
+  - The parity tool now asks the native loop for every term directly, counts its answers
+    against its fallbacks, and fails when it answered none.
+  - Against that mutant (MEASURED): the test fails with `FAIL the native lightmap_add answers
+    itself ... (0 bytes)`, and the parity tool fails with `FAIL lightmap: the native loop
+    answered 0 of 600 terms (600 empty)` and `PARITY FAIL 1`.
+  - The real library answered 600 of 600, with 0 fallbacks and 0 mismatches.
+- **The profiling hooks** (LOW). `_job_lap` builds its key only when profiling is on, and the
+  `entry` table now resets the profile, so the first `window` table no longer counts the entry
+  again.
+- **Corrections:** the lightmap is 512x512, not 256x256. The 101 refused `.nvm` files are a
+  short-heightmap variant (§7, docs/TODO.md).
+- **Suites (MEASURED):**
+  - with the library: 182 suites, 0 failing;
+  - `NO_NATIVE=1`: 182 suites, 0 failing;
+  - `SRREVAMP_NATIVE=0`: 182 suites, 1 failing. The failure is `native_assets_test.gd`, which
+    8894f21 fixes at the merge.
+  - `terrain_native_test.gd` passes in all three modes.
+
 ## Six-hundred-and-sixty-ninth round: the mesh, animation and skeleton readers in Rust -- the Jangan entry 1.0 s shorter and its longest freeze 0.3 s shorter than round 667's native build, a 500-monster entry 1.1 s shorter
 
 The user asked (2026-10-01) to move into Rust the work that is worth having there, before any

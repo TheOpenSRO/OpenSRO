@@ -5,3 +5,5 @@ mod gd;
 mod gd_models;
 #[cfg(feature = "godot-binding")]
 mod gd_tables;
+#[cfg(feature = "godot-binding")]
+mod gd_terrain;

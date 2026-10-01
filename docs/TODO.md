@@ -930,6 +930,53 @@ what the same `SRREVAMP_PARSE_PROFILE=1` Jangan entry measured with the native r
         (18 ms with its six reads), `TeleportReader.load` (4 ms), `NpcServiceReader`'s
         shop and greeting tables (under 1 ms), and the readers not on the boot or entry path
         (skill, mastery, level, worldmap, sound tables).
+- [ ] **`BmsReader.parse`**: the largest parser left, at 326 ms on the main thread and 879 ms on
+      the workers per Jangan entry (plus `to_arrays`, 58 / 72). The parse builds one `Vertex` object per vertex, and
+      `to_arrays` turns them back into packed arrays. A native parse that hands back the packed
+      arrays and keeps them on `ParsedMesh` saves both. Callers that read `mesh.vertices`
+      (character, monster and skinned assemblers, `bms_collision`) still need the objects, or
+      need moving onto the arrays.
+- [~] **The terrain readers** (round 670, WORLD_ISSUES.md).
+  - Done: `MapmTerrainBuilder.lightmap_term`'s per-byte loop is native. It took 28 ms a region
+    in GDScript and takes 1.2 ms. That saves about 0.7 s of worker time and 27 ms of the
+    centre cell's main thread per Jangan entry.
+  - Done: the `.m` and `.nvm` decodes are ported and proven on every real file
+    (`MapmReader.parse_native`, `NvmReader.parse_native`). They are not on the load path,
+    because the reader's objects cost as much to build from the columns as the GDScript
+    parse costs whole. The decode is 0.1 ms; the build is 13 ms a `.m` and 12 ms a `.nvm`.
+  - Not ported, too small: `.o2` (13 ms an entry), the object index (`ObjidxReader`, 7 ms once), `tile2d.ifo`
+    (2 ms once) and `.t` (33 ms an entry, mostly the engine's DXT1 decompress).
+- [ ] **101 `.nvm` files that no reader parses** (round 670's review, MEASURED). All of them are
+      in Data.pk2's `navmesh\`, and both readers refuse them with "truncated reading the real
+      HeightMap". They are a short-heightmap variant:
+      - the header, cells, edges and tiles are valid;
+      - then come only 952 bytes: 193 height floats instead of 9,409, 36 zero plane types, and
+        36 plane heights of -20.0.
+
+      None of those regions has a `.m` in Map.pk2, so no region the client loads loses its
+      navigation today. The server lane may care: what 193 heights cover, and whether the
+      server's own reader accepts the variant, is not known.
+- [ ] **Keep the terrain columns on the region (an API change).** This is what makes the
+      `.m`/`.nvm` port pay. `ParsedRegion` would carry the packed heights and extras (and for
+      `.nvm`, the tiles), and its readers would move onto them:
+      `TerrainCollision.heights_from_region`, `MapmTerrainBuilder._full_region_cells`,
+      `MapmWater`, `NvmCollision`, `NavGraph` and `anim_sounds.material_at`. The
+      per-vertex and per-tile objects then go away. Worker time per Jangan entry at stake:
+      524 ms `.m` + 460 ms `.nvm` + 88 ms heights. `parse_native` and
+      `native_parity_terrain.gd` are already the proven decode.
+- [ ] **The terrain mesh build** (`prep.terrain.mesh`, `MapmTerrainBuilder.build_full_region_surfaces_textured`).
+      It is the largest item in the terrain prepare: 2.9 s of worker time and 90 ms of the
+      centre cell's main thread per Jangan entry (round 670, MEASURED). It is geometry and
+      lighting over the region's grid (normals, per-vertex light, the texture passes), not a
+      parse. Porting it means holding float32 vector and colour arithmetic to GDScript's bits,
+      or agreeing on a tolerance. Its own round.
+- [ ] **The NPC text tables** (`npcs [tables]`, about 570 ms on the main thread at the centre
+      cell, unchanged by round 667): `NpcTableReader.parse_models`/`parse_codes`/`parse_names`
+      and `UiTextTable.parse` over characterdata and textdata_object. These are UTF-16 split and
+      scan, a natural fit for one native call per file that returns packed columns.
+- [ ] **The boot tables** (`character/item/NPC tables loaded in` about 1.1 s, before the loading
+      screen): not profiled function by function yet. ParseProfile's `before the entry` window
+      covers only the readers it wraps.
 - [x] **Ship it** (round 668). release.yml builds both libraries, both zips carry them, and the
       auto-updater installs them over a DLL the game has loaded (native/README.md, "CI";
       docs/NATIVE_ON_WINDOWS.md). Left from it:
