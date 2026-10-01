@@ -1139,6 +1139,14 @@ Mountain), tunnels, Jangan's gate soldiers, Constantinople's guides and the two 
       (92/50 (1719, 760)) is `alex_portal` at 15.1 units, past the 10-unit stand-in radius. Whether
       that portal is the gate is not established. Widening the radius would be a guess. Alexandria
       (South) binds its `alex_portal` at 8.4.
+- [ ] **"After I died, the Jangan teleport stopped working" (round 675) is not reproduced.**
+      srrevamp-01's log shows the player's client never sent OpTeleportUse (0 in the whole
+      session) after the option-1 revive took it to Jangan, though it ran into the gate's AOI cell
+      and clicked around for about 4 s; six dev runs with the live flags (QA hook, real X input,
+      the user's saved place and `/speed 3`, the native readers, 4K at UI scale 1.95) all went
+      through. Next: the player's client log for 18:04:20-18:04:37 UTC on 2026-10-01 (its `PICK:`,
+      `NPCTALK` and `World3D: teleport` lines; round 675's `CLICK:` lines from the next release).
+      WORLD_ISSUES round 675 has the timeline.
 - [ ] **The talk range of other NPCs.** Round 642's review closes a gate's or teleport NPC's talk
       box beyond the READ range (300 NPC, 800 structure). Whether retail's talk box for a shop or a
       warehouse closes by the same range is not read, so those talk boxes still stay open.
