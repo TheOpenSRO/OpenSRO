@@ -902,9 +902,27 @@ what the same `SRREVAMP_PARSE_PROFILE=1` Jangan entry measured with the native r
 - [ ] **The boot tables** (`character/item/NPC tables loaded in` about 1.1 s, before the loading
       screen): not profiled function by function yet. ParseProfile's `before the entry` window
       covers only the readers it wraps.
-- [ ] **Ship it.** The release workflow builds no library yet, and `export_presets.cfg` excludes
-      the `.gdextension`. native/README.md, "Exports and CI", has the three steps. The user tests
-      the DLL on Windows first (the log lines to look for are in the README).
+- [x] **Ship it** (round 668). release.yml builds both libraries, both zips carry them, and the
+      auto-updater installs them over a DLL the game has loaded (native/README.md, "CI";
+      docs/NATIVE_ON_WINDOWS.md). Left from it:
+  - [ ] **The user's Windows test.** Nothing of the DLL or of the updater's rename-aside install
+        has run on Windows. The user's exclusion-and-rename test is the first evidence; the
+        lines to expect are in docs/NATIVE_ON_WINDOWS.md.
+  - [ ] **A `.pck` held open blocks an update.** If Windows has the old `.pck` open without
+        FILE_SHARE_DELETE at the moment of the update (Godot's own `_wfsopen(_SH_DENYNO)`
+        handles, file_access_windows.cpp:146), it cannot be moved aside. The update is then
+        rolled back and reported as failed. Godot opens the `.pck` per resource read and closes
+        it again, and the update runs at the Boot screen, so this is INFERRED to be rare. Not
+        seen.
+  - [ ] **The relaunch on Windows** is a batch file polling `tasklist` (AutoUpdater
+        `windows_relaunch_script`). If it fails, the update is still installed and the player
+        starts the game by hand.
+  - [ ] **Signing.** The DLL and the exe are unsigned. If antivirus quarantines the DLL for
+        players, the options are an Authenticode certificate or a static link into custom
+        export templates (native/README.md, "Windows").
+  - [ ] **Godot's own licence text** is not in the zips. The engine is MIT, which asks for its
+        notice in copies. THIRD_PARTY_NOTICES.txt covers only the Rust crates. This predates
+        round 668.
 - [ ] **Low-end hardware.** The user will emulate a slow CPU and slow storage. `perf_gate.sh
       --ab-env SRREVAMP_NATIVE=0 --cold` is the reproducible run (client/tools/README.md,
       "Native readers A/B").

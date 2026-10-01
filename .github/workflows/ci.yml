@@ -5,6 +5,7 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+  workflow_dispatch: {}
 
 jobs:
   server:
@@ -68,29 +69,52 @@ jobs:
         working-directory: client
         run: godot --headless --path . --script res://tools/check_scripts.gd
 
+      # No native library here, on purpose: this is the client a player
+      # without srrevamp_native.dll runs (Godot prints its extension-load
+      # errors, then every reader is GDScript). The "native" job below runs
+      # the same suites with the library loaded.
       - name: Run GDScript tests
         working-directory: client
+        run: bash tools/run_gd_tests.sh
+
+  native:
+    name: Native readers (Rust) and the suites with the library loaded
+    runs-on: kakariko-runner
+    env:
+      # Same pin as release.yml.
+      RUST_TOOLCHAIN: "1.98.1"
+    steps:
+      - uses: actions/checkout@v5
+      # Not cached, on purpose (MEASURED, probe run 36808460104): with nothing
+      # cached, installing the toolchain took 43 s and building both libraries
+      # 36 s, while saving the 1.9 GB a cache would hold (rustup, zig,
+      # native/target) to this runner's cache service was still running after
+      # five minutes. hashFiles() also failed outright here (probe run
+      # 36807629459).
+      - name: Install the native build toolchain
+        run: bash native/ci_toolchain.sh
+      - name: Test the native core (Blowfish, pk2, ddj; no Godot)
+        working-directory: native
+        run: cargo test --locked --no-default-features
+      - name: Build the release .so and check it
         run: |
-          # Discovered, not listed. The list this replaced had drifted to 55
-          # entries against 56 test files in the repo, so a test could be
-          # added and silently never run -- the failure mode a test suite
-          # exists to prevent.
+          native/build.sh linux-release
+          bash client/tools/check_native_library.sh client/native_bin/libsrrevamp_native.so linux
+      - name: Set up Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: 4.2.2
+          use-dotnet: false
+      - name: Import the project
+        working-directory: client
+        run: godot --headless --path . --import --quit
+      - name: Run GDScript tests with the native library loaded
+        working-directory: client
+        run: |
           set -o pipefail
-          failed=0
-          count=0
-          for t in $(find scripts -name '*_test.gd' | sort); do
-            count=$((count + 1))
-            if ! godot --headless --path . --script "res://$t"; then
-              echo "::error file=client/$t::GDScript test failed"
-              failed=1
-            fi
-          done
-          echo "ran $count GDScript test(s)"
-          if [ "$count" -eq 0 ]; then
-            echo "::error::no GDScript tests were discovered"
-            exit 1
-          fi
-          exit $failed
+          godot --headless --path . --script res://scripts/pk2/native_status_test.gd | tee /tmp/native_status.log
+          grep -q "NativeAssets: native readers ON" /tmp/native_status.log || { echo "::error::the library did not load"; exit 1; }
+          bash tools/run_gd_tests.sh
 
   no-assets-check:
     name: Guard against committed pk2/game assets

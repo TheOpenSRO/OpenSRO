@@ -101,3 +101,27 @@ static func find_asset_api_url(assets: Array, asset_name: String) -> String:
 		if asset is Dictionary and asset.get("name", "") == asset_name:
 			return asset.get("url", "")
 	return ""
+
+## The asset's SHA-256 as GitHub's Releases API reports it ("digest":
+## "sha256:<hex>"; MEASURED on v0.1.464's two assets, round 668), lower-case
+## hex, or "" when the asset has no digest of that kind.
+static func find_asset_digest(assets: Array, asset_name: String) -> String:
+	if asset_name == "":
+		return ""
+	for asset in assets:
+		if asset is Dictionary and asset.get("name", "") == asset_name:
+			var digest := str(asset.get("digest", ""))
+			if digest.begins_with("sha256:") and digest.length() == 7 + 64:
+				return digest.substr(7).to_lower()
+			return ""
+	return ""
+
+## "" when the downloaded file's SHA-256 matches the release's, otherwise why
+## not. An empty expected digest is reported, not failed: older releases and a
+## QA endpoint may list none (AutoUpdater logs it as unverified).
+static func digest_problem(actual_hex: String, expected_hex: String) -> String:
+	if expected_hex == "":
+		return ""
+	if actual_hex.to_lower() != expected_hex.to_lower():
+		return "the download's SHA-256 is %s, the release says %s" % [actual_hex.to_lower(), expected_hex.to_lower()]
+	return ""

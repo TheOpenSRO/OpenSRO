@@ -18,6 +18,12 @@ func _ready() -> void:
 	print("SRRevamp boot: no bundled game data -- put your own *.pk2 files in the 'pk2' folder next to this executable.")
 	print("SRRevamp log file: %s" % ProjectSettings.globalize_path("user://logs/srrevamp.log"))
 	print("SRRevamp version: %s" % UpdateChecker.CLIENT_VERSION)
+	# The native readers' state, once, at startup (round 668): ON, OFF because
+	# the library is missing or refused, or forced OFF. A tester's log always
+	# says which reader loaded their world.
+	NativeAssets.available()
+	# A previous update's summary and leftovers (round 668, UpdateInstaller).
+	AutoUpdater.after_update_startup()
 	# Before any screen draws, so the login screen is already the size the
 	# player asked for last time (the debug panel changes it live).
 	ClientSettings.apply_ui_scale(get_window(), ClientSettings.ui_scale())
@@ -42,6 +48,12 @@ func _on_update_failed(reason: String) -> void:
 	_proceed_to_login()
 
 func _on_update_available(tag: String, download_url: String) -> void:
+	# QA hook (round 668): accept without the dialog, for an unattended update
+	# test against SRREVAMP_QA_UPDATE_URL. OURS.
+	if OS.get_environment("SRREVAMP_QA_UPDATE_ACCEPT") == "1":
+		print("SRRevamp: downloading update %s (accepted by SRREVAMP_QA_UPDATE_ACCEPT)..." % tag)
+		_updater.begin_download(download_url)
+		return
 	var dialog := ConfirmationDialog.new()
 	dialog.title = "Update available"
 	dialog.dialog_text = "A new version (%s) is available. Download and restart now?" % tag
@@ -53,6 +65,13 @@ func _on_update_available(tag: String, download_url: String) -> void:
 	dialog.popup_centered()
 
 func _proceed_to_login() -> void:
+	# QA hook (round 668): stop here instead of opening Login, so an
+	# unattended update test's relaunched client exits by itself and its log
+	# is complete. OURS.
+	if OS.get_environment("SRREVAMP_QA_QUIT_AT_LOGIN") == "1":
+		print("SRRevamp: quitting before Login (SRREVAMP_QA_QUIT_AT_LOGIN)")
+		get_tree().quit.call_deferred()
+		return
 	# Deferred: calling change_scene_to_file directly from _ready() fights
 	# the scene tree's own in-progress node-addition for this node,
 	# producing "Parent node is busy adding/removing children" errors.

@@ -261,6 +261,8 @@ func diagnostics() -> String:
 	lines.append("Godot %s on %s | gpu %s | api %s" % [
 		Engine.get_version_info().string, OS.get_name(),
 		RenderingServer.get_video_adapter_name(), RenderingServer.get_video_adapter_api_version()])
+	# Which asset readers loaded this world (round 668): the startup log line.
+	lines.append(NativeAssets.status.trim_prefix("NativeAssets: ") if NativeAssets.status != "" else "native readers: not checked yet")
 	lines.append("log %s" % ProjectSettings.globalize_path("user://logs/srrevamp.log"))
 	lines.append("settings %s" % ProjectSettings.globalize_path(ClientSettings.PATH))
 

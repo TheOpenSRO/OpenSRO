@@ -19,6 +19,10 @@ jobs:
     runs-on: kakariko-runner
     permissions:
       contents: write
+    env:
+      # The native readers' toolchain (native/README.md). Bump it here and in
+      # ci.yml together.
+      RUST_TOOLCHAIN: "1.98.1"
     steps:
       - uses: actions/checkout@v5
 
@@ -59,6 +63,28 @@ jobs:
           git fetch --tags --force --quiet || true
           bash client/tools/bundle_docs.sh
 
+      # The native (Rust) asset readers, round 667/668 (native/README.md, "CI"):
+      # srrevamp_native.dll (x86_64-pc-windows-gnu) and libsrrevamp_native.so,
+      # built before the import so the editor sees the library the
+      # .gdextension names, and before the exports so each zip carries its
+      # platform's library next to the executable. The toolchain is pinned.
+      # Not cached, on purpose (MEASURED, probe run 36808460104): with nothing
+      # cached, installing the toolchain took 43 s and building both libraries
+      # 36 s, while saving the 1.9 GB a cache would hold (rustup, zig,
+      # native/target) to this runner's cache service was still running after
+      # five minutes. hashFiles() also failed outright here (probe run
+      # 36807629459).
+      - name: Install the native build toolchain
+        run: bash native/ci_toolchain.sh
+
+      - name: Build the native readers (Linux .so, Windows .dll)
+        run: |
+          set -euo pipefail
+          native/build.sh linux-release
+          native/build.sh windows
+          bash client/tools/check_native_library.sh client/native_bin/srrevamp_native.dll windows
+          bash client/tools/check_native_library.sh client/native_bin/libsrrevamp_native.so linux
+
       - name: Import project
         working-directory: client
         run: |
@@ -75,6 +101,7 @@ jobs:
           godot --headless --path . --export-release "Windows Desktop" build/windows/srrevamp.exe
           cp -r build/windows/. dist/srrevamp-windows/
           cp ../README.md dist/srrevamp-windows/README.md || true
+          bash ../native/third_party_notice.sh x86_64-pc-windows-gnu > dist/srrevamp-windows/THIRD_PARTY_NOTICES.txt
           cat > dist/srrevamp-windows/pk2/PUT_YOUR_PK2_FILES_HERE.txt <<'EOF'
           Copy your own real Silkroad Online client's *.pk2 files into this
           folder (Data.pk2, Map.pk2, Media.pk2, at minimum) before running
@@ -90,6 +117,7 @@ jobs:
           godot --headless --path . --export-release "Linux" build/linux/srrevamp.x86_64
           cp -r build/linux/. dist/srrevamp-linux/
           cp ../README.md dist/srrevamp-linux/README.md || true
+          bash ../native/third_party_notice.sh x86_64-unknown-linux-gnu > dist/srrevamp-linux/THIRD_PARTY_NOTICES.txt
           cat > dist/srrevamp-linux/pk2/PUT_YOUR_PK2_FILES_HERE.txt <<'EOF'
           Copy your own real Silkroad Online client's *.pk2 files into this
           folder (Data.pk2, Map.pk2, Media.pk2, at minimum) before running
@@ -98,6 +126,31 @@ jobs:
           EOF
           chmod +x dist/srrevamp-linux/srrevamp.x86_64 || true
           cd dist && zip -r srrevamp-linux.zip srrevamp-linux
+
+      # Both zips must carry their library where the exported game looks for
+      # it (next to the executable; Godot 4.2.2's OS::open_dynamic_library
+      # falls back to the executable's folder), and the Linux build must
+      # actually load it: the exported game is run headless and its own log
+      # line is checked. The Windows build cannot be run here.
+      - name: Check the zips carry the native library, and the Linux build loads it
+        working-directory: client
+        run: |
+          set -euo pipefail
+          bash tools/check_release_zip.sh dist/srrevamp-windows.zip windows
+          bash tools/check_release_zip.sh dist/srrevamp-linux.zip linux
+          bash tools/check_release_zip.sh dist/srrevamp-linux.zip linux --run
+
+      # A test build (workflow_dispatch, no tag) keeps its zips for three days
+      # so they can be downloaded and checked without publishing a release.
+      - name: Keep a test build's zips
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: srrevamp-test-build
+          path: |
+            client/dist/srrevamp-windows.zip
+            client/dist/srrevamp-linux.zip
+          retention-days: 3
 
       # The release body is the tag's own annotation -- the human changelog
       # written when the tag was cut -- with GitHub's generated commit list

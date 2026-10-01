@@ -391,6 +391,20 @@ jangan  hitches    base 5  head 5  (+0.0)  SAME
 It also shows what a player waits through at every Jangan entry: about 14 s, with a single frame
 of about 4.9 s and five over 100 ms.
 
+### Release checks (round 668)
+
+- `check_native_library.sh <lib> windows|linux`: the built library stands alone. On Windows that
+  means system DLLs only; on Linux, base libraries only and glibc at or below 2.28. It must also
+  export `gdext_rust_init` and be stripped.
+- `check_release_zip.sh <zip> windows|linux [--run]`: the zip carries the exe, the `.pck`, the
+  library next to the exe and `THIRD_PARTY_NOTICES.txt`. `--run` (Linux) starts the exported game
+  headless twice, as shipped (`native readers ON`, no extension error) and with the library
+  renamed to `.off` (`native readers OFF`).
+- `run_gd_tests.sh`: every `*_test.gd`, one at a time, with the `godot` on PATH. This is CI's
+  loop. On the box, use `remote_godot.sh tests` instead.
+
+release.yml runs the first two; native/README.md, "CI".
+
 ### Native readers A/B (round 667)
 
 The pk2 reader and the `.ddj` per-pixel decodes have a native (Rust, GDExtension) twin, set out in

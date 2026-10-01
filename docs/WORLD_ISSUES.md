@@ -7094,6 +7094,318 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-sixty-eighth round: the release ships the native readers in both zips, and the auto-updater replaces a DLL the running game has loaded
+
+The user (2026-09-30): "Build and ship the DLL. Make sure the Game auto update feature grabs it
+but I'm sure it does just fine. I'll add the SRREVAMP folder as an AV exclusion and test it. I'll
+also rename the DLL extension to test the fallback too." Round 667's library now ships. The
+updater did not "do just fine": it would have taken a loaded DLL only after robocopy's 30-second
+retry, it hung for ever on a file antivirus would not release, and its Linux copy never ran the
+command it was written with. The DLL and the updater are covered below.
+
+Labels: READ (the Godot 4.2.2 source, this repo), MEASURED (the render box, this LXC, CI),
+INFERRED, OURS.
+
+### 1. The release builds the libraries
+
+`release.yml` now runs the following before the import (native/README.md, "CI"):
+- `native/ci_toolchain.sh`;
+- `native/build.sh linux-release`;
+- `native/build.sh windows`;
+- `client/tools/check_native_library.sh` on both libraries.
+
+After the exports, the zips go through `client/tools/check_release_zip.sh`. `export_presets.cfg`
+includes `srrevamp_native.gdextension` again. Each zip gets a `THIRD_PARTY_NOTICES.txt`
+generated from Cargo.lock: the godot-rust crates are MPL-2.0, whose section 3.2(a) asks that
+recipients be told where the source is.
+
+- **The runner** (MEASURED from the v0.1.464 run log) is an ephemeral Actions Runner Controller
+  pod (`kakariko-runner-…-runner-…`, `/home/runner`). Nothing persists between runs, so rustup,
+  cargo's registry, zig and `native/target` go through `actions/cache`.
+- **`hashFiles()` fails on it** (MEASURED, probe run 36807629459). `hashFiles('native/Cargo.lock')`
+  failed the job with "Fail to hash files under directory '/home/runner/_work/srrevamp/srrevamp'".
+  The log does not say which path it choked on. The key is now a `sha256sum` of the one file,
+  computed in a step.
+- **`cargo-zigbuild --version` is not a version query** (MEASURED, probe run 36808132225). Called
+  directly, the binary parses its arguments as the `zigbuild` subcommand's. The sanity line is
+  now `cargo zigbuild --help`.
+- **The glibc floor, chosen.** Godot 4.2.2's editor binary and its `linux_release.x86_64`
+  template both need GLIBC_2.28 at most (MEASURED, `objdump -T`). The `.so` that round 667
+  linked on this LXC (Ubuntu 24.04) asked for GLIBC_2.34. That would have refused the library,
+  and only the library, on Debian 10, Ubuntu 20.04 or RHEL 8. Linked by zig 0.15.2 through
+  cargo-zigbuild for `x86_64-unknown-linux-gnu.2.28`, its newest symbol is GLIBC_2.28 (MEASURED).
+  The library never asks for more than the engine does. `check_native_library.sh` fails a `.so`
+  above the floor.
+- **zig and cargo-zigbuild are pinned and checked.** The SHA-256 sums were read on 2026-09-30:
+  zig's from ziglang.org's index.json, cargo-zigbuild's from its v0.23.4 release's `.sha256`.
+- **A clean dry run on this LXC** (MEASURED): `env -i`, a fresh HOME, PATH only the system dirs,
+  then `ci_toolchain.sh`, both builds and both checks. Everything passed.
+
+### 2. Where the library goes, and that the exported game finds it
+
+READ: `editor_export_platform_pc.cpp:191-213` copies each GDExtension shared object to
+`p_path.get_base_dir()`, which is the executable's folder. `OS_Windows::open_dynamic_library`
+(`os_windows.cpp:358-361`) and `OS_Unix::open_dynamic_library` (`os_unix.cpp:649-652`) fall
+back to the executable's folder when the `res://native_bin/…` path is not a real file.
+
+MEASURED, on a local export made on the box with the downloaded 4.2.2 templates
+(`/var/tmp/ship668/templates`), before the merge with round 667's follow-up. After it, the
+ON line also carries `API 2`:
+- `build/linux` holds `srrevamp.x86_64`, `srrevamp.pck` and `libsrrevamp_native.so`.
+- `build/windows` holds `srrevamp.exe`, `srrevamp.pck` and `srrevamp_native.dll`.
+- `check_release_zip.sh … linux --run`, as shipped, prints only
+  `NativeAssets: native readers ON (library loaded, srrevamp_native 0.1.0, …/srrevamp-linux/libsrrevamp_native.so)`,
+  with no GDExtension error. This settles review item 2 for round 667: with the library present,
+  an export logs no extension errors.
+- With the library renamed to `.off`, it prints Godot's four errors and then our line:
+
+```
+ERROR: Can't open dynamic library: native_bin/libsrrevamp_native.so. Error: …/srrevamp-linux/../lib/libsrrevamp_native.so: cannot open shared object file: No such file or directory.
+ERROR: GDExtension dynamic library not found: native_bin/libsrrevamp_native.so
+ERROR: Failed loading resource: res://srrevamp_native.gdextension. Make sure resources have been imported by opening the project in the editor at least once.
+ERROR: Error loading extension: res://srrevamp_native.gdextension
+NativeAssets: native readers OFF (library not found: …/srrevamp-linux/libsrrevamp_native.so) -- using the GDScript readers
+```
+
+**CI** (MEASURED). Three probe runs of release.yml by `workflow_dispatch` on the throwaway
+branch `ci/ship668-probe`, which publishes nothing:
+- 36807629459 failed on `hashFiles`.
+- 36808132225 failed on the cargo-zigbuild sanity line.
+- [36808460104](https://github.com/OpenSRO/srrevamp/actions/runs/36808460104) was **green**.
+  - The runner reported "user runner (uid 1001), Ubuntu 24.04.4 LTS, 4 cores". It installed gcc,
+    libc6-dev, gcc-mingw-w64-x86-64, binutils-mingw-w64-x86-64, xz-utils and binutils through
+    `sudo -n` apt; the toolchain was rustc 1.98.1, zig 0.15.2, cargo-zigbuild 0.23.4 and
+    x86_64-w64-mingw32-gcc 13-win32.
+  - Uncached, the toolchain install took 43 s and both builds 36 s. Saving the 1.9 GB cache then
+    ran for more than five minutes, so both workflows build uncached.
+  - Its artifact `srrevamp-test-build`, rechecked on the box with
+    `check_release_zip.sh … --run`:
+
+| zip (8 entries each) | contents |
+|---|---|
+| srrevamp-windows.zip | README.md, pk2/PUT_YOUR_PK2_FILES_HERE.txt, srrevamp.exe 69,707,264, **srrevamp_native.dll 2,345,472**, THIRD_PARTY_NOTICES.txt 3,872, srrevamp.pck 6,480,944 |
+| srrevamp-linux.zip | README.md, pk2/PUT_YOUR_PK2_FILES_HERE.txt, srrevamp.x86_64 62,204,152, **libsrrevamp_native.so 1,184,400**, THIRD_PARTY_NOTICES.txt 3,724, srrevamp.pck 6,480,944 |
+
+- **The CI-built DLL** (sha256 5f06c107…). `objdump -p` shows imports api-ms-win-core-synch-l1-2-0,
+  bcryptprimitives, KERNEL32, msvcrt, ntdll, USERENV and WS2_32. That is Windows system DLLs only:
+  no libgcc_s_seh-1, libwinpthread-1 or libstdc++. Its one export is `[0] +base[1] 0000
+  gdext_rust_init`. It has 0 `.debug_` sections and no COFF symbols, and is 2.24 MiB.
+- **The CI-built .so** (sha256 581bae19…) needs libpthread.so.0, libc.so.6, libdl.so.2 and
+  ld-linux-x86-64.so.2. Its glibc symbols are 2.2.5, 2.3, 2.3.4, 2.14, 2.17, 2.25 and **2.28**.
+- **The exported CI Linux game, run headless**, logs `NativeAssets: native readers ON (library
+  loaded, srrevamp_native 0.1.0, …)` and no GDExtension error. With the library renamed to `.off`,
+  it logs the four Godot errors and then `native readers OFF (library not found: …)`. The same
+  lines appear in the run's own "Check the zips" step on the runner.
+
+**The final probe**, on the merged tree (d836348 plus this round), is
+[36809080517](https://github.com/OpenSRO/srrevamp/actions/runs/36809080517). It is **green**:
+every step passed, the publish steps were skipped, and the whole job took 2 min 47 s. Its
+artifact, rechecked on the box with `check_release_zip.sh … --run` (MEASURED):
+- srrevamp-windows.zip has 8 entries; **srrevamp_native.dll is 2,348,032 bytes** (sha256
+  83bc18f5…). Its imports are the same seven system DLLs, its one export is `gdext_rust_init`, and
+  it has 0 debug sections.
+- srrevamp-linux.zip has 8 entries; **libsrrevamp_native.so is 1,188,736 bytes** (sha256
+  5c291c15…). Its newest glibc symbol is GLIBC_2.28.
+- The exported Linux game, as shipped, logs
+  `NativeAssets: native readers ON (library loaded, srrevamp_native 0.1.0, API 2, …)` and no
+  extension error. Renamed `.off`, it logs the four Godot errors and then
+  `native readers OFF (library not found: …) -- using the GDScript readers`.
+
+`ci.yml`'s new `native` job has not run in CI. ci.yml runs only on pushes to dev or main and on
+pull requests, so a probe branch does not start it. Each of its steps ran outside CI: cargo test,
+the linux-release build and its check on this LXC, and the suites with the library on the box.
+
+### 3. The auto-updater, read before changing it
+
+What it did (READ, `client/scripts/update/auto_updater.gd` at d7b4aba):
+- **What it downloads:** the whole platform zip, the release's `srrevamp-<os>.zip` (lines 76-95).
+- **Where it extracts:** in-process, into `srrevamp_update_staging` next to the executable
+  (lines 129-148).
+- **How it replaces the running exe:** it writes a helper script, starts it, and quits
+  (lines 159-170). On Windows the script ran `timeout /t 2`, then
+  `robocopy "<staging>" "<install>" /E /XD pk2`, then relaunched (lines 180-188). On Linux it ran
+  `sleep 2`, then `cp -r <staging>/. <install>/ --exclude=pk2`, and fell back to
+  `find … -exec cp -r` (lines 194-202).
+- **Deleting files the new version lacks:** never.
+- **Verifying the download:** HTTP 200 and the zip opening, nothing more.
+
+What was wrong with that:
+- **`timeout` does not wait.** Godot starts the helper with `CREATE_NO_WINDOW`
+  (`os_windows.cpp:847`, READ), and `timeout` needs a console. That it returns at once is
+  INFERRED, not seen. robocopy then met the exe and the DLL still locked by the quitting game.
+- **robocopy's default retry is 30 s x 1,000,000.** A locked DLL was taken only after a
+  30-second wait. A file antivirus never released held the copy, and the relaunch behind it, for
+  ever.
+- **GNU cp has no `--exclude`.** The first command always failed, and the `find` fallback copied
+  over files in place after a fixed `sleep 2`.
+- **One staged file failing to write aborted the whole update.** That is exactly what antivirus
+  quarantining the new DLL does.
+- **The release lists a SHA-256 for each asset that nothing checked.** v0.1.464's two assets
+  carry `"digest": "sha256:…"` (MEASURED, `gh api …/releases/latest`).
+
+What it does now (OURS): `client/scripts/update/update_installer.gd`, `update_fs.gd` and
+`auto_updater.gd`.
+- **The SHA-256 check.** The download is checked against the asset's digest
+  (`UpdateChecker.find_asset_digest` / `digest_problem`). A mismatch deletes the zip and reports
+  the update as failed. A release without a digest is logged as `NOT verified`.
+- **The install runs inside the running game, by moving files aside.** For each file it renames
+  the current one to `<name>.old-update`, then renames the new one into place. Windows refuses to
+  overwrite or delete a running exe or a loaded DLL but allows the rename, because the loader
+  holds the file with FILE_SHARE_DELETE (INFERRED from Windows' documented sharing rules; not run
+  on Windows). On Linux a rename gives the new file a new inode.
+- **Every step is bounded.** A rename or copy is retried 5 times, 200 ms apart, so no step waits
+  more than 1 s.
+- **The executable and the `.pck` are critical.** If either cannot be installed, every file
+  installed so far is put back, and the game carries on with the old version.
+- **Any other file failing, the DLL included, is logged.** Its previous version is restored, the
+  update continues, and the client falls back to GDScript if it cannot use the old library.
+- **Moved-aside files are deleted at once where possible.** The rest are listed in
+  `srrevamp_update_cleanup.txt` and deleted at the next start.
+- **The pk2 folder is never touched, and no file is ever deleted** that the new version lacks.
+- **The relaunch waits for the old process.** It polls the old PID: `kill -0` on Linux, a batch
+  file using `tasklist` and `ping` on Windows (no `timeout`), for at most 60 polls. Then it starts
+  the new executable, so the two never write the same log. If the relaunch fails, the files are
+  already installed.
+- **The summary reaches the new log.** The old process writes `srrevamp_update.log`. The new one
+  prints it as `SRRevamp update (last run): …` and removes it.
+- **Only an exported build updates itself.** A run from source would have installed a release
+  zip over the Godot editor's folder.
+- **QA hooks** (OURS): `SRREVAMP_QA_UPDATE_URL` (another "latest release" endpoint),
+  `SRREVAMP_QA_UPDATE_ACCEPT=1` (no dialog) and `SRREVAMP_QA_QUIT_AT_LOGIN=1`.
+
+### 4. A real update on Linux
+
+`/var/tmp/ship668/upd_test.sh` (box), MEASURED:
+1. Install the exported client as the "old" version, with 31 bytes appended to its `.so` so the
+   old and new libraries differ.
+2. Serve the release zip from a local endpoint: `v0.0.1` with its digest, then `v0.0.0`.
+3. Run the old client. It loads the old `.so`, downloads, verifies, installs and relaunches.
+4. Measure the result.
+
+| | plain | `off` (the `.so` renamed to `.so.off` first) |
+|---|---|---|
+| old client's startup line | `native readers ON (library loaded, srrevamp_native 0.1.0, API 2, …)` | `native readers OFF (library not found: …)` |
+| download | `downloaded and verified, sha256 3bd5d5d9…` | same |
+| `.so` install | `installed libsrrevamp_native.so (the old one was moved aside …)` | `installed libsrrevamp_native.so` |
+| installed `.so` | sha256 e701f090… = the zip's; inode 7867910, was 7867892 | sha256 e701f090…; `.so.off` untouched |
+| relaunched client maps | `…/install/libsrrevamp_native.so` (not deleted) | same |
+| relaunched client's log | `native readers ON`, then `SRRevamp update (last run): v0.0.0 -> v0.0.1: installed` and the four install lines | same |
+| leftovers (`.old-update`, staging, zip) | none | none |
+| endpoint requests | `/latest`, the zip, `/latest` (the relaunch, up to date) | same |
+
+These numbers are from the merged tree, d836348 plus this round. The pre-merge run gave the same
+outcomes.
+
+**A stale library beside a newer client, for real** (`/var/tmp/ship668/stale_test.sh`,
+MEASURED). Probe 3's pre-merge `.so` was built before `api()` existed (sha256 581bae19…). Put
+next to the merged export, it logs
+`NativeAssets: native readers OFF (library REFUSED: API 0, this client needs API 2 -- a stale library, rebuild it with native/build.sh) -- using the GDScript readers`.
+
+So on Linux the library is replaced while the old process has it loaded: the install runs inside
+that process. The renamed-DLL fallback test restores the library. Windows' locking is not part of
+this run.
+
+### 5. Windows' locks, simulated
+
+`client/scripts/update/update_installer_test.gd` (62 checks) runs UpdateInstaller against a
+FakeFs with these Windows rules:
+- a running exe or a loaded DLL can be renamed, but not overwritten or deleted, and the lock moves
+  with the file;
+- a file open without FILE_SHARE_DELETE cannot be renamed;
+- `busy:N` refuses N renames (antivirus scanning);
+- quarantined content is removed by antivirus the first time it is moved or copied;
+- `DirAccess.rename` deletes an existing target first (`dir_access_windows.cpp:301-305`, READ).
+
+The cases:
+1. The exe running and the DLL loaded. Everything installs, the two originals wait for the next
+   start, and the next start deletes them.
+2. The fallback test: the DLL renamed `.off`.
+3. The new DLL removed from staging. The rest installs and the old DLL stays.
+4. The new DLL quarantined while being moved into place. The old DLL comes back under its name.
+5. The `.pck` held open. Everything is rolled back, at a cost of at most 1,000 ms of retries.
+6. The new exe blocked. Everything is rolled back, and the running exe is back under its name.
+7. A transient lock, taken after two 200 ms waits.
+8. An earlier `.old-update` still locked, so the next free name is used.
+9. Linux rules: no leftovers, and the exe stays executable.
+10. Both relaunch scripts: the PID is polled, there is no `timeout`, no robocopy and no
+    `--exclude`, and the path is passed as a parameter.
+11. The digest checks.
+12. A real-filesystem install on the box.
+
+What this does NOT prove: that real Windows behaves like FakeFs. The rules are INFERRED.
+
+### 6. The log lines (item 5 of the brief)
+
+`Boot._ready` now calls `NativeAssets.available()` right after `SRRevamp version: …`, so exactly
+one line is printed at startup:
+- ON: `native readers ON (library loaded, <version>, <path>)`.
+- OFF: `library not found: <path>`, `library failed to load: <path> is there but…`, or `forced
+  off by SRREVAMP_NATIVE=0`.
+
+The OFF lines all end `-- using the GDScript readers`. The Ctrl+F3 debug panel's `== build` block
+shows the same line. `client/scripts/pk2/native_status_test.gd` holds every form, and
+docs/NATIVE_ON_WINDOWS.md quotes them for the user's test.
+
+**The version check (item 6 of the brief) is round 667's follow-up** (d836348, merged here as a
+fast-forward). It adds `API = 2` in `native/src/core/mod.rs`, exposed as `api()`, and
+`NativeAssets.NATIVE_API`. A library speaking any other number, or one without `api()`, is
+refused before anything calls it. Round 668 folds that refusal into the same startup line:
+
+```
+NativeAssets: native readers OFF (library REFUSED: API 0, this client needs API 2 -- a stale library, rebuild it with native/build.sh) -- using the GDScript readers
+```
+
+That line covers the partial update: a DLL the installer could not replace (`NOT installed
+srrevamp_native.dll: … kept the previous one`) sits beside a newer exe. It is refused if its
+interface differs and used if it does not; the number changes only with the interface.
+
+### 7. Tests
+
+- `remote_godot.sh tests`, with the library and with `NO_NATIVE=1`: 181 suites each, 0 failing
+  (MEASURED).
+- `remote_godot.sh check`: ALL LOAD.
+- `cargo test --locked --no-default-features` on the merged tree: 11 passed.
+- `update_installer_test.gd`: 62 checks. `native_status_test.gd`: every line form plus the live
+  one. Both are in the 181 suites.
+
+**The negatives**, all run on the box (MEASURED):
+- **The installer test against an installer that overwrites in place** (the aside step disabled;
+  what robocopy and cp did). 12 checks fail, among them:
+
+```
+FAIL the update installs with the exe running and the DLL loaded
+FAIL srrevamp_native.dll is the new version
+FAIL the loaded DLL was moved aside, not overwritten
+FAIL the update puts srrevamp_native.dll back
+```
+
+- **The new suites on round 667's tree (d7b4aba)**:
+
+```
+update_installer_test.gd: SCRIPT ERROR: Parse Error: Could not find base class "UpdateFs".
+native_status_test.gd:    SCRIPT ERROR: Parse Error: Static function "describe()" not found in base "NativeAssets".
+```
+
+- **`check_release_zip.sh` on an export made with round 667's presets** (the `.gdextension`
+  excluded):
+  `FAIL neg/srrevamp-linux.zip has no srrevamp-linux/libsrrevamp_native.so`.
+- **`check_native_library.sh`**:
+  - on the host-glibc `.so`: `FAIL needs GLIBC_2.34, above the floor 2.28`;
+  - on an unstripped mingw DLL: `FAIL has debug sections`, `FAIL carries 1000 COFF symbols`.
+
+No perf gate: the round changes no world, drawing or loading code. The readers are round 667's,
+unchanged.
+
+### 8. Open
+
+- ci.yml's `native` job first runs when this lands on dev.
+- docs/TODO.md, "Native (Rust) readers", lists the rest:
+  - the user's Windows test;
+  - a `.pck` held open would roll an update back (INFERRED rare);
+  - the Windows relaunch batch file is untested;
+  - signing;
+  - Godot's own MIT notice is not in the zips (this predates the round).
+
 ## Six-hundred-and-sixty-seventh round: the pk2 reader and the texture decodes in Rust -- the Jangan entry from 9.9 s to 6.1 s warm, the centre cell from 3.4 s to 1.7 s
 
 The user asked (2026-09-30) whether loading is faster with pk2 decrypting, loading and parsing done

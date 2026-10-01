@@ -65,6 +65,11 @@ static var _checked := false
 static var _available := false
 static var _parsers: Object = null
 
+## The one log line saying which readers run and why (round 668), set by the
+## first available(): Boot calls it at startup, and the Ctrl+F3 debug panel
+## shows it. docs/NATIVE_ON_WINDOWS.md lists every form it takes.
+static var status := ""
+
 ## True when the extension loaded and SRREVAMP_NATIVE is not "0". Logged once.
 static func available() -> bool:
 	if not _checked:
@@ -73,18 +78,41 @@ static func available() -> bool:
 		var refusal := api_verdict(library_api())
 		var forced_off := OS.get_environment("SRREVAMP_NATIVE") == "0"
 		_available = loaded and refusal == "" and not forced_off
-		var detail := "not loaded"
-		if loaded and refusal != "":
-			detail = "REFUSED: " + refusal
-		elif loaded:
+		var version := ""
+		if loaded and refusal == "":
 			# Made here, on the first caller's thread (Pk2Reader.open, at boot,
 			# on the main thread), so worker threads only ever read it.
 			_parsers = ClassDB.instantiate(PARSERS_CLASS)
-			detail = "loaded, %s, API %d" % [str(_parsers.call("version")), NATIVE_API]
-			if forced_off:
-				detail += ", forced off by SRREVAMP_NATIVE=0"
-		print("NativeAssets: native readers %s (library %s)" % ["ON" if _available else "OFF", detail])
+			version = "%s, API %d" % [str(_parsers.call("version")), NATIVE_API]
+		var path := library_path()
+		status = describe(loaded, refusal, forced_off, version, path, FileAccess.file_exists(path))
+		print(status)
 	return _available and not force_gdscript
+
+## Where Godot looks for this platform's library: next to the executable in
+## an exported game (Godot 4.2.2's OS::open_dynamic_library falls back to the
+## executable's folder, os_windows.cpp:358-361 / os_unix.cpp:649-652), under
+## res://native_bin/ when run from the project.
+static func library_path() -> String:
+	var file := "srrevamp_native.dll" if OS.get_name() == "Windows" else "libsrrevamp_native.so"
+	if OS.has_feature("template"):
+		return OS.get_executable_path().get_base_dir().path_join(file)
+	return ProjectSettings.globalize_path("res://native_bin/" + file)
+
+## The status line, from the facts (pure, so a test can hold every form).
+## Each starts "NativeAssets: native readers ON" or "... OFF"; perf_gate.sh
+## reads that word. `refusal` is api_verdict()'s answer for a loaded library.
+static func describe(loaded: bool, refusal: String, forced_off: bool, version: String, path: String, file_exists: bool) -> String:
+	if forced_off:
+		return "NativeAssets: native readers OFF (forced off by SRREVAMP_NATIVE=0; the library is %s) -- using the GDScript readers" % (
+			"loaded but unused" if loaded else "not loaded either")
+	if loaded and refusal != "":
+		return "NativeAssets: native readers OFF (library REFUSED: %s) -- using the GDScript readers" % refusal
+	if loaded:
+		return "NativeAssets: native readers ON (library loaded, %s, %s)" % [version, path]
+	if file_exists:
+		return "NativeAssets: native readers OFF (library failed to load: %s is there but Godot could not load it -- blocked by antivirus, or a build for another system?) -- using the GDScript readers" % path
+	return "NativeAssets: native readers OFF (library not found: %s) -- using the GDScript readers" % path
 
 ## The shared parser object (stateless; its methods are thread-safe), or null.
 static func parsers() -> Object:
