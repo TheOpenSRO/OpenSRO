@@ -106,6 +106,7 @@ func _readers(names: UiTextTable) -> Array:
 		["speeds", func(d): return NpcTableReader.parse_speeds_by_code(d, {}, "")],
 		["country", func(d): return NpcTableReader.parse_country_by_code(d, {}, "")],
 		["bc_radius", func(d): return NpcTableReader.parse_bc_radius_by_code(d, {})],
+		["decay", func(d): return NpcTableReader.parse_decay_by_code(d, {}, "")],
 		["names", func(d): return NpcTableReader.parse_names(d, names, {})],
 		["name_keys", func(d): return NpcTableReader.parse_name_keys(d, {})],
 		["models_by_name", func(d): return NpcTableReader.parse_models_by_name(d, names, {})],

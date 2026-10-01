@@ -6,7 +6,8 @@
 /// the client's is refused, and the client reads in GDScript (round 667's review, M2).
 /// 4: rounds 669-671 merged (models, terrain, tables). Each lane said 3 on its own branch, so a
 /// library built from any one lane is refused by the merged client (round 669's review).
-pub const API: i64 = 4;
+/// 5: round 677 adds `char_decay_by_code` (SrNativeTables).
+pub const API: i64 = 5;
 
 pub mod ban;
 pub mod blowfish;

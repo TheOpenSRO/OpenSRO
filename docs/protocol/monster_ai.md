@@ -3983,9 +3983,15 @@ with the guess: the monster disappears.
   in state 3, calls its slot 390 and, for a non-player, `FUN_00417090`, which queues the object's
   deletion. The same state is how a monster's lifetime ends (`CGObjMob::Update` `0x4c1700`: the
   countdown at `+0x1ce0`, the timers at `+0x1cec`/`+0x1cf4`, the Pandora box). So: **no death, no
-  experience, no drop, no corpse**. INFERRED: the players around it are told it left by the
-  deletion's block removal (CMsgBlock slot 3, `0x3016`; aoi.go's block note) -- the deletion
-  path was not followed that far.
+  experience, no drop, no corpse**. The players around it are told it left by the deletion's
+  block removal (READ, round 677): `FUN_00417090` -> `FUN_00489fc0` -> slot 0x354
+  (`CGObjMob::ReleaseAndClear` 0x4c0eb0) -> slot 0x358 (0x4c10b0 -> `CGObjChar::vslot_214` ->
+  `CGObjMobile::vslot_214` -> `CGObj::vslot_214` 0x484a80) -> slot 0x364 (the leave-world,
+  0x485150) -> slot 0x3b0(0, 0, 0) (CGObjMob's 0x4c1e00 -> 0x485bb0) -> the block's slot 3
+  (0x5344b0) -> `FUN_00534050`: **`0x3016`**, the despawn, to the players of the nine blocks. The
+  client answers a despawn with a 1.5 s fade-out (`CIDecoDisappear`, docs/protocol/appear_fade.md),
+  which srrevamp's client draws on `OpMonsterLeft` since round 677. A dead monster leaves the same
+  way once its corpse's DecayTime has run (`CGObj::Update` 0x484d10 -> slot 218, SetLifeState(3)).
 - **It runs on every region change.** Slot 235 has one call site, `0x485ad4` in `FUN_004858e0`,
   the object's move into a new cell: when the new region differs from `this[0x4a]` it calls the
   region-entry veto (slot 220), adds the object to the region, and then `SetCurRegion`.

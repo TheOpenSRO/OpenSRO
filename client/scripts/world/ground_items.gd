@@ -196,9 +196,18 @@ func spawn(snap: GroundItemsNet.Snapshot) -> void:
 	add_child(body)
 	_nodes[snap.id] = body
 
-func remove(ground_id: int) -> void:
+## Takes a drop off the ground. `fade_out`, given, is handed the node instead
+## of it being freed (World3D._fade_out_body: a 1.5 s fade, then it frees
+## itself; round 677); its name plate is hidden first (OURS: whether retail
+## draws a fading item's name was not read).
+func remove(ground_id: int, fade_out: Callable = Callable()) -> void:
 	var node: Node3D = _nodes.get(ground_id)
-	if node != null:
+	if node != null and fade_out.is_valid():
+		var label := node.get_node_or_null("Label") as Node3D
+		if label != null:
+			label.visible = false
+		fade_out.call(node)
+	elif node != null:
 		node.queue_free()
 	_nodes.erase(ground_id)
 	_items.erase(ground_id)

@@ -23,7 +23,8 @@ class_name NativeAssets
 ## failure, not a hypothetical one -- it is refused with one log line naming
 ## both numbers, and the client reads in GDScript. Bump both together.
 ## 4: rounds 669-671 merged; each lane alone was 3, and is refused.
-const NATIVE_API := 4
+## 5: round 677, SrNativeTables.char_decay_by_code.
+const NATIVE_API := 5
 
 ## The native pk2 archive class (native/src/gd.rs).
 const PK2_CLASS := "SrNativePk2"
@@ -180,7 +181,9 @@ static func new_tables() -> Object:
 ## that comes out empty or holds an unpaired surrogate; native/src/core/tables.rs).
 static func table_rows(method: String, args: Array) -> Dictionary:
 	var tables := new_tables()
-	if tables == null:
+	# A library without `method` (API 5 refuses one older than round 677's
+	# char_decay_by_code, so this is a second guard): GDScript.
+	if tables == null or not tables.has_method(method):
 		return {}
 	var rows: Dictionary = tables.callv(method, args)
 	return {} if rows.has("fallback") else rows

@@ -11,6 +11,7 @@
 //! | `char_speeds_by_code` | `parse_speeds_by_code` |
 //! | `char_country_by_code` | `parse_country_by_code` |
 //! | `char_bc_radius_by_code` | `parse_bc_radius_by_code` |
+//! | `char_decay_by_code` | `parse_decay_by_code` |
 //! | `char_name_keys` | `parse_name_keys`, and `parse_names` up to its `names.get_text` |
 //! | `char_models_name_keys` | `parse_models_by_name` up to its `names.get_text` |
 //! | `items` | npc/item_table_reader.gd `parse`, up to `Item.new()` |
@@ -431,6 +432,7 @@ const COL_POS_Z: usize = 4;
 const COL_MODEL_ID: usize = 1;
 const COL_CODE_NAME: usize = 2;
 const COL_ORG_CODE_NAME: usize = 4;
+const COL_DECAY_TIME: usize = 13;
 const COL_COUNTRY: usize = 14;
 const COL_SPEED_WALK: usize = 46;
 const COL_SPEED_RUN: usize = 47;
@@ -658,6 +660,11 @@ pub fn char_country_by_code(data: &[u8], prefix: &str) -> Result<StrInts, Fallba
 /// `parse_bc_radius_by_code`: {code -> BCRadius (column 50)}.
 pub fn char_bc_radius_by_code(data: &[u8], prefix: &str) -> Result<StrInts, Fallback> {
     code_int_rows(data, prefix, COL_BC_RADIUS)
+}
+
+/// `parse_decay_by_code`: {code -> DecayTime (column 13, ms)} (round 677).
+pub fn char_decay_by_code(data: &[u8], prefix: &str) -> Result<StrInts, Fallback> {
+    code_int_rows(data, prefix, COL_DECAY_TIME)
 }
 
 /// `parse_name_keys`'s rows {id -> SN_ key}; also `parse_names`' rows before it resolves the key.
@@ -1163,7 +1170,7 @@ mod tests {
         let text = [
             "// a comment row is just a row without a number",
             &chardata_row(" 1907 ", "CHAR_CH_MAN_ADVENTURER", &[(5, "SN_CHAR_A"), (14, "0"), (46, "16"), (47, "50"), (50, "4"), (52, " char\\china\\a.bsr , b.bsr")]),
-            &chardata_row("2000", "MOB_CH_X", &[(4, "XxX"), (8, "SN_MOB_X"), (14, "?"), (46, "1.5"), (47, "x"), (50, "6"), (52, "mob\\X.BSR")]),
+            &chardata_row("2000", "MOB_CH_X", &[(4, "XxX"), (8, "SN_MOB_X"), (13, " 5000 "), (14, "?"), (46, "1.5"), (47, "x"), (50, "6"), (52, "mob\\X.BSR")]),
             &chardata_row("2000", "MOB_CH_X", &[(4, "MOB_CH_ORG"), (52, "mob\\later.bsr")]),
             "",
             "short\t1",
@@ -1193,6 +1200,8 @@ mod tests {
         assert_eq!((country.keys.clone(), country.values), (vec!["CHAR_CH_MAN_ADVENTURER".to_string(), "CHAR_TRAILING".to_string()], vec![0, 1]));
         let radius = char_bc_radius_by_code(&data, "MOB_").unwrap();
         assert_eq!(radius.values, vec![6]);
+        let decay = char_decay_by_code(&data, "MOB_").unwrap();
+        assert_eq!((decay.keys, decay.values), (vec!["MOB_CH_X".to_string()], vec![5000]), "DecayTime, column 13; an empty one is skipped");
         let keys = char_name_keys(&data).unwrap();
         assert_eq!((keys.ids, keys.values), (vec![1907, 2000], vec!["SN_CHAR_A".to_string(), "SN_MOB_X".to_string()]));
         let mk = char_models_name_keys(&data).unwrap();
@@ -1325,6 +1334,7 @@ mod tests {
             let _ = char_speeds_by_code(data, "");
             let _ = char_country_by_code(data, "");
             let _ = char_bc_radius_by_code(data, "");
+            let _ = char_decay_by_code(data, "");
             let _ = char_name_keys(data);
             let _ = char_models_name_keys(data);
             let _ = items(data);

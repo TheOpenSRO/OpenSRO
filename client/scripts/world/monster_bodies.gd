@@ -8,7 +8,9 @@ class_name MonsterBodies
 ## so a body whose id is missing from it is dead or gone. A dying monster is
 ## the exception: it is left where it fell while its own die clip (type 4 of
 ## its `default` group -- `die` in mangnyang's, docs/protocol/BSR_FORMAT.md)
-## runs, held on the last frame. The hold is a deadline on World3D's
+## runs, held on the last frame -- since round 677 for its species' DecayTime
+## from the death when that is known (the corpse, World3D._monster_corpse_seconds),
+## after which it fades out. The hold is a deadline on World3D's
 ## animation clock (`_idle_anim_time`), kept per id in `dying_until`.
 
 ## Whether the body for `id` goes on this list refresh: it is not in the
