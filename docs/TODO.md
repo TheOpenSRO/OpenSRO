@@ -2262,10 +2262,17 @@ attack result. `SRREVAMP_QA_MOBS=<N>` and the perf gate's `mobs` site measure it
       monster's body at once when its death clip ends, the list drops it or it leaves the area of
       interest, and another player's when they leave. Drawing it means keeping the body (without
       its collider, target and list entry) for 1.5 s after it is forgotten.
-- [ ] **Name plate, HP bar, shadow and effects** are not faded. Retail writes the alpha to the
-      model's compound (`CCompChar` +0x4c) only; who reads it in the draw is not read.
-- [ ] **NPCs** fade in retail (the same `FUN_009d17e0`); ours are built from the map's data at
-      region load and appear at once.
+- [ ] **Shadow and effects** are not faded. Retail writes the alpha to the model's compound
+      (`CCompChar` +0x4c) only; who reads it in the draw is not read. (The name plate stays at
+      full alpha in retail: `FUN_008b4d90(point, 0xff)`, READ in round 673.)
+- [ ] **NPCs, guards and pets** fade in retail (the same `FUN_009d17e0` for CICNPC, CICGuard and
+      CICCos); ours are built from the map's data at region load (NPCs) or not drawn yet, and
+      appear at once.
+- [ ] **A cold driver shader cache hitches on a monster's opaque material** (130-240 ms the first
+      time a material kind is drawn, MEASURED in round 676's review; the base pays it as the
+      monster appears, this client as its fade ends). The fade twins are warmed while the world
+      loads (`AppearFade.warm`); the opaque monster shaders could be warmed the same way. An MTRL
+      mod shader first made after loading still compiles its fade twin on first sight.
 - [ ] **The player's own character** is not faded. `CICPlayer::vslot_009` drives its alpha every
       frame from its own interpolator (+0x2068, `FUN_009d4e80`); whether a spawn fade shows is
       not settled.

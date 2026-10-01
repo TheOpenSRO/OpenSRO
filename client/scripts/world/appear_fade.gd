@@ -21,15 +21,19 @@ class_name AppearFade
 ## - **The curve.** `CIDecoAppear::FUN_00a48a20` starts the alpha at 0 and
 ##   its rate at 255.0 (the double at 0xd83108) / 2.0; each frame
 ##   `CIDecoAppear::vslot_009` (0xa48ae0) adds rate x dt (the float at
-##   0x110f7fc, the frame's elapsed time -- in seconds, INFERRED, as for the
-##   map objects' fade) and, while the sum is <= 255, sets the model's
-##   alpha to round(sum) & 0xff; past 255 it sets 0xff and the deco removes
+##   0x110f7fc: the frame's elapsed seconds, clamped to 3.0, written beside
+##   the milliseconds at 0x110f7f8 by 0xba40fb-0xba4136) and, while the sum
+##   is <= 255, sets the model's alpha to the sum TRUNCATED, & 0xff (asm
+##   0xa48b5f-0xa48b75: `fnstcw`, `or eax, 0xc00` -- rounding control
+##   "chop" -- `fldcw`, `fistp`); past 255 it sets 0xff and the deco removes
 ##   itself. Linear, 0 to 255 in 2.0 s.
 ## - **What it fades.** The alpha goes to the model's compound,
-##   `CCompChar` vslot 5 (0xc25590: +0x4c = alpha << 24). Whether the name
-##   plate, the shadow or attached effects read it is not read (OPEN); this
-##   client fades the model's own meshes only and leaves the plate, the bar
-##   and any effect as they were.
+##   `CCompChar` vslot 5 (0xc25590: +0x4c = alpha << 24). The name plate is
+##   drawn at full alpha whatever the model's (`FUN_008b4d90(point, 0xff)`,
+##   READ in round 673). Whether the shadow or attached effects read the
+##   compound's alpha is not read (OPEN); this client fades the model's own
+##   meshes only and leaves the name plate, the party mark and any effect
+##   as they were.
 ## - **The way out** (READ, not drawn here): a despawn (0x3016,
 ##   `FUN_008a6cc0`, and a group despawn) calls vslot 0x4c with 0, which
 ##   makes a `CIDecoDisappear` (0x110a790) of **1.5 s** (float 0xd819ec):
@@ -38,8 +42,12 @@ class_name AppearFade
 ## How it is drawn (OURS). Godot 4.2's GL Compatibility renderer ignores
 ## GeometryInstance3D.transparency (MEASURED, round 676: a model at
 ## transparency 1.0 covered all of its pixels), so a fading model is drawn
-## with blended twins of its own materials: a StandardMaterial3D duplicated
-## with alpha blending, a ShaderMaterial duplicated onto its shader's fade
+## with blended twins of its own materials: a plain StandardMaterial3D as a
+## ShaderMaterial on STANDARD_FADE_CODE (its own look; the alpha is the
+## fade's alone, never the texture's -- the opaque original ignores texture
+## alpha, so a twin that multiplied it in would show holes, then snap
+## opaque), any other BaseMaterial3D duplicated with alpha blending, a
+## ShaderMaterial duplicated onto its shader's fade
 ## twin (ObjectLoader.appear_fade_shader: the foliage *_fade variants and the
 ## mod shader's `fade` twin), the alpha set on the twin. The twins are shared
 ## by every model whose fade started in the same frame (one cohort: they are
@@ -62,19 +70,77 @@ const FULL := 255.0
 ## reads it (original_material), so a berserk starting mid-fade keeps the
 ## real one.
 const ORIGINAL_META := "srrevamp_appear_original"
+## Meta on a fade twin (a material made by fade_twin).
+const TWIN_META := "srrevamp_appear_twin"
+
+## The twin of a plain StandardMaterial3D (OURS): the shader Godot 4.2
+## generates for one -- albedo colour times the albedo texture's colour,
+## metallic 0, roughness 1, specular 0.5, Burley diffuse, Schlick-GGX
+## specular -- with ALPHA the fade's alone. `%s` is the cull mode.
+const STANDARD_FADE_CODE := """shader_type spatial;
+// A plain StandardMaterial3D while its character fades into existence
+// (AppearFade, round 676): its own look, blended at the fade's alpha.
+render_mode blend_mix, depth_draw_always, cull_%s, diffuse_burley, specular_schlick_ggx;
+uniform vec4 albedo : source_color = vec4(1.0);
+uniform sampler2D texture_albedo : source_color, hint_default_white, filter_linear_mipmap, repeat_enable;
+uniform float appear_alpha = 1.0;
+void fragment() {
+	vec4 albedo_tex = texture(texture_albedo, UV);
+	ALBEDO = albedo.rgb * albedo_tex.rgb;
+	METALLIC = 0.0;
+	ROUGHNESS = 1.0;
+	SPECULAR = 0.5;
+	ALPHA = appear_alpha;
+}
+"""
+static var _standard_fade_shaders := {}
+
+## The STANDARD_FADE_CODE shader for a cull mode, made once.
+static func standard_fade_shader(cull: String) -> Shader:
+	if not _standard_fade_shaders.has(cull):
+		var sh := Shader.new()
+		sh.code = STANDARD_FADE_CODE % cull
+		_standard_fade_shaders[cull] = sh
+	return _standard_fade_shaders[cull]
+
+## Whether `m` is a StandardMaterial3D STANDARD_FADE_CODE draws as it is
+## drawn: opaque, an albedo colour and texture and every other setting at
+## Godot's default (ObjectLoader's plain layers and the capsules are).
+static func is_plain_standard(m: Material) -> bool:
+	if not (m is StandardMaterial3D):
+		return false
+	var std := m as StandardMaterial3D
+	return std.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED \
+		and std.shading_mode == BaseMaterial3D.SHADING_MODE_PER_PIXEL \
+		and std.diffuse_mode == BaseMaterial3D.DIFFUSE_BURLEY \
+		and std.specular_mode == BaseMaterial3D.SPECULAR_SCHLICK_GGX \
+		and std.blend_mode == BaseMaterial3D.BLEND_MODE_MIX \
+		and std.depth_draw_mode == BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY \
+		and std.cull_mode in [BaseMaterial3D.CULL_BACK, BaseMaterial3D.CULL_DISABLED] \
+		and not std.vertex_color_use_as_albedo \
+		and std.metallic == 0.0 and std.roughness == 1.0 and std.metallic_specular == 0.5 \
+		and std.metallic_texture == null and std.roughness_texture == null \
+		and not std.emission_enabled and not std.normal_enabled and not std.rim_enabled \
+		and not std.clearcoat_enabled and not std.ao_enabled and not std.detail_enabled \
+		and not std.disable_ambient_light and not std.disable_receive_shadows \
+		and not std.no_depth_test and not std.fixed_size and not std.use_point_size \
+		and std.billboard_mode == BaseMaterial3D.BILLBOARD_DISABLED \
+		and std.texture_filter == BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS \
+		and std.texture_repeat \
+		and std.uv1_scale == Vector3.ONE and std.uv1_offset == Vector3.ZERO \
+		and not std.uv1_triplanar
 
 ## The model's alpha byte `elapsed` seconds into a fade of `duration`, as
-## `CIDecoAppear::vslot_009` sets it: round(255 / duration x elapsed) while
-## that is <= 255, else 255. (Retail rounds with the FPU's
-## round-half-to-even; round() here goes half away from zero -- one step of
-## 255 at an exact half, OURS.)
+## `CIDecoAppear::vslot_009` sets it: 255 / duration x elapsed, truncated
+## (READ: the FPU's rounding control set to chop around its `fistp`), while
+## that is <= 255, else 255.
 static func alpha_at(elapsed: float, duration: float = APPEAR_SECONDS) -> int:
 	if duration <= 0.0:
 		return 255
 	var a := FULL / duration * maxf(elapsed, 0.0)
 	if a > FULL:
 		return 255
-	return int(round(a)) & 0xff
+	return int(a) & 0xff
 
 ## Whether a fade of `duration` is over `elapsed` seconds in: the deco's sum
 ## has passed 255 (it set 0xff and removed itself).
@@ -82,8 +148,8 @@ static func done_at(elapsed: float, duration: float = APPEAR_SECONDS) -> bool:
 	return duration <= 0.0 or FULL / duration * elapsed > FULL
 
 ## The meshes a model is drawn with: every MeshInstance3D at or under
-## `model`, not counting an effect's (under an EfpEffect). A name plate
-## (Label3D), a bar or mark (Sprite3D) and a collider are not meshes.
+## `model`, not counting an effect's (under an EfpEffect). The name plate
+## (Label3D), the party mark (Sprite3D) and a collider are not meshes.
 static func instances_of(model: Node) -> Array[MeshInstance3D]:
 	var out: Array[MeshInstance3D] = []
 	if model == null:
@@ -100,16 +166,35 @@ static func instances_of(model: Node) -> Array[MeshInstance3D]:
 	return out
 
 ## The material `mi` really draws with: the one it gets back after a fade
-## when it is fading, else its material_override.
+## while it still draws with its fade twin, else its material_override. (A
+## mesh whose twin something else replaced mid-fade -- a berserk ending and
+## restoring its own original -- draws with that now, and the fade's mark is
+## stale until the fade ends.)
 static func original_material(mi: MeshInstance3D) -> Material:
-	if mi.has_meta(ORIGINAL_META):
+	var now := mi.material_override
+	if mi.has_meta(ORIGINAL_META) and now != null and now.has_meta(TWIN_META):
 		return mi.get_meta(ORIGINAL_META)
-	return mi.material_override
+	return now
 
 ## A blended twin of `src` at alpha 0, or null when `src` has none. OURS:
 ## depth is written (depth_draw_always) so the model's near faces stay in
 ## front of its far ones while it is translucent.
 static func fade_twin(src: Material) -> Material:
+	var twin := _make_twin(src)
+	if twin != null:
+		twin.set_meta(TWIN_META, true)
+	return twin
+
+static func _make_twin(src: Material) -> Material:
+	if is_plain_standard(src):
+		var std := src as StandardMaterial3D
+		var plain := ShaderMaterial.new()
+		plain.shader = standard_fade_shader("disabled" if std.cull_mode == BaseMaterial3D.CULL_DISABLED else "back")
+		plain.set_shader_parameter("albedo", std.albedo_color)
+		if std.albedo_texture != null:
+			plain.set_shader_parameter("texture_albedo", std.albedo_texture)
+		set_twin_alpha(plain, 0.0)
+		return plain
 	if src is BaseMaterial3D:
 		var std := (src as BaseMaterial3D).duplicate() as BaseMaterial3D
 		std.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -136,6 +221,68 @@ static func set_twin_alpha(twin: Material, a: float) -> void:
 		std.albedo_color = c
 	elif twin is ShaderMaterial:
 		(twin as ShaderMaterial).set_shader_parameter("appear_alpha", a)
+
+## The fade twins' shaders, compiled before the first fade needs them
+## (round 676's review). A GL driver compiles a shader the first frame it
+## draws it: MEASURED with empty Godot and Mesa shader caches, a monster's
+## first frame took 138-197 ms on its fade twin (`measure_appear_fade.gd`,
+## WORLD_ISSUES round 676, Review), the hitch landing when the first monster
+## of each material kind appears. So while the world loads, `warm(camera)`
+## draws one tiny quad per twin shader -- the standard fade shader both
+## culls, the two foliage fade variants, and the fade twin of every MTRL mod
+## shader made so far -- at alpha 0 in front of the camera for WARM_FRAMES
+## frames, then frees them. OURS.
+const WARM_FRAMES := 3
+
+static func warm_materials() -> Array[Material]:
+	var out: Array[Material] = []
+	var white := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+	white.fill(Color.WHITE)
+	var tex := ImageTexture.create_from_image(white)
+	var shaders: Array[Shader] = [standard_fade_shader("back"), standard_fade_shader("disabled"),
+		ObjectLoader.appear_fade_shader(ObjectLoader.FOLIAGE_SHADER),
+		ObjectLoader.appear_fade_shader(ObjectLoader.FOLIAGE_SHADER_ONE_SIDED)]
+	for sh in ObjectLoader.mod_shaders_made():
+		var twin := ObjectLoader.appear_fade_shader(sh)
+		if twin != null and not shaders.has(twin):
+			shaders.append(twin)
+	for sh in shaders:
+		if sh == null:
+			continue
+		var m := ShaderMaterial.new()
+		m.shader = sh
+		m.set_shader_parameter("appear_alpha", 0.0)
+		m.set_shader_parameter("texture_albedo", tex)
+		m.set_shader_parameter("albedo_texture", tex)
+		out.append(m)
+	return out
+
+## Puts the warm-up quads in front of `camera`; they free themselves after
+## WARM_FRAMES drawn frames. Returns how many shaders it warms.
+static func warm(camera: Camera3D) -> int:
+	if camera == null:
+		return 0
+	var node := Warm.new()
+	node.name = "AppearFadeWarm"
+	var mats := warm_materials()
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.01, 0.01)
+	for i in range(mats.size()):
+		var mi := MeshInstance3D.new()
+		mi.mesh = quad
+		mi.material_override = mats[i]
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.position = Vector3(0.002 * i, 0.0, -1.0)
+		node.add_child(mi)
+	camera.add_child(node)
+	return mats.size()
+
+class Warm extends Node3D:
+	var _frames := 0
+	func _process(_delta: float) -> void:
+		_frames += 1
+		if _frames >= AppearFade.WARM_FRAMES:
+			queue_free()
 
 ## Models fading in together: started in the same frame, so always at the
 ## same alpha, and sharing their materials' twins.
@@ -238,14 +385,6 @@ class Fades:
 				(mi as MeshInstance3D).set_surface_override_material(surface, m[2])
 		co.meshes.clear()
 		co.twins.clear()
-
-	## Ends every fade at once, opaque (the world leaving).
-	func finish_all() -> void:
-		for co in _cohorts:
-			_restore(co)
-			_finished += co.models.size()
-		_cohorts.clear()
-		_open = null
 
 	func running() -> int:
 		var n := 0

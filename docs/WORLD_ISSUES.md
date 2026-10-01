@@ -7125,11 +7125,15 @@ RX 7600), INFERRED, OURS, OPEN. The full table is `docs/protocol/appear_fade.md`
   at all" is not what the code does; what makes it look so in play is not known.)
 - **Duration and curve.** The float at 0xd86ecc is **2.0**. `CIDecoAppear::FUN_00a48a20` sets the
   alpha to 0 and the rate to 255.0 (double 0xd83108) / 2.0; `CIDecoAppear::vslot_009` (0xa48ae0)
-  adds rate x dt each frame (float 0x110f7fc; seconds INFERRED) and sets `round(sum) & 0xff` while
-  the sum is <= 255, then 0xff, and deletes itself. **Linear**, 0 to 255 in 2.0 s.
+  adds rate x dt each frame (float 0x110f7fc: the frame's seconds, clamped to 3.0, 0xba40fb-0xba4136)
+  and sets the sum **truncated** & 0xff (asm 0xa48b5f-0xa48b75: rounding control set to chop around
+  the `fistp`) while the sum is <= 255, then 0xff, and deletes itself. **Linear**, 0 to 255 in 2.0
+  s: 63 / 127 / 191 at 0.5 / 1.0 / 1.5 s. (This entry first said `round(sum)`; the review read the
+  chop -- see Review below.)
 - **What it writes.** `CCompChar` vslot 5 (0xc25590, vtable 0xe0cd3c): `+0x4c = alpha << 24`, on
-  the character's compound model. Whether the name plate, shadow or effects read that is not read
-  (OPEN). Every frame the CICharactor update also writes 0xff (or 0/0x50 for stealth) through
+  the character's compound model. The name plate is drawn at full alpha regardless
+  (`FUN_008b4d90(point, 0xff)`, READ in round 673); whether the shadow or effects read the
+  compound's alpha is not read (OPEN). Every frame the CICharactor update also writes 0xff (or 0/0x50 for stealth) through
   `FUN_009ce950`; the deco's write landing after it is INFERRED from the fade being visible.
 - **The way out.** A despawn (0x3016 `FUN_008a6cc0`, group despawn type 2) calls vslot 0x4c with 0
   (`IGIDObject::FUN_009c32f0`, CICMonster `FUN_009d3c90`), which makes a `CIDecoDisappear`
@@ -7161,8 +7165,8 @@ drawn). So the fade is drawn with materials.
   its key; `ObjectLoader.appear_fade_shader` maps a shader to its twin. A material with no twin is
   left as it is (that piece pops, counted in `unfadable`); the census below found none.
 - `World3D`: a monster body built (`_build_monster_body`) and another player's body built
-  (`_spawn_or_update_other`) start a fade; `_physics_process` steps them. The name plate, the HP bar,
-  the party mark and the collider are not meshes and are not faded; effect meshes (under an
+  (`_spawn_or_update_other`) start a fade; `_physics_process` steps them. The name plate (Label3D),
+  the party mark (Sprite3D) and the collider are not meshes and are not faded; effect meshes (under an
   `EfpEffect`) are skipped. A refresh of a body already drawn does not restart it. A body rebuilt
   when its region loads fades again, as an object re-sent by the server would.
 - `BerserkLook._take_meshes` copies `AppearFade.original_material(mi)`, so a berserk starting
@@ -7198,12 +7202,12 @@ material back.
 ### 5. Tests
 
 `client/scripts/world/appear_fade_test.gd` (new; synthetic meshes, no game data): the curve (0,
-64, 128, 191, 255 at 0/0.5/1/1.5/2 s; linear at every 10 ms; done just past 2.0 s), twins for the
-StandardMaterial3D and foliage pieces keeping their texture and alpha test, alpha 0 / 128 / 254 /
-own material at 0 / 1.0 / 1.99 / 2.01 s, plate and bar untouched, cohort sharing, a material
+63, 127, 191, 255 at 0/0.5/1/1.5/2 s since the review; linear at every 10 ms; done just past 2.0
+s), twins for the StandardMaterial3D and foliage pieces keeping their texture and alpha test, alpha
+0 / 127 / 253 / own material at 0 / 1.0 / 1.99 / 2.01 s, the name plate and party mark untouched, cohort sharing, a material
 replaced mid-fade left alone, the mod shader's twin and the world's shaders unchanged, an unknown
 shader left alone; and in a quiet World3D, a monster body built from a list and another player's
-body: alpha 0 when built, 128/255 at 1.0 s, a refresh not restarting it, the species' own shared
+body: alpha 0 when built, 127/255 at 1.0 s, a refresh not restarting it, the species' own shared
 opaque material at 2.01 s.
 
 The NEGATIVE, the suite on the base (dev 4104a11):
@@ -7244,14 +7248,100 @@ well after, when every mesh is back on its opaque material -- the point of resto
 - **The despawn fade-out** (READ above: 1.5 s, the object deleted at the end) is not drawn: a
   monster's body still goes at once when its death clip ends, the list drops it, or it leaves the
   area of interest; a player's when they leave.
-- **Name plate, shadow, effects**: whether retail fades them with the model is not read; this
-  client leaves them as they were.
-- **NPCs** fade in retail (CICNPC vslot 0x6c is `FUN_009d17e0`), but ours are built from the map's
-  data when a region loads, not from a spawn; they still appear at once.
+- **Shadow, effects**: whether retail fades them with the model is not read; this client leaves
+  them as they were. (The name plate stays at full alpha in retail, READ in round 673.)
+- **NPCs, guards and pets** fade in retail (vslot 0x6c is `FUN_009d17e0` for CICNPC, CICGuard and
+  CICCos), but ours are not: NPCs are built from the map's data when a region loads, not from a
+  spawn, and guards and pets are not drawn yet; they appear at once.
 - **The player's own character**: `CICPlayer::vslot_009` writes its alpha every frame from its
   own interpolator; whether it shows a spawn fade is not settled. Not faded here.
-- **The first fade of a session compiles the twin shaders** (the GL driver compiles a variant on
-  first draw); not separately measured beyond the gate's freeze column.
+- **A cold driver cache still hitches on a model's opaque material** (130-240 ms, MEASURED in the
+  Review below) -- the base pays it when the monster appears, this client when its fade ends. Not
+  this round's; warming the opaque monster shaders too is the same trick.
+- **An MTRL mod shader first made after the world loaded** has its fade twin compiled on first
+  sight (the warm-up covers the mod shaders made by then; 17 of 602 monster surfaces are mod).
+
+### Review (on the integration branch with rounds 673-675): one MEDIUM, six LOWs, fixed in a second commit
+
+1. **MEDIUM, retail truncates (READ, confirmed).** `CIDecoAppear::vslot_009` at 0xa48b5f-0xa48b75:
+   `fnstcw; movzx; or eax, 0xc00; fldcw; fistp` -- rounding control "chop", MSVC's float-to-int
+   idiom. So the alpha is the sum truncated: 63 / 127 / 191 at 0.5 / 1.0 / 1.5 s, not 64 / 128 /
+   191. `AppearFade.alpha_at` now returns `int(a) & 0xff`; §1, the code comment and
+   docs/protocol/appear_fade.md say so. The measurement table in §4 was taken with the rounded
+   alpha (one step of 255 higher at most); the review's re-runs below are on the truncated one.
+2. **LOW, a StandardMaterial3D twin multiplied in its texture's alpha.** The opaque original ignores
+   texture alpha; the blended duplicate did not. MEASURED with the review's own probe
+   (`measure_appear_fade.gd`, `mob\oasis\redeyeghost.bsr`, whose body textures average alpha
+   0.890 with 11.0 % of texels under 0.5 -- `--census`): on 555cfc0, at 1.0 s **804 of 8,082 model
+   pixels (9.9 %) showed under half the asked alpha** (holes), and the twin at alpha 255 differed
+   from the opaque model in **2,799 pixels, by up to 166/255** -- a snap at 2.0 s. Now a plain
+   StandardMaterial3D (`AppearFade.is_plain_standard`: opaque, colour and texture, every other
+   setting Godot's default -- every monster StandardMaterial3D surface and the capsules) fades on
+   `AppearFade.STANDARD_FADE_CODE`, a small shader with the generated standard lighting and ALPHA
+   the fade's alone: **0 holes**, and the twin at 254 differs from the opaque model in **0 pixels
+   by more than 2/255 (at most 1)**. Any other BaseMaterial3D keeps the duplicate. The player's
+   default body (`char\china\chinaman_fighter.bsr`): 10 surfaces, all foliage-shader (whose twin
+   keeps the alpha test and ignores texture alpha), none StandardMaterial3D.
+3. **LOW, a stale berserk copy.** `original_material` returned the fade's original while a berserk
+   end had put the template's material back; it now returns it only while the mesh still draws
+   with a twin (twins carry `TWIN_META`).
+4. **LOW, wording.** The HP bar (removed by round 673) is gone from the comments, docs and test
+   labels: "the name plate and party mark (Sprite3D)". The name plate at full alpha is READ (round
+   673: `FUN_008b4d90(point, 0xff)`), no longer OPEN.
+5. **LOW, `Fades.finish_all()` was never called**: deleted (the bodies it would restore are freed
+   with the world).
+6. **LOW, the first-sight shader compile (MEASURED).** `measure_appear_fade.gd` with **empty Godot
+   and Mesa shader caches** for every run (`XDG_DATA_HOME`, `MESA_SHADER_CACHE_DIR`), frame times at
+   60 Hz vsync:
+
+   | model | no fade (base): first frame | fade: first frame / at the fade's end | fade + warm-up: first frame / at the end |
+   |---|---|---|---|
+   | redeyeghost (StandardMaterial3D) | 238.8 ms | 198.9 / 234.0 ms | **31.0** / 232.0 ms |
+   | tiger (foliage) | 176.7 ms | 159.2 / 162.9 ms | **31.3** / 166.4 ms |
+   | nachal (MTRL mod) | 132.7 ms | 134.8 / 134.8 ms | **30.1** / 118.4 ms |
+
+   So the fade added a compile of its own (135-199 ms) on the first monster of each material kind.
+   `AppearFade.warm(camera)`, called while the world loads, draws a 0.01-unit quad per twin shader
+   at alpha 0 in front of the camera for 3 frames: the first fading frame drops to 30-31 ms. What is
+   left is the opaque material's own first compile -- the base pays it as the monster appears, this
+   client 2 s later when the fade ends -- recorded OPEN. (A warm Mesa cache hides all of it: the
+   same runs with the caches kept read 16-20 ms.)
+7. **OPEN recorded:** NPCs (CICNPC), guards (CICGuard) and pets (CICCos) fade in retail and not
+   here. The dt label is upgraded to READ: [0x110f7fc] is the frame's seconds, clamped to 3.0, at
+   0xba40fb-0xba4136, set with the milliseconds at 0x110f7f8 (0x84c343).
+
+The NEGATIVE, the updated suite on the round's first commit (555cfc0):
+
+```
+FAIL alpha 63 at 0.5 s (63.75 truncated: READ, rounding control chop at 0xa48b68)
+FAIL alpha 127 at 1.0 s, half way (127.5 truncated)
+FAIL linear and truncated: int(127.5 x t) at every 10 ms
+FAIL a plain StandardMaterial3D piece draws with the standard fade shader, its own texture and colour
+FAIL whose alpha is the fade's alone: the texture's alpha is not multiplied in (the opaque original ignores it)
+FAIL half way at 1.0 s (alpha 127)
+FAIL 253 at 1.99 s (253.725 truncated)
+FAIL each at its own alpha
+FAIL once something else put another material back, that one is the piece's own (not the stale copy)
+SCRIPT ERROR: Invalid call. Nonexistent function 'is_plain_standard' in base 'GDScript'.
+FAIL half way through its fade at 1.0 s
+FAIL a refresh of the same monster does not restart it
+FAIL half way at 1.0 s
+12 FAILURES
+```
+
+On the branch: ALL PASS (with the warm-up's own checks). `remote_godot.sh check`: ALL LOAD;
+`remote_godot.sh tests`: ran 186 suite(s), 0 failing. The re-measured fades (warm caches): mangnyang
+0.514 covered at 1.0 s, tiger 0.562, nachal 0.634, redeyeghost 0.538, each with 0 holes and the
+twin at 254 within 1/255 of the opaque model.
+
+Perf gate after the fixes (`--base 4104a11 --sites mobs`, the shader and the warm-up changed):
+
+| site | number | base 4104a11 | head | change | verdict |
+|---|---|---|---|---|---|
+| mobs | frame ms | 10.82 | 11.04 | +0.2 | SAME |
+| mobs | entry ms | 10,516.5 | 10,456 | -60.5 | SAME |
+| mobs | freeze ms | 3,426.5 | 3,379 | -47.5 | SAME |
+| mobs | hitches | 5 | 5 | 0 | SAME |
 
 ## Six-hundred-and-seventy-second round: text as crisp as the original's at every UI scale -- glyphs rasterised at the scale and drawn unfiltered, every in-game text node in the client's own face, and the old lost-last-glyph bug found in Buttons and guarded
 

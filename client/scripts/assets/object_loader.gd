@@ -561,6 +561,17 @@ static func appear_fade_shader(shader: Shader) -> Shader:
 		return _mod_shader(String(k[0]), String(k[1]), bool(k[2]), true)
 	return null
 
+## Every MTRL mod shader made so far, not counting fade twins (AppearFade
+## warms their twins while the world loads; round 676's review).
+static func mod_shaders_made() -> Array[Shader]:
+	var out: Array[Shader] = []
+	_static_lock.lock()
+	for key in _mod_shaders.keys():
+		if not String(key).ends_with("/fade"):
+			out.append(_mod_shaders[key])
+	_static_lock.unlock()
+	return out
+
 ## The scissor threshold of an alpha-tested layer: ALPHA_TEST_REF / 255.
 ## (The 0.5 it replaced drew the same texels; this is the client's number.)
 const FOLIAGE_ALPHA_SCISSOR := float(ALPHA_TEST_REF) / 255.0
