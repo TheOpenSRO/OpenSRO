@@ -1176,6 +1176,12 @@ class ChatList extends Control:
 	var max_lines := HudChat.MAX_LINES
 	var _laid_width := -1.0
 
+	# Text and the untextured hover bar only: glyphs drawn unfiltered, as
+	# every text node is (UiBuilder.crisp_text, round 672).
+	func _init() -> void:
+		set_meta(UiBuilder.TEXT_NODE_META, true)
+		UiBuilder.crisp_text(self)
+
 	func _ready() -> void:
 		mouse_exited.connect(func() -> void:
 			hover = -1
@@ -1343,18 +1349,28 @@ class ChatTab extends Control:
 			selected = v
 			queue_redraw()
 
+	## The caption, drawn on its own unfiltered layer over the tab's art
+	## (UiBuilder.TextLayer, round 672).
+	var _text_layer: UiBuilder.TextLayer
+
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_STOP
+		_text_layer = UiBuilder.TextLayer.new(_draw_caption)
+		add_child(_text_layer)
 
 	func _draw() -> void:
 		if texture != null:
 			draw_texture_rect(texture, Rect2(Vector2.ZERO, size), false)
+		if _text_layer != null:
+			_text_layer.queue_redraw()
+
+	func _draw_caption(on: CanvasItem) -> void:
 		var f := bold_font if selected and bold_font != null else font
 		if f == null or caption == "":
 			return
 		var w := f.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
 		var y := (size.y - f.get_height(font_size)) / 2.0 + f.get_ascent(font_size)
-		draw_string(f, Vector2(round((size.x - w) / 2.0), round(y)), caption, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		on.draw_string(f, Vector2(round((size.x - w) / 2.0), round(y)), caption, HORIZONTAL_ALIGNMENT_LEFT, -1,
 			font_size, text_color())
 
 	func text_color() -> Color:

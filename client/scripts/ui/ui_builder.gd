@@ -1359,6 +1359,156 @@ func font_at(_index: int) -> FontFile:
 	_load_fonts()
 	return _ui_font
 
+## **Every in-game text path goes through here** (round 672).
+##
+## The reference client draws all its text with one face (`font_at`) at the
+## five FontIndex sizes, glyphs rasterised one bit deep -- GetGlyphOutlineW
+## with GGO_BITMAP (format 1) in GFontChar 0x8b0a00 / GNFontChar 0x492bc0,
+## each set bit stored as an opaque texel (READ) -- and drawn 1:1, since it
+## never scales its UI. So a glyph pixel is the text colour or nothing.
+##
+## `apply_ui_theme` gives a UI root that look for everything under it:
+##   - a Theme whose default font is the client's face at FontIndex 0's
+##     12 px, so a Label, Button, LineEdit or RichTextLabel made in code
+##     without a font of its own no longer falls back to Godot's anti-aliased
+##     default font at 16 px;
+##   - `crisp_text` on every text node that enters the root, now or later:
+##     the glyph texture is sampled NEAREST. The window rasterises glyphs at
+##     the UI scale (ClientSettings.apply_ui_scale), but a glyph still lands
+##     at a fractional pixel position, and at a scale like 1.95 its texel is
+##     1.017 px (FreeType takes a whole pixel size: 12 x 1.95 = 23.4 -> 23).
+##     A LINEAR filter turns that into a 2-3 px ramp on 60-70 % of text
+##     pixels (measured at 1.95, and still 33-43 % at a whole 2.0, from
+##     half-pixel placements); NEAREST keeps every pixel one level at every
+##     scale measured (1.0 to 2.5, round 672). The UI's ART keeps its
+##     linear filter: only text nodes are switched.
+func apply_ui_theme(root: Control) -> void:
+	if root == null:
+		return
+	var font := font_at(0)
+	if font != null:
+		var theme := root.theme if root.theme != null else Theme.new()
+		theme.default_font = font
+		theme.default_font_size = FONT_SIZES[0]
+		root.theme = theme
+	watch_text(root)
+
+## Makes every text node under `root` -- those there now and every one added
+## later, at any depth -- draw its glyphs unfiltered (`crisp_text`). Only the
+## UI's own subtree is watched: each node in it gets one child_entered_tree
+## connection, so nothing is paid for the 3D world's nodes.
+static func watch_text(root: Node) -> void:
+	if root == null:
+		return
+	_watch_node(root)
+
+static func _watch_node(n: Node) -> void:
+	if is_text_node(n):
+		crisp_text(n as CanvasItem)
+	if n is Button:
+		guard_button_font(n as Button)
+	var cb := Callable(UiBuilder, "_watch_node")
+	if not n.child_entered_tree.is_connected(cb):
+		n.child_entered_tree.connect(cb)
+	for c in n.get_children():
+		_watch_node(c)
+
+## Meta that marks a custom-drawn node (one whose `_draw` writes text and
+## nothing textured) as a text node for `is_text_node`.
+const TEXT_NODE_META := &"ui_text"
+
+## Whether `n` draws text and nothing else textured, so it can be sampled
+## NEAREST without touching the UI's art. A Button counts unless a style of
+## it is a texture (CompositeItemWindow's buttons wear the client's art),
+## TextureButton and the other art controls never.
+static func is_text_node(n: Node) -> bool:
+	if n is Label or n is LineEdit or n is RichTextLabel or n is ItemList:
+		return true
+	if n is Button:
+		for st in [&"normal", &"hover", &"pressed", &"disabled", &"focus"]:
+			if (n as Button).get_theme_stylebox(st) is StyleBoxTexture:
+				return false
+		return true
+	return n is CanvasItem and n.has_meta(TEXT_NODE_META)
+
+## The one switch: a text node's glyph textures are sampled NEAREST, so a
+## glyph pixel is drawn whole or not at all (see apply_ui_theme for why).
+static func crisp_text(ci: CanvasItem) -> void:
+	if ci != null:
+		ci.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+
+## **A Button's last glyph at a fractional scale** -- the 2026-09-11
+## "Registe", reproduced in round 672 as "Sel" for "Sell" at 1.25, fresh
+## start and live change alike (measured: ink 20 px against 25).
+##
+## READ in 4.2.2: a Button draws its text through a TextLine whose width it
+## sets to the text's own width, rounded UP to a whole unit
+## (scene/gui/button.cpp, `int text_width = ... text_buf->get_size().x`;
+## TextServerAdvanced::_shaped_text_get_size `.ceil()`), and the line is
+## drawn clipped to that width: shaped_text_draw stops at the first glyph
+## whose end passes it (servers/text_server.cpp, "Clip right"). At a
+## fractional oversampling the glyph advances are fractions -- "Sell" at
+## 1.25 is 8 + 6.675 + 2.662 + 2.662 (MEASURED, TextLine) -- and when they
+## sum to a whole number the ceiling adds nothing, so the running total
+## (INFERRED: float rounding, a hair over) passes the clip on the last glyph
+## and it is not drawn. A Label draws without that clip and never lost one.
+##
+## The guard: the Button's face with `variation_embolden` BUTTON_NUDGE. Each
+## glyph's advance grows by embolden x size / 64 (READ,
+## TextServerAdvanced::_get_extra_advance) -- 0.0019 at 12 px -- so a
+## whole-number sum gets a fraction and the ceiling a whole unit of room.
+## The glyph is not touched: FreeType's embolden strength is embolden x size
+## x 4 in 1/64 px, truncated to an integer -- 0 below 25 px (READ,
+## _ensure_glyph). At scale 1.0 a shaped advance plus that extra is rounded
+## to a whole pixel (READ, _shape_run: `subpos` is off when the font's scale
+## is 1 and subpixel positioning is disabled), so 1.0's layout is unchanged
+## (text_crispness_test checks the widths). OURS: a workaround for an engine
+## edge, kept to Buttons.
+const BUTTON_NUDGE := 0.01
+const _BUTTON_GUARD_META := &"ui_button_guard"
+static var _button_fonts := {}
+
+static func guard_button_font(b: Button) -> void:
+	var base := b.get_theme_font(&"font")
+	if base == null or base.has_meta(_BUTTON_GUARD_META) or base is FontVariation:
+		return
+	if not _button_fonts.has(base):
+		var v := FontVariation.new()
+		v.base_font = base
+		v.variation_embolden = BUTTON_NUDGE
+		v.set_meta(_BUTTON_GUARD_META, true)
+		_button_fonts[base] = v
+	b.add_theme_font_override(&"font", _button_fonts[base])
+
+## For a node that draws art AND text in its own `_draw` (the chat's tabs,
+## the notice banner): the text goes on this child, which covers the parent
+## and draws whatever `draw_text` draws on it, unfiltered, after (over) the
+## parent's own drawing -- so the art keeps its filter and the text loses
+## its. The parent calls `queue_redraw` on it when its text changes.
+class TextLayer extends Control:
+	var draw_text: Callable
+
+	func _init(drawer: Callable = Callable()) -> void:
+		draw_text = drawer
+		name = "TextLayer"
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		set_meta(TEXT_NODE_META, true)
+		UiBuilder.crisp_text(self)
+
+	func _draw() -> void:
+		if draw_text.is_valid():
+			draw_text.call(self)
+
+## Uses the face in `data` (a font file's bytes) as the UI font, with the
+## client's rendering flags, instead of resolving one from the archive --
+## for a test or tool that has no archive. Returns the font, or null.
+func use_font_data(data: PackedByteArray) -> FontFile:
+	_fonts_loaded = true
+	_ui_font = _new_font(data)
+	_ui_font_source = "given"
+	return _ui_font
+
 ## How many UI fonts are in play: one, or none.
 func font_count() -> int:
 	_load_fonts()
@@ -1415,6 +1565,7 @@ func _apply_font(label: Label, def: UiLayoutParser.ControlDef) -> void:
 		label.add_theme_font_override("font", font)
 	var size: int = FONT_SIZES[def.font_index] if def.font_index >= 0 and def.font_index < FONT_SIZES.size() else FONT_SIZE_FALLBACK
 	label.add_theme_font_size_override("font_size", size)
+	crisp_text(label)
 	# Not clipped to the authored rect, because the client does not clip:
 	# in the reference screenshot "Phy. balance" is 63.8px wide and "Mag.
 	# balance" 65.7px, drawn in GDR_PI_TEXT_PHYBAL / _MAGBAL rects that are

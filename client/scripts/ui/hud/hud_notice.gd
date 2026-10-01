@@ -88,12 +88,19 @@ var _edge: Texture2D
 var _edge2: Texture2D
 var _corner: Texture2D
 var _text := ""
+## The banner's text, drawn on its own unfiltered layer over the frame
+## (UiBuilder.TextLayer, round 672).
+var _text_layer: UiBuilder.TextLayer
 var _left_ms := 0
 var _style: Dictionary = STYLE_NOTICE
 ## The window's alpha, 0..255 (CIFWnd +0x12d): 255 while shown, then
 ## remaining * 255 / 2000 over the fade. The frame and the text are drawn at
 ## it and the fill at fill_alpha_for(it), so no modulate is used.
 var _alpha := 255
+
+func _init() -> void:
+	_text_layer = UiBuilder.TextLayer.new(_draw_text)
+	add_child(_text_layer)
 
 ## `style` is STYLE_NOTICE (the default) or STYLE_WARNING.
 func setup(builder: UiBuilder, style: Dictionary = STYLE_NOTICE) -> void:
@@ -196,6 +203,10 @@ func _draw() -> void:
 		draw_texture_rect(_corner, Rect2(w, 0, -cw, ch), false, tint)
 		draw_texture_rect(_corner, Rect2(0, h, cw, -ch), false, tint)
 		draw_texture_rect(_corner, Rect2(w, h, -cw, -ch), false, tint)
+	# The text is on its own unfiltered layer, over the frame (round 672).
+	_text_layer.queue_redraw()
+
+func _draw_text(on: CanvasItem) -> void:
 	if _font != null and _text != "":
-		draw_string(_font, Vector2(0, _font.get_ascent(_font_size)), _text, HORIZONTAL_ALIGNMENT_LEFT, -1,
-			_font_size, Color(TEXT_COLOR, TEXT_COLOR.a * tint.a))
+		on.draw_string(_font, Vector2(0, _font.get_ascent(_font_size)), _text, HORIZONTAL_ALIGNMENT_LEFT, -1,
+			_font_size, Color(TEXT_COLOR, TEXT_COLOR.a * float(_alpha) / 255.0))

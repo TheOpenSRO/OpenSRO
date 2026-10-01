@@ -1593,6 +1593,10 @@ func _try_initialize_pk2_ui() -> void:
 		_ui_text_table = UiTextTable.parse(text_bytes)
 
 	_ui_builder = UiBuilder.new(_media_pk2, _ui_text_table)
+	# Every text node of the in-game UI in the client's own face, at its
+	# 12 px, drawn unfiltered -- including the ones made in code with no
+	# font of their own (UiBuilder.apply_ui_theme, round 672).
+	_ui_builder.apply_ui_theme(ui_control)
 
 	# Setup authentic Minimap
 	_hud_minimap = HudMinimap.new(_ui_builder, _media_pk2, _ui_text_table)

@@ -52,9 +52,8 @@ renderer/rendering_method.mobile="gl_compatibility"
 
 [gui]
 
-; Off so the window does not tie font oversampling to its content scale
-; factor: Godot 4.2 loses a string's last glyph under fractional
-; oversampling (measured, docs/WORLD_ISSUES.md round 134's addendum).
-; ClientSettings.apply_ui_scale turns the window's oversampling back on at
-; whole-number UI scales only.
-fonts/dynamic_fonts/use_oversampling=false
+; On: the window rasterises glyphs at its content scale factor (the UI
+; scale), so text is drawn at the size it is shown at, at every scale --
+; ClientSettings.apply_ui_scale has why it is on from start-up and never
+; toggled (docs/WORLD_ISSUES.md round 672).
+fonts/dynamic_fonts/use_oversampling=true

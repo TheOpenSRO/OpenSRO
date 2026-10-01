@@ -89,36 +89,72 @@ static func seasonal_shown() -> String:
 ## divides its size by this factor for the canvas, which is the whole
 ## effect wanted.
 ##
-## Font oversampling -- rasterising glyphs at the scaled size so they stay
-## crisp -- is applied only at a whole-number scale. Measured on the render
-## box in a 1160x700 window (2026-09-11): at 2.0 "Register" draws whole, at
-## 2.35 and 2.5 its last glyph is missing, and at 2.35 with oversampling off
-## it draws whole again. So Godot 4.2 loses the last glyph of a string under
-## fractional oversampling. (Round 581's rendered probe -- a Label and the
-## current register link, in the default font -- did not reproduce it at
-## 2.35 or 2.5; the rule stays, and costs nothing.)
+## Font oversampling -- rasterising glyphs at the scaled size -- is on at
+## EVERY scale (round 672). Off, a glyph is rasterised at its 1x size and
+## magnified by the scale, and that is the soft text players saw at 1.25,
+## 1.5 and 1.95. Measured on the render box, 3840x2160, the HUD's name,
+## level and HP/MP numbers, the chat and the character window: with the old
+## whole-number-only rule 84-97 % of text pixels were part-covered at 1.25,
+## 1.5 and 1.95 (edges 3-6 px wide); oversampled and drawn unfiltered
+## (UiBuilder.crisp_text) every text pixel is one level at every scale, as
+## at 1.0 -- docs/WORLD_ISSUES.md round 672 has the table.
 ##
-## The root window sets the text server's oversampling itself on every
-## viewport update -- a resize, a content-scale change: to its content scale
-## factor when its font-oversampling flag is on, to 1.0 when it is off
-## (scene/main/window.cpp, Window::_update_viewport_size, 4.2.2-stable; the
-## project's stretch mode is "disabled"). So this sets the FLAG -- on at a
-## whole-number scale, off otherwise -- and the window then holds the right
-## value through every later resize. The project setting
-## gui/fonts/dynamic_fonts/use_oversampling (false) is the flag at startup.
+## The window owns the value: on every viewport update -- a resize, a
+## content-scale change -- it sets the text server's oversampling to its
+## content scale factor while its font-oversampling flag is on, 1.0 when it
+## is off (scene/main/window.cpp, Window::_update_viewport_size, 4.2.2).
+## The flag is on from start-up (project.godot) and this keeps it on, so it
+## never TOGGLES. That matters: the update resizes the canvas -- which
+## queues a redraw of every CanvasItem (Viewport::_set_size ->
+## update_canvas_items) -- before it changes the oversampling, and the
+## oversampling change frees every cached glyph texture
+## (TextServerAdvanced::_font_set_global_oversampling ->
+## _font_clear_size_cache). With a size change, the queued redraws pick up
+## the new glyphs. A flag flipped with no size change after it (round 672's
+## first probe, which turned the flag on by hand after this function had
+## set the scale) frees the textures with nothing redrawn, and every glyph
+## drawn before it renders as a solid block: measured, round 672.
 ##
-## Until round 581 this set the oversampling by hand and again from the
-## window's size_changed signal. That signal is emitted inside the viewport
-## update, before the window's own reset, so after a resize the window's
-## value won: 2.35 at a 2.35 scale while project.godot's `#` comment swallowed
-## the setting, and 1.0 at every scale once the setting applied (measured on
-## the render box, headless and in a window, round 581).
+## The 2026-09-11 lost glyph ("Register" read "Registe" at 2.35) was the
+## reason oversampling was limited to whole numbers. Round 672 reproduced it
+## ("Sell" drew as "Sel" at 1.25) and found it is a Button's alone: a Button
+## clips its text to the ceiling of its own width, and fractional advances
+## that sum to a whole number pass it. UiBuilder.guard_button_font has the
+## READ mechanism and the guard every Button in the UI now wears.
 static func apply_ui_scale(window: Window, scale: float) -> void:
 	if window == null:
 		return
 	var factor := clampf(scale, 0.5, 3.0)
 	# Only the main window drives the oversampling, and only it may set the
-	# flag once it is in the tree (Window::set_use_font_oversampling).
-	if window.is_inside_tree() and window == window.get_tree().root:
-		window.set_use_font_oversampling(is_equal_approx(factor, roundf(factor)))
+	# flag once it is in the tree (Window::set_use_font_oversampling). It is
+	# already on (project.godot); setting it again changes nothing, and it
+	# is never turned off.
+	if window.is_inside_tree() and window == window.get_tree().root and not window.is_using_font_oversampling():
+		window.set_use_font_oversampling(true)
+	var changed := not is_equal_approx(window.content_scale_factor, factor)
 	window.content_scale_factor = factor
+	if changed and window.is_inside_tree():
+		_refresh_text(window)
+
+## After a scale change made while text is up (the debug panel's slider):
+## the window has already re-rasterised every glyph at the new scale and
+## queued every CanvasItem's redraw, but nothing re-measures text. Measured
+## in a running client, round 672, at 1.25-1.95: a column of Buttons moved
+## the moment its theme next changed (INFERRED: they had kept their old
+## sizes), and the name plate's ink grew 5-14 times (INFERRED: its glyph
+## quads still pointed at freed glyph textures); a client started at those scales showed
+## neither, and with this refresh the running one measures the same. A
+## theme-changed notification is what makes a Control reshape its text and
+## resize; a Label3D rebuilds its glyph quads when its font size changes,
+## so the size is nudged and put back. Rare: a scale is set at start-up and
+## from the panel.
+static func _refresh_text(window: Window) -> void:
+	# Controls only: the notification's number means other things to other
+	# classes, so it is not propagated through the 3D world.
+	for n in window.find_children("*", "Control", true, false):
+		n.notification(Control.NOTIFICATION_THEME_CHANGED)
+	for n in window.find_children("*", "Label3D", true, false):
+		var plate := n as Label3D
+		var fs := plate.font_size
+		plate.font_size = fs + 1
+		plate.font_size = fs

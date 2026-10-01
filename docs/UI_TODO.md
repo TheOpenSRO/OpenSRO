@@ -523,7 +523,13 @@ does (`0x778310`). Slots 25-28 and 31-32 also need their features.
   the layouts is given as `SN_` keys, so resolve through it rather than hardcoding English.
 - **Scaling.** The layouts are authored for a 1024×768 default at 1:1 pixel size. Decide what
   happens on a larger window — the real client anchors and does not scale — and do it once,
-  centrally.
+  centrally. *Text at a UI scale is settled (round 672):* the window rasterises glyphs at the
+  scale (oversampling on at every scale, never toggled), and every text node under the UI root is
+  in the client's face and sampled NEAREST (`UiBuilder.apply_ui_theme` / `watch_text` /
+  `crisp_text`), so text measures one level at any scale, as the original's 1-bit GGO_BITMAP
+  glyphs do at 1:1. A new text path goes through those helpers; a custom `_draw` that mixes art
+  and text puts the text on a `UiBuilder.TextLayer`. Name plates (Label3D) are still open
+  (docs/TODO.md, "Text crispness").
 
 ## Unknowns, flagged rather than guessed
 

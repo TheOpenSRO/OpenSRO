@@ -85,6 +85,9 @@ static func apply_client_font(root: Control, media: Pk2Reader) -> void:
 	var theme := root.theme if root.theme != null else Theme.new()
 	theme.default_font = font
 	root.theme = theme
+	# Drawn unfiltered, as the in-game text is (UiBuilder.apply_ui_theme,
+	# round 672). The front-end's own sizes are left as they are.
+	UiBuilder.watch_text(root)
 
 ## A dark ground so a missing backdrop is black, not the host theme.
 static func ground(colour: Color = Color(0.03, 0.03, 0.04)) -> ColorRect:

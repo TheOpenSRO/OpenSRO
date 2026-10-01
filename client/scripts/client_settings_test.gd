@@ -1,8 +1,9 @@
 extends SceneTree
 
 ## ClientSettings.apply_ui_scale: the text server's font oversampling is the
-## scale at a whole-number UI scale and 1.0 at any other, and it STAYS so
-## after the window is resized.
+## UI scale at EVERY scale, fractional ones included (round 672: oversampling
+## only at whole numbers was the soft text at 1.25, 1.5 and 1.95), and it
+## STAYS so after the window is resized.
 ##
 ## A resize is where it went wrong before round 581: the window resets the
 ## oversampling on every viewport update (Window::_update_viewport_size), and
@@ -39,7 +40,7 @@ func _run() -> void:
 	var root := get_root()
 	var sizes := [Vector2i(1160, 700), Vector2i(1000, 640), Vector2i(1280, 720)]
 	var step := 0
-	for c in [[2.0, 2.0], [2.35, 1.0], [3.0, 3.0], [2.5, 1.0], [1.0, 1.0]]:
+	for c in [[2.0, 2.0], [2.35, 2.35], [3.0, 3.0], [2.5, 2.5], [1.25, 1.25], [1.5, 1.5], [1.95, 1.95], [1.0, 1.0]]:
 		var scale: float = c[0]
 		var want: float = c[1]
 		ClientSettings.apply_ui_scale(root, scale)
@@ -51,6 +52,7 @@ func _run() -> void:
 		await process_frame
 		_check(is_equal_approx(_oversampling(), want), "UI scale %.2f after a resize to %s: oversampling %.2f (got %.3f)" % [scale, root.size, want, _oversampling()])
 		_check(is_equal_approx(root.content_scale_factor, scale), "UI scale %.2f is the window's content scale (got %.2f)" % [scale, root.content_scale_factor])
+		_check(root.is_using_font_oversampling(), "UI scale %.2f: the window's oversampling flag is on" % scale)
 
 	if _failures == 0:
 		print("ALL PASS")

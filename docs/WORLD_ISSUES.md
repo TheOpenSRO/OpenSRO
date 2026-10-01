@@ -7094,6 +7094,238 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-seventy-second round: text as crisp as the original's at every UI scale -- glyphs rasterised at the scale and drawn unfiltered, every in-game text node in the client's own face, and the old lost-last-glyph bug found in Buttons and guarded
+
+The user (2026-10-01): "The text in the game seems blurry while it's nice and crisp in the original
+game. [...] The text looks bad on pretty much any DPI scale too. Here's 1.95 at ~4k resolution."
+Then: "Yah, 2.0 does look clear." The screenshot (the HUD's name, "Lv 140", the HP/MP numbers at
+1.95) shows soft, dark-fringed text in crisp frame art.
+
+Labels: READ (the decompiled client, `/var/tmp/decomp_client`; Godot 4.2.2-stable's source),
+MEASURED (the render box, GL Compatibility on the RX 7600, 3840x2160 unless said, real
+Media.pk2 -- the face resolved is the archive's Arial, `UIC_STT_FONTNAME`'s English column on this
+archive), INFERRED, OURS.
+
+### 1. What retail does (READ)
+
+- **The fonts.** `FUN_00baa110` builds each FontIndex's HFONT: `lfHeight = -MulDiv(pt, 96, 72)`,
+  `lfWidth/Escapement/Orientation = 0`, `lfWeight` 0 (FW_DONTCARE) for the regular face and 600
+  for variant 2, `lfItalic` 1 for variant 1, `lfUnderline` 1 for variant 3, `lfCharSet` 1
+  (DEFAULT_CHARSET), `lfOutPrecision` 0 (OUT_DEFAULT_PRECIS), `lfClipPrecision` 0, **`lfQuality`
+  0 (DEFAULT_QUALITY)**, `lfPitchAndFamily` 0; `CreateFontIndirectA`, selected into the memory DC
+  `DAT_0110fab0` (`CreateCompatibleDC(NULL)` in `CGame::FUN_00ba9f40`) for `GetTextMetricsA`. Only
+  the regular variant is always made (`local_50[0] = 1`); the others when asked.
+- **The glyphs.** `GFontChar::FUN_008b0a00` rasterises a character with
+  `GetGlyphOutlineW(DAT_0110fab0, ch, 1, &gm, size, buf, &identity MAT2)` -- **format 1 is
+  GGO_BITMAP, one bit per pixel** -- and unpacks the DWORD-aligned rows bit by bit into 16-bit
+  texels, `0xffff` for a set bit and 0 otherwise, 128 texels to a row of its glyph texture.
+  `GNFontChar::FUN_00492bc0` does the same through `DAT_01119ffc` (a DC made compatible with the
+  first). So `lfQuality` does not matter: whatever the system's smoothing, the glyph that reaches
+  the texture is one bit deep. This is why round 199 measured one luminance level in the reference
+  screenshots (`{12: 162}`); it is now read, not only measured.
+- **The scale.** The original never scales its UI (UI_TODO's "Scaling" note): its glyphs are drawn
+  1:1. srrevamp's UI scale has no retail counterpart; the target at scale s is the same look --
+  one level, a 1-pixel edge -- with glyphs rasterised AT s, not a 1x bitmap magnified.
+
+### 2. The measurement (MEASURED, `client/tools/measure_text_crispness.gd`)
+
+The tool builds the HUD's text the way World3D does -- `HudPlayerInfo` (name "deadass3", Lv 140,
+24936/24936, 90333/90333), `HudChat` and `HudSystemMessage` lines, the GM notice, the character
+window from `HudPanels`, eight code-made Buttons like the dialogs' ("Register", "Buy", "Sell",
+...), the 2026-09-11 login form (a VBoxContainer of LineEdits and Buttons in Godot's own font) and
+a name plate from `World3D._name_plate` -- and for each scale renders a frame, renders it again with
+one text kind invisible, and diffs. Each changed pixel is fitted as background + t x (ink -
+background) over the kind's ink colours (text, shadow, outline). Per kind: **partial** = % of text
+pixels with t < 0.9; **levels** = distinct t in 1/16 steps; **edge** = mean partial pixels at a
+run's end + 1; **mass** = sum of t / s^2 (a glyph drawn as a block, or lost, shows here); and per
+Button, ink width against the string's advance width, judged against its own ratio at 1.0 (a lost
+glyph). Aliased text drawn 1:1 is 0 % / 1 / 1.00. The scales run in ONE process, changed live as
+the debug panel's slider does; fresh starts at 1.25, 1.5, 1.95 and (in 1160x700) 2.35 were run
+too.
+
+### 3. Before (dev bf11666, the scale changed live 1.0 -> 2.5): partial % / levels / edge px
+
+| text | 1.00 | 1.25 | 1.50 | 1.75 | 1.95 | 2.00 | 2.35 | 2.50 |
+|---|---|---|---|---|---|---|---|---|
+| HUD name | 0.0% / 1 / 1.00 | 84.2% / 17 / 3.22 | 92.3% / 15 / 3.93 | 86.2% / 17 / 4.02 | 92.2% / 17 / 4.70 | 33.9% / 10 / 1.74 | 86.5% / 17 / 5.04 | 85.0% / 17 / 5.06 |
+| HUD level | 0.0% / 1 / 1.00 | 95.4% / 17 / 2.79 | 94.1% / 15 / 3.07 | 90.3% / 17 / 3.33 | 89.0% / 17 / 3.50 | 43.0% / 6 / 1.76 | 91.1% / 17 / 3.84 | 93.7% / 17 / 4.35 |
+| HUD HP | 0.0% / 1 / 1.00 | 94.8% / 17 / 3.44 | 96.4% / 15 / 4.04 | 87.5% / 17 / 4.25 | 92.4% / 17 / 4.70 | 40.0% / 13 / 1.82 | 91.4% / 17 / 5.03 | 93.3% / 17 / 5.91 |
+| HUD MP | 0.0% / 1 / 1.00 | 95.5% / 17 / 2.93 | 97.1% / 16 / 3.57 | 85.7% / 17 / 3.62 | 90.1% / 17 / 3.94 | 41.7% / 13 / 1.81 | 92.5% / 17 / 4.49 | 93.4% / 17 / 5.17 |
+| chat lines | 0.0% / 1 / 1.00 | 93.0% / 17 / 4.62 | 96.8% / 17 / 5.75 | 89.8% / 17 / 5.06 | 89.9% / 17 / 5.56 | 42.8% / 17 / 1.92 | 90.3% / 17 / 5.84 | 93.4% / 17 / 7.43 |
+| system messages | 0.0% / 1 / 1.00 | 94.1% / 17 / 4.59 | 97.0% / 17 / 5.82 | 91.1% / 17 / 4.87 | 91.1% / 17 / 5.23 | 41.3% / 17 / 1.85 | 90.1% / 17 / 5.61 | 92.7% / 17 / 6.73 |
+| notice banner | 0.0% / 1 / 1.00 | 94.2% / 17 / 3.09 | 95.4% / 15 / 3.63 | 88.5% / 17 / 3.49 | 90.4% / 17 / 4.02 | 41.0% / 17 / 1.84 | 90.6% / 17 / 4.40 | 93.7% / 17 / 5.05 |
+| character window | 0.0% / 1 / 1.00 | 94.4% / 17 / 3.01 | 95.3% / 15 / 3.48 | 91.1% / 17 / 3.50 | 90.5% / 17 / 3.84 | 33.3% / 14 / 1.63 | 89.5% / 17 / 4.31 | 93.8% / 17 / 4.86 |
+| code-made Buttons | 63.3% / 17 / 2.15 | 90.0% / 17 / 4.34 | 91.3% / 17 / 5.12 | 89.3% / 17 / 5.19 | 88.8% / 17 / 5.54 | 53.4% / 17 / 2.86 | 89.2% / 17 / 6.48 | 89.4% / 17 / 6.89 |
+| 2026-09-11 login form | 64.6% / 17 / 2.31 | 89.3% / 17 / 4.64 | 91.5% / 17 / 5.64 | 92.3% / 17 / 6.47 | 91.4% / 17 / 6.56 | 50.3% / 17 / 2.85 | 90.9% / 17 / 7.78 | 90.7% / 17 / 7.83 |
+| name plate | 79.3% / 17 / 4.40 | 79.3% / 17 / 4.40 | 79.3% / 17 / 4.40 | 100.0% / 10 / 6.26 | 79.3% / 17 / 4.40 | 69.1% / 17 / 3.76 | 79.3% / 17 / 4.40 | 79.3% / 17 / 4.40 |
+
+A fresh start at 1.95 (the user's case) measured the same: 89-92 % partial, edges 3.5-5.6 px.
+So: the client's own text was crisp at 1.0 only; at every fractional scale it was a 1x bitmap
+magnified through a linear filter (the oversampling was 1.0 -- the whole-number rule); at 2.0,
+oversampled, still a third partial, from glyphs at half-pixel positions under the linear filter
+-- clearer, which is what the user saw, but not the original's one level. The code-made Buttons
+and the login form were in Godot's anti-aliased default font, soft even at 1.0.
+
+### 4. Two engine traps on the way (READ + MEASURED)
+
+**Glyphs drawn as solid blocks.** The first probe turned the window's oversampling flag on by
+hand after `apply_ui_scale` had set a fractional scale: every glyph drawn before it rendered as a
+solid rectangle in the text colour (ink mass 2.6x that at 1.0, fill 0.86 of the ink box against
+0.35). READ: `Window::_update_viewport_size` resizes the canvas -- `Viewport::_set_size`, which
+returns early when nothing changed and otherwise calls `update_canvas_items()`, a `queue_redraw`
+on every CanvasItem -- and only then sets the text server's oversampling, and
+`TextServerAdvanced::_font_set_global_oversampling` clears every font's size cache (the glyph
+textures). Oversampling changed WITH a size change: the queued redraws fetch new glyphs. Changed
+without one (a flag flip at an unchanged scale): nothing redraws and the old draw commands point at
+freed textures (INFERRED: drawn with GL's default white). So the flag is now on from start-up
+(`project.godot`) and never toggled. The probe's glyph atlas itself was fine at every scale
+(`font_get_texture_image`: 601 opaque texels at 1.0, 2,212 at 1.95, 0 partial).
+
+**The 2026-09-11 lost glyph, reproduced and explained.** With oversampling on at every scale,
+"Sell" drew as "Sel" at 1.25 (ink 20 px against 25; 23 against 26.2 now), a fresh start and a live
+change alike, and the 2026-09-11 form's "Register" as "Registe" at 1.5 -- the bug the
+whole-number rule was made for. It is a Button's alone. READ: a Button sets its TextLine's width to
+the text's own width (`scene/gui/button.cpp`, `int text_width = MAX(1, ... text_buf->get_size().x)`),
+which `_shaped_text_get_size` rounds UP (`.ceil()`), and `TextLine::draw` passes that width as the
+right clip of `shaped_text_draw`, which stops at the first glyph whose end passes it
+(`servers/text_server.cpp`, "Clip right"). At a fractional oversampling the advances are fractions
+-- "Sell" at 1.25 shapes as 8 + 6.675 + 2.662 + 2.662 = 20.000 (MEASURED, TextLine) -- and when
+they sum to a whole number the ceiling adds no room, and the running end passes the clip on the
+last glyph (INFERRED: single-precision accumulation a hair over). At 1.0 advances are whole
+pixels; at 2.0 they are halves, exact in binary. A Label draws without that clip: no Label lost a
+glyph at any scale. Round 581's probe (a Label) could not reproduce it for that reason.
+
+### 5. What changed (OURS, each measured)
+
+- `client/project.godot`: `gui/fonts/dynamic_fonts/use_oversampling=true` -- the window
+  rasterises glyphs at its content scale factor at every scale, from start-up.
+- `client/scripts/client_settings.gd`, `apply_ui_scale`: keeps the flag on (never toggles it);
+  after a live scale change, `_refresh_text` sends every Control a theme-changed notification (so
+  Buttons and containers re-measure their text) and nudges every Label3D's font size and back (so
+  a name plate rebuilds its glyph quads). Measured without it, in a running client: the Buttons'
+  layout moved under the probe and the plate's ink grew 5-14x at 1.75/1.95; with it, a live change
+  measures as a fresh start.
+- `client/scripts/ui/ui_builder.gd`: **the one helper** -- `apply_ui_theme(root)`: a Theme with
+  the client's face (`font_at(0)`) at FontIndex 0's 12 px as the default, so a Label, Button,
+  LineEdit, RichTextLabel or ItemList made in code without a font of its own is no longer in
+  Godot's anti-aliased default at 16 px; and `watch_text(root)`, which makes every text node under
+  the root -- there now or added later, at any depth, one `child_entered_tree` connection per UI
+  node, none in the 3D world -- draw unfiltered (`crisp_text`: `texture_filter = NEAREST`). Art
+  keeps its filter: only Label/LineEdit/RichTextLabel/ItemList, Buttons without texture styles,
+  and nodes marked `ui_text` are switched. `guard_button_font` gives every Button under the root
+  its face as a FontVariation with `variation_embolden` 0.01: each advance grows by 0.01 x size /
+  64 (`_get_extra_advance`), so a whole-number sum gets a fraction and the ceiling a unit of
+  room; the outline is untouched (FreeType's embolden strength, embolden x size x 4 in 1/64 px,
+  truncates to 0 below 25 px) and 1.0's advances still round to whole pixels.
+  `TextLayer`: a full-rect child that draws a node's text unfiltered over its art.
+  `_apply_font` (every layout label) calls `crisp_text` too, and `use_font_data` gives a tool or
+  test a face without an archive.
+- `client/scripts/World3D.gd`: `_ui_builder.apply_ui_theme(ui_control)` right after the builder.
+- `client/scripts/ui/frontend_ui.gd`: the front-end's root is watched too (its own font sizes
+  unchanged).
+- `client/scripts/ui/hud/hud_chat.gd`: `ChatList` (the chat's and the system window's lines) is a
+  text node; `ChatTab` draws its caption on a TextLayer over its tab art.
+- `client/scripts/ui/hud/hud_notice.gd`: the banner's text on a TextLayer over its frame (the GM
+  notice and the blue warning banner).
+
+Weighed and dropped (MEASURED, oversampled): the linear filter as it was (60-70 % partial at 1.95,
+33-43 % at 2.0); `snap_2d_vertices_to_pixel` and `snap_2d_transforms_to_pixel` on the root (no
+change from the linear numbers -- 59-73 % at 1.95); NEAREST on the whole UI root (would switch the
+art's filter too, which the user accepts as it is).
+
+### 6. After: partial % / levels / edge px, the scale changed live 1.0 -> 2.5
+
+| text | 1.00 | 1.25 | 1.50 | 1.75 | 1.95 | 2.00 | 2.35 | 2.50 |
+|---|---|---|---|---|---|---|---|---|
+| HUD name, level, HP, MP | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 |
+| chat lines | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 |
+| system messages | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 |
+| notice banner | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 |
+| character window | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 |
+| code-made Buttons | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 |
+| 2026-09-11 login form | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 | 0.0% / 1 / 1.00 |
+| name plate (OPEN) | 79.3% / 17 / 4.40 | 74.4% / 17 / 4.06 | 72.4% / 17 / 3.94 | 68.2% / 17 / 3.72 | 65.9% / 17 / 3.60 | 69.1% / 17 / 3.76 | 67.6% / 17 / 3.76 | 63.5% / 17 / 3.55 |
+
+Fresh starts at 1.25, 1.5 and 1.95 measure the same as the live rows; at 2.35 (1160x700) the HUD
+block is 0 % / 1 / 1.00. Ink mass per kind stays within 0.77-1.16x its 1.0 value at every scale
+(glyphs rasterised at 15, 18, 23 px hint differently), so nothing is a block. No Button lost a
+glyph at any scale ("Sell" 0.876-0.905 of its advance width against 0.905 at 1.0). The login
+form's row is now the client's face: its Buttons take the root's font through the guard (an
+artefact of the probe, which gives the form Godot's font after its Buttons entered).
+
+**Layout at 1.0 is unchanged** for text that was already in the client's face: 24 text rects
+(HUD, character window, chat, notice) identical between base and head. The 13 that changed are
+code-made controls that were in Godot's default font -- now the client's face at 12 px, so a
+Button is 22 px tall where it was 31. In the game these are the dialogs' Buttons, Labels and
+LineEdits that `hud_panels.gd`, `hud_buff_board.gd`, `composite_item_window.gd` and others make
+without a font (the confirm boxes, the store's quantity rows, the warehouse's gold box, the skill
+tabs' level-up button, ...).
+
+Crops (for showing, not deciding): the scratchpad's `text672_crops/` -- the HUD block at 1.95 and
+1.25 before/after, the chat and the character window at 1.95, the name at 1.95 zoomed 4x, and the
+code-made Buttons at 1.25 losing "Sell"'s last glyph without the guard and keeping it with it.
+
+### 7. Name plates (MEASURED; OPEN)
+
+The plates are `Label3D`s in Godot's anti-aliased default font at Label3D's default 32 px
+(`scene/3d/label_3d.h`, 4.2.2) -- scaled by `NAME_PLATE_PIXEL_SIZE` 0.0004 with `fixed_size`, drawn with
+Label3D's default linear-mipmap filter: 64-79 % partial at every scale, before and after. Label3D
+can be made crisp -- the client's face, `texture_filter` NEAREST, `pixel_size` set so one glyph
+texel is one screen pixel (2 tan(fov/2) / viewport height under `fixed_size`) -- but that sets the
+plate's on-screen size to the UI font's 12 px x scale, a visible change to a plate whose size,
+colour and 8 px outline are ours, and retail's name pass was not traced far enough to say its face
+and size: `CICMonster` vslot 15 (`0x9d3e70`) places the party mark at pixel offsets from a
+screen-space name box (`FUN_008b2d30`), so the name is screen-space 2D (READ), drawn through
+`FUN_009cf1b0`; the text call itself is not found. Left OPEN, in docs/TODO.md.
+
+### 8. Tests
+
+- New `client/scripts/ui/text_crispness_test.gd`: a UI font of its own through `use_font_data`;
+  under a root given `apply_ui_theme`, code-made Label, Button, LineEdit, a Label added later two
+  levels down, RichTextLabel and ItemList resolve to the client's face at 12 px and sample
+  NEAREST; a TextureRect, a container and a texture-styled Button keep their filter; ChatList and
+  the notice's TextLayer are NEAREST, the notice's frame is not; every Button is in the guarded
+  face, which at 1.0 lays out 17 strings x 5 sizes exactly as the plain face does, and for those
+  strings at 6 fractional scales no single-precision glyph run ends past its Button's clip (0 of
+  510); oversampling is on and equals the scale at 1.25, 1.5, 1.95, 2.35,
+  2.0, 1.0; World3D applies the theme to `ui_control`.
+- `client_settings_test.gd`: oversampling equals the scale at 2.0, 2.35, 3.0, 2.5, 1.25, 1.5, 1.95
+  and 1.0, after a resize too, with the flag on. `project_settings_test.gd`: the setting is true
+  and the root drives oversampling.
+- **Negative** (the three suites on dev, the base): `text_crispness_test` FAILURES 30, among them
+  `FAIL UiBuilder.apply_ui_theme exists`, `FAIL Label 'Phy. balance' draws in the client's face,
+  not Godot's default (got Godot's default)`, `FAIL Label 'Phy. balance' is at FontIndex 0's 12 px
+  (got 16)`, `FAIL Button 'Withdraw' samples its glyphs NEAREST (got 0)`, `FAIL the chat's lines
+  sample NEAREST`, `FAIL UI scale 1.95: glyphs are rasterised at 1.95 (got 1.000)`;
+  `client_settings_test` FAILURES 15 (`FAIL UI scale 1.95: oversampling 1.95 (got 1.000)`, ...);
+  `project_settings_test` FAILURES 2 (`FAIL gui/fonts/dynamic_fonts/use_oversampling = true (got
+  false)`). The guard's own negative is rendered: without it, "Sell" at 1.25 inks 20 px of 25.
+- `remote_godot.sh tests`: 185 suites, 0 failing.
+
+### 9. Perf gate
+
+`client/tools/perf_gate.sh --sites jangan` (base 2b27a6b vs this working tree, 1280x720, median
+of 3; the round touches World3D's UI setup and adds a watcher on the UI's own nodes):
+
+| jangan | base | head | | verdict |
+|---|---|---|---|---|
+| frame ms | 9.65 | 9.78 | +0.1 | SAME |
+| entry ms | 9523 | 9583 | +60 | SAME |
+| freeze ms | 3388 | 3383 | -5 | SAME |
+| hitches | 5 | 5 | 0 | SAME |
+
+### 10. OPEN
+
+- Name plates (section 7), and the floating damage numbers, which are the same Label3D.
+- A Button wearing texture art (CompositeItemWindow's) keeps the linear filter, so its text is
+  oversampled but drawn filtered at a fractional scale.
+- The Button guard makes a whole-number width unlikely, not impossible: a string whose fractional
+  sum lands within ~1e-5 below a whole number minus n x 0.0019 would still lose its last glyph.
+- The front-end keeps its own font sizes (Godot's 16 px default in the client's face); only its
+  filtering changed.
+- A Button whose font comes from an ancestor theme set AFTER it entered the UI keeps the face it
+  had when it entered (the guard captures it then).
+
 ## Six-hundred-and-seventy-first round: the text tables in Rust -- the boot tables from 1,023 ms to 187 ms, the NPC tables in the entry's longest frame from 582 ms to 113 ms
 
 The user (2026-10-01): "I'd actually like to start moving over the tasks you think are worth having

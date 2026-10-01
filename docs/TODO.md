@@ -1671,6 +1671,29 @@ bars use `pmi_hp.ddj` / `pmi_mp.ddj`. Left:
       activation. OPEN: body mode 2 (the revive / entry invincibility and its berserk error 4);
       other players' body modes are not drawn.
 
+### Text crispness (round 672) — **built: glyphs rasterised at the UI scale and drawn unfiltered, every in-game text node in the client's face, Buttons guarded against the lost last glyph; these are left**
+
+docs/WORLD_ISSUES.md round 672 has the measurement (`client/tools/measure_text_crispness.gd`) and
+the READ mechanisms. Every HUD, chat, notice, window and code-made Button text measures one level
+and a 1-pixel edge at 1.0-2.5, as the original's GGO_BITMAP glyphs are.
+
+- **Name plates and damage numbers** (`World3D._name_plate`, `_floating_damage`): Label3D in
+  Godot's anti-aliased default font at 32 px, scaled by `pixel_size` 0.0004 under `fixed_size`,
+  linear-mipmap filtered -- 64-79 % of their pixels part-covered at every scale. Label3D can be
+  crisp (the client's face, NEAREST, `pixel_size = 2 tan(fov/2) / viewport height` so a texel is a
+  pixel, re-set on resize and on the camera's fov), but that sets the plate to the UI font's 12 px
+  x scale on screen; retail's name text is screen-space (CICMonster vslot 15, `0x9d3e70`, places
+  the party mark at pixel offsets from the name box `FUN_008b2d30` gives) and its draw call under
+  `FUN_009cf1b0` is not found yet -- find it, read the face and size, then build the plate to it.
+- **Texture-styled Buttons** (CompositeItemWindow's) keep the linear filter, so their text is
+  oversampled but filtered at a fractional scale. The fix is a TextLayer for their text, as the
+  chat tabs and the notice have.
+- **The Button guard is probabilistic**: a fractional width that lands within ~1e-5 under a whole
+  number after the guard's +0.0019 per glyph would still lose its last glyph. A Label-based button
+  (text drawn without the TextLine clip) would close it for good.
+- **The front-end** keeps its own sizes (Godot's 16 px in the client's face); only the filter and
+  the Button guard reach it.
+
 ### Chat (round 634) -- **the retail window, channels, globals and notices built; these are left**
 
 docs/protocol/chat.md has every address. Built: the five tabs with their filters and lamps, the

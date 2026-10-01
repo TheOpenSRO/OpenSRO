@@ -60,11 +60,14 @@ func _initialize() -> void:
 	_setting_is("debug/file_logging/log_path", "user://logs/srrevamp.log")
 	_setting_is("debug/file_logging/max_log_files", 10)
 
-	_setting_is("gui/fonts/dynamic_fonts/use_oversampling", false)
+	# On (round 672): glyphs are rasterised at the UI scale, every scale, and
+	# the flag is on from start-up so it never toggles (ClientSettings.
+	# apply_ui_scale has why a toggle is harmful).
+	_setting_is("gui/fonts/dynamic_fonts/use_oversampling", true)
 	# Main::start hands the setting to the root window (main/main.cpp,
 	# `set_use_font_oversampling`); this is what Window::_update_viewport_size
 	# reads.
-	_check(not get_root().is_using_font_oversampling(), "the root window does not drive font oversampling")
+	_check(get_root().is_using_font_oversampling(), "the root window drives font oversampling")
 
 	var long_names: Array[String] = []
 	for prop in ProjectSettings.get_property_list():
