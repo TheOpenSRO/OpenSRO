@@ -38,6 +38,7 @@ var _item_by_pkg: Dictionary = {}      # package code -> item codename
 ## Parses all six tables from an open Media.pk2 (via a reader callback that
 ## returns the raw bytes for a textdata path, or an empty array). Returns self.
 func load(read: Callable) -> ShopReader:
+	var _pp := ParseProfile.t0()
 	for r in _rows(read.call(T_SHOPGROUP)):
 		if r.size() > 4 and r[4].begins_with("NPC_"):
 			_group_by_npc[r[4].strip_edges().to_upper()] = r[3].strip_edges()
@@ -63,6 +64,7 @@ func load(read: Callable) -> ShopReader:
 	for r in _rows(read.call(T_SCRAP)):
 		if r.size() > 3:
 			_item_by_pkg[r[2].strip_edges()] = r[3].strip_edges()
+	ParseProfile.add("text.shop_goods", _pp)
 	return self
 
 ## True when the NPC (by codename) runs a shop with resolvable goods.

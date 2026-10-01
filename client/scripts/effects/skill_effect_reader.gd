@@ -26,8 +26,12 @@ static func parse(data: PackedByteArray) -> Dictionary:
 ## {"hit": parse's map, "aniset": parse_aniset's}. Pure data -- World3D runs
 ## it on a WorkerThreadPool task at world entry.
 static func parse_all(data: PackedByteArray) -> Dictionary:
+	var _pp := ParseProfile.t0()
 	var hit: Dictionary = {}
 	var sets: Dictionary = {}
+	if _parse_all_native(data, hit, sets):
+		ParseProfile.add("text.skill_effects", _pp)
+		return {"hit": hit, "aniset": sets}
 	var section := ""
 	for line in _lines(data):
 		if line.begins_with("#section"):
@@ -40,7 +44,50 @@ static func parse_all(data: PackedByteArray) -> Dictionary:
 		_hit_row(cols, hit)
 		if section in ANIM_SECTIONS and not line.strip_edges().begins_with("//"):
 			_aniset_row(cols, section, sets)
+	ParseProfile.add("text.skill_effects", _pp)
 	return {"hit": hit, "aniset": sets}
+
+## parse_all's loop with its row work done by the native port (round 671;
+## native/src/core/tables.rs `skill_effects`): the hit rows and the aniset rows
+## come back in file order, and the case folding, the ANI_TYPES lookups and the
+## merge of a repeated SkillID run here exactly as in _hit_row/_aniset_row.
+## False when there is no library or the port handed the table back.
+static func _parse_all_native(data: PackedByteArray, hit: Dictionary, sets: Dictionary) -> bool:
+	var rows := NativeAssets.table_rows("skill_effects", [data])
+	if rows.is_empty():
+		return false
+	var hit_codes: PackedStringArray = rows["hit_codes"]
+	var hit_efps: PackedStringArray = rows["hit_efps"]
+	for i in hit_codes.size():
+		hit[hit_codes[i].to_upper()] = hit_efps[i]
+	var codes: PackedStringArray = rows["set_codes"]
+	var groups: PackedStringArray = rows["set_groups"]
+	var priorities: PackedInt64Array = rows["set_priorities"]
+	var defenses: PackedStringArray = rows["set_defenses"]
+	var names: PackedStringArray = rows["set_names"]
+	var counts: PackedInt64Array = rows["set_name_counts"]
+	var n := 0
+	for i in codes.size():
+		var code := codes[i].to_upper()
+		var lists := [[], [], []]
+		for k in range(3):
+			for j in range(n, n + counts[i * 3 + k]):
+				var ani := names[j].to_upper()
+				if ANI_TYPES.has(ani):
+					lists[k].append(int(ANI_TYPES[ani]))
+			n += counts[i * 3 + k]
+		if not code.begins_with("SKILL_") and not code.begins_with("SYSTEM_"):
+			continue
+		var row: Dictionary = sets.get(code, {"group": "", "ready": [], "wait": [], "shot": []})
+		row["group"] = groups[i].to_lower()
+		row["priority"] = priorities[i]
+		if defenses[i] != "":
+			row["defense"] = defenses[i]
+		(row["ready"] as Array).append_array(lists[0])
+		(row["wait"] as Array).append_array(lists[1])
+		(row["shot"] as Array).append_array(lists[2])
+		sets[code] = row
+	return true
 
 static func _hit_row(cols: PackedStringArray, out: Dictionary) -> void:
 	if cols.size() <= E_CODE:

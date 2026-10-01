@@ -84,6 +84,24 @@ static func parse_positions(data: PackedByteArray) -> Array[Spawn]:
 ## The body of parse_positions, timed by its wrapper above (ParseProfile, round 667).
 static func _pp_parse_positions(data: PackedByteArray) -> Array[Spawn]:
 	var out: Array[Spawn] = []
+	# The native port of the loop below (round 671, native/src/core/tables.rs):
+	# the same rows, the same int()/float() values, in file order.
+	var rows := NativeAssets.table_rows("npc_positions", [data])
+	if not rows.is_empty():
+		var ids: PackedInt64Array = rows["npc_ids"]
+		var regions: PackedInt64Array = rows["regions"]
+		var xs: PackedFloat64Array = rows["x"]
+		var ys: PackedFloat64Array = rows["y"]
+		var zs: PackedFloat64Array = rows["z"]
+		for i in ids.size():
+			var region: int = regions[i]
+			var spawn := Spawn.new()
+			spawn.npc_id = ids[i]
+			spawn.region_x = (region >> 8) & 0xFF
+			spawn.region_y = region & 0xFF
+			spawn.local_position = Vector3(xs[i], ys[i], zs[i])
+			out.append(spawn)
+		return out
 	for line in _lines(data):
 		var cols := line.split("\t")
 		if cols.size() <= COL_POS_Z:
@@ -115,6 +133,8 @@ static func parse_codes(data: PackedByteArray, into: Dictionary = {}) -> Diction
 
 ## The body of parse_codes, timed by its wrapper above (ParseProfile, round 667).
 static func _pp_parse_codes(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
+	if _merge_native(into, "char_codes", [data]):
+		return into
 	for line in _lines(data):
 		var cols := line.split("\t")
 		if cols.size() <= COL_CODE_NAME:
@@ -137,6 +157,8 @@ static func parse_models(data: PackedByteArray, into: Dictionary = {}) -> Dictio
 
 ## The body of parse_models, timed by its wrapper above (ParseProfile, round 667).
 static func _pp_parse_models(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
+	if _merge_native(into, "char_models", [data]):
+		return into
 	for line in _lines(data):
 		var cols := line.split("\t")
 		if cols.size() <= COL_MODEL_ID:
@@ -163,7 +185,22 @@ static func _pp_parse_models(data: PackedByteArray, into: Dictionary = {}) -> Di
 static func parse_models_by_name(
 	data: PackedByteArray, names: UiTextTable, into: Dictionary = {}
 ) -> Dictionary:
+	var _pp := ParseProfile.t0()
 	if names == null:
+		ParseProfile.add("text.models_by_name", _pp)
+		return into
+	# Native: each row's (model, SN_ key); the lookup and the lower-casing
+	# stay here (Godot's to_lower is the key's definition).
+	var rows := NativeAssets.table_rows("char_models_name_keys", [data])
+	if not rows.is_empty():
+		var models: PackedStringArray = rows["keys"]
+		var keys: PackedStringArray = rows["values"]
+		for i in models.size():
+			var display := names.get_text(keys[i])
+			if display == "" or display == keys[i]:
+				continue
+			into[display.to_lower()] = models[i]
+		ParseProfile.add("text.models_by_name", _pp)
 		return into
 	for line in _lines(data):
 		var cols := line.split("\t")
@@ -179,6 +216,7 @@ static func parse_models_by_name(
 		if display == "" or display == key:
 			continue
 		into[display.to_lower()] = model
+	ParseProfile.add("text.models_by_name", _pp)
 	return into
 
 ## Parses one characterdata part into {code name -> model path}, merging
@@ -192,6 +230,10 @@ static func parse_models_by_name(
 ## in every part and every archive, where an id is only a number and a
 ## display name is whatever language column the archive happens to carry.
 static func parse_models_by_code(data: PackedByteArray, into: Dictionary = {}, prefix: String = "CHAR_") -> Dictionary:
+	var _pp := ParseProfile.t0()
+	if _merge_native(into, "char_models_by_code", [data, prefix]):
+		ParseProfile.add("text.models_by_code", _pp)
+		return into
 	for line in _lines(data):
 		var cols := line.split("\t")
 		if cols.size() <= COL_CODE_NAME:
@@ -203,6 +245,7 @@ static func parse_models_by_code(data: PackedByteArray, into: Dictionary = {}, p
 		if code == "" or not code.begins_with(prefix):
 			continue
 		into[code] = model
+	ParseProfile.add("text.models_by_code", _pp)
 	return into
 
 ## OrgObjCodeName, the row a `_CLON` (and 34 other rows) takes its model from
@@ -221,6 +264,10 @@ const COL_ORG_CODE_NAME := 4
 ## = org + 0x124`, CICMonster::vslot_025 0x9d3850 and three twins). One
 ## level: the Org row's own Org is never consulted.
 static func parse_org_codes(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
+	var _pp := ParseProfile.t0()
+	if _merge_native(into, "char_org_codes", [data]):
+		ParseProfile.add("text.org_codes", _pp)
+		return into
 	for line in _lines(data):
 		var cols := line.split("\t")
 		if cols.size() <= COL_ORG_CODE_NAME:
@@ -230,6 +277,7 @@ static func parse_org_codes(data: PackedByteArray, into: Dictionary = {}) -> Dic
 		if code == "" or org == "" or org.to_lower() == "xxx":
 			continue
 		into[code] = org
+	ParseProfile.add("text.org_codes", _pp)
 	return into
 
 ## The model a row is drawn with: its own when it has one, else its Org row's
@@ -252,6 +300,16 @@ static func model_with_org(code: String, models_by_code: Dictionary, org_by_code
 ## per second, COL_SPEED_WALK/COL_SPEED_RUN) for rows whose code starts with
 ## `prefix`, merging into `into`. A row missing either column is skipped.
 static func parse_speeds_by_code(data: PackedByteArray, into: Dictionary = {}, prefix: String = "CHAR_") -> Dictionary:
+	var _pp := ParseProfile.t0()
+	var rows := NativeAssets.table_rows("char_speeds_by_code", [data, prefix])
+	if not rows.is_empty():
+		var codes: PackedStringArray = rows["keys"]
+		var walks: PackedFloat64Array = rows["walk"]
+		var runs: PackedFloat64Array = rows["run"]
+		for i in codes.size():
+			into[codes[i]] = [walks[i], runs[i]]
+		ParseProfile.add("text.speeds_by_code", _pp)
+		return into
 	for line in _lines(data):
 		var cols := line.split("\t")
 		if cols.size() <= COL_SPEED_RUN:
@@ -264,6 +322,7 @@ static func parse_speeds_by_code(data: PackedByteArray, into: Dictionary = {}, p
 		if not walk.is_valid_float() or not run.is_valid_float():
 			continue
 		into[code] = [float(walk), float(run)]
+	ParseProfile.add("text.speeds_by_code", _pp)
 	return into
 
 ## _RefObjCommon.Country: 0 for the China race, 1 for Europe (characterdata
@@ -276,6 +335,10 @@ const COL_COUNTRY := 14
 ## code starts with `prefix`, merging into `into`. A row whose column is not a
 ## number is skipped rather than read as China.
 static func parse_country_by_code(data: PackedByteArray, into: Dictionary = {}, prefix: String = "CHAR_") -> Dictionary:
+	var _pp := ParseProfile.t0()
+	if _merge_native(into, "char_country_by_code", [data, prefix]):
+		ParseProfile.add("text.country_by_code", _pp)
+		return into
 	for line in _lines(data):
 		var cols := line.split("\t")
 		if cols.size() <= COL_COUNTRY:
@@ -287,6 +350,7 @@ static func parse_country_by_code(data: PackedByteArray, into: Dictionary = {}, 
 		if not country.is_valid_int():
 			continue
 		into[code] = int(country)
+	ParseProfile.add("text.country_by_code", _pp)
 	return into
 
 ## Parses one characterdata part into {code name -> BCRadius} (world units,
@@ -307,6 +371,10 @@ static func parse_country_by_code(data: PackedByteArray, into: Dictionary = {}, 
 ## corrected in round 523 and now names it, and says an exact code-name key
 ## is safe.
 static func parse_bc_radius_by_code(data: PackedByteArray, into: Dictionary = {}, prefix: String = "") -> Dictionary:
+	var _pp := ParseProfile.t0()
+	if _merge_native(into, "char_bc_radius_by_code", [data, prefix]):
+		ParseProfile.add("text.bc_radius_by_code", _pp)
+		return into
 	for line in _lines(data):
 		var cols := line.split("\t")
 		if cols.size() <= COL_BC_RADIUS:
@@ -318,6 +386,7 @@ static func parse_bc_radius_by_code(data: PackedByteArray, into: Dictionary = {}
 		if not radius.is_valid_int():
 			continue
 		into[code] = int(radius)
+	ParseProfile.add("text.bc_radius_by_code", _pp)
 	return into
 
 ## Parses one characterdata part into {id -> display name}, merging into
@@ -331,7 +400,21 @@ static func parse_bc_radius_by_code(data: PackedByteArray, into: Dictionary = {}
 static func parse_names(
 	data: PackedByteArray, names: UiTextTable, into: Dictionary = {}
 ) -> Dictionary:
+	var _pp := ParseProfile.t0()
 	if names == null:
+		ParseProfile.add("text.npc_names", _pp)
+		return into
+	# Native: each row's (id, SN_ key); the lookup stays here.
+	var rows := NativeAssets.table_rows("char_name_keys", [data])
+	if not rows.is_empty():
+		var ids: PackedInt64Array = rows["ids"]
+		var keys: PackedStringArray = rows["values"]
+		for i in ids.size():
+			var display := names.get_text(keys[i])
+			if display == "" or display == keys[i]:
+				continue
+			into[ids[i]] = display
+		ParseProfile.add("text.npc_names", _pp)
 		return into
 	for line in _lines(data):
 		var cols := line.split("\t")
@@ -349,12 +432,17 @@ static func parse_names(
 		if display == "" or display == key:
 			continue
 		into[int(id_text)] = display
+	ParseProfile.add("text.npc_names", _pp)
 	return into
 
 ## Parses one characterdata part into {id -> `SN_` name key}, merging into
 ## `into` -- the index the unique notices look a RefObjID up in (round 657:
 ## World3D builds it once, on a WorkerThreadPool task, at load).
 static func parse_name_keys(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
+	var _pp := ParseProfile.t0()
+	if _merge_native(into, "char_name_keys", [data]):
+		ParseProfile.add("text.name_keys", _pp)
+		return into
 	for line in _lines(data):
 		var cols := line.split("\t")
 		if cols.size() <= COL_MODEL_ID:
@@ -365,6 +453,7 @@ static func parse_name_keys(data: PackedByteArray, into: Dictionary = {}) -> Dic
 		var key := _find_name_key(cols)
 		if key != "":
 			into[int(id_text)] = key
+	ParseProfile.add("text.name_keys", _pp)
 	return into
 
 ## The `SN_` name key of the characterdata row whose id is `id` in one part,
@@ -378,6 +467,22 @@ static func find_name_key(data: PackedByteArray, id: int) -> String:
 			continue
 		return _find_name_key(cols)
 	return ""
+
+## Merges the native port's rows for `method` (round 671; native/src/core/
+## tables.rs: the GDScript loop's kept rows, in file order, as `ids` or `keys`
+## beside `values`) into `into` in that order -- so a later duplicate id or
+## code overwrites an earlier one, as the loop's own `into[k] = v` does. False
+## when there is no library or the port handed the table back; the caller then
+## runs its GDScript loop.
+static func _merge_native(into: Dictionary, method: String, args: Array) -> bool:
+	var rows := NativeAssets.table_rows(method, args)
+	if rows.is_empty():
+		return false
+	var values = rows["values"]
+	var keys = rows["ids"] if rows.has("ids") else rows["keys"]
+	for i in keys.size():
+		into[keys[i]] = values[i]
+	return true
 
 ## The `SN_`-prefixed name key in a characterdata row, found by content for
 ## the same reason the model path is.
@@ -405,10 +510,13 @@ static func _find_model_path(cols: PackedStringArray) -> String:
 static func _lines(data: PackedByteArray) -> PackedStringArray:
 	if data.is_empty():
 		return PackedStringArray()
+	var _pp := ParseProfile.t0()
 	var raw := data
 	if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
 		raw = raw.slice(2)
 	var text := raw.get_string_from_utf16()
 	if text.is_empty():
 		text = raw.get_string_from_utf8()
-	return text.replace("\r", "").split("\n")
+	var _out := text.replace("\r", "").split("\n")
+	ParseProfile.add("text.decode_split", _pp, data.size())
+	return _out

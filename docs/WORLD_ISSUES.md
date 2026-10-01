@@ -7094,6 +7094,325 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-seventy-first round: the text tables in Rust -- the boot tables from 1,023 ms to 187 ms, the NPC tables in the entry's longest frame from 582 ms to 113 ms
+
+The user (2026-10-01): "I'd actually like to start moving over the tasks you think are worth having
+in rust so we can squeeze more performance out of this. Once that's done we can start looking into
+caching and multi-threading." This round is the text-table lane of three (669 models, 670 terrain,
+671 tables): the UTF-16 tables the client reads at boot and at entry, ported one to one into the
+GDExtension. No caching, no threads, no API change. The module, its rules and the negative:
+native/README.md, "The text tables". What is left: docs/TODO.md, "Native (Rust) readers".
+
+Labels: MEASURED (render box, real archives at /opt/sro-files/client, perf_gate's `jangan` view --
+97/168 at 1002,1020, loading screen forced, 1280x720 -- and its `mobs` view, the same spot with
+SRREVAMP_QA_MOBS=500), READ (Godot 4.2.2's source: core/string/ustring.cpp, ucaps.h,
+variant_construct.h), INFERRED, OURS.
+
+### 1. The profile, before porting (MEASURED)
+
+ParseProfile (`SRREVAMP_PARSE_PROFILE=1`) gained a key per table reader -- each NpcTableReader
+parser, `text.items`, `text.shop_goods`, `text.teleport`, `text.skill_effects` -- and
+`text.decode_split`, nested inside them: the FF FE strip, `get_string_from_utf16`,
+`replace("\r", "")` and `split("\n")` that every reader repeats. Round 667's pk2 and ddj readers ON,
+the tables in GDScript; the Jangan run without another lane's Godot beside it (run 2), ms:
+
+| window | key (calls) | main | workers |
+|---|---|---|---|
+| boot (`tables loaded in` 1,023) | `text.items` (7 itemdata parts) | **428** | |
+| | `text.models_by_code` CHAR_ (7 characterdata parts) | **227** | |
+| | `text.bc_radius_by_code` (7) | 107 | |
+| | `text.speeds_by_code` (7) | 103 | |
+| | `text.country_by_code` (7) | 98 | |
+| | of which `text.decode_split` (35 calls, 54 MB) | 136 | |
+| | `bsr.parse` (the 2 bodies), `pk2.read_file`, `pk2.find_file` | 34, 17, 3 | |
+| entry | `text.name_keys` (7, the unique-notice index task) | | **236** |
+| | `text.npc_models` (7) | **223** | |
+| | `text.ui_table` (3: textuisystem, textdata_object, textquest_speechname) | **184** | |
+| | `text.skill_effects` (skilleffect.txt, 4.5 MB) | | 115 |
+| | `text.npc_names` (7) | 112 | |
+| | `text.npc_codes` (7) | 109 | |
+| | `text.npc_positions` (npcpos) | 28 | |
+| | `text.shop_goods` (`ShopReader.load`, six tables, its reads included) | 18 | |
+| | `text.teleport` | 4 | |
+| | `text.greetings`, `text.shop_npcs` | 0.6, 0.2 | |
+| | of which `text.decode_split` (34 calls, 48 MB) | 100 | 35 |
+| mobs: the first monster | `text.models_by_code` '' (7) | **477** | |
+| | `text.models_by_name` (7) | **350** | |
+| | `text.org_codes` (7) | **260** | |
+
+What it says:
+- **The boot tables were all text tables.** 963 of the 1,023 ms are five readers over the seven
+  characterdata parts and the seven itemdata parts; the two body `.bsr` parses are 34 ms.
+- **The decode and the line split are the small part** (136 of the boot's 963 ms). The rest is
+  per-row GDScript: `split("\t")` on every line, `strip_edges` and `is_valid_int` per field, and
+  `_find_model_path` / `_find_name_key` / `_find_icon_path`, which strip, lower-case and test EVERY
+  field of a 104- or 160-column row. Per phase and per reader: §5's table.
+- **characterdata is read 21 times over:** four readers at boot, three at the centre cell, three
+  at the first monster, one on the name-key task, each over the seven parts.
+- **The entry's NPC tables sit in its longest frame.** The centre cell's `npcs [tables 582]` is
+  part of the 1,678 ms frame 0.
+- At the mobs site the first monster adds 1,087 ms of main-thread table parsing.
+
+### 2. What was ported, and what was not
+
+Ported, every reader over 20 ms an entry, one native function per GDScript function
+(`native/src/core/tables.rs`, binding `native/src/gd_tables.rs`, class `SrNativeTables`; the
+GDScript readers call it through `NativeAssets.table_rows`):
+- NpcTableReader: `parse_positions`, `parse_codes`, `parse_models`, `parse_models_by_code`,
+  `parse_org_codes`, `parse_speeds_by_code`, `parse_country_by_code`, `parse_bc_radius_by_code`,
+  `parse_name_keys`, and `parse_names` / `parse_models_by_name` up to their `names.get_text`;
+- `ItemTableReader.parse` up to `Item.new()`;
+- `UiTextTable.parse` up to its keep-first insert;
+- `SkillEffectReader.parse_all` up to its case folding and ANI_TYPES lookups.
+
+Each returns ONE Dictionary of packed columns: the rows the GDScript loop keeps, in file order.
+The GDScript then merges them into the caller's Dictionary in that order, so a later duplicate id
+still overwrites an earlier one ("last wins", within a part and across parts) and UiTextTable's
+"first wins" check runs as before. Objects (`Item`, `Spawn`, `Vector3`, `Vector2`) are still built
+in GDScript: the readers' API is unchanged. So is every `to_lower`/`to_upper` whose result is kept:
+a key like `parse_models_by_name`'s is formed by Godot's full-Unicode case tables (ucaps.h), and
+is left to the engine that defines it rather than ported (OURS). Tests of a lower-cased value
+against `.bsr`, `.ddj`, `.efp`, `xxx` and `none` are ported as ASCII case-insensitive compares,
+which are exact: no code point outside ASCII lower-cases into ASCII in Godot 4.2.2 (MEASURED by
+the review, over every code point). (This entry first said 4.2.2 lower-cases 'I' to U+0131. That
+was wrong -- §8: the {0x0049, 0x0131} entry is commented out at ucaps.h:716.)
+
+Godot's string rules are ported from the source (READ): `parse_utf16` (a second BOM after the FF
+FE strip, FFFE byte-swapping, the stop at the first NUL unit), `strip_edges` (every code <= 32),
+`split` (empty fields kept), `is_valid_int`, `to_int` (digits up to the first '.', other characters
+skipped, a '-' while the value is 0 flips the sign, INT64 clamping), `is_valid_float`, and
+`to_float`, which is `built_in_strtod` -- not a correctly rounded parse (18 mantissa digits,
+powers of ten by squaring) and with a quirk: a dangling `e` returns the mantissa digits unscaled,
+so `float("1.5e")` is 15.0. GDScript's `int(s)`/`float(s)` are `to_int()`/`to_float()`
+(variant_construct.h, `VariantConstructorFromString`).
+
+Handed back to GDScript (`{"fallback": why}`), so those inputs read exactly as before: an empty
+UTF-16 decode (the readers then try UTF-8), an unpaired surrogate, a U+FEFF after the leading BOM
+(added by the review, §8), a negative UI language column, and a float exponent that overflows the
+C++ `int`. On a lone lead surrogate followed by another
+character, Godot 4.2.2 itself is not deterministic: `parse_utf16` drops the lead but sizes the
+string for it, so the last character is uninitialised memory (MEASURED: the first parity run
+compared GDScript with GDScript on such files and got different rows from the same bytes, and the
+log printed `Invalid unicode codepoint (6db3bc40)` for that character). None of the client's boot
+or entry tables is handed back (§3).
+
+Two implementation choices, both MEASURED on a synthetic 1.9 MB characterdata-shaped part (cargo,
+release): decoding with an ASCII fast path writing UTF-8 bytes took 1.09 ms against 2.43 ms for
+`char::decode_utf16`; and a byte scan for tabs took a reader from 2.94 to 1.75 ms against
+`str::split('\t')`.
+
+Not ported, each under 20 ms an entry (MEASURED above): `ShopReader.load` (18 ms with its six
+reads), `TeleportReader.load` (4), `NpcServiceReader.parse_greetings` and `parse_shop_npcs` (under
+1). The other text readers (skills, masteries, level data, world map, sound tables) are not on the
+boot or entry path.
+
+### 3. Parity on the real archives (MEASURED)
+
+`client/tools/table_parity.gd` (new), on every `.txt` file of the four archives, 68 s:
+
+| | count |
+|---|---|
+| `.txt` files (Data 7, Map 3, Media 670, Particles 0) | 680, 200,350,334 bytes |
+| rows / cells compared, decode + `_lines` + tab split, as strings | 267,306 / 17,484,849 |
+| the same through UiTextTable's own decode and split | every file again |
+| distinct stripped cells through is_valid_int, int(), is_valid_float, float() (bits) | 775,227 |
+| reader runs compared whole, both ways (21 readers x 550 files) | 11,550 |
+| characterdata / itemdata parts merged in World3D's order, entries compared | 88,730 |
+| files handed back (72 decode to nothing, 58 hold an unpaired surrogate: the `skilldata_*enc` files, regioninfo, layerobjdef, ...) | 130 |
+
+Entries compared, summed over every file: positions 167,327, codes 136,203, items 135,253, the UI
+table 193,129 for each of four settings (language column 8, 3, 12; keep-first and keep-last),
+org_codes 89,457, country '' 80,744, name_keys 79,171, bc_radius '' 63,659, speeds '' 63,659,
+models 47,248, models_by_code '' 47,184, names 42,752, bc_radius MOB_ 16,054, models_by_name
+10,094. Each comparison is `var_to_bytes` of the whole result (keys, key order, values; floats and
+Vector2/Vector3 components by bit pattern; every `Item` field). For each handed-back file, the
+tool also checks that its raw UTF-16 really is not plain and that all 13 native readers hand it
+back. None of the tables the client reads at boot or entry is among them.
+
+Result: `TABLE PARITY PASS`, **0 mismatches**.
+
+**The negative.** `--features parity-negative` adds three bugs to the text tables: a characterdata
+model column keeps its whole comma list, a UI table drops the first row of a duplicated token, and
+`to_float` uses Rust's correctly rounded parse. Shipped to a separate box copy (MEASURED):
+
+```
+FAIL Media.pk2:server_dep\silkroad\textdata\force_addobject.txt: ui 8 differs: at res\artifact\guild\flag\fortress_flag.bsr: GDScript FORTRESS_JANGAN, native FORTRESS_HOTAN
+FAIL Media.pk2:server_dep\silkroad\textdata\npcchat.txt: ui 8 differs: at NPC_CH_EVENT_EASTEREGG: GDScript SN_TALK_QEV_CH_EVENT_KISAENG_EASTER_DAY_A_1, native SN_TALK_QEV_CH_EVENT_KISAENG_EASTER_DAY_A_10
+FAIL Media.pk2:server_dep\silkroad\textdata\characterdata_30000.txt: models differs: at 26736: GDScript mob\sd\haroeris.bsr, native mob\sd\haroeris.bsr,mob\sd\haroeris_t2.bsr
+FAIL Media.pk2:server_dep\silkroad\textdata\characterdata_42000.txt: models_by_name differs: at baal [str]: GDScript mob\Jupiter\baal.bsr, native mob\Jupiter\baal.bsr,mob\Jupiter\baal_weapon.bsr
+FAIL merged models_by_code '' differs: at MOB_SD_HAROERIS: GDScript mob\sd\haroeris.bsr, native mob\sd\haroeris.bsr,mob\sd\haroeris_t2.bsr
+TABLE PARITY FAIL 105
+```
+
+With `--max-fails=400`, the 105 are 83 UI-table results (the duplicate-token bug), 22 model results
+(the comma-list bug: models, models_by_code, models_by_name and the merged parts). **The float bug
+alone is not caught by the real archive**: none of its 775,227 distinct cells parses differently
+through Rust's correctly rounded parse and `built_in_strtod` (MEASURED: no `float(` FAIL line).
+`cargo test` catches it (`godot_float_semantics`: "1.5e" and the 19-digit mantissa).
+
+`native_tables_test.gd` against it: `22 FAILURES` (`FAIL characterdata (CRLF, BOM): models agrees
+both ways`, `... models_by_code ...`, `... models_by_name ...`, `FAIL ui table: ui agrees both
+ways`, ...). `cargo test --features parity-negative`: 6 of 21 fail, among them
+`core::tables::tests::godot_float_semantics`.
+
+### 4. The gain (MEASURED)
+
+**This round alone**, from the profile: two box copies of this build, identical but for
+`NativeAssets.new_tables()` answering null in the base copy (the text tables in GDScript, round
+667's readers ON in both), interleaved, 2 runs a side; run 1 of the Jangan base overlapped another
+lane's headless Godot and is left out of the medians:
+
+| | Jangan base | Jangan head | mobs base | mobs head |
+|---|---|---|---|---|
+| boot tables (`tables loaded in`) | 1,023 | 186 / 187 | 1,033 / 1,069 | 188 / 189 |
+| centre cell `npcs [tables]` | 582 | 114 / 113 | 582 / 586 | 113 / 114 |
+| centre cell, built in (= longest frame) | 1,678 | 1,206 / 1,204 | 1,700 / 1,702 | 1,205 / 1,215 |
+| region grid loaded in (entry) | 6,101 | 5,330 / 5,488 | 6,620 / 7,052 | 5,681 / 6,023 |
+
+The ported keys, run 2 (main / workers, ms):
+
+| key | GDScript | native |
+|---|---|---|
+| `text.items` (boot) | 428 | 83 |
+| `text.models_by_code` CHAR_ (boot) | 227 | 12 |
+| `text.bc_radius_by_code` (boot) | 107 | 16 |
+| `text.speeds_by_code` (boot) | 103 | 9 |
+| `text.country_by_code` (boot) | 98 | 9 |
+| `text.npc_models` | 223 | 13 |
+| `text.ui_table` (3 tables) | 184 | 31 |
+| `text.npc_names` | 112 | 16 |
+| `text.npc_codes` | 109 | 12 |
+| `text.npc_positions` | 28 | 13 |
+| `text.name_keys` (worker) | / 236 | / 15 |
+| `text.skill_effects` (worker) | / 115 | / 18 |
+| mobs: `text.models_by_code` '' | 477 | 21 |
+| mobs: `text.models_by_name` | 350 | 20 |
+| mobs: `text.org_codes` | 260 | 23 |
+
+What remains of the boot tables is `text.items`' 83 ms -- 12k `Item.new()` with ~30 fields each,
+in GDScript -- and the two `.bsr` parses (34). `npc_positions` keeps 13 ms of `Spawn.new()`.
+
+**The A/B gate**, `PERF_LANE=tables671 perf_gate.sh --ab-env SRREVAMP_NATIVE=0 --sites
+jangan,mobs`: one build, the base side with every native reader OFF (round 667's included), so this
+is the whole native path against GDScript. The run's shell was stopped at its 30-minute limit after
+the three Jangan pairs; its Jangan verdicts below are the gate's own `verdict` arithmetic on those
+per-run lines (base entry 9,777 / 10,147 / 10,024, head 5,875 / 5,524 / 5,833; freeze 3,425 / 3,507
+/ 3,466 against 1,212 / 1,213 / 1,206), and the mobs site was run again on its own:
+
+```
+jangan  frame ms   base 11.60  head 9.45  (-2.2)  SAME
+jangan  entry ms   base 10024  head 5833  (-4191.0)  FASTER
+jangan  freeze ms  base 3466  head 1212  (-2254.0)  FASTER
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+mobs    frame ms   base 10.84  head 11.20  (+0.4)  SAME
+mobs    entry ms   base 11364  head 5930  (-5434.0)  FASTER
+mobs    freeze ms  base 3431  head 1216  (-2215.0)  FASTER
+mobs    hitches    base 5  head 6  (+1.0)  SAME
+```
+
+Against round 667's same A/B (head entry 6,097 / freeze 1,659 at Jangan, 7,006 / 1,914 at mobs),
+the native path now enters about 0.3 s sooner at Jangan and 1.1 s sooner at mobs (where the first
+monster's 1,087 ms of tables are gone), and the longest frame is about 0.45 / 0.7 s shorter.
+**Frame time is SAME at both sites.** Jangan: 9.45 / 9.39 / 9.51 ms native against 9.39 in the
+base's one clean run (its 11.60 / 12.19 runs have last-30 samples reaching into loading, the gate
+issue round 667 noted). Mobs: 11.15 / 11.20 / 11.31 against 11.17 / 10.71 / 10.84, +0.4 ms, under
+the gate's 0.54 ms threshold with the ranges overlapping; the tables are read once, before and
+during the entry, so nothing of this round runs in a standing frame (INFERRED from where the
+readers are called; round 667's mobs head was 10.62).
+
+### 5. Where the time goes per table, both ways (MEASURED, `probe_table_cost.gd`)
+
+Median of 3, every part of a table summed, ms. `decode` / `lines` / `tabs` are the GDScript steps
+every reader repeats (`get_string_from_utf16`; `replace("\r", "")` + `split("\n")`;
+`split("\t")` on each line); then each reader called as World3D calls it, GDScript -> native:
+
+| table (parts, MB) | decode | lines | tabs | reader: GDScript -> native |
+|---|---|---|---|---|
+| characterdata (7, 9.6) | 13.8 | 26.7 | 78.7 | models_by_code CHAR_ 256 -> 12.5; speeds 129 -> 9.9; bc_radius 139 -> 17.7; country 127 -> 9.7; models 255 -> 14.6; codes 136 -> 14.8; names 147 -> 18.5; name_keys 144 -> 15.0; models_by_code '' 258 -> 16.5; org_codes 143 -> 19.3; models_by_name 261 -> 17.5 |
+| itemdata (7, 15.6) | 24.5 | 24.2 | 113.6 | items 504 -> 105 |
+| textdata_object (1, 3.5) | 3.2 | 6.6 | 12.8 | ui_table 52.5 -> 12.4 |
+| textuisystem (1, 3.6) | 3.3 | 7.1 | 14.4 | ui_table 51.4 -> 11.8 |
+| textquest_speechname (1, 1.3) | 1.2 | 2.8 | 5.6 | ui_table 21.3 -> 6.0 |
+| npcpos (1, 1.0) | 0.9 | 2.8 | 5.9 | positions 38.4 -> 18.1 |
+| skilleffect (1, 4.5) | 4.3 | 8.8 | 18.6 | parse_all 46.3 -> 14.0 |
+
+The decode is the cheapest step (13.8 ms for all of characterdata); the tab split is 3-6x it; and
+the per-field work after it is most of every reader (a characterdata reader is 127-261 ms against
+119 ms of the three common steps). What is left natively is mostly the GDScript side: the merge
+loop and, for items and positions, the objects. (This probe runs headless and without the world, so
+its GDScript figures run 10-20 % over the in-game ones above.)
+
+### 6. Tests
+
+- `cd native && cargo test --no-default-features`: 21 pass (12 new: Godot's int and float rules,
+  `strip_edges`, the decode's BOMs/NUL/surrogates, every reader on synthetic rows, truncated input
+  at every length and 480 random buffers on every reader, without a panic).
+- `client/scripts/npc/native_tables_test.gd` (new): every reader both ways on synthetic tables
+  (one BOM, none, two, byte-swapped; CRLF and LF; comments, blank and short lines; trailing tabs;
+  padded fields; duplicate ids within and across parts; a duplicate UI token; a two-model column;
+  Hangul and a surrogate pair; a lone surrogate and a NUL-first table, both handed back; INT64
+  clamping, `-0`, `1.5e`), then 8 worker tasks x 50 native parses against the main thread. ALL PASS.
+- `remote_godot.sh check`: ALL LOAD (452 scripts). `remote_godot.sh tests`: 182 suites, 0 failing.
+  Without the library (`NO_NATIVE=1 remote_godot.sh tests`, a separate box copy): 182 suites, 0
+  failing -- every reader runs its GDScript loop.
+- `native/build.sh windows`, then `check_native_library.sh ... windows`: `stands alone, exports
+  gdext_rust_init, stripped` (system DLLs only).
+
+### 7. OPEN
+
+- **`Item` objects** are most of what is left of the boot tables (83 ms). Faster needs an API
+  change (a packed item store read lazily), which these rounds leave out.
+- **Each characterdata reader decodes its part again** (21 decodes of the same seven parts in a
+  session, about 1-2 ms each natively). One decode shared per part is the caching round's.
+- **Not ported, under 20 ms**: ShopReader, TeleportReader, the shop and greeting tables.
+- **Not run on Windows.** The DLL is built and checked; nothing of it has run there.
+
+### 8. Review follow-up (round 671's review: one MEDIUM, two LOW)
+
+The review found no HIGH. It held the ported string rules to Godot's own function bodies in a C++
+harness (1,000,067 strings, 0 mismatches), fuzzed the readers (1.3M inputs, 0 panics) and
+reproduced the gain (entry 10,186 -> 5,604 ms, freeze 3,463 -> 1,219).
+
+**M1. A native string that began with U+FEFF lost it.** gdext 0.5.5 turns a Rust `&str` into a
+Godot `String` through `string_new_with_utf8_chars_and_len`, which is `String::parse_utf8`, and that
+skips a LEADING UTF-8 BOM (READ, ustring.cpp 4.2.2). The GDScript kept the character (`strip_edges`
+leaves code points over 32). It shows when two UTF-16 files are run together and the second's BOM
+starts a line. The decode now hands any U+FEFF after the leading one back to GDScript (it sits on
+the non-ASCII path, so ASCII text pays nothing). No real table has one: the parity run hands back
+the same 130 files as before, none for this reason. The new synthetic case `BOM mid-file`, against
+d508562's library (MEASURED):
+
+```
+FAIL BOM mid-file: models agrees both ways
+FAIL BOM mid-file: models_by_code agrees both ways
+FAIL BOM mid-file: ui agrees both ways
+FAIL BOM mid-file: ui last agrees both ways
+FAIL a field that begins with U+FEFF keeps it ({"5":"mob\\a.bsr","6":"mob\\b.bsr"})
+5 FAILURES
+```
+
+With the fix: ALL PASS. `cargo test` gained four decode/reader assertions for it.
+
+**L1. A false READ.** §2 said Godot 4.2.2 lower-cases 'I' to U+0131. Its {0x0049, 0x0131} entry
+is commented out (ucaps.h:716, `// { 0x0049, 0x0131 }, // dotless I`); the parse of ucaps.h that
+produced the claim did not skip comments, and on the box `"I".to_lower()` is U+0069 (the review's
+measurement). Behaviour was not affected: the folds whose results are kept stayed in GDScript for
+that reason, and stay there now as a plain choice (OURS) -- a key formed by Godot's full-Unicode
+case tables is left to the engine. The ASCII compares are exact for the reason the review
+measured: no code point outside ASCII lower-cases into ASCII. Corrected in core/tables.rs,
+native/README.md and §2.
+
+**L2. The native suites under SRREVAMP_NATIVE=0.** `native_tables_test.gd` decided "native" from
+`library_usable()`, so with the library present and the switch off it called a null reader; round
+667's `native_assets_test.gd` expected a native handle the same way. Both now ask whether the
+readers are ON (`NativeAssets.new_tables() != null`; `library_usable() and available()`).
+
+Re-run (MEASURED): `cargo test --no-default-features` 21 pass; `table_parity.gd` `TABLE PARITY
+PASS`, 0 FAIL lines (680 files, 11,550 reader runs); the suites in all three modes -- with the
+library, `SRREVAMP_NATIVE=0` (the log says `forced off by SRREVAMP_NATIVE=0`) and `NO_NATIVE=1` --
+182 suites, 0 failing each; the Windows DLL still `stands alone, exports gdext_rust_init,
+stripped`.
+
 ## Six-hundred-and-sixty-ninth round: the mesh, animation and skeleton readers in Rust -- the Jangan entry 1.0 s shorter and its longest freeze 0.3 s shorter than round 667's native build, a 500-monster entry 1.1 s shorter
 
 The user asked (2026-10-01) to move into Rust the work that is worth having there, before any

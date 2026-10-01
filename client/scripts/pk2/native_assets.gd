@@ -143,3 +143,24 @@ static func models() -> Object:
 	var m := _models
 	_models_lock.unlock()
 	return m
+## The native text-table readers (round 671; native/src/gd_tables.rs).
+const TABLES_CLASS := "SrNativeTables"
+
+## A new native text-table reader, or null when the library is unavailable or
+## has no such class. Stateless and cheap, so each call gets its own and the
+## worker-thread callers share nothing.
+static func new_tables() -> Object:
+	if not available() or not ClassDB.class_exists(TABLES_CLASS):
+		return null
+	return ClassDB.instantiate(TABLES_CLASS)
+
+## One table reader's rows from the native port (`method` on SrNativeTables,
+## called with `args`), or {} when the caller must run its GDScript instead:
+## no library, or a table the port hands back with {"fallback": why} (a decode
+## that comes out empty or holds an unpaired surrogate; native/src/core/tables.rs).
+static func table_rows(method: String, args: Array) -> Dictionary:
+	var tables := new_tables()
+	if tables == null:
+		return {}
+	var rows: Dictionary = tables.callv(method, args)
+	return {} if rows.has("fallback") else rows

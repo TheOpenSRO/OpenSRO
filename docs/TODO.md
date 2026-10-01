@@ -911,13 +911,25 @@ what the same `SRREVAMP_PARSE_PROFILE=1` Jangan entry measured with the native r
 - [ ] **`MapmReader.parse` and `NvmReader.parse`**: 557 and 453 ms on the workers per 25-region
       entry. Off the main thread, so they cost entry time only while the drain waits for
       them.
-- [ ] **The NPC text tables** (`npcs [tables]`, about 570 ms on the main thread at the centre
-      cell, unchanged by round 667): `NpcTableReader.parse_models`/`parse_codes`/`parse_names`
-      and `UiTextTable.parse` over characterdata and textdata_object. These are UTF-16 split and
-      scan, a natural fit for one native call per file that returns packed columns.
-- [ ] **The boot tables** (`character/item/NPC tables loaded in` about 1.1 s, before the loading
-      screen): not profiled function by function yet. ParseProfile's `before the entry` window
-      covers only the readers it wraps.
+- [x] **The text tables** (round 671; WORLD_ISSUES.md, "Six-hundred-and-seventy-first round"):
+      the boot tables (`character/item/NPC tables loaded in`) and the NPC tables at the centre
+      cell (`npcs [tables]`) were profiled function by function, and every reader over 20 ms an
+      entry is native (`native/src/core/tables.rs`): NpcTableReader's ten parsers,
+      `ItemTableReader.parse`, `UiTextTable.parse`, `SkillEffectReader.parse_all`. Parity on all
+      680 `.txt` files of the four archives (`client/tools/table_parity.gd`). The boot tables went
+      from 1,023 to 187 ms and the centre cell's `npcs [tables]` from 582 to 113. Left from it:
+  - [ ] **Building the `Item` objects** is now most of what is left of the boot tables (83 ms
+        in `text.items`, MEASURED): the row work is native, `Item.new()` and
+        its ~30 fields are not. Faster needs a different API (a packed item store read lazily),
+        which these rounds leave out.
+  - [ ] **Each characterdata reader decodes its part again**: the boot runs four readers over
+        the same seven parts, the entry three, the first monster three, the name-key task one.
+        Natively that is 1.5-2.5 ms a part a reader (MEASURED); one decode shared per part is the caching
+        round's, not a port.
+  - [ ] **Not ported, under 20 ms an entry** (MEASURED, round 671's profile): `ShopReader.load`
+        (18 ms with its six reads), `TeleportReader.load` (4 ms), `NpcServiceReader`'s
+        shop and greeting tables (under 1 ms), and the readers not on the boot or entry path
+        (skill, mastery, level, worldmap, sound tables).
 - [x] **Ship it** (round 668). release.yml builds both libraries, both zips carry them, and the
       auto-updater installs them over a DLL the game has loaded (native/README.md, "CI";
       docs/NATIVE_ON_WINDOWS.md). Left from it:

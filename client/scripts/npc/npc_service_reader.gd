@@ -596,10 +596,13 @@ const REPAIR_PATTERNS := [
 static func _lines(data: PackedByteArray) -> PackedStringArray:
 	if data.is_empty():
 		return PackedStringArray()
+	var _pp := ParseProfile.t0()
 	var raw := data
 	if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
 		raw = raw.slice(2)
 	var text := raw.get_string_from_utf16()
 	if text.is_empty():
 		text = raw.get_string_from_utf8()
-	return text.replace("\r", "").split("\n")
+	var _out := text.replace("\r", "").split("\n")
+	ParseProfile.add("text.decode_split", _pp, data.size())
+	return _out

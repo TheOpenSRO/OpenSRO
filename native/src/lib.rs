@@ -3,3 +3,5 @@ pub mod core;
 mod gd;
 #[cfg(feature = "godot-binding")]
 mod gd_models;
+#[cfg(feature = "godot-binding")]
+mod gd_tables;

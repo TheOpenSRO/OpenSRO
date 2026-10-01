@@ -14,6 +14,7 @@ before.
 | `.bms` mesh: header, vertices (either record size), skin (with its part-way refusal), indices, box, motion and link sections; `to_arrays`' winding and skin arrays | `BmsReader.parse` and `to_arrays` (round 669) | `src/core/bms.rs`, binding `src/gd_models.rs` |
 | `.ban` animation: header, key times, every bone's keyframes | `BanReader.parse` (round 669) | `src/core/ban.rs`, binding `src/gd_models.rs` |
 | `.bsk` skeleton: the announce-then-resolve walk, both record shapes | `BskReader.parse` (round 669) | `src/core/bsk.rs`, binding `src/gd_models.rs` |
+| the UTF-16 text tables (round 671): the decode, the line and tab splits and each reader's row loop for characterdata, npcpos, itemdata, the UI string tables and skilleffect | `NpcTableReader`'s ten parsers, `ItemTableReader.parse`, `UiTextTable.parse`, `SkillEffectReader.parse_all` | `src/core/tables.rs`, binding `src/gd_tables.rs` |
 
 - `src/core/` is plain Rust with no Godot types. It is unit-tested with `cargo test` and can sit
   behind a C ABI and be linked statically into custom export templates later, if antivirus
@@ -55,6 +56,42 @@ returns one Dictionary of packed arrays, or `{error}`.
 - Every offset read from the file is bounds-checked; nothing is allocated before the data is
   shown to hold it (`vec_with`, `try_reserve`). Truncated and randomly corrupted input returns an
   error and never panics (`truncated_and_random_input_never_panics`, in both modules).
+
+## The text tables (round 671)
+
+`src/core/tables.rs` ports each table reader's row loop one to one (its header lists which
+function is which), with Godot 4.2.2's own string rules ported from `core/string/ustring.cpp`:
+`parse_utf16` (a second BOM, FFFE byte-swapping, the stop at the first NUL), `strip_edges`,
+`split`, `is_valid_int`, `to_int`, `is_valid_float` and `to_float` (`built_in_strtod`, which is not
+a correctly rounded parse; `"1.5e"` is 15). `SrNativeTables` (`src/gd_tables.rs`) answers one
+Dictionary of packed columns per call: the kept rows, in file order.
+
+What stays in GDScript, on purpose:
+- The merge into the caller's Dictionary, in row order, so a later duplicate id still overwrites
+  an earlier one ("last wins"), and UiTextTable's "first wins" check.
+- Building the readers' objects (`Item`, `Spawn`, `Vector3`, `Vector2`): their API is unchanged.
+- Every `to_lower`/`to_upper` whose result is KEPT: a key formed by Godot's full-Unicode case
+  tables (`ucaps.h`) stays with the engine that defines it rather than being ported (OURS). A
+  test of a lower-cased value against a fixed ASCII string (`.bsr`, `.ddj`, `.efp`, `xxx`, `none`)
+  is ported as an ASCII case-insensitive compare, which is exact because no code point outside
+  ASCII lower-cases into ASCII in Godot 4.2.2 (MEASURED by round 671's review over every code
+  point; 'I' lower-cases to 'i', its {0x0049, 0x0131} entry being commented out at ucaps.h:716).
+
+Inputs the port hands back with `{"fallback": why}`, so the GDScript reads them exactly as before:
+a decode that comes out empty (the readers then try UTF-8), an unpaired UTF-16 surrogate (Godot
+keeps a lone trail as a character, which a Rust `String` cannot hold, and on a lone lead followed by
+another character Godot 4.2.2 reads uninitialised memory), a U+FEFF anywhere after the leading
+BOM, a negative UI language column, and a float exponent long enough to overflow the C++ `int`.
+The U+FEFF rule is round 671's review: gdext 0.5.5 turns a Rust `&str` into a Godot `String`
+through `string_new_with_utf8_chars_and_len`, that is `String::parse_utf8`, which skips a
+LEADING UTF-8 BOM (READ, ustring.cpp 4.2.2), so a field that began with U+FEFF came back without
+it while the GDScript (whose `strip_edges` keeps it) had it. `NativeAssets.table_rows()` turns a fallback
+into `{}` and the caller runs its own loop.
+
+The parity check is `client/tools/table_parity.gd` (below); the synthetic one is
+`client/scripts/npc/native_tables_test.gd`, which runs every reader both ways on tables built to
+hit the traps (BOMs, CRLF, comments, trailing tabs, duplicates, surrogates, number quirks) and from
+8 worker threads at once.
 
 ## Build
 
@@ -105,7 +142,10 @@ position (`pread` / `seek_read`), so threads share no file cursor.
 
 ```
 cd native && cargo test --no-default-features          # the core: Blowfish vectors, a synthetic pk2, ddj decodes, bms/ban/bsk
+
+cd native && cargo test --no-default-features          # the core: Blowfish vectors, a synthetic pk2, ddj decodes, text tables
 client/tools/remote_godot.sh script res://scripts/pk2/native_assets_test.gd   # both paths, synthetic input, on the box
+client/tools/remote_godot.sh script res://scripts/npc/native_tables_test.gd    # the text tables, synthetic, both ways
 ```
 
 `remote_godot.sh` ships `client/native_bin` when it exists. `NO_NATIVE=1 client/tools/remote_godot.sh
@@ -137,6 +177,24 @@ The model readers have their own pass, over **every** `.bms` and `.ban` of the f
 client/tools/remote_godot.sh script res://tools/native_parity_models.gd -- --pk2-dir=/opt/sro-files/client
 client/tools/remote_godot.sh script res://scripts/bms/native_models_test.gd    # synthetic, both ways
 ```
+
+deliberate, subtle bugs: it drops the 20th entry slot of each directory block, and it leaves an
+uncompressed texture's BGR unswizzled. Both the parity tool and `native_assets_test.gd` must FAIL
+against it, and so must `cargo test --features parity-negative`. Round 671 adds three in the text
+tables: a characterdata model column keeps its whole comma list (not the first file), a UI table
+drops the first row of a duplicated token, and `to_float` uses Rust's correctly rounded parse.
+`table_parity.gd` and `native_tables_test.gd` must FAIL against it.
+
+The text tables have their own parity check, over every `.txt` in every archive (round 671):
+
+```
+client/tools/remote_godot.sh script res://tools/table_parity.gd -- --pk2-dir=/opt/sro-files/client
+```
+
+It compares the decode and both split shapes cell for cell, Godot's number rules on every distinct
+cell (floats by bit pattern), every ported reader's whole result both ways (keys, key order, every
+value), and the characterdata and itemdata parts merged in World3D's order. A table the port hands
+back must be one whose UTF-16 really is not plain, and every reader must hand it back.
 
 ## A/B
 
