@@ -64,6 +64,16 @@ if [ ! -x "$HOME/.cargo/bin/cargo-zigbuild" ]; then
   install -m 755 "$tools/cargo-zigbuild-x86_64-unknown-linux-musl/cargo-zigbuild" "$HOME/.cargo/bin/"
   rm -rf "$tools/czb.tar.xz" "$tools/cargo-zigbuild-x86_64-unknown-linux-musl"
 fi
+# cargo-about 0.9.2 (sum from its release's .sha256 file, read 2026-10-01): the crates'
+# full licence texts for THIRD_PARTY_NOTICES.txt (native/third_party_notice.sh).
+if [ ! -x "$HOME/.cargo/bin/cargo-about" ]; then
+  mkdir -p "$tools"
+  curl -sSfL -o "$tools/about.tar.gz" https://github.com/EmbarkStudios/cargo-about/releases/download/0.9.2/cargo-about-0.9.2-x86_64-unknown-linux-musl.tar.gz
+  echo "9099a59e820c38a68b9d65f300662a567d56562f9a10f6aa4c7e86c17c2566af  $tools/about.tar.gz" | sha256sum -c -
+  tar -xzf "$tools/about.tar.gz" -C "$tools"
+  install -m 755 "$tools/cargo-about-0.9.2-x86_64-unknown-linux-musl/cargo-about" "$HOME/.cargo/bin/"
+  rm -rf "$tools/about.tar.gz" "$tools/cargo-about-0.9.2-x86_64-unknown-linux-musl"
+fi
 export PATH="$zig_dir:$PATH"
 if [ -n "${GITHUB_PATH:-}" ]; then echo "$zig_dir" >> "$GITHUB_PATH"; fi
 
@@ -73,5 +83,6 @@ zig version
 # 36808132225): ask cargo for the subcommand's help to prove it is installed.
 cargo zigbuild --help > /dev/null && echo "cargo-zigbuild 0.23.4 installed"
 cargo --version
+cargo-about --version
 x86_64-w64-mingw32-gcc --version | head -1
 cc --version | head -1

@@ -51,7 +51,12 @@ if [ -f "$dir/$lib" ]; then
   sha256sum "$dir/$lib" | sed "s#$tmp/##"
 fi
 if [ -f "$dir/THIRD_PARTY_NOTICES.txt" ]; then
-  grep -q 'MPL-2.0' "$dir/THIRD_PARTY_NOTICES.txt" || bad "THIRD_PARTY_NOTICES.txt names no MPL-2.0 crate"
+  notices="$dir/THIRD_PARTY_NOTICES.txt"
+  grep -q 'MPL-2.0' "$notices" || bad "THIRD_PARTY_NOTICES.txt names no MPL-2.0 crate"
+  grep -q '^Mozilla Public License Version 2.0' "$notices" || bad "THIRD_PARTY_NOTICES.txt lacks the MPL-2.0 text"
+  grep -q '^FULL LICENCE TEXTS OF THE CRATES' "$notices" || bad "THIRD_PARTY_NOTICES.txt lacks the crates' licence texts"
+  grep -q '^THE RUST STANDARD LIBRARY' "$notices" || bad "THIRD_PARTY_NOTICES.txt lacks the Rust standard library's texts"
+  grep -q '^GODOT ENGINE 4\.2\.2' "$notices" || bad "THIRD_PARTY_NOTICES.txt lacks Godot Engine's licence and notices"
 fi
 
 if [ "$run" = "--run" ]; then

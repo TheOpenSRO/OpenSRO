@@ -7120,12 +7120,14 @@ generated from Cargo.lock: the godot-rust crates are MPL-2.0, whose section 3.2(
 recipients be told where the source is.
 
 - **The runner** (MEASURED from the v0.1.464 run log) is an ephemeral Actions Runner Controller
-  pod (`kakariko-runner-…-runner-…`, `/home/runner`). Nothing persists between runs, so rustup,
-  cargo's registry, zig and `native/target` go through `actions/cache`.
+  pod (`kakariko-runner-…-runner-…`, `/home/runner`). Nothing persists between runs, and
+  **nothing is cached**: uncached, the toolchain install took 43 s and both builds 36 s (probe
+  run 36808460104), while saving the 1.9 GB `actions/cache` would hold was still running after
+  five minutes. The first probes tried a cache and were reverted.
 - **`hashFiles()` fails on it** (MEASURED, probe run 36807629459). `hashFiles('native/Cargo.lock')`
   failed the job with "Fail to hash files under directory '/home/runner/_work/srrevamp/srrevamp'".
-  The log does not say which path it choked on. The key is now a `sha256sum` of the one file,
-  computed in a step.
+  The log does not say which path it choked on. That cache key was the only use, and it went
+  with the cache.
 - **`cargo-zigbuild --version` is not a version query** (MEASURED, probe run 36808132225). Called
   directly, the binary parses its arguments as the `zigbuild` subcommand's. The sanity line is
   now `cargo zigbuild --help`.
@@ -7405,6 +7407,109 @@ unchanged.
   - the Windows relaunch batch file is untested;
   - signing;
   - Godot's own MIT notice is not in the zips (this predates the round).
+
+### 9. Review follow-up (round 668's review of 41e0d85)
+
+The review ran v0.1.464's own updater against this release on Linux, for real, with the actual
+v0.1.464 binary. Every file arrived byte for byte, and the relaunch logged native ON. It also
+confirmed the move-aside rules, the rollback order, the digest check failing open and the
+tag-only steps. What it found, and what changed:
+
+- **H1: a disk filling during staging installed truncated files** (CONFIRMED by the review on a
+  120 MB tmpfs). Every file logged "installed", the exe was 30.7 of 62.2 MB, three files were 0
+  bytes, and the next start crashed (exit 139). The cause (READ, Godot 4.2.2):
+  `FileAccess.store_buffer` returns nothing on a short write, and `ZIPReader.read_file` returns
+  an empty array on a CRC or IO error (zip_reader.cpp:98-124).
+
+  New `client/scripts/update/update_stager.gd` unpacks before anything in the install is touched.
+  It checks, in order:
+  1. the zip's own central directory is read for every entry's size (ZIPReader exposes none);
+  2. free space must cover the unpacked total plus 32 MB (OURS);
+  3. every entry must come out of the archive at that size;
+  4. every staged file is read back at its full length.
+
+  A failure removes the staging folder, and the update reports `could not unpack …, nothing was
+  changed`. The installer's copy fallback reads its length back too. Real runs on the box, with
+  a 120 MB tmpfs as root and the client as ghidra (`full_test.sh`, MEASURED):
+
+| run | outcome |
+|---|---|
+| **41e0d85**, the 41e0d85 export on the tmpfs (67 MB used, 54 MB free before the download) | all four files logged "installed"; afterwards `srrevamp.x86_64` was 30,728,192 bytes, and the `.pck`, the `.so` and the notices were 0 bytes; the next start exited 139 (a segfault) -- the review's finding, reproduced |
+| follow-up, as it ships | `SRRevamp update: refused: not enough disk space next to the game: the update needs 66.8 MB (plus 32 MB to spare), 29.3 MB is free`, then `update failed (could not unpack v0.0.1, nothing was changed (…))`; install **byte-identical** (sha256 of every file before and after); the next start exits 0 with `native readers ON` |
+| follow-up, free-space check skipped (`SRREVAMP_QA_UPDATE_IGNORE_SPACE=1`, OURS) | `refused: could not write srrevamp-linux/srrevamp.x86_64 whole into the staging folder (disk full?)`; install **byte-identical**; the next start exits 0 |
+
+- **M1:** ci.yml's check `grep -q "NativeAssets: native readers ON"` could not fail, because
+  `native_status_test.gd` prints indented sample lines holding those words. It is anchored now
+  (`'^NativeAssets: native readers ON'`). On the box (MEASURED):
+  - with the library, both the old and the anchored grep pass;
+  - with `NO_NATIVE=1`, the old grep still passes, while the anchored one fails (exit 1).
+- **M2 / L3: the relaunch batch file holds no install path.** cmd.exe reads a batch file in the
+  OEM code page, so `C:\Users\José\…` written as UTF-8 was mangled. Every path in the file is
+  now relative to `%~dp0`, and the file is plain ASCII. cmd is started as `cmd /D /S /C
+  "<path>"`, with the path in its own quotes. Godot quotes an argument only when it has a space
+  or one of `& ( ) [ ] { } ^ = ; ! ' + , `` ` `` ~` (os_windows.cpp:656-663, READ). `/S` makes
+  cmd strip exactly the outer pair, so a path holding `&` or `(` reaches it intact. INFERRED from
+  cmd's documented /S rule; not run on Windows.
+- **PRE-EXISTING, found by the review:** v0.1.464's own batch file has the same code-page
+  problem. An install under a non-ASCII path probably never auto-updated, and will not get this
+  release automatically (docs/NATIVE_ON_WINDOWS.md says to copy it once by hand).
+- **L1:** putting a moved-aside original back is retried like every other step. A failure is
+  logged as `COULD NOT PUT BACK <name>: the previous version is still at <path> …`.
+- **L2:** the next start finds leftovers by name (`*.old-update[-N]`, pk2/ aside) instead of from
+  a list a killed run never wrote. Where the original is missing, it puts the newest aside back.
+  A missing exe or `.pck` stops the game from starting at all, so the docs give the hand repair.
+- **L4:** the relaunch poll matches the quoted PID (`find """<pid>"""`), not any comma.
+- **L8:** docs/NATIVE_ON_WINDOWS.md now says that the first update to this release is installed
+  by v0.1.464's robocopy batch file. It shows none of the new lines, and is INFERRED to take up
+  to ~30 s to come back. The new lines start with the update after that.
+- **L9:** THIRD_PARTY_NOTICES.txt carries the full licence texts:
+  - every crate's, from cargo-about 0.9.2, pinned and SHA-256 checked;
+  - the Rust standard library's COPYRIGHT and licences, in `native/licenses/`, from
+    rust-lang/rust 1.98.1;
+  - Godot Engine's own licence and every third-party notice built into it, read from the engine
+    by `client/tools/print_godot_licenses.gd`.
+
+  `check_release_zip.sh` fails a zip that lacks any of them. The file is about 120 KB.
+- **L5, L6, L10:** recorded in docs/TODO.md, unchanged.
+
+**Every fix fails on 41e0d85** (MEASURED, box):
+
+- **The new `update_installer_test.gd` on 41e0d85's tree** does not even parse:
+  `SCRIPT ERROR: Parse Error: Static function "windows_relaunch_args()" not found in base "AutoUpdater"`
+  and `Identifier "UpdateStager" not declared in the current scope`.
+- **The real disk-full run on 41e0d85:** the table above.
+- **ci.yml's old grep** passes with no library (M1, above).
+- **Each fix undone on its own** in a copy of the follow-up tree (`/var/tmp/ship668/mut668.py`),
+  with `update_installer_test.gd` run each time:
+
+| fix undone | FAIL lines |
+|---|---|
+| H1: the read-back of each staged write | `FAIL a write the disk cut short is refused and nothing is left staged` |
+| H1: the entry-size check | `FAIL a damaged entry is refused` |
+| H1: the free-space check | `FAIL too little free space is refused up front` |
+| H1: the copy fallback's length check | `FAIL a short copy is a failure, not an install`, `FAIL and the previous DLL is back` |
+| L1: the retried restore | `FAIL a moved-aside original busy for two tries is still put back` |
+| L2: putting back a missing original | `FAIL a file killed between its two renames is put back, from the newest aside`, `FAIL in subfolders too` |
+| M2: the install path back in the batch file | `FAIL the batch file holds no install path`, `FAIL the batch file is plain ASCII, …`, `FAIL then starts the exe from the script's own folder`, `FAIL a non-ASCII executable name falls back to srrevamp.exe` |
+| L4: any comma counts as running | `FAIL it matches the quoted PID, not any comma` |
+| L3: `cmd /C <path>` as before | `FAIL cmd gets /S /C and the path in its own quotes (got ["/C", "C:\\Users\\José\\Games (x) & y\\srrevamp_update_relaunch.bat"])` |
+
+The first pass of these mutations caught two test gaps:
+- **The read-back.** FakeFs's write reported a short write itself, so undoing the stager's
+  read-back changed nothing. FakeFs now reports nothing, exactly like `store_buffer`, and the
+  stager reads every length back.
+- **The batch-file argument check** indexed an array of the wrong length. That raised an error
+  and aborted the check without printing a FAIL line. It now checks the length first.
+
+**Re-run on the follow-up tree** (MEASURED):
+- `cargo test`: 11 passed.
+- `remote_godot.sh check`: ALL LOAD.
+- `remote_godot.sh tests`: 181 suites with the library and 181 without, 0 failing either way.
+- `update_installer_test.gd`: 81 checks, all pass, now including the stager, the short copy, the retried
+  restore, the leftover scan and the batch-file checks.
+- A fresh local export passed `check_release_zip.sh` (Windows) and `--run` (Linux).
+- The real Linux updates passed again: plain and `.off`, both logging `native readers ON` after
+  the relaunch, with no leftovers.
 
 ## Six-hundred-and-sixty-seventh round: the pk2 reader and the texture decodes in Rust -- the Jangan entry from 9.9 s to 6.1 s warm, the centre cell from 3.4 s to 1.7 s
 

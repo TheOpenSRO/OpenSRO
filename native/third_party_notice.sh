@@ -3,11 +3,17 @@
 # native readers' library, their licences, and where each one's exact source lives. The
 # godot-rust crates are MPL-2.0, whose section 3.2(a) asks that recipients of an
 # executable be told how to obtain the source; crates.io keeps every published version.
-#   native/third_party_notice.sh x86_64-pc-windows-gnu   > THIRD_PARTY_NOTICES.txt
-#   native/third_party_notice.sh x86_64-unknown-linux-gnu > THIRD_PARTY_NOTICES.txt
+#   native/third_party_notice.sh x86_64-pc-windows-gnu   [godot_licenses.txt] > THIRD_PARTY_NOTICES.txt
+#   native/third_party_notice.sh x86_64-unknown-linux-gnu [godot_licenses.txt] > THIRD_PARTY_NOTICES.txt
 # Generated from Cargo.lock through `cargo tree`, so it cannot drift from what was built.
+# Then the full licence texts (round 668's review, L9):
+# - every crate's, through cargo-about (pinned 0.9.2, native/ci_toolchain.sh; native/about.toml);
+# - the Rust standard library's (native/licenses/, the Rust project's own files);
+# - Godot Engine's own licence and its third-party notices, when the file
+#   client/tools/print_godot_licenses.gd wrote is given.
 set -euo pipefail
 target="${1:?target triple}"
+godot_licenses="${2:-}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cargo="${CARGO:-cargo}"
 command -v "$cargo" >/dev/null || cargo="$HOME/.cargo/bin/cargo"
@@ -59,7 +65,7 @@ done <<< "$rows"
 cat <<EOF
 
 The Rust standard library is linked in as well (MIT OR Apache-2.0,
-https://github.com/rust-lang/rust).
+https://github.com/rust-lang/rust). Its texts follow the crates' below.
 EOF
 case "$target" in
   *windows-gnu*) cat <<'EOF'
@@ -70,3 +76,24 @@ https://gcc.gnu.org/onlinedocs/libstdc++/manual/license.html).
 EOF
   ;;
 esac
+
+# The full texts. cargo-about picks one licence of an "A OR B" choice (MIT here).
+about="${CARGO_ABOUT:-cargo-about}"
+command -v "$about" >/dev/null || about="$HOME/.cargo/bin/cargo-about"
+printf '\n\nFULL LICENCE TEXTS OF THE CRATES (%s)\n' "$target"
+(cd "$here" && "$about" generate --locked --target "$target" about.hbs 2>/dev/null) \
+  || { echo "third_party_notice.sh: cargo-about failed" >&2; exit 1; }
+
+printf '\n\n================================================================================\n'
+printf 'THE RUST STANDARD LIBRARY (rust-lang/rust %s)\n' "${RUST_TOOLCHAIN:-1.98.1}"
+for f in rust-COPYRIGHT rust-LICENSE-MIT rust-LICENSE-APACHE; do
+  printf -- '--------------------------------------------------------------------------------\n%s\n\n' "${f#rust-}"
+  cat "$here/licenses/$f"
+done
+
+if [ -n "$godot_licenses" ]; then
+  printf '\n\n================================================================================\n'
+  printf 'srrevamp.exe / srrevamp.x86_64 is the Godot Engine export template:\n\n'
+  cat "$godot_licenses"
+fi
+

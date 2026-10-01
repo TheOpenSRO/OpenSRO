@@ -94,6 +94,12 @@ jobs:
         working-directory: client
         run: godot --headless --path . --script res://tools/check_scripts.gd
 
+      # Godot's own licence and the notices of everything built into it, from
+      # the engine itself, for THIRD_PARTY_NOTICES.txt (native/third_party_notice.sh).
+      - name: Collect Godot Engine's licence notices
+        working-directory: client
+        run: godot --headless --path . --script res://tools/print_godot_licenses.gd -- --out="${RUNNER_TEMP}/godot_licenses.txt"
+
       - name: Export Windows Desktop
         working-directory: client
         run: |
@@ -101,7 +107,7 @@ jobs:
           godot --headless --path . --export-release "Windows Desktop" build/windows/srrevamp.exe
           cp -r build/windows/. dist/srrevamp-windows/
           cp ../README.md dist/srrevamp-windows/README.md || true
-          bash ../native/third_party_notice.sh x86_64-pc-windows-gnu > dist/srrevamp-windows/THIRD_PARTY_NOTICES.txt
+          bash ../native/third_party_notice.sh x86_64-pc-windows-gnu "${RUNNER_TEMP}/godot_licenses.txt" > dist/srrevamp-windows/THIRD_PARTY_NOTICES.txt
           cat > dist/srrevamp-windows/pk2/PUT_YOUR_PK2_FILES_HERE.txt <<'EOF'
           Copy your own real Silkroad Online client's *.pk2 files into this
           folder (Data.pk2, Map.pk2, Media.pk2, at minimum) before running
@@ -117,7 +123,7 @@ jobs:
           godot --headless --path . --export-release "Linux" build/linux/srrevamp.x86_64
           cp -r build/linux/. dist/srrevamp-linux/
           cp ../README.md dist/srrevamp-linux/README.md || true
-          bash ../native/third_party_notice.sh x86_64-unknown-linux-gnu > dist/srrevamp-linux/THIRD_PARTY_NOTICES.txt
+          bash ../native/third_party_notice.sh x86_64-unknown-linux-gnu "${RUNNER_TEMP}/godot_licenses.txt" > dist/srrevamp-linux/THIRD_PARTY_NOTICES.txt
           cat > dist/srrevamp-linux/pk2/PUT_YOUR_PK2_FILES_HERE.txt <<'EOF'
           Copy your own real Silkroad Online client's *.pk2 files into this
           folder (Data.pk2, Map.pk2, Media.pk2, at minimum) before running

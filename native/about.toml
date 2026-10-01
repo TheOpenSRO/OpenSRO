@@ -1,0 +1,7 @@
+# cargo-about (pinned 0.9.2, native/ci_toolchain.sh): the licence texts of every crate in the
+# native library, for the release zips' THIRD_PARTY_NOTICES.txt (native/third_party_notice.sh).
+accepted = ["MIT", "Apache-2.0", "MPL-2.0", "Unicode-3.0"]
+# Only what goes into the library: build-time crates (build scripts, proc-macros) are listed
+# by third_party_notice.sh's own table, not here.
+ignore-build-dependencies = false
+ignore-dev-dependencies = true

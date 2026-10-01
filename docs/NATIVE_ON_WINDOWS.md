@@ -80,7 +80,24 @@ have. The Linux equivalent was run for real (round 668, `upd_test.sh off`).
 
 ## What an update logs
 
-The old version logs these lines before it restarts:
+**The first update to this release looks different.** An update is installed by the version you
+are running, not by the new one. Going from v0.1.464 to the release that brings the DLL is
+therefore v0.1.464's own updater at work (READ, its `auto_updater.gd`):
+- It unpacks the zip next to the game, quits, and runs a batch file. That file tries `timeout /t
+  2`, then `robocopy … /E /XD pk2`, then starts the game again.
+- None of the `SRRevamp update: …` lines below appear in either log. The old log ends at
+  `SRRevamp: downloading update …`.
+- The new client's log starts with its `NativeAssets: …` line and has no `SRRevamp update (last
+  run)` summary.
+- v0.1.464 has no DLL loaded, so `srrevamp_native.dll` is a new file to it and nothing blocks the
+  copy. The running `srrevamp.exe` is still locked when robocopy starts, though, and robocopy's
+  default is to wait 30 seconds before retrying. Expect up to half a minute, possibly more,
+  before the game comes back (INFERRED from robocopy's documented defaults; not timed on
+  Windows). The round 668 review ran this old updater for real on Linux: every file arrived
+  byte for byte, and the relaunched game logged native ON.
+
+**From the next update on**, the new updater installs, and the old version logs these lines
+before it restarts:
 
 ```
 SRRevamp update: srrevamp-windows.zip downloaded and verified, sha256 …
@@ -89,12 +106,31 @@ SRRevamp update: installed srrevamp.exe (the old one was moved aside to srrevamp
 SRRevamp update: installed srrevamp.pck (the old one was moved aside to srrevamp.pck.old-update)
 SRRevamp update: srrevamp_native.dll.old-update is still in use; it is deleted at the next start
 SRRevamp update: srrevamp.exe.old-update is still in use; it is deleted at the next start
-SRRevamp update: installed v0.1.465, restarting (the new client starts as soon as this one has exited)
+SRRevamp update: installed v0.1.466, restarting (the new client starts as soon as this one has exited)
 ```
 
 The new version then repeats that summary at the top of its own log, as
 `SRRevamp update (last run): …`. It also logs `removed srrevamp_native.dll.old-update, left over
 from the last update` for each file it could now delete.
+
+If the update cannot be unpacked whole, nothing is changed. For example, when the disk is too
+full:
+
+```
+SRRevamp update: refused: not enough disk space next to the game: the update needs 78.4 MB (plus 32 MB to spare), 40.0 MB is free
+SRRevamp: update failed (could not unpack v0.1.466, nothing was changed (…)) -- continuing with the current version
+```
+
+**A game folder whose path has non-ASCII characters** (e.g. `C:\Users\José\…`) probably never
+auto-updated with v0.1.464 or earlier (PRE-EXISTING, found by the round 668 review). Their batch
+file wrote the install path into a file that `cmd.exe` reads in the OEM code page, which mangles
+those characters. Such an install will not get this release automatically either: copy the zip
+over it by hand once. From this release on, the batch file holds no path at all.
+
+**If the game will not start after an interrupted update** (the PC lost power mid-install): look
+in the game folder for `srrevamp.exe.old-update` or `srrevamp.pck.old-update` with no
+`srrevamp.exe` or `srrevamp.pck` beside it, and rename it back. The game puts back any other
+file the same way by itself, at its next start.
 
 Why "moved aside": Windows refuses to overwrite or delete a running exe or a loaded DLL, but lets
 it be renamed. The game renames the old file and puts the new one under the real name. The old

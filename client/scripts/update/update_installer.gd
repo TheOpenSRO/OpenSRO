@@ -11,7 +11,7 @@ class_name UpdateInstaller
 ## run on Windows here). So for each file: move the current one aside to
 ## "<name>.old-update", move the new one into its place, and delete the old
 ## one when nothing holds it any more -- at once on Linux, on the next launch
-## on Windows (cleanup()). srrevamp_native.dll is loaded by this very process,
+## on Windows (cleanup(), which finds them by name). srrevamp_native.dll is loaded by this very process,
 ## so it is exactly that case. On Linux a rename gives the new file a new
 ## inode and the running process keeps the old one mapped.
 ##
@@ -28,8 +28,9 @@ class_name UpdateInstaller
 ## - files the new version does not have are left alone, and so is "pk2/".
 
 const ASIDE_SUFFIX := ".old-update"
-## Moved-aside files that could not be deleted yet, one absolute path a line,
-## next to the executable. cleanup() works through it at the next start.
+## Round 668's first cut listed the moved-aside files here; cleanup() now finds
+## them by name instead (the review's L2: a run killed mid-install never wrote
+## the list). An old list is still read and removed.
 const CLEANUP_LIST := "srrevamp_update_cleanup.txt"
 ## What the last update did, next to the executable: written by the old
 ## process, printed into the new process's log by take_summary() and removed,
@@ -108,7 +109,6 @@ func install(staged_root: String, install_dir: String, files: PackedStringArray,
 		if r.aside != "" and not fs.remove(r.aside):
 			pending.append(r.aside)
 			lines.append("%s is still in use; it is deleted at the next start" % r.aside.get_file())
-	_add_to_cleanup_list(install_dir, pending)
 	return {"ok": true, "reason": "", "failed": failed, "pending_cleanup": pending}
 
 ## One file. Returns {error ("" on success), dst, aside, created, note}.
@@ -130,17 +130,36 @@ func _put(src: String, dst: String, executable: bool) -> Dictionary:
 			return r
 		r.aside = aside
 		r.note = " (the old one was moved aside to %s)" % aside.get_file()
-	if not _retry(func() -> bool: return fs.rename(src, dst)) and not fs.copy(src, dst):
+	if not _retry(func() -> bool: return fs.rename(src, dst)) and not _copy_whole(src, dst):
 		if fs.exists(dst):
 			fs.remove(dst)
 		if r.aside != "":
-			fs.rename(r.aside, dst)
-		r.error = "could not be written (blocked by antivirus?)"
+			_restore(r.aside, dst)
+		r.error = "could not be written whole (blocked by antivirus, or the disk is full?)"
 		return r
 	if executable:
 		perms = (perms if perms >= 0 else 420) | 73  # 0644 | 0111: rwx for everyone who could read it
 	fs.set_permissions(dst, perms)
 	return r
+
+## The copy fallback, with the length read back: a copy onto a full disk can
+## end short without an error reaching GDScript (UpdateStager's header).
+func _copy_whole(src: String, dst: String) -> bool:
+	if not fs.copy(src, dst):
+		return false
+	var want := fs.size(src)
+	return want >= 0 and fs.size(dst) == want
+
+## Puts a moved-aside original back under its own name, retried like every
+## other step; a failure is logged loudly, naming where the original is.
+func _restore(aside: String, dst: String) -> bool:
+	if fs.exists(dst):
+		fs.remove(dst)
+	if _retry(func() -> bool: return fs.rename(aside, dst)):
+		lines.append("put back %s" % dst.get_file())
+		return true
+	lines.append("COULD NOT PUT BACK %s: the previous version is still at %s -- rename it back by hand if the game does not start" % [dst.get_file(), aside])
+	return false
 
 func _free_aside_name(dst: String) -> String:
 	for i in range(10):
@@ -160,43 +179,43 @@ func _retry(step: Callable) -> bool:
 func _rollback(done: Array[Dictionary]) -> void:
 	for i in range(done.size() - 1, -1, -1):
 		var r: Dictionary = done[i]
-		fs.remove(r.dst)
 		if r.aside != "":
-			if fs.rename(r.aside, r.dst):
-				lines.append("put back %s" % r.dst.get_file())
-			else:
-				lines.append("could NOT put back %s (the old copy is %s)" % [r.dst.get_file(), r.aside.get_file()])
+			_restore(r.aside, r.dst)
+		else:
+			fs.remove(r.dst)
 
-func _add_to_cleanup_list(install_dir: String, paths: PackedStringArray) -> void:
-	if paths.is_empty():
-		return
-	var list := install_dir.path_join(CLEANUP_LIST)
-	var existing := fs.read_text(list).strip_edges()
-	var text := (existing + "\n" if existing != "" else "") + "\n".join(paths)
-	fs.write_text(list, text + "\n")
-
-## At startup: delete the moved-aside files a previous update could not
-## (their process has exited by now). Only names inside install_dir carrying
-## ASIDE_SUFFIX are ever deleted. Returns log lines.
+## At startup: every "<name>.old-update[-N]" under install_dir (pk2/ aside)
+## is a previous update's leftover. If <name> itself is missing -- a run
+## killed between its two renames -- the leftover is put back; otherwise it is
+## deleted (its process has exited by now; a still-locked one waits for the
+## next start). Only names carrying ASIDE_SUFFIX are ever deleted. Returns log
+## lines. A missing exe or .pck cannot be repaired this way, since the game
+## needs them to start at all: docs/NATIVE_ON_WINDOWS.md says how by hand.
 func cleanup(install_dir: String) -> PackedStringArray:
 	var out := PackedStringArray()
 	var list := install_dir.path_join(CLEANUP_LIST)
-	if not fs.exists(list):
-		return out
-	var left := PackedStringArray()
-	for line in fs.read_text(list).split("\n", false):
-		var path := line.strip_edges()
-		if path == "" or not path.begins_with(install_dir) or not path.get_file().contains(ASIDE_SUFFIX):
-			continue
-		if not fs.exists(path) or fs.remove(path):
-			out.append("removed %s, left over from the last update" % path.get_file())
-		else:
-			left.append(path)
-			out.append("%s is still in use; trying again next start" % path.get_file())
-	if left.is_empty():
+	if fs.exists(list):
 		fs.remove(list)
-	else:
-		fs.write_text(list, "\n".join(left) + "\n")
+	var asides: Array[String] = []
+	for rel in fs.list_files(install_dir):
+		if not (rel == "pk2" or rel.begins_with("pk2/")) and rel.get_file().contains(ASIDE_SUFFIX):
+			asides.append(rel)
+	# Newest aside first: "x.old-update-1" was made after "x.old-update" (which
+	# was still locked then), so it is the one to put back.
+	asides.sort()
+	asides.reverse()
+	for rel in asides:
+		var path := install_dir.path_join(rel)
+		var original := path.substr(0, path.rfind(ASIDE_SUFFIX))
+		if not fs.exists(original):
+			if _retry(func() -> bool: return fs.rename(path, original)):
+				out.append("put back %s from %s: an update was interrupted" % [original.get_file(), rel.get_file()])
+			else:
+				out.append("COULD NOT PUT BACK %s from %s" % [original.get_file(), rel.get_file()])
+		elif fs.remove(path):
+			out.append("removed %s, left over from the last update" % rel.get_file())
+		else:
+			out.append("%s is still in use; trying again next start" % rel.get_file())
 	return out
 
 func write_summary(install_dir: String, summary: PackedStringArray) -> void:

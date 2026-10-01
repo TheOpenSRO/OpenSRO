@@ -113,7 +113,9 @@ jobs:
         run: |
           set -o pipefail
           godot --headless --path . --script res://scripts/pk2/native_status_test.gd | tee /tmp/native_status.log
-          grep -q "NativeAssets: native readers ON" /tmp/native_status.log || { echo "::error::the library did not load"; exit 1; }
+          # Anchored: the test also prints sample lines, indented, that contain
+          # the same words whether or not a library loaded (round 668's review, M1).
+          grep -q '^NativeAssets: native readers ON' /tmp/native_status.log || { echo "::error::the library did not load"; exit 1; }
           bash tools/run_gd_tests.sh
 
   no-assets-check:

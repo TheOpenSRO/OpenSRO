@@ -162,7 +162,12 @@ The steps, in order:
 5. Each zip gets a `THIRD_PARTY_NOTICES.txt` from `native/third_party_notice.sh`. It is generated
    from Cargo.lock with `cargo tree` and lists every crate, its licence and its exact crates.io
    source. The godot-rust crates are MPL-2.0, and MPL section 3.2(a) asks that recipients be told
-   where the source is.
+   where the source is. Then come the full texts:
+   - each crate's licence, from cargo-about 0.9.2 (pinned, SHA-256 checked; `native/about.toml`,
+     `native/about.hbs`);
+   - the Rust standard library's COPYRIGHT and licences (`native/licenses/`);
+   - Godot Engine's own licence with the copyright and licence of every third-party part built
+     into it, read from the engine itself by `client/tools/print_godot_licenses.gd`.
 6. `client/tools/check_release_zip.sh` checks both zips: exe, `.pck`, library next to the exe,
    notices, and the `.gdextension` and `extension_list.cfg` inside the `.pck`. It then runs the
    exported Linux game headless twice:

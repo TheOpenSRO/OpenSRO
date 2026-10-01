@@ -152,31 +152,17 @@ func _apply_update(zip_path: String) -> void:
 	var staging_dir := install_dir.path_join(STAGING_DIR)
 	remove_tree(staging_dir)
 
-	var reader := ZIPReader.new()
-	if reader.open(zip_path) != OK:
-		update_failed.emit("could not open downloaded update archive")
+	# Unpack and check every file whole BEFORE the install is touched
+	# (UpdateStager; the review's H1: a full disk staged truncated files and
+	# the installer then put them in place).
+	var stager := UpdateStager.new()
+	var staged := stager.stage(zip_path, staging_dir, install_dir)
+	for line in stager.lines:
+		print("SRRevamp update: " + line)
+	if not staged.ok:
+		DirAccess.remove_absolute(zip_path)
+		update_failed.emit("could not unpack %s, nothing was changed (%s)" % [_pending_tag, staged.reason])
 		return
-	DirAccess.make_dir_recursive_absolute(staging_dir)
-	for file_path in reader.get_files():
-		if file_path.ends_with("/"):
-			continue
-		var dest := staging_dir.path_join(file_path)
-		DirAccess.make_dir_recursive_absolute(dest.get_base_dir())
-		var f := FileAccess.open(dest, FileAccess.WRITE)
-		if f == null:
-			# Antivirus refusing the native library must not stop the rest
-			# of the update; the installer reports it as missing and keeps
-			# the old one. Anything else is fatal here.
-			if UpdateInstaller.is_native_library(file_path):
-				print("SRRevamp update: could not unpack %s (blocked by antivirus?) -- updating the rest" % file_path)
-				continue
-			reader.close()
-			remove_tree(staging_dir)
-			update_failed.emit("could not write staged update file %s" % dest)
-			return
-		f.store_buffer(reader.read_file(file_path))
-		f.close()
-	reader.close()
 
 	# The zip wraps everything in one folder ("srrevamp-windows/", release.yml).
 	var extracted_root := staging_dir
@@ -217,30 +203,57 @@ func _relaunch(exe_path: String, install_dir: String) -> int:
 			return -1
 		f.store_string(windows_relaunch_script(pid, exe_path))
 		f.close()
-		return OS.create_process("cmd.exe", ["/C", bat.replace("/", "\\")])
+		return OS.create_process("cmd.exe", windows_relaunch_args(bat))
 	return OS.create_process("/bin/sh", linux_relaunch_args(pid, exe_path))
 
 ## A batch file that polls until process `pid` is gone (at most RELAUNCH_POLLS
 ## polls, ~1 s apart: `ping -n 2` to localhost, because `timeout` needs a
 ## console this script does not have), starts the executable and deletes
-## itself. `tasklist /FO CSV` prints a quoted, comma-separated row when the
-## process exists and an INFO line without commas when it does not.
+## itself.
+## - It holds NO install path (the review's M2): cmd.exe reads a batch file in
+##   the OEM code page, so a UTF-8 path such as C:\Users\José\... would be
+##   mangled. Every path is relative to the script's own folder, %~dp0, which
+##   cmd keeps as UTF-16. Only the executable's NAME is written, and only when
+##   it is plain ASCII (otherwise "srrevamp.exe", release.yml's name).
+## - `tasklist /FO CSV` prints `"name","<pid>",...` for a live process; the
+##   quoted PID is matched (`find """<pid>"""`), not just any comma (L4).
+## v0.1.464's own batch file has the OEM problem too (PRE-EXISTING): an install
+## under a non-ASCII path probably never auto-updated, and will not get this
+## release automatically either.
 static func windows_relaunch_script(pid: int, exe_path: String) -> String:
-	var exe := exe_path.replace("/", "\\")
+	var exe_name := exe_path.get_file()
+	if not _is_ascii(exe_name):
+		exe_name = "srrevamp.exe"
 	return "\r\n".join(PackedStringArray([
 		"@echo off",
 		"set /a n=0",
 		":wait",
-		"tasklist /FI \"PID eq %d\" /NH /FO CSV 2>NUL | find \",\" >NUL" % pid,
+		"tasklist /FI \"PID eq %d\" /NH /FO CSV 2>NUL | find \"\"\"%d\"\"\" >NUL" % [pid, pid],
 		"if errorlevel 1 goto start",
 		"set /a n+=1",
 		"if %%n%% GEQ %d goto start" % RELAUNCH_POLLS,
 		"ping -n 2 127.0.0.1 >NUL",
 		"goto wait",
 		":start",
-		"start \"\" /D \"%s\" \"%s\"" % [exe.get_base_dir(), exe],
-		"del \"%~f0\"",
+		"start \"\" /D \"%%~dp0.\" \"%%~dp0%s\"" % exe_name,
+		"(goto) 2>NUL & del \"%~f0\"",
 		""]))
+
+static func _is_ascii(text: String) -> bool:
+	for i in range(text.length()):
+		if text.unicode_at(i) > 126 or text.unicode_at(i) < 32:
+			return false
+	return true
+
+## cmd.exe arguments that run `bat` whatever its path holds. Godot quotes an
+## argument only when it contains a space or one of & ( ) [ ] { } ^ = ; ! ' + , ` ~
+## (os_windows.cpp:656-663, READ), and `cmd /C "<path>"` keeps those quotes
+## only when the path has no & ( ) @ ^ | in it; otherwise it strips them and
+## splits the command at the &. With /S, cmd always strips exactly the outer
+## pair, so the path goes in wrapped in its own quotes: the inner pair
+## survives, special characters and all (the review's L3).
+static func windows_relaunch_args(bat: String) -> PackedStringArray:
+	return PackedStringArray(["/D", "/S", "/C", "\"" + bat.replace("/", "\\") + "\""])
 
 ## /bin/sh arguments that poll until process `pid` is gone (at most
 ## RELAUNCH_POLLS x 0.5 s), then exec the executable. The pid and path are
@@ -263,7 +276,7 @@ static func after_update_startup() -> void:
 	var bat := install_dir.path_join(RELAUNCH_BAT)
 	if FileAccess.file_exists(bat):
 		DirAccess.remove_absolute(bat)
-	remove_tree(install_dir.path_join(STAGING_DIR))
+	UpdateFs.new().remove_tree(install_dir.path_join(STAGING_DIR))
 
 ## Every file under root, relative to it, "/"-separated.
 static func list_files(root: String, prefix: String = "") -> PackedStringArray:

@@ -920,9 +920,26 @@ what the same `SRREVAMP_PARSE_PROFILE=1` Jangan entry measured with the native r
   - [ ] **Signing.** The DLL and the exe are unsigned. If antivirus quarantines the DLL for
         players, the options are an Authenticode certificate or a static link into custom
         export templates (native/README.md, "Windows").
-  - [ ] **Godot's own licence text** is not in the zips. The engine is MIT, which asks for its
-        notice in copies. THIRD_PARTY_NOTICES.txt covers only the Rust crates. This predates
-        round 668.
+  - [x] **Licence texts** (round 668's review, L9): THIRD_PARTY_NOTICES.txt now carries every
+        crate's licence text, the Rust standard library's, and Godot Engine's own licence with
+        its third-party notices.
+  - [ ] **Non-ASCII install paths never auto-updated before this release** (PRE-EXISTING, found
+        by round 668's review). v0.1.464's batch file writes the install path into a file that
+        cmd.exe reads in the OEM code page. Such installs will not get the first native release
+        automatically; docs/NATIVE_ON_WINDOWS.md tells them to copy it once by hand. From this
+        release on, the batch file holds no path.
+  - [ ] **A second client started from the same folder** while one updates (review L5). The
+        second still holds the old exe and DLL. They are moved aside like the first one's, and
+        the next start deletes them once both have exited. The two clients then run different
+        versions until the second is restarted. Not handled, and not seen.
+  - [ ] **The Linux relaunch waits on `kill -0`** (review L6). An exited client stays a zombie
+        until whatever started it (a shell, a desktop launcher) reaps it, and `kill -0` succeeds
+        on a zombie. With a parent that reaps at once this costs nothing. Under one that never
+        reaps, the helper waits out its 30 s cap and then starts the game anyway. On the box the relaunched client came up in each of the
+        six real update runs, which allow it 30 s. How long it took was not timed.
+  - [ ] **Download trust for the CI tools** (review L10). rustup is fetched from sh.rustup.rs
+        over TLS without a pinned sum. zig comes from ziglang.org, a single host that asks
+        heavy users to use mirrors. Both are fine for a few builds a day.
 - [ ] **Low-end hardware.** The user will emulate a slow CPU and slow storage. `perf_gate.sh
       --ab-env SRREVAMP_NATIVE=0 --cold` is the reproducible run (client/tools/README.md,
       "Native readers A/B").

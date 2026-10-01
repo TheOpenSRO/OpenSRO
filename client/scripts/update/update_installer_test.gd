@@ -27,6 +27,22 @@ class FakeFs extends UpdateFs:
 	var locks := {}
 	var quarantine := {}  # content -> true
 	var slept_ms := 0
+	## Bytes the disk can still take (-1: unlimited). A write or copy that does
+	## not fit is cut short, and reports nothing -- like store_buffer.
+	var capacity := -1
+	## What space_left() answers (-1: report capacity, or a lot).
+	var reported_space := -1
+	## A copy that silently ends short (a full disk under the copy fallback).
+	var short_copies := false
+
+	func _used() -> int:
+		var n := 0
+		for k in files:
+			n += _len(files[k])
+		return n
+
+	static func _len(v) -> int:
+		return v.size() if v is PackedByteArray else str(v).length()
 
 	func exists(path: String) -> bool:
 		return files.has(path)
@@ -82,8 +98,38 @@ class FakeFs extends UpdateFs:
 			return false
 		if files.has(to) and _lock(to) == "image":
 			return false
-		files[to] = files[from]
+		var v = files[from]
+		if short_copies:
+			v = str(v).substr(0, maxi(0, _len(v) / 2))
+		files[to] = v
 		return true
+
+	func size(path: String) -> int:
+		return _len(files[path]) if files.has(path) else -1
+
+	func space_left(_dir: String) -> int:
+		if reported_space >= 0:
+			return reported_space
+		return 1 << 40 if capacity < 0 else maxi(0, capacity - _used())
+
+	func write_file(path: String, data: PackedByteArray) -> bool:
+		if quarantine.has(data.get_string_from_utf8()):
+			return false
+		var room := data.size() if capacity < 0 else mini(data.size(), maxi(0, capacity - _used()))
+		files[path] = data.slice(0, room)
+		return true  # like store_buffer: a short write reports nothing
+
+	func remove_tree(path: String) -> void:
+		for k in files.keys():
+			if str(k).begins_with(path + "/"):
+				files.erase(k)
+
+	func list_files(root: String, _prefix: String = "") -> PackedStringArray:
+		var out := PackedStringArray()
+		for k in files:
+			if str(k).begins_with(root + "/"):
+				out.append(str(k).substr(root.length() + 1))
+		return out
 
 	func make_dir(_path: String) -> void:
 		pass
@@ -153,6 +199,11 @@ func _initialize() -> void:
 	_test_previous_aside_still_locked()
 	_test_linux_semantics()
 	_test_relaunch_scripts()
+	_test_relaunch_unicode_and_specials()
+	_test_copy_fallback_short()
+	_test_restore_retried()
+	_test_cleanup_scan()
+	_test_stage()
 	_test_digest()
 	_test_real_filesystem()
 	if _failures == 0:
@@ -195,7 +246,7 @@ func _test_locked_exe_and_dll() -> void:
 	var lines := inst.cleanup(I)
 	_check(not fs.files.has(I + "/" + DLL + ".old-update") and not fs.files.has(I + "/" + EXE + ".old-update"),
 		"the next start deletes the moved-aside exe and DLL (%s)" % [lines])
-	_check(not fs.files.has(I + "/" + UpdateInstaller.CLEANUP_LIST), "and then removes its list")
+	_check(not fs.files.keys().any(func(k): return str(k).contains(".old-update")), "and nothing is left over")
 
 func _test_dll_renamed_off() -> void:
 	print("-- the fallback test: srrevamp_native.dll renamed to .dll.off, then an update")
@@ -285,7 +336,7 @@ func _test_relaunch_scripts() -> void:
 	_check(bat.contains("tasklist /FI \"PID eq 4242\""), "the Windows relaunch polls the old process by its PID")
 	_check(not bat.contains("timeout") and not bat.contains("robocopy"), "with no `timeout` and no robocopy")
 	_check(bat.contains("if %n% GEQ 60 goto start"), "and gives up waiting after 60 polls")
-	_check(bat.contains("start \"\" /D \"C:\\Games\\srrevamp\" \"C:\\Games\\srrevamp\\srrevamp.exe\""), "then starts the exe from its folder")
+	_check(bat.contains("start \"\" /D \"%~dp0.\" \"%~dp0srrevamp.exe\""), "then starts the exe from the script's own folder")
 	var args := AutoUpdater.linux_relaunch_args(4242, "/home/a b/srrevamp.x86_64")
 	_check(args[0] == "-c" and args[3] == "4242" and args[4] == "/home/a b/srrevamp.x86_64" and not args[1].contains("a b"),
 		"the Linux relaunch passes the PID and path as parameters, not spliced into the script")
@@ -331,3 +382,140 @@ func _test_real_filesystem() -> void:
 	_check(FileAccess.get_file_as_string(inst_dir.path_join("pk2/Data.pk2")) == "data", "pk2 untouched")
 	_check(not FileAccess.file_exists(inst_dir.path_join("libsrrevamp_native.so.old-update")), "no leftovers on Linux")
 	AutoUpdater.remove_tree(root)
+
+## The review's M2/L3/L4: the batch file must hold no install path (cmd reads
+## it in the OEM code page), must match the quoted PID, and must reach cmd
+## intact whatever the path holds.
+func _test_relaunch_unicode_and_specials() -> void:
+	var exe := "C:/Users/José/Games (x) & y/srrevamp.exe"
+	var bat := AutoUpdater.windows_relaunch_script(4242, exe)
+	_check(not bat.contains("José") and not bat.contains("Games (x)"), "the batch file holds no install path")
+	var ascii := true
+	for i in range(bat.length()):
+		ascii = ascii and bat.unicode_at(i) < 127
+	_check(ascii, "the batch file is plain ASCII, so the OEM code page cannot mangle it")
+	_check(bat.contains("find \"\"\"4242\"\"\""), "it matches the quoted PID, not any comma")
+	_check(AutoUpdater.windows_relaunch_script(1, "C:/G/jogo-ação.exe").contains("%~dp0srrevamp.exe"),
+		"a non-ASCII executable name falls back to srrevamp.exe")
+	var args := AutoUpdater.windows_relaunch_args("C:/Users/José/Games (x) & y/srrevamp_update_relaunch.bat")
+	_check(args.size() == 4 and args[2] == "/C" and args[1] == "/S" and args[3] == "\"C:\\Users\\José\\Games (x) & y\\srrevamp_update_relaunch.bat\"",
+		"cmd gets /S /C and the path in its own quotes (got %s)" % [args])
+
+## The review's H1, in the installer: the copy fallback ending short.
+func _test_copy_fallback_short() -> void:
+	print("-- the copy fallback ends short (disk full)")
+	var fs := _windows_world()
+	fs.locks[S + "/" + DLL] = "open"  # the staged DLL cannot be renamed, so it is copied
+	fs.short_copies = true
+	var out: Dictionary = _run(fs)[1]
+	_check(out.ok and Array(out.failed) == [DLL], "a short copy is a failure, not an install")
+	_check(fs.files.get(I + "/" + DLL) == "old " + DLL, "and the previous DLL is back")
+
+## The review's L1: putting an original back is retried like every step.
+func _test_restore_retried() -> void:
+	print("-- putting the old DLL back meets a transient lock")
+	var fs2 := FakeFs.new()
+	fs2.files["C:/g/a.dll.old-update"] = "old"
+	fs2.locks["C:/g/a.dll.old-update"] = "busy:2"
+	var inst2 := UpdateInstaller.new(fs2)
+	_check(inst2._restore("C:/g/a.dll.old-update", "C:/g/a.dll") and fs2.files.get("C:/g/a.dll") == "old",
+		"a moved-aside original busy for two tries is still put back")
+	var fs3 := FakeFs.new()
+	fs3.files["C:/g/a.dll.old-update"] = "old"
+	fs3.locks["C:/g/a.dll.old-update"] = "open"
+	var inst3 := UpdateInstaller.new(fs3)
+	_check(not inst3._restore("C:/g/a.dll.old-update", "C:/g/a.dll") and inst3.lines[-1].begins_with("COULD NOT PUT BACK a.dll"),
+		"one that never lets go is reported loudly, naming where the original is")
+
+## The review's L2: leftovers are found by name, and a missing original is put back.
+func _test_cleanup_scan() -> void:
+	print("-- leftovers from an interrupted update")
+	var fs := FakeFs.new()
+	fs.files[I + "/README.md"] = "new"
+	fs.files[I + "/README.md.old-update"] = "old"
+	fs.files[I + "/" + DLL + ".old-update"] = "older"
+	fs.files[I + "/" + DLL + ".old-update-1"] = "old"
+	fs.files[I + "/docs/a.md.old-update"] = "old doc"
+	fs.files[I + "/pk2/Data.pk2.old-update"] = "the player's own"
+	var lines := UpdateInstaller.new(fs).cleanup(I)
+	for l in lines:
+		print("    | " + l)
+	_check(not fs.files.has(I + "/README.md.old-update") and fs.files.get(I + "/README.md") == "new", "a leftover beside its file is deleted")
+	_check(fs.files.get(I + "/" + DLL) == "old", "a file killed between its two renames is put back, from the newest aside")
+	_check(fs.files.get(I + "/docs/a.md") == "old doc", "in subfolders too")
+	_check(fs.files.has(I + "/pk2/Data.pk2.old-update"), "pk2/ is never touched")
+
+## The review's H1: nothing is installed unless every file was unpacked whole.
+func _test_stage() -> void:
+	print("-- unpacking: free space, short writes, damaged entries")
+	var root := OS.get_user_data_dir().path_join("update_stager_test")
+	UpdateFs.new().remove_tree(root)
+	DirAccess.make_dir_recursive_absolute(root)
+	var zip := root.path_join("u.zip")
+	var packer := ZIPPacker.new()
+	packer.open(zip)
+	var payload := {"srrevamp-linux/srrevamp.x86_64": "exe".repeat(4000), "srrevamp-linux/srrevamp.pck": "pck".repeat(3000),
+		"srrevamp-linux/libsrrevamp_native.so": "lib".repeat(2000), "srrevamp-linux/docs/a.md": "doc"}
+	for name in payload:
+		packer.start_file(name)
+		packer.write_file(payload[name].to_utf8_buffer())
+		packer.close_file()
+	packer.close()
+	var sizes := UpdateStager.zip_entry_sizes(zip)
+	_check(sizes.size() == 4 and int(sizes["srrevamp-linux/srrevamp.x86_64"]) == 12000, "the central directory gives every entry's size (%s)" % [sizes])
+	var total := 12000 + 9000 + 6000 + 3
+
+	# Real filesystem, enough room.
+	var st := UpdateStager.new()
+	var out := st.stage(zip, root.path_join("staging"), root)
+	_check(out.ok and FileAccess.get_file_as_string(root.path_join("staging/srrevamp-linux/srrevamp.pck")) == payload["srrevamp-linux/srrevamp.pck"],
+		"a whole archive is unpacked (%s)" % out.reason)
+
+	# Not enough room: refused before writing anything.
+	var fs := FakeFs.new()
+	fs.reported_space = total + UpdateStager.SPACE_MARGIN - 1
+	var st2 := UpdateStager.new(fs)
+	out = st2.stage(zip, "/x/staging", "/x")
+	_check(not out.ok and out.reason.begins_with("not enough disk space") and fs.files.is_empty(), "too little free space is refused up front: " + out.reason)
+
+	# The disk fills mid-way (the free-space answer was wrong, or someone else
+	# wrote meanwhile): the short write is caught and the staging folder goes.
+	fs = FakeFs.new()
+	fs.reported_space = 1 << 40
+	fs.capacity = 15000
+	var st3 := UpdateStager.new(fs)
+	out = st3.stage(zip, "/x/staging", "/x")
+	_check(not out.ok and out.reason.contains("whole") and fs.files.is_empty(),
+		"a write the disk cut short is refused and nothing is left staged: " + out.reason)
+
+	# A damaged entry: ZIPReader hands back an empty array on a CRC or zlib
+	# error. Flip a byte inside the .pck entry's compressed data (past its
+	# local header: 30 bytes, the name, the extra field).
+	var bytes := FileAccess.get_file_as_bytes(zip)
+	var name_at := _find_bytes(bytes, "srrevamp-linux/srrevamp.pck".to_utf8_buffer())
+	var data_at := name_at + "srrevamp-linux/srrevamp.pck".length() + bytes.decode_u16(name_at - 2) + 2
+	var corrupt := bytes.duplicate()
+	corrupt[data_at] = corrupt[data_at] ^ 0x5A
+	var bad := root.path_join("bad.zip")
+	var w := FileAccess.open(bad, FileAccess.WRITE)
+	w.store_buffer(corrupt)
+	w.close()
+	fs = FakeFs.new()
+	var st4 := UpdateStager.new(fs)
+	out = st4.stage(bad, "/x/staging", "/x")
+	_check(not out.ok and out.reason.contains("srrevamp.pck came out of the archive as"), "a damaged entry is refused: " + out.reason)
+
+	# Antivirus refuses the new native library: the rest is still staged.
+	fs = FakeFs.new()
+	fs.quarantine[payload["srrevamp-linux/libsrrevamp_native.so"]] = true
+	var st5 := UpdateStager.new(fs)
+	out = st5.stage(zip, "/x/staging", "/x")
+	_check(out.ok and not fs.files.has("/x/staging/srrevamp-linux/libsrrevamp_native.so") and fs.files.has("/x/staging/srrevamp-linux/srrevamp.pck"),
+		"a refused native library is skipped and the rest staged")
+	UpdateFs.new().remove_tree(root)
+
+static func _find_bytes(hay: PackedByteArray, needle: PackedByteArray) -> int:
+	for i in range(hay.size() - needle.size() + 1):
+		if hay[i] == needle[0] and hay.slice(i, i + needle.size()) == needle:
+			return i
+	return -1
