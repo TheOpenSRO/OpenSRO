@@ -33,7 +33,11 @@ import (
 // worldmap.RegionSpan) -- and each monster it meets for the first time, and
 // removes the ones standing in a town (combat.Hub.Remove). The players whose
 // window held it are told the way a monster leaving their window is
-// (OpMonsterLeft): the client drops the body, no death. With no table
+// (OpMonsterLeft): the client fades the body out over 1.5 s, no death (round
+// 677: READ, retail's deletion of a state-3 monster sends the despawn 0x3016
+// -- FUN_00417090 -> the leave-world 0x485150 -> CMsgBlock slot 3 0x5344b0 ->
+// FUN_00534050 -- and the client fades a despawn with CIDecoDisappear;
+// docs/protocol/appear_fade.md). With no table
 // installed (-regions-csv unset, and every test that does not install one)
 // nothing changes.
 //

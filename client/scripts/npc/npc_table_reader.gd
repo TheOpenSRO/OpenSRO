@@ -65,6 +65,15 @@ const COL_SPEED_RUN := 47
 ## Retail rows read: every playable body 4, Mangyang 6, Gyo 10, Yeoha 11 --
 ## the values server/cmd/server's roster carries (monsterSpec.BCRadius).
 const COL_BC_RADIUS := 50
+## DecayTime, milliseconds: field 14 of the common record, text column 13
+## (round 227, docs/protocol/refobj_binary_format.md; the server keeps it in
+## seconds at ref+0x84). An item's is how long it lies on the ground; a
+## monster's is how long its corpse lies: `CGObj::Update` (0x484d10) removes
+## a character in life state 2 once its dead time reaches it (round 677).
+## Retail rows read (the box's characterdata parts, round 677): 5000 for
+## most monsters (MOB_CH_MANGNYANG), 10000 for others (MOB_CH_TIGERWOMAN),
+## 1000000000 for the player bodies.
+const COL_DECAY_TIME := 13
 
 class Spawn:
 	var npc_id: int
@@ -351,6 +360,31 @@ static func parse_country_by_code(data: PackedByteArray, into: Dictionary = {}, 
 			continue
 		into[code] = int(country)
 	ParseProfile.add("text.country_by_code", _pp)
+	return into
+
+## Parses one characterdata part into {code name -> DecayTime (ms,
+## COL_DECAY_TIME)} for rows whose code starts with `prefix` (the monsters,
+## by default), merging into `into` -- how long a dead monster's corpse lies
+## (World3D._monster_corpse_seconds, round 677). A row too short to have the
+## column, or whose column is not a number, is skipped. The fallback reads
+## the two columns it needs with get_slice rather than splitting the whole
+## ~100-column row.
+static func parse_decay_by_code(data: PackedByteArray, into: Dictionary = {}, prefix: String = "MOB_") -> Dictionary:
+	var _pp := ParseProfile.t0()
+	if _merge_native(into, "char_decay_by_code", [data, prefix]):
+		ParseProfile.add("text.decay_by_code", _pp)
+		return into
+	for line in _lines(data):
+		if line.get_slice_count("\t") <= COL_DECAY_TIME:
+			continue
+		var code := line.get_slice("\t", COL_CODE_NAME).strip_edges()
+		if code == "" or not code.begins_with(prefix):
+			continue
+		var decay := line.get_slice("\t", COL_DECAY_TIME).strip_edges()
+		if not decay.is_valid_int():
+			continue
+		into[code] = int(decay)
+	ParseProfile.add("text.decay_by_code", _pp)
 	return into
 
 ## Parses one characterdata part into {code name -> BCRadius} (world units,

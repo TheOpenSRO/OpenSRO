@@ -34,10 +34,24 @@ class_name AppearFade
 ##   compound's alpha is not read (OPEN); this client fades the model's own
 ##   meshes only and leaves the name plate, the party mark and any effect
 ##   as they were.
-## - **The way out** (READ, not drawn here): a despawn (0x3016,
-##   `FUN_008a6cc0`, and a group despawn) calls vslot 0x4c with 0, which
-##   makes a `CIDecoDisappear` (0x110a790) of **1.5 s** (float 0xd819ec):
-##   255 down to 0, then the object is deleted. OPEN for this client.
+## - **The way out** (round 677, READ): a despawn (0x3016, `FUN_008a6cc0`,
+##   and a group despawn, `FUN_008a6d20` type 2, which calls it per id) runs
+##   the object's vslot 0x4c with 0 (`IGIDObject::FUN_009c32f0`; CICMonster's
+##   `FUN_009d3c90`, CICCos's 0x9c66e0, CIItem's 0x9e21c0 are the same shape;
+##   CICUser's 0x9daf10 passes 1 -- no fade -- in its modes 4/6/7). It first
+##   takes the object out of the game-id hash and zeroes its id
+##   (`IGIDObject::FUN_009c3270`: g_sHashGID, +0xf8), then makes a
+##   `CIDecoDisappear` (0x110a790) on it with the float at 0xd819ec, **1.5
+##   s**. `CIDecoDisappear::FUN_00a49970` starts the alpha at 255.0 (float
+##   0xd85284) and its rate at 255.0 (double 0xd83108) / 1.5; each frame
+##   `CIDecoDisappear::vslot_009` (0xa49a30) subtracts rate x dt and, while
+##   the result is >= 0, sets it TRUNCATED (asm 0xa49ab9-0xa49ad4: `fnstcw`,
+##   `or eax, 0xc00`, `fldcw`, `fistp`, as the appear does); below 0 it
+##   deletes itself and the object (`entitymanager::FUN_00ba3770`, asm
+##   0xa49b34-0xa49b71). So 170 at 0.5 s, 85 at 1.0 s, 0 at 1.5 s, gone the
+##   frame after. The object is not in the id hash while it fades: a new
+##   spawn of the same id is a new object (fade_out() below hands the body
+##   over; World3D builds a fresh one).
 ##
 ## How it is drawn (OURS). Godot 4.2's GL Compatibility renderer ignores
 ## GeometryInstance3D.transparency (MEASURED, round 676: a model at
@@ -56,13 +70,17 @@ class_name AppearFade
 ## own material back -- the shared, opaque one -- and the twins are dropped.
 ## A material with no fade twin (a shader this file does not know) is left
 ## as it is: that piece pops in, as before (counted in `unfadable`).
+## The fade-out (round 677, Fades.start_out) is the same in reverse: the
+## twins start at alpha 255 and go down, and when the fade ends the model is
+## freed instead of getting its materials back (a piece with no twin stays
+## opaque until then).
 
 ## The fade-in's length, seconds. READ: the float at 0xd86ecc (2.0), passed
 ## by `FUN_009d17e0` (asm 0x9d190b) to `CIDecoAppear::FUN_00a48a20`.
 const APPEAR_SECONDS := 2.0
 ## The fade-out's length on a despawn, seconds. READ: the float at 0xd819ec
 ## (1.5), passed by `IGIDObject::FUN_009c32f0` / `FUN_009d3c90` to
-## `CIDecoDisappear::FUN_00a49970`. Not drawn by this client yet (OPEN).
+## `CIDecoDisappear::FUN_00a49970`. Drawn since round 677 (Fades.start_out).
 const DISAPPEAR_SECONDS := 1.5
 ## Full alpha. READ: the double at 0xd83108 (255.0).
 const FULL := 255.0
@@ -146,6 +164,26 @@ static func alpha_at(elapsed: float, duration: float = APPEAR_SECONDS) -> int:
 ## has passed 255 (it set 0xff and removed itself).
 static func done_at(elapsed: float, duration: float = APPEAR_SECONDS) -> bool:
 	return duration <= 0.0 or FULL / duration * elapsed > FULL
+
+## The model's alpha byte `elapsed` seconds into a despawn's fade-out of
+## `duration`, as `CIDecoDisappear::vslot_009` (0xa49a30) sets it: 255 less
+## 255 / duration x elapsed, truncated (READ, the same chop as the appear),
+## while that is >= 0; 0 after (the object is gone by then: out_done_at).
+static func out_alpha_at(elapsed: float, duration: float = DISAPPEAR_SECONDS) -> int:
+	if duration <= 0.0:
+		return 0
+	var a := FULL - FULL / duration * maxf(elapsed, 0.0)
+	if a < 0.0:
+		return 0
+	return int(a) & 0xff
+
+## Whether a fade-out of `duration` is over `elapsed` seconds in: the
+## deco's value has gone below 0, and it deleted itself and the object
+## (READ, asm 0xa49aaa-0xa49ab5: `fcomp` against 0, `test ah, 0x41`). A
+## duration of 0 (`IGIDObject::FUN_009c32f0`'s CICMonster +0x7b0 branch)
+## ends at the first step.
+static func out_done_at(elapsed: float, duration: float = DISAPPEAR_SECONDS) -> bool:
+	return duration <= 0.0 or FULL - FULL / duration * elapsed < 0.0
 
 ## The meshes a model is drawn with: every MeshInstance3D at or under
 ## `model`, not counting an effect's (under an EfpEffect). The name plate
@@ -284,24 +322,33 @@ class Warm extends Node3D:
 		if _frames >= AppearFade.WARM_FRAMES:
 			queue_free()
 
-## Models fading in together: started in the same frame, so always at the
-## same alpha, and sharing their materials' twins.
+## Models fading together: started in the same frame and the same way, so
+## always at the same alpha, and sharing their materials' twins. `out` is a
+## despawn's fade-out (round 677): 255 down to 0, then the models are freed.
 class Cohort:
 	var elapsed := 0.0
 	var duration := APPEAR_SECONDS
+	var out := false
 	## source material instance id -> its twin (null: none)
 	var twins := {}
-	## [MeshInstance3D, surface (-1: material_override), original, twin]
+	## [MeshInstance3D, surface (-1: material_override), original, twin, model]
 	var meshes: Array = []
 	var models: Array = []
+	## A fade-out's callbacks: model instance id -> Callable(model), run just
+	## before the model is freed.
+	var done_calls := {}
 
 ## The fades running, stepped once a physics step by World3D.
 class Fades:
 	var _cohorts: Array[Cohort] = []
-	## The cohort started since the last step, which new models join.
+	## The cohorts started since the last step, which new models join: one
+	## fading in, one fading out.
 	var _open: Cohort = null
+	var _open_out: Cohort = null
 	var _started := 0
 	var _finished := 0
+	var _started_out := 0
+	var _freed := 0
 	var _unfadable := 0
 
 	## Starts `model` fading in from nothing: from now every mesh under it
@@ -314,26 +361,63 @@ class Fades:
 			_open = Cohort.new()
 			_open.duration = duration
 			_cohorts.append(_open)
-		var co := _open
+		if _take_model(_open, model, 0.0):
+			_open.models.append(model)
+			_started += 1
+
+	## Starts `model` fading out (round 677; READ, CIDecoDisappear): from now
+	## every mesh under it draws with its material's twin at alpha 255, the
+	## deco's start value, step() lowers it, and when it goes below 0 the
+	## model is freed -- `on_done(model)` first, when given. The model is the
+	## fade's from here: the caller drops it from whatever tracks it (the
+	## object leaves retail's id hash at this point, FUN_009c3270).
+	##
+	## A model still fading in stops doing so: its meshes get their own
+	## materials back and fade out from 255. INFERRED: the appear and the
+	## disappear deco are both live on the object then and each sets the
+	## alpha every frame; the disappear, made later, is taken to run later in
+	## the entity list and so to be the one drawn (the list order was not
+	## read). A model already fading out is left to finish its own fade.
+	## A model with nothing fadable is still freed after `duration` (its
+	## pieces stay opaque until then).
+	func start_out(model: Node, duration: float = DISAPPEAR_SECONDS, on_done: Callable = Callable()) -> void:
+		if model == null or not is_instance_valid(model) or fading_out(model):
+			return
+		_cancel_in(model)
+		if _open_out == null or _open_out.duration != duration:
+			_open_out = Cohort.new()
+			_open_out.duration = duration
+			_open_out.out = true
+			_cohorts.append(_open_out)
+		_take_model(_open_out, model, 1.0)
+		_open_out.models.append(model)
+		if on_done.is_valid():
+			_open_out.done_calls[model.get_instance_id()] = on_done
+		_started_out += 1
+
+	## Puts every mesh under `model` on its twin in `co`, at alpha `a`.
+	## Whether any mesh took one.
+	func _take_model(co: Cohort, model: Node, a: float) -> bool:
 		var took := false
 		for mi in AppearFade.instances_of(model):
 			if mi.has_meta(AppearFade.ORIGINAL_META):
 				continue
 			if mi.material_override != null:
-				took = _take(co, mi, -1, mi.material_override) or took
+				took = _take(co, mi, -1, mi.material_override, model, a) or took
 			elif mi.mesh != null:
 				for s in range(mi.mesh.get_surface_count()):
 					var src := mi.get_active_material(s)
 					if src != null:
-						took = _take(co, mi, s, src) or took
-		if took:
-			co.models.append(model)
-			_started += 1
+						took = _take(co, mi, s, src, model, a) or took
+		return took
 
-	func _take(co: Cohort, mi: MeshInstance3D, surface: int, src: Material) -> bool:
+	func _take(co: Cohort, mi: MeshInstance3D, surface: int, src: Material, model: Node, a: float) -> bool:
 		var id := src.get_instance_id()
 		if not co.twins.has(id):
-			co.twins[id] = AppearFade.fade_twin(src)
+			var made := AppearFade.fade_twin(src)
+			if made != null:
+				AppearFade.set_twin_alpha(made, a)
+			co.twins[id] = made
 		var twin: Material = co.twins[id]
 		if twin == null:
 			_unfadable += 1
@@ -344,22 +428,50 @@ class Fades:
 			mi.material_override = twin
 		else:
 			mi.set_surface_override_material(surface, twin)
-		co.meshes.append([mi, surface, original, twin])
+		co.meshes.append([mi, surface, original, twin, model])
 		return true
 
+	## Ends `model`'s fade-in now: its meshes get their own materials back
+	## (_restore_mesh) and it leaves its cohort.
+	func _cancel_in(model: Node) -> void:
+		for co in _cohorts:
+			if co.out or not co.models.has(model):
+				continue
+			var keep: Array = []
+			for m in co.meshes:
+				if m[4] == model:
+					_restore_mesh(m)
+				else:
+					keep.append(m)
+			co.meshes = keep
+			co.models.erase(model)
+
 	## Advances every fade by `delta` seconds: the twins take the cohort's
-	## alpha; a finished cohort gives each mesh its own material back and is
-	## dropped.
+	## alpha; a finished fade-in gives each mesh its own material back, a
+	## finished fade-out frees its models; either is then dropped.
 	func step(delta: float) -> void:
 		_open = null
+		_open_out = null
 		if _cohorts.is_empty():
 			return
 		var keep: Array[Cohort] = []
 		for co in _cohorts:
 			co.elapsed += delta
+			if co.out:
+				if AppearFade.out_done_at(co.elapsed, co.duration):
+					_free_out(co)
+					continue
+				var oa := float(AppearFade.out_alpha_at(co.elapsed, co.duration)) / AppearFade.FULL
+				for twin in co.twins.values():
+					if twin != null:
+						AppearFade.set_twin_alpha(twin, oa)
+				keep.append(co)
+				continue
 			if AppearFade.done_at(co.elapsed, co.duration):
 				_restore(co)
 				_finished += co.models.size()
+				continue
+			if co.models.is_empty():
 				continue
 			var a := float(AppearFade.alpha_at(co.elapsed, co.duration)) / AppearFade.FULL
 			for twin in co.twins.values():
@@ -368,24 +480,59 @@ class Fades:
 			keep.append(co)
 		_cohorts = keep
 
+	## Ends every fade-out now: their models are freed at once (a zone
+	## change: World3D's teardown frees the old zone's bodies at once, as
+	## retail's FUN_009c2c20 deletes every object with vslot 0x4c(1), no
+	## fade). Returns how many were freed.
+	func free_out_now() -> int:
+		var before := _freed
+		var keep: Array[Cohort] = []
+		for co in _cohorts:
+			if co.out:
+				_free_out(co)
+			else:
+				keep.append(co)
+		_cohorts = keep
+		_open_out = null
+		return _freed - before
+
+	## A fade-out is over: each model's callback, then the model is freed.
+	func _free_out(co: Cohort) -> void:
+		for model in co.models:
+			if model == null or not is_instance_valid(model):
+				continue
+			var call: Callable = co.done_calls.get(model.get_instance_id(), Callable())
+			if call.is_valid():
+				call.call(model)
+			if is_instance_valid(model) and not (model as Node).is_queued_for_deletion():
+				(model as Node).queue_free()
+			_freed += 1
+		co.meshes.clear()
+		co.twins.clear()
+		co.done_calls.clear()
+
 	## Gives each still-fading mesh its own material back. A mesh whose
 	## material something else has replaced since (BerserkLook) is left with
 	## what it has now.
 	func _restore(co: Cohort) -> void:
 		for m in co.meshes:
-			var mi = m[0]
-			if mi == null or not is_instance_valid(mi):
-				continue
-			var surface: int = m[1]
-			if surface < 0:
-				if (mi as MeshInstance3D).material_override == m[3]:
-					(mi as MeshInstance3D).material_override = m[2]
-				(mi as Node).remove_meta(AppearFade.ORIGINAL_META)
-			elif (mi as MeshInstance3D).get_surface_override_material(surface) == m[3]:
-				(mi as MeshInstance3D).set_surface_override_material(surface, m[2])
+			_restore_mesh(m)
 		co.meshes.clear()
 		co.twins.clear()
 
+	func _restore_mesh(m: Array) -> void:
+		var mi = m[0]
+		if mi == null or not is_instance_valid(mi):
+			return
+		var surface: int = m[1]
+		if surface < 0:
+			if (mi as MeshInstance3D).material_override == m[3]:
+				(mi as MeshInstance3D).material_override = m[2]
+			(mi as Node).remove_meta(AppearFade.ORIGINAL_META)
+		elif (mi as MeshInstance3D).get_surface_override_material(surface) == m[3]:
+			(mi as MeshInstance3D).set_surface_override_material(surface, m[2])
+
+	## Models fading, in or out.
 	func running() -> int:
 		var n := 0
 		for co in _cohorts:
@@ -394,9 +541,27 @@ class Fades:
 					n += 1
 		return n
 
+	## Models fading out.
+	func running_out() -> int:
+		var n := 0
+		for co in _cohorts:
+			if not co.out:
+				continue
+			for m in co.models:
+				if is_instance_valid(m):
+					n += 1
+		return n
+
+	## Whether `model` is fading, in or out.
 	func fading(model: Node) -> bool:
 		for co in _cohorts:
 			if co.models.has(model):
+				return true
+		return false
+
+	func fading_out(model: Node) -> bool:
+		for co in _cohorts:
+			if co.out and co.models.has(model):
 				return true
 		return false
 
@@ -404,6 +569,8 @@ class Fades:
 	func alpha_of(model: Node) -> int:
 		for co in _cohorts:
 			if co.models.has(model):
+				if co.out:
+					return AppearFade.out_alpha_at(co.elapsed, co.duration)
 				return AppearFade.alpha_at(co.elapsed, co.duration)
 		return 255
 
@@ -421,6 +588,13 @@ class Fades:
 
 	func finished() -> int:
 		return _finished
+
+	func started_out() -> int:
+		return _started_out
+
+	## Models a fade-out has freed.
+	func freed() -> int:
+		return _freed
 
 	func unfadable() -> int:
 		return _unfadable

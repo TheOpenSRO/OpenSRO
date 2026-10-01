@@ -180,7 +180,9 @@ static func new_tables() -> Object:
 ## that comes out empty or holds an unpaired surrogate; native/src/core/tables.rs).
 static func table_rows(method: String, args: Array) -> Dictionary:
 	var tables := new_tables()
-	if tables == null:
+	# A library built before `method` was added (round 677's
+	# char_decay_by_code beside an older .so) has no such method: GDScript.
+	if tables == null or not tables.has_method(method):
 		return {}
 	var rows: Dictionary = tables.callv(method, args)
 	return {} if rows.has("fallback") else rows

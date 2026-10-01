@@ -7094,6 +7094,209 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-seventy-seventh round: monsters fade out when they leave -- into a town, out of view, or as a corpse whose time is up -- over 1.5 s, as retail's CIDecoDisappear fades them, instead of vanishing
+
+The user (2026-10-01): "when a mob walks into a safe zone and disappears they're supposed to fade.
+You can check the code for that." Round 674 removes a monster at a town's line and tells the
+client with `OpMonsterLeft`; the client dropped the body at once. Round 676 read the way out
+(0x3016 -> vslot 0x4c(0) -> a 1.5 s `CIDecoDisappear`) and left it undrawn. This round reads the
+rest -- the curve, who takes it, deaths, the server's side -- and draws it.
+
+Labels: READ (sro_client.exe: `/var/tmp/decomp_client`, `sro_client.asm`, constants read from the
+PE; SR_GameServer.exe: `/var/tmp/decomp_server`, `srv.asm`, vtables read from the PE), MEASURED
+(the render box), INFERRED, OURS. The full reading is in docs/protocol/appear_fade.md, "The
+disappear fade".
+
+### 1. Retail, the client (READ)
+
+- **Who gets it.** `FUN_008a6cc0` (0x3016) and the group despawn `FUN_008a6d20` type 2 (which
+  calls it per id) run the object's vslot 0x4c with 0. Base `IGIDObject::FUN_009c32f0` (CICNPC
+  thunks to it), CICMonster `FUN_009d3c90`, `CICCos::vslot_019` 0x9c66e0 and `CIItem::vslot_019`
+  0x9e21c0 all make a `CIDecoDisappear` (class link 0x110a790) of the float at **0xd819ec = 1.5
+  s**. CICUser's (0x9daf10) passes 1 -- deleted at once, no fade -- when its byte +0x2c2 is 4, 6 or
+  7 (mode 4 is drawn at alpha 0x50 by `FUN_009cf880`; INFERRED a stealth mode), else the same fade.
+  A CICMonster whose +0x7b0 is set (`FUN_00b94b70(0xef1a84)`: 0xef1a84 is the runtime class
+  registered at 0xd764ab with the name string 0xde281c, `CICMonster`) gets 0 s.
+- **What happens first.** vslot 0x3c(1, 0) (CICMonster: `FUN_009d3e70` -> `FUN_009cf1b0` case 1
+  -> `FUN_009ccf50`, which calls vslot 8(1) on each entry of the list at +0x288 and empties it;
+  INFERRED the attached effects), then `IGIDObject::FUN_009c3270`: the object leaves the game-id
+  hash `g_sHashGID` and its id (+0xf8) becomes 0. So a fading object is nobody's: the same id
+  spawning again is a new object.
+- **The curve.** `CIDecoDisappear::FUN_00a49970`: alpha 255.0 (float 0xd85284), rate 255.0
+  (double 0xd83108) / duration. `vslot_009` (0xa49a30): alpha -= rate x dt; while >= 0 (0xa49aaa
+  `fcomp`, `test ah, 0x41`) the compound gets it **truncated** (0xa49ab9-0xa49ad4: `fnstcw`, `or
+  eax, 0xc00`, `fldcw`, `fistp`; the decompiler's ROUND is wrong); below 0 the deco deletes itself
+  and the object (`entitymanager::FUN_00ba3770`, 0xa49b34-0xa49b71). 255, 170 at 0.5 s, 127 at
+  0.75, 85 at 1.0, 0 at 1.5, gone the frame after. Linear.
+- **Not a death.** The creators of `CIDecoDisappear` (every `push 0x110a790`): the four above,
+  `CICScriptObj::vslot_019` and `FUN_009e48c0` (script objects), and `CIItem::FUN_009e1670` (1.8 s,
+  float 0xdd81e8, reached only from `CIItem::vslot_005` message 0xff, an item's own timer
+  sequence). No death path. `FUN_009c2c20` (from 0x84abaf, 0x84b75e) deletes every object with
+  vslot 0x4c(**1**): a zone change takes everything at once.
+- **The name.** A character's draw, vslot 10 `FUN_009d20d0`, draws the model, its effects and the
+  name (`FUN_009d0a80`, at 0xff) with no test of the id or the deco: the name stays until the
+  object is deleted. The +0xd4 bit that hides it is set only by script objects (`FUN_009c4160`
+  from 0x51ae40, 0x535750, 0x556370).
+- **Clicks.** The pick, `FUN_0078ee20`, walks the list at 0xec4ae4 -- `CIGIDObject`'s class link
+  (added by `FUN_009c1e30` from the constructor 0x9c2340, removed in the destructor) -- so a fading
+  object can still be hit, with id 0. What the click handler (`FUN_00792f00`) then does: OPEN.
+
+### 2. Retail, the server (READ): the removal is the despawn, and so is the corpse's end
+
+- **Town removal -> 0x3016** (round 674's INFERRED, now READ): `FUN_00417090` ->
+  `FUN_00489fc0` -> slot 0x354 (`CGObjMob::ReleaseAndClear` 0x4c0eb0) -> slot 0x358 (0x4c10b0 ->
+  `CGObjChar::vslot_214` 0x4a72e0 -> `CGObjMobile::vslot_214` 0x48b490 -> `CGObj::vslot_214`
+  0x484a80) -> slot 0x364 (0x485150, the leave-world; CGObjMob's entry read from its vtable at
+  0xaeddac+0x364) -> slot 0x3b0(0, 0, 0) (0x4c1e00 -> `GObjPC::FUN_00485bb0`) -> the block's slot
+  3 (`FUN_005344b0`, the CMsgBlock vtables 0xaf7f9c / 0xaf7fc4 / 0xaf7fe4) -> `FUN_00534050`:
+  **0x3016** with the object's id, to the players of the block and its 8 neighbours.
+- **Death.** `CGObj::Update` (0x484d10, slot 211; CGObjMob::Update 0x4c1700 -> CGObjChar::Update
+  0x4a88f0 -> CGObjMobile::Update 0x48b8c0 -> it): in life state 2 it adds the tick's seconds to
+  +0x3c and, when DecayTime (the ref's float at +0x84, round 227) <= the sum (0x484d3f `fcompp`,
+  `test ah, 0x41`, `jp`), calls slot 218 = 0x484cf0 = `SetLifeState(3)` (0xaeddac+0x368). The
+  main loop then deletes it through the same `FUN_00417090`. So a corpse lies **DecayTime from the
+  death** and then fades over 1.5 s. Monster DecayTime, characterdata column 13 (MEASURED over the
+  distinct MOB_ codes of the box's extracted parts, Service 1): 5000 ms for 7,459
+  (MOB_CH_MANGNYANG), 10000 for 697 (MOB_CH_TIGERWOMAN), 8000 for 6, one each of 3000 / 15000 /
+  30000 / 0. The live client read 7,495 MOB_ rows out of Media.pk2, MOB_CH_MANGNYANG 5000 ms.
+
+### 3. This client (OURS on READ)
+
+- `AppearFade.Fades.start_out(model, 1.5, on_done)`: the round-676 twins in reverse, from alpha
+  255 (`out_alpha_at`: int(255 - 170 t), truncated), and when the value goes below 0
+  (`out_done_at`) the model is freed. A body still fading in goes back to its own materials and
+  fades out from 255 (INFERRED: both decos write each frame, and the later one -- the disappear --
+  is taken to be drawn; the entity list's order was not read). `free_out_now` ends them all at a
+  zone change.
+- `World3D._fade_out_body(body)`: the body is dropped from its id map first (as retail's leaves
+  `g_sHashGID`), its click collider goes (OURS: retail's pick still lists it, with id 0), and its
+  name plate and party mark stay as they are (READ). Used by:
+  - `OpMonsterLeft` (`_on_monster_left`): a monster leaving the area, or removed in a town (round
+    674). A corpse that leaves fades too. The target window clears if it was the target (it did
+    not, before: the base FAIL below), a walk to attack it is dropped, a walking body stops and
+    stands (OURS). A listed monster not yet built is forgotten, so no body is built for it later.
+  - `OpEntityLeft` (`_on_entity_left`): another player.
+  - A ground item's removal (`GroundItems.remove(id, fade)`): READ for a despawn; that a pickup
+    reaches retail's client as 0x3016 is INFERRED. Its name plate is hidden (OURS).
+  - A dead monster (`_begin_monster_death` / `_finish_monster_death`): the corpse lies for its
+    species' DecayTime (`_monster_corpse_seconds`; `NpcTableReader.parse_decay_by_code`, column
+    13, natively `SrNativeTables.char_decay_by_code`), then fades. OURS: the time is the client's,
+    from when it learns of the death -- this server drops a monster at its death and sends no
+    despawn. With no DecayTime known it holds for the die clip, as before, and then fades.
+- Unchanged, OURS: a list refresh that no longer names a monster and a region unloading under a
+  body still free it at once (neither is a despawn; the list path is mostly a zone change).
+
+### 4. Tests
+
+`client/scripts/world/fade_out_test.gd` (new, synthetic): the curve; a model's fade-out, its
+callback and its free; a fade-in turned into a fade-out; `free_out_now`; in a quiet World3D the
+`OpMonsterLeft` path (not freed at once, alpha 255 then 127 at 0.75 s, the target cleared, the
+plate unfaded, no click body, a re-spawn of the same id mid-fade gets a fresh body that fades in
+while the old one fades out and goes, the fresh one alone in the map), a death with a 200 ms
+DecayTime (the corpse lies, then fades from 255, then goes), a death with none (fades at once), a
+player leaving and coming back mid-fade, a ground item taken away, and nothing left fading or
+twinned at the end. `native_tables_test.gd` gains the decay reader (GDScript and native agree on
+every case, run with the native library built: `NativeAssets: native readers ON`); the Rust unit
+test `characterdata_rows` reads column 13. `remote_godot.sh check`: 468 scripts, ALL LOAD;
+`remote_godot.sh tests`: 189 suites, 0 failing (the new suite's first run failed one check of its
+own: a queue_free made from a timer lands a frame later; it now waits two frames). Server: comment only (safezone.go); `go test -count=1 -p 1 ./...`:
+all ok (internal/systems and internal/session re-run after the last docs edit: ok).
+
+**NEGATIVE** -- the new suite on the base (a worktree at dev 55ca5c8, v0.1.468):
+
+```
+FAIL AppearFade has the fade-out's curve (out_alpha_at, out_done_at)
+FAIL Fades.start_out exists
+FAIL Fades.start_out exists
+FAIL Fades.free_out_now exists
+FAIL but it is not freed at once
+FAIL the target window is cleared
+FAIL its click body is gone: it cannot be clicked or attacked
+FAIL 127 at 0.75 s
+FAIL spawned again mid-fade, it gets a fresh body; the old one keeps fading
+FAIL its corpse time is its DecayTime, 200 ms -> 0.2 s
+FAIL the corpse lies there after the death
+FAIL and fades out from 255 instead of vanishing
+FAIL with no DecayTime and no clip it fades out at once rather than vanishing
+FAIL another player who leaves fades out instead of vanishing
+FAIL and can no longer be clicked
+FAIL World3D has _fade_out_body
+16 FAILURES
+```
+
+### 5. MEASURED
+
+**The curve on the GPU** (`client/tools/measure_appear_fade.gd --out`, new mode: the model opaque,
+then despawned; coverage = the model's summed difference from the background over the last opaque
+frame's, per frame, 1/60 s steps, 320x240, GL on the RX 7600 through VirtualGL):
+
+| t (s) | asked alpha | MOB_CH_MANGNYANG covered | MOB_WC_EARTHGHOST covered | Mangyang, --nofade (the base: freed at once) |
+|---|---|---|---|---|
+| 0.000 | 255 | 1.000 | 1.000 | 1.000 |
+| 0.133 | 232 | 0.913 | 0.921 | 0.000 |
+| 0.433 | 181 | 0.721 | 0.740 | 0.000 |
+| 0.733 | 130 | 0.525 | 0.549 | 0.000 |
+| 1.033 | 79 | 0.324 | 0.345 | 0.000 |
+| 1.333 | 28 | 0.118 | 0.128 | 0.000 |
+| 1.483 | 2 | 0.010 | 0.012 | 0.000 |
+| 1.517 | -- | gone | gone | -- |
+
+Worst |covered - asked| 0.016 (Mangyang, 1,834 model pixels) and 0.039 (Earth Ghost, 822); the
+last frame with model pixels at t = 1.483 and the model freed from t = 1.517 (the first 1/60 step
+past 1.5 s); no unfadable piece. The base: gone the frame after the despawn.
+
+**Live** (`/var/tmp/fadeout677/live.sh r1 on`, round 674's harness: this tree's server with
+srrevamp-01's flags -- `-full-map`, `-monster-ai -monster-strike-push -monster-spawn-push
+-monster-battle -player-dead-state -monster-aggro`, the EXTERNAL nest DB -- and `-regions-csv`;
+the GM spawns an Earth Ghost south of Jangan's south gate, strikes it and walks north through the
+gate into the town):
+
+```
+20:40:57.546 server  level=INFO msg="monster removed: it entered a town (_RefRegion IsBattleField 0; CGObjMob::SetCurRegion 0x4c1270 -> SetLifeState 3)" monster=61638 name="Earth Ghost" how="walked in" state=BATTLE target=1 region=97/168 area=Town_Jangan x=0 z=953
+20:40:57.546 wire    {"d":"s2c","op":"0x00b5","v":{"IDs":[61638]}}
+20:40:57.547 client  World3D: monster 61638 fades out over 1.5s (ticks 28334)
+20:40:57.548 client  World3D: 1 monster(s) left the area of interest
+20:40:59.062 client  World3D: monster 61638 faded out and is freed after 1515 ms
+client           World3D: 7495 monster DecayTime row(s) from characterdata column 13 (MOB_CH_MANGNYANG: 5000 ms)
+```
+
+No blow after the removal; her HP climbs back (`QA STATS` 8136 -> 8203 of 8452). The 1515 ms is
+the fade's 1.5 s plus the physics step that passes the end. The client read its tables in GDScript
+(native readers OFF, the lane ships no library).
+
+### 6. Performance gate
+
+`client/tools/perf_gate.sh --sites jangan,mobs` (base 55ca5c8, 1280x720, medians of 3, native
+readers OFF both sides). The first run's jangan runs all completed but the script was stopped by
+the caller's time limit during mobs (another lane's renders overlapped it repeatedly); the jangan
+medians below are taken by hand from its six run lines, and mobs was re-run alone to completion
+(`--sites mobs`, the gate's own table).
+
+| site | number | base 55ca5c8 | head | change | verdict |
+|---|---|---|---|---|---|
+| jangan | frame ms | 11.33 | 10.13 | -1.2 | SAME (runs 12.18/11.33/10.86 vs 9.24/10.47/10.13: drift) |
+| jangan | entry ms | 9,723 | 9,562 | -161 | SAME |
+| jangan | freeze ms | 3,427 | 3,420 | -7 | SAME |
+| jangan | hitches | 5 | 5 | 0 | SAME |
+| mobs | frame ms | 11.15 | 11.03 | -0.1 | SAME |
+| mobs | entry ms | 10,463 | 10,582 | +119 | SAME |
+| mobs | freeze ms | 3,397 | 3,396 | -1 | SAME |
+| mobs | hitches | 5 | 5 | 0 | SAME |
+
+The DecayTime table is one more pass over characterdata at load (GDScript here, the native
+`char_decay_by_code` on a player's build); inside the noise of the entry.
+
+### 7. OPEN
+
+- The corpse's time is the client's (the server drops a dead monster at once); a server-sent
+  removal at DecayTime would put it on the server's clock.
+- What retail's click does with a fading body (it is still in the pick list, with id 0).
+- Whether retail's mover runs on during the 1.5 s (ours stops and stands).
+- The CICMonster +0x7b0 0 s branch: which monster (`DAT_00ef1a7c`, CGame+0x4f8[3]).
+- A ground item's name during its fade (ours hides it); a pickup as 0x3016 (INFERRED).
+- CICUser modes 4/6/7 leave at once in retail; this client has no such modes for other players.
+- Shadows and effects under the fade (as round 676).
+
 ## Six-hundred-and-seventy-sixth round: monsters and other players fade into existence over 2.0 s, as retail's CIDecoAppear fades them, instead of popping in
 
 The user (2026-10-01): "Also another fix, mobs seem to fade in existence not pop. Check the

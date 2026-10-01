@@ -1096,6 +1096,11 @@ var _pending_skill_id := 0
 ## reach band's base (CombatNet.approach_band). Filled in
 ## _load_character_assets; empty without Media.pk2.
 var _bc_radius_by_code: Dictionary = {}
+## characterdata code name -> DecayTime, ms (NpcTableReader.COL_DECAY_TIME),
+## for the monster rows (MOB_): how long a corpse lies before it fades out
+## (round 677, _monster_corpse_seconds). Filled in _load_character_assets;
+## empty without Media.pk2.
+var _monster_decay_ms_by_code: Dictionary = {}
 ## An attack waiting for the walk into reach: {"monster": id, "skill": skill
 ## id (0 = a plain swing), "code": Basic_Code, "stop", "reach"} -- the band
 ## CombatNet.approach_band gave when it was asked for -- plus "tight" (release
@@ -5188,6 +5193,9 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	for monster_id in _monster_bodies.keys():
 		_monster_bodies[monster_id].queue_free()
 	_monster_bodies.clear()
+	# And any body still fading out of the old zone (round 677): gone now,
+	# not left fading at its old-zone spot.
+	_appear_fades.free_out_now()
 	# Their snapshots too (round 638 review): the old zone's monsters are no
 	# one's target here; the list below refills it. And any body still
 	# queued or waiting for its region (round 655).
@@ -5793,7 +5801,9 @@ func _tick_map_animations() -> void:
 ## monster id -> the assembled character behind its body, for playing its
 ## own hit and death animations by type.
 var _monster_assembled: Dictionary = {}
-## monster id -> the _idle_anim_time until which its death animation runs.
+## monster id -> the _idle_anim_time until which its death animation runs --
+## since round 677, until its corpse fades out: its species' DecayTime from
+## the death when known (_monster_corpse_seconds), else the clip's end.
 var _dying_until: Dictionary = {}
 
 ## Every NPC the client knows how to place, grouped by region, and the
@@ -7614,12 +7624,15 @@ func _load_character_assets() -> void:
 			bodies = NpcTableReader.parse_models_by_code(bytes, bodies)
 			speeds = NpcTableReader.parse_speeds_by_code(bytes, speeds)
 			_bc_radius_by_code = NpcTableReader.parse_bc_radius_by_code(bytes, _bc_radius_by_code)
+			_monster_decay_ms_by_code = NpcTableReader.parse_decay_by_code(bytes, _monster_decay_ms_by_code)
 			_country_by_code = NpcTableReader.parse_country_by_code(bytes, _country_by_code)
 	# Every row's BCRadius (column 50), for the attack approach: the player's
 	# body and the monsters' species both feed the reach band.
 	print("World3D: %d BCRadius row(s) from characterdata column 50 (%s: %s)" % [
 		_bc_radius_by_code.size(), GENDER_BODY_CODE[DEFAULT_GENDER],
 		str(_bc_radius_by_code.get(GENDER_BODY_CODE[DEFAULT_GENDER], "none"))])
+	print("World3D: %d monster DecayTime row(s) from characterdata column 13 (MOB_CH_MANGNYANG: %s ms)" % [
+		_monster_decay_ms_by_code.size(), str(_monster_decay_ms_by_code.get("MOB_CH_MANGNYANG", "none"))])
 	# The player's run speed is the body row's own (column 47), the number the
 	# server moves the character by; see NpcTableReader.COL_SPEED_RUN.
 	var player_speeds: Array = speeds.get(GENDER_BODY_CODE[DEFAULT_GENDER], [])
@@ -14006,7 +14019,11 @@ func _on_entity_left(character_id: int) -> void:
 			if child is Label3D:
 				departing_name = child.text
 				break
-		body.queue_free()
+		# They fade out over 1.5 s (round 677; READ: CICUser's vslot 0x4c,
+		# 0x9daf10, ends in IGIDObject::FUN_009c32f0's CIDecoDisappear -- but
+		# for its modes 4/6/7, which this client does not draw), no longer
+		# their body: coming back is a fresh body fading in.
+		_fade_out_body(body)
 		_other_bodies.erase(character_id)
 		_other_body_targets.erase(character_id)
 		_log_system("%s left the zone." % departing_name)
@@ -15882,7 +15899,8 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 ## world (_exit_tree). Kept across zone changes, like _npc_model_cache.
 var _monster_templates := MonsterDraw.Templates.new()
 ## Bodies fading into existence (round 676, AppearFade): every monster body
-## built and every other player's body, stepped in _physics_process.
+## built and every other player's body; and bodies fading out of it (round
+## 677, _fade_out_body), which free themselves. Stepped in _physics_process.
 var _appear_fades := AppearFade.Fades.new()
 ## How a template is assembled: the model's own `.bsr` out of Data.pk2. A
 ## Callable so the headless test can hand it a synthetic model.
@@ -16032,11 +16050,30 @@ func _monster_cells_changed() -> void:
 ## body (not the snapshot): the list's removal, a region unloading, a death
 ## played out. `keep_buffs` (a region unloading: the monster lives on) keeps
 ## the buffs the zone told of it, so the rebuilt body's auras come back
-## (_fx_resync_owner).
-func _free_monster_body(monster_id: int, keep_buffs: bool = false) -> void:
+## (_fx_resync_owner). `fade` (round 677: a despawn -- the monster left the
+## area, entered a town, or its corpse's time ran out) hands the body to
+## _fade_out_body instead of freeing it: it fades over 1.5 s and frees
+## itself, no longer this monster's body.
+func _free_monster_body(monster_id: int, keep_buffs: bool = false, fade: bool = false) -> void:
 	var body = _monster_bodies.get(monster_id)
 	if body != null and is_instance_valid(body):
-		(body as Node).queue_free()
+		if fade:
+			if monster_id == _last_attack_target:
+				# The target window closes as the fade starts. INFERRED: retail
+				# takes the object out of its id hash and zeroes its id at once
+				# (IGIDObject::FUN_009c3270), so nothing names it any more.
+				_clear_target()
+				_last_attack_target = -1
+				_target_buff_book.drop(_fx_owner_key(monster_id, SkillNet.OWNER_MONSTER))
+			if not _pending_attack.is_empty() and int(_pending_attack["monster"]) == monster_id:
+				_drop_pending_attack()
+			# It stops where it is (OURS: whether retail's mover runs on for
+			# the 1.5 s was not read).
+			if _monster_motion.has(monster_id) and bool((_monster_motion[monster_id] as Dictionary).get("moving", false)):
+				_set_monster_gait(monster_id, BsrReader.AnimationEntry.TYPE_STAND)
+			_fade_out_body(body as Node3D)
+		else:
+			(body as Node).queue_free()
 	_monster_bodies.erase(monster_id)
 	SkillEffects.detach_owner(_fx_owner_key(monster_id, 1))
 	if not keep_buffs:
@@ -16048,12 +16085,44 @@ func _free_monster_body(monster_id: int, keep_buffs: bool = false) -> void:
 	_strike_waits.erase(monster_id)
 
 ## Forgets a monster entirely: its body, its snapshot and any queued or
-## deferred build.
-func _forget_monster(monster_id: int) -> void:
-	_free_monster_body(monster_id)
+## deferred build. `fade`: its body fades out (_free_monster_body).
+func _forget_monster(monster_id: int, fade: bool = false) -> void:
+	_free_monster_body(monster_id, false, fade)
 	_monster_snapshots.erase(monster_id)
 	_monster_deferred.erase(monster_id)
 	_monster_build_queued.erase(monster_id)
+
+## A body leaving the world fades out (round 677, AppearFade.Fades.start_out;
+## READ: a despawn makes a 1.5 s CIDecoDisappear, docs/protocol/appear_fade.md)
+## and frees itself when the fade ends. From here it is nobody's body: the
+## caller has dropped it from its map (retail's FUN_009c3270 takes the
+## object out of the id hash before the deco starts), so the same id coming
+## back is a fresh body fading in beside this one fading out, as in retail.
+## Its click collider goes now, so it cannot be picked or attacked (OURS;
+## READ only that its id is zeroed -- what retail's pick, FUN_0078ee20,
+## does with a fading body it still lists is OPEN). Its name plate and party
+## mark stay as they are until it is freed: retail draws the name while the
+## object exists, at full alpha (FUN_009d20d0 -> FUN_009d0a80, no id test;
+## the deco never touches it). Its effects (buff auras) are detached by the
+## caller (READ: vslot 0x3c(1, 0) -> FUN_009ccf50 stops the object's
+## attached list at the despawn).
+func _fade_out_body(body: Node3D) -> void:
+	if body == null or not is_instance_valid(body) or body.is_queued_for_deletion():
+		return
+	for c in body.get_children():
+		if c is CollisionObject3D:
+			(c as CollisionObject3D).collision_layer = 0
+			c.queue_free()
+	if not _mob_logging():
+		_appear_fades.start_out(body)
+		return
+	var what := "monster %d" % int(body.get_meta("monster_id")) if body.has_meta("monster_id") \
+		else "player %d" % int(body.get_meta("character_id")) if body.has_meta("character_id") \
+		else "ground item %d" % int(body.get_meta("ground_item_id", -1))
+	var started_ms := Time.get_ticks_msec()
+	print("World3D: %s fades out over %.1fs (ticks %d)" % [what, AppearFade.DISAPPEAR_SECONDS, started_ms])
+	_appear_fades.start_out(body, AppearFade.DISAPPEAR_SECONDS, func(_m: Node) -> void:
+		print("World3D: %s faded out and is freed after %d ms" % [what, Time.get_ticks_msec() - started_ms]))
 
 ## A click-target collider for a monster: a capsule as tall as the model,
 ## on the monster layer only, so a ray can pick it out for an attack while
@@ -16216,7 +16285,9 @@ func _on_ground_item_spawned(snap: GroundItemsNet.Snapshot) -> void:
 func _on_ground_item_removed(removed: GroundItemsNet.Removed) -> void:
 	if _ground_items == null:
 		return
-	_ground_items.remove(removed.id)
+	# It fades out over 1.5 s (round 677; READ: CIItem's vslot 0x4c,
+	# 0x9e21c0, makes the same 1.5 s CIDecoDisappear on a despawn).
+	_ground_items.remove(removed.id, _fade_out_body)
 	if _pending_pickup_id == removed.id:
 		_pending_pickup_id = -1
 	print("World3D: ground item %d gone (%s)" % [removed.id,
@@ -16423,30 +16494,20 @@ func _on_monster_list_result(monsters: Array, error: String) -> void:
 		_qa_goto_from_list(goto_plan)
 
 ## Monsters that left the player's area of interest (round 656,
-## OP_MONSTER_LEFT): each body goes as _sync_monster_bodies drops one the list
-## no longer names -- a body still playing its death is left to finish -- and
-## the monster leaves the list the panel shows.
+## OP_MONSTER_LEFT) or were removed by the server -- a monster entering a
+## town (round 674, session/safezone.go) is told the same way: each body
+## fades out over 1.5 s and frees itself (round 677, _fade_out_body; READ:
+## retail's despawn 0x3016 makes a CIDecoDisappear), and the monster leaves
+## the list the panel shows. A corpse still lying there fades too: retail's
+## corpse leaves through the same despawn. A monster listed but not built
+## yet (queued, or waiting for its region) is forgotten, so no body is built
+## for it later.
 func _on_monster_left(ids: Array) -> void:
 	var gone := {}
 	for id in ids:
 		gone[int(id)] = true
-	var live_ids := {}
-	for monster_id in _monster_bodies.keys():
-		if not gone.has(monster_id):
-			live_ids[monster_id] = true
 	for monster_id in gone.keys():
-		if not _monster_bodies.has(monster_id) or not MonsterBodies.should_free(monster_id, live_ids, _dying_until, _idle_anim_time):
-			continue
-		_monster_bodies[monster_id].queue_free()
-		_monster_bodies.erase(monster_id)
-		SkillEffects.detach_owner(_fx_owner_key(monster_id, 1))
-		_fx_owner_buffs.erase(_fx_owner_key(monster_id, 1))
-		_monster_assembled.erase(monster_id)
-		_dying_until.erase(monster_id)
-		_monster_motion.erase(monster_id)
-		_monster_heights_pending.erase(monster_id)
-		_strike_waits.erase(monster_id)
-		_monster_snapshots.erase(monster_id)
+		_forget_monster(monster_id, true)
 	var kept: Array[CombatNet.MonsterSnapshot] = []
 	for m in _monsters:
 		if not gone.has(m.monster_id):
@@ -18739,27 +18800,64 @@ func _begin_monster_death(monster_id: int) -> void:
 	# its own wait (the timer holds it), and nothing newer will come.
 	_strike_waits.erase(monster_id)
 	var seconds := _play_monster_action(monster_id, BsrReader.AnimationEntry.TYPE_DIE, true)
-	if seconds > 0.0:
+	# The corpse lies for its species' DecayTime from the death, then fades
+	# out (round 677, _monster_corpse_seconds); with no DecayTime known, for
+	# its die clip, as before.
+	var decay := _monster_corpse_seconds(monster_id)
+	var hold := decay if decay > 0.0 else seconds
+	var has_body: bool = dying_body != null and is_instance_valid(dying_body)
+	if hold > 0.0 and has_body:
 		# The hold restarts from the clip's real start, replacing the killer's
 		# predicted one (MonsterBodies.hold_for_kill).
-		_dying_until[monster_id] = _idle_anim_time + seconds
-		get_tree().create_timer(seconds).timeout.connect(_finish_monster_death.bind(monster_id))
+		_dying_until[monster_id] = _idle_anim_time + hold
+		get_tree().create_timer(hold).timeout.connect(
+			_finish_monster_death.bind(monster_id, (dying_body as Node).get_instance_id()))
 	else:
-		# Nothing to watch (no die clip, a capsule, a monster with no body):
-		# it goes now. Until round 655 a fresh list removed it.
+		# Nothing to watch (no die clip and no DecayTime, a capsule, a monster
+		# with no body): it goes now. Until round 655 a fresh list removed it.
 		_finish_monster_death(monster_id)
-	print("World3D: monster %d dies, holding %.2fs t=%.2f" % [monster_id, seconds, _idle_anim_time])
+	print("World3D: monster %d dies, holding %.2fs (clip %.2fs, corpse %.2fs) t=%.2f" % [
+		monster_id, hold if has_body else 0.0, seconds, decay, _idle_anim_time])
 
-## A dead monster's clip has run (or it had none): its body and snapshot go.
-## The server has already dropped it -- a respawn is a new monster with a new
-## id (cmd/server maintainMonster) -- so no list is asked for (round 655).
-func _finish_monster_death(monster_id: int) -> void:
+## How long a dead monster's corpse lies before it is removed, seconds: its
+## species' DecayTime (characterdata column 13, ms; _monster_decay_ms_by_code),
+## or 0 when not known (no Media.pk2, no row, no snapshot). READ, the server:
+## while a character's life state is 2 (dead), `CGObj::Update` (0x484d10,
+## slot 211, reached from CGObjMob::Update -> CGObjChar::Update ->
+## CGObjMobile::Update) adds each tick's seconds to +0x3c and, once they
+## reach the float at ref+0x84 -- DecayTime, kept in seconds (round 227,
+## docs/protocol/refobj_binary_format.md) -- calls slot 218 (0x484cf0:
+## SetLifeState(3)); the main loop (CMainProcess::FUN_00413b30) deletes a
+## state-3 non-player through FUN_00417090, whose leave-world sends the
+## despawn 0x3016 (docs/protocol/appear_fade.md). So in retail the corpse
+## lies DecayTime from the death and then fades over 1.5 s. OURS: this
+## server drops a monster at its death and sends no despawn, so the client
+## times the corpse itself, from when it learns of the death (the zone's
+## died push, or the killing blow landing for the killer).
+func _monster_corpse_seconds(monster_id: int) -> float:
+	var snap = _monster_snapshots.get(monster_id)
+	if snap == null:
+		return 0.0
+	return float(int(_monster_decay_ms_by_code.get(String(snap.code_name), 0))) / 1000.0
+
+## A dead monster's corpse time has run (or it had no hold): its body fades
+## out (round 677; READ, the despawn retail's server sends at the corpse's
+## DecayTime makes a CIDecoDisappear) and its snapshot goes. The server has
+## already dropped it -- a respawn is a new monster with a new id (cmd/server
+## maintainMonster) -- so no list is asked for (round 655). `body_id`, from
+## the hold's timer: the body that died; a different body under the same id
+## by then (a fade-out and a fresh spawn) is not this death's to remove.
+func _finish_monster_death(monster_id: int, body_id: int = 0) -> void:
 	if not _monster_bodies.has(monster_id) and not _monster_snapshots.has(monster_id):
 		return
 	var had_body := _monster_bodies.has(monster_id)
-	_forget_monster(monster_id)
+	if body_id != 0 and had_body:
+		var now_body = _monster_bodies[monster_id]
+		if now_body == null or not is_instance_valid(now_body) or (now_body as Node).get_instance_id() != body_id:
+			return
+	_forget_monster(monster_id, true)
 	if had_body:
-		print("World3D: monster %d body removed t=%.2f" % [monster_id, _idle_anim_time])
+		print("World3D: monster %d corpse fades out t=%.2f" % [monster_id, _idle_anim_time])
 	_maybe_pull_after_death()
 
 ## A server that sends no spawn push (-monster-spawn-push off, the default)

@@ -1284,8 +1284,12 @@ on srrevamp-01 (`deploy/README.md`, "Towns"). Left:
 - [ ] **Whether the nest counts a removal as a loss** (INFERRED yes: srrevamp re-arms the nest as
       for a death). The engine's hook, `AI::CNest::OnHatchedRemoved` 0x560d00, still has no caller
       found.
-- [ ] **What the players are sent** for a removal: srrevamp sends `OpMonsterLeft` (OURS); retail's
-      deletion path (FUN_00417090 onward) was not followed to its block removal (`0x3016`, INFERRED).
+- [x] **What the players are sent** for a removal (round 677, READ): the despawn `0x3016`.
+      `FUN_00417090` -> `FUN_00489fc0` -> slot 0x354 (`CGObjMob::ReleaseAndClear` 0x4c0eb0) -> slot
+      0x358 (0x4c10b0 -> `CGObjChar::vslot_214` -> `CGObj::vslot_214` 0x484a80) -> slot 0x364 (the
+      leave-world 0x485150) -> slot 0x3b0(0, 0, 0) (0x4c1e00 -> 0x485bb0) -> the block's slot 3
+      (0x5344b0) -> `FUN_00534050`, `0x3016` with the object's id to the nine blocks' players. The
+      client fades it out over 1.5 s; srrevamp's `OpMonsterLeft` now draws the same fade.
 - [ ] **A monster whose leg ends exactly on a z region line** is checked only at its next cell
       crossing (OURS: the cell index files the line on the field side, worldmap.FromWorld on the
       town side). Immaterial in play.
@@ -2325,11 +2329,29 @@ attack result. `SRREVAMP_QA_MOBS=<N>` and the perf gate's `mobs` site measure it
 
 ### Characters fade into existence (round 676) — **built: monsters and other players fade in over 2.0 s, linear, as retail's CIDecoAppear (READ; docs/protocol/appear_fade.md); these are left**
 
-- [ ] **The despawn fade-out is not drawn.** Retail fades a despawned object (0x3016, the group
-      despawn) out over 1.5 s with `CIDecoDisappear` and deletes it after (READ). Ours removes a
-      monster's body at once when its death clip ends, the list drops it or it leaves the area of
-      interest, and another player's when they leave. Drawing it means keeping the body (without
-      its collider, target and list entry) for 1.5 s after it is forgotten.
+- [x] **The despawn fade-out** (round 677): built. A monster that leaves the area or enters a
+      town (`OpMonsterLeft`), another player who leaves, a ground item taken away, and a dead
+      monster once its corpse's DecayTime has run fade out over 1.5 s (`CIDecoDisappear`, READ)
+      and free themselves; docs/protocol/appear_fade.md. Left from it:
+  - [ ] **The corpse's time is the client's.** Retail's server keeps a dead monster in life
+        state 2 until `CGObj::Update` (0x484d10) finds its dead time past its DecayTime
+        (characterdata column 13; 5 s for most monsters), then deletes it and sends `0x3016`
+        (READ). srrevamp's server drops the monster at its death and sends nothing more, so the
+        client holds the corpse for the species' DecayTime from when it learns of the death and
+        fades it then (OURS). A server-sent removal would put it on the server's clock.
+  - [ ] **The CICMonster +0x7b0 branch** (a 0 s fade-out for the monster whose ref is the id at
+        `DAT_00ef1a7c`, CGame+0x4f8[3] looked up by `FUN_0093f710`): which monster that is, not read.
+  - [ ] **What a click on a fading body does.** Retail's pick (`FUN_0078ee20`) walks the
+        CIGIDObject class list, which keeps the object until it is deleted, so a fading body can
+        still be hit; its id is 0 by then (`FUN_009c3270`). Ours drops the click collider at the
+        start (OURS).
+  - [ ] **Whether retail's mover runs on during the fade.** Ours stops a walking body where it
+        is and stands it (OURS).
+  - [ ] **A ground item's name** while it fades: ours hides it (OURS); not read. And that a
+        pickup reaches the client as `0x3016` is INFERRED (the item leaves its block as any
+        object does; the pickup path was not followed).
+  - [ ] **CICUser modes 4/6/7** leave at once in retail (0x9daf10 passes 1); this client has no
+        such modes for other players yet.
 - [ ] **Shadow and effects** are not faded. Retail writes the alpha to the model's compound
       (`CCompChar` +0x4c) only; who reads it in the draw is not read. (The name plate stays at
       full alpha in retail: `FUN_008b4d90(point, 0xff)`, READ in round 673.)

@@ -24,14 +24,53 @@ So monsters, NPCs, guards, pets and other players all fade in over the same 2.0 
 spawn -- a single spawn and a group spawn alike, a fresh spawn and an object entering view alike
 (there is no separate path). Ground items pop in.
 
-## The disappear fade (READ)
+## The disappear fade (READ, round 677)
 
 | What | Where | Detail |
 |---|---|---|
-| Despawn | `FUN_008a6cc0` (0x3016); group despawn `FUN_008a6d20` type 2 | Looks the object up and tail-calls its vslot 0x4c with 0. |
-| Remove | `IGIDObject::FUN_009c32f0` (base); `FUN_009d3c90` (CICMonster) | With 0 and a model: makes a `CIDecoDisappear` (0x110a790) on its id with [0xd819ec] = **1.5 s** -- or 0 s for a CICMonster whose +0x7b0 is set (set in `CICMonster::vslot_025` when its ref is `DAT_00ef1a7c`; what that is, OPEN). With 1 or no model: deleted at once. |
-| Per frame | `CIDecoDisappear::vslot_009` (0xa49a30) | Starts at 255.0 (float 0xd85284), alpha -= 255 / duration x dt; while >= 0 sets it; below 0 deletes the deco **and the object**. For a character it also fades the object `FUN_009ce930` / `FUN_009ce910` return (a ridden or linked object, INFERRED). |
-| Items | `CIItem::vslot_019` (0x9e21c0) | 1.5 s; `CIItem::FUN_009e1670` 1.8 s (float 0xdd81e8; which removal, OPEN). |
+| Despawn | `FUN_008a6cc0` (0x3016) | Reads the id, looks the object up (`IGIDObject::FUN_009c31a0`) and tail-calls its vslot 0x4c with 0. (Its test against the player's own id only logs, `FUN_0049d640`: "My Player ... destroy".) |
+| Group despawn | `FUN_008a6d20`, type byte 2 | A count, then `FUN_008a6cc0` per id: the same path. |
+| Remove | `IGIDObject::FUN_009c32f0` (base; CICNPC's vslot 0x4c is a thunk to it); `FUN_009d3c90` (CICMonster); `CICCos::vslot_019` 0x9c66e0; `CIItem::vslot_019` 0x9e21c0 | vslot 0x3c(1, 0) first (for a CICMonster `FUN_009d3e70` -> `FUN_009cf1b0` case 1 -> `FUN_009ccf50`, which calls vslot 8(1) on each entry of the object's list at +0x288 and empties it -- INFERRED its attached effects); then `IGIDObject::FUN_009c3270`: the object leaves the game-id hash `g_sHashGID` and its id +0xf8 becomes 0. With 0 and a model (`+0x9c`, its `+4`): `FUN_00ba36d0(0x110a790)` makes a `CIDecoDisappear`, initialised on the object's entity id (+0x30) with the float at **0xd819ec = 1.5 s** -- or 0 s for a CICMonster (`FUN_00b94b70(0xef1a84)`, the runtime class registered at 0xd764ab with the name string 0xde281c `CICMonster`) whose +0x7b0 is set. With 1, or no model: deleted at once (`entitymanager::FUN_00ba3770`). CICMonster and CICCos also fade the object `FUN_009ce930` returns when `+0x728`'s +0x24 is set (a linked object, INFERRED). |
+| Players | CICUser vslot 0x4c, 0x9daf10 | Passes **1** (no fade) when its byte +0x2c2 is 4, 6 or 7 (the setter `FUN_009cf880` writes alpha 0x50 for mode 4 -- INFERRED a stealth mode), else `FUN_009c3580(+0x110)` and the base with 0: the 1.5 s fade. |
+| Init | `CIDecoDisappear::FUN_00a49970` | +0x54 alpha = **255.0** (float 0xd85284); +0x5c target entity id; +0x58 rate = 255.0 (double 0xd83108) / duration. |
+| Per frame | `CIDecoDisappear::vslot_009` (0xa49a30) | alpha -= rate x dt (the float at 0x110f7fc, as the appear). While alpha >= 0 (asm 0xa49aaa: `fcomp` with 0, `test ah, 0x41`) the model's `CCompChar` vslot 5 gets it **truncated**, & 0xff (asm 0xa49ab9-0xa49ad4: `fnstcw`, `or eax, 0xc00`, `fldcw`, `fistp` -- the decompiler's `ROUND` is wrong here, as for the appear). Below 0 it deletes itself and the object (`FUN_00ba3770`, asm 0xa49b34-0xa49b71). A target already gone deletes the deco. So **255 at 0, 170 at 0.5 s, 127 at 0.75 s, 85 at 1.0 s, 0 at 1.5 s, gone the frame after. Linear.** |
+| Items | `CIItem::vslot_019` (0x9e21c0) | The same 1.5 s on a despawn. `CIItem::FUN_009e1670` (1.8 s, float 0xdd81e8) is reached only from `CIItem::vslot_005` message 0xff, the end of an item's own 0x101/0x102 timer sequence, not from a despawn. |
+| Other despawns | `FUN_009c2c20` (from 0x84abaf, 0x84b75e) | Walks the id hash calling vslot 0x4c with **1**: every object deleted at once, no fade (a zone change / world reset). `CICScriptObj::vslot_019` 0x9e45d0 and `FUN_009e48c0` make decos for script objects. These are every `CIDecoDisappear` creator (`push 0x110a790` in the asm). |
+
+**Death.** No death path makes a `CIDecoDisappear`. A dead monster stays until the server deletes
+it, and the server's delete is a despawn (READ, SR_GameServer.exe):
+
+- `CGObj::Update` (0x484d10, slot 211; reached from `CGObjMob::Update` 0x4c1700 -> `CGObjChar::Update`
+  0x4a88f0 -> `CGObjMobile::Update` 0x48b8c0): while the life state is 2 it adds the tick's
+  seconds to +0x3c and, once the sum reaches the float at `ref+0x18 -> +0x84` -- the ref record's
+  DecayTime, kept in seconds (round 227) -- calls slot 218 (0x484cf0, `SetLifeState(3)`).
+  (Asm 0x484d3f: `fcompp; test ah, 0x41; jp` -- it fires when DecayTime <= the sum.)
+- The main loop (`CMainProcess::FUN_00413b30`) hands a state-3 non-player to `FUN_00417090`,
+  whose `FUN_00489fc0` releases the object: slot 0x354 (`CGObjMob::ReleaseAndClear` 0x4c0eb0) ->
+  slot 0x358 (0x4c10b0 -> `CGObjChar::vslot_214` 0x4a72e0 -> `CGObjMobile::vslot_214` ->
+  `CGObj::vslot_214` 0x484a80) -> slot 0x364 (0x485150, the leave-world: with the object in a
+  block, slot 0x3b0(0, 0, 0)) -> CGObjMob's slot 0x3b0 (0x4c1e00 -> 0x485bb0) -> the block's
+  slot 3 (`FUN_005344b0`) -> `FUN_00534050`: **0x3016** with the object's id to the players of
+  the block and its 8 neighbours.
+- Monster DecayTime (characterdata column 13, ms; MEASURED over the distinct MOB_ codes of the
+  box's extracted parts, `/var/tmp/characterdata_*.txt`, Service 1): **5000** for 7,459
+  (MOB_CH_MANGNYANG among them), 10000 for 697 (MOB_CH_TIGERWOMAN), 8000 for 6, one each of
+  3000 / 15000 / 30000 / 0. The player bodies read 1000000000. A client reading Media.pk2 takes
+  7,495 MOB_ rows (MEASURED, round 677's live log).
+
+So a monster's corpse lies **DecayTime from its death** (5 s for most) and then fades out over
+1.5 s. A monster removed in a town (`CGObjMob::SetCurRegion` -> `SetLifeState(3)`, round 674)
+goes through the same `FUN_00417090` and so reaches the client as the same despawn: it fades.
+
+**The name plate.** A character's draw (vslot 10, `FUN_009d20d0`) draws the model
+(`FUN_009c4aa0`), its attached effects and the name (`FUN_009d0a80`) with no test of the id or of
+a deco: the name stays, at 0xff, until the object is deleted at the end of the fade. Nothing on
+the despawn path sets the +0xd4 bit 2 that hides it (its setter `FUN_009c4160` is called only by
+script/event objects: 0x51ae40, 0x535750, 0x556370).
+
+**Clicks.** The pick (`FUN_0078ee20`) walks the list at 0xec4ae4 -- `CIGIDObject`'s class link,
+added in its constructor (`FUN_009c1e30` from 0x9c2340) and removed in its destructor -- so a
+fading object can still be hit; its id is 0 by then. What the click does with it is OPEN.
 
 ## What is not read (OPEN)
 
@@ -47,7 +86,7 @@ spawn -- a single spawn and a group spawn alike, a fresh spawn and an object ent
   from its own interpolator at +0x2068 (`FUN_009d4e80`) or 0xff/0x50, so whether it shows a
   spawn fade is not settled.
 
-## This client (round 676, OURS)
+## This client (round 676, OURS; the fade-out round 677)
 
 `client/scripts/world/appear_fade.gd`. Godot 4.2's GL Compatibility renderer ignores
 `GeometryInstance3D.transparency` (MEASURED: a model at 1.0 covered all its pixels), so a fading
@@ -58,3 +97,17 @@ texture's alpha, and a blended duplicate that multiplied it in showed holes mid-
 review, MEASURED in WORLD_ISSUES). The twin shaders are compiled while the world loads (`AppearFade.warm`): with
 empty Godot and Mesa shader caches a monster's first frame took 135-199 ms on its twin, and 30-31
 ms after the warm-up (MEASURED, WORLD_ISSUES round 676, Review).
+
+The fade-out (round 677, `AppearFade.Fades.start_out`) uses the same twins in reverse: the meshes
+take blended twins at alpha 255 (`out_alpha_at`: 255 - 170 x t, truncated), and when the value
+goes below 0 the body is freed (`out_done_at`). A body fading in is put back on its own materials
+first and fades out from 255 (INFERRED: the later deco's write is the one drawn). World3D hands a
+body over with `_fade_out_body`: it leaves the id maps first, so the same id spawning again builds
+a fresh body (as retail's object leaves `g_sHashGID`), loses its click collider (OURS), and keeps
+its name plate and party mark as they are. Paths: `OpMonsterLeft` (leaving the area, or a town
+removal, round 674), `OpEntityLeft` (another player), a ground item's removal, and a dead
+monster's corpse after its species' DecayTime (`World3D._monster_corpse_seconds`; the time is the
+client's, OURS -- this server drops a dead monster at once and sends no despawn). A zone change
+frees every body still fading at once (`Fades.free_out_now`). A monster's list refresh dropping
+it (`_sync_monster_bodies`, mostly a zone change) and a region unloading under a body still free
+it at once (OURS: neither is a despawn).

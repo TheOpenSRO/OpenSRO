@@ -140,6 +140,12 @@ impl SrNativeTables {
         str_ints(tables::char_bc_radius_by_code(data.as_slice(), &prefix.to_string()))
     }
 
+    /// NpcTableReader.parse_decay_by_code (round 677): {keys, values}.
+    #[func]
+    fn char_decay_by_code(&self, data: PackedByteArray, prefix: GString) -> VarDictionary {
+        str_ints(tables::char_decay_by_code(data.as_slice(), &prefix.to_string()))
+    }
+
     /// NpcTableReader.parse_name_keys (and parse_names before its lookup): {ids, values (SN_ keys)}.
     #[func]
     fn char_name_keys(&self, data: PackedByteArray) -> VarDictionary {
