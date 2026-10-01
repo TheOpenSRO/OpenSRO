@@ -16,7 +16,7 @@ OURS, OPEN.
 | The flag | CICharactor +0x770 | 1 in the constructor (`CICharactor::FUN_009d2ad0`, asm 0x9d2e50). Its only setter `FUN_009c7b10` (asm 0x9c7b14) is called with 0 at three places, all objects the client makes itself: a game script's CICUser (0x518514, CGScript), an icscriptobj (0x9e26de), and `FUN_0050f1b0` (0x50f24a). No packet path clears it. |
 | Duration | float 0xd86ecc | **2.0** seconds. |
 | Init | `CIDecoAppear::FUN_00a48a20` | +0x54 alpha = 0; +0x5c target id; +0x58 rate = 255.0 (double 0xd83108) / duration. |
-| Per frame | `CIDecoAppear::vslot_009` (0xa48ae0) | alpha += rate x dt (the float at 0x110f7fc, the frame's elapsed time; that it is in seconds is INFERRED, as BSR_FORMAT.md records for the map objects' fade, which steps by the same float); if alpha <= 255: `SetAlpha(round(alpha) & 0xff)`; else `SetAlpha(0xff)` and the deco deletes itself (`entitymanager::FUN_00ba3770`). A target that is gone also deletes it. **Linear.** |
+| Per frame | `CIDecoAppear::vslot_009` (0xa48ae0) | alpha += rate x dt (the float at 0x110f7fc: the frame's elapsed **seconds**, clamped to 3.0 (float 0xd8adc4), written beside the milliseconds at 0x110f7f8 (clamped to 3000) at 0xba40fb-0xba4136, and set together with it at 0x84c343); if alpha <= 255: `SetAlpha(trunc(alpha) & 0xff)` -- **truncated**: asm 0xa48b5f-0xa48b75 is `fnstcw; or eax, 0xc00` (rounding control = chop); `fldcw; fistp`, MSVC's float-to-int idiom -- so 63 / 127 / 191 at 0.5 / 1.0 / 1.5 s; else `SetAlpha(0xff)` and the deco deletes itself (`entitymanager::FUN_00ba3770`). A target that is gone also deletes it. **Linear.** |
 | SetAlpha | `CCompChar` vslot 5 (0xc25590), vtable 0xe0cd3c | `+0x4c = alpha << 24`. Reached as `(*(obj+0x9c)+4)->vslot 5`, the character's compound model. |
 | Another writer | `FUN_009ce950` | Called from the CICharactor update (`FUN_009d1d60`) for every character but the player's own: sets 0 (invisible), 0x50 (stealth seen) or **0xff** every frame. That the deco's write lands after it in a frame is INFERRED from the fade being visible in play (the user's report, 2026-10-01). |
 
@@ -35,10 +35,14 @@ spawn -- a single spawn and a group spawn alike, a fresh spawn and an object ent
 
 ## What is not read (OPEN)
 
-- Whether the name plate, the HP bar, the shadow or attached effects take the compound's alpha.
-  Only `CCompChar`'s +0x4c is written; who reads it in the draw was not followed far enough
+- Whether the shadow or attached effects take the compound's alpha. (The name plate does not: it
+  is drawn at full alpha, `FUN_008b4d90(point, 0xff)`, READ in round 673.) Only `CCompChar`'s
+  +0x4c is written; who reads it in the draw was not followed far enough
   (`FUN_00aac913` picks a render mode from it: 0xff000000 -> 0x20, 0 -> 0x21; the env-map mod
   `CRTModEnvMap::vslot_004` draws only when it is 0xff000000).
+- NPCs (CICNPC), guards (CICGuard) and pets (CICCos) fade in retail -- their vslot 0x6c is
+  `FUN_009d17e0` -- but this client builds NPCs from the map's data at region load and has no
+  guards or pets yet: none of them fades here.
 - The player's own character: `CICPlayer::vslot_009` (0x9d8d30) writes its alpha every frame
   from its own interpolator at +0x2068 (`FUN_009d4e80`) or 0xff/0x50, so whether it shows a
   spawn fade is not settled.
@@ -48,4 +52,9 @@ spawn -- a single spawn and a group spawn alike, a fresh spawn and an object ent
 `client/scripts/world/appear_fade.gd`. Godot 4.2's GL Compatibility renderer ignores
 `GeometryInstance3D.transparency` (MEASURED: a model at 1.0 covered all its pixels), so a fading
 model draws with blended twins of its materials, shared by every model whose fade started in the
-same frame, and gets its own back at 2.0 s.
+same frame, and gets its own back at 2.0 s. A plain StandardMaterial3D's twin is a small shader
+(`AppearFade.STANDARD_FADE_CODE`) whose alpha is the fade's alone: the opaque original ignores its
+texture's alpha, and a blended duplicate that multiplied it in showed holes mid-fade (round 676's
+review, MEASURED in WORLD_ISSUES). The twin shaders are compiled while the world loads (`AppearFade.warm`): with
+empty Godot and Mesa shader caches a monster's first frame took 135-199 ms on its twin, and 30-31
+ms after the warm-up (MEASURED, WORLD_ISSUES round 676, Review).

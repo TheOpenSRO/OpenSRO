@@ -1284,6 +1284,9 @@ func _ready() -> void:
 	# table, drawn from the same Particles.pk2.
 	BerserkLook.set_archive(_open_particles_pk2_if_set())
 	BerserkLook.warm()
+	# The fade-in's shaders (round 676's review): compiled behind the loading
+	# screen, not on the first monster's frame.
+	print("World3D: warming %d appear-fade shader(s)" % AppearFade.warm(camera_3d))
 	# Known skills' effect files decode on a worker thread when the skill
 	# state arrives, so a first cast does not (round 620 review).
 	NetClient.skill_state_result.connect(func(state) -> void:

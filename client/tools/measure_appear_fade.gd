@@ -26,12 +26,13 @@ extends SceneTree
 ##     --pk2=/opt/sro-files/client/Data.pk2 --media=/opt/sro-files/client/Media.pk2 \
 ##     [--code=MOB_CH_MANGNYANG | --model=mob\\china\\mangnyang.bsr] [--nofade] [--save=<last frame .png>]
 ##
-## --census instead assembles every model a `MOB_` row names and counts its
+## --census instead assembles every model a `MOB_` row names (or the
+## comma-separated --models=) and counts its
 ## surfaces' materials by kind, and how many have no fade twin
 ## (AppearFade.fade_twin returns null: that piece would pop in).
 
 const STEP := 1.0 / 60.0
-const BEFORE_FRAMES := 3
+const BEFORE_FRAMES := 6
 const AFTER_SECONDS := 2.5
 const MASK_THRESHOLD := 8
 
@@ -46,6 +47,7 @@ var _nofade := false
 var _frame := 0
 var _done := false
 var _shaders := {}
+var _usec: Array[int] = []
 
 func _arg(flag: String) -> String:
 	for a in OS.get_cmdline_user_args():
@@ -106,6 +108,10 @@ func _initialize() -> void:
 	cam.look_at_from_position(Vector3(0.0, height * 0.5, height * 2.2), Vector3(0.0, height * 0.5, 0.0))
 	cam.current = true
 	root.add_child(cam)
+	# --warm: World3D's loading-time warm-up (AppearFade.warm) in the frames
+	# before the model.
+	if OS.get_cmdline_user_args().has("--warm"):
+		print("MEASURE warming %d fade shader(s) before the model" % AppearFade.warm(cam))
 	RenderingServer.frame_post_draw.connect(_on_drawn)
 
 func _process(_delta: float) -> bool:
@@ -130,6 +136,7 @@ func _on_drawn() -> void:
 	var img := root.get_texture().get_image()
 	img.convert(Image.FORMAT_RGB8)
 	_frames.append(img)
+	_usec.append(Time.get_ticks_usec())
 	var a := -1
 	var t := -1.0
 	if _added_at >= 0:
@@ -175,6 +182,8 @@ func _report() -> void:
 		print("MEASURE FAIL: the model drew no pixels")
 		return
 	var worst := 0.0
+	var at_one := BEFORE_FRAMES + int(round(1.0 / STEP))
+	var at_two := BEFORE_FRAMES + int(round(AppearFade.APPEAR_SECONDS / STEP))
 	for k in range(BEFORE_FRAMES - 1, _frames.size()):
 		var f: Image = _frames[k]
 		var s := 0.0
@@ -188,6 +197,50 @@ func _report() -> void:
 		var t := (k - BEFORE_FRAMES) * STEP if k >= BEFORE_FRAMES else 0.0
 		print("MEASURE frame %3d t=%.3f asked alpha %3d (%.3f) drawn alpha %.3f -> covered %.3f" % [
 			k, t, maxi(_alphas[k], 0), asked, _transp[k], cover])
+		if k == at_one:
+			# Holes: model pixels showing under half the asked share of their
+			# own opaque colour -- a texture alpha multiplied into the fade.
+			var holes := 0
+			for p in mask:
+				var b := bg.get_pixel(p.x, p.y)
+				var c := f.get_pixel(p.x, p.y)
+				var o := last.get_pixel(p.x, p.y)
+				var own := absf(o.r - b.r) + absf(o.g - b.g) + absf(o.b - b.b)
+				var got := absf(c.r - b.r) + absf(c.g - b.g) + absf(c.b - b.b)
+				if own > 0.0 and got / own < asked * 0.5:
+					holes += 1
+			print("MEASURE holes at t=%.3f: %d of %d model pixels (%.1f%%) show under half the asked alpha" % [
+				t, holes, mask.size(), 100.0 * holes / mask.size()])
+	# The twin at alpha 255 (the fade's last frame) against the opaque model.
+	if at_two < _frames.size():
+		var twin_frame: Image = _frames[at_two]
+		var differ := 0
+		var most := 0.0
+		for p in mask:
+			var c := twin_frame.get_pixel(p.x, p.y)
+			var o := last.get_pixel(p.x, p.y)
+			var d := maxf(maxf(absf(c.r - o.r), absf(c.g - o.g)), absf(c.b - o.b)) * 255.0
+			most = maxf(most, d)
+			if d > 2.0:
+				differ += 1
+		print("MEASURE the twin at alpha %d (frame %d) against the opaque model: %d of %d model pixels differ by more than 2/255, the most by %.0f" % [
+			_alphas[at_two], at_two, differ, mask.size(), most])
+	# Frame times: the first frame with the model draws its meshes, textures
+	# and shaders for the first time; --nofade gives the same frame without
+	# the fade's shaders.
+	var first := (_usec[BEFORE_FRAMES] - _usec[BEFORE_FRAMES - 1]) / 1000.0
+	var longest := 0.0
+	var longest_k := -1
+	for k in range(BEFORE_FRAMES, _usec.size()):
+		var ms := (_usec[k] - _usec[k - 1]) / 1000.0
+		if ms > longest:
+			longest = ms
+			longest_k = k
+	var before := 0.0
+	for k in range(1, BEFORE_FRAMES):
+		before = maxf(before, (_usec[k] - _usec[k - 1]) / 1000.0)
+	print("MEASURE frame time: the longest before the model %.1f ms; the model's first frame %.1f ms; the longest from then %.1f ms (frame %d)" % [
+		before, first, longest, longest_k])
 	var opaque_back := true
 	for mi in AppearFade.instances_of(_model):
 		if mi.has_meta(AppearFade.ORIGINAL_META) or (mi.material_override is BaseMaterial3D and (mi.material_override as BaseMaterial3D).transparency != BaseMaterial3D.TRANSPARENCY_DISABLED) \
@@ -201,10 +254,15 @@ func _census(data: Pk2Reader, models: Dictionary) -> void:
 	for code in models:
 		if String(code).begins_with("MOB_"):
 			paths[models[code]] = true
+	if _arg("--models") != "":
+		paths = {}
+		for p in _arg("--models").split(",", false):
+			paths[p] = true
 	var keys := paths.keys()
 	keys.sort()
 	var kinds := {}
 	var no_twin := 0
+	var plain := 0
 	var assembled := 0
 	for p in keys:
 		var a := SkinnedBsrAssembler.assemble_from_archive(data, String(p), true)
@@ -225,6 +283,28 @@ func _census(data: Pk2Reader, models: Dictionary) -> void:
 				kinds[k] = int(kinds.get(k, 0)) + 1
 				if m == null or AppearFade.fade_twin(m) == null:
 					no_twin += 1
+				if AppearFade.is_plain_standard(m):
+					plain += 1
+				# Texture alpha under a StandardMaterial3D: the opaque draw
+				# ignores it; a blended twin that multiplied it in would not.
+				if m is StandardMaterial3D and (m as StandardMaterial3D).albedo_texture != null:
+					var img := (m as StandardMaterial3D).albedo_texture.get_image()
+					if img != null:
+						img = img.duplicate() as Image
+						img.decompress()
+						img.convert(Image.FORMAT_RGBA8)
+						var texels := img.get_data()
+						var total := 0.0
+						var low := 0
+						var n := texels.size() / 4
+						for i in range(n):
+							var av := texels[i * 4 + 3]
+							total += av / 255.0
+							if av < 128:
+								low += 1
+						if total / n < 0.999:
+							print("CENSUS texture alpha %s %s: mean %.3f, %.1f%% of texels under 0.5" % [
+								String(p), (m as StandardMaterial3D).albedo_texture.resource_name, total / n, 100.0 * low / n])
 		a.skeleton.free()
-	print("CENSUS %d monster models assembled (of %d the MOB_ rows name): surfaces by material %s; with no fade twin: %d" % [
-		assembled, keys.size(), str(kinds), no_twin])
+	print("CENSUS %d models assembled (of %d): surfaces by material %s; plain StandardMaterial3D (the STANDARD_FADE_CODE twin): %d; with no fade twin: %d" % [
+		assembled, keys.size(), str(kinds), plain, no_twin])

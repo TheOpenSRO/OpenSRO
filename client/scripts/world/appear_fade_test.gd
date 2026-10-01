@@ -14,8 +14,11 @@ extends SceneTree
 ## AppearFade is reached through load(), not its class name, so the suite
 ## runs -- and prints its FAIL lines -- on a client without it.
 ##
-## NEGATIVE, on the base (dev 4104a11): no AppearFade, and a monster's or a
-## player's body is drawn opaque the frame it is built -- it pops in.
+## NEGATIVES: on the base (dev 4104a11), no AppearFade, and a monster's or a
+## player's body is drawn opaque the frame it is built -- it pops in. On the
+## round's first commit (555cfc0, its review): the alpha rounded where retail
+## truncates (64/128 for 63/127), a StandardMaterial3D's twin multiplying in
+## its texture's alpha, and a stale berserk copy taken as a piece's own.
 
 const AF_PATH := "res://scripts/world/appear_fade.gd"
 
@@ -44,6 +47,8 @@ func _initialize() -> void:
 		_test_taken_over()
 		_test_mod_shader_twin()
 		_test_unknown_shader()
+		_test_other_standard()
+		await _test_warm()
 	var world := _make_world()
 	if world != null:
 		await _test_world_monster(world)
@@ -96,8 +101,8 @@ func _test_curve() -> void:
 	_check(AF.APPEAR_SECONDS == 2.0, "the fade-in takes 2.0 s (READ, float 0xd86ecc)")
 	_check(AF.DISAPPEAR_SECONDS == 1.5, "the despawn fade-out is 1.5 s (READ, float 0xd819ec)")
 	_check(AF.alpha_at(0.0) == 0, "alpha 0 at t = 0")
-	_check(AF.alpha_at(0.5) == 64, "alpha 64 at 0.5 s (63.75 rounded)")
-	_check(AF.alpha_at(1.0) == 128, "alpha 128 at 1.0 s, half way (127.5 rounded)")
+	_check(AF.alpha_at(0.5) == 63, "alpha 63 at 0.5 s (63.75 truncated: READ, rounding control chop at 0xa48b68)")
+	_check(AF.alpha_at(1.0) == 127, "alpha 127 at 1.0 s, half way (127.5 truncated)")
 	_check(AF.alpha_at(1.5) == 191, "alpha 191 at 1.5 s")
 	_check(AF.alpha_at(2.0) == 255, "alpha 255 at 2.0 s")
 	_check(AF.alpha_at(9.0) == 255, "and 255 after")
@@ -105,9 +110,9 @@ func _test_curve() -> void:
 	var linear := true
 	for i in range(1, 200):
 		var t := float(i) / 100.0
-		if absi(AF.alpha_at(t) - int(round(127.5 * t))) > 0:
+		if absi(AF.alpha_at(t) - int(127.5 * t)) > 0:
 			linear = false
-	_check(linear, "linear: round(127.5 x t) at every 10 ms")
+	_check(linear, "linear and truncated: int(127.5 x t) at every 10 ms")
 
 func _test_model_fade() -> void:
 	var std := StandardMaterial3D.new()
@@ -124,15 +129,19 @@ func _test_model_fade() -> void:
 	var plate := Label3D.new()
 	plate.text = "name"
 	model.add_child(plate)
-	var bar := Sprite3D.new()
-	model.add_child(bar)
+	var mark := Sprite3D.new()
+	model.add_child(mark)
 	root.add_child(model)
 	var fades = AF.Fades.new()
 	fades.start(model)
 	_check(fades.running() == 1 and fades.fading(model), "the model is fading")
-	_check(a.material_override != std and a.material_override is BaseMaterial3D
-		and (a.material_override as BaseMaterial3D).transparency == BaseMaterial3D.TRANSPARENCY_ALPHA,
-		"a StandardMaterial3D piece draws with a blended twin")
+	var std_twin := a.material_override as ShaderMaterial
+	_check(std_twin != null and std_twin.shader != null and std_twin.shader.code.contains("ALPHA = appear_alpha;")
+		and std_twin.get_shader_parameter("texture_albedo") == std.albedo_texture
+		and std_twin.get_shader_parameter("albedo") == std.albedo_color,
+		"a plain StandardMaterial3D piece draws with the standard fade shader, its own texture and colour")
+	_check(std_twin != null and std_twin.shader != null and not std_twin.shader.code.contains("albedo_tex.a"),
+		"whose alpha is the fade's alone: the texture's alpha is not multiplied in (the opaque original ignores it)")
 	_check(b.material_override != fol and b.material_override is ShaderMaterial
 		and (b.material_override as ShaderMaterial).shader == load("res://scripts/assets/foliage_fade.gdshader"),
 		"a foliage piece draws with the foliage shader's fade twin")
@@ -141,11 +150,11 @@ func _test_model_fade() -> void:
 		"the twin keeps the piece's own texture and alpha test")
 	_check(_near(_drawn_alpha(a), 0.0) and _near(_drawn_alpha(b), 0.0), "both pieces are drawn at alpha 0 at t = 0")
 	_check(AF.original_material(a) == std, "the piece's own material is still known while it fades")
-	_check(plate.modulate == Color(1, 1, 1, 1) and bar.modulate == Color(1, 1, 1, 1), "the name plate and the bar are not faded")
+	_check(plate.modulate == Color(1, 1, 1, 1) and mark.modulate == Color(1, 1, 1, 1), "the name plate and the party mark (Sprite3D) are not faded")
 	fades.step(1.0)
-	_check(_near(_drawn_alpha(a), 128.0 / 255.0) and _near(_drawn_alpha(b), 128.0 / 255.0), "half way at 1.0 s (alpha 128)")
+	_check(_near(_drawn_alpha(a), 127.0 / 255.0) and _near(_drawn_alpha(b), 127.0 / 255.0), "half way at 1.0 s (alpha 127)")
 	fades.step(0.99)
-	_check(_near(_drawn_alpha(a), 254.0 / 255.0), "254 at 1.99 s")
+	_check(_near(_drawn_alpha(a), 253.0 / 255.0), "253 at 1.99 s (253.725 truncated)")
 	fades.step(0.02)
 	_check(a.material_override == std and b.material_override == fol, "at 2.01 s each piece has its own material back")
 	_check(std.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED and _near(_drawn_alpha(a), 1.0), "and it is opaque")
@@ -174,7 +183,7 @@ func _test_cohorts() -> void:
 	fades.step(0.5)
 	fades.start(bodies[2])
 	_check(fades.twin_count() == 2, "a body started a frame later has its own")
-	_check(_near(_drawn_alpha(bodies[0].get_child(0)), 64.0 / 255.0) and _near(_drawn_alpha(bodies[2].get_child(0)), 0.0),
+	_check(_near(_drawn_alpha(bodies[0].get_child(0)), 63.0 / 255.0) and _near(_drawn_alpha(bodies[2].get_child(0)), 0.0),
 		"each at its own alpha")
 	fades.step(1.6)
 	_check((bodies[0].get_child(0) as MeshInstance3D).material_override == std, "the first two are done at 2.1 s")
@@ -200,6 +209,23 @@ func _test_taken_over() -> void:
 	_check(mi.material_override == taken, "a material replaced mid-fade is left in place when the fade ends")
 	_check(not mi.has_meta(AF.ORIGINAL_META), "and the fade's mark is gone")
 	body.free()
+	# A berserk player entering view: the fade takes berserk's copy B as the
+	# original; berserk ends and restores the template's T; a berserk starting
+	# again within the 2 s must copy T, not the stale B.
+	var t_mat := StandardMaterial3D.new()
+	var b_mat := t_mat.duplicate() as StandardMaterial3D
+	var body2 := Node3D.new()
+	var mi2 := _box(b_mat)
+	body2.add_child(mi2)
+	root.add_child(body2)
+	var fades2 = AF.Fades.new()
+	fades2.start(body2)
+	_check(AF.original_material(mi2) == b_mat, "while the twin draws, the piece's own material is the one the fade took")
+	mi2.material_override = t_mat
+	_check(AF.original_material(mi2) == t_mat, "once something else put another material back, that one is the piece's own (not the stale copy)")
+	fades2.step(2.5)
+	_check(mi2.material_override == t_mat, "and the fade leaves it there")
+	body2.free()
 
 ## The mod shader's fade twin (ObjectLoader._mod_shader, fade): the world's
 ## shaders are generated as before; the twin multiplies the alpha.
@@ -225,6 +251,39 @@ func _fade_shader_of(shader: Shader) -> Shader:
 		if String(m["name"]) == "appear_fade_shader":
 			return ol.call("appear_fade_shader", shader)
 	return null
+
+## A StandardMaterial3D with a setting the standard fade shader does not
+## draw keeps the duplicated-BaseMaterial3D twin.
+func _test_other_standard() -> void:
+	var std := StandardMaterial3D.new()
+	std.vertex_color_use_as_albedo = true
+	_check(not AF.is_plain_standard(std), "a StandardMaterial3D using vertex colour is not plain")
+	var twin = AF.fade_twin(std)
+	_check(twin is BaseMaterial3D and (twin as BaseMaterial3D).transparency == BaseMaterial3D.TRANSPARENCY_ALPHA
+		and (twin as BaseMaterial3D).vertex_color_use_as_albedo, "and fades as a blended duplicate of itself")
+	var capsule := StandardMaterial3D.new()
+	capsule.albedo_color = Color(0.55, 0.15, 0.1)
+	_check(AF.is_plain_standard(capsule), "a capsule's colour-only material is plain")
+
+## The warm-up (round 676's review): one quad per fade twin shader, at alpha
+## 0, in front of the camera, gone after WARM_FRAMES frames.
+func _test_warm() -> void:
+	var cam := Camera3D.new()
+	root.add_child(cam)
+	var n: int = AF.warm(cam)
+	var node := cam.get_node_or_null("AppearFadeWarm")
+	_check(n >= 4 and node != null and node.get_child_count() == n, "the warm-up draws a quad per fade shader (%d)" % n)
+	var all_zero := true
+	if node != null:
+		for c in node.get_children():
+			var m := (c as MeshInstance3D).material_override as ShaderMaterial
+			if m == null or float(m.get_shader_parameter("appear_alpha")) != 0.0:
+				all_zero = false
+	_check(all_zero, "each at alpha 0")
+	for i in range(AF.WARM_FRAMES + 1):
+		await process_frame
+	_check(cam.get_node_or_null("AppearFadeWarm") == null, "and frees them after WARM_FRAMES frames")
+	cam.free()
 
 ## A shader with no fade twin is left as it is: that piece pops in.
 func _test_unknown_shader() -> void:
@@ -324,10 +383,10 @@ func _test_world_monster(world: Node) -> void:
 	var label := body.get_node_or_null("Label") as Label3D
 	var plate_colour := label.modulate if label != null else Color.BLACK
 	var stepped := _step_world(world, 1.0)
-	_check(stepped and _near(_drawn_alpha(mi), 128.0 / 255.0), "half way through its fade at 1.0 s")
+	_check(stepped and _near(_drawn_alpha(mi), 127.0 / 255.0), "half way through its fade at 1.0 s")
 	_check(label != null and label.modulate == plate_colour and label.modulate.a == 1.0, "its name plate is not faded")
 	world.call("_spawn_or_update_monster", snap)
-	_check(_near(_drawn_alpha(mi), 128.0 / 255.0), "a refresh of the same monster does not restart it")
+	_check(_near(_drawn_alpha(mi), 127.0 / 255.0), "a refresh of the same monster does not restart it")
 	_step_world(world, 1.01)
 	_check(mi.material_override == _mob_material and _mob_material.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED,
 		"at 2.01 s it draws with its species' own, shared, opaque material")
@@ -348,7 +407,7 @@ func _test_world_player(world: Node) -> void:
 	var own: Material = AF.original_material(meshes[0]) if AF != null else meshes[0].material_override
 	_check(_near(_drawn_alpha(meshes[0]), 0.0), "another player's body is drawn at alpha 0 the frame it appears (READ: the same 2.0 s fade)")
 	_step_world(world, 1.0)
-	_check(_near(_drawn_alpha(meshes[0]), 128.0 / 255.0), "half way at 1.0 s")
+	_check(_near(_drawn_alpha(meshes[0]), 127.0 / 255.0), "half way at 1.0 s")
 	_step_world(world, 1.01)
 	_check(meshes[0].material_override == own and _near(_drawn_alpha(meshes[0]), 1.0), "opaque, with its own material, at 2.01 s")
 	world.call("_on_entity_left", 76002)
