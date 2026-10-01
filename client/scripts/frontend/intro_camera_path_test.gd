@@ -80,6 +80,16 @@ func _initialize() -> void:
 	IntroCameraPath.unwrap_angles(unwrapped)
 	_check(is_equal_approx(unwrapped[1], 0.1 + IntroCameraPath.ANGLE_TWO_PI) and is_equal_approx(unwrapped[3], 6.0),
 		"0x4deee0: 0.1 after 6.2 becomes 0.1 + 2 pi; 6.0 after it stays (got %s)" % str(unwrapped))
+	# Round 678's review: retail's loops by count, not by looping -- the same
+	# steps (13.0 after 0.1: three times 2 pi down, as the loop does), and a
+	# value too big for the loop to ever change finishes at once.
+	var three := [0.1, 13.0]
+	IntroCameraPath.unwrap_angles(three)
+	_check(is_equal_approx(three[1], 13.0 - 3.0 * IntroCameraPath.ANGLE_TWO_PI), "13.0 after 0.1: three 2 pi steps, as the loop takes (got %s)" % str(three))
+	var t0 := Time.get_ticks_msec()
+	var huge := [0.0, 1e17, -1e17, INF]
+	IntroCameraPath.unwrap_angles(huge)
+	_check(Time.get_ticks_msec() - t0 < 1000, "1e17 and inf unwrap without looping (%d ms) -- %s" % [Time.get_ticks_msec() - t0, str(huge)])
 	var down := [0.1, 6.2]
 	IntroCameraPath.unwrap_angles(down)
 	_check(is_equal_approx(down[1], 6.2 - IntroCameraPath.ANGLE_TWO_PI), "6.2 after 0.1 becomes 6.2 - 2 pi (got %s)" % str(down))

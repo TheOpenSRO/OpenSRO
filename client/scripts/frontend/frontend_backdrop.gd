@@ -34,10 +34,18 @@ var _started_ms := 0
 ## Starts loading the world's scene (and its 20,000-line script) on a
 ## worker thread, so the screen asking for a backdrop stays responsive while
 ## it compiles -- measured at ~1.2 s on the main thread when loaded on
-## demand (round 678). Safe to call more than once.
+## demand (round 678). Safe to call more than once. The cost (round 678's
+## review, MEASURED on the Linux box): what the compile frees on that thread
+## stays in its glibc arena, ~150-190 MB of resident memory once in the
+## world that a main-thread compile does not leave; MALLOC_ARENA_MAX=2
+## removes it entirely. Loading here on the main thread would freeze the
+## screen 1.2 s instead -- the trade this file makes, OURS.
 static func preload_world() -> void:
 	if ResourceLoader.load_threaded_get_status(WORLD_SCENE) == ResourceLoader.THREAD_LOAD_INVALID_RESOURCE:
-		ResourceLoader.load_threaded_request(WORLD_SCENE, "PackedScene", true)
+		# One loader thread, no sub-threads (round 678's review: each thread
+		# that allocates keeps its own glibc arena, and what the compile frees
+		# there stays resident -- MEASURED, the WORLD_ISSUES entry's Review).
+		ResourceLoader.load_threaded_request(WORLD_SCENE, "PackedScene", false)
 
 ## Whether the world's scene has finished loading (preload_world); true too
 ## when it failed, so the caller moves on and begin() reports it.

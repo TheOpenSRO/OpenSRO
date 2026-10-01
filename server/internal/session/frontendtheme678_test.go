@@ -90,8 +90,8 @@ func TestFrontEndThemeBGMAndImageValidation(t *testing.T) {
 	}{
 		{in: "maintheme_cut.ogg", ok: true},
 		{in: "Title Theme-2.OGG", ok: true},
-		{in: "intro.wav", ok: true},
-		{in: "intro.v2.mp3", ok: true},
+		{in: "intro.wav"},
+		{in: "intro.v2.mp3"}, {in: "intro.v2.ogg", ok: true},
 		{in: "../maintheme.ogg"},
 		{in: "a..b.ogg"},
 		{in: `..\maintheme.ogg`},
@@ -285,27 +285,26 @@ func TestFrontEndThemeHandlerOnAFreshSession(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, data := range [][]byte{nil, {0xde, 0xad}} {
-		if err := proto.Write(conn, &proto.Packet{Opcode: OpFrontEndThemeRequest, Data: data}, nil, nil); err != nil {
-			t.Fatal(err)
-		}
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		p, err := proto.Read(r, nil, nil)
-		if err != nil {
-			t.Fatalf("no reply to OpFrontEndThemeRequest (payload %x): %v", data, err)
-		}
-		if p.Opcode != OpFrontEndTheme {
-			t.Fatalf("reply opcode %#04x, want OpFrontEndTheme %#04x (an earlier opcode was answered?)", p.Opcode, OpFrontEndTheme)
-		}
-		got, err := DecodeFrontEndTheme(p.Data)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != theme {
-			t.Errorf("served %+v, want %+v", got, theme)
-		}
+	if err := proto.Write(conn, &proto.Packet{Opcode: OpFrontEndThemeRequest, Data: []byte{0xde, 0xad}}, nil, nil); err != nil {
+		t.Fatal(err)
 	}
-	for i := 0; i < 5; i++ {
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	p, err := proto.Read(r, nil, nil)
+	if err != nil {
+		t.Fatalf("no reply to OpFrontEndThemeRequest: %v", err)
+	}
+	if p.Opcode != OpFrontEndTheme {
+		t.Fatalf("reply opcode %#04x, want OpFrontEndTheme %#04x (an earlier opcode was answered?)", p.Opcode, OpFrontEndTheme)
+	}
+	got, err := DecodeFrontEndTheme(p.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != theme {
+		t.Errorf("served %+v, want %+v", got, theme)
+	}
+	// The three other opcodes went down the chain; the request did not.
+	for i := 0; i < 3; i++ {
 		select {
 		case ok := <-authed:
 			if ok {
@@ -315,10 +314,57 @@ func TestFrontEndThemeHandlerOnAFreshSession(t *testing.T) {
 			t.Fatalf("packet %d never reached the end of the chain", i)
 		}
 	}
-	// Nothing else was sent: the next read times out.
-	conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	// Round 678's review: one answer per connection -- an unauthenticated
+	// asker's connection is closed after it, with nothing more sent.
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	if p, err := proto.Read(r, nil, nil); err == nil {
 		t.Errorf("unexpected extra frame opcode %#04x", p.Opcode)
+	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Errorf("the connection stayed open after the answer (read timed out instead of ending)")
+	}
+}
+
+// A logged-in session that asks gets one answer, and nothing for a repeat;
+// its connection stays open (round 678's review).
+func TestFrontEndThemeHandlerAnswersOncePerSession(t *testing.T) {
+	theme, _, _ := NewFrontEndTheme(FrontEndTheme{Intro: "roc"})
+	store := account.NewMemStore()
+	if _, err := store.Add("someone", "secret"); err != nil {
+		t.Fatal(err)
+	}
+	addr := startThemeServer(t, gateway.Chain(FrontEndThemeHandler(theme), LoginHandler(store)))
+	conn := dialTheme(t, addr)
+	r := bufio.NewReader(conn)
+	read := func(what string) *proto.Packet {
+		t.Helper()
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		p, err := proto.Read(r, nil, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", what, err)
+		}
+		return p
+	}
+	login := &proto.Packet{Opcode: OpLogin, Data: (&LoginRequest{Username: "someone", Password: "secret"}).Encode()}
+	if err := proto.Write(conn, login, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if p := read("login reply"); p.Opcode != OpLoginResult {
+		t.Fatalf("login reply opcode %#04x", p.Opcode)
+	}
+	for i := 0; i < 3; i++ {
+		if err := proto.Write(conn, &proto.Packet{Opcode: OpFrontEndThemeRequest}, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if p := read("theme reply"); p.Opcode != OpFrontEndTheme {
+		t.Fatalf("theme reply opcode %#04x", p.Opcode)
+	}
+	// The repeats get nothing, and the connection is still usable.
+	if err := proto.Write(conn, login, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if p := read("the next reply"); p.Opcode != OpLoginResult {
+		t.Fatalf("after the repeats the next frame is %#04x, want the second login's reply (a repeat was answered?)", p.Opcode)
 	}
 }
 

@@ -118,6 +118,12 @@ func _names() -> void:
 		_check(not FrontEndTheme.is_safe_file(bad, ["png", "ddj"], false), "refused image '%s'" % bad)
 	_check(FrontEndTheme.is_safe_file("maintheme_cut.ogg", ["ogg"], true) and not FrontEndTheme.is_safe_file("../x.ogg", ["ogg"], true),
 		"music: the archive's names, no parent")
+	var mw := PackedStringArray()
+	_check(FrontEndTheme.sanitize("bgm", "track.wav", mw) == "" and FrontEndTheme.sanitize("bgm", "maintheme_cut.ogg", mw) == "maintheme_cut.ogg",
+		"music: only .ogg, the only names the music archive is searched for (round 678's review)")
+	_check(FrontEndTheme.cache_key("127.0.0.1:15779") != FrontEndTheme.cache_key("10.0.0.2:15779")
+		and FrontEndTheme.cache_key("Host.Example:1") == "server_theme_host.example_1",
+		"the cache is kept per server address (%s)" % FrontEndTheme.cache_key("Host.Example:1"))
 	var w := PackedStringArray()
 	var long := FrontEndTheme.sanitize("copyright", "x".repeat(250) + "\u0007", w)
 	_check(long.length() == FrontEndTheme.COPYRIGHT_MAX and w.size() == 1, "copyright: control characters dropped, cut at 200")
@@ -134,7 +140,7 @@ func _wire() -> void:
 	_check(ThemeQuery.parse_frames(bytes.slice(0, 40)).is_empty(), "half a frame: keep waiting")
 	var other := Packet.new(0x0002, PackedByteArray([1, 0, 0])).encode()
 	other.append_array(bytes)
-	_check(ThemeQuery.parse_frames(other).has("theme_json"), "another frame first is skipped")
+	_check(ThemeQuery.parse_frames(other).has("error"), "another frame first is an error: the answer is the first frame (round 678's review)")
 	_check(Packet.new(ThemeQuery.OP_REQUEST).encode() == "000005000000".hex_decode(), "the request is 00 00 05 00 00 00")
 
 func _intro_choice() -> void:

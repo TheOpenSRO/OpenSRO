@@ -798,8 +798,9 @@ about, and refuses, anything that is not a plain file name.
 (for previewing, below) > the server's answer > the answer it cached last launch > a
 `custom/theme.json` shipped with the client > retail's default. The client asks the server it is
 about to connect to (the address remembered from the last login) as it starts, waits at most 1.5 s,
-and caches the answer -- so a first launch against a new server may show the default once, and every
-launch after it the server's choice. `custom/theme.json` is the same structure the server sends:
+and caches the answer per server address -- so a first launch against a new server may show the
+default once, and every launch after it that server's choice. The server answers the question once
+and closes that connection; it never logs it. `custom/theme.json` is the same structure the server sends:
 
 ```json
 {"v":1,"intro":"myserver","bgm":"","logo":"mylogo.png","copyright":"(c) 2026 My Server","band_top":"","band_bottom":"","charselect":null,"create":null}
@@ -834,11 +835,21 @@ eases through every point (a Catmull-Rom spline), every position is taken relati
 region, and it stops on the last point, where the login window fades in -- or earlier, on a click or
 a key. The client checks the file when it loads it; one that does not parse falls back to the
 archive's intro of that name, then to option.txt's, and logs why. A `[SCRIPT]` section is read but not
-run yet.
+run yet. Values a camera cannot fly are refused, so the intro falls back: at most 1024 lines, times
+0..3600 s, x and z within 32 regions of the named one (+-61440), heights within +-20000, angles within
++-1000 rad, distances 0..100000, and no `inf`/`nan` (our bounds; retail's own files sit far inside them).
 
-**The music.** `-login-bgm=<file>` names a track in the player's archives (Music.pk2's root, e.g.
-`maintheme_cut.ogg`). Retail has one title track for every intro; choosing one per server is ours. A
-name that is not in the archives falls back to IntroBGM.
+**Low-end machines.** A player can turn the 3D title off with `title_3d=false` under `[frontend]` in the
+client's settings file (or `SRREVAMP_TITLE_3D=0`): the screen keeps the 2D still and the world is not
+built until they enter it. Measured on the Linux render box, the 3D title raises the process's resident
+memory once in the world by ~200 MB (glibc keeps what the title's worker threads freed in their own
+arenas; `MALLOC_ARENA_MAX=2` in the environment removes it, and lowers the world's own footprint by ~215
+MB besides). Windows' allocator does not keep per-thread arenas this way; not measured there.
+
+**The music.** `-login-bgm=<file>` names an `.ogg` track in the player's Music.pk2 root (e.g.
+`maintheme_cut.ogg`; only `.ogg` names are looked up there, so only `.ogg` is accepted). Retail has one
+title track for every intro; choosing one per server is ours. A name that is not in the archive falls
+back to IntroBGM.
 
 **The logo and the bands.** PNG (or DDJ) files in `custom/frontend/`. The logo is shown at the size
 and place of the archive's own (508 x 172 in retail's 1600 x 1200 layout, centred above the login

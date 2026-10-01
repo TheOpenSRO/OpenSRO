@@ -1042,6 +1042,11 @@ front-end's next steps.
   launch with a click at its first frame (the 0.5 s is retail's own login fade), against ~0.12 s for
   the old 2D screen; no frame over 100 ms in its first 12 s once the world's scene compiles on a
   worker (it froze 1.3 s when loaded on demand).
+- **Memory on Linux** (round 678's review): ~205-230 MB more resident memory once in the world than
+  without the 3D title -- glibc keeping what the title's worker threads freed (equal to base under
+  `MALLOC_ARENA_MAX=2`); ~150-190 MB of it is the World3D compile on the loader thread, kept to avoid
+  a 1.2 s freeze. The user's call: a Linux launcher with `MALLOC_ARENA_MAX=2` (also -215 MB on the base
+  world), or the player's `[frontend] title_3d=false`. Windows not measured.
 
 ### Loading freezes: what the off-thread rounds left (map/loading epic, 2026-09-25)
 

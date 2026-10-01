@@ -7282,6 +7282,98 @@ scratchpad. The comparison above, not the picture, is the evidence; positions ar
 - Per-intro music is ours; the LIST button and server window are left out.
 - A 4:3-correct layout on wide screens would be ours (retail stretches).
 
+### Review (round 678's review: no HIGH, two MEDIUM, thirteen LOW -- fixed in a follow-up commit)
+
+**M1, a custom intro could hang the title for good.** `_wtof` read `1e999` as inf, and retail's
+unwrap loop (`b -= 2 pi` while b > a) never changes a value past ~1e17, so the main thread spun. Fixed
+three ways: every keyframe is checked against sanity bounds (OURS; IntroScript: at most 1024
+keyframes, time 0..3600, |x|,|z| <= 61440, |y| <= 20000, |angles| <= 1000, distance 0..100000,
+finite) and a script that breaks one is refused whole, so the title falls back with a log line; the
+unwrap takes retail's number of steps by arithmetic, `ceil(|d| / 2 pi)` (13.0 after 0.1 still lands on
+13.0 - 3 x 2 pi, as the loop does); the path takes at most 1024 keys (its sorted insert is quadratic).
+Against 8fd7a1a the new checks fail (the keyframe cap written as 1024, the constant being new):
+```
+FAIL 1e999 (inf) is refused:
+FAIL a yaw of 1e17 is refused:
+FAIL a negative distance is refused
+FAIL x past 32 regions is refused
+FAIL more than 1024 keyframes is refused:
+FAILURES 5
+```
+and `intro_camera_path_test.gd` never reaches its 1e17 check's verdict: the run is stopped at its
+60 s limit (exit 124) right after `ok  13.0 after 0.1: three 2 pi steps`.
+
+**M2, ~200-375 MB more resident memory in the world than base.** MEASURED on the box with
+`client/tools/measure_rss.tscn` (Login 8 s, then an offline Jangan entry, VmRSS after 40 s; base
+55ca5c8 / 8fd7a1a / this fix):
+
+| Run | VmRSS at the title | VmRSS in the world | Godot static in the world |
+|---|---|---|---|
+| base 55ca5c8 (2 runs) | 255 MB | 1777-1778 MB | 1024.4 MB |
+| 8fd7a1a (3 runs) | 919-1063 MB | 2106-2232 MB | 1026-1057 MB |
+| this fix (2 runs) | 890-916 MB | 1982-2006 MB | 1026.0 MB |
+| this fix, `MALLOC_ARENA_MAX=2` | 596 MB | **1564 MB** | 1026.1 MB |
+| base, `MALLOC_ARENA_MAX=2` | 254 MB | **1564 MB** | 1024.6 MB |
+| this fix, `SRREVAMP_TITLE_3D=0` | 269 MB | 1781 MB | 1025.5 MB |
+
+- **The cause is glibc's per-thread arenas, not a leak.** With `MALLOC_ARENA_MAX=2`, head and base
+  are equal within 1 MB. Godot's own counters are equal once in the world, because what the title
+  allocated is freed. But what its worker threads freed stays resident in their arenas, and the
+  world allocates in others.
+- **The split, MEASURED by variants:**
+  - Compiling the World3D scene on the loader thread costs ~150-190 MB. Loaded on the main thread
+    instead, the world sat at 1866-1877 MB, but the screen froze 1.2 s. With and without
+    sub-threads it is within run-to-run noise. Sub-threads are now off (L13).
+  - The title's own cells are the rest.
+- **Fixed in our code:** the title is never walked, so it no longer reads a navmesh or builds walls
+  or a walkable graph (`World3D._terrain_job`, `title_mode`). That cut the title's footprint from
+  437 to 275 MB static and from 316k to 170k objects. It also cut the title-time RSS (1063 to
+  890-916 MB) and the in-world RSS by 100-250 MB against 8fd7a1a.
+- **Not fixed:** the remaining ~205-230 MB on Linux is the arena retention. The worker-thread
+  compile was kept deliberately: the alternative is a 1.2 s freeze of the login screen.
+- **Ways to remove it, OURS and the user's call:**
+  - The player's new switch `[frontend] title_3d=false` / `SRREVAMP_TITLE_3D=0` (equal to base).
+  - `MALLOC_ARENA_MAX=2` in a Linux launcher, which also takes ~215 MB off the base world.
+  - Windows' allocator has no per-thread arenas of this kind. NOT measured there.
+- glibc does not hand this memory back on its own under pressure. It is free inside the process
+  and reused by later allocations in the same arenas: the world grew by 1092-1177 MB after the
+  title against 1522 MB on base.
+
+**LOW**
+- L1: music `.ogg` only on both sides, the only names Music.pk2 is searched for.
+- L2: on the 2D still, the archive logo is held back (the still carries its own). An operator's
+  logo still shows. If the 3D view arrives, the archive logo comes in with it.
+- L3: the server slot keeps retail's 86 px (READ). It scrolls to the end of the address, so the
+  port shows, and the whole address is the tooltip.
+- L4: the operator's copyright line fades in with the band, not during the fly.
+- L5: Connect stops the backdrop starting new cells (`World3D.title_hold`). Leaving waits only for
+  the ≤ 2 already preparing (not re-measured with a server).
+- L6: the theme is cached per server address (`server_theme_<address>`).
+- L7: a host name is resolved with `IP.resolve_hostname_queue_item` inside the 1.5 s deadline.
+- L8: at most one frame is read (6 + 0x7fff bytes), and it must be the answer.
+- L9: the server answers once per connection. It ends an unauthenticated asker's session after the
+  answer with the new quiet `gateway.ErrEndSession` (drained, closed, Debug only). A repeat on a
+  logged-in session gets nothing, and no request is logged. Against 8fd7a1a:
+  ```
+  frontendtheme678_test.go:323: the connection stayed open after the answer (read timed out instead of ending)
+  frontendtheme678_test.go:367: after the repeats the next frame is 0x0006, want the second login's reply (a repeat was answered?)
+  ```
+- L10: `normalise`'s doc comment is back on it.
+- L11: a layout without its Title or Login section gets the plain screen.
+- L12: the theme question goes out first in `_ready`.
+- L13: `use_sub_threads=false`.
+
+**Measured after the fix:** login interactable 234-235 ms, faded in 700 ms, longest frame 83-85 ms,
+0 over 100 ms (unchanged). Perf gate (`--sites jangan`, the title's
+`_terrain_job` touched), medians of 3:
+```
+jangan  frame ms   base 9.98  head 10.22  (+0.2)  SAME
+jangan  entry ms   base 9565  head 9660  (+95.0)  SAME
+jangan  freeze ms  base 3411  head 3414  (+3.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+``` `remote_godot.sh check` ALL LOAD;
+`tests` 191 suites, 0 failing; `go build`, `go vet`, `go test -count=1 -p 1 ./...` green.
+
 ## Six-hundred-and-seventy-sixth round: monsters and other players fade into existence over 2.0 s, as retail's CIDecoAppear fades them, instead of popping in
 
 The user (2026-10-01): "Also another fix, mobs seem to fade in existence not pop. Check the

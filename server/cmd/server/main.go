@@ -894,7 +894,7 @@ func main() {
 			"(an archive path's may also hold spaces); anything else is refused with a warning and none is served. Default empty: the client plays option.txt's IntroName.")
 	loginBGM := flag.String("login-bgm", os.Getenv("SRREVAMP_LOGIN_BGM"),
 		"the title music's file name (env SRREVAMP_LOGIN_BGM), e.g. maintheme_cut.ogg: letters, digits, "+
-			"space, _ . -, ending .ogg, .wav or .mp3. Default empty: the client plays option.txt's IntroBGM.")
+			"space, _ . -, ending .ogg (the only music the client looks up in Music.pk2). Default empty: the client plays option.txt's IntroBGM.")
 	loginLogo := flag.String("login-logo", os.Getenv("SRREVAMP_LOGIN_LOGO"),
 		"a logo file name the client loads from its own custom/frontend/ folder (env SRREVAMP_LOGIN_LOGO), "+
 			"e.g. mylogo.png: letters, digits, _ and -, ending .png or .ddj. Default empty: the archive's own logo.")

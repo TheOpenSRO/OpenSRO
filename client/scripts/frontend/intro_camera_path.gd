@@ -70,8 +70,12 @@ var time: float = 0.0
 var loop: bool = false
 var _start_pose: Pose = null
 
+## At most IntroScript.MAX_KEYFRAMES keys are taken (_insert is a sorted
+## insert, quadratic in the count).
 static func from_keyframes(keyframes: Array) -> IntroCameraPath:
 	var p := IntroCameraPath.new()
+	if keyframes.size() > IntroScript.MAX_KEYFRAMES:
+		keyframes = keyframes.slice(0, IntroScript.MAX_KEYFRAMES)
 	for kf in keyframes:
 		p._insert(kf.time, kf.pos, kf.pitch, kf.yaw, kf.roll, kf.distance)
 		p.length = kf.time
@@ -174,18 +178,23 @@ func _sample_scalar(keys: PackedFloat32Array, t: float, angle: bool) -> float:
 	return catmull_rom(p[0], p[1], p[2], p[3], at[1])
 
 ## READ 0x4deee0 (see the header): each point made continuous with the one
-## before it, in order, on a copy.
+## before it, in order, on a copy. Retail loops `b -= 2 pi` while b > a (and
+## `b += 2 pi` while b < a); the same count of steps is computed here, k =
+## ceil(|b - a| / 2 pi), so a huge value cannot spin for ever (round 678's
+## review -- above ~1e17, b - 2 pi == b and the loop never ends). The two
+## agree to float rounding on any value a script could fly (IntroScript's
+## bounds); a non-finite value is left as it is.
 static func unwrap_angles(p: Array) -> void:
 	for j in range(1, p.size()):
 		var a: float = p[j - 1]
 		var b: float = p[j]
+		if is_nan(a) or is_inf(a) or is_nan(b) or is_inf(b):
+			continue
 		var d := b - a
 		if d > ANGLE_PI:
-			while b > a:
-				b -= ANGLE_TWO_PI
+			b -= ceilf(d / ANGLE_TWO_PI) * ANGLE_TWO_PI
 		elif d < -ANGLE_PI:
-			while b < a:
-				b += ANGLE_TWO_PI
+			b += ceilf(-d / ANGLE_TWO_PI) * ANGLE_TWO_PI
 		p[j] = b
 
 static func catmull_rom(p0: float, p1: float, p2: float, p3: float, u: float) -> float:

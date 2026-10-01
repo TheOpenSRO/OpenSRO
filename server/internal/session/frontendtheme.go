@@ -58,7 +58,7 @@ var (
 	// and extension in any case. The name allows a space (but no dot or
 	// separator), so neither ".." nor a further folder can appear in it.
 	introArchivePath = regexp.MustCompile(`(?i)^script\\intro\\([A-Za-z0-9_ -]{1,64})\.txt$`)
-	bgmName          = regexp.MustCompile(`(?i)^[A-Za-z0-9_ .-]{1,64}\.(ogg|wav|mp3)$`)
+	bgmName          = regexp.MustCompile(`(?i)^[A-Za-z0-9_ .-]{1,64}\.ogg$`)
 	// A logo and the band art: one pattern for the three images.
 	imageName = regexp.MustCompile(`(?i)^[A-Za-z0-9_-]{1,64}\.(png|ddj)$`)
 )
@@ -119,7 +119,7 @@ func NewFrontEndTheme(raw FrontEndTheme) (theme FrontEndTheme, warnings, infos [
 	case bgmName.MatchString(bgm) && !strings.Contains(bgm, ".."):
 		theme.BGM = bgm
 	default:
-		warnings = append(warnings, fmt.Sprintf("front-end bgm %q is not a valid music file name (letters, digits, space, _ . -, ending .ogg, .wav or .mp3, no \"..\"); serving none, the client uses option.txt's IntroBGM", bgm))
+		warnings = append(warnings, fmt.Sprintf("front-end bgm %q is not a valid music file name (letters, digits, space, _ . -, ending .ogg, no \"..\"); serving none, the client uses option.txt's IntroBGM", bgm))
 	}
 
 	theme.Logo, warnings = imageSetting("logo", raw.Logo, "logo", warnings)
@@ -249,12 +249,30 @@ func DecodeFrontEndTheme(data []byte) (FrontEndTheme, error) {
 // OpFrontEndThemeRequest (any payload, ignored) with OpFrontEndTheme carrying
 // theme. It needs no login and touches no session state; other opcodes are
 // ignored, as every handler in the chain does. OURS.
+//
+// Round 678's review: one answer per connection. The client asks on a
+// connection of its own, so an unauthenticated session that asked is ended
+// after its answer is written (gateway.ErrEndSession: drained, closed, no
+// WARN); a logged-in session that asks gets one answer and nothing for a
+// repeat. Nothing is logged per request.
 func FrontEndThemeHandler(theme FrontEndTheme) gateway.Handler {
 	payload := theme.Encode()
 	return func(_ context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpFrontEndThemeRequest {
 			return nil
 		}
-		return sess.Send(&proto.Packet{Opcode: OpFrontEndTheme, Data: payload})
+		if _, answered := sess.Get(frontEndThemeAnsweredKey); answered {
+			return nil
+		}
+		sess.Set(frontEndThemeAnsweredKey, true)
+		if err := sess.Send(&proto.Packet{Opcode: OpFrontEndTheme, Data: payload}); err != nil {
+			return err
+		}
+		if _, authed := AuthenticatedAccountID(sess); !authed {
+			return gateway.ErrEndSession
+		}
+		return nil
 	}
 }
+
+const frontEndThemeAnsweredKey = "session.frontend_theme_answered"

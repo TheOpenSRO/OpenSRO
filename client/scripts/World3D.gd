@@ -7076,7 +7076,10 @@ func _terrain_job(mapm_path: String, texture_override: String, world_offset: Vec
 	var navmesh_key := -1
 	var navmesh_cached := false
 	var navmesh: NvmReader.ParsedRegion = null
-	if not coords.is_empty():
+	# A front-end backdrop is never walked (round 678's review): no navmesh,
+	# so no walls and no walkable graph -- the bulk of a cell's objects and
+	# memory, freed again when the screen goes.
+	if not coords.is_empty() and not title_mode:
 		navmesh_key = RegionGridState.navmesh_key(int(coords["x"]), int(coords["y"]))
 		if _grid.navmesh_cache.has(navmesh_key):
 			navmesh_cached = true
@@ -20111,6 +20114,17 @@ static func title_world_from_local(local: Vector3) -> Vector3:
 	var corner := _group_position(Vector3.ZERO, 0.0)
 	return corner + Vector3(local.x, local.y, -local.z)
 
+## Stops starting new cells (round 678's review): the queue is dropped and
+## the window no longer follows the focus; cells already preparing still
+## commit, so leaving the screen has little or nothing left to wait for.
+func title_hold() -> void:
+	_title_held = true
+	for cell in _load_queue:
+		_grid.queued_cells.erase(cell["key"])
+	_load_queue.clear()
+
+var _title_held := false
+
 func _title_physics(_delta: float) -> void:
 	if _sky_dome != null:
 		_cloud_uv_offset.x = fposmod(Time.get_ticks_msec() / CLOUD_SCROLL_MS, 1.0)
@@ -20118,5 +20132,6 @@ func _title_physics(_delta: float) -> void:
 	if _sun_glow != null:
 		_sun_glow.global_position = camera_3d.global_position + _sun_glow_offset
 	_tick_map_animations()
-	_maybe_stream_regions()
+	if not _title_held:
+		_maybe_stream_regions()
 	_process_stream_queue()

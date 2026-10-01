@@ -88,6 +88,8 @@ var _exit_button: Button = null
 var _text: UiTextTable = null
 var _skip_pending := false
 var _layout: UiLayoutParser.LayoutDef = null
+## The address the theme was asked of (the cache is kept per address).
+var _theme_address := ""
 
 func _ready() -> void:
 	_started_ms = Time.get_ticks_msec()
@@ -95,20 +97,35 @@ func _ready() -> void:
 	NetClient.connection_failed.connect(_on_connection_failed)
 	NetClient.login_result.connect(_on_login_result)
 	NetClient.register_result.connect(_on_register_result)
+	# Round 678: the 3D title. The server's front-end theme decides the intro,
+	# its music and the branding (FrontEndTheme). The question goes out first
+	# (round 678's review), so its round trip overlaps the archive work
+	# below; the screen is built when it answers or gives up.
+	# The theme comes from the server this screen will connect to: the one
+	# remembered from last time (or a QA run's SRREVAMP_QA_SERVER).
+	var qa_server := OS.get_environment("SRREVAMP_QA_SERVER")
+	_theme_address = (qa_server if qa_server != "" else _remembered_address()).strip_edges()
+	var address := _parse_server_address(_theme_address)
+	_query = ThemeQuery.new()
+	_query.name = "ThemeQuery"
+	add_child(_query)
+	_query.start(address.get("host", ""), int(address.get("port", 0)))
 	_media = _open_media()
 	FrontEndUi.apply_client_font(self, _media)
-	# Round 678: the 3D title. The server's front-end theme decides the intro,
-	# its music and the branding (FrontEndTheme); ask for it first, with a
-	# short deadline, and build the screen when it answers or gives up.
-	# Without Media.pk2 there is no title to build: the plain screen at once.
+	# Without Media.pk2 and its title layout there is no title to build: the
+	# plain screen at once.
 	_layout = FrontEndFrame.load_layout(_media)
-	if _media == null or _layout == null:
+	if _media == null or _layout == null or not _layout.sections.has("Title") or not _layout.sections.has("Login"):
+		_query.abandon("no title layout to build")
+		_query = null
 		_build_ui()
 		_finish_ready()
 		return
 	# The world's scene compiles on a worker while the theme is asked for
-	# and the screen is built (FrontEndBackdrop.preload_world).
-	FrontEndBackdrop.preload_world()
+	# and the screen is built (FrontEndBackdrop.preload_world) -- unless the
+	# player turned the 3D title off (TitleIntro.title_3d_enabled, OURS).
+	if TitleIntro.title_3d_enabled():
+		FrontEndBackdrop.preload_world()
 	# The cover over the 3D while it loads (OURS): the dark ground and the 2D
 	# still, faded out together once the first view is built -- and left up,
 	# as the fallback, when no 3D intro can run.
@@ -121,15 +138,10 @@ func _ready() -> void:
 	var still_art := FrontEndUi.backdrop(_media, BACKDROP_DDJ)
 	if still_art != null:
 		_still.add_child(still_art)
-	# The theme comes from the server this screen will connect to: the one
-	# remembered from last time (or a QA run's SRREVAMP_QA_SERVER).
-	var qa_server := OS.get_environment("SRREVAMP_QA_SERVER")
-	var address := _parse_server_address(qa_server if qa_server != "" else _remembered_address())
-	_query = ThemeQuery.new()
-	_query.name = "ThemeQuery"
-	add_child(_query)
-	_query.finished.connect(_on_theme_answer, CONNECT_ONE_SHOT)
-	_query.start(address.get("host", ""), int(address.get("port", 0)))
+	if _query.is_done():
+		_on_theme_answer(_query.result_theme, _query.result_why)
+	else:
+		_query.finished.connect(_on_theme_answer, CONNECT_ONE_SHOT)
 
 ## Everything after the screen exists: the remembered fields, Enter to
 ## submit, the QA sign-in.
@@ -144,6 +156,12 @@ func _finish_ready() -> void:
 	# The server that last answered and the account name come back from the
 	# previous run so a tester is not retyping host:port every launch.
 	server_address_edit.text = _remembered_address()
+	# Retail's server slot is 86 px (READ); a host:port longer than it
+	# scrolls -- shown from its end, so the port is in view, with the whole
+	# address as the tooltip (round 678's review, OURS).
+	server_address_edit.caret_column = server_address_edit.text.length()
+	server_address_edit.tooltip_text = server_address_edit.text
+	server_address_edit.text_changed.connect(func(t: String) -> void: server_address_edit.tooltip_text = t)
 	var remembered_username := ClientSettings.username()
 	if remembered_username != "":
 		username_edit.text = remembered_username
@@ -199,9 +217,9 @@ func _on_theme_answer(server_theme: FrontEndTheme, why: String) -> void:
 	var custom := FrontEndTheme.from_custom_folder(custom_dir, warnings)
 	var cached: FrontEndTheme = null
 	if server_theme != null:
-		FrontEndTheme.store_cache(server_theme)
+		FrontEndTheme.store_cache(server_theme, _theme_address)
 	else:
-		cached = FrontEndTheme.cached()
+		cached = FrontEndTheme.cached(_theme_address)
 	for w in warnings:
 		print("FrontEnd: theme: %s" % w)
 	_theme = FrontEndTheme.resolve(preview, server_theme, cached, custom)
@@ -613,6 +631,10 @@ func _connect_and_send() -> void:
 		status_label.text = "Enter a valid server address, e.g. 192.168.1.23:15779"
 		return
 	status_label.text = "Connecting..."
+	# The title's backdrop stops starting new cells (round 678's review): the
+	# screen may be left soon, and leaving waits for any still preparing.
+	if _title != null:
+		_title.hold_backdrop("Connect pressed")
 	NetClient.connect_to_server(address["host"], address["port"])
 
 ## Parses "host" or "host:port" into {"host", "port"} (port defaults to

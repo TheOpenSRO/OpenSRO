@@ -204,8 +204,6 @@ static func read_table(archive_name: String, path: String) -> PackedByteArray:
 		return PackedByteArray()
 	return archive.read_file(entry)
 
-## Lowercase, backslashes, no leading separator: the one spelling the cache
-## is keyed by.
 ## Whether the archive a path would be read from holds it (round 678: the
 ## front-end theme's title music is checked before it replaces IntroBGM).
 static func has_file(path: String) -> bool:
@@ -218,6 +216,8 @@ static func has_file(path: String) -> bool:
 	var entry := ObjectLoader.find_file(archive, key)
 	return entry != null and not entry.is_dir
 
+## Lowercase, backslashes, no leading separator: the one spelling the cache
+## is keyed by.
 static func normalise(path: String) -> String:
 	var p := path.strip_edges().replace("/", "\\").to_lower()
 	while p.begins_with("\\"):

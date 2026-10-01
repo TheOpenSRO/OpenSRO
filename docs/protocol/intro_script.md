@@ -73,6 +73,12 @@ AREA=EUROP_CONSTANTINOPLE
   "Region(rx=%d,rz=%d)" console line reads +0x7c and +0x7d, `FUN_00539c00`). This project writes it
   "hi/lo" (Jangan 97/168) and Map.pk2's path is `<hi>\<lo>.m`.
 - **OURS:** an operator's own script may also be UTF-8 (with or without a BOM).
+- **OURS (round 678's review):** sanity bounds, applied to every keyframe -- a value outside them, or
+  not finite (`1e999` reads as inf), refuses the whole script and the title falls back: at most 1024
+  keyframes, time 0..3600, |x|, |z| <= 61440 (32 regions), |y| <= 20000, |angles| <= 1000, distance
+  0..100000. Retail checks none; its files sit far inside (MEASURED: <= 53 s, |x|,|z| <= 8320, y
+  -434..2008, |angles| <= 14.9, distances 1..100, <= 21 keyframes). Without them a yaw of 1e17
+  hung the title for good: retail's unwrap loop never changes a value that large.
 
 ### Preloading (READ, `FUN_0056c870`)
 
@@ -110,7 +116,9 @@ The title's path object (constructor 0x4e6c40; reset `FUN_004e6630`) holds five 
   `0.5 * (2 p1 + (p2 - p0) u + (2 p0 - 5 p1 + 4 p2 - p3) u^2 + (-p0 + 3 p1 - 3 p2 + p3) u^3)`.
 - **The angle fix-up** (0x4deee0), on copies of the four points: for each consecutive pair (a, b),
   d = b - a; if d > pi, `b -= 2 pi` while b > a; if d < -pi, `b += 2 pi` while b < a (pi 0xd81948,
-  2 pi 0xd81930). Pitch, yaw and roll have it; distance does not.
+  2 pi 0xd81930). Pitch, yaw and roll have it; distance does not. This client takes the same number
+  of steps by arithmetic, `ceil(|d| / 2 pi)` (round 678's review: the loop never ends once
+  `b - 2 pi == b`).
 - **Playing** (`FUN_004e5bf0(dt)`): time += dt; past the length it wraps if +0xec is set, else it
   CLAMPS to the length. The title never sets +0xec (`FUN_004e6630` clears it), so the camera rests
   on the last keyframe. A non-zero region at +0xf4 would rebase the output into neighbouring regions
@@ -200,18 +208,26 @@ One structure, the same on the wire, in the settings cache and in `custom/theme.
 - **Wire:** `OpFrontEndThemeRequest` 0x0005 (client -> server, no payload) and `OpFrontEndTheme`
   0x0006 (server -> client: u16 LE byte length + that much UTF-8 JSON). Answered before any login
   (`server/internal/session/frontendtheme.go`); the client asks at boot over its own short-lived TCP
-  connection (`ThemeQuery`, 1.5 s deadline), because retail picks its intro before any connection and
-  this client connects only on Connect.
+  connection (`ThemeQuery`, 1.5 s deadline, a host name resolved without blocking, at most one frame
+  read and it must be the answer), because retail picks its intro before any connection and this
+  client connects only on Connect. The server answers once per connection and ends an
+  unauthenticated asker's session after the answer (`gateway.ErrEndSession`); a repeat on a logged-in
+  session gets nothing. Nothing is logged per request. The client caches the answer per server
+  address.
 - **Order, per field:** `SRREVAMP_LOGIN_*` preview variables > the server's fresh answer (else the
   answer cached from the last launch -- one layer, so a field the operator cleared stays cleared) >
   `custom/theme.json` > retail's defaults.
 - **Names never leave their folders:** an intro is a bare name (`[A-Za-z0-9_-]{1,64}`, looked up as
   `custom/intro/<name>.txt` first, then `script\intro\<name>.txt`) or `script\intro\<name>.txt`;
-  images are `<bare name>.png|.ddj` in `custom/frontend/`; music `<name>.ogg|.wav|.mp3` in the
+  images are `<bare name>.png|.ddj` in `custom/frontend/`; music `<name>.ogg` in the
   archives. Anything else is refused and logged.
-- **Fallbacks:** a custom script that does not parse -> the archive's of that name -> option.txt's
-  IntroName -> the 2D still; a logo or band image that is missing or unreadable -> the archive's art;
-  music not in the archives -> IntroBGM. Each with a log line.
+- **Fallbacks:** a custom script that does not parse (or breaks the bounds above) -> the archive's of
+  that name -> option.txt's IntroName -> the 2D still; a logo or band image that is missing or
+  unreadable -> the archive's art; music not in the archives -> IntroBGM (only `.ogg` names are
+  accepted: those are the ones looked up in Music.pk2). Each with a log line. On the 2D still the
+  archive's logo is not drawn (the still has its own); an operator's is.
+- **The player's switch** (OURS): `[frontend] title_3d=false` (or `SRREVAMP_TITLE_3D=0`) keeps the 2D
+  still and never builds the 3D title.
 - `charselect` / `create` are reserved (null). Retail's select and create scenes are fixed (below),
   so making them choosable is OURS.
 

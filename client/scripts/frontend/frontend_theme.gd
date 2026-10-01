@@ -21,9 +21,9 @@ class_name FrontEndTheme
 ##   1. SRREVAMP_LOGIN_* preview variables (a developer or operator trying a
 ##      theme on their own machine, no server needed);
 ##   2. the server's answer, if it arrived before the title started -- or, when
-##      it did not, the last answer cached from an earlier launch (the two are
-##      one layer: a fresh answer replaces the cache whole, so a field the
-##      operator cleared is not brought back from the cache);
+##      it did not, the last answer cached from an earlier launch, per server
+##      address (the two are one layer: a fresh answer replaces the cache
+##      whole, so a field the operator cleared is not brought back from it);
 ##   3. custom/theme.json (a client shipped pre-branded);
 ##   4. retail's defaults.
 ##
@@ -114,7 +114,10 @@ static func sanitize(field: String, value: String, warnings: PackedStringArray) 
 			if is_safe_name(v) or is_archive_intro_path(v):
 				return v
 		"bgm":
-			if is_safe_file(v, ["ogg", "wav", "mp3"], true):
+			# Only .ogg (round 678's review): the music archive's root is where a
+			# bare name is looked for, and only .ogg names route there
+			# (AudioBank.is_music_path).
+			if is_safe_file(v, ["ogg"], true):
 				return v
 		"logo", "band_top", "band_bottom":
 			if is_safe_file(v, ["png", "ddj"], false):
@@ -199,15 +202,26 @@ static func from_environment(warnings: PackedStringArray = PackedStringArray()) 
 			any = true
 	return t if any else null
 
-## The last server answer, from the settings file, or null.
-static func cached() -> FrontEndTheme:
-	var text := str(ClientSettings.get_value(SETTINGS_SECTION, SETTINGS_KEY, ""))
+## The last answer from the server at `address` ("host:port"), from the
+## settings file, or null. Kept per server (round 678's review): a player
+## who uses two servers sees each one's own branding.
+static func cached(address: String) -> FrontEndTheme:
+	var text := str(ClientSettings.get_value(SETTINGS_SECTION, cache_key(address), ""))
 	if text == "":
 		return null
 	return from_json(text)
 
-static func store_cache(theme: FrontEndTheme) -> void:
-	ClientSettings.set_value(SETTINGS_SECTION, SETTINGS_KEY, theme.to_json() if theme != null else "")
+static func store_cache(theme: FrontEndTheme, address: String) -> void:
+	ClientSettings.set_value(SETTINGS_SECTION, cache_key(address), theme.to_json() if theme != null else "")
+
+## The settings key for an address: letters, digits, '.', '-' and '_' kept,
+## anything else '_'.
+static func cache_key(address: String) -> String:
+	var key := SETTINGS_KEY + "_"
+	for c in address.strip_edges().to_lower():
+		var ok := (c >= "a" and c <= "z") or (c >= "0" and c <= "9") or c == "." or c == "-" or c == "_"
+		key += c if ok else "_"
+	return key
 
 # --- The operator's folder ----------------------------------------------------
 

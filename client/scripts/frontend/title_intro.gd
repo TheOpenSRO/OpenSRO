@@ -76,6 +76,9 @@ var _qa_shots: PackedFloat32Array = PackedFloat32Array()
 var _qa_seek: PackedFloat32Array = PackedFloat32Array()
 var _qa_seek_frames := 0
 var _qa_login_shot := false
+## The archive's logo held back while the 2D still (which carries its own)
+## is up.
+var _logo_waiting := false
 
 ## Picks the intro and starts loading its backdrop. `login_nodes` are the
 ## login window's pieces in FUN_00864870's order (logo first). Returns false
@@ -98,6 +101,12 @@ func start(media: Pk2Reader, theme: FrontEndTheme, custom_dir: String, frame: Fr
 		_frame.set_alpha(_frame.cover_bottom, 255)
 		_frame.set_alpha(_frame.title_art, 0)
 		_frame.set_alpha(_frame.big_logo, 0)
+		if _frame.copyright_label != null:
+			_frame.set_alpha(_frame.copyright_label, 0)
+	if not title_3d_enabled():
+		for n in _login_nodes:
+			_hide_login_node(n)
+		return _fall_back("the 3D title is turned off ([frontend] title_3d = false or SRREVAMP_TITLE_3D=0)")
 	for n in _login_nodes:
 		_hide_login_node(n)
 	var picked := resolve_intro(media, theme.intro if theme != null else "", custom_dir)
@@ -220,10 +229,42 @@ func show_login() -> void:
 		_frame.fade(_frame.cover_bottom, _alpha(_frame.cover_bottom), 0, LOGIN_FADE_S)
 		_frame.fade(_frame.big_logo, _alpha(_frame.big_logo), 0, LOGIN_FADE_S)
 		_frame.fade(_frame.title_art, _alpha(_frame.title_art), 255, LOGIN_FADE_S)
+		# The operator's line comes in with the band art it sits on (round
+		# 678's review: it showed over the black covers during the fly).
+		if _frame.copyright_label != null and _frame.copyright_label.text != "":
+			_frame.copyright_label.visible = true
+			_frame.fade(_frame.copyright_label, _alpha(_frame.copyright_label), 255, LOGIN_FADE_S)
 	for n in _login_nodes:
+		if _frame != null and n == _frame.logo and _still_covers():
+			# The 2D still has the logo in its own art (round 678's review):
+			# the archive's logo is not drawn over it -- an operator's is.
+			_logo_waiting = true
+			continue
 		_show_login_node(n)
 	print("TITLE: login window shown at %d ms" % (Time.get_ticks_msec() - _started_ms))
 	login_shown.emit()
+
+## Whether the 2D still is (still) what the player sees, and the logo
+## drawn now would be the archive's over the still's own.
+func _still_covers() -> bool:
+	return _still != null and _still.visible and _still.modulate.a > 0.0 and _still.get_child_count() > 1 \
+		and state != State.FLYING and not (_frame != null and _frame.custom_logo)
+
+## Stops the backdrop from starting new cells (the screen is about to be
+## left: Connect was pressed). Round 678's review: leaving waited ~0.8 s for
+## cells still preparing.
+func hold_backdrop(why: String) -> void:
+	if backdrop != null and backdrop.world != null:
+		backdrop.world.call("title_hold")
+		print("TITLE: backdrop holds its cells (%s)" % why)
+
+## OURS (round 678's review, for low-end machines): `[frontend] title_3d =
+## false` in the settings file, or SRREVAMP_TITLE_3D=0, keeps the 2D still and
+## never builds the 3D world at the title.
+static func title_3d_enabled() -> bool:
+	if OS.get_environment("SRREVAMP_TITLE_3D") == "0":
+		return false
+	return bool(ClientSettings.get_value(FrontEndTheme.SETTINGS_SECTION, "title_3d", true))
 
 func _alpha(n: CanvasItem) -> int:
 	return int(roundf(n.modulate.a * 255.0)) if n != null else 0
@@ -255,6 +296,9 @@ func _on_first_view_ready() -> void:
 		_frame.fade(_still, _alpha(_still), 0, STILL_FADE_S)
 	elif _still != null:
 		_still.visible = false
+	if _logo_waiting and _frame != null:
+		_logo_waiting = false
+		_show_login_node(_frame.logo)
 	# READ, FUN_00869b50: the big logo's slow fade-in, unless the login is up.
 	if _frame != null and not login_up:
 		_frame.fade(_frame.big_logo, 0, 255, BIG_LOGO_FADE_S, BIG_LOGO_DELAY_S)

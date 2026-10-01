@@ -41,6 +41,22 @@ const SECTION_SCRIPT := 2
 ## FUN_004e5bf0 compare against).
 const REGION_SPAN := 1920.0
 
+## Sanity bounds (OURS, round 678's review): a value outside them -- or not
+## a finite number at all (`1e999` reads as inf) -- makes the whole script
+## unusable, so the title falls back to the next intro with a log line
+## instead of flying (or hanging) on it. Retail has none; its own files sit
+## far inside them (MEASURED, check_intro_scripts.gd: times <= 53 s, |x|,
+## |z| <= 8320, y -434..2008, |angles| <= 14.9, distances 1..100,
+## at most 21 keyframes).
+const MAX_KEYFRAMES := 1024
+const MAX_TIME := 3600.0
+const MAX_HORIZONTAL := REGION_SPAN * 32.0
+const MAX_HEIGHT := 20000.0
+const MAX_ANGLE := 1000.0
+const MAX_DISTANCE := 100000.0
+## [SCRIPT] lines kept as text (not run); more are dropped.
+const MAX_SCRIPT_LINES := 10000
+
 class Keyframe:
 	var time: float = 0.0
 	## The region word's bytes: lo is the X sector, hi the Z sector (this
@@ -101,7 +117,7 @@ static func parse(bytes: PackedByteArray) -> Parsed:
 			section = SECTION_NONE
 			continue
 		if section == SECTION_SCRIPT:
-			if line.strip_edges() != "":
+			if line.strip_edges() != "" and out.script_lines.size() < MAX_SCRIPT_LINES:
 				out.script_lines.append(line.strip_edges())
 		elif section == SECTION_CAMERA:
 			if first.begins_with("AREA="):
@@ -117,12 +133,41 @@ static func parse(bytes: PackedByteArray) -> Parsed:
 				kf.yaw = _wtof(_at(tokens, 9))
 				kf.roll = _wtof(_at(tokens, 10))
 				kf.distance = _wtof(_at(tokens, 11))
+				var bad := out_of_bounds(kf)
+				if bad != "":
+					out.error = "keyframe %d: %s" % [out.keyframes.size() + 1, bad]
+					out.keyframes.clear()
+					return out
+				if out.keyframes.size() >= MAX_KEYFRAMES:
+					out.error = "more than %d keyframes" % MAX_KEYFRAMES
+					out.keyframes.clear()
+					return out
 				out.keyframes.append(kf)
 			elif line.strip_edges() != "":
 				out.skipped_camera_lines.append(line.strip_edges())
 	if out.keyframes.is_empty():
 		out.error = "no S_CameraInsert keyframe in a [CAMERA] section"
 	return out
+
+## Why a keyframe cannot be flown, or "" (the bounds above).
+static func out_of_bounds(kf: Keyframe) -> String:
+	var checks := [
+		["time", kf.time, 0.0, MAX_TIME],
+		["x", kf.pos.x, -MAX_HORIZONTAL, MAX_HORIZONTAL],
+		["y", kf.pos.y, -MAX_HEIGHT, MAX_HEIGHT],
+		["z", kf.pos.z, -MAX_HORIZONTAL, MAX_HORIZONTAL],
+		["pitch", kf.pitch, -MAX_ANGLE, MAX_ANGLE],
+		["yaw", kf.yaw, -MAX_ANGLE, MAX_ANGLE],
+		["roll", kf.roll, -MAX_ANGLE, MAX_ANGLE],
+		["distance", kf.distance, 0.0, MAX_DISTANCE],
+	]
+	for c in checks:
+		var v: float = c[1]
+		if is_nan(v) or is_inf(v):
+			return "%s is not a finite number" % c[0]
+		if v < float(c[2]) or v > float(c[3]):
+			return "%s %s is outside %s..%s" % [c[0], str(v), str(c[2]), str(c[3])]
+	return ""
 
 ## The region the camera is placed in: READ, CPSTitle::OnCreate asks the
 ## intro object for the LAST keyframe (FUN_0056be40, 0x86bda0) and hands its

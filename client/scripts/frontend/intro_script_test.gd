@@ -83,6 +83,24 @@ func _initialize() -> void:
 	_check(IntroScript.parse(utf16le("[SCRIPT]\n0 S_SetWorldTime 22\n")).error != "", "no [CAMERA] keyframe: an error")
 	_check(not IntroScript.parse(PackedByteArray([0x00, 0xFF, 0x13])).ok(), "garbage: not ok")
 
+	# Round 678's review: values a camera cannot fly are refused whole (OURS
+	# bounds), so the title falls back instead of hanging on them.
+	var inf_time := IntroScript.parse(utf16le("[CAMERA]\n0 S_CameraInsert 1e999 1 1 0 0 0 0 0 0 10\n[END]\n"))
+	_check(not inf_time.ok() and inf_time.error.contains("not a finite"), "1e999 (inf) is refused: %s" % inf_time.error)
+	var huge_yaw := IntroScript.parse(utf16le("[CAMERA]\n0 S_CameraInsert 0 1 1 0 0 0 0 1e17 0 10\n0 S_CameraInsert 1 1 1 0 0 0 0 0 0 10\n[END]\n"))
+	_check(not huge_yaw.ok() and huge_yaw.keyframes.is_empty() and huge_yaw.error.contains("yaw"), "a yaw of 1e17 is refused: %s" % huge_yaw.error)
+	_check(not IntroScript.parse(utf16le("[CAMERA]\n0 S_CameraInsert 0 1 1 0 0 0 0 0 0 -5\n")).ok(), "a negative distance is refused")
+	_check(not IntroScript.parse(utf16le("[CAMERA]\n0 S_CameraInsert 0 1 1 99999999 0 0 0 0 0 5\n")).ok(), "x past 32 regions is refused")
+	var many := "[CAMERA]\n"
+	for i in range(IntroScript.MAX_KEYFRAMES + 1):
+		many += "0 S_CameraInsert %d 1 1 0 0 0 0 0 0 10\n" % i
+	var too_many := IntroScript.parse(utf16le(many))
+	_check(not too_many.ok() and too_many.error.contains("more than"), "more than %d keyframes is refused: %s" % [IntroScript.MAX_KEYFRAMES, too_many.error])
+	var edge := "[CAMERA]\n"
+	for i in range(IntroScript.MAX_KEYFRAMES):
+		edge += "0 S_CameraInsert %d 1 1 0 0 0 0 0 0 10\n" % i
+	_check(IntroScript.parse(utf16le(edge)).keyframes.size() == IntroScript.MAX_KEYFRAMES, "exactly the cap is accepted")
+
 	# option.txt: the uncommented IntroName (a synthetic file in its shape).
 	var option := "//StartProcess = \"X\"\r\n//IntroName = \"script\\intro\\a.txt\"\r\nIntroName = \"script\\intro\\b.txt\"\r\nIntroBGM = \"x.ogg\"\r\n"
 	_check(IntroScript.parse_option_intro_name(option.to_utf8_buffer()) == "script\\intro\\b.txt",
