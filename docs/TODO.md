@@ -1444,6 +1444,9 @@ READ and measured in `docs/WORLD_ISSUES.md`'s 673rd round; the name rule is `Nam
 - [ ] **The sweep is OURS**: a sixth of the plates is re-tested a frame (`NamePlates.SWEEP_FRAMES`),
       so a name can show or hide up to 0.1 s after its owner crosses 300; retail measures every
       object every frame.
+- [ ] **Every name box draws before every name** (render priority 0 against 1; round 673's
+      review): where two monsters' plates overlap, the far one's text draws over the near one's
+      box. Needs the box and its text sorted as one item (one mesh, or a screen-space draw).
 - [ ] **Two models read +Z, 36 settle nothing** (`probe_monster_front.gd --all=1`): the event
       Jinn pets (`cos\p_jinn*.bsr`) on one weak head reading each, and the models with no
       toe/head/pelvis bones or disagreeing readings. All turn as -Z (INFERRED, one heading

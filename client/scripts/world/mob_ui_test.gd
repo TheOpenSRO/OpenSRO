@@ -174,12 +174,23 @@ func _test_monster(world: Node) -> void:
 		var want := 2.0 * tan(deg_to_rad(cam0.fov) * 0.5) / float(world.get_window().size.y) * world.get_window().content_scale_factor
 		_check(absf(label.pixel_size - want) < 1e-7, "one font pixel is one screen pixel x the UI scale (pixel_size %.7f, want %.7f)" % [label.pixel_size, want])
 
+	# 1c. Round 673's review: a party mark follows its plate when the plate is
+	# re-sized (a UI-scale change, a resize). Made here as _party_mark makes
+	# it (its pixel_size the plate's times its text's line height over 16);
+	# the archive's icon is not in this test, so a 16 x 16 stand-in.
+	await _test_party_mark_rescale(world, label)
+
 	# 2. The name: by distance from the player, never from the camera.
 	_check(label.visibility_range_end == 0.0, "the plate has no camera-distance cut (visibility_range_end %.0f)" % label.visibility_range_end)
 	var sweep = world.get("_plate_sweep")
 	_check(sweep != null, "the world keeps a plate sweep (NamePlates.Sweep)")
 	if sweep != null:
 		_test_plates(world, sweep, player, label, far_body.get_node("Label") as Label3D)
+
+	# 2b. Round 673's review: a dropped item's name keeps its own rule (shown
+	# only while hovered or Z is held, GroundItems.update_labels); the sweep
+	# must not show it.
+	_test_ground_item_plate(world, player)
 
 	# 3. Facing: a leg turns it to its path, a blow to its target.
 	body.rotation.y = 0.0
@@ -225,3 +236,67 @@ func _test_plates(world: Node, sweep, player: Node3D, label: Label3D, far_label:
 	_check(not far_label.visible, "the debug slider's range applies at once (63 > 50)")
 	world.call("set_name_plate_range", 300.0)
 	player.global_position = Vector3.ZERO
+
+func _test_party_mark_rescale(world: Node, label: Label3D) -> void:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	img.fill(Color.WHITE)
+	var mark := Sprite3D.new()
+	mark.name = "PartyMark"
+	mark.texture = ImageTexture.create_from_image(img)
+	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
+	var k := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).y / 16.0
+	mark.pixel_size = label.pixel_size * k
+	label.add_child(mark)
+	var window := world.get_window()
+	var was := window.content_scale_factor
+	window.content_scale_factor = 2.0
+	world.call("_step_monster_plate_scale")
+	var plate_now := label.pixel_size
+	_check(plate_now > 0.0 and absf(mark.pixel_size - plate_now * k) < 1e-7,
+		"at UI scale 2 the party mark is re-sized with its plate (mark %.7f, want %.7f)" % [mark.pixel_size, plate_now * k])
+	window.content_scale_factor = was
+	world.call("_step_monster_plate_scale")
+	_check(absf(mark.pixel_size - label.pixel_size * k) < 1e-7, "and back at the old scale with it")
+	label.remove_child(mark)
+	mark.free()
+	await process_frame
+
+func _test_ground_item_plate(world: Node, player: Node3D) -> void:
+	world.set("_data_pk2", Pk2Reader.new())
+	world.call("_try_setup_ground_items")
+	var items = world.get("_ground_items")
+	_check(items != null, "the world sets up its ground items")
+	if items == null:
+		return
+	var snap := GroundItemsNet.Snapshot.new()
+	snap.id = 1
+	snap.gold = true
+	snap.quantity = 50
+	snap.x = player.global_position.x + 20.0
+	snap.y = player.global_position.y
+	snap.z = player.global_position.z
+	items.spawn(snap)
+	var body := (items as Node).get_node_or_null("GroundItem_1") as Node3D
+	var label := body.get_node_or_null("Label") as Label3D if body != null else null
+	_check(label != null, "a dropped gold stack has a name plate")
+	if label == null:
+		return
+	var sweep = world.get("_plate_sweep")
+	var shown := 0
+	for i in range(60):
+		# Not hovered, Z not held: the item's own rule hides it every frame,
+		# then the frame's plate sweep runs (World3D's order).
+		items.update_labels(player.global_position, 0.0, -1)
+		if sweep != null:
+			sweep.step(player.global_position)
+		if label.visible:
+			shown += 1
+	_check(shown == 0, "an item's name not hovered stays hidden across the plate sweep (visible after %d of 60 frames)" % shown)
+	items.update_labels(player.global_position, 0.0, 1)
+	if sweep != null:
+		sweep.step(player.global_position)
+	_check(label.visible, "and shows when hovered")
+	(items as Node).get_parent().remove_child(items)
+	(items as Node).free()
+	world.set("_ground_items", null)
+	world.set("_data_pk2", null)

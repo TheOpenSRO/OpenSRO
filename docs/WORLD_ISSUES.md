@@ -7299,6 +7299,32 @@ An earlier gate on the tree before 2b's look (same sites) was SAME on all eight 
 frame 12.06 -> 9.67, mobs 10.82 -> 10.80; the jangan base runs were overlapped by another lane's
 renders and repeated).
 
+### Review (round 673's review, on 3917214)
+
+- **HIGH, fixed: the sweep showed dropped items' names.** `_name_plate` put every plate in the
+  sweep, including GroundItems' (World3D passed `_name_plate` as its `plate_for`), and the sweep
+  sets `visible` after `GroundItems.update_labels` hid it -- undoing round 608's "hovered or Z
+  held" rule: with 32 plates or fewer every item name in range showed, with more they flickered.
+  `_name_plate` takes `swept` (default true) and GroundItems gets `_name_plate.bind(false)`. The
+  other callers -- the player's own plate, other players', NPCs' -- have no other owner of their
+  `visible` (searched: only GroundItems.update_labels and the QA labels-off switch, which now
+  takes the plate off every render layer instead), so they follow the 300-from-the-player rule as
+  intended.
+- **MEDIUM, fixed: the party mark was not re-sized with its plate.** Its `pixel_size` is the
+  plate's times its text's line height over 16, taken once at creation; `_step_monster_plate_scale`
+  re-sized the plate and its box only, so at UI scale 1.95 or after a resize the mark sat at the
+  old scale. `_fit_party_mark` now sizes and places it, from `_party_mark` and from
+  `_fit_monster_name_box`.
+- **LOW, OPEN: the boxes all draw before all the texts** (render priority 0 against 1), so a far
+  monster's name draws over a near monster's box where two plates overlap. A per-plate order needs
+  the box and its text sorted as one item; Godot sorts transparent items by priority, then depth,
+  and the box and the text share a position. docs/TODO.md.
+- **Tests** (`mob_ui_test.gd`, two more checks; on 3917214 with the new suite): `FAIL at UI scale
+  2 the party mark is re-sized with its plate (mark 0.0254777, want 0.0509553)` and `FAIL an
+  item's name not hovered stays hidden across the plate sweep (visible after 60 of 60 frames)`, 2
+  FAILURES; with the fix ALL PASS. `remote_godot.sh check`: 464 scripts and 5 scenes, ALL LOAD;
+  `tests`: 187 suites, 0 failing. No per-frame work was added, so the perf gate was not re-run.
+
 ### 6. OPEN (docs/TODO.md, "Over and on monsters")
 
 Retail's optional small gauge; `+0xf0` and the name pass's other gates; the plate's face, size and

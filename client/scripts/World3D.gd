@@ -5954,7 +5954,12 @@ func _refresh_player_name_plate() -> void:
 	var top := _skeleton_top(_player_skeleton) if _player_skeleton != null else 1.8 * PLAYER_SCALE_RATIO
 	player.add_child(_name_plate(who, top))
 
-func _name_plate(text: String, above: float) -> Label3D:
+## `swept` (round 673's review): whether the plate follows the 300-from-the-
+## player rule (NamePlates.Sweep), which owns its `visible`. A ground item's
+## plate has its own rule -- shown only while hovered or Z is held
+## (GroundItems.update_labels, round 608) -- so it is made unswept: the sweep
+## setting `visible` every frame showed every item name in range.
+func _name_plate(text: String, above: float, swept: bool = true) -> Label3D:
 	var label := Label3D.new()
 	label.name = "Name"
 	label.text = text
@@ -5980,7 +5985,8 @@ func _name_plate(text: String, above: float) -> Label3D:
 	label.add_to_group("name_plates")
 	# Shown while its owner is within NamePlates.RANGE of the player (READ),
 	# from any camera angle; hidden until the sweep first measures it.
-	_plate_sweep.add(label)
+	if swept:
+		_plate_sweep.add(label)
 	return label
 
 ## The party monster's mark (round 660): retail's CICMonster vslot 15
@@ -6001,23 +6007,34 @@ func _party_mark(label: Label3D) -> Sprite3D:
 	var tex: Texture2D = _ui_builder.load_texture(PARTY_MARK_TEXTURE)
 	if tex == null:
 		return null
-	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
-	var text_size := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size)
-	var k := text_size.y / PARTY_MARK_PX  # icon pixels -> the plate's font pixels
 	var mark := Sprite3D.new()
 	mark.name = "PartyMark"
 	mark.texture = tex
 	mark.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	mark.fixed_size = true
-	mark.pixel_size = label.pixel_size * k * float(PARTY_MARK_PX) / float(tex.get_height())
 	mark.no_depth_test = true
 	mark.render_priority = label.render_priority
+	_fit_party_mark(label, mark)
+	# A child of the plate: shown and hidden with it (round 673).
+	return mark
+
+## Sizes and places a party mark against its plate's text and scale. Called
+## again whenever the plate is re-sized (_fit_monster_name_box, round 673's
+## review): the mark's pixel_size is the plate's times its own ratio, so a
+## UI-scale change or a resize that re-sized only the plate left the mark
+## at the old scale, over the text or adrift.
+func _fit_party_mark(label: Label3D, mark: Sprite3D) -> void:
+	if mark == null or mark.texture == null:
+		return
+	var tex := mark.texture
+	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
+	var text_size := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size)
+	var k := text_size.y / PARTY_MARK_PX  # icon pixels -> the plate's font pixels
+	mark.pixel_size = label.pixel_size * k * float(PARTY_MARK_PX) / float(tex.get_height())
 	# The plate is centred on its node: the mark's centre is half the text, the
 	# gap and half itself to the left, in its own texture pixels.
 	var tex_px := float(tex.get_height()) / PARTY_MARK_PX
 	mark.offset = Vector2(-(text_size.x * 0.5 / k + PARTY_MARK_GAP_PX + PARTY_MARK_PX * 0.5) * tex_px, 0.0)
-	# A child of the plate: shown and hidden with it (round 673).
-	return mark
 
 ## A monster's name as retail draws it (round 673), MEASURED from the user's
 ## retail screenshot of the Mangyang field near Jangan (1730 x 896, every
@@ -6092,6 +6109,7 @@ func _fit_monster_name_box(label: Label3D) -> void:
 		_monster_name_box_textures[key] = tex
 	box.texture = tex
 	box.pixel_size = label.pixel_size
+	_fit_party_mark(label, label.get_node_or_null("PartyMark") as Sprite3D)
 	# Centred on the plate the box sat one row low against the picture (3 rows
 	# above the cap top and 2 below the descender, MEASURED in round 673's
 	# render, against retail's 4 and 1): one font pixel up.
@@ -16088,7 +16106,8 @@ func _try_setup_ground_items() -> void:
 		return
 	_ground_items = GroundItems.new()
 	_ground_items.name = "GroundItems"
-	_ground_items.setup(_data_pk2, _item_drop_models, _item_display_name, _name_plate, _terrain_hit_height)
+	# Unswept plates: an item's name has its own visibility rule (_name_plate).
+	_ground_items.setup(_data_pk2, _item_drop_models, _item_display_name, _name_plate.bind(false), _terrain_hit_height)
 	other_entities.add_child(_ground_items)
 
 ## The object-name table (textdata_object.txt), parsed once on first use and
