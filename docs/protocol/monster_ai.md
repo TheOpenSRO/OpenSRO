@@ -3988,7 +3988,8 @@ with the guess: the monster disappears.
   the ones standing in a town region (`combat.Hub.Remove`: no death, nothing credited, booked on the
   death log so the nest scheduler re-arms as for a loss -- INFERRED above). The players whose window
   holds it get `OpMonsterLeft` (round 656's message; the client drops the body), its states and
-  blocking streak are forgotten, and the server logs `monster removed: it entered a town ...` with
+  blocking streak are forgotten, and the server logs `monster removed: it entered a town ...` (INFO for
+  one that walked in, Debug plus a per-minute INFO count for one placed there -- OURS, round 674's review) with
   the monster, how (walked in / placed there), its state and target, the region and area.
 - The region of a monster is `worldmap.FromWorld` in its bucket's frame (`entityFrame`). OURS: a
   region the CSV does not list is not a town (retail removes a monster with no region at all, but

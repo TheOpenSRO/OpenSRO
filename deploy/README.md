@@ -871,13 +871,16 @@ On srrevamp-01, with this release's server running (the update timer, step 0 of 
    as in step 6 of the next section), then `cd ~/srrevamp && docker compose up -d`.
 4. The boot log (`docker compose logs server`) says
    `region table loaded: a monster entering a town region is removed (IsBattleField 0) ... regions=3194 towns=103`,
-   and each removal logs `monster removed: it entered a town ... name=... how="walked in" ... area=Town_Jangan`.
+   and a monster that walks in logs `monster removed: it entered a town ... name=... how="walked in" ... area=Town_Jangan`
+   at INFO. One removed where it was placed (hatched or spawned in a town) is logged at Debug, and
+   counted once a minute at INFO: `monsters removed on placement in a town ... count=N`.
 
 Six of the retail archive's 12,110 monster placements stand in a town region (two of Alexandria's
 `town_Alex` regions, 90/49 and 91/51: one MOB_SD_UNEG, five MOB_SD_WENEG). With `-full-map` each
 hatches, is removed on the first AI pass that runs it (with `-monster-sleep`, the default, once a
 player comes near) and hatches again after its nest's window -- what the engine's rule does with a
-nest in a town (INFERRED: its placement goes through the same region change).
+nest in a town (INFERRED: its placement goes through the same region change). Each nest's window
+is 1-3 s with a cap of 24 (EXTERNAL), so near them the per-minute count runs at about 30-60.
 
 ## Deploying the monster-epic release to srrevamp-01 (round 666)
 

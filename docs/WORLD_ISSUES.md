@@ -7250,6 +7250,37 @@ one 480 critical), her HP 8452 -> 3949 and still falling when the run ended -- t
   hatch and are removed again while a player is near (INFERRED retail-like), one log line each.
 - srrevamp-01 needs `regions.csv` and the `-regions-csv` line (deploy/README.md, "Towns").
 
+### 7. Review (cd992ed): READ claims confirmed, nothing HIGH; four fixes
+
+- **The leave reaches every player who could see the monster (MEDIUM).** The removal's
+  `OpMonsterLeft` went, after the pass, to the cell's watchers at the send only. The area of
+  interest's reconcile runs on its own ticker: a view it moved off the cell between `Hub.Remove`
+  and the push got no leave from the reconcile (the monster is out of the hub, so its lost cells do
+  not name it) nor from the push, and kept a ghost body. The removal now takes the cell's watchers
+  as it removes, and the push goes to the union of those and the send-time watchers -- the pattern
+  `damageMonsterWatched` uses for a death. `TestTownRemovalReachesAViewThatMovedOffBeforeThePush`
+  moves the view in that gap (a test hook between the pass's unlock and its pushes); with the
+  removal-time watchers dropped it fails:
+  `OpMonsterLeft named [], want [1]: the player who could see the monster when it was removed keeps its body`.
+- **The town nests' churn is logged as a count (MEDIUM).** The six in-town retail placements are
+  nests 27527 (90/49) and 27572, 27585-27588 (91/51), window 1-3 s, cap 24 (EXTERNAL): near them a
+  burst of up to ~24 removals a nest and then 1-2 a second. The behaviour is kept (INFERRED
+  retail's: no town filter at the nest, 0x560e90; the hatch goes EnterWorld -> MoveTo ->
+  SetCurRegion). OURS, the logging: a removal "placed there" is a Debug line, counted in one INFO
+  line a minute (`monsters removed on placement in a town ... count=N`); "walked in" stays INFO.
+  `TestTownRemovalLogLevels` pins both (with the placed removals at INFO it fails: `two monsters
+  placed in the town: 2 INFO and 0 Debug removal lines, want 0 and 2`).
+- **The boot line (LOW)** says monsters are removed only when `-monster-ai` is on; with it off it
+  says the table is loaded and nothing moves or is removed.
+- **The same-pass enter (LOW, tested now):** `TestTownRemovalInTheSamePassAsItsEnterSendsNoBody`
+  takes the production path (`a.push` nil, the area of interest installed): a monster whose step
+  owes a player an enter and lands it in the town is removed before the enter is delivered, and
+  the player gets no `OpMonsterSpawned` and no leg for it.
+
+After the fixes: `cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...` --
+gofmt and vet clean, 62 packages ok, 0 FAIL; `go test -race` over the session and combat tests this
+round touches (Town, AOI, MonsterChases, MonsterBattle, Remove): ok.
+
 ## Six-hundred-and-seventy-second round: text as crisp as the original's at every UI scale -- glyphs rasterised at the scale and drawn unfiltered, every in-game text node in the client's own face, and the old lost-last-glyph bug found in Buttons and guarded
 
 The user (2026-10-01): "The text in the game seems blurry while it's nice and crisp in the original

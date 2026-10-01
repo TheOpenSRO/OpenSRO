@@ -1497,8 +1497,15 @@ func main() {
 			os.Exit(1)
 		}
 		session.SetSafeRegions(regions)
-		logger.Info("region table loaded: a monster entering a town region is removed (IsBattleField 0)",
-			"path", *regionsCSV, "regions", regions.Len(), "towns", regions.SafeCount())
+		// The removal is the monster AI's (round 674's review): the line says
+		// so only when the AI runs.
+		if *monsterAI {
+			logger.Info("region table loaded: a monster entering a town region is removed (IsBattleField 0)",
+				"path", *regionsCSV, "regions", regions.Len(), "towns", regions.SafeCount())
+		} else {
+			logger.Info("region table loaded (IsBattleField 0 are the towns), but the monster AI is off (-monster-ai): no monster moves, and none is removed",
+				"path", *regionsCSV, "regions", regions.Len(), "towns", regions.SafeCount())
+		}
 	} else {
 		logger.Info("no region table (-regions-csv / SRREVAMP_REGIONS_CSV): no region is a town, and a monster follows a player into one")
 	}

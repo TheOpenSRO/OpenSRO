@@ -1282,7 +1282,7 @@ on srrevamp-01 (`deploy/README.md`, "Towns"). Left:
       town side). Immaterial in play.
 - [ ] **Six retail placements stand in town regions** (Alexandria, 90/49 and 91/51): with
       `-full-map` they hatch, are removed and hatch again after their window while a player is
-      near -- what the engine would do (INFERRED), but a removal line each time in the log.
+      near -- what the engine would do (INFERRED). Logged at Debug, with one INFO count a minute (review).
 
 ### The monster world's nests (round 660) — **built: every field row a nest, the DB's numbers where a row joins one, champion/giant/party, per-monster tactics; these are left**
 
