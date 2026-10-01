@@ -1221,6 +1221,39 @@ func (h *Hub) ApplyDamageFrom(id, attacker int64, amount int) (monster Monster, 
 	return result, false, true, nil
 }
 
+// Remove takes monster id out of the hub without a death (round 674): no blow,
+// no credit, its damage list dropped with it. It is retail's removal --
+// SetLifeState(3, 0xff, 0), which the main loop turns into the object's
+// deletion and which broadcasts no death (session's safe regions, the
+// internal/safezone package note) -- for a monster that walked into a town.
+//
+// The removal is booked on the death log (LogDeaths) as a death is: the log is
+// how the nest scheduler learns a hatch is gone, and its loss is the nest's
+// like any other. INFERRED: the engine's nest hook for a lost hatch
+// (AI::CNest::OnHatchedRemoved, 0x560d00) has no caller found (round 239),
+// so whether it runs for a removal as well as a death is not read; a nest
+// that never learned of the removal would stop hatching once its cap was
+// spent.
+func (h *Hub) Remove(id int64) (Monster, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	m, exists := h.byID[id]
+	if !exists {
+		return Monster{}, false
+	}
+	result := *m
+	delete(h.byID, id)
+	delete(h.moving, id)
+	delete(h.facing, id)
+	delete(h.lastBlow, id)
+	delete(h.hits, id)
+	h.unfileLocked(id)
+	if h.deathLog {
+		h.deaths = append(h.deaths, id)
+	}
+	return result, true
+}
+
 // Hits is a copy of monster id's damage list so far, in first-hit order.
 func (h *Hub) Hits(id int64) []Hit {
 	h.mu.Lock()

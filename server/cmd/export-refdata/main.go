@@ -47,6 +47,7 @@ import (
 	"strings"
 	"unicode/utf16"
 
+	"github.com/OpenSRO/srrevamp/server/internal/safezone"
 	"github.com/OpenSRO/srrevamp/server/internal/skillparam"
 	"github.com/OpenSRO/srrevamp/server/internal/spawn"
 	"github.com/OpenSRO/srrevamp/server/internal/species"
@@ -453,12 +454,13 @@ const (
 
 func main() {
 	out := flag.String("out", "-", "output CSV path, or - for stdout")
-	mode := flag.String("mode", "items", "which reference table the input files are: items, skills, npcpos, teleport or monsters")
+	mode := flag.String("mode", "items", "which reference table the input files are: items, skills, npcpos, teleport, monsters or regions")
 	flag.Parse()
-	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters") {
+	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "regions") {
 		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills|npcpos] -out out.csv <data_*.txt> ...")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt teleportbuilding.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode monsters -out monsters.csv characterdata_*.txt [levelgold.txt] [textdata_object.txt]")
+		fmt.Fprintln(os.Stderr, "       export-refdata -mode regions -out regions.csv refregion.txt")
 		os.Exit(2)
 	}
 	record, noun := itemRecord, "item"
@@ -476,6 +478,14 @@ func main() {
 		// species under species.CSVColumns: what cmd/server's -monsters-csv
 		// loads (round 654).
 		if err := exportMonsters(*out, flag.Args()); err != nil {
+			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	case "regions":
+		// refregion.txt (_RefRegion) in, one CSV out: what cmd/server's
+		// -regions-csv loads (round 674, internal/safezone).
+		if err := exportRegions(*out, flag.Args()); err != nil {
 			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
 			os.Exit(1)
 		}
@@ -2312,4 +2322,75 @@ func countList(m map[int]int) string {
 		parts = append(parts, fmt.Sprintf("%d=%d", k, m[k]))
 	}
 	return strings.Join(parts, " ")
+}
+
+// refregion.txt's columns (_RefRegion, 21 fields a row in a retail archive):
+// wRegionID, X, Z, ContinentName, AreaName, IsBattleField, Climate,
+// MaxCapacity, AssocObjID, AssocServer, AssocFile256, LinkedRegion_1..10. The
+// server's row parser (0x6a2e40) reads them in this order and keeps
+// IsBattleField at the record's +2, the byte every town test reads
+// (internal/safezone).
+const (
+	rrID          = 0
+	rrContinent   = 3
+	rrArea        = 4
+	rrBattlefield = 5
+)
+
+// exportRegions writes the regions CSV (safezone.CSVColumns) from the client's
+// refregion.txt. A row with fewer fields than the columns read, or whose id or
+// IsBattleField is not a number, is an ERROR naming the row -- every retail row
+// has the table's full width and numbers in both -- because a mis-split table
+// would leave a town out without a word. The output is loaded back before this
+// returns, so a CSV the server cannot read fails here, not at boot.
+func exportRegions(out string, paths []string) error {
+	if len(paths) != 1 || !strings.EqualFold(filepath.Base(paths[0]), "refregion.txt") {
+		return fmt.Errorf("-mode regions reads one file, refregion.txt (got %q)", paths)
+	}
+	if out == "-" || out == "" {
+		return fmt.Errorf("-mode regions writes a file: -out must name it")
+	}
+	rows, err := readTable(paths[0])
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", paths[0], err)
+	}
+	recs := make([][]string, 0, len(rows))
+	for i, cols := range rows {
+		if len(cols) <= rrBattlefield {
+			return fmt.Errorf("%s: row %d has %d fields, fewer than the %d the export reads: %.60q",
+				paths[0], i+1, len(cols), rrBattlefield+1, strings.Join(cols, "\t"))
+		}
+		for j := range cols {
+			cols[j] = strings.TrimSpace(cols[j])
+		}
+		if _, err := strconv.Atoi(cols[rrID]); err != nil {
+			return fmt.Errorf("%s: row %d: wRegionID %q is not a number", paths[0], i+1, cols[rrID])
+		}
+		if _, err := strconv.Atoi(cols[rrBattlefield]); err != nil {
+			return fmt.Errorf("%s: row %d: IsBattleField %q is not a number", paths[0], i+1, cols[rrBattlefield])
+		}
+		recs = append(recs, []string{cols[rrID], cols[rrContinent], cols[rrArea], cols[rrBattlefield]})
+	}
+	f, err := os.Create(out)
+	if err != nil {
+		return err
+	}
+	w := csv.NewWriter(f)
+	if err := w.Write(safezone.CSVColumns); err != nil {
+		f.Close()
+		return err
+	}
+	if err := w.WriteAll(recs); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	t, err := safezone.Load(out)
+	if err != nil {
+		return fmt.Errorf("the CSV written does not load back: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "wrote %d regions to %s, %d of them towns (IsBattleField 0)\n", t.Len(), out, t.SafeCount())
+	return nil
 }

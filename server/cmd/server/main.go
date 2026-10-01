@@ -34,6 +34,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/quest"
 	"github.com/OpenSRO/srrevamp/server/internal/rates"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/srrevamp/server/internal/safezone"
 	"github.com/OpenSRO/srrevamp/server/internal/session"
 	"github.com/OpenSRO/srrevamp/server/internal/shop"
 	"github.com/OpenSRO/srrevamp/server/internal/skill"
@@ -846,6 +847,13 @@ func main() {
 			"teleportdata.txt, teleportlink.txt and teleportbuilding.txt). Loaded, checked and counted "+
 			"at boot; the town teleporters' OpTeleportUse 0x00F3 charges and moves by it (round 576), "+
 			"and without it every teleport is refused. A configured directory that does not load is fatal.")
+	regionsCSV := flag.String("regions-csv", os.Getenv("SRREVAMP_REGIONS_CSV"),
+		"path to the game's region table as CSV (env SRREVAMP_REGIONS_CSV; from cmd/export-refdata -mode regions "+
+			"on a client's own server_dep\\silkroad\\textdata\\refregion.txt, round 674). Its IsBattleField 0 regions "+
+			"are the towns: with the monster AI on, a monster that walks into one -- chasing a player, say -- or is "+
+			"placed in one is removed, as SR_GameServer.exe's CGObjMob::SetCurRegion does (no death, no reward; "+
+			"docs/protocol/monster_ai.md). Without it no region is a town and monsters follow players in. "+
+			"A configured path that does not load is fatal.")
 	itemsCSV := flag.String("items-csv", os.Getenv("SRREVAMP_ITEMS_CSV"),
 		"path to an item-refdata CSV (from cmd/export-refdata -mode items); with -in-memory it "+
 			"feeds the shop catalogue and prices, item stat lookups and inventory stack limits. "+
@@ -1478,6 +1486,21 @@ func main() {
 		}
 		logger.Info("npcpos placements loaded", "species_in_table", len(table), "roster_species_placed", applied,
 			"npcpos_species_in_monster_table", inMonsterTable)
+	}
+	// The towns (round 674): _RefRegion's IsBattleField, which the monster AI
+	// removes a monster by when it enters a town region (session.SetSafeRegions).
+	// Loaded and checked here so a bad export fails at boot.
+	if *regionsCSV != "" {
+		regions, err := safezone.Load(*regionsCSV)
+		if err != nil {
+			logger.Error("loading the region table", "path", *regionsCSV, "err", err)
+			os.Exit(1)
+		}
+		session.SetSafeRegions(regions)
+		logger.Info("region table loaded: a monster entering a town region is removed (IsBattleField 0)",
+			"path", *regionsCSV, "regions", regions.Len(), "towns", regions.SafeCount())
+	} else {
+		logger.Info("no region table (-regions-csv / SRREVAMP_REGIONS_CSV): no region is a town, and a monster follows a player into one")
 	}
 	// The game's teleport network, when the operator supplies it (round 575).
 	// Loaded and checked here so a bad export fails at boot, the npcpos rule;

@@ -646,6 +646,19 @@ func (a *monsterAI) tick(now time.Time) {
 		a.crossed = a.monsters.StepCells(dt, awake, a.crossed[:0])
 	}
 
+	// 1b. Towns (round 674, safezone.go): a monster the step carried into a
+	// town region is removed -- CGObjMob::SetCurRegion's SetLifeState(3) on
+	// every region change (READ). A region line is a cell line, so the
+	// crossings are every region change the step made. Removed before the
+	// pass reads the live monsters, so the brain goes as a dead monster's.
+	if safeRegions.Load() != nil {
+		for _, ch := range a.crossed {
+			if m, ok := a.monsters.Get(ch.ID); ok {
+				a.removeIfInTown(m, "walked in")
+			}
+		}
+	}
+
 	// 2. A brain per live monster. A new one faces the heading it hatched
 	// with (combat.Monster.Heading) and leaves SPAWN at once: message 0x21's
 	// default transition is IDLE. OWN DESIGN: SPAWN::OnUpdate's timing is
@@ -683,6 +696,13 @@ func (a *monsterAI) tick(now time.Time) {
 			b := a.wake(*m, mem)
 			b.seenTick = a.tickN
 			a.brains[m.ID] = b
+			continue
+		}
+		// Round 674: a monster first met standing in a town -- hatched or
+		// GM-spawned there -- is removed before it gets a brain: its first
+		// placement is a region change too (CGObj::EnterWorld -> MoveTo ->
+		// SetCurRegion, READ).
+		if a.removeIfInTown(*m, "placed there") {
 			continue
 		}
 		b := a.newBrain(*m)

@@ -7094,6 +7094,162 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-seventy-fourth round: towns are safe from monsters -- a monster that follows a player into a town disappears at the town's region line, as the original server removes it
+
+The user (2026-10-01): "There should also be safe zones in towns but I had a mob follow me into town
+and attack me. I think the usually disappear if they follow you into safe zone but check the game
+logic." The game logic says the guess is right: the original server removes a monster the moment
+its move takes it into a town region. srrevamp had no towns at all on the server, so a monster
+chased a player through Jangan's gate and kept swinging.
+
+Labels: READ (SR_GameServer.exe: `/var/tmp/decomp_server`, `srv.asm`, the exe's vtables read with
+a PE reader on the box), MEASURED (the render box, the client's own Media.pk2), INFERRED, OURS.
+The full reading is in `docs/protocol/monster_ai.md`, "Towns: a monster that walks into one is
+removed (round 674)"; the essentials:
+
+### 1. What a town is (READ, MEASURED)
+
+- The server's town is the `_RefRegion` row's **IsBattleField** byte. The row parser `0x6a2e40`
+  stores wRegionID at `+0`, skips X and Z, reads ContinentName and AreaName, and stores the sixth
+  column's byte at `+2`. A field region keeps its row at `region+0x10`; every town test in the
+  binary reads `*(region+0x10)+2`.
+- NOT regioninfo.txt: the server parses it (`RegionManagerBody::FUN_0098be30`), but the region
+  manager's town query (slot 23, `0x98d040`) is never called -- the global `DAT_00cc387c` is called
+  through slots `0xc`..`0x7c`, never `0x5c`, in the decompile and in the asm.
+- MEASURED: the client's `server_dep\silkroad\textdata\refregion.txt` (UTF-16, 21 columns) equals
+  the server package's `SR_GameRefData\refregion.txt` byte for byte after decoding (diff empty):
+  3,194 regions, **103 with IsBattleField 0**, all town areas (`Town_Jangan` 6 -- 97/167-169 and
+  98/167-169 --, `Town_Dunhwang` 4, `Town_Khotan` 7, `Town_Cons` 21, `Eu` 2, `Town_Samarkand` 4,
+  `Town_Thief` 1, `TOWN_ARABIA`/`TOWN_` 22, `town_Alex` 36). This is the data source: the
+  operator's own archive, exported by `export-refdata -mode regions`. No row is in the repo.
+
+### 2. What a monster does there (READ)
+
+- `CGObjMob::SetCurRegion` (vtable `0xaeddac` slot 235, `0x4c1270`) is
+  `this[0x4a] = region; if (region == 0 || region.row[+2] == 0) SetLifeState(3, 0xff, 0)`.
+- Life state 3 is **removal**: `CGObjChar::SetLifeState` (`0x4a9c80`) broadcasts only 1<->2, and
+  the main loop (`CMainProcess::FUN_00413b30`) hands a non-player in state 3 to `FUN_00417090`,
+  which deletes it -- the same end as a monster's lifetime (`CGObjMob::Update` `0x4c1700`). No
+  death, no experience, no drop.
+- Slot 235's one call site (`0x485ad4`) is in the region change of `FUN_004858e0`, reached only
+  from the object's MoveTo (`FUN_00485740` <- `0x48b660`, CGObjMob's slot 231), which
+  `CGObj::EnterWorld` also calls. So a monster is removed whenever its walk crosses into a town
+  region, and when it is placed in one. The veto before it (slot 220) is `return 1` for a monster
+  (`0x9856e0`).
+- **Nothing else protects a player in town.** CGObjMob's attack check (slot 394, `0x529110`), the
+  AI's target validity (`0x540de0`) and its nearest selector (`0x5464e0`) read no region. A monster
+  that stops on the field side of the line still hits a player standing just inside it.
+- The byte's player-side uses (READ, not built, TODO): PvP refused `0x3018` when either side is in
+  a town (CGObjPC slot 394, `0x5293a0`), offensive skills refused from a town (skill gate row 13,
+  `0x58e186`), the thief's cart (`0x0c01`, CGObjPC slot 220, `0x4eb220`).
+
+So the answers to the brief's four questions: a town is a region with IsBattleField 0 (a table);
+a monster chasing a player into it **disappears** at the line; it cannot attack a player inside
+because it cannot be inside -- but one outside can reach a player at the edge; monsters are not
+kept from spawning or wandering there, they are removed on arrival.
+
+### 3. What changed (OURS where said)
+
+- `internal/safezone` (new): the table, read from the CSV `RegionID,ContinentName,AreaName,
+  IsBattleField`; `SafeAt` is IsBattleField 0. OURS: a region the CSV does not list is not a town.
+- `cmd/export-refdata -mode regions`: refregion.txt -> regions.csv, refusing a short or non-numeric
+  row, loading its output back. On the box's archive: `wrote 3194 regions to regions.csv, 103 of
+  them towns (IsBattleField 0)`.
+- `cmd/server -regions-csv` (env `SRREVAMP_REGIONS_CSV`): loads it, fatal when it does not load,
+  `session.SetSafeRegions`. Without it nothing changes.
+- `session` (monster AI, `monsterai.go` step 1b and the new-brain path, `safezone.go`): after the
+  mover's step, each monster that crossed a cell line (a region line is always a cell line) and each
+  monster met for the first time is removed when it stands in a town region: `combat.Hub.Remove`
+  (new; no death, no credit; booked on the death log so the nest re-arms as for a loss, INFERRED),
+  `OpMonsterLeft` to the players whose window holds it (OURS: retail's despawn is `0x3016`; the
+  client already drops a body on `OpMonsterLeft`), its states and blocking streak forgotten, and an
+  INFO line `monster removed: it entered a town ...` with its state, target, region and area.
+- Docs: `monster_ai.md` "Towns", `server/README.md` (`-regions-csv`), `deploy/README.md` (the export
+  line, the compose line, "Towns (round 674)" with the srrevamp-01 steps), `TODO.md` "Towns".
+- No client change: the removal reaches the client as the area-of-interest leave it already handles.
+
+### 4. Tests
+
+New: `internal/session/safezone674_test.go` (with `safezone674_shim_test.go`, the one new-API call),
+`safezone674_unit_test.go` (the region in each bucket's frame), `internal/safezone/safezone_test.go`,
+`internal/combat/remove674_test.go`, `cmd/export-refdata/regions_test.go`. The rows in every test
+table are SYNTHETIC.
+
+- `TestMonsterChasingIntoTownIsRemovedAtTheLine` -- Aria stands 60 inside Jangan's line (z 900); a
+  Mangyang she struck chases from the field (z 1060): it is removed within a tick's step of z 960,
+  no brain, one `OpMonsterLeft`, the loss on the death log, no blow, her HP untouched.
+- `TestMonsterPlacedInTownIsRemovedOnItsFirstPass` -- spawned at (0, 0): gone on its first pass.
+- `TestMonsterInTheFieldIsLeftAlone` (control) and `TestMonsterAtTheTownEdgeStillReachesAPlayerJustInside`
+  (READ pin: a monster stopping at z 965 hits Aria at z 955).
+
+**The negative** -- the session test and a stub shim (`installTowns674` doing nothing) in a worktree
+at the base `4104a11`:
+
+```
+=== RUN   TestMonsterChasingIntoTownIsRemovedAtTheLine
+    safezone674_test.go:121: the monster chased Aria into the town and is still there at (0.0, 912.6), moving false: the town's line at z 960 removed nothing
+    safezone674_test.go:127: the removed monster still has a brain
+    safezone674_test.go:130: OpMonsterLeft named [], want exactly the removed monster 1 once
+    safezone674_test.go:133: the death log holds [], want the removed monster 1 (the nest scheduler's only signal of a lost hatch)
+    safezone674_test.go:137: 2 blow(s) on Aria standing in the town: [{MonsterID:1 TargetCharacterID:1 Damage:15 ... TargetHP:185 ...} {MonsterID:1 TargetCharacterID:1 Damage:15 ... TargetHP:170 ...}]
+    safezone674_test.go:140: Aria's HP 170 (err <nil>), want 200 untouched
+--- FAIL: TestMonsterChasingIntoTownIsRemovedAtTheLine (0.03s)
+=== RUN   TestMonsterPlacedInTownIsRemovedOnItsFirstPass
+    safezone674_test.go:154: a monster standing in the town (0, 0, region 97/168) is still in the hub after its first pass
+--- FAIL: TestMonsterPlacedInTownIsRemovedOnItsFirstPass (0.00s)
+--- PASS: TestMonsterInTheFieldIsLeftAlone (0.00s)
+--- PASS: TestMonsterAtTheTownEdgeStillReachesAPlayerJustInside (0.01s)
+```
+
+Mutations on the branch: dropping the crossing check fails the chase test with the same six lines;
+dropping the first-pass check fails the placement test.
+
+`cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...`: vet clean, gofmt clean, 63 packages ok, 0 FAIL (the session package 107 s).
+`remote_godot.sh check` on the box: `checked 461 scripts and 5 scenes / ALL LOAD` (no client change).
+No perf gate: server-only round.
+
+### 5. Live (MEASURED, render box, lane safezone674)
+
+`/var/tmp/safezone674/live.sh`: this branch's server with srrevamp-01's flags (`-full-map` =>
+`-single-frame`, `-monster-ai -monster-strike-push -monster-spawn-push -monster-battle
+-player-dead-state -monster-aggro`, `-nest-db-dir` the EXTERNAL shard nests) and
+`-regions-csv` from the archive's refregion.txt; one client through the wire tap. The GM stands
+south of Jangan's south gate (`/tp -6 1180`, region 96/168), spawns an Earth Ghost beside
+her, steps 40 north of it (`/tp 0 1140`), strikes it once and walks 300 units straight away --
+north through the gate (the walk was probed first, headless: `walk_probe.gd --region=96/168
+--from=1008,1500 --heading=0 --cross=1` crosses into 97/168 on terrain and reaches the
+`cj_jang_gate` at local z 300; at local x 1100 the `cj_s` wall stops it).
+
+Run r1 (`-regions-csv` on):
+
+```
+level=INFO msg="region table loaded: a monster entering a town region is removed (IsBattleField 0)" path=/var/tmp/safezone674/regions.csv regions=3194 towns=103
+level=INFO msg="gm command" ... line="spawn Earth Ghost" ... reply="spawned 1 x Earth Ghost (MOB_WC_EARTHGHOST, id 1963; level 27, rarity 0, HP 1451) at 0, 1180 -- ids 61710; no respawn"
+level=INFO msg="monster removed: it entered a town (_RefRegion IsBattleField 0; CGObjMob::SetCurRegion 0x4c1270 -> SetLifeState 3)" monster=61710 name="Earth Ghost" how="walked in" state=BATTLE target=1 region=97/168 area=Town_Jangan x=0 z=953
+```
+
+The wire (tap): two `OpMonsterAttacked` from 61710 while it chased her in the field (239 at
+18:33:46.110, 220 at 18:33:50.010), then `0x00b5 OpMonsterLeft {IDs:[61710]}` at 18:33:51.710;
+the client logs `World3D: 1 monster(s) left the area of interest` at the same moment
+(18:33:51.720) and its retreat ends at z 840.8, 113 inside the line. No blow after the removal:
+her HP climbs back from 8060 to 8452 over the next 25 s (`QA STATS`).
+
+Run r2 (the same, without `-regions-csv`: no region is a town, as before this round): the monster
+follows her in. Its last leg (`OpMonsterMoved`) ends at (0, 855.5), 104 units inside the line; no
+`monster removed` line, no `OpMonsterLeft`; **21 `OpMonsterAttacked` in 43 s** (224, 222, 244, ...,
+one 480 critical), her HP 8452 -> 3949 and still falling when the run ended -- the user's report.
+
+### 6. OPEN
+
+- The player's side of the town byte (PvP `0x3018`, offensive skills from a town, the thief's cart):
+  READ, not built.
+- Whether the nest counts a removal as a loss (INFERRED yes; `AI::CNest::OnHatchedRemoved`'s
+  caller is still unfound), and what retail sends for it (INFERRED `0x3016` via the deletion).
+- A monster whose leg ends exactly on a z region line is checked at its next cell crossing (OURS).
+- Six retail placements stand in Alexandria's town regions (90/49, 91/51): with `-full-map` they
+  hatch and are removed again while a player is near (INFERRED retail-like), one log line each.
+- srrevamp-01 needs `regions.csv` and the `-regions-csv` line (deploy/README.md, "Towns").
+
 ## Six-hundred-and-seventy-second round: text as crisp as the original's at every UI scale -- glyphs rasterised at the scale and drawn unfiltered, every in-game text node in the client's own face, and the old lost-last-glyph bug found in Buttons and guarded
 
 The user (2026-10-01): "The text in the game seems blurry while it's nice and crisp in the original

@@ -64,8 +64,10 @@ for f in teleportdata.txt teleportlink.txt teleportbuilding.txt; do
   /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\\silkroad\\textdata\\$f" -out $f; done
 /tmp/export-refdata  -mode teleport -out teleport teleportdata.txt teleportlink.txt teleportbuilding.txt
                      # a DIRECTORY of three CSVs: 222 points, 292 links, 77 buildings; the server reads it with -teleport-dir
+/tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\refregion.txt" -out refregion.txt
+/tmp/export-refdata  -mode regions -out regions.csv refregion.txt         # 3,194 regions, 103 towns; the server reads it with -regions-csv (round 674)
 rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt characterdata_* leveldata.txt \
-      levelgold.txt textdata_object.txt npcpos.txt teleport*.txt
+      levelgold.txt textdata_object.txt npcpos.txt teleport*.txt refregion.txt
                      # the extracted tables are game data; keep only the CSVs (and the teleport/ directory)
 
 # The exporter grows a strict-suffix column now and then (latest: skill columns 47-61, round 616 -- the buff
@@ -171,6 +173,7 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 #         - "-npcpos-csv=/data/npcpos.csv"       # real monster placements (round 253); omit for the town anchors
 #         - "-teleport-dir=/data/teleport"       # the teleport network (round 575); the town teleporters use it (round 576)
 #         - "-monsters-csv=/data/monsters.csv"   # the monster species table (round 654); see "Monster species table"
+#         - "-regions-csv=/data/regions.csv"     # the towns (round 674): a monster entering one is removed; see "Towns"
 docker compose up -d
 ```
 
@@ -847,6 +850,34 @@ A client must be a release that carries round 656 (the paged list and the enter/
 a window this dense; one that also carries round 660 gets the party flag and draws champions,
 giants and elites at their retail scale. An older client is sent no party flag and draws every
 rank at its species' size. `SRREVAMP_AI_TICK_STATS=1` logs the AI tick's p50/p99 once a minute.
+
+## Towns (round 674)
+
+`-regions-csv` (env `SRREVAMP_REGIONS_CSV`) gives the server the game's region table, `_RefRegion`,
+whose `IsBattleField` 0 regions are the towns. With the monster AI on, a monster that walks into a
+town region -- a monster chasing a player through Jangan's gate, say -- is removed at the line: no
+death, no reward, the players who could see it told it left (`OpMonsterLeft`; the client drops the
+body). That is SR_GameServer.exe's own rule (`CGObjMob::SetCurRegion` 0x4c1270, which sets life state
+3 on every region change into a town; `docs/protocol/monster_ai.md`, "Towns"). A monster outside the
+line can still hit a player standing just inside it, as in retail. Without the file no region is a
+town and monsters follow players in, as before round 674.
+
+On srrevamp-01, with this release's server running (the update timer, step 0 of the next section):
+1. Export `regions.csv` (step 2 of "Reference data": the `refregion.txt` and `-mode regions` lines).
+   The exporter prints `wrote 3194 regions to regions.csv, 103 of them towns (IsBattleField 0)` on
+   a retail archive.
+2. `scp regions.csv srrevamp@<server-host>:~/srrevamp-data/ && ssh srrevamp@<server-host> 'chmod 644 ~/srrevamp-data/regions.csv'`
+3. Add `- "-regions-csv=/data/regions.csv"` to the override's `command:` list (edit only that key,
+   as in step 6 of the next section), then `cd ~/srrevamp && docker compose up -d`.
+4. The boot log (`docker compose logs server`) says
+   `region table loaded: a monster entering a town region is removed (IsBattleField 0) ... regions=3194 towns=103`,
+   and each removal logs `monster removed: it entered a town ... name=... how="walked in" ... area=Town_Jangan`.
+
+Six of the retail archive's 12,110 monster placements stand in a town region (two of Alexandria's
+`town_Alex` regions, 90/49 and 91/51: one MOB_SD_UNEG, five MOB_SD_WENEG). With `-full-map` each
+hatches, is removed on the first AI pass that runs it (with `-monster-sleep`, the default, once a
+player comes near) and hatches again after its nest's window -- what the engine's rule does with a
+nest in a town (INFERRED: its placement goes through the same region change).
 
 ## Deploying the monster-epic release to srrevamp-01 (round 666)
 

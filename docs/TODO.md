@@ -1261,6 +1261,29 @@ interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
 - [x] ~~The respawn is still the flat 10 s~~ -- round 660 runs the READ nest rules in the one
       scheduler (`internal/nest`); 10 s is now only the stand-in nest's window.
 
+### Towns (round 674) — **built: a monster that walks into a town region, or is placed in one, is removed (READ: CGObjMob::SetCurRegion 0x4c1270); these are left**
+
+Round 674 (`docs/protocol/monster_ai.md`, "Towns"; WORLD_ISSUES.md, round 674). Needs `-regions-csv`
+on srrevamp-01 (`deploy/README.md`, "Towns"). Left:
+
+- [ ] **The player's side of the town byte** (READ, not built): a player-vs-player attack where
+      either side stands in a town is refused `0x3018` ITS_NOT_A_BATTLE_FIELD (CGObjPC slot 394,
+      0x5293a0); an offensive skill cast FROM a town is refused `0x3018` (`0x3009` for a quest skill;
+      the skill gate's row 13, 0x58e186, `FUN_00589d20` the "offensive" test); a thief with a cart
+      cannot cross into a town (`0x0c01`, CGObjPC slot 220, 0x4eb220). srrevamp lets a player in
+      town attack a monster outside.
+- [ ] **Whether the nest counts a removal as a loss** (INFERRED yes: srrevamp re-arms the nest as
+      for a death). The engine's hook, `AI::CNest::OnHatchedRemoved` 0x560d00, still has no caller
+      found.
+- [ ] **What the players are sent** for a removal: srrevamp sends `OpMonsterLeft` (OURS); retail's
+      deletion path (FUN_00417090 onward) was not followed to its block removal (`0x3016`, INFERRED).
+- [ ] **A monster whose leg ends exactly on a z region line** is checked only at its next cell
+      crossing (OURS: the cell index files the line on the field side, worldmap.FromWorld on the
+      town side). Immaterial in play.
+- [ ] **Six retail placements stand in town regions** (Alexandria, 90/49 and 91/51): with
+      `-full-map` they hatch, are removed and hatch again after their window while a player is
+      near -- what the engine would do (INFERRED), but a removal line each time in the log.
+
 ### The monster world's nests (round 660) — **built: every field row a nest, the DB's numbers where a row joins one, champion/giant/party, per-monster tactics; these are left**
 
 Round 660 (`docs/protocol/monster_ai.md`, "Nests on the map"; WORLD_ISSUES.md, round 660). Left:

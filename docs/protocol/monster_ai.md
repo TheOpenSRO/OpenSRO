@@ -3907,3 +3907,93 @@ the summon on the swing's cooldown with no reach, the minions pushed after the p
 `cmd/server/unique.go` (the selector's filing, the minion species with their own DB tactics).
 Not modelled: the leader's behaviours and WANDER bias, `Summon_C`, the periodic trigger's
 phase-alignment, the summon's cast push to the client.
+
+## Towns: a monster that walks into one is removed (round 674)
+
+The user (2026-10-01): "There should also be safe zones in towns but I had a mob follow me into town
+and attack me. I think they usually disappear if they follow you into safe zone but check the game
+logic." The game logic, READ from SR_GameServer.exe (`/var/tmp/decomp_server`, `srv.asm`), agrees
+with the guess: the monster disappears.
+
+### What a town is (READ)
+
+- **`_RefRegion.IsBattleField`.** The row parser `0x6a2e40` (refdata_tables.md's `wbbbdddd` row,
+  11 columns, 3 strings, record 0xb0) stores `wRegionID` at `+0`, steps over the X and Z bytes
+  (cursor advanced, nothing stored), reads ContinentName and AreaName, then stores the **sixth
+  column's byte at `+2`** (`*(byte*)(edi+2)`), Climate resolved into `+4`, MaxCapacity `+8`,
+  AssocObjID `+0xc`, AssocServer `+0x10`. A field region (`CRgnTerrain`) keeps its row at
+  `region+0x10` (`CMainProcess::FUN_0053b6f0` builds the regions from the rows;
+  `FUN_0053b540`'s "Region has no assigned RefClimate! REGIONID[%d]" prints `*(short*)region[4]`,
+  the row's id). Every town test in the binary reads `*(char*)(*(int*)(region+0x10)+2)`.
+- **The towns are IsBattleField 0.** The client's `server_dep\silkroad\textdata\refregion.txt`
+  (UTF-16, 21 columns, identical to the server package's `SR_GameRefData\refregion.txt` on the box,
+  MEASURED by diff) has 3,194 rows, **103 with IsBattleField 0**: area names `Town_Jangan` (6:
+  97/167-169, 98/167-169), `Town_Dunhwang` (4), `Town_Khotan` (7), `Town_Cons` (21), `Eu` (2, by
+  Constantinople), `Town_Samarkand` (4), `Town_Thief` (1), `TOWN_ARABIA`/`TOWN_` (22), `town_Alex`
+  (36). The id is `x << 8 | y`, `worldmap.RegionID`'s packing (25000 is 97/168, the Jangan square).
+- **Not regioninfo.txt.** The game server parses the same `#TOWN`/`#FIELD` file the client uses
+  (`RegionManagerBody::FUN_0098be30`, "regioninfo.txt", kind 2 for `#TOWN`), and
+  `CRegionManagerBody` slot 23 (`0x98d040`) answers "is this position in a town" from it -- but no
+  game code calls slot 23: the region manager's global (`DAT_00cc387c = &DAT_00d67c80`, vtable
+  `0xb431fc`) is called through slots `0xc`-`0x7c` and never `0x5c`, in the decompile or the asm.
+  The server's town is the `_RefRegion` byte.
+
+### What a monster does there (READ)
+
+- **`CGObjMob::SetCurRegion`** (vtable `0xaeddac` slot 235, `0x4c1270`, the whole function):
+  `this[0x4a] = region; if (region == 0 || region.row[+2] == 0) this->SetLifeState(3, 0xff, 0)`.
+  (`CGObjPC`'s slot 235, `0x4e6fe0`, stores the region and sends the player `0x3809`; no removal.)
+- **Life state 3 is removal.** `CGObjChar::SetLifeState` (`0x4a9c80`) broadcasts only the 1<->2
+  changes (`GObjPC::BroadcastStateChange`); for 3 it calls slot 4 of the object at `this+0x188`
+  (unread) and stores the byte. The main loop (`CMainProcess::FUN_00413b30`) finds each character
+  in state 3, calls its slot 390 and, for a non-player, `FUN_00417090`, which queues the object's
+  deletion. The same state is how a monster's lifetime ends (`CGObjMob::Update` `0x4c1700`: the
+  countdown at `+0x1ce0`, the timers at `+0x1cec`/`+0x1cf4`, the Pandora box). So: **no death, no
+  experience, no drop, no corpse**. INFERRED: the players around it are told it left by the
+  deletion's block removal (CMsgBlock slot 3, `0x3016`; aoi.go's block note) -- the deletion
+  path was not followed that far.
+- **It runs on every region change.** Slot 235 has one call site, `0x485ad4` in `FUN_004858e0`,
+  the object's move into a new cell: when the new region differs from `this[0x4a]` it calls the
+  region-entry veto (slot 220), adds the object to the region, and then `SetCurRegion`.
+  `FUN_004858e0`'s one caller is `FUN_00485740` (`0x4857f5`), whose one direct caller is the
+  object's MoveTo, `0x48b660` (`0x48b69c`) -- CGObjMob's slot 231 -- which `CGObj::EnterWorld`
+  calls too ("CGObj::EnterWorld Failed!!! at MoveTo()"). So a hatch placed in a town is removed
+  at once, and a monster whose walk crosses into one is removed at the line.
+- **Nothing vetoes the entry.** CGObjMob's slot 220 is `0x9856e0`, `mov eax,1; ret 8` (a shared
+  stub). CGObjPC's (`0x4eb220`) is the thief's cart test (`0x0c01`
+  ROBBER_CANT_ENTER_TOWN_WITH_CART when a job-2 character with a cart crosses from a battlefield
+  region into a non-battlefield one).
+- **Nothing else protects a player in town.** `CGObjMob`'s attack check (slot 394, `0x529110`)
+  tests the target's kind, job state and fortress flags, no region; the AI's target validity
+  (`0x540de0`) and the nearest selector (`0x5464e0`) test life state and distance, no region. So a
+  monster on the field side of the line still picks and hits a player standing inside it, within
+  its reach. The region byte guards only the PLAYER's attacks: `CGObjPC` slot 394 (`0x5293a0`)
+  answers `0x3018` ITS_NOT_A_BATTLE_FIELD for a player-vs-player attack when either side's region
+  is a town, and the skill gate's row 13 (`0x58e186`) refuses an offensive skill (`FUN_00589d20`)
+  cast from a town (`0x3018`, or `0x3009` for a quest skill).
+- **Spawning and wandering.** The nest's own region check (`AI::CNest::ValidateRegion`,
+  `0x560e90`) only asks that the region exist; no hatch-time town filter exists. A wander leg is
+  not bent away from a town either: any arrival is removed by the rule above. INFERRED: whether
+  the nest's loss hook (`AI::CNest::OnHatchedRemoved`, `0x560d00`, caller not found) runs for a
+  removal as for a death -- a nest that never learned of it would stop hatching at its cap.
+
+### srrevamp
+
+- `internal/safezone` reads the CSV `export-refdata -mode regions` writes from refregion.txt
+  (`RegionID,ContinentName,AreaName,IsBattleField`); cmd/server's `-regions-csv` installs it
+  (`session.SetSafeRegions`). Without it nothing changes.
+- The monster AI's pass (`session/monsterai.go` step 1b, `safezone.go`) checks each monster its
+  step carried over a cell line -- a region line is always a cell line (combat.CellSpan = 1920/6)
+  -- and each monster it meets for the first time (hatched, respawned or GM-spawned), and removes
+  the ones standing in a town region (`combat.Hub.Remove`: no death, nothing credited, booked on the
+  death log so the nest scheduler re-arms as for a loss -- INFERRED above). The players whose window
+  holds it get `OpMonsterLeft` (round 656's message; the client drops the body), its states and
+  blocking streak are forgotten, and the server logs `monster removed: it entered a town ...` with
+  the monster, how (walked in / placed there), its state and target, the region and area.
+- The region of a monster is `worldmap.FromWorld` in its bucket's frame (`entityFrame`). OURS: a
+  region the CSV does not list is not a town (retail removes a monster with no region at all, but
+  there it has no ground to stand on); a monster whose leg ends exactly ON a z region line is not
+  checked until it next crosses a cell line (the cell index files the line on the field side).
+- Not built: the player-side uses of the byte (PvP `0x3018`, offensive skills from a town, the
+  thief's cart). The client draws nothing new: it drops the body on the `OpMonsterLeft` it
+  already handles.
