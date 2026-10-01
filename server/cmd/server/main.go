@@ -809,6 +809,27 @@ func monsterAggroAllowed(aggro, battleOn, deadState bool) (on bool, why string) 
 	return true, ""
 }
 
+// frontEndThemeFromFlags validates the -login-* settings (raw, as given) into
+// the theme the server serves before login, and tells the operator at startup what was
+// refused, what the client will need to find, and what is being served.
+// OURS (round 678).
+func frontEndThemeFromFlags(raw session.FrontEndTheme, logger *slog.Logger) session.FrontEndTheme {
+	theme, warnings, infos := session.NewFrontEndTheme(raw)
+	for _, w := range warnings {
+		logger.Warn(w)
+	}
+	for _, i := range infos {
+		logger.Info(i)
+	}
+	if theme.IsDefault() {
+		logger.Info("front-end theme: client defaults (no intro, bgm, logo, copyright or band art set)")
+	} else {
+		logger.Info("front-end theme", "intro", theme.Intro, "bgm", theme.BGM, "logo", theme.Logo, "copyright", theme.Copyright,
+			"band_top", theme.BandTop, "band_bottom", theme.BandBottom)
+	}
+	return theme
+}
+
 func main() {
 	addr := flag.String("addr", ":15779", "listen address for the gateway service")
 	postgresDSN := flag.String("postgres-dsn", "postgres://postgres:postgres@localhost:5432/srrevamp?sslmode=disable",
@@ -863,6 +884,29 @@ func main() {
 		"comma-separated account usernames allowed to run GM commands (env SRREVAMP_GM_ACCOUNTS). "+
 			"Case is compared as stored in accounts.username. Default none: nobody is a GM. See "+
 			"docs/DEBUG_TOOLS.md.")
+	// The operator's front-end theme (round 678, OURS): served to any client
+	// before login over OpFrontEndThemeRequest; see session/frontendtheme.go.
+	loginIntro := flag.String("login-intro", os.Getenv("SRREVAMP_LOGIN_INTRO"),
+		"the title intro the login screen plays (env SRREVAMP_LOGIN_INTRO): a retail intro's short name "+
+			"(roc, egypt, china_whatf, china_wharf, constantinople, rm, rmzh, jupiter_login, ruby_baghdad -- "+
+			"the files in Media.pk2 script\\intro\\), an operator's own name the client finds as "+
+			"custom/intro/<name>.txt, or an archive path like script\\intro\\roc.txt. A name is letters, digits, _ and - "+
+			"(an archive path's may also hold spaces); anything else is refused with a warning and none is served. Default empty: the client plays option.txt's IntroName.")
+	loginBGM := flag.String("login-bgm", os.Getenv("SRREVAMP_LOGIN_BGM"),
+		"the title music's file name (env SRREVAMP_LOGIN_BGM), e.g. maintheme_cut.ogg: letters, digits, "+
+			"space, _ . -, ending .ogg, .wav or .mp3. Default empty: the client plays option.txt's IntroBGM.")
+	loginLogo := flag.String("login-logo", os.Getenv("SRREVAMP_LOGIN_LOGO"),
+		"a logo file name the client loads from its own custom/frontend/ folder (env SRREVAMP_LOGIN_LOGO), "+
+			"e.g. mylogo.png: letters, digits, _ and -, ending .png or .ddj. Default empty: the archive's own logo.")
+	loginCopyright := flag.String("login-copyright", os.Getenv("SRREVAMP_LOGIN_COPYRIGHT"),
+		"one line of copyright or branding text for the login screen's bottom band (env "+
+			"SRREVAMP_LOGIN_COPYRIGHT), at most 200 characters; control characters are removed. Default empty: none.")
+	loginBandTop := flag.String("login-band-top", os.Getenv("SRREVAMP_LOGIN_BAND_TOP"),
+		"the front-end's top band art, a file name the client loads from its own custom/frontend/ folder "+
+			"(env SRREVAMP_LOGIN_BAND_TOP): letters, digits, _ and -, ending .png or .ddj. Default empty: the archive's own band art.")
+	loginBandBottom := flag.String("login-band-bottom", os.Getenv("SRREVAMP_LOGIN_BAND_BOTTOM"),
+		"the front-end's bottom band art, a file name the client loads from its own custom/frontend/ folder "+
+			"(env SRREVAMP_LOGIN_BAND_BOTTOM): letters, digits, _ and -, ending .png or .ddj. Default empty: the archive's own band art.")
 	monsterAIEnv, monsterAIEnvErr := envBool("SRREVAMP_MONSTER_AI")
 	monsterAI := flag.Bool("monster-ai", monsterAIEnv,
 		"run the monster AI (env SRREVAMP_MONSTER_AI): monsters idle, wander, run home past their "+
@@ -1024,6 +1068,8 @@ func main() {
 		logger.Warn("SRREVAMP_SINGLE_FRAME is not a boolean; the single frame stays off unless -single-frame is given",
 			"err", singleFrameEnvErr)
 	}
+	frontEndTheme := frontEndThemeFromFlags(session.FrontEndTheme{Intro: *loginIntro, BGM: *loginBGM, Logo: *loginLogo,
+		Copyright: *loginCopyright, BandTop: *loginBandTop, BandBottom: *loginBandBottom}, logger)
 	if monsterAIEnvErr != nil {
 		logger.Warn("SRREVAMP_MONSTER_AI is not a boolean; the monster AI stays off unless -monster-ai is given",
 			"err", monsterAIEnvErr)
@@ -1778,6 +1824,9 @@ func main() {
 	gpSkills := session.NewGuildPointSkills(skills, guilds, chars)
 
 	handle := gateway.Chain(
+		// The front-end theme (round 678): answered on any connection, before
+		// and without login; the client asks on a short connection of its own.
+		session.FrontEndThemeHandler(frontEndTheme),
 		session.LoginHandler(accounts),
 		session.RegisterHandler(registerer),
 		// New characters are dressed server-side rather than the client

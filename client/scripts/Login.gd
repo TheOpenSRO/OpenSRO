@@ -4,17 +4,23 @@ extends Control
 ## OpRegister via the NetClient autoload, then moves to character select on
 ## success.
 ##
-## The look is the original's: the authored `login_window.ddj` frame over a
-## Silkroad backdrop, with ID / PW / Server fields laid on the frame's own
-## slots and Connect / Exit below it. That art is loaded at runtime from the
-## player's own Media.pk2 (never shipped) exactly the way the HUD loads its
-## windows -- through UiBuilder.load_texture. When no Media.pk2 is present
-## (a dev run without game data) the screen falls back to a plain styled
-## panel, so logging in always works.
+## Since round 678 it is retail's title screen (CPSTitle): an intro script
+## flown in 3D over the world's own regions (TitleIntro, FrontEndBackdrop),
+## inside the letterbox frame built from Media.pk2's resinfo\pstitle.txt
+## (FrontEndFrame), with the login window, Connect and Exit placed and faded
+## in as FUN_00866760 / FUN_00865630 do -- all READ, docs/protocol/
+## intro_script.md. The intro, its music and the branding are the server's
+## front-end theme (FrontEndTheme, asked for at boot by ThemeQuery; OURS),
+## else option.txt's. The art and text are the player's own Media.pk2's,
+## loaded at runtime, never shipped.
 ##
-## The layout constants here are OURS, eyeballed against the real frame art
-## (288x140), not recovered values -- the retail client hardcodes this
-## screen in C++ with no layout file. See docs/FRONTEND.md.
+## Fallbacks: no Media.pk2 (a dev run without game data) -- the plain styled
+## panel below (_build_ui), so logging in always works; an intro or region
+## that cannot load -- the 2D still (loading_login_01_2011.ddj) behind the
+## same frame, the login window in at once, the reason in the log.
+##
+## The plain panel's layout constants are OURS, eyeballed against the frame
+## art (288x140).
 ##
 ## Server address is user-entered so a friend on the same LAN can point at
 ## the host's real IP (e.g. "192.168.1.23:15779"); it defaults to
@@ -49,22 +55,95 @@ var status_label: Label
 
 var _pending_action := "" # "login" or "register", sent once connected
 
+# --- Round 678: the 3D title (TitleIntro, FrontEndFrame, FrontEndTheme) -----
+
+## The login window's art: READ, FUN_00866760 loads login_window_europe.ddj
+## into window 9 by hand (0x8667d0, 39 chars at 0xdd8b6c), over the layout's
+## own login_window.ddj.
+const LOGIN_WINDOW_DDJ := "interface\\outer\\login_window_europe.ddj"
+## The buttons' three states: the layout's button.ddj and its _focus/_press
+## siblings in Media.pk2 (the same naming every outer button uses).
+const BUTTON_STATES := ["", "_focus", "_press"]
+## The labels' and buttons' text keys (READ, pstitle.txt's Text= fields):
+## UIO_CTL_ID, UIO_CTL_PASSWORD, UIO_CTL_SELECT_SERVER, UIO_CTL_CONNECT,
+## UIO_CTL_EXIT, looked up in textuisystem.txt.
+const TEXT_TABLE_PATH := "server_dep\\silkroad\\textdata\\textuisystem.txt"
+## The Login section's control IDs (READ, pstitle.txt).
+const ID_STATIC_ID := 101
+const ID_STATIC_PW := 102
+const ID_STATIC_SERVER := 103
+const ID_EDIT_ID := 41
+const ID_EDIT_PASS := 42
+const ID_STA_SERVER := 43
+
+var _media: Pk2Reader = null
+var _started_ms := 0
+var _still: Control = null
+var _frame: FrontEndFrame = null
+var _title: TitleIntro = null
+var _query: ThemeQuery = null
+var _theme: FrontEndTheme = null
+var _login_window: Control = null
+var _exit_button: Button = null
+var _text: UiTextTable = null
+var _skip_pending := false
+var _layout: UiLayoutParser.LayoutDef = null
+
 func _ready() -> void:
-	_build_ui()
-	# The title music, option.txt's IntroBGM, pushed at playlist level 0 as
-	# CPSTitle::OnCreate does (round 612, READ); character select and create
-	# touch nothing, so it keeps playing through them (INFERRED).
-	var svc := AudioService.instance()
-	if svc != null and svc.music != null:
-		svc.music.play_intro()
+	_started_ms = Time.get_ticks_msec()
 	NetClient.connected.connect(_on_connected)
 	NetClient.connection_failed.connect(_on_connection_failed)
 	NetClient.login_result.connect(_on_login_result)
 	NetClient.register_result.connect(_on_register_result)
+	_media = _open_media()
+	FrontEndUi.apply_client_font(self, _media)
+	# Round 678: the 3D title. The server's front-end theme decides the intro,
+	# its music and the branding (FrontEndTheme); ask for it first, with a
+	# short deadline, and build the screen when it answers or gives up.
+	# Without Media.pk2 there is no title to build: the plain screen at once.
+	_layout = FrontEndFrame.load_layout(_media)
+	if _media == null or _layout == null:
+		_build_ui()
+		_finish_ready()
+		return
+	# The world's scene compiles on a worker while the theme is asked for
+	# and the screen is built (FrontEndBackdrop.preload_world).
+	FrontEndBackdrop.preload_world()
+	# The cover over the 3D while it loads (OURS): the dark ground and the 2D
+	# still, faded out together once the first view is built -- and left up,
+	# as the fallback, when no 3D intro can run.
+	_still = Control.new()
+	_still.name = "TitleCover"
+	_still.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_still.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_still)
+	_still.add_child(FrontEndUi.ground())
+	var still_art := FrontEndUi.backdrop(_media, BACKDROP_DDJ)
+	if still_art != null:
+		_still.add_child(still_art)
+	# The theme comes from the server this screen will connect to: the one
+	# remembered from last time (or a QA run's SRREVAMP_QA_SERVER).
+	var qa_server := OS.get_environment("SRREVAMP_QA_SERVER")
+	var address := _parse_server_address(qa_server if qa_server != "" else _remembered_address())
+	_query = ThemeQuery.new()
+	_query.name = "ThemeQuery"
+	add_child(_query)
+	_query.finished.connect(_on_theme_answer, CONNECT_ONE_SHOT)
+	_query.start(address.get("host", ""), int(address.get("port", 0)))
+
+## Everything after the screen exists: the remembered fields, Enter to
+## submit, the QA sign-in.
+func _finish_ready() -> void:
+	# The title music, option.txt's IntroBGM (or the theme's, round 678),
+	# pushed at playlist level 0 as CPSTitle::OnCreate does (round 612,
+	# READ); character select and create touch nothing, so it keeps playing
+	# through them (INFERRED).
+	var svc := AudioService.instance()
+	if svc != null and svc.music != null:
+		svc.music.play_intro(_title_music())
 	# The server that last answered and the account name come back from the
 	# previous run so a tester is not retyping host:port every launch.
-	var remembered_address := ClientSettings.server_address()
-	server_address_edit.text = remembered_address if remembered_address != "" else "127.0.0.1:%d" % DEFAULT_SERVER_PORT
+	server_address_edit.text = _remembered_address()
 	var remembered_username := ClientSettings.username()
 	if remembered_username != "":
 		username_edit.text = remembered_username
@@ -78,7 +157,13 @@ func _ready() -> void:
 	# remembered settings) runs as it does for a player; CharacterSelect
 	# then starts the QA character.
 	if OS.get_environment("SRREVAMP_QA_RECONNECT_VIA_LOGIN") != "":
+		if _title != null:
+			_title.skip("SRREVAMP_QA_RECONNECT_VIA_LOGIN")
 		_qa_sign_in()
+
+func _remembered_address() -> String:
+	var remembered := ClientSettings.server_address()
+	return remembered if remembered != "" else "127.0.0.1:%d" % DEFAULT_SERVER_PORT
 
 ## SRREVAMP_QA_RECONNECT_VIA_LOGIN: fill the fields from the QA environment
 ## (SRREVAMP_QA_SERVER; the account QaSignIn reads) and press Connect. Says
@@ -102,6 +187,238 @@ func _qa_report(text: String) -> void:
 	if OS.get_environment("SRREVAMP_QA_RECONNECT_VIA_LOGIN") != "":
 		print("QA RECONNECT: Login: %s" % text)
 
+# --- The 3D title (round 678) ---------------------------------------------
+
+## The theme query finished (answered, refused or timed out): settle the
+## theme, build the screen from the archive's own layout and art, and start
+## the intro.
+func _on_theme_answer(server_theme: FrontEndTheme, why: String) -> void:
+	var warnings := PackedStringArray()
+	var preview := FrontEndTheme.from_environment(warnings)
+	var custom_dir := FrontEndTheme.custom_dir()
+	var custom := FrontEndTheme.from_custom_folder(custom_dir, warnings)
+	var cached: FrontEndTheme = null
+	if server_theme != null:
+		FrontEndTheme.store_cache(server_theme)
+	else:
+		cached = FrontEndTheme.cached()
+	for w in warnings:
+		print("FrontEnd: theme: %s" % w)
+	_theme = FrontEndTheme.resolve(preview, server_theme, cached, custom)
+	print("FrontEnd: server theme %s (%s at %d ms); theme: %s" % [
+		"answered" if server_theme != null else "not used", why,
+		Time.get_ticks_msec() - _started_ms, _theme.describe()])
+	_build_title_ui(custom_dir)
+	_title = TitleIntro.new()
+	_title.name = "TitleIntro"
+	add_child(_title)
+	# Below every control: the 3D draws under the 2D canvas anyway, and the
+	# intro node holds no Control.
+	move_child(_title, 0)
+	_title.login_shown.connect(_on_title_login_shown)
+	_title.start(_media, _theme, custom_dir, _frame, _still, [_frame.logo, _login_window, login_button, _exit_button, register_button])
+	print("LOGIN: screen built at %d ms" % (Time.get_ticks_msec() - _started_ms))
+	_finish_ready()
+	if _skip_pending:
+		_title.skip("a click or key while the theme was asked for")
+
+func _title_music() -> String:
+	if _theme == null or _theme.bgm == "":
+		return ""
+	if not AudioBank.has_file(_theme.bgm):
+		print("FrontEnd: title music '%s' is not in the archives -- option.txt's IntroBGM" % _theme.bgm)
+		return ""
+	return _theme.bgm
+
+## The letterbox frame and the login window, from pstitle.txt and the
+## archive's art (FrontEndFrame has the READ layout).
+func _build_title_ui(custom_dir: String) -> void:
+	_text = _load_text_table()
+	_frame = FrontEndFrame.new()
+	_frame.name = "FrontEndFrame"
+	add_child(_frame)
+	_frame.build(_media, _theme, custom_dir, "Ver %s" % UpdateChecker.CLIENT_VERSION.trim_prefix("v"), _layout)
+
+	_login_window = Control.new()
+	_login_window.name = "LoginWindow"
+	_login_window.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var win_def := _frame.def(FrontEndFrame.ID_LOGINWINDOW)
+	_login_window.size = Vector2(win_def.rect.size) if win_def != null else Vector2(288, 140)
+	add_child(_login_window)
+	var art := TextureRect.new()
+	art.texture = FrontEndUi.load_ddj(_media, LOGIN_WINDOW_DDJ)
+	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	art.stretch_mode = TextureRect.STRETCH_SCALE
+	art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_login_window.add_child(art)
+	_login_label(ID_STATIC_ID, "ID")
+	_login_label(ID_STATIC_PW, "PW")
+	_login_label(ID_STATIC_SERVER, "Server")
+	username_edit = _login_edit(ID_EDIT_ID, false)
+	password_edit = _login_edit(ID_EDIT_PASS, true)
+	# OURS: the server slot takes a typed host:port (this client has no
+	# server list; retail shows the chosen server's name here and opens its
+	# list with the LIST button, GDR_BTN_SERVER, which is left out).
+	server_address_edit = _login_edit(ID_STA_SERVER, false)
+	server_address_edit.placeholder_text = "host:port"
+
+	login_button = _art_button(_frame.def(FrontEndFrame.ID_OK), "UIO_CTL_CONNECT", "Connect")
+	login_button.pressed.connect(_on_login_pressed)
+	add_child(login_button)
+	_exit_button = _art_button(_frame.def(FrontEndFrame.ID_CANCEL), "UIO_CTL_EXIT", "Exit")
+	_exit_button.pressed.connect(func(): get_tree().quit())
+	add_child(_exit_button)
+
+	# OURS: account creation for testers (retail has no such link), small,
+	# under the buttons.
+	register_button = Button.new()
+	register_button.text = "Register a new account"
+	register_button.flat = true
+	register_button.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+	register_button.add_theme_color_override("font_color", Color(0.86, 0.78, 0.5))
+	register_button.add_theme_color_override("font_hover_color", Color(1.0, 0.95, 0.72))
+	register_button.pressed.connect(_on_register_pressed)
+	add_child(register_button)
+
+	# OURS: the status line (the client's own errors go through a message
+	# box; this screen keeps its one line of text).
+	status_label = Label.new()
+	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	status_label.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6))
+	status_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	status_label.add_theme_constant_override("outline_size", 3)
+	status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(status_label)
+	_frame.resized.connect(_layout_login_window)
+	_layout_login_window()
+
+## READ, FUN_00866760: around the screen's middle column cx = width >> 1 and
+## the line midway between the bands (FrontEndFrame.centre_line), the login
+## window at (cx - 0x90, mid + 6), Connect at (cx - 100, mid + 0x9c) and
+## Exit at (cx + 9, mid + 0x9c) -- in pixels, unscaled.
+func _layout_login_window() -> void:
+	if _frame == null or _login_window == null:
+		return
+	var c := _frame.centre_line()
+	_login_window.position = Vector2(c.x - 0x90, c.y + 6)
+	login_button.position = Vector2(c.x - 100, c.y + 0x9c)
+	_exit_button.position = Vector2(c.x + 9, c.y + 0x9c)
+	var below := login_button.position.y + login_button.size.y
+	register_button.size = Vector2(220, 22)
+	register_button.position = Vector2(c.x - 110, below + 6)
+	status_label.size = Vector2(_frame.size.x, 22)
+	status_label.position = Vector2(0, below + 30)
+
+func _login_label(id: int, fallback: String) -> void:
+	var d := _frame.login_def(id)
+	if d == null:
+		return
+	var label := Label.new()
+	label.text = _text_for(d.text, fallback)
+	label.position = Vector2(d.rect.position)
+	label.size = Vector2(d.rect.size)
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", _font_size(d.font_index))
+	label.add_theme_color_override("font_color", d.font_color)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_login_window.add_child(label)
+
+func _login_edit(id: int, secret: bool) -> LineEdit:
+	var d := _frame.login_def(id)
+	var field := LineEdit.new()
+	field.secret = secret
+	field.flat = true # on the frame's own dark slot
+	field.add_theme_font_size_override("font_size", _font_size(d.font_index if d != null else 0))
+	field.add_theme_color_override("font_color", d.font_color if d != null else Color.WHITE)
+	field.add_theme_constant_override("minimum_character_width", 1)
+	var empty := StyleBoxEmpty.new()
+	for sb in ["normal", "focus", "read_only"]:
+		field.add_theme_stylebox_override(sb, empty)
+	if d != null:
+		field.position = Vector2(d.rect.position)
+		field.size = Vector2(d.rect.size)
+	field.custom_minimum_size = Vector2.ZERO
+	_login_window.add_child(field)
+	return field
+
+func _art_button(d: UiLayoutParser.ControlDef, text_key: String, fallback: String) -> Button:
+	var b := Button.new()
+	b.text = _text_for(text_key, fallback)
+	b.size = Vector2(d.rect.size) if d != null else Vector2(91, 41)
+	b.custom_minimum_size = b.size
+	b.add_theme_font_size_override("font_size", _font_size(d.font_index if d != null else 0))
+	b.add_theme_color_override("font_color", d.font_color if d != null else Color.WHITE)
+	var base := d.ddj if d != null and d.ddj != "" else "interface\\outer\\button.ddj"
+	var styles := ["normal", "hover", "pressed"]
+	for i in range(BUTTON_STATES.size()):
+		var path: String = base.get_basename() + str(BUTTON_STATES[i]) + ".ddj"
+		var tex := FrontEndUi.load_ddj(_media, path)
+		if tex == null:
+			continue
+		var sb := StyleBoxTexture.new()
+		sb.texture = tex
+		b.add_theme_stylebox_override(styles[i], sb)
+		if i == 1:
+			b.add_theme_stylebox_override("focus", sb)
+	return b
+
+func _font_size(index: int) -> int:
+	return UiBuilder.FONT_SIZES[clampi(index, 0, UiBuilder.FONT_SIZES.size() - 1)]
+
+func _text_for(key: String, fallback: String) -> String:
+	if _text != null and key != "" and _text.has(key):
+		var t := _text.get_text(key, fallback)
+		if t != "":
+			return t
+	return fallback
+
+func _load_text_table() -> UiTextTable:
+	if _media == null:
+		return null
+	var entry := ObjectLoader.find_file(_media, TEXT_TABLE_PATH)
+	if entry == null:
+		return null
+	var sw := Time.get_ticks_msec()
+	var table := UiTextTable.parse(_media.read_file(entry))
+	print("LOGIN: text table read in %d ms" % (Time.get_ticks_msec() - sw))
+	return table
+
+func _on_title_login_shown() -> void:
+	print("LOGIN: usable at %d ms" % (Time.get_ticks_msec() - _started_ms))
+	if username_edit != null and username_edit.is_inside_tree():
+		if username_edit.text == "":
+			username_edit.grab_focus()
+		else:
+			password_edit.grab_focus()
+
+## READ: a left button press (CPSTitle::vslot_017, message 0x201) or any key
+## (FUN_0086ae50) while the login window is not up brings it in at once.
+## The press or key is used up by the skip (OURS: retail's key handler goes
+## on to treat Tab and Enter).
+func _input(event: InputEvent) -> void:
+	var press := (event is InputEventMouseButton and (event as InputEventMouseButton).pressed \
+			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT) \
+			or (event is InputEventKey and (event as InputEventKey).pressed and not (event as InputEventKey).echo)
+	if _title == null and _query != null and press:
+		# Still asking for the theme (at most ThemeQuery.TIMEOUT_MS): the
+		# player wants the login now, so stop waiting -- the cached answer
+		# (else custom/theme.json, else retail's defaults) stands in, OURS --
+		# and the skip is applied as the title starts.
+		_skip_pending = true
+		get_viewport().set_input_as_handled()
+		_query.abandon("the player clicked through")
+		return
+	if _title == null or _title.login_up:
+		return
+	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed \
+			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+		_title.skip("a click")
+		get_viewport().set_input_as_handled()
+	elif event is InputEventKey and (event as InputEventKey).pressed and not (event as InputEventKey).echo:
+		_title.skip("a key")
+		get_viewport().set_input_as_handled()
+
 # --- Building the screen ---------------------------------------------------
 
 func _build_ui() -> void:
@@ -112,8 +429,7 @@ func _build_ui() -> void:
 	ground.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(ground)
 
-	var media := _open_media()
-	FrontEndUi.apply_client_font(self, media)
+	var media := _media
 	var backdrop_tex := _load_ddj(media, BACKDROP_DDJ)
 	if backdrop_tex != null:
 		var bg := TextureRect.new()

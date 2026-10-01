@@ -1251,6 +1251,11 @@ var _wire_logging := false
 const CHAT_LEFT := 2.0
 
 func _ready() -> void:
+	# The front-end's 3D backdrop (round 678, FrontEndBackdrop): none of an
+	# entry's work -- no player, HUD, server or loading screen.
+	if title_mode:
+		_title_ready()
+		return
 	# Every entry names itself and the renderer in the log (round 579), so a
 	# player's log carries the GPU and how many times this process has
 	# entered the world without anyone typing /groundprobe. Counted in the
@@ -3012,7 +3017,7 @@ func _water_env_tick() -> void:
 	for rec in _environment_table.records:
 		if rec.key == env_id:
 			_water_env_id = env_id
-			_env_water_color = EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_WATER_COLOR, ENVIRONMENT_REFERENCE_TIME)
+			_env_water_color = EnvironmentReader.sample_color_channel(rec, EnvironmentReader.CHANNEL_WATER_COLOR, _env_time)
 			_set_water_color(_env_water_color)
 			print("World3D: water colour follows the camera's block, environment %d: %s" % [env_id, str(_env_water_color)])
 			return
@@ -3464,6 +3469,11 @@ var _sky_material: ProceduralSkyMaterial
 ## 0.5 too; a live day/night cycle would be OUR design, not a recovered one.
 ## The server's game clock (0x34be) feeds nothing in the sky.
 const ENVIRONMENT_REFERENCE_TIME := 0.5
+## The day phase the environment graphs are read at: ENVIRONMENT_REFERENCE_TIME
+## in the world; the front-end backdrop's random title hour (round 678,
+## FrontEndBackdrop -- READ: CPSTitle::OnCreate sets SWorld's phase, the same
+## +0x26a3 the graphs read, through SWorld::vslot_020).
+var _env_time := ENVIRONMENT_REFERENCE_TIME
 ## The parsed environment.ifo, once per world (instance state since round
 ## 560, statics until then -- see _ground_texture_cache); cleared in
 ## _exit_tree.
@@ -3619,8 +3629,8 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 		print("World3D: region's EnvironmentID %d has no matching environment.ifo record" % env_id)
 		return
 
-	var top := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_SKY_TOP_COLOR, ENVIRONMENT_REFERENCE_TIME)
-	var bottom := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_SKY_BOTTOM_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	var top := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_SKY_TOP_COLOR, _env_time)
+	var bottom := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_SKY_BOTTOM_COLOR, _env_time)
 	_sky_material.sky_top_color = top
 	_sky_material.sky_horizon_color = bottom
 	_sky_material.ground_horizon_color = bottom
@@ -3637,9 +3647,9 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# DirectionalLight3D's real per-zone *angle* has no confirmed real source
 	# (only color channels exist in this format) and stays a hand-set
 	# constant, unchanged.
-	var sun_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_SUN_COLOR, ENVIRONMENT_REFERENCE_TIME)
-	var diffuse_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_DIFFUSE_COLOR, ENVIRONMENT_REFERENCE_TIME)
-	var ambient_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_OBJECT_AMBIENT_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	var sun_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_SUN_COLOR, _env_time)
+	var diffuse_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_DIFFUSE_COLOR, _env_time)
+	var ambient_color := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_OBJECT_AMBIENT_COLOR, _env_time)
 
 	# **Channel roles corrected 2026-09-07 from the real client's own shader**
 	# (see docs/RE_MAP_ENGINE.md). The real terrain vertex shader
@@ -3685,15 +3695,15 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# the object ambient's 0.58), which is exactly why baking terrain lighting
 	# lets both be honoured where one global ambient cannot.
 	_env_light_diffuse = diffuse_color
-	_env_terrain_ambient = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_TERRAIN_AMBIENT_COLOR, ENVIRONMENT_REFERENCE_TIME)
-	_env_terrain_shadow = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_TERRAIN_SHADOW_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	_env_terrain_ambient = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_TERRAIN_AMBIENT_COLOR, _env_time)
+	_env_terrain_shadow = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_TERRAIN_SHADOW_COLOR, _env_time)
 	_env_light_ready = true
 	# The water's tint: channel 14 (READ: the record reader stores it at
 	# record+0x228, and `Map::FUN_00a1baf0` evaluates that graph into
 	# world+0x688f, the texture factor FUN_00a220b0 draws water with).
 	# A starting value from the region's block 0; _water_env_tick then
 	# follows the camera's block, as retail does.
-	_env_water_color = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_WATER_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	_env_water_color = EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_WATER_COLOR, _env_time)
 	_water_env_id = env_id
 	_set_water_color(_env_water_color)
 	print("World3D: environment %d water colour (channel 14) %s" % [env_id, str(_env_water_color)])
@@ -3722,7 +3732,7 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# real planes cannot be applied without a shader pass; until that exists
 	# they are computed, logged and shown by QA_LOOK, and the density stays
 	# the bounded choice described at FOG_DENSITY.
-	var fog_channel := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_FOG_COLOR, ENVIRONMENT_REFERENCE_TIME)
+	var fog_channel := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_FOG_COLOR, _env_time)
 	# What the client fogs with is the square root of the clamped channel
 	# (READ, rounds 623-628 integration review: EnvironmentReader.
 	# render_fog_color). Until then the raw channel was used, darker.
@@ -3735,14 +3745,14 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# record+0x158), alpha is world+0x68c7 = (channel 12 + 1) / 2. Its fog is
 	# the world's fog colour between 90,000 and 200,000.
 	if _sky_dome_material != null:
-		var cc := EnvironmentReader.sample_color_channel(record, CHANNEL_CLOUD_COLOR, ENVIRONMENT_REFERENCE_TIME)
-		var ca := clampf((EnvironmentReader.sample_float_channel(record, CHANNEL_CLOUD_ALPHA, ENVIRONMENT_REFERENCE_TIME) + 1.0) * 0.5, 0.0, 1.0)
+		var cc := EnvironmentReader.sample_color_channel(record, CHANNEL_CLOUD_COLOR, _env_time)
+		var ca := clampf((EnvironmentReader.sample_float_channel(record, CHANNEL_CLOUD_ALPHA, _env_time) + 1.0) * 0.5, 0.0, 1.0)
 		_sky_dome_material.set_shader_parameter("cloud_color", Vector3(clampf(cc.r, 0, 1), clampf(cc.g, 0, 1), clampf(cc.b, 0, 1)))
 		_sky_dome_material.set_shader_parameter("cloud_alpha", ca)
 		_sky_dome_material.set_shader_parameter("fog_color", Vector3(fog_color.r, fog_color.g, fog_color.b))
 		print("World3D: cloud layer colour (channel 4) %s, alpha (channel 12) %.3f" % [str(cc), ca])
-	_fog_near_real = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_NEAR_PLANE, ENVIRONMENT_REFERENCE_TIME) * EnvironmentReader.VIEW_DISTANCE_DEFAULT
-	_fog_far_real = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_FAR_PLANE, ENVIRONMENT_REFERENCE_TIME) * EnvironmentReader.VIEW_DISTANCE_DEFAULT
+	_fog_near_real = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_NEAR_PLANE, _env_time) * EnvironmentReader.VIEW_DISTANCE_DEFAULT
+	_fog_far_real = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_FAR_PLANE, _env_time) * EnvironmentReader.VIEW_DISTANCE_DEFAULT
 	print("World3D: environment fog planes (real, channels 10/11 x view distance %.0f): near %.0f, far %.0f -- drawn with Godot density %.5f (disclosed)" % [
 		EnvironmentReader.VIEW_DISTANCE_DEFAULT, _fog_near_real, _fog_far_real, FOG_DENSITY])
 	var env := world_environment.environment
@@ -4261,7 +4271,8 @@ func _load_region_cell(region_x: int, region_y: int, dx: int, dy: int, shared_an
 	else:
 		_try_load_real_map_objects("%d\\%d.o" % [region_x, region_y], offset, suffix)
 	var t2 := Time.get_ticks_usec()
-	_try_spawn_region_npcs(region_x, region_y)
+	if not title_mode:
+		_try_spawn_region_npcs(region_x, region_y)
 	_note_cell_built(t0, t1, t2, Time.get_ticks_usec())
 	_grid.mark_loaded(dx, dy, region_x, region_y)
 	# Its monsters waiting for it are built now (round 655).
@@ -4971,6 +4982,8 @@ func _build_one_queued_cell() -> void:
 ## frame once it is up. Most checks only ever look at one region, so being
 ## able to ask for fewer is most of the wait.
 func _region_load_radius() -> int:
+	if title_mode:
+		return _title_radius
 	var override := OS.get_environment("SRREVAMP_QA_RADIUS")
 	if override != "" and override.is_valid_int():
 		return maxi(int(override), 0)
@@ -5435,7 +5448,8 @@ func _exit_tree() -> void:
 	_drop_cell_jobs("the world left the tree")
 	# How this entry ended and its textures' GL names, for the next entry's
 	# /groundprobe (round 579) -- before the caches below are cleared.
-	GroundProbe.record_exit(self, NetClient.is_connected_to_server())
+	if not title_mode:
+		GroundProbe.record_exit(self, NetClient.is_connected_to_server())
 	var scenery_freed := 0
 	if _object_templates != null:
 		scenery_freed = _object_templates.free_all()
@@ -13315,6 +13329,9 @@ func _is_typing() -> bool:
 ## frame however long it took -- LoadTimings' doc comment and
 ## client/tools/README.md, "Load benchmark".
 func _physics_process(delta: float) -> void:
+	if title_mode:
+		_title_physics(delta)
+		return
 	var sw := Time.get_ticks_usec()
 	if _qa_split != null:
 		_qa_split.on_step(Engine.get_frames_drawn())
@@ -14729,6 +14746,8 @@ static func take_focus_back(viewport: Viewport, event: InputEvent) -> bool:
 	return true
 
 func _unhandled_input(event: InputEvent) -> void:
+	if title_mode:
+		return
 	# A left click that reaches here was consumed by no control -- no STOP
 	# control on its chain (Godot 4.2 viewport.cpp) -- so it is treated as a
 	# click on the world and takes the keyboard back from whatever text line
@@ -14878,6 +14897,8 @@ var _hover_reached_world := false
 var _hover_settle_queued := false
 
 func _input(event: InputEvent) -> void:
+	if title_mode:
+		return
 	# Escape cancels a ground pick (round 617) before anything else sees it --
 	# HudPanels would otherwise close a window or open the System menu with
 	# the same press. Read here, before the GUI (the real-input rule of round
@@ -19986,3 +20007,116 @@ func _qa_use_first_potion(slots: Array, _error: String) -> void:
 				UiSounds.expect_use(_hud_panels.item_types(slot.item_id))
 			NetClient.use_item(NetClient.current_character_name, slot.slot_index)
 			return
+
+# --- The front-end's 3D backdrop (round 678) ---------------------------------
+#
+# FrontEndBackdrop instances this scene with `title_mode` set before it enters
+# the tree: the login screen's fly-through (and, later, character select and
+# create) reuse the world's own region loaders -- terrain, objects, water, sky
+# and environment -- and nothing else. No player body, HUD, server, keys,
+# NPCs or loading screen; the backdrop drives the camera and the region
+# window follows the point it hands title_focus. Everything here is OURS
+# plumbing around READ behaviour the backdrop documents.
+
+## Set before add_child: this World3D is a front-end backdrop.
+var title_mode := false
+## The region window around the focus, in regions (OURS: 1, a 3x3 window,
+## at the title -- the view is fogged at 2500 units, READ 0xec54b0).
+var _title_radius := 1
+
+## The backdrop's half of _ready: the water reflection and the sky, the camera
+## freed from the player's spring arm, the world's own UI hidden.
+func _title_ready() -> void:
+	print("World3D: title mode (round 678) -- a front-end backdrop: no player, HUD, server or loading screen")
+	($UI as CanvasLayer).visible = false
+	player.visible = false
+	camera_arm.set_physics_process(false)
+	camera_3d.top_level = true
+	camera_3d.make_current()
+	_water_reflection_on = WaterReflection.enabled()
+	WaterReflection.ensure_globals()
+	camera_3d.cull_mask &= ~WaterReflection.MIRROR_TERRAIN_BIT
+	_water_reflection = WaterReflection.new()
+	_water_reflection.name = "WaterReflection"
+	add_child(_water_reflection)
+	_try_add_real_sky()
+	_apply_camera_far_plane()
+
+## Starts the backdrop's region window on region (hi, lo) -- `centre` is
+## Vector2i(hi, lo), this project's "hi/lo" -- with that region as the frame
+## and a vertical anchor of 0 (OURS: world y is the region's own height, so
+## a script's camera heights need no offset), its environment applied at
+## `env_time` before any cell builds (so every cell bakes its light), and
+## every cell of the window, the centre included, queued for the threaded
+## pipeline -- nothing is built on this frame. False, with a printed reason,
+## when Map.pk2 or the centre's `.m` is missing.
+func title_begin(centre: Vector2i, radius: int, env_time: float) -> bool:
+	_title_radius = maxi(radius, 0)
+	_env_time = env_time
+	var map_pk2 := _open_map_pk2_if_set()
+	if map_pk2 == null:
+		print("World3D: title backdrop -- no Map.pk2 (path='%s')" % Pk2Config.map_path())
+		return false
+	var mapm_path := "%d\\%d.m" % [centre.x, centre.y]
+	var sw := Time.get_ticks_usec()
+	var bytes := AssetSource.read_bytes(mapm_path, map_pk2)
+	var region: MapmReader.ParsedRegion = MapmReader.parse(bytes) if not bytes.is_empty() else null
+	if region == null:
+		print("World3D: title backdrop -- region %d/%d has no terrain (%s)" % [centre.x, centre.y, mapm_path])
+		return false
+	_apply_real_environment_lighting(region, map_pk2)
+	print("World3D: title backdrop at %d/%d, radius %d, environment phase %.4f (read and applied in %.1f ms)" % [
+		centre.x, centre.y, _title_radius, env_time, (Time.get_ticks_usec() - sw) / 1000.0])
+	_drop_cell_jobs("a new title backdrop")
+	_grid_builds += 1
+	_grid_origin_region = centre
+	_grid_centre_region = centre
+	_grid_shared_anchor_height = 0.0
+	_grid_origin_world = _frame_corner(0.0)
+	_grid_has_origin = true
+	_grid.loaded_cells.clear()
+	_grid.queued_cells.clear()
+	_load_queue.clear()
+	_last_stream_cell = Vector2i.ZERO
+	var cells: Array = []
+	for dy in range(-_title_radius, _title_radius + 1):
+		for dx in range(-_title_radius, _title_radius + 1):
+			cells.append({"rx": centre.x + dx, "ry": centre.y + dy, "dx": dx, "dy": dy,
+				"key": "%d_%d" % [dx, dy], "dist": absi(dx) + absi(dy)})
+	cells.sort_custom(func(a, b): return a["dist"] < b["dist"])
+	for cell in cells:
+		_grid.queued_cells[cell["key"]] = true
+		_load_queue.append(cell)
+	return true
+
+## The point the region window follows (the camera's target, in world
+## space): the hidden player stands there, which is what
+## _maybe_stream_regions measures from.
+func title_focus(world_position: Vector3) -> void:
+	player.position = world_position
+
+## Cells built so far, and cells still queued or preparing.
+func title_cells_loaded() -> int:
+	return _grid.loaded_cells.size()
+
+func title_cells_pending() -> int:
+	return _load_queue.size() + _cell_jobs.size()
+
+## Where a point given relative to the backdrop's frame region lands in the
+## world, for a backdrop begun with title_begin (anchor 0): the region
+## group's corner (_group_position, the same placement every cell uses) plus
+## the point with z mirrored (the group's scale.z = -1). Positions outside
+## [0, 1920) fall in the neighbouring cells, as they do in retail's frame.
+static func title_world_from_local(local: Vector3) -> Vector3:
+	var corner := _group_position(Vector3.ZERO, 0.0)
+	return corner + Vector3(local.x, local.y, -local.z)
+
+func _title_physics(_delta: float) -> void:
+	if _sky_dome != null:
+		_cloud_uv_offset.x = fposmod(Time.get_ticks_msec() / CLOUD_SCROLL_MS, 1.0)
+		_sky_dome_material.set_shader_parameter("uv_offset", _cloud_uv_offset)
+	if _sun_glow != null:
+		_sun_glow.global_position = camera_3d.global_position + _sun_glow_offset
+	_tick_map_animations()
+	_maybe_stream_regions()
+	_process_stream_queue()

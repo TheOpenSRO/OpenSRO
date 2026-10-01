@@ -9,7 +9,24 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
 
 ## 1. Connect / login screen
 - [x] Reskin `Login.tscn` with the real `login_window.ddj` frame: ID / PW / Server / Connect / Exit (v0.1.103, round 150)
-- [~] Backdrop behind it — pass 1 done (real `loading_login_01_2011.ddj` still); pass 2 = 3D flowing town camera
+- [x] **Retail's 3D title screen** (round 678): the intro script flown over the world's own regions
+  (the five-curve Catmull-Rom path, the camera's pitch/yaw/roll/distance, the clamp), the random
+  5/14/18/23 o'clock, the IntroBGM, the letterbox frame and login window built from
+  `resinfo\pstitle.txt` at READ positions, the fades, and the click/key skip
+  (`docs/protocol/intro_script.md`). The 2D still stays as the loading cover and the fallback.
+- [x] **The operator's front-end theme** (round 678): intro, music, logo, band art and a copyright
+  line from the server (`-login-*`), a cached answer, or `custom/theme.json` / `custom/intro` /
+  `custom/frontend`; each falls back to the archive's own (deploy/README.md, "Branding your
+  front-end").
+- [ ] OPEN (round 678): the [SCRIPT] section (GScript: rm's smoke effects, ruby_baghdad's crowds,
+  riders and camera shake) and Constantinople's `AREA=` crowd builder -- their cameras fly over an
+  empty scene for now
+- [ ] OPEN (round 678): the sun's direction from the title's day phase (SWorld::vslot_004) -- only
+  the environment colours follow the hour; `SWorld::vslot_043(0x17, 0)` at the title is unread
+- [ ] OPEN (round 678): per-intro music is ours (retail has one IntroBGM); the server-list LIST
+  button and its window are left out (the Server slot takes a typed host:port)
+- [ ] OPEN (round 678): the frame's band/logo stretch at wide screens is retail's (non-uniform
+  1600x1200 scaling, READ) -- a 4:3-correct option would be ours
 - [ ] Server dropdown / channel list (`login_chanel_window`), even if it is a single server for now
 - [x] Keep every existing `NetClient` login/register wiring working (v0.1.103)
 - [x] Plain-panel fallback when no Media.pk2 is present, so login always works (v0.1.103)
@@ -68,9 +85,32 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
 - [ ] Char-select: fill the empty centre with the 3D character (pass 2)
 
 ## 6. 3D backdrops (pass 2, the expensive one)
-- [ ] Shared town backdrop streamed behind the screens (reuse the world loader)
-- [ ] Slow flowing camera path through town
-- [ ] Swap the pass-1 2D backdrops for it without touching the UI layer
+- [x] Shared backdrop streamed behind the screens, reusing the world loader (round 678:
+  `FrontEndBackdrop` = World3D's `title_mode`; a frame region, a radius, a day phase and a camera
+  pose per frame)
+- [x] Flowing camera path (round 678: the title's intro, `IntroCameraPath`)
+- [x] The letterbox frame as a shared component (round 678: `FrontEndFrame` -- bands, covers, title
+  art, logo, version, copyright line, fades -- built from `pstitle.txt`)
+- [ ] **Next: character select in 3D** (READ, `docs/protocol/intro_script.md`, "The scenes after the
+  title"): region 105/81 (the Constantinople harbour: ships `euro_constan_ship02/03`, the port, market
+  stalls), characters on the dock line (95,-27.6,654) -> (29,-27.6,644), the camera dolly
+  (60,-15,700) -> (60,-15,660) at pitch 0.1 yaw 3.0 distance 30, Start zooming to the slot. Reuse
+  `FrontEndBackdrop` + `FrontEndFrame` (title art `text-*` for "CHARACTER SELECT" to find).
+- [ ] **Next: race select** -- not a screen of its own: the same process and region, the table
+  (`res\interface\box.bsr`: box, compass, brush case, letter, parchment map), the two idols and the
+  lizard at (155..157, -20, 651.6..654.4), a 4-key 5 s camera to (165.2,-33.9,640.3); an idol opens
+  Europe or China create. (A reference screenshot's "horse" is OPEN: no horse mesh in `Res\interface`.)
+- [ ] **Next: create/customize in 3D** -- China: region 98/168 (the Jangan palace forecourt), camera
+  target (960.42,50,458.26) turning slowly on the spot (distance 0.1); Europe: 105/79 (Constantinople),
+  target (335,140,1460). Slider order differs: China Figure/Height/Volume/**Protector/Weapon**, Europe
+  Figure/Height/Volume/**Weapon/Protector**. The China screen's drifting calligraphy is OPEN (no .efp
+  loaded; `back_image.ddj` unverified).
+- [ ] The theme's reserved `charselect` / `create` slots (null today): retail's scenes are fixed and
+  not tied to the intro (READ), so letting an operator pick them is ours -- fill the slots then.
+- [ ] Reference screenshots of a private server's front-end (2026-10-01, `fe_ref1..4`): the same
+  letterbox frame on every screen, the screen's title top-left, the server's logo in the top band,
+  the copyright centred in the bottom band, a green message line bottom-left -- their band art is
+  custom; ours is the archive's (or the operator's, via the theme).
 
 ## 7. In-game HUD & gameplay (dumped 2026-09-11, with reference screenshots)
 Ordered roughly quick-fix → needs-a-server-system.
