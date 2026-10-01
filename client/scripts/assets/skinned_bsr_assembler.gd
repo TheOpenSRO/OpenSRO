@@ -455,7 +455,7 @@ static func animation_for(
 
 ## The bone whose bind position is nearest the mesh's own vertex centroid.
 static func _nearest_bone(mesh: BmsReader.ParsedMesh, bone_positions: Dictionary) -> String:
-	if mesh.vertices.is_empty():
+	if mesh.vertex_count() == 0:
 		return ""
 	var centre := _centroid(mesh)
 	var best_bone := ""
@@ -468,10 +468,13 @@ static func _nearest_bone(mesh: BmsReader.ParsedMesh, bone_positions: Dictionary
 	return best_bone
 
 static func _centroid(mesh: BmsReader.ParsedMesh) -> Vector3:
+	# From the packed positions, so a natively parsed mesh never builds its
+	# Vertex objects (round 669); the same sum, in the same order.
+	var positions := mesh.positions()
 	var sum := Vector3.ZERO
-	for v in mesh.vertices:
-		sum += v.position
-	return sum / float(mesh.vertices.size())
+	for p in positions:
+		sum += p
+	return sum / float(positions.size())
 
 ## Reads a path that may or may not carry the "res\" prefix the server
 ## tables omit and object.ifo includes -- same accommodation ObjectLoader

@@ -886,12 +886,28 @@ the parity check, the negative and the Windows cross-build are in native/README.
 measurement, warm and cold, is in WORLD_ISSUES.md, round 667. The rest of the parse time, ranked by
 what the same `SRREVAMP_PARSE_PROFILE=1` Jangan entry measured with the native readers ON:
 
-- [ ] **`BmsReader.parse`**: the largest parser left, at 326 ms on the main thread and 879 ms on
-      the workers per Jangan entry (plus `to_arrays`, 58 / 72). The parse builds one `Vertex` object per vertex, and
-      `to_arrays` turns them back into packed arrays. A native parse that hands back the packed
-      arrays and keeps them on `ParsedMesh` saves both. Callers that read `mesh.vertices`
-      (character, monster and skinned assemblers, `bms_collision`) still need the objects, or
-      need moving onto the arrays.
+- [x] **`BmsReader.parse`**, with `to_arrays`, `BanReader.parse` and `BskReader.parse`: native
+      in round 669 (native/README.md, "The model readers"; the numbers in WORLD_ISSUES.md, round
+      669). Left from it:
+  - [ ] **`BsrReader.parse`** (34 ms on the main thread and 79 on the workers at the mobs entry,
+        plus 34 ms on the main thread before it): not ported. It is the largest and least regular
+        reader (1,281 lines: the section table, the forward scan, the mod sets and sound sets),
+        and its result is nested Dictionaries and objects. Round 669's finer timers (Jangan entry,
+        main thread) put 19.5 of its 36 ms in `parse_sound_section`, run 314 times for 90 parses:
+        every parse that takes the section table reads the same bytes three times
+        (`material_mods`, `env_map_materials`, and `env_map_flags` through `material_mods`
+        again), a character a fourth (`_attach_sound_sets`). `parse_sections` is another 12 ms.
+        Reading the section once per parse is a GDScript change, not a port.
+  - [ ] **`BmsReader.parse_collision`** (6 ms main, 43 ms workers at the mobs entry) and
+        **`BmtReader.parse`** (4 / 22 ms): under the round's ~20 ms main-thread bar; not ported.
+  - [ ] **The `.ban` keyframes are still objects.** The native parse is flat, but `BanReader`
+        builds one `Keyframe` per key (9.7 million across Data.pk2) because the per-frame pose
+        code reads `track.keyframes` directly. Moving MonsterCrowd/Skeleton3DBuilder onto flat
+        arrays would remove the rest of the `.ban` cost; that is an API change, not a port.
+  - [ ] **12 real `.bms` files make the GDScript reader fail on a script error**, not a null:
+        `_read_len_prefixed_string` answers `[]` where its callers test for `null`. The native
+        reader returns `{error}` for them and GDScript then fails as it always has. Not fixed:
+        this round changes no GDScript answer.
 - [ ] **`MapmReader.parse` and `NvmReader.parse`**: 557 and 453 ms on the workers per 25-region
       entry. Off the main thread, so they cost entry time only while the drain waits for
       them.

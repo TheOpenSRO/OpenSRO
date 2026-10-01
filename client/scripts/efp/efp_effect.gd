@@ -869,7 +869,7 @@ static func _decode_mesh(p: String, particles: Pk2Reader):
 	if bytes.is_empty():
 		return null
 	var parsed := BmsReader.parse(bytes)
-	if parsed == null or parsed.vertices.is_empty():
+	if parsed == null or parsed.vertex_count() == 0:
 		return null
 	return BmsReader.to_arrays(parsed)
 

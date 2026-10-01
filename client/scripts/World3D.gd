@@ -4882,6 +4882,9 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 	print(_load_timings.summary())
 	if ParseProfile.enabled:
 		print(ParseProfile.report("entry"))
+		# A fresh window for what loads after the entry -- a species or a
+		# character met for the first time (round 669) -- reported at exit.
+		ParseProfile.reset()
 	_qa_print_entry_probe()
 	_loading_screen.set_progress(1.0)
 	_loading_screen.set_caption("Entering the world...")
@@ -5397,6 +5400,8 @@ func _load_object_template(model_path: String) -> Node3D:
 ##   the next one entered in the same process.
 ## Also called on quit, where all of it is harmless.
 func _exit_tree() -> void:
+	if ParseProfile.enabled and _initial_load_done:
+		print(ParseProfile.report("after the entry"))
 	SoundTable.set_listener(null)
 	_leave_ground_pick("the world left the tree")
 	# The skilleffect.txt parse (_preload_skill_effect_table) is not left
