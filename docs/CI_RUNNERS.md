@@ -27,11 +27,18 @@ Every srrevamp workflow (`.github/workflows/ci.yml` and `release.yml`) runs on
   - Two runners take two jobs at once.
 - **The old runner is still registered.** No workflow targets it any more, but it hasn't been
   deleted; that's the user's call.
+- **The work folder must be `/home/runner/_work`** (the `workFolder` in `~/actions-runner/.runner`).
+  setup-godot's cache stores Godot at a path relative to the workspace, and the cache entries were
+  saved on the old kakariko pod, whose workspace is `/home/runner/_work/srrevamp/srrevamp`. With the
+  default `_work` under `~/actions-runner`, a cache hit unpacked Godot one level too deep, and both
+  Godot jobs failed with "No Godot executable found" (CI run 36834736619, attempt 1). With
+  `/home/runner/_work`, attempt 2 passed all four jobs. `--work /home/runner/_work` when
+  re-registering.
 - **Re-registering one** (e.g. after rebuilding the container): on a machine logged into `gh`
   as a repo admin, run
   `tok=$(gh api -X POST repos/OpenSRO/srrevamp/actions/runners/registration-token --jq .token)`.
   Then, as `runner` in `~/actions-runner`, run
-  `./config.sh --url https://github.com/OpenSRO/srrevamp --token "$tok" --name pve-runner-N --labels srrevamp-pve --work _work --unattended --replace`,
+  `./config.sh --url https://github.com/OpenSRO/srrevamp --token "$tok" --name pve-runner-N --labels srrevamp-pve --work /home/runner/_work --unattended --replace`,
   and as root `./svc.sh install runner && ./svc.sh start`. The token expires after an hour;
   don't commit or log it.
 - **Checking them:** `gh api repos/OpenSRO/srrevamp/actions/runners --jq '.runners[] | "\(.name) \(.status) busy=\(.busy)"'`.
