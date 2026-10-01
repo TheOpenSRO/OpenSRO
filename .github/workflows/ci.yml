@@ -10,7 +10,7 @@ on:
 jobs:
   server:
     name: Build & test server (Go)
-    runs-on: kakariko-runner
+    runs-on: [self-hosted, srrevamp-pve]
     # Bounded (OURS): a stalled step held the only runner for 10+ min on 2026-10-01.
     timeout-minutes: 30
     defaults:
@@ -54,7 +54,7 @@ jobs:
 
   client:
     name: Validate client (Godot)
-    runs-on: kakariko-runner
+    runs-on: [self-hosted, srrevamp-pve]
     # Bounded (OURS): a stalled step held the only runner for 10+ min on 2026-10-01.
     timeout-minutes: 30
     steps:
@@ -83,7 +83,7 @@ jobs:
 
   native:
     name: Native readers (Rust) and the suites with the library loaded
-    runs-on: kakariko-runner
+    runs-on: [self-hosted, srrevamp-pve]
     # Bounded (OURS): a stalled step held the only runner for 10+ min on 2026-10-01.
     timeout-minutes: 40
     env:
@@ -127,7 +127,7 @@ jobs:
 
   no-assets-check:
     name: Guard against committed pk2/game assets
-    runs-on: kakariko-runner
+    runs-on: [self-hosted, srrevamp-pve]
     # Bounded (OURS): a stalled step held the only runner for 10+ min on 2026-10-01.
     timeout-minutes: 10
     steps:

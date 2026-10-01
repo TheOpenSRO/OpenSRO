@@ -297,7 +297,8 @@ executable's folder when `res://native_bin/…` is not a real file. `export_pres
 `srrevamp_native.gdextension` again.
 
 The steps, in order:
-1. `native/ci_toolchain.sh` sets up the toolchain on the ephemeral `kakariko-runner` pod. It
+1. `native/ci_toolchain.sh` sets up the toolchain on the runner (the persistent `srrevamp-pve`
+   runners since 2026-10-01, docs/CI_RUNNERS.md; until then the ephemeral `kakariko-runner` pod). It
    installs mingw-w64 (and a host `cc`) through apt, as root or with `sudo -n`. It installs
    rustup with the pinned toolchain (`RUST_TOOLCHAIN`, 1.98.1, set in release.yml and ci.yml)
    and the `x86_64-pc-windows-gnu` target. It also downloads zig 0.15.2 and cargo-zigbuild
