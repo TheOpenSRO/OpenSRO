@@ -126,8 +126,8 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 # `SELECT code_name FROM items WHERE id = 23937;` answers `ITEM_ETC_SECOND_HWAN`, on a retail
 # archive. A client that predates round 632 ignores the new opcodes 0x0104-0x0108.
 # ROUND 654 (the monster species table) NEEDS THREE THINGS ON srrevamp-01, in this order:
-#   a. re-run `export-refdata -mode skills` with the NEW binary (step 2; the CSV grows to 90
-#      columns -- column 89 is AI_AttackChance, skilldata column 66), then the NEW `import-refdata`
+#   a. re-run `export-refdata -mode skills` with the NEW binary (step 2; the CSV grew to 90
+#      columns here -- 91 since round 659, see "Deploying the monster-epic release" -- column 89 is AI_AttackChance, skilldata column 66), then the NEW `import-refdata`
 #      (step 3) -- its store adds skills.ai_attack_chance (default -1, "unknown") before it writes
 #      the rows. Check: `SELECT count(*) FROM skills WHERE ai_attack_chance > 0;` answers 26650,
 #      and `... WHERE ai_attack_chance < 0;` answers 0, on a retail archive.
@@ -851,7 +851,7 @@ rank at its species' size. `SRREVAMP_AI_TICK_STATS=1` logs the AI tick's p50/p99
 ## Deploying the monster-epic release to srrevamp-01 (round 666)
 
 The release that carries rounds 653-666 changes the reference data, adds the shard's nest files
-and turns the monster world on. The final release review ran steps 1-7; do them in this order.
+and turns the monster world on. The final release review ran steps 1, 2 and 4 and checked step 7's boot lines on the render box (steps 0, 5 and 6 need srrevamp-01 and its Postgres, so they were not run there); do them in this order.
 `<server-host>` is srrevamp-01 (`srrevamp@192.168.5.25`); the checkout there is `~/srrevamp`, and
 `~/srrevamp-data` is mounted into the server container as `/data`.
 

@@ -838,8 +838,8 @@ func main() {
 		"path to the monster species table (from cmd/export-refdata -mode monsters on a client's own "+
 			"characterdata parts, levelgold.txt and textdata_object.txt; round 654). Every roster species "+
 			"takes its numbers from its row, and the GM console's /spawn knows every species in it by code "+
-			"name, id or English name. Who spawns where does not change. Without it the hand-typed roster is all "+
-			"the server knows. A configured path that does not load is fatal.")
+			"name, id or English name. Without -full-map, who spawns where does not change; with it, every "+
+			"field nest spawns from this table (round 660). Without it the hand-typed roster is all the server knows. A configured path that does not load is fatal.")
 	teleportDir := flag.String("teleport-dir", os.Getenv("SRREVAMP_TELEPORT_DIR"),
 		"directory holding the game's teleport network as teleportdata.csv, teleportlink.csv and "+
 			"teleportbuilding.csv (from cmd/export-refdata -mode teleport on a client's own "+

@@ -298,7 +298,10 @@ In order. Each is checked off here when it ships in a release, with its round in
         "Waiting for other player's help." button stands for -- shown disabled today, while
         retail's click closes the box; (4) the retail message box art
         (`msgbox_rebirth_button.ddj`) for the window; (5) whether to default `-player-dead-state`
-        on -- retail has one death, the dead state (a user decision).
+        on -- retail has one death, the dead state (a user decision); (6) with the flag off, a
+        death writes no `[n]Experience Points lost.` line to the system window -- the status
+        label carries the loss, but `World3D._show_own_strike` (~16966) only adds that line
+        through `_enter_dead_state` (pre-existing; the release's final review, LOW).
       - **mob-acquire** -- BUILT in round 552 behind `-monster-aggro` (default off; forced off
         unless `-monster-battle` is in effect and `-player-dead-state` is on): target acquisition
         (round 257: radius = BCRadius + `_RefTactics.+0x14`, the nearest player, no level term) with
