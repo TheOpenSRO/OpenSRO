@@ -918,7 +918,20 @@ each species the way World3D does (by code, then by display name) and prints one
 <front>` line per model; those are `MonsterMotion.FRONT_BY_MODEL`. Headless, renders nothing; ship
 the working copy first (`script` does not sync):
 `client/tools/remote_godot.sh sync && client/tools/remote_godot.sh script res://tools/probe_monster_front.gd -- --pk2=/opt/sro-files/client/Data.pk2 --media=/opt/sro-files/client/Media.pk2`.
-Written for round 533, where all seven roster models read -Z.
+Written for round 533, where all seven roster models read -Z. `--all=1` (round 673) measures every
+model a `MOB_` row draws (155) instead of the roster and ends with a `TALLY` line: 117 read -Z, 36
+name no axis, 2 (the event Jinn pets) read +Z on one weak reading, none +-X -- the evidence for
+`MonsterMotion.MODEL_FRONT`, which since round 673 turns every drawn model (the table is gone).
+
+`plate_pixels.py` (round 673) counts a name plate's own pixels in a movie frame where the client
+says it projects: a run with `SRREVAMP_QA_SHOTS` and `SRREVAMP_QA_PLATES=1` prints one `QA PLATE`
+line per monster at each shot (its distance from the camera and from the player, its screen point),
+and the tool counts cream-beside-black pixels in a 140 x 22 box there. Pure Python (the box has no
+PIL); run it on the box against the run's directory: `python3 plate_pixels.py <dir>` (add `--white`
+for the round's retail monster look -- white glyphs on a translucent box, no outline -- which
+counts pixels >= 235 in every channel instead). Round 673's
+before/after: the same monster 73 from the player had 97 plate pixels at camera distance 87 and none
+at 103 (looking straight down) before, and its name at every shot after.
 
 `probe_seasonal.gd` counts what round 583's seasonal filter leaves out of real regions. It runs
 World3D's own `_objects_job` and `_objects_prepare` over each region (Jangan's nine by default,

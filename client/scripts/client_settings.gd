@@ -22,9 +22,12 @@ const KEY_UI_SCALE := "scale"
 const DEFAULT_UI_SCALE := 1.0
 ## 0 means the theme's own size.
 const KEY_CHAT_FONT_SIZE := "chat_font_size"
-## How near an entity has to be before its name shows, in world units;
-## World3D.NAME_PLATE_RANGE when unset.
-const KEY_NAME_PLATE_RANGE := "name_plate_range"
+## How near an entity has to be to the player before its name shows, in world
+## units; World3D.NAME_PLATE_RANGE (retail's 300) when unset. A new key in
+## round 673: the old "name_plate_range" was a distance from the CAMERA, 80 by
+## default, and a value saved under it would keep hiding names the retail
+## rule shows.
+const KEY_NAME_PLATE_RANGE := "name_range_from_player"
 ## Which of the original's three views the camera uses: "free" (the
 ## default), "third_person" or "quarter" -- World3D.CAMERA_VIEW_*.
 const KEY_CAMERA_VIEW := "camera_view"

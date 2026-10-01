@@ -593,7 +593,8 @@ In order. Each is checked off here when it ships in a release, with its round in
 ## Next up
 
 ### 0. Monster HP bars, click-to-attack, target window, damage numbers — **done** (rounds 146-149)
-Monsters show a name plate and a billboarded red HP bar that shrinks on each hit, a left click
+Monsters show a name plate and a billboarded red HP bar that shrinks on each hit (the bar was
+ours and is gone since round 673, at the user's request: the health shows in the target window), a left click
 on a monster attacks it (NPC->talk, monster->attack, ground->move), the current target shows at
 the top of the screen, and every blow floats a damage number that rises and fades -- white for
 damage the player deals, red for damage taken (round 149). Combat behind it is still the
@@ -1437,6 +1438,42 @@ READ and measured in `docs/WORLD_ISSUES.md`'s 637th round; the rule is `RemoteFa
 - [ ] **A monster the list moves mid-leg keeps its leg's facing.** Seen once at world entry: 7.4
       degrees off for 0.6 s. The client's facing changes only on a message, so this may be right;
       not established.
+
+### Over and on monsters (round 673) — **built: no bar over a monster's head, every name within 300 of the player from any camera, every monster model turns to its path and its target; these are left**
+
+READ and measured in `docs/WORLD_ISSUES.md`'s 673rd round; the name rule is `NamePlates`
+(docs/protocol/monster_ai.md, "The overhead name").
+
+- [ ] **Retail's own over-head gauge is not built.** The user: "There's a toggle in the original
+      game to see mob and player health bars above them but it's much smaller but let's ignore it
+      for now." It is `CICharactor` vslot 38 (0x9d0da0): an HP (and MP) gauge drawn only under the
+      option flags it tests (`FUN_00b94b90` on 0xeef6f0 / 0xef1a84 / 0xef1bc0) and within the
+      name's 300 of the player (`FUN_009cef40`). Its art, size and the option's place in the
+      Option window are unread.
+- [ ] **What lets a name show at any distance** (`object+0xf0`, tested before the 300 at 0x9d0ac3)
+      is unread, as are the name pass's other early returns (a vcall at +0xb0 on
+      `FUN_009edd60`'s object; the bits `+0xd4 & 2` and `+0x464 & 2`) and the global byte
+      0xec4b58 the overlay pass is drawn under -- one of them is likely the Option window's
+      "show names" switch.
+- [ ] **The plates' look: monsters matched to a retail picture, the rest still ours.** Monster
+      names are white, no outline, 12 px in the client's face on a black box at 0.29, 1:1 pixels
+      (MEASURED from the user's retail screenshot, round 673). Still open: the face (the text call
+      under `FUN_008b4d90` is not traced), the height over the head (retail: position + height +
+      2.0 projected, then lifted by half the short at +0x4c2 plus 10 px when `FUN_008b2d20()` is 0,
+      from LAB_009d0d3c; +0x4c2 untraced), and the
+      player's and NPCs' plates (cream on a black outline, Godot's font, round 672's item under
+      "Text crispness") -- the retail picture's player plate also carries the HP/MP gauge and an
+      icon.
+- [ ] **The sweep is OURS**: a sixth of the plates is re-tested a frame (`NamePlates.SWEEP_FRAMES`),
+      so a name can show or hide up to 0.1 s after its owner crosses 300; retail measures every
+      object every frame.
+- [ ] **Every name box draws before every name** (render priority 0 against 1; round 673's
+      review): where two monsters' plates overlap, the far one's text draws over the near one's
+      box. Needs the box and its text sorted as one item (one mesh, or a screen-space draw).
+- [ ] **Two models read +Z, 36 settle nothing** (`probe_monster_front.gd --all=1`): the event
+      Jinn pets (`cos\p_jinn*.bsr`) on one weak head reading each, and the models with no
+      toe/head/pelvis bones or disagreeing readings. All turn as -Z (INFERRED, one heading
+      convention); a render of a walking Jinn would settle it.
 
 ### The click walk's arrival (round 649) — **the /speed stutter fixed: the step is cut to land on the point, as retail's is; these are left**
 

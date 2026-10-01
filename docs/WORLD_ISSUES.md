@@ -7281,6 +7281,245 @@ After the fixes: `cd server && go build ./... && go vet ./... && go test -count=
 gofmt and vet clean, 62 packages ok, 0 FAIL; `go test -race` over the session and combat tests this
 round touches (Town, AOI, MonsterChases, MonsterBattle, Remove): ok.
 
+## Six-hundred-and-seventy-third round: no bar over a monster's head, every monster's name shown within 300 of the player from any camera angle in the original's white-on-dark look, and every monster turns to face the way it runs
+
+The user (2026-10-01, on v0.1.467): "There's a legacy healthbar above mobs that's needs removed (for
+now) [...] There's a toggle in the original game to see mob and player health bars above them but
+it's much smaller but let's ignore it for now. Also the mob name is only visible with certain
+angles and it should be visible at all times [...] Also mobs should face the way the run, I've seen
+mobs come at me sideways to attack me." Two screenshots: two Earth Ghosts with big red bars over
+them near Donwhang, and, from a steep camera, an Earth Ghost with no name beside the player whose
+name shows.
+
+### 1. The bar (OURS, removed)
+
+`World3D._hp_bar` built it in 2026-08 (rounds 146-149): a 64 x 8 red/black texture on a fixed-size
+billboarded `Sprite3D` at 0.9 of the model's height, its colours and size "a disclosed choice". It
+was hung on monsters only (`_build_monster_body`; players and NPCs never had one) and repainted on
+every health change (`_set_hp_bar` from the list refresh, `_paint_monster_hp`). All of it is gone
+-- the node, the per-hit texture rebuild, the constants -- and nothing replaces it per frame. A
+monster's health still goes into its snapshot and the target window (HudTarget), and a damage
+number still starts where the bar sat (`MONSTER_TEXT_UNDER_NAME`, 0.9 of the name's height, OURS,
+unchanged).
+
+What retail has (READ, not built, as the user asked): `CICharactor` vslot 38 (0x9d0da0), the name
+pass's sibling, draws a small HP (and MP) gauge only under the option flags it tests
+(`FUN_00b94b90` on 0xeef6f0 / 0xef1a84 / 0xef1bc0) and only within the name's 300 of the player
+(`FUN_009cef40`). docs/TODO.md.
+
+### 2. The name (READ the rule; MEASURED the cause)
+
+**Retail (READ, sro_client.exe; docs/protocol/monster_ai.md "The overhead name").** The name is
+drawn by `FUN_009d0a80` (CICharactor): it projects the head point through the camera, runs the
+object's vslot 15 with pass 4 (CICMonster's 0x9d3e70, the party mark) and draws the text with
+`FUN_008b4d90(point, 0xff)` -- screen space, full alpha, no fade. Its one distance test, at
+0x9d0ac3, returns when `300.0 <= object+0x24c` (float 0xd85224, read from the PE image) unless
+`object+0xf0` is set. `+0x24c` is written at 0x9d6f7e by `CICPlayer::vslot_005` (0x9d6c80, message
+0xd) in its walk over the entity list: `sqrt(dx^2 + dy^2 + dz^2)` between the LOCAL PLAYER's
+position (+0x90..+0x98, loaded at 0x9d6ea1) and the object's. The constructor (0x9c2340) starts it at
+1000.0 (0xda95ec). So a name shows while its owner is within 300 units of the player; the camera's
+angle and zoom do not enter into it.
+
+**Ours, before.** `_apply_name_plate_range` gave every plate `visibility_range_end = 80` with an
+8-unit fade -- a distance from the CAMERA, "a project choice". The camera hangs up to 90 units out
+on its arm, so a monster a few dozen units from the player sits 80-115 units from the camera, and
+which side of 80 it falls on turns with the pitch and the zoom.
+
+**MEASURED** (the render box, 1280 x 720, `SRREVAMP_QA_MOBS=24` real species around the Jangan
+spawn, `SRREVAMP_QA_PLATES=1`, eight viewpoints at pitch -42 / -80 / -10 and zoom 45 / 75 / 90;
+`client/tools/plate_pixels.py` counts the plate's cream-beside-black pixels at the point each
+`QA PLATE` line says it projects to):
+
+| | plates on screen | with plate pixels |
+|---|---|---|
+| dev (4104a11 + the round's logging) | 121 | 3 |
+| this round | 121 | 121 |
+
+The one monster near enough to straddle the cut, 73.4 from the player:
+
+| view | camera distance | dev | this round |
+|---|---|---|---|
+| pitch -42, zoom 75 | 87.3 | 97 px | 97 px |
+| pitch -42, zoom 90 | 97.0 | 0 | 99 px |
+| pitch -80 (top-down), zoom 75 | 103.3 | **0** | 101 px |
+| pitch -80, zoom 90 | 114.4 | 0 | 92 px |
+| pitch -10, zoom 90 | 87.3 | 38 px (fading) | 100 px |
+
+The same monster at the same zoom has its name from the default pitch and loses it looking down:
+the user's screenshot. Every `QA PLATE` line on dev also says `shown=yes` -- the node was visible
+and the engine's range cut it, which is why nothing in the scene tree ever looked wrong.
+
+**The fix.** `NamePlates` (client/scripts/world/name_plates.gd): `shown(owner, player)` is the
+retail rule -- strictly within 300, in 3D, of the owner's position (the body, the NPC holder, the
+player) -- and `Sweep` applies it: a new plate is hidden until measured (retail's 1000.0) and
+measured on the next frame; the rest are re-tested a sixth a frame (`SWEEP_FRAMES` 6,
+`MIN_PER_FRAME` 32; OURS: retail measures every object every frame, a GDScript pass over a 2,500
+crowd is not free), so a name changes at most 0.1 s after its owner crosses 300. `_name_plate` no
+longer sets a visibility range and registers the plate; the party mark, a child of the plate,
+follows it. The debug panel's "Names within" slider now sets the distance from the player; its
+saved key is new (`name_range_from_player`) so a value saved for the old camera range does not
+keep hiding names. The look is 2b.
+
+NOT read: what `+0xf0` is (it shows a name at any distance), the pass's other early returns, and
+the global byte 0xec4b58 the overlay is drawn under -- one is likely the Option window's name
+switch. docs/TODO.md.
+
+### 2b. The name's look, against a retail screenshot (MEASURED from the picture)
+
+Mid-round the user sent a retail screenshot of the Mangyang field near Jangan (1730 x 896): no bar
+over any monster, a name over every one -- the far ones and the overlapping ones in a cluster too.
+Read off its pixels (pure Python, the PNG decoded by hand):
+
+- the glyphs are pure white (#ffffff), one level, with no outline and no shadow: the pixels beside
+  a glyph are the box's, never black;
+- the cap height is 9 rows ("M" of "Mangyang": rows 244-252 over the dirt, 200-208 over the
+  grass), FontIndex 0's 9-row cap at its 12 px em (`UiBuilder.FONT_SIZES`, docs/rounds/ui.md);
+- behind the text a darker box, 2 px wider than the ink on each side, 16 rows tall, 4 above the
+  cap top and 1 below the descender, the ground inside it 0.71 of the ground outside in every
+  channel ((161, 123, 69) -> (115, 88, 46)): black at alpha 0.29;
+- the same size near and far.
+
+Matched for monster plates (`World3D._monster_name_look`): white, no outline, the client's face at
+FontIndex 0's 12 px sampled NEAREST, a black box at alpha 0.29 (text width + 4 by 16, raised one
+font pixel), and a `pixel_size` that makes one font pixel one screen pixel times the UI scale
+(fixed size: 2 tan(fov/2) / window height x scale, re-set when the window height, the UI scale or
+the fov changes -- three comparisons a frame). Measured in this round's render (1280 x 720, scale
+1.0, the 73.4-unit monster looking straight down): the cap is 9 rows, crisp (every glyph pixel
+>= 235 in every channel); the box darkens the ground to 0.70 of the same pixels without it (the
+earlier render, same view); before the one-pixel raise it sat 3 rows above the cap and 2 below the
+descender, after it 4 and 1 (rows 569-584 around a cap at 573-581 and a descender ending at 583),
+as retail's. Every on-screen monster name has white pixels at all eight views
+(`plate_pixels.py --white`). NOT matched: the face itself (the archive's UI face, INFERRED to be
+the name's; the text call is not traced), the vertical offset over the head (ours: 12 % of the
+model's height over its top bone; retail's pass projects position + height + 2.0 and, when
+`FUN_008b2d20()` is 0, lifts the draw point by half the short at +0x4c2 plus 10 px before drawing
+-- from LAB_009d0d3c; what +0x4c2 holds is not traced, so it is not used), and the player's and NPCs' plates, which keep their cream-on-black look (the picture's player
+plate, "Tobi", carries the HP/MP gauge and an icon: not this round).
+
+### 3. The facing (MEASURED the cause)
+
+The client turns a monster on a leg toward its destination at retail's 3 pi rad/s (round 637,
+`_aim_remote_body`) and snaps it to its target on a blow (`_face_monster_toward`) -- but only when
+`MonsterMotion.front_of` knows its model's front. That table held the seven models of round 533's
+eleven-species roster; every other model was "facing unmeasured" and never turned. Round 660 put
+every field species on the map.
+
+**MEASURED, live** (`/var/tmp/mobui673/live.sh`: a server built from dev with the srrevamp-01 flags
+-- `-full-map` (so `-single-frame`), `-monster-ai -monster-strike-push -monster-spawn-push
+-monster-battle -monster-aggro -player-dead-state` -- the full-map nest DB, a level-40 GM sent
+`/goto earth ghost` beside Donwhang; `SRREVAMP_QA_FACING_LOG=1` now logs every walking monster with a
+model, and its model once; `client/tools/facing_measure.py`). The Earth Ghosts the user saw share
+that ground with Gun Powder ghosts (`mob\wchina\gunpowderghost.bsr`, not in the table):
+
+| | Earth Ghost legs | mean of leg means | Gun Powder legs | mean of leg means | Gun Powder legs > 5 deg off |
+|---|---|---|---|---|---|
+| dev | 33 | 0.16 deg | 19 | **83.6 deg** (worst 179.7) | 18 of 19 |
+| this round | 42 | 0.17 deg | 19 | 0.14 deg | 0 |
+
+All moving samples within 2 degrees of their movement: 60.3 % on dev, 99.0 % now (the rest are
+turns in progress: longest stretch off 300 ms, against 5,600 ms on dev). Every blow logged
+(`QA STRIKE FACE`, 6 a run, Earth Ghosts) faced its target to 0.0 degrees on both builds; the
+player died in each run after six blows, so the two later `/goto`s were refused ("you are dead")
+and no Gun Powder blow was logged -- the strike path for an untabled model is held by the test
+below.
+
+**Which way the models face (MEASURED).** `client/tools/probe_monster_front.gd --all=1` (new)
+measures every model a `MOB_` row draws: of 155, 117 read -Z, 36 name no axis (no toe, head or
+pelvis bones -- the tombstones, Nachal -- or readings that disagree, as a crab's toes point back
+from its head), and 2, the event Jinn pets (`cos\p_jinn*.bsr`), read +Z on one weak reading each (a
+head offset of 0.51 against the probe's 0.5 floor; their walk pose names no axis). None reads +-X;
+the control (`CHAR_CH_MAN_FIGHTER`) reads -Z. INFERRED for the 38: the client turns every object by
+one heading, with no per-model front (`FUN_009ec850`, round 637), so the models share one authored
+front. `MonsterMotion.MODEL_FRONT` is -Z for every drawn model; the table is gone; the capsule (no
+model) still does not turn.
+
+### 4. Tests
+
+- New `client/scripts/world/name_plates_test.gd`: the rule (300 exactly hides, 299.9 shows, a
+  height difference counts, a narrower range applies); the sweep (a new plate hidden until the
+  next step, both measured then, the camera nowhere in it, a plate made before its owner waits and
+  then shows, a freed plate dropped, a range change re-tests all at once, 1,200 plates each
+  re-tested within 6 steps at about a sixth a step).
+- New `client/scripts/world/mob_ui_test.gd`, in the real World3D (quiet subclass, a synthetic
+  two-bone model drawn under `mob\wchina\gunpowderghost.bsr`): no `HpBar` and no `Sprite3D` over
+  the monster but the name's box; a hit still reaches the snapshot; the name is white, unoutlined,
+  12 px, on a black 0.29 box of the text's width + 4 by 16, at one font pixel per screen pixel x
+  the UI scale; the plate has no camera-distance cut; the world
+  keeps a sweep; a monster 72 from the player shows its name and one 340 away does not, with the
+  camera 2,000 units up; the far one shows when the player walks within 300; the debug range
+  applies at once; a leg starts the Gun Powder ghost's turn and leaves it facing along the leg; a
+  blow faces it at its target.
+- `monster_motion_test.gd`: five models the old table did not list (Gun Powder, Demon Horse,
+  tiger, tombstone, Bug Ghost) turn with front -Z; the capsule has no front.
+- **Negative** (the three final suites on dev 4104a11, a second worktree): `mob_ui_test` 12
+  FAILURES -- `FAIL no HP bar hangs over the monster`, `FAIL nothing billboarded but its name (and
+  the name's box) hangs over it (1 other Sprite3D)`, `FAIL the name is white ((1, 0.94, 0.72,
+  1))`, `FAIL with no outline (8)`, `FAIL at FontIndex 0's 12 px (32)`, `FAIL on a box`, `FAIL one
+  font pixel is one screen pixel x the UI scale (pixel_size 0.0004000, want 0.0239790)`, `FAIL the
+  plate has no camera-distance cut (visibility_range_end 80)`, `FAIL the world keeps a plate sweep
+  (NamePlates.Sweep)`, `FAIL a leg starts the Gun Powder ghost's turn toward its path`, `FAIL and
+  after the turn its model faces along the leg (+x), front (0.000, -1.000)`, `FAIL a blow turns it
+  to face its target (+z), front (0.000, -1.000)`; `monster_motion_test` 5 FAILURES (`FAIL
+  mob\wchina\gunpowderghost.bsr turns to its path (front -Z), not left unturned`, and the same for
+  demonhorse, tiger, tombstone, bugghost); `name_plates_test` does not compile (`Identifier
+  "NamePlates" not declared in the current scope`).
+- `remote_godot.sh check`: 464 scripts and 5 scenes, ALL LOAD. `remote_godot.sh tests`: 187
+  suites, 0 failing.
+
+### 5. Performance
+
+`client/tools/perf_gate.sh --sites jangan,mobs` (the final working tree against 4104a11; 1280 x
+720, median of 3 interleaved runs, 2026-10-01):
+
+```
+jangan  frame ms   base 9.85  head 10.10  (+0.2)  SAME
+jangan  entry ms   base 9545  head 9639  (+94.0)  SAME
+jangan  freeze ms  base 3406  head 3388  (-18.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+mobs    frame ms   base 10.81  head 10.74  (-0.1)  SAME
+mobs    entry ms   base 10525  head 10443  (-82.0)  SAME
+mobs    freeze ms  base 3426  head 3397  (-29.5)  SAME
+mobs    hitches    base 5  head 5  (+0.0)  SAME
+```
+
+An earlier gate on the tree before 2b's look (same sites) was SAME on all eight as well (jangan
+frame 12.06 -> 9.67, mobs 10.82 -> 10.80; the jangan base runs were overlapped by another lane's
+renders and repeated).
+
+### Review (round 673's review, on 3917214)
+
+- **HIGH, fixed: the sweep showed dropped items' names.** `_name_plate` put every plate in the
+  sweep, including GroundItems' (World3D passed `_name_plate` as its `plate_for`), and the sweep
+  sets `visible` after `GroundItems.update_labels` hid it -- undoing round 608's "hovered or Z
+  held" rule: with 32 plates or fewer every item name in range showed, with more they flickered.
+  `_name_plate` takes `swept` (default true) and GroundItems gets `_name_plate.bind(false)`. The
+  other callers -- the player's own plate, other players', NPCs' -- have no other owner of their
+  `visible` (searched: only GroundItems.update_labels and the QA labels-off switch, which now
+  takes the plate off every render layer instead), so they follow the 300-from-the-player rule as
+  intended.
+- **MEDIUM, fixed: the party mark was not re-sized with its plate.** Its `pixel_size` is the
+  plate's times its text's line height over 16, taken once at creation; `_step_monster_plate_scale`
+  re-sized the plate and its box only, so at UI scale 1.95 or after a resize the mark sat at the
+  old scale. `_fit_party_mark` now sizes and places it, from `_party_mark` and from
+  `_fit_monster_name_box`.
+- **LOW, OPEN: the boxes all draw before all the texts** (render priority 0 against 1), so a far
+  monster's name draws over a near monster's box where two plates overlap. A per-plate order needs
+  the box and its text sorted as one item; Godot sorts transparent items by priority, then depth,
+  and the box and the text share a position. docs/TODO.md.
+- **Tests** (`mob_ui_test.gd`, two more checks; on 3917214 with the new suite): `FAIL at UI scale
+  2 the party mark is re-sized with its plate (mark 0.0254777, want 0.0509553)` and `FAIL an
+  item's name not hovered stays hidden across the plate sweep (visible after 60 of 60 frames)`, 2
+  FAILURES; with the fix ALL PASS. `remote_godot.sh check`: 464 scripts and 5 scenes, ALL LOAD;
+  `tests`: 187 suites, 0 failing. No per-frame work was added, so the perf gate was not re-run.
+
+### 6. OPEN (docs/TODO.md, "Over and on monsters")
+
+Retail's optional small gauge; `+0xf0` and the name pass's other gates; the plate's face, size and
+colour (round 672's item); the sweep's 0.1 s; the Jinn's +Z readings and the 36 models that settle
+nothing. In the QA render, names of monsters placed under the raised plaza show with their models
+hidden by the floor -- as retail would draw a name within 300 whatever is in front of it (the name
+is a screen-space overlay); the synthetic placement, not a client rule, put them there.
+
 ## Six-hundred-and-seventy-second round: text as crisp as the original's at every UI scale -- glyphs rasterised at the scale and drawn unfiltered, every in-game text node in the client's own face, and the old lost-last-glyph bug found in Buttons and guarded
 
 The user (2026-10-01): "The text in the game seems blurry while it's nice and crisp in the original

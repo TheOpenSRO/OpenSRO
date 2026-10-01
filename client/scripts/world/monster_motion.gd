@@ -49,26 +49,32 @@ const REAIM_EPSILON := 0.5
 const MODE_WALK := 0
 const MODE_RUN := 1
 
-## Which way each model's body faces in its own skeleton space, MEASURED by
-## client/tools/probe_monster_front.gd on the render box (round 533): the mean
-## toe-minus-foot bone vector and the head-minus-pelvis offset, at the bind
-## pose and at the walk clip's first frame, with the player's body
-## (CHAR_CH_MAN_FIGHTER, whose front World3D turns by PI) as the control -- it
-## read -Z, so the probe counts. Keyed by the model World3D draws (the .bsr
-## path, lowercase), not the code: the four `_CLON` roster rows carry `xxx`
-## for a model and, since round 655, are drawn with their Org row's model
-## (docs/protocol/characterdata.md), so they face as that model does. A model
-## not listed here is FACING UNMEASURED and is left unturned (front_of
-## returns "").
-const FRONT_BY_MODEL := {
-	"mob\\china\\mangnyang.bsr": "-Z",
-	"mob\\china\\bigeyeghost.bsr": "-Z",
-	"mob\\china\\gyo.bsr": "-Z",
-	"mob\\china\\waterghost.bsr": "-Z",
-	"mob\\china\\stoneghost.bsr": "-Z",
-	"mob\\china\\yeoha.bsr": "-Z",
-	"mob\\wchina\\earthghost.bsr": "-Z",
-}
+## Which way a model's body faces in its own skeleton space: -Z, for every
+## monster model.
+##
+## MEASURED by client/tools/probe_monster_front.gd on the render box (the
+## mean toe-minus-foot bone vector and the head-minus-pelvis offset, at the
+## bind pose and at the walk clip's first frame; the player's body,
+## CHAR_CH_MAN_FIGHTER, read -Z as the control). Round 533 probed the eleven
+## roster species (seven models, all -Z) and kept them in a table; every
+## model not in it was left unturned, "facing unmeasured". Round 660 put
+## every field species on the map, so most monsters never turned: round
+## 673's live run measured the Gun Powder ghosts beside Donwhang's Earth
+## Ghosts facing one fixed way on all 14 of a chase's legs, 2 to 179 degrees
+## off their path, while the Earth Ghosts (in the table) kept within 0.5.
+## Round 673's census (--all=1) probed all 155 models the MOB_ rows draw:
+## 117 read -Z; 36 name no axis (no toe, head or pelvis bones -- the
+## tombstones, Nachal -- or readings that disagree: a crab's toes point back
+## from its head); 2, the event Jinn pets (cos\p_jinn*.bsr), read +Z on a
+## single weak reading (a head offset of 0.51 against the probe's 0.5 floor,
+## their walk pose naming no axis). None reads +-X.
+##
+## INFERRED for the models that do not settle: the client turns every object
+## by one heading with no per-model front (FUN_009ec850 turns the heading h
+## into the facing (sin h, 0, -cos h) for any object, round 637), so the
+## models are authored to one front, the one every clear reading names. The
+## Jinn readings are OPEN (docs/TODO.md).
+const MODEL_FRONT := "-Z"
 
 ## One frame of the engine's mover: the step is min(|speed x delta|, 160)
 ## along the line to dest (FUN_0048bff0), and a step longer than what is left
@@ -134,9 +140,10 @@ static func state_gait(state: Dictionary) -> int:
 static func turns_to_face(state: Dictionary) -> bool:
 	return bool(state["moving"]) and not bool(state["stop"])
 
-## The measured front of a model (FRONT_BY_MODEL), or "" -- facing unmeasured.
+## The front of a drawn model (MODEL_FRONT), or "" for no model -- the
+## capsule a species with no model is drawn as, which has no front to turn.
 static func front_of(model_path: String) -> String:
-	return String(FRONT_BY_MODEL.get(model_path.to_lower(), ""))
+	return MODEL_FRONT if model_path != "" else ""
 
 ## The body's rotation.y that puts its front along `dir`, a WORLD-space ground
 ## vector (x, z) -- bodies are children of OtherEntities in world space

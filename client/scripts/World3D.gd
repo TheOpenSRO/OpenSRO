@@ -5954,7 +5954,12 @@ func _refresh_player_name_plate() -> void:
 	var top := _skeleton_top(_player_skeleton) if _player_skeleton != null else 1.8 * PLAYER_SCALE_RATIO
 	player.add_child(_name_plate(who, top))
 
-func _name_plate(text: String, above: float) -> Label3D:
+## `swept` (round 673's review): whether the plate follows the 300-from-the-
+## player rule (NamePlates.Sweep), which owns its `visible`. A ground item's
+## plate has its own rule -- shown only while hovered or Z is held
+## (GroundItems.update_labels, round 608) -- so it is made unswept: the sweep
+## setting `visible` every frame showed every item name in range.
+func _name_plate(text: String, above: float, swept: bool = true) -> Label3D:
 	var label := Label3D.new()
 	label.name = "Name"
 	label.text = text
@@ -5973,11 +5978,15 @@ func _name_plate(text: String, above: float) -> Label3D:
 	label.outline_size = NAME_PLATE_OUTLINE
 	label.outline_modulate = NAME_PLATE_OUTLINE_COLOUR
 	# Names read over whatever they stand in front of, which is what makes a
-	# crowd of NPCs legible.
+	# crowd of NPCs legible -- and retail's name is a screen-space draw over
+	# the scene (NamePlates).
 	label.no_depth_test = true
 	label.render_priority = 1
 	label.add_to_group("name_plates")
-	_apply_name_plate_range(label)
+	# Shown while its owner is within NamePlates.RANGE of the player (READ),
+	# from any camera angle; hidden until the sweep first measures it.
+	if swept:
+		_plate_sweep.add(label)
 	return label
 
 ## The party monster's mark (round 660): retail's CICMonster vslot 15
@@ -5998,24 +6007,146 @@ func _party_mark(label: Label3D) -> Sprite3D:
 	var tex: Texture2D = _ui_builder.load_texture(PARTY_MARK_TEXTURE)
 	if tex == null:
 		return null
-	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
-	var text_size := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size)
-	var k := text_size.y / PARTY_MARK_PX  # icon pixels -> the plate's font pixels
 	var mark := Sprite3D.new()
 	mark.name = "PartyMark"
 	mark.texture = tex
 	mark.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	mark.fixed_size = true
-	mark.pixel_size = label.pixel_size * k * float(PARTY_MARK_PX) / float(tex.get_height())
 	mark.no_depth_test = true
 	mark.render_priority = label.render_priority
+	_fit_party_mark(label, mark)
+	# A child of the plate: shown and hidden with it (round 673).
+	return mark
+
+## Sizes and places a party mark against its plate's text and scale. Called
+## again whenever the plate is re-sized (_fit_monster_name_box, round 673's
+## review): the mark's pixel_size is the plate's times its own ratio, so a
+## UI-scale change or a resize that re-sized only the plate left the mark
+## at the old scale, over the text or adrift.
+func _fit_party_mark(label: Label3D, mark: Sprite3D) -> void:
+	if mark == null or mark.texture == null:
+		return
+	var tex := mark.texture
+	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
+	var text_size := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size)
+	var k := text_size.y / PARTY_MARK_PX  # icon pixels -> the plate's font pixels
+	mark.pixel_size = label.pixel_size * k * float(PARTY_MARK_PX) / float(tex.get_height())
 	# The plate is centred on its node: the mark's centre is half the text, the
 	# gap and half itself to the left, in its own texture pixels.
 	var tex_px := float(tex.get_height()) / PARTY_MARK_PX
 	mark.offset = Vector2(-(text_size.x * 0.5 / k + PARTY_MARK_GAP_PX + PARTY_MARK_PX * 0.5) * tex_px, 0.0)
-	mark.add_to_group("name_plates")
-	_apply_name_plate_range(mark)
-	return mark
+
+## A monster's name as retail draws it (round 673), MEASURED from the user's
+## retail screenshot of the Mangyang field near Jangan (1730 x 896, every
+## name read off its pixels; a picture, not the binary):
+##   - pure white glyphs (#ffffff), one level, no outline and no shadow: the
+##     pixels beside a glyph are the box's, never black;
+##   - a cap height of 9 rows ("M" of "Mangyang", rows 244-252 over the dirt,
+##     200-208 over the grass) -- the 9-row cap the HUD's FontIndex 0 has at
+##     its 12 px em (UiBuilder.FONT_SIZES; docs/rounds/ui.md), so the name is
+##     drawn in the client's face at 12 px (the face itself INFERRED: the
+##     text call under FUN_008b4d90 is not traced);
+##   - a darker box behind the text, 2 px wider than the ink on each side and
+##     16 rows tall (4 above the cap top, 1 below the descender): the ground
+##     inside it is 0.71 of the ground just outside it in every channel
+##     ((161,123,69) -> (115,88,46)), i.e. black at alpha 0.29;
+##   - the same size near and far (screen space; READ, NamePlates).
+## Drawn 1:1: the plate's pixel_size makes one glyph texel one screen pixel
+## times the UI scale (fixed_size: a font pixel spans pixel_size x depth world
+## units, and the screen is 2 depth tan(fov/2) tall), the glyphs rasterised
+## at the UI scale as the HUD's are (round 672) and sampled NEAREST. The
+## other plates (players, NPCs) keep their look: the picture shows monsters.
+const MONSTER_NAME_COLOUR := Color(1.0, 1.0, 1.0)
+const MONSTER_NAME_BOX_COLOUR := Color(0.0, 0.0, 0.0, 0.29)
+const MONSTER_NAME_BOX_PAD_PX := 2.0
+const MONSTER_NAME_BOX_HEIGHT_PX := 16.0
+const MONSTER_NAME_BOX_RAISE_PX := 1.0
+## The monster plates whose pixel_size follows the screen.
+const MONSTER_PLATE_GROUP := "monster_name_plates"
+## [window height, UI scale, camera fov] the monster plates were last sized
+## for; _step_monster_plate_scale re-sizes them when any changes.
+var _monster_plate_basis := Vector3.ZERO
+
+func _monster_name_look(label: Label3D) -> void:
+	label.modulate = MONSTER_NAME_COLOUR
+	label.outline_size = 0
+	var font: Font = _ui_builder.font_at(0) if _ui_builder != null else null
+	if font != null:
+		label.font = font
+	label.font_size = UiBuilder.FONT_SIZES[0]
+	label.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	label.pixel_size = _monster_plate_pixel_size()
+	label.add_to_group(MONSTER_PLATE_GROUP)
+	var box := Sprite3D.new()
+	box.name = "NameBox"
+	box.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	box.fixed_size = true
+	box.no_depth_test = true
+	box.shaded = false
+	box.modulate = MONSTER_NAME_BOX_COLOUR
+	# Under the text: a lower render priority among the transparent overlays.
+	box.render_priority = label.render_priority - 1
+	box.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	label.add_child(box)
+	_fit_monster_name_box(label)
+
+## The box behind a monster's name: the text's own width plus the padding,
+## MONSTER_NAME_BOX_HEIGHT_PX tall, in the plate's font pixels (which the
+## plate's pixel_size makes screen pixels x the UI scale).
+func _fit_monster_name_box(label: Label3D) -> void:
+	var box := label.get_node_or_null("NameBox") as Sprite3D
+	if box == null:
+		return
+	var font: Font = label.font if label.font != null else ThemeDB.fallback_font
+	var w := int(ceil(font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, label.font_size).x + 2.0 * MONSTER_NAME_BOX_PAD_PX))
+	var h := int(MONSTER_NAME_BOX_HEIGHT_PX)
+	var key := "%dx%d" % [w, h]
+	var tex: Texture2D = _monster_name_box_textures.get(key)
+	if tex == null:
+		var img := Image.create(maxi(w, 1), h, false, Image.FORMAT_RGBA8)
+		img.fill(Color.WHITE)
+		tex = ImageTexture.create_from_image(img)
+		_monster_name_box_textures[key] = tex
+	box.texture = tex
+	box.pixel_size = label.pixel_size
+	_fit_party_mark(label, label.get_node_or_null("PartyMark") as Sprite3D)
+	# Centred on the plate the box sat one row low against the picture (3 rows
+	# above the cap top and 2 below the descender, MEASURED in round 673's
+	# render, against retail's 4 and 1): one font pixel up.
+	box.offset = Vector2(0.0, MONSTER_NAME_BOX_RAISE_PX)
+var _monster_name_box_textures := {}
+
+## One font pixel = one screen pixel x the UI scale, for a fixed-size plate
+## under the current camera (fov is the vertical angle: Camera3D's default
+## KEEP_HEIGHT) and window.
+func _monster_plate_pixel_size() -> float:
+	var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
+	var fov := cam.fov if cam != null else 75.0
+	var height := float(get_window().size.y) if is_inside_tree() else 720.0
+	return 2.0 * tan(deg_to_rad(fov) * 0.5) / maxf(height, 1.0) * _ui_scale_now()
+
+## The UI scale in effect: the window's content scale, which
+## ClientSettings.apply_ui_scale sets (read from memory, not the settings
+## file, since it is asked every frame).
+func _ui_scale_now() -> float:
+	return get_window().content_scale_factor if is_inside_tree() else 1.0
+
+## Once a rendered frame: re-sizes every monster plate (and its box) when the
+## window height, the UI scale or the camera's fov changed. Three
+## comparisons a frame otherwise.
+func _step_monster_plate_scale() -> void:
+	var cam := get_viewport().get_camera_3d()
+	var basis := Vector3(float(get_window().size.y), _ui_scale_now(), cam.fov if cam != null else 75.0)
+	if basis == _monster_plate_basis:
+		return
+	_monster_plate_basis = basis
+	var size := _monster_plate_pixel_size()
+	for node in get_tree().get_nodes_in_group(MONSTER_PLATE_GROUP):
+		var plate := node as Label3D
+		if plate == null:
+			continue
+		plate.pixel_size = size
+		_fit_monster_name_box(plate)
 
 ## Where a name sits over a model, how large it draws, and in what colour.
 ##
@@ -6028,59 +6159,24 @@ const NAME_PLATE_PIXEL_SIZE := 0.0004
 const NAME_PLATE_COLOUR := Color(1.0, 0.94, 0.72)
 const NAME_PLATE_OUTLINE := 8
 const NAME_PLATE_OUTLINE_COLOUR := Color(0.0, 0.0, 0.0, 0.85)
-## How near an entity has to be before its name shows, in world units (a
-## character is about 16 tall), with the plate fading in over the last
-## tenth of that. A project choice, not a recovered value: nothing found
-## says where the original starts drawing names. Every plate is in the
-## "name_plates" group so set_name_plate_range can change it live.
-const NAME_PLATE_RANGE := 80.0
+## How near an entity has to be TO THE PLAYER before its name shows, in world
+## units: retail's 300 (READ, NamePlates.RANGE; round 673). Until round 673
+## this was 80 from the CAMERA with a fade over the last tenth -- a project
+## choice that hid a monster's name when the camera pitched or zoomed away
+## from it. The debug panel's slider changes it live (set_name_plate_range).
+const NAME_PLATE_RANGE := NamePlates.RANGE
 var _name_plate_range := NAME_PLATE_RANGE
+## Every name plate, tested against the player a share a frame (NamePlates.Sweep).
+var _plate_sweep := NamePlates.Sweep.new()
 
-## A monster's HP bar, the way the original shows one over its head: a name
-## above and a red bar below it. The bar is a single fixed-size billboarded
-## Sprite3D whose texture is drawn per fraction (a dark frame, a red fill),
-## so there is no two-sprite alignment to get wrong and it reads the same at
-## any distance -- the same reason the name plate is fixed-size. Colours and
-## size are a disclosed choice; nothing recovered gives the original's.
-const HP_BAR_TEX_W := 64
-const HP_BAR_TEX_H := 8
-const HP_BAR_PIXEL_SIZE := 0.006
-const HP_BAR_FILL := Color(0.78, 0.12, 0.10)
-const HP_BAR_BG := Color(0.05, 0.05, 0.05, 0.85)
-const HP_BAR_FRAME := Color(0.0, 0.0, 0.0, 0.95)
-
-func _hp_bar_texture(fraction: float) -> ImageTexture:
-	var img := Image.create(HP_BAR_TEX_W, HP_BAR_TEX_H, false, Image.FORMAT_RGBA8)
-	img.fill(HP_BAR_FRAME)
-	var frac := clampf(fraction, 0.0, 1.0)
-	var inner_w := HP_BAR_TEX_W - 2
-	var filled := int(round(inner_w * frac))
-	for y in range(1, HP_BAR_TEX_H - 1):
-		for x in range(1, HP_BAR_TEX_W - 1):
-			img.set_pixel(x, y, HP_BAR_FILL if (x - 1) < filled else HP_BAR_BG)
-	return ImageTexture.create_from_image(img)
-
-## A billboarded HP bar sitting `above` the model's feet, fixed screen size,
-## in the name-plate group so it fades in over the same range.
-func _hp_bar(above: float) -> Sprite3D:
-	var bar := Sprite3D.new()
-	bar.name = "HpBar"
-	bar.texture = _hp_bar_texture(1.0)
-	bar.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	bar.fixed_size = true
-	bar.pixel_size = HP_BAR_PIXEL_SIZE
-	bar.no_depth_test = true
-	bar.render_priority = 2
-	bar.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	bar.position = Vector3(0.0, above, 0.0)
-	bar.add_to_group("name_plates")
-	_apply_name_plate_range(bar)
-	return bar
-
-func _set_hp_bar(body: Node3D, hp: int, max_hp: int) -> void:
-	var bar := body.get_node_or_null("HpBar") as Sprite3D
-	if bar != null and max_hp > 0:
-		bar.texture = _hp_bar_texture(float(hp) / float(max_hp))
+## No bar over a monster's head (round 673). The red bar this client drew
+## there since 2026-08 was ours (its colours and size "a disclosed choice"),
+## and the user asked for it gone. Retail's own over-head gauge is a smaller,
+## optional one: CICharactor vslot 38 (0x9d0da0, the name pass's sibling)
+## draws an HP (and MP) gauge only under the option flags it tests
+## (FUN_00b94b90 on 0xeef6f0 / 0xef1a84 / 0xef1bc0) and within the same 300
+## units of the player as the name (FUN_009cef40, READ) -- not built here;
+## docs/TODO.md. A monster's health shows in the target window (HudTarget).
 
 ## The target window: whatever the player has clicked, at the top of the
 ## screen. Built by HudTarget from the client's own layouts
@@ -6220,35 +6316,28 @@ func _floating_damage(anchor: Node3D, height: float, amount: int, colour: Color)
 	tween.tween_property(label, "outline_modulate:a", 0.0, FLOAT_TEXT_SECONDS)
 	tween.finished.connect(label.queue_free)
 
-## The height a floating number starts at over a monster -- its HP bar's,
-## or a default when it has no bar.
+## The height a floating number starts at over a monster: just under its
+## name, where its HP bar sat until round 673 (MONSTER_TEXT_UNDER_NAME of the
+## name's height, OURS, unchanged), or a default when it has no name plate.
+const MONSTER_TEXT_UNDER_NAME := 0.9
 func _monster_text_height(monster_id: int) -> float:
 	var body = _monster_bodies.get(monster_id)
 	if body != null and is_instance_valid(body):
-		var bar := (body as Node3D).get_node_or_null("HpBar") as Sprite3D
-		if bar != null:
-			return bar.position.y
-	# Every spawned monster gets an HP bar, so this fallback is rare; human
+		var label := (body as Node3D).get_node_or_null("Label") as Node3D
+		if label != null:
+			return label.position.y * MONSTER_TEXT_UNDER_NAME
+	# Every spawned monster gets a name plate, so this fallback is rare; human
 	# head height (same PLAYER_SCALE_RATIO calibration) beats an unscaled
 	# constant that would sit at the monster's feet in this world's scale.
 	return 2.0 * PLAYER_SCALE_RATIO
 
-## Changes how near an entity has to be before its name shows, for every
-## plate already in the scene and every one made from now on.
+## Changes how near an entity has to be to the player before its name shows,
+## for every plate already in the scene (re-tested on the next frame) and
+## every one made from now on.
 func set_name_plate_range(distance: float) -> void:
 	_name_plate_range = maxf(distance, 0.0)
-	for node in get_tree().get_nodes_in_group("name_plates"):
-		_apply_name_plate_range(node as GeometryInstance3D)
-
-## Takes a GeometryInstance3D so it works for both the Label3D name plates
-## and the Sprite3D HP bars, which share the "name_plates" group and fade
-## over the same range.
-func _apply_name_plate_range(label: GeometryInstance3D) -> void:
-	if label == null:
-		return
-	label.visibility_range_end = _name_plate_range
-	label.visibility_range_end_margin = _name_plate_range * 0.1
-	label.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	_plate_sweep.reach = _name_plate_range
+	_plate_sweep.retest_all()
 
 ## The top of an assembled skeleton, in its own local space.
 func _skeleton_top(skeleton: Skeleton3D) -> float:
@@ -11596,6 +11685,8 @@ func _qa_advance_shots() -> void:
 		var wanted := OS.get_environment("SRREVAMP_QA_OBJECTS")
 		if wanted != "":
 			_qa_objects_report(_qa_shots[_qa_shot_index]["name"], wanted.split(",", false))
+		if OS.get_environment("SRREVAMP_QA_PLATES") != "":
+			_qa_plates_report(_qa_shots[_qa_shot_index]["name"])
 	_qa_shot_frames -= 1
 	if _qa_shot_frames > 0:
 		return
@@ -11623,6 +11714,32 @@ func _qa_advance_shots() -> void:
 			shot.get("pitch", camera_arm.rotation_degrees.x),
 			shot.get("yaw", camera_arm.rotation_degrees.y), 0.0)
 	_qa_shot_frames = QA_SHOT_SETTLE + QA_SHOT_HOLD
+
+## SRREVAMP_QA_PLATES=1 (round 673): at each QA SHOT, one `QA PLATE` line per
+## monster body and one for the player -- the name plate's distance from the
+## camera and from the player, where it projects on screen, and whether the
+## node is shown -- so a frame crop can count the plate's own pixels there.
+func _qa_plates_report(shot: String) -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var plates: Array = []
+	for monster_id in _monster_bodies:
+		var body = _monster_bodies[monster_id]
+		if is_instance_valid(body):
+			plates.append(["monster %d" % monster_id, body, (body as Node3D).get_node_or_null("Label")])
+	plates.append(["player 0", player, player.get_node_or_null("Name")])
+	for entry in plates:
+		var label := entry[2] as Label3D
+		if label == null:
+			continue
+		var at := label.global_position
+		var sp := cam.unproject_position(at)
+		print("QA PLATE %s %s cam=%.1f player=%.1f screen=%.0f,%.0f ahead=%s shown=%s range_end=%.0f text=%s" % [
+			shot, entry[0], cam.global_position.distance_to(at),
+			(entry[1] as Node3D).global_position.distance_to(player.global_position), sp.x, sp.y,
+			"yes" if not cam.is_position_behind(at) else "no", "yes" if label.is_visible_in_tree() else "no",
+			label.visibility_range_end, label.text])
 
 ## Reports where each piece of the assembled character actually is,
 ## against where its own bone is.
@@ -12042,8 +12159,8 @@ func _qa_mobs_step() -> void:
 ## SRREVAMP_QA_MOBSPLIT=<frames> (round 664): the frame split, one line every
 ## <frames> rendered frames (MonsterCrowd.Split). SRREVAMP_QA_MOBSPLIT_OFF, a
 ## comma list, switches parts of every monster body off for the A/B that
-## splits the renderer's share: `pose` (no clip is posed), `labels` (name and
-## HP bar hidden), `collide` (no click collider), `mesh` (the model hidden,
+## splits the renderer's share: `pose` (no clip is posed), `labels` (the name
+## hidden), `collide` (no click collider), `mesh` (the model hidden,
 ## still posed), `sound` (no clip's sound tracks advanced). QA only.
 var _qa_split: MonsterCrowd.Split = null
 var _qa_split_off := PackedStringArray()
@@ -12072,10 +12189,11 @@ func _qa_split_print() -> void:
 ## The QA split's switches on one freshly built monster body.
 func _qa_split_strip(body: Node3D, skeleton: Skeleton3D) -> void:
 	if _qa_split_off.has("labels"):
-		for n in ["Label", "HpBar"]:
-			var node := body.get_node_or_null(n) as Node3D
-			if node != null:
-				node.visible = false
+		# Off every render layer rather than hidden: the plate sweep sets
+		# `visible` (round 673, NamePlates) and would show it again.
+		var name_plate := body.get_node_or_null("Label") as VisualInstance3D
+		if name_plate != null:
+			name_plate.layers = 0
 	if _qa_split_off.has("collide"):
 		var click := body.get_node_or_null("ClickBody")
 		if click != null:
@@ -13464,6 +13582,11 @@ func _physics_step(delta: float) -> void:
 	# rendered frame, with every step's time (round 664, MonsterCrowd.TickGate).
 	var idle_delta := _idle_tick_gate.take(Engine.get_process_frames(), delta)
 	if idle_delta >= 0.0:
+		# Name plates within 300 of the player (round 673, NamePlates): a
+		# share of them each rendered frame.
+		if player != null and player.is_inside_tree():
+			_plate_sweep.step(player.global_position)
+			_step_monster_plate_scale()
 		split_sw = Time.get_ticks_usec()
 		_tick_idle_animations(idle_delta)
 		if _qa_split != null:
@@ -13580,7 +13703,7 @@ func _step_local_turn(delta: float) -> void:
 ## and per monster on a leg, with where it is drawn and the way
 ## its MODEL faces, read off the drawn skeleton's global basis (the player
 ## body's front is its skeleton's -Z, MEASURED in round 533; a monster's is
-## MonsterMotion.FRONT_BY_MODEL's). client/tools/facing_measure.py turns
+## MonsterMotion.MODEL_FRONT, -Z). client/tools/facing_measure.py turns
 ## consecutive lines into movement-versus-facing angles. Measurement only.
 var _qa_facing_log := OS.get_environment("SRREVAMP_QA_FACING_LOG") != ""
 ## SRREVAMP_QA_MOVE_LOG=1 (round 649): see _qa_move_report. Measurement only.
@@ -13611,6 +13734,8 @@ func _qa_move_report() -> void:
 		print("MOVE body %d t=%d ms=%d pos=(%.3f,%.3f) target=(%.3f,%.3f)" % [
 			id, _qa_move_tick, ms, body.position.x, body.position.z, to.x, to.z])
 var _qa_facing_log_ms := 0
+## The monsters whose model the facing report has named (round 673).
+var _qa_facing_models := {}
 
 func _qa_facing_report() -> void:
 	var now := Time.get_ticks_msec()
@@ -13638,14 +13763,37 @@ func _qa_facing_report() -> void:
 		var mbody = _monster_bodies.get(id)
 		if mbody == null or not is_instance_valid(mbody):
 			continue
-		var fr := MonsterMotion.front_of(String((mbody as Node3D).get_meta("model", "")))
-		if fr != "-Z":
+		# Every drawn model (round 673), not only the ones with a table entry:
+		# its skeleton's -Z is the model's front (MEASURED for 117 of the 155
+		# MOB_ models, none reading another axis clearly --
+		# client/tools/probe_monster_front.gd --all=1), so a body the client
+		# never turns shows here as off its path. The capsule has no front.
+		var model_path := String((mbody as Node3D).get_meta("model", ""))
+		if model_path == "":
 			continue
+		if not _qa_facing_models.has(id):
+			_qa_facing_models[id] = true
+			print("QA FACING MODEL %d %s table=%s" % [id, model_path, MonsterMotion.front_of(model_path)])
 		var asm: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(id)
 		var node: Node3D = asm.skeleton if asm != null and asm.skeleton != null else mbody
 		var mf := node.global_basis * Vector3(0, 0, -1)
 		print("QA FACING monster %d ms=%d pos=(%.3f,%.3f) front=(%.4f,%.4f)" % [
 			id, now, (mbody as Node3D).global_position.x, (mbody as Node3D).global_position.z, mf.x, mf.z])
+
+## SRREVAMP_QA_FACING_LOG (round 673): at each blow a monster swings, the
+## angle between its model's front (its skeleton's -Z, as the facing report
+## reads it) and the line to its target, and whether it was walking a leg.
+func _qa_strike_facing(monster: int, target: Node3D) -> void:
+	var body = _monster_bodies.get(monster)
+	var asm: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(monster)
+	if body == null or asm == null or asm.skeleton == null:
+		return
+	var front := asm.skeleton.global_basis * Vector3(0, 0, -1)
+	var to := target.global_position - (body as Node3D).global_position
+	var off := rad_to_deg(absf(wrapf(atan2(front.x, front.z) - atan2(to.x, to.z), -PI, PI)))
+	print("QA STRIKE FACE monster %d model %s off %.1f deg moving=%s dist=%.1f" % [
+		monster, String((body as Node3D).get_meta("model", "")), off,
+		"yes" if _monster_is_moving(monster) else "no", Vector2(to.x, to.z).length()])
 
 ## Turns in progress on other players' and monsters' bodies (round 637):
 ## body instance id -> {"target": the client's heading it turns to, "front":
@@ -15554,8 +15702,9 @@ func _spawn_or_update_monster(monster: CombatNet.MonsterSnapshot) -> void:
 			state["pos"] = placed
 			state["h_xz"] = placed
 		var existing_label: Label3D = existing.get_node("Label")
-		existing_label.text = monster.monster_name
-		_set_hp_bar(existing, monster.hp, monster.max_hp)
+		if existing_label.text != monster.monster_name:
+			existing_label.text = monster.monster_name
+			_fit_monster_name_box(existing_label)
 		return
 
 	# Round 655: no body outside the loaded regions. The snapshot is kept, and
@@ -15672,16 +15821,13 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	var label := _name_plate(monster.monster_name,
 		label_height / (1.0 + NAME_PLATE_CLEARANCE_FRACTION))
 	label.name = "Label"
+	_monster_name_look(label)
 	body.add_child(label)
 	# A party monster's mark beside its name (round 660, _party_mark).
 	if monster.party:
 		var mark := _party_mark(label)
 		if mark != null:
 			label.add_child(mark)
-	# The HP bar sits just under the name, at the model's own top.
-	var bar := _hp_bar(label_height * 0.9)
-	body.add_child(bar)
-	_set_hp_bar(body, monster.hp, monster.max_hp)
 	# A clickable collider so a left click on the monster attacks it (see
 	# _try_attack_monster), tagged with the id the attack is sent for.
 	body.set_meta("monster_id", monster.monster_id)
@@ -15960,7 +16106,8 @@ func _try_setup_ground_items() -> void:
 		return
 	_ground_items = GroundItems.new()
 	_ground_items.name = "GroundItems"
-	_ground_items.setup(_data_pk2, _item_drop_models, _item_display_name, _name_plate, _terrain_hit_height)
+	# Unswept plates: an item's name has its own visibility rule (_name_plate).
+	_ground_items.setup(_data_pk2, _item_drop_models, _item_display_name, _name_plate.bind(false), _terrain_hit_height)
 	other_entities.add_child(_ground_items)
 
 ## The object-name table (textdata_object.txt), parsed once on first use and
@@ -16418,7 +16565,7 @@ func _apply_monster_leg(moved: CombatNet.MonsterMoved) -> void:
 		print("World3D: monster %d %s from (%.1f,%.1f) to (%.1f,%.1f) at %.1f/s yaw %.2f%s%s" % [
 			moved.monster_id, kind, pos.x, pos.y, moved.dest_x, moved.dest_z, float(state["speed"]),
 			body.rotation.y, "" if turn == null else " turning to %.2f" % RemoteFacing.yaw_of(float(turn["target"]), float(turn["front"])),
-			"" if front != "" else " (facing unmeasured)"])
+			"" if front != "" else " (no model: the capsule)"])
 
 ## Plays a gait on a monster's body: its own idle for 0 (stand), its walk or
 ## run clip otherwise. A model with no such clip keeps the loop it has.
@@ -17159,6 +17306,8 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool) ->
 	if body != null and is_instance_valid(body) and not _dying_until.has(monster):
 		if target != null:
 			_face_monster_toward(monster, Vector2(target.position.x, target.position.z))
+			if OS.get_environment("SRREVAMP_QA_FACING_LOG") != "":
+				_qa_strike_facing(monster, target)
 		_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_ATTACK)
 		strike_after = _monster_strike_seconds(monster)
 	if target != null and attacked.blocked:
@@ -17203,9 +17352,9 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool) ->
 		# Over the head, at the height the player's own number uses.
 		_floating_damage(anchor, 2.0 * PLAYER_SCALE_RATIO, attacked.damage, DAMAGE_TAKEN_COLOUR))
 
-## Turns a monster's body to face `at` (world x, z) by its measured front
-## (MonsterMotion.front_of / facing_yaw). A model whose front was not measured,
-## and a target on the body itself, leave it as it is. So does a body walking a
+## Turns a monster's body to face `at` (world x, z) by its model's front
+## (MonsterMotion.front_of / facing_yaw). The capsule (no model), and a target
+## on the body itself, leave it as it is. So does a body walking a
 ## leg: it keeps facing its path, as _face_monster_heading leaves it -- the leg
 ## faced it at its start (_apply_monster_leg) and nothing re-faces it mid-leg,
 ## so a turn here would have it walk sideways to its stop (round 544).
@@ -18471,8 +18620,8 @@ func _on_monster_spawned(spawned: CombatNet.MonsterSpawned) -> void:
 		m.monster_id, m.monster_name, m.x, m.z, spawned.heading, " (already drawn)" if known else ""])
 
 ## Faces a standing monster's body along a server heading
-## (MonsterMotion.heading_dir) by its measured front. A body walking a leg
-## keeps facing its path; an unmeasured front leaves it as it is.
+## (MonsterMotion.heading_dir) by its model's front. A body walking a leg
+## keeps facing its path; the capsule (no model) is left as it is.
 func _face_monster_heading(monster_id: int, heading: float) -> void:
 	var body = _monster_bodies.get(monster_id)
 	if body == null or not is_instance_valid(body) or _monster_is_moving(monster_id):
@@ -18497,8 +18646,9 @@ func _on_monster_damaged(damaged: CombatNet.MonsterDamaged) -> void:
 		if damaged_assembled != null:
 			_audio_mark_hit(damaged_assembled.skeleton, false)
 		_play_monster_action(damaged.monster_id, BsrReader.AnimationEntry.TYPE_HIT)
-	# Shrink the HP bar at once, so it tracks each hit. The max comes from
-	# the last snapshot of this monster. No list follows any more (round
+	# The health at once (the target window's gauge, when it is the target),
+	# so it tracks each hit. The max comes from the last snapshot of this
+	# monster. No list follows any more (round
 	# 655): the push carries the health, and it is kept in the snapshot.
 	if damaged != null:
 		_apply_monster_hp(damaged.monster_id, damaged.remaining_hp)
@@ -18516,8 +18666,8 @@ func _record_monster_hp(monster_id: int, hp: int) -> void:
 	if snap != null:
 		snap.hp = hp
 
-## Draws a monster's health on its bar and, for the target, in the target
-## window: `hp`, or the snapshot's when -1.
+## Draws a monster's health in the target window when it is the target:
+## `hp`, or the snapshot's when -1. (No bar over its head since round 673.)
 func _paint_monster_hp(monster_id: int, hp: int = -1) -> void:
 	var snap = _monster_snapshots.get(monster_id)
 	if hp < 0:
@@ -18525,9 +18675,6 @@ func _paint_monster_hp(monster_id: int, hp: int = -1) -> void:
 			return
 		hp = snap.hp
 	var max_hp: int = snap.max_hp if snap != null else hp
-	var body = _monster_bodies.get(monster_id)
-	if body != null and is_instance_valid(body):
-		_set_hp_bar(body, hp, max_hp)
 	if monster_id == _last_attack_target:
 		_set_target_hp(hp, max_hp)
 

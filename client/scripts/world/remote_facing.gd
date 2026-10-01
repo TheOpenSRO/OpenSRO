@@ -34,7 +34,7 @@ class_name RemoteFacing
 ## (sin h, cos h) -- exactly where a node with rotation.y = h points its local
 ## +Z. So for a body whose front is its node's +Z (another player: the skeleton
 ## is turned PI inside it) rotation.y IS the client's heading, and for a
-## monster whose front is measured (MonsterMotion.FRONT_BY_MODEL) rotation.y is
+## monster (whose model's front is MonsterMotion.MODEL_FRONT) rotation.y is
 ## h less that front's yaw (yaw_of / heading_of_yaw).
 
 ## The turn rate: FUN_009e02f0 scales the elapsed time (an unsigned int, +2^32
