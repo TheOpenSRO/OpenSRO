@@ -57,6 +57,34 @@ What still cost time, measured:
   pass alone.
 - The final review waited for round 648's own review to finish before its last gate runs.
 
+## The third batch: the monster world, rounds 653-666 (2026-09-30 08:16 to 2026-10-01 00:24)
+
+**16 h 08 min from the request to the tag (v0.1.464), 16 h 27 min to srrevamp-01 running it.**
+That covers fourteen rounds, which include two the final review added (665, the die-revive
+loop it found live; 666, the deploy guide and its LOWs), plus an infra round (658, restoring the
+user's shard DB). The rounds were far larger than batches one and two, so wall time per round
+is not comparable with them. The measures below are.
+
+| | Rounds 648-652 | Rounds 653-666 |
+|---|---|---|
+| Request to release | 2 h 03 min | 16 h 08 min |
+| Agents | -- | 36 |
+| Agent time, all agents | 473 min | 3,208 min |
+| Agents waiting in foreground loops on jobs | 28 min | 240 min (7.5 %), in four agents |
+| Go build and test in agents | -- | 193 min |
+| Rounds added late, by the final review | 0 | 2 (665, 666) |
+
+The cost of this batch, measured or seen:
+- **The dev VM has 1 core and 2 GB** (`nproc`, `free`; measured 2026-10-01). It ran every lane's
+  Go build and test. The session package took 100-190 s, and 245-560 s under -race, where a
+  whole-package -race run hit Go's 10-minute timeout. Lanes queued on the one test Postgres
+  (`testdb.Lock`). The disk (31 GB) filled twice from the shared Go cache, stopping Postgres and
+  failing SQL tests falsely.
+- **Every round needed one to three review cycles.** Each review found real defects: a server
+  crash (665), a death loop (final review), invented minions (661), and mutants surviving (666).
+  The cycles cost the most hours, and every one of them was worth it.
+- **Foreground wait loops came back** in four agents, despite the brief. They cost 240 min.
+
 ## What the render box is short of (measured 2026-09-30)
 
 `amdgpu_top` (installed on the box; `gpu_sample` logs it once a second) and `vmstat 1`, one Jangan
