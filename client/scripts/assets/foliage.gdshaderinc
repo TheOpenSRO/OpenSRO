@@ -35,6 +35,12 @@ uniform sampler2D albedo_texture : source_color, filter_linear_mipmap, repeat_en
 // under an env-map mod that asks for its own, and 0 for none -- then every
 // texel is kept, as the client draws a two-sided solid layer.
 uniform float alpha_scissor : hint_range(0.0, 1.0) = 0.50196;
+#ifdef APPEAR_FADE
+// A character fading into existence (AppearFade, round 676): the model's
+// alpha, 0 to 1 over the fade. Only the *_fade.gdshader variants define
+// APPEAR_FADE; the shaders the world draws with compile without it.
+uniform float appear_alpha : hint_range(0.0, 1.0) = 1.0;
+#endif
 
 void fragment() {
 	vec4 tex = texture(albedo_texture, UV);
@@ -63,8 +69,17 @@ void fragment() {
 	//
 	// OURS, not the client's: retail tests the filtered, mipmapped alpha;
 	// mip 0 is this project's answer to the canopy dissolving with distance.
+#ifdef APPEAR_FADE
+	// The same keep-or-discard test, made by hand, so the drawn alpha can be
+	// the fade's: a blended draw cannot also take Godot's scissor (OURS).
+	if (alpha_scissor > 0.0 && albedo.a * textureLod(albedo_texture, UV, 0.0).a < alpha_scissor) {
+		discard;
+	}
+	ALPHA = appear_alpha;
+#else
 	ALPHA = alpha_scissor > 0.0 ? albedo.a * textureLod(albedo_texture, UV, 0.0).a : 1.0;
 	ALPHA_SCISSOR_THRESHOLD = alpha_scissor;
+#endif
 	if (!FRONT_FACING) {
 		NORMAL = -NORMAL;
 	}

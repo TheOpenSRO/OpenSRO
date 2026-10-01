@@ -452,7 +452,9 @@ static func _take_meshes(look: Dictionary, skel: Skeleton3D) -> void:
 			continue
 		if (look["meshes"] as Dictionary).has(mi.get_instance_id()):
 			continue
-		var orig := mi.material_override
+		# A body fading into existence (AppearFade, round 676) draws with a
+		# blended twin for two seconds; its own material is the one to copy.
+		var orig := AppearFade.original_material(mi)
 		if orig == null or not (orig is StandardMaterial3D or orig is ShaderMaterial):
 			continue
 		mi.set_meta(ORIGINAL_META, orig)
