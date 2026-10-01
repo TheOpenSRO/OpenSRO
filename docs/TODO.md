@@ -879,6 +879,53 @@ driver" alert unless the export template carries ANGLE, which was not checked; a
 report so far (the white ground included) came from a Forward+ build, so the first report from a
 Compatibility release is the one to read against the box.
 
+### Asset packs: `.pk3` beside `.pk2` -- **planned (decided with the user 2026-10-01); start after the front-end epic**
+
+Shipping new or changed assets should not require injecting them into a `.pk2`. A `.pk3` is a
+plain zip archive; `.zip` is accepted too. The client reads the same formats from it that it reads
+from a `.pk2` today: models, textures, audio, rigs and particles. Modder-friendly formats (glTF,
+PNG, OGG, WAV) can come later. Everything here is OURS: retail has only `.pk2`.
+
+**The user's decisions:**
+- **Source mode, one setting:** `pk2` only (today's behaviour), `pk3` only (the retail content
+  converted once, then no `.pk2` needed), or `mixed`, the default, where packs layer over the
+  archives.
+- **Packs cascade by name, and a later name wins,** whether `.pk2` or `.pk3`: `z_assets` overrides
+  `assets`.
+- **The order a lookup checks the layers in, highest priority first.** The first layer that has
+  the path serves it:
+  1. the loose `custom/` folder (development, and round 678's branding files);
+  2. `z_assets.pk3`;
+  3. `z_assets.pk2`;
+  4. `assets.pk3`;
+  5. the retail base archives (`Data`, `Map`, `Media` and `Music`, as `.pk2` or converted
+     `.pk3`). These are always the bottom layer whatever their names, or `assets.pk3` would sort
+     before `Data.pk2` and lose to it.
+- **The name sort ignores case.** For two packs with the same name, the `.pk3` wins over the
+  `.pk2`.
+- **Paths inside a pack are the pk2's own paths,** matched case-insensitively with `/` and `\`
+  treated alike. So `prim/mtrl/foo.ddj` in a pack replaces `Prim\Mtrl\foo.ddj`, and overriding an
+  asset or adding a new one is the same operation.
+
+**The work:**
+- [ ] **One virtual file system** under every reader (client GDScript, the Rust native readers and
+      the Go tools: `export-refdata`, `pk2list` and the server's own reads). No reader knows which
+      layer a file came from.
+- [ ] **A `.pk3` reader:** stored and deflated entries, and zip64, since a converted `Map.pk2` is
+      several GB. Read stored entries without unpacking where we can.
+- [ ] **A pk2 → pk3 converter.** It keeps every entry's path, so its output drops in for the
+      original archive. It stores already-compressed types (`.ddj`, `.ogg`) and deflates text,
+      tables and meshes. It checks every entry comes out byte-identical. It runs on the operator's
+      own archives, and its output is game data: never committed (docs/LEGAL.md).
+- [ ] **Safety:** reject entry names that escape the archive (`..`, absolute paths), cap the
+      unpacked size to stop zip bombs, and log every override at load.
+- [ ] **A QA/debug command** that answers "which layer served this path?".
+- [ ] **The server names the packs a client needs,** with their hashes (idTech's "pure server"),
+      and the auto-updater fetches them. Then every player sees the same content, and a modified
+      local pack cannot change what the server assumes (walls, navmesh).
+- [ ] **Measure loading against `.pk2`** (perf gate). The `.pk2` directory's Blowfish decrypt was
+      the top loading cost in round 667, and a zip's index has no such step.
+
 ### Native (Rust) readers (round 667) -- **the pk2 reader and the `.ddj` per-pixel decodes are native; these are left**
 
 Round 667's spike moved the pk2 reader (the directory's Blowfish decrypt, the name index, the
