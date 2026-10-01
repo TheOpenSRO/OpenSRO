@@ -1,5 +1,37 @@
 # Protocol direction: full wire-level reimplementation (reversed 2026-08-22)
 
+## Addendum (2026-10-01): a superset of the retail protocol
+
+**The user's goal:**
+- Keep wire compatibility with the original opcodes, and add our own features on top as a
+  superset. An original client can talk to our server.
+- Our client can talk to an old (retail-protocol) server, with the extras unavailable there.
+- If that needs a compatibility layer, build one.
+
+**State on 2026-10-01 (MEASURED):** the wire we run is still the placeholder scaffolding described
+below. None of srrevamp's 143 opcodes is a real one (SYSTEMS.md, round 324). The groundwork exists:
+- `payload_layouts.tsv` maps 262 real opcodes' field widths;
+- the reply envelope is known: result byte 1 = ok, 2 = u16 error code (rounds 467-468);
+- the handshake is implemented in `server/internal/proto` but not wired in.
+
+Round 678's front-end theme request (0x0005 -> 0x0006) is also our own opcode.
+
+**Proposed design (OPEN: Claude's recommendation, not yet decided by the user):**
+1. **The compatibility layer is the architecture.** Game logic works on internal commands and
+   events and never sees an opcode. Each wire protocol is a codec in front of it: a retail codec
+   (per client version: vSRO, iSRO, ...) and an extension codec.
+2. **Extensions on the same game connection, negotiated.**
+   - Keep retail's framing on the one TCP stream.
+   - Our client advertises "srrevamp extensions vN" during the handshake.
+   - Only then does the server use extension packets, in an opcode range retail never uses, with
+     Protobuf payloads so they can evolve.
+   - An original client never negotiates, so it never sees them. Our client facing an old server
+     gets no answer, speaks pure retail, and hides what it lacks.
+   - Our own opcodes (such as 0x0005/0x0006) move into that range.
+3. **gRPC for everything that is not the game client:** server to server (gateway, shards,
+   database), admin and web panels, and the planned external bot API. It stays off the game
+   connection, because Godot has no native gRPC and it would need a second transport.
+
 **Decision reversed (2026-08-22, superseding the 2026-08-19 decision below):** the goal is a true
 end-to-end rewrite of the original server *and* protocol — not just an own-designed client/server
 pair that happens to implement similar game systems. That means the real wire protocol (real
