@@ -4,7 +4,9 @@
 /// (client/scripts/pk2/native_assets.gd, NATIVE_API). Bump it with any change to a binding's
 /// name, arguments or results, or to what a parser returns: a library whose number differs from
 /// the client's is refused, and the client reads in GDScript (round 667's review, M2).
-pub const API: i64 = 3;
+/// 4: rounds 669-671 merged (models, terrain, tables). Each lane said 3 on its own branch, so a
+/// library built from any one lane is refused by the merged client (round 669's review).
+pub const API: i64 = 4;
 
 pub mod ban;
 pub mod blowfish;

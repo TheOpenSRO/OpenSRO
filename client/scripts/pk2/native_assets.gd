@@ -22,7 +22,8 @@ class_name NativeAssets
 ## outlives a pull, so a library built from older sources is the expected
 ## failure, not a hypothetical one -- it is refused with one log line naming
 ## both numbers, and the client reads in GDScript. Bump both together.
-const NATIVE_API := 3
+## 4: rounds 669-671 merged; each lane alone was 3, and is refused.
+const NATIVE_API := 4
 
 ## The native pk2 archive class (native/src/gd.rs).
 const PK2_CLASS := "SrNativePk2"

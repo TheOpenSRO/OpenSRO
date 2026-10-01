@@ -23,7 +23,7 @@ Exactly one of these lines is printed at startup, right after `SRRevamp version:
 **Native ON.** The DLL loaded:
 
 ```
-NativeAssets: native readers ON (library loaded, srrevamp_native 0.1.0, API 2, C:/Games/srrevamp-windows/srrevamp_native.dll)
+NativeAssets: native readers ON (library loaded, srrevamp_native 0.1.0, API 4, C:/Games/srrevamp-windows/srrevamp_native.dll)
 ```
 
 **OFF, the DLL is missing.** This is what renaming it gives, e.g. to `srrevamp_native.dll.off`.
@@ -50,7 +50,7 @@ for example because antivirus blocked the new one. The client checks the library
 number (round 667's API check) and refuses a mismatch rather than calling into it:
 
 ```
-NativeAssets: native readers OFF (library REFUSED: API 1, this client needs API 2 -- a stale library, rebuild it with native/build.sh) -- using the GDScript readers
+NativeAssets: native readers OFF (library REFUSED: API 3, this client needs API 4 -- a stale library, rebuild it with native/build.sh) -- using the GDScript readers
 ```
 
 The "rebuild" advice is for developers. For a player the fix is the next update, or the DLL
