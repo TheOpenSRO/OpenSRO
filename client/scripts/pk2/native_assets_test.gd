@@ -115,7 +115,10 @@ func _init() -> void:
 	_check(NativeAssets.api_verdict(0).contains("stale"), "a library without api() (API 0) is refused as stale")
 	_check(NativeAssets.api_verdict(NativeAssets.NATIVE_API + 1) != "", "a library from newer sources is refused too")
 	_check(NativeAssets.api_verdict(-1) == "not loaded", "no library is 'not loaded'")
-	var loaded := NativeAssets.library_usable()
+	# The native comparisons need the readers ON: the library usable AND not
+	# switched off by SRREVAMP_NATIVE=0 (round 671's review: under that switch
+	# the suite expected a native handle and failed).
+	var loaded := NativeAssets.library_usable() and NativeAssets.available()
 	print("native library loaded: %s, API %d (client %d)" % [NativeAssets.library_loaded(), NativeAssets.library_api(), NativeAssets.NATIVE_API])
 	if NativeAssets.library_loaded() and not loaded:
 		_check(not NativeAssets.available(), "a refused library is not used")
@@ -132,7 +135,7 @@ func _init() -> void:
 		_check(not n.is_native() and not NativeAssets.available(), "without the library nothing is native")
 		var e := ObjectLoader.find_file(n, "data\\sub\\X.BIN")
 		_check(e != null and n.read_file(e) == body, "without the library the GDScript reader still answers")
-		print("SKIP native comparisons: the library is not loaded")
+		print("SKIP native comparisons: the native readers are off (no usable library, or SRREVAMP_NATIVE=0)")
 	else:
 		_check(n.is_native(), "with the library the handle is native")
 		var gd_root := g.read_dir()

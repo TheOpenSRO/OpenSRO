@@ -36,17 +36,22 @@ What stays in GDScript, on purpose:
 - The merge into the caller's Dictionary, in row order, so a later duplicate id still overwrites
   an earlier one ("last wins"), and UiTextTable's "first wins" check.
 - Building the readers' objects (`Item`, `Spawn`, `Vector3`, `Vector2`): their API is unchanged.
-- Every `to_lower`/`to_upper` whose result is KEPT. Godot 4.2.2 lower-cases 'I' to U+0131
-  (`ucaps.h`'s `reverse_caps_table` holds both {0x49, 0x69} and {0x49, 0x131}, and the binary
-  search finds the second), so a lower-cased key is left to the engine that defines it. A test of a
-  lower-cased value against a fixed ASCII suffix (`.bsr`, `.ddj`, `.efp`, `xxx`, `none`) is ported:
-  no character outside ASCII lower-cases into ASCII in that table, and none of them has an 'i'.
+- Every `to_lower`/`to_upper` whose result is KEPT: a key formed by Godot's full-Unicode case
+  tables (`ucaps.h`) stays with the engine that defines it rather than being ported (OURS). A
+  test of a lower-cased value against a fixed ASCII string (`.bsr`, `.ddj`, `.efp`, `xxx`, `none`)
+  is ported as an ASCII case-insensitive compare, which is exact because no code point outside
+  ASCII lower-cases into ASCII in Godot 4.2.2 (MEASURED by round 671's review over every code
+  point; 'I' lower-cases to 'i', its {0x0049, 0x0131} entry being commented out at ucaps.h:716).
 
 Inputs the port hands back with `{"fallback": why}`, so the GDScript reads them exactly as before:
 a decode that comes out empty (the readers then try UTF-8), an unpaired UTF-16 surrogate (Godot
 keeps a lone trail as a character, which a Rust `String` cannot hold, and on a lone lead followed by
-another character Godot 4.2.2 reads uninitialised memory), a negative UI language column, and a
-float exponent long enough to overflow the C++ `int`. `NativeAssets.table_rows()` turns a fallback
+another character Godot 4.2.2 reads uninitialised memory), a U+FEFF anywhere after the leading
+BOM, a negative UI language column, and a float exponent long enough to overflow the C++ `int`.
+The U+FEFF rule is round 671's review: gdext 0.5.5 turns a Rust `&str` into a Godot `String`
+through `string_new_with_utf8_chars_and_len`, that is `String::parse_utf8`, which skips a
+LEADING UTF-8 BOM (READ, ustring.cpp 4.2.2), so a field that began with U+FEFF came back without
+it while the GDScript (whose `strip_edges` keeps it) had it. `NativeAssets.table_rows()` turns a fallback
 into `{}` and the caller runs its own loop.
 
 The parity check is `client/tools/table_parity.gd` (below); the synthetic one is

@@ -19,13 +19,15 @@
 //! What stays in GDScript, and why: the merge into the caller's Dictionary (`into[k] = v`, in row
 //! order, so a later duplicate id overwrites an earlier one exactly as before -- "last wins"; the
 //! UI table's "first wins" check runs there too), building `Item`/`Spawn` objects and `Vector3`s
-//! (the readers' API), and every `to_lower`/`to_upper`/`get_text` whose RESULT is kept: Godot
-//! 4.2.2's `to_lower` maps 'I' to U+0131 (READ, ucaps.h: `reverse_caps_table` holds both
-//! {0x49, 0x69} and {0x49, 0x131} and `_find_lower`'s binary search lands on the second), so a
-//! lower-cased KEY is left to the engine that defines it. Where the GDScript only TESTS a
-//! lower-cased value against a fixed ASCII string (`.bsr`, `.ddj`, `xxx`), an ASCII
-//! case-insensitive compare is exact: no character outside ASCII lower-cases into ASCII in that
-//! table (checked over every code point), and none of those strings holds an 'i'.
+//! (the readers' API), and every `to_lower`/`to_upper`/`get_text` whose RESULT is kept: a key
+//! formed by Godot's full-Unicode case tables (ucaps.h) is left to the engine that defines it,
+//! rather than ported with its 600-odd entries (OURS: a choice, not a known difference). Where
+//! the GDScript only TESTS a lower-cased value against a fixed ASCII string (`.bsr`, `.ddj`,
+//! `.efp`, `xxx`, `none`), an ASCII case-insensitive compare is exact: no code point outside
+//! ASCII lower-cases into ASCII in Godot 4.2.2 (MEASURED by round 671's review on the box, over
+//! every code point), and 'I' lower-cases to 'i' (its {0x0049, 0x0131} entry is commented out,
+//! ucaps.h:716, READ; `"I".to_lower()` is U+0069, MEASURED). Round 671 first said 'I' became
+//! U+0131 here, from a parse of ucaps.h that did not skip comments; that was wrong.
 //!
 //! Godot's own string semantics are ported here from the 4.2.2 source (core/string/ustring.cpp,
 //! READ): `parse_utf16`, `strip_edges`, `split`, `is_valid_int`, `to_int`, `is_valid_float` and
@@ -36,7 +38,9 @@
 //! Inputs whose GDScript path is not ported answer `Err(Fallback)`, and the caller runs the
 //! GDScript reader instead, so behaviour on them is unchanged: a decode that comes out empty
 //! (the GDScript then tries UTF-8), an unpaired UTF-16 surrogate (Godot keeps it as a lone
-//! surrogate character, which a Rust `String` cannot hold), and the UI table with a negative
+//! surrogate character, which a Rust `String` cannot hold), a U+FEFF after the leading BOM
+//! (gdext 0.5.5 hands a string back through `String::parse_utf8`, which drops a LEADING BOM, so a
+//! field beginning with one would lose it; round 671's review), and the UI table with a negative
 //! language column. Nothing here panics on any input (cargo tests feed truncated and random
 //! bytes); every index is checked.
 
@@ -337,6 +341,14 @@ pub fn decode(data: &[u8], drop_cr: bool) -> Result<Option<String>, Fallback> {
             continue;
         }
         decoded += 1;
+        if u == 0xFEFF {
+            // A BOM after the one stripped above (concatenated UTF-16 files). The GDScript keeps
+            // it as a character (strip_edges leaves code points over 32), but a native string
+            // that BEGINS with it would lose it on the way back: gdext 0.5.5 hands strings to
+            // Godot through string_new_with_utf8_chars_and_len, i.e. String::parse_utf8, which
+            // skips a leading UTF-8 BOM (READ, ustring.cpp 4.2.2). Round 671's review.
+            return Err(Fallback("a byte-order mark inside the text"));
+        }
         let c = if (0xD800..0xDC00).contains(&u) {
             // A lead needs a trail next; a NUL, the end, or anything else leaves it unpaired.
             let next = it.next().map_or(0, unit);
@@ -1124,6 +1136,13 @@ mod tests {
         assert!(decode(&[0xFF, 0xFE, 0x00, 0xDC], true).is_err());
         assert!(decode(&[0xFF, 0xFE], true).is_err());
         assert!(decode(&[0xFF, 0xFE, 0x00, 0x00, 0x41, 0x00], true).is_err());
+        // A BOM inside the text is handed back (round 671's review): Godot keeps it as a
+        // character, and a native string beginning with one would lose it in gdext's UTF-8
+        // hand-over. Before or after a byte swap alike.
+        assert_eq!(decode(&utf16("1\t5\tX\t\u{feff}a.bsr"), true), Err(Fallback("a byte-order mark inside the text")));
+        assert!(decode(&utf16("a\n\u{feff}b"), false).is_err());
+        assert!(char_models(&utf16("1\t5\tMOB_X\t\u{feff}mob\\x.bsr\n")).is_err());
+        assert!(decode(&[0xFF, 0xFE, 0xFE, 0xFF, 0x00, 0x41, 0xFE, 0xFF], true).is_err());
         // "\r" alone decodes to one character, so it is not "empty" -- it just has no lines.
         assert_eq!(decode(&utf16("\r"), true), Ok(Some(String::new())));
     }

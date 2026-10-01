@@ -7170,11 +7170,12 @@ The GDScript then merges them into the caller's Dictionary in that order, so a l
 still overwrites an earlier one ("last wins", within a part and across parts) and UiTextTable's
 "first wins" check runs as before. Objects (`Item`, `Spawn`, `Vector3`, `Vector2`) are still built
 in GDScript: the readers' API is unchanged. So is every `to_lower`/`to_upper` whose result is kept:
-Godot 4.2.2 lower-cases 'I' to U+0131 (READ: ucaps.h's `reverse_caps_table` holds both
-{0x49, 0x69} and {0x49, 0x131}, and `_find_lower`'s binary search lands on the second), so a key
-like `parse_models_by_name`'s is left to the engine that defines it. Tests of a lower-cased value
-against `.bsr`, `.ddj`, `.efp`, `xxx` and `none` are ported: no code point outside ASCII
-lower-cases into ASCII in that table (checked over all of them), and none of those has an 'i'.
+a key like `parse_models_by_name`'s is formed by Godot's full-Unicode case tables (ucaps.h), and
+is left to the engine that defines it rather than ported (OURS). Tests of a lower-cased value
+against `.bsr`, `.ddj`, `.efp`, `xxx` and `none` are ported as ASCII case-insensitive compares,
+which are exact: no code point outside ASCII lower-cases into ASCII in Godot 4.2.2 (MEASURED by
+the review, over every code point). (This entry first said 4.2.2 lower-cases 'I' to U+0131. That
+was wrong -- §8: the {0x0049, 0x0131} entry is commented out at ucaps.h:716.)
 
 Godot's string rules are ported from the source (READ): `parse_utf16` (a second BOM after the FF
 FE strip, FFFE byte-swapping, the stop at the first NUL unit), `strip_edges` (every code <= 32),
@@ -7186,8 +7187,9 @@ so `float("1.5e")` is 15.0. GDScript's `int(s)`/`float(s)` are `to_int()`/`to_fl
 (variant_construct.h, `VariantConstructorFromString`).
 
 Handed back to GDScript (`{"fallback": why}`), so those inputs read exactly as before: an empty
-UTF-16 decode (the readers then try UTF-8), an unpaired surrogate, a negative UI language column,
-and a float exponent that overflows the C++ `int`. On a lone lead surrogate followed by another
+UTF-16 decode (the readers then try UTF-8), an unpaired surrogate, a U+FEFF after the leading BOM
+(added by the review, §8), a negative UI language column, and a float exponent that overflows the
+C++ `int`. On a lone lead surrogate followed by another
 character, Godot 4.2.2 itself is not deterministic: `parse_utf16` drops the lead but sizes the
 string for it, so the last character is uninitialised memory (MEASURED: the first parity run
 compared GDScript with GDScript on such files and got different rows from the same bytes, and the
@@ -7364,6 +7366,52 @@ its GDScript figures run 10-20 % over the in-game ones above.)
   session, about 1-2 ms each natively). One decode shared per part is the caching round's.
 - **Not ported, under 20 ms**: ShopReader, TeleportReader, the shop and greeting tables.
 - **Not run on Windows.** The DLL is built and checked; nothing of it has run there.
+
+### 8. Review follow-up (round 671's review: one MEDIUM, two LOW)
+
+The review found no HIGH. It held the ported string rules to Godot's own function bodies in a C++
+harness (1,000,067 strings, 0 mismatches), fuzzed the readers (1.3M inputs, 0 panics) and
+reproduced the gain (entry 10,186 -> 5,604 ms, freeze 3,463 -> 1,219).
+
+**M1. A native string that began with U+FEFF lost it.** gdext 0.5.5 turns a Rust `&str` into a
+Godot `String` through `string_new_with_utf8_chars_and_len`, which is `String::parse_utf8`, and that
+skips a LEADING UTF-8 BOM (READ, ustring.cpp 4.2.2). The GDScript kept the character (`strip_edges`
+leaves code points over 32). It shows when two UTF-16 files are run together and the second's BOM
+starts a line. The decode now hands any U+FEFF after the leading one back to GDScript (it sits on
+the non-ASCII path, so ASCII text pays nothing). No real table has one: the parity run hands back
+the same 130 files as before, none for this reason. The new synthetic case `BOM mid-file`, against
+d508562's library (MEASURED):
+
+```
+FAIL BOM mid-file: models agrees both ways
+FAIL BOM mid-file: models_by_code agrees both ways
+FAIL BOM mid-file: ui agrees both ways
+FAIL BOM mid-file: ui last agrees both ways
+FAIL a field that begins with U+FEFF keeps it ({"5":"mob\\a.bsr","6":"mob\\b.bsr"})
+5 FAILURES
+```
+
+With the fix: ALL PASS. `cargo test` gained four decode/reader assertions for it.
+
+**L1. A false READ.** §2 said Godot 4.2.2 lower-cases 'I' to U+0131. Its {0x0049, 0x0131} entry
+is commented out (ucaps.h:716, `// { 0x0049, 0x0131 }, // dotless I`); the parse of ucaps.h that
+produced the claim did not skip comments, and on the box `"I".to_lower()` is U+0069 (the review's
+measurement). Behaviour was not affected: the folds whose results are kept stayed in GDScript for
+that reason, and stay there now as a plain choice (OURS) -- a key formed by Godot's full-Unicode
+case tables is left to the engine. The ASCII compares are exact for the reason the review
+measured: no code point outside ASCII lower-cases into ASCII. Corrected in core/tables.rs,
+native/README.md and §2.
+
+**L2. The native suites under SRREVAMP_NATIVE=0.** `native_tables_test.gd` decided "native" from
+`library_usable()`, so with the library present and the switch off it called a null reader; round
+667's `native_assets_test.gd` expected a native handle the same way. Both now ask whether the
+readers are ON (`NativeAssets.new_tables() != null`; `library_usable() and available()`).
+
+Re-run (MEASURED): `cargo test --no-default-features` 21 pass; `table_parity.gd` `TABLE PARITY
+PASS`, 0 FAIL lines (680 files, 11,550 reader runs); the suites in all three modes -- with the
+library, `SRREVAMP_NATIVE=0` (the log says `forced off by SRREVAMP_NATIVE=0`) and `NO_NATIVE=1` --
+182 suites, 0 failing each; the Windows DLL still `stands alone, exports gdext_rust_init,
+stripped`.
 
 ## Six-hundred-and-sixty-eighth round: the release ships the native readers in both zips, and the auto-updater replaces a DLL the running game has loaded
 

@@ -142,7 +142,10 @@ func _canon_items(items: Dictionary) -> Dictionary:
 	return out
 
 func _init() -> void:
-	var loaded := NativeAssets.library_usable() and ClassDB.class_exists(NativeAssets.TABLES_CLASS)
+	# ON when the readers would be used: a usable library with the class, and
+	# SRREVAMP_NATIVE not 0 (round 671's review: library_usable() alone said ON
+	# under SRREVAMP_NATIVE=0, where new_tables() answers null).
+	var loaded := NativeAssets.new_tables() != null
 	print("native tables: %s" % ("loaded" if loaded else "not loaded"))
 	var names := _names()
 	var chardata := _chardata("\r\n")
@@ -181,6 +184,10 @@ func _init() -> void:
 		"BOM only": PackedByteArray([0xFF, 0xFE]),
 		"NUL first (decodes to nothing)": PackedByteArray([0xFF, 0xFE, 0x00, 0x00, 0x78, 0x00]),
 		"UTF-8 text": "1\t2000\tMOB_UTF8\t\t\tSN_MOB_UTF8\tmob\\u.bsr".to_utf8_buffer(),
+		# Two files run together: the second's BOM starts a line and a field
+		# begins with one (round 671's review: native lost a LEADING U+FEFF in
+		# gdext's string hand-over, so such a table is now handed back).
+		"BOM mid-file": _utf16("1\t5\tMOB_A\t\t\tSN_MOB_A\tmob\\a.bsr\r\n\uFEFF1\t6\tMOB_B\t\t\tSN_MOB_B\t\uFEFFmob\\b.bsr\r\n1\tUIIT_B\t\t\t\t\t\t\t\uFEFFText\r\n"),
 	}
 	# A byte-swapped (big-endian) table behind the FF FE mark, and a lone
 	# surrogate: both decoded by Godot's own rules, the second handed back.
@@ -223,12 +230,14 @@ func _init() -> void:
 	_check(radius.get("MOB_KOR") == 9223372036854775807, "an int past 64 bits clamps as Godot's to_int does")
 	var org := NpcTableReader.parse_org_codes(data, {})
 	_check(org.size() == 1 and org.get("MOB_CH_MANGNYANG_CLON") == "MOB_CH_MANGNYANG", "xxx names no Org row")
+	var bom_models := NpcTableReader.parse_models(cases["BOM mid-file"], {})
+	_check(str(bom_models.get(6, "")).begins_with("\uFEFF"), "a field that begins with U+FEFF keeps it (%s)" % JSON.stringify(bom_models))
 	var table := UiTextTable.parse(cases["ui table"])
 	_check(table.get_text("UIIT_STT_PHYSICAL_ATTACK") == "Phy. Atk:", "a duplicate UI token keeps the FIRST row")
 	_check(table.get_text("UIIT_DOT") == "Left" and not table.has("UIIT_OFF"), "service ' 1.9 ' reads as 1; service 0 is skipped")
 	_check(table.get_text("UIIT_EMOJI") == "Smile 😀", "a surrogate pair decodes")
 	var by_name := NpcTableReader.parse_models_by_name(data, names, {})
-	_check(by_name.has("blacksmıth ıronsmith") or by_name.has("blacksmith ironsmith"), "names are lower-cased by Godot's own to_lower (%s)" % str(by_name.keys()))
+	_check(by_name.has("blacksmith ironsmith"), "names are lower-cased by Godot's own to_lower ('I' to 'i') (%s)" % str(by_name.keys()))
 	var fx := SkillEffectReader.parse_all(cases["skilleffect"])
 	var smash: Dictionary = fx["aniset"].get("SKILL_CH_SWORD_SMASH_A", {})
 	_check(smash.get("group") == "sword" and smash.get("priority") == 9 and smash.get("defense") == "def.EFP",
@@ -241,8 +250,8 @@ func _init() -> void:
 	_check(items.has(7) and not items.has(5) and not items.has(6), "items: a nameless iconless row and a short row are skipped")
 
 	if not loaded:
-		_check(NativeAssets.new_tables() == null, "without the library there is no native table reader")
-		print("SKIP native-only checks: the library is not loaded")
+		_check(NativeAssets.new_tables() == null, "with the native readers off there is no native table reader")
+		print("SKIP native-only checks: the native readers are off (no usable library, or SRREVAMP_NATIVE=0)")
 	else:
 		var nt := NativeAssets.new_tables()
 		_check(nt.call("char_codes", cases["lone surrogate"]).has("fallback"), "a lone surrogate is handed back to GDScript")
