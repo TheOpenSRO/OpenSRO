@@ -1067,6 +1067,34 @@ what the same `SRREVAMP_PARSE_PROFILE=1` Jangan entry measured with the native r
       --ab-env SRREVAMP_NATIVE=0 --cold` is the reproducible run (client/tools/README.md,
       "Native readers A/B").
 
+### The 3D title screen (round 678) — **built: retail's intro flown over the world's own regions, the archive's frame and login window at READ positions, the operator's theme; these are left**
+
+`docs/protocol/intro_script.md` has the format, the path, the camera and the screen, all READ;
+deploy/README.md "Branding your front-end" the operator's side; FRONTEND_CHECKLIST.md section 6 the
+front-end's next steps.
+
+- **The [SCRIPT] section** (GScript): rm.txt's `S_SetWorldTime 22` and seven `roc_smoke.efp`
+  effects, ruby_baghdad's 333 lines (objects created by index with `#rand`, `S_ObjectEquipSet`,
+  `S_ObjectMoveTo`, `S_CameraShake`). Kept as text by IntroScript; the interpreter is
+  `FUN_004779a0` / `FUN_00477ca0` and the title-time flag `FUN_0056b380` (whether [SCRIPT] runs at the
+  title at all is still OPEN). Their cameras fly over empty scenes until then.
+- **Constantinople's crowd** (`AREA=EUROP_CONSTANTINOPLE`, `FUN_00520580` -> `FUN_0051dea0`).
+- **The sun at the title hour**: the environment colours follow the random phase; the sun's
+  direction (`SWorld::vslot_004`, (phase - c) * 2 pi) does not. `SWorld::vslot_043(0x17, 0)` at the
+  title is unread.
+- **The scenes after the title** -- character select (105/81 harbour), race select (box.bsr, idols,
+  lizard), create China (98/168) / Europe (105/79): READ and recorded, not built
+  (FRONTEND_CHECKLIST.md section 6). The theme's `charselect` / `create` slots wait for them.
+- **Measured costs** (round 678): the screen is interactable ~0.2 s and fully faded in ~0.7 s after
+  launch with a click at its first frame (the 0.5 s is retail's own login fade), against ~0.12 s for
+  the old 2D screen; no frame over 100 ms in its first 12 s once the world's scene compiles on a
+  worker (it froze 1.3 s when loaded on demand).
+- **Memory on Linux** (round 678's review): ~205-230 MB more resident memory once in the world than
+  without the 3D title -- glibc keeping what the title's worker threads freed (equal to base under
+  `MALLOC_ARENA_MAX=2`); ~150-190 MB of it is the World3D compile on the loader thread, kept to avoid
+  a 1.2 s freeze. The user's call: a Linux launcher with `MALLOC_ARENA_MAX=2` (also -215 MB on the base
+  world), or the player's `[frontend] title_3d=false`. Windows not measured.
+
 ### Loading freezes: what the off-thread rounds left (map/loading epic, 2026-09-25)
 
 Rounds 565-566 prepare a streamed cell's terrain and objects on a `WorkerThreadPool` task and

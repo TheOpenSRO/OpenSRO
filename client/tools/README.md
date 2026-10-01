@@ -124,6 +124,18 @@ SRREVAMP_GM_ACCOUNTS=qa SRREVAMP_QA_COMMANDS="/level 20;/sp 100000" SRREVAMP_QA_
   SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 620 --out /var/tmp/hotbar
 ```
 
+**The title screen is a run too** (round 678). `qa_shot.sh --scene res://scenes/Login.tscn` (or a
+lane-safe xvfb run of it) with `SRREVAMP_QA_TITLE_SEEK=0,12,26,40` stands the intro's camera at those
+times, waits for the region window, and logs `QA TITLE SHOT t=<t> frame <n> target (...) pitch ..
+yaw .. dist ..`, then fades the login window in and logs `QA LOGIN SHOT frame <n>`;
+`SRREVAMP_QA_TITLE_HOUR=0..3` pins the random hour and `SRREVAMP_LOGIN_INTRO=<name>` picks the intro.
+Three tools measure it instead of looking: `check_intro_scripts.gd -- --media=<Media.pk2>` checks
+every intro in an archive (keyframes, length, the path through each keyframe, the clamp, the regions),
+`measure_login_ready.tscn` (run as the main scene) clicks at the screen's first frame and prints how
+long the login takes to become interactable and fully faded in, and its longest frame, and
+`dump_title_layout.gd -- --media=<Media.pk2>` prints pstitle.txt's Title and Login controls as the
+frame reads them.
+
 **Sounds are logged, not heard** (round 613). The box's Godot runs the dummy audio driver, so every
 animation-fired sound prints one `AUDIO <effect key> t=<key ms> clip <type>:<group> <body> at
 <x,y,z>` line (at most one per key per second, the swallowed count appended), and a silent one

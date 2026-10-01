@@ -7094,6 +7094,286 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-seventy-eighth round: the login screen is retail's 3D title -- the intro flown over the world, the archive's own frame, logo and login box where the client puts them, the title music, and a theme the server picks
+
+The user (2026-10-01): "I also want to start implementing the full 3d login screen with music
+after these fixes. Can you check if the files support multiple 3d intros or just one? It'd be nice
+to let you choose on the backend which intro" -- then "let's work on the login screens too", "Turn
+on the intro and new login screen but make it easy to select a different if wanted. That's a big
+thing private servers like is to customize that to give their own brand", "make sure you copy the
+login screen from the pk2 assets as much as possible" (with an iSRO reference screenshot), "Use the
+default Silkroad Online logo from the assets but let people customize it easily", "use the default
+frame and branding but let users customize that as well", and, on four private-server reference
+shots, that character select and creation are not tied to the intro.
+
+Labels: READ (the decompiled client `/var/tmp/decomp_client`, `/var/tmp/sro_client.asm`, constants
+read out of `sro_client.exe`, and the archive's own files), MEASURED (the render box, GL
+Compatibility; the archives in `/opt/sro-files/client`), INFERRED, OURS, OPEN. Every address is in
+`docs/protocol/intro_script.md`; the operator's guide is deploy/README.md, "Branding your
+front-end".
+
+### 1. What retail does (READ)
+
+- **One intro per launch**, `IntroName` in Media.pk2 `config\option.txt` (`CGame` 0x8475d3), loaded
+  once by `FUN_0056cb10` into the object at 0xee7be8. Seven distinct scripts ship (MEASURED, table in
+  the protocol doc); roc.txt (the default) = egypt.txt = china_whatf.txt byte for byte, so the iSRO
+  reference's Alexandria (obelisks, palms) is not in these archives and is not faked.
+- **The format**: UTF-16LE lines; `[CAMERA]` / `[SCRIPT]` / `[END]` by the first token's prefix;
+  `AREA=`; `<unused> S_CameraInsert t lo hi x y z pitch yaw roll distance`; other [CAMERA] lines
+  skipped; [SCRIPT] lines handed to GScript.
+- **The path**: five curves (position, pitch, yaw, roll, distance), keys sorted by time, the
+  **uniform Catmull-Rom** spline (0x4e0920 / 0x4df7d0, constants 2, 5, 4, 3, 0.5 -- the research's
+  "Catmull-Rom INFERRED" is now READ), an angle unwrap on copies of the points for the three angles
+  (0x4deee0), the length = the last keyframe's time in file order, and a **clamp** at the end (the
+  loop flag +0xec is never set at the title).
+- **The camera**: the four values are pitch, yaw, roll and the distance from the look-at point to
+  the eye: `eye = target - (0,0,d) * Rz(roll) Rx(pitch) Ry(yaw)` (`CGFXVideo3d::FUN_00bae580`, d3dx
+  rotations read from their generic bodies), fovy 60 degrees; the same fields the in-game orbit
+  camera drives (mouse drag -> pitch and yaw, zoom -> distance).
+- **The title** (`CPSTitle::OnCreate` 0x86b190): `rand() & 3` -> day phase 5/24, 14/24, 18/24 or
+  23/24 for `SWorld::vslot_020`; the camera on the last keyframe in its region; IntroBGM; the fly
+  hides the logo, login box and buttons and fades the big logo in 3 s after 15 s; at the path's
+  end, or on a **left click (message 0x201) or any key**, the black covers, big logo and title text
+  fade over 0.5 s and the logo, login box, Connect and Exit fade in over 0.5 s; the camera flies on.
+- **The screen's layout** is the archive's: `resinfo\pstitle.txt` rects in a 1600x1200 space scaled
+  by width/1600 and height/1200 (non-uniform, so wide screens stretch the bands and logos, as
+  retail does), the login box (art replaced by `login_window_europe.ddj`) and buttons placed in
+  pixels around the line midway between the bands (`FUN_00866760`), the labels and button texts from
+  `textuisystem` (UIO_CTL_ID/PASSWORD/SELECT_SERVER/CONNECT/EXIT), `Ver %d.%03d` at (5, h-25) in
+  0xffff8080.
+- **Character select / race select / create are fixed scenes** (none touches 0xee7be8): select and
+  race select are one process on 105/81 (the Constantinople harbour; box.bsr, two idols and a
+  lizard for the race pick), create China on 98/168, create Europe on 105/79; China vs Europe is the
+  player's idol click per character; the slider order differs (China Protector before Weapon,
+  Europe Weapon before Protector). Recorded, not built.
+
+### 2. What shipped
+
+- `client/scripts/frontend/`: `IntroScript` (the reader; preload regions per `FUN_0056c870`;
+  option.txt's IntroName), `IntroCameraPath` (the path and the camera, READ above),
+  `FrontEndBackdrop` (a reusable 3D backdrop: World3D in its new `title_mode`, with a frame region,
+  a radius, a day phase and a pose per frame -- character select and create can stand one up
+  later), `FrontEndFrame` (the shared letterbox frame from pstitle.txt: bands, black covers, title
+  art, big logo, logo, version, copyright line, the CIFFade fades), `TitleIntro` (the CPSTitle
+  sequence), `FrontEndTheme` + `ThemeQuery` (the operator's theme, below).
+- `World3D.gd`, kept small and isolated: a `title_mode` branch at the top of `_ready`,
+  `_physics_process`, `_input` and `_unhandled_input`; no NPCs and no ground-probe record in title
+  mode; the environment read at `_env_time` (the in-game 0.5 unless the title sets its hour); a
+  block at the end (`title_begin`, `title_focus`, `title_world_from_local`, `_title_ready`,
+  `_title_physics`). `title_begin` reads the frame region's `.m` and applies its environment on the
+  main thread (~14 ms MEASURED) and queues every cell, the centre included, for the threaded
+  pipeline; the region window (radius 1, OURS) follows the camera's target.
+- `Login.gd`: the screen above, with every `NetClient` call unchanged; the old plain panel stays for
+  a run without Media.pk2; the 2D still is the loading cover and the fallback. The world's scene
+  compiles on a worker (`ResourceLoader.load_threaded_request`) -- loaded on demand it froze the
+  window 1.3 s (MEASURED, below).
+- **The operator's theme (OURS)**: server `-login-intro`, `-login-bgm`, `-login-logo`,
+  `-login-copyright`, `-login-band-top`, `-login-band-bottom` (and `SRREVAMP_LOGIN_*`), validated
+  (no path can leave its folder; refused names are logged and served empty); answered before login
+  on `OpFrontEndThemeRequest` 0x0005 -> `OpFrontEndTheme` 0x0006 (JSON `{v, intro, bgm, logo,
+  copyright, band_top, band_bottom, charselect: null, create: null}` -- the last two reserved for
+  the later scenes). The client asks at boot on its own short TCP connection (1.5 s), caches the
+  answer, and resolves per field: `SRREVAMP_LOGIN_*` preview > the server's fresh answer (else the
+  cached one) > `custom/theme.json` > retail's default. Custom files: `custom/intro/<name>.txt`
+  (retail format, UTF-16 or UTF-8), `custom/frontend/` PNG/DDJ for the logo (kept to its aspect in
+  the retail logo's box) and bands; each falls back to the archive's with a log line. A copyright
+  line swaps the bottom band for the archive's plain `blackbar_down.ddj`. Music not in the archives
+  falls back to IntroBGM (`AudioBank.has_file`).
+- Tools: `check_intro_scripts.gd`, `measure_login_ready.tscn`, `dump_title_layout.gd`.
+
+### 3. The reference screenshot, element by element
+
+| Element (login_ref.jpg, iSRO) | Our source | Position |
+|---|---|---|
+| Top band, swirl ornament, gold strip | `interface\outer\blackbar_up_18.ddj` (pstitle id 1; the ornament is in the art) | READ: 0,0,1600,172 scaled |
+| Bottom band, ornament, copyright line | `blackbar_down_copyright.ddj` (id 2) -- the line is the archive's art, not authored by us | READ: 0,1030,1600,172 scaled |
+| Black bands during the fly | none: CIFFade colour 0xff000000 (ids 3, 4) | READ: 0,0,1600,170 / 0,1030,1600,170 |
+| "CONNECT" | `text-connect.ddj` (id 5) | READ: 47,110,184,36 scaled (30,70 at 1024x768; the reference's is there) |
+| SILKROAD ONLINE logo | `logo.ddj` (id 8); operator `custom/frontend/` | READ: size scaled, (cx - w/2, mid + 6 - 0x78) |
+| Big logo (during the fly only) | `logo-big.ddj` (id 7) | READ: 360,448,896,300 scaled |
+| Login box | `login_window_europe.ddj` (`FUN_00866760`) | READ: (cx - 0x90, mid + 6) = (368, 390) at 1024x768; reference ~(370, 390) |
+| ID / PW / Server labels | textuisystem UIO_CTL_ID / PASSWORD / SELECT_SERVER, FontIndex 2 = 16 px | READ: pstitle Login rects |
+| ID / PW fields | the art's slots | READ: 110,32 and 110,60, 135x20 |
+| Server field | the art's third slot | READ rect; a typed host:port is OURS (no server list) |
+| LIST button | `list_button.ddj` exists | left out (OURS: no server list) |
+| "Located In" bar and flag | `login_window_eu_located*.ddj` (21 files) ARE in the archive, but the exe names none of them (ASCII and UTF-16 string scans) -- iSRO's; left out, and our server has no locale |
+| Connect / Exit | `button.ddj` (+ _focus, _press), UIO_CTL_CONNECT / UIO_CTL_EXIT | READ: (cx - 100, mid + 0x9c), (cx + 9, mid + 0x9c) = (412, 540), (521, 540); reference (413, 540), (521, 540) |
+| Version, red, bottom-left | our client's version | READ: (5, h - 25), 0xffff8080 |
+| Operator's copyright line | (default empty) | OURS, at the archive line's MEASURED height (rows 139-156 of the 1600x172 art) |
+| Register link, status line | -- | OURS |
+| The 3D scene | option.txt's roc.txt (Alexandria not in vSRO) | READ path |
+
+Shots (1024x768, ours beside the reference): `login678_shots/compare_ref_vs_ours.jpg` in the round's
+scratchpad. The comparison above, not the picture, is the evidence; positions are READ.
+
+### 4. Measurements
+
+- **Path accuracy** (MEASURED, `check_intro_scripts.gd` on the box's Media.pk2): all ten scripts
+  parse with the census counts (roc/egypt/china_whatf 21 keyframes 40 s, constantinople 14/53 s,
+  china_wharf 8/35 s, rm/rmzh 7/43 s, jupiter_login 7/27 s, ruby_baghdad and its copy 6/33.5 s); at
+  every keyframe's time the path is that keyframe -- worst error **0.000000** units in position,
+  0.000000 rad in angle, 0.000000 in distance -- and every path clamps on its last keyframe. `PARITY OK`.
+- **Time to a usable login** (MEASURED, `measure_login_ready.tscn`, 1280x720, a click at the first
+  frame, 3 runs each):
+
+  | | Login instanced | interactable | fully faded in | longest frame in 12 s | frames > 100 ms |
+  |---|---|---|---|---|---|
+  | base 55ca5c8 (2D screen) | 107-118 ms | -- | 112-124 ms | 23.7-24.8 ms | 0 |
+  | head (roc, the default) | 184-189 ms | 234-238 ms | 700-703 ms | 84.3-89.6 ms | 0 |
+  | head, the world's scene loaded on demand (first build) | 191-201 ms | -- | 1828-1894 ms | 1294-1368 ms | 1 |
+
+  The 0.5 s between interactable and faded in is retail's own login fade (READ); the screen takes
+  input from the frame after the click lands (~50 ms). The remaining difference is building the
+  frame from pstitle.txt and the art (~70 ms in Login's instancing). The box was quiet (no other
+  lane's Godot) for these runs. With jupiter_login (the server's choice cached by the end-to-end run
+  below) the same measurement saw one 187-210 ms frame: the world loader committing cell 124/235
+  (its objects), a cost the same cell has in play -- not the title's.
+- **The 3D load** (MEASURED, the logs): the frame region's `.m` read and environment applied in ~14
+  ms on the main thread; the first view (the cell under the camera) built ~0.4-0.5 s after the
+  backdrop starts, every cell prepared off the main thread (13-38 ms commits).
+- **Perf gate** (`client/tools/perf_gate.sh --sites jangan`, World3D.gd touched; 3 interleaved
+  runs, 1280x720, medians):
+  ```
+  jangan  frame ms   base 10.13  head 10.40  (+0.3)  SAME
+  jangan  entry ms   base 9567  head 9680  (+113.0)  SAME
+  jangan  freeze ms  base 3406  head 3421  (+15.0)  SAME
+  jangan  hitches    base 5  head 5  (+0.0)  SAME
+  ```
+
+### 5. Tests, and their negative
+
+- `client/scripts/frontend/intro_script_test.gd` (a synthetic UTF-16 snippet, ours: sections, AREA,
+  a skipped camera line, the trailing `f`, tabs, the preload set, encodings, option.txt),
+  `intro_camera_path_test.gd` (the path IS each keyframe at its time, the Catmull-Rom by hand, the
+  angle unwrap, the clamp, the zero-length path, file-order length, the camera's eye/up and its
+  world transform against World3D's own group placement), `frontend_theme_test.gd` (the structure,
+  the order, refused names, the server's exact 134-byte frame, the custom intro and its fallback,
+  custom/broken/missing images, the CIFFade values). Against base 55ca5c8 (a separate worktree, the
+  three files copied in) none compiles:
+  ```
+  intro_script_test:      SCRIPT ERROR: Parse Error: Identifier "IntroScript" not declared in the current scope.
+  intro_camera_path_test: SCRIPT ERROR: Parse Error: Could not find type "IntroScript" in the current scope.
+  frontend_theme_test:    SCRIPT ERROR: Parse Error: Identifier "FrontEndTheme" not declared in the current scope.
+  ```
+- Server: `server/internal/session/frontendtheme678_test.go` (validation, exact JSON, the handler on
+  a real gateway, no auth state) and `server/cmd/server/frontendtheme678_test.go` -- the real
+  server's `main()` booted `-in-memory`, asked on a fresh connection. On base:
+  ```
+  frontendtheme678_test.go:115: no reply to the front-end theme request (opcode 0x0005) within the client's 1.5 s: read tcp 127.0.0.1:45492->127.0.0.1:41713: i/o timeout
+  --- FAIL: TestFrontEndThemeServedByTheRealServer (1.55s)
+  ```
+- End to end on the box: the server with `-login-intro jupiter_login -login-copyright "(c) 2026 Test
+  Server -- our line" -login-logo ../evil.png` logged the refusal (`front-end logo "../evil.png" is
+  not a valid image file name ... serving none`), the client logged `server theme answered ...
+  intro=jupiter_login [server] ... copyright=(c) 2026 Test Server -- our line [server]`, flew
+  jupiter_login at 23 o'clock and drew the line on the plain band; the cache held the answer.
+- `remote_godot.sh check` ALL LOAD; `remote_godot.sh tests` 191 suites, 0 failing; `go build`, `go
+  vet`, `go test -count=1 -p 1 ./...` green.
+
+### 6. OPEN
+
+- The [SCRIPT] section (GScript: rm's smoke, ruby_baghdad's crowds and riders, `S_CameraShake`) and
+  Constantinople's `AREA=` crowd: their cameras fly over empty scenes.
+- The sun's direction at the title hour (`SWorld::vslot_004`); `SWorld::vslot_043(0x17, 0)` at the
+  title.
+- Character select, race select and create in 3D (READ and recorded in the protocol doc and
+  FRONTEND_CHECKLIST.md section 6); the theme's `charselect` / `create` slots wait for them. The
+  China create screen's drifting calligraphy and the reference's "horse" are unidentified.
+- Per-intro music is ours; the LIST button and server window are left out.
+- A 4:3-correct layout on wide screens would be ours (retail stretches).
+
+### Review (round 678's review: no HIGH, two MEDIUM, thirteen LOW -- fixed in a follow-up commit)
+
+**M1, a custom intro could hang the title for good.** `_wtof` read `1e999` as inf, and retail's
+unwrap loop (`b -= 2 pi` while b > a) never changes a value past ~1e17, so the main thread spun. Fixed
+three ways: every keyframe is checked against sanity bounds (OURS; IntroScript: at most 1024
+keyframes, time 0..3600, |x|,|z| <= 61440, |y| <= 20000, |angles| <= 1000, distance 0..100000,
+finite) and a script that breaks one is refused whole, so the title falls back with a log line; the
+unwrap takes retail's number of steps by arithmetic, `ceil(|d| / 2 pi)` (13.0 after 0.1 still lands on
+13.0 - 3 x 2 pi, as the loop does); the path takes at most 1024 keys (its sorted insert is quadratic).
+Against 8fd7a1a the new checks fail (the keyframe cap written as 1024, the constant being new):
+```
+FAIL 1e999 (inf) is refused:
+FAIL a yaw of 1e17 is refused:
+FAIL a negative distance is refused
+FAIL x past 32 regions is refused
+FAIL more than 1024 keyframes is refused:
+FAILURES 5
+```
+and `intro_camera_path_test.gd` never reaches its 1e17 check's verdict: the run is stopped at its
+60 s limit (exit 124) right after `ok  13.0 after 0.1: three 2 pi steps`.
+
+**M2, ~200-375 MB more resident memory in the world than base.** MEASURED on the box with
+`client/tools/measure_rss.tscn` (Login 8 s, then an offline Jangan entry, VmRSS after 40 s; base
+55ca5c8 / 8fd7a1a / this fix):
+
+| Run | VmRSS at the title | VmRSS in the world | Godot static in the world |
+|---|---|---|---|
+| base 55ca5c8 (2 runs) | 255 MB | 1777-1778 MB | 1024.4 MB |
+| 8fd7a1a (3 runs) | 919-1063 MB | 2106-2232 MB | 1026-1057 MB |
+| this fix (2 runs) | 890-916 MB | 1982-2006 MB | 1026.0 MB |
+| this fix, `MALLOC_ARENA_MAX=2` | 596 MB | **1564 MB** | 1026.1 MB |
+| base, `MALLOC_ARENA_MAX=2` | 254 MB | **1564 MB** | 1024.6 MB |
+| this fix, `SRREVAMP_TITLE_3D=0` | 269 MB | 1781 MB | 1025.5 MB |
+
+- **The cause is glibc's per-thread arenas, not a leak.** With `MALLOC_ARENA_MAX=2`, head and base
+  are equal within 1 MB. Godot's own counters are equal once in the world, because what the title
+  allocated is freed. But what its worker threads freed stays resident in their arenas, and the
+  world allocates in others.
+- **The split, MEASURED by variants:**
+  - Compiling the World3D scene on the loader thread costs ~150-190 MB. Loaded on the main thread
+    instead, the world sat at 1866-1877 MB, but the screen froze 1.2 s. With and without
+    sub-threads it is within run-to-run noise. Sub-threads are now off (L13).
+  - The title's own cells are the rest.
+- **Fixed in our code:** the title is never walked, so it no longer reads a navmesh or builds walls
+  or a walkable graph (`World3D._terrain_job`, `title_mode`). That cut the title's footprint from
+  437 to 275 MB static and from 316k to 170k objects. It also cut the title-time RSS (1063 to
+  890-916 MB) and the in-world RSS by 100-250 MB against 8fd7a1a.
+- **Not fixed:** the remaining ~205-230 MB on Linux is the arena retention. The worker-thread
+  compile was kept deliberately: the alternative is a 1.2 s freeze of the login screen.
+- **Ways to remove it, OURS and the user's call:**
+  - The player's new switch `[frontend] title_3d=false` / `SRREVAMP_TITLE_3D=0` (equal to base).
+  - `MALLOC_ARENA_MAX=2` in a Linux launcher, which also takes ~215 MB off the base world.
+  - Windows' allocator has no per-thread arenas of this kind. NOT measured there.
+- glibc does not hand this memory back on its own under pressure. It is free inside the process
+  and reused by later allocations in the same arenas: the world grew by 1092-1177 MB after the
+  title against 1522 MB on base.
+
+**LOW**
+- L1: music `.ogg` only on both sides, the only names Music.pk2 is searched for.
+- L2: on the 2D still, the archive logo is held back (the still carries its own). An operator's
+  logo still shows. If the 3D view arrives, the archive logo comes in with it.
+- L3: the server slot keeps retail's 86 px (READ). It scrolls to the end of the address, so the
+  port shows, and the whole address is the tooltip.
+- L4: the operator's copyright line fades in with the band, not during the fly.
+- L5: Connect stops the backdrop starting new cells (`World3D.title_hold`). Leaving waits only for
+  the ≤ 2 already preparing (not re-measured with a server).
+- L6: the theme is cached per server address (`server_theme_<address>`).
+- L7: a host name is resolved with `IP.resolve_hostname_queue_item` inside the 1.5 s deadline.
+- L8: at most one frame is read (6 + 0x7fff bytes), and it must be the answer.
+- L9: the server answers once per connection. It ends an unauthenticated asker's session after the
+  answer with the new quiet `gateway.ErrEndSession` (drained, closed, Debug only). A repeat on a
+  logged-in session gets nothing, and no request is logged. Against 8fd7a1a:
+  ```
+  frontendtheme678_test.go:323: the connection stayed open after the answer (read timed out instead of ending)
+  frontendtheme678_test.go:367: after the repeats the next frame is 0x0006, want the second login's reply (a repeat was answered?)
+  ```
+- L10: `normalise`'s doc comment is back on it.
+- L11: a layout without its Title or Login section gets the plain screen.
+- L12: the theme question goes out first in `_ready`.
+- L13: `use_sub_threads=false`.
+
+**Measured after the fix:** login interactable 234-235 ms, faded in 700 ms, longest frame 83-85 ms,
+0 over 100 ms (unchanged). Perf gate (`--sites jangan`, the title's
+`_terrain_job` touched), medians of 3:
+```
+jangan  frame ms   base 9.98  head 10.22  (+0.2)  SAME
+jangan  entry ms   base 9565  head 9660  (+95.0)  SAME
+jangan  freeze ms  base 3411  head 3414  (+3.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+``` `remote_godot.sh check` ALL LOAD;
+`tests` 191 suites, 0 failing; `go build`, `go vet`, `go test -count=1 -p 1 ./...` green.
+
 ## Six-hundred-and-seventy-seventh round: monsters fade out when they leave -- into a town, out of view, or as a corpse whose time is up -- over 1.5 s, as retail's CIDecoDisappear fades them, instead of vanishing
 
 The user (2026-10-01): "when a mob walks into a safe zone and disappears they're supposed to fade.

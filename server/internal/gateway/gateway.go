@@ -197,6 +197,12 @@ var ErrSendStalled = errors.New("gateway: session stalled: its sends ran past th
 // closing for any other reason.
 var ErrSessionClosed = errors.New("gateway: session closed")
 
+// ErrEndSession is a handler's way to end a session that has finished its
+// business -- what it queued is written out, then the connection closes --
+// without the WARN a failing handler gets (round 678: the front-end theme's
+// one-question connection).
+var ErrEndSession = errors.New("gateway: session ended by its handler")
+
 // SetSecurity installs this session's real per-direction RollingByte/
 // PacketChecksum generators (see proto.Read/Write) once a handshake derives
 // them. Before this is called, Send and the read loop pass nil for both,
@@ -773,6 +779,10 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logg
 			continue
 		}
 		if err := s.Handle(ctx, sess, p); err != nil {
+			if errors.Is(err, ErrEndSession) {
+				logger.Debug("session ended by its handler", "addr", sess.RemoteAddr())
+				return
+			}
 			logger.Warn("handler error, closing session", "addr", sess.RemoteAddr(), "error", err)
 			return
 		}

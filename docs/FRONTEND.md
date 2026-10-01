@@ -69,9 +69,26 @@ swapped for the 3D flowing-camera town of the later pass without touching the sc
    sliders, a 3D preview, Confirm / Cancel.
 6. **3D backdrops (pass 2)** — a town region streamed behind the screens with a slow flowing
    camera, reusing the world loader; the 3D character preview in select and customize.
+   **Login done (round 678):** the title screen is retail's -- the intro script
+   (`script\intro\*.txt`, option.txt's IntroName or the operator's choice) flown by
+   `IntroCameraPath` over `FrontEndBackdrop` (World3D in `title_mode`), the letterbox frame and login
+   window from `resinfo\pstitle.txt` (`FrontEndFrame`, Login.gd), the fades and the skip, the
+   operator's theme (`FrontEndTheme`, `ThemeQuery`, server `-login-*`). Everything recovered is in
+   `docs/protocol/intro_script.md`, including what character select, race select and create use;
+   the next steps are in FRONTEND_CHECKLIST.md section 6.
 
 ## Verifying a front-end screen
 
 `qa_shot.sh --scene res://scenes/Login.tscn` boots that scene instead of `World3D.tscn` under the
 same xvfb + movie capture, with `SRREVAMP_MEDIA_PK2_PATH` already exported, so the screen loads its
-real art. No server is needed to render a screen (login only connects when Connect is pressed).
+real art. No server is needed to render a screen (login only connects when Connect is pressed; the
+boot-time theme query gives up at once on a refused connection).
+
+The title since round 678: `SRREVAMP_QA_TITLE_SEEK=0,12,26,40` stands the intro's camera at those
+times, waits for the regions, and logs `QA TITLE SHOT t=.. frame ..` (then `QA LOGIN SHOT frame ..`
+once the login window has faded in); `SRREVAMP_QA_TITLE_SKIP_AT=<s>` clicks through at that many
+seconds; `SRREVAMP_QA_TITLE_HOUR=0..3` pins the random hour; `SRREVAMP_LOGIN_INTRO=<name>` (and the
+other `SRREVAMP_LOGIN_*`) previews a theme. `client/tools/measure_login_ready.tscn` measures how long
+the screen takes to become usable with a click at its first frame, and its longest frame;
+`client/tools/check_intro_scripts.gd` checks every intro in an archive (counts, path accuracy, the
+clamp, the regions).

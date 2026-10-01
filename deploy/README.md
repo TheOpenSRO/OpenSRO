@@ -770,6 +770,103 @@ the bag is at the lower size once those slots are emptied.
 The retail starting size is not known: it is a `_CHAR.InventorySize` database default, and neither
 the client nor the server executable carries it.
 
+## Branding your front-end (round 678)
+
+The login screen is retail's title screen: an intro flown in 3D over the world's own regions, with
+the archive's own letterbox frame, logo, login box and music. Everything a private server usually
+re-brands can be changed without repacking any archive, and every piece falls back to the
+archive's own when the operator's is missing or broken (the client's log says which and why). The
+format and every recovered value: `docs/protocol/intro_script.md`.
+
+**What can be branded, and where it comes from**
+
+| Piece | Server setting (flag / env) | Client file (next to the executable) | Default |
+|---|---|---|---|
+| The intro (the camera's flight) | `-login-intro` / `SRREVAMP_LOGIN_INTRO` | `custom/intro/<name>.txt` | option.txt's `IntroName` (roc) |
+| The title music | `-login-bgm` / `SRREVAMP_LOGIN_BGM` | -- (a file in the archives) | option.txt's `IntroBGM` |
+| The logo above the login box | `-login-logo` / `SRREVAMP_LOGIN_LOGO` | `custom/frontend/<file>`, or `custom/frontend/logo.png` | Media.pk2 `interface\outer\logo.ddj` |
+| The top band | `-login-band-top` / `SRREVAMP_LOGIN_BAND_TOP` | `custom/frontend/<file>`, or `custom/frontend/band_top.png` | `blackbar_up_18.ddj` |
+| The bottom band | `-login-band-bottom` / `SRREVAMP_LOGIN_BAND_BOTTOM` | `custom/frontend/<file>`, or `custom/frontend/band_bottom.png` | `blackbar_down_copyright.ddj` |
+| A copyright / branding line | `-login-copyright` / `SRREVAMP_LOGIN_COPYRIGHT` | -- | none (the archive's band art carries its own line) |
+
+All server settings default to empty: with none set, players see retail's screen. Set them in the
+compose override's `command` (`- "-login-intro=constantinople"`) or as environment variables, then
+`docker compose up -d`. The server logs what it serves at startup (`front-end theme ...`) and warns
+about, and refuses, anything that is not a plain file name.
+
+**How the client picks** (per piece): a `SRREVAMP_LOGIN_*` variable on the player's own machine
+(for previewing, below) > the server's answer > the answer it cached last launch > a
+`custom/theme.json` shipped with the client > retail's default. The client asks the server it is
+about to connect to (the address remembered from the last login) as it starts, waits at most 1.5 s,
+and caches the answer per server address -- so a first launch against a new server may show the
+default once, and every launch after it that server's choice. The server answers the question once
+and closes that connection; it never logs it. `custom/theme.json` is the same structure the server sends:
+
+```json
+{"v":1,"intro":"myserver","bgm":"","logo":"mylogo.png","copyright":"(c) 2026 My Server","band_top":"","band_bottom":"","charselect":null,"create":null}
+```
+
+(`charselect` and `create` are reserved for the character select and creation scenes of a later
+release; leave them `null`.)
+
+**Choosing a built-in intro.** The archives carry these (vSRO's Media.pk2; `docs/protocol/
+intro_script.md` has the table): `roc` (the default; `egypt` and `china_whatf` are the same file),
+`constantinople`, `china_wharf`, `jupiter_login`, `rm`, `ruby_baghdad`. The last two also script
+smoke, crowds and riders, which this client does not play yet -- their cameras fly over an empty
+scene. A full archive path (`script\intro\roc.txt`) works too.
+
+**Writing your own intro.** Put `custom/intro/<name>.txt` next to the client's executable (a name of
+letters, digits, `_` and `-`), and set `-login-intro=<name>` on the server (or `"intro"` in
+`custom/theme.json`). The file is retail's format, in UTF-16 or UTF-8:
+
+```
+[CAMERA]
+0.0 S_CameraInsert 0.0 168 97 1002 40 900 0.20 3.14 0.0 100
+0.0 S_CameraInsert 8.0 168 97 1002 60 1200 0.15 3.40 0.0 120
+0.0 S_CameraInsert 16.0 168 97 900 120 1500 0.30 3.80 0.0 100
+[END]
+```
+
+Each line: an unused first value, `S_CameraInsert`, the time in seconds, the region's two numbers in
+the order **lo hi** (Jangan's region 97/168 is written `168 97`), the look-at point x y z inside that
+region (it may run past 0..1920 into the neighbours), then pitch (radians, positive looks down), yaw
+(radians, 0 looks north), roll, and the camera's distance back from the look-at point. The camera
+eases through every point (a Catmull-Rom spline), every position is taken relative to the LAST line's
+region, and it stops on the last point, where the login window fades in -- or earlier, on a click or
+a key. The client checks the file when it loads it; one that does not parse falls back to the
+archive's intro of that name, then to option.txt's, and logs why. A `[SCRIPT]` section is read but not
+run yet. Values a camera cannot fly are refused, so the intro falls back: at most 1024 lines, times
+0..3600 s, x and z within 32 regions of the named one (+-61440), heights within +-20000, angles within
++-1000 rad, distances 0..100000, and no `inf`/`nan` (our bounds; retail's own files sit far inside them).
+
+**Low-end machines.** A player can turn the 3D title off with `title_3d=false` under `[frontend]` in the
+client's settings file (or `SRREVAMP_TITLE_3D=0`): the screen keeps the 2D still and the world is not
+built until they enter it. Measured on the Linux render box, the 3D title raises the process's resident
+memory once in the world by ~200 MB (glibc keeps what the title's worker threads freed in their own
+arenas; `MALLOC_ARENA_MAX=2` in the environment removes it, and lowers the world's own footprint by ~215
+MB besides). Windows' allocator does not keep per-thread arenas this way; not measured there.
+
+**The music.** `-login-bgm=<file>` names an `.ogg` track in the player's Music.pk2 root (e.g.
+`maintheme_cut.ogg`; only `.ogg` names are looked up there, so only `.ogg` is accepted). Retail has one
+title track for every intro; choosing one per server is ours. A name that is not in the archive falls
+back to IntroBGM.
+
+**The logo and the bands.** PNG (or DDJ) files in `custom/frontend/`. The logo is shown at the size
+and place of the archive's own (508 x 172 in retail's 1600 x 1200 layout, centred above the login
+box) and keeps its aspect ratio inside that box -- a 508 x 172 image, or larger at the same shape,
+fits it exactly. The bands are stretched to the archive's band rectangles (1600 x 172 in the same
+layout: the top one at y 0, the bottom one at y 1030), so draw them 1600 x 172. Set
+`-login-copyright` and the bottom band switches to the archive's plain one (`blackbar_down.ddj`) with
+your line centred where the archive's own line sits, so the two never overlap.
+
+**Previewing on your own machine, no server needed.** Run the client with the same names as
+environment variables, e.g. `SRREVAMP_LOGIN_INTRO=myserver SRREVAMP_LOGIN_LOGO=mylogo.png`, and
+`SRREVAMP_CUSTOM_DIR=<folder>` to use a folder other than `custom/` next to the executable. They win
+over the server's answer, so you see your files at once; the client's log (`FrontEnd:` and `TITLE:`
+lines) says what it used and why it fell back. For a render on the box: `SRREVAMP_QA_TITLE_SEEK=0,10,20`
+stands the camera at those times and logs `QA TITLE SHOT t=.. frame ..`; `SRREVAMP_QA_TITLE_HOUR=0..3`
+pins the time of day (retail picks 5, 14, 18 or 23 o'clock at random).
+
 ## The full map (round 660)
 
 `-full-map` (env `SRREVAMP_FULL_MAP`, off by default) places every field monster of the game.

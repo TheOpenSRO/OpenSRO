@@ -171,8 +171,12 @@ func leave_world() -> void:
 ## READ); server select, character select and character create touch
 ## nothing, so it keeps playing through them (INFERRED from the absence of
 ## any other caller).
-func play_intro() -> void:
-	var name := intro_bgm()
+##
+## `override` (round 678, OURS) is an operator's title music from the
+## front-end theme (FrontEndTheme.bgm, -login-bgm); retail has only the one
+## global IntroBGM, so "" keeps option.txt's.
+func play_intro(override: String = "") -> void:
+	var name := override if override != "" else intro_bgm()
 	if name == "":
 		return
 	var before := music.sounding

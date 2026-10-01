@@ -204,6 +204,18 @@ static func read_table(archive_name: String, path: String) -> PackedByteArray:
 		return PackedByteArray()
 	return archive.read_file(entry)
 
+## Whether the archive a path would be read from holds it (round 678: the
+## front-end theme's title music is checked before it replaces IntroBGM).
+static func has_file(path: String) -> bool:
+	var key := normalise(path)
+	if key == "":
+		return false
+	var archive := _archive("music" if is_music_path(key) else "data")
+	if archive == null:
+		return false
+	var entry := ObjectLoader.find_file(archive, key)
+	return entry != null and not entry.is_dir
+
 ## Lowercase, backslashes, no leading separator: the one spelling the cache
 ## is keyed by.
 static func normalise(path: String) -> String:
