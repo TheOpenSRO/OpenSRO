@@ -1,0 +1,159 @@
+extends RefCounted
+class_name TitleCellPlan
+
+## The title's whole scene, worked out before the fly (round 680): every
+## region cell the intro's camera can see at any moment of its path, so the
+## backdrop builds them all under the loading cover and nothing streams in
+## -- or pops into view -- while the camera flies. The user (2026-10-01):
+## "As the camera moves some buildings pop-in. Let's try to preload the
+## scene entirely so that doesn't happen."
+##
+## What retail does (READ, docs/protocol/intro_script.md "Preloading"): at
+## startup, inside Client_LoadAllRefData and so before the title screen
+## exists, `FUN_00840670` reads the intro and hands every region of
+## `FUN_0056c870`'s set to `CGWorld::FUN_00aa2190(region, 1)`, which loads
+## that region and its eight neighbours (diagonals included) through the
+## region manager (`CRegionManagerBody::vslot_005`). Retail's set is built
+## from the keyframes' own region words, which for roc misses the regions
+## the camera's target crosses (100/70 .. 96/70, MEASURED in round 678) --
+## its 3x3 neighbourhoods are what cover them.
+##
+## This client (OURS): the path itself, sampled every SAMPLE_STEP_S, and at
+## each sample the union of
+##   - the region window around the camera's target (`radius` regions each
+##     way: the cells round 678's streaming would have built there), and
+##   - every cell whose box -- the region's 1920 x 1920 footprint between
+##     CELL_Y_MIN and CELL_Y_MAX -- meets the camera's view frustum (60
+##     degrees vertical, READ; the widest aspect we plan for, MIN_ASPECT;
+##     the title's draw distance, its camera far plane).
+## Cells are (dx, dy) relative to the frame region, as the region grid keys
+## them: dx along the region's high byte (SRO z), dy along its low byte
+## (SRO x) -- RegionGridState.cell_at of the point's world position.
+## The plan is conservative: a cell behind a hill or under fog counts.
+
+const REGION_SPAN := 1920.0
+## OURS: how densely the path is sampled. The camera's fastest MEASURED
+## motion in the archive's intros is ~210 units a second (roc), so 0.05 s is
+## ~10 units between samples -- far below the 1920-unit cell.
+const SAMPLE_STEP_S := 0.05
+## OURS: the height band a cell is tested over. The archive's intros keep the
+## camera between y -434 and 2008 (MEASURED, round 678's census); terrain and
+## scenery sit inside this band with room to spare.
+const CELL_Y_MIN := -1000.0
+const CELL_Y_MAX := 4000.0
+## OURS: the widest screen planned for (21:9 is ~2.37) -- a narrower
+## window sees a subset, so one plan covers every window shape.
+const MIN_ASPECT := 2.4
+## OURS: the near plane of the planning frustum (the camera's own is 0.05;
+## the value only trims what lies behind the eye).
+const NEAR := 1.0
+
+## The plan: every cell any sample needs, as Vector2i(dx, dy), ordered by
+## the first time a sample needs it, then by distance from the frame region
+## -- so the cells the fly opens on are built first.
+static func cells(path: IntroCameraPath, radius: int, draw_distance: float, aspect: float = MIN_ASPECT, step: float = SAMPLE_STEP_S) -> Array[Vector2i]:
+	var first_needed := {}
+	for_each_sample(path, step, func(t: float, pose: IntroCameraPath.Pose) -> void:
+		add_sample_cells(first_needed, t, pose, radius, draw_distance, maxf(aspect, MIN_ASPECT)))
+	var out: Array[Vector2i] = []
+	for c in first_needed:
+		out.append(c)
+	out.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		if first_needed[a] != first_needed[b]:
+			return first_needed[a] < first_needed[b]
+		return absi(a.x) + absi(a.y) < absi(b.x) + absi(b.y))
+	return out
+
+## Calls `visit(t, pose)` at t = 0, step, 2 step, ... and at the path's end.
+static func for_each_sample(path: IntroCameraPath, step: float, visit: Callable) -> void:
+	var n := maxi(int(ceilf(path.length / maxf(step, 0.001))), 0)
+	for i in range(n + 1):
+		var t := minf(i * step, path.length)
+		visit.call(t, path.sample(t))
+
+## The cells one pose needs: the window around its target and every cell its
+## frustum meets within `draw_distance`.
+static func sample_cells(pose: IntroCameraPath.Pose, radius: int, draw_distance: float, aspect: float) -> Array[Vector2i]:
+	var seen := {}
+	add_sample_cells(seen, 0.0, pose, radius, draw_distance, aspect)
+	var out: Array[Vector2i] = []
+	for c in seen:
+		out.append(c)
+	return out
+
+## sample_cells into `into` (cell -> the time first needed): a cell already
+## there is not tested again, so a whole path costs little more than its
+## first view.
+static func add_sample_cells(into: Dictionary, t: float, pose: IntroCameraPath.Pose, radius: int, draw_distance: float, aspect: float) -> void:
+	var centre := cell_of(pose.target)
+	for dx in range(-radius, radius + 1):
+		for dy in range(-radius, radius + 1):
+			var w := centre + Vector2i(dx, dy)
+			if not into.has(w):
+				into[w] = t
+	var xf := camera_transform(pose)
+	var planes := frustum_planes(xf, aspect, NEAR, draw_distance)
+	# Every cell the far plane can reach from the eye, tested against the planes.
+	var eye_cell := cell_of(_sro(xf.origin))
+	var reach := int(ceilf(draw_distance / REGION_SPAN)) + 1
+	for dx in range(eye_cell.x - reach, eye_cell.x + reach + 1):
+		for dy in range(eye_cell.y - reach, eye_cell.y + reach + 1):
+			var c := Vector2i(dx, dy)
+			if not into.has(c) and box_in_frustum(cell_box(c), planes):
+				into[c] = t
+
+## The cell holding a point given in the frame region's local SRO
+## coordinates (x along the low byte, z along the high byte).
+static func cell_of(local: Vector3) -> Vector2i:
+	return Vector2i(int(floorf(local.z / REGION_SPAN)), int(floorf(local.x / REGION_SPAN)))
+
+## A cell's box in the planning space: the frame region's local coordinates
+## with z mirrored, as the world places them (World3D.title_world_from_local
+## less the frame's corner).
+static func cell_box(c: Vector2i) -> AABB:
+	return AABB(Vector3(c.y * REGION_SPAN, CELL_Y_MIN, -(c.x + 1) * REGION_SPAN),
+		Vector3(REGION_SPAN, CELL_Y_MAX - CELL_Y_MIN, REGION_SPAN))
+
+## The camera's transform in the planning space (IntroCameraPath's own,
+## READ, with the world's z mirror and no frame offset).
+static func camera_transform(pose: IntroCameraPath.Pose) -> Transform3D:
+	return IntroCameraPath.camera_transform(pose, func(v: Vector3) -> Vector3: return Vector3(v.x, v.y, -v.z))
+
+static func _sro(v: Vector3) -> Vector3:
+	return Vector3(v.x, v.y, -v.z)
+
+## The view frustum of a camera at `xf` (looking down its -z, 60 degrees
+## vertical, IntroCameraPath.FOV_Y_DEGREES) as six planes with outward
+## normals, in the space `xf` is in -- what Camera3D.get_frustum() returns,
+## built here because Godot 4.2 does not expose Projection's planes.
+static func frustum_planes(xf: Transform3D, aspect: float, near: float, far: float) -> Array[Plane]:
+	var ty := tan(deg_to_rad(IntroCameraPath.FOV_Y_DEGREES) * 0.5)
+	var tx := ty * aspect
+	var local: Array[Plane] = [
+		Plane(Vector3(0, 0, 1), -near),
+		Plane(Vector3(0, 0, -1), far),
+		Plane(Vector3(1, 0, tx).normalized(), 0.0),
+		Plane(Vector3(-1, 0, tx).normalized(), 0.0),
+		Plane(Vector3(0, 1, ty).normalized(), 0.0),
+		Plane(Vector3(0, -1, ty).normalized(), 0.0),
+	]
+	var out: Array[Plane] = []
+	for p in local:
+		out.append(xf * p)
+	return out
+
+## Whether a box meets a convex frustum given as outward-facing planes
+## (frustum_planes, Camera3D.get_frustum): out only when all eight corners are
+## over one plane. Conservative -- a box near an edge may pass.
+static func box_in_frustum(box: AABB, planes: Array) -> bool:
+	for plane in planes:
+		var p := plane as Plane
+		# The corner furthest against the normal: if even it is over the
+		# plane, the whole box is.
+		var v := Vector3(
+			box.position.x if p.normal.x > 0.0 else box.end.x,
+			box.position.y if p.normal.y > 0.0 else box.end.y,
+			box.position.z if p.normal.z > 0.0 else box.end.z)
+		if p.distance_to(v) > 0.0:
+			return false
+	return true

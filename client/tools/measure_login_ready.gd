@@ -27,6 +27,24 @@ var _over := 0
 var _last_us := 0
 var _frames := 0
 var _seconds := 12.0
+## Round 680: the process's peak resident memory and Godot's video memory,
+## sampled every PEAK_SAMPLE_MS (OURS), printed with the frame line.
+const PEAK_SAMPLE_MS := 500
+var _peak_rss := 0.0
+var _peak_video := 0.0
+var _next_peak_ms := 0
+
+## VmRSS in MB (measure_rss.gd's reader: /proc files read as empty through
+## FileAccess, so grep is asked).
+static func _rss_mb() -> float:
+	var out: Array = []
+	OS.execute("grep", ["VmRSS", "/proc/%d/status" % OS.get_process_id()], out)
+	if out.is_empty():
+		return -1.0
+	var parts := str(out[0]).split(":")
+	if parts.size() < 2:
+		return -1.0
+	return float(parts[1].strip_edges().split(" ")[0]) / 1024.0
 
 func _ready() -> void:
 	var s := OS.get_environment("MEASURE_SECONDS")
@@ -49,6 +67,10 @@ func _process(_delta: float) -> void:
 		if frame_ms > 100.0:
 			_over += 1
 	var since := Time.get_ticks_msec() - _t0
+	if since >= _next_peak_ms:
+		_next_peak_ms = since + PEAK_SAMPLE_MS
+		_peak_rss = maxf(_peak_rss, _rss_mb())
+		_peak_video = maxf(_peak_video, Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0)
 	if _click_ms < 0 and _frames >= 1 and OS.get_environment("MEASURE_NO_CLICK") == "":
 		_click_ms = since
 		var press := InputEventMouseButton.new()
@@ -67,6 +89,7 @@ func _process(_delta: float) -> void:
 		print("MEASURE login usable after %d ms (click at %d ms)" % [_usable_ms, _click_ms])
 	if since > _seconds * 1000.0:
 		print("MEASURE frames: longest %.1f ms, %d over 100 ms in %.0f s (%d frames)" % [_longest, _over, _seconds, _frames])
+		print("MEASURE peak: VmRSS %.1f MB, video %.1f MB (sampled every %d ms)" % [_peak_rss, _peak_video, PEAK_SAMPLE_MS])
 		if _usable_ms < 0:
 			print("MEASURE login NOT usable within %.0f s" % _seconds)
 		get_tree().quit()

@@ -76,6 +76,8 @@ var _qa_shots: PackedFloat32Array = PackedFloat32Array()
 var _qa_seek: PackedFloat32Array = PackedFloat32Array()
 var _qa_seek_frames := 0
 var _qa_login_shot := false
+## SRREVAMP_QA_TITLE_POPS (round 680, QA): the pop-in measurement.
+var _pop_probe: TitlePopProbe = null
 ## The archive's logo held back while the 2D still (which carries its own)
 ## is up.
 var _logo_waiting := false
@@ -95,6 +97,8 @@ func start(media: Pk2Reader, theme: FrontEndTheme, custom_dir: String, frame: Fr
 		_qa_shots.append(part.to_float())
 	for part in OS.get_environment("SRREVAMP_QA_TITLE_SEEK").split(",", false):
 		_qa_seek.append(part.to_float())
+	if TitlePopProbe.enabled():
+		_pop_probe = TitlePopProbe.new()
 	# The fly's opening state (FUN_00869b50), whatever happens next.
 	if _frame != null:
 		_frame.set_alpha(_frame.cover_top, 255)
@@ -318,6 +322,10 @@ func _process(delta: float) -> void:
 			if not login_up and path.finished():
 				print("TITLE: the path ended (%.2f s)" % path.length)
 				show_login()
+	if _pop_probe != null and backdrop != null and backdrop.world != null and path != null:
+		_pop_probe.tick(backdrop.world, backdrop.camera(), path.time, state == State.FLYING, Time.get_ticks_msec() - _started_ms)
+		if state == State.FLYING and path.finished():
+			_pop_probe.summary(intro_source, path.time, get_tree())
 	if login_up and not _qa_login_shot and _qa_seek.is_empty() and _frame != null and _frame.fades_running() == 0 \
 			and (OS.get_environment("SRREVAMP_QA_TITLE_SKIP_AT") != "" or OS.get_environment("SRREVAMP_QA_TITLE_SEEK") != ""):
 		_qa_login_shot = true
