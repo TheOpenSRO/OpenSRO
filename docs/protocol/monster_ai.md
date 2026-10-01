@@ -1557,6 +1557,16 @@ So a moving body is turned by `rotation.y = atan2(dir.x, dir.z) - PI` for a worl
 (`MonsterMotion.facing_yaw`). The table is keyed by MODEL in `MonsterMotion.FRONT_BY_MODEL`; a
 model not in it is left unturned and logged "facing unmeasured".
 
+**Superseded in round 673: every drawn model turns.** The table left every species round 660 put on
+the map unturned -- round 673's live chase beside Donwhang measured the Gun Powder ghosts
+(`mob\wchina\gunpowderghost.bsr`, not in the table) facing one fixed way on all 14 legs, 2 to 179
+degrees off their path, while the Earth Ghosts beside them kept within 0.5. The probe's census of
+all 155 models the `MOB_` rows draw (`probe_monster_front.gd --all=1`): 117 read -Z, 36 name no
+axis (no toe/head/pelvis bones, or readings that disagree), 2 read +Z on one weak reading (the event
+Jinn pets: a head offset of 0.51 against the 0.5 floor), none +-X. So `MonsterMotion.MODEL_FRONT` is
+-Z for every model (MEASURED for 117; INFERRED for the rest from the client turning every object by
+one heading with no per-model front, FUN_009ec850). The capsule (no model) is still left unturned.
+
 **The four `_CLON` species have no model.** `MOB_CH_BIGEYEGHOST_CLON` (Small-eyed Ghost),
 `MOB_CH_GYO_CLON` (Old Weasel), `MOB_CH_WATERGHOST_CLON` (Water Ghost slave) and
 `MOB_CH_TOMBSTONE_CLON` (Tomb Stone Ghost) carry `xxx` in every model column of their
@@ -3758,6 +3768,30 @@ overhead name's colour does not depend on the class (no colour write in 0x9d0a80
 0x9d3e70, the test at 0x9d3f2a; srrevamp sizes it to its own plate's line height, OURS), and its
 target window's rank row gets UIIT_STT_PARTYMOB_TARGET's text appended with no separator (0x69b834,
 "Champion(Party)").
+
+## The overhead name: shown within 300 of the player (round 673)
+
+READ (sro_client.exe). CICharactor's name pass is `FUN_009d0a80`: it projects the head point
+(position + height + 2.0, or a rider's + 7.0, 0xe1b898 / 0xda7c60 as doubles) through the scene's
+camera (`DAT_0110f7ec` vslot 0x84), calls the object's vslot 15 with pass 4 (the screen-space
+overlay; CICMonster's is 0x9d3e70, which adds the party mark) and draws the name with
+`FUN_008b4d90(point, 0xff)` -- full alpha, no fade, in screen space over the scene. Its one distance
+test, at 0x9d0ac3: unless the object's `+0xf0` is set, it returns when `300.0 <= object+0x24c`
+(float 0xd85224 = 300.0). `+0x24c` is written at 0x9d6f7e by `CICPlayer::vslot_005` (0x9d6c80,
+message 0xd) as it walks every object of the entity list (0xec4ae4, node - 0xdc): the square root of
+the summed squared x, y, z differences between the LOCAL PLAYER's position (+0x90..+0x98, loaded at
+0x9d6ea1) and the object's. The constructor (0x9c2340) starts it at 1000.0 (0xda95ec), so a new
+object's name is hidden until measured. The same walk writes `+0xd0`, the distance from the point at
+`[0x110f7d0]+0x340` (unread; the camera, INFERRED). The small over-head HP/MP gauge is vslot 38
+(0x9d0da0), drawn only under option flags (FUN_00b94b90 on 0xeef6f0 / 0xef1a84 / 0xef1bc0) and
+behind the same 300 test (`FUN_009cef40`).
+
+NOT read: what `+0xf0` is; the pass's other early returns (a vcall at +0xb0 on FUN_009edd60's
+object; the bits `+0xd4 & 2` and `+0x464 & 2`); the global byte 0xec4b58 the overlay pass is drawn
+under. srrevamp: `NamePlates` (client/scripts/world/name_plates.gd) shows a plate while its owner
+is within 300 of the player, tested a sixth of the plates a frame (OURS); before round 673 the
+plates hid at 80 from the CAMERA (OURS), which is why a monster's name came and went with the
+camera's pitch and zoom.
 
 ## The unique rotation and the minions (round 661)
 

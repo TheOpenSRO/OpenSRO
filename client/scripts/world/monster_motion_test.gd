@@ -157,7 +157,15 @@ func _test_facing() -> void:
 		_check(front.is_equal_approx(want), "a -Z-front body faces %s (front %s)" % [str(dir), str(front)])
 	_check(MonsterMotion.front_of("mob\\china\\mangnyang.bsr") == "-Z", "Mangyang's model is measured -Z")
 	_check(MonsterMotion.front_of("MOB\\CHINA\\YEOHA.BSR") == "-Z", "the model lookup ignores case")
-	_check(MonsterMotion.front_of("mob\\china\\tombstone.bsr") == "", "an unprobed model is facing unmeasured")
+	# Round 673: every drawn model turns. The round-533 table left every model
+	# off it unturned; the Gun Powder ghost (live, round 673) and the field
+	# species round 660 added are -Z by the census (probe_monster_front.gd
+	# --all=1: 117 of 155 read -Z, none +-X), and the rest by the engine's one
+	# heading convention (INFERRED).
+	for model in ["mob\\wchina\\gunpowderghost.bsr", "mob\\wchina\\demonhorse.bsr", "mob\\china\\tiger.bsr",
+			"mob\\china\\tombstone.bsr", "mob\\dunhuang\\bugghost.bsr"]:
+		_check(MonsterMotion.front_of(model) == "-Z", "%s turns to its path (front -Z), not left unturned" % model)
+	_check(MonsterMotion.front_of("") == "", "the capsule (no model) has no front to turn")
 
 ## A server heading (OpMonsterSpawned's): radians from +x toward +z, the unit
 ## heading SetHeading (0x00482440) writes as (cos a, 0, sin a).

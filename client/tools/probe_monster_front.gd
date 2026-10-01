@@ -42,7 +42,10 @@ extends SceneTree
 ## Usage (render box only -- never run Godot on the developer's machine):
 ##   client/tools/remote_godot.sh sync
 ##   client/tools/remote_godot.sh script res://tools/probe_monster_front.gd -- \
-##     --pk2=/opt/sro-files/client/Data.pk2 --media=/opt/sro-files/client/Media.pk2
+##     --pk2=/opt/sro-files/client/Data.pk2 --media=/opt/sro-files/client/Media.pk2 [--all=1]
+##
+## --all=1 (round 673) measures every MOB_ row's model instead of the roster,
+## and ends with a TALLY line: how many models read each front.
 
 ## The eleven roster species as [code, the name the server sends]
 ## (server/cmd/server/main.go monsterSpecs), then the control.
@@ -87,6 +90,20 @@ func _init() -> void:
 			by_name = NpcTableReader.parse_models_by_name(bytes, names, by_name)
 	var control_axis := ""
 	var rows: Array = ROSTER.duplicate()
+	# --all (round 673): every MOB_ row's own model once (the field monsters
+	# round 660 put on the map, not only the round-533 roster), each distinct
+	# .bsr measured once, under the first code that names it.
+	if _arg("--all") != "":
+		rows = []
+		var seen := {}
+		var codes: Array = models.keys()
+		codes.sort()
+		for code in codes:
+			var path := String(models[code])
+			if not String(code).begins_with("MOB_") or path == "" or seen.has(path.to_lower()):
+				continue
+			seen[path.to_lower()] = true
+			rows.append([code, ""])
 	rows.append([CONTROL, ""])
 	var fronts := {}
 	for row in rows:
@@ -129,8 +146,11 @@ func _init() -> void:
 		for mi in skeleton.find_children("*", "MeshInstance3D", true, false):
 			(mi as MeshInstance3D).mesh = null
 		skeleton.free()
+	var tally := {}
 	for bsr in fronts:
 		print("MODEL %s %s" % [bsr, fronts[bsr]])
+		tally[fronts[bsr]] = int(tally.get(fronts[bsr], 0)) + 1
+	print("TALLY %s over %d model(s)" % [str(tally), fronts.size()])
 	print("CONTROL %s reads %s -- the probe %s" % [CONTROL, control_axis if control_axis != "" else "nothing",
 		"COUNTS" if control_axis == "-Z" else "DOES NOT COUNT"])
 	quit(0)
