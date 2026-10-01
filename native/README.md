@@ -151,7 +151,7 @@ The client uses a library only when its `api()` returns exactly its own number. 
 The client refuses it with one log line naming both numbers, then reads in GDScript:
 
 ```
-NativeAssets: native readers OFF (library REFUSED: API 0, this client needs API 4 -- a stale library, rebuild it with native/build.sh) -- using the GDScript readers
+NativeAssets: native readers OFF (library REFUSED: API 0, this client needs API 5 -- a stale library, rebuild it with native/build.sh) -- using the GDScript readers
 ```
 
 The same line catches the release case: a DLL from an older release left next to a newer exe by an
@@ -275,7 +275,7 @@ On a Windows PC, put `srrevamp_native.dll` in `native_bin\` next to the project,
 exe in an export (see below). Then check the log for:
 
 ```
-NativeAssets: native readers ON (library loaded, srrevamp_native 0.1.0, API 4, <path of the DLL>)
+NativeAssets: native readers ON (library loaded, srrevamp_native 0.1.0, API 5, <path of the DLL>)
 ```
 
 `native readers OFF (library not found: <path>)`, after Godot's `GDExtension dynamic library not

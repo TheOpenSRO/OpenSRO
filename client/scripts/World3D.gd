@@ -5194,8 +5194,11 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 		_monster_bodies[monster_id].queue_free()
 	_monster_bodies.clear()
 	# And any body still fading out of the old zone (round 677): gone now,
-	# not left fading at its old-zone spot.
+	# not left fading at its old-zone spot. And the old zone's corpse holds
+	# (round 677's review): their timers find no body of theirs and do
+	# nothing (_finish_monster_death's body_id).
 	_appear_fades.free_out_now()
+	_dying_until.clear()
 	# Their snapshots too (round 638 review): the old zone's monsters are no
 	# one's target here; the list below refills it. And any body still
 	# queued or waiting for its region (round 655).
@@ -8670,6 +8673,11 @@ func _pick_character(screen_pos: Vector2) -> String:
 	if node.has_meta("character_id"):
 		_select_character(int(node.get_meta("character_id")), String(node.get_meta("character_name", "")))
 		return "select_player"
+	# A dead monster is no target (round 677's review): its collider is
+	# dropped at the death (_drop_click_body), and a ray that still met it
+	# in the same frame finds nothing here.
+	if _dying_until.has(int(node.get_meta("monster_id"))):
+		return ""
 	_last_attack_target = int(node.get_meta("monster_id"))
 	_show_target(_last_attack_target)
 	_attack_monster(_last_attack_target)
@@ -13999,6 +14007,10 @@ func _on_entity_left(character_id: int) -> void:
 	if not _pending_friend_cast.is_empty() and int(_pending_friend_cast["character"]) == character_id:
 		print("World3D: player %d left before the walk reached them -- friendly cast dropped" % character_id)
 		_drop_pending_attack()
+	# A departing body stops running before it fades (OURS, as a monster's
+	# does in _free_monster_body: whether retail's mover runs on during the
+	# 1.5 s was not read).
+	_set_other_gait(character_id, false)
 	_other_gaits.erase(character_id)
 	SkillEffects.detach_owner(_fx_owner_key(character_id, 0))
 	_target_buff_book.drop(_fx_owner_key(character_id, SkillNet.OWNER_CHARACTER))
@@ -16109,10 +16121,7 @@ func _forget_monster(monster_id: int, fade: bool = false) -> void:
 func _fade_out_body(body: Node3D) -> void:
 	if body == null or not is_instance_valid(body) or body.is_queued_for_deletion():
 		return
-	for c in body.get_children():
-		if c is CollisionObject3D:
-			(c as CollisionObject3D).collision_layer = 0
-			c.queue_free()
+	_drop_click_body(body)
 	if not _mob_logging():
 		_appear_fades.start_out(body)
 		return
@@ -16123,6 +16132,17 @@ func _fade_out_body(body: Node3D) -> void:
 	print("World3D: %s fades out over %.1fs (ticks %d)" % [what, AppearFade.DISAPPEAR_SECONDS, started_ms])
 	_appear_fades.start_out(body, AppearFade.DISAPPEAR_SECONDS, func(_m: Node) -> void:
 		print("World3D: %s faded out and is freed after %d ms" % [what, Time.get_ticks_msec() - started_ms]))
+
+## Takes a body's click colliders away: out of the physics layers at once,
+## so a ray this frame passes through to what is behind, and freed. A dead
+## monster's (round 677's review) and a fading body's.
+func _drop_click_body(body: Node3D) -> void:
+	if body == null or not is_instance_valid(body):
+		return
+	for c in body.get_children():
+		if c is CollisionObject3D:
+			(c as CollisionObject3D).collision_layer = 0
+			c.queue_free()
 
 ## A click-target collider for a monster: a capsule as tall as the model,
 ## on the monster layer only, so a ray can pick it out for an attack while
@@ -16165,7 +16185,7 @@ func _try_attack_monster(screen_pos: Vector2) -> bool:
 	var node := hit["collider"] as Node
 	while node != null and not node.has_meta("monster_id"):
 		node = node.get_parent()
-	if node == null:
+	if node == null or _dying_until.has(int(node.get_meta("monster_id"))):
 		return false
 	_last_attack_target = int(node.get_meta("monster_id"))
 	_show_target(_last_attack_target)
@@ -18806,6 +18826,20 @@ func _begin_monster_death(monster_id: int) -> void:
 	var decay := _monster_corpse_seconds(monster_id)
 	var hold := decay if decay > 0.0 else seconds
 	var has_body: bool = dying_body != null and is_instance_valid(dying_body)
+	# The corpse cannot be clicked or targeted (round 677's review, OURS):
+	# READ only that retail's pick, FUN_0078ee20, tests no life state (its
+	# tests are +0x70 bit 0, the player and its ride, and the option classes);
+	# whether its click handler refuses a dead target was not settled. Until
+	# round 677 the corpse went with its clip; lying for its DecayTime, a
+	# clickable corpse took clicks meant for what stands behind it.
+	if has_body:
+		_drop_click_body(dying_body as Node3D)
+	# The respawn list a server without the spawn push needs is asked for when
+	# the clip has run, as before the corpse hold (round 655).
+	if seconds > 0.0:
+		get_tree().create_timer(seconds).timeout.connect(_maybe_pull_after_death)
+	else:
+		_maybe_pull_after_death()
 	if hold > 0.0 and has_body:
 		# The hold restarts from the clip's real start, replacing the killer's
 		# predicted one (MonsterBodies.hold_for_kill).
@@ -18851,14 +18885,16 @@ func _finish_monster_death(monster_id: int, body_id: int = 0) -> void:
 	if not _monster_bodies.has(monster_id) and not _monster_snapshots.has(monster_id):
 		return
 	var had_body := _monster_bodies.has(monster_id)
-	if body_id != 0 and had_body:
-		var now_body = _monster_bodies[monster_id]
+	if body_id != 0:
+		# The hold's timer: only for the body that died. Gone (faded on a
+		# leave, or a zone change took it) or another body under the same id
+		# (a fresh spawn, or the next zone's monster): not this death's.
+		var now_body = _monster_bodies.get(monster_id)
 		if now_body == null or not is_instance_valid(now_body) or (now_body as Node).get_instance_id() != body_id:
 			return
 	_forget_monster(monster_id, true)
 	if had_body:
 		print("World3D: monster %d corpse fades out t=%.2f" % [monster_id, _idle_anim_time])
-	_maybe_pull_after_death()
 
 ## A server that sends no spawn push (-monster-spawn-push off, the default)
 ## tells this client of a respawn or a GM spawn only through a list (round

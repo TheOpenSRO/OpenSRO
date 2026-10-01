@@ -7148,7 +7148,7 @@ disappear fade".
   `CGObjChar::vslot_214` 0x4a72e0 -> `CGObjMobile::vslot_214` 0x48b490 -> `CGObj::vslot_214`
   0x484a80) -> slot 0x364 (0x485150, the leave-world; CGObjMob's entry read from its vtable at
   0xaeddac+0x364) -> slot 0x3b0(0, 0, 0) (0x4c1e00 -> `GObjPC::FUN_00485bb0`) -> the block's slot
-  3 (`FUN_005344b0`, the CMsgBlock vtables 0xaf7f9c / 0xaf7fc4 / 0xaf7fe4) -> `FUN_00534050`:
+  3 (`FUN_005344b0`, slot 3 (+0xc) of the vtables 0xaf7f90 CMsgBlock, 0xaf7fb8 CMsgBlockObject and 0xaf7fd8 CMsgBlockTerrain; 0xaf7f9c / 0xaf7fc4 / 0xaf7fe4 are those slot-3 entries) -> `FUN_00534050`:
   **0x3016** with the object's id, to the players of the block and its 8 neighbours.
 - **Death.** `CGObj::Update` (0x484d10, slot 211; CGObjMob::Update 0x4c1700 -> CGObjChar::Update
   0x4a88f0 -> CGObjMobile::Update 0x48b8c0 -> it): in life state 2 it adds the tick's seconds to
@@ -7296,6 +7296,48 @@ The DecayTime table is one more pass over characterdata at load (GDScript here, 
 - A ground item's name during its fade (ours hides it); a pickup as 0x3016 (INFERRED).
 - CICUser modes 4/6/7 leave at once in retail; this client has no such modes for other players.
 - Shadows and effects under the fade (as round 676).
+
+### 8. Review (be85123): every READ claim confirmed, no HIGH; one MEDIUM and five LOW fixed
+
+1. **MEDIUM: a corpse stayed clickable for its whole DecayTime** (5-10 s; before this round only
+   for its die clip). A click near a corpse re-targeted the dead monster from its stale snapshot
+   and started a walk or attack that went nowhere. READ, partly: retail's pick `FUN_0078ee20`
+   tests no life state (its tests are +0x70 bit 0 -- set only by `FUN_009c4130`, from the UI paths
+   0x5611e9 / 0x5618cd -- the player and its ride, and the option classes), and the monster branch
+   of its click handler (`FUN_00792f00` -> `FUN_00778650`, the selection) reads none either;
+   whether anything later refuses a dead target was not settled. OURS: `_begin_monster_death`
+   drops the corpse's click collider at the death (`_drop_click_body`: out of the layers at once,
+   so a ray in the same frame passes through to what stands behind), and `_pick_character` and
+   `_try_attack_monster` both ignore an id in `_dying_until`. The ground-item ray still goes first.
+2. **LOW: a zone change left the corpse holds.** `_on_change_zone_result` now clears
+   `_dying_until`, and `_finish_monster_death` from a hold's timer acts only on the body that died
+   (it returned early only when a body existed; a same-id snapshot in the new zone was forgotten).
+3. **LOW: the CMsgBlock addresses.** 0xaf7f9c / 0xaf7fc4 / 0xaf7fe4 are the slot-3 entries; the
+   vtables are 0xaf7f90 CMsgBlock, 0xaf7fb8 CMsgBlockObject and 0xaf7fd8 CMsgBlockTerrain (fixed
+   in section 2 above).
+4. **LOW: the native API** goes to **5** (native/src/core/mod.rs `API`, native_assets.gd
+   `NATIVE_API`, native/README.md's example lines) for the new `char_decay_by_code`; an API-4
+   library is refused and the client reads in GDScript. The `has_method` guard stays as a second
+   check.
+5. **LOW: a departing player kept running while fading.** `_on_entity_left` now stands the body
+   (`_set_other_gait(id, false)`) before it fades, as a monster's (OURS).
+6. **LOW: the respawn list pull** (`_maybe_pull_after_death`, a server without the spawn push) is
+   asked for at the die clip's end again, not after the corpse hold.
+
+Tests: `fade_out_test.gd` gains the corpse's collider at the death and a zone change during a
+corpse hold. On be85123:
+
+```
+FAIL the corpse cannot be clicked or targeted from its death (round 677's review: not for its whole DecayTime)
+FAIL a zone change clears the old zone's corpse holds
+FAIL the old corpse's timer does not forget the new zone's monster of the same id
+3 FAILURES
+```
+
+On the fix: ALL PASS. `remote_godot.sh check` 468 scripts ALL LOAD; `remote_godot.sh tests` 189
+suites, 0 failing, both with the API-5 native library shipped and without it;
+`native_tables_test.gd` ALL PASS with `native readers ON ... API 5`; `native_assets_test.gd`
+accepts API 5; `cargo test --release` 37 passed. No server code changed.
 
 ## Six-hundred-and-seventy-sixth round: monsters and other players fade into existence over 2.0 s, as retail's CIDecoAppear fades them, instead of popping in
 

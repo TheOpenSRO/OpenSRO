@@ -51,6 +51,7 @@ func _initialize() -> void:
 		await _test_world_left(world)
 		await _test_world_death(world)
 		await _test_world_death_no_decay(world)
+		await _test_world_zone_change_corpse(world)
 		await _test_world_player(world)
 		await _test_ground_item(world)
 		var fades = world.get("_appear_fades")
@@ -226,6 +227,14 @@ func _make_world() -> Node:
 		"\tpass",
 		"func _exit_tree() -> void:",
 		"\tpass",
+		"func _show_loading_screen() -> int:",
+		"\treturn 0",
+		"func _reload_zone_assets(_zone: String, _frame: String = \"\") -> void:",
+		"\tpass",
+		"func _place_at_zone_spawn(_zone: String) -> bool:",
+		"\treturn true",
+		"func _drain_initial_load(_started: int, _frames: int = 0) -> void:",
+		"\tpass",
 		""]))
 	_check(sub.reload() == OK and sub.can_instantiate(), "a quiet subclass of World3D.gd compiles")
 	var scene := load("res://scenes/World3D.tscn") as PackedScene
@@ -329,6 +338,9 @@ func _test_world_death(world: Node) -> void:
 	var bodies: Dictionary = world.get("_monster_bodies")
 	_check(bodies.get(77002) == body and is_instance_valid(body) and not body.is_queued_for_deletion(),
 		"the corpse lies there after the death")
+	var click := body.get_node_or_null("ClickBody") as CollisionObject3D
+	_check(click == null or (click.collision_layer == 0 and click.is_queued_for_deletion()),
+		"the corpse cannot be clicked or targeted from its death (round 677's review: not for its whole DecayTime)")
 	await create_timer(0.35).timeout
 	_check(not bodies.has(77002), "past its DecayTime it is no longer the monster's")
 	_check(is_instance_valid(body) and not body.is_queued_for_deletion() and _near(_drawn_alpha(_mesh_of(body)), 1.0),
@@ -403,3 +415,28 @@ func _test_ground_item(world: Node) -> void:
 	await process_frame
 	_check(not is_instance_valid(node), "and is gone after 1.5 s")
 	items.free()
+
+## A zone change during a corpse hold (round 677's review): the holds are
+## cleared, and the old hold's timer does not forget a same-id monster the new
+## zone lists.
+func _test_world_zone_change_corpse(world: Node) -> void:
+	world.set("_monster_decay_ms_by_code", {"MOB_FADE_TEST": 300})
+	var body := _built(world, 77007)
+	if body == null:
+		return
+	world.call("_on_monster_died", 77007)
+	_check((world.get("_dying_until") as Dictionary).has(77007), "the corpse is held")
+	var zone := WorldNet.ChangeZoneResult.new()
+	zone.ok = true
+	zone.zone = "donwhang"
+	await world.call("_on_change_zone_result", zone)
+	_check(not (world.get("_dying_until") as Dictionary).has(77007), "a zone change clears the old zone's corpse holds")
+	# The new zone lists a monster with the same id (not built yet).
+	var snaps: Dictionary = world.get("_monster_snapshots")
+	snaps[77007] = _snap(77007)
+	await create_timer(0.45).timeout
+	_check(snaps.has(77007), "the old corpse's timer does not forget the new zone's monster of the same id")
+	world.call("_forget_monster", 77007)
+	_step(world, 1.6)
+	await process_frame
+	await process_frame

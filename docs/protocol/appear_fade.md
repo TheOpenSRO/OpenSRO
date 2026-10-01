@@ -106,7 +106,8 @@ body over with `_fade_out_body`: it leaves the id maps first, so the same id spa
 a fresh body (as retail's object leaves `g_sHashGID`), loses its click collider (OURS), and keeps
 its name plate and party mark as they are. Paths: `OpMonsterLeft` (leaving the area, or a town
 removal, round 674), `OpEntityLeft` (another player), a ground item's removal, and a dead
-monster's corpse after its species' DecayTime (`World3D._monster_corpse_seconds`; the time is the
+monster's corpse after its species' DecayTime (the corpse's click collider goes at the death, and
+dying ids are not picked: round 677's review, OURS) (`World3D._monster_corpse_seconds`; the time is the
 client's, OURS -- this server drops a dead monster at once and sends no despawn). A zone change
 frees every body still fading at once (`Fades.free_out_now`). A monster's list refresh dropping
 it (`_sync_monster_bodies`, mostly a zone change) and a region unloading under a body still free
