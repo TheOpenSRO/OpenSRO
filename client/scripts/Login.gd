@@ -122,10 +122,8 @@ func _ready() -> void:
 		_finish_ready()
 		return
 	# The world's scene compiles on a worker while the theme is asked for
-	# and the screen is built (FrontEndBackdrop.preload_world) -- unless the
-	# player turned the 3D title off (TitleIntro.title_3d_enabled, OURS).
-	if TitleIntro.title_3d_enabled():
-		FrontEndBackdrop.preload_world()
+	# and the screen is built (FrontEndBackdrop.preload_world).
+	FrontEndBackdrop.preload_world()
 	# The cover over the 3D while it loads (OURS): the dark ground and the 2D
 	# still, faded out together once the first view is built -- and left up,
 	# as the fallback, when no 3D intro can run.

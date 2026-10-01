@@ -226,8 +226,8 @@ One structure, the same on the wire, in the settings cache and in `custom/theme.
   unreadable -> the archive's art; music not in the archives -> IntroBGM (only `.ogg` names are
   accepted: those are the ones looked up in Music.pk2). Each with a log line. On the 2D still the
   archive's logo is not drawn (the still has its own); an operator's is.
-- **The player's switch** (OURS): `[frontend] title_3d=false` (or `SRREVAMP_TITLE_3D=0`) keeps the 2D
-  still and never builds the 3D title.
+- **No player switch.** Round 678's review added `[frontend] title_3d=false`; it was removed the same
+  day at the user's request (the 3D title is not optional; a "clientless" mode comes later instead).
 - `charselect` / `create` are reserved (null). Retail's select and create scenes are fixed (below),
   so making them choosable is OURS.
 

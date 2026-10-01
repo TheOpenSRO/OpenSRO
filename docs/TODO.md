@@ -879,6 +879,17 @@ driver" alert unless the export template carries ANGLE, which was not checked; a
 report so far (the white ground included) came from a Forward+ build, so the first report from a
 Compatibility release is the one to read against the box.
 
+### Bots and clientless play -- **noted by the user 2026-10-01; not scheduled**
+
+- **A macro bot built into the game client.** With it, players don't need to go clientless to
+  automate.
+- **An external bot that supports clientless play properly.** The original game never supported it.
+- **A "clientless" option for players.** This is the low-end choice the user wants to offer, instead
+  of a switch to turn off the 3D title (round 678's `title_3d` switch was removed for that reason).
+
+Nothing is designed yet. When it comes up, start from the protocol docs (docs/protocol/) and the
+gateway's TLS and session handling.
+
 ### Asset packs: `.pk3` beside `.pk2` -- **planned (decided with the user 2026-10-01); start after the front-end epic**
 
 Shipping new or changed assets should not require injecting them into a `.pk2`. A `.pk3` is a
@@ -1092,8 +1103,9 @@ front-end's next steps.
 - **Memory on Linux** (round 678's review): ~205-230 MB more resident memory once in the world than
   without the 3D title -- glibc keeping what the title's worker threads freed (equal to base under
   `MALLOC_ARENA_MAX=2`); ~150-190 MB of it is the World3D compile on the loader thread, kept to avoid
-  a 1.2 s freeze. The user's call: a Linux launcher with `MALLOC_ARENA_MAX=2` (also -215 MB on the base
-  world), or the player's `[frontend] title_3d=false`. Windows not measured.
+  a 1.2 s freeze. Open: a Linux launcher with `MALLOC_ARENA_MAX=2` (also -215 MB on the base world). The 3D
+  title is not a player option (the user, 2026-10-01: players get a "clientless" mode later instead).
+  Windows not measured.
 
 ### Loading freezes: what the off-thread rounds left (map/loading epic, 2026-09-25)
 

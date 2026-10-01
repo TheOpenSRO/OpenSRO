@@ -103,10 +103,6 @@ func start(media: Pk2Reader, theme: FrontEndTheme, custom_dir: String, frame: Fr
 		_frame.set_alpha(_frame.big_logo, 0)
 		if _frame.copyright_label != null:
 			_frame.set_alpha(_frame.copyright_label, 0)
-	if not title_3d_enabled():
-		for n in _login_nodes:
-			_hide_login_node(n)
-		return _fall_back("the 3D title is turned off ([frontend] title_3d = false or SRREVAMP_TITLE_3D=0)")
 	for n in _login_nodes:
 		_hide_login_node(n)
 	var picked := resolve_intro(media, theme.intro if theme != null else "", custom_dir)
@@ -257,14 +253,6 @@ func hold_backdrop(why: String) -> void:
 	if backdrop != null and backdrop.world != null:
 		backdrop.world.call("title_hold")
 		print("TITLE: backdrop holds its cells (%s)" % why)
-
-## OURS (round 678's review, for low-end machines): `[frontend] title_3d =
-## false` in the settings file, or SRREVAMP_TITLE_3D=0, keeps the 2D still and
-## never builds the 3D world at the title.
-static func title_3d_enabled() -> bool:
-	if OS.get_environment("SRREVAMP_TITLE_3D") == "0":
-		return false
-	return bool(ClientSettings.get_value(FrontEndTheme.SETTINGS_SECTION, "title_3d", true))
 
 func _alpha(n: CanvasItem) -> int:
 	return int(roundf(n.modulate.a * 255.0)) if n != null else 0

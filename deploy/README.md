@@ -839,10 +839,8 @@ run yet. Values a camera cannot fly are refused, so the intro falls back: at mos
 0..3600 s, x and z within 32 regions of the named one (+-61440), heights within +-20000, angles within
 +-1000 rad, distances 0..100000, and no `inf`/`nan` (our bounds; retail's own files sit far inside them).
 
-**Low-end machines.** A player can turn the 3D title off with `title_3d=false` under `[frontend]` in the
-client's settings file (or `SRREVAMP_TITLE_3D=0`): the screen keeps the 2D still and the world is not
-built until they enter it. Measured on the Linux render box, the 3D title raises the process's resident
-memory once in the world by ~200 MB (glibc keeps what the title's worker threads freed in their own
+**Memory.** The 3D title is always on; it is not a player option. Measured on the Linux render box,
+it raises the process's resident memory once in the world by ~200 MB (glibc keeps what the title's worker threads freed in their own
 arenas; `MALLOC_ARENA_MAX=2` in the environment removes it, and lowers the world's own footprint by ~215
 MB besides). Windows' allocator does not keep per-thread arenas this way; not measured there.
 
