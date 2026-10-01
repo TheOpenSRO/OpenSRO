@@ -108,7 +108,9 @@ var _link_count := 0
 ## archive path's bytes (or an empty array), as ShopReader.load takes it.
 ## Returns self.
 func load(read: Callable) -> TeleportReader:
+	var _pp := ParseProfile.t0()
 	parse(read.call(DATA_TABLE), read.call(LINK_TABLE), read.call(BUILDING_TABLE))
+	ParseProfile.add("text.teleport", _pp)
 	return self
 
 ## Parses the three tables from their bytes (UTF-16LE with or without the

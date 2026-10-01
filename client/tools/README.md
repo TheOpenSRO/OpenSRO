@@ -449,6 +449,17 @@ ranked the port by these lines.
 `client/scripts/pk2/native_assets_test.gd` does the same on synthetic input, and checks the
 fallback when the library is absent (`NO_NATIVE=1 client/tools/remote_godot.sh tests`).
 
+The text tables (round 671) have their own pair: `table_parity.gd` runs every ported reader both
+ways on every `.txt` of every archive (about 70 s; `--max-fails=N` prints more FAIL lines), and
+`client/scripts/npc/native_tables_test.gd` on synthetic tables. `probe_table_cost.gd` prints, per
+boot and entry table, what the GDScript decode, line split and tab split cost and what each reader
+costs both ways:
+
+```
+client/tools/remote_godot.sh script res://tools/table_parity.gd -- --pk2-dir=/opt/sro-files/client
+client/tools/remote_godot.sh script res://tools/probe_table_cost.gd -- --pk2-dir=/opt/sro-files/client
+```
+
 ### Skinned map objects: where the vertices go (round 648)
 
 `probe_map_anim_pose.gd` builds one map object the way the world does (ObjectLoader, then

@@ -311,6 +311,10 @@ const REQ_GENDER_ANY := 2
 ## Parses one itemdata part into {id -> Item}, merging into `into` so the
 ## parts can be accumulated.
 static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
+	var _pp := ParseProfile.t0()
+	if _parse_native(data, into):
+		ParseProfile.add("text.items", _pp)
+		return into
 	for line in _lines(data):
 		var cols := line.split("\t")
 		if cols.size() <= COL_NAME:
@@ -357,7 +361,78 @@ static func parse(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 		if item.item_name == "" and item.icon_path == "":
 			continue
 		into[item.id] = item
+	ParseProfile.add("text.items", _pp)
 	return into
+
+## The loop above, its row work done by the native port (round 671; native/
+## src/core/tables.rs `items`): every kept row's fields come back as columns,
+## and each Item is built from them here, field for field as above, merged into
+## `into` in file order (a later duplicate id replaces an earlier one, as
+## above). False when there is no library or the port handed the table back.
+static func _parse_native(data: PackedByteArray, into: Dictionary) -> bool:
+	var rows := NativeAssets.table_rows("items", [data])
+	if rows.is_empty():
+		return false
+	var ids: PackedInt64Array = rows["ids"]
+	var code_names: PackedStringArray = rows["code_names"]
+	var item_names: PackedStringArray = rows["item_names"]
+	var name_strids: PackedStringArray = rows["name_strids"]
+	var icon_paths: PackedStringArray = rows["icon_paths"]
+	var drop_models: PackedStringArray = rows["drop_models"]
+	var models: PackedStringArray = rows["models"]
+	var model_counts: PackedInt64Array = rows["model_counts"]
+	var max_stacks: PackedInt64Array = rows["max_stacks"]
+	var sell_prices: PackedInt64Array = rows["sell_prices"]
+	var countries: PackedInt64Array = rows["countries"]
+	var req_genders: PackedInt64Array = rows["req_genders"]
+	var durabilities: PackedInt64Array = rows["durabilities"]
+	var attack_rates: PackedInt64Array = rows["attack_rates"]
+	var criticals: PackedInt64Array = rows["criticals"]
+	var ranges: PackedInt64Array = rows["ranges"]
+	var param1s: PackedInt64Array = rows["param1s"]
+	var type_ids: PackedInt64Array = rows["type_ids"]
+	var req_types: PackedInt64Array = rows["req_types"]
+	var req_levels: PackedInt64Array = rows["req_levels"]
+	var attacks: PackedInt64Array = rows["attacks"]
+	var defences: PackedFloat64Array = rows["defences"]
+	var m := 0
+	for i in ids.size():
+		var item := Item.new()
+		item.id = ids[i]
+		item.code_name = code_names[i]
+		item.item_name = item_names[i]
+		item.name_strid = name_strids[i]
+		item.max_stack = max_stacks[i]
+		item.sell_price = sell_prices[i]
+		item.icon_path = icon_paths[i]
+		var count: int = model_counts[i]
+		item.model_paths = models.slice(m, m + count)
+		m += count
+		item.model_path = item.model_paths[0] if not item.model_paths.is_empty() else ""
+		item.drop_model_path = drop_models[i]
+		for k in range(4):
+			item.type_ids.append(type_ids[i * 4 + k])
+		item.country = countries[i]
+		item.req_gender = req_genders[i]
+		for pair in range(REQ_LEVEL_PAIRS):
+			item.req_level_types.append(req_types[i * REQ_LEVEL_PAIRS + pair])
+			item.req_levels.append(req_levels[i * REQ_LEVEL_PAIRS + pair])
+		item.durability = durabilities[i]
+		var a := i * 8
+		item.phys_atk = Vector2i(attacks[a], attacks[a + 1])
+		item.mag_atk = Vector2i(attacks[a + 2], attacks[a + 3])
+		item.phys_reinforce = Vector2i(attacks[a + 4], attacks[a + 5])
+		item.mag_reinforce = Vector2i(attacks[a + 6], attacks[a + 7])
+		item.attack_rate = attack_rates[i]
+		item.critical = criticals[i]
+		item.attack_range = ranges[i]
+		item.param1 = param1s[i]
+		var d := i * 6
+		item.phys_def = Vector2(defences[d], defences[d + 1])
+		item.mag_def = Vector2(defences[d + 2], defences[d + 3])
+		item.block = Vector2(defences[d + 4], defences[d + 5])
+		into[item.id] = item
+	return true
 
 ## A `.bsr` path in the column the layout puts it in, or "" for the `xxx`
 ## the table writes where a row has no model -- checked by extension so a
@@ -408,10 +483,13 @@ static func _find_icon_path(cols: PackedStringArray) -> String:
 static func _lines(data: PackedByteArray) -> PackedStringArray:
 	if data.is_empty():
 		return PackedStringArray()
+	var _pp := ParseProfile.t0()
 	var raw := data
 	if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
 		raw = raw.slice(2)
 	var text := raw.get_string_from_utf16()
 	if text.is_empty():
 		text = raw.get_string_from_utf8()
-	return text.replace("\r", "").split("\n")
+	var _out := text.replace("\r", "").split("\n")
+	ParseProfile.add("text.decode_split", _pp, data.size())
+	return _out

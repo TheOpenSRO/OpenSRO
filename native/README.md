@@ -11,6 +11,7 @@ before.
 |---|---|---|
 | pk2 archive: open, directory read + Blowfish decrypt, name index, path lookup, positional file read | `Pk2Reader` internals and `ObjectLoader.find_file`'s scan | `src/core/pk2.rs`, `src/core/blowfish.rs` |
 | `.ddj` per-pixel decodes: uncompressed (channel masks) and A16B16G16R16F (`q`) | the two looping branches of `DdjReader.to_image` | `src/core/ddj.rs` |
+| the UTF-16 text tables (round 671): the decode, the line and tab splits and each reader's row loop for characterdata, npcpos, itemdata, the UI string tables and skilleffect | `NpcTableReader`'s ten parsers, `ItemTableReader.parse`, `UiTextTable.parse`, `SkillEffectReader.parse_all` | `src/core/tables.rs`, binding `src/gd_tables.rs` |
 
 - `src/core/` is plain Rust with no Godot types. It is unit-tested with `cargo test` and can sit
   behind a C ABI and be linked statically into custom export templates later, if antivirus
@@ -21,6 +22,37 @@ before.
 - The client never names these classes as types. `client/scripts/pk2/native_assets.gd` looks them
   up by string through `ClassDB`, so every script compiles without the library.
   `client/srrevamp_native.gdextension` names the library files.
+
+## The text tables (round 671)
+
+`src/core/tables.rs` ports each table reader's row loop one to one (its header lists which
+function is which), with Godot 4.2.2's own string rules ported from `core/string/ustring.cpp`:
+`parse_utf16` (a second BOM, FFFE byte-swapping, the stop at the first NUL), `strip_edges`,
+`split`, `is_valid_int`, `to_int`, `is_valid_float` and `to_float` (`built_in_strtod`, which is not
+a correctly rounded parse; `"1.5e"` is 15). `SrNativeTables` (`src/gd_tables.rs`) answers one
+Dictionary of packed columns per call: the kept rows, in file order.
+
+What stays in GDScript, on purpose:
+- The merge into the caller's Dictionary, in row order, so a later duplicate id still overwrites
+  an earlier one ("last wins"), and UiTextTable's "first wins" check.
+- Building the readers' objects (`Item`, `Spawn`, `Vector3`, `Vector2`): their API is unchanged.
+- Every `to_lower`/`to_upper` whose result is KEPT. Godot 4.2.2 lower-cases 'I' to U+0131
+  (`ucaps.h`'s `reverse_caps_table` holds both {0x49, 0x69} and {0x49, 0x131}, and the binary
+  search finds the second), so a lower-cased key is left to the engine that defines it. A test of a
+  lower-cased value against a fixed ASCII suffix (`.bsr`, `.ddj`, `.efp`, `xxx`, `none`) is ported:
+  no character outside ASCII lower-cases into ASCII in that table, and none of them has an 'i'.
+
+Inputs the port hands back with `{"fallback": why}`, so the GDScript reads them exactly as before:
+a decode that comes out empty (the readers then try UTF-8), an unpaired UTF-16 surrogate (Godot
+keeps a lone trail as a character, which a Rust `String` cannot hold, and on a lone lead followed by
+another character Godot 4.2.2 reads uninitialised memory), a negative UI language column, and a
+float exponent long enough to overflow the C++ `int`. `NativeAssets.table_rows()` turns a fallback
+into `{}` and the caller runs its own loop.
+
+The parity check is `client/tools/table_parity.gd` (below); the synthetic one is
+`client/scripts/npc/native_tables_test.gd`, which runs every reader both ways on tables built to
+hit the traps (BOMs, CRLF, comments, trailing tabs, duplicates, surrogates, number quirks) and from
+8 worker threads at once.
 
 ## Build
 
@@ -70,8 +102,9 @@ position (`pread` / `seek_read`), so threads share no file cursor.
 ## Test
 
 ```
-cd native && cargo test --no-default-features          # the core: Blowfish vectors, a synthetic pk2, ddj decodes
+cd native && cargo test --no-default-features          # the core: Blowfish vectors, a synthetic pk2, ddj decodes, text tables
 client/tools/remote_godot.sh script res://scripts/pk2/native_assets_test.gd   # both paths, synthetic input, on the box
+client/tools/remote_godot.sh script res://scripts/npc/native_tables_test.gd    # the text tables, synthetic, both ways
 ```
 
 `remote_godot.sh` ships `client/native_bin` when it exists. `NO_NATIVE=1 client/tools/remote_godot.sh
@@ -90,10 +123,24 @@ never committed.
 client/tools/remote_godot.sh script res://tools/native_parity.gd -- --pk2-dir=/opt/sro-files/client
 ```
 
-**The negative.** `cargo build --release --features parity-negative` makes a library with two
+**The negative.** `cargo build --release --features parity-negative` makes a library with
 deliberate, subtle bugs: it drops the 20th entry slot of each directory block, and it leaves an
 uncompressed texture's BGR unswizzled. Both the parity tool and `native_assets_test.gd` must FAIL
-against it, and so must `cargo test --features parity-negative`.
+against it, and so must `cargo test --features parity-negative`. Round 671 adds three in the text
+tables: a characterdata model column keeps its whole comma list (not the first file), a UI table
+drops the first row of a duplicated token, and `to_float` uses Rust's correctly rounded parse.
+`table_parity.gd` and `native_tables_test.gd` must FAIL against it.
+
+The text tables have their own parity check, over every `.txt` in every archive (round 671):
+
+```
+client/tools/remote_godot.sh script res://tools/table_parity.gd -- --pk2-dir=/opt/sro-files/client
+```
+
+It compares the decode and both split shapes cell for cell, Godot's number rules on every distinct
+cell (floats by bit pattern), every ported reader's whole result both ways (keys, key order, every
+value), and the characterdata and itemdata parts merged in World3D's order. A table the port hands
+back must be one whose UTF-16 really is not plain, and every reader must hand it back.
 
 ## A/B
 

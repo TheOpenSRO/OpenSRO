@@ -64,8 +64,21 @@ static func _pp_parse(data: PackedByteArray, lang_col: int = COL_ENGLISH, keep_f
 	var table := UiTextTable.new()
 	if data.is_empty():
 		return table
+	# The native port of the row loop below (round 671; native/src/core/
+	# tables.rs `ui_text_rows`): every accepted row's token and value in file
+	# order, with the keep-first rule applied here as below.
+	var rows := NativeAssets.table_rows("ui_text_rows", [data, lang_col])
+	if not rows.is_empty():
+		var tokens: PackedStringArray = rows["keys"]
+		var values: PackedStringArray = rows["values"]
+		for i in tokens.size():
+			if keep_first and table._strings.has(tokens[i]):
+				continue
+			table._strings[tokens[i]] = values[i]
+		return table
 
 	# Strip UTF-16LE BOM if present (0xFF, 0xFE)
+	var _pp := ParseProfile.t0()
 	var raw := data
 	if raw.size() >= 2 and raw[0] == 0xFF and raw[1] == 0xFE:
 		raw = raw.slice(2)
@@ -78,6 +91,7 @@ static func _pp_parse(data: PackedByteArray, lang_col: int = COL_ENGLISH, keep_f
 		full_text = raw.get_string_from_utf8()
 
 	var lines := full_text.split("\n")
+	ParseProfile.add("text.decode_split", _pp, data.size())
 	for line in lines:
 		var clean_line := line.strip_edges()
 		if clean_line.is_empty() or clean_line.begins_with("//") or clean_line.begins_with("#"):
