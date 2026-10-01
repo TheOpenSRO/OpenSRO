@@ -7094,6 +7094,119 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-seventy-fifth round: the Jangan gate after a death -- not reproduced on dev under srrevamp-01's flags; the live server was never asked, the server's half is now pinned by tests, and a world click the client drops now shows in the tester's log
+
+The user (2026-10-01, playing v0.1.467): "Also when I died it seems the Jangan teleport stopped
+working? I had to manually tp to donwhang."
+
+Labels: MEASURED (srrevamp-01's own server log; live runs on the render box), READ (this tree's
+code), INFERRED, OURS, OPEN. **The cause on the player's machine is not found.** This round did
+not reproduce the bug and ships no fix for it; what it ships is below, in section 4.
+
+### 1. What the live server saw (MEASURED, srrevamp-01's docker log)
+
+The container ran 4104a11 (v0.1.467) from 09:42:24 UTC, with `-full-map` (so `-single-frame`),
+the monster flags, `-player-dead-state` and `-persist-position` on (its own boot lines). Every
+packet it reads is logged (`cmd/server` main.go, `"packet received"` with its opcode). One player
+session ran, from 16:32:40, as character 11:
+
+| UTC | What the log shows |
+|---|---|
+| 16:32:40 | enters the world at a saved place, AOI cell (-65, -20), 10 regions west of Jangan |
+| 16:33:52 | `gm command ... line="speed 3" reply="run speed 315 (x3)"` |
+| 16:33-16:34 | runs east to Donwhang (cells -88, -24 to -28), buys (0x0050), changes gear (0x0042/0x0043) |
+| 16:35-18:04 | no packets but a few walks; `durability lost character=11` lines all along: monsters hit it in town (round 674's report) |
+| 18:04:20.565 | OpRevive 0x0028, 1 byte; `aoi: view moved ... from=-80,-23 to=3,3`: option 1, taken to the return point in Jangan |
+| 18:04:21.471 | one OpMove of 13 bytes (the relocated flag: the client's landing report), cell 3,3 -> 3,2 |
+| 18:04:25.4-28.2 | 58 moves at 20 a second: a run of about 3 s |
+| 18:04:27.579 | cell 3,2 -> **3,1**, the gate's cell (Jangan's gate is at world (299, -418), section 2) |
+| 18:04:30-34 | 30 moves in short bursts (6, 4, 8, 11, 1 a second) |
+| 18:04:36.909 | OpChangeZone 0x0026, 9 bytes (the zone box), 2.5 s after the last move; then cells -87,-27 onwards: Donwhang |
+
+Over the whole log: **0 OpTeleportUse** (`opcode=243`, 0x00F3), **0 `teleport refused`** and
+**0 `msg=teleport`** lines. So the player's client never asked the server for a teleport, at the
+gate or anywhere else, and the server refused nothing. INFERRED from the timeline: the player ran
+to the gate, clicked around it for about 4 s with no talk box or no request coming of it, and gave
+up for the zone box. What those clicks hit is not in any log this project holds (section 5).
+
+The server already logs every refused teleport at INFO, with the account, the code, the reason and
+the gate (`teleporter.use`'s `refuse` closure, READ; it has done so since round 576). The brief's
+"the server doesn't log teleport refusals at INFO" was wrong; `TestRefusedTeleportIsLogged` now
+pins the line.
+
+### 2. Reproduction on dev (MEASURED, render box, lane `deathtp675`)
+
+A server built from 4104a11 with the live flags (`-full-map -monster-ai -monster-strike-push
+-monster-spawn-push -monster-battle -monster-aggro -player-dead-state`, plus `-persist-position`
+from run i2 on; `-in-memory`, where the live server runs PostgreSQL), the retail export's teleport
+tables, the full-map nest DB, and the client from the same commit. Six runs, each: die to monsters,
+revive with option 1, reach Jangan's gate, ask for Donwhang (teleportdata 2).
+
+| Run | Death | Revive and gate | Result |
+|---|---|---|---|
+| r1 | level 30 GM, the full map's densest window (-223840, 13920) | `SRREVAMP_QA_REVIVE_OPTION=1`; `SRREVAMP_QA_CLICK=gate` + `SRREVAMP_QA_TELEPORT=2` | `QA CLICK gate: dispatched -> talk`, `teleport requested 1 -> 2`, accepted |
+| i1 | same | **real X input**: the dead window's "Resurrect at the specified point", walked by ground clicks, clicked the gate, "Select a teleport area", "Donwhang" | server `msg=teleport ... gate=STORE_CH_GATE dest=GATE_WC fee=0 waiver=2`; arrival at 102/153 (957, 1508) |
+| i2 (twice) | level 5, **saved place at the user's death area** (-25300, -7500), re-entered there (`the server restored jangan at (-25300.0, -11.9, -7500.0)`), `/speed 3`, killed by Earth Ghosts; the second death inside Donwhang | real X input as i1; the second time the gate clicked from under its platform at local (1250, 1330) | both accepted (`waiver=1`) |
+| r2 | as r1 | as r1, **with the native (Rust) readers** (`NativeAssets: native readers ON`), as the release ships | accepted |
+| i5 | as i2, level 30 | real X input at **3840x2160, UI scale 1.95**, through Boot.tscn (the user's setup in round 672's report) | accepted |
+
+In every run the gate was bound after the revive's zone change (`teleport gate STORE_CH_GATE bound
+to Obj_cj_portal_229 in RealMapObjects_97_168 (3.6 units ...; point 1, 6 piece bod(ies) on the talk
+layer)`), the talk box opened on the first click, and the server took the request. The live
+timeline's landing report (18:04:21) is the same message the runs' clients sent (13 bytes, then
+cell 3,3 -> 3,2).
+
+### 3. The brief's hypotheses
+
+- **The return point's frame against the gate's (MEASURED, no).** Under `-single-frame` the return
+  point is `arrival("jangan")`, the world bucket at world (0, 0), and `teleporter.reach` names the
+  hub position in `worldmap.WorldOrigin`'s frame, which is Jangan's own: the requester is in
+  97/168 at local (960, 960), the gate building at (1254, 1374), 508 units, inside the 800 of
+  `IsWithinInteractionRange` (READ, round 642). Every live run passed it; the tests below run both
+  frames.
+- **The return guard (MEASURED, no).** It drops moves more than 400 units from both landing points
+  until one comes near. The client's landing report ends it -- the live log has that report at
+  18:04:21 and the AOI took it. And with every move dropped the server keeps the player at the
+  landing, which is still within 800 of the building. `TestTeleportFromJanganAfterReturnPointRevive`
+  runs that case; a mutant that refused any teleport while a guard is armed fails exactly the two
+  no-landing-report subtests (MEASURED), so the test does see the guard.
+- **Dead or revive state left set (MEASURED, no).** After each revive the hub has the character
+  alive (`reviveWith` swaps 2 -> 1), and the teleport handler's only life test is `LifeDead`. The
+  tests revive by option 1, option 2 and the flag-off return, and teleport.
+- **A client lock never cleared (not reproduced).** `_leave_dead_state` clears `_player_dead` and
+  the prompt; `_teleport_request_pending` cannot be set without an OpTeleportUse going out, and
+  none did. A world click while `_player_dead` is set was dropped without a word
+  (`_dispatch_left_click`'s first test): that is now logged (section 4).
+- **The GM `/goto`.** The player used the zone box (OpChangeZone), not `/goto` (no `gm command`
+  line at 18:04). Both land through `arrival`/`warpTo` like the return point; no frame difference.
+
+### 4. What this round ships
+
+- `server/internal/session/deathtp675_test.go`: die -> come back -> Jangan's gate -> Donwhang, by
+  option 1 (with and without the client's landing report, the guard dropping the walk in the
+  second), option 2 at level 10, and the flag-off `returnAfterKill`, each with `-single-frame` on and
+  off; and `TestRefusedTeleportIsLogged`. **They pass on the base (4104a11) as on this branch**:
+  there is no negative, because nothing on the server was found to fix. They pin the behaviour so a
+  later change to the return point, the guard or the dead state cannot refuse the gate unseen.
+- The client logs a world click it drops while dead (`CLICK: at (x, y) ignored -- the player is
+  dead`, MEASURED in run i4), and a click whose talk ray hit something on the talk layer that is
+  no NPC or gate (`CLICK: npc ray: <collider path> (layer ...) -> no npc_name up the chain`; until
+  now printed only under the QA click hook, which printed it in rounds 577-650's runs; no click in
+  run i4 hit such a body, so the new spelling is not seen live). With the `PICK:` line every click already prints and
+  the `NPCTALK` lines a talk prints, a tester's log now says what each click at a gate did.
+
+The perf gate was not run: the client change is two `print`s on the click path, no world, drawing
+or loading code.
+
+### 5. OPEN
+
+- **The cause on the player's machine.** The next measurement is the player's client log for
+  18:04:20-18:04:37 UTC on 2026-10-01 (`user://logs/srrevamp.log`; `/log` in game shows where,
+  docs/HELP_PLAYING.md): its `PICK:`, `NPCTALK`, `World3D:
+  teleport ...` and `talk box closes` lines say whether the clicks reached the gate. It predates
+  this round's `CLICK:` lines. Not covered by the runs: the Windows build and its DLL, PostgreSQL
+  storage, and 90 minutes in the world before the death.
+
 ## Six-hundred-and-seventy-fourth round: towns are safe from monsters -- a monster that follows a player into a town disappears at the town's region line, as the original server removes it
 
 The user (2026-10-01): "There should also be safe zones in towns but I had a mob follow me into town

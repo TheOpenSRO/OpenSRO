@@ -14973,6 +14973,9 @@ func _dispatch_left_click(screen_pos: Vector2) -> String:
 	if _player_dead:
 		# Dead (round 548): a click on the world does nothing -- no pick-up,
 		# attack, talk or walk; the Revive button is what there is to click.
+		# Logged (round 675): a click lost to a dead state the player cannot
+		# see must show in the tester's log.
+		print("CLICK: at %s ignored -- the player is dead" % str(screen_pos))
 		return "dead"
 	# Ground-pick mode (round 617): the click is the skill's point, not a
 	# pick-up, an attack, a talk or a walk.
@@ -15023,8 +15026,10 @@ func _try_talk_to_npc(screen_pos: Vector2) -> bool:
 	while node != null and not node.has_meta("npc_name"):
 		node = node.get_parent()
 	if node == null:
-		if _qa_click_logging:
-			print("QA CLICK   npc ray: %s" % _describe_click_hit(hit, "npc_name"))
+		# Round 675: what took a click that talked to nobody -- a gate whose
+		# portal is not bound, or a wall on the talk layer in front of it --
+		# goes to the tester's log, not only the QA hook's.
+		print("%s npc ray: %s" % ["QA CLICK  " if _qa_click_logging else "CLICK:", _describe_click_hit(hit, "npc_name")])
 		return false
 	if _qa_click_logging:
 		print("QA CLICK   npc ray: %s" % _describe_click_hit(hit, "npc_name"))
