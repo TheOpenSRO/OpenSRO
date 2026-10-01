@@ -291,6 +291,10 @@ type monsterAI struct {
 	minions  []int64
 	onMinion func(id int64)
 	summons  int64
+	// townPlaced counts the monsters removed on placement in a town since
+	// townPlacedSince, for the pass's periodic INFO line (safezone.go).
+	townPlaced      int
+	townPlacedSince time.Time
 }
 
 // struckEvent is a blow the tick has not seen yet.
@@ -446,7 +450,16 @@ type monsterPush struct {
 	cell   combat.Cell
 	id     int64 // the monster (round 656's second review: mayShowLeg)
 	packet *proto.Packet
+	// also is sessions that get the push besides the cell's watchers at the
+	// send: a town removal's watchers as they were at the removal (round
+	// 674's review, safezone.go).
+	also []*gateway.Session
 }
+
+// tickPushHook, when set, runs in the pass between its unlock and its pushes:
+// a test's window into the gap a view can move in (round 674's review). nil
+// in production.
+var tickPushHook func()
 
 // RunMonsterAI installs the monster AI before it returns, then ticks it every
 // MonsterAITick on its own goroutine until ctx ends. cmd/server calls it only
@@ -646,6 +659,19 @@ func (a *monsterAI) tick(now time.Time) {
 		a.crossed = a.monsters.StepCells(dt, awake, a.crossed[:0])
 	}
 
+	// 1b. Towns (round 674, safezone.go): a monster the step carried into a
+	// town region is removed -- CGObjMob::SetCurRegion's SetLifeState(3) on
+	// every region change (READ). A region line is a cell line, so the
+	// crossings are every region change the step made. Removed before the
+	// pass reads the live monsters, so the brain goes as a dead monster's.
+	if safeRegions.Load() != nil {
+		for _, ch := range a.crossed {
+			if m, ok := a.monsters.Get(ch.ID); ok {
+				a.removeIfInTown(m, false)
+			}
+		}
+	}
+
 	// 2. A brain per live monster. A new one faces the heading it hatched
 	// with (combat.Monster.Heading) and leaves SPAWN at once: message 0x21's
 	// default transition is IDLE. OWN DESIGN: SPAWN::OnUpdate's timing is
@@ -683,6 +709,13 @@ func (a *monsterAI) tick(now time.Time) {
 			b := a.wake(*m, mem)
 			b.seenTick = a.tickN
 			a.brains[m.ID] = b
+			continue
+		}
+		// Round 674: a monster first met standing in a town -- hatched or
+		// GM-spawned there -- is removed before it gets a brain: its first
+		// placement is a region change too (CGObj::EnterWorld -> MoveTo ->
+		// SetCurRegion, READ).
+		if a.removeIfInTown(*m, true) {
 			continue
 		}
 		b := a.newBrain(*m)
@@ -727,9 +760,13 @@ func (a *monsterAI) tick(now time.Time) {
 		}
 	}
 
+	a.logTownPlaced()
 	pending, handoffs, minions := a.pending, a.handoffs, a.minions
 	a.pending, a.handoffs, a.minions = nil, nil, nil
 	a.mu.Unlock()
+	if tickPushHook != nil {
+		tickPushHook()
+	}
 
 	// 5. The pushes, after the pass: first what each player is owed for the
 	// monsters that crossed into or out of its window (round 656), then the
@@ -2050,6 +2087,7 @@ func (a *monsterAI) deliver(p monsterPush, buf []*gateway.Session) []*gateway.Se
 		// leg for a body it has never been told about by asking for the whole
 		// list (World3D._on_monster_moved).
 		buf = v.appendWatchers(buf, p.cell)
+		buf = unionSessions(buf, p.also)
 		for _, sess := range buf {
 			a.sendIfShown(v, sess, p)
 		}
@@ -2061,8 +2099,26 @@ func (a *monsterAI) deliver(p monsterPush, buf []*gateway.Session) []*gateway.Se
 			}
 		}
 	}
+	buf = unionSessions(buf, p.also)
 	for _, sess := range buf {
 		a.sendUnderWireLock(sess, p.packet)
+	}
+	return buf
+}
+
+// unionSessions appends to buf each session of also it does not hold yet.
+func unionSessions(buf, also []*gateway.Session) []*gateway.Session {
+	for _, s := range also {
+		dup := false
+		for _, have := range buf {
+			if have.ID() == s.ID() {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			buf = append(buf, s)
+		}
 	}
 	return buf
 }
