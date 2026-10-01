@@ -238,6 +238,113 @@ static func _pp_parse(data: PackedByteArray) -> ParsedRegion:
 
 	return r
 
+## The same parse through the native decode (round 670): the bytes decoded in
+## Rust (native/src/core/terrain.rs, a one-to-one port of _pp_parse, held to
+## it on every real `.nvm` by tools/native_parity_terrain.gd) and this reader's
+## ParsedRegion built from the columns. Null without the native readers.
+##
+## NOT on the load path. Round 670 measured it: the decode takes about 0.1
+## ms a file, but building this reader's objects from the columns costs as
+## much as the whole GDScript parse (WORLD_ISSUES, round 670), so parse()
+## stays in GDScript. It is the decode a later round needs once the
+## region's readers move onto the columns (docs/TODO.md).
+static func parse_native(data: PackedByteArray) -> ParsedRegion:
+	var native := NativeAssets.terrain()
+	if native == null:
+		return null
+	return _from_native(native.call("nvm_parse", data))
+
+## The ParsedRegion of a native decode (SrNativeTerrain.nvm_parse): the same
+## objects the GDScript parse builds, field for field; null, with the
+## GDScript parse's own error, on {error}.
+static func _from_native(d: Dictionary) -> ParsedRegion:
+	if d.has("error"):
+		push_error(d["error"])
+		return null
+	var r := ParsedRegion.new()
+	var rid: PackedInt64Array = d["obj_resource_id"]
+	var pos: PackedFloat32Array = d["obj_position"]
+	var is_static: PackedInt32Array = d["obj_is_static"]
+	var yaw: PackedFloat32Array = d["obj_yaw"]
+	var uid: PackedInt32Array = d["obj_uid"]
+	var is_big: PackedByteArray = d["obj_is_big"]
+	var is_struct: PackedByteArray = d["obj_is_struct"]
+	var region_id: PackedInt32Array = d["obj_region_id"]
+	var link_start: PackedInt32Array = d["link_start"]
+	var links: PackedInt32Array = d["links"]
+	for i in range(rid.size()):
+		var obj := MapObject.new()
+		obj.resource_id = rid[i]
+		obj.local_position = Vector3(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2])
+		obj.is_static = is_static[i]
+		obj.yaw = yaw[i]
+		obj.uid = uid[i]
+		obj.is_big = is_big[i] != 0
+		obj.is_struct = is_struct[i] != 0
+		obj.region_id = region_id[i]
+		for l in range(link_start[i], link_start[i + 1]):
+			var link := LinkedEdge.new()
+			link.other_object_index = links[3 * l]
+			link.other_edge_index = links[3 * l + 1]
+			link.edge_index = links[3 * l + 2]
+			obj.linked_edges.append(link)
+		r.objects.append(obj)
+
+	r.walkable_cell_count = d["walkable_cell_count"]
+	var rects: PackedFloat32Array = d["cell_rects"]
+	var cell_start: PackedInt32Array = d["cell_start"]
+	var cell_objects: PackedInt32Array = d["cell_objects"]
+	for i in range(cell_start.size() - 1):
+		var cell := Cell.new()
+		cell.rect_min = Vector2(rects[4 * i], rects[4 * i + 1])
+		cell.rect_max = Vector2(rects[4 * i + 2], rects[4 * i + 3])
+		for k in range(cell_start[i], cell_start[i + 1]):
+			cell.object_indices.append(cell_objects[k])
+		r.cells.append(cell)
+
+	r.global_edges = _edges_from_native(d, "ge_")
+	r.internal_edges = _edges_from_native(d, "ie_")
+
+	var tile_cell: PackedInt32Array = d["tile_cell_index"]
+	var tile_flags: PackedInt32Array = d["tile_flags"]
+	var tile_tex: PackedInt32Array = d["tile_texture_id"]
+	for i in range(TILE_COUNT):
+		var tile := Tile.new()
+		tile.cell_index = tile_cell[i]
+		tile.flags = tile_flags[i]
+		tile.texture_id = tile_tex[i]
+		r.tiles.append(tile)
+
+	r.heights = d["heights"]
+	r.plane_types = d["plane_types"]
+	r.plane_heights = d["plane_heights"]
+	return r
+
+## One edge list of a native decode (`ge_` global, `ie_` internal).
+static func _edges_from_native(d: Dictionary, prefix: String) -> Array[Edge]:
+	var lines: PackedFloat32Array = d[prefix + "lines"]
+	var flags: PackedInt32Array = d[prefix + "flags"]
+	var dir_from: PackedInt32Array = d[prefix + "dir_from"]
+	var dir_to: PackedInt32Array = d[prefix + "dir_to"]
+	var cell_from: PackedInt32Array = d[prefix + "cell_from"]
+	var cell_to: PackedInt32Array = d[prefix + "cell_to"]
+	var region_from: PackedInt32Array = d[prefix + "region_from"]
+	var region_to: PackedInt32Array = d[prefix + "region_to"]
+	var edges: Array[Edge] = []
+	for i in range(flags.size()):
+		var edge := Edge.new()
+		edge.line_min = Vector2(lines[4 * i], lines[4 * i + 1])
+		edge.line_max = Vector2(lines[4 * i + 2], lines[4 * i + 3])
+		edge.flags = flags[i]
+		edge.assoc_direction_from = dir_from[i]
+		edge.assoc_direction_to = dir_to[i]
+		edge.assoc_cell_index_from = cell_from[i]
+		edge.assoc_cell_index_to = cell_to[i]
+		edge.assoc_region_id_from = region_from[i]
+		edge.assoc_region_id_to = region_to[i]
+		edges.append(edge)
+	return edges
+
 ## Shared parser for GlobalEdges (is_global=true, carries real
 ## AssocRegionIdFrom/To) and InternalEdges (is_global=false, no region
 ## fields) -- identical shape otherwise. Returns [edges, new_offset] or

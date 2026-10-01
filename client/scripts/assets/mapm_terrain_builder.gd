@@ -495,6 +495,13 @@ static func lightmap_coord(i: int) -> float:
 ## terrain material's detail layer in MUL mode on UV2 (_surface_material).
 ## Returns an RGB8 Image, or null for no lightmap.
 static func lightmap_term(lightmap: Image, shadow: Color) -> Image:
+	var _pp := ParseProfile.t0()
+	var _out := _pp_lightmap_term(lightmap, shadow)
+	ParseProfile.add("mapm.lightmap_term", _pp)
+	return _out
+
+## The body of lightmap_term, timed by its wrapper above (ParseProfile, round 670).
+static func _pp_lightmap_term(lightmap: Image, shadow: Color) -> Image:
 	if lightmap == null or lightmap.is_empty():
 		return null
 	var img := lightmap.duplicate() as Image
@@ -505,6 +512,15 @@ static func lightmap_term(lightmap: Image, shadow: Color) -> Image:
 		clampi(roundi(shadow.r * 255.0), 0, 255),
 		clampi(roundi(shadow.g * 255.0), 0, 255),
 		clampi(roundi(shadow.b * 255.0), 0, 255)])
+	# The per-byte loop below, in Rust when the native readers are on
+	# (SrNativeTerrain.lightmap_add, round 670; tools/native_parity_terrain.gd
+	# holds the two to each other on every real `.t`).
+	var native := NativeAssets.terrain()
+	if native != null:
+		var src := img.get_data()
+		var out: PackedByteArray = native.call("lightmap_add", src, add[0], add[1], add[2])
+		if out.size() == src.size():
+			return Image.create_from_data(img.get_width(), img.get_height(), false, Image.FORMAT_RGB8, out)
 	var luts: Array[PackedByteArray] = []
 	for ch in range(3):
 		var lut := PackedByteArray()

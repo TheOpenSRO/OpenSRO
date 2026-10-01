@@ -892,9 +892,30 @@ what the same `SRREVAMP_PARSE_PROFILE=1` Jangan entry measured with the native r
       arrays and keeps them on `ParsedMesh` saves both. Callers that read `mesh.vertices`
       (character, monster and skinned assemblers, `bms_collision`) still need the objects, or
       need moving onto the arrays.
-- [ ] **`MapmReader.parse` and `NvmReader.parse`**: 557 and 453 ms on the workers per 25-region
-      entry. Off the main thread, so they cost entry time only while the drain waits for
-      them.
+- [~] **The terrain readers** (round 670, WORLD_ISSUES.md).
+  - Done: `MapmTerrainBuilder.lightmap_term`'s per-byte loop is native. It took 28 ms a region
+    in GDScript and takes 1.2 ms. That saves about 0.7 s of worker time and 27 ms of the
+    centre cell's main thread per Jangan entry.
+  - Done: the `.m` and `.nvm` decodes are ported and proven on every real file
+    (`MapmReader.parse_native`, `NvmReader.parse_native`). They are not on the load path,
+    because the reader's objects cost as much to build from the columns as the GDScript
+    parse costs whole. The decode is 0.1 ms; the build is 13 ms a `.m` and 12 ms a `.nvm`.
+  - Not ported, too small: `.o2` (13 ms an entry), the object index (`ObjidxReader`, 7 ms once), `tile2d.ifo`
+    (2 ms once) and `.t` (33 ms an entry, mostly the engine's DXT1 decompress).
+- [ ] **Keep the terrain columns on the region (an API change).** This is what makes the
+      `.m`/`.nvm` port pay. `ParsedRegion` would carry the packed heights and extras (and for
+      `.nvm`, the tiles), and its readers would move onto them:
+      `TerrainCollision.heights_from_region`, `MapmTerrainBuilder._full_region_cells`,
+      `MapmWater`, `NvmCollision`, `NavGraph` and `anim_sounds.material_at`. The
+      per-vertex and per-tile objects then go away. Worker time per Jangan entry at stake:
+      524 ms `.m` + 460 ms `.nvm` + 88 ms heights. `parse_native` and
+      `native_parity_terrain.gd` are already the proven decode.
+- [ ] **The terrain mesh build** (`prep.terrain.mesh`, `MapmTerrainBuilder.build_full_region_surfaces_textured`).
+      It is the largest item in the terrain prepare: 2.9 s of worker time and 90 ms of the
+      centre cell's main thread per Jangan entry (round 670, MEASURED). It is geometry and
+      lighting over the region's grid (normals, per-vertex light, the texture passes), not a
+      parse. Porting it means holding float32 vector and colour arithmetic to GDScript's bits,
+      or agreeing on a tolerance. Its own round.
 - [ ] **The NPC text tables** (`npcs [tables]`, about 570 ms on the main thread at the centre
       cell, unchanged by round 667): `NpcTableReader.parse_models`/`parse_codes`/`parse_names`
       and `UiTextTable.parse` over characterdata and textdata_object. These are UTF-16 split and

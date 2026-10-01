@@ -12,6 +12,8 @@ before.
 | pk2 archive: open, directory read + Blowfish decrypt, name index, path lookup, positional file read | `Pk2Reader` internals and `ObjectLoader.find_file`'s scan | `src/core/pk2.rs`, `src/core/blowfish.rs` |
 | `.ddj` per-pixel decodes: uncompressed (channel masks) and A16B16G16R16F (`q`) | the two looping branches of `DdjReader.to_image` | `src/core/ddj.rs` |
 
+| the lightmap term's per-byte loop; the `.m` (JMXVMAPM) and `.nvm` (JMXVNVM) decodes, proven but not on the load path (round 670) | `MapmTerrainBuilder.lightmap_term`'s loop; `MapmReader.parse` and `NvmReader.parse` through their `parse_native` | `src/core/terrain.rs`, binding `src/gd_terrain.rs` |
+
 - `src/core/` is plain Rust with no Godot types. It is unit-tested with `cargo test` and can sit
   behind a C ABI and be linked statically into custom export templates later, if antivirus
   software objects to a separate DLL.
@@ -21,6 +23,39 @@ before.
 - The client never names these classes as types. `client/scripts/pk2/native_assets.gd` looks them
   up by string through `ClassDB`, so every script compiles without the library.
   `client/srrevamp_native.gdextension` names the library files.
+
+### The terrain parsers (round 670)
+
+`SrNativeTerrain` (`src/gd_terrain.rs`) is its own class, reached through
+`NativeAssets.terrain()`. It is stateless; one instance serves every thread, made on the first
+call under a lock.
+
+- **On the load path: `lightmap_add(rgb, r, g, b)`.** It is `MapmTerrainBuilder.lightmap_term`'s
+  per-byte loop: each RGB8 channel raised by the environment's TerrainShadowColor and saturated
+  at 255. It took 28 ms a region in GDScript and takes 1.2 ms. On input that is not whole pixels
+  it returns an empty array, and the GDScript loop runs and reports the problem.
+- **Ported and proven, but not on the load path: `mapm_parse(bytes)` and `nvm_parse(bytes)`.**
+  - Each returns one Dictionary of packed columns, one array per field, or `{error}` with the
+    GDScript reader's own message.
+  - `MapmReader.parse_native` and `NvmReader.parse_native` rebuild the reader's own
+    `ParsedRegion` from those columns (`_from_native`).
+  - `parse()` stays in GDScript, because round 670 measured no gain.
+    - The decode takes about 0.1 ms a file.
+    - Building the reader's objects from the columns costs as much as the whole GDScript parse:
+      10,404 `Vertex` objects for a `.m`, and 9,216 `Tile` objects plus the cells and edges for
+      a `.nvm`.
+    - The numbers are in WORLD_ISSUES, round 670.
+  - The parity tool and `terrain_native_test.gd` hold `parse_native` to `parse` on every real
+    file. That makes it the decode the next step needs: keeping the columns on the region and
+    moving its readers onto them (TerrainCollision, MapmTerrainBuilder, MapmWater, NavGraph).
+    That step changes the API (docs/TODO.md).
+- **Floats keep GDScript's bits.** GDScript widens each float32 to a 64-bit float and narrows it
+  again, and on x86-64 that sets a signalling NaN's quiet bit. `f32_gd` does the same.
+- **Not ported, measured too small:**
+  - `.o2` (`MapO2Reader.parse`): 13 ms an entry.
+  - The object index (`ObjidxReader`): 7 ms, once.
+  - `tile2d.ifo`: 2 ms, once.
+  - `.t` (`MapTReader.parse`): 33 ms an entry, most of it the engine's own DXT1 decompress.
 
 ## Build
 
@@ -46,7 +81,7 @@ The client uses a library only when its `api()` returns exactly its own number. 
 The client refuses it with one log line naming both numbers, then reads in GDScript:
 
 ```
-NativeAssets: native readers OFF (library REFUSED: API 0, this client needs API 2 -- a stale library, rebuild it with native/build.sh) -- using the GDScript readers
+NativeAssets: native readers OFF (library REFUSED: API 0, this client needs API 3 -- a stale library, rebuild it with native/build.sh) -- using the GDScript readers
 ```
 
 The same line catches the release case: a DLL from an older release left next to a newer exe by an
@@ -70,7 +105,7 @@ position (`pread` / `seek_read`), so threads share no file cursor.
 ## Test
 
 ```
-cd native && cargo test --no-default-features          # the core: Blowfish vectors, a synthetic pk2, ddj decodes
+cd native && cargo test --no-default-features          # the core: Blowfish vectors, a synthetic pk2, ddj decodes, synthetic .m/.nvm (round 670)
 client/tools/remote_godot.sh script res://scripts/pk2/native_assets_test.gd   # both paths, synthetic input, on the box
 ```
 
@@ -90,10 +125,23 @@ never committed.
 client/tools/remote_godot.sh script res://tools/native_parity.gd -- --pk2-dir=/opt/sro-files/client
 ```
 
-**The negative.** `cargo build --release --features parity-negative` makes a library with two
-deliberate, subtle bugs: it drops the 20th entry slot of each directory block, and it leaves an
-uncompressed texture's BGR unswizzled. Both the parity tool and `native_assets_test.gd` must FAIL
-against it, and so must `cargo test --features parity-negative`.
+**The negative.** `cargo build --release --features parity-negative` makes a library with
+deliberate, subtle bugs:
+- it drops the 20th entry slot of each directory block;
+- it leaves an uncompressed texture's BGR unswizzled;
+- (round 670) it flips the lowest bit of every terrain float read at a file offset that is 13
+  modulo 97;
+- (round 670) it saturates a lightmap's green at 254 instead of 255.
+
+The parity tools, `native_assets_test.gd` and `terrain_native_test.gd` must all FAIL against it,
+and so must `cargo test --features parity-negative`.
+
+The terrain parsers have their own parity tool. It parses every `.m` and `.nvm` and
+lightmap-terms every `.t`, both ways, and compares float bit patterns:
+
+```
+client/tools/remote_godot.sh script res://tools/native_parity_terrain.gd -- --pk2-dir=/opt/sro-files/client
+```
 
 ## A/B
 
@@ -121,7 +169,7 @@ On a Windows PC, put `srrevamp_native.dll` in `native_bin\` next to the project,
 exe in an export (see below). Then check the log for:
 
 ```
-NativeAssets: native readers ON (library loaded, srrevamp_native 0.1.0, API 2, <path of the DLL>)
+NativeAssets: native readers ON (library loaded, srrevamp_native 0.1.0, API 3, <path of the DLL>)
 ```
 
 `native readers OFF (library not found: <path>)`, after Godot's `GDExtension dynamic library not

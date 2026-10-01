@@ -22,12 +22,15 @@ class_name NativeAssets
 ## outlives a pull, so a library built from older sources is the expected
 ## failure, not a hypothetical one -- it is refused with one log line naming
 ## both numbers, and the client reads in GDScript. Bump both together.
-const NATIVE_API := 2
+const NATIVE_API := 3
 
 ## The native pk2 archive class (native/src/gd.rs).
 const PK2_CLASS := "SrNativePk2"
 ## The native parsers (native/src/gd.rs), one static-like method per format.
 const PARSERS_CLASS := "SrNativeParsers"
+## The native terrain and navigation parsers (native/src/gd_terrain.rs, round
+## 670): `.m`, `.nvm` and the lightmap term's per-byte loop.
+const TERRAIN_CLASS := "SrNativeTerrain"
 
 ## Set by a parity check or a test to run the GDScript path in a process
 ## that has the library (native_parity.gd, native_assets_test.gd): every
@@ -119,6 +122,22 @@ static func parsers() -> Object:
 	if not available():
 		return null
 	return _parsers
+
+static var _terrain: Object = null
+static var _terrain_lock := Mutex.new()
+
+## The shared terrain parser object (stateless; its methods are thread-safe),
+## or null. Made on the first caller's thread under a lock: World3D's terrain
+## prepare may make that first call from two WorkerThreadPool tasks at once.
+static func terrain() -> Object:
+	if not available():
+		return null
+	_terrain_lock.lock()
+	if _terrain == null and ClassDB.class_exists(TERRAIN_CLASS):
+		_terrain = ClassDB.instantiate(TERRAIN_CLASS)
+	var t := _terrain
+	_terrain_lock.unlock()
+	return t
 
 ## A new native pk2 handle, or null when the library is unavailable.
 static func new_pk2() -> Object:

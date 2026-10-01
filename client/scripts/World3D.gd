@@ -6819,6 +6819,9 @@ static func _terrain_prepare(job: Dictionary) -> void:
 static func _job_lap(job: Dictionary, name: String, since_usec: int) -> int:
 	var now := Time.get_ticks_usec()
 	(job["laps"] as Array).append([name, now - since_usec])
+	# The same lap, by thread, in the PARSEPROF table (round 670): what ranks
+	# the prepare's own loops beside the parsers they call.
+	ParseProfile.add(("prep.objects." if job.has("mapo_path") else "prep.terrain.") + name, since_usec)
 	return now
 
 ## The prepare's first half: the region's `.m` read and parsed into
@@ -11260,6 +11263,11 @@ func _qa_step() -> void:
 	# below.
 	if _qa_tick % 600 == 0:
 		print(_load_timings.summary())
+		# The readers' table for the same window (round 670): a boundary
+		# crossing's parse time, apart from the entry's.
+		if ParseProfile.enabled:
+			print(ParseProfile.report("window"))
+			ParseProfile.reset()
 	if _qa_tick % 60 == 0:
 		var where := "off-region"
 		var standing := ""

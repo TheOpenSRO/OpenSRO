@@ -4,9 +4,10 @@
 /// (client/scripts/pk2/native_assets.gd, NATIVE_API). Bump it with any change to a binding's
 /// name, arguments or results, or to what a parser returns: a library whose number differs from
 /// the client's is refused, and the client reads in GDScript (round 667's review, M2).
-pub const API: i64 = 2;
+pub const API: i64 = 3;
 
 pub mod blowfish;
 mod blowfish_constants;
 pub mod ddj;
 pub mod pk2;
+pub mod terrain;
