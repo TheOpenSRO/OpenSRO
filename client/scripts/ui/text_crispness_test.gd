@@ -101,6 +101,55 @@ func _run() -> void:
 			c.get_class(), String(c.get("text")), c.get_theme_font_size("font_size")])
 		_check(c.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST, "%s '%s' samples its glyphs NEAREST (got %d)" % [
 			c.get_class(), String(c.get("text")), c.texture_filter])
+	# A dialog built off-tree and added in one go, the way HudPanels makes its
+	# buy/sell, gold, revive and guild dialogs: Buttons and a Label nested
+	# three deep, text set before the add and, on one Button, after it. The
+	# watcher must handle each node once it is IN the tree, where it resolves
+	# the root's face -- handled from its ancestor's signal it was guarded in
+	# Godot's default face and kept it (round 672's review, H1).
+	var dialog := PanelContainer.new()
+	var col := VBoxContainer.new()
+	dialog.add_child(col)
+	var row := HBoxContainer.new()
+	col.add_child(row)
+	var nested: Array[Control] = []
+	for t in ["Buy", "Cancel"]:
+		var nb := Button.new()
+		nb.text = t
+		row.add_child(nb)
+		nested.append(nb)
+	var later := Button.new()
+	row.add_child(later)
+	nested.append(later)
+	var nl := Label.new()
+	nl.text = "Quantity"
+	col.add_child(nl)
+	nested.append(nl)
+	root.add_child(dialog)
+	later.text = "Withdraw"
+	await process_frame
+	for c in nested:
+		var f := c.get_theme_font("font")
+		var face := (f as FontVariation).base_font if f is FontVariation else f
+		_check(face == font, "nested %s '%s' in a dialog added in one go draws in the client's face (got %s)" % [
+			c.get_class(), String(c.get("text")), "Godot's default" if face == ThemeDB.fallback_font else str(face)])
+		_check(c.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST, "nested %s '%s' samples NEAREST" % [
+			c.get_class(), String(c.get("text"))])
+		if c is Button:
+			_check(f is FontVariation and (f as FontVariation).variation_embolden > 0.0,
+				"nested Button '%s' wears the guarded face" % String(c.get("text")))
+
+	# Controls that draw theme icons beside their text keep their filter.
+	var check := CheckBox.new()
+	check.text = "Show names"
+	root.add_child(check)
+	var option := OptionButton.new()
+	option.add_item("1.95")
+	root.add_child(option)
+	await process_frame
+	_check(check.texture_filter == CanvasItem.TEXTURE_FILTER_PARENT_NODE, "a CheckBox keeps its icons' filter")
+	_check(option.texture_filter == CanvasItem.TEXTURE_FILTER_PARENT_NODE, "an OptionButton keeps its arrow's filter")
+
 	_check(rich.get_theme_font("normal_font") == font, "a RichTextLabel's body is in the client's face")
 	_check(rich.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST, "a RichTextLabel samples NEAREST")
 	_check(items.get_theme_font("font") == font, "an ItemList is in the client's face")

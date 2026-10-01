@@ -7326,6 +7326,59 @@ of 3; the round touches World3D's UI setup and adds a watcher on the UI's own no
 - A Button whose font comes from an ancestor theme set AFTER it entered the UI keeps the face it
   had when it entered (the guard captures it then).
 
+### 11. Review follow-up (round 672's review of d9708cd)
+
+**H1, fixed: a dialog's nested Buttons kept Godot's default face.** `UiBuilder._watch_node` ran
+from an ancestor's `child_entered_tree` and walked into descendants that had not entered the tree
+yet, where a Button's theme font still resolved to Godot's default; `guard_button_font` pinned
+that face as an override, and the Button's own visit later skipped it (the guard's meta). Every
+HudPanels dialog is built off-tree and added in one go, so every dialog Button was hit -- buy,
+sell, withdraw (-/+, the action, Cancel), the gold box (Deposit, Withdraw, Close), the revive
+prompt, guild Create/Cancel, the buff-cancel OK/Cancel, the help window's X. Now `_watch_node`
+handles a node only once it is inside the tree; a descendant still outside is handled when it
+enters, from its parent's `child_entered_tree` (READ order in 4.2.2: a node enters, its parent
+emits the signal, then its children enter). `watch_text` on a root not yet in the tree waits for
+its `tree_entered`.
+
+MEASURED at 1.95 with the reviewer's dialog probe (fresh start, 3840x2160), distinct colours
+inside each control's content rect (4 units in from its edge):
+
+| dialog control | d9708cd | fixed |
+|---|---|---|
+| buy '-' / '+' | 7 / 12 (godot-default+guard) | 2 / 2 (Arial+guard) |
+| buy 'Buy' / 'Cancel' | 112 / 158 | 2 / 2 |
+| revive's two Buttons | 237 / 233 | 2 / 2 |
+| the Labels beside them | 2 | 2 |
+
+All 25 dialog Buttons the probe builds now report `font=Arial+guard/12`.
+
+New cases in `text_crispness_test.gd`: a PanelContainer > VBox > HBox dialog built off-tree with
+two Buttons (text set before the add), one Button whose text is set after, and a Label, added in
+one go; and a CheckBox and an OptionButton. On d9708cd:
+`FAIL nested Button 'Buy' in a dialog added in one go draws in the client's face (got Godot's
+default)`, the same for 'Cancel' and 'Withdraw', `FAIL a CheckBox keeps its icons' filter`,
+`FAIL an OptionButton keeps its arrow's filter` (FAILURES 5). Fixed: ALL PASS.
+
+**L4, fixed:** CheckBox, CheckButton and OptionButton are no longer text nodes for `crisp_text`
+(they also draw theme icons -- the box, the switch, the arrow -- which keep their filter); their
+text keeps the Button guard. None is under the UI root today.
+
+**L2, fixed:** the debug panel's UI-scale slider applied the scale on every step of a drag, and
+each application re-measures every Control (`_refresh_text`, 33 ms on the reviewer's 2,286-Control
+tree, 40 ms frames while dragging). It now applies 0.15 s (OURS) after the slider's last change.
+
+**Recorded:**
+- L1: the help window's body went 16 -> 12 px (FontIndex 0, which retail's guide layout uses);
+  its Markdown heading sizes, 26/22/19/17/16/15 px (`md_to_bbcode.gd`), are OURS, not retail's --
+  docs/TODO.md.
+- L3: the guard's +0.0019 per glyph moves a glyph by one pixel at some fractional scales (the
+  reviewer measured ink width within 1 px of the unguarded face); invisible, and 1.0 is untouched.
+- L5: the static `_button_fonts` keeps the UI FontFile alive for the process (one face); the
+  watcher costs about 1.7 ms per window open; the skill-level badge now draws in the client face
+  (Arial) at its own 9 px.
+- The test cannot see text attached outside `ui_control` -- the debug panel lives under `$UI`, a
+  sibling, and keeps Godot's default font (debug panels are out of scope).
+
 ## Six-hundred-and-seventy-first round: the text tables in Rust -- the boot tables from 1,023 ms to 187 ms, the NPC tables in the entry's longest frame from 582 ms to 113 ms
 
 The user (2026-10-01): "I'd actually like to start moving over the tasks you think are worth having

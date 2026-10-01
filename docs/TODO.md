@@ -1693,6 +1693,11 @@ and a 1-pixel edge at 1.0-2.5, as the original's GGO_BITMAP glyphs are.
   (text drawn without the TextLine clip) would close it for good.
 - **The front-end** keeps its own sizes (Godot's 16 px in the client's face); only the filter and
   the Button guard reach it.
+- **The help window's headings** (`md_to_bbcode.gd`: 26/22/19/17/16/15 px) are OURS; its body is
+  now FontIndex 0's 12 px, as retail's guide layout is. Retail draws no Markdown -- if the window is
+  to match a retail one, its heading sizes need a source.
+- **Outside the UI root**: the debug panel (under `$UI`, a sibling of `ui_control`) keeps Godot's
+  default font and is not covered by text_crispness_test.
 
 ### Chat (round 634) -- **the retail window, channels, globals and notices built; these are left**
 

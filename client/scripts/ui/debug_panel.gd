@@ -437,10 +437,24 @@ func _on_range_changed(value: float) -> void:
 	_range_value.text = "%d" % int(value)
 	ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_NAME_PLATE_RANGE, value)
 
+## The slider fires on every step of a drag, and a scale change re-measures
+## every Control (ClientSettings._refresh_text: 33 ms on a 2,286-Control HUD,
+## round 672's review), so the scale is applied once the slider has rested
+## SCALE_SETTLE_S -- OURS -- after its last change.
+const SCALE_SETTLE_S := 0.15
+var _scale_timer: Timer
+
 func _on_scale_changed(value: float) -> void:
-	ClientSettings.apply_ui_scale(get_window(), value)
 	_scale_value.text = "%.2f" % value
 	ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_UI_SCALE, value)
+	if _scale_timer == null:
+		_scale_timer = Timer.new()
+		_scale_timer.one_shot = true
+		_scale_timer.wait_time = SCALE_SETTLE_S
+		_scale_timer.timeout.connect(func() -> void:
+			ClientSettings.apply_ui_scale(get_window(), _scale_slider.value))
+		add_child(_scale_timer)
+	_scale_timer.start()
 
 func _on_chat_font_changed(value: float) -> void:
 	# A click on the spinner's arrows grabs its inner line's focus (Godot 4.2

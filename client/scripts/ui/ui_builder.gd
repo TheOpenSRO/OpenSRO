@@ -1400,9 +1400,22 @@ func apply_ui_theme(root: Control) -> void:
 static func watch_text(root: Node) -> void:
 	if root == null:
 		return
+	if not root.is_inside_tree():
+		root.tree_entered.connect(func() -> void: _watch_node(root), CONNECT_ONE_SHOT)
+		return
 	_watch_node(root)
 
+## Only a node INSIDE the tree is handled: its theme (the root's face, a
+## Button's styles) resolves only there. A subtree added in one go enters
+## parent first, and each node's parent emits child_entered_tree as that
+## node enters -- after the parent was connected here, before the node's
+## own children enter. So a descendant still outside the tree is skipped
+## now and handled when it enters. Handled from outside, a dialog's nested
+## Buttons were guarded in Godot's default face and kept it (round 672's
+## review, H1: every HudPanels dialog).
 static func _watch_node(n: Node) -> void:
+	if not n.is_inside_tree():
+		return
 	if is_text_node(n):
 		crisp_text(n as CanvasItem)
 	if n is Button:
@@ -1419,11 +1432,16 @@ const TEXT_NODE_META := &"ui_text"
 
 ## Whether `n` draws text and nothing else textured, so it can be sampled
 ## NEAREST without touching the UI's art. A Button counts unless a style of
-## it is a texture (CompositeItemWindow's buttons wear the client's art),
-## TextureButton and the other art controls never.
+## it is a texture (CompositeItemWindow's buttons wear the client's art);
+## CheckBox, CheckButton and OptionButton never, because they also draw
+## theme icons (the box, the switch, the arrow) that must keep their filter
+## (none is under the UI root today; review L4). TextureButton and the other
+## art controls never. Their text keeps the guard (guard_button_font).
 static func is_text_node(n: Node) -> bool:
 	if n is Label or n is LineEdit or n is RichTextLabel or n is ItemList:
 		return true
+	if n is CheckBox or n is CheckButton or n is OptionButton:
+		return false
 	if n is Button:
 		for st in [&"normal", &"hover", &"pressed", &"disabled", &"focus"]:
 			if (n as Button).get_theme_stylebox(st) is StyleBoxTexture:
