@@ -154,7 +154,7 @@ static func _build_layer(particles: Pk2Reader, layer: Layer, burst: float) -> Me
 	if mesh_bytes.is_empty():
 		return null
 	var parsed := BmsReader.parse(mesh_bytes)
-	if parsed == null or parsed.vertices.is_empty():
+	if parsed == null or parsed.vertex_count() == 0:
 		return null
 	var array_mesh := BmsReader.to_array_mesh(parsed)
 

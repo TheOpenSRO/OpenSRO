@@ -7094,6 +7094,263 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-sixty-ninth round: the mesh, animation and skeleton readers in Rust -- the Jangan entry 1.0 s shorter and its longest freeze 0.3 s shorter than round 667's native build, a 500-monster entry 1.1 s shorter
+
+The user asked (2026-10-01) to move into Rust the work that is worth having there, before any
+caching or multi-threading. This round is the model lane: `.bms` first, then whichever of the
+other model formats measured significant. The ports are one to one: the GDScript readers stay,
+and they stay the reference. Build, API and safety rules: native/README.md, "The model readers".
+What is left: docs/TODO.md, "Native (Rust) readers".
+
+Labels: MEASURED (render box, real archives at /opt/sro-files/client, 1280x720, loading screen
+forced, Jangan spawn 97/168 at 1002,1020), READ (the GDScript readers, Godot 4.2.2), INFERRED,
+OURS.
+
+### 1. The profile, ranked, before porting (MEASURED)
+
+`SRREVAMP_PARSE_PROFILE=1` on dev 520c44e, native readers ON (round 667's pk2 and ddj). A new
+window, `after the entry`, reports at exit whatever loaded after the entry (World3D `_exit_tree`),
+so a species or character met for the first time would show there. At both sites it held only a
+few file reads: the mobs site's 24 species are all assembled during the entry drain (their
+templates on WorkerThreadPool tasks, round 661), so the entry window is where first sight costs.
+
+Model readers in the entry window, ms main thread / workers (calls), run 1 of the first profile:
+
+| key | Jangan | mobs (500 monsters, 24 species) |
+|---|---|---|
+| `bms.parse` | 328 / 682 (330 / 652) | **341 / 1,723** (330 / 691) |
+| `bms.to_arrays` | 58 / 66 | 59 / **308** |
+| `ban.parse` | 53 / 15 (56 / 22) | 59 / **248** (56 / 36) |
+| `bsr.parse` | 34 / 26 (90 / 200) | 34 / 79 (90 / 213) |
+| `bms.parse_collision` | 6 / 38 | 6 / 43 |
+| `bsk.parse` | 23 / 2 (55 / 22) | 24 / 18 (55 / 36) |
+| `bmt.parse` | 4 / 16 | 4 / 22 |
+| `cpd.parse` | 0.1 / 0.1 | 0.1 / 0.1 |
+
+Before the entry, `bsr.parse` also takes 34 ms on the main thread for 2 calls (the player's own
+models). No `inflate` call ran at either site: every `.bmt` read was uncompressed.
+
+What it says:
+- `bms.parse` is three quarters of the model time, and the monsters triple its worker share.
+  The GDScript parse builds one `Vertex` object per vertex and slices 4 bytes for every float.
+  `to_arrays` then copies the objects back into packed arrays.
+- `ban.parse` is a quarter of a second of worker time at the mobs site (36 calls): monster clips
+  are long.
+- `bsk.parse` is 24 ms on the main thread: its name check is a per-byte GDScript loop.
+- **Ported:** `.bms` (parse and `to_arrays`), `.ban`, `.bsk`.
+- **Not ported:** `bsr.parse` (see §5), `parse_collision` (6 ms main) and `bmt.parse` (4 ms
+  main), both under the round's ~20 ms bar on the main thread.
+
+### 2. What was built (OURS)
+
+- **`native/src/core/bms.rs`, `ban.rs`, `bsk.rs`**: plain Rust, no Godot types, each a line-by-line
+  port of `BmsReader.parse` (with `_detect_vertex_rec_size`, `_parse_skin`, `_parse_vertex_motion`
+  and `_parse_vertex_links`), `BanReader.parse` and `BskReader.parse`. Integer arithmetic is i64,
+  as GDScript's `int`.
+- **`native/src/gd_models.rs`**: the binding, one new class `SrNativeModels` with `bms_parse`,
+  `bms_wound_indices`, `bms_skin_arrays`, `ban_parse` and `bsk_parse`. Each returns one
+  Dictionary of packed arrays, or `{error}`. `lib.rs` and `core/mod.rs` gained only `mod` lines;
+  `gd.rs` is untouched. `API` is 3, and `NATIVE_API` 3: an API 2 library is refused.
+- **`NativeAssets.models()`**: the accessor, beside the others in native_assets.gd. It makes the
+  object once, under a mutex, since the readers run on worker tasks too.
+- **The readers.** Each `parse` asks the native reader first. On `{error}` it runs its own
+  GDScript, which reports as it always has.
+  - `{error}` is returned exactly where GDScript returns null (READ, every branch). It is also
+    returned for the one input whose GDScript answer depends on Godot's negative indexing: a
+    `.bms` header pointer at or above 2^31, which `PackedInt32Array` makes negative. So **no
+    input gets a different answer natively**; at worst it gets the GDScript one.
+  - **Bit patterns.** GDScript reads a float as f32 -> f64 (`decode_float`) -> f32 (`Vector3`,
+    `PackedFloat32Array`), which quiets a signalling NaN. `gd_f32` does the same. Strings are
+    `get_string_from_ascii`'s: up to the first NUL, each byte a Latin-1 code point.
+  - **The partial skin.** `_parse_skin` returns early on a bad bone index, leaving the vertices
+    before it skinned and the palette empty. The port keeps that exactly. 0 real files do it
+    (§3), but a synthetic one does (§4).
+- **`ParsedMesh.vertices` became a property.** A natively parsed mesh keeps its vertices as
+  packed arrays. The getter builds the same `Vertex` objects on first access. `to_arrays` reads
+  the arrays directly (the winding and skin loops are native too), and so do two new methods,
+  `vertex_count()` and `positions()`.
+  - The callers that only counted or summed vertices now use those methods:
+    `SkinnedBsrAssembler._nearest_bone`/`_centroid` (every monster piece) and the three effect
+    loaders' empty check. Each gives the same answer: the same sum, in the same order.
+  - `CharacterAssembler._build_side_mesh` still builds the objects.
+  - The GDScript `to_arrays` reads `mesh.vertices` once instead of per vertex, so the getter
+    costs the fallback nothing.
+- **`.ban` keyframes stay objects.** The native parse is flat, and `BanReader` builds the same
+  `Bone`/`Keyframe` objects from it, with no byte slicing. A lazy getter there would be called on
+  every frame by `MonsterCrowd` and `Skeleton3DBuilder`, which read `track.keyframes` per bone.
+- **`.bsk`**: the same walk (announcement, resolution, Type A/B, the one-byte gap), returned as
+  name and parent arrays plus one transform buffer that `BskReader` slices per bone.
+- **Safety.** No `unsafe` beyond round 667's ExtensionLibrary impl. Every read goes through
+  bounds-checked i64 offsets (`Bytes`), and an out-of-range read is an `Err`, never a panic.
+  Allocations are fallible (`try_reserve`) and sized only after the data is shown to hold them:
+  a `.bms` claiming 4 billion vertices, or a `.ban` with 4 billion bones or keys, is refused
+  without allocating. Cargo tests feed every truncation and 3,000 randomly corrupted copies of
+  each synthetic file.
+
+### 3. Parity on every real file (MEASURED)
+
+`client/tools/native_parity_models.gd` (new) parses every `.bms`, `.ban` and `.bsk` of the four
+archives both ways in one process and compares them with `ModelCompare`
+(client/scripts/bms/model_compare.gd):
+- every field;
+- every vertex's position, normal, uv (as bit patterns, via `var_to_bytes`), extra bytes, bones
+  and f64 weights;
+- every index, motion, link and order value; the bounds;
+- every keyframe's quaternion and position; every bone record's bytes, name and parent;
+- `vertex_count()`, `positions()`, and the whole `to_arrays` surface: the native one taken
+  before the mesh builds its vertices, against the GDScript one, byte for byte.
+
+| | files | parsed | null both ways (native `{error}`, then GDScript) | compared |
+|---|---|---|---|---|
+| `.bms` (Data 24,984, Particles 268) | 25,252 | 24,820 | 432 | 12,824,385 vertices, 10,837,084 triangles; 6,654 skinned; 6,196 at 52 bytes a vertex; 801 with motion and links |
+| `.ban` (Data 5,130, Particles 105) | 5,235 | 5,232 | 3 | 283,994 bones, 9,709,358 keyframes |
+| `.bsk` (Data 1,250, Particles 1) | 1,251 | 1,232 | 19 | 33,195 bones, 483 of them parent-less (92-byte) records |
+
+Map.pk2 and Media.pk2 hold none of the three. Result: **`PARITY PASS`, 0 mismatches.** The native
+reader never answered `{error}` for a file GDScript parsed ("0 of them parsed there", every
+archive). No real `.bms` has a skin refused part-way.
+
+In the same pass, the readers' own time over every file (GDScript / native, the native including
+the GDScript that builds the result objects): `.bms` 58,061 / 3,998 ms, `.ban` 19,435 / 8,739 ms
+(the `Keyframe` objects are most of what is left), `.bsk` 407 / 57 ms.
+
+**12 real `.bms` files make the GDScript reader stop on a script error** rather than return null
+(MEASURED: 24 `Out of bounds get index '0' (on base: 'Array')`, two GDScript parses a file). Its
+`_read_len_prefixed_string` answers `[]` where the callers test for `null`. The native reader
+returns `{error}` for them, so GDScript fails as before. This round changes no GDScript answer;
+the bug is in docs/TODO.md.
+
+### 4. Tests and the negatives (MEASURED)
+
+- `cargo test --no-default-features`: 21 pass. The new ones: a synthetic quad at both record
+  sizes with every section; an empty slot and a part-way skin refusal; an uneven blend kept as a
+  double; the `to_arrays` pieces; a quieted NaN; a clip with a key time past 2^31 and a keyless
+  bone; a skeleton with both record shapes, a late resolution and a one-byte gap; truncated and
+  random input for all three.
+- `client/scripts/bms/native_models_test.gd` (new): the same kinds of synthetic file, parsed both
+  ways in Godot and compared with ModelCompare, `to_arrays` included. It also covers the 2^31
+  pointer (left to GDScript), truncations, and, without the library, the fallback. 51 checks, ALL
+  PASS.
+- Box suites with the library: 182 suites, 0 failing. Without it (`NO_NATIVE=1`): 182 suites, 0
+  failing. `remote_godot.sh check`: ALL LOAD.
+- `native/build.sh windows` + `check_native_library.sh`: `ok ... stands alone, exports
+  gdext_rust_init, stripped`, imports only system DLLs.
+
+**The negative.** `--features parity-negative` adds three bugs: the `.bms` blend rounded to f32,
+the `.ban`'s last key time a millisecond late, and a space on the `.bsk`'s last named parent.
+Shipped to a separate box copy:
+
+```
+native_models_test.gd:
+FAIL an uneven blend: parses agree both ways vertex 0: skin (0 1 0.24993751562109473 0.75006248437890521) / (0 1 0.24993751943111420 0.75006248056888580)
+FAIL a clip agrees both ways key_times [0, 1167, -2147483648] / [0, 1167, -2147483647]
+FAIL a skeleton agrees both ways bone 1: Bip01 Head <- 'Bip01 Spine' (88 bytes) / Bip01 Head <- 'Bip01 Spine ' (88 bytes)
+5 FAILURES
+native_parity_models.gd --only=Data.pk2:
+FAIL Data.pk2: bms 'data\prim\mesh\mob\dm\darkguardian_hand_part1.bms': to_arrays: slot 11 differs (1180 / 1180 elements)
+FAIL Data.pk2: ban 'data\prim\ani\mob\dm\wendigo\wendigo_damage01.ban': key_times [0, 100, 200, 300, 400, 500] / [0, 100, 200, 300, 400, 501]
+FAIL Data.pk2: bsk 'data\prim\skel\mob\dm\darkguardian.bsk': bone 71: Bone04 <- 'Bone01' (88 bytes) / Bone04 <- 'Bone01 ' (88 bytes)
+PARITY FAIL 8785 (by kind: { "bsk": 1166, "bms": 3007, "ban": 4612 })
+cargo test --features parity-negative: 8 of 21 fail (the 3 new, and round 667's 5)
+```
+
+Slot 11 is `Mesh.ARRAY_WEIGHTS`. The negative copy also carries round 667's directory bug, which is
+why it walks fewer files. **The new test against the base** (dev 520c44e, its own API 2 library):
+
+```
+SCRIPT ERROR: Parse Error: Static function "models()" not found in base "NativeAssets".
+SCRIPT ERROR: Parse Error: Cannot infer the type of "native_used" variable because the value doesn't have a set type.
+```
+
+### 5. The gain (MEASURED)
+
+**This round's own change**: dev 520c44e with its native library, against this build, both with
+the native readers ON. `SRREVAMP_PARSE_PROFILE=1`, 2 runs a side, interleaved. Another lane's Godot
+ran beside every run (`others` 1 throughout), on both sides alike:
+
+| | dev 520c44e (runs 1 / 2) | this round (runs 1 / 2) |
+|---|---|---|
+| Jangan entry (`region grid loaded in`) | 6,467 / 6,591 | **5,521 / 5,405** |
+| Jangan longest work frame | 1,707 / 1,732 | **1,425 / 1,427** |
+| mobs entry | 7,146 / 7,652 | **6,195 / 6,424** |
+| mobs longest work frame | 1,880 / 2,174 | **1,425 / 1,631** |
+
+The bucket, ms main / workers:
+
+| key | Jangan before | Jangan after | mobs before | mobs after |
+|---|---|---|---|---|
+| `bms.parse` | 371 / 863-1,039 | **11 / 21** | 342-369 / 1,687-2,296 | **11 / 25** |
+| `bms.to_arrays` | 60-61 / 69-83 | **4 / 5** | 61-64 / 303-425 | **4 / 6** |
+| `ban.parse` | 64-66 / 15-20 | **29 / 12-13** | 58-63 / 241-270 | **29-30 / 68-70** |
+| `bsk.parse` | 25 / 2 | **4 / 1** | 24-25 / 18-26 | **4 / 5-9** |
+| what was not ported: `bsr.parse` | 35 / 28-30 | 36 / 28-29 | 35-38 / 101-151 | 35-37 / 95-125 |
+
+Summed over the four keys, the main thread goes from about 520 ms (Jangan) and 500 ms (mobs) to
+48 ms at either site. The workers go from 0.95-1.14 s to 39 ms at Jangan, and from 2.25-3.02 s to
+about 0.11 s at mobs.
+
+`bsr.parse`, measured finer (temporary timers, not committed; Jangan, main thread): 19.5 of its
+36 ms is `parse_sound_section`, called 314 times for 90 parses, and 12 ms is `parse_sections`.
+Each table-read parse reads the sound section three times (`material_mods`,
+`env_map_materials`, and `env_map_flags` through `material_mods` again), and a character's four
+(`_attach_sound_sets`). Reading it once is a GDScript change, and porting the 1,281-line reader is
+a round of its own (docs/TODO.md).
+
+**The A/B the brief asks for**: `perf_gate.sh --ab-env SRREVAMP_NATIVE=0 --sites jangan,mobs`,
+the same build with every native reader (667's and this round's) against GDScript:
+
+```
+jangan  frame ms   base 11.69  head 9.80  (-1.9)  SAME
+jangan  entry ms   base 10026  head 5386  (-4640.0)  FASTER
+jangan  freeze ms  base 3431  head 1380  (-2051.0)  FASTER
+jangan  hitches    base 6  head 5  (-1.0)  SAME
+mobs    frame ms   base 10.90  head 10.61  (-0.3)  SAME
+mobs    entry ms   base 11277  head 6191  (-5086.0)  FASTER
+mobs    freeze ms  base 3434  head 1575  (-1859.0)  FASTER
+mobs    hitches    base 5  head 5  (+0.0)  SAME
+```
+
+Per run:
+
+```
+jangan base run 1: frame 11.69 ms, entry 10165 ms, freeze 3425 ms, 6 hitch(es), native readers OFF
+jangan head run 1: frame 9.68 ms, entry 5386 ms, freeze 1383 ms, 5 hitch(es), native readers ON
+jangan base run 2: frame 9.31 ms, entry 9867 ms, freeze 3460 ms, 5 hitch(es), native readers OFF
+jangan head run 2: frame 9.80 ms, entry 5438 ms, freeze 1380 ms, 5 hitch(es), native readers ON
+jangan base run 3: frame 15.00 ms, entry 10026 ms, freeze 3431 ms, 6 hitch(es), native readers OFF
+jangan head run 3: frame 9.82 ms, entry 5334 ms, freeze 1376 ms, 5 hitch(es), native readers ON
+mobs base run 1: frame 10.77 ms, entry 11277 ms, freeze 3427 ms, 5 hitch(es), native readers OFF
+mobs head run 1: frame 10.57 ms, entry 6187 ms, freeze 1575 ms, 5 hitch(es), native readers ON
+mobs base run 2: another render overlapped it (1) -- repeating
+mobs base run 2: frame 10.90 ms, entry 10722 ms, freeze 3442 ms, 5 hitch(es), native readers OFF
+mobs head run 2: frame 10.61 ms, entry 6322 ms, freeze 1633 ms, 5 hitch(es), native readers ON
+mobs base run 3: frame 11.02 ms, entry 11581 ms, freeze 3434 ms, 5 hitch(es), native readers OFF
+mobs head run 3: frame 10.63 ms, entry 6191 ms, freeze 1537 ms, 5 hitch(es), native readers ON
+```
+
+- **Frame time did not get slower**: SAME at both sites. Head runs read 9.68-9.82 ms at Jangan
+  and 10.57-10.63 at mobs. The GDScript side's 11.69 and 15.00 ms Jangan runs are the gate's
+  metric reaching back into the loading second, as round 667 found; its 9.31 ms run is the
+  standing frame.
+- Against round 667's own A/B (same gate, same sites), the native head moved from entry 6,097 to
+  5,386 ms and freeze 1,659 to 1,380 ms at Jangan, and from 7,006 to 6,191 and 1,914 to 1,575 ms
+  at mobs. The interleaved profile above is the like-for-like measurement of this round alone.
+- One mobs base run was repeated because another lane's render overlapped it.
+
+### 6. OPEN
+
+- **`BsrReader.parse`** is not ported (§5).
+- **`.ban` keyframes are still built as objects.** `ban.parse` stays at 29 ms main and 68-70 ms
+  on the workers at the mobs site. The rest needs MonsterCrowd/Skeleton3DBuilder reading flat
+  arrays: an API change.
+- **`parse_collision` and `bmt.parse`**: under the bar; not ported.
+- **The 12 `.bms` files whose GDScript parse stops on a script error** (§3): unchanged, noted in
+  docs/TODO.md.
+- **Not run on Windows.** The DLL builds and passes `check_native_library.sh`, nothing more.
+- The parity tool's exit status: `remote_godot.sh script` returned 0 for a run that printed
+  `PARITY FAIL 8785` (round 667's `native_parity.gd` uses the same `quit(1)` in `_init`). Read the
+  `PARITY` line, not the status.
+
 ## Six-hundred-and-sixty-eighth round: the release ships the native readers in both zips, and the auto-updater replaces a DLL the running game has loaded
 
 The user (2026-09-30): "Build and ship the DLL. Make sure the Game auto update feature grabs it

@@ -70,6 +70,15 @@ static func parse(data: PackedByteArray) -> ParsedAnimation:
 
 ## The body of parse, timed by its wrapper above (ParseProfile, round 667).
 static func _pp_parse(data: PackedByteArray) -> ParsedAnimation:
+	# The native reader (round 669; native/src/core/ban.rs), when the library
+	# is loaded: the same values, flat. Where the code below returns null it
+	# returns {error}, and the code below runs and reports as it always has.
+	var native := NativeAssets.models()
+	if native != null:
+		var d: Dictionary = native.call("ban_parse", data)
+		if not d.has("error"):
+			return _from_native(d)
+
 	if data.size() < MAGIC_LEN + 4:
 		push_error("ban: file too small to contain a header")
 		return null
@@ -128,6 +137,36 @@ static func _pp_parse(data: PackedByteArray) -> ParsedAnimation:
 		a.bones.append(result[0])
 		off = result[1]
 
+	return a
+
+## A ParsedAnimation from the native reader's Dictionary (native/src/gd_models.rs,
+## ban_parse): the same Bone and Keyframe objects, built from flat arrays --
+## no byte slicing or decoding left here.
+static func _from_native(d: Dictionary) -> ParsedAnimation:
+	var a := ParsedAnimation.new()
+	a.animation_name = d["animation_name"]
+	a.duration_ms = d["duration_ms"]
+	a.authored_fps = d["authored_fps"]
+	a.cyclic = d["cyclic"]
+	a.key_times = d["key_times"]
+	var names: PackedStringArray = d["bone_names"]
+	var counts: PackedInt32Array = d["key_counts"]
+	var rotations: PackedFloat32Array = d["rotations"]
+	var positions: PackedVector3Array = d["positions"]
+	var k := 0
+	for i in range(names.size()):
+		var b := Bone.new()
+		b.bone_name = names[i]
+		var keyframes: Array[Keyframe] = []
+		keyframes.resize(counts[i])
+		for j in range(counts[i]):
+			var kf := Keyframe.new()
+			kf.rotation = Quaternion(rotations[k * 4], rotations[k * 4 + 1], rotations[k * 4 + 2], rotations[k * 4 + 3])
+			kf.position = positions[k]
+			keyframes[j] = kf
+			k += 1
+		b.keyframes = keyframes
+		a.bones.append(b)
 	return a
 
 static func _parse_bone(data: PackedByteArray, off: int):

@@ -153,7 +153,69 @@ class ParsedMesh:
 		return not bone_names.is_empty()
 	## Vertices with an influence on OBJECT_SPACE (see _parse_skin).
 	var object_space_vertices: int = 0
-	var vertices: Array[Vertex] = []
+	## The vertices. A mesh the native reader parsed (round 669) holds them
+	## as its packed arrays and builds these Vertex objects only on first
+	## access: the world's objects and the monsters never touch them --
+	## to_arrays, vertex_count and positions read the packed arrays -- and
+	## building them was most of what the GDScript parse cost. The values
+	## are the same either way (client/tools/native_parity.gd).
+	var vertices: Array[Vertex]:
+		get:
+			if not _native.is_empty():
+				_materialize()
+			return _vertices
+		set(value):
+			_native = {}
+			_vertices = value
+	var _vertices: Array[Vertex] = []
+	## BmsReader._from_native's arrays, until _materialize turns them into
+	## _vertices; empty for a mesh the GDScript reader parsed.
+	var _native: Dictionary = {}
+
+	## The number of vertices, without building them.
+	func vertex_count() -> int:
+		if _native.is_empty():
+			return _vertices.size()
+		return (_native["positions"] as PackedVector3Array).size()
+
+	## Every vertex's position, in order, without building the vertices.
+	func positions() -> PackedVector3Array:
+		if not _native.is_empty():
+			return (_native["positions"] as PackedVector3Array).duplicate()
+		var out := PackedVector3Array()
+		out.resize(_vertices.size())
+		for i in range(_vertices.size()):
+			out[i] = _vertices[i].position
+		return out
+
+	func _materialize() -> void:
+		var d := _native
+		_native = {}
+		var positions_n: PackedVector3Array = d["positions"]
+		var normals_n: PackedVector3Array = d["normals"]
+		var uvs_n: PackedVector2Array = d["uvs"]
+		var extra_n: PackedByteArray = d["extra"]
+		var extra_size: int = d["extra_size"]
+		var skinned: bool = d.has("bone0")
+		var bone0: PackedInt32Array = d.get("bone0", PackedInt32Array())
+		var bone1: PackedInt32Array = d.get("bone1", PackedInt32Array())
+		var weight0: PackedFloat64Array = d.get("weight0", PackedFloat64Array())
+		var weight1: PackedFloat64Array = d.get("weight1", PackedFloat64Array())
+		var out: Array[Vertex] = []
+		out.resize(positions_n.size())
+		for i in range(positions_n.size()):
+			var v := Vertex.new()
+			v.position = positions_n[i]
+			v.normal = normals_n[i]
+			v.uv = uvs_n[i]
+			v.extra = extra_n.slice(i * extra_size, (i + 1) * extra_size)
+			if skinned:
+				v.bone0 = bone0[i]
+				v.bone1 = bone1[i]
+				v.weight0 = weight0[i]
+				v.weight1 = weight1[i]
+			out[i] = v
+		_vertices = out
 	## Flat triangle list; size is always a multiple of 3.
 	var indices: PackedInt32Array = PackedInt32Array()
 	var bounds_min: Vector3
@@ -210,6 +272,16 @@ static func parse(data: PackedByteArray) -> ParsedMesh:
 
 ## The body of parse, timed by its wrapper above (ParseProfile, round 667).
 static func _pp_parse(data: PackedByteArray) -> ParsedMesh:
+	# The native reader (round 669; native/src/core/bms.rs), when the library
+	# is loaded. It answers exactly what the code below answers; where that
+	# returns null -- or depends on Godot's negative indexing -- it returns
+	# {error}, and the code below runs and reports as it always has.
+	var native := NativeAssets.models()
+	if native != null:
+		var d: Dictionary = native.call("bms_parse", data)
+		if not d.has("error"):
+			return _from_native(d)
+
 	if data.size() < PREAMBLE_END:
 		push_error("bms: file too small to contain a header")
 		return null
@@ -266,7 +338,7 @@ static func _pp_parse(data: PackedByteArray) -> ParsedMesh:
 		v.normal = Vector3(_le_f32(data, rec_off + 0x0c), _le_f32(data, rec_off + 0x10), _le_f32(data, rec_off + 0x14))
 		v.uv = Vector2(_le_f32(data, rec_off + 0x18), _le_f32(data, rec_off + 0x1c))
 		v.extra = data.slice(rec_off + 0x20, rec_off + vertex_rec_size)
-		mesh.vertices.append(v)
+		mesh._vertices.append(v)
 
 	# The skin section: a bone palette followed by one weight record per
 	# vertex, running from hdr[0] up to the index section at hdr[1].
@@ -301,6 +373,27 @@ static func _pp_parse(data: PackedByteArray) -> ParsedMesh:
 	_parse_vertex_links(data, mesh)
 	return mesh
 
+## A ParsedMesh from the native reader's Dictionary (native/src/gd_models.rs,
+## bms_parse): every field set from its packed arrays, the vertices kept as
+## those arrays until something asks for them (ParsedMesh.vertices).
+static func _from_native(d: Dictionary) -> ParsedMesh:
+	var mesh := ParsedMesh.new()
+	mesh.mesh_name = d["mesh_name"]
+	mesh.material_name = d["material_name"]
+	mesh.bone_names = d["bone_names"]
+	mesh.object_space_vertices = d["object_space_vertices"]
+	mesh.indices = d["indices"]
+	if d.has("bounds_min"):
+		mesh.bounds_min = d["bounds_min"]
+		mesh.bounds_max = d["bounds_max"]
+	mesh.vertex_motion = d["vertex_motion"]
+	mesh.vertex_pinned = d["vertex_pinned"]
+	mesh.vertex_links = d["vertex_links"]
+	mesh.vertex_link_lengths = d["vertex_link_lengths"]
+	mesh.vertex_link_order = d["vertex_link_order"]
+	mesh._native = d
+	return mesh
+
 ## Reads the `hdr[3]` section: a count, then that many (vertex, vertex,
 ## distance) records.
 ##
@@ -324,7 +417,7 @@ static func _parse_vertex_links(data: PackedByteArray, mesh: ParsedMesh) -> void
 	var count := _le_u32(data, start)
 	if count == 0 or start + 4 + count * VERTEX_LINK_REC_SIZE > data.size():
 		return
-	var vertex_count := mesh.vertices.size()
+	var vertex_count := mesh._vertices.size()
 	var links := PackedInt32Array()
 	var lengths := PackedFloat32Array()
 	links.resize(count * 2)
@@ -375,7 +468,7 @@ static func _parse_vertex_motion(data: PackedByteArray, mesh: ParsedMesh) -> voi
 	if start == 0 or start + 4 > data.size():
 		return
 	var count := _le_u32(data, start)
-	if count != mesh.vertices.size():
+	if count != mesh._vertices.size():
 		return
 	if start + 4 + count * VERTEX_MOTION_REC_SIZE > data.size():
 		return
@@ -457,7 +550,7 @@ static func _parse_skin(
 		var s1 := b1 != NO_BONE
 		if (s0 and b0 >= names.size()) or (s1 and b1 >= names.size()):
 			return # a bad index means this isn't the palette we think it is
-		var v: Vertex = mesh.vertices[i]
+		var v: Vertex = mesh._vertices[i]
 		var f0 := 1.0 if w0 == WEIGHT_FULL_SCALE else w0 / WEIGHT_FULL_SCALE
 		var f1 := 1.0 if w1 == WEIGHT_FULL_SCALE else w1 / WEIGHT_FULL_SCALE
 		var total := (f0 if s0 else 0.0) + (f1 if s1 else 0.0)
@@ -640,16 +733,24 @@ static func to_arrays(mesh: ParsedMesh) -> Array:
 
 ## The body of to_arrays, timed by its wrapper above (ParseProfile, round 667).
 static func _pp_to_arrays(mesh: ParsedMesh) -> Array:
+	# A natively parsed mesh whose vertices were never built: the same arrays
+	# from its packed ones, the index and skin loops native too (round 669).
+	if not mesh._native.is_empty() and (not mesh.is_skinned() or mesh._native.has("bone0")):
+		var native := NativeAssets.models()
+		if native != null:
+			return _to_arrays_native(mesh, native)
 	var positions := PackedVector3Array()
+	# Read once: `vertices` is a property with a getter (round 669).
+	var verts := mesh.vertices
 	var normals := PackedVector3Array()
 	var uvs := PackedVector2Array()
-	positions.resize(mesh.vertices.size())
-	normals.resize(mesh.vertices.size())
-	uvs.resize(mesh.vertices.size())
-	for i in range(mesh.vertices.size()):
-		positions[i] = mesh.vertices[i].position
-		normals[i] = mesh.vertices[i].normal
-		uvs[i] = mesh.vertices[i].uv
+	positions.resize(verts.size())
+	normals.resize(verts.size())
+	uvs.resize(verts.size())
+	for i in range(verts.size()):
+		positions[i] = verts[i].position
+		normals[i] = verts[i].normal
+		uvs[i] = verts[i].uv
 
 	# **Winding reversed 2026-09-02** (see docs/WORLD_ISSUES.md's
 	# forty-seventh round). The real .bms index buffer lists each triangle's
@@ -688,10 +789,10 @@ static func _pp_to_arrays(mesh: ParsedMesh) -> Array:
 	if mesh.is_skinned():
 		var bones := PackedInt32Array()
 		var weights := PackedFloat32Array()
-		bones.resize(mesh.vertices.size() * 4)
-		weights.resize(mesh.vertices.size() * 4)
-		for i in range(mesh.vertices.size()):
-			var v: Vertex = mesh.vertices[i]
+		bones.resize(verts.size() * 4)
+		weights.resize(verts.size() * 4)
+		for i in range(verts.size()):
+			var v: Vertex = verts[i]
 			var base := i * 4
 			# OBJECT_SPACE is the index one past the palette, which
 			# Skeleton3DBuilder.build_skin binds to a bone that never moves.
@@ -707,6 +808,23 @@ static func _pp_to_arrays(mesh: ParsedMesh) -> Array:
 		arrays[Mesh.ARRAY_BONES] = bones
 		arrays[Mesh.ARRAY_WEIGHTS] = weights
 
+	return arrays
+
+## _pp_to_arrays for a mesh still holding the native reader's arrays: the
+## same Mesh.ARRAY_MAX arrays, value for value (native_parity.gd compares
+## the two). Copies, so a caller that edits them does not edit the mesh.
+static func _to_arrays_native(mesh: ParsedMesh, native: Object) -> Array:
+	var d := mesh._native
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = (d["positions"] as PackedVector3Array).duplicate()
+	arrays[Mesh.ARRAY_NORMAL] = (d["normals"] as PackedVector3Array).duplicate()
+	arrays[Mesh.ARRAY_TEX_UV] = (d["uvs"] as PackedVector2Array).duplicate()
+	arrays[Mesh.ARRAY_INDEX] = native.call("bms_wound_indices", mesh.indices)
+	if mesh.is_skinned():
+		var skin: Dictionary = native.call("bms_skin_arrays", d["bone0"], d["bone1"], d["weight0"], d["weight1"], mesh.bone_names.size())
+		arrays[Mesh.ARRAY_BONES] = skin["bones"]
+		arrays[Mesh.ARRAY_WEIGHTS] = skin["weights"]
 	return arrays
 
 ## The ArrayMesh to_array_mesh has always built, from to_arrays' surface.

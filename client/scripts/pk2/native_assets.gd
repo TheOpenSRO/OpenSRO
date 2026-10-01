@@ -22,7 +22,7 @@ class_name NativeAssets
 ## outlives a pull, so a library built from older sources is the expected
 ## failure, not a hypothetical one -- it is refused with one log line naming
 ## both numbers, and the client reads in GDScript. Bump both together.
-const NATIVE_API := 2
+const NATIVE_API := 3
 
 ## The native pk2 archive class (native/src/gd.rs).
 const PK2_CLASS := "SrNativePk2"
@@ -125,3 +125,21 @@ static func new_pk2() -> Object:
 	if not available():
 		return null
 	return ClassDB.instantiate(PK2_CLASS)
+
+## The native model readers (native/src/gd_models.rs, round 669): .bms, .ban
+## and .bsk, one Dictionary of packed arrays a call. Null when the library is
+## unavailable. Made once, by whichever thread asks first, and read under
+## the same lock (the readers run on WorkerThreadPool tasks too); the object
+## itself is stateless and thread-safe.
+const MODELS_CLASS := "SrNativeModels"
+static var _models: Object = null
+static var _models_lock := Mutex.new()
+static func models() -> Object:
+	if not available():
+		return null
+	_models_lock.lock()
+	if _models == null and ClassDB.class_exists(MODELS_CLASS):
+		_models = ClassDB.instantiate(MODELS_CLASS)
+	var m := _models
+	_models_lock.unlock()
+	return m

@@ -445,7 +445,8 @@ Per function, `SRREVAMP_PARSE_PROFILE=1` makes the client print `PARSEPROF` line
 the workers, once after the boot tables and once with the entry's LoadTimings summary. Round 667
 ranked the port by these lines.
 
-`client/tools/native_parity.gd` holds the two paths to each other on the real archives.
+`client/tools/native_parity.gd` holds the two paths to each other on the real archives, and
+`client/tools/native_parity_models.gd` does the same for every `.bms`, `.ban` and `.bsk` (round 669).
 `client/scripts/pk2/native_assets_test.gd` does the same on synthetic input, and checks the
 fallback when the library is absent (`NO_NATIVE=1 client/tools/remote_godot.sh tests`).
 

@@ -11,16 +11,50 @@ before.
 |---|---|---|
 | pk2 archive: open, directory read + Blowfish decrypt, name index, path lookup, positional file read | `Pk2Reader` internals and `ObjectLoader.find_file`'s scan | `src/core/pk2.rs`, `src/core/blowfish.rs` |
 | `.ddj` per-pixel decodes: uncompressed (channel masks) and A16B16G16R16F (`q`) | the two looping branches of `DdjReader.to_image` | `src/core/ddj.rs` |
+| `.bms` mesh: header, vertices (either record size), skin (with its part-way refusal), indices, box, motion and link sections; `to_arrays`' winding and skin arrays | `BmsReader.parse` and `to_arrays` (round 669) | `src/core/bms.rs`, binding `src/gd_models.rs` |
+| `.ban` animation: header, key times, every bone's keyframes | `BanReader.parse` (round 669) | `src/core/ban.rs`, binding `src/gd_models.rs` |
+| `.bsk` skeleton: the announce-then-resolve walk, both record shapes | `BskReader.parse` (round 669) | `src/core/bsk.rs`, binding `src/gd_models.rs` |
 
 - `src/core/` is plain Rust with no Godot types. It is unit-tested with `cargo test` and can sit
   behind a C ABI and be linked statically into custom export templates later, if antivirus
   software objects to a separate DLL.
 - `src/gd.rs` is the thin gdext binding: two `RefCounted` classes, `SrNativePk2` and
-  `SrNativeParsers`. Results go back in bulk, as packed arrays or one Dictionary per call. There is
+  `SrNativeParsers`. `src/gd_models.rs` (round 669) adds `SrNativeModels` for the model readers,
+  reached through `NativeAssets.models()`. Results go back in bulk, as packed arrays or one Dictionary per call. There is
   never a Variant per element.
 - The client never names these classes as types. `client/scripts/pk2/native_assets.gd` looks them
   up by string through `ClassDB`, so every script compiles without the library.
   `client/srrevamp_native.gdextension` names the library files.
+
+## The model readers (round 669)
+
+`SrNativeModels` has `bms_parse`, `bms_wound_indices`, `bms_skin_arrays`, `ban_parse` and
+`bsk_parse`. Each
+returns one Dictionary of packed arrays, or `{error}`.
+
+- **The GDScript reader is the reference, and the native one answers what it answers.** Every
+  float has the GDScript bit pattern. A float there goes f32 -> f64 (`decode_float`) -> f32
+  (`Vector3`, `PackedFloat32Array`), which quiets a signalling NaN; `gd_f32` does the same. Strings
+  are `get_string_from_ascii`'s: the bytes up to the first NUL, each a Latin-1 code point. A skin
+  refused at vertex *i* keeps the bones and weights of vertices 0..*i*-1 and no palette, exactly
+  as `_parse_skin`'s early return leaves them.
+- **`{error}` always means "GDScript answers".** It is returned wherever the GDScript reader
+  returns null, and for the input whose GDScript answer depends on Godot's negative indexing (a
+  `.bms` header pointer at or above 2^31, which `PackedInt32Array` makes negative). The reader
+  then runs its GDScript code, which reports its own error. So no input gets a different answer
+  natively; at worst it gets the GDScript one.
+- **A natively parsed `.bms` keeps its vertices as packed arrays.** `ParsedMesh.vertices` is a
+  property: its getter builds the `Vertex` objects from the arrays on first access, the values
+  identical. `to_arrays`, `vertex_count()` and `positions()` read the arrays. The world's objects
+  and the monster assembler never build the objects. Building them was most of what the GDScript
+  parse cost.
+- **A `.ban`'s keyframes come back flat** (`key_counts`, `rotations` x/y/z/w, `positions`).
+  `BanReader` builds the same `Bone` and `Keyframe` objects from them, because the per-frame code
+  (`MonsterCrowd`, `Skeleton3DBuilder`) reads `track.keyframes` directly, and a getter there would
+  cost every frame.
+- Every offset read from the file is bounds-checked; nothing is allocated before the data is
+  shown to hold it (`vec_with`, `try_reserve`). Truncated and randomly corrupted input returns an
+  error and never panics (`truncated_and_random_input_never_panics`, in both modules).
 
 ## Build
 
@@ -70,7 +104,7 @@ position (`pread` / `seek_read`), so threads share no file cursor.
 ## Test
 
 ```
-cd native && cargo test --no-default-features          # the core: Blowfish vectors, a synthetic pk2, ddj decodes
+cd native && cargo test --no-default-features          # the core: Blowfish vectors, a synthetic pk2, ddj decodes, bms/ban/bsk
 client/tools/remote_godot.sh script res://scripts/pk2/native_assets_test.gd   # both paths, synthetic input, on the box
 ```
 
@@ -90,10 +124,19 @@ never committed.
 client/tools/remote_godot.sh script res://tools/native_parity.gd -- --pk2-dir=/opt/sro-files/client
 ```
 
-**The negative.** `cargo build --release --features parity-negative` makes a library with two
-deliberate, subtle bugs: it drops the 20th entry slot of each directory block, and it leaves an
-uncompressed texture's BGR unswizzled. Both the parity tool and `native_assets_test.gd` must FAIL
-against it, and so must `cargo test --features parity-negative`.
+**The negative.** `cargo build --release --features parity-negative` makes a library with
+deliberate, subtle bugs: it drops the 20th entry slot of each directory block, it leaves an
+uncompressed texture's BGR unswizzled, it rounds a `.bms` vertex's skin blend to f32, it makes
+a `.ban`'s last key time a millisecond late, and it adds a space to a `.bsk`'s last parent name. The parity tools and `native_assets_test.gd` /
+`native_models_test.gd` must FAIL against it, and so must `cargo test --features parity-negative`.
+
+The model readers have their own pass, over **every** `.bms` and `.ban` of the four archives
+(round 669; the counts are in its WORLD_ISSUES entry):
+
+```
+client/tools/remote_godot.sh script res://tools/native_parity_models.gd -- --pk2-dir=/opt/sro-files/client
+client/tools/remote_godot.sh script res://scripts/bms/native_models_test.gd    # synthetic, both ways
+```
 
 ## A/B
 

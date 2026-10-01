@@ -78,6 +78,15 @@ static func parse(data: PackedByteArray) -> ParsedSkeleton:
 
 ## The body of parse, timed by its wrapper above (ParseProfile, round 667).
 static func _pp_parse(data: PackedByteArray) -> ParsedSkeleton:
+	# The native reader (round 669; native/src/core/bsk.rs), when the library
+	# is loaded: the same walk, the same bones. Where the code below returns
+	# null it returns {error}, and the code below runs and reports as always.
+	var native := NativeAssets.models()
+	if native != null:
+		var d: Dictionary = native.call("bsk_parse", data)
+		if not d.has("error"):
+			return _from_native(d)
+
 	if data.size() < MAGIC_LEN + 5:
 		push_error("bsk: file too small to contain a header")
 		return null
@@ -142,6 +151,24 @@ static func _pp_parse(data: PackedByteArray) -> ParsedSkeleton:
 		push_error("bsk: no bones parsed")
 		return null
 
+	return s
+
+## A ParsedSkeleton from the native reader's Dictionary (native/src/gd_models.rs,
+## bsk_parse): the same Bone objects, each transform cut from one buffer.
+static func _from_native(d: Dictionary) -> ParsedSkeleton:
+	var s := ParsedSkeleton.new()
+	s.root_name = d["root_name"]
+	s.root_transform = d["root_transform"]
+	var names: PackedStringArray = d["bone_names"]
+	var parents: PackedStringArray = d["parent_names"]
+	var transforms: PackedByteArray = d["transforms"]
+	var offsets: PackedInt32Array = d["offsets"]
+	for i in range(names.size()):
+		var b := Bone.new()
+		b.bone_name = names[i]
+		b.parent_name = parents[i]
+		b.transform = transforms.slice(offsets[i], offsets[i + 1])
+		s.bones.append(b)
 	return s
 
 ## Reads a bone's record starting right after its resolving name
