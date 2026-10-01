@@ -7190,7 +7190,7 @@ pairs.
 
 The brief asked whether the prepare's height, normal and lightmap loops are parse-like byte
 loops.
-- **The lightmap term is one**: a LUT over every byte of a 256x256 RGB8 image. It is ported.
+- **The lightmap term is one**: a LUT over every byte of a 512x512 RGB8 image (262,144 pixels a term: 5,446,303,744 / 20,776 in §5; docs/protocol/MAPM_FORMAT.md). It is ported.
 - **The height grid is not.** `heights_from_region` walks `Vertex` objects, so it moves with §3's
   column step.
 - **The mesh is not.** It is geometry and lighting in float32 vectors and colours: normals,
@@ -7301,10 +7301,42 @@ cross   hitches    base 5  head 5  (+0.0)  SAME
 - **The terrain mesh build**: 2.9 s of worker time and 90 ms of the centre cell's main thread a
   Jangan entry. It is not a parse, and porting it needs float32 vector and colour parity or an
   agreed tolerance.
-- **101 `.nvm` files** in Data.pk2 are refused by both readers. They were not looked into: parity
-  only needs the two readers to refuse them alike.
+- **101 `.nvm` files** in Data.pk2 are refused by both readers (the review's finding, MEASURED).
+  - All of them are in `navmesh\`, and all fail with "truncated reading the real HeightMap".
+  - They are a short-heightmap variant: after valid tiles come only 952 bytes, which hold 193
+    height floats, 36 zero plane types and 36 plane heights of -20.0.
+  - None of those regions has a `.m`, so no loaded region loses its navigation.
+  - docs/TODO.md has it for the server lane.
 - **The lightmap port has not run on Windows.** The DLL builds and passes
   `check_native_library.sh`.
+
+### 8. Review follow-up
+
+- **`terrain_native_test.gd` failed under `SRREVAMP_NATIVE=0`** (MEDIUM). It asked
+  `library_usable()`, which is true for a library that is loaded but forced off, so it printed 7
+  FAILs. It now asks `NativeAssets.terrain() != null`, which is what the client itself uses.
+- **A native lightmap that always fell back went unseen** (LOW).
+  - An always-`Err` `lightmap_add` still passed both checks, because `lightmap_term`'s fallback
+    made both sides GDScript.
+  - The test now calls `lightmap_add` directly and requires a non-empty answer with the GDScript
+    loop's bytes.
+  - The parity tool now asks the native loop for every term directly, counts its answers
+    against its fallbacks, and fails when it answered none.
+  - Against that mutant (MEASURED): the test fails with `FAIL the native lightmap_add answers
+    itself ... (0 bytes)`, and the parity tool fails with `FAIL lightmap: the native loop
+    answered 0 of 600 terms (600 empty)` and `PARITY FAIL 1`.
+  - The real library answered 600 of 600, with 0 fallbacks and 0 mismatches.
+- **The profiling hooks** (LOW). `_job_lap` builds its key only when profiling is on, and the
+  `entry` table now resets the profile, so the first `window` table no longer counts the entry
+  again.
+- **Corrections:** the lightmap is 512x512, not 256x256. The 101 refused `.nvm` files are a
+  short-heightmap variant (§7, docs/TODO.md).
+- **Suites (MEASURED):**
+  - with the library: 182 suites, 0 failing;
+  - `NO_NATIVE=1`: 182 suites, 0 failing;
+  - `SRREVAMP_NATIVE=0`: 182 suites, 1 failing. The failure is `native_assets_test.gd`, which
+    8894f21 fixes at the merge.
+  - `terrain_native_test.gd` passes in all three modes.
 
 ## Six-hundred-and-sixty-eighth round: the release ships the native readers in both zips, and the auto-updater replaces a DLL the running game has loaded
 

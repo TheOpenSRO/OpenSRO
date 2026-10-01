@@ -4882,6 +4882,8 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 	print(_load_timings.summary())
 	if ParseProfile.enabled:
 		print(ParseProfile.report("entry"))
+		# The next `window` table (round 670) then counts only the play after it.
+		ParseProfile.reset()
 	_qa_print_entry_probe()
 	_loading_screen.set_progress(1.0)
 	_loading_screen.set_caption("Entering the world...")
@@ -6821,7 +6823,8 @@ static func _job_lap(job: Dictionary, name: String, since_usec: int) -> int:
 	(job["laps"] as Array).append([name, now - since_usec])
 	# The same lap, by thread, in the PARSEPROF table (round 670): what ranks
 	# the prepare's own loops beside the parsers they call.
-	ParseProfile.add(("prep.objects." if job.has("mapo_path") else "prep.terrain.") + name, since_usec)
+	if ParseProfile.enabled:
+		ParseProfile.add(("prep.objects." if job.has("mapo_path") else "prep.terrain.") + name, since_usec)
 	return now
 
 ## The prepare's first half: the region's `.m` read and parsed into

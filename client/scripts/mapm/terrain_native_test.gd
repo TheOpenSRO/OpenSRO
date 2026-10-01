@@ -158,13 +158,14 @@ func _both(parse: Callable, parse_native: Callable, printer: Callable, bytes: Pa
 	return [g, n]
 
 func _init() -> void:
-	var usable := NativeAssets.library_usable()
-	NativeAssets.available()
+	# What the client itself would use: no library, a stale one, or one forced
+	# off with SRREVAMP_NATIVE=0 all answer null here (round 670's review).
+	var usable := NativeAssets.terrain() != null
 	if not usable:
-		_check(NativeAssets.terrain() == null and MapmReader.parse_native(_mapm(7)) == null,
-			"without a usable library there is no native terrain parser")
+		_check(MapmReader.parse_native(_mapm(7)) == null,
+			"with the native readers off (%s) there is no native terrain parser" % NativeAssets.status)
 		_check(MapmReader.parse(_mapm(7)) != null and NvmReader.parse(_nvm()) != null,
-			"without it the GDScript readers parse the synthetic .m and .nvm")
+			"the GDScript readers parse the synthetic .m and .nvm")
 		_finish()
 		return
 	_check(NativeAssets.terrain() != null, "the library's SrNativeTerrain is there")
@@ -215,6 +216,14 @@ func _init() -> void:
 		NativeAssets.force_gdscript = false
 		var b := MapmTerrainBuilder.lightmap_term(img, shadow)
 		_check(a.get_data() == b.get_data() and a.get_format() == b.get_format(), "lightmap_term under %s agrees both ways" % shadow)
+	# The native loop itself, called directly: lightmap_term falls back to
+	# GDScript on an empty answer, so the comparison above would pass with a
+	# native side that never answers (round 670's review).
+	var direct: PackedByteArray = NativeAssets.terrain().call("lightmap_add", img.get_data(), 10, 0, 255)
+	var want := img.get_data()
+	for i in range(want.size()):
+		want[i] = mini(want[i] + [10, 0, 255][i % 3], 255)
+	_check(not direct.is_empty() and direct == want, "the native lightmap_add answers itself, and with the GDScript loop's bytes (%d bytes)" % direct.size())
 
 	# Many tasks at once (World3D's terrain prepare runs on WorkerThreadPool),
 	# the first of them making the shared parser object again.

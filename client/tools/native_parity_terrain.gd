@@ -327,6 +327,8 @@ func _compare_lightmaps(map: Pk2Reader, files: Array) -> void:
 	var pixels := 0
 	var tg := 0
 	var tn := 0
+	var native_answers := 0
+	var native_empty := 0
 	for f in files:
 		var p: String = f[0]
 		if not p.to_lower().ends_with(".t"):
@@ -357,5 +359,24 @@ func _compare_lightmaps(map: Pk2Reader, files: Array) -> void:
 			if a.get_width() != b.get_width() or a.get_height() != b.get_height() or a.get_format() != b.get_format() \
 					or a.get_data() != b.get_data():
 				_fail("lightmap '%s' under %s: the terms differ" % [p, shadow])
-	print("PARITY lightmap: %d mismatches; %d .t files, %d lightmaps decoded, %d terms compared (%d pixels); lightmap_term GDScript %.1f ms, native %.1f ms a term" % [
-		_fails - fails0, count, images, terms, pixels, tg / 1000.0 / maxi(terms, 1), tn / 1000.0 / maxi(terms, 1)])
+				continue
+			# lightmap_term falls back to its GDScript loop when the native one
+			# answers empty, which would make both sides above GDScript. So the
+			# native loop is also asked directly, on the same RGB8 bytes, and
+			# must answer with the term's own bytes (round 670's review).
+			var rgb := parsed.image.duplicate() as Image
+			if rgb.is_compressed():
+				rgb.decompress()
+			rgb.convert(Image.FORMAT_RGB8)
+			var direct: PackedByteArray = NativeAssets.terrain().call("lightmap_add", rgb.get_data(),
+				clampi(roundi(shadow.r * 255.0), 0, 255), clampi(roundi(shadow.g * 255.0), 0, 255), clampi(roundi(shadow.b * 255.0), 0, 255))
+			if direct.is_empty():
+				native_empty += 1
+			else:
+				native_answers += 1
+				if direct != a.get_data():
+					_fail("lightmap '%s' under %s: the native loop's own answer differs from the term" % [p, shadow])
+	if terms > 0 and native_answers == 0:
+		_fail("lightmap: the native loop answered 0 of %d terms (%d empty) -- every term above was GDScript's fallback" % [terms, native_empty])
+	print("PARITY lightmap: %d mismatches; %d .t files, %d lightmaps decoded, %d terms compared (%d pixels); the native loop answered %d, fell back %d; lightmap_term GDScript %.1f ms, native %.1f ms a term" % [
+		_fails - fails0, count, images, terms, pixels, native_answers, native_empty, tg / 1000.0 / maxi(terms, 1), tn / 1000.0 / maxi(terms, 1)])

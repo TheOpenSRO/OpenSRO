@@ -902,6 +902,16 @@ what the same `SRREVAMP_PARSE_PROFILE=1` Jangan entry measured with the native r
     parse costs whole. The decode is 0.1 ms; the build is 13 ms a `.m` and 12 ms a `.nvm`.
   - Not ported, too small: `.o2` (13 ms an entry), the object index (`ObjidxReader`, 7 ms once), `tile2d.ifo`
     (2 ms once) and `.t` (33 ms an entry, mostly the engine's DXT1 decompress).
+- [ ] **101 `.nvm` files that no reader parses** (round 670's review, MEASURED). All of them are
+      in Data.pk2's `navmesh\`, and both readers refuse them with "truncated reading the real
+      HeightMap". They are a short-heightmap variant:
+      - the header, cells, edges and tiles are valid;
+      - then come only 952 bytes: 193 height floats instead of 9,409, 36 zero plane types, and
+        36 plane heights of -20.0.
+
+      None of those regions has a `.m` in Map.pk2, so no region the client loads loses its
+      navigation today. The server lane may care: what 193 heights cover, and whether the
+      server's own reader accepts the variant, is not known.
 - [ ] **Keep the terrain columns on the region (an API change).** This is what makes the
       `.m`/`.nvm` port pay. `ParsedRegion` would carry the packed heights and extras (and for
       `.nvm`, the tiles), and its readers would move onto them:

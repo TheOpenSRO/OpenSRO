@@ -11,7 +11,6 @@ before.
 |---|---|---|
 | pk2 archive: open, directory read + Blowfish decrypt, name index, path lookup, positional file read | `Pk2Reader` internals and `ObjectLoader.find_file`'s scan | `src/core/pk2.rs`, `src/core/blowfish.rs` |
 | `.ddj` per-pixel decodes: uncompressed (channel masks) and A16B16G16R16F (`q`) | the two looping branches of `DdjReader.to_image` | `src/core/ddj.rs` |
-
 | the lightmap term's per-byte loop; the `.m` (JMXVMAPM) and `.nvm` (JMXVNVM) decodes, proven but not on the load path (round 670) | `MapmTerrainBuilder.lightmap_term`'s loop; `MapmReader.parse` and `NvmReader.parse` through their `parse_native` | `src/core/terrain.rs`, binding `src/gd_terrain.rs` |
 
 - `src/core/` is plain Rust with no Godot types. It is unit-tested with `cargo test` and can sit
