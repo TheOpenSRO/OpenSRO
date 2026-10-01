@@ -7094,6 +7094,165 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-seventy-sixth round: monsters and other players fade into existence over 2.0 s, as retail's CIDecoAppear fades them, instead of popping in
+
+The user (2026-10-01): "Also another fix, mobs seem to fade in existence not pop. Check the
+original game code to see how they do it. Players might do the same but it seems like a much
+faster fade if it at all."
+
+Labels: READ (the decompiled client, `/var/tmp/decomp_client` and `/var/tmp/sro_client.asm` on the
+render box; constants read from `sro_client.exe`), MEASURED (the render box, GL Compatibility,
+RX 7600), INFERRED, OURS, OPEN. The full table is `docs/protocol/appear_fade.md`.
+
+### 1. What retail does (READ)
+
+- **The deco.** A character is faded in by a decoration object, `CIDecoAppear` (class link
+  0x110a770, registered at 0xd77090 with the name string 0xde5610 `CIDecoAppear`), found by its
+  RTTI name beside `CIDecoDisappear`.
+- **Who makes it.** Vslot 0x6c of a character, `FUN_009d17e0`: `cmp byte [esi+0x770], 0` (asm
+  0x9d18f0), then `FUN_00ba36d0(0x110a770, 0)` and `CIDecoAppear::FUN_00a48a20(obj id +0x30,
+  [0xd86ecc])` (asm 0x9d190b-0x9d191b). The body reader runs it: `CICMonster::vslot_025` (0x9d3850)
+  calls vslot 0x6c, and both spawn paths run the body reader -- 0x3015 (`FUN_008a6ca0` ->
+  `FUN_008a6bd0(stream, 1)`) and the group spawn (`FUN_008a6d20` type 1 -> `FUN_008a6bd0(stream,
+  0)`). There is no separate "entering view" path: every spawn the client is sent fades.
+- **The flag +0x770** is 1 from the CICharactor constructor (asm 0x9d2e50). Its one setter
+  (`FUN_009c7b10`) is called with 0 only for objects the client makes itself: a game script's
+  actor (0x518514), an icscriptobj (0x9e26de) and `FUN_0050f1b0` (0x50f24a).
+- **Which classes.** Vslot 0x6c, read from each vtable: `FUN_009d17e0` for CICMonster, CICNPC,
+  CICCos (pets), CICGuard and CICMonsterNPC; for CICUser (**other players**) `FUN_009dbcc0`, which
+  ends in `FUN_009d17e0`. Ground items (CIItem) and teleport gates have `FUN_009c1890`: no fade.
+  **Players fade exactly like monsters, the same 2.0 s** -- not faster. (The user's "much faster if
+  at all" is not what the code does; what makes it look so in play is not known.)
+- **Duration and curve.** The float at 0xd86ecc is **2.0**. `CIDecoAppear::FUN_00a48a20` sets the
+  alpha to 0 and the rate to 255.0 (double 0xd83108) / 2.0; `CIDecoAppear::vslot_009` (0xa48ae0)
+  adds rate x dt each frame (float 0x110f7fc; seconds INFERRED) and sets `round(sum) & 0xff` while
+  the sum is <= 255, then 0xff, and deletes itself. **Linear**, 0 to 255 in 2.0 s.
+- **What it writes.** `CCompChar` vslot 5 (0xc25590, vtable 0xe0cd3c): `+0x4c = alpha << 24`, on
+  the character's compound model. Whether the name plate, shadow or effects read that is not read
+  (OPEN). Every frame the CICharactor update also writes 0xff (or 0/0x50 for stealth) through
+  `FUN_009ce950`; the deco's write landing after it is INFERRED from the fade being visible.
+- **The way out.** A despawn (0x3016 `FUN_008a6cc0`, group despawn type 2) calls vslot 0x4c with 0
+  (`IGIDObject::FUN_009c32f0`, CICMonster `FUN_009d3c90`), which makes a `CIDecoDisappear`
+  (0x110a790) of **1.5 s** (float 0xd819ec): 255 down to 0, then the object is deleted. Not drawn
+  by this round (OPEN).
+
+### 2. The engine trap (MEASURED)
+
+The obvious way to draw it, `GeometryInstance3D.transparency`, does nothing in Godot 4.2.2's GL
+Compatibility renderer: the measurement below, with transparency set to 1.0 on every mesh of
+`mob\china\mangnyang.bsr`, read **covered 1.000** on every frame from the first (the model fully
+drawn). So the fade is drawn with materials.
+
+### 3. What changed (OURS, in how it is drawn)
+
+- `client/scripts/world/appear_fade.gd` (new): `AppearFade.alpha_at` is the deco's curve;
+  `AppearFade.Fades` runs the fades. While a model fades, each mesh draws with a **blended twin**
+  of its own material -- a StandardMaterial3D duplicated with alpha blending, a ShaderMaterial
+  duplicated onto its shader's fade twin -- at the cohort's alpha. Twins are **shared by every model
+  whose fade started in the same frame** (they are always at the same alpha), so a list of 500 of
+  24 species makes a twin per species material per build frame, not one per body. At 2.0 s each
+  mesh gets its own material back -- the template's shared, opaque one -- and the twins are freed:
+  nothing stays on a transparent material. Depth is written while translucent
+  (`depth_draw_always`, OURS) so a model's near faces stay in front of its far ones.
+- `foliage.gdshaderinc` gains an `APPEAR_FADE` block (the same alpha test made by hand, ALPHA =
+  `appear_alpha`), compiled only by the new `foliage_fade.gdshader` /
+  `foliage_one_sided_fade.gdshader`; the world's shaders compile without it, unchanged.
+  `ObjectLoader._mod_shader` takes `fade` for the MTRL-mod shader's twin and tags each shader with
+  its key; `ObjectLoader.appear_fade_shader` maps a shader to its twin. A material with no twin is
+  left as it is (that piece pops, counted in `unfadable`); the census below found none.
+- `World3D`: a monster body built (`_build_monster_body`) and another player's body built
+  (`_spawn_or_update_other`) start a fade; `_physics_process` steps them. The name plate, the HP bar,
+  the party mark and the collider are not meshes and are not faded; effect meshes (under an
+  `EfpEffect`) are skipped. A refresh of a body already drawn does not restart it. A body rebuilt
+  when its region loads fades again, as an object re-sent by the server would.
+- `BerserkLook._take_meshes` copies `AppearFade.original_material(mi)`, so a berserk starting
+  mid-fade keeps the real material (the piece then shows at once); the fade leaves a material
+  someone replaced in place.
+
+Census (MEASURED, `measure_appear_fade.gd --census`: the 155 of the 156 models the `MOB_` rows
+name that assemble, every surface): 72 StandardMaterial3D, 269 `foliage.gdshader`, 244
+`foliage_one_sided.gdshader`, 17 MTRL-mod shader; **with no fade twin: 0**.
+
+### 4. The measurement (MEASURED, `client/tools/measure_appear_fade.gd`)
+
+A real monster model from Data.pk2, held in its rest pose before a plain background at 320x240,
+added and faded with a fixed 1/60 s step; every frame read back. Covered = how much of the model's
+final colour difference from the background the frame shows (0 = absent, 1 = opaque).
+
+| t (s) | asked alpha | mangnyang (StandardMaterial3D) | tiger (foliage shader) | nachal (MTRL mod) | mangnyang, no fade (base) |
+|---|---|---|---|---|---|
+| 0.000 | 0 | 0.000 | 0.000 | 0.000 | **1.000** |
+| 0.017 | 2 | 0.010 | 0.012 | 0.015 | 1.000 |
+| 0.500 | 64 | 0.265 | 0.303 | 0.368 | 1.000 |
+| 1.000 | 128 | 0.518 | 0.566 | 0.638 | 1.000 |
+| 1.500 | 191 | 0.758 | 0.794 | 0.839 | 1.000 |
+| 1.983 | 253 | 0.992 | 0.994 | 0.995 | 1.000 |
+| 2.000 | 255 | 1.000 | 1.000 | 1.000 | 1.000 |
+
+Rising monotonically from nothing to the whole model in 2.0 s. The multi-piece models read above
+the asked alpha mid-fade (worst +0.064 tiger, +0.139 nachal; +0.016 mangnyang): overlapping
+translucent pieces composite (INFERRED). After the fade, the last frame is **pixel-identical** to
+the never-faded model's for all three (0 of 76,800 pixels differ), and every mesh has its own
+material back.
+
+### 5. Tests
+
+`client/scripts/world/appear_fade_test.gd` (new; synthetic meshes, no game data): the curve (0,
+64, 128, 191, 255 at 0/0.5/1/1.5/2 s; linear at every 10 ms; done just past 2.0 s), twins for the
+StandardMaterial3D and foliage pieces keeping their texture and alpha test, alpha 0 / 128 / 254 /
+own material at 0 / 1.0 / 1.99 / 2.01 s, plate and bar untouched, cohort sharing, a material
+replaced mid-fade left alone, the mod shader's twin and the world's shaders unchanged, an unknown
+shader left alone; and in a quiet World3D, a monster body built from a list and another player's
+body: alpha 0 when built, 128/255 at 1.0 s, a refresh not restarting it, the species' own shared
+opaque material at 2.01 s.
+
+The NEGATIVE, the suite on the base (dev 4104a11):
+
+```
+FAIL AppearFade exists (res://scripts/world/appear_fade.gd)
+FAIL a monster's body is drawn at alpha 0 the frame it is built (it does not pop in)
+FAIL half way through its fade at 1.0 s
+FAIL a refresh of the same monster does not restart it
+FAIL another player's body is drawn at alpha 0 the frame it appears (READ: the same 2.0 s fade)
+FAIL half way at 1.0 s
+6 FAILURES
+```
+
+On the branch: ALL PASS. `client/tools/remote_godot.sh tests`: ran 186 suite(s), 0 failing.
+
+### 6. Performance gate (`perf_gate.sh --base 4104a11 --sites jangan,mobs`)
+
+Interleaved, 1280x720, median of 3 runs a side (one head run at Jangan repeated after another
+lane's render overlapped it):
+
+| site | number | base 4104a11 | head | change | verdict |
+|---|---|---|---|---|---|
+| jangan | frame ms | 9.91 | 10.01 | +0.1 | SAME |
+| jangan | entry ms | 9,580 | 9,695 | +115 | SAME |
+| jangan | freeze ms | 3,411 | 3,393 | -18 | SAME |
+| jangan | hitches | 5 | 5 | 0 | SAME |
+| mobs | frame ms | 10.87 | 10.91 | +0.0 | SAME |
+| mobs | entry ms | 10,635 | 10,573 | -62 | SAME |
+| mobs | freeze ms | 3,466.5 | 3,430 | -36.5 | SAME |
+| mobs | hitches | 5 | 5 | 0 | SAME |
+
+At `mobs` all 500 monsters fade in during and just after the entry; the frame number is taken
+well after, when every mesh is back on its opaque material -- the point of restoring them.
+
+### 7. OPEN
+
+- **The despawn fade-out** (READ above: 1.5 s, the object deleted at the end) is not drawn: a
+  monster's body still goes at once when its death clip ends, the list drops it, or it leaves the
+  area of interest; a player's when they leave.
+- **Name plate, shadow, effects**: whether retail fades them with the model is not read; this
+  client leaves them as they were.
+- **NPCs** fade in retail (CICNPC vslot 0x6c is `FUN_009d17e0`), but ours are built from the map's
+  data when a region loads, not from a spawn; they still appear at once.
+- **The player's own character**: `CICPlayer::vslot_009` writes its alpha every frame from its
+  own interpolator; whether it shows a spawn fade is not settled. Not faded here.
+- **The first fade of a session compiles the twin shaders** (the GL driver compiles a variant on
+  first draw); not separately measured beyond the gate's freeze column.
+
 ## Six-hundred-and-seventy-fifth round: the Jangan gate after a death -- not reproduced on dev under srrevamp-01's flags; the live server was never asked, the server's half is now pinned by tests, and a world click the client drops now shows in the tester's log
 
 The user (2026-10-01, playing v0.1.467): "Also when I died it seems the Jangan teleport stopped

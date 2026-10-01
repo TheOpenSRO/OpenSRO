@@ -13317,6 +13317,8 @@ func _physics_process(delta: float) -> void:
 		_qa_split.on_step(Engine.get_frames_drawn())
 	SkillEffects.tick(delta)
 	BerserkLook.tick(delta)
+	# Monsters and other players fading into existence (round 676).
+	_appear_fades.step(delta)
 	_berserk_flash_step(delta)
 	_qa_berserk_probe()
 	var cells_before := _load_timings.cell_work_usec
@@ -13917,6 +13919,9 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	# And their berserk, if they are (round 651): the spawn's own body mode,
 	# applied without the start burst (FUN_009cf880(mode, 1, 0), READ).
 	_berserk_resync(character_id, "their body was built")
+	# They fade into existence over 2.0 s, as a monster does (round 676,
+	# AppearFade: READ, CICUser vslot 0x6c FUN_009dbcc0 -> FUN_009d17e0).
+	_appear_fades.start(body)
 
 func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 	# During a zone change's load the old zone's bodies are still drawn and
@@ -15846,6 +15851,9 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	other_entities.add_child(body)
 	_monster_bodies[monster.monster_id] = body
 	_monster_builds += 1
+	# It fades into existence over 2.0 s, as retail's spawn does (round 676,
+	# AppearFade: READ, CICharactor vslot 0x6c FUN_009d17e0 -> CIDecoAppear).
+	_appear_fades.start(body)
 	# Its buffs' auras, if the zone told any (round 646, BuffRoster).
 	_fx_resync_owner(_fx_owner_key(monster.monster_id, SkillNet.OWNER_MONSTER), "its body was built")
 	# Its sounds: keyed by its own sound object (MOB_CH_MANGNYANG ->
@@ -15870,6 +15878,9 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 ## One template per species model (MonsterDraw.Templates), freed with the
 ## world (_exit_tree). Kept across zone changes, like _npc_model_cache.
 var _monster_templates := MonsterDraw.Templates.new()
+## Bodies fading into existence (round 676, AppearFade): every monster body
+## built and every other player's body, stepped in _physics_process.
+var _appear_fades := AppearFade.Fades.new()
 ## How a template is assembled: the model's own `.bsr` out of Data.pk2. A
 ## Callable so the headless test can hand it a synthetic model.
 var _monster_assemble := Callable()

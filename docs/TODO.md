@@ -2323,6 +2323,24 @@ attack result. `SRREVAMP_QA_MOBS=<N>` and the perf gate's `mobs` site measure it
       (the region gate runs when a cell loads or unloads, not per step).
 - [ ] **Scale (characterdata col 48)** is not applied to any monster (see the `_CLON` item above).
 
+### Characters fade into existence (round 676) — **built: monsters and other players fade in over 2.0 s, linear, as retail's CIDecoAppear (READ; docs/protocol/appear_fade.md); these are left**
+
+- [ ] **The despawn fade-out is not drawn.** Retail fades a despawned object (0x3016, the group
+      despawn) out over 1.5 s with `CIDecoDisappear` and deletes it after (READ). Ours removes a
+      monster's body at once when its death clip ends, the list drops it or it leaves the area of
+      interest, and another player's when they leave. Drawing it means keeping the body (without
+      its collider, target and list entry) for 1.5 s after it is forgotten.
+- [ ] **Name plate, HP bar, shadow and effects** are not faded. Retail writes the alpha to the
+      model's compound (`CCompChar` +0x4c) only; who reads it in the draw is not read.
+- [ ] **NPCs** fade in retail (the same `FUN_009d17e0`); ours are built from the map's data at
+      region load and appear at once.
+- [ ] **The player's own character** is not faded. `CICPlayer::vslot_009` drives its alpha every
+      frame from its own interpolator (+0x2068, `FUN_009d4e80`); whether a spawn fade shows is
+      not settled.
+- [ ] **A material with no fade twin pops in** (`AppearFade.Fades.unfadable`). Every monster
+      surface has one today (`measure_appear_fade.gd --census`); a new shader needs its twin in
+      `ObjectLoader.appear_fade_shader`.
+
 ## Parked, with the state written down
 
 ### Moat water — **resolved by the `.m` (round 627)**

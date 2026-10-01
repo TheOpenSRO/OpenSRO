@@ -542,6 +542,24 @@ const ENV_MAP_ALPHA_REF := 1
 ## Godot shader's cull mode is a compile-time render_mode.
 const FOLIAGE_SHADER := preload("res://scripts/assets/foliage.gdshader")
 const FOLIAGE_SHADER_ONE_SIDED := preload("res://scripts/assets/foliage_one_sided.gdshader")
+## The (cull, blend, zwrite) a generated MTRL-mod shader was built for, on
+## the Shader (round 676): AppearFade asks _mod_shader for its fade twin.
+const MOD_SHADER_KEY_META := "srrevamp_mod_shader_key"
+
+## The shader a character's material is drawn with while it fades into
+## existence (AppearFade, round 676), or null for one with no fade twin: the
+## foliage shaders' *_fade variants and a mod shader's `fade` twin.
+static func appear_fade_shader(shader: Shader) -> Shader:
+	if shader == null:
+		return null
+	if shader == FOLIAGE_SHADER:
+		return load("res://scripts/assets/foliage_fade.gdshader")
+	if shader == FOLIAGE_SHADER_ONE_SIDED:
+		return load("res://scripts/assets/foliage_one_sided_fade.gdshader")
+	if shader.has_meta(MOD_SHADER_KEY_META):
+		var k: Array = shader.get_meta(MOD_SHADER_KEY_META)
+		return _mod_shader(String(k[0]), String(k[1]), bool(k[2]), true)
+	return null
 
 ## The scissor threshold of an alpha-tested layer: ALPHA_TEST_REF / 255.
 ## (The 0.5 it replaced drew the same texels; this is the client's number.)
@@ -746,8 +764,15 @@ static func stage_ops_handled(rule: Dictionary) -> bool:
 		return true
 	return int(rule["color_op"]) in HANDLED_COLOR_OPS and int(rule["alpha_op"]) in HANDLED_ALPHA_OPS
 
-static func _mod_shader(cull: String, godot_blend: String, zwrite: bool) -> Shader:
+## `fade` (round 676) gives the variant a character fading into existence is
+## drawn with (AppearFade): the same draw, its alpha multiplied by the
+## uniform `appear_alpha`, blended even where the mod is opaque, and writing
+## depth (OURS). The world's shaders are built without it, unchanged; each
+## keeps its key in MOD_SHADER_KEY_META so AppearFade can ask for its twin.
+static func _mod_shader(cull: String, godot_blend: String, zwrite: bool, fade: bool = false) -> Shader:
 	var key := "%s/%s/%s" % [cull, godot_blend, zwrite]
+	if fade:
+		key += "/fade"
 	_static_lock.lock()
 	var cached: Shader = _mod_shaders.get(key)
 	_static_lock.unlock()
@@ -758,6 +783,12 @@ static func _mod_shader(cull: String, godot_blend: String, zwrite: bool) -> Shad
 	if not opaque:
 		modes.append("blend_" + godot_blend)
 		modes.append("depth_draw_always" if zwrite else "depth_draw_never")
+	elif fade:
+		modes.append("blend_mix")
+		modes.append("depth_draw_always")
+	var alpha_line := "" if opaque else "ALPHA = clamp(out_a, 0.0, 1.0);"
+	if fade:
+		alpha_line = "ALPHA = appear_alpha;" if opaque else "ALPHA = clamp(out_a, 0.0, 1.0) * appear_alpha;"
 	var shader := Shader.new()
 	shader.code = """shader_type spatial;
 render_mode %s;
@@ -777,7 +808,7 @@ uniform int alpha_arg2 = 0;
 // The blend emulation (ObjectLoader.BLEND_EMULATION).
 uniform int blend_color = 0;
 uniform int blend_alpha = 0;
-
+%s
 // A stage value split into the part that multiplies DIFFUSE (lit) and the
 // part that does not (unlit): value = lit * DIFFUSE + unlit.
 struct Split { vec3 lit; vec3 unlit; };
@@ -888,7 +919,8 @@ void fragment() {
 		NORMAL = -NORMAL;
 	}
 }
-""" % [", ".join(modes), "" if opaque else "ALPHA = clamp(out_a, 0.0, 1.0);"]
+""" % [", ".join(modes), "uniform float appear_alpha = 1.0;\n" if fade else "", alpha_line]
+	shader.set_meta(MOD_SHADER_KEY_META, [cull, godot_blend, zwrite])
 	_static_lock.lock()
 	if _mod_shaders.has(key):
 		shader = _mod_shaders[key] # another thread built it first: one shader per key
