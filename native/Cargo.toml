@@ -1,0 +1,31 @@
+[package]
+name = "srrevamp_native"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Native pk2 archive reader and asset parsers for the srrevamp client (round 667 spike)"
+license = "MIT"
+
+[lib]
+# cdylib: the GDExtension library Godot loads. rlib: so `cargo test` and a
+# later C-ABI/static build can link the plain-Rust core without Godot.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["godot-binding"]
+# The thin gdext layer (src/gd.rs). Off, the crate is the plain core only.
+godot-binding = ["dep:godot"]
+# The parity check's NEGATIVE (native/README.md, "Parity"): two deliberate, subtle bugs -- a
+# directory block's 20th entry is dropped, and an uncompressed texture's red and blue are
+# swapped. A build with this feature must FAIL client/tools/native_parity.gd. Never shipped.
+parity-negative = []
+
+[dependencies]
+godot = { version = "=0.5.5", default-features = false, features = ["api-4-2", "experimental-threads"], optional = true }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+strip = "symbols"

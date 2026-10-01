@@ -878,6 +878,37 @@ driver" alert unless the export template carries ANGLE, which was not checked; a
 report so far (the white ground included) came from a Forward+ build, so the first report from a
 Compatibility release is the one to read against the box.
 
+### Native (Rust) readers (round 667) -- **the pk2 reader and the `.ddj` per-pixel decodes are native; these are left**
+
+Round 667's spike moved the pk2 reader (the directory's Blowfish decrypt, the name index, the
+path lookup and the file read) and DdjReader's two per-pixel decodes into a GDExtension. The build,
+the parity check, the negative and the Windows cross-build are in native/README.md. The
+measurement, warm and cold, is in WORLD_ISSUES.md, round 667. The rest of the parse time, ranked by
+what the same `SRREVAMP_PARSE_PROFILE=1` Jangan entry measured with the native readers ON:
+
+- [ ] **`BmsReader.parse`**: the largest parser left, at 326 ms on the main thread and 879 ms on
+      the workers per Jangan entry (plus `to_arrays`, 58 / 72). The parse builds one `Vertex` object per vertex, and
+      `to_arrays` turns them back into packed arrays. A native parse that hands back the packed
+      arrays and keeps them on `ParsedMesh` saves both. Callers that read `mesh.vertices`
+      (character, monster and skinned assemblers, `bms_collision`) still need the objects, or
+      need moving onto the arrays.
+- [ ] **`MapmReader.parse` and `NvmReader.parse`**: 557 and 453 ms on the workers per 25-region
+      entry. Off the main thread, so they cost entry time only while the drain waits for
+      them.
+- [ ] **The NPC text tables** (`npcs [tables]`, about 570 ms on the main thread at the centre
+      cell, unchanged by round 667): `NpcTableReader.parse_models`/`parse_codes`/`parse_names`
+      and `UiTextTable.parse` over characterdata and textdata_object. These are UTF-16 split and
+      scan, a natural fit for one native call per file that returns packed columns.
+- [ ] **The boot tables** (`character/item/NPC tables loaded in` about 1.1 s, before the loading
+      screen): not profiled function by function yet. ParseProfile's `before the entry` window
+      covers only the readers it wraps.
+- [ ] **Ship it.** The release workflow builds no library yet, and `export_presets.cfg` excludes
+      the `.gdextension`. native/README.md, "Exports and CI", has the three steps. The user tests
+      the DLL on Windows first (the log lines to look for are in the README).
+- [ ] **Low-end hardware.** The user will emulate a slow CPU and slow storage. `perf_gate.sh
+      --ab-env SRREVAMP_NATIVE=0 --cold` is the reproducible run (client/tools/README.md,
+      "Native readers A/B").
+
 ### Loading freezes: what the off-thread rounds left (map/loading epic, 2026-09-25)
 
 Rounds 565-566 prepare a streamed cell's terrain and objects on a `WorkerThreadPool` task and

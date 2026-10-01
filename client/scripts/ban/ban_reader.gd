@@ -63,6 +63,13 @@ class ParsedAnimation:
 ## Parses a .ban file's raw bytes. Returns null (and pushes an error) on
 ## failure.
 static func parse(data: PackedByteArray) -> ParsedAnimation:
+	var _pp := ParseProfile.t0()
+	var _out: ParsedAnimation = _pp_parse(data)
+	ParseProfile.add("ban.parse", _pp)
+	return _out
+
+## The body of parse, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse(data: PackedByteArray) -> ParsedAnimation:
 	if data.size() < MAGIC_LEN + 4:
 		push_error("ban: file too small to contain a header")
 		return null

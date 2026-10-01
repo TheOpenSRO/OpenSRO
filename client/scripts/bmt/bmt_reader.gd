@@ -56,6 +56,13 @@ class ParsedMaterial:
 ## (chinaman_warrior.bmt, chinaman_bogy.bmt, chinaman_monk.bmt). Detect by
 ## checking for the magic directly before assuming the compressed layout.
 static func parse(data: PackedByteArray) -> ParsedMaterial:
+	var _pp := ParseProfile.t0()
+	var _out: ParsedMaterial = _pp_parse(data)
+	ParseProfile.add("bmt.parse", _pp)
+	return _out
+
+## The body of parse, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse(data: PackedByteArray) -> ParsedMaterial:
 	if data.size() >= MAGIC_LEN and data.slice(0, MAGIC_LEN).get_string_from_ascii() == MAGIC:
 		return _parse_decompressed(data)
 

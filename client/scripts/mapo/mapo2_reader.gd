@@ -117,6 +117,13 @@ class ParsedRegion:
 ## real error (not a graceful partial result) since this format's layout is
 ## fully deterministic, unlike .m's still-partially-understood Shape A.
 static func parse(data: PackedByteArray) -> ParsedRegion:
+	var _pp := ParseProfile.t0()
+	var _out: ParsedRegion = _pp_parse(data)
+	ParseProfile.add("o2.parse", _pp)
+	return _out
+
+## The body of parse, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse(data: PackedByteArray) -> ParsedRegion:
 	if data.size() < HEADER_LEN:
 		push_error("mapo2: file too small to contain a header")
 		return null

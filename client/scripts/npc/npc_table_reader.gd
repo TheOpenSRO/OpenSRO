@@ -76,6 +76,13 @@ class Spawn:
 ## Parses npcpos.txt. Rows that don't have five numeric columns are skipped
 ## rather than failing the file -- these tables carry comment lines.
 static func parse_positions(data: PackedByteArray) -> Array[Spawn]:
+	var _pp := ParseProfile.t0()
+	var _out: Array[Spawn] = _pp_parse_positions(data)
+	ParseProfile.add("text.npc_positions", _pp)
+	return _out
+
+## The body of parse_positions, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse_positions(data: PackedByteArray) -> Array[Spawn]:
 	var out: Array[Spawn] = []
 	for line in _lines(data):
 		var cols := line.split("\t")
@@ -101,6 +108,13 @@ static func parse_positions(data: PackedByteArray) -> Array[Spawn]:
 ## The codename (NPC_CH_SMITH) is what the shop/greeting tables key by, so this
 ## is the join from a placed NPC's id to those tables.
 static func parse_codes(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
+	var _pp := ParseProfile.t0()
+	var _out: Dictionary = _pp_parse_codes(data, into)
+	ParseProfile.add("text.npc_codes", _pp)
+	return _out
+
+## The body of parse_codes, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse_codes(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 	for line in _lines(data):
 		var cols := line.split("\t")
 		if cols.size() <= COL_CODE_NAME:
@@ -116,6 +130,13 @@ static func parse_codes(data: PackedByteArray, into: Dictionary = {}) -> Diction
 ## Parses one characterdata part into {npc id -> .bsr path}, merging into
 ## `into` so several parts can be accumulated.
 static func parse_models(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
+	var _pp := ParseProfile.t0()
+	var _out: Dictionary = _pp_parse_models(data, into)
+	ParseProfile.add("text.npc_models", _pp)
+	return _out
+
+## The body of parse_models, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse_models(data: PackedByteArray, into: Dictionary = {}) -> Dictionary:
 	for line in _lines(data):
 		var cols := line.split("\t")
 		if cols.size() <= COL_MODEL_ID:

@@ -7094,6 +7094,291 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-sixty-seventh round: the pk2 reader and the texture decodes in Rust -- the Jangan entry from 9.9 s to 6.1 s warm, the centre cell from 3.4 s to 1.7 s
+
+The user asked (2026-09-30) whether loading is faster with pk2 decrypting, loading and parsing done
+in Rust through a GDExtension. Their players are on slower PCs than theirs, and they will emulate
+low-end CPU and storage once this is shown to work. This round is that spike. It has four parts:
+measure where the parse time goes, port the top of it, prove parity on the real archives, and A/B
+one build both ways, warm and cold. Build, test and toolchain: native/README.md. The A/B recipe:
+client/tools/README.md, "Native readers A/B". Next ports: docs/TODO.md, "Native (Rust) readers".
+
+Labels: MEASURED (on the render box, real archives at /opt/sro-files/client, Jangan spawn
+97/168 at 1002,1020, 1280x720, loading screen forced), READ (the Godot 4.2.2 source), INFERRED,
+OURS.
+
+### 1. Where the time went: ranked, before porting anything
+
+`client/scripts/pk2/parse_profile.gd` (new, `SRREVAMP_PARSE_PROFILE=1`) times every pk2 directory
+read, with the disk read and the Blowfish decrypt apart. It also times every file read, every path
+lookup (`ObjectLoader.find_file`) and 23 parser entry points, by thread, and prints `PARSEPROF`
+lines. Two runs gave the same picture within 3 %; these are run 2's entry window, from the drain's
+start to its LoadTimings summary (MEASURED):
+
+| key | main thread ms (calls) | workers ms (calls) |
+|---|---|---|
+| **pk2 directory decrypt** (`pk2.dir_decrypt`, GDScript Blowfish) | **2,637 (1,051 blocks)** | **896 (315)** |
+| `ddj.to_image` (texture decode) | **1,242 (606)** | 202 (329) |
+| `bms.parse` | 330 (330) | **977 (652)** |
+| `pk2.find_file`, beyond its directory reads: the name scan and waiting on the reader's lock | 162 | **569** |
+| `mapm.parse` | 17 | 531 (24) |
+| `nvm.parse` | 13 | 478 (24) |
+| NPC text tables (`npc_models` 218, `ui_table` 185, `npc_codes` 109, `npc_positions` 27) | 539 | 0 |
+| `bms.to_arrays` | 59 | 70 |
+| `pk2.dir_entries` (slicing a decrypted block into entries) | 56 | 19 |
+| `ban.parse` / `bsr.parse` / `bsk.parse` | 55 / 34 / 24 | 16 / 27 / 2 |
+| `pk2.read_file` (153 MB) | 46 | 127 |
+| `pk2.dir_io` (3.5 MB of directory blocks off the disk) | 3 | 2 |
+| `tile2d.parse` | **1.8** | 0 |
+
+Before the entry, the boot tables add another 192 ms of directory decrypt on the main thread and
+143 ms on the workers.
+
+What the table says:
+- **The pk2 directory decryption WAS the cost.** The brief said it was not, because only directory
+  blocks are encrypted. That is true, but there are 1,366 of them in one entry. Each 2,560-byte
+  block is 320 Blowfish block decrypts in GDScript, about 2.5 ms a directory block (MEASURED). That
+  is 3.5 s of CPU, 2.6 s of it on the main thread, before counting the worker tasks queued behind
+  `Pk2Reader._lock` while it is held through a decrypt (the 569 ms row).
+- **The centre cell's `tiletable 707` was never the tile table.** `tile2d.parse` takes 1.8 ms. The
+  rest is the lookup of `navmesh\tile2d.ifo`, which decrypts the whole `navmesh` folder, the
+  largest in Data.pk2. Native, the lap is 7 ms (§4).
+- `ddj.to_image`'s cost is its two per-pixel GDScript loops (uncompressed textures through their
+  channel masks, and the half-float `q`). The DXT branches already hand off to Godot's C++.
+- Disk reads are a rounding error warm: 3 ms for every directory block and 46 ms for 153 MB of
+  files.
+
+So the port was the pk2 reader (directory decrypt, name index, lookup, read) and, as the top
+parser, `ddj.to_image`'s per-pixel decodes. `bms.parse`, mapm, nvm and the text tables are
+next, in that order (docs/TODO.md).
+
+### 2. What was built
+
+- **`native/`**: a Rust crate. `godot` is pinned to `=0.5.5` with `api-4-2` and
+  `experimental-threads`, Rust is 1.98.1, and Cargo.lock is committed.
+  - `src/core/` is plain Rust with no Godot type: Blowfish, the pk2 archive and the ddj decodes.
+    This keeps it binding-agnostic, as the user asked, so the same code can sit behind a C ABI
+    and be linked statically if antivirus objects to the DLL.
+  - `src/gd.rs` is the thin gdext layer: `SrNativePk2` and `SrNativeParsers`. It returns packed
+    arrays or one Dictionary per call, never a Variant per element.
+  - The archive decrypts each directory once and indexes it by lower-cased name. As
+    `find_file`'s scan does, the first entry of a name wins. Reads are positional
+    (`pread`/`seek_read`), so threads share no cursor and need no lock to read.
+- **The client** never names a native class as a type. `client/scripts/pk2/native_assets.gd`
+  finds them through `ClassDB.class_exists`/`instantiate`, so every script compiles and runs
+  without the library.
+  - `Pk2Reader` keeps its API. With the library it hands directories, lookups and reads to the
+    native handle; without it, nothing changes.
+  - `DdjReader.to_image` sends its two per-pixel branches to native when available. A native
+    refusal falls through to the GDScript branch, which reports its own error.
+  - `SRREVAMP_NATIVE=0` forces GDScript in a build that has the library. The client logs which
+    path it took: `NativeAssets: native readers ON|OFF (...)`.
+- **`client/srrevamp_native.gdextension`** gives the linux.x86_64 and windows.x86_64 paths
+  (`res://native_bin/`, git-ignored). Libraries are build output: `native/build.sh [windows]`.
+  `.gitignore` covers `native/target/`, `client/native_bin/`, `*.so`, `*.dll`, `*.dylib` and
+  `*.rlib`.
+- **Without the library** (MEASURED: a copy with the `.gdextension` but no `native_bin`, which is
+  CI's case and a player's without the DLL), Godot 4.2.2 prints four `ERROR` lines and carries on:
+  `Can't open dynamic library`, `GDExtension dynamic library not found: .../libsrrevamp_native.so`,
+  `Failed loading resource: res://srrevamp_native.gdextension` and `Error loading extension`.
+  `check_scripts.gd` then prints `ALL LOAD` and exits 0, all 179 suites pass, and the client logs
+  `NativeAssets: native readers OFF (library not loaded)`.
+- **The export presets exclude the `.gdextension`** (READ, `editor_export_platform_pc.cpp`, 4.2.2).
+  The exporter adds the library a `.gdextension` names to the shared objects and fails the export
+  when its `da->copy` fails. The release workflow builds no library yet, so without the exclusion
+  every tagged release would have failed. The workflow itself is unchanged.
+- **`perf_gate.sh` gained `--ab-env "VAR=value"`**, which runs the base side on the head's own
+  copy with those variables, so one build is compared both ways. It also gained `--cold` (§5).
+  `remote_godot.sh` and the gate ship `client/native_bin` when it is built.
+  `NO_NATIVE=1 remote_godot.sh ...` ships no library and removes the box's copy.
+
+### 3. Parity on the real archives (MEASURED)
+
+`client/tools/native_parity.gd` reads the four archives both ways in one process (202 s):
+
+| archive | directories / entries compared | lookups compared (case/slash/missing variants) | files read, bytes compared | per-pixel `.ddj` decodes compared |
+|---|---|---|---|---|
+| Data.pk2 | 2,734 / 75,872 (every one) | 70,261 (16,974) | 25,846 / 1,868,030,264 | 1,052 (rgb32 804, rgb16 232, rgb8 12, rgb24 4) |
+| Map.pk2 | 101 / 19,511 | 9,428 (2,664) | 3,491 / 302,173,729 | 38 (rgb32) |
+| Media.pk2 | 168 / 23,002 | 11,453 (3,207) | 21,812 / 726,889,128 | 9,653 (rgb32 5,935, rgb16 3,696, rgb24 14, rgb8 8) |
+| Particles.pk2 | 40 / 5,871 | 3,356 (906) | 1,934 / 105,798,627 | 134 (rgb32 128, rgb16 2, q 4) |
+| **total** | **3,043 / 124,256** | **94,498** | **53,083 / 3.00 GB** | **10,877** |
+
+- Every directory of every archive is compared entry by entry: name, kind, offset and size.
+- Lookups cover every file in a folder of up to 300 entries and every 25th in larger ones. Every
+  10th also gets an upper-cased, a `/`-separated and a missing variant.
+- Every 7th file is compared byte for byte, plus every `.ddj`.
+- Every uncompressed or `q` texture is decoded both ways and compared as RGBA bytes.
+
+Result: `PARITY PASS`, with **0 mismatches**.
+
+**The negative.** `cargo build --features parity-negative` makes a library with two deliberate,
+subtle bugs: it never reads a directory block's 20th slot, and it leaves BGR unswizzled. Shipped to
+a separate box copy, it fails both checks (MEASURED):
+
+```
+FAIL Data's 27 entries over two chained blocks agree entry for entry (27 / 26)
+FAIL 32-bit BGRA decodes to the same RGBA both ways ([48, 32, 16, 64, ...] / [16, 32, 48, 64, ...])
+FAIL 16-bit ARGB1555 decodes to the same RGBA both ways (...)
+FAIL 24-bit, no masks recorded decodes to the same RGBA both ways ([3, 2, 1, 255] / [1, 2, 3, 255])
+4 FAILURES
+FAIL Particles.pk2: dir '' has 21 entries in GDScript, 20 native
+FAIL Particles.pk2: dir '' entry 18: GDScript (map.rar, dir false, @150203305, 462877) native (co, dir true, @140892261, 0)
+FAIL Particles.pk2: dir 'co' has 55 entries in GDScript, 53 native
+PARITY FAIL 5354
+FAIL Map.pk2: dir '' has 190 entries in GDScript, 181 native
+PARITY FAIL 18373
+```
+
+`cargo test --features parity-negative` fails 4 of its 9 tests too.
+
+Tests:
+- `cargo test --no-default-features`: 9 pass. They cover Schneier's Blowfish vectors (the same 9
+  as blowfish_test.gd), the pk2 variant, a synthetic plain and encrypted archive with a chained
+  folder and a case-variant duplicate, and every ddj branch and fallback.
+- `client/scripts/pk2/native_assets_test.gd` (new) runs on synthetic input both ways:
+  - an encrypted chained archive: directories, 8 lookup variants, bytes, and 1,600 concurrent
+    native lookups and reads from 8 WorkerThreadPool tasks;
+  - four textures;
+  - without the library, the fallback.
+- Box suites, with the library: `remote_godot.sh check` ALL LOAD (445 scripts) and `tests` 179
+  suites, 0 failing. The existing pk2, asset-source and object-loader suites then run through the
+  native path. Without it (`NO_NATIVE=1`): ALL LOAD, 179 suites, 0 failing.
+
+### 4. The gain, warm (MEASURED; same build, `--ab-env SRREVAMP_NATIVE=0`)
+
+`perf_gate.sh --ab-env SRREVAMP_NATIVE=0 --sites jangan,mobs` ran 3 runs a side, interleaved, on
+one shipped copy. The base is this build with the GDScript path forced. The verdicts are the gate's
+own functions. The run's final print was lost to a shell fault, because perf_gate.sh was edited
+while it ran (bash reads a script as it goes), so the table was recomputed from the gate's own
+per-run lines with the same functions:
+
+```
+jangan  frame ms   base 10.29  head 9.56  (-0.7)  SAME
+jangan  entry ms   base 9966  head 6097  (-3869.0)  FASTER
+jangan  freeze ms  base 3386  head 1659  (-1727.0)  FASTER
+jangan  hitches    base 6  head 5  (-1.0)  SAME
+mobs    frame ms   base 10.88  head 10.62  (-0.3)  SAME
+mobs    entry ms   base 11162  head 7006  (-4156.0)  FASTER
+mobs    freeze ms  base 3406  head 1914  (-1492.0)  FASTER
+mobs    hitches    base 5  head 5  (+0.0)  SAME
+```
+
+Per run, entry ms: Jangan base 9,966 / 9,906 / 10,111 against head 6,035 / 6,311 / 6,097; mobs base
+11,302 / 10,944 / 11,162 against head 7,034 / 6,708 / 7,006. Every head run beats every base run.
+
+**Frame time did not get slower.** Base Jangan run 1's "20.87 ms" is the gate's metric, not a slow
+frame: the mean of the last 30 per-second samples reached back into that run's loading second
+(333 ms). The median of the last 20 samples is 8.84 / 9.00 / 8.92 ms for the base and 8.84 /
+8.92 / 8.92 ms for the head.
+
+The buckets, Jangan, median of 3 runs each (LoadTimings, ms):
+
+| | GDScript | native |
+|---|---|---|
+| entry (`region grid loaded in`) | 9,966 | 6,097 |
+| centre cell 97/168, main thread, frame 0 | 3,339 | 1,656 |
+| - terrain | 1,468 | 299 |
+| -- `tiletable` | 710 | 7 |
+| -- `water` | 291 | 107 |
+| -- `navgraph` | 134 | 17 |
+| -- `textures` | 93 | 5 |
+| - objects | 749 | 307 |
+| -- `models` | 659 | 217 |
+| - npcs | 1,120 | 1,051 |
+| -- `tables` (text tables: not ported) | 572 | 570 |
+| outside the cells, over the awaited frames | 5,228 | 3,166 |
+| terrain prepared off the main thread | 5,933 | 4,992 |
+| objects prepared off the main thread | 2,143 | 1,181 |
+| boot tables (`character/item/NPC tables loaded in`, before the entry) | 1,174 | 1,033 |
+| longest work frame (the centre cell) | 3,386 | 1,659 |
+
+The mobs site (500 monsters) gives the same picture: centre cell 3,359 against 1,672, and
+`tiletable` 715 against 7.
+
+The ported functions in the same `PARSEPROF` entry window, native ON (run 2 of 2; MEASURED):
+
+| key | GDScript main / workers ms | native main / workers ms |
+|---|---|---|
+| `pk2.find_file` (with its directory decrypts) | 2,858 / 1,486 | **30 / 24** |
+| `pk2.dir_decrypt` | 2,637 / 896 | 0: no GDScript decrypt runs |
+| `ddj.to_image` (every format) | 1,242 / 202 | **19 / 7** |
+| `pk2.read_file` (153 MB) | 46 / 127 | 46 / 34 |
+| before the entry: `pk2.find_file` | 199 / 148 | 3 / 2 |
+
+What was not ported is unchanged: `bms.parse` 326 / 879, `mapm.parse` 16 / 557, `nvm.parse` 12 /
+453, and the text tables 538 on the main thread.
+
+### 5. The gain, cold (MEASURED)
+
+The box's container cannot drop the page cache: `/proc/sys/vm/drop_caches` is read-only there
+(`Read-only file system`). `--cold` instead evicts each `*.pk2` with
+`posix_fadvise(POSIX_FADV_DONTNEED)` before every run and records `fincore` afterwards. Godot, the
+project and the shader cache stay cached, so this is cold archives, not a cold machine.
+
+`--ab-env SRREVAMP_NATIVE=0 --sites jangan,mobs --cold`, 3 runs a side. `fincore` read
+**0 pages** of the five archives resident after every one of the 12 evictions.
+
+```
+perf gate: base working tree with SRREVAMP_NATIVE=0 vs head working tree (1280x720, median of 3 run(s), cold page cache)
+jangan  frame ms   base 9.49  head 9.72  (+0.2)  SAME
+jangan  entry ms   base 10118  head 6230  (-3888.0)  FASTER
+jangan  freeze ms  base 3477  head 1752  (-1725.0)  FASTER
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+mobs    frame ms   base 10.93  head 10.71  (-0.2)  SAME
+mobs    entry ms   base 11371  head 7135  (-4236.0)  FASTER
+mobs    freeze ms  base 3482  head 1896  (-1586.0)  FASTER
+mobs    hitches    base 5  head 5  (+0.0)  SAME
+```
+
+Jangan, median of 3, cold against warm:
+
+| | GDScript cold (warm) | native cold (warm) |
+|---|---|---|
+| entry | 10,118 (9,966) | 6,230 (6,097) |
+| centre cell | 3,424 (3,339) | 1,748 (1,656) |
+| `tiletable` | 711 (710) | 10 (7) |
+| `textures` | 103 (93) | 13 (5) |
+| `models` | 683 (659) | 246 (217) |
+
+**Cold costs this box about 0.1-0.2 s an entry, either way.** `lsblk` in the container lists a
+Samsung 970 EVO Plus NVMe, and an entry reads about 157 MB: 153 MB of files and 3.5 MB of
+directory blocks (PARSEPROF bytes). On this box the load is CPU-bound, warm or cold. On a slow
+disk, the 157 MB is what an entry pulls off it. The native reader reads the same bytes and does not
+change that (INFERRED from the identical byte counts). The user's storage emulation is what will
+measure it.
+
+### 6. Windows (MEASURED here; NOT run on Windows)
+
+`native/build.sh windows` cross-compiles for `x86_64-pc-windows-gnu` with mingw-w64 13 (Ubuntu's
+`gcc-mingw-w64-x86-64`). The output is `srrevamp_native.dll`, 2.3 MB stripped, a PE32+ DLL. Its
+export table is exactly `gdext_rust_init`, the `.gdextension`'s entry symbol. It imports only
+system DLLs: `KERNEL32`, `msvcrt`, `ntdll`, `USERENV`, `WS2_32`, `bcryptprimitives` and
+`api-ms-win-core-synch-l1-2-0`. No MinGW runtime DLL has to ship beside it.
+
+Why GNU and not MSVC (`cargo-xwin`):
+- It builds from distribution packages on the Linux runner, without fetching Microsoft's CRT and SDK.
+- The GDExtension interface is a C ABI, so the compiler that built Godot does not matter.
+
+What the user should check on the PC: `Initialize godot-rust (API v4.2..., runtime v4.2.2...)`
+and `NativeAssets: native readers ON (library loaded, srrevamp_native 0.1.0)` in the log. The DLL is
+unsigned. SmartScreen or antivirus may quarantine a new unsigned DLL, and the client then simply
+runs in GDScript. The fixes are signing, or the static link the core was kept Godot-free for. How
+CI would build it on `kakariko-runner` is in native/README.md, "Exports and CI". This round does
+not change it.
+
+### 7. OPEN
+
+- **Not run on Windows.** The DLL is built and its exports checked, nothing more.
+- **Not shipped.** The release workflow builds no library, and the presets exclude the extension.
+- **The parsers not ported**, ranked in docs/TODO.md: `bms.parse` first, then mapm and nvm, then
+  the NPC text tables. The boot tables (about 1.1 s) are not profiled function by function.
+- **Cold is cold archives only**, for the reason in §5. The user's low-end storage emulation is the
+  real test.
+- **perf_gate's frame number reads into loading** when an entry leaves fewer than 30
+  once-a-second samples after it (base Jangan run 1, §4). That is a gate issue, not a cost of this
+  round. It is noted here, not fixed.
+
 ## Six-hundred-and-sixty-sixth round: the deploy guide matches the release -- the skills re-import, the nest files' permissions and the full monster population -- and the server stops keeping a brain for every monster a player has passed
 
 The final release review of the monster epic (rounds 653-665) found the deploy guide out of step

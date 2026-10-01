@@ -54,6 +54,13 @@ const FIRST_LANGUAGE_COL := 3
 var _strings: Dictionary = {}
 
 static func parse(data: PackedByteArray, lang_col: int = COL_ENGLISH, keep_first: bool = true) -> UiTextTable:
+	var _pp := ParseProfile.t0()
+	var _out: UiTextTable = _pp_parse(data, lang_col, keep_first)
+	ParseProfile.add("text.ui_table", _pp)
+	return _out
+
+## The body of parse, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse(data: PackedByteArray, lang_col: int = COL_ENGLISH, keep_first: bool = true) -> UiTextTable:
 	var table := UiTextTable.new()
 	if data.is_empty():
 		return table

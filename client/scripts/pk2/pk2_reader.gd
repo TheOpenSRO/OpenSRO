@@ -92,6 +92,14 @@ var _dir_cache := {}
 ## little; pk2_reader_test.gd's concurrent-read case is the regression guard.
 var _lock := Mutex.new()
 
+## The native (Rust) half of this handle, or null (round 667; NativeAssets).
+## When set, directories, path lookups (ObjectLoader.find_file) and file reads
+## go through it: it decrypts a directory once in Rust, indexes it by
+## lower-cased name and reads positionally, so it needs neither `_lock` nor a
+## shared file cursor. The GDScript path below stays the reference: the
+## native one is held to it byte for byte (native/README.md, "Parity").
+var _native: Object = null
+
 ## Opens path for reading. Returns null (and pushes an error) on failure.
 static func open(path: String) -> Pk2Reader:
 	var f := FileAccess.open(path, FileAccess.READ)
@@ -115,9 +123,26 @@ static func open(path: String) -> Pk2Reader:
 	reader._root_offset = HEADER_SIZE
 	if reader._encrypted:
 		reader._cipher = Blowfish.new(_effective_key(DEFAULT_KEY.to_ascii_buffer()))
+	reader._native = _open_native(path)
 	return reader
 
+## The archive opened natively, or null: no library, SRREVAMP_NATIVE=0, or a
+## native open that failed (logged; the GDScript reader then serves it alone).
+static func _open_native(path: String) -> Object:
+	var native := NativeAssets.new_pk2()
+	if native == null:
+		return null
+	if not native.call("open", ProjectSettings.globalize_path(path)):
+		printerr("pk2: native open of %s failed (%s) -- reading it in GDScript" % [path, native.call("last_error")])
+		return null
+	return native
+
+## True when this handle reads through the native library.
+func is_native() -> bool:
+	return _native != null
+
 func close() -> void:
+	_native = null
 	_lock.lock()
 	if _file != null:
 		_file.close()
@@ -140,10 +165,16 @@ func read_file(file: Entry) -> PackedByteArray:
 	if file.is_dir:
 		push_error("pk2: %s is a folder, not a file" % file.name)
 		return PackedByteArray()
-	_lock.lock()
-	_file.seek(file._offset)
-	var bytes := _file.get_buffer(file.size)
-	_lock.unlock()
+	var pp := ParseProfile.t0()
+	var bytes: PackedByteArray
+	if _native != null:
+		bytes = _native.call("read", file._offset, file.size)
+	else:
+		_lock.lock()
+		_file.seek(file._offset)
+		bytes = _file.get_buffer(file.size)
+		_lock.unlock()
+	ParseProfile.add("pk2.read_file", pp, bytes.size())
 	return bytes
 
 ## Reads a directory's full entry list, following the real "next block"
@@ -161,10 +192,59 @@ func read_file(file: Entry) -> PackedByteArray:
 ## the field layout. MAX_CHAIN_BLOCKS bounds the walk as a
 ## cycle/corruption guard, not a real observed limit.
 func _read_block_chain(offset: int) -> Array[Entry]:
+	if _native != null:
+		return _native_dir(offset)
 	_lock.lock()
 	var out := _read_block_chain_locked(offset)
 	_lock.unlock()
 	return out
+
+## A directory through the native reader, as Entry objects in on-disk order
+## -- the same list _read_block_chain_locked builds -- cached in `_dir_cache`
+## like it. A lookup does not come here: find_native answers it without
+## building Entry objects for the whole directory.
+func _native_dir(offset: int) -> Array[Entry]:
+	_lock.lock()
+	if _dir_cache.has(offset):
+		var cached: Array[Entry] = _dir_cache[offset]
+		_lock.unlock()
+		return cached
+	_lock.unlock()
+	var pp := ParseProfile.t0()
+	var d: Dictionary = _native.call("list_dir", offset)
+	var out: Array[Entry] = []
+	var names: PackedStringArray = d.get("names", PackedStringArray())
+	var kinds: PackedInt64Array = d.get("kinds", PackedInt64Array())
+	var offsets: PackedInt64Array = d.get("offsets", PackedInt64Array())
+	var sizes: PackedInt64Array = d.get("sizes", PackedInt64Array())
+	out.resize(names.size())
+	for i in range(names.size()):
+		var e := Entry.new()
+		e.name = names[i]
+		e.is_dir = kinds[i] == ENTRY_TYPE_FOLDER
+		e._offset = offsets[i]
+		e.size = sizes[i]
+		out[i] = e
+	ParseProfile.add("pk2.native_list_dir", pp)
+	_lock.lock()
+	if not _dir_cache.has(offset):
+		_dir_cache[offset] = out
+	out = _dir_cache[offset]
+	_lock.unlock()
+	return out
+
+## ObjectLoader.find_file through the native index: the Entry for `path`, or
+## null. Only called when is_native().
+func find_native(path: String) -> Entry:
+	var d: Dictionary = _native.call("find", path)
+	if d.is_empty():
+		return null
+	var e := Entry.new()
+	e.name = d["name"]
+	e.is_dir = int(d["kind"]) == ENTRY_TYPE_FOLDER
+	e._offset = d["offset"]
+	e.size = d["size"]
+	return e
 
 ## _read_block_chain's body, run under `_lock` -- split out so every return
 ## path unlocks in one place.
@@ -176,10 +256,15 @@ func _read_block_chain_locked(offset: int) -> Array[Entry]:
 	var out: Array[Entry] = []
 
 	for _chain_step in range(MAX_CHAIN_BLOCKS):
+		var pp := ParseProfile.t0()
 		_file.seek(offset)
 		var block := _file.get_buffer(BLOCK_SIZE)
+		ParseProfile.add("pk2.dir_io", pp, block.size())
+		pp = ParseProfile.t0()
 		if _encrypted:
 			_decrypt_block_pk2(block)
+		ParseProfile.add("pk2.dir_decrypt", pp, block.size())
+		pp = ParseProfile.t0()
 
 		var next_offset := 0
 		for i in range(ENTRIES_PER_BLOCK):
@@ -198,6 +283,7 @@ func _read_block_chain_locked(offset: int) -> Array[Entry]:
 			if i == ENTRIES_PER_BLOCK - 1:
 				next_offset = _le_u32(raw, ENTRY_OFF_NEXT_BLOCK)
 
+		ParseProfile.add("pk2.dir_entries", pp)
 		if next_offset == 0:
 			break
 		offset = next_offset

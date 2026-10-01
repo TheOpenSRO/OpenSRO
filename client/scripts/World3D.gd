@@ -1323,6 +1323,12 @@ func _ready() -> void:
 	var _t_assets := Time.get_ticks_msec()
 	_load_character_assets()
 	print("World3D: character/item/NPC tables loaded in %d ms" % (Time.get_ticks_msec() - _t_assets))
+	# The readers' own time so far, by function (round 667, ParseProfile;
+	# SRREVAMP_PARSE_PROFILE=1): boot and these tables, then a fresh window
+	# for the entry's drain, reported beside its LoadTimings summary.
+	if ParseProfile.enabled:
+		print(ParseProfile.report("before the entry"))
+		ParseProfile.reset()
 	if _qa_entry > 0:
 		print("QA ENTRY %d: world instance %d at frame %d (connected: %s)" % [
 			_qa_entry, get_instance_id(), Engine.get_frames_drawn(), str(NetClient.is_connected_to_server())])
@@ -4874,6 +4880,8 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 	# leaves the cells' own sum behind (round 561, _grid_loaded_line).
 	print(_grid_loaded_line(region_started_ms, frames_awaited))
 	print(_load_timings.summary())
+	if ParseProfile.enabled:
+		print(ParseProfile.report("entry"))
 	_qa_print_entry_probe()
 	_loading_screen.set_progress(1.0)
 	_loading_screen.set_caption("Entering the world...")

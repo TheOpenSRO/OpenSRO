@@ -1234,6 +1234,16 @@ static func _find_layer_by_name(layers: Array[BmtReader.Layer], material_name: S
 ## against an already-open pk2 archive, walking one directory level at a
 ## time. Returns null if any component isn't found.
 static func find_file(archive: Pk2Reader, path: String) -> Pk2Reader.Entry:
+	var pp := ParseProfile.t0()
+	var found_entry: Pk2Reader.Entry
+	if archive.is_native():
+		found_entry = archive.find_native(path)
+	else:
+		found_entry = _find_file(archive, path)
+	ParseProfile.add("pk2.find_file", pp)
+	return found_entry
+
+static func _find_file(archive: Pk2Reader, path: String) -> Pk2Reader.Entry:
 	var parts := path.replace("\\", "/").split("/")
 	var entries := archive.read_dir()
 	for i in range(parts.size()):

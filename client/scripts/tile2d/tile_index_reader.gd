@@ -78,6 +78,13 @@ class Table:
 ## by a real trailing "{a,b}" grass-placement field this reader doesn't
 ## need and skips.
 static func parse(data: PackedByteArray) -> Table:
+	var _pp := ParseProfile.t0()
+	var _out: Table = _pp_parse(data)
+	ParseProfile.add("tile2d.parse", _pp)
+	return _out
+
+## The body of parse, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse(data: PackedByteArray) -> Table:
 	var text := data.get_string_from_ascii()
 	var lines := text.split("\n")
 	if lines.size() < 2:

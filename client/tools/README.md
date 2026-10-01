@@ -391,6 +391,38 @@ jangan  hitches    base 5  head 5  (+0.0)  SAME
 It also shows what a player waits through at every Jangan entry: about 14 s, with a single frame
 of about 4.9 s and five over 100 ms.
 
+### Native readers A/B (round 667)
+
+The pk2 reader and the `.ddj` per-pixel decodes have a native (Rust, GDExtension) twin, set out in
+native/README.md. One build compares both ways. `SRREVAMP_NATIVE=0` forces the GDScript path even
+when the library loaded, and the client logs which path it took once:
+`NativeAssets: native readers ON|OFF (...)`.
+
+```
+native/build.sh                                                       # client/native_bin/libsrrevamp_native.so
+PERF_LANE=native667 client/tools/perf_gate.sh --ab-env SRREVAMP_NATIVE=0 --sites jangan,mobs          # warm
+PERF_LANE=native667 client/tools/perf_gate.sh --ab-env SRREVAMP_NATIVE=0 --sites jangan,mobs --cold   # cold
+```
+
+- `--ab-env "VAR=value ..."` runs the base side on the head's own copy with those variables, so
+  "base" here means the same build on the GDScript path. No base revision is shipped, and the base
+  cache is neither read nor written.
+- `--cold` evicts every `*.pk2` from the page cache before each run, with
+  `posix_fadvise(DONTNEED)`, because the box's container cannot write `/proc/sys/vm/drop_caches`.
+  `fincore` records what stayed resident in `<log>.cold`. This is the storage-bound case. Godot
+  and the project stay cached.
+- The working tree ships `client/*.gdextension` and `client/native_bin` when built. A `--head`
+  revision ships no library.
+
+Per function, `SRREVAMP_PARSE_PROFILE=1` makes the client print `PARSEPROF` lines
+(`client/scripts/pk2/parse_profile.gd`): a table of every reader's time on the main thread and on
+the workers, once after the boot tables and once with the entry's LoadTimings summary. Round 667
+ranked the port by these lines.
+
+`client/tools/native_parity.gd` holds the two paths to each other on the real archives.
+`client/scripts/pk2/native_assets_test.gd` does the same on synthetic input, and checks the
+fallback when the library is absent (`NO_NATIVE=1 client/tools/remote_godot.sh tests`).
+
 ### Skinned map objects: where the vertices go (round 648)
 
 `probe_map_anim_pose.gd` builds one map object the way the world does (ObjectLoader, then

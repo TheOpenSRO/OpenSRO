@@ -107,6 +107,13 @@ class Service:
 ## Parses refshopgroup.txt into a set of NPC codenames (upper-cased) that run a
 ## shop.
 static func parse_shop_npcs(data: PackedByteArray) -> Dictionary:
+	var _pp := ParseProfile.t0()
+	var _out: Dictionary = _pp_parse_shop_npcs(data)
+	ParseProfile.add("text.shop_npcs", _pp)
+	return _out
+
+## The body of parse_shop_npcs, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse_shop_npcs(data: PackedByteArray) -> Dictionary:
 	var out: Dictionary = {}
 	for line in _lines(data):
 		if line.begins_with("//"):
@@ -121,6 +128,13 @@ static func parse_shop_npcs(data: PackedByteArray) -> Dictionary:
 
 ## Parses npcchat.txt into NPC codename (upper) -> [msg1_strid, msg2_strid].
 static func parse_greetings(data: PackedByteArray) -> Dictionary:
+	var _pp := ParseProfile.t0()
+	var _out: Dictionary = _pp_parse_greetings(data)
+	ParseProfile.add("text.greetings", _pp)
+	return _out
+
+## The body of parse_greetings, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse_greetings(data: PackedByteArray) -> Dictionary:
 	var out: Dictionary = {}
 	for line in _lines(data):
 		if line.begins_with("//"):

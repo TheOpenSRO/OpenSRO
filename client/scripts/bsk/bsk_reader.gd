@@ -71,6 +71,13 @@ class ParsedSkeleton:
 ## 38-265 bones each): every one parses to completion with zero leftover
 ## announcements and lands exactly on the trailer.
 static func parse(data: PackedByteArray) -> ParsedSkeleton:
+	var _pp := ParseProfile.t0()
+	var _out: ParsedSkeleton = _pp_parse(data)
+	ParseProfile.add("bsk.parse", _pp)
+	return _out
+
+## The body of parse, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse(data: PackedByteArray) -> ParsedSkeleton:
 	if data.size() < MAGIC_LEN + 5:
 		push_error("bsk: file too small to contain a header")
 		return null

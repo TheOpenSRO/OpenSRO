@@ -104,6 +104,13 @@ const CODE_LENGTH_ORDER := [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 
 ## Inflates raw DEFLATE-compressed data (no zlib/gzip wrapper). Returns an
 ## empty PackedByteArray on a malformed stream.
 static func inflate(compressed: PackedByteArray) -> PackedByteArray:
+	var _pp := ParseProfile.t0()
+	var _out: PackedByteArray = _pp_inflate(compressed)
+	ParseProfile.add("inflate", _pp)
+	return _out
+
+## The body of inflate, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_inflate(compressed: PackedByteArray) -> PackedByteArray:
 	var br := BitReader.new(compressed)
 	var out := PackedByteArray()
 

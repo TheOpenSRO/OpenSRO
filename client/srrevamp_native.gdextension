@@ -1,0 +1,13 @@
+; The native (Rust) asset readers -- round 667, native/README.md.
+; Optional: when the library below is missing, Godot 4.2.2 prints one error
+; loading this extension and the client reads everything in GDScript
+; (client/scripts/pk2/native_assets.gd). The libraries are build output and
+; are never committed (.gitignore); native/README.md says how to build them.
+[configuration]
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = 4.2
+reloadable = false
+
+[libraries]
+linux.x86_64 = "res://native_bin/libsrrevamp_native.so"
+windows.x86_64 = "res://native_bin/srrevamp_native.dll"

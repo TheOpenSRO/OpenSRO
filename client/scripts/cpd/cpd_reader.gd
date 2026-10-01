@@ -56,6 +56,13 @@ class ParsedCompound:
 ## the exact real trailing layout isn't confirmed enough to distinguish
 ## "no sub-objects" from "this project's scan missed something."
 static func parse(data: PackedByteArray) -> ParsedCompound:
+	var _pp := ParseProfile.t0()
+	var _out: ParsedCompound = _pp_parse(data)
+	ParseProfile.add("cpd.parse", _pp)
+	return _out
+
+## The body of parse, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse(data: PackedByteArray) -> ParsedCompound:
 	if data.size() < HEADER_LEN + 4:
 		push_error("cpd: file too small to contain a header")
 		return null

@@ -59,6 +59,13 @@ class ParsedRegion:
 ## leaves `texture` null, building nothing that owns an RID -- for a caller
 ## off the main thread. The Image is the one `texture` is uploaded from.
 static func parse(data: PackedByteArray, with_texture: bool = true) -> ParsedRegion:
+	var _pp := ParseProfile.t0()
+	var _out: ParsedRegion = _pp_parse(data, with_texture)
+	ParseProfile.add("mapt.parse", _pp)
+	return _out
+
+## The body of parse, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse(data: PackedByteArray, with_texture: bool = true) -> ParsedRegion:
 	if data.size() < HEADER_LEN + SHADOW_MAP_LEN + LENGTH_FIELDS_LEN:
 		push_error("mapt: file too small to contain a header, shadow map, and texture-length fields")
 		return null

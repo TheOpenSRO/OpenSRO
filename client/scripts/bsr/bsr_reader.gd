@@ -361,6 +361,13 @@ class ParsedObject:
 ## failure -- including the known edge case of a file with an empty mesh
 ## path (see docs/protocol/BSR_FORMAT.md).
 static func parse(data: PackedByteArray) -> ParsedObject:
+	var _pp := ParseProfile.t0()
+	var _out: ParsedObject = _pp_parse(data)
+	ParseProfile.add("bsr.parse", _pp)
+	return _out
+
+## The body of parse, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse(data: PackedByteArray) -> ParsedObject:
 	var obj := _parse(data)
 	if obj != null and obj.object_type == -1 and data.size() >= PREAMBLE_END:
 		# A file read by the forward scan still has its header's flag word

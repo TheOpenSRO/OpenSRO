@@ -203,6 +203,13 @@ const VERTEX_LINK_REC_SIZE := 12
 ## Parses a .bms file's raw bytes. Returns null (and pushes an error) on
 ## failure.
 static func parse(data: PackedByteArray) -> ParsedMesh:
+	var _pp := ParseProfile.t0()
+	var _out: ParsedMesh = _pp_parse(data)
+	ParseProfile.add("bms.parse", _pp)
+	return _out
+
+## The body of parse, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse(data: PackedByteArray) -> ParsedMesh:
 	if data.size() < PREAMBLE_END:
 		push_error("bms: file too small to contain a header")
 		return null
@@ -486,6 +493,13 @@ static func _parse_skin(
 ## all 507 land exactly on the end with zero leftover bytes, at the record
 ## sizes COLLISION_FLAGS_OFFSET's real bitfield selects.
 static func parse_collision(data: PackedByteArray) -> CollisionMesh:
+	var _pp := ParseProfile.t0()
+	var _out: CollisionMesh = _pp_parse_collision(data)
+	ParseProfile.add("bms.parse_collision", _pp)
+	return _out
+
+## The body of parse_collision, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse_collision(data: PackedByteArray) -> CollisionMesh:
 	if data.size() < PREAMBLE_END:
 		return null
 	var magic := data.slice(0, MAGIC_LEN).get_string_from_ascii()
@@ -619,6 +633,13 @@ static func to_array_mesh(mesh: ParsedMesh) -> ArrayMesh:
 ## on a WorkerThreadPool task and only mesh_from_arrays runs on the main
 ## thread.
 static func to_arrays(mesh: ParsedMesh) -> Array:
+	var _pp := ParseProfile.t0()
+	var _out: Array = _pp_to_arrays(mesh)
+	ParseProfile.add("bms.to_arrays", _pp)
+	return _out
+
+## The body of to_arrays, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_to_arrays(mesh: ParsedMesh) -> Array:
 	var positions := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var uvs := PackedVector2Array()

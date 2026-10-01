@@ -40,6 +40,13 @@ class ParsedTexture:
 ## Parses a .ddj file's raw bytes. Returns null (and pushes an error) on
 ## failure.
 static func parse(data: PackedByteArray) -> ParsedTexture:
+	var _pp := ParseProfile.t0()
+	var _out: ParsedTexture = _pp_parse(data)
+	ParseProfile.add("ddj.parse", _pp)
+	return _out
+
+## The body of parse, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_parse(data: PackedByteArray) -> ParsedTexture:
 	if data.size() < WRAPPER_SIZE + 4:
 		push_error("ddj: file too small to contain the wrapper header")
 		return null
@@ -108,8 +115,39 @@ static func to_texture(tex: ParsedTexture) -> ImageTexture:
 ## exactly that pair. Null (and the same pushed errors) where to_texture
 ## returns null.
 static func to_image(tex: ParsedTexture) -> Image:
+	var _pp := ParseProfile.t0()
+	var _out: Image = _pp_to_image(tex)
+	# Keyed by format (round 667): the per-pixel branches are what cost.
+	ParseProfile.add("ddj.to_image." + (tex.four_cc if tex.four_cc != "" else "rgb%d" % tex.rgb_bit_count), _pp)
+	return _out
+
+## The per-pixel decodes through the native library (round 667), or an empty
+## array -- no library, or an input the native decode refuses, which the
+## GDScript branch below then reports with its own error. `four_cc` is "" or
+## "q", the two branches that loop over pixels in GDScript.
+static func _native_rgba(tex: ParsedTexture, pixels: PackedByteArray) -> PackedByteArray:
+	var native := NativeAssets.parsers()
+	if native == null:
+		return PackedByteArray()
+	var d: Dictionary
+	if tex.four_cc == "q":
+		d = native.call("ddj_decode_half", pixels, tex.width, tex.height)
+	else:
+		d = native.call("ddj_decode_masked", pixels, tex.width, tex.height, tex.rgb_bit_count,
+			tex.r_mask, tex.g_mask, tex.b_mask, tex.a_mask)
+	return d.get("rgba", PackedByteArray())
+
+## The body of to_image, timed by its wrapper above (ParseProfile, round 667).
+static func _pp_to_image(tex: ParsedTexture) -> Image:
 	var pixels := tex.dds.slice(4 + DDS_HEADER_SIZE)
 	var image: Image
+
+	# The two per-pixel branches below, in Rust when the library is loaded
+	# (round 667; native/src/core/ddj.rs, held to them byte for byte).
+	if tex.four_cc == "" or tex.four_cc == "q":
+		var rgba := _native_rgba(tex, pixels)
+		if not rgba.is_empty():
+			return Image.create_from_data(tex.width, tex.height, false, Image.FORMAT_RGBA8, rgba)
 
 	match tex.four_cc:
 		"DXT1":

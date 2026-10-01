@@ -35,3 +35,11 @@ client/build/
 # Compiled dev tools, accidentally committed three times (2.6 MB a go).
 # `go build ./cmd/export-refdata/` drops this in the tree; it is regenerable.
 /server/export-refdata
+
+# Native (Rust) readers, round 667: build output is never committed.
+native/target/
+client/native_bin/
+*.so
+*.dll
+*.dylib
+*.rlib

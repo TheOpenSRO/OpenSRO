@@ -25,8 +25,21 @@ PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# The native readers (round 667) ship when built: the .gdextension always,
+# client/native_bin only if native/build.sh put a library there. NO_NATIVE=1
+# ships the .gdextension without the library and removes a library already on
+# the box -- the client as CI and a player without the DLL see it
+# (native/README.md).
+native_files() {
+  (cd "$repo_root" && ls client/*.gdextension 2>/dev/null; [ "${NO_NATIVE:-0}" != 1 ] && [ -d client/native_bin ] && echo client/native_bin) || true
+}
+
 sync_client() {
-  tar cf - -C "$repo_root" client/scripts client/tools client/scenes client/docs client/project.godot \
+  if [ "${NO_NATIVE:-0}" = 1 ]; then
+    ssh -n "$RENDER_HOST" "rm -rf '$RENDER_DIR/native_bin'"
+  fi
+  # shellcheck disable=SC2046
+  tar cf - -C "$repo_root" client/scripts client/tools client/scenes client/docs client/project.godot $(native_files) \
     | ssh "$RENDER_HOST" "tar xf - -C '$RENDER_DIR' --strip-components=1 \
         && chmod +x '$RENDER_DIR'/tools/*.sh \
         && chown -R ghidra:ghidra '$RENDER_DIR'"

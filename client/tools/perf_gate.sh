@@ -56,6 +56,23 @@
 # (a feature that costs time) says so in its WORLD_ISSUES entry with these
 # numbers, and the user decides; the gate never passes it silently.
 #
+# One build, two settings (round 667): `--ab-env "SRREVAMP_NATIVE=0"` runs the
+# BASE side on the head's own copy with those variables added, so the gate
+# compares one build both ways -- the native readers against the GDScript ones
+# (client/tools/README.md, "Native readers A/B"). No base revision is shipped
+# and no base cache is read or written in that mode.
+#
+# `--cold` (round 667) evicts the game archives from the page cache before
+# every run, so their reads come off the disk: the storage-bound case. The
+# box's container cannot write /proc/sys/vm/drop_caches (read-only there), so
+# each *.pk2 under PK2_DIR is dropped with posix_fadvise(POSIX_FADV_DONTNEED),
+# which any process that can open a file may do, and `fincore` confirms how
+# much stayed resident (written to <log>.cold). Godot, the project and the
+# shader cache stay cached: the archives are what a load reads.
+#
+# The working tree ships the native readers when built: client/*.gdextension
+# and client/native_bin (native/build.sh). A --head revision ships neither.
+#
 # Environment: RENDER_HOST, PK2_DIR, PERF_LANE (dir suffix; default: branch).
 set -euo pipefail
 
@@ -64,7 +81,7 @@ PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
 GODOT="${RENDER_GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-base="" head="" sites="jangan,reeds,cross" runs=3 frames=3000
+base="" head="" sites="jangan,reeds,cross" runs=3 frames=3000 ab_env="" cold=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) base="$2"; shift 2 ;;
@@ -72,10 +89,16 @@ while [ $# -gt 0 ]; do
     --sites) sites="$2"; shift 2 ;;
     --runs) runs="$2"; shift 2 ;;
     --frames) frames="$2"; shift 2 ;;
-    *) echo "usage: $0 [--base REV] [--head REV] [--sites jangan,reeds,cross,hotan,ferry,mobs,crowd] [--runs N] [--frames N]" >&2; exit 2 ;;
+    --ab-env) ab_env="$2"; shift 2 ;;
+    --cold) cold=1; shift ;;
+    *) echo "usage: $0 [--base REV] [--head REV] [--sites jangan,reeds,cross,hotan,ferry,mobs,crowd] [--runs N] [--frames N] [--ab-env 'VAR=value ...'] [--cold]" >&2; exit 2 ;;
   esac
 done
 cd "$repo_root"
+if [ -n "$ab_env" ]; then
+  [ -z "$base" ] || { echo "--ab-env compares the head with itself: give no --base" >&2; exit 2; }
+  base="${head:-HEAD}"
+fi
 [ -n "$base" ] || base="$(git merge-base HEAD origin/dev 2>/dev/null || git merge-base HEAD dev)"
 base_short="$(git rev-parse --short "$base")"
 head_label="${head:-working tree}"
@@ -86,6 +109,7 @@ lane="${PERF_LANE:-$(git rev-parse --abbrev-ref HEAD | tr -c 'a-zA-Z0-9\n' '-')}
 base_full_rev="$(git rev-parse "$base")"
 box_base="/opt/srrevamp-client-perf-base-${base_full_rev:0:12}"
 box_head="/opt/srrevamp-client-perf-${lane}-head"
+[ -n "$ab_env" ] && box_base="$box_head"
 work="/var/tmp/perf-${lane}"
 
 # The fixed views: MAPM path | QA_AT (region-local x,z) | yaw | walk heading ('' = stand) | [frames, at least] | [extra VAR=value ..., space-separated].
@@ -104,18 +128,24 @@ view() {
 for s in ${sites//,/ }; do view "$s" >/dev/null; done
 
 files="client/scripts client/tools client/scenes client/docs client/project.godot"
+# The native readers, when the working tree has them built (round 667).
+native_files="$(cd "$repo_root" && { ls client/*.gdextension 2>/dev/null; [ -d client/native_bin ] && echo client/native_bin; } || true)"
 ship() { # $1 box dir, $2 rev ('' = working tree)
   ssh -n "$RENDER_HOST" "rm -rf '$1' && mkdir -p '$1'"
   if [ -z "$2" ]; then
-    tar cf - -C "$repo_root" $files
+    # shellcheck disable=SC2086
+    tar cf - -C "$repo_root" $files $native_files
   else
     git -C "$repo_root" archive "$2" $files
   fi | ssh "$RENDER_HOST" "tar xf - -C '$1' --strip-components=1 && chown -R ghidra:ghidra '$1'"
   ssh -n "$RENDER_HOST" "su - ghidra -c \"flock '$work/import.lock' $GODOT --headless --path '$1' --import --quit\"" >/dev/null 2>&1 || true
 }
 
-echo "perf gate: base $base_short vs head $head_label; sites $sites; $runs run(s) each; box dirs $box_base, $box_head"
+base_label="$base_short"
+[ -n "$ab_env" ] && base_label="$head_label with $ab_env"
+echo "perf gate: base $base_label vs head $head_label; sites $sites; $runs run(s) each$([ $cold = 1 ] && echo ', COLD page cache'); box dirs $box_base, $box_head"
 ssh -n "$RENDER_HOST" "mkdir -p '$work' && chown ghidra:ghidra '$work'"
+if [ -z "$ab_env" ]; then
 # The shared base copy: built once, under a per-revision lock on the box, and
 # marked .shipped when complete. A gate that finds it complete (or waits for
 # another lane to finish it) just discards its own stream.
@@ -126,13 +156,14 @@ git -C "$repo_root" archive "$base" $files | ssh "$RENDER_HOST" "flock '/var/tmp
     chown -R ghidra:ghidra \"$box_base\" &&
     { su - ghidra -c \"$GODOT --headless --path $box_base --import --quit\" >/dev/null 2>&1 || true; } &&
     touch \"$box_base/.shipped\" && echo \"perf gate: shipped the shared base copy $box_base\"; fi'"
+fi
 ship "$box_head" "$head"
 
 # One run on the box: waits until no other lane runs Godot, boots,
 # and prints "<frame ms> <entry ms> <freeze ms> <hitches> <other renders seen>".
 ssh "$RENDER_HOST" "cat > '$work/run1.sh'" <<EOF
 #!/bin/bash
-# run1.sh <client dir> <log> <mapm> <x,z> <yaw> [walk heading] [frames] [VAR=value]
+# run1.sh <client dir> <log> <mapm> <x,z> <yaw> [walk heading] [frames] [VAR=value] [cold: 1]
 export SRREVAMP_PK2_PATH=$PK2_DIR/Data.pk2 SRREVAMP_MAP_PK2_PATH=$PK2_DIR/Map.pk2 SRREVAMP_MEDIA_PK2_PATH=$PK2_DIR/Media.pk2
 export SRREVAMP_PARTICLES_PK2_PATH=$PK2_DIR/Particles.pk2 SRREVAMP_MUSIC_PK2_PATH=$PK2_DIR/Music.pk2
 export SRREVAMP_MAPM_PATH="\$3" SRREVAMP_QA_AT="\$4" SRREVAMP_QA_YAW="\$5" SRREVAMP_QA_FORCE_LOADING=1
@@ -143,6 +174,12 @@ read -r -a kvs <<< "\${8:-}"; for kv in "\${kvs[@]}"; do export "\$kv"; done  # 
 DIR="\$1"   # captured here: inside others() \$1 is the function's own (empty) argument
 others() { pgrep -af "^/opt/godot-bin/Godot_v4" | grep -v -- "--path \$DIR " | wc -l; }
 for i in \$(seq 1 120); do [ "\$(others)" = 0 ] && break; sleep 5; done
+if [ "\${9:-0}" = 1 ]; then  # --cold, after the wait so no other run re-reads them: the archives off the page cache (see the header)
+  python3 -c 'import os,sys
+for p in sys.argv[1:]:
+    fd = os.open(p, os.O_RDONLY); os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED); os.close(fd)' $PK2_DIR/*.pk2
+  fincore -b $PK2_DIR/*.pk2 > "\$2.cold" 2>&1
+fi
 rm -f "\$2.others"
 ( while :; do n=\$(others); [ "\$n" -gt 0 ] && echo \$n >> "\$2.others"; sleep 2; done ) & W=\$!
 xvfb-run -a -s "-screen 0 1280x720x24" vglrun -d egl0 $GODOT --rendering-driver opengl3 \
@@ -189,7 +226,9 @@ one1() {
   local b=$1 tag=$2 dir="$box_base" out ms entry freeze hitches seen
   [ "$b" = head ] && dir="$box_head"
   for try in 1 2 3; do
-    out=$(ssh -n "$RENDER_HOST" "flock /var/tmp/perf-gate.lock '$work/run1.sh' '$dir' '$work/${s}_${b}_$tag.log' '$mapm' '$at' '$yaw' '$walk' '$run_frames' '$extra'")
+    local env="$extra"
+    [ "$b" = base ] && [ -n "$ab_env" ] && env="$(echo "$extra $ab_env" | xargs)"
+    out=$(ssh -n "$RENDER_HOST" "flock /var/tmp/perf-gate.lock '$work/run1.sh' '$dir' '$work/${s}_${b}_$tag.log' '$mapm' '$at' '$yaw' '$walk' '$run_frames' '$env' '$cold'")
     read -r ms entry freeze hitches seen <<<"$out"
     if [ "$ms" = none ] || [ "$entry" = none ] || [ "$freeze" = none ]; then
       echo "  $s $b run $tag: missing numbers ($out) -- see $RENDER_HOST:$work/${s}_${b}_$tag.log" >&2; exit 1
@@ -221,7 +260,10 @@ for s in ${sites//,/ }; do
   # and keeps the cache only if that run's frame time is within the gate's own
   # SLOWER threshold of the cached median -- a drifted box is measured again.
   cfile="$cache/${base_full}_${s}_${run_frames}.vals"
-  cached=$(ssh -n "$RENDER_HOST" "cat '$cfile' 2>/dev/null" || true)
+  cached=""
+  # Same-build A/B and cold runs never use or fill the base cache: neither is
+  # the base revision's ordinary warm measurement.
+  [ -z "$ab_env" ] && [ $cold = 0 ] && cached=$(ssh -n "$RENDER_HOST" "cat '$cfile' 2>/dev/null" || true)
   ncached=$(printf '%s\n' "$cached" | grep -c . || true)
   use_cache=0
   if [ "$ncached" -ge "$runs" ]; then
@@ -244,7 +286,7 @@ for s in ${sites//,/ }; do
     fi
     r=$(one1 head "$i") || exit 1; add head "$r"
   done
-  if [ $use_cache = 0 ] && [ -n "$newbase" ]; then
+  if [ $use_cache = 0 ] && [ -n "$newbase" ] && [ -z "$ab_env" ] && [ $cold = 0 ]; then
     printf '%s' "$newbase" | ssh "$RENDER_HOST" "cat > '$cfile'"
   fi
   for m in "frame ms|0.5|0.05" "entry ms|1000|0.10" "freeze ms|100|0.25" "hitches|2|0"; do
@@ -257,7 +299,7 @@ for s in ${sites//,/ }; do
 done
 
 echo
-echo "perf gate: base $base_short vs head $head_label (1280x720, median of $runs run(s))"
+echo "perf gate: base $base_label vs head $head_label (1280x720, median of $runs run(s)$([ $cold = 1 ] && echo ', cold page cache'))"
 printf '%s' "$report"
 if [ $slower = 1 ]; then
   echo "SLOWER: the head is slower than its base. Fix it, or record the cost and ask the user." >&2
