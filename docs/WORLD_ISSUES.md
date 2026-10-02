@@ -7233,6 +7233,44 @@ rows that draw nothing; the readers not found; Water Reflection at the next logi
 and Filtering under Compatibility; the inferred pieces (a hand-set row switching to User, the
 scroll step, the combo's drawing, Effect Quality 1's tests); Resolution in full screen.
 
+### 7. The default decision and the review (merged with round 693)
+
+- **The user's decision (2026-10-02, "Original's Middle"):** Middle is the default (section 2).
+  Its cost against the look before this round, at the Jangan spawn, 12000 frames, median of 3:
+  ```
+  Compatibility: base 137e2953 (old look) vs head 4d9555f (Middle)
+  jangan  frame ms   base 8.82  head 2.55  (-6.3)  FASTER
+  jangan  entry ms   base 9560  head 9348  (-212.0)  SAME
+  jangan  freeze ms  base 3394  head 3223  (-171.0)  SAME
+  jangan  hitches    base 5  head 5  (+0.0)  SAME
+  Forward+: base 7410d686 (round 693, old look) vs head b13e110 (Middle, merged with 693)
+  jangan  frame ms   base 2.94  head 2.36  (-0.6)  SAME
+  jangan  entry ms   base 9469  head 9214  (-255.0)  SAME
+  jangan  freeze ms  base 3424  head 3228  (-196.0)  SAME
+  jangan  hitches    base 5  head 5  (+0.0)  SAME
+  ```
+  Under Compatibility Middle is far cheaper: no sun shadow map (GLES3 draws a shadow-casting
+  directional light in an extra pass) and no reflection pass; its bloom, MSAA and bias are inert
+  there. Under Forward+ it turns glow, MSAA 2x and a mipmap bias on and the shadow map and the
+  reflection off, and costs no more (head runs 3.17 / 2.36 / 2.35 against 2.94 / 2.94 / 2.96).
+- **The review's findings, fixed** (the review ran on a trial merge with 693 under Forward+ and
+  confirmed every READ claim):
+  - HIGH, SSAO drew nothing: MEASURED, Godot's defaults darkened 9.9k pixels against 11.4k of noise.
+    Radius 16, intensity 4, light affect 1 (OURS) darken 19.5k against 11-12k (dluma -0.55, about
+    +0.1 ms). It stays a light effect -- the unshaded terrain and the EMISSION object mods are not
+    darkened by Godot's SSAO -- and the row's tooltip and OPTION_VIDEO.md say so.
+  - MEDIUM: Texture Detail has little to act on (the terrain textures carry no mipmaps) -- tooltip,
+    docs and a TODO item; MSAA's small effect documented. A saved size larger than the screen is
+    fitted to the screen's usable area and centred on it (`VideoOptions.fit_resolution`).
+  - LOW: tag i of SROptionSet.dat holds entry i (the jump table at 0x5031ac: tag 1 -> bytes +5 /
+    +0x15) -- round 628's tag 5 is Water Detail, and the shipped file's tag 4 (the reflection) is 0;
+    the renderer row writes override.cfg only in an exported build (`RendererChoice.applies_here`)
+    and tells the player when the write fails; Character Sight keeps a list of entity meshes
+    instead of walking the tree, and its NPC gap is documented; Apply re-applies only the rows
+    that changed and touches the window only when its own rows changed; round 693's TODO and
+    `WorldPostEffects` notes are brought up to date.
+- `remote_godot.sh check`: ALL LOAD; `tests`: 211 suites, 0 failing (on the merged tree).
+
 ## Six-hundred-and-ninety-third round: the game draws with Forward+ (Vulkan) by default, looking as it did under Compatibility -- the same colours, ground, sky, portrait and select screen -- with Compatibility one launcher away for a PC without Vulkan
 
 The user (2026-10-02): "Let's make forward+ the default build. Can you switch to it and test?" Earlier
