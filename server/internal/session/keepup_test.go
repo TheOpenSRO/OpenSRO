@@ -123,8 +123,8 @@ func TestKeepUpReachIsTheApproachBand(t *testing.T) {
 // phase 3 waits +0x78 + +0x74, and PostLoadSkillTable (0x5893e0) has already
 // folded +0x70 (PreparingTime) into +0x74 -- refdata keeps both raw.
 func TestSkillHandOffRule(t *testing.T) {
-	smash := &refdata.Skill{ID: 3, AutoAttackType: 1, CastingTimeMs: 411, ActionDurationMs: 1022}
-	bolt := &refdata.Skill{ID: 9944, AutoAttackType: 0, CastingTimeMs: 500, ActionDurationMs: 732}
+	smash := &refdata.Skill{ReqLearnSP: 1, ID: 3, AutoAttackType: 1, CastingTimeMs: 411, ActionDurationMs: 1022}
+	bolt := &refdata.Skill{ReqLearnSP: 1, ID: 9944, AutoAttackType: 0, CastingTimeMs: 500, ActionDurationMs: 732}
 	if !skillHandsOff(smash) || skillHandsOff(bolt) || skillHandsOff(nil) {
 		t.Fatal("only AutoAttackType 1 hands off")
 	}
@@ -134,7 +134,7 @@ func TestSkillHandOffRule(t *testing.T) {
 
 	// PreparingTime counts: a synthetic row with 300 ms of it waits 1700 ms,
 	// not the 1400 ms CastingTime + ActionDuration alone would give.
-	prepared := &refdata.Skill{ID: 1, AutoAttackType: 1, PreparingTimeMs: 300, CastingTimeMs: 400, ActionDurationMs: 1000}
+	prepared := &refdata.Skill{ReqLearnSP: 1, ID: 1, AutoAttackType: 1, PreparingTimeMs: 300, CastingTimeMs: 400, ActionDurationMs: 1000}
 	if got := handOffDelay(prepared); got != 1700*time.Millisecond {
 		t.Errorf("handOffDelay with PreparingTime 300 = %v; want 1700 ms (the engine's +0x74 includes +0x70)", got)
 	}
@@ -142,13 +142,13 @@ func TestSkillHandOffRule(t *testing.T) {
 	// A row with a non-zero Basic_ChainCode does not hand off: the engine
 	// would play its links first and test the LAST link's byte, which
 	// srrevamp does not model.
-	chained := &refdata.Skill{ID: 2, AutoAttackType: 1, BasicChainCode: 12, CastingTimeMs: 411, ActionDurationMs: 834}
+	chained := &refdata.Skill{ReqLearnSP: 1, ID: 2, AutoAttackType: 1, BasicChainCode: 12, CastingTimeMs: 411, ActionDurationMs: 834}
 	if skillHandsOff(chained) {
 		t.Error("a row with BasicChainCode 12 handed off; the engine plays the chain link by link first")
 	}
 
 	// AutoAttackType 2 is not 1: the engine's test is `== '\x01'`.
-	typeTwo := &refdata.Skill{ID: 4, AutoAttackType: 2, CastingTimeMs: 411, ActionDurationMs: 1022}
+	typeTwo := &refdata.Skill{ReqLearnSP: 1, ID: 4, AutoAttackType: 2, CastingTimeMs: 411, ActionDurationMs: 1022}
 	if skillHandsOff(typeTwo) {
 		t.Error("AutoAttackType 2 handed off; only 1 does")
 	}
@@ -399,11 +399,11 @@ func TestSkillCastHandsOffToPlainSwings(t *testing.T) {
 	// The cast rows are the test's, the rule is the engine's. Each damaging
 	// row carries att 100% (AttackType 5), so a cast hit is the same 30 - 10
 	// = 20 a plain swing of the no-`att` base row deals.
-	handsOff := &refdata.Skill{ID: 50, BasicLevel: 1, AutoAttackType: 1, ReuseDelayMs: 60000,
+	handsOff := &refdata.Skill{ReqLearnSP: 1, ID: 50, BasicLevel: 1, AutoAttackType: 1, ReuseDelayMs: 60000,
 		PreparingTimeMs: 100, CastingTimeMs: 100, ActionDurationMs: 100, AttackPercent: 100, AttackType: 5}
-	chained := &refdata.Skill{ID: 51, BasicLevel: 1, AutoAttackType: 1, BasicChainCode: 52, ReuseDelayMs: 60000,
+	chained := &refdata.Skill{ReqLearnSP: 1, ID: 51, BasicLevel: 1, AutoAttackType: 1, BasicChainCode: 52, ReuseDelayMs: 60000,
 		CastingTimeMs: 50, ActionDurationMs: 50, AttackPercent: 100, AttackType: 5}
-	zeroDamage := &refdata.Skill{ID: 53, BasicLevel: 1, AutoAttackType: 1, ReuseDelayMs: 60000,
+	zeroDamage := &refdata.Skill{ReqLearnSP: 1, ID: 53, BasicLevel: 1, AutoAttackType: 1, ReuseDelayMs: 60000,
 		CastingTimeMs: 50, ActionDurationMs: 50, ZeroDamage: true}
 	ref := itemsAndSkills{
 		items: map[int64]*refdata.Item{100: {ID: 100, TypeID4: 2, PhysAttackMax: 30, Range: 6}},

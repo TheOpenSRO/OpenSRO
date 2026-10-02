@@ -24,9 +24,9 @@ import (
 // type/percent/min/max and the `mc` hit count, measured on the RE box's
 // skilldata; round 505). Only the damage columns matter here.
 var (
-	punchRow = &refdata.Skill{ID: 1, ReuseDelayMs: 1500, AttackPercent: 150, AttackType: 5}
-	swordRow = &refdata.Skill{ID: 2, ReuseDelayMs: 1200, AttackPercent: 60, HitCount: 2, AttackType: 5}
-	staffRow = &refdata.Skill{ID: 9944, ReuseDelayMs: 1666, AttackPercent: 180, HitCount: 1, AttackType: 10}
+	punchRow = &refdata.Skill{ReqLearnSP: 1, ID: 1, ReuseDelayMs: 1500, AttackPercent: 150, AttackType: 5}
+	swordRow = &refdata.Skill{ReqLearnSP: 1, ID: 2, ReuseDelayMs: 1200, AttackPercent: 60, HitCount: 2, AttackType: 5}
+	staffRow = &refdata.Skill{ReqLearnSP: 1, ID: 9944, ReuseDelayMs: 1666, AttackPercent: 180, HitCount: 1, AttackType: 10}
 )
 
 // TestPlainSwingIsTheBaseSkillsAtt: a plain swing is the weapon's base attack

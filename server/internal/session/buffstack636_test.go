@@ -88,6 +88,10 @@ func startStackWorld(t *testing.T) *stackWorld {
 		// cast reaches the recast rule: the gate tests the cooldown and the
 		// MP before row 16, and a level-1 character's MP runs out.
 		rows[i].ConsumeMP, rows[i].ConsumeHP, rows[i].ReuseDelayMs, rows[i].CooldownGroup = 0, 0, 0, 0
+		// A learn cost (SYNTHETIC; the rows above carry none): a mastery-less
+		// row with none is a monster's shape, which a player may not cast
+		// (playerHoldRefusal, the round 691 review).
+		rows[i].ReqLearnSP = 1
 		ref[rows[i].ID] = &rows[i]
 		if err := skills.Learn(ctx, c.ID, rows[i].ID); err != nil {
 			t.Fatal(err)

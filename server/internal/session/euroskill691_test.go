@@ -33,7 +33,21 @@ const (
 	// noMasteryRaceZeroID is a made-up row for the race clause alone: no
 	// mastery requirement (so the held test passes) and ReqLearn_Race 0.
 	noMasteryRaceZeroID = 900001
+	// monsterRowID is shaped like id 31825, MSKILL_EVE_STRONG_CH_STRONG_
+	// MANGNYANG_ATTACK02 (MEASURED on the re-export): no mastery, ReqLearn_Race
+	// 3, ReqLearn_SP 0, 'att' 300 % with a 99,999 maximum, no weapon -- one of
+	// the 26,699 monster/pet/guard/trap rows every gate but 0x3409 let through.
+	monsterRowID = 31825
+	// chainLinkID is shaped like a board's chain link with no learn cost
+	// (SKILL_CH_SWORD_KNOCKDOWN_E2_01; 205 such board rows, MEASURED).
+	chainLinkID = 900002
 )
+
+func monsterRow() *refdata.Skill {
+	return &refdata.Skill{ID: monsterRowID, GroupID: 17000, BasicCode: "MSKILL_EVE_STRONG_CH_STRONG_MANGNYANG_ATTACK02",
+		BasicLevel: 1, ReqLearnRace: 3, ReqLearnSP: 0, AttackPercent: 300, DamageMin: 99999, DamageMax: 99999,
+		AttackType: 5, ReqCastWeapon1: 255, ReqCastWeapon2: 255, Range: 1000}
+}
 
 type raceRef struct{}
 
@@ -50,7 +64,13 @@ func (raceRef) GetSkill(_ context.Context, id int64) (*refdata.Skill, error) {
 			Mastery1: crossA1Mastery, MasteryLevel1: crossA1MasteryLevel, ReqLearnSP: crossA1SP, ReqLearnRace: 1,
 		}, nil
 	case noMasteryRaceZeroID:
-		return &refdata.Skill{ID: noMasteryRaceZeroID, GroupID: 9001, BasicCode: "TEST_RACE_ZERO_01", BasicLevel: 1, ReqLearnRace: 0}, nil
+		// A learn cost, or 0x3409 would refuse it before the race clause.
+		return &refdata.Skill{ID: noMasteryRaceZeroID, GroupID: 9001, BasicCode: "TEST_RACE_ZERO_01", BasicLevel: 1, ReqLearnRace: 0, ReqLearnSP: 1}, nil
+	case monsterRowID:
+		return monsterRow(), nil
+	case chainLinkID:
+		return &refdata.Skill{ID: chainLinkID, GroupID: 9002, BasicCode: "SKILL_CH_SWORD_KNOCKDOWN_E2_01", BasicLevel: 1,
+			Mastery1: smashA1Mastery, MasteryLevel1: 1, ReqLearnSP: 0, ReqLearnRace: 0}, nil
 	}
 	return nil, errors.New("no such skill")
 }
@@ -97,7 +117,7 @@ func newRaceHarness(t *testing.T, level int) *raceHarness {
 	h.europe = mk("Erik", character.GenderEuropeMan)
 
 	handle := gateway.Chain(LoginHandler(accounts), LearnSkillHandler(h.chars, h.skills, raceRef{}),
-		RaiseMasteryHandler(h.chars, h.skills), SkillStateHandler(h.chars, h.skills))
+		RaiseMasteryHandler(h.chars, h.skills), SkillStateHandlerWithRefs(h.chars, h.skills, raceRef{}))
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)
 	conn := dialTestServer(t, addr)

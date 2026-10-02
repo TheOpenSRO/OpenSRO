@@ -62,11 +62,11 @@ func TestSkillRefusedAsTooFarCostsNothing(t *testing.T) {
 	// no real skill or item table (itemcooldown.go lists both), so no other
 	// test's arm can stand in for this one's.
 	const group = 250
-	strike := &refdata.Skill{ID: 60, BasicLevel: 1, ReuseDelayMs: 60000, CooldownGroup: group,
+	strike := &refdata.Skill{ReqLearnSP: 1, ID: 60, BasicLevel: 1, ReuseDelayMs: 60000, CooldownGroup: group,
 		ConsumeMP: 5, AttackPercent: 100, AttackType: 5}
-	bleed := &refdata.Skill{ID: 61, BasicLevel: 1, ReuseDelayMs: 60000, ConsumeHP: 7,
+	bleed := &refdata.Skill{ReqLearnSP: 1, ID: 61, BasicLevel: 1, ReuseDelayMs: 60000, ConsumeHP: 7,
 		AttackPercent: 100, AttackType: 5}
-	greedy := &refdata.Skill{ID: 62, BasicLevel: 1, ReuseDelayMs: 60000, ConsumeMP: 1 << 30,
+	greedy := &refdata.Skill{ReqLearnSP: 1, ID: 62, BasicLevel: 1, ReuseDelayMs: 60000, ConsumeMP: 1 << 30,
 		AttackPercent: 100, AttackType: 5}
 	ref := itemsAndSkills{
 		items:  map[int64]*refdata.Item{100: {ID: 100, TypeID4: 2, PhysAttackMax: 30, Range: 6}},

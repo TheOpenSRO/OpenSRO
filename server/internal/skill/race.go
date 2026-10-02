@@ -21,9 +21,12 @@ package skill
 // (+0x234) and returns nothing for an id it does not hold, and both callers
 // refuse on that -- Mastery_LevelUp (0x0059c4e0) with 0x3801 and the learn
 // check FUN_0059e450 (called from Skill_HandleLearn 0x0059bfe0) with 0x3401.
-// srrevamp stores only RAISED masteries (skill.Store.MasteryLevels), so the
-// held list is derived from the Country here instead of being seeded per
-// character; the two agree for every character _AddNewChar could create.
+// srrevamp's held list is derived from the Country here. Since round 692 a new
+// character is also seeded with its race's masteries as level-0 rows
+// (SeedMasteries, from the same table) -- characters made before 692 hold only
+// the rows they raised -- and the two agree: every seeded row is one
+// HoldsMastery answers true for, and a stored row of another race (raisable
+// before round 691) is ignored by every check that uses this list.
 //
 // The mastery ids are the skillmasterydata.txt ids (column 0) the client's
 // window titles them with: 513 Warrior, 514 Wizard, 515 Rogue, 516 Warlock,

@@ -99,7 +99,7 @@ func TestStatusDoTKillPaysTheKillerOnce(t *testing.T) {
 	k := z.monsters.SpawnSpecies("jangan", strikeMangyang, z.aria.x, 0, z.aria.z, 300, 0, 0, gold)
 	deps := combatDeps{chars: z.chars, eq: z.eq, items: z.items, hub: z.hub, monsters: z.monsters,
 		quests: quest.NewMemStore(), inv: z.inv, skills: skill.NewMemStore()}
-	bleed := &refdata.Skill{ID: 9001, StatusParams: "bl:30000,100,1,200,0"}
+	bleed := &refdata.Skill{ReqLearnSP: 1, ID: 9001, StatusParams: "bl:30000,100,1,200,0"}
 
 	t0 := time.Now()
 	fx.applyToMonster(deps, z.ariaChar, bleed, k.ID, t0)

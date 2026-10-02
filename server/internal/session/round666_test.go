@@ -216,7 +216,7 @@ func TestStatusHoldWakesAFiledMonster(t *testing.T) {
 	now := aiT0
 	a.tick(now)
 	fileAsleep(t, a, hub, sess, &now, id)
-	fx.applyToMonster(combatDeps{monsters: monsters}, 1, &refdata.Skill{ID: 9100, StatusParams: "st:60000,100,2"}, id, time.Now())
+	fx.applyToMonster(combatDeps{monsters: monsters}, 1, &refdata.Skill{ReqLearnSP: 1, ID: 9100, StatusParams: "st:60000,100,2"}, id, time.Now())
 	now = now.Add(MonsterAITick)
 	a.tick(now)
 	_, filed := a.asleep[id]
@@ -364,7 +364,7 @@ func TestStatusTickKillArmsThePartyNest(t *testing.T) {
 	t.Cleanup(func() { SetMonsterKillObserver(nil) })
 
 	t0 := time.Now()
-	fx.applyToMonster(deps, z.ariaChar, &refdata.Skill{ID: 9001, StatusParams: "bl:30000,100,1,200,0"}, k.ID, t0)
+	fx.applyToMonster(deps, z.ariaChar, &refdata.Skill{ReqLearnSP: 1, ID: 9001, StatusParams: "bl:30000,100,1,200,0"}, k.ID, t0)
 	fx.step(ctx, t0.Add(2001*time.Millisecond))
 	if _, ok := z.monsters.Get(k.ID); ok {
 		t.Fatal("setup: the 200 tick did not kill a 100-HP monster")

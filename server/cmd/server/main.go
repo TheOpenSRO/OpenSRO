@@ -2045,7 +2045,7 @@ func main() {
 		// asks for since none is dead.
 		session.ReviveHandler(chars, hub, session.RegenDeps{Equipment: eq, Items: refItems, Skills: skills, Mana: manaTracker, Berserk: zerkTracker}),
 		session.SkillListHandler(chars, skills),
-		session.SkillStateHandler(chars, skills),
+		session.SkillStateHandlerWithRefs(chars, skills, refItems),
 		session.RaiseMasteryHandler(chars, skills),
 		session.PartyHandler(chars, parties),
 		session.GuildHandler(chars, guilds, hub),

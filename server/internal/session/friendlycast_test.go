@@ -43,14 +43,14 @@ func (friendSkillRef) GetSkill(ctx context.Context, id int64) (*refdata.Skill, e
 		r.TargetHealHP = 369 // (heal 369, 0, 0, 0): skillparam.TargetHealAmounts
 		return r, nil
 	case skPartyBuff:
-		return &refdata.Skill{ID: id, GroupID: 8101, BasicLevel: 1, ActionKind: 3, TargetRequired: true,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: 8101, BasicLevel: 1, ActionKind: 3, TargetRequired: true,
 			TargetParty: true, DuraMs: 60000, NoCombatParam: true, ZeroDamage: true}, nil
 	case skAllyBuff, skAllyBuff2:
 		lv := 1
 		if id == skAllyBuff2 {
 			lv = 2
 		}
-		return &refdata.Skill{ID: id, GroupID: 8102, BasicLevel: lv, ActionKind: 3, TargetRequired: true,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: 8102, BasicLevel: lv, ActionKind: 3, TargetRequired: true,
 			TargetAlly: true, TargetParty: true, DuraMs: 60000, NoCombatParam: true, ZeroDamage: true}, nil
 	}
 	return buffSkillRef{}.GetSkill(ctx, id)
@@ -398,13 +398,13 @@ func TestSkillCastRoundTripAndOpcode(t *testing.T) {
 }
 
 func TestCastActDelay(t *testing.T) {
-	if d := castActDelay(&refdata.Skill{PreparingTimeMs: 1000, CastingTimeMs: 1000}); d != 2*time.Second {
+	if d := castActDelay(&refdata.Skill{ReqLearnSP: 1, PreparingTimeMs: 1000, CastingTimeMs: 1000}); d != 2*time.Second {
 		t.Fatalf("Heal's act after %v, want 2s (prep + cast)", d)
 	}
-	if d := castActDelay(&refdata.Skill{}); d != 0 {
+	if d := castActDelay(&refdata.Skill{ReqLearnSP: 1}); d != 0 {
 		t.Fatalf("Grass Walk's act after %v, want at once", d)
 	}
-	if d := castActDelay(&refdata.Skill{CastingTimeMs: 60000}); d != castActMax {
+	if d := castActDelay(&refdata.Skill{ReqLearnSP: 1, CastingTimeMs: 60000}); d != castActMax {
 		t.Fatalf("a 60 s cast's act after %v, want the %v bound", d, castActMax)
 	}
 	if d := castActDelay(nil); d != 0 {

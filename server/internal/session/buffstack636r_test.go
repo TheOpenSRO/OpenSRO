@@ -73,6 +73,10 @@ func startReview636World(t *testing.T) *reviewWorld {
 	eq.Equip(ctx, c.ID, equipment.SlotWeapon, 0)
 	skills := skill.NewMemStore()
 	for i := range rows {
+		// A learn cost (SYNTHETIC; the rows above carry none): a mastery-less
+		// row with none is a monster's shape, which a player may not cast
+		// (playerHoldRefusal, the round 691 review).
+		rows[i].ReqLearnSP = 1
 		ref[rows[i].ID] = &rows[i]
 		if err := skills.Learn(ctx, c.ID, rows[i].ID); err != nil {
 			t.Fatal(err)

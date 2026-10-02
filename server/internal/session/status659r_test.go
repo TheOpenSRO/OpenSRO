@@ -50,7 +50,7 @@ func TestStatusStunOnAMovingMonsterSendsAStop(t *testing.T) {
 	f.rec.reset()
 	// The fixture's session cannot be written to, so no hub: the mask goes
 	// nowhere, the stun lands and the AI does the rest.
-	fx.applyToMonster(combatDeps{monsters: f.monsters}, f.aria, &refdata.Skill{ID: 9100, StatusParams: "st:60000,100,2"}, m.ID, time.Now())
+	fx.applyToMonster(combatDeps{monsters: f.monsters}, f.aria, &refdata.Skill{ReqLearnSP: 1, ID: 9100, StatusParams: "st:60000,100,2"}, m.ID, time.Now())
 	for i := 0; i < 3; i++ {
 		monsterAITick(now)
 		now = now.Add(MonsterAITick)
@@ -87,7 +87,7 @@ func TestStatusFrostbiteSlowsTheLegAtOnce(t *testing.T) {
 		t.Fatalf("setup: not running at %v: %+v", chaseMangyang.RunSpeed, got)
 	}
 	f.rec.reset()
-	fx.applyToMonster(combatDeps{monsters: f.monsters}, f.aria, &refdata.Skill{ID: 9100, StatusParams: "fb:40,100"}, m.ID, time.Now())
+	fx.applyToMonster(combatDeps{monsters: f.monsters}, f.aria, &refdata.Skill{ReqLearnSP: 1, ID: 9100, StatusParams: "fb:40,100"}, m.ID, time.Now())
 	monsterAITick(now)
 	moves := f.rec.of(m.ID)
 	if len(moves) != 1 || moves[0].Speed != float32(chaseMangyang.RunSpeed/2) {
@@ -107,7 +107,7 @@ func TestStatusTickBooksALivingCaster(t *testing.T) {
 	deps := combatDeps{chars: z.chars, eq: z.eq, items: z.items, hub: z.hub, monsters: z.monsters,
 		quests: quest.NewMemStore(), inv: z.inv, skills: skill.NewMemStore()}
 	t0 := time.Now()
-	fx.applyToMonster(deps, z.ariaChar, &refdata.Skill{ID: 9100, StatusParams: "bl:30000,100,1,200,0"}, k.ID, t0)
+	fx.applyToMonster(deps, z.ariaChar, &refdata.Skill{ReqLearnSP: 1, ID: 9100, StatusParams: "bl:30000,100,1,200,0"}, k.ID, t0)
 	fx.step(ctx, t0.Add(2001*time.Millisecond))
 	var booked int
 	for _, h := range z.monsters.Hits(k.ID) {
@@ -172,7 +172,7 @@ func TestStatusDiceAreTheCasters(t *testing.T) {
 	t.Cleanup(func() { chanceMemory.Forget(z.ariaChar) })
 	deps := combatDeps{chars: z.chars, hub: z.hub, monsters: z.monsters}
 	// A 50 % frostbite (kind 2): a real roll, so the accumulator is touched.
-	fx.applyToMonster(deps, z.ariaChar, &refdata.Skill{ID: 9100, StatusParams: "fb:30,50"}, a.ID, time.Now())
+	fx.applyToMonster(deps, z.ariaChar, &refdata.Skill{ReqLearnSP: 1, ID: 9100, StatusParams: "fb:30,50"}, a.ID, time.Now())
 	if _, rolled := chanceMemory.Accumulated(z.ariaChar, combat.ChanceStatus(2)); !rolled {
 		t.Error("the frostbite roll kept no streak on its caster (0x590680 rolls in [esi+0xa30], ESI the source)")
 	}
@@ -313,10 +313,10 @@ type statusSkillRef struct{}
 func (statusSkillRef) GetSkill(_ context.Context, id int64) (*refdata.Skill, error) {
 	switch id {
 	case skStunZero, skStunZero2, skStunZero3:
-		return &refdata.Skill{ID: id, GroupID: id, BasicLevel: 1, TargetRequired: true, ZeroDamage: true,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: id, BasicLevel: 1, TargetRequired: true, ZeroDamage: true,
 			Range: 20, StatusParams: "st:60000,100,2"}, nil
 	case skStunSmash, skStunSmsh2:
-		return &refdata.Skill{ID: id, GroupID: id, BasicLevel: 1, TargetRequired: true,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: id, BasicLevel: 1, TargetRequired: true,
 			AttackPercent: 143, DamageMin: 15, DamageMax: 18, AttackType: 5, Range: 20, StatusParams: "st:60000,100,2"}, nil
 	}
 	return nil, errors.New("no such skill")
@@ -472,7 +472,7 @@ func TestStatusStunStopsALegWithTheAIOff(t *testing.T) {
 	if _, ok := monsters.SetMotion(m.ID, 100, 0, 10, 1); !ok {
 		t.Fatal("setup: no leg")
 	}
-	fx.applyToMonster(combatDeps{monsters: monsters}, 1, &refdata.Skill{ID: 9100, StatusParams: "st:60000,100,2"}, m.ID, time.Now())
+	fx.applyToMonster(combatDeps{monsters: monsters}, 1, &refdata.Skill{ReqLearnSP: 1, ID: 9100, StatusParams: "st:60000,100,2"}, m.ID, time.Now())
 	if got, _ := monsters.Get(m.ID); got.Moving {
 		t.Errorf("with -monster-ai off a stunned monster is still on its leg: %+v", got)
 	}

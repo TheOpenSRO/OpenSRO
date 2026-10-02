@@ -7443,6 +7443,55 @@ jangan  hitches    base 5.00  head 5  (+0.0)  SAME
 (A first gate, under heavy overlap from other lanes, ran out of its own time limit after two pairs;
 its numbers were within the same spread.)
 
+### Review (round 691's review: no regression for China characters; one HIGH, predating 691 and live on srrevamp-01, and three LOW -- fixed in a follow-up commit)
+
+The review tested pre-692 and 692-shaped characters, crafted mastery ids and a trial merge onto dev
+d6205fc (green). origin/dev d6205fc is merged in (WORLD_ISSUES by `wi_resolve.py`).
+
+- **HIGH: any character could learn a monster's skill for free, and cast it.** The review counted
+  26,699 rows with no mastery, ReqLearn_Race 3 and ReqLearn_SP 0 (this lane's census of its
+  re-export: 26,646 MSKILL_/CSKILL_/PSKILL_/TSKILL_/HSKILL_/GSKILL_ rows with no mastery and no learn
+  cost, plus 47 SKILL_ event/mall rows), so the held-mastery check was skipped, the race clause passed,
+  there was no prerequisite and nothing to pay; 14,621 deal damage (the review's count) with no weapon requirement, among
+  them id 31825 (MSKILL_EVE_STRONG_CH_STRONG_MANGNYANG_ATTACK02, 300 %, a 99,999 maximum). The cast
+  path checked only that the skill was known. Fixed three ways:
+  - **Learn**: FUN_0059e450's outermost test (READ) -- its whole body sits inside
+    `if (... && *(int *)(skill + 0xc0) != 0)` and falls through to `return 0x3409` -- is now the
+    learn handler's first real-skill check ("this skill cannot be learned"). It also refuses the 205
+    class-board chain links with no cost (SKILL_CH_SWORD_KNOCKDOWN_E2_01 ...), as retail does, and
+    the skill window no longer offers their "+". Round 692's default skills are written by
+    `giveDefaults` straight into the store (`Skills.Learn`), not through the handler, so the base
+    attacks a new character starts with are unaffected (READ in lobbyhandler.go).
+  - **Cast**: `playerHoldRefusal` (session/playerskill.go) applies the learn check's rules to a
+    held skill -- the race clause, the held mastery, and for a mastery-less row its learn cost, with
+    the thirteen base attacks (ids 1, 2, 40, 70, 8419, 8420, 8421, 9354, 9355, 9944, 10625, 11162,
+    11526; `combat.BaseAttackSkillFor`) exempt. A refused cast answers "you cannot use this skill"
+    and costs nothing. A class chain link the old gate let through is still castable (it is its
+    race's own class skill, and the learn gate now refuses it).
+  - **Purge**: the refused skill is dropped from the store (`skill.Forgetter`, both stores),
+    logged `dropped a learned skill no player may hold` with the character, skill and reason; the
+    skill-state request the client sends on entering the world does the same for every held skill
+    (`SkillStateHandlerWithRefs`, wired in cmd/server). The check query for srrevamp-01 is in
+    deploy/README.md, ROUND 691'S REVIEW.
+- **LOW: another race's skills learned before 691 stayed castable.** The cast now re-checks the race
+  clause and the held mastery (the same `playerHoldRefusal`) and drops a refused skill, logged.
+- **LOW: a stale comment in skill/race.go** said srrevamp stores only raised masteries. It now says
+  the held list is the Country's, that round 692 seeds the race's masteries as level-0 rows from the
+  same table, and that the two agree; the deploy note says the same.
+- **LOW: a lookup miss parsed the other race's ~10 MB of skilldata on the main thread mid-game**
+  (`skill_reach` / `skill_icon_path` / `skill_level_ids`). A miss now answers "unknown" from the
+  tables already read, and HudPanels takes the race from the enter-world result's body (its
+  gender) when it is built, so the hotbar restore and the first cast read the player's own race's
+  tables at world entry; the skill state confirms the race as before.
+- Tests: `TestLearnRefusesRowsWithNoLearnCost` (the 31825 shape and a chain link, 0x3409, nothing
+  spent or learned), `TestPlayerHoldRefusal` (monster rows, all thirteen base-attack shapes, both
+  races' class rows), `TestCastOfAnUnholdableSkillIsRefusedAndDropped` (a China character holding
+  the monster row and Cross is refused both and loses both, its sword swing and Power Strike still
+  land, and the skill state drops a monster row learned since), `skill.TestForget` (both stores).
+  `noMasteryRaceZeroID` now has a learn cost. 85 code-built test rows that had none gained
+  `ReqLearnSP: 1` (with no cost a mastery-less row is a monster's shape), and the 636 CSV fixtures
+  set it after loading; TestSkillFullFlow gives the two points its rows now cost.
+
 ## Six-hundred-and-eighty-eighth round: the race-select lizard walks in once and stays, "Name Check" sits centred inside its button at every UI scale, and the select screen's darkness is traced to retail's own random hour
 
 The user (2026-10-02, on v0.1.475): "The animated lizard when selecting the race disappears and

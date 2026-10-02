@@ -370,6 +370,20 @@ func LearnSkillHandler(chars character.Store, skills skill.Store, skillRef Skill
 			}
 			return sess.Send(&proto.Packet{Opcode: OpLearnSkillResult, Data: (&LearnSkillResult{OK: true}).Encode()})
 		}
+		// FUN_0059e450's outermost test (READ, the round 691 review): its whole
+		// body sits inside `if (... && *(int *)(skill + 0xc0) != 0)` and falls
+		// through to `return 0x3409` otherwise -- a row whose ReqLearn_SP
+		// (+0xc0, skilldata column 46) is 0 is never learnable. That is every
+		// monster, pet, guard and trap row (26,646 MSKILL_/CSKILL_/PSKILL_/
+		// TSKILL_/HSKILL_/GSKILL_ rows with Mastery1 0 and no learn cost,
+		// MEASURED on round 691's re-export), every base attack, and 205 chain-link rows on the class
+		// boards (SKILL_CH_SWORD_KNOCKDOWN_E2_01 ...). Until this check those
+		// passed every other gate here for free -- id 31825 with its 99,999
+		// damage among them. A character's default skills (round 692's
+		// giveDefaults) are stored directly, not learned through here.
+		if ref.ReqLearnSP <= 0 {
+			return fail("this skill cannot be learned")
+		}
 		known, err := skills.Knows(ctx, characterID, req.SkillID)
 		if err != nil {
 			return fail("lookup failed")
@@ -841,6 +855,19 @@ func useSkillHandler(
 		}
 		if !knows {
 			return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "skill not known"}).Encode()})
+		}
+		// A known skill must also be one a player of this race may hold (the
+		// round 691 review, playerskill.go): a monster's row or another race's,
+		// learned before the learn gate refused it, is refused and dropped.
+		if castRow != nil {
+			owned, err := chars.GetByID(ctx, characterID)
+			if err != nil {
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "lookup failed"}).Encode()})
+			}
+			if reason := playerHoldRefusal(castRow, characterCountry(owned)); reason != "" {
+				forgetUnholdable(ctx, skills, characterID, req.SkillID, reason)
+				return sess.Send(&proto.Packet{Opcode: OpAttackResult, Data: echoed(req, &AttackResult{Error: "you cannot use this skill"}).Encode()})
+			}
 		}
 
 		// THE WEAPON GATE, recovered from FUN_0058d480: a skill names up to two
@@ -1782,11 +1809,14 @@ func DecodeSkillStateResult(data []byte) (*SkillStateResult, error) {
 	return r, nil
 }
 
-// SkillStateHandler answers OpSkillState with the character's level, unspent
-// skill points and the level of every mastery its race holds (0 for one never
-// raised) -- what the skill window's tabs, totals and lit/greyed skills are
-// drawn from.
-func SkillStateHandler(chars character.Store, store skill.Store) gateway.Handler {
+// SkillStateHandlerWithRefs answers OpSkillState with the character's level,
+// unspent skill points and the level of every mastery its race holds (0 for one
+// never raised) -- what the skill window's tabs, totals and lit/greyed skills
+// are drawn from. It first drops every learned skill the character may not hold (playerHoldRefusal, the round 691 review):
+// the client asks for the state on entering the world, so a monster's or
+// another race's skill learned before the learn gate refused it goes at the
+// next login, logged. A nil skillRef judges nothing.
+func SkillStateHandlerWithRefs(chars character.Store, store skill.Store, skillRef SkillRefStore) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpSkillState {
 			return nil
@@ -1826,7 +1856,7 @@ func SkillStateHandler(chars character.Store, store skill.Store) gateway.Handler
 		}
 		sort.Slice(result.Masteries, func(i, j int) bool { return result.Masteries[i].MasteryID < result.Masteries[j].MasteryID })
 		if learned, err := store.KnownSkills(ctx, characterID); err == nil {
-			result.KnownSkills = learned
+			result.KnownSkills = purgeUnholdable(ctx, store, skillRef, characterID, characterCountry(owned), learned)
 		}
 		return send(result)
 	}

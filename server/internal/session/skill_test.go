@@ -40,7 +40,7 @@ type fakeSkillRef struct{}
 
 func (fakeSkillRef) GetSkill(_ context.Context, id int64) (*refdata.Skill, error) {
 	if id == 999 {
-		return &refdata.Skill{ID: 999, BasicLevel: 1, ReuseDelayMs: 500}, nil
+		return &refdata.Skill{ReqLearnSP: 1, ID: 999, BasicLevel: 1, ReuseDelayMs: 500}, nil
 	}
 	// 998 is the mana test: no cooldown, and a Consume_MP pinned to two
 	// thirds of a starting caster's pool so exactly one cast is affordable.
@@ -48,48 +48,48 @@ func (fakeSkillRef) GetSkill(_ context.Context, id int64) (*refdata.Skill, error
 	// from the recovered Int-based formula and a literal would silently stop
 	// testing the refusal the moment that changed.
 	if id == 998 {
-		return &refdata.Skill{ID: 998, BasicLevel: 1, ReuseDelayMs: 0, ConsumeMP: skill998ManaCost}, nil
+		return &refdata.Skill{ReqLearnSP: 1, ID: 998, BasicLevel: 1, ReuseDelayMs: 0, ConsumeMP: skill998ManaCost}, nil
 	}
 	// 997 carries a REAL 'att' parameter -- 200% and no flat term -- so the
 	// skill-percentage path can be exercised end to end. See
 	// TestSkillPercentageAppliesAfterMitigation.
 	if id == 997 {
-		return &refdata.Skill{ID: 997, BasicLevel: 1, ReuseDelayMs: 0, AttackPercent: 200}, nil
+		return &refdata.Skill{ReqLearnSP: 1, ID: 997, BasicLevel: 1, ReuseDelayMs: 0, AttackPercent: 200}, nil
 	}
 	// 996 carries NO combat parameter -- a buff, heal or passive, which is
 	// 5.6% of the real table. BasicLevel 5 is deliberate: under the disclosed
 	// fallback this skill dealt 5 * DisclosedSkillDamagePerLevel, so a test
 	// that finds zero is finding the flag and not an accident of the numbers.
 	if id == 996 {
-		return &refdata.Skill{ID: 996, BasicLevel: 5, ReuseDelayMs: 0, NoCombatParam: true}, nil
+		return &refdata.Skill{ReqLearnSP: 1, ID: 996, BasicLevel: 5, ReuseDelayMs: 0, NoCombatParam: true}, nil
 	}
 	// 995 is the WIDER case: it carries a combat parameter, so the engine does
 	// resolve a blow for it, but it has no 'att' and no 'ck', so `local_d0` is
 	// 1 and the blow's damage is zero. 669 real rows are like this, and they
 	// are NOT covered by NoCombatParam.
 	if id == 995 {
-		return &refdata.Skill{ID: 995, BasicLevel: 5, ReuseDelayMs: 0, ZeroDamage: true}, nil
+		return &refdata.Skill{ReqLearnSP: 1, ID: 995, BasicLevel: 5, ReuseDelayMs: 0, ZeroDamage: true}, nil
 	}
 	// 994 is a FLOOR blow: it carries 'att', so the engine does compute its
 	// damage, but with a percent of 0 -- the mall pets' elemental skills are 420
 	// of the 446 real rows like this. The computed blow is identically zero and
 	// the engine floors it at 1.
 	if id == 994 {
-		return &refdata.Skill{ID: 994, BasicLevel: 5, ReuseDelayMs: 0, FloorBlow: true}, nil
+		return &refdata.Skill{ReqLearnSP: 1, ID: 994, BasicLevel: 5, ReuseDelayMs: 0, FloorBlow: true}, nil
 	}
 	// 993 is a flat SELF-HEAL, SKILL_CH_WATER_SELFHEAL's shape (round 503): no
 	// combat parameter, and a 'heal' the exporter turned into SelfHealHP. 992
 	// is its MP twin, SKILL_EU_BARD_RECOVERA_ABNORMALTIME's shape.
 	if id == 993 {
-		return &refdata.Skill{ID: 993, BasicLevel: 1, ReuseDelayMs: 0, NoCombatParam: true, ZeroDamage: true, SelfHealHP: 50}, nil
+		return &refdata.Skill{ReqLearnSP: 1, ID: 993, BasicLevel: 1, ReuseDelayMs: 0, NoCombatParam: true, ZeroDamage: true, SelfHealHP: 50}, nil
 	}
 	if id == 992 {
-		return &refdata.Skill{ID: 992, BasicLevel: 1, ReuseDelayMs: 0, NoCombatParam: true, ZeroDamage: true, SelfHealMP: 50}, nil
+		return &refdata.Skill{ReqLearnSP: 1, ID: 992, BasicLevel: 1, ReuseDelayMs: 0, NoCombatParam: true, ZeroDamage: true, SelfHealMP: 50}, nil
 	}
 	// 990 carries 'ao' or 'pw' -- a Cold/Fire Wall's shape (round 607): the
 	// skill-use gate refuses it to a seated caster. 996 above carries neither.
 	if id == 990 {
-		return &refdata.Skill{ID: 990, BasicLevel: 1, ReuseDelayMs: 0, NoCombatParam: true, SitGate: refdata.SitGateActionOff}, nil
+		return &refdata.Skill{ReqLearnSP: 1, ID: 990, BasicLevel: 1, ReuseDelayMs: 0, NoCombatParam: true, SitGate: refdata.SitGateActionOff}, nil
 	}
 	return nil, errors.New("no such skill")
 }
@@ -153,6 +153,9 @@ func TestSkillFullFlow(t *testing.T) {
 	}
 	defer skills.Close()
 	skills.TruncateForTest(ctx)
+	// The real rows 999 and 998 cost a point each to learn (the round 691
+	// review: a row with no learn cost is refused, 0x3409).
+	skills.AddSkillPoints(ctx, c.ID, 2)
 
 	hub := world.NewHub()
 	monsters := combat.NewHub()
@@ -276,7 +279,7 @@ func TestSkillFullFlow(t *testing.T) {
 		t.Fatalf("got %+v, want skill 1 to report a positive cooldown remaining", slr.Skills[0])
 	}
 
-	// A real (refdata) skill, id 999 (BasicLevel 1): learn it (free here) then
+	// A real (refdata) skill, id 999 (BasicLevel 1): learn it (one point) then
 	// cast it. It takes the real ReuseDelay cooldown and adds the DISCLOSED
 	// own-design skill bonus (BasicLevel * DisclosedSkillDamagePerLevel = 1*4):
 	// 30 weapon + 4 skill - 10 defense = 24. (The real formula is unrecoverable
@@ -1172,7 +1175,7 @@ func TestSkillCooldownGroupIsShared(t *testing.T) {
 
 	const reuse = 400 // ms
 	row := func(id int64, group, reuseMs int) *refdata.Skill {
-		return &refdata.Skill{ID: id, BasicLevel: 1, ReuseDelayMs: reuseMs, CooldownGroup: group, NoCombatParam: true, ZeroDamage: true}
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, BasicLevel: 1, ReuseDelayMs: reuseMs, CooldownGroup: group, NoCombatParam: true, ZeroDamage: true}
 	}
 	ref := mapSkillRef{
 		993: row(993, 2, reuse),
@@ -1297,7 +1300,7 @@ func TestCounterOnACasterAliveAtZeroKills(t *testing.T) {
 				t.Fatalf("test premise: a new character's max HP is %d, want 200", c.MaxHP())
 			}
 			// The rows are the test's: a sword and a skill costing the whole pool.
-			drain := &refdata.Skill{ID: 64, BasicLevel: 1, ReuseDelayMs: 60000, ConsumeHP: 200,
+			drain := &refdata.Skill{ReqLearnSP: 1, ID: 64, BasicLevel: 1, ReuseDelayMs: 60000, ConsumeHP: 200,
 				AttackPercent: 100, AttackType: 5}
 			ref := itemsAndSkills{
 				items:  map[int64]*refdata.Item{100: {ID: 100, TypeID4: 2, PhysAttackMax: 30, Range: 6}},

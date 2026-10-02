@@ -55,40 +55,40 @@ const (
 func (buffSkillRef) GetSkill(_ context.Context, id int64) (*refdata.Skill, error) {
 	switch id {
 	case skGrassWalkA1:
-		return &refdata.Skill{ID: id, GroupID: 260, BasicLevel: 1, ActionKind: 3, DuraMs: 355462,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: 260, BasicLevel: 1, ActionKind: 3, DuraMs: 355462,
 			BuffParams: "hste:20", NoCombatParam: true, ZeroDamage: true, ActionOverlap: 6, Activity: 1}, nil
 	case skGrassWalkA2:
-		return &refdata.Skill{ID: id, GroupID: 260, BasicLevel: 2, ActionKind: 3, DuraMs: 370588,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: 260, BasicLevel: 2, ActionKind: 3, DuraMs: 370588,
 			BuffParams: "hste:23", NoCombatParam: true, ZeroDamage: true, ActionOverlap: 6, Activity: 1}, nil
 	case skGrassWalkC1:
-		return &refdata.Skill{ID: id, GroupID: 262, BasicLevel: 1, ActionKind: 3, DuraMs: 557143,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: 262, BasicLevel: 1, ActionKind: 3, DuraMs: 557143,
 			BuffParams: "hste:55", NoCombatParam: true, ZeroDamage: true, ActionOverlap: 6, Activity: 1}, nil
 	case skGrassWalkE1:
-		return &refdata.Skill{ID: id, GroupID: 493, BasicLevel: 1, ActionKind: 3, DuraMs: 829412,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: 493, BasicLevel: 1, ActionKind: 3, DuraMs: 829412,
 			BuffParams: "hste:93", NoCombatParam: true, ZeroDamage: true, ActionOverlap: 6, Activity: 1}, nil
 	case skFireProtA1:
-		return &refdata.Skill{ID: id, GroupID: 280, BasicLevel: 1, ActionKind: 3, DuraMs: -1875767296, Cbuf: true,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: 280, BasicLevel: 1, ActionKind: 3, DuraMs: -1875767296, Cbuf: true,
 			BuffParams: "defp:0,6,0", NoCombatParam: true, ZeroDamage: true, ActionOverlap: 3, Activity: 2}, nil
 	case skColdProtA1:
-		return &refdata.Skill{ID: id, GroupID: 240, BasicLevel: 1, ActionKind: 3, DuraMs: -1875767296, Cbuf: true,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: 240, BasicLevel: 1, ActionKind: 3, DuraMs: -1875767296, Cbuf: true,
 			BuffParams: "defp:2,0,0", NoCombatParam: true, ZeroDamage: true, ActionOverlap: 2, Activity: 2}, nil
 	case skGhostWalkB1:
-		return &refdata.Skill{ID: id, GroupID: 261, BasicLevel: 1, ActionKind: 0, TargetRequired: true,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: 261, BasicLevel: 1, ActionKind: 0, TargetRequired: true,
 			TargetLand: true, Tele0: 500, Tele1: 100, NoCombatParam: true, ZeroDamage: true}, nil
 	case skImbueA1:
-		return &refdata.Skill{ID: id, GroupID: 237, BasicLevel: 1, ActionKind: 3, DuraMs: 15000,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: 237, BasicLevel: 1, ActionKind: 3, DuraMs: 15000,
 			AttackPercent: 100, DamageMin: 16, DamageMax: 26, AttackType: 8, Range: 0}, nil
 	case skExplosionA1:
-		return &refdata.Skill{ID: id, GroupID: 726, BasicLevel: 1, ActionKind: 0, AttackPercent: 368,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: 726, BasicLevel: 1, ActionKind: 0, AttackPercent: 368,
 			DamageMin: 106, DamageMax: 130, AttackType: 8}, nil
 	case skSmashA1:
-		return &refdata.Skill{ID: id, GroupID: 174, BasicLevel: 1, ActionKind: 0, TargetRequired: true,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: 174, BasicLevel: 1, ActionKind: 0, TargetRequired: true,
 			AttackPercent: 143, DamageMin: 15, DamageMax: 18, AttackType: 5}, nil
 	case skDaggerSpdA1:
-		return &refdata.Skill{ID: id, GroupID: 628, BasicLevel: 1, ActionKind: 3, DuraMs: 15000,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: 628, BasicLevel: 1, ActionKind: 3, DuraMs: 15000,
 			BuffParams: "hst2:48", NoCombatParam: true, ZeroDamage: true}, nil
 	case skNbufSelf:
-		return &refdata.Skill{ID: id, GroupID: 8001, BasicLevel: 1, ActionKind: 3, DuraMs: 60000,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: 8001, BasicLevel: 1, ActionKind: 3, DuraMs: 60000,
 			Nbuf: true, NoCombatParam: true, ZeroDamage: true}, nil
 	}
 	return nil, errors.New("no such skill")

@@ -37,7 +37,7 @@ type healSkillRef struct{}
 
 func (healSkillRef) GetSkill(_ context.Context, id int64) (*refdata.Skill, error) {
 	if id == skHealA1 {
-		return &refdata.Skill{ID: id, GroupID: 296, BasicLevel: 1, ActionKind: 0, TargetRequired: true,
+		return &refdata.Skill{ReqLearnSP: 1, ID: id, GroupID: 296, BasicLevel: 1, ActionKind: 0, TargetRequired: true,
 			TargetSelf: true, TargetAlly: true, TargetParty: true, Range: 150,
 			PreparingTimeMs: 1000, CastingTimeMs: 1000, ReuseDelayMs: 3000, ConsumeMP: 74,
 			NoCombatParam: true, ZeroDamage: true}, nil

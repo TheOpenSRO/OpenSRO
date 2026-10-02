@@ -4239,9 +4239,11 @@ func skill_names_table() -> UiTextTable:
 		print("HudPanels: no %s -- skill names show their SN_ ids" % SKILL_NAME_TABLE_PATH.get_file())
 	return _skill_names
 
-## Which races' skills _skill_grid holds (round 691: a race's tables are read
-## when the window is first laid out for it, the other's only when a skill id
-## of it is asked for -- skill_reach, skill_icon_path, skill_level_ids).
+## Which races' skills _skill_grid holds (round 691): the player's race's
+## tables, read on the first lookup -- at world entry, by the hotbar restore --
+## and the other race's only if the window is laid out for it. A lookup of an
+## id the player's race does not carry answers "unknown" rather than parsing
+## ~10 MB of the other race's files mid-game (the round 691 review).
 var _skill_catalog_races: Dictionary = {}
 
 func _load_skill_catalog() -> void:
@@ -4259,12 +4261,6 @@ func _load_skill_catalog() -> void:
 		_skill_groups = SkillDataReader.parse_groups(archive.read_file(gentry))
 	_load_masteries()
 	_load_skill_catalog_for(_skill_race)
-
-## Both races' skills, for a lookup by id that missed the player's own.
-func _load_all_skill_catalogs() -> void:
-	_load_skill_catalog()
-	for race in MasteryReader.RACE_MASTERIES:
-		_load_skill_catalog_for(int(race))
 
 ## Reads one race's skills (its masteries' rows of its skilldata files) into
 ## _skill_grid and _skill_reach_by_id, once.
@@ -4326,8 +4322,6 @@ func _load_skill_catalog_for(race: int) -> void:
 ## the window ever being opened.
 func skill_reach(skill_id: int) -> Dictionary:
 	_load_skill_catalog()
-	if not _skill_reach_by_id.has(skill_id):
-		_load_all_skill_catalogs()
 	return _skill_reach_by_id.get(skill_id, {})
 
 ## The server's skill state -- skill points and per-mastery levels. Refills the
@@ -4702,6 +4696,10 @@ func _build_group_row(host: Control, mastery: MasteryReader.Mastery, group: Skil
 		var next_level := learned + 1
 		var can_learn := next_level <= s.max_level and next_level <= s.level_reqs.size() \
 			and mastery_level >= s.level_reqs[next_level - 1] and s.level_ids[next_level - 1] > 0
+		# A level with no learn cost is never learnable (FUN_0059e450's 0x3409,
+		# READ; the round 691 review): the 205 chain links on the class boards.
+		if can_learn and next_level <= s.level_sp.size() and s.level_sp[next_level - 1] <= 0:
+			can_learn = false
 		# The real prerequisites too (skilldata ReqLearn_Skill1..3): another
 		# skill group known at a level. The server refuses these as well; the
 		# window simply doesn't offer the "+" and says so in the tooltip.
@@ -4760,18 +4758,15 @@ func skill_level_ids(skill_id: int) -> PackedInt64Array:
 	var bs := _board_skill_with_level_id(skill_id)
 	return bs.level_ids if bs != null else PackedInt64Array()
 
-## The board skill one of whose levels is `skill_id`: the player's race's
-## tables first, both races' on a miss (round 691). Null when neither has it.
+## The board skill one of whose levels is `skill_id`, from the tables read so
+## far (the player's race's; round 691). Null when they do not carry it.
 func _board_skill_with_level_id(skill_id: int) -> SkillDataReader.BaseSkill:
 	_load_skill_catalog()
-	for attempt in 2:
-		for key in _skill_grid:
-			for entry in _skill_grid[key]:
-				var bs: SkillDataReader.BaseSkill = entry
-				if bs.level_ids.has(skill_id):
-					return bs
-		if attempt == 0:
-			_load_all_skill_catalogs()
+	for key in _skill_grid:
+		for entry in _skill_grid[key]:
+			var bs: SkillDataReader.BaseSkill = entry
+			if bs.level_ids.has(skill_id):
+				return bs
 	return null
 
 ## The board's BaseSkill for a skill group id (skilldata GroupID / base id),
@@ -5223,6 +5218,13 @@ func connect_net() -> void:
 		_on_friend_list_result(NetClient.last_friend_list, "")
 	if NetClient.has_quest_list:
 		_on_quest_list_result(NetClient.last_quest_list, "")
+	# The race the skill tables are read for, from the body the server put
+	# in the world (round 691's review): known at world entry, before the
+	# first skill state, so the hotbar restore and the first cast look up the
+	# right race's skills. The skill state confirms it (set_skill_state).
+	var entered: WorldNet.EnterWorldResult = NetClient.last_enter_world_result
+	if entered != null and entered.ok:
+		set_skill_race(MasteryReader.RACE_EUROPE if entered.gender.begins_with("europe") else MasteryReader.RACE_CHINA)
 	NetClient.character_stats_result.connect(_apply_stats)
 	NetClient.skill_state_result.connect(_apply_skill_state)
 	NetClient.raise_mastery_result.connect(_on_raise_mastery_result)

@@ -40,11 +40,11 @@ func TestSkillCooldownGroupGate(t *testing.T) {
 		ref  *refdata.Skill
 		want uint32
 	}{
-		{"grouped, 3 s", &refdata.Skill{CooldownGroup: 2, ReuseDelayMs: 3000}, 2},
-		{"ungrouped", &refdata.Skill{CooldownGroup: 0, ReuseDelayMs: 3000}, 0},
-		{"no ReuseDelay (IsReady's +0x7c guard)", &refdata.Skill{CooldownGroup: 2, ReuseDelayMs: 0}, 0},
-		{"persisted branch, Water Harmony", &refdata.Skill{CooldownGroup: 73, ReuseDelayMs: 300000}, 0},
-		{"just under the persisted branch", &refdata.Skill{CooldownGroup: 73, ReuseDelayMs: 299999}, 73},
+		{"grouped, 3 s", &refdata.Skill{ReqLearnSP: 1, CooldownGroup: 2, ReuseDelayMs: 3000}, 2},
+		{"ungrouped", &refdata.Skill{ReqLearnSP: 1, CooldownGroup: 0, ReuseDelayMs: 3000}, 0},
+		{"no ReuseDelay (IsReady's +0x7c guard)", &refdata.Skill{ReqLearnSP: 1, CooldownGroup: 2, ReuseDelayMs: 0}, 0},
+		{"persisted branch, Water Harmony", &refdata.Skill{ReqLearnSP: 1, CooldownGroup: 73, ReuseDelayMs: 300000}, 0},
+		{"just under the persisted branch", &refdata.Skill{ReqLearnSP: 1, CooldownGroup: 73, ReuseDelayMs: 299999}, 73},
 		{"catalog skill", nil, 0},
 	} {
 		if got := skillCooldownGroup(tc.ref); got != tc.want {

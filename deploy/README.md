@@ -168,7 +168,23 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 # client reads the Europe skill files itself (skilldata_9000/10000/12000/15000/22000/35000 from
 # the player's Media.pk2). Existing characters: a China character's stored rows are unchanged; a
 # Europe character created since round 682 that raised a China mastery keeps the row in the
-# database, but it is no longer sent, summed into the cap or raisable.
+# database, but it is no longer sent, summed into the cap or raisable. The held list is the
+# Country's; round 692 also seeds a new character's race masteries as level-0 rows from the same
+# table, and the two agree.
+# ROUND 691'S REVIEW (monster skills learnable for free): a skill with no learn cost (ReqLearn_SP
+# 0) is now refused (retail's 0x3409), and a held skill a player may not hold -- a mastery-less,
+# cost-less row that is not a base attack (the monster/pet/guard/trap rows), or another race's --
+# is refused at the cast and DROPPED, logged as "dropped a learned skill no player may hold"; the
+# skill-state request the client sends drops them too. To see what srrevamp-01 holds BEFORE the
+# deploy (the deploy then drops these at each character's next login or cast):
+#   SELECT c.name, c.gender, cs.skill_id, s.basic_code, s.req_learn_race, s.mastery1
+#   FROM character_skills cs JOIN skills s ON s.id = cs.skill_id JOIN characters c ON c.id = cs.character_id
+#   WHERE (s.req_learn_sp = 0 AND s.mastery1 = 0
+#          AND cs.skill_id NOT IN (1,2,40,70,8419,8420,8421,9354,9355,9944,10625,11162,11526))
+#      OR (s.req_learn_race = 0 AND c.gender IN ('europe_man','europe_woman'))
+#      OR (s.req_learn_race = 1 AND c.gender NOT IN ('europe_man','europe_woman'))
+#   ORDER BY c.name, cs.skill_id;
+# An empty answer means nobody used the hole.
 # 3. On the server host (CSVs and import-refdata copied to ~/srrevamp-data; Postgres is pinned to
 #    127.0.0.1:5432 by docker-compose.override.yml):
 ~/srrevamp-data/import-refdata -items-csv ~/srrevamp-data/items.csv -skills-csv ~/srrevamp-data/skills.csv \
