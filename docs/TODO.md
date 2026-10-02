@@ -27,8 +27,9 @@ In order. Each is checked off here when it ships in a release, with its round in
 - [x] **ESC -> System window** (`ifsystemwnd`: Option / Help / Restart / Exit) -- round 138.
       Restart = login screen, Exit = quit. Option opens the retail Option window since round 615
       (CNIFOption from `res_ui\optionwnd.2dt`, the window the button really opens -- not the
-      `ifoption*.txt` family); its Audio tab works. Still open: its Video, Input and Game tabs
-      (our UI scale / chat font / name range / camera views stay on the Ctrl+F3 debug panel).
+      `ifoption*.txt` family); its Audio tab works, and its Video tab since round 694 (below,
+      "The Option window's Video tab"). Still open: its Input and Game tabs (our UI scale / chat
+      font / name range stay on the Ctrl+F3 debug panel).
 - [x] **NPC talk.** A click on an NPC opens `if_npctalk` titled with its name -- round 139. The
       greeting's service lines are now clickable; Buy opens the shop and the storage line the
       warehouse (both below). The guild NPC's lines follow the player's guild (round 521): a
@@ -911,6 +912,31 @@ under Compatibility.
       feature-tag override `renderer/rendering_method.forwardplus="forward_plus"` plus a second
       export preset with that custom feature). Two exports mean CI builds both, and the
       auto-updater keeps each install on its own flavour.
+
+### The Option window's Video tab (round 694) -- **built: retail's rows, presets, Graphic 1 / 2, brightness curve and sight ladders READ; SSAO and Bloom (glow) through one environment function; these are left**
+
+`docs/protocol/OPTION_VIDEO.md` has the record and the mapping table.
+
+- [ ] **Two defaults for the user to decide.** Retail's default is Middle (READ: the record
+      constructor 0x5f75e0 and the Default button 0x5fc340), which turns Bloom ON and Water
+      Reflection OFF, and its Default picks full screen. This client defaults to User control with
+      the look it drew before (bloom off, reflection on, a window), and its Default restores that.
+      Under Forward+ Middle would also turn glow on, against round 693's "glow off".
+- [ ] **Rows kept that draw nothing here:** Metallic Sheen (no env-map sheen pass), Light Effect
+      (no torch / sun light effect), Dynamic Animation (no cloth or hair; TEXANI and DYVERTEX are
+      their own items above), Display Friendly/Enemy (no battle outfits).
+- [ ] **Readers not found:** Character Sight Range (case 9) and Water Detail (case 7) are stored
+      and never read by the three probes tried; Texture Filtering's byte 0xc has no reader found
+      either. Their effects here are OURS (draw distance, reflection rows) and INFERRED (MSAA from
+      the tooltip). Next: the object renderer's draw path for +0x2e74, and a D3D sampler-state
+      search for the filter.
+- [ ] **Water Reflection applies at the next login**: a region's water is built for one mode.
+      Live would mean rebuilding every loaded region's water and mirror terrain.
+- [ ] **Inferred, not read:** a hand-set row switching the record to User (the slot's change
+      handler); the scroll bar's line step; the combo's own drawing (only its arrow and list frame
+      art are read); Effect Quality 1's two owner tests (FUN_00b94b70 on DAT_00ef1a84 / b44).
+- [ ] **Resolution** is the window's size; in full screen Godot keeps the desktop's (no mode
+      change in 4.2.2). A 3D render scale would be the Godot way to honour it there.
 
 ### Bots and clientless play -- **noted by the user 2026-10-01; not scheduled**
 

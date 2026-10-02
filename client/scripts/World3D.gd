@@ -473,6 +473,68 @@ func apply_video_options(o: VideoOptions) -> void:
 	# outfits (docs/protocol/OPTION_VIDEO.md).
 	print("World3D: video options applied -- %s" % describe_video(o))
 
+## SRREVAMP_QA_VIDEO_STEPS="spec|spec|..." (round 694, OURS): once the
+## world's load is done, every SRREVAMP_QA_VIDEO_STEP_FRAMES ticks (default
+## 90) the next spec -- SRREVAMP_QA_VIDEO's syntax, over this client's
+## defaults -- is applied as Apply would, and `QA VIDEO STEP i frame f: spec`
+## is printed, so one boot shows (or times) every setting a question needs.
+## Each step's end prints its mean wall time a frame over its second half
+## (`QA VIDEO TIME i <ms> ms over <n> frames`) and, with
+## SRREVAMP_QA_VIDEO_SHOT_DIR, saves the frame as step_<i>.png; with
+## SRREVAMP_QA_VIDEO_QUIT=1 the run quits after the last.
+var _qa_video_steps_spec := OS.get_environment("SRREVAMP_QA_VIDEO_STEPS")
+var _qa_video_steps: PackedStringArray = []
+var _qa_video_step_i := -1
+var _qa_video_step_at := -1
+var _qa_video_step_len := 90
+var _qa_video_last_usec := 0
+var _qa_video_frames := 0
+
+func _qa_video_step() -> void:
+	if _qa_video_steps_spec == "":
+		return
+	if _qa_video_step_i == -1:
+		if not _initial_load_done:
+			return
+		_qa_video_steps = _qa_video_steps_spec.split("|", false)
+		_qa_video_step_i = 0
+		_qa_video_step_at = _qa_tick + 120
+		return
+	if _qa_video_step_i > _qa_video_steps.size():
+		return
+	# This runs on physics ticks; the time a frame is the wall time over the
+	# frames DRAWN in the step's second half.
+	if _qa_video_step_i > 0 and _qa_video_last_usec == 0 and _qa_tick >= _qa_video_step_at - _qa_video_step_len / 2:
+		_qa_video_last_usec = Time.get_ticks_usec()
+		_qa_video_frames = Engine.get_frames_drawn()
+	if _qa_tick < _qa_video_step_at:
+		return
+	if _qa_video_step_i > 0:
+		var done := _qa_video_step_i - 1
+		var frames := Engine.get_frames_drawn() - _qa_video_frames
+		print("QA VIDEO TIME %d %.2f ms over %d frames" % [done,
+			float(Time.get_ticks_usec() - _qa_video_last_usec) / 1000.0 / float(maxi(frames, 1)), frames])
+		var dir := OS.get_environment("SRREVAMP_QA_VIDEO_SHOT_DIR")
+		if dir != "":
+			var img := get_viewport().get_texture().get_image()
+			if img != null:
+				img.save_png(dir.path_join("step_%d.png" % done))
+	_qa_video_last_usec = 0
+	if _qa_video_step_i >= _qa_video_steps.size():
+		_qa_video_step_i += 1
+		print("QA VIDEO STEPS done")
+		if OS.get_environment("SRREVAMP_QA_VIDEO_QUIT") == "1":
+			get_tree().quit()
+		return
+	var o := VideoOptions.new()
+	VideoOptions.apply_spec(o, _qa_video_steps[_qa_video_step_i])
+	print("QA VIDEO STEP %d frame %d: %s" % [_qa_video_step_i, Engine.get_frames_drawn(), _qa_video_steps[_qa_video_step_i]])
+	_on_video_options_applied(o)
+	_qa_video_step_i += 1
+	var every := OS.get_environment("SRREVAMP_QA_VIDEO_STEP_FRAMES")
+	_qa_video_step_len = int(every) if every.is_valid_int() else 90
+	_qa_video_step_at = _qa_tick + _qa_video_step_len
+
 ## One line naming every row's value in force, for the log and the QA probe.
 func describe_video(o: VideoOptions) -> String:
 	var p := o.current()
@@ -11779,6 +11841,7 @@ func _qa_step() -> void:
 	_qa_tick += 1
 	if _qa_pmi_spec != "":
 		_qa_pmi_step()
+	_qa_video_step()
 	# The load summary every ten seconds of game time (round 561): the window
 	# since the last one, so the play after the entry -- a boundary crossing
 	# -- is reported apart from the entry itself. _qa_step runs for every

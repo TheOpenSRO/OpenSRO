@@ -459,6 +459,11 @@ static func _qa_override(o: VideoOptions) -> void:
 	var spec := OS.get_environment("SRREVAMP_QA_VIDEO")
 	if spec == "":
 		return
+	apply_spec(o, spec)
+	print("VideoOptions: SRREVAMP_QA_VIDEO=%s -> graphic %d quality %d" % [spec, o.active + 1, o.current().quality])
+
+## Sets rows of `o` from "key=value,..." (see _qa_override).
+static func apply_spec(o: VideoOptions, spec: String) -> void:
 	for pair in spec.split(",", false):
 		var kv := pair.split("=")
 		if kv.size() != 2 or not kv[1].strip_edges().is_valid_int():
@@ -476,7 +481,6 @@ static func _qa_override(o: VideoOptions) -> void:
 				for r in ROWS:
 					if String(r["key"]) == key:
 						set_row(o.current(), int(r["entry"]), v)
-	print("VideoOptions: SRREVAMP_QA_VIDEO=%s -> graphic %d quality %d" % [spec, o.active + 1, o.current().quality])
 
 static func set_in_force(o: VideoOptions) -> void:
 	_in_force = o

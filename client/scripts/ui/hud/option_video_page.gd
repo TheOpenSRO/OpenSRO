@@ -510,7 +510,9 @@ func store() -> VideoOptions:
 		var effective := current if current != "" else str(rc.get_script_constant_map().get("PROJECT_DEFAULT", "forward_plus"))
 		if renderer_choice != effective:
 			rc.call("choose", renderer_choice)
-	return edit.duplicate_options()
+	var stored := edit.duplicate_options()
+	VideoOptions.set_in_force(stored)
+	return stored
 
 func at(path: Array) -> Control:
 	return TwoDtBuilder.find_path(_root, path) if _root != null else null
