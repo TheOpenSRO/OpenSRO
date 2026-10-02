@@ -23,6 +23,10 @@ class_name QaSignIn
 ##   SRREVAMP_QA_GENDER=china_woman   the gender a character created by
 ##                                    this run is given (default: the
 ##                                    server's own default, a China man)
+##   SRREVAMP_QA_CREATE=ref:scale:chest:legs:feet:weapon
+##                                    create the character with these
+##                                    retail create fields instead (round
+##                                    689; the scale as decimal or 0x..)
 ##   SRREVAMP_QA_KIT=body,chest,legs,feet,weapon
 ##                                    creates the character with exactly
 ##                                    these ids instead (round 691: a Europe
@@ -94,8 +98,14 @@ static func run(tree: SceneTree) -> bool:
 	for summary in listed[1]:
 		names.append(summary.char_name)
 	if not (who in names):
+		# SRREVAMP_QA_CREATE (round 689): the retail create's own fields, so a
+		# run can make any Figure -- a Europe body included -- with its scale
+		# byte and kit, as the customize screen sends them.
+		var full := create_fields(OS.get_environment("SRREVAMP_QA_CREATE"))
 		var kit := OS.get_environment("SRREVAMP_QA_KIT").split(",", false)
-		if kit.size() == 5:
+		if not full.is_empty():
+			NetClient.create_character_full(who, full[0], full[1], full[2], full[3], full[4], full[5])
+		elif kit.size() == 5:
 			NetClient.create_character_full(who, int(kit[0]), CharacterNet.DEFAULT_SCALE,
 				int(kit[1]), int(kit[2]), int(kit[3]), int(kit[4]))
 		else:
@@ -134,6 +144,25 @@ static func account_credentials() -> PackedStringArray:
 	var user := account if split < 0 else account.substr(0, split)
 	var password := "" if split < 0 else account.substr(split + 1)
 	return PackedStringArray([user, password])
+
+## SRREVAMP_QA_CREATE's six fields as ints, [] when unset or malformed.
+static func create_fields(spec: String) -> Array:
+	if spec == "":
+		return []
+	var out: Array = []
+	for part in spec.split(":"):
+		var t := String(part).strip_edges()
+		if t.begins_with("0x"):
+			out.append(t.substr(2).hex_to_int())
+		elif t.is_valid_int():
+			out.append(int(t))
+		else:
+			printerr("QA sign-in: SRREVAMP_QA_CREATE field '%s' is not a number -- ignored" % t)
+			return []
+	if out.size() != 6:
+		printerr("QA sign-in: SRREVAMP_QA_CREATE wants ref:scale:chest:legs:feet:weapon -- ignored")
+		return []
+	return out
 
 ## The QA character's name, from SRREVAMP_QA_CHARACTER or CHARACTER_DEFAULT.
 static func character_name() -> String:

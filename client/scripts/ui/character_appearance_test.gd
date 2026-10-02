@@ -243,12 +243,13 @@ func _init() -> void:
 	_check(Array(CharacterAppearance.item_models("item\\china\\weapon\\sword_01.bsr", tid.call([3, 1, 6, 2]), true)) \
 		== ["item\\china\\weapon\\sword_01.bsr"], "a sword is its own model")
 
-	# --- the weapon -> animation group table is World3D's ---
-	# Read from World3D.gd's source: the script cannot be loaded without its
-	# autoloads, which a --script run does not have.
-	var world_groups := _world_weapon_groups()
-	_check(not world_groups.is_empty() and world_groups == CharacterAppearance.WEAPON_ANIMATION_GROUP,
-		"WEAPON_ANIMATION_GROUP matches World3D's (%d entries read)" % world_groups.size())
+	# --- the weapon -> animation group is BodyAnimations' (round 689) ---
+	# One table for the world and the screens; World3D no longer keeps its own
+	# copy (the round-683 check that held two copies equal is retired with it).
+	_check(_world_weapon_groups().is_empty(), "World3D keeps no WEAPON_ANIMATION_GROUP copy of its own")
+	_check(BodyAnimations.group_for_weapon(7, 1) == "onehand_sword" and BodyAnimations.group_for_weapon(16, 0) == "sword" \
+		and BodyAnimations.group_for_weapon(16, 1) == "onehand_sword" and BodyAnimations.group_for_weapon(0, 1) == "default" \
+		and BodyAnimations.group_for_weapon(99, 0) == "default", "the weapon -> group switch with the fortress weapon by race (READ FUN_00a5a7d0)")
 
 	for n in [b1, b2]:
 		n.free()

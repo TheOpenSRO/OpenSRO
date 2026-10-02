@@ -79,6 +79,14 @@ class EntitySnapshot:
 	## OpEntityEntered's trailing wire angle (round 637's review follow-up);
 	## NAN from a list or an older server, which send none.
 	var heading: float = NAN
+	## The body the character was made from -- one of the 52 creatable Figures'
+	## characterdata ids -- and its scale byte (Height low nibble, Volume high),
+	## from the round-689 models tails (server EntitySnapshot.RefObjID).
+	## has_model is false from an older server, which sends none: World3D then
+	## draws the body `gender` names, as before.
+	var ref_obj_id: int = 0
+	var scale: int = 0x22
+	var has_model: bool = false
 
 	func item_in(slot: int) -> int:
 		return int(equipped.get(slot, 0))
@@ -160,6 +168,11 @@ class EnterWorldResult:
 	## review follow-up; the last field of the headings tail); NAN from a
 	## server that sends none.
 	var heading: float = NAN
+	## This player's own model (round 689; EntitySnapshot.ref_obj_id), from the
+	## models tail after the wire angle; has_model false from an older server.
+	var ref_obj_id: int = 0
+	var scale: int = 0x22
+	var has_model: bool = false
 	var error: String # decode error, distinct from a well-formed "not ok" response
 
 ## Parses one EntitySnapshot from data starting at offset, returning it
@@ -307,7 +320,45 @@ static func decode_enter_world_result(data: PackedByteArray) -> EnterWorldResult
 			var own: int = heads[1]
 			if result.error == "" and own + 2 <= data.size():
 				result.heading = RemoteFacing.from_wire_angle(data.decode_u16(own))
+				# The models tail (round 689): this player's own model, then
+				# the others'. Nothing there is an older server.
+				var tail := own + 2
+				if tail < data.size():
+					if tail + 5 > data.size():
+						result.error = "truncated own model"
+						return result
+					var ref := data.decode_u32(tail)
+					if ref != 0:
+						result.ref_obj_id = ref
+						result.scale = data[tail + 4]
+						result.has_model = true
+					result.error = _decode_models(data, tail + 5, result.others)[0]
 	return result
+
+## Reads the models tail (round 689; the server's decodeModels) of an
+## OpEnterWorldResult (after the player's own model) or an OpChangeZoneResult
+## (after the headings): a u16 count equal to the list's length and one model
+## per other -- a u32 RefObjID and the u8 scale byte; a RefObjID of 0 is an
+## other sent without one. Nothing there is an older server. Returns [error, next].
+static func _decode_models(data: PackedByteArray, offset: int, others: Array) -> Array:
+	if offset >= data.size():
+		return ["", offset]
+	if offset + 2 > data.size():
+		return ["truncated model count", offset]
+	var n := data.decode_u16(offset)
+	offset += 2
+	if n != others.size():
+		return ["%d models for %d others" % [n, others.size()], offset]
+	if offset + 5 * n > data.size():
+		return ["truncated models", offset]
+	for i in range(n):
+		var ref := data.decode_u32(offset + 5 * i)
+		if ref != 0:
+			var snap := others[i] as EntitySnapshot
+			snap.ref_obj_id = ref
+			snap.scale = data[offset + 5 * i + 4]
+			snap.has_model = true
+	return ["", offset + 5 * n]
 
 ## Reads the Seated tail of an OpEnterWorldResult or OpChangeZoneResult (round
 ## 607; server/internal/session/world.go's decodeSeated): a u16 count and an
@@ -380,6 +431,11 @@ static func decode_entity_entered(data: PackedByteArray) -> EntitySnapshot:
 	var end: int = decoded[1]
 	if snap != null and end >= 0 and end + 2 <= data.size():
 		snap.heading = RemoteFacing.from_wire_angle(data.decode_u16(end))
+	# The model (round 689; the server's EncodeEntered), after the angle.
+	if snap != null and end >= 0 and end + 2 + 5 <= data.size():
+		snap.ref_obj_id = data.decode_u32(end + 2)
+		snap.scale = data[end + 6]
+		snap.has_model = snap.ref_obj_id != 0
 	return snap
 
 ## Result of decode_entity_moved().
@@ -560,7 +616,11 @@ static func decode_change_zone_result(data: PackedByteArray) -> ChangeZoneResult
 		result.seated = seated[0]
 		result.error = seated[1]
 		if result.error == "":
-			result.error = _decode_headings(data, int(seated[2]), result.others)[0]
+			var heads := _decode_headings(data, int(seated[2]), result.others)
+			result.error = heads[0]
+			# The models tail (round 689), after the headings.
+			if result.error == "":
+				result.error = _decode_models(data, int(heads[1]), result.others)[0]
 	return result
 
 ## Encodes an OpRevive request: retail's one option byte (see OP_REVIVE) --

@@ -1235,6 +1235,75 @@ box. `perf_gate.sh` for B3.
 - Europe bodies' speed and sound rows (the code looks up by the gender's body code today).
 - `perf_gate.sh` required.
 
+**Done in round 689** (lane `world689`; WORLD_ISSUES round 689):
+
+- **The wire (OURS layout, trailing, backward compatible).** All values little-endian; a model is a
+  u32 RefObjID then the u8 scale byte. Golden bytes, written by hand:
+  `client/scripts/net/testdata/world_model_golden.json` (server `TestRound689ModelGolden`, client
+  `net/world_test.gd`).
+  - `OpEntityEntered`: snapshot, u16 wire angle (round 637), **then the model**. An older client
+    reads the angle and stops.
+  - `OpEnterWorldResult`: ... own wire angle (the last field before), **then the own model, then a
+    u16 count (= the Others' count) and one model per other** in list order. Present whenever the
+    server knows a model (always, from this server); its presence makes Restored, Seated (count 0),
+    the headings tail and the own angle always written, as the field doc's trap requires.
+  - `OpChangeZoneResult`: ... headings tail, **then the u16 count and one model per other**.
+  - A RefObjID of 0 is "no model": the client draws the gender's legacy body. A row without a model
+    (RefObjID 0, an older store) is sent as `LegacyModelFor(Gender)` at 0x22 (`session.modelOf`).
+- **Bodies.** `World3D._build_assembled_character(equipped, body, scale)` builds through
+  `CharacterAppearance` (the screens' builder: Height on the skeleton node, Volume, `_l`/`_r`/`_f`,
+  the missing-palette-bone rule, default wear, round 687's hides). The body key is the Figure's code
+  name (`WorldBodies.body_key`: the model's when the catalogue holds it, else
+  `WorldBodies.LEGACY_BODY_CODE[gender]`, else the China fighter). The world's catalogue is
+  bodies-only, built from the characterdata parts it already reads (`CharCatalog.from_tables(parts,
+  [])`, 39 ms MEASURED) and its item table (`CharacterAppearance.from_catalog`). Speed (column 47),
+  sound object, BCRadius and Country come from the body's own row.
+- **The T-pose (READ the cause in our code):** World3D animated the player only when
+  `_character_assets.has(_player_gender)`, and only `china_man` / `china_woman` were ever loaded, so
+  a `europe_man` / `europe_woman` player was drawn with the China fighter body and never posed.
+
+### Animations per body (round 689; the contract for skill casting and every screen)
+
+`client/scripts/assets/body_animations.gd`, class **`BodyAnimations`**. Every lane that plays a clip
+on a player body uses it; nothing else should look clips up by path pattern.
+
+```gdscript
+var anims := BodyAnimations.new(data_pk2)
+var group := BodyAnimations.group_for_weapon(weapon_type_id4, race)    # race 0 China, 1 Europe
+var clip := anims.clip_for(assembled, action_type, group)              # BanReader.ParsedAnimation or null
+var path := anims.path_for(assembled, action_type, group)              # "" when none
+var found := anims.group_found(assembled, action_type, group)          # group or "default"
+var entry := BodyAnimations.entry_for(parsed, action_type, group)      # BsrReader.AnimationEntry (events)
+```
+
+- `assembled` is the body's `SkinnedBsrAssembler.AssembledCharacter`:
+  `CharacterAppearance.template_for(ref_obj_id)` (or `Body.assembled`); in World3D,
+  `_body_assets(body)["assembled"]` and `_body_animation_for(body, type, group)`.
+- Clips are parsed once per body template and shared; each carries `BsrReader.CLIP_META`
+  ([type, group found]) for its sound tracks.
+- **The rule (READ):** group from `CObjCharacter::RefreshAnimationGroup` 0xa5bd10 /
+  `FUN_00a5a7d0` (no weapon `default`; TypeID4 16 `sword` for China, `onehand_sword` for Europe; no
+  sex test); entry from `CCObjAnimation::FUN_00a5b550` -> `CCompChar::FUN_00c2bbb0` ->
+  `AniMixer::FUN_00c551a0`: the group, the entry of that action type, a non-null clip, else the
+  same in `default`, else nothing. The last entry of a type wins (`FUN_00c0f470`); an entry whose
+  file index is -1 holds a null clip (`ResObject::FUN_00c0f500`) and so falls back. Sitting
+  (0xa5a270 / 0xa5a160) uses the same lookup.
+- **Nothing race-specific.** The Europe bodies' `default` group names China stand / walk / sit
+  clips and retail plays them (the chain reads only the body's own maps); all 52 share the two Europe
+  skeletons. The Europe skill clips are entries of type 26+ in the weapon's group (MEASURED, e.g. the
+  Europe man's `onehand_sword` type 29 `skill_eu_warrior_onehanda_strike_a`), so a skill whose
+  skillaniset row names an action type finds its clip through this lookup (INFERRED: that the cast
+  goes through the same chain was not traced in this round). **The cast-clip path since round
+  691's merge:** `_play_skill_cast_anim` and `_play_other_cast_anim` build
+  `SkillDataReader.cast_clip_path(_body_gender(body), code)` --
+  `Prim\Ani\Char\<China|Europe>\<man|woman>\<code>.ban`, the folders from the body's own assets
+  (`_body_assets_or_default(body)`'s `race` and `woman`), the file named after the skill's
+  Basic_Code without its level -- and fall back to the weapon swing when the file is missing. Only
+  33 of the 284 Europe board Basic_Code stems have such a file (MEASURED, round 691); the rest need
+  the skillaniset SHOT entry looked up through `BodyAnimations` as above (OPEN).
+- **OPEN:** the avatar group (CObjCharacter +0x190, tried first without fallback when set); the
+  transport `cart` group; the stand entry's type 65 (`_a_wakeup`) after a knock-down.
+
 ### Order and collisions
 
 - Round 0 first.

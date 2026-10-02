@@ -289,19 +289,21 @@ func derivedStat(stat, perPoint, level int) int {
 const StartingLevel = 1
 
 // Gender names a character's race and sex, the string the world wire still
-// carries (EntitySnapshot.Gender, EnterWorldResult.Gender) until lane W draws
-// bodies from RefObjID and Scale. Since round 682 it is DERIVED from the body
-// the character was made from (GenderFor of the model's race and sex), not
-// chosen on its own.
+// carries (EntitySnapshot.Gender, EnterWorldResult.Gender) beside the model
+// for an older client. Since round 682 it is DERIVED from the body the
+// character was made from (GenderFor of the model's race and sex), not chosen
+// on its own; since round 689 (charselect.md lane W) the world messages carry
+// RefObjID and Scale too, in trailing tails, and the client draws the body
+// from them.
 //
 // CORRECTED (round 682): this note used to say Europe's base body meshes were
 // not present in the available client data, so only China was offered. That
 // was wrong. Data.pk2 holds all 26 `Res\Char\Europe\europe(wo)man_*.bsr` bodies
 // and the `Prim\Ani\Char\Europe\` clips (MEASURED with pk2list,
 // docs/protocol/charselect.md "Corrections"). Europe is offered now (the
-// user's decision, 2026-10-02); a client that knows only the two China strings
-// falls back to its default body for the two Europe ones (World3D's
-// DEFAULT_GENDER) until lane W lands.
+// user's decision, 2026-10-02); a client before round 689 knows only the two
+// China strings and falls back to its default body for the two Europe ones
+// (World3D's DEFAULT_GENDER); a round-689 client reads the model instead.
 const (
 	GenderChinaMan    = "china_man"
 	GenderChinaWoman  = "china_woman"

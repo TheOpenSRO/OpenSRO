@@ -44,8 +44,10 @@ func TestArrivalFacesTheLastWalk(t *testing.T) {
 		t.Fatalf("Bram's packet after Aria arrived is %#04x, want OpEntityEntered", p.Opcode)
 	}
 	tail := enteredTail(t, p.Data)
-	if len(tail) != 2 {
-		t.Fatalf("OpEntityEntered carries %d byte(s) after the snapshot, want the 2-byte wire angle", len(tail))
+	// The 2-byte wire angle, then (round 689) the 5-byte model an older
+	// client never reaches.
+	if len(tail) != 2+5 {
+		t.Fatalf("OpEntityEntered carries %d byte(s) after the snapshot, want the 2-byte wire angle and the 5-byte model", len(tail))
 	}
 	if got := binary.LittleEndian.Uint16(tail); got != 16384 {
 		t.Errorf("the arrival's wire angle is %d, want 16384 (heading pi, the last walk toward -z)", got)
@@ -90,8 +92,8 @@ func TestRelocationIsRelayedAndKeepsTheHeading(t *testing.T) {
 		t.Fatalf("Bram's packet after Aria arrived is %#04x, want OpEntityEntered", p.Opcode)
 	}
 	tail := enteredTail(t, p.Data)
-	if len(tail) != 2 {
-		t.Fatalf("OpEntityEntered carries %d byte(s) after the snapshot, want 2", len(tail))
+	if len(tail) != 2+5 {
+		t.Fatalf("OpEntityEntered carries %d byte(s) after the snapshot, want 2 + the round-689 model's 5", len(tail))
 	}
 	if got := binary.LittleEndian.Uint16(tail); got != 0 {
 		t.Errorf("after the relocation the wire angle is %d, want 0 (heading pi/2 kept from the walk, not pi toward the jump)", got)
@@ -124,9 +126,11 @@ func TestArrivalListCarriesTheHeadingsOfThoseStanding(t *testing.T) {
 	if err != nil || !czr.OK || len(czr.Others) != 1 {
 		t.Fatalf("Bram's change back: %+v, %v; want Aria in the list", czr, err)
 	}
-	want := []byte{0, 0, 1, 0, 0x00, 0x40}
-	if !bytes.HasSuffix(p.Data, want) {
-		t.Errorf("the arrival list ends % x, want the tail % x (no one seated, 1 heading, wire angle 16384)",
-			p.Data[max(0, len(p.Data)-6):], want)
+	// Then (round 689) the models tail: a count of 1 and Aria's model, 5
+	// bytes, which an older decoder never reaches.
+	want := []byte{0, 0, 1, 0, 0x00, 0x40, 1, 0}
+	if len(p.Data) < 5 || !bytes.HasSuffix(p.Data[:len(p.Data)-5], want) {
+		t.Errorf("the arrival list ends % x, want the tail % x (no one seated, 1 heading, wire angle 16384, 1 model) and a model",
+			p.Data[max(0, len(p.Data)-13):], want)
 	}
 }

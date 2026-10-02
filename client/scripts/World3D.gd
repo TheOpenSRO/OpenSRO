@@ -518,48 +518,32 @@ const MIN_SEND_DISTANCE := 0.05 * PLAYER_SCALE_RATIO
 ## (50 units/s), not a claim about real interpolation timing.
 const OTHER_BODY_INTERPOLATION_SPEED := 15.0
 
-## The body each gender is drawn with: a row of characterdata, the same
-## table that names every NPC's model, by its code name. Ids 1907-1932 of
-## that table are the 26 playable China classes -- adventurer, bogy,
-## fighter, merchant, monk and the rest, 13 to a gender -- and each row's
-## `.bsr` lists the body's skeleton, its nine skinned pieces, its material
-## and its animations. Nothing about the body is guessed from a path
-## layout any more.
+## The body a character is drawn with when the server names only its gender
+## -- an older server, whose world messages carry no model: a row of
+## characterdata by its code name, the body round 682's migration gave every
+## character made before models existed (character.LegacyModelFor, OURS:
+## "fighter" for both, what the world drew until then).
 ##
-## **Which class is a fixed pick.** The server stores a gender and nothing
-## finer, so "fighter" is chosen here for both -- the same style the earlier
-## per-gender path table already used for the face and hair. A class
-## choice at character creation would replace this table, not this code.
-const GENDER_BODY_CODE := {
-	"china_man": "CHAR_CH_MAN_FIGHTER",
-	"china_woman": "CHAR_CH_WOMAN_FIGHTER",
-}
+## **Since round 689 a character is drawn from its own model.** The world
+## messages carry each character's RefObjID -- one of the 52 creatable
+## Figures, China and Europe, men and women -- and its scale byte (the
+## models tails, WorldNet.EntitySnapshot.ref_obj_id), and the body is built
+## from them through CharacterAppearance, the select and create screens'
+## builder (_build_assembled_character). A character's "body key" in this
+## script is that row's code name (CHAR_EU_MAN_NOBLE): the key the sound,
+## speed, BCRadius and Country tables use too.
+const GENDER_BODY_CODE := WorldBodies.LEGACY_BODY_CODE
 ## Falls back to this real gender's assets when a requested gender's assets
 ## didn't load (or a peer reports an unrecognized gender string) -- matches
 ## character.DefaultGender server-side.
 const DEFAULT_GENDER := "china_man"
 
 ## Which animation group a held weapon selects, by the weapon's TypeID4 in
-## the item table: the client's own switch (`FUN_00a5a7d0`, reached from
-## the equip-visual refresh with the item in the weapon slot), checked
-## against the real table's weapon rows -- 215-251 rows behind every case
-## (ITEM_FORMAT.md). Two of the client's rules are not in this table: while
-## pulling a transport the group is `cart` whatever the weapon, and the
-## fortress weapon (16) is `sword` for a China character and
-## `onehand_sword` for a European one -- every body here is China.
-const WEAPON_ANIMATION_GROUP := {
-	2: "sword", 3: "sword",  # sword, blade
-	4: "spear", 5: "spear",  # spear, glaive
-	6: "bow", 12: "bow",  # bow, crossbow
-	7: "onehand_sword",
-	8: "twohand_sword",
-	9: "dual_axe",
-	10: "onehand_staff", 15: "onehand_staff",  # dark staff, cleric rod
-	11: "twohand_staff",
-	13: "dagger",
-	14: "harf",  # the harp, as the client spells it
-	16: "sword",  # fortress weapon, China
-}
+## the item table and the body's race: BodyAnimations.group_for_weapon, the
+## client's own switch (`FUN_00a5a7d0`, READ, with the fortress weapon (16)
+## `sword` for a China body and `onehand_sword` for a Europe one) -- one table
+## for the world and the select and create screens since round 689. The
+## transport's `cart` group is not modelled.
 
 ## The fallback for a body whose `.bsr` carries no animation groups: the
 ## exact files the China fighters' `default` group names, matched by name.
@@ -1002,7 +986,28 @@ var _relocated_pending := false
 const RELOCATE_MARGIN := 1.0
 
 var _player_skeleton: Skeleton3D
+## The gender string the server sent (CharacterNet.GENDER_*), kept for an
+## older server's body (GENDER_BODY_CODE). The body itself is _player_body.
 var _player_gender := DEFAULT_GENDER
+## The player's body key: the characterdata code name of the Figure it was
+## made from (round 689; _body_key_for), "" until the body is built.
+var _player_body := ""
+## The player's scale byte (Height low nibble, Volume high; CharacterAppearance).
+var _player_scale := CharacterAppearance.DEFAULT_SCALE
+## The builder every character body comes from since round 689 -- the select
+## and create screens' own (CharacterAppearance), over this world's archives,
+## its bodies-only catalogue and its item table. Null without Data.pk2 and
+## Media.pk2 (characters stay placeholders).
+var _appearance: CharacterAppearance = null
+## The per-body clip lookup (BodyAnimations): the client's group / default rule.
+var _body_anims: BodyAnimations = null
+## characterdata code name -> [walk, run] speed (columns 46/47), every CHAR_ row.
+var _speeds_by_code: Dictionary = {}
+## The last run speed a server packet set for this player (_apply_buff_run_speed;
+## 0: none yet). It outranks the body row's base (_apply_player_speed).
+var _server_run_speed := 0
+## characterdata code name -> id, for the catalogue's bodies (the Figures).
+var _body_id_by_code: Dictionary = {}
 ## characterdata's Country (column 14) for the player bodies (CHAR_ rows),
 ## keyed by code name: the race emblem's source (round 629).
 var _country_by_code: Dictionary = {}
@@ -1152,13 +1157,13 @@ var _real_skeleton_track: BanReader.Bone
 var _real_skeleton_anim: BanReader.ParsedAnimation
 var _real_skeleton_time := 0.0
 
-## Per gender: the body's `.bsr` path, its animation groups (from the
-## `.bsr` itself -- see BsrReader.AnimationEntry) and a cache of the
-## animations parsed so far, keyed by path -- read once by
-## _load_character_assets(). A gender with no entry here means its body
-## row was not found (or SRREVAMP_PK2_PATH isn't set at all) -- callers
-## fall back to DEFAULT_GENDER, and to the placeholder capsule if even that
-## didn't load.
+## Per body key (a Figure's code name, round 689): {"ref": its characterdata
+## id, "bsr_path", "parsed" (the body `.bsr`, whose groups name its
+## animations -- BsrReader.AnimationEntry), "assembled" (CharacterAppearance's
+## shared template, whose cache holds the clips parsed so far), "race",
+## "woman"} -- made on first use by _body_assets(). A key with no entry yet is
+## a body not drawn so far; one that cannot be built falls back to the
+## default gender's body, and to the placeholder capsule if even that fails.
 var _character_assets: Dictionary = {}
 ## Data.pk2, held open for dressing: every character and every item on one
 ## is assembled out of it. All three archives are opened once and reused --
@@ -1692,7 +1697,7 @@ func _try_initialize_pk2_ui() -> void:
 	# Round 635: a body dressed before the block existed gets its portrait now
 	# (retail's block is created dirty: +0x38c = 1 in its constructor).
 	if _player_skeleton != null and is_instance_valid(_player_skeleton):
-		_refresh_player_portrait(_player_skeleton, _player_equipped_last, _player_gender)
+		_refresh_player_portrait(_player_skeleton, _player_equipped_last, _player_body)
 	_hud_player_info.set_character(NetClient.current_character_name, 1)
 
 	# The active-buff icons right of the player block (round 618): retail's
@@ -4842,6 +4847,7 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 		print(_grid_loaded_line(region_started_ms, 0))
 		print(_load_timings.summary())
 		_qa_print_entry_probe()
+		_land_restored_return_point()
 		_initial_load_done = true
 		return
 	# Reuse the screen the caller put up (_ready and _on_change_zone_result
@@ -4922,7 +4928,74 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 		return
 	_loading_screen.queue_free()
 	_loading_screen = null
+	_land_restored_return_point()
 	_initial_load_done = true
+
+## A restored entry's position (round 690), world (x, z), until the entry's
+## grid is in; null otherwise. _land_restored_return_point consumes it.
+var _restored_entry_point: Variant = null
+
+## Stands a restored entry on the walkable graph when it is a teleport point
+## (round 690). The server saves a character that leaves the world dead at its
+## return point -- the designated gate's teleport point, at its own height 0
+## (session.savedPlace) -- and a character that logs out where a teleport put
+## it, without moving, at that arrival's height 0 too; the entry keeps a
+## restored position, lifted only to the bare terrain
+## (_snap_player_onto_terrain): 12.19 under Hotan's plaza, 355.79 under
+## GATE_TOMB_GATE_IN's object and 366.84 under GATE_ARABIAN_COAST's (MEASURED,
+## walk_probe --column). A restored point that is no teleport point keeps that
+## rule: it is where the character stood, on whatever floor it stood on.
+func _land_restored_return_point() -> void:
+	if _restored_entry_point == null:
+		return
+	var spot: Vector2 = _restored_entry_point
+	_restored_entry_point = null
+	var result = NetClient.last_enter_world_result
+	var zone: String = result.zone if result != null else ""
+	var frame: String = result.frame if result != null else ""
+	var point := _teleport_point_at(spot, _zone_frame_coords(zone, frame))
+	if point == null:
+		return
+	if _land_teleport_arrival(spot.x, spot.y):
+		print("World3D: the restored entry is %s's point (a teleport arrival) -- stood on the walkable graph there" % point.code)
+
+## The frame a zone's coordinates are in (round 690): the server's FrameRegion
+## when it parses, else the zone's own centre (_frame_coords); {} when neither
+## is known.
+func _zone_frame_coords(zone: String, frame: String) -> Dictionary:
+	var centre := _parse_region_coords(_resolve_zone_region(zone)) if zone != "" else {}
+	return _frame_coords(centre, frame)
+
+## Where region (rx, ry)'s local (lx, lz) is in the world, in a grid built in
+## frame (fx, fy) (round 690): the transform TerrainCollision.place_group gives
+## that region's group (_cell_offset of its cell in the frame, the z mirror),
+## without the group having to be loaded.
+static func region_local_to_world(rx: int, ry: int, lx: float, lz: float, fx: int, fy: int) -> Vector2:
+	var g := Node3D.new()
+	TerrainCollision.place_group(g, _cell_offset(rx - fx, ry - fy), 0.0)
+	var at := g.transform * Vector3(lx, 0.0, lz)
+	g.free()
+	return Vector2(at.x, at.z)
+
+## The teleport point (any open-world teleportdata row, TeleportReader.
+## world_points) whose arrival is within TELEPORT_POINT_MATCH of world (x, z)
+## in frame `frame_coords` ({"x", "y"}); null when none, or with no frame.
+func _teleport_point_at(spot: Vector2, frame_coords: Dictionary) -> TeleportReader.Point:
+	if _teleport_reader == null or frame_coords.is_empty():
+		return null
+	var fx: int = frame_coords["x"]
+	var fy: int = frame_coords["y"]
+	for p_v in _teleport_reader.world_points():
+		var p: TeleportReader.Point = p_v
+		var at := region_local_to_world((p.region >> 8) & 0xFF, p.region & 0xFF, p.x, p.z, fx, fy)
+		if at.distance_to(spot) <= TELEPORT_POINT_MATCH:
+			return p
+	return null
+
+## How close a server position must be to a teleport point to be taken for an
+## arrival there (OURS): the server names the point exactly, as float32 world
+## coordinates from the table's whole numbers.
+const TELEPORT_POINT_MATCH := 1.0
 
 ## The `region grid loaded` line (round 561): the drain's wall time from its
 ## clock start, the terrain/objects/npcs split both branches have printed
@@ -5037,6 +5110,12 @@ func _load_initial_region_neighborhood() -> void:
 		if result.restored:
 			print("World3D: the server restored %s at (%.1f, %.1f, %.1f) in frame %s -- kept, not moved to the zone's landing spot" % [
 				result.zone, result.x, result.y, result.z, result.frame])
+			# A character that left the world dead is saved at its return
+			# point (server savedPlace, READ FUN_004df050), at the server's
+			# height 0, and so is one that logged out where a teleport put it:
+			# stood on the walkable graph once the grid is in
+			# (_land_restored_return_point, round 690).
+			_restored_entry_point = Vector2(result.x, result.z)
 		else:
 			_place_at_zone_spawn(result.zone)
 	else:
@@ -5134,6 +5213,18 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# leave it set for a later one.
 	var teleport_arrival := _teleport_arrival_pending
 	_teleport_arrival_pending = false
+	# Whether this client asked for this zone change (round 690,
+	# _request_zone_change, matched by _match_zone_change_request): a result
+	# it did not ask for, or one that finds the player dead, is the server
+	# moving the character to its return point (option 1 of the dead window,
+	# or the flag-off respawn).
+	var at_point := false
+	if result != null and result.ok and not teleport_arrival:
+		at_point = _teleport_point_at(Vector2(result.x, result.z), _zone_frame_coords(result.zone, result.frame)) != null
+	var requested := _zone_result_requested(teleport_arrival,
+		result.zone if result != null else "", result != null and result.ok, at_point)
+	var dead_at_arrival := _player_dead
+	var keep_server_point := arrival_keeps_server_point(teleport_arrival, requested, dead_at_arrival)
 	if result != null and result.ok:
 		# A zone change or a teleport lets go of the icon on the cursor
 		# (round 652's review; OURS -- retail's handling is not read).
@@ -5240,12 +5331,24 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# Only now, with the new region's terrain and walkable graph actually
 	# built, can an `@x,z` from the zone box be honoured -- see
 	# _split_zone_target.
-	if teleport_arrival:
+	if keep_server_point:
 		# A gate teleport keeps the server's position -- the destination gate's
 		# point -- instead of the zone's landing spot (_place_at_zone_spawn
 		# would move a Jangan arrival to the square, ZONE_SPAWN_LOCAL), and
 		# stands it on the walkable graph there; held there until its region
 		# is built when that is a neighbour cell (_step_teleport_landing).
+		# So, since round 690, does a return to the return point: it is the
+		# designated gate's teleport point, the arrival a gate teleport there
+		# makes (server ResolveRevivePoint, READ in round 686), and the server
+		# sends it at height 0 as it sends a teleport's. Until round 690 it
+		# took the branch below: Jangan's was moved to the square (the client
+		# 350 units from where the server had it), and every other town's
+		# kept the server's 0 and was only lifted to the bare terrain by
+		# _snap_player_onto_terrain -- 12.5 units under Hotan's plaza, the
+		# user's "clipped half way through the ground" (MEASURED, round 690).
+		if not teleport_arrival:
+			print("World3D: the server moved the character to (%.1f, %.1f) -- %s; kept and stood on the walkable graph" % [
+				result.x, result.z, "the return point (dead)" if dead_at_arrival else "a zone change this client did not ask for (the return point)"])
 		_teleport_landing = Vector2(result.x, result.z)
 		_step_teleport_landing()
 	elif _pending_zone_local != null:
@@ -5271,6 +5374,7 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	# Pump the new zone's queued neighbour cells behind the loading screen (if
 	# one is up), then drop it -- the same drain the first entry uses.
 	await _drain_initial_load(zone_started_ms)
+	_qa_arm_arrival_probe("zone change to %s%s" % [result.zone, " (gate teleport)" if teleport_arrival else ""])
 	# A teleport point in a neighbour cell has its ground now; one that still
 	# has none (no walkable graph there at all) is let go to the ordinary
 	# ground snap rather than held for ever.
@@ -6466,6 +6570,8 @@ func _qa_npc_body_report() -> void:
 			var from := mid + Vector3(shape.radius * 4.0, 0.0, 0.0)
 			var query := PhysicsRayQueryParameters3D.create(from, mid)
 			query.exclude = [player.get_rid()]
+			# Not the gates' pick boxes (round 690's review).
+			query.collision_mask = 0xFFFFFFFF & ~GATE_PICK_COLLISION_LAYER
 			var hit := space.intersect_ray(query)
 			# Any NPC's body counts: two NPCs stand within half a unit of
 			# each other on Jangan's square, so a ray aimed at one is
@@ -6624,79 +6730,53 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 	print("World3D: %d/%d NPC(s) placed in %d/%d (%d had no model, %d named, %d monster rows left to the server; %d faced toward open space in %.1f ms)" % [
 		placed, spawns.size(), region_x, region_y, skipped, named, monsters_skipped, faced, facing_usec / 1000.0])
 
-## How near a placed object has to stand to a gate building's table point to
-## be taken as the gate, in region-local x/z units (round 577). **A disclosed
-## stand-in, not recovered**: nothing read ties a teleportbuilding row to a
-## placed object. The rule rests on the placements: Jangan's cj_portal.bsr is
-## placed 3.6 units (x/z) from STORE_CH_GATE's point (97/168 local 1254,
-## 1374), with cj_portal_stone.bsr at 7.5; and the five town gates each bound
-## an object 0.7 to 3.6 units from their points in round 577's runs on the
-## render box (docs/protocol/teleport_network.md, "The clickable gate (round
-## 577)"; docs/RE_COMPLETION.md, round 577).
-const GATE_BIND_RADIUS := 10.0
-
 ## Makes each town's Dimensional Gate standing in a region clickable (round
-## 577).
+## 577; retail's pick box since round 690).
 ##
-## A gate is not an NPC: no npcpos row names a teleportbuilding id (the
-## first-column join of the two is empty), so _try_spawn_region_npcs never
-## places one. The town's Dimensional Gate is a placed map object -- in
-## Jangan cj_portal.bsr -- and teleportbuilding gives the structure's
-## region-local position (columns 41, 43-45, TeleportReader).
+## **What retail does (READ, round 690, sro_client.exe):**
+## - A town gate is a teleportbuilding row of TypeID 4/1/1, and the client
+##   creates it as a `CITeleportGate`: `IGIDObject::FUN_009c1fa0` picks the
+##   runtime class from the type, and its predicate `FUN_009c1ca0` --
+##   non-bionic, TypeID1 4, TypeID2 1 -- selects the class registered as
+##   "CITeleportGate" (0xde47b4, parent "CIRuntimeStruct").
+## - Its click test is a box from its ref record: `CITeleportGate::vslot_025`
+##   (0x9e9eb0) sets min (-r, -h, -r) and max (r, h, r) at +0x280..+0x294 with
+##   r = the record's +0x118 and h = its +0x114, which the _RefObjCommon
+##   parser (`FUN_00972910`, teleportbuilding's loader `Client_LoadRefDataFile`
+##   type 0x14) fills from columns 50 (BCRadius) and 49 (BCHeight)
+##   (TeleportReader.TB_BC_RADIUS / TB_BC_HEIGHT). `vslot_033` (0x9e9b60)
+##   writes the object's position into an identity matrix's translation and
+##   calls the ray-vs-box test `FUN_00a5b000`: the box is centred on the
+##   position and never turns with the gate's yaw.
+## - The mouse pick `FUN_0078ee20` walks the object list and keeps the
+##   nearest box a click ray meets. No model, placed map object or navmesh is
+##   part of it; a plain `CIRuntimeStruct` answers the miss value
+##   (`FUN_00535520`), so a gate is clickable where its box is and nowhere
+##   else. (It casts a 3 x 3 grid of rays a little apart around the cursor;
+##   any nearer hit replaces the best, and a centre hit replaces a best from
+##   an outer ray whatever its distance -- `d < best || (best_idx != 4 &&
+##   idx == 4)`. srrevamp casts the centre ray only -- OPEN.)
+## - The position is the structure's spawn position. INFERRED: the server
+##   spawns the structure at its teleportbuilding row (columns 41, 43-45), as
+##   GObjPC::IsWithinInteractionRange measures from it (round 642).
 ##
-## **Only a point that registers interaction id 7 is bound** (Point.interaction7,
-## teleportdata column 10 -- round 454, docs/protocol/teleport_network.md,
-## "The clickable gate (round 577)"). Joined against the retail tables, 61
-## teleportbuilding rows in a world region are named by a serviced point, and
-## exactly 7 of them register id 7: STORE_CH/WC/KT/EU/CA_GATE and Alexandria's
-## STORE_SD_GATE1/2 -- the town gates. The other 54 (the fortress, charge,
-## glory and revival gates, the tomb, desert and delta gates,
-## STORE_SURVIVAL_DW in Donwhang's 102/153) are left alone: nothing ties any
-## of them to a placed object, and binding them made arbitrary scenery a talk
-## target. That the flag picks the town gates is what the table shows; the
-## client's own reason for it (its designate line) is round 454's.
+## So for each id-7 gate standing in the region (Point.interaction7 -- round
+## 577's rule: exactly the seven town gates, STORE_CH/WC/KT/EU/CA_GATE and
+## Alexandria's STORE_SD_GATE1/2), a `GatePick_<code>` node at the building's
+## table position carries the talk tags (`npc_name`, `npc_code`,
+## `gate_point_id`) and one StaticBody3D with that box, axis-aligned in the
+## world (its basis undoes the region group's z mirror), on
+## GATE_PICK_COLLISION_LAYER alone. Not the talk layer: that is the
+## navmesh-wall bit the player's body masks, and the box is a click target,
+## never a wall. The talk ray (_talk_ray) masks both.
 ##
-## So for each such building in the region, the nearest placed object
-## (the region's RealMapObjects container, whose children are positioned
-## region-local) within GATE_BIND_RADIUS is tagged the way an NPC holder is:
-## `npc_name` (the building's name string through textdata_object --
-## SN_NPC_CH_GATE is "Dimensional Gate"), `npc_code` (STORE_CH_GATE, which
-## _npc_services turns into the gate's lines) and `gate_point_id` (its
-## teleportdata id). The tags and the talk layer go on the placed COPY:
-## ObjectTemplateCache.instance returns a duplicate() of the world's
-## template, whose own nodes are never touched.
-##
-## _try_talk_to_npc's ray masks NPC_COLLISION_LAYER only and walks up from
-## the collider to the `npc_name` tag, and ObjectLoader gives each piece a
-## StaticBody3D on the default layer 1, so NPC_COLLISION_LAYER is OR-ed into
-## every one of them. The player already stops at layer 1 (its mask is 17,
-## both bits) and the camera arm masks layer 1 only, so nothing else about
-## the gate's collision changes.
-##
-## Nothing within GATE_BIND_RADIUS (a region without its `.o2`, or a portal
-## no loaded region has placed yet): the gate is left unbound -- not
-## clickable -- and the log says so. No stand-in collider is added: the talk
-## layer is the navmesh-wall bit the player's body masks, so any body put
-## there is a wall where retail has none.
-##
-## **Where the portal is held (round 650).** Since round 643 a map object
-## exists once in the world, placed by the FIRST loaded region whose `.o2`
-## lists its key, in that region's container and frame (_placed_objects,
-## region_placements). A portal on a region edge is listed by both regions,
-## so it is often held by the neighbour: Donwhang's STORE_WC_GATE stands in
-## 103/153 at local (962, 8), eight units from the edge, and a player
-## arriving at GATE_WC (102/153) has 102/153 load first, which places
-## Obj_w_cd_portal in RealMapObjects_102_153 (MEASURED on the render box:
-## `no placed object within 10 units of the table's point (962, 8) in
-## 103/153; left unbound`, and no OpTeleportUse from the tester's session
-## after the arrival). Until round 650 this looked in the building region's
-## own container only, so the gate was never bound there. Now the table
-## point is taken into the world through the building region's terrain group
-## and every loaded region's container is searched in world x/z
-## (_nearest_placed_object); and a gate left unbound -- its portal held by a
-## region that has not committed yet -- is tried again after every region's
-## commit (_rebind_pending_gates), since a later region may be the one that
-## places it.
+## **Until round 690** the gate was the placed map object nearest its table
+## point within 10 units (round 577's disclosed stand-in), with every piece of
+## it on the talk layer: in Jangan the whole pavilion took clicks (147 units
+## across), and Alexandria North's portal, placed 15.1 units from its point,
+## was never bound -- not clickable since teleporters were added (MEASURED,
+## round 690). A row without a box (BCRadius or BCHeight 0) is left
+## unclickable, as retail's would be, and the log says so.
 func _bind_region_gates(region_x: int, region_y: int, group: Node3D) -> void:
 	if _teleport_reader == null:
 		return
@@ -6705,44 +6785,59 @@ func _bind_region_gates(region_x: int, region_y: int, group: Node3D) -> void:
 		var point := _teleport_reader.point_for_building(building.code)
 		if point == null or not point.interaction7:
 			continue
-		_gate_bindings[building.code] = {"rx": region_x, "ry": region_y, "node": null}
-		if not _bind_gate(building, point, group):
-			# The nearest placed object at any distance, for the log.
-			var spot := _chain_transform(group) * Vector3(building.x, 0.0, building.z)
-			var nearest := _nearest_placed_object(_object_containers.values(), spot, INF)
-			var nearest_text := "none loaded" if nearest.is_empty() else "the nearest is %s at %.1f" % [(nearest["node"] as Node).name, nearest["distance"]]
-			print("World3D: teleport gate %s -- no placed object within %.0f units of the table's point (%.0f, %.0f) in %d/%d (%s); left unbound (not clickable) until a region that places it loads" % [
-				building.code, GATE_BIND_RADIUS, building.x, building.z, region_x, region_y, nearest_text])
-	_rebind_pending_gates(region_x, region_y)
+		var pick := _gate_pick_node(building, point, group)
+		if pick == null:
+			print("World3D: teleport gate %s has no bounding box in teleportbuilding (BCRadius %.0f, BCHeight %.0f) -- not clickable" % [
+				building.code, building.bc_radius, building.bc_height])
+			continue
+		_gate_bindings[building.code] = {"rx": region_x, "ry": region_y, "node": pick}
+		print("World3D: teleport gate %s clickable at %d/%d local (%.0f, %.0f, %.0f): its BCRadius %.0f / BCHeight %.0f box, world %s (point %d)" % [
+			building.code, region_x, region_y, building.x, building.y, building.z, building.bc_radius, building.bc_height,
+			str(pick.global_position.round() if pick.is_inside_tree() else (_chain_transform(group) * Vector3(building.x, building.y, building.z)).round()), point.id])
 
-## The town gates of the loaded regions (round 650): building code ->
-## {"rx", "ry" (the building's region), "node" (the placed object it is bound
-## to, or null while unbound)}. Set by _bind_region_gates, retried by
-## _rebind_pending_gates, cleared with the grid (_clear_region_grid).
+## A town gate's pick box layer (round 690): its own bit (10), which only the
+## talk ray masks -- nothing walks into it, no camera or ground ray meets it.
+const GATE_PICK_COLLISION_LAYER := 0b1000000000 # layer 10 only
+
+## The town gates of the loaded regions: building code -> {"rx", "ry" (the
+## building's region), "node" (its GatePick_<code> node)}. Set by
+## _bind_region_gates, cleared with the grid (_clear_region_grid); a region
+## streamed out takes its node with it.
 var _gate_bindings := {}
 
-## Binds one town gate to the placed object nearest its table point, in any
-## loaded region's container (see _bind_region_gates); true when bound.
-## `group` is the building region's terrain group, whose frame the table's
-## region-local point is in.
-func _bind_gate(building: TeleportReader.Building, point: TeleportReader.Point, group: Node3D) -> bool:
-	var spot := _chain_transform(group) * Vector3(building.x, 0.0, building.z)
-	var containers: Array = _object_containers.values()
-	# The building region's own container first, as before round 650: also
-	# when _object_containers does not list it (a test's bare group).
-	var own := group.get_node_or_null("RealMapObjects%s" % String(group.name).trim_prefix("RealTerrain"))
-	if own != null and not containers.has(own):
-		containers.push_front(own)
-	var found := _nearest_placed_object(containers, spot, GATE_BIND_RADIUS)
-	if found.is_empty():
-		return false
-	var best: Node3D = found["node"]
-	var bodies := _tag_gate(best, building.code, _gate_display_name(building), point.id)
-	if _gate_bindings.has(building.code):
-		_gate_bindings[building.code]["node"] = best
-	print("World3D: teleport gate %s bound to %s in %s (%.1f units from the table's point; point %d, %d piece bod(ies) on the talk layer)" % [
-		building.code, best.name, best.get_parent().name, found["distance"], point.id, bodies])
-	return true
+## Builds a gate's pick node (see _bind_region_gates) under `group`, the
+## building region's terrain group, whose frame the table's region-local
+## position is in (a placed object's y is its raw height in that frame too).
+## null when the row has no box. A node of the same name already there is
+## replaced.
+func _gate_pick_node(building: TeleportReader.Building, point: TeleportReader.Point, group: Node3D) -> Node3D:
+	if building.bc_radius <= 0.0 or building.bc_height <= 0.0:
+		return null
+	var node_name := "GatePick_%s" % building.code
+	var old := group.get_node_or_null(node_name)
+	if old != null:
+		group.remove_child(old)
+		old.queue_free()
+	var node := Node3D.new()
+	node.name = node_name
+	var frame := _chain_transform(group)
+	var at := frame * Vector3(building.x, building.y, building.z)
+	node.transform = frame.affine_inverse() * Transform3D(Basis.IDENTITY, at)
+	node.set_meta("npc_name", _gate_display_name(building))
+	node.set_meta("npc_code", building.code)
+	node.set_meta("gate_point_id", point.id)
+	var body := StaticBody3D.new()
+	body.name = "PickBox"
+	body.collision_layer = GATE_PICK_COLLISION_LAYER
+	body.collision_mask = 0
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(building.bc_radius * 2.0, building.bc_height * 2.0, building.bc_radius * 2.0)
+	shape.shape = box
+	body.add_child(shape)
+	node.add_child(body)
+	group.add_child(node)
+	return node
 
 ## The placed object whose origin is nearest `spot` (a world point) in x/z,
 ## within `radius`, over the children of `containers`: {"node", "distance"},
@@ -6771,36 +6866,6 @@ static func _nearest_placed_object(containers: Array, spot: Vector3, radius: flo
 		return {}
 	return {"node": best, "distance": best_d}
 
-## Tries again every town gate of a loaded region that is unbound -- its
-## portal not placed when its region committed, or freed since with a region
-## that held it (round 650, _bind_region_gates). Called after each region's
-## gates are bound; `skip_x`/`skip_y` is that region, already tried. A gate
-## whose region is no longer loaded is forgotten (its region binds it again
-## when it streams back in).
-func _rebind_pending_gates(skip_x: int, skip_y: int) -> void:
-	if _teleport_reader == null:
-		return
-	for code in _gate_bindings.keys():
-		var entry: Dictionary = _gate_bindings[code]
-		var node = entry["node"]
-		if is_instance_valid(node) and not (node as Node).is_queued_for_deletion() and (node as Node3D).has_meta("gate_point_id"):
-			continue
-		entry["node"] = null
-		var rx: int = entry["rx"]
-		var ry: int = entry["ry"]
-		if rx == skip_x and ry == skip_y:
-			continue
-		var group := get_node_or_null("RealTerrain_%d_%d" % [rx, ry]) as Node3D
-		if group == null or group.is_queued_for_deletion():
-			_gate_bindings.erase(code)
-			continue
-		var building := _teleport_reader.building_by_code(code)
-		var point := _teleport_reader.point_for_building(code)
-		if building == null or point == null:
-			_gate_bindings.erase(code)
-			continue
-		_bind_gate(building, point, group)
-
 ## What a gate is called: its building's name string (SN_NPC_CH_GATE) through
 ## textdata_object, as an NPC's is; "" when the row has none ("xxx") or the
 ## table does not name it -- the talk window then shows "...".
@@ -6810,20 +6875,6 @@ func _gate_display_name(building: TeleportReader.Building) -> String:
 		return ""
 	var text := names.get_text(building.name_strid).strip_edges()
 	return "" if text == building.name_strid else text
-
-## Tags a node as a talkable gate (see _bind_region_gates) and puts every
-## StaticBody3D under it -- itself included -- on the talk layer as well as
-## its own. Returns how many bodies it changed.
-func _tag_gate(node: Node3D, code: String, gate_name: String, point_id: int) -> int:
-	node.set_meta("npc_name", gate_name)
-	node.set_meta("npc_code", code)
-	node.set_meta("gate_point_id", point_id)
-	var bodies: Array = node.find_children("*", "StaticBody3D", true, false)
-	if node is StaticBody3D:
-		bodies.append(node)
-	for body in bodies:
-		(body as StaticBody3D).collision_layer |= NPC_COLLISION_LAYER
-	return bodies.size()
 
 ## Loads real terrain from a real Map.pk2 region .m file via MapmReader +
 ## MapmTerrainBuilder, replacing both the placeholder ground's visual mesh
@@ -7620,15 +7671,19 @@ func _has_roof_overhead(pos: Vector3) -> bool:
 		pos + Vector3(0.0, 0.5 * PLAYER_SCALE_RATIO, 0.0),
 		pos + Vector3(0.0, ROOF_CHECK_HEIGHT, 0.0))
 	query.exclude = [player.get_rid()]
+	# A gate's pick box is a click target, not a roof (round 690).
+	query.collision_mask = 0xFFFFFFFF & ~GATE_PICK_COLLISION_LAYER
 	var hit := space_state.intersect_ray(query)
 	return not hit.is_empty()
 
 ## Reads, once, everything dressing needs and nothing it does not:
-## Data.pk2 stays open, each gender's body row is looked up in
-## characterdata by code name and its animations parsed, and the item
-## table is read for id -> worn model. Leaves _character_assets empty if
-## SRREVAMP_PK2_PATH isn't set at all, and a gender whose row is missing
-## simply gets no entry.
+## Data.pk2 stays open, the characterdata parts give each body row (and the
+## speed, BCRadius, DecayTime and Country tables), and the item table is read
+## for id -> worn model. Then the builder (CharacterAppearance) is made over
+## them: a bodies-only catalogue from the same characterdata bytes (the 52
+## Figures, CharCatalog's rule) and this item table, so nothing is parsed
+## twice. Each body is assembled the first time a character needs it
+## (_body_assets). Leaves _appearance null if SRREVAMP_PK2_PATH isn't set.
 func _load_character_assets() -> void:
 	_data_pk2 = _open_pk2_if_set()
 	if _data_pk2 == null:
@@ -7640,17 +7695,18 @@ func _load_character_assets() -> void:
 		print("World3D: no Media.pk2 -- no character or item tables, characters stay placeholders")
 		return
 
-	var bodies := {}
 	var speeds := {}
+	var char_parts: Array = []
 	for path in NpcTableReader.MODEL_TABLE_PATHS:
 		var entry := ObjectLoader.find_file(_media_pk2, path)
 		if entry != null:
 			var bytes := _media_pk2.read_file(entry)
-			bodies = NpcTableReader.parse_models_by_code(bytes, bodies)
+			char_parts.append(bytes)
 			speeds = NpcTableReader.parse_speeds_by_code(bytes, speeds)
 			_bc_radius_by_code = NpcTableReader.parse_bc_radius_by_code(bytes, _bc_radius_by_code)
 			_monster_decay_ms_by_code = NpcTableReader.parse_decay_by_code(bytes, _monster_decay_ms_by_code)
 			_country_by_code = NpcTableReader.parse_country_by_code(bytes, _country_by_code)
+	_speeds_by_code = speeds
 	# Every row's BCRadius (column 50), for the attack approach: the player's
 	# body and the monsters' species both feed the reach band.
 	print("World3D: %d BCRadius row(s) from characterdata column 50 (%s: %s)" % [
@@ -7658,15 +7714,9 @@ func _load_character_assets() -> void:
 		str(_bc_radius_by_code.get(GENDER_BODY_CODE[DEFAULT_GENDER], "none"))])
 	print("World3D: %d monster DecayTime row(s) from characterdata column 13 (MOB_CH_MANGNYANG: %s ms)" % [
 		_monster_decay_ms_by_code.size(), str(_monster_decay_ms_by_code.get("MOB_CH_MANGNYANG", "none"))])
-	# The player's run speed is the body row's own (column 47), the number the
-	# server moves the character by; see NpcTableReader.COL_SPEED_RUN.
-	var player_speeds: Array = speeds.get(GENDER_BODY_CODE[DEFAULT_GENDER], [])
-	if player_speeds.size() == 2 and float(player_speeds[1]) > 0.0:
-		_move_speed = float(player_speeds[1])
-		print("World3D: player run speed %.0f units/s (characterdata column 47 of %s; walk %.0f)" % [
-			_move_speed, GENDER_BODY_CODE[DEFAULT_GENDER], float(player_speeds[0])])
-	else:
-		print("World3D: no speed row for %s -- keeping the fallback %.1f units/s" % [GENDER_BODY_CODE[DEFAULT_GENDER], MOVE_SPEED_FALLBACK])
+	# The player's run speed is its body row's own (column 47), set when the
+	# body is known (_apply_player_speed); the default body's until then.
+	_apply_player_speed(GENDER_BODY_CODE[DEFAULT_GENDER])
 	for path in ItemTableReader.TABLE_PATHS:
 		var entry := ObjectLoader.find_file(_media_pk2, path)
 		if entry == null:
@@ -7680,53 +7730,119 @@ func _load_character_assets() -> void:
 				if item.type_ids.size() >= 4:
 					_item_kinds[item.id] = item.type_ids[3]
 
-	for gender in GENDER_BODY_CODE:
-		var code: String = GENDER_BODY_CODE[gender]
-		var bsr_path: String = bodies.get(code, "")
-		if bsr_path == "":
-			printerr("World3D: characterdata has no %s row for the %s body" % [code, gender])
-			continue
-		var bsr_data := AssetSource.read_bytes(bsr_path, _data_pk2)
-		if bsr_data.is_empty():
-			bsr_data = AssetSource.read_bytes("res\\" + bsr_path, _data_pk2)
-		var parsed := BsrReader.parse(bsr_data) if not bsr_data.is_empty() else null
-		if parsed == null or not parsed.is_character:
-			printerr("World3D: %s body %s is not a character .bsr" % [gender, bsr_path])
-			continue
-		var assets := {
-			"bsr_path": bsr_path,
-			"parsed": parsed,
-			"animations": {},
-		}
-		_character_assets[gender] = assets
-		var groups: Array = parsed.animation_groups.keys()
-		print("World3D: %s body is %s (%d pieces, %d animations, groups %s)" % [
-			gender, bsr_path, parsed.all_mesh_paths().size(), parsed.animation_paths.size(), str(groups)])
-	print("World3D: %d item model(s) known from the item table" % _item_models.size())
+	# The bodies (round 689): the catalogue's rule over the parts just read.
+	var t_cat := Time.get_ticks_usec()
+	var bodies := CharCatalog.from_tables(char_parts, [])
+	_appearance = CharacterAppearance.from_catalog(_data_pk2, _media_pk2, bodies, _item_rows)
+	_body_anims = BodyAnimations.new(_data_pk2)
+	for id in bodies.entries:
+		var e: CharCatalog.Entry = bodies.entries[id]
+		if e.is_body:
+			_body_id_by_code[e.code] = e.id
+	print("World3D: %d character bodies from characterdata (%d us); %d item model(s) known from the item table" % [
+		_body_id_by_code.size(), Time.get_ticks_usec() - t_cat, _item_models.size()])
 
-## The animation a gender's body plays for one action, in the animation
-## group a held weapon selects -- the file's own table, with its own
-## fallback to `default` (see BsrReader.ParsedObject.animation_for). Parsed
-## on first use and cached per gender. Null when the body has no animation
-## for it, which the caller treats as "hold the pose".
+## The player's run speed from its body's characterdata row (column 47, the
+## number the server moves the character by; NpcTableReader.COL_SPEED_RUN) --
+## the base. A run speed a server packet set (_server_run_speed: a buff, a GM's
+## /speed, replayed at world entry by _replay_held_buffs) is the speed in
+## effect and stays: round 689's review found the first dress, which comes
+## after that replay, dropping a held /speed 2 back to the body's 50 (a
+## reconnecting player then rubber-banded against the server).
+func _apply_player_speed(code: String) -> void:
+	var player_speeds: Array = _speeds_by_code.get(code, [])
+	if player_speeds.size() != 2 or float(player_speeds[1]) <= 0.0:
+		print("World3D: no speed row for %s -- keeping %.1f units/s" % [code, _move_speed])
+		return
+	if _server_run_speed > 0:
+		print("World3D: %s runs %.0f units/s by its row, but the server set %d -- kept" % [
+			code, float(player_speeds[1]), _server_run_speed])
+		return
+	_move_speed = float(player_speeds[1])
+	print("World3D: player run speed %.0f units/s (characterdata column 47 of %s; walk %.0f)" % [
+		_move_speed, code, float(player_speeds[0])])
+
+## The body key (a Figure's characterdata code name) of a character: its
+## model's when the server sent one (round 689) and the catalogue holds it,
+## else the body its gender was migrated to (GENDER_BODY_CODE), else the
+## default gender's. "" when there are no bodies at all.
+func _body_key_for(ref_obj_id: int, gender: String) -> String:
+	var cat := _appearance.catalog() if _appearance != null else null
+	var key := WorldBodies.body_key(cat, ref_obj_id, gender)
+	if ref_obj_id > 0 and (cat == null or cat.get_entry(ref_obj_id) == null):
+		print("World3D: model %d is not a creatable body in this archive -- drawn as %s (gender %s)" % [ref_obj_id, key, gender])
+	return key
+
+## The body's assets (see _character_assets), made on first use from the
+## builder's template: the `.bsr` is parsed and the body assembled once, and
+## every character of that Figure shares them. {} when the body cannot be
+## built.
+func _body_assets(body: String) -> Dictionary:
+	if _character_assets.has(body):
+		return _character_assets[body]
+	if _appearance == null or not _body_id_by_code.has(body):
+		return {}
+	var ref: int = _body_id_by_code[body]
+	var tmpl := _appearance.template_for(ref)
+	if tmpl == null or tmpl.parsed == null or not tmpl.parsed.is_character:
+		printerr("World3D: body %s (%d, %s) is not a character .bsr" % [body, ref, _appearance.body_path(ref)])
+		_character_assets[body] = {}
+		return {}
+	var assets := {
+		"ref": ref,
+		"bsr_path": _appearance.body_path(ref),
+		"parsed": tmpl.parsed,
+		"assembled": tmpl,
+		"race": _appearance.race_of(ref),
+		"woman": _appearance.is_woman(ref),
+	}
+	_character_assets[body] = assets
+	print("World3D: body %s is %s (%d, %d pieces, %d animations, groups %s)" % [
+		body, assets["bsr_path"], ref, tmpl.parsed.all_mesh_paths().size(), tmpl.parsed.animation_paths.size(),
+		str(tmpl.parsed.animation_groups.keys())])
+	return assets
+
+## A body's assets, or the default gender's body's when it has none.
+func _body_assets_or_default(body: String) -> Dictionary:
+	var assets := _body_assets(body)
+	if assets.is_empty():
+		assets = _body_assets(String(GENDER_BODY_CODE[DEFAULT_GENDER]))
+	return assets
+
+## Whether a body is a woman's (characterdata column 58), for the skill clips'
+## man / woman folders.
+func _body_is_woman(body: String) -> bool:
+	return bool(_body_assets_or_default(body).get("woman", false))
+
+## The race and sex a body's skill clips are filed under, as
+## SkillDataReader.cast_clip_path reads them ("europe_woman", ...; round 691
+## over round 689's body): the body's race (BodyAnimations) and sex (column 58).
+func _body_gender(body: String) -> String:
+	var a := _body_assets_or_default(body)
+	var race := "europe" if int(a.get("race", BodyAnimations.RACE_CHINA)) == BodyAnimations.RACE_EUROPE else "china"
+	return race + ("_woman" if bool(a.get("woman", false)) else "_man")
+
+## The animation a body plays for one action, in the animation group a held
+## weapon selects -- the body's own `.bsr` table with the client's fallback to
+## `default` (BodyAnimations, READ). Parsed on first use and cached per body.
+## Null when the body has no animation for it, which the caller treats as
+## "hold the pose".
 ##
 ## A body whose `.bsr` carries no groups at all falls back to matching the
 ## animation file names against BODY_ANIMATION_HINTS.
-func _body_animation_for(gender: String, action_type: int, group: String = "default") -> BanReader.ParsedAnimation:
-	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
+func _body_animation_for(body: String, action_type: int, group: String = "default") -> BanReader.ParsedAnimation:
+	var assets := _body_assets_or_default(body)
 	if assets.is_empty():
 		return null
+	var assembled: SkinnedBsrAssembler.AssembledCharacter = assets["assembled"]
 	var parsed: BsrReader.ParsedObject = assets["parsed"]
-	var path := parsed.animation_for(action_type, group)
-	if path == "" and parsed.animation_groups.is_empty():
-		path = _hinted_animation_path(parsed.animation_paths, action_type)
+	if not parsed.animation_groups.is_empty():
+		return _body_anims.clip_for(assembled, action_type, group)
+	var path := _hinted_animation_path(parsed.animation_paths, action_type)
 	if path == "":
 		return null
-	# Which entry the clip was found as, for its sound tracks (AnimSounds).
-	var found_group := parsed.animation_group_for(action_type, group)
-	var cache: Dictionary = assets["animations"]
+	var cache: Dictionary = assembled.animation_cache
 	if cache.has(path):
-		_tag_clip(cache[path], action_type, found_group)
 		return cache[path]
 	var bytes := AssetSource.read_bytes(path, _data_pk2)
 	if bytes.is_empty():
@@ -7735,7 +7851,6 @@ func _body_animation_for(gender: String, action_type: int, group: String = "defa
 	if anim != null and anim.bones.is_empty():
 		anim = null
 	cache[path] = anim
-	_tag_clip(anim, action_type, found_group)
 	return anim
 
 ## The name-hint fallback: the first animation path matching the earliest
@@ -7762,24 +7877,27 @@ func _hinted_animation_path(paths: Array, action_type: int) -> String:
 				return path
 	return ""
 
-## The animation group the weapon in a set of equipped items selects.
-func _weapon_group_for(equipped: Dictionary) -> String:
+## The animation group the weapon in a set of equipped items selects on a
+## body (BodyAnimations.group_for_weapon: the client's switch, the fortress
+## weapon by the body's race).
+func _weapon_group_for(equipped: Dictionary, body: String = "") -> String:
 	var weapon_id: int = int(equipped.get(EquipmentNet.SLOT_WEAPON, 0))
 	if weapon_id == 0:
 		return "default"
-	return WEAPON_ANIMATION_GROUP.get(int(_item_kinds.get(weapon_id, 0)), "default")
+	var race := int(_body_assets_or_default(body).get("race", BodyAnimations.RACE_CHINA)) if body != "" else BodyAnimations.RACE_CHINA
+	return BodyAnimations.group_for_weapon(int(_item_kinds.get(weapon_id, 0)), race)
 
 # --- Animation-fired sounds (AnimSounds) ---------------------------------------
 
 ## A player character's sound owner: the PLAYER key family, the sound object
-## of the body's characterdata row (GENDER_BODY_CODE -> PCM_FIGHTER), the
+## of the body's characterdata row (CHAR_CH_MAN_FIGHTER -> PCM_FIGHTER), the
 ## body's own .bsr for its tracks, and the held weapon for its swings.
-func _audio_pc_owner(label: String, gender: String, equipped: Dictionary, node: Node3D) -> AnimSounds.Owner:
+func _audio_pc_owner(label: String, body: String, equipped: Dictionary, node: Node3D) -> AnimSounds.Owner:
 	var owner := AnimSounds.Owner.new()
 	owner.label = label
 	owner.is_pc = true
-	owner.token = _sound_object_for(String(GENDER_BODY_CODE.get(gender, GENDER_BODY_CODE[DEFAULT_GENDER])))
-	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
+	owner.token = _sound_object_for(body if body != "" else String(GENDER_BODY_CODE[DEFAULT_GENDER]))
+	var assets := _body_assets_or_default(body)
 	owner.parsed = assets.get("parsed")
 	owner.node = node
 	owner.weapon_kind = _audio_weapon_kind(equipped)
@@ -7849,9 +7967,15 @@ static func _tag_clip(anim: Object, action_type: int, group: String) -> void:
 	if anim != null and group != "":
 		anim.set_meta(BsrReader.CLIP_META, [action_type, group])
 
-## Builds one fresh character: the gender's body assembled from its own
-## `.bsr` with real skinning, then every worn item hung on it the way its
-## own `.bsr` says (see SkinnedBsrAssembler.attach_item_from_archive).
+## Builds one fresh character through the select and create screens' own
+## builder (CharacterAppearance, round 689): the body of `body` (a Figure's
+## code name, _body_key_for) at the scale byte `scale` -- Height on the node,
+## Volume on the bone groups, both READ -- with every worn item hung the way
+## its own `.bsr` says, a dual axe's or dagger's `_l`/`_r` and a woman's harp
+## `_f`, the client's missing-palette-bone rule, the default wear on an empty
+## chest and legs (round 685) and the body's pieces under what it wears
+## switched off (round 687). Select, create and the world now draw a character
+## identically.
 ##
 ## `equipped` is slot -> item id, straight from the server. Each id is
 ## looked up in the item table for the model it is worn as, so the
@@ -7860,63 +7984,46 @@ static func _tag_clip(anim: Object, action_type: int, group: String) -> void:
 ## the table does not know is skipped with a line in the log, and the
 ## character is drawn without it rather than with a stand-in.
 ##
-## Falls back to DEFAULT_GENDER if gender's assets never loaded (or gender
-## is empty/unrecognized -- an older peer, or an EnterWorldResult without
-## one). Returns null only if even the default's body could not be built.
-## Round 685's review: charactervisualchange.txt's default-wear rows, read once.
-var _default_wear: DefaultWear = null
-
-func _build_assembled_character(equipped: Dictionary = {}, gender: String = DEFAULT_GENDER) -> Skeleton3D:
-	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
-	if assets.is_empty() or _data_pk2 == null:
+## Returns the body's Skeleton3D, its uniform scale the Height factor (READ:
+## the client scales the skeleton's root about the model origin, CCompChar
+## 0xc25460 -> RTSkeleton 0xc4bcb0), with meta "body" and "weapon_group".
+## Falls back to the default gender's body if `body` cannot be built; null
+## only if even that fails.
+func _build_assembled_character(equipped: Dictionary = {}, body: String = "", scale: int = CharacterAppearance.DEFAULT_SCALE) -> Skeleton3D:
+	if _appearance == null:
 		return null
-	var assembled := SkinnedBsrAssembler.assemble_from_archive(_data_pk2, assets["bsr_path"], false)
-	if assembled == null:
+	var assets := _body_assets(body)
+	if assets.is_empty():
+		body = String(GENDER_BODY_CODE[DEFAULT_GENDER])
+		assets = _body_assets(body)
+	if assets.is_empty():
 		return null
-	var worn := 0
-	var blocks: Array = []
+	var items: Array = []
 	for slot in equipped:
 		var item_id: int = int(equipped[slot])
 		if item_id == 0:
 			continue
-		var model: String = _item_models.get(item_id, "")
-		if model == "":
+		if not _item_models.has(item_id):
 			print("World3D: item %d in slot %d has no worn model in the item table -- not drawn" % [item_id, slot])
 			continue
-		var attached := SkinnedBsrAssembler.attach_item_from_archive(_data_pk2, assembled.skeleton, model)
-		if attached != null:
-			worn += 1
-			blocks.append(attached.attachable)
-	# The default wear on an empty chest and legs (round 685's review, READ
-	# FUN_00a5e010 / SetDefaultWear / BuildDefaultWearTypeID -- DefaultWear):
-	# decided from what is worn, by the drawn body's race and sex.
-	if _default_wear == null:
-		_default_wear = DefaultWear.from_archive(_media_pk2)
-	var dw_worn: Array = []
-	for slot in equipped:
-		var row = _item_rows.get(int(equipped[slot]))
-		if row != null:
-			var tids: PackedInt32Array = (row as ItemTableReader.Item).type_ids
-			dw_worn.append({"slot": CharacterAppearance.visual_slot(tids), "type_ids": tids})
-	var body_lower := String(assets["bsr_path"]).to_lower()
-	var dw_race := CharCatalog.RACE_EUROPE if body_lower.contains("europe") else CharCatalog.RACE_CHINA
-	for d in _default_wear.wear_for(dw_race, body_lower.contains("woman"), dw_worn):
-		var dw_attached := SkinnedBsrAssembler.attach_item_from_archive(_data_pk2, assembled.skeleton, d["path"])
-		if dw_attached != null:
-			blocks.append(dw_attached.attachable)
-	# The body's own pieces under what it wears are switched off, as retail
-	# does (round 687, READ CCompChar::FUN_00c1f790 / FUN_00c1f890). The local
-	# player's body and the paper doll are rebuilt on every equipment change
-	# (_apply_player_equipment_visual), so for them an unequip's
-	# show-all-then-re-apply is this same call on the new set. Another
-	# player's body is built once, when they come into view
-	# (_spawn_or_update_other only records a later _other_equipped and does
-	# not redress them -- OPEN, round 687), so its hides follow what they wore
-	# then.
-	var hidden := SkinnedBsrAssembler.apply_body_hides(assembled.skeleton, assembled.parsed, blocks)
+		items.append({"id": item_id, "plus": 0})
+	var built := _appearance.build(int(assets["ref"]), scale, items)
+	if built == null:
+		return null
+	var skeleton := built.skeleton
+	built.remove_child(skeleton)
+	skeleton.scale = built.scale
+	skeleton.set_meta("body", body)
+	skeleton.set_meta("weapon_group", built.weapon_group)
+	var drawn := 0
+	for w in built.worn:
+		if not w.get("default", false) and not (w["nodes"] as Array).is_empty():
+			drawn += 1
 	if not equipped.is_empty():
-		print("World3D: %s wears %d/%d item(s), %d body mesh(es) hidden under them" % [gender, worn, equipped.size(), hidden])
-	return assembled.skeleton
+		print("World3D: %s (scale 0x%02x, height x%.2f) wears %d/%d item(s), %d body mesh(es) hidden under them" % [
+			body, scale, built.height_factor, drawn, equipped.size(), built.hidden_body_meshes])
+	built.free()
+	return skeleton
 
 ## Attaches a freshly-built assembled character (see
 ## _build_assembled_character()) to the player node, hiding the
@@ -7944,17 +8051,33 @@ func _try_apply_real_player_character() -> void:
 func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	_player_equipped_last = equipped
 	var gender := DEFAULT_GENDER
-	if NetClient.last_enter_world_result != null and NetClient.last_enter_world_result.gender != "":
-		gender = NetClient.last_enter_world_result.gender
+	var ref_obj_id := 0
+	var scale := CharacterAppearance.DEFAULT_SCALE
+	var ewr = NetClient.last_enter_world_result
+	if ewr != null and ewr.gender != "":
+		gender = ewr.gender
+	# The character's own model (round 689), from a server that sends it.
+	if ewr != null and ewr.has_model:
+		ref_obj_id = ewr.ref_obj_id
+		scale = ewr.scale
+	# SRREVAMP_QA_BODY="<ref_obj_id>[:<scale>]" (round 689): this body and scale
+	# byte for a run with no server, as a server would name them. With a server
+	# the server's word stands (round 689's review).
+	var qa_body := _qa_body_spec() if not NetClient.is_connected_to_server() else []
+	if not qa_body.is_empty():
+		ref_obj_id = int(qa_body[0])
+		scale = int(qa_body[1])
+	var body := _body_key_for(ref_obj_id, gender)
 
 	# Worth a log line: "the character renders bare" has had two different
 	# causes so far -- the server not dressing them, and the client not
 	# asking -- and this says which side to look at.
 	print("World3D: player equipment %s" % str(equipped))
 
-	var skeleton := _build_assembled_character(equipped, gender)
+	var skeleton := _build_assembled_character(equipped, body, scale)
 	if skeleton == null:
 		return
+	body = String(skeleton.get_meta("body", body))
 	# Drop the body we were wearing before. This function used to run exactly
 	# once, at login, so nothing freed the old skeleton; now that an equipment
 	# change redresses the character, leaving it would stack a second dressed
@@ -7978,20 +8101,25 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	# name over it (playtest 2026-09-20, item 18).
 	_refresh_player_name_plate()
 	_player_gender = gender
+	if body != _player_body:
+		_apply_player_speed(body)
+	_player_body = body
+	_player_scale = scale
 	_apply_player_race()
-	_player_weapon_group = _weapon_group_for(equipped)
+	_player_weapon_group = _weapon_group_for(equipped, body)
 	# The body's sounds: the footstep material is the cell the walk carries
 	# (_nav_footing), the swing's token the weapon just equipped.
-	var sound_owner := _audio_pc_owner("player", gender, equipped, player)
+	var sound_owner := _audio_pc_owner("player", body, equipped, player)
 	sound_owner.material = func() -> int: return _audio_player_material()
 	sound_owner.hwan = _audio_hwan
 	_anim_sounds.register(skeleton, sound_owner)
-	print("World3D: player animation group %s (stand %s, run %s)" % [
-		_player_weapon_group,
-		_body_animation_path(gender, BsrReader.AnimationEntry.TYPE_STAND, _player_weapon_group),
-		_body_animation_path(gender, BsrReader.AnimationEntry.TYPE_RUN, _player_weapon_group)])
-	_refresh_paper_doll(equipped, gender)
-	_refresh_player_portrait(skeleton, equipped, gender)
+	print("World3D: player body %s (model %d, scale 0x%02x), animation group %s (stand %s, run %s, sit %s)" % [
+		body, ref_obj_id, scale, _player_weapon_group,
+		_body_animation_path(body, BsrReader.AnimationEntry.TYPE_STAND, _player_weapon_group),
+		_body_animation_path(body, BsrReader.AnimationEntry.TYPE_RUN, _player_weapon_group),
+		_body_animation_path(body, BsrReader.AnimationEntry.TYPE_SITTING, _player_weapon_group)])
+	_refresh_paper_doll(equipped, body)
+	_refresh_player_portrait(skeleton, equipped, body)
 
 ## Builds a fresh dressed character (a second copy, not the one on the
 ## player) into the PaperDoll so the equipment window can show it, the way
@@ -7999,7 +8127,7 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 ## equipment changes.
 var _paper_doll: PaperDoll = null
 
-func _refresh_paper_doll(equipped: Dictionary, gender: String) -> void:
+func _refresh_paper_doll(equipped: Dictionary, body: String) -> void:
 	if _hud_panels == null:
 		return
 	if _paper_doll == null:
@@ -8017,7 +8145,7 @@ func _refresh_paper_doll(equipped: Dictionary, gender: String) -> void:
 		_paper_doll.set_active(_hud_panels.paper_doll_shown())
 		_hud_panels.paper_doll_shown_changed.connect(_paper_doll.set_active)
 		_hud_panels.paper_doll_measure_requested.connect(_log_paper_doll_pose)
-	var doll_skeleton := _build_assembled_character(equipped, gender)
+	var doll_skeleton := _build_assembled_character(equipped, body, _player_scale)
 	if doll_skeleton == null:
 		return
 	_paper_doll.set_character(doll_skeleton)
@@ -8026,7 +8154,7 @@ func _refresh_paper_doll(equipped: Dictionary, gender: String) -> void:
 	# posed every physics frame by _tick_idle_animations, and the doll's
 	# SubViewport (UPDATE_ALWAYS) shows it. A stale entry from a previous
 	# equipment change is dropped there when its skeleton is freed.
-	var idle := _body_animation_for(gender, BsrReader.AnimationEntry.TYPE_STAND, _weapon_group_for(equipped))
+	var idle := _body_animation_for(body, BsrReader.AnimationEntry.TYPE_STAND, _weapon_group_for(equipped, body))
 	if idle != null and _frame_count(idle) > 1:
 		Skeleton3DBuilder.apply_ban_pose_at(doll_skeleton, idle, 0.0, true)
 		_animated.append([doll_skeleton, idle, _frame_count(idle), 0.0, true, _idle_anim_time, null])
@@ -8037,17 +8165,17 @@ func _refresh_paper_doll(equipped: Dictionary, gender: String) -> void:
 ## posed with ANI_POSE in the held weapon's group, rendered once. Retail
 ## re-renders on the same occasions: the item-move reply and the avatar's
 ## reset mark the block dirty (FUN_007b4c00), and this runs on every dress.
-func _refresh_player_portrait(body: Skeleton3D, equipped: Dictionary, gender: String) -> void:
-	if _hud_player_info == null or body == null or not is_instance_valid(body):
+func _refresh_player_portrait(skel: Skeleton3D, equipped: Dictionary, body: String) -> void:
+	if _hud_player_info == null or skel == null or not is_instance_valid(skel):
 		return
-	var copy := body.duplicate() as Skeleton3D
+	var copy := skel.duplicate() as Skeleton3D
 	if copy == null:
 		return
-	var pose := _body_animation_for(gender, PlayerPortrait.ANI_POSE, _weapon_group_for(equipped))
+	var pose := _body_animation_for(body, PlayerPortrait.ANI_POSE, _weapon_group_for(equipped, body))
 	_hud_player_info.set_portrait(copy, pose)
 	var p := _hud_player_info.portrait()
 	print("World3D: portrait dressed (%s, pose %s, %d us, %d material(s) left as they were)" % [
-		gender, _body_animation_path(gender, PlayerPortrait.ANI_POSE, _weapon_group_for(equipped)),
+		body, _body_animation_path(body, PlayerPortrait.ANI_POSE, _weapon_group_for(equipped, body)),
 		p.last_build_usec if p != null else -1, p.unmapped_materials if p != null else -1])
 
 ## The doll's hands and head in its 176x318 picture, and where the weapon
@@ -8077,7 +8205,7 @@ func _set_other_gait(character_id: int, moving: bool) -> void:
 		gait["sitting"] = false
 		_other_seated.erase(character_id)
 	var action := BsrReader.AnimationEntry.TYPE_RUN if moving else BsrReader.AnimationEntry.TYPE_STAND
-	var anim := _body_animation_for(gait["gender"], action, gait["group"])
+	var anim := _body_animation_for(gait["body"], action, gait["group"])
 	var frames := _frame_count(anim)
 	if frames <= 1:
 		return
@@ -8120,10 +8248,9 @@ func _play_skill_cast_anim(anim_base: String) -> float:
 		# whatsoever, which is the shape the playtest reported.
 		print("World3D: no archive for a cast clip -- falling back to the weapon swing")
 		return _play_weapon_swing_anim()
-	# The race's clip directory (round 691: a Europe body's clips are under
-	# Prim\Ani\Char\Europe -- SkillDataReader.cast_clip_path; a small adapter
-	# until the world lane's per-body clip lookup lands).
-	var path := SkillDataReader.cast_clip_path(_player_gender, anim_base)
+	# The body's race and sex folder (round 691's cast_clip_path over round
+	# 689's body): a Europe body's clips are under Prim\Ani\Char\Europe.
+	var path := SkillDataReader.cast_clip_path(_body_gender(_player_body), anim_base)
 	var bytes := AssetSource.read_bytes(path, _data_pk2)
 	if bytes.is_empty():
 		print("World3D: no cast animation at %s -- falling back to the weapon swing" % path)
@@ -8159,13 +8286,13 @@ func _play_self_cast_anim(basic_code: String, anim_base: String) -> float:
 			var group: String = String(plan.get("group", ""))
 			if group == "":
 				group = _player_weapon_group
-			var anim := _body_animation_for(_player_gender, t, group)
+			var anim := _body_animation_for(_player_body, t, group)
 			if anim == null:
 				print("CAST ANIM: %s -- WAIT action type %d has no entry in the body for group '%s': nothing played" % [
 					basic_code, t, group])
 				return 0.0
 			print("CAST ANIM: %s -- WAIT action type %d, group %s (%s)" % [basic_code, t, group,
-				_body_animation_path(_player_gender, t, group)])
+				_body_animation_path(_player_body, t, group)])
 			return _play_player_once(anim)
 	return _play_skill_cast_anim(anim_base)
 
@@ -8206,10 +8333,10 @@ func _play_weapon_swing_anim() -> float:
 	types.append(BsrReader.AnimationEntry.TYPE_ATTACK)
 	for t in types:
 		var action_type: int = int(t)
-		var entry := _body_animation_entry(_player_gender, action_type, _player_weapon_group)
+		var entry := _body_animation_entry(_player_body, action_type, _player_weapon_group)
 		if entry == null:
 			continue
-		var swing := _body_animation_for(_player_gender, entry.action_type, _player_weapon_group)
+		var swing := _body_animation_for(_player_body, entry.action_type, _player_weapon_group)
 		if swing == null:
 			continue
 		var played := _play_player_once(swing)
@@ -8773,7 +8900,7 @@ func _select_self() -> void:
 	_selected_character = own
 	if _hud_target != null:
 		_hud_target.show_player(NetClient.current_character_name,
-			_fx_owner_key(own, SkillNet.OWNER_CHARACTER), _race_of_gender(_player_gender))
+			_fx_owner_key(own, SkillNet.OWNER_CHARACTER), _race_of_body(_player_body))
 	print("World3D: selected this player (%d, %s)" % [own, NetClient.current_character_name])
 
 func _select_character(character_id: int, char_name: String) -> void:
@@ -8781,8 +8908,8 @@ func _select_character(character_id: int, char_name: String) -> void:
 	_selected_character = character_id
 	var race := -1
 	var body = _other_bodies.get(character_id)
-	if body != null and is_instance_valid(body) and (body as Node).has_meta("gender"):
-		race = _race_of_gender(String((body as Node).get_meta("gender")))
+	if body != null and is_instance_valid(body) and (body as Node).has_meta("body"):
+		race = _race_of_body(String((body as Node).get_meta("body")))
 	if _hud_target != null:
 		_hud_target.show_player(char_name, _fx_owner_key(character_id, SkillNet.OWNER_CHARACTER), race)
 	print("World3D: selected player %d (%s), race %d" % [character_id, char_name, race])
@@ -8802,11 +8929,10 @@ func _target_exists(owner_key: String) -> bool:
 	return _other_bodies.has(id)
 
 ## A character's race for the target window's emblem (round 638): the Country
-## (characterdata column 14) of the body its Gender draws -- srrevamp's Gender
-## stands in for the reference object retail reads +0x9c of (0x69b143). -1
+## (characterdata column 14) of the body it is drawn with -- since round 689
+## its own model, the reference object retail reads +0x9c of (0x69b143). -1
 ## when the table has no row for it: no emblem rather than a guessed one.
-func _race_of_gender(gender: String) -> int:
-	var code := String(GENDER_BODY_CODE.get(gender, ""))
+func _race_of_body(code: String) -> int:
 	if code == "" or not _country_by_code.has(code):
 		return -1
 	return int(_country_by_code[code])
@@ -8828,7 +8954,7 @@ func _friend_band(skill_id: int) -> Dictionary:
 	var skill: Dictionary = _hud_panels.skill_reach(skill_id) if _hud_panels != null else {}
 	if skill.is_empty():
 		return {}
-	var body_code: String = GENDER_BODY_CODE.get(_player_gender, GENDER_BODY_CODE[DEFAULT_GENDER])
+	var body_code: String = _player_body if _player_body != "" else String(GENDER_BODY_CODE[DEFAULT_GENDER])
 	var caster_bc := int(_bc_radius_by_code.get(body_code, CombatNet.PLAYER_BC_RADIUS))
 	return {"band": CombatNet.approach_band(caster_bc, CombatNet.PLAYER_BC_RADIUS,
 		CombatNet.effective_range(int(skill["range"]), _equipped_weapon_range()))}
@@ -9037,7 +9163,7 @@ func _play_other_cast_anim(character_id: int, skill_id: int) -> float:
 	if code == "" or code == SkillAudio.NONE:
 		return 0.0
 	var skel: Skeleton3D = gait["skeleton"]
-	var gender := String(gait["gender"])
+	var body := String(gait["body"])
 	var group := String(gait["group"])
 	var plan := SkillEffectReader.cast_body_anim(SkillEffectReader.aniset_for(_skill_anisets(), code))
 	match String(plan["kind"]):
@@ -9045,7 +9171,7 @@ func _play_other_cast_anim(character_id: int, skill_id: int) -> float:
 			return 0.0
 		"wait":
 			var g := String(plan.get("group", ""))
-			var wait := _body_animation_for(gender, int(plan["type"]), g if g != "" else group)
+			var wait := _body_animation_for(body, int(plan["type"]), g if g != "" else group)
 			return _play_once(skel, wait) if wait != null else 0.0
 	var anim_base := code.to_lower()
 	var us := anim_base.rfind("_")
@@ -9053,14 +9179,14 @@ func _play_other_cast_anim(character_id: int, skill_id: int) -> float:
 		anim_base = anim_base.substr(0, us)
 	var anim: BanReader.ParsedAnimation = null
 	if _data_pk2 != null:
-		var path := SkillDataReader.cast_clip_path(gender, anim_base)
+		var path := SkillDataReader.cast_clip_path(_body_gender(body), anim_base)
 		var bytes := AssetSource.read_bytes(path, _data_pk2)
 		if not bytes.is_empty():
 			anim = BanReader.parse(bytes)
 			if anim != null and anim.bones.is_empty():
 				anim = null
 	if anim == null:
-		anim = _body_animation_for(gender, BsrReader.AnimationEntry.TYPE_ATTACK, group)
+		anim = _body_animation_for(body, BsrReader.AnimationEntry.TYPE_ATTACK, group)
 	return _play_once(skel, anim) if anim != null else 0.0
 
 ## The ground-pick mode's cursor. OURS: retail's ground-cast cursor (and its
@@ -9272,13 +9398,13 @@ func _attack_band(monster_id: int, skill_id: int) -> Dictionary:
 	var species: String = snap.code_name
 	if species == "" or not _bc_radius_by_code.has(species):
 		return {"why": "no characterdata BCRadius row for species '%s'" % species}
-	# The player's own body row (GENDER_BODY_CODE). The client reads the row;
+	# The player's own body row (_player_body). The client reads the row;
 	# the server reads none -- keepUpInReach/skillInReach (session/keepup.go)
 	# pass the constant combat.PlayerBCRadius for every attacker. The two agree
 	# because all 52 CHAR_* rows read 4 (re-counted round 523 over the box's
 	# six characterdata data files); a table whose body rows differed would
 	# split them. The constant is also the fallback when the row is absent.
-	var body_code: String = GENDER_BODY_CODE.get(_player_gender, GENDER_BODY_CODE[DEFAULT_GENDER])
+	var body_code: String = _player_body if _player_body != "" else String(GENDER_BODY_CODE[DEFAULT_GENDER])
 	var caster_bc := int(_bc_radius_by_code.get(body_code, CombatNet.PLAYER_BC_RADIUS))
 	var weapon_range := _equipped_weapon_range()
 	return {"band": CombatNet.approach_band(caster_bc, int(_bc_radius_by_code[species]),
@@ -9459,15 +9585,15 @@ func _send_attack(monster_id: int, skill_id: int, basic_code: String) -> void:
 	NetClient.use_skill(NetClient.current_character_name, skill_id, monster_id)
 
 ## The group entry behind _body_animation_for, for its events.
-func _body_animation_entry(gender: String, action_type: int, group: String) -> BsrReader.AnimationEntry:
-	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
+func _body_animation_entry(body: String, action_type: int, group: String) -> BsrReader.AnimationEntry:
+	var assets := _body_assets_or_default(body)
 	if assets.is_empty():
 		return null
-	return (assets["parsed"] as BsrReader.ParsedObject).animation_entry_for(action_type, group)
+	return BodyAnimations.entry_for(assets["parsed"], action_type, group)
 
 ## The path _body_animation_for would parse, for a log line.
-func _body_animation_path(gender: String, action_type: int, group: String) -> String:
-	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
+func _body_animation_path(body: String, action_type: int, group: String) -> String:
+	var assets := _body_assets_or_default(body)
 	if assets.is_empty():
 		return ""
 	return (assets["parsed"] as BsrReader.ParsedObject).animation_for(action_type, group).get_file()
@@ -10597,11 +10723,26 @@ func _update_blob_shadow() -> void:
 ##                          between two clicks ("gate,wait:2400,gate")
 ##   SRREVAMP_QA_CLICK_WAIT=<ticks> (round 646) the ticks before the first
 ##                          click (default 120)
+##   SRREVAMP_QA_ARRIVAL_PROBE=1 (round 690) after the entry, every zone change
+##                          and every GM move: `QA ARRIVAL` (the feet against the
+##                          terrain and the walkable graph's landing) and, per
+##                          town gate in range, `QA GATEPICK` (its pick box
+##                          against the placed object drawn there, a sweep of the
+##                          talk ray) and `QA GATEAIM` (the box's screen point)
+##                          (_qa_arrival_probe, GatePickProbe)
 ##   SRREVAMP_QA_TELEPORT=<dest id> (round 578; with SRREVAMP_QA_CLICK=gate
 ##                          and a server) choose the gate's teleport line,
 ##                          then click the talk box's line for that teleportdata
 ##                          id: `QA TELEPORT: requested <gate> -> <dest>`
 ##                          (_qa_advance_teleport)
+##   SRREVAMP_QA_BODY="<ref_obj_id>[:<scale>]"  the player's model and scale
+##                          byte when no server names them (round 689; e.g.
+##                          "14875:0x24", the Europe noble man at Height 4)
+##   SRREVAMP_QA_LINEUP=all|<ids>|none  the creatable Figures spawned through
+##                          the other-player path and measured per action
+##                          phase -- posed or T-posed, feet against the
+##                          ground -- as `LINEUP` lines (QaLineup has the
+##                          companion variables; round 689)
 ##   SRREVAMP_QA_EQUIP="s=id,.." dress the player from this loadout when no
 ##                          server is present: "slot=item_id" pairs (slots per
 ##                          EquipmentNet, e.g. "1=3637,4=3638,5=3639,6=3632"
@@ -11151,6 +11292,22 @@ func _qa_step() -> void:
 	# Basic_Code -> .ban mapping. QA only, no target/server needed.
 	if OS.get_environment("SRREVAMP_QA_CASTANIM") != "" and _qa_tick % 90 == 0 and _qa_tick > 0:
 		_play_skill_cast_anim(OS.get_environment("SRREVAMP_QA_CASTANIM"))
+	# ... and measures the pose it drives (round 691's merge): at eight ticks
+	# of each 90 the angle of each upper arm from its bind (rest) rotation --
+	# a T-pose reads ~0 on both -- and the clip playing. QA only.
+	if OS.get_environment("SRREVAMP_QA_CASTANIM") != "" and _qa_tick > 90 and _qa_tick % 90 in [5, 15, 25, 35, 45, 55, 65, 75] \
+			and _player_skeleton != null:
+		var angles := PackedStringArray()
+		for bone_name in ["Bip01 L UpperArm", "Bip01 R UpperArm"]:
+			var b := _player_skeleton.find_bone(bone_name)
+			if b < 0:
+				angles.append("%s missing" % bone_name)
+				continue
+			var q := _player_skeleton.get_bone_global_pose(b).basis.get_rotation_quaternion()
+			var r := _player_skeleton.get_bone_global_rest(b).basis.get_rotation_quaternion()
+			angles.append("%s %.1f deg" % [bone_name, rad_to_deg(q.angle_to(r))])
+		print("QA CASTPOSE tick %d body %s: %s; one-shot %s" % [_qa_tick, _player_body, ", ".join(angles),
+			_player_one_shot.animation_name if _player_one_shot != null else "none"])
 
 	# SRREVAMP_QA_TARGET=1 opens the target window on the first known monster so a
 	# render can verify its real level (from characterdata) shows. QA only.
@@ -11431,6 +11588,17 @@ func _qa_step() -> void:
 			var samples := _qa_ground_rays
 			_qa_ground_rays = 0
 			_qa_ground_rays_report(samples)
+
+	# SRREVAMP_QA_ARRIVAL_PROBE (round 690): the entry's arrival once its
+	# load is done, then each zone change's (armed in _on_change_zone_result).
+	if _qa_arrival_probe_enabled():
+		if not _qa_arrival_entry_armed and _initial_load_done:
+			_qa_arrival_entry_armed = true
+			_qa_arm_arrival_probe("entry")
+		if _qa_arrival_probe_at >= 0 and _qa_tick >= _qa_arrival_probe_at \
+				and _load_queue.is_empty() and _cell_jobs.is_empty():
+			_qa_arrival_probe_at = -1
+			_qa_arrival_probe()
 
 	_qa_tick += 1
 	if _qa_pmi_spec != "":
@@ -12186,6 +12354,28 @@ func _qa_mob_move() -> void:
 ## the (2 * radius + 1)^2 regions of the load window, at the player's height.
 const QA_MOB_SPECIES := 24
 var _qa_mobs_done := false
+## SRREVAMP_QA_LINEUP (round 689, QaLineup): the creatable Figures spawned
+## through the other-player path in front of the player and measured --
+## posed or T-posed, feet against the ground -- per action phase. QA only.
+var _qa_lineup: QaLineup = QaLineup.from_env(self)
+
+## SRREVAMP_QA_BODY="<ref_obj_id>[:<scale>]" (round 689): the player's model
+## and scale byte for a run with no server (a server names them in its
+## enter-world result). [] when unset or malformed.
+func _qa_body_spec() -> Array:
+	var spec := OS.get_environment("SRREVAMP_QA_BODY")
+	if spec == "":
+		return []
+	var kv := spec.split(":")
+	if not kv[0].is_valid_int():
+		printerr("World3D: SRREVAMP_QA_BODY: bad model '%s' (want <ref_obj_id>[:<scale>])" % spec)
+		return []
+	var scale := CharacterAppearance.DEFAULT_SCALE
+	if kv.size() > 1:
+		var t := kv[1].strip_edges()
+		scale = t.substr(2).hex_to_int() if t.begins_with("0x") else int(t)
+	print("World3D: QA body %d, scale 0x%02x" % [int(kv[0]), scale])
+	return [int(kv[0]), scale]
 func _qa_mobs_step() -> void:
 	if _qa_mobs_done or not _grid_has_origin:
 		return
@@ -12319,6 +12509,111 @@ func _qa_mob_strike(monster: int, result: CombatNet.AttackResult) -> void:
 ## log shows what the NPC ray and the monster ray each hit at that screen
 ## point and which path took the click. That is the measurement behind
 ## "clicking a monster opened the talk window": the node, not the impression.
+## SRREVAMP_QA_ARRIVAL_PROBE=1 (round 690): QA_ARRIVAL_PROBE_DELAY ticks after
+## each arrival -- the entry, a zone change, a gate teleport, a return to the
+## return point -- once the grid has stopped loading, prints where the player
+## stands against the ground under it (`QA ARRIVAL`: the feet, the terrain-only
+## ray, the walkable graph's landing height) and, for every bound gate within
+## QA_GATE_PROBE_RANGE, its drawn box against its click bodies and a sweep of
+## the talk ray from eight directions (`QA GATEPICK`, GatePickProbe). A
+## measurement only: it moves nothing.
+const QA_ARRIVAL_PROBE_DELAY := 240
+const QA_GATE_PROBE_RANGE := 1500.0
+## The sweep's eye (OURS, the measurement's geometry): QA_GATE_EYE_DISTANCE
+## beyond the gate's drawn half-extent in x/z, QA_GATE_EYE_HEIGHT above the
+## ground at its drawn centre -- about where the camera arm (45 units at -42
+## degrees, World3D.tscn) puts a player standing just off the gate.
+const QA_GATE_EYE_DISTANCE := 60.0
+const QA_GATE_EYE_HEIGHT := 50.0
+var _qa_arrival_probe_at := -1
+var _qa_arrival_probe_label := ""
+var _qa_arrival_entry_armed := false
+var _qa_arrival_count := 0
+
+func _qa_arrival_probe_enabled() -> bool:
+	return OS.get_environment("SRREVAMP_QA_ARRIVAL_PROBE") != ""
+
+func _qa_arm_arrival_probe(label: String) -> void:
+	if not _qa_arrival_probe_enabled():
+		return
+	_qa_arrival_count += 1
+	_qa_arrival_probe_at = _qa_tick + QA_ARRIVAL_PROBE_DELAY
+	_qa_arrival_probe_label = "#%d %s" % [_qa_arrival_count, label]
+
+func _qa_arrival_probe() -> void:
+	var space := get_world_3d().direct_space_state
+	var p := player.global_position
+	var terrain := TerrainCollision.vertical_ray(space, p.x, p.z, p.y + 1000.0, p.y - 1000.0,
+		TERRAIN_ONLY_COLLISION_MASK, [player.get_rid()])
+	var terrain_y: float = (terrain["position"] as Vector3).y if not terrain.is_empty() else NAN
+	var landing := NAN
+	var where := "no loaded region"
+	var pair := _nav_graph_for(p)
+	if not pair.is_empty():
+		var group: Node3D = pair[1]
+		var local := group.to_local(p)
+		landing = group.to_global(Vector3(local.x, (pair[0] as NavGraph).landing_height_at(local.x, local.z), local.z)).y
+		where = "%s local (%.1f, %.1f)" % [group.name, local.x, local.z]
+	print("QA ARRIVAL %s: feet y %.2f at world (%.1f, %.1f) in %s; terrain %.2f; walkable graph landing %.2f; feet - landing %.2f; feet - terrain %.2f; dead %s" % [
+		_qa_arrival_probe_label, p.y, p.x, p.z, where, terrain_y, landing, p.y - landing, p.y - terrain_y, str(_player_dead)])
+	for code in _gate_bindings:
+		var node = _gate_bindings[code]["node"]
+		if not is_instance_valid(node) or (node as Node).is_queued_for_deletion():
+			print("QA GATEPICK %s %s: no pick node" % [_qa_arrival_probe_label, code])
+			continue
+		var pick := node as Node3D
+		if Vector2(pick.global_position.x - p.x, pick.global_position.z - p.z).length() > QA_GATE_PROBE_RANGE:
+			continue
+		# What is drawn there: the placed map object nearest the gate's
+		# table point (the portal round 577 bound; Alexandria North's is 15.1
+		# units off), within QA_GATE_DRAWN_RADIUS.
+		var found := _nearest_placed_object(_object_containers.values(), pick.global_position, QA_GATE_DRAWN_RADIUS)
+		if found.is_empty():
+			print("QA GATEPICK %s %s: nothing placed within %.0f of its point" % [_qa_arrival_probe_label, code, QA_GATE_DRAWN_RADIUS])
+			continue
+		var gate: Node3D = found["node"]
+		var drawn := GatePickProbe.visual_aabb(gate)
+		var box := GatePickProbe.body_aabb(pick, GATE_PICK_COLLISION_LAYER | NPC_COLLISION_LAYER)
+		print("QA GATEPICK %s %s: drawn %s (%.1f from the point) %s..%s; pick box %s..%s; centre delta %s; box inside drawn %s" % [
+			_qa_arrival_probe_label, code, gate.name, float(found["distance"]), str(drawn.position.round()), str(drawn.end.round()),
+			str(box.position.round()), str(box.end.round()), str((box.get_center() - drawn.get_center()).round()), str(drawn.encloses(box))])
+		# Each drawn piece's box (which one is the stone), and where the
+		# pick box's centre falls on this screen and whether a click there
+		# talks (`QA GATEAIM`: the point for a real X click).
+		for m in gate.find_children("*", "MeshInstance3D", true, false):
+			var mi := m as MeshInstance3D
+			if mi.mesh == null:
+				continue
+			var pb := mi.global_transform * mi.get_aabb()
+			print("QA GATEPICK %s %s piece %s: %s..%s" % [_qa_arrival_probe_label, code, mi.name, str(pb.position.round()), str(pb.end.round())])
+		var aim := box.get_center()
+		if not camera_3d.is_position_behind(aim):
+			var screen := camera_3d.unproject_position(aim)
+			var on_screen := get_viewport().get_visible_rect().has_point(screen)
+			print("QA GATEAIM %s %s: pick box centre %s at screen %d,%d%s; talk there: %s" % [_qa_arrival_probe_label, code, str(aim.round()),
+				int(round(screen.x)), int(round(screen.y)), "" if on_screen else " (OFF-SCREEN)", str(_talk_ray_at(screen)["node"] == pick)])
+		# The ground under the drawn centre (the walkable graph's landing
+		# there), so the eye is above the gate's floor, not under it: a
+		# piece's foundations reach well below the ground (Jangan's
+		# CJ_por_gidung, 73 under its origin).
+		var ground := drawn.get_center().y
+		var gpair := _nav_graph_for(drawn.get_center())
+		if not gpair.is_empty():
+			var gg: Node3D = gpair[1]
+			var gl := gg.to_local(drawn.get_center())
+			ground = gg.to_global(Vector3(gl.x, (gpair[0] as NavGraph).landing_height_at(gl.x, gl.z), gl.z)).y
+		var reach := maxf(drawn.size.x, drawn.size.z) * 0.5 + QA_GATE_EYE_DISTANCE
+		for k in 8:
+			var yaw := k * PI / 4.0
+			var eye := drawn.get_center() + Vector3(sin(yaw), 0.0, cos(yaw)) * reach
+			eye.y = ground + QA_GATE_EYE_HEIGHT
+			var sw := GatePickProbe.sweep(space, gate, pick, eye, drawn, 24, 1, _talk_ray, [player.get_rid()])
+			print("QA GATEPICK %s %s" % [_qa_arrival_probe_label, GatePickProbe.describe("%s from %d deg" % [code, k * 45], sw)])
+
+## How far from a gate's table point the probe looks for what is drawn there
+## (OURS: Alexandria North's portal is placed 15.1 from its point).
+const QA_GATE_DRAWN_RADIUS := 20.0
+
 ## "gate" (round 577) clicks the nearest bound teleport gate (_qa_gate_target).
 ## "npc:<CODE>" (round 642) the nearest NPC with that codename. With
 ## SRREVAMP_QA_AIM_ONLY=1 nothing is dispatched: the player is stood and the
@@ -12365,7 +12660,9 @@ func _qa_advance_click() -> void:
 		if kind != "ground":
 			# Stand 40 units short of the target, on the walkable surface, and
 			# look along +Z at it with a shallow camera so it sits mid-frame.
-			var stand: Vector3 = _qa_click_target["pos"] + Vector3(0.0, 0.0, -40.0)
+			# A gate's pick box is wider than that (round 690: Alexandria's is
+			# 140 across): stand 40 short of its side, so the camera is outside it.
+			var stand: Vector3 = _qa_click_target["pos"] + Vector3(0.0, 0.0, -40.0 - float(_qa_click_target.get("stand_off", 0.0)))
 			var pair := _nav_graph_for(stand)
 			if not pair.is_empty():
 				var group: Node3D = pair[1]
@@ -12508,29 +12805,20 @@ func _qa_click_target_for(kind: String) -> Dictionary:
 			return {"pos": best_n.global_position, "half_height": _qa_click_half_height(best_n, "Body"),
 				"name": str(best_n.get_meta("npc_name"))}
 		"gate":
-			# A teleport gate bound by _bind_region_gates (round 577): a placed
-			# object in a region's RealMapObjects container (a child of the
-			# terrain group) -- the nearest whose npc_code is STORE_*_GATE.
+			# The nearest town gate (round 577) -- since round 690 its pick
+			# node, which draws nothing: _qa_gate_target aims at its box's
+			# centre, the gate's table point.
 			var best_g: Node3D = null
 			var best_gd := INF
-			for group in get_children():
-				if not (group is Node3D) or not String(group.name).begins_with("RealTerrain_"):
+			# The gates' pick nodes (round 690, _bind_region_gates).
+			for code in _gate_bindings:
+				var node = _gate_bindings[code]["node"]
+				if not is_instance_valid(node) or not (node as Node).is_inside_tree():
 					continue
-				var candidates: Array = []
-				for child in group.get_children():
-					if String(child.name).begins_with("RealMapObjects"):
-						candidates.append_array(child.get_children())
-				for node in candidates:
-					if not (node is Node3D) or not node.has_meta("npc_code"):
-						continue
-					# Any bound town gate (round 650: STORE_SD_GATE1/2 end in a
-					# digit, which the old "_GATE" suffix test missed).
-					if not node.has_meta("gate_point_id"):
-						continue
-					var d := (node as Node3D).global_position.distance_to(player.global_position)
-					if d < best_gd:
-						best_gd = d
-						best_g = node
+				var d := (node as Node3D).global_position.distance_to(player.global_position)
+				if d < best_gd:
+					best_gd = d
+					best_g = node
 			if best_g == null:
 				return {}
 			return _qa_gate_target(best_g)
@@ -12565,7 +12853,8 @@ func _qa_show_cursor_swatch(cursor_id: int, at: Vector2) -> void:
 
 ## The QA click's target for a bound gate (round 577): the middle of its
 ## drawn meshes' world box -- "pos" the box's bottom centre, "half_height"
-## half its height -- or its own origin when it draws nothing. Named
+## half its height -- or its own origin when it draws nothing (a gate's pick
+## node since round 690: the centre of its pick box). Named
 ## "<gate name> (<node>)" so the log says which object took the click. The
 ## box's middle can fall outside the frame for a tall composite (round 577's
 ## Samarkand, Constantinople and Hotan clicks were aimed off-screen): such a
@@ -12580,6 +12869,14 @@ func _qa_gate_target(gate: Node3D) -> Dictionary:
 		box = b if not have else box.merge(b)
 		have = true
 	if not have:
+		# A gate's pick node (round 690): aim at the lower part of its box
+		# (a quarter of its height above its bottom, on the ground side of
+		# the centre, so the aim stays on screen from a stand on the
+		# ground), and stand off its half-width.
+		var shapes := gate.find_children("*", "CollisionShape3D", true, false)
+		if not shapes.is_empty() and (shapes[0] as CollisionShape3D).shape is BoxShape3D:
+			var size := ((shapes[0] as CollisionShape3D).shape as BoxShape3D).size
+			return {"pos": gate.global_position - Vector3(0.0, size.y * 0.25, 0.0), "half_height": 0.0, "name": label, "stand_off": size.x * 0.5}
 		return {"pos": gate.global_position, "half_height": 0.0, "name": label}
 	var centre := box.get_center()
 	return {"pos": Vector3(centre.x, box.position.y, centre.z), "half_height": box.size.y * 0.5, "name": label}
@@ -12640,10 +12937,11 @@ func _qa_rig_report() -> void:
 	# between standing on the plaza and standing inside it.
 	var space_state := get_world_3d().direct_space_state
 	var from := player.global_position + Vector3(0.0, 60.0, 0.0)
-	# Every layer, as before; off the heightfield's grid lines
+	# Every layer but the gates' pick boxes (round 690's review: a click
+	# target is not a surface), as before; off the heightfield's grid lines
 	# (TerrainCollision.vertical_ray, round 572).
 	var hit := TerrainCollision.vertical_ray(space_state, from.x, from.z, from.y,
-		player.global_position.y - 20.0, 0xFFFFFFFF, [player.get_rid()])
+		player.global_position.y - 20.0, 0xFFFFFFFF & ~GATE_PICK_COLLISION_LAYER, [player.get_rid()])
 	if hit.is_empty():
 		print("QA RIG   nothing under the column from %.1f above the feet" % 60.0)
 	else:
@@ -12800,7 +13098,7 @@ func _qa_through_report(spec: String) -> void:
 	while x <= REGION_SPAN:
 		var query := PhysicsRayQueryParameters3D.create(
 			group.to_global(Vector3(x, y, z0)), group.to_global(Vector3(x, y, z1)))
-		query.collision_mask = 0xFFFFFFFF
+		query.collision_mask = 0xFFFFFFFF & ~GATE_PICK_COLLISION_LAYER
 		query.exclude = [player.get_rid()]
 		var clear := space.intersect_ray(query).is_empty()
 		if clear and is_nan(open_from):
@@ -13174,7 +13472,7 @@ func _qa_scan_report(samples: int) -> void:
 			# Off the heightfield's grid lines (TerrainCollision.vertical_ray,
 			# round 572): at 48 samples the lattice is on them.
 			var hit := TerrainCollision.vertical_ray(space, top.x, top.z, top.y, bottom.y,
-				0xFFFFFFFF, [player.get_rid()])
+				0xFFFFFFFF & ~GATE_PICK_COLLISION_LAYER, [player.get_rid()])
 			if hit.is_empty():
 				continue
 			checked += 1
@@ -13437,6 +13735,9 @@ func _physics_step(delta: float) -> void:
 		_qa_split.heights_usec += Time.get_ticks_usec() - split_sw
 	# SRREVAMP_QA_MOBS (round 655): a dense monster list, once.
 	_qa_mobs_step()
+	# SRREVAMP_QA_LINEUP (round 689): the Figures as other players, measured.
+	if _qa_lineup != null:
+		_qa_lineup.step(delta)
 	# The monster bodies a list queued, a frame's budget of them (round 655).
 	split_sw = Time.get_ticks_usec()
 	_pump_monster_builds()
@@ -13680,7 +13981,7 @@ func _physics_step(delta: float) -> void:
 	# Map objects that move -- trees, reeds, tentacles (round 645).
 	_tick_map_animations()
 
-	if _player_skeleton != null and _character_assets.has(_player_gender):
+	if _player_skeleton != null and not _body_assets(_player_body).is_empty():
 		# The game's default gait is a run -- `chinaman_fighter_runforward`
 		# is the type-7 entry, and it is the one a held sword replaces with
 		# its own (`_runforward_sword`) -- so moving plays the run of the
@@ -13696,7 +13997,7 @@ func _physics_step(delta: float) -> void:
 			action = BsrReader.AnimationEntry.TYPE_STAND_BATTLE
 		else:
 			action = BsrReader.AnimationEntry.TYPE_STAND
-		var anim := _body_animation_for(_player_gender, action, _player_weapon_group)
+		var anim := _body_animation_for(_player_body, action, _player_weapon_group)
 		_player_anim_time += delta
 		if _player_one_shot != null:
 			var elapsed := _player_anim_time - _player_one_shot_start
@@ -13920,7 +14221,11 @@ func _step_remote_turns(delta: float) -> void:
 ## object, whose mover starts with none: 0x9e0cd0 zeroes +0xa4). NAN (a list,
 ## an older server) leaves the facing as it is. A snapshot is a placement, not
 ## a walk, so it never aims the body.
-func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, gender: String = DEFAULT_GENDER, heading: float = NAN) -> void:
+##
+## `body` and `scale` (round 689) are the character's own model -- a Figure's
+## code name (_body_key_for of the snapshot's RefObjID, or of its gender from
+## an older server) and its scale byte -- drawn as the local player's is.
+func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, body: String = "", heading: float = NAN, scale: int = CharacterAppearance.DEFAULT_SCALE) -> void:
 	if not equipped.is_empty():
 		_other_equipped[character_id] = equipped
 	if _other_bodies.has(character_id):
@@ -13934,37 +14239,38 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 			_remote_turns.erase(drawn.get_instance_id())
 		return
 
-	var body := Node3D.new()
-	body.position = pos
+	var node := Node3D.new()
+	node.position = pos
 	if not is_nan(heading):
-		body.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
+		node.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
 
-	# The same body and the same dressing as the local player: their
-	# Gender and every worn item's id come in the snapshot (see genderOf
-	# and equippedItems in server/internal/session/world.go, both queried
-	# live), and each item is drawn from its own model. Falls back to the
-	# labeled placeholder capsule if the bodies never loaded.
-	var skeleton := _build_assembled_character(equipped, gender)
+	# The same builder and the same dressing as the local player: their
+	# model, scale byte and every worn item's id come in the snapshot (see
+	# bodyOf and equippedItems in server/internal/session/world.go, both
+	# queried live), and each item is drawn from its own model. Falls back to
+	# the labeled placeholder capsule if the bodies never loaded.
+	var skeleton := _build_assembled_character(equipped, body, scale)
 	if skeleton != null:
 		# Same 180deg front correction as the local player (see
 		# _try_apply_real_player_character) -- the body's own front is -Z, and
 		# the node points +Z where it moves/faces.
 		skeleton.rotation.y = PI
-		body.add_child(skeleton)
+		node.add_child(skeleton)
 		# Another player stands in the town idle of the group their weapon
 		# selects, and runs while their body is still catching up to a
 		# position update (see _set_other_gait). Without this they stood
 		# in the bind pose, arms out, which no character in the game does.
-		var group := _weapon_group_for(equipped)
-		_other_gaits[character_id] = {"skeleton": skeleton, "gender": gender, "group": group, "moving": false}
+		body = String(skeleton.get_meta("body", body))
+		var group := _weapon_group_for(equipped, body)
+		_other_gaits[character_id] = {"skeleton": skeleton, "body": body, "scale": scale, "group": group, "moving": false}
 		# Their sounds come from where their body is; the cell under them is
 		# found from the height (_audio_material_at), not carried as the
 		# local player's is. Their berserk arrives as their body mode (round
 		# 651, _berserk_apply), which turns their swings to the hwan ones.
-		var owner := _audio_pc_owner("player %d" % character_id, gender, equipped, body)
-		owner.material = func() -> int: return _audio_material_at(body.global_position, -2) if is_instance_valid(body) else -1
+		var owner := _audio_pc_owner("player %d" % character_id, body, equipped, node)
+		owner.material = func() -> int: return _audio_material_at(node.global_position, -2) if is_instance_valid(node) else -1
 		_anim_sounds.register(skeleton, owner)
-		var idle := _body_animation_for(gender, BsrReader.AnimationEntry.TYPE_STAND, group)
+		var idle := _body_animation_for(body, BsrReader.AnimationEntry.TYPE_STAND, group)
 		var frames := _frame_count(idle)
 		if frames > 1:
 			_animated.append([skeleton, idle, frames, float(_animated.size()) * 0.37, true, _idle_anim_time, null])
@@ -13978,22 +14284,23 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		mat.albedo_color = Color(0.9, 0.3, 0.3)
 		mesh.material_override = mat
 		mesh.position.y = 0.9 * PLAYER_SCALE_RATIO
-		body.add_child(mesh)
+		node.add_child(mesh)
 
 	# The same plate as an NPC's -- fixed screen size, outlined, shown only
 	# within range -- over the assembled body's own height.
 	var top := _skeleton_top(skeleton) if skeleton != null else 1.8 * PLAYER_SCALE_RATIO
-	body.add_child(_name_plate(char_name, top))
+	node.add_child(_name_plate(char_name, top))
 
 	# A click body on its own layer (round 622), so the player can be selected.
-	body.set_meta("character_id", character_id)
-	body.set_meta("character_name", char_name)
-	# Its Gender, for the target window's race emblem (round 638).
-	body.set_meta("gender", gender)
-	body.add_child(_other_player_collider(top))
+	node.set_meta("character_id", character_id)
+	node.set_meta("character_name", char_name)
+	# Its body key, for the target window's race emblem (round 638; its own
+	# model since round 689).
+	node.set_meta("body", body)
+	node.add_child(_other_player_collider(top))
 
-	other_entities.add_child(body)
-	_other_bodies[character_id] = body
+	other_entities.add_child(node)
+	_other_bodies[character_id] = node
 	_other_body_targets[character_id] = pos
 	# The auras of the buffs this client holds for them go on the new body
 	# (round 646): a zone change's arrival list and the world entry build the
@@ -14004,7 +14311,12 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	_berserk_resync(character_id, "their body was built")
 	# They fade into existence over 2.0 s, as a monster does (round 676,
 	# AppearFade: READ, CICUser vslot 0x6c FUN_009dbcc0 -> FUN_009d17e0).
-	_appear_fades.start(body)
+	_appear_fades.start(node)
+
+## Another player's body key: their model's (round 689), or their gender's from
+## an older server (_body_key_for).
+func _snapshot_body(snapshot: WorldNet.EntitySnapshot) -> String:
+	return _body_key_for(snapshot.ref_obj_id if snapshot.has_model else 0, snapshot.gender)
 
 func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 	# During a zone change's load the old zone's bodies are still drawn and
@@ -14015,7 +14327,8 @@ func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 		_arrival_entries[snapshot.character_id] = snapshot
 		_log_system("%s entered the zone." % snapshot.char_name)
 		return
-	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.equipped, snapshot.gender, snapshot.heading)
+	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.equipped,
+		_snapshot_body(snapshot), snapshot.heading, snapshot.scale if snapshot.has_model else CharacterAppearance.DEFAULT_SCALE)
 	_log_system("%s entered the zone." % snapshot.char_name)
 
 ## Another player's position (OpEntityMoved): their body's new walk target,
@@ -14337,7 +14650,67 @@ func _on_change_zone_pressed() -> void:
 	_last_attack_target = -1
 	if _hud_target != null:
 		_hud_target.clear()
+	_request_zone_change(zone)
+
+## Sends OpChangeZone and remembers it (round 690): every zone change this
+## client asks for goes through here, so _on_change_zone_result can tell an
+## answer to one from a move the server made on its own
+## (arrival_keeps_server_point).
+func _request_zone_change(zone: String) -> void:
+	_note_zone_change_request(zone)
 	NetClient.change_zone(zone)
+
+## The zone labels of the OpChangeZone requests sent and not yet answered,
+## oldest first (_request_zone_change).
+var _zone_change_requests: Array[String] = []
+
+func _note_zone_change_request(zone: String) -> void:
+	_zone_change_requests.append(zone.strip_edges().to_lower())
+
+## Whether a zone change's result answers one of this client's requests, and
+## if so consumes that request (round 690's review). The server answers a
+## request with the label asked for (handleChangeZone -> warpTo(req.Zone)) at
+## that zone's landing; a move to the return point (warpHome) comes with the
+## return point's label at a teleport point, and can arrive between a request
+## and its answer, or before it. So:
+## - a refused change answers the oldest request (the server answers in order;
+##   warpHome's only refusal is for a session that has left the world);
+## - an accepted one answers the oldest request for its label, unless it
+##   lands on a teleport point (`at_point`): no zone's landing is one (the
+##   town landings are their centres' middles, local (960, 960) -- MEASURED
+##   against the 64 open-world points, none there), so that is the server's
+##   own move, and the request stays for its answer.
+## Whether a zone change's result answers this client: a gate teleport's
+## arrival always does (its receipt marked it, round 576) and takes no zone
+## request; any other result is matched (_match_zone_change_request).
+func _zone_result_requested(teleport_arrival: bool, zone: String, ok: bool, at_point: bool) -> bool:
+	if teleport_arrival:
+		return true
+	return _match_zone_change_request(zone, ok, at_point)
+
+func _match_zone_change_request(zone: String, ok: bool, at_point: bool) -> bool:
+	if not ok:
+		if not _zone_change_requests.is_empty():
+			_zone_change_requests.pop_front()
+		return true
+	if at_point:
+		return false
+	var i := _zone_change_requests.find(zone.strip_edges().to_lower())
+	if i < 0:
+		return false
+	_zone_change_requests.remove_at(i)
+	return true
+
+## Whether a zone change's arrival keeps the server's position and stands it
+## on the walkable graph (round 690), rather than moving it to the zone's own
+## landing spot (_place_at_zone_spawn): a gate teleport's (the receipt came
+## first, round 576), and a move to the return point -- one that finds the
+## player dead (option 1 of the dead window: the server warps a dead
+## character, then revives it, deadstate.go) or one this client never asked
+## for (the flag-off respawn after a kill). A zone change this client asked
+## for lands where it always has.
+static func arrival_keeps_server_point(teleport: bool, requested: bool, dead: bool) -> bool:
+	return teleport or dead or not requested
 
 ## Chat panel, ported from the 2D World.gd HUD (see docs/PROGRESS.md) --
 ## this scene is becoming the one real client, so its UI needs to cover
@@ -14723,10 +15096,11 @@ func _apply_gm_move(result: GmNet.Result) -> void:
 	if result.zone != "" and result.zone != here:
 		if result.has_pos:
 			_pending_gm_pos = Vector2(result.x, result.z)
-		NetClient.change_zone(result.zone)
+		_request_zone_change(result.zone)
 		return
 	if result.has_pos:
 		_place_player_at_world(result.x, result.z)
+		_qa_arm_arrival_probe("gm move to %.0f, %.0f" % [result.x, result.z])
 
 ## Stands the player at a world X/Z, resolving the height off the terrain --
 ## the same safety net _unstuck uses. Clears velocity and lets the move sync
@@ -15027,7 +15401,7 @@ func _hover_kind_at(screen_pos: Vector2) -> String:
 		return "pickup"
 	if not _objects_hidden and _ray_hit_tagged(screen_pos, MONSTER_COLLISION_LAYER, "monster_id") != null:
 		return "attack"
-	if _ray_hit_tagged(screen_pos, NPC_COLLISION_LAYER, "npc_name") != null:
+	if _talk_ray_at(screen_pos)["node"] != null:
 		return "talk"
 	return "normal"
 
@@ -15111,20 +15485,56 @@ func _describe_click_hit(hit: Dictionary, wanted_meta: String) -> String:
 	var tagged := ("%s=%s on %s" % [wanted_meta, str(node.get_meta(wanted_meta)), node.name]) if node != null else ("no %s up the chain" % wanted_meta)
 	return "%s (layer 0b%s) -> %s" % [collider.get_path() if collider != null else "?", String.num_int64(layer, 2), tagged]
 
+## The talk ray from `from` to `to` (round 690, split out of
+## _try_talk_to_npc so the cursor and GatePickProbe fire the same one):
+## {"node": the first ancestor of the nearest tagged collider carrying
+## `npc_name`, or null; "collider": the first thing the ray hit, or null;
+## "hit": the raw result for that first thing}.
+##
+## It masks the talk layer (NPC bodies) and the gates' pick boxes
+## (GATE_PICK_COLLISION_LAYER), and goes on through what is on the talk layer
+## without a tag -- the navmesh walls, which share its bit -- up to
+## TALK_RAY_PASSES hits: retail's pick (FUN_0078ee20) tests objects only, and
+## an invisible wall standing in front of an NPC or a gate's box is not one.
+## Until round 690 the first wall ended the click.
+func _talk_ray(from: Vector3, to: Vector3) -> Dictionary:
+	var query := PhysicsRayQueryParameters3D.create(from, to)
+	var exclude: Array[RID] = [player.get_rid()]
+	query.collision_mask = NPC_COLLISION_LAYER | GATE_PICK_COLLISION_LAYER
+	var first: Dictionary = {}
+	for _pass in TALK_RAY_PASSES:
+		query.exclude = exclude
+		var hit := get_world_3d().direct_space_state.intersect_ray(query)
+		if hit.is_empty():
+			break
+		if first.is_empty():
+			first = hit
+		var node := hit["collider"] as Node
+		while node != null and not node.has_meta("npc_name"):
+			node = node.get_parent()
+		if node != null:
+			return {"node": node, "collider": first["collider"], "hit": first}
+		exclude.append(hit["rid"])
+	return {"node": null, "collider": first.get("collider"), "hit": first}
+
+## How many untagged talk-layer bodies the talk ray goes through (OURS): a
+## bound, so a click across a walled town casts at most this many rays.
+const TALK_RAY_PASSES := 8
+
+## The talk ray through a screen point (_talk_ray).
+func _talk_ray_at(screen_pos: Vector2) -> Dictionary:
+	var from := camera_3d.project_ray_origin(screen_pos)
+	var dir := camera_3d.project_ray_normal(screen_pos)
+	return _talk_ray(from, from + dir * 2000.0)
+
 func _try_talk_to_npc(screen_pos: Vector2) -> bool:
 	if _hud_panels == null:
 		return false
-	var from := camera_3d.project_ray_origin(screen_pos)
-	var dir := camera_3d.project_ray_normal(screen_pos)
-	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
-	query.exclude = [player.get_rid()]
-	query.collision_mask = NPC_COLLISION_LAYER
-	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	var talk := _talk_ray_at(screen_pos)
+	var hit: Dictionary = talk["hit"]
 	if hit.is_empty():
 		return false
-	var node := hit["collider"] as Node
-	while node != null and not node.has_meta("npc_name"):
-		node = node.get_parent()
+	var node := talk["node"] as Node
 	if node == null:
 		# Round 675: what took a click that talked to nobody -- a gate whose
 		# portal is not bound, or a wall on the talk layer in front of it --
@@ -16312,7 +16722,7 @@ func _try_attack_monster(screen_pos: Vector2) -> bool:
 func _probe_click_rays(screen_pos: Vector2) -> void:
 	var from := camera_3d.project_ray_origin(screen_pos)
 	var dir := camera_3d.project_ray_normal(screen_pos)
-	for probe in [["npc", NPC_COLLISION_LAYER, "npc_name"], ["monster", MONSTER_COLLISION_LAYER, "monster_id"]]:
+	for probe in [["npc", NPC_COLLISION_LAYER | GATE_PICK_COLLISION_LAYER, "npc_name"], ["monster", MONSTER_COLLISION_LAYER, "monster_id"]]:
 		var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
 		query.exclude = [player.get_rid()]
 		query.collision_mask = int(probe[1])
@@ -17009,12 +17419,12 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	# when the monster's own hit reaction plays.
 	var swing_type: int = ATTACK_SEQUENCE[_attack_step % ATTACK_SEQUENCE.size()]
 	_attack_step += 1
-	var swing_entry := _body_animation_entry(_player_gender, swing_type, _player_weapon_group)
+	var swing_entry := _body_animation_entry(_player_body, swing_type, _player_weapon_group)
 	if swing_entry == null:
-		swing_entry = _body_animation_entry(_player_gender, BsrReader.AnimationEntry.TYPE_ATTACK, _player_weapon_group)
+		swing_entry = _body_animation_entry(_player_body, BsrReader.AnimationEntry.TYPE_ATTACK, _player_weapon_group)
 	var lands_after := 0.0
 	if swing_entry != null:
-		var swing := _body_animation_for(_player_gender, swing_entry.action_type, _player_weapon_group)
+		var swing := _body_animation_for(_player_body, swing_entry.action_type, _player_weapon_group)
 		if swing != null:
 			_play_player_once(swing)
 		var hit_ms := swing_entry.first_event_time(BsrReader.AnimationEntry.EVENT_HIT)
@@ -17391,14 +17801,14 @@ func _play_player_struck() -> void:
 	if _player_dead:
 		_play_player_death_pose()
 		return
-	var hit := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
+	var hit := _body_animation_for(_player_body, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
 	if hit != null:
 		_play_player_once(hit)
 
 ## Plays the die clip once and holds its last frame (_player_one_shot_hold).
 ## A body with no such clip keeps whatever it plays.
 func _play_player_death_pose() -> void:
-	_hold_player_one_shot(_body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_DIE, _player_weapon_group))
+	_hold_player_one_shot(_body_animation_for(_player_body, BsrReader.AnimationEntry.TYPE_DIE, _player_weapon_group))
 
 ## Plays `die` once and holds it -- only if it STARTED (round 550): a clip of
 ## one frame, or none, starts nothing (_play_player_once), and setting the
@@ -17592,7 +18002,7 @@ func _play_other_hit(character_id: int) -> void:
 	var gait: Dictionary = _other_gaits.get(character_id, {})
 	if gait.is_empty() or not is_instance_valid(gait["skeleton"]):
 		return
-	var hit := _body_animation_for(gait["gender"], BsrReader.AnimationEntry.TYPE_HIT, gait["group"])
+	var hit := _body_animation_for(gait["body"], BsrReader.AnimationEntry.TYPE_HIT, gait["group"])
 	if hit != null:
 		_play_once(gait["skeleton"], hit)
 
@@ -18472,6 +18882,7 @@ func _apply_buff_run_speed(run_speed: int, why: String) -> void:
 		return
 	print("SPEED: run speed %.0f -> %d (%s)" % [_move_speed, run_speed, why])
 	_move_speed = float(run_speed)
+	_server_run_speed = run_speed
 
 ## A skill moved a character (OpSkillMove, round 617: Ghost Walk's landing).
 ## This player is put at the point at once. The move's duration is OPEN
@@ -18713,22 +19124,22 @@ func _apply_player_motion(value: int) -> void:
 	var what := _sit.answer(value, _player_anim_time)
 	match what:
 		"sit_down", "sit":
-			var loop := _body_animation_path(_player_gender, BsrReader.AnimationEntry.TYPE_SITTING, _player_weapon_group)
+			var loop := _body_animation_path(_player_body, BsrReader.AnimationEntry.TYPE_SITTING, _player_weapon_group)
 			if what == "sit_down":
-				var down := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_SIT_DOWN, _player_weapon_group)
+				var down := _body_animation_for(_player_body, BsrReader.AnimationEntry.TYPE_SIT_DOWN, _player_weapon_group)
 				if _play_player_once(down) > 0.0:
 					_player_sit_clip = down
 				print("SIT: player sits -- clip %s (action type 13), then %s (type 14, loop)" % [
-					_body_animation_path(_player_gender, BsrReader.AnimationEntry.TYPE_SIT_DOWN, _player_weapon_group), loop])
+					_body_animation_path(_player_body, BsrReader.AnimationEntry.TYPE_SIT_DOWN, _player_weapon_group), loop])
 			else:
 				print("SIT: player sits -- clip %s (type 14, loop)" % loop)
 		"stand_up", "stand":
 			if what == "stand_up":
-				var up := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_STAND_UP, _player_weapon_group)
+				var up := _body_animation_for(_player_body, BsrReader.AnimationEntry.TYPE_STAND_UP, _player_weapon_group)
 				if _play_player_once(up) > 0.0:
 					_player_sit_clip = up
 				print("SIT: player stands -- clip %s (action type 15)" % _body_animation_path(
-					_player_gender, BsrReader.AnimationEntry.TYPE_STAND_UP, _player_weapon_group))
+					_player_body, BsrReader.AnimationEntry.TYPE_STAND_UP, _player_weapon_group))
 		_:
 			print("SIT: motion value %d for the player is not one srrevamp plays" % value)
 
@@ -18762,7 +19173,8 @@ func _spawn_result_others(others: Array, seated: Array) -> void:
 	for other in others:
 		# Each faces its heading from the list's tail (round 637's review
 		# follow-up; NAN from an older server).
-		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped, other.gender, other.heading)
+		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped,
+			_snapshot_body(other), other.heading, other.scale if other.has_model else CharacterAppearance.DEFAULT_SCALE)
 	for id in seated:
 		if not _other_bodies.has(int(id)):
 			continue
@@ -18771,10 +19183,10 @@ func _spawn_result_others(others: Array, seated: Array) -> void:
 		if gait.is_empty() or not is_instance_valid(gait["skeleton"]):
 			continue
 		gait["sitting"] = true
-		var loop := _body_animation_for(gait["gender"], BsrReader.AnimationEntry.TYPE_SITTING, gait["group"])
+		var loop := _body_animation_for(gait["body"], BsrReader.AnimationEntry.TYPE_SITTING, gait["group"])
 		MonsterMotion.swap_loop(_animated, gait["skeleton"], loop, _frame_count(loop), _idle_anim_time)
 		print("SIT: player %d drawn seated on spawn -- loop %s (type 14)" % [int(id),
-			_body_animation_path(gait["gender"], BsrReader.AnimationEntry.TYPE_SITTING, gait["group"])])
+			_body_animation_path(gait["body"], BsrReader.AnimationEntry.TYPE_SITTING, gait["group"])])
 
 ## Another player's answer: the sitting loop under the sit-down clip, or the
 ## stand loop under the stand-up clip, from their own body's table.
@@ -18801,15 +19213,15 @@ func _apply_other_motion(character_id: int, value: int) -> void:
 				once_type = BsrReader.AnimationEntry.TYPE_STAND_UP
 		_:
 			return
-	var loop := _body_animation_for(gait["gender"], loop_type, gait["group"])
+	var loop := _body_animation_for(gait["body"], loop_type, gait["group"])
 	MonsterMotion.swap_loop(_animated, gait["skeleton"], loop, _frame_count(loop), _idle_anim_time)
 	if once_type != -1:
-		var once := _body_animation_for(gait["gender"], once_type, gait["group"])
+		var once := _body_animation_for(gait["body"], once_type, gait["group"])
 		if once != null:
 			_play_once(gait["skeleton"], once)
 	print("SIT: player %d %s -- loop %s (type %d)%s" % [character_id, "sits" if value == WorldNet.MOTION_SIT else "stands",
-		_body_animation_path(gait["gender"], loop_type, gait["group"]), loop_type,
-		"" if once_type == -1 else ", once %s (type %d)" % [_body_animation_path(gait["gender"], once_type, gait["group"]), once_type]])
+		_body_animation_path(gait["body"], loop_type, gait["group"]), loop_type,
+		"" if once_type == -1 else ", once %s (type %d)" % [_body_animation_path(gait["body"], once_type, gait["group"]), once_type]])
 
 # --- A monster appearing (round 540) ------------------------------------------
 
@@ -19201,7 +19613,7 @@ func _stat_panel_on_equipment(items: Array, error: String) -> void:
 func _apply_player_race() -> void:
 	if _hud_player_info == null:
 		return
-	var code: String = GENDER_BODY_CODE.get(_player_gender, GENDER_BODY_CODE[DEFAULT_GENDER])
+	var code: String = _player_body if _player_body != "" else String(GENDER_BODY_CODE[DEFAULT_GENDER])
 	if not _country_by_code.has(code):
 		print("World3D: no characterdata Country for %s -- no race emblem" % code)
 		return
@@ -19434,7 +19846,7 @@ func _skill_effects() -> Dictionary:
 ## use).
 func _player_world_height() -> float:
 	if _player_skeleton != null and is_instance_valid(_player_skeleton):
-		var h := _skeleton_top(_player_skeleton) * _player_skeleton.scale.y
+		var h := _skeleton_top(_player_skeleton)  # _skeleton_bounds already applies the skeleton's scale (Height, round 689)
 		if h > 0.1:
 			return h
 	return 2.0 * PLAYER_SCALE_RATIO

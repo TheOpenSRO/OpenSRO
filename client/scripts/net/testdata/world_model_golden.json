@@ -1,0 +1,18 @@
+{
+ "note": "Round 689: the world messages' model tails, golden bytes written BY HAND from the layout in server/internal/session/world.go (EncodeEntered, EnterWorldResult.Encode, ChangeZoneResult.Encode, encodeModels). One field per '|'-separated group; spaces and '|' are ignored. server/internal/session TestRound689ModelGolden encodes the structs it builds from these values and requires exactly 'hex', and decodes 'hex'; client/scripts/net/world_test.gd decodes 'hex' and requires the 'model' values. Names, positions and ids are test values; ids are references (14875 CHAR_EU_MAN_NOBLE, 14888 CHAR_EU_WOMAN_NOBLE, 1925 CHAR_CH_WOMAN_KANGSI).",
+ "vectors": [
+  {"name": "entity entered: Aria, Europe man 14875, Height 4 Volume 1, heading pi",
+   "kind": "entity_entered",
+   "hex": "0700000000000000 | 0400 41726961 | 0000803f | 00000040 | 00004040 | 00 | 0a00 6575726f70655f6d616e | 0040 | 1b3a0000 | 14",
+   "own": {"ref_obj_id": 14875, "scale": 20}},
+  {"name": "enter world: own Europe woman 14888 scale 0x03 facing pi/2, Bram China woman 1925 scale 0x40 facing pi",
+   "kind": "enter_world_result",
+   "hex": "01 | 0000 | 0600 6a616e67616e | 00000000 | 00000000 | 00000000 | 0c00 6575726f70655f776f6d616e | 01000000 | 01000000 | 0100 | 0100000000000000 | 0400 4272616d | 00000000 | 00000000 | 00000000 | 00 | 0b00 6368696e615f776f6d616e | 0600 39372f313638 | 00 | 0000 | 0100 0040 | 0000 | 283a0000 03 | 0100 85070000 40",
+   "own": {"ref_obj_id": 14888, "scale": 3},
+   "others": [{"ref_obj_id": 1925, "scale": 64}]},
+  {"name": "change zone: Bram in the list",
+   "kind": "change_zone_result",
+   "hex": "01 | 0000 | 0500 686f74616e | 00000000 | 00000000 | 00000000 | 0100 | 0100000000000000 | 0400 4272616d | 00000000 | 00000000 | 00000000 | 00 | 0b00 6368696e615f776f6d616e | 0600 39322f313335 | 0000 | 0100 0040 | 0100 85070000 40",
+   "others": [{"ref_obj_id": 1925, "scale": 64}]}
+ ]
+}

@@ -210,7 +210,13 @@ func set_character(skeleton: Node3D) -> void:
 		# The client's camera is fixed: the model stands at the origin, its
 		# feet on y 0, and is not framed (use_equipment_view). Its materials
 		# are the zone-lit ones (PlayerPortrait's), rebuilt for each dress.
-		skeleton.transform = Transform3D.IDENTITY
+		# Height stays (round 689's review): the equipment page's avatar (+0x36c
+		# of IFMainPopup::FUN_006a1d50's page) is dressed by FUN_00a619e0, which
+		# ends with FUN_00a5b960 -- the scale byte -- READ in IFItemMall's
+		# 0x7c08e0; 0x6abc50 does the same on a +0x36c avatar (INFERRED to be
+		# this page's own refresh from the offset). So a tall character stands
+		# taller in this window too.
+		skeleton.transform = Transform3D(Basis.from_scale(skeleton.scale), Vector3.ZERO)
 		_lighter.set("_materials", [])
 		_lighter.unmapped_materials = 0
 		_lighter.call("_apply_materials", skeleton)

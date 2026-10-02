@@ -7492,6 +7492,536 @@ d6205fc (green). origin/dev d6205fc is merged in (WORLD_ISSUES by `wi_resolve.py
   `ReqLearnSP: 1` (with no cost a mastery-less row is a monster's shape), and the 636 CSV fixtures
   set it after loading; TestSkillFullFlow gives the two points its rows now cost.
 
+**Merge with rounds 688-690 and 692 (origin/dev 1f01c80).** WORLD_ISSUES by `wi_resolve.py`. Round
+689 draws bodies by model and renamed the cast paths' `gender` to `body`: both cast paths now build
+`SkillDataReader.cast_clip_path(_body_gender(body), code)`, `_body_gender` reading the race and
+sex from `_body_assets_or_default(body)` (as the review's trial merge 56510fe did);
+docs/protocol/charselect.md's cast-path note says so. `qa_sign_in.gd` keeps both hooks, round 689's
+`SRREVAMP_QA_CREATE` first, then `SRREVAMP_QA_KIT`. MEASURED, headless on the box
+(`/var/tmp/euroskill691/pose.sh`, offline World3D, `SRREVAMP_QA_BODY=14875` -- the Europe man
+`char\europe\europeman_noble.bsr` -- with the EU one-hand sword and `SRREVAMP_QA_CASTANIM=
+skill_eu_warrior_onehanda_strike_a`; a new QA CASTPOSE line prints, at eight ticks of each 90, each
+upper arm's angle from its bind rotation): the clip plays as the one-shot and the arms read 63.9-146.6
+deg (left) and 89.1-179.8 deg (right) over the eight samples, the same in each of five replays -- 8/8
+posed, none near the bind pose's 0. With a staff and Earth Point (no clip of its name) the fallback
+plays the Europe body's own `skill_eu_wizard_twohand_attack01`, 60.0-172.5 deg, 8/8 posed. So the
+arms-out pose round 691's shots showed after a cast was the China fighter body's (no Europe groups),
+gone with round 689's Europe bodies. The probe's zero is by construction (the angle to the bone's
+own rest rotation); no run here exercised a true bind pose.
+
+## Six-hundred-and-ninetieth round: a Hotan return stands on the plaza, the Alexandria North teleporter is clickable, and a town gate is clicked where retail clicks it -- its own box around the stone, not the whole building
+
+The user (2026-10-02): "when I set Hotan as my default spawn and die I get resurrected back in hotan
+but im clipped half way through the ground. This didn't seem to happen at other towns. Also the
+Alexandria north teleporter has been broken since you added teleporters but I'm just telling you now.
+When I had jangan as my spawn and I died it seemed like the teleport hit zone was off to the right and
+not on the actual stone or around so I couldn't easily click it."
+
+Labels: READ (the decompiles and asm on the render box), MEASURED, INFERRED, OURS, OPEN. The full
+reading is in `docs/protocol/teleport_network.md`, "The gate's pick box and the arrival's height
+(round 690)".
+
+The live runs used the render box, lane `tele690`, with real X input through the Login route:
+- the server was dev's, with srrevamp-01's flags: `-full-map` (so `-single-frame`), `-monster-ai
+  -monster-strike-push -monster-spawn-push -monster-battle -monster-aggro -player-dead-state
+  -persist-position`, `-regions-csv` and `-chargen-csv`;
+- the box's exports were loaded: teleport, npcpos, monsters, the nest DB, regions and chargen.
+
+The harness is `/var/tmp/tele690/inter.sh`, `x.sh`, `gate.sh`, `hop.sh` and `relog.sh`. The runs were:
+- **i2**: dev's client with only the probe hook added (no behaviour change), which reproduced the
+  bugs.
+- **i4**: this tree's client: all seven gates clicked, and a revive at Alexandria North.
+- **i5**: this tree's client: a Jangan revive, a Hotan revive and a dead logout at Hotan.
+- **i6**: dev's client again, at Alexandria North.
+
+A new QA hook, `SRREVAMP_QA_ARRIVAL_PROBE=1`, takes the measurements:
+- `QA ARRIVAL`: the feet against the terrain-only ray and the walkable graph's landing, after every
+  entry, zone change and GM move;
+- `QA GATEPICK`: a gate's pick body against the placed object drawn there, with a sweep of the talk
+  ray (`GatePickProbe`);
+- `QA GATEAIM`: the screen point to click.
+
+### 1. Hotan: the return was 12.19 under the plaza
+
+**Cause (MEASURED).** The server sends a revive's return like a gate teleport: the gate's point at
+height 0 (`teleportArrival`, round 686). The client stood a gate teleport on its walkable graph
+because a receipt came first (round 576), but a return has no receipt. It took the plain zone
+change's branch:
+- In Jangan that branch moved the player to the square spawn (`ZONE_SPAWN_LOCAL`), 350 units from
+  where the server had the character. Run i2, `QA ARRIVAL #3`: local (1002, 1020).
+- Every other town kept the server's 0, and `_snap_player_onto_terrain` only lifted it to the bare
+  terrain.
+
+Hotan's gate point is on the castle plaza, so the result there was wrong. Run i2, `QA ARRIVAL #8 zone
+change to hotan`:
+- feet 234.59;
+- terrain 234.25;
+- walkable graph landing 246.78;
+- **feet - landing -12.19** (the screenshot `hotan_revive_base.jpg` shows only the head above the
+  plaza).
+
+The graph's own step-up limit (`SURFACE_REACH_UP`, 12) then refused the plaza, which is 12.19 up, so
+the character stayed underneath.
+
+**Why only Hotan (MEASURED, every point).** `walk_probe.gd --column` was run at the 64 open-world
+teleport points.
+- At 61 of them the landing is within 1.6 units of the terrain.
+- Three are more than 12 above it: `GATE_KT` +12.19, `GATE_TOMB_GATE_IN` +355.79 and
+  `GATE_ARABIAN_COAST` +366.84.
+- Only `GATE_KT` is a return point, an id-7 town gate.
+
+The other six town gates measure: CH +0.56, WC, EU, CA, SD1 and SD2 0.00.
+
+**Retail (READ, partial).** The server copies the teleportdata record's x/y/z as they are
+(`FUN_00407760`; `ResolveRevivePoint` `0x4e08a0`; `GObjPC::Revive` -> `vslot_222` `0x4df590`). No
+height function is called on that path. The re-entry's consumer and the client's placement are
+unread (OPEN).
+
+**Fix (client).** These arrivals now keep the server's point and stand on the walkable graph, as a
+gate teleport does:
+- A zone change that finds the player dead, or that this client did not ask for, is a move to the
+  return point (`World3D.arrival_keeps_server_point`). Every request goes through
+  `_request_zone_change`, which counts it. Both are OURS, from the server's own order: option 1
+  warps a dead character, then revives it.
+- A restored entry within 1 unit of a town gate's point is stood on the graph as well
+  (`_land_restored_return_point`, `TeleportReader.return_points`). That is a dead logout, which the
+  server saves at the return point (`savedPlace`).
+
+**After (MEASURED, run i5):**
+- Hotan revive: feet 246.78, landing 246.78, feet - landing 0.00 (`hotan_revive_fixed.jpg`).
+- Jangan revive: at the gate's point local (969, 1369), feet - landing 0.00. It is no longer moved to
+  the square.
+- Dead logout at Hotan, then a fresh login: `the restored entry is GATE_KT's point (a return point) --
+  stood on the walkable graph there`, feet - landing 0.00.
+
+Run i4:
+- Alexandria North revive: feet - landing 0.00.
+- All seven gate-teleport arrivals: feet - landing 0.00. Their heights: CH -30.12, SD2 1539.99, SD1
+  865.82, WC -104.27, KT 246.78, EU 86.23, CA 182.49.
+
+### 2. Alexandria North: never clickable
+
+**Cause (MEASURED).**
+- The building row is there: `STORE_SD_GATE2`, 92/50 (1719, 1586, 760). So are the point,
+  `GATE_SD2` 92/51 (111, 1537, 524) with id 7, and its links.
+- The server answers it. The fault was the client's binding (round 577, a disclosed stand-in): the
+  gate was the placed map object nearest the table point within 10 units.
+- `cmd/whatishere` puts Alexandria North's `alex_portal.bsr` **15.1** units from the point, so it
+  was never bound and never clickable. Alexandria South's portal is 8.4 units from its point, so it
+  was bound. Round 577 never ran Alexandria.
+
+**Retail (READ).** A town gate (type 4/1/1) is a `CITeleportGate` (`IGIDObject::FUN_009c1fa0`,
+predicate `FUN_009c1ca0`).
+- Its click is a box built from BCRadius / BCHeight: `vslot_025` `0x9e9eb0` sets `(-r, -h, -r)..(r,
+  h, r)` from `+0x118` and `+0x114`.
+- The parser `FUN_00972910` fills those from teleportbuilding columns 50 and 49 (`0x972ce2`,
+  `0x972cd1`).
+- `vslot_033` (`0x9e9b60`) tests that box about the gate's position, axis-aligned, and the pick
+  routine `FUN_0078ee20` keeps the nearest hit.
+- No model, placed object or navmesh is involved.
+
+**Fix (client).** Each id-7 gate gets a `GatePick_<code>` box at its table point:
+- The box is BCRadius x BCHeight from the row: 10/25 for Jangan, 70/70 for Alexandria.
+- It sits on its own layer, 10, which nothing walks into.
+- The talk ray masks it. The placed objects are no longer click targets.
+
+Alexandria North's box (`QA GATEPICK`, run i4) is `(-225871, 1518, 9730)..(-225731, 1658, 9870)`,
+centred 15 units from the drawn portal's centre in x/z.
+
+**Live (MEASURED, run i4, real X input).** Each gate was clicked and one destination was requested.
+The server's `msg=teleport` line for each:
+
+| gate | click | destination | server |
+|---|---|---|---|
+| `STORE_CH_GATE` Jangan | QA aim point | Alexandria (North) | `gate=STORE_CH_GATE dest=GATE_SD2` |
+| `STORE_SD_GATE2` Alexandria North | the portal's base (the rings above the box miss) | Alexandria (South) | `gate=STORE_SD_GATE2 dest=GATE_SD1` (also designated: `recall designated ... gate=STORE_SD_GATE2`) |
+| `STORE_SD_GATE1` Alexandria South | QA aim point | Jangan | `gate=STORE_SD_GATE1 dest=GATE_CH` |
+| `STORE_CH_GATE` Jangan | QA aim point | Donwhang | `dest=GATE_WC` |
+| `STORE_WC_GATE` Donwhang | QA aim point | Hotan | `dest=GATE_KT` |
+| `STORE_KT_GATE` Hotan | QA aim point | Constantinople | `dest=GATE_EU` |
+| `STORE_EU_GATE` Constantinople | QA aim point | Samarkand | `dest=GATE_CA` |
+| `STORE_CA_GATE` Samarkand | QA aim point | Jangan | `dest=GATE_CH` |
+
+**Before (MEASURED, run i6: dev's client, the same server and flags, real X input).**
+- Jangan's gate was clicked and Alexandria (North) chosen (`dest=GATE_SD2`).
+- On arrival the client logged `teleport gate STORE_SD_GATE2 -- no placed object within 10 units of
+  the table's point (1719, 760) in 92/50 (the nearest is Obj_alex_portal_32 at 15.1); left unbound
+  (not clickable)`.
+- Three clicks on the portal (its platform, its base and its rings) opened no talk box. The player
+  walked onto the platform.
+
+With this tree (run i4): `teleport gate STORE_SD_GATE2 clickable at 92/50 local (1719, 1586, 760):
+its BCRadius 70 / BCHeight 70 box`.
+
+### 3. Jangan: the click zone was the whole pavilion, not the stone
+
+**Measured (dev's client, run i2).** Round 577 put every piece of `cj_portal.bsr` on the talk layer.
+That covered:
+- the fence, floor, pillars, roof and a stone slab, `CJ_por_stone01`, which is 102 units long: drawn
+  `(226, -103, -491)..(373, 58, -345)`, 147 units across;
+- foundations reaching 73 units under the ground (`CJ_por_gidung`).
+
+The glowing stone in the middle is a separate object, `cj_portal_stone.bsr`. It is 7.5 units from
+the point and holds only two `.efp` effects (`dump_bsr`), with no collision of its own. So the click
+zone was the building, wherever its pieces stood, and not the stone.
+
+**Not reproduced: a shift after the revive.**
+- The same 6 bodies with the same bounds were measured after the entry, after a gate teleport (`#4`,
+  `#9`) and after the revive (`#3`).
+- A real click on the visible stone opened the gate in run i2, after the revive.
+- What the revive did change was where the player stood: the client put them in the square, about 435
+  units from the gate building (fixed under 1).
+- INFERRED: the user's "off to the right" was the pavilion's pieces taking clicks beside the stone,
+  while the stone itself only took a click where a piece stood behind it.
+
+**Fix.** Retail's box, as in 2: `(284, -29, -424)..(304, 21, -404)`. It is 20 x 50 x 20 at the table
+point, inside the drawn pavilion, around the stone.
+
+The talk ray also goes on through untagged talk-layer bodies (the navmesh walls, which share its bit)
+up to 8 hits. Retail's pick tests objects only (READ). The sweeps saw walls first on some rays at
+Jangan and Alexandria North: `NavmeshWalls` in `QA GATEPICK`'s blocker counts, for example 5 of 22
+drawn rays from 0 degrees at Jangan after the revive. Those rays are counted where the wall came
+first and nothing was hit behind it, so they show that walls are there, not how many clicks they
+used to take.
+
+**After (MEASURED, run i5).** These were measured after the revive, with real X input:
+- From (294, -330), `QA GATEAIM` gave the box centre at screen (640, 48), `talk there: true`.
+- A click on the visible stone at (652, 50) opened the Dimensional Gate.
+- A click to its right at (860, 60), on the pavilion, did not talk.
+- The teleport to Hotan from that click was accepted: `gate=STORE_CH_GATE dest=GATE_KT`.
+
+### 4. Tests
+
+| Test | FAIL before (run against dev bf25e7e's World3D and TeleportReader) |
+|---|---|
+| `scripts/world/arrival_landing_test.gd` (new): the arrival rule's five cases; `_return_point_at` matches GATE_CH's point, not 5 units off, not a ferry, not an unloaded region | `FAIL World3D.arrival_keeps_server_point exists`; `FAIL TeleportReader.return_points exists`; `FAIL World3D._return_point_at exists` |
+| `scripts/npc/teleport_reader_test.gd` (rewritten binding sections): BC columns; the CH pick box (position, world-axis-aligned, 20x50x20, own layer); Alexandria North's 140-unit box with the portal 15.1 off; no box without BC; the fortress gate; Donwhang in its own region; a re-bind replaces | `SCRIPT ERROR: Invalid get index 'bc_height'`; `FAIL the pick boxes have a layer of their own ... (got -1)`; `FAIL Jangan's gate gets its pick node`; `FAIL the placed portal is not a click target: untagged, its body on layer 1 alone (got layer 0b10001)`; `FAIL Alexandria North is clickable: its pick node carries STORE_SD_GATE2 and point 176`; `FAIL while the town gate in the same region (id 7) gets its box`; `FAIL Donwhang's gate gets its pick node in its own region 103/153`; `FAIL the portal itself is not a click target`; `FAIL binding a region again replaces its pick node (got 0)` |
+
+The pick against the mesh after a revive or zone change is measured by the QA hook, not a unit test
+(above).
+
+Results:
+- `remote_godot.sh check`: ALL LOAD.
+- `remote_godot.sh tests`: 204 suites, 0 failing.
+- `go build ./... && go vet ./... && go test -count=1 -p 1 ./...`: green, except `internal/refdata`,
+  which the full run killed at 11 minutes (Postgres shared with other lanes). It passed alone in 116
+  s. The server is unchanged.
+
+### 5. Perf gate (`--sites jangan`, base bf25e7e vs this tree)
+
+Medians of 3 interleaved runs, 1280x720. Runs another lane's Godot overlapped were repeated. The
+head's frame median is +0.9 ms, inside the gate's threshold: its three runs were 9.38, 10.32 and
+10.30 ms against the base's 9.44, 9.22 and 11.01.
+
+| site | number | base | head | delta | verdict |
+|---|---|---|---|---|---|
+| jangan | frame ms | 9.44 | 10.30 | +0.9 | SAME |
+| jangan | entry ms | 9900 | 9679 | -221 | SAME |
+| jangan | freeze ms | 3425 | 3431 | +6 | SAME |
+| jangan | hitches | 5 | 5 | 0 | SAME |
+
+### 6. OPEN
+
+- The pick's 3 x 3 ray grid: retail casts nine around the cursor (step INFERRED to be 1.6 % of the
+  screen); srrevamp casts one.
+- A ray starting inside a gate's box does not take it. Retail's triangle test's back faces are
+  unread.
+- A structure's spawn position is INFERRED to be its teleportbuilding row.
+- Retail's arrival height after the server's unchanged y is unread.
+- The two non-return points 355 and 366 units under their objects (`GATE_TOMB_GATE_IN`,
+  `GATE_ARABIAN_COAST`) land on the graph as teleports. Nothing returns a character there.
+
+### Review (round 690's review: no HIGH, no MEDIUM; five LOW -- fixed in a follow-up commit)
+
+The review confirmed the READ claims and found layer 10 clean and the click paths and masks right. A
+trial merge onto dev d6205fc passed, with 205 suites. The follow-up:
+
+1. **Requests are matched, not counted.** `_request_zone_change` remembers each zone label it asks
+   for (`_note_zone_change_request`). `_on_change_zone_result` asks `_zone_result_requested`:
+   - a gate teleport's arrival is this client's and takes no request;
+   - a refused change answers the oldest request;
+   - an accepted one answers the oldest request for its own label, unless it lands on a teleport
+     point. No zone's landing is a teleport point: the landings are the centres' middles, and none
+     of the 64 open-world points is there.
+
+   So a flag-off kill's return to Jangan's gate, arriving between a zone-box "jangan" and its answer,
+   is the server's own move and leaves the request for its answer. The point test runs before the
+   zone loads: `region_local_to_world` is `TerrainCollision.place_group`'s transform for the
+   region's cell in the result's frame. It is checked against the server's own numbers: GATE_CH
+   (9, -409) and GATE_KT (-63182, 10407) in frame 97/168.
+2. **The QA rays exclude layer 10**: `QA NPCBODY` (it had no mask), `QA RIG`'s column and the ground
+   lattice probe (both had `0xFFFFFFFF`).
+3. **The pick's rays, worded right** (`teleport_network.md`, `World3D._bind_region_gates`, TODO).
+   `FUN_0078ee20` casts a 3 x 3 grid and keeps a hit when `d < best || (best_idx != 4 && idx ==
+   4)`: any nearer hit replaces the best, and a centre hit replaces a best from an outer ray whatever
+   its distance.
+4. **A logout where a teleport left the player** (pre-existing). The restored-entry landing matched
+   id-7 town gates only. A logout right after a teleport to `GATE_TOMB_GATE_IN` or
+   `GATE_ARABIAN_COAST`, without moving, re-entered 355.79 / 366.84 under the object there. It now
+   matches every point in a world region (`TeleportReader.world_points`, `_teleport_point_at`), and
+   no longer needs the region loaded.
+5. **Tests for the wiring** (`arrival_landing_test.gd`):
+   - `_request_zone_change` remembers the zone;
+   - a refused change takes the oldest;
+   - with nothing asked, a move is the server's;
+   - the interleave: a return first, at a point, takes nothing, then the answer at the landing takes
+     the request;
+   - two requests answered out of order;
+   - an unasked label takes nothing;
+   - a teleport arrival leaves the requests alone;
+   - the frame conversion, and a non-gate point matched.
+
+   FAIL against 4465783: `FAIL World3D.region_local_to_world exists`; `FAIL
+   TeleportReader.world_points exists`; `FAIL World3D._teleport_point_at exists`; `FAIL
+   World3D._note_zone_change_request / _match_zone_change_request exist`.
+
+No perf gate: none of this is per-frame code. The matcher runs once per zone change, over 64 points.
+
+## Six-hundred-and-eighty-ninth round: every character is drawn from its own model -- a Europe man is a Europe man, a Kangsi a Kangsi, at its Height and Volume -- for the player, the other players, the paper doll and the portrait, and no body T-poses
+
+The user (2026-10-02): "Euro doesn't seem work once you load in. I'm the default chinese male skin
+and I t-pose. When I do chinese female it goes to the default woman skin too. Euro needs added to
+the actually game with full skin support, animations, and skills. Same with the rest of the chinese
+characters too. Some float and have different ways to sit or hold weapons."
+
+charselect.md's lane W. Europe *skills* are lane euroskill691's; this round is drawing and animation.
+Labels: READ (sro_client.exe's dump and asm on the box), MEASURED, INFERRED, OURS, OPEN.
+
+### 1. Why (the before, MEASURED)
+
+- **The T-pose is our code, not the data.** World3D animated the local player only under
+  `_character_assets.has(_player_gender)`, and only `china_man` / `china_woman` were ever loaded. A
+  Europe character's gender (`europe_man`, round 682) fell back to the China fighter's body for the
+  build and failed that test every frame. The base client (bf25e7e, plus a box-only print) signed in
+  to this round's server as a Europe noble man: `POSECHECK player gender europe_man body (default)
+  posed TPOSE` on **21 of 21** samples, drawn as `chinaman_fighter.bsr` wearing 4 of its 5 items
+  (the Europe heavy legs need a bone the China body lacks).
+- **"The default skin":** every China Figure was drawn as the fighter (`GENDER_BODY_CODE`), the
+  Figure, Height and Volume the player chose were never sent to the world.
+- **129 clips played nothing** (`body_anim_probe.gd --lookup=old`, all 52 Figures x every core
+  action x every weapon group of their race, 4,056 lookups): the Europe bodies' `onehand_sword` types
+  16/17 and `onehand_staff` types 5/16/17 are entries that name no file, and our lookup returned the
+  empty entry instead of falling back -- a 1H-sword or staff user's 2nd-4th swing froze.
+
+### 2. What retail does (READ, addresses)
+
+- **Group:** `CObjCharacter::RefreshAnimationGroup` 0xa5bd10: no weapon in visual slot 6 ->
+  `default`; else `FUN_00a5a7d0(TypeID4, race)` (race = char data +0x9c); `cart` while pulling a
+  transport. The switch is the table we had, plus the fortress weapon 16: race 0 `sword`, race 1
+  `onehand_sword`. **No sex test.**
+- **Entry:** `CCObjCharacter` slot 3 `FUN_00a5faf0` -> `CCObjAnimation::FUN_00a5b550` ->
+  `CCompChar::FUN_00c2bbb0` -> `AniMixer::FUN_00c551a0`: the group by name (`FUN_00bd68e0`), the
+  entry by type (`AniMixer::FUN_00c0e950`), a non-null clip; failing any, the same in `default`;
+  failing that, nothing. `ResObject::FUN_00c0f500` stores a NULL clip for file index -1, and
+  `FUN_00c0f470` overwrites a type in place, so **the last entry of a type wins** and an entry naming
+  no file falls back. The avatar group (+0x190) is tried first, without fallback, when set (not
+  modelled, OPEN).
+- **Nothing race-specific:** the chain reads only the body's own `.bsr` maps. The Europe bodies'
+  `default` group names `chinaman_*` / `chinawoman_*` stand, walk and sit clips (MEASURED, round 684's
+  review and here) and retail plays them; all 52 Figures use the two Europe skeletons.
+- **Sitting:** 0xa5a270 plays type 14 (and 13 from standing), 0xa5a160 type 15 (or 65,
+  `_a_wakeup`, after a knock-down: not modelled), through the same lookup.
+- **Root and Height:** a driven bone's local matrix takes the keyframe's full translation, x, y and
+  z (`RTSkeleton::FUN_00c49f20` / `FUN_00c4bcb0`); the root's world matrix is its local one. Height
+  (`CCompChar::FUN_00c25460` -> skeleton +0xa4 -> `FUN_00c4bcb0`) multiplies the root's whole local
+  matrix: the model scales about its origin, the feet. **No per-body ground offset** was found in the
+  clip / skeleton chain (the position -> compound matrix step, vt+0x54 0xc255e0, was not traced: OPEN).
+- **Weapons:** `CObjCharacter::FUN_00a5f4f0` -- the `_l`/`_r` pair for TypeID4 9/13, `_f` for a
+  harp on a vslot-0x34 body, else the plain model; the bone comes from each item's own `.bsr`. No
+  per-race, per-sex or per-weapon bone table, no hold offset. CharacterAppearance already did this;
+  the world did not (it drew no dual axe, round 683).
+
+### 3. What changed
+
+**The wire (OURS layout, trailing, backward compatible; charselect.md lane W has the bytes):**
+`OpEntityEntered` appends the model (u32 RefObjID, u8 scale) after its wire angle; `OpEnterWorldResult`
+appends the own model and a per-other models list after the own wire angle (making Restored, Seated,
+the headings tail and the angle always written, as the field doc's trap requires);
+`OpChangeZoneResult` appends the models list after its headings. A row with no model is sent as
+`LegacyModelFor(Gender)` at 0x22. The base client read this round's server and entered the world
+(section 1's run) -- the tails reach it unread. No migration.
+
+**The world** (`World3D.gd`):
+- `_build_assembled_character(equipped, body, scale)` builds through `CharacterAppearance`
+  (`from_catalog`: a bodies-only `CharCatalog` from the characterdata parts the world already reads,
+  39 ms MEASURED, and the world's item table). Height goes on the skeleton node, Volume on the bone
+  groups, `_l`/`_r`/`_f`, the missing-palette-bone rule, round 685's default wear and round 687's hides
+  -- select, create and the world now draw a character the same way. The player, every other player,
+  the paper doll and the portrait use it.
+- The body key is the Figure's code name (`WorldBodies.body_key`: the model's, else the gender's
+  legacy body, else the China fighter). Speed (column 47), sound object, BCRadius and Country are the
+  body's own rows. The animation gate tests the body, not a gender.
+- `BodyAnimations` (new, `scripts/assets/body_animations.gd`): the group switch with the fortress
+  weapon by race and the lookup above; `BsrReader.ParsedObject.animation_for` / `_entry_for` /
+  `_group_for` implement the last-wins and null-clip fallback. CharacterAppearance and World3D share
+  the one table. charselect.md "Animations per body" is the contract for euroskill691.
+- The skill-clip folder (`Prim\Ani\Char\China\<man|woman>`) now follows the body's sex; the path
+  rule itself is the skill lane's.
+
+**QA:** `SRREVAMP_QA_BODY=<id>[:<scale>]`; `SRREVAMP_QA_LINEUP` (`scripts/world/qa_lineup.gd`: the
+Figures spawned through the other-player path and measured per action phase -- `posed yes|TPOSE`
+from the bones against their rest, `feet` as the lowest CPU-skinned vertex against the walkable
+surface); `SRREVAMP_QA_CREATE=ref:scale:chest:legs:feet:weapon` in QaSignIn; `tools/body_anim_probe.gd`.
+
+### 4. Measured
+
+**Clips** (`body_anim_probe.gd`, 52 Figures x 12 actions x default + the race's weapon groups, 4,056
+lookups, real archives): `--lookup=old` 129 that play nothing; `--lookup=world` **0** (RESULT: PASS).
+
+**In the world** (GL, Jangan 97/168 (1002, 1100), `SRREVAMP_QA_LINEUP=all`, `_WEAPONS=each`: 364
+bodies -- every Figure with every catalogue weapon of its race -- plus the player, a Europe noble man
+with a 1H sword, `/var/tmp/world689/m2/log.txt`):
+
+| action | bodies | TPOSE | feet (lowest vertex - surface) |
+|---|---|---|---|
+| stand | 365 | 0 | -0.150 .. +0.999 |
+| run | 365 | 0 | -0.150 .. +1.006 |
+| sit | 365 | 0 | -1.120 .. +0.006 |
+| attack | 365 | 0 | -0.099 .. +0.487 |
+
+Two bodies at the lineup's far corner stood on a stair edge (feet -29.3 / -15.5: the surface ray hit
+the steps above where they were placed) and are left out of the ranges; the same Figures with the
+other weapons are in range. A body is about 17-18 tall.
+
+**"Some float" -- what the numbers say (MEASURED; not changed):**
+- Every Figure's bind pose stands on its origin (-0.005 men, -0.004 women).
+- Standing, running and attacking, every body is within -0.15 .. +0.15 of the surface **except
+  CHAR_CH_WOMAN_KANGSI**, whose own stand and run clips (`chinawoman_kangsi_standcity`, `_runforward`)
+  lift the whole body 0.4 to 1.0 off the ground -- the jiangshi's hop. Retail applies a clip's root
+  translation in full and no per-body offset was found (section 2), so retail hops too (INFERRED).
+- Sitting, the clips differ per body (round 607: looked up in each body's own table), and so does how
+  far the lowest vertex goes below the surface: `chinaman_fighter_a_sitbreath` -0.35,
+  `chinawoman_a_sitbreath` -0.40, the Europe men's `chinaman_a_sitbreath` -0.55, the Kangsi -0.54, the
+  Europe women's `chinawoman_merchant_a_sitbreath` -0.35 -- and the eleven China Figures whose table
+  names a merchant sit -1.05 (women) .. -1.12 (men). The same merchant clip sits the Europe women at
+  -0.35 and the China women at -1.05, so the difference is in those bodies' own meshes, not the clip.
+  Nothing was found that would lift a seated body; whether retail shows the same is OPEN.
+- The before drew every China Figure as the fighter, so the user saw one sit and one stand; the
+  Figures they picked now each sit and stand with their own clips.
+
+**Live** (`/var/tmp/world689/live.sh`: this round's server in memory with the creatable catalogue, two
+GL clients signing in and creating through the retail create, each measuring itself and the other
+through stand, sit (the N key's request, relayed by the server), stand):
+
+| pair | client sees | body | clip (stand / sit) | feet stand / sit |
+|---|---|---|---|---|
+| Europe, Constantinople | itself | CHAR_EU_MAN_NOBLE 0x24, 1H sword | chinaman_fighter_standcity / chinaman_a_sitbreath | -0.093 / -0.587 |
+| | the other | CHAR_EU_WOMAN_CRUSADER 0x40, crossbow | skill_eu_rog_bowa_stand01 / chinawoman_merchant_a_sitbreath | -0.239 / +0.008 |
+| China, Jangan | itself | CHAR_CH_WOMAN_KANGSI 0x02, spear | chinawoman_kangsi_standcity / _a_sitbreath | +0.646 / -0.231 |
+| | the other | CHAR_CH_MAN_MONKEY 0x22, bow | chinaman_monkey_standcity / chinaman_fighter_a_sitbreath | -0.140 / -0.208 |
+
+0 TPOSE in every line, on both clients. Each side's log names the other's model as the server sent it
+(`other:CHAR_EU_WOMAN_CRUSADER`, `other:CHAR_CH_WOMAN_KANGSI scale 0x02`).
+
+### 5. Pictures (for a human; nothing above rests on them)
+
+`/var/tmp/world689/sheet/` on the box: `lineup_0_stand.png`, `_1_run`, `_2_sit`, `_3_attack` (the 52
+in four rows -- China men nearest, then China women, Europe men, Europe women -- each with its race's
+weapon i mod n, 2560x1440), and `live1_*` / `live2_*` (each client's view at each phase).
+
+### 6. Tests
+
+- Server: `model689_test.go` (the tails round-trip; a result built without models is the older
+  payload byte for byte; the flows: own result, OpEntityEntered, the arrival list and a zone change
+  carry the model; a legacy row draws 1909/0x22) and `model689_golden_test.go` (the hand-written
+  golden bytes). `facing_test.go`'s three byte-count assertions now expect the model after the angle.
+- Client: `net/world_test.gd` decodes the same golden file; `world/world_bodies_test.gd` (a Europe id
+  is a Europe body, the legacy fallbacks, the group switch with the fortress weapon, the null-clip
+  fallback, last-wins, sitting through the same lookup, every core action in every Europe group);
+  `character_appearance_test.gd` (one table: World3D keeps no copy).
+- **The negatives** (the new tests against the base bf25e7e on the box):
+
+```
+SCRIPT ERROR: Parse Error: Identifier "WorldBodies" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "BodyAnimations" not declared in the current scope.
+SCRIPT ERROR: Invalid get index 'has_model' (on base: 'RefCounted (EntitySnapshot)').
+FAIL empty entry falls back to default (got "")
+FAIL onehand_sword empty 16 falls back (got "")
+FAIL the last entry of a type wins (got "run1.ban")
+```
+
+  (the last three: world_bodies_test's reader checks, run alone on the base reader). The Go tests
+  name fields the base does not have (a compile failure there). The behavioural before/after is
+  section 1's 21/21 TPOSE and 129 silent clips against 0 and 0.
+- `go build ./... && go vet ./... && go test -count=1 -p 1 ./...`: every package ok; `internal/session` hit the 10-minute default timeout (660 s) in the full run while other lanes' `-race` suites shared the CPU, and passed alone (`go test -count=1 -p 1 -timeout 40m ./internal/session/`: ok, 227 s).
+- `remote_godot.sh check`: ALL LOAD. `remote_godot.sh tests`: 204 suites, 0 failing.
+
+### 7. Performance gate
+
+`client/tools/perf_gate.sh --sites jangan,mobs` (base bf25e7e, head d03631e, 1280x720, median of 3):
+
+```
+jangan  frame ms   base 9.37  head 10.78  (+1.4)  SAME
+jangan  entry ms   base 9588  head 9689  (+101.0)  SAME
+jangan  freeze ms  base 3408  head 3417  (+9.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+mobs    frame ms   base 10.71  head 11.00  (+0.3)  SAME
+mobs    entry ms   base 10487  head 10528  (+41.0)  SAME
+mobs    freeze ms  base 3435  head 3408  (-27.0)  SAME
+mobs    hitches    base 5  head 5  (+0.0)  SAME
+```
+
+The Jangan frame is SAME only by the gate's rule (base run 3, 10.55, was slower than head run 2,
+10.33); the runs were base 9.37 / 9.31 / 10.55 and head 11.49 / 10.33 / 10.78, and head run 1 shared
+the box with another lane's Godot for 32 s. So it was re-measured: the same two copies interleaved three times more at the
+Jangan spawn under this lane's lock, with the frame split (`SRREVAMP_QA_MOBSPLIT=300`):
+
+| run | base ms | head ms |
+|---|---|---|
+| 1 | 10.35 | 9.93 |
+| 2 | 9.65 | 12.58 |
+| 3 | 9.27 | 9.43 |
+| median | 9.65 | 9.93 (+0.28) |
+
+Every split line on both sides draws **1968 objects in 1968 draw calls, 1,564,456 primitives**, with
+idle 0.21-0.29 ms and pose 0.12-0.17 ms a frame -- the same scene and the same per-frame script work.
+Head run 2's 12.58 ms is a run with identical work. The +1.4 ms was run-to-run noise on a box other
+lanes share; no cost was found to fix.
+
+### 8. Still OPEN
+
+- The avatar animation group (CObjCharacter +0x190) and the transport `cart` group.
+- Whether retail draws the merchant-family sit 1.1 below the ground and the Kangsi idle 0.4-1.0 above
+  it (no per-body offset READ; the position -> compound matrix step was not traced).
+- Another player's body is built once, on arrival: a later equipment change is recorded but not
+  redrawn (round 687's OPEN, unchanged).
+- The skill cast clip path (`_play_skill_cast_anim`, China folders) -- euroskill691.
+- Plus glow; the visual record's second resource (BsrName) for weapons (round 683's OPENs).
+
+### Review
+
+The review of dae48d5 found it safe: wire compatibility both ways, the READ confirmed, existing China
+players unchanged, a 50-player spawn burst far cheaper than before (CharacterAppearance's templates),
+the trial merge with rounds 690 and 691 green, and round 691's T-pose after a Europe cast fixed by
+this round. One MEDIUM and three LOWs, fixed in the review commit:
+
+- **MEDIUM, a held run speed dropped back to the body's at entry.** `_apply_player_speed` ran at the
+  first dress (`_player_body` was still ""), after `_replay_held_buffs("world entry")` had applied the
+  server's speed (`BuffRoster.run_speed_of`): a GM under `/speed 2`, or a buffed player, reconnected
+  at 50 and rubber-banded. Now the last speed a server packet set (`_server_run_speed`, set by
+  `_apply_buff_run_speed`) outranks the body row's base. `buff_persist_test.gd` checks that the
+  body's row (run 50) applied after the replay keeps the held 90; on dae48d5 it
+  printed `FAIL world entry: the body's own row (run 50), applied at the first dress, keeps the held
+  /speed 90 (got 50)`.
+- **LOW, Height in the paper doll and the portrait.** Both reset the skeleton's transform to identity.
+  READ: the equipment page's avatar (+0x36c, the one the portrait borrows) is dressed by
+  `FUN_00a619e0`, which ends with `FUN_00a5b960(info +0x30)` -- the scale byte -- called from
+  `IFItemMall::FUN_007c08e0` on `IFMainPopup::FUN_006a1d50`'s page +0x36c and from 0x6abc50 on a +0x36c
+  avatar (INFERRED to be the equipment page's own refresh, from the offset). So both now keep the
+  skeleton's scale, and the portrait reads the scaled head for its camera.
+- **LOW, the encoder's heading.** `EnterWorldResult.Encode` wrote the own wire angle whenever a model
+  followed, even with `HasHeading` false; it now encodes such a result as the same result with
+  `HasHeading` set (from a copy), so the angle written is `Heading` by rule.
+  `TestRound689AModelForcesTheOwnHeading` pins it (the bytes were already the same before: this
+  makes the rule explicit rather than fixing a wrong byte).
+- **LOW:** `SRREVAMP_QA_BODY` applies only with no server connection, as documented; charselect.md's
+  note on `_play_skill_cast_anim` now says the cast-clip path is reconciled in round 691's merge.
+
+**Merged origin/dev a351775** (rounds 690 and 692): World3D.gd merged without a conflict, as the
+review's trial merge found; WORLD_ISSUES by `wi_resolve.py`. After the merge: `remote_godot.sh check`
+ALL LOAD (533 scripts), `tests` 206 suites, 0 failing; `go build ./... && go vet ./... && go test -count=1 -p 1 ./...`
+every package ok (64; `-timeout 40m`, as the 10-minute default had cut `internal/session` off under other lanes' load in the round).
+
 ## Six-hundred-and-eighty-eighth round: the race-select lizard walks in once and stays, "Name Check" sits centred inside its button at every UI scale, and the select screen's darkness is traced to retail's own random hour
 
 The user (2026-10-02, on v0.1.475): "The animated lizard when selecting the race disappears and

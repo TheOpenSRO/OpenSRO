@@ -280,13 +280,18 @@ func set_character(skeleton: Skeleton3D, pose: BanReader.ParsedAnimation) -> voi
 		return
 	if skeleton.get_parent() != null:
 		skeleton.get_parent().remove_child(skeleton)
-	skeleton.transform = Transform3D.IDENTITY
+	# Height stays (round 689's review, READ): the equipment page's avatar this
+	# borrows is dressed by FUN_00a619e0, which ends with FUN_00a5b960 (the
+	# scale byte at the character info's +0x30) -- the world body's uniform
+	# scale, about its feet. The head, read after it, is the scaled head.
+	var height := skeleton.scale
+	skeleton.transform = Transform3D(Basis.from_scale(height), Vector3.ZERO)
 	_mirror.add_child(skeleton)
 	if pose != null:
 		Skeleton3DBuilder.apply_ban_pose_at(skeleton, pose, 0.0, false)
 	else:
 		skeleton.force_update_all_bone_transforms()
-	var head := head_position(skeleton)
+	var head := head_position(skeleton) * height
 	# The avatar's own yaw (after the head is read, as FUN_007b7740 does).
 	skeleton.rotation.y = model_rotation_y()
 	_place_camera(head + Vector3(0.0, TARGET_LIFT, 0.0))

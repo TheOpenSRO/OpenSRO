@@ -304,7 +304,7 @@ func _make_world() -> Node:
 		"\tpass",
 		"func _skill_anisets() -> Dictionary:",
 		"\treturn {}",
-		"func _build_assembled_character(_equipped: Dictionary = {}, _gender: String = \"\") -> Skeleton3D:",
+		"func _build_assembled_character(_equipped: Dictionary = {}, _body: String = \"\", _scale: int = 0x22) -> Skeleton3D:",
 		"\treturn null",
 		""]))
 	_check(sub.reload() == OK and sub.can_instantiate(), "a subclass of World3D.gd compiles")
@@ -377,6 +377,13 @@ func _test_world() -> void:
 
 	_check(is_equal_approx(float(world.get("_move_speed")), 90.0),
 		"world entry: the /speed sent before this scene listened is this player's run speed (got %s)" % str(world.get("_move_speed")))
+	# Round 689's review: the first dress comes after the replay and sets the
+	# body row's base speed -- it must not drop the held /speed back to it.
+	world.set("_speeds_by_code", {"CHAR_CH_MAN_FIGHTER": [16, 50]})
+	if world.has_method("_apply_player_speed"):
+		world.call("_apply_player_speed", "CHAR_CH_MAN_FIGHTER")
+	_check(is_equal_approx(float(world.get("_move_speed")), 90.0),
+		"world entry: the body's own row (run 50), applied at the first dress, keeps the held /speed 90 (got %s)" % str(world.get("_move_speed")))
 
 	# --- 2. A re-sent start keeps the running aura. ----------------------------
 	var before := _made.size()

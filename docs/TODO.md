@@ -1413,6 +1413,22 @@ Mountain), tunnels, Jangan's gate soldiers, Constantinople's guides and the two 
         Constantinople's gate with no stub; no live run with a created Europe character yet.
   - [ ] **The agreement box's art and button labels** are the talk prompts' panel and "OK" /
         "Cancel" (OURS): kind 5's button controls were not read.
+- [x] **The gate's click, and the return point's height** (round 690, `teleport_network.md` "The
+      gate's pick box and the arrival's height (round 690)"). A town gate is clicked through
+      retail's box (BCRadius / BCHeight at the table point, READ). Alexandria North is clickable,
+      and Jangan's click is the stone, not the whole pavilion. A return to the return point and a
+      dead logout's restored entry stand on the walkable graph, as a gate teleport does (Hotan was
+      12.19 under its plaza). Left open:
+  - [ ] **The pick's 3 x 3 ray grid.** `FUN_0078ee20` casts a 3 x 3 grid around the cursor, the
+        step INFERRED to be 1.6 % of the screen; a nearer hit replaces the best, and a centre hit
+        replaces an outer best whatever its distance. srrevamp casts the centre ray only.
+  - [ ] **A ray from inside a gate's box** does not take it (Godot's `hit_from_inside` is off). It
+        is unknown whether retail's triangle test `FUN_00a5b000` hits back faces. A camera inside
+        Alexandria's 140-unit box cannot click that gate until the player steps back.
+  - [ ] **The spawn position of a structure** is INFERRED to be its teleportbuilding row. The
+        server's structure spawn was not read.
+  - [ ] **Retail's arrival height**: the server copies the table's y unchanged (READ). Whether the
+        client or the re-entry snaps it to the navmesh is unread. srrevamp lands on the graph.
 - [ ] **Which objects offer id 8 is stood in for.** Retail registers id 8 ("Select teleport area") on
       a link source's object when a byte of the point's record (`+0x34`, the last
       `RefTeleport_ExtractData` reads, `0x6a7f45`) is 1. The client's teleportdata.txt has no column
