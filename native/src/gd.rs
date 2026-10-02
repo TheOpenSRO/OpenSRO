@@ -19,7 +19,28 @@ use crate::core::{ddj, pk2};
 struct SrNativeExtension;
 
 #[gdextension]
-unsafe impl ExtensionLibrary for SrNativeExtension {}
+unsafe impl ExtensionLibrary for SrNativeExtension {
+    /// Core (round 693's review) for the game: the library is initialised in Main::setup before
+    /// Godot reads the renderer, which is where the Vulkan -> OpenGL fall back has to run
+    /// (vk_fallback.rs). Scene, as before, for the editor and its `--import`: a first import of a
+    /// project whose .godot/ does not list the extension yet loads it after start-up, and at Core
+    /// that run never finished (MEASURED: a fresh `--headless --import --quit` was still running
+    /// after 180 s, and finished with the library at Scene). The classes register at Scene either
+    /// way.
+    fn min_level() -> InitLevel {
+        if crate::vk_fallback::editor_or_import(&std::env::args().collect::<Vec<_>>()) {
+            InitLevel::Scene
+        } else {
+            InitLevel::Core
+        }
+    }
+
+    fn on_stage_init(stage: InitStage) {
+        if stage == InitStage::Core {
+            crate::vk_fallback::run_at_core_init();
+        }
+    }
+}
 
 /// One open pk2 archive (Pk2Reader's native half).
 #[derive(GodotClass)]

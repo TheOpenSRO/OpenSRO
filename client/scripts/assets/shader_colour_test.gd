@@ -118,11 +118,28 @@ func _sky() -> void:
 	var v = m.get_shader_parameter("sky_top_color")
 	_check(v is Vector3 and (v as Vector3).is_equal_approx(Vector3(0.2, 0.4, 0.6)), "a sky colour reaches the shader as a Vector3, as stored (%s)" % str(v))
 	_check(m.get_shader_parameter("decode_out") == (RendererChoice.running() == RendererChoice.FORWARD_PLUS), "decode_out follows the renderer running")
+	_check(is_equal_approx(float(m.get_shader_parameter("sun_energy_scale")), 1.0 / WorldPostEffects.sun_scale()), "the sky's sun keeps the unscaled energy (1 / the Forward+ sun scale)")
 	var code := m.shader.code
 	_check(code.contains("decode_out ? enc(LIGHT0_COLOR)") and code.contains("COLOR = dec(COLOR)"), "the sun's colour is re-encoded and the result decoded under Forward+")
 	var w3d := FileAccess.get_file_as_string("res://scripts/World3D.gd")
 	_check(w3d.contains("GammaSkyMaterial.new()") and not w3d.contains("ProceduralSkyMaterial.new()"), "World3D draws its sky with GammaSkyMaterial")
 	_check(w3d.contains("env.fog_sky_affect = 0.0"), "World3D keeps the fog off the sky, as Compatibility does")
+	# The cloud layer blends as Compatibility does under Forward+ (round 693's
+	# review): fed the sky, the sun and the tone mapper, gamma_blend only
+	# where Forward+ runs.
+	var cloud := ShaderMaterial.new()
+	cloud.shader = load("res://scripts/assets/cloud_dome.gdshader")
+	var sun := DirectionalLight3D.new()
+	var env := Environment.new()
+	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	m.feed_clouds(cloud, sun, env)
+	_check(cloud.get_shader_parameter("gamma_blend") == (RendererChoice.running() == RendererChoice.FORWARD_PLUS), "the cloud layer's gamma blend follows the renderer running")
+	_check((cloud.get_shader_parameter("sky_top") as Vector3).is_equal_approx(Vector3(0.2, 0.4, 0.6)) and bool(cloud.get_shader_parameter("tm_filmic")),
+		"the cloud layer gets the sky's colours and the tone mapper")
+	sun.free()
+	var cd := FileAccess.get_file_as_string("res://scripts/assets/cloud_dome.gdshader")
+	_check(cd.contains("ALBEDO = untonemap(dec3(mix(sky_out, cloud_out") and cd.contains("ALPHA = 1.0;"), "the cloud layer draws Compatibility's display-value blend, opaque, under Forward+")
+	_check(w3d.contains("_sky_material.feed_clouds(_sky_dome_material"), "World3D feeds the cloud layer")
 
 func _vertex_colour_materials() -> void:
 	for blend in [false, true]:

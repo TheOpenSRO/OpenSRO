@@ -17,20 +17,33 @@ class_name RendererChoice
 ## things write it as well, at boot (`apply_at_boot`, exported builds only):
 ## - `setting/config.yaml`'s `display.renderer` (`forward_plus` or
 ##   `compatibility`), when the file sets it: a private server or a player
-##   picks the renderer there, and the file wins at every start (OURS).
-## - a start on the command line's `--rendering-driver opengl3` (the
-##   Compatibility launcher in the release zip, `srrevamp-compatibility.bat`
-##   / `.sh`) with no choice recorded yet: the choice is written, so a plain
-##   start, and the auto-updater's relaunch (which passes no arguments), stay
-##   on Compatibility (OURS).
+##   picks the renderer there, and the file wins at every start (OURS). It
+##   cannot rescue a machine without Vulkan on its own: Boot never runs there
+##   unless the start already fell back (below).
+## - a start that is RUNNING Compatibility while nothing is recorded and the
+##   project's default is Forward+ (OURS): it got there through the native
+##   Vulkan fallback, the Compatibility launcher (`srrevamp-compatibility.bat`
+##   / `.sh`, `--rendering-driver opengl3`) or a hand-typed flag, and the
+##   choice is written so that plain starts, and the auto-updater's relaunch
+##   (which passes no arguments), start on Compatibility directly. The
+##   command line cannot tell: Godot 4.2.2's Main::setup consumes
+##   `--rendering-driver` / `--rendering-method` (main/main.cpp 1020-1035),
+##   so OS.get_cmdline_args() never holds them -- the round-693 review
+##   MEASURED this, and the first cut, which looked there, never wrote the
+##   file. The renderer RUNNING is what decides (running()).
 ##
-## Why the second: Godot 4.2.2 has NO automatic fall back from Vulkan to
-## OpenGL (READ, platform/windows/display_server_windows.cpp,
+## Why: Godot 4.2.2 has NO automatic fall back from Vulkan to OpenGL (READ,
+## platform/windows/display_server_windows.cpp,
 ## DisplayServerWindows::create_func: a failed Vulkan start shows "Unable to
 ## initialize Vulkan video driver" -- naming `--rendering-driver opengl3` --
 ## and the engine exits; main/main.cpp has no `fallback_to_opengl3`, which
-## arrived in Godot 4.3). No script of ours runs on such a machine, so the
-## launcher is its way in, once.
+## arrived in Godot 4.3). The native library supplies one (native/src/
+## vk_fallback.rs, round 693's review): at its Core initialisation, before
+## Main reads the renderer, it asks the system's Vulkan loader for an
+## instance and a physical device, and if there is none it starts the game
+## again with `--rendering-driver opengl3` (SRREVAMP_VK_PROBE carries what it
+## found, and Boot logs it). Without the library (a player who deleted the
+## DLL) there is no automatic fall back: the launcher is the way in.
 ##
 ## A source run (the editor binary, the render box) reads `override.cfg` from
 ## the project folder instead, so nothing here writes outside an exported
@@ -114,28 +127,15 @@ static func choose(method: String, path: String = "") -> Error:
 	f.close()
 	return OK
 
-## Whether the command line asked for the Compatibility renderer.
-static func cmdline_asks_compatibility(args: PackedStringArray) -> bool:
-	for i in args.size():
-		var a := args[i]
-		var v := ""
-		if a in ["--rendering-driver", "--rendering-method"] and i + 1 < args.size():
-			v = args[i + 1]
-		elif a.begins_with("--rendering-driver=") or a.begins_with("--rendering-method="):
-			v = a.get_slice("=", 1)
-		if v.begins_with("opengl3") or v == COMPATIBILITY:
-			return true
-	return false
-
 ## What boot should record, given config.yaml's word ("" when unset), the
-## command line, and the current choice: the method to write, or "" for
-## nothing. Pure, so the tests can walk every case.
-static func boot_decision(config_word: String, args: PackedStringArray, current: String) -> String:
+## renderer running (running()) and the current choice: the method to write,
+## or "" for nothing. Pure, so the tests can walk every case.
+static func boot_decision(config_word: String, running_now: String, current: String) -> String:
 	var want := normalise(config_word)
 	if want != "":
 		var effective := current if current != "" else PROJECT_DEFAULT
 		return want if want != effective else ""
-	if current == "" and cmdline_asks_compatibility(args):
+	if current == "" and running_now == COMPATIBILITY and PROJECT_DEFAULT == FORWARD_PLUS:
 		return COMPATIBILITY
 	return ""
 
@@ -148,14 +148,23 @@ static func apply_at_boot(config_word: String) -> String:
 	var current := chosen(path) if here else ""
 	var line := "RENDERER: running=%s adapter=\"%s\" api=\"%s\" project_default=%s" % [
 		running(), RenderingServer.get_video_adapter_name(), RenderingServer.get_video_adapter_api_version(), PROJECT_DEFAULT]
+	# What the native library's Vulkan probe found (vk_fallback.rs): "ok ..."
+	# or "fallback to OpenGL: <why>"; unset without the library.
+	var probe := OS.get_environment("SRREVAMP_VK_PROBE")
+	line += " vulkan_probe=\"%s\"" % (probe if probe != "" else "(none: no native library, or a named renderer)")
 	if not here:
 		line += " override=(not read by a source run)"
 		print(line)
 		return line
 	line += " override=%s chosen=%s" % [path, current if current != "" else "(none)"]
-	var write := boot_decision(config_word, OS.get_cmdline_args(), current)
+	var write := boot_decision(config_word, running(), current)
 	if write != "":
 		var err := choose(write, path)
-		line += " -> recorded %s for the next start (%s)" % [write, "ok" if err == OK else "error %d" % err]
+		if err == OK:
+			line += " -> recorded %s for the next start" % write
+		else:
+			# A folder the game cannot write (Program Files): the choice is not
+			# kept, and the next plain start asks the native fall back again.
+			line += " -> could NOT record %s in %s (error %d: is the game's folder writable?); the next start decides again" % [write, path, err]
 	print(line)
 	return line

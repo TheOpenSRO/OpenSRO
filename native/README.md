@@ -28,6 +28,42 @@ before.
   up by string through `ClassDB`, so every script compiles without the library.
   `client/srrevamp_native.gdextension` names the library files.
 
+## The Vulkan -> OpenGL fall back (round 693's review)
+
+`src/vk_fallback.rs`, run from `gd.rs`'s `on_stage_init(Core)`. It is not a reader and not a
+binding: no class, no `#[func]`, so `core::API` is unchanged.
+
+- **The problem.** Forward+ is the client's default. Godot 4.2.2 has no fall back of its own: a
+  machine without Vulkan gets "Unable to initialize Vulkan video driver" and the game exits (READ,
+  display_server_windows.cpp; `fallback_to_opengl3` is 4.3).
+- **Why at Core.** The library is loaded at Core level for the game: `min_level` is Core unless the
+  command line holds `--editor` / `-e` / `--import` / `--project-manager` / `--export*`. Godot
+  initialises Core in `register_core_extensions` (main.cpp 1647), before it reads the renderer
+  (main.cpp 1966). No Godot API is usable there on 4.2.
+- **What it does.** It opens the system's Vulkan loader at run time (`libvulkan.so.1` /
+  `vulkan-1.dll`) and creates an instance with `VK_KHR_surface` plus the platform surface
+  extension. It then counts the physical devices. If any step fails, it starts the game again with
+  `--rendering-driver opengl3`, put before any `--`, and ends this process: `exec` on Linux,
+  spawn + `TerminateProcess` on Windows.
+- **The record.** `SRREVAMP_VK_PROBE` carries the result (`ok N device(s) in X ms` /
+  `fallback to OpenGL: <why> (X ms)`). Boot logs it, and `RendererChoice` records the Compatibility
+  start in `override.cfg`.
+- **When it does nothing:** a renderer, driver or display driver on the command line, `--headless`,
+  the editor or an export, a set `SRREVAMP_VK_PROBE` (the restarted child), or an `override.cfg`
+  beside the executable that already chooses `gl_compatibility`.
+- **Why the editor and imports stay at Scene.** A first `--headless --import --quit` of a project
+  whose `.godot/` does not list the extension yet never finished with the library at Core.
+  MEASURED: still running after 180 s; 15 s at Scene.
+- **MEASURED on the box (Linux, editor binary, windowed):**
+  - a plain start finds 2 devices in 28 ms and runs Forward+;
+  - with `VK_ICD_FILENAMES=/dev/null` it restarts and runs Compatibility (the probe takes 0.3 ms);
+  - without the library the same start stops at "Could not initialize Vulkan".
+  - `client/tools/renderer_fallback_box_test.sh` is the end-to-end check.
+- **NOT RUN: the Windows path.** It is compiled and checked by `check_native_library.sh`, but no
+  Windows machine has run it.
+- **Without the library** there is no automatic fall back. The release zips carry the Compatibility
+  launcher for that case.
+
 ## The model readers (round 669)
 
 `SrNativeModels` has `bms_parse`, `bms_wound_indices`, `bms_skin_arrays`, `ban_parse` and

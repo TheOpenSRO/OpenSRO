@@ -50,6 +50,14 @@ func _initialize() -> void:
 	_check(ready_at >= 0 and apply_at > ready_at and apply_at < title_at,
 		"World3D._ready applies WorldPostEffects before the title branch")
 
+	# The sun under Forward+ (the user's "Raise it to match"): scaled only
+	# where Forward+ runs; this headless run is neither, so the factor is 1 --
+	# Compatibility's look is never touched.
+	_check(WorldPostEffects.FORWARD_PLUS_SUN_SCALE > 1.0, "Forward+ raises the sun (x%.2f)" % WorldPostEffects.FORWARD_PLUS_SUN_SCALE)
+	_check(is_equal_approx(WorldPostEffects.sun_scale(), 1.0), "the factor is 1 where Forward+ is not running (got %.2f)" % WorldPostEffects.sun_scale())
+	var sun_at := src.find("directional_light.light_energy *= WorldPostEffects.sun_scale()", ready_at)
+	_check(sun_at > ready_at and sun_at < title_at, "World3D._ready scales the sun before the title branch (the title and select backdrops too)")
+
 	if _failures == 0:
 		print("ALL PASS")
 	else:

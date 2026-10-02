@@ -1523,6 +1523,9 @@ func _ready() -> void:
 	# its own choice (WorldPostEffects). Before the title branch: the title's
 	# backdrop is this scene too.
 	WorldPostEffects.apply(world_environment.environment)
+	# The sun's energy under Forward+, matched to Compatibility's look (round
+	# 693, WorldPostEffects.sun_scale; 1.0 under Compatibility).
+	directional_light.light_energy *= WorldPostEffects.sun_scale()
 	# The front-end's 3D backdrop (round 678, FrontEndBackdrop): none of an
 	# entry's work -- no player, HUD, server or loading screen.
 	if title_mode:
@@ -4049,7 +4052,13 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# The real model's inscattering is strongest looking toward the sun (the
 	# Henyey-Greenstein phase term in the real vertex shader), which is exactly
 	# what Godot's fog_sun_scatter approximates.
-	env.fog_sun_scatter = FOG_SUN_SCATTER
+	# Divided by the Forward+ sun scale (round 693): both renderers scale the
+	# fog's sun scatter by the light's energy (READ, gles3 scene.glsl 1183 /
+	# scene_forward_clustered.glsl 833), and the raised Forward+ sun is there
+	# to match the shadow pass, not to brighten the haze (READ; no change
+	# MEASURED at the shots taken, where the sky's sun was what had brightened
+	# -- GammaSkyMaterial's sun_energy_scale).
+	env.fog_sun_scatter = FOG_SUN_SCATTER / WorldPostEffects.sun_scale()
 	env.fog_aerial_perspective = FOG_AERIAL_PERSPECTIVE
 	# The sky is not fogged (round 693): Compatibility's sky shader never
 	# mixes the environment fog in (READ, drivers/gles3/shaders/sky.glsl,
@@ -4063,6 +4072,12 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# is taken from real data.
 	if _sun_glow != null:
 		_sun_glow.modulate = Color(sun_color.r, sun_color.g, sun_color.b, _sun_glow.modulate.a)
+
+	# The cloud layer's Compatibility-style blend under Forward+ (round 693's
+	# review; GammaSkyMaterial.feed_clouds), fed after the sky, the sun and
+	# the light are set.
+	if _sky_material != null:
+		_sky_material.feed_clouds(_sky_dome_material, directional_light, world_environment.environment)
 
 	print("World3D: applied real environment.ifo lighting (%s, EnvironmentID=%d) -- sky_top=%s sky_bottom=%s sun_disc=%s light_diffuse=%s ambient=%s fog=%s (channel 9 %s)" % [record.name1, env_id, top, bottom, sun_color, diffuse_color, ambient_color, fog_color, fog_channel])
 

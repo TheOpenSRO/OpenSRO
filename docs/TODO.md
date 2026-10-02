@@ -892,23 +892,24 @@ the following:
   itself (READ).
 
 **Still open:**
-- [ ] **Blending space.** Forward+ blends half-transparent surfaces in linear space; retail (D3D9)
-      and Compatibility blend in display values. MEASURED (`client/tools/measure_blend_space.gd`): up
-      to 13 levels at a 50 % terrain-overlay feather, 21 for water's 200/255 over sand, 9-12 for
-      additive glow. Not fixable per material without the destination colour. The options are a
-      second pass, or accepting it (the user's call).
-- [ ] **A machine without Vulkan** gets Godot's "Unable to initialize Vulkan video driver" alert
-      and then needs the Compatibility launcher once. An automatic fall back needs Godot 4.3's
-      `rendering_device/fallback_to_opengl3` (an engine upgrade). Whether the official 4.2.2 Windows
-      templates link ANGLE (for a GPU without GL 3.3) is unverified.
+- [ ] **Blending space.** Forward+ blends half-transparent surfaces in linear space; retail (D3D9) and
+      Compatibility blend in display values. MEASURED (`client/tools/measure_blend_space.gd`): up to
+      13 levels at a 50 % terrain-overlay feather, 21 for water's 200/255 over sand, 9-12 for
+      additive glow. The cloud layer is done (round 693's review: it computes Compatibility's blend
+      against the analytic sky). The others cannot be fixed per material without the colour
+      underneath. The options are a second pass, or accepting it (the user's call).
+- [ ] **A machine without Vulkan:** the native library restarts the game on OpenGL by itself
+      (round 693's review, native/src/vk_fallback.rs), MEASURED on Linux. **Not run on Windows**
+      (spawn + TerminateProcess): the first tester report from a Vulkan-less Windows PC is the check.
+      Without the library there is no fall back, only the launcher. Whether the official 4.2.2
+      Windows templates link ANGLE (for a GPU without GL 3.3) is unverified.
 - [ ] **The low-end hardware test** (the user's). On the box's RX 7600 Forward+ draws the Jangan spawn in
       2.97 ms against Compatibility's 8.75, and the 500-monster view in 3.29 against 10.09. Entry and
       freezes are the same (round 693's perf gate). A low-end or integrated GPU is not measured.
-- [ ] **Compatibility's shadowed sun was brighter.** GLES3 draws a shadow-casting directional light
-      in a separate additive pass and adds it in display values. MEASURED: a lit quad reads
-      (225,176,127) with shadows against (159,128,95) without; Forward+ reads (158,128,95) either
-      way. So lit objects look about 10-15 luma darker under Forward+ than in every shot since round
-      581. Retune the sun's 0.3 (OURS) for Forward+, or keep it: the user's call.
+- [x] ~~**Compatibility's shadowed sun was brighter.**~~ GLES3 adds a shadow-casting sun in a separate
+      pass in display values. **Decided by the user 2026-10-02, "Raise it to match":** under
+      Forward+ the sun is x4.0 (`WorldPostEffects.FORWARD_PLUS_SUN_SCALE`, OURS, calibrated by
+      measurement in round 693). Lit areas are now within -2.4 to +1.6 luma of Compatibility.
 - [x] **The Options window** shows the renderer and the SSAO and glow toggles -- round 694 (the
       renderer row writes `override.cfg` in an exported build only).
 - [ ] **Retail's Bloom effect's look** (round 694 READ its default: ON in Middle, the default; it

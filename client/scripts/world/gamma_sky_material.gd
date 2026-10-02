@@ -42,6 +42,9 @@ uniform float ground_curve = 0.02;
 uniform float sun_angle_max = 0.523599;
 uniform float sun_curve = 0.15;
 uniform bool decode_out = false;
+// 1 / WorldPostEffects.sun_scale(): the sky's sun disc and halo keep the
+// unscaled sun's energy (round 693).
+uniform float sun_energy_scale = 1.0;
 
 vec3 enc(vec3 c) {
 	c = max(c, vec3(0.0));
@@ -57,7 +60,7 @@ void sky() {
 	float c = (1.0 - v_angle / (PI * 0.5));
 	vec3 sky = mix(sky_horizon_color, sky_top_color, clamp(1.0 - pow(1.0 - c, 1.0 / sky_curve), 0.0, 1.0));
 	if (LIGHT0_ENABLED) {
-		vec3 lc = decode_out ? enc(LIGHT0_COLOR) : LIGHT0_COLOR;
+		vec3 lc = (decode_out ? enc(LIGHT0_COLOR) : LIGHT0_COLOR) * sun_energy_scale;
 		float sun_angle = acos(dot(LIGHT0_DIRECTION, EYEDIR));
 		if (sun_angle < LIGHT0_SIZE) {
 			sky = lc * LIGHT0_ENERGY;
@@ -100,3 +103,36 @@ func _init() -> void:
 		_shader.code = SHADER_CODE
 	shader = _shader
 	set_shader_parameter("decode_out", RendererChoice.running() == RendererChoice.FORWARD_PLUS)
+	# The Forward+ sun is raised to match Compatibility's shadow pass
+	# (WorldPostEffects.sun_scale); the sky's disc and halo are not part of
+	# that, and stay at the unscaled energy (MEASURED: at x4 without this the
+	# ferry river shot's top band went from 17 % to 33 % white).
+	set_shader_parameter("sun_energy_scale", 1.0 / WorldPostEffects.sun_scale())
+
+## The cloud layer's blend under Forward+ (round 693's review; cloud_dome.gdshader's
+## `gamma_blend`): the layer gets this sky's colours, the sun the sky draws
+## (its direction, colour and the unscaled energy) and the tone mapper, and
+## computes Compatibility's display-value blend against them itself.
+## Compatibility blends as it always did (gamma_blend off).
+func feed_clouds(cloud: ShaderMaterial, sun: DirectionalLight3D, env: Environment) -> void:
+	if cloud == null:
+		return
+	var on := RendererChoice.running() == RendererChoice.FORWARD_PLUS
+	cloud.set_shader_parameter("gamma_blend", on)
+	cloud.set_shader_parameter("sky_top", Vector3(sky_top_color.r, sky_top_color.g, sky_top_color.b))
+	cloud.set_shader_parameter("sky_horizon", Vector3(sky_horizon_color.r, sky_horizon_color.g, sky_horizon_color.b))
+	cloud.set_shader_parameter("ground_bottom", Vector3(ground_bottom_color.r, ground_bottom_color.g, ground_bottom_color.b))
+	cloud.set_shader_parameter("ground_horizon", Vector3(ground_horizon_color.r, ground_horizon_color.g, ground_horizon_color.b))
+	if sun != null and sun.visible:
+		var d := (sun.global_transform if sun.is_inside_tree() else sun.transform).basis.z.normalized()
+		cloud.set_shader_parameter("sun_dir", d)
+		cloud.set_shader_parameter("sun_color", Vector3(sun.light_color.r, sun.light_color.g, sun.light_color.b))
+		# The sky's sun keeps the unscaled energy (sun_energy_scale).
+		cloud.set_shader_parameter("sun_energy", sun.light_energy * float(get_shader_parameter("sun_energy_scale")))
+		cloud.set_shader_parameter("sun_size", deg_to_rad(sun.light_angular_distance))
+	else:
+		cloud.set_shader_parameter("sun_energy", 0.0)
+	if env != null:
+		cloud.set_shader_parameter("tm_exposure", env.tonemap_exposure)
+		cloud.set_shader_parameter("tm_white", env.tonemap_white)
+		cloud.set_shader_parameter("tm_filmic", env.tonemap_mode == Environment.TONE_MAPPER_FILMIC)

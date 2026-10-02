@@ -7319,7 +7319,9 @@ source, sro_client.exe's dump), MEASURED (the render box, RX 7600, real archives
     every start;
   - by a start with `--rendering-driver opengl3` when no choice is recorded yet, so plain starts
     and the updater's argument-less relaunch stay on Compatibility. The release zips now carry
-    `srrevamp-compatibility.bat` / `.sh` for that first start.
+    `srrevamp-compatibility.bat` / `.sh` for that first start. **Corrected by the review below:**
+    that cut looked for the flag in `OS.get_cmdline_args()`, which never holds it, and never wrote
+    the file. It now decides from the renderer running.
   - Boot prints `RENDERER: running=... adapter=... override=... chosen=...`.
   - **MEASURED end to end:** a project with the file RendererChoice wrote, and no renderer flag,
     starts `OpenGL API ... - Compatibility`. Choosing forward_plus deletes the file, and the next
@@ -7534,6 +7536,178 @@ shared the box with other lanes.
   the official 4.2.2 Windows templates link ANGLE is unverified.
 - **Retail's Bloom effect** default and look; glow's parameters are still the 2026-08-26 guess.
 - **The low-end hardware test** (the user's).
+
+### 6. The sun under Forward+, raised to match (the user, 2026-10-02: "Raise it to match")
+
+Section 4's shadow-pass finding went to the user, who chose to raise the Forward+ sun so sunlit
+areas look as they did under Compatibility.
+
+**The change:**
+- `WorldPostEffects.sun_scale()` is `FORWARD_PLUS_SUN_SCALE` = **4.0** under Forward+ and 1.0
+  otherwise. **OURS: chosen by measurement to match the Compatibility look, per the user; not a
+  value of the original client.**
+- World3D multiplies the sun's 0.3 by it at the top of `_ready`, so it is 1.2 under Forward+. The
+  title and select backdrops are World3D too.
+- Two terms that scale with the light's energy in both renderers keep the unscaled sun:
+  - the fog's sun scatter (READ, gles3 scene.glsl 1183 / scene_forward_clustered.glsl 833), now
+    `FOG_SUN_SCATTER / sun_scale()`;
+  - the sky's sun disc and halo (GammaSkyMaterial's `sun_energy_scale`).
+  Neither moved any measured shot; they are kept so the factor reaches only the lit surfaces.
+- `SRREVAMP_QA_SUN_SCALE` overrides the factor under Forward+ (QA only).
+- **Compatibility is untouched:** its factor is 1, and `world_post_effects_test` checks it.
+
+**Calibration (MEASURED, frame_ab.py):** Jangan (no fog) and the Dunhuang reeds against the
+Compatibility frames. Each cell is the lower band's luma, Forward+ minus GL:
+
+| Scale | Jangan spawn | Jangan sky shot | Jangan overview | Reeds | Reeds 2 | Grass (unshaded) |
+|---|---|---|---|---|---|---|
+| 1 (before) | -14.8 | -11.4 | -11.0 | -6.2 | -9.4 | -2.4 |
+| 1.5 | -12.0 | -9.2 | -9.4 | -4.8 | -7.3 | -2.3 |
+| 2 | -9.2 | -7.1 | -7.9 | -3.4 | -5.3 | -2.3 |
+| 2.5 | -6.6 | -5.2 | -6.5 | -2.0 | -3.4 | -2.2 |
+| 3 | -4.2 | -3.3 | -5.0 | -0.8 | -1.7 | -2.1 |
+| 3.5 | -1.8 | -1.6 | -3.7 | +0.4 | 0.0 | -2.1 |
+| **4 (chosen)** | **+0.5** | **+0.1** | **-2.4** | **+1.5** | **+1.6** | -2.0 |
+
+- At 4 the mean absolute lit-area difference is 1.2 levels, against 1.5 at 3.5.
+- There is no blow-out at any scale: the 95th luma percentile at x4 is 91 / 192 / 85 / 186 / 184,
+  against GL's 90 / 192 / 85 / 186 / 184, and no lit band has white pixels.
+- The terrain is unshaded (baked light), so the sun does not reach it: its -2 is the overlays'
+  blending.
+- The lit quad of measure_lit_space.gd (ambient 0.7, sun 45 degrees off) reads (204,173,135) at x4,
+  against GL's (225,176,127) and Forward+ x1's (158,128,95). It is a single flat test, so it does
+  not set the value.
+
+**After, the final build (Forward+ x4 against Compatibility):**
+
+| View | Before (x1) | After (x4) |
+|---|---|---|
+| Jangan spawn, whole / lower band (fog on) | -11.3 / -15.4 | **+0.1 / -0.6** |
+| Jangan overview, whole | -10.5 | **-4.0** |
+| Jangan grass, whole | -3.4 | -2.8 |
+| Jangan sky shot, top band (the cloud layer, blending) | +16.1 | +16.4 (unchanged: not the sun) |
+| Ferry dock / river / up, whole | -0.4 / -0.9 / -2.4 | -0.3 / +0.8 / -0.4 |
+| Reeds / reeds2, whole | -7.1 / -6.4 | **+0.3 / +2.3** |
+| Login title at 120 / 300 / 600 / 899, lower half | -5.9 / -8.6 / -7.4 / -8.7 | **-3.2 / -3.4 / -4.1 / -4.9** |
+| Create, China / Europe | -4.5 / -2.6 | **-0.5 / -1.2** |
+| Select screen at 14:00 / 23:00, whole | -2.3 / -1.0 | **-1.1 / +0.3** |
+| Select backdrop luma at 14:00 / 23:00 (GL 141.1 / 107.4) | 137.6 / 106.9 | **139.3 / 108.7** |
+
+**The characters did not move.**
+- PlayerPortrait's formula does not use the scene's sun: select bodies Bram / Aria read 89.0 / 137.2
+  at 14:00 and 57.9 / 89.2 at 23:00, the same as before the change.
+- Portrait shots are unchanged: calibration 160, man mean 0.207, woman 0.169, identical before and
+  after.
+
+Remaining:
+- The ferry's top band has more pixels at or above 230 under Forward+: 33 % against 17 % on the
+  river shot, but its mean is only +2.7. It was 13-14 % before GammaSkyMaterial, at the sun's x1. Neither the
+  sun scale nor the two compensations moved it (0.333 / 0.334 / 0.334), so it is a bright sky
+  sitting around the threshold, not a blow-out.
+- The cloud layer's +16 is section 4's blending space.
+
+A sun energy costs nothing to draw; a confirmation gate run is below.
+
+### 7. The perf gate's start-up samples (found by round 694's review)
+
+Each run's first once-a-second sample carries the first cell's build (8-1000 ms), and samples 2-5
+are still raised: 8 / 16 / 12 / 9.8 ms under GL, 55 / 3.35 / 5.05 / 4.06 under Forward+. A
+3,000-frame GL run gives about 27 samples, so its "last 30" took the start-up in and could read
+SLOWER. `perf_gate.sh` now drops the first 5 samples (`tail -n +6 | tail -30`). A Forward+ gate
+still needs `--frames 12000` (client/tools/README.md). Section 5's table used 12,000 frames, where
+the last 30 of 40+ samples already skipped the start-up, so it stands.
+
+**Confirmation (MEASURED):** `perf_gate.sh --ab-renderer gl_compatibility --sites jangan --runs 2
+--frames 12000` with the first 5 samples dropped and the Forward+ sun at x4. Frame: Compatibility
+8.78 (8.77 / 8.79) against Forward+ **2.94** (2.94 / 2.94), FASTER. Entry 9631 against 9424, freeze
+3395 against 3428, hitches 5 against 4.5: SAME. These are section 5's numbers, so the raised sun
+costs nothing.
+
+### Review (round 693's review: two HIGHs, two MEDIUMs, three LOWs)
+
+**HIGH 1: the Compatibility launcher's choice was never saved.**
+- Godot 4.2.2's `Main::setup` consumes `--rendering-driver` / `--rendering-method` (main.cpp
+  1020-1035), so `OS.get_cmdline_args()` never holds them. The reviewer MEASURED `ASKS=false`,
+  nothing recorded.
+- **Fixed:** `RendererChoice.boot_decision(config_word, running, current)` records Compatibility
+  when the start is RUNNING it, nothing is recorded, and the project default is Forward+. Headless
+  ("none (headless)") writes nothing.
+- When the folder cannot be written (Program Files), the RENDERER line now says so in plain words,
+  and the README says to install in a folder you own.
+- **Windowed box test** (new `client/tools/renderer_fallback_box_test.sh`: real starts of the game's
+  own main scene on xwl_run.sh, `SRREVAMP_OVERRIDE_CFG` set). This tree: ALL PASS.
+- **NEGATIVE** (c18419dc's client with the same library):
+  - `FAIL 1. ... and records it for the next start ()`
+  - `FAIL 3. ... the native probe says why ()`
+  - `FAIL 3. ... and records Compatibility`
+
+**HIGH 2: the auto-update moved every player to Vulkan with no fall back.**
+- Godot 4.2.2 has none of its own. The native library now supplies one (native/src/vk_fallback.rs;
+  native/README.md, "The Vulkan -> OpenGL fall back").
+- It is loaded at Core for the game, so it runs in `register_core_extensions` (main.cpp 1647),
+  before the renderer is read (1966). No Godot API is usable there on 4.2: ProjectSettings and
+  Engine register in setup2. So rather than set the renderer, it:
+  - asks the system's Vulkan loader (opened at run time) for an instance with the surface
+    extensions and a physical device;
+  - on failure, starts the game again with `--rendering-driver opengl3` (before any `--`) and ends
+    this start (exec on Linux; spawn + TerminateProcess on Windows).
+  - `SRREVAMP_VK_PROBE` carries the result: Boot logs it, and RendererChoice records the
+    Compatibility start.
+- **MEASURED on the box** (the editor binary running the project windowed, plain start, no
+  renderer flag):
+
+| Start | Renderer | Probe |
+|---|---|---|
+| Vulkan present | Forward+ (RADV) | `ok 2 device(s) in 28.0 ms` |
+| `VK_ICD_FILENAMES=/dev/null` (no driver) | **Compatibility, no alert** | `fallback to OpenGL: vkCreateInstance failed (-9) (0.3 ms)` |
+| the same, without the library | none: "Could not initialize Vulkan", then the alert blocks until killed | -- |
+
+- **A trap found on the way, MEASURED:** at Core the library made a first `--headless --import
+  --quit` (a fresh `.godot/`) hang. It was still running after 180 s, against 15 s with the library
+  at Scene. CI imports exactly that way. `min_level` is now Core only when the command line has no
+  `--editor` / `-e` / `--import` / `--project-manager` / `--export*`, and the fresh import finishes
+  in 15 s.
+- **Checks:** `cargo test` 43 passed (5 new for the fall back's rules and arguments).
+  `native_parity.gd`: PARITY PASS. `check_native_library.sh` on the new DLL: stands alone (kernel32
+  imports only).
+- No binding changed, so `core::API` stays 5.
+- **NOT RUN:** the Windows restart (spawn + TerminateProcess). It is compiled, but no Windows
+  machine has run it. The startup cost there is not measured either; on the box it is 28 ms.
+- **The shipped README** (copied into both zips) said "OpenGL 3.3". It now describes Forward+, the
+  automatic fall back, the launcher, `display.renderer`, `override.cfg`, a non-writable folder, and
+  what happens without the library.
+
+**MEDIUM 3: the clouds.**
+- Under Forward+ the cloud layer blended into the sky in linear space.
+- **Fixed:** the sky behind it is analytic, so `cloud_dome.gdshader` (fed by
+  `GammaSkyMaterial.feed_clouds`: the sky's colours, the sun it draws, the tone mapper) computes
+  Compatibility's own result: both colours tone-mapped and encoded, mixed in display values, and
+  the inverse of that, drawn opaque. Only under Forward+; Compatibility blends as before.
+- **MEASURED** (Jangan sky shot, fog on, top band, Forward+ minus GL): **+16.4 luma (77 % of pixels
+  off by more than 32) -> -0.55 (0.6 %)**. The whole frame went from +5.6 to -1.1.
+
+**MEDIUM 4: `display.renderer` cannot rescue a machine without Vulkan.** True on its own (Boot never
+runs there). It is now said in ClientConfig's and RendererChoice's headers and in the README, and HIGH 2's
+fall back makes it moot whenever the library is there.
+
+**LOW 5: Program Files.** See HIGH 1: the log line and the README.
+
+**LOW 6: xwl_run.sh** now clears its own user's `/var/tmp/xwl-run.*` older than 120 minutes before
+it starts. A SIGKILLed run can leave one behind.
+
+**LOW 7: the paper doll** (the equipment window, signed in, `--panels equipment`, the window at
+(446,156) 388x408, frame 359, MEASURED): the window's pixels differ by more than 8 in 0.1 % between
+the renderers, and by more than 32 in none. Its luma percentiles are 0 / 16 / 155 under both.
+NOT ESTABLISHED: that the doll's body was drawn in this QA start. The window holds 10,169 / 10,132
+strongly coloured pixels, but the frame art counts too.
+
+**After the review, MEASURED:**
+- `remote_godot.sh check`: ALL LOAD (544 scripts, 9 scenes). `tests`: ran 210 suite(s), 0 failing,
+  with the library present.
+- Perf gate: `--ab-renderer gl_compatibility --sites jangan --frames 12000`, 3 runs: frame
+  Compatibility 8.64 against Forward+ **2.94** (FASTER); entry 9578 against 9382, freeze 3371
+  against 3419, hitches 5 against 4 (SAME). The gate ships no library, so the fall back's probe is
+  not in these numbers; it costs 28 ms once at start-up on the box.
 
 ## Six-hundred-and-ninety-second round: a new character starts with its race's own masteries, basic skills and first quests, as the shard's `_AddNewChar` gives them -- and the shard's own list of creatable ids is exactly the 104 the rule picks
 
