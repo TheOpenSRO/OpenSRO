@@ -526,6 +526,7 @@ func _init() -> void:
 		_check(broken_obj.skeleton_path == "", "fallback: no skeleton path invented (got %s)" % broken_obj.skeleton_path)
 
 	_test_round_625()
+	_test_attachable()
 
 	if _failures == 0:
 		print("ALL PASS")
@@ -608,3 +609,88 @@ func _test_round_625_mods() -> void:
 	_check(two != null and two.two_pass() and two.sub_mesh_paths.size() == 1,
 		"r625 review: header flag 0x2 is two passes, and without bit 0 the meshes abut")
 
+
+## Appends the sound section's second (empty) list when the builder wrote
+## only the first, then the attachable block: word0, kind, flag, n pairs --
+## and `tail` more words (a body's combo word, or an odd file's leftovers).
+func _with_attachable(buf: PackedByteArray, word0: int, kind: int, flag: int, pairs: Array, tail: Array) -> PackedByteArray:
+	var out := buf.duplicate()
+	var w := PackedByteArray()
+	w.resize(4)
+	_put_u32(w, 0, 0)
+	out.append_array(w)
+	for v in [word0, kind, flag, pairs.size()]:
+		_put_u32(w, 0, v)
+		out.append_array(w)
+	for p in pairs:
+		_put_u32(w, 0, p[0])
+		out.append_array(w)
+		_put_u32(w, 0, p[1])
+		out.append_array(w)
+	for v in tail:
+		_put_u32(w, 0, v)
+		out.append_array(w)
+	return out
+
+## Round 687: the attachable block (BsrReader.Attachable), READ from
+## CResAttachable::vslot_007 (0x00be4b90): three words, a count, that many
+## {key, value} pairs, after the mod section. On synthetic bytes only.
+func _test_attachable() -> void:
+	# A body: keys -> its own mesh indices, out of order, then the combo word.
+	var body_bytes := _with_attachable(_build_synthetic_character("body_synth",
+		["prim\\mtrl\\body.bmt"],
+		["prim\\mesh\\body_face.bms", "prim\\mesh\\body_hair.bms", "prim\\mesh\\body_thigh.bms"],
+		["prim\\ani\\body_stand.ban"], ["prim\\skel\\body.bsk"],
+		BsrReader.TYPE_PLAYER_CHARACTER), 7, 3, 0, [[1, 0], [0, 1], [12, 2]], [0])
+	var body := BsrReader.parse(body_bytes)
+	_check(body != null and body.attachable != null, "r687: a body's attachable block is read")
+	if body != null and body.attachable != null:
+		var a := body.attachable
+		_check(a.word0 == 7 and a.kind == 3 and a.flag == 0, "r687: word0, kind and flag in file order (got %d %d %d)" % [a.word0, a.kind, a.flag])
+		_check(a.entries == [[1, 0], [0, 1], [12, 2]], "r687: the body's key -> mesh pairs (got %s)" % str(a.entries))
+		_check(Array(a.values_for(0)) == [1] and Array(a.values_for(12)) == [2] and a.values_for(5).is_empty(),
+			"r687: key 0 is mesh 1, key 12 mesh 2, key 5 none")
+		_check(a.trailing == 4, "r687: the body's combo word is left after the block (got %d)" % a.trailing)
+		_check(not a.hides_body(), "r687: flag 0 hides nothing")
+	_check(BsrReader.attachable_tail_end(body_bytes, body.attachable.start if body != null and body.attachable != null else -1) == body_bytes.size(),
+		"r687: the tail stepper still ends on the combo word")
+
+	# An item: flag 1 and the keys it covers, nothing after.
+	var item_bytes := _with_attachable(_build_synthetic_character("item_synth",
+		["prim\\mtrl\\item.bmt"], ["prim\\mesh\\item_ba.bms"], [], [],
+		BsrReader.TYPE_ITEM), 0, 1, 1, [[2, 0], [3, 0], [5, 0]], [])
+	var item := BsrReader.parse(item_bytes)
+	_check(item != null and item.attachable != null and item.attachable.hides_body(), "r687: an item with flag 1 hides the body")
+	if item != null and item.attachable != null:
+		_check(Array(item.attachable.keys()) == [2, 3, 5] and item.attachable.trailing == 0,
+			"r687: the item's keys 2, 3, 5 and no bytes after (got %s, %d)" % [str(item.attachable.keys()), item.attachable.trailing])
+	var light := BsrReader.parse(_with_attachable(_build_synthetic_character("aa_synth",
+		["prim\\mtrl\\aa.bmt"], ["prim\\mesh\\aa.bms"], [], [], BsrReader.TYPE_ITEM), 0, 1, 2, [[6, 0]], []))
+	_check(light != null and light.attachable != null and light.attachable.flag == 2 and not light.attachable.hides_body(),
+		"r687: flag 2 (a light gauntlet's) hides nothing")
+
+	# Leftover bytes after the block do not fail it (61 real files carry some).
+	var odd := BsrReader.parse(_with_attachable(_build_synthetic_character("odd_synth",
+		["prim\\mtrl\\odd.bmt"], ["prim\\mesh\\odd.bms"], [], [], BsrReader.TYPE_ITEM), 0, 1, 1, [[13, 0]], [9, 9, 9]))
+	_check(odd != null and odd.attachable != null and odd.attachable.trailing == 12 and Array(odd.attachable.keys()) == [13],
+		"r687: a file with 12 bytes left over still yields its block")
+
+	# Strict bounds: a count past the end, a negative count, a cut word.
+	var cut := item_bytes.slice(0, item_bytes.size() - 4)
+	var cut_obj := BsrReader.parse(cut)
+	_check(cut_obj != null and cut_obj.attachable == null, "r687: a pair cut short is no block, and the file still parses")
+	var start := item_bytes.size() - 16 - 3 * 8
+	var bad := item_bytes.duplicate()
+	_put_u32(bad, start + 12, 4)
+	_check(BsrReader.parse_attachable(bad, start) == null, "r687: a count past the end is refused")
+	_put_u32(bad, start + 12, 0xFFFFFFFF)
+	_check(BsrReader.parse_attachable(bad, start) == null, "r687: a negative count is refused")
+	_check(BsrReader.parse_attachable(item_bytes, item_bytes.size() - 8) == null, "r687: a block cut in its header is refused")
+	var good := BsrReader.parse_attachable(item_bytes, start)
+	_check(good != null and good.start == start and Array(good.keys()) == [2, 3, 5], "r687: parse_attachable at the block's start")
+
+	# Only bodies and items carry it: an NPC (type 1) is not read for it.
+	var npc := BsrReader.parse(_with_attachable(_build_synthetic_character("npc_synth",
+		["prim\\mtrl\\npc.bmt"], ["prim\\mesh\\npc.bms"], ["prim\\ani\\npc.ban"], ["prim\\skel\\npc.bsk"]),
+		0, 1, 1, [[0, 0]], [0]))
+	_check(npc != null and npc.attachable == null, "r687: an NPC's block is not read")

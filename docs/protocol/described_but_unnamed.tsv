@@ -177,7 +177,6 @@
 2	004181d0	FUN_004181d0	413	docs/WORLD_ISSUES.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/refobj_binary_format.md
 2	0049ff20	FUN_0049ff20	410	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv
 2	0059f610	FUN_0059f610	400	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/skill_withdraw.md
-2	00513410	FUN_00513410	372	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/handler_payloads.tsv,docs/protocol/message_handlers.tsv,docs/protocol/server_handlers.tsv
 2	004fcda0	GObjPC::FUN_004fcda0	317	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv
 2	0055eec0	AI::CNest::FUN_0055eec0	279	docs/protocol/described_but_unnamed.tsv,docs/protocol/recovered_names.tsv
 2	005c6480	FUN_005c6480	207	docs/RE_COMPLETION.md,docs/protocol/described_but_unnamed.tsv,docs/protocol/error_attributed_functions.md,docs/protocol/error_emitters.tsv,docs/protocol/guild.md,docs/protocol/recovered_names.tsv

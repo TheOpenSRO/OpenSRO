@@ -57,6 +57,18 @@ class_name CharacterAppearance
 ## `_f.bsr` (READ, `CObjCharacter::FUN_00a5f4f0`); each `.bsr` names the bone
 ## it hangs from (SkinnedBsrAssembler.attach_item_from_archive).
 ##
+## **The body's own pieces under worn items (round 687, READ):** every body
+## and item `.bsr` ends with an attachable block (BsrReader.Attachable). The
+## body's maps each piece key (0 hair, 1 face, 2/3 torso, 5/6 arms, 11
+## pelvis, 12 thigh, 13 calf -- MEASURED) to one of its meshes; an item's lists
+## the keys it covers, and when its flag is 1 the client switches those body
+## meshes off (`CCompChar::FUN_00c1f790`). Taking a part off shows every body
+## mesh again and re-applies the hides of what is left (`FUN_00c1f890`).
+## build() and unequip() do the same (apply_hides, through
+## SkinnedBsrAssembler.apply_body_hides). Default wear (`clothes_00_*`) and
+## avatars carry blocks too and hide as their flag says; a light gauntlet's
+## flag is 2, so it hides nothing (MEASURED).
+##
 ## **Plus** is kept on the body (Body.worn) for the weapon glow; the glow
 ## itself is not drawn (INFERRED in charselect.md that plus drives it; OPEN).
 ##
@@ -141,8 +153,13 @@ class Body extends Node3D:
 	## The held weapon's TypeID4 (0 for none) and the animation group it picks.
 	var weapon_kind: int = 0
 	var weapon_group: String = "default"
-	## What was put on, in install order: {id, plus, slot, models: [paths], nodes: [Node3D]}.
+	## What was put on, in install order: {id, plus, slot, models: [paths],
+	## nodes: [Node3D], drawn: [paths], attachables: [BsrReader.Attachable or
+	## null, one per drawn path]}.
 	var worn: Array = []
+	## How many body meshes the worn items hide now (apply_hides); a mesh's
+	## front-pass twin is not counted again.
+	var hidden_body_meshes: int = 0
 	## The body's assembled template (shared): its parsed `.bsr` names the animations.
 	var assembled: SkinnedBsrAssembler.AssembledCharacter
 	## Height's factor as applied (Body.scale is this, uniformly).
@@ -171,6 +188,9 @@ var _full_items_loaded := false
 var _extra_bodies: Dictionary = {}
 var _body_templates: Dictionary = {}  # bsr path -> AssembledCharacter (detached)
 var _item_templates: Dictionary = {}  # "skeleton|bones|item path" -> Node3D (detached) or null
+## item path (lower case) -> its BsrReader.Attachable, or null when its block
+## did not parse; filled as the item templates are made.
+var _item_attachables: Dictionary = {}
 ## Timings, microseconds: the last build, and the running totals.
 var last_build_usec: int = 0
 var stats := {"builds": 0, "body_assemblies": 0, "item_assemblies": 0, "build_usec": 0, "item_table_usec": 0, "item_table_rows": 0}
@@ -418,6 +438,7 @@ func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Bo
 	wears.append_array(avatars)
 	for wear in wears:
 		var drawn := PackedStringArray()
+		var blocks: Array = []
 		for path in wear["models"]:
 			var node := _item_instance(bsr_path, tmpl, skel, path)
 			if node == null and _fallback_of(path) != "":
@@ -426,15 +447,58 @@ func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Bo
 			if node != null:
 				(wear["nodes"] as Array).append(node)
 				drawn.append(path)
+				blocks.append(_item_attachables.get(path.to_lower()))
 		wear["drawn"] = drawn
+		wear["attachables"] = blocks
 		body.worn.append(wear)
 
+	apply_hides(body)
 	_own_skins(skel)
 	apply_scale(body, scale)
 	last_build_usec = Time.get_ticks_usec() - t0
 	stats["builds"] += 1
 	stats["build_usec"] += last_build_usec
 	return body
+
+## Hides the body's own pieces under what it wears, as retail does: every
+## body mesh shown, then each worn item's attachable block with flag 1 hides
+## the pieces it covers (SkinnedBsrAssembler.apply_body_hides, READ
+## CCompChar::FUN_00c1f890). Called by build() and unequip(); call it again
+## after changing Body.worn by hand. Height and Volume (set_scale_byte) touch
+## no visibility, so a slider keeps the hides.
+static func apply_hides(body: Body) -> void:
+	if body == null or body.skeleton == null:
+		return
+	var blocks: Array = []
+	for wear in body.worn:
+		blocks.append_array(wear.get("attachables", []))
+	var parsed: BsrReader.ParsedObject = body.assembled.parsed if body.assembled != null else null
+	body.hidden_body_meshes = SkinnedBsrAssembler.apply_body_hides(body.skeleton, parsed, blocks)
+
+## Takes the item in visual `slot` off a built body (SLOT_AVATAR takes every
+## avatar): its nodes are freed and the hides re-applied from what remains
+## (READ, vslot_061 0x00c1fa00 -> FUN_00c1f890). Returns whether anything
+## came off.
+func unequip(body: Body, slot: int) -> bool:
+	if body == null:
+		return false
+	var kept: Array = []
+	var removed := false
+	for wear in body.worn:
+		if int(wear["slot"]) != slot:
+			kept.append(wear)
+			continue
+		removed = true
+		for n in wear["nodes"]:
+			if is_instance_valid(n):
+				(n as Node).free()
+		if slot == SLOT_WEAPON:
+			body.weapon_kind = 0
+			body.weapon_group = "default"
+	body.worn = kept
+	if removed:
+		apply_hides(body)
+	return removed
 
 ## The animation `action_type` (BsrReader.AnimationEntry.TYPE_*) of the body's
 ## own `.bsr`, in the group its weapon picks (falling back to `default`), parsed
@@ -473,6 +537,7 @@ func free_templates() -> void:
 		if n != null and is_instance_valid(n):
 			n.free()
 	_item_templates.clear()
+	_item_attachables.clear()
 
 func _body_template(bsr_path: String) -> SkinnedBsrAssembler.AssembledCharacter:
 	if _body_templates.has(bsr_path):
@@ -522,6 +587,7 @@ func _make_item_template(tmpl: SkinnedBsrAssembler.AssembledCharacter, item_path
 	var node: Node3D = null
 	if attached != null and attached.node != null:
 		node = attached.node
+		_item_attachables[item_path.to_lower()] = attached.attachable
 		scratch.remove_child(node)
 		node.set_meta("bone_count", scratch.get_bone_count())
 	scratch.free()

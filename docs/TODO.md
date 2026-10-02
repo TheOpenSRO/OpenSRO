@@ -277,7 +277,7 @@ In order. Each is checked off here when it ships in a release, with its round in
         (3) the flag's flip (`deploy/README.md`, "Player dead state (off by default)"). Stand-ins,
         each disclosed at its line: reviving in place above max level 10 (retail returns the
         character to `_CHAR.AppointedTeleport`, `CGObjPC::ResolveRevivePoint` -- srrevamp has no
-        appointed teleport; its town gates, round 576, move a player but record no return point), the empty request against retail 0x7053's u8
+        appointed teleport; its town gates, round 576, move a player but record no return point -- kept since round 686), the empty request against retail 0x7053's u8
         option, the fallback and its 30 s, the refusal wording, the pick-up / duel / zone-change / GM
         refusals (their retail handlers not read for a life-state test), the item kind usable while
         dead (`(tid & 0xf800) == 0x3000` in `Item_HandleUseItem`), the duel's own death path (still
@@ -288,10 +288,10 @@ In order. Each is checked off here when it ships in a release, with its round in
         option 1 to the return point, option 2 in place at level 10 or under; the 30 s in-place
         auto-revive is gone (retail has none); a character leaving dead is saved at the return
         point; with the flag off a kill's respawn is moved to the return point. **OPEN, in order**:
-        (1) the bind point -- `_CHAR.AppointedTeleport`, set by a gate's "Designate as
-        return/recall point" line (interaction id 7, `UIIT_CTL_RECALL_POSITION`, whose server side
-        is not read) -- so the return point is the character's own town and not every
-        character's Jangan entry (OURS today); a new character's default is also unread;
+        (1) ~~the bind point~~ -- DONE in round 686: a town gate's "Designate as return/recall
+        point" sets `_CHAR.AppointedTeleport` (`GObjPC_HandleDesignateRecallMsg_059`, READ), the return point is that
+        gate's point, else the race's gate (`STORE_CH_GATE` / `STORE_EU_GATE`, SR_ShardManager
+        `FUN_0042bb20`, READ) -- see "Town teleporters" below for what is left;
         (2) body mode 2 after a revive, 6.0 s invincible (`0xb45b78`) and the world entry's own
         time (world slot `0x70`, unread) -- srrevamp has no body mode 2; (3) resurrection by
         another player and by scroll (`trs_wait_response::vslot_002`, `FUN_0049ff20`), which the
@@ -682,8 +682,14 @@ are not drawn.
 - **The 355 bit-9 item layers with no ENVMAP mod** are cut at 128 by the READ rule. That is right
   for the 1-bit hats. `light_02_ha` (91% graded alpha) is cut the same way; a render of it
   against the original would confirm it.
-- **The body under armour.** The body's own pieces are still drawn beneath every worn piece.
-  Whether the client hides any body piece under armour was not looked at.
+- ~~**The body under armour.**~~ Done in round 687: a worn item whose `.bsr` attachable block has
+  flag 1 hides the body pieces it lists, READ from `CCompChar::FUN_00c1f790` / `FUN_00c1f890`
+  (BSR_FORMAT.md). The world's players, the paper doll and the portrait take it through
+  `_build_assembled_character`; the create preview through `CharacterPreview.dress`; and
+  `CharacterAppearance` (which no lobby screen uses yet). Still OPEN: what the block's first two
+  words (+0x314, +0x318) mean, that part id 1 is the body (INFERRED), and another player's body is
+  not redressed when their equipment changes, so its hides follow what they wore when they came
+  into view.
 - **The faint translucent shape beside the tester's character** (v0.1.457 screenshot) is not
   from the equipment chain: no worn piece's mesh reaches there, and the one translucent-authored
   item mesh found (`heavy_11_set_b_fly`) belongs to a `_fullset` model v0.1.457 could not load.
@@ -1139,12 +1145,11 @@ front-end's next steps.
   `_f`). Trace `CCompChar` 0xc1f0d0 -> 0xc2bb40's resource +0x28.
 - **Avatars:** attached on top (READ `FUN_00a60ef0`). Which visual wins a slot bit is
   `charactervisualchange.txt`'s Slot / OverlapSlot / Priority (READ, round 683 review); not modelled.
-- **The body through the armour** (round 683 review): 2-21 % of a worn armour's pixels show the
-  body's own skin at bind (`appearance_probe.gd --showthrough=1`). This is the archive's geometry: the
-  body is outside the armour there, and no client code hiding a body piece was found. Next reads:
-  where `CICPlayer::vslot_025` attaches the body (vslots 0x58/0x5c), and whether a helm's 0x0800 bit
-  hides the body's hair mesh. A retail screenshot of the Europe man in the light set would settle the
-  art question.
+- **The body through the armour** (round 683 review; round 687 applied retail's rule): the worst
+  case went from 21.30 % to 5.58 % of a worn armour's pixels (`appearance_probe.gd --showthrough=1`,
+  MEASURED). What is left is body pieces no worn item lists (the China woman's light set hides only
+  three of her meshes), which the client draws too (READ, `FUN_00c1f790`). A retail screenshot of the China woman
+  in the light set would show whether anything else covers them.
 - **The world reads only 7 of itemdata.txt's 63 parts** (`ItemTableReader.TABLE_PATHS`): 3,566 of
   15,338 item ids, avatars among them, are unknown to World3D and not drawn. The builder and
   catalogue read through the index (`CharCatalog.index_parts`). Switching the world costs a parse of
@@ -1313,6 +1318,23 @@ Round 642 made all 32 NPCs with teleportdata points work: the ferries, boats, ai
 Mountain), tunnels, Jangan's gate soldiers, Constantinople's guides and the two Thief Town NPCs
 (`docs/protocol/teleport_network.md`, "Teleport NPCs (round 642)"). Still open:
 
+- [x] **The return point** (round 686, `teleport_network.md` "The return point (round 686)"): a town
+      gate's "Designate as return/recall point" is retail's 0x059 handler (`OpRecallDesignate`
+      0x0111 -> 0x0112 in 0xb059's shape), kept in `characters.appointed_teleport`; option 1, the
+      flag-off respawn and a dead logout go there, else to the race's gate. Left open:
+  - [ ] **"Teleport to return point"** (interaction id 9, item 0x10): READ as the teleport request's
+        kind 1 -> `GObjPC::Revive(0)` (`CMainProcess::FUN_004f2b50`, 0x1c10 with a cart). No town
+        gate offers it; the client still answers "not available yet".
+  - [ ] **Return scrolls**: `UseByKind` (`0x49c2b0`) cases 1-3 cast the item's linked skill (ref
+        object `+0x2a0`, `FUN_0059b8d0`); the skill effect that moves the player is unread, and
+        srrevamp refuses every return scroll. When built, it goes to `returnPointFor`.
+  - [ ] **An unknown designated gate** falls back to the race's gate (OURS); retail falls back to
+        `LatestRegion` / `Pos`.
+  - [ ] **A Europe character's return, live.** Since round 682 is on dev, `characterCountry`
+        reads the body's race (`RaceOf`) and the tests return a Europe character to
+        Constantinople's gate with no stub; no live run with a created Europe character yet.
+  - [ ] **The agreement box's art and button labels** are the talk prompts' panel and "OK" /
+        "Cancel" (OURS): kind 5's button controls were not read.
 - [ ] **Which objects offer id 8 is stood in for.** Retail registers id 8 ("Select teleport area") on
       a link source's object when a byte of the point's record (`+0x34`, the last
       `RefTeleport_ExtractData` reads, `0x6a7f45`) is 1. The client's teleportdata.txt has no column

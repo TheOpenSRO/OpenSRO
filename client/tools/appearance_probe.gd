@@ -60,6 +60,8 @@ func _initialize() -> void:
 
 	if _arg("--showthrough") != "":
 		await _measure_show_through(app, cat, _arg("--showthrough") == "all")
+	if _arg("--closeup") != "":
+		await _render_closeups(app, cat, _arg("--closeup"))
 	var out := _arg("--out")
 	if out != "" and _arg("--norender") == "":
 		await _render_all(app, cat, out)
@@ -137,6 +139,24 @@ func _build_all(app: CharacterAppearance, cat: CharCatalog) -> Array:
 					b.assembled.skinned_pieces if b.assembled != null else 0, b.worn.size(), kit.size(), hung, models,
 					b.weapon_group, str(b.is_woman)])
 				out.append(b)
+				# Round 687: the body's attachable block names the nine piece
+				# keys charselect.md section 9 lists (MEASURED by the research
+				# across all Figures), and every kit item has a block.
+				var blk: BsrReader.Attachable = b.assembled.parsed.attachable if b.assembled != null and b.assembled.parsed != null else null
+				var body_keys := []
+				if blk != null:
+					body_keys = Array(blk.keys())
+					body_keys.sort()
+				var blocks := 0
+				var drawn_models := 0
+				for w in b.worn:
+					drawn_models += (w["drawn"] as PackedStringArray).size()
+					for a in w.get("attachables", []):
+						if a != null:
+							blocks += 1
+				_expect(body_keys == [0, 1, 2, 3, 5, 6, 11, 12, 13] and blocks == drawn_models,
+					"%-26s body keys %s, %d/%d worn models with a block, %d body meshes hidden" % [figs[i].code,
+					str(body_keys), blocks, drawn_models, b.hidden_body_meshes])
 	cold.sort()
 	warm.sort()
 	if not cold.is_empty():
@@ -304,6 +324,46 @@ func _render_all(app: CharacterAppearance, cat: CharCatalog, out: String) -> voi
 		holder.free()
 	world.free()
 
+## Round 687's pictures for a human (not evidence; the show-through counts
+## are): the first China woman and the first Europe man in their light set,
+## textured, front and back, with every body piece drawn ("before") and with
+## the worn items' hides ("after"), side by side in one frame per view.
+func _render_closeups(app: CharacterAppearance, cat: CharCatalog, out: String) -> void:
+	DirAccess.make_dir_recursive_absolute(out)
+	var world := Node3D.new()
+	get_root().add_child(world)
+	_lights(world)
+	var cam := Camera3D.new()
+	cam.projection = Camera3D.PROJECTION_ORTHOGONAL
+	cam.current = true
+	world.add_child(cam)
+	for who in [[CharCatalog.RACE_CHINA, CharCatalog.SEX_WOMAN, "china_woman"], [CharCatalog.RACE_EUROPE, CharCatalog.SEX_MAN, "europe_man"]]:
+		var f: CharCatalog.Entry = cat.figures(who[0], who[1])[0]
+		var armour := []
+		for st in cat.all_armour_sets(who[0], who[1]):
+			if st.name == "light":
+				for id in st.ids():
+					armour.append({"id": id, "plus": 0})
+		var before := app.build(f.id, 0x22, armour)
+		var after := app.build(f.id, 0x22, armour)
+		for mi in before.skeleton.get_children():
+			if mi.has_meta(SkinnedBsrAssembler.BODY_MESH_META):
+				(mi as Node3D).visible = true
+		for pair in [[before, -5.5], [after, 5.5]]:
+			var b: CharacterAppearance.Body = pair[0]
+			_stand(app, b)
+			b.position = Vector3(float(pair[1]), 0, 0)
+			world.add_child(b)
+		print("closeup %s %s (%d): after hides %d body meshes" % [who[2], f.code, f.id, after.hidden_body_meshes])
+		for view in [["front", PI], ["back", 0.0]]:
+			before.rotation.y = view[1]
+			after.rotation.y = view[1]
+			_frame(cam, Vector3(0, 10.0, 0), 13.0)
+			await _shoot(out.path_join("%s_light_%s_before_left_after_right.png" % [who[2], view[0]]))
+		before.free()
+		after.free()
+	world.free()
+
 func _stand(app: CharacterAppearance, b: CharacterAppearance.Body) -> void:
 	if _arg("--bind") == "":
 		var idle := app.animation_for(b, BsrReader.AnimationEntry.TYPE_STAND)
@@ -369,6 +429,7 @@ func _measure_show_through(app: CharacterAppearance, cat: CharCatalog, every: bo
 	var body_mat := _flat(_BODY_COLOR)
 	var worn_mat := _flat(_WORN_COLOR)
 	var worst := 0.0
+	var worst_all := 0.0
 	for r in [CharCatalog.RACE_CHINA, CharCatalog.RACE_EUROPE]:
 		for s in [CharCatalog.SEX_MAN, CharCatalog.SEX_WOMAN]:
 			var figs := cat.figures(r, s)
@@ -399,7 +460,14 @@ func _measure_show_through(app: CharacterAppearance, cat: CharCatalog, every: bo
 									for i in range(sk.get_bind_count()):
 										sk.set_bind_pose(i, Transform3D(Basis.from_scale(Vector3.ONE * shrink), Vector3.ZERO) * sk.get_bind_pose(i))
 									mi.skin = sk
+						# What the builder left drawn: the body pieces its worn items
+						# hide are off (round 687). "before" draws every body piece,
+						# as the builder did until then; "after" keeps the hides.
+						var built_visible := {}
+						for mi in all_nodes:
+							built_visible[mi] = mi.visible
 						var shown := 0
+						var shown_all := 0
 						var covered := 0
 						for yaw in [PI, 0.0]:
 							b.rotation.y = yaw
@@ -411,23 +479,31 @@ func _measure_show_through(app: CharacterAppearance, cat: CharCatalog, every: bo
 							var mask := await _grab()
 							for mi in all_nodes:
 								mi.visible = true
+							var all_shot := await _grab()
+							for mi in all_nodes:
+								mi.visible = built_visible[mi]
 							var both := await _grab()
 							if _arg("--stdir") != "":
 								both.save_png(_arg("--stdir").path_join("%s_%s_v%d_%d.png" % [f.code, sets[set_i].name, scale >> 4, int(yaw)]))
+								all_shot.save_png(_arg("--stdir").path_join("%s_%s_v%d_%d_nohide.png" % [f.code, sets[set_i].name, scale >> 4, int(yaw)]))
 								mask.save_png(_arg("--stdir").path_join("%s_%s_v%d_%d_mask.png" % [f.code, sets[set_i].name, scale >> 4, int(yaw)]))
 							var counts := _compare(mask, both)
 							covered += counts[0]
 							shown += counts[1]
+							shown_all += _compare(mask, all_shot)[1]
 						var share := float(shown) / maxf(1.0, float(covered))
+						var share_all := float(shown_all) / maxf(1.0, float(covered))
 						worst = maxf(worst, share)
-						line += "  v%d %5.2f%%" % [scale >> 4, share * 100.0]
+						worst_all = maxf(worst_all, share_all)
+						line += "  v%d %5.2f%% -> %5.2f%% (%d hidden)" % [scale >> 4, share_all * 100.0, share * 100.0, b.hidden_body_meshes]
 						b.free()
 					print("show-through " + line)
 	world.free()
-	# A measurement, not a verdict: the client draws the body's own pieces
-	# under worn ones (round 683 review, docs/WORLD_ISSUES.md), so this is what
-	# the archive's geometry gives at bind, not a defect count.
-	print("show-through: worst %.2f%% of a worn armour's pixels" % (worst * 100.0))
+	# Each cell is "every body piece drawn -> the worn items' hides applied"
+	# (round 687). What is left is body pieces no worn item lists, which the
+	# client draws too (READ, FUN_00c1f790), so the "after" figure is what the
+	# archive's geometry gives at bind, not a defect count.
+	print("show-through: worst %.2f%% of a worn armour's pixels with every body piece drawn, %.2f%% with the hides" % [worst_all * 100.0, worst * 100.0])
 
 func _grab() -> Image:
 	for _i in range(3):
