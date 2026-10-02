@@ -921,6 +921,11 @@ func _on_login_result(ok: bool, reason: String) -> void:
 	if ok:
 		status_label.text = "Login OK."
 		_qa_report(status_label.text)
+		# Round 684: the select screen keeps the title's hour (READ: no
+		# front-end screen picks its own) and this screen's branding.
+		CharSelectHandoff.day_phase = _title.day_phase if _title != null else -1.0
+		CharSelectHandoff.theme = _theme
+		CharSelectHandoff.came_from = CharSelectHandoff.FROM_OTHER
 		get_tree().change_scene_to_file("res://scenes/CharacterSelect.tscn")
 	else:
 		status_label.text = "Login failed: %s" % reason

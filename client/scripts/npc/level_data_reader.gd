@@ -52,6 +52,27 @@ static func parse_mastery_costs(data: PackedByteArray) -> Dictionary:
 		costs[int(level_text)] = int(cost_text)
 	return costs
 
+## Column 1: the EXP a level takes, {level: exp} (round 684). READ: the
+## character select's EXP percentage divides by the level record's +8, an
+## int64 (PSCharacterSelect FUN_0085a580 -> FUN_00937f20(level) + 8), the
+## column the server's `cmd/export-leveldata` reads as colExpNext = 1.
+const COL_EXP := 1
+
+static func parse_exp(data: PackedByteArray) -> Dictionary:
+	var out := {}
+	for line in _lines(data):
+		if line.begins_with("//"):
+			continue
+		var cols := line.split("\t")
+		if cols.size() <= COL_EXP:
+			continue
+		var level_text := cols[COL_LEVEL].strip_edges()
+		var exp_text := cols[COL_EXP].strip_edges()
+		if not level_text.is_valid_int() or not exp_text.is_valid_int():
+			continue
+		out[int(level_text)] = int(exp_text)
+	return out
+
 ## The skill points raising a mastery from `level` to level + 1 costs, as the
 ## engine charges it; 0 when it charges nothing or the table does not say.
 ##   - level < 1: the first point is free. `test cl,cl` at 0x59c628 sends a

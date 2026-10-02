@@ -344,6 +344,58 @@ fades out at the same rate. No glow, no idol animation.
 **Cancel (17):** the titles swap back, Create and Back return, the panels hide, the camera returns,
 the lizard hides. `FUN_0085cbc0` (fly back from an idol) has no references: dead code.
 
+### Round 684's reading (what `CharacterSelect.gd` follows; READ unless marked)
+
+- **The race index is 0 for Europe, 1 for China.** `DAT_00ec2d64` indexes the idol objects in
+  OnCreate's load order (Europe, China, then the lizard) and the panels at +0x228 (window 11) and
+  +0x22c (window 9). Index 0 flies to (168.5, -34.9, 639.1) (0xdd7cfc) and switches to the process at
+  `DAT_00eed8d4`. `CharSelectHandoff` translates it to `CharCatalog`'s race (section 7).
+- **A click on nothing does nothing.** `vslot_017` (0x85ddb0) calls `FUN_0085ca10` only while an
+  idol is hovered (`DAT_00ec2d64 != -1`) in state 8, and selects only while a character is hovered in
+  state 2. "Out of service area." is shown for an index other than 0 or 1, which two idols never give.
+  This corrects section 3's "Anything but an idol".
+- **Cancel 17 is 0x85c7e0**, a function the decompile's list lacks (found by its `mov [esi+0xe4], 0xb`
+  at 0x85c9f5): window 3 to 255 and 4 to 0 over 5.0 s (0xe1b86c), 12/13 in and 17 out over 0.5 s, both
+  panels out, and the race keys added **reversed** (key 3 at 0 ... key 0 at 5.0 s). State 0xb ends with
+  the lizard hidden (+0x220 = 0) and the page re-placed.
+- **Back (13) is 0x85b560**: window 21 from 0 to 255 over 0.5 s and the two list keys reversed,
+  (60, -15, 660) at 0 to (60, -15, 700) at 2.0 s -- the "dolly out". State 0xd switches to the title
+  when the path ends.
+- **Cancel 16 is `FUN_0085c1d0`**: Create and Back in; Start, Delete, Restore, 16, 26 and the info
+  panel out; the message cleared; the camera from where it is to the list's second key over 2.0 s.
+- **Create (12) is `FUN_0085c4a0`**: 3 out and 4 in over 5.0 s, 12/13 out, 17 in, the arrows and
+  labels out, the race keys at t = k x 5.0 / 3.0.
+- **The models fade in on every list.** `FUN_0085f840` zeroes each new model's alpha; `FUN_0085def0`
+  then fades it over 1.0 s to 0xff, or 0xcc when pending. A model is drawn only while its alpha is
+  non-zero (vslot_013). After a delete or restore the whole list fades in again, and the character
+  re-selected sits down (0xd, then 0xe) or stands up (0xf, then 0).
+- **The order among equal keys:** `FUN_00859e70` inserts with no equality test and an equal key goes
+  right, and the walk is backwards, so the later record comes first.
+- **Picking:** each model of the page, in order, is tested with a ray against its own bounding box
+  (`FUN_00a5b2c0` -> `FUN_00a5b000` with vslot 0x10's local box and vslot 0x18's matrix); the first
+  hit wins, not the nearest.
+- **The name label** fades at 0.5 s per whole fade (`FUN_00855400`'s duration is 0.5 x the bytes left
+  / 255), in font 4 (`FUN_00ba5460(4)` in `FUN_0085a580`). Its colour and alignment were not read
+  (INFERRED: white, centred).
+- **The idol panels** (vslot_012 case 7): top-left = the projection of the idol's bounding-box
+  centre, turned by its yaw and moved to its position, less half the panel's width; x held at 5 or
+  more. The lizard switches to clip 1 there (`(1, 0, 200, 0, 1.0, 1.0)`).
+- **Window placement (OnCreate 0x85ee33..0x85f04c), screen pixels, unscaled:** 12/15/25 at
+  (W - 0xd1, band2 + 0x1b), 13/16/17 at (W - 0x69, ...), 14 at (W - 0x139, ...), the info panel 18 at
+  (W - 0x10f, band1 + 0x29), the countdown 26 at ((W - its width) >> 1, band2 - 0x66), the message
+  line 500 at (0x1a, band2 + 0x1d) sized (W - 0x1a) x 100; the popups 20, 900, 920 centred. band1 is
+  window 1's bottom and band2 window 2's top, both as scaled (`FUN_00849c70` over 1, 2, 3, 4 and 21).
+- **The page arrows** (case 0): 45 at (10, (H - h) >> 1), 46 at (W - w - 10, ...); "[ %d / %d ]" in
+  window 50 with more than 4 characters (`FUN_00858e50`).
+- **The delete refusals'** keys are `UIO_MSG_CHAR_DEL_WANNING_CONFIRM_MEMBER` / `_MASTER` /
+  `_STUDENT` / `_GUARDIAN` (the strings at 0xdd7b58, 0xdd7ba8, 0xdd7aa8, 0xdd7b00).
+- **The countdown text** is CIFPML markup in the archive (`<sml2>` and `<font color="a,r,g,b">`
+  around each %d, MEASURED); this client draws it as BBCode with the colours kept and `<sml2>` dropped
+  (INFERRED: the PML renderer was not read).
+- **EXP** is capped at 99.99 once the percentage reaches it (0xd986f8); the level's EXP is the level
+  record's +8, leveldata column 1.
+- **No version line**: it is CPSTitle's window (0x86bc1d); select creates none.
+
 ## 4. Character create / customize (READ unless marked)
 
 ### State (`CCustomInfoManager` at this+0x11c; ctor 0x80bd00, loader 0x80b980)

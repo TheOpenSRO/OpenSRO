@@ -80,7 +80,18 @@ const LOGO_GAP := 10.0
 const COPYRIGHT_MID_Y := 1177.5
 
 var layout: UiLayoutParser.LayoutDef = null
+## The section the frame's windows are read from ("Title" at the title).
 var _title_section: UiLayoutParser.SectionDef = null
+## Which layout ID plays which part of the frame (round 684): the title's
+## own IDs by default; the character select screen's layout
+## (pscharacterselect.txt, section "Select") names its bands 1/2 and its title
+## 3, and has no covers or logos (READ: MEASURED in that file, -1 = none).
+const TITLE_ROLES := {"screenup": ID_SCREENUP, "screendown": ID_SCREENDOWN, "bscreenup": ID_BSCREENUP,
+	"bscreendown": ID_BSCREENDOWN, "title": ID_TITLE, "biglogo": ID_BIGLOGO, "logo": ID_LOGO}
+const SELECT_LAYOUT_PATH := "resinfo\\pscharacterselect.txt"
+const SELECT_ROLES := {"screenup": 1, "screendown": 2, "bscreenup": -1, "bscreendown": -1,
+	"title": 3, "biglogo": -1, "logo": -1}
+var _roles: Dictionary = TITLE_ROLES
 var _media: Pk2Reader = null
 
 var band_top: TextureRect
@@ -99,10 +110,10 @@ var custom_logo := false
 var _fades := {}
 
 ## The archive layout, or null when Media.pk2 has no pstitle.txt.
-static func load_layout(media: Pk2Reader) -> UiLayoutParser.LayoutDef:
+static func load_layout(media: Pk2Reader, path: String = LAYOUT_PATH) -> UiLayoutParser.LayoutDef:
 	if media == null:
 		return null
-	var entry := ObjectLoader.find_file(media, LAYOUT_PATH)
+	var entry := ObjectLoader.find_file(media, path)
 	if entry == null:
 		return null
 	return UiLayoutParser.parse(media.read_file(entry), true, PackedStringArray())
@@ -110,28 +121,33 @@ static func load_layout(media: Pk2Reader) -> UiLayoutParser.LayoutDef:
 ## Builds the frame. False when the archive has no title layout (the caller
 ## keeps its plain screen).
 func build(media: Pk2Reader, theme: FrontEndTheme, custom_dir: String, version_text: String,
-		parsed_layout: UiLayoutParser.LayoutDef = null) -> bool:
+		parsed_layout: UiLayoutParser.LayoutDef = null, section: String = "Title", roles: Dictionary = TITLE_ROLES) -> bool:
 	_media = media
+	_roles = roles
 	layout = parsed_layout if parsed_layout != null else load_layout(media)
-	if layout == null or not layout.sections.has("Title"):
-		print("FrontEndFrame: no %s in Media.pk2 -- no letterbox frame" % LAYOUT_PATH)
+	if layout == null or not layout.sections.has(section):
+		print("FrontEndFrame: no section %s in the layout -- no letterbox frame" % section)
 		return false
-	_title_section = layout.sections["Title"]
+	_title_section = layout.sections[section]
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var bottom_default := def(ID_SCREENDOWN).ddj if def(ID_SCREENDOWN) != null else ""
+	var bottom_default := role_def("screendown").ddj if role_def("screendown") != null else ""
 	if theme != null and theme.copyright != "":
 		bottom_default = PLAIN_BOTTOM_DDJ
-	band_top = _art_rect(_branded_texture(theme.band_top if theme != null else "", "band_top.png", def(ID_SCREENUP).ddj if def(ID_SCREENUP) != null else "", custom_dir, "top band"))
+	band_top = _art_rect(_branded_texture(theme.band_top if theme != null else "", "band_top.png", role_def("screenup").ddj if role_def("screenup") != null else "", custom_dir, "top band"))
 	band_bottom = _art_rect(_branded_texture(theme.band_bottom if theme != null else "", "band_bottom.png", bottom_default, custom_dir, "bottom band"))
 	cover_top = _cover()
 	cover_bottom = _cover()
-	title_art = _art_rect(_ddj(def(ID_TITLE).ddj if def(ID_TITLE) != null else ""))
-	big_logo = _art_rect(_ddj(def(ID_BIGLOGO).ddj if def(ID_BIGLOGO) != null else ""))
-	var logo_tex := _custom_texture(theme.logo if theme != null else "", "logo.png", custom_dir, "logo")
+	title_art = _art_rect(_ddj(role_def("title").ddj if role_def("title") != null else ""))
+	big_logo = _art_rect(_ddj(role_def("biglogo").ddj if role_def("biglogo") != null else ""))
+	# A frame whose layout has no logo window (the select screen's) draws no
+	# logo, the operator's included: its branding is the band art.
+	var logo_tex: Texture2D = null
+	if role_def("logo") != null:
+		logo_tex = _custom_texture(theme.logo if theme != null else "", "logo.png", custom_dir, "logo")
 	custom_logo = logo_tex != null
 	if logo_tex == null:
-		logo_tex = _ddj(def(ID_LOGO).ddj if def(ID_LOGO) != null else "")
+		logo_tex = _ddj(role_def("logo").ddj if role_def("logo") != null else "")
 	logo = _art_rect(logo_tex)
 	if custom_logo:
 		logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -157,6 +173,12 @@ func build(media: Pk2Reader, theme: FrontEndTheme, custom_dir: String, version_t
 
 func def(id: int) -> UiLayoutParser.ControlDef:
 	return by_id(_title_section, id)
+
+## The window playing `role` in this frame (_roles), or null when the layout
+## has none.
+func role_def(role: String) -> UiLayoutParser.ControlDef:
+	var id: int = _roles.get(role, -1)
+	return def(id) if id >= 0 else null
 
 func login_def(id: int) -> UiLayoutParser.ControlDef:
 	if layout == null or not layout.sections.has("Login"):
@@ -188,8 +210,8 @@ func scaled(rect: Rect2i) -> Rect2:
 ## bottom and band 2's top, both as scaled -- `(top2 - bottom1) >> 1 +
 ## bottom1`; and the screen's horizontal middle, width >> 1.
 func centre_line() -> Vector2i:
-	var up := scaled(def(ID_SCREENUP).rect) if def(ID_SCREENUP) != null else Rect2()
-	var down := scaled(def(ID_SCREENDOWN).rect) if def(ID_SCREENDOWN) != null else Rect2()
+	var up := scaled(role_def("screenup").rect) if role_def("screenup") != null else Rect2()
+	var down := scaled(role_def("screendown").rect) if role_def("screendown") != null else Rect2()
 	var bottom1 := int(up.position.y + up.size.y)
 	var top2 := int(down.position.y)
 	var s := size if size.x > 0 else get_viewport_rect().size
@@ -197,7 +219,7 @@ func centre_line() -> Vector2i:
 
 ## The bottom edge of the top band, scaled (where the logo may reach up to).
 func band_bottom_edge() -> int:
-	var up := scaled(def(ID_SCREENUP).rect) if def(ID_SCREENUP) != null else Rect2()
+	var up := scaled(role_def("screenup").rect) if role_def("screenup") != null else Rect2()
 	return int(up.position.y + up.size.y)
 
 ## Where the logo goes, given its scaled size, the centre line and the top
@@ -226,16 +248,16 @@ static func logo_rect(logo_size: Vector2, c: Vector2i, band_bottom: int) -> Rect
 	return Rect2(Vector2(x, y), logo_size)
 
 func relayout() -> void:
-	_place(band_top, def(ID_SCREENUP))
-	_place(band_bottom, def(ID_SCREENDOWN))
-	_place(cover_top, def(ID_BSCREENUP))
-	_place(cover_bottom, def(ID_BSCREENDOWN))
-	_place(title_art, def(ID_TITLE))
-	_place(big_logo, def(ID_BIGLOGO))
+	_place(band_top, role_def("screenup"))
+	_place(band_bottom, role_def("screendown"))
+	_place(cover_top, role_def("bscreenup"))
+	_place(cover_bottom, role_def("bscreendown"))
+	_place(title_art, role_def("title"))
+	_place(big_logo, role_def("biglogo"))
 	# The logo: scaled like the others (OnCreate), then centred above the
 	# login box by FUN_00866760 (logo_rect).
-	if logo != null and def(ID_LOGO) != null:
-		var r := logo_rect(scaled(def(ID_LOGO).rect).size, centre_line(), band_bottom_edge())
+	if logo != null and role_def("logo") != null:
+		var r := logo_rect(scaled(role_def("logo").rect).size, centre_line(), band_bottom_edge())
 		logo.size = r.size
 		logo.position = r.position
 	var s := size if size.x > 0 else get_viewport_rect().size
@@ -247,7 +269,7 @@ func relayout() -> void:
 	# blackbar_down_copyright.ddj (thresholded at 70 % grey): the line's
 	# pixels span rows 139..156 and columns 490..1110, so its middle is at
 	# 1030 + 147.5 in the design space, centred at x 800.
-	if copyright_label != null and def(ID_SCREENDOWN) != null:
+	if copyright_label != null and role_def("screendown") != null:
 		var k := design_scale()
 		copyright_label.position = Vector2(0, roundf(COPYRIGHT_MID_Y * k.y) - 10.0)
 		copyright_label.size = Vector2(s.x, 20.0)
