@@ -10,7 +10,10 @@ extends SceneTree
 ##
 ## NEGATIVE: before round 694 VideoOptions, OptionVideoPage,
 ## MapAnimation.object_range and SkillEffects.wants_effect do not exist --
-## this suite does not parse.
+## this suite does not parse. Before round 696 VideoOptions.restore_for_size,
+## window_placement and frame_insets and OptionVideoPage.combo_field_rect do
+## not exist (it does not parse either), and the combos had no field: the
+## ComboField / ComboArrow checks fail.
 ##
 ## `godot4 --headless --path client --script res://scripts/setting/video_options_test.gd`
 
@@ -36,6 +39,7 @@ func _initialize() -> void:
 	_map_range()
 	_effects()
 	_post_effects()
+	_window_placement()
 	await _page()
 	for f in DirAccess.get_files_at(_dir):
 		DirAccess.remove_absolute(_dir.path_join(f))
@@ -115,6 +119,37 @@ func _ladders() -> void:
 		"a saved size larger than the screen is cut to the screen's usable area (round 694 review)")
 	_check(VideoOptions.parse_resolution("1280x720") == Vector2i(1280, 720) and VideoOptions.parse_resolution("junk") == Vector2i.ZERO
 		and VideoOptions.format_resolution(Vector2i(1024, 768)) == "1024x768", "resolution text round trip")
+
+# --- the window (round 696) ---------------------------------------------------
+
+## The user's report: in a window, a lower resolution left a black border.
+## READ (Godot 4.2.2): DisplayServerWindows::window_set_size returns while the
+## window is maximised, but Window::set_size has already sized the viewport,
+## so a maximised window must be restored first. The rects here are synthetic
+## (OURS): a 3840 x 2112 work area and a Windows-10-like frame (8 px sides,
+## a 31 px title bar: client offset (8, 31), frame extra (16, 39)).
+func _window_placement() -> void:
+	_check(VideoOptions.restore_for_size(Window.MODE_MAXIMIZED) and VideoOptions.restore_for_size(Window.MODE_MINIMIZED)
+		and VideoOptions.restore_for_size(Window.MODE_FULLSCREEN) and not VideoOptions.restore_for_size(Window.MODE_WINDOWED),
+		"a maximised, minimised or full-screen window is restored before it is sized; a plain window is not")
+	var area := Rect2i(0, 0, 3840, 2112)
+	var inset := VideoOptions.frame_insets(Vector2i(1008, 531), Vector2i(1280, 720), Vector2i(1000, 500), Vector2i(1296, 759))
+	_check(inset == Rect2i(8, 31, 16, 39), "the frame: client offset (8, 31) inside it, 16 x 39 extra (got %s)" % str(inset))
+	var r := VideoOptions.window_placement(Vector2i(1280, 720), area, inset)
+	_check(r.size == Vector2i(1280, 720), "1280 x 720 asked: the client area is 1280 x 720 (got %s)" % str(r.size))
+	_check(r.position == Vector2i((3840 - 1296) / 2 + 8, (2112 - 759) / 2 + 31),
+		"... with the FRAME centred in the work area (retail centres the frame too, FUN_00835510) (got %s)" % str(r.position))
+	r = VideoOptions.window_placement(Vector2i(3840, 2160), area, inset)
+	_check(r.size == Vector2i(3840 - 16, 2112 - 39) and r.position == Vector2i(8, 31),
+		"3840 x 2160 on that screen: cut to the work area less the frame, the frame at the area's corner -- never off screen (got %s)" % str(r))
+	r = VideoOptions.window_placement(Vector2i(1024, 768), Rect2i(3840, 0, 1920, 1040), Rect2i())
+	_check(r == Rect2i(3840 + 448, 136, 1024, 768), "no frame (a box X server with no window manager), a second screen at x 3840: centred on that screen (got %s)" % str(r))
+	_check(VideoOptions.frame_insets(Vector2i(10, 10), Vector2i(800, 600), Vector2i(10, 10), Vector2i(800, 600)) == Rect2i(),
+		"no frame reported: no insets")
+	_check(VideoOptions.window_placement(Vector2i(800, 600), Rect2i(), Rect2i()).size == Vector2i(800, 600),
+		"no usable area known: the size as asked")
+	_check(not VideoOptions.sync_window_size(null) and not VideoOptions.sync_window_size(root),
+		"headless: nothing to correct (the live check is the box's windowed run, round 696)")
 
 func _storage() -> void:
 	var path := _dir.path_join("settings.cfg")
@@ -256,6 +291,46 @@ func _optionwnd() -> PackedByteArray:
 		out.append_array(_rec(r))
 	return out
 
+## Round 696: every combo on the tab draws the original's black value box
+## (READ, CNIFComboBox::vslot_010 0x486d30): the field {0, 0, W-20, H} filled
+## 0xff000000 with the com_blacksquare_ frame, the arrow {W-20, 0, 20, H}, the
+## text {5, 0, W-30, H}. The file's combos are 156 x 18 (Resolution, Set
+## Brightness) and 150 x 20 (the rows), MEASURED.
+func _combo_field(page: OptionVideoPage) -> void:
+	_check(OptionVideoPage.combo_field_rect(Vector2(150, 20)) == Rect2(0, 0, 130, 20)
+		and OptionVideoPage.combo_arrow_rect(Vector2(150, 20)) == Rect2(130, 0, 20, 20)
+		and OptionVideoPage.combo_text_rect(Vector2(150, 20)) == Rect2(5, 0, 120, 20),
+		"a 150 x 20 combo: field 130 x 20, arrow at x 130 (20 x 20), text from x 5, 120 wide (READ)")
+	var combos: Array = [page.resolution_combo(), page.brightness_combo()]
+	for n in page.slot_count():
+		combos.append(page.slot_combo(n))
+	var good := 0
+	for c in combos:
+		var combo := c as OptionButton
+		if combo == null:
+			continue
+		var host := combo.get_parent() as Control
+		var field := host.get_node_or_null("ComboField") as Control
+		var arrow := host.get_node_or_null("ComboArrow") as TextureRect
+		var hs := host.size
+		var ok := field != null and arrow != null
+		if ok:
+			ok = field.get_rect() == Rect2(0, 0, hs.x - 20, hs.y) and arrow.get_rect() == Rect2(hs.x - 20, 0, 20, hs.y)
+			ok = ok and field.get_index() < combo.get_index() and arrow.get_index() < combo.get_index()
+			var blank := combo.get_theme_icon("arrow")
+			ok = ok and blank != null and blank.get_width() == 20
+			var st := combo.get_theme_stylebox("normal")
+			ok = ok and st.content_margin_left == 5 and st.content_margin_right == 5 and combo.get_theme_constant("h_separation") == 0
+			ok = ok and combo.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST and field.texture_filter == CanvasItem.TEXTURE_FILTER_PARENT_NODE
+		if ok:
+			good += 1
+		else:
+			print("  combo %s: field %s arrow %s host %s" % [combo.get_path(), str(field.get_rect()) if field != null else "none", str(arrow.get_rect()) if arrow != null else "none", str(hs)])
+	_check(combos.size() == 14 and good == 14,
+		"all 14 combos (Resolution, Set Brightness, the 12 rows) draw a field {0,0,W-20,H} and the arrow {W-20,0,20,H} behind a button whose text room is {5,0,W-30,H}, the text crisp (got %d of %d)" % [good, combos.size()])
+	_check(page.resolution_combo() != null and (page.resolution_combo().get_parent() as Control).size == Vector2(156, 18),
+		"the Resolution combo's record is 156 x 18 (the field 136 x 18)")
+
 func _frames(n: int = 2) -> void:
 	for i in n:
 		await process_frame
@@ -300,6 +375,7 @@ func _page() -> void:
 	_check(page.slot_combo(0).item_count == 5 and page.slot_combo(0).get_item_text(4) == "User control" and page.slot_combo(0).selected == 1,
 		"the quality combo lists five choices and shows Middle (the default)")
 	_check(page.max_line() == 3, "17 rows, two a line, six lines shown: three more lines to scroll (got %d)" % page.max_line())
+	_combo_field(page)
 	# Low through the combo's own signal (a real popup choice emits it).
 	page.slot_combo(0).item_selected.emit(0)
 	await _frames()
@@ -362,6 +438,29 @@ func _page() -> void:
 		f.close()
 	else:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	# Round 696: the window is centred again when the view changes size under
+	# it (an Apply that resized the game window left it half off the screen).
+	win.show()
+	win.place_centred()
+	var was := win.position
+	root.size = Vector2i(900, 560)
+	await _frames()
+	var want := Vector2(maxi(0, (900 >> 1) - (int(win.size.x) >> 1)), maxi(0, (560 >> 1) - (int(win.size.y) >> 1)))
+	_check(win.position == want and win.position != was,
+		"the view shrinks under the open Option window: it is centred again (%s -> %s, want %s)" % [str(was), str(win.position), str(want)])
+	# ... and at a UI scale (round 672's content_scale_factor, the user's 1.95):
+	# the view is the window's size over the factor, and the window is centred
+	# in that.
+	root.content_scale_factor = 1.95
+	root.size = Vector2i(2400, 1400)
+	await _frames()
+	var view := win.get_viewport_rect().size
+	want = Vector2(maxi(0, (int(view.x) >> 1) - (int(win.size.x) >> 1)), maxi(0, (int(view.y) >> 1) - (int(win.size.y) >> 1)))
+	_check(absf(view.x - 2400.0 / 1.95) < 1.0 and win.position == want,
+		"at UI scale 1.95 a 2400 x 1400 window is a %s view and the Option window is centred in it (%s, want %s)" % [str(view), str(win.position), str(want)])
+	root.content_scale_factor = 1.0
+	root.size = Vector2i(1152, 648)
+	await _frames()
 	win.queue_free()
 	VideoOptions.set_in_force(saved_force)
 	await _frames()

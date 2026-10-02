@@ -21,13 +21,20 @@ class_name OptionVideoPage
 ## (INFERRED: the step was not read). A row's tooltip is its
 ## UIIT_STT_VIDIO_TTDESC_* text (READ: each row's second push in 0x5fef70).
 ##
-## **The combo (READ in part).** CNIFComboBox's create (vslot_010, 0x486d30)
-## loads `interface\ifcommon\com_qst_downarrow_button.ddj` for its button and
-## `interface\ifcommon\com_blacksquare_` for its list's frame. How it draws
-## its field and list is not read; here (OURS) it is a Godot OptionButton
-## with that arrow, the client's font, centred white text and no field art of
-## its own -- the row's own texture (opt_key2_long.ddj,
-## opt_video_control_box2.ddj) draws the field behind it.
+## **The combo (READ, round 696).** CNIFComboBox's create (vslot_010,
+## 0x486d30; its asm 0x486d6e..0x486ee1) makes three children of the combo's
+## own W x H rect (every combo here is 156 x 18 or 150 x 20, MEASURED):
+##   1  the arrow button {W-20, 0, 20, H}, com_qst_downarrow_button.ddj (20 x 20)
+##   2  the value field  {0, 0, W-20, H}, a CNIFStretchWnd on
+##      `interface\ifcommon\com_blacksquare_` (four corners, left_side and
+##      right_side, 0x49b040) with its fill colour +0x1c4 = 0xff000000
+##   3  the value text   {5, 0, W-30, H}, a CNIFStatic
+## The field is the black box: CNIFStretchWnd's draw (0x49aeb0) fills its
+## whole rect with the +0x1c4 colour (0x46d2a0, opaque black) and draws the
+## frame pieces over it. Round 694 read the second child as the list's frame
+## and drew no field, so each value sat on the row's grey art (the user's
+## report, 2026-10-02). See `_make_combo` for what is READ and what MEASURED.
+## The list (the popup) is still a Godot PopupMenu (OURS).
 ##
 ## **The buttons.** Default on this tab (0x5fc340, READ) sets Middle, Normal
 ## brightness, the 1280 x 1024 mode when listed, FULL SCREEN and the Free
@@ -178,9 +185,63 @@ func text(key: String, fallback: String) -> String:
 	return table.get_text(key)
 
 ## A combo over a ComboBox record's (unbuilt) node: see the header.
+## The combo's pieces (READ, CNIFComboBox::vslot_010 -- see the header).
+const COMBO_ARROW_W := 20
+const COMBO_TEXT_INSET := 5
+## READ: the field's fill, CNIFStretchWnd +0x1c4 = 0xff000000 (ARGB).
+const COMBO_FIELD_FILL := Color(0, 0, 0, 1)
+const COMBO_FIELD_BASE := "interface\\ifcommon\\com_blacksquare_"
+const COMBO_FIELD_PIECES := ["left_up", "right_up", "left_down", "right_down", "left_side", "right_side"]
+
+## The field and arrow rects in a combo of `size` (READ, see the header).
+static func combo_field_rect(size: Vector2) -> Rect2:
+	return Rect2(0, 0, maxf(size.x - COMBO_ARROW_W, 0.0), size.y)
+
+static func combo_arrow_rect(size: Vector2) -> Rect2:
+	return Rect2(maxf(size.x - COMBO_ARROW_W, 0.0), 0, minf(COMBO_ARROW_W, size.x), size.y)
+
+## The value text's rect: {5, 0, W-30, H} (READ).
+static func combo_text_rect(size: Vector2) -> Rect2:
+	return Rect2(COMBO_TEXT_INSET, 0, maxf(size.x - COMBO_ARROW_W - 2 * COMBO_TEXT_INSET, 0.0), size.y)
+
+## The combo over the file's record `host`: the field (black fill and
+## com_blacksquare_ frame), the arrow at its rect, and on top a Godot
+## OptionButton covering the whole record (OURS: a click anywhere on it opens
+## the list) that draws only the value text, centred in the text rect. Its
+## own arrow icon is a transparent 20-wide image so the button keeps the
+## arrow's width out of the text's room; its style margins (5 each side, no
+## separation) leave exactly the READ text rect. The text keeps round 672's
+## crisp (NEAREST) sampling: the button draws nothing else, and the field and
+## arrow are its siblings, so they keep the UI art's filter.
 func _make_combo(host: Control) -> OptionButton:
 	if host == null:
 		return null
+	var size := host.size
+	var field := Control.new()
+	field.name = "ComboField"
+	field.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var fr := combo_field_rect(size)
+	field.position = fr.position
+	field.size = fr.size
+	var pieces := {}
+	for p in COMBO_FIELD_PIECES:
+		pieces[p] = _builder.load_texture(COMBO_FIELD_BASE + p + ".ddj") if _builder != null else null
+	field.draw.connect(func() -> void: OptionVideoPage.draw_combo_field(field, pieces))
+	host.add_child(field)
+	var arrow_tex := _builder.load_texture(ARROW_DDJ) if _builder != null else null
+	var arrow := TextureRect.new()
+	arrow.name = "ComboArrow"
+	arrow.texture = arrow_tex
+	# READ: the button's rect is 20 x H; the 20 x 20 texture fills it (an 18
+	# tall combo draws it 18 tall: MEASURED in the reference picture, 36
+	# pixels at its 2x).
+	arrow.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	arrow.stretch_mode = TextureRect.STRETCH_SCALE
+	arrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var ar := combo_arrow_rect(size)
+	arrow.position = ar.position
+	arrow.size = ar.size
+	host.add_child(arrow)
 	var combo := OptionButton.new()
 	combo.name = "Combo"
 	combo.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -189,10 +250,13 @@ func _make_combo(host: Control) -> OptionButton:
 	combo.fit_to_longest_item = false
 	combo.clip_text = true
 	for st in ["normal", "hover", "pressed", "disabled", "focus", "hover_pressed"]:
-		combo.add_theme_stylebox_override(st, StyleBoxEmpty.new())
-	var arrow := _builder.load_texture(ARROW_DDJ) if _builder != null else null
-	if arrow != null:
-		combo.add_theme_icon_override("arrow", arrow)
+		var empty := StyleBoxEmpty.new()
+		empty.content_margin_left = COMBO_TEXT_INSET
+		empty.content_margin_right = COMBO_TEXT_INSET
+		combo.add_theme_stylebox_override(st, empty)
+	combo.add_theme_icon_override("arrow", _blank_arrow())
+	combo.add_theme_constant_override("arrow_margin", 0)
+	combo.add_theme_constant_override("h_separation", 0)
 	var font := _builder.font_at(0) if _builder != null else null
 	if font != null:
 		combo.add_theme_font_override("font", font)
@@ -201,9 +265,75 @@ func _make_combo(host: Control) -> OptionButton:
 		combo.add_theme_color_override(c, Color.WHITE)
 	combo.add_theme_color_override("font_disabled_color", DISABLED_TEXT)
 	UiBuilder.guard_button_font(combo)
+	UiBuilder.crisp_text(combo)
 	host.mouse_filter = Control.MOUSE_FILTER_PASS
 	host.add_child(combo)
 	return combo
+
+static var _blank_arrow_tex: ImageTexture = null
+
+## A transparent COMBO_ARROW_W x 1 image: the OptionButton's arrow slot,
+## drawn invisibly (the real arrow is its own TextureRect).
+static func _blank_arrow() -> ImageTexture:
+	if _blank_arrow_tex == null:
+		_blank_arrow_tex = ImageTexture.create_from_image(Image.create(COMBO_ARROW_W, 1, false, Image.FORMAT_RGBA8))
+	return _blank_arrow_tex
+
+## Draws the value field on `ci` over its whole rect: the READ black fill,
+## then the com_blacksquare_ pieces -- each corner at its own size in its
+## corner, left_side tiled down the left and right_side down the right
+## (READ: the loader 0x49b040 passes left_side twice and right_side twice;
+## round 584 read the pairing as left + top, right + bottom), and the same
+## two pieces along the top and bottom TRANSPOSED, so their outer column is
+## the edge's outer row. The transposition is MEASURED, not read: the
+## reference picture's top edge is one continuous row of 0x080808..0x100c10
+## and its bottom one row of 0x7b797b -- the outer columns of left_side and
+## right_side -- where the pieces tiled untransposed would draw a dot every
+## 4 pixels; the six-piece class's UVs (0x49a140 / 0x49a7d0) were not read.
+## Every piece in the archive is 4 x 4 (MEASURED). The bottom row matches the
+## reference pixel for pixel (0x7b797b); the top row here is left_side's
+## column 0, 0x080808 with every fourth pixel 0x000400, where the reference
+## shows 0x080808 throughout -- the top's exact source is not established
+## (every value within 8 levels; MEASURED, round 696).
+static func draw_combo_field(ci: CanvasItem, pieces: Dictionary) -> void:
+	var size: Vector2 = (ci as Control).size if ci is Control else Vector2.ZERO
+	if size.x <= 0 or size.y <= 0:
+		return
+	ci.draw_rect(Rect2(Vector2.ZERO, size), COMBO_FIELD_FILL)
+	var lu := pieces.get("left_up") as Texture2D
+	var ru := pieces.get("right_up") as Texture2D
+	var ld := pieces.get("left_down") as Texture2D
+	var rd := pieces.get("right_down") as Texture2D
+	var ls := pieces.get("left_side") as Texture2D
+	var rs := pieces.get("right_side") as Texture2D
+	var lu_s := lu.get_size() if lu != null else Vector2.ZERO
+	var ru_s := ru.get_size() if ru != null else Vector2.ZERO
+	var ld_s := ld.get_size() if ld != null else Vector2.ZERO
+	var rd_s := rd.get_size() if rd != null else Vector2.ZERO
+	if ls != null:
+		var w := ls.get_size().x
+		_tile(ci, ls, Rect2(0, lu_s.y, w, size.y - lu_s.y - ld_s.y), false)
+		# The top: the piece transposed, its width now the edge's height.
+		_tile(ci, ls, Rect2(lu_s.x, 0, size.x - lu_s.x - ru_s.x, w), true)
+	if rs != null:
+		var w := rs.get_size().x
+		_tile(ci, rs, Rect2(size.x - w, ru_s.y, w, size.y - ru_s.y - rd_s.y), false)
+		_tile(ci, rs, Rect2(ld_s.x, size.y - w, size.x - ld_s.x - rd_s.x, w), true)
+	for c in [[lu, Vector2.ZERO], [ru, Vector2(size.x - ru_s.x, 0)],
+			[ld, Vector2(0, size.y - ld_s.y)], [rd, size - rd_s]]:
+		if c[0] != null:
+			ci.draw_texture(c[0], c[1])
+
+## Tiles `tex` over `rect`, its axes swapped when `transpose`. READ, Godot
+## 4.2.2 (servers/rendering/renderer_canvas_cull.cpp,
+## canvas_item_add_texture_rect): a transposed rect has its SIZE swapped as
+## well as its UVs, so the size goes in swapped to come out as `rect` --
+## passed as is, the top edge drew as a 4-wide column hanging down from the
+## field (this round's first live shots).
+static func _tile(ci: CanvasItem, tex: Texture2D, rect: Rect2, transpose: bool) -> void:
+	if rect.size.x > 0 and rect.size.y > 0:
+		var r := Rect2(rect.position, Vector2(rect.size.y, rect.size.x)) if transpose else rect
+		ci.draw_texture_rect(tex, r, true, Color.WHITE, transpose)
 
 func _slot_label(slot: Control) -> Label:
 	if slot == null:

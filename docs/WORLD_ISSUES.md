@@ -7094,6 +7094,176 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-ninety-sixth round: in a window the chosen resolution sizes the OS window (a maximised window is restored first), and every Option combo draws the original's black value box
+
+The user (2026-10-02, on v0.1.480, Windows at about 4K, UI scale ~1.95, window mode at 3840 x 2019):
+"when you change the resolution in window mode please have the window size change with it.
+Currently if you set a lower resolution it will leave a black area around the game inside the
+actual game window." and "great start on the video settings but the drop downs need a black box
+in them." Lane `ui696`, client, UI-only (no perf gate: no world, map, object, terrain, effect,
+animation or loading code). Labels: READ (`sro_client.exe` on the box; Godot 4.2.2's source),
+MEASURED, INFERRED, OURS. `docs/protocol/OPTION_VIDEO.md` has the record.
+
+### 1. The black border (root cause, READ)
+
+3840 x 2019 is a maximised window on a 3840 x 2160 screen. Round 694's `apply_display` set
+`window.size` and moved it. In Godot 4.2.2:
+
+- `Window::set_size` stores the size and calls `_update_window_size`, which asks the display
+  server for the size and then sizes the viewport from the stored value (`_update_viewport_size`,
+  scene/main/window.cpp);
+- `DisplayServerWindows::window_set_size` and `window_set_position` both begin
+  `if (wd.fullscreen || wd.maximized) return;` (platform/windows/display_server_windows.cpp).
+
+So on Windows the OS window kept its maximised 3840 x 2019, no WM_SIZE came back to correct the
+node, and the game drew a 1280 x 720 (or whatever was chosen) viewport in the corner of the
+window: the rest black. Choosing a larger size again drew a viewport larger than the window.
+
+### 2. What the original does (READ)
+
+- The Video tab's store `0x5fdae0` calls `FUN_00835510(mode)` when the Resolution changed. In a
+  window (`video+0xa0`) it ORs WS_CAPTION | WS_SYSMENU (0xC80000) into the style, turns
+  {0, 0, w, h} into the frame with `AdjustWindowRect`, and `MoveWindow`s the frame to
+  ((SM_CXFULLSCREEN - frame w) / 2, (SM_CYFULLSCREEN - frame h) / 2); then `FUN_004694d0` and
+  `FUN_008354c0` reset the device to w x h. In full screen `CGFXVideo3d::vslot_020` (`0xbad590`)
+  changes the display mode (`ChangeDisplaySettings`, CDS_FULLSCREEN) and `SetWindowPos`.
+- The full screen <-> window toggle (`CGFXVideo3d::vslot_000`, `0xbad910`) does the same centred
+  MoveWindow on the way into a window.
+- Retail's style has no WS_THICKFRAME or WS_MAXIMIZEBOX: its window is never maximised or
+  resized by hand. Ours can be, which is how the user met this.
+
+### 3. The black value box (READ)
+
+`CNIFComboBox::vslot_010` (`0x486d30`, asm `0x486d6e..0x486ee1`) takes the combo's own W x H rect
+and makes: the arrow button {W-20, 0, 20, H} (`com_qst_downarrow_button.ddj`, 20 x 20); a
+CNIFStretchWnd {0, 0, W-20, H} on `com_blacksquare_` (corners, `left_side` x2, `right_side` x2,
+`0x49b040`) with +0x1c4 = 0xff000000; and the value CNIFStatic {5, 0, W-30, H}.
+CNIFStretchWnd's draw (`0x49aeb0`) fills its rect with the +0x1c4 colour when it is non-zero
+(`0x46d2a0`) and draws its frame over it -- the black box. Round 694 read that child as the list's
+frame and drew no field. MEASURED in the box's Media.pk2: optionwnd.2dt has 14 CNIFComboBox
+records, all on the Video pane (Resolution / Set Brightness 156 x 18, the rows' 217 150 x 20) --
+no other Option tab has a combo; the six `com_blacksquare_` pieces are 4 x 4 (a near-black
+top-left edge 0x080808..0x100c10, a grey bottom-right one 0x6a656a / 0x7b797b); `mid_up` /
+`mid_down` do not exist.
+
+### 4. What changed
+
+- `VideoOptions.apply_display`: a maximised, minimised or full-screen window is restored
+  (`MODE_WINDOWED`) before it is sized (`restore_for_size`); the client size is the chosen one cut
+  to the usable area of the window's screen LESS the window's own frame (`frame_insets` from the
+  display server's with/without-decoration rects; round 694's clamp, now counting the title bar);
+  the frame is centred in that area (`window_placement`; retail centres it on the primary screen's
+  full-screen area); afterwards `sync_window_size` makes the node's size the OS window's if they
+  still differ (on Windows `window_get_size` is the real client size, so a size the OS refused can
+  never again leave a viewport smaller than its window). One log line per apply names the node's
+  size, the OS window's and the view's render target (for a tester's log), and one more each time
+  the view changes size later ("view resized": a full-screen switch or maximise the window
+  manager finishes after the call returns, a drag), at most one a frame.
+- `OptionWindow` is centred again whenever the view changes size while it is open (OURS). Found
+  by this round's live run: after Apply took the game window from 1920 x 1056 to 1024 x 768 the
+  Option window kept its position, its right half and its Cancel / Apply off the screen. Retail
+  sends its UI message 0x80a (w, h) after a resolution change (`CGFXVideo3d::vslot_020`); what its
+  windows do with it is not read. The HUD's anchored pieces (minimap, hotbar, portrait) re-laid out
+  by themselves (the shots); other open windows keep their positions (OPEN).
+- `OptionVideoPage._make_combo`: the field (`ComboField`: the READ black fill and the
+  `com_blacksquare_` pieces), the arrow (`ComboArrow`, the texture at its 20 x H button rect) and
+  on top the OptionButton drawing only the text, centred in {5, 0, W-30, H} (a transparent 20-wide
+  arrow icon keeps the arrow's room; 5 px style margins; no separation). The text is now sampled
+  NEAREST (round 672's crisp text) -- the button draws nothing else; the field and arrow are its
+  siblings and keep the art's filter. The top and bottom edges are the side pieces TRANSPOSED:
+  MEASURED against the user's picture (one continuous row of the pieces' outer-column colour), the
+  six-piece UVs (`0x49a140` / `0x49a7d0`) not read. A trap on the way: Godot 4.2.2 swaps a
+  transposed rect's SIZE as well as its UVs (`canvas_item_add_texture_rect`, READ), so the first
+  live run drew each top / bottom edge as a 4-wide dotted column hanging below the field; the size
+  now goes in swapped.
+
+### 5. Measurements
+
+Real X input on the box (`/var/tmp/ui696/h/live696.sh` + `drive696.py`, kept on the box, not in
+the repo): a fresh in-memory server, a client in a 1280 x 720 window that signs in, is MAXIMISED by
+the window manager (xfwm4 on Xvfb :696, 1920 x 1080; `wmctrl`), then Esc -> Option -> Resolution
+1024 x 768 -> Apply; the largest listed (1920 x 1080) -> Confirm; Full screen -> Confirm; Window
+1280 x 720 -> Confirm. After each: the X window's client geometry (`xwininfo`, `_NET_WM_STATE`),
+the client's own line (the node's size, the OS window's, the view's render target) and a shot.
+
+| Step | origin/dev (+ the log line only) | this round, GL | this round, Forward+ |
+|---|---|---|---|
+| maximised by the WM | X window 1920 x 1056, MAXIMIZED | the same | the same |
+| Apply 1024 x 768 | node 1024 x 768, view 1024 x 768; **X window still 1920 x 1056, maximised** -- the bug | X window 1024 x 768 at (448, 168), not maximised; node = OS = view 1024 x 768 | the same |
+| Confirm 1920 x 1080 | node / view 1920 x 1080; X window still 1920 x 1056 (the view larger than the window) | 1910 x 1046 at (5, 29): the usable 1920 x 1080 less xfwm4's 10 x 34 frame; node = OS = view | the same |
+| Confirm Full screen | X window 1920 x 1080, FULLSCREEN | X 1920 x 1080; "view resized -- fullscreen, 1920x1080; OS window 1920x1080; view 1920x1080" | X 1920 x 1080 |
+| Confirm Window 1280 x 720 | 1280 x 720 (from full screen the base works) | 1280 x 720 at (322, 194); node = OS = view | the same |
+
+GL: Compatibility, OpenGL 4.6 radeonsi (RX 7600) under VirtualGL. Forward+: Vulkan, RADV NAVI33
+(RX 7600), on the same Xvfb with Mesa's software WSI (`MESA_VK_WSI_DEBUG=sw`) -- headless weston's
+Xwayland (round 693's `xwl_run.sh`) maximised the window (1908 x 1015) but took no xdotool keys,
+so no Option window could be opened there (MEASURED: four "no System window" timeouts).
+
+**The shots' black border is a second probe, with a different failure mode** (`border.py`: full
+columns at the right / rows at the bottom that are pure black): origin/dev after Apply 1024 x 768:
+the game drawn 1024 x 768 in the corner of the 1920 x 1056 window, 315 columns / 175 rows of
+undrawn window (the rest is stale X content on Xvfb; on Windows it is the user's black). This
+round: 0 / 0 after every Godot-initiated resize under both renderers; under Forward+ 0 / 0 also
+after the WM's maximise and the full-screen switch. Under GL the WM-initiated grows (maximise, full
+screen) show 315 / 175 and 5 / 5 in the shot while Godot's own line says view = OS window
+(1920 x 1080): the VirtualGL read-back, not the game -- the Forward+ capture, without VirtualGL,
+has none.
+
+**The Option window after the resize:** before this round's re-centre it kept its position, half
+off a 1024 x 768 window with its Cancel / Apply off screen (the first live run's shot); now it is
+centred (the driver's Cancel, moved by half the size change, hit it in every run).
+
+**The combo field against the reference** (`field.py`: the dark run along a text-free row and
+column, and the edge pixels; the reference is at 2x, ours at 1x):
+
+| | reference (picture px / 2) | ours (1x, gl_final) |
+|---|---|---|
+| row combo field | 258 + 2 edge = 260 x 40 -> 130 x 20 | 129 + 1 edge = 130 x 20 |
+| Resolution field | 270 + 2 = 272 x 36 -> 136 x 18 | 135 + 1 = 136 x 18 |
+| arrow | 40 -> 20 wide; 36 -> 18 tall on Resolution | 20 x H (ComboArrow rect, test) |
+| top-left / right / bottom edge | 0x080808 / 0x6b656b / 0x7b797b | 0x080808 / 0x6a656a / 0x7b797b |
+| bottom edge row | one row of 0x7b797b | 121 of 121 px 0x7b797b |
+| top edge row | 0x080808 (one 0x100c10) | 91 of 121 px 0x080808, 30 px 0x000400 (left_side's column 0: the exact top piece is not established; every value within 8 levels) |
+| value text | white (255, 255, 255), ink centred on the field within 1 px | white, centred in {5, 0, W-30, H} |
+
+Between two slots (the 4-pixel gap at x 793..796) the first live run had the hanging 0x00 /
+0x7b797b strip of the untransposed-size draw; gl_final has the window's own background there.
+
+Shots (on the box, regenerable; not in the repo): `/var/tmp/ui696/runs/gl_base/03_applied_1024.png`
+(the bug), `/var/tmp/ui696/runs/gl_final/02_option_1024.png` (the boxes),
+`/var/tmp/ui696/runs/gl_final/03_applied_1024.png`, `.../04_applied_largest.png`,
+`/var/tmp/ui696/runs/fpx_final/0*.png` (Forward+).
+
+### 6. Tests
+
+`video_options_test.gd`: `_window_placement` (restore rule; a Windows-10-like synthetic frame on
+a 3840 x 2112 work area: 1280 x 720 centred by its frame; 3840 x 2160 cut to 3824 x 2073 at (8, 31);
+no frame on a second screen) and `_combo_field` (all 14 combos: field {0,0,W-20,H}, arrow
+{W-20,0,20,H} behind the button, text room {5,0,W-30,H}, crisp), and the Option window centred
+again when the view shrinks under it, at scale 1 and at 1.95 (a 2400 x 1400 window: a 1230 x 717
+view). NEGATIVE: the suite on origin/dev
+(this test file, the old code) does not parse -- `restore_for_size`, `frame_insets`,
+`window_placement` not found. `remote_godot.sh check`: 547 scripts and
+9 scenes, ALL LOAD. `remote_godot.sh tests`: 211 suites, 0 failing. The live runs above were not
+at a UI scale: they start World3D.tscn directly, and only Boot applies `[ui] scale` (a seeded 1.25
+reached the file but not the window) -- the scale is covered by the headless check only.
+
+### 7. Open
+
+- The open list is still a Godot PopupMenu; retail's list (the CNIFComboBox's popup) is not read.
+- The six-piece frame's UVs are not read (the transposed edges are MEASURED against one picture).
+- Retail's window cannot be maximised or resized by hand; whether ours should be locked the same
+  way is the user's call (docs/TODO.md).
+- Windows itself was not run: the Windows path is READ from Godot's source; the box measured X11
+  under xfwm4 (GL, and Forward+ through Mesa's software WSI). On X11 Godot's own size record is the
+  ASKED size (`window_set_size` stores it first), so `sync_window_size` can only catch a refused
+  size on Windows, where `window_get_size` is the real client size; the restore is what fixed the
+  box's runs.
+- Other open HUD windows keep their positions when the view shrinks; only the Option window (open
+  while its Apply resizes) is re-centred. What retail's windows do with message 0x80a is not read.
+- The live runs were at UI scale 1 (see Tests); the user's 1.95 is covered headlessly.
+- The top edge of the field: 0x000400 every fourth pixel against the reference's 0x080808.
+
 ## Six-hundred-and-ninety-fourth round: the Option window's Video tab -- retail's rows, presets, two Graphic records and brightness curve, each mapped to a Godot effect or marked as drawing nothing here, plus SSAO and the Bloom row as Godot glow
 
 The user (2026-10-02): "Add SSAO and glow as toggable options in Esc -> Option -> Video tab alongside
