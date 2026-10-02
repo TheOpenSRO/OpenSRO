@@ -312,6 +312,8 @@ static func _set_shown(window: HudWindow, control_name: String, shown: bool) -> 
 ## connects them: Option opens the settings panel, Restart returns to the
 ## login screen, Exit quits.
 signal system_option_requested
+## The Option window's Video tab was stored (Apply / Confirm; round 694).
+signal video_options_applied(options: VideoOptions)
 signal system_restart_requested
 signal system_exit_requested
 signal system_help_requested
@@ -610,6 +612,7 @@ func toggle_option() -> OptionWindow:
 		window.queue_free()
 		return null
 	window.closed.connect(close_option)
+	window.video_applied.connect(func(o: VideoOptions) -> void: video_options_applied.emit(o))
 	_option = window
 	window.show()
 	window.place_centred()
@@ -618,7 +621,43 @@ func toggle_option() -> OptionWindow:
 	if system != null:
 		system.hide()
 	print("HudPanels: option window opened (%s)" % OptionWindow.OPTION_2DT)
+	if qa_rects_on():
+		_qa_print_option_rects.call_deferred()
 	return window
+
+## SRREVAMP_QA_UI_RECTS=1 (round 694, OURS): print the screen rect of the
+## controls a real-input run clicks -- the System window's Option button,
+## the Option window's tabs, buttons and Video rows -- as `QA RECT <window>
+## <name> <centre x> <centre y> <w> <h>` in window pixels, so an xdotool
+## driver clicks what is drawn, at any UI scale.
+static func qa_rects_on() -> bool:
+	return OS.get_environment("SRREVAMP_QA_UI_RECTS") == "1"
+
+func _qa_print_rects(tag: String, controls: Dictionary) -> void:
+	var k := get_window().content_scale_factor if is_inside_tree() else 1.0
+	for key in controls:
+		var c := controls[key] as Control
+		if c == null or not is_instance_valid(c) or not c.is_visible_in_tree():
+			print("QA RECT %s %s none" % [tag, key])
+			continue
+		var r := c.get_global_rect()
+		print("QA RECT %s %s %d %d %d %d" % [tag, key, roundi(r.get_center().x * k), roundi(r.get_center().y * k), roundi(r.size.x * k), roundi(r.size.y * k)])
+
+func _qa_print_option_rects() -> void:
+	var w := option_window()
+	if w == null:
+		return
+	var controls := {"tab_video": w.control([10]), "tab_audio": w.control([14]), "default": w.control([5]),
+		"confirm": w.control([6]), "cancel": w.control([8]), "apply": w.control([9]),
+		"g1": w.control([78, 24]), "g2": w.control([78, 25]), "fullscreen": w.control([78, 203]),
+		"windowed": w.control([78, 204]), "view_free": w.control([78, 207]), "view_third": w.control([78, 208]),
+		"view_quarter": w.control([78, 209]), "resolution": w.control([78, 14, 15]), "brightness": w.control([78, 462, 15]),
+		"scroll_up": w.control([78, 465]).get_node_or_null("Up") if w.control([78, 465]) != null else null,
+		"scroll_down": w.control([78, 465]).get_node_or_null("Down") if w.control([78, 465]) != null else null}
+	if w.video != null:
+		for n in w.video.slot_count():
+			controls["slot%d" % n] = w.video.slot_combo(n)
+	_qa_print_rects("option", controls)
 
 func close_option() -> void:
 	var window := _option
@@ -3054,6 +3093,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			var system := open("system")
 			if system != null:
 				UiSounds.window_toggled(system.visible, _interface_shown(), "Escape: system")
+				if qa_rects_on():
+					_qa_print_rects.call_deferred("system", {"option": system.node("GDR_SYSTEM_BTN_OPTION")})
 		get_viewport().set_input_as_handled()
 		return
 	# The windows' keys, from the one key table (KeyMap, round 608). A text

@@ -47,6 +47,10 @@ class_name WaterReflection
 ##   0xa0)`, whose unit is INFERRED to be seconds.
 
 const TARGET_ROWS := 512
+## The rows in force: the Water Detail option (round 694,
+## VideoOptions.water_rows: 256 / 512 / 1024, Middle = TARGET_ROWS). Read
+## every frame, so a change shows on the next.
+static var target_rows := TARGET_ROWS
 const QA_WINDOW := 10
 ## READ: `_DAT_00de4f70` = 0.04 (as a double), and the angle is t * 0.5 * 9.
 const BUMP_SCALE := 0.04
@@ -84,14 +88,18 @@ var _qa_frames := 0
 var _qa_main_ms := 0.0
 var _qa_refl_ms := 0.0
 
-## The option, mirroring retail's: ClientSettings [world] water_reflection,
-## default ON as the shipped SROptionSet.dat has it; SRREVAMP_WATER_REFLECTION
-## (0 or 1) overrides it for a run.
+## The option: the Option window's Water Reflection row in the Graphic
+## record in force (round 694, VideoOptions; before it, [world]
+## water_reflection, which still seeds it). This client's default is ON, the
+## look it has drawn since round 628. (Round 628 took ON from the shipped
+## SROptionSet.dat's tag 5; round 694 READ that the file's record is Middle,
+## whose preset retail re-applies on load -- Middle has the reflection OFF.)
+## SRREVAMP_WATER_REFLECTION (0 or 1) overrides it for a run.
 static func enabled() -> bool:
 	var env := OS.get_environment("SRREVAMP_WATER_REFLECTION")
 	if env != "":
 		return env != "0"
-	return bool(ClientSettings.get_value(ClientSettings.SECTION_WORLD, ClientSettings.KEY_WATER_REFLECTION, true))
+	return VideoOptions.in_force().value(VideoOptions.WATER_REFLECTION) == 1
 
 ## waterbump3.ddj as the bump stage reads it (READ, `Map::FUN_009f2050`):
 ## - du = (left - right) / 2 and dv = (row above - row below) / 2 on byte 0
@@ -298,7 +306,7 @@ func _ready() -> void:
 	ensure_globals()
 	_viewport = SubViewport.new()
 	_viewport.name = "WaterReflectionTarget"
-	_viewport.size = Vector2i(TARGET_ROWS, TARGET_ROWS)
+	_viewport.size = Vector2i(target_rows, target_rows)
 	_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	_viewport.handle_input_locally = false
 	_viewport.gui_disable_input = true
@@ -418,7 +426,7 @@ func _process(_delta: float) -> void:
 	var vs := get_viewport().get_visible_rect().size
 	if vs.y > 0:
 		aspect = vs.x / vs.y
-	var size := Vector2i(maxi(1, int(roundf(TARGET_ROWS * aspect))), TARGET_ROWS)
+	var size := Vector2i(maxi(1, int(roundf(target_rows * aspect))), target_rows)
 	if _viewport.size != size:
 		_viewport.size = size
 	_camera.fov = main.fov

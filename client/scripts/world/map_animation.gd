@@ -64,12 +64,20 @@ const ACTION_TYPE := 0
 
 ## The object range the fade state is tested against (READ, asm
 ## 0xa2d961/0xa2d967): `DAT_00ec54b0` minus the double 480.0 at 0xde4f58.
-## DAT_00ec54b0 starts at 2500; the view-distance option can set it to
-## min(0.8 x view, 2500) -- 1200 / 2000 / 2500 -- which this client has no
-## option for, so the range is 2020 (720 / 1520 / 2020 per setting).
+## DAT_00ec54b0 starts at 2500; the Background Sight Range option sets it to
+## min(0.8 x far plane, 2500) -- 1200 / 2000 / 2500 / 2500 / 2500 -- so the
+## range is 720 / 1520 / 2020 per setting (round 694: the Option window's
+## row, VideoOptions.view_distance; `object_range` below follows it).
 const OBJECT_RANGE_SETTING := 2500.0
 const OBJECT_RANGE_MARGIN := 480.0
 const OBJECT_RANGE := OBJECT_RANGE_SETTING - OBJECT_RANGE_MARGIN
+## The range in force: OBJECT_RANGE until set_view_distance is called.
+static var object_range := OBJECT_RANGE
+
+## The view distance (DAT_00ec54b0) in force; the range is it less the
+## margin (READ, above). A Driver re-tests every sector on its next tick.
+static func set_view_distance(view: float) -> void:
+	object_range = maxf(view - OBJECT_RANGE_MARGIN, 0.0)
 
 ## A region's `.o2` sector: its 6 x 6 grid over 1920 units (MAPO2_FORMAT.md).
 ## The frame's sector list (+0x2783) is taken to be this grid (INFERRED).
@@ -260,8 +268,8 @@ static func start(player: AnimationPlayer) -> void:
 ## The client's fade-state test (SWorld::FUN_00a38a50, READ): in range while
 ## `dist - radius < range`, strictly -- `dist` from the camera `eye` to the
 ## placement `origin`, `radius` the object's X-Z radius (xz_radius).
-static func in_range(origin: Vector3, radius: float, eye: Vector3, object_range: float = OBJECT_RANGE) -> bool:
-	return origin.distance_to(eye) - radius < object_range
+static func in_range(origin: Vector3, radius: float, eye: Vector3, range_: float = -1.0) -> bool:
+	return origin.distance_to(eye) - radius < (range_ if range_ >= 0.0 else object_range)
 
 ## The sector cell holding a placement at region-local `local`: its key and
 ## the centre of the cell (at the placement's height) in the space
@@ -408,6 +416,8 @@ class Driver:
 	var _last_eye := Vector3.INF
 	var _last_planes: Array = []
 	var _changed := true
+	## The object range the last tick tested against (MapAnimation.object_range).
+	var _range_ticked := MapAnimation.OBJECT_RANGE
 
 	## Every registered entry, [player, object root, world origin, radius] --
 	## for the probe and the tests.
@@ -490,6 +500,13 @@ class Driver:
 			return
 		if not _released.is_empty():
 			_pool_released()
+		if MapAnimation.object_range != _range_ticked:
+			# The range changed (the Background Sight Range option): every
+			# sector's quiet shortcut was taken against the old one.
+			_range_ticked = MapAnimation.object_range
+			_changed = true
+			for key in _sectors:
+				(_sectors[key] as Sector).quiet = false
 		# The same camera as the last tick, and nothing added or dropped
 		# since: every decision below would come out as it did, and the
 		# last tick already applied them.
@@ -504,9 +521,9 @@ class Driver:
 		var starting: Array = []
 		var stopping: Array = []
 		var dead := false
-		var near := MapAnimation.OBJECT_RANGE - BOUND_MARGIN
-		var far := MapAnimation.OBJECT_RANGE + BOUND_MARGIN
-		var object_range := MapAnimation.OBJECT_RANGE
+		var near := MapAnimation.object_range - BOUND_MARGIN
+		var far := MapAnimation.object_range + BOUND_MARGIN
+		var object_range := MapAnimation.object_range
 		var reach := MapAnimation.SECTOR_RADIUS
 		var view: Array[Plane] = []
 		for plane in planes:

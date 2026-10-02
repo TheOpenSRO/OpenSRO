@@ -27,6 +27,15 @@ func _ready() -> void:
 	# Before any screen draws, so the login screen is already the size the
 	# player asked for last time (the debug panel changes it live).
 	ClientSettings.apply_ui_scale(get_window(), ClientSettings.ui_scale())
+	# The Option window's Video tab (round 694): the window mode and size and
+	# the brightness pass from the start, the login screen included; the
+	# world applies the rest when it loads.
+	var video := VideoOptions.in_force()
+	VideoOptions.apply_display(get_window(), video)
+	VideoOptions.apply_brightness(get_tree().root, video.current().brightness)
+	print("SRRevamp video: graphic %d, quality %d, brightness %d, fullscreen %s, resolution %s" % [
+		video.active + 1, video.current().quality, video.current().brightness, str(video.fullscreen),
+		VideoOptions.format_resolution(video.resolution) if video.resolution.x > 0 else "(as started)"])
 
 	_updater = AutoUpdater.new()
 	add_child(_updater)
