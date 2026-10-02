@@ -443,7 +443,8 @@ func apply_video_options(o: VideoOptions) -> void:
 	# a region's water is built for one mode, so a change shows from the next
 	# world entry (OURS; said in the window's tooltip).
 	var want_reflection := o.value(VideoOptions.WATER_REFLECTION) == 1
-	if before != null and want_reflection != _water_reflection_on:
+	if before != null and want_reflection != (before.value(VideoOptions.WATER_REFLECTION) == 1) \
+			and want_reflection != _water_reflection_on:
 		_log_system("Water Reflection %s from the next login." % ("on" if want_reflection else "off"))
 	# Water Detail (OURS rows; VideoOptions.WATER_ROWS): live.
 	WaterReflection.target_rows = VideoOptions.water_rows(o.value(VideoOptions.WATER_DETAIL))

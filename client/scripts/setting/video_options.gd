@@ -337,7 +337,8 @@ static func brightness_curve(choice: int, x: float) -> float:
 static func forward_plus_running() -> bool:
 	return RenderingServer.get_rendering_device() != null
 
-## SSAO and glow exist only under Forward+ (4.2.2's GLES3 has neither pass).
+## SSAO and glow exist only under Forward+ (4.2.2's GLES3 has neither pass);
+## so do MSAA and the mipmap bias (MEASURED, OptionVideoPage.available).
 static func post_effects_available() -> bool:
 	return forward_plus_running()
 

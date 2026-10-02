@@ -341,8 +341,13 @@ func combo_of(entry: int) -> OptionButton:
 	return _slots[n][1] if n >= 0 else null
 
 ## Whether a row can do anything in this build under the running renderer.
+## Texture Filtering (MSAA) and Texture Detail (mipmap bias) are Forward+'s
+## too: MEASURED in round 694 on the box, a test scene's edges and a
+## mipmapped checker are pixel-identical with msaa_3d 2x / bias 2 under 4.2.2
+## Compatibility, and change under Forward+ (edge pixels 12455 -> 12727,
+## checker contrast 0.356 -> 0.257).
 static func available(entry: int) -> bool:
-	if entry == VideoOptions.SSAO or entry == VideoOptions.BLOOM:
+	if entry in [VideoOptions.SSAO, VideoOptions.BLOOM, VideoOptions.FILTERING, VideoOptions.TEXTURE]:
 		return VideoOptions.post_effects_available()
 	if entry == VideoOptions.RENDERER:
 		return VideoOptions.renderer_choice_script() != null
@@ -350,8 +355,10 @@ static func available(entry: int) -> bool:
 
 ## Why a row is greyed, for its tooltip.
 static func unavailable_reason(entry: int) -> String:
-	if entry == VideoOptions.SSAO or entry == VideoOptions.BLOOM:
-		return "Needs the Forward+ renderer: the Compatibility renderer running now has no %s pass." % ("ambient occlusion" if entry == VideoOptions.SSAO else "glow")
+	if entry in [VideoOptions.SSAO, VideoOptions.BLOOM, VideoOptions.FILTERING, VideoOptions.TEXTURE]:
+		var what := {VideoOptions.SSAO: "ambient occlusion pass", VideoOptions.BLOOM: "glow pass",
+			VideoOptions.FILTERING: "multisampling (it draws the same picture)", VideoOptions.TEXTURE: "texture mipmap bias (it draws the same picture)"}
+		return "Needs the Forward+ renderer: the Compatibility renderer running now has no %s." % what[entry]
 	if entry == VideoOptions.RENDERER:
 		return "This build cannot record a renderer choice yet (round 693's RendererChoice); running: %s." % ("Forward+" if VideoOptions.forward_plus_running() else "Compatibility")
 	return ""
@@ -367,6 +374,8 @@ func tooltip_of(entry: int) -> String:
 			ours = "Godot glow."
 		VideoOptions.SSAO:
 			ours = "Screen-space ambient occlusion (this client's own option)."
+		VideoOptions.FILTERING:
+			ours = "Multisample anti-aliasing (2x)."
 		VideoOptions.RENDERER:
 			ours = "Forward+ (Vulkan) or Compatibility (OpenGL). Takes effect at the next start."
 		VideoOptions.WATER_REFLECTION:
