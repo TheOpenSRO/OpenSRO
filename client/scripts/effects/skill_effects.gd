@@ -240,7 +240,9 @@ static func warm() -> void:
 	SkillAudio.warm()
 	var t0 := Time.get_ticks_msec()
 	_rows = parse_rows(AudioBank.read_table("media", SKILLEFFECT_PATH))
-	for path in SkillDataReader.SKILL_TABLES:
+	# Both races' skill files (round 691): a Europe cast keys its sound and
+	# effect rows by its id like a China one, so its rows must be read too.
+	for path in SkillDataReader.all_tables():
 		parse_timings(AudioBank.read_table("media", path), _timings)
 	var n := 0
 	for k in _rows:

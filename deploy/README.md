@@ -157,6 +157,18 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 # Since round 666 the server also WARNs at every boot while no skill carries status params:
 # `skills store has NO status params (N skills, 0 with status_params) ... RE-EXPORT skills.csv`.
 
+# ROUND 691 (Europe's masteries and skills) NEEDS NO RE-EXPORT AND NO RE-IMPORT: the race filter
+# reads two columns every skills table already has -- skills.mastery1 and skills.req_learn_race
+# (CSV fields 22 and 20, exported since 2026-09-12) -- and the Europe rows were always in the
+# export (the exporter keeps every Service row). Deploy the new server binary and restart. Check
+# before: `SELECT count(*) FROM skills WHERE mastery1 BETWEEN 513 AND 518;` and
+# `... AND req_learn_race = 1;` both answer 3242 on a retail archive (MEASURED on the render box's
+# re-export, 2026-10-02); 0 means a table imported without the column, and then every Europe
+# skill is refused "not your race's skill" -- re-export and re-import as in steps 2-3. The new
+# client reads the Europe skill files itself (skilldata_9000/10000/12000/15000/22000/35000 from
+# the player's Media.pk2). Existing characters: a China character's stored rows are unchanged; a
+# Europe character created since round 682 that raised a China mastery keeps the row in the
+# database, but it is no longer sent, summed into the cap or raisable.
 # 3. On the server host (CSVs and import-refdata copied to ~/srrevamp-data; Postgres is pinned to
 #    127.0.0.1:5432 by docker-compose.override.yml):
 ~/srrevamp-data/import-refdata -items-csv ~/srrevamp-data/items.csv -skills-csv ~/srrevamp-data/skills.csv \

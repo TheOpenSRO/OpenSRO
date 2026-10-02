@@ -4023,23 +4023,48 @@ var _equipped_items: Array = []
 ## "repair all" (no per-slot selection UI exists yet -- disclosed).
 var _repair_selected_slot: int = -1
 
-## China's masteries, read once from the player's own Media.pk2.
+## The masteries the window shows: the player's race's (round 691), from the
+## whole table read once from the player's own Media.pk2 (_mastery_table).
 var _masteries: Array = []
+var _mastery_table: Array = []
 var _masteries_loaded := false
 
+## The player's race as the window lays it out: MasteryReader.RACE_CHINA until
+## the server's OpSkillState names masteries of another race (the retail
+## window lays out the server's own mastery list, FUN_006aa3e0 -- READ; the
+## list is the race's, _AddNewChar), or set_skill_race says otherwise.
+var _skill_race := MasteryReader.RACE_CHINA
+
+var _masteries_race := -1
+
 func _load_masteries() -> void:
+	if not _masteries_loaded:
+		_masteries_loaded = true
+		var archive := _builder.media_archive() if _builder != null else null
+		if archive != null:
+			var entry := ObjectLoader.find_file(archive, MasteryReader.TABLE_PATH)
+			if entry != null:
+				_mastery_table = MasteryReader.parse_all(archive.read_file(entry))
+	if _masteries_race == _skill_race:
+		return
+	_masteries_race = _skill_race
+	_masteries = MasteryReader.for_race(_mastery_table, _skill_race)
+	print("HudPanels: %d mastery(ies) for race %d (of %d read)" % [_masteries.size(), _skill_race, _mastery_table.size()])
+
+## Lays the window out for `race` (MasteryReader.RACE_*): its masteries, its
+## skill tables and its mastery total cap. A change of race resets the tab.
+func set_skill_race(race: int) -> void:
+	if race != MasteryReader.RACE_CHINA and race != MasteryReader.RACE_EUROPE:
+		return
+	if race == _skill_race:
+		return
+	_skill_race = race
+	_skill_active_tab = 0
+	_skill_active_mastery = 0
 	if _masteries_loaded:
-		return
-	_masteries_loaded = true
-	if _builder == null:
-		return
-	var archive := _builder.media_archive()
-	if archive == null:
-		return
-	var entry := ObjectLoader.find_file(archive, MasteryReader.TABLE_PATH)
-	if entry != null:
-		_masteries = MasteryReader.parse_china(archive.read_file(entry))
-	print("HudPanels: %d China mastery(ies) read" % _masteries.size())
+		_load_masteries()
+	if _skill_catalog_loaded:
+		_load_skill_catalog_for(race)
 
 ## leveldata.txt's column 2 -- the skill points raising a mastery costs, by the
 ## mastery's current level -- read once from the player's own Media.pk2 (see
@@ -4110,11 +4135,24 @@ func is_skill_known(skill_id: int) -> bool:
 ## The mastery-total cap: the sum of a China character's mastery levels may reach
 ## 330, flat, whatever its level. Recovered from the server's Mastery_LevelUp
 ## (0x0059c4e0): for Country 0 (China) it refuses unless `sum + requested < 0x14b`;
-## Europe's rule is min(240, 2 x level), but every srrevamp character is China.
-## Matches the server's session.MasteryTotalCapChina; docs/RE_COMPLETION.md,
-## round 483. (It was "3 x level" before -- an extrapolation from a retail
-## account, not a reading of the binary.)
+## Europe's rule is min(240, 2 x level). Matches the server's
+## session.MasteryTotalCapChina; docs/RE_COMPLETION.md, round 483. (It was
+## "3 x level" before -- an extrapolation from a retail account, not a reading
+## of the binary.)
 const MASTERY_TOTAL_CAP := 330
+const MASTERY_TOTAL_CAP_EUROPE := 240
+
+## The total the window shows the mastery levels against, by race (round 691).
+## READ from the client's own skill window, CIFSkill FUN_006aa3e0: it reads the
+## player's ref-object race byte (+0x9c) and for 1 computes
+## `fild [player+0x868] ; fadd st,st` -- twice the level -- and keeps it only
+## below 0xf0 (240), else 240 (0x6aa474..0x6aa4a8); for 0 it uses 0x14a (330)
+## (0x6aa4ba..0x6aa4c3); then prints "%d/%d". The server's rule is the same
+## (masteryTotalRefusal). A level of 0 (not reported yet) gives Europe 0.
+static func mastery_total_cap(race: int, char_level: int) -> int:
+	if race == MasteryReader.RACE_EUROPE:
+		return mini(MASTERY_TOTAL_CAP_EUROPE, 2 * maxi(char_level, 0))
+	return MASTERY_TOTAL_CAP
 
 ## The highest mastery level whose raise costs skill points: 120. Not a cap on the
 ## mastery. Mastery_LevelUp (0x0059c4e0) sums leveldata column 2 in a loop whose
@@ -4201,6 +4239,11 @@ func skill_names_table() -> UiTextTable:
 		print("HudPanels: no %s -- skill names show their SN_ ids" % SKILL_NAME_TABLE_PATH.get_file())
 	return _skill_names
 
+## Which races' skills _skill_grid holds (round 691: a race's tables are read
+## when the window is first laid out for it, the other's only when a skill id
+## of it is asked for -- skill_reach, skill_icon_path, skill_level_ids).
+var _skill_catalog_races: Dictionary = {}
+
 func _load_skill_catalog() -> void:
 	if _skill_catalog_loaded:
 		return
@@ -4215,17 +4258,36 @@ func _load_skill_catalog() -> void:
 	if gentry != null:
 		_skill_groups = SkillDataReader.parse_groups(archive.read_file(gentry))
 	_load_masteries()
+	_load_skill_catalog_for(_skill_race)
+
+## Both races' skills, for a lookup by id that missed the player's own.
+func _load_all_skill_catalogs() -> void:
+	_load_skill_catalog()
+	for race in MasteryReader.RACE_MASTERIES:
+		_load_skill_catalog_for(int(race))
+
+## Reads one race's skills (its masteries' rows of its skilldata files) into
+## _skill_grid and _skill_reach_by_id, once.
+func _load_skill_catalog_for(race: int) -> void:
+	if _skill_catalog_races.has(race) or _builder == null:
+		return
+	var archive := _builder.media_archive()
+	if archive == null:
+		return
+	_skill_catalog_races[race] = true
 	var ids := PackedInt32Array()
-	for entry in _masteries:
-		ids.append((entry as MasteryReader.Mastery).id)
+	for id in MasteryReader.RACE_MASTERIES.get(race, []):
+		ids.append(int(id))
 	var datas: Array = []
-	for path in SkillDataReader.SKILL_TABLES:
+	for path in SkillDataReader.tables_for_race(race):
 		var e := ObjectLoader.find_file(archive, path)
 		if e != null:
 			datas.append(archive.read_file(e))
-	_skill_grid = SkillDataReader.parse_skills(datas, ids)
-	for key in _skill_grid:
-		for entry in _skill_grid[key]:
+	var grid := SkillDataReader.parse_skills(datas, ids)
+	for key in grid:
+		_skill_grid[key] = grid[key]
+	for key in grid:
+		for entry in grid[key]:
 			var bs: SkillDataReader.BaseSkill = entry
 			# Per level, not the level-1 range_val: the server measures a cast
 			# with that level's own row (session/skill.go, ref.Range), and the
@@ -4246,8 +4308,8 @@ func _load_skill_catalog() -> void:
 						# for SelfCast.plan's friendly-target rules.
 						"target_groups": int(bs.level_target_groups[i]) if i < bs.level_target_groups.size() else 0,
 					}
-	print("HudPanels: skill catalog -- %d masteries with groups, %d group-rows of skills"
-		% [_skill_groups.size(), _skill_grid.size()])
+	print("HudPanels: skill catalog (race %d) -- %d masteries with groups, %d group-rows of skills"
+		% [race, _skill_groups.size(), _skill_grid.size()])
 	if OS.has_environment("SRREVAMP_QA_PANELS"):
 		var dbg := ""
 		for r in range(9):
@@ -4264,12 +4326,19 @@ func _load_skill_catalog() -> void:
 ## the window ever being opened.
 func skill_reach(skill_id: int) -> Dictionary:
 	_load_skill_catalog()
+	if not _skill_reach_by_id.has(skill_id):
+		_load_all_skill_catalogs()
 	return _skill_reach_by_id.get(skill_id, {})
 
 ## The server's skill state -- skill points and per-mastery levels. Refills the
 ## open window so learnable skills light up (their real icon instead of the grey
 ## disable book) and the totals show.
 func set_skill_state(skill_points: int, mastery_levels: Dictionary, char_level: int = 0, known: Dictionary = {}) -> void:
+	# The race whose masteries the server lists (round 691): it sends every
+	# mastery the character holds, a level-0 one included.
+	var race := MasteryReader.race_of_masteries(mastery_levels.keys())
+	if race >= 0:
+		set_skill_race(race)
 	_skill_points = skill_points
 	_skill_mastery_levels = mastery_levels.duplicate()
 	_skill_known = known.duplicate()
@@ -4328,6 +4397,7 @@ func _fill_skill_masteries(window: HudWindow) -> void:
 			match key:
 				"sp": _skill_points = int(kv[1])
 				"level": _skill_char_level = int(kv[1])
+				"race": set_skill_race(int(kv[1]))
 				_:
 					if key.is_valid_int():   # "257=3": mastery id 257 at level 3
 						_skill_mastery_levels[int(key)] = int(kv[1])
@@ -4336,7 +4406,8 @@ func _fill_skill_masteries(window: HudWindow) -> void:
 		return
 	board.clip_contents = true
 
-	# Group the masteries by their tab (Weapon/Force), in first-seen order.
+	# Group the masteries by their tab (China Weapon/Force; Europe Melee/
+	# Caster/Buff), in tab order (_masteries is sorted by tab, then id).
 	var tab_keys: Array = []
 	var tabs: Dictionary = {}
 	for entry in _masteries:
@@ -4362,27 +4433,27 @@ func _fill_skill_masteries(window: HudWindow) -> void:
 	var top := _skill_tab_strip(board, 2.0, "SkillTopTabs")
 	for i in range(tab_keys.size()):
 		var group: Dictionary = tabs[tab_keys[i]]
-		_add_skill_tab(top, _resolve_ui(group["code"], _skill_tab_fallback(tab_keys[i])),
+		_add_skill_tab(top, _resolve_ui(group["code"], _skill_tab_fallback(int(tab_keys[i]))),
 			i == _skill_active_tab, _on_skill_tab.bind(i))
 
 	var sub := _skill_tab_strip(board, 2.0 + SKILL_TAB_H + 2.0, "SkillMasteryTabs")
 	for i in range(masteries.size()):
 		var mm: MasteryReader.Mastery = masteries[i]
-		_add_skill_tab(sub, mm.display_name(_text_table()), i == _skill_active_mastery,
+		_add_skill_tab(sub, mm.display_name(_text_table(), _skill_text_table()), i == _skill_active_mastery,
 			_on_skill_mastery_tab.bind(i))
 
 	# The selected mastery's board -- header + grid of group rows.
 	if _skill_active_mastery < masteries.size():
 		_build_mastery_board(board, masteries[_skill_active_mastery] as MasteryReader.Mastery)
 
-	# Skill points and total mastery level against the flat 330 total cap, from
-	# the server's state.
+	# Skill points and total mastery level against the race's total cap
+	# (mastery_total_cap), from the server's state.
 	_set_label(window, "GDR_SKILL_TEXT_SP_NUM", str(_skill_points))
 	# The real server total (a QA lighting override must not pollute it).
 	var total := 0
 	for lvl in _skill_mastery_levels.values():
 		total += int(lvl)
-	var total_text := "%d / %d" % [total, MASTERY_TOTAL_CAP]
+	var total_text := "%d / %d" % [total, mastery_total_cap(_skill_race, _skill_char_level)]
 	_set_label(window, "GDR_SKILL_TEXT_TOTAL_MASTERYLEV_NUM", total_text)
 
 ## A dark backing so the world does not show through the board (the layout names
@@ -4447,7 +4518,7 @@ func _build_mastery_board(board: Control, mastery: MasteryReader.Mastery) -> voi
 	host.add_child(icon)
 
 	var name_lbl := Label.new()
-	name_lbl.text = mastery.display_name(_text_table())
+	name_lbl.text = mastery.display_name(_text_table(), _skill_text_table())
 	name_lbl.position = Vector2(48, 6)
 	name_lbl.size = Vector2(100, 20)
 	_style_skill_label(name_lbl)
@@ -4473,8 +4544,9 @@ func _build_mastery_board(board: Control, mastery: MasteryReader.Mastery) -> voi
 	for lvl in _skill_mastery_levels.values():
 		total_now += int(lvl)
 	var cost := LevelDataReader.mastery_up_cost(_level_mastery_costs, real_level)
+	var total_cap := mastery_total_cap(_skill_race, _skill_char_level)
 	var reason := mastery_levelup_block_reason(real_level, _skill_char_level, total_now,
-		MASTERY_TOTAL_CAP, _skill_points, cost)
+		total_cap, _skill_points, cost)
 	if reason != "":
 		levelup.disabled = true
 		levelup.tooltip_text = reason
@@ -4486,8 +4558,8 @@ func _build_mastery_board(board: Control, mastery: MasteryReader.Mastery) -> voi
 		levelup.tooltip_text = "Raising this mastery to Lv %d costs no skill points." % (real_level + 1)
 	if OS.has_environment("SRREVAMP_QA_SKILL_STATE"):
 		print("QA SKILL: %s Lv %d, %d SP, char Lv %d, total %d/%d, cost %d -> LEVEL UP %s%s" % [
-			mastery.display_name(_text_table()), real_level, _skill_points, _skill_char_level, total_now,
-			MASTERY_TOTAL_CAP, cost, "disabled: " if reason != "" else "enabled", reason])
+			mastery.display_name(_text_table(), _skill_text_table()), real_level, _skill_points, _skill_char_level, total_now,
+			total_cap, cost, "disabled: " if reason != "" else "enabled", reason])
 	host.add_child(levelup)
 
 	var lvl_lbl := Label.new()
@@ -4676,27 +4748,31 @@ func _missing_prerequisites(s: SkillDataReader.BaseSkill, level: int) -> Array:
 ## `skill_id`, or "" when the tables do not carry it -- what the quick-slot
 ## bar restores a saved skill's icon from (round 639).
 func skill_icon_path(skill_id: int) -> String:
-	_load_skill_catalog()
-	for key in _skill_grid:
-		for entry in _skill_grid[key]:
-			var bs: SkillDataReader.BaseSkill = entry
-			if bs.level_ids.has(skill_id):
-				if bs.icon_path == "":
-					return ""
-				return bs.icon_path if bs.icon_path.to_lower().begins_with("icon\\") else "icon\\" + bs.icon_path
-	return ""
+	var bs := _board_skill_with_level_id(skill_id)
+	if bs == null or bs.icon_path == "":
+		return ""
+	return bs.icon_path if bs.icon_path.to_lower().begins_with("icon\\") else "icon\\" + bs.icon_path
 
 ## Every level's id of the skill whose per-level id is `skill_id` (index i =
 ## level i + 1), or empty -- the group the quick-slot rebind walks (round
 ## 639's review, HotbarStore.rebind_for_skill).
 func skill_level_ids(skill_id: int) -> PackedInt64Array:
+	var bs := _board_skill_with_level_id(skill_id)
+	return bs.level_ids if bs != null else PackedInt64Array()
+
+## The board skill one of whose levels is `skill_id`: the player's race's
+## tables first, both races' on a miss (round 691). Null when neither has it.
+func _board_skill_with_level_id(skill_id: int) -> SkillDataReader.BaseSkill:
 	_load_skill_catalog()
-	for key in _skill_grid:
-		for entry in _skill_grid[key]:
-			var bs: SkillDataReader.BaseSkill = entry
-			if bs.level_ids.has(skill_id):
-				return bs.level_ids
-	return PackedInt64Array()
+	for attempt in 2:
+		for key in _skill_grid:
+			for entry in _skill_grid[key]:
+				var bs: SkillDataReader.BaseSkill = entry
+				if bs.level_ids.has(skill_id):
+					return bs
+		if attempt == 0:
+			_load_all_skill_catalogs()
+	return null
 
 ## The board's BaseSkill for a skill group id (skilldata GroupID / base id),
 ## or null when the archive's board does not carry it.
@@ -4753,6 +4829,11 @@ func _skill_cell_tooltip(s: SkillDataReader.BaseSkill, learned: int, mastery: Ma
 	stats.append(rng)
 	if not stats.is_empty():
 		lines.append(" · ".join(stats))
+	# The weapon the cast needs (ReqCast_Weapon1/2, round 691) -- what the
+	# server refuses a cast without ("wrong weapon for this skill", 0x300d).
+	var weapon := s.weapon_requirement()
+	if weapon != "":
+		lines.append("Weapon: %s" % weapon)
 	# The next level's real learn gate, stated against what the player HAS --
 	# so a locked skill says why it is locked instead of only what it costs.
 	# The numbers are skilldata's own (ReqCommon_MasteryLevel1 col 36,
@@ -4765,7 +4846,7 @@ func _skill_cell_tooltip(s: SkillDataReader.BaseSkill, learned: int, mastery: Ma
 		var nxt: int = learned + 1
 		var sp: int = s.level_sp[nxt - 1] if nxt - 1 < s.level_sp.size() else 0
 		var req: int = s.level_reqs[nxt - 1] if nxt - 1 < s.level_reqs.size() else s.min_req_mastery_level
-		var mname: String = mastery.display_name(_text_table()) if mastery != null else "mastery"
+		var mname: String = mastery.display_name(_text_table(), _skill_text_table()) if mastery != null else "mastery"
 		var have: int = _mastery_level(mastery.id) if mastery != null else 0
 		lines.append("Learn Lv %d: %s Lv %d required (yours: Lv %d)" % [nxt, mname, req, have])
 		lines.append("%s: %d" % [_resolve_ui("UIIT_STT_NEED_SP", "Skill point needed"), sp])
@@ -4857,7 +4938,12 @@ func _on_attack_refresh_skill(_result) -> void:
 
 ## Titles a tab from its own name code, falling back to the plain English when
 ## the archive has no text for the token.
+## A tab's label when the UI table cannot resolve its token: China's two tabs,
+## Europe's three (the English the archive's own tokens carry -- Melee, Caster,
+## Buff -- written here as OURS fallbacks).
 func _skill_tab_fallback(tab: int) -> String:
+	if _skill_race == MasteryReader.RACE_EUROPE:
+		return ["Melee", "Caster", "Buff"][clampi(tab, 0, 2)]
 	return "Weapon Skill" if tab == MasteryReader.TAB_WEAPON else "Force Skill"
 
 func _resolve_ui(token: String, fallback: String) -> String:

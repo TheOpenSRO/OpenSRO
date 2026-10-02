@@ -59,6 +59,7 @@ func _init() -> void:
 	_test_groups()
 	_test_skills()
 	_test_level_range_and_targeting()
+	_test_europe()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
@@ -72,12 +73,14 @@ func _test_groups() -> void:
 		_group("257", "0", "UIIT_G0", "skillgroup\\china\\pack_sword_smash.ddj"),
 		_group("257", "2", "UIIT_G2", "skillgroup\\china\\pack_sword_shield.ddj"),
 		_group("257", "1", "UIIT_G1", "skillgroup\\china\\pack_sword_chain.ddj"),
-		# Europe -- a china-only parse must drop it.
-		_group("513", "0", "UIIT_EU", "skillgroup\\europe\\pack_eu.ddj"),
+		# Europe (round 691) -- kept too: its window lays out these bars.
+		_group("513", "0", "EU_WARRIOR_GROUP_FRENZY_TT_DESC", "skillgroup\\europe\\pack_frenzy.ddj"),
+		# A group of neither race's icon directory -- dropped.
+		_group("1", "0", "xxx", "xxx"),
 	])
 	var groups := SkillDataReader.parse_groups(("\n".join(rows) + "\n").to_utf16_buffer())
-	_check(groups.has(257) and not groups.has(513),
-		"china groups kept, europe dropped")
+	_check(groups.has(257) and groups.has(513) and not groups.has(1),
+		"china and europe groups kept, a group of neither dropped")
 	if groups.has(257):
 		var g: Array = groups[257]
 		_check(g.size() == 3, "three groups for mastery 257 (got %d)" % g.size())
@@ -175,3 +178,43 @@ func _test_level_range_and_targeting() -> void:
 	var ghost: SkillDataReader.BaseSkill = grid["274:2"][0]
 	_check(ghost.level_target_required[0] == 1 and ghost.level_target_land[0] == 1,
 		"a land-targeted skill reads TargetType_Land 1 (col 24)")
+
+## Round 691: Europe's skills read like China's -- SKILL_EU_ rows of a Europe
+## mastery land in the grid, with their weapon requirement; the race's tables
+## and the cast clip's race directory.
+func _test_europe() -> void:
+	var cross := _skill("764", "1", "518", "4", "8", "skill\\europe\\cleric\\cross.ddj", "SN_SKILL_EU_CLERIC_BATTLEA_CROSS_A")
+	var cols := cross.split("\t")
+	cols[SkillDataReader.S_REQ_WEAPON_1] = "15"
+	cols[SkillDataReader.S_REQ_WEAPON_2] = "255"
+	var rows := PackedStringArray(["\t".join(cols),
+		# A China row asked for under a Europe mastery list is dropped.
+		_skill("174", "1", "257", "5", "0", "skill\\china\\sword_smash_a.ddj", "SN_SKILL_CH_SWORD_SMASH_A")])
+	var grid := SkillDataReader.parse_skills([("\n".join(rows) + "\n").to_utf16_buffer()],
+		PackedInt32Array([513, 514, 515, 516, 517, 518]))
+	_check(grid.has("518:8") and not grid.has("257:0"), "a Europe mastery's SKILL_EU_ row is read; China's is not asked for")
+	if grid.has("518:8"):
+		var s: SkillDataReader.BaseSkill = (grid["518:8"] as Array)[0]
+		_check(s.req_weapon_1 == 15 and s.req_weapon_2 == 255, "ReqCast_Weapon1/2 read (got %d/%d)" % [s.req_weapon_1, s.req_weapon_2])
+		_check(s.weapon_requirement() == "Light Staff", "the weapon line names the code (got '%s')" % s.weapon_requirement())
+		_check(s.cast_anim_name() == "skill_eu_cleric_battlea_cross_a", "the clip base name (got %s)" % s.cast_anim_name())
+	var none := SkillDataReader.BaseSkill.new()
+	_check(none.weapon_requirement() == "", "no requirement (255/255) gives no weapon line")
+	none.req_weapon_1 = 7
+	none.req_weapon_2 = 8
+	_check(none.weapon_requirement() == "One-handed Sword or Two-handed Sword", "two codes join (got '%s')" % none.weapon_requirement())
+	_check(SkillDataReader.cast_clip_path("europe_woman", "skill_eu_x") == "Prim\\Ani\\Char\\Europe\\woman\\skill_eu_x.ban",
+		"a Europe woman's clip is under Europe\\woman (got %s)" % SkillDataReader.cast_clip_path("europe_woman", "skill_eu_x"))
+	_check(SkillDataReader.cast_clip_path("europe_man", "a") == "Prim\\Ani\\Char\\Europe\\man\\a.ban"
+		and SkillDataReader.cast_clip_path("china_woman", "a") == "Prim\\Ani\\Char\\China\\woman\\a.ban"
+		and SkillDataReader.cast_clip_path("china_man", "a") == "Prim\\Ani\\Char\\China\\man\\a.ban"
+		and SkillDataReader.cast_clip_path("", "a") == "Prim\\Ani\\Char\\China\\man\\a.ban",
+		"the other bodies keep China's directories")
+	_check(SkillDataReader.tables_for_race(1) == SkillDataReader.EUROPE_SKILL_TABLES
+		and SkillDataReader.tables_for_race(0) == SkillDataReader.SKILL_TABLES, "each race reads its own tables")
+	var all := SkillDataReader.all_tables()
+	var nums: Array = []
+	for p in all:
+		nums.append(SkillDataReader._table_number(String(p)))
+	_check(nums == [1000, 5000, 9000, 10000, 12000, 15000, 22000, 25000, 30000, 35000],
+		"all_tables is both lists once each in numeric order (got %s)" % str(nums))

@@ -7,7 +7,8 @@ class_name SkillDataReader
 ## resinfo layouts and a decompile of CIFSkillBoard/CIFSkillGroup/CIFSkillSlot
 ## (see the skill-window-layout note): a mastery's skill board is one BAR per
 ## skill group, and each bar holds the group's skills laid left to right in
-## columns. China only for now.
+## columns. China and, since round 691, Europe (masteries 513-518, group
+## icons under `skillgroup\europe\`, skills SKILL_EU_*).
 ##
 ## skillgroup.txt (UTF-16, tab separated, 0-indexed):
 ##   [2] MasteryID   [4] Row (the bar's order in the board)
@@ -33,6 +34,41 @@ const SKILL_TABLES := [
 	"server_dep\\silkroad\\textdata\\skilldata_35000.txt",
 ]
 
+## The skilldata files that carry Europe mastery (513-518) skills (round 691).
+## MEASURED on the render box's Media.pk2: the 3,242 Service-1 rows of a Europe
+## mastery have 3,242 distinct ids spread over eleven files, and these six
+## cover every one -- 15000 (1,732), 10000 (1,362), 35000 (83), then 9000,
+## 12000 and 22000 for the last 65 (a greedy cover; 11000, 25000, 31000,
+## 32000 and 36000 add none). Listed in the index's numeric order, which is
+## the order the client loads them in (skilldata.txt).
+const EUROPE_SKILL_TABLES := [
+	"server_dep\\silkroad\\textdata\\skilldata_9000.txt",
+	"server_dep\\silkroad\\textdata\\skilldata_10000.txt",
+	"server_dep\\silkroad\\textdata\\skilldata_12000.txt",
+	"server_dep\\silkroad\\textdata\\skilldata_15000.txt",
+	"server_dep\\silkroad\\textdata\\skilldata_22000.txt",
+	"server_dep\\silkroad\\textdata\\skilldata_35000.txt",
+]
+
+## The files a race's skill board reads (MasteryReader.RACE_*).
+static func tables_for_race(race: int) -> Array:
+	return EUROPE_SKILL_TABLES if race == 1 else SKILL_TABLES
+
+## Both races' files once each, in the index's numeric order -- for the
+## tables that must know every player skill (cast sounds, effects).
+static func all_tables() -> Array:
+	var out: Array = []
+	for p in SKILL_TABLES + EUROPE_SKILL_TABLES:
+		if not out.has(p):
+			out.append(p)
+	out.sort_custom(func(a, b): return SkillDataReader._table_number(a) < SkillDataReader._table_number(b))
+	return out
+
+static func _table_number(path: String) -> int:
+	var at := path.rfind("skilldata_")
+	var digits := path.substr(at + 10).trim_suffix(".txt") if at >= 0 else ""
+	return int(digits) if digits.is_valid_int() else 0
+
 ## The client pads every group row out to this many skill columns with the
 ## `skl_mastery_nothing.ddj` empty slot (CIFSkillGroup loops while x < 0x145,
 ## x = col*0x24 + 0x25, so columns 0..7).
@@ -57,9 +93,9 @@ const S_LEVEL := 7
 # 467-470), which rise 2 a level: 204->214, 218->228, 228->238 and 240->244.
 # The fifth is a Europe skill, SKILL_EU_WARRIOR_FRENZYA_TOUNT_SPRINT_A (group
 # 540, ids 8479-8499), 80 -> 240. Every other China skill keeps one Range
-# across its levels. This reader keeps only SKILL_CH_ rows (parse_skills), so
-# it never sees the Europe skill, and it keeps Range per level (level_range)
-# for the four bow skills.
+# across its levels. This reader keeps Range per level (level_range), so the
+# four bow skills and -- since round 691 reads SKILL_EU_ rows too -- the
+# Europe sprint carry each level's own.
 const S_CAST_TIME := 12
 const S_REUSE_DELAY := 14         # the cooldown
 const S_RANGE := 21               # 0 = melee
@@ -99,6 +135,11 @@ const S_REQ_SKILL_LEVEL_1 := 43
 const S_REQ_SKILL_LEVEL_2 := 44
 const S_REQ_SKILL_LEVEL_3 := 45
 const S_REQ_SP := 46              # SP to learn this level
+# ReqCast_Weapon1/2 (round 691): the itemdata TypeID4 codes the skill may be
+# cast with, 255 = unused (the skilldata-columns note; the server's
+# refdata.Skill.ReqCastWeapon1/2 and combat.SkillAllowsWeapon).
+const S_REQ_WEAPON_1 := 50
+const S_REQ_WEAPON_2 := 51
 const S_CONSUME_MP := 53
 const S_GROUP_ROW := 59
 const S_ICON := 61
@@ -151,6 +192,10 @@ class BaseSkill:
 	## skills this reader keeps, it differs from range_val only on the four
 	## SKILL_CH_BOW_SPECIAL skills (see S_RANGE).
 	var level_range: PackedInt32Array = PackedInt32Array()
+	## ReqCast_Weapon1/2 of level 1 (skilldata columns 50/51, round 691): the
+	## TypeID4s the skill is cast with; 255 or 0 = no requirement in that slot.
+	var req_weapon_1: int = 255
+	var req_weapon_2: int = 255
 	## Each level's Target_Required (S_TARGET_REQUIRED) and TargetType_Land
 	## (S_TARGET_LAND), aligned with level_ids: whether the skill tick walks
 	## into reach before the cast (CombatNet.skill_tick_approaches).
@@ -180,7 +225,8 @@ class BaseSkill:
 	## The cast animation clip's base name: the Basic_Code lowercased with the
 	## trailing "_NN" level suffix removed, e.g. SKILL_CH_SWORD_SMASH_A_01 ->
 	## "skill_ch_sword_smash_a". "" if the skill has no Basic_Code. The clip
-	## lives at Prim\Ani\Char\China\<gender>\<this>.ban in Data.pk2.
+	## lives at Prim\Ani\Char\<China|Europe>\<gender>\<this>.ban in Data.pk2
+	## (cast_clip_path).
 	func cast_anim_name() -> String:
 		if basic_code == "":
 			return ""
@@ -206,9 +252,35 @@ class BaseSkill:
 				return resolved
 		return name_code if name_code != "" else "Skill %d" % base_id
 
+	## The weapon types a skill is cast with (ReqCast_Weapon1/2), as labels:
+	## "" when neither slot names one (255 or 0). The labels are
+	## MasteryReader.WEAPON_LABEL's (OURS words for READ codes); 1 is the bare hand.
+	func weapon_requirement() -> String:
+		var out := PackedStringArray()
+		for code in [req_weapon_1, req_weapon_2]:
+			if code <= 0 or code == 255:
+				continue
+			out.append("Bare hand" if code == 1 else String(MasteryReader.WEAPON_LABEL.get(code, "weapon type %d" % code)))
+		return " or ".join(out)
+
+## The Data.pk2 path of a skill's name-matched cast clip for a body
+## (round 691): `Prim\Ani\Char\<Race>\<man|woman>\<anim_base>.ban`, the race
+## directory from the character's gender string ("europe_man" ->
+## `Europe\man`; any other -> `China`). MEASURED on the render box's Data.pk2:
+## `Prim\Ani\Char\Europe\man` holds 122 clips and `...\woman` 119, 228 of
+## them `skill_eu_*`; but only 33 of the 284 Europe board skills have a clip
+## named after their Basic_Code -- retail picks a Europe cast's body motion
+## through skilleffect.txt's aniset (ANI_SKILL_n in the row's AniGroup) in the
+## body's .bsr, which is the per-body clip lookup of the world lane (OPEN
+## here). Pure, so the world can adopt or replace it.
+static func cast_clip_path(gender: String, anim_base: String) -> String:
+	var race_dir := "Europe" if gender.begins_with("europe") else "China"
+	var sex_dir := "woman" if gender.ends_with("woman") else "man"
+	return "Prim\\Ani\\Char\\%s\\%s\\%s.ban" % [race_dir, sex_dir, anim_base]
+
 ## Parses skillgroup.txt into mastery_id -> Array[SkillGroup] ordered by row.
-## Only China groups (pack icon under `china\`) are kept, so a partial archive
-## still yields what it has.
+## Only the player races' groups (pack icon under `china\` or `europe\`) are
+## kept, so a partial archive still yields what it has.
 static func parse_groups(data: PackedByteArray) -> Dictionary:
 	var by_mastery: Dictionary = {}
 	for line in _lines(data):
@@ -219,7 +291,7 @@ static func parse_groups(data: PackedByteArray) -> Dictionary:
 			continue
 		var icon := cols[G_ICON].strip_edges()
 		var low := icon.to_lower()
-		if not low.contains("china\\") and not low.contains("china/"):
+		if not (low.contains("china\\") or low.contains("china/") or low.contains("europe\\") or low.contains("europe/")):
 			continue
 		var mastery_text := cols[G_MASTERY].strip_edges()
 		if not mastery_text.is_valid_int():
@@ -250,9 +322,9 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 		if data == null or (data is PackedByteArray and data.is_empty()):
 			continue
 		for line in _lines(data):
-			# Cheap reject before the tab split: China mastery skills are the
-			# only ones with this code, and they are a fraction of the file.
-			if not line.contains("SKILL_CH_"):
+			# Cheap reject before the tab split: player mastery skills are the
+			# only ones with these codes, and they are a fraction of the file.
+			if not line.contains("SKILL_CH_") and not line.contains("SKILL_EU_"):
 				continue
 			var cols := line.split("\t")
 			if cols.size() <= S_NAME:
@@ -310,6 +382,8 @@ static func parse_skills(datas: Array, mastery_ids: PackedInt32Array) -> Diction
 				bs.desc_code = cols[S_TOOLTIP_DESC].strip_edges() if cols.size() > S_TOOLTIP_DESC else ""
 				bs.basic_code = cols[S_BASIC_CODE].strip_edges() if cols.size() > S_BASIC_CODE else ""
 			if level == 1:
+				bs.req_weapon_1 = _int_at(cols, S_REQ_WEAPON_1)
+				bs.req_weapon_2 = _int_at(cols, S_REQ_WEAPON_2)
 				bs.cast_time_ms = _int_at(cols, S_CAST_TIME)
 				bs.cooldown_ms = _int_at(cols, S_REUSE_DELAY)
 				bs.range_val = _int_at(cols, S_RANGE)

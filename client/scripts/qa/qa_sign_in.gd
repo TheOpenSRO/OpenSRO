@@ -23,6 +23,12 @@ class_name QaSignIn
 ##   SRREVAMP_QA_GENDER=china_woman   the gender a character created by
 ##                                    this run is given (default: the
 ##                                    server's own default, a China man)
+##   SRREVAMP_QA_KIT=body,chest,legs,feet,weapon
+##                                    creates the character with exactly
+##                                    these ids instead (round 691: a Europe
+##                                    body, 14875, with a Europe weapon -- the
+##                                    gender kit has only China's; the server
+##                                    checks them against -chargen-csv)
 ##
 ## Every step is bounded by STEP_TIMEOUT, so a server that is down or slow
 ## costs one timeout rather than a render that never finishes.
@@ -88,7 +94,12 @@ static func run(tree: SceneTree) -> bool:
 	for summary in listed[1]:
 		names.append(summary.char_name)
 	if not (who in names):
-		NetClient.create_character(who, OS.get_environment("SRREVAMP_QA_GENDER"))
+		var kit := OS.get_environment("SRREVAMP_QA_KIT").split(",", false)
+		if kit.size() == 5:
+			NetClient.create_character_full(who, int(kit[0]), CharacterNet.DEFAULT_SCALE,
+				int(kit[1]), int(kit[2]), int(kit[3]), int(kit[4]))
+		else:
+			NetClient.create_character(who, OS.get_environment("SRREVAMP_QA_GENDER"))
 		var created: Array = await _first_of(tree, [NetClient.character_create_result])
 		if created.is_empty() or not created[1]:
 			printerr("QA sign-in: could not create %s (%s) -- rendering offline" % [who, _reason(created, 2)])

@@ -259,7 +259,9 @@ static func warm() -> void:
 	_loaded = true
 	var t0 := Time.get_ticks_msec()
 	var skills: Dictionary = {}
-	for path in SkillDataReader.SKILL_TABLES:
+	# Both races' skill files (round 691): a Europe cast keys its sound and
+	# effect rows by its id like a China one, so its rows must be read too.
+	for path in SkillDataReader.all_tables():
 		parse_skills(AudioBank.read_table("media", path), skills)
 	_skills = skills
 	_effects = parse_effect_sounds(AudioBank.read_table("media", SKILLEFFECT_PATH))

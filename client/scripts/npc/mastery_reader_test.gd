@@ -54,6 +54,26 @@ func _init() -> void:
 		_check(masteries[0].display_name(names) == "Bicheon",
 			"a resolvable name is used (got %s)" % masteries[0].display_name(names))
 
+	# Round 691: the same table read for a Europe character.
+	var eu_rows := PackedStringArray([
+		_row("257", "UIIT_STT_MASTERY_VI", "0", "2", "3", "icon\\skillmastery\\china\\mastery_sword.ddj"),
+		_row("513", "UIIT_STT_WARRIOR", "0", "7", "8", "icon\\skillmastery\\europe\\eu_warrior.ddj"),
+		_row("515", "UIIT_STT_ROG", "0", "11", "12", "icon\\skillmastery\\europe\\eu_rog.ddj"),
+		_row("514", "UIIT_STT_WIZARD", "1", "11", "0", "icon\\skillmastery\\europe\\eu_wizard.ddj"),
+		_row("518", "UIIT_STT_CLERIC", "2", "10", "0", "icon\\skillmastery\\europe\\eu_cleric.ddj"),
+	])
+	var eu := MasteryReader.parse_race(("\n".join(eu_rows) + "\n").to_utf16_buffer(), MasteryReader.RACE_EUROPE)
+	var eu_ids: Array = []
+	for m in eu:
+		eu_ids.append((m as MasteryReader.Mastery).id)
+	_check(eu_ids == [513, 515, 514, 518], "a Europe parse keeps Europe's masteries by tab then id, no China (got %s)" % str(eu_ids))
+	if eu.size() == 4:
+		# Europe's names live in textdata_equip&skill.txt: the second table.
+		var ui := UiTextTable.parse("1\tUIIT_STT_MASTERY_VI\t승\t\t\t\t\t\tBicheon\n".to_utf16_buffer())
+		var sk := UiTextTable.parse("1\tUIIT_STT_WARRIOR\t워\t\t\t\t\t\tWarrior\n".to_utf16_buffer())
+		_check(eu[0].display_name(ui, sk) == "Warrior", "a Europe name resolves through the second table (got %s)" % eu[0].display_name(ui, sk))
+		_check(eu[3].display_name(null) == "Dark Staff Mastery", "with no table it labels by its weapons (got %s)" % eu[3].display_name(null))
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

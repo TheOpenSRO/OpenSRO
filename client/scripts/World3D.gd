@@ -8120,8 +8120,10 @@ func _play_skill_cast_anim(anim_base: String) -> float:
 		# whatsoever, which is the shape the playtest reported.
 		print("World3D: no archive for a cast clip -- falling back to the weapon swing")
 		return _play_weapon_swing_anim()
-	var gender_dir := "woman" if _player_gender == "china_woman" else "man"
-	var path := "Prim\\Ani\\Char\\China\\%s\\%s.ban" % [gender_dir, anim_base]
+	# The race's clip directory (round 691: a Europe body's clips are under
+	# Prim\Ani\Char\Europe -- SkillDataReader.cast_clip_path; a small adapter
+	# until the world lane's per-body clip lookup lands).
+	var path := SkillDataReader.cast_clip_path(_player_gender, anim_base)
 	var bytes := AssetSource.read_bytes(path, _data_pk2)
 	if bytes.is_empty():
 		print("World3D: no cast animation at %s -- falling back to the weapon swing" % path)
@@ -9051,7 +9053,7 @@ func _play_other_cast_anim(character_id: int, skill_id: int) -> float:
 		anim_base = anim_base.substr(0, us)
 	var anim: BanReader.ParsedAnimation = null
 	if _data_pk2 != null:
-		var path := "Prim\\Ani\\Char\\China\\%s\\%s.ban" % ["woman" if gender == "china_woman" else "man", anim_base]
+		var path := SkillDataReader.cast_clip_path(gender, anim_base)
 		var bytes := AssetSource.read_bytes(path, _data_pk2)
 		if not bytes.is_empty():
 			anim = BanReader.parse(bytes)

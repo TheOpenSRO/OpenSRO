@@ -377,6 +377,21 @@ func LearnSkillHandler(chars character.Store, skills skill.Store, skillRef Skill
 		if known {
 			return fail("already known")
 		}
+		// The learn check's race filter, in FUN_0059e450's own order (READ,
+		// called from Skill_HandleLearn 0x0059bfe0): the skill's mastery must be
+		// one the character HOLDS (0x3401 -- a Europe character holds only
+		// 513-518, a China one only 257-276; skill.HoldsMastery), and its
+		// ReqLearn_Race must be 3 or the character's Country (0x3405). Round
+		// 691: until then a Europe character could learn China skills and the
+		// reverse.
+		owned, err := chars.GetByID(ctx, characterID)
+		if err != nil {
+			return fail("lookup failed")
+		}
+		country := characterCountry(owned)
+		if ref.Mastery1 > 0 && !skill.HoldsMastery(country, ref.Mastery1) {
+			return fail("not your race's mastery")
+		}
 		// Gated by the mastery level the skill requires.
 		if ref.Mastery1 > 0 && ref.MasteryLevel1 > 0 {
 			levels, err := skills.MasteryLevels(ctx, characterID)
@@ -386,6 +401,11 @@ func LearnSkillHandler(chars character.Store, skills skill.Store, skillRef Skill
 			if levels[ref.Mastery1] < ref.MasteryLevel1 {
 				return fail("mastery level too low")
 			}
+		}
+		// FUN_0059e450 tests the race byte after the masteries (and the Str/Int
+		// requirements, which srrevamp does not model) and before the chain.
+		if !skill.LearnRaceAllows(ref.ReqLearnRace, country) {
+			return fail("not your race's skill")
 		}
 		// Gated by what the character already knows: the previous level of the
 		// same skill, and the skilldata prerequisites (ReqLearn_Skill1..3 at
@@ -1763,8 +1783,9 @@ func DecodeSkillStateResult(data []byte) (*SkillStateResult, error) {
 }
 
 // SkillStateHandler answers OpSkillState with the character's level, unspent
-// skill points and per-mastery levels -- what the skill window's totals and
-// lit/greyed skills are drawn from.
+// skill points and the level of every mastery its race holds (0 for one never
+// raised) -- what the skill window's tabs, totals and lit/greyed skills are
+// drawn from.
 func SkillStateHandler(chars character.Store, store skill.Store) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpSkillState {
@@ -1794,8 +1815,14 @@ func SkillStateHandler(chars character.Store, store skill.Store) gateway.Handler
 			return send(&SkillStateResult{Error: "lookup failed"})
 		}
 		result := &SkillStateResult{Level: int32(owned.Level), SkillPoints: int32(points)}
-		for id, lvl := range levels {
-			result.Masteries = append(result.Masteries, MasterySnapshot{MasteryID: id, Level: int32(lvl)})
+		// Every mastery the character HOLDS, a level-0 one included -- retail's
+		// character data carries the whole _CharSkillMastery list (seeded at
+		// level 0 by _AddNewChar), and the client's skill window lays out
+		// exactly that list (FUN_006aa3e0 walks the server's mastery map into
+		// one tab manager per TabID, READ). Round 691: the client picks the
+		// race's masteries from this; another race's stored row is not sent.
+		for _, id := range skill.DefaultMasteries(characterCountry(owned)) {
+			result.Masteries = append(result.Masteries, MasterySnapshot{MasteryID: id, Level: int32(levels[id])})
 		}
 		sort.Slice(result.Masteries, func(i, j int) bool { return result.Masteries[i].MasteryID < result.Masteries[j].MasteryID })
 		if learned, err := store.KnownSkills(ctx, characterID); err == nil {
@@ -1865,10 +1892,11 @@ func DecodeRaiseMasteryResult(data []byte) (*RaiseMasteryResult, error) {
 
 // RaiseMasteryHandler raises a mastery one level, spending masteryUpCost's skill
 // points (none for a mastery's first point or past MasteryCostLevelCeiling),
-// when the character's mastery total stays within its Country's cap (a flat
-// MasteryTotalCapChina for every srrevamp character -- see masteryTotalRefusal)
-// and the mastery is below the character's level (no single mastery can exceed
-// it). The checks run in Mastery_LevelUp's own order: total cap (0x3805), then
+// when the mastery is one the character's race holds (0x3801), the character's
+// mastery total stays within its Country's cap (China a flat 330, Europe
+// min(240, 2 x level) -- see masteryTotalRefusal) and the mastery is below the
+// character's level (no single mastery can exceed it). The checks run in
+// Mastery_LevelUp's own order: held (0x3801), total cap (0x3805), then
 // the character's level (0x3804), then skill points (0x3802) -- a check the
 // engine skips for level 0 and that a cost of 0 passes here. Answers
 // OpRaiseMasteryResult.
@@ -1896,11 +1924,25 @@ func RaiseMasteryHandler(chars character.Store, store skill.Store) gateway.Handl
 		if err != nil {
 			return fail("lookup failed")
 		}
-		total := 0
-		for _, lvl := range levels {
-			total += lvl
+		// Mastery_LevelUp's first check (FUN_0059d6f0, READ): the mastery must be
+		// one the character holds, else 0x3801. A character holds its race's
+		// masteries (skill.HoldsMastery, from _AddNewChar), so a Europe
+		// character cannot raise Bicheon and a China one cannot raise Warrior.
+		country := characterCountry(owned)
+		if !skill.HoldsMastery(country, req.MasteryID) {
+			return fail("not your race's mastery")
 		}
-		switch code := masteryTotalRefusal(characterCountry(owned), total, 1, owned.Level); {
+		// The total counts the character's own masteries. A row of another
+		// race's mastery (raised before round 691 made that impossible) is not
+		// in the engine's map at all, so it is not summed (FUN_0059e7c0 walks
+		// the held map only).
+		total := 0
+		for id, lvl := range levels {
+			if skill.HoldsMastery(country, id) {
+				total += lvl
+			}
+		}
+		switch code := masteryTotalRefusal(country, total, 1, owned.Level); {
 		case code == masteryErrTotalCap:
 			return fail("mastery total at cap")
 		case code != 0:
