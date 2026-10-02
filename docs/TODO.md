@@ -1155,8 +1155,39 @@ front-end's next steps.
   catalogue read through the index (`CharCatalog.index_parts`). Switching the world costs a parse of
   all 63 parts (~285 ms with the native readers, MEASURED) and needs `perf_gate.sh`.
 - **The plus glow** (INFERRED that plus drives it): the plus is kept on `Body.worn`, not drawn.
-- **`CharacterPreview`** is still the create screen's preview; round 685 replaces it with this
-  builder.
+- **`CharacterPreview`** (`ui/character_preview.gd`) no longer has a user in round 685's tree: the
+  customize screen draws through `CharCreatePreview`. Delete it once lane A's select (round 684)
+  is merged and confirmed not to use it.
+
+### The customize screens (round 685) — **built: China and Europe from their own layouts, every control, the READ ranges and rules, the preview with the READ spin, zoom and idle, the turning 98/168 and 105/79 backdrops; these are left**
+
+`docs/protocol/charselect.md` section 4 has everything READ; WORLD_ISSUES round 685 the evidence.
+- **The name's character test** is OURS (the server's rule: printable ASCII, no space, `'` or `"`).
+  Retail's is the inverse of one language column of `textdata\abusefilter.txt`'s
+  `#ALLOW_ID_TABLE` (READ 0x8c4a10); which column the English client reads (the filter's +0x14,
+  GlobalDataManager +0x858) is OPEN. Column 5 (MEASURED) allows exactly 0-9, A-Z, `_`, a-z. The
+  same file's two word lists are not applied. When the column is known, client and server should
+  both apply it (`session.LobbyNameCode`).
+- **Branding:** the create screens draw the archive's red/blue bands only. Whether an operator's
+  theme band art should replace them as it does the title's is the user's call (the reference
+  shots are a private server's reskin).
+- **INFERRED, not read:** the slider's thumb travel (x 20..104 from the 84-pixel track) and its
+  drag; the confirm box's Cancel and Create fading it over 0.5 s; the clock behind the backdrop's
+  turn being milliseconds; the preview lit by the backdrop's zone light; ANI_STAND1 looked up in the
+  weapon's group; the sex buttons' ClientRect as a text inset.
+- **OURS:** the backdrop's window radius 1 (9 cells) and the black fade held until its first view
+  (at most 8 s); China when the screen opens with no race chosen; Enter in the name field confirms.
+- **The message line's colour** (FUN_00860ca0's value) is OPEN: the layout's white is used.
+- **Europe women 12/13** (DEVIL, SUCCUBUS): the tooltip is taken by code name (OURS) until the
+  retail order is known.
+- **Default wear** (round 685's review): drawn on the create preview, the select bodies
+  (`CharacterAppearance`) and the world's characters (`World3D._build_assembled_character`).
+  Left: an avatar's own visual record (ConditionID 2) is not consulted for the mask, so default
+  wear can draw under an avatar dress (OPEN, with the avatar arbitration); `CGame+0x129` is
+  assumed clear (OURS, as the Protector minimum).
+- **China's backdrop** does not reproduce fe_ref4's lion-and-gate view at any yaw of the READ
+  pose; Europe's matches fe_ref3 at yaw ~2.6 (the reviewer's sheets, scratchpad `rv685/shots/`).
+  Whether the reference server moved the China camera, or the READ target is read wrong, is OPEN.
 
 ### The server list and setting/ (round 679) — **built: setting/config.yaml with named servers, the LIST window with each server's status, the logo clear of the box, centred fields and a `*` password; these are left**
 

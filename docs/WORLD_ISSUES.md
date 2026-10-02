@@ -7482,6 +7482,305 @@ check` 510 scripts ALL LOAD (a first run failed on `scripts/net/character_test.g
 deleted that the lane's box directory still held -- the sync never removes; deleted there, not a
 tree defect); `remote_godot.sh tests` 200 suites, 0 failing.
 
+## Six-hundred-and-eighty-fifth round: the character customize screens -- China in the Jangan palace courtyard, Europe on the Constantinople plaza -- with every retail control: name and name check, sex, Figure, Height, Volume, Weapon and Cloth with the original's ranges and Europe's weapon-to-armour rule, the tooltip, the turning and zooming preview, and Confirm sending exactly the choices
+
+The user (2026-10-02): "I'd like for all of those features I requested before that matches the original
+game as much as possible" -- name, race, gender, model, armor, weapon, rotation, name check, height and
+volume -- and, today, "the new character selection/creation isn't ready yet? thought it was".
+
+This is charselect.md's lane B, rounds B2 and B3. It consumes round 683's `CharacterAppearance` and
+`CharCatalog`, round 682's lobby (0x7007 create and name check through NetClient) and round 684's
+`CharSelectHandoff` (its commit is cherry-picked unchanged so this branch builds alone). Labels: READ
+(sro_client.exe's dump, asm and bytes on the box), MEASURED, INFERRED, OURS, OPEN.
+
+### 1. What retail does (READ; addresses in charselect.md section 4, which this round extends)
+
+- **The layouts** `resinfo\pscharactercreatechina.txt` / `pscharactercreate_europe.txt` (MEASURED,
+  extracted on the box, nothing kept): sections CreateChina/CreateEurope, Custom, Explain, Rotate,
+  Slider, WCreate. They differ only in art (`button_europe`, `customize_window_europe`,
+  `explain-window_02` 212x250, `redbar_*_europe`), China's calligraphy (window 5,
+  `back_image.ddj`, Europe none) and **the y of sliders 48 and 49**: China Protector 224 / Weapon 255,
+  Europe the reverse.
+- **Placement** (OnCreate 0x84fbc0 / 0x853990): only windows 1, 2 and 14 are scaled to the screen
+  (FUN_00849c70). OK (W-209, band 2 top+27), Cancel (W-105, same), panel 7 (75, mid-155), rotate 8
+  (W-165, band 2 top-69), tooltip 9 China (rot.x-59, rot.y-219) / **Europe (rot.x-69, rot.y-270)**
+  (0x853ebd/0x853ec4 -- the existing table had only China's), box 13 centred, message line 500
+  (26, band 2 top+29), W-26 x 100. The title and calligraphy stay at their layout rects.
+- **Sliders**: built from the Slider section (prev 71, next 72, thumb 73) with a track of 0x54 = 84
+  (FUN_00659840); Height and Volume (0, 4) at 2; Figure (1, n) and Weapon (0, n) from the lists
+  (0x84f350); China Protector min 1 unless CGame+0x129 (then 0). Europe's weapon handler 0x853400
+  sets the Protector range by the weapon's TypeID4 -- (0,2) for 7/8/9/15, (0,1) for 10..14, (0,0)
+  for none -- and puts it at 0; 0x8531e0 dims it to alpha 100 with no weapon.
+- **The tooltip** (0x84d470 / 0x850f50): the keys of the control in +0x350 at its current choice
+  (the full key lists are in charselect.md). A slider handler sets +0x350; each frame the slider
+  under the cursor does when it is not already the subject (0x850573..0x8505d5). Empty until then.
+- **Confirm**: China (0x84ed50) refuses weapon 0 (`SELECTWEAPON`, snd_error); Europe (0x8527e0)
+  refuses chest 0 first (`SELECTARMOR`), then weapon 0. Then the name (0x84eac0): the edit's length
+  2..12 (`+0x434 - 2 < 0xb`) else `NAME_STRING`, then 0x8c3cb0 else `WRONGSTRING`. Box 13 fades in
+  0.5 s with the name in 31 and window 12 dims 0 -> 0x80 (0x84ec00); Create's packet goes when the
+  box's fade ends (0x84e610); the OK fades 14 to black over 0.5 s (0x84cff0), then select. Cancel
+  (0x84d300) goes back at once with previous-process 0xa. Messages go to window 500
+  (FUN_00861850 -> 0x8613b0).
+- **The name filter's source -- new.** 0x8c3cb0 lower-cases A-Z (0x8c1660) and refuses any
+  character whose bit is set in a 65,536-bit table (0x8c0760), then two word lists. 0x8c4a10 builds
+  them from `textdata\abusefilter.txt` (the caller at 0x845f9c, beside the other textdata loads):
+  `#ALLOW_ID_TABLE <from> <to>` rows per language column, the table being the complement. MEASURED
+  on the vSRO file: six columns; column 5 allows exactly 0-9, A-Z, `_`, a-z; column 6 adds Latin-1;
+  columns 1-4 add Shift-JIS, KS, Big5 and GB ranges. **Which column the English client reads is
+  OPEN** (the filter's +0x14 from its constructor's argument, GlobalDataManager +0x858). So the
+  client-side character test here is OURS: the server's rule (`session.LobbyNameCode`).
+- **The preview** (CIFCharacterWnd, window 6, full screen, created after the bands and before the
+  panels): its camera is a CGFXVideo3d at +0x57c (constructor 0x80c090 -> 0xbae0a0), so OnCreate's
+  **+0x5cc = 45.0 is its vertical field of view** (0xdd5f74), +0x58c its target (0.5, 9.8, 0),
+  +0x5b0 pitch 0.2, +0x5bc distance 28.5; the model at (3.0, 0.5, 0) yaw 0 (FUN_0080bf80).
+  MEASURED against fe_ref3: the model's centre sits 0.13 of the half-width right of the middle,
+  which is what 2.5 units at 28.5 with 45 degrees on a 16:10 screen gives.
+- **The pose** (CCustomInfoManager 0x80b440): a model change re-dresses every slot, re-applies the
+  scale and plays animation 0 (ANI_STAND1) from its start, vt+0xc(0,0,0,0,1.0,1.0); a weapon change
+  installs the weapon, the shield beside one whose refitem +0x250 is 0, and plays animation 0 again;
+  an armour change only re-dresses. This closes charselect.md's "which animation the preview plays".
+- **The spin and zoom** re-read from the asm (0x850804..0x8508a4, constants from the exe's bytes):
+  +-50 a click (0xd8f0b0), d = dt v 0.5 (d = v when |v| < |d|), angle += (2v - d) dt 0.5, v -= d,
+  v = 0 below 30 (0xdd6018), yaw = angle / 180 x 3.14; the zoom a 1.0 s two-key path between
+  (0.5, 9.8, 0) at 28.5 and (2.0, h x 15 man / 14 woman, 0) at 11.0 (0x84f36b..0x84f3b3), the middle
+  button toggling zoomin/zoomout art (0x84fa90). The backdrop: pitch 0, roll 0, distance 0.1, yaw =
+  clock / 30000 + 0.390955 (0x8505ed..0x850665), China (960.4189, 50, 458.2598) in 98/168.
+
+### 2. What changed
+
+- **`CharacterCreate.gd`** (rewritten): the screen from the race's layout -- FrontEndFrame over the
+  layout's own bands and title (text-custom.ddj, "CHARACTER CUSTOMIZE"), the message line, China's
+  calligraphy, the preview, the customize panel (labels by text key, the name edit max 12, Name
+  Check, Male/Female with their on/off art, the five sliders in the layout's order), the rotate
+  panel, the tooltip, OK/Cancel, the dimmer, box 13 and the black fade, each at the READ place;
+  FrontEndBackdrop at 98/168 or 105/79 turning by the READ clock; the READ opening fades; Confirm,
+  box, create, name check and refusals as section 1. It reads `CharSelectHandoff.race` and leaves
+  by `CharSelectHandoff.back_to_select`. It no longer sends `CharacterNet.INTERIM_KIT`.
+- **`frontend/charcreate_model.gd`** (`CharCreateModel`): the state, ranges, the Europe rule, the
+  scale byte, the request, the preview items (shield by TwoHanded, INFERRED to be +0x250), Confirm's
+  order, the name rule, the tooltip keys, the slider order from a layout.
+- **`frontend/charcreate_view.gd`** (`CharCreateView`): the spin, the zoom path, the backdrop pose.
+- **`frontend/charcreate_preview.gd`** (`CharCreatePreview`): the full-screen SubViewport with the
+  45-degree camera, the z-mirror (as PaperDoll), PlayerPortrait's zone-lit materials fed the
+  backdrop's environment light (INFERRED: the same vertex-shader light chain round 633 READ), and
+  ANI_STAND1 restarted on a model or weapon change.
+- **`frontend/charcreate_slider.gd`** (`CharCreateSlider`): the slider from the Slider section's art;
+  the thumb's travel and drag are INFERRED.
+- **`world/map_animation.gd`** -- a leak this round found: `MapAnimation.Driver`'s Obj <-> Sector and
+  Obj <-> PoseGroup links are RefCounted cycles, so every World3D freed -- each front-end backdrop,
+  and in play every zone change's `reset()` -- left its animated objects behind. The driver now
+  cuts them in `reset()` and when it is deleted.
+- **`tools/measure_create_cycles.gd`**: per-cycle object and memory growth by piece, and the swap
+  latencies.
+- QA hooks (off in play): `SRREVAMP_QA_CREATE_RACE` (a race or a per-opening list, until lane A's
+  race select merges), `SRREVAMP_QA_CREATE_STATE`, `SRREVAMP_QA_CREATE_SHOTS` +
+  `SRREVAMP_QA_CREATE_SHOT_DIR`, and `CREATE LAYOUT` lines giving every clickable control's rect.
+
+### 3. The handoff contract (round 684's, unchanged)
+
+`CharSelectHandoff` (`frontend/charselect_handoff.gd`): select sets `race` (CharCatalog's 0 China,
+1 Europe; -1 none) and changes to `CharacterCreate.tscn`; create reads it in `_ready` (OURS: China
+when -1), also `day_phase` (else it picks the title's way), and leaves with `back_to_select(tree,
+created)`. The commit is round 684's own (2922670), cherry-picked byte for byte.
+
+### 4. Measured
+
+**Real X input end to end** (xdotool on Xvfb against a dev server, `-in-memory -chargen-csv`, a
+wire tap; Login -> the round-682 select -> Create, every control clicked):
+- Two runs. The second made one character per race and sex, each with non-default Figure, Height,
+  Volume, Weapon and Protector, and the list record (0xB007 action 2, decoded from the tap) carries
+  exactly what was sent:
+
+| Create sent (0x7007 action 1) | List record (model, scale, items) |
+|---|---|
+| QaEuroMan 14884 (Figure 10) 0x03 (H3 V0) 11620/11621/11622 light, 10889 2H sword | 14884 0x03 [11620, 11621, 11622, 10889] |
+| QaEuroWoman 14899 (Figure 12) 0x34 (H4 V3) 11632/11633/11634 robe, 10894 harp | 14899 0x34 [11632, 11633, 11634, 10894] |
+| QaChinaMan 1919 (Figure 13) 0x41 (H1 V4) 3643/3644/3645 clothes, 3635 glaive | 1919 0x41 [3643, 3644, 3645, 3635] |
+| QaChinaWoman 1922 (Figure 3) 0x12 (H2 V1) 3646/3647/3648 heavy, 3632 sword | 1922 0x12 [3646, 3647, 3648, 3632, 10886] (the server's shield, READ) |
+
+- Refusals, each in the message line in the archive's words with snd_error: "a" -> NAME_STRING and
+  "a b" -> WRONGSTRING (client); Confirm with no weapon -> SELECTWEAPON (China), no set ->
+  SELECTARMOR (Europe, both before and after a weapon was chosen); Name Check of a taken name ->
+  0x410 "This character name already exists in the server!"; Create of a taken name -> 0x410; a fifth
+  character -> 0x405 "...A maximum of 4 characters can be created per account." Name Check of a
+  free name -> "This character name is valid and usable. You may proceed!".
+- Europe's weapon -> armour rule through the UI: with the 2H sword the Cloth slider ran 0..2 (heavy,
+  light), with the harp 0..1 (robe); a weapon change put it back to 0 (the wire above).
+
+**Time to a usable screen** (the black fade starting, the controls live): 1.42 s (China) and 1.66 s
+(Europe) after Create in the e2e, with Login having compiled the world; 3.1 s for a cold boot
+straight into the scene (`--resolution 1280x720`, GPU). Of that: the catalogue and builder 204-236
+ms, the screen built 306-348 ms (1.5 s cold, the world scene compiling), the backdrop's first view
+1.4-2.4 s, the whole 9 cells 3.4 s.
+
+**Swap latency** (`measure_create_cycles.gd --mode=swaps`, headless, GDScript readers; every Figure of
+both sexes, every weapon x set, twice):
+
+| | Figure | Weapon / Cloth | Height / Volume |
+|---|---|---|---|
+| China, first pass (templates built) | median 22.1 ms, max 34.7 | median 1.9, max 6.0 | 0.06 ms |
+| China, second pass (cached) | median 1.6 ms, max 1.7 | median 1.7, max 1.9 | 0.06 |
+| Europe, first pass | median 22.7 ms, max 31.7 | median 3.0, max 10.7 | 0.06 |
+| Europe, second pass | median 1.4 ms, max 1.4 | median 1.7, max 1.9 | 0.06 |
+
+In the GPU e2e a first-time Figure took 20-35 ms (build plus 0.4-1.0 ms of materials), a scale change
+0.7 ms (the log's `CREATE SWAP` lines).
+
+**Memory and leaks.** The e2e's select <-> create cycles first showed growth: +571 objects and
++3.0 MB of static memory per opening, the same screen each time. Bisected with
+`measure_create_cycles.gd` (headless, per cycle): appearance 0, preview 0, the World3D scene alone 0,
+`begin` without frames 0, **the backdrop with its cells loaded +559 objects, +1.32 MB -- and 0 with
+`SRREVAMP_NO_MAP_ANIM=1`**: MapAnimation's RefCounted cycles (section 2). After the fix: backdrop
++0 / +0.00 MB over 4 cycles, the whole screen +0 / +0.00 MB over 4 (Europe). While open the screen
+holds ~230-250 MB of static memory (the backdrop's 9 cells and the preview), released on leaving
+(e2e `CREATE MEM` lines: 95.8 MB before the first opening, 346 MB inside).
+
+**Perf gate** (`perf_gate.sh --sites jangan`; map_animation.gd is world code):
+
+```
+perf gate: base 67937a5 vs head working tree (1280x720, median of 3 run(s))
+jangan  frame ms   base 10.54  head 10.19  (-0.3)  SAME
+jangan  entry ms   base 9713.50  head 9664  (-49.5)  SAME
+jangan  freeze ms  base 3418.50  head 3407  (-11.5)  SAME
+jangan  hitches    base 5.00  head 5  (+0.0)  SAME
+```
+
+### 5. Pictures (for a human; nothing above rests on them)
+
+On the box in `/var/tmp/customize685/shots/`: `compare_china.png` and `compare_europe.png` (fe_ref4 /
+fe_ref3 beside ours), `china_0..2.png` and `europe_0..2.png` (QA shots: defaults with a tooltip; a
+China FOX woman with a blade and shield at Height 4 Volume 0; zoomed in and turned; a Europe KNIGHT
+man with sword, shield and heavy set; a Europe SUMMONER woman with the harp and robe), and the e2e's
+`e2e_*.png` (the confirm box, each refusal, the Europe man and the DEVIL woman, the China woman's bow,
+the China man turned by one rotate click, select after the four creates). The references are a
+private server's reskin: their gold bands and logo are that server's art; ours are the archive's
+`redbar_*` bands.
+
+### 6. Tests
+
+- `scripts/frontend/charcreate_test.gd` (107 checks, synthetic catalogue): the controls -> request
+  (model, the nibbles, the items), the starting values, sex switching, Europe's rule per weapon as the
+  slider ranges show it (and the reset to 0 and the dimming), Confirm's order per race, the name rule
+  and its messages, the tooltip keys (DEVIL/SUCCUBUS by code), the slider order from a layout's rects,
+  the thumb geometry, the spin (one click 40.0 degrees, ~1.02 s; two stack to 140), the zoom and the
+  backdrop's turn.
+- `scripts/world/map_animation_share_test.gd`: a dropped and a reset driver free their objects,
+  sectors and pose groups.
+- **The negative** -- both suites on the base 67937a5 (a base worktree with only the tests copied in):
+
+```
+SCRIPT ERROR: Parse Error: Identifier "CharCreateModel" not declared in the current scope.
+          at: GDScript::reload (res://scripts/frontend/charcreate_test.gd:122)
+FAIL r685: a driver dropped frees its objects, sectors and pose groups (5 tracked, 5 still alive, groups formed true)
+FAIL r685: a driver reset frees its objects, sectors and pose groups (5 tracked, 5 still alive, groups formed true)
+```
+
+- `remote_godot.sh check`: ALL LOAD (515 scripts, 8 scenes). `remote_godot.sh tests`: 200 suites,
+  0 failing.
+
+### 7. Still OPEN
+
+- Which `abusefilter.txt` column the English client's name test reads (the test here is the
+  server's rule, OURS); its word lists are not applied.
+- INFERRED, not read: the slider's thumb travel and drag; the box's Create/Cancel fades; the
+  backdrop clock's unit; the preview's zone light; ANI_STAND1 looked up in the weapon's group.
+- OURS: the backdrop radius 1 and the black held up to 8 s for its first view; China when no race is
+  handed over; Enter in the name confirms; archive bands only (no operator branding).
+- The message line's colour (FUN_00860ca0).
+- The body under armour shows in the preview until round 687 merges.
+- `ui/character_preview.gd` has no user left here; delete it once round 684's select is confirmed not
+  to use it.
+
+### 8. Review
+
+The review found the layout, ranges, Confirm order, preview constants and backdrop pose as READ
+("Weight" is the archive's own English for `UIO_NEWCHAR_STT_VOLUME`), 0 client/server mismatches
+over a 5,330-request sweep, the MapAnimation fix safe, and a clean merge onto dev f57aee5 (round
+687's body hiding, which this branch now carries). It raised two MEDIUMs and two LOWs; all fixed.
+
+**MEDIUM 1, default wear (READ).** An empty chest or legs is not bare in retail. `FUN_00a5e010` (run
+after every armour change, 0xa61c60 -> `CObjCharacter::FUN_00a611e0`) does nothing but take the
+defaults off when `CGame+0x129` is set; otherwise, for wear 0 (mask 0x2) and wear 1 (mask 0x10), when
+no worn visual's record carries the bit it calls `SetDefaultWear(0, 1)` / `SetDefaultWear(1, 4)`
+(the chest's and legs' visual slots); nothing for the feet. `BuildDefaultWearTypeID` (0xa5c760, asm
+and its two jump tables 0xa5c81c / 0xa5c82c): 0x2c, then by the race byte (+0x9c; INFERRED the
+Country) and `WornArmorClass()` (0xa5c670: the first visual slot with armour, 1 for TypeID3 1/9, 2
+for 2/10, 3 for 3/11, else 0) China 0/1 -> TypeID3 1, 2/3 -> 2, Europe 0/1 -> 9, 2/3 -> 10; then
+`& 0x7ff | 0x1800` (wear 0) or `| 0x2000` (wear 1). `SetDefaultWear` resolves it to a visual record
+and takes BsrName(M) (+0x18) for a man, (F) (+0x34) for a woman (+0x1c4).
+- MEASURED in `charactervisualchange.txt`: the eight ConditionID 6 rows, Pram1 6316/8364 China
+  `clothes_00_ba/_la`, 6444/8492 China `light_00_*`, 7340/9388 Europe `clothes_01_*`, 7468/9516
+  Europe `light_01_*`. The packing TypeID1 << 2 | TypeID2 << 5 | TypeID3 << 7 | TypeID4 << 11
+  reproduces every one and every ConditionID 1 armour row (6316 "ROBE-MAIL" 0x2, 8364 "ROBE-PANTS"
+  0x10, ...), which give a worn item's mask (INFERRED that an equipped item's visual record is that
+  row). The reviewer's "clothes_00" for Europe is Europe's `clothes_01` in this archive.
+- Built: `client/scripts/ui/default_wear.gd` (`DefaultWear`); `CharacterAppearance.build` and
+  `unequip` re-decide the defaults (worn entries with id 0, `default` set) and their attachable
+  blocks hide the body through round 687's `apply_hides`; `World3D._build_assembled_character` does
+  the same for the player, the paper doll and other players, by the drawn body's race and sex. The
+  flag is taken as clear (OURS, as the Protector minimum).
+- Seen (for a human): Europe at opening now wears the red tunic and dark trousers of fe_ref3
+  (`shots/compare_europe_review.png`); after a weapon change and at Cloth 0 too
+  (`europe_review_1/2.png`).
+
+**MEDIUM 2, a Europe sex change keeps the armour -- fixed (READ).** 0x852e00 re-sets Figure, the
+Protector, then the Weapon through 0x6599e0 with its notification, and 0x6598a0 sends 0x2806b at
+once, so 0x853400 runs last and puts the Protector at 0 (0x8531e0 unequips 1-3). `set_sex` now does
+that for Europe; China's weapon handler resets nothing and China keeps its set. A Europe man in the
+heavy set who switches to Female shows default wear and Confirm says SELECTARMOR.
+
+**LOW 3, the backdrop camera -- fixed at the source.** In title mode the Camera3D was still a child
+of the player's SpringArm3D, whose INTERNAL physics re-places its children (`set_physics_process
+(false)` does not stop it). `_title_ready` now also stops the internal process and reparents the
+camera to the World3D, keeping its transform. MEASURED (`measure_create_cycles.gd --mode=camera`,
+98/168, posed once, 240 frames): drift 55.681 units before, 0.000 after. Round 684's
+`CharSelectStage.camera()` workaround is no longer needed (not edited here).
+
+**LOW 4, Cancel while the create is in flight -- fixed (OURS).** The dimmer (12) now takes the mouse
+while box 13 is up and while the 0xB007 is due, so OK, Cancel and the panel cannot be used; the box
+sits above it. A create with no answer in 10 s gives the screen back with "The server did not answer
+the create request." (no retail key fits); a reply after that, or after leaving, is ignored (the
+handler checks the state; a freed screen's connections go with it). What retail's window 12 does
+with the mouse is not read.
+
+**OPEN, recorded:** China's backdrop does not reproduce fe_ref4's lion-and-gate view at any yaw of
+the READ pose, while Europe's matches fe_ref3 at yaw ~2.6 (the reviewer's sheets, scratchpad
+`rv685/shots/china_sheet.jpg`, `europe_sheet.jpg`). The reference is a private server's; whether it
+moved the camera or the READ target is misread is OPEN.
+
+**Tests.** `charcreate_test.gd` 121 checks: the Europe sex change (with sets for the woman in the
+synthetic catalogue), China keeping its set; DefaultWear's packing and TypeIDs per race and class,
+Europe's opening defaults (chest and legs, no feet; the woman's .bsr), still both after a weapon
+change, none under a worn set, worn mail suppressing only the chest default (the legs' following
+the worn light class), none with the flag, and China never showing one in any create state. On the
+tree before these fixes (the merge 501b4ae):
+
+```
+FAIL switching to Female puts the Protector back to 0, the weapon stays (got protector 1, armour [2021, 2022, 2023])
+FAIL so Confirm refuses with SELECTARMOR
+SCRIPT ERROR: Parse Error: Identifier "DefaultWear" not declared in the current scope.
+CAMERA drift after 240 frames without show_pose: 55.681 units
+```
+
+After: `remote_godot.sh check` ALL LOAD (519 scripts, 8 scenes); `remote_godot.sh tests` 202 suites,
+0 failing; whole-screen cycles +0 objects / +0.00 MB (Europe, 3); swaps unchanged (Europe cached
+Figure median 1.6 ms, Weapon/Cloth 1.9 ms).
+
+**Perf gate** (`perf_gate.sh --sites jangan,mobs`; World3D's title camera and character assembly
+changed):
+
+```
+perf gate: base f57aee5 vs head working tree (1280x720, median of 3 run(s))
+jangan  frame ms   base 10.16  head 9.32  (-0.8)  SAME
+jangan  entry ms   base 10014  head 9661  (-353.0)  SAME
+jangan  freeze ms  base 3473  head 3421  (-52.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+mobs    frame ms   base 10.97  head 10.91  (-0.1)  SAME
+mobs    entry ms   base 10670  head 10654  (-16.0)  SAME
+mobs    freeze ms  base 3428  head 3431  (+3.0)  SAME
+mobs    hitches    base 5  head 5  (+0.0)  SAME
+```
+
 ## Six-hundred-and-eighty-fourth round: the account's characters stand on the Constantinople quay in their own bodies, armour and weapons; hovering names one, clicking flies to it, and Create flies to the table where the horse and the lion pick the race -- retail's CPSCharacterSelect, number for number
 
 The user (2026-10-02): "I'd like for all of those features I requested before that matches the

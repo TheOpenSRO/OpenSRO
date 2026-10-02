@@ -446,8 +446,55 @@ the lizard hides. `FUN_0085cbc0` (fly back from an idol) has no references: dead
 | Cancel | (W-105, bottom band top + 27) |
 | customize panel | (75, mid - 155) |
 | rotate buttons | (W-165, bottom band top - 69) |
-| tooltip | (rotate.x - 59, rotate.y - 219) |
+| tooltip | China (rotate.x - 59, rotate.y - 219); Europe, whose window is 212x250, (rotate.x - 69, rotate.y - 270) (round 685: 0x853ea2..0x853eca, -0x45 / -0x10e) |
 | confirm box | centred |
+| message line (500) | (26, bottom band top + 29), W - 26 by 100 (round 685: 0x850157..0x8501ac) |
+
+**Round 685 additions (READ, OnCreate 0x84fbc0 / 0x853990 unless marked):**
+- **Only windows 1, 2 and 14 are scaled to the screen** (FUN_00849c70 at 0x84ff8d..0x84ffb7). The
+  title (3) and China's calligraphy (5) stay at their layout rects in screen pixels; the code above
+  places the rest. MEASURED against fe_ref3/4 (2546 px wide): the title at 47,111 and the model's
+  centre where the formula below puts it.
+- **The sliders** are built from the layout's `Slider` section -- prev 71 `arrow_left.ddj` at
+  (0, 2), next 72 `arrow_right.ddj` at (120, 2), thumb 73 `slider.ddj` 16x24 at (20, 0), each with
+  `_focus` / `_press` art (MEASURED) -- by FUN_00659620, and given a track of 0x54 = 84 (FUN_00659840).
+  Height and Volume get FUN_006599e0(0, 4, 1, 1) and FUN_006598a0(2, 1) (0x8503c4..0x8503db).
+  INFERRED: the thumb runs from x 20 to 104.
+- **The ranges** (the sex setter 0x84f350): Figure (1, the sex's body count); China Protector
+  (1 unless `CGame+0x129` is set, then 0; up to the chest count); Weapon (0, the weapon count).
+  Europe's weapon handler 0x853400 sets the Protector range by the weapon's TypeID4 -- (0, 2) for
+  7, 8, 9, 15; (0, 1) for 10..14; (0, 0) with none -- and puts it at 0 (FUN_006598a0(0, 1));
+  0x8531e0 draws the Protector slider at alpha 100 with no weapon, 255 otherwise.
+- **The windows' first state:** 3, 5, 13 and 12 hidden; 12 and 14 coloured 0xff000000; window 14
+  fades 255 -> 0 over 0.5 s (FUN_006526e0(0xff, 0, 0.5)); when it ends the title and the
+  calligraphy fade 0 -> 255 over 0.5 s (0x84e610's fade-end branch).
+- **The tooltip** (61 title, 62 text; 0x84d470 China, 0x850f50 Europe) shows the keys of the
+  control in `this+0x350` at its current choice: a Figure's `UIO_NEWCHAR_[EU_](MAN|FEMALE)_<name>`
+  and `_EXPLANATION`; `UIO_NEWCHAR_STT_HEIGHT` / `_EXPLANATION_HEIGHT` and the same for Volume;
+  Weapon 0 `STT_WEAPON` / `EXPLANATION_ARMY_SELECT`, then China SWORD, BLADE, SPEAR, TBLADE, BOW,
+  Europe `STT_EU_` DAGGER, ONEHANDSWORD, TWOHANDSWORD, DUELAXE, CROSSBOW, DARKSTAFF, TWOHANDSTAFF,
+  HARP, ONEHANDSTAFF with `EXPLANATION_<same>`; Protector 0 `STT_PROTECTOR` /
+  `EXPLANATION_ARMOR_SELECT`, then by the chest's list place China HEAVY_ARMOR, LIGHT_ARMOR,
+  CLOTHES, Europe `EU_` HEAVY_ARMOR, LIGHT_ARMOR, ROBE. A slider handler sets +0x350 to its control;
+  each frame the slider under the cursor does too, when it is not already the subject
+  (0x850573..0x8505d5). Nothing is shown before the first (+0x350 starts at -1).
+- **Messages** (FUN_00861850 -> 0x8613b0) go to window 500, the message line, while it exists; the
+  NetError message box is the fallback. Confirm's own refusals also play `snd_error`.
+- **The confirm box** (0x84ec00): 13 fades 0 -> 255 over 0.5 s with the name in 31; 12 dims
+  0 -> 0x80 over 0.5 s. The create OK (0x84cff0) fades 14 to 255 over 0.5 s, then select.
+- **Cancel** (11, 0x84d300) switches to select at once and writes 0xa as the previous process.
+- **A Europe sex change clears the armour** (round 685's review): 0x852e00 re-sets Figure, then
+  the Protector, then the Weapon through 0x6599e0 with its notification, and 0x6598a0 sends 0x2806b
+  at once, so the weapon handler 0x853400 runs last and puts the Protector at 0 (0x8531e0 takes
+  slots 1-3 off). China's weapon handler resets nothing, so China keeps its set.
+- **Default wear** (round 685's review; `client/scripts/ui/default_wear.gd` has the addresses): an
+  empty chest or legs shows `charactervisualchange.txt`'s ConditionID 6 garment -- Europe
+  `clothes_01_ba/_la` (worn armour light or heavy: `light_01_*`), China `clothes_00_*` /
+  `light_00_*` -- unless `CGame+0x129` is set; nothing for the feet. So Europe at opening, after a
+  weapon change and at Cloth 0 wears the red tunic the reference shows.
+- **The sex buttons** (0x84f630 male, 0x84f540 female) swap their art: male man_on / woman_off,
+  female man_off / woman_on, with `_press` art (strings 0xdd5f20.., 0xdd5e9c..). Their ClientRects
+  (male "20,0,0,0", female "0,0,20,0") keep the text clear of the radio mark (INFERRED).
 
 ### Name
 
@@ -596,7 +643,21 @@ the lizard hides. `FUN_0085cbc0` (fly back from an idol) has no references: dead
 | out (start) | (0.5, 9.8, 0) | 28.5 |
 | in | (2.0, height factor x 15 for men / x 14 for women, 0) | 11.0 |
 
-- Which animation the preview plays is OPEN.
+- **The animation (READ round 685, `CCustomInfoManager` 0x80b440):** a model change (slot 0) re-dresses
+  every slot, re-applies the scale (`CIFCharacterWnd::FUN_0080c250`) and calls vt+0xc(0, 0, 0, 0,
+  1.0, 1.0) -- animation 0, ANI_STAND1 (`SkillEffectReader.ANI_TYPES`), from its start; a weapon
+  change (slot 4) installs the weapon, the shield beside a weapon whose refitem +0x250 is 0
+  (`FUN_0093f5f0`), and plays animation 0 again; an armour change only re-dresses (vt+0x20).
+  INFERRED: the clip is looked up in the held weapon's group, as the world's is.
+- **The window's camera** is a CGFXVideo3d at CIFCharacterWnd +0x57c (the constructor 0x80c090 runs
+  0xbae0a0 there): OnCreate's +0x58c.. is its target, +0x5b0.. its pitch, yaw, roll, distance, and
+  **+0x5cc = 45.0 its vertical field of view** (camera +0x50; 0xdd5f74). MEASURED against fe_ref3:
+  the model's centre 0.13 of the half-width right of the screen's middle, as the target's 2.5-unit
+  offset at 28.5 with 45 degrees and a 16:10 screen puts it.
+- **The rotation formula above, re-read (round 685, 0x850804..0x8508a4):** also `d = v` when
+  `|v| < |d|`; the snap is `v = 0` once `|v - d| < 30` (`fcomp` with 0xdd6018). The zoom targets were
+  re-read: 2.0 (0xd86ecc), 15.0 man / 14.0 woman (0xdd5e2c / 0xdd5e30), 11.0 (0xd8acf8). The move is a
+  two-key path (FUN_0084f9e0 -> 0x4e67b0), the title's Catmull-Rom curves.
 
 **The backdrop:**
 - Each frame the world camera has pitch 0, roll 0, distance 0.1 and yaw = `clock / 30000.0 +
@@ -1043,6 +1104,11 @@ deletion. Renders on the box, batched in one `--shots` run. `perf_gate.sh` (it d
   restrictions, the tooltips 61/62 by text key;
 - Confirm, box 13, create (action 1), the error texts, return to select.
 
+**Round 685 built B2 and B3** (`CharacterCreate.gd` with `frontend/charcreate_model.gd`,
+`charcreate_view.gd`, `charcreate_preview.gd`, `charcreate_slider.gd`; WORLD_ISSUES round 685). It
+reads `CharSelectHandoff.race` and leaves through `CharSelectHandoff.back_to_select` (the contract
+above); `SRREVAMP_QA_CREATE_RACE` stands in for the race select until lane A's merges.
+
 **B3:** the 3D backdrop (98/168 and 105/79, the turning camera), the preview window with READ
 rotation physics and zoom, China's `back_image.ddj`.
 
@@ -1121,12 +1187,19 @@ box. `perf_gate.sh` for B3.
   worn item lists, which the client draws too.
 - The weight half of the missing-palette-bone rule (`ResObject::FUN_00be2f80` leaves a missing
   bone's weight out of the sum; this client models only the entry, round 683).
-- The name bitmap at 0x8c3cb0, and the forbidden-word lists' source.
+- The name bitmap at 0x8c3cb0: **its source is READ (round 685)** -- 0x8c4a10 builds it from
+  `textdata\abusefilter.txt` (Media.pk2 `server_dep\silkroad\textdata\`, named at 0x845f9c's
+  caller), whose `#ALLOW_ID_TABLE <from> <to>` rows give the allowed ranges of one of six language
+  columns (MEASURED: column 5, offsets 24..26, allows 0-9, A-Z, `_`, a-z; column 6 adds Latin-1);
+  the rest of the 65,536 bits is the refused set, and the same file feeds the two word lists
+  (+0x2018, +0x2048). **Which column the English client reads is OPEN** (the filter's +0x14, from
+  its constructor 0x8c46a0's argument, GlobalDataManager +0x858). The server's forbidden-word list
+  (session.LobbyNameCode: "no such list was found in the archives") may be this file: OPEN.
 - The deletion delay in `_DeleteCharTemporal`.
 - Restore's u8 vs u16 error code.
 - 0xB007 action 6.
 - The academy byte in the list.
-- The preview's and the select idle's animation.
+- The select idle's animation (the preview's is READ, round 685).
 - The lizard's root motion.
 - `FUN_00bbda70(1)` on select open.
 - Re-entering select after create when the previous-process id is neither 0 nor 10.

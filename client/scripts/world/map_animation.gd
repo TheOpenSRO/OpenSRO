@@ -750,6 +750,7 @@ class Driver:
 	## which moves the world's origin, so no sector key or centre carries
 	## over). The objects go with their containers; the pose nodes go now.
 	func reset() -> void:
+		_break_cycles()
 		for g in _live_groups:
 			if is_instance_valid(g.node):
 				g.node.queue_free()
@@ -770,3 +771,40 @@ class Driver:
 		poses = 0
 		groups = 0
 		_changed = true
+
+	## Round 685: each Obj names its Sector and its PoseGroup and they list it
+	## back -- RefCounted cycles, which outlive the driver. MEASURED: every
+	## World3D freed left its animated objects behind (+559 objects and
+	## +1.3 MB a front-end backdrop of 98/168, client/tools/
+	## measure_create_cycles.gd, 0 with SRREVAMP_NO_MAP_ANIM), and so does
+	## every reset (a zone change). The links are cut here.
+	func _break_cycles() -> void:
+		for key in _sectors:
+			var s: Sector = _sectors[key]
+			for o in s.objs:
+				(o as Obj).sector = null
+				(o as Obj).group = null
+			s.objs = []
+		for o in _always:
+			(o as Obj).group = null
+		for g in _live_groups + _released:
+			(g as PoseGroup).members = []
+
+	## The same, when the driver itself goes (its World3D freed). Inline: a
+	## RefCounted's own methods cannot be called while it is being deleted
+	## (MEASURED in round 683, CharacterAppearance).
+	func _notification(what: int) -> void:
+		if what != NOTIFICATION_PREDELETE:
+			return
+		for key in _sectors:
+			var s: Sector = _sectors[key]
+			for o in s.objs:
+				(o as Obj).sector = null
+				(o as Obj).group = null
+			s.objs = []
+		for o in _always:
+			(o as Obj).group = null
+		for g in _live_groups:
+			(g as PoseGroup).members = []
+		for g in _released:
+			(g as PoseGroup).members = []

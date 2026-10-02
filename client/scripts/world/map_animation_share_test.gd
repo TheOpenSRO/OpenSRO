@@ -52,6 +52,7 @@ func _initialize() -> void:
 		await _test_shared_poses(MA, template, once_template)
 	await _test_sector_bounds(MA, template)
 	await _test_world_resets(MA, template)
+	await _test_driver_frees(MA, template)
 	template.free()
 	once_template.free()
 	_finish()
@@ -341,6 +342,49 @@ func _test_world_resets(MA, template: Node3D) -> void:
 	new_zone.queue_free()
 	w.free()
 	await process_frame
+
+## Round 685: a driver that goes (its World3D freed) or resets (a zone
+## change) lets its objects, sectors and pose groups go too. Each Obj names
+## its Sector and PoseGroup and they list it back -- RefCounted cycles that
+## outlived the driver: every front-end backdrop freed left +559 objects and
+## +1.3 MB (MEASURED, client/tools/measure_create_cycles.gd).
+func _test_driver_frees(MA, template: Node3D) -> void:
+	for how in ["dropped", "reset"]:
+		var holder := Node3D.new()
+		root.add_child(holder)
+		var poses := Node3D.new()
+		root.add_child(poses)
+		await process_frame
+		var drv = MA.Driver.new()
+		drv.pose_parent = poses
+		for i in range(3):
+			drv.add(_place(template, holder, Vector3(100 + i, 0, 100)), false)
+		drv.tick(Vector3(160, 0, 600), [])
+		await process_frame
+		drv.tick(Vector3(160, 0, 600), [])
+		var refs: Array = []
+		for o in drv.objects():
+			refs.append(weakref(o))
+			if o.sector != null and refs.size() == 1:
+				refs.append(weakref(o.sector))
+			if o.group != null and refs.size() <= 2:
+				refs.append(weakref(o.group))
+		var grouped: bool = drv.groups > 0
+		if how == "reset":
+			drv.reset()
+		else:
+			drv = null
+		await process_frame
+		var alive := 0
+		for r in refs:
+			if (r as WeakRef).get_ref() != null:
+				alive += 1
+		_check(refs.size() >= 4 and grouped and alive == 0,
+			"r685: a driver %s frees its objects, sectors and pose groups (%d tracked, %d still alive, groups formed %s)" % [how, refs.size(), alive, grouped])
+		drv = null
+		holder.queue_free()
+		poses.queue_free()
+		await process_frame
 
 func _finish() -> void:
 	if _failures == 0:
