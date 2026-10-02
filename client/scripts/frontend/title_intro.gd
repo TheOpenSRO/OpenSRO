@@ -30,10 +30,15 @@ class_name TitleIntro
 ##     FUN_00865630 early: the skip.
 ##
 ## OURS around that: the theme decides the intro (FrontEndTheme); the clock
-## starts once the backdrop's first view is built, a 2D still covering the
-## load until then (retail loads its regions before the title exists); a
-## script, archive or region that cannot back a 3D intro leaves the still
-## up and brings the login window in at once, with the reason in the log.
+## starts once the backdrop's whole scene is built (round 680: every cell
+## the camera's path needs, TitleCellPlan -- the user's "preload the scene
+## entirely" against pop-in), a 2D still covering the load until then
+## (retail loads its regions at startup, before the title exists:
+## FUN_00840670 -> CGWorld::FUN_00aa2190, READ, TitleCellPlan's header); a
+## click or key during that load brings the login in at once, as during the
+## fly, and the scene keeps loading behind it; a script, archive or region
+## that cannot back a 3D intro leaves the still up and brings the login
+## window in at once, with the reason in the log.
 
 signal login_shown
 ## The intro could not run; the 2D still stays (why, for the log).
@@ -49,6 +54,19 @@ const TITLE_RADIUS := 1
 ## OURS: how long the title waits for its first region before giving up
 ## on the 3D intro and showing the login on the still.
 const FIRST_VIEW_TIMEOUT_S := 30.0
+## OURS (round 680): how long the title waits for its WHOLE scene, once the
+## first view is in, before it flies anyway -- a slow disk must not hold the
+## still up for good; the cells still queued then build during the fly
+## (and may pop, as round 678's did), with a log line saying how many.
+const SCENE_TIMEOUT_S := 60.0
+## OURS (round 680): the planned scene is the union of the region window
+## (TITLE_RADIUS) around every sample of the path -- the cells round 678's
+## streaming would have built at some point of the fly, all built first.
+## A distance > 0 adds every cell the view frustum meets within it
+## (TitleCellPlan); 0 keeps the scene to the window, which costs least --
+## the measured trade-off is in the round 680 WORLD_ISSUES entry.
+## SRREVAMP_QA_TITLE_DRAW=<units> overrides it for a measurement.
+const PLAN_DRAW_DISTANCE := 0.0
 ## OURS: the still's fade-out once the 3D view is ready.
 const STILL_FADE_S := 0.5
 
@@ -67,6 +85,14 @@ var _still: CanvasItem = null
 var _login_nodes: Array = []
 var _started_ms := 0
 var _loading_s := 0.0
+## The scene plan (TitleCellPlan), computed on a worker while the world's
+## scene compiles; the task id until it is done, then -1.
+var plan: Array[Vector2i] = []
+var _plan_task := -1
+var _plan_ms := 0.0
+var _first_view := false
+## Connect was pressed (hold_backdrop): the scene stops loading for good.
+var _held := false
 var _qa_skip_at := -1.0
 var _qa_shots: PackedFloat32Array = PackedFloat32Array()
 ## SRREVAMP_QA_TITLE_SEEK=<t,t,...> (OURS, QA): instead of flying, stand the
@@ -126,6 +152,30 @@ func start(media: Pk2Reader, theme: FrontEndTheme, custom_dir: String, frame: Fr
 	_origin = origin
 	state = State.PRELOADING
 	FrontEndBackdrop.preload_world()
+	_plan_task = WorkerThreadPool.add_task(_compute_plan, true, "title scene plan")
+	return true
+
+## The scene plan, on a worker (TitleCellPlan only reads the path).
+func _compute_plan() -> void:
+	var sw := Time.get_ticks_usec()
+	var draw := PLAN_DRAW_DISTANCE
+	var qa := OS.get_environment("SRREVAMP_QA_TITLE_DRAW")
+	if qa != "" and qa.is_valid_float():
+		draw = qa.to_float()
+	if draw > 0.0:
+		plan = TitleCellPlan.cells(path, TITLE_RADIUS, draw)
+	else:
+		plan = TitleCellPlan.window_cells(path, TITLE_RADIUS)
+	_plan_ms = (Time.get_ticks_usec() - sw) / 1000.0
+
+## Whether the plan's task has finished (and been disposed of).
+func _plan_done() -> bool:
+	if _plan_task < 0:
+		return true
+	if not WorkerThreadPool.is_task_completed(_plan_task):
+		return false
+	WorkerThreadPool.wait_for_task_completion(_plan_task)
+	_plan_task = -1
 	return true
 
 ## The world's scene has loaded (FrontEndBackdrop.preload_world): build the
@@ -136,7 +186,8 @@ func _begin_backdrop() -> void:
 	backdrop.name = "TitleBackdrop"
 	add_child(backdrop)
 	print("TITLE: world scene ready at %d ms" % (Time.get_ticks_msec() - _started_ms))
-	if not backdrop.begin(origin, TITLE_RADIUS, day_phase):
+	print("TITLE: scene plan -- %d cell(s) for the whole path, computed in %.1f ms on a worker" % [plan.size(), _plan_ms])
+	if not backdrop.begin(origin, TITLE_RADIUS, day_phase, plan):
 		backdrop.queue_free()
 		backdrop = null
 		_fall_back("the backdrop for region %d/%d could not start" % [origin.x, origin.y])
@@ -149,6 +200,7 @@ func _begin_backdrop() -> void:
 	# wrong end of the path while the player waits.
 	backdrop.show_pose(path.sample(0.0))
 	backdrop.first_view_ready.connect(_on_first_view_ready, CONNECT_ONE_SHOT)
+	backdrop.scene_ready.connect(_on_scene_ready, CONNECT_ONE_SHOT)
 	state = State.LOADING
 
 ## The intro's parsed script and where it came from, or {"error": why}: the
@@ -254,6 +306,7 @@ func _still_covers() -> bool:
 ## left: Connect was pressed). Round 678's review: leaving waited ~0.8 s for
 ## cells still preparing.
 func hold_backdrop(why: String) -> void:
+	_held = true
 	if backdrop != null and backdrop.world != null:
 		backdrop.world.call("title_hold")
 		print("TITLE: backdrop holds its cells (%s)" % why)
@@ -272,6 +325,13 @@ func _show_login_node(n: Control) -> void:
 	else:
 		n.modulate.a = 1.0
 
+## A plan still computing when the screen goes is waited for (it writes
+## `plan` on this node; it takes tens of milliseconds, MEASURED).
+func _exit_tree() -> void:
+	if _plan_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_plan_task)
+		_plan_task = -1
+
 func _fall_back(why: String) -> bool:
 	state = State.FALLBACK
 	print("TITLE: no 3D intro -- %s; the 2D still stays and the login comes in at once" % why)
@@ -280,10 +340,24 @@ func _fall_back(why: String) -> bool:
 	return false
 
 func _on_first_view_ready() -> void:
+	_first_view = true
+
+## The whole planned scene is built: the camera may move (round 680).
+func _on_scene_ready() -> void:
+	_start_flying("the whole scene is built")
+
+func _start_flying(why: String) -> void:
 	if state != State.LOADING:
 		return
+	if _held:
+		# Connect stopped the load before the scene was whole (round 680):
+		# a part-built scene is not flown -- the still stays, as the screen
+		# is about to be left.
+		print("TITLE: the scene was held before it was built (%d cell(s) built) -- the still stays" % backdrop.cells_loaded())
+		return
 	state = State.FLYING
-	print("TITLE: flying from %d ms (load %.2f s)" % [Time.get_ticks_msec() - _started_ms, _loading_s])
+	print("TITLE: flying from %d ms (load %.2f s; %s; %d cell(s) built, %d pending)" % [
+		Time.get_ticks_msec() - _started_ms, _loading_s, why, backdrop.cells_loaded(), backdrop.cells_pending()])
 	if _still != null and _frame != null:
 		_frame.fade(_still, _alpha(_still), 0, STILL_FADE_S)
 	elif _still != null:
@@ -303,12 +377,14 @@ func _process(delta: float) -> void:
 	match state:
 		State.PRELOADING:
 			_loading_s += delta
-			if FrontEndBackdrop.world_loaded():
+			if FrontEndBackdrop.world_loaded() and _plan_done():
 				_begin_backdrop()
 		State.LOADING:
 			_loading_s += delta
-			if _loading_s > FIRST_VIEW_TIMEOUT_S:
+			if not _first_view and _loading_s > FIRST_VIEW_TIMEOUT_S:
 				_fall_back("no region built within %.0f s" % FIRST_VIEW_TIMEOUT_S)
+			elif _first_view and not _held and _loading_s > SCENE_TIMEOUT_S:
+				_start_flying("the scene was not built within %.0f s -- the rest builds during the fly" % SCENE_TIMEOUT_S)
 		State.FLYING:
 			if not _qa_seek.is_empty():
 				_qa_seek_step()

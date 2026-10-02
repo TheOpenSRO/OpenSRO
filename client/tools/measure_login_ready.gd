@@ -30,6 +30,8 @@ var _seconds := 12.0
 ## Round 680: the process's peak resident memory and Godot's video memory,
 ## sampled every PEAK_SAMPLE_MS (OURS), printed with the frame line.
 const PEAK_SAMPLE_MS := 500
+var _longest_after := 0.0
+var _over_after := 0
 var _peak_rss := 0.0
 var _peak_video := 0.0
 var _next_peak_ms := 0
@@ -66,6 +68,13 @@ func _process(_delta: float) -> void:
 		_longest = maxf(_longest, frame_ms)
 		if frame_ms > 100.0:
 			_over += 1
+			# Round 680: when each long frame fell, so a freeze can be told
+			# from the screen's build, the click or the title's loading.
+			print("MEASURE slow frame %.1f ms ending at %d ms" % [frame_ms, Time.get_ticks_msec() - _t0])
+		if _usable_ms >= 0:
+			_longest_after = maxf(_longest_after, frame_ms)
+			if frame_ms > 100.0:
+				_over_after += 1
 	var since := Time.get_ticks_msec() - _t0
 	if since >= _next_peak_ms:
 		_next_peak_ms = since + PEAK_SAMPLE_MS
@@ -89,6 +98,7 @@ func _process(_delta: float) -> void:
 		print("MEASURE login usable after %d ms (click at %d ms)" % [_usable_ms, _click_ms])
 	if since > _seconds * 1000.0:
 		print("MEASURE frames: longest %.1f ms, %d over 100 ms in %.0f s (%d frames)" % [_longest, _over, _seconds, _frames])
+		print("MEASURE frames after usable: longest %.1f ms, %d over 100 ms" % [_longest_after, _over_after])
 		print("MEASURE peak: VmRSS %.1f MB, video %.1f MB (sampled every %d ms)" % [_peak_rss, _peak_video, PEAK_SAMPLE_MS])
 		if _usable_ms < 0:
 			print("MEASURE login NOT usable within %.0f s" % _seconds)

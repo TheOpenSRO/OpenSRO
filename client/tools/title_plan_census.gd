@@ -53,6 +53,21 @@ func _initialize() -> void:
 			name, path.length, origin.x, origin.y, window.size(), with_terrain.call(window.keys()), retail.size(),
 			with_terrain.call(retail.keys()), window.keys().filter(func(c): return not retail.has(c)).size()]
 		print(line)
+		# How fast the camera moves: the target's speed and the yaw/pitch
+		# rates, sampled every 0.01 s -- what SAMPLE_STEP_S must resolve.
+		var top_speed := 0.0
+		var top_turn := 0.0
+		var prev := path.sample(0.0)
+		var tt := 0.01
+		while tt <= path.length:
+			var cur := path.sample(tt)
+			top_speed = maxf(top_speed, cur.target.distance_to(prev.target) / 0.01)
+			top_turn = maxf(top_turn, maxf(absf(cur.yaw - prev.yaw), absf(cur.pitch - prev.pitch)) / 0.01)
+			prev = cur
+			tt += 0.01
+		print("  camera: target up to %.0f units/s, yaw or pitch up to %.2f rad/s" % [top_speed, top_turn])
+		var plan_w := TitleCellPlan.window_cells(path, 1)
+		print("  window plan (TitleCellPlan.window_cells): %d cells (%d with terrain)" % [plan_w.size(), with_terrain.call(plan_w)])
 		for d in [2500.0, 3840.0, 5760.0, 7680.0]:
 			var t0 := Time.get_ticks_usec()
 			var plan := TitleCellPlan.cells(path, 1, d)

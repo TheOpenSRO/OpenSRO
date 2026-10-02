@@ -389,6 +389,11 @@ class Driver:
 	## Set by MapAnimationProbe (SRREVAMP_QA_MAPANIM_SPLIT): the driver stops
 	## testing, leaving the probe's state in place. Never set in play.
 	var halted := false
+	## Round 680 (OURS, the title's backdrop only): an object out of range
+	## stays DRAWN, its clock paused at its last pose, instead of hidden --
+	## the title's camera flies toward scenery, and switching it on at 2020
+	## units is a pop in view. Off in play, where the retail rule stands.
+	var keep_drawn := false
 	## Where pose groups' nodes live (World3D's own holder). null: no sharing.
 	var pose_parent: Node = null
 	## Share poses (no_share unset). A test flips it per driver.
@@ -451,8 +456,8 @@ class Driver:
 				_always.append(o)
 				continue
 			# Hidden until its sector is first visited, as the client's fade
-			# state starts at 0.
-			o.root.visible = false
+			# state starts at 0 (drawn, paused, under keep_drawn).
+			o.root.visible = keep_drawn
 			var s: Sector = _sectors.get(where[0])
 			if s == null:
 				s = Sector.new()
@@ -556,8 +561,9 @@ class Driver:
 				var on: bool = all == 1 or (all == 0 and o.origin.distance_to(eye) - o.radius < object_range)
 				if on:
 					quiet = false
-				if o.root.visible != on:
-					o.root.visible = on
+				var drawn: bool = on or keep_drawn
+				if o.root.visible != drawn:
+					o.root.visible = drawn
 				if o.running != on:
 					if on:
 						starting.append(o)

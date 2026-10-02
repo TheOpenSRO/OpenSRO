@@ -21,24 +21,30 @@ class_name TitleCellPlan
 ## This client (OURS): the path itself, sampled every SAMPLE_STEP_S, and at
 ## each sample the union of
 ##   - the region window around the camera's target (`radius` regions each
-##     way: the cells round 678's streaming would have built there), and
-##   - every cell whose box -- the region's 1920 x 1920 footprint between
-##     CELL_Y_MIN and CELL_Y_MAX -- meets the camera's view frustum (60
-##     degrees vertical, READ; the widest aspect we plan for, MIN_ASPECT;
-##     the title's draw distance, its camera far plane).
+##     way: the cells round 678's streaming would have built there) --
+##     window_cells, what the title builds (TitleIntro.PLAN_DRAW_DISTANCE);
+##   - with cells(), also every cell whose box -- the region's 1920 x 1920
+##     footprint between CELL_Y_MIN and CELL_Y_MAX -- meets the camera's
+##     view frustum (60 degrees vertical, READ; the widest aspect planned
+##     for, MIN_ASPECT) within a draw distance: more of the horizon, at
+##     2.3 to 3.9 times the cells at 2500 units (MEASURED, round 680).
 ## Cells are (dx, dy) relative to the frame region, as the region grid keys
 ## them: dx along the region's high byte (SRO z), dy along its low byte
 ## (SRO x) -- RegionGridState.cell_at of the point's world position.
 ## The plan is conservative: a cell behind a hill or under fog counts.
 
 const REGION_SPAN := 1920.0
-## OURS: how densely the path is sampled. The camera's fastest MEASURED
-## motion in the archive's intros is ~210 units a second (roc), so 0.05 s is
-## ~10 units between samples -- far below the 1920-unit cell.
+## OURS: how densely the path is sampled. The camera's fastest motion in
+## the archive's intros (MEASURED every 0.01 s, title_plan_census.gd) is 341
+## units a second (roc) and 0.53 rad a second of yaw or pitch
+## (constantinople), so 0.05 s is at most 17 units and 0.03 rad between
+## samples -- far below the 1920-unit cell. The suite checks the plan at
+## five times this density.
 const SAMPLE_STEP_S := 0.05
 ## OURS: the height band a cell is tested over. The archive's intros keep the
-## camera between y -434 and 2008 (MEASURED, round 678's census); terrain and
-## scenery sit inside this band with room to spare.
+## camera's target between y -434 and 2008 (MEASURED, round 678's census);
+## that terrain and scenery sit inside this band is INFERRED (it only widens
+## which cells count -- a taller band plans more, never fewer).
 const CELL_Y_MIN := -1000.0
 const CELL_Y_MAX := 4000.0
 ## OURS: the widest screen planned for (21:9 is ~2.37) -- a narrower
@@ -55,6 +61,24 @@ static func cells(path: IntroCameraPath, radius: int, draw_distance: float, aspe
 	var first_needed := {}
 	for_each_sample(path, step, func(t: float, pose: IntroCameraPath.Pose) -> void:
 		add_sample_cells(first_needed, t, pose, radius, draw_distance, maxf(aspect, MIN_ASPECT)))
+	return _ordered(first_needed)
+
+## The plan without the frustum: the region window (`radius` regions each
+## way) around the camera's target at every sample -- every cell round 678's
+## streaming window would have built at some moment of the fly -- in the
+## same order as cells().
+static func window_cells(path: IntroCameraPath, radius: int, step: float = SAMPLE_STEP_S) -> Array[Vector2i]:
+	var first_needed := {}
+	for_each_sample(path, step, func(t: float, pose: IntroCameraPath.Pose) -> void:
+		var centre := cell_of(pose.target)
+		for dx in range(-radius, radius + 1):
+			for dy in range(-radius, radius + 1):
+				var c := centre + Vector2i(dx, dy)
+				if not first_needed.has(c):
+					first_needed[c] = t)
+	return _ordered(first_needed)
+
+static func _ordered(first_needed: Dictionary) -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	for c in first_needed:
 		out.append(c)

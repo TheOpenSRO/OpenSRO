@@ -87,8 +87,28 @@ x >= 1920 or x <= 0 and the high byte when z >= 1920 or z <= 0, by `trunc(v / -1
 0xd8ac80, `fistp` under a truncating control word) and one more step down for v <= 0. roc's
 keyframes are all "region 100/71" with x down to -1840 and z down to -7211, so retail preloads
 100/71, 100/70, 99/71 .. 96/71 -- but the camera's target actually crosses 100/70 .. 96/70
-(MEASURED), regions this set never names. This client streams a 3x3 window around the camera's
-target instead (OURS, `World3D.title_begin`), which covers what the camera sees.
+(MEASURED), regions this set never names.
+
+**What is done with the set (READ, round 680).** `FUN_00840670` -- called from
+`Client_LoadAllRefData` at 0x844cd0, the startup load, so before `CPSTitle` exists -- parses the
+intro (`FUN_0056cb10`) and walks the set (`FUN_0056a980`), handing each region to
+`CGWorld::FUN_00aa2190(region, 1)`. That function loads the region through the region manager
+(`DAT_0111a02c` = `CRegionManagerBody`, vtable 0xe16184, slot 5 `vslot_005`, flag 1) and, with its
+second argument set, **its eight neighbours too** -- two nested loops over -1..1 on the high and the
+low byte, diagonals included -- keeping each region the manager loaded in a list (`FUN_00aa2090`),
+then runs slot 3 (`vslot_003`: two passes of `RegionManagerBody::FUN_00415520` over the regions).
+So retail's title regions are each keyframe region's 3x3 neighbourhood, loaded during the client's
+startup load, and the title's camera never waits on one. For roc that is 24 regions, which do
+contain 100/70 .. 96/70 (MEASURED, `client/tools/title_plan_census.gd`). Whether slot 5 builds a
+region's meshes at once or only queues them is not read (OPEN); no thread hand-off was seen in
+these functions (INFERRED: synchronous).
+
+**This client (round 680, OURS).** Round 678 streamed a 3x3 window around the camera's target, so
+cells were built -- and popped into view -- during the fly (MEASURED: 16 cells in view on roc).
+Since round 680 the title plans its whole scene before the camera moves (`TitleCellPlan`): the
+3x3 window around the target at every 0.05 s of the path, built behind the 2D still; the fly
+starts when all of it is built, and nothing streams or unloads while it flies
+(`World3D.title_begin`'s `plan`). The numbers are in round 680's WORLD_ISSUES entry.
 
 ## The camera path (READ)
 
