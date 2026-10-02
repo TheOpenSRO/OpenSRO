@@ -81,9 +81,19 @@ const (
 	PieceShield
 )
 
-// Piece reads an item row's piece: TypeID3 6 is a weapon, 4 a shield, and an
-// armour family's TypeID4 3/4/6 the chest, legs and feet (MEASURED on the 52
-// catalogue items; the same TypeID4 values equipment.SlotFor reads).
+// Piece reads an item row's piece by the READ rules (tightened in round
+// 682's review to match round 683's char_catalog.gd piece()):
+//
+//   - TypeID3 6 is a weapon;
+//   - TypeID3 4 is a shield only with TypeID4 1 or 2 (READ, IsShieldItem
+//     0x56fab0: China's and Europe's shield families);
+//   - TypeID4 3 / 4 / 6 is the chest / legs / feet only within an armour
+//     family, TypeID3 1, 2, 3 (China) or 9, 10, 11 (Europe) (READ, the
+//     create screen's list builder 0x80b980).
+//
+// Anything else is PieceNone. On the box's archive the looser rule this
+// replaced agreed on all 52 catalogue items (MEASURED); the two differ only
+// on rows the catalogue does not hold today.
 func (c Creatable) Piece() Piece {
 	if c.Kind != CreatableItem {
 		return PieceNone
@@ -92,15 +102,19 @@ func (c Creatable) Piece() Piece {
 	case 6:
 		return PieceWeapon
 	case 4:
-		return PieceShield
-	}
-	switch c.TypeID4 {
-	case 3:
-		return PieceChest
-	case 4:
-		return PieceLegs
-	case 6:
-		return PieceFeet
+		if c.TypeID4 == 1 || c.TypeID4 == 2 {
+			return PieceShield
+		}
+		return PieceNone
+	case 1, 2, 3, 9, 10, 11:
+		switch c.TypeID4 {
+		case 3:
+			return PieceChest
+		case 4:
+			return PieceLegs
+		case 6:
+			return PieceFeet
+		}
 	}
 	return PieceNone
 }

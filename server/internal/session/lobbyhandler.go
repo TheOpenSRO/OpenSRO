@@ -19,6 +19,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/srrevamp/server/internal/world"
 	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
 )
 
@@ -49,6 +50,9 @@ type LobbyDeps struct {
 	Eq        equipment.Store
 	Guilds    GuildRoles
 	Mana      *mana.Tracker
+	// Hub, when set, is how the lobby tells a session already in the world:
+	// every lobby action is refused there (round 682's review).
+	Hub *world.Hub
 	// Now is the clock (time.Now when nil); Pick returns a number in [0, n)
 	// for the start spawn (rand.Intn when nil).
 	Now    func() time.Time
@@ -97,6 +101,16 @@ func LobbyHandler(d LobbyDeps) gateway.Handler {
 			return sendLobby(sess, &LobbyResult{Action: action, Code: LobbyErrRefused})
 		}
 		accountID, authed := AuthenticatedAccountID(sess)
+		// A session in the world has left the lobby: retail's client never
+		// sends 0x7007 from the world (its senders are the select and create
+		// screens), and what the ShardManager would answer was not read. So
+		// every action is refused with 0x40e, "an operation is pending" -- the
+		// closest READ meaning, the choice OURS (round 682's review).
+		if d.Hub != nil && req.Action >= LobbyCreate && req.Action <= LobbyRestore {
+			if _, inWorld := d.Hub.EntityBySession(sess.ID()); inWorld {
+				return sendLobby(sess, &LobbyResult{Action: req.Action, Code: LobbyErrBusy})
+			}
+		}
 		switch req.Action {
 		case LobbyList:
 			if !authed {
@@ -388,13 +402,18 @@ func findOwned(list []*character.Character, name string) *character.Character {
 
 // remove is action 3: the 7-day soft delete (READ, `_DeleteCharTemporal`,
 // replied at once). Refused (READ ShardManager, charselect.md section 5): an
-// empty name or one with a quote 0x408; a name not on the account 0x40b; a
-// guild member or master 0x402 (the client refuses those before sending,
-// 0x858b40). Academy members cannot occur: srrevamp has no academy. A
+// empty name 0x408 (retail also refuses a quote there: not applied, see
+// below); a name not on the account 0x40b; a guild member or master 0x402
+// (the client refuses those before sending, 0x858b40) -- and, failing closed,
+// a guild lookup that errs (OURS). Academy members cannot occur: srrevamp has no academy. A
 // character already pending is refused with 0x402 (OURS).
 func (d *LobbyDeps) remove(ctx context.Context, accountID int64, req *LobbyRequest) *LobbyResult {
 	r := &LobbyResult{Action: LobbyDelete}
-	if req.Name == "" || containsQuote(req.Name) {
+	// An empty name is refused with 0x408 (READ). The server's quote
+	// refusal is not applied (round 682's review, OURS): a grandfathered
+	// name may hold one, and the name is only matched against the account's
+	// own list.
+	if req.Name == "" {
 		r.Code = LobbyErrDeleteName
 		return r
 	}
@@ -408,7 +427,10 @@ func (d *LobbyDeps) remove(ctx context.Context, accountID int64, req *LobbyReque
 		r.Code = LobbyErrNotOnAccount
 		return r
 	}
-	if d.guildClass(ctx, c.ID) != 0 {
+	if class, err := d.guildClass(ctx, c.ID); err != nil || class != 0 {
+		if err != nil {
+			d.logger().Warn("lobby: delete refused: the guild lookup failed", "character", c.Name, "err", err)
+		}
 		r.Code = LobbyErrRefused
 		return r
 	}
@@ -450,29 +472,28 @@ func (d *LobbyDeps) restore(ctx context.Context, accountID int64, req *LobbyRequ
 	return r
 }
 
-func containsQuote(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\'' || s[i] == '"' {
-			return true
-		}
-	}
-	return false
-}
-
 // guildClass is the list record's guild byte: 0 none, 1 member, 2 master
 // (READ, the client's delete refusal reads 1 as _MEMBER and 2 as _MASTER).
-func (d *LobbyDeps) guildClass(ctx context.Context, characterID int64) uint8 {
+// A lookup that fails for any reason but "not in a guild" is returned as an
+// error (round 682's review: the delete refusal fails closed on it).
+func (d *LobbyDeps) guildClass(ctx context.Context, characterID int64) (uint8, error) {
 	if d.Guilds == nil {
-		return 0
+		return 0, nil
 	}
 	g, err := d.Guilds.GetByCharacter(ctx, characterID)
-	if err != nil || g == nil {
-		return 0
+	if errors.Is(err, guild.ErrNotInGuild) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if g == nil {
+		return 0, nil
 	}
 	if g.LeaderID == characterID {
-		return 2
+		return 2, nil
 	}
-	return 1
+	return 1, nil
 }
 
 // list is action 2: every character on the account, in creation order (the
@@ -514,7 +535,11 @@ func (d *LobbyDeps) record(ctx context.Context, c *character.Character, now time
 		Exp: uint64(maxI64(c.Exp, 0)), Str: clampU16(c.Str), Int: clampU16(c.Int), StatPoints: clampU16(c.StatPoints),
 		HP: uint32(maxInt(c.HP, 0)), MP: uint32(maxInt(mp, 0)),
 		Deleting: c.Deleting(), MinutesLeft: c.MinutesLeft(now),
-		GuildClass: d.guildClass(ctx, c.ID),
+	}
+	if class, err := d.guildClass(ctx, c.ID); err == nil {
+		rec.GuildClass = class
+	} else {
+		d.logger().Warn("lobby: list: the guild lookup failed; listed as guildless", "character", c.Name, "err", err)
 	}
 	if d.Eq != nil {
 		if worn, err := d.Eq.Get(ctx, c.ID); err == nil {

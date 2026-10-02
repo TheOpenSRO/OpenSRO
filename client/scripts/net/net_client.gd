@@ -257,6 +257,7 @@ var _resolve_id := -1
 var _resolve_port := 0
 
 func _process(_delta: float) -> void:
+	_check_list_timeout(Time.get_ticks_msec())
 	if _tcp_peer == null:
 		return
 
@@ -431,6 +432,7 @@ func disconnect_from_server() -> void:
 	buff_roster.clear()
 	body_modes.clear()
 	_forget_session_lists()
+	_list_watch.answered()
 	disconnected.emit()
 
 func is_connected_to_server() -> bool:
@@ -452,8 +454,20 @@ func register_account(username: String, password: String) -> void:
 ## refusals (LobbyNet.code_text); null gives our own words.
 var lobby_text: UiTextTable = null
 
+## The list request outstanding, if any (round 682's review): unanswered
+## after LobbyNet.LIST_TIMEOUT_MS, character_list_result says so.
+var _list_watch := LobbyNet.ListWatch.new()
+
 func list_characters() -> void:
+	_list_watch.arm(Time.get_ticks_msec())
 	_send(LobbyNet.OP_LOBBY, LobbyNet.encode_list())
+
+## Called every frame: a list request left unanswered is reported once, as an
+## empty list with LobbyNet.LIST_TIMEOUT_TEXT.
+func _check_list_timeout(now_ms: int) -> void:
+	if _list_watch.expired(now_ms):
+		print("NetClient: no answer to the character list in %d ms" % LobbyNet.LIST_TIMEOUT_MS)
+		character_list_result.emit([], LobbyNet.LIST_TIMEOUT_TEXT)
 
 ## The retail create (0x7007 action 1): a body, a scale byte, and the chest,
 ## legs, feet and weapon.
@@ -841,6 +855,7 @@ func _dispatch_lobby(r: LobbyNet.Result) -> void:
 	var ok := r.ok and r.error == ""
 	match r.action:
 		LobbyNet.ACTION_LIST:
+			_list_watch.answered()
 			character_list_result.emit(r.characters if ok else [], why)
 		LobbyNet.ACTION_CREATE:
 			character_create_result.emit(ok, why)

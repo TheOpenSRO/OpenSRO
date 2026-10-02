@@ -110,6 +110,39 @@ class StartResult:
 	var code: int = 0
 	var error: String = ""
 
+## How long the client waits for the list before it says the server did not
+## answer (OURS, round 682's review): an older server ignores 0x7007 and the
+## select screen would otherwise sit empty and silent.
+const LIST_TIMEOUT_MS := 5000
+
+## What the select screen says then. OURS: no retail text key says this (the
+## nearest, UIO_MSG_ERROR_SEVER_CONNECT "Failed to connect to server.", is
+## false here -- the connection is up).
+const LIST_TIMEOUT_TEXT := "The server did not answer the character list -- the client or server may need updating."
+
+## Watches one outstanding list request: armed when it is sent, cleared by
+## the answer, expired LIST_TIMEOUT_MS later without one. Times are passed in
+## (milliseconds) so a test can step them.
+class ListWatch:
+	var _since := -1
+
+	func arm(now_ms: int) -> void:
+		_since = now_ms
+
+	func answered() -> void:
+		_since = -1
+
+	func pending() -> bool:
+		return _since >= 0
+
+	## True once, the first time it is polled past the timeout; it is then
+	## cleared, so the timeout is reported once per request.
+	func expired(now_ms: int) -> bool:
+		if _since < 0 or now_ms - _since < LIST_TIMEOUT_MS:
+			return false
+		_since = -1
+		return true
+
 # --- Encoding ---------------------------------------------------------------
 
 static func _u8(out: PackedByteArray, v: int) -> void:

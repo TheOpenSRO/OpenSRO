@@ -122,3 +122,31 @@ func TestCreatableRule(t *testing.T) {
 		t.Error("a wrong header loaded")
 	}
 }
+
+// TestPieceFollowsTheREADRules: a shield needs TypeID4 1 or 2 (IsShieldItem
+// 0x56fab0), and chest/legs/feet need an armour family's TypeID3 (0x80b980).
+// NEGATIVE: before round 682's review TypeID3 4 with any TypeID4 read as a
+// shield and any TypeID3 with TypeID4 3/4/6 as armour.
+func TestPieceFollowsTheREADRules(t *testing.T) {
+	item := func(t3, t4 int) Creatable {
+		return Creatable{Kind: CreatableItem, TypeID1: 3, TypeID2: 1, TypeID3: t3, TypeID4: t4}
+	}
+	cases := []struct {
+		t3, t4 int
+		want   Piece
+	}{
+		{6, 2, PieceWeapon}, {6, 12, PieceWeapon},
+		{4, 1, PieceShield}, {4, 2, PieceShield}, {4, 3, PieceNone}, {4, 0, PieceNone},
+		{1, 3, PieceChest}, {2, 4, PieceLegs}, {3, 6, PieceFeet},
+		{9, 3, PieceChest}, {10, 4, PieceLegs}, {11, 6, PieceFeet},
+		{5, 3, PieceNone}, {7, 4, PieceNone}, {12, 6, PieceNone}, {1, 1, PieceNone}, {10, 5, PieceNone},
+	}
+	for _, c := range cases {
+		if got := item(c.t3, c.t4).Piece(); got != c.want {
+			t.Errorf("TypeID3 %d TypeID4 %d: piece %d, want %d", c.t3, c.t4, got, c.want)
+		}
+	}
+	if (Creatable{Kind: CreatableModel, TypeID3: 4, TypeID4: 1}).Piece() != PieceNone {
+		t.Error("a body has a piece")
+	}
+}

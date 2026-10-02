@@ -625,20 +625,27 @@ Our 0x0010-0x0015 are gone. Start's OK is followed by today's `OpEnterWorldResul
 
 | Code | srrevamp raises it for (OURS where marked) |
 |---|---|
-| 0x402 | Start: an empty name, a quote in it, a character pending deletion (READ). Delete: a guild member or master (READ), a character already pending (OURS). Any action: a store error or a payload too short to read (OURS). |
+| 0x402 | Start: an empty name, a character pending deletion (READ). Delete: a guild member or master (READ), a guild lookup that fails (OURS, fails closed), a character already pending (OURS). Any action: a store error or a payload too short to read (OURS). Retail also refuses a quote in a Start name with 0x402: **not applied** (round 682's review), so a grandfathered name with one still starts. |
 | 0x403 | Create: no catalogue loaded; a body or item outside it (OURS, on top of READ); a body not TypeID 1/1; an item not equipment, of the other race (not 3), of the other sex (not 2) (READ); an item in the wrong field (OURS); a missing chest, legs or feet (OURS: China's Protector "none" is not offered); a Height or Volume nibble above 4 (OURS). |
 | 0x404 | Create: weapon 0 (READ). |
 | 0x405 | Create: 4 characters already, pending ones included (READ). |
 | 0x406 | Create: armour pieces of two classes (READ check, INFERRED code); the store failed. |
 | 0x407 | Any action or Start before login (READ). |
-| 0x408 | Delete: an empty name or a quote in it (READ "name refused"). |
+| 0x408 | Delete: an empty name (READ "name refused"; retail's quote refusal is not applied, as for Start). |
 | 0x40b | Delete, restore, Start: no character of that name on the account (READ). |
 | 0x40c | Create, name check: not 2..12 bytes (READ). |
 | 0x40d | Create, name check: a space, `'` or `"` (READ); a byte outside printable ASCII (OURS: the client's bitmap is OPEN). |
 | 0x410 | Create, name check: the name exists, any case, pending deletion or not (READ). |
 | 0x419 | Restore: the character is not pending deletion (READ), sent as a u16 (OURS, see above). |
+| 0x40e | Any 0x7007 action from a session already in the world (OURS choice of code: "an operation is pending" is the nearest READ meaning; what the ShardManager answers there was not read). |
 
-Not raised: 0x409, 0x40a, 0x40e (one request at a time on a session), 0x40f, 0x411-0x418.
+Not raised: 0x409, 0x40a, 0x40f, 0x411-0x418.
+
+**Older clients and servers** (round 682's review, OURS): the server answers the removed
+0x0010 / 0x0012 / 0x0014 in their old reply formats with "this server uses the new character lobby
+-- update the client", which the old screens show; a new client that has no list answer within 5 s
+says "The server did not answer the character list -- the client or server may need updating."
+(no retail text key fits: the nearest, `UIO_MSG_ERROR_SEVER_CONNECT`, would be false).
 
 ### Create on the server (READ ShardManager)
 
@@ -673,6 +680,15 @@ Not raised: 0x409, 0x40a, 0x40e (one request at a time on a session), 0x40f, 0x4
 
 **The start position** (FUN_0042bb20): `rand() % 3` picks one of three spawns per race (table
 0x781b88), and the return point is the race's `STORE_CH_GATE` / `STORE_EU_GATE` refobj.
+
+> **Whose values these are.** The spawn table, the ammunition and shield rule and the code names
+> above are READ from a **private-server package's** SR_ShardManager.exe, not from a retail
+> binary. Nothing modded was seen in its lobby code, but these are exactly the kind of values a
+> server operator edits (where a new character starts, what it is given), so they may be that
+> package's rather than retail's. srrevamp uses them (round 682) labelled so; the shard DB
+> procedures (section 6) are where a retail-shaped confirmation would come from. The ammunition
+> *quantity* is not in this binary at all (`_AddNewChar`'s body, OPEN); round 682's one stack is
+> OURS.
 
 | Race | Spawns (region hi/lo, local x, y, z) |
 |---|---|

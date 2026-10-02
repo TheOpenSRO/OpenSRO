@@ -1063,8 +1063,9 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 
 // handleStart is 0x7001, Start (round 682; lobby.go): the name, checked as
 // SR_ShardManager's FUN_0040e2c0 does (READ, charselect.md section 2
-// "Start") -- not logged in 0x407; an empty name 0x402; a quote in it 0x402
-// (the forbidden-word half is OPEN); not on the account 0x40b; pending
+// "Start") -- not logged in 0x407; an empty name 0x402; (retail also refuses
+// a quote or a forbidden word with 0x402: not applied, see below); not on
+// the account 0x40b; pending
 // deletion 0x402 -- then 0xB001 [1] and the existing enter-world path, whose
 // OpEnterWorldResult follows (INFERRED: retail sends 0xB001 [1] once the game
 // server accepts, then the character data; the OpEnterWorldResult stands in
@@ -1080,7 +1081,12 @@ func handleStart(ctx context.Context, sess *gateway.Session, p *proto.Packet, ch
 		return refuse(LobbyErrNoUser)
 	}
 	req, err := DecodeStartRequest(p.Data)
-	if err != nil || req.Name == "" || containsQuote(req.Name) {
+	// An empty name is refused (READ). The server's quote refusal is NOT
+	// applied here (round 682's review, OURS): a name made before round 682
+	// may hold a quote (names are grandfathered), and the name is only
+	// matched against the account's own list below, never put into a query
+	// unparameterised -- so refusing it would only lock such a character out.
+	if err != nil || req.Name == "" {
 		return refuse(LobbyErrRefused)
 	}
 	list, err := chars.ListByAccount(ctx, accountID)

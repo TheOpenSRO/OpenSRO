@@ -301,7 +301,7 @@ func TestLobbyDeleteRestorePurge(t *testing.T) {
 		}
 	}
 	h.wantCode(&LobbyRequest{Action: LobbyDelete, Name: "Nobody"}, LobbyErrNotOnAccount, "a name not on the account")
-	h.wantCode(&LobbyRequest{Action: LobbyDelete, Name: "Ar'ia"}, LobbyErrDeleteName, "a quote")
+	h.wantCode(&LobbyRequest{Action: LobbyDelete, Name: ""}, LobbyErrDeleteName, "an empty name")
 	h.wantCode(&LobbyRequest{Action: LobbyRestore, Name: "Aria"}, LobbyErrNothingRestore, "restore, not deleting")
 
 	if r := h.lobby(&LobbyRequest{Action: LobbyDelete, Name: "Aria"}); !r.OK {

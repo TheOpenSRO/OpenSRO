@@ -176,9 +176,25 @@ func _table_bytes() -> PackedByteArray:
 	])
 	return "\n".join(rows).to_utf16_buffer()
 
+## Round 682's review: an unanswered list is reported once, LIST_TIMEOUT_MS
+## after it was sent, and never once it is answered. NEGATIVE: before the
+## review LobbyNet.ListWatch does not exist and this suite does not parse.
+func _test_list_watch() -> void:
+	var w := LobbyNet.ListWatch.new()
+	_check(not w.expired(100000), "nothing armed: nothing expires")
+	w.arm(1000)
+	_check(w.pending() and not w.expired(1000 + LobbyNet.LIST_TIMEOUT_MS - 1), "armed: not expired a millisecond early")
+	_check(w.expired(1000 + LobbyNet.LIST_TIMEOUT_MS), "expired on time")
+	_check(not w.expired(1000 + 2 * LobbyNet.LIST_TIMEOUT_MS), "reported once, not again")
+	w.arm(50000)
+	w.answered()
+	_check(not w.expired(50000 + 10 * LobbyNet.LIST_TIMEOUT_MS), "an answered list never expires")
+	_check(LobbyNet.LIST_TIMEOUT_MS == 5000 and LobbyNet.LIST_TIMEOUT_TEXT.contains("may need updating"), "5 s, and the words say what to do")
+
 func _init() -> void:
 	_test_golden()
 	_test_words()
+	_test_list_watch()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

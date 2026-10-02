@@ -7254,6 +7254,70 @@ client/tools/remote_godot.sh check                                              
 client/tools/remote_godot.sh tests                                              ran 197 suite(s), 0 failing
 ```
 
+### Review (round 682's review, fixed in a second commit)
+
+The review found no HIGH: the migration is additive and idempotent with no loss, ownership holds,
+the create race is exact, item bypasses are refused, the purge and clock are right. Fixed:
+
+- **MEDIUM: grandfathered names with a quote were locked out.** Start refused a quote (0x402) and
+  Delete too (0x408), so a pre-682 `O'Brien` could not be started, deleted or restored. The quote
+  refusal now applies to NEW names only (create, name check: 0x40d). Start / Delete / Restore match
+  the name against the account's own list (parameterised queries) and refuse only an empty one.
+  Retail's quote refusal on Start/Delete is recorded as not applied (OURS) in charselect.md.
+- **MEDIUM: old client vs new server and the reverse were silent.** The server answers the removed
+  0x0010 / 0x0012 / 0x0014 in their OLD formats (`LegacyLobbyHandler`; the pre-682 list reply had
+  an error string the old screen shows as "Error: ...", create/delete an OK/reason it shows as
+  "... failed: ...") with "this server uses the new character lobby -- update the client", logged
+  at INFO. The client waits 5 s for the list (`LobbyNet.ListWatch`, OURS) and then reports an empty
+  list with "The server did not answer the character list -- the client or server may need
+  updating." No retail key fits (the nearest, `UIO_MSG_ERROR_SEVER_CONNECT`, would be false).
+- **LOW:** `SRREVAMP_CHARGEN_CSV` is the flag's env form (it was already). deploy/README's
+  "Character lobby" is now in the safe order: stage `chargen.csv` (644) and the env var before the
+  release (the old binary ignores it), `pg_dump -t characters`, merge, check the boot line and
+  that `ref_obj_id` holds only 1909/1923, then tag the client; with a query listing the names the
+  new rules would refuse (checked on local Postgres: it finds `O'Brien`, `A B`, `x`, a non-ASCII
+  name, a 13-byte name and `Q"t`, and not `Aria` or `QA_Aria`).
+- **LOW:** every 0x7007 action from a session in the world is refused with 0x40e (the nearest
+  READ meaning, "an operation is pending"; the choice OURS). `guildClass` fails closed: a guild
+  lookup error refuses the delete (0x402) and lists the character guildless, with a WARN.
+- **LOW:** the legacy dressing (`GiveStartingKit`, cmd/server's enter hook) skips a European
+  character (OURS): its kit is China's and would bypass `equipment.Refusal`; a European character
+  was always dressed at creation in what it chose.
+- **From round 683's review: `refdata.Creatable.Piece()` was looser than READ.** A shield now needs
+  TypeID3 4 with TypeID4 1 or 2 (READ `IsShieldItem` 0x56fab0), and chest/legs/feet need an armour
+  family's TypeID3 1/2/3/9/10/11 with TypeID4 3/4/6 (READ, the create loader 0x80b980) -- the same
+  rule as round 683's `char_catalog.gd` `piece()`. Both rules agree on all 52 catalogue items of
+  this archive, so nothing changes today (`TestPieceFollowsTheREADRules`).
+- **LOW:** charselect.md says plainly next to the spawn table that the spawns, the shield and
+  ammunition rule and their code names are READ from a private-server package's ShardManager and
+  may be that package's values; the ammunition quantity is OURS.
+
+Tests (`lobbyreview682_test.go`, `lobby_test.gd`): a migrated `O'Brien` deletes, restores and
+starts while a new quoted name is still refused; all five actions refused in the world; a failing
+guild store refuses the delete and lists guildless; the legacy opcodes' replies byte by byte; a
+European character is not given the China kit; the list watch's timing (not a millisecond early,
+once, never after an answer). The negatives, run against 8e54648 (only the review tests copied):
+
+```
+--- FAIL: TestGrandfatheredQuotedNameIsNotLockedOut (0.10s)
+    lobbyreview682_test.go:20: delete of a grandfathered quoted name refused 0x408
+--- FAIL: TestLegacyKitSkipsEurope (0.00s)
+    lobbyreview682_test.go:46: a European character was dressed in [{Slot:1 ItemID:3643 ...} {Slot:4 ItemID:3644 ...} {Slot:5 ItemID:3645 ...} {Slot:6 ItemID:3632 ...}]
+vet: internal/session/lobbyreview682_test.go:63:86: unknown field Hub in struct literal of type LobbyDeps
+--- FAIL: TestPieceFollowsTheREADRules (0.00s)
+    piece_neg_test.go:25: TypeID3 4 TypeID4 3: piece 5, want 0
+    piece_neg_test.go:25: TypeID3 5 TypeID4 3: piece 1, want 0
+SCRIPT ERROR: Parse Error: Cannot infer the type of "got" variable because the value doesn't have a set type.   (lobby_test.gd: the suite does not parse without LobbyNet.ListWatch)
+```
+
+Commands after the fixes: `go build ./... && go vet ./... && go test -count=1 -p 1 ./...` exit 0
+(64 packages ok); `-race` on character, refdata, equipment and cmd/export-refdata ok, and on the
+touched session tests (`-run 'Lobby|Start|Grandfathered|InTheWorld|FailsClosed|LegacyLobby|
+LegacyKit|NewCharacter|NameOnly|EnterWorld|Teleport|Wire' -timeout 30m`) ok (118 s, no DATA RACE) -- the whole
+session package under `-race` runs past `go test`'s 10-minute default (it timed out in
+TestRound640ToggleOffReplyIsMarked with no DATA RACE reported); `remote_godot.sh check` 502
+scripts and 8 scenes, ALL LOAD; `tests` 197 suites, 0 failing.
+
 ### OPEN
 
 - srrevamp-01: export `chargen.csv` and pass `-chargen-csv` (deploy/README.md "Character lobby");

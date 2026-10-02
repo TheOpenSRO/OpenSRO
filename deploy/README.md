@@ -1056,18 +1056,35 @@ Round 682 moves character select and create onto the retail lobby (0x7007 / 0x70
   (`no creatable catalogue (-chargen-csv / SRREVAMP_CHARGEN_CSV): every character create is
   refused`). Existing characters list, start and play as before.
 
-On srrevamp-01, once this release's server runs (the update timer):
-1. Export `chargen.csv` (step 2 of "Reference data": the `-mode chargen` line, after the
-   characterdata and itemdata parts are extracted). It prints
-   `wrote 104 creatable ids (52 bodies, 52 items) and 2 ammunition rows` on a retail archive.
-2. `scp chargen.csv srrevamp@<server-host>:~/srrevamp-data/ && ssh srrevamp@<server-host> 'chmod 644 ~/srrevamp-data/chargen.csv'`
-3. Add `- "-chargen-csv=/data/chargen.csv"` to the override's `command:` list (edit only that key),
-   then `cd ~/srrevamp && docker compose up -d`.
-4. The boot log says `creatable catalogue loaded: characters can be created ... ids=104`.
+On srrevamp-01, in this order (round 682's review: nothing breaks at any step, and the data is
+backed up before the migration runs):
+1. **Before the release reaches the host, stage the catalogue.** Export `chargen.csv` (step 2 of
+   "Reference data": the `-mode chargen` line, after the characterdata and itemdata parts are
+   extracted; it prints `wrote 104 creatable ids (52 bodies, 52 items) and 2 ammunition rows`),
+   then
+   `scp chargen.csv srrevamp@<server-host>:~/srrevamp-data/ && ssh srrevamp@<server-host> 'chmod 644 ~/srrevamp-data/chargen.csv'`.
+   Set it in the untracked override as the environment form of `-chargen-csv`, under the server's
+   `environment:` (edit only that key): `SRREVAMP_CHARGEN_CSV: /data/chargen.csv`, then
+   `cd ~/srrevamp && docker compose up -d`. The server running now is the old one; it does not
+   read the variable and runs on unchanged.
+2. **Back up the characters table**:
+   `docker compose exec -T postgres pg_dump -U postgres -t characters srrevamp > ~/characters-before-682.sql`.
+3. **Merge to dev**; the update timer deploys it within 5 minutes (step 0 of "Deploying the
+   monster-epic release"). The new server migrates the table at its first boot.
+4. **Check** the boot line, `docker compose logs server | grep 'creatable catalogue loaded'`
+   (`... ids=104`), and the migration:
+   `docker compose exec -T postgres psql -U postgres srrevamp -c "SELECT ref_obj_id, count(*) FROM characters GROUP BY 1;"`
+   lists only 1909 and 1923. The names the new rules would refuse are kept and still play; to see
+   them:
+   `... -c "SELECT id, name FROM characters WHERE name ~ '[ ''\"]' OR name ~ '[^ -~]' OR octet_length(name) NOT BETWEEN 2 AND 12;"`
+   (a space or a quote, a byte outside printable ASCII, or not 2..12 bytes).
+5. **Then tag the client release**, so players get a client that speaks the new lobby.
 
-Players need this release's client: an older one speaks the removed 0x0010-0x0015 and its select
-screen lists nothing. A deleted character waits 7 days (10080 minutes, restorable) and is then
-removed by the server's once-a-minute purge.
+Players need this release's client. An older one speaks the removed 0x0010-0x0015: the server
+answers it in its old format with "this server uses the new character lobby -- update the client",
+which its select screen shows as the list's error (round 682's review). A new client against an
+older server waits 5 s for the list and then says the server did not answer. A deleted character
+waits 7 days (10080 minutes, restorable) and is then removed by the server's once-a-minute purge.
 
 ## Towns (round 674)
 

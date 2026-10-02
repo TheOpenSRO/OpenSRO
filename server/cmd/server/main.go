@@ -1915,8 +1915,11 @@ func main() {
 		// ammunition the server adds), the name check, the 7-day delete and
 		// restore. Start is the world handler's.
 		session.LobbyHandler(session.LobbyDeps{
-			Chars: lobbyChars, Catalogue: chargen, Inv: inv, Eq: eq, Guilds: guilds, Mana: manaTracker, Logger: logger,
+			Chars: lobbyChars, Catalogue: chargen, Inv: inv, Eq: eq, Guilds: guilds, Mana: manaTracker, Hub: hub, Logger: logger,
 		}),
+		// An older client's 0x0010/0x0012/0x0014 are told, in their own
+		// reply format, to update (round 682's review).
+		session.LegacyLobbyHandler(logger),
 		// A character made before the starting kit existed enters the world
 		// with nothing on and nothing in the bag; it is dressed on the way
 		// in. Only that case: a character who has taken everything off and
@@ -1930,6 +1933,11 @@ func main() {
 			bag, err := inv.List(ctx, c.ID)
 			if err != nil || len(bag) > 0 {
 				return err
+			}
+			// The legacy kit is China's; a European character is left as it is
+			// (round 682's review, OURS; equipment.GiveStartingKit).
+			if character.RaceOf(c.Gender) == character.RaceEurope {
+				return nil
 			}
 			logger.Info("dressing a character that had nothing", "character", c.Name)
 			return equipment.GiveStartingKit(ctx, inv, eq, c.ID, c.Gender)

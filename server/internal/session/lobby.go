@@ -52,19 +52,19 @@ const (
 // shows the text the table names.
 const (
 	LobbyOK                uint16 = 0x401
-	LobbyErrRefused        uint16 = 0x402 // start on a pending character, a quote in a start name, delete refused for a guild member
+	LobbyErrRefused        uint16 = 0x402 // start on a pending character or with no name, delete refused for a guild member
 	LobbyErrBadChargen     uint16 = 0x403 // a body or an item outside the rules
 	LobbyErrNoWeapon       uint16 = 0x404
 	LobbyErrAccountFull    uint16 = 0x405
 	LobbyErrCreateFailed   uint16 = 0x406 // the store could not add the row; the armour pieces of different classes (INFERRED)
 	LobbyErrNoUser         uint16 = 0x407 // not logged in
-	LobbyErrDeleteName     uint16 = 0x408 // delete: an empty name or one with a quote
+	LobbyErrDeleteName     uint16 = 0x408 // delete: an empty name
 	LobbyErrNoGameServer   uint16 = 0x409
 	LobbyErr40A            uint16 = 0x40a
 	LobbyErrNotOnAccount   uint16 = 0x40b
 	LobbyErrNameLength     uint16 = 0x40c
 	LobbyErrNameInvalid    uint16 = 0x40d
-	LobbyErrBusy           uint16 = 0x40e
+	LobbyErrBusy           uint16 = 0x40e // any lobby action from a session in the world (OURS choice)
 	LobbyErrNoParent       uint16 = 0x40f
 	LobbyErrNameExists     uint16 = 0x410
 	LobbyErrNothingRestore uint16 = 0x419

@@ -122,6 +122,14 @@ func GiveStartingKit(ctx context.Context, inv InventoryAdder, equip Store, chara
 	if inv == nil || equip == nil {
 		return nil
 	}
+	// The legacy kit is China's (the ids above). A European character is
+	// never dressed in it (round 682's review, OURS): every European
+	// character was made by the lobby, which dresses it in what it chose,
+	// so one with nothing has taken it off -- and a China kit would bypass
+	// equipment.Refusal's race rule.
+	if character.RaceOf(gender) == character.RaceEurope {
+		return nil
+	}
 	kit := StartingKitFor(gender)
 	for _, slot := range WearableSlots {
 		itemID, ok := kit[slot]
