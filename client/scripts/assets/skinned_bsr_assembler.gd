@@ -178,19 +178,31 @@ static func assemble_from_archive(
 			var skin := Skeleton3DBuilder.build_skin(skeleton, mesh.bone_names, mesh.object_space_vertices > 0)
 			if skin != null:
 				var mi := MeshInstance3D.new()
+				# Named after the piece and tagged with its index in the file's
+				# mesh list, so the body-piece hiding (apply_body_hides) finds it
+				# by the index the attachable block names -- a duplicate of this
+				# template keeps the meta; an unnamed node's generated name it
+				# does not.
+				mi.name = piece
 				mi.mesh = BmsReader.to_array_mesh(mesh)
 				if godot_material != null:
 					mi.material_override = godot_material
 				skeleton.add_child(mi)
 				mi.skin = skin
 				mi.skeleton = mi.get_path_to(skeleton)
-				ObjectLoader.add_front_pass(mi)
+				mi.set_meta(BODY_MESH_META, i)
+				var twin := ObjectLoader.add_front_pass(mi)
+				if twin != null:
+					twin.set_meta(BODY_MESH_META, i)
 				result.skinned_pieces += 1
 				attached += 1
 				continue
+		var before := skeleton.get_child_count()
 		CharacterAssembler.attach_rigid(
 			skeleton, BmsReader.to_array_mesh(mesh), bone_name, godot_material
 		)
+		if skeleton.get_child_count() > before:
+			skeleton.get_child(skeleton.get_child_count() - 1).set_meta(BODY_MESH_META, i)
 		attached += 1
 
 	if attached == 0:
@@ -221,6 +233,57 @@ static func assemble_from_archive(
 						parsed_anim.set_meta(BsrReader.CLIP_META, [BsrReader.AnimationEntry.TYPE_STAND, idle_group])
 	return result
 
+## The meta a body's own mesh node carries: its index in the body `.bsr`'s
+## mesh list (BsrReader.ParsedObject.all_mesh_paths()), which is what the
+## body's attachable block maps each piece key to (round 687, READ).
+const BODY_MESH_META := &"bsr_mesh_index"
+
+## Retail's body-piece hiding (round 687), on an assembled body:
+## `CCompChar::FUN_00c1f890` (0x00c1f890), which the client runs when a part
+## comes off (vslot_061 0x00c1fa00, vslot_064), and whose second half is what
+## attaching runs for one item (`FUN_00c1f790`, from vslot_067 0x00c1fa90 for
+## a resource of tag 5, CResAttachable). READ:
+##
+## 1. show every mesh of the body (`FUN_00c392a0(1)`);
+## 2. for every attached part other than the body (part id 1, INFERRED to be
+##    the body) whose attachable flag is 1, and every key it lists, switch
+##    off each body mesh the BODY's block maps that same key to
+##    (`FUN_00c35050(value, 0)`: CRTMesh +0x10 = 0, skipped by the gather
+##    FUN_00c38f50).
+##
+## `body` is the body's parsed `.bsr` (its attachable block names key ->
+## mesh index); `items` the attachable blocks (BsrReader.Attachable, nulls
+## skipped) of what is worn now. The body's mesh nodes are found under
+## `skeleton` by BODY_MESH_META, never by position or name: mesh order
+## differs per file (MEASURED across the 53 Figures). Showing first makes it
+## safe to call again after any change -- an unequip is a call with the
+## remaining items. Returns how many body mesh nodes it hid.
+static func apply_body_hides(skeleton: Skeleton3D, body: BsrReader.ParsedObject, items: Array) -> int:
+	if skeleton == null:
+		return 0
+	var by_index := {}
+	for n in skeleton.get_children():
+		if n.has_meta(BODY_MESH_META):
+			var idx := int(n.get_meta(BODY_MESH_META))
+			if not by_index.has(idx):
+				by_index[idx] = []
+			(by_index[idx] as Array).append(n)
+			(n as Node3D).visible = true
+	if body == null or body.attachable == null:
+		return 0
+	var hidden := 0
+	for item in items:
+		var block := item as BsrReader.Attachable
+		if block == null or not block.hides_body():
+			continue
+		for key in block.keys():
+			for idx in body.attachable.values_for(key):
+				for n in by_index.get(idx, []):
+					if (n as Node3D).visible:
+						(n as Node3D).visible = false
+						hidden += 1
+	return hidden
+
 ## What attaching one item produced, for a caller that wants to report it.
 class AttachedItem:
 	## The node that was added under the body's skeleton: a skinned
@@ -231,6 +294,10 @@ class AttachedItem:
 	## weighted onto the body.
 	var attach_bone: String = ""
 	var skinned: bool = false
+	## The item file's attachable block (round 687): which body pieces it
+	## covers and whether it hides them (apply_body_hides). Null when the
+	## block did not parse.
+	var attachable: BsrReader.Attachable = null
 
 ## Hangs one equippable item on skeleton, the way its own `.bsr` says.
 ##
@@ -322,6 +389,7 @@ static func attach_item_from_archive(
 		return null
 
 	var result := AttachedItem.new()
+	result.attachable = parsed.attachable
 	if parsed.skeleton_path == "":
 		# Weighted onto the body: one skinned instance per mesh, bound to
 		# the body's own bones by name.

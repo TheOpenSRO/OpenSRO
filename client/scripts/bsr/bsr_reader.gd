@@ -208,6 +208,68 @@ const MOD_PROGEQUIPPOW := 0x70000
 ## words and four bytes.
 const MOD_HEADER_BYTES := 28
 
+## The attachable block every `.bsr` ends with (round 687, READ):
+## `CResAttachable::vslot_007` (0x00be4b90) reads it straight after the mod
+## section (the sound section's two lists, parse_sound_section), and
+## `vslot_008` (0x00bda070) writes the same layout:
+##
+##   u32 word0  -> CResAttachable +0x314 (meaning OPEN)
+##   u32 kind   -> +0x318 (meaning OPEN)
+##   u32 flag   -> +0x31c
+##   i32 n, then n x {u32 key, u32 value}
+##
+## A character body (type 0) then has the one word `CResChar::vslot_007`
+## (0x00c1efd0) reads and asserts 0 (`nComboNum`); an item (type 5) ends
+## there (MEASURED, 0 bytes left in every item file the research parsed).
+##
+## What the entries mean (READ, `CCompChar::FUN_00c1f790` 0x00c1f790):
+## - in a body, `key -> value` names which of the body's own meshes (the
+##   index into its mesh list, all_mesh_paths() order) is the piece `key`;
+## - in an item, the keys are the body pieces the item covers. When the
+##   item's `flag` is 1, every body mesh whose key equals one of them is
+##   switched off (`FUN_00c35050` -> `FUN_00c33760`, CRTMesh +0x10 = 0, which
+##   the gather `FUN_00c38f50` skips). Any other flag hides nothing.
+## The key numbers MEASURED across the 53 Figures: 0 hair, 1 face, 2
+## torso_upper, 3 torso_lower, 5 arm_upper, 6 arm_lower/fore, 11 pelvis,
+## 12 thigh, 13 calf. Mesh order differs per file, so match by key.
+class Attachable:
+	var word0: int = 0
+	var kind: int = 0
+	var flag: int = 0
+	## [key, value] pairs, in file order.
+	var entries: Array = []
+	## The block's first byte and the bytes after it, for a census; a body's
+	## combo word counts here (4), and the research found 61 files with more.
+	var start: int = 0
+	var trailing: int = 0
+
+	## True when attaching this resource hides the body pieces it lists
+	## (READ: FUN_00c1f790 tests `flag == 1`).
+	func hides_body() -> bool:
+		return flag == HIDE_FLAG
+
+	func keys() -> PackedInt32Array:
+		var out := PackedInt32Array()
+		for e in entries:
+			out.append(int(e[0]))
+		return out
+
+	## For a body: the mesh indices its entries give for `key` (normally one;
+	## every match is kept, as the client's loop does not stop at the first).
+	func values_for(key: int) -> PackedInt32Array:
+		var out := PackedInt32Array()
+		for e in entries:
+			if int(e[0]) == key:
+				out.append(int(e[1]))
+		return out
+
+## The flag value whose item hides the body pieces it covers (READ,
+## FUN_00c1f790 / FUN_00c1f890: `*(res + 8) == 1`).
+const HIDE_FLAG := 1
+## A bound on the block's entry count (OURS; the research's parser used it,
+## and no real file carries more than a handful).
+const MAX_ATTACHABLE_ENTRIES := 1000
+
 class ParsedObject:
 	var object_name: String
 	var mesh_path: String
@@ -283,6 +345,11 @@ class ParsedObject:
 	## header names it (round 625). NOT the scope of the mod -- see
 	## env_map_flags; kept for the census.
 	var env_map_materials: Dictionary = {}
+
+	## The attachable block (Attachable), read for a body (type 0) or an item
+	## (type 5) through the header table; null for every other file, or when
+	## the block does not parse.
+	var attachable: Attachable = null
 
 	## The MTRL mod that sets material `index`'s draw states, or {} for
 	## none. READ, `CRTModMtrl::vslot_004` (0x00c821f0): applied when its
@@ -449,6 +516,8 @@ static func _parse(data: PackedByteArray) -> ParsedObject:
 			built.material_mods = material_mods(data)
 			built.env_map_materials = env_map_materials(data)
 			built.env_map_flags = env_map_flags(data)
+			if obj_type == TYPE_PLAYER_CHARACTER or obj_type == TYPE_ITEM:
+				built.attachable = attachable_block(data)
 			return built
 
 	# The exact byte layout between the name and the mesh/material paths
@@ -886,18 +955,53 @@ static func _read_mtrl_state(data: PackedByteArray, at: int) -> Dictionary:
 ## word is not 0. For the parse-all check (client/tools/sweep_bsr_sound.gd),
 ## which uses it to show the sound section ends where the next block starts.
 static func attachable_tail_end(data: PackedByteArray, off: int) -> int:
-	var cursor := [off]
-	for _i in range(3):
-		if _take_i32(data, cursor) == null:
-			return -1
-	var pairs = _take_i32(data, cursor)
-	if pairs == null or pairs < 0 or cursor[0] + pairs * 8 > data.size():
+	var block := parse_attachable(data, off)
+	if block == null:
 		return -1
-	cursor[0] += pairs * 8
+	var cursor := [block.start + 16 + block.entries.size() * 8]
 	var combo = _take_i32(data, cursor)
 	if combo == null or combo != 0:
 		return -1
 	return cursor[0]
+
+## The Attachable block of a file: where the sound section ends
+## (parse_sound_section), parsed by parse_attachable. Null when the sound
+## section or the block does not parse.
+static func attachable_block(data: PackedByteArray) -> Attachable:
+	if data.size() < PREAMBLE_END:
+		return null
+	var section = parse_sound_section(data, _le_u32(data, OFF_PTR_SOUND))
+	if section == null:
+		return null
+	return parse_attachable(data, int(section["end"]))
+
+## The Attachable block at `off` (its layout on the class), or null when it
+## runs past the end or its count is out of range (strict: every word must
+## be in the file). Bytes after it -- a body's combo word, or the leftovers
+## a few odd files carry -- do not fail it; they are counted in `trailing`.
+static func parse_attachable(data: PackedByteArray, off: int) -> Attachable:
+	if off < 0:
+		return null
+	var cursor := [off]
+	var word0 = _take_i32(data, cursor)
+	var kind = _take_i32(data, cursor)
+	var flag = _take_i32(data, cursor)
+	var n = _take_i32(data, cursor)
+	if word0 == null or kind == null or flag == null or n == null:
+		return null
+	if n < 0 or n > MAX_ATTACHABLE_ENTRIES or cursor[0] + n * 8 > data.size():
+		return null
+	var block := Attachable.new()
+	block.start = off
+	block.word0 = word0 & 0xFFFFFFFF
+	block.kind = kind & 0xFFFFFFFF
+	block.flag = flag & 0xFFFFFFFF
+	for _i in range(n):
+		var at: int = cursor[0]
+		block.entries.append([data.decode_u32(at), data.decode_u32(at + 4)])
+		cursor[0] = at + 8
+	block.trailing = data.size() - cursor[0]
+	return block
 
 ## One mod set (FUN_00c0b640). A set with no sound mod comes back with no
 ## tracks; one with several would have their tracks joined, which no

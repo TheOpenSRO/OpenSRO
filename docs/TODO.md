@@ -682,8 +682,11 @@ are not drawn.
 - **The 355 bit-9 item layers with no ENVMAP mod** are cut at 128 by the READ rule. That is right
   for the 1-bit hats. `light_02_ha` (91% graded alpha) is cut the same way; a render of it
   against the original would confirm it.
-- **The body under armour.** The body's own pieces are still drawn beneath every worn piece.
-  Whether the client hides any body piece under armour was not looked at.
+- ~~**The body under armour.**~~ Done in round 687: a worn item whose `.bsr` attachable block has
+  flag 1 hides the body pieces it lists, READ from `CCompChar::FUN_00c1f790` / `FUN_00c1f890`
+  (BSR_FORMAT.md). The world's players, the paper doll and the portrait take it through
+  `_build_assembled_character`; the lobby builder through `CharacterAppearance`. Still OPEN: what
+  the block's first two words (+0x314, +0x318) mean, and that part id 1 is the body (INFERRED).
 - **The faint translucent shape beside the tester's character** (v0.1.457 screenshot) is not
   from the equipment chain: no worn piece's mesh reaches there, and the one translucent-authored
   item mesh found (`heavy_11_set_b_fly`) belongs to a `_fullset` model v0.1.457 could not load.
@@ -1139,12 +1142,11 @@ front-end's next steps.
   `_f`). Trace `CCompChar` 0xc1f0d0 -> 0xc2bb40's resource +0x28.
 - **Avatars:** attached on top (READ `FUN_00a60ef0`). Which visual wins a slot bit is
   `charactervisualchange.txt`'s Slot / OverlapSlot / Priority (READ, round 683 review); not modelled.
-- **The body through the armour** (round 683 review): 2-21 % of a worn armour's pixels show the
-  body's own skin at bind (`appearance_probe.gd --showthrough=1`). This is the archive's geometry: the
-  body is outside the armour there, and no client code hiding a body piece was found. Next reads:
-  where `CICPlayer::vslot_025` attaches the body (vslots 0x58/0x5c), and whether a helm's 0x0800 bit
-  hides the body's hair mesh. A retail screenshot of the Europe man in the light set would settle the
-  art question.
+- **The body through the armour** (round 683 review; round 687 applied retail's rule): the worst
+  case went from 21.30 % to 5.58 % of a worn armour's pixels (`appearance_probe.gd --showthrough=1`,
+  MEASURED). What is left is body pieces no worn item lists (the China woman's light set hides only
+  three of her meshes), which the client draws too (READ, `FUN_00c1f790`). A retail screenshot of the China woman
+  in the light set would show whether anything else covers them.
 - **The world reads only 7 of itemdata.txt's 63 parts** (`ItemTableReader.TABLE_PATHS`): 3,566 of
   15,338 item ids, avatars among them, are unknown to World3D and not drawn. The builder and
   catalogue read through the index (`CharCatalog.index_parts`). Switching the world costs a parse of

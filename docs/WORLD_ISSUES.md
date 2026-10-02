@@ -7094,6 +7094,171 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-eighty-seventh round: the body's own skin no longer shows through worn armour -- each item hides the body pieces it covers, as retail's client does
+
+Round 683 built the bodies and found the body's own skin showing through worn armour on 2-21 % of
+an armour's pixels. Its review searched the visual-change masks for a way the client hides a body
+piece, found none, and left the rule out as uninvented. A research pass then READ it in the
+`.bsr` files, and this round implements it in the lobby builder and in the world.
+
+### 1. The rule (READ, sro_client.exe; the decompile on the box)
+
+- **The block.** Every `.bsr` ends with an attachable block, which `BsrReader.attachable_tail_end`
+  only stepped over. `CResAttachable::vslot_007` (0xbe4b90) reads it right after the mod section:
+  `u32` -> +0x314, `u32 kind` -> +0x318, `u32 flag` -> +0x31c, `i32 n`, then n x `{u32 key, u32
+  value}`. `vslot_008` (0xbda070) writes the same layout. A body (`CResChar::vslot_007` 0xc1efd0)
+  then has `nComboNum`, asserted 0; an item ends there.
+- **What it means.** In a body (type 0), key -> the index of the body's own mesh in its mesh list.
+  In an item (type 5), the keys the item covers.
+- **Attaching.** `CCompChar::vslot_067` (0xc1fa90) adds a part and, for a tag-5 resource
+  (`CResAttachable`), calls `FUN_00c1f790`. Read again this round: when the item's flag
+  (`*(res + 8)`) is 1, it takes part id 1 (`FUN_00c1f720(1)`, the body, INFERRED), and for every
+  item key equal to a body key calls `FUN_00c35050(value, 0)` -> `FUN_00c33760`, which sets the
+  body mesh's `+0x10 = 0`. The gather `FUN_00c38f50` skips a mesh with +0x10 == 0.
+- **Removing.** `vslot_061` (0xc1fa00) and `vslot_064` call `FUN_00c1f890`: `FUN_00c392a0(1)` shows
+  every body mesh, then the loop re-applies the hides of every remaining part whose id is not 1.
+- **The keys (MEASURED by the research, all Figures):** body 0 hair, 1 face, 2 torso_upper,
+  3 torso_lower, 5 arm_upper, 6 arm_lower/fore, 11 pelvis, 12 thigh, 13 calf, in a different mesh
+  order per file. Items: helm `_ha` {0} (some heavy helms {0, 1}), chest `_ba` {2, 3, 5} and the
+  like by set, legs `_la` {11, 12} (women's light/clothes {11}), feet `_fa` {13}, gauntlets `_aa`
+  {6} with flag 1 on heavy but flag 2 on light and clothes, shoulders `_sa` {4} (no body piece).
+
+### 2. What changed
+
+- `BsrReader.Attachable` and `parse_attachable` / `attachable_block`: the block, with strict
+  bounds (every word in the file, 0 <= n <= 1000, OURS bound). Bytes after it -- a body's combo word,
+  or the leftovers 61 real files carry -- are counted in `trailing`, not refused. Read for type 0
+  and type 5 through the header table only (`ParsedObject.attachable`), so scenery parses as
+  before. `attachable_tail_end` now uses it.
+- `SkinnedBsrAssembler`: each body mesh (and its front-pass twin, and a rigid piece's attachment)
+  carries `BODY_MESH_META` = its index in the body file's mesh list, and is named after its piece.
+  The meta survives the template duplicate (tested); the generated name of an unnamed node does
+  not, which is the trap the research hit. `apply_body_hides(skeleton, body, items)` is
+  `FUN_00c1f890`: show every tagged mesh, then for each item block with flag 1 and each key, hide
+  the meshes the BODY's block maps that key to. Matched by key, never by position.
+  `AttachedItem.attachable` carries the item's block.
+- `CharacterAppearance`: `build()` applies it; `unequip(body, slot)` frees the slot's nodes and
+  re-applies from what remains; `Body.hidden_body_meshes` counts. `set_scale_byte` touches no
+  visibility, so the hides stay (tested). The item blocks are cached with the item templates.
+- `World3D._build_assembled_character` (the local player, other players, the paper doll and the
+  portrait) applies it after attaching the worn items. Every equipment change rebuilds that body,
+  so retail's show-all-then-re-apply is the same call on the new set. Its log line now says how
+  many body meshes were hidden.
+- `tools/appearance_probe.gd`: `--showthrough=1` measures both "every body piece drawn" and "the
+  hides applied" in one run, checks every Figure's block, and `--closeup=<dir>` renders the
+  before/after pictures.
+
+### 3. Measured: show-through, before -> after
+
+`appearance_probe.gd --showthrough=1` on the box's archives (one run, GPU path, no software GL
+line): % of a worn armour's pixels where the body wins, front and back, at Volume 0 / 2 / 4, and
+how many body meshes the set hides:
+
+| Body | heavy | light | clothes / robe |
+|---|---|---|---|
+| CH man ADVENTURER | 2.13 / 2.04 / 2.03 -> **0.48 / 0.54 / 0.69** (6) | 4.93 / 4.80 / 4.89 -> **1.09 / 1.35 / 2.05** (5) | 7.39 / 7.36 / 8.12 -> **1.81 / 1.94 / 2.48** (5) |
+| CH woman ADVENTURER | 3.66 / 3.96 / 5.19 -> **0.74 / 0.92 / 1.33** (5) | 5.62 / 6.21 / 8.36 -> **4.18 / 4.55 / 5.58** (3) | 4.40 / 4.62 / 5.54 -> **2.43 / 2.71 / 3.44** (4) |
+| EU man NOBLE | 3.29 / 3.18 / 3.80 -> **0.68 / 0.85 / 1.29** (6) | 21.30 / 20.94 / 18.97 -> **0.46 / 0.43 / 0.44** (6) | 5.95 / 6.59 / 6.92 -> **0.51 / 0.47 / 0.35** (6) |
+| EU woman NOBLE | 6.26 / 6.84 / 7.51 -> **1.50 / 1.63 / 2.14** (5) | 13.74 / 12.95 / 13.55 -> **2.70 / 2.87 / 3.51** (4) | 8.54 / 8.04 / 8.31 -> **1.12 / 1.28 / 1.71** (5) |
+
+Worst 21.30 % -> **5.58 %**; the EU man's light set 21.30 -> 0.46 %, the research's numbers exactly.
+The "before" column equals round 683's table cell for cell. What is left is body pieces no worn
+item lists (the China woman's light set hides three meshes), which the client draws too (READ,
+FUN_00c1f790 hides only listed keys): a measurement, not a defect count.
+
+Also MEASURED in the same run: all 52 Figures' body blocks name exactly the keys {0, 1, 2, 3, 5,
+6, 11, 12, 13}, and every drawn kit model has a block (`RESULT: PASS (0 failing)`).
+
+Pictures for a human (not evidence; the table is), textured, every body piece drawn on the left
+and the hides on the right, front and back: `china_woman_light_{front,back}_before_left_after_right.png`
+and `europe_man_light_{front,back}_before_left_after_right.png` (the box's
+/var/tmp/hidebody687/out, not committed).
+
+### 4. Tests
+
+- `bsr_reader_test.gd`, `_test_attachable` (synthetic bytes): a body's block with its combo word,
+  an item's flag-1 block, a flag-2 block that hides nothing, 12 leftover bytes that do not fail it,
+  a pair cut short, a count past the end, a negative count, a cut header, and an NPC (type 1) not
+  read.
+- `character_appearance_test.gd`, `_test_body_hides` (synthetic templates): a flag-1 chest {2,3,5}
+  hides torso upper/lower and upper arm; flag-2 gauntlets and key-4 shoulders hide nothing; the same
+  chest on a body listing its meshes in another order hides the same pieces, there meshes 4, 7, 8;
+  unequipping the chest shows the torso again while the helm and legs keep theirs, and the helm's
+  removal brings the hair back; a scale change keeps the hides; a body with no block hides nothing;
+  a duplicated template keeps all nine indices.
+
+**Negatives.** Against the base (the new tests over dev 67937a5) neither suite compiles:
+`Parse Error: Static function "parse_attachable()" not found in base "BsrReader"`, `Could not find
+type "Attachable" under base "BsrReader"`, `Cannot find member "BODY_MESH_META" in base
+"SkinnedBsrAssembler"`. Two behavioural negatives on the head's code:
+- `build()` without `apply_hides`:
+  ```
+  FAIL r687: a flag-1 chest {2,3,5} hides torso upper/lower and upper arm (got [0, 1, 2, 3, 5, 6, 11, 12, 13])
+  FAIL r687: three body meshes hidden (got 0)
+  FAIL r687: on a body with another mesh order the chest hides the same pieces (got [0, 1, 2, 3, 5, 6, 11, 12, 13])
+  FAIL r687: there they are meshes 4, 7 and 8 of that file, not 2, 3 and 4 (got [])
+  FAIL r687: chest, legs, helm and light gauntlets leave face, forearm and calf (got [0, 1, 2, 3, 5, 6, 11, 12, 13])
+  ```
+- the item key taken as the body's mesh index (no body map):
+  ```
+  FAIL r687: a flag-1 chest {2,3,5} hides torso upper/lower and upper arm (got [0, 1, 5, 11, 12, 13])
+  FAIL r687: shoulders {4} hide nothing -- no body piece is key 4
+  FAIL r687: on a body with another mesh order the chest hides the same pieces (got [2, 3, 5, 6, 11, 13])
+  FAIL r687: there they are meshes 4, 7 and 8 of that file, not 2, 3 and 4 (got [2, 3, 5])
+  FAIL r687: chest, legs, helm and light gauntlets leave face, forearm and calf (got [1, 5, 11, 12, 13])
+  FAIL r687: the torso and upper arm show again, the helm and legs still hide theirs (got [1, 2, 3, 5, 6, 11, 12, 13])
+  FAIL r687: the hair is back (got [0, 1, 2, 3, 5, 6, 11, 12, 13])
+  FAIL r687: a scale change keeps the hides
+  ```
+
+`remote_godot.sh check`: 508 scripts and 8 scenes, ALL LOAD. `remote_godot.sh tests`: 199 suites,
+0 failing.
+
+**In the world (MEASURED, the log):** World3D booted with no server and
+`SRREVAMP_QA_EQUIP="1=3640,4=3641,5=3642"` (the China man's light chest, legs and boots) on the base
+and on the head, under this lane's own lock. Base: `World3D: china_man wears 3/3 item(s)`. Head:
+`World3D: china_man wears 3/3 item(s), 5 body mesh(es) hidden under them`. That is the same 5 the
+probe counts for that body and set through the builder. The frames of that run (no map loaded,
+camera far) show nothing useful and were not kept.
+
+### 5. Performance
+
+`perf_gate.sh --base 67937a5 --head 12764e3 --sites jangan,mobs` (1280x720, median of 3 runs, the
+code commit of this round; one mobs base run overlapped another lane's render and was repeated):
+
+| site | number | base | head | | verdict |
+|---|---|---|---|---|---|
+| jangan | frame ms | 10.61 | 9.32 | -1.3 | SAME |
+| jangan | entry ms | 9702 | 9625 | -77 | SAME |
+| jangan | freeze ms | 3418 | 3418 | +0 | SAME |
+| jangan | hitches | 5 | 5 | +0 | SAME |
+| mobs | frame ms | 11.04 | 10.89 | -0.1 | SAME |
+| mobs | entry ms | 10892 | 10711 | -181 | SAME |
+| mobs | freeze ms | 3502 | 3460 | -42 | SAME |
+| mobs | hitches | 5 | 5 | +0 | SAME |
+
+The rule costs one more pass over a body's or item's mod section per `.bsr` parse (types 0 and 5
+only) and a walk of the skeleton's children per dressed body.
+
+### 6. Corrections
+
+- Round 683 §7 MEDIUM 1 ("hiding a body piece would be a rule this project invented"): a
+  correction note added above it.
+- Round 283 ("the engine does not hide them either"): a correction note added; the text is kept.
+- charselect.md section 9 and docs/TODO.md: the OPEN item closed with the rule.
+- BSR_FORMAT.md: "The attachable block" -- its fields, what they mean and what the client does.
+
+### 7. Still OPEN
+
+- What the block's first two words (+0x314, +0x318) mean.
+- That part id 1 is the body (INFERRED from the body's block being the one with the mesh map).
+- Avatars over armour (`charactervisualchange.txt`'s Slot / OverlapSlot / Priority) is unchanged:
+  an avatar and the armour under it both hide by their own blocks.
+- The world still draws no default wear (`clothes_00_*`) in an empty slot (round 283); when it
+  does, those items' blocks hide too.
+- The Go reader (`server/internal/bsr`) does not read the block; the server has no use for it.
+
+
 ## Six-hundred-and-eighty-third round: one builder dresses any of the 52 bodies -- China and Europe, men and women -- at the Height and Volume picked, and the create screens' choices come from the player's own archive
 
 The user (2026-10-02): "Let's actually work on the character selection/creation part now. I'd like
@@ -7295,6 +7460,13 @@ MEDIUMs and five LOWs.
 
 **MEDIUM 1, the body through the armour -- measured; the fix asked for is not implemented, because
 no READ supports it.**
+
+> **Corrected by round 687.** The rule exists, and it is READ: not in the visual-change masks this
+> review searched, but in the attachable block every body and item `.bsr` ends with
+> (`CResAttachable::vslot_007` 0xbe4b90; `CCompChar::FUN_00c1f790` hides, `FUN_00c1f890`
+> re-derives). An item with flag 1 switches off the body meshes whose keys it lists. With it the
+> worst case below drops from 21.30 % to 5.58 %, and the EU man's light set to 0.46 %. "Hiding a
+> body piece would be a rule this project invented" was wrong; the text below is kept as it was.
 
 *The measurement.* `appearance_probe.gd --showthrough=1` draws each body with one armour set and no
 weapon, front and back, in two flat colours. Pass 1 draws the armour alone (its mask); pass 2 draws
@@ -30022,7 +30194,11 @@ character with no chest armour is wearing a garment, not showing skin.
 
 **That corrects round 281's conclusion** -- and only the conclusion; its observation stands.
 srrevamp really never hides body meshes. But the engine does not hide them either: the body
-`.bsr`'s skin is drawn under the slot visual in both. So "we never hide" cannot be why skin
+`.bsr`'s skin is drawn under the slot visual in both.
+*(Correction, round 687: the engine does hide them. Each item `.bsr`'s attachable block lists the
+body pieces it covers, and with flag 1 `CCompChar::FUN_00c1f790` switches those body meshes off
+when the item is attached; `InstallEquipVisual` was not where it happens. The paragraph is kept as
+written.)* So "we never hide" cannot be why skin
 shows through our armour. What srrevamp is missing is the **default wear** -- an unarmoured slot
 should show `clothes_00_*` and ours shows bare skin -- plus whatever keeps the engine's worn
 geometry clear of the skin, which is still unread.

@@ -7868,6 +7868,7 @@ func _build_assembled_character(equipped: Dictionary = {}, gender: String = DEFA
 	if assembled == null:
 		return null
 	var worn := 0
+	var blocks: Array = []
 	for slot in equipped:
 		var item_id: int = int(equipped[slot])
 		if item_id == 0:
@@ -7879,8 +7880,14 @@ func _build_assembled_character(equipped: Dictionary = {}, gender: String = DEFA
 		var attached := SkinnedBsrAssembler.attach_item_from_archive(_data_pk2, assembled.skeleton, model)
 		if attached != null:
 			worn += 1
+			blocks.append(attached.attachable)
+	# The body's own pieces under what it wears are switched off, as retail
+	# does (round 687, READ CCompChar::FUN_00c1f790 / FUN_00c1f890). Every
+	# change of equipment rebuilds this body, so the show-all-then-re-apply of
+	# an unequip is this same call on the new set.
+	var hidden := SkinnedBsrAssembler.apply_body_hides(assembled.skeleton, assembled.parsed, blocks)
 	if not equipped.is_empty():
-		print("World3D: %s wears %d/%d item(s)" % [gender, worn, equipped.size()])
+		print("World3D: %s wears %d/%d item(s), %d body mesh(es) hidden under them" % [gender, worn, equipped.size(), hidden])
 	return assembled.skeleton
 
 ## Attaches a freshly-built assembled character (see

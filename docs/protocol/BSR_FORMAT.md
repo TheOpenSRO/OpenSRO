@@ -676,6 +676,49 @@ After the section a character file ends, or carries the block `CResAttachable::v
 next -- three words, i32 n, n x 8 bytes -- and the one word `CResChar::vslot_007` asserts is 0
 (`nComboNum == 0`).
 
+### The attachable block: which body pieces a worn item hides (round 687)
+
+READ from `CResAttachable::vslot_007` (0x00be4b90), which reads it straight after the mod-data
+section; `vslot_008` (0x00bda070) writes the same layout:
+
+```
+u32 word0          -> CResAttachable +0x314   (meaning OPEN)
+u32 kind           -> +0x318                  (meaning OPEN)
+u32 flag           -> +0x31c                  (1: hide the covered body pieces)
+i32 n
+n x { u32 key, u32 value }
+```
+
+A player body (type 0) is a `CResChar`, whose `vslot_007` (0x00c1efd0) then reads `nComboNum`
+(asserted 0): 4 bytes after the block. An item (type 5) ends with the block. The research parse
+(`attach.py`, the exact reader above) found 61 type-0/5 files with other leftovers after it; the
+reader (`BsrReader.parse_attachable`) keeps the block and counts them in `trailing`.
+
+**What the entries mean.**
+- In a **body** file, `key -> value`: `value` is the index, in the file's mesh list, of the body's
+  own piece `key`. MEASURED across the Figures: 0 hair, 1 face, 2 torso_upper, 3 torso_lower,
+  5 arm_upper, 6 arm_lower / arm_fore, 11 pelvis, 12 thigh, 13 calf. The mesh order differs per
+  file, so a piece is found by key, never by position.
+- In an **item** file, the keys are the body pieces it covers. MEASURED: helm `_ha` {0} (some heavy
+  helms also {1}); chest `_ba` {2, 3, 5} and similar by set; legs `_la` {11, 12} (women's light and
+  clothes {11}); feet `_fa` {13}; gauntlets `_aa` {6}, with flag 1 on heavy but **flag 2** on light
+  and clothes; shoulders `_sa` {4}, which no body piece is. The default wear (`clothes_00_*`) and
+  avatars carry blocks too.
+
+**What the client does with it** (READ):
+- `CCompChar::vslot_067` (0x00c1fa90) adds a part; for a resource of tag 5 (`CResAttachable`) it
+  calls `CCompChar::FUN_00c1f790`. When the item's flag is 1, that looks up part id 1 (the body,
+  INFERRED) and, for every item key equal to a body key, calls `FUN_00c35050(value, 0)` ->
+  `FUN_00c33760`: the body mesh's `CRTMesh +0x10 = 0`. The gather `FUN_00c38f50` skips a mesh
+  whose +0x10 is 0, so it is not drawn.
+- `vslot_061` (0x00c1fa00) and `vslot_064` remove a part through `FUN_00c1f890`: every body mesh is
+  shown again (`FUN_00c392a0(1)`), then the hides of every remaining part except id 1 are
+  re-applied.
+
+The client: `BsrReader.Attachable` (read for type 0 and 5), `SkinnedBsrAssembler.apply_body_hides`
+(the show-all-then-re-apply), used by `CharacterAppearance.build` / `unequip` and World3D's
+`_build_assembled_character`.
+
 ### The parse-all check (MEASURED)
 
 `sweep_bsr_sound.gd --pk2=/opt/sro-files/client/Data.pk2 --durations`, over the **1,012** `.bsr`
