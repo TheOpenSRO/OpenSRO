@@ -35,7 +35,7 @@ func OpenSQLStore(dsn string) (*SQLStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("quest: connecting to postgres: %w", err)
 	}
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.Exec(schema + defaultsSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("quest: creating schema: %w", err)
 	}
@@ -50,7 +50,7 @@ func (s *SQLStore) Close() error {
 // TruncateForTest clears all quest progress, for other packages' tests
 // sharing this Postgres instance. Not for production use.
 func (s *SQLStore) TruncateForTest(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE character_quests`)
+	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE character_quests, character_default_quests`)
 	return err
 }
 
