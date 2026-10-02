@@ -7094,6 +7094,182 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-ninety-first round: Europe characters see, learn and cast their own masteries -- Warrior, Rogue, Wizard, Warlock, Bard and Cleric, laid out as retail's window lays them -- and neither race can learn or raise the other's
+
+The user, 2026-10-02: "Euro needs added to the actually game with full skin support, animations, and
+skills." This lane (euroskill691) is the skills; skin and animation are world689's.
+
+### 1. What retail does (READ unless marked)
+
+- **Which masteries a character has is the server's list, and the list is the race's.** The shard's
+  `_AddNewChar` (`/opt/sro-files/db/csv/charsel/proc__AddNewChar.sql`, the retail DB export on the
+  render box) seeds `_CharSkillMastery` with `SELECT MasteryID FROM _RefCharDefault_SkillMastery
+  WHERE Race = @country or Race = 3`; the table's 13 rows are Race 0: 257 258 259 273 274 275 276,
+  Race 1: 513 514 515 516 517 518 (no Race-3 row). `_RefCharDefault_Skill` gives Race 3 skill 1
+  (the punch), Race 0 the three CH base attacks, Race 1 the nine EU base attacks (8419 8420 8421
+  9354 9355 9944 10625 11162 11526) -- srrevamp already picks the base attack by weapon
+  (`combat.BaseAttackSkillFor`), so those need nothing.
+- **The game server refuses another race's mastery by the list, not by a race test.**
+  `FUN_0059d6f0` looks the id up in the character's mastery map (+0x234) and answers 0 for one it
+  does not hold (or holds in status 3). `Mastery_LevelUp` (0x0059c4e0) refuses that with 0x3801
+  before anything else; the learn check `FUN_0059e450` (called by `Skill_HandleLearn` 0x0059bfe0)
+  with 0x3401 for each of the skill's two masteries (+0xa0/+0xa4), then 0x3402 for a level below
+  +0xa8/+0xa9, 0x3403/0x3404 Str/Int (+0xaa/+0xac), **0x3405 when ReqLearn_Race (+0xc4) is neither 3
+  nor the character's Country (`*(ref+0x18)+0x88`)**, 0x340c/0x3406/0x3407 the chain and the
+  prerequisites, 0x340a the skill points (`pc+0x80 < +0xc0`, ReqLearn_SP) -- and 0x3409 up front for
+  a row whose ReqLearn_SP is 0.
+- **The cap**: the server's Country rule (round 483) is unchanged; the CLIENT shows the same:
+  CIFSkill `FUN_006aa3e0` reads the player's ref race byte (+0x9c) and for 1 does
+  `fild [player+0x868] ; fadd st,st` -- twice the level -- keeping it below 0xf0 (240), else 240
+  (0x6aa474..0x6aa4a8); for 0 it uses 0x14a = 330 (0x6aa4ba..0x6aa4c3); then `"%d/%d"`.
+- **The window**: the same function copies the server's mastery map and files each mastery under a
+  tab manager keyed by the mastery record's +0x5c byte, adding a 0x44 x 0x1c mastery tab per
+  mastery (`FUN_006a0400`). +0x5c is skillmasterydata's TabID: the record keeps GroupNum at +0x20
+  (`GlobalDataManager::FUN_00945ee0` sizes the board's group vector from it) and the icon strings
+  at +0x64/+0x80 (the board loads them), and with MSVC's 0x1c-byte strings between, column 5 lands
+  at +0x40 and column 6 at +0x5c (INFERRED from that layout, not from a loader read). The table
+  (READ) gives Europe three tabs: `UIIT_CTL_EU_SKILLWND_PHYSICAL` (Melee) 513 Warrior, 515 Rogue;
+  `_MASICAL` (Caster) 514 Wizard, 516 Warlock; `_ASSIST` (Buff) 517 Bard, 518 Cleric. Within a tab
+  the map's order, ascending id. GroupNum (READ) is the board's row count: 8, 8, 6, 9, 7, 11 -- and
+  skillgroup.txt has exactly that many rows per Europe mastery (MEASURED).
+- **Names**: China's mastery names are in textuisystem.txt, Europe's (`UIIT_STT_WARRIOR`...) only in
+  textdata_equip&skill.txt (MEASURED).
+- **Skill rows (MEASURED, the box's Media.pk2)**: 3,242 Service-1 rows have a Europe mastery, every
+  one ReqLearn_Race 1; 2,942 China rows are 0 and the three CH `_BASE_01` rows 3. They spread over
+  eleven skilldata files; 15000, 10000, 35000, 9000, 12000 and 22000 cover every id. Board rows
+  (UI_SkillColumn < 250) per mastery: Warrior 47 base skills, Rogue 48, Wizard 40, Warlock 45,
+  Bard 43, Cleric 47 (270 skill groups; 284 distinct Basic_Code stems, a few groups holding
+  more than one).
+- **SP**: a level's learn cost is skilldata col 46 for both races; the mastery raise cost is
+  leveldata col 2 for both (Mastery_LevelUp has no Country branch in the cost loop).
+- **Weapons (MEASURED, ReqCast_Weapon1/2 or the `reqi` list of each mastery's level-1 rows)**:
+  Warrior 7/8/9 (sword, two-handed sword, axe), Rogue 12/13 (crossbow, dagger), Wizard 11, Warlock
+  10, Bard 14, Cleric 15. skillmasterydata's own weapon columns differ for Rogue (11, 12) and Cleric
+  (10) and are not a cast rule anywhere this round reads.
+- **Cast clips**: `Prim\Ani\Char\Europe\man` holds 122 clips and `...\woman` 119 (228 of the 241 named
+  `skill_eu_*`), but only 33 of the 284 Europe board Basic_Code stems have a clip named after them. Retail picks the body motion through skilleffect.txt's `skillaniset2` row (e.g.
+  SKILL_EU_WARRIOR_ONEHANDA_STRIKE_A: AniGroup ONEHAND_SWORD, SHOT ANI_SKILL_4) in the body's .bsr --
+  the per-body lookup of the world lane.
+
+### 2. What changed
+
+Server -- `internal/skill/race.go` (`DefaultMasteries`, `HoldsMastery`, `LearnRaceAllows`, the
+mastery ids); `session/skill.go`: LearnSkillHandler refuses a skill of a mastery the race does not
+hold ("not your race's mastery", 0x3401) and a ReqLearn_Race that is neither 3 nor the Country ("not
+your race's skill", 0x3405), in FUN_0059e450's order; RaiseMasteryHandler refuses an unheld mastery
+first (0x3801) and sums only held masteries into the total; SkillStateHandler sends every held
+mastery, level 0 included, and nothing of the other race. Not modelled, disclosed: 0x3409 (a
+ReqLearn_SP of 0 cannot be learned -- the own-design catalog and test rows are learned free), the
+Str/Int clauses, the second mastery slot (refdata carries Mastery1 only).
+
+Client -- `MasteryReader.parse_all/for_race/race_of_masteries` and `RACE_MASTERIES`; HudPanels
+takes the race from the server's mastery list (`set_skill_state`; `set_skill_race`; QA
+`SRREVAMP_QA_SKILL_STATE=race=1`), reads that race's skill files (`SkillDataReader.tables_for_race`;
+the other race's only on a lookup miss), shows the total against `mastery_total_cap(race, level)`,
+falls back to Melee/Caster/Buff (OURS words, the archive's own English) for an unresolved Europe tab,
+resolves Europe mastery names through the skill-name table, and adds the cast weapon to a skill's
+tooltip ("Weapon: Light Staff"; OURS labels for READ codes; a `reqi` list's requirement is not
+shown -- OPEN). `SkillDataReader` reads SKILL_EU_ rows and europe\ groups, `cast_clip_path`
+puts a Europe body's clip under `Europe\<sex>`, World3D's two clip paths call it (an adapter: see
+§6). SkillAudio/SkillEffects read both races' files (`all_tables`). QA: `SRREVAMP_QA_KIT=body,chest,
+legs,feet,weapon` creates the sign-in character with those ids (the gender kit has only China's).
+
+### 3. What works per Europe mastery (MEASURED live unless marked; §5)
+
+| Mastery | Learn + raise | Cast (live) | Engine coverage (census of the re-export: the mastery's level-1 rows with a mastery requirement -- Warrior 66, Rogue 55, Wizard 55, Warlock 45, Bard 43, Cleric 48) |
+|---|---|---|---|
+| Warrior 513 | yes | Strike A (8671, one-hand sword): 46, 44, 38 damage | 36+ damage skills work; 7+4 stances (kind 4) cast but publish nothing; buffs (kind 3) start; 1 `tele`/`tel3` sprint does not move (OPEN since round 640) |
+| Rogue 515 | yes | Dagger Chain A (9744): 50, 40, 54 | dagger and crossbow damage work; crossbow ammunition (`cnsm`) is not spent (OPEN, round 255's note); stealth/poison buffs start, their params do nothing |
+| Wizard 514 | yes | Earth Point A (10005, staff): 267, 254, 257 | the nukes work, their status runs land (round 659); Teleport (`tel2`) does not move |
+| Warlock 516 | yes | Blood Point A (10918, dark staff): 159, 159, 161 | direct damage works; the DoTs (kind 3, Target_Required 1, hostile groups -- 8 of them) are not caster buffs (`session.startsCasterBuff`) and take the attack path: their blow and their status runs (round 659) land, but no timed debuff record runs on the target (OPEN: hostile debuffs are not modelled) |
+| Bard 517 | yes | Battle Damage A (11219, harp): 151, 144, 145 | Battle damage works; the dances/songs are buffs (kind 3) whose ParamKeeper params do nothing (no ParamKeeper slots); the MP self-heal works (round 503) |
+| Cleric 518 | yes | Cross A (11557, light staff): 155, 147, 171 | Cross works; **Heal (11603) heals nobody**: its row is `heal 73` + `mwhh 150` + `getv HLRU`, which `TargetHealAmounts` refuses because the weapon-scaled `mwhh` term and the `HLRU` lookup are not read (OPEN); resurrections (`resu`) are not modelled |
+
+### 4. Tests
+
+- Go: `internal/skill/race_test.go` (the 13 rows, the race clause), `session/euroskill691_test.go`
+  (`TestLearnRaceFilter`: Europe cannot learn Power Strike, China cannot learn Cross, a ReqLearn_Race
+  0 row refused to Europe, each learns its own and pays its SP, Europe's level gate holds;
+  `TestRaiseMasteryRaceFilterAndEuropeCap`: both directions of 0x3801, the free first point and
+  leveldata's cost, 2 x level at 20, the 240 ceiling at 130, China's flat 330 at the same level, a
+  stored other-race row not counted; `TestSkillStateListsTheRaceMasteries`).
+  `go build ./... && go vet ./... && go test -count=1 -p 1 ./...`: all ok.
+- Client: `ui/hud/skill_window_race_test.gd` (19 checks: a Europe character's window has Melee/
+  Caster/Buff, Warrior and Rogue, Bard and Cleric under Buff, no China mastery, "3 / 40"; China's
+  two tabs and "4 / 330"); `mastery_reader_test.gd` and `skill_data_reader_test.gd` gained Europe
+  cases. `remote_godot.sh check`: 523 scripts and 8 scenes, ALL LOAD; `tests`: 204 suites, 0
+  failing.
+
+### 5. Live (MEASURED, render box, lane euroskill691, Xvfb :691, 2026-10-02)
+
+`/var/tmp/euroskill691/live.sh` (not committed): a fresh `-in-memory` server with
+`-chargen-csv /var/tmp/lobby682/chargen.csv`, round 691's skills re-export
+(`/var/tmp/euroskill691/skills.csv`, 33,698 rows, 91 columns) and final664's items/leveldata/
+monsters; the wire tap between client and server. Per mastery one client signs in and creates a
+Europe man (body 14875, the EU clothes 11623-11625) with that mastery's weapon
+(`SRREVAMP_QA_KIT`), runs `/level 20`, `/sp 2000`, `/spawn MOV_EV_WOLF_A_010 2`, raises the mastery
+to 4 and learns its first skill (`SRREVAMP_QA_LEARN`), puts it on quick slot 1, clicks a wolf, and
+then **real X input** (xdotool): `1` three times 4-5 s apart, `S` for the skill window, and clicks on
+the window's race tab and mastery tab. `casts691.py` pairs each 0x0072 with its 0x0061 (every reply
+0-1 ms after its request):
+
+| Character | Learn (QA LEARN) | Casts (skill -> damage, error '') | Cast clip |
+|---|---|---|---|
+| EuWar (one-hand sword 10888) | Warrior 0->4, Strike A 8671 ok | 46, 44, 38 | `Europe\man\skill_eu_warrior_onehanda_strike_a.ban` played |
+| EuRog (dagger 10887) | Rogue 0->4, Dagger Chain A 9744 ok | 50, 40, 54 | `skill_eu_rog_daggera_chain_a.ban` played |
+| EuWiz (staff 10893) | Wizard 0->4, Earth Point A 10005 ok | 267, 254, 257 | none by name -- weapon-swing fallback |
+| EuLock (dark staff 10892) | Warlock 0->4, Blood Point A 10918 ok | 159, 159, 161 | fallback |
+| EuBard (harp 10894) | Bard 0->4, Battle Damage A 11219 ok | 151, 144, 145 | fallback |
+| EuCler (light staff 10895) | Cleric 0->4, Cross A 11557 ok | 155, 147, 171 | fallback |
+| EuNeg (Europe, sword) | Bicheon 257 x4 and Power Strike 3: every one "not your race's mastery" | none (not known, so the hotbar refused it) | -- |
+
+(The fifth character on one account was refused by round 682's four-per-account rule, so Bard and
+Cleric ran as r3 on a fresh server.) The mastery raises cost 0, 1, 1, 1 SP and each learn 2 SP
+(leveldata col 2, skilldata col 46). The skill window's shots show Melee/Caster/Buff, the two
+masteries of the clicked tab, Europe icons, the learned skill's level badge, and "Mastery level
+total 4 / 40" at level 20. Europe casts drew their skilleffect rows too
+(`EFFECTS skill 8671 SHOT/1: AT_ONE_FOLLOW battle\deco_force_onehand_cut.efp`).
+
+Shots (box): `/var/tmp/euroskill691/live/r2/{EuWar,EuRog,EuWiz,EuLock}_{cast1,cast2,cast3,skillwnd}.png`,
+`/var/tmp/euroskill691/live/r3/{EuBard,EuCler}_*.png`, `/var/tmp/euroskill691/live/r1/EuWar_skillwnd.png`.
+Seen in the shots and NOT measured: the character is drawn on the China fighter body (no Europe body
+in World3D yet -- world689), and after a cast it stands with its arms out (a bind pose) with every
+Europe weapon, the name-matched clip and the weapon-swing fallback alike; before any cast (r1) it
+stands normally. That is the world lane's body/clip question; this round did not chase it.
+
+### 6. Merge notes and OPEN
+
+- **world689**: `World3D._play_skill_cast_anim` and `_play_other_cast_anim` now build the clip path
+  with `SkillDataReader.cast_clip_path(gender, anim_base)` (two lines). When the per-body clip lookup
+  lands, keep its lookup and drop the adapter; the retail path for a Europe cast is the aniset's SHOT
+  action type in the body's AniGroup (only 33 of 284 Europe board Basic_Code stems have a name-matched clip).
+  The bind pose of §5 is for that lane to measure.
+- **fe688**: `qa/qa_sign_in.gd` gained `SRREVAMP_QA_KIT` (five lines). `net/character.gd`'s
+  INTERIM_KIT is untouched.
+- OPEN: Cleric heals (`mwhh` weapon-scaled heal and `getv HLRU` not read; `TargetHealAmounts`
+  refuses them, so Heal A heals nobody); resurrections; hostile debuffs/DoT records on the target;
+  ParamKeeper-publishing buffs, stances and Bard songs (they start, they change nothing); `tel2`/
+  `tel3` moves; crossbow bolts (`cnsm`); the `reqi` requirement in the tooltip; 0x3409 (an SP-0 row
+  is not learnable in retail); the skill COLUMN order within a group row (base-id order, as China's;
+  skilldata col 60 UI_SkillRow disagrees in 167 of 530 skills of both races, and the engine's insert
+  into the group vector was not traced); the second mastery slot (Mastery2 not exported).
+
+### 7. Performance gate (MEASURED, `perf_gate.sh --sites jangan`, base bf25e7e, native readers off on both sides)
+
+The round reads four more skilldata files at world entry (SkillAudio/SkillEffects `all_tables`:
+28,696 skill rows instead of 23,936; their warm-up logged 266-348 ms for audio and 186-261 ms for
+effects on a box shared with other lanes) and changes the cast-clip path. The gate:
+
+```
+jangan  frame ms   base 9.34  head 9.23  (-0.1)  SAME
+jangan  entry ms   base 9747.00  head 9581  (-166.0)  SAME
+jangan  freeze ms  base 3414.50  head 3406  (-8.5)  SAME
+jangan  hitches    base 5.00  head 5  (+0.0)  SAME
+```
+
+(A first gate, under heavy overlap from other lanes, ran out of its own time limit after two pairs;
+its numbers were within the same spread.)
+
 ## Six-hundred-and-eighty-seventh round: the body's own skin no longer shows through worn armour -- each item hides the body pieces it covers, as retail's client does
 
 Round 683 built the bodies and found the body's own skin showing through worn armour on 2-21 % of

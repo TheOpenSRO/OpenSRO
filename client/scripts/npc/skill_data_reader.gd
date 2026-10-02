@@ -268,7 +268,7 @@ class BaseSkill:
 ## directory from the character's gender string ("europe_man" ->
 ## `Europe\man`; any other -> `China`). MEASURED on the render box's Data.pk2:
 ## `Prim\Ani\Char\Europe\man` holds 122 clips and `...\woman` 119, 228 of
-## them `skill_eu_*`; but only 33 of the 284 Europe board skills have a clip
+## the 241 `skill_eu_*`; but only 33 of the 284 Europe board Basic_Code stems have a clip
 ## named after their Basic_Code -- retail picks a Europe cast's body motion
 ## through skilleffect.txt's aniset (ANI_SKILL_n in the row's AniGroup) in the
 ## body's .bsr, which is the per-body clip lookup of the world lane (OPEN
