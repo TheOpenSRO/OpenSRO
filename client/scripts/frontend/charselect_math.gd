@@ -185,6 +185,19 @@ static func click_pose(slot: Dictionary, scale: int, woman: bool, pending: bool)
 	p.distance = CLICK_DIST
 	return p
 
+## READ, FUN_0085b680 with +0x12f == 2 (the re-select after a delete or
+## restore): x, z and the angles are the camera's own, but y is set again at
+## LAB_0085c06b from the character's state -- seated or standing
+## (click_target_y) -- and the fly is 1.0 s.
+static func reselect_pose(from: IntroCameraPath.Pose, scale: int, woman: bool, pending: bool) -> IntroCameraPath.Pose:
+	var p := IntroCameraPath.Pose.new()
+	p.target = Vector3(from.target.x, click_target_y(scale, woman, pending), from.target.z)
+	p.pitch = from.pitch
+	p.yaw = from.yaw
+	p.roll = from.roll
+	p.distance = from.distance
+	return p
+
 static func key_pose(k: Dictionary) -> IntroCameraPath.Pose:
 	var p := IntroCameraPath.Pose.new()
 	p.target = k["pos"]
@@ -210,14 +223,20 @@ static func path_of(poses: Array, times: Array) -> IntroCameraPath:
 		kfs.append(kf)
 	return IntroCameraPath.from_keyframes(kfs)
 
-static func _keys_path(keys: Array, reverse: bool) -> IntroCameraPath:
+## `from`, when given, replaces the first key: the camera flies on from where
+## it is. READ: retail adds its fixed keys and a fly started while another
+## runs jumps to the first one; when nothing was running the camera stands
+## on that key already, so the two agree. Starting from the camera's pose
+## when a click interrupts a fly is OURS (round 684's review: retail's
+## handlers take the click in any state -- 0x85c4a0, 0x85b560, 0x85c7e0).
+static func _keys_path(keys: Array, reverse: bool, from: IntroCameraPath.Pose = null) -> IntroCameraPath:
 	var poses: Array = []
 	var times: Array = []
 	var n := keys.size()
 	var length: float = keys[n - 1]["t"]
 	for i in range(n):
 		var k: Dictionary = keys[n - 1 - i] if reverse else keys[i]
-		poses.append(key_pose(k))
+		poses.append(from if i == 0 and from != null else key_pose(k))
 		times.append(length - float(k["t"]) if reverse else float(k["t"]))
 	return path_of(poses, times)
 
@@ -227,17 +246,17 @@ static func list_intro_path() -> IntroCameraPath:
 
 ## READ, 0x85b560 (Back, id 13): the same keys reversed, (60, -15, 660) at 0
 ## to (60, -15, 700) at 2.0 -- the dolly out, under a 0.5 s fade to black.
-static func back_path() -> IntroCameraPath:
-	return _keys_path(LIST_KEYS, true)
+static func back_path(from: IntroCameraPath.Pose = null) -> IntroCameraPath:
+	return _keys_path(LIST_KEYS, true, from)
 
 ## READ, FUN_0085c4a0 (Create): the race fly.
-static func race_path() -> IntroCameraPath:
-	return _keys_path(RACE_KEYS, false)
+static func race_path(from: IntroCameraPath.Pose = null) -> IntroCameraPath:
+	return _keys_path(RACE_KEYS, false, from)
 
 ## READ, 0x85c7e0 (Cancel 17, not in the decompile's function list): the race
 ## keys reversed, the table at 0 to (60, -15, 660) at 5.0.
-static func race_back_path() -> IntroCameraPath:
-	return _keys_path(RACE_KEYS, true)
+static func race_back_path(from: IntroCameraPath.Pose = null) -> IntroCameraPath:
+	return _keys_path(RACE_KEYS, true, from)
 
 ## READ, FUN_0085c1d0 (Cancel 16, deselect): from where the camera is to the
 ## list's last key over 2.0 s (0xd86ecc).
@@ -279,7 +298,8 @@ const OPEN_FADE_FROM := 0x80
 static func label_fade_s(from_alpha: int, to_alpha: int) -> float:
 	return absf(float(to_alpha - from_alpha)) * 0.5 / 255.0
 
-## INFERRED (charselect.md section 3): the idol panels fade at 1/3 s.
+## READ (charselect.md section 3, vslot_012 case 8): the hovered idol's panel
+## fades in over 1/3 s and the other out at the same rate.
 const IDOL_PANEL_FADE_S := 1.0 / 3.0
 
 # --- The info panel --------------------------------------------------------------

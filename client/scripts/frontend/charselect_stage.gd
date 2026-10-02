@@ -330,12 +330,15 @@ func pick_idol(screen: Vector2) -> int:
 		return -1
 	var from := cam.project_ray_origin(screen)
 	var dir := cam.project_ray_normal(screen)
+	# READ, vslot_012 case 8: the loop tests both idols without stopping, so
+	# where the two overlap the LAST hit -- China -- is the one kept.
+	var hit := -1
 	var i := 0
 	for key in ["europe", "china"]:
 		if props.has(key) and _ray_hits_box(from, dir, (props[key] as Node3D).get_child(0).global_transform, _prop_bounds[key]):
-			return i
+			hit = i
 		i += 1
-	return -1
+	return hit
 
 ## READ, vslot_012 case 7: an idol's panel hangs from the projection of the
 ## idol's bounding-box centre (FUN_00854eb0, turned by the idol's yaw and

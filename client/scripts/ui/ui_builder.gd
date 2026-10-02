@@ -1245,6 +1245,14 @@ var _ui_font: FontFile = null
 var _ui_font_source := ""
 var _fonts_loaded := false
 
+## One FontFile per archive and face for the whole process (round 684's
+## review): each screen used to parse the face afresh, and guard_button_font
+## pins every face it meets in `_button_fonts` for good -- ~1.3 MB and 5
+## objects kept per visit of a screen (MEASURED, the select screen's reload
+## loop). The cached font carries the same flags (_new_font), so round 672's
+## crispness is unchanged. Key: the archive's file path and the face asked.
+static var _font_cache := {}
+
 ## The face name the client would ask GDI for: the text table's
 ## `UIC_STT_FONTNAME`, else the binary's default.
 func ui_face_name() -> String:
@@ -1333,6 +1341,16 @@ func _load_fonts() -> void:
 	if _media_pk2 == null:
 		return
 	var face := ui_face_name()
+	var key := "%s|%s" % [_media_pk2._file.get_path_absolute() if _media_pk2._file != null else str(_media_pk2.get_instance_id()), face.to_lower()]
+	if _font_cache.has(key):
+		var hit: Array = _font_cache[key]
+		_ui_font = hit[0]
+		_ui_font_source = str(hit[1]) + " (cached)"
+		return
+	_load_fonts_uncached(face)
+	_font_cache[key] = [_ui_font, _ui_font_source]
+
+func _load_fonts_uncached(face: String) -> void:
 	var bundled := _bundled_fonts()
 	if bundled.has(face.to_lower()):
 		_ui_font = bundled[face.to_lower()]

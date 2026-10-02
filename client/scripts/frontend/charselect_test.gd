@@ -57,6 +57,7 @@ func _initialize() -> void:
 	_camera()
 	_info()
 	_idol_and_start()
+	_review_fixes()
 	print("ALL PASS" if _failures == 0 else "FAILURES: %d" % _failures)
 	quit(1 if _failures > 0 else 0)
 
@@ -203,3 +204,106 @@ func _idol_and_start() -> void:
 	# The handoff back.
 	CharSelectHandoff.came_from = CharSelectHandoff.FROM_OTHER
 	_check(CharSelectHandoff.FROM_CREATE_OK == 0 and CharSelectHandoff.FROM_CREATE_CANCEL == 10, "the create screens' return ids are retail's 0 and 10")
+
+## A screen instance outside the tree with just the parts a handler touches.
+func _screen(state: int, slots: Array):
+	var cs = (load("res://scripts/CharacterSelect.gd") as GDScript).new()
+	cs._scene_ready = true
+	cs._slots = slots
+	cs.state = state
+	cs._message = Label.new()
+	cs._dim = ColorRect.new()
+	cs._black = ColorRect.new()
+	for id in [9, 11]:
+		cs._windows[id] = Control.new()
+	cs._last_pose = CharSelectMath.key_pose(CharSelectMath.LIST_KEYS[1])
+	return cs
+
+func _drop(cs) -> void:
+	for id in cs._windows:
+		(cs._windows[id] as Node).free()
+	cs._message.free()
+	cs._dim.free()
+	cs._black.free()
+	cs.free()
+
+## Round 684's review fixes.
+## NEGATIVE: before them -- Create, Back, Cancel 16, Delete and Restore did
+## nothing during the flies (states 0, 3, 6, 11); the re-select kept the
+## standing height over a seated character; with no 3D the race select had
+## nothing to click; Europe won an idol overlap.
+func _review_fixes() -> void:
+	var two := [_rec("a", 5, 0), _rec("b", 3, 0, true, 100)]
+	# Create 12 and Back 13 during the intro, the deselect fly and the fly back.
+	for st in [0, 6, 11]:
+		var cs = _screen(st, two)
+		cs._on_create_pressed()
+		_check(cs.state == 7, "Create taken in state %d (the fly it interrupts) -> the race fly (7)" % st)
+		_drop(cs)
+		cs = _screen(st, two)
+		cs._on_back_pressed()
+		_check(cs.state == 13, "Back taken in state %d -> the dolly out (13)" % st)
+		_drop(cs)
+	# Cancel 16, Delete and Restore during the zoom.
+	var z = _screen(3, two)
+	z.selected = 0
+	z._on_deselect_pressed()
+	_check(z.state == 6, "Cancel 16 taken during the zoom (3) -> the deselect fly (6)")
+	_drop(z)
+	z = _screen(3, two)
+	z.selected = 0
+	z._on_delete_pressed()
+	_check(z.state == 15 and z._confirm_delete, "Delete taken during the zoom -> the confirm (15), deleting")
+	z._on_confirm_cancel()
+	_check(z.state == 3, "closing that confirm goes back to the zoom still flying")
+	_drop(z)
+	z = _screen(3, two)
+	z.selected = 1
+	z._on_delete_pressed()
+	_check(z.state == 15 and not z._confirm_delete, "Restore taken during the zoom -> the confirm, restoring")
+	_drop(z)
+	# Cancel 17 during the race fly; nothing once the screen is leaving.
+	z = _screen(7, two)
+	z._on_race_cancel_pressed()
+	_check(z.state == 11, "Cancel 17 taken during the race fly -> the fly back (11)")
+	_drop(z)
+	for st in [13, 9]:
+		z = _screen(st, two)
+		z._on_create_pressed()
+		z._on_back_pressed()
+		_check(z.state == st, "nothing is taken while the screen leaves (state %d)" % st)
+		_drop(z)
+	# An interrupted fly starts where the camera is.
+	var here := CharSelectMath.key_pose(CharSelectMath.RACE_KEYS[2])
+	var rp := CharSelectMath.race_path(here)
+	_check(_v_near(rp.sample(0.0).target, here.target) and _v_near(rp.sample(5.0).target, Vector3(165.2, -33.9, 640.3)), "the race fly from the camera's pose still ends on the table")
+	_check(_v_near(CharSelectMath.back_path(here).sample(0.0).target, here.target) and _v_near(CharSelectMath.race_back_path(here).sample(5.0).target, Vector3(60, -15, 660)), "Back and Cancel 17 fly on from the camera's pose too")
+	# The re-select's height (READ 0x85b680, LAB_0085c06b).
+	var cam := CharSelectMath.click_pose(CharSelectMath.slot_place(0, 1), 0x22, false, false)
+	var sat := CharSelectMath.reselect_pose(cam, 0x22, false, true)
+	_check(_near(sat.target.x, cam.target.x) and _near(sat.target.z, cam.target.z) and _near(sat.yaw, cam.yaw) and _near(sat.distance, cam.distance), "a re-select keeps the camera's x, z and angles")
+	_check(_near(sat.target.y, 9.0 - 29.0) and _near(CharSelectMath.reselect_pose(sat, 0x22, false, false).target.y, 16.0 - 28.779172897338867), "and sets y from the state: seated h x 9 - 29, standing h x 16 - 28.779")
+	var rs = _screen(15, two)
+	rs.selected = 1
+	rs._last_pose = cam
+	rs._select(1, true)
+	_check(_near(rs._path.length, 1.0) and _near(rs._path.sample(1.0).target.y, 9.0 - 29.0), "the screen's re-select flies 1.0 s down to the seated height")
+	_drop(rs)
+	# No Map.pk2: the races as two panels, a click picks one.
+	var fb = _screen(2, two)
+	var got := []
+	fb.race_chosen.connect(func(r: int) -> void: got.append(r))
+	var went := []
+	fb.change_scene = func(path: String) -> void: went.append(path)
+	fb._on_create_pressed()
+	fb._process(0.016)
+	_check(fb.state == 8 and (fb._windows[11] as Control).mouse_filter == Control.MOUSE_FILTER_STOP and (fb._windows[9] as Control).modulate.a == 1.0, "no 3D: Create shows both race panels at once, clickable")
+	fb.fallback_pick_race(1)
+	fb._process(0.016)
+	_check(got == [CharCatalog.RACE_CHINA] and went == [CharSelectHandoff.CREATE_SCENE], "no 3D: a click on the China panel picks China and opens customize")
+	_drop(fb)
+	# A disconnect says so.
+	var dc = _screen(2, two)
+	dc._on_disconnected()
+	_check(dc._message.text != "" and dc.state == 100, "a server disconnect shows a line and leaves (to the title)")
+	_drop(dc)

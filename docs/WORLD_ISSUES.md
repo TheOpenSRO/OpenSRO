@@ -7634,8 +7634,46 @@ backdrop as round 678 built it.
 - The name label's colour and alignment; what `<sml2>` does in a PML.
 - The list intro when re-entering from create with a previous id other than 0 or 10 (we always run
   it).
-- Europe women play China women's stand clips (`chinawoman_merchant_standcity` on 14888, from the
-  body's own `.bsr` through round 683's builder) -- MEASURED here, not judged.
+- ~~Europe women play China women's stand clips~~ -- the data, not a bug: the Europe bodies' own
+  `.bsr`s list only China stand and sit clips (MEASURED by the review), so 14888 playing
+  `chinawoman_merchant_standcity` is what the archive says.
+
+### Review (round 684's review: the full flow held under real input; one HIGH, four MEDIUM, three LOW -- fixed in follow-up commits)
+
+**HIGH, clicks on shown buttons were dropped.** Create and Back did nothing during the 2 s intro,
+the 2 s deselect fly and the 5 s fly back from the table; Cancel 16, Delete and Restore did nothing
+during the 2 s zoom. Retail's handlers check no state (0x85c4a0, 0x85b560; the thunks
+0x85de20/0x85de40 just jump; 0x85de50 checks only the count; 0x85c1d0 only closes the confirm in
+state 0xf). Now each takes the click in every state its button is shown in, and the new fly starts
+from where the camera is (OURS: retail adds its fixed keys, so an interrupted fly jumps to the first
+one; when nothing was running the two agree). A Delete during the zoom leaves the zoom flying and
+the confirm returns to it. Once the screen is leaving (Back's dolly, the idol fly, Start answered,
+a disconnect) every button is made not clickable (OURS). Real input on the box: Create in the intro,
+Cancel 17 in the race fly, Create in the fly back, Cancel 16 in the zoom, Back in the deselect fly,
+Delete in the zoom -- each taken (`client.log` states 7, 11, 7, 6, 13, 15).
+
+**MEDIUM.**
+- **The in-memory store listed in map order.** `MemStore.ListByAccount` now sorts by ID, the SQL
+  store's `ORDER BY id`; `TestListByAccountIsInCreationOrder` (NEGATIVE without the sort: "list 2:
+  slot 0 is id 4, want 1").
+- **The re-select kept the standing height.** READ 0x85b680: with +0x12f == 2 x, z and the angles
+  are the camera's, y is set again at LAB_0085c06b from the character's state; now
+  `CharSelectMath.reselect_pose`, flown 1.0 s -- the camera drops to a character that sat down.
+- **No Map.pk2: no way to create.** The races are now the two panels, side by side with the
+  archive's tooltips, and a click on one picks it (OURS).
+- **The ~1.3 MB a visit was `UiBuilder._button_fonts`:** every screen parsed the client face afresh
+  and `guard_button_font` pinned each one. `UiBuilder` now keeps one FontFile per archive and face
+  for the process (`_font_cache`), with the same flags (round 672's crispness tests pass). MEASURED
+  with the reload loop, 7 visits: no 3D, static 80.1 -> 82.4 MB, flat from the third visit (was
+  +1.3 MB every visit), objects flat (was +5); with the harbour, objects +12 and static +0.25 MB a
+  visit (were +15..17 and +1.3..1.5) -- the remainder is in the 3D backdrop's path, not traced
+  (OPEN). It also saves the TTF parse on Login, Create and World3D.
+
+**LOW.** A server disconnect on select now shows the archive's `UIIT_MSG_MSGBOX_NETOFF` and returns
+to the title after 2 s (INFERRED key, OURS delay); the idol pick keeps the LAST hit (READ, case 8
+does not break: China on an overlap); window 500's x is window 2's x + 0x1a; window 501 is
+deliberately not built (READ: shown only with `DAT_00eed9b8`, the unity server); the 1/3 s panel
+fade is labelled READ.
 
 ## Six-hundred-and-eighty-third round: one builder dresses any of the 52 bodies -- China and Europe, men and women -- at the Height and Volume picked, and the create screens' choices come from the player's own archive
 

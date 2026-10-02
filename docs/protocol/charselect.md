@@ -395,6 +395,11 @@ the lizard hides. `FUN_0085cbc0` (fly back from an idol) has no references: dead
 - **EXP** is capped at 99.99 once the percentage reaches it (0xd986f8); the level's EXP is the level
   record's +8, leveldata column 1.
 - **No version line**: it is CPSTitle's window (0x86bc1d); select creates none.
+- **Round 684's review:** the buttons take a click in any state they are shown in (no state check in
+  0x85c4a0, 0x85b560, 0x85c1d0 beyond closing the confirm, 0x85de50 beyond the count); the re-select
+  after a delete or restore keeps the camera's x/z/angles and sets y from the character's state
+  (LAB_0085c06b), 1.0 s; the idol pick keeps the last hit. The Europe bodies' `.bsr`s list only
+  China stand and sit clips (MEASURED), so a Europe woman idles in `chinawoman_merchant_standcity`.
 
 ## 4. Character create / customize (READ unless marked)
 

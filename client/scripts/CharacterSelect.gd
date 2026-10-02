@@ -30,6 +30,7 @@ const STILL_DDJ := "interface\\loading\\loading_constantinople.ddj"
 const TEXT_TABLE_PATH := "server_dep\\silkroad\\textdata\\textuisystem.txt"
 const BUTTON_STATES := ["", "_focus", "_press"]
 const WORLD_SCENE := "res://scenes/World3D.tscn"
+const LOGIN_SCENE := "res://scenes/Login.tscn"
 
 ## Test seams (OURS): what Start sends and how the scene changes, when set;
 ## NetClient.enter_world and the tree's change_scene_to_file otherwise.
@@ -83,6 +84,9 @@ var selected := -1
 var hovered := -1
 var hovered_idol := -1
 var _path: IntroCameraPath = null
+## The pose the camera was last put at (the stage keeps its own; this one
+## serves the no-3D fallback and the tests).
+var _last_pose: IntroCameraPath.Pose = null
 var _level_exp := {}
 ## The countdown's own clock (READ: +0x120 seconds, +0x124 whole minutes).
 var _clock_s := 0.0
@@ -96,6 +100,9 @@ var _shown_min := -1
 var _reselect_index := -1
 var _reselect_deleted := false
 var _confirm_delete := true
+## The state the confirm was opened from (a click during the zoom leaves the
+## fly running; closing goes back to it).
+var _confirm_from: int = S.SELECTED
 var _busy := 0
 var _list_arrived := false
 var _scene_ready := false
@@ -124,6 +131,7 @@ func _ready() -> void:
 	NetClient.character_delete_result.connect(_on_delete_result)
 	NetClient.character_restore_result.connect(_on_restore_result)
 	NetClient.enter_world_result.connect(_on_enter_world_result)
+	NetClient.disconnected.connect(_on_disconnected)
 	_media = FrontEndUi.open_media()
 	FrontEndUi.apply_client_font(self, _media)
 	_text = _load_text_table()
@@ -220,6 +228,7 @@ func _build_ui() -> void:
 		var panel := _art(_def("Select", pair[0]), Vector2(440, 152))
 		add_child(panel)
 		_windows[pair[0]] = panel
+		panel.gui_input.connect(_on_race_panel_input.bind(0 if pair[0] == ID_EUROPE else 1))
 		for c in (_section(pair[1]).controls if _section(pair[1]) != null else []):
 			var cd: UiLayoutParser.ControlDef = c
 			var lab := _static(cd, _t(cd.text, ""))
@@ -336,7 +345,11 @@ func _relayout() -> void:
 		(_windows[id] as Control).position = CharSelectMath.button_position(id, w, band1, band2)
 	var remain := _windows[ID_REMAIN] as Control
 	remain.position = CharSelectMath.countdown_position(w, band2, int(remain.size.x))
-	_message.position = CharSelectMath.button_position(ID_MESSAGE, w, band1, band2)
+	# READ: x is window 2's own x + 0x1a (0x85efdb; 0 in the archive's layout).
+	var band2_x := int(_frame.scaled(down.rect).position.x) if down != null else 0
+	_message.position = CharSelectMath.button_position(ID_MESSAGE, w, band1, band2) + Vector2(band2_x, 0)
+	# Window 501 (the unity-server line) is not built: OnCreate shows it only
+	# when DAT_00eed9b8 is set (READ), a service this server is not.
 	_message.size = Vector2(w - 0x1a, 100)
 	var popup := _windows[ID_POPUP] as Control
 	popup.position = Vector2((w - int(popup.size.x)) / 2, (h - int(popup.size.y)) / 2)
@@ -730,6 +743,7 @@ func _process(delta: float) -> void:
 	_tick_countdown(delta)
 	if _scene_ready and _path != null:
 		var pose := _path.advance(delta)
+		_last_pose = pose
 		if stage != null:
 			stage.show_pose(pose)
 	_tick_labels(delta)
@@ -770,12 +784,36 @@ func _process(delta: float) -> void:
 					stage.set_lizard(false)
 				_update_page_windows()
 				_set_state(S.LIST)
+				_qa_print_anchors()
 		S.IDOL_FLY:
-			if done and _frame != null and _frame.fades_running() == 0:
+			if done and (_frame == null or _frame.fades_running() == 0):
 				_go_create()
 		S.BACK:
 			if done:
-				get_tree().change_scene_to_file("res://scenes/Login.tscn")
+				_leave_to_login()
+
+## Where the camera is now, for a fly that starts from it.
+func _current_pose() -> IntroCameraPath.Pose:
+	if stage != null and stage.current_pose() != null:
+		return stage.current_pose()
+	if _last_pose != null:
+		return _last_pose
+	return CharSelectMath.key_pose(CharSelectMath.LIST_KEYS[1])
+
+## The states the list's buttons (Create 12, Back 13) work in: shown and
+## taking the mouse from the intro on, through a deselect and the fly back
+## from the table. READ: retail's handlers check no state (0x85c4a0,
+## 0x85b560; 0x85de20/0x85de40 just jump); round 684's review found clicks
+## dropped during the flies.
+const LIST_BUTTON_STATES := [S.INTRO, S.PLACE, S.LIST, S.DESELECT, S.PLACE_AGAIN, S.RACE_BACK]
+## Cancel 16, Delete 15 and Restore 25 work from the click on (the zoom).
+const SELECTED_BUTTON_STATES := [S.ZOOM, S.SELECTED]
+
+## OURS: once the screen is leaving (Back's dolly, the idol fly, Start
+## answered) nothing more is taken, and the buttons left on screen say so.
+func _freeze_buttons() -> void:
+	for id in [ID_START, ID_CREATE, ID_DELETE, ID_RESTORE, ID_BACK, ID_DESELECT, ID_RACE_CANCEL, ID_PREV, ID_NEXT]:
+		_set_clickable(_windows.get(id), false)
 
 func _pick_mouse() -> int:
 	if stage == null:
@@ -802,6 +840,8 @@ func _fade_page_labels_out() -> void:
 
 func _fade_label(k: int, to: int) -> void:
 	var i := k % CharSelectMath.PER_PAGE
+	if i >= _labels.size():
+		return
 	var l: Label = _labels[i]
 	l.text = _slots[k].char_name if k < _slots.size() else ""
 	var from := int(roundf(l.modulate.a * 255.0))
@@ -899,10 +939,16 @@ func _select(k: int, reselect: bool) -> void:
 	# Every label fades out (READ, the loop at the function's end).
 	_fade_page_labels_out()
 	hovered = -1
-	if stage != null:
-		var from := stage.current_pose()
-		var to := from if reselect else CharSelectMath.click_pose(stage.drawn[k].slot, r.scale, stage.is_woman(k), r.deleting)
-		_path = CharSelectMath.click_path(from, to, reselect)
+	var from := _current_pose()
+	var woman: bool = stage.is_woman(k) if stage != null else false
+	var to: IntroCameraPath.Pose
+	if reselect:
+		to = CharSelectMath.reselect_pose(from, r.scale, woman, r.deleting)
+	elif stage != null:
+		to = CharSelectMath.click_pose(stage.drawn[k].slot, r.scale, woman, r.deleting)
+	else:
+		to = from
+	_path = CharSelectMath.click_path(from, to, reselect)
 	_set_state(S.ZOOM)
 
 ## READ, FUN_0085b680: name, HP and MP gauges, EXP "%.2f%%", stat points
@@ -921,7 +967,7 @@ func _fill_info(r) -> void:
 
 ## READ, FUN_0085c1d0 (Cancel 16).
 func _on_deselect_pressed() -> void:
-	if state != S.SELECTED:
+	if not state in SELECTED_BUTTON_STATES:
 		return
 	_show(ID_CREATE, true)
 	_show(ID_BACK, true)
@@ -929,8 +975,7 @@ func _on_deselect_pressed() -> void:
 		_show(id, false)
 	_say("", "")
 	selected = -1
-	if stage != null:
-		_path = CharSelectMath.deselect_path(stage.current_pose())
+	_path = CharSelectMath.deselect_path(_current_pose())
 	_set_state(S.DESELECT)
 
 func _change_page(step: int) -> void:
@@ -999,7 +1044,7 @@ func _on_enter_world_result(result: WorldNet.EnterWorldResult) -> void:
 ## guardian, is refused with the archive's line; anyone else gets the
 ## confirm (0x858950).
 func _on_delete_pressed() -> void:
-	if state != S.SELECTED or selected < 0:
+	if not state in SELECTED_BUTTON_STATES or selected < 0:
 		return
 	var r = _slots[selected]
 	match int(r.guild_class):
@@ -1036,6 +1081,7 @@ func _open_confirm(delete: bool) -> void:
 	if _frame != null:
 		_frame.fade(_dim, 0, 0x80, CharSelectMath.FADE_S)
 	UiSounds.play("snd_window_open", "character select: the delete confirm")
+	_confirm_from = state
 	_set_state(S.CONFIRM)
 
 ## READ, 0x858c00: 0x7007 action 3 (delete) or 5 (restore) with the name; the
@@ -1072,7 +1118,7 @@ func _close_confirm() -> void:
 	if _frame != null:
 		_frame.fade(_dim, int(_dim.modulate.a * 255.0), 0, CharSelectMath.FADE_S)
 	UiSounds.play("snd_window_close", "character select: the delete confirm")
-	_set_state(S.SELECTED)
+	_set_state(S.ZOOM if _confirm_from == S.ZOOM else S.SELECTED)
 
 ## READ, vslot_006: OK -> the list is asked for again and the character is
 ## re-selected where the camera is (+0x12f = 2); a refusal shows its words
@@ -1130,7 +1176,7 @@ func _tick_countdown(delta: float) -> void:
 ## Back fade out, Cancel 17 in, the arrows and labels out, and the camera
 ## flies the 4 race keys.
 func _on_create_pressed() -> void:
-	if state != S.LIST:
+	if not state in LIST_BUTTON_STATES:
 		return
 	# READ, 0x85de50: a full account is refused before anything moves.
 	if _slots.size() >= LobbyNet.MAX_CHARACTERS:
@@ -1147,7 +1193,9 @@ func _on_create_pressed() -> void:
 	_show(ID_PAGE, false)
 	_fade_page_labels_out()
 	hovered = -1
-	_path = CharSelectMath.race_path()
+	# OURS: with no 3D there is no table to fly to (the races are offered as
+	# the two panels at once, _arrive_at_table).
+	_path = CharSelectMath.race_path(_current_pose()) if stage != null else null
 	_set_state(S.RACE_FLY)
 
 ## READ, vslot_012 case 7: the idol panels placed over the idols and shown,
@@ -1157,11 +1205,32 @@ func _arrive_at_table() -> void:
 		stage.set_lizard(true)
 	_place_idol_panels()
 	for id in [ID_EUROPE, ID_CHINA]:
-		var p := _windows[id] as Control
+		var p := _windows.get(id) as Control
+		if p == null:
+			continue
 		p.visible = true
 		p.modulate.a = 0.0
+		if stage == null:
+			# OURS, round 684's review: no idols to hover without the 3D, so
+			# both panels -- the archive's own race tooltips -- stand side by
+			# side and a click on one picks that race.
+			var w := size.x if size.x > 0 else 1280.0
+			var h := size.y if size.y > 0 else 720.0
+			p.position = Vector2(w * 0.5 + (-p.size.x - 10.0 if id == ID_EUROPE else 10.0), h * 0.5 - p.size.y * 0.5)
+			p.modulate.a = 1.0
+			p.mouse_filter = Control.MOUSE_FILTER_STOP
 	_set_state(S.RACE)
 	_qa_print_anchors()
+
+## A click on a race panel in the no-3D fallback (OURS).
+func _on_race_panel_input(event: InputEvent, idol_index: int) -> void:
+	var mb := event as InputEventMouseButton
+	if mb != null and mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+		fallback_pick_race(idol_index)
+
+func fallback_pick_race(idol_index: int) -> void:
+	if stage == null and state == S.RACE:
+		_pick_idol(idol_index)
 
 func _place_idol_panels() -> void:
 	if stage == null:
@@ -1198,8 +1267,11 @@ func _pick_idol(i: int) -> void:
 		for id in [ID_EUROPE, ID_CHINA]:
 			_frame.fade(_windows[id], int(_windows[id].modulate.a * 255.0), 0, CharSelectMath.FADE_S)
 	_show(ID_RACE_CANCEL, false)
-	if stage != null:
-		_path = CharSelectMath.idol_path(stage.current_pose(), i)
+	_freeze_buttons()
+	for id in [ID_EUROPE, ID_CHINA]:
+		if _windows.get(id) != null:
+			(_windows[id] as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_path = CharSelectMath.idol_path(_current_pose(), i) if stage != null else null
 	_set_state(S.IDOL_FLY)
 
 func _go_create() -> void:
@@ -1223,7 +1295,10 @@ func _on_race_cancel_pressed() -> void:
 	_show(ID_EUROPE, false)
 	_show(ID_CHINA, false)
 	hovered_idol = -1
-	_path = CharSelectMath.race_back_path()
+	for id in [ID_EUROPE, ID_CHINA]:
+		if _windows.get(id) != null:
+			(_windows[id] as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_path = CharSelectMath.race_back_path(_current_pose()) if stage != null else null
 	_set_state(S.RACE_BACK)
 
 # --- Back ------------------------------------------------------------------------------------
@@ -1231,13 +1306,36 @@ func _on_race_cancel_pressed() -> void:
 ## READ, 0x85b560 (id 13): the black fade 0 -> 255 over 0.5 s, the camera
 ## dollies back up the quay over 2.0 s, then the title.
 func _on_back_pressed() -> void:
-	if state != S.LIST:
+	if not state in LIST_BUTTON_STATES:
 		return
-	_black.visible = true
+	if _black != null:
+		_black.visible = true
 	if _frame != null:
 		_frame.fade(_black, 0, 255, CharSelectMath.FADE_S)
-	_path = CharSelectMath.back_path()
+	_freeze_buttons()
+	_path = CharSelectMath.back_path(_current_pose())
 	_set_state(S.BACK)
+
+func _leave_to_login() -> void:
+	_set_state(S.LOADING)
+	if change_scene.is_valid():
+		change_scene.call(LOGIN_SCENE)
+	else:
+		get_tree().change_scene_to_file(LOGIN_SCENE)
+
+## The server went away (round 684's review: Start and Delete were sent into
+## nothing, silently). The archive's line, then the title. INFERRED: which
+## key retail's select shows here was not read; UIIT_MSG_MSGBOX_NETOFF is the
+## archive's own "disconnected" line. OURS: 2 s to read it.
+func _on_disconnected() -> void:
+	if state == S.LOADING or state == S.ENTERING:
+		return
+	_message.text = _t("UIIT_MSG_MSGBOX_NETOFF", "You have been disconnected from the server.")
+	_freeze_buttons()
+	print("SELECT: disconnected -- %s" % _message.text)
+	_set_state(S.LOADING)
+	if is_inside_tree():
+		get_tree().create_timer(2.0).timeout.connect(_leave_to_login)
 
 # --- QA ---------------------------------------------------------------------------------------
 
