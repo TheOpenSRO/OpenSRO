@@ -685,8 +685,11 @@ are not drawn.
 - ~~**The body under armour.**~~ Done in round 687: a worn item whose `.bsr` attachable block has
   flag 1 hides the body pieces it lists, READ from `CCompChar::FUN_00c1f790` / `FUN_00c1f890`
   (BSR_FORMAT.md). The world's players, the paper doll and the portrait take it through
-  `_build_assembled_character`; the lobby builder through `CharacterAppearance`. Still OPEN: what
-  the block's first two words (+0x314, +0x318) mean, and that part id 1 is the body (INFERRED).
+  `_build_assembled_character`; the create preview through `CharacterPreview.dress`; and
+  `CharacterAppearance` (which no lobby screen uses yet). Still OPEN: what the block's first two
+  words (+0x314, +0x318) mean, that part id 1 is the body (INFERRED), and another player's body is
+  not redressed when their equipment changes, so its hides follow what they wore when they came
+  into view.
 - **The faint translucent shape beside the tester's character** (v0.1.457 screenshot) is not
   from the equipment chain: no worn piece's mesh reaches there, and the one translucent-authored
   item mesh found (`heavy_11_set_b_fly`) belongs to a `_fullset` model v0.1.457 could not load.

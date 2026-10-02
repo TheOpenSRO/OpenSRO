@@ -7885,9 +7885,14 @@ func _build_assembled_character(equipped: Dictionary = {}, gender: String = DEFA
 			worn += 1
 			blocks.append(attached.attachable)
 	# The body's own pieces under what it wears are switched off, as retail
-	# does (round 687, READ CCompChar::FUN_00c1f790 / FUN_00c1f890). Every
-	# change of equipment rebuilds this body, so the show-all-then-re-apply of
-	# an unequip is this same call on the new set.
+	# does (round 687, READ CCompChar::FUN_00c1f790 / FUN_00c1f890). The local
+	# player's body and the paper doll are rebuilt on every equipment change
+	# (_apply_player_equipment_visual), so for them an unequip's
+	# show-all-then-re-apply is this same call on the new set. Another
+	# player's body is built once, when they come into view
+	# (_spawn_or_update_other only records a later _other_equipped and does
+	# not redress them -- OPEN, round 687), so its hides follow what they wore
+	# then.
 	var hidden := SkinnedBsrAssembler.apply_body_hides(assembled.skeleton, assembled.parsed, blocks)
 	if not equipped.is_empty():
 		print("World3D: %s wears %d/%d item(s), %d body mesh(es) hidden under them" % [gender, worn, equipped.size(), hidden])

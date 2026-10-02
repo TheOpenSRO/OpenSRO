@@ -105,14 +105,31 @@ func _rebuild() -> void:
 	if assembled == null:
 		return
 	# Dress the body in the starting outfit (the real kit the server gives).
+	var models: Array = []
 	for item_id in STARTING_KIT.get(_gender, []):
 		var model: String = _item_models.get(item_id, "")
 		if model != "":
-			SkinnedBsrAssembler.attach_item_from_archive(_data_pk2, assembled.skeleton, model)
+			models.append(model)
+	dress(assembled, models, func(model: String) -> SkinnedBsrAssembler.AttachedItem:
+		return SkinnedBsrAssembler.attach_item_from_archive(_data_pk2, assembled.skeleton, model))
 	_skeleton = assembled.skeleton
 	_idle = assembled.idle_animation
 	_anim_time = 0.0
 	_doll.set_character(_skeleton)
+
+## Hangs each of `models` on the body through `attach` (model path ->
+## SkinnedBsrAssembler.AttachedItem or null), then hides the body's own pieces
+## the worn items cover, as the world does (round 687, READ
+## CCompChar::FUN_00c1f790; SkinnedBsrAssembler.apply_body_hides). Returns how
+## many body meshes were hidden. `attach` is a parameter so a test can dress a
+## synthetic body without an archive.
+static func dress(assembled: SkinnedBsrAssembler.AssembledCharacter, models: Array, attach: Callable) -> int:
+	var blocks: Array = []
+	for model in models:
+		var attached = attach.call(model)
+		if attached != null:
+			blocks.append((attached as SkinnedBsrAssembler.AttachedItem).attachable)
+	return SkinnedBsrAssembler.apply_body_hides(assembled.skeleton, assembled.parsed, blocks)
 
 ## Advances the idle so the preview breathes instead of holding its bind
 ## pose. The skeleton is re-framed once by PaperDoll on set_character; the

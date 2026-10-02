@@ -7099,7 +7099,8 @@ placed object more than 12 off its region's ground on the box's archive.
 Round 683 built the bodies and found the body's own skin showing through worn armour on 2-21 % of
 an armour's pixels. Its review searched the visual-change masks for a way the client hides a body
 piece, found none, and left the rule out as uninvented. A research pass then READ it in the
-`.bsr` files, and this round implements it in the lobby builder and in the world.
+`.bsr` files, and this round implements it in `CharacterAppearance` (the builder no lobby screen uses
+yet), the create screen's preview (`CharacterPreview`, added by the review) and the world.
 
 ### 1. The rule (READ, sro_client.exe; the decompile on the box)
 
@@ -7257,6 +7258,56 @@ only) and a walk of the skeleton's children per dressed body.
 - The world still draws no default wear (`clothes_00_*`) in an empty slot (round 283); when it
   does, those items' blocks hide too.
 - The Go reader (`server/internal/bsr`) does not read the block; the server has no use for it.
+- Another player's body is built once, when they come into view; `_spawn_or_update_other` records
+  a later equipment list in `_other_equipped` but does not redress them, so their hides (like their
+  worn items) follow what they wore then. Pre-existing, not this round's; the review found it.
+
+### 8. Review
+
+The review passed the round: the world path is safe, every READ claim was confirmed against the
+decompile, a parser sweep over all 8,539 `.bsr` files is clean with `attachable_tail_end` unchanged,
+and the show-through numbers reproduce. A trial merge onto dev e516d7c conflicted only in this file.
+It raised one MEDIUM and three LOWs, all fixed in a follow-up commit, and asked for the merge.
+
+**MEDIUM: the create preview did not hide.** `CharacterPreview._rebuild`, the only live lobby
+screen today, hung the starting kit with `attach_item_from_archive` and never called
+`apply_body_hides`, so a new player's preview still showed skin through the clothes. It now
+collects the kit's names and calls `CharacterPreview.dress(assembled, models, attach)`. That static
+helper attaches each model through the given callable, collects each `attached.attachable` and
+calls `SkinnedBsrAssembler.apply_body_hides` as World3D does. The callable is there so the test can
+dress a synthetic body without an archive. Round 685 is rebuilding this screen on
+`CharacterAppearance` in parallel, so the change stays inside `_rebuild` plus that helper.
+New test `character_preview_test.gd`: a synthetic body with front-pass twins, dressed in a chest
+{2,3,5}, legs {11,12} and feet {13}, each flag 1, plus a model that does not load. Hair, face and
+forearm stay, six meshes are hidden, and the twins hide with them. Negatives on the box's copy:
+- `dress` returning without the hides:
+  ```
+  FAIL the kit hides torso, upper arm, pelvis, thigh and calf; hair, face and forearm show (got [0, 1, 2, 3, 5, 6, 11, 12, 13])
+  FAIL six body meshes hidden, each counted once with its front-pass twin (got 0)
+  FAIL the front-pass twins hide with their meshes (got 0)
+  ```
+- the count taken per node, as before the LOW below was fixed:
+  ```
+  FAIL six body meshes hidden, each counted once with its front-pass twin (got 12)
+  ```
+
+**LOW: "the lobby builder" overclaimed.** No lobby screen uses `CharacterAppearance` yet. This
+entry, docs/TODO.md and charselect.md now name the create preview (`CharacterPreview`) and
+`CharacterAppearance`.
+
+**LOW: "every change of equipment rebuilds this body"** (the World3D comment) is true only for the
+local player and the paper doll. The comment now says so and names the other-player gap (OPEN,
+section 7).
+
+**LOW: the hidden count counted nodes.** A body mesh's front-pass twin was counted again.
+`apply_body_hides` now counts each hidden mesh index once (the doc comments say so). The counts in
+section 3 and the world's 5 are unchanged: none of those bodies' hidden pieces has a twin (MEASURED: the probe re-run after the fix gives the
+same table, cell for cell, and the same 3 and 6 for the close-ups).
+
+**Merge.** origin/dev (e516d7c, round 686 and its review) is merged in. WORLD_ISSUES was resolved
+with the coordinator's `wi_resolve.py`, which orders the entries 687 then 686. After the
+follow-up: `remote_godot.sh check` 511 scripts and 8 scenes, ALL LOAD; `remote_godot.sh tests` 201
+suites, 0 failing.
 
 ## Six-hundred-and-eighty-sixth round: a town gate's "Designate as return/recall point" sets the character's return point, and a return goes there -- else to the race's own gate, Jangan's for China and Constantinople's for Europe
 

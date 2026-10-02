@@ -1034,7 +1034,7 @@ box. `perf_gate.sh` for B3.
   1 face, 2/3 torso, 5/6 arms, 11 pelvis, 12 thigh, 13 calf, MEASURED) to one of its meshes; an
   item's block lists the keys it covers, and with flag 1 the client switches those body meshes off
   when it attaches the item (`CCompChar::FUN_00c1f790`) and re-derives them when a part comes off
-  (`FUN_00c1f890`). The builder and the world now do the same: the worst show-through went from
+  (`FUN_00c1f890`). `CharacterAppearance`, the create preview (`CharacterPreview`) and the world now do the same: the worst show-through went from
   21.30 % to 5.58 % of an armour's pixels (WORLD_ISSUES round 687). What is left is body pieces no
   worn item lists, which the client draws too.
 - The weight half of the missing-palette-bone rule (`ResObject::FUN_00be2f80` leaves a missing

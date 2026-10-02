@@ -257,7 +257,8 @@ const BODY_MESH_META := &"bsr_mesh_index"
 ## `skeleton` by BODY_MESH_META, never by position or name: mesh order
 ## differs per file (MEASURED across the 53 Figures). Showing first makes it
 ## safe to call again after any change -- an unequip is a call with the
-## remaining items. Returns how many body mesh nodes it hid.
+## remaining items. Returns how many body meshes it hid (a mesh's front-pass
+## twin is not counted again).
 static func apply_body_hides(skeleton: Skeleton3D, body: BsrReader.ParsedObject, items: Array) -> int:
 	if skeleton == null:
 		return 0
@@ -278,10 +279,14 @@ static func apply_body_hides(skeleton: Skeleton3D, body: BsrReader.ParsedObject,
 			continue
 		for key in block.keys():
 			for idx in body.attachable.values_for(key):
-				for n in by_index.get(idx, []):
-					if (n as Node3D).visible:
-						(n as Node3D).visible = false
-						hidden += 1
+				var nodes: Array = by_index.get(idx, [])
+				if nodes.is_empty() or not (nodes[0] as Node3D).visible:
+					continue
+				# One body mesh, counted once: its front-pass twin (and a rigid
+				# piece's attachment) is the same mesh drawn again.
+				for n in nodes:
+					(n as Node3D).visible = false
+				hidden += 1
 	return hidden
 
 ## What attaching one item produced, for a caller that wants to report it.

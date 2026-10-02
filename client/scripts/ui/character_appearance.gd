@@ -157,7 +157,8 @@ class Body extends Node3D:
 	## nodes: [Node3D], drawn: [paths], attachables: [BsrReader.Attachable or
 	## null, one per drawn path]}.
 	var worn: Array = []
-	## How many body mesh nodes the worn items hide now (apply_hides).
+	## How many body meshes the worn items hide now (apply_hides); a mesh's
+	## front-pass twin is not counted again.
 	var hidden_body_meshes: int = 0
 	## The body's assembled template (shared): its parsed `.bsr` names the animations.
 	var assembled: SkinnedBsrAssembler.AssembledCharacter

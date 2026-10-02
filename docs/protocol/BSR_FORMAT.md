@@ -716,8 +716,8 @@ reader (`BsrReader.parse_attachable`) keeps the block and counts them in `traili
   re-applied.
 
 The client: `BsrReader.Attachable` (read for type 0 and 5), `SkinnedBsrAssembler.apply_body_hides`
-(the show-all-then-re-apply), used by `CharacterAppearance.build` / `unequip` and World3D's
-`_build_assembled_character`.
+(the show-all-then-re-apply), used by `CharacterAppearance.build` / `unequip`, the create preview's
+`CharacterPreview.dress` and World3D's `_build_assembled_character`.
 
 ### The parse-all check (MEASURED)
 
