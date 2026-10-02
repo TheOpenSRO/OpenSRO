@@ -22,10 +22,13 @@ extends Control
 ## The plain panel's layout constants are OURS, eyeballed against the frame
 ## art (288x140).
 ##
-## Server address is user-entered so a friend on the same LAN can point at
-## the host's real IP (e.g. "192.168.1.23:15779"); it defaults to
-## 127.0.0.1:15779 and is remembered (ClientSettings) between runs. The
-## password never is.
+## The server (round 679): when setting/config.yaml lists servers
+## (ClientConfig), the Server field shows the chosen one's name, read-only,
+## and the LIST button opens the server list (ServerListWindow) with each
+## server's status; the last choice is remembered. Without a list the field
+## is a typed host:port, so a friend on the same LAN can point at the host's
+## real IP (e.g. "192.168.1.23:15779"); it defaults to 127.0.0.1:15779 and is
+## remembered (ClientSettings) between runs. The password never is.
 
 const DdjReader = preload("res://scripts/ddj/ddj_reader.gd")
 
@@ -75,6 +78,11 @@ const ID_STATIC_SERVER := 103
 const ID_EDIT_ID := 41
 const ID_EDIT_PASS := 42
 const ID_STA_SERVER := 43
+## GDR_BTN_SERVER, the LIST button (READ, pstitle.txt: 203,86 48x24,
+## list_button.ddj, which carries the word in its art).
+const ID_BTN_SERVER := 44
+## The password field's mask (READ: see _login_edit).
+const PASSWORD_CHAR := "*"
 
 var _media: Pk2Reader = null
 var _started_ms := 0
@@ -90,6 +98,18 @@ var _skip_pending := false
 var _layout: UiLayoutParser.LayoutDef = null
 ## The address the theme was asked of (the cache is kept per address).
 var _theme_address := ""
+## setting/config.yaml (round 679): never null once _ready has run.
+var _config: ClientConfig = null
+## The chosen server when the config lists servers, else null (the typed
+## host:port field).
+var _selected: ClientConfig.ServerEntry = null
+## SRREVAMP_QA_SERVER's address, which a QA run connects to whatever the
+## config lists.
+var _address_override := ""
+var _list_button: Button = null
+var _server_list: ServerListWindow = null
+## What the open server list hid (_set_login_visible).
+var _hidden_for_list: Array = []
 
 func _ready() -> void:
 	_started_ms = Time.get_ticks_msec()
@@ -103,8 +123,9 @@ func _ready() -> void:
 	# below; the screen is built when it answers or gives up.
 	# The theme comes from the server this screen will connect to: the one
 	# remembered from last time (or a QA run's SRREVAMP_QA_SERVER).
+	_load_config()
 	var qa_server := OS.get_environment("SRREVAMP_QA_SERVER")
-	_theme_address = (qa_server if qa_server != "" else _remembered_address()).strip_edges()
+	_theme_address = (qa_server if qa_server != "" else _target_address()).strip_edges()
 	var address := _parse_server_address(_theme_address)
 	_query = ThemeQuery.new()
 	_query.name = "ThemeQuery"
@@ -151,21 +172,19 @@ func _finish_ready() -> void:
 	var svc := AudioService.instance()
 	if svc != null and svc.music != null:
 		svc.music.play_intro(_title_music())
-	# The server that last answered and the account name come back from the
-	# previous run so a tester is not retyping host:port every launch.
-	server_address_edit.text = _remembered_address()
-	# Retail's server slot is 86 px (READ); a host:port longer than it
-	# scrolls -- shown from its end, so the port is in view, with the whole
-	# address as the tooltip (round 678's review, OURS).
-	server_address_edit.caret_column = server_address_edit.text.length()
-	server_address_edit.tooltip_text = server_address_edit.text
-	server_address_edit.text_changed.connect(func(t: String) -> void: server_address_edit.tooltip_text = t)
+	# A listed server's name, read-only (LIST chooses another); else the
+	# server that last answered, so a tester is not retyping host:port every
+	# launch, with the account name.
+	show_server_field(server_address_edit, _selected, _remembered_address())
+	if _selected == null:
+		server_address_edit.text_changed.connect(func(t: String) -> void: server_address_edit.tooltip_text = t)
 	var remembered_username := ClientSettings.username()
 	if remembered_username != "":
 		username_edit.text = remembered_username
 	# Enter submits from any field.
 	for field in [username_edit, password_edit, server_address_edit]:
 		field.text_submitted.connect(func(_t): _on_login_pressed())
+	_set_tab_order()
 	# SRREVAMP_QA_RECONNECT_VIA_LOGIN (round 558): a scripted reconnect that
 	# takes the tester's route lands here from World3D._on_disconnected.
 	# Sign back in with the QA account through the same Connect path a click
@@ -181,6 +200,112 @@ func _remembered_address() -> String:
 	var remembered := ClientSettings.server_address()
 	return remembered if remembered != "" else "127.0.0.1:%d" % DEFAULT_SERVER_PORT
 
+## Tab moves between the ID and password fields only, as retail's does
+## (round 679's review) -- and the server field when it is a typed host:port;
+## LIST, Connect, Exit and the register link take no keyboard focus, so
+## Enter in a field always submits.
+func _set_tab_order() -> void:
+	var cycle: Array = [username_edit, password_edit]
+	if server_address_edit != null and server_address_edit.editable:
+		cycle.append(server_address_edit)
+	for i in range(cycle.size()):
+		var a: Control = cycle[i]
+		var b: Control = cycle[(i + 1) % cycle.size()]
+		a.focus_next = a.get_path_to(b)
+		b.focus_previous = b.get_path_to(a)
+	for b in [login_button, _exit_button, register_button, _list_button]:
+		if b != null:
+			(b as Control).focus_mode = Control.FOCUS_NONE
+
+## The field a returning player types into: the password when the ID is
+## filled, else the ID.
+func _focus_first_empty() -> void:
+	if username_edit == null or not username_edit.is_inside_tree() or not username_edit.is_visible_in_tree():
+		return
+	if username_edit.text == "":
+		username_edit.grab_focus()
+	else:
+		password_edit.grab_focus()
+
+## setting/config.yaml, and the server it starts on (round 679).
+func _load_config() -> void:
+	var warnings := PackedStringArray()
+	_config = ClientConfig.load_default(warnings)
+	for w in warnings:
+		print("SETTING: %s" % w)
+	print("SETTING: %s %s" % [ClientConfig.config_path() if _config.source != "" else "no " + ClientConfig.config_path(), _config.describe()])
+	_selected = _config.pick_server(ClientSettings.server_name())
+
+## The address Connect goes to (and the theme is asked of): the QA
+## override, else the chosen listed server's gateway, else the typed field
+## (before the screen exists, the remembered address).
+func _target_address() -> String:
+	if _address_override != "":
+		return _address_override
+	if _selected != null:
+		return _selected.gateway_address()
+	if server_address_edit != null:
+		return server_address_edit.text
+	return _remembered_address()
+
+## The chosen server's name in the Server field (round 679): centred and
+## read-only like retail's GDR_STA_SERVER static, the address as its tooltip.
+func _show_selected_server() -> void:
+	if server_address_edit != null and _selected != null:
+		show_server_field(server_address_edit, _selected, "")
+
+## LIST (GDR_BTN_SERVER): the server list, with each server's status.
+func _open_server_list() -> void:
+	if _config == null or not _config.has_servers():
+		return
+	if _server_list != null and is_instance_valid(_server_list):
+		_server_list.refresh_now()
+		return
+	_server_list = ServerListWindow.new()
+	_server_list.name = "ServerListWindow"
+	add_child(_server_list)
+	_server_list.chosen.connect(_on_server_chosen)
+	_server_list.closed.connect(_on_server_list_closed)
+	_server_list.open(_media, _frame, _text, _config.servers, _selected)
+	if _title != null:
+		_title.logo_held = true
+	_set_login_visible(false)
+
+func _on_server_chosen(entry: ClientConfig.ServerEntry) -> void:
+	_selected = entry
+	_show_selected_server()
+	ClientSettings.set_value(ClientSettings.SECTION_SERVER, ClientSettings.KEY_SERVER_NAME, entry.name)
+	print("LOGIN: server '%s' chosen (%s)" % [entry.name, entry.gateway_address()])
+
+func _on_server_list_closed() -> void:
+	_server_list = null
+	_set_login_visible(true)
+	# A reveal of the logo that came due while the list was open (round
+	# 679's review).
+	if _title != null:
+		_title.release_logo()
+	# The fields again take the keys (round 679's review).
+	_focus_first_empty.call_deferred()
+
+## The logo, login window, Connect and Exit while the server list is up:
+## READ, LIST's FUN_00864870(1, 0) fades windows 8, 9, 11 and 12 out as it
+## fades the list in, and Cancel/Select the reverse (the 0.5 s fades are
+## left out, OURS).
+## Only what was showing is hidden, and only that is shown again (the
+## archive's logo stays held back over the 2D still, round 678's L2).
+func _set_login_visible(on: bool) -> void:
+	if not on:
+		_hidden_for_list.clear()
+		for n in [_login_window, login_button, _exit_button, register_button, _frame.logo if _frame != null else null]:
+			if n != null and (n as CanvasItem).visible:
+				(n as CanvasItem).visible = false
+				_hidden_for_list.append(n)
+		return
+	for n in _hidden_for_list:
+		if is_instance_valid(n):
+			(n as CanvasItem).visible = true
+	_hidden_for_list.clear()
+
 ## SRREVAMP_QA_RECONNECT_VIA_LOGIN: fill the fields from the QA environment
 ## (SRREVAMP_QA_SERVER; the account QaSignIn reads) and press Connect. Says
 ## why when it cannot, so a run that stalls on this screen says so in its
@@ -191,7 +316,9 @@ func _qa_sign_in() -> void:
 		printerr("QA RECONNECT: Login has no SRREVAMP_QA_SERVER to sign in to -- staying on the login screen")
 		return
 	var credentials := QaSignIn.account_credentials()
-	server_address_edit.text = target
+	_address_override = target
+	if _selected == null:
+		server_address_edit.text = target
 	username_edit.text = credentials[0]
 	password_edit.text = credentials[1]
 	print("QA RECONNECT: Login signing in to %s as %s at frame %d" % [target, credentials[0], Engine.get_frames_drawn()])
@@ -220,7 +347,7 @@ func _on_theme_answer(server_theme: FrontEndTheme, why: String) -> void:
 		cached = FrontEndTheme.cached(_theme_address)
 	for w in warnings:
 		print("FrontEnd: theme: %s" % w)
-	_theme = FrontEndTheme.resolve(preview, server_theme, cached, custom)
+	_theme = FrontEndTheme.resolve(preview, server_theme, cached, custom, _config.to_theme() if _config != null else null)
 	print("FrontEnd: server theme %s (%s at %d ms); theme: %s" % [
 		"answered" if server_theme != null else "not used", why,
 		Time.get_ticks_msec() - _started_ms, _theme.describe()])
@@ -273,11 +400,22 @@ func _build_title_ui(custom_dir: String) -> void:
 	_login_label(ID_STATIC_SERVER, "Server")
 	username_edit = _login_edit(ID_EDIT_ID, false)
 	password_edit = _login_edit(ID_EDIT_PASS, true)
-	# OURS: the server slot takes a typed host:port (this client has no
-	# server list; retail shows the chosen server's name here and opens its
-	# list with the LIST button, GDR_BTN_SERVER, which is left out).
 	server_address_edit = _login_edit(ID_STA_SERVER, false)
-	server_address_edit.placeholder_text = "host:port"
+	if _selected != null:
+		# Round 679: a listed server's name, read-only (retail's
+		# GDR_STA_SERVER is a static), and the LIST button beside it.
+		show_server_field(server_address_edit, _selected, "")
+		_list_button = _art_button(_frame.login_def(ID_BTN_SERVER), "", "")
+		_list_button.name = "ListButton"
+		var lb := _frame.login_def(ID_BTN_SERVER)
+		if lb != null:
+			_list_button.position = Vector2(lb.rect.position)
+		_list_button.pressed.connect(_open_server_list)
+		_login_window.add_child(_list_button)
+	else:
+		# OURS: no list in setting/config.yaml -- the slot takes a typed
+		# host:port, and the LIST button is left out.
+		server_address_edit.placeholder_text = "host:port"
 
 	login_button = _art_button(_frame.def(FrontEndFrame.ID_OK), "UIO_CTL_CONNECT", "Connect")
 	login_button.pressed.connect(_on_login_pressed)
@@ -340,23 +478,75 @@ func _login_label(id: int, fallback: String) -> void:
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_login_window.add_child(label)
 
+## The ID, password and server slots. READ (pstitle.txt's Login section):
+## GDR_EDIT_ID, GDR_EDIT_PASS and GDR_STA_SERVER all carry HAlign=1, centred
+## text -- the layout parser's own 0 = left, 1 = centre, 2 = right -- where
+## the labels carry 0; the password field masks with PASSWORD_CHAR.
 func _login_edit(id: int, secret: bool) -> LineEdit:
-	var d := _frame.login_def(id)
 	var field := LineEdit.new()
+	style_login_edit(field, _frame.login_def(id), secret, _login_window)
+	return field
+
+## One slot's field from its layout control (null: centred, font 0), added
+## to `parent` (when given) BEFORE it is sized: outside the tree a Control's
+## size is clamped to the default theme's minimum, and the 20-tall slots came
+## out 31 tall with their text 5.5 low (round 679's review). Retail centres the
+## text vertically too (VAlign=1 on 41/42/43; FUN_00637b70, top + (h -
+## textHeight) * 0.5), which a LineEdit does in its own height.
+static func style_login_edit(field: LineEdit, d: UiLayoutParser.ControlDef, secret: bool, parent: Node = null) -> void:
 	field.secret = secret
+	field.secret_character = PASSWORD_CHAR
+	field.alignment = _h_alignment(d.halign if d != null else 1)
 	field.flat = true # on the frame's own dark slot
-	field.add_theme_font_size_override("font_size", _font_size(d.font_index if d != null else 0))
+	field.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[clampi(d.font_index if d != null else 0, 0, UiBuilder.FONT_SIZES.size() - 1)])
 	field.add_theme_color_override("font_color", d.font_color if d != null else Color.WHITE)
 	field.add_theme_constant_override("minimum_character_width", 1)
 	var empty := StyleBoxEmpty.new()
 	for sb in ["normal", "focus", "read_only"]:
 		field.add_theme_stylebox_override(sb, empty)
+	field.custom_minimum_size = Vector2.ZERO
+	if parent != null:
+		parent.add_child(field)
 	if d != null:
 		field.position = Vector2(d.rect.position)
 		field.size = Vector2(d.rect.size)
-	field.custom_minimum_size = Vector2.ZERO
-	_login_window.add_child(field)
-	return field
+
+## What the Server field shows (round 679): a listed server's name, centred
+## and read-only like retail's GDR_STA_SERVER static, with its address as the
+## tooltip; or, without a list, the typed host:port, editable. Retail's slot
+## is 86 px (READ); a host:port longer than it scrolls -- shown from its end,
+## so the port is in view, with the whole address as the tooltip (round
+## 678's review, OURS).
+static func show_server_field(field: LineEdit, entry: ClientConfig.ServerEntry, address: String) -> void:
+	if entry != null:
+		field.text = entry.name
+		_make_read_only(field)
+		field.tooltip_text = entry.gateway_address()
+		field.caret_column = 0
+		return
+	field.editable = true
+	field.focus_mode = Control.FOCUS_ALL
+	field.text = address
+	field.caret_column = field.text.length()
+	field.tooltip_text = address
+
+static func _h_alignment(halign: int) -> HorizontalAlignment:
+	match halign:
+		1:
+			return HORIZONTAL_ALIGNMENT_CENTER
+		2:
+			return HORIZONTAL_ALIGNMENT_RIGHT
+	return HORIZONTAL_ALIGNMENT_LEFT
+
+## A field that shows a value and cannot be typed into or focused.
+static func _make_read_only(field: LineEdit) -> void:
+	field.editable = false
+	field.focus_mode = Control.FOCUS_NONE
+	field.context_menu_enabled = false
+	field.selecting_enabled = false
+	field.mouse_default_cursor_shape = Control.CURSOR_ARROW
+	# Read-only keeps the font colour (Godot greys it by default).
+	field.add_theme_color_override("font_uneditable_color", field.get_theme_color("font_color"))
 
 func _art_button(d: UiLayoutParser.ControlDef, text_key: String, fallback: String) -> Button:
 	var b := Button.new()
@@ -402,11 +592,7 @@ func _load_text_table() -> UiTextTable:
 
 func _on_title_login_shown() -> void:
 	print("LOGIN: usable at %d ms" % (Time.get_ticks_msec() - _started_ms))
-	if username_edit != null and username_edit.is_inside_tree():
-		if username_edit.text == "":
-			username_edit.grab_focus()
-		else:
-			password_edit.grab_focus()
+	_focus_first_empty()
 
 ## READ: a left button press (CPSTitle::vslot_017, message 0x201) or any key
 ## (FUN_0086ae50) while the login window is not up brings it in at once.
@@ -466,6 +652,8 @@ func _build_ui() -> void:
 	panel.set_anchors_preset(Control.PRESET_CENTER)
 	panel.position = Vector2(-panel_size.x * 0.5, -panel_size.y * 0.5 + 60.0)
 	add_child(panel)
+	# The plain panel is this screen's login window (the server list hides it).
+	_login_window = panel
 
 	var frame_tex := _load_ddj(media, FRAME_DDJ)
 	if frame_tex != null:
@@ -483,6 +671,18 @@ func _build_ui() -> void:
 		panel.add_child(plate)
 
 	server_address_edit = _slot_field(panel, panel_size, SLOT_SERVER, "Server", "127.0.0.1:15779", false)
+	if _selected != null:
+		# Round 679: the listed server's name and a plain List button (no
+		# archive art without Media.pk2).
+		show_server_field(server_address_edit, _selected, "")
+		_list_button = _text_button("List", Vector2(0, 0))
+		_list_button.name = "ListButton"
+		_list_button.add_theme_font_size_override("font_size", 13)
+		var h := panel_size.y * SLOT_HEIGHT_FRAC
+		_list_button.position = Vector2(panel_size.x * (SLOT_SERVER[2] + 0.02), panel_size.y * SLOT_SERVER[3] - h * 0.5)
+		_list_button.size = Vector2(panel_size.x * 0.12, h)
+		_list_button.pressed.connect(_open_server_list)
+		panel.add_child(_list_button)
 	username_edit = _slot_field(panel, panel_size, SLOT_ID, "ID", "", false)
 	password_edit = _slot_field(panel, panel_size, SLOT_PW, "PW", "", true)
 
@@ -538,20 +738,22 @@ func _slot_field(panel: Control, panel_size: Vector2, slot: Array, label_text: S
 	label.add_theme_color_override("font_color", Color(0.93, 0.86, 0.6))
 	label.add_theme_color_override("font_outline_color", Color.BLACK)
 	label.add_theme_constant_override("outline_size", 4)
+	panel.add_child(label) # before sizing (round 679's review)
 	label.position = Vector2(panel_size.x * slot[0], cy - h * 0.5)
 	label.size = Vector2(panel_size.x * (slot[1] - slot[0]) - 4.0, h)
-	panel.add_child(label)
 
 	var field := LineEdit.new()
 	field.text = default_text
 	field.secret = secret
+	field.secret_character = PASSWORD_CHAR
+	field.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	field.flat = true # sit on the frame's own dark slot
 	field.add_theme_color_override("font_color", Color(1, 1, 1))
 	field.add_theme_color_override("font_outline_color", Color.BLACK)
 	field.add_theme_constant_override("outline_size", 3)
+	panel.add_child(field) # before sizing (round 679's review)
 	field.position = Vector2(panel_size.x * slot[1], cy - h * 0.5)
 	field.size = Vector2(panel_size.x * (slot[2] - slot[1]), h)
-	panel.add_child(field)
 	return field
 
 func _plate() -> Control:
@@ -624,10 +826,12 @@ func _connect_and_send() -> void:
 	if NetClient.is_connected_to_server():
 		_send_pending_action()
 		return
-	var address := _parse_server_address(server_address_edit.text)
+	var address := _parse_server_address(_target_address())
 	if address.is_empty():
 		status_label.text = "Enter a valid server address, e.g. 192.168.1.23:15779"
 		return
+	if _server_list != null and is_instance_valid(_server_list):
+		_server_list.close()
 	status_label.text = "Connecting..."
 	# The title's backdrop stops starting new cells (round 678's review): the
 	# screen may be left soon, and leaving waits for any still preparing.
@@ -655,7 +859,10 @@ func _parse_server_address(text: String) -> Dictionary:
 	return {"host": host, "port": port}
 
 func _on_connected() -> void:
-	ClientSettings.set_value(ClientSettings.SECTION_SERVER, ClientSettings.KEY_ADDRESS, server_address_edit.text.strip_edges())
+	if _selected != null and _address_override == "":
+		ClientSettings.set_value(ClientSettings.SECTION_SERVER, ClientSettings.KEY_SERVER_NAME, _selected.name)
+	else:
+		ClientSettings.set_value(ClientSettings.SECTION_SERVER, ClientSettings.KEY_ADDRESS, _target_address().strip_edges())
 	ClientSettings.set_value(ClientSettings.SECTION_SERVER, ClientSettings.KEY_USERNAME, username_edit.text)
 	_send_pending_action()
 
@@ -672,8 +879,11 @@ func _send_pending_action() -> void:
 		status_label.text = "Registering..."
 		NetClient.register_account(username, password)
 
+## READ: retail's title says UIO_MSG_ERROR_SEVER_CONNECT ("Failed to connect
+## to server.") when its gateway connection fails (FUN_00861890, which adds
+## "(C<code>)"; this client has no such code, so none is shown).
 func _on_connection_failed() -> void:
-	status_label.text = "Could not connect to server."
+	status_label.text = _text_for("UIO_MSG_ERROR_SEVER_CONNECT", "Could not connect to server.")
 	_qa_report(status_label.text)
 	# The front-end message box sounds snd_error (0x8613b0, read); that the
 	# title screen's refusals go through it is inferred (UiSounds.error_box).

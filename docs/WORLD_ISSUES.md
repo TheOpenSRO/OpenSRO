@@ -7094,6 +7094,227 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-seventy-ninth round: the logo sits clear above the login box at every screen size, the fields are centred with a `*` password, and a `setting/config.yaml` beside the game lists servers by name behind retail's LIST button, each with its Easy / Populated / Crowded / FULL / Check status
+
+The user (2026-10-01, on v0.1.469's 3D login): "the Silkroad Online logo about the login text seems
+a bit low ... the logo is full visible plus some padding below that. Additionally the text in the
+input needs to be centered and password should be asterisks not dots ... Create a "setting" directory
+alongside the game like pk2 so we have a place to store client configs and client save data ... a
+general client config where you can specify a list of servers like the game ... name the server with
+the key value ... You can only see ESRO if you click the list button which you need to add ... the
+client should check the server status and see if it's under "Check" status, online at all, or give a
+general idea of the server population ... "Easy", "Populated", "Crowded", and "Full" and they're
+color coded. Look up how the game does that." The pop-in fix from the same message is lane
+`preload680`.
+
+Labels: READ (`/var/tmp/decomp_client`, `/var/tmp/sro_client.asm`, constants read from
+`sro_client.exe`, the archive's own files), MEASURED (the render box), INFERRED, OURS, OPEN. Every
+address is in the new `docs/protocol/server_list.md`; the operator's guide is deploy/README.md,
+"Configuring the client: setting/config.yaml".
+
+### 1. What retail does (READ)
+
+- **The logo** (`FUN_00866760`, 0x8667e4..0x866803): `(cx - w/2, mid + 6 - 0x78)` whatever its
+  height; its size is pstitle's 508x172 scaled by w/1600, h/1200 (`FUN_00849c70`; 1600.0 / 1200.0 at
+  0xed7cc8 / 0xed7ccc, read from .data); the login window at `mid + 6`, unscaled. Our scaling and
+  placement were already retail's: **the overlap is retail's own geometry** on any screen (canvas)
+  taller than 837 -- the logo is 120 tall there and grows with the height while its top stays 120
+  above the box. At the reference's 1024x768 it is 110 tall with 10 clear.
+- **The fields:** HAlign is stored at descriptor+0x88 (0x82c76e) and CIFEdit's text placement
+  (`FUN_00637b70`) centres for 1, `left + (right - left - textWidth) * 0.5`; pstitle gives the ID, PW
+  and server controls HAlign=1. The password: OnCreate sets style bit 2 on edit 42 (0x86bba6) and
+  `FUN_00636330` draws one `*` (0x2a) per character (`rep stos` at 0x6363d9).
+- **The list** (window 10, `server_window.ddj` 240x340 at `(max(cx - 0x78, 0), max(mid - 0xaf, 0))`;
+  Select/Cancel at `(x + 0x15 / 0x82, y + 0x15e)`; columns name 15/120 and status 152/45; 13 rows;
+  `server_select.ddj` / `server_rollover.ddj`). LIST (`FUN_00864870(1, 0)`) asks for the list, fades the
+  window in and the logo, box, Connect and Exit out; Select (`FUN_00866eb0`) puts the name in the
+  Server static; the list is asked again every **5.0 s** while open (0xe1b86c, `CPSTitle::vslot_012`).
+  The last server is the registry's `RECENTSERVER`.
+- **The status** (`FUN_00869cd0`, 0x86a703..0x86ac51): state 0 -> **Check** 0xFFC0BDFF; else r =
+  cur/max: < lo **Easy** 0xFF6DFFEF, < hi **Populated** 0xFFFFDA49, < 1.0 **Crowded** 0xFFFFB541,
+  else **FULL** 0xFFFF5858. lo and hi are textuisystem's `UIO_STT_SERVER_35` / `_75` times 0.01:
+  35 and **97** in the English column (65 in the Korean) -- MEASURED. This vSRO exe stores 5 into a
+  flag at 0x832a68 that turns FULL into a red "Crowded" (INFERRED a patch); ours shows FULL.
+- **"Check" on the wire** is the shard entry's state byte 0 (entry +0x24 after current +0x20 and max
+  +0x22). The 0xA101 parser itself is not found (no 0xa101 immediate): OPEN.
+- **Unreachable:** retail has one gateway; a failed connect is the message box
+  `UIO_MSG_ERROR_SEVER_CONNECT` "Failed to connect to server." with "(C<code>)" -- no per-row state.
+- **Connecting:** DIVISIONINFO.TXT (MEASURED: locale 22, one division `DIV01`, one DNS host) is read
+  by `CGame::FUN_008469c0`, which **skips the locale byte**; the gateway is picked by the launcher's
+  command-line indices, not at random; GATEPORT.TXT is atoi'd into a u16 (0x847191). The agent is a
+  second connection presenting the gateway's token (`CClientProcess::vslot_014`: 0x6100 to
+  `GatewayServer`, 0x6103 to `AgentServer`); its address comes from the login reply. Nothing lets a
+  client choose its agent.
+- **Region:** nothing READ maps to one -- the locale byte is skipped, no "Located In" code exists,
+  option.txt's `Language` key is compared but unset and its effect is OPEN.
+- **Retail's own `Setting\` folder** beside the exe holds `SROptionSet.dat`, `wndpos.dat` and nine
+  more names (strings 0xd960b4.., `Setting\*.*` at 0xdd2f38).
+
+### 2. What shipped
+
+- **The logo** (`FrontEndFrame.logo_rect`, OURS): where retail's placement would overlap, the logo
+  is lifted until it clears the box by 10 (`LOGO_GAP`, retail's own clearance at 1024x768,
+  INFERRED as the intended padding); elsewhere it is exactly retail's; its size is retail's.
+- **The fields** (`Login.style_login_edit`): alignment from the layout's HAlign (centred), the mask
+  `*`; the plain no-archive panel too.
+- **`setting/`** (OURS): `<exe dir>/setting` or `SRREVAMP_SETTING_DIR`; `setting/config.yaml` read by
+  `YamlLite` (a strict subset: block maps, flow maps and lists on a line, `- ` lists, quoted and
+  plain scalars, comments; refusals name their line) into `ClientConfig` (`global.loginScreen`,
+  `global.region` kept/reserved, `servers.<name>.gateway` required, `.agent` kept/unused). A broken
+  file is ignored whole with its line in a `SETTING:` log line; a bad entry is skipped. Data only.
+- **The intro's order** (OURS): preview > server (else cache) > `setting/config.yaml` > `custom/
+  theme.json` > retail. The server's answer is its own operator's branding; a config may list several
+  servers and its `global` choice is the fallback.
+- **The server list** (`ServerListWindow`, `ServerStatus`, `GatewayQuery` -- ThemeQuery now its
+  subclass): the Server field shows the chosen name read-only with the archive's LIST button; LIST
+  opens window 10 at its READ place with the archive's art, Select/Cancel/double click/Enter/Esc; the
+  logo, box and buttons hide while it is up; the choice is remembered (`[server] server_name`).
+  Without `servers`, the old editable host:port.
+- **The status exchange** (OURS): `OpServerStatusRequest` 0x0007 -> `OpServerStatus` 0x0008,
+  `u8 version | u16 current | u16 max | u8 state` (retail's fields in retail's order), answered before
+  login once per connection and the asker's connection ended. Server: `-max-players` (1-65535,
+  default 1000, OURS) and `-inspection` (+ `SRREVAMP_MAX_PLAYERS` / `SRREVAMP_INSPECTION`); current =
+  `world.Hub.Count()`; `session.LoginGate` refuses a login under inspection or at capacity with
+  retail's two messages. Client: every listed server asked at once, 2 s timeout, IPv4 preferred
+  (MEASURED: "localhost" resolved to ::1 first on the box, with the server on 127.0.0.1, and showed
+  Closed until `pick_address`), again every 5 s while open. No answer -> "Closed" (the archive's
+  unused `UIO_STT_TEST`) in the list's grey 0xFFB4B4B4 (OURS). A failed Connect now says retail's
+  "Failed to connect to server.".
+- Tool: `client/tools/login_at_scale.tscn` (a UI scale without Boot; prints `LOGINRECT`, saves the
+  login and the list).
+
+### 3. Measurements
+
+The logo against the box, MEASURED in the running client (`LOGINRECT`, canvas units, real archive):
+
+| Screen, UI scale | Canvas | Logo (y, size) | Box top | Gap | Base (round 678) gap |
+|---|---|---|---|---|---|
+| 1024x768, 1.0 | 1024x768 | 270, 325x110 | 390 | 10 | 10 |
+| 1920x1080, 1.0 | 1920x1080 | 382, 610x155 | 547 | 10 | -35 |
+| 3840x2160, 1.95 | 1969x1107 | 391, 625x159 | 560 | 10 | -39 |
+
+The base column is `login_screen_test.gd` on base (same arithmetic); it also gives 2560x1440 at 1.0
+-86 and 3840x2160 at 1.0 -190, and passes at every canvas up to 837 tall.
+
+The status, MEASURED end to end on the box (two servers from this round's binary, `-in-memory
+-max-players 100`, the second with `-inspection`, and a port nobody listens on), the client's log:
+```
+SERVERLIST: 3 servers, bands at 0.35 / 0.97 (textuisystem UIO_STT_SERVER_35 / _75)
+SERVERLIST: Offline (127.0.0.1:25781) no answer -> CLOSED -- connection failed
+SERVERLIST: OpenSROTest (127.0.0.1:25779) 0/100 state 1 -> EASY -- answered in 183 ms
+SERVERLIST: Maintenance (localhost:25780) 0/100 state 0 -> CHECK -- answered in 183 ms
+FrontEnd: server theme answered (...); theme: intro=roc [setting] ...
+```
+Shots (scratchpad `sl679_shots/`): `r768_login.jpg`, `r768_list.jpg`, `r1080_login.jpg`,
+`r1080_list.jpg`, `r2160_login.jpg`, `r2160_list.jpg` (3840x2160 at 1.95), `crop_login.jpg` /
+`crop_list.jpg` (the 4K box and list). The table above, not the pictures, is the evidence.
+
+No perf gate: no world, map, object, terrain, effect, animation or loading code changed (the title's
+streaming is untouched; `FrontEndFrame` and `Login` are the front-end's 2D).
+
+### 4. Tests, and their negative
+
+- `client/scripts/setting/client_config_test.gd` (YamlLite: the user's example shape with
+  placeholder hosts, the subset, 19 refusals each with its line; ClientConfig: entries, defaults,
+  skipped entries, a broken file, a missing file, `SRREVAMP_SETTING_DIR`; the intro's order).
+- `client/scripts/frontend/login_screen_test.gd` (the logo at 1024x768 / 1920x1080 / 2560x1440 /
+  3840x2160 at scales 1.0 and 1.95 on pstitle's READ rects; `*`; centred; the vanity name read-only;
+  editable without servers).
+- `client/scripts/frontend/server_list_test.gd` (the bands at 10/34/35/50/96/97/99/100/150 of 100,
+  0/0, state 0; the thresholds from the table; the words and colours; the server's exact frame; IPv4
+  first; a dead port -> UNREACHABLE and a "Gone | Closed" row in the window's labels).
+- `server/internal/session/serverstatus679_test.go` (exact bytes, strict decode, the handler on a real
+  gateway answering the status at the moment it is asked and ending the connection, the gate) and
+  `server/cmd/server/serverstatus679_test.go` (the real `main()` with `SRREVAMP_MAX_PLAYERS=50
+  SRREVAMP_INSPECTION=1`).
+
+Against base 75fa1fa (a separate worktree, the new tests copied in):
+```
+login_screen_test:
+FAIL the logo clears the box by 10 -- 1920x1080 at 1.00 (canvas 1920x1080): logo 427..582, box top 547, gap -35
+FAIL the logo clears the box by 10 -- 2560x1440 at 1.00 (canvas 2560x1440): logo 607..813, box top 727, gap -86
+FAIL the logo clears the box by 10 -- 3840x2160 at 1.00 (canvas 3840x2160): logo 968..1278, box top 1088, gap -190
+FAIL the logo clears the box by 10 -- 3840x2160 at 1.95 (canvas 1969x1107): logo 440..599, box top 560, gap -39
+FAIL Login.gd has style_login_edit and show_server_field
+client_config_test: SCRIPT ERROR: Parse Error: Identifier "YamlLite" not declared in the current scope.
+server_list_test:   SCRIPT ERROR: Parse Error: Identifier "ServerStatus" not declared in the current scope.
+session:            vet: internal/session/serverstatus679_test.go:23:8: undefined: ServerStatus
+cmd/server:         serverstatus679_test.go:81: no reply to the server status request (opcode 0x0007) within the client's 2 s: read tcp ...: i/o timeout
+                    --- FAIL: TestServerStatusServedByTheRealServer (2.05s)
+```
+
+`remote_godot.sh check` ALL LOAD (491 scripts); `remote_godot.sh tests` 195 suites, 0 failing;
+`go build ./...`, `go vet ./...`, `go test -count=1 -p 1 ./...` green (the first run caught
+`TestServerReadmeIsCurrent`: server/README.md now lists `-max-players` and `-inspection`).
+
+### 5. OPEN
+
+- The client's own saved settings (display, sound, hotbar, ...) are still in `user://settings.cfg`;
+  moving them into `setting/` is the next step (not this round, by the brief).
+- Settings a server hands the client (the user's idea): noted beside PROTOCOL_DECISION.md's addendum
+  and in docs/TODO.md; not designed.
+- `agent` is parsed and unused (one-process server; the 0xA102 redirect's handler address is OPEN);
+  `global.region` is reserved (nothing READ maps to it).
+- (Fixed by the review: Connect now resolves a name the way the status does.)
+- Choosing another server in the list does not re-ask the theme until the next launch.
+- The list's 0.5 s fades, the farm column, the name's gold flag (+0x28, meaning OPEN), the slider's
+  drag; the 0xA101 parser; the meaning of edit flags 0xa / 2 set on the ID and PW edits.
+- `-max-players` counts characters in the world; whether retail lets staff in under inspection is
+  OPEN (ours refuses everyone).
+
+### Review (round 679's review: no blocker, two MEDIUM, nine LOW -- fixed in a follow-up commit)
+
+**M1, the field text sat 5.5 low.** `style_login_edit` sized the field before it was in the tree,
+where a Control's size is clamped to the default theme's minimum: the 20-tall slots were 31, the
+text 5.5 below the slot's middle (retail centres vertically: VAlign=1 on 41/42/43, `FUN_00637b70`
+`top + (h - textHeight) * 0.5`). Every field is now added to its window first and sized after; the
+plain panel's `_slot_field` and the server list's cells (rows 20, were ~23) the same. The test: each
+slot's field is the slot's size in the tree and its text's middle is the slot's (41: 42.0, 42: 70.0,
+43: 98.0 -- LineEdit's own formula). Against 67109b5 the suite stops on the new parent argument
+(`SCRIPT ERROR: Invalid call to function 'style_login_edit (via call)' ... Expected 3 arguments.`).
+
+**M2, Connect resolved a name differently from the status.** `NetClient.connect_to_server` let
+`StreamPeerTCP` resolve (the first address of any family); the list prefers IPv4. With real input,
+"localhost" showed Check, then Connect went to ::1 and failed. NetClient now resolves a name without
+blocking and takes its IPv4 address first (`GatewayQuery.pick_address`), the TLS name staying the
+host name. The test connects the real NetClient autoload to "localhost" with a server listening on
+127.0.0.1 only. Against 67109b5:
+```
+FAIL Connect to 'localhost' reaches a server on 127.0.0.1 only (connection_failed after 0 ms)
+```
+
+**LOW**
+- L1: the bands compare in integers, `cur * 100 < pct * max`; `thresholds()` returns whole percents.
+  The float32 0.97 from the table had put 97/100 in Populated. New checks go through the client's own
+  text-table parser on rows shaped as the archive's (column 2 = 65, columns 8-9 = 97, MEASURED with
+  dump_text_table.gd): 349/1000 Easy, 350/1000 and 35/100 Populated, 969/1000 and 96/100 Populated,
+  970/1000 and 97/100 Crowded. Against 67109b5 the suite no longer parses (`Invalid operands "Vector2"
+  and "Vector2i"`).
+- L2: 0/0 is Crowded (NaN's unordered compare takes the `jp` branches); only cur > 0 over 0 is FULL.
+  The protocol doc and the test are corrected.
+- L3: the logo cannot show over an open list. `TitleIntro.logo_held` holds the reveal (round 680
+  moves that reveal later), and `release_logo()` gives it when the list closes. Two small hooks in
+  title_intro.gd.
+- L4: Tab moves between ID and PW (and an editable server field) only. LIST, Connect, Exit and the
+  register link take no keyboard focus, so Enter in a field always submits.
+- L5: closing the list gives the focus back to PW (or ID when empty).
+- L6: two server names that are one name once trimmed: the first stands, the second is warned.
+  Against 67109b5:
+  `FAIL 'A ' and 'A' are one name: the first stands (... servers=[A=a.example.com:15779, A=b.example.com:15779])`.
+- L7: `ClientConfig.load_file` checks the size (`get_length`) before reading.
+- L8: a connection whose first packet is the status or theme question logs its connected, packet and
+  disconnected lines at Debug (`gateway.Server.Quiet`; the "connected" line is written at the first
+  packet, or at the end for a session that sent none). `TestQuietSessionsLogAtDebug`; against
+  67109b5 it does not build (`unknown field Quiet in struct literal of type Server`).
+- L9: the `-gm-accounts` names pass `LoginGate` both full and under inspection (`TestLoginGate`;
+  against 67109b5 `too many arguments in call to LoginGate`). deploy/README.md says capacity counts
+  characters in the world.
+- Not changed: the asterisk's size is Arial 12's raised `*`; the font choice goes to the user.
+
+After the fixes: `remote_godot.sh check` ALL LOAD (491 scripts); `tests` 195 suites, 0 failing;
+`go build ./...`, `go vet ./...`, `go test -count=1 -p 1 ./...` green (63 packages). No perf gate (no
+world code).
+
 ## Six-hundred-and-seventy-eighth round: the login screen is retail's 3D title -- the intro flown over the world, the archive's own frame, logo and login box where the client puts them, the title music, and a theme the server picks
 
 The user (2026-10-01): "I also want to start implementing the full 3d login screen with music

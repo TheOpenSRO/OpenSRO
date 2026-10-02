@@ -795,7 +795,8 @@ compose override's `command` (`- "-login-intro=constantinople"`) or as environme
 about, and refuses, anything that is not a plain file name.
 
 **How the client picks** (per piece): a `SRREVAMP_LOGIN_*` variable on the player's own machine
-(for previewing, below) > the server's answer > the answer it cached last launch > a
+(for previewing, below) > the server's answer > the answer it cached last launch > the client's
+`setting/config.yaml` (round 679: only the intro, `global.loginScreen`; next section) > a
 `custom/theme.json` shipped with the client > retail's default. The client asks the server it is
 about to connect to (the address remembered from the last login) as it starts, waits at most 1.5 s,
 and caches the answer per server address -- so a first launch against a new server may show the
@@ -864,6 +865,81 @@ over the server's answer, so you see your files at once; the client's log (`Fron
 lines) says what it used and why it fell back. For a render on the box: `SRREVAMP_QA_TITLE_SEEK=0,10,20`
 stands the camera at those times and logs `QA TITLE SHOT t=.. frame ..`; `SRREVAMP_QA_TITLE_HOUR=0..3`
 pins the time of day (retail picks 5, 14, 18 or 23 o'clock at random).
+
+## Configuring the client: setting/config.yaml (round 679)
+
+A private server configures the client it hands its players with **data files in a `setting/`
+folder next to the client's executable**, beside its `pk2/` folder -- no rebuilding, and no
+re-signing of the executable or its DLLs, because nothing in `setting/` is ever run: the client only
+reads it. (Retail keeps its own options in a `Setting\` folder beside its exe too: `SROptionSet.dat`,
+`wndpos.dat` and others.) This folder will later hold the client's own saved settings as well --
+display, sound, hot bar and the rest; for now it holds one file, the general client config,
+`setting/config.yaml`. Developers can point the client at another folder with
+`SRREVAMP_SETTING_DIR=<folder>`.
+
+```yaml
+# setting/config.yaml -- every key is optional.
+global:
+  loginScreen: constantinople      # the title intro (same names as -login-intro)
+  region: US                       # kept, reserved (see below)
+servers:
+  MyServer:                        # the name the login screen shows
+    gateway: { address: login.example.com, port: 15779 }
+    agent:   { address: agent.example.com, port: 15884 }
+  MyTestServer:
+    gateway: { address: 203.0.113.7 }      # the port defaults to 15779
+```
+
+| Key | Meaning |
+|---|---|
+| `global.loginScreen` | The title intro: a retail name (`roc`, `constantinople`, `china_wharf`, `jupiter_login`, `rm`, `ruby_baghdad`, ...) or your own `custom/intro/<name>.txt`. The server's `-login-intro` wins over it (below). |
+| `global.region` | Kept and reserved: a short code (letters, digits, `_`, `-`). vSRO's client reads no region: its `DIVISIONINFO.TXT` starts with a locale byte (22 in vSRO's archive) that the client's own loader skips, and the iSRO "Located In" bar's art is in the archive but no code names it. A later round may use it for the language or the content id. |
+| `servers.<name>` | One server. `<name>` is what the Server field and the list show (1-32 characters). The file's order is the list's order. |
+| `servers.<name>.gateway` | Where the client connects: `address` (a host name or IP address) and `port` (default 15779). Required. It plays the part of retail's `DIVISIONINFO.TXT` host and `GATEPORT.TXT` port. |
+| `servers.<name>.agent` | Read and kept, **not used yet**: `address` and `port`, both required if given. Retail's gateway tells the client which agent server to connect to in its login reply; this server is one process and has no such hand-off yet. When it does, a configured agent will stand in for the address the gateway names (a proxy feature). |
+
+**What the player sees.** With `servers` listed, the login screen's Server field shows the chosen
+server's name (read-only, centred) and a **LIST** button opens the server list -- retail's window,
+built from the archive's own layout and art -- with each server's status, asked of every server at
+once and again every 5 s while the list is open (retail's own interval). Picking one with Select (or a
+double click) puts its name in the field; the client remembers it for the next launch. Without
+`servers`, the field is the old editable `host:port`.
+
+**The status** (the words and colours are retail's, from the archive's text table):
+
+| Shown | When |
+|---|---|
+| Check | the server runs with `-inspection` (env `SRREVAMP_INSPECTION`) |
+| Easy | fewer than 35 % of `-max-players` in the world |
+| Populated | 35 % to under 97 % |
+| Crowded | 97 % to under 100 % |
+| FULL | 100 % or more |
+| Closed | the server did not answer within 2 s (not running, wrong address, blocked port) |
+
+The percentages come from the archive's text table (`UIO_STT_SERVER_35` / `UIO_STT_SERVER_75`, 35
+and 97 in the English column), as retail's do. `-max-players` (env `SRREVAMP_MAX_PLAYERS`, 1-65535,
+default 1000) is the capacity; a login is refused with retail's "The server is full, please try
+again later." once that many characters are in the world (characters that have entered the world,
+not accounts at character select). Under `-inspection` every login is refused with retail's "Cannot
+connect to the server because the server is now in inspection." The `-gm-accounts` names are let
+through both, so staff can test a server under inspection or a full one.
+
+**Which setting wins when two places set the intro:** the player's `SRREVAMP_LOGIN_INTRO` (a preview)
+> the server's `-login-intro` (its fresh answer, else the one cached from the last launch) >
+`setting/config.yaml`'s `global.loginScreen` > `custom/theme.json`'s `intro` > retail's `option.txt`.
+The reasoning: the server's answer is the branding of the server being connected to, which its own
+operator controls; a config may list several servers, and its `global` choice is the fallback for
+the ones that set nothing. `custom/theme.json` stays the place for the logo and band images. The
+theme is asked of the chosen server.
+
+**Mistakes.** The client logs every problem in its log file as a `SETTING:` line and carries on: a
+file that does not parse (the line number is in the message) is ignored whole; a server entry
+without a usable gateway is skipped and the others kept; an unknown key is ignored. The file is a
+strict subset of YAML: maps by indentation (spaces, not tabs), `{ a: 1, b: 2 }` and `[1, 2]` on one
+line, `- item` lists, quoted or plain values, `#` comments; no anchors, tags or multi-line strings.
+
+**Later (not built):** a server may also hand the client settings it wants kept out of the file,
+during the server list or after login (docs/TODO.md).
 
 ## The full map (round 660)
 

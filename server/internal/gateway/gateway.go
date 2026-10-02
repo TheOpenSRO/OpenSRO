@@ -690,6 +690,16 @@ type Server struct {
 	// a farewell packet to the disconnecting client.
 	OnDisconnect func(sess *Session)
 
+	// Quiet, if set, names the opcodes that make a session quiet when they
+	// are its FIRST packet: its "session connected" and "session
+	// disconnected" lines are logged at Debug instead of Info. Round 679's
+	// review: the client's server list asks every listed server for its
+	// status every 5 s on a connection of its own, and the theme is asked at
+	// every launch; three INFO lines per question flooded the log. The
+	// "connected" line is therefore written when the first packet arrives (or
+	// when a session ends without one), not at accept.
+	Quiet func(opcode uint16) bool
+
 	nextSessionID atomic.Uint64
 }
 
@@ -744,19 +754,31 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logg
 	// what is still queued is written out (round 662: a frame sent just
 	// before a handler's error reaches the client, as it did when Send wrote
 	// synchronously), then the connection is closed and the writer gone.
+	quiet, announced := false, false
+	level := func() slog.Level {
+		if quiet {
+			return slog.LevelDebug
+		}
+		return slog.LevelInfo
+	}
+	announce := func() {
+		if !announced {
+			announced = true
+			logger.Log(ctx, level(), "session connected", "addr", sess.RemoteAddr())
+		}
+	}
 	defer func() {
+		announce()
 		sess.closeAfterDrain(SendDrainTimeout)
 		peak, longest, sent := sess.SendStats()
 		queuePeak, burst := sess.QueueStats()
-		logger.Info("session disconnected", "addr", sess.RemoteAddr(),
+		logger.Log(ctx, level(), "session disconnected", "addr", sess.RemoteAddr(),
 			"send_debt_peak", peak, "longest_write", longest, "sent_bytes", sent,
 			"send_queue_peak", queuePeak, "send_burst_peak", burst)
 	}()
 	if s.OnDisconnect != nil {
 		defer s.OnDisconnect(sess)
 	}
-
-	logger.Info("session connected", "addr", sess.RemoteAddr())
 
 	r := bufio.NewReader(conn)
 	for {
@@ -775,6 +797,10 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn, logger *slog.Logg
 			return
 		}
 
+		if !announced {
+			quiet = s.Quiet != nil && s.Quiet(p.Opcode)
+			announce()
+		}
 		if s.Handle == nil {
 			continue
 		}

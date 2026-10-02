@@ -14,7 +14,13 @@ below. None of srrevamp's 143 opcodes is a real one (SYSTEMS.md, round 324). The
 - the reply envelope is known: result byte 1 = ok, 2 = u16 error code (rounds 467-468);
 - the handshake is implemented in `server/internal/proto` but not wired in.
 
-Round 678's front-end theme request (0x0005 -> 0x0006) is also our own opcode.
+Round 678's front-end theme request (0x0005 -> 0x0006) is also our own opcode, and so is round
+679's server status request (0x0007 -> 0x0008: version, current, max, state -- retail's shard-entry
+fields; `docs/protocol/server_list.md`).
+
+**Noted by the user (2026-10-01), not designed:** a server may want to hand the client settings it
+keeps out of the client's `setting/config.yaml` -- during the server list or after login. That would
+be one more extension message of the kind item 2 below describes (docs/TODO.md).
 
 **Proposed design (OPEN: Claude's recommendation, not yet decided by the user):**
 1. **The compatibility layer is the architecture.** Game logic works on internal commands and

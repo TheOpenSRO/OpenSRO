@@ -59,6 +59,18 @@ swapped for the 3D flowing-camera town of the later pass without touching the sc
 
 1. **Connect / login** — `login_window.ddj` frame with ID / PW / Server / Connect / Exit, over a
    backdrop. Preserves every `NetClient` wiring in `Login.gd`. *(started here)*
+   **Round 679:** the logo clears the login box at every screen size (retail's own placement
+   overlaps it on any screen taller than 837; `FrontEndFrame.logo_rect`), the fields' text is
+   centred and the password shows `*` (both READ), and the server list is built: `setting/config.yaml`
+   (`ClientConfig`, read by `YamlLite`) lists servers by name, the Server field shows the chosen one
+   with retail's LIST button, and LIST opens retail's window 10 (`ServerListWindow`, from
+   `pstitle.txt` and `server_window.ddj` / `server_select.ddj` / `server_rollover.ddj`) with each
+   server's status (`ServerStatus`: Easy / Populated / Crowded / FULL / Check, READ thresholds and
+   colours; "Closed" for no answer, ours). Everything recovered is in
+   `docs/protocol/server_list.md`; the operator's side in deploy/README.md, "Configuring the
+   client". (`login_chanel_window_01/02.ddj` and `login_select.ddj` are pstitle's *channel* window
+   -- Section Channel / ChannelList, two UILM_STT_CHANNEL buttons -- not the server list; not
+   built.)
 2. **Loading overlay** — reusable: `loading_<region>.ddj` + `gauge_loading.ddj` + "NOW LOADING",
    shown on every scene transition.
 3. **Character select** — the account's characters, a stat panel (name / HP / MP / EXP / level),

@@ -241,9 +241,17 @@ var _reader: PacketReader
 
 var _use_tls := false
 var _tls_host := ""
+## A host name being resolved before the TCP connect (round 679's review),
+## or -1; the port it is for.
+var _resolve_id := -1
+var _resolve_port := 0
 
 func _process(_delta: float) -> void:
 	if _tcp_peer == null:
+		return
+
+	if _resolve_id >= 0:
+		_poll_resolve()
 		return
 
 	if _connecting:
@@ -342,18 +350,62 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	server_port = port
 	_tls_handshaking = false
 	_connected = false
-	var err := _tcp_peer.connect_to_host(host, port)
+	_cancel_resolve()
+	if host.is_valid_ip_address():
+		_connect_ip(host, port)
+		return
+	# A host name is resolved first, without blocking, and its IPv4 address
+	# preferred -- the same path the server list's status takes
+	# (GatewayQuery.pick_address), so the server a row says answers is the
+	# one Connect reaches (round 679's review: "localhost" showed Check, then
+	# Connect went to ::1 and failed). connect_to_host would resolve it
+	# synchronously and take the first address of any family. The TLS name
+	# stays the host name.
+	_resolve_id = IP.resolve_hostname_queue_item(host)
+	_resolve_port = port
+	_connecting = true
+
+func _connect_ip(ip: String, port: int) -> void:
+	var err := _tcp_peer.connect_to_host(ip, port)
 	if err != OK:
 		push_error("NetClient: connect_to_host failed: %s" % err)
+		_connecting = false
 		connection_failed.emit()
 		return
 	_connecting = true
+
+func _poll_resolve() -> void:
+	match IP.get_resolve_item_status(_resolve_id):
+		IP.RESOLVER_STATUS_WAITING:
+			return
+		IP.RESOLVER_STATUS_DONE:
+			var ip := GatewayQuery.pick_address(IP.get_resolve_item_addresses(_resolve_id))
+			_cancel_resolve()
+			if ip == "":
+				_connecting = false
+				print("NetClient: %s did not resolve" % server_host)
+				connection_failed.emit()
+				return
+			print("NetClient: %s -> %s" % [server_host, ip])
+			_connect_ip(ip, _resolve_port)
+		_:
+			_cancel_resolve()
+			_connecting = false
+			print("NetClient: %s did not resolve" % server_host)
+			connection_failed.emit()
+
+func _cancel_resolve() -> void:
+	if _resolve_id >= 0:
+		IP.erase_resolve_item(_resolve_id)
+		_resolve_id = -1
 
 func _keep_guild(result: GuildNet.Result) -> void:
 	if result != null and result.error == "":
 		last_guild_result = result
 
 func disconnect_from_server() -> void:
+	_cancel_resolve()
+	_connecting = false
 	if _peer is StreamPeerTLS:
 		(_peer as StreamPeerTLS).disconnect_from_stream()
 	if _tcp_peer != null:

@@ -71,6 +71,11 @@ const VERSION_POS_X := 5.0
 const VERSION_FROM_BOTTOM := 0x19
 const VERSION_SIZE := Vector2(0x50, 0x14)
 const VERSION_COLOR := Color(1.0, 0x80 / 255.0, 0x80 / 255.0, 1.0)
+## The clearance kept between the logo and the login window when retail's
+## own placement would overlap them (logo_rect). INFERRED: retail's own
+## clearance at the reference's 1024x768, 0x78 - round(172 * 768 / 1200) =
+## 120 - 110 = 10 (the iSRO reference shows the logo that far above the box).
+const LOGO_GAP := 10.0
 ## MEASURED (see relayout): the archive's copyright line's middle, design y.
 const COPYRIGHT_MID_Y := 1177.5
 
@@ -190,6 +195,36 @@ func centre_line() -> Vector2i:
 	var s := size if size.x > 0 else get_viewport_rect().size
 	return Vector2i(int(s.x) >> 1, ((top2 - bottom1) >> 1) + bottom1)
 
+## The bottom edge of the top band, scaled (where the logo may reach up to).
+func band_bottom_edge() -> int:
+	var up := scaled(def(ID_SCREENUP).rect) if def(ID_SCREENUP) != null else Rect2()
+	return int(up.position.y + up.size.y)
+
+## Where the logo goes, given its scaled size, the centre line and the top
+## band's bottom edge.
+##
+## READ, FUN_00866760 (0x8667e4..0x866803): the logo's top-left is
+## (cx - w/2, mid + 6 - 0x78) whatever its height -- its size is the pstitle
+## rect (508x172) scaled by OnCreate (FUN_00849c70) -- and the login window's
+## top is mid + 6 (0x866860). So the logo clears the window only while its
+## scaled height is at most 0x78 = 120, 172 * h / 1200 <= 120: a screen (in
+## our UI units) at most 837 tall. At the reference's 1024x768 it is 110 tall
+## and 10 clear; at 1080 lines it reaches 35 into the window, and on the
+## player's 3840x2160 at UI scale 1.95 (a 1969x1108 canvas) 39 -- the "ONLINE"
+## line hidden behind the box (round 679).
+##
+## OURS (round 679): where retail's own placement would overlap, the logo is
+## lifted until it clears the window by LOGO_GAP; where it does not, it stays
+## exactly where retail puts it. Its size stays retail's, and it never rises
+## above the top band.
+static func logo_rect(logo_size: Vector2, c: Vector2i, band_bottom: int) -> Rect2:
+	var x := float(c.x - (int(logo_size.x) >> 1))
+	var y := float(c.y + 6 - 0x78)
+	var box_top := float(c.y + 6)
+	if y + logo_size.y > box_top - LOGO_GAP:
+		y = maxf(box_top - LOGO_GAP - logo_size.y, float(band_bottom))
+	return Rect2(Vector2(x, y), logo_size)
+
 func relayout() -> void:
 	_place(band_top, def(ID_SCREENUP))
 	_place(band_bottom, def(ID_SCREENDOWN))
@@ -198,13 +233,11 @@ func relayout() -> void:
 	_place(title_art, def(ID_TITLE))
 	_place(big_logo, def(ID_BIGLOGO))
 	# The logo: scaled like the others (OnCreate), then centred above the
-	# login box by FUN_00866760 -- x = middle - width / 2, y = (middle line +
-	# 6) - 0x78.
+	# login box by FUN_00866760 (logo_rect).
 	if logo != null and def(ID_LOGO) != null:
-		var r := scaled(def(ID_LOGO).rect)
-		var c := centre_line()
+		var r := logo_rect(scaled(def(ID_LOGO).rect).size, centre_line(), band_bottom_edge())
 		logo.size = r.size
-		logo.position = Vector2(c.x - (int(r.size.x) >> 1), c.y + 6 - 0x78)
+		logo.position = r.position
 	var s := size if size.x > 0 else get_viewport_rect().size
 	if version_label != null:
 		version_label.position = Vector2(VERSION_POS_X, s.y - VERSION_FROM_BOTTOM)

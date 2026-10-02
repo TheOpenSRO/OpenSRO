@@ -14,6 +14,9 @@ const PATH := "user://settings.cfg"
 const SECTION_SERVER := "server"
 const KEY_ADDRESS := "address"
 const KEY_USERNAME := "username"
+## The server last chosen from setting/config.yaml's list, by its name (round
+## 679, ClientConfig): the login screen starts on it while the file lists it.
+const KEY_SERVER_NAME := "server_name"
 
 const SECTION_UI := "ui"
 ## Multiplies the size of everything drawn on screen; 1.0 is as authored.
@@ -68,6 +71,9 @@ static func set_value(section: String, key: String, value: Variant) -> bool:
 
 static func server_address() -> String:
 	return str(get_value(SECTION_SERVER, KEY_ADDRESS, ""))
+
+static func server_name() -> String:
+	return str(get_value(SECTION_SERVER, KEY_SERVER_NAME, ""))
 
 static func username() -> String:
 	return str(get_value(SECTION_SERVER, KEY_USERNAME, ""))
