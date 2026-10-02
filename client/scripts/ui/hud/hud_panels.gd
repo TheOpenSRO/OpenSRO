@@ -351,6 +351,9 @@ signal guild_create_requested(guild_name: String)
 ## The guild leave prompt (open_guild_leave_prompt, round 521) was confirmed.
 ## World3D sends the leave request (NetClient.leave_guild).
 signal guild_leave_requested
+## The return-point box (open_recall_designate_prompt, round 686) was
+## confirmed. World3D sends the designate request (NetClient.recall_designate).
+signal recall_designate_requested
 ## A line for the chat's system channel -- today a server refusal of a mastery
 ## raise, which used to be dropped silently. World3D logs it (_log_system).
 signal system_notice(text: String)
@@ -1119,6 +1122,7 @@ func _show_talk_prompt(window: HudWindow, panel: PanelContainer, focus: Control)
 	await panel.get_tree().process_frame
 	if is_instance_valid(panel):
 		panel.position = ((window.size - panel.size) * 0.5).round()
+		_qa_print_buttons(panel, str(panel.name))
 
 ## The name prompt behind the guild NPC's create line (round 521): a line for
 ## the name, then Create and Cancel. Create (or Enter) emits
@@ -1188,6 +1192,42 @@ func open_guild_leave_prompt(npc_name: String) -> void:
 		panel.queue_free()
 	_talk_prompt_buttons(panel, [
 		["Leave", "Leave", confirm],
+		["Cancel", "Cancel", func() -> void: panel.queue_free()],
+	])
+	_show_talk_prompt(window, panel, null)
+
+## The box behind a town gate's "Designate as return/recall point" line (round
+## 686). READ: retail's line opens message box kind 5 (CIF_NPCTalk::
+## FUN_007020c0 case 9, 0x7027b5) over the talk box, which stays open (its
+## OK takes the target from it, FUN_00797d90 case 5); kind 5
+## (UI_SILKMALL::FUN_00644c90, entry 0x644f93) is titled UIIT_STT_AGREEMENT_BOX
+## and says UIIT_MSG_MSGBOX_SETREBIRTH_CURPOS with the current region's zone
+## name, then UIIT_MSG_MSGBOX_SETREBIRTH_ASKCERTIFY; OK sends the request,
+## anything else nothing. OURS: the box is the talk prompts' dark, gold-edged
+## panel, not the msgbox art, and its buttons read "OK" / "Cancel" (kind 5's
+## button controls were not read for their labels). `zone_name` is the
+## player's current zone's name (World3D._current_zone_name).
+func open_recall_designate_prompt(npc_name: String, zone_name: String) -> void:
+	var window: HudWindow = _windows.get("npctalk")
+	if window == null:
+		return
+	print("RECALLPROMPT %s: opened at '%s'" % [npc_name, zone_name])
+	var panel := _talk_prompt(window, "RecallDesignatePrompt",
+		_resolve_ui(RecallNet.TITLE_STRID, RecallNet.TITLE_FALLBACK))
+	var vb: VBoxContainer = panel.get_node("VB")
+	var curpos := _shop_label(RecallNet.current_position_line(
+		_resolve_ui(RecallNet.CURPOS_STRID, RecallNet.CURPOS_FALLBACK), zone_name), Color(0.86, 0.82, 0.7))
+	curpos.name = "CurrentPosition"
+	vb.add_child(curpos)
+	var ask := _shop_label(_resolve_ui(RecallNet.ASK_STRID, RecallNet.ASK_FALLBACK), Color(0.86, 0.82, 0.7))
+	ask.name = "Ask"
+	vb.add_child(ask)
+	var confirm := func() -> void:
+		print("RECALLPROMPT %s: confirmed" % npc_name)
+		recall_designate_requested.emit()
+		panel.queue_free()
+	_talk_prompt_buttons(panel, [
+		["OK", "OK", confirm],
 		["Cancel", "Cancel", func() -> void: panel.queue_free()],
 	])
 	_show_talk_prompt(window, panel, null)
@@ -1322,6 +1362,7 @@ func show_revive_prompt(line: String, level: int = 0) -> void:
 	# above it. A placement of this project's own.
 	var view := panel.get_viewport_rect().size
 	panel.position = Vector2((view.x - panel.size.x) * 0.5, view.y * 0.62).round()
+	_qa_print_buttons(panel, "REVIVE")
 
 ## Takes the Revive prompt down (the revive came through, or a new prompt
 ## replaces it). Removed from the tree at once, so a prompt shown in the
@@ -1370,6 +1411,21 @@ func open_teleport_list(gate_name: String, entries: Array) -> bool:
 	print("HudPanels: teleport list for %s -- %d destination(s) in the talk box" % [gate_name, entries.size()])
 	_qa_print_talk_lines.call_deferred(body)
 	return true
+
+## SRREVAMP_QA_TALK_LINES, for a prompt (round 686): each button of `panel`
+## with the screen point at its middle (`QA PROMPT <tag> BUTTON <name> at
+## x,y`), a frame after it is placed, so a real X click can be aimed at it.
+## QA only; prints nothing without the variable.
+func _qa_print_buttons(panel: Control, tag: String) -> void:
+	if OS.get_environment("SRREVAMP_QA_TALK_LINES") == "" or not is_instance_valid(panel) or not panel.is_inside_tree():
+		return
+	await get_tree().process_frame
+	if not is_instance_valid(panel):
+		return
+	for node in panel.find_children("*", "Button", true, false):
+		var b := node as Button
+		var c := b.get_global_rect().get_center()
+		print("QA PROMPT %s BUTTON %s at %d,%d: %s" % [tag, b.name, int(c.x), int(c.y), b.text])
 
 ## SRREVAMP_QA_TALK_LINES (round 642): each paragraph of the talk box as drawn,
 ## with the screen point at its middle, so a real X click can be aimed at a

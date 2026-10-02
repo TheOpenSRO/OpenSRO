@@ -18,7 +18,7 @@ index	handler	server_name	function_exists	client_opcodes	client_handlers	replies
 0x050	005112f0	GObjPC_HandleIncreaseStr	yes	0xb050	FUN_00880ac0	-
 0x051	005113b0	GObjPC_HandleIncreaseInt	yes	0xb051	FUN_00880b10	-
 0x053	0050fee0	GObjPC_HandleResurrectMsg_053	yes	-	-	-
-0x059	00513410	FUN_00513410	yes	0xb059	FUN_00883520	0xb059
+0x059	00513410	GObjPC_HandleDesignateRecallMsg_059	yes	0xb059	FUN_00883520	0xb059
 0x05a	00513590	GObjPC::HandleTeleportUse	yes	0xb05a	FUN_008809d0	0xb05a
 0x05b	00513ea0	GObjPC::FUN_00513ea0	yes	0xb05b	FUN_008727a0	0xb05b
 0x05d	0051a5b0	FUN_0051a5b0	yes	0xb05d	FUN_0088e1c0	-

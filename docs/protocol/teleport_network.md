@@ -425,8 +425,10 @@ as return/recall point", "Select teleport area"), not the earlier 16-column rows
 "Designate this region as your return & recall point!" / "Select a teleport area:".
 
 Since round 603 "teleport" lists the gate's destinations in the talk box itself ("The
-destination list (round 603)" below; round 578 opened a separate board). The two recall lines still say "... is not available yet"
-(`World3D._on_npc_service_selected`'s default): srrevamp models no return point.
+destination list (round 603)" below; round 578 opened a separate board). Since round 686 the
+designate line (id 7) opens retail's agreement box and sets the character's return point ("The
+return point (round 686)" below); the "Teleport to return point" line (id 9, offered by no town
+gate) still says "... is not available yet" (`World3D._on_npc_service_selected`'s default).
 `SRREVAMP_QA_CLICK=gate` clicks the nearest bound gate through the real
 dispatcher.
 
@@ -794,8 +796,11 @@ talk menu turns id 7 into item 9, `UIIT_CTL_RECALL_POSITION` ("Designate this
 region as your return & recall point!"), and id 9 into item 0x10,
 `UIIT_CTL_TELEPORT_TO_RESURRECT_POS` ("Teleport to your return point.") --
 `character_state.md`, "Interaction id to menu item", rows 10 and 11, and "The
-clickable gate (round 577)" below. What the server does when either is chosen is
-still unread.
+clickable gate (round 577)" below. What the server does for each was read in
+round 686 ("The return point (round 686)" below): id 7 is the designate handler's
+test (dispatch 0x059, `GObjPC_HandleDesignateRecallMsg_059`), and id 9's line is kind 1 of the teleport
+request, which revives-to-the-return-point (`CMainProcess::FUN_004f2b50` case 1 ->
+`GObjPC::Revive(0)`).
 
 This is the first grounded example of **where interaction ids come from**: a
 refdata loader registers them on a ref object from boolean columns at table-load
@@ -929,3 +934,99 @@ code); and the rules are enforced as mode 0 enforces them, the mode byte's
 filler being unread (above). Level stands in for MaxLevel (equal unless a
 character lost levels, which srrevamp cannot do); no fortress tax (no
 fortresses).
+
+## The return point (round 686)
+
+The user (2026-10-02): "you should get the return/recall feature working for town teleporters.
+That will fix where they restore at and just euro to const and chn to jangan." Labels: READ (the
+decompiles and asm on the render box; `SR_ShardManager.exe` from the server package, disassembled
+with objdump), MEASURED, INFERRED, OURS, OPEN.
+
+### What retail does (READ)
+
+**The talk line and its box (client).** A gate offering interaction 7 lists item 9,
+`UIIT_CTL_RECALL_POSITION` (above). `CIF_NPCTalk::FUN_007020c0` case 9 (`0x702777`) takes the
+talked-to object's id (`FUN_00704080`) and opens message box **kind 5** with it (`0x7027b5 push 0x5`,
+`0x6ec5d0`); the talk box stays. Kind 5 (`UI_SILKMALL::FUN_00644c90`, jump table `0x648758`, entry
+`0x644f93`) is titled `UIIT_STT_AGREEMENT_BOX` ("Agreement window"), reads
+`UIIT_MSG_MSGBOX_SETREBIRTH_CURPOS` ("The current position : [%s]", `0x645027`) filled with a text
+looked up by the decimal of the local player's word at `+0x7c` (`0x644fce`, `"%d"` then `"%s"`) --
+INFERRED to be its region id, since `textzonename.txt` is keyed by region id (MEASURED: 25000 ->
+Jangan, 26265 -> Donwhang, 26959 -> Constantinople) -- and `UIIT_MSG_MSGBOX_SETREBIRTH_ASKCERTIFY`
+("Will you designate the place to be returned /resurrected?", `0x645060`). The box's result goes
+to `FUN_00797d90`; case 5 with result 1 (OK) sends **0x7059** with the u32 object id
+(`0x797fc5..0x798014`), anything else nothing.
+
+**The handler (server).** Dispatch 0x059, `0x513410` (named
+`GObjPC_HandleDesignateRecallMsg_059` in `recovered_names.tsv` this round):
+
+1. reads the u32 object id;
+2. `GObjPC::IsWithinInteractionRange(target, 0x30)` (`0x513450`: the mask 0x30 is TypeID1 4,
+   TypeID2 1, a structure -- "The interaction range (round 642's review)" above has the rest); any
+   answer but 1 is sent as the code (0 for an object not found, 3, 4);
+3. the target's ref object must hold interaction id 7 (`mov BYTE PTR [esp+0x17],0x7` at
+   `0x513491`, the set at ref object `+0x90` that `RefTeleport_ExtractData` fills from teleportdata
+   column 10) and the target must answer `IGObj::IsTeleportGate` (vslot 37, `call [eax+0x94]` at
+   `0x5134a5`), else code 3 (`0x51354d`);
+4. when the target's `IGObj::GetRefObjID` (vslot 1, `0x5134d8`) differs from charData `+0xa4`
+   (`_CHAR.AppointedTeleport`), `CharData_SetAppointedTeleport` writes it and marks the row dirty (`+0x8 |= 0x80`);
+5. replies **0xb059 {u8 1}** (`0x5134fc..0x513528`) -- also when nothing changed. A refusal is
+   `Msg_SendTwoFieldReply`'s {u8 2, u16 code} (`0x4e7250`).
+
+No fee, no level and no life-state test. So the stored value is the **gate building's ref object id**
+(2095 `STORE_WC_GATE` for Donwhang).
+
+**The answer (client).** `Client_OnDesignateRecallResult`, registered for 0xb059: on 1,
+`UIIT_MSG_STATE_REBIRTH_POINT_APPOINT` ("Resurrection spawn point has changed.") to the system
+window as type 5 (`FUN_007781b0(5, ...)`) and to `GDR_WARNING_WND` (`FUN_0077b580`); on 2 it reads
+the u16 and shows **nothing**.
+
+**Where it sends a character.** `CGObjPC::ResolveRevivePoint` (`0x4e08a0`; `character_state.md`, "The
+return point") looks `AppointedTeleport` up as a ref object and takes its teleport record's region,
+x/y/z and world through `FUN_004e0a40` -> `FUN_00407760` -- the same arrival a gate teleport to
+that gate makes (`0x513779`). An unknown id logs "someone designated unknown teleport gate: %d"
+and falls back to `LatestRegion` / `Pos` / `WorldID`. Its callers: `GObjPC::Revive(0)` (the dead
+window's option 1), the PC's leave path for a dead character (`0x4df188`), and
+`CMainProcess::EnterGame` in a siege world at war (`0x4031e2`).
+
+**The default.** `SR_ShardManager.exe`'s `FUN_0042bb20`, the start position at creation, reads the
+new body's Country byte (`movzx edi,BYTE PTR [eax+0x88]`, `0x42bb78`) and looks up
+`"STORE_CH_GATE"` (`0x783d04`) for 0 and any value but 1, `"STORE_EU_GATE"` (`0x783d14`) for 1
+(`0x42bb81..0x42bb97`); it asserts the object has a teleport record (`+0x190`, `0x42bbd8`) and
+returns its id (`+0x8`, `0x42bbe5`), which goes to `_AddNewChar` beside the start spawn
+(`charselect.md`: parameter 9, INFERRED to be `AppointedTeleport` by its position). So a China
+character returns to Jangan's gate and a Europe character to Constantinople's until it designates
+another. MEASURED on the render box's export: `STORE_CH_GATE` 2094 -> `GATE_CH` 97/168 (969, 0,
+1369); `STORE_EU_GATE` 19554 -> `GATE_EU` 105/79 (950, 84, 1070); the server's boot line reads
+`china_found=true europe_found=true`.
+
+**The other line, id 9** ("Teleport to return point", item 0x10). It is kind 1 of the teleport
+request: `CMainProcess::FUN_004f2b50` case 1 (`0x4f2c83`) refuses 0x1c10 with a trade cart and
+otherwise calls `GObjPC::Revive(0)` -- the same move -- with `GameEventLog_Record(0xb, 3, 0)`. No
+town gate offers it (teleportdata column 11 is 0 on all seven); srrevamp does not serve it.
+
+**The return scroll (OPEN).** `CGItemExpendable::UseByKind` (`0x49c2b0`) cases 1-3 cast the skill
+the item's ref object names at `+0x2a0` through `FUN_0059b8d0` (the skill system's queue); what the
+skill's effect does to reach the return point is unread. srrevamp refuses every return scroll
+(`useitem.go`, "restores nothing"), so there is nothing to point at the return point yet.
+
+### What srrevamp built
+
+- **Server** (`session/recall.go`): `OpRecallDesignate 0x0111` (u16 gate teleportdata id) ->
+  `OpRecallDesignateResult 0x0112`, retail's 0xb059 shape exactly (OURS: the placeholder pair and
+  the id). In `GObjPC_HandleDesignateRecallMsg_059`'s order: the gate (0), a building row (3 -- the structure mask),
+  `session.reach` (3/4), the point's `Interaction7` (3), then the write only when it changes, and
+  {1}. The stored value is `character.RecallStore` (`characters.appointed_teleport`, 0 = none,
+  OURS: the race's gate is resolved by code when needed rather than written at creation).
+- **The return point** (`returnPointFor`): the designated gate's teleportdata point, else the race's
+  gate (`RaceGate`, `characterCountry` -- the body's race, `RaceOf`, since round 682), through
+  `teleportArrival` (frames and `-single-frame` as a gate teleport). Option 1, the flag-off respawn
+  and a dead logout all use it. A failed read is logged with the character's id (round 686's review):
+  a character that cannot be read goes to its designated gate if that reads, else to `spawnZone`'s
+  arrival, with an error line. Fallbacks (OURS): an unknown designated gate -> the race's gate (not
+  retail's `LatestRegion`); no `-teleport-dir` -> `spawnZone`'s arrival (China, as before) or
+  Constantinople's zone arrival (Europe).
+- **Client**: the line opens the agreement box over the talk box (`HudPanels.
+  open_recall_designate_prompt`, the archive's text; the panel and its OK/Cancel labels OURS), OK
+  sends the request (`RecallNet`, `NetClient.recall_designate`), and a success writes retail's line
+  to the system window (type 5) and the warning banner.

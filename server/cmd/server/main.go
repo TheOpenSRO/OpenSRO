@@ -1654,6 +1654,16 @@ func main() {
 			logger.Info("teleport interaction range: NPC 300, structure 800 (IsWithinInteractionRange 0x4a8e10)",
 				"npcs_placed", placed)
 		}
+		// The return point (round 686): a character's designated town gate,
+		// else its race's (STORE_CH_GATE / STORE_EU_GATE), resolved on this
+		// network. Without it a return goes to the zone arrival as before.
+		session.SetRecallNetwork(network)
+		_, chOK := network.PointByBuildingCode(session.RaceGateChina)
+		_, euOK := network.PointByBuildingCode(session.RaceGateEurope)
+		logger.Info("return points: designated at a town gate, else the race's gate",
+			"china_gate", session.RaceGateChina, "china_found", chOK, "europe_gate", session.RaceGateEurope, "europe_found", euOK)
+	} else {
+		logger.Info("no teleport network: every return point is the zone arrival (jangan for China, constantinople for Europe)")
 	}
 	if *teleportFree {
 		logger.Info("teleport free on: every gate teleport costs nothing (-teleport-free, own design, for testing)")

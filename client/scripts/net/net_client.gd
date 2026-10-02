@@ -241,6 +241,9 @@ signal gm_command_result(result: GmNet.Result)
 ## and the destination, or the refusal. On success the server's
 ## OpChangeZoneResult follows it (change_zone_result).
 signal teleport_result(result: TeleportNet.Result)
+## A town gate's "Designate as return/recall point" answered (RecallNet.Result,
+## round 686): ok, or the refusal's code.
+signal recall_designate_result(result: RecallNet.Result)
 
 var _tcp_peer: StreamPeerTCP  # the real socket, always present once connecting starts
 var _peer: StreamPeer         # what packets are actually read/written through -- _tcp_peer directly, or a StreamPeerTLS wrapping it once connected with use_tls
@@ -776,6 +779,12 @@ func gm_command(char_name: String, line: String, selected_monster: int) -> void:
 func teleport_use(gate_id: int, dest_id: int) -> void:
 	_send(TeleportNet.OP_USE, TeleportNet.encode_use(gate_id, dest_id))
 
+## Asks to make the gate the player is talking to (a teleportdata id) its
+## return point (RecallNet.OP_DESIGNATE, round 686). The reply is
+## recall_designate_result.
+func recall_designate(gate_id: int) -> void:
+	_send(RecallNet.OP_DESIGNATE, RecallNet.encode_designate(gate_id))
+
 func list_quests(char_name: String) -> void:
 	_send(QuestNet.OP_LIST, QuestNet.encode_list_request(char_name))
 
@@ -1256,6 +1265,10 @@ func _dispatch(p: Packet) -> void:
 			var r := TeleportNet.decode_result(p.data)
 			if r != null:
 				teleport_result.emit(r)
+		RecallNet.OP_DESIGNATE_RESULT:
+			var r := RecallNet.decode_result(p.data)
+			if r != null:
+				recall_designate_result.emit(r)
 		_:
 			if _should_warn_unhandled(p.opcode):
 				push_warning("NetClient: unhandled opcode 0x%04x (warned once per connection)" % p.opcode)

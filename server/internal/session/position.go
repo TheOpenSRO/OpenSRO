@@ -181,7 +181,7 @@ func SaveAllPositions(hub *world.Hub, chars character.Store) {
 	}
 	for _, e := range hub.AllEntities() {
 		// Dead, at its return point (round 665, savedPlace).
-		savePosition(chars, e.Session, savedPlace(e.Session, e))
+		savePosition(chars, e.Session, savedPlace(chars, e.Session, e))
 	}
 }
 

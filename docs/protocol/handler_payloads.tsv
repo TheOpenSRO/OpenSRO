@@ -18,7 +18,7 @@ index	handler	server_name	server_fields	client_fields	agreement	note
 0x050	005112f0	GObjPC_HandleIncreaseStr				
 0x051	005113b0	GObjPC_HandleIncreaseInt				
 0x053	0050fee0	GObjPC_HandleResurrectMsg_053	u8		server-only	
-0x059	00513410	FUN_00513410	u32		server-only	
+0x059	00513410	GObjPC_HandleDesignateRecallMsg_059	u32		server-only	
 0x05a	00513590	GObjPC::HandleTeleportUse	u32,u8,u8	u32,u8	client-prefix	
 0x05b	00513ea0	GObjPC::FUN_00513ea0				
 0x05d	0051a5b0	FUN_0051a5b0	u32	u32	exact	

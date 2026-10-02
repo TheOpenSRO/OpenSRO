@@ -159,17 +159,23 @@ func DecodeTeleportResult(data []byte) (*TeleportResult, error) {
 	}, nil
 }
 
-// TeleportHandler answers OpTeleportUse. network is cmd/server's -teleport-dir
+// TeleportHandler answers OpTeleportUse and, since round 686, OpRecallDesignate
+// (recall.go). network is cmd/server's -teleport-dir
 // (nil without it: every request is refused); gate is the GM account list, the
 // same gm.Gate the GM console uses (nil: nobody is a GM); free is
 // -teleport-free. logger may be nil.
 func TeleportHandler(chars character.Store, eq equipment.Store, hub *world.Hub, network *teleport.Table, gate *gm.Gate, free bool, logger *slog.Logger, zerk *berserk.Tracker) gateway.Handler {
 	t := &teleporter{chars: chars, eq: eq, hub: hub, network: network, gate: gate, free: free, logger: logger, zerk: zerk}
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
-		if p.Opcode != OpTeleportUse {
-			return nil
+		switch p.Opcode {
+		case OpTeleportUse:
+			return t.use(ctx, sess, p)
+		case OpRecallDesignate:
+			// A town gate's "Designate as return/recall point" (round 686,
+			// recall.go).
+			return t.designate(ctx, sess, p)
 		}
-		return t.use(ctx, sess, p)
+		return nil
 	}
 }
 

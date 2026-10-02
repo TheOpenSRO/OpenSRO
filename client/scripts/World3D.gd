@@ -1364,6 +1364,7 @@ func _ready() -> void:
 	NetClient.entity_left.connect(_on_entity_left)
 	NetClient.change_zone_result.connect(_on_change_zone_result)
 	NetClient.teleport_result.connect(_on_teleport_result)
+	NetClient.recall_designate_result.connect(_on_recall_designate_result)
 	NetClient.chat_update.connect(_on_chat_update)
 	NetClient.unique_notice.connect(_on_unique_notice)
 	NetClient.chat_result.connect(_on_chat_result)
@@ -1894,6 +1895,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
 	_hud_panels.guild_create_requested.connect(_on_guild_create_requested)
 	_hud_panels.guild_leave_requested.connect(_on_guild_leave_requested)
+	# A town gate's return-point box was confirmed (round 686).
+	_hud_panels.recall_designate_requested.connect(_on_recall_designate_requested)
 	# A gate's destination line in the talk box (round 603; the board's Move
 	# until then): sent with the gate the list was opened at.
 	_hud_panels.teleport_requested.connect(_on_teleport_requested)
@@ -15229,8 +15232,58 @@ func _on_npc_service_selected(key: String) -> void:
 			# A Dimensional Gate's 'Select a teleport area:' (round 578): its
 			# destinations, in the talk box (round 603).
 			_open_teleport_list()
+		"recall_designate":
+			# A town gate's 'Designate as return/recall point' (round 686):
+			# retail's agreement box, then the request.
+			_open_recall_designate()
 		_:
 			_log_system("%s is not available yet." % key.capitalize())
+
+## The gate the return-point box was opened at (a teleportdata id), what its
+## OK sends (_on_recall_designate_requested); 0 when none is open.
+var _recall_gate_point_id := 0
+
+## Opens the agreement box behind a town gate's 'Designate as return/recall
+## point' line (round 686; HudPanels.open_recall_designate_prompt has the
+## reading) for the gate being talked to, naming the zone the player stands
+## in, as retail's box does.
+func _open_recall_designate() -> void:
+	if _teleport_reader == null or _hud_panels == null or _talk_npc_code == "":
+		return
+	var point := _teleport_point_for_code(_talk_npc_code)
+	if point == null:
+		_log_system("This gate has no teleport point.")
+		return
+	_recall_gate_point_id = point.id
+	_hud_panels.open_recall_designate_prompt(_talk_npc_name, _current_zone_name)
+
+## The box's OK: the request goes out with the gate it was opened at.
+func _on_recall_designate_requested() -> void:
+	if _recall_gate_point_id == 0:
+		return
+	if not NetClient.is_connected_to_server():
+		_log_system("Designating a return point needs the server.")
+		return
+	print("World3D: recall designate at point %d (%s)" % [_recall_gate_point_id, _talk_npc_code])
+	NetClient.recall_designate(_recall_gate_point_id)
+
+## The server's answer (round 686). READ, Client_OnDesignateRecallResult: on 1 the line
+## UIIT_MSG_STATE_REBIRTH_POINT_APPOINT goes to the system window as type 5
+## (0x7781b0(5, ...)) and to GDR_WARNING_WND (0x77b580); on 2 retail reads the
+## code and shows nothing -- the code goes to the log only.
+func _on_recall_designate_result(result: RecallNet.Result) -> void:
+	if not result.ok:
+		print("World3D: recall designate refused, code %d" % result.code)
+		return
+	var line := RecallNet.DONE_FALLBACK
+	if _ui_text_table != null:
+		var t := _ui_text_table.get_text(RecallNet.DONE_STRID, "")
+		if t != "" and t != RecallNet.DONE_STRID:
+			line = t
+	print("SYSLOG recall: %s" % line)
+	_log_system(line, HudSystemMessage.TYPE_GAME)
+	if _hud_warning != null:
+		_hud_warning.show_notice(line)
 
 ## The gate the destination list was last opened at (a teleportdata id), what
 ## a destination line sends as the source (_on_teleport_requested); 0 before any.
@@ -15294,6 +15347,7 @@ func _close_gate_ui() -> void:
 	_talk_npc_name = ""
 	_talk_node = null
 	_teleport_gate_point_id = 0
+	_recall_gate_point_id = 0
 	_teleport_request_pending = false
 
 ## The object the open talk box was opened on by a click (an NPC holder or a
