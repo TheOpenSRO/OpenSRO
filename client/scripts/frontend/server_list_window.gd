@@ -69,7 +69,7 @@ var _selected_index := -1
 var _hover_index := -1
 var _scroll := 0
 var _refresh_left := 0.0
-var _thresholds := Vector2(ServerStatus.LO_FALLBACK, ServerStatus.HI_FALLBACK)
+var _thresholds := Vector2i(ServerStatus.LO_FALLBACK, ServerStatus.HI_FALLBACK)
 var _text: UiTextTable = null
 var _frame: FrontEndFrame = null
 var _media: Pk2Reader = null
@@ -94,7 +94,7 @@ func open(media: Pk2Reader, frame: FrontEndFrame, text: UiTextTable, entries: Ar
 	_text = text
 	_entries = entries
 	_thresholds = ServerStatus.thresholds(text)
-	print("SERVERLIST: %d servers, bands at %.2f / %.2f (textuisystem UIO_STT_SERVER_35 / _75)" % [
+	print("SERVERLIST: %d servers, bands at %d %% / %d %% (textuisystem UIO_STT_SERVER_35 / _75)" % [
 		entries.size(), _thresholds.x, _thresholds.y])
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -233,11 +233,9 @@ func _build() -> void:
 		row_art.size = Vector2(ROW_WIDTH, ROW_HEIGHT)
 		row_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		list.add_child(row_art)
-		var name_label := _cell(COL_NAME_X, COL_NAME_W, r, font_size)
-		var status_label := _cell(COL_STATUS_X, COL_STATUS_W, r, font_size)
+		var name_label := _cell(list, COL_NAME_X, COL_NAME_W, r, font_size)
+		var status_label := _cell(list, COL_STATUS_X, COL_STATUS_W, r, font_size)
 		_rows.append({"art": row_art, "name": name_label, "status": status_label})
-		list.add_child(name_label)
-		list.add_child(status_label)
 
 	_build_slider()
 
@@ -250,14 +248,17 @@ func _build() -> void:
 	cancel_button.pressed.connect(close)
 	add_child(cancel_button)
 
-func _cell(x: int, w: int, r: int, font_size: int) -> Label:
+## One cell, added to `parent` before it is sized (round 679's review: sized
+## outside the tree, a 20-tall row came out ~23).
+func _cell(parent: Control, x: int, w: int, r: int, font_size: int) -> Label:
 	var l := Label.new()
-	l.position = Vector2(x, r * ROW_HEIGHT)
-	l.size = Vector2(w, ROW_HEIGHT)
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	l.clip_text = true
 	l.add_theme_font_size_override("font_size", font_size)
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(l)
+	l.position = Vector2(x, r * ROW_HEIGHT)
+	l.size = Vector2(w, ROW_HEIGHT)
 	return l
 
 func _build_slider() -> void:

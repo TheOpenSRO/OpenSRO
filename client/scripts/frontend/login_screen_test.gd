@@ -170,3 +170,25 @@ func _fields() -> void:
 	for n in [pw, id, server, plain]:
 		n.free()
 
+	# Round 679's review: a slot's field, styled into a window in the tree, is
+	# the slot's 20 tall -- sized outside the tree it was clamped to the
+	# default theme's minimum, 31, its text 5.5 low -- and its text's middle
+	# is the slot's (retail centres vertically: VAlign=1, FUN_00637b70). The
+	# text's place is LineEdit's own (Godot 4.2.2 scene/gui/line_edit.cpp,
+	# DRAW: offset.y + (height - style minimum - text height) / 2).
+	var window := Control.new()
+	root.add_child(window)
+	for id_ in [41, 42, 43]:
+		var f := LineEdit.new()
+		login.call("style_login_edit", f, defs[id_], id_ == 42, window)
+		var d: UiLayoutParser.ControlDef = defs[id_]
+		f.text = "tester"
+		var sb := f.get_theme_stylebox("normal")
+		var fs := f.get_theme_font_size("font_size")
+		var th := f.get_theme_font("font").get_height(fs)
+		var text_mid := f.position.y + sb.get_offset().y + (f.size.y - sb.get_minimum_size().y - th) * 0.5 + th * 0.5
+		var slot_mid := d.rect.position.y + d.rect.size.y * 0.5
+		_check(f.size == Vector2(d.rect.size), "slot %d: the field is the slot's %s once in the tree (got %s)" % [id_, Vector2(d.rect.size), f.size])
+		_check(absf(text_mid - slot_mid) <= 1.0, "slot %d: the text's middle %.1f is the slot's %.1f" % [id_, text_mid, slot_mid])
+	window.queue_free()
+

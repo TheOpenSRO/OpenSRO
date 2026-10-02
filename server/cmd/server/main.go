@@ -830,6 +830,13 @@ func frontEndThemeFromFlags(raw session.FrontEndTheme, logger *slog.Logger) sess
 	return theme
 }
 
+// quietQuery is true for the before-login questions a client asks on a
+// connection of its own -- the front-end theme and the server list's status
+// -- whose connection, packet and disconnection lines are logged at Debug.
+func quietQuery(opcode uint16) bool {
+	return opcode == session.OpFrontEndThemeRequest || opcode == session.OpServerStatusRequest
+}
+
 // defaultMaxPlayers is -max-players' default. OURS: retail's capacity is a
 // row of its shard database, which neither executable carries.
 const defaultMaxPlayers = 1000
@@ -1869,7 +1876,9 @@ func main() {
 		// The status for the client's server list (round 679), the same way.
 		session.ServerStatusHandler(serverStatus),
 		// Inspection and a full server turn a login away (round 679).
-		session.LoginGate(serverStatus, session.LoginHandler(accounts)),
+		// The GM accounts pass both (round 679's review: staff test under
+		// inspection).
+		session.LoginGate(serverStatus, gmGate.Allows, session.LoginHandler(accounts)),
 		session.RegisterHandler(registerer),
 		// New characters are dressed server-side rather than the client
 		// drawing a default set: that keeps the rendered character, the
@@ -1970,9 +1979,16 @@ func main() {
 		Logger:    logger,
 		TLSConfig: tlsConfig,
 		Handle: func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
-			logger.Info("packet received", "addr", sess.RemoteAddr(), "opcode", p.Opcode, "size", len(p.Data))
+			lvl := slog.LevelInfo
+			if quietQuery(p.Opcode) {
+				lvl = slog.LevelDebug
+			}
+			logger.Log(ctx, lvl, "packet received", "addr", sess.RemoteAddr(), "opcode", p.Opcode, "size", len(p.Data))
 			return handle(ctx, sess, p)
 		},
+		// The unauthenticated one-question connections (round 679's review):
+		// their lines go to Debug.
+		Quiet: quietQuery,
 		OnDisconnect: func(sess *gateway.Session) {
 			// duelDisconnect/tradeDisconnect/guildPointsDisconnect must run
 			// before worldDisconnect: all three look the disconnecting

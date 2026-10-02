@@ -7255,13 +7255,65 @@ cmd/server:         serverstatus679_test.go:81: no reply to the server status re
   and in docs/TODO.md; not designed.
 - `agent` is parsed and unused (one-process server; the 0xA102 redirect's handler address is OPEN);
   `global.region` is reserved (nothing READ maps to it).
-- Connect resolves a name through Godot's own path (first address of any family) while the status
-  prefers IPv4: a "localhost"-style name can show a status yet fail to connect.
+- (Fixed by the review: Connect now resolves a name the way the status does.)
 - Choosing another server in the list does not re-ask the theme until the next launch.
 - The list's 0.5 s fades, the farm column, the name's gold flag (+0x28, meaning OPEN), the slider's
   drag; the 0xA101 parser; the meaning of edit flags 0xa / 2 set on the ID and PW edits.
 - `-max-players` counts characters in the world; whether retail lets staff in under inspection is
   OPEN (ours refuses everyone).
+
+### Review (round 679's review: no blocker, two MEDIUM, nine LOW -- fixed in a follow-up commit)
+
+**M1, the field text sat 5.5 low.** `style_login_edit` sized the field before it was in the tree,
+where a Control's size is clamped to the default theme's minimum: the 20-tall slots were 31, the
+text 5.5 below the slot's middle (retail centres vertically: VAlign=1 on 41/42/43, `FUN_00637b70`
+`top + (h - textHeight) * 0.5`). Every field is now added to its window first and sized after; the
+plain panel's `_slot_field` and the server list's cells (rows 20, were ~23) the same. The test: each
+slot's field is the slot's size in the tree and its text's middle is the slot's (41: 42.0, 42: 70.0,
+43: 98.0 -- LineEdit's own formula). Against 67109b5 the suite stops on the new parent argument
+(`SCRIPT ERROR: Invalid call to function 'style_login_edit (via call)' ... Expected 3 arguments.`).
+
+**M2, Connect resolved a name differently from the status.** `NetClient.connect_to_server` let
+`StreamPeerTCP` resolve (the first address of any family); the list prefers IPv4. With real input,
+"localhost" showed Check, then Connect went to ::1 and failed. NetClient now resolves a name without
+blocking and takes its IPv4 address first (`GatewayQuery.pick_address`), the TLS name staying the
+host name. The test connects the real NetClient autoload to "localhost" with a server listening on
+127.0.0.1 only. Against 67109b5:
+```
+FAIL Connect to 'localhost' reaches a server on 127.0.0.1 only (connection_failed after 0 ms)
+```
+
+**LOW**
+- L1: the bands compare in integers, `cur * 100 < pct * max`; `thresholds()` returns whole percents.
+  The float32 0.97 from the table had put 97/100 in Populated. New checks go through the client's own
+  text-table parser on rows shaped as the archive's (column 2 = 65, columns 8-9 = 97, MEASURED with
+  dump_text_table.gd): 349/1000 Easy, 350/1000 and 35/100 Populated, 969/1000 and 96/100 Populated,
+  970/1000 and 97/100 Crowded. Against 67109b5 the suite no longer parses (`Invalid operands "Vector2"
+  and "Vector2i"`).
+- L2: 0/0 is Crowded (NaN's unordered compare takes the `jp` branches); only cur > 0 over 0 is FULL.
+  The protocol doc and the test are corrected.
+- L3: the logo cannot show over an open list. `TitleIntro.logo_held` holds the reveal (round 680
+  moves that reveal later), and `release_logo()` gives it when the list closes. Two small hooks in
+  title_intro.gd.
+- L4: Tab moves between ID and PW (and an editable server field) only. LIST, Connect, Exit and the
+  register link take no keyboard focus, so Enter in a field always submits.
+- L5: closing the list gives the focus back to PW (or ID when empty).
+- L6: two server names that are one name once trimmed: the first stands, the second is warned.
+  Against 67109b5:
+  `FAIL 'A ' and 'A' are one name: the first stands (... servers=[A=a.example.com:15779, A=b.example.com:15779])`.
+- L7: `ClientConfig.load_file` checks the size (`get_length`) before reading.
+- L8: a connection whose first packet is the status or theme question logs its connected, packet and
+  disconnected lines at Debug (`gateway.Server.Quiet`; the "connected" line is written at the first
+  packet, or at the end for a session that sent none). `TestQuietSessionsLogAtDebug`; against
+  67109b5 it does not build (`unknown field Quiet in struct literal of type Server`).
+- L9: the `-gm-accounts` names pass `LoginGate` both full and under inspection (`TestLoginGate`;
+  against 67109b5 `too many arguments in call to LoginGate`). deploy/README.md says capacity counts
+  characters in the world.
+- Not changed: the asterisk's size is Arial 12's raised `*`; the font choice goes to the user.
+
+After the fixes: `remote_godot.sh check` ALL LOAD (491 scripts); `tests` 195 suites, 0 failing;
+`go build ./...`, `go vet ./...`, `go test -count=1 -p 1 ./...` green (63 packages). No perf gate (no
+world code).
 
 ## Six-hundred-and-seventy-eighth round: the login screen is retail's 3D title -- the intro flown over the world, the archive's own frame, logo and login box where the client puts them, the title music, and a theme the server picks
 

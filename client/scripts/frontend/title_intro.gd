@@ -79,6 +79,9 @@ var _qa_login_shot := false
 ## The archive's logo held back while the 2D still (which carries its own)
 ## is up.
 var _logo_waiting := false
+## Round 679: set while the server list is open (it hides the logo); a
+## reveal that comes due then waits for release_logo().
+var logo_held := false
 
 ## Picks the intro and starts loading its backdrop. `login_nodes` are the
 ## login window's pieces in FUN_00864870's order (logo first). Returns false
@@ -246,6 +249,14 @@ func _still_covers() -> bool:
 	return _still != null and _still.visible and _still.modulate.a > 0.0 and _still.get_child_count() > 1 \
 		and state != State.FLYING and not (_frame != null and _frame.custom_logo)
 
+## Round 679: the server list closed -- the logo's held reveal, if it came
+## due meanwhile.
+func release_logo() -> void:
+	logo_held = false
+	if _logo_waiting and _frame != null and not _still_covers():
+		_logo_waiting = false
+		_show_login_node(_frame.logo)
+
 ## Stops the backdrop from starting new cells (the screen is about to be
 ## left: Connect was pressed). Round 678's review: leaving waited ~0.8 s for
 ## cells still preparing.
@@ -284,7 +295,7 @@ func _on_first_view_ready() -> void:
 		_frame.fade(_still, _alpha(_still), 0, STILL_FADE_S)
 	elif _still != null:
 		_still.visible = false
-	if _logo_waiting and _frame != null:
+	if _logo_waiting and _frame != null and not logo_held:
 		_logo_waiting = false
 		_show_login_node(_frame.logo)
 	# READ, FUN_00869b50: the big logo's slow fade-in, unless the login is up.

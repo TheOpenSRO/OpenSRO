@@ -184,6 +184,7 @@ func _finish_ready() -> void:
 	# Enter submits from any field.
 	for field in [username_edit, password_edit, server_address_edit]:
 		field.text_submitted.connect(func(_t): _on_login_pressed())
+	_set_tab_order()
 	# SRREVAMP_QA_RECONNECT_VIA_LOGIN (round 558): a scripted reconnect that
 	# takes the tester's route lands here from World3D._on_disconnected.
 	# Sign back in with the QA account through the same Connect path a click
@@ -198,6 +199,33 @@ func _finish_ready() -> void:
 func _remembered_address() -> String:
 	var remembered := ClientSettings.server_address()
 	return remembered if remembered != "" else "127.0.0.1:%d" % DEFAULT_SERVER_PORT
+
+## Tab moves between the ID and password fields only, as retail's does
+## (round 679's review) -- and the server field when it is a typed host:port;
+## LIST, Connect, Exit and the register link take no keyboard focus, so
+## Enter in a field always submits.
+func _set_tab_order() -> void:
+	var cycle: Array = [username_edit, password_edit]
+	if server_address_edit != null and server_address_edit.editable:
+		cycle.append(server_address_edit)
+	for i in range(cycle.size()):
+		var a: Control = cycle[i]
+		var b: Control = cycle[(i + 1) % cycle.size()]
+		a.focus_next = a.get_path_to(b)
+		b.focus_previous = b.get_path_to(a)
+	for b in [login_button, _exit_button, register_button, _list_button]:
+		if b != null:
+			(b as Control).focus_mode = Control.FOCUS_NONE
+
+## The field a returning player types into: the password when the ID is
+## filled, else the ID.
+func _focus_first_empty() -> void:
+	if username_edit == null or not username_edit.is_inside_tree() or not username_edit.is_visible_in_tree():
+		return
+	if username_edit.text == "":
+		username_edit.grab_focus()
+	else:
+		password_edit.grab_focus()
 
 ## setting/config.yaml, and the server it starts on (round 679).
 func _load_config() -> void:
@@ -239,6 +267,8 @@ func _open_server_list() -> void:
 	_server_list.chosen.connect(_on_server_chosen)
 	_server_list.closed.connect(_on_server_list_closed)
 	_server_list.open(_media, _frame, _text, _config.servers, _selected)
+	if _title != null:
+		_title.logo_held = true
 	_set_login_visible(false)
 
 func _on_server_chosen(entry: ClientConfig.ServerEntry) -> void:
@@ -250,6 +280,12 @@ func _on_server_chosen(entry: ClientConfig.ServerEntry) -> void:
 func _on_server_list_closed() -> void:
 	_server_list = null
 	_set_login_visible(true)
+	# A reveal of the logo that came due while the list was open (round
+	# 679's review).
+	if _title != null:
+		_title.release_logo()
+	# The fields again take the keys (round 679's review).
+	_focus_first_empty.call_deferred()
 
 ## The logo, login window, Connect and Exit while the server list is up:
 ## READ, LIST's FUN_00864870(1, 0) fades windows 8, 9, 11 and 12 out as it
@@ -448,12 +484,16 @@ func _login_label(id: int, fallback: String) -> void:
 ## the labels carry 0; the password field masks with PASSWORD_CHAR.
 func _login_edit(id: int, secret: bool) -> LineEdit:
 	var field := LineEdit.new()
-	style_login_edit(field, _frame.login_def(id), secret)
-	_login_window.add_child(field)
+	style_login_edit(field, _frame.login_def(id), secret, _login_window)
 	return field
 
-## One slot's field from its layout control (null: centred, font 0).
-static func style_login_edit(field: LineEdit, d: UiLayoutParser.ControlDef, secret: bool) -> void:
+## One slot's field from its layout control (null: centred, font 0), added
+## to `parent` (when given) BEFORE it is sized: outside the tree a Control's
+## size is clamped to the default theme's minimum, and the 20-tall slots came
+## out 31 tall with their text 5.5 low (round 679's review). Retail centres the
+## text vertically too (VAlign=1 on 41/42/43; FUN_00637b70, top + (h -
+## textHeight) * 0.5), which a LineEdit does in its own height.
+static func style_login_edit(field: LineEdit, d: UiLayoutParser.ControlDef, secret: bool, parent: Node = null) -> void:
 	field.secret = secret
 	field.secret_character = PASSWORD_CHAR
 	field.alignment = _h_alignment(d.halign if d != null else 1)
@@ -464,10 +504,12 @@ static func style_login_edit(field: LineEdit, d: UiLayoutParser.ControlDef, secr
 	var empty := StyleBoxEmpty.new()
 	for sb in ["normal", "focus", "read_only"]:
 		field.add_theme_stylebox_override(sb, empty)
+	field.custom_minimum_size = Vector2.ZERO
+	if parent != null:
+		parent.add_child(field)
 	if d != null:
 		field.position = Vector2(d.rect.position)
 		field.size = Vector2(d.rect.size)
-	field.custom_minimum_size = Vector2.ZERO
 
 ## What the Server field shows (round 679): a listed server's name, centred
 ## and read-only like retail's GDR_STA_SERVER static, with its address as the
@@ -550,11 +592,7 @@ func _load_text_table() -> UiTextTable:
 
 func _on_title_login_shown() -> void:
 	print("LOGIN: usable at %d ms" % (Time.get_ticks_msec() - _started_ms))
-	if username_edit != null and username_edit.is_inside_tree():
-		if username_edit.text == "":
-			username_edit.grab_focus()
-		else:
-			password_edit.grab_focus()
+	_focus_first_empty()
 
 ## READ: a left button press (CPSTitle::vslot_017, message 0x201) or any key
 ## (FUN_0086ae50) while the login window is not up brings it in at once.
@@ -700,9 +738,9 @@ func _slot_field(panel: Control, panel_size: Vector2, slot: Array, label_text: S
 	label.add_theme_color_override("font_color", Color(0.93, 0.86, 0.6))
 	label.add_theme_color_override("font_outline_color", Color.BLACK)
 	label.add_theme_constant_override("outline_size", 4)
+	panel.add_child(label) # before sizing (round 679's review)
 	label.position = Vector2(panel_size.x * slot[0], cy - h * 0.5)
 	label.size = Vector2(panel_size.x * (slot[1] - slot[0]) - 4.0, h)
-	panel.add_child(label)
 
 	var field := LineEdit.new()
 	field.text = default_text
@@ -713,9 +751,9 @@ func _slot_field(panel: Control, panel_size: Vector2, slot: Array, label_text: S
 	field.add_theme_color_override("font_color", Color(1, 1, 1))
 	field.add_theme_color_override("font_outline_color", Color.BLACK)
 	field.add_theme_constant_override("outline_size", 3)
+	panel.add_child(field) # before sizing (round 679's review)
 	field.position = Vector2(panel_size.x * slot[1], cy - h * 0.5)
 	field.size = Vector2(panel_size.x * (slot[2] - slot[1]), h)
-	panel.add_child(field)
 	return field
 
 func _plate() -> Control:

@@ -919,8 +919,10 @@ double click) puts its name in the field; the client remembers it for the next l
 The percentages come from the archive's text table (`UIO_STT_SERVER_35` / `UIO_STT_SERVER_75`, 35
 and 97 in the English column), as retail's do. `-max-players` (env `SRREVAMP_MAX_PLAYERS`, 1-65535,
 default 1000) is the capacity; a login is refused with retail's "The server is full, please try
-again later." once that many characters are in the world. Under `-inspection` every login is
-refused with retail's "Cannot connect to the server because the server is now in inspection."
+again later." once that many characters are in the world (characters that have entered the world,
+not accounts at character select). Under `-inspection` every login is refused with retail's "Cannot
+connect to the server because the server is now in inspection." The `-gm-accounts` names are let
+through both, so staff can test a server under inspection or a full one.
 
 **Which setting wins when two places set the intro:** the player's `SRREVAMP_LOGIN_INTRO` (a preview)
 > the server's `-login-intro` (its fresh answer, else the one cached from the last launch) >

@@ -23,8 +23,12 @@ class_name ServerStatus
 ## lo and hi are not constants in the code: they are textuisystem's
 ## UIO_STT_SERVER_35 and UIO_STT_SERVER_75 times 0.01 (DAT_00e1b820), and
 ## the archive's English column holds 35 and 97 (MEASURED, the box's
-## Media.pk2; the Korean column says 65 for the second). The comparison is in
-## floats, so a max of 0 is FULL (r is inf, or NaN failing every test).
+## Media.pk2; the Korean column says 65 for the second). Retail compares in
+## x87 floats; here the same test is made in integers, cur * 100 < pct * max,
+## so 97/100 against 97 is Crowded exactly (round 679's review: a float32
+## 0.97 put it in Populated). A max of 0: cur > 0 gives r = inf, FULL; 0/0 is
+## NaN, whose unordered compare takes the `jp` branches to Crowded (READ in
+## round 679's review).
 ## The vSRO client measured stores 5 into a flag (0x832a68) that turns FULL
 ## into a red "Crowded" (INFERRED a patch); this client shows retail's FULL.
 ##
@@ -51,8 +55,8 @@ enum Band { PENDING, UNREACHABLE, CHECK, EASY, POPULATED, CROWDED, FULL }
 
 ## MEASURED fallbacks for the two thresholds when the text table is not
 ## there: the English column of the box's textuisystem (see above).
-const LO_FALLBACK := 0.35
-const HI_FALLBACK := 0.97
+const LO_FALLBACK := 35
+const HI_FALLBACK := 97
 
 const BAND_KEYS := {
 	Band.UNREACHABLE: "UIO_STT_TEST",
@@ -92,33 +96,34 @@ func _init() -> void:
 	timeout_ms = TIMEOUT_MS
 
 ## READ (above): the band for an answer.
-static func band_for(cur: int, max_users: int, operating: int, lo: float, hi: float) -> int:
+## `lo` and `hi` are whole percents (textuisystem's numbers).
+static func band_for(cur: int, max_users: int, operating: int, lo: int, hi: int) -> int:
 	if operating == 0:
 		return Band.CHECK
 	if max_users <= 0:
-		return Band.FULL
-	var r := float(cur) / float(max_users)
-	if r < lo:
+		return Band.FULL if cur > 0 else Band.CROWDED
+	if cur * 100 < lo * max_users:
 		return Band.EASY
-	if r < hi:
+	if cur * 100 < hi * max_users:
 		return Band.POPULATED
-	if r < 1.0:
+	if cur < max_users:
 		return Band.CROWDED
 	return Band.FULL
 
 ## The thresholds as retail reads them: textuisystem's UIO_STT_SERVER_35 and
 ## UIO_STT_SERVER_75 times 0.01, each falling back (MEASURED values) when
 ## the table or the row is missing or not a number.
-static func thresholds(text: UiTextTable) -> Vector2:
-	return Vector2(_percent(text, "UIO_STT_SERVER_35", LO_FALLBACK), _percent(text, "UIO_STT_SERVER_75", HI_FALLBACK))
+## Whole percents (x = lo, y = hi).
+static func thresholds(text: UiTextTable) -> Vector2i:
+	return Vector2i(_percent(text, "UIO_STT_SERVER_35", LO_FALLBACK), _percent(text, "UIO_STT_SERVER_75", HI_FALLBACK))
 
-static func _percent(text: UiTextTable, key: String, fallback: float) -> float:
+static func _percent(text: UiTextTable, key: String, fallback: int) -> int:
 	if text == null or not text.has(key):
 		return fallback
 	var s := text.get_text(key, "").strip_edges()
-	if not s.is_valid_float() and not s.is_valid_int():
+	if not s.is_valid_int() or s.to_int() < 0 or s.to_int() > 1000:
 		return fallback
-	return s.to_float() * 0.01
+	return s.to_int()
 
 static func band_text(b: int, text: UiTextTable) -> String:
 	var fallback: String = BAND_FALLBACK.get(b, "")
@@ -174,7 +179,7 @@ func _answered(value, why: String) -> void:
 	finished.emit(self, why)
 
 ## The band for this query's outcome with the given thresholds.
-func band_with(t: Vector2) -> int:
+func band_with(t: Vector2i) -> int:
 	if not is_done():
 		return Band.PENDING
 	if not answered_ok:

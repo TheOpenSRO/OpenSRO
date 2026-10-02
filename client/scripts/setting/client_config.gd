@@ -85,10 +85,16 @@ static func load_default(warnings: PackedStringArray = PackedStringArray()) -> C
 static func load_file(path: String, warnings: PackedStringArray = PackedStringArray()) -> ClientConfig:
 	if not FileAccess.file_exists(path):
 		return ClientConfig.new()
-	var text := FileAccess.get_file_as_string(path)
-	if text == "" and FileAccess.get_open_error() != OK:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
 		warnings.append("%s could not be read (error %d) -- ignored" % [path, FileAccess.get_open_error()])
 		return ClientConfig.new()
+	# The size before the read (round 679's review): a huge file is not read.
+	if f.get_length() > YamlLite.MAX_BYTES:
+		warnings.append("%s is %d bytes, more than %d -- ignored" % [path, f.get_length(), YamlLite.MAX_BYTES])
+		return ClientConfig.new()
+	var text := f.get_as_text()
+	f.close()
 	var c := from_text(text, path, warnings)
 	return c
 
@@ -126,7 +132,15 @@ static func from_text(text: String, where: String, warnings: PackedStringArray =
 	if s != null and not (s is Dictionary):
 		warnings.append("%s: 'servers' is not a map of name -> server -- ignored" % where)
 	elif s is Dictionary:
+		var seen := {}
 		for name in s.keys():
+			# Two keys that are one name once trimmed ("A " and "A"): the
+			# first stands (round 679's review).
+			var trimmed := str(name).strip_edges()
+			if seen.has(trimmed):
+				warnings.append("%s: server '%s' is listed twice -- the second is ignored" % [where, trimmed])
+				continue
+			seen[trimmed] = true
 			if c.servers.size() >= SERVERS_MAX:
 				warnings.append("%s: more than %d servers -- the rest are ignored" % [where, SERVERS_MAX])
 				break

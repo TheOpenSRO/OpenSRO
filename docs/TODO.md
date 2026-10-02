@@ -1126,15 +1126,11 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
 - **`global.region` is reserved:** vSRO reads no region (DIVISIONINFO's locale byte is skipped by its
   loader; no "Located In" code). Candidates: the content id byte (net-state+0, who sets it OPEN) or
   option.txt's `Language` key (what it does OPEN).
-- **Connect resolves a host name through Godot's own path** (`StreamPeerTCP.connect_to_host`, the
-  first address of any family), while the status query prefers IPv4 (`GatewayQuery.pick_address`):
-  a name whose first address is IPv6 with the server listening on IPv4 only (as "localhost" on the
-  render box) shows a status but may not connect. Resolve once, the same way, for both.
 - **The list's polish:** the 0.5 s fades (FUN_00864870), the farm column, the name's gold colour for
   the entry's +0x28 flag (meaning OPEN), the slider's drag; the 0xA101 parser in the exe (not found:
   no 0xa101 immediate).
-- **-max-players counts characters in the world**, not sessions at character select; a GM is turned
-  away under `-inspection` like everyone (retail's rule for staff is OPEN).
+- **-max-players counts characters in the world**, not sessions at character select; the
+  `-gm-accounts` names pass the inspection and full gates (ours; retail's rule for staff is OPEN).
 
 ### Loading freezes: what the off-thread rounds left (map/loading epic, 2026-09-25)
 

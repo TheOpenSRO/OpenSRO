@@ -113,11 +113,15 @@ func TestLoginGate(t *testing.T) {
 		return LoginHandler(store)(ctx, sess, p)
 	}
 	statusNow := func() ServerStatus { return st.Load().(ServerStatus) }
-	addr := startThemeServer(t, LoginGate(statusNow, counted))
-	login := func() *LoginResult {
+	staff := func(u string) bool { return u == "gm" }
+	if _, err := store.Add("gm", "secret"); err != nil {
+		t.Fatal(err)
+	}
+	addr := startThemeServer(t, LoginGate(statusNow, staff, counted))
+	loginAs := func(user string) *LoginResult {
 		t.Helper()
 		conn := dialTheme(t, addr)
-		if err := proto.Write(conn, &proto.Packet{Opcode: OpLogin, Data: (&LoginRequest{Username: "someone", Password: "secret"}).Encode()}, nil, nil); err != nil {
+		if err := proto.Write(conn, &proto.Packet{Opcode: OpLogin, Data: (&LoginRequest{Username: user, Password: "secret"}).Encode()}, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
@@ -131,6 +135,7 @@ func TestLoginGate(t *testing.T) {
 		}
 		return res
 	}
+	login := func() *LoginResult { t.Helper(); return loginAs("someone") }
 	if r := login(); !r.OK || reached.Load() != 1 {
 		t.Errorf("an open server with room: %+v, reached %d", r, reached.Load())
 	}
@@ -142,8 +147,16 @@ func TestLoginGate(t *testing.T) {
 	if r := login(); r.OK || r.Reason != LoginRefusedFull || reached.Load() != 1 {
 		t.Errorf("full: %+v, reached %d", r, reached.Load())
 	}
+	// Staff pass both (round 679's review).
+	if r := loginAs("gm"); !r.OK || reached.Load() != 2 {
+		t.Errorf("a GM account when full: %+v, reached %d", r, reached.Load())
+	}
+	st.Store(ServerStatus{Current: 0, Max: 2, Inspection: true})
+	if r := loginAs("gm"); !r.OK || reached.Load() != 3 {
+		t.Errorf("a GM account under inspection: %+v, reached %d", r, reached.Load())
+	}
 	st.Store(ServerStatus{Current: 1, Max: 2})
-	if r := login(); !r.OK || reached.Load() != 2 {
+	if r := login(); !r.OK || reached.Load() != 4 {
 		t.Errorf("room again: %+v, reached %d", r, reached.Load())
 	}
 }

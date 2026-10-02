@@ -73,8 +73,12 @@ client: setting/config.yaml".
   lo and hi are text, not code constants: `UIO_STT_SERVER_35` and `UIO_STT_SERVER_75` times 0.01
   (`DAT_00e1b820`). MEASURED in the box's textuisystem: `UIO_STT_SERVER_35` is 35 in the Korean and
   English columns; `UIO_STT_SERVER_75` is 65 in the Korean column and **97** in the English. This
-  client's text table yields 35 and 97 (MEASURED, the `SERVERLIST:` log line). A max of 0 makes r
-  inf or NaN and falls to FULL. A dword at 0xeed578+0x160, which 0x832a68 sets to 5 unconditionally
+  client's text table yields 35 and 97 (MEASURED: the row's columns read with dump_text_table.gd,
+  column 2 = 65, columns 8 and 9 = 97, and parsed by the client's UiTextTable in
+  server_list_test.gd). A max of 0: cur > 0 makes r inf, FULL; 0/0 is NaN, whose unordered x87
+  compare takes the `jp` branches to Crowded (READ in round 679's review). Ours compares in integers,
+  cur * 100 < pct * max, so 97/100 is Crowded exactly as retail's (a float32 0.97 had put it in
+  Populated). A dword at 0xeed578+0x160, which 0x832a68 sets to 5 unconditionally
   (nop padding after it: INFERRED a binary patch), turns "FULL" and "Crowded" red (0xFFFF5858, the
   word "Crowded"): this vSRO client never shows FULL. Ours shows retail's unpatched FULL.
   `UIO_STT_TEST` ("Closed") is in the text table but no code names it (string scan).
@@ -152,13 +156,17 @@ client: setting/config.yaml".
   `u8 version (1) | u16 LE current | u16 LE max | u8 state` -- retail's three entry fields in retail's
   order, state 0 = Check, 1 = open. Answered before login, once per connection; an unauthenticated
   asker's connection is ended after it (as the theme's). Current = characters in the world
-  (`world.Hub.Count`); max = `-max-players` (default 1000, OURS); state 0 under `-inspection`. The
+  (`world.Hub.Count`), not sessions at character select; max = `-max-players` (default 1000, OURS);
+  state 0 under `-inspection`. The connection, packet and disconnection log lines of these
+  one-question connections (and the theme's) are at Debug (`gateway.Server.Quiet`). The
   client asks every listed server at once on its own connections (`GatewayQuery`, a 2 s timeout, a
   host name resolved without blocking and its IPv4 address preferred), and again every 5 s while
   the list is open.
 - **Unreachable:** the row shows `UIO_STT_TEST` "Closed" in the list's default 0xFFB4B4B4. Connect
   to such a server shows retail's "Failed to connect to server." (without the code).
 - **The gate:** under `-inspection`, or with `-max-players` characters in the world, a login gets
-  retail's inspection or full message (`session.LoginGate`).
+  retail's inspection or full message (`session.LoginGate`); the `-gm-accounts` names pass both.
+- **Connect resolves a name the way the status does** (`NetClient`, round 679's review): without
+  blocking, its IPv4 address first (`GatewayQuery.pick_address`); the TLS name stays the host name.
 - **Left out:** the 0.5 s fades of the list (it shows and hides at once), the farm column, the
   name's gold flag, the slider's drag (wheel and arrows scroll).

@@ -186,6 +186,11 @@ global:
 	_check(not c.has_servers() and c.source == "", "a file that does not parse is ignored whole")
 	_check(w.size() == 1 and w[0].contains("broken.yaml line 3:"), "its warning names the file and line: %s" % [w])
 
+	w = PackedStringArray()
+	c = ClientConfig.from_text("servers:\n  \"A \":\n    gateway: { address: a.example.com }\n  A:\n    gateway: { address: b.example.com }\n", "dup.yaml", w)
+	_check(c.servers.size() == 1 and c.servers[0].gateway_host == "a.example.com", "'A ' and 'A' are one name: the first stands (%s)" % c.describe())
+	_check("\n".join(w).contains("listed twice"), "and the second is warned about: %s" % [w])
+
 	_check(ClientConfig.is_valid_host("login.example.com") and ClientConfig.is_valid_host("192.0.2.1") and ClientConfig.is_valid_host("::1"), "host names and IP literals")
 	_check(not ClientConfig.is_valid_host("a b") and not ClientConfig.is_valid_host("x.example.com:15779") and not ClientConfig.is_valid_host(""), "no spaces, ports or empties in a host")
 
@@ -199,6 +204,13 @@ func _files() -> void:
 	f.close()
 	c = ClientConfig.load_file(path, w)
 	_check(c.servers.size() == 2 and c.source == path, "read from a file")
+	var big := _dir.path_join("big.yaml")
+	var bf := FileAccess.open(big, FileAccess.WRITE)
+	bf.store_string("# " + "x".repeat(YamlLite.MAX_BYTES) + "\n")
+	bf.close()
+	w = PackedStringArray()
+	c = ClientConfig.load_file(big, w)
+	_check(not c.has_servers() and w.size() == 1 and w[0].contains("bytes, more than"), "a file over %d bytes is not read: %s" % [YamlLite.MAX_BYTES, w])
 	OS.set_environment("SRREVAMP_SETTING_DIR", _dir)
 	_check(ClientConfig.setting_dir() == _dir and ClientConfig.config_path() == _dir.path_join("config.yaml"), "SRREVAMP_SETTING_DIR overrides the folder")
 	_check(ClientConfig.load_default().servers.size() == 2, "load_default reads <setting dir>/config.yaml")
