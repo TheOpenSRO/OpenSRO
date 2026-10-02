@@ -50,8 +50,9 @@ func TestNameOnlyRequestsMatchTheClientsWireShape(t *testing.T) {
 	}
 
 	// The character-create payload is a different shape and must stay so:
-	// it carries a gender after the name.
-	if _, err := DecodeCharacterCreateRequest(payload); err == nil {
+	// since round 682 it is the lobby's action 1, an action byte and the
+	// body, scale and items after the name.
+	if r, err := DecodeLobbyRequest(payload); err == nil && r.Action == LobbyCreate {
 		t.Fatal("a name-only payload decoded as a character-create request; " +
 			"the two shapes have merged again")
 	}

@@ -66,6 +66,8 @@ for f in teleportdata.txt teleportlink.txt teleportbuilding.txt; do
                      # a DIRECTORY of three CSVs: 222 points, 292 links, 77 buildings; the server reads it with -teleport-dir
 /tmp/pk2list -pk2 "$MEDIA" -extract "server_dep\silkroad\textdata\refregion.txt" -out refregion.txt
 /tmp/export-refdata  -mode regions -out regions.csv refregion.txt         # 3,194 regions, 103 towns; the server reads it with -regions-csv (round 674)
+/tmp/export-refdata  -mode chargen -out chargen.csv $(order characterdata.txt) $(order itemdata.txt)
+                     # 104 creatable ids (52 bodies, 52 items) and 2 ammunition rows; the server reads it with -chargen-csv (round 682)
 rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt characterdata_* leveldata.txt \
       levelgold.txt textdata_object.txt npcpos.txt teleport*.txt refregion.txt
                      # the extracted tables are game data; keep only the CSVs (and the teleport/ directory)
@@ -174,6 +176,7 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 #         - "-teleport-dir=/data/teleport"       # the teleport network (round 575); the town teleporters use it (round 576)
 #         - "-monsters-csv=/data/monsters.csv"   # the monster species table (round 654); see "Monster species table"
 #         - "-regions-csv=/data/regions.csv"     # the towns (round 674): a monster entering one is removed; see "Towns"
+#         - "-chargen-csv=/data/chargen.csv"     # the creatable catalogue (round 682): without it every create is refused; see "Character lobby"
 docker compose up -d
 ```
 
@@ -1035,6 +1038,36 @@ A client must be a release that carries round 656 (the paged list and the enter/
 a window this dense; one that also carries round 660 gets the party flag and draws champions,
 giants and elites at their retail scale. An older client is sent no party flag and draws every
 rank at its species' size. `SRREVAMP_AI_TICK_STATS=1` logs the AI tick's p50/p99 once a minute.
+
+## Character lobby (round 682)
+
+Round 682 moves character select and create onto the retail lobby (0x7007 / 0x7001,
+`docs/protocol/charselect.md`). Two things change on a deployed server:
+
+- **The database migrates itself** at the server's boot (`character.OpenSQLStore`): the characters
+  table gains `ref_obj_id`, `scale`, `deleted_at`, `start_zone`, `start_x`, `start_y`, `start_z`,
+  and every existing row with `ref_obj_id` 0 gets 1909 (`china_man`) or 1923 (`china_woman`) at
+  scale 0x22 -- the body it is drawn with today. Names are kept even where the new rules would
+  refuse them. Idempotent: a second boot changes nothing (`TestMigration682` runs it twice on a
+  copy of the old table). Check: `SELECT ref_obj_id, count(*) FROM characters GROUP BY 1;` shows
+  only 1909 and 1923 for the old rows.
+- **Creating a character needs the creatable catalogue.** Without `-chargen-csv` the server
+  refuses every create with 0x403 ("Failed to create a character...") and warns at boot
+  (`no creatable catalogue (-chargen-csv / SRREVAMP_CHARGEN_CSV): every character create is
+  refused`). Existing characters list, start and play as before.
+
+On srrevamp-01, once this release's server runs (the update timer):
+1. Export `chargen.csv` (step 2 of "Reference data": the `-mode chargen` line, after the
+   characterdata and itemdata parts are extracted). It prints
+   `wrote 104 creatable ids (52 bodies, 52 items) and 2 ammunition rows` on a retail archive.
+2. `scp chargen.csv srrevamp@<server-host>:~/srrevamp-data/ && ssh srrevamp@<server-host> 'chmod 644 ~/srrevamp-data/chargen.csv'`
+3. Add `- "-chargen-csv=/data/chargen.csv"` to the override's `command:` list (edit only that key),
+   then `cd ~/srrevamp && docker compose up -d`.
+4. The boot log says `creatable catalogue loaded: characters can be created ... ids=104`.
+
+Players need this release's client: an older one speaks the removed 0x0010-0x0015 and its select
+screen lists nothing. A deleted character waits 7 days (10080 minutes, restorable) and is then
+removed by the server's once-a-minute purge.
 
 ## Towns (round 674)
 

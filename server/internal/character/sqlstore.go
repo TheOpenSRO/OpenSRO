@@ -57,6 +57,23 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS inventory_size INTEGER NOT NULL 
 -- HeadingStore): the client's heading in radians, saved with the position.
 -- OURS: _CHAR declares no such column.
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS heading DOUBLE PRECISION NOT NULL DEFAULT 0;
+-- The lobby (round 682, docs/protocol/charselect.md): the body a character was
+-- made from (_CHAR.RefObjID), its scale byte (_CHAR.Scale: Height low nibble,
+-- Volume high), when its 7-day deletion started (NULL: not deleting), and its
+-- race's start spawn (start_zone '' : none, the zone spawn as before).
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS ref_obj_id BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS scale INTEGER NOT NULL DEFAULT 34;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS start_zone TEXT NOT NULL DEFAULT '';
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS start_x DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS start_y DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS start_z DOUBLE PRECISION NOT NULL DEFAULT 0;
+-- Existing characters get the body the world draws for their gender today,
+-- CHAR_CH_WOMAN_FIGHTER 1923 or CHAR_CH_MAN_FIGHTER 1909 (character.
+-- LegacyModelFor; OURS, the user accepted it), at the default scale 0x22 (the
+-- column default above). Only rows still at 0, so a second run changes nothing.
+UPDATE characters SET ref_obj_id = CASE WHEN gender = 'china_woman' THEN 1923 ELSE 1909 END WHERE ref_obj_id = 0;
+CREATE INDEX IF NOT EXISTS characters_deleted_at ON characters (deleted_at) WHERE deleted_at IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS characters_name_lower ON characters (LOWER(name));
 CREATE INDEX IF NOT EXISTS characters_account_id ON characters(account_id);
 `
@@ -93,7 +110,7 @@ func (s *SQLStore) Close() error {
 // ListByAccount implements Store.
 func (s *SQLStore) ListByAccount(ctx context.Context, accountID int64) ([]*Character, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, account_id, name, gold, hp, gender, level, exp, stat_points, str, intel, storage_gold, hwan_count, latest_zone, latest_frame, pos_x, pos_y, pos_z FROM characters WHERE account_id = $1 ORDER BY id`, accountID)
+		`SELECT `+characterColumns+` FROM characters WHERE account_id = $1 ORDER BY id`, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("character: listing characters: %w", err)
 	}
@@ -101,12 +118,11 @@ func (s *SQLStore) ListByAccount(ctx context.Context, accountID int64) ([]*Chara
 
 	var out []*Character
 	for rows.Next() {
-		var c Character
-		if err := rows.Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender, &c.Level, &c.Exp, &c.StatPoints, &c.Str, &c.Int, &c.StorageGold, &c.HwanCount,
-			&c.Zone, &c.Frame, &c.PosX, &c.PosY, &c.PosZ); err != nil {
+		c, err := scanCharacter(rows)
+		if err != nil {
 			return nil, fmt.Errorf("character: scanning row: %w", err)
 		}
-		out = append(out, &c)
+		out = append(out, c)
 	}
 	return out, rows.Err()
 }
@@ -124,9 +140,9 @@ func (s *SQLStore) Create(ctx context.Context, accountID int64, name string) (*C
 
 	var id int64
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO characters (account_id, name, gold, hp, gender, level, str, intel) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+		`INSERT INTO characters (account_id, name, gold, hp, gender, level, str, intel, ref_obj_id, scale) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
 		accountID, name, StartingGold, StartingMaxHP, DefaultGender, StartingLevel,
-		StartingStr, StartingInt).Scan(&id)
+		StartingStr, StartingInt, LegacyModelFor(DefaultGender), DefaultScale).Scan(&id)
 	if err != nil {
 		if isUniqueConstraintErr(err) {
 			return nil, ErrNameTaken
@@ -134,7 +150,8 @@ func (s *SQLStore) Create(ctx context.Context, accountID int64, name string) (*C
 		return nil, fmt.Errorf("character: inserting character: %w", err)
 	}
 	return &Character{ID: id, AccountID: accountID, Name: name, Gold: StartingGold, HP: StartingMaxHP,
-		Gender: DefaultGender, Level: StartingLevel, Str: StartingStr, Int: StartingInt}, nil
+		Gender: DefaultGender, Level: StartingLevel, Str: StartingStr, Int: StartingInt,
+		RefObjID: LegacyModelFor(DefaultGender), Scale: DefaultScale}, nil
 }
 
 // Delete implements Store.
@@ -348,18 +365,15 @@ func (s *SQLStore) ResetHP(ctx context.Context, characterID int64) error {
 
 // GetByID implements Store.
 func (s *SQLStore) GetByID(ctx context.Context, characterID int64) (*Character, error) {
-	var c Character
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, account_id, name, gold, hp, gender, level, exp, stat_points, str, intel, storage_gold, hwan_count, latest_zone, latest_frame, pos_x, pos_y, pos_z FROM characters WHERE id = $1`, characterID,
-	).Scan(&c.ID, &c.AccountID, &c.Name, &c.Gold, &c.HP, &c.Gender, &c.Level, &c.Exp, &c.StatPoints, &c.Str, &c.Int, &c.StorageGold, &c.HwanCount,
-		&c.Zone, &c.Frame, &c.PosX, &c.PosY, &c.PosZ)
+	c, err := scanCharacter(s.db.QueryRowContext(ctx,
+		`SELECT `+characterColumns+` FROM characters WHERE id = $1`, characterID))
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("character: getting character: %w", err)
 	}
-	return &c, nil
+	return c, nil
 }
 
 // SetLeveling implements Store.
@@ -382,7 +396,11 @@ func (s *SQLStore) SetLeveling(ctx context.Context, characterID int64, level int
 
 // SetGender implements Store.
 func (s *SQLStore) SetGender(ctx context.Context, characterID int64, gender string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE characters SET gender = $1 WHERE id = $2`, gender, characterID)
+	// A China gender carries its legacy body with it (LegacyModelFor), so the
+	// old create path and the tests that set a gender keep RefObjID agreeing.
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE characters SET gender = $1, ref_obj_id = CASE WHEN $1 IN ('china_man', 'china_woman') THEN $3 ELSE ref_obj_id END WHERE id = $2`,
+		gender, characterID, LegacyModelFor(gender))
 	if err != nil {
 		return fmt.Errorf("character: setting gender: %w", err)
 	}

@@ -581,9 +581,9 @@ func ExpDiffScale(killerLevel, victimLevel int, expSharingParty, europe bool) fl
 // here -- see ExpDiffScale and ExpWindowScale. expSharingParty is ExpDiffScale's
 // party gate (the killer is in an exp-sharing party, which every srrevamp party
 // is). Its Country selector is passed as China, always: every srrevamp
-// character is one (character.ValidGender admits only the two China genders,
-// and equipment.Refusal refuses a Europe item on exactly that ground), so the
-// Europe arm of the bonus is recovered but never selected.
+// character was one until round 682 made Europe creatable, and the selector
+// is not yet passed the killer's race, so the Europe arm of the bonus is
+// recovered but never selected (OPEN, docs/TODO.md, round 682).
 //
 // The reward's remaining factor, the float at pc+0x1cd8 that
 // Formula_MonsterExpReward loads at 0x410660 (`fld [edi+0x1cd8]`, EDI being the
@@ -603,7 +603,7 @@ func (t *Table) KillExp(killerLevel, victimLevel int, expSharingParty bool) (int
 	}
 	v = int64(math.Round(float64(v) *
 		ExpWindowScale(killerLevel, victimLevel) *
-		// europe = false: every srrevamp character is China (see above).
+		// europe = false: the killer's race is not passed yet (see above).
 		ExpDiffScale(killerLevel, victimLevel, expSharingParty, false)))
 	if v < 1 {
 		// The real formula floors its result at 1.

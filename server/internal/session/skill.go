@@ -137,12 +137,15 @@ func masteryTotalRefusal(country, total, requested, charLevel int) uint16 {
 }
 
 // characterCountry is the Country byte (ref object +0x88, common column 14) of
-// a character: always China. Every srrevamp character is one --
-// character.ValidGender admits only the two China genders, and
-// equipment.Refusal refuses a Europe item on exactly that ground
-// (equipment/rules.go, "Every character is China today"). Should Europe
-// characters ever be created, this is the one place to read their Country.
-func characterCountry(*character.Character) int {
+// a character: its body's race (character.RaceOf its Gender, which round 682
+// derives from RefObjID). Until round 682 every srrevamp character was China
+// and this returned China outright; Europe is creatable now (the user's
+// decision, 2026-10-02), so the mastery total cap and the potion reuse delay
+// read the real race here.
+func characterCountry(c *character.Character) int {
+	if c != nil && character.RaceOf(c.Gender) == character.RaceEurope {
+		return equipment.CountryEurope
+	}
 	return equipment.CountryChina
 }
 

@@ -32,6 +32,7 @@ package session
 import (
 	"context"
 	"log"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -199,6 +200,29 @@ func restoredArrival(c *character.Character) (zone, bucket string, pos world.Pos
 		return "", "", world.Position{}, "", false
 	}
 	return c.Zone, bucket, pos, frame, true
+}
+
+// startArrival is where a character with a start spawn and no saved position
+// enters (round 682): its StartZone's bucket and frame today (arrival), and
+// the spawn point -- stored in the zone's own frame, FrameFor(zone) -- named in
+// that frame (inFrame, so -single-frame moves it into the one world frame).
+// It applies with -persist-position on or off: off, a character always enters
+// at its start; on, until its first save.
+func startArrival(c *character.Character) (zone, bucket string, pos world.Position, frame string, ok bool) {
+	if c.StartZone == "" {
+		return "", "", world.Position{}, "", false
+	}
+	rx, ry, has := worldmap.FrameFor(c.StartZone)
+	if !has {
+		return "", "", world.Position{}, "", false
+	}
+	bucket, _, frame, _ = arrival(c.StartZone)
+	from := strconv.Itoa(rx) + "/" + strconv.Itoa(ry)
+	pos, ok = inFrame(world.Position{X: c.StartX, Y: c.StartY, Z: c.StartZ}, from, frame)
+	if !ok {
+		return "", "", world.Position{}, "", false
+	}
+	return c.StartZone, bucket, pos, frame, true
 }
 
 // inFrame names pos, saved in the frame centred on region `from`, in the frame

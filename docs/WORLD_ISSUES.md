@@ -7094,6 +7094,178 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-eighty-second round: characters are listed, created, deleted, restored and started over retail's own lobby -- 0x7007 and 0x7001 -- with the original's checks, the player's chosen armour and weapon plus the shield or arrows the server adds, four an account, a 7-day restorable delete, and each race's own start
+
+The user (2026-10-02): "Let's actually work on the character selection/creation part now. I'd like
+for all of those features I requested before that matches the original game as much as possible."
+Earlier: "name, race, gender, model, armor, weapon, rotation, name check, height, and volume". Their
+decisions: retail opcodes and layouts; 4 characters an account; deletion takes 7 days and is
+restorable until then; Europe offered now, at the READ Constantinople spawns. This is round 0 and
+lane S of `docs/protocol/charselect.md` section 7 (lane `lobby682`); the screens are rounds 683-685.
+
+### What changed
+
+- **The wire** (`server/internal/session/lobby.go`, `client/scripts/net/lobby.gd`): 0x7007 actions
+  1-5 and 0xB007 (`[action][1]...` or `[action][2][u16 code]`), 0x7001 / 0xB001, on our framing
+  with retail's opcode numbers (USER DECISION 1). The list record is the READ layout: RefObjID,
+  name, scale, u8 level, u64 ExpOffset, Str, Int, stat points, HP, MP, the deleting flag and
+  minutes left, guild class, the rename flag and string, academy class, up to 9 items with plus,
+  up to 5 avatars. Our 0x0010-0x0015 are removed: their last callers (CharacterSelect,
+  CharacterCreate, QaSignIn through NetClient) speak the lobby now.
+- **The golden file** `client/scripts/net/testdata/lobby_golden.json`: 30 vectors written BY HAND
+  from the layouts, one field per `|` group -- every action both ways, the list empty and with
+  two records (one plain, one deleting in a guild with the rename string and an avatar), nine
+  refusal codes (0x402 0x404 0x405 0x407 0x40b 0x40c 0x40d 0x410 0x419), Start both ways, and six malformed payloads that must not decode. Go
+  (`TestLobbyGolden`) and GDScript (`lobby_test.gd`) both encode the fields to exactly the hex and
+  decode the hex to exactly the fields.
+- **The creatable catalogue** (`refdata.CreatableExtractor`, `export-refdata -mode chargen`,
+  `cmd/server -chargen-csv`): the rule written into charselect.md section 6 as "the one
+  definition" for round 683. MEASURED on the box's archive: **104** (52 bodies: Service 1,
+  TypeID 1/1; 52 items: Service 1, TypeID 3/1, code ending `_A_DEF`) plus the two ammunition rows.
+  Sex is column 58 on both tables (MEASURED: 1 on all 26 `_MAN_` bodies, 0 on all 26 `_WOMAN_`).
+- **The schema** (S1): `ref_obj_id`, `scale`, `deleted_at`, `start_zone`, `start_x/y/z`. Existing
+  rows with `ref_obj_id` 0 become 1909 (`china_man`) / 1923 (`china_woman`) at 0x22 (OURS, the
+  user accepted it); names are kept whatever the new rules say. `Gender` is derived from the
+  body at create (`character.GenderFor`), with `europe_man` / `europe_woman` for Europe.
+- **Create** (S2), in the ShardManager's order (READ): 0x405 at four characters (pending ones
+  count); 0x403 for a body that is not TypeID 1/1 or an item of the other race (not 3) or sex (not
+  2) -- and, OURS on top, anything outside the catalogue, an item in the wrong field, a missing
+  armour piece (China's Protector "none" is not offered) or a Height/Volume nibble above 4; 0x404
+  for no weapon; the name (0x40c length 2..12 bytes, 0x40d a space or quote -- READ -- or a byte
+  outside printable ASCII, OURS; 0x410 taken). Then the worker's armour-class check (READ
+  0x429dc2-0x429dd7; code 0x406 INFERRED). The character wears what it chose; the server adds the
+  race's shield beside a one-handed weapon (TwoHanded column 93 = 0, INFERRED as what it reads) or
+  arrows / bolts beside a bow / crossbow (into the bag, one stack: OURS). `StartingKitFor` is now
+  only the legacy dressing for a character with nothing.
+- **Start spawns** (READ, ShardManager FUN_0042bb20): `rand() % 3` over the race's three rows,
+  stored on the character in its town's frame (`jangan` / `constantinople`, OURS: so it shares the
+  town's bucket) and used while it has no saved position, with `-persist-position` on or off. Sent
+  as Restored, so the client keeps the point.
+- **Name check** (action 4), **delete** (action 3: a soft delete stamped `deleted_at`; 0x40b not on
+  the account, 0x408 a quote, 0x402 a guild member or master -- READ), **restore** (action 5;
+  0x419 when not pending), **purge** (`RunLobbyPurge` once a minute, OURS cadence, removes rows
+  10080 minutes old), **minutes left** in the list ((purge - now) / 60 s, at least 1: READ).
+- **Start** (0x7001) is the world handler's: 0x407 not logged in, 0x402 an empty name, a quote or
+  a pending character, 0x40b not on the account (READ), then 0xB001 `[1]` and the existing enter
+  path, whose `OpEnterWorldResult` follows. The old `OpEnterWorld` refuses a pending character too.
+- **Today's screens** (the minimal interop change): CharacterSelect lists the records (HP gauge
+  max = Str x 10, READ), shows `(deleting)` with the time left, swaps Delete for Restore and
+  disables Start on a pending character; CharacterCreate still picks only a sex and sends
+  `CharacterNet.INTERIM_KIT` (the China fighter body, Clothes set and Copper Sword, OURS until
+  round 685). Refusals are shown in the archive's words (`LobbyNet.code_text`: the code's
+  textuisystem key, READ from charselect.md's table, with "(S<code>)" where the client adds it).
+- **Europe ripples**: `equipment.Refusal` and `session.characterCountry` read the body's race
+  instead of assuming China (the mastery cap and the potion delay follow).
+
+### New READs (charselect.md)
+
+- The list record's guild byte is 1 member / 2 master and the academy byte 1 student / 2 guardian:
+  the delete button picks `..._CONFIRM_MEMBER` / `_MASTER` from +0x1f0 and `_STUDENT` /
+  `_GUARDIAN` from +0x1f1 (asm 0x858b66-0x858bd4).
+- 0x858c00 sends action 3 or 5 by the window's +0x11d flag (`cmp [esi+0x11d]` 0x858c93; action
+  bytes 3 at 0x858ce9, 5 at 0x858d87).
+- The create worker's loop compares each item's Country with the model's (0x429d84) and each
+  non-weapon's TypeID3 with the first (0x429dd5); a mismatch returns 0 through the error routine.
+- The textuisystem keys behind the codes (MEASURED in the archive): `UIO_MSG_ERROR_SEVER_CONNECT`,
+  `UIO_SMERR_INVALID_CHARGEN_INFO`, `UIO_MSG_ERROR_CHARACTER_OVER_3`, `UIO_SMERR_NOT_ALLOWED_CHARNAME`,
+  `UIO_MSG_ERROR_ID` and the rest; the archive writes line breaks as a literal `\n`.
+
+### Corrections filed
+
+`character.go` (MaxPerAccount 3 -> 4; the "no European assets" Gender note), `starterkit.go`
+(the kit is the player's choice, READ in the ShardManager), RE_COMPLETION's two 2026-09-18
+entries (addenda: the kit, and the create packet's order -- u32 model, **u8 scale**, then the four
+items), recovered_names' evidence for 0084e610 and 00858c00 (the latter's name stays until the
+rename is applied in Ghidra: OPEN).
+
+### Tests (each fails before the change)
+
+- `session`: `TestLobbyGolden` (every message, the shared file), `TestLobbyCreateRefusals` (19
+  refusals, each its code, and no-catalogue / not-logged-in), `TestLobbyFourCharactersPerAccount`,
+  `TestLobbyCreateDressesAndPlaces` (sword + shield, bow + arrows, spear without a shield, Europe
+  crossbow + bolts; the stored body, scale, gender and start), `TestLobbyStartSpawnTable`,
+  `TestLobbyNameCheck`, `TestLobbyDeleteRestorePurge` (fake clock: 10080, 25 h later 8579, past the
+  end the floor 1; restore; purge one second early keeps it, on time removes it and frees the name;
+  a guild master refused 0x402 and listed with class 2), `TestStartRefusedWhileDeleting` (0x40b,
+  0x402 empty, 0x402 pending, OpEnterWorld refused, after restore 0xB001 [1] then the enter-world
+  result at the READ spawn, frame 97/168, Restored), and `TestNewCharacterIsDressedAndHasVitals`
+  ported to the lobby.
+- `character`: `TestMigration682` (the pre-682 schema verbatim in its own Postgres schema, six old
+  rows including `x`, `A Name With Spaces`, `O'Brien` and a non-ASCII name; opened twice; a row
+  re-bodied between the runs is left alone), `TestSQLLobbyStore`, `TestRetailLimitIsFour`.
+- `refdata`: `TestCreatableRule` (synthetic rows: sex 0/1/2, country, the suffix, equipment only,
+  Service 0, a duplicated id's last definition, the ammunition, the CSV round trip).
+- client: `lobby_test.gd` (the golden file both ways, 68 checks; the words with and without the
+  archive's table).
+
+**The negatives**, run against dev 3857a5e in a second worktree with only the new test files copied:
+
+```
+--- FAIL: TestRetailLimitIsFour (0.00s)
+    limit682_test.go:11: MaxPerAccount = 3, want retail's 4
+internal/session/lobby_golden_test.go:96:31: undefined: LobbyItem
+internal/session/lobby_test.go:40:55: undefined: refdata.CreatableSet
+internal/character/migration682_test.go:145:11: got.RefObjID undefined (type *Character has no field or method RefObjID)
+internal/refdata/chargen_test.go:18:7: undefined: cgService
+SCRIPT ERROR: Parse Error: Could not find type "LobbyNet" in the current scope.   (lobby_test.gd)
+```
+
+### The end-to-end, real X input (box, Xvfb :682, 2026-10-02)
+
+A fresh `-in-memory` server with `-chargen-csv` (boot: `creatable catalogue loaded: characters can
+be created ... ids=104`), a wire tap in front of it, one account registered, and the client's Login
+scene driven with `xdotool` only: type the ID and password, click the server field and type the
+tap's address, Enter. The select screen listed nothing; click Create; type `Ar ia`, click Woman,
+click Confirm -- refused; type `Mei682`, Confirm; back on select, Mei682 listed; Delete; Restore;
+Start. The tap's record of the lobby (c2s / s2c, opcode, payload):
+
+```
+c2s 0x7007 02                                                                list
+s2c 0xb007 020100                                                            OK, 0 characters
+c2s 0x7007 01 0500 4172206961 83070000 22 440e0000 450e0000 460e0000 300e0000 create "Ar ia", 1923, 0x22, 3652-3654, 3632
+s2c 0xb007 01020d04                                                          refused 0x40d
+c2s 0x7007 01 0600 4d6569363832 83070000 22 440e0000 450e0000 460e0000 300e0000  create "Mei682"
+s2c 0xb007 0101                                                              OK
+c2s 0x7007 02 / s2c 0xb007 (70 bytes: one record, 5 items -- the set, the sword, the shield)
+c2s 0x7007 03 0600 4d6569363832 / s2c 0xb007 0301                            delete OK
+c2s 0x7007 02 / s2c 0xb007 (74 bytes: the same record + u32 minutes left)
+c2s 0x7007 05 0600 4d6569363832 / s2c 0xb007 0501                            restore OK
+c2s 0x7001 0600 4d6569363832 / s2c 0xb001 01                                 Start OK
+s2c 0x0021 01 ... 0600 6a616e67616e ... 0b00 6368696e615f776f6d616e ... 0600 39372f313638 01 ...   enter world: jangan, china_woman, frame 97/168, Restored
+```
+
+The refusal showed in the archive's words ("This character name is invalid ... An invalid symbol,
+character, or letter has been used!", which carried a raw `\n` -- now turned into a line break,
+with a test). The pending character showed "Deleted in 6 days 23 hours 59 minutes" with Start
+disabled; after Restore it started, and the client logged `the server restored jangan at (-2.0,
+60.0, -2047.0) in frame 97/168` -- spawn 2 of China's three, 98/168 local (958, 60, 1087), the
+palace forecourt (MEASURED: 958 - 960 = -2, -1920 + 960 - 1087 = -2047). The shot shows Mei682 there
+with the shield on her arm. The screenshots are for a human; the claims above are the tap's bytes
+and the client's log.
+
+No perf gate: no world, map, object, terrain, effect, animation, movement or loading code changed
+(the server's arrival point and two front-end screens did; the world draws as before).
+
+### Commands
+
+```
+cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...     exit 0: 64 packages ok, 0 FAIL (14 without tests)
+client/tools/remote_godot.sh check                                              checked 502 scripts and 8 scenes, ALL LOAD
+client/tools/remote_godot.sh tests                                              ran 197 suite(s), 0 failing
+```
+
+### OPEN
+
+- srrevamp-01: export `chargen.csv` and pass `-chargen-csv` (deploy/README.md "Character lobby");
+  until then every create there is refused with 0x403. Players need this release's client.
+- Blocked on the stopped shard DB (CT 104, the user's call): `_RefCharGen` (confirm the 104),
+  `_RefCharDefault_*` (a new character's default skills and quests: none given), the procedures
+  (`_AddNewChar`'s ammunition quantity, `_DeleteCharTemporal`'s real delay).
+- The name bitmap and forbidden words; the ammunition stack (bag, not worn); the purge leaving
+  other tables' rows; Europe's return point, KillExp arm and bodies (lane W); item plus and
+  avatars; restore's u8/u16; the 858c00 rename; retiring `OpEnterWorld`. All in docs/TODO.md,
+  "The character lobby (round 682)".
+
 ## Six-hundred-and-eighty-first round: a `type: legacy` server in the list is asked the original way -- the retail handshake, 0x6100, 0x6101 -- and its shards show their real Check / Easy / Populated / Crowded / FULL
 
 The user (2026-10-01): "I want to add a random private server to the server list in yaml for

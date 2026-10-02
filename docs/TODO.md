@@ -1160,6 +1160,34 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
 - **-max-players counts characters in the world**, not sessions at character select; the
   `-gm-accounts` names pass the inspection and full gates (ours; retail's rule for staff is OPEN).
 
+### The character lobby (round 682) — **built: retail's 0x7007/0x7001 on our framing, create with the READ checks and the player's own items, 4 an account, the 7-day delete and restore, per-race start spawns; these are left**
+
+- [ ] **Deploy on srrevamp-01**: export `chargen.csv` and pass `-chargen-csv` (deploy/README.md,
+      "Character lobby"). Until then every create there is refused with 0x403. The schema migrates
+      itself; players need the new client.
+- [ ] **Blocked on the shard DB (CT 104, stopped; the user's call)**: export `_RefCharGen` to confirm
+      the 104-id rule (charselect.md section 6), `_RefCharDefault_Skill/_SkillMastery/_Quest` (a new
+      character's skills and quests: none are given today), and read `_AddNewChar` (the ammunition
+      quantity, any item whitelist), `_DeleteCharTemporal` (the real delay), `_DeleteCharPermanently`,
+      `_ReviveChar`, `_IsExistingCharName`.
+- [ ] **The name rule's OPEN half**: the client's forbidden-character bitmap (0x8c3cb0 / 0x8c0760,
+      filled at runtime), its two filter lists, the server's forbidden-word list and FUN_006df4c0.
+      The server applies 2..12 bytes, no space or quote (READ) and printable ASCII (OURS).
+- [ ] **Ammunition**: a bow's arrows and a crossbow's bolts go into the bag, one stack (OURS): the
+      equipment slot has no quantity and ammunition is not modelled (session/skill.go).
+- [ ] **The purge removes the characters row only**: the bag, worn items, skills, quests and guild
+      rows of a purged character stay, as `Store.Delete` always left them.
+- [ ] **Europe in the world**: bodies are drawn as the China default until lane W (RefObjID + scale on
+      the entity wire); death returns and the warp home go to Jangan, not `STORE_EU_GATE`;
+      `leveldata.KillExp`'s Europe arm is never selected (the killer's race is not passed); Europe's
+      NPCs and shops are unexercised.
+- [ ] **Item plus and avatars** in the list record are 0 / none: srrevamp keeps no plus and no avatars.
+- [ ] **Restore's asynchronous error**: u8 in the server, u16 in the client (READ both); u16 is sent.
+- [ ] **recovered_names**: rename `SendNameCheckRequest_858c00` (it is the delete/restore confirm
+      sender) once the rename is applied in Ghidra too.
+- [ ] **`OpEnterWorld` 0x0020** is still accepted beside Start (it refuses a pending character too);
+      retire it when the world handoff is retail.
+
 ### Loading freezes: what the off-thread rounds left (map/loading epic, 2026-09-25)
 
 Rounds 565-566 prepare a streamed cell's terrain and objects on a `WorkerThreadPool` task and

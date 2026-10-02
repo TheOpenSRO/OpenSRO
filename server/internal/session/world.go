@@ -950,6 +950,8 @@ func WorldHandlerWithHook(chars character.Store, eq equipment.Store, hub *world.
 		switch p.Opcode {
 		case OpEnterWorld:
 			return handleEnterWorld(ctx, sess, p, chars, eq, hub, onEnter, zerk)
+		case OpStart:
+			return handleStart(ctx, sess, p, chars, eq, hub, onEnter, zerk)
 		case OpMove:
 			return handleMove(sess, p, hub, chars)
 		case OpChangeZone:
@@ -1040,19 +1042,67 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 			Data:   (&EnterWorldResult{Reason: "lookup failed"}).Encode(),
 		})
 	}
-	var owned *character.Character
-	for _, c := range list {
-		if c.Name == req.CharacterName {
-			owned = c
-			break
-		}
-	}
+	owned := findOwned(list, req.CharacterName)
 	if owned == nil {
 		return sess.Send(&proto.Packet{
 			Opcode: OpEnterWorldResult,
 			Data:   (&EnterWorldResult{Reason: "no such character on this account"}).Encode(),
 		})
 	}
+	// A character pending deletion does not enter (round 682): Start refuses
+	// it with 0x402 (READ, handleStart), and this older path must not be the
+	// way around that.
+	if owned.Deleting() {
+		return sess.Send(&proto.Packet{
+			Opcode: OpEnterWorldResult,
+			Data:   (&EnterWorldResult{Reason: "the character is pending deletion"}).Encode(),
+		})
+	}
+	return enterOwned(ctx, sess, owned, chars, eq, hub, onEnter, zerk)
+}
+
+// handleStart is 0x7001, Start (round 682; lobby.go): the name, checked as
+// SR_ShardManager's FUN_0040e2c0 does (READ, charselect.md section 2
+// "Start") -- not logged in 0x407; an empty name 0x402; a quote in it 0x402
+// (the forbidden-word half is OPEN); not on the account 0x40b; pending
+// deletion 0x402 -- then 0xB001 [1] and the existing enter-world path, whose
+// OpEnterWorldResult follows (INFERRED: retail sends 0xB001 [1] once the game
+// server accepts, then the character data; the OpEnterWorldResult stands in
+// for that data until the world handoff is retail too). The "operation
+// pending" refusal (0x40e) has nothing to guard here: one request is handled
+// at a time on a session.
+func handleStart(ctx context.Context, sess *gateway.Session, p *proto.Packet, chars character.Store, eq equipment.Store, hub *world.Hub, onEnter EnterHook, zerk *berserk.Tracker) error {
+	refuse := func(code uint16) error {
+		return sess.Send(&proto.Packet{Opcode: OpStartResult, Data: (&StartResult{Code: code}).Encode()})
+	}
+	accountID, ok := AuthenticatedAccountID(sess)
+	if !ok {
+		return refuse(LobbyErrNoUser)
+	}
+	req, err := DecodeStartRequest(p.Data)
+	if err != nil || req.Name == "" || containsQuote(req.Name) {
+		return refuse(LobbyErrRefused)
+	}
+	list, err := chars.ListByAccount(ctx, accountID)
+	if err != nil {
+		return refuse(LobbyErrRefused)
+	}
+	owned := findOwned(list, req.Name)
+	if owned == nil {
+		return refuse(LobbyErrNotOnAccount)
+	}
+	if owned.Deleting() {
+		return refuse(LobbyErrRefused)
+	}
+	if err := sess.Send(&proto.Packet{Opcode: OpStartResult, Data: (&StartResult{OK: true}).Encode()}); err != nil {
+		return err
+	}
+	return enterOwned(ctx, sess, owned, chars, eq, hub, onEnter, zerk)
+}
+
+// enterOwned puts owned, already resolved to the session's account, into the
+// world: the shared tail of OpEnterWorld and Start.
+func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Character, chars character.Store, eq equipment.Store, hub *world.Hub, onEnter EnterHook, zerk *berserk.Tracker) error {
 	if onEnter != nil {
 		if err := onEnter(ctx, owned); err != nil {
 			log.Printf("session: enter hook for %q: %v", owned.Name, err)
@@ -1090,6 +1140,11 @@ func handleEnterWorld(ctx context.Context, sess *gateway.Session, p *proto.Packe
 	savedZone, savedBucket, savedPos, savedFrame, restored := restoredArrival(owned)
 	if restored {
 		zone, bucket, pos, frame = savedZone, savedBucket, savedPos, savedFrame
+	} else if startZone, startBucket, startPos, startFrame, ok := startArrival(owned); ok {
+		// No saved position, and a start spawn from creation (round 682): the
+		// race's READ spawn. Sent as Restored, so the client keeps the point
+		// rather than moving it to the zone's own landing spot.
+		zone, bucket, pos, frame, restored = startZone, startBucket, startPos, startFrame, true
 	}
 	others := hub.Enter(sess, owned.ID, owned.Name, owned.Level, bucket, pos)
 	// The heading comes back with a restored position (round 637's review

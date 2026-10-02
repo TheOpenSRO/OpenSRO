@@ -75,7 +75,8 @@ func (m *MemStore) Create(_ context.Context, accountID int64, name string) (*Cha
 
 	m.nextID++
 	c := &Character{ID: m.nextID, AccountID: accountID, Name: name, Gold: StartingGold, HP: StartingMaxHP,
-		Gender: DefaultGender, Level: StartingLevel, Str: StartingStr, Int: StartingInt}
+		Gender: DefaultGender, Level: StartingLevel, Str: StartingStr, Int: StartingInt,
+		RefObjID: LegacyModelFor(DefaultGender), Scale: DefaultScale}
 	m.byID[c.ID] = c
 	m.namesTaken[key] = true
 
@@ -259,6 +260,9 @@ func (m *MemStore) SetGender(_ context.Context, characterID int64, gender string
 		return ErrNotFound
 	}
 	c.Gender = gender
+	if gender == GenderChinaMan || gender == GenderChinaWoman {
+		c.RefObjID = LegacyModelFor(gender)
+	}
 	return nil
 }
 
