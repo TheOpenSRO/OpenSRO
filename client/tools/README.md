@@ -495,6 +495,13 @@ kills every Godot on the box.
 
 ### Character appearance: the 52 bodies, Height and Volume (round 683)
 
+`measure_create_cycles.gd` (round 685) builds a piece of the customize screen, lets it run, frees
+it and prints the engine's object count and static memory after each cycle -- `--mode=screen` (the
+whole scene), `backdrop`, `appearance`, `preview` -- so growth per cycle is pinned to the piece that
+leaks it; `--mode=swaps` prints the preview's swap times over every Figure, weapon and set, cold
+then cached. Run it headless on the box with the archive variables set
+(`res://tools/measure_create_cycles.gd -- --mode=backdrop --cycles=4 --race=china`).
+
 `appearance_probe.gd` checks `CharCatalog` against charselect.md (52 Figures, 5 + 9 weapons, a
 shield per race, 3 armour sets per race and sex, 104 ids), builds every Figure with a kit through
 `CharacterAppearance` (cold and warm build times), measures the head bone at Height 0/2/4 and the
