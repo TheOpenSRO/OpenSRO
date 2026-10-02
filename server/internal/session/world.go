@@ -448,6 +448,15 @@ func (r *EnterWorldResult) Encode() []byte {
 	}
 	out = append(out, encodeStrings(r.FrameRegion)...)
 	models := r.HasModel || anyModel(r.Others)
+	if models && !r.HasHeading {
+		// The trap above, enforced here (round 689's review): the models tail
+		// follows the own wire angle, so a result with a model always carries
+		// one -- r.Heading, which a decoder then reads back as a heading
+		// (HasHeading true). Encoded from a copy; r is left as it was.
+		withHeading := *r
+		withHeading.HasHeading = true
+		return withHeading.Encode()
+	}
 	heads := r.HasHeading || anyHeading(r.Others) || models
 	if r.Restored || len(r.Seated) > 0 || heads {
 		b := byte(0)

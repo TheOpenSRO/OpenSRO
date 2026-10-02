@@ -1185,9 +1185,9 @@ var entry := BodyAnimations.entry_for(parsed, action_type, group)      # BsrRead
   skeletons. The Europe skill clips are entries of type 26+ in the weapon's group (MEASURED, e.g. the
   Europe man's `onehand_sword` type 29 `skill_eu_warrior_onehanda_strike_a`), so a skill whose
   skillaniset row names an action type finds its clip through this lookup (INFERRED: that the cast
-  goes through the same chain was not traced in this round). World3D's `_play_skill_cast_anim`
-  still builds `Prim\Ani\Char\China\<man|woman>\<code>.ban` (round 689 only made the folder follow
-  the body's sex): the skill lane's to replace.
+  goes through the same chain was not traced in this round). The cast-clip path (round 689's
+  `_play_skill_cast_anim` still built `Prim\Ani\Char\China\<man|woman>\<code>.ban`, its folder
+  following the body's sex) is reconciled with this lookup in round 691's merge.
 - **OPEN:** the avatar group (CObjCharacter +0x190, tried first without fallback when set); the
   transport `cart` group; the stand entry's type 65 (`_a_wakeup`) after a knock-down.
 

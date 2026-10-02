@@ -1003,6 +1003,9 @@ var _appearance: CharacterAppearance = null
 var _body_anims: BodyAnimations = null
 ## characterdata code name -> [walk, run] speed (columns 46/47), every CHAR_ row.
 var _speeds_by_code: Dictionary = {}
+## The last run speed a server packet set for this player (_apply_buff_run_speed;
+## 0: none yet). It outranks the body row's base (_apply_player_speed).
+var _server_run_speed := 0
 ## characterdata code name -> id, for the catalogue's bodies (the Figures).
 var _body_id_by_code: Dictionary = {}
 ## characterdata's Country (column 14) for the player bodies (CHAR_ rows),
@@ -7692,15 +7695,24 @@ func _load_character_assets() -> void:
 		_body_id_by_code.size(), Time.get_ticks_usec() - t_cat, _item_models.size()])
 
 ## The player's run speed from its body's characterdata row (column 47, the
-## number the server moves the character by; NpcTableReader.COL_SPEED_RUN).
+## number the server moves the character by; NpcTableReader.COL_SPEED_RUN) --
+## the base. A run speed a server packet set (_server_run_speed: a buff, a GM's
+## /speed, replayed at world entry by _replay_held_buffs) is the speed in
+## effect and stays: round 689's review found the first dress, which comes
+## after that replay, dropping a held /speed 2 back to the body's 50 (a
+## reconnecting player then rubber-banded against the server).
 func _apply_player_speed(code: String) -> void:
 	var player_speeds: Array = _speeds_by_code.get(code, [])
-	if player_speeds.size() == 2 and float(player_speeds[1]) > 0.0:
-		_move_speed = float(player_speeds[1])
-		print("World3D: player run speed %.0f units/s (characterdata column 47 of %s; walk %.0f)" % [
-			_move_speed, code, float(player_speeds[0])])
-	else:
+	if player_speeds.size() != 2 or float(player_speeds[1]) <= 0.0:
 		print("World3D: no speed row for %s -- keeping %.1f units/s" % [code, _move_speed])
+		return
+	if _server_run_speed > 0:
+		print("World3D: %s runs %.0f units/s by its row, but the server set %d -- kept" % [
+			code, float(player_speeds[1]), _server_run_speed])
+		return
+	_move_speed = float(player_speeds[1])
+	print("World3D: player run speed %.0f units/s (characterdata column 47 of %s; walk %.0f)" % [
+		_move_speed, code, float(player_speeds[0])])
 
 ## The body key (a Figure's characterdata code name) of a character: its
 ## model's when the server sent one (round 689) and the catalogue holds it,
@@ -7993,8 +8005,9 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 		ref_obj_id = ewr.ref_obj_id
 		scale = ewr.scale
 	# SRREVAMP_QA_BODY="<ref_obj_id>[:<scale>]" (round 689): this body and scale
-	# byte for a run with no server, as a server would name them.
-	var qa_body := _qa_body_spec()
+	# byte for a run with no server, as a server would name them. With a server
+	# the server's word stands (round 689's review).
+	var qa_body := _qa_body_spec() if not NetClient.is_connected_to_server() else []
 	if not qa_body.is_empty():
 		ref_obj_id = int(qa_body[0])
 		scale = int(qa_body[1])
@@ -18573,6 +18586,7 @@ func _apply_buff_run_speed(run_speed: int, why: String) -> void:
 		return
 	print("SPEED: run speed %.0f -> %d (%s)" % [_move_speed, run_speed, why])
 	_move_speed = float(run_speed)
+	_server_run_speed = run_speed
 
 ## A skill moved a character (OpSkillMove, round 617: Ghost Walk's landing).
 ## This player is put at the point at once. The move's duration is OPEN

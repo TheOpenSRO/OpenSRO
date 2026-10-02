@@ -190,3 +190,27 @@ func TestRound689ModelOfALegacyRow(t *testing.T) {
 		}
 	}
 }
+
+// Round 689's review: a result with a model but no heading still writes the
+// own wire angle the models tail follows -- the encoder sets HasHeading itself
+// -- so the model is read back where it was written, and the heading is the
+// result's own Heading rather than a stray byte pair.
+func TestRound689AModelForcesTheOwnHeading(t *testing.T) {
+	ew := &EnterWorldResult{OK: true, Zone: "jangan", Gender: "europe_man", HP: 1, MaxHP: 1,
+		FrameRegion: "97/168", Heading: math.Pi, RefObjID: 14875, Scale: 0x24, HasModel: true}
+	got, err := DecodeEnterWorldResult(ew.Encode())
+	if err != nil || !got.HasModel || got.RefObjID != 14875 || got.Scale != 0x24 {
+		t.Fatalf("a model without a heading: %+v, %v", got, err)
+	}
+	if !got.HasHeading || math.Abs(got.Heading-math.Pi) > 1e-4 {
+		t.Errorf("the own heading decodes as %v (has %v), want the result's own pi", got.Heading, got.HasHeading)
+	}
+	if ew.HasHeading {
+		t.Error("Encode changed the caller's result")
+	}
+	with := *ew
+	with.HasHeading = true
+	if !bytes.Equal(ew.Encode(), with.Encode()) {
+		t.Error("a model without HasHeading does not encode as the same result with it")
+	}
+}
