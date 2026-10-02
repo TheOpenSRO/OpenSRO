@@ -885,6 +885,33 @@ driver" alert unless the export template carries ANGLE, which was not checked; a
 report so far (the white ground included) came from a Forward+ build, so the first report from a
 Compatibility release is the one to read against the box.
 
+### Forward+ as a second renderer -- **planned (discussed with the user 2026-10-02); not scheduled**
+
+The user asked whether Forward+ can return without the white-ground bug, and about shipping a
+Compatibility build and a Forward+ build. The ground mechanism (bases drawn over their textured
+passes by material-RID order after a reconnect) was fixed in round 580 with `render_priority`. By
+reading Godot 4.2.2's source that ordering also holds in Forward+, but it has only been MEASURED
+under Compatibility.
+
+- [ ] **First: Vulkan on the render box.** CT 103 has the RADV ICD (`radeon_icd.json`) and
+      `/dev/dri/renderD128`. Whether Godot's Vulkan path runs there under Xvfb is untested, and
+      every probe, perf gate and QA shot so far is Compatibility.
+- [ ] **A/B every visual check under Forward+:**
+      - the `/groundprobe` reconnect test (round 579/580);
+      - water and foliage;
+      - the appear/disappear fades (Compatibility ignores `GeometryInstance3D.transparency`;
+        Forward+ honours it);
+      - round 688's `_undo_tonemap`;
+      - the PlayerPortrait character formula;
+      - text crispness.
+- [ ] **The perf gate under both renderers,** and a low-end check (Forward+ needs Vulkan and is
+      heavier).
+- [ ] **Shipping.** Either a launch-time choice (an `override.cfg` beside the exe, written from
+      `setting/`, applied on restart; recommended first) or two exports from one project (a
+      feature-tag override `renderer/rendering_method.forwardplus="forward_plus"` plus a second
+      export preset with that custom feature). Two exports mean CI builds both, and the
+      auto-updater keeps each install on its own flavour.
+
 ### Bots and clientless play -- **noted by the user 2026-10-01; not scheduled**
 
 - **A macro bot built into the game client.** With it, players don't need to go clientless to
