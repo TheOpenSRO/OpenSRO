@@ -58,6 +58,14 @@ const TB_REGION := 41
 const TB_X := 43
 const TB_Y := 44
 const TB_Z := 45
+## BCHeight and BCRadius (round 690), READ: the client's _RefObjCommon parser
+## FUN_00972910 -- which teleportbuilding's loader (Client_LoadRefDataFile
+## type 0x14, FUN_00976700) runs -- stores column 49 at the record's +0x114
+## (0x972cd1) and column 50 at +0x118 (0x972ce2), and a town gate's pick box
+## is built from those two words (World3D._bind_region_gates). A row without
+## them keeps 0 (no pick box).
+const TB_BC_HEIGHT := 49
+const TB_BC_RADIUS := 50
 
 ## One teleport point: a teleportdata row. `region` is the table's region id,
 ## `(x << 8) | y` as npcpos packs it (NpcTableReader.parse_positions); a
@@ -96,6 +104,11 @@ class Building:
 	var x: float
 	var y: float
 	var z: float
+	## The structure's bounding cylinder, teleportbuilding columns 49/50
+	## (TB_BC_HEIGHT, TB_BC_RADIUS): 25 and 10 for STORE_CH_GATE, 70 and 70
+	## for Alexandria's two. 0 when the row is too short to carry them.
+	var bc_height: float
+	var bc_radius: float
 
 var _points_by_id: Dictionary = {}      # teleport id -> Point
 var _point_by_object: Dictionary = {}   # associated object id -> Point
@@ -167,8 +180,25 @@ func parse(data: PackedByteArray, links: PackedByteArray, buildings: PackedByteA
 		b.x = float(cols[TB_X].strip_edges())
 		b.y = float(cols[TB_Y].strip_edges())
 		b.z = float(cols[TB_Z].strip_edges())
+		if cols.size() > TB_BC_RADIUS:
+			b.bc_height = float(cols[TB_BC_HEIGHT].strip_edges())
+			b.bc_radius = float(cols[TB_BC_RADIUS].strip_edges())
 		_buildings.append(b)
 		_building_by_code[b.code.to_upper()] = b
+
+## The points that register interaction id 7 (round 690) -- the town gates a
+## character can designate, so the points a return to the return point lands
+## on (server ResolveRevivePoint reads the designated gate's point) -- in id
+## order.
+func return_points() -> Array:
+	var ids: Array = _points_by_id.keys()
+	ids.sort()
+	var out: Array = []
+	for id in ids:
+		var p: Point = _points_by_id[id]
+		if p.interaction7:
+			out.append(p)
+	return out
 
 ## The gate structures that stand in region (rx, ry) -- the folder names of
 ## `rx\ry.m` -- in file order. Never a dungeon's (a region id below 0).

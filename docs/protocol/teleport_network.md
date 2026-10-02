@@ -333,6 +333,11 @@ to a placed object, and binding them (the first cut of round 577) made whatever
 scenery stood within 10 units a talk target, or put a stand-in collider at the
 point.
 
+**Superseded in round 690** by retail's own pick box: see "The gate's pick box and the arrival's
+height (round 690)" at the end of this file. The binding below is the history; Alexandria's two
+gates, which round 577 did not run, were where it broke (`STORE_SD_GATE2`'s portal is placed 15.1
+units from its point, so it was never bound).
+
 **The binding rule is a disclosed stand-in.** For each such row, the nearest
 placed object (x/z, region-local) within 10 units of the row's point is taken as
 the gate. Nothing read ties a building row to a placed object. The rule rests on
@@ -1030,3 +1035,113 @@ skill's effect does to reach the return point is unread. srrevamp refuses every 
   open_recall_designate_prompt`, the archive's text; the panel and its OK/Cancel labels OURS), OK
   sends the request (`RecallNet`, `NetClient.recall_designate`), and a success writes retail's line
   to the system window (type 5) and the warning banner.
+
+## The gate's pick box and the arrival's height (round 690)
+
+### How retail picks a town gate (READ, sro_client.exe)
+
+- **The class.** A town gate is a teleportbuilding row of type 4/1/1. `IGIDObject::FUN_009c1fa0` picks
+  the runtime class from the TID, and its predicate `FUN_009c1ca0` -- `(tid&2)==0 && (tid&0x1c)==0x10
+  && (tid&0x60)==0x20`, non-bionic, TypeID1 4, TypeID2 1 -- selects the class registered as
+  "CITeleportGate" (string `0xde47b4`, registered at `0xd768a1`, parent "CIRuntimeStruct"). The TID's
+  packing is read in the parser at `0x97314f..0x973194`. `STORE_CH_GATE`, `STORE_SD_GATE1` and
+  `STORE_SD_GATE2` all have Cash 0, Bionic 0, types 4/1/1/0.
+- **The box.** `CITeleportGate::vslot_025` (`0x9e9eb0`) sets min `(-r, -h, -r)` and max `(r, h, r)` at
+  `+0x280..+0x294`, with r the ref record's `+0x118` and h its `+0x114`, and an identity matrix at
+  `+0x2a4`. `vslot_033` (`0x9e9b60`) copies the position (`+0x90..+0x98`) into that matrix's
+  translation and calls `FUN_00a5b000`, a ray against the box's 12 triangles. Only the translation is
+  written, so the box is centred on the position and never turns with the yaw.
+- **The columns.** teleportbuilding is loaded as type 0x14 by `Client_LoadRefDataFile` (`0x952890`,
+  case at `0x84515b`) through `FUN_00976700` into the `_RefObjCommon` parser `FUN_00972910`. It stores
+  column 49 (BCHeight) at `+0x114` (`0x972cd1`) and column 50 (BCRadius) at `+0x118` (`0x972ce2`).
+- **The pick.** `FUN_0078ee20` turns the cursor into a ray (`FUN_00a5ade0`), walks the object list,
+  calls each object's slot 33, and keeps the nearest hit. It casts nine rays a step apart (`[0xed7cc0]
+  * 0.016` and `[0xed7cc4] * 0.016`, INFERRED to be the screen size), and the centre one wins a tie.
+  A plain `CIRuntimeStruct`'s slot 33 is `FUN_00535520`, which returns the miss value -1.0. No model,
+  placed map object or navmesh is part of a gate's click.
+- **The position** is the structure's spawn position. INFERRED: it is the teleportbuilding row's
+  region and x/y/z (columns 41, 43-45). The server measures the interaction range from that position
+  (round 642).
+
+The seven town gates' boxes, from the archive's rows (READ):
+
+| gate | region | x, y, z | BCHeight | BCRadius |
+|---|---|---|---|---|
+| `STORE_CH_GATE` | 97/168 | 1254, -6, 1374 | 25 | 10 |
+| `STORE_WC_GATE` | 103/153 | 962, -35, 8 | 50 | 40 |
+| `STORE_KT_GATE` | 92/135 | 1131, 305, 488 | 50 | 30 |
+| `STORE_EU_GATE` | 105/79 | 700, 200, 886 | 60 | 100 |
+| `STORE_CA_GATE` | 107/108 | 1917, 250, 108 | 50 | 50 |
+| `STORE_SD_GATE1` | 90/48 | 612, 910, 1089 | 70 | 70 |
+| `STORE_SD_GATE2` | 92/50 | 1719, 1586, 760 | 70 | 70 |
+
+**srrevamp** (`World3D._bind_region_gates`, `_gate_pick_node`; `TeleportReader.TB_BC_HEIGHT` and
+`TB_BC_RADIUS`):
+- Each id-7 gate standing in a region gets a `GatePick_<code>` node at the row's position, in the
+  building region's frame. Its world basis is the identity, which undoes the region group's z
+  mirror. The node carries the talk tags and one `StaticBody3D` holding a `BoxShape3D` of `(2r, 2h,
+  2r)`.
+- The box sits on `GATE_PICK_COLLISION_LAYER` (bit 10) alone. It is not on the talk layer, because
+  that layer is the navmesh-wall bit the player's body masks.
+- `_talk_ray` masks both layers. It goes on through untagged talk-layer bodies (the navmesh walls),
+  up to 8 hits.
+- The placed map objects are no longer click targets.
+- OPEN: the nine-ray tolerance (one ray is cast). A ray that starts inside a box does not take it
+  (Godot's `hit_from_inside` is off). Retail's triangle test was not read for back faces.
+
+**Round 577's binding, measured against this (round 690, render box):**
+- Jangan's whole pavilion took clicks: `cj_portal.bsr`, 147 x 161 x 146 units, with its foundations
+  73 units under the ground. Its box is 20 x 50 x 20 at the table point.
+- Alexandria North's portal is placed 15.1 units from its point (`cmd/whatishere`), beyond the 10-unit
+  bind radius. It was never bound, so it was not clickable.
+
+The boxes against what is drawn at each gate (`QA GATEPICK`, run i4). The offset is the box centre
+minus the drawn object's centre, in world units:
+
+| gate | drawn object (x/z from the point) | box centre offset x, y, z |
+|---|---|---|
+| CH | `cj_portal` (3.6) | -5, 19, 4 |
+| WC | `w_cd_portal` (3.3) | 0, 12, -4 |
+| KT | `oas_hot_portal` (0.7) | 1, -1, 0 |
+| EU | `euro_esteuro_fountain01` (2.6) | 3, -22, 2 |
+| CA | `samarkand_center_01` (1.0) | -1, -22, 0 |
+| SD1 | `alex_portal` (8.4) | -5, -82, 8 |
+| SD2 | `alex_portal` (15.1) | 0, -64, -15 |
+
+The box lies inside the drawn object's bounds for CH, WC, KT, EU and CA. The Alexandria portals rise
+above their boxes: the rings and animated parts reach 125 units (North) and 143 (South) over the box tops. A click on SD2's rings
+missed and a click on its base took it (MEASURED by real X input, run i4). That matches the READ box,
+whose y is the table's.
+
+### How retail places an arrival vertically (READ, partial)
+
+**Server: READ.** On the server, `FUN_00407760` copies the teleportdata record's int16 x/y/z
+(`+0x26/+0x28/+0x2a`) to floats, as they are. Neither of these calls a height function:
+- `CGObjPC::FUN_004e0a40` and `ResolveRevivePoint` (`0x4e08a0`);
+- `GObjPC::Revive` -> `CGObjPC::vslot_222` (`0x4df590`), which stores the destination on the PC.
+
+The teleport's internal message 0x7ce6 carries the world id and the object id, not a position.
+
+**Unread:** whatever reads the stored destination on re-entry, and the client's 0x3013 placement. So
+whether retail snaps the table's y to the navmesh is not established either way.
+
+**srrevamp's arrival:**
+- The table's y is not used. The server sends height 0, and the client stands the point on its
+  walkable graph (`_land_teleport_arrival`, the highest walkable surface).
+- That was already true for a gate teleport. Since round 690 it is also true for a return to the
+  return point (a zone change that finds the player dead, or one this client did not ask for:
+  `World3D.arrival_keeps_server_point`).
+- It is also true for a restored entry that lies on a town gate's point. The server saves a character
+  that leaves the world dead at its return point (`_land_restored_return_point`).
+
+**Every open-world teleport point, MEASURED** (`walk_probe.gd --column`, 64 points with WorldID 1 and a
+region above 0):
+- At 61 points the walkable graph's landing is within 1.6 units of the terrain.
+- At three points an object stands more than `NavGraph.SURFACE_REACH_UP` (12) over the terrain:
+  - `GATE_KT`: Hotan's plaza, 244.29 over terrain 232.10, so +12.19;
+  - `GATE_TOMB_GATE_IN`: +355.79;
+  - `GATE_ARABIAN_COAST`: +366.84.
+- Of those three, only `GATE_KT` is a return point.
+- Before round 690, a return there was lifted only to the bare terrain. The graph then refused a
+  surface 12.19 above. That is the user's "clipped half way through the ground", and it is why other
+  towns were fine.

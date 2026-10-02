@@ -71,11 +71,13 @@ func _link_rows() -> Array:
 	]
 
 ## teleportbuilding.txt, 59 fields: service, id, codename, ..., the name
-## string at 5, region at 41, x/y/z at 43..45.
+## string at 5, region at 41, x/y/z at 43..45, Scale 48, BCHeight 49 and
+## BCRadius 50 (round 690; the values docs/protocol/teleport_network.md
+## records for each gate).
 func _building_rows() -> Array:
 	return [
-		_row(59, {0: 1, 1: 2094, 2: "STORE_CH_GATE", 5: "SN_NPC_CH_GATE", 41: 25000, 43: 1254, 44: -6, 45: 1374}),
-		_row(59, {0: 1, 1: 2095, 2: "STORE_WC_GATE", 5: "SN_NPC_WC_GATE", 41: 26521, 43: 962, 44: -35, 45: 8}),
+		_row(59, {0: 1, 1: 2094, 2: "STORE_CH_GATE", 5: "SN_NPC_CH_GATE", 41: 25000, 43: 1254, 44: -6, 45: 1374, 48: 100, 49: 25, 50: 10}),
+		_row(59, {0: 1, 1: 2095, 2: "STORE_WC_GATE", 5: "SN_NPC_WC_GATE", 41: 26521, 43: 962, 44: -35, 45: 8, 48: 100, 49: 50, 50: 40}),
 		_row(59, {0: 1, 1: 2197, 2: "STORE_TD_GATE", 5: "xxx", 41: 24758, 43: 641, 44: -3, 45: 728}),
 		# A dungeon's structure (a negative region) and one with region 0.
 		_row(59, {0: 1, 1: 22896, 2: "STORE_TQ_SNAKEGATE", 5: "SN_X", 41: -32764, 43: -655, 44: 7, 45: -172}),
@@ -129,6 +131,15 @@ func _init() -> void:
 		var b = here[0]
 		_check(b.id == 2094 and b.name_strid == "SN_NPC_CH_GATE" and is_equal_approx(b.x, 1254.0) and is_equal_approx(b.y, -6.0) and is_equal_approx(b.z, 1374.0),
 			"STORE_CH_GATE: id 2094, SN_NPC_CH_GATE, local (1254, -6, 1374) from columns 43-45")
+	if not here.is_empty():
+		var b = here[0]
+		_check(is_equal_approx(b.bc_height, 25.0) and is_equal_approx(b.bc_radius, 10.0),
+			"STORE_CH_GATE: BCHeight 25 from column 49, BCRadius 10 from column 50 (round 690; got %s, %s)" % [str(b.get("bc_height")), str(b.get("bc_radius"))])
+		var shed = here[1]
+		_check(is_equal_approx(shed.bc_height, 0.0) and is_equal_approx(shed.bc_radius, 0.0), "a row with 0 in both keeps 0 (no box)")
+	var rp: Array = reader.call("return_points") if reader.has_method("return_points") else []
+	_check(_codes(rp) == ["GATE_CH", "GATE_WC"],
+		"return_points: the id-7 points in id order -- GATE_CH, GATE_WC; not GATE_TD (id 9 only) nor the fixture GATE_KT (its column 10 left 0) (got %s)" % [_codes(rp)])
 	_check(_codes(reader.call("buildings_in_region", 103, 153)) == ["STORE_WC_GATE"],
 		"region 26521 is 103/153 ((x << 8) | y)")
 	_check((reader.call("buildings_in_region", 128, 4) as Array).is_empty() and (reader.call("buildings_in_region", 0, 0) as Array).is_empty(),
@@ -201,18 +212,27 @@ func _initialize() -> void:
 		_check(smith.map(func(s): return s.key).filter(func(k): return k in ["teleport", "recall_designate", "recall_return"]).is_empty(),
 			"an NPC gets no gate line")
 
-		# (b) The binding. A region's objects, positioned region-local in its
-		# RealMapObjects container under the terrain group: the portal is a
-		# placed COPY of a template held by an ObjectTemplateCache, 3.6 units
-		# from STORE_CH_GATE's point (the measured cj_portal.bsr placement);
-		# the portal stone at 7.5; something else 40 away.
+		# (b) The pick box (round 690; READ: CITeleportGate::vslot_025 builds
+		# (-r, -h, -r)..(r, h, r) from BCRadius / BCHeight about the gate's
+		# position, axis-aligned). A region's objects, positioned
+		# region-local in its RealMapObjects container under the terrain
+		# group, which TerrainCollision.place_group mirrors in z as the grid
+		# does: the portal is a placed COPY of a template held by an
+		# ObjectTemplateCache, 3.6 units from STORE_CH_GATE's point (the
+		# measured cj_portal.bsr placement); the portal stone at 7.5. The
+		# gate's click is its box at the table point, not those objects.
 		var has_bind := world.has_method("_bind_region_gates")
 		_check(has_bind, "World3D has _bind_region_gates")
+		var pick_layer: int = world_script.get_script_constant_map().get("GATE_PICK_COLLISION_LAYER", -1)
+		_check(pick_layer > 0 and pick_layer & layer == 0 and pick_layer & 1 == 0,
+			"the pick boxes have a layer of their own -- not the talk layer (the navmesh-wall bit the player masks), not layer 1 (got %d)" % pick_layer)
 		if has_bind:
+			world.set("_gate_bindings", {})
 			var template := _piece_object("cj_portal")
 			var cache := ObjectTemplateCache.new(func(_path: String) -> Node3D: return template)
 			var group := Node3D.new()
 			group.name = "RealTerrain_97_168"
+			TerrainCollision.place_group(group, world_script.call("_cell_offset", 0, 0), 0.0)
 			var container := Node3D.new()
 			container.name = "RealMapObjects_97_168"
 			group.add_child(container)
@@ -224,57 +244,95 @@ func _initialize() -> void:
 			stone.name = "Obj_cj_portal_stone_1"
 			stone.position = Vector3(1254.0 + 7.5, 0.0, 1374.0)
 			container.add_child(stone)
-			var far := _piece_object("cj_house")
-			far.name = "Obj_cj_house_2"
-			far.position = Vector3(1294.0, 0.0, 1374.0)
-			container.add_child(far)
 			world.call("_bind_region_gates", 97, 168, group)
-			_check(portal.get_meta("npc_name", "") == "Fixture Gate" and portal.get_meta("npc_code", "") == "STORE_CH_GATE" and portal.get_meta("gate_point_id", 0) == 1,
-				"the nearest placed object within 10 units is the gate: npc_name from SN_NPC_CH_GATE, npc_code STORE_CH_GATE, gate_point_id 1")
-			_check(_body_layer(portal) == (1 | layer),
-				"its piece body keeps layer 1 and gains the talk layer (got 0b%s)" % String.num_int64(_body_layer(portal), 2))
+			var pick := group.get_node_or_null("GatePick_STORE_CH_GATE") as Node3D
+			_check(pick != null, "Jangan's gate gets its pick node, GatePick_STORE_CH_GATE, under its region's group")
+			if pick != null:
+				_check(pick.get_meta("npc_name", "") == "Fixture Gate" and pick.get_meta("npc_code", "") == "STORE_CH_GATE" and pick.get_meta("gate_point_id", 0) == 1,
+					"it carries the talk tags: npc_name from SN_NPC_CH_GATE, npc_code STORE_CH_GATE, gate_point_id 1")
+				var at: Transform3D = world_script.call("_chain_transform", pick)
+				var want: Vector3 = (world_script.call("_chain_transform", group) as Transform3D) * Vector3(1254.0, -6.0, 1374.0)
+				_check(at.origin.distance_to(want) < 0.01,
+					"centred on the building's table point (1254, -6, 1374) in its region's frame (got %s, want %s)" % [str(at.origin), str(want)])
+				_check(at.basis.is_equal_approx(Basis.IDENTITY),
+					"axis-aligned in the world: the node undoes the group's z mirror (world basis %s)" % str(at.basis))
+				var bodies := pick.find_children("*", "StaticBody3D", true, false)
+				var box_ok := false
+				if bodies.size() == 1:
+					var body := bodies[0] as StaticBody3D
+					var cs := body.get_child(0) as CollisionShape3D
+					box_ok = body.collision_layer == pick_layer and body.collision_mask == 0 and cs != null \
+						and cs.shape is BoxShape3D and (cs.shape as BoxShape3D).size.is_equal_approx(Vector3(20.0, 50.0, 20.0))
+				_check(box_ok, "one body, on the pick layer alone, mask 0, a 20 x 50 x 20 box -- 2 x BCRadius 10, 2 x BCHeight 25")
+				var entry: Dictionary = (world.get("_gate_bindings") as Dictionary).get("STORE_CH_GATE", {})
+				_check(entry.get("node") == pick, "_gate_bindings names the pick node")
+			# NEGATIVE (the round-577 binding): the placed objects are not the
+			# click any more -- untagged, their bodies on layer 1 alone.
+			_check(not portal.has_meta("npc_name") and _body_layer(portal) == 1,
+				"the placed portal is not a click target: untagged, its body on layer 1 alone (got layer 0b%s)" % String.num_int64(_body_layer(portal), 2))
+			_check(not stone.has_meta("npc_name") and _body_layer(stone) == 1, "nor the portal stone")
 			_check(_body_layer(template) == 1 and not template.has_meta("npc_name"),
 				"the cache's template is untouched: layer 1, no tag")
-			_check(not stone.has_meta("npc_name") and _body_layer(stone) == 1 and not far.has_meta("npc_name"),
-				"the farther objects are not tagged")
-			# The talk ray's walk: from the piece body up to the tag.
-			var node: Node = portal.find_children("*", "StaticBody3D", true, false)[0]
-			while node != null and not node.has_meta("npc_name"):
-				node = node.get_parent()
-			_check(node == portal, "a hit on the portal's piece body walks up to the tagged copy")
 
-			# (c) NEGATIVE of the rule: nothing within 10 units -> the gate is
-			# left unbound: no placed object tagged, and no stand-in body added
-			# (the talk layer is the navmesh-wall bit the player's body masks,
-			# so a stand-in would be an invisible wall).
-			var group2 := Node3D.new()
-			group2.name = "RealTerrain_97_168"
-			var container2 := Node3D.new()
-			container2.name = "RealMapObjects_97_168"
-			group2.add_child(container2)
-			var lone := _piece_object("cj_house")
-			lone.position = Vector3(1254.0 + 12.0, 0.0, 1374.0)
-			container2.add_child(lone)
-			world.call("_bind_region_gates", 97, 168, group2)
-			_check(not lone.has_meta("npc_name") and _body_layer(lone) == 1,
-				"an object 12 units off is not taken: untagged, its body still on layer 1 alone")
-			_check(group2.get_child_count() == 1 and container2.get_child_count() == 1,
-				"and no stand-in collider is added anywhere (group children %d, container children %d)" % [group2.get_child_count(), container2.get_child_count()])
+			# (c) Alexandria North (the user's report, 2026-10-02). STORE_SD_GATE2
+			# stands in 92/50 at (1719, 1586, 760), BCRadius 70 / BCHeight 70;
+			# its point GATE_SD2 registers id 7. The portal is placed 15.1 units
+			# from the table point (MEASURED, cmd/whatishere) -- beyond round
+			# 577's 10, so it was never bound and the gate never clicked. Its
+			# box does not need the portal at all.
+			var sd_reader: Object = (load(READER_PATH) as GDScript).new()
+			sd_reader.call("parse",
+				_table(_data_rows() + [_row(14, {0: 1, 1: 176, 2: "GATE_SD2", 3: 27754, 4: "SN_ZONE_21836_16", 5: 23603,
+					6: 111, 7: 1537, 8: 524, 9: 50, 10: 1, 11: 0, 12: 1})]),
+				_table(_link_rows() + [_row(23, {0: 1, 1: 176, 2: 1, 3: 40000})]),
+				_table(_building_rows() + [_row(59, {0: 1, 1: 27754, 2: "STORE_SD_GATE2", 5: "SN_STORE_AS_GATE_N",
+					41: 23602, 43: 1719, 44: 1586, 45: 760, 48: 100, 49: 70, 50: 70})]))
+			world.set("_teleport_reader", sd_reader)
+			var group_sd := Node3D.new()
+			group_sd.name = "RealTerrain_92_50"
+			TerrainCollision.place_group(group_sd, world_script.call("_cell_offset", 0, 0), 0.0)
+			var container_sd := Node3D.new()
+			container_sd.name = "RealMapObjects_92_50"
+			group_sd.add_child(container_sd)
+			var alex := _piece_object("alex_portal")
+			alex.name = "Obj_alex_portal_0"
+			alex.position = Vector3(1719.15, 1549.42, 744.88)
+			container_sd.add_child(alex)
+			world.call("_bind_region_gates", 92, 50, group_sd)
+			var pick_sd := group_sd.get_node_or_null("GatePick_STORE_SD_GATE2") as Node3D
+			_check(pick_sd != null and pick_sd.get_meta("npc_code", "") == "STORE_SD_GATE2" and pick_sd.get_meta("gate_point_id", 0) == 176,
+				"Alexandria North is clickable: its pick node carries STORE_SD_GATE2 and point 176")
+			if pick_sd != null:
+				var shape_sd := (pick_sd.find_children("*", "CollisionShape3D", true, false)[0] as CollisionShape3D).shape as BoxShape3D
+				_check(shape_sd != null and shape_sd.size.is_equal_approx(Vector3(140.0, 140.0, 140.0)),
+					"its box is 140 x 140 x 140 (BCRadius 70, BCHeight 70)")
+				var box_sd := AABB((world_script.call("_chain_transform", pick_sd) as Transform3D).origin - Vector3(70, 70, 70), Vector3(140, 140, 140))
+				var alex_at: Vector3 = (world_script.call("_chain_transform", alex) as Transform3D).origin
+				_check(box_sd.has_point(alex_at), "and the portal drawn 15.1 units off its point stands inside it")
+			# NEGATIVE: a row without a box (BCRadius 0) gets no pick node.
+			var flat_reader: Object = (load(READER_PATH) as GDScript).new()
+			flat_reader.call("parse", _table(_data_rows()), _table(_link_rows()),
+				_table([_row(59, {0: 1, 1: 2094, 2: "STORE_CH_GATE", 5: "SN_NPC_CH_GATE", 41: 25000, 43: 1254, 44: -6, 45: 1374})]))
+			world.set("_teleport_reader", flat_reader)
+			var group_flat := Node3D.new()
+			group_flat.name = "RealTerrain_97_168"
+			world.call("_bind_region_gates", 97, 168, group_flat)
+			_check(group_flat.get_child_count() == 0, "a gate row with no BCRadius/BCHeight gets no pick node (children %d)" % group_flat.get_child_count())
 
 			# (d) NEGATIVE: a gate whose point does not register id 7. Retail's
 			# fortress gates (STORE_CH_FORT_GATE1..3, in 92/167..169) are
 			# teleportbuilding rows named by serviced teleportdata points with
 			# outgoing links and column 10 = 0; one is placed here, in 97/168,
-			# with a placed object exactly on its point. It must be neither
-			# tagged nor given a stand-in, while Jangan's town gate in the same
-			# region still binds.
+			# with a placed object exactly on its point. It gets no pick node
+			# and its object no tag, while Jangan's town gate in the same
+			# region still gets its box.
 			var fort_reader: Object = (load(READER_PATH) as GDScript).new()
 			fort_reader.call("parse",
 				_table(_data_rows() + [_row(14, {0: 1, 1: 50, 2: "GATE_CH_FORT1", 3: 9001, 4: "SN_ZONE_FORT", 5: 25000,
 					6: 400, 7: 0, 8: 400, 9: 50, 10: 0, 11: 0, 12: 1})]),
 				_table(_link_rows() + [_row(23, {0: 1, 1: 50, 2: 1, 3: 0})]),
 				_table(_building_rows() + [_row(59, {0: 1, 1: 9001, 2: "STORE_CH_FORT_GATE1", 5: "SN_NPC_CH_FORT_GATE1",
-					41: 25000, 43: 400, 44: 0, 45: 400})]))
+					41: 25000, 43: 400, 44: 0, 45: 400, 48: 100, 49: 30, 50: 30})]))
 			var fort_point = fort_reader.call("point_for_building", "STORE_CH_FORT_GATE1")
 			_check(fort_point != null and not fort_point.interaction7 and not (fort_reader.call("links_from", 50) as Array).is_empty(),
 				"the fixture's fortress gate is a teleport point with a link and no id-7 registration")
@@ -288,21 +346,14 @@ func _initialize() -> void:
 			scenery.name = "Obj_cj_wall_0"
 			scenery.position = Vector3(400.0, 0.0, 400.0)
 			container3.add_child(scenery)
-			var portal3 := _piece_object("cj_portal")
-			portal3.name = "Obj_cj_portal_1"
-			portal3.position = Vector3(1257.14, -33.0, 1375.71)
-			container3.add_child(portal3)
 			world.call("_bind_region_gates", 97, 168, group3)
-			_check(not scenery.has_meta("npc_name") and not scenery.has_meta("npc_code") and _body_layer(scenery) == 1,
-				"a fortress-gate row (links, no id 7) does not tag the object on its point: no npc_name/npc_code, body on layer 1 alone")
-			_check(group3.get_child_count() == 1 and container3.get_child_count() == 2,
-				"and gets no stand-in collider (group children %d, container children %d)" % [group3.get_child_count(), container3.get_child_count()])
-			_check(portal3.get_meta("npc_code", "") == "STORE_CH_GATE",
-				"while the town gate in the same region (id 7) still binds")
+			_check(group3.get_node_or_null("GatePick_STORE_CH_FORT_GATE1") == null and not scenery.has_meta("npc_name") and _body_layer(scenery) == 1,
+				"a fortress-gate row (links, no id 7) gets no pick node, and the object on its point no tag")
+			_check(group3.get_node_or_null("GatePick_STORE_CH_GATE") != null,
+				"while the town gate in the same region (id 7) gets its box")
 			world.set("_teleport_reader", reader)
-			group3.free()
-			group.free()
-			group2.free()
+			for g in [group3, group, group_sd, group_flat]:
+				g.free()
 			template.free()
 
 		# (e) Round 642: a teleport NPC. GATE_NPC_CH_FERRY's associated object
@@ -360,14 +411,13 @@ func _initialize() -> void:
 
 		# (g) Round 650: Donwhang's gate. STORE_WC_GATE stands in 103/153 at
 		# local (962, 8), eight units from the edge with 102/153, where the
-		# player arrives (GATE_WC). Since round 643 a map object exists once,
-		# held by the first loaded region whose .o2 lists it, in THAT region's
-		# container and frame -- so the portal is in RealMapObjects_102_153 at
-		# 8 + 1920 on z (MapO2Reader.owner_offset). The groups stand as
-		# TerrainCollision.place_group puts them (the frame region 102/153 at
-		# cell (0, 0), 103/153 one cell over on region x, scale.z -1).
-		var has_rebind := world.has_method("_rebind_pending_gates")
-		_check(has_rebind, "World3D has _rebind_pending_gates (round 650)")
+		# player arrives (GATE_WC), and its portal is held by 102/153's
+		# container (a map object exists once, round 643). Round 650 searched
+		# every container for it; since round 690 the box needs no placed
+		# object at all: it is built in the building's own region, in that
+		# region's frame. The groups stand as TerrainCollision.place_group
+		# puts them (the frame region 102/153 at cell (0, 0), 103/153 one cell
+		# over on region x, scale.z -1).
 		var dw := _donwhang_grid(world_script)
 		world.set("_object_containers", {"_102_153": dw["c102"], "_103_153": dw["c103"]})
 		for g in [dw["g102"], dw["g103"]]:
@@ -377,47 +427,24 @@ func _initialize() -> void:
 		dw_portal.name = "Obj_w_cd_portal_0"
 		dw_portal.position = Vector3(962.0 + 2.0, -35.0, 8.0 + 1920.0 + 2.5)
 		(dw["c102"] as Node3D).add_child(dw_portal)
-		# A decoy at the building's local numbers in the WRONG region's frame
-		# (102/153's own (962, 8), 1,920 units away in the world).
-		var decoy: Node3D = _piece_object("w_cd_house")
-		decoy.position = Vector3(962.0, 0.0, 8.0)
-		(dw["c102"] as Node3D).add_child(decoy)
 		world.call("_bind_region_gates", 103, 153, dw["g103"])
-		_check(dw_portal.get_meta("npc_code", "") == "STORE_WC_GATE" and dw_portal.get_meta("gate_point_id", 0) == 2,
-			"Donwhang's gate binds to the portal the neighbour 102/153 holds (got npc_code '%s')" % str(dw_portal.get_meta("npc_code", "")))
-		_check(_body_layer(dw_portal) == (1 | layer), "and the portal's body is on the talk layer")
-		_check(not decoy.has_meta("npc_code"), "the object at the same local numbers in the other region's frame is not taken")
+		var dw_pick := (dw["g103"] as Node3D).get_node_or_null("GatePick_STORE_WC_GATE") as Node3D
+		_check(dw_pick != null and dw_pick.get_meta("npc_code", "") == "STORE_WC_GATE" and dw_pick.get_meta("gate_point_id", 0) == 2,
+			"Donwhang's gate gets its pick node in its own region 103/153")
+		if dw_pick != null:
+			var dw_want: Vector3 = (world_script.call("_chain_transform", dw["g103"]) as Transform3D) * Vector3(962.0, -35.0, 8.0)
+			var dw_at: Vector3 = (world_script.call("_chain_transform", dw_pick) as Transform3D).origin
+			_check(dw_at.distance_to(dw_want) < 0.01, "at (962, -35, 8) in 103/153's frame (got %s, want %s)" % [str(dw_at), str(dw_want)])
+			var portal_at: Vector3 = (world_script.call("_chain_transform", dw_portal) as Transform3D).origin
+			_check(Vector2(portal_at.x - dw_at.x, portal_at.z - dw_at.z).length() < 40.0,
+				"within its BCRadius 40 of the portal 102/153 holds (%.1f units in x/z)" % Vector2(portal_at.x - dw_at.x, portal_at.z - dw_at.z).length())
+		_check(not dw_portal.has_meta("npc_code") and _body_layer(dw_portal) == 1, "the portal itself is not a click target")
+		# The building region committing again (streamed out and back in):
+		# one pick node, not two.
+		world.call("_bind_region_gates", 103, 153, dw["g103"])
+		var picks := (dw["g103"] as Node3D).get_children().filter(func(n): return String(n.name).begins_with("GatePick_"))
+		_check(picks.size() == 1, "binding a region again replaces its pick node (got %d)" % picks.size())
 		for g in [dw["g102"], dw["g103"]]:
-			world.remove_child(g)
-			g.free()
-
-		# The other order: 103/153 commits before the region holding the
-		# portal (defensive: no real gate needs it, round 650 review). It is unbound then, and
-		# bound once 102/153's commit places the portal -- 102/153 has no gate
-		# of its own, so only the retry can bind it.
-		var dw2 := _donwhang_grid(world_script)
-		world.set("_object_containers", {"_103_153": dw2["c103"]})
-		world.add_child(dw2["g103"])
-		world.set("_gate_bindings", {})
-		world.call("_bind_region_gates", 103, 153, dw2["g103"])
-		var late_portal: Node3D = _piece_object("w_cd_portal")
-		late_portal.position = Vector3(962.0 + 2.0, -35.0, 8.0 + 1920.0 + 2.5)
-		(dw2["c102"] as Node3D).add_child(late_portal)
-		world.add_child(dw2["g102"])
-		world.set("_object_containers", {"_102_153": dw2["c102"], "_103_153": dw2["c103"]})
-		_check(not late_portal.has_meta("npc_code"), "before 102/153 commits, nothing is bound")
-		world.call("_bind_region_gates", 102, 153, dw2["g102"])
-		_check(late_portal.get_meta("npc_code", "") == "STORE_WC_GATE",
-			"a gate left unbound is bound when a later region places its portal (got '%s')" % str(late_portal.get_meta("npc_code", "")))
-		# NEGATIVE: a portal 12 units off in the neighbour is still not taken.
-		late_portal.free()
-		var off_portal: Node3D = _piece_object("w_cd_portal")
-		off_portal.position = Vector3(962.0 + 12.0, -35.0, 8.0 + 1920.0)
-		(dw2["c102"] as Node3D).add_child(off_portal)
-		world.call("_bind_region_gates", 102, 153, dw2["g102"])
-		_check(not off_portal.has_meta("npc_code") and _body_layer(off_portal) == 1,
-			"a neighbour's object 12 units off the point is not taken")
-		for g in [dw2["g102"], dw2["g103"]]:
 			world.remove_child(g)
 			g.free()
 		world.set("_object_containers", {})

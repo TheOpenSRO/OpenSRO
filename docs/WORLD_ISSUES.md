@@ -7094,6 +7094,228 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-ninetieth round: a Hotan return stands on the plaza, the Alexandria North teleporter is clickable, and a town gate is clicked where retail clicks it -- its own box around the stone, not the whole building
+
+The user (2026-10-02): "when I set Hotan as my default spawn and die I get resurrected back in hotan
+but im clipped half way through the ground. This didn't seem to happen at other towns. Also the
+Alexandria north teleporter has been broken since you added teleporters but I'm just telling you now.
+When I had jangan as my spawn and I died it seemed like the teleport hit zone was off to the right and
+not on the actual stone or around so I couldn't easily click it."
+
+Labels: READ (the decompiles and asm on the render box), MEASURED, INFERRED, OURS, OPEN. The full
+reading is in `docs/protocol/teleport_network.md`, "The gate's pick box and the arrival's height
+(round 690)".
+
+The live runs used the render box, lane `tele690`, with real X input through the Login route:
+- the server was dev's, with srrevamp-01's flags: `-full-map` (so `-single-frame`), `-monster-ai
+  -monster-strike-push -monster-spawn-push -monster-battle -monster-aggro -player-dead-state
+  -persist-position`, `-regions-csv` and `-chargen-csv`;
+- the box's exports were loaded: teleport, npcpos, monsters, the nest DB, regions and chargen.
+
+The harness is `/var/tmp/tele690/inter.sh`, `x.sh`, `gate.sh`, `hop.sh` and `relog.sh`. The runs were:
+- **i2**: dev's client with only the probe hook added (no behaviour change), which reproduced the
+  bugs.
+- **i4**: this tree's client: all seven gates clicked, and a revive at Alexandria North.
+- **i5**: this tree's client: a Jangan revive, a Hotan revive and a dead logout at Hotan.
+- **i6**: dev's client again, at Alexandria North.
+
+A new QA hook, `SRREVAMP_QA_ARRIVAL_PROBE=1`, takes the measurements:
+- `QA ARRIVAL`: the feet against the terrain-only ray and the walkable graph's landing, after every
+  entry, zone change and GM move;
+- `QA GATEPICK`: a gate's pick body against the placed object drawn there, with a sweep of the talk
+  ray (`GatePickProbe`);
+- `QA GATEAIM`: the screen point to click.
+
+### 1. Hotan: the return was 12.19 under the plaza
+
+**Cause (MEASURED).** The server sends a revive's return like a gate teleport: the gate's point at
+height 0 (`teleportArrival`, round 686). The client stood a gate teleport on its walkable graph
+because a receipt came first (round 576), but a return has no receipt. It took the plain zone
+change's branch:
+- In Jangan that branch moved the player to the square spawn (`ZONE_SPAWN_LOCAL`), 350 units from
+  where the server had the character. Run i2, `QA ARRIVAL #3`: local (1002, 1020).
+- Every other town kept the server's 0, and `_snap_player_onto_terrain` only lifted it to the bare
+  terrain.
+
+Hotan's gate point is on the castle plaza, so the result there was wrong. Run i2, `QA ARRIVAL #8 zone
+change to hotan`:
+- feet 234.59;
+- terrain 234.25;
+- walkable graph landing 246.78;
+- **feet - landing -12.19** (the screenshot `hotan_revive_base.jpg` shows only the head above the
+  plaza).
+
+The graph's own step-up limit (`SURFACE_REACH_UP`, 12) then refused the plaza, which is 12.19 up, so
+the character stayed underneath.
+
+**Why only Hotan (MEASURED, every point).** `walk_probe.gd --column` was run at the 64 open-world
+teleport points.
+- At 61 of them the landing is within 1.6 units of the terrain.
+- Three are more than 12 above it: `GATE_KT` +12.19, `GATE_TOMB_GATE_IN` +355.79 and
+  `GATE_ARABIAN_COAST` +366.84.
+- Only `GATE_KT` is a return point, an id-7 town gate.
+
+The other six town gates measure: CH +0.56, WC, EU, CA, SD1 and SD2 0.00.
+
+**Retail (READ, partial).** The server copies the teleportdata record's x/y/z as they are
+(`FUN_00407760`; `ResolveRevivePoint` `0x4e08a0`; `GObjPC::Revive` -> `vslot_222` `0x4df590`). No
+height function is called on that path. The re-entry's consumer and the client's placement are
+unread (OPEN).
+
+**Fix (client).** These arrivals now keep the server's point and stand on the walkable graph, as a
+gate teleport does:
+- A zone change that finds the player dead, or that this client did not ask for, is a move to the
+  return point (`World3D.arrival_keeps_server_point`). Every request goes through
+  `_request_zone_change`, which counts it. Both are OURS, from the server's own order: option 1
+  warps a dead character, then revives it.
+- A restored entry within 1 unit of a town gate's point is stood on the graph as well
+  (`_land_restored_return_point`, `TeleportReader.return_points`). That is a dead logout, which the
+  server saves at the return point (`savedPlace`).
+
+**After (MEASURED, run i5):**
+- Hotan revive: feet 246.78, landing 246.78, feet - landing 0.00 (`hotan_revive_fixed.jpg`).
+- Jangan revive: at the gate's point local (969, 1369), feet - landing 0.00. It is no longer moved to
+  the square.
+- Dead logout at Hotan, then a fresh login: `the restored entry is GATE_KT's point (a return point) --
+  stood on the walkable graph there`, feet - landing 0.00.
+
+Run i4:
+- Alexandria North revive: feet - landing 0.00.
+- All seven gate-teleport arrivals: feet - landing 0.00. Their heights: CH -30.12, SD2 1539.99, SD1
+  865.82, WC -104.27, KT 246.78, EU 86.23, CA 182.49.
+
+### 2. Alexandria North: never clickable
+
+**Cause (MEASURED).**
+- The building row is there: `STORE_SD_GATE2`, 92/50 (1719, 1586, 760). So are the point,
+  `GATE_SD2` 92/51 (111, 1537, 524) with id 7, and its links.
+- The server answers it. The fault was the client's binding (round 577, a disclosed stand-in): the
+  gate was the placed map object nearest the table point within 10 units.
+- `cmd/whatishere` puts Alexandria North's `alex_portal.bsr` **15.1** units from the point, so it
+  was never bound and never clickable. Alexandria South's portal is 8.4 units from its point, so it
+  was bound. Round 577 never ran Alexandria.
+
+**Retail (READ).** A town gate (type 4/1/1) is a `CITeleportGate` (`IGIDObject::FUN_009c1fa0`,
+predicate `FUN_009c1ca0`).
+- Its click is a box built from BCRadius / BCHeight: `vslot_025` `0x9e9eb0` sets `(-r, -h, -r)..(r,
+  h, r)` from `+0x118` and `+0x114`.
+- The parser `FUN_00972910` fills those from teleportbuilding columns 50 and 49 (`0x972ce2`,
+  `0x972cd1`).
+- `vslot_033` (`0x9e9b60`) tests that box about the gate's position, axis-aligned, and the pick
+  routine `FUN_0078ee20` keeps the nearest hit.
+- No model, placed object or navmesh is involved.
+
+**Fix (client).** Each id-7 gate gets a `GatePick_<code>` box at its table point:
+- The box is BCRadius x BCHeight from the row: 10/25 for Jangan, 70/70 for Alexandria.
+- It sits on its own layer, 10, which nothing walks into.
+- The talk ray masks it. The placed objects are no longer click targets.
+
+Alexandria North's box (`QA GATEPICK`, run i4) is `(-225871, 1518, 9730)..(-225731, 1658, 9870)`,
+centred 15 units from the drawn portal's centre in x/z.
+
+**Live (MEASURED, run i4, real X input).** Each gate was clicked and one destination was requested.
+The server's `msg=teleport` line for each:
+
+| gate | click | destination | server |
+|---|---|---|---|
+| `STORE_CH_GATE` Jangan | QA aim point | Alexandria (North) | `gate=STORE_CH_GATE dest=GATE_SD2` |
+| `STORE_SD_GATE2` Alexandria North | the portal's base (the rings above the box miss) | Alexandria (South) | `gate=STORE_SD_GATE2 dest=GATE_SD1` (also designated: `recall designated ... gate=STORE_SD_GATE2`) |
+| `STORE_SD_GATE1` Alexandria South | QA aim point | Jangan | `gate=STORE_SD_GATE1 dest=GATE_CH` |
+| `STORE_CH_GATE` Jangan | QA aim point | Donwhang | `dest=GATE_WC` |
+| `STORE_WC_GATE` Donwhang | QA aim point | Hotan | `dest=GATE_KT` |
+| `STORE_KT_GATE` Hotan | QA aim point | Constantinople | `dest=GATE_EU` |
+| `STORE_EU_GATE` Constantinople | QA aim point | Samarkand | `dest=GATE_CA` |
+| `STORE_CA_GATE` Samarkand | QA aim point | Jangan | `dest=GATE_CH` |
+
+**Before (MEASURED, run i6: dev's client, the same server and flags, real X input).**
+- Jangan's gate was clicked and Alexandria (North) chosen (`dest=GATE_SD2`).
+- On arrival the client logged `teleport gate STORE_SD_GATE2 -- no placed object within 10 units of
+  the table's point (1719, 760) in 92/50 (the nearest is Obj_alex_portal_32 at 15.1); left unbound
+  (not clickable)`.
+- Three clicks on the portal (its platform, its base and its rings) opened no talk box. The player
+  walked onto the platform.
+
+With this tree (run i4): `teleport gate STORE_SD_GATE2 clickable at 92/50 local (1719, 1586, 760):
+its BCRadius 70 / BCHeight 70 box`.
+
+### 3. Jangan: the click zone was the whole pavilion, not the stone
+
+**Measured (dev's client, run i2).** Round 577 put every piece of `cj_portal.bsr` on the talk layer.
+That covered:
+- the fence, floor, pillars, roof and a stone slab, `CJ_por_stone01`, which is 102 units long: drawn
+  `(226, -103, -491)..(373, 58, -345)`, 147 units across;
+- foundations reaching 73 units under the ground (`CJ_por_gidung`).
+
+The glowing stone in the middle is a separate object, `cj_portal_stone.bsr`. It is 7.5 units from
+the point and holds only two `.efp` effects (`dump_bsr`), with no collision of its own. So the click
+zone was the building, wherever its pieces stood, and not the stone.
+
+**Not reproduced: a shift after the revive.**
+- The same 6 bodies with the same bounds were measured after the entry, after a gate teleport (`#4`,
+  `#9`) and after the revive (`#3`).
+- A real click on the visible stone opened the gate in run i2, after the revive.
+- What the revive did change was where the player stood: the client put them in the square, about 435
+  units from the gate building (fixed under 1).
+- INFERRED: the user's "off to the right" was the pavilion's pieces taking clicks beside the stone,
+  while the stone itself only took a click where a piece stood behind it.
+
+**Fix.** Retail's box, as in 2: `(284, -29, -424)..(304, 21, -404)`. It is 20 x 50 x 20 at the table
+point, inside the drawn pavilion, around the stone.
+
+The talk ray also goes on through untagged talk-layer bodies (the navmesh walls, which share its bit)
+up to 8 hits. Retail's pick tests objects only (READ). The sweeps saw walls first on some rays at
+Jangan and Alexandria North: `NavmeshWalls` in `QA GATEPICK`'s blocker counts, for example 5 of 22
+drawn rays from 0 degrees at Jangan after the revive. Those rays are counted where the wall came
+first and nothing was hit behind it, so they show that walls are there, not how many clicks they
+used to take.
+
+**After (MEASURED, run i5).** These were measured after the revive, with real X input:
+- From (294, -330), `QA GATEAIM` gave the box centre at screen (640, 48), `talk there: true`.
+- A click on the visible stone at (652, 50) opened the Dimensional Gate.
+- A click to its right at (860, 60), on the pavilion, did not talk.
+- The teleport to Hotan from that click was accepted: `gate=STORE_CH_GATE dest=GATE_KT`.
+
+### 4. Tests
+
+| Test | FAIL before (run against dev bf25e7e's World3D and TeleportReader) |
+|---|---|
+| `scripts/world/arrival_landing_test.gd` (new): the arrival rule's five cases; `_return_point_at` matches GATE_CH's point, not 5 units off, not a ferry, not an unloaded region | `FAIL World3D.arrival_keeps_server_point exists`; `FAIL TeleportReader.return_points exists`; `FAIL World3D._return_point_at exists` |
+| `scripts/npc/teleport_reader_test.gd` (rewritten binding sections): BC columns; the CH pick box (position, world-axis-aligned, 20x50x20, own layer); Alexandria North's 140-unit box with the portal 15.1 off; no box without BC; the fortress gate; Donwhang in its own region; a re-bind replaces | `SCRIPT ERROR: Invalid get index 'bc_height'`; `FAIL the pick boxes have a layer of their own ... (got -1)`; `FAIL Jangan's gate gets its pick node`; `FAIL the placed portal is not a click target: untagged, its body on layer 1 alone (got layer 0b10001)`; `FAIL Alexandria North is clickable: its pick node carries STORE_SD_GATE2 and point 176`; `FAIL while the town gate in the same region (id 7) gets its box`; `FAIL Donwhang's gate gets its pick node in its own region 103/153`; `FAIL the portal itself is not a click target`; `FAIL binding a region again replaces its pick node (got 0)` |
+
+The pick against the mesh after a revive or zone change is measured by the QA hook, not a unit test
+(above).
+
+Results:
+- `remote_godot.sh check`: ALL LOAD.
+- `remote_godot.sh tests`: 204 suites, 0 failing.
+- `go build ./... && go vet ./... && go test -count=1 -p 1 ./...`: green, except `internal/refdata`,
+  which the full run killed at 11 minutes (Postgres shared with other lanes). It passed alone in 116
+  s. The server is unchanged.
+
+### 5. Perf gate (`--sites jangan`, base bf25e7e vs this tree)
+
+Medians of 3 interleaved runs, 1280x720. Runs another lane's Godot overlapped were repeated. The
+head's frame median is +0.9 ms, inside the gate's threshold: its three runs were 9.38, 10.32 and
+10.30 ms against the base's 9.44, 9.22 and 11.01.
+
+| site | number | base | head | delta | verdict |
+|---|---|---|---|---|---|
+| jangan | frame ms | 9.44 | 10.30 | +0.9 | SAME |
+| jangan | entry ms | 9900 | 9679 | -221 | SAME |
+| jangan | freeze ms | 3425 | 3431 | +6 | SAME |
+| jangan | hitches | 5 | 5 | 0 | SAME |
+
+### 6. OPEN
+
+- The pick's nine rays: retail casts nine around the cursor (step INFERRED to be 1.6 % of the
+  screen); srrevamp casts one.
+- A ray starting inside a gate's box does not take it. Retail's triangle test's back faces are
+  unread.
+- A structure's spawn position is INFERRED to be its teleportbuilding row.
+- Retail's arrival height after the server's unchanged y is unread.
+- The two non-return points 355 and 366 units under their objects (`GATE_TOMB_GATE_IN`,
+  `GATE_ARABIAN_COAST`) land on the graph as teleports. Nothing returns a character there.
+
 ## Six-hundred-and-eighty-seventh round: the body's own skin no longer shows through worn armour -- each item hides the body pieces it covers, as retail's client does
 
 Round 683 built the bodies and found the body's own skin showing through worn armour on 2-21 % of
