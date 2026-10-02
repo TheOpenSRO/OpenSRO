@@ -271,7 +271,7 @@ func _begin_backdrop() -> void:
 	_backdrop = FrontEndBackdrop.new()
 	_backdrop.name = "CreateBackdrop"
 	add_child(_backdrop)
-	var phase := CharSelectHandoff.day_phase if CharSelectHandoff.day_phase >= 0.0 else TitleIntro.pick_day_phase()
+	var phase := CharSelectHandoff.front_end_phase()
 	var region: Vector2i = CharCreateView.BACKDROP[_race]["region"]
 	if not _backdrop.begin(region, BACKDROP_RADIUS, phase):
 		print("CREATE: no backdrop for %d/%d" % [region.x, region.y])
@@ -538,11 +538,32 @@ func _button(d: UiLayoutParser.ControlDef) -> TextureButton:
 		l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		l.add_theme_font_size_override("font_size", _font_size(d.font_index))
 		l.add_theme_color_override("font_color", d.font_color)
+		place_button_text(l, d.client_rect)
 		b.add_child(l)
-		var inset := d.client_rect
-		_place_centred(l, Rect2(inset.position.x, inset.position.y,
-			d.rect.size.x - inset.position.x - inset.size.x, d.rect.size.y - inset.position.y - inset.size.y))
 	return b
+
+## The words of a layout button fill the button less its ClientRect inset,
+## and follow its size (round 688). READ: the layout's HAlign/VAlign 1 centre
+## them in that rect (CIFButton, pscharactercreate*.txt). They were placed
+## with a fixed size computed before the label was in the tree, where its
+## minimum width came from Godot's default face -- 98 units for "Name Check"
+## against the button's 75 -- and a Label never shrinks below the size it
+## was given: the client face's 71-unit string was centred in 98 units,
+## 13.5 in from the button's left and 9.5 past its right edge at every UI
+## scale (MEASURED, frontend_at_scale.gd, 1.0 and 1.95; the user's
+## 2026-10-02 screenshot). Anchored to the button, the label is re-fitted
+## whenever its minimum size changes (the face arriving with the tree) and
+## whenever the button resizes; a string wider than the button (another
+## archive's language) grows both ways and stays centred (OURS: retail does
+## not clip, UiBuilder._apply_font's note).
+static func place_button_text(l: Label, inset: Rect2i) -> void:
+	l.set_anchors_preset(Control.PRESET_FULL_RECT)
+	l.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	l.grow_vertical = Control.GROW_DIRECTION_BOTH
+	l.offset_left = inset.position.x
+	l.offset_top = inset.position.y
+	l.offset_right = -inset.size.x
+	l.offset_bottom = -inset.size.y
 
 ## Places a control on a rect, centring it vertically when its minimum height
 ## (the client font's line) is taller than the rect.

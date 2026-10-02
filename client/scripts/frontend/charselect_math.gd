@@ -46,7 +46,8 @@ const LIZARD_YAW := 3.0
 ## index 1 when the race-select fly ends (vslot_012 case 7, 0x85d80c:
 ## `(*(+0x1c0)+0xc)(1, 0, 200, 0, 1.0, 1.0)`). Its clips in .bsr order are
 ## interface_lizard_stand, _move, _run (MEASURED, charselect.md), so index 1
-## is _move (INFERRED).
+## is _move (INFERRED). _move is not cyclic and plays once, ending in the
+## stand's pose (MEASURED and READ, round 688: CharSelectStage.lizard_clip_loops).
 const LIZARD_RACE_CLIP := 1
 const LIZARD_LIST_CLIP := 0
 

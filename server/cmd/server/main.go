@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"math/rand"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -902,6 +905,13 @@ func main() {
 			"on a client's own characterdata_*.txt and itemdata_*.txt, round 682): the 52 bodies and 52 starting items a "+
 			"new character may be made from, and the two ammunition rows. Without it every character create is refused "+
 			"(0x403) -- the server cannot tell what it may make. A configured path that does not load is fatal.")
+	charDefaultsDir := flag.String("chardefaults-dir", os.Getenv("SRREVAMP_CHARDEFAULTS_DIR"),
+		"a directory holding the shard DB's _RefCharDefault_SkillMastery.csv, _RefCharDefault_Skill.csv and "+
+			"_RefCharDefault_Quest.csv as exported (env SRREVAMP_CHARDEFAULTS_DIR; EXTERNAL, round 692): a new "+
+			"character gets its race's default masteries at level 0, its default skills, and its level-1 default "+
+			"quests recorded, as the shard's _AddNewChar gives them. A _RefCharGen.csv beside them is compared with "+
+			"the creatable catalogue at boot. Without it new characters get no defaults. A configured directory "+
+			"that does not load is fatal. See deploy/README.md, \"Character defaults\".")
 	itemsCSV := flag.String("items-csv", os.Getenv("SRREVAMP_ITEMS_CSV"),
 		"path to an item-refdata CSV (from cmd/export-refdata -mode items); with -in-memory it "+
 			"feeds the shop catalogue and prices, item stat lookups and inventory stack limits. "+
@@ -1075,8 +1085,8 @@ func main() {
 		"the bag's size in slots for every character without one of its own (env SRREVAMP_INVENTORY_SIZE): "+
 			"the client shows it as pages of 32, at most three (IFInventory 0x6b6620), and locks the "+
 			"slots of the last page past it. 1..96. Default 96, three full pages -- OURS, the test "+
-			"server's choice (round 633); the retail starting size is a database default neither "+
-			"executable carries. A GM's /invsize or the inventory expansion item gives a character its "+
+			"server's choice (round 633); the shard DB's _AddNewChar gives a new character "+
+			"InventorySize 109, the same 96 plus the 13 equipment slots (EXTERNAL, round 692). A GM's /invsize or the inventory expansion item gives a character its "+
 			"own. See deploy/README.md, \"Inventory size\".")
 	flag.Parse()
 
@@ -1627,6 +1637,55 @@ func main() {
 	} else {
 		logger.Warn("no creatable catalogue (-chargen-csv / SRREVAMP_CHARGEN_CSV): every character create is refused (0x403) -- see deploy/README.md \"Reference data\"")
 	}
+	// A new character's default masteries, skills and quests (round 692):
+	// the shard DB's _RefCharDefault_* tables, as _AddNewChar applies them
+	// (session.LobbyDeps.Defaults). EXTERNAL data, so it is the operator's to
+	// supply; without it the create path gives none.
+	var charDefaults *refdata.CharDefaults
+	if *charDefaultsDir != "" {
+		d, err := refdata.LoadCharDefaultsDir(*charDefaultsDir)
+		if err != nil {
+			logger.Error("loading the character defaults", "dir", *charDefaultsDir, "err", err)
+			os.Exit(1)
+		}
+		charDefaults = d
+		m, sk, q := d.Counts()
+		logger.Info("character defaults loaded: new characters get their race's default masteries, skills and quests",
+			"dir", *charDefaultsDir, "masteries", m, "skills", sk, "quests", q,
+			"china", fmt.Sprintf("%d masteries, %d skills, %d quests", len(d.Masteries(0)), len(d.Skills(0)), len(d.Quests(0))),
+			"europe", fmt.Sprintf("%d masteries, %d skills, %d quests", len(d.Masteries(1)), len(d.Skills(1)), len(d.Quests(1))))
+		// Rows no character can match, and duplicates (given once, OURS).
+		for _, w := range d.Warnings() {
+			logger.Warn("character defaults: an odd row", "row", w)
+		}
+		// The shard's own list of creatable ids, when it is beside them: the
+		// catalogue's rule should pick the same ids (MEASURED, round 692).
+		refCharGenPath := filepath.Join(*charDefaultsDir, refdata.RefCharGenFile)
+		if f, err := os.Open(refCharGenPath); err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				logger.Warn("the shard's _RefCharGen.csv is there but cannot be opened; the catalogue is not compared with it",
+					"path", refCharGenPath, "err", err)
+			}
+		} else {
+			ids, err := refdata.LoadRefCharGen(f)
+			f.Close()
+			switch {
+			case err != nil:
+				logger.Warn("the shard's _RefCharGen.csv does not load; the catalogue is not compared with it", "err", err)
+			case chargen == nil:
+				logger.Info("_RefCharGen.csv found but no creatable catalogue is loaded to compare it with", "ids", len(ids))
+			default:
+				if missing, extra := chargen.CompareRefCharGen(ids); len(missing) == 0 && len(extra) == 0 {
+					logger.Info("the creatable catalogue agrees with the shard's _RefCharGen", "ids", len(ids))
+				} else {
+					logger.Warn("the creatable catalogue and the shard's _RefCharGen differ: creates follow the catalogue",
+						"only_in_refchargen", missing, "only_in_catalogue", extra)
+				}
+			}
+		}
+	} else {
+		logger.Warn("no character defaults (-chardefaults-dir / SRREVAMP_CHARDEFAULTS_DIR): new characters get no default masteries, skills or quests -- see deploy/README.md \"Character defaults\"")
+	}
 	// The game's teleport network, when the operator supplies it (round 575).
 	// Loaded and checked here so a bad export fails at boot, the npcpos rule;
 	// session.TeleportHandler charges and moves by it (round 576), and refuses
@@ -1909,6 +1968,13 @@ func main() {
 	serverStatus := func() session.ServerStatus {
 		return session.ServerStatus{Current: hub.Count(), Max: capacity, Inspection: *inspection}
 	}
+	// Where a new character's defaults go (round 692): both stores, memory
+	// and SQL, take them.
+	defaultSkills, _ := skills.(session.CharDefaultSkills)
+	defaultQuests, _ := quests.(session.CharDefaultQuests)
+	if charDefaults != nil && (defaultSkills == nil || defaultQuests == nil) {
+		logger.Warn("character defaults loaded but a store cannot take them", "skills", defaultSkills != nil, "quests", defaultQuests != nil)
+	}
 	handle := gateway.Chain(
 		// The front-end theme (round 678): answered on any connection, before
 		// and without login; the client asks on a short connection of its own.
@@ -1926,6 +1992,7 @@ func main() {
 		// restore. Start is the world handler's.
 		session.LobbyHandler(session.LobbyDeps{
 			Chars: lobbyChars, Catalogue: chargen, Inv: inv, Eq: eq, Guilds: guilds, Mana: manaTracker, Hub: hub, Logger: logger,
+			Defaults: charDefaults, Skills: defaultSkills, Quests: defaultQuests,
 		}),
 		// An older client's 0x0010/0x0012/0x0014 are told, in their own
 		// reply format, to update (round 682's review).

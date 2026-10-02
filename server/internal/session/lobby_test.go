@@ -39,6 +39,13 @@ type lobbyHarness struct {
 
 func newLobbyHarness(t *testing.T, catalogue *refdata.CreatableSet, login bool) *lobbyHarness {
 	t.Helper()
+	return newLobbyHarnessWith(t, catalogue, login, nil)
+}
+
+// newLobbyHarnessWith is newLobbyHarness with mod applied to the deps before
+// the handler is built (round 692: the character defaults).
+func newLobbyHarnessWith(t *testing.T, catalogue *refdata.CreatableSet, login bool, mod func(*LobbyDeps)) *lobbyHarness {
+	t.Helper()
 	ctx := context.Background()
 	accounts := account.NewMemStore()
 	if _, err := accounts.Register(ctx, "alice", "pw"); err != nil {
@@ -56,6 +63,9 @@ func newLobbyHarness(t *testing.T, catalogue *refdata.CreatableSet, login bool) 
 	h.eq = equipment.NewMemStore(h.inv)
 	deps := LobbyDeps{Chars: h.chars, Catalogue: catalogue, Inv: h.inv, Eq: h.eq, Guilds: h.guilds,
 		Now: func() time.Time { return h.clock }, Pick: func(int) int { return 0 }}
+	if mod != nil {
+		mod(&deps)
+	}
 	handle := gateway.Chain(LoginHandler(accounts), LobbyHandler(deps), WorldHandler(h.chars, h.eq, world.NewHub()))
 	addr, cleanup := startTestServer(t, handle)
 	t.Cleanup(cleanup)

@@ -19,6 +19,7 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/mana"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/srrevamp/server/internal/skill"
 	"github.com/OpenSRO/srrevamp/server/internal/world"
 	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
 )
@@ -36,6 +37,20 @@ type GuildRoles interface {
 	GetByCharacter(ctx context.Context, characterID int64) (*guild.Guild, error)
 }
 
+// CharDefaultSkills is the slice of the skill store a new character's
+// default masteries and skills go into (skill.MemStore and skill.SQLStore).
+type CharDefaultSkills interface {
+	Learn(ctx context.Context, characterID, skillID int64) error
+	SeedMasteries(ctx context.Context, characterID int64, masteryIDs []int64) error
+}
+
+// CharDefaultQuests is where a new character's default quests are recorded
+// (quest.MemStore and quest.SQLStore; quest/defaults.go says why they are
+// not quests yet).
+type CharDefaultQuests interface {
+	GrantDefaultQuests(ctx context.Context, characterID int64, codes []string) error
+}
+
 // LobbyDeps is what LobbyHandler works with. Chars and Catalogue are
 // required for create; the rest may be nil (tests): no kit is given without
 // Inv/Eq, every character is guildless without Guilds, MP is the maximum
@@ -50,6 +65,13 @@ type LobbyDeps struct {
 	Eq        equipment.Store
 	Guilds    GuildRoles
 	Mana      *mana.Tracker
+	// Defaults is the shard's `_RefCharDefault_*` tables (round 692,
+	// -chardefaults-dir); Skills and Quests are where create puts what they
+	// give. Defaults nil: a new character gets none (the server warns at
+	// boot); Skills or Quests nil: that part is skipped.
+	Defaults *refdata.CharDefaults
+	Skills   CharDefaultSkills
+	Quests   CharDefaultQuests
 	// Hub, when set, is how the lobby tells a session already in the world:
 	// every lobby action is refused there (round 682's review).
 	Hub *world.Hub
@@ -340,8 +362,68 @@ func (d *LobbyDeps) create(ctx context.Context, accountID int64, req *LobbyReque
 	if err := equipment.GiveKit(ctx, d.Inv, d.Eq, created.ID, d.chosenKit(items, model.Country)); err != nil {
 		d.logger().Warn("lobby: character created without all of its chosen items", "character", created.Name, "err", err)
 	}
+	d.giveDefaults(ctx, created, model.Country)
 	r.OK = true
 	return r
+}
+
+// giveDefaults is what `_AddNewChar` gives every new character beside its
+// items (READ, this package's procedure; EXTERNAL data, round 692): the
+// `_RefCharDefault_*` rows of the character's Country or of Race 3 -- each
+// mastery at level 0, each skill learned, and each quest with RequiredLevel 1
+// and Service 1 started (refdata.CharDefaults says which rows). Country is the
+// body's (catalogue column 14), the value the procedure's `_GetObjCountry`
+// reads (INFERRED: its body was not exported).
+//
+// The procedure does this inside the create's transaction and fails the whole
+// create when an insert fails (-15, -16, -17). Here, as for the items since
+// round 682 (OURS), a character that could not be given everything is still
+// a character: the failure is logged, not sent.
+//
+// The quests cannot be held as quests yet (quest/defaults.go): their code
+// names are recorded against the character instead.
+func (d *LobbyDeps) giveDefaults(ctx context.Context, c *character.Character, country int) {
+	if d.Defaults == nil {
+		return
+	}
+	if d.Skills != nil {
+		if err := d.Skills.SeedMasteries(ctx, c.ID, d.Defaults.Masteries(country)); err != nil {
+			d.logger().Warn("lobby: character created without its default masteries", "character", c.Name, "err", err)
+		}
+		for _, id := range d.Defaults.Skills(country) {
+			if err := d.Skills.Learn(ctx, c.ID, id); err != nil && !errors.Is(err, skill.ErrAlreadyKnown) {
+				d.logger().Warn("lobby: character created without a default skill", "character", c.Name, "skill", id, "err", err)
+			}
+		}
+	}
+	if d.Quests != nil {
+		var codes []string
+		for _, q := range d.Defaults.Quests(country) {
+			codes = append(codes, q.CodeName)
+		}
+		if len(codes) > 0 {
+			if err := d.Quests.GrantDefaultQuests(ctx, c.ID, codes); err != nil {
+				d.logger().Warn("lobby: character created without its default quests", "character", c.Name, "err", err)
+			}
+		}
+	}
+}
+
+// AmmoStartQuantity is how many arrows or bolts a new character is given:
+// 250. READ (this package's `_AddNewChar`, EXTERNAL, round 692): it equips the
+// ammunition into slot 7 with `_FN_ADD_INITIAL_EQUIP @NewCharID, 7,
+// @DefaultArrow, 250`, where every other item's fourth argument is its
+// durability; that the 250 is the stack's count for ammunition is INFERRED
+// (`_FN_ADD_INITIAL_EQUIP`'s body was not exported). Until round 692 the bag
+// got one full stack (its MaxStack, 2,500 on a retail archive), OURS. Capped
+// at the row's MaxStack so it stays one stack.
+const AmmoStartQuantity = 250
+
+func ammoQuantity(maxStack int) int {
+	if maxStack > 0 && maxStack < AmmoStartQuantity {
+		return maxStack
+	}
+	return AmmoStartQuantity
 }
 
 // chosenKit is what a new character is given (READ, ShardManager
@@ -351,11 +433,11 @@ func (d *LobbyDeps) create(ctx context.Context, accountID int64, req *LobbyReque
 // (TwoHanded 0, itemdata column 93 -- INFERRED to be what the server reads),
 // the race's shield, worn.
 //
-// OURS: the ammunition goes into the bag, one full stack (its MaxStack), and
-// is not worn -- srrevamp's equipment slot carries no quantity and ammunition
-// is not modelled (session/skill.go); the retail quantity lives in
-// `_AddNewChar`'s body, OPEN. The durability byte the server writes for each
-// item is the inventory's own fresh roll here.
+// The ammunition is AmmoStartQuantity (round 692; see there), and goes into
+// the bag, not worn (OURS): srrevamp's equipment slot carries no quantity and
+// ammunition is not modelled (session/skill.go). The durability byte the
+// server writes for each item is the inventory's own fresh roll here (the
+// procedure writes each item's `_RefObjItem.Dur_L`).
 func (d *LobbyDeps) chosenKit(items []refdata.Creatable, race int) []equipment.KitPiece {
 	slots := []equipment.Slot{equipment.SlotMail, equipment.SlotPants, equipment.SlotBoots, equipment.SlotWeapon}
 	var kit []equipment.KitPiece
@@ -369,11 +451,11 @@ func (d *LobbyDeps) chosenKit(items []refdata.Creatable, race int) []equipment.K
 	switch {
 	case weapon.IsBow():
 		if a, ok := d.Catalogue.Ammo(refdata.AmmoArrowCode); ok {
-			kit = append(kit, equipment.KitPiece{Slot: equipment.SlotShield, ItemID: a.ID, Quantity: maxInt(a.MaxStack, 1)})
+			kit = append(kit, equipment.KitPiece{Slot: equipment.SlotShield, ItemID: a.ID, Quantity: ammoQuantity(a.MaxStack)})
 		}
 	case weapon.IsCrossbow():
 		if a, ok := d.Catalogue.Ammo(refdata.AmmoBoltCode); ok {
-			kit = append(kit, equipment.KitPiece{Slot: equipment.SlotShield, ItemID: a.ID, Quantity: maxInt(a.MaxStack, 1)})
+			kit = append(kit, equipment.KitPiece{Slot: equipment.SlotShield, ItemID: a.ID, Quantity: ammoQuantity(a.MaxStack)})
 		}
 	case !weapon.TwoHanded:
 		if s, ok := d.Catalogue.Shield(race); ok {

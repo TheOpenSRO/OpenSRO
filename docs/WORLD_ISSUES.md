@@ -7094,6 +7094,447 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-ninety-second round: a new character starts with its race's own masteries, basic skills and first quests, as the shard's `_AddNewChar` gives them -- and the shard's own list of creatable ids is exactly the 104 the rule picks
+
+The user approved the shard DB export (2026-10-02, "yes ct 104"); the four `_RefCharGen` /
+`_RefCharDefault_*` tables and the text of six lobby procedures were exported to
+`/opt/sro-files/db/csv/charsel/` on the render box (EXTERNAL, a private shard's; nothing entered the
+repo). This round reads them and closes charselect.md's EXTERNAL OPENs (lane `defaults692`,
+server only). The user, mid-round: "euros probably have their own quests too, make sure you consider
+that."
+
+### 1. The catalogue (MEASURED)
+
+`_RefCharGen` holds 104 rows, all Service 1. Their RefObjIDs against the rule's:
+- the server's (`chargen.csv` from `cmd/export-refdata -mode chargen` on the box's archive,
+  `/var/tmp/lobby682/chargen.csv`): **identical**, 104 = 104, none missing, none extra
+  (`TestRefCharGenAgreesWithTheRule` with `SRREVAMP_TEST_CHARGEN_CSV` / `SRREVAMP_TEST_REFCHARGEN_CSV`
+  set: `rule 104 ids, _RefCharGen 104 ids, missing 0, extra 0`);
+- the client's (`CharCatalog.from_archive` on the box's Media.pk2, a throwaway script run through
+  `remote_godot.sh script`, not committed): **identical**, `CATIDS 104 ...`, `diff` empty.
+
+So the rule is the shard's list, id for id. The server now also compares them at boot when
+`_RefCharGen.csv` sits in `-chardefaults-dir` (`the creatable catalogue agrees with the shard's
+_RefCharGen ids=104`).
+
+### 2. What the procedures do (READ, this package's; charselect.md sections 2 and 5)
+
+- **`_AddNewChar`** (20 parameters, the order section 5 READ from the ShardManager's pushes): refuses
+  4 characters (-2), scale > 68 (-3), a taken name (-4); inserts `_Char` with **Strength 20,
+  Intellect 20, CurLevel 1, HP 200, MP 200, InventorySize 109**, RemainGold 2,000,000, RemainSkillPoint
+  5,000,000, region 25000 (97/168) at (993, 0, 130), AppointedTeleport 2094 (`STORE_CH_GATE`) -- the
+  position and gate parameters are ignored, every race starts in Jangan on this shard; equips the
+  items (the ammunition into slot 7 **with 250**); then, by `_GetObjCountry(RefObjID)`:
+  `_CharSkillMastery` every `_RefCharDefault_SkillMastery` row of that Race or 3 **at Level 0**,
+  `_CharSkill` every `_RefCharDefault_Skill` row of that Race or 3 (Enable 1), `_CharQuest` every
+  `_RefCharDefault_Quest` CodeName of that Race or 3 **with RequiredLevel 1 and Service 1** (Status
+  1) -- of the codes that have a `_RefQuest` row (its join; `_RefQuest` was not exported, so that every
+  code passes it is INFERRED). It is **edited by the shard's operator**: an `_A_RARE` starting-kit swap ("Initial Equip Edit
+  by LemoniscooL"), nine `_RoyalAddItems` grants, `ANTHEIA` calls, silk rows, and a commented-out
+  level-110 variant of the INSERT.
+- **`_DeleteCharTemporal`**: stamps `_DeletedChar` with GetDate() and sets Deleted 1 (refusing id 0
+  and an already-deleted character); no guild or time check. **`_DeleteCharPermanently`**: refuses
+  before **6 days 23 hours** ("roughly 7 days ... an hour's error is allowed"). So the delay is 7 days,
+  the ShardManager's timer, which srrevamp's `DeleteDelay` (the user's 7 days) already is.
+- **`_ReviveChar`**: needs the `_DeletedChar` row and Deleted 1; removes the row, Deleted 0. No time
+  check. srrevamp's restore is the same. `_RecoverDeletedChar` is disabled in this package.
+- **`_IsExistingCharName`**: `=` against `_CharNameList` (pending characters' names included) and
+  `_CharNickNameList`. Case follows the DB collation, not exported (INFERRED case-insensitive);
+  srrevamp compares without case, as before (OURS until settled).
+
+### 3. What changed
+
+- **Defaults at create** (`session/lobbyhandler.go` `giveDefaults`): after the items, the race's
+  masteries at level 0 (`skill.SeedMasteries`, new in `skill/defaults.go`), its skills
+  (`Learn`), and its level-1 quests recorded (`quest.GrantDefaultQuests`, new in `quest/defaults.go`,
+  table `character_default_quests`: the quest package's invented catalogue's ids 1 and 2 are real
+  quests' ids, so the defaults cannot be accepted as quests). A failure is
+  logged, as the items' is (OURS; the procedure rolls the whole create back).
+- **The tables** (`refdata/chardefaults.go`): read as exported (header checked, BOM and CRLF
+  accepted) from `-chardefaults-dir` / `SRREVAMP_CHARDEFAULTS_DIR`; `Race = Country or 3` (READ).
+  Unset: no-op, and the server warns at boot that new characters get no defaults.
+- **The ammunition** is the procedure's 250 (`session.AmmoStartQuantity`; INFERRED that the 250 is
+  the count, `_FN_ADD_INITIAL_EQUIP` was not exported), not round 682's full stack of 2,500 (OURS).
+- **Labels**: `character.StartingStr/Int` 20 are READ (were OWN DESIGN; the operator's level-110
+  variant's 129 = 20 + 109 agrees with StatGrowthPerLevel 1); `DeleteDelay`'s procedure is READ;
+  `NameTaken`'s rule says what is READ and what OURS; `-inventory-size`'s help notes the procedure's
+  109 = 96 + 13. **Not taken:** the procedure's gold and SP, its `_A_RARE` kit and item grants, its
+  Jangan-for-everyone start (charselect.md decisions 10-11; the ShardManager's per-race spawns stay).
+- Docs: charselect.md sections 2, 4, 5 ("`_AddNewChar`, read"), 6, 8 (decisions 7, 8 closed; 10-12
+  new), 9; deploy/README.md "Character defaults"; TODO.md (the lobby section, and "Europe: what a
+  Europe character still lacks"); round 682's OPEN item closed.
+
+**What a new character gets** (MEASURED on the export; its rows are not reproduced in the repo):
+China 7 masteries at level 0 (257-259, 273-276), 4 skills (the bare-hand attack and a basic attack
+per China weapon family), 3 quests recorded; Europe 6 masteries (513-518), 10 skills (the bare-hand
+attack and nine basic attacks), 2 quests recorded.
+
+**Europe's quests** (the user's question): the table has **no Race 1 row**, so Europe gets only the
+two Race 3 quests, by the READ rule. The archive does carry `QTUTORIAL_EU` (questdata id 210) and
+`QTUTORIAL_EU_2` (225), category 1 in questcontentsdata, whose third column is the same 0/1/3 as
+Race (MEASURED); whether retail gave `QTUTORIAL_EU` at create is OPEN (decision 12). TODO.md's
+Europe heading tracks it and Europe's quest NPCs.
+
+**Coordination with euroskill691:** the mastery ids are skillmasterydata's; this round touches the
+skill package only in a new file (`skill/defaults.go`) and none of the mastery rules. Every race
+mastery now has a level-0 row on a new character, so a rule that counts "masteries chosen" must count
+levels above 0 (the existing sum, maximum and lookup are unaffected; the client reads `get(id, 0)`).
+
+### 4. Tests
+
+FAIL before (behavioural, with LobbyDeps' new fields present and `giveDefaults` not called; the
+synthetic fixture of the review, below -- the first commit's run used the export's rows, which are no
+longer in the repo):
+
+```
+lobbydefaults692_test.go:100: Hanshin: masteries [], want [9001 9002 9301]
+lobbydefaults692_test.go:104: Hanshin: skills [], want [8001 8002 8301]
+lobbydefaults692_test.go:115: Hanshin: default quests [], want [QSYN_ALL QSYN_CH]
+lobbydefaults692_test.go:100: Viktor: masteries [], want [9101 9301]
+lobbydefaults692_test.go:104: Viktor: skills [], want [8101 8301]
+lobbydefaults692_test.go:115: Viktor: default quests [], want [QSYN_ALL QSYN_EU]
+FAIL	github.com/OpenSRO/srrevamp/server/internal/session
+```
+
+and `internal/refdata [build failed]` (`undefined: LoadCharDefaultsDir`, ...) without
+`chardefaults.go`. New: `TestLobbyCreateGivesTheRaceDefaults692`, `TestLobbyCreateWithoutDefaults692`,
+`TestAmmoStartQuantity692`, `TestCharDefaultsByRace`, `TestCharDefaultsRefusesAWrongHeader`,
+`TestCharDefaultsDir`, `TestCompareRefCharGen`, `TestRefCharGenAgreesWithTheRule` (skips without the
+exports), `TestSeedMasteries{Mem,SQL}`, `TestGrantDefaultQuests{Mem,SQL}`.
+
+The first full run failed two doc probes, both fixed: `TestEveryOrphanIsExplained` (`quest.DefaultQuests`
+is read only by tests until real quests land: a `knownOrphans` line says so) and
+`TestServerReadmeIsCurrent` (server/README.md now lists `-chardefaults-dir`). Then
+`cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...`: build and vet clean, 64 packages ok, 0 failing (session 115.5 s).
+
+A boot with `-in-memory -chargen-csv <rule> -chardefaults-dir <export>` logged `character defaults
+loaded ... masteries=13 skills=13 quests=15 china="7 masteries, 4 skills, 3 quests" europe="6
+masteries, 10 skills, 2 quests"` and `the creatable catalogue agrees with the shard's _RefCharGen
+ids=104`; without the flag, the WARN. No client change; `remote_godot.sh check` (RENDER_DIR
+/var/tmp/defaults692): 523 scripts and 8 scenes, ALL LOAD. Server-only round: no perf gate.
+
+### OPEN
+
+- srrevamp-01: stage the tables and set `SRREVAMP_CHARDEFAULTS_DIR` (deploy/README.md, "Character
+  defaults"); until then new characters get no defaults there.
+- Default quests are recorded, not started: the quest system has no real quests (and its ids 1, 2
+  collide with real ones). The higher-level default rows (RequiredLevel 5..60): when they are given
+  is not in these procedures; whether each code is in the shard's `_RefQuest` is OPEN.
+- Europe: no Race 1 default quest in the table; `QTUTORIAL_EU` exists in the archive (decision 12).
+  Europe's quest NPCs and content are unexercised (TODO.md, "Europe").
+- Not exported: `_GetObjCountry` (Race 0/1 INFERRED), `_FN_ADD_INITIAL_EQUIP` (the 250 INFERRED the
+  count), `_DeleteCharPermanently_NoTX` and `_KeepDelCharName` (whether a purged name is freed), the
+  DB collation (name case).
+- Decisions 10-12: the procedure's gold/SP, the shard's kit edit, Europe's tutorial.
+- Characters created before this round have no default masteries or skills (no backfill).
+- On a server without skill refdata, skill ids 1 and 2 still fall back to `skill.Catalog`'s invented
+  "Power Strike" / "Whirlwind" (the known collision); srrevamp-01 has skill refdata.
+- A create whose defaults fail is kept (logged), where the procedure would roll it back (OURS).
+
+### Review (round 692's review, fixed in a second commit)
+
+The review found the selection matches `_AddNewChar` row for row on the real export, everything
+additive and idempotent, level-0 rows tripping no cap, and the round composing with euroskill691's
+uncommitted work. It asked for six fixes:
+
+1. **MEDIUM, collation.** `SQLStore.DefaultQuests` ordered by `quest_code` in the database's own
+   collation: en_US.utf8 on CI's postgres:16 and srrevamp-01, C in the local test DB, bytes in the
+   memory store. Now `ORDER BY quest_code COLLATE "C"`, and the test's codes (`QSYN_A`, `QSYNB`)
+   sort one way by bytes and the other under en_US, so a collation-dependent order fails it. (The
+   local DB is SQL_ASCII with no en_US collation, so the en_US half is CI's to exercise.)
+2. **MEDIUM, DB contents in the repo.** The session test copied all three tables verbatim and
+   charselect.md section 5 repeated every row. Both are gone: the tests use a SYNTHETIC set
+   (made-up ids and codes covering Race 0/1/3, a Race 2 row, a duplicate, and the RequiredLevel and
+   Service filters), charselect.md, TODO.md and this entry give the rule and the counts (China
+   7/4/3, Europe 6/10/2; the public mastery ids), and `refdata.TestCharDefaultsRealExport` checks the
+   real export when `SRREVAMP_TEST_CHARDEFAULTS_DIR` names it (run here: PASS, counts as above, no
+   warnings), skipping otherwise. deploy/README's "never in this repo" now holds. The first commit's
+   message and diff still carry the rows; only history keeps them.
+3. **LOW, `_RefQuest`.** The procedure inserts only codes with a `_RefQuest` row; recording every
+   code is now labelled INFERRED (refdata `Quests`, quest/defaults.go, charselect.md).
+4. **LOW, silent rows.** A Race other than 0/1/3 and an id repeated for a race are reported
+   (`CharDefaults.Warnings`, logged at boot as `character defaults: an odd row`); the dedupe is
+   labelled OURS (the procedure's insert would fail on its key and roll back, INFERRED). A
+   `_RefCharGen.csv` that exists but cannot be opened is logged; only not-found is silent. Booted
+   with a Race 2 row added: `odd row ... SkillID 777 has Race 2, which no character matches`; the
+   real export: no odd row.
+5. **LOW, deploy.** A step checks the files are listed, readable and headed right before the
+   variable is set (a configured directory that fails to load is fatal).
+6. **Coordination.** charselect.md section 9 and TODO.md say 692 seeds the level-0 rows from the
+   export, which is the authority, and euroskill691's hard-coded list must stay equal to it until 691
+   reads the seeded rows.
+
+After the fixes, `cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...`:
+build and vet clean, 64 packages ok, 0 failing.
+
+## Six-hundred-and-ninetieth round: a Hotan return stands on the plaza, the Alexandria North teleporter is clickable, and a town gate is clicked where retail clicks it -- its own box around the stone, not the whole building
+
+The user (2026-10-02): "when I set Hotan as my default spawn and die I get resurrected back in hotan
+but im clipped half way through the ground. This didn't seem to happen at other towns. Also the
+Alexandria north teleporter has been broken since you added teleporters but I'm just telling you now.
+When I had jangan as my spawn and I died it seemed like the teleport hit zone was off to the right and
+not on the actual stone or around so I couldn't easily click it."
+
+Labels: READ (the decompiles and asm on the render box), MEASURED, INFERRED, OURS, OPEN. The full
+reading is in `docs/protocol/teleport_network.md`, "The gate's pick box and the arrival's height
+(round 690)".
+
+The live runs used the render box, lane `tele690`, with real X input through the Login route:
+- the server was dev's, with srrevamp-01's flags: `-full-map` (so `-single-frame`), `-monster-ai
+  -monster-strike-push -monster-spawn-push -monster-battle -monster-aggro -player-dead-state
+  -persist-position`, `-regions-csv` and `-chargen-csv`;
+- the box's exports were loaded: teleport, npcpos, monsters, the nest DB, regions and chargen.
+
+The harness is `/var/tmp/tele690/inter.sh`, `x.sh`, `gate.sh`, `hop.sh` and `relog.sh`. The runs were:
+- **i2**: dev's client with only the probe hook added (no behaviour change), which reproduced the
+  bugs.
+- **i4**: this tree's client: all seven gates clicked, and a revive at Alexandria North.
+- **i5**: this tree's client: a Jangan revive, a Hotan revive and a dead logout at Hotan.
+- **i6**: dev's client again, at Alexandria North.
+
+A new QA hook, `SRREVAMP_QA_ARRIVAL_PROBE=1`, takes the measurements:
+- `QA ARRIVAL`: the feet against the terrain-only ray and the walkable graph's landing, after every
+  entry, zone change and GM move;
+- `QA GATEPICK`: a gate's pick body against the placed object drawn there, with a sweep of the talk
+  ray (`GatePickProbe`);
+- `QA GATEAIM`: the screen point to click.
+
+### 1. Hotan: the return was 12.19 under the plaza
+
+**Cause (MEASURED).** The server sends a revive's return like a gate teleport: the gate's point at
+height 0 (`teleportArrival`, round 686). The client stood a gate teleport on its walkable graph
+because a receipt came first (round 576), but a return has no receipt. It took the plain zone
+change's branch:
+- In Jangan that branch moved the player to the square spawn (`ZONE_SPAWN_LOCAL`), 350 units from
+  where the server had the character. Run i2, `QA ARRIVAL #3`: local (1002, 1020).
+- Every other town kept the server's 0, and `_snap_player_onto_terrain` only lifted it to the bare
+  terrain.
+
+Hotan's gate point is on the castle plaza, so the result there was wrong. Run i2, `QA ARRIVAL #8 zone
+change to hotan`:
+- feet 234.59;
+- terrain 234.25;
+- walkable graph landing 246.78;
+- **feet - landing -12.19** (the screenshot `hotan_revive_base.jpg` shows only the head above the
+  plaza).
+
+The graph's own step-up limit (`SURFACE_REACH_UP`, 12) then refused the plaza, which is 12.19 up, so
+the character stayed underneath.
+
+**Why only Hotan (MEASURED, every point).** `walk_probe.gd --column` was run at the 64 open-world
+teleport points.
+- At 61 of them the landing is within 1.6 units of the terrain.
+- Three are more than 12 above it: `GATE_KT` +12.19, `GATE_TOMB_GATE_IN` +355.79 and
+  `GATE_ARABIAN_COAST` +366.84.
+- Only `GATE_KT` is a return point, an id-7 town gate.
+
+The other six town gates measure: CH +0.56, WC, EU, CA, SD1 and SD2 0.00.
+
+**Retail (READ, partial).** The server copies the teleportdata record's x/y/z as they are
+(`FUN_00407760`; `ResolveRevivePoint` `0x4e08a0`; `GObjPC::Revive` -> `vslot_222` `0x4df590`). No
+height function is called on that path. The re-entry's consumer and the client's placement are
+unread (OPEN).
+
+**Fix (client).** These arrivals now keep the server's point and stand on the walkable graph, as a
+gate teleport does:
+- A zone change that finds the player dead, or that this client did not ask for, is a move to the
+  return point (`World3D.arrival_keeps_server_point`). Every request goes through
+  `_request_zone_change`, which counts it. Both are OURS, from the server's own order: option 1
+  warps a dead character, then revives it.
+- A restored entry within 1 unit of a town gate's point is stood on the graph as well
+  (`_land_restored_return_point`, `TeleportReader.return_points`). That is a dead logout, which the
+  server saves at the return point (`savedPlace`).
+
+**After (MEASURED, run i5):**
+- Hotan revive: feet 246.78, landing 246.78, feet - landing 0.00 (`hotan_revive_fixed.jpg`).
+- Jangan revive: at the gate's point local (969, 1369), feet - landing 0.00. It is no longer moved to
+  the square.
+- Dead logout at Hotan, then a fresh login: `the restored entry is GATE_KT's point (a return point) --
+  stood on the walkable graph there`, feet - landing 0.00.
+
+Run i4:
+- Alexandria North revive: feet - landing 0.00.
+- All seven gate-teleport arrivals: feet - landing 0.00. Their heights: CH -30.12, SD2 1539.99, SD1
+  865.82, WC -104.27, KT 246.78, EU 86.23, CA 182.49.
+
+### 2. Alexandria North: never clickable
+
+**Cause (MEASURED).**
+- The building row is there: `STORE_SD_GATE2`, 92/50 (1719, 1586, 760). So are the point,
+  `GATE_SD2` 92/51 (111, 1537, 524) with id 7, and its links.
+- The server answers it. The fault was the client's binding (round 577, a disclosed stand-in): the
+  gate was the placed map object nearest the table point within 10 units.
+- `cmd/whatishere` puts Alexandria North's `alex_portal.bsr` **15.1** units from the point, so it
+  was never bound and never clickable. Alexandria South's portal is 8.4 units from its point, so it
+  was bound. Round 577 never ran Alexandria.
+
+**Retail (READ).** A town gate (type 4/1/1) is a `CITeleportGate` (`IGIDObject::FUN_009c1fa0`,
+predicate `FUN_009c1ca0`).
+- Its click is a box built from BCRadius / BCHeight: `vslot_025` `0x9e9eb0` sets `(-r, -h, -r)..(r,
+  h, r)` from `+0x118` and `+0x114`.
+- The parser `FUN_00972910` fills those from teleportbuilding columns 50 and 49 (`0x972ce2`,
+  `0x972cd1`).
+- `vslot_033` (`0x9e9b60`) tests that box about the gate's position, axis-aligned, and the pick
+  routine `FUN_0078ee20` keeps the nearest hit.
+- No model, placed object or navmesh is involved.
+
+**Fix (client).** Each id-7 gate gets a `GatePick_<code>` box at its table point:
+- The box is BCRadius x BCHeight from the row: 10/25 for Jangan, 70/70 for Alexandria.
+- It sits on its own layer, 10, which nothing walks into.
+- The talk ray masks it. The placed objects are no longer click targets.
+
+Alexandria North's box (`QA GATEPICK`, run i4) is `(-225871, 1518, 9730)..(-225731, 1658, 9870)`,
+centred 15 units from the drawn portal's centre in x/z.
+
+**Live (MEASURED, run i4, real X input).** Each gate was clicked and one destination was requested.
+The server's `msg=teleport` line for each:
+
+| gate | click | destination | server |
+|---|---|---|---|
+| `STORE_CH_GATE` Jangan | QA aim point | Alexandria (North) | `gate=STORE_CH_GATE dest=GATE_SD2` |
+| `STORE_SD_GATE2` Alexandria North | the portal's base (the rings above the box miss) | Alexandria (South) | `gate=STORE_SD_GATE2 dest=GATE_SD1` (also designated: `recall designated ... gate=STORE_SD_GATE2`) |
+| `STORE_SD_GATE1` Alexandria South | QA aim point | Jangan | `gate=STORE_SD_GATE1 dest=GATE_CH` |
+| `STORE_CH_GATE` Jangan | QA aim point | Donwhang | `dest=GATE_WC` |
+| `STORE_WC_GATE` Donwhang | QA aim point | Hotan | `dest=GATE_KT` |
+| `STORE_KT_GATE` Hotan | QA aim point | Constantinople | `dest=GATE_EU` |
+| `STORE_EU_GATE` Constantinople | QA aim point | Samarkand | `dest=GATE_CA` |
+| `STORE_CA_GATE` Samarkand | QA aim point | Jangan | `dest=GATE_CH` |
+
+**Before (MEASURED, run i6: dev's client, the same server and flags, real X input).**
+- Jangan's gate was clicked and Alexandria (North) chosen (`dest=GATE_SD2`).
+- On arrival the client logged `teleport gate STORE_SD_GATE2 -- no placed object within 10 units of
+  the table's point (1719, 760) in 92/50 (the nearest is Obj_alex_portal_32 at 15.1); left unbound
+  (not clickable)`.
+- Three clicks on the portal (its platform, its base and its rings) opened no talk box. The player
+  walked onto the platform.
+
+With this tree (run i4): `teleport gate STORE_SD_GATE2 clickable at 92/50 local (1719, 1586, 760):
+its BCRadius 70 / BCHeight 70 box`.
+
+### 3. Jangan: the click zone was the whole pavilion, not the stone
+
+**Measured (dev's client, run i2).** Round 577 put every piece of `cj_portal.bsr` on the talk layer.
+That covered:
+- the fence, floor, pillars, roof and a stone slab, `CJ_por_stone01`, which is 102 units long: drawn
+  `(226, -103, -491)..(373, 58, -345)`, 147 units across;
+- foundations reaching 73 units under the ground (`CJ_por_gidung`).
+
+The glowing stone in the middle is a separate object, `cj_portal_stone.bsr`. It is 7.5 units from
+the point and holds only two `.efp` effects (`dump_bsr`), with no collision of its own. So the click
+zone was the building, wherever its pieces stood, and not the stone.
+
+**Not reproduced: a shift after the revive.**
+- The same 6 bodies with the same bounds were measured after the entry, after a gate teleport (`#4`,
+  `#9`) and after the revive (`#3`).
+- A real click on the visible stone opened the gate in run i2, after the revive.
+- What the revive did change was where the player stood: the client put them in the square, about 435
+  units from the gate building (fixed under 1).
+- INFERRED: the user's "off to the right" was the pavilion's pieces taking clicks beside the stone,
+  while the stone itself only took a click where a piece stood behind it.
+
+**Fix.** Retail's box, as in 2: `(284, -29, -424)..(304, 21, -404)`. It is 20 x 50 x 20 at the table
+point, inside the drawn pavilion, around the stone.
+
+The talk ray also goes on through untagged talk-layer bodies (the navmesh walls, which share its bit)
+up to 8 hits. Retail's pick tests objects only (READ). The sweeps saw walls first on some rays at
+Jangan and Alexandria North: `NavmeshWalls` in `QA GATEPICK`'s blocker counts, for example 5 of 22
+drawn rays from 0 degrees at Jangan after the revive. Those rays are counted where the wall came
+first and nothing was hit behind it, so they show that walls are there, not how many clicks they
+used to take.
+
+**After (MEASURED, run i5).** These were measured after the revive, with real X input:
+- From (294, -330), `QA GATEAIM` gave the box centre at screen (640, 48), `talk there: true`.
+- A click on the visible stone at (652, 50) opened the Dimensional Gate.
+- A click to its right at (860, 60), on the pavilion, did not talk.
+- The teleport to Hotan from that click was accepted: `gate=STORE_CH_GATE dest=GATE_KT`.
+
+### 4. Tests
+
+| Test | FAIL before (run against dev bf25e7e's World3D and TeleportReader) |
+|---|---|
+| `scripts/world/arrival_landing_test.gd` (new): the arrival rule's five cases; `_return_point_at` matches GATE_CH's point, not 5 units off, not a ferry, not an unloaded region | `FAIL World3D.arrival_keeps_server_point exists`; `FAIL TeleportReader.return_points exists`; `FAIL World3D._return_point_at exists` |
+| `scripts/npc/teleport_reader_test.gd` (rewritten binding sections): BC columns; the CH pick box (position, world-axis-aligned, 20x50x20, own layer); Alexandria North's 140-unit box with the portal 15.1 off; no box without BC; the fortress gate; Donwhang in its own region; a re-bind replaces | `SCRIPT ERROR: Invalid get index 'bc_height'`; `FAIL the pick boxes have a layer of their own ... (got -1)`; `FAIL Jangan's gate gets its pick node`; `FAIL the placed portal is not a click target: untagged, its body on layer 1 alone (got layer 0b10001)`; `FAIL Alexandria North is clickable: its pick node carries STORE_SD_GATE2 and point 176`; `FAIL while the town gate in the same region (id 7) gets its box`; `FAIL Donwhang's gate gets its pick node in its own region 103/153`; `FAIL the portal itself is not a click target`; `FAIL binding a region again replaces its pick node (got 0)` |
+
+The pick against the mesh after a revive or zone change is measured by the QA hook, not a unit test
+(above).
+
+Results:
+- `remote_godot.sh check`: ALL LOAD.
+- `remote_godot.sh tests`: 204 suites, 0 failing.
+- `go build ./... && go vet ./... && go test -count=1 -p 1 ./...`: green, except `internal/refdata`,
+  which the full run killed at 11 minutes (Postgres shared with other lanes). It passed alone in 116
+  s. The server is unchanged.
+
+### 5. Perf gate (`--sites jangan`, base bf25e7e vs this tree)
+
+Medians of 3 interleaved runs, 1280x720. Runs another lane's Godot overlapped were repeated. The
+head's frame median is +0.9 ms, inside the gate's threshold: its three runs were 9.38, 10.32 and
+10.30 ms against the base's 9.44, 9.22 and 11.01.
+
+| site | number | base | head | delta | verdict |
+|---|---|---|---|---|---|
+| jangan | frame ms | 9.44 | 10.30 | +0.9 | SAME |
+| jangan | entry ms | 9900 | 9679 | -221 | SAME |
+| jangan | freeze ms | 3425 | 3431 | +6 | SAME |
+| jangan | hitches | 5 | 5 | 0 | SAME |
+
+### 6. OPEN
+
+- The pick's 3 x 3 ray grid: retail casts nine around the cursor (step INFERRED to be 1.6 % of the
+  screen); srrevamp casts one.
+- A ray starting inside a gate's box does not take it. Retail's triangle test's back faces are
+  unread.
+- A structure's spawn position is INFERRED to be its teleportbuilding row.
+- Retail's arrival height after the server's unchanged y is unread.
+- The two non-return points 355 and 366 units under their objects (`GATE_TOMB_GATE_IN`,
+  `GATE_ARABIAN_COAST`) land on the graph as teleports. Nothing returns a character there.
+
+### Review (round 690's review: no HIGH, no MEDIUM; five LOW -- fixed in a follow-up commit)
+
+The review confirmed the READ claims and found layer 10 clean and the click paths and masks right. A
+trial merge onto dev d6205fc passed, with 205 suites. The follow-up:
+
+1. **Requests are matched, not counted.** `_request_zone_change` remembers each zone label it asks
+   for (`_note_zone_change_request`). `_on_change_zone_result` asks `_zone_result_requested`:
+   - a gate teleport's arrival is this client's and takes no request;
+   - a refused change answers the oldest request;
+   - an accepted one answers the oldest request for its own label, unless it lands on a teleport
+     point. No zone's landing is a teleport point: the landings are the centres' middles, and none
+     of the 64 open-world points is there.
+
+   So a flag-off kill's return to Jangan's gate, arriving between a zone-box "jangan" and its answer,
+   is the server's own move and leaves the request for its answer. The point test runs before the
+   zone loads: `region_local_to_world` is `TerrainCollision.place_group`'s transform for the
+   region's cell in the result's frame. It is checked against the server's own numbers: GATE_CH
+   (9, -409) and GATE_KT (-63182, 10407) in frame 97/168.
+2. **The QA rays exclude layer 10**: `QA NPCBODY` (it had no mask), `QA RIG`'s column and the ground
+   lattice probe (both had `0xFFFFFFFF`).
+3. **The pick's rays, worded right** (`teleport_network.md`, `World3D._bind_region_gates`, TODO).
+   `FUN_0078ee20` casts a 3 x 3 grid and keeps a hit when `d < best || (best_idx != 4 && idx ==
+   4)`: any nearer hit replaces the best, and a centre hit replaces a best from an outer ray whatever
+   its distance.
+4. **A logout where a teleport left the player** (pre-existing). The restored-entry landing matched
+   id-7 town gates only. A logout right after a teleport to `GATE_TOMB_GATE_IN` or
+   `GATE_ARABIAN_COAST`, without moving, re-entered 355.79 / 366.84 under the object there. It now
+   matches every point in a world region (`TeleportReader.world_points`, `_teleport_point_at`), and
+   no longer needs the region loaded.
+5. **Tests for the wiring** (`arrival_landing_test.gd`):
+   - `_request_zone_change` remembers the zone;
+   - a refused change takes the oldest;
+   - with nothing asked, a move is the server's;
+   - the interleave: a return first, at a point, takes nothing, then the answer at the landing takes
+     the request;
+   - two requests answered out of order;
+   - an unasked label takes nothing;
+   - a teleport arrival leaves the requests alone;
+   - the frame conversion, and a non-gate point matched.
+
+   FAIL against 4465783: `FAIL World3D.region_local_to_world exists`; `FAIL
+   TeleportReader.world_points exists`; `FAIL World3D._teleport_point_at exists`; `FAIL
+   World3D._note_zone_change_request / _match_zone_change_request exist`.
+
+No perf gate: none of this is per-frame code. The matcher runs once per zone change, over 64 points.
+
 ## Six-hundred-and-eighty-ninth round: every character is drawn from its own model -- a Europe man is a Europe man, a Kangsi a Kangsi, at its Height and Volume -- for the player, the other players, the paper doll and the portrait, and no body T-poses
 
 The user (2026-10-02): "Euro doesn't seem work once you load in. I'm the default chinese male skin
@@ -7304,6 +7745,263 @@ lanes share; no cost was found to fix.
   redrawn (round 687's OPEN, unchanged).
 - The skill cast clip path (`_play_skill_cast_anim`, China folders) -- euroskill691.
 - Plus glow; the visual record's second resource (BsrName) for weapons (round 683's OPENs).
+
+### Review
+
+The review of dae48d5 found it safe: wire compatibility both ways, the READ confirmed, existing China
+players unchanged, a 50-player spawn burst far cheaper than before (CharacterAppearance's templates),
+the trial merge with rounds 690 and 691 green, and round 691's T-pose after a Europe cast fixed by
+this round. One MEDIUM and three LOWs, fixed in the review commit:
+
+- **MEDIUM, a held run speed dropped back to the body's at entry.** `_apply_player_speed` ran at the
+  first dress (`_player_body` was still ""), after `_replay_held_buffs("world entry")` had applied the
+  server's speed (`BuffRoster.run_speed_of`): a GM under `/speed 2`, or a buffed player, reconnected
+  at 50 and rubber-banded. Now the last speed a server packet set (`_server_run_speed`, set by
+  `_apply_buff_run_speed`) outranks the body row's base. `buff_persist_test.gd` checks that the
+  body's row (run 50) applied after the replay keeps the held 90; on dae48d5 it
+  printed `FAIL world entry: the body's own row (run 50), applied at the first dress, keeps the held
+  /speed 90 (got 50)`.
+- **LOW, Height in the paper doll and the portrait.** Both reset the skeleton's transform to identity.
+  READ: the equipment page's avatar (+0x36c, the one the portrait borrows) is dressed by
+  `FUN_00a619e0`, which ends with `FUN_00a5b960(info +0x30)` -- the scale byte -- called from
+  `IFItemMall::FUN_007c08e0` on `IFMainPopup::FUN_006a1d50`'s page +0x36c and from 0x6abc50 on a +0x36c
+  avatar (INFERRED to be the equipment page's own refresh, from the offset). So both now keep the
+  skeleton's scale, and the portrait reads the scaled head for its camera.
+- **LOW, the encoder's heading.** `EnterWorldResult.Encode` wrote the own wire angle whenever a model
+  followed, even with `HasHeading` false; it now encodes such a result as the same result with
+  `HasHeading` set (from a copy), so the angle written is `Heading` by rule.
+  `TestRound689AModelForcesTheOwnHeading` pins it (the bytes were already the same before: this
+  makes the rule explicit rather than fixing a wrong byte).
+- **LOW:** `SRREVAMP_QA_BODY` applies only with no server connection, as documented; charselect.md's
+  note on `_play_skill_cast_anim` now says the cast-clip path is reconciled in round 691's merge.
+
+**Merged origin/dev a351775** (rounds 690 and 692): World3D.gd merged without a conflict, as the
+review's trial merge found; WORLD_ISSUES by `wi_resolve.py`. After the merge: `remote_godot.sh check`
+ALL LOAD (533 scripts), `tests` 206 suites, 0 failing; `go build ./... && go vet ./... && go test -count=1 -p 1 ./...`
+every package ok (64; `-timeout 40m`, as the 10-minute default had cut `internal/session` off under other lanes' load in the round).
+
+## Six-hundred-and-eighty-eighth round: the race-select lizard walks in once and stays, "Name Check" sits centred inside its button at every UI scale, and the select screen's darkness is traced to retail's own random hour
+
+The user (2026-10-02, on v0.1.475): "The animated lizard when selecting the race disappears and
+then come backs. That needs fixed. Also the first time I saw all of the character it was unsually
+dark. Then after doing it again a few times it was bit brighter but probably not as bright as it
+should be. ... Also the name check text in the buttom is misaligned" (their screenshot: the words
+spill past the button's right edge). They play at ~4K with UI scale ~1.95. Labels: READ
+(sro_client.exe's dump and asm on the box), MEASURED (the box, RX 7600, real archives), INFERRED,
+OURS. Front-end files only; no World3D or shared lighting code changed, so no perf gate.
+
+### 1. The lizard: a one-shot clip played as a loop
+
+**MEASURED, before** (`SRREVAMP_QA_LIZARD_PROBE`, `CharSelectQa.lizard_sample`: each frame the
+lizard's 1,143 vertices skinned on the CPU exactly as Godot skins them, tested against the camera's
+frustum and projected; and the box Godot 4.2.2's GLES3 `MeshStorage::mesh_get_aabb` gives the
+instance, tested as the scene cull does): over 602 frames of the race view, **174 had no vertex of
+the lizard in the frustum**. They are clip time 0 to 0.73 s of every 2.666 s loop: the lizard
+walked in from below the frame, grew to a 480x270 px patch by the idols, then jumped back off-screen
+and walked in again. Its meshes were visible in the tree on every frame and the cull box agreed with
+the vertices (kept when they were in view), so culling, visibility, fades and the MapAnimation range
+were not involved; the frames rendered on the box show the same (`liz_montage_before.jpg`).
+
+**MEASURED, the clip** (`client/tools/probe_ban_motion.gd`, new): `interface_lizard_move.ban` has
+81 keys over 2666 ms and **IsCyclic 0**. Its Bip01 walks 4.16 units in model space, from
+(7.02, 0.29, -9.96) to (3.47, 0.29, -7.79) -- exactly where `interface_lizard_stand` (cyclic,
+15 s) holds it. `_run` is IsCyclic 0 too.
+
+**READ** (docs/protocol/BSR_FORMAT.md, rounds 645-647): the client plays a clip with IsCyclic 0
+through `CRTAniOneShot` (0xc75ce0), once, and after it the mixer unlinks the clip and the bones
+keep their last pose. Retail's race view (`CPSCharacterSelect::vslot_012` case 7, 0x85d80c) calls
+the lizard's animation setter `(1, 0, 200, 0, 1.0, 1.0)` (`CCObjAnimation::vslot_003` 0xa5b6d0 ->
+`FUN_00a5b550` -> the compound's slot 29/30, 0xc31f00/0xc31de0) on every arrival, and updates it
+each frame only while +0x220 is set (`FUN_00a5ac80`). So the lizard walks in once from below the
+frame and stops by the idols in the stand's pose; a second Create walks it in again.
+
+**Changed:** `CharSelectStage` poses the lizard with the clip's own IsCyclic
+(`lizard_clip_loops`) instead of always looping.
+
+**MEASURED, after** (same probe, 290 frames): no vertex in view on the first 26 frames only (the
+walk-in's first 0.8 s), then the lizard stays in view with a constant screen box (164, 439,
+479 x 279) and a still root from 2.67 s to the end of the 8 s run (`liz_montage_after.jpg`).
+
+The setter's 200 is a 200 ms fade-out at the end of the one-shot (READ by the review, below); with
+one clip it has no visible effect.
+
+### 2. The select screen's brightness: retail's random hour, not a lighting fault
+
+**MEASURED** (`SRREVAMP_QA_SELECT_LUMA`: 1.5 s after the list is up, the frame's mean Rec. 709 luma
+over the 3D band less the characters, and over the characters' projected boxes, with the light the
+backdrop was given):
+
+| Hour (title phase) | Backdrop | Characters | Light (x 0.30) | Ambient |
+|---|---|---|---|---|
+| 5:00 (0.2083) | 136.1 | 108.6 | (0.63, 0.64, 0.68) | (0.63, 0.66, 0.62) |
+| 14:00 (0.5833), visits 1, 2, 3, 4, 5 in one process | 141.1 each | 112.0 each | (0.62, 0.61, 0.56) | (0.79, 0.71, 0.66) |
+| 18:00 (0.75) | 138.5 | 109.2 | (0.91, 0.87, 0.74) | (0.79, 0.57, 0.43) |
+| 23:00 (0.9583) | 107.4 | 89.8 | (0.48, 0.50, 0.65) | (0.42, 0.46, 0.55) |
+
+At one hour every visit is identical to the decimal: nothing left over from a previous screen, no
+late light, no first-visit difference. What changes is the hour: 23:00 is 24 % darker than 14:00
+(backdrop) and 20 % (characters). Region 105/81 is environment 33 in all 36 blocks (MEASURED), so
+the block-0 environment the world applies is the camera's too. As a picture only, the reference
+`fe_ref1.jpg` (a private server, hour unknown) measures 115 over its 3D band, our 14:00 frame 127
+over the same crop and 23:00 99 (`luma_montage_before.jpg`: 14:00, 23:00, 5:00, 18:00).
+
+**READ, the hour** (closing charselect.md's INFERRED): SWorld is one global (0x1101950) built once
+by the static initialiser 0xd768f0 -> `Map::FUN_00a2f370`, which sets the day phase +0x26a3 to 0.5
+and the clock flag +0x2f18 to 0. The phase's only writers are that constructor, `vslot_020` and the
+world clock at 0xa2d130 (phase += the float 0x110f7fc x 0.0005, wrapping at 1.0), which runs only
+while +0x2f18 is non-zero -- and nothing but the constructor writes +0x2f18 (no other
+`[reg+0x2f18]` store, no absolute 0x1104868 store). `CPSTitle::OnCreate` calls `vslot_020` with
+`rand() & 3` of its four phases unconditionally (0x86b278). The environment graphs are read at the
+phase itself (`Map::FUN_00a1baf0`, 0xa1bb0c). So retail's select and customize show the hour the
+title last picked -- 5, 14, 18 or 23 o'clock -- and a new one each time the title is shown, which
+is what the user saw: "very dark" at a 23:00 title, "a bit brighter" after returning to the title.
+Within one title visit ours already kept the hour (`CharSelectHandoff.day_phase`).
+
+**Changed (OURS, small):** when no title set the hour (a screen opened directly: QA runs), select
+and customize each picked a NEW random hour on every visit; `CharSelectHandoff.front_end_phase()`
+now picks it once and keeps it, as the title's would be.
+
+**Decided, not changed:** the hour stays retail's. Pinning the front end to a daytime hour would be
+OURS against READ; it is recorded as decision 13 for the user (charselect.md section 8). The review
+(below) found the darkness this round missed: the bodies themselves drew 1.3-1.8x darker than retail's
+character formula, at every hour.
+
+### 3. "Name Check": a label sized before it had its face
+
+**READ** (`pscharactercreatechina.txt` / `_europe.txt`, MEASURED from the archive): `GDR_BTN_CHECK`
+is 75 x 25 at (156, 57) in the Custom panel, `overlap.ddj` (a 75 x 25 DDS), FontIndex 0 (12 px),
+HAlign 1 and VAlign 1 (centred), ClientRect 0.
+
+**MEASURED, before** (`client/tools/frontend_at_scale.tscn`, new: each front-end screen at a UI
+scale in 3840x2160, every button's rect and its words' rect -- the string's advance width in the
+face and size the label draws with, placed by the label's alignment -- in canvas units):
+
+| Scale | Button | Words | Past the right edge | Centre off |
+|---|---|---|---|---|
+| 1.0 | x 231, 75 wide | x 244.5, 71 wide | 9.5 | +11.5 |
+| 1.5 | 75 | 70 | 9.0 | +11.5 |
+| 1.95 | 75 | 70 | 9.0 | +11.5 |
+| 2.0 | 75 | 70 | 9.0 | +11.5 |
+
+The same at every scale: the label was 98 units wide. `CharacterCreate._button` sized it with
+`_place_centred` before it was in the tree, where its minimum width came from Godot's default face
+(98 for "Name Check"); a Control never shrinks below a size it was given, so in the tree the client
+face's 71-unit string was centred in 98 units. "Female" had the same fault, smaller (centre -7
+against the inset's -10). Every other front-end button measured inside and centred: Confirm and
+Cancel on both create screens, the confirm box's Create and Cancel, select's Start, Create, Delete,
+Restore and the three Cancels and its delete confirm, login's Connect, Exit and Register.
+
+**Changed:** `CharacterCreate.place_button_text` anchors the words to the button less its
+ClientRect (so they re-fit when the face arrives and whenever the button resizes), growing both
+ways if a string is ever wider than the button. Round 672's crisp text and round 684's one font per
+process are untouched (the label still takes the screen's theme face).
+
+**MEASURED, after:** "Name Check" 2.0-2.5 units in from each side and centre off 0.0 at 1.0, 1.5,
+1.95 and 2.0, China and Europe, and in a 1280x720 window; Female -10 / Male +10, exactly the
+ClientRect inset (INFERRED: the radio mark's room). The words fill 70-71 of the 75 units, as
+retail's 12-px face would (INFERRED: its GGO_BITMAP Arial at FontIndex 0).
+Crops at 1.95: `nc_before_195.png`, `nc_after_195.png`.
+
+### 4. Tests
+
+`client/scripts/frontend/frontend_fixes_test.gd` (new, synthetic): a non-cyclic one-bone clip
+plays once and holds its last key through the stage's own `_process`, a cyclic one still loops; the
+front-end hour is picked once and kept; a create button's words box is the button less its
+ClientRect, centred, inside it and following its size, when the face in the tree is narrower than
+the default face. **NEGATIVE** (the base bf25e7e with this file and `CharSelectQa` copied in):
+
+```
+FAIL a clip that is not cyclic plays once and keeps its last pose at 1.5 s and 2.5 s (got 2, 2)
+FAIL CharSelectHandoff.front_end_phase exists
+FAIL 'Name Check': the words' box is the button less its ClientRect, [P: (156, 57), S: (75, 25)] (got [P: (156, 57), S: (98, 25)])
+FAIL 'Name Check': the words are centred in it (text [P: (182, 61), S: (46, 17)])
+FAIL 'Name Check': the words' box follows the button's size
+FAIL 'Female': the words' box is the button less its ClientRect, [P: (166, 95), S: (50, 25)] (got [P: (166, 95), S: (56, 25)])
+FAIL 'Female': the words are centred in it (text [P: (180, 99), S: (28, 17)])
+FAIL 'Female': the words' box follows the button's size
+FAILURES: 8
+```
+
+On this branch: ALL PASS; `remote_godot.sh check` ALL LOAD; `remote_godot.sh tests`
+204 suites, 0 failing.
+
+### 5. OPEN
+
+- The sun's direction from the hour
+  (`SWorld::vslot_004`, round 678's OPEN) -- a night select keeps the day's light direction.
+- Decision 13 (the front-end's hour) is the user's.
+- New QA hooks (OURS, off unless set): `SRREVAMP_QA_SELECT_RACE`, `SRREVAMP_QA_LIZARD_PROBE`
+  (+ `SRREVAMP_QA_SELECT_SHOT_DIR`, `SRREVAMP_QA_LIZARD_SHOT_EVERY`), `SRREVAMP_QA_SELECT_LUMA`.
+
+### Review (round 688's review: all three fixes held, the READ confirmed; one HIGH and two LOW, fixed in a follow-up commit)
+
+**HIGH: the select bodies were lit about 1.8x darker than the same character on the customize
+preview at the same hour** -- the user's "probably not as bright as it should be". The select screen
+hung its bodies in the backdrop with Godot's lit materials under World3D's DirectionalLight3D at its
+tuned energy 0.3 (OURS since round 43); the customize preview (round 685), the equipment window and
+the portrait draw characters with PlayerPortrait's materials, retail's own formula (READ, its
+header: vertex colour = 0.6 x ambient + max(0, n.l) x material x diffuse, diffuse = environment
+channel 2 clamped x 0.6, ambient = channel 3 clamped; then texture x colour x 2, MODULATE2X).
+
+- **Changed:** `CharSelectStage._dress` gives each body PlayerPortrait's materials fed the backdrop's
+  zone light (`_portrait_zone_light`), as `CharCreatePreview` does, after the body is built -- so the
+  round 687 hides and the round 685 default wear are untouched (MEASURED: 7/6, 10/4 and 8/5 meshes
+  shown/hidden on the three bodies with either light; every mesh in the character light after).
+- **The backdrop's tone mapping:** the first after-run came out 13-37 % BRIGHTER than the preview.
+  READ (Godot 4.2.2 `drivers/gles3/shaders/scene.glsl` 1369 and 1590-1593, `tonemap_inc.glsl` 42-58
+  and 96-108): an unshaded ALBEDO is decoded to linear, times exposure, Filmic-mapped over the mapped
+  white, and encoded again -- World3D's environment is Filmic (tonemap_mode 2), the preview's
+  SubViewport linear (PlayerPortrait: no change, MEASURED round 635). So the characters' colour is
+  pre-inverted through that chain in their shader (`_undo_tonemap`: the Filmic quadratic solved
+  exactly, the decode cubic by Newton's method; OURS on READ source), and the frame carries the
+  client's value.
+- **MEASURED** (`SRREVAMP_QA_SELECT_LUMA`'s per-body line: each body's own pixels -- those that change
+  when it is hidden, its shadows off for that mask -- against the same character, same items, built
+  in a CharCreatePreview in the same process with the backdrop's zone light, zoomed out; mean
+  Rec. 709 luma; `SRREVAMP_QA_SELECT_GODOT_LIGHT=1` keeps the old materials on the same build):
+
+| Hour | Character | Select before | Select after | Preview | Preview / select, before -> after |
+|---|---|---|---|---|---|
+| 14:00 | QA_Bram (1909) | 58.8 | 89.2 | 94.0 | 1.60 -> 1.05 |
+| 14:00 | QA_Aria (1923) | 86.7 | 138.6 | 141.1 | 1.63 -> 1.02 |
+| 14:00 | QA_Wei (1919, seated) | 59.8 | 92.0 | 79.0 | 1.32 -> 0.86 |
+| 23:00 | QA_Bram | 32.6 | 56.8 | 59.4 | 1.82 -> 1.04 |
+| 23:00 | QA_Aria | 50.0 | 89.7 | 91.4 | 1.83 -> 1.02 |
+| 23:00 | QA_Wei (seated) | 32.1 | 61.0 | 49.9 | 1.55 -> 0.82 |
+
+  The standing bodies are within 2-5 % of their preview. The seated one is 14-18 % brighter than the
+  standing preview (INFERRED: the sitting pose turns more of the body up to the light; the preview
+  stands). Without the tone-mapping undo the ratios were 0.89 / 0.86 / 0.73 at 14:00 and
+  0.87 / 0.81 / 0.68 at 23:00.
+- **Cost** (`SRREVAMP_QA_SELECT_FRAMES`, 3 s to 8 s after the list, 300 frames, three runs each,
+  alternating; the box is vsync-capped at 16.67 ms so the viewport's measured render time is the
+  cost): old light CPU 1.930 / 1.941 / 1.923 ms, GPU 1.947 / 1.835 / 1.814 ms; character light CPU
+  2.002 / 1.945 / 1.826 ms, GPU 1.872 / 1.830 / 1.758 ms -- no difference beyond run-to-run noise.
+  No World3D code changed, so no perf gate.
+- Shot: scratchpad `bodies_before_after.jpg` (14:00 old / new, 23:00 old / new).
+
+**LOW, the lizard's 200 (READ by the review):** a 200 ms fade-OUT at the end of the one-shot
+(`CRTAniOneShot::vslot_002` case 4 -> 5 via `AniMixer::FUN_00c554e0(clip, 0, 200)`); the fade-in is
+0, and with one clip on the mixer it has no visible effect. Closed in charselect.md sections 3 and 9
+and TODO.
+
+**LOW, the hour's writers:** `charselect_handoff.gd` said only CPSTitle sets the hour.
+`CPSMission::vslot_012` also calls `SWorld::vslot_020` every frame from the game clock, and two console
+handlers do (0x53a4d0, 0x53a520); CPSTitle is the only caller on the front-end path. Corrected there
+and in charselect.md.
+
+**Found on the way (READ Godot 4.2.2 source, not measured on screen; TODO):**
+`GeometryInstance3D.transparency` is stored by `RenderGeometryInstanceBase::set_transparency` and never
+read by the GLES3 renderer, so round 684's model fades (the 1.0 s fade-in, 0xcc for a character
+pending deletion) are likely not drawn on GL Compatibility.
+
+**TODO added:** the world's own characters still use Godot's tuned lighting, not retail's character
+formula -- for a round after 689 (world bodies), with the perf gate.
+
+**Tests:** `frontend_fixes_test.gd` gains the select-light check (the body's material is
+PlayerPortrait's formula with the tone-mapping undo, its colour kept). NEGATIVE on 12d93b6 (the
+file copied in): `FAIL CharSelectStage dresses its bodies (_dress exists)` -- `FAILURES: 1`. This
+branch: ALL PASS; `remote_godot.sh check` ALL LOAD; `remote_godot.sh tests` 204 suites, 0 failing.
 
 ## Six-hundred-and-eighty-seventh round: the body's own skin no longer shows through worn armour -- each item hides the body pieces it covers, as retail's client does
 
@@ -8722,9 +9420,10 @@ scripts and 8 scenes, ALL LOAD; `tests` 197 suites, 0 failing.
 
 - srrevamp-01: export `chargen.csv` and pass `-chargen-csv` (deploy/README.md "Character lobby");
   until then every create there is refused with 0x403. Players need this release's client.
-- Blocked on the stopped shard DB (CT 104, the user's call): `_RefCharGen` (confirm the 104),
+- ~~Blocked on the stopped shard DB (CT 104, the user's call): `_RefCharGen` (confirm the 104),
   `_RefCharDefault_*` (a new character's default skills and quests: none given), the procedures
-  (`_AddNewChar`'s ammunition quantity, `_DeleteCharTemporal`'s real delay).
+  (`_AddNewChar`'s ammunition quantity, `_DeleteCharTemporal`'s real delay).~~ **Closed in round
+  692**: the 104 confirmed, the defaults given (quests recorded), 250 ammunition, 7 days READ.
 - The name bitmap and forbidden words; the ammunition stack (bag, not worn); the purge leaving
   other tables' rows; Europe's return point, KillExp arm and bodies (lane W); item plus and
   avatars; restore's u8/u16; the 858c00 rename; retiring `OpEnterWorld`. All in docs/TODO.md,
