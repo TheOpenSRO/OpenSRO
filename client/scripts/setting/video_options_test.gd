@@ -150,6 +150,34 @@ func _window_placement() -> void:
 		"no usable area known: the size as asked")
 	_check(not VideoOptions.sync_window_size(null) and not VideoOptions.sync_window_size(root),
 		"headless: nothing to correct (the live check is the box's windowed run, round 696)")
+	# Round 696 review M1: the UI scale. Retail lists no mode below 800 x 600
+	# (READ 0x5fef70); here that is the smallest VIEW, window / scale. The
+	# user's scale is 2.0 (1.95 in the report).
+	_check(VideoOptions.min_window(1.0) == Vector2i(800, 600) and VideoOptions.min_window(1.95) == Vector2i(1560, 1170)
+		and VideoOptions.min_window(2.0) == Vector2i(1600, 1200), "the smallest window: 800 x 600 at 1, 1560 x 1170 at 1.95, 1600 x 1200 at 2.0")
+	var c195 := VideoOptions.resolution_choices(Vector2i(3840, 2160), Vector2i.ZERO, 1.95)
+	_check(c195[0] == Vector2i(1600, 1200) and not c195.has(Vector2i(1280, 720)) and not c195.has(Vector2i(1920, 1080))
+		and c195.has(Vector2i(2560, 1440)) and c195[-1] == Vector2i(3840, 2160),
+		"at 1.95 on 3840 x 2160 the list starts at 1600 x 1200: no 1280 x 720 (a 656 x 369 view), no 1920 x 1080 (985 x 554) (got %s)" % [c195])
+	var c20 := VideoOptions.resolution_choices(Vector2i(3840, 2160), Vector2i(3840, 2019), 2.0)
+	_check(c20[0] == Vector2i(1600, 1200) and not c20.has(Vector2i(1680, 1050)) and c20.has(Vector2i(1920, 1200)) and c20.has(Vector2i(3840, 2019)),
+		"at 2.0: from 1600 x 1200, no 1680 x 1050 (a 525-tall view), the maximised 3840 x 2019 kept (got %s)" % [c20])
+	_check(VideoOptions.resolution_choices(Vector2i(1920, 1080), Vector2i.ZERO, 2.0) == [Vector2i(1920, 1080)],
+		"at 2.0 a 1920 x 1080 screen has no size with an 800 x 600 view: the list is the largest that fits, never empty")
+	_check(VideoOptions.resolution_choices(Vector2i(1920, 1080), Vector2i.ZERO)[0] == Vector2i(800, 600), "at 1.0 the list still starts at 800 x 600")
+	r = VideoOptions.window_placement(Vector2i(1280, 720), area, inset, 1.95)
+	_check(r.size == Vector2i(1560, 1170), "a saved 1280 x 720 at 1.95 is raised to 1560 x 1170 -- the Option window's buttons stay on screen (got %s)" % str(r.size))
+	r = VideoOptions.window_placement(Vector2i(1280, 720), area, inset, 2.0)
+	_check(r.size == Vector2i(1600, 1200) and r.position == Vector2i((3840 - 1616) / 2 + 8, (2112 - 1239) / 2 + 31),
+		"... and to 1600 x 1200 at 2.0, centred (got %s)" % str(r))
+	r = VideoOptions.window_placement(Vector2i(1280, 720), Rect2i(0, 0, 1920, 1040), Rect2i(), 2.0)
+	_check(r.size == Vector2i(1600, 1040), "the screen wins over the minimum: 1600 x 1040 on a 1920 x 1040 area at 2.0 (got %s)" % str(r.size))
+	_check(VideoOptions.window_placement(Vector2i(1280, 720), area, inset).size == Vector2i(1280, 720), "at 1.0 nothing is raised")
+	var touched := VideoOptions.new()
+	touched.resolution = Vector2i(1280, 720)
+	touched.resolution_touched = true
+	_check(not VideoOptions.needs_resize(null, touched) and not touched.duplicate_options().resolution_touched,
+		"L1: needs_resize wants a window; the touched mark is not copied (store hands it on once)")
 
 func _storage() -> void:
 	var path := _dir.path_join("settings.cfg")
@@ -322,12 +350,13 @@ func _combo_field(page: OptionVideoPage) -> void:
 			var st := combo.get_theme_stylebox("normal")
 			ok = ok and st.content_margin_left == 5 and st.content_margin_right == 5 and combo.get_theme_constant("h_separation") == 0
 			ok = ok and combo.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST and field.texture_filter == CanvasItem.TEXTURE_FILTER_PARENT_NODE
+			ok = ok and combo.get_popup().canvas_item_default_texture_filter == Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_NEAREST
 		if ok:
 			good += 1
 		else:
 			print("  combo %s: field %s arrow %s host %s" % [combo.get_path(), str(field.get_rect()) if field != null else "none", str(arrow.get_rect()) if arrow != null else "none", str(hs)])
 	_check(combos.size() == 14 and good == 14,
-		"all 14 combos (Resolution, Set Brightness, the 12 rows) draw a field {0,0,W-20,H} and the arrow {W-20,0,20,H} behind a button whose text room is {5,0,W-30,H}, the text crisp (got %d of %d)" % [good, combos.size()])
+		"all 14 combos (Resolution, Set Brightness, the 12 rows) draw a field {0,0,W-20,H} and the arrow {W-20,0,20,H} behind a button whose text room is {5,0,W-30,H}, the text crisp, the open list's too (got %d of %d)" % [good, combos.size()])
 	_check(page.resolution_combo() != null and (page.resolution_combo().get_parent() as Control).size == Vector2(156, 18),
 		"the Resolution combo's record is 156 x 18 (the field 136 x 18)")
 
@@ -415,6 +444,11 @@ func _page() -> void:
 	_click(full.get_global_rect().get_center())
 	await _frames()
 	_check(page.edit.fullscreen and page.resolution_combo().disabled, "Full screen checked: the resolution row is unavailable (Godot keeps the desktop's size)")
+	# Round 696 review L1: the shown Resolution picked again counts.
+	var res := page.resolution_combo()
+	_check(res.allow_reselect and not page.edit.resolution_touched, "the Resolution combo takes a re-pick; nothing touched yet")
+	res.item_selected.emit(maxi(res.selected, 0))
+	_check(page.edit.resolution_touched, "re-picking the shown size marks the row touched")
 	# Apply: stored and handed on.
 	var got: Array = []
 	win.video_applied.connect(func(o: VideoOptions) -> void: got.append(o))
@@ -424,6 +458,8 @@ func _page() -> void:
 	win.press_apply()
 	_check(got.size() == 1 and (got[0] as VideoOptions).current().quality == VideoOptions.QUALITY_LOW and (got[0] as VideoOptions).camera_view == "third_person",
 		"Apply hands the record on (Low, Third Person)")
+	_check(got.size() == 1 and (got[0] as VideoOptions).resolution_touched and not page.edit.resolution_touched,
+		"... with the touched mark, once: the edit is clear again for the next Apply")
 	var cfg := ConfigFile.new()
 	cfg.load(path)
 	_check(int(cfg.get_value("video_graphic1", "quality", -1)) == 0 and bool(cfg.get_value("video", "fullscreen", false)), "Apply saves [video_graphic1] quality=0 and fullscreen")

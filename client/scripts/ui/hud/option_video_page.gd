@@ -117,12 +117,18 @@ func build(options: VideoOptions, view: String, screen: Vector2i, window_size: V
 		return
 	_res_combo = _make_combo(at([ID_PANE, ID_RES_BOX, ID_COMBO]))
 	_bright_combo = _make_combo(at([ID_PANE, ID_BRIGHT_BOX, ID_COMBO]))
-	_resolutions = VideoOptions.resolution_choices(screen, window_size)
+	# Only sizes whose view at the UI scale is at least retail's 800 x 600
+	# (VideoOptions.MIN_VIEW, round 696 review M1).
+	_resolutions = VideoOptions.resolution_choices(screen, window_size, _ui_scale())
 	if _res_combo != null:
 		for r in _resolutions:
 			_res_combo.add_item("%d x %d" % [r.x, r.y])
+		# Picking the shown size again counts (round 696 review, L1): it is
+		# how a maximised window gets its stored size back.
+		_res_combo.allow_reselect = true
 		_res_combo.item_selected.connect(func(i: int) -> void:
 			edit.resolution = _resolutions[i]
+			edit.resolution_touched = true
 			changed.emit())
 	if _bright_combo != null:
 		for i in VideoOptions.BRIGHTNESS_KEYS.size():
@@ -266,9 +272,19 @@ func _make_combo(host: Control) -> OptionButton:
 	combo.add_theme_color_override("font_disabled_color", DISABLED_TEXT)
 	UiBuilder.guard_button_font(combo)
 	UiBuilder.crisp_text(combo)
+	crisp_popup(combo)
 	host.mouse_filter = Control.MOUSE_FILTER_PASS
 	host.add_child(combo)
 	return combo
+
+## The open list's text crisp too (round 696 review, L4): the PopupMenu is a
+## Window of its own, so the button's texture_filter does not reach it; its
+## viewport's default canvas filter does (Viewport.
+## canvas_item_default_texture_filter, 4.2.2). The list draws text and a
+## check mark only (Godot's theme, no client art).
+static func crisp_popup(combo: OptionButton) -> void:
+	if combo != null:
+		combo.get_popup().canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_NEAREST
 
 static var _blank_arrow_tex: ImageTexture = null
 
@@ -594,6 +610,9 @@ func _show_shared() -> void:
 		if t != null and TwoDtBuilder.is_checked(t) != (i == edit.active):
 			TwoDtBuilder.set_tab_checked(t, i == edit.active)
 
+func _ui_scale() -> float:
+	return _window.get_window().content_scale_factor if _window != null and _window.is_inside_tree() else 1.0
+
 func _window_size() -> Vector2i:
 	return _window.get_window().size if _window != null and _window.is_inside_tree() else Vector2i.ZERO
 
@@ -666,6 +685,9 @@ func store() -> VideoOptions:
 					name, str(rc.call("override_path")), err]
 	var stored := edit.duplicate_options()
 	stored.notice = notice
+	# Handed on once: the next Apply resizes only if the row is picked again.
+	stored.resolution_touched = edit.resolution_touched
+	edit.resolution_touched = false
 	VideoOptions.set_in_force(stored)
 	return stored
 

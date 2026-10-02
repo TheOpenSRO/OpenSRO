@@ -7264,6 +7264,45 @@ reached the file but not the window) -- the scale is covered by the headless che
 - The live runs were at UI scale 1 (see Tests); the user's 1.95 is covered headlessly.
 - The top edge of the field: 0x000400 every fourth pixel against the reference's 0x080808.
 
+### Review (round 696's review: no HIGH; M1, L1, L2, L4 fixed in a second commit; L3 noted)
+
+- **M1 (MEDIUM): the resolution list and clamp ignored the UI scale.** At 1.95 a 1280 x 720 window
+  is a 656 x 369 view; the 700 x 500 Option window pinned at (0, 0) with Confirm / Cancel / Apply off
+  the screen, and Boot re-applied the saved size at every start. Retail lists no mode narrower than
+  800 or shorter than 600 (READ, 0x5fef70); here that minimum is the VIEW, window / scale
+  (`VideoOptions.MIN_VIEW`, `min_window`, `view_fits`): `resolution_choices` lists only sizes with
+  at least an 800 x 600 view at the window's content scale (on a screen with none, the largest that
+  fits -- OURS, never an empty list), and `window_placement` raises a smaller asked size to
+  `min_window(scale)` before the screen's clamp, which wins, so a size saved by an older build or at
+  another scale cannot strand the player at start-up. Tests at 1.95 and 2.0 (the user's scale): on
+  3840 x 2160 the list starts at 1600 x 1200 (no 1280 x 720, no 1920 x 1080 -- a 985 x 554 view at
+  1.95); a saved 1280 x 720 becomes 1560 x 1170 at 1.95 and 1600 x 1200 at 2.0; at 2.0 a 1920 x 1080
+  screen offers only 1920 x 1080 and a 1920 x 1040 work area gives 1600 x 1040.
+- **L1: re-picking the stored Resolution while maximised did nothing** (the combo shows the stored
+  value and Apply resized only on a change). The Resolution combo now takes a re-pick
+  (`allow_reselect`), which marks `resolution_touched`; `store` hands the mark on once and clears it;
+  World3D also applies the display when `VideoOptions.needs_resize` -- the row was touched and the
+  window is maximised / minimised or not the size the placement gives. Moving the window is not a
+  resize, so Apply on another tab still never snaps a moved window back (round 694's review).
+  Live on the box (real X input, xfwm4, GL; `/var/tmp/ui696/runs/gl_L1`): 1024 x 768 confirmed,
+  the window maximised by the window manager (1920 x 1056), 1024 x 768 picked again and confirmed:
+  "window windowed, 1024x768 at (450, 170) (asked 1024x768); OS window 1024x768; view 1024x768".
+- **L2: a drag-resize logged a line a frame.** The "view resized" line is now written once the size
+  has been still for `RESIZE_SETTLE_MS` = 300 ms (OURS). The same live run logged one line per
+  settled size (1024 x 768, the maximised 1920 x 1056, 1024 x 768 again), where the first build
+  logged two for each.
+- **L4 (PLAUSIBLE -> MEASURED): the open list's text was not crisp.** The PopupMenu is a Window, so
+  the button's `texture_filter` does not reach it; `crisp_popup` sets the popup viewport's
+  `canvas_item_default_texture_filter` to NEAREST. Measured on the box (GL, RX 7600, a window at
+  content scale 2.0, the client's font 0, five items; text pixels = the frame with the items' text
+  minus the frame with it blanked): default filter 11,149 text pixels in 155 distinct colours, 5 at
+  full ink; NEAREST 9,376 in 20 colours, 332 at full ink. So the filter reaches the list; it is not
+  round 672's one level per pixel -- what keeps 20 levels (the font's own antialiasing at the
+  oversampled size, the popup's theme) is not established.
+- **L3 (left as it is, noted):** the review's multi-monitor case -- restoring a maximised window
+  before sizing it on a setup with several screens. Judged harmless by the review; not changed, and
+  not measured here (the box has one screen).
+
 ## Six-hundred-and-ninety-fourth round: the Option window's Video tab -- retail's rows, presets, two Graphic records and brightness curve, each mapped to a Godot effect or marked as drawing nothing here, plus SSAO and the Bloom row as Godot glow
 
 The user (2026-10-02): "Add SSAO and glow as toggable options in Esc -> Option -> Video tab alongside
