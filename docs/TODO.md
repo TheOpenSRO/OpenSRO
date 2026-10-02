@@ -1229,16 +1229,38 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
 - [ ] **Deploy on srrevamp-01**: export `chargen.csv` and pass `-chargen-csv` (deploy/README.md,
       "Character lobby"). Until then every create there is refused with 0x403. The schema migrates
       itself; players need the new client.
-- [ ] **Blocked on the shard DB (CT 104, stopped; the user's call)**: export `_RefCharGen` to confirm
-      the 104-id rule (charselect.md section 6), `_RefCharDefault_Skill/_SkillMastery/_Quest` (a new
-      character's skills and quests: none are given today), and read `_AddNewChar` (the ammunition
-      quantity, any item whitelist), `_DeleteCharTemporal` (the real delay), `_DeleteCharPermanently`,
-      `_ReviveChar`, `_IsExistingCharName`.
+- [x] ~~**Blocked on the shard DB**~~ -- **done in round 692** (the user approved the export,
+      2026-10-02): `_RefCharGen`'s 104 ids are exactly the rule's (server and client, MEASURED); a new
+      character gets its race's `_RefCharDefault_*` masteries (level 0) and skills, and its level-1
+      quests recorded by code; the ammunition is the procedure's 250; the 7-day delay and the
+      restore rule are READ and agree; Str/Int 20 and HP/MP 200 are READ (were OWN DESIGN).
+      charselect.md section 5, "`_AddNewChar`, read".
+- [ ] **Deploy round 692 on srrevamp-01**: stage the three `_RefCharDefault_*` CSVs and `_RefCharGen.csv`
+      and set `SRREVAMP_CHARDEFAULTS_DIR` (deploy/README.md, "Character defaults"). Until then new
+      characters get no defaults; the server says so at boot.
+- [ ] **Default quests are recorded, not given** (round 692): `character_default_quests` holds each new
+      character's level-1 default quests by code at Status 1 (China 3, Europe 2). The quest package is
+      an invented catalogue whose ids 1 and 2 collide with real quests; when the real quest graph is
+      imported, start these from the table. The higher-level default rows (RequiredLevel 5..60) are
+      not given at create and when they are is OPEN; whether each code is in the shard's `_RefQuest`
+      (the procedure's join) is OPEN.
+- [ ] **Characters created before round 692** have no default masteries or skills (the procedure runs
+      only at create). A one-off backfill is possible (OURS); not done.
+- [ ] **Decisions 10-12 in charselect.md section 8**: the procedure's 2,000,000 gold and 5,000,000 SP
+      (not taken), the shard's `_A_RARE` starting-kit edit (not taken), Europe's missing tutorial
+      quest row.
+- [ ] **A level-0 mastery row now exists for every race mastery** (round 692): any rule that counts a
+      character's masteries ("at most N chosen") must count levels above 0, not rows.
+- [ ] **Two sources for the race masteries** (round 692's review): 692 seeds the level-0 rows from the
+      export (the authority: what `_AddNewChar` writes); euroskill691's `skill/race.go` hard-codes
+      the same 13 ids. Keep them equal; move 691 to reading the seeded rows once older characters
+      are backfilled (charselect.md section 9).
 - [ ] **The name rule's OPEN half**: the client's forbidden-character bitmap (0x8c3cb0 / 0x8c0760,
       filled at runtime), its two filter lists, the server's forbidden-word list and FUN_006df4c0.
       The server applies 2..12 bytes, no space or quote (READ) and printable ASCII (OURS).
-- [ ] **Ammunition**: a bow's arrows and a crossbow's bolts go into the bag, one stack (OURS): the
-      equipment slot has no quantity and ammunition is not modelled (session/skill.go).
+- [ ] **Ammunition**: a bow's arrows and a crossbow's bolts go into the bag (OURS), 250 of them
+      (READ `_AddNewChar`, round 692; was one full stack): the equipment slot has no quantity and
+      ammunition is not modelled (session/skill.go).
 - [ ] **The purge removes the characters row only**: the bag, worn items, skills, quests and guild
       rows of a purged character stay, as `Store.Delete` always left them.
 - [ ] **Europe in the world**: bodies are drawn as the China default until lane W (RefObjID + scale on
@@ -1251,6 +1273,24 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
       sender) once the rename is applied in Ghidra too.
 - [ ] **`OpEnterWorld` 0x0020** is still accepted beside Start (it refuses a pending character too);
       retire it when the world handoff is retail.
+
+### Europe: what a Europe character still lacks (round 692 notes)
+
+The user (2026-10-02): "euros probably have their own quests too, make sure you consider that."
+
+- [ ] **Europe's default quests.** The shard's `_RefCharDefault_Quest` has no Race 1 row: a Europe
+      character is given only the two Race 3 quests, China also its Race 0 tutorial. The archive has `QTUTORIAL_EU` (questdata id 210, category 1) and
+      `QTUTORIAL_EU_2` (225), `QTUTORIAL2_EU_1..7`, `QNO_EU_TUTORIAL_1..7` and the `QNO_EU_CONS_*`
+      chain (MEASURED, questdata / questcontentsdata). Whether retail gave `QTUTORIAL_EU` at create
+      is OPEN (charselect.md decision 12).
+- [ ] **Europe's quest content.** No quest is real yet for either race (quest/quest.go): the
+      objectives' targets are server-side and not in the archive. For Europe specifically, the
+      Constantinople quest NPCs' quest lists (who gives `QTUTORIAL_EU`, `QNO_EU_TUTORIAL_*`,
+      `QNO_EU_CONS_*`) have never been loaded or exercised; Europe's NPCs and shops are unexercised
+      too (see "Europe in the world" in the character lobby section).
+- [ ] **Europe's default masteries and skills** are given at create (round 692: masteries 513-518 at
+      level 0, and 10 skills: the bare-hand attack and a basic attack per weapon family). Their use -- Europe's mastery
+      rules and skill window -- is lane euroskill691's.
 
 ### Loading freezes: what the off-thread rounds left (map/loading epic, 2026-09-25)
 

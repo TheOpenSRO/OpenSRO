@@ -177,6 +177,7 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 #         - "-monsters-csv=/data/monsters.csv"   # the monster species table (round 654); see "Monster species table"
 #         - "-regions-csv=/data/regions.csv"     # the towns (round 674): a monster entering one is removed; see "Towns"
 #         - "-chargen-csv=/data/chargen.csv"     # the creatable catalogue (round 682): without it every create is refused; see "Character lobby"
+#         - "-chardefaults-dir=/data/chardefaults" # a new character's default masteries/skills/quests (round 692, EXTERNAL); see "Character defaults"
 docker compose up -d
 ```
 
@@ -1097,6 +1098,55 @@ answers it in its old format with "this server uses the new character lobby -- u
 which its select screen shows as the list's error (round 682's review). A new client against an
 older server waits 5 s for the list and then says the server did not answer. A deleted character
 waits 7 days (10080 minutes, restorable) and is then removed by the server's once-a-minute purge.
+
+## Character defaults (round 692)
+
+A new character gets its race's default masteries (level 0), skills and level-1 quests, as the
+shard DB's `_AddNewChar` gives them (`docs/protocol/charselect.md` section 5, "`_AddNewChar`,
+read"). The tables are the shard DB's `_RefCharDefault_SkillMastery`, `_RefCharDefault_Skill` and
+`_RefCharDefault_Quest` (EXTERNAL, a private shard's export; **never in this repo**). The server
+reads them as exported, from the directory `-chardefaults-dir` (env `SRREVAMP_CHARDEFAULTS_DIR`)
+names; a `_RefCharGen.csv` in the same directory is compared with the creatable catalogue at boot.
+
+- **Unset** (the default): nothing changes. The server warns at boot, `no character defaults
+  (-chardefaults-dir / SRREVAMP_CHARDEFAULTS_DIR): new characters get no default masteries, skills
+  or quests`, and creates characters as before.
+- **Set**: the boot log reads `character defaults loaded ... masteries=13 skills=13 quests=15
+  china="7 masteries, 4 skills, 3 quests" europe="6 masteries, 10 skills, 2 quests"` and, with
+  `_RefCharGen.csv` beside them, `the creatable catalogue agrees with the shard's _RefCharGen
+  ids=104`. A directory that does not load is fatal, like the other reference files.
+- **The schema** grows one table, `character_default_quests` (character, quest code, status, time),
+  created at boot if absent (`quest.OpenSQLStore`); nothing else changes. Additive and idempotent.
+  Default masteries are rows of the existing `character_mastery_levels` at level 0.
+- **Only characters created afterwards** get them, as in the original (the procedure runs at
+  create). Existing characters are not changed.
+
+On srrevamp-01:
+1. **Stage the tables** (from the render box, where the export lives; the three default tables and
+   `_RefCharGen.csv`, nothing else -- the procedures' text is not needed):
+   ```
+   ssh root@192.168.10.78 'tar cf - -C /opt/sro-files/db/csv/charsel _RefCharDefault_SkillMastery.csv _RefCharDefault_Skill.csv _RefCharDefault_Quest.csv _RefCharGen.csv' \
+     | ssh srrevamp@<server-host> 'mkdir -p ~/srrevamp-data/chardefaults && tar xf - -C ~/srrevamp-data/chardefaults && chmod 644 ~/srrevamp-data/chardefaults/*.csv'
+   ```
+2. **Check the files are readable** before the server is told about them -- a configured directory
+   that does not load stops the server at boot:
+   `ssh srrevamp@<server-host> 'ls -l ~/srrevamp-data/chardefaults/ && head -1 ~/srrevamp-data/chardefaults/_RefCharDefault_*.csv'`
+   must list four `-rw-r--r--` files and print the headers `Race,MasteryID`, `Race,SkillID` and
+   `Service,ID,Race,CodeName,RequiredLevel`. The container reads them as another user, so
+   `chmod 644` (step 1) matters; a directory the container cannot enter needs `chmod 755`.
+3. **Set it** in the untracked override, under the server's `environment:` (edit only that key):
+   `SRREVAMP_CHARDEFAULTS_DIR: /data/chardefaults` (the data directory is mounted at `/data`). The
+   server running now does not read the variable; nothing changes until the release lands.
+4. **Merge to dev**; the update timer deploys it within 5 minutes.
+5. **Check** `docker compose logs server | grep -E 'character defaults loaded|agrees with the shard|odd row'`
+   (no `odd row` line on the shard's export),
+   then create a character and look:
+   `docker compose exec -T postgres psql -U postgres srrevamp -c "SELECT mastery_id, level FROM character_mastery_levels WHERE character_id = <id>;"`
+   (7 rows at 0 for China, 6 for Europe),
+   `... -c "SELECT skill_id FROM character_skills WHERE character_id = <id>;"` (4 China, 10 Europe), and
+   `... -c "SELECT quest_code, status FROM character_default_quests WHERE character_id = <id>;"`.
+
+To undo: remove the variable and `docker compose up -d`; characters already given defaults keep them.
 
 ## Towns (round 674)
 

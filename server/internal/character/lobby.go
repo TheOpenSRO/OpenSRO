@@ -18,7 +18,12 @@ type LobbyStore interface {
 	// are still on the account, as the select screen shows).
 	CreateCharacter(ctx context.Context, accountID int64, nc NewCharacter) (*Character, error)
 	// NameTaken reports whether any character, on any account and pending
-	// deletion or not, already has name (compared without case).
+	// deletion or not, already has name (compared without case). READ round
+	// 692: `_IsExistingCharName` looks the name up in `_CharNameList` (every
+	// character's name, pending ones included) and in `_CharNickNameList`
+	// with `=`; whether that `=` ignores case is the database collation's,
+	// not exported (OPEN; INFERRED case-insensitive, SQL Server's default --
+	// "without case" is OURS until then). srrevamp has no nicknames.
 	NameTaken(ctx context.Context, name string) (bool, error)
 	// MarkDeleted starts characterID's deletion at at. ErrNotFound when the
 	// account has no such character, ErrAlreadyDeleting when it is already

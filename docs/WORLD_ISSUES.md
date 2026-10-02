@@ -7094,6 +7094,179 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-ninety-second round: a new character starts with its race's own masteries, basic skills and first quests, as the shard's `_AddNewChar` gives them -- and the shard's own list of creatable ids is exactly the 104 the rule picks
+
+The user approved the shard DB export (2026-10-02, "yes ct 104"); the four `_RefCharGen` /
+`_RefCharDefault_*` tables and the text of six lobby procedures were exported to
+`/opt/sro-files/db/csv/charsel/` on the render box (EXTERNAL, a private shard's; nothing entered the
+repo). This round reads them and closes charselect.md's EXTERNAL OPENs (lane `defaults692`,
+server only). The user, mid-round: "euros probably have their own quests too, make sure you consider
+that."
+
+### 1. The catalogue (MEASURED)
+
+`_RefCharGen` holds 104 rows, all Service 1. Their RefObjIDs against the rule's:
+- the server's (`chargen.csv` from `cmd/export-refdata -mode chargen` on the box's archive,
+  `/var/tmp/lobby682/chargen.csv`): **identical**, 104 = 104, none missing, none extra
+  (`TestRefCharGenAgreesWithTheRule` with `SRREVAMP_TEST_CHARGEN_CSV` / `SRREVAMP_TEST_REFCHARGEN_CSV`
+  set: `rule 104 ids, _RefCharGen 104 ids, missing 0, extra 0`);
+- the client's (`CharCatalog.from_archive` on the box's Media.pk2, a throwaway script run through
+  `remote_godot.sh script`, not committed): **identical**, `CATIDS 104 ...`, `diff` empty.
+
+So the rule is the shard's list, id for id. The server now also compares them at boot when
+`_RefCharGen.csv` sits in `-chardefaults-dir` (`the creatable catalogue agrees with the shard's
+_RefCharGen ids=104`).
+
+### 2. What the procedures do (READ, this package's; charselect.md sections 2 and 5)
+
+- **`_AddNewChar`** (20 parameters, the order section 5 READ from the ShardManager's pushes): refuses
+  4 characters (-2), scale > 68 (-3), a taken name (-4); inserts `_Char` with **Strength 20,
+  Intellect 20, CurLevel 1, HP 200, MP 200, InventorySize 109**, RemainGold 2,000,000, RemainSkillPoint
+  5,000,000, region 25000 (97/168) at (993, 0, 130), AppointedTeleport 2094 (`STORE_CH_GATE`) -- the
+  position and gate parameters are ignored, every race starts in Jangan on this shard; equips the
+  items (the ammunition into slot 7 **with 250**); then, by `_GetObjCountry(RefObjID)`:
+  `_CharSkillMastery` every `_RefCharDefault_SkillMastery` row of that Race or 3 **at Level 0**,
+  `_CharSkill` every `_RefCharDefault_Skill` row of that Race or 3 (Enable 1), `_CharQuest` every
+  `_RefCharDefault_Quest` CodeName of that Race or 3 **with RequiredLevel 1 and Service 1** (Status
+  1) -- of the codes that have a `_RefQuest` row (its join; `_RefQuest` was not exported, so that every
+  code passes it is INFERRED). It is **edited by the shard's operator**: an `_A_RARE` starting-kit swap ("Initial Equip Edit
+  by LemoniscooL"), nine `_RoyalAddItems` grants, `ANTHEIA` calls, silk rows, and a commented-out
+  level-110 variant of the INSERT.
+- **`_DeleteCharTemporal`**: stamps `_DeletedChar` with GetDate() and sets Deleted 1 (refusing id 0
+  and an already-deleted character); no guild or time check. **`_DeleteCharPermanently`**: refuses
+  before **6 days 23 hours** ("roughly 7 days ... an hour's error is allowed"). So the delay is 7 days,
+  the ShardManager's timer, which srrevamp's `DeleteDelay` (the user's 7 days) already is.
+- **`_ReviveChar`**: needs the `_DeletedChar` row and Deleted 1; removes the row, Deleted 0. No time
+  check. srrevamp's restore is the same. `_RecoverDeletedChar` is disabled in this package.
+- **`_IsExistingCharName`**: `=` against `_CharNameList` (pending characters' names included) and
+  `_CharNickNameList`. Case follows the DB collation, not exported (INFERRED case-insensitive);
+  srrevamp compares without case, as before (OURS until settled).
+
+### 3. What changed
+
+- **Defaults at create** (`session/lobbyhandler.go` `giveDefaults`): after the items, the race's
+  masteries at level 0 (`skill.SeedMasteries`, new in `skill/defaults.go`), its skills
+  (`Learn`), and its level-1 quests recorded (`quest.GrantDefaultQuests`, new in `quest/defaults.go`,
+  table `character_default_quests`: the quest package's invented catalogue's ids 1 and 2 are real
+  quests' ids, so the defaults cannot be accepted as quests). A failure is
+  logged, as the items' is (OURS; the procedure rolls the whole create back).
+- **The tables** (`refdata/chardefaults.go`): read as exported (header checked, BOM and CRLF
+  accepted) from `-chardefaults-dir` / `SRREVAMP_CHARDEFAULTS_DIR`; `Race = Country or 3` (READ).
+  Unset: no-op, and the server warns at boot that new characters get no defaults.
+- **The ammunition** is the procedure's 250 (`session.AmmoStartQuantity`; INFERRED that the 250 is
+  the count, `_FN_ADD_INITIAL_EQUIP` was not exported), not round 682's full stack of 2,500 (OURS).
+- **Labels**: `character.StartingStr/Int` 20 are READ (were OWN DESIGN; the operator's level-110
+  variant's 129 = 20 + 109 agrees with StatGrowthPerLevel 1); `DeleteDelay`'s procedure is READ;
+  `NameTaken`'s rule says what is READ and what OURS; `-inventory-size`'s help notes the procedure's
+  109 = 96 + 13. **Not taken:** the procedure's gold and SP, its `_A_RARE` kit and item grants, its
+  Jangan-for-everyone start (charselect.md decisions 10-11; the ShardManager's per-race spawns stay).
+- Docs: charselect.md sections 2, 4, 5 ("`_AddNewChar`, read"), 6, 8 (decisions 7, 8 closed; 10-12
+  new), 9; deploy/README.md "Character defaults"; TODO.md (the lobby section, and "Europe: what a
+  Europe character still lacks"); round 682's OPEN item closed.
+
+**What a new character gets** (MEASURED on the export; its rows are not reproduced in the repo):
+China 7 masteries at level 0 (257-259, 273-276), 4 skills (the bare-hand attack and a basic attack
+per China weapon family), 3 quests recorded; Europe 6 masteries (513-518), 10 skills (the bare-hand
+attack and nine basic attacks), 2 quests recorded.
+
+**Europe's quests** (the user's question): the table has **no Race 1 row**, so Europe gets only the
+two Race 3 quests, by the READ rule. The archive does carry `QTUTORIAL_EU` (questdata id 210) and
+`QTUTORIAL_EU_2` (225), category 1 in questcontentsdata, whose third column is the same 0/1/3 as
+Race (MEASURED); whether retail gave `QTUTORIAL_EU` at create is OPEN (decision 12). TODO.md's
+Europe heading tracks it and Europe's quest NPCs.
+
+**Coordination with euroskill691:** the mastery ids are skillmasterydata's; this round touches the
+skill package only in a new file (`skill/defaults.go`) and none of the mastery rules. Every race
+mastery now has a level-0 row on a new character, so a rule that counts "masteries chosen" must count
+levels above 0 (the existing sum, maximum and lookup are unaffected; the client reads `get(id, 0)`).
+
+### 4. Tests
+
+FAIL before (behavioural, with LobbyDeps' new fields present and `giveDefaults` not called; the
+synthetic fixture of the review, below -- the first commit's run used the export's rows, which are no
+longer in the repo):
+
+```
+lobbydefaults692_test.go:100: Hanshin: masteries [], want [9001 9002 9301]
+lobbydefaults692_test.go:104: Hanshin: skills [], want [8001 8002 8301]
+lobbydefaults692_test.go:115: Hanshin: default quests [], want [QSYN_ALL QSYN_CH]
+lobbydefaults692_test.go:100: Viktor: masteries [], want [9101 9301]
+lobbydefaults692_test.go:104: Viktor: skills [], want [8101 8301]
+lobbydefaults692_test.go:115: Viktor: default quests [], want [QSYN_ALL QSYN_EU]
+FAIL	github.com/OpenSRO/srrevamp/server/internal/session
+```
+
+and `internal/refdata [build failed]` (`undefined: LoadCharDefaultsDir`, ...) without
+`chardefaults.go`. New: `TestLobbyCreateGivesTheRaceDefaults692`, `TestLobbyCreateWithoutDefaults692`,
+`TestAmmoStartQuantity692`, `TestCharDefaultsByRace`, `TestCharDefaultsRefusesAWrongHeader`,
+`TestCharDefaultsDir`, `TestCompareRefCharGen`, `TestRefCharGenAgreesWithTheRule` (skips without the
+exports), `TestSeedMasteries{Mem,SQL}`, `TestGrantDefaultQuests{Mem,SQL}`.
+
+The first full run failed two doc probes, both fixed: `TestEveryOrphanIsExplained` (`quest.DefaultQuests`
+is read only by tests until real quests land: a `knownOrphans` line says so) and
+`TestServerReadmeIsCurrent` (server/README.md now lists `-chardefaults-dir`). Then
+`cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...`: build and vet clean, 64 packages ok, 0 failing (session 115.5 s).
+
+A boot with `-in-memory -chargen-csv <rule> -chardefaults-dir <export>` logged `character defaults
+loaded ... masteries=13 skills=13 quests=15 china="7 masteries, 4 skills, 3 quests" europe="6
+masteries, 10 skills, 2 quests"` and `the creatable catalogue agrees with the shard's _RefCharGen
+ids=104`; without the flag, the WARN. No client change; `remote_godot.sh check` (RENDER_DIR
+/var/tmp/defaults692): 523 scripts and 8 scenes, ALL LOAD. Server-only round: no perf gate.
+
+### OPEN
+
+- srrevamp-01: stage the tables and set `SRREVAMP_CHARDEFAULTS_DIR` (deploy/README.md, "Character
+  defaults"); until then new characters get no defaults there.
+- Default quests are recorded, not started: the quest system has no real quests (and its ids 1, 2
+  collide with real ones). The higher-level default rows (RequiredLevel 5..60): when they are given
+  is not in these procedures; whether each code is in the shard's `_RefQuest` is OPEN.
+- Europe: no Race 1 default quest in the table; `QTUTORIAL_EU` exists in the archive (decision 12).
+  Europe's quest NPCs and content are unexercised (TODO.md, "Europe").
+- Not exported: `_GetObjCountry` (Race 0/1 INFERRED), `_FN_ADD_INITIAL_EQUIP` (the 250 INFERRED the
+  count), `_DeleteCharPermanently_NoTX` and `_KeepDelCharName` (whether a purged name is freed), the
+  DB collation (name case).
+- Decisions 10-12: the procedure's gold/SP, the shard's kit edit, Europe's tutorial.
+- Characters created before this round have no default masteries or skills (no backfill).
+- On a server without skill refdata, skill ids 1 and 2 still fall back to `skill.Catalog`'s invented
+  "Power Strike" / "Whirlwind" (the known collision); srrevamp-01 has skill refdata.
+- A create whose defaults fail is kept (logged), where the procedure would roll it back (OURS).
+
+### Review (round 692's review, fixed in a second commit)
+
+The review found the selection matches `_AddNewChar` row for row on the real export, everything
+additive and idempotent, level-0 rows tripping no cap, and the round composing with euroskill691's
+uncommitted work. It asked for six fixes:
+
+1. **MEDIUM, collation.** `SQLStore.DefaultQuests` ordered by `quest_code` in the database's own
+   collation: en_US.utf8 on CI's postgres:16 and srrevamp-01, C in the local test DB, bytes in the
+   memory store. Now `ORDER BY quest_code COLLATE "C"`, and the test's codes (`QSYN_A`, `QSYNB`)
+   sort one way by bytes and the other under en_US, so a collation-dependent order fails it. (The
+   local DB is SQL_ASCII with no en_US collation, so the en_US half is CI's to exercise.)
+2. **MEDIUM, DB contents in the repo.** The session test copied all three tables verbatim and
+   charselect.md section 5 repeated every row. Both are gone: the tests use a SYNTHETIC set
+   (made-up ids and codes covering Race 0/1/3, a Race 2 row, a duplicate, and the RequiredLevel and
+   Service filters), charselect.md, TODO.md and this entry give the rule and the counts (China
+   7/4/3, Europe 6/10/2; the public mastery ids), and `refdata.TestCharDefaultsRealExport` checks the
+   real export when `SRREVAMP_TEST_CHARDEFAULTS_DIR` names it (run here: PASS, counts as above, no
+   warnings), skipping otherwise. deploy/README's "never in this repo" now holds. The first commit's
+   message and diff still carry the rows; only history keeps them.
+3. **LOW, `_RefQuest`.** The procedure inserts only codes with a `_RefQuest` row; recording every
+   code is now labelled INFERRED (refdata `Quests`, quest/defaults.go, charselect.md).
+4. **LOW, silent rows.** A Race other than 0/1/3 and an id repeated for a race are reported
+   (`CharDefaults.Warnings`, logged at boot as `character defaults: an odd row`); the dedupe is
+   labelled OURS (the procedure's insert would fail on its key and roll back, INFERRED). A
+   `_RefCharGen.csv` that exists but cannot be opened is logged; only not-found is silent. Booted
+   with a Race 2 row added: `odd row ... SkillID 777 has Race 2, which no character matches`; the
+   real export: no odd row.
+5. **LOW, deploy.** A step checks the files are listed, readable and headed right before the
+   variable is set (a configured directory that fails to load is fatal).
+6. **Coordination.** charselect.md section 9 and TODO.md say 692 seeds the level-0 rows from the
+   export, which is the authority, and euroskill691's hard-coded list must stay equal to it until 691
+   reads the seeded rows.
+
+After the fixes, `cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...`:
+build and vet clean, 64 packages ok, 0 failing.
+
 ## Six-hundred-and-eighty-seventh round: the body's own skin no longer shows through worn armour -- each item hides the body pieces it covers, as retail's client does
 
 Round 683 built the bodies and found the body's own skin showing through worn armour on 2-21 % of
@@ -8511,9 +8684,10 @@ scripts and 8 scenes, ALL LOAD; `tests` 197 suites, 0 failing.
 
 - srrevamp-01: export `chargen.csv` and pass `-chargen-csv` (deploy/README.md "Character lobby");
   until then every create there is refused with 0x403. Players need this release's client.
-- Blocked on the stopped shard DB (CT 104, the user's call): `_RefCharGen` (confirm the 104),
+- ~~Blocked on the stopped shard DB (CT 104, the user's call): `_RefCharGen` (confirm the 104),
   `_RefCharDefault_*` (a new character's default skills and quests: none given), the procedures
-  (`_AddNewChar`'s ammunition quantity, `_DeleteCharTemporal`'s real delay).
+  (`_AddNewChar`'s ammunition quantity, `_DeleteCharTemporal`'s real delay).~~ **Closed in round
+  692**: the 104 confirmed, the defaults given (quests recorded), 250 ammunition, 7 days READ.
 - The name bitmap and forbidden words; the ammunition stack (bag, not worn); the purge leaving
   other tables' rows; Europe's return point, KillExp arm and bodies (lane W); item plus and
   avatars; restore's u8/u16; the 858c00 rename; retiring `OpEnterWorld`. All in docs/TODO.md,

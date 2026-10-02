@@ -48,7 +48,11 @@ var ErrNotFound = errors.New("character: no such character on this account")
 var ErrInsufficientGold = errors.New("character: insufficient gold")
 
 // StartingGold is how much currency a newly-created character has. Own
-// design choice.
+// design choice (OURS). This package's `_AddNewChar` (EXTERNAL, round 692)
+// writes RemainGold 2,000,000 and RemainSkillPoint 5,000,000 -- a private
+// shard's values, INFERRED modded (the operator demonstrably edited that same
+// INSERT: a commented-out level-110 variant sits beside it), and not adopted:
+// charselect.md section 8 has it as a decision for the user.
 const StartingGold = 1000
 
 // Health and mana are the game's own formula. RECOVERED, in full.
@@ -149,12 +153,22 @@ const (
 	RespawnFraction = 0.4
 )
 
-// StartingStr and StartingInt are a new character's stats. OWN DESIGN,
-// disclosed -- the formula above is the game's, these two numbers are not.
+// StartingStr and StartingInt are a new character's stats: 20 and 20.
+//
+// READ in round 692 (this package's `_AddNewChar`, the shard DB's procedure;
+// EXTERNAL): its INSERT INTO _Char writes Strength 20, Intellect 20, CurLevel
+// 1, HP 200 and MP 200 -- the two numbers this project had chosen as its own
+// (they were OWN DESIGN until then; the history below is why). The same
+// procedure carries the shard operator's commented-out level-110 variant
+// with Strength and Intellect 129, which is 20 + 109 * StatGrowthPerLevel: it
+// agrees. 20 apiece puts a level-1 character on 200 health and 200 mana, the
+// HP and MP the procedure stores. docs/protocol/charselect.md section 5,
+// "_AddNewChar, read".
+//
+// The rest of this comment is the record from before the procedure was read:
 // SR_GameServer.exe does not contain them: nothing writes a constant to
 // charData+0x74 or +0x76 anywhere in it, because character creation happened on
-// the database side, which this project has no artifact of. 20 apiece puts a
-// level-1 character on 200 health and 200 mana.
+// the database side, which this project had no artifact of.
 //
 // THE ABSENCE IS NOW MEASURED, NOT INFERRED (2026-09-16). It used to rest on one
 // binary's silence, which is the weaker kind of negative -- and these two numbers
@@ -204,10 +218,9 @@ const (
 //     ever ADDS. So the binary never assigns a starting Strength; it only ever
 //     increments one it loaded.
 //
-// So the value stays own-design, but the reason is now four measurements rather
-// than one silence, and the last of them is an enumeration rather than a search.
-// If it is ever recovered, it is worth doing: at level 40 a wrong starting Str
-// is a wrong health total by the same ratio.
+// So the value stayed own-design, on four measurements rather than one silence
+// -- until round 692 read it in the database procedure, where those
+// measurements said it had to be.
 //
 // WHERE NOT TO LOOK, corrected 2026-09-17. docs/RE_COMPLETION.md named
 // `_REFCHARGEN` as "the table that would hold them". It is not.
@@ -379,8 +392,13 @@ func ValidScale(scale int) bool {
 // DeleteDelay is how long a deleted character waits, restorable, before it is
 // removed: 7 days, 10080 minutes. READ from the client, whose confirm text says
 // "reserved for 7 days" and whose countdown gauge is 1 - remaining / 10080
-// (charselect.md section 2); the delay inside `_DeleteCharTemporal` is OPEN.
-// The user chose it (2026-10-02).
+// (charselect.md section 2). The user chose it (2026-10-02). The shard DB's
+// procedures agree (READ round 692, this package's; EXTERNAL):
+// `_DeleteCharTemporal` only stamps the date (`_DeletedChar`, GetDate()) and
+// sets Deleted 1, and `_DeleteCharPermanently` refuses a character deleted
+// less than 6 days 23 hours ago ("roughly 7 days ... an hour's error is
+// allowed", its comment) -- so the 7 days themselves are the caller's timer,
+// with the procedure as a guard an hour short of it.
 const DeleteDelay = 10080 * time.Minute
 
 // MinutesLeft is what the list record says of a character pending deletion:
