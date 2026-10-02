@@ -421,6 +421,7 @@ func video_options() -> VideoOptions:
 func apply_video_options(o: VideoOptions) -> void:
 	if o == null:
 		return
+	var t0 := Time.get_ticks_usec()
 	var before := _video
 	_video = o
 	VideoOptions.set_in_force(o)
@@ -472,7 +473,7 @@ func apply_video_options(o: VideoOptions) -> void:
 	# change nothing here: this client draws no environment-map sheen, no
 	# torch or sun light effect, no cloth or hair motion, and no battle
 	# outfits (docs/protocol/OPTION_VIDEO.md).
-	print("World3D: video options applied -- %s" % describe_video(o))
+	print("World3D: video options applied in %d us -- %s" % [Time.get_ticks_usec() - t0, describe_video(o)])
 
 ## SRREVAMP_QA_VIDEO_STEPS="spec|spec|..." (round 694, OURS): once the
 ## world's load is done, every SRREVAMP_QA_VIDEO_STEP_FRAMES ticks (default

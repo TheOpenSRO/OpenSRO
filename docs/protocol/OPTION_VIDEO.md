@@ -97,8 +97,8 @@ value)` (`0xa194a0`), which also stores it at `SWorld+0x2e50 + case*4` (getter `
 | Water Detail | case 7: stored only; no reader found | OURS: the reflection target's rows 256 / 512 (READ size) / 1024, live |
 | Metallic Sheen | case 0xc -> object renderer +0x194; forced off below shader model 3 (`CGame::FUN_00834fb0`) | kept, draws nothing: no environment-map sheen here |
 | Light Effect | case 0xb -> object renderer +0x1a4 (Sun / Torch, TTDESC_10) | kept, draws nothing: no torch or sun light effect here |
-| Texture Filtering | byte 0xc; no reader found; TTDESC_15 "compensates rough outlines" | INFERRED anti-aliasing: MSAA 2x on the 3D view (OURS level) |
-| Texture Detail | case 5: `IDirect3DBaseTexture9::SetLOD(2 - v)` on every texture (vtable +0x2c) | `Viewport.texture_mipmap_bias` 2 / 1 / 0 (INFERRED equivalent look, not the memory saving) |
+| Texture Filtering | byte 0xc; no reader found; TTDESC_15 "compensates rough outlines" | INFERRED anti-aliasing: MSAA 2x on the 3D view (OURS level); Forward+ only -- greyed under Compatibility (MEASURED below) |
+| Texture Detail | case 5: `IDirect3DBaseTexture9::SetLOD(2 - v)` on every texture (vtable +0x2c) | `Viewport.texture_mipmap_bias` 2 / 1 / 0 (INFERRED equivalent look, not the memory saving); Forward+ only -- greyed under Compatibility (MEASURED below) |
 | Lens Flare | case 0xd: `SWorld::vslot_005` draws `Map::FUN_00a21280` while +0x2e84 is set | the sun glow sprite (`SkyBox\glow.ddj`, INFERRED to be the flare's piece) |
 | Bloom Effect | case 1: screen-size and 512 x 512 render targets (a glow pass; look not read) | Godot glow (Forward+ only); the user's "glow" toggle is this row |
 | Dynamic Animation | case 0xe -> renderer +0x19c, re-inits the animated objects; TTDESC_14 fabrics and hair | kept, draws nothing: no cloth or hair motion here |
@@ -120,3 +120,19 @@ Middle (above); one choice in the Graphic Quality row. Default (the button) rest
 started); `[video_graphic1]` and `[video_graphic2]`: quality, brightness and every row by name
 (the User values). `[world] water_reflection` (round 628) seeds Water Reflection and is kept in
 step. QA: `SRREVAMP_QA_VIDEO="quality=0,shadow_detail=2,..."` sets rows for one run, unsaved.
+
+## Measured (round 694, the box)
+
+- **MSAA and the mip bias under each renderer** (a synthetic scene: a rotated white box, a
+  mipmapped 2-px checker plane; `msaa_3d` 2x, then `texture_mipmap_bias` 2): Compatibility
+  (GL 4.6, RX 7600) -- edge pixels 12555 and checker contrast 0.2943 in all four states,
+  pixel-identical; Forward+ (Vulkan, RADV) -- edge pixels 12455 -> 12727 with MSAA, contrast
+  0.3557 -> 0.2573 with bias 2. So both rows are Forward+'s, like SSAO and glow.
+- **Each row at the Jangan spawn** (one boot, `SRREVAMP_QA_VIDEO_STEPS`, 1280x720, offline,
+  pixels differing by more than 2 % from the first default frame; same-settings frames differ
+  by 128k-201k from animation alone): Shadow Nothing 743k, Circle 692k (the sun's shadow map
+  gone), Very Dark mean grey 0.594 and Very bright 0.815 against 0.681, Background Sight 1
+  473k; Texture Detail Low, Filtering On and Lens Flare Off within the same-settings spread
+  (Lens: the sun was not in view). Frame time (another lane's Godot running throughout):
+  default 14.2 ms, High 14.3 / 14.7, Middle 14.0, Large scale battle 14.0, Low 5.6 / 5.7,
+  Background Sight 1 alone 6.1 -- the far plane is what costs.

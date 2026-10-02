@@ -937,6 +937,10 @@ under Compatibility.
       art are read); Effect Quality 1's two owner tests (FUN_00b94b70 on DAT_00ef1a84 / b44).
 - [ ] **Resolution** is the window's size; in full screen Godot keeps the desktop's (no mode
       change in 4.2.2). A 3D render scale would be the Godot way to honour it there.
+- [ ] **Texture Detail and Texture Filtering under Compatibility.** MEASURED: 4.2.2's GLES3
+      draws the same picture with `msaa_3d` 2x and `texture_mipmap_bias` 2, so both rows are
+      greyed there (they work under Forward+). A bias in this client's own shaders (a global
+      uniform) would give Compatibility a Texture Detail.
 
 ### Bots and clientless play -- **noted by the user 2026-10-01; not scheduled**
 
