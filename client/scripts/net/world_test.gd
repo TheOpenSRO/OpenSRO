@@ -467,7 +467,59 @@ func _test_decode_headings() -> void:
 	var oh = o.others[0].get("heading") if o.others.size() == 1 else 0.0
 	_check(o.error == "" and oh != null and is_nan(float(oh)), "no tail: the heading stays unknown (NAN)")
 
+## Round 689: the model tails, against testdata/world_model_golden.json -- the
+## bytes the server's TestRound689ModelGolden encodes exactly.
+func _test_decode_model_golden() -> void:
+	var f := FileAccess.open("res://scripts/net/testdata/world_model_golden.json", FileAccess.READ)
+	_check(f != null, "world_model_golden.json opens")
+	if f == null:
+		return
+	var golden: Dictionary = JSON.parse_string(f.get_as_text())
+	var seen := 0
+	for v in golden["vectors"]:
+		var data := String(v["hex"]).replace(" ", "").replace("|", "").hex_decode()
+		var kind := String(v["kind"])
+		var others: Array = []
+		var own = null
+		var err := ""
+		if kind == "entity_entered":
+			own = WorldNet.decode_entity_entered(data)
+		elif kind == "enter_world_result":
+			var r := WorldNet.decode_enter_world_result(data)
+			own = r
+			others = r.others
+			err = r.error
+		elif kind == "change_zone_result":
+			var z := WorldNet.decode_change_zone_result(data)
+			others = z.others
+			err = z.error
+		_check(err == "", "%s: decodes (error %s)" % [v["name"], err])
+		if v.has("own"):
+			_check(own != null and own.has_model and own.ref_obj_id == int(v["own"]["ref_obj_id"]) and own.scale == int(v["own"]["scale"]),
+				"%s: own model %s" % [v["name"], str(v["own"])])
+		var want: Array = v.get("others", [])
+		_check(others.size() == want.size(), "%s: %d other(s)" % [v["name"], want.size()])
+		for i in range(mini(others.size(), want.size())):
+			var o: WorldNet.EntitySnapshot = others[i]
+			_check(o.has_model and o.ref_obj_id == int(want[i]["ref_obj_id"]) and o.scale == int(want[i]["scale"]),
+				"%s: other %d's model %d/%d" % [v["name"], i, o.ref_obj_id, o.scale])
+		seen += 1
+	_check(seen == 3, "three golden vectors (got %d)" % seen)
+	# An older server's payload (no models tail) keeps has_model false, and a
+	# models count that does not match the list is an error.
+	var plain := _build_change_zone_result(true, "", "jangan", 0.0, 0.0, 0.0, [{"id": 42, "name": "Bram", "x": 4.0, "y": 5.0, "z": 6.0, "gender": CharacterNet.GENDER_CHINA_MAN}])
+	plain.append_array(_frame_bytes("97/168"))
+	plain.append_array(_seated_tail([]))
+	plain.append_array(_u16s([1, 0]))
+	var p := WorldNet.decode_change_zone_result(plain)
+	_check(p.error == "" and p.others.size() == 1 and not p.others[0].has_model, "no models tail: no model")
+	var bad := plain.duplicate()
+	bad.append_array(_u16s([2]))
+	bad.append_array(PackedByteArray([1, 0, 0, 0, 0x22]))
+	_check(WorldNet.decode_change_zone_result(bad).error != "", "a models count that does not match the list is a decode error")
+
 func _init() -> void:
+	_test_decode_model_golden()
 	_test_decode_seated()
 	_test_decode_headings()
 	_test_motion()

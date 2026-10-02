@@ -282,9 +282,9 @@ func diagnostics() -> String:
 	else:
 		lines.append("region: not streamed in yet")
 	var arm: SpringArm3D = _world.camera_arm
-	lines.append("camera yaw %.0f pitch %.0f dist %.0f | gender %s | weapon group %s | names within %d" % [
+	lines.append("camera yaw %.0f pitch %.0f dist %.0f | gender %s | body %s scale 0x%02x | weapon group %s | names within %d" % [
 		arm.rotation_degrees.y, arm.rotation_degrees.x, arm.spring_length,
-		_world._player_gender, _world._player_weapon_group, int(_world._name_plate_range)])
+		_world._player_gender, _world._player_body, _world._player_scale, _world._player_weapon_group, int(_world._name_plate_range)])
 
 	lines.append("== equipment (slot: item -> model)")
 	# The last answer the server gave, not a fresh request: asking is a

@@ -379,9 +379,21 @@ class ParsedObject:
 
 	## The animation path for an action (an AnimationEntry.TYPE_* code) in
 	## group_name, falling back to the `default` group when that group has
-	## no entry for it -- a sword has its own run but no walk of its own,
+	## no clip for it -- a sword has its own run but no walk of its own,
 	## and the body's default walk is what plays then. "" if neither has
 	## one.
+	##
+	## The client's own rule (READ, round 689): `CCObjAnimation::FUN_00a5b550`
+	## asks `CCompChar::FUN_00c2bbb0` -> `AniMixer::FUN_00c551a0` for the group
+	## by name (`FUN_00bd68e0`), the entry by type (`AniMixer::FUN_00c0e950`)
+	## and requires its clip to be non-null; when any of the three is missing
+	## it retries with `default`, and plays nothing when that fails too. The
+	## group's entries are a map by type, built in file order by
+	## `FUN_00c0f470`, which overwrites in place -- so of two entries of one
+	## type THE LAST wins -- and `ResObject::FUN_00c0f500` stores a NULL clip
+	## for an entry whose file index is below 0 (0xFFFFFFFF; MEASURED in the
+	## Europe bodies, e.g. onehand_staff type 5 and onehand_sword type 16), so
+	## such an entry falls back to `default` rather than playing nothing.
 	func animation_for(action_type: int, group_name: String = "default") -> String:
 		var entry := animation_entry_for(action_type, group_name)
 		return entry.path if entry != null else ""
@@ -389,20 +401,31 @@ class ParsedObject:
 	## The entry itself, with its events, for the same lookup.
 	func animation_entry_for(action_type: int, group_name: String = "default") -> AnimationEntry:
 		for name in [group_name, "default"]:
-			for entry in animation_groups.get(name, []):
-				if (entry as AnimationEntry).action_type == action_type:
-					return entry
+			var entry := _clip_entry_in(name, action_type)
+			if entry != null:
+				return entry
 		return null
 
 	## The group the same lookup finds its entry in -- group_name, or
-	## `default` when group_name has no entry of that type -- or "" when
+	## `default` when group_name has no clip of that type -- or "" when
 	## neither has one.
 	func animation_group_for(action_type: int, group_name: String = "default") -> String:
 		for name in [group_name, "default"]:
-			for entry in animation_groups.get(name, []):
-				if (entry as AnimationEntry).action_type == action_type:
-					return name
+			if _clip_entry_in(name, action_type) != null:
+				return name
 		return ""
+
+	## The entry of `action_type` in one group as the client's map holds it:
+	## the last of that type (READ FUN_00c0f470), or null when there is none
+	## or its clip is null (an entry naming no file, READ FUN_00c0f500).
+	func _clip_entry_in(group_name: String, action_type: int) -> AnimationEntry:
+		var found: AnimationEntry = null
+		for entry in animation_groups.get(group_name, []):
+			if (entry as AnimationEntry).action_type == action_type:
+				found = entry
+		if found == null or found.path == "":
+			return null
+		return found
 
 	## The sound tracks of the entry (action_type, group_name) -- the
 	## SET_BY_TYPE set keyed by exactly that pair, or null. No fallback:

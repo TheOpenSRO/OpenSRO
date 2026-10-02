@@ -71,6 +71,18 @@ type EntitySnapshot struct {
 	// payload had none.
 	Heading    float64
 	HasHeading bool
+	// RefObjID is the body the character was made from (character.RefObjID,
+	// one of the 52 creatable Figures) and Scale its scale byte (Height low
+	// nibble, Volume high), so the client draws the character from its own
+	// model rather than a body picked by Gender (round 689, charselect.md lane
+	// W). Sent in trailing tails only -- after EncodeEntered's wire angle, and
+	// in the results' models tail (encodeModels) -- so an older client, whose
+	// decoders stop before them, reads what it always did. HasModel is false
+	// when the payload had none (an older server): the client then keeps
+	// drawing from Gender.
+	RefObjID uint32
+	Scale    uint8
+	HasModel bool
 }
 
 // EquippedIn reports the item id in slot, or 0 if nothing is worn there.
@@ -105,10 +117,27 @@ func (e *EntitySnapshot) Encode() []byte {
 // Retail's spawn carries the angle among its position fields (FUN_009c3a70);
 // srrevamp's goes last so an older client, whose decode_entity_entered reads
 // one snapshot and stops, is unaffected.
+//
+// Round 689: then the model, a u32 RefObjID and the u8 scale byte, when the
+// snapshot carries one. A client before round 689 stops after the angle
+// (decode_entity_entered reads two bytes past the snapshot and returns), so
+// they reach it unread.
 func (e *EntitySnapshot) EncodeEntered() []byte {
 	out := e.Encode()
 	angle := proto.EncodeMovementAngle(world.WireAngle(e.Heading))
-	return append(out, byte(angle), byte(angle>>8))
+	out = append(out, byte(angle), byte(angle>>8))
+	if e.HasModel {
+		out = appendModel(out, e.RefObjID, e.Scale)
+	}
+	return out
+}
+
+// appendModel writes one model: a u32 RefObjID and the u8 scale byte.
+func appendModel(out []byte, refObjID uint32, scale uint8) []byte {
+	b := make([]byte, 5)
+	binary.LittleEndian.PutUint32(b, refObjID)
+	b[4] = scale
+	return append(out, b...)
 }
 
 // DecodeEntityEntered parses an OpEntityEntered payload: one snapshot and,
@@ -123,6 +152,12 @@ func DecodeEntityEntered(data []byte) (*EntitySnapshot, error) {
 		wire := float64(binary.LittleEndian.Uint16(rest)) / 65535.0 * 2 * math.Pi
 		snap.Heading = math.Mod(wire+math.Pi/2, 2*math.Pi)
 		snap.HasHeading = true
+	}
+	// The model (round 689), from a server that sends it.
+	if len(rest) >= 2+5 {
+		snap.RefObjID = binary.LittleEndian.Uint32(rest[2:])
+		snap.Scale = rest[6]
+		snap.HasModel = true
 	}
 	return snap, nil
 }
@@ -202,31 +237,51 @@ func equippedItems(ctx context.Context, eq equipment.Store, characterID int64) [
 	return out
 }
 
-// genderOf looks up characterID's real Gender via chars.GetByID, live at
-// broadcast time -- world.Entity doesn't carry it (that package deliberately
-// only tracks position/presence, not character details -- same reasoning
-// as equippedSlots not living in world.Entity either). Falls back to
-// character.DefaultGender on any lookup error, the same honest-failure
-// convention as equippedSlots: never block a broadcast over this, and
-// never guess at a value that couldn't be confirmed.
-func genderOf(ctx context.Context, chars character.Store, characterID int64) string {
+// bodyOf looks up characterID's Gender, RefObjID and scale byte in one
+// chars.GetByID, live at broadcast time -- world.Entity doesn't carry them
+// (that package deliberately only tracks position/presence, not character
+// details -- same reasoning as equippedItems). On any lookup error it gives
+// character.DefaultGender with that gender's legacy body (LegacyModelFor) at
+// character.DefaultScale, the same honest-failure convention as
+// equippedItems: never block a broadcast over this. (Round 689 folded the
+// older genderOf into it.)
+func bodyOf(ctx context.Context, chars character.Store, characterID int64) (gender string, refObjID uint32, scale uint8) {
 	c, err := chars.GetByID(ctx, characterID)
-	if err != nil {
-		return character.DefaultGender
+	if err != nil || c == nil {
+		return character.DefaultGender, uint32(character.LegacyModelFor(character.DefaultGender)), character.DefaultScale
 	}
-	return c.Gender
+	ref, sc := modelOf(c)
+	return c.Gender, ref, sc
+}
+
+// modelOf is the wire model of a character row: its RefObjID and scale byte,
+// or, for a row without a model (0 -- an older store), the body its Gender
+// was migrated to (LegacyModelFor) at DefaultScale, as round 682's migration
+// does. A scale outside a byte reads DefaultScale.
+func modelOf(c *character.Character) (uint32, uint8) {
+	ref, scale := c.RefObjID, c.Scale
+	if ref <= 0 || ref > math.MaxUint32 {
+		ref, scale = character.LegacyModelFor(c.Gender), character.DefaultScale
+	}
+	if scale < 0 || scale > 0xff {
+		scale = character.DefaultScale
+	}
+	return uint32(ref), uint8(scale)
 }
 
 func entitySnapshotFromWorld(ctx context.Context, eq equipment.Store, chars character.Store, e world.Entity) EntitySnapshot {
+	gender, ref, scale := bodyOf(ctx, chars, e.CharacterID)
 	return EntitySnapshot{
 		CharacterID: e.CharacterID,
 		Name:        e.Name,
 		X:           float32(e.Pos.X), Y: float32(e.Pos.Y), Z: float32(e.Pos.Z),
 		Equipped: equippedItems(ctx, eq, e.CharacterID),
-		Gender:   genderOf(ctx, chars, e.CharacterID),
+		Gender:   gender,
 		// Sent in the arrival lists' headings tail (round 637's review
 		// follow-up), not by Encode.
 		Heading: e.Heading, HasHeading: true,
+		// Sent in the results' models tail (round 689), not by Encode.
+		RefObjID: ref, Scale: scale, HasModel: true,
 	}
 }
 
@@ -304,6 +359,71 @@ type EnterWorldResult struct {
 	// sends one. It is the last field of the headings tail (encodeHeadings).
 	Heading    float64
 	HasHeading bool
+	// RefObjID and Scale are the entering character's own model (round 689;
+	// EntitySnapshot.RefObjID's doc), and the Others' ride their snapshots.
+	// They are the models tail (encodeModels), the LAST field: written after
+	// the entering character's wire angle, which -- with Restored, Seated and
+	// the headings tail before it -- is then always written, as the trap above
+	// requires. An older client stops at the wire angle and never reads them.
+	// HasModel marks a server that sends them; sent whenever it is set or any
+	// Other carries a model, so a result built without one is byte for byte
+	// the older payload.
+	RefObjID uint32
+	Scale    uint8
+	HasModel bool
+}
+
+// anyModel reports whether a snapshot in others carries a model.
+func anyModel(others []EntitySnapshot) bool {
+	for _, o := range others {
+		if o.HasModel {
+			return true
+		}
+	}
+	return false
+}
+
+// encodeModels is the models tail (round 689) of an EnterWorldResult (after
+// its own model) and a ChangeZoneResult: a u16 count, equal to len(others),
+// and one model -- u32 RefObjID, u8 scale -- per other in list order. A
+// snapshot without one is written as 0/0, which the client reads as "no
+// model, draw from Gender".
+func encodeModels(others []EntitySnapshot) []byte {
+	out := []byte{byte(len(others)), byte(len(others) >> 8)}
+	for _, o := range others {
+		if o.HasModel {
+			out = appendModel(out, o.RefObjID, o.Scale)
+		} else {
+			out = appendModel(out, 0, 0)
+		}
+	}
+	return out
+}
+
+// decodeModels reads the models tail into others: nothing there is an older
+// server, and a 0 RefObjID is a snapshot sent without a model.
+func decodeModels(rest []byte, others []EntitySnapshot) ([]byte, error) {
+	if len(rest) == 0 {
+		return rest, nil
+	}
+	if len(rest) < 2 {
+		return nil, errors.New("truncated model count")
+	}
+	n := int(binary.LittleEndian.Uint16(rest))
+	rest = rest[2:]
+	if n != len(others) {
+		return nil, fmt.Errorf("%d models for %d others", n, len(others))
+	}
+	if len(rest) < 5*n {
+		return nil, errors.New("truncated models")
+	}
+	for i := range others {
+		ref := binary.LittleEndian.Uint32(rest[5*i:])
+		if ref != 0 {
+			others[i].RefObjID, others[i].Scale, others[i].HasModel = ref, rest[5*i+4], true
+		}
+	}
+	return rest[5*n:], nil
 }
 
 func (r *EnterWorldResult) Encode() []byte {
@@ -327,7 +447,8 @@ func (r *EnterWorldResult) Encode() []byte {
 		out = append(out, o.Encode()...)
 	}
 	out = append(out, encodeStrings(r.FrameRegion)...)
-	heads := r.HasHeading || anyHeading(r.Others)
+	models := r.HasModel || anyModel(r.Others)
+	heads := r.HasHeading || anyHeading(r.Others) || models
 	if r.Restored || len(r.Seated) > 0 || heads {
 		b := byte(0)
 		if r.Restored {
@@ -340,7 +461,18 @@ func (r *EnterWorldResult) Encode() []byte {
 	}
 	out = append(out, encodeSeatedAlways(r.Seated)...)
 	out = append(out, encodeHeadings(r.Others)...)
-	return appendWireAngle(out, r.Heading)
+	out = appendWireAngle(out, r.Heading)
+	if !models {
+		return out
+	}
+	// The models tail (round 689): the entering character's own, then the
+	// Others'. An own model of 0 is "none" (HasModel false).
+	if r.HasModel {
+		out = appendModel(out, r.RefObjID, r.Scale)
+	} else {
+		out = appendModel(out, 0, 0)
+	}
+	return append(out, encodeModels(r.Others)...)
 }
 
 // The headings tail (round 637's review follow-up): the Others' headings, so
@@ -533,6 +665,20 @@ func DecodeEnterWorldResult(data []byte) (*EnterWorldResult, error) {
 		if len(after) >= 2 {
 			r.Heading = headingOfWire(binary.LittleEndian.Uint16(after))
 			r.HasHeading = true
+			after = after[2:]
+		}
+		// The models tail (round 689): this character's own, then the
+		// Others'. Nothing there is an older server.
+		if len(after) > 0 {
+			if len(after) < 5 {
+				return nil, errors.New("session: decoding EnterWorldResult: truncated own model")
+			}
+			if ref := binary.LittleEndian.Uint32(after); ref != 0 {
+				r.RefObjID, r.Scale, r.HasModel = ref, after[4], true
+			}
+			if _, err = decodeModels(after[5:], r.Others); err != nil {
+				return nil, fmt.Errorf("session: decoding EnterWorldResult: %w", err)
+			}
 		}
 	}
 	return r, nil
@@ -846,13 +992,20 @@ func (r *ChangeZoneResult) Encode() []byte {
 		out = append(out, o.Encode()...)
 	}
 	out = append(out, encodeStrings(r.FrameRegion)...)
-	if !anyHeading(r.Others) {
+	models := anyModel(r.Others)
+	if !anyHeading(r.Others) && !models {
 		return append(out, encodeSeated(r.Seated)...)
 	}
 	// The headings tail (round 637's review follow-up; EnterWorldResult's
 	// doc): Seated always written, then the Others' wire angles.
 	out = append(out, encodeSeatedAlways(r.Seated)...)
-	return append(out, encodeHeadings(r.Others)...)
+	out = append(out, encodeHeadings(r.Others)...)
+	if !models {
+		return out
+	}
+	// The models tail (round 689), after the headings, which it makes always
+	// written: an older client stops at the headings.
+	return append(out, encodeModels(r.Others)...)
 }
 
 func DecodeChangeZoneResult(data []byte) (*ChangeZoneResult, error) {
@@ -908,7 +1061,10 @@ func DecodeChangeZoneResult(data []byte) (*ChangeZoneResult, error) {
 	if r.Seated, after, err = decodeSeatedRest(rest); err != nil {
 		return nil, fmt.Errorf("session: decoding ChangeZoneResult: %w", err)
 	}
-	if _, err = decodeHeadings(after, r.Others); err != nil {
+	if after, err = decodeHeadings(after, r.Others); err != nil {
+		return nil, fmt.Errorf("session: decoding ChangeZoneResult: %w", err)
+	}
+	if _, err = decodeModels(after, r.Others); err != nil {
 		return nil, fmt.Errorf("session: decoding ChangeZoneResult: %w", err)
 	}
 	return r, nil
@@ -1182,6 +1338,9 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 		Heading:     heading,
 		HasHeading:  true,
 	}
+	// The character's own model (round 689): the body it was made from.
+	ownRef, ownScale := modelOf(owned)
+	result.RefObjID, result.Scale, result.HasModel = ownRef, ownScale, true
 	if err := sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: result.Encode()}); err != nil {
 		return err
 	}
@@ -1194,6 +1353,7 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 		Gender:     owned.Gender,
 		Heading:    heading,
 		HasHeading: true,
+		RefObjID:   ownRef, Scale: ownScale, HasModel: true,
 	}
 	for _, other := range others {
 		other.Session.Send(&proto.Packet{Opcode: OpEntityEntered, Data: entered.EncodeEntered()})
@@ -1312,9 +1472,10 @@ func warpTo(ctx context.Context, sess *gateway.Session, eq equipment.Store, char
 		CharacterID: old.CharacterID, Name: old.Name,
 		X: float32(pos.X), Y: float32(pos.Y), Z: float32(pos.Z),
 		Equipped: equippedItems(ctx, eq, old.CharacterID),
-		Gender:   genderOf(ctx, chars, old.CharacterID),
 		Heading:  old.Heading, HasHeading: true,
+		HasModel: true,
 	}
+	entered.Gender, entered.RefObjID, entered.Scale = bodyOf(ctx, chars, old.CharacterID)
 	for _, other := range othersNew {
 		other.Session.Send(&proto.Packet{Opcode: OpEntityEntered, Data: entered.EncodeEntered()})
 	}

@@ -518,48 +518,32 @@ const MIN_SEND_DISTANCE := 0.05 * PLAYER_SCALE_RATIO
 ## (50 units/s), not a claim about real interpolation timing.
 const OTHER_BODY_INTERPOLATION_SPEED := 15.0
 
-## The body each gender is drawn with: a row of characterdata, the same
-## table that names every NPC's model, by its code name. Ids 1907-1932 of
-## that table are the 26 playable China classes -- adventurer, bogy,
-## fighter, merchant, monk and the rest, 13 to a gender -- and each row's
-## `.bsr` lists the body's skeleton, its nine skinned pieces, its material
-## and its animations. Nothing about the body is guessed from a path
-## layout any more.
+## The body a character is drawn with when the server names only its gender
+## -- an older server, whose world messages carry no model: a row of
+## characterdata by its code name, the body round 682's migration gave every
+## character made before models existed (character.LegacyModelFor, OURS:
+## "fighter" for both, what the world drew until then).
 ##
-## **Which class is a fixed pick.** The server stores a gender and nothing
-## finer, so "fighter" is chosen here for both -- the same style the earlier
-## per-gender path table already used for the face and hair. A class
-## choice at character creation would replace this table, not this code.
-const GENDER_BODY_CODE := {
-	"china_man": "CHAR_CH_MAN_FIGHTER",
-	"china_woman": "CHAR_CH_WOMAN_FIGHTER",
-}
+## **Since round 689 a character is drawn from its own model.** The world
+## messages carry each character's RefObjID -- one of the 52 creatable
+## Figures, China and Europe, men and women -- and its scale byte (the
+## models tails, WorldNet.EntitySnapshot.ref_obj_id), and the body is built
+## from them through CharacterAppearance, the select and create screens'
+## builder (_build_assembled_character). A character's "body key" in this
+## script is that row's code name (CHAR_EU_MAN_NOBLE): the key the sound,
+## speed, BCRadius and Country tables use too.
+const GENDER_BODY_CODE := WorldBodies.LEGACY_BODY_CODE
 ## Falls back to this real gender's assets when a requested gender's assets
 ## didn't load (or a peer reports an unrecognized gender string) -- matches
 ## character.DefaultGender server-side.
 const DEFAULT_GENDER := "china_man"
 
 ## Which animation group a held weapon selects, by the weapon's TypeID4 in
-## the item table: the client's own switch (`FUN_00a5a7d0`, reached from
-## the equip-visual refresh with the item in the weapon slot), checked
-## against the real table's weapon rows -- 215-251 rows behind every case
-## (ITEM_FORMAT.md). Two of the client's rules are not in this table: while
-## pulling a transport the group is `cart` whatever the weapon, and the
-## fortress weapon (16) is `sword` for a China character and
-## `onehand_sword` for a European one -- every body here is China.
-const WEAPON_ANIMATION_GROUP := {
-	2: "sword", 3: "sword",  # sword, blade
-	4: "spear", 5: "spear",  # spear, glaive
-	6: "bow", 12: "bow",  # bow, crossbow
-	7: "onehand_sword",
-	8: "twohand_sword",
-	9: "dual_axe",
-	10: "onehand_staff", 15: "onehand_staff",  # dark staff, cleric rod
-	11: "twohand_staff",
-	13: "dagger",
-	14: "harf",  # the harp, as the client spells it
-	16: "sword",  # fortress weapon, China
-}
+## the item table and the body's race: BodyAnimations.group_for_weapon, the
+## client's own switch (`FUN_00a5a7d0`, READ, with the fortress weapon (16)
+## `sword` for a China body and `onehand_sword` for a Europe one) -- one table
+## for the world and the select and create screens since round 689. The
+## transport's `cart` group is not modelled.
 
 ## The fallback for a body whose `.bsr` carries no animation groups: the
 ## exact files the China fighters' `default` group names, matched by name.
@@ -1002,7 +986,25 @@ var _relocated_pending := false
 const RELOCATE_MARGIN := 1.0
 
 var _player_skeleton: Skeleton3D
+## The gender string the server sent (CharacterNet.GENDER_*), kept for an
+## older server's body (GENDER_BODY_CODE). The body itself is _player_body.
 var _player_gender := DEFAULT_GENDER
+## The player's body key: the characterdata code name of the Figure it was
+## made from (round 689; _body_key_for), "" until the body is built.
+var _player_body := ""
+## The player's scale byte (Height low nibble, Volume high; CharacterAppearance).
+var _player_scale := CharacterAppearance.DEFAULT_SCALE
+## The builder every character body comes from since round 689 -- the select
+## and create screens' own (CharacterAppearance), over this world's archives,
+## its bodies-only catalogue and its item table. Null without Data.pk2 and
+## Media.pk2 (characters stay placeholders).
+var _appearance: CharacterAppearance = null
+## The per-body clip lookup (BodyAnimations): the client's group / default rule.
+var _body_anims: BodyAnimations = null
+## characterdata code name -> [walk, run] speed (columns 46/47), every CHAR_ row.
+var _speeds_by_code: Dictionary = {}
+## characterdata code name -> id, for the catalogue's bodies (the Figures).
+var _body_id_by_code: Dictionary = {}
 ## characterdata's Country (column 14) for the player bodies (CHAR_ rows),
 ## keyed by code name: the race emblem's source (round 629).
 var _country_by_code: Dictionary = {}
@@ -1152,13 +1154,13 @@ var _real_skeleton_track: BanReader.Bone
 var _real_skeleton_anim: BanReader.ParsedAnimation
 var _real_skeleton_time := 0.0
 
-## Per gender: the body's `.bsr` path, its animation groups (from the
-## `.bsr` itself -- see BsrReader.AnimationEntry) and a cache of the
-## animations parsed so far, keyed by path -- read once by
-## _load_character_assets(). A gender with no entry here means its body
-## row was not found (or SRREVAMP_PK2_PATH isn't set at all) -- callers
-## fall back to DEFAULT_GENDER, and to the placeholder capsule if even that
-## didn't load.
+## Per body key (a Figure's code name, round 689): {"ref": its characterdata
+## id, "bsr_path", "parsed" (the body `.bsr`, whose groups name its
+## animations -- BsrReader.AnimationEntry), "assembled" (CharacterAppearance's
+## shared template, whose cache holds the clips parsed so far), "race",
+## "woman"} -- made on first use by _body_assets(). A key with no entry yet is
+## a body not drawn so far; one that cannot be built falls back to the
+## default gender's body, and to the placeholder capsule if even that fails.
 var _character_assets: Dictionary = {}
 ## Data.pk2, held open for dressing: every character and every item on one
 ## is assembled out of it. All three archives are opened once and reused --
@@ -1692,7 +1694,7 @@ func _try_initialize_pk2_ui() -> void:
 	# Round 635: a body dressed before the block existed gets its portrait now
 	# (retail's block is created dirty: +0x38c = 1 in its constructor).
 	if _player_skeleton != null and is_instance_valid(_player_skeleton):
-		_refresh_player_portrait(_player_skeleton, _player_equipped_last, _player_gender)
+		_refresh_player_portrait(_player_skeleton, _player_equipped_last, _player_body)
 	_hud_player_info.set_character(NetClient.current_character_name, 1)
 
 	# The active-buff icons right of the player block (round 618): retail's
@@ -7624,11 +7626,13 @@ func _has_roof_overhead(pos: Vector3) -> bool:
 	return not hit.is_empty()
 
 ## Reads, once, everything dressing needs and nothing it does not:
-## Data.pk2 stays open, each gender's body row is looked up in
-## characterdata by code name and its animations parsed, and the item
-## table is read for id -> worn model. Leaves _character_assets empty if
-## SRREVAMP_PK2_PATH isn't set at all, and a gender whose row is missing
-## simply gets no entry.
+## Data.pk2 stays open, the characterdata parts give each body row (and the
+## speed, BCRadius, DecayTime and Country tables), and the item table is read
+## for id -> worn model. Then the builder (CharacterAppearance) is made over
+## them: a bodies-only catalogue from the same characterdata bytes (the 52
+## Figures, CharCatalog's rule) and this item table, so nothing is parsed
+## twice. Each body is assembled the first time a character needs it
+## (_body_assets). Leaves _appearance null if SRREVAMP_PK2_PATH isn't set.
 func _load_character_assets() -> void:
 	_data_pk2 = _open_pk2_if_set()
 	if _data_pk2 == null:
@@ -7640,17 +7644,18 @@ func _load_character_assets() -> void:
 		print("World3D: no Media.pk2 -- no character or item tables, characters stay placeholders")
 		return
 
-	var bodies := {}
 	var speeds := {}
+	var char_parts: Array = []
 	for path in NpcTableReader.MODEL_TABLE_PATHS:
 		var entry := ObjectLoader.find_file(_media_pk2, path)
 		if entry != null:
 			var bytes := _media_pk2.read_file(entry)
-			bodies = NpcTableReader.parse_models_by_code(bytes, bodies)
+			char_parts.append(bytes)
 			speeds = NpcTableReader.parse_speeds_by_code(bytes, speeds)
 			_bc_radius_by_code = NpcTableReader.parse_bc_radius_by_code(bytes, _bc_radius_by_code)
 			_monster_decay_ms_by_code = NpcTableReader.parse_decay_by_code(bytes, _monster_decay_ms_by_code)
 			_country_by_code = NpcTableReader.parse_country_by_code(bytes, _country_by_code)
+	_speeds_by_code = speeds
 	# Every row's BCRadius (column 50), for the attack approach: the player's
 	# body and the monsters' species both feed the reach band.
 	print("World3D: %d BCRadius row(s) from characterdata column 50 (%s: %s)" % [
@@ -7658,15 +7663,9 @@ func _load_character_assets() -> void:
 		str(_bc_radius_by_code.get(GENDER_BODY_CODE[DEFAULT_GENDER], "none"))])
 	print("World3D: %d monster DecayTime row(s) from characterdata column 13 (MOB_CH_MANGNYANG: %s ms)" % [
 		_monster_decay_ms_by_code.size(), str(_monster_decay_ms_by_code.get("MOB_CH_MANGNYANG", "none"))])
-	# The player's run speed is the body row's own (column 47), the number the
-	# server moves the character by; see NpcTableReader.COL_SPEED_RUN.
-	var player_speeds: Array = speeds.get(GENDER_BODY_CODE[DEFAULT_GENDER], [])
-	if player_speeds.size() == 2 and float(player_speeds[1]) > 0.0:
-		_move_speed = float(player_speeds[1])
-		print("World3D: player run speed %.0f units/s (characterdata column 47 of %s; walk %.0f)" % [
-			_move_speed, GENDER_BODY_CODE[DEFAULT_GENDER], float(player_speeds[0])])
-	else:
-		print("World3D: no speed row for %s -- keeping the fallback %.1f units/s" % [GENDER_BODY_CODE[DEFAULT_GENDER], MOVE_SPEED_FALLBACK])
+	# The player's run speed is its body row's own (column 47), set when the
+	# body is known (_apply_player_speed); the default body's until then.
+	_apply_player_speed(GENDER_BODY_CODE[DEFAULT_GENDER])
 	for path in ItemTableReader.TABLE_PATHS:
 		var entry := ObjectLoader.find_file(_media_pk2, path)
 		if entry == null:
@@ -7680,53 +7679,102 @@ func _load_character_assets() -> void:
 				if item.type_ids.size() >= 4:
 					_item_kinds[item.id] = item.type_ids[3]
 
-	for gender in GENDER_BODY_CODE:
-		var code: String = GENDER_BODY_CODE[gender]
-		var bsr_path: String = bodies.get(code, "")
-		if bsr_path == "":
-			printerr("World3D: characterdata has no %s row for the %s body" % [code, gender])
-			continue
-		var bsr_data := AssetSource.read_bytes(bsr_path, _data_pk2)
-		if bsr_data.is_empty():
-			bsr_data = AssetSource.read_bytes("res\\" + bsr_path, _data_pk2)
-		var parsed := BsrReader.parse(bsr_data) if not bsr_data.is_empty() else null
-		if parsed == null or not parsed.is_character:
-			printerr("World3D: %s body %s is not a character .bsr" % [gender, bsr_path])
-			continue
-		var assets := {
-			"bsr_path": bsr_path,
-			"parsed": parsed,
-			"animations": {},
-		}
-		_character_assets[gender] = assets
-		var groups: Array = parsed.animation_groups.keys()
-		print("World3D: %s body is %s (%d pieces, %d animations, groups %s)" % [
-			gender, bsr_path, parsed.all_mesh_paths().size(), parsed.animation_paths.size(), str(groups)])
-	print("World3D: %d item model(s) known from the item table" % _item_models.size())
+	# The bodies (round 689): the catalogue's rule over the parts just read.
+	var t_cat := Time.get_ticks_usec()
+	var bodies := CharCatalog.from_tables(char_parts, [])
+	_appearance = CharacterAppearance.from_catalog(_data_pk2, _media_pk2, bodies, _item_rows)
+	_body_anims = BodyAnimations.new(_data_pk2)
+	for id in bodies.entries:
+		var e: CharCatalog.Entry = bodies.entries[id]
+		if e.is_body:
+			_body_id_by_code[e.code] = e.id
+	print("World3D: %d character bodies from characterdata (%d us); %d item model(s) known from the item table" % [
+		_body_id_by_code.size(), Time.get_ticks_usec() - t_cat, _item_models.size()])
 
-## The animation a gender's body plays for one action, in the animation
-## group a held weapon selects -- the file's own table, with its own
-## fallback to `default` (see BsrReader.ParsedObject.animation_for). Parsed
-## on first use and cached per gender. Null when the body has no animation
-## for it, which the caller treats as "hold the pose".
+## The player's run speed from its body's characterdata row (column 47, the
+## number the server moves the character by; NpcTableReader.COL_SPEED_RUN).
+func _apply_player_speed(code: String) -> void:
+	var player_speeds: Array = _speeds_by_code.get(code, [])
+	if player_speeds.size() == 2 and float(player_speeds[1]) > 0.0:
+		_move_speed = float(player_speeds[1])
+		print("World3D: player run speed %.0f units/s (characterdata column 47 of %s; walk %.0f)" % [
+			_move_speed, code, float(player_speeds[0])])
+	else:
+		print("World3D: no speed row for %s -- keeping %.1f units/s" % [code, _move_speed])
+
+## The body key (a Figure's characterdata code name) of a character: its
+## model's when the server sent one (round 689) and the catalogue holds it,
+## else the body its gender was migrated to (GENDER_BODY_CODE), else the
+## default gender's. "" when there are no bodies at all.
+func _body_key_for(ref_obj_id: int, gender: String) -> String:
+	var cat := _appearance.catalog() if _appearance != null else null
+	var key := WorldBodies.body_key(cat, ref_obj_id, gender)
+	if ref_obj_id > 0 and (cat == null or cat.get_entry(ref_obj_id) == null):
+		print("World3D: model %d is not a creatable body in this archive -- drawn as %s (gender %s)" % [ref_obj_id, key, gender])
+	return key
+
+## The body's assets (see _character_assets), made on first use from the
+## builder's template: the `.bsr` is parsed and the body assembled once, and
+## every character of that Figure shares them. {} when the body cannot be
+## built.
+func _body_assets(body: String) -> Dictionary:
+	if _character_assets.has(body):
+		return _character_assets[body]
+	if _appearance == null or not _body_id_by_code.has(body):
+		return {}
+	var ref: int = _body_id_by_code[body]
+	var tmpl := _appearance.template_for(ref)
+	if tmpl == null or tmpl.parsed == null or not tmpl.parsed.is_character:
+		printerr("World3D: body %s (%d, %s) is not a character .bsr" % [body, ref, _appearance.body_path(ref)])
+		_character_assets[body] = {}
+		return {}
+	var assets := {
+		"ref": ref,
+		"bsr_path": _appearance.body_path(ref),
+		"parsed": tmpl.parsed,
+		"assembled": tmpl,
+		"race": _appearance.race_of(ref),
+		"woman": _appearance.is_woman(ref),
+	}
+	_character_assets[body] = assets
+	print("World3D: body %s is %s (%d, %d pieces, %d animations, groups %s)" % [
+		body, assets["bsr_path"], ref, tmpl.parsed.all_mesh_paths().size(), tmpl.parsed.animation_paths.size(),
+		str(tmpl.parsed.animation_groups.keys())])
+	return assets
+
+## A body's assets, or the default gender's body's when it has none.
+func _body_assets_or_default(body: String) -> Dictionary:
+	var assets := _body_assets(body)
+	if assets.is_empty():
+		assets = _body_assets(String(GENDER_BODY_CODE[DEFAULT_GENDER]))
+	return assets
+
+## Whether a body is a woman's (characterdata column 58), for the skill clips'
+## man / woman folders.
+func _body_is_woman(body: String) -> bool:
+	return bool(_body_assets_or_default(body).get("woman", false))
+
+## The animation a body plays for one action, in the animation group a held
+## weapon selects -- the body's own `.bsr` table with the client's fallback to
+## `default` (BodyAnimations, READ). Parsed on first use and cached per body.
+## Null when the body has no animation for it, which the caller treats as
+## "hold the pose".
 ##
 ## A body whose `.bsr` carries no groups at all falls back to matching the
 ## animation file names against BODY_ANIMATION_HINTS.
-func _body_animation_for(gender: String, action_type: int, group: String = "default") -> BanReader.ParsedAnimation:
-	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
+func _body_animation_for(body: String, action_type: int, group: String = "default") -> BanReader.ParsedAnimation:
+	var assets := _body_assets_or_default(body)
 	if assets.is_empty():
 		return null
+	var assembled: SkinnedBsrAssembler.AssembledCharacter = assets["assembled"]
 	var parsed: BsrReader.ParsedObject = assets["parsed"]
-	var path := parsed.animation_for(action_type, group)
-	if path == "" and parsed.animation_groups.is_empty():
-		path = _hinted_animation_path(parsed.animation_paths, action_type)
+	if not parsed.animation_groups.is_empty():
+		return _body_anims.clip_for(assembled, action_type, group)
+	var path := _hinted_animation_path(parsed.animation_paths, action_type)
 	if path == "":
 		return null
-	# Which entry the clip was found as, for its sound tracks (AnimSounds).
-	var found_group := parsed.animation_group_for(action_type, group)
-	var cache: Dictionary = assets["animations"]
+	var cache: Dictionary = assembled.animation_cache
 	if cache.has(path):
-		_tag_clip(cache[path], action_type, found_group)
 		return cache[path]
 	var bytes := AssetSource.read_bytes(path, _data_pk2)
 	if bytes.is_empty():
@@ -7735,7 +7783,6 @@ func _body_animation_for(gender: String, action_type: int, group: String = "defa
 	if anim != null and anim.bones.is_empty():
 		anim = null
 	cache[path] = anim
-	_tag_clip(anim, action_type, found_group)
 	return anim
 
 ## The name-hint fallback: the first animation path matching the earliest
@@ -7762,24 +7809,27 @@ func _hinted_animation_path(paths: Array, action_type: int) -> String:
 				return path
 	return ""
 
-## The animation group the weapon in a set of equipped items selects.
-func _weapon_group_for(equipped: Dictionary) -> String:
+## The animation group the weapon in a set of equipped items selects on a
+## body (BodyAnimations.group_for_weapon: the client's switch, the fortress
+## weapon by the body's race).
+func _weapon_group_for(equipped: Dictionary, body: String = "") -> String:
 	var weapon_id: int = int(equipped.get(EquipmentNet.SLOT_WEAPON, 0))
 	if weapon_id == 0:
 		return "default"
-	return WEAPON_ANIMATION_GROUP.get(int(_item_kinds.get(weapon_id, 0)), "default")
+	var race := int(_body_assets_or_default(body).get("race", BodyAnimations.RACE_CHINA)) if body != "" else BodyAnimations.RACE_CHINA
+	return BodyAnimations.group_for_weapon(int(_item_kinds.get(weapon_id, 0)), race)
 
 # --- Animation-fired sounds (AnimSounds) ---------------------------------------
 
 ## A player character's sound owner: the PLAYER key family, the sound object
-## of the body's characterdata row (GENDER_BODY_CODE -> PCM_FIGHTER), the
+## of the body's characterdata row (CHAR_CH_MAN_FIGHTER -> PCM_FIGHTER), the
 ## body's own .bsr for its tracks, and the held weapon for its swings.
-func _audio_pc_owner(label: String, gender: String, equipped: Dictionary, node: Node3D) -> AnimSounds.Owner:
+func _audio_pc_owner(label: String, body: String, equipped: Dictionary, node: Node3D) -> AnimSounds.Owner:
 	var owner := AnimSounds.Owner.new()
 	owner.label = label
 	owner.is_pc = true
-	owner.token = _sound_object_for(String(GENDER_BODY_CODE.get(gender, GENDER_BODY_CODE[DEFAULT_GENDER])))
-	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
+	owner.token = _sound_object_for(body if body != "" else String(GENDER_BODY_CODE[DEFAULT_GENDER]))
+	var assets := _body_assets_or_default(body)
 	owner.parsed = assets.get("parsed")
 	owner.node = node
 	owner.weapon_kind = _audio_weapon_kind(equipped)
@@ -7849,9 +7899,15 @@ static func _tag_clip(anim: Object, action_type: int, group: String) -> void:
 	if anim != null and group != "":
 		anim.set_meta(BsrReader.CLIP_META, [action_type, group])
 
-## Builds one fresh character: the gender's body assembled from its own
-## `.bsr` with real skinning, then every worn item hung on it the way its
-## own `.bsr` says (see SkinnedBsrAssembler.attach_item_from_archive).
+## Builds one fresh character through the select and create screens' own
+## builder (CharacterAppearance, round 689): the body of `body` (a Figure's
+## code name, _body_key_for) at the scale byte `scale` -- Height on the node,
+## Volume on the bone groups, both READ -- with every worn item hung the way
+## its own `.bsr` says, a dual axe's or dagger's `_l`/`_r` and a woman's harp
+## `_f`, the client's missing-palette-bone rule, the default wear on an empty
+## chest and legs (round 685) and the body's pieces under what it wears
+## switched off (round 687). Select, create and the world now draw a character
+## identically.
 ##
 ## `equipped` is slot -> item id, straight from the server. Each id is
 ## looked up in the item table for the model it is worn as, so the
@@ -7860,63 +7916,46 @@ static func _tag_clip(anim: Object, action_type: int, group: String) -> void:
 ## the table does not know is skipped with a line in the log, and the
 ## character is drawn without it rather than with a stand-in.
 ##
-## Falls back to DEFAULT_GENDER if gender's assets never loaded (or gender
-## is empty/unrecognized -- an older peer, or an EnterWorldResult without
-## one). Returns null only if even the default's body could not be built.
-## Round 685's review: charactervisualchange.txt's default-wear rows, read once.
-var _default_wear: DefaultWear = null
-
-func _build_assembled_character(equipped: Dictionary = {}, gender: String = DEFAULT_GENDER) -> Skeleton3D:
-	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
-	if assets.is_empty() or _data_pk2 == null:
+## Returns the body's Skeleton3D, its uniform scale the Height factor (READ:
+## the client scales the skeleton's root about the model origin, CCompChar
+## 0xc25460 -> RTSkeleton 0xc4bcb0), with meta "body" and "weapon_group".
+## Falls back to the default gender's body if `body` cannot be built; null
+## only if even that fails.
+func _build_assembled_character(equipped: Dictionary = {}, body: String = "", scale: int = CharacterAppearance.DEFAULT_SCALE) -> Skeleton3D:
+	if _appearance == null:
 		return null
-	var assembled := SkinnedBsrAssembler.assemble_from_archive(_data_pk2, assets["bsr_path"], false)
-	if assembled == null:
+	var assets := _body_assets(body)
+	if assets.is_empty():
+		body = String(GENDER_BODY_CODE[DEFAULT_GENDER])
+		assets = _body_assets(body)
+	if assets.is_empty():
 		return null
-	var worn := 0
-	var blocks: Array = []
+	var items: Array = []
 	for slot in equipped:
 		var item_id: int = int(equipped[slot])
 		if item_id == 0:
 			continue
-		var model: String = _item_models.get(item_id, "")
-		if model == "":
+		if not _item_models.has(item_id):
 			print("World3D: item %d in slot %d has no worn model in the item table -- not drawn" % [item_id, slot])
 			continue
-		var attached := SkinnedBsrAssembler.attach_item_from_archive(_data_pk2, assembled.skeleton, model)
-		if attached != null:
-			worn += 1
-			blocks.append(attached.attachable)
-	# The default wear on an empty chest and legs (round 685's review, READ
-	# FUN_00a5e010 / SetDefaultWear / BuildDefaultWearTypeID -- DefaultWear):
-	# decided from what is worn, by the drawn body's race and sex.
-	if _default_wear == null:
-		_default_wear = DefaultWear.from_archive(_media_pk2)
-	var dw_worn: Array = []
-	for slot in equipped:
-		var row = _item_rows.get(int(equipped[slot]))
-		if row != null:
-			var tids: PackedInt32Array = (row as ItemTableReader.Item).type_ids
-			dw_worn.append({"slot": CharacterAppearance.visual_slot(tids), "type_ids": tids})
-	var body_lower := String(assets["bsr_path"]).to_lower()
-	var dw_race := CharCatalog.RACE_EUROPE if body_lower.contains("europe") else CharCatalog.RACE_CHINA
-	for d in _default_wear.wear_for(dw_race, body_lower.contains("woman"), dw_worn):
-		var dw_attached := SkinnedBsrAssembler.attach_item_from_archive(_data_pk2, assembled.skeleton, d["path"])
-		if dw_attached != null:
-			blocks.append(dw_attached.attachable)
-	# The body's own pieces under what it wears are switched off, as retail
-	# does (round 687, READ CCompChar::FUN_00c1f790 / FUN_00c1f890). The local
-	# player's body and the paper doll are rebuilt on every equipment change
-	# (_apply_player_equipment_visual), so for them an unequip's
-	# show-all-then-re-apply is this same call on the new set. Another
-	# player's body is built once, when they come into view
-	# (_spawn_or_update_other only records a later _other_equipped and does
-	# not redress them -- OPEN, round 687), so its hides follow what they wore
-	# then.
-	var hidden := SkinnedBsrAssembler.apply_body_hides(assembled.skeleton, assembled.parsed, blocks)
+		items.append({"id": item_id, "plus": 0})
+	var built := _appearance.build(int(assets["ref"]), scale, items)
+	if built == null:
+		return null
+	var skeleton := built.skeleton
+	built.remove_child(skeleton)
+	skeleton.scale = built.scale
+	skeleton.set_meta("body", body)
+	skeleton.set_meta("weapon_group", built.weapon_group)
+	var drawn := 0
+	for w in built.worn:
+		if not w.get("default", false) and not (w["nodes"] as Array).is_empty():
+			drawn += 1
 	if not equipped.is_empty():
-		print("World3D: %s wears %d/%d item(s), %d body mesh(es) hidden under them" % [gender, worn, equipped.size(), hidden])
-	return assembled.skeleton
+		print("World3D: %s (scale 0x%02x, height x%.2f) wears %d/%d item(s), %d body mesh(es) hidden under them" % [
+			body, scale, built.height_factor, drawn, equipped.size(), built.hidden_body_meshes])
+	built.free()
+	return skeleton
 
 ## Attaches a freshly-built assembled character (see
 ## _build_assembled_character()) to the player node, hiding the
@@ -7944,17 +7983,32 @@ func _try_apply_real_player_character() -> void:
 func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	_player_equipped_last = equipped
 	var gender := DEFAULT_GENDER
-	if NetClient.last_enter_world_result != null and NetClient.last_enter_world_result.gender != "":
-		gender = NetClient.last_enter_world_result.gender
+	var ref_obj_id := 0
+	var scale := CharacterAppearance.DEFAULT_SCALE
+	var ewr = NetClient.last_enter_world_result
+	if ewr != null and ewr.gender != "":
+		gender = ewr.gender
+	# The character's own model (round 689), from a server that sends it.
+	if ewr != null and ewr.has_model:
+		ref_obj_id = ewr.ref_obj_id
+		scale = ewr.scale
+	# SRREVAMP_QA_BODY="<ref_obj_id>[:<scale>]" (round 689): this body and scale
+	# byte for a run with no server, as a server would name them.
+	var qa_body := _qa_body_spec()
+	if not qa_body.is_empty():
+		ref_obj_id = int(qa_body[0])
+		scale = int(qa_body[1])
+	var body := _body_key_for(ref_obj_id, gender)
 
 	# Worth a log line: "the character renders bare" has had two different
 	# causes so far -- the server not dressing them, and the client not
 	# asking -- and this says which side to look at.
 	print("World3D: player equipment %s" % str(equipped))
 
-	var skeleton := _build_assembled_character(equipped, gender)
+	var skeleton := _build_assembled_character(equipped, body, scale)
 	if skeleton == null:
 		return
+	body = String(skeleton.get_meta("body", body))
 	# Drop the body we were wearing before. This function used to run exactly
 	# once, at login, so nothing freed the old skeleton; now that an equipment
 	# change redresses the character, leaving it would stack a second dressed
@@ -7978,20 +8032,25 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	# name over it (playtest 2026-09-20, item 18).
 	_refresh_player_name_plate()
 	_player_gender = gender
+	if body != _player_body:
+		_apply_player_speed(body)
+	_player_body = body
+	_player_scale = scale
 	_apply_player_race()
-	_player_weapon_group = _weapon_group_for(equipped)
+	_player_weapon_group = _weapon_group_for(equipped, body)
 	# The body's sounds: the footstep material is the cell the walk carries
 	# (_nav_footing), the swing's token the weapon just equipped.
-	var sound_owner := _audio_pc_owner("player", gender, equipped, player)
+	var sound_owner := _audio_pc_owner("player", body, equipped, player)
 	sound_owner.material = func() -> int: return _audio_player_material()
 	sound_owner.hwan = _audio_hwan
 	_anim_sounds.register(skeleton, sound_owner)
-	print("World3D: player animation group %s (stand %s, run %s)" % [
-		_player_weapon_group,
-		_body_animation_path(gender, BsrReader.AnimationEntry.TYPE_STAND, _player_weapon_group),
-		_body_animation_path(gender, BsrReader.AnimationEntry.TYPE_RUN, _player_weapon_group)])
-	_refresh_paper_doll(equipped, gender)
-	_refresh_player_portrait(skeleton, equipped, gender)
+	print("World3D: player body %s (model %d, scale 0x%02x), animation group %s (stand %s, run %s, sit %s)" % [
+		body, ref_obj_id, scale, _player_weapon_group,
+		_body_animation_path(body, BsrReader.AnimationEntry.TYPE_STAND, _player_weapon_group),
+		_body_animation_path(body, BsrReader.AnimationEntry.TYPE_RUN, _player_weapon_group),
+		_body_animation_path(body, BsrReader.AnimationEntry.TYPE_SITTING, _player_weapon_group)])
+	_refresh_paper_doll(equipped, body)
+	_refresh_player_portrait(skeleton, equipped, body)
 
 ## Builds a fresh dressed character (a second copy, not the one on the
 ## player) into the PaperDoll so the equipment window can show it, the way
@@ -7999,7 +8058,7 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 ## equipment changes.
 var _paper_doll: PaperDoll = null
 
-func _refresh_paper_doll(equipped: Dictionary, gender: String) -> void:
+func _refresh_paper_doll(equipped: Dictionary, body: String) -> void:
 	if _hud_panels == null:
 		return
 	if _paper_doll == null:
@@ -8017,7 +8076,7 @@ func _refresh_paper_doll(equipped: Dictionary, gender: String) -> void:
 		_paper_doll.set_active(_hud_panels.paper_doll_shown())
 		_hud_panels.paper_doll_shown_changed.connect(_paper_doll.set_active)
 		_hud_panels.paper_doll_measure_requested.connect(_log_paper_doll_pose)
-	var doll_skeleton := _build_assembled_character(equipped, gender)
+	var doll_skeleton := _build_assembled_character(equipped, body, _player_scale)
 	if doll_skeleton == null:
 		return
 	_paper_doll.set_character(doll_skeleton)
@@ -8026,7 +8085,7 @@ func _refresh_paper_doll(equipped: Dictionary, gender: String) -> void:
 	# posed every physics frame by _tick_idle_animations, and the doll's
 	# SubViewport (UPDATE_ALWAYS) shows it. A stale entry from a previous
 	# equipment change is dropped there when its skeleton is freed.
-	var idle := _body_animation_for(gender, BsrReader.AnimationEntry.TYPE_STAND, _weapon_group_for(equipped))
+	var idle := _body_animation_for(body, BsrReader.AnimationEntry.TYPE_STAND, _weapon_group_for(equipped, body))
 	if idle != null and _frame_count(idle) > 1:
 		Skeleton3DBuilder.apply_ban_pose_at(doll_skeleton, idle, 0.0, true)
 		_animated.append([doll_skeleton, idle, _frame_count(idle), 0.0, true, _idle_anim_time, null])
@@ -8037,17 +8096,17 @@ func _refresh_paper_doll(equipped: Dictionary, gender: String) -> void:
 ## posed with ANI_POSE in the held weapon's group, rendered once. Retail
 ## re-renders on the same occasions: the item-move reply and the avatar's
 ## reset mark the block dirty (FUN_007b4c00), and this runs on every dress.
-func _refresh_player_portrait(body: Skeleton3D, equipped: Dictionary, gender: String) -> void:
-	if _hud_player_info == null or body == null or not is_instance_valid(body):
+func _refresh_player_portrait(skel: Skeleton3D, equipped: Dictionary, body: String) -> void:
+	if _hud_player_info == null or skel == null or not is_instance_valid(skel):
 		return
-	var copy := body.duplicate() as Skeleton3D
+	var copy := skel.duplicate() as Skeleton3D
 	if copy == null:
 		return
-	var pose := _body_animation_for(gender, PlayerPortrait.ANI_POSE, _weapon_group_for(equipped))
+	var pose := _body_animation_for(body, PlayerPortrait.ANI_POSE, _weapon_group_for(equipped, body))
 	_hud_player_info.set_portrait(copy, pose)
 	var p := _hud_player_info.portrait()
 	print("World3D: portrait dressed (%s, pose %s, %d us, %d material(s) left as they were)" % [
-		gender, _body_animation_path(gender, PlayerPortrait.ANI_POSE, _weapon_group_for(equipped)),
+		body, _body_animation_path(body, PlayerPortrait.ANI_POSE, _weapon_group_for(equipped, body)),
 		p.last_build_usec if p != null else -1, p.unmapped_materials if p != null else -1])
 
 ## The doll's hands and head in its 176x318 picture, and where the weapon
@@ -8077,7 +8136,7 @@ func _set_other_gait(character_id: int, moving: bool) -> void:
 		gait["sitting"] = false
 		_other_seated.erase(character_id)
 	var action := BsrReader.AnimationEntry.TYPE_RUN if moving else BsrReader.AnimationEntry.TYPE_STAND
-	var anim := _body_animation_for(gait["gender"], action, gait["group"])
+	var anim := _body_animation_for(gait["body"], action, gait["group"])
 	var frames := _frame_count(anim)
 	if frames <= 1:
 		return
@@ -8120,7 +8179,7 @@ func _play_skill_cast_anim(anim_base: String) -> float:
 		# whatsoever, which is the shape the playtest reported.
 		print("World3D: no archive for a cast clip -- falling back to the weapon swing")
 		return _play_weapon_swing_anim()
-	var gender_dir := "woman" if _player_gender == "china_woman" else "man"
+	var gender_dir := "woman" if _body_is_woman(_player_body) else "man"
 	var path := "Prim\\Ani\\Char\\China\\%s\\%s.ban" % [gender_dir, anim_base]
 	var bytes := AssetSource.read_bytes(path, _data_pk2)
 	if bytes.is_empty():
@@ -8157,13 +8216,13 @@ func _play_self_cast_anim(basic_code: String, anim_base: String) -> float:
 			var group: String = String(plan.get("group", ""))
 			if group == "":
 				group = _player_weapon_group
-			var anim := _body_animation_for(_player_gender, t, group)
+			var anim := _body_animation_for(_player_body, t, group)
 			if anim == null:
 				print("CAST ANIM: %s -- WAIT action type %d has no entry in the body for group '%s': nothing played" % [
 					basic_code, t, group])
 				return 0.0
 			print("CAST ANIM: %s -- WAIT action type %d, group %s (%s)" % [basic_code, t, group,
-				_body_animation_path(_player_gender, t, group)])
+				_body_animation_path(_player_body, t, group)])
 			return _play_player_once(anim)
 	return _play_skill_cast_anim(anim_base)
 
@@ -8204,10 +8263,10 @@ func _play_weapon_swing_anim() -> float:
 	types.append(BsrReader.AnimationEntry.TYPE_ATTACK)
 	for t in types:
 		var action_type: int = int(t)
-		var entry := _body_animation_entry(_player_gender, action_type, _player_weapon_group)
+		var entry := _body_animation_entry(_player_body, action_type, _player_weapon_group)
 		if entry == null:
 			continue
-		var swing := _body_animation_for(_player_gender, entry.action_type, _player_weapon_group)
+		var swing := _body_animation_for(_player_body, entry.action_type, _player_weapon_group)
 		if swing == null:
 			continue
 		var played := _play_player_once(swing)
@@ -8771,7 +8830,7 @@ func _select_self() -> void:
 	_selected_character = own
 	if _hud_target != null:
 		_hud_target.show_player(NetClient.current_character_name,
-			_fx_owner_key(own, SkillNet.OWNER_CHARACTER), _race_of_gender(_player_gender))
+			_fx_owner_key(own, SkillNet.OWNER_CHARACTER), _race_of_body(_player_body))
 	print("World3D: selected this player (%d, %s)" % [own, NetClient.current_character_name])
 
 func _select_character(character_id: int, char_name: String) -> void:
@@ -8779,8 +8838,8 @@ func _select_character(character_id: int, char_name: String) -> void:
 	_selected_character = character_id
 	var race := -1
 	var body = _other_bodies.get(character_id)
-	if body != null and is_instance_valid(body) and (body as Node).has_meta("gender"):
-		race = _race_of_gender(String((body as Node).get_meta("gender")))
+	if body != null and is_instance_valid(body) and (body as Node).has_meta("body"):
+		race = _race_of_body(String((body as Node).get_meta("body")))
 	if _hud_target != null:
 		_hud_target.show_player(char_name, _fx_owner_key(character_id, SkillNet.OWNER_CHARACTER), race)
 	print("World3D: selected player %d (%s), race %d" % [character_id, char_name, race])
@@ -8800,11 +8859,10 @@ func _target_exists(owner_key: String) -> bool:
 	return _other_bodies.has(id)
 
 ## A character's race for the target window's emblem (round 638): the Country
-## (characterdata column 14) of the body its Gender draws -- srrevamp's Gender
-## stands in for the reference object retail reads +0x9c of (0x69b143). -1
+## (characterdata column 14) of the body it is drawn with -- since round 689
+## its own model, the reference object retail reads +0x9c of (0x69b143). -1
 ## when the table has no row for it: no emblem rather than a guessed one.
-func _race_of_gender(gender: String) -> int:
-	var code := String(GENDER_BODY_CODE.get(gender, ""))
+func _race_of_body(code: String) -> int:
 	if code == "" or not _country_by_code.has(code):
 		return -1
 	return int(_country_by_code[code])
@@ -8826,7 +8884,7 @@ func _friend_band(skill_id: int) -> Dictionary:
 	var skill: Dictionary = _hud_panels.skill_reach(skill_id) if _hud_panels != null else {}
 	if skill.is_empty():
 		return {}
-	var body_code: String = GENDER_BODY_CODE.get(_player_gender, GENDER_BODY_CODE[DEFAULT_GENDER])
+	var body_code: String = _player_body if _player_body != "" else String(GENDER_BODY_CODE[DEFAULT_GENDER])
 	var caster_bc := int(_bc_radius_by_code.get(body_code, CombatNet.PLAYER_BC_RADIUS))
 	return {"band": CombatNet.approach_band(caster_bc, CombatNet.PLAYER_BC_RADIUS,
 		CombatNet.effective_range(int(skill["range"]), _equipped_weapon_range()))}
@@ -9035,7 +9093,7 @@ func _play_other_cast_anim(character_id: int, skill_id: int) -> float:
 	if code == "" or code == SkillAudio.NONE:
 		return 0.0
 	var skel: Skeleton3D = gait["skeleton"]
-	var gender := String(gait["gender"])
+	var body := String(gait["body"])
 	var group := String(gait["group"])
 	var plan := SkillEffectReader.cast_body_anim(SkillEffectReader.aniset_for(_skill_anisets(), code))
 	match String(plan["kind"]):
@@ -9043,7 +9101,7 @@ func _play_other_cast_anim(character_id: int, skill_id: int) -> float:
 			return 0.0
 		"wait":
 			var g := String(plan.get("group", ""))
-			var wait := _body_animation_for(gender, int(plan["type"]), g if g != "" else group)
+			var wait := _body_animation_for(body, int(plan["type"]), g if g != "" else group)
 			return _play_once(skel, wait) if wait != null else 0.0
 	var anim_base := code.to_lower()
 	var us := anim_base.rfind("_")
@@ -9051,14 +9109,14 @@ func _play_other_cast_anim(character_id: int, skill_id: int) -> float:
 		anim_base = anim_base.substr(0, us)
 	var anim: BanReader.ParsedAnimation = null
 	if _data_pk2 != null:
-		var path := "Prim\\Ani\\Char\\China\\%s\\%s.ban" % ["woman" if gender == "china_woman" else "man", anim_base]
+		var path := "Prim\\Ani\\Char\\China\\%s\\%s.ban" % ["woman" if _body_is_woman(body) else "man", anim_base]
 		var bytes := AssetSource.read_bytes(path, _data_pk2)
 		if not bytes.is_empty():
 			anim = BanReader.parse(bytes)
 			if anim != null and anim.bones.is_empty():
 				anim = null
 	if anim == null:
-		anim = _body_animation_for(gender, BsrReader.AnimationEntry.TYPE_ATTACK, group)
+		anim = _body_animation_for(body, BsrReader.AnimationEntry.TYPE_ATTACK, group)
 	return _play_once(skel, anim) if anim != null else 0.0
 
 ## The ground-pick mode's cursor. OURS: retail's ground-cast cursor (and its
@@ -9270,13 +9328,13 @@ func _attack_band(monster_id: int, skill_id: int) -> Dictionary:
 	var species: String = snap.code_name
 	if species == "" or not _bc_radius_by_code.has(species):
 		return {"why": "no characterdata BCRadius row for species '%s'" % species}
-	# The player's own body row (GENDER_BODY_CODE). The client reads the row;
+	# The player's own body row (_player_body). The client reads the row;
 	# the server reads none -- keepUpInReach/skillInReach (session/keepup.go)
 	# pass the constant combat.PlayerBCRadius for every attacker. The two agree
 	# because all 52 CHAR_* rows read 4 (re-counted round 523 over the box's
 	# six characterdata data files); a table whose body rows differed would
 	# split them. The constant is also the fallback when the row is absent.
-	var body_code: String = GENDER_BODY_CODE.get(_player_gender, GENDER_BODY_CODE[DEFAULT_GENDER])
+	var body_code: String = _player_body if _player_body != "" else String(GENDER_BODY_CODE[DEFAULT_GENDER])
 	var caster_bc := int(_bc_radius_by_code.get(body_code, CombatNet.PLAYER_BC_RADIUS))
 	var weapon_range := _equipped_weapon_range()
 	return {"band": CombatNet.approach_band(caster_bc, int(_bc_radius_by_code[species]),
@@ -9457,15 +9515,15 @@ func _send_attack(monster_id: int, skill_id: int, basic_code: String) -> void:
 	NetClient.use_skill(NetClient.current_character_name, skill_id, monster_id)
 
 ## The group entry behind _body_animation_for, for its events.
-func _body_animation_entry(gender: String, action_type: int, group: String) -> BsrReader.AnimationEntry:
-	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
+func _body_animation_entry(body: String, action_type: int, group: String) -> BsrReader.AnimationEntry:
+	var assets := _body_assets_or_default(body)
 	if assets.is_empty():
 		return null
-	return (assets["parsed"] as BsrReader.ParsedObject).animation_entry_for(action_type, group)
+	return BodyAnimations.entry_for(assets["parsed"], action_type, group)
 
 ## The path _body_animation_for would parse, for a log line.
-func _body_animation_path(gender: String, action_type: int, group: String) -> String:
-	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
+func _body_animation_path(body: String, action_type: int, group: String) -> String:
+	var assets := _body_assets_or_default(body)
 	if assets.is_empty():
 		return ""
 	return (assets["parsed"] as BsrReader.ParsedObject).animation_for(action_type, group).get_file()
@@ -10600,6 +10658,14 @@ func _update_blob_shadow() -> void:
 ##                          then click the talk box's line for that teleportdata
 ##                          id: `QA TELEPORT: requested <gate> -> <dest>`
 ##                          (_qa_advance_teleport)
+##   SRREVAMP_QA_BODY="<ref_obj_id>[:<scale>]"  the player's model and scale
+##                          byte when no server names them (round 689; e.g.
+##                          "14875:0x24", the Europe noble man at Height 4)
+##   SRREVAMP_QA_LINEUP=all|<ids>|none  the creatable Figures spawned through
+##                          the other-player path and measured per action
+##                          phase -- posed or T-posed, feet against the
+##                          ground -- as `LINEUP` lines (QaLineup has the
+##                          companion variables; round 689)
 ##   SRREVAMP_QA_EQUIP="s=id,.." dress the player from this loadout when no
 ##                          server is present: "slot=item_id" pairs (slots per
 ##                          EquipmentNet, e.g. "1=3637,4=3638,5=3639,6=3632"
@@ -12184,6 +12250,28 @@ func _qa_mob_move() -> void:
 ## the (2 * radius + 1)^2 regions of the load window, at the player's height.
 const QA_MOB_SPECIES := 24
 var _qa_mobs_done := false
+## SRREVAMP_QA_LINEUP (round 689, QaLineup): the creatable Figures spawned
+## through the other-player path in front of the player and measured --
+## posed or T-posed, feet against the ground -- per action phase. QA only.
+var _qa_lineup: QaLineup = QaLineup.from_env(self)
+
+## SRREVAMP_QA_BODY="<ref_obj_id>[:<scale>]" (round 689): the player's model
+## and scale byte for a run with no server (a server names them in its
+## enter-world result). [] when unset or malformed.
+func _qa_body_spec() -> Array:
+	var spec := OS.get_environment("SRREVAMP_QA_BODY")
+	if spec == "":
+		return []
+	var kv := spec.split(":")
+	if not kv[0].is_valid_int():
+		printerr("World3D: SRREVAMP_QA_BODY: bad model '%s' (want <ref_obj_id>[:<scale>])" % spec)
+		return []
+	var scale := CharacterAppearance.DEFAULT_SCALE
+	if kv.size() > 1:
+		var t := kv[1].strip_edges()
+		scale = t.substr(2).hex_to_int() if t.begins_with("0x") else int(t)
+	print("World3D: QA body %d, scale 0x%02x" % [int(kv[0]), scale])
+	return [int(kv[0]), scale]
 func _qa_mobs_step() -> void:
 	if _qa_mobs_done or not _grid_has_origin:
 		return
@@ -13435,6 +13523,9 @@ func _physics_step(delta: float) -> void:
 		_qa_split.heights_usec += Time.get_ticks_usec() - split_sw
 	# SRREVAMP_QA_MOBS (round 655): a dense monster list, once.
 	_qa_mobs_step()
+	# SRREVAMP_QA_LINEUP (round 689): the Figures as other players, measured.
+	if _qa_lineup != null:
+		_qa_lineup.step(delta)
 	# The monster bodies a list queued, a frame's budget of them (round 655).
 	split_sw = Time.get_ticks_usec()
 	_pump_monster_builds()
@@ -13678,7 +13769,7 @@ func _physics_step(delta: float) -> void:
 	# Map objects that move -- trees, reeds, tentacles (round 645).
 	_tick_map_animations()
 
-	if _player_skeleton != null and _character_assets.has(_player_gender):
+	if _player_skeleton != null and not _body_assets(_player_body).is_empty():
 		# The game's default gait is a run -- `chinaman_fighter_runforward`
 		# is the type-7 entry, and it is the one a held sword replaces with
 		# its own (`_runforward_sword`) -- so moving plays the run of the
@@ -13694,7 +13785,7 @@ func _physics_step(delta: float) -> void:
 			action = BsrReader.AnimationEntry.TYPE_STAND_BATTLE
 		else:
 			action = BsrReader.AnimationEntry.TYPE_STAND
-		var anim := _body_animation_for(_player_gender, action, _player_weapon_group)
+		var anim := _body_animation_for(_player_body, action, _player_weapon_group)
 		_player_anim_time += delta
 		if _player_one_shot != null:
 			var elapsed := _player_anim_time - _player_one_shot_start
@@ -13918,7 +14009,11 @@ func _step_remote_turns(delta: float) -> void:
 ## object, whose mover starts with none: 0x9e0cd0 zeroes +0xa4). NAN (a list,
 ## an older server) leaves the facing as it is. A snapshot is a placement, not
 ## a walk, so it never aims the body.
-func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, gender: String = DEFAULT_GENDER, heading: float = NAN) -> void:
+##
+## `body` and `scale` (round 689) are the character's own model -- a Figure's
+## code name (_body_key_for of the snapshot's RefObjID, or of its gender from
+## an older server) and its scale byte -- drawn as the local player's is.
+func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, equipped: Dictionary = {}, body: String = "", heading: float = NAN, scale: int = CharacterAppearance.DEFAULT_SCALE) -> void:
 	if not equipped.is_empty():
 		_other_equipped[character_id] = equipped
 	if _other_bodies.has(character_id):
@@ -13932,37 +14027,38 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 			_remote_turns.erase(drawn.get_instance_id())
 		return
 
-	var body := Node3D.new()
-	body.position = pos
+	var node := Node3D.new()
+	node.position = pos
 	if not is_nan(heading):
-		body.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
+		node.rotation.y = RemoteFacing.yaw_of(heading, 0.0)
 
-	# The same body and the same dressing as the local player: their
-	# Gender and every worn item's id come in the snapshot (see genderOf
-	# and equippedItems in server/internal/session/world.go, both queried
-	# live), and each item is drawn from its own model. Falls back to the
-	# labeled placeholder capsule if the bodies never loaded.
-	var skeleton := _build_assembled_character(equipped, gender)
+	# The same builder and the same dressing as the local player: their
+	# model, scale byte and every worn item's id come in the snapshot (see
+	# bodyOf and equippedItems in server/internal/session/world.go, both
+	# queried live), and each item is drawn from its own model. Falls back to
+	# the labeled placeholder capsule if the bodies never loaded.
+	var skeleton := _build_assembled_character(equipped, body, scale)
 	if skeleton != null:
 		# Same 180deg front correction as the local player (see
 		# _try_apply_real_player_character) -- the body's own front is -Z, and
 		# the node points +Z where it moves/faces.
 		skeleton.rotation.y = PI
-		body.add_child(skeleton)
+		node.add_child(skeleton)
 		# Another player stands in the town idle of the group their weapon
 		# selects, and runs while their body is still catching up to a
 		# position update (see _set_other_gait). Without this they stood
 		# in the bind pose, arms out, which no character in the game does.
-		var group := _weapon_group_for(equipped)
-		_other_gaits[character_id] = {"skeleton": skeleton, "gender": gender, "group": group, "moving": false}
+		body = String(skeleton.get_meta("body", body))
+		var group := _weapon_group_for(equipped, body)
+		_other_gaits[character_id] = {"skeleton": skeleton, "body": body, "scale": scale, "group": group, "moving": false}
 		# Their sounds come from where their body is; the cell under them is
 		# found from the height (_audio_material_at), not carried as the
 		# local player's is. Their berserk arrives as their body mode (round
 		# 651, _berserk_apply), which turns their swings to the hwan ones.
-		var owner := _audio_pc_owner("player %d" % character_id, gender, equipped, body)
-		owner.material = func() -> int: return _audio_material_at(body.global_position, -2) if is_instance_valid(body) else -1
+		var owner := _audio_pc_owner("player %d" % character_id, body, equipped, node)
+		owner.material = func() -> int: return _audio_material_at(node.global_position, -2) if is_instance_valid(node) else -1
 		_anim_sounds.register(skeleton, owner)
-		var idle := _body_animation_for(gender, BsrReader.AnimationEntry.TYPE_STAND, group)
+		var idle := _body_animation_for(body, BsrReader.AnimationEntry.TYPE_STAND, group)
 		var frames := _frame_count(idle)
 		if frames > 1:
 			_animated.append([skeleton, idle, frames, float(_animated.size()) * 0.37, true, _idle_anim_time, null])
@@ -13976,22 +14072,23 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 		mat.albedo_color = Color(0.9, 0.3, 0.3)
 		mesh.material_override = mat
 		mesh.position.y = 0.9 * PLAYER_SCALE_RATIO
-		body.add_child(mesh)
+		node.add_child(mesh)
 
 	# The same plate as an NPC's -- fixed screen size, outlined, shown only
 	# within range -- over the assembled body's own height.
 	var top := _skeleton_top(skeleton) if skeleton != null else 1.8 * PLAYER_SCALE_RATIO
-	body.add_child(_name_plate(char_name, top))
+	node.add_child(_name_plate(char_name, top))
 
 	# A click body on its own layer (round 622), so the player can be selected.
-	body.set_meta("character_id", character_id)
-	body.set_meta("character_name", char_name)
-	# Its Gender, for the target window's race emblem (round 638).
-	body.set_meta("gender", gender)
-	body.add_child(_other_player_collider(top))
+	node.set_meta("character_id", character_id)
+	node.set_meta("character_name", char_name)
+	# Its body key, for the target window's race emblem (round 638; its own
+	# model since round 689).
+	node.set_meta("body", body)
+	node.add_child(_other_player_collider(top))
 
-	other_entities.add_child(body)
-	_other_bodies[character_id] = body
+	other_entities.add_child(node)
+	_other_bodies[character_id] = node
 	_other_body_targets[character_id] = pos
 	# The auras of the buffs this client holds for them go on the new body
 	# (round 646): a zone change's arrival list and the world entry build the
@@ -14002,7 +14099,12 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	_berserk_resync(character_id, "their body was built")
 	# They fade into existence over 2.0 s, as a monster does (round 676,
 	# AppearFade: READ, CICUser vslot 0x6c FUN_009dbcc0 -> FUN_009d17e0).
-	_appear_fades.start(body)
+	_appear_fades.start(node)
+
+## Another player's body key: their model's (round 689), or their gender's from
+## an older server (_body_key_for).
+func _snapshot_body(snapshot: WorldNet.EntitySnapshot) -> String:
+	return _body_key_for(snapshot.ref_obj_id if snapshot.has_model else 0, snapshot.gender)
 
 func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 	# During a zone change's load the old zone's bodies are still drawn and
@@ -14013,7 +14115,8 @@ func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 		_arrival_entries[snapshot.character_id] = snapshot
 		_log_system("%s entered the zone." % snapshot.char_name)
 		return
-	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.equipped, snapshot.gender, snapshot.heading)
+	_spawn_or_update_other(snapshot.character_id, snapshot.char_name, Vector3(snapshot.x, snapshot.y, snapshot.z), snapshot.equipped,
+		_snapshot_body(snapshot), snapshot.heading, snapshot.scale if snapshot.has_model else CharacterAppearance.DEFAULT_SCALE)
 	_log_system("%s entered the zone." % snapshot.char_name)
 
 ## Another player's position (OpEntityMoved): their body's new walk target,
@@ -17007,12 +17110,12 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	# when the monster's own hit reaction plays.
 	var swing_type: int = ATTACK_SEQUENCE[_attack_step % ATTACK_SEQUENCE.size()]
 	_attack_step += 1
-	var swing_entry := _body_animation_entry(_player_gender, swing_type, _player_weapon_group)
+	var swing_entry := _body_animation_entry(_player_body, swing_type, _player_weapon_group)
 	if swing_entry == null:
-		swing_entry = _body_animation_entry(_player_gender, BsrReader.AnimationEntry.TYPE_ATTACK, _player_weapon_group)
+		swing_entry = _body_animation_entry(_player_body, BsrReader.AnimationEntry.TYPE_ATTACK, _player_weapon_group)
 	var lands_after := 0.0
 	if swing_entry != null:
-		var swing := _body_animation_for(_player_gender, swing_entry.action_type, _player_weapon_group)
+		var swing := _body_animation_for(_player_body, swing_entry.action_type, _player_weapon_group)
 		if swing != null:
 			_play_player_once(swing)
 		var hit_ms := swing_entry.first_event_time(BsrReader.AnimationEntry.EVENT_HIT)
@@ -17389,14 +17492,14 @@ func _play_player_struck() -> void:
 	if _player_dead:
 		_play_player_death_pose()
 		return
-	var hit := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
+	var hit := _body_animation_for(_player_body, BsrReader.AnimationEntry.TYPE_HIT, _player_weapon_group)
 	if hit != null:
 		_play_player_once(hit)
 
 ## Plays the die clip once and holds its last frame (_player_one_shot_hold).
 ## A body with no such clip keeps whatever it plays.
 func _play_player_death_pose() -> void:
-	_hold_player_one_shot(_body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_DIE, _player_weapon_group))
+	_hold_player_one_shot(_body_animation_for(_player_body, BsrReader.AnimationEntry.TYPE_DIE, _player_weapon_group))
 
 ## Plays `die` once and holds it -- only if it STARTED (round 550): a clip of
 ## one frame, or none, starts nothing (_play_player_once), and setting the
@@ -17590,7 +17693,7 @@ func _play_other_hit(character_id: int) -> void:
 	var gait: Dictionary = _other_gaits.get(character_id, {})
 	if gait.is_empty() or not is_instance_valid(gait["skeleton"]):
 		return
-	var hit := _body_animation_for(gait["gender"], BsrReader.AnimationEntry.TYPE_HIT, gait["group"])
+	var hit := _body_animation_for(gait["body"], BsrReader.AnimationEntry.TYPE_HIT, gait["group"])
 	if hit != null:
 		_play_once(gait["skeleton"], hit)
 
@@ -18711,22 +18814,22 @@ func _apply_player_motion(value: int) -> void:
 	var what := _sit.answer(value, _player_anim_time)
 	match what:
 		"sit_down", "sit":
-			var loop := _body_animation_path(_player_gender, BsrReader.AnimationEntry.TYPE_SITTING, _player_weapon_group)
+			var loop := _body_animation_path(_player_body, BsrReader.AnimationEntry.TYPE_SITTING, _player_weapon_group)
 			if what == "sit_down":
-				var down := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_SIT_DOWN, _player_weapon_group)
+				var down := _body_animation_for(_player_body, BsrReader.AnimationEntry.TYPE_SIT_DOWN, _player_weapon_group)
 				if _play_player_once(down) > 0.0:
 					_player_sit_clip = down
 				print("SIT: player sits -- clip %s (action type 13), then %s (type 14, loop)" % [
-					_body_animation_path(_player_gender, BsrReader.AnimationEntry.TYPE_SIT_DOWN, _player_weapon_group), loop])
+					_body_animation_path(_player_body, BsrReader.AnimationEntry.TYPE_SIT_DOWN, _player_weapon_group), loop])
 			else:
 				print("SIT: player sits -- clip %s (type 14, loop)" % loop)
 		"stand_up", "stand":
 			if what == "stand_up":
-				var up := _body_animation_for(_player_gender, BsrReader.AnimationEntry.TYPE_STAND_UP, _player_weapon_group)
+				var up := _body_animation_for(_player_body, BsrReader.AnimationEntry.TYPE_STAND_UP, _player_weapon_group)
 				if _play_player_once(up) > 0.0:
 					_player_sit_clip = up
 				print("SIT: player stands -- clip %s (action type 15)" % _body_animation_path(
-					_player_gender, BsrReader.AnimationEntry.TYPE_STAND_UP, _player_weapon_group))
+					_player_body, BsrReader.AnimationEntry.TYPE_STAND_UP, _player_weapon_group))
 		_:
 			print("SIT: motion value %d for the player is not one srrevamp plays" % value)
 
@@ -18760,7 +18863,8 @@ func _spawn_result_others(others: Array, seated: Array) -> void:
 	for other in others:
 		# Each faces its heading from the list's tail (round 637's review
 		# follow-up; NAN from an older server).
-		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped, other.gender, other.heading)
+		_spawn_or_update_other(other.character_id, other.char_name, Vector3(other.x, other.y, other.z), other.equipped,
+			_snapshot_body(other), other.heading, other.scale if other.has_model else CharacterAppearance.DEFAULT_SCALE)
 	for id in seated:
 		if not _other_bodies.has(int(id)):
 			continue
@@ -18769,10 +18873,10 @@ func _spawn_result_others(others: Array, seated: Array) -> void:
 		if gait.is_empty() or not is_instance_valid(gait["skeleton"]):
 			continue
 		gait["sitting"] = true
-		var loop := _body_animation_for(gait["gender"], BsrReader.AnimationEntry.TYPE_SITTING, gait["group"])
+		var loop := _body_animation_for(gait["body"], BsrReader.AnimationEntry.TYPE_SITTING, gait["group"])
 		MonsterMotion.swap_loop(_animated, gait["skeleton"], loop, _frame_count(loop), _idle_anim_time)
 		print("SIT: player %d drawn seated on spawn -- loop %s (type 14)" % [int(id),
-			_body_animation_path(gait["gender"], BsrReader.AnimationEntry.TYPE_SITTING, gait["group"])])
+			_body_animation_path(gait["body"], BsrReader.AnimationEntry.TYPE_SITTING, gait["group"])])
 
 ## Another player's answer: the sitting loop under the sit-down clip, or the
 ## stand loop under the stand-up clip, from their own body's table.
@@ -18799,15 +18903,15 @@ func _apply_other_motion(character_id: int, value: int) -> void:
 				once_type = BsrReader.AnimationEntry.TYPE_STAND_UP
 		_:
 			return
-	var loop := _body_animation_for(gait["gender"], loop_type, gait["group"])
+	var loop := _body_animation_for(gait["body"], loop_type, gait["group"])
 	MonsterMotion.swap_loop(_animated, gait["skeleton"], loop, _frame_count(loop), _idle_anim_time)
 	if once_type != -1:
-		var once := _body_animation_for(gait["gender"], once_type, gait["group"])
+		var once := _body_animation_for(gait["body"], once_type, gait["group"])
 		if once != null:
 			_play_once(gait["skeleton"], once)
 	print("SIT: player %d %s -- loop %s (type %d)%s" % [character_id, "sits" if value == WorldNet.MOTION_SIT else "stands",
-		_body_animation_path(gait["gender"], loop_type, gait["group"]), loop_type,
-		"" if once_type == -1 else ", once %s (type %d)" % [_body_animation_path(gait["gender"], once_type, gait["group"]), once_type]])
+		_body_animation_path(gait["body"], loop_type, gait["group"]), loop_type,
+		"" if once_type == -1 else ", once %s (type %d)" % [_body_animation_path(gait["body"], once_type, gait["group"]), once_type]])
 
 # --- A monster appearing (round 540) ------------------------------------------
 
@@ -19199,7 +19303,7 @@ func _stat_panel_on_equipment(items: Array, error: String) -> void:
 func _apply_player_race() -> void:
 	if _hud_player_info == null:
 		return
-	var code: String = GENDER_BODY_CODE.get(_player_gender, GENDER_BODY_CODE[DEFAULT_GENDER])
+	var code: String = _player_body if _player_body != "" else String(GENDER_BODY_CODE[DEFAULT_GENDER])
 	if not _country_by_code.has(code):
 		print("World3D: no characterdata Country for %s -- no race emblem" % code)
 		return
@@ -19432,7 +19536,7 @@ func _skill_effects() -> Dictionary:
 ## use).
 func _player_world_height() -> float:
 	if _player_skeleton != null and is_instance_valid(_player_skeleton):
-		var h := _skeleton_top(_player_skeleton) * _player_skeleton.scale.y
+		var h := _skeleton_top(_player_skeleton)  # _skeleton_bounds already applies the skeleton's scale (Height, round 689)
 		if h > 0.1:
 			return h
 	return 2.0 * PLAYER_SCALE_RATIO

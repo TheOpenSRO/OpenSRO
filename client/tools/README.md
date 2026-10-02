@@ -518,6 +518,28 @@ frames, `--shrink=<f>` scales every body piece towards its bones first, `--bind`
 and `--norender` skips the lineups. `probe_body_armour.gd --body=<.bsr> --items=<a.bsr,b.bsr>` counts
 an item's vertices that sit on a body vertex (headless; pass paths with `/`, which survive the ssh).
 
+### Bodies in the world: clips, T-poses and feet (round 689)
+
+`body_anim_probe.gd` (headless, `remote_godot.sh script`) builds every one of the 52 Figures and,
+for each core action (stand, walk, run, the four plain-attack types, hit, die, sit down, sit, stand
+up) in `default` and every weapon group the race can hold, resolves the clip and checks it plays
+(the file is there, parses and drives the skeleton's bones). `--lookup=world` is BodyAnimations
+(the client's READ rule); `--lookup=old` the lookup World3D used before round 689, for the
+before/after. A clip that does not play prints `TPOSE ...` and `PARITY FAIL`; `FIGURE` lines give
+each body's lowest skinned point at bind and at its stand clip's first frame (`feet`).
+
+In the world, `SRREVAMP_QA_LINEUP` (scripts/world/qa_lineup.gd) spawns the Figures through the
+other-player path and prints a `LINEUP` line per body per phase (`posed yes|TPOSE`, `feet` against
+the walkable surface) and a `LINEUP SUMMARY`; `SRREVAMP_QA_LINEUP_SHOTS=<dir>` saves the screen.
+It needs a GL context; the lane runs it under its own lock, in real time and without the movie
+writer, e.g. `/var/tmp/world689/gl.sh <out> <env file>` with `SRREVAMP_MAPM_PATH=97\168.m`,
+`SRREVAMP_QA_AT=1002,1100`, `SRREVAMP_QA_LINEUP=all`, `SRREVAMP_QA_LINEUP_WEAPONS=each`,
+`SRREVAMP_QA_LINEUP_ACTIONS=stand,run,sit,attack`, `SRREVAMP_QA_LINEUP_QUIT=1`. With
+`SRREVAMP_QA_LINEUP=none` and `SRREVAMP_QA_SERVER` it measures the player and the server's other
+players instead (`SRREVAMP_QA_CREATE=ref:scale:chest:legs:feet:weapon` makes the character; the
+live pair is `/var/tmp/world689/live.sh`). The world needs `SRREVAMP_MAPM_PATH` offline: without it
+the grid builds no cells and the lineup never finds ground.
+
 ### Load benchmark
 
 Every map and loading change is measured on the two runs below, before and after, and on nothing

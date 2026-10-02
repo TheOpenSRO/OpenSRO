@@ -108,22 +108,9 @@ const BONE_GROUP_NAMES := [
 ]
 const DEFAULT_SCALE := 0x22
 
-## A held weapon's TypeID4 -> the body's animation group. The same table as
-## World3D.WEAPON_ANIMATION_GROUP (round 318, READ); character_appearance_test
-## holds the two equal so they cannot drift.
-const WEAPON_ANIMATION_GROUP := {
-	2: "sword", 3: "sword",
-	4: "spear", 5: "spear",
-	6: "bow", 12: "bow",
-	7: "onehand_sword",
-	8: "twohand_sword",
-	9: "dual_axe",
-	10: "onehand_staff", 15: "onehand_staff",
-	11: "twohand_staff",
-	13: "dagger",
-	14: "harf",
-	16: "sword",
-}
+## A held weapon's TypeID4 -> the body's animation group: BodyAnimations
+## (round 689; READ FUN_00a5a7d0, the fortress weapon by race), the one table
+## the world and the screens share.
 
 ## Visual slots (READ, ResolveVisualSlotForItem 0x9db5e0). 0..8 draw a mesh.
 const SLOT_HEAD := 0
@@ -234,9 +221,43 @@ static func from_archives(data_pk2: Pk2Reader, media_pk2: Pk2Reader, items: Dict
 		a.add_item_rows(items)
 	return a
 
+## An appearance over a catalogue already built (round 689: the world builds
+## its bodies-only catalogue from the characterdata parts it reads anyway, and
+## hands its parsed item table), so nothing is parsed twice.
+static func from_catalog(data_pk2: Pk2Reader, media_pk2: Pk2Reader, catalog: CharCatalog, items: Dictionary = {}) -> CharacterAppearance:
+	var a := CharacterAppearance.new()
+	a._data = data_pk2
+	a._media = media_pk2
+	a._catalog = catalog
+	a.default_wear = DefaultWear.from_archive(media_pk2) if media_pk2 != null else null
+	if not items.is_empty():
+		a.add_item_rows(items)
+	return a
+
 ## The catalogue this appearance resolves bodies through.
 func catalog() -> CharCatalog:
 	return _catalog
+
+## The body's assembled template (shared, detached): its parsed `.bsr` names
+## the body's animations (BodyAnimations), its skeleton the bones. Null for an
+## unknown id.
+func template_for(ref_obj_id: int) -> SkinnedBsrAssembler.AssembledCharacter:
+	var path := body_path(ref_obj_id)
+	return _body_template(path) if path != "" else null
+
+## Whether the body is a woman's (characterdata column 58 through the
+## catalogue); false for an id the catalogue does not hold.
+func is_woman(ref_obj_id: int) -> bool:
+	var e := _catalog.get_entry(ref_obj_id) if _catalog != null else null
+	return e != null and e.sex == CharCatalog.SEX_WOMAN
+
+## The body's race (0 China, 1 Europe) by the catalogue's Country, else by its
+## `.bsr` path, as body_race.
+func race_of(ref_obj_id: int) -> int:
+	var e := _catalog.get_entry(ref_obj_id) if _catalog != null else null
+	if e != null and e.is_body:
+		return e.race
+	return CharCatalog.RACE_EUROPE if body_path(ref_obj_id).to_lower().contains("europe") else CharCatalog.RACE_CHINA
 
 ## Adds item rows (id -> ItemTableReader.Item) so build() can resolve them.
 func add_item_rows(rows: Dictionary) -> void:
@@ -435,7 +456,7 @@ func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Bo
 			by_slot[slot] = wear
 		if slot == SLOT_WEAPON:
 			body.weapon_kind = (info["type_ids"] as PackedInt32Array)[3]
-	body.weapon_group = WEAPON_ANIMATION_GROUP.get(body.weapon_kind, "default")
+	body.weapon_group = BodyAnimations.group_for_weapon(body.weapon_kind, body_race(body))
 	var order: Array = by_slot.keys()
 	order.sort()
 	var wears: Array = []

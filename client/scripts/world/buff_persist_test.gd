@@ -304,7 +304,7 @@ func _make_world() -> Node:
 		"\tpass",
 		"func _skill_anisets() -> Dictionary:",
 		"\treturn {}",
-		"func _build_assembled_character(_equipped: Dictionary = {}, _gender: String = \"\") -> Skeleton3D:",
+		"func _build_assembled_character(_equipped: Dictionary = {}, _body: String = \"\", _scale: int = 0x22) -> Skeleton3D:",
 		"\treturn null",
 		""]))
 	_check(sub.reload() == OK and sub.can_instantiate(), "a subclass of World3D.gd compiles")

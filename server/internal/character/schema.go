@@ -58,7 +58,7 @@ var Mapping = []FieldMapping{
 		Note: "DIVERGENCE. The engine has no gender column: a character's race and " +
 			"sex follow from RefObjID, the reference object it is built from. " +
 			"srrevamp keeps the string, derived from RefObjID since round 682, because " +
-			"the world wire still carries it until bodies are drawn from RefObjID"},
+			"the world wire still carries it for older clients (round 689 draws bodies from RefObjID)"},
 	{Field: "Level", Column: "CurLevel",
 		Note: "the engine also keeps MaxLevel, a separate high-water mark srrevamp " +
 			"has no equivalent for. _TRAININGCAMPMEMBER carries CharMaxLevel too, " +
