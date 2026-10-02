@@ -912,6 +912,20 @@ under Compatibility.
       export preset with that custom feature). Two exports mean CI builds both, and the
       auto-updater keeps each install on its own flavour.
 
+### Culling and level of detail -- **queued (the user, 2026-10-02): a round after the Video options tab (round 694)**
+
+Today:
+- **Frustum culling** is Godot's own.
+- **Region streaming** gives a 3x3 window, with the far plane at 7680 and fog beyond.
+- **The server's AOI cells** limit which monsters and players exist on the client.
+- **Retail's distance rules:** animated map objects stop beyond 2020 units (MapAnimation) and names hide beyond 300.
+- **Missing:** no mesh has a `visibility_range`, no LODs are generated (the runtime ArrayMeshes have no `generate_lods`), and there is no occlusion culling.
+
+- [ ] **Per-object draw distance from the Video tab's Background/Character Sight Range.** READ what retail culls at each setting.
+- [ ] **LODs.** First check whether retail's .bms/.bsr carry their own LOD meshes. Otherwise generate them at load (ImporterMesh.generate_lods, or a cached simplification); OURS.
+- [ ] **Occlusion culling:** ArrayOccluder3D / OccluderInstance3D built from building collision when a region loads. It works in both renderers; the perf gate decides whether its CPU cost pays.
+- [ ] **Measure with the perf gate in a crowded town and on the low-end profile,** under both renderers.
+
 ### Bots and clientless play -- **noted by the user 2026-10-01; not scheduled**
 
 - **A macro bot built into the game client.** With it, players don't need to go clientless to
