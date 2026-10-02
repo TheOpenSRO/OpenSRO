@@ -1879,6 +1879,13 @@ docs/WORLD_ISSUES.md round 672 has the measurement (`client/tools/measure_text_c
 the READ mechanisms. Every HUD, chat, notice, window and code-made Button text measures one level
 and a 1-pixel edge at 1.0-2.5, as the original's GGO_BITMAP glyphs are.
 
+- [ ] **Arial or Tahoma: compare later** (the user, 2026-10-01: "keep Arial for now and maybe we can
+      compare later, especially if I don't like it"). The client uses the archive's first
+      `UIC_STT_FONTNAME` row, Arial, as vSRO does. Its `*` in the password field is a small raised
+      glyph. A private server's login (scratchpad reference `login_pw_ref.png`) likely uses Tahoma,
+      the archive's second row, whose `*` is larger and centred. Options: switch the login fields,
+      switch the whole UI, or a `setting/config.yaml` key.
+
 - **Name plates and damage numbers** (`World3D._name_plate`, `_floating_damage`): Label3D in
   Godot's anti-aliased default font at 32 px, scaled by `pixel_size` 0.0004 under `fixed_size`,
   linear-mipmap filtered -- 64-79 % of their pixels part-covered at every scale. Label3D can be
