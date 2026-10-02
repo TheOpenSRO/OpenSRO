@@ -1348,8 +1348,9 @@ Mountain), tunnels, Jangan's gate soldiers, Constantinople's guides and the two 
       and Jangan's click is the stone, not the whole pavilion. A return to the return point and a
       dead logout's restored entry stand on the walkable graph, as a gate teleport does (Hotan was
       12.19 under its plaza). Left open:
-  - [ ] **The pick's nine rays.** `FUN_0078ee20` casts nine rays a step apart around the cursor,
-        the step INFERRED to be 1.6 % of the screen. srrevamp casts the centre one.
+  - [ ] **The pick's 3 x 3 ray grid.** `FUN_0078ee20` casts a 3 x 3 grid around the cursor, the
+        step INFERRED to be 1.6 % of the screen; a nearer hit replaces the best, and a centre hit
+        replaces an outer best whatever its distance. srrevamp casts the centre ray only.
   - [ ] **A ray from inside a gate's box** does not take it (Godot's `hit_from_inside` is off). It
         is unknown whether retail's triangle test `FUN_00a5b000` hits back faces. A camera inside
         Alexandria's 140-unit box cannot click that gate until the player steps back.

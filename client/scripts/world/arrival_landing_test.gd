@@ -59,41 +59,85 @@ func _initialize() -> void:
 		_check(bool(world_script.call("arrival_keeps_server_point", false, false, false)),
 			"a move this client never asked for, alive -- the flag-off respawn: the server's point")
 
-	# (b) A restored entry at a town gate's point is a return point
-	# (_return_point_at): the server saved a character that left dead at
-	# its return point, at height 0.
+	# (b) Where a teleport point is in the world, without its region loaded
+	# (region_local_to_world): the server's own numbers for the two gates
+	# (MEASURED, msg=teleport in run i4/i5 under -single-frame, frame 97/168).
+	var has_conv := world_script.get_script_method_list().any(func(m): return m["name"] == "region_local_to_world")
+	_check(has_conv, "World3D.region_local_to_world exists")
+	if has_conv:
+		var ch: Vector2 = world_script.call("region_local_to_world", 97, 168, 969.0, 1369.0, 97, 168)
+		_check(ch.distance_to(Vector2(9.0, -409.0)) < 0.01, "GATE_CH 97/168 (969, 1369) is world (9, -409) in frame 97/168 (got %s)" % str(ch))
+		var kt: Vector2 = world_script.call("region_local_to_world", 92, 135, 1138.0, 153.0, 97, 168)
+		_check(kt.distance_to(Vector2(-63182.0, 10407.0)) < 0.01, "GATE_KT 92/135 (1138, 153) is world (-63182, 10407) in frame 97/168 (got %s)" % str(kt))
+
+	# (c) A restored entry at a teleport point (_teleport_point_at): the
+	# server saved it at height 0 -- a dead logout at the return point, or a
+	# logout where a teleport left the player.
 	var reader := TeleportReader.new()
 	reader.parse(
 		_table([
 			_row(14, {0: 1, 1: 1, 2: "GATE_CH", 3: 2094, 4: "SN_ZONE_22001", 5: 25000, 6: 969, 7: 0, 8: 1369, 9: 150, 10: 1, 11: 0, 12: 1}),
 			_row(14, {0: 1, 1: 5, 2: "GATE_KT", 3: 2096, 4: "SN_ZONE_22003", 5: 23687, 6: 1138, 7: 250, 8: 153, 9: 250, 10: 1, 11: 0, 12: 1}),
-			# A ferry's point: no id 7, so never a return point.
-			_row(14, {0: 1, 1: 3, 2: "GATE_NPC_CH_FERRY", 3: 2011, 4: "SN_ZONE_21002", 5: 25000, 6: 500, 7: 0, 8: 500, 9: 200, 10: 0, 11: 0, 12: 1}),
+			# Not a town gate (no id 7): a logout right after a teleport there
+			# re-entered 355.79 under its object before the review.
+			_row(14, {0: 1, 1: 164, 2: "GATE_TOMB_GATE_IN", 3: 0, 4: "SN_X", 5: 19019, 6: 500, 7: 398, 8: 500, 9: 50, 10: 0, 11: 0, 12: 1}),
+			# A dungeon's point: never matched.
+			_row(14, {0: 1, 1: 9, 2: "GATE_DUNGEON", 3: 0, 4: "SN_Y", 5: -32760, 6: 969, 7: 0, 8: 1369, 9: 50, 10: 0, 11: 0, 12: 1}),
 		]),
 		_table([]), _table([]))
-	_check(reader.has_method("return_points"), "TeleportReader.return_points exists")
+	_check(reader.has_method("world_points"), "TeleportReader.world_points exists")
 	var world: Node = world_script.new()
 	world.set("_teleport_reader", reader)
-	var group := Node3D.new()
-	group.name = "RealTerrain_97_168"
-	TerrainCollision.place_group(group, world_script.call("_cell_offset", 0, 0), 0.0)
-	world.add_child(group)
-	var has_at := world.has_method("_return_point_at")
-	_check(has_at, "World3D._return_point_at exists")
-	if has_at:
-		var xf: Transform3D = world_script.call("_chain_transform", group)
-		var at := xf * Vector3(969.0, 0.0, 1369.0)
-		var found = world.call("_return_point_at", Vector2(at.x, at.z))
-		_check(found != null and found.code == "GATE_CH",
-			"GATE_CH's point named in its region's frame is a return point (got %s)" % [found.code if found != null else "null"])
-		var near = world.call("_return_point_at", Vector2(at.x + 0.5, at.z))
-		_check(near != null, "half a unit off still is (the server names it in float32)")
-		# NEGATIVE: a restored point that is no gate's keeps the old rule.
-		_check(world.call("_return_point_at", Vector2(at.x + 5.0, at.z)) == null, "five units off is not")
-		var ferry := xf * Vector3(500.0, 0.0, 500.0)
-		_check(world.call("_return_point_at", Vector2(ferry.x, ferry.z)) == null, "a ferry's point (no id 7) is not")
-		# Hotan's region is not loaded: its point cannot be matched there.
-		_check(world.call("_return_point_at", Vector2(-63182.0, 10407.0)) == null, "a gate whose region is not loaded is not matched")
+	var has_at := world.has_method("_teleport_point_at")
+	_check(has_at, "World3D._teleport_point_at exists")
+	if has_at and has_conv:
+		var frame := {"x": 97, "y": 168}
+		var at: Vector2 = world_script.call("region_local_to_world", 97, 168, 969.0, 1369.0, 97, 168)
+		var found = world.call("_teleport_point_at", at, frame)
+		_check(found != null and found.code == "GATE_CH", "GATE_CH's point is a teleport point (got %s)" % [found.code if found != null else "null"])
+		_check(world.call("_teleport_point_at", at + Vector2(0.5, 0.0), frame) != null, "half a unit off still is (the server names it in float32)")
+		_check(world.call("_teleport_point_at", at + Vector2(5.0, 0.0), frame) == null, "five units off is not")
+		var kt = world.call("_teleport_point_at", Vector2(-63182.0, 10407.0), frame)
+		_check(kt != null and kt.code == "GATE_KT", "GATE_KT is matched with its region not loaded (got %s)" % [kt.code if kt != null else "null"])
+		var tomb_at: Vector2 = world_script.call("region_local_to_world", 74, 75, 500.0, 500.0, 97, 168)
+		var tomb = world.call("_teleport_point_at", tomb_at, frame)
+		_check(tomb != null and tomb.code == "GATE_TOMB_GATE_IN",
+			"a point that is no town gate is matched too (review item 4; got %s)" % [tomb.code if tomb != null else "null"])
+		_check(world.call("_teleport_point_at", at, {}) == null, "no frame, no match")
+
+	# (d) The request bookkeeping (round 690's review).
+	var has_match := world.has_method("_match_zone_change_request") and world.has_method("_note_zone_change_request")
+	_check(has_match, "World3D._note_zone_change_request / _match_zone_change_request exist")
+	if has_match:
+		var reqs := func() -> Array: return Array(world.get("_zone_change_requests"))
+		world.call("_request_zone_change", "Donwhang")
+		_check(reqs.call() == ["donwhang"], "_request_zone_change remembers the zone it asks for (got %s)" % str(reqs.call()))
+		_check(bool(world.call("_match_zone_change_request", "", false, false)) and reqs.call().is_empty(),
+			"a refused change answers the oldest request (left %s)" % str(reqs.call()))
+		_check(not bool(world.call("_match_zone_change_request", "jangan", true, true)), "with nothing asked, a move is the server's own")
+		# The interleave: the zone box asked for Jangan; a flag-off kill's
+		# return to Jangan's gate arrives first, then the answer.
+		world.call("_note_zone_change_request", "jangan")
+		_check(not bool(world.call("_match_zone_change_request", "jangan", true, true)),
+			"a result for the asked label but at a teleport point is the return, not the answer")
+		_check(reqs.call() == ["jangan"], "and leaves the request for its answer (got %s)" % str(reqs.call()))
+		_check(bool(world.call("_match_zone_change_request", "jangan", true, false)) and reqs.call().is_empty(),
+			"the answer at the landing then takes it")
+		# Two requests answered out of label order.
+		world.call("_note_zone_change_request", "hotan")
+		world.call("_note_zone_change_request", "jangan")
+		_check(bool(world.call("_match_zone_change_request", "jangan", true, false)) and reqs.call() == ["hotan"],
+			"an answer takes the request for its own label (left %s)" % str(reqs.call()))
+		_check(not bool(world.call("_match_zone_change_request", "donwhang", true, false)) and reqs.call() == ["hotan"],
+			"a label nobody asked for is the server's own move and takes nothing")
+		# A gate teleport's arrival (its receipt marked it) is answered without
+		# touching the requests, even at a point in an asked-for zone.
+		_check(world.has_method("_zone_result_requested"), "World3D._zone_result_requested exists")
+		if world.has_method("_zone_result_requested"):
+			_check(bool(world.call("_zone_result_requested", true, "hotan", true, true)) and reqs.call() == ["hotan"],
+				"a teleport arrival is this client's and leaves the requests alone (left %s)" % str(reqs.call()))
+			_check(bool(world.call("_zone_result_requested", false, "hotan", true, false)) and reqs.call().is_empty(),
+				"a plain result goes through the matcher")
 	world.free()
 	_finish()
 

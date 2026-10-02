@@ -4930,46 +4930,67 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 ## grid is in; null otherwise. _land_restored_return_point consumes it.
 var _restored_entry_point: Variant = null
 
-## Stands a restored entry on the walkable graph when it is a town gate's
-## point (round 690). The server saves a character that leaves the world dead
-## at its return point -- the designated gate's teleport point, at its own
-## height 0 (session.savedPlace) -- and the entry keeps a restored position,
-## lifted only to the bare terrain (_snap_player_onto_terrain): under Hotan's
-## plaza, 12.5 units below where the gate's arrival stands (MEASURED). A
-## restored point that is no gate's keeps that rule: it is where the character
-## stood, on whatever floor it stood on.
+## Stands a restored entry on the walkable graph when it is a teleport point
+## (round 690). The server saves a character that leaves the world dead at its
+## return point -- the designated gate's teleport point, at its own height 0
+## (session.savedPlace) -- and a character that logs out where a teleport put
+## it, without moving, at that arrival's height 0 too; the entry keeps a
+## restored position, lifted only to the bare terrain
+## (_snap_player_onto_terrain): 12.19 under Hotan's plaza, 355.79 under
+## GATE_TOMB_GATE_IN's object and 366.84 under GATE_ARABIAN_COAST's (MEASURED,
+## walk_probe --column). A restored point that is no teleport point keeps that
+## rule: it is where the character stood, on whatever floor it stood on.
 func _land_restored_return_point() -> void:
 	if _restored_entry_point == null:
 		return
 	var spot: Vector2 = _restored_entry_point
 	_restored_entry_point = null
-	var point := _return_point_at(spot)
+	var result = NetClient.last_enter_world_result
+	var zone: String = result.zone if result != null else ""
+	var frame: String = result.frame if result != null else ""
+	var point := _teleport_point_at(spot, _zone_frame_coords(zone, frame))
 	if point == null:
 		return
 	if _land_teleport_arrival(spot.x, spot.y):
-		print("World3D: the restored entry is %s's point (a return point) -- stood on the walkable graph there" % point.code)
+		print("World3D: the restored entry is %s's point (a teleport arrival) -- stood on the walkable graph there" % point.code)
 
-## The town gate point (TeleportReader.return_points) a world (x, z) is within
-## RETURN_POINT_MATCH of, in a loaded region; null when none.
-func _return_point_at(spot: Vector2) -> TeleportReader.Point:
-	if _teleport_reader == null:
+## The frame a zone's coordinates are in (round 690): the server's FrameRegion
+## when it parses, else the zone's own centre (_frame_coords); {} when neither
+## is known.
+func _zone_frame_coords(zone: String, frame: String) -> Dictionary:
+	var centre := _parse_region_coords(_resolve_zone_region(zone)) if zone != "" else {}
+	return _frame_coords(centre, frame)
+
+## Where region (rx, ry)'s local (lx, lz) is in the world, in a grid built in
+## frame (fx, fy) (round 690): the transform TerrainCollision.place_group gives
+## that region's group (_cell_offset of its cell in the frame, the z mirror),
+## without the group having to be loaded.
+static func region_local_to_world(rx: int, ry: int, lx: float, lz: float, fx: int, fy: int) -> Vector2:
+	var g := Node3D.new()
+	TerrainCollision.place_group(g, _cell_offset(rx - fx, ry - fy), 0.0)
+	var at := g.transform * Vector3(lx, 0.0, lz)
+	g.free()
+	return Vector2(at.x, at.z)
+
+## The teleport point (any open-world teleportdata row, TeleportReader.
+## world_points) whose arrival is within TELEPORT_POINT_MATCH of world (x, z)
+## in frame `frame_coords` ({"x", "y"}); null when none, or with no frame.
+func _teleport_point_at(spot: Vector2, frame_coords: Dictionary) -> TeleportReader.Point:
+	if _teleport_reader == null or frame_coords.is_empty():
 		return null
-	for p_v in _teleport_reader.return_points():
+	var fx: int = frame_coords["x"]
+	var fy: int = frame_coords["y"]
+	for p_v in _teleport_reader.world_points():
 		var p: TeleportReader.Point = p_v
-		if p.region <= 0:
-			continue
-		var group := get_node_or_null("RealTerrain_%d_%d" % [(p.region >> 8) & 0xFF, p.region & 0xFF]) as Node3D
-		if group == null:
-			continue
-		var at := _chain_transform(group) * Vector3(p.x, 0.0, p.z)
-		if Vector2(at.x - spot.x, at.z - spot.y).length() <= RETURN_POINT_MATCH:
+		var at := region_local_to_world((p.region >> 8) & 0xFF, p.region & 0xFF, p.x, p.z, fx, fy)
+		if at.distance_to(spot) <= TELEPORT_POINT_MATCH:
 			return p
 	return null
 
-## How close a restored entry must be to a gate point to be taken for a return
-## to it (OURS): the server names the point exactly, as float32 world
+## How close a server position must be to a teleport point to be taken for an
+## arrival there (OURS): the server names the point exactly, as float32 world
 ## coordinates from the table's whole numbers.
-const RETURN_POINT_MATCH := 1.0
+const TELEPORT_POINT_MATCH := 1.0
 
 ## The `region grid loaded` line (round 561): the drain's wall time from its
 ## clock start, the terrain/objects/npcs split both branches have printed
@@ -5086,7 +5107,8 @@ func _load_initial_region_neighborhood() -> void:
 				result.zone, result.x, result.y, result.z, result.frame])
 			# A character that left the world dead is saved at its return
 			# point (server savedPlace, READ FUN_004df050), at the server's
-			# height 0: stood on the walkable graph once the grid is in
+			# height 0, and so is one that logged out where a teleport put it:
+			# stood on the walkable graph once the grid is in
 			# (_land_restored_return_point, round 690).
 			_restored_entry_point = Vector2(result.x, result.z)
 		else:
@@ -5187,12 +5209,15 @@ func _on_change_zone_result(result: WorldNet.ChangeZoneResult) -> void:
 	var teleport_arrival := _teleport_arrival_pending
 	_teleport_arrival_pending = false
 	# Whether this client asked for this zone change (round 690,
-	# _request_zone_change): a result it did not ask for, or one that finds
-	# the player dead, is the server moving the character to its return
-	# point (option 1 of the dead window, or the flag-off respawn).
-	var requested := _zone_changes_requested > 0
-	if not teleport_arrival:
-		_zone_changes_requested = maxi(0, _zone_changes_requested - 1)
+	# _request_zone_change, matched by _match_zone_change_request): a result
+	# it did not ask for, or one that finds the player dead, is the server
+	# moving the character to its return point (option 1 of the dead window,
+	# or the flag-off respawn).
+	var at_point := false
+	if result != null and result.ok and not teleport_arrival:
+		at_point = _teleport_point_at(Vector2(result.x, result.z), _zone_frame_coords(result.zone, result.frame)) != null
+	var requested := _zone_result_requested(teleport_arrival,
+		result.zone if result != null else "", result != null and result.ok, at_point)
 	var dead_at_arrival := _player_dead
 	var keep_server_point := arrival_keeps_server_point(teleport_arrival, requested, dead_at_arrival)
 	if result != null and result.ok:
@@ -6540,6 +6565,8 @@ func _qa_npc_body_report() -> void:
 			var from := mid + Vector3(shape.radius * 4.0, 0.0, 0.0)
 			var query := PhysicsRayQueryParameters3D.create(from, mid)
 			query.exclude = [player.get_rid()]
+			# Not the gates' pick boxes (round 690's review).
+			query.collision_mask = 0xFFFFFFFF & ~GATE_PICK_COLLISION_LAYER
 			var hit := space.intersect_ray(query)
 			# Any NPC's body counts: two NPCs stand within half a unit of
 			# each other on Jangan's square, so a ray aimed at one is
@@ -6720,8 +6747,10 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 ##   nearest box a click ray meets. No model, placed map object or navmesh is
 ##   part of it; a plain `CIRuntimeStruct` answers the miss value
 ##   (`FUN_00535520`), so a gate is clickable where its box is and nowhere
-##   else. (It casts nine rays a little apart around the cursor, the centre
-##   one first; srrevamp casts the centre one -- OPEN.)
+##   else. (It casts a 3 x 3 grid of rays a little apart around the cursor;
+##   any nearer hit replaces the best, and a centre hit replaces a best from
+##   an outer ray whatever its distance -- `d < best || (best_idx != 4 &&
+##   idx == 4)`. srrevamp casts the centre ray only -- OPEN.)
 ## - The position is the structure's spawn position. INFERRED: the server
 ##   spawns the structure at its teleportbuilding row (columns 41, 43-45), as
 ##   GObjPC::IsWithinInteractionRange measures from it (round 642).
@@ -12782,10 +12811,11 @@ func _qa_rig_report() -> void:
 	# between standing on the plaza and standing inside it.
 	var space_state := get_world_3d().direct_space_state
 	var from := player.global_position + Vector3(0.0, 60.0, 0.0)
-	# Every layer, as before; off the heightfield's grid lines
+	# Every layer but the gates' pick boxes (round 690's review: a click
+	# target is not a surface), as before; off the heightfield's grid lines
 	# (TerrainCollision.vertical_ray, round 572).
 	var hit := TerrainCollision.vertical_ray(space_state, from.x, from.z, from.y,
-		player.global_position.y - 20.0, 0xFFFFFFFF, [player.get_rid()])
+		player.global_position.y - 20.0, 0xFFFFFFFF & ~GATE_PICK_COLLISION_LAYER, [player.get_rid()])
 	if hit.is_empty():
 		print("QA RIG   nothing under the column from %.1f above the feet" % 60.0)
 	else:
@@ -13316,7 +13346,7 @@ func _qa_scan_report(samples: int) -> void:
 			# Off the heightfield's grid lines (TerrainCollision.vertical_ray,
 			# round 572): at 48 samples the lattice is on them.
 			var hit := TerrainCollision.vertical_ray(space, top.x, top.z, top.y, bottom.y,
-				0xFFFFFFFF, [player.get_rid()])
+				0xFFFFFFFF & ~GATE_PICK_COLLISION_LAYER, [player.get_rid()])
 			if hit.is_empty():
 				continue
 			checked += 1
@@ -14481,15 +14511,54 @@ func _on_change_zone_pressed() -> void:
 		_hud_target.clear()
 	_request_zone_change(zone)
 
-## Sends OpChangeZone and counts it (round 690): every zone change this client
-## asks for goes through here, so _on_change_zone_result can tell an answer to
-## one from a move the server made on its own (arrival_keeps_server_point).
+## Sends OpChangeZone and remembers it (round 690): every zone change this
+## client asks for goes through here, so _on_change_zone_result can tell an
+## answer to one from a move the server made on its own
+## (arrival_keeps_server_point).
 func _request_zone_change(zone: String) -> void:
-	_zone_changes_requested += 1
+	_note_zone_change_request(zone)
 	NetClient.change_zone(zone)
 
-## OpChangeZone requests sent and not yet answered (_request_zone_change).
-var _zone_changes_requested := 0
+## The zone labels of the OpChangeZone requests sent and not yet answered,
+## oldest first (_request_zone_change).
+var _zone_change_requests: Array[String] = []
+
+func _note_zone_change_request(zone: String) -> void:
+	_zone_change_requests.append(zone.strip_edges().to_lower())
+
+## Whether a zone change's result answers one of this client's requests, and
+## if so consumes that request (round 690's review). The server answers a
+## request with the label asked for (handleChangeZone -> warpTo(req.Zone)) at
+## that zone's landing; a move to the return point (warpHome) comes with the
+## return point's label at a teleport point, and can arrive between a request
+## and its answer, or before it. So:
+## - a refused change answers the oldest request (the server answers in order;
+##   warpHome's only refusal is for a session that has left the world);
+## - an accepted one answers the oldest request for its label, unless it
+##   lands on a teleport point (`at_point`): no zone's landing is one (the
+##   town landings are their centres' middles, local (960, 960) -- MEASURED
+##   against the 64 open-world points, none there), so that is the server's
+##   own move, and the request stays for its answer.
+## Whether a zone change's result answers this client: a gate teleport's
+## arrival always does (its receipt marked it, round 576) and takes no zone
+## request; any other result is matched (_match_zone_change_request).
+func _zone_result_requested(teleport_arrival: bool, zone: String, ok: bool, at_point: bool) -> bool:
+	if teleport_arrival:
+		return true
+	return _match_zone_change_request(zone, ok, at_point)
+
+func _match_zone_change_request(zone: String, ok: bool, at_point: bool) -> bool:
+	if not ok:
+		if not _zone_change_requests.is_empty():
+			_zone_change_requests.pop_front()
+		return true
+	if at_point:
+		return false
+	var i := _zone_change_requests.find(zone.strip_edges().to_lower())
+	if i < 0:
+		return false
+	_zone_change_requests.remove_at(i)
+	return true
 
 ## Whether a zone change's arrival keeps the server's position and stands it
 ## on the walkable graph (round 690), rather than moving it to the zone's own

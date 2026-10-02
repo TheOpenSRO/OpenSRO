@@ -137,9 +137,9 @@ func _init() -> void:
 			"STORE_CH_GATE: BCHeight 25 from column 49, BCRadius 10 from column 50 (round 690; got %s, %s)" % [str(b.get("bc_height")), str(b.get("bc_radius"))])
 		var shed = here[1]
 		_check(is_equal_approx(shed.bc_height, 0.0) and is_equal_approx(shed.bc_radius, 0.0), "a row with 0 in both keeps 0 (no box)")
-	var rp: Array = reader.call("return_points") if reader.has_method("return_points") else []
-	_check(_codes(rp) == ["GATE_CH", "GATE_WC"],
-		"return_points: the id-7 points in id order -- GATE_CH, GATE_WC; not GATE_TD (id 9 only) nor the fixture GATE_KT (its column 10 left 0) (got %s)" % [_codes(rp)])
+	var wp: Array = reader.call("world_points") if reader.has_method("world_points") else []
+	_check(_codes(wp) == ["GATE_CH", "GATE_WC", "GATE_KT", "GATE_TD"],
+		"world_points: every point in a world region, in id order -- the town gates, GATE_KT and GATE_TD alike (got %s)" % [_codes(wp)])
 	_check(_codes(reader.call("buildings_in_region", 103, 153)) == ["STORE_WC_GATE"],
 		"region 26521 is 103/153 ((x << 8) | y)")
 	_check((reader.call("buildings_in_region", 128, 4) as Array).is_empty() and (reader.call("buildings_in_region", 0, 0) as Array).is_empty(),

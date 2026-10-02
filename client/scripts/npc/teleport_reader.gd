@@ -186,17 +186,17 @@ func parse(data: PackedByteArray, links: PackedByteArray, buildings: PackedByteA
 		_buildings.append(b)
 		_building_by_code[b.code.to_upper()] = b
 
-## The points that register interaction id 7 (round 690) -- the town gates a
-## character can designate, so the points a return to the return point lands
-## on (server ResolveRevivePoint reads the designated gate's point) -- in id
-## order.
-func return_points() -> Array:
+## Every point in a world region (round 690; its review widened it from the
+## id-7 town gates): the places a teleport, a return to the return point or a
+## logout saved where either left the player can put a character at the
+## server's height 0. A dungeon's (region < 0) is not one. In id order.
+func world_points() -> Array:
 	var ids: Array = _points_by_id.keys()
 	ids.sort()
 	var out: Array = []
 	for id in ids:
 		var p: Point = _points_by_id[id]
-		if p.interaction7:
+		if p.region > 0:
 			out.append(p)
 	return out
 

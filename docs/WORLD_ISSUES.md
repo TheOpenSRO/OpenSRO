@@ -7307,7 +7307,7 @@ head's frame median is +0.9 ms, inside the gate's threshold: its three runs were
 
 ### 6. OPEN
 
-- The pick's nine rays: retail casts nine around the cursor (step INFERRED to be 1.6 % of the
+- The pick's 3 x 3 ray grid: retail casts nine around the cursor (step INFERRED to be 1.6 % of the
   screen); srrevamp casts one.
 - A ray starting inside a gate's box does not take it. Retail's triangle test's back faces are
   unread.
@@ -7315,6 +7315,52 @@ head's frame median is +0.9 ms, inside the gate's threshold: its three runs were
 - Retail's arrival height after the server's unchanged y is unread.
 - The two non-return points 355 and 366 units under their objects (`GATE_TOMB_GATE_IN`,
   `GATE_ARABIAN_COAST`) land on the graph as teleports. Nothing returns a character there.
+
+### Review (round 690's review: no HIGH, no MEDIUM; five LOW -- fixed in a follow-up commit)
+
+The review confirmed the READ claims and found layer 10 clean and the click paths and masks right. A
+trial merge onto dev d6205fc passed, with 205 suites. The follow-up:
+
+1. **Requests are matched, not counted.** `_request_zone_change` remembers each zone label it asks
+   for (`_note_zone_change_request`). `_on_change_zone_result` asks `_zone_result_requested`:
+   - a gate teleport's arrival is this client's and takes no request;
+   - a refused change answers the oldest request;
+   - an accepted one answers the oldest request for its own label, unless it lands on a teleport
+     point. No zone's landing is a teleport point: the landings are the centres' middles, and none
+     of the 64 open-world points is there.
+
+   So a flag-off kill's return to Jangan's gate, arriving between a zone-box "jangan" and its answer,
+   is the server's own move and leaves the request for its answer. The point test runs before the
+   zone loads: `region_local_to_world` is `TerrainCollision.place_group`'s transform for the
+   region's cell in the result's frame. It is checked against the server's own numbers: GATE_CH
+   (9, -409) and GATE_KT (-63182, 10407) in frame 97/168.
+2. **The QA rays exclude layer 10**: `QA NPCBODY` (it had no mask), `QA RIG`'s column and the ground
+   lattice probe (both had `0xFFFFFFFF`).
+3. **The pick's rays, worded right** (`teleport_network.md`, `World3D._bind_region_gates`, TODO).
+   `FUN_0078ee20` casts a 3 x 3 grid and keeps a hit when `d < best || (best_idx != 4 && idx ==
+   4)`: any nearer hit replaces the best, and a centre hit replaces a best from an outer ray whatever
+   its distance.
+4. **A logout where a teleport left the player** (pre-existing). The restored-entry landing matched
+   id-7 town gates only. A logout right after a teleport to `GATE_TOMB_GATE_IN` or
+   `GATE_ARABIAN_COAST`, without moving, re-entered 355.79 / 366.84 under the object there. It now
+   matches every point in a world region (`TeleportReader.world_points`, `_teleport_point_at`), and
+   no longer needs the region loaded.
+5. **Tests for the wiring** (`arrival_landing_test.gd`):
+   - `_request_zone_change` remembers the zone;
+   - a refused change takes the oldest;
+   - with nothing asked, a move is the server's;
+   - the interleave: a return first, at a point, takes nothing, then the answer at the landing takes
+     the request;
+   - two requests answered out of order;
+   - an unasked label takes nothing;
+   - a teleport arrival leaves the requests alone;
+   - the frame conversion, and a non-gate point matched.
+
+   FAIL against 4465783: `FAIL World3D.region_local_to_world exists`; `FAIL
+   TeleportReader.world_points exists`; `FAIL World3D._teleport_point_at exists`; `FAIL
+   World3D._note_zone_change_request / _match_zone_change_request exist`.
+
+No perf gate: none of this is per-frame code. The matcher runs once per zone change, over 64 points.
 
 ## Six-hundred-and-eighty-seventh round: the body's own skin no longer shows through worn armour -- each item hides the body pieces it covers, as retail's client does
 

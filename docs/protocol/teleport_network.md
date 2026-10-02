@@ -1055,8 +1055,11 @@ skill's effect does to reach the return point is unread. srrevamp refuses every 
   case at `0x84515b`) through `FUN_00976700` into the `_RefObjCommon` parser `FUN_00972910`. It stores
   column 49 (BCHeight) at `+0x114` (`0x972cd1`) and column 50 (BCRadius) at `+0x118` (`0x972ce2`).
 - **The pick.** `FUN_0078ee20` turns the cursor into a ray (`FUN_00a5ade0`), walks the object list,
-  calls each object's slot 33, and keeps the nearest hit. It casts nine rays a step apart (`[0xed7cc0]
-  * 0.016` and `[0xed7cc4] * 0.016`, INFERRED to be the screen size), and the centre one wins a tie.
+  calls each object's slot 33 for each ray. The rays are a 3 x 3 grid around the cursor, a step apart
+  (`[0xed7cc0] * 0.016` and `[0xed7cc4] * 0.016`, INFERRED to be the screen size), and index 4 is the
+  centre. A hit replaces the best when `d < best || (best_idx != 4 && idx == 4)` (round 690's review):
+  any nearer hit replaces the best, and a centre hit replaces a best from an outer ray whatever its
+  distance.
   A plain `CIRuntimeStruct`'s slot 33 is `FUN_00535520`, which returns the miss value -1.0. No model,
   placed map object or navmesh is part of a gate's click.
 - **The position** is the structure's spawn position. INFERRED: it is the teleportbuilding row's
@@ -1086,7 +1089,7 @@ The seven town gates' boxes, from the archive's rows (READ):
 - `_talk_ray` masks both layers. It goes on through untagged talk-layer bodies (the navmesh walls),
   up to 8 hits.
 - The placed map objects are no longer click targets.
-- OPEN: the nine-ray tolerance (one ray is cast). A ray that starts inside a box does not take it
+- OPEN: the 3 x 3 ray grid (srrevamp casts the centre ray only). A ray that starts inside a box does not take it
   (Godot's `hit_from_inside` is off). Retail's triangle test was not read for back faces.
 
 **Round 577's binding, measured against this (round 690, render box):**
