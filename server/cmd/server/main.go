@@ -830,6 +830,21 @@ func frontEndThemeFromFlags(raw session.FrontEndTheme, logger *slog.Logger) sess
 	return theme
 }
 
+// defaultMaxPlayers is -max-players' default. OURS: retail's capacity is a
+// row of its shard database, which neither executable carries.
+const defaultMaxPlayers = 1000
+
+// serverCapacity checks -max-players: 1..65535 (the status's field is a u16,
+// as retail's is), else the default with a warning.
+func serverCapacity(v int, logger *slog.Logger) int {
+	if v < 1 || v > 0xffff {
+		logger.Warn("-max-players must be 1-65535; using the default", "given", v, "default", defaultMaxPlayers)
+		return defaultMaxPlayers
+	}
+	logger.Info("capacity", "max_players", v)
+	return v
+}
+
 func main() {
 	addr := flag.String("addr", ":15779", "listen address for the gateway service")
 	postgresDSN := flag.String("postgres-dsn", "postgres://postgres:postgres@localhost:5432/srrevamp?sslmode=disable",
@@ -908,6 +923,15 @@ func main() {
 		"the front-end's bottom band art, a file name the client loads from its own custom/frontend/ folder "+
 			"(env SRREVAMP_LOGIN_BAND_BOTTOM): letters, digits, _ and -, ending .png or .ddj. Default empty: the archive's own band art.")
 	monsterAIEnv, monsterAIEnvErr := envBool("SRREVAMP_MONSTER_AI")
+	// The server list's status (round 679, OURS): the capacity the client's
+	// population band divides by, and the inspection switch it shows as
+	// "Check"; both also turn logins away (session.LoginGate).
+	maxPlayersEnv, maxPlayersEnvErr := envInt("SRREVAMP_MAX_PLAYERS", defaultMaxPlayers)
+	inspectionEnv, inspectionEnvErr := envBool("SRREVAMP_INSPECTION")
+	maxPlayers := flag.Int("max-players", maxPlayersEnv,
+		"the server's capacity: the client's server list shows current/max as Easy, Populated, Crowded or FULL, and a login is refused once this many characters are in the world (1-65535; SRREVAMP_MAX_PLAYERS)")
+	inspection := flag.Bool("inspection", inspectionEnv,
+		"under inspection: the client's server list shows \"Check\" and every login is refused with retail's inspection message (SRREVAMP_INSPECTION)")
 	monsterAI := flag.Bool("monster-ai", monsterAIEnv,
 		"run the monster AI (env SRREVAMP_MONSTER_AI): monsters idle, wander, run home past their "+
 			"roam radius, and stand where a blow found them while any player in the zone has an "+
@@ -1045,6 +1069,17 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	if maxPlayersEnvErr != nil {
+		logger.Warn("SRREVAMP_MAX_PLAYERS is not a number; the capacity keeps its default unless -max-players is given",
+			"err", maxPlayersEnvErr, "default", defaultMaxPlayers)
+	}
+	if inspectionEnvErr != nil {
+		logger.Warn("SRREVAMP_INSPECTION is not a boolean; the server is open unless -inspection is given", "err", inspectionEnvErr)
+	}
+	capacity := serverCapacity(*maxPlayers, logger)
+	if *inspection {
+		logger.Info("under inspection (-inspection): the server list shows Check and every login is refused")
+	}
 	if inventorySizeEnvErr != nil {
 		logger.Warn("SRREVAMP_INVENTORY_SIZE is not a number; the bag keeps its default unless -inventory-size is given",
 			"err", inventorySizeEnvErr, "default", inventory.DefaultBagSlots)
@@ -1823,11 +1858,18 @@ func main() {
 	// once the listener stops.
 	gpSkills := session.NewGuildPointSkills(skills, guilds, chars)
 
+	// The server list's status (round 679): read when asked.
+	serverStatus := func() session.ServerStatus {
+		return session.ServerStatus{Current: hub.Count(), Max: capacity, Inspection: *inspection}
+	}
 	handle := gateway.Chain(
 		// The front-end theme (round 678): answered on any connection, before
 		// and without login; the client asks on a short connection of its own.
 		session.FrontEndThemeHandler(frontEndTheme),
-		session.LoginHandler(accounts),
+		// The status for the client's server list (round 679), the same way.
+		session.ServerStatusHandler(serverStatus),
+		// Inspection and a full server turn a login away (round 679).
+		session.LoginGate(serverStatus, session.LoginHandler(accounts)),
 		session.RegisterHandler(registerer),
 		// New characters are dressed server-side rather than the client
 		// drawing a default set: that keeps the rendered character, the

@@ -1107,6 +1107,35 @@ front-end's next steps.
   title is not a player option (the user, 2026-10-01: players get a "clientless" mode later instead).
   Windows not measured.
 
+### The server list and setting/ (round 679) — **built: setting/config.yaml with named servers, the LIST window with each server's status, the logo clear of the box, centred fields and a `*` password; these are left**
+
+`docs/protocol/server_list.md` has everything READ (the status bands and colours, the window, the
+refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mask); deploy/README.md
+"Configuring the client" the operator's side.
+
+- **The client's own saved settings in `setting/`** (the user: "client save data like display,
+  sound, hotbar"): today they are in `user://settings.cfg` (ClientSettings), unmoved this round.
+  Next: decide the file(s) (one YAML per area?), migrate on first launch, keep the old file readable.
+- **Settings a server hands the client** (the user's idea, 2026-10-01; beside PROTOCOL_DECISION.md's
+  addendum): config an operator wants kept out of the client's file, supplied during the server list
+  or after login. Not designed; it belongs with the negotiated extension messages of the addendum's
+  item 2, and a server value would sit above `setting/config.yaml` in the order the theme uses.
+- **`agent` is parsed, not used:** this server is one process. When the gateway/agent split exists
+  (retail's 0xA102 redirect; its handler's address is still OPEN), a configured agent stands in for
+  the address the gateway names.
+- **`global.region` is reserved:** vSRO reads no region (DIVISIONINFO's locale byte is skipped by its
+  loader; no "Located In" code). Candidates: the content id byte (net-state+0, who sets it OPEN) or
+  option.txt's `Language` key (what it does OPEN).
+- **Connect resolves a host name through Godot's own path** (`StreamPeerTCP.connect_to_host`, the
+  first address of any family), while the status query prefers IPv4 (`GatewayQuery.pick_address`):
+  a name whose first address is IPv6 with the server listening on IPv4 only (as "localhost" on the
+  render box) shows a status but may not connect. Resolve once, the same way, for both.
+- **The list's polish:** the 0.5 s fades (FUN_00864870), the farm column, the name's gold colour for
+  the entry's +0x28 flag (meaning OPEN), the slider's drag; the 0xA101 parser in the exe (not found:
+  no 0xa101 immediate).
+- **-max-players counts characters in the world**, not sessions at character select; a GM is turned
+  away under `-inspection` like everyone (retail's rule for staff is OPEN).
+
 ### Loading freezes: what the off-thread rounds left (map/loading epic, 2026-09-25)
 
 Rounds 565-566 prepare a streamed cell's terrain and objects on a `WorkerThreadPool` task and

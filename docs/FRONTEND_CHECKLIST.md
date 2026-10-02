@@ -23,11 +23,24 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
   empty scene for now
 - [ ] OPEN (round 678): the sun's direction from the title's day phase (SWorld::vslot_004) -- only
   the environment colours follow the hour; `SWorld::vslot_043(0x17, 0)` at the title is unread
-- [ ] OPEN (round 678): per-intro music is ours (retail has one IntroBGM); the server-list LIST
-  button and its window are left out (the Server slot takes a typed host:port)
+- [ ] OPEN (round 678): per-intro music is ours (retail has one IntroBGM)
+- [x] **The logo above the box** (round 679): retail's placement (`mid + 6 - 0x78`, READ) overlaps
+  the box on any screen taller than 837; the logo is lifted to clear it by 10 (retail's own clearance
+  at 1024x768) wherever it would, and kept in retail's place elsewhere
+- [x] **Centred fields and a `*` password** (round 679, READ: HAlign=1 -> CIFEdit centres,
+  FUN_00636330 masks with 0x2a)
+- [x] **The server list** (round 679): `setting/config.yaml` servers by name, the read-only Server
+  field and LIST, retail's window 10 with each server's status (Easy / Populated / Crowded / FULL /
+  Check, READ; Closed when it does not answer, ours), refreshed every 5 s, the choice remembered
+  (`docs/protocol/server_list.md`)
+- [ ] OPEN (round 679): the list's 0.5 s fades, the farm column, the name's gold flag (+0x28) and the
+  slider's drag; the 0xA101 parser in the exe is not found
+- [ ] OPEN (round 679): a `setting/` home for the client's own saved settings (display, sound,
+  hotbar, ...) -- today they are in `user://settings.cfg`
 - [ ] OPEN (round 678): the frame's band/logo stretch at wide screens is retail's (non-uniform
   1600x1200 scaling, READ) -- a 4:3-correct option would be ours
-- [ ] Server dropdown / channel list (`login_chanel_window`), even if it is a single server for now
+- [ ] The channel list (`login_chanel_window_01/02.ddj`, pstitle's Channel / ChannelList sections)
+  -- not the server list, which is done (round 679)
 - [x] Keep every existing `NetClient` login/register wiring working (v0.1.103)
 - [x] Plain-panel fallback when no Media.pk2 is present, so login always works (v0.1.103)
 - [ ] "MaxiGuard verification success"-style status line area (cosmetic)

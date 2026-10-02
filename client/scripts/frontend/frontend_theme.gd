@@ -24,8 +24,16 @@ class_name FrontEndTheme
 ##      it did not, the last answer cached from an earlier launch, per server
 ##      address (the two are one layer: a fresh answer replaces the cache
 ##      whole, so a field the operator cleared is not brought back from it);
-##   3. custom/theme.json (a client shipped pre-branded);
-##   4. retail's defaults.
+##   3. setting/config.yaml's `global` keys (round 679, ClientConfig: so far
+##      only loginScreen, the intro) -- the client's general config file;
+##   4. custom/theme.json (a client shipped pre-branded);
+##   5. retail's defaults.
+## Why the server before the local files (round 679, OURS): the answer is the
+## branding of the server being connected to, which its operator controls; a
+## client config may list several servers, and its `global` choice is the
+## fallback for the ones that set nothing. setting/ before custom/: it is the
+## general config file a player or operator edits first; theme.json remains
+## for the branding images that only it can name.
 ##
 ## Names never reach outside the folders they name a file in (custom/intro,
 ## custom/frontend) or Media.pk2's script\intro: see is_safe_name and
@@ -56,7 +64,7 @@ var band_bottom := ""
 var charselect = null
 var create = null
 ## Field -> where its value came from ("preview", "server", "cache",
-## "custom", or "" for unset/default), filled by resolve().
+## "setting", "custom", or "" for unset/default), filled by resolve().
 var origin := {}
 
 func get_field(field: String) -> String:
@@ -175,13 +183,15 @@ static func is_safe_file(s: String, exts: Array, allow_spaces_dots: bool) -> boo
 
 ## The layered theme (see the header for the order). `server` is the fresh
 ## answer or null; `cached` the settings copy or null; `custom` the folder's
-## theme.json or null; `preview` the SRREVAMP_LOGIN_* variables or null.
-static func resolve(preview: FrontEndTheme, server: FrontEndTheme, cached: FrontEndTheme, custom: FrontEndTheme) -> FrontEndTheme:
+## theme.json or null; `preview` the SRREVAMP_LOGIN_* variables or null;
+## `setting` setting/config.yaml's share (ClientConfig.to_theme) or null.
+static func resolve(preview: FrontEndTheme, server: FrontEndTheme, cached: FrontEndTheme, custom: FrontEndTheme,
+		setting: FrontEndTheme = null) -> FrontEndTheme:
 	var out := FrontEndTheme.new()
 	var server_layer: FrontEndTheme = server if server != null else cached
 	var server_name := "server" if server != null else "cache"
 	for f in FIELDS:
-		for layer in [[preview, "preview"], [server_layer, server_name], [custom, "custom"]]:
+		for layer in [[preview, "preview"], [server_layer, server_name], [setting, "setting"], [custom, "custom"]]:
 			var t: FrontEndTheme = layer[0]
 			if t != null and t.get_field(f) != "":
 				out.set(f, t.get_field(f))
