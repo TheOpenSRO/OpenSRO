@@ -39,9 +39,10 @@ class_name VideoOptions
 ## the Default button (0x5fc340 on the video tab) both choose Middle, Normal
 ## brightness; the constructor 1024x768. Middle turns Bloom, Lens Flare,
 ## Filtering and Metallic Sheen ON and Water Reflection OFF. (So the shipped
-## SROptionSet.dat's tag 5 = 1 is overwritten on load: its record 0 is Middle,
-## and Middle's preset has Water Reflection off. Round 627/628 read the tag
-## and missed the re-application.)
+## shipped SROptionSet.dat's record 0 is Middle, and the loader re-applies
+## Middle's preset. Tag i holds entry i (jump table 0x5031ac): its tag 4,
+## Water Reflection, is 0; the tag 5 = 1 round 628 read as the reflection is
+## Water Detail.)
 ##
 ## **This client's default: retail's Middle** -- the user's decision,
 ## 2026-10-02 ("Original's Middle"), for every record with no saved
@@ -193,7 +194,8 @@ const VIEW_DISTANCE_MAX := 2500.0
 
 ## OURS: Character Sight Range. Retail stores it (SWorld+0x2e74, case 9) and
 ## no reader was found (three probes, round 694's entry), so no distance is
-## READ. Here it is how far another player, monster or NPC is drawn: 600 and
+## READ. Here it is how far another player or a monster is drawn (NPCs are
+## part of their region's build here and are not reached): 600 and
 ## 1200 world units at 1 and 2, unlimited (as before) at 3 to 5 -- nothing
 ## past the server's own range is sent anyway.
 const CHARACTER_RANGE := [600.0, 1200.0, 0.0, 0.0, 0.0]
@@ -252,6 +254,9 @@ var active := 0
 var fullscreen := false
 ## The window size asked for; Vector2i.ZERO leaves the window as it is.
 var resolution := Vector2i.ZERO
+## A line for the player about the last store (a renderer choice that could
+## not be written, say); "" for none. Not saved.
+var notice := ""
 ## The View row as the window left it ("free" / "third_person" / "quarter",
 ## World3D.CAMERA_VIEWS), "" for unchanged. Not saved here: [ui] camera_view
 ## is its key.
@@ -563,11 +568,21 @@ static func apply_display(window: Window, o: VideoOptions) -> void:
 		return
 	if window.mode == Window.MODE_FULLSCREEN or window.mode == Window.MODE_EXCLUSIVE_FULLSCREEN:
 		window.mode = Window.MODE_WINDOWED
-	if o.resolution.x > 0 and o.resolution.y > 0 and window.size != o.resolution:
-		window.size = o.resolution
-		var screen := DisplayServer.window_get_current_screen()
-		var area := DisplayServer.screen_get_usable_rect(screen)
-		window.position = area.position + (area.size - o.resolution) / 2
+	if o.resolution.x > 0 and o.resolution.y > 0:
+		# Never larger than the screen the window is on, and never off it
+		# (round 694 review: a size saved on a bigger monitor put the window
+		# at a negative position).
+		var area := DisplayServer.screen_get_usable_rect(DisplayServer.window_get_current_screen())
+		var want := fit_resolution(o.resolution, area.size)
+		if window.size != want:
+			window.size = want
+			window.position = area.position + (area.size - want) / 2
+
+## A window size no larger than `screen` (the usable area); ZERO screen keeps it.
+static func fit_resolution(want: Vector2i, screen: Vector2i) -> Vector2i:
+	if screen.x <= 0 or screen.y <= 0:
+		return want
+	return Vector2i(mini(want.x, screen.x), mini(want.y, screen.y))
 
 ## Texture Filtering and Texture Detail on the 3D viewport (see the
 ## constants and the apply notes in World3D.apply_video_options).

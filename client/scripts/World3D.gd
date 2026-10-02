@@ -405,9 +405,13 @@ var _video: VideoOptions = null
 ## _apply_view_distance).
 var _fog_scale := 1.0
 var _far_scale := 1.0
-## The Character Sight Range in force, 0 for none, and whether the tree's
-## node_added is watched for it.
+## The Character Sight Range in force, 0 for none, and the meshes it reaches:
+## every GeometryInstance3D added under other_entities (players, monsters,
+## the ground items; NPCs are built into their region's RealTerrain_* group
+## and are not reached), collected as they are added, so an apply walks a
+## list rather than the tree (round 694 review: 24-31 ms with 2,500 monsters).
 var _character_range := 0.0
+var _character_range_nodes: Array = []
 var _character_range_watch := false
 
 func video_options() -> VideoOptions:
@@ -425,6 +429,10 @@ func apply_video_options(o: VideoOptions) -> void:
 	var before := _video
 	_video = o
 	VideoOptions.set_in_force(o)
+	# Only what changed is applied again (round 694 review: Apply on any tab
+	# re-applied the whole record); everything on the first apply.
+	var changed := func(entry: int) -> bool:
+		return before == null or before.value(entry) != o.value(entry)
 	# Shadow Detail. READ, SWorld::vslot_043 case 2: Detail builds a 96x96
 	# target and 32x32 shadow textures per character -- a real shadow; Circle
 	# and Nothing free them. Circle is the round blob (READ in label text,
@@ -433,14 +441,17 @@ func apply_video_options(o: VideoOptions) -> void:
 	# map, Circle draws the blob alone (Middle, the default), Detail both (the
 	# look before round 694).
 	var shadow := o.value(VideoOptions.SHADOW)
-	if directional_light != null:
-		directional_light.shadow_enabled = shadow >= 2
-	if _blob_shadow != null and shadow < 1:
-		_blob_shadow.visible = false
+	if changed.call(VideoOptions.SHADOW):
+		if directional_light != null:
+			directional_light.shadow_enabled = shadow >= 2
+		if _blob_shadow != null and shadow < 1:
+			_blob_shadow.visible = false
 	# Background Sight Range (READ distances, OURS drawing; _apply_view_distance).
-	_apply_view_distance(o.value(VideoOptions.SCENERY))
+	if changed.call(VideoOptions.SCENERY):
+		_apply_view_distance(o.value(VideoOptions.SCENERY))
 	# Character Sight Range (OURS distances; VideoOptions.CHARACTER_RANGE).
-	_set_character_range(VideoOptions.character_range(o.value(VideoOptions.CHARACTER)))
+	if changed.call(VideoOptions.CHARACTER):
+		_set_character_range(VideoOptions.character_range(o.value(VideoOptions.CHARACTER)))
 	# Water Reflection: retail builds or frees the pass at once (case 6). Here
 	# a region's water is built for one mode, so a change shows from the next
 	# world entry (OURS; said in the window's tooltip).
@@ -451,7 +462,8 @@ func apply_video_options(o: VideoOptions) -> void:
 	# Water Detail (OURS rows; VideoOptions.WATER_ROWS): live.
 	WaterReflection.target_rows = VideoOptions.water_rows(o.value(VideoOptions.WATER_DETAIL))
 	# Texture Filtering (MSAA) and Texture Detail (mip bias): the 3D view.
-	VideoOptions.apply_viewport(get_viewport(), o)
+	if changed.call(VideoOptions.FILTERING) or changed.call(VideoOptions.TEXTURE):
+		VideoOptions.apply_viewport(get_viewport(), o)
 	# Lens Flare. READ: SWorld::vslot_005 draws the flare (Map::FUN_00a21280)
 	# only while world+0x2e84 (case 0xd) is set. INFERRED: this client's sun
 	# glow (SkyBox\glow.ddj, which the sky loader 0xa0d1b0 loads) is that
@@ -459,13 +471,17 @@ func apply_video_options(o: VideoOptions) -> void:
 	if _sun_glow != null:
 		_sun_glow.visible = o.value(VideoOptions.LENS_FLARE) == 1
 	# Bloom Effect = glow, and SSAO (OURS): one environment function.
-	if world_environment != null:
+	if world_environment != null and (changed.call(VideoOptions.SSAO) or changed.call(VideoOptions.BLOOM)):
 		VideoOptions.apply_post_effects(world_environment.environment,
 			o.value(VideoOptions.SSAO) == 1, o.value(VideoOptions.BLOOM) == 1)
 	# Effect Quality (READ, IDecoSkill::FUN_00a50dc0; SkillEffects.quality).
 	SkillEffects.quality = o.value(VideoOptions.EFFECT)
 	# Set Brightness (READ curve; a pass over the whole screen).
-	VideoOptions.apply_brightness(get_tree().root if is_inside_tree() else null, o.current().brightness)
+	if before == null or before.current().brightness != o.current().brightness:
+		VideoOptions.apply_brightness(get_tree().root if is_inside_tree() else null, o.current().brightness)
+	if o.notice != "":
+		_log_system(o.notice)
+		o.notice = ""
 	# Metallic Sheen (case 0xc -> the object renderer's +0x194; forced off on
 	# a card below shader model 3, CGame::FUN_00834fb0), Light Effect (case
 	# 0xb -> +0x1a4), Dynamic Animation (case 0xe -> +0x19c and a re-init of
@@ -576,26 +592,28 @@ func _apply_view_distance(scenery: int) -> void:
 	if camera_3d != null:
 		_apply_camera_far_plane()
 
-## Character Sight Range: other players', monsters' and NPCs' meshes are drawn
-## to `range_` from the camera (GeometryInstance3D.visibility_range_end; 0
-## draws them at any distance). Their name plates keep their own range.
+## Character Sight Range: other players' and monsters' meshes are drawn to
+## `range_` from the camera (GeometryInstance3D.visibility_range_end; 0
+## draws them at any distance). Their name plates keep their own range; NPCs
+## are not reached (see _character_range_nodes).
 func _set_character_range(range_: float) -> void:
 	_character_range = range_
-	if other_entities != null:
-		_apply_character_range_under(other_entities)
-	var want := range_ > 0.0 and is_inside_tree()
-	if want and not _character_range_watch:
+	if not _character_range_watch and is_inside_tree():
+		# The first time: what is there now, then every mesh as it is added.
+		if other_entities != null:
+			for n in other_entities.find_children("*", "GeometryInstance3D", true, false):
+				if not (n is Label3D):
+					_character_range_nodes.append(n)
 		get_tree().node_added.connect(_on_node_added_for_range)
 		_character_range_watch = true
-	elif not want and _character_range_watch and is_inside_tree():
-		get_tree().node_added.disconnect(_on_node_added_for_range)
-		_character_range_watch = false
+	var kept: Array = []
+	for n in _character_range_nodes:
+		if is_instance_valid(n) and (n as Node).is_inside_tree():
+			_apply_character_range_to(n as GeometryInstance3D)
+			kept.append(n)
+	_character_range_nodes = kept
 
 const CHARACTER_RANGE_META := &"video_character_range"
-
-func _apply_character_range_under(root: Node) -> void:
-	for n in root.find_children("*", "GeometryInstance3D", true, false):
-		_apply_character_range_to(n as GeometryInstance3D)
 
 func _apply_character_range_to(g: GeometryInstance3D) -> void:
 	if g == null or g is Label3D:
@@ -610,13 +628,22 @@ func _apply_character_range_to(g: GeometryInstance3D) -> void:
 		g.remove_meta(CHARACTER_RANGE_META)
 
 func _on_node_added_for_range(n: Node) -> void:
-	if n is GeometryInstance3D and other_entities != null and other_entities.is_ancestor_of(n):
-		_apply_character_range_to(n as GeometryInstance3D)
+	if n is GeometryInstance3D and not (n is Label3D) and other_entities != null and other_entities.is_ancestor_of(n):
+		_character_range_nodes.append(n)
+		# Bodies come and go: drop the freed ones now and then.
+		if _character_range_nodes.size() % 4096 == 0:
+			_character_range_nodes = _character_range_nodes.filter(func(x) -> bool: return is_instance_valid(x))
+		if _character_range > 0.0:
+			_apply_character_range_to(n as GeometryInstance3D)
 
 ## The Option window's Apply / Confirm (HudPanels.video_options_applied):
 ## the display (window mode, size), the View row, then the world.
 func _on_video_options_applied(o: VideoOptions) -> void:
-	VideoOptions.apply_display(get_window(), o)
+	# The window only when its own rows changed: Apply on another tab must not
+	# snap a moved window back (round 694 review).
+	var before := _video
+	if before == null or before.fullscreen != o.fullscreen or before.resolution != o.resolution:
+		VideoOptions.apply_display(get_window(), o)
 	if o.camera_view != "" and o.camera_view != _camera_view:
 		set_camera_view(o.camera_view)
 		ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_CAMERA_VIEW, _camera_view)

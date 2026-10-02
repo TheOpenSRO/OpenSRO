@@ -110,6 +110,9 @@ func _ladders() -> void:
 	var choices := VideoOptions.resolution_choices(Vector2i(1920, 1080), Vector2i(1234, 777))
 	_check(choices.has(Vector2i(1920, 1080)) and not choices.has(Vector2i(2560, 1440)) and choices.has(Vector2i(1234, 777))
 		and choices[0] == Vector2i(800, 600), "resolutions: no larger than the screen, from 800 x 600, the current size added")
+	_check(VideoOptions.fit_resolution(Vector2i(2560, 1440), Vector2i(1920, 1040)) == Vector2i(1920, 1040)
+		and VideoOptions.fit_resolution(Vector2i(1024, 768), Vector2i(1920, 1040)) == Vector2i(1024, 768),
+		"a saved size larger than the screen is cut to the screen's usable area (round 694 review)")
 	_check(VideoOptions.parse_resolution("1280x720") == Vector2i(1280, 720) and VideoOptions.parse_resolution("junk") == Vector2i.ZERO
 		and VideoOptions.format_resolution(Vector2i(1024, 768)) == "1024x768", "resolution text round trip")
 

@@ -917,11 +917,11 @@ under Compatibility.
 
 `docs/protocol/OPTION_VIDEO.md` has the record and the mapping table.
 
-- [ ] **Two defaults for the user to decide.** Retail's default is Middle (READ: the record
-      constructor 0x5f75e0 and the Default button 0x5fc340), which turns Bloom ON and Water
-      Reflection OFF, and its Default picks full screen. This client defaults to User control with
-      the look it drew before (bloom off, reflection on, a window), and its Default restores that.
-      Under Forward+ Middle would also turn glow on, against round 693's "glow off".
+- [x] **The default** -- decided by the user 2026-10-02: retail's Middle (bloom on, reflection
+      off) for every record with no saved section, pre-694 files included; a stored `[world]
+      water_reflection` still wins; Default restores Middle and leaves the window mode alone.
+      Under Forward+ this turns glow on by default, against round 693's "glow off" -- the user's
+      decision is the later one.
 - [ ] **Rows kept that draw nothing here:** Metallic Sheen (no env-map sheen pass), Light Effect
       (no torch / sun light effect), Dynamic Animation (no cloth or hair; TEXANI and DYVERTEX are
       their own items above), Display Friendly/Enemy (no battle outfits).
@@ -937,6 +937,12 @@ under Compatibility.
       art are read); Effect Quality 1's two owner tests (FUN_00b94b70 on DAT_00ef1a84 / b44).
 - [ ] **Resolution** is the window's size; in full screen Godot keeps the desktop's (no mode
       change in 4.2.2). A 3D render scale would be the Godot way to honour it there.
+- [ ] **Texture Detail has little to act on, even under Forward+** (round 694 review): the terrain
+      textures are built without mipmaps (`mapm_terrain_builder.gd`), so the mipmap bias does not
+      reach them. Generating mipmaps would also cut distant shimmer; measure its VRAM, load time and
+      the gate first. Texture Filtering (MSAA 2x) works but shows little.
+- [ ] **Character Sight Range does not reach NPCs**: they are built into the region's
+      RealTerrain_* group, not other_entities. The original's rule is unread (no reader found).
 - [ ] **Texture Detail and Texture Filtering under Compatibility.** MEASURED: 4.2.2's GLES3
       draws the same picture with `msaa_3d` 2x and `texture_mipmap_bias` 2, so both rows are
       greyed there (they work under Forward+). A bias in this client's own shaders (a global

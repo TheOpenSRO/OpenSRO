@@ -58,7 +58,9 @@ nearby players are unified to improve performance".
 Graphic tab. In record r (base `+r*0x2c`): bytes 4+i are entry i in force, bytes 0x14+i the
 player's own ("User") copy, 0x24 the Graphic Quality, 0x25 the brightness, 0x28 / 0x2c the
 resolution. `Setting\SROptionSet.dat` (loader `0x502680`): u32 13, then tags -- tag i (1..15)
-two bytes (in force, user) for entry i-1, 501 quality, 502 brightness, 503 / 504 width /
+two bytes (in force, user) for entry i (the jump table at 0x5031ac: tag 1 reads bytes +5 / +0x15,
+tag 2 +6 / +0x16, tag 3 +7 / +0x17 -- byte 4+i; the decompiler's normalised `case 5: +8` is
+wrong), 501 quality, 502 brightness, 503 / 504 width /
 height, +100 for record 1, 9999 the selector.
 
 **Presets** (`0x5015a0`, the quality's table; User restores the second copy):
@@ -75,7 +77,8 @@ After loading the file, every record whose quality is not User gets its preset a
 1024 x 768; the Video tab's Default (`0x5fc340`) sets Middle, Normal, the 1280 x 1024 mode,
 **full screen** and the Free view. **The shipped file** (MEASURED, `/opt/sro-files/client/setting/
 SROptionSet.dat`): selector 0; record 0 Middle, Normal, 1280 x 1024; record 1 Low. So the
-shipped client draws Middle -- with Water Reflection **off**: round 628 read tag 5 = 1 and missed
+shipped client draws Middle -- with Water Reflection **off**. Its tag 4 (Water Reflection) is 0
+already; the tag 5 = 1 round 628 read is Water Detail (Middle), and that round also missed
 the re-application.
 
 ## What each does in the original (READ) and here
@@ -92,13 +95,13 @@ value)` (`0xa194a0`), which also stores it at `SWorld+0x2e50 + case*4` (getter `
 | Graphic Quality | the presets above | the same presets; any hand-set row switches to User (INFERRED) |
 | Shadow Detail | case 2: Detail builds a 96 x 96 target and 32 x 32 shadow textures per character; Circle (TTDESC_04 "circles") | Nothing: no blob, no sun shadow map; Circle: the blob (`SkyBox\shadowsphere.ddj`); Detail: blob and the DirectionalLight3D's shadow (OURS) |
 | Background Sight Range | case 8: far plane 1500/2500/3500/4500/5500; view distance `min(0.8 far, 2500)` = 1200/2000/2500/2500/2500 scales the fog planes and is the map-object range + 480; world+0x23db = 800..2048 (reader not found) | map-object animation range = view - 480 (READ rule); fog density x 2500/view and camera far x min(1, far/3500) (OURS); 3 = as before |
-| Character Sight Range | case 9: stored only; no reader found (asm `+0x2e74` has one writer; 17 getter calls carry other cases; no record-offset reader) | OURS: other characters' meshes drawn to 600 / 1200 from the camera at 1 / 2; unlimited at 3..5 (as before) |
+| Character Sight Range | case 9: stored only; no reader found (asm `+0x2e74` has one writer; 17 getter calls carry other cases; no record-offset reader) | OURS: other players' and monsters' meshes drawn to 600 / 1200 from the camera at 1 / 2; unlimited at 3..5 (as before). NPCs are built into their region's group here and are not reached; the original's rule (no reader found) is unknown |
 | Water Reflection | case 6: builds / frees the reflection target and two 512 x 512 textures | round 628's pass; from the next login (a region's water is built for one mode) |
 | Water Detail | case 7: stored only; no reader found | OURS: the reflection target's rows 256 / 512 (READ size) / 1024, live |
 | Metallic Sheen | case 0xc -> object renderer +0x194; forced off below shader model 3 (`CGame::FUN_00834fb0`) | kept, draws nothing: no environment-map sheen here |
 | Light Effect | case 0xb -> object renderer +0x1a4 (Sun / Torch, TTDESC_10) | kept, draws nothing: no torch or sun light effect here |
-| Texture Filtering | byte 0xc; no reader found; TTDESC_15 "compensates rough outlines" | INFERRED anti-aliasing: MSAA 2x on the 3D view (OURS level); Forward+ only -- greyed under Compatibility (MEASURED below) |
-| Texture Detail | case 5: `IDirect3DBaseTexture9::SetLOD(2 - v)` on every texture (vtable +0x2c) | `Viewport.texture_mipmap_bias` 2 / 1 / 0 (INFERRED equivalent look, not the memory saving); Forward+ only -- greyed under Compatibility (MEASURED below) |
+| Texture Filtering | byte 0xc; no reader found; TTDESC_15 "compensates rough outlines" | INFERRED anti-aliasing: MSAA 2x on the 3D view (OURS level); Forward+ only -- greyed under Compatibility (MEASURED below). Under Forward+ the change on screen is small (the review: barely visible) |
+| Texture Detail | case 5: `IDirect3DBaseTexture9::SetLOD(2 - v)` on every texture (vtable +0x2c) | `Viewport.texture_mipmap_bias` 2 / 1 / 0 (INFERRED equivalent look, not the memory saving); Forward+ only -- greyed under Compatibility (MEASURED below). **Little effect in the world yet:** the bias reaches only mipmapped textures, and the terrain's are built without mipmaps (the review, `mapm_terrain_builder.gd`); docs/TODO.md |
 | Lens Flare | case 0xd: `SWorld::vslot_005` draws `Map::FUN_00a21280` while +0x2e84 is set | the sun glow sprite (`SkyBox\glow.ddj`, INFERRED to be the flare's piece) |
 | Bloom Effect | case 1: screen-size and 512 x 512 render targets (a glow pass; look not read) | Godot glow (Forward+ only); the user's "glow" toggle is this row |
 | Dynamic Animation | case 0xe -> renderer +0x19c, re-inits the animated objects; TTDESC_14 fabrics and hair | kept, draws nothing: no cloth or hair motion here |
@@ -107,18 +110,30 @@ value)` (`0xa194a0`), which also stores it at `SWorld+0x2e50 + case*4` (getter `
 | SSAO | (none in the exe) | OURS: Godot SSAO, Forward+ only, default off |
 | Renderer | (none) | OURS: Forward+ / Compatibility at the next start, through round 693's RendererChoice when the build has it |
 
-## This client's defaults (OURS)
+## This client's default: Middle (the user's decision, 2026-10-02)
 
-Graphic 1, **User control** with the values that draw what the client drew before round 694:
-Detail shadows, sight 3 / 3, reflection on, water Middle, texture High, filtering off, lens
-on, bloom off, effects all on, SSAO off; Normal brightness; a window. Retail's default is
-Middle (above); one choice in the Graphic Quality row. Default (the button) restores these.
+The user chose "Original's Middle": every record with no saved section -- a new install and a
+settings file from before round 694 alike -- is retail's **Middle** (READ above): Circle
+shadows, sight 3 / 3, Water Reflection **off**, Middle water, Metallic Sheen / Light Effect /
+Filtering / Lens Flare / **Bloom on**, Middle textures, Dynamic Animation on, every effect;
+Normal brightness; SSAO (OURS) off. Under Compatibility, Bloom, Filtering and Texture Detail
+draw nothing (greyed), so there Middle differs from the look before round 694 by the sun's
+shadow map (off), the water reflection (off) and nothing else drawn. The window mode was not part
+of the choice: it stays a window unless saved otherwise, and Default (the button) restores
+Middle, Normal and the Free view without touching it (retail's Default also picks full screen).
+
+A settings file from before round 694 that stores `[world] water_reflection` keeps that choice:
+`false` is Middle as it is; `true` is User control with Middle's other rows and the reflection
+on (as a hand-set row in the window would be). No key: Middle's value, off.
+
+Round 694 first shipped "User control with the look before this round" as the default; the
+user's decision replaced it.
 
 ## Storage (OURS)
 
 `user://settings.cfg`: `[video]` profile (1 / 2), fullscreen, resolution ("WxH", "" = as
 started); `[video_graphic1]` and `[video_graphic2]`: quality, brightness and every row by name
-(the User values). `[world] water_reflection` (round 628) seeds Water Reflection and is kept in
+(the User values). `[world] water_reflection` (round 628) still wins over the Middle default for a record with no section of its own, and is kept in
 step. QA: `SRREVAMP_QA_VIDEO="quality=0,shadow_detail=2,..."` sets rows for one run, unsaved.
 
 ## Measured (round 694, the box)

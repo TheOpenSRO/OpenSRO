@@ -350,7 +350,8 @@ static func available(entry: int) -> bool:
 	if entry in [VideoOptions.SSAO, VideoOptions.BLOOM, VideoOptions.FILTERING, VideoOptions.TEXTURE]:
 		return VideoOptions.post_effects_available()
 	if entry == VideoOptions.RENDERER:
-		return VideoOptions.renderer_choice_script() != null
+		var rc := VideoOptions.renderer_choice_script()
+		return rc != null and bool(rc.call("applies_here"))
 	return true
 
 ## Why a row is greyed, for its tooltip.
@@ -360,7 +361,10 @@ static func unavailable_reason(entry: int) -> String:
 			VideoOptions.FILTERING: "multisampling (it draws the same picture)", VideoOptions.TEXTURE: "texture mipmap bias (it draws the same picture)"}
 		return "Needs the Forward+ renderer: the Compatibility renderer running now has no %s." % what[entry]
 	if entry == VideoOptions.RENDERER:
-		return "This build cannot record a renderer choice yet (round 693's RendererChoice); running: %s." % ("Forward+" if VideoOptions.forward_plus_running() else "Compatibility")
+		var running := "Forward+" if VideoOptions.forward_plus_running() else "Compatibility"
+		if VideoOptions.renderer_choice_script() == null:
+			return "This build cannot record a renderer choice (round 693's RendererChoice); running: %s." % running
+		return "Only an exported game reads the renderer choice (override.cfg beside it); running: %s." % running
 	return ""
 
 ## The tooltip of a row: its own text from the table, and what this client
@@ -375,7 +379,9 @@ func tooltip_of(entry: int) -> String:
 		VideoOptions.SSAO:
 			ours = "Screen-space ambient occlusion (this client's own option)."
 		VideoOptions.FILTERING:
-			ours = "Multisample anti-aliasing (2x)."
+			ours = "Multisample anti-aliasing (2x); a small change on screen."
+		VideoOptions.TEXTURE:
+			ours = "A mipmap bias: it reaches only textures with mipmaps, and most world textures here have none yet, so it changes little."
 		VideoOptions.RENDERER:
 			ours = "Forward+ (Vulkan) or Compatibility (OpenGL). Takes effect at the next start."
 		VideoOptions.WATER_REFLECTION:
@@ -514,12 +520,22 @@ func press_default() -> void:
 func store() -> VideoOptions:
 	edit.save()
 	var rc := VideoOptions.renderer_choice_script()
-	if rc != null:
+	var notice := ""
+	# Only an exported build reads override.cfg (RendererChoice.applies_here);
+	# a run from source would write beside the editor binary for nothing.
+	if rc != null and bool(rc.call("applies_here")):
 		var current := str(rc.call("chosen"))
 		var effective := current if current != "" else str(rc.get_script_constant_map().get("PROJECT_DEFAULT", "forward_plus"))
 		if renderer_choice != effective:
-			rc.call("choose", renderer_choice)
+			var err: int = int(rc.call("choose", renderer_choice))
+			var name := "Compatibility" if renderer_choice == "gl_compatibility" else "Forward+"
+			if err == OK:
+				notice = "Renderer: %s from the next start." % name
+			else:
+				notice = "Renderer: could not record %s for the next start (%s, error %d) -- the game's folder may be read-only." % [
+					name, str(rc.call("override_path")), err]
 	var stored := edit.duplicate_options()
+	stored.notice = notice
 	VideoOptions.set_in_force(stored)
 	return stored
 

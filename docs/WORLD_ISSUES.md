@@ -7118,7 +7118,10 @@ changed. Labels: READ (`sro_client.exe`, decompile and asm on the box), MEASURED
 - **Defaults:** the constructor (`0x5f75e0`) and the Default button (`0x5fc340`) choose **Middle**,
   Normal brightness; Default also full screen and the Free view. **Correction to round 628:** the
   shipped `SROptionSet.dat`'s record 0 is Middle, whose preset has Water Reflection OFF, so the
-  shipped client draws no reflection; round 628 read tag 5 = 1 and missed the re-application.
+  shipped client draws no reflection. Round 628 read tag 5 = 1 as the reflection, but tag i holds
+  entry i (the jump table at 0x5031ac: tag 1 -> bytes +5 / +0x15, tag 2 -> +6 / +0x16), so tag 5 is
+  Water Detail; tag 4, the reflection, is 0 in that file -- and the preset re-applied on load
+  would turn it off anyway (the review of this round found the off-by-one).
 - **What each does** (`CGame::FUN_00835000` -> `SWorld::vslot_043`): brightness is a gamma ramp
   `65535 * pow(i/255 * B, A)` with (A, B) = (1.4, 0.8) (1.2, 0.9) (1, 1) (0.8, 1.2) (0.6, 1.4),
   full screen only; Background Sight Range sets the far plane 1500..5500 and the view distance
@@ -7144,16 +7147,19 @@ Sheen, Light Effect, Dynamic Animation, Display Friendly/Enemy. The renderer row
 Forward+ / Compatibility for the next start through round 693's `RendererChoice` when the build
 has it (looked up by class name); without it the row is greyed and names the running renderer.
 
-**Defaults (OURS):** User control with the look the client drew before this round (Detail
-shadows, sight 3 / 3, reflection on, Middle water, High textures, no MSAA, lens on, no bloom, no
-SSAO, every effect, Normal, a window). Retail's Middle is one choice away; which default to ship
-is the user's call (docs/TODO.md).
+**Default: retail's Middle -- the user's decision (2026-10-02, "Original's Middle").** Every
+record with no saved section, settings files from before this round included, is Middle: bloom
+on, Water Reflection off, Circle shadows (READ, 0x5015a0). A pre-694 file's stored `[world]
+water_reflection` still wins (true: User control with Middle's other rows). The window mode is not
+part of the choice and stays as saved (a window by default); Default restores Middle, Normal and
+the Free view without touching it. The round first shipped "User control with the look before
+this round" (below, section 4's first gate measured that); the user replaced it.
 
 ### 3. What changed
 
-- `setting/video_options.gd` (new, `VideoOptions`): rows, READ presets / curve / ladders, OURS
-  defaults, storage under `[video]`, `[video_graphic1]`, `[video_graphic2]` (rows by name; `[world]
-  water_reflection` seeds and follows), `apply_post_effects` (the one settings->environment
+- `setting/video_options.gd` (new, `VideoOptions`): rows, READ presets / curve / ladders, the
+  Middle default (the user's), storage under `[video]`, `[video_graphic1]`, `[video_graphic2]` (rows by name; `[world]
+  water_reflection`, when stored, wins over the default and then follows), `apply_post_effects` (the one settings->environment
   function; defers to round 693's `WorldPostEffects.apply` when present), `apply_brightness`,
   `apply_display`, `apply_viewport`; QA `SRREVAMP_QA_VIDEO`.
 - `ui/hud/option_video_page.gd` (new, `OptionVideoPage`): the tab over pane 78 -- combos with
@@ -7222,7 +7228,7 @@ is the user's call (docs/TODO.md).
 
 ### 6. Open
 
-docs/TODO.md, "The Option window's Video tab (round 694)": the two defaults for the user; the four
+docs/TODO.md, "The Option window's Video tab (round 694)": the four
 rows that draw nothing; the readers not found; Water Reflection at the next login; Texture Detail
 and Filtering under Compatibility; the inferred pieces (a hand-set row switching to User, the
 scroll step, the combo's drawing, Effect Quality 1's tests); Resolution in full screen.

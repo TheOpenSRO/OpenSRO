@@ -8,8 +8,10 @@ class_name WaterReflection
 ##
 ## What retail does (READ):
 ## - The option is video control 4, `UIIT_STT_WATER_REFLECTION`: world
-##   option 6, world+0x2e68, saved as tag 5 of Setting\SROptionSet.dat. It
-##   is ON in the shipped file, so it is ON by default here too.
+##   option 6, world+0x2e68, saved as tag 4 of Setting\SROptionSet.dat
+##   (round 694: tag i is entry i; round 628 named tag 5, Water Detail). It
+##   is OFF in the shipped file (tag 4 = 0, and its Middle preset is
+##   re-applied on load); the default here is Middle's, OFF (round 694).
 ## - Each frame the reflection plane is the PlaneHeight of the first block in
 ##   the drawn-block list (nearest the camera's block) that has water
 ##   (PlaneType != -1, state != 0). With no such block, nothing is drawn.
@@ -92,7 +94,8 @@ var _qa_refl_ms := 0.0
 ## record in force (round 694, VideoOptions; before it, [world]
 ## water_reflection, which still wins when stored). The default is OFF:
 ## retail's Middle, the user's choice of default (2026-10-02). (Round 628
-## took ON from the shipped SROptionSet.dat's tag 5; round 694 READ that the
+## took ON from the shipped SROptionSet.dat's tag 5, which is Water Detail --
+## tag 4, the reflection, is 0 there; round 694 READ also that the
 ## file's record is Middle, whose preset retail re-applies on load.)
 ## SRREVAMP_WATER_REFLECTION (0 or 1) overrides it for a run.
 static func enabled() -> bool:
