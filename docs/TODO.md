@@ -27,8 +27,9 @@ In order. Each is checked off here when it ships in a release, with its round in
 - [x] **ESC -> System window** (`ifsystemwnd`: Option / Help / Restart / Exit) -- round 138.
       Restart = login screen, Exit = quit. Option opens the retail Option window since round 615
       (CNIFOption from `res_ui\optionwnd.2dt`, the window the button really opens -- not the
-      `ifoption*.txt` family); its Audio tab works. Still open: its Video, Input and Game tabs
-      (our UI scale / chat font / name range / camera views stay on the Ctrl+F3 debug panel).
+      `ifoption*.txt` family); its Audio tab works, and its Video tab since round 694 (below,
+      "The Option window's Video tab"). Still open: its Input and Game tabs (our UI scale / chat
+      font / name range stay on the Ctrl+F3 debug panel).
 - [x] **NPC talk.** A click on an NPC opens `if_npctalk` titled with its name -- round 139. The
       greeting's service lines are now clickable; Buy opens the shop and the storage line the
       warehouse (both below). The guild NPC's lines follow the player's guild (round 521): a
@@ -868,49 +869,91 @@ are textured. The tester plays a tagged Windows release; which tag is not known 
    `renderer/rendering_method="gl_compatibility"` there is a no-rebuild A/B of the renderer
    question, and `shader_compiler/shader_cache/enabled=false` one of the shader-cache hypothesis.
 
-### The renderer — **decided 2026-09-26: GL Compatibility, in effect from round 581**
+### The renderer — **decided 2026-10-02: Forward+ the default, Compatibility a per-install choice (round 693)**
 
-The user decided on 2026-09-26 that players run the Compatibility renderer, which `project.godot`
-had meant since 2026-08-26 but never got: its `#` comment lines were folded into the next key by
-Godot 4.2's parser (only `;` is a comment there), so `rendering_method`, `enable_file_logging` and
-`use_oversampling` did not apply and every release ran Forward+ on Vulkan (round 579, the
-`/groundprobe` round, measured it). Round 581 rewrote the comments; `client/scripts/project_settings_test.gd`
-fails if a setting stops applying, and an exported pack's `project.binary` now carries
-`rendering_method="gl_compatibility"` (measured before and after, `docs/RE_COMPLETION.md` round
-581). What a player sees change, read in the 4.2.2 source: the world's SSAO and glow stop (the
-Compatibility renderer has neither); sky, tonemap, fog and the sun's shadows stay. Every box render
-was already Compatibility, so the look this project has verified is the one players now get.
-Still open: a Windows GPU without OpenGL 3.3 gets Godot's "Unable to initialize OpenGL video
-driver" alert unless the export template carries ANGLE, which was not checked; and every tester
-report so far (the white ground included) came from a Forward+ build, so the first report from a
-Compatibility release is the one to read against the box.
+The user decided on 2026-10-02: "Let's make forward+ the default build." From round 581 to 692
+players ran GL Compatibility (decided 2026-09-26). Before round 581 releases ran Forward+ by
+accident: project.godot's `#` comments swallowed the setting. Round 693 (docs/WORLD_ISSUES.md) did
+the following:
 
-### Forward+ as a second renderer -- **planned (discussed with the user 2026-10-02); not scheduled**
+- **The box renders Forward+ on the RX 7600.** Vulkan presents through `client/tools/xwl_run.sh`
+  (headless weston + Xwayland). Xvfb silently falls back to llvmpipe (docs/RENDER_BOX.md, "Vulkan
+  (Forward+)"). `qa_shot.sh` and `perf_gate.sh` run each copy's own renderer, and `RENDERER=` /
+  `--renderer` / `--ab-renderer` pick one.
+- **The client's own shaders keep Compatibility's colour arithmetic** (`ShaderColour`). Under
+  Forward+ the portrait, the select bodies, the mod stages, the particles, the cloud layer, the water
+  reflection and every vertex-coloured terrain or water material would otherwise draw too bright.
+- **SSAO and glow** go through `WorldPostEffects.apply` (off until a record says otherwise). Since
+  round 694 the Option window's Video tab sets them: Bloom Effect is the glow, and retail's default,
+  Middle -- the user's chosen default -- has it ON; SSAO (OURS) is off.
+- **Compatibility stays available.** It is chosen per install in `override.cfg` beside the game
+  (`RendererChoice`), written from `setting/config.yaml`'s `display.renderer` or by the release's
+  `srrevamp-compatibility.bat` / `.sh`. Godot 4.2.2 does not fall back from Vulkan to OpenGL by
+  itself (READ).
 
-The user asked whether Forward+ can return without the white-ground bug, and about shipping a
-Compatibility build and a Forward+ build. The ground mechanism (bases drawn over their textured
-passes by material-RID order after a reconnect) was fixed in round 580 with `render_priority`. By
-reading Godot 4.2.2's source that ordering also holds in Forward+, but it has only been MEASURED
-under Compatibility.
+**Still open:**
+- [ ] **Blending space.** Forward+ blends half-transparent surfaces in linear space; retail (D3D9)
+      and Compatibility blend in display values. MEASURED (`client/tools/measure_blend_space.gd`): up
+      to 13 levels at a 50 % terrain-overlay feather, 21 for water's 200/255 over sand, 9-12 for
+      additive glow. Not fixable per material without the destination colour. The options are a
+      second pass, or accepting it (the user's call).
+- [ ] **A machine without Vulkan** gets Godot's "Unable to initialize Vulkan video driver" alert
+      and then needs the Compatibility launcher once. An automatic fall back needs Godot 4.3's
+      `rendering_device/fallback_to_opengl3` (an engine upgrade). Whether the official 4.2.2 Windows
+      templates link ANGLE (for a GPU without GL 3.3) is unverified.
+- [ ] **The low-end hardware test** (the user's). On the box's RX 7600 Forward+ draws the Jangan spawn in
+      2.97 ms against Compatibility's 8.75, and the 500-monster view in 3.29 against 10.09. Entry and
+      freezes are the same (round 693's perf gate). A low-end or integrated GPU is not measured.
+- [ ] **Compatibility's shadowed sun was brighter.** GLES3 draws a shadow-casting directional light
+      in a separate additive pass and adds it in display values. MEASURED: a lit quad reads
+      (225,176,127) with shadows against (159,128,95) without; Forward+ reads (158,128,95) either
+      way. So lit objects look about 10-15 luma darker under Forward+ than in every shot since round
+      581. Retune the sun's 0.3 (OURS) for Forward+, or keep it: the user's call.
+- [x] **The Options window** shows the renderer and the SSAO and glow toggles -- round 694 (the
+      renderer row writes `override.cfg` in an exported build only).
+- [ ] **Retail's Bloom effect's look** (round 694 READ its default: ON in Middle, the default; it
+      builds screen-size and 512 x 512 targets, SWorld::vslot_043 case 1). Its parameters are
+      unread, so glow's are still the 2026-08-26 guess.
+- [ ] **The first tester report from a Forward+ release** is the one to read against the box.
 
-- [ ] **First: Vulkan on the render box.** CT 103 has the RADV ICD (`radeon_icd.json`) and
-      `/dev/dri/renderD128`. Whether Godot's Vulkan path runs there under Xvfb is untested, and
-      every probe, perf gate and QA shot so far is Compatibility.
-- [ ] **A/B every visual check under Forward+:**
-      - the `/groundprobe` reconnect test (round 579/580);
-      - water and foliage;
-      - the appear/disappear fades (Compatibility ignores `GeometryInstance3D.transparency`;
-        Forward+ honours it);
-      - round 688's `_undo_tonemap`;
-      - the PlayerPortrait character formula;
-      - text crispness.
-- [ ] **The perf gate under both renderers,** and a low-end check (Forward+ needs Vulkan and is
-      heavier).
-- [ ] **Shipping.** Either a launch-time choice (an `override.cfg` beside the exe, written from
-      `setting/`, applied on restart; recommended first) or two exports from one project (a
-      feature-tag override `renderer/rendering_method.forwardplus="forward_plus"` plus a second
-      export preset with that custom feature). Two exports mean CI builds both, and the
-      auto-updater keeps each install on its own flavour.
+### The Option window's Video tab (round 694) -- **built: retail's rows, presets, Graphic 1 / 2, brightness curve and sight ladders READ; SSAO and Bloom (glow) through one environment function; these are left**
+
+`docs/protocol/OPTION_VIDEO.md` has the record and the mapping table.
+
+- [x] **The default** -- decided by the user 2026-10-02: retail's Middle (bloom on, reflection
+      off) for every record with no saved section, pre-694 files included; a stored `[world]
+      water_reflection` still wins; Default restores Middle and leaves the window mode alone.
+      Under Forward+ this turns glow on by default, against round 693's "glow off" -- the user's
+      decision is the later one.
+- [ ] **Rows kept that draw nothing here:** Metallic Sheen (no env-map sheen pass), Light Effect
+      (no torch / sun light effect), Dynamic Animation (no cloth or hair; TEXANI and DYVERTEX are
+      their own items above), Display Friendly/Enemy (no battle outfits).
+- [ ] **Readers not found:** Character Sight Range (case 9) and Water Detail (case 7) are stored
+      and never read by the three probes tried; Texture Filtering's byte 0xc has no reader found
+      either. Their effects here are OURS (draw distance, reflection rows) and INFERRED (MSAA from
+      the tooltip). Next: the object renderer's draw path for +0x2e74, and a D3D sampler-state
+      search for the filter.
+- [ ] **Water Reflection applies at the next login**: a region's water is built for one mode.
+      Live would mean rebuilding every loaded region's water and mirror terrain.
+- [ ] **Inferred, not read:** a hand-set row switching the record to User (the slot's change
+      handler); the scroll bar's line step; the combo's own drawing (only its arrow and list frame
+      art are read); Effect Quality 1's two owner tests (FUN_00b94b70 on DAT_00ef1a84 / b44).
+- [ ] **Resolution** is the window's size; in full screen Godot keeps the desktop's (no mode
+      change in 4.2.2). A 3D render scale would be the Godot way to honour it there.
+- [ ] **Texture Detail has little to act on, even under Forward+** (round 694 review): the terrain
+      textures are built without mipmaps (`mapm_terrain_builder.gd`), so the mipmap bias does not
+      reach them. Generating mipmaps would also cut distant shimmer; measure its VRAM, load time and
+      the gate first. Texture Filtering (MSAA 2x) works but shows little.
+- [ ] **SSAO is a light effect** (round 694 review, MEASURED): the terrain is unshaded and the object
+      mods write EMISSION, which Godot's SSAO does not darken; tuned (radius 16, intensity 4, light
+      affect 1) it darkens about 1.7x the frame noise. A real effect needs those shaders to take
+      light, or an AO term of their own.
+- [ ] **Character Sight Range does not reach NPCs**: they are built into the region's
+      RealTerrain_* group, not other_entities. The original's rule is unread (no reader found).
+- [ ] **Texture Detail and Texture Filtering under Compatibility.** MEASURED: 4.2.2's GLES3
+      draws the same picture with `msaa_3d` 2x and `texture_mipmap_bias` 2, so both rows are
+      greyed there (they work under Forward+). A bias in this client's own shaders (a global
+      uniform) would give Compatibility a Texture Detail.
 
 ### Culling and level of detail -- **queued (the user, 2026-10-02): a round after the Video options tab (round 694)**
 

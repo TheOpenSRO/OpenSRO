@@ -8,8 +8,10 @@ class_name WaterReflection
 ##
 ## What retail does (READ):
 ## - The option is video control 4, `UIIT_STT_WATER_REFLECTION`: world
-##   option 6, world+0x2e68, saved as tag 5 of Setting\SROptionSet.dat. It
-##   is ON in the shipped file, so it is ON by default here too.
+##   option 6, world+0x2e68, saved as tag 4 of Setting\SROptionSet.dat
+##   (round 694: tag i is entry i; round 628 named tag 5, Water Detail). It
+##   is OFF in the shipped file (tag 4 = 0, and its Middle preset is
+##   re-applied on load); the default here is Middle's, OFF (round 694).
 ## - Each frame the reflection plane is the PlaneHeight of the first block in
 ##   the drawn-block list (nearest the camera's block) that has water
 ##   (PlaneType != -1, state != 0). With no such block, nothing is drawn.
@@ -47,6 +49,10 @@ class_name WaterReflection
 ##   0xa0)`, whose unit is INFERRED to be seconds.
 
 const TARGET_ROWS := 512
+## The rows in force: the Water Detail option (round 694,
+## VideoOptions.water_rows: 256 / 512 / 1024, Middle = TARGET_ROWS). Read
+## every frame, so a change shows on the next.
+static var target_rows := TARGET_ROWS
 const QA_WINDOW := 10
 ## READ: `_DAT_00de4f70` = 0.04 (as a double), and the angle is t * 0.5 * 9.
 const BUMP_SCALE := 0.04
@@ -84,14 +90,19 @@ var _qa_frames := 0
 var _qa_main_ms := 0.0
 var _qa_refl_ms := 0.0
 
-## The option, mirroring retail's: ClientSettings [world] water_reflection,
-## default ON as the shipped SROptionSet.dat has it; SRREVAMP_WATER_REFLECTION
-## (0 or 1) overrides it for a run.
+## The option: the Option window's Water Reflection row in the Graphic
+## record in force (round 694, VideoOptions; before it, [world]
+## water_reflection, which still wins when stored). The default is OFF:
+## retail's Middle, the user's choice of default (2026-10-02). (Round 628
+## took ON from the shipped SROptionSet.dat's tag 5, which is Water Detail --
+## tag 4, the reflection, is 0 there; round 694 READ also that the
+## file's record is Middle, whose preset retail re-applies on load.)
+## SRREVAMP_WATER_REFLECTION (0 or 1) overrides it for a run.
 static func enabled() -> bool:
 	var env := OS.get_environment("SRREVAMP_WATER_REFLECTION")
 	if env != "":
 		return env != "0"
-	return bool(ClientSettings.get_value(ClientSettings.SECTION_WORLD, ClientSettings.KEY_WATER_REFLECTION, true))
+	return VideoOptions.in_force().value(VideoOptions.WATER_REFLECTION) == 1
 
 ## waterbump3.ddj as the bump stage reads it (READ, `Map::FUN_009f2050`):
 ## - du = (left - right) / 2 and dv = (row above - row below) / 2 on byte 0
@@ -272,8 +283,12 @@ uniform float ao_light_affect = 0.0;
 uniform vec4 albedo_color : source_color = vec4(1.0);
 uniform vec2 uv1_scale = vec2(1.0);
 varying vec3 world_pos;
+%s
 void vertex() {
 	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	// The terrain's vertex colour is sRGB (vertex_color_is_srgb, round 693):
+	// decoded where the output is linear, as StandardMaterial3D does.
+	%s
 }
 void fragment() {
 	if (dot(world_pos, water_clip_plane.xyz) + water_clip_plane.w < 0.0) {
@@ -292,13 +307,13 @@ void fragment() {
 	}
 	ALBEDO = c.rgb;
 %s%s}
-""" % [", ".join(modes), ao_lines, "\tALPHA = c.a;\n" if blend else ""]
+""" % [", ".join(modes), ShaderColour.DECODE_FN, ShaderColour.DECODE_COLOR, ao_lines, "\tALPHA = c.a;\n" if blend else ""]
 
 func _ready() -> void:
 	ensure_globals()
 	_viewport = SubViewport.new()
 	_viewport.name = "WaterReflectionTarget"
-	_viewport.size = Vector2i(TARGET_ROWS, TARGET_ROWS)
+	_viewport.size = Vector2i(target_rows, target_rows)
 	_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	_viewport.handle_input_locally = false
 	_viewport.gui_disable_input = true
@@ -418,7 +433,7 @@ func _process(_delta: float) -> void:
 	var vs := get_viewport().get_visible_rect().size
 	if vs.y > 0:
 		aspect = vs.x / vs.y
-	var size := Vector2i(maxi(1, int(roundf(TARGET_ROWS * aspect))), TARGET_ROWS)
+	var size := Vector2i(maxi(1, int(roundf(target_rows * aspect))), target_rows)
 	if _viewport.size != size:
 		_viewport.size = size
 	_camera.fov = main.fov

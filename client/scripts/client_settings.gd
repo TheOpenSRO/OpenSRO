@@ -48,10 +48,12 @@ const SECTION_WORLD := "world"
 ## setting's default, and the next set_value rewrites the file from only
 ## the keys above the bad line plus its own, losing that line and the rest.
 const KEY_SEASONAL := "seasonal"
-## The Water Reflection video option (round 628; WaterReflection): true, the
-## default, draws retail's reflection pass, as the game's shipped
-## Setting\SROptionSet.dat has it (tag 5 = 1); false draws the plain animated
-## water. Read once per world scene.
+## The Water Reflection video option (round 628; WaterReflection): true draws
+## retail's reflection pass, false the plain animated water. Since round 694
+## the Option window's Video tab owns it (VideoOptions, sections [video],
+## [video_graphic1], [video_graphic2]): a value stored here before them still
+## wins over the Middle default; absent, Middle's (off). It is rewritten to
+## match the record in force.
 const KEY_WATER_REFLECTION := "water_reflection"
 
 static func get_value(section: String, key: String, default_val: Variant) -> Variant:

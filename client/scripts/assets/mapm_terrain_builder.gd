@@ -251,6 +251,9 @@ static func _surface_material(surface: Dictionary, texture_lookup: Dictionary, l
 		else:
 			push_error("MapmTerrainBuilder: surface texture %d is not in the lookup" % key)
 	mat.vertex_color_use_as_albedo = true
+	# Display values, as Compatibility reads them; decoded where the output
+	# is linear (Forward+), round 693's ShaderColour.
+	mat.vertex_color_is_srgb = ShaderColour.VERTEX_COLOR_IS_SRGB
 	# The base under every opaque pass in the opaque sort, whatever the
 	# materials' RID indices (BASE_RENDER_PRIORITY). The overlays are
 	# transparent and sorted apart; they keep the default, as do the passes.

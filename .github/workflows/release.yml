@@ -109,6 +109,10 @@ jobs:
           mkdir -p build/windows dist/srrevamp-windows/pk2
           godot --headless --path . --export-release "Windows Desktop" build/windows/srrevamp.exe
           cp -r build/windows/. dist/srrevamp-windows/
+          # Round 693: Forward+ is the default and Godot 4.2.2 does not fall
+          # back to OpenGL when Vulkan fails, so a PC without Vulkan starts
+          # once through this (RendererChoice remembers it).
+          cp launchers/srrevamp-compatibility.bat dist/srrevamp-windows/
           cp ../README.md dist/srrevamp-windows/README.md || true
           bash ../native/third_party_notice.sh x86_64-pc-windows-gnu "${RUNNER_TEMP}/godot_licenses.txt" > dist/srrevamp-windows/THIRD_PARTY_NOTICES.txt
           cat > dist/srrevamp-windows/pk2/PUT_YOUR_PK2_FILES_HERE.txt <<'EOF'
@@ -125,6 +129,7 @@ jobs:
           mkdir -p build/linux dist/srrevamp-linux/pk2
           godot --headless --path . --export-release "Linux" build/linux/srrevamp.x86_64
           cp -r build/linux/. dist/srrevamp-linux/
+          cp launchers/srrevamp-compatibility.sh dist/srrevamp-linux/
           cp ../README.md dist/srrevamp-linux/README.md || true
           bash ../native/third_party_notice.sh x86_64-unknown-linux-gnu "${RUNNER_TEMP}/godot_licenses.txt" > dist/srrevamp-linux/THIRD_PARTY_NOTICES.txt
           cat > dist/srrevamp-linux/pk2/PUT_YOUR_PK2_FILES_HERE.txt <<'EOF'
@@ -133,7 +138,7 @@ jobs:
           the client. This project ships with no game data of its own --
           see docs/LEGAL.md in the source repository for why.
           EOF
-          chmod +x dist/srrevamp-linux/srrevamp.x86_64 || true
+          chmod +x dist/srrevamp-linux/srrevamp.x86_64 dist/srrevamp-linux/srrevamp-compatibility.sh || true
           cd dist && zip -r srrevamp-linux.zip srrevamp-linux
 
       # Both zips must carry their library where the exported game looks for

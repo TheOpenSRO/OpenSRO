@@ -106,6 +106,11 @@ void fragment() {
 		ALPHA = COLOR.a;
 	}
 	ALBEDO = qa_output_mode == 1 ? disp : undo_output(disp);
+	// ALBEDO is a display value, as Compatibility decodes it; Forward+ takes
+	// it as linear, so decode it there (ShaderColour, round 693).
+	if (!OUTPUT_IS_SRGB) {
+		ALBEDO = srgb_to_linear(clamp(ALBEDO, 0.0, 1.0));
+	}
 	if (qa_output_mode == 2) {
 		ALBEDO = vec3(SCREEN_UV.x);
 		ALPHA = 1.0;

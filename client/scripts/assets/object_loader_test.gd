@@ -703,7 +703,7 @@ func _test_material_review(OL, archive: Pk2Reader, layer_for: Callable, base_mod
 		"review 2: D3DTA_DIFFUSE (0) is sent, not skipped (got color_arg1 %s alpha_arg1 %s)" % [
 			m.get_shader_parameter("color_arg1") if m != null else "-", m.get_shader_parameter("alpha_arg1") if m != null else "-"])
 	_check(m != null and m.shader.code.contains("ALBEDO = lit;") and m.shader.code.contains("EMISSION = unlit;")
-			and m.shader.code.contains("albedo.rgb * 0.5"),
+			and m.shader.code.contains("srr_color(albedo, OUTPUT_IS_SRGB).rgb * 0.5"),
 		"review 2-3: DIFFUSE is the lit term (ALBEDO, lit by the scene), TEXTURE alone unlit (EMISSION), MODULATE2X = the flag-word brightness")
 	var two := OL.build_godot_material(archive, "", layer_for.call(0x340), {}, -1, leaf, true) as ShaderMaterial
 	# Integration review: the front pass is not a next_pass at a higher

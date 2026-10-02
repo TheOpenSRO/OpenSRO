@@ -33,10 +33,11 @@ func _initialize() -> void:
 
 	# --- The option: ON unless the setting or the env says otherwise.
 	OS.set_environment("SRREVAMP_WATER_REFLECTION", "")
-	# Only a settings.cfg that says `water_reflection=false` under [world]
-	# turns it off; with the key absent it is on.
-	var saved = ClientSettings.get_value("world", "water_reflection", "unset")
-	_check(R.enabled() == (str(saved) == "unset" or bool(saved)), "with no env override the option is the setting, ON when unset (saved: %s)" % str(saved))
+	# Since round 694 the option is the Video tab's row in the record in
+	# force (VideoOptions); with nothing saved it is Middle's, OFF -- the
+	# user's choice of default (2026-10-02).
+	_check(R.enabled() == (VideoOptions.in_force().value(VideoOptions.WATER_REFLECTION) == 1), "with no env override the option is the record in force's row")
+	_check(VideoOptions.load_saved("user://no_such_settings_694.cfg").value(VideoOptions.WATER_REFLECTION) == 0, "with nothing saved it is OFF (Middle)")
 	OS.set_environment("SRREVAMP_WATER_REFLECTION", "0")
 	_check(not R.enabled(), "SRREVAMP_WATER_REFLECTION=0 turns it off")
 	OS.set_environment("SRREVAMP_WATER_REFLECTION", "1")

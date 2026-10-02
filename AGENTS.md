@@ -58,7 +58,9 @@ way is ~116 seconds against ~9.5 minutes as six runs.
 
 **Check the GL path.** The runner uses the GPU when it can and says so on stderr. A log saying
 `falling back to software GL` means renders just got 5–10x slower; fix that before waiting on
-anything.
+anything. Forward+ is the default renderer from round 693. It runs on Vulkan through
+`client/tools/xwl_run.sh`, because Xvfb cannot present Vulkan. The run's banner names the device;
+`llvmpipe` there means the CPU (docs/RENDER_BOX.md, "Vulkan (Forward+)").
 
 ## Verifying claims
 

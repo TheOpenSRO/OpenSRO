@@ -84,6 +84,21 @@
 # numbered frame out of the output directory.
 #
 # Environment: CLIENT_DIR and PK2_DIR default to the RE box's own layout.
+#
+# RENDERER (round 693): forward_plus or gl_compatibility; unset, the client
+# copy's own project.godot decides (Forward+ from round 693), as a plain
+# launch would. Forward+ runs on Vulkan through tools/xwl_run.sh (a private
+# headless weston + Xwayland, which RADV can present to; Xvfb cannot --
+# docs/RENDER_BOX.md, "Vulkan (Forward+)"); QA_VK_PRESENT=sw runs it on Xvfb
+# with Mesa's software presentation instead (correct frames, but ~17 ms of
+# CPU copy a 1280x720 frame: never for timings). gl_compatibility runs as
+# before, VirtualGL on Xvfb. The run's own banner (`Vulkan API ... - Forward+
+# - Using Vulkan Device #0: ...` or `OpenGL API ... - Compatibility - ...`) is
+# repeated on stderr at the end, and a run that landed on llvmpipe says so.
+#
+# QA_SHOT_REAP=0 (round 693) skips the start-up reap below: for a lane that
+# runs under its own GODOT_LOCK, where killing every Godot on the box would
+# kill other lanes' runs.
 set -euo pipefail
 
 # One run at a time on this box. The startup below kills every running
@@ -160,11 +175,17 @@ done
 # the client connected to nothing and hung. Reap the whole stack: the godot
 # binary (by its real path, not the wrapper), any prior xvfb-run, every leftover
 # Xvfb, and any stale in-memory QA server.
+if [ "${QA_SHOT_REAP:-1}" != 0 ]; then
 pkill -9 -f "godot-bin/Godot_v4.2.2" 2>/dev/null || true
 pkill -9 -f "xvfb-run" 2>/dev/null || true   # only prior ones; ours starts below
 pkill -9 -x Xvfb 2>/dev/null || true
+# Forward+ runs (round 693) sit on xwl_run.sh's weston + Xwayland instead.
+pkill -9 -f "tools/xwl_run.sh" 2>/dev/null || true
+pkill -9 -x weston 2>/dev/null || true
+pkill -9 -x Xwayland 2>/dev/null || true
 pkill -9 -f "srrevamp-server -in-memory" 2>/dev/null || true
 sleep 1
+fi
 rm -rf "$OUT"; mkdir -p "$OUT"
 
 # A full disk does not fail a render: the movie writer keeps going and
@@ -186,13 +207,22 @@ cd "$CLIENT_DIR"
 # rasterised on the CPU -- which is why a screenshot used to cost minutes.
 # VirtualGL bridges the two: it services GLX through EGL on the render
 # node, and glxinfo then reports the real card instead of llvmpipe.
+# The renderer (round 693): RENDERER, else the project's own setting.
+RENDERER="${RENDERER:-$(sed -n 's/^renderer\/rendering_method="\([a-z_]*\)"$/\1/p' project.godot | head -1)}"
+RENDERER="${RENDERER:-forward_plus}"   # Godot's own default when the file sets none
+case "$RENDERER" in
+  forward_plus|gl_compatibility) ;;
+  *) echo "qa_shot: RENDERER must be forward_plus or gl_compatibility, not '$RENDERER'" >&2; exit 2 ;;
+esac
 VGL=""
-if command -v vglrun >/dev/null && [ -e /dev/dri/renderD128 ] && [ -r /dev/dri/renderD128 ]; then
-  VGL="vglrun -d egl0"
-  echo "qa_shot: hardware GL via VirtualGL on /dev/dri/renderD128" >&2
-else
-  export LIBGL_ALWAYS_SOFTWARE=1
-  echo "qa_shot: no usable render node -- falling back to software GL (slow)" >&2
+if [ "$RENDERER" = gl_compatibility ]; then
+  if command -v vglrun >/dev/null && [ -e /dev/dri/renderD128 ] && [ -r /dev/dri/renderD128 ]; then
+    VGL="vglrun -d egl0"
+    echo "qa_shot: Compatibility renderer, hardware GL via VirtualGL on /dev/dri/renderD128" >&2
+  else
+    export LIBGL_ALWAYS_SOFTWARE=1
+    echo "qa_shot: no usable render node -- falling back to software GL (slow)" >&2
+  fi
 fi
 export SRREVAMP_PK2_PATH="$PK2_DIR/Data.pk2"
 export SRREVAMP_MAP_PK2_PATH="$PK2_DIR/Map.pk2"
@@ -232,11 +262,18 @@ if [ "$SERVER" = "start" ]; then
   # The teleport network (round 575): export-refdata -mode teleport's three
   # CSVs in a teleport/ directory beside the pk2s. The server logs its counts.
   TELEPORT_DIR="${SRREVAMP_TELEPORT_DIR:-$PK2_DIR/teleport}"
+  # The creatable catalogue (round 682's lobby; export-refdata -mode
+  # chargen): without it the server refuses every create (S1027, "no
+  # creatable catalogue loaded"), the QA sign-in renders offline and a
+  # --reconnect-via-login finds no character to start (round 693).
+  CHARGEN_CSV="${SRREVAMP_CHARGEN_CSV:-$PK2_DIR/chargen.csv}"
   SERVER_ARGS=(-in-memory -addr "127.0.0.1:$SERVER_PORT")
   [ -f "$ITEMS_CSV" ]     && SERVER_ARGS+=(-items-csv "$ITEMS_CSV")
   [ -f "$SKILLS_CSV" ]    && SERVER_ARGS+=(-skills-csv "$SKILLS_CSV")
   [ -f "$LEVELDATA_CSV" ] && SERVER_ARGS+=(-leveldata-csv "$LEVELDATA_CSV")
   [ -f "$TELEPORT_DIR/teleportdata.csv" ] && SERVER_ARGS+=(-teleport-dir "$TELEPORT_DIR")
+  if [ -f "$CHARGEN_CSV" ]; then SERVER_ARGS+=(-chargen-csv "$CHARGEN_CSV")
+  else echo "qa_shot: no chargen CSV at $CHARGEN_CSV (set SRREVAMP_CHARGEN_CSV) -- the server can create no character" >&2; fi
   "$SERVER_BIN" "${SERVER_ARGS[@]}" >"$OUT/server.log" 2>&1 &
   SERVER_PID=$!
   # SIGKILL, not SIGTERM: the in-memory server did not always die on TERM, so
@@ -288,6 +325,24 @@ fi
 # window size otherwise, so asking for a square screen alone still produced
 # 16:9 frames -- which quietly ruins any comparison against square authored
 # art like a region minimap.
-xvfb-run -a -s "-screen 0 ${SIZE}x24" $VGL "$GODOT" \
-  --rendering-driver opengl3 --resolution "$SIZE" --path . "$SCENE" \
-  --write-movie "$OUT/f.png" --quit-after "$FRAMES"
+if [ "$RENDERER" = forward_plus ]; then
+  if [ "${QA_VK_PRESENT:-}" = sw ]; then
+    echo "qa_shot: Forward+ on Vulkan, Xvfb with Mesa's software presentation (QA_VK_PRESENT=sw: slow frames, no timings)" >&2
+    LAUNCH=(xvfb-run -a -s "-screen 0 ${SIZE}x24" env MESA_VK_WSI_DEBUG=sw)
+  else
+    echo "qa_shot: Forward+ on Vulkan, headless weston + Xwayland (tools/xwl_run.sh)" >&2
+    LAUNCH=("$CLIENT_DIR/tools/xwl_run.sh" -s "$SIZE")
+  fi
+  RFLAGS=(--rendering-method forward_plus --rendering-driver vulkan)
+else
+  # shellcheck disable=SC2206
+  LAUNCH=(xvfb-run -a -s "-screen 0 ${SIZE}x24" $VGL)
+  RFLAGS=(--rendering-driver opengl3)
+fi
+"${LAUNCH[@]}" "$GODOT" \
+  "${RFLAGS[@]}" --resolution "$SIZE" --path . "$SCENE" \
+  --write-movie "$OUT/f.png" --quit-after "$FRAMES" 2>&1 | tee "$OUT/godot.log"
+# What actually ran: Godot's own banner. llvmpipe is the CPU, never the GPU.
+banner=$(grep -m1 -E "^(Vulkan|OpenGL) API" "$OUT/godot.log" || true)
+echo "qa_shot: ran ${banner:-(no renderer banner in the log)}" >&2
+case "$banner" in *llvmpipe*) echo "qa_shot: WARNING: the run rendered on llvmpipe (the CPU), not the GPU" >&2 ;; esac

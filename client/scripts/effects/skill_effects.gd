@@ -117,6 +117,28 @@ const C_NAME := 18
 const C_BONE := 19
 const C_OFFSET := 20
 
+## The Effect Quality option (round 694, VideoOptions.EFFECT): 0 "Turn Off
+## All Effects", 1 "See Hit Effects", 2 "See All Effects" (the default).
+## READ: the client asks IDecoSkill::FUN_00a50dc0(quality, owner) before it
+## starts a skill's effect -- 0 shows none, 2 all, and 1 only an effect whose
+## owner passes two tests (FUN_00b94b70 against DAT_00ef1a84 / DAT_00ef1b44)
+## that were not read. INFERRED: those name the player and the player's own
+## fight, so at 1 an effect is shown when the player casts it, is hit by it,
+## or carries it (wants_effect).
+const EFFECTS_NONE := 0
+const EFFECTS_HITS := 1
+const EFFECTS_ALL := 2
+static var quality := EFFECTS_ALL
+
+## Whether the Effect Quality option lets an effect on `host`, cast by
+## `caster` at `target`, be started.
+static func wants_effect(caster: Node3D, target: Node3D, host: Node3D) -> bool:
+	if quality >= EFFECTS_ALL:
+		return true
+	if quality <= EFFECTS_NONE:
+		return false
+	return own_body != null and (caster == own_body or target == own_body or host == own_body)
+
 ## SkillEffectID -> Array of Dictionary {ani, event, act, path, bone, offset}.
 static var _rows: Dictionary = {}
 static var _loaded := false
@@ -320,6 +342,8 @@ static func play_phase(skill_id: int, ani_type: int, start_event: int, caster: N
 		var host := host_for(act, caster, target)
 		if not _valid(host):
 			continue
+		if not wants_effect(caster, target, host):
+			continue
 		var fx := _make(String(r["path"]))
 		if fx == null:
 			print("EFFECTS skill %d %s/%d: %s did not load (%s)" % [skill_id,
@@ -509,7 +533,7 @@ static func attach_aura(owner_key: String, token: int, skill_id: int, host: Node
 		remaining_ms: int = -1, now_ms: int = -1) -> Array:
 	detach_aura(owner_key, token)
 	var started: Array = []
-	if not _valid(host):
+	if not _valid(host) or not wants_effect(null, null, host):
 		return started
 	for r in rows_for(skill_id, SkillAudio.ACT_L, -1):
 		var fx := _make(String(r["path"]))

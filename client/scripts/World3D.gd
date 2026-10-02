@@ -394,6 +394,263 @@ func set_camera_view(view: String) -> void:
 			if _camera_pivot != null:
 				_camera_pivot.rotation.y = 0.0
 
+## ---------------------------------------------------------------------------
+## The Option window's Video tab (round 694, VideoOptions; the record of what
+## each row does in the original, and what it does here, is
+## docs/protocol/OPTION_VIDEO.md). `_video` is the record in force; the
+## pieces built later (the blob, the sun glow, a new character's meshes)
+## read it as they are made.
+var _video: VideoOptions = null
+## The fog and far-plane factors of the Background Sight Range (see
+## _apply_view_distance).
+var _fog_scale := 1.0
+var _far_scale := 1.0
+## The Character Sight Range in force, 0 for none, and the meshes it reaches:
+## every GeometryInstance3D added under other_entities (players, monsters,
+## the ground items; NPCs are built into their region's RealTerrain_* group
+## and are not reached), collected as they are added, so an apply walks a
+## list rather than the tree (round 694 review: 24-31 ms with 2,500 monsters).
+var _character_range := 0.0
+var _character_range_nodes: Array = []
+var _character_range_watch := false
+
+func video_options() -> VideoOptions:
+	if _video == null:
+		_video = VideoOptions.in_force()
+	return _video
+
+## Applies `o` to everything this scene draws (Apply / Confirm, and once at
+## _ready). Each row's line says what it reaches; rows with nothing here to
+## reach say so. The View row is applied by its own caller (set_camera_view).
+func apply_video_options(o: VideoOptions) -> void:
+	if o == null:
+		return
+	var t0 := Time.get_ticks_usec()
+	var before := _video
+	_video = o
+	VideoOptions.set_in_force(o)
+	# Only what changed is applied again (round 694 review: Apply on any tab
+	# re-applied the whole record); everything on the first apply.
+	var changed := func(entry: int) -> bool:
+		return before == null or before.value(entry) != o.value(entry)
+	# Shadow Detail. READ, SWorld::vslot_043 case 2: Detail builds a 96x96
+	# target and 32x32 shadow textures per character -- a real shadow; Circle
+	# and Nothing free them. Circle is the round blob (READ in label text,
+	# UIIT_STT_VIDIO_TTDESC_04 "simplify shadows into circles"). Here (OURS):
+	# Nothing hides the blob (SkyBox\shadowsphere.ddj) and the sun's shadow
+	# map, Circle draws the blob alone (Middle, the default), Detail both (the
+	# look before round 694).
+	var shadow := o.value(VideoOptions.SHADOW)
+	if changed.call(VideoOptions.SHADOW):
+		if directional_light != null:
+			directional_light.shadow_enabled = shadow >= 2
+		if _blob_shadow != null and shadow < 1:
+			_blob_shadow.visible = false
+	# Background Sight Range (READ distances, OURS drawing; _apply_view_distance).
+	if changed.call(VideoOptions.SCENERY):
+		_apply_view_distance(o.value(VideoOptions.SCENERY))
+	# Character Sight Range (OURS distances; VideoOptions.CHARACTER_RANGE).
+	if changed.call(VideoOptions.CHARACTER):
+		_set_character_range(VideoOptions.character_range(o.value(VideoOptions.CHARACTER)))
+	# Water Reflection: retail builds or frees the pass at once (case 6). Here
+	# a region's water is built for one mode, so a change shows from the next
+	# world entry (OURS; said in the window's tooltip).
+	var want_reflection := o.value(VideoOptions.WATER_REFLECTION) == 1
+	if before != null and want_reflection != (before.value(VideoOptions.WATER_REFLECTION) == 1) \
+			and want_reflection != _water_reflection_on:
+		_log_system("Water Reflection %s from the next login." % ("on" if want_reflection else "off"))
+	# Water Detail (OURS rows; VideoOptions.WATER_ROWS): live.
+	WaterReflection.target_rows = VideoOptions.water_rows(o.value(VideoOptions.WATER_DETAIL))
+	# Texture Filtering (MSAA) and Texture Detail (mip bias): the 3D view.
+	if changed.call(VideoOptions.FILTERING) or changed.call(VideoOptions.TEXTURE):
+		VideoOptions.apply_viewport(get_viewport(), o)
+	# Lens Flare. READ: SWorld::vslot_005 draws the flare (Map::FUN_00a21280)
+	# only while world+0x2e84 (case 0xd) is set. INFERRED: this client's sun
+	# glow (SkyBox\glow.ddj, which the sky loader 0xa0d1b0 loads) is that
+	# flare's nearest piece.
+	if _sun_glow != null:
+		_sun_glow.visible = o.value(VideoOptions.LENS_FLARE) == 1
+	# Bloom Effect = glow, and SSAO (OURS): one environment function.
+	if world_environment != null and (changed.call(VideoOptions.SSAO) or changed.call(VideoOptions.BLOOM)):
+		VideoOptions.apply_post_effects(world_environment.environment,
+			o.value(VideoOptions.SSAO) == 1, o.value(VideoOptions.BLOOM) == 1)
+	# Effect Quality (READ, IDecoSkill::FUN_00a50dc0; SkillEffects.quality).
+	SkillEffects.quality = o.value(VideoOptions.EFFECT)
+	# Set Brightness (READ curve; a pass over the whole screen).
+	if before == null or before.current().brightness != o.current().brightness:
+		VideoOptions.apply_brightness(get_tree().root if is_inside_tree() else null, o.current().brightness)
+	if o.notice != "":
+		_log_system(o.notice)
+		o.notice = ""
+	# Metallic Sheen (case 0xc -> the object renderer's +0x194; forced off on
+	# a card below shader model 3, CGame::FUN_00834fb0), Light Effect (case
+	# 0xb -> +0x1a4), Dynamic Animation (case 0xe -> +0x19c and a re-init of
+	# the animated objects) and Display Friendly/Enemy (the large-battle
+	# outfit swap, GlobalDataManager::FUN_009dae90) are kept and saved, and
+	# change nothing here: this client draws no environment-map sheen, no
+	# torch or sun light effect, no cloth or hair motion, and no battle
+	# outfits (docs/protocol/OPTION_VIDEO.md).
+	print("World3D: video options applied in %d us -- %s" % [Time.get_ticks_usec() - t0, describe_video(o)])
+
+## SRREVAMP_QA_VIDEO_STEPS="spec|spec|..." (round 694, OURS): once the
+## world's load is done, every SRREVAMP_QA_VIDEO_STEP_FRAMES ticks (default
+## 90) the next spec -- SRREVAMP_QA_VIDEO's syntax, over this client's
+## defaults -- is applied as Apply would, and `QA VIDEO STEP i frame f: spec`
+## is printed, so one boot shows (or times) every setting a question needs.
+## Each step's end prints its mean wall time a frame over its second half
+## (`QA VIDEO TIME i <ms> ms over <n> frames`) and, with
+## SRREVAMP_QA_VIDEO_SHOT_DIR, saves the frame as step_<i>.png; with
+## SRREVAMP_QA_VIDEO_QUIT=1 the run quits after the last.
+var _qa_video_steps_spec := OS.get_environment("SRREVAMP_QA_VIDEO_STEPS")
+var _qa_video_steps: PackedStringArray = []
+var _qa_video_step_i := -1
+var _qa_video_step_at := -1
+var _qa_video_step_len := 90
+var _qa_video_last_usec := 0
+var _qa_video_frames := 0
+
+func _qa_video_step() -> void:
+	if _qa_video_steps_spec == "":
+		return
+	if _qa_video_step_i == -1:
+		if not _initial_load_done:
+			return
+		_qa_video_steps = _qa_video_steps_spec.split("|", false)
+		_qa_video_step_i = 0
+		_qa_video_step_at = _qa_tick + 120
+		return
+	if _qa_video_step_i > _qa_video_steps.size():
+		return
+	# This runs on physics ticks; the time a frame is the wall time over the
+	# frames DRAWN in the step's second half.
+	if _qa_video_step_i > 0 and _qa_video_last_usec == 0 and _qa_tick >= _qa_video_step_at - _qa_video_step_len / 2:
+		_qa_video_last_usec = Time.get_ticks_usec()
+		_qa_video_frames = Engine.get_frames_drawn()
+	if _qa_tick < _qa_video_step_at:
+		return
+	if _qa_video_step_i > 0:
+		var done := _qa_video_step_i - 1
+		var frames := Engine.get_frames_drawn() - _qa_video_frames
+		print("QA VIDEO TIME %d %.2f ms over %d frames" % [done,
+			float(Time.get_ticks_usec() - _qa_video_last_usec) / 1000.0 / float(maxi(frames, 1)), frames])
+		var dir := OS.get_environment("SRREVAMP_QA_VIDEO_SHOT_DIR")
+		if dir != "":
+			var img := get_viewport().get_texture().get_image()
+			if img != null:
+				img.save_png(dir.path_join("step_%d.png" % done))
+	_qa_video_last_usec = 0
+	if _qa_video_step_i >= _qa_video_steps.size():
+		_qa_video_step_i += 1
+		print("QA VIDEO STEPS done")
+		if OS.get_environment("SRREVAMP_QA_VIDEO_QUIT") == "1":
+			get_tree().quit()
+		return
+	var o := VideoOptions.new()
+	VideoOptions.apply_spec(o, _qa_video_steps[_qa_video_step_i])
+	print("QA VIDEO STEP %d frame %d: %s" % [_qa_video_step_i, Engine.get_frames_drawn(), _qa_video_steps[_qa_video_step_i]])
+	_on_video_options_applied(o)
+	_qa_video_step_i += 1
+	var every := OS.get_environment("SRREVAMP_QA_VIDEO_STEP_FRAMES")
+	_qa_video_step_len = int(every) if every.is_valid_int() else 90
+	_qa_video_step_at = _qa_tick + _qa_video_step_len
+
+## One line naming every row's value in force, for the log and the QA probe.
+func describe_video(o: VideoOptions) -> String:
+	var p := o.current()
+	var parts := PackedStringArray()
+	parts.append("graphic %d quality %d brightness %d" % [o.active + 1, p.quality, p.brightness])
+	for e in VideoOptions.VALUE_ENTRIES:
+		parts.append("%s=%d" % [VideoOptions.row_of(e)["key"], o.value(e)])
+	parts.append("fullscreen=%s resolution=%s" % [str(o.fullscreen), VideoOptions.format_resolution(o.resolution)])
+	parts.append("view_distance=%.0f object_range=%.0f far=%.0f fog_density=%.6f char_range=%.0f water_rows=%d msaa=%d mip_bias=%.1f renderer=%s" % [
+		VideoOptions.view_distance(o.value(VideoOptions.SCENERY)), MapAnimation.object_range,
+		camera_3d.far if camera_3d != null else 0.0, FOG_DENSITY * _fog_scale, _character_range,
+		WaterReflection.target_rows, get_viewport().msaa_3d if is_inside_tree() else -1,
+		get_viewport().texture_mipmap_bias if is_inside_tree() else 0.0,
+		"forward_plus" if VideoOptions.forward_plus_running() else "gl_compatibility"])
+	return " ".join(parts)
+
+## Background Sight Range. READ (VideoOptions.SCENERY_FAR): the far plane
+## 1500..5500 and the view distance min(0.8 x far, 2500), which scales the
+## fog planes and is the map objects' animation range plus 480. Here:
+## - the map objects' range follows the view distance (READ rule);
+## - the drawn fog's density scales by 2500 / view distance (OURS: Godot
+##   4.2's fog is exponential, not retail's linear planes -- FOG_DENSITY);
+## - the camera's far plane scales by far / 3500, the READ default, at the
+##   settings below it (OURS: this client's far plane is its streamed region
+##   window's, not retail's; settings 3 to 5 keep it, since nothing past the
+##   loaded window exists to show).
+## At 3 (the default) all three are what they were before round 694.
+func _apply_view_distance(scenery: int) -> void:
+	var view := VideoOptions.view_distance(scenery)
+	MapAnimation.set_view_distance(view)
+	_fog_scale = VideoOptions.VIEW_DISTANCE_MAX / maxf(view, 1.0)
+	_far_scale = minf(1.0, VideoOptions.far_plane(scenery) / VideoOptions.SCENERY_FAR[2])
+	if world_environment != null and world_environment.environment != null \
+			and world_environment.environment.fog_enabled:
+		world_environment.environment.fog_density = FOG_DENSITY * _fog_scale
+	if camera_3d != null:
+		_apply_camera_far_plane()
+
+## Character Sight Range: other players' and monsters' meshes are drawn to
+## `range_` from the camera (GeometryInstance3D.visibility_range_end; 0
+## draws them at any distance). Their name plates keep their own range; NPCs
+## are not reached (see _character_range_nodes).
+func _set_character_range(range_: float) -> void:
+	_character_range = range_
+	if not _character_range_watch and is_inside_tree():
+		# The first time: what is there now, then every mesh as it is added.
+		if other_entities != null:
+			for n in other_entities.find_children("*", "GeometryInstance3D", true, false):
+				if not (n is Label3D):
+					_character_range_nodes.append(n)
+		get_tree().node_added.connect(_on_node_added_for_range)
+		_character_range_watch = true
+	var kept: Array = []
+	for n in _character_range_nodes:
+		if is_instance_valid(n) and (n as Node).is_inside_tree():
+			_apply_character_range_to(n as GeometryInstance3D)
+			kept.append(n)
+	_character_range_nodes = kept
+
+const CHARACTER_RANGE_META := &"video_character_range"
+
+func _apply_character_range_to(g: GeometryInstance3D) -> void:
+	if g == null or g is Label3D:
+		return
+	# A range a mesh was given for another reason is left alone.
+	if g.visibility_range_end > 0.0 and not g.has_meta(CHARACTER_RANGE_META):
+		return
+	g.visibility_range_end = _character_range
+	if _character_range > 0.0:
+		g.set_meta(CHARACTER_RANGE_META, true)
+	elif g.has_meta(CHARACTER_RANGE_META):
+		g.remove_meta(CHARACTER_RANGE_META)
+
+func _on_node_added_for_range(n: Node) -> void:
+	if n is GeometryInstance3D and not (n is Label3D) and other_entities != null and other_entities.is_ancestor_of(n):
+		_character_range_nodes.append(n)
+		# Bodies come and go: drop the freed ones now and then.
+		if _character_range_nodes.size() % 4096 == 0:
+			_character_range_nodes = _character_range_nodes.filter(func(x) -> bool: return is_instance_valid(x))
+		if _character_range > 0.0:
+			_apply_character_range_to(n as GeometryInstance3D)
+
+## The Option window's Apply / Confirm (HudPanels.video_options_applied):
+## the display (window mode, size), the View row, then the world.
+func _on_video_options_applied(o: VideoOptions) -> void:
+	# The window only when its own rows changed: Apply on another tab must not
+	# snap a moved window back (round 694 review).
+	var before := _video
+	if before == null or before.fullscreen != o.fullscreen or before.resolution != o.resolution:
+		VideoOptions.apply_display(get_window(), o)
+	if o.camera_view != "" and o.camera_view != _camera_view:
+		set_camera_view(o.camera_view)
+		ClientSettings.set_value(ClientSettings.SECTION_UI, ClientSettings.KEY_CAMERA_VIEW, _camera_view)
+		if _debug_panel != null:
+			_debug_panel.sync_view()
+	apply_video_options(o)
+
 ## Keeps the pivot on the player and, in the third-person view, turned the
 ## way they face.
 func _follow_with_camera(delta: float) -> void:
@@ -1261,6 +1518,11 @@ var _wire_logging := false
 const CHAT_LEFT := 2.0
 
 func _ready() -> void:
+	# SSAO and glow (round 693): off, the look the project verified under the
+	# Compatibility renderer, which has neither; the Options window may pass
+	# its own choice (WorldPostEffects). Before the title branch: the title's
+	# backdrop is this scene too.
+	WorldPostEffects.apply(world_environment.environment)
 	# The front-end's 3D backdrop (round 678, FrontEndBackdrop): none of an
 	# entry's work -- no player, HUD, server or loading screen.
 	if title_mode:
@@ -1282,7 +1544,7 @@ func _ready() -> void:
 	_water_reflection = WaterReflection.new()
 	_water_reflection.name = "WaterReflection"
 	add_child(_water_reflection)
-	print("World3D: water reflection %s" % ("on (retail's Water Reflection option, the shipped default)" if _water_reflection_on else "off"))
+	print("World3D: water reflection %s (the Video tab's Water Reflection row; Middle, the default, has it off)" % ("on" if _water_reflection_on else "off"))
 	# Sound (round 611): distances are measured from the player, left and
 	# right from the camera -- AudioService's header says why (ours).
 	SoundTable.set_listener(player, camera_3d)
@@ -1542,6 +1804,9 @@ func _ready() -> void:
 	_try_setup_ground_items()
 	_try_add_real_sky()
 	_apply_camera_far_plane()
+	# The Option window's Video tab (round 694): the saved record, applied
+	# before the first region is built (its fog and far plane are set here).
+	apply_video_options(video_options())
 	var _t_region := Time.get_ticks_msec()
 	_load_timings.begin_drain()
 	# The "NOW LOADING" screen goes up here, before the centre cell (round
@@ -1865,6 +2130,8 @@ func _try_initialize_pk2_ui() -> void:
 	# Ctrl+F3.
 	_hud_panels.system_option_requested.connect(func():
 		_hud_panels.toggle_option())
+	# The Option window's Video tab (round 694): Apply / Confirm.
+	_hud_panels.video_options_applied.connect(_on_video_options_applied)
 	# Restart is one scene change: NetClient.disconnect_from_server() emits
 	# `disconnected` unconditionally, and _on_disconnected is what takes this
 	# instance to Login -- for a dropped peer, for the Log Out button
@@ -2242,7 +2509,9 @@ func _hide_debug_ui_replaced_by_hud() -> void:
 ## change. (The cloud layer no longer needs it: it is pinned to the far
 ## plane by its own shader since round 628's review.)
 func _apply_camera_far_plane() -> void:
-	camera_3d.far = REGION_SPAN * (_region_load_radius() + 1) * 2.0
+	# Round 694: times the Background Sight Range's factor (1 at the default;
+	# _apply_view_distance).
+	camera_3d.far = REGION_SPAN * (_region_load_radius() + 1) * 2.0 * _far_scale
 
 ## Loads real static scenery through the exact same pk2 -> BsrReader ->
 ## ObjectLoader pipeline client/tools/render_asset.gd verifies standalone,
@@ -3459,7 +3728,7 @@ var _cloud_dome_shader: Shader = preload("res://scripts/assets/cloud_dome.gdshad
 var _cloud_uv_offset := Vector2.ZERO
 var _sun_glow: Sprite3D
 var _sun_glow_offset := Vector3.ZERO
-var _sky_material: ProceduralSkyMaterial
+var _sky_material: GammaSkyMaterial
 
 ## Real per-zone day/night lighting data (2026-08-31, see
 ## docs/protocol/ENVIRONMENT_FORMAT.md and docs/WORLD_ISSUES.md's
@@ -3505,7 +3774,9 @@ func _try_add_real_sky() -> void:
 	# scene shipped with, using that same real color as the horizon tone so
 	# this doesn't introduce a new invented color, only extends it into a
 	# gradient.
-	var sky_material := ProceduralSkyMaterial.new()
+	# GammaSkyMaterial (round 693): ProceduralSkyMaterial's own gradient,
+	# drawn the same under Forward+ as under Compatibility.
+	var sky_material := GammaSkyMaterial.new()
 	var flat_color: Color = world_environment.environment.background_color
 	sky_material.sky_top_color = flat_color.lerp(Color(0.15, 0.25, 0.55), 0.35)
 	sky_material.sky_horizon_color = flat_color
@@ -3606,6 +3877,8 @@ func _build_sun_glow(glow_tex: Texture2D) -> void:
 	_sun_glow.pixel_size = SUN_GLOW_SIZE / glow_tex.get_width()
 	_sun_glow_offset = sun_dir * SUN_GLOW_DISTANCE
 	_sun_glow.position = _sun_glow_offset
+	# The Lens Flare row (round 694, apply_video_options).
+	_sun_glow.visible = video_options().value(VideoOptions.LENS_FLARE) == 1
 	add_child(_sun_glow)
 
 ## Loads and caches the real environment.ifo (Map.pk2's root) once per world --
@@ -3771,12 +4044,19 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	var env := world_environment.environment
 	env.fog_enabled = true
 	env.fog_light_color = fog_color
-	env.fog_density = FOG_DENSITY
+	# Times the Background Sight Range's factor (round 694; 1 at the default).
+	env.fog_density = FOG_DENSITY * _fog_scale
 	# The real model's inscattering is strongest looking toward the sun (the
 	# Henyey-Greenstein phase term in the real vertex shader), which is exactly
 	# what Godot's fog_sun_scatter approximates.
 	env.fog_sun_scatter = FOG_SUN_SCATTER
 	env.fog_aerial_perspective = FOG_AERIAL_PERSPECTIVE
+	# The sky is not fogged (round 693): Compatibility's sky shader never
+	# mixes the environment fog in (READ, drivers/gles3/shaders/sky.glsl,
+	# 4.2.2), Forward+ does by fog_sky_affect (default 1.0, renderer_rd sky.
+	# glsl 263-265), which hazed the Jangan sky shot's top band +22 luma
+	# (MEASURED). The cloud layer fogs itself (cloud_dome.gdshader).
+	env.fog_sky_affect = 0.0
 
 	# The real sun-disc colour belongs on the real sun sprite. Its alpha stays
 	# a disclosed rendering choice (see _build_sun_glow); only the real colour
@@ -7328,6 +7608,9 @@ func _terrain_commit(job: Dictionary) -> float:
 			mat.uv1_scale = Vector3(1.0, max(row_count_estimate / float(MapmTerrainBuilder.GRID_WIDTH), 1.0), 1.0)
 		else:
 			mat.vertex_color_use_as_albedo = true
+			# Display values, as Compatibility reads them; decoded where the output
+			# is linear (Forward+), round 693's ShaderColour.
+			mat.vertex_color_is_srgb = ShaderColour.VERTEX_COLOR_IS_SRGB
 		if lightmap != null:
 			mat.ao_enabled = true
 			mat.ao_texture = lightmap
@@ -10536,7 +10819,8 @@ func _update_blob_shadow() -> void:
 	var local := group.to_local(player.global_position)
 	local.y = graph.height_at(local.x, local.z, local.y) + BLOB_SHADOW_LIFT
 	_blob_shadow.global_position = group.to_global(local)
-	_blob_shadow.visible = true
+	# Shadow Detail "Nothing" draws no blob (round 694, apply_video_options).
+	_blob_shadow.visible = video_options().value(VideoOptions.SHADOW) >= 1
 
 ## ---------------------------------------------------------------------------
 ## QA screenshot harness
@@ -10553,6 +10837,7 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_WALK=deg   walk continuously on that heading
 ##   SRREVAMP_QA_FREE=1     let the camera pass through geometry
 ##   SRREVAMP_QA_NOFOG=1    disable fog (for high overview shots)
+##   SRREVAMP_QA_NOSHADOW=1 the sun casts no shadows (round 693's renderer A/B)
 ##   SRREVAMP_QA_NOUI=1     hide the HUD (for comparison shots)
 ##   SRREVAMP_QA_NOWATER=1  build no block water (round 648: the pixel diff
 ##                          that measures what the water draws)
@@ -11192,6 +11477,10 @@ func _qa_step() -> void:
 				# rendered frames and a 60-frame run never reaches it. A
 				# third of a second is frame 20.
 				get_tree().create_timer(20.0 / 60.0).timeout.connect(_hud_worldmap.show_world)
+		# Round 693's renderer A/B: the sun's shadows off, so a Forward+ /
+		# Compatibility difference can be put on them or not. QA only.
+		if OS.get_environment("SRREVAMP_QA_NOSHADOW") != "" and directional_light != null:
+			directional_light.shadow_enabled = false
 		if OS.get_environment("SRREVAMP_QA_NOFOG") != "":
 			if world_environment != null and world_environment.environment != null:
 				var env := world_environment.environment
@@ -11603,6 +11892,7 @@ func _qa_step() -> void:
 	_qa_tick += 1
 	if _qa_pmi_spec != "":
 		_qa_pmi_step()
+	_qa_video_step()
 	# The load summary every ten seconds of game time (round 561): the window
 	# since the last one, so the play after the entry -- a boundary crossing
 	# -- is reported apart from the entry itself. _qa_step runs for every
@@ -20694,6 +20984,8 @@ func _title_ready() -> void:
 	add_child(_water_reflection)
 	_try_add_real_sky()
 	_apply_camera_far_plane()
+	# The saved video record (round 694), as an entered world applies it.
+	apply_video_options(video_options())
 	# Round 680: the swaying trees and the like stay drawn (their clocks
 	# paused) out of MapAnimation's 2020-unit range, instead of switching on
 	# in view as the camera nears them -- a pop the title's probe counted

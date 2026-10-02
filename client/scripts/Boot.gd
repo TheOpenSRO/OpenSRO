@@ -18,6 +18,11 @@ func _ready() -> void:
 	print("SRRevamp boot: no bundled game data -- put your own *.pk2 files in the 'pk2' folder next to this executable.")
 	print("SRRevamp log file: %s" % ProjectSettings.globalize_path("user://logs/srrevamp.log"))
 	print("SRRevamp version: %s" % UpdateChecker.CLIENT_VERSION)
+	# The renderer running, and the one recorded for the next start: an
+	# exported game brings override.cfg in line with setting/config.yaml's
+	# display.renderer, or records the Compatibility launcher's choice
+	# (round 693, RendererChoice).
+	RendererChoice.apply_at_boot(ClientConfig.load_default().renderer)
 	# The native readers' state, once, at startup (round 668): ON, OFF because
 	# the library is missing or refused, or forced OFF. A tester's log always
 	# says which reader loaded their world.
@@ -27,6 +32,15 @@ func _ready() -> void:
 	# Before any screen draws, so the login screen is already the size the
 	# player asked for last time (the debug panel changes it live).
 	ClientSettings.apply_ui_scale(get_window(), ClientSettings.ui_scale())
+	# The Option window's Video tab (round 694): the window mode and size and
+	# the brightness pass from the start, the login screen included; the
+	# world applies the rest when it loads.
+	var video := VideoOptions.in_force()
+	VideoOptions.apply_display(get_window(), video)
+	VideoOptions.apply_brightness(get_tree().root, video.current().brightness)
+	print("SRRevamp video: graphic %d, quality %d, brightness %d, fullscreen %s, resolution %s" % [
+		video.active + 1, video.current().quality, video.current().brightness, str(video.fullscreen),
+		VideoOptions.format_resolution(video.resolution) if video.resolution.x > 0 else "(as started)"])
 
 	_updater = AutoUpdater.new()
 	add_child(_updater)

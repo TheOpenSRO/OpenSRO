@@ -15,6 +15,8 @@ class_name ClientConfig
 ##   global:
 ##     loginScreen: constantinople     # the title intro (FrontEndTheme.intro)
 ##     region: US                      # kept, reserved (see below)
+##   display:
+##     renderer: compatibility         # or forward_plus (round 693, RendererChoice)
 ##   servers:
 ##     MyServer:                       # the name the login screen shows
 ##       type: srrevamp                # REQUIRED: srrevamp or legacy
@@ -43,6 +45,11 @@ class_name ClientConfig
 ##   one process with no such hand-off. When the hand-off exists, a
 ##   configured agent will stand in for the address the gateway names -- a
 ##   proxy or private-server feature (OURS).
+## - `display.renderer` (round 693, OURS): `forward_plus` (the default) or
+##   `compatibility`. Godot picks its renderer before any script runs, so
+##   Boot records the word in `override.cfg` beside the game
+##   (RendererChoice) and it takes effect at the NEXT start. Unset, the
+##   choice already recorded there stands.
 ## - `global.region` is parsed and kept, reserved: what it may drive is in
 ##   deploy/README.md ("Configuring the client").
 ##
@@ -76,6 +83,9 @@ class ServerEntry:
 
 var login_screen := ""
 var region := ""
+## display.renderer, normalised (RendererChoice.normalise): "forward_plus",
+## "gl_compatibility", or "" when the file does not set it.
+var renderer := ""
 var servers: Array = [] # of ServerEntry, in the file's order
 ## Where it was read from ("" when no file).
 var source := ""
@@ -122,7 +132,7 @@ static func from_text(text: String, where: String, warnings: PackedStringArray =
 	c.source = where
 	var root: Dictionary = parsed["data"]
 	for k in root.keys():
-		if not (str(k) in ["global", "servers"]):
+		if not (str(k) in ["global", "servers", "display"]):
 			warnings.append("%s: unknown top-level key '%s' -- ignored" % [where, k])
 	var g = root.get("global", null)
 	if g != null and not (g is Dictionary):
@@ -142,6 +152,20 @@ static func from_text(text: String, where: String, warnings: PackedStringArray =
 				c.region = r
 			else:
 				warnings.append("%s: global.region '%s' is not a short code -- ignored" % [where, region])
+	var d = root.get("display", null)
+	if d != null and not (d is Dictionary):
+		warnings.append("%s: 'display' is not a map -- ignored" % where)
+	elif d is Dictionary:
+		for k in d.keys():
+			if not (str(k) in ["renderer"]):
+				warnings.append("%s: unknown key 'display.%s' -- ignored" % [where, k])
+		var rw = d.get("renderer", null)
+		if rw != null:
+			var rn := RendererChoice.normalise(str(rw))
+			if rn == "":
+				warnings.append("%s: display.renderer '%s' is not forward_plus or compatibility -- ignored" % [where, rw])
+			else:
+				c.renderer = rn
 	var s = root.get("servers", null)
 	if s != null and not (s is Dictionary):
 		warnings.append("%s: 'servers' is not a map of name -> server -- ignored" % where)
@@ -274,5 +298,5 @@ func describe() -> String:
 	var names := PackedStringArray()
 	for e in servers:
 		names.append("%s=%s (%s)" % [(e as ServerEntry).name, (e as ServerEntry).gateway_address(), (e as ServerEntry).type])
-	return "loginScreen=%s region=%s servers=[%s]" % [login_screen if login_screen != "" else "(unset)",
-		region if region != "" else "(unset)", ", ".join(names)]
+	return "loginScreen=%s region=%s renderer=%s servers=[%s]" % [login_screen if login_screen != "" else "(unset)",
+		region if region != "" else "(unset)", renderer if renderer != "" else "(unset)", ", ".join(names)]

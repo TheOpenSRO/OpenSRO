@@ -49,8 +49,9 @@ class_name OptionWindow
 ##   are put back.
 ## **The first tab (read, 0x600850, the window's 0x8065 message):** video is
 ## checked and audio, input and game cleared, so the window opens on Video.
-## The video, input and game panes are built as the file draws them and are
-## not wired in this round (ours).
+## The Video tab is wired since round 694 (OptionVideoPage, VideoOptions);
+## the input and game panes are built as the file draws them and are not
+## wired (ours).
 ##
 ## **The slider (read, CNIFSliderCtrl).** Its create (vslot_010, 0x4886e0)
 ## makes three buttons, ids 10 prev, 11 next, 12 thumb; the texture setter
@@ -101,8 +102,13 @@ var _thumb_x0: Array = []
 var _mutes: Array = []
 var _stored := false
 var _dragging_row := -1
+## The Video tab (round 694).
+var video: OptionVideoPage
 
 signal applied(options: AudioOptions)
+## Apply / Confirm on any tab store the Video tab's record too; it is handed
+## to whoever applies it (HudPanels -> World3D).
+signal video_applied(options: VideoOptions)
 
 func _init(builder: UiBuilder = null) -> void:
 	super._init()
@@ -137,6 +143,10 @@ func build_option() -> bool:
 		TwoDtBuilder.set_tab_checked(_at([id]), false)
 	TwoDtBuilder.set_tab_checked(_at([ID_TAB_VIDEO]), true)
 	_build_audio_page()
+	video = OptionVideoPage.new(self, _builder, panel_root)
+	var win := get_window() if is_inside_tree() else null
+	var screen := DisplayServer.screen_get_size() if DisplayServer.get_name() != "headless" else Vector2i.ZERO
+	video.build(VideoOptions.in_force(), ClientSettings.camera_view(), screen, win.size if win != null else Vector2i.ZERO)
 	_wire_buttons()
 	_settle()
 	var svc := AudioService.instance()
@@ -304,8 +314,12 @@ func current_tab() -> int:
 			return id
 	return 0
 
-## 0x5fda90: the checked tab's defaults; on the audio tab 0x5f6660.
+## 0x5fda90: the checked tab's defaults; on the audio tab 0x5f6660, on the
+## video tab 0x5fc340 (OptionVideoPage.press_default).
 func press_default() -> void:
+	if current_tab() == ID_TAB_VIDEO and video != null:
+		video.press_default()
+		return
 	if current_tab() != ID_TAB_AUDIO:
 		return
 	_edit.bgm = DEFAULT_VALUE
@@ -327,6 +341,8 @@ func press_apply() -> void:
 	_saved = _edit.duplicate_options()
 	_stored = true
 	applied.emit(_saved)
+	if video != null and video.edit != null:
+		video_applied.emit(video.store())
 
 ## Confirm: store, then close.
 func press_confirm() -> void:
