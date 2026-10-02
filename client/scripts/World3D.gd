@@ -1266,6 +1266,9 @@ func _ready() -> void:
 	# its own choice (WorldPostEffects). Before the title branch: the title's
 	# backdrop is this scene too.
 	WorldPostEffects.apply(world_environment.environment)
+	# The sun's energy under Forward+, matched to Compatibility's look (round
+	# 693, WorldPostEffects.sun_scale; 1.0 under Compatibility).
+	directional_light.light_energy *= WorldPostEffects.sun_scale()
 	# The front-end's 3D backdrop (round 678, FrontEndBackdrop): none of an
 	# entry's work -- no player, HUD, server or loading screen.
 	if title_mode:
@@ -3782,7 +3785,13 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# The real model's inscattering is strongest looking toward the sun (the
 	# Henyey-Greenstein phase term in the real vertex shader), which is exactly
 	# what Godot's fog_sun_scatter approximates.
-	env.fog_sun_scatter = FOG_SUN_SCATTER
+	# Divided by the Forward+ sun scale (round 693): both renderers scale the
+	# fog's sun scatter by the light's energy (READ, gles3 scene.glsl 1183 /
+	# scene_forward_clustered.glsl 833), and the raised Forward+ sun is there
+	# to match the shadow pass, not to brighten the haze (READ; no change
+	# MEASURED at the shots taken, where the sky's sun was what had brightened
+	# -- GammaSkyMaterial's sun_energy_scale).
+	env.fog_sun_scatter = FOG_SUN_SCATTER / WorldPostEffects.sun_scale()
 	env.fog_aerial_perspective = FOG_AERIAL_PERSPECTIVE
 	# The sky is not fogged (round 693): Compatibility's sky shader never
 	# mixes the environment fog in (READ, drivers/gles3/shaders/sky.glsl,

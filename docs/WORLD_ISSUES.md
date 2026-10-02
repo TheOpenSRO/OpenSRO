@@ -7358,6 +7358,92 @@ shared the box with other lanes.
 - **Retail's Bloom effect** default and look; glow's parameters are still the 2026-08-26 guess.
 - **The low-end hardware test** (the user's).
 
+### 6. The sun under Forward+, raised to match (the user, 2026-10-02: "Raise it to match")
+
+Section 4's shadow-pass finding went to the user, who chose to raise the Forward+ sun so sunlit
+areas look as they did under Compatibility.
+
+**The change:**
+- `WorldPostEffects.sun_scale()` is `FORWARD_PLUS_SUN_SCALE` = **4.0** under Forward+ and 1.0
+  otherwise. **OURS: chosen by measurement to match the Compatibility look, per the user; not a
+  value of the original client.**
+- World3D multiplies the sun's 0.3 by it at the top of `_ready`, so it is 1.2 under Forward+. The
+  title and select backdrops are World3D too.
+- Two terms that scale with the light's energy in both renderers keep the unscaled sun:
+  - the fog's sun scatter (READ, gles3 scene.glsl 1183 / scene_forward_clustered.glsl 833), now
+    `FOG_SUN_SCATTER / sun_scale()`;
+  - the sky's sun disc and halo (GammaSkyMaterial's `sun_energy_scale`).
+  Neither moved any measured shot; they are kept so the factor reaches only the lit surfaces.
+- `SRREVAMP_QA_SUN_SCALE` overrides the factor under Forward+ (QA only).
+- **Compatibility is untouched:** its factor is 1, and `world_post_effects_test` checks it.
+
+**Calibration (MEASURED, frame_ab.py):** Jangan (no fog) and the Dunhuang reeds against the
+Compatibility frames. Each cell is the lower band's luma, Forward+ minus GL:
+
+| Scale | Jangan spawn | Jangan sky shot | Jangan overview | Reeds | Reeds 2 | Grass (unshaded) |
+|---|---|---|---|---|---|---|
+| 1 (before) | -14.8 | -11.4 | -11.0 | -6.2 | -9.4 | -2.4 |
+| 1.5 | -12.0 | -9.2 | -9.4 | -4.8 | -7.3 | -2.3 |
+| 2 | -9.2 | -7.1 | -7.9 | -3.4 | -5.3 | -2.3 |
+| 2.5 | -6.6 | -5.2 | -6.5 | -2.0 | -3.4 | -2.2 |
+| 3 | -4.2 | -3.3 | -5.0 | -0.8 | -1.7 | -2.1 |
+| 3.5 | -1.8 | -1.6 | -3.7 | +0.4 | 0.0 | -2.1 |
+| **4 (chosen)** | **+0.5** | **+0.1** | **-2.4** | **+1.5** | **+1.6** | -2.0 |
+
+- At 4 the mean absolute lit-area difference is 1.2 levels, against 1.5 at 3.5.
+- There is no blow-out at any scale: the 95th luma percentile at x4 is 91 / 192 / 85 / 186 / 184,
+  against GL's 90 / 192 / 85 / 186 / 184, and no lit band has white pixels.
+- The terrain is unshaded (baked light), so the sun does not reach it: its -2 is the overlays'
+  blending.
+- The lit quad of measure_lit_space.gd (ambient 0.7, sun 45 degrees off) reads (204,173,135) at x4,
+  against GL's (225,176,127) and Forward+ x1's (158,128,95). It is a single flat test, so it does
+  not set the value.
+
+**After, the final build (Forward+ x4 against Compatibility):**
+
+| View | Before (x1) | After (x4) |
+|---|---|---|
+| Jangan spawn, whole / lower band (fog on) | -11.3 / -15.4 | **+0.1 / -0.6** |
+| Jangan overview, whole | -10.5 | **-4.0** |
+| Jangan grass, whole | -3.4 | -2.8 |
+| Jangan sky shot, top band (the cloud layer, blending) | +16.1 | +16.4 (unchanged: not the sun) |
+| Ferry dock / river / up, whole | -0.4 / -0.9 / -2.4 | -0.3 / +0.8 / -0.4 |
+| Reeds / reeds2, whole | -7.1 / -6.4 | **+0.3 / +2.3** |
+| Login title at 120 / 300 / 600 / 899, lower half | -5.9 / -8.6 / -7.4 / -8.7 | **-3.2 / -3.4 / -4.1 / -4.9** |
+| Create, China / Europe | -4.5 / -2.6 | **-0.5 / -1.2** |
+| Select screen at 14:00 / 23:00, whole | -2.3 / -1.0 | **-1.1 / +0.3** |
+| Select backdrop luma at 14:00 / 23:00 (GL 141.1 / 107.4) | 137.6 / 106.9 | **139.3 / 108.7** |
+
+**The characters did not move.**
+- PlayerPortrait's formula does not use the scene's sun: select bodies Bram / Aria read 89.0 / 137.2
+  at 14:00 and 57.9 / 89.2 at 23:00, the same as before the change.
+- Portrait shots are unchanged: calibration 160, man mean 0.207, woman 0.169, identical before and
+  after.
+
+Remaining:
+- The ferry's top band has more pixels at or above 230 under Forward+: 33 % against 17 % on the
+  river shot, but its mean is only +2.7. It was 13-14 % before GammaSkyMaterial, at the sun's x1. Neither the
+  sun scale nor the two compensations moved it (0.333 / 0.334 / 0.334), so it is a bright sky
+  sitting around the threshold, not a blow-out.
+- The cloud layer's +16 is section 4's blending space.
+
+A sun energy costs nothing to draw; a confirmation gate run is below.
+
+### 7. The perf gate's start-up samples (found by round 694's review)
+
+Each run's first once-a-second sample carries the first cell's build (8-1000 ms), and samples 2-5
+are still raised: 8 / 16 / 12 / 9.8 ms under GL, 55 / 3.35 / 5.05 / 4.06 under Forward+. A
+3,000-frame GL run gives about 27 samples, so its "last 30" took the start-up in and could read
+SLOWER. `perf_gate.sh` now drops the first 5 samples (`tail -n +6 | tail -30`). A Forward+ gate
+still needs `--frames 12000` (client/tools/README.md). Section 5's table used 12,000 frames, where
+the last 30 of 40+ samples already skipped the start-up, so it stands.
+
+**Confirmation (MEASURED):** `perf_gate.sh --ab-renderer gl_compatibility --sites jangan --runs 2
+--frames 12000` with the first 5 samples dropped and the Forward+ sun at x4. Frame: Compatibility
+8.78 (8.77 / 8.79) against Forward+ **2.94** (2.94 / 2.94), FASTER. Entry 9631 against 9424, freeze
+3395 against 3428, hitches 5 against 4.5: SAME. These are section 5's numbers, so the raised sun
+costs nothing.
+
 ## Six-hundred-and-ninety-second round: a new character starts with its race's own masteries, basic skills and first quests, as the shard's `_AddNewChar` gives them -- and the shard's own list of creatable ids is exactly the 104 the rule picks
 
 The user approved the shard DB export (2026-10-02, "yes ct 104"); the four `_RefCharGen` /

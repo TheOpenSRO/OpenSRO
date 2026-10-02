@@ -118,6 +118,7 @@ func _sky() -> void:
 	var v = m.get_shader_parameter("sky_top_color")
 	_check(v is Vector3 and (v as Vector3).is_equal_approx(Vector3(0.2, 0.4, 0.6)), "a sky colour reaches the shader as a Vector3, as stored (%s)" % str(v))
 	_check(m.get_shader_parameter("decode_out") == (RendererChoice.running() == RendererChoice.FORWARD_PLUS), "decode_out follows the renderer running")
+	_check(is_equal_approx(float(m.get_shader_parameter("sun_energy_scale")), 1.0 / WorldPostEffects.sun_scale()), "the sky's sun keeps the unscaled energy (1 / the Forward+ sun scale)")
 	var code := m.shader.code
 	_check(code.contains("decode_out ? enc(LIGHT0_COLOR)") and code.contains("COLOR = dec(COLOR)"), "the sun's colour is re-encoded and the result decoded under Forward+")
 	var w3d := FileAccess.get_file_as_string("res://scripts/World3D.gd")

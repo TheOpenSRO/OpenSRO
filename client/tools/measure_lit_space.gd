@@ -26,6 +26,11 @@ const CASES := [
 	# is drawing the same light.
 	["sun 0.3 only, shadows on, filmic", Color8(150, 120, 90), false, 0.3, Color.BLACK, true, true],
 	["sun 0.3 + ambient 0.7, shadows on, filmic", Color8(150, 120, 90), false, 0.3, Color(0.7, 0.7, 0.7), true, true],
+	# The Forward+ sun scale's calibration (WorldPostEffects.sun_scale):
+	# the same light at 0.3 x k.
+	["sun 0.3x2 + ambient 0.7, shadows on, filmic", Color8(150, 120, 90), false, 0.6, Color(0.7, 0.7, 0.7), true, true],
+	["sun 0.3x3 + ambient 0.7, shadows on, filmic", Color8(150, 120, 90), false, 0.9, Color(0.7, 0.7, 0.7), true, true],
+	["sun 0.3x4 + ambient 0.7, shadows on, filmic", Color8(150, 120, 90), false, 1.2, Color(0.7, 0.7, 0.7), true, true],
 ]
 
 var _case := -1

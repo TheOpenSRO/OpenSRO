@@ -15,7 +15,8 @@
 #
 # Four numbers per run, all from the client's own log:
 #   frame    ms per frame standing still: the mean of the last 30 of
-#            `--print-fps`'s per-second samples (1280x720, vsync off);
+#            `--print-fps`'s per-second samples after the first 5 (start-up;
+#            round 693), at least 10 (1280x720, vsync off);
 #   entry    the world entry a player waits through: `region grid loaded in
 #            N ms` (the real loading drain, SRREVAMP_QA_FORCE_LOADING=1);
 #   freeze   the longest main-thread frame: the largest `longest work frame
@@ -251,7 +252,11 @@ eval "\$LAUNCH" $GODOT \$RFLAGS \
   --print-fps --disable-vsync > "\$2" 2>&1 &
 G=\$!; wait \$G
 kill \$W 2>/dev/null
-ms=\$(grep -o "([0-9.]* mspf)" "\$2" | tr -d "(" | awk '{print \$1}' | tail -30 | awk '{s+=\$1;n++} END {if(n>=10) printf "%.2f", s/n; else print "none"}')
+# The first 5 samples dropped (round 693): the first second carries the first
+# cell's build (8-1000 ms) and seconds 2-5 are still raised (8/16/12/9.8 ms
+# under GL, 55/3.35/5.05/4.06 under Forward+, round 694's review), so a
+# 3,000-frame GL run's "last 30" took in the start-up and could read SLOWER.
+ms=\$(grep -o "([0-9.]* mspf)" "\$2" | tr -d "(" | awk '{print \$1}' | tail -n +6 | tail -30 | awk '{s+=\$1;n++} END {if(n>=10) printf "%.2f", s/n; else print "none"}')
 entry=\$(grep -m1 -o "region grid loaded in [0-9]* ms" "\$2" | grep -o "[0-9]*" || echo none)
 freeze=\$(grep -o "longest work frame [0-9.]* ms" "\$2" | grep -o "[0-9.]*" | sort -n | tail -1 | grep . || echo none)
 hitches=\$(grep -o "; [0-9]* over 100 ms" "\$2" | grep -o "[0-9]* over" | grep -o "[0-9]*" | awk '{s+=\$1} END {print s+0}')

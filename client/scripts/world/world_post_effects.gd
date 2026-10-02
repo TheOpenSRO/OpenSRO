@@ -31,3 +31,27 @@ static func apply(env: Environment, ssao: bool = SSAO_DEFAULT, glow: bool = GLOW
 		return
 	env.ssao_enabled = ssao
 	env.glow_enabled = glow
+
+## The sun under Forward+ (round 693; the user, 2026-10-02: "Raise it to
+## match"). Compatibility draws World3D's shadow-casting sun in a separate
+## additive pass and adds it in display values (READ, gles3 scene.glsl
+## 1805-1808), so its sunlit surfaces came out brighter than one pass of the
+## same light: a lit quad (ambient 0.7, sun 0.3) read (225,176,127) with
+## shadows on against (159,128,95) without, while Forward+ reads (158,128,95)
+## either way (MEASURED, tools/measure_lit_space.gd). The look players and
+## every box shot had from round 581 to 692 is Compatibility's, so under
+## Forward+ the sun's energy is multiplied by FORWARD_PLUS_SUN_SCALE -- OURS,
+## chosen by measurement to match that look (docs/WORLD_ISSUES.md, round 693),
+## not a value of the original client. Under Compatibility the factor is 1:
+## its look stays exactly as it was.
+const FORWARD_PLUS_SUN_SCALE := 4.0
+
+## The factor for the renderer running. SRREVAMP_QA_SUN_SCALE overrides it
+## under Forward+ (QA only: the calibration runs).
+static func sun_scale() -> float:
+	if RendererChoice.running() != RendererChoice.FORWARD_PLUS:
+		return 1.0
+	var qa := OS.get_environment("SRREVAMP_QA_SUN_SCALE")
+	if qa.is_valid_float():
+		return qa.to_float()
+	return FORWARD_PLUS_SUN_SCALE

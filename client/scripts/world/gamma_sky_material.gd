@@ -42,6 +42,9 @@ uniform float ground_curve = 0.02;
 uniform float sun_angle_max = 0.523599;
 uniform float sun_curve = 0.15;
 uniform bool decode_out = false;
+// 1 / WorldPostEffects.sun_scale(): the sky's sun disc and halo keep the
+// unscaled sun's energy (round 693).
+uniform float sun_energy_scale = 1.0;
 
 vec3 enc(vec3 c) {
 	c = max(c, vec3(0.0));
@@ -57,7 +60,7 @@ void sky() {
 	float c = (1.0 - v_angle / (PI * 0.5));
 	vec3 sky = mix(sky_horizon_color, sky_top_color, clamp(1.0 - pow(1.0 - c, 1.0 / sky_curve), 0.0, 1.0));
 	if (LIGHT0_ENABLED) {
-		vec3 lc = decode_out ? enc(LIGHT0_COLOR) : LIGHT0_COLOR;
+		vec3 lc = (decode_out ? enc(LIGHT0_COLOR) : LIGHT0_COLOR) * sun_energy_scale;
 		float sun_angle = acos(dot(LIGHT0_DIRECTION, EYEDIR));
 		if (sun_angle < LIGHT0_SIZE) {
 			sky = lc * LIGHT0_ENERGY;
@@ -100,3 +103,8 @@ func _init() -> void:
 		_shader.code = SHADER_CODE
 	shader = _shader
 	set_shader_parameter("decode_out", RendererChoice.running() == RendererChoice.FORWARD_PLUS)
+	# The Forward+ sun is raised to match Compatibility's shadow pass
+	# (WorldPostEffects.sun_scale); the sky's disc and halo are not part of
+	# that, and stay at the unscaled energy (MEASURED: at x4 without this the
+	# ferry river shot's top band went from 17 % to 33 % white).
+	set_shader_parameter("sun_energy_scale", 1.0 / WorldPostEffects.sun_scale())

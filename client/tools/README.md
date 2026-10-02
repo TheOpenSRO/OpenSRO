@@ -371,7 +371,7 @@ boots each at fixed views, interleaved base/head, and reads four numbers from th
 
 | number | from | SLOWER when (OURS) |
 |---|---|---|
-| frame ms | the mean of the last 30 `--print-fps` samples, standing still | +max(0.5 ms, 5 %) |
+| frame ms | the mean of the last 30 `--print-fps` samples after the first 5, standing still | +max(0.5 ms, 5 %) |
 | entry ms | `region grid loaded in N ms`, the real loading drain (`SRREVAMP_QA_FORCE_LOADING=1`) | +max(1 s, 10 %) |
 | freeze ms | the largest `longest work frame W ms` of the run's LoadTimings summaries | +max(100 ms, 25 %) |
 | hitches | the summaries' `H over 100 ms`, summed | +2 |
@@ -401,8 +401,13 @@ client/tools/perf_gate.sh --ab-renderer gl_compatibility --sites jangan,mobs
 Every run's renderer is read back from Godot's banner. A run on the wrong renderer, or on llvmpipe,
 fails the gate. Cached Forward+ bases are kept apart (`..._fp.vals`).
 
+The first 5 once-a-second samples are dropped (round 693, found by round 694's review). The
+first second carries the first cell's build (8-1000 ms), and seconds 2-5 are still raised (8 / 16 /
+12 / 9.8 ms under GL, 55 / 3.35 / 5.05 / 4.06 under Forward+). A 3,000-frame GL run gives about
+27 samples, so its "last 30" took the start-up in and could read SLOWER.
+
 Forward+ at the Jangan spawn draws in about 3 ms (round 693). 3,000 frames is then about 9 s,
-under the 10 once-a-second samples the frame figure needs, and the gate stops with "missing
+under the 15 samples (10 after the 5 dropped) the frame figure needs, and the gate stops with "missing
 numbers". Give such a gate `--frames 12000`. The two renderers also reach the screen differently on
 the box: Compatibility through VirtualGL's read-back, Forward+ through Xwayland directly. Measured
 once at the spawn, Compatibility drew 8.2 ms through Xwayland against 10.5 through VirtualGL. So

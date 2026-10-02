@@ -902,11 +902,10 @@ the following:
 - [ ] **The low-end hardware test** (the user's). On the box's RX 7600 Forward+ draws the Jangan spawn in
       2.97 ms against Compatibility's 8.75, and the 500-monster view in 3.29 against 10.09. Entry and
       freezes are the same (round 693's perf gate). A low-end or integrated GPU is not measured.
-- [ ] **Compatibility's shadowed sun was brighter.** GLES3 draws a shadow-casting directional light
-      in a separate additive pass and adds it in display values. MEASURED: a lit quad reads
-      (225,176,127) with shadows against (159,128,95) without; Forward+ reads (158,128,95) either
-      way. So lit objects look about 10-15 luma darker under Forward+ than in every shot since round
-      581. Retune the sun's 0.3 (OURS) for Forward+, or keep it: the user's call.
+- [x] ~~**Compatibility's shadowed sun was brighter.**~~ GLES3 adds a shadow-casting sun in a separate
+      pass in display values. **Decided by the user 2026-10-02, "Raise it to match":** under
+      Forward+ the sun is x4.0 (`WorldPostEffects.FORWARD_PLUS_SUN_SCALE`, OURS, calibrated by
+      measurement in round 693). Lit areas are now within -2.4 to +1.6 luma of Compatibility.
 - [ ] **The Options window** shows the renderer (`RendererChoice.chosen()` / `choose()`) and the SSAO
       and glow toggles (`WorldPostEffects.apply`). That is the options694 lane.
 - [ ] **Retail's Bloom effect** (UIIT_STT_BLOOM_EFFECT, FUN_005fef70): its default (SROptionSet.dat)
