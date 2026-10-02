@@ -944,6 +944,10 @@ the following:
       textures are built without mipmaps (`mapm_terrain_builder.gd`), so the mipmap bias does not
       reach them. Generating mipmaps would also cut distant shimmer; measure its VRAM, load time and
       the gate first. Texture Filtering (MSAA 2x) works but shows little.
+- [ ] **SSAO is a light effect** (round 694 review, MEASURED): the terrain is unshaded and the object
+      mods write EMISSION, which Godot's SSAO does not darken; tuned (radius 16, intensity 4, light
+      affect 1) it darkens about 1.7x the frame noise. A real effect needs those shaders to take
+      light, or an AO term of their own.
 - [ ] **Character Sight Range does not reach NPCs**: they are built into the region's
       RealTerrain_* group, not other_entities. The original's rule is unread (no reader found).
 - [ ] **Texture Detail and Texture Filtering under Compatibility.** MEASURED: 4.2.2's GLES3

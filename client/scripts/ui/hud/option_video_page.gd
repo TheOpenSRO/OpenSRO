@@ -377,7 +377,7 @@ func tooltip_of(entry: int) -> String:
 		VideoOptions.BLOOM:
 			ours = "Godot glow."
 		VideoOptions.SSAO:
-			ours = "Screen-space ambient occlusion (this client's own option)."
+			ours = "Screen-space ambient occlusion (this client's own option). A light effect here: the ground and most buildings are drawn with their own lighting, which ambient occlusion cannot darken."
 		VideoOptions.FILTERING:
 			ours = "Multisample anti-aliasing (2x); a small change on screen."
 		VideoOptions.TEXTURE:

@@ -374,9 +374,30 @@ static func apply_post_effects(env: Environment, ssao: bool, glow: bool) -> void
 	var post := _global_script(&"WorldPostEffects")
 	if post != null and post.has_method("apply"):
 		post.call("apply", env, ssao, glow)
-		return
-	env.ssao_enabled = ssao
-	env.glow_enabled = glow
+	else:
+		env.ssao_enabled = ssao
+		env.glow_enabled = glow
+	if ssao:
+		env.ssao_radius = SSAO_RADIUS
+		env.ssao_intensity = SSAO_INTENSITY
+		env.ssao_light_affect = SSAO_LIGHT_AFFECT
+
+## SSAO's look (OURS, round 694 review). Godot's defaults (radius 1, intensity
+## 2, light affect 0) drew nothing measurable here: MEASURED under Forward+ at
+## the Jangan spawn, SSAO on darkened 9.9k pixels by more than 8 luma against
+## 11.4k between two frames with it on -- within the frame-to-frame noise.
+## Why: a radius of 1 is a hand's width at this world's scale, and SSAO only
+## darkens light a material receives -- the terrain is drawn unshaded and the
+## object mods write EMISSION, which it never touches. A radius of 16, intensity
+## 4 and the AO applied to direct light too: 19.5k pixels darkened against
+## 11-12k between two frames with the same setting (dluma -0.55 over the
+## frame, at the buildings' feet and the ground band), about +0.1 ms a frame.
+## Still a light effect. A stronger one needs the client's own shaders to take
+## light (or an AO term) instead of emission -- a restructuring this row does
+## not do.
+const SSAO_RADIUS := 16.0
+const SSAO_INTENSITY := 4.0
+const SSAO_LIGHT_AFFECT := 1.0
 
 # --- storage --------------------------------------------------------------------
 

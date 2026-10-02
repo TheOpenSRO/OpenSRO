@@ -107,7 +107,7 @@ value)` (`0xa194a0`), which also stores it at `SWorld+0x2e50 + case*4` (getter `
 | Dynamic Animation | case 0xe -> renderer +0x19c, re-inits the animated objects; TTDESC_14 fabrics and hair | kept, draws nothing: no cloth or hair motion here |
 | Effect Quality | `IDecoSkill::FUN_00a50dc0(q, owner)`: 0 none, 2 all, 1 only owners passing two unread tests | `SkillEffects.quality`: 1 shows effects the player casts, takes or carries (INFERRED) |
 | Display Friendly/Enemy | 0 lets `GlobalDataManager::FUN_009dae90/9db750` swap a large-battle outfit tint; 1 (General) never | kept, draws nothing: no battle outfits here |
-| SSAO | (none in the exe) | OURS: Godot SSAO, Forward+ only, default off |
+| SSAO | (none in the exe) | OURS: Godot SSAO, Forward+ only, default off; radius 16, intensity 4, light affect 1 (OURS). **A light effect only:** the terrain is unshaded and the object mods write EMISSION, which SSAO does not darken (measured below) |
 | Renderer | (none) | OURS: Forward+ / Compatibility at the next start, through round 693's RendererChoice when the build has it |
 
 ## This client's default: Middle (the user's decision, 2026-10-02)
@@ -151,3 +151,10 @@ step. QA: `SRREVAMP_QA_VIDEO="quality=0,shadow_detail=2,..."` sets rows for one 
   (Lens: the sun was not in view). Frame time (another lane's Godot running throughout):
   default 14.2 ms, High 14.3 / 14.7, Middle 14.0, Large scale battle 14.0, Low 5.6 / 5.7,
   Background Sight 1 alone 6.1 -- the far plane is what costs.
+- **SSAO under Forward+** (round 694 review; Jangan spawn, yaw 180, pitch -10, distance 40; pixels
+  darkened by more than 8 luma, between later steps of one boot): Godot's defaults (radius 1,
+  intensity 2, light affect 0) 9.9k against 11.4k between two frames with SSAO on -- nothing; light
+  affect 1 and AO channel 1 alone, the same; radius 16, intensity 4, light affect 1 (shipped)
+  19.5k against 11-12k, dluma -0.55, about +0.1 ms (1.99-2.01 -> 2.04-2.08 ms a frame). The terrain
+  (unshaded) and the object mods (EMISSION) are not darkened by SSAO at all; a real effect needs
+  those shaders to take light or an AO term.

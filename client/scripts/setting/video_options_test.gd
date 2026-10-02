@@ -193,6 +193,9 @@ func _post_effects() -> void:
 	_check(env.ssao_enabled and not env.glow_enabled, "apply_post_effects: SSAO on, glow off")
 	VideoOptions.apply_post_effects(env, false, true)
 	_check(not env.ssao_enabled and env.glow_enabled, "apply_post_effects: SSAO off, glow (Bloom) on")
+	VideoOptions.apply_post_effects(env, true, true)
+	_check(is_equal_approx(env.ssao_radius, 16.0) and is_equal_approx(env.ssao_light_affect, 1.0) and is_equal_approx(env.ssao_intensity, 4.0),
+		"SSAO on takes this world's scale: radius 16, intensity 4, light affect 1 (OURS; Godot's radius 1 drew nothing measurable)")
 	_check(not VideoOptions.post_effects_available(), "headless (no RenderingDevice): SSAO and glow are reported unavailable, as under Compatibility")
 
 # --- the page -------------------------------------------------------------------
