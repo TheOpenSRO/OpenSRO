@@ -42,6 +42,12 @@ docs. The English strings quoted are from the archive's `textuisystem` English c
 | round 678 (`intro_script.md`) | slot k at k/5 of the dock line; Start zooms to the slot | k/5 holds only for a full page. The zoom happens when a character is **clicked**, not on Start. |
 | `character.MaxPerAccount = 3` | 3 characters | Retail allows 4 (READ, client and server). |
 
+**Fixed in round 682:** `character.go` (the Gender note and MaxPerAccount 4), `equipment/
+starterkit.go` and an addendum under RE_COMPLETION's two 2026-09-18 entries (the kit and the
+scale-byte order), and recovered_names' evidence for `SendCharacterCreateChina` (0084e610) and
+`SendNameCheckRequest_858c00` (whose *name* stays until the rename is applied in Ghidra too: OPEN).
+`CharacterCreate.gd`'s header says so too. The FRONTEND docs are the client lanes'.
+
 ## 1. The flow
 
 ```
@@ -191,12 +197,19 @@ approximate):
 | academy student | `..._CONFIRM_STUDENT` | "...first leave the Academy" |
 | academy guardian | `..._CONFIRM_GUARDIAN` | "...first disband the Academy" |
 
+**Which byte is which** (READ round 682, asm 0x858b66-0x858bd4): the list record's guild byte
+(character +0x1f0) is 1 for `_CONFIRM_MEMBER` and 2 for `_CONFIRM_MASTER`; the academy byte (+0x1f1)
+is 1 for `_CONFIRM_STUDENT` and 2 for `_CONFIRM_GUARDIAN`; 0 on both opens the confirm (0x858950).
+So guild class 0 none / 1 member / 2 master, academy 0 none / 1 student / 2 guardian.
+
 **The confirm popup (window 20)**
 - Fades in over 0.5 s, dims the screen to alpha 0x80, plays `snd_window_open`.
 - Text `UIO_STT_CHAR_DEL_CONFIRM`: "...it will be reserved for 7 days... after 7 days, it will be
   permenantly deleted. Do you really want to delete the character?" Button "Delete".
 - For a pending character: `UIO_STT_CHAR_RECOVERY_CONFIRM` and "Restore".
-- Accept (0x858c00) sends 0x7007 action 3 (delete) or 5 (restore) with the name.
+- Accept (0x858c00) sends 0x7007 action 3 (delete) or 5 (restore) with the name. Which one is
+  the window's +0x11d flag (READ round 682: `cmp BYTE [esi+0x11d]` at 0x858c93, then action byte 3
+  at 0x858ce9 or 5 at 0x858d87), set by 0x858950 from the character's pending byte +0x1e8.
 
 **A pending character, selected**
 - Start and Delete hide; Restore (25) and the countdown (26) show.
@@ -601,6 +614,39 @@ per character:
 "(S)" means the client appends "(S<decimal code>)". The decode is through the byte index table at
 0x861b84 (select) and 0x861a40 (create).
 
+### What srrevamp sends (round 682)
+
+The lobby rides **our framing on retail's opcode numbers** (USER DECISION 1): 0x7007 / 0xB007 /
+0x7001 / 0xB001 in a `proto.Packet`, payloads byte for byte the layouts above. Codec:
+`server/internal/session/lobby.go` and `client/scripts/net/lobby.gd`; golden bytes, written by
+hand from the layouts: `client/scripts/net/testdata/lobby_golden.json` (both sides run it).
+Our 0x0010-0x0015 are gone. Start's OK is followed by today's `OpEnterWorldResult`; the old
+`OpEnterWorld` (0x0020) still works and refuses a pending character too.
+
+| Code | srrevamp raises it for (OURS where marked) |
+|---|---|
+| 0x402 | Start: an empty name, a character pending deletion (READ). Delete: a guild member or master (READ), a guild lookup that fails (OURS, fails closed), a character already pending (OURS). Any action: a store error or a payload too short to read (OURS). Retail also refuses a quote in a Start name with 0x402: **not applied** (round 682's review), so a grandfathered name with one still starts. |
+| 0x403 | Create: no catalogue loaded; a body or item outside it (OURS, on top of READ); a body not TypeID 1/1; an item not equipment, of the other race (not 3), of the other sex (not 2) (READ); an item in the wrong field (OURS); a missing chest, legs or feet (OURS: China's Protector "none" is not offered); a Height or Volume nibble above 4 (OURS). |
+| 0x404 | Create: weapon 0 (READ). |
+| 0x405 | Create: 4 characters already, pending ones included (READ). |
+| 0x406 | Create: armour pieces of two classes (READ check, INFERRED code); the store failed. |
+| 0x407 | Any action or Start before login (READ). |
+| 0x408 | Delete: an empty name (READ "name refused"; retail's quote refusal is not applied, as for Start). |
+| 0x40b | Delete, restore, Start: no character of that name on the account (READ). |
+| 0x40c | Create, name check: not 2..12 bytes (READ). |
+| 0x40d | Create, name check: a space, `'` or `"` (READ); a byte outside printable ASCII (OURS: the client's bitmap is OPEN). |
+| 0x410 | Create, name check: the name exists, any case, pending deletion or not (READ). |
+| 0x419 | Restore: the character is not pending deletion (READ), sent as a u16 (OURS, see above). |
+| 0x40e | Any 0x7007 action from a session already in the world (OURS choice of code: "an operation is pending" is the nearest READ meaning; what the ShardManager answers there was not read). |
+
+Not raised: 0x409, 0x40a, 0x40f, 0x411-0x418.
+
+**Older clients and servers** (round 682's review, OURS): the server answers the removed
+0x0010 / 0x0012 / 0x0014 in their old reply formats with "this server uses the new character lobby
+-- update the client", which the old screens show; a new client that has no list answer within 5 s
+says "The server did not answer the character list -- the client or server may need updating."
+(no retail text key fits: the nearest, `UIO_MSG_ERROR_SEVER_CONNECT`, would be false).
+
 ### Create on the server (READ ShardManager)
 
 **Checks, in order:**
@@ -620,14 +666,29 @@ per character:
 - Internal 0x620e (shard id, JID, name) goes to the manager.
 - Then `_AddNewChar`, synchronously; a failure gives 0x406.
 - **It adds** (READ):
-  - the three armour pieces must share one armour class;
+  - the three armour pieces must share one armour class (round 682: the loop at 0x429d42 over the
+    item slots compares each non-weapon item's type bits 7..10 -- TypeID3 -- with the first one's,
+    0x429dc2-0x429dd7, and a Country unequal to the model's, 0x429d84; either failure calls the
+    error routine and returns 0 from the worker, 0x429cca. Which code the client then sees is
+    INFERRED to be 0x406, the worker's failure path);
   - each item gets a durability byte from its refobj;
   - a bow gets `ITEM_ETC_AMMO_ARROW_01_DEF`, a crossbow `ITEM_ETC_AMMO_BOLT_01_DEF`;
   - otherwise a one-handed weapon gets the race's shield, `ITEM_CH_SHIELD_01_A_DEF` or
-    `ITEM_EU_SHIELD_01_A_DEF`.
+    `ITEM_EU_SHIELD_01_A_DEF`. One-handed is itemdata column 93 (0-based) = 0 (INFERRED to be what
+    the server reads; MEASURED on the 14 weapons: China sword and blade, Europe 1H sword, warlock rod
+    and cleric rod are 0, the rest 1 -- the dagger included).
 
 **The start position** (FUN_0042bb20): `rand() % 3` picks one of three spawns per race (table
 0x781b88), and the return point is the race's `STORE_CH_GATE` / `STORE_EU_GATE` refobj.
+
+> **Whose values these are.** The spawn table, the ammunition and shield rule and the code names
+> above are READ from a **private-server package's** SR_ShardManager.exe, not from a retail
+> binary. Nothing modded was seen in its lobby code, but these are exactly the kind of values a
+> server operator edits (where a new character starts, what it is given), so they may be that
+> package's rather than retail's. srrevamp uses them (round 682) labelled so; the shard DB
+> procedures (section 6) are where a retail-shaped confirmation would come from. The ammunition
+> *quantity* is not in this binary at all (`_AddNewChar`'s body, OPEN); round 682's one stack is
+> OURS.
 
 | Race | Spawns (region hi/lo, local x, y, z) |
 |---|---|
@@ -703,6 +764,49 @@ Our wire today is our own (`PROTOCOL_DECISION.md`).
 | Start spawns, gate | ShardManager table 0x781b88 (READ, this package) | READ |
 | Music | none pushed by select or create | READ; the intro's track carries over |
 
+### The creatable catalogue: the one definition (round 682)
+
+Round 682's server (`refdata.CreatableExtractor`, `cmd/export-refdata -mode chargen`) and round
+683's client (`frontend/char_catalog.gd`) implement **this** rule and nothing else. Columns are
+0-based indices into a tab-split textdata row; column 0 is the Service flag.
+
+**Input.** Every `characterdata_*.txt` part named by `characterdata.txt` and every
+`itemdata_*.txt` part named by `itemdata.txt` (Media.pk2 `server_dep\silkroad\textdata\`), each
+in its index file's order. Rows are UTF-16; blank lines and lines starting `//` are skipped; a row
+whose column 1 is not an integer is skipped. **The last definition of an id wins** (the China bodies
+1908-1932 appear in two parts, MEASURED).
+
+**A body** is a characterdata row with
+- column 0 (Service) = 1,
+- column 9 (TypeID1) = 1 and column 10 (TypeID2) = 1 (a player character: the same test the
+  ShardManager's create makes on the model).
+
+Its race is column 14 (Country: 0 China, 1 Europe) and its sex column 58 (1 man, 0 woman;
+MEASURED: 1 on all 26 `_MAN_` rows, 0 on all 26 `_WOMAN_`). Do not read the sex from the code name.
+
+**An item** is an itemdata row with
+- column 0 (Service) = 1,
+- column 9 (TypeID1) = 3 and column 10 (TypeID2) = 1 (equipment),
+- column 2 (CodeName) ending `_A_DEF`.
+
+Its race is column 14 (0 China, 1 Europe, 3 either), its sex column 58 (ReqGender: 1 man, 0 woman,
+2 either). Its piece: TypeID3 (column 11) 6 a weapon, 4 a shield; otherwise TypeID4 (column 12) 3
+chest, 4 legs, 6 feet. Its armour class is TypeID3 (China 1 garment / 2 protector / 3 armour,
+Europe 9 robe / 10 light / 11 heavy). A weapon is a bow when TypeID4 = 6 (China) and a crossbow
+when TypeID4 = 12 (Europe); one-handed when column 93 (TwoHanded) = 0.
+
+**Not in the catalogue, but in the server's CSV:** the two ammunition rows by code name,
+`ITEM_ETC_AMMO_ARROW_01_DEF` and `ITEM_ETC_AMMO_BOLT_01_DEF` (READ, ShardManager strings), with
+their MaxStack (column 57). The client does not need them.
+
+**MEASURED 2026-10-02 on the box's vSRO archive:** 52 bodies (26 China, 26 Europe) and 52 items
+(24 China: 5 weapons, 18 armour, 1 shield; 28 Europe: 9 weapons, 18 armour, 1 shield) = **104**,
+plus the 2 ammunition rows (3655 arrows, 10885 bolts, MaxStack 2500 each). The ids are section 4's.
+
+**The server's CSV** (`-chargen-csv`): header `ID,Code,Kind,Country,Sex,TypeID1,TypeID2,TypeID3,
+TypeID4,TwoHanded,MaxStack`, Kind `model` / `item` / `ammo`, catalogue rows by id then the
+ammunition. The client never reads it: it applies the rule to its own archive.
+
 **To close the EXTERNAL OPENs** (one session, nothing enters the repo):
 1. `pct start 104` (the stopped `mssql-temp`, deploy/README.md "External shard DB").
 2. Export `_RefCharGen`, `_RefCharDefault_Skill`, `_RefCharDefault_SkillMastery` and
@@ -719,6 +823,11 @@ Four lanes after one shared contract round. None edits another lane's files. The
 packet fields and three small client classes.
 
 ### Round 0 (server/protocol lane, first, small): the contract
+
+**Done in round 682** together with S1-S3 (lane `lobby682`): the codecs, the golden file, the
+catalogue rule above (server half), the schema (`ref_obj_id`, `scale`, `deleted_at`, `start_zone`,
+`start_x/y/z`; existing rows to 1909/1923 at 0x22), create / list / name check / delete / restore /
+purge / Start, and today's two screens moved onto it. See WORLD_ISSUES round 682.
 
 **The wire.** Payloads **byte-for-byte the retail layouts of section 5**, so that they move unchanged
 into the retail codec `PROTOCOL_DECISION.md`'s addendum describes:

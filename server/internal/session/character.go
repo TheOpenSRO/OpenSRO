@@ -1,122 +1,23 @@
 package session
 
+// The character lobby -- list, create, delete, the name check, restore and
+// Start -- is retail's 0x7007/0xB007 and 0x7001/0xB001 since round 682
+// (lobby.go, lobbyhandler.go; docs/protocol/charselect.md). Our own
+// 0x0010-0x0015 (OpCharacterList/Create/Delete and their results) were
+// removed with their last caller, the client's CharacterSelect/CharacterCreate
+// screens and QaSignIn, which speak the retail lobby now; an older client is
+// answered by LegacyLobbyHandler below.
+
 import (
 	"context"
-	"encoding/binary"
-	"errors"
 	"fmt"
 	"log/slog"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
 	"github.com/OpenSRO/srrevamp/server/internal/gateway"
 	"github.com/OpenSRO/srrevamp/server/internal/proto"
 )
 
-// Character opcodes, our own protocol. All require a prior successful
-// OpLogin on the same connection (see authstate.go) — attempts without one
-// get a not-authenticated error rather than being silently ignored.
-const (
-	OpCharacterList         uint16 = 0x0010 // client -> server
-	OpCharacterListResult   uint16 = 0x0011 // server -> client
-	OpCharacterCreate       uint16 = 0x0012 // client -> server
-	OpCharacterCreateResult uint16 = 0x0013 // server -> client
-	OpCharacterDelete       uint16 = 0x0014 // client -> server
-	OpCharacterDeleteResult uint16 = 0x0015 // server -> client
-)
-
 const errNotAuthenticated = "not authenticated"
-
-// CharacterSummary is one character as the select screen needs it: enough
-// to show a name and an honest stat panel (level and an HP bar) and to know
-// which body to preview. Only fields the server actually tracks are here --
-// there is no experience, MP or stat-point system yet, so the client shows
-// none rather than an invented value.
-type CharacterSummary struct {
-	Name   string
-	Gender string
-	Level  int
-	HP     int
-	MaxHP  int
-}
-
-// CharacterListResult is the OpCharacterListResult payload. On failure Error
-// is non-empty and Characters is empty.
-type CharacterListResult struct {
-	Error      string
-	Characters []CharacterSummary
-}
-
-func (r *CharacterListResult) Encode() []byte {
-	out := encodeStrings(r.Error)
-	countBuf := make([]byte, 2)
-	binary.LittleEndian.PutUint16(countBuf, uint16(len(r.Characters)))
-	out = append(out, countBuf...)
-	for _, c := range r.Characters {
-		out = append(out, encodeStrings(c.Name, c.Gender)...)
-		stat := make([]byte, 6)
-		binary.LittleEndian.PutUint16(stat[0:], uint16(c.Level))
-		binary.LittleEndian.PutUint16(stat[2:], uint16(c.HP))
-		binary.LittleEndian.PutUint16(stat[4:], uint16(c.MaxHP))
-		out = append(out, stat...)
-	}
-	return out
-}
-
-func DecodeCharacterListResult(data []byte) (*CharacterListResult, error) {
-	fields, rest, err := decodeStringsPrefix(data, 1)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding CharacterListResult: %w", err)
-	}
-	if len(rest) < 2 {
-		return nil, errors.New("session: decoding CharacterListResult: truncated character count")
-	}
-	count := int(binary.LittleEndian.Uint16(rest))
-	rest = rest[2:]
-	result := &CharacterListResult{Error: fields[0]}
-	for i := 0; i < count; i++ {
-		strs, r2, err := decodeStringsPrefix(rest, 2)
-		if err != nil {
-			return nil, fmt.Errorf("session: decoding CharacterListResult character %d: %w", i, err)
-		}
-		if len(r2) < 6 {
-			return nil, fmt.Errorf("session: decoding CharacterListResult character %d: truncated stats", i)
-		}
-		result.Characters = append(result.Characters, CharacterSummary{
-			Name:   strs[0],
-			Gender: strs[1],
-			Level:  int(binary.LittleEndian.Uint16(r2[0:])),
-			HP:     int(binary.LittleEndian.Uint16(r2[2:])),
-			MaxHP:  int(binary.LittleEndian.Uint16(r2[4:])),
-		})
-		rest = r2[6:]
-	}
-	return result, nil
-}
-
-// CharacterCreateRequest is the OpCharacterCreate payload. Gender is one of
-// character.GenderChinaMan/GenderChinaWoman -- the real, RE-confirmed
-// options (see character.go's doc comment) -- or empty, which falls back
-// to character.DefaultGender. An unrecognized non-empty value also falls
-// back to the default rather than erroring the whole create, since it's
-// purely cosmetic and shouldn't block character creation.
-type CharacterCreateRequest struct {
-	Name   string
-	Gender string
-}
-
-func (r *CharacterCreateRequest) Encode() []byte {
-	out := encodeStrings(r.Name)
-	out = append(out, encodeStrings(r.Gender)...)
-	return out
-}
-
-func DecodeCharacterCreateRequest(data []byte) (*CharacterCreateRequest, error) {
-	fields, err := decodeStrings(data, 2)
-	if err != nil {
-		return nil, err
-	}
-	return &CharacterCreateRequest{Name: fields[0], Gender: fields[1]}, nil
-}
 
 // CharacterNameRequest is the payload of every request that identifies a
 // character and asks for nothing else: the inventory, equipment, quest,
@@ -130,7 +31,8 @@ func DecodeCharacterCreateRequest(data []byte) (*CharacterCreateRequest, error) 
 // -- which the client sends with one -- started failing as "malformed
 // request". The client showed it as an undressed character, an empty
 // inventory and empty panels, with the server answering every listing with
-// nothing.
+// nothing. (The create request is the lobby's LobbyRequest now, a different
+// shape again.)
 type CharacterNameRequest struct {
 	Name string
 }
@@ -145,211 +47,47 @@ func DecodeCharacterNameRequest(data []byte) (*CharacterNameRequest, error) {
 	return &CharacterNameRequest{Name: fields[0]}, nil
 }
 
-// CharacterDeleteRequest is the OpCharacterDelete payload.
-type CharacterDeleteRequest struct {
-	Name string
-}
+// The pre-682 lobby's opcodes, kept only to answer an older client (round
+// 682's review). Our own protocol until round 682 (git show 3857a5e:
+// server/internal/session/character.go): 0x0010 list -> 0x0011 (a u16-length
+// error string, then a u16 count of characters), 0x0012 create -> 0x0013 and
+// 0x0014 delete -> 0x0015 (wire.go's OK/Reason shape). That client shows the
+// list's error as "Error: <text>" and a create or delete refusal as "Create
+// failed: <text>" / "Delete failed: <text>" (its CharacterSelect.gd and
+// CharacterCreate.gd), so each is answered in its own format with words that
+// say what to do.
+const (
+	legacyOpCharacterList         uint16 = 0x0010
+	legacyOpCharacterListResult   uint16 = 0x0011
+	legacyOpCharacterCreate       uint16 = 0x0012
+	legacyOpCharacterCreateResult uint16 = 0x0013
+	legacyOpCharacterDelete       uint16 = 0x0014
+	legacyOpCharacterDeleteResult uint16 = 0x0015
+)
 
-func (r *CharacterDeleteRequest) Encode() []byte { return encodeStrings(r.Name) }
+// LegacyLobbyNotice is what an older client is told (OURS wording).
+const LegacyLobbyNotice = "this server uses the new character lobby -- update the client"
 
-func DecodeCharacterDeleteRequest(data []byte) (*CharacterDeleteRequest, error) {
-	fields, err := decodeStrings(data, 1)
-	if err != nil {
-		return nil, err
+// LegacyLobbyHandler answers the removed 0x0010 / 0x0012 / 0x0014 in their
+// old reply formats with LegacyLobbyNotice, and logs each at INFO, so an
+// older client says why its select screen is empty instead of saying nothing.
+func LegacyLobbyHandler(logger *slog.Logger) gateway.Handler {
+	if logger == nil {
+		logger = slog.Default()
 	}
-	return &CharacterDeleteRequest{Name: fields[0]}, nil
-}
-
-// CharacterCreateResult is the OpCharacterCreateResult payload — the common
-// OK/Reason shape (see wire.go), given its own name here rather than reused
-// from an unrelated opcode.
-type CharacterCreateResult struct {
-	OK     bool
-	Reason string
-}
-
-func (r *CharacterCreateResult) Encode() []byte { return encodeOKReason(r.OK, r.Reason) }
-
-func DecodeCharacterCreateResult(data []byte) (*CharacterCreateResult, error) {
-	ok, reason, err := decodeOKReason(data)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding CharacterCreateResult: %w", err)
-	}
-	return &CharacterCreateResult{OK: ok, Reason: reason}, nil
-}
-
-// CharacterDeleteResult is the OpCharacterDeleteResult payload.
-type CharacterDeleteResult struct {
-	OK     bool
-	Reason string
-}
-
-func (r *CharacterDeleteResult) Encode() []byte { return encodeOKReason(r.OK, r.Reason) }
-
-func DecodeCharacterDeleteResult(data []byte) (*CharacterDeleteResult, error) {
-	ok, reason, err := decodeOKReason(data)
-	if err != nil {
-		return nil, fmt.Errorf("session: decoding CharacterDeleteResult: %w", err)
-	}
-	return &CharacterDeleteResult{OK: ok, Reason: reason}, nil
-}
-
-// OnCharacterCreated is called after a character is successfully created,
-// for whatever a new character needs beyond its row -- currently its
-// starting equipment. Optional: a nil hook means "just create the
-// character", which is what the tests and any caller that has not wired
-// inventory/equipment yet want.
-//
-// Errors are logged by the caller and do not fail the creation: a character
-// that could not be given its kit is still a usable character.
-type OnCharacterCreated func(ctx context.Context, characterID int64) error
-
-// CharacterHandler returns a gateway.Handler implementing character
-// list/create/delete against store, scoped to whichever account
-// authenticated on the connection (see AuthenticatedAccountID).
-func CharacterHandler(store character.Store) gateway.Handler {
-	return CharacterHandlerWithHook(store, nil)
-}
-
-// CharacterHandlerWithHook is CharacterHandler plus a hook run after a
-// successful create.
-func CharacterHandlerWithHook(store character.Store, created OnCharacterCreated) gateway.Handler {
-	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
+	return func(_ context.Context, sess *gateway.Session, p *proto.Packet) error {
+		var reply *proto.Packet
 		switch p.Opcode {
-		case OpCharacterList:
-			return handleList(ctx, sess, store)
-		case OpCharacterCreate:
-			return handleCreate(ctx, sess, p, store, created)
-		case OpCharacterDelete:
-			return handleDelete(ctx, sess, p, store)
+		case legacyOpCharacterList:
+			reply = &proto.Packet{Opcode: legacyOpCharacterListResult, Data: append(encodeStrings(LegacyLobbyNotice), 0, 0)}
+		case legacyOpCharacterCreate:
+			reply = &proto.Packet{Opcode: legacyOpCharacterCreateResult, Data: encodeOKReason(false, LegacyLobbyNotice)}
+		case legacyOpCharacterDelete:
+			reply = &proto.Packet{Opcode: legacyOpCharacterDeleteResult, Data: encodeOKReason(false, LegacyLobbyNotice)}
 		default:
 			return nil
 		}
+		logger.Info("an older client asked the removed lobby; told to update", "opcode", fmt.Sprintf("%#04x", p.Opcode))
+		return sess.Send(reply)
 	}
-}
-
-func handleList(ctx context.Context, sess *gateway.Session, store character.Store) error {
-	accountID, ok := AuthenticatedAccountID(sess)
-	if !ok {
-		return sess.Send(&proto.Packet{
-			Opcode: OpCharacterListResult,
-			Data:   (&CharacterListResult{Error: errNotAuthenticated}).Encode(),
-		})
-	}
-
-	chars, err := store.ListByAccount(ctx, accountID)
-	if err != nil {
-		return sess.Send(&proto.Packet{
-			Opcode: OpCharacterListResult,
-			Data:   (&CharacterListResult{Error: "list failed"}).Encode(),
-		})
-	}
-
-	summaries := make([]CharacterSummary, len(chars))
-	for i, c := range chars {
-		summaries[i] = CharacterSummary{
-			Name:   c.Name,
-			Gender: c.Gender,
-			Level:  c.Level,
-			HP:     c.HP,
-			MaxHP:  c.MaxHP(),
-		}
-	}
-	return sess.Send(&proto.Packet{Opcode: OpCharacterListResult, Data: (&CharacterListResult{Characters: summaries}).Encode()})
-}
-
-func handleCreate(ctx context.Context, sess *gateway.Session, p *proto.Packet, store character.Store, onCreated OnCharacterCreated) error {
-	accountID, ok := AuthenticatedAccountID(sess)
-	if !ok {
-		return sess.Send(&proto.Packet{
-			Opcode: OpCharacterCreateResult,
-			Data:   (&CharacterCreateResult{OK: false, Reason: errNotAuthenticated}).Encode(),
-		})
-	}
-
-	req, err := DecodeCharacterCreateRequest(p.Data)
-	if err != nil {
-		return sess.Send(&proto.Packet{
-			Opcode: OpCharacterCreateResult,
-			Data:   (&CharacterCreateResult{OK: false, Reason: "malformed request"}).Encode(),
-		})
-	}
-
-	result := &CharacterCreateResult{OK: true}
-	created, err := store.Create(ctx, accountID, req.Name)
-	if err != nil {
-		result.OK = false
-		switch {
-		case errors.Is(err, character.ErrNameTaken):
-			result.Reason = "name already taken"
-		case errors.Is(err, character.ErrAccountFull):
-			result.Reason = "account already has the maximum number of characters"
-		default:
-			result.Reason = "create failed"
-		}
-		return sess.Send(&proto.Packet{Opcode: OpCharacterCreateResult, Data: result.Encode()})
-	}
-
-	// Gender is purely cosmetic (see CharacterCreateRequest's doc comment),
-	// so an invalid/unrecognized choice just keeps the real default
-	// store.Create already applied rather than failing character creation
-	// over it.
-	if character.ValidGender(req.Gender) && req.Gender != created.Gender {
-		if err := store.SetGender(ctx, created.ID, req.Gender); err != nil {
-			result.OK = false
-			result.Reason = "create failed"
-		}
-	}
-
-	// Starting equipment and anything else a new character needs. Failing
-	// this does not fail the creation -- a character without its kit is
-	// still a usable character, and reporting "create failed" for one would
-	// be worse than being underdressed.
-	if onCreated != nil {
-		if err := onCreated(ctx, created.ID); err != nil {
-			slog.Warn("character created without its starting kit", "character_id", created.ID, "err", err)
-		}
-	}
-	return sess.Send(&proto.Packet{Opcode: OpCharacterCreateResult, Data: result.Encode()})
-}
-
-func handleDelete(ctx context.Context, sess *gateway.Session, p *proto.Packet, store character.Store) error {
-	accountID, ok := AuthenticatedAccountID(sess)
-	if !ok {
-		return sess.Send(&proto.Packet{
-			Opcode: OpCharacterDeleteResult,
-			Data:   (&CharacterDeleteResult{OK: false, Reason: errNotAuthenticated}).Encode(),
-		})
-	}
-
-	req, err := DecodeCharacterDeleteRequest(p.Data)
-	if err != nil {
-		return sess.Send(&proto.Packet{
-			Opcode: OpCharacterDeleteResult,
-			Data:   (&CharacterDeleteResult{OK: false, Reason: "malformed request"}).Encode(),
-		})
-	}
-
-	// Our own protocol identifies characters by name over the wire (simpler
-	// for a hand-rolled client to work with); look the ID up server-side.
-	chars, err := store.ListByAccount(ctx, accountID)
-	var id int64 = -1
-	if err == nil {
-		for _, c := range chars {
-			if c.Name == req.Name {
-				id = c.ID
-				break
-			}
-		}
-	}
-
-	result := &CharacterDeleteResult{OK: true}
-	if id == -1 {
-		result.OK = false
-		result.Reason = "no such character"
-	} else if err := store.Delete(ctx, accountID, id); err != nil {
-		result.OK = false
-		result.Reason = "delete failed"
-	}
-	return sess.Send(&proto.Packet{Opcode: OpCharacterDeleteResult, Data: result.Encode()})
 }

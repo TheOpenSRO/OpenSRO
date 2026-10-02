@@ -10,27 +10,22 @@ import (
 	"context"
 	"errors"
 	"math"
+	"time"
 )
 
-// MaxPerAccount caps how many characters one account may have. Own design, and
-// now with a reason rather than just a label: it is not recoverable from the
-// artifact this project has.
+// MaxPerAccount caps how many characters one account may have: **4**, READ
+// (round 682, docs/protocol/charselect.md section 2) -- the client refuses
+// Create at four with "A maximum of 4 characters can be created per account."
+// (0x85de50), and SR_ShardManager's create refuses a fifth with 0x405
+// (charselect.md section 5, "Create on the server", check 2).
+// The user chose retail's 4 (2026-10-02).
 //
-// SR_GameServer.exe carries no character-creation path at all -- no limit
-// string, no count check -- because creation happens on the AgentServer and in
-// the database. That is the same wall this project already hit for starting
-// Str/Int ("nothing writes a CONSTANT to charData+0x74/+0x76") and for
-// the default InventorySize (nothing writes charData+0xac either).
-//
-// THE QUALIFIER MATTERS AND THIS LINE HAD LOST IT (fixed 2026-09-16). It read
-// "nothing writes charData+0x74/+0x76 anywhere in the binary", which is false:
-// GObjPC_SpendStatPoints (`0x00511470`) writes both, incrementing them when
-// points are spent. The claim that holds is the narrower one at StartingStr --
-// nothing writes an initial constant there. A paraphrase that drops the word
-// doing the work turns a true absence into a false one. Anything
-// decided when a character is first made is outside this executable, so the
-// whole category is closed rather than each value being rediscovered.
-const MaxPerAccount = 3
+// This used to be 3 under a note saying the limit "is not recoverable from the
+// artifact this project has", because SR_GameServer.exe carries no
+// character-creation path. That was true of the GameServer and the wrong
+// binary to ask: creation is the ShardManager's (0x7007 -> 0x40f010), which
+// the server package on the render box holds.
+const MaxPerAccount = 4
 
 // ErrNameTaken is returned by Store.Create when the requested character
 // name is already in use (names are unique server-wide, not just per
@@ -280,28 +275,130 @@ func derivedStat(stat, perPoint, level int) int {
 // own "required level" column, which equipment checks against it.
 const StartingLevel = 1
 
-// Gender selects which real body/skeleton/equipment assets a character
-// renders with client-side (see client/scripts/World3D.gd). Real,
-// RE-confirmed asset options, not invented: this project's available real
-// client data (see docs/PROGRESS.md) has complete, parallel body/skeleton/
-// armor asset sets for China man and China woman, but not for any other
-// real race found in that data (Europe's base body meshes weren't present
-// in the available client install) -- so only these two are offered, not
-// a larger invented roster.
+// Gender names a character's race and sex, the string the world wire still
+// carries (EntitySnapshot.Gender, EnterWorldResult.Gender) until lane W draws
+// bodies from RefObjID and Scale. Since round 682 it is DERIVED from the body
+// the character was made from (GenderFor of the model's race and sex), not
+// chosen on its own.
+//
+// CORRECTED (round 682): this note used to say Europe's base body meshes were
+// not present in the available client data, so only China was offered. That
+// was wrong. Data.pk2 holds all 26 `Res\Char\Europe\europe(wo)man_*.bsr` bodies
+// and the `Prim\Ani\Char\Europe\` clips (MEASURED with pk2list,
+// docs/protocol/charselect.md "Corrections"). Europe is offered now (the
+// user's decision, 2026-10-02); a client that knows only the two China strings
+// falls back to its default body for the two Europe ones (World3D's
+// DEFAULT_GENDER) until lane W lands.
 const (
-	GenderChinaMan   = "china_man"
-	GenderChinaWoman = "china_woman"
+	GenderChinaMan    = "china_man"
+	GenderChinaWoman  = "china_woman"
+	GenderEuropeMan   = "europe_man"
+	GenderEuropeWoman = "europe_woman"
 )
 
 // DefaultGender is used when a character is created without an explicit
 // (or a not-recognized) gender choice.
 const DefaultGender = GenderChinaMan
 
-// ValidGender reports whether g is one of the real, supported Gender
-// values above.
-func ValidGender(g string) bool {
-	return g == GenderChinaMan || g == GenderChinaWoman
+// Race values: an object's Country (refobj +0x88, textdata column 14).
+const (
+	RaceChina  = 0
+	RaceEurope = 1
+)
+
+// Sex values: refobj +0x1c4 (textdata column 58): 1 a man, 0 a woman (READ,
+// the create screen's list builder 0x80b980; MEASURED on the 52 bodies).
+const (
+	SexWoman = 0
+	SexMan   = 1
+)
+
+// GenderFor is the Gender string of a body of race and sex.
+func GenderFor(race, sex int) string {
+	switch {
+	case race == RaceEurope && sex == SexMan:
+		return GenderEuropeMan
+	case race == RaceEurope:
+		return GenderEuropeWoman
+	case sex == SexMan:
+		return GenderChinaMan
+	default:
+		return GenderChinaWoman
+	}
 }
+
+// RaceOf and SexOf read a Gender string back.
+func RaceOf(gender string) int {
+	if gender == GenderEuropeMan || gender == GenderEuropeWoman {
+		return RaceEurope
+	}
+	return RaceChina
+}
+
+func SexOf(gender string) int {
+	if gender == GenderChinaWoman || gender == GenderEuropeWoman {
+		return SexWoman
+	}
+	return SexMan
+}
+
+// The bodies existing characters are migrated to, and what the old create
+// path (Store.Create, which tests use) makes: CHAR_CH_MAN_FIGHTER and
+// CHAR_CH_WOMAN_FIGHTER, the bodies World3D.GENDER_BODY_CODE draws for the two
+// China strings today -- so a migrated character looks as it did (OURS,
+// round 682; the user accepted it 2026-10-02).
+const (
+	ModelChinaManFighter   int64 = 1909
+	ModelChinaWomanFighter int64 = 1923
+)
+
+// LegacyModelFor is the body a character with only a Gender string is given.
+func LegacyModelFor(gender string) int64 {
+	if gender == GenderChinaWoman {
+		return ModelChinaWomanFighter
+	}
+	return ModelChinaManFighter
+}
+
+// DefaultScale is the scale byte a new character starts with and every
+// existing one is migrated to: Height 2 (low nibble) and Volume 2 (high
+// nibble), both sliders' middle (READ, the create screen's start values,
+// 0x84d040 / 0x84d070). See ScaleHeight/ScaleVolume.
+const DefaultScale = 0x22
+
+// ScaleHeight and ScaleVolume split a scale byte: Height is the low nibble and
+// Volume the high one, each 0..4 (READ, charselect.md section 2).
+func ScaleHeight(scale int) int { return scale & 0x0f }
+func ScaleVolume(scale int) int { return (scale >> 4) & 0x0f }
+
+// ValidScale reports whether both nibbles are in the create sliders' 0..4.
+func ValidScale(scale int) bool {
+	return scale >= 0 && scale <= 0xff && ScaleHeight(scale) <= 4 && ScaleVolume(scale) <= 4
+}
+
+// DeleteDelay is how long a deleted character waits, restorable, before it is
+// removed: 7 days, 10080 minutes. READ from the client, whose confirm text says
+// "reserved for 7 days" and whose countdown gauge is 1 - remaining / 10080
+// (charselect.md section 2); the delay inside `_DeleteCharTemporal` is OPEN.
+// The user chose it (2026-10-02).
+const DeleteDelay = 10080 * time.Minute
+
+// MinutesLeft is what the list record says of a character pending deletion:
+// (purge time - now) in whole minutes, at least 1 (READ ShardManager: "(stored
+// date - now) seconds / 60, at least 1"). 0 for a character not deleting.
+func (c *Character) MinutesLeft(now time.Time) uint32 {
+	if c.DeletedAt.IsZero() {
+		return 0
+	}
+	left := int64(c.DeletedAt.Add(DeleteDelay).Sub(now) / time.Second / 60)
+	if left < 1 {
+		left = 1
+	}
+	return uint32(left)
+}
+
+// Deleting reports whether the character is pending deletion.
+func (c *Character) Deleting() bool { return !c.DeletedAt.IsZero() }
 
 // Character is one player character.
 type Character struct {
@@ -358,6 +455,25 @@ type Character struct {
 	Zone             string
 	Frame            string
 	PosX, PosY, PosZ float64
+
+	// RefObjID is the body the character was made from (_CHAR.RefObjID), one
+	// of the creatable catalogue's models; Scale its scale byte (_CHAR.Scale,
+	// Height low nibble, Volume high). Round 682; existing rows are migrated
+	// to LegacyModelFor(Gender) at DefaultScale.
+	RefObjID int64
+	Scale    int
+	// DeletedAt is when the character was deleted, zero when it is not
+	// pending deletion. It is removed DeleteDelay later and can be restored
+	// until then (round 682; the engine's `_CHAR.Deleted` plus the date
+	// `_DeleteCharTemporal` stores, charselect.md section 2).
+	DeletedAt time.Time
+	// StartZone and StartX/Y/Z are where the character enters the world while
+	// it has no saved position: its race's start spawn, picked at creation
+	// (READ, ShardManager FUN_0042bb20; session.StartSpawns), as a zone label
+	// and a world point in that zone's frame. "" for a character made before
+	// round 682, which enters at the zone spawn as it always has.
+	StartZone              string
+	StartX, StartY, StartZ float64
 }
 
 // MaxHP is this character's maximum health, from its Str and Level.
@@ -459,10 +575,10 @@ type Store interface {
 	GetByID(ctx context.Context, characterID int64) (*Character, error)
 
 	// SetGender updates characterID's Gender. Returns ErrNotFound if no
-	// such character exists. Doesn't validate gender against ValidGender --
-	// callers (see server/internal/session/character.go) are expected to
-	// have already checked, same as this project's other Store methods
-	// trusting their caller for business-rule validation.
+	// such character exists. Doesn't validate gender; a China gender also
+	// sets the matching legacy body (LegacyModelFor). Since round 682 the
+	// lobby sets a character's gender at creation (LobbyStore.
+	// CreateCharacter) and only tests call this.
 	SetGender(ctx context.Context, characterID int64, gender string) error
 
 	// SavePosition stores where characterID last stood: the zone label, the

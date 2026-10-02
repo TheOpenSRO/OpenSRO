@@ -4,12 +4,12 @@ extends Control
 ## Woman -- the two the server supports), see a live 3D preview of it, and
 ## confirm. The preview is the real assembled body (CharacterPreview).
 ##
-## Appearance sliders (figure / height / weapon / cloth) the original shows
-## are deliberately absent: the server stores only the gender, and the client
-## renders the body from that alone, so a slider here would change nothing --
-## it goes in when there is a system behind it. Race is Chinese only for the
-## same honesty reason: there are no European body assets yet. See
-## docs/FRONTEND_CHECKLIST.md.
+## Since round 682 the confirm is the retail create (0x7007 action 1): a body,
+## a scale byte and four items. This screen still picks only a sex, so it
+## sends CharacterNet.INTERIM_KIT's body and items for it (OURS, the look
+## every character had before the lobby) until round 685's customize screen
+## -- Figure, Height, Volume, Protector, Weapon, and Europe, whose bodies
+## Data.pk2 does hold (charselect.md's corrections) -- sends the player's own.
 
 const BACKDROP_DDJ := "interface\\loading\\loading_charactercustom.ddj"
 

@@ -130,7 +130,6 @@ var baseline = map[string]string{
 	"CanDeclareWar":       "internal/guild/war.go",
 	"CanRequestAlliance":  "internal/guild/alliance.go",
 	"CapDamage":           "internal/combat/combat.go",
-	"CharacterHandler":    "internal/session/character.go",
 	"CombatHandler":       "internal/session/combat.go",
 	"Complete":            "internal/equipment/itemset.go",
 	"DefaultWearFamily":   "internal/equipment/defaultwear.go",

@@ -47,6 +47,7 @@ import (
 	"strings"
 	"unicode/utf16"
 
+	"github.com/OpenSRO/srrevamp/server/internal/refdata"
 	"github.com/OpenSRO/srrevamp/server/internal/safezone"
 	"github.com/OpenSRO/srrevamp/server/internal/skillparam"
 	"github.com/OpenSRO/srrevamp/server/internal/spawn"
@@ -454,13 +455,14 @@ const (
 
 func main() {
 	out := flag.String("out", "-", "output CSV path, or - for stdout")
-	mode := flag.String("mode", "items", "which reference table the input files are: items, skills, npcpos, teleport, monsters or regions")
+	mode := flag.String("mode", "items", "which reference table the input files are: items, skills, npcpos, teleport, monsters, regions or chargen")
 	flag.Parse()
-	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "regions") {
+	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "regions" && *mode != "chargen") {
 		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills|npcpos] -out out.csv <data_*.txt> ...")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt teleportbuilding.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode monsters -out monsters.csv characterdata_*.txt [levelgold.txt] [textdata_object.txt]")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode regions -out regions.csv refregion.txt")
+		fmt.Fprintln(os.Stderr, "       export-refdata -mode chargen -out chargen.csv characterdata_*.txt itemdata_*.txt   (each in its index's order)")
 		os.Exit(2)
 	}
 	record, noun := itemRecord, "item"
@@ -486,6 +488,16 @@ func main() {
 		// refregion.txt (_RefRegion) in, one CSV out: what cmd/server's
 		// -regions-csv loads (round 674, internal/safezone).
 		if err := exportRegions(*out, flag.Args()); err != nil {
+			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	case "chargen":
+		// The creatable catalogue (round 682, refdata.CreatableExtractor):
+		// characterdata and itemdata parts in, the 104 ids a new character
+		// may be made from (plus the two ammunition rows) out -- what
+		// cmd/server's -chargen-csv loads.
+		if err := exportChargen(*out, flag.Args()); err != nil {
 			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
 			os.Exit(1)
 		}
@@ -2248,6 +2260,61 @@ func exportTeleport(outDir string, paths []string) error {
 //
 // The output is read back through species.Read before this returns, so a
 // table the server cannot load fails at export time, not at boot.
+// exportChargen applies refdata's creatable rule to the characterdata and
+// itemdata parts named by paths (told apart by file name), in the order given.
+func exportChargen(out string, paths []string) error {
+	ex := refdata.NewCreatableExtractor()
+	for _, path := range paths {
+		rows, err := readTable(path)
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", path, err)
+		}
+		base := strings.ToLower(filepath.Base(path))
+		switch {
+		case strings.HasPrefix(base, "characterdata_"):
+			for _, cols := range rows {
+				ex.AddCharacterRow(cols)
+			}
+		case strings.HasPrefix(base, "itemdata_"):
+			for _, cols := range rows {
+				ex.AddItemRow(cols)
+			}
+		default:
+			return fmt.Errorf("%s is neither a characterdata_ nor an itemdata_ part", path)
+		}
+	}
+	set := ex.Set()
+	models, items, ammo := 0, 0, 0
+	for _, c := range set.Rows() {
+		switch c.Kind {
+		case refdata.CreatableModel:
+			models++
+		case refdata.CreatableItem:
+			items++
+		case refdata.CreatableAmmo:
+			ammo++
+		}
+	}
+	var buf strings.Builder
+	if err := refdata.WriteCreatableCSV(&buf, set); err != nil {
+		return err
+	}
+	if err := writeOut(out, buf.String()); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "export-refdata: wrote %d creatable ids (%d bodies, %d items) and %d ammunition rows\n", models+items, models, items, ammo)
+	return nil
+}
+
+// writeOut writes body to out, or to stdout for "-".
+func writeOut(out, body string) error {
+	if out == "-" {
+		_, err := os.Stdout.WriteString(body)
+		return err
+	}
+	return os.WriteFile(out, []byte(body), 0o644)
+}
+
 func exportMonsters(out string, paths []string) error {
 	ex := species.NewExporter()
 	var gold species.LevelGold

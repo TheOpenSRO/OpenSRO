@@ -7,50 +7,41 @@ import (
 	"github.com/OpenSRO/srrevamp/server/internal/character"
 )
 
-// StartingKitFor is what a new character of the given gender is given and
-// wears: the game's own default starter items.
+// StartingKitFor is the LEGACY dressing: what a character with nothing worn
+// and nothing carried is given on its way into the world (cmd/server's enter
+// hook), and what every character was given at creation before round 682.
+// Since round 682 a new character wears what the player CHOSE on the create
+// screen -- its armour set and weapon, plus the shield or ammunition the
+// server adds (session.LobbyHandler, GiveKit below) -- and this kit is no
+// longer how anyone is made.
 //
-// The item table marks them itself. Every row whose code name ends in
-// `_A_DEF` is a starter item, and for a China character there are exactly
-// three armour pieces per family plus one weapon of each kind:
+// The ids are the item table's own defaults (every row whose code ends
+// `_A_DEF` is one): the China Clothes set and the Copper Sword,
 //
 //	3643 ITEM_CH_M_CLOTHES_01_BA_A_DEF  Cotton Suit       3652 (woman)
 //	3644 ITEM_CH_M_CLOTHES_01_LA_A_DEF  Cotton Trousers   3653
 //	3645 ITEM_CH_M_CLOTHES_01_FA_A_DEF  Cotton Shoes      3654
 //	3632 ITEM_CH_SWORD_01_A_DEF         Copper Sword      (either gender)
 //
-// No hat, shoulder guard or gauntlet: the game does not start anyone in
-// those, and the Cotton Hat/Talisman/Wristlet this kit once gave were the
-// table's `_RARE` rows, not its defaults. **A bare helm or gauntlet slot is
-// not a bare character** -- the client draws nothing there and never did,
-// which is why the original ships no default for them either. The two slots
-// that WOULD look wrong bare, the mail and the pants, the client covers by
-// itself; see defaultwear.go, and TestStartingKitFillsTheDefaultWearSlots
-// for why this kit fills them anyway with real items. **Two choices are this project's**:
-// the garment family (the table also carries Cloth protector and Copper
-// armour defaults) and the sword among the five default weapons. Each row's
-// model, name and icon then follow from the id.
+// which is one of the choices the create screen offers (Protector 3, Weapon
+// 1), so a legacy-dressed character wears something a new one could. The
+// shield a one-handed sword now comes with is not added here: the legacy kit
+// stays what it was.
 //
-// WHY THOSE TWO ARE DISCLOSED RATHER THAN GROUNDED, with the reason proven
-// rather than assumed. An earlier version of this note said "the original
-// picks by the class chosen at creation", which was an unverified claim about
-// the original. What is now established:
+// CORRECTED (round 682). This note used to say the original's starting-kit
+// rule "is not recoverable from the binaries available here", because
+// SR_GameServer.exe has no 0x7007 handler and the only AgentServer was a
+// modified build. Both were true and beside the point: creation is
+// SR_ShardManager.exe's (0x7007 -> 0x40f010), and the rule is READ there and
+// in the client (docs/protocol/charselect.md sections 4-5). The kit is what
+// the customize screen sends -- one of three armour sets and one weapon -- and
+// the server checks race and sex and adds a shield or ammunition itself. No
+// "class chosen at creation" picks it, and the garment family and the sword
+// were never the original's choice: they are the player's.
 //
-//   - Character creation is opcode 0x7007 action 1, and **SR_GameServer.exe
-//     does not handle it**: its client-message dispatch table carries indices
-//     0x005, 0x006, 0x00d, 0x00f and 0x010, and has no entry at 0x007. The
-//     game server never sees a character being made.
-//   - That work belongs to the AgentServer, which runs before world entry.
-//     The only AgentServer binary this project has is a modified
-//     private-server build -- it carries hardcoded operator IP addresses --
-//     so reading it would ground a *mod's* choice, not the original's.
-//
-// So the original's rule is not recoverable from the binaries available here.
-// These two choices stay the project's own, deliberately, and an operator with
-// different refdata can change them.
-//
-// An operator running with different refdata can change these; an id the
-// client's tables do not know still equips, it just has no name or icon.
+// A bare helm or gauntlet slot is not a bare character -- the client draws
+// nothing there -- and the two slots that would look wrong bare, the mail and
+// the pants, the client covers by itself; see defaultwear.go.
 func StartingKitFor(gender string) map[Slot]int64 {
 	if gender == character.GenderChinaWoman {
 		return map[Slot]int64{
@@ -66,6 +57,44 @@ func StartingKitFor(gender string) map[Slot]int64 {
 		SlotBoots:  3645,
 		SlotWeapon: 3632,
 	}
+}
+
+// KitPiece is one item a new character is given: the item, how many, and the
+// slot it is worn in (Worn false: it goes into the bag and stays there).
+type KitPiece struct {
+	Slot     Slot
+	ItemID   int64
+	Quantity int
+	Worn     bool
+}
+
+// GiveKit gives characterID each piece in order: added to the bag and, when
+// Worn, equipped straight out of it. Best effort like GiveStartingKit: the
+// first failure is returned for logging, and what was given before it stays.
+func GiveKit(ctx context.Context, inv InventoryAdder, equip Store, characterID int64, pieces []KitPiece) error {
+	if inv == nil || equip == nil {
+		return nil
+	}
+	for _, p := range pieces {
+		q := p.Quantity
+		if q < 1 {
+			q = 1
+		}
+		if err := inv.AddItem(ctx, characterID, p.ItemID, q); err != nil {
+			return fmt.Errorf("equipment: kit: adding item %d: %w", p.ItemID, err)
+		}
+		if !p.Worn {
+			continue
+		}
+		// AddItem fills the first free slot and each worn piece leaves it
+		// at once, so on a new character's empty bag slot 0 is the one just
+		// added -- the same reasoning as GiveStartingKit. Pieces that stay in
+		// the bag come last (session.chosenKit orders them so).
+		if err := equip.Equip(ctx, characterID, p.Slot, 0); err != nil {
+			return fmt.Errorf("equipment: kit: equipping slot %v: %w", p.Slot, err)
+		}
+	}
+	return nil
 }
 
 // InventoryAdder is the slice of the inventory store a starting kit needs.
@@ -91,6 +120,14 @@ type InventoryAdder interface {
 // unwinding the creation.
 func GiveStartingKit(ctx context.Context, inv InventoryAdder, equip Store, characterID int64, gender string) error {
 	if inv == nil || equip == nil {
+		return nil
+	}
+	// The legacy kit is China's (the ids above). A European character is
+	// never dressed in it (round 682's review, OURS): every European
+	// character was made by the lobby, which dresses it in what it chose,
+	// so one with nothing has taken it off -- and a China kit would bypass
+	// equipment.Refusal's race rule.
+	if character.RaceOf(gender) == character.RaceEurope {
 		return nil
 	}
 	kit := StartingKitFor(gender)

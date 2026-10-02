@@ -1,0 +1,54 @@
+{
+ "note": "Round 682: the character lobby's golden bytes, written BY HAND from the READ layouts in docs/protocol/charselect.md section 5 (one field per '|'-separated group; spaces and '|' are ignored). server/internal/session TestLobbyGolden and client/scripts/net/lobby_test.gd both encode 'fields' and require exactly 'hex', and decode 'hex' and require exactly 'fields'. A vector with 'error' must fail to decode. All values are test values; ids are references.",
+ "opcodes": {"lobby": 28679, "lobby_result": 45063, "start": 28673, "start_result": 45057},
+ "vectors": [
+  {"name": "create China man", "kind": "lobby_request",
+   "fields": {"action": 1, "name": "Aria", "ref_obj_id": 1909, "scale": 34, "chest": 3643, "legs": 3644, "feet": 3645, "weapon": 3632},
+   "hex": "01 | 0400 41726961 | 75070000 | 22 | 3b0e0000 | 3c0e0000 | 3d0e0000 | 300e0000"},
+  {"name": "create Europe woman, height 1 volume 4", "kind": "lobby_request",
+   "fields": {"action": 1, "name": "Kasia", "ref_obj_id": 14888, "scale": 65, "chest": 11629, "legs": 11630, "feet": 11631, "weapon": 10891},
+   "hex": "01 | 0500 4b61736961 | 283a0000 | 41 | 6d2d0000 | 6e2d0000 | 6f2d0000 | 8b2a0000"},
+  {"name": "list", "kind": "lobby_request", "fields": {"action": 2}, "hex": "02"},
+  {"name": "delete", "kind": "lobby_request", "fields": {"action": 3, "name": "Aria"}, "hex": "03 | 0400 41726961"},
+  {"name": "name check", "kind": "lobby_request", "fields": {"action": 4, "name": "Bram"}, "hex": "04 | 0400 4272616d"},
+  {"name": "restore", "kind": "lobby_request", "fields": {"action": 5, "name": "Aria"}, "hex": "05 | 0400 41726961"},
+
+  {"name": "create OK", "kind": "lobby_result", "fields": {"action": 1, "ok": true}, "hex": "01 01"},
+  {"name": "create refused: account full", "kind": "lobby_result", "fields": {"action": 1, "ok": false, "code": 1029}, "hex": "01 02 | 0504"},
+  {"name": "create refused: name exists", "kind": "lobby_result", "fields": {"action": 1, "ok": false, "code": 1040}, "hex": "01 02 | 1004"},
+  {"name": "create refused: no weapon", "kind": "lobby_result", "fields": {"action": 1, "ok": false, "code": 1028}, "hex": "01 02 | 0404"},
+  {"name": "list, empty", "kind": "lobby_result", "fields": {"action": 2, "ok": true, "characters": []}, "hex": "02 01 | 00"},
+  {"name": "list, two characters: one plain, one deleting in a guild with the rename string and an avatar", "kind": "lobby_result",
+   "fields": {"action": 2, "ok": true, "characters": [
+     {"ref_obj_id": 1923, "name": "Aria", "scale": 34, "level": 10, "exp": 1234567, "str": 30, "int": 25, "stat_points": 5, "hp": 300, "mp": 250,
+      "deleting": false, "minutes_left": 0, "guild_class": 0, "guild_rename": false, "guild_name": "", "academy_class": 0,
+      "items": [{"id": 3652, "plus": 0}, {"id": 3653, "plus": 0}, {"id": 3654, "plus": 0}, {"id": 3632, "plus": 3}, {"id": 10886, "plus": 0}],
+      "avatars": []},
+     {"ref_obj_id": 1909, "name": "Bram", "scale": 64, "level": 1, "exp": 0, "str": 20, "int": 20, "stat_points": 0, "hp": 200, "mp": 200,
+      "deleting": true, "minutes_left": 10079, "guild_class": 2, "guild_rename": true, "guild_name": "Guild", "academy_class": 1,
+      "items": [],
+      "avatars": [{"id": 23300, "plus": 0}]}
+   ]},
+   "hex": "02 01 | 02 | 83070000 | 0400 41726961 | 22 | 0a | 87d6120000000000 | 1e00 | 1900 | 0500 | 2c010000 | fa000000 | 00 | 00 | 00 | 00 | 05 | 440e0000 00 | 450e0000 00 | 460e0000 00 | 300e0000 03 | 862a0000 00 | 00 | 75070000 | 0400 4272616d | 40 | 01 | 0000000000000000 | 1400 | 1400 | 0000 | c8000000 | c8000000 | 01 5f270000 | 02 | 01 0500 4775696c64 | 01 | 00 | 01 | 045b0000 00"},
+  {"name": "list refused: not logged in", "kind": "lobby_result", "fields": {"action": 2, "ok": false, "code": 1031}, "hex": "02 02 | 0704"},
+  {"name": "delete OK", "kind": "lobby_result", "fields": {"action": 3, "ok": true}, "hex": "03 01"},
+  {"name": "delete refused: guild member", "kind": "lobby_result", "fields": {"action": 3, "ok": false, "code": 1026}, "hex": "03 02 | 0204"},
+  {"name": "name check OK", "kind": "lobby_result", "fields": {"action": 4, "ok": true}, "hex": "04 01"},
+  {"name": "name check refused: length", "kind": "lobby_result", "fields": {"action": 4, "ok": false, "code": 1036}, "hex": "04 02 | 0c04"},
+  {"name": "name check refused: invalid", "kind": "lobby_result", "fields": {"action": 4, "ok": false, "code": 1037}, "hex": "04 02 | 0d04"},
+  {"name": "restore OK", "kind": "lobby_result", "fields": {"action": 5, "ok": true}, "hex": "05 01"},
+  {"name": "restore refused: nothing to restore (u16, OURS)", "kind": "lobby_result", "fields": {"action": 5, "ok": false, "code": 1049}, "hex": "05 02 | 1904"},
+
+  {"name": "start", "kind": "start_request", "fields": {"name": "Aria"}, "hex": "0400 41726961"},
+  {"name": "start OK", "kind": "start_result", "fields": {"ok": true}, "hex": "01"},
+  {"name": "start refused: pending deletion", "kind": "start_result", "fields": {"ok": false, "code": 1026}, "hex": "02 | 0204"},
+  {"name": "start refused: not on the account", "kind": "start_result", "fields": {"ok": false, "code": 1035}, "hex": "02 | 0b04"},
+
+  {"name": "a list cut inside a record", "kind": "lobby_result", "error": true, "hex": "02 01 | 01 | 83070000 | 0400 4172"},
+  {"name": "a refusal without its code", "kind": "lobby_result", "error": true, "hex": "01 02 | 05"},
+  {"name": "a result byte that is neither 1 nor 2", "kind": "lobby_result", "error": true, "hex": "01 03"},
+  {"name": "a list record with ten items", "kind": "lobby_result", "error": true, "hex": "02 01 | 01 | 83070000 | 0000 | 22 | 0a | 0000000000000000 | 0000 | 0000 | 0000 | 00000000 | 00000000 | 00 | 00 | 00 | 00 | 0a"},
+  {"name": "a create cut before its weapon", "kind": "lobby_request", "error": true, "hex": "01 | 0400 41726961 | 75070000 | 22 | 3b0e0000 | 3c0e0000 | 3d0e0000"},
+  {"name": "a start result with no code", "kind": "start_result", "error": true, "hex": "02"}
+ ]
+}
