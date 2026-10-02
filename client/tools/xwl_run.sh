@@ -24,6 +24,9 @@ SIZE=1280x720
 if [ "${1:-}" = -s ]; then SIZE="$2"; shift 2; fi
 [ $# -gt 0 ] || { echo "usage: $0 [-s WxH] <command> [args...]" >&2; exit 2; }
 command -v weston >/dev/null || { echo "xwl_run: weston is not installed (docs/RENDER_BOX.md, \"Vulkan (Forward+)\")" >&2; exit 2; }
+# A run killed with SIGKILL (another lane's qa_shot reap) leaves its directory behind: clear
+# this user's older than 120 minutes (OURS; no run lasts that long) before making a new one.
+find /var/tmp -maxdepth 1 -name 'xwl-run.*' -user "$(id -u)" -mmin +120 -exec rm -rf {} + 2>/dev/null
 rt=$(mktemp -d /var/tmp/xwl-run.XXXXXX)
 chmod 700 "$rt"
 XDG_RUNTIME_DIR="$rt" weston --backend=headless --renderer=gl --xwayland \

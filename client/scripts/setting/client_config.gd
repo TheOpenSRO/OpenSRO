@@ -49,7 +49,9 @@ class_name ClientConfig
 ##   `compatibility`. Godot picks its renderer before any script runs, so
 ##   Boot records the word in `override.cfg` beside the game
 ##   (RendererChoice) and it takes effect at the NEXT start. Unset, the
-##   choice already recorded there stands.
+##   choice already recorded there stands. It cannot rescue a machine
+##   without Vulkan by itself -- Boot never runs there -- the native
+##   library's fall back does (RendererChoice's header).
 ## - `global.region` is parsed and kept, reserved: what it may drive is in
 ##   deploy/README.md ("Configuring the client").
 ##

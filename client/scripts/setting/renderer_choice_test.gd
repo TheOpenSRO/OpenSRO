@@ -21,7 +21,6 @@ func _initialize() -> void:
 	DirAccess.make_dir_recursive_absolute(_dir)
 	_words()
 	_file()
-	_cmdline()
 	_decision()
 	_config_yaml()
 	_godot_reads_it()
@@ -77,35 +76,30 @@ func _file() -> void:
 	_check(RendererChoice.chosen(p) == "", "a value other than the two reads as no choice")
 	DirAccess.remove_absolute(p)
 
-func _cmdline() -> void:
-	_check(RendererChoice.cmdline_asks_compatibility(PackedStringArray(["--rendering-driver", "opengl3"])), "--rendering-driver opengl3")
-	_check(RendererChoice.cmdline_asks_compatibility(PackedStringArray(["--rendering-driver=opengl3_angle"])), "--rendering-driver=opengl3_angle")
-	_check(RendererChoice.cmdline_asks_compatibility(PackedStringArray(["--rendering-method", "gl_compatibility"])), "--rendering-method gl_compatibility")
-	_check(not RendererChoice.cmdline_asks_compatibility(PackedStringArray(["--rendering-driver", "vulkan"])), "not --rendering-driver vulkan")
-	_check(not RendererChoice.cmdline_asks_compatibility(PackedStringArray(["--rendering-driver"])), "not a flag with no value")
-	_check(not RendererChoice.cmdline_asks_compatibility(PackedStringArray(["opengl3"])), "not a bare word")
-
 func _decision() -> void:
-	var none := PackedStringArray()
-	var gl := PackedStringArray(["--rendering-driver", "opengl3"])
 	var F := RendererChoice.FORWARD_PLUS
 	var C := RendererChoice.COMPATIBILITY
-	# [config word, args, current, expected]
+	var H := "none (headless)"
+	# [config word, running, current, expected]
 	var cases := [
-		["", none, "", ""],                 # nothing set: nothing written
-		["", none, C, ""],                  # a recorded choice stands
-		["compatibility", none, "", C],     # the file asks for Compatibility
-		["compatibility", none, C, ""],     # already recorded
-		["forward_plus", none, C, F],       # the file wins over the record
-		["forward_plus", none, "", ""],     # the default needs no record
-		["forward_plus", gl, "", ""],       # the file wins over the launcher
-		["", gl, "", C],                    # the launcher, first time: recorded
-		["", gl, F, ""],                    # a recorded choice is never overwritten by it
-		["bogus", gl, "", C],               # an unusable word is no word
+		["", F, "", ""],                    # Forward+ running, nothing set: nothing written
+		["", C, C, ""],                     # a recorded choice stands
+		["compatibility", F, "", C],        # the file asks for Compatibility
+		["compatibility", C, C, ""],        # already recorded
+		["forward_plus", C, C, F],          # the file wins over the record
+		["forward_plus", F, "", ""],        # the default needs no record
+		["forward_plus", C, "", ""],        # the file wins over the running renderer
+		["", C, "", C],                     # running Compatibility (fall back / launcher), first time: recorded
+		["", C, F, ""],                     # an explicit Forward+ record is never overwritten by it
+		["", H, "", ""],                    # headless runs nothing: nothing written
+		["bogus", C, "", C],                # an unusable word is no word
 	]
 	for c in cases:
 		var got := RendererChoice.boot_decision(c[0], c[1], c[2])
-		_check(got == c[3], "config '%s', args %s, current '%s' -> '%s' (got '%s')" % [c[0], c[1], c[2], c[3], got])
+		_check(got == c[3], "config '%s', running '%s', current '%s' -> '%s' (got '%s')" % [c[0], c[1], c[2], c[3], got])
+	_check(not FileAccess.get_file_as_string("res://scripts/setting/renderer_choice.gd").contains("OS.get_cmdline_args()\n") \
+		and not FileAccess.get_file_as_string("res://scripts/setting/renderer_choice.gd").contains("boot_decision(config_word, OS.get_cmdline_args()"),
+		"boot never decides from OS.get_cmdline_args() (Godot consumes the renderer flags, round 693's review)")
 
 func _config_yaml() -> void:
 	var w := PackedStringArray()

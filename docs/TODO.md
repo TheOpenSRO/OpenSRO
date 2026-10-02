@@ -890,15 +890,17 @@ the following:
   itself (READ).
 
 **Still open:**
-- [ ] **Blending space.** Forward+ blends half-transparent surfaces in linear space; retail (D3D9)
-      and Compatibility blend in display values. MEASURED (`client/tools/measure_blend_space.gd`): up
-      to 13 levels at a 50 % terrain-overlay feather, 21 for water's 200/255 over sand, 9-12 for
-      additive glow. Not fixable per material without the destination colour. The options are a
-      second pass, or accepting it (the user's call).
-- [ ] **A machine without Vulkan** gets Godot's "Unable to initialize Vulkan video driver" alert
-      and then needs the Compatibility launcher once. An automatic fall back needs Godot 4.3's
-      `rendering_device/fallback_to_opengl3` (an engine upgrade). Whether the official 4.2.2 Windows
-      templates link ANGLE (for a GPU without GL 3.3) is unverified.
+- [ ] **Blending space.** Forward+ blends half-transparent surfaces in linear space; retail (D3D9) and
+      Compatibility blend in display values. MEASURED (`client/tools/measure_blend_space.gd`): up to
+      13 levels at a 50 % terrain-overlay feather, 21 for water's 200/255 over sand, 9-12 for
+      additive glow. The cloud layer is done (round 693's review: it computes Compatibility's blend
+      against the analytic sky). The others cannot be fixed per material without the colour
+      underneath. The options are a second pass, or accepting it (the user's call).
+- [ ] **A machine without Vulkan:** the native library restarts the game on OpenGL by itself
+      (round 693's review, native/src/vk_fallback.rs), MEASURED on Linux. **Not run on Windows**
+      (spawn + TerminateProcess): the first tester report from a Vulkan-less Windows PC is the check.
+      Without the library there is no fall back, only the launcher. Whether the official 4.2.2
+      Windows templates link ANGLE (for a GPU without GL 3.3) is unverified.
 - [ ] **The low-end hardware test** (the user's). On the box's RX 7600 Forward+ draws the Jangan spawn in
       2.97 ms against Compatibility's 8.75, and the 500-monster view in 3.29 against 10.09. Entry and
       freezes are the same (round 693's perf gate). A low-end or integrated GPU is not measured.

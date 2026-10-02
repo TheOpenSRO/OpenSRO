@@ -3806,6 +3806,12 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	if _sun_glow != null:
 		_sun_glow.modulate = Color(sun_color.r, sun_color.g, sun_color.b, _sun_glow.modulate.a)
 
+	# The cloud layer's Compatibility-style blend under Forward+ (round 693's
+	# review; GammaSkyMaterial.feed_clouds), fed after the sky, the sun and
+	# the light are set.
+	if _sky_material != null:
+		_sky_material.feed_clouds(_sky_dome_material, directional_light, world_environment.environment)
+
 	print("World3D: applied real environment.ifo lighting (%s, EnvironmentID=%d) -- sky_top=%s sky_bottom=%s sun_disc=%s light_diffuse=%s ambient=%s fog=%s (channel 9 %s)" % [record.name1, env_id, top, bottom, sun_color, diffuse_color, ambient_color, fog_color, fog_channel])
 
 ## Opens the real Map.pk2 -- SRREVAMP_MAP_PK2_PATH if set, else a real

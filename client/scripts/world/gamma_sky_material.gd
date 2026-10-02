@@ -108,3 +108,31 @@ func _init() -> void:
 	# that, and stay at the unscaled energy (MEASURED: at x4 without this the
 	# ferry river shot's top band went from 17 % to 33 % white).
 	set_shader_parameter("sun_energy_scale", 1.0 / WorldPostEffects.sun_scale())
+
+## The cloud layer's blend under Forward+ (round 693's review; cloud_dome.gdshader's
+## `gamma_blend`): the layer gets this sky's colours, the sun the sky draws
+## (its direction, colour and the unscaled energy) and the tone mapper, and
+## computes Compatibility's display-value blend against them itself.
+## Compatibility blends as it always did (gamma_blend off).
+func feed_clouds(cloud: ShaderMaterial, sun: DirectionalLight3D, env: Environment) -> void:
+	if cloud == null:
+		return
+	var on := RendererChoice.running() == RendererChoice.FORWARD_PLUS
+	cloud.set_shader_parameter("gamma_blend", on)
+	cloud.set_shader_parameter("sky_top", Vector3(sky_top_color.r, sky_top_color.g, sky_top_color.b))
+	cloud.set_shader_parameter("sky_horizon", Vector3(sky_horizon_color.r, sky_horizon_color.g, sky_horizon_color.b))
+	cloud.set_shader_parameter("ground_bottom", Vector3(ground_bottom_color.r, ground_bottom_color.g, ground_bottom_color.b))
+	cloud.set_shader_parameter("ground_horizon", Vector3(ground_horizon_color.r, ground_horizon_color.g, ground_horizon_color.b))
+	if sun != null and sun.visible:
+		var d := (sun.global_transform if sun.is_inside_tree() else sun.transform).basis.z.normalized()
+		cloud.set_shader_parameter("sun_dir", d)
+		cloud.set_shader_parameter("sun_color", Vector3(sun.light_color.r, sun.light_color.g, sun.light_color.b))
+		# The sky's sun keeps the unscaled energy (sun_energy_scale).
+		cloud.set_shader_parameter("sun_energy", sun.light_energy * float(get_shader_parameter("sun_energy_scale")))
+		cloud.set_shader_parameter("sun_size", deg_to_rad(sun.light_angular_distance))
+	else:
+		cloud.set_shader_parameter("sun_energy", 0.0)
+	if env != null:
+		cloud.set_shader_parameter("tm_exposure", env.tonemap_exposure)
+		cloud.set_shader_parameter("tm_white", env.tonemap_white)
+		cloud.set_shader_parameter("tm_filmic", env.tonemap_mode == Environment.TONE_MAPPER_FILMIC)

@@ -30,9 +30,34 @@ Every tagged release publishes ready-to-run Windows and Linux client builds unde
    `host:port`, defaults to `127.0.0.1:15779`) into the "Server IP[:port]" field — useful for
    connecting to a friend's server on the same LAN instead of your own machine.
 
-The client draws with OpenGL 3.3 (Godot's Compatibility renderer). If the graphics driver cannot
-provide it, Godot stops at start-up with "Unable to initialize OpenGL video driver", which suggests
-updating the driver. Releases before round 581 ran Vulkan (Forward+) instead, by mistake.
+**Graphics.** The client draws with Vulkan (Godot's Forward+ renderer) by default. It can also
+draw with OpenGL 3.3 (the Compatibility renderer), which runs on more and older hardware.
+
+- **Automatic fall back.** On a machine without a working Vulkan driver, the client notices at
+  start-up and restarts itself on OpenGL. The log's `RENDERER:` line then says
+  `vulkan_probe="fallback to OpenGL: ..."`. From then on it starts on OpenGL directly: the choice is
+  kept in `override.cfg` next to the executable.
+- **Choosing OpenGL yourself.** Run `srrevamp-compatibility.bat` (Windows) or
+  `srrevamp-compatibility.sh` (Linux), which ship next to the executable, once. The client keeps the
+  choice the same way.
+- **Choosing a renderer in a config file.** Set it in `setting/config.yaml` next to the executable:
+
+  ```
+  display:
+    renderer: compatibility    # or forward_plus
+  ```
+
+  It takes effect at the next start.
+- **Going back to Vulkan.** Delete `override.cfg`, or set `renderer: forward_plus`.
+- **Which renderer is running:** the log's `RENDERER: running=...` line.
+- **A folder the game cannot write to** (for example under `Program Files`): the choice cannot be
+  kept. The log says so, and the automatic check runs again at every start, costing a few
+  milliseconds. Install it in a folder you own.
+- **The automatic fall back needs the native library** next to the executable
+  (`srrevamp_native.dll` / `libsrrevamp_native.so`). Without it, a machine without Vulkan stops at
+  Godot's "Unable to initialize Vulkan video driver" message. Use the Compatibility launcher then.
+- **If neither renderer starts**, update the graphics driver. On OpenGL, Godot stops with "Unable to
+  initialize OpenGL video driver" if the driver lacks OpenGL 3.3.
 
 **Controls**: WASD/arrow keys walk directly, or left-click a spot on the ground to walk there.
 Right-click-drag orbits the camera around your character; the scroll wheel zooms. Press **F10** (or

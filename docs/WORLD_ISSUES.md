@@ -7142,7 +7142,9 @@ source, sro_client.exe's dump), MEASURED (the render box, RX 7600, real archives
     every start;
   - by a start with `--rendering-driver opengl3` when no choice is recorded yet, so plain starts
     and the updater's argument-less relaunch stay on Compatibility. The release zips now carry
-    `srrevamp-compatibility.bat` / `.sh` for that first start.
+    `srrevamp-compatibility.bat` / `.sh` for that first start. **Corrected by the review below:**
+    that cut looked for the flag in `OS.get_cmdline_args()`, which never holds it, and never wrote
+    the file. It now decides from the renderer running.
   - Boot prints `RENDERER: running=... adapter=... override=... chosen=...`.
   - **MEASURED end to end:** a project with the file RendererChoice wrote, and no renderer flag,
     starts `OpenGL API ... - Compatibility`. Choosing forward_plus deletes the file, and the next
@@ -7443,6 +7445,92 @@ the last 30 of 40+ samples already skipped the start-up, so it stands.
 8.78 (8.77 / 8.79) against Forward+ **2.94** (2.94 / 2.94), FASTER. Entry 9631 against 9424, freeze
 3395 against 3428, hitches 5 against 4.5: SAME. These are section 5's numbers, so the raised sun
 costs nothing.
+
+### Review (round 693's review: two HIGHs, two MEDIUMs, three LOWs)
+
+**HIGH 1: the Compatibility launcher's choice was never saved.**
+- Godot 4.2.2's `Main::setup` consumes `--rendering-driver` / `--rendering-method` (main.cpp
+  1020-1035), so `OS.get_cmdline_args()` never holds them. The reviewer MEASURED `ASKS=false`,
+  nothing recorded.
+- **Fixed:** `RendererChoice.boot_decision(config_word, running, current)` records Compatibility
+  when the start is RUNNING it, nothing is recorded, and the project default is Forward+. Headless
+  ("none (headless)") writes nothing.
+- When the folder cannot be written (Program Files), the RENDERER line now says so in plain words,
+  and the README says to install in a folder you own.
+- **Windowed box test** (new `client/tools/renderer_fallback_box_test.sh`: real starts of the game's
+  own main scene on xwl_run.sh, `SRREVAMP_OVERRIDE_CFG` set). This tree: ALL PASS.
+- **NEGATIVE** (c18419dc's client with the same library):
+  - `FAIL 1. ... and records it for the next start ()`
+  - `FAIL 3. ... the native probe says why ()`
+  - `FAIL 3. ... and records Compatibility`
+
+**HIGH 2: the auto-update moved every player to Vulkan with no fall back.**
+- Godot 4.2.2 has none of its own. The native library now supplies one (native/src/vk_fallback.rs;
+  native/README.md, "The Vulkan -> OpenGL fall back").
+- It is loaded at Core for the game, so it runs in `register_core_extensions` (main.cpp 1647),
+  before the renderer is read (1966). No Godot API is usable there on 4.2: ProjectSettings and
+  Engine register in setup2. So rather than set the renderer, it:
+  - asks the system's Vulkan loader (opened at run time) for an instance with the surface
+    extensions and a physical device;
+  - on failure, starts the game again with `--rendering-driver opengl3` (before any `--`) and ends
+    this start (exec on Linux; spawn + TerminateProcess on Windows).
+  - `SRREVAMP_VK_PROBE` carries the result: Boot logs it, and RendererChoice records the
+    Compatibility start.
+- **MEASURED on the box** (the editor binary running the project windowed, plain start, no
+  renderer flag):
+
+| Start | Renderer | Probe |
+|---|---|---|
+| Vulkan present | Forward+ (RADV) | `ok 2 device(s) in 28.0 ms` |
+| `VK_ICD_FILENAMES=/dev/null` (no driver) | **Compatibility, no alert** | `fallback to OpenGL: vkCreateInstance failed (-9) (0.3 ms)` |
+| the same, without the library | none: "Could not initialize Vulkan", then the alert blocks until killed | -- |
+
+- **A trap found on the way, MEASURED:** at Core the library made a first `--headless --import
+  --quit` (a fresh `.godot/`) hang. It was still running after 180 s, against 15 s with the library
+  at Scene. CI imports exactly that way. `min_level` is now Core only when the command line has no
+  `--editor` / `-e` / `--import` / `--project-manager` / `--export*`, and the fresh import finishes
+  in 15 s.
+- **Checks:** `cargo test` 43 passed (5 new for the fall back's rules and arguments).
+  `native_parity.gd`: PARITY PASS. `check_native_library.sh` on the new DLL: stands alone (kernel32
+  imports only).
+- No binding changed, so `core::API` stays 5.
+- **NOT RUN:** the Windows restart (spawn + TerminateProcess). It is compiled, but no Windows
+  machine has run it. The startup cost there is not measured either; on the box it is 28 ms.
+- **The shipped README** (copied into both zips) said "OpenGL 3.3". It now describes Forward+, the
+  automatic fall back, the launcher, `display.renderer`, `override.cfg`, a non-writable folder, and
+  what happens without the library.
+
+**MEDIUM 3: the clouds.**
+- Under Forward+ the cloud layer blended into the sky in linear space.
+- **Fixed:** the sky behind it is analytic, so `cloud_dome.gdshader` (fed by
+  `GammaSkyMaterial.feed_clouds`: the sky's colours, the sun it draws, the tone mapper) computes
+  Compatibility's own result: both colours tone-mapped and encoded, mixed in display values, and
+  the inverse of that, drawn opaque. Only under Forward+; Compatibility blends as before.
+- **MEASURED** (Jangan sky shot, fog on, top band, Forward+ minus GL): **+16.4 luma (77 % of pixels
+  off by more than 32) -> -0.55 (0.6 %)**. The whole frame went from +5.6 to -1.1.
+
+**MEDIUM 4: `display.renderer` cannot rescue a machine without Vulkan.** True on its own (Boot never
+runs there). It is now said in ClientConfig's and RendererChoice's headers and in the README, and HIGH 2's
+fall back makes it moot whenever the library is there.
+
+**LOW 5: Program Files.** See HIGH 1: the log line and the README.
+
+**LOW 6: xwl_run.sh** now clears its own user's `/var/tmp/xwl-run.*` older than 120 minutes before
+it starts. A SIGKILLed run can leave one behind.
+
+**LOW 7: the paper doll** (the equipment window, signed in, `--panels equipment`, the window at
+(446,156) 388x408, frame 359, MEASURED): the window's pixels differ by more than 8 in 0.1 % between
+the renderers, and by more than 32 in none. Its luma percentiles are 0 / 16 / 155 under both.
+NOT ESTABLISHED: that the doll's body was drawn in this QA start. The window holds 10,169 / 10,132
+strongly coloured pixels, but the frame art counts too.
+
+**After the review, MEASURED:**
+- `remote_godot.sh check`: ALL LOAD (544 scripts, 9 scenes). `tests`: ran 210 suite(s), 0 failing,
+  with the library present.
+- Perf gate: `--ab-renderer gl_compatibility --sites jangan --frames 12000`, 3 runs: frame
+  Compatibility 8.64 against Forward+ **2.94** (FASTER); entry 9578 against 9382, freeze 3371
+  against 3419, hitches 5 against 4 (SAME). The gate ships no library, so the fall back's probe is
+  not in these numbers; it costs 28 ms once at start-up on the box.
 
 ## Six-hundred-and-ninety-second round: a new character starts with its race's own masteries, basic skills and first quests, as the shard's `_AddNewChar` gives them -- and the shard's own list of creatable ids is exactly the 104 the rule picks
 
