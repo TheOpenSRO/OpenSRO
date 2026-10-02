@@ -7233,6 +7233,269 @@ rows that draw nothing; the readers not found; Water Reflection at the next logi
 and Filtering under Compatibility; the inferred pieces (a hand-set row switching to User, the
 scroll step, the combo's drawing, Effect Quality 1's tests); Resolution in full screen.
 
+## Six-hundred-and-ninety-third round: the game draws with Forward+ (Vulkan) by default, looking as it did under Compatibility -- the same colours, ground, sky, portrait and select screen -- with Compatibility one launcher away for a PC without Vulkan
+
+The user (2026-10-02): "Let's make forward+ the default build. Can you switch to it and test?" Earlier
+the same day they asked whether Forward+ could return "without the ground textures issues we had
+before", and about shipping a Compatibility build beside it. Labels: READ (Godot 4.2.2-stable
+source, sro_client.exe's dump), MEASURED (the render box, RX 7600, real archives), INFERRED, OURS.
+
+### 1. Vulkan on the render box (docs/RENDER_BOX.md, "Vulkan (Forward+)")
+
+- **MEASURED:** RADV was already installed; `vulkaninfo` (vulkan-tools, installed here) lists
+  `AMD Radeon RX 7600 (RADV NAVI33)`.
+- **Plain Xvfb cannot take a Vulkan frame** (no DRI3). Godot then silently picks `Vulkan Device #1:
+  llvmpipe`, the CPU. `MESA_VK_WSI_DEBUG=sw` reaches the GPU, but every frame is copied back
+  through the CPU: an empty scene costs 17.5 ms a frame at 1280x720 and 4.7 at 640x360.
+- **New `client/tools/xwl_run.sh`:** a private headless weston (GL renderer on the GPU) with
+  Xwayland, which has DRI3. The same empty scene draws in 0.24 ms.
+- **Installed:** weston and xwayland, `--no-install-recommends`, 49 packages. The list and the
+  selections from before are saved on the box; the revert is in RENDER_BOX.md.
+- **Nothing else changed:** no group, X configuration, service, or host change.
+- **Headless runs** use the dummy rasterizer under either renderer (READ, main.cpp 1164-1167), so
+  the suites, `--import` and CI's exports are unaffected.
+- **Tooling:**
+  - `qa_shot.sh`: `RENDERER=`; it repeats Godot's banner and warns on llvmpipe. `QA_SHOT_REAP=0`
+    skips the box-wide kill for lane use. It now passes `-chargen-csv`; without it, a `--server`
+    run has had no character to start since round 682 (S1027 "no creatable catalogue").
+  - `perf_gate.sh`: per-side renderers from each copy's project.godot, `--renderer` and
+    `--ab-renderer`. A run on the wrong renderer or on llvmpipe fails the gate. Separately,
+    `$([ ... ] && echo _fp)` in an assignment had ended the gate silently under `set -e` (fixed).
+  - New measuring tools: `frame_ab.py`, `measure_blend_space.gd`, `measure_lit_space.gd`,
+    `measure_appear_fade.gd --instance`, `renderer_choice_cli.gd`.
+
+### 2. The switch
+
+- **`project.godot`:** `rendering_method="forward_plus"`. The `.mobile` key stays
+  `gl_compatibility`; no mobile build is exported. `.web` is the engine's default,
+  `gl_compatibility` (READ, main.cpp 1962).
+- **No automatic fallback without Vulkan (READ):** Godot 4.2.2 does not fall back to OpenGL by
+  itself. `DisplayServerWindows::create_func` shows "Unable to initialize Vulkan video driver",
+  naming `--rendering-driver opengl3`, and Main fails. `fallback_to_opengl3` arrived in 4.3. With
+  no `--rendering-method`, `--rendering-driver opengl3` alone implies gl_compatibility (main.cpp
+  1911-1916).
+- **`RendererChoice` (new, OURS):** the per-install choice lives in `override.cfg` beside the
+  executable. An exported game reads that file over project.godot (READ, project_settings.cpp
+  590-591). The file is written:
+  - from `setting/config.yaml`'s new `display.renderer: forward_plus|compatibility`, which wins at
+    every start;
+  - by a start with `--rendering-driver opengl3` when no choice is recorded yet, so plain starts
+    and the updater's argument-less relaunch stay on Compatibility. The release zips now carry
+    `srrevamp-compatibility.bat` / `.sh` for that first start.
+  - Boot prints `RENDERER: running=... adapter=... override=... chosen=...`.
+  - **MEASURED end to end:** a project with the file RendererChoice wrote, and no renderer flag,
+    starts `OpenGL API ... - Compatibility`. Choosing forward_plus deletes the file, and the next
+    start is `Vulkan API ... - Forward+`.
+- **For the Options lane:** `RendererChoice.chosen()` / `choose()` and `WorldPostEffects.apply(env,
+  ssao, glow)`. World3D's only environment change is one call at the top of `_ready`. The
+  `ssao_enabled` / `glow_enabled` lines left World3D.tscn, and `fog_sky_affect = 0` was set beside
+  the fog (section 4).
+- **SSAO and glow are off.** Both were OURS guesses (2026-08-26) and invisible from round 581 to
+  692, because Compatibility has neither.
+  - READ: retail's option page (FUN_005fef70) has a "Bloom effect" switch (UIIT_STT_BLOOM_EFFECT),
+    whose default and look are not read.
+  - MEASURED: no SSAO or ambient-occlusion string in the exe.
+
+### 3. What broke under Forward+, and the fix (READ, then MEASURED)
+
+**The colour rule.** Compatibility samples every texture and colour parameter as stored, ignoring
+`source_color`. It decodes the shader's ALBEDO and EMISSION from sRGB, unshaded included
+(gles3/shaders/scene.glsl 1368-1370), and encodes after tone mapping (1590-1593). Forward+ differs:
+- It decodes `source_color` textures as it samples them (storage_rd/material_storage.cpp 912).
+- It turns EVERY vec3/vec4 parameter set from a Color into linear, whatever its hint (449 / 1375,
+  variant_converters.h 211). MEASURED: Color(90,120,50) read back (26,48,8) once decoded again.
+- It takes ALBEDO as linear.
+
+So the project's gamma-space arithmetic drew too bright, or mixed. MEASURED before the fix, select
+screen at 14:00, Bram's body / his customize preview: Compatibility 89 / 94, the same as round 688.
+Forward+ drew **162 / 149**; at 23:00, 138 / 121 against 57 / 59.
+
+**`ShaderColour` (new):** raw samples, Color parameters read through `srr_color(v, OUTPUT_IS_SRGB)`,
+and ALBEDO and EMISSION decoded where `OUTPUT_IS_SRGB` is false. It covers:
+- the mod shader (the D3DTOP emulation);
+- the portrait, and the select screen's tone-mapping undo through it;
+- the particles, the cloud layer, the water reflection and the mirror terrain;
+- every StandardMaterial3D that multiplies by a vertex colour (terrain, water, the hit and level-up
+  effects), which now sets `vertex_color_is_srgb`, decoded only where the output is linear (READ,
+  material.cpp 973-976).
+
+MEASURED along the way: `OUTPUT_IS_SRGB` is a stage built-in that a user function cannot read
+("Unknown identifier in expression"), so the caller passes it. A decode-function parameter named `c`
+collided with a uniform `c`. Setting a Shader's code twice compiled the half-made first version.
+
+**The sky.** Compatibility mixes ProceduralSkyMaterial's gradient in display values and never fogs
+the sky (READ, gles3 sky.glsl). Forward+ mixes in linear and fogs the sky by `fog_sky_affect`.
+`GammaSkyMaterial` (new) is the material's own code with Compatibility's arithmetic, and
+`fog_sky_affect = 0`.
+
+**MEASURED after:**
+
+| Check | Compatibility | Forward+ before | Forward+ after |
+|---|---|---|---|
+| Select, 14:00: Bram / Aria body (preview) | 89.4 (94.0) / 138.6 (141.1) | 162.3 (149.1) / 196.9 (185.6) | **89.0 (93.4) / 137.3 (139.5)** |
+| Select, 23:00: Bram / Aria | 56.9 (59.4) / 89.7 (91.4) | 138.2 (121.1) / 169.5 (151.8) | **57.9 (59.9) / 89.2 (90.5)** |
+| Portrait calibration (portrait_shot.gd) | 160 | -- | **160** (d8 0.000) |
+| Portrait raw128, man / woman | -- | -- | dluma -2.1 / -2.7, d32 2.2 % / 2.9 % |
+| Terrain flat base, `unfix_inverted` p50 | 98 | 144 | **95** |
+| Jangan sky band, no fog: mean R, d32 | 69.5 | 87.8, 20.4 % | **69.2, 0.3 %** |
+| Opaque quad (measure_blend_space) | exact | -- | **exact** |
+
+**Compatibility is unchanged.** Every world shot of the Compatibility runs before and after all of
+this (13 viewpoints, 4 places) differs in at most 0.6 % of pixels by more than 8 (animated water
+and clouds); the rest are pixel-identical.
+
+### 4. The A/B (frame_ab.py; Compatibility = a, Forward+ = b, the final build)
+
+**Whole frame:**
+
+| View | d8 | d32 | dluma | What it is |
+|---|---|---|---|---|
+| Jangan spawn | 0.750 | 0.036 | -11.3 | lit objects; see "shadows" below |
+| Jangan grass (unshaded terrain) | 0.058 | 0.005 | -3.4 | terrain, overlay blending |
+| Jangan overview | 0.411 | 0.008 | -10.5 | lit objects |
+| Jangan sky (fog on) | 0.731 | 0.296 | -1.8 | the cloud layer blended linearly (top band +16) |
+| Jangan sky (no fog) | 0.339 | 0.013 | -7.8 | the sky band matches (-0.8); the rest is lit objects |
+| Ferry dock / river / up (water, reeds) | 0.146 / 0.280 / 0.171 | 0.002 / 0.008 / 0.012 | -0.4 / -0.9 / -2.4 | water within 1-3 |
+| Dunhuang reeds / reeds2 (foliage) | 0.407 / 0.535 | 0.068 / 0.092 | -7.1 / -6.4 | foliage, lit; shadows |
+| Login title at 120 / 300 / 600 / 899 | 0.53-0.59 | 0.12-0.24 | -7.1 / -7.7 / -4.6 / -4.3 | the title's lit world; clouds |
+| Create, China / Europe | 0.41 / 0.28 | 0.09 / 0.01 | -4.5 / -2.6 | |
+| Select at 14:00 / 23:00 | 0.25 / 0.19 | 0.012 / 0.005 | -2.3 / -1.0 | |
+
+**Shadows: the darker lit objects are Compatibility over-brightening.**
+- MEASURED (measure_lit_space.gd, a lit quad with nothing occluding it): the two renderers agree
+  within 1 level on ambient, sun, both, and Filmic.
+- With the sun casting shadows (World3D.tscn's `shadow_enabled`) and ambient 0.7, Compatibility
+  reads **(225,176,127)** against **(159,128,95)** without shadows. Forward+ reads (158,128,95)
+  either way.
+- READ: GLES3 draws a shadowed directional light in an additive pass, tone-mapped and encoded on
+  its own, then added in display values (scene.glsl 1805-1808). So with shadows on it adds enc(a) +
+  enc(b) rather than enc(a + b).
+- In the world (new `SRREVAMP_QA_NOSHADOW`): Jangan spawn's lower band is GL 70.7 with shadows and
+  58.7 without, against Forward+ 56.9 either way. With shadows off the gap is -3.6 instead of
+  -14.6.
+- So the look Compatibility showed since round 581 includes that over-brightening. Forward+ draws
+  the single-pass sum. Neither is retail's lighting (the world's objects use Godot's tuned light,
+  OURS; TODO). Not changed: whether to retune the sun's 0.3 is the user's call.
+
+**Blending space (MEASURED, measure_blend_space.gd).** Forward+ blends in a linear buffer:
+`|read - linear|` is 0-1 on every case. Compatibility blends in display values, as D3D9 does:
+`|read - gamma|` is 0-3. They differ by:
+- 11 / 13 / 8 levels at a 25 / 50 / 75 % sand-over-grass feather (the terrain overlays);
+- 12 for water at 50 % over dark;
+- 21 for water's 200/255 over sand;
+- 9 for an additive glow.
+
+This cannot be fixed per material without the colour underneath; it stays OPEN, a user decision.
+
+**The fades.** measure_appear_fade.gd, mangnyang, the share of the model on screen at t = 0.5 /
+1.0 / 1.5 s of the 2 s fade-in:
+
+| | asked | Compatibility | Forward+ |
+|---|---|---|---|
+| AppearFade, in (rounds 676/677) | 0.247 / 0.498 / 0.749 | 0.260 / 0.514 / 0.758 (worst 0.016) | 0.184 / 0.383 / 0.617 (worst 0.134) |
+| AppearFade, out | 0.667 / 0.329 / 0 | 0.679 / 0.344 / 0 | 0.534 / 0.247 / 0 |
+| GeometryInstance3D.transparency (new `--instance`, the select screen's fade) | 0.247 / 0.498 / 0.749 | **1.000 / 1.000 / 1.000** (ignored) | 0.193 / 0.396 / 0.633 |
+
+- Both fades now run under Forward+, ending and leaving on the asked frames (the model is gone at
+  frame 107 under both).
+- They lag the asked alpha by up to 0.13 mid-fade. That is the linear blending above, measured
+  against display values.
+- Round 688's READ, that Compatibility ignores `transparency`, is now MEASURED. On the select
+  screen, the character pending deletion (0xcc, QA_Wei) now draws translucent under Forward+: its
+  body luma is 107.7 against Compatibility's 92.2 at 14:00, with the backdrop showing through.
+
+**Text (measure_text_crispness.gd, scales 1 / 1.5 / 2, 3840x2160):** 25 of 30 kinds identical
+(1 level, 0 % partial). The chat's mass differs by 1-2 pixels. The name plate (3D) is 68.8 % partial
+against 72.4 % at 1.5, and 65.8 % against 69.1 % at 2.
+
+**The ground (round 579/580's Login-route reconnect, `/groundprobe`).** Forward+, final build:
+- Entry 2's baseline is 0.015/43, entry 1's 0.015/43.
+- `tint` magenta is 0.000.
+- The RID inversion is present: 9 of 22 passes below the base in 97/168.
+- "with the fix: 9 of 9 regions".
+- `unfix_inverted` flattens the view (0.506/0.457/95).
+
+**Round 580's fix holds under Forward+, MEASURED,** as it had been READ.
+- Compatibility's run of the same script: tint 0.000, the fix in 12 of 12 regions, 8 of 22 passes
+  inverted, `unfix_inverted` 0.587/0.280/98.
+- That run's grid came up with 12 regions, not 9, so its frame figures are not comparable
+  one-to-one (INFERRED: a different load window; not chased).
+
+### 5. Performance (perf_gate.sh --ab-renderer gl_compatibility --sites jangan,mobs; SSAO and glow off)
+
+MEASURED. The base side is Compatibility (VirtualGL on Xvfb); the head side is Forward+ (xwl_run.sh).
+It is one build at 1280x720, three runs each, `--frames 12000`, and every run's renderer was read
+back from its banner:
+
+| Site | Number | Compatibility | Forward+ | Verdict |
+|---|---|---|---|---|
+| jangan | frame ms | 8.75 (8.72 / 8.75 / 8.80) | **2.97** (2.97 / 2.93 / 2.99) | FASTER (-5.8) |
+| jangan | entry ms | 9528 | 9448 | SAME |
+| jangan | freeze ms | 3380 | 3413 | SAME |
+| jangan | hitches | 5 | 5 | SAME |
+| mobs (500 monsters) | frame ms | 10.09 (10.11 / 10.09 / 10.02) | **3.29** (3.27 / 3.29 / 3.29) | FASTER (-6.8) |
+| mobs | entry ms | 10482 | 10365 | SAME |
+| mobs | freeze ms | 3387 | 3406 | SAME |
+| mobs | hitches | 5 | 5 | SAME |
+
+- **On this box (RX 7600) Forward+ draws a frame in about a third of Compatibility's time.**
+  Loading and freezes are the same, because they are CPU work.
+- **Two caveats, both MEASURED:**
+  - Compatibility's frame here includes VirtualGL's read-back. The same view drew 8.23 ms through
+    Xwayland directly against 10.52 through VirtualGL (one run each), about 2 ms that a player's
+    machine does not pay.
+  - With SSAO and glow ON, Forward+ drew 13.22 ms at the same spawn (one run, before the colour
+    fix). Those two cost about 10 ms here, which is part of why they stay off.
+- **Not measured: a low-end GPU.** Forward+ needs Vulkan, and on an integrated or older GPU its
+  clustered lighting and depth prepass may cost more than Compatibility's. The user's
+  low-end test decides.
+- A first gate at the default 3,000 frames stopped with "missing numbers". At ~3 ms, 3,000 frames
+  give under the 10 once-a-second samples the figure needs (client/tools/README.md now says so).
+
+**Round 680's title preload, real time, 1280x720, two runs each, interleaved:**
+
+| Intro | Fly starts, FP / GL | Login usable after the click, FP / GL | Longest frame after usable | Peak VmRSS, FP / GL | Video memory, FP / GL | Frames drawn in 25 s, FP / GL |
+|---|---|---|---|---|---|---|
+| roc | 4.65, 4.21 / 4.92, 4.24 s | 2.20, 2.08 / 2.26, 2.09 s | 280, 65 / 520, 55 ms | 1126, 1044 / 1361, 1165 MB | 232 / 124 MB | 872, 887 / 1270, 1319 |
+| constantinople | 6.95, 6.85 / 6.91, 6.83 s | 2.19, 2.11 / 2.12, 2.08 s | 384, 409 / 378, 370 ms | 1404, 1380 / 1591, 1470 MB | 277 / 157 MB | 868, 875 / 1194, 1241 |
+
+Forward+ uses about 110-120 MB more video memory and 120-230 MB less resident memory. These runs
+shared the box with other lanes.
+
+### Tests and negatives
+
+- New suites: `renderer_choice_test.gd`, `world_post_effects_test.gd` and `shader_colour_test.gd`.
+  The last checks every rewritten shader parses: a shader lists no uniforms if it does not.
+- Changed: `project_settings_test.gd` (Forward+), `object_loader_test.gd` (the mod shader's lit
+  line).
+- `remote_godot.sh tests`: ran 210 suite(s), 0 failing. `check`: ALL LOAD. A windowed boot of the world (200
+  monsters) and the select screen under each renderer: 0 shader errors, 0 script errors.
+- **NEGATIVES** (base 137e295 with the test files copied in; the classes the tests name copied in
+  where noted):
+  - `project_settings_test`: `FAIL the engine starts the Forward+ renderer on this platform (got
+    "gl_compatibility")`, `FAIL rendering/renderer/rendering_method = "forward_plus" (got
+    "gl_compatibility")`, FAILURES 2.
+  - `world_post_effects_test` (class copied): `FAIL World3D.tscn's environment has SSAO off`,
+    `FAIL World3D.tscn's environment has glow off`, `FAIL World3D._ready applies WorldPostEffects
+    before the title branch`, FAILURES 3.
+  - `shader_colour_test` (class copied): FAILURES 74. For example: `FAIL the mod shader (opaque):
+    samples raw (no source_color uniform)`, `FAIL the portrait shader (blend false): carries if
+    (!OUTPUT_IS_SRGB) { ALBEDO = srr_srgb_to_linear(ALBEDO); }`, `FAIL a terrain pass (blend
+    false) marks its vertex colour sRGB`, `FAIL water_reflection.gdshader decodes its ALBEDO where
+    the output is linear`.
+  - `renderer_choice_test`: Parse Error (`RendererChoice` not declared).
+- **CI (READ):** every job runs Godot `--headless` (the dummy rasterizer), and the exports are
+  headless. The exports were not run here: there are no export templates on the box.
+
+### OPEN
+
+- **Blending space** (above). The only remaining systematic difference besides the shadow pass.
+- **Compatibility's brighter shadowed sun:** retune the sun for Forward+, or leave it. The user's
+  call, with the numbers above.
+- **A PC without Vulkan** needs the launcher once. An automatic fallback needs Godot 4.3. Whether
+  the official 4.2.2 Windows templates link ANGLE is unverified.
+- **Retail's Bloom effect** default and look; glow's parameters are still the 2026-08-26 guess.
+- **The low-end hardware test** (the user's).
 
 ## Six-hundred-and-ninety-second round: a new character starts with its race's own masteries, basic skills and first quests, as the shard's `_AddNewChar` gives them -- and the shard's own list of creatable ids is exactly the 104 the rule picks
 

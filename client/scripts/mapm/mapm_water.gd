@@ -300,6 +300,9 @@ static func water_material(frames: Texture2D, water_color: Color) -> StandardMat
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.vertex_color_use_as_albedo = true
+	# Display values, as Compatibility reads them; decoded where the output
+	# is linear (Forward+), round 693's ShaderColour.
+	mat.vertex_color_is_srgb = ShaderColour.VERTEX_COLOR_IS_SRGB
 	mat.albedo_texture = frames
 	set_water_color(mat, water_color)
 	return mat

@@ -35,19 +35,22 @@ file_logging/max_log_files=10
 
 [rendering]
 
-; Real, deliberate choice (2026-08-26, see docs/WORLD_ISSUES.md): default
-; to the Compatibility (OpenGL) renderer rather than Godot 4's Forward+
-; (Vulkan) default. A real playtest reported a cluster of symptoms --
-; missing HUD, flat/textureless ground, generally "not right" visuals --
-; all at once, which is consistent with a Vulkan driver/GPU incompatibility
-; on that specific machine (no hard crash, just broad rendering breakage)
-; rather than several unrelated content bugs. Compatibility mode runs on
-; far more real hardware (including older/integrated GPUs a real user is
-; likelier to have), which matters more for a downloadable hobby client
-; than Forward+'s extra rendering features.
-; It took effect only in round 581: until then these lines began with '#',
-; which swallowed the key below, and every player ran Forward+ on Vulkan.
-renderer/rendering_method="gl_compatibility"
+; Forward+ (Vulkan) is the default from round 693 (the user, 2026-10-02:
+; "Let's make forward+ the default build"). From round 581 to 692 it was
+; the Compatibility (OpenGL) renderer, chosen on 2026-08-26 after a tester's
+; broken visuals were blamed on Vulkan; the white ground among them was
+; later traced to a draw-order bug fixed in round 580 (measured holding
+; under both renderers in round 693).
+; Compatibility stays a choice per install: override.cfg beside the game
+; (RendererChoice), written from setting/config.yaml's display.renderer or
+; by the Compatibility launcher. Godot 4.2.2 does not fall back to OpenGL by
+; itself when Vulkan fails (RendererChoice has the source it was read from).
+; Before round 581 these lines began with '#', which swallowed the key
+; below, and every player ran Forward+ anyway.
+renderer/rendering_method="forward_plus"
+; Phones and tablets (the "mobile" feature tag) stay on Compatibility, as
+; before; no mobile build is exported. The web's ".web" key is the engine's
+; own default, gl_compatibility (main/main.cpp), and is not set here.
 renderer/rendering_method.mobile="gl_compatibility"
 
 [gui]

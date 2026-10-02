@@ -801,12 +801,19 @@ static func _mod_shader(cull: String, godot_blend: String, zwrite: bool, fade: b
 	if fade:
 		alpha_line = "ALPHA = appear_alpha;" if opaque else "ALPHA = clamp(out_a, 0.0, 1.0) * appear_alpha;"
 	var shader := Shader.new()
-	shader.code = """shader_type spatial;
+	# One assignment: setting a Shader's code compiles it, so a second set
+	# would compile the half-made code first (round 693).
+	var code := """shader_type spatial;
 render_mode %s;
 // An MTRL mod's draw (ObjectLoader._mod_shader; READ from
-// CRTModMtrl::vslot_004, OURS where ObjectLoader says so).
-uniform vec4 albedo : source_color = vec4(1.0);
-uniform sampler2D albedo_texture : source_color, filter_linear_mipmap, repeat_enable;
+// CRTModMtrl::vslot_004, OURS where ObjectLoader says so). Raw samples and
+// a raw colour, decoded at the end where the output is linear (ShaderColour,
+// round 693): the stage arithmetic is the client's gamma-space arithmetic in
+// both renderers.
+// `albedo` is set as a Color (BmtReader's layer ambient): read through
+// srr_color (ShaderColour).
+uniform vec4 albedo = vec4(1.0);
+uniform sampler2D albedo_texture : filter_linear_mipmap, repeat_enable;
 // The alpha test: the ref byte / 255 and its D3DCMPFUNC (0 = no test).
 uniform float alpha_scissor = 0.0;
 uniform int alpha_func = 0;
@@ -905,7 +912,7 @@ void fragment() {
 	}
 	Split c = cop(color_op, carg(color_arg1, tex), carg(color_arg2, tex), aarg(color_arg1, tex));
 	float a = clamp(aop(alpha_op, aarg(alpha_arg1, tex), aarg(alpha_arg2, tex), tex.a), 0.0, 1.0);
-	vec3 lit = c.lit * albedo.rgb * 0.5;
+	vec3 lit = c.lit * srr_color(albedo, OUTPUT_IS_SRGB).rgb * 0.5;
 	vec3 unlit = c.unlit;
 	if (blend_color == 1) {
 		vec3 s = clamp(lit + unlit, vec3(0.0), vec3(1.0));
@@ -926,11 +933,17 @@ void fragment() {
 	ALBEDO = lit;
 	EMISSION = unlit;
 	%s
+	%s
+	%s
 	if (!FRONT_FACING) {
 		NORMAL = -NORMAL;
 	}
 }
-""" % [", ".join(modes), "uniform float appear_alpha = 1.0;\n" if fade else "", alpha_line]
+""" % [", ".join(modes), "uniform float appear_alpha = 1.0;\n" if fade else "", alpha_line,
+		ShaderColour.DECODE_ALBEDO, ShaderColour.DECODE_EMISSION]
+	# The helpers go before the first function (the stage arithmetic and the
+	# portrait's injected vertex() both call them).
+	shader.code = code.replace("\nstruct Split {", ShaderColour.DECODE_FN + "\nstruct Split {")
 	shader.set_meta(MOD_SHADER_KEY_META, [cull, godot_blend, zwrite])
 	_static_lock.lock()
 	if _mod_shaders.has(key):

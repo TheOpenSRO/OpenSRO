@@ -124,6 +124,9 @@ static func _build_layer(particles: Pk2Reader, layer: Layer, burst_height: float
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 	mat.vertex_color_use_as_albedo = true
+	# Display values, as Compatibility reads them; decoded where the output
+	# is linear (Forward+), round 693's ShaderColour.
+	mat.vertex_color_is_srgb = ShaderColour.VERTEX_COLOR_IS_SRGB
 	var tex := _load_texture(particles, layer.texture_path)
 	if tex != null:
 		mat.albedo_texture = tex

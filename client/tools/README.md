@@ -21,13 +21,24 @@ EGL on the render node instead, and says which path it took on stderr. If a log 
 "falling back to software GL", something about the render node changed — that is worth fixing
 before waiting on anything else.
 
-**It draws with the renderer players run.** `qa_shot.sh` passes `--rendering-driver opengl3`,
-which picks GL Compatibility, and since round 581 a release does too: `project.godot`'s
-`rendering_method="gl_compatibility"` finally applies (its `#` comment lines had been folded into
-the key; only `;` is a comment there). Until then every box render was Compatibility while players
-ran Forward+ on Vulkan -- keep that in mind when reading an older round's picture against a
-tester's. A plain launch without the flag now prints `OpenGL API ... - Compatibility` too, and
+**It draws with the renderer players run.** From round 693 that is Forward+ (Vulkan):
+`project.godot` says `rendering_method="forward_plus"`, and `qa_shot.sh` and `perf_gate.sh` read
+that line from the client copy they run, unless `RENDERER=gl_compatibility` (qa_shot) or
+`--renderer` / `--ab-renderer` (the gate) says otherwise. Forward+ cannot present to Xvfb, so it
+runs through `xwl_run.sh`, a private headless weston with Xwayland that RADV presents to directly
+(docs/RENDER_BOX.md, "Vulkan (Forward+)"). Compatibility runs as before, through VirtualGL on Xvfb.
+Each run repeats Godot's own banner on stderr: `qa_shot: ran Vulkan API ... - Forward+ - Using
+Vulkan Device #0: AMD - AMD Radeon RX 7600 (RADV NAVI33)`. **`llvmpipe` there means the CPU** --
+which is what a Forward+ run under plain Xvfb silently gets. From round 581 to 692 every box render
+and every release was Compatibility. Before round 581, releases ran Forward+ while the box drew
+Compatibility. Keep that in mind when reading an older round's picture against a tester's.
 `scripts/project_settings_test.gd` fails if the setting stops applying.
+
+`QA_SHOT_REAP=0` skips qa_shot's start-up kill of every Godot, Xvfb and weston on the box. Use it
+with your own `GODOT_LOCK` in a lane, so another lane's runs survive. `frame_ab.py a.png b.png
+[--box x,y,w,h]` (numpy + ImageMagick, on the box) prints how two frames differ: mean colour, luma
+percentiles, the fraction of pixels off by more than 8 and 32, and white and black fractions. It is
+the A/B measurement of round 693's renderer table.
 
 **Startup dominates, so batch the pictures.** Loading the region grid costs roughly 65 seconds
 against 0.33 seconds a frame, so six pictures taken as six runs pays that cost six times. Use
@@ -377,6 +388,25 @@ client/tools/perf_gate.sh                                   # all three default 
 client/tools/perf_gate.sh --sites jangan --runs 3           # ~6 minutes
 client/tools/perf_gate.sh --base 8658370 --head c306c51 --sites jangan   # the proof: SLOWER (+3.0)
 ```
+
+**The renderer (round 693).** Each side runs the renderer its own `project.godot` names, so a
+gate across round 693 compares Compatibility (base) with Forward+ (head). `--renderer R` puts both
+sides on R. `--ab-renderer R` compares one build with itself, its base side on R (no base cache, no
+native library), which is how round 693 measured Forward+ against Compatibility:
+
+```
+client/tools/perf_gate.sh --ab-renderer gl_compatibility --sites jangan,mobs
+```
+
+Every run's renderer is read back from Godot's banner. A run on the wrong renderer, or on llvmpipe,
+fails the gate. Cached Forward+ bases are kept apart (`..._fp.vals`).
+
+Forward+ at the Jangan spawn draws in about 3 ms (round 693). 3,000 frames is then about 9 s,
+under the 10 once-a-second samples the frame figure needs, and the gate stops with "missing
+numbers". Give such a gate `--frames 12000`. The two renderers also reach the screen differently on
+the box: Compatibility through VirtualGL's read-back, Forward+ through Xwayland directly. Measured
+once at the spawn, Compatibility drew 8.2 ms through Xwayland against 10.5 through VirtualGL. So
+the gate's Compatibility frame carries about 2 ms that a player's machine does not pay.
 
 Each run waits until no other lane's Godot is running and is repeated if one overlaps it: the CPU
 is what lanes share (one render uses about 3.3 of the box's 10 cores; six at once put it at 89 %

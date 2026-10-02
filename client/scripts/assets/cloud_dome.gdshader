@@ -24,7 +24,9 @@
 shader_type spatial;
 render_mode unshaded, cull_disabled, blend_mix, depth_draw_never, fog_disabled, skip_vertex_transform;
 
-uniform sampler2D cloud_tex : source_color, filter_linear_mipmap, repeat_enable;
+// Raw: the arithmetic below is in display values, decoded at the end where
+// the output is linear (ShaderColour, round 693).
+uniform sampler2D cloud_tex : filter_linear_mipmap, repeat_enable;
 uniform vec2 uv_offset = vec2(0.0);
 uniform vec3 cloud_color = vec3(1.0);
 uniform float cloud_alpha = 0.6;
@@ -53,5 +55,9 @@ void fragment() {
 	vec4 tex = texture(cloud_tex, UV + uv_offset);
 	float f = clamp((fog_end - max(view_depth, 0.0)) / (fog_end - fog_start), 0.0, 1.0);
 	ALBEDO = mix(fog_color, tex.rgb * cloud_color, f);
+	if (!OUTPUT_IS_SRGB) {
+		vec3 c = clamp(ALBEDO, 0.0, 1.0);
+		ALBEDO = mix(pow((c + vec3(0.055)) * (1.0 / 1.055), vec3(2.4)), c * (1.0 / 12.92), lessThan(c, vec3(0.04045)));
+	}
 	ALPHA = tex.a * cloud_alpha;
 }

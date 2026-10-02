@@ -283,8 +283,12 @@ uniform float ao_light_affect = 0.0;
 uniform vec4 albedo_color : source_color = vec4(1.0);
 uniform vec2 uv1_scale = vec2(1.0);
 varying vec3 world_pos;
+%s
 void vertex() {
 	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	// The terrain's vertex colour is sRGB (vertex_color_is_srgb, round 693):
+	// decoded where the output is linear, as StandardMaterial3D does.
+	%s
 }
 void fragment() {
 	if (dot(world_pos, water_clip_plane.xyz) + water_clip_plane.w < 0.0) {
@@ -303,7 +307,7 @@ void fragment() {
 	}
 	ALBEDO = c.rgb;
 %s%s}
-""" % [", ".join(modes), ao_lines, "\tALPHA = c.a;\n" if blend else ""]
+""" % [", ".join(modes), ShaderColour.DECODE_FN, ShaderColour.DECODE_COLOR, ao_lines, "\tALPHA = c.a;\n" if blend else ""]
 
 func _ready() -> void:
 	ensure_globals()
