@@ -301,12 +301,28 @@ func _add_prop(key: String, path: String, pos: Vector3, yaw: float) -> void:
 		parsed.animation_paths.size()])
 
 ## READ: the lizard is shown with clip 1 when the race fly ends and hidden
-## again when the camera is back (vslot_012 cases 7 and 0xb).
+## again when the camera is back (vslot_012 cases 7 and 0xb). Each arrival
+## starts the clip again (case 7 calls the animation setter, vslot_003, every
+## time), so a second Create walks it in again.
 func set_lizard(on: bool) -> void:
 	if props.has("lizard"):
 		(props["lizard"] as Node3D).visible = on
 	_lizard_anim = _lizard_clip(CharSelectMath.LIZARD_RACE_CLIP if on else CharSelectMath.LIZARD_LIST_CLIP)
 	_lizard_anim_start = _clock
+
+## Whether the lizard's clip repeats (round 688): as the clip's own `.ban`
+## says. READ (docs/protocol/BSR_FORMAT.md, "Looping" and "After a
+## one-shot"): the client plays an IsCyclic clip with CRTAniCyclic and any
+## other with CRTAniOneShot, which plays once, after which the bones keep
+## their last pose. MEASURED (round 688, probe_ban_motion.gd):
+## interface_lizard_move is NOT cyclic -- 81 keys over 2666 ms, its Bip01
+## walking 4.16 units, from (7.02, 0.29, -9.96) to (3.47, 0.29, -7.79) in
+## model space, exactly where interface_lizard_stand (cyclic, 15 s) holds it.
+## So on arrival the lizard walks in once, from below the frame, and stops
+## by the idols. Looping it (rounds 684-687) snapped it back off-screen every
+## 2.67 s: the "disappears and then comes back" of the user's report.
+static func lizard_clip_loops(anim: BanReader.ParsedAnimation) -> bool:
+	return anim != null and anim.cyclic
 
 func _lizard_clip(index: int) -> BanReader.ParsedAnimation:
 	if _lizard_assembled == null or index >= _lizard_assembled.animation_paths.size():
@@ -361,7 +377,35 @@ func _process(delta: float) -> void:
 	for d in drawn:
 		_tick(d, delta)
 	if _lizard_skeleton != null and _lizard_anim != null and props.has("lizard") and (props["lizard"] as Node3D).visible:
-		Skeleton3DBuilder.apply_ban_pose_at(_lizard_skeleton, _lizard_anim, _clock - _lizard_anim_start, true)
+		Skeleton3DBuilder.apply_ban_pose_at(_lizard_skeleton, _lizard_anim, _clock - _lizard_anim_start,
+			lizard_clip_loops(_lizard_anim))
+		_qa_lizard_probe()
+
+## SRREVAMP_QA_LIZARD_PROBE=<seconds> (OURS, QA; CharSelectQa): one line a
+## frame about the lizard from its arrival, then the client quits.
+var _qa_lizard_until := -1.0
+func _qa_lizard_probe() -> void:
+	var want := OS.get_environment("SRREVAMP_QA_LIZARD_PROBE")
+	if want == "" or not want.is_valid_float():
+		return
+	if _qa_lizard_until < 0.0:
+		_qa_lizard_until = _clock + want.to_float()
+	var cam := camera()
+	var t := _clock - _lizard_anim_start
+	var dur := _lizard_anim.duration_seconds()
+	var s := CharSelectQa.lizard_sample(props["lizard"] as Node3D, cam, get_viewport().get_visible_rect().size)
+	var r: Rect2 = s["rect"]
+	print("QA LIZARD frame %d t=%.3f clip=%s clip_t=%.3f/%.3f meshes=%d visible=%d verts=%d inside=%d rect=(%d,%d %dx%d) cull_kept=%d/%d root=(%.2f,%.2f,%.2f)" % [
+		Engine.get_frames_drawn(), t, _lizard_anim.animation_name, fposmod(t, dur) if dur > 0.0 else 0.0, dur,
+		s["meshes"], s["visible"], s["verts"], s["inside"], int(r.position.x), int(r.position.y), int(r.size.x), int(r.size.y),
+		s["cull_kept"], s["cull_meshes"], s["root"].x, s["root"].y, s["root"].z])
+	var dir := OS.get_environment("SRREVAMP_QA_SELECT_SHOT_DIR")
+	var every := int(OS.get_environment("SRREVAMP_QA_LIZARD_SHOT_EVERY"))
+	if dir != "" and every > 0 and Engine.get_frames_drawn() % every == 0:
+		get_viewport().get_texture().get_image().save_png("%s/lizard_%05d.png" % [dir, Engine.get_frames_drawn()])
+	if _clock >= _qa_lizard_until:
+		print("QA LIZARD done")
+		get_tree().quit()
 
 func _tick(d: Drawn, delta: float) -> void:
 	if d.alpha_t < CharSelectMath.MODEL_FADE_S and not fades_paused:

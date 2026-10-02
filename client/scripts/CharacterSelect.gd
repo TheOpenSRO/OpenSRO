@@ -558,9 +558,7 @@ func _begin_stage() -> void:
 	stage = CharSelectStage.new()
 	stage.name = "CharSelectStage"
 	add_child(stage)
-	var phase := CharSelectHandoff.day_phase
-	if phase < 0.0:
-		phase = TitleIntro.pick_day_phase()
+	var phase := CharSelectHandoff.front_end_phase()
 	_has_3d = stage.begin(phase)
 	if not _has_3d:
 		stage.queue_free()
@@ -763,6 +761,7 @@ func _process(delta: float) -> void:
 			_qa_print_anchors()
 		S.LIST:
 			_hover(_pick_mouse())
+			_qa_list_tick(delta)
 			_qa_reload_tick()
 		S.ZOOM:
 			if done:
@@ -1338,6 +1337,64 @@ func _on_disconnected() -> void:
 		get_tree().create_timer(2.0).timeout.connect(_leave_to_login)
 
 # --- QA ---------------------------------------------------------------------------------------
+
+## Visits of this screen in this process (the QA luminance line's number).
+static var _qa_visits := 0
+var _qa_list_s := -1.0
+var _qa_luma_done := false
+
+## CharSelectQa's hooks (round 688, OURS, QA only): SRREVAMP_QA_SELECT_RACE
+## presses Create once the list is up; SRREVAMP_QA_SELECT_LUMA measures the
+## frame 1.5 s after it (the models' READ 1.0 s fade done).
+func _qa_list_tick(delta: float) -> void:
+	if _qa_list_s < 0.0:
+		_qa_list_s = 0.0
+		_qa_visits += 1
+	_qa_list_s += delta
+	if OS.get_environment("SRREVAMP_QA_SELECT_LUMA") != "" and not _qa_luma_done and _qa_list_s >= 1.5:
+		_qa_luma_done = true
+		_qa_luma()
+	if OS.get_environment("SRREVAMP_QA_SELECT_RACE") != "" and _qa_list_s >= 2.0 and _slots.size() < LobbyNet.MAX_CHARACTERS:
+		print("QA SELECT: pressing Create")
+		_on_create_pressed()
+
+func _qa_luma() -> void:
+	if stage == null or stage.backdrop == null:
+		return
+	var img := get_viewport().get_texture().get_image()
+	if img == null:
+		return
+	var cam := stage.camera()
+	var w := img.get_width()
+	var h := img.get_height()
+	var band1 := _frame.band_bottom_edge() if _frame != null and _frame.layout != null else int(h * 172.0 / 1200.0)
+	var down := _frame.role_def("screendown") if _frame != null and _frame.layout != null else null
+	var band2 := int(_frame.scaled(down.rect).position.y) if down != null else int(h * 1030.0 / 1200.0)
+	# The viewport image is in physical pixels; the bands in the window's.
+	var k := float(w) / maxf(size.x, 1.0)
+	var band := Rect2i(0, int(band1 * k), w, int((band2 - band1) * k))
+	var chars: Array = []
+	for d in stage.drawn:
+		var dd: CharSelectStage.Drawn = d
+		if dd.body != null and dd.holder.visible:
+			chars.append(CharSelectQa.screen_rect(cam, dd.body.global_transform, dd.bounds))
+	var char_sum := 0.0
+	var char_n := 0
+	for r in chars:
+		var m: float = CharSelectQa.mean_luma(img, r)
+		if m >= 0.0:
+			char_sum += m
+			char_n += 1
+	var world = stage.backdrop.world
+	var light := world.get("directional_light") as DirectionalLight3D
+	var env := (world.get("world_environment") as WorldEnvironment).environment
+	print("QA SELECT LUMA visit %d phase %.4f backdrop %.1f characters %.1f (%d) light %s x %.2f ambient %s x %.2f tonemap %d exposure %.2f frame %d" % [
+		_qa_visits, float(world.get("_env_time")), CharSelectQa.mean_luma(img, band, chars),
+		char_sum / char_n if char_n > 0 else -1.0, char_n, light.light_color, light.light_energy,
+		env.ambient_light_color, env.ambient_light_energy, env.tonemap_mode, env.tonemap_exposure, Engine.get_frames_drawn()])
+	var dir := OS.get_environment("SRREVAMP_QA_SELECT_SHOT_DIR")
+	if dir != "":
+		img.save_png("%s/select_visit%d.png" % [dir, _qa_visits])
 
 func _qa_reload_tick() -> void:
 	var want := OS.get_environment("SRREVAMP_QA_SELECT_RELOAD")
