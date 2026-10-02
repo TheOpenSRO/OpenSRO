@@ -18,6 +18,11 @@ func _ready() -> void:
 	print("SRRevamp boot: no bundled game data -- put your own *.pk2 files in the 'pk2' folder next to this executable.")
 	print("SRRevamp log file: %s" % ProjectSettings.globalize_path("user://logs/srrevamp.log"))
 	print("SRRevamp version: %s" % UpdateChecker.CLIENT_VERSION)
+	# The renderer running, and the one recorded for the next start: an
+	# exported game brings override.cfg in line with setting/config.yaml's
+	# display.renderer, or records the Compatibility launcher's choice
+	# (round 693, RendererChoice).
+	RendererChoice.apply_at_boot(ClientConfig.load_default().renderer)
 	# The native readers' state, once, at startup (round 668): ON, OFF because
 	# the library is missing or refused, or forced OFF. A tester's log always
 	# says which reader loaded their world.

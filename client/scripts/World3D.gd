@@ -1261,6 +1261,11 @@ var _wire_logging := false
 const CHAT_LEFT := 2.0
 
 func _ready() -> void:
+	# SSAO and glow (round 693): off, the look the project verified under the
+	# Compatibility renderer, which has neither; the Options window may pass
+	# its own choice (WorldPostEffects). Before the title branch: the title's
+	# backdrop is this scene too.
+	WorldPostEffects.apply(world_environment.environment)
 	# The front-end's 3D backdrop (round 678, FrontEndBackdrop): none of an
 	# entry's work -- no player, HUD, server or loading screen.
 	if title_mode:
@@ -3459,7 +3464,7 @@ var _cloud_dome_shader: Shader = preload("res://scripts/assets/cloud_dome.gdshad
 var _cloud_uv_offset := Vector2.ZERO
 var _sun_glow: Sprite3D
 var _sun_glow_offset := Vector3.ZERO
-var _sky_material: ProceduralSkyMaterial
+var _sky_material: GammaSkyMaterial
 
 ## Real per-zone day/night lighting data (2026-08-31, see
 ## docs/protocol/ENVIRONMENT_FORMAT.md and docs/WORLD_ISSUES.md's
@@ -3505,7 +3510,9 @@ func _try_add_real_sky() -> void:
 	# scene shipped with, using that same real color as the horizon tone so
 	# this doesn't introduce a new invented color, only extends it into a
 	# gradient.
-	var sky_material := ProceduralSkyMaterial.new()
+	# GammaSkyMaterial (round 693): ProceduralSkyMaterial's own gradient,
+	# drawn the same under Forward+ as under Compatibility.
+	var sky_material := GammaSkyMaterial.new()
 	var flat_color: Color = world_environment.environment.background_color
 	sky_material.sky_top_color = flat_color.lerp(Color(0.15, 0.25, 0.55), 0.35)
 	sky_material.sky_horizon_color = flat_color
@@ -3777,6 +3784,12 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# what Godot's fog_sun_scatter approximates.
 	env.fog_sun_scatter = FOG_SUN_SCATTER
 	env.fog_aerial_perspective = FOG_AERIAL_PERSPECTIVE
+	# The sky is not fogged (round 693): Compatibility's sky shader never
+	# mixes the environment fog in (READ, drivers/gles3/shaders/sky.glsl,
+	# 4.2.2), Forward+ does by fog_sky_affect (default 1.0, renderer_rd sky.
+	# glsl 263-265), which hazed the Jangan sky shot's top band +22 luma
+	# (MEASURED). The cloud layer fogs itself (cloud_dome.gdshader).
+	env.fog_sky_affect = 0.0
 
 	# The real sun-disc colour belongs on the real sun sprite. Its alpha stays
 	# a disclosed rendering choice (see _build_sun_glow); only the real colour
@@ -7328,6 +7341,9 @@ func _terrain_commit(job: Dictionary) -> float:
 			mat.uv1_scale = Vector3(1.0, max(row_count_estimate / float(MapmTerrainBuilder.GRID_WIDTH), 1.0), 1.0)
 		else:
 			mat.vertex_color_use_as_albedo = true
+			# Display values, as Compatibility reads them; decoded where the output
+			# is linear (Forward+), round 693's ShaderColour.
+			mat.vertex_color_is_srgb = ShaderColour.VERTEX_COLOR_IS_SRGB
 		if lightmap != null:
 			mat.ao_enabled = true
 			mat.ao_texture = lightmap
@@ -10553,6 +10569,7 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_WALK=deg   walk continuously on that heading
 ##   SRREVAMP_QA_FREE=1     let the camera pass through geometry
 ##   SRREVAMP_QA_NOFOG=1    disable fog (for high overview shots)
+##   SRREVAMP_QA_NOSHADOW=1 the sun casts no shadows (round 693's renderer A/B)
 ##   SRREVAMP_QA_NOUI=1     hide the HUD (for comparison shots)
 ##   SRREVAMP_QA_NOWATER=1  build no block water (round 648: the pixel diff
 ##                          that measures what the water draws)
@@ -11192,6 +11209,10 @@ func _qa_step() -> void:
 				# rendered frames and a 60-frame run never reaches it. A
 				# third of a second is frame 20.
 				get_tree().create_timer(20.0 / 60.0).timeout.connect(_hud_worldmap.show_world)
+		# Round 693's renderer A/B: the sun's shadows off, so a Forward+ /
+		# Compatibility difference can be put on them or not. QA only.
+		if OS.get_environment("SRREVAMP_QA_NOSHADOW") != "" and directional_light != null:
+			directional_light.shadow_enabled = false
 		if OS.get_environment("SRREVAMP_QA_NOFOG") != "":
 			if world_environment != null and world_environment.environment != null:
 				var env := world_environment.environment

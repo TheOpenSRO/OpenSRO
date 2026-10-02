@@ -768,7 +768,9 @@ static func _shader(cls: String, no_cull: bool, link: bool = false) -> Shader:
 		.replace("{CULL}", "cull_disabled" if no_cull else "cull_back") \
 		.replace("{FORCE_ALPHA_ONE}", "true" if cls == "add_one" else "false") \
 		.replace("{DARKEN}", "true" if cls == "darken" else "false") \
-		.replace("{UVMAP}", "" if link else UVMAP_INSTANCE)
+		.replace("{UVMAP}", "" if link else UVMAP_INSTANCE) \
+		.replace("{DECODE}", ShaderColour.DECODE_ALBEDO) \
+		.replace("\nvoid fragment() {", ShaderColour.DECODE_FN + "\nvoid fragment() {")
 	_shaders[key] = sh
 	return sh
 
@@ -778,7 +780,10 @@ static func _shader(cls: String, no_cull: bool, link: bool = false) -> Shader:
 ## (D3DTOP). Anything else is taken as MODULATE (OURS).
 const SHADER_TEMPLATE := """shader_type spatial;
 render_mode unshaded, {BLEND}, {CULL}, depth_draw_never, fog_disabled, shadows_disabled;
-uniform sampler2D tex : source_color, filter_linear_mipmap, repeat_enable;
+// Raw, and the result decoded where the output is linear: the stage
+// arithmetic is D3D's, in display values, under both renderers (ShaderColour,
+// round 693).
+uniform sampler2D tex : filter_linear_mipmap, repeat_enable;
 uniform int c_op = 4;
 uniform int c_a1 = 2;
 uniform int c_a2 = 0;
@@ -811,6 +816,7 @@ void fragment() {
 	if ({FORCE_ALPHA_ONE}) a = 1.0;
 	if ({DARKEN}) c = vec3(0.0);
 	ALBEDO = clamp(c, 0.0, 1.0);
+	{DECODE}
 	ALPHA = clamp(a, 0.0, 1.0);
 }
 """

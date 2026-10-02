@@ -162,7 +162,10 @@ render_mode unshaded, %s;
 // renderer's SubViewport a texel reaches the shader as stored and ALBEDO
 // reaches the buffer as written -- no sRGB decode, no encode -- so the
 // arithmetic below is the client's, value for value. No `source_color`
-// hint, so the sample is the stored byte / 255 on every driver.
+// hint, so the sample is the stored byte / 255 on every driver. That held
+// under GL Compatibility, which decodes ALBEDO and encodes the result;
+// Forward+ takes ALBEDO as linear, so it is decoded there at the end
+// (ShaderColour, round 693) and still reaches the buffer as written.
 uniform sampler2D tex : filter_linear_mipmap, repeat_enable;
 uniform vec4 material_color = vec4(0.588, 0.588, 0.588, 1.0);
 uniform vec3 to_light = vec3(0.70710678, 0.70710678, 0.0);
@@ -179,7 +182,8 @@ void vertex() {
 	float ndl = max(dot(n, normalize(to_light)), 0.0);
 	// oD0 = c10 + max(0, N.c9) * c11, saturated as a vs_1_1 colour output is:
 	// c10 = object colour x ambient, c11 = material colour x diffuse.
-	lit = clamp(object_color * light_ambient + ndl * material_color.rgb * light_diffuse, 0.0, 1.0);
+	// material_color is set as a Color: as stored (ShaderColour.srr_color).
+	lit = clamp(object_color * light_ambient + ndl * srr_color(material_color, OUTPUT_IS_SRGB).rgb * light_diffuse, 0.0, 1.0);
 }
 
 void fragment() {
@@ -188,6 +192,7 @@ void fragment() {
 		discard;
 	}
 	ALBEDO = clamp(modulate_scale * t.rgb * lit, 0.0, 1.0);
+	%s
 	%s
 }
 """
@@ -205,7 +210,7 @@ varying vec3 portrait_od0;
 void vertex() {
 	vec3 pn = normalize(MODEL_NORMAL_MATRIX * NORMAL);
 	float pndl = max(dot(pn, normalize(portrait_to_light)), 0.0);
-	portrait_od0 = clamp(portrait_object_color * portrait_light_ambient + pndl * albedo.rgb * portrait_light_diffuse, 0.0, 1.0);
+	portrait_od0 = clamp(portrait_object_color * portrait_light_ambient + pndl * srr_color(albedo, OUTPUT_IS_SRGB).rgb * portrait_light_diffuse, 0.0, 1.0);
 }
 """
 
@@ -508,7 +513,7 @@ func _mod_material(src: ShaderMaterial) -> ShaderMaterial:
 	var code := src.shader.code
 	var key := "mod:%d" % code.hash()
 	if not _shaders.has(key):
-		var lit_line := "vec3 lit = c.lit * albedo.rgb * 0.5;"
+		var lit_line := "vec3 lit = c.lit * srr_color(albedo, OUTPUT_IS_SRGB).rgb * 0.5;"
 		var out_lines := "ALBEDO = lit;\n\tEMISSION = unlit;"
 		var rm := code.find("render_mode ")
 		var rm_end := code.find(";", rm) if rm >= 0 else -1
@@ -542,6 +547,7 @@ func _shader(cull: String, blend: bool = false) -> Shader:
 	if not _shaders.has(key):
 		var sh := Shader.new()
 		var modes := cull + (", blend_mix, depth_draw_opaque" if blend else ", depth_draw_opaque")
-		sh.code = PORTRAIT_SHADER % [modes, "ALPHA = t.a * material_color.a;" if blend else ""]
+		sh.code = (PORTRAIT_SHADER % [modes, "ALPHA = t.a * material_color.a;" if blend else "", ShaderColour.DECODE_ALBEDO]) \
+			.replace("\nvarying vec3 lit;", ShaderColour.DECODE_FN + "\nvarying vec3 lit;")
 		_shaders[key] = sh
 	return _shaders[key]

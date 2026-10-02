@@ -33,6 +33,13 @@ extends SceneTree
 ##     --pk2=/opt/sro-files/client/Data.pk2 --media=/opt/sro-files/client/Media.pk2 \
 ##     [--code=MOB_CH_MANGNYANG | --model=mob\\china\\mangnyang.bsr] [--nofade] [--save=<last frame .png>]
 ##
+## --instance (round 693) fades the model the select screen's way instead:
+## GeometryInstance3D.transparency on every mesh instance, 1 - alpha_at / 255
+## (CharSelectStage._apply_alpha), the materials untouched. GL Compatibility
+## ignores that property (READ: stored by RenderGeometryInstanceBase::
+## set_transparency, never read by the GLES3 renderer), Forward+ draws it --
+## this measures what each renderer shows.
+##
 ## --census instead assembles every model a `MOB_` row names (or the
 ## comma-separated --models=) and counts its
 ## surfaces' materials by kind, and how many have no fade twin
@@ -58,6 +65,7 @@ var _done := false
 var _shaders := {}
 var _usec: Array[int] = []
 var _out := false
+var _instance := false
 ## The frame the despawn starts (--out), and the first frame drawn without
 ## the model.
 var _out_at := -1
@@ -72,6 +80,7 @@ func _arg(flag: String) -> String:
 func _initialize() -> void:
 	_nofade = OS.get_cmdline_user_args().has("--nofade")
 	_out = OS.get_cmdline_user_args().has("--out")
+	_instance = OS.get_cmdline_user_args().has("--instance")
 	var data := Pk2Reader.open(_arg("--pk2"))
 	var media := Pk2Reader.open(_arg("--media"))
 	if data == null or media == null:
@@ -108,7 +117,7 @@ func _initialize() -> void:
 	print("MEASURE %s -> %s, %d meshes, %.1f tall, %s" % [code, model_path,
 		AppearFade.instances_of(_model).size(), height,
 		("despawn, NO fade (freed at once)" if _nofade else "despawn, AppearFade fade-out") if _out
-		else ("NO fade (the pop)" if _nofade else "AppearFade")])
+		else ("GeometryInstance3D.transparency (the select screen's fade)" if _instance else ("NO fade (the pop)" if _nofade else "AppearFade"))])
 
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
@@ -154,12 +163,21 @@ func _process(_delta: float) -> bool:
 			_shaders[mi.get_instance_id()] = (m as ShaderMaterial).shader if m is ShaderMaterial else null
 		root.add_child(_model)
 		_added_at = _frame
-		if not _nofade:
+		if _instance:
+			_set_instance_alpha(0)
+		elif not _nofade:
 			_fades.start(_model)
 	elif _added_at >= 0:
 		_elapsed += STEP
-		_fades.step(STEP)
+		if _instance:
+			_set_instance_alpha(AppearFade.alpha_at(_elapsed))
+		else:
+			_fades.step(STEP)
 	return false
+
+func _set_instance_alpha(a: int) -> void:
+	for mi in AppearFade.instances_of(_model):
+		mi.transparency = clampf(1.0 - a / 255.0, 0.0, 1.0)
 
 func _on_drawn() -> void:
 	if _done:
@@ -177,7 +195,10 @@ func _on_drawn() -> void:
 		a = 255 if _nofade else (AppearFade.alpha_at(_elapsed) if _fades.running() > 0 else 255)
 		var mis := AppearFade.instances_of(_model)
 		t = -1.0
-		if not mis.is_empty():
+		if _instance:
+			a = AppearFade.alpha_at(_elapsed)
+			t = 1.0 - mis[0].transparency if not mis.is_empty() else -1.0
+		elif not mis.is_empty():
 			var m := mis[0].material_override
 			if m is ShaderMaterial and (m as ShaderMaterial).get_shader_parameter("appear_alpha") != null:
 				t = float((m as ShaderMaterial).get_shader_parameter("appear_alpha"))

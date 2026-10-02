@@ -86,6 +86,21 @@
 # self-test that the per-run check catches a head that is not native
 # (client/tools/README.md, "Native readers A/B").
 #
+# The renderer (round 693). Each side runs the renderer its own
+# project.godot names (Forward+ from round 693, Compatibility before), as a
+# plain launch of that revision would: Forward+ on Vulkan through the head
+# copy's tools/xwl_run.sh (a private headless weston + Xwayland, which RADV
+# presents to directly -- docs/RENDER_BOX.md, "Vulkan (Forward+)"),
+# Compatibility through VirtualGL on Xvfb as before. `--renderer R` runs both
+# sides on R. `--ab-renderer R` compares ONE build both ways, like --ab-env:
+# the base side is the head's own copy on renderer R, the head side its
+# default (or --renderer); neither side ships the native library and no base
+# cache is used. Every run's renderer is read back from Godot's own banner
+# (`Vulkan API ... - Forward+ - Using Vulkan Device #0: <name>` /
+# `OpenGL API ... - Compatibility - Using Device: <name>`); a run on another
+# renderer than asked, or on llvmpipe (the CPU), fails the gate. A base cache
+# for a Forward+ base is kept apart from the Compatibility ones (`_fp`).
+#
 # Environment: RENDER_HOST, PK2_DIR, PERF_LANE (dir suffix; default: branch).
 set -euo pipefail
 
@@ -94,7 +109,7 @@ PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
 GODOT="${RENDER_GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-base="" head="" sites="jangan,reeds,cross" runs=3 frames=3000 ab_env="" cold=0
+base="" head="" sites="jangan,reeds,cross" runs=3 frames=3000 ab_env="" cold=0 renderer="" ab_renderer=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) base="$2"; shift 2 ;;
@@ -104,10 +119,20 @@ while [ $# -gt 0 ]; do
     --frames) frames="$2"; shift 2 ;;
     --ab-env) ab_env="$2"; shift 2 ;;
     --cold) cold=1; shift ;;
-    *) echo "usage: $0 [--base REV] [--head REV] [--sites jangan,reeds,cross,hotan,ferry,mobs,crowd] [--runs N] [--frames N] [--ab-env 'VAR=value ...'] [--cold]" >&2; exit 2 ;;
+    --renderer) renderer="$2"; shift 2 ;;
+    --ab-renderer) ab_renderer="$2"; shift 2 ;;
+    *) echo "usage: $0 [--base REV] [--head REV] [--sites jangan,reeds,cross,hotan,ferry,mobs,crowd] [--runs N] [--frames N] [--ab-env 'VAR=value ...'] [--cold] [--renderer forward_plus|gl_compatibility] [--ab-renderer forward_plus|gl_compatibility]" >&2; exit 2 ;;
   esac
 done
 cd "$repo_root"
+for r in "$renderer" "$ab_renderer"; do
+  case "$r" in ""|forward_plus|gl_compatibility) ;; *) echo "a renderer is forward_plus or gl_compatibility, not '$r'" >&2; exit 2 ;; esac
+done
+if [ -n "$ab_renderer" ]; then
+  [ -z "$ab_env" ] || { echo "--ab-renderer and --ab-env are separate comparisons: give one" >&2; exit 2; }
+  [ -z "$base" ] && [ -z "$head" ] || { echo "--ab-renderer compares the working tree with itself: give no --base or --head" >&2; exit 2; }
+  base="HEAD"
+fi
 if [ -n "$ab_env" ]; then
   [ -z "$base" ] || { echo "--ab-env compares the head with itself: give no --base" >&2; exit 2; }
   [ -z "$head" ] || { echo "--ab-env needs the working tree's built library: --head REV carries none, so both sides would read in GDScript" >&2; exit 2; }
@@ -127,6 +152,7 @@ base_full_rev="$(git rev-parse "$base")"
 box_base="/opt/srrevamp-client-perf-base-${base_full_rev:0:12}"
 box_head="/opt/srrevamp-client-perf-${lane}-head"
 [ -n "$ab_env" ] && box_base="$box_head"
+[ -n "$ab_renderer" ] && box_base="$box_head"
 work="/var/tmp/perf-${lane}"
 
 # The fixed views: MAPM path | QA_AT (region-local x,z) | yaw | walk heading ('' = stand) | [frames, at least] | [extra VAR=value ..., space-separated].
@@ -164,9 +190,18 @@ ship() { # $1 box dir, $2 rev ('' = working tree)
 
 base_label="$base_short"
 [ -n "$ab_env" ] && base_label="$head_label with $ab_env"
-echo "perf gate: base $base_label vs head $head_label; sites $sites; $runs run(s) each$([ $cold = 1 ] && echo ', COLD page cache'); box dirs $box_base, $box_head"
+[ -n "$ab_renderer" ] && base_label="$head_label on $ab_renderer"
+# Each side's renderer (round 693): forced, or its own project.godot's line.
+proj_renderer() { # $1 rev ('' = working tree)
+  local text
+  if [ -z "$1" ]; then text=$(cat client/project.godot); else text=$(git show "$1:client/project.godot"); fi
+  printf '%s\n' "$text" | sed -n 's/^renderer\/rendering_method="\([a-z_]*\)"$/\1/p' | head -1 | grep . || echo forward_plus
+}
+head_renderer="${renderer:-$(proj_renderer "$head")}"
+if [ -n "$ab_renderer" ]; then base_renderer="$ab_renderer"; else base_renderer="${renderer:-$(proj_renderer "$base")}"; fi
+echo "perf gate: base $base_label vs head $head_label; sites $sites; $runs run(s) each$([ $cold = 1 ] && echo ', COLD page cache'); renderers base $base_renderer, head $head_renderer; box dirs $box_base, $box_head"
 ssh -n "$RENDER_HOST" "mkdir -p '$work' && chown ghidra:ghidra '$work'"
-if [ -z "$ab_env" ]; then
+if [ -z "$ab_env" ] && [ -z "$ab_renderer" ]; then
 # The shared base copy: built once, under a per-revision lock on the box, and
 # marked .shipped when complete. A gate that finds it complete (or waits for
 # another lane to finish it) just discards its own stream.
@@ -184,7 +219,7 @@ ship "$box_head" "$head"
 # and prints "<frame ms> <entry ms> <freeze ms> <hitches> <other renders seen>".
 ssh "$RENDER_HOST" "cat > '$work/run1.sh'" <<EOF
 #!/bin/bash
-# run1.sh <client dir> <log> <mapm> <x,z> <yaw> [walk heading] [frames] [VAR=value] [cold: 1]
+# run1.sh <client dir> <log> <mapm> <x,z> <yaw> [walk heading] [frames] [VAR=value] [cold: 1] [renderer]
 export SRREVAMP_PK2_PATH=$PK2_DIR/Data.pk2 SRREVAMP_MAP_PK2_PATH=$PK2_DIR/Map.pk2 SRREVAMP_MEDIA_PK2_PATH=$PK2_DIR/Media.pk2
 export SRREVAMP_PARTICLES_PK2_PATH=$PK2_DIR/Particles.pk2 SRREVAMP_MUSIC_PK2_PATH=$PK2_DIR/Music.pk2
 export SRREVAMP_MAPM_PATH="\$3" SRREVAMP_QA_AT="\$4" SRREVAMP_QA_YAW="\$5" SRREVAMP_QA_FORCE_LOADING=1
@@ -203,7 +238,15 @@ for p in sys.argv[1:]:
 fi
 rm -f "\$2.others"
 ( while :; do n=\$(others); [ "\$n" -gt 0 ] && echo \$n >> "\$2.others"; sleep 2; done ) & W=\$!
-xvfb-run -a -s "-screen 0 1280x720x24" vglrun -d egl0 $GODOT --rendering-driver opengl3 \
+# The renderer (round 693): Forward+ through the head copy's xwl_run.sh
+# (weston + Xwayland: Vulkan presents there, not to Xvfb), Compatibility
+# through VirtualGL on Xvfb as before.
+if [ "\${10:-gl_compatibility}" = forward_plus ]; then
+  LAUNCH="$box_head/tools/xwl_run.sh -s 1280x720"; RFLAGS="--rendering-method forward_plus --rendering-driver vulkan"
+else
+  LAUNCH="xvfb-run -a -s '-screen 0 1280x720x24' vglrun -d egl0"; RFLAGS="--rendering-driver opengl3"
+fi
+eval "\$LAUNCH" $GODOT \$RFLAGS \
   --resolution 1280x720 --path "\$1" res://scenes/World3D.tscn --quit-after "\${7:-$frames}" \
   --print-fps --disable-vsync > "\$2" 2>&1 &
 G=\$!; wait \$G
@@ -213,7 +256,11 @@ entry=\$(grep -m1 -o "region grid loaded in [0-9]* ms" "\$2" | grep -o "[0-9]*" 
 freeze=\$(grep -o "longest work frame [0-9.]* ms" "\$2" | grep -o "[0-9.]*" | sort -n | tail -1 | grep . || echo none)
 hitches=\$(grep -o "; [0-9]* over 100 ms" "\$2" | grep -o "[0-9]* over" | grep -o "[0-9]*" | awk '{s+=\$1} END {print s+0}')
 native=\$(grep -m1 -o "native readers [A-Z]*" "\$2" | awk '{print \$3}'); native=\${native:-none}
-echo "\$ms \$entry \$freeze \$hitches \$(sort -n "\$2.others" 2>/dev/null | tail -1 | grep . || echo 0) \$native"
+# The renderer that ran, from Godot's banner: <method>:<device, spaces as _>.
+banner=\$(grep -m1 -E "^(Vulkan|OpenGL) API" "\$2")
+case "\$banner" in *" - Forward+ - "*) rmeth=forward_plus ;; *" - Compatibility - "*) rmeth=gl_compatibility ;; *) rmeth=unknown ;; esac
+rdev=\$(echo "\$banner" | sed -n 's/.*Using \(Vulkan \)\{0,1\}Device[^:]*: //p' | tr ' ' _ | cut -c1-60)
+echo "\$ms \$entry \$freeze \$hitches \$(sort -n "\$2.others" 2>/dev/null | tail -1 | grep . || echo 0) \$native \$rmeth:\${rdev:-none}"
 EOF
 ssh -n "$RENDER_HOST" "chmod +x '$work/run1.sh'"
 
@@ -245,13 +292,17 @@ ssh -n "$RENDER_HOST" "mkdir -p '$cache'"
 # one1 <base|head> <run tag>: one booted run, repeated if another lane's Godot
 # overlapped it; prints "ms entry freeze hitches" (progress goes to stderr).
 one1() {
-  local b=$1 tag=$2 dir="$box_base" out ms entry freeze hitches seen
-  [ "$b" = head ] && dir="$box_head"
+  local b=$1 tag=$2 dir="$box_base" out ms entry freeze hitches seen rend want_r="$base_renderer"
+  [ "$b" = head ] && dir="$box_head" && want_r="$head_renderer"
   for try in 1 2 3; do
     local env="$extra"
     [ "$b" = base ] && [ -n "$ab_env" ] && env="$(echo "$extra $ab_env" | xargs)"
-    out=$(ssh -n "$RENDER_HOST" "flock /var/tmp/perf-gate.lock '$work/run1.sh' '$dir' '$work/${s}_${b}_$tag.log' '$mapm' '$at' '$yaw' '$walk' '$run_frames' '$env' '$cold'")
-    read -r ms entry freeze hitches seen native <<<"$out"
+    out=$(ssh -n "$RENDER_HOST" "flock /var/tmp/perf-gate.lock '$work/run1.sh' '$dir' '$work/${s}_${b}_$tag.log' '$mapm' '$at' '$yaw' '$walk' '$run_frames' '$env' '$cold' '$want_r'")
+    read -r ms entry freeze hitches seen native rend <<<"$out"
+    # The renderer that ran (round 693): the one asked for, on the GPU.
+    if [ "${rend%%:*}" != "$want_r" ] || [[ "$rend" == *llvmpipe* ]]; then
+      echo "  $s $b run $tag: FAIL the run's renderer is '$rend', this side must be $want_r on the GPU (see $RENDER_HOST:$work/${s}_${b}_$tag.log)" >&2; exit 1
+    fi
     if [ "$ms" = none ] || [ "$entry" = none ] || [ "$freeze" = none ]; then
       echo "  $s $b run $tag: missing numbers ($out) -- see $RENDER_HOST:$work/${s}_${b}_$tag.log" >&2; exit 1
     fi
@@ -264,7 +315,7 @@ one1() {
     [ "$seen" = 0 ] && break
     echo "  $s $b run $tag: another render overlapped it ($seen) -- repeating" >&2
   done
-  echo "  $s $b run $tag: frame $ms ms, entry $entry ms, freeze $freeze ms, $hitches hitch(es), native readers $native" >&2
+  echo "  $s $b run $tag: frame $ms ms, entry $entry ms, freeze $freeze ms, $hitches hitch(es), native readers $native, renderer $rend" >&2
   echo "$ms $entry $freeze $hitches"
 }
 add() { # add <base|head> "<ms entry freeze hitches>"
@@ -287,11 +338,13 @@ for s in ${sites//,/ }; do
   # frames) and cached on the box; a later gate runs ONE fresh base run first
   # and keeps the cache only if that run's frame time is within the gate's own
   # SLOWER threshold of the cached median -- a drifted box is measured again.
-  cfile="$cache/${base_full}_${s}_${run_frames}.vals"
+  # (`|| true`: an assignment takes its substitution's status, and under set -e
+  # a false test there ended the gate silently -- round 693.)
+  cfile="$cache/${base_full}_${s}_${run_frames}$([ "$base_renderer" = forward_plus ] && echo _fp || true).vals"
   cached=""
   # Same-build A/B and cold runs never use or fill the base cache: neither is
   # the base revision's ordinary warm measurement.
-  [ -z "$ab_env" ] && [ $cold = 0 ] && cached=$(ssh -n "$RENDER_HOST" "cat '$cfile' 2>/dev/null" || true)
+  [ -z "$ab_env" ] && [ -z "$ab_renderer" ] && [ $cold = 0 ] && cached=$(ssh -n "$RENDER_HOST" "cat '$cfile' 2>/dev/null" || true)
   ncached=$(printf '%s\n' "$cached" | grep -c . || true)
   use_cache=0
   if [ "$ncached" -ge "$runs" ]; then
@@ -314,7 +367,7 @@ for s in ${sites//,/ }; do
     fi
     r=$(one1 head "$i") || exit 1; add head "$r"
   done
-  if [ $use_cache = 0 ] && [ -n "$newbase" ] && [ -z "$ab_env" ] && [ $cold = 0 ]; then
+  if [ $use_cache = 0 ] && [ -n "$newbase" ] && [ -z "$ab_env" ] && [ -z "$ab_renderer" ] && [ $cold = 0 ]; then
     printf '%s' "$newbase" | ssh "$RENDER_HOST" "cat > '$cfile'"
   fi
   for m in "frame ms|0.5|0.05" "entry ms|1000|0.10" "freeze ms|100|0.25" "hitches|2|0"; do
@@ -327,7 +380,7 @@ for s in ${sites//,/ }; do
 done
 
 echo
-echo "perf gate: base $base_label vs head $head_label (1280x720, median of $runs run(s)$([ $cold = 1 ] && echo ', cold page cache'))"
+echo "perf gate: base $base_label ($base_renderer) vs head $head_label ($head_renderer) (1280x720, median of $runs run(s)$([ $cold = 1 ] && echo ', cold page cache'))"
 printf '%s' "$report"
 if [ $slower = 1 ]; then
   echo "SLOWER: the head is slower than its base. Fix it, or record the cost and ask the user." >&2

@@ -139,6 +139,57 @@ Both should name the Radeon RX 7600 (the old box: RX 5700 XT). **`llvmpipe` mean
 A `qa_shot.sh` log also states it directly, and Godot's own startup line reads
 `Using Device: AMD - AMD Radeon RX 7600 (radeonsi, navi33, …)` (the old box: RX 5700 XT, navi10).
 
+## Vulkan (Forward+) -- set up 2026-10-02, round 693
+
+Forward+ is the client's default renderer from round 693. It needs Vulkan, and Vulkan needs a way
+to present a frame. What was found and what was changed:
+
+- **The driver was already there.** `mesa-vulkan-drivers` 25.0.7 (RADV) and `libvulkan1` were
+  installed, and `ghidra` was already in `render` (992) and `video` (44). As ghidra,
+  `vulkaninfo --summary` lists `AMD Radeon RX 7600 (RADV NAVI33)`, driver `radv`, beside
+  `llvmpipe` (MEASURED). No container or host change was needed.
+- **Xvfb cannot take a Vulkan frame.** Mesa's X11 presentation needs DRI3, which Xvfb lacks. Under
+  plain Xvfb, Godot skips the RX 7600 and silently renders on **llvmpipe, the CPU** (banner
+  `Using Vulkan Device #1: Unknown - llvmpipe`, MEASURED). With `MESA_VK_WSI_DEBUG=sw` it gets the RX
+  7600, but every frame is copied back through the CPU. An empty scene then takes 17.5 ms a frame
+  at 1280x720 and 4.7 ms at 640x360 (MEASURED), which swamps any frame time. That path is still
+  available as `QA_VK_PRESENT=sw` in `qa_shot.sh`, for correct pictures only, never for timings.
+- **What works: a headless Wayland compositor with Xwayland.** Xwayland has DRI3 through glamor on
+  the render node. `client/tools/xwl_run.sh [-s WxH] <command>` starts a private `weston
+  --backend=headless --renderer=gl --xwayland` (its GL renderer on the RX 7600) in a private
+  `XDG_RUNTIME_DIR` under `/var/tmp`. It runs the command on that Xwayland's display and stops
+  weston by PID afterwards. The same empty scene draws in 0.24 ms a frame there (MEASURED).
+  `qa_shot.sh`, `perf_gate.sh` and the lane scripts use it for Forward+.
+- **Headless runs are unaffected.** `--headless` selects the headless display server, which always
+  uses the dummy rasterizer (READ, 4.2.2 `main/main.cpp` 1164-1167). The test suites, `--import`,
+  `check_scripts.gd` and CI's exports draw nothing under either renderer.
+- **The GL path is unchanged:** VirtualGL on Xvfb with `--rendering-driver opengl3`. GL also runs
+  on xwl_run.sh's Xwayland without VirtualGL (Jangan spawn 8.23 ms against VirtualGL's 10.52,
+  MEASURED once each). The tools keep VirtualGL for Compatibility so older numbers stay comparable.
+
+**Changes made, and how to revert them** (both apt installs, on 2026-10-02):
+
+| Change | Revert |
+|---|---|
+| `apt-get install vulkan-tools` (`vulkaninfo`, diagnostics only) | `apt-get remove vulkan-tools` |
+| `apt-get install --no-install-recommends weston xwayland` (49 packages; the list is in `/root/fplus693-installed-packages.txt`, and `dpkg --get-selections` from before is in `/root/dpkg-selections-before-fplus693.txt`) | `apt-get remove weston xwayland && apt-get autoremove`, or restore the saved selections with `dpkg --set-selections < /root/dpkg-selections-before-fplus693.txt && apt-get dselect-upgrade` |
+
+Nothing else was changed: no X server configuration, no service, no group, no udev rule, and
+nothing on the Proxmox host. Nothing runs between renders, because each `xwl_run.sh` call starts
+its own compositor and stops it.
+
+**Checking it:**
+
+```
+su - ghidra -c 'vulkaninfo --summary | grep deviceName'          # want: AMD Radeon RX 7600 (RADV NAVI33)
+su - ghidra -c '/opt/srrevamp-client/tools/xwl_run.sh /opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64 \
+  --rendering-method forward_plus --rendering-driver vulkan --path <client> --quit-after 30' | grep "Vulkan API"
+# want: Vulkan API 1.4.305 - Forward+ - Using Vulkan Device #0: AMD - AMD Radeon RX 7600 (RADV NAVI33)
+```
+
+**`llvmpipe` in that banner means the run is on the CPU.** `qa_shot.sh` warns about it, and
+`perf_gate.sh` fails the run.
+
 ## Services on the box
 
 `vncserver` (`ghidra`'s desktop on `:1`, port 5901), `novnc` (the same desktop in a browser on port

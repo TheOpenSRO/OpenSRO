@@ -26,13 +26,14 @@ fail=0
 bad() { echo "FAIL $*"; fail=1; }
 
 case "$kind" in
-  windows) top=srrevamp-windows; exe=srrevamp.exe; lib=srrevamp_native.dll ;;
-  linux) top=srrevamp-linux; exe=srrevamp.x86_64; lib=libsrrevamp_native.so ;;
+  windows) top=srrevamp-windows; exe=srrevamp.exe; lib=srrevamp_native.dll; launcher=srrevamp-compatibility.bat ;;
+  linux) top=srrevamp-linux; exe=srrevamp.x86_64; lib=libsrrevamp_native.so; launcher=srrevamp-compatibility.sh ;;
   *) echo "usage: $0 <zip> windows|linux [--run]" >&2; exit 2 ;;
 esac
 
 listing=$(unzip -Z1 "$zip")
-for f in "$exe" srrevamp.pck "$lib" THIRD_PARTY_NOTICES.txt; do
+# The Compatibility launcher (round 693): the way in for a machine without Vulkan.
+for f in "$exe" srrevamp.pck "$lib" THIRD_PARTY_NOTICES.txt "$launcher"; do
   grep -qx "$top/$f" <<< "$listing" || bad "$zip has no $top/$f"
 done
 echo "$zip: $(grep -c . <<< "$listing") entries"

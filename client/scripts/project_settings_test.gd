@@ -52,8 +52,10 @@ func _initialize() -> void:
 	# get_setting_with_override (core/config/project_settings.h, 4.2.2).
 	# Godot 4.2 gives a script no call for the method actually running.
 	var method: Variant = ProjectSettings.get_setting_with_override("rendering/renderer/rendering_method")
-	_check(method == "gl_compatibility", "the engine starts the Compatibility renderer on this platform (got %s)" % var_to_str(method))
-	_setting_is("rendering/renderer/rendering_method", "gl_compatibility")
+	# Forward+ from round 693 (the user's decision, 2026-10-02); the
+	# Compatibility renderer from round 581 to 692.
+	_check(method == "forward_plus", "the engine starts the Forward+ renderer on this platform (got %s)" % var_to_str(method))
+	_setting_is("rendering/renderer/rendering_method", "forward_plus")
 	_setting_is("rendering/renderer/rendering_method.mobile", "gl_compatibility")
 
 	_setting_is("debug/file_logging/enable_file_logging", true)
