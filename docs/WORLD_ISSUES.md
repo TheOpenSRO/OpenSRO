@@ -7482,6 +7482,199 @@ check` 510 scripts ALL LOAD (a first run failed on `scripts/net/character_test.g
 deleted that the lane's box directory still held -- the sync never removes; deleted there, not a
 tree defect); `remote_godot.sh tests` 200 suites, 0 failing.
 
+## Six-hundred-and-eighty-fourth round: the account's characters stand on the Constantinople quay in their own bodies, armour and weapons; hovering names one, clicking flies to it, and Create flies to the table where the horse and the lion pick the race -- retail's CPSCharacterSelect, number for number
+
+The user (2026-10-02): "I'd like for all of those features I requested before that matches the
+original game as much as possible", and today: "the new character selection/creation isn't ready
+yet? thought it was". This is charselect.md's lane A (A1-A3): the select screen and the race
+select, which retail runs as one process. Customize is round 685's (lane B), reached through a
+handoff this round defines. Labels: READ (sro_client.exe's dump and asm on the box, constants read
+from the exe's bytes), MEASURED, INFERRED, OURS, OPEN.
+
+### 1. What was READ (new this round; charselect.md section 3, "Round 684's reading")
+
+- **The race index is 0 for Europe, 1 for China** (`DAT_00ec2d64` follows OnCreate's load order:
+  the Europe idol, the China idol, then the lizard; index 0 flies to (168.5, -34.9, 639.1), the
+  floats at 0xdd7cfc). Customize gets `CharCatalog`'s race instead (the handoff, section 4).
+- **Cancel 17 is 0x85c7e0**, missing from the decompile's function list (found by its
+  `mov [esi+0xe4], 0xb` at 0x85c9f5): the race keys reversed over 5.0 s (0xe1b86c), the titles
+  swapped back over 5.0 s. **Back (13) is 0x85b560**: the two list keys reversed over 2.0 s under a
+  0.5 s black fade. **Cancel 16 is `FUN_0085c1d0`**: from the camera's pose to the list's last key
+  over 2.0 s.
+- **A click on nothing does nothing** (vslot_017 calls the idol handler only while an idol is
+  hovered): "Out of service area." is for an index other than 0/1, which two idols never give. This
+  corrects section 3's "Anything but an idol".
+- **The models fade in from nothing over 1.0 s on every list** (`FUN_0085f840` zeroes the alpha,
+  `FUN_0085def0` sets a 1.0 s fade to 0xff or 0xcc); after a delete or restore the whole list fades
+  in again, and **the same slot index** -- not the same name -- is re-selected where the camera is,
+  sitting down (0xd, then 0xe) or standing up (0xf, then 0).
+- **Ties in the sort**: `FUN_00859e70` is a multimap insert (an equal key goes right) and the walk is
+  backwards, so among equal level and EXP the later record comes first.
+- **Picking** is a ray against each model's own bounding box (`FUN_00a5b2c0` -> `FUN_00a5b000`), the
+  first hit in page order winning. **The name label** fades at 0.5 s per whole fade, font 4, at the
+  slot + height factor x 20 (x 19 for vslot 0x34).
+- **Every window's place** in screen pixels around the scaled bands (OnCreate 0x85ee33..0x85f04c),
+  the idol panels' anchor (the projection of the idol's bounding-box centre, case 7), the page arrows
+  (case 0), the delete refusals' four `UIO_MSG_CHAR_DEL_WANNING_CONFIRM_*` keys, the EXP cap 99.99,
+  and no version line (CPSTitle's own window).
+
+### 2. What changed
+
+- `client/scripts/CharacterSelect.gd`, rewritten: the 2D list is gone. The states are retail's
+  (+0xe4's numbers); every window is the layout's (`pscharacterselect.txt`: Select, Info, Remain,
+  Warning, China, Europe sections) with the archive's art and words. Kept: LobbyNet through NetClient
+  (list, delete, restore, Start), `SRREVAMP_QA_FAKECHARS` (now `=<n>`, real catalogue bodies and
+  items, one pending deletion), `SRREVAMP_QA_RECONNECT_VIA_LOGIN`.
+- `client/scripts/frontend/charselect_stage.gd` (new, `CharSelectStage`): the harbour 105/81 through
+  `FrontEndBackdrop` (radius 1, OURS: every viewpoint lies in 105/81), the characters through
+  `CharacterAppearance` with the list's items and avatars, the box, both idols and the lizard (clip 1
+  on arrival, MEASURED `interface_lizard_move`), the models' fades
+  (`GeometryInstance3D.transparency`), poses and picking. Everything hangs under one node at the
+  region's corner with scale.z = -1 and `rotation.y = -yaw` (READ: retail turns the characters and
+  the props with the one setter, `FUN_00a5a8c0`; the world's object rule, round 506).
+- `client/scripts/frontend/charselect_math.gd` (new, `CharSelectMath`): every number above as pure
+  functions -- placement, order, camera keys and poses, fades, the info panel, the countdown, the
+  window placement, and the countdown's PML as BBCode.
+- `client/scripts/frontend/charselect_handoff.gd` (new, `CharSelectHandoff`): section 4.
+- `FrontEndFrame`: a frame can be built from another layout's section with its own role map
+  (`SELECT_ROLES`: bands 1/2, title 3, no covers or logos); the title's behaviour is unchanged.
+  A frame with no logo window draws no logo, the operator's included (its branding is the band art).
+- `Login.gd`: hands the title's hour and the resolved theme to select (READ: no front-end screen
+  picks its own hour). `LevelDataReader.parse_exp`: leveldata column 1, the level's EXP (READ, the
+  record's +8).
+- Music: none touched (READ: select pushes none; the title's track carries on, INFERRED).
+
+**OURS, disclosed:** the 3x3 region window; the screen stays black until those 9 cells are built
+(retail loads in OnCreate, so nothing waits there), then window 21's READ 0x80 -> 0 fade; the
+models are assembled at once but fade only then; the countdown's 328 px PML line is drawn 160 px
+wider, centred (this client's face is wider than retail's 9 pt); a CIFTextBox's line gap is -3 px
+so the archive's 7-line confirm fits its 90 px; a window fading out stops taking clicks at once;
+the name label is white and centred (colour and alignment not read); with no Map.pk2 the names
+stand in a row over the 2D still and are clicked there.
+
+**MEASURED on the way:** World3D's spring arm moves the title-mode camera on every physics tick
+((-904.2, -12.0, 270.4) became (-900, 29.5, 266.6)); the frame drawn is right because the pose is
+set again in `_process`, but a projection made between the two was 550 px off. `CharSelectStage.
+camera()` puts the pose back before any projection. The title (round 678) projects nothing and is
+not affected.
+
+### 3. The handoff (charselect.md section 7, "Lane A <-> lane B handoff")
+
+Static `CharSelectHandoff.race` (`CharCatalog.RACE_CHINA` 0 / `RACE_EUROPE` 1, -1 none),
+`day_phase`, `theme`, `came_from`. Select emits `race_chosen(race)`, flies and fades (READ 1.0 s),
+then `CharSelectHandoff.go_create(tree, race)` -> `CharacterCreate.tscn`. Create reads the race and
+leaves with `back_to_select(tree, created)` (`came_from` 0 or 10, READ). Nothing else is shared.
+
+### 4. Tests
+
+`client/scripts/frontend/charselect_test.gd` (synthetic records): placement k/5 and k/(r+1), pages,
+the sort with ties, list -> scene mapping (record, place, page, idle, opacity), the delete-state
+display (windows, countdown text, gauge, minutes), the camera keys and the click pose, the label
+height and fade, window placement, the PML, EXP and leveldata column 1, idol picking emitting the
+race and opening CharacterCreate.tscn, and the Start flow (0x7001 with the selected name; a refusal
+shows the archive's words and gives Start back; OK enters the world). **NEGATIVE:** the same file
+on the base (67937a5) does not parse: `Identifier "CharSelectMath" not declared` and 29 more
+`SCRIPT ERROR` lines.
+
+### 5. The end-to-end, real X input (box, Xvfb :684, xdotool, 2026-10-02)
+
+Against `server -in-memory -chargen-csv` built from this branch's base, accounts made over the
+lobby by a throwaway tool (0, 1 and 4 characters, one of them deleted):
+- **0 characters:** the quay, Create and Cancel only. Cancel -> Back (black fade, dolly) -> the
+  title again.
+- **1 character:** at the dock's midpoint, with the shield the server adds. Hover names it; a
+  click flies 2.0 s to it and opens the panel; Cancel 16 flies back.
+- **4 characters:** in slot order Qaspear, Qaknight, Qaeuro, Qachina (all level 1, EXP 0: the later
+  first, READ). Create is refused with the archive's "A maximum of 4 characters ..." line. The
+  pending one sits at 0xcc; selected, it shows Restore, the countdown ("6days 23hours 57minuites",
+  the archive's own spelling) and DEL_WAITING; Restore -> confirm -> stands up; Delete -> confirm ->
+  sits down; Start on another enters the world (the loading screen, then `Console: ready`).
+  **MEASURED caveat:** the in-memory store lists an account's characters in Go map order
+  (`memstore.go` ranges over `byID`; the SQL store has `ORDER BY id`), so equal-level characters
+  swap slots between lists, and the READ re-select by slot index then lands on another character
+  after a restore. Retail's order comes from its procedure; with Postgres ours is stable. Not
+  changed here (server, lane S).
+- **5 and 6 characters** (the server refuses a fifth, READ 0x405, so with `SRREVAMP_QA_FAKECHARS`):
+  page 1 of 4 at k/5, the arrows and "[ 1 / 2 ]"; page 2 with one at the midpoint (two at thirds).
+- **Race select:** the fly, the lizard walking (clip 1), the Europe and China panels with the
+  archive's tooltips on hover, Cancel 17 flying back, and an idol click: `race_chosen`, the 1.0 s
+  fly and fade, then CharacterCreate.tscn.
+
+Found and fixed on the way: a faded-out confirm kept taking clicks (the character behind it could
+not be picked again); a page's fifth character showed on page 1 (the fade overrode the page's
+visibility); the labels' projection (above).
+
+### 6. Measurements (box, RX 7600, 1280x720)
+
+| What | Number |
+|---|---|
+| Select usable after the scene starts (9 cells built), first visit in a process | 6.2-6.8 s (fake list), 4.9-5.3 s after login (MEASURED) |
+| The same, later visits in the same process | 4.6-4.7 s |
+| of which: catalogue / race props / 4 bodies' first build / the same rebuilt | 0.26-0.34 s / 0.10-0.14 s / 1.23 s / 7 ms |
+| RSS, select after login (real) / in the world after Start | 1.60 GB / 2.46 GB |
+| RSS over 7 visits of select (reload loop), default allocator | 0.94 -> 1.71 GB |
+| The same with `MALLOC_ARENA_MAX=2` | 0.76 -> 0.81 GB |
+| Engine counts per visit | nodes 6484 and orphan nodes 1655 every visit; objects +15..17, static +1.3..1.5 MB |
+| The same with no 3D (no Map.pk2) | nodes 231 every visit; objects +5, static +1.3 MB |
+
+So the backdrop and the characters are freed with the screen (nodes and orphans flat); the RSS
+growth is glibc's per-thread arenas (gone under `MALLOC_ARENA_MAX=2`, round 678's finding); a small
+retention of ~1.3 MB a visit happens without any 3D too and was not traced (OPEN; a probe of
+Pk2Reader.open, the layout parse, the DDJ loads, leveldata, the text table, the theme, the client
+font and FrontEndFrame showed none of them growing). **Cold cache: not measured** -- the container
+cannot drop the page cache (`/proc/sys/vm/drop_caches` is read-only) and `dd iflag=nocache` left the
+times unchanged (6.6 s against 6.8 s), so both runs were warm (OPEN).
+
+**perf_gate not run:** no World3D, map, object, terrain or loading code changed; the screen uses the
+backdrop as round 678 built it.
+
+### 7. OPEN
+
+- The per-visit ~1.3 MB retention (above); the cold-cache time.
+- The name label's colour and alignment; what `<sml2>` does in a PML.
+- The list intro when re-entering from create with a previous id other than 0 or 10 (we always run
+  it).
+- ~~Europe women play China women's stand clips~~ -- the data, not a bug: the Europe bodies' own
+  `.bsr`s list only China stand and sit clips (MEASURED by the review), so 14888 playing
+  `chinawoman_merchant_standcity` is what the archive says.
+
+### Review (round 684's review: the full flow held under real input; one HIGH, four MEDIUM, three LOW -- fixed in follow-up commits)
+
+**HIGH, clicks on shown buttons were dropped.** Create and Back did nothing during the 2 s intro,
+the 2 s deselect fly and the 5 s fly back from the table; Cancel 16, Delete and Restore did nothing
+during the 2 s zoom. Retail's handlers check no state (0x85c4a0, 0x85b560; the thunks
+0x85de20/0x85de40 just jump; 0x85de50 checks only the count; 0x85c1d0 only closes the confirm in
+state 0xf). Now each takes the click in every state its button is shown in, and the new fly starts
+from where the camera is (OURS: retail adds its fixed keys, so an interrupted fly jumps to the first
+one; when nothing was running the two agree). A Delete during the zoom leaves the zoom flying and
+the confirm returns to it. Once the screen is leaving (Back's dolly, the idol fly, Start answered,
+a disconnect) every button is made not clickable (OURS). Real input on the box: Create in the intro,
+Cancel 17 in the race fly, Create in the fly back, Cancel 16 in the zoom, Back in the deselect fly,
+Delete in the zoom -- each taken (`client.log` states 7, 11, 7, 6, 13, 15).
+
+**MEDIUM.**
+- **The in-memory store listed in map order.** `MemStore.ListByAccount` now sorts by ID, the SQL
+  store's `ORDER BY id`; `TestListByAccountIsInCreationOrder` (NEGATIVE without the sort: "list 2:
+  slot 0 is id 4, want 1").
+- **The re-select kept the standing height.** READ 0x85b680: with +0x12f == 2 x, z and the angles
+  are the camera's, y is set again at LAB_0085c06b from the character's state; now
+  `CharSelectMath.reselect_pose`, flown 1.0 s -- the camera drops to a character that sat down.
+- **No Map.pk2: no way to create.** The races are now the two panels, side by side with the
+  archive's tooltips, and a click on one picks it (OURS).
+- **The ~1.3 MB a visit was `UiBuilder._button_fonts`:** every screen parsed the client face afresh
+  and `guard_button_font` pinned each one. `UiBuilder` now keeps one FontFile per archive and face
+  for the process (`_font_cache`), with the same flags (round 672's crispness tests pass). MEASURED
+  with the reload loop, 7 visits: no 3D, static 80.1 -> 82.4 MB, flat from the third visit (was
+  +1.3 MB every visit), objects flat (was +5); with the harbour, objects +12 and static +0.25 MB a
+  visit (were +15..17 and +1.3..1.5) -- the remainder is in the 3D backdrop's path, not traced
+  (OPEN). It also saves the TTF parse on Login, Create and World3D.
+
+**LOW.** A server disconnect on select now shows the archive's `UIIT_MSG_MSGBOX_NETOFF` and returns
+to the title after 2 s (INFERRED key, OURS delay); the idol pick keeps the LAST hit (READ, case 8
+does not break: China on an overlap); window 500's x is window 2's x + 0x1a; window 501 is
+deliberately not built (READ: shown only with `DAT_00eed9b8`, the unity server); the 1/3 s panel
+fade is labelled READ.
+
 ## Six-hundred-and-eighty-third round: one builder dresses any of the 52 bodies -- China and Europe, men and women -- at the Height and Volume picked, and the create screens' choices come from the player's own archive
 
 The user (2026-10-02): "Let's actually work on the character selection/creation part now. I'd like

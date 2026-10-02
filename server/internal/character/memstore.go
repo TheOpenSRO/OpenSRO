@@ -2,6 +2,7 @@ package character
 
 import (
 	"context"
+	"sort"
 	"sync"
 )
 
@@ -53,6 +54,12 @@ func (m *MemStore) ListByAccount(_ context.Context, accountID int64) ([]*Charact
 			out = append(out, &cp)
 		}
 	}
+	// In creation order, as the SQL store's ORDER BY id gives it (round
+	// 684's review): a Go map ranges in random order, and the select screen
+	// re-selects by slot index after a delete or restore (READ 0x85f840), so
+	// equal-level characters swapping slots put the camera and the next
+	// Delete on another character.
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
 
