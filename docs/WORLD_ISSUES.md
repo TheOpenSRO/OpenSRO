@@ -7094,6 +7094,262 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-eightieth round: the title preloads its whole scene before the camera moves -- no pop-in during the intro's fly
+
+The user (2026-10-01, about v0.1.469's 3D login): "Another problem to fix is pop-in. As the camera
+moves some buildings pop-in. Let's try to preload the scene entirely so that doesn't happen."
+
+Labels: READ (the decompiled client `/var/tmp/decomp_client`, the exe's own vtable at 0xe16184),
+MEASURED (the render box, GL Compatibility on the RX 7600, 1280x720, real time, the archives in
+`/opt/sro-files/client`), INFERRED, OURS, OPEN.
+
+### 1. The pop-in, measured first
+
+`SRREVAMP_QA_TITLE_POPS=1` (new, `client/scripts/frontend/title_pop_probe.gd`, QA only) watches the
+title every frame and prints a `QA POP` line for anything that becomes drawn while its world AABB is
+inside the camera's frustum during the fly, by source:
+
+- `cell` -- a region cell the loader committed (terrain, water, placed objects at once): the cell's
+  terrain in view, and how many of its placements are; with the projected AABB's share of the
+  screen (an upper bound: occlusion and fog are not considered, so it over-counts);
+- `anim` -- an animated map object switched on by MapAnimation's 2020-unit range rule (round 645);
+- `popout` -- a cell unloaded while its terrain was in view;
+- Godot's own -- every GeometryInstance3D with a visibility range, counted once at the fly's start
+  (this client builds no mesh LODs: ArrayMesh without `generate_lods`).
+
+Before (dev 75fa1fa plus the probe, 813bb30; the title hour pinned to 14:00):
+
+| Intro | Cells built during the fly | Cells popping in view (placements in view) | Animated objects switched on in view | Cells unloaded in view | **In-view pops** | Largest on-screen share |
+|---|---|---|---|---|---|---|
+| roc (the default) | 23 | 16 (884) | 0 | 0 | **16** | 1.0 (the cells around the opening view, t=0.14 s) |
+| constantinople | 27 | 12 (1841) | 16 | 6 | **34** | 0.195 |
+| china_wharf | 8 | 4 (7) | 25 | 0 | **29** | 1.0 (t=0.28 s) |
+| jupiter_login | 11 | 4 (142) | 53 | 0 | **57** | 0.236 |
+
+Godot's visibility ranges: 0 of 250 / 8 / 198 / 666 GeometryInstance3D at the fly's start carry one
+-- not a source. Where the pops came from:
+
+- **Streaming**: round 678 started the fly once the cell under the camera's target was built, so the
+  other eight of the first window popped in during the first second (roc 100/70 and 99/71 at t=0.14
+  s, each filling the screen's bounds), and every region boundary the target crossed streamed a new
+  row in, in view (roc t=4.9, 5.3, 17.1, 24.9, 32.3 s: three cells and ~200 placements each time).
+  Constantinople also unloaded six cells in view (t=43.0 and 47.0 s): the window's unload margin.
+- **MapAnimation's range rule**: an animated object (trees, reeds, banners) out of 2020 units is
+  hidden and switched on as the camera nears it; and a newly committed one is hidden until its
+  sector is first visited. jupiter_login's 53 and china_wharf's 25 are these.
+
+### 2. What retail does (READ)
+
+`FUN_00840670`, called from `Client_LoadAllRefData` (0x844cd0) -- the client's startup load, before
+`CPSTitle` exists -- parses the intro (`FUN_0056cb10`) and hands every region of `FUN_0056c870`'s
+preload set to `CGWorld::FUN_00aa2190(region, 1)`. That loads the region through the region manager
+(`DAT_0111a02c` = `CRegionManagerBody`, vtable 0xe16184 read out of the exe, slot 5, flag 1) and,
+with its second argument set and the region's 0x8000 (dungeon) bit clear, its eight neighbours
+**with flag 0** (two nested -1..1 loops on the high and low byte, diagonals included; corrected by
+the review below -- the first text said all eight unconditionally and at the same flag), listing
+each one the manager loaded (`FUN_00aa2090`), then runs slot 3 (two passes over the regions). So
+retail's title regions, for an outdoor intro, are each keyframe region's 3x3, loaded at
+startup: its camera never waits on a region, and a click cannot come before the load, because the
+title is not up yet. For roc that is 24 regions and they do contain the 100/70 .. 96/70 the
+camera's target crosses -- round 678's protocol note ("this set never names") was about
+`FUN_0056c870` alone. Whether slot 5 builds a region at once or queues it is OPEN (no thread
+hand-off seen in these functions: INFERRED synchronous). `docs/protocol/intro_script.md`,
+"Preloading", has the addresses.
+
+### 3. What changed
+
+- **`TitleCellPlan`** (new, `client/scripts/frontend/title_cell_plan.gd`, OURS): the path sampled
+  every 0.05 s and, at each sample, the 3x3 region window around the camera's target -- every cell
+  round 678's streaming would have built at some moment of the fly -- ordered by when the fly
+  first needs it. The camera's fastest motion in the archive's intros is 341 units/s and 0.53 rad/s
+  (MEASURED every 0.01 s), so a sample is at most 17 units and 0.03 rad from the next. Computed on
+  a WorkerThreadPool task while the world's scene compiles (12-16 ms). `cells()` adds every cell
+  the view frustum meets within a draw distance (planes built by hand -- Godot 4.2 does not expose
+  `Projection`'s planes -- and checked against `Camera3D.get_frustum()` at aspect 2.3 by the suite);
+  measured below and not the default.
+  - Plan sizes (MEASURED, `client/tools/title_plan_census.gd`; cells with a `.m` in brackets): roc
+    24 (24), constantinople 28 (28), china_wharf 12 (10), jupiter_login 12 (12), rm 12 (9),
+    ruby_baghdad 12 (12). Retail's 3x3-per-keyframe-region set: 24, 27, 12, 15, 12, 12. With the
+    frustum at 2500 units: 54 (45), 67 (67), 40 (10), 47 (30).
+- **`World3D.title_begin(..., plan)`**: a planned backdrop queues exactly the plan and then neither
+  streams nor unloads (`_title_planned`: `_maybe_stream_regions` is not called, and
+  `_outside_stream_window` never drops a planned cell). Cells still prepare on the threaded
+  pipeline, one commit a frame, as before.
+- **`FrontEndBackdrop.scene_ready`**: every queued cell built. **`TitleIntro`** starts the fly on it
+  instead of on the first view; the still and the black covers stay until then. A click or key
+  during the load brings the login in at once (unchanged) and the load continues behind it; the
+  camera starts when the scene is whole. `SCENE_TIMEOUT_S` (60 s, OURS): with the first view in, a
+  scene not finished by then is flown anyway, the rest building during the fly (and logged). A
+  scene held by Connect (`hold_backdrop`) before it is whole is not flown: the still stays.
+- **`MapAnimation.Driver.keep_drawn`** (OURS, set by `_title_ready` only): out of the 2020-unit
+  range an animated object stays drawn with its clock paused, instead of hidden; a new one is drawn
+  from its registration. Play keeps the retail rule (retail fades the object in and out, round 645).
+
+### 4. Cost
+
+MEASURED with `client/tools/measure_login_ready.tscn` (now also printing each frame over 100 ms with
+its time, the longest frame and the count over 100 ms AFTER the login is usable, and the peak VmRSS
+and video memory sampled every 500 ms), 1280x720, real time, 25 s a run, the hour pinned; base
+813bb30 (dev plus the probe) against head 436a012, interleaved, two click runs each and one
+no-click run each, after one discarded warm-up per build. "Usable" is the ID field fully faded in;
+the column is that minus the click (the click lands on the first frame).
+
+| Intro | Fly starts, base -> head | Login usable after an immediate click, base -> head | Longest frame after usable, base -> head | Frames > 100 ms after usable | Peak VmRSS, base -> head | Peak video memory |
+|---|---|---|---|---|---|---|
+| roc (24 cells) | 1.46-1.51 s -> **4.26-4.50 s** | 2.10, 2.12 s -> 2.14, 2.11 s | 54, 54 -> 48, 55 ms | 0, 0 -> 0, 0 | 990-1010 -> **1136-1172 MB** | 90 -> 124 MB |
+| constantinople (28) | 1.62-1.64 s -> **6.78-8.85 s** | 2.15, 2.15 s -> 2.70*, 2.11 s | 358, 369 -> 410, 364 ms | 3, 3 -> **10, 5** | 1059-1116 -> **1466-1473 MB** | 107 -> 157 MB |
+| china_wharf (12) | 2.10-2.13 s -> 3.26-3.35 s | 2.13, 2.13 s -> 2.15, 2.10 s | 358, 352 -> 443, 439 ms | 3, 3 -> 2, 2 | 871-915 -> 890-912 MB | 76 -> 76 MB |
+| jupiter_login (12) | 2.76-2.92 s -> 3.53-3.53 s | 2.14, 2.14 s -> 2.12, 2.09 s | 500, 446 -> 440, 438 ms | 2, 1 -> 1, 2 | 955-970 -> 930-978 MB | 85 -> 85 MB |
+
+\* that run's click landed 200 ms late (its first frame came at 1051 ms); usable - click is 2.70 s.
+
+- **The login is as fast as before**: usable 2.09-2.15 s after the click in both builds. Those 2 s
+  are not this round's: in BOTH builds two ~1 s frames come first -- the screen's build (ending at
+  ~1.85 s) and the world scene's instancing and `title_begin` (ending at ~2.85 s) -- because the
+  box's native readers were refused (the only library on the box is API 4, this client wants API 5:
+  `NativeAssets: native readers OFF (library REFUSED ...)`), so Media.pk2 and Map.pk2's directories
+  are decoded in GDScript; and the server theme query waits ~690 ms for a connection that fails
+  (no server). Round 678 measured 234 ms usable with the native readers and a reachable theme
+  server. Not re-measured with a current native build (OPEN).
+- **The fly starts later**: by the time the whole scene takes to build, 0.6-0.8 s (jupiter_login) to
+  5.1-7.2 s (constantinople) more, the 2D still and the covers up meanwhile -- retail spends that
+  time in its startup load, before the title exists.
+- **Memory**: the whole scene resident at once: +150 MB (roc) and +350-410 MB (constantinople) of
+  VmRSS and +34 / +50 MB of video memory at the peak; the two 12-cell intros are unchanged (their
+  window held ~12 cells anyway). Base's peak is within the first 25 s; it keeps streaming after.
+- **Hitches**: the same cells commit in both builds -- base during the fly (visible as hitches in
+  the camera's motion), head under the still. Constantinople's dense cells cost 100-340 ms a
+  commit (e.g. 105/81 342 ms, 105/78 166 ms), so a player who clicked at once and starts typing
+  sees 5-10 such frames in the first ~9 s instead of 3; the longest is unchanged (~360-410 ms, one
+  cell's commit). The fly itself no longer hitches on a commit.
+- **The frustum variant** (`SRREVAMP_QA_TITLE_DRAW=2500`, more of the horizon): roc 54 cells, fly at
+  6.41 s, 1442 MB, 197 MB video; constantinople 67 cells, fly at **10.73 s, 2042 MB, 301 MB video**;
+  china_wharf 40 cells, 3.83 s, 911 MB; jupiter_login 47 cells, 5.36 s, 1279 MB, 149 MB. Also 0
+  pops on all four (below). Too heavy for the user's low-end testing: not the default.
+- **A cap, proposed (not built)**: the largest plan in the archive is 28 cells; if a custom intro
+  plans far more, a cap such as "the first N cells the fly needs, then stream the rest" would bound
+  the wait and the memory -- the user's call. `SCENE_TIMEOUT_S` (60 s) already bounds the wait.
+
+### 5. After
+
+Same probe, same runs, head 436a012 (the window plan):
+
+| Intro | Cells planned and built before the fly | Cells built during the fly | In-view pops (cells / animated / unloaded) |
+|---|---|---|---|
+| roc | 24 | 0 | **0** (0 / 0 / 0) |
+| constantinople | 28 | 0 | **0** (0 / 0 / 0) |
+| china_wharf | 12 | 0 | **0** (0 / 0 / 0) |
+| jupiter_login | 12 | 0 | **0** (0 / 0 / 0) |
+
+With the frustum plan at 2500 units: 0 on all four as well (54 / 67 / 40 / 47 cells). Every cell's
+build is logged `QA POP prefly ... (built under the cover: not a pop)`, and the visibility-range
+count stays 0 (of 610-7011 GeometryInstance3D at the fly's start). What the probe does not see:
+occlusion (it over-counts, so 0 stands), the water's reflection pass (its block culling only
+changes what is mirrored), and a hand-checked picture -- none was taken; the claim is the
+measurement.
+
+### 6. Tests, and their negative
+
+- `client/scripts/frontend/title_cell_plan_test.gd` (synthetic keyframes): `cell_of` is the grid's
+  `RegionGridState.cell_at`; the window plan holds the 3x3 window of every sample at 0.01 s (five
+  times the plan's density); no cell twice; the first cell is the one under the opening target; the
+  frustum plan holds every cell Godot's own `Camera3D.get_frustum()` meets (a 2300x1000 SubViewport,
+  far 2500) at 0.01 s (13,221 cell views, 0 missing); `TitleIntro`: the first view alone does NOT
+  start the fly, `scene_ready` does, a held scene is never flown, `SCENE_TIMEOUT_S` flies anyway.
+- `client/scripts/world/map_animation_test.gd` gains the `keep_drawn` checks (off by default; drawn
+  and paused out of range; runs in range).
+- Against dev 75fa1fa (a detached worktree with the two suites copied in):
+  ```
+  title_cell_plan_test: SCRIPT ERROR: Parse Error: Identifier "TitleCellPlan" not declared in the current scope.
+  map_animation_test:   FAIL r680: the driver has keep_drawn (the title's rule)
+                        FAIL r680: keep_drawn is off unless set (play keeps retail's rule)
+                        FAILURES: 2
+  ```
+- `remote_godot.sh check` ALL LOAD (486 scripts); `remote_godot.sh tests` 193 suites, 0 failing.
+
+### 7. Perf gate
+
+`client/tools/perf_gate.sh --base 75fa1fa --head 436a012 --sites jangan` (World3D.gd and
+map_animation.gd touched; in play `keep_drawn` is off and `_title_planned` false), 3 interleaved
+runs, 1280x720, medians; both builds with the native readers off (as above):
+```
+jangan  frame ms   base 10.09  head 10.37  (+0.3)  SAME
+jangan  entry ms   base 9658  head 9563  (-95.0)  SAME
+jangan  freeze ms  base 3402  head 3392  (-10.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+```
+
+### Tools
+
+`client/scripts/frontend/title_pop_probe.gd` (`SRREVAMP_QA_TITLE_POPS=1`, `=quit` ends the run 2 s
+after the path), `client/tools/title_plan_census.gd` (plan sizes, retail's set, the camera's
+speeds; `-- --media=... --map=...`), `measure_login_ready.gd`'s new lines. The box harness was
+`/var/tmp/preload680/{pops,measure,runall}.sh`.
+
+### 8. OPEN
+
+- The cost of a commit (100-340 ms for a dense Constantinople cell) is the loader's, in play as at
+  the title; spreading one cell's object placement over frames would remove the typing hitches
+  during the preload.
+- The login's ~2 s to usable on the box is the stale native library and the unreachable theme
+  server, in base and head alike; a run with a current API-5 native build is not done.
+- Retail fades a map animation in and out at its range; the title now keeps them drawn (OURS).
+- Whether retail's region manager builds a region at once or queues it (`vslot_005`, INFERRED
+  synchronous).
+- A plan cap for a custom intro with a very long path (section 4), the user's call.
+
+### Review (round 680's review: no HIGH, one MEDIUM, three LOW -- fixed in a follow-up commit)
+
+The review confirmed 0 pops on the archive's intros (this probe, base against head, and an
+independent frame-diff render) and, merged with round 679 and the native readers ON, measured roc's
+fly from 3.2 s, constantinople's from 4.1 s, the login usable at 0.75 s (as base), and no keystroke
+lost while typing during the preload.
+
+**M1, a custom intro's plan was unbounded and never unloaded.** Inside IntroScript's bounds a
+straight line planned 198 cells and a sweep 5,412 (7.9 s on the worker; the review's MEASURED), at
+~15-20 MB a cell, and a planned backdrop turns unloading off; `_exit_tree` waited the plan out.
+Fixed:
+- `TitleCellPlan.PLAN_MAX_CELLS` = 36 (OURS; the archive's largest plan is 28, retail's largest set
+  27). The walk stops in the sample that passes it; `TitleIntro` then drops the plan and the
+  backdrop streams round 678's window, unloading as it goes, with a log line
+  (`the scene plan passed 36 cells ... not preloaded`).
+- The walk is O(samples + keys): `IntroCameraPath.sample_forward` resumes the key search where the
+  last sample left it (the same pose as `sample`, exactly -- the suite compares them). A 1024-key,
+  600 s path now plans in 127 ms on the box; roc 13.9 -> 9.6 ms, constantinople 15.8 -> 12.5 ms (one run each).
+- The plan runs in a `TitleIntro.PlanJob` (its own path copy and result, nothing of the node
+  touched on the worker) with a `cancel` flag checked every sample; leaving the screen cancels it
+  (`_cancel_plan`, 1 ms in the suite against an uncapped 1024-key sweep) instead of waiting.
+
+**L1, Connect during PRELOADING** still began the backdrop and queued the plan under
+"Connecting...". `_begin_backdrop` is skipped once `_held` is set, and the plan is cancelled.
+
+**L2, a wrong comment**: World3D's `_title_radius` said "the view is fogged at 2500 units". The far
+plane is 7680 and the exponential fog leaves ~88-90 % showing at 2000-2700 units; the review counted
+23-84 unplanned terrain cells entering the frustum per intro -- the built world's edge, visible in
+the distance, from before this round. The comment says so now, and docs/TODO.md "The 3D title
+screen" records it as OPEN with `title_plan_census.gd`'s counts (cells with terrain the frustum
+meets within the far plane against those planned: roc 49 vs 24, constantinople 114 vs 28,
+china_wharf 28 vs 10, jupiter_login 43 vs 12). The plan is not widened (section 4's frustum costs).
+
+**L3, docs**: `CGWorld::FUN_00aa2190` loads the neighbours with flag 0 and only when the region's
+0x8000 (dungeon) bit is clear -- section 2, `intro_script.md` and `TitleCellPlan`'s header corrected
+(what flag 0 changes is OPEN). The probe's gap is now in its header: it scans only `RealTerrain*`
+children, so the placements of a `.o` cell with no `.m` (their container added to the world
+directly) are not seen.
+
+**Tests.** `title_cell_plan_test.gd` adds: `sample_forward` equals `sample` exactly (forward, and
+after a step back); a 40-region line plans 129 cells and stops at 39 with the cap; a 1024-key 600 s
+path plans in under 5 s (127 ms); a plan past the cap leaves `TitleIntro.plan` empty and
+`_plan_over_cap` set; leaving during an uncapped sweep returns in 1 ms; Connect during PRELOADING
+begins no backdrop. Against 9038feb (the round before this fix, the suite copied in):
+```
+SCRIPT ERROR: Parse Error: Cannot find member "PLAN_MAX_CELLS" in base "TitleCellPlan".   (x6)
+SCRIPT ERROR: Parse Error: Too many arguments for "window_cells()" call. Expected at most 3 but received 4.
+SCRIPT ERROR: Parse Error: Cannot infer the type of "b" variable because the value doesn't have a set type.
+```
+After: the probe again counts 0 pops on roc (24 cells, fly at 4.2 s) and constantinople (28 cells,
+6.7 s) -- box, native readers off; `remote_godot.sh check` ALL LOAD; `tests` 193 suites, 0 failing.
+
 ## Six-hundred-and-seventy-ninth round: the logo sits clear above the login box at every screen size, the fields are centred with a `*` password, and a `setting/config.yaml` beside the game lists servers by name behind retail's LIST button, each with its Easy / Populated / Crowded / FULL / Check status
 
 The user (2026-10-01, on v0.1.469's 3D login): "the Silkroad Online logo about the login text seems

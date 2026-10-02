@@ -24,10 +24,14 @@ static var _world_script: GDScript = null
 ## Emitted once, when the region under the camera's target has been built
 ## (or the whole first window has, whichever is first).
 signal first_view_ready
+## Emitted once, when every cell queued so far is built -- for a planned
+## backdrop (begin's `plan`, round 680) the whole scene.
+signal scene_ready
 
 var world: Node3D = null
 var _frame_region := Vector2i(-1, -1)
 var _ready_sent := false
+var _scene_sent := false
 var _last_focus := Vector3.ZERO
 var _started_ms := 0
 
@@ -55,7 +59,10 @@ static func world_loaded() -> bool:
 
 ## Builds the world and starts loading. False (and nothing left behind) when
 ## the archives cannot back a backdrop -- the caller keeps its 2D still.
-func begin(frame_region: Vector2i, radius: int, day_phase: float) -> bool:
+## `plan` (round 680, TitleCellPlan): every cell of the scene, built before
+## anything moves and kept; empty for round 678's window that follows the
+## focus.
+func begin(frame_region: Vector2i, radius: int, day_phase: float, plan: Array = []) -> bool:
 	_started_ms = Time.get_ticks_msec()
 	var packed: PackedScene = null
 	if ResourceLoader.load_threaded_get_status(WORLD_SCENE) != ResourceLoader.THREAD_LOAD_INVALID_RESOURCE:
@@ -69,7 +76,7 @@ func begin(frame_region: Vector2i, radius: int, day_phase: float) -> bool:
 	world.set("title_mode", true)
 	world.name = "FrontEndWorld"
 	add_child(world)
-	if not world.call("title_begin", frame_region, radius, day_phase):
+	if not world.call("title_begin", frame_region, radius, day_phase, plan):
 		world.queue_free()
 		world = null
 		return false
@@ -103,13 +110,18 @@ func cells_pending() -> int:
 	return world.call("title_cells_pending") if world != null else 0
 
 func _process(_delta: float) -> void:
-	if world == null or _ready_sent:
+	if world == null or (_ready_sent and _scene_sent):
 		return
-	if cells_loaded() > 0 and (_focus_cell_loaded() or cells_pending() == 0):
+	if not _ready_sent and cells_loaded() > 0 and (_focus_cell_loaded() or cells_pending() == 0):
 		_ready_sent = true
 		print("FrontEndBackdrop: first view ready in %d ms (%d cell(s) built, %d pending)" % [
 			Time.get_ticks_msec() - _started_ms, cells_loaded(), cells_pending()])
 		first_view_ready.emit()
+	if _ready_sent and not _scene_sent and cells_pending() == 0:
+		_scene_sent = true
+		print("FrontEndBackdrop: scene ready in %d ms (%d cell(s) built)" % [
+			Time.get_ticks_msec() - _started_ms, cells_loaded()])
+		scene_ready.emit()
 
 func _focus_cell_loaded() -> bool:
 	var grid = world.get("_grid")

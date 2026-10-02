@@ -114,12 +114,31 @@ func advance(dt: float) -> Pose:
 	return sample(time)
 
 func sample(t: float) -> Pose:
+	return _pose_at(_locate(t))
+
+## The same pose as sample(t), for a caller that walks the path forward
+## (round 680's review, TitleCellPlan): the key search resumes where the last
+## call left it instead of starting at key 0, so a whole walk costs O(samples
+## + keys), not O(samples x keys). A t below the last one starts over.
+func sample_forward(t: float) -> Pose:
+	if t < _scan_t:
+		_scan_k = 0
+	_scan_t = t
+	var n := _times.size()
+	while _scan_k < n and not (t <= _times[_scan_k]):
+		_scan_k += 1
+	return _pose_at(_at_from(t, _scan_k))
+
+var _scan_k := 0
+var _scan_t := -INF
+
+func _pose_at(at: Array) -> Pose:
 	var pose := Pose.new()
-	pose.target = _sample_vec3(t)
-	pose.pitch = _sample_scalar(_pitch, t, true)
-	pose.yaw = _sample_scalar(_yaw, t, true)
-	pose.roll = _sample_scalar(_roll, t, true)
-	pose.distance = _sample_scalar(_dist, t, false)
+	pose.target = _sample_vec3(at)
+	pose.pitch = _sample_scalar(_pitch, at, true)
+	pose.yaw = _sample_scalar(_yaw, at, true)
+	pose.roll = _sample_scalar(_roll, at, true)
+	pose.distance = _sample_scalar(_dist, at, false)
 	return pose
 
 func _insert(t: float, pos: Vector3, pitch: float, yaw: float, roll: float, dist: float) -> void:
@@ -140,18 +159,24 @@ func _locate(t: float) -> Array:
 	var n := _times.size()
 	for k in range(n):
 		if t <= _times[k]:
-			if k == 0:
-				return [-1, 0.0]
-			var span := _times[k] - _times[k - 1]
-			var u := 0.0 if span <= SPAN_EPSILON else (t - _times[k - 1]) / span
-			return [k - 1, u]
+			return _at_from(t, k)
 	return [-2, 0.0]
 
-func _sample_vec3(t: float) -> Vector3:
+## _locate's answer once k -- the first key with t <= its time, or the key
+## count for none -- is known.
+func _at_from(t: float, k: int) -> Array:
+	if k >= _times.size():
+		return [-2, 0.0]
+	if k == 0:
+		return [-1, 0.0]
+	var span := _times[k] - _times[k - 1]
+	var u := 0.0 if span <= SPAN_EPSILON else (t - _times[k - 1]) / span
+	return [k - 1, u]
+
+func _sample_vec3(at: Array) -> Vector3:
 	var n := _pos.size()
 	if n == 0:
 		return Vector3.ZERO
-	var at := _locate(t)
 	var i: int = at[0]
 	if i == -1:
 		return _pos[0]
@@ -161,11 +186,10 @@ func _sample_vec3(t: float) -> Vector3:
 	var p3: Vector3 = _pos[i + 1] if i == n - 2 else _pos[i + 2]
 	return catmull_rom_vec3(p0, _pos[i], _pos[i + 1], p3, at[1])
 
-func _sample_scalar(keys: PackedFloat32Array, t: float, angle: bool) -> float:
+func _sample_scalar(keys: PackedFloat32Array, at: Array, angle: bool) -> float:
 	var n := keys.size()
 	if n == 0:
 		return 0.0
-	var at := _locate(t)
 	var i: int = at[0]
 	if i == -1:
 		return keys[0]

@@ -4556,6 +4556,8 @@ func _process_stream_queue() -> void:
 ## Whether a queued cell is now further from the player's cell than the
 ## unload margin -- the player left its window before it was built.
 func _outside_stream_window(cell: Dictionary, margin: int) -> bool:
+	if _title_planned:
+		return false # a planned title backdrop builds its whole plan (round 680)
 	return absi(int(cell["dx"]) - _last_stream_cell.x) > margin or absi(int(cell["dy"]) - _last_stream_cell.y) > margin
 
 ## Whether streamed cells prepare their terrain (round 565) and objects (round
@@ -20158,7 +20160,13 @@ func _qa_use_first_potion(slots: Array, _error: String) -> void:
 ## Set before add_child: this World3D is a front-end backdrop.
 var title_mode := false
 ## The region window around the focus, in regions (OURS: 1, a 3x3 window,
-## at the title -- the view is fogged at 2500 units, READ 0xec54b0).
+## at the title). It does not reach the camera's far plane (7680 units,
+## _apply_camera_far_plane) and the exponential fog (FOG_DENSITY 0.00005)
+## leaves ~88-90 % showing at 2000-2700 units, so the built world's edge can
+## show in the distance -- OPEN, docs/TODO.md "The 3D title screen". (Retail's
+## view distance, DAT_00ec54b0, is 2500, and its fog is linear, ending at the
+## environment's far-plane channel times that distance -- the FOG_DENSITY
+## comment.)
 var _title_radius := 1
 
 ## The backdrop's half of _ready: the water reflection and the sky, the camera
@@ -20178,6 +20186,11 @@ func _title_ready() -> void:
 	add_child(_water_reflection)
 	_try_add_real_sky()
 	_apply_camera_far_plane()
+	# Round 680: the swaying trees and the like stay drawn (their clocks
+	# paused) out of MapAnimation's 2020-unit range, instead of switching on
+	# in view as the camera nears them -- a pop the title's probe counted
+	# (OURS; retail fades them, MapAnimation's header).
+	_map_animations.keep_drawn = true
 
 ## Starts the backdrop's region window on region (hi, lo) -- `centre` is
 ## Vector2i(hi, lo), this project's "hi/lo" -- with that region as the frame
@@ -20187,7 +20200,13 @@ func _title_ready() -> void:
 ## every cell of the window, the centre included, queued for the threaded
 ## pipeline -- nothing is built on this frame. False, with a printed reason,
 ## when Map.pk2 or the centre's `.m` is missing.
-func title_begin(centre: Vector2i, radius: int, env_time: float) -> bool:
+##
+## `plan` (round 680): the whole scene instead of a window -- every cell, as
+## Vector2i(dx, dy) from the frame region, in the order to build them
+## (TitleCellPlan). A planned backdrop queues exactly those cells and then
+## neither streams nor unloads: what is built stays, so nothing appears or
+## goes while the camera flies (the user's "preload the scene entirely").
+func title_begin(centre: Vector2i, radius: int, env_time: float, plan: Array = []) -> bool:
 	_title_radius = maxi(radius, 0)
 	_env_time = env_time
 	var map_pk2 := _open_map_pk2_if_set()
@@ -20216,11 +20235,19 @@ func title_begin(centre: Vector2i, radius: int, env_time: float) -> bool:
 	_load_queue.clear()
 	_last_stream_cell = Vector2i.ZERO
 	var cells: Array = []
-	for dy in range(-_title_radius, _title_radius + 1):
-		for dx in range(-_title_radius, _title_radius + 1):
-			cells.append({"rx": centre.x + dx, "ry": centre.y + dy, "dx": dx, "dy": dy,
-				"key": "%d_%d" % [dx, dy], "dist": absi(dx) + absi(dy)})
-	cells.sort_custom(func(a, b): return a["dist"] < b["dist"])
+	_title_planned = not plan.is_empty()
+	if _title_planned:
+		for c in plan:
+			var at := c as Vector2i
+			cells.append({"rx": centre.x + at.x, "ry": centre.y + at.y, "dx": at.x, "dy": at.y,
+				"key": "%d_%d" % [at.x, at.y], "dist": absi(at.x) + absi(at.y)})
+		print("World3D: title backdrop planned -- %d cell(s) queued, no streaming while it flies" % cells.size())
+	else:
+		for dy in range(-_title_radius, _title_radius + 1):
+			for dx in range(-_title_radius, _title_radius + 1):
+				cells.append({"rx": centre.x + dx, "ry": centre.y + dy, "dx": dx, "dy": dy,
+					"key": "%d_%d" % [dx, dy], "dist": absi(dx) + absi(dy)})
+		cells.sort_custom(func(a, b): return a["dist"] < b["dist"])
 	for cell in cells:
 		_grid.queued_cells[cell["key"]] = true
 		_load_queue.append(cell)
@@ -20258,6 +20285,10 @@ func title_hold() -> void:
 	_load_queue.clear()
 
 var _title_held := false
+## A planned backdrop (title_begin's `plan`, round 680): its cells are the
+## whole scene, so the window neither follows the focus nor unloads, and the
+## stale-cell guard (_outside_stream_window) never drops one of them.
+var _title_planned := false
 
 func _title_physics(_delta: float) -> void:
 	if _sky_dome != null:
@@ -20266,6 +20297,6 @@ func _title_physics(_delta: float) -> void:
 	if _sun_glow != null:
 		_sun_glow.global_position = camera_3d.global_position + _sun_glow_offset
 	_tick_map_animations()
-	if not _title_held:
+	if not _title_held and not _title_planned:
 		_maybe_stream_regions()
 	_process_stream_queue()

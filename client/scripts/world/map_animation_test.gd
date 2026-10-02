@@ -192,6 +192,33 @@ func _initialize() -> void:
 		driver2.tick(Vector3(9000, 0, 0), cam.get_frustum())
 		_check(pb.active and b.visible, "r645: object.ifo flag bit 0 runs at any range")
 
+		# --- round 680: the title's backdrop keeps an out-of-range object
+		# DRAWN, its clock paused (OURS: switching it on at 2020 units is a
+		# pop in the fly's view); play keeps the retail rule above ---
+		var c := node.duplicate() as Node3D
+		root.add_child(c)
+		await process_frame
+		var pc := c.get_node("MapAnimation") as AnimationPlayer
+		var driver3 = MA.Driver.new()
+		var has_keep: bool = "keep_drawn" in driver3
+		_check(has_keep, "r680: the driver has keep_drawn (the title's rule)")
+		_check(has_keep and driver3.keep_drawn == false, "r680: keep_drawn is off unless set (play keeps retail's rule)")
+		if has_keep:
+			driver3.keep_drawn = true
+			driver3.add(c, false)
+			_check(c.visible and not pc.active, "r680: under keep_drawn a new object is drawn, paused, before its sector is visited")
+			cam.rotation_degrees = Vector3.ZERO
+			cam.position = Vector3(0, 0, 2100)
+			driver3.tick(cam.global_position, cam.get_frustum())
+			_check(c.visible and not pc.active and driver3.running == 0, "r680: out of range it stays drawn, its clock paused")
+			cam.position = Vector3(160, 0, 600)
+			driver3.tick(cam.global_position, cam.get_frustum())
+			_check(c.visible and pc.active and driver3.running == 1, "r680: in range it runs")
+			cam.position = Vector3(0, 0, 2100)
+			driver3.tick(cam.global_position, cam.get_frustum())
+			_check(c.visible and not pc.active and driver3.running == 0, "r680: out of range again: paused, still drawn")
+		c.free()
+
 		# The cost probe (QA only): entries() lists what the driver holds,
 		# and a halted driver leaves the objects as the probe set them.
 		_check(driver.entries().size() == 1 and driver.entries()[0][0] == pa, "r645 cost: entries() lists the registered clip")

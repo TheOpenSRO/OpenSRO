@@ -1106,6 +1106,24 @@ front-end's next steps.
   a 1.2 s freeze. Open: a Linux launcher with `MALLOC_ARENA_MAX=2` (also -215 MB on the base world). The 3D
   title is not a player option (the user, 2026-10-01: players get a "clientless" mode later instead).
   Windows not measured.
+- **Pop-in during the fly: fixed (round 680)** -- the whole scene (TitleCellPlan: the 3x3 window
+  around the camera's target along the whole path) is built under the still before the camera
+  moves, and nothing streams or unloads while it flies: 0 in-view pops on the four plain intros
+  (16-57 before). A plan past `TitleCellPlan.PLAN_MAX_CELLS` (36, OURS; the archive's largest is 28)
+  falls back to round 678's streaming. Left: one cell's commit is 100-340 ms for a dense
+  Constantinople cell, felt as a hitch while typing during the preload; splitting a cell's object
+  placement over frames would remove it.
+- **The loaded world's edge in the distance (OPEN, predates round 680).** The title's camera far
+  plane is 7680 units (`REGION_SPAN * (radius + 1) * 2`) and the fog is exponential at density
+  0.00005 (~88-90 % of a colour still shows at 2000-2700 units), but only the 3x3 window around the
+  target is built, so the edge of the built world is visible beyond it. MEASURED: round 680's review
+  counted 23-84 unplanned terrain cells entering the frustum per intro; `title_plan_census.gd`
+  counts the cells with terrain that the view frustum meets along the path within the far plane
+  against those planned -- roc 49 vs 24, constantinople 114 vs 28, china_wharf 28 vs 10,
+  jupiter_login 43 vs 12. Planning the frustum within 2500 units fills it but costs too much (round
+  680: constantinople 67 cells, fly at 10.7 s, 2042 MB, 301 MB video). Options, not chosen: a
+  cheaper far ring (terrain only, no objects), a nearer far plane or retail's linear fog end at the
+  title.
 
 ### The server list and setting/ (round 679) — **built: setting/config.yaml with named servers, the LIST window with each server's status, the logo clear of the box, centred fields and a `*` password; these are left**
 
