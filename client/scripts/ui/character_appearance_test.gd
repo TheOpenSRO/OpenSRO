@@ -270,7 +270,142 @@ func _init() -> void:
 	_check(item_ids.size() > 0 and alive == 0, "and its %d item templates (%d left)" % [item_ids.size(), alive])
 	_check(orphans_after < orphans_before, "orphan nodes drop when the appearance goes (%d -> %d)" % [orphans_before, orphans_after])
 	s.free()
+	_test_body_hides()
 	_finish()
+
+## An attachable block (BsrReader.Attachable) from its fields.
+func _block(flag: int, pairs: Array) -> BsrReader.Attachable:
+	var a := BsrReader.Attachable.new()
+	a.flag = flag
+	a.entries = pairs
+	return a
+
+## A body template whose meshes are the piece keys in `order`: mesh i (the
+## i-th of the body file's mesh list, BODY_MESH_META = i) is the piece
+## `order[i]`, named "piece_<key>", and the body's block maps each key to its
+## index -- so two orders are two files listing the same pieces differently.
+func _hide_template(order: Array, path: String) -> SkinnedBsrAssembler.AssembledCharacter:
+	var t := SkinnedBsrAssembler.AssembledCharacter.new()
+	t.skeleton = _skeleton()
+	t.skeleton.get_child(0).free()
+	var pairs: Array = []
+	for i in range(order.size()):
+		var mi := MeshInstance3D.new()
+		mi.name = "piece_%d" % order[i]
+		mi.mesh = BoxMesh.new()
+		t.skeleton.add_child(mi)
+		mi.skin = _skin(t.skeleton, ["Bip01 Spine"])
+		mi.skeleton = mi.get_path_to(t.skeleton)
+		mi.set_meta(SkinnedBsrAssembler.BODY_MESH_META, i)
+		pairs.append([order[i], i])
+	t.parsed = BsrReader.ParsedObject.new()
+	# The item-template cache keys on the parsed skeleton path; the body's
+	# own path stands in for it here.
+	t.parsed.skeleton_path = path
+	t.parsed.attachable = _block(0, pairs)
+	return t
+
+## Which piece keys of a built body are drawn, sorted.
+func _shown_keys(b: CharacterAppearance.Body) -> Array:
+	var out := []
+	for c in b.skeleton.get_children():
+		if c.has_meta(SkinnedBsrAssembler.BODY_MESH_META) and (c as Node3D).visible:
+			out.append(int(String(c.name).trim_prefix("piece_")))
+	out.sort()
+	return out
+
+## Round 687: the body's own pieces under worn items, READ from
+## CCompChar::FUN_00c1f790 (attach) and FUN_00c1f890 (remove). Synthetic.
+func _test_body_hides() -> void:
+	# The MEASURED Figure keys: hair, face, torso upper/lower, arm upper/lower,
+	# pelvis, thigh, calf. Two bodies list them in different orders.
+	var order_a := [0, 1, 2, 3, 5, 6, 11, 12, 13]
+	var order_b := [13, 6, 0, 12, 3, 1, 11, 5, 2]
+	var app := CharacterAppearance.new()
+	app.add_body(1907, "char\\test\\a.bsr")
+	app.add_body(1908, "char\\test\\b.bsr")
+	var ta := _hide_template(order_a, "char\\test\\a.bsr")
+	var tb := _hide_template(order_b, "char\\test\\b.bsr")
+	app._body_templates["char\\test\\a.bsr"] = ta
+	app._body_templates["char\\test\\b.bsr"] = tb
+	var bones := ta.skeleton.get_bone_count()
+	# Chest {2,3,5} flag 1, legs {11,12} flag 1, helm {0} flag 1, light
+	# gauntlets {6} flag 2, shoulders {4} flag 1 (no body piece is key 4).
+	var items := {
+		6001: ["item\\t_ba.bsr", [3, 1, 1, 3], _block(1, [[2, 0], [3, 0], [5, 0]])],
+		6002: ["item\\t_la.bsr", [3, 1, 1, 4], _block(1, [[11, 0], [12, 0]])],
+		6003: ["item\\t_ha.bsr", [3, 1, 1, 1], _block(1, [[0, 0]])],
+		6004: ["item\\t_aa.bsr", [3, 1, 1, 5], _block(2, [[6, 0]])],
+		6005: ["item\\t_sa.bsr", [3, 1, 1, 2], _block(1, [[4, 0]])],
+	}
+	for id in items:
+		var path: String = items[id][0]
+		app._items[id] = {"models": PackedStringArray([path]), "type_ids": PackedInt32Array(items[id][1])}
+		for body_path in ["char\\test\\a.bsr", "char\\test\\b.bsr"]:
+			app._item_templates["%s|%d|%s" % [body_path, bones, path.to_lower()]] = _item_template(path.get_file().get_basename(), ta.skeleton)
+		app._item_attachables[path.to_lower()] = items[id][2]
+	app._full_items_loaded = true
+
+	var bare := app.build(1907, 0x22, [])
+	_check(_shown_keys(bare) == [0, 1, 2, 3, 5, 6, 11, 12, 13] and bare.hidden_body_meshes == 0,
+		"r687: a bare body draws all nine pieces (got %s)" % str(_shown_keys(bare)))
+
+	var chest := app.build(1907, 0x22, [6001])
+	_check(_shown_keys(chest) == [0, 1, 6, 11, 12, 13], "r687: a flag-1 chest {2,3,5} hides torso upper/lower and upper arm (got %s)" % str(_shown_keys(chest)))
+	_check(chest.hidden_body_meshes == 3, "r687: three body meshes hidden (got %d)" % chest.hidden_body_meshes)
+	_check(_mesh_named(chest, "t_ba_mesh") != null and _mesh_named(chest, "t_ba_mesh").visible, "r687: the chest itself is drawn")
+
+	var gloves := app.build(1907, 0x22, [6004])
+	_check(_shown_keys(gloves) == [0, 1, 2, 3, 5, 6, 11, 12, 13], "r687: flag-2 gauntlets {6} hide nothing (got %s)" % str(_shown_keys(gloves)))
+	var shoulders := app.build(1907, 0x22, [6005])
+	_check(_shown_keys(shoulders) == [0, 1, 2, 3, 5, 6, 11, 12, 13], "r687: shoulders {4} hide nothing -- no body piece is key 4")
+
+	# By key, not by position: the same chest on a body listing its meshes in
+	# another order hides the same pieces.
+	var chest_b := app.build(1908, 0x22, [6001])
+	_check(_shown_keys(chest_b) == [0, 1, 6, 11, 12, 13], "r687: on a body with another mesh order the chest hides the same pieces (got %s)" % str(_shown_keys(chest_b)))
+	var hidden_idx := []
+	for c in chest_b.skeleton.get_children():
+		if c.has_meta(SkinnedBsrAssembler.BODY_MESH_META) and not (c as Node3D).visible:
+			hidden_idx.append(int(c.get_meta(SkinnedBsrAssembler.BODY_MESH_META)))
+	hidden_idx.sort()
+	_check(hidden_idx == [4, 7, 8], "r687: there they are meshes 4, 7 and 8 of that file, not 2, 3 and 4 (got %s)" % str(hidden_idx))
+
+	# Unequip: show every body mesh, then re-apply what remains (FUN_00c1f890).
+	var full := app.build(1907, 0x22, [6001, 6002, 6003, 6004])
+	_check(_shown_keys(full) == [1, 6, 13], "r687: chest, legs, helm and light gauntlets leave face, forearm and calf (got %s)" % str(_shown_keys(full)))
+	_check(app.unequip(full, CharacterAppearance.SLOT_CHEST), "r687: the chest comes off")
+	_check(_mesh_named(full, "t_ba_mesh") == null, "r687: its mesh is gone")
+	_check(_shown_keys(full) == [1, 2, 3, 5, 6, 13], "r687: the torso and upper arm show again, the helm and legs still hide theirs (got %s)" % str(_shown_keys(full)))
+	_check(app.unequip(full, CharacterAppearance.SLOT_HEAD), "r687: the helm comes off")
+	_check(_shown_keys(full) == [0, 1, 2, 3, 5, 6, 13], "r687: the hair is back (got %s)" % str(_shown_keys(full)))
+	_check(not app.unequip(full, CharacterAppearance.SLOT_CHEST), "r687: nothing in an empty slot to take off")
+	full.set_scale_byte(0x42)
+	_check(_shown_keys(full) == [0, 1, 2, 3, 5, 6, 13], "r687: a scale change keeps the hides")
+
+	# A body with no block (an NPC body, a file whose block did not parse)
+	# hides nothing and is left fully drawn.
+	var t_none := _hide_template(order_a, "char\\test\\none.bsr")
+	t_none.parsed.attachable = null
+	app.add_body(1909, "char\\test\\none.bsr")
+	app._body_templates["char\\test\\none.bsr"] = t_none
+	for id in items:
+		app._item_templates["%s|%d|%s" % ["char\\test\\none.bsr", bones, (items[id][0] as String).to_lower()]] = _item_template((items[id][0] as String).get_file().get_basename(), ta.skeleton)
+	var none := app.build(1909, 0x22, [6001])
+	_check(_shown_keys(none) == [0, 1, 2, 3, 5, 6, 11, 12, 13], "r687: a body without a block hides nothing")
+
+	# The template's tag survives the duplicate a build makes (the trap: a
+	# duplicated unnamed node loses its generated name, not its meta).
+	var dup := ta.skeleton.duplicate() as Skeleton3D
+	var tagged := 0
+	for c in dup.get_children():
+		if c.has_meta(SkinnedBsrAssembler.BODY_MESH_META):
+			tagged += 1
+	_check(tagged == 9, "r687: a duplicated template keeps every body mesh's index (%d of 9)" % tagged)
+	dup.free()
+	for n in [bare, chest, gloves, shoulders, chest_b, full, none]:
+		n.free()
+	app = null
 
 ## World3D.WEAPON_ANIMATION_GROUP's `N: "group"` pairs, from its source text.
 func _world_weapon_groups() -> Dictionary:

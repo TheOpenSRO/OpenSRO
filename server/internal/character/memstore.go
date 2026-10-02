@@ -17,6 +17,9 @@ type MemStore struct {
 	invSize map[int64]int
 	// headings is each character's saved heading (HeadingStore); none is 0.
 	headings map[int64]float64
+	// appointed is each character's designated return gate (RecallStore,
+	// round 686); none is 0, the race's gate.
+	appointed map[int64]int64
 }
 
 // NewMemStore returns an empty MemStore.

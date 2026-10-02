@@ -7094,6 +7094,394 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-eighty-seventh round: the body's own skin no longer shows through worn armour -- each item hides the body pieces it covers, as retail's client does
+
+Round 683 built the bodies and found the body's own skin showing through worn armour on 2-21 % of
+an armour's pixels. Its review searched the visual-change masks for a way the client hides a body
+piece, found none, and left the rule out as uninvented. A research pass then READ it in the
+`.bsr` files, and this round implements it in `CharacterAppearance` (the builder no lobby screen uses
+yet), the create screen's preview (`CharacterPreview`, added by the review) and the world.
+
+### 1. The rule (READ, sro_client.exe; the decompile on the box)
+
+- **The block.** Every `.bsr` ends with an attachable block, which `BsrReader.attachable_tail_end`
+  only stepped over. `CResAttachable::vslot_007` (0xbe4b90) reads it right after the mod section:
+  `u32` -> +0x314, `u32 kind` -> +0x318, `u32 flag` -> +0x31c, `i32 n`, then n x `{u32 key, u32
+  value}`. `vslot_008` (0xbda070) writes the same layout. A body (`CResChar::vslot_007` 0xc1efd0)
+  then has `nComboNum`, asserted 0; an item ends there.
+- **What it means.** In a body (type 0), key -> the index of the body's own mesh in its mesh list.
+  In an item (type 5), the keys the item covers.
+- **Attaching.** `CCompChar::vslot_067` (0xc1fa90) adds a part and, for a tag-5 resource
+  (`CResAttachable`), calls `FUN_00c1f790`. Read again this round: when the item's flag
+  (`*(res + 8)`) is 1, it takes part id 1 (`FUN_00c1f720(1)`, the body, INFERRED), and for every
+  item key equal to a body key calls `FUN_00c35050(value, 0)` -> `FUN_00c33760`, which sets the
+  body mesh's `+0x10 = 0`. The gather `FUN_00c38f50` skips a mesh with +0x10 == 0.
+- **Removing.** `vslot_061` (0xc1fa00) and `vslot_064` call `FUN_00c1f890`: `FUN_00c392a0(1)` shows
+  every body mesh, then the loop re-applies the hides of every remaining part whose id is not 1.
+- **The keys (MEASURED by the research, all Figures):** body 0 hair, 1 face, 2 torso_upper,
+  3 torso_lower, 5 arm_upper, 6 arm_lower/fore, 11 pelvis, 12 thigh, 13 calf, in a different mesh
+  order per file. Items: helm `_ha` {0} (some heavy helms {0, 1}), chest `_ba` {2, 3, 5} and the
+  like by set, legs `_la` {11, 12} (women's light/clothes {11}), feet `_fa` {13}, gauntlets `_aa`
+  {6} with flag 1 on heavy but flag 2 on light and clothes, shoulders `_sa` {4} (no body piece).
+
+### 2. What changed
+
+- `BsrReader.Attachable` and `parse_attachable` / `attachable_block`: the block, with strict
+  bounds (every word in the file, 0 <= n <= 1000, OURS bound). Bytes after it -- a body's combo word,
+  or the leftovers 61 real files carry -- are counted in `trailing`, not refused. Read for type 0
+  and type 5 through the header table only (`ParsedObject.attachable`), so scenery parses as
+  before. `attachable_tail_end` now uses it.
+- `SkinnedBsrAssembler`: each body mesh (and its front-pass twin, and a rigid piece's attachment)
+  carries `BODY_MESH_META` = its index in the body file's mesh list, and is named after its piece.
+  The meta survives the template duplicate (tested); the generated name of an unnamed node does
+  not, which is the trap the research hit. `apply_body_hides(skeleton, body, items)` is
+  `FUN_00c1f890`: show every tagged mesh, then for each item block with flag 1 and each key, hide
+  the meshes the BODY's block maps that key to. Matched by key, never by position.
+  `AttachedItem.attachable` carries the item's block.
+- `CharacterAppearance`: `build()` applies it; `unequip(body, slot)` frees the slot's nodes and
+  re-applies from what remains; `Body.hidden_body_meshes` counts. `set_scale_byte` touches no
+  visibility, so the hides stay (tested). The item blocks are cached with the item templates.
+- `World3D._build_assembled_character` (the local player, other players, the paper doll and the
+  portrait) applies it after attaching the worn items. Every equipment change rebuilds that body,
+  so retail's show-all-then-re-apply is the same call on the new set. Its log line now says how
+  many body meshes were hidden.
+- `tools/appearance_probe.gd`: `--showthrough=1` measures both "every body piece drawn" and "the
+  hides applied" in one run, checks every Figure's block, and `--closeup=<dir>` renders the
+  before/after pictures.
+
+### 3. Measured: show-through, before -> after
+
+`appearance_probe.gd --showthrough=1` on the box's archives (one run, GPU path, no software GL
+line): % of a worn armour's pixels where the body wins, front and back, at Volume 0 / 2 / 4, and
+how many body meshes the set hides:
+
+| Body | heavy | light | clothes / robe |
+|---|---|---|---|
+| CH man ADVENTURER | 2.13 / 2.04 / 2.03 -> **0.48 / 0.54 / 0.69** (6) | 4.93 / 4.80 / 4.89 -> **1.09 / 1.35 / 2.05** (5) | 7.39 / 7.36 / 8.12 -> **1.81 / 1.94 / 2.48** (5) |
+| CH woman ADVENTURER | 3.66 / 3.96 / 5.19 -> **0.74 / 0.92 / 1.33** (5) | 5.62 / 6.21 / 8.36 -> **4.18 / 4.55 / 5.58** (3) | 4.40 / 4.62 / 5.54 -> **2.43 / 2.71 / 3.44** (4) |
+| EU man NOBLE | 3.29 / 3.18 / 3.80 -> **0.68 / 0.85 / 1.29** (6) | 21.30 / 20.94 / 18.97 -> **0.46 / 0.43 / 0.44** (6) | 5.95 / 6.59 / 6.92 -> **0.51 / 0.47 / 0.35** (6) |
+| EU woman NOBLE | 6.26 / 6.84 / 7.51 -> **1.50 / 1.63 / 2.14** (5) | 13.74 / 12.95 / 13.55 -> **2.70 / 2.87 / 3.51** (4) | 8.54 / 8.04 / 8.31 -> **1.12 / 1.28 / 1.71** (5) |
+
+Worst 21.30 % -> **5.58 %**; the EU man's light set 21.30 -> 0.46 %, the research's numbers exactly.
+The "before" column equals round 683's table cell for cell. What is left is body pieces no worn
+item lists (the China woman's light set hides three meshes), which the client draws too (READ,
+FUN_00c1f790 hides only listed keys): a measurement, not a defect count.
+
+Also MEASURED in the same run: all 52 Figures' body blocks name exactly the keys {0, 1, 2, 3, 5,
+6, 11, 12, 13}, and every drawn kit model has a block (`RESULT: PASS (0 failing)`).
+
+Pictures for a human (not evidence; the table is), textured, every body piece drawn on the left
+and the hides on the right, front and back: `china_woman_light_{front,back}_before_left_after_right.png`
+and `europe_man_light_{front,back}_before_left_after_right.png` (the box's
+/var/tmp/hidebody687/out, not committed).
+
+### 4. Tests
+
+- `bsr_reader_test.gd`, `_test_attachable` (synthetic bytes): a body's block with its combo word,
+  an item's flag-1 block, a flag-2 block that hides nothing, 12 leftover bytes that do not fail it,
+  a pair cut short, a count past the end, a negative count, a cut header, and an NPC (type 1) not
+  read.
+- `character_appearance_test.gd`, `_test_body_hides` (synthetic templates): a flag-1 chest {2,3,5}
+  hides torso upper/lower and upper arm; flag-2 gauntlets and key-4 shoulders hide nothing; the same
+  chest on a body listing its meshes in another order hides the same pieces, there meshes 4, 7, 8;
+  unequipping the chest shows the torso again while the helm and legs keep theirs, and the helm's
+  removal brings the hair back; a scale change keeps the hides; a body with no block hides nothing;
+  a duplicated template keeps all nine indices.
+
+**Negatives.** Against the base (the new tests over dev 67937a5) neither suite compiles:
+`Parse Error: Static function "parse_attachable()" not found in base "BsrReader"`, `Could not find
+type "Attachable" under base "BsrReader"`, `Cannot find member "BODY_MESH_META" in base
+"SkinnedBsrAssembler"`. Two behavioural negatives on the head's code:
+- `build()` without `apply_hides`:
+  ```
+  FAIL r687: a flag-1 chest {2,3,5} hides torso upper/lower and upper arm (got [0, 1, 2, 3, 5, 6, 11, 12, 13])
+  FAIL r687: three body meshes hidden (got 0)
+  FAIL r687: on a body with another mesh order the chest hides the same pieces (got [0, 1, 2, 3, 5, 6, 11, 12, 13])
+  FAIL r687: there they are meshes 4, 7 and 8 of that file, not 2, 3 and 4 (got [])
+  FAIL r687: chest, legs, helm and light gauntlets leave face, forearm and calf (got [0, 1, 2, 3, 5, 6, 11, 12, 13])
+  ```
+- the item key taken as the body's mesh index (no body map):
+  ```
+  FAIL r687: a flag-1 chest {2,3,5} hides torso upper/lower and upper arm (got [0, 1, 5, 11, 12, 13])
+  FAIL r687: shoulders {4} hide nothing -- no body piece is key 4
+  FAIL r687: on a body with another mesh order the chest hides the same pieces (got [2, 3, 5, 6, 11, 13])
+  FAIL r687: there they are meshes 4, 7 and 8 of that file, not 2, 3 and 4 (got [2, 3, 5])
+  FAIL r687: chest, legs, helm and light gauntlets leave face, forearm and calf (got [1, 5, 11, 12, 13])
+  FAIL r687: the torso and upper arm show again, the helm and legs still hide theirs (got [1, 2, 3, 5, 6, 11, 12, 13])
+  FAIL r687: the hair is back (got [0, 1, 2, 3, 5, 6, 11, 12, 13])
+  FAIL r687: a scale change keeps the hides
+  ```
+
+`remote_godot.sh check`: 508 scripts and 8 scenes, ALL LOAD. `remote_godot.sh tests`: 199 suites,
+0 failing.
+
+**In the world (MEASURED, the log):** World3D booted with no server and
+`SRREVAMP_QA_EQUIP="1=3640,4=3641,5=3642"` (the China man's light chest, legs and boots) on the base
+and on the head, under this lane's own lock. Base: `World3D: china_man wears 3/3 item(s)`. Head:
+`World3D: china_man wears 3/3 item(s), 5 body mesh(es) hidden under them`. That is the same 5 the
+probe counts for that body and set through the builder. The frames of that run (no map loaded,
+camera far) show nothing useful and were not kept.
+
+### 5. Performance
+
+`perf_gate.sh --base 67937a5 --head 12764e3 --sites jangan,mobs` (1280x720, median of 3 runs, the
+code commit of this round; one mobs base run overlapped another lane's render and was repeated):
+
+| site | number | base | head | | verdict |
+|---|---|---|---|---|---|
+| jangan | frame ms | 10.61 | 9.32 | -1.3 | SAME |
+| jangan | entry ms | 9702 | 9625 | -77 | SAME |
+| jangan | freeze ms | 3418 | 3418 | +0 | SAME |
+| jangan | hitches | 5 | 5 | +0 | SAME |
+| mobs | frame ms | 11.04 | 10.89 | -0.1 | SAME |
+| mobs | entry ms | 10892 | 10711 | -181 | SAME |
+| mobs | freeze ms | 3502 | 3460 | -42 | SAME |
+| mobs | hitches | 5 | 5 | +0 | SAME |
+
+The rule costs one more pass over a body's or item's mod section per `.bsr` parse (types 0 and 5
+only) and a walk of the skeleton's children per dressed body.
+
+### 6. Corrections
+
+- Round 683 §7 MEDIUM 1 ("hiding a body piece would be a rule this project invented"): a
+  correction note added above it.
+- Round 283 ("the engine does not hide them either"): a correction note added; the text is kept.
+- charselect.md section 9 and docs/TODO.md: the OPEN item closed with the rule.
+- BSR_FORMAT.md: "The attachable block" -- its fields, what they mean and what the client does.
+
+### 7. Still OPEN
+
+- What the block's first two words (+0x314, +0x318) mean.
+- That part id 1 is the body (INFERRED from the body's block being the one with the mesh map).
+- Avatars over armour (`charactervisualchange.txt`'s Slot / OverlapSlot / Priority) is unchanged:
+  an avatar and the armour under it both hide by their own blocks.
+- The world still draws no default wear (`clothes_00_*`) in an empty slot (round 283); when it
+  does, those items' blocks hide too.
+- The Go reader (`server/internal/bsr`) does not read the block; the server has no use for it.
+- Another player's body is built once, when they come into view; `_spawn_or_update_other` records
+  a later equipment list in `_other_equipped` but does not redress them, so their hides (like their
+  worn items) follow what they wore then. Pre-existing, not this round's; the review found it.
+
+### 8. Review
+
+The review passed the round: the world path is safe, every READ claim was confirmed against the
+decompile, a parser sweep over all 8,539 `.bsr` files is clean with `attachable_tail_end` unchanged,
+and the show-through numbers reproduce. A trial merge onto dev e516d7c conflicted only in this file.
+It raised one MEDIUM and three LOWs, all fixed in a follow-up commit, and asked for the merge.
+
+**MEDIUM: the create preview did not hide.** `CharacterPreview._rebuild`, the only live lobby
+screen today, hung the starting kit with `attach_item_from_archive` and never called
+`apply_body_hides`, so a new player's preview still showed skin through the clothes. It now
+collects the kit's names and calls `CharacterPreview.dress(assembled, models, attach)`. That static
+helper attaches each model through the given callable, collects each `attached.attachable` and
+calls `SkinnedBsrAssembler.apply_body_hides` as World3D does. The callable is there so the test can
+dress a synthetic body without an archive. Round 685 is rebuilding this screen on
+`CharacterAppearance` in parallel, so the change stays inside `_rebuild` plus that helper.
+New test `character_preview_test.gd`: a synthetic body with front-pass twins, dressed in a chest
+{2,3,5}, legs {11,12} and feet {13}, each flag 1, plus a model that does not load. Hair, face and
+forearm stay, six meshes are hidden, and the twins hide with them. Negatives on the box's copy:
+- `dress` returning without the hides:
+  ```
+  FAIL the kit hides torso, upper arm, pelvis, thigh and calf; hair, face and forearm show (got [0, 1, 2, 3, 5, 6, 11, 12, 13])
+  FAIL six body meshes hidden, each counted once with its front-pass twin (got 0)
+  FAIL the front-pass twins hide with their meshes (got 0)
+  ```
+- the count taken per node, as before the LOW below was fixed:
+  ```
+  FAIL six body meshes hidden, each counted once with its front-pass twin (got 12)
+  ```
+
+**LOW: "the lobby builder" overclaimed.** No lobby screen uses `CharacterAppearance` yet. This
+entry, docs/TODO.md and charselect.md now name the create preview (`CharacterPreview`) and
+`CharacterAppearance`.
+
+**LOW: "every change of equipment rebuilds this body"** (the World3D comment) is true only for the
+local player and the paper doll. The comment now says so and names the other-player gap (OPEN,
+section 7).
+
+**LOW: the hidden count counted nodes.** A body mesh's front-pass twin was counted again.
+`apply_body_hides` now counts each hidden mesh index once (the doc comments say so). The counts in
+section 3 and the world's 5 are unchanged: none of those bodies' hidden pieces has a twin (MEASURED: the probe re-run after the fix gives the
+same table, cell for cell, and the same 3 and 6 for the close-ups).
+
+**Merge.** origin/dev (e516d7c, round 686 and its review) is merged in. WORLD_ISSUES was resolved
+with the coordinator's `wi_resolve.py`, which orders the entries 687 then 686. After the
+follow-up: `remote_godot.sh check` 511 scripts and 8 scenes, ALL LOAD; `remote_godot.sh tests` 201
+suites, 0 failing.
+
+## Six-hundred-and-eighty-sixth round: a town gate's "Designate as return/recall point" sets the character's return point, and a return goes there -- else to the race's own gate, Jangan's for China and Constantinople's for Europe
+
+The user (2026-10-02): "you should get the return/recall feature working for town teleporters.
+That will fix where they restore at and just euro to const and chn to jangan."
+
+Labels: READ (the decompiles and asm on the render box; `SR_ShardManager.exe` from the server
+package, disassembled with objdump into `/var/tmp/recall686/sm.asm`), MEASURED, INFERRED, OURS,
+OPEN. The full reading, with every address, is `docs/protocol/teleport_network.md`, "The return
+point (round 686)".
+
+### 1. What retail does (READ)
+
+- **The client.** The gate's line (item 9, `UIIT_CTL_RECALL_POSITION`) opens message box kind 5 over
+  the talk box (`CIF_NPCTalk::FUN_007020c0` case 9, `0x7027b5`): "Agreement window", "The current
+  position : [<zone>]" (`UIIT_MSG_MSGBOX_SETREBIRTH_CURPOS`, the zone looked up by the player's
+  region id -- INFERRED from `textzonename.txt` being keyed that way), "Will you designate the place
+  to be returned /resurrected?" (`..._ASKCERTIFY`; `UI_SILKMALL::FUN_00644c90` entry `0x644f93`).
+  OK sends 0x7059 {u32 object id} (`FUN_00797d90` case 5, `0x797fc5`).
+- **The server.** Dispatch 0x059 (`0x513410`, now `GObjPC_HandleDesignateRecallMsg_059`):
+  `IsWithinInteractionRange` with the structure mask 0x30 (its answer is the code: 0 no object, 3, 4);
+  interaction id 7 on the gate's ref object and `IGObj::IsTeleportGate`, else 3; then
+  `_CHAR.AppointedTeleport` := the gate's **ref object id** when it differs
+  (`CharData_SetAppointedTeleport`, `0x51db20`), and 0xb059 {1}; refusals {2, u16 code}. No fee, no
+  level, no life-state test.
+- **The answer.** `Client_OnDesignateRecallResult` (`0x883520`): on 1, "Resurrection spawn point has
+  changed." to the system window as type 5 and to `GDR_WARNING_WND`; on 2, nothing.
+- **Where it sends a character.** `CGObjPC::ResolveRevivePoint` (`0x4e08a0`) takes the designated
+  gate's teleport record -- the arrival a gate teleport to it makes. Used by option 1 of the dead
+  window, the leave path of a dead character and a siege world's entry.
+- **The default** (the user's "euro to const and chn to jangan", and retail's): the ShardManager's
+  start-position function `FUN_0042bb20` reads the body's Country byte (`0x42bb78`) and gives
+  `_AddNewChar` the ref object id of `STORE_CH_GATE` (`0x783d04`) for China, `STORE_EU_GATE`
+  (`0x783d14`) for Europe. MEASURED on the box's export: 2094 -> `GATE_CH` 97/168 (969, 0, 1369);
+  19554 -> `GATE_EU` 105/79 (950, 84, 1070).
+- **Not served.** Interaction id 9, "Teleport to return point": the teleport request's kind 1 ->
+  `GObjPC::Revive(0)` (`CMainProcess::FUN_004f2b50`, `0x4f2c83`); no town gate offers it. The return
+  scroll: `UseByKind` (`0x49c2b0`) cases 1-3 cast the item's linked skill (`+0x2a0`,
+  `FUN_0059b8d0`); the skill effect is unread, and srrevamp refuses every return scroll.
+
+**A correction to the brief.** It called round 665's Jangan point "READ". It was OURS: every
+character's world entry (`spawnZone`'s arrival, the town centre). Retail's China default is
+Jangan's gate point, 285 units from the gate building; that is where an undesignated China
+character now returns.
+
+### 2. What changed
+
+- **Server.** `session/recall.go`: `OpRecallDesignate 0x0111` {u16 gate teleportdata id} ->
+  `OpRecallDesignateResult 0x0112`, 0xb059's shape (OURS: the pair and the id; free on 2026-10-02 in
+  dev, feat/lobby682 and feat/appear683), served by `TeleportHandler` in the handler's order: unknown
+  gate 0, not a building row 3, `session.reach` 3/4, no interaction 7 3, then the write only when
+  it changes, and {1}. `returnPointFor` resolves the designated gate's point, else the race's gate
+  (`RaceGate(characterCountry(c))`), through `teleportArrival` (frames and `-single-frame` as a gate
+  teleport). Option 1, the flag-off respawn (`returnAfterKill`) and a dead logout (`savedPlace`) all
+  use it; `returnPoint()` is gone. cmd/server hands it the network (`SetRecallNetwork`) and logs
+  whether both race gates were found.
+- **Store.** `character.RecallStore` on MemStore and SQLStore, kept off `Character` (as
+  `InventorySizeStore` is), so no SELECT changes.
+- **Client.** `RecallNet` (`net/recall.gd`), `NetClient.recall_designate` /
+  `recall_designate_result`, `HudPanels.open_recall_designate_prompt` (the archive's three texts;
+  the panel and its "OK" / "Cancel" are OURS -- kind 5's button controls were not read), and
+  `World3D._open_recall_designate` / `_on_recall_designate_result` (type 5 line + warning banner;
+  a refusal goes to the log only, as retail shows nothing). QA: `SRREVAMP_QA_TALK_LINES` now also
+  prints a talk prompt's and the dead window's buttons (`QA PROMPT <tag> BUTTON ...`) for xdotool.
+
+OURS, disclosed in `recall.go`'s header: 0 in the column means "none designated" and is resolved to
+the race's gate by code when needed (retail writes the id at creation); an unknown or unusable
+designated gate falls back to the race's gate (retail: `LatestRegion` / `Pos`); with no
+`-teleport-dir`, China returns to `spawnZone`'s arrival as before and Europe to Constantinople's
+zone arrival.
+
+### 3. The migration
+
+`ALTER TABLE characters ADD COLUMN IF NOT EXISTS appointed_teleport BIGINT NOT NULL DEFAULT 0;`,
+appended to the schema. Every existing row takes 0 -- its race's gate -- and nothing else on the row
+changes; a second run is a no-op (`TestMigration686`: the schema less this line, three characters
+with saved places, opened twice with a designation in between). No backfill is needed, so the line
+is safe on srrevamp-01's live data.
+
+### 4. Tests (each run against dev 3857a5e with a shim for the new symbols first)
+
+| Test | FAIL before |
+|---|---|
+| `TestDesignatedGateIsWhereOptionOneReturns` (own frames, single frame) | `no answer to the designate request for gate 2: ... i/o timeout` |
+| `TestUndesignatedReturnPointIsTheRaceGate` (China/Europe x frames) | `arrived at (0, 0, 0); want the point 97/168 local (969, 1369)`; `the return went to zone "jangan" (frame 97/168), want "constantinople"` |
+| `TestDesignateIsRefusedOutOfRange` (3, 4, 3, 0, 0, then 1 beside the building, then 4) | `no answer to the designate request` |
+| `TestLeavingDeadSavesTheDesignatedGate`, `TestFlagOffRespawnGoesToTheDesignatedGate` | `no answer to the designate request` |
+| `TestTeleportFromJanganAfterReturningToTheRaceGate` (round 675's gate, after the new return) | `arrived at (0, 0, 0); want ... (969, 1369)` |
+| `TestRecallDesignateWire` | `ok encodes , want 01` ... |
+| `TestRecallStores` (memory, postgres), `TestMigration686` | `after designating 2095 the gate reads 0`; `column "appointed_teleport" does not exist`; `the schema has no appointed_teleport line to leave out` |
+| client `net/recall_test.gd` (codec, the box: OK sends once, Cancel nothing) | new suite |
+
+`TestReturnPointWithoutANetworkIsTheZoneArrival` is a guard, not a negative: it passes before and
+after (no `-teleport-dir` keeps the old point). `systems`: `PointByBuildingCode` left the orphan
+list (the race gate is resolved by code), and the three derived tables carry the new name.
+
+### 5. Live (MEASURED, render box, lane recall686, run i1)
+
+A server from this tree with srrevamp-01's flags (`-full-map` -- so `-single-frame` -- `-monster-ai
+-monster-strike-push -monster-spawn-push -monster-battle -monster-aggro -player-dead-state`, plus
+`-persist-position`, `-in-memory`), the box's retail export (`-teleport-dir`, npcpos, monsters, the
+nest DB) and the client from this tree, everything through the Login route with real X input
+(`/var/tmp/recall686/inter.sh`, `x.sh`):
+
+- boot: `return points: designated at a town gate, else the race's gate china_found=true europe_found=true`;
+- `/goto donwhang`; the gate clicked by xdotool at the aimed point -> the talk box: "1. Designate this
+  region as your return & recall point!" (this archive resolves the older row); the line clicked ->
+  `RECALLPROMPT ... opened at 'Donwhang'`; OK clicked -> wire `c2s 0x0111 0200`, `s2c 0x0112 01`;
+  server `recall designated ... gate=STORE_WC_GATE point=GATE_WC object=2095 was=0`; client
+  `SYSLOG [5] Resurrection spawn point has changed.` and the banner;
+- `/goto jangan`, `/spawn tiger 6`: killed in Jangan (`left dead (HP 0)`); "Resurrect at the
+  specified point." clicked -> the zone change `donwhang` at (-28803, 0, -10148) in frame 97/168,
+  which is `GATE_WC`'s 102/153 (957, 1508) in that frame; the client stood at local (957, -106,
+  1508) on terrain, revived at HP 80.
+
+The undesignated China and Europe returns were not run live (the tests cover both frames); a Europe
+character needs round 682.
+
+No perf gate: the client half is UI and network wiring that runs on a click (the talk line, the box,
+the reply), no world, drawing or loading code.
+
+### 6. Merge notes against feat/lobby682
+
+- The race comes from `characterCountry` (`skill.go`), which 682 already rewrites to read
+  `character.RaceOf(c.Gender)`; 686 called it through `recallCountry` (removed in the review) and added no helper, so after the
+  merge a Europe character returns to Constantinople with no further change.
+- Expected textual conflicts, all "keep both": this entry and 682's at the top of the descending
+  block; `docs/TODO.md` if 682 edits the same lines. `sqlstore.go`: 686's line is appended after
+  `characters_account_id`, 682's block sits above `characters_name_lower` (non-adjacent);
+  `schema.go`: 686 edits only the `AppointedTeleport` line of `EngineOnlyColumns`;
+  `cmd/server/main.go`: 686's lines are inside the teleport block, 682's above it; `orphans_test.go`
+  hunks are apart. `TestMigration686` strips only its own line from whatever the schema is, and its
+  scratch schema (`mig686`) and helper names differ from 682's.
+
+### 7. OPEN
+
+- "Teleport to return point" (id 9): READ, not served (no town gate offers it).
+- Return scrolls: the skill effect is unread; srrevamp has none.
+- Retail's fallback for an unknown designated gate (`LatestRegion` / `Pos`); ours is the race's gate.
+- The agreement box's art and button labels.
+- A Europe character's return, live: since the review's merge of 682 the tests return a real
+  Europe character (its `Gender`, read by `RaceOf`) to Constantinople; no live run yet.
+
+### Review (round 686's review: no HIGH, no MEDIUM; four LOW -- fixed in a follow-up commit)
+
+The review trial-merged d66ff53 on dev 67937a5 (rounds 682-683) with everything green, resolved a
+Europe character through 682's real race code to Constantinople, found the migration safe and the
+READ claims confirmed. The placeholder pair 0x0111 / 0x0112 stays: our client has no runtime gate
+object id to send in retail's 0x7059. The follow-up:
+
+1. **origin/dev merged** into `feat/recall686` (WORLD_ISSUES by `wi_resolve.py`, rounds in descending
+   order 686, 683, 682; `recovered_names.tsv` keeps both blocks).
+2. **The race seam is gone.** `var recallCountry` was a stand-in until 682; `returnPointFor` calls
+   `characterCountry` (`RaceOf` of the body's `Gender`) directly, and
+   `TestUndesignatedReturnPointIsTheRaceGate` makes Aria a Europe character with the store's own
+   `SetGender(GenderEuropeMan)`, checking first that the race reads Europe (the probe of the probe).
+3. **A failed read is logged, never silent.** `GetByID` and `AppointedTeleport` errors were dropped,
+   so an unreadable Europe character would have gone to Jangan without a word. Now each logs at
+   Error with `character_id`; a character that cannot be read goes to its designated gate when that
+   still reads, else to `spawnZone`'s arrival (the no-network point), logged; an unreadable or
+   unusable designated gate falls to the race's gate, logged. `TestReturnPointLogsFailedReads`.
+4. **Designate refusals log at Debug**, not Info, so a client repeating a refused request cannot
+   flood the log; successes stay at Info. `TestDesignateRefusalsLogAtDebug`.
+
+FAIL lines of the two new tests against d66ff53's `recall.go`: `no "reading the character failed"
+in the log`, `no "character_id=1" in the log`, `unreadable but designated Donwhang: zone "jangan",
+want donwhang`, `the gate read failure was not logged`, `refusals reached an Info log` (the last
+also by flipping the level back to Info alone).
+
+After the follow-up: `go build`, `go vet`, `go test -count=1 -p 1 ./...` green; `remote_godot.sh
+check` 510 scripts ALL LOAD (a first run failed on `scripts/net/character_test.gd`, a file round 682
+deleted that the lane's box directory still held -- the sync never removes; deleted there, not a
+tree defect); `remote_godot.sh tests` 200 suites, 0 failing.
+
 ## Six-hundred-and-eighty-fourth round: the account's characters stand on the Constantinople quay in their own bodies, armour and weapons; hovering names one, clicking flies to it, and Create flies to the table where the horse and the lion pick the race -- retail's CPSCharacterSelect, number for number
 
 The user (2026-10-02): "I'd like for all of those features I requested before that matches the
@@ -7450,6 +7838,13 @@ MEDIUMs and five LOWs.
 
 **MEDIUM 1, the body through the armour -- measured; the fix asked for is not implemented, because
 no READ supports it.**
+
+> **Corrected by round 687.** The rule exists, and it is READ: not in the visual-change masks this
+> review searched, but in the attachable block every body and item `.bsr` ends with
+> (`CResAttachable::vslot_007` 0xbe4b90; `CCompChar::FUN_00c1f790` hides, `FUN_00c1f890`
+> re-derives). An item with flag 1 switches off the body meshes whose keys it lists. With it the
+> worst case below drops from 21.30 % to 5.58 %, and the EU man's light set to 0.46 %. "Hiding a
+> body piece would be a rule this project invented" was wrong; the text below is kept as it was.
 
 *The measurement.* `appearance_probe.gd --showthrough=1` draws each body with one armour set and no
 weapon, front and back, in two flat colours. Pass 1 draws the armour alone (its mask); pass 2 draws
@@ -30177,7 +30572,11 @@ character with no chest armour is wearing a garment, not showing skin.
 
 **That corrects round 281's conclusion** -- and only the conclusion; its observation stands.
 srrevamp really never hides body meshes. But the engine does not hide them either: the body
-`.bsr`'s skin is drawn under the slot visual in both. So "we never hide" cannot be why skin
+`.bsr`'s skin is drawn under the slot visual in both.
+*(Correction, round 687: the engine does hide them. Each item `.bsr`'s attachable block lists the
+body pieces it covers, and with flag 1 `CCompChar::FUN_00c1f790` switches those body meshes off
+when the item is attached; `InstallEquipVisual` was not where it happens. The paragraph is kept as
+written.)* So "we never hide" cannot be why skin
 shows through our armour. What srrevamp is missing is the **default wear** -- an unarmoured slot
 should show `clothes_00_*` and ours shows bare skin -- plus whatever keeps the engine's worn
 geometry clear of the skin, which is still unread.

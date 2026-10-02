@@ -1104,8 +1104,16 @@ box. `perf_gate.sh` for B3.
   OverlapSlot, a group and a Priority (armour 250, avatars 60-110); `CObjCharacter::FUN_00a5fe00`
   ORs `Slot & ~OverlapSlot` into +0x174 and `FUN_00a5da10` / `FUN_00a611e0` arbitrate the visuals
   by it. The arbitration itself is not modelled.
-- What keeps the body's own pieces from showing through worn ones, if anything does. Traced
-  (round 683 review) and nothing found that hides a body mesh: see WORLD_ISSUES round 683, Review.
+- ~~What keeps the body's own pieces from showing through worn ones, if anything does.~~
+  **READ in round 687** (the round 683 review looked at the visual-change masks and found nothing;
+  the rule is in the `.bsr` files instead): every body and item `.bsr` ends with an attachable
+  block (BSR_FORMAT.md, "The attachable block"). The body's block maps each piece key (0 hair,
+  1 face, 2/3 torso, 5/6 arms, 11 pelvis, 12 thigh, 13 calf, MEASURED) to one of its meshes; an
+  item's block lists the keys it covers, and with flag 1 the client switches those body meshes off
+  when it attaches the item (`CCompChar::FUN_00c1f790`) and re-derives them when a part comes off
+  (`FUN_00c1f890`). `CharacterAppearance`, the create preview (`CharacterPreview`) and the world now do the same: the worst show-through went from
+  21.30 % to 5.58 % of an armour's pixels (WORLD_ISSUES round 687). What is left is body pieces no
+  worn item lists, which the client draws too.
 - The weight half of the missing-palette-bone rule (`ResObject::FUN_00be2f80` leaves a missing
   bone's weight out of the sum; this client models only the entry, round 683).
 - The name bitmap at 0x8c3cb0, and the forbidden-word lists' source.
