@@ -51,9 +51,13 @@ func playerHoldRefusal(ref *refdata.Skill, country int) string {
 	// trap and event row (26,646 MSKILL_..GSKILL_ rows MEASURED on round 691's
 	// re-export, plus 47 SKILL_ event/mall rows) and of
 	// the base attacks; a class skill with no cost (a chain link such as
-	// SKILL_CH_SWORD_KNOCKDOWN_E2_01, 205 board rows) is unlearnable too, but
-	// it is its race's own and a cast of it is a class skill's, so only the
-	// mastery-less shape is refused here; the learn gate refuses both (0x3409).
+	// SKILL_CH_SWORD_KNOCKDOWN_E2_01; 205 sit on the skill boards, and the
+	// export holds 801 China and 462 Europe zero-cost rows with a mastery in
+	// all, MEASURED in round 691's review) is unlearnable too, but it is its
+	// race's own and a cast of it is a class skill's, so only the mastery-less
+	// shape is refused here (OURS: one held from before the fix stays castable
+	// and MasteryLevel1 is not re-checked at cast); the learn gate refuses both
+	// (0x3409).
 	if ref.ReqLearnSP <= 0 && ref.Mastery1 == 0 && !baseAttackSkills[ref.ID] {
 		return "not a player skill"
 	}

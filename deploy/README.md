@@ -179,12 +179,17 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 # deploy (the deploy then drops these at each character's next login or cast):
 #   SELECT c.name, c.gender, cs.skill_id, s.basic_code, s.req_learn_race, s.mastery1
 #   FROM character_skills cs JOIN skills s ON s.id = cs.skill_id JOIN characters c ON c.id = cs.character_id
-#   WHERE (s.req_learn_sp = 0 AND s.mastery1 = 0
+#   WHERE (s.req_learn_sp <= 0 AND s.mastery1 = 0
 #          AND cs.skill_id NOT IN (1,2,40,70,8419,8420,8421,9354,9355,9944,10625,11162,11526))
-#      OR (s.req_learn_race = 0 AND c.gender IN ('europe_man','europe_woman'))
-#      OR (s.req_learn_race = 1 AND c.gender NOT IN ('europe_man','europe_woman'))
+#      OR (c.gender IN ('europe_man','europe_woman') AND (s.req_learn_race NOT IN (1,3)
+#          OR (s.mastery1 > 0 AND s.mastery1 NOT IN (513,514,515,516,517,518))))
+#      OR (c.gender NOT IN ('europe_man','europe_woman') AND (s.req_learn_race NOT IN (0,3)
+#          OR (s.mastery1 > 0 AND s.mastery1 NOT IN (257,258,259,273,274,275,276))))
 #   ORDER BY c.name, cs.skill_id;
-# An empty answer means nobody used the hole.
+# This mirrors playerHoldRefusal exactly (round 691's review: an earlier version missed the
+# mastery clause -- 807 race-3 item/mall/quest rows on Mastery1 1, and China base attacks held by a
+# Europe character). An empty answer means nothing will be dropped. Run on srrevamp-01 on
+# 2026-10-02 before the deploy: empty.
 # 3. On the server host (CSVs and import-refdata copied to ~/srrevamp-data; Postgres is pinned to
 #    127.0.0.1:5432 by docker-compose.override.yml):
 ~/srrevamp-data/import-refdata -items-csv ~/srrevamp-data/items.csv -skills-csv ~/srrevamp-data/skills.csv \
