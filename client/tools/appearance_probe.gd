@@ -54,11 +54,14 @@ func _initialize() -> void:
 	_check_catalog(cat)
 
 	var bodies := _build_all(app, cat)
+	_check_index_items(app)
 	_measure_height(app, cat)
 	_measure_volume(app, cat)
 
+	if _arg("--showthrough") != "":
+		await _measure_show_through(app, cat, _arg("--showthrough") == "all")
 	var out := _arg("--out")
-	if out != "":
+	if out != "" and _arg("--norender") == "":
 		await _render_all(app, cat, out)
 	for b in bodies:
 		b.free()
@@ -302,8 +305,9 @@ func _render_all(app: CharacterAppearance, cat: CharCatalog, out: String) -> voi
 	world.free()
 
 func _stand(app: CharacterAppearance, b: CharacterAppearance.Body) -> void:
-	var idle := app.animation_for(b, BsrReader.AnimationEntry.TYPE_STAND)
-	b.pose(idle, 0.0)
+	if _arg("--bind") == "":
+		var idle := app.animation_for(b, BsrReader.AnimationEntry.TYPE_STAND)
+		b.pose(idle, 0.0)
 	# A body faces its own -Z and the camera sits on +Z looking down -Z, so
 	# turn the body round to face it.
 	b.rotation.y = PI
@@ -331,3 +335,132 @@ func _shoot(path: String) -> void:
 		await process_frame
 	get_root().get_texture().get_image().save_png(path)
 	print("saved " + path)
+
+# --- show-through ------------------------------------------------------------------
+
+const _BODY_COLOR := Color(1, 0, 0)
+const _WORN_COLOR := Color(0, 1, 0)
+
+## Every MeshInstance3D under `n`.
+func _mesh_instances(n: Node, out: Array) -> void:
+	if n is MeshInstance3D:
+		out.append(n)
+	for c in n.get_children():
+		_mesh_instances(c, out)
+
+func _flat(color: Color) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.albedo_color = color
+	m.cull_mode = BaseMaterial3D.CULL_BACK
+	return m
+
+## The share of a worn armour's pixels where the body's own skin is drawn
+## instead, front and back, each body with its armour only (no weapon or
+## shield): pass 1 draws the armour alone (its mask), pass 2 body and armour
+## in flat colours. MEASURED in pixels; needs a GL context.
+func _measure_show_through(app: CharacterAppearance, cat: CharCatalog, every: bool) -> void:
+	var world := Node3D.new()
+	get_root().add_child(world)
+	var cam := Camera3D.new()
+	cam.projection = Camera3D.PROJECTION_ORTHOGONAL
+	cam.current = true
+	world.add_child(cam)
+	var body_mat := _flat(_BODY_COLOR)
+	var worn_mat := _flat(_WORN_COLOR)
+	var worst := 0.0
+	for r in [CharCatalog.RACE_CHINA, CharCatalog.RACE_EUROPE]:
+		for s in [CharCatalog.SEX_MAN, CharCatalog.SEX_WOMAN]:
+			var figs := cat.figures(r, s)
+			var count := figs.size() if every else 1
+			for fi in range(count):
+				var f: CharCatalog.Entry = figs[fi]
+				for set_i in range(cat.all_armour_sets(r, s).size()):
+					var armour := []
+					var sets := cat.all_armour_sets(r, s)
+					for id in sets[set_i].ids():
+						armour.append({"id": id, "plus": 0})
+					var line := "%-26s %-7s" % [f.code, sets[set_i].name]
+					for scale in [0x02, 0x22, 0x42]:
+						var b := app.build(f.id, scale, armour)
+						_stand(app, b)
+						world.add_child(b)
+						var worn_nodes := []
+						for w in b.worn:
+							for n in w["nodes"]:
+								_mesh_instances(n, worn_nodes)
+						var all_nodes := []
+						_mesh_instances(b.skeleton, all_nodes)
+						var shrink := float(_arg("--shrink", "1.0"))
+						if shrink != 1.0:
+							for mi in all_nodes:
+								if not worn_nodes.has(mi) and mi.skin != null:
+									var sk: Skin = mi.skin.duplicate()
+									for i in range(sk.get_bind_count()):
+										sk.set_bind_pose(i, Transform3D(Basis.from_scale(Vector3.ONE * shrink), Vector3.ZERO) * sk.get_bind_pose(i))
+									mi.skin = sk
+						var shown := 0
+						var covered := 0
+						for yaw in [PI, 0.0]:
+							b.rotation.y = yaw
+							_frame(cam, Vector3(0, 9.5, 0), 21.0)
+							for mi in all_nodes:
+								var is_worn := worn_nodes.has(mi)
+								mi.material_override = worn_mat if is_worn else body_mat
+								mi.visible = is_worn
+							var mask := await _grab()
+							for mi in all_nodes:
+								mi.visible = true
+							var both := await _grab()
+							if _arg("--stdir") != "":
+								both.save_png(_arg("--stdir").path_join("%s_%s_v%d_%d.png" % [f.code, sets[set_i].name, scale >> 4, int(yaw)]))
+								mask.save_png(_arg("--stdir").path_join("%s_%s_v%d_%d_mask.png" % [f.code, sets[set_i].name, scale >> 4, int(yaw)]))
+							var counts := _compare(mask, both)
+							covered += counts[0]
+							shown += counts[1]
+						var share := float(shown) / maxf(1.0, float(covered))
+						worst = maxf(worst, share)
+						line += "  v%d %5.2f%%" % [scale >> 4, share * 100.0]
+						b.free()
+					print("show-through " + line)
+	world.free()
+	# A measurement, not a verdict: the client draws the body's own pieces
+	# under worn ones (round 683 review, docs/WORLD_ISSUES.md), so this is what
+	# the archive's geometry gives at bind, not a defect count.
+	print("show-through: worst %.2f%% of a worn armour's pixels" % (worst * 100.0))
+
+func _grab() -> Image:
+	for _i in range(3):
+		await process_frame
+	return get_root().get_texture().get_image()
+
+## [armour pixels in the mask, of those the body's colour in the full pass].
+func _compare(mask: Image, both: Image) -> Array:
+	var covered := 0
+	var shown := 0
+	for y in range(0, mask.get_height(), 2):
+		for x in range(0, mask.get_width(), 2):
+			var m := mask.get_pixel(x, y)
+			if m.g > 0.5 and m.r < 0.5:
+				covered += 1
+				var c := both.get_pixel(x, y)
+				if c.r > 0.5 and c.g < 0.5:
+					shown += 1
+	return [covered, shown]
+
+# --- items only the index names ----------------------------------------------------
+
+## An avatar hat from ItemData_23000.txt, a part itemdata.txt names and
+## ItemTableReader.TABLE_PATHS does not (MEASURED: ITEM_MALL_AVATAR_M_CH_WEDDING_HAT,
+## 22912, `item\Avatar\avatar_m_ch_wedding_hat.bsr`), drawn on a China man.
+func _check_index_items(app: CharacterAppearance) -> void:
+	var b := app.build(1909, 0x22, [{"id": 22912, "plus": 0}])
+	var drawn := 0
+	if b != null and not b.worn.is_empty():
+		drawn = (b.worn[0]["nodes"] as Array).size()
+	_expect(drawn > 0, "an item only the index names (22912, ItemData_23000) is drawn as slot %s" % (
+		str(b.worn[0]["slot"]) if b != null and not b.worn.is_empty() else "none"))
+	print("full item table through itemdata.txt: %d rows in %.0f ms" % [
+		app.stats["item_table_rows"], app.stats["item_table_usec"] / 1000.0])
+	if b != null:
+		b.free()

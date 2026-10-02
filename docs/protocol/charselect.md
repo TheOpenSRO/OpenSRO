@@ -137,9 +137,11 @@ There is no other "selected" motion.
   set. Children are composed from the unscaled world matrix.
 - So Volume thickens or thins what is weighted to those bones, across the bone and never along it,
   and moves no joint. Armour skinned to the body follows it; a weapon on its own skeleton does not.
-- **Which table is whose (INFERRED, two supports):** only the women's skeletons have `Bone01`
-  (MEASURED: chinawoman_skel and europewoman_skel hold Bone01/Bone02; chinaman_skel and
-  europeman_skel do not), and the same vslot 0x34 selects the harp's `_f.bsr` model
+- **Which table is whose (INFERRED, two supports):** only the women's skeleton has `Bone01`.
+  Every one of the 52 Figure `.bsr`s names a **Europe** skeleton, China bodies included: the 26 men
+  `prim\skel\char\europe\europeman_skel.bsk`, the 26 women `europewoman_skel.bsk` (MEASURED,
+  round 683 review; `china\chinaman_skel.bsk` is named by one other `.bsr` only). europewoman_skel
+  holds Bone01/Bone02 and europeman_skel does not (MEASURED). And the same vslot 0x34 selects the harp's `_f.bsr` model
   (`CObjCharacter::FUN_00a5f4f0`). What vslot 0x34 reads (a resource's +0x28, `CCompChar`
   0xc1f0d0 -> 0xc2bb40) was not traced further.
 - `CharacterAppearance` (client/scripts/ui/character_appearance.gd) applies it as each bone's skin
@@ -910,7 +912,14 @@ box. `perf_gate.sh` for B3.
 
 - Where the client's creatable-id list (0xeedf08) comes from (INFERRED `_RefCharGen`).
 - What vslot 0x34 reads (INFERRED: a woman), which picks the Volume table and the harp's `_f`.
-- Whether an avatar hides the armour under it (`FUN_00a60ef0`).
+- Whether an avatar hides the armour under it (`FUN_00a60ef0`). What is READ (round 683 review):
+  `textdata\charactervisualchange.txt` gives each visual a Slot bit mask (helm 0x0801, mail 0x0002,
+  shoulder 0x0004, gauntlet 0x0008, pants 0x0010, boots 0x0020, weapon 0x0040, hair 0x0800), an
+  OverlapSlot, a group and a Priority (armour 250, avatars 60-110); `CObjCharacter::FUN_00a5fe00`
+  ORs `Slot & ~OverlapSlot` into +0x174 and `FUN_00a5da10` / `FUN_00a611e0` arbitrate the visuals
+  by it. The arbitration itself is not modelled.
+- What keeps the body's own pieces from showing through worn ones, if anything does. Traced
+  (round 683 review) and nothing found that hides a body mesh: see WORLD_ISSUES round 683, Review.
 - The weight half of the missing-palette-bone rule (`ResObject::FUN_00be2f80` leaves a missing
   bone's weight out of the sum; this client models only the entry, round 683).
 - The name bitmap at 0x8c3cb0, and the forbidden-word lists' source.

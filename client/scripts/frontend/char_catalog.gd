@@ -100,7 +100,13 @@ class Entry:
 	func type_id(level: int) -> int:
 		return type_ids[level - 1] if level >= 1 and level <= type_ids.size() else 0
 
-	## The create packet's piece (READ 0x80b980).
+	## The create packet's piece, by the create screen's own loader (READ
+	## 0x80b980): an armour piece needs TypeID3 1/2/3/9/10/11 and the shield
+	## TypeID4 1 or 2 (also `IsShieldItem` 0x56fab0). refdata/chargen.go's
+	## Piece() is looser (TypeID3 4 is a shield whatever its TypeID4, and
+	## TypeID4 3/4/6 is a piece whatever its TypeID3). The two agree on all 52
+	## catalogue items of the vSRO archive (MEASURED by appearance_probe.gd's
+	## set, weapon and shield counts).
 	func piece() -> int:
 		if is_body:
 			return Piece.NONE
@@ -144,21 +150,49 @@ var entries: Dictionary = {}
 
 # --- building ------------------------------------------------------------------
 
+## The textdata directory both index files and their parts live in.
+const TEXTDATA_DIR := "server_dep\\silkroad\\textdata\\"
+## The index files: one part name per line, in the order the client loads them
+## (MEASURED: characterdata.txt lists CharacterData_1000.txt ..
+## CharacterData_63000.txt and itemdata.txt ItemData_1000.txt ..
+## ItemData_63000.txt; the archive also holds parts no index names, such as
+## itemdata_55500.txt, which are not read).
+const CHAR_INDEX := "characterdata.txt"
+const ITEM_INDEX := "itemdata.txt"
+
 ## The catalogue from the player's own Media.pk2, or an empty one when it has
 ## no tables.
 static func from_archive(media_pk2: Pk2Reader) -> CharCatalog:
-	var char_parts: Array[PackedByteArray] = []
-	var item_parts: Array[PackedByteArray] = []
-	if media_pk2 != null:
-		for path in NpcTableReader.MODEL_TABLE_PATHS:
-			var entry := ObjectLoader.find_file(media_pk2, path)
-			if entry != null:
-				char_parts.append(media_pk2.read_file(entry))
-		for path in ItemTableReader.TABLE_PATHS:
-			var entry := ObjectLoader.find_file(media_pk2, path)
-			if entry != null:
-				item_parts.append(media_pk2.read_file(entry))
-	return from_tables(char_parts, item_parts)
+	return from_tables(index_parts(media_pk2, CHAR_INDEX), index_parts(media_pk2, ITEM_INDEX))
+
+## The bytes of every part `index_name` names, in the index's order. A name the
+## archive lacks is skipped; an empty or missing index gives no parts.
+static func index_parts(media_pk2: Pk2Reader, index_name: String) -> Array[PackedByteArray]:
+	var out: Array[PackedByteArray] = []
+	for name in index_part_names(media_pk2, index_name):
+		var entry := ObjectLoader.find_file(media_pk2, TEXTDATA_DIR + name)
+		if entry != null:
+			out.append(media_pk2.read_file(entry))
+	return out
+
+## The part names an index file lists, in order.
+static func index_part_names(media_pk2: Pk2Reader, index_name: String) -> PackedStringArray:
+	var names := PackedStringArray()
+	if media_pk2 == null:
+		return names
+	var entry := ObjectLoader.find_file(media_pk2, TEXTDATA_DIR + index_name)
+	if entry == null:
+		return names
+	return parse_index(media_pk2.read_file(entry))
+
+## An index file's part names, in order (blank and `//` lines skipped).
+static func parse_index(data) -> PackedStringArray:
+	var names := PackedStringArray()
+	for line in _text_lines(data):
+		var n := line.strip_edges()
+		if n != "" and not n.begins_with("//"):
+			names.append(n)
+	return names
 
 ## The catalogue from raw characterdata and itemdata parts (UTF-16LE as the
 ## archive stores them, or UTF-8), in the index files' order.
@@ -183,17 +217,26 @@ static func from_tables(char_parts: Array, item_parts: Array) -> CharCatalog:
 ## Keeps, per id, the last line that defines it -- but only for ids that are
 ## ever a candidate, so the 30,000 item rows are not all kept. A later
 ## definition of a candidate id replaces it whatever it says, which is what
-## "the last definition wins" needs.
+## "the last definition wins" needs. As refdata/chargen.go does: a `//` line
+## and a row whose column 1 is not an integer are skipped, and a row too short
+## to hold the rule's columns (58 for a body, 93 for an item) defines nothing,
+## so it does not replace an earlier one.
 static func _collect_last(lines: PackedStringArray, last: Dictionary, items: bool) -> void:
+	var need := (COL_TWO_HANDED if items else COL_SEX) + 1
 	for line in lines:
-		if line.is_empty():
+		if line.is_empty() or line.begins_with("//"):
 			continue
 		var id_text := line.get_slice("\t", COL_ID).strip_edges()
 		if not id_text.is_valid_int():
 			continue
 		var id := int(id_text)
-		if last.has(id) or _maybe_candidate(line, items):
-			last[id] = line
+		# The cheap tests first: most rows are neither a candidate nor an id
+		# already kept, and a full tab count of every row cost ~1 s (MEASURED).
+		if not (last.has(id) or _maybe_candidate(line, items)):
+			continue
+		if line.count("\t") + 1 < need:
+			continue
+		last[id] = line.trim_suffix("\r")
 
 ## A cheap pre-test the full rule then confirms: an item's code must end
 ## `_A_DEF`, so its line holds `_A_DEF\t`; a body's TypeID1/2 must read 1/1.
@@ -245,7 +288,9 @@ static func _text_lines(data) -> PackedStringArray:
 		text = raw.slice(2).get_string_from_utf16()
 	else:
 		text = raw.get_string_from_utf8()
-	return text.replace("\r", "").split("\n")
+	# Lines keep a trailing "\r"; every reader strips its fields, and a kept
+	# row is trimmed, so the whole text is not copied once more to drop them.
+	return text.split("\n")
 
 # --- queries -------------------------------------------------------------------
 

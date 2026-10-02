@@ -37,6 +37,12 @@ func _row(service: int, id: int, code: String, t: Array, country: int, sex: int,
 	cols[CharCatalog.COL_TWO_HANDED] = str(two_handed)
 	return "\t".join(cols)
 
+func _zeros(n: int) -> String:
+	var parts := PackedStringArray()
+	for i in range(n):
+		parts.append("0")
+	return "\t".join(parts)
+
 func _utf16(text: String) -> PackedByteArray:
 	var out := PackedByteArray([0xFF, 0xFE])
 	out.append_array(text.to_utf16_buffer())
@@ -54,10 +60,15 @@ func _init() -> void:
 		_row(1, 140, "CHAR_CH_MAN_LATE", [1, 2, 0, 0], 0, 1), # first: not 1/1 ...
 		_row(1, 150, "CHAR_CH_MAN_GONE", [1, 1, 0, 0], 0, 1), # first: a body ...
 	]
+	# A `//` comment line, and rows too short to hold the rule's columns
+	# (chargen.go: <= 58 / <= 93 columns), define nothing.
+	var short_body := "1\t101\tCHAR_CH_MAN_A\t" + _zeros(10)
 	var chars_late := [
+		"//Service\tID\tCodeName",
 		_row(1, 140, "CHAR_CH_MAN_LATE", [1, 1, 0, 0], 0, 1), # ... last: a body -> in
 		_row(0, 150, "CHAR_CH_MAN_GONE", [1, 1, 0, 0], 0, 1), # ... last: Service 0 -> out
 		_row(1, 101, "CHAR_CH_MAN_A", [1, 1, 0, 0], 0, 1, "char\\china\\a.bsr"), # a duplicate
+		short_body, # last, and too short: it replaces nothing
 	]
 	var items := [
 		# China weapons; a two-handed one gets no shield.
@@ -99,6 +110,8 @@ func _init() -> void:
 		_row(1, 3004, "ITEM_ETC_AMMO_ARROW_01_DEF", [3, 3, 4, 1], 0, 2),
 		# A code that does not END in _A_DEF.
 		_row(1, 3005, "ITEM_CH_SWORD_01_A_DEF_X", [3, 1, 6, 2], 0, 2),
+		# Last, and too short for the rule's 94 columns: it replaces nothing.
+		"1\t1001\tITEM_CH_SWORD_01_A_DEF\t" + _zeros(20),
 	]
 	var cat := CharCatalog.from_tables(
 		[_utf16("\r\n".join(PackedStringArray(chars))), "\n".join(PackedStringArray(chars_late))],
@@ -161,6 +174,13 @@ func _init() -> void:
 	var kit3 := cat.sample_kit(eu, ew, 1)
 	_check(_ids(kit3) == [2013, 2014, 2015, 2002], "Europe crossbow kit: light set, no shield (got %s)" % str(_ids(kit3)))
 	_check(cat.size() == 6 + 2 + 1 + 9 + 1 + 4 + 1 + 9, "the catalogue holds exactly the rule's rows (got %d)" % cat.size())
+
+	_check(cat.get_entry(101).model_path == "char\\china\\a.bsr", "a short row does not replace a body's definition")
+	_check(cat.has(1001) and cat.get_entry(1001).model_path == "item\\china\\weapon\\sword_01.bsr", "a short row does not replace an item's definition")
+
+	# --- the index file ---
+	var idx := CharCatalog.parse_index(_utf16("ItemData_1000.txt\r\n//note\r\n\r\nItemData_63000.txt\r\nItemData_2000.txt\r\n"))
+	_check(Array(idx) == ["ItemData_1000.txt", "ItemData_63000.txt", "ItemData_2000.txt"], "an index lists its parts in its own order (got %s)" % str(idx))
 
 	# --- an empty archive ---
 	_check(CharCatalog.from_archive(null).size() == 0, "no archive: an empty catalogue")

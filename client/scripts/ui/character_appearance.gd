@@ -38,9 +38,10 @@ class_name CharacterAppearance
 ##   pre-multiplied by `scale(1, f, f)`, on every mesh skinned to the body.
 ## - Which table is whose: `FUN_00a5b7e0` picks 0xec6528 when the model's
 ##   vslot 0x34 is non-zero. INFERRED to mean "a woman" twice over: 0xec6528
-##   is the only table naming group 37, `Bone01`, which only the two women's
-##   skeletons have (MEASURED: chinawoman_skel and europewoman_skel hold
-##   Bone01/Bone02, chinaman_skel and europeman_skel do not), and the same
+##   is the only table naming group 37, `Bone01`, which only the women's
+##   skeleton has (MEASURED: all 52 Figures name europeman_skel.bsk or
+##   europewoman_skel.bsk, China bodies too; europewoman_skel holds
+##   Bone01/Bone02, europeman_skel does not), and the same
 ##   vslot picks the harp's `_f.bsr` model (CObjCharacter 0xa5f4f0). The sex
 ##   itself comes from the body's characterdata column 58 (CharCatalog).
 ##
@@ -172,7 +173,24 @@ var _body_templates: Dictionary = {}  # bsr path -> AssembledCharacter (detached
 var _item_templates: Dictionary = {}  # "skeleton|bones|item path" -> Node3D (detached) or null
 ## Timings, microseconds: the last build, and the running totals.
 var last_build_usec: int = 0
-var stats := {"builds": 0, "body_assemblies": 0, "item_assemblies": 0, "build_usec": 0}
+var stats := {"builds": 0, "body_assemblies": 0, "item_assemblies": 0, "build_usec": 0, "item_table_usec": 0, "item_table_rows": 0}
+
+## The cached templates are detached nodes, which a RefCounted's death would
+## otherwise leak; they go with it.
+## (Inline, not through free_templates(): a RefCounted's script methods cannot
+## be called while it is being deleted -- MEASURED, the call errors with "base
+## 'null instance'".)
+func _notification(what: int) -> void:
+	if what != NOTIFICATION_PREDELETE:
+		return
+	for path in _body_templates:
+		var t: SkinnedBsrAssembler.AssembledCharacter = _body_templates[path]
+		if t != null and is_instance_valid(t.skeleton):
+			t.skeleton.free()
+	for key in _item_templates:
+		var n = _item_templates[key]
+		if n != null and is_instance_valid(n):
+			(n as Node).free()
 
 ## An appearance over the player's archives. `items`, when given, is a table
 ## already parsed (item id -> ItemTableReader.Item, World3D's `_item_rows`), so
@@ -248,6 +266,10 @@ static func volume_bone_scales(scale: int, woman: bool) -> Dictionary:
 ## Volume to the bind poses of every skin bound to the body's skeleton.
 static func apply_scale(body: Body, scale: int) -> void:
 	body.scale_byte = scale
+	# 0xFF is stored and changes nothing (READ 0xa5b960): the body keeps the
+	# Height and Volume it had.
+	if scale == 0xff:
+		return
 	body.height_factor = height_factor(scale)
 	body.scale = Vector3.ONE * body.height_factor
 	body.volume_scales = volume_bone_scales(scale, body.is_woman)
@@ -292,11 +314,10 @@ static func _skinned_to(skeleton: Skeleton3D) -> Array[MeshInstance3D]:
 # --- worn items -----------------------------------------------------------------
 
 ## The visual slot of an item by its TypeID1..4 (READ, ResolveVisualSlotForItem
-## 0x9db5e0), or -1 when it draws no mesh. The function's shield test is its
-## `IsShieldItem` helper, taken here as TypeID3 4 (INFERRED: both catalogue
-## shields are 3/1/4/x, MEASURED); earrings, necklaces and rings (its slots
-## 9..11) draw nothing and read -1. SLOT_AVATAR for TypeID3 13 (READ, the
-## select screen's 0x680 test).
+## 0x9db5e0, with its `IsShieldItem` 0x56fab0: TypeID 3/1/4 and TypeID4 1 or
+## 2), or -1 when it draws no mesh: earrings, necklaces and rings (its slots
+## 9..11) draw nothing. SLOT_AVATAR for TypeID3 13 (READ, the select screen's
+## 0x680 test).
 static func visual_slot(type_ids: PackedInt32Array) -> int:
 	if type_ids.size() < 4 or type_ids[0] != 3 or type_ids[1] != 1:
 		return -1
@@ -312,7 +333,7 @@ static func visual_slot(type_ids: PackedInt32Array) -> int:
 			6: return SLOT_FEET
 	if t3 == 6:
 		return SLOT_WEAPON
-	if t3 == 4:
+	if t3 == 4 and (t4 == 1 or t4 == 2):
 		return SLOT_SHIELD
 	if t3 == 7:
 		return SLOT_SUIT
@@ -322,7 +343,12 @@ static func visual_slot(type_ids: PackedInt32Array) -> int:
 
 ## The models an item is drawn from on a body (READ CObjCharacter 0xa5f4f0):
 ## a dual axe or dagger from `<path>_l.bsr` and `<path>_r.bsr`, a harp on a
-## woman from `<path>_f.bsr`, anything else from its own path.
+## woman from `<path>_f.bsr`, anything else from its own path. When the `_r`
+## or `_f` resource does not load the client loads the plain path instead
+## (0xa5f4f0 -> LAB_00a5f851); build() does the same (_FALLBACK_SUFFIXES).
+## The client's second-resource branch for a visual record that names its own
+## `.bsr` (the record from 0x4ec9b0, charactervisualchange.txt's BsrName
+## columns) is not modelled: OPEN.
 static func item_models(model_path: String, type_ids: PackedInt32Array, woman: bool) -> PackedStringArray:
 	if model_path == "":
 		return PackedStringArray()
@@ -391,10 +417,16 @@ func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Bo
 		wears.append(by_slot[slot])
 	wears.append_array(avatars)
 	for wear in wears:
+		var drawn := PackedStringArray()
 		for path in wear["models"]:
 			var node := _item_instance(bsr_path, tmpl, skel, path)
+			if node == null and _fallback_of(path) != "":
+				path = _fallback_of(path)
+				node = _item_instance(bsr_path, tmpl, skel, path)
 			if node != null:
 				(wear["nodes"] as Array).append(node)
+				drawn.append(path)
+		wear["drawn"] = drawn
 		body.worn.append(wear)
 
 	_own_skins(skel)
@@ -418,6 +450,16 @@ func body_path(ref_obj_id: int) -> String:
 	if e != null and e.is_body and e.model_path != "":
 		return e.model_path
 	return String(_extra_bodies.get(ref_obj_id, ""))
+
+## The variants whose failure falls back to the plain model (READ 0xa5f4f0).
+const _FALLBACK_SUFFIXES := ["_r.bsr", "_f.bsr"]
+
+## The plain model a `_r` / `_f` variant falls back to, "" for any other path.
+static func _fallback_of(path: String) -> String:
+	for suffix in _FALLBACK_SUFFIXES:
+		if path.to_lower().ends_with(suffix):
+			return path.substr(0, path.length() - suffix.length()) + ".bsr"
+	return ""
 
 ## Frees the cached templates (a screen closing).
 func free_templates() -> void:
@@ -507,13 +549,16 @@ func _item_info(id: int) -> Dictionary:
 		return _items[id]
 	if not _full_items_loaded and _media != null:
 		_full_items_loaded = true
-		for path in ItemTableReader.TABLE_PATHS:
-			var entry := ObjectLoader.find_file(_media, path)
-			if entry == null:
-				continue
-			var rows := ItemTableReader.parse(_media.read_file(entry))
-			for rid in rows:
-				if not _items.has(int(rid)):
-					var item: ItemTableReader.Item = rows[rid]
-					_items[int(rid)] = {"models": item.model_paths, "type_ids": item.type_ids}
+		var t0 := Time.get_ticks_usec()
+		# Every part itemdata.txt names, in its order, so a later definition
+		# of an id wins as it does in the client and in refdata/chargen.go
+		# (ItemTableReader.TABLE_PATHS, the world's list, names 7 of them).
+		var rows := {}
+		for part in CharCatalog.index_parts(_media, CharCatalog.ITEM_INDEX):
+			ItemTableReader.parse(part, rows)
+		for rid in rows:
+			var item: ItemTableReader.Item = rows[rid]
+			_items[int(rid)] = {"models": item.model_paths, "type_ids": item.type_ids}
+		stats["item_table_usec"] = Time.get_ticks_usec() - t0
+		stats["item_table_rows"] = rows.size()
 	return _items.get(id, {})

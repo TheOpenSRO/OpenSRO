@@ -505,6 +505,12 @@ vglrun -d egl0 ... --rendering-driver opengl3 --resolution 1600x1200 --script
 res://tools/appearance_probe.gd -- --pk2=$PK2/Data.pk2 --media=$PK2/Media.pk2 --out=/var/tmp/<lane>/shots`.
 Without `--out` it runs headless through `remote_godot.sh script`.
 
+`--showthrough=1` (GL context) measures how much of each worn armour set the body's own pieces cover,
+front and back, in flat colours (`--showthrough=all` for every Figure). `--stdir=<dir>` saves the
+frames, `--shrink=<f>` scales every body piece towards its bones first, `--bind` skips the idle pose,
+and `--norender` skips the lineups. `probe_body_armour.gd --body=<.bsr> --items=<a.bsr,b.bsr>` counts
+an item's vertices that sit on a body vertex (headless; pass paths with `/`, which survive the ssh).
+
 ### Load benchmark
 
 Every map and loading change is measured on the two runs below, before and after, and on nothing

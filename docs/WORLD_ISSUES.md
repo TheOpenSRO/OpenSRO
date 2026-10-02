@@ -7128,8 +7128,9 @@ changes here: the select screen (684) and the customize preview (685) use this. 
   children are composed from the unscaled matrix. So Volume thickens across the bone, never along
   it, and moves no joint.
 - **Which table is whose -- INFERRED.** `FUN_00a5b7e0` takes 0xec6528 when vslot 0x34 is non-zero.
-  Only that table names `Bone01`, which only the women's skeletons have (MEASURED: `strings` on the
-  four `*_skel.bsk`; chinawoman and europewoman hold Bone01/Bone02, the men's do not). The same vslot
+  Only that table names `Bone01`, which only the women's skeleton has (MEASURED, corrected in the
+  review: all 52 Figure `.bsr`s name `europeman_skel.bsk` or `europewoman_skel.bsk`, China bodies
+  too; europewoman_skel holds Bone01/Bone02, europeman_skel does not). The same vslot
   picks the harp's `_f.bsr` (below). So 0xec6528 is the women's.
 
 **What is worn.**
@@ -7247,8 +7248,9 @@ rows China men, China women, Europe men, Europe women), `lineup_v0/v4.png` (Volu
 `compare_height.png` / `compare_volume.png` (the first Figure of each race and sex at the three
 values side by side), all orthographic at one scale.
 
-- In one earlier close-up the China woman ADVENTURER's heavy chest drew bright white. At the final
-  framing it does not. Not measured; noted.
+- In one earlier close-up the China woman ADVENTURER's heavy chest drew bright white. **Corrected in
+  the review:** that was her body's own painted top drawn over the armour, and it is there at the
+  final framing too, only smaller. The review measured it (section 7).
 - The body's own pieces still draw under the armour (TODO "The body under armour", round 281/283:
   retail fills empty slots with default wear).
 
@@ -7285,6 +7287,114 @@ SCRIPT ERROR: Parse Error: Identifier "CharacterAppearance" not declared in the 
 - The body under armour and default wear (TODO).
 - Which clip the select idle and the preview play (charselect.md section 9).
 - `CharacterPreview` is still the create screen's preview; round 685 replaces it with this builder.
+
+### 7. Review
+
+The review found the shared-file changes world-neutral and every READ claim sound. It raised three
+MEDIUMs and five LOWs.
+
+**MEDIUM 1, the body through the armour -- measured; the fix asked for is not implemented, because
+no READ supports it.**
+
+*The measurement.* `appearance_probe.gd --showthrough=1` draws each body with one armour set and no
+weapon, front and back, in two flat colours. Pass 1 draws the armour alone (its mask); pass 2 draws
+body and armour. It counts the armour's pixels where the body wins, with back faces culled. Results
+in % of the armour's pixels at Volume 0 / 2 / 4:
+
+| Body | heavy | light | clothes / robe |
+|---|---|---|---|
+| CHAR_CH_MAN_ADVENTURER | 2.13 / 2.04 / 2.03 | 4.93 / 4.80 / 4.89 | 7.39 / 7.36 / 8.12 |
+| CHAR_CH_WOMAN_ADVENTURER | 3.66 / 3.96 / 5.19 | 5.62 / 6.21 / 8.36 | 4.40 / 4.62 / 5.54 |
+| CHAR_EU_MAN_NOBLE | 3.29 / 3.18 / 3.80 | 21.30 / 20.94 / 18.97 | 5.95 / 6.59 / 6.92 |
+| CHAR_EU_WOMAN_NOBLE | 6.26 / 6.84 / 7.51 | 13.74 / 12.95 / 13.55 | 8.54 / 8.04 / 8.31 |
+
+*What it is.* It is the archive's own geometry at bind:
+- No armour vertex coincides with a body vertex (`tools/probe_body_armour.gd`, eps 0.01: none for
+  the China woman's heavy set). So it is not z-fighting.
+- The armour mask has no holes (EU man light, inspected).
+- Shrinking every body piece towards its bones still leaves it: by 1 % the worst case is 18.05 %,
+  by 3 % 12.90 %, by 7 % 7.34 % (EU man light). So the body really is outside the armour there.
+- At Volume 4 the women's numbers rise because the body's torso is skinned to `Bone01` and the
+  armour is not (the China woman's `heavy_01_ba.bms` palette has no `Bone01`, MEASURED). The
+  client scales by the same rule, so it would do the same (READ, section 1).
+
+*What was READ looking for the client's way of hiding a body piece under a worn one.* Nothing found:
+- Every Figure `.bsr` has one mesh group, `default`, listing all nine pieces. These are the same
+  seven skin parts in the same order for all 52 (arm_fore/lower, arm_upper, calf, pelvis, thigh,
+  torso_lower, torso_upper), then face and hair (MEASURED).
+- The exe names no body part; `strings` finds no `torso`, `arm_fore` or `_calf`.
+- The slot masks belong to the visual-change table (`charactervisualchange.txt`, loaded by
+  `CharacterVisualChangeManager` 0x4ed530). The masks are helm 0x0801, mail 0x0002 and so on; hair
+  is 0x0800.
+- `CObjCharacter::FUN_00a5fe00` ORs `Slot & ~OverlapSlot` into +0x174, and `FUN_00a5da10` and
+  `FUN_00a611e0` use it to choose between visuals (an avatar over armour). They do not touch the
+  body's meshes.
+- `FUN_00a5e010` gives the chest and legs the default wear when no visual's mask covers mail
+  (0x0002) or pants (0x0010). It does this unless `CGame+0x129` is set, the same per-server flag as
+  the Protector minimum.
+- `AttachEquipVisualResource` (0xa609f0) only books the resource.
+- Round 283 READ the same of `InstallEquipVisual`.
+
+So hiding a body piece would be a rule this project invented. Per AGENTS.md it is left out, and the
+probe reports the numbers as a measurement, not a PASS/FAIL. **OPEN**, with the next reads:
+- where the body `.bsr` is attached for a player (`CICPlayer::vslot_025` 0x9d9a80 calls vslot
+  0x58/0x5c around the equipment; neither was read);
+- whether the helm's mask bit 0x0800 hides the body's hair mesh. If it does, the same mechanism
+  would hide skin pieces, and it would be where to look;
+- one retail screenshot of the Europe man in the light set, to settle whether the skin patches on
+  its legs are the art.
+
+**MEDIUM 2, the template cache leaked:** fixed.
+- `_notification(NOTIFICATION_PREDELETE)` frees the templates. It does so inline: calling
+  `free_templates()` from there errors with "base 'null instance'" (MEASURED).
+- The test drops an appearance holding 1 body and 5 item templates. All are freed, and the orphan
+  count goes 15 -> 3.
+
+**MEDIUM 3, items outside `ItemTableReader.TABLE_PATHS`:** fixed for the builder and the catalogue.
+The world is unchanged.
+- `CharCatalog.index_parts(media, index)` reads `itemdata.txt` / `characterdata.txt` and their
+  parts in the index's order. `parse_index` is tested.
+- The catalogue reads both tables that way.
+- The builder's full item table (parsed on the first id the catalogue lacks) reads all 63 itemdata
+  parts: 15,338 rows in 285 ms (MEASURED).
+- The probe draws `ITEM_MALL_AVATAR_M_CH_WEDDING_HAT` (22912, only in ItemData_23000) on a China
+  man, as an avatar.
+- `from_archives` went from 130 ms to 216 ms. A first version, which counted every row's tabs, took
+  1534 ms; the cheap tests now run first.
+- World3D still reads the seven `TABLE_PATHS` (TODO).
+
+**LOWs**
+1. **Shield:** `visual_slot` takes TypeID 3/1/4 with TypeID4 1 or 2 (READ `IsShieldItem`
+   0x56fab0). Tested: 3/1/4/3 is not a shield.
+2. **Fallback:** a `_r` or `_f` model that does not load falls back to the plain path, as
+   0xa5f4f0's `LAB_00a5f851` does. A missing `_l` draws nothing (the client asserts there).
+   `wear["drawn"]` records what was drawn, and this is tested. The second-resource branch (the
+   visual record's own BsrName, 0x4ec9b0) is OPEN.
+3. **0xFF** is stored and leaves Height and Volume as they were (READ 0xa5b960). Tested.
+4. **Parity with `chargen.go` (8e54648):**
+   - Rows too short for the rule (58 columns for a body, 93 for an item) define nothing and so
+     replace nothing. `//` lines are skipped. Both are tested.
+   - `piece()` stays the create screen's own loader rule (READ 0x80b980 plus `IsShieldItem`). It is
+     stricter than chargen.go's `Piece()`, which takes any TypeID3 4 as a shield and any TypeID4
+     3/4/6 as an armour piece. They agree on all 52 catalogue items (MEASURED), so neither is wrong
+     on the archive. The server's is looser than READ, for the coordinator to route.
+5. **Skeleton files:** corrected (section 1 and charselect.md). The 52 Figures name europe(wo)man_skel.
+
+**Tests:**
+- char_catalog_test: 44 checks, ALL PASS.
+- character_appearance_test: 78 checks, ALL PASS.
+- `remote_godot.sh check`: ALL LOAD.
+- `remote_godot.sh tests`: 199 suites, 0 failing (507 scripts load).
+- appearance_probe: PASS (0 failing).
+- The new checks on the base 9c8518d fail:
+
+```
+SCRIPT ERROR: Parse Error: Static function "parse_index()" not found in base "CharCatalog".
+FAIL 0xFF changes nothing: Height 4 and Volume 4 stay (READ 0xa5b960)
+SCRIPT ERROR: Invalid get index 'drawn' (on base: 'Dictionary').
+```
+
+  The last of these is the fallback check; it stops the suite before the shield and cache checks.
 
 ## Six-hundred-and-eighty-first round: a `type: legacy` server in the list is asked the original way -- the retail handshake, 0x6100, 0x6101 -- and its shards show their real Check / Easy / Populated / Crowded / FULL
 

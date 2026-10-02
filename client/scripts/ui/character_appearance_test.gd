@@ -204,17 +204,34 @@ func _init() -> void:
 	_check(_vnear(worn_spine * probe, r.origin + r.basis.y * 2.2), "a worn piece skinned to the body follows Volume too")
 	_check(_mesh_named(b1, "chest_b_mesh").mesh == _mesh_named(b2, "chest_b_mesh").mesh, "two characters share the worn mesh")
 	_check(_mesh_named(b1, "body_piece").mesh == _mesh_named(tmpl.skeleton, "body_piece").mesh, "a character shares the template's body mesh")
+	b1.set_scale_byte(0xff)
+	m1 = r * _bind_of(_mesh_named(b1, "body_piece"), b1.skeleton, "Bip01 Spine")
+	_check(_vnear(m1 * probe, r.origin + r.basis.y * 2.2) and _vnear(b1.scale, Vector3.ONE * 1.06),
+		"0xFF changes nothing: Height 4 and Volume 4 stay (READ 0xa5b960)")
+	_check(b1.scale_byte == 0xff, "0xFF is still stored")
 	b1.set_scale_byte(0x20)
 	m1 = r * _bind_of(_mesh_named(b1, "body_piece"), b1.skeleton, "Bip01 Spine")
 	_check(_vnear(m1 * probe, probe) and _vnear(b1.scale, Vector3.ONE * 0.94), "set_scale_byte re-applies: volume 2, height 0")
 	_check(app.build(4242, 0x22, []) == null, "an unknown model id builds nothing")
+
+	# A dagger whose `_r` does not load falls back to the plain model (READ
+	# 0xa5f4f0 -> LAB_00a5f851); its `_l` has no fallback.
+	app._items[5005] = {"models": PackedStringArray(["item\\dagger_01.bsr"]), "type_ids": PackedInt32Array([3, 1, 6, 13])}
+	app._item_templates["%s|%d|%s" % [body_path, bones, "item\\dagger_01.bsr"]] = _item_template("dagger_01", tmpl.skeleton)
+	var b3 := app.build(1907, 0x22, [5005])
+	_check(b3 != null and b3.worn.size() == 1 and Array(b3.worn[0]["drawn"]) == ["item\\dagger_01.bsr"],
+		"a missing _r falls back to the plain path, a missing _l draws nothing (got %s)" % (str(b3.worn[0]["drawn"]) if b3 != null and not b3.worn.is_empty() else "none"))
+	if b3 != null:
+		b3.free()
 
 	# --- item rules ---
 	var tid := func(a: Array) -> PackedInt32Array: return PackedInt32Array(a)
 	_check(CharacterAppearance.visual_slot(tid.call([3, 1, 1, 3])) == CharacterAppearance.SLOT_CHEST, "TypeID4 3 is the chest")
 	_check(CharacterAppearance.visual_slot(tid.call([3, 1, 10, 6])) == CharacterAppearance.SLOT_FEET, "Europe light feet")
 	_check(CharacterAppearance.visual_slot(tid.call([3, 1, 6, 2])) == CharacterAppearance.SLOT_WEAPON, "TypeID3 6 is the weapon")
-	_check(CharacterAppearance.visual_slot(tid.call([3, 1, 4, 1])) == CharacterAppearance.SLOT_SHIELD, "TypeID3 4 is the shield")
+	_check(CharacterAppearance.visual_slot(tid.call([3, 1, 4, 1])) == CharacterAppearance.SLOT_SHIELD, "3/1/4/1 is a shield")
+	_check(CharacterAppearance.visual_slot(tid.call([3, 1, 4, 2])) == CharacterAppearance.SLOT_SHIELD, "3/1/4/2 is a shield")
+	_check(CharacterAppearance.visual_slot(tid.call([3, 1, 4, 3])) == -1, "3/1/4/3 is not (IsShieldItem 0x56fab0 wants TypeID4 1 or 2)")
 	_check(CharacterAppearance.visual_slot(tid.call([3, 1, 13, 1])) == CharacterAppearance.SLOT_AVATAR, "TypeID3 13 is an avatar")
 	_check(CharacterAppearance.visual_slot(tid.call([3, 3, 1, 1])) == -1, "a consumable is worn nowhere")
 	_check(Array(CharacterAppearance.item_models("item\\europe\\weapon\\dagger_01.bsr", tid.call([3, 1, 6, 13]), false)) \
@@ -235,7 +252,23 @@ func _init() -> void:
 
 	for n in [b1, b2]:
 		n.free()
-	app.free_templates()
+
+	# --- the template cache goes with the appearance (NOTIFICATION_PREDELETE) ---
+	var tmpl_id := tmpl.skeleton.get_instance_id()
+	var item_ids := []
+	for key in app._item_templates:
+		if app._item_templates[key] != null:
+			item_ids.append((app._item_templates[key] as Node).get_instance_id())
+	var orphans_before := int(Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT))
+	app = null
+	var orphans_after := int(Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT))
+	_check(not is_instance_id_valid(tmpl_id), "dropping the appearance frees its body template")
+	var alive := 0
+	for i in item_ids:
+		if is_instance_id_valid(i):
+			alive += 1
+	_check(item_ids.size() > 0 and alive == 0, "and its %d item templates (%d left)" % [item_ids.size(), alive])
+	_check(orphans_after < orphans_before, "orphan nodes drop when the appearance goes (%d -> %d)" % [orphans_before, orphans_after])
 	s.free()
 	_finish()
 

@@ -1137,7 +1137,18 @@ front-end's next steps.
   weight out of the sum): not modelled. The position at rest is right.
 - **What vslot 0x34 reads** (INFERRED "a woman": it picks the women's Volume table and the harp's
   `_f`). Trace `CCompChar` 0xc1f0d0 -> 0xc2bb40's resource +0x28.
-- **Avatars:** attached on top (READ `FUN_00a60ef0`). Whether one hides the armour under it is OPEN.
+- **Avatars:** attached on top (READ `FUN_00a60ef0`). Which visual wins a slot bit is
+  `charactervisualchange.txt`'s Slot / OverlapSlot / Priority (READ, round 683 review); not modelled.
+- **The body through the armour** (round 683 review): 2-21 % of a worn armour's pixels show the
+  body's own skin at bind (`appearance_probe.gd --showthrough=1`). This is the archive's geometry: the
+  body is outside the armour there, and no client code hiding a body piece was found. Next reads:
+  where `CICPlayer::vslot_025` attaches the body (vslots 0x58/0x5c), and whether a helm's 0x0800 bit
+  hides the body's hair mesh. A retail screenshot of the Europe man in the light set would settle the
+  art question.
+- **The world reads only 7 of itemdata.txt's 63 parts** (`ItemTableReader.TABLE_PATHS`): 3,566 of
+  15,338 item ids, avatars among them, are unknown to World3D and not drawn. The builder and
+  catalogue read through the index (`CharCatalog.index_parts`). Switching the world costs a parse of
+  all 63 parts (~285 ms with the native readers, MEASURED) and needs `perf_gate.sh`.
 - **The plus glow** (INFERRED that plus drives it): the plus is kept on `Body.worn`, not drawn.
 - **`CharacterPreview`** is still the create screen's preview; round 685 replaces it with this
   builder.
