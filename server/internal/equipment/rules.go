@@ -298,18 +298,28 @@ func Refusal(c *character.Character, it *refdata.Item, slot Slot) error {
 	if !SlotAccepts(want, slot) {
 		return fmt.Errorf("%w: item %d goes in slot %d, not %d", ErrWrongSlot, it.ID, want, slot)
 	}
-	// Every character is China today; a Europe item is for another race.
-	if it.Country == CountryEurope {
+	// An item of the other race is refused; Country 3 (either) is not. The
+	// character's race is its body's (character.RaceOf its Gender, which is
+	// derived from RefObjID since round 682, when Europe became creatable);
+	// with no character the check is a China one, as it always was.
+	race := character.RaceChina
+	if c != nil {
+		race = character.RaceOf(c.Gender)
+	}
+	if it.Country == CountryEurope && race != character.RaceEurope {
 		return fmt.Errorf("%w: item %d is European", ErrWrongRace, it.ID)
+	}
+	if it.Country == CountryChina && race != character.RaceChina {
+		return fmt.Errorf("%w: item %d is Chinese", ErrWrongRace, it.ID)
 	}
 	if c != nil {
 		switch it.ReqGender {
 		case ReqGenderMan:
-			if c.Gender != character.GenderChinaMan {
+			if character.SexOf(c.Gender) != character.SexMan {
 				return fmt.Errorf("%w: item %d is a man's", ErrWrongGender, it.ID)
 			}
 		case ReqGenderWoman:
-			if c.Gender != character.GenderChinaWoman {
+			if character.SexOf(c.Gender) != character.SexWoman {
 				return fmt.Errorf("%w: item %d is a woman's", ErrWrongGender, it.ID)
 			}
 		}

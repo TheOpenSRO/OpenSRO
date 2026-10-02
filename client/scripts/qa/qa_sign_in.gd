@@ -78,7 +78,8 @@ static func run(tree: SceneTree) -> bool:
 	if listed.is_empty():
 		printerr("QA sign-in: no answer to the character list -- rendering offline")
 		return false
-	# The list carries CharacterNet.Summary objects, not names: `who in
+	# The list carries LobbyNet.Character objects (CharacterNet.Summary
+	# before round 682), not names: `who in
 	# listed[1]` was always false, so every run after a server's first tried
 	# to create the character again and stopped at "name already taken" --
 	# unseen while each in-memory QA server was fresh, found by round 558's

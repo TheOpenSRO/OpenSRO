@@ -240,12 +240,27 @@ static func apply_ban_keyframe(skeleton: Skeleton3D, track: BanReader.Bone, fram
 ## Returns null if any palette bone is missing from the skeleton: a skin
 ## with a wrong binding silently drags geometry to the origin, which is far
 ## harder to diagnose than a mesh that declines to attach.
-static func build_skin(skeleton: Skeleton3D, bone_names: PackedStringArray, object_space: bool = false) -> Skin:
+##
+## `missing_to_object_space` (round 683, off by default; CharacterAppearance
+## passes it) applies the client's own rule instead: `ResObject::FUN_00be2f80`
+## looks each influence's palette name up in the skeleton (`FUN_00bce230`) and,
+## when it is not there, gives that influence entry 0 -- the object's own
+## space, OBJECT_SPACE_BONE here -- and leaves its weight out of the vertex's
+## sum (READ). The Europe man's heavy legs (`heavy_01_la.bms`) name a `Bone03`
+## that europeman_skel.bsk does not have (MEASURED), so without this the legs
+## are not drawn at all. The weight half of the rule is not modelled
+## (BmsReader normalises over both slots before the skeleton is known): at
+## rest the vertex lands in the same place either way, animated it may lag.
+static func build_skin(skeleton: Skeleton3D, bone_names: PackedStringArray, object_space: bool = false,
+		missing_to_object_space: bool = false) -> Skin:
 	if skeleton == null or bone_names.is_empty():
 		return null
 	var skin := Skin.new()
 	for i in range(bone_names.size()):
 		var bone_idx := skeleton.find_bone(bone_names[i])
+		if bone_idx == -1 and missing_to_object_space:
+			skin.add_bind(_object_space_bone(skeleton), Transform3D.IDENTITY)
+			continue
 		if bone_idx == -1:
 			push_warning("Skeleton3DBuilder: skeleton has no bone named %s" % bone_names[i])
 			return null
@@ -256,14 +271,18 @@ static func build_skin(skeleton: Skeleton3D, bone_names: PackedStringArray, obje
 		# origin that nothing animates, so its skin matrix stays identity
 		# and the vertex keeps its bind position in the model's own space --
 		# the client's palette entry 0 (BmsReader._parse_skin, round 626).
-		var obj := skeleton.find_bone(OBJECT_SPACE_BONE)
-		if obj == -1:
-			obj = skeleton.get_bone_count()
-			skeleton.add_bone(OBJECT_SPACE_BONE)
-			skeleton.set_bone_rest(obj, Transform3D.IDENTITY)
-			skeleton.reset_bone_pose(obj)
-		skin.add_bind(obj, Transform3D.IDENTITY)
+		skin.add_bind(_object_space_bone(skeleton), Transform3D.IDENTITY)
 	return skin
+
+## The skeleton's OBJECT_SPACE_BONE, added on first use.
+static func _object_space_bone(skeleton: Skeleton3D) -> int:
+	var obj := skeleton.find_bone(OBJECT_SPACE_BONE)
+	if obj == -1:
+		obj = skeleton.get_bone_count()
+		skeleton.add_bone(OBJECT_SPACE_BONE)
+		skeleton.set_bone_rest(obj, Transform3D.IDENTITY)
+		skeleton.reset_bone_pose(obj)
+	return obj
 
 ## The bone build_skin adds for vertices on the client's palette entry 0.
 const OBJECT_SPACE_BONE := "__srrevamp_object_space__"

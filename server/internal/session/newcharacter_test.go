@@ -40,9 +40,7 @@ func TestNewCharacterIsDressedAndHasVitals(t *testing.T) {
 	handle := gateway.Chain(
 		LoginHandler(accounts),
 		RegisterHandler(accounts),
-		CharacterHandlerWithHook(chars, func(ctx context.Context, characterID int64) error {
-			return equipment.GiveStartingKit(ctx, inv, eq, characterID, character.DefaultGender)
-		}),
+		LobbyHandler(LobbyDeps{Chars: chars, Catalogue: testCatalogue(), Inv: inv, Eq: eq}),
 		WorldHandler(chars, eq, hub),
 		EquipmentHandler(chars, eq),
 		InventoryHandler(chars, inv, refItems),
@@ -77,12 +75,20 @@ func TestNewCharacterIsDressedAndHasVitals(t *testing.T) {
 		t.Fatalf("login: err=%v result=%+v", err, lr)
 	}
 
-	resp = send(OpCharacterCreate, (&CharacterCreateRequest{Name: "QaTester"}).Encode())
-	if cr, err := DecodeCharacterCreateResult(resp.Data); err != nil || !cr.OK {
+	resp = send(OpLobby, chinaManCreate("QaTester").Encode())
+	if cr, err := DecodeLobbyResult(resp.Data); err != nil || !cr.OK {
 		t.Fatalf("character create: err=%v result=%+v", err, cr)
 	}
 
-	resp = send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "QaTester"}).Encode())
+	resp = send(OpStart, (&StartRequest{Name: "QaTester"}).Encode())
+	if sr, err := DecodeStartResult(resp.Data); err != nil || !sr.OK {
+		t.Fatalf("start: err=%v result=%+v", err, sr)
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := proto.Read(r, nil, nil)
+	if err != nil {
+		t.Fatalf("reading the enter-world result after Start: %v", err)
+	}
 	entered, err := DecodeEnterWorldResult(resp.Data)
 	if err != nil || !entered.OK {
 		t.Fatalf("enter world: err=%v result=%+v", err, entered)
@@ -107,7 +113,10 @@ func TestNewCharacterIsDressedAndHasVitals(t *testing.T) {
 	if worn.Error != "" {
 		t.Fatalf("equipment list: %s", worn.Error)
 	}
-	kit := equipment.StartingKitFor(character.DefaultGender)
+	// What the create asked for, and the shield the server adds beside a
+	// one-handed sword (READ, charselect.md section 5).
+	kit := map[equipment.Slot]int64{equipment.SlotMail: 3643, equipment.SlotPants: 3644, equipment.SlotBoots: 3645,
+		equipment.SlotWeapon: 3632, equipment.SlotShield: 10886}
 	if len(worn.Items) != len(kit) {
 		t.Fatalf("a new character is wearing %d item(s), want %d -- the client renders bare without them",
 			len(worn.Items), len(kit))

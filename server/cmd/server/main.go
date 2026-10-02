@@ -897,6 +897,11 @@ func main() {
 			"placed in one is removed, as SR_GameServer.exe's CGObjMob::SetCurRegion does (no death, no reward; "+
 			"docs/protocol/monster_ai.md). Without it no region is a town and monsters follow players in. "+
 			"A configured path that does not load is fatal.")
+	chargenCSV := flag.String("chargen-csv", os.Getenv("SRREVAMP_CHARGEN_CSV"),
+		"path to the creatable catalogue as CSV (env SRREVAMP_CHARGEN_CSV; from cmd/export-refdata -mode chargen "+
+			"on a client's own characterdata_*.txt and itemdata_*.txt, round 682): the 52 bodies and 52 starting items a "+
+			"new character may be made from, and the two ammunition rows. Without it every character create is refused "+
+			"(0x403) -- the server cannot tell what it may make. A configured path that does not load is fatal.")
 	itemsCSV := flag.String("items-csv", os.Getenv("SRREVAMP_ITEMS_CSV"),
 		"path to an item-refdata CSV (from cmd/export-refdata -mode items); with -in-memory it "+
 			"feeds the shop catalogue and prices, item stat lookups and inventory stack limits. "+
@@ -1438,6 +1443,14 @@ func main() {
 	// Timed buffs end at their end time (round 616): the book's expiry
 	// pass, broadcasting OpBuffEnd and the owner's new run speed.
 	go session.RunBuffTicker(ctx, hub, logger)
+	// A deleted character is removed 7 days after its deletion (round 682).
+	// OURS: checked once a minute.
+	lobbyChars, ok := chars.(session.LobbyStores)
+	if !ok {
+		logger.Error("the character store has no lobby (character.LobbyStore)")
+		os.Exit(1)
+	}
+	go session.RunLobbyPurge(ctx, lobbyChars, time.Minute, nil, logger)
 	// The toggles and the protection walls (round 640, session/walls.go):
 	// each 'onff' toggle's MP drain and its end when the MP runs short, and
 	// a wall's end once its HP is gone. The walls read the monster skills'
@@ -1596,6 +1609,23 @@ func main() {
 		}
 	} else {
 		logger.Info("no region table (-regions-csv / SRREVAMP_REGIONS_CSV): no region is a town, and a monster follows a player into one")
+	}
+	// The creatable catalogue (round 682): what the lobby's create checks
+	// bodies and items against (session.LobbyDeps.Catalogue).
+	var chargen *refdata.CreatableSet
+	if *chargenCSV != "" {
+		f, err := os.Open(*chargenCSV)
+		if err == nil {
+			chargen, err = refdata.LoadCreatableCSV(f)
+			f.Close()
+		}
+		if err != nil {
+			logger.Error("loading the creatable catalogue", "path", *chargenCSV, "err", err)
+			os.Exit(1)
+		}
+		logger.Info("creatable catalogue loaded: characters can be created", "path", *chargenCSV, "ids", chargen.Len())
+	} else {
+		logger.Warn("no creatable catalogue (-chargen-csv / SRREVAMP_CHARGEN_CSV): every character create is refused (0x403) -- see deploy/README.md \"Reference data\"")
 	}
 	// The game's teleport network, when the operator supplies it (round 575).
 	// Loaded and checked here so a bad export fails at boot, the npcpos rule;
@@ -1890,17 +1920,16 @@ func main() {
 		// inspection).
 		session.LoginGate(serverStatus, gmGate.Allows, session.LoginHandler(accounts)),
 		session.RegisterHandler(registerer),
-		// New characters are dressed server-side rather than the client
-		// drawing a default set: that keeps the rendered character, the
-		// equipment window, the inventory and the server all agreeing about
-		// what is actually equipped.
-		session.CharacterHandlerWithHook(chars, func(ctx context.Context, characterID int64) error {
-			gender := character.DefaultGender
-			if c, err := chars.GetByID(ctx, characterID); err == nil {
-				gender = c.Gender
-			}
-			return equipment.GiveStartingKit(ctx, inv, eq, characterID, gender)
+		// The character lobby on retail's 0x7007/0x7001 (round 682): list,
+		// create (dressed in what the player chose, plus the shield or
+		// ammunition the server adds), the name check, the 7-day delete and
+		// restore. Start is the world handler's.
+		session.LobbyHandler(session.LobbyDeps{
+			Chars: lobbyChars, Catalogue: chargen, Inv: inv, Eq: eq, Guilds: guilds, Mana: manaTracker, Hub: hub, Logger: logger,
 		}),
+		// An older client's 0x0010/0x0012/0x0014 are told, in their own
+		// reply format, to update (round 682's review).
+		session.LegacyLobbyHandler(logger),
 		// A character made before the starting kit existed enters the world
 		// with nothing on and nothing in the bag; it is dressed on the way
 		// in. Only that case: a character who has taken everything off and
@@ -1914,6 +1943,11 @@ func main() {
 			bag, err := inv.List(ctx, c.ID)
 			if err != nil || len(bag) > 0 {
 				return err
+			}
+			// The legacy kit is China's; a European character is left as it is
+			// (round 682's review, OURS; equipment.GiveStartingKit).
+			if character.RaceOf(c.Gender) == character.RaceEurope {
+				return nil
 			}
 			logger.Info("dressing a character that had nothing", "character", c.Name)
 			return equipment.GiveStartingKit(ctx, inv, eq, c.ID, c.Gender)

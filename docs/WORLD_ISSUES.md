@@ -7235,6 +7235,544 @@ the reply), no world, drawing or loading code.
 - The agreement box's art and button labels.
 - Europe returns live, once 682 lands.
 
+## Six-hundred-and-eighty-third round: one builder dresses any of the 52 bodies -- China and Europe, men and women -- at the Height and Volume picked, and the create screens' choices come from the player's own archive
+
+The user (2026-10-02): "Let's actually work on the character selection/creation part now. I'd like
+for all of those features I requested before that matches the original game as much as possible."
+Earlier: "name, race, gender, model, armor, weapon, rotation, name check, height, and volume". The
+user's decisions: retail opcodes, 4 slots, a 7-day delete, Europe offered now, both races render.
+
+This is charselect.md's lane B round B1 (`CharacterAppearance`) and the client half of round 0's
+catalogue (`CharCatalog`); round 682 (lobby682) builds the server half of the same rule. No screen
+changes here: the select screen (684) and the customize preview (685) use this. Labels: READ
+(sro_client.exe's dump and asm on the box, the exe's bytes), MEASURED, INFERRED, OURS, OPEN.
+
+### 1. What was READ
+
+**Volume's bone groups -- charselect.md's OPEN, closed.**
+- The {group, min, max} tables 0xec64c8 / 0xec6528 and the height table 0xec64b0 were re-read from
+  the exe's bytes and agree with charselect.md. `FUN_00a5b7e0`'s constants are 2.0 (neutral) and
+  4.0 (the clamp, 0xd8ada8), and 2.0 / 0.5 in the formula.
+- Each group number goes to the model's vslot 49 (`CCompChar::FUN_00c2ca90`, offset 0xc4, found by
+  scanning the exe's vtables). It refuses 38 and above and passes the string at **0xed9b68 + group x
+  0x1c** to 0xc2ca50.
+- Those 38 strings are assigned by `FUN_00d79e00` at start-up (the asm's `mov ecx, 0xed9b68` before
+  "Bip01", then +0x1c each): 0 `Bip01`, 1 `Bip01 Pelvis`, 2 `Bip01 Spine`, 3 `Bip01 Spine1`, ...,
+  8 `Bip01 L UpperArm`, ..., 19 `Bip01 R UpperArm`, ..., 29 `Bip01 L Thigh`, 33 `Bip01 R Thigh`, ...,
+  37 `Bone01`. So the groups are the pelvis, the spine, both upper arms, both thighs and (women)
+  `Bone01`.
+- 0xc2ca50 finds the bone by name (0xc2c890) and 0xc4aaf0 stores the factor at CRTBone +0x88,
+  flag 2 in +0x84.
+- `RTSkeleton::FUN_00c4a180` copies the bone's world matrix, multiplies **rows 1 and 2** by the
+  factor (row 0, along the bone, is left) and stores inverse bind x that at +0x8c.
+  `CObjRendererVS::FUN_00bf0310` uses +0x8c as the bone's skinning matrix when flag 2 is set; the
+  children are composed from the unscaled matrix. So Volume thickens across the bone, never along
+  it, and moves no joint.
+- **Which table is whose -- INFERRED.** `FUN_00a5b7e0` takes 0xec6528 when vslot 0x34 is non-zero.
+  Only that table names `Bone01`, which only the women's skeleton has (MEASURED, corrected in the
+  review: all 52 Figure `.bsr`s name `europeman_skel.bsk` or `europewoman_skel.bsk`, China bodies
+  too; europewoman_skel holds Bone01/Bone02, europeman_skel does not). The same vslot
+  picks the harp's `_f.bsr` (below). So 0xec6528 is the women's.
+
+**What is worn.**
+- `GlobalDataManager::ResolveVisualSlotForItem` (0x9db5e0) maps an item to visual slots 0..11.
+  `InstallEquipVisual` draws 0..8 and keeps one visual per slot (round 283).
+- The select screen (`PSCharacterSelect::FUN_0085a580`) installs each listed item by that slot with
+  its plus, and avatars (TypeID3 13) through `FUN_00a60ef0`, which attaches on top.
+- **`CObjCharacter::FUN_00a5f4f0`:** a weapon of TypeID4 9 (dual axe) or 13 (dagger) is drawn from
+  the model path's `_l.bsr` and `_r.bsr`. A harp (14) on a body whose vslot 0x34 is set is drawn
+  from `_f.bsr`. The archive has no plain `axe_01.bsr` (MEASURED), so the world draws no axe today.
+- **A palette bone the skeleton lacks** (`ResObject::FUN_00be2f80`): `FUN_00bce230` looks the name
+  up; when it is missing the influence gets entry 0 (the object's own space) and its weight is left
+  out of the sum. The Europe man's `heavy_01_la.bms` names `Bone03` (MEASURED), which
+  europeman_skel does not have.
+
+Twelve of these functions are filed in `recovered_names.tsv` (origin `reading`).
+
+**The create screen's choices.**
+- Europe's Protector rule (0x8531e0, with 0x853400's slider ranges) is keyed by the weapon's TypeID4
+  (`FUN_0080b6a0` returns `TID >> 11`). Protector value p selects list position 1/2 for 7, 8, 9;
+  2 for 12, 13; 3 for 10, 11, 14; 2/3 for 15.
+- With the list in id order (INFERRED) that is charselect.md's table exactly (MEASURED below).
+- The loader 0x80b980 sorts by TypeID as charselect.md says. It also preloads the `_r.bsr` of
+  weapons 9 and 13.
+- The starting values: sex man (`FUN_0084f350(1)`), the Figure slider at its minimum 1 (0x6599e0
+  clamps the position into the range), Height and Volume 2, Weapon 0.
+
+### 2. What shipped
+
+**`CharacterAppearance`** (client/scripts/ui/character_appearance.gd, the path charselect.md's
+lane B names). It knows nothing of World3D or Login.
+- `CharacterAppearance.from_archives(data_pk2, media_pk2, items := {})`. `items` takes World3D's
+  already-parsed `_item_rows`. The full item table is otherwise parsed only on the first id the
+  catalogue lacks.
+- `build(ref_obj_id, scale := 0x22, items := [{id, plus}, ...]) -> Body`. `Body` is a Node3D whose
+  child is the Skeleton3D, facing its own -Z. It carries `ref_obj_id`, `scale_byte`, `is_woman`,
+  `height_factor`, `volume_scales`, `weapon_kind`, `weapon_group`, `worn` ({id, plus, slot, models,
+  nodes}) and `assembled`.
+- `body.set_scale_byte(s)` re-applies Height and Volume without a rebuild (the sliders).
+- `animation_for(body, action_type)` returns the body's own clip in its weapon's group: stand 0,
+  sit down 13, sit 14, stand up 15. `body.pose(anim, seconds)` poses it. Which clip each screen plays
+  is 684/685's choice.
+- Statics: `height_index`, `volume_level`, `height_factor`, `volume_factor`, `volume_bone_scales`,
+  `apply_scale`, `apply_volume`, `visual_slot`, `item_models`.
+- **Height:** the node's uniform scale by the READ table.
+- **Volume:** every skin bound to the body skeleton (body pieces and body-weighted armour, not a
+  weapon's own skeleton) gets its bone's bind pre-multiplied by scale(1, f, f) -- rows 1 and 2.
+- **Plus** is kept per item; the glow is not drawn.
+- **Caching (OURS):** a body is assembled once into a detached template and each item once per
+  skeleton layout. A build duplicates them, so meshes, textures and materials are shared, and gives
+  each character its own skin copies. A per-character fade must use the instance's
+  `GeometryInstance3D.transparency`, not the shared materials. `free_templates()` releases them.
+- `WEAPON_ANIMATION_GROUP` is World3D's table. The test reads World3D.gd's source and holds the two
+  equal.
+
+**`CharCatalog`** (client/scripts/frontend/char_catalog.gd).
+- The rule, as `refdata/chargen.go` applies it. A body is a characterdata row with Service 1 and
+  TypeID 1/1. An item is an itemdata row with Service 1, TypeID 3/1 and a code ending `_A_DEF`. The
+  last definition of an id wins. The sex comes from column 58.
+- API: `from_archive(media)`, `from_tables(char_parts, item_parts)`, `figures(race, sex)`,
+  `weapons(race)`, `shield(race)`, `all_armour_sets(race, sex)`, `armour_sets(race, sex, weapon_id)`
+  (Europe's READ restriction; no weapon gives none), `defaults(race, sex, protector_required)` (the
+  READ starting values) and `sample_kit(race, sex, weapon_i, set_i)` (OURS: a creatable kit, with the
+  shield beside a one-handed weapon as the server adds it). Each `Entry` has `piece()`,
+  `armour_class()` and `two_handed` (column 93, as chargen.go reads it).
+
+**The missing-bone rule, opt-in.** `Skeleton3DBuilder.build_skin(..., missing_to_object_space)` and
+`SkinnedBsrAssembler.attach_item_from_archive(..., missing_bones_to_object_space)` default to false,
+so World3D draws exactly as before. CharacterAppearance passes true. The weight half of the READ
+rule is not modelled: at rest the vertex lands in the same place, but animated it may lag.
+
+**`client/tools/appearance_probe.gd`** measures and renders (tools/README.md).
+
+### 3. Measured (`appearance_probe.gd` on the box's vSRO archive, native readers API 5)
+
+- **The catalogue:** 13 Figures per race and sex (1907-1919, 1920-1932, 14875-14887,
+  14888-14900). China weapons are 3632-3636 and Europe's 10887-10895, in id order. There is one
+  shield per race and three whole sets per race and sex, 104 ids in all, every count charselect.md
+  gives.
+- **Europe's weapon -> sets:** dagger light; 1H, 2H sword and axe heavy and light; crossbow light;
+  warlock rod, staff and harp robe; cleric rod light and robe. That is charselect.md's table.
+- **Every Figure dressed:** all 52 built with a kit (weapons rotated, so every catalogue weapon model
+  is drawn, including the dagger's and axe's `_l`/`_r` and the women's harp `_f`). Every kit item
+  hung its models.
+- **Before the opt-in** the same run printed six
+  `PARITY FAIL CHAR_EU_MAN_* ... worn 5/5 items, 4/5 models` lines (EXORCIST, NECROMENCER, MERCHANT,
+  ANGEL, DEVIL, WEREWOLF: the heavy legs). There were 0 after.
+- **Height:** the head bone stands at 15.95 (men) and 15.31 (women) at Height 2. Every one of the 52
+  measured exactly x0.9400 and x1.0600 at Height 0 and 4 (worst error 0.000000).
+- **Volume** (CPU-skinned vertices of the bare body, at Volume 0 / 2 / 4):
+
+| Body | height | torso depth | thigh depth |
+|---|---|---|---|
+| CHAR_CH_MAN_ADVENTURER | 18.12 / 18.12 / 18.12 | 2.36 / 2.61 / 2.71 | 1.68 / 1.86 / 2.14 |
+| CHAR_CH_WOMAN_ADVENTURER | 17.20 / 17.20 / 17.20 | 2.46 / 2.61 / 2.70 | 1.24 / 1.38 / 1.59 |
+| CHAR_EU_MAN_NOBLE | 18.04 / 18.04 / 18.04 | 2.36 / 2.61 / 2.71 | 1.68 / 1.86 / 2.14 |
+| CHAR_EU_WOMAN_NOBLE | 17.88 / 17.88 / 17.88 | 2.49 / 2.64 / 2.74 | 1.24 / 1.38 / 1.59 |
+
+  The height is unchanged and the girth grows with the level. The overall width (arms out) is
+  unchanged too: the arms' length is along their bones.
+- **Build time:**
+  - `from_archives`: 130 ms.
+  - A cold build (assembles the body and its items): median 21.0 ms, max 30.8 ms over the 52.
+  - A warm build (from templates): median 1.1 ms, max 1.1 ms.
+  - 104 builds took 52 body and 61 item assemblies.
+  - With the GDScript readers (the box's stale API-4 library) cold was a median 29.9 ms, max 405 ms
+    (the first).
+  - So four characters on the select screen cost under ~0.1 s the first time, and a customize swap
+    is ~1 ms once its pieces are cached.
+
+### 4. Pictures (for a human; nothing above rests on them)
+
+`appearance_probe.gd --out` renders: `lineup_h0/h2/h4.png` (the 52 at Height 0/2/4, Volume 2;
+rows China men, China women, Europe men, Europe women), `lineup_v0/v4.png` (Volume 0/4), and
+`compare_height.png` / `compare_volume.png` (the first Figure of each race and sex at the three
+values side by side), all orthographic at one scale.
+
+- In one earlier close-up the China woman ADVENTURER's heavy chest drew bright white. **Corrected in
+  the review:** that was her body's own painted top drawn over the armour, and it is there at the
+  final framing too, only smaller. The review measured it (section 7).
+- The body's own pieces still draw under the armour (TODO "The body under armour", round 281/283:
+  retail fills empty slots with default wear).
+
+### 5. Tests
+
+- `scripts/frontend/char_catalog_test.gd` (41 checks, synthetic rows). It covers bodies against
+  Service 0, NPCs and the last definition; items against the suffix, TypeID, Service and ammo; sets
+  in id order; Europe's restriction per weapon type; defaults; kits; and UTF-16.
+- `scripts/ui/character_appearance_test.gd` (70 checks, synthetic skeletons). It covers the scale
+  byte's decode and clamps, both tables, the 38 names, Volume across the bone and not along it, its
+  reset, per-character skins, shared meshes, one visual per slot, `_l`/`_r`/`_f`, the missing-bone
+  opt-in with the default unchanged, Height on the node, and the World3D table.
+- **The negative**, the new suites run on the base (3857a5e):
+
+```
+SCRIPT ERROR: Parse Error: Identifier "CharCatalog" not declared in the current scope.
+          at: GDScript::reload (res://scripts/frontend/char_catalog_test.gd:29)
+SCRIPT ERROR: Parse Error: Identifier "CharacterAppearance" not declared in the current scope.
+          at: GDScript::reload (res://scripts/ui/character_appearance_test.gd:92)
+```
+
+  The behavioural before/after is the probe's six heavy-legs `PARITY FAIL` lines in section 3.
+- `remote_godot.sh check`: ALL LOAD (506 scripts). `remote_godot.sh tests`: 199 suites, 0 failing.
+- No perf gate: World3D's drawing is untouched. The two shared asset files gain parameters whose
+  defaults keep every existing call identical.
+
+### 6. Still OPEN
+
+- What vslot 0x34 reads (INFERRED: a woman). It picks the Volume table and the harp's `_f`.
+- The weight half of the missing-bone rule, and switching the world to the rule (lane W, with
+  `perf_gate.sh`; it also gives the world the dual axe's `_l`/`_r`, which it does not draw today).
+- Whether an avatar hides the armour under it (`FUN_00a60ef0`).
+- The plus glow.
+- The body under armour and default wear (TODO).
+- Which clip the select idle and the preview play (charselect.md section 9).
+- `CharacterPreview` is still the create screen's preview; round 685 replaces it with this builder.
+
+### 7. Review
+
+The review found the shared-file changes world-neutral and every READ claim sound. It raised three
+MEDIUMs and five LOWs.
+
+**MEDIUM 1, the body through the armour -- measured; the fix asked for is not implemented, because
+no READ supports it.**
+
+*The measurement.* `appearance_probe.gd --showthrough=1` draws each body with one armour set and no
+weapon, front and back, in two flat colours. Pass 1 draws the armour alone (its mask); pass 2 draws
+body and armour. It counts the armour's pixels where the body wins, with back faces culled. Results
+in % of the armour's pixels at Volume 0 / 2 / 4:
+
+| Body | heavy | light | clothes / robe |
+|---|---|---|---|
+| CHAR_CH_MAN_ADVENTURER | 2.13 / 2.04 / 2.03 | 4.93 / 4.80 / 4.89 | 7.39 / 7.36 / 8.12 |
+| CHAR_CH_WOMAN_ADVENTURER | 3.66 / 3.96 / 5.19 | 5.62 / 6.21 / 8.36 | 4.40 / 4.62 / 5.54 |
+| CHAR_EU_MAN_NOBLE | 3.29 / 3.18 / 3.80 | 21.30 / 20.94 / 18.97 | 5.95 / 6.59 / 6.92 |
+| CHAR_EU_WOMAN_NOBLE | 6.26 / 6.84 / 7.51 | 13.74 / 12.95 / 13.55 | 8.54 / 8.04 / 8.31 |
+
+*What it is.* It is the archive's own geometry at bind:
+- No armour vertex coincides with a body vertex (`tools/probe_body_armour.gd`, eps 0.01: none for
+  the China woman's heavy set). So it is not z-fighting.
+- The armour mask has no holes (EU man light, inspected).
+- Shrinking every body piece towards its bones still leaves it: by 1 % the worst case is 18.05 %,
+  by 3 % 12.90 %, by 7 % 7.34 % (EU man light). So the body really is outside the armour there.
+- At Volume 4 the women's numbers rise because the body's torso is skinned to `Bone01` and the
+  armour is not (the China woman's `heavy_01_ba.bms` palette has no `Bone01`, MEASURED). The
+  client scales by the same rule, so it would do the same (READ, section 1).
+
+*What was READ looking for the client's way of hiding a body piece under a worn one.* Nothing found:
+- Every Figure `.bsr` has one mesh group, `default`, listing all nine pieces. These are the same
+  seven skin parts in the same order for all 52 (arm_fore/lower, arm_upper, calf, pelvis, thigh,
+  torso_lower, torso_upper), then face and hair (MEASURED).
+- The exe names no body part; `strings` finds no `torso`, `arm_fore` or `_calf`.
+- The slot masks belong to the visual-change table (`charactervisualchange.txt`, loaded by
+  `CharacterVisualChangeManager` 0x4ed530). The masks are helm 0x0801, mail 0x0002 and so on; hair
+  is 0x0800.
+- `CObjCharacter::FUN_00a5fe00` ORs `Slot & ~OverlapSlot` into +0x174, and `FUN_00a5da10` and
+  `FUN_00a611e0` use it to choose between visuals (an avatar over armour). They do not touch the
+  body's meshes.
+- `FUN_00a5e010` gives the chest and legs the default wear when no visual's mask covers mail
+  (0x0002) or pants (0x0010). It does this unless `CGame+0x129` is set, the same per-server flag as
+  the Protector minimum.
+- `AttachEquipVisualResource` (0xa609f0) only books the resource.
+- Round 283 READ the same of `InstallEquipVisual`.
+
+So hiding a body piece would be a rule this project invented. Per AGENTS.md it is left out, and the
+probe reports the numbers as a measurement, not a PASS/FAIL. **OPEN**, with the next reads:
+- where the body `.bsr` is attached for a player (`CICPlayer::vslot_025` 0x9d9a80 calls vslot
+  0x58/0x5c around the equipment; neither was read);
+- whether the helm's mask bit 0x0800 hides the body's hair mesh. If it does, the same mechanism
+  would hide skin pieces, and it would be where to look;
+- one retail screenshot of the Europe man in the light set, to settle whether the skin patches on
+  its legs are the art.
+
+**MEDIUM 2, the template cache leaked:** fixed.
+- `_notification(NOTIFICATION_PREDELETE)` frees the templates. It does so inline: calling
+  `free_templates()` from there errors with "base 'null instance'" (MEASURED).
+- The test drops an appearance holding 1 body and 5 item templates. All are freed, and the orphan
+  count goes 15 -> 3.
+
+**MEDIUM 3, items outside `ItemTableReader.TABLE_PATHS`:** fixed for the builder and the catalogue.
+The world is unchanged.
+- `CharCatalog.index_parts(media, index)` reads `itemdata.txt` / `characterdata.txt` and their
+  parts in the index's order. `parse_index` is tested.
+- The catalogue reads both tables that way.
+- The builder's full item table (parsed on the first id the catalogue lacks) reads all 63 itemdata
+  parts: 15,338 rows in 285 ms (MEASURED).
+- The probe draws `ITEM_MALL_AVATAR_M_CH_WEDDING_HAT` (22912, only in ItemData_23000) on a China
+  man, as an avatar.
+- `from_archives` went from 130 ms to 216 ms. A first version, which counted every row's tabs, took
+  1534 ms; the cheap tests now run first.
+- World3D still reads the seven `TABLE_PATHS` (TODO).
+
+**LOWs**
+1. **Shield:** `visual_slot` takes TypeID 3/1/4 with TypeID4 1 or 2 (READ `IsShieldItem`
+   0x56fab0). Tested: 3/1/4/3 is not a shield.
+2. **Fallback:** a `_r` or `_f` model that does not load falls back to the plain path, as
+   0xa5f4f0's `LAB_00a5f851` does. A missing `_l` draws nothing (the client asserts there).
+   `wear["drawn"]` records what was drawn, and this is tested. The second-resource branch (the
+   visual record's own BsrName, 0x4ec9b0) is OPEN.
+3. **0xFF** is stored and leaves Height and Volume as they were (READ 0xa5b960). Tested.
+4. **Parity with `chargen.go` (8e54648):**
+   - Rows too short for the rule (58 columns for a body, 93 for an item) define nothing and so
+     replace nothing. `//` lines are skipped. Both are tested.
+   - `piece()` stays the create screen's own loader rule (READ 0x80b980 plus `IsShieldItem`). It is
+     stricter than chargen.go's `Piece()`, which takes any TypeID3 4 as a shield and any TypeID4
+     3/4/6 as an armour piece. They agree on all 52 catalogue items (MEASURED), so neither is wrong
+     on the archive. The server's is looser than READ, for the coordinator to route.
+5. **Skeleton files:** corrected (section 1 and charselect.md). The 52 Figures name europe(wo)man_skel.
+
+**Tests:**
+- char_catalog_test: 44 checks, ALL PASS.
+- character_appearance_test: 78 checks, ALL PASS.
+- `remote_godot.sh check`: ALL LOAD.
+- `remote_godot.sh tests`: 199 suites, 0 failing (507 scripts load).
+- appearance_probe: PASS (0 failing).
+- The new checks on the base 9c8518d fail:
+
+```
+SCRIPT ERROR: Parse Error: Static function "parse_index()" not found in base "CharCatalog".
+FAIL 0xFF changes nothing: Height 4 and Volume 4 stay (READ 0xa5b960)
+SCRIPT ERROR: Invalid get index 'drawn' (on base: 'Dictionary').
+```
+
+  The last of these is the fallback check; it stops the suite before the shield and cache checks.
+
+## Six-hundred-and-eighty-second round: characters are listed, created, deleted, restored and started over retail's own lobby -- 0x7007 and 0x7001 -- with the original's checks, the player's chosen armour and weapon plus the shield or arrows the server adds, four an account, a 7-day restorable delete, and each race's own start
+
+The user (2026-10-02): "Let's actually work on the character selection/creation part now. I'd like
+for all of those features I requested before that matches the original game as much as possible."
+Earlier: "name, race, gender, model, armor, weapon, rotation, name check, height, and volume". Their
+decisions: retail opcodes and layouts; 4 characters an account; deletion takes 7 days and is
+restorable until then; Europe offered now, at the READ Constantinople spawns. This is round 0 and
+lane S of `docs/protocol/charselect.md` section 7 (lane `lobby682`); the screens are rounds 683-685.
+
+### What changed
+
+- **The wire** (`server/internal/session/lobby.go`, `client/scripts/net/lobby.gd`): 0x7007 actions
+  1-5 and 0xB007 (`[action][1]...` or `[action][2][u16 code]`), 0x7001 / 0xB001, on our framing
+  with retail's opcode numbers (USER DECISION 1). The list record is the READ layout: RefObjID,
+  name, scale, u8 level, u64 ExpOffset, Str, Int, stat points, HP, MP, the deleting flag and
+  minutes left, guild class, the rename flag and string, academy class, up to 9 items with plus,
+  up to 5 avatars. Our 0x0010-0x0015 are removed: their last callers (CharacterSelect,
+  CharacterCreate, QaSignIn through NetClient) speak the lobby now.
+- **The golden file** `client/scripts/net/testdata/lobby_golden.json`: 30 vectors written BY HAND
+  from the layouts, one field per `|` group -- every action both ways, the list empty and with
+  two records (one plain, one deleting in a guild with the rename string and an avatar), nine
+  refusal codes (0x402 0x404 0x405 0x407 0x40b 0x40c 0x40d 0x410 0x419), Start both ways, and six malformed payloads that must not decode. Go
+  (`TestLobbyGolden`) and GDScript (`lobby_test.gd`) both encode the fields to exactly the hex and
+  decode the hex to exactly the fields.
+- **The creatable catalogue** (`refdata.CreatableExtractor`, `export-refdata -mode chargen`,
+  `cmd/server -chargen-csv`): the rule written into charselect.md section 6 as "the one
+  definition" for round 683. MEASURED on the box's archive: **104** (52 bodies: Service 1,
+  TypeID 1/1; 52 items: Service 1, TypeID 3/1, code ending `_A_DEF`) plus the two ammunition rows.
+  Sex is column 58 on both tables (MEASURED: 1 on all 26 `_MAN_` bodies, 0 on all 26 `_WOMAN_`).
+- **The schema** (S1): `ref_obj_id`, `scale`, `deleted_at`, `start_zone`, `start_x/y/z`. Existing
+  rows with `ref_obj_id` 0 become 1909 (`china_man`) / 1923 (`china_woman`) at 0x22 (OURS, the
+  user accepted it); names are kept whatever the new rules say. `Gender` is derived from the
+  body at create (`character.GenderFor`), with `europe_man` / `europe_woman` for Europe.
+- **Create** (S2), in the ShardManager's order (READ): 0x405 at four characters (pending ones
+  count); 0x403 for a body that is not TypeID 1/1 or an item of the other race (not 3) or sex (not
+  2) -- and, OURS on top, anything outside the catalogue, an item in the wrong field, a missing
+  armour piece (China's Protector "none" is not offered) or a Height/Volume nibble above 4; 0x404
+  for no weapon; the name (0x40c length 2..12 bytes, 0x40d a space or quote -- READ -- or a byte
+  outside printable ASCII, OURS; 0x410 taken). Then the worker's armour-class check (READ
+  0x429dc2-0x429dd7; code 0x406 INFERRED). The character wears what it chose; the server adds the
+  race's shield beside a one-handed weapon (TwoHanded column 93 = 0, INFERRED as what it reads) or
+  arrows / bolts beside a bow / crossbow (into the bag, one stack: OURS). `StartingKitFor` is now
+  only the legacy dressing for a character with nothing.
+- **Start spawns** (READ, ShardManager FUN_0042bb20): `rand() % 3` over the race's three rows,
+  stored on the character in its town's frame (`jangan` / `constantinople`, OURS: so it shares the
+  town's bucket) and used while it has no saved position, with `-persist-position` on or off. Sent
+  as Restored, so the client keeps the point.
+- **Name check** (action 4), **delete** (action 3: a soft delete stamped `deleted_at`; 0x40b not on
+  the account, 0x408 a quote, 0x402 a guild member or master -- READ), **restore** (action 5;
+  0x419 when not pending), **purge** (`RunLobbyPurge` once a minute, OURS cadence, removes rows
+  10080 minutes old), **minutes left** in the list ((purge - now) / 60 s, at least 1: READ).
+- **Start** (0x7001) is the world handler's: 0x407 not logged in, 0x402 an empty name, a quote or
+  a pending character, 0x40b not on the account (READ), then 0xB001 `[1]` and the existing enter
+  path, whose `OpEnterWorldResult` follows. The old `OpEnterWorld` refuses a pending character too.
+- **Today's screens** (the minimal interop change): CharacterSelect lists the records (HP gauge
+  max = Str x 10, READ), shows `(deleting)` with the time left, swaps Delete for Restore and
+  disables Start on a pending character; CharacterCreate still picks only a sex and sends
+  `CharacterNet.INTERIM_KIT` (the China fighter body, Clothes set and Copper Sword, OURS until
+  round 685). Refusals are shown in the archive's words (`LobbyNet.code_text`: the code's
+  textuisystem key, READ from charselect.md's table, with "(S<code>)" where the client adds it).
+- **Europe ripples**: `equipment.Refusal` and `session.characterCountry` read the body's race
+  instead of assuming China (the mastery cap and the potion delay follow).
+
+### New READs (charselect.md)
+
+- The list record's guild byte is 1 member / 2 master and the academy byte 1 student / 2 guardian:
+  the delete button picks `..._CONFIRM_MEMBER` / `_MASTER` from +0x1f0 and `_STUDENT` /
+  `_GUARDIAN` from +0x1f1 (asm 0x858b66-0x858bd4).
+- 0x858c00 sends action 3 or 5 by the window's +0x11d flag (`cmp [esi+0x11d]` 0x858c93; action
+  bytes 3 at 0x858ce9, 5 at 0x858d87).
+- The create worker's loop compares each item's Country with the model's (0x429d84) and each
+  non-weapon's TypeID3 with the first (0x429dd5); a mismatch returns 0 through the error routine.
+- The textuisystem keys behind the codes (MEASURED in the archive): `UIO_MSG_ERROR_SEVER_CONNECT`,
+  `UIO_SMERR_INVALID_CHARGEN_INFO`, `UIO_MSG_ERROR_CHARACTER_OVER_3`, `UIO_SMERR_NOT_ALLOWED_CHARNAME`,
+  `UIO_MSG_ERROR_ID` and the rest; the archive writes line breaks as a literal `\n`.
+
+### Corrections filed
+
+`character.go` (MaxPerAccount 3 -> 4; the "no European assets" Gender note), `starterkit.go`
+(the kit is the player's choice, READ in the ShardManager), RE_COMPLETION's two 2026-09-18
+entries (addenda: the kit, and the create packet's order -- u32 model, **u8 scale**, then the four
+items), recovered_names' evidence for 0084e610 and 00858c00 (the latter's name stays until the
+rename is applied in Ghidra: OPEN).
+
+### Tests (each fails before the change)
+
+- `session`: `TestLobbyGolden` (every message, the shared file), `TestLobbyCreateRefusals` (19
+  refusals, each its code, and no-catalogue / not-logged-in), `TestLobbyFourCharactersPerAccount`,
+  `TestLobbyCreateDressesAndPlaces` (sword + shield, bow + arrows, spear without a shield, Europe
+  crossbow + bolts; the stored body, scale, gender and start), `TestLobbyStartSpawnTable`,
+  `TestLobbyNameCheck`, `TestLobbyDeleteRestorePurge` (fake clock: 10080, 25 h later 8579, past the
+  end the floor 1; restore; purge one second early keeps it, on time removes it and frees the name;
+  a guild master refused 0x402 and listed with class 2), `TestStartRefusedWhileDeleting` (0x40b,
+  0x402 empty, 0x402 pending, OpEnterWorld refused, after restore 0xB001 [1] then the enter-world
+  result at the READ spawn, frame 97/168, Restored), and `TestNewCharacterIsDressedAndHasVitals`
+  ported to the lobby.
+- `character`: `TestMigration682` (the pre-682 schema verbatim in its own Postgres schema, six old
+  rows including `x`, `A Name With Spaces`, `O'Brien` and a non-ASCII name; opened twice; a row
+  re-bodied between the runs is left alone), `TestSQLLobbyStore`, `TestRetailLimitIsFour`.
+- `refdata`: `TestCreatableRule` (synthetic rows: sex 0/1/2, country, the suffix, equipment only,
+  Service 0, a duplicated id's last definition, the ammunition, the CSV round trip).
+- client: `lobby_test.gd` (the golden file both ways, 68 checks; the words with and without the
+  archive's table).
+
+**The negatives**, run against dev 3857a5e in a second worktree with only the new test files copied:
+
+```
+--- FAIL: TestRetailLimitIsFour (0.00s)
+    limit682_test.go:11: MaxPerAccount = 3, want retail's 4
+internal/session/lobby_golden_test.go:96:31: undefined: LobbyItem
+internal/session/lobby_test.go:40:55: undefined: refdata.CreatableSet
+internal/character/migration682_test.go:145:11: got.RefObjID undefined (type *Character has no field or method RefObjID)
+internal/refdata/chargen_test.go:18:7: undefined: cgService
+SCRIPT ERROR: Parse Error: Could not find type "LobbyNet" in the current scope.   (lobby_test.gd)
+```
+
+### The end-to-end, real X input (box, Xvfb :682, 2026-10-02)
+
+A fresh `-in-memory` server with `-chargen-csv` (boot: `creatable catalogue loaded: characters can
+be created ... ids=104`), a wire tap in front of it, one account registered, and the client's Login
+scene driven with `xdotool` only: type the ID and password, click the server field and type the
+tap's address, Enter. The select screen listed nothing; click Create; type `Ar ia`, click Woman,
+click Confirm -- refused; type `Mei682`, Confirm; back on select, Mei682 listed; Delete; Restore;
+Start. The tap's record of the lobby (c2s / s2c, opcode, payload):
+
+```
+c2s 0x7007 02                                                                list
+s2c 0xb007 020100                                                            OK, 0 characters
+c2s 0x7007 01 0500 4172206961 83070000 22 440e0000 450e0000 460e0000 300e0000 create "Ar ia", 1923, 0x22, 3652-3654, 3632
+s2c 0xb007 01020d04                                                          refused 0x40d
+c2s 0x7007 01 0600 4d6569363832 83070000 22 440e0000 450e0000 460e0000 300e0000  create "Mei682"
+s2c 0xb007 0101                                                              OK
+c2s 0x7007 02 / s2c 0xb007 (70 bytes: one record, 5 items -- the set, the sword, the shield)
+c2s 0x7007 03 0600 4d6569363832 / s2c 0xb007 0301                            delete OK
+c2s 0x7007 02 / s2c 0xb007 (74 bytes: the same record + u32 minutes left)
+c2s 0x7007 05 0600 4d6569363832 / s2c 0xb007 0501                            restore OK
+c2s 0x7001 0600 4d6569363832 / s2c 0xb001 01                                 Start OK
+s2c 0x0021 01 ... 0600 6a616e67616e ... 0b00 6368696e615f776f6d616e ... 0600 39372f313638 01 ...   enter world: jangan, china_woman, frame 97/168, Restored
+```
+
+The refusal showed in the archive's words ("This character name is invalid ... An invalid symbol,
+character, or letter has been used!", which carried a raw `\n` -- now turned into a line break,
+with a test). The pending character showed "Deleted in 6 days 23 hours 59 minutes" with Start
+disabled; after Restore it started, and the client logged `the server restored jangan at (-2.0,
+60.0, -2047.0) in frame 97/168` -- spawn 2 of China's three, 98/168 local (958, 60, 1087), the
+palace forecourt (MEASURED: 958 - 960 = -2, -1920 + 960 - 1087 = -2047). The shot shows Mei682 there
+with the shield on her arm. The screenshots are for a human; the claims above are the tap's bytes
+and the client's log.
+
+No perf gate: no world, map, object, terrain, effect, animation, movement or loading code changed
+(the server's arrival point and two front-end screens did; the world draws as before).
+
+### Commands
+
+```
+cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...     exit 0: 64 packages ok, 0 FAIL (14 without tests)
+client/tools/remote_godot.sh check                                              checked 502 scripts and 8 scenes, ALL LOAD
+client/tools/remote_godot.sh tests                                              ran 197 suite(s), 0 failing
+```
+
+### Review (round 682's review, fixed in a second commit)
+
+The review found no HIGH: the migration is additive and idempotent with no loss, ownership holds,
+the create race is exact, item bypasses are refused, the purge and clock are right. Fixed:
+
+- **MEDIUM: grandfathered names with a quote were locked out.** Start refused a quote (0x402) and
+  Delete too (0x408), so a pre-682 `O'Brien` could not be started, deleted or restored. The quote
+  refusal now applies to NEW names only (create, name check: 0x40d). Start / Delete / Restore match
+  the name against the account's own list (parameterised queries) and refuse only an empty one.
+  Retail's quote refusal on Start/Delete is recorded as not applied (OURS) in charselect.md.
+- **MEDIUM: old client vs new server and the reverse were silent.** The server answers the removed
+  0x0010 / 0x0012 / 0x0014 in their OLD formats (`LegacyLobbyHandler`; the pre-682 list reply had
+  an error string the old screen shows as "Error: ...", create/delete an OK/reason it shows as
+  "... failed: ...") with "this server uses the new character lobby -- update the client", logged
+  at INFO. The client waits 5 s for the list (`LobbyNet.ListWatch`, OURS) and then reports an empty
+  list with "The server did not answer the character list -- the client or server may need
+  updating." No retail key fits (the nearest, `UIO_MSG_ERROR_SEVER_CONNECT`, would be false).
+- **LOW:** `SRREVAMP_CHARGEN_CSV` is the flag's env form (it was already). deploy/README's
+  "Character lobby" is now in the safe order: stage `chargen.csv` (644) and the env var before the
+  release (the old binary ignores it), `pg_dump -t characters`, merge, check the boot line and
+  that `ref_obj_id` holds only 1909/1923, then tag the client; with a query listing the names the
+  new rules would refuse (checked on local Postgres: it finds `O'Brien`, `A B`, `x`, a non-ASCII
+  name, a 13-byte name and `Q"t`, and not `Aria` or `QA_Aria`).
+- **LOW:** every 0x7007 action from a session in the world is refused with 0x40e (the nearest
+  READ meaning, "an operation is pending"; the choice OURS). `guildClass` fails closed: a guild
+  lookup error refuses the delete (0x402) and lists the character guildless, with a WARN.
+- **LOW:** the legacy dressing (`GiveStartingKit`, cmd/server's enter hook) skips a European
+  character (OURS): its kit is China's and would bypass `equipment.Refusal`; a European character
+  was always dressed at creation in what it chose.
+- **From round 683's review: `refdata.Creatable.Piece()` was looser than READ.** A shield now needs
+  TypeID3 4 with TypeID4 1 or 2 (READ `IsShieldItem` 0x56fab0), and chest/legs/feet need an armour
+  family's TypeID3 1/2/3/9/10/11 with TypeID4 3/4/6 (READ, the create loader 0x80b980) -- the same
+  rule as round 683's `char_catalog.gd` `piece()`. Both rules agree on all 52 catalogue items of
+  this archive, so nothing changes today (`TestPieceFollowsTheREADRules`).
+- **LOW:** charselect.md says plainly next to the spawn table that the spawns, the shield and
+  ammunition rule and their code names are READ from a private-server package's ShardManager and
+  may be that package's values; the ammunition quantity is OURS.
+
+Tests (`lobbyreview682_test.go`, `lobby_test.gd`): a migrated `O'Brien` deletes, restores and
+starts while a new quoted name is still refused; all five actions refused in the world; a failing
+guild store refuses the delete and lists guildless; the legacy opcodes' replies byte by byte; a
+European character is not given the China kit; the list watch's timing (not a millisecond early,
+once, never after an answer). The negatives, run against 8e54648 (only the review tests copied):
+
+```
+--- FAIL: TestGrandfatheredQuotedNameIsNotLockedOut (0.10s)
+    lobbyreview682_test.go:20: delete of a grandfathered quoted name refused 0x408
+--- FAIL: TestLegacyKitSkipsEurope (0.00s)
+    lobbyreview682_test.go:46: a European character was dressed in [{Slot:1 ItemID:3643 ...} {Slot:4 ItemID:3644 ...} {Slot:5 ItemID:3645 ...} {Slot:6 ItemID:3632 ...}]
+vet: internal/session/lobbyreview682_test.go:63:86: unknown field Hub in struct literal of type LobbyDeps
+--- FAIL: TestPieceFollowsTheREADRules (0.00s)
+    piece_neg_test.go:25: TypeID3 4 TypeID4 3: piece 5, want 0
+    piece_neg_test.go:25: TypeID3 5 TypeID4 3: piece 1, want 0
+SCRIPT ERROR: Parse Error: Cannot infer the type of "got" variable because the value doesn't have a set type.   (lobby_test.gd: the suite does not parse without LobbyNet.ListWatch)
+```
+
+Commands after the fixes: `go build ./... && go vet ./... && go test -count=1 -p 1 ./...` exit 0
+(64 packages ok); `-race` on character, refdata, equipment and cmd/export-refdata ok, and on the
+touched session tests (`-run 'Lobby|Start|Grandfathered|InTheWorld|FailsClosed|LegacyLobby|
+LegacyKit|NewCharacter|NameOnly|EnterWorld|Teleport|Wire' -timeout 30m`) ok (118 s, no DATA RACE) -- the whole
+session package under `-race` runs past `go test`'s 10-minute default (it timed out in
+TestRound640ToggleOffReplyIsMarked with no DATA RACE reported); `remote_godot.sh check` 502
+scripts and 8 scenes, ALL LOAD; `tests` 197 suites, 0 failing.
+
+### OPEN
+
+- srrevamp-01: export `chargen.csv` and pass `-chargen-csv` (deploy/README.md "Character lobby");
+  until then every create there is refused with 0x403. Players need this release's client.
+- Blocked on the stopped shard DB (CT 104, the user's call): `_RefCharGen` (confirm the 104),
+  `_RefCharDefault_*` (a new character's default skills and quests: none given), the procedures
+  (`_AddNewChar`'s ammunition quantity, `_DeleteCharTemporal`'s real delay).
+- The name bitmap and forbidden words; the ammunition stack (bag, not worn); the purge leaving
+  other tables' rows; Europe's return point, KillExp arm and bodies (lane W); item plus and
+  avatars; restore's u8/u16; the 858c00 rename; retiring `OpEnterWorld`. All in docs/TODO.md,
+  "The character lobby (round 682)".
+
 ## Six-hundred-and-eighty-first round: a `type: legacy` server in the list is asked the original way -- the retail handshake, 0x6100, 0x6101 -- and its shards show their real Check / Easy / Populated / Crowded / FULL
 
 The user (2026-10-01): "I want to add a random private server to the server list in yaml for

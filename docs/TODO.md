@@ -1125,6 +1125,34 @@ front-end's next steps.
   cheaper far ring (terrain only, no objects), a nearer far plane or retail's linear fog end at the
   title.
 
+### Character appearance and the creatable catalogue (round 683) — **built: `CharacterAppearance` dresses any of the 52 bodies at the READ Height and Volume, `CharCatalog` derives the create screens' choices from the archive; these are left**
+
+- **The world does not use it yet** (lane W, after S1): bodies by RefObjID + scale through
+  `CharacterAppearance`, replacing `GENDER_BODY_CODE`. That round runs `perf_gate.sh`. It can also
+  turn on the missing-palette-bone rule (`attach_item_from_archive(..., true)`), which the world
+  leaves off today. With it off, a Europe man's heavy legs (`Bone03`) are not drawn in the world. The
+  world also draws no dual axe: the archive has only `axe_01_l/_r.bsr`, which the world never asks
+  for.
+- **The weight half of the missing-bone rule** (`ResObject::FUN_00be2f80` leaves the missing bone's
+  weight out of the sum): not modelled. The position at rest is right.
+- **What vslot 0x34 reads** (INFERRED "a woman": it picks the women's Volume table and the harp's
+  `_f`). Trace `CCompChar` 0xc1f0d0 -> 0xc2bb40's resource +0x28.
+- **Avatars:** attached on top (READ `FUN_00a60ef0`). Which visual wins a slot bit is
+  `charactervisualchange.txt`'s Slot / OverlapSlot / Priority (READ, round 683 review); not modelled.
+- **The body through the armour** (round 683 review): 2-21 % of a worn armour's pixels show the
+  body's own skin at bind (`appearance_probe.gd --showthrough=1`). This is the archive's geometry: the
+  body is outside the armour there, and no client code hiding a body piece was found. Next reads:
+  where `CICPlayer::vslot_025` attaches the body (vslots 0x58/0x5c), and whether a helm's 0x0800 bit
+  hides the body's hair mesh. A retail screenshot of the Europe man in the light set would settle the
+  art question.
+- **The world reads only 7 of itemdata.txt's 63 parts** (`ItemTableReader.TABLE_PATHS`): 3,566 of
+  15,338 item ids, avatars among them, are unknown to World3D and not drawn. The builder and
+  catalogue read through the index (`CharCatalog.index_parts`). Switching the world costs a parse of
+  all 63 parts (~285 ms with the native readers, MEASURED) and needs `perf_gate.sh`.
+- **The plus glow** (INFERRED that plus drives it): the plus is kept on `Body.worn`, not drawn.
+- **`CharacterPreview`** is still the create screen's preview; round 685 replaces it with this
+  builder.
+
 ### The server list and setting/ (round 679) — **built: setting/config.yaml with named servers, the LIST window with each server's status, the logo clear of the box, centred fields and a `*` password; these are left**
 
 `docs/protocol/server_list.md` has everything READ (the status bands and colours, the window, the
@@ -1159,6 +1187,34 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
   no 0xa101 immediate).
 - **-max-players counts characters in the world**, not sessions at character select; the
   `-gm-accounts` names pass the inspection and full gates (ours; retail's rule for staff is OPEN).
+
+### The character lobby (round 682) — **built: retail's 0x7007/0x7001 on our framing, create with the READ checks and the player's own items, 4 an account, the 7-day delete and restore, per-race start spawns; these are left**
+
+- [ ] **Deploy on srrevamp-01**: export `chargen.csv` and pass `-chargen-csv` (deploy/README.md,
+      "Character lobby"). Until then every create there is refused with 0x403. The schema migrates
+      itself; players need the new client.
+- [ ] **Blocked on the shard DB (CT 104, stopped; the user's call)**: export `_RefCharGen` to confirm
+      the 104-id rule (charselect.md section 6), `_RefCharDefault_Skill/_SkillMastery/_Quest` (a new
+      character's skills and quests: none are given today), and read `_AddNewChar` (the ammunition
+      quantity, any item whitelist), `_DeleteCharTemporal` (the real delay), `_DeleteCharPermanently`,
+      `_ReviveChar`, `_IsExistingCharName`.
+- [ ] **The name rule's OPEN half**: the client's forbidden-character bitmap (0x8c3cb0 / 0x8c0760,
+      filled at runtime), its two filter lists, the server's forbidden-word list and FUN_006df4c0.
+      The server applies 2..12 bytes, no space or quote (READ) and printable ASCII (OURS).
+- [ ] **Ammunition**: a bow's arrows and a crossbow's bolts go into the bag, one stack (OURS): the
+      equipment slot has no quantity and ammunition is not modelled (session/skill.go).
+- [ ] **The purge removes the characters row only**: the bag, worn items, skills, quests and guild
+      rows of a purged character stay, as `Store.Delete` always left them.
+- [ ] **Europe in the world**: bodies are drawn as the China default until lane W (RefObjID + scale on
+      the entity wire); death returns and the warp home go to Jangan, not `STORE_EU_GATE`;
+      `leveldata.KillExp`'s Europe arm is never selected (the killer's race is not passed); Europe's
+      NPCs and shops are unexercised.
+- [ ] **Item plus and avatars** in the list record are 0 / none: srrevamp keeps no plus and no avatars.
+- [ ] **Restore's asynchronous error**: u8 in the server, u16 in the client (READ both); u16 is sent.
+- [ ] **recovered_names**: rename `SendNameCheckRequest_858c00` (it is the delete/restore confirm
+      sender) once the rename is applied in Ghidra too.
+- [ ] **`OpEnterWorld` 0x0020** is still accepted beside Start (it refuses a pending character too);
+      retire it when the world handoff is retail.
 
 ### Loading freezes: what the off-thread rounds left (map/loading epic, 2026-09-25)
 

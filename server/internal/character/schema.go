@@ -57,7 +57,8 @@ var Mapping = []FieldMapping{
 	{Field: "Gender", Column: "",
 		Note: "DIVERGENCE. The engine has no gender column: a character's race and " +
 			"sex follow from RefObjID, the reference object it is built from. " +
-			"srrevamp stores a string because it selects asset paths directly"},
+			"srrevamp keeps the string, derived from RefObjID since round 682, because " +
+			"the world wire still carries it until bodies are drawn from RefObjID"},
 	{Field: "Level", Column: "CurLevel",
 		Note: "the engine also keeps MaxLevel, a separate high-water mark srrevamp " +
 			"has no equivalent for. _TRAININGCAMPMEMBER carries CharMaxLevel too, " +
@@ -92,6 +93,23 @@ var Mapping = []FieldMapping{
 		Note: "charData +0x98; a world coordinate in Frame's frame, not region-local (round 573)"},
 	{Field: "PosY", Column: "PosY",
 		Note: "charData +0x9c; the client's height in Frame's frame (round 573)"},
+	{Field: "RefObjID", Column: "RefObjID",
+		Note: "the body the character was made from (round 682); existing rows migrated " +
+			"to 1909/1923 by Gender"},
+	{Field: "Scale", Column: "Scale",
+		Note: "Height low nibble, Volume high nibble (round 682, charselect.md section 2)"},
+	{Field: "DeletedAt", Column: "Deleted",
+		Note: "the engine keeps a Deleted flag on the row and the date in " +
+			"_DeleteCharTemporal (its body is OPEN); srrevamp keeps the time of the " +
+			"deletion, zero when the character is not deleting (round 682)"},
+	{Field: "StartZone", Column: "",
+		Note: "DIVERGENCE, OURS. Where a character enters while it has no saved position: " +
+			"its race's start spawn (ShardManager FUN_0042bb20 passes it to _AddNewChar " +
+			"as the first LatestRegion/PosX/PosY/PosZ), kept apart so -persist-position " +
+			"off still enters a European character in Europe (round 682)"},
+	{Field: "StartX", Column: "", Note: "the start spawn's world X in StartZone's frame (round 682)"},
+	{Field: "StartY", Column: "", Note: "the start spawn's height (round 682)"},
+	{Field: "StartZ", Column: "", Note: "the start spawn's world Z in StartZone's frame (round 682)"},
 	{Field: "PosZ", Column: "PosZ",
 		Note: "charData +0xa0; a world coordinate in Frame's frame, Z mirrored (worldmap), not " +
 			"region-local (round 573)"},
@@ -101,10 +119,7 @@ var Mapping = []FieldMapping{
 // than ignored, because "the engine keeps this and we do not" is the useful
 // half of a schema comparison.
 var EngineOnlyColumns = map[string]string{
-	"Deleted":           "the engine soft-deletes characters; srrevamp deletes the row",
-	"RefObjID":          "the reference object a character is built from -- what srrevamp's Gender stands in for",
 	"NickName16":        "a second name, separate from CharName16",
-	"Scale":             "body scale",
 	"MaxLevel":          "a high-water mark beside CurLevel",
 	"SExpOffset":        "skill experience, beside ExpOffset",
 	"RemainSkillPoint":  "srrevamp keeps SP in internal/skill's own store, not on the character",

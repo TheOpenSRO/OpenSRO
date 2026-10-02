@@ -20,9 +20,19 @@ var server_port := 0
 
 signal login_result(ok: bool, reason: String)
 signal register_result(ok: bool, reason: String)
+## The lobby (round 682, LobbyNet): characters are LobbyNet.Character. A
+## refusal's reason is LobbyNet.code_text of its code, in lobby_text's words
+## when a screen has loaded the archive's table.
 signal character_list_result(characters: Array, error: String)
 signal character_create_result(ok: bool, reason: String)
 signal character_delete_result(ok: bool, reason: String)
+signal character_restore_result(ok: bool, reason: String)
+signal name_check_result(ok: bool, reason: String)
+## Every 0xB007, whole, for screens that want the code rather than words.
+signal lobby_result(result: LobbyNet.Result)
+## 0xB001: ok, or the refusal's code and words. An OK is followed by the
+## enter-world result.
+signal start_result(ok: bool, code: int, reason: String)
 signal enter_world_result(result: WorldNet.EnterWorldResult)
 signal entity_entered(snapshot: WorldNet.EntitySnapshot)
 signal entity_moved(moved: WorldNet.EntityMoved)
@@ -250,6 +260,7 @@ var _resolve_id := -1
 var _resolve_port := 0
 
 func _process(_delta: float) -> void:
+	_check_list_timeout(Time.get_ticks_msec())
 	if _tcp_peer == null:
 		return
 
@@ -424,6 +435,7 @@ func disconnect_from_server() -> void:
 	buff_roster.clear()
 	body_modes.clear()
 	_forget_session_lists()
+	_list_watch.answered()
 	disconnected.emit()
 
 func is_connected_to_server() -> bool:
@@ -441,14 +453,45 @@ func login(username: String, password: String) -> void:
 func register_account(username: String, password: String) -> void:
 	_send(Auth.OP_REGISTER, Auth.encode_credentials(username, password))
 
-func list_characters() -> void:
-	_send(CharacterNet.OP_LIST)
+## The archive's UI text, when a screen has loaded it, for the lobby's
+## refusals (LobbyNet.code_text); null gives our own words.
+var lobby_text: UiTextTable = null
 
+## The list request outstanding, if any (round 682's review): unanswered
+## after LobbyNet.LIST_TIMEOUT_MS, character_list_result says so.
+var _list_watch := LobbyNet.ListWatch.new()
+
+func list_characters() -> void:
+	_list_watch.arm(Time.get_ticks_msec())
+	_send(LobbyNet.OP_LOBBY, LobbyNet.encode_list())
+
+## Called every frame: a list request left unanswered is reported once, as an
+## empty list with LobbyNet.LIST_TIMEOUT_TEXT.
+func _check_list_timeout(now_ms: int) -> void:
+	if _list_watch.expired(now_ms):
+		print("NetClient: no answer to the character list in %d ms" % LobbyNet.LIST_TIMEOUT_MS)
+		character_list_result.emit([], LobbyNet.LIST_TIMEOUT_TEXT)
+
+## The retail create (0x7007 action 1): a body, a scale byte, and the chest,
+## legs, feet and weapon.
+func create_character_full(char_name: String, ref_obj_id: int, scale: int, chest: int, legs: int, feet: int, weapon: int) -> void:
+	_send(LobbyNet.OP_LOBBY, LobbyNet.encode_create(char_name, ref_obj_id, scale, chest, legs, feet, weapon))
+
+## Today's create screen, which picks only a sex: CharacterNet.INTERIM_KIT's
+## body and items for it at the default scale (OURS, until round 685).
 func create_character(char_name: String, gender: String = "") -> void:
-	_send(CharacterNet.OP_CREATE, CharacterNet.encode_create(char_name, gender))
+	var kit: Dictionary = CharacterNet.INTERIM_KIT.get(gender, CharacterNet.INTERIM_KIT[CharacterNet.GENDER_CHINA_MAN])
+	create_character_full(char_name, int(kit["model"]), CharacterNet.DEFAULT_SCALE,
+		int(kit["chest"]), int(kit["legs"]), int(kit["feet"]), int(kit["weapon"]))
 
 func delete_character(char_name: String) -> void:
-	_send(CharacterNet.OP_DELETE, CharacterNet.encode_name(char_name))
+	_send(LobbyNet.OP_LOBBY, LobbyNet.encode_named(LobbyNet.ACTION_DELETE, char_name))
+
+func restore_character(char_name: String) -> void:
+	_send(LobbyNet.OP_LOBBY, LobbyNet.encode_named(LobbyNet.ACTION_RESTORE, char_name))
+
+func check_character_name(char_name: String) -> void:
+	_send(LobbyNet.OP_LOBBY, LobbyNet.encode_named(LobbyNet.ACTION_NAME_CHECK, char_name))
 
 ## The character currently in the world on this connection, if any -- set
 ## by enter_world(). Scenes that load after CharacterSelect (e.g. World.tscn)
@@ -494,7 +537,9 @@ func enter_world(char_name: String) -> void:
 	_forget_session_lists()
 	# The OpSelfId that answers this entry names the character entering now.
 	own_character_id = -1
-	_send(WorldNet.OP_ENTER_WORLD, WorldNet.encode_enter_world(char_name))
+	# Start (round 682): 0x7001, answered by 0xB001 and, when it is OK, the
+	# enter-world result.
+	_send(LobbyNet.OP_START, LobbyNet.encode_start(char_name))
 
 ## `heading_wire` (round 653) is a heading run's u16 wire angle
 ## (SkyRun.wire_angle), or -1 for a position with no run in effect.
@@ -808,6 +853,28 @@ func _should_warn_unhandled(opcode: int) -> bool:
 	_unhandled_warned[opcode] = true
 	return true
 
+## One 0xB007 to the signal its action has.
+func _dispatch_lobby(r: LobbyNet.Result) -> void:
+	lobby_result.emit(r)
+	var why := ""
+	if r.error != "":
+		why = "malformed response (%s)" % r.error
+	elif not r.ok:
+		why = LobbyNet.code_text(r.code, lobby_text)
+	var ok := r.ok and r.error == ""
+	match r.action:
+		LobbyNet.ACTION_LIST:
+			_list_watch.answered()
+			character_list_result.emit(r.characters if ok else [], why)
+		LobbyNet.ACTION_CREATE:
+			character_create_result.emit(ok, why)
+		LobbyNet.ACTION_DELETE:
+			character_delete_result.emit(ok, why)
+		LobbyNet.ACTION_RESTORE:
+			character_restore_result.emit(ok, why)
+		LobbyNet.ACTION_NAME_CHECK:
+			name_check_result.emit(ok, why)
+
 func _dispatch(p: Packet) -> void:
 	if wire_logging:
 		print("WIRE recv opcode=0x%04x size=%d" % [p.opcode, p.data.size()])
@@ -818,15 +885,23 @@ func _dispatch(p: Packet) -> void:
 		Auth.OP_REGISTER_RESULT:
 			var r := Auth.decode_result(p.data)
 			register_result.emit(r.ok, r.reason if r.error == "" else r.error)
-		CharacterNet.OP_LIST_RESULT:
-			var r := CharacterNet.decode_list_result(p.data)
-			character_list_result.emit(r.characters, r.error)
-		CharacterNet.OP_CREATE_RESULT:
-			var r := Auth.decode_result(p.data)
-			character_create_result.emit(r.ok, r.reason if r.error == "" else r.error)
-		CharacterNet.OP_DELETE_RESULT:
-			var r := Auth.decode_result(p.data)
-			character_delete_result.emit(r.ok, r.reason if r.error == "" else r.error)
+		LobbyNet.OP_LOBBY_RESULT:
+			_dispatch_lobby(LobbyNet.decode_result(p.data))
+		LobbyNet.OP_START_RESULT:
+			var r := LobbyNet.decode_start_result(p.data)
+			var why := ""
+			if r.error != "":
+				why = "malformed response (%s)" % r.error
+			elif not r.ok:
+				why = LobbyNet.code_text(r.code, lobby_text)
+			start_result.emit(r.ok and r.error == "", r.code, why)
+			if why != "":
+				# The screens wait on the enter-world result; a refused Start
+				# is one, with the refusal's words.
+				var refused := WorldNet.EnterWorldResult.new()
+				refused.ok = false
+				refused.reason = why
+				enter_world_result.emit(refused)
 		WorldNet.OP_ENTER_WORLD_RESULT:
 			var result := WorldNet.decode_enter_world_result(p.data)
 			last_enter_world_result = result

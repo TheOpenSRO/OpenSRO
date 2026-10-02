@@ -1,10 +1,15 @@
 extends Control
 
-## Character select: lists the account's characters, shows an honest stat
-## panel for the selected one (name, level, and an HP bar -- the only
-## per-character stats the server tracks; there is no MP / EXP / stat-point
-## system yet, so none is shown rather than an invented value), and enters
-## the world, deletes, or creates.
+## Character select: lists the account's characters, shows a stat panel for
+## the selected one (name, level, and an HP bar), and enters the world,
+## deletes, restores, or creates.
+##
+## Since round 682 it speaks the retail lobby (LobbyNet through NetClient):
+## the list is 0x7007 action 2's records, Start is 0x7001, Delete is the
+## 7-day deletion (action 3) and a character pending deletion shows its time
+## left and a Restore button (action 5) instead of Start and Delete. The
+## retail 3D select screen replaces this one in round 684; this is the
+## minimal change that keeps today's screen working on the new wire.
 ##
 ## The look is the original's, over real backdrop art from the player's own
 ## Media.pk2 (see FrontEndUi / docs/FRONTEND.md). The layout constants are
@@ -13,7 +18,7 @@ extends Control
 
 const BACKDROP_DDJ := "interface\\loading\\loading_constantinople.ddj"
 
-var _summaries: Array = [] # of CharacterNet.Summary
+var _summaries: Array = [] # of LobbyNet.Character
 var _selected := -1
 
 var _list_box: VBoxContainer
@@ -30,6 +35,7 @@ func _ready() -> void:
 	_build_ui()
 	NetClient.character_list_result.connect(_on_list_result)
 	NetClient.character_delete_result.connect(_on_delete_result)
+	NetClient.character_restore_result.connect(_on_restore_result)
 	NetClient.enter_world_result.connect(_on_enter_world_result)
 	# QA render hook: with no logged-in session this screen would list
 	# nothing, so a render can inject clearly-fake sample characters to show
@@ -41,13 +47,19 @@ func _ready() -> void:
 
 func _qa_sample_characters() -> Array:
 	var out: Array = []
-	for spec in [["QA_Aria", CharacterNet.GENDER_CHINA_WOMAN, 1, 100], ["QA_Bram", CharacterNet.GENDER_CHINA_MAN, 1, 62], ["QA_Wei", CharacterNet.GENDER_CHINA_MAN, 1, 100]]:
-		var s := CharacterNet.Summary.new()
+	# Name, body, level, HP, minutes left (0: not deleting). Str 10 makes the
+	# gauge's maximum 100 (READ: the select screen's HP / (Str x 10)).
+	for spec in [["QA_Aria", 1923, 1, 100, 0], ["QA_Bram", 1909, 1, 62, 0], ["QA_Wei", 1909, 1, 100, 4321]]:
+		var s := LobbyNet.Character.new()
 		s.char_name = spec[0]
-		s.gender = spec[1]
+		s.ref_obj_id = spec[1]
+		s.scale = CharacterNet.DEFAULT_SCALE
 		s.level = spec[2]
 		s.hp = spec[3]
-		s.max_hp = 100
+		s.str_stat = 10
+		s.int_stat = 10
+		s.deleting = spec[4] > 0
+		s.minutes_left = spec[4]
 		out.append(s)
 	return out
 
@@ -57,6 +69,11 @@ func _build_ui() -> void:
 	add_child(FrontEndUi.ground())
 	var media := FrontEndUi.open_media()
 	FrontEndUi.apply_client_font(self, media)
+	# The archive's own words for the lobby's refusals (LobbyNet.code_text).
+	if media != null and NetClient.lobby_text == null:
+		var entry := ObjectLoader.find_file(media, "server_dep\\silkroad\\textdata\\textuisystem.txt")
+		if entry != null:
+			NetClient.lobby_text = UiTextTable.parse(media.read_file(entry))
 	var bg := FrontEndUi.backdrop(media, BACKDROP_DDJ)
 	if bg != null:
 		add_child(bg)
@@ -159,7 +176,7 @@ func _on_list_result(characters: Array, error: String) -> void:
 		var entry := Button.new()
 		entry.toggle_mode = true
 		entry.button_group = _list_group
-		entry.text = summary.char_name
+		entry.text = summary.char_name + ("  (deleting)" if summary.deleting else "")
 		entry.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		entry.add_theme_color_override("font_color", FrontEndUi.GOLD)
 		entry.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -218,9 +235,20 @@ func _select(index: int) -> void:
 	var s = _summaries[index]
 	_name_label.text = s.char_name
 	_level_label.text = "Level %d" % s.level
-	_hp_bar.max_value = maxi(s.max_hp, 1)
+	var max_hp: int = s.gauge_max_hp()
+	_hp_bar.max_value = maxi(max_hp, 1)
 	_hp_bar.value = s.hp
-	_hp_text.text = "%d / %d" % [s.hp, s.max_hp]
+	_hp_text.text = "%d / %d" % [s.hp, max_hp]
+	# A character pending deletion cannot start; Delete becomes Restore, and
+	# the time left is shown (OURS wording; retail's countdown window is
+	# round 684's).
+	_start_button.disabled = s.deleting
+	_delete_button.text = "Restore" if s.deleting else "Delete"
+	if s.deleting:
+		var m: int = s.minutes_left
+		_status.text = "Deleted in %d days %d hours %d minutes. Restore to keep it." % [m / 1440, (m % 1440) / 60, m % 60]
+	elif _status.text.begins_with("Deleted in "):
+		_status.text = ""
 
 func _selected_name() -> String:
 	if _selected < 0 or _selected >= _summaries.size():
@@ -234,15 +262,24 @@ func _on_delete_pressed() -> void:
 	if char_name.is_empty():
 		_status.text = "Select a character first."
 		return
-	NetClient.delete_character(char_name)
+	if _summaries[_selected].deleting:
+		NetClient.restore_character(char_name)
+	else:
+		NetClient.delete_character(char_name)
 
 func _on_delete_result(ok: bool, reason: String) -> void:
 	if ok:
-		_status.text = "Character deleted."
-		_selected = -1
+		_status.text = "The character will be deleted in 7 days. It can be restored until then."
 		NetClient.list_characters()
 	else:
 		_status.text = "Delete failed: %s" % reason
+
+func _on_restore_result(ok: bool, reason: String) -> void:
+	if ok:
+		_status.text = "Character restored."
+		NetClient.list_characters()
+	else:
+		_status.text = "Restore failed: %s" % reason
 
 func _on_enter_pressed() -> void:
 	var char_name := _selected_name()

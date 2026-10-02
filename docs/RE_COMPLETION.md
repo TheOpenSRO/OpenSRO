@@ -23053,6 +23053,13 @@ meaning is not.
 
 Applied 2, evidence refreshed 4. No value changed.
 
+> **CORRECTED (round 682, docs/protocol/charselect.md).** The wire order is not "five dwords then
+> a byte": it is the name, **u32 model (+0x128), u8 scale (+0x218)**, then u32 chest, legs, feet,
+> weapon (+0x12c..+0x138) -- READ in the client's writer 0x84e2e0 and in SR_ShardManager's parser
+> 0x41a470. The offsets were listed in memory order, not wire order. The five dwords are the
+> chosen ids of `CCustomInfoManager` (this+0x11c; ctor 0x80bd00, loader 0x80b980): the model and
+> the four items. And 0x858c00 is not a name check: it sends action 3 (delete) or 5 (restore).
+
 ## 2026-09-18 — the starter kit: closed with a proven reason, not an answer
 
 `starterkit.go` named two choices as the project's own and justified them with a claim about
@@ -23081,6 +23088,17 @@ project before. And the AgentServer's empty string greps were verified against a
 rather than read as "packed": 1,603 strings and ordinary `.text`/`.rdata`/`.data` sections.
 
 No value changed — only the justification behind one. Full suite green, 53 packages.
+
+> **CORRECTED (round 682, docs/protocol/charselect.md sections 4-5).** "Not recoverable from the
+> binaries available here" was true of SR_GameServer.exe and of the modded AgentServer, and beside
+> the point: creation is **SR_ShardManager.exe**'s (0x7007 -> 0x40f010, in the server package on
+> the render box), and the rule is READ there and in the client. The kit is what the customize
+> screen sends -- one of three armour sets and one weapon, chosen by the player -- and the server
+> checks race and sex, requires the three armour pieces to share a class, and adds a shield beside
+> a one-handed weapon or ammunition beside a bow or crossbow. Since round 682 new characters are
+> made that way (session.LobbyHandler); `StartingKitFor` is only the legacy dressing for a
+> character that has nothing. The caution about grounding a mod still stands: every server-side
+> READ there is "this package's ShardManager", and nothing modded was seen in its lobby code.
 
 ## 2026-09-18 — the skill param table was short by 31 codes, and 'att' was one
 
