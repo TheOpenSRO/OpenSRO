@@ -15,6 +15,7 @@ import (
 type MemStore struct {
 	mu       sync.RWMutex
 	progress map[int64]map[int64]*Progress // characterID -> questID -> progress
+	defaults map[int64]map[string]memGrant // characterID -> quest code -> default grant (round 692, defaults.go)
 }
 
 // NewMemStore returns an empty MemStore.

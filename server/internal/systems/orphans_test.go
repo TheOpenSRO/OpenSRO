@@ -43,6 +43,10 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	"DefaultQuests": "round 692: the reader of character_default_quests, the default quests a new " +
+		"character is given (quest/defaults.go). The quest system has no real quests yet (its catalogue is " +
+		"invented and its ids 1/2 collide with QEVENT_GUIDE/QTUTORIAL_CH), so nothing starts them; this is " +
+		"what the real quest import will read, and the tests read it now. docs/TODO.md, the character lobby.",
 	"DeathPenaltyFactorFor": "the per-cause EXP death penalty. Triaged out of the baseline in " +
 		"round 351: cause 5 (the lesser, 20x branch) requires BOTH parties to be guilded -- " +
 		"GObjPC::IsKilledByPlayer tests victim+0x1cbc and killer[0x72f], which are PARTY and " +

@@ -15,7 +15,12 @@ those features ... that matches the original game as much as possible."
   not "retail".
 - The archives: the box's vSRO `Media.pk2` / `Data.pk2` / `Music.pk2` in `/opt/sro-files/client`,
   read with `server/cmd/pk2list`.
-- The shard DB export (EXTERNAL, a private shard's, partly modded): `/opt/sro-files/db/csv/`.
+- The shard DB export (EXTERNAL, a private shard's, partly modded): `/opt/sro-files/db/csv/`. The
+  lobby's tables and procedures (exported 2026-10-02 with the user's approval, read in round 692)
+  are in `/opt/sro-files/db/csv/charsel/`: `_RefCharGen`, `_RefCharDefault_Skill`,
+  `_RefCharDefault_SkillMastery`, `_RefCharDefault_Quest`, and the text of `_AddNewChar`,
+  `_DeleteCharTemporal`, `_DeleteCharPermanently`, `_ReviveChar`, `_RecoverDeletedChar` and
+  `_IsExistingCharName`. A server-side READ from them means "READ (this package's procedure)".
 - The reference screenshots `fe_ref1..4` (a private server's reskin). They show the flow, not
   retail art.
 
@@ -66,7 +71,20 @@ CPSTitle --login--> CPSCharacterSelect (list) --Create--> [same process] race se
 | Create Europe | `CPSCharacterCreateEurope` (0x853990, per frame 0x8542d0) | 0x694f = 105/79, Constantinople plaza | the same turn | preview model | none pushed |
 
 - **Time of day (READ):** none of these screens calls `SWorld::vslot_020`, so the title's random
-  hour carries over (round 678, INFERRED).
+  hour carries over (round 678, INFERRED). **Round 688 closes the inference:** SWorld is one global
+  (0x1101950) built once at start-up (static initialiser 0xd768f0 -> `Map::FUN_00a2f370`, which
+  sets the phase +0x26a3 to 0.5 and the clock flag +0x2f18 to 0). The phase's only writers are that
+  constructor, `vslot_020` (called on the front-end path only by CPSTitle; in the game by
+  `CPSMission::vslot_012` every frame from the game clock, and by two console handlers 0x53a4d0 and
+  0x53a520 -- round 688's review) and the world clock at 0xa2d130 (phase += the frame-time float 0x110f7fc
+  x 0.0005, wrapping at 1.0), and the clock runs only while +0x2f18 is non-zero -- which nothing
+  but the constructor writes (no other `[reg+0x2f18]` and no absolute 0x1104868 store in the asm).
+  CPSTitle's OnCreate calls `vslot_020` with one of its four phases unconditionally (0x86b278). So
+  the select and create screens show the hour the title last picked: 5:00, 14:00, 18:00 or 23:00,
+  a new one each time the title is shown. The environment graphs are read at that phase
+  (`Map::FUN_00a1baf0` 0xa1bb0c). MEASURED (round 688, region 105/81 is environment 33 in all 36
+  blocks): the select scene's mean luma is 136 / 141 / 139 / 107 at the four hours, the same on
+  every visit at one hour.
 - **The select screen's black fade** (READ, window 21): from alpha 0x80 to 0 over 0.5 s on open.
   `FUN_00bbda70(1)` runs before the region is set; what it does is OPEN.
 - **The create screens** fade in from black over 0.5 s, then windows 3 (title) and 5 (China's
@@ -250,8 +268,21 @@ So guild class 0 none / 1 member / 2 master, academy 0 none / 1 student / 2 guar
 - **Server side** (READ ShardManager): delete runs `_DeleteCharTemporal(JID, CharID)` and replies
   at once. Removal is later, by `_DeleteCharPermanently(CharID)`. Restore runs `_ReviveChar(CharID)`.
   - The remaining minutes = (stored date - now) seconds / 60, at least 1.
-  - **The delay itself is in the procedure, OPEN.** The client's text and gauge both say 7 days
-    (READ), so 7 days is what the client expects.
+  - **The delay** (READ round 692, this package's procedures). `_DeleteCharTemporal` refuses char
+    id 0 (-2) and a character already deleted (-3); otherwise it inserts `_DeletedChar (CharID,
+    UserJID, GetDate())` and sets `_Char.Deleted = 1`. It checks no guild and no time: those are the
+    callers'. `_DeleteCharPermanently` refuses a character not in `_DeletedChar` (-1), one deleted
+    **less than 6 days 23 hours** ago (-2; its comment: "is it roughly 7 days since the delete --
+    in case the shard has a bug -- an hour's error is allowed"), one whose `Deleted` is not 1 (-3)
+    and one not on the account (-5), then calls `_DeleteCharPermanently_NoTX` (not exported). So
+    the 7 days are the ShardManager's timer and the procedure is a guard an hour short of them;
+    the client's text and gauge say 7 days (READ). srrevamp purges at 7 days (the user's choice,
+    `character.DeleteDelay`): the same.
+  - **Restore** (READ, `_ReviveChar`): refused when the character is not in `_DeletedChar` (-1) or
+    its `Deleted` is not 1 (-2); otherwise the `_DeletedChar` row goes and `Deleted` returns to 0.
+    No time check: a purged character simply is no longer there. srrevamp's restore is the same
+    (0x419 when not pending). `_RecoverDeletedChar` is an old operator tool, disabled in this
+    package (its body only selects an error string, "do not use, it changed").
 
 ### Equipment on the select models (READ, FUN_0085a580)
 
@@ -321,7 +352,22 @@ So guild class 0 none / 1 member / 2 master, academy 0 none / 1 student / 2 guar
 - **The lizard** is shown only now (never in the list view) and switches from clip index 0 to 1.
   - Its clips, in .bsr order, are `interface_lizard_stand`, `_move`, `_run` (MEASURED); index 1 is
     `_move` (INFERRED).
-  - The code never moves it. Whether `_move` carries root motion is OPEN.
+  - The code never moves it. **`_move` carries the motion itself and plays once (round 688):**
+    - MEASURED (`client/tools/probe_ban_motion.gd`): `interface_lizard_move` has 81 keys over
+      2666 ms and **IsCyclic 0**; its Bip01 walks 4.16 units, from (7.02, 0.29, -9.96) to
+      (3.47, 0.29, -7.79) in model space -- exactly the stand clip's Bip01 (cyclic, 15 s).
+      `_run` (IsCyclic 0 too) carries its Bip01 5.38 units from the stand's spot.
+    - READ (BSR_FORMAT.md, "Looping" and "After a one-shot"): a clip with IsCyclic 0 is played by
+      `CRTAniOneShot` once, and after it the bones keep their last pose.
+    - So on arrival the lizard walks in from below the frame (its start is outside the camera's
+      view: MEASURED, no vertex in the frustum for the first 0.73 s) and stops by the idols, in the
+      stand's pose. Each arrival restarts it (case 7 calls the setter every time).
+    - The setter's other arguments `(1, 0, 200, 0, 1.0, 1.0)` go through
+      `CCObjAnimation::vslot_003` 0xa5b6d0 -> `FUN_00a5b550` (clamps the fourth to 1.0) to the
+      compound's slot 29 0xc31f00 / slot 30 0xc31de0, which queue a command at compound+0x1c0.
+      **READ (round 688's review): the 200 is a 200 ms fade-OUT at the end of the one-shot**
+      (`CRTAniOneShot::vslot_002` case 4 -> 5 via `AniMixer::FUN_00c554e0(clip, 0, 200)`); the
+      fade-in is 0. With one clip on the mixer it has no visible effect, so it is not modelled.
 
 **Hover:** each idol is ray-picked. The hovered idol's panel fades in over 1/3 s and the other's
 fades out at the same rate. No glow, no idol animation.
@@ -529,7 +575,9 @@ the lizard hides. `FUN_0085cbc0` (fly back from an idol) has no references: dead
   - MEASURED: the archive ids that fit the rule number **104** (26 China and 26 Europe characters, 24
     China and 28 Europe items).
   - EXTERNAL: the shard DB's `_RefCharGen` has exactly 104 rows and 2 columns, and ShardManager loads
-    it ("There is no Refobj like this or Service is 0 (ObjID : %d)").
+    it ("There is no Refobj like this or Service is 0 (ObjID : %d)"). **Round 692 (MEASURED):** its
+    104 RefObjIDs (all Service 1) are exactly the rule's 104, on the server's and the client's
+    implementation alike.
   - INFERRED: `_RefCharGen` is the list, and it reaches the client by a path not yet found (an
     opcode? a file the patcher writes?). Closing this needs the table exported (section 6).
 - **The Figure slider runs 1..13 and starts at 1** (READ). The ids (MEASURED, characterdata; EXTERNAL
@@ -789,7 +837,7 @@ Our 0x0010-0x0015 are gone. Start's OK is followed by today's `OpEnterWorldResul
 | 0x40b | Delete, restore, Start: no character of that name on the account (READ). |
 | 0x40c | Create, name check: not 2..12 bytes (READ). |
 | 0x40d | Create, name check: a space, `'` or `"` (READ); a byte outside printable ASCII (OURS: the client's bitmap is OPEN). |
-| 0x410 | Create, name check: the name exists, any case, pending deletion or not (READ). |
+| 0x410 | Create, name check: the name exists, pending deletion or not (READ, `_IsExistingCharName` round 692: `_CharNameList`, which keeps a pending character's name, and `_CharNickNameList`, by `=`); compared without case (OURS: the `=`'s case rule is the DB collation's, not exported; INFERRED case-insensitive). srrevamp has no nicknames. |
 | 0x419 | Restore: the character is not pending deletion (READ), sent as a u16 (OURS, see above). |
 | 0x40e | Any 0x7007 action from a session already in the world (OURS choice of code: "an operation is pending" is the nearest READ meaning; what the ShardManager answers there was not read). |
 
@@ -814,7 +862,9 @@ says "The server did not answer the character list -- the client or server may n
 4. The weapon is non-zero (else 0x404).
 5. The name rules above.
 
-**No whitelist** of default items is checked in this code. The procedure may enforce one (OPEN).
+**No whitelist** of default items is checked in this code, nor in this package's `_AddNewChar`
+(READ round 692: it maps the 12 `_A_DEF` chests, 2 shields and 14 weapons it knows to the shard's
+own `_A_RARE` sets and passes any other id through unchanged).
 
 **What runs** (FUN_00429c80):
 - Internal 0x620e (shard id, JID, name) goes to the manager.
@@ -840,9 +890,12 @@ says "The server did not answer the character list -- the client or server may n
 > binary. Nothing modded was seen in its lobby code, but these are exactly the kind of values a
 > server operator edits (where a new character starts, what it is given), so they may be that
 > package's rather than retail's. srrevamp uses them (round 682) labelled so; the shard DB
-> procedures (section 6) are where a retail-shaped confirmation would come from. The ammunition
-> *quantity* is not in this binary at all (`_AddNewChar`'s body, OPEN); round 682's one stack is
-> OURS.
+> procedures (section 6) are where a retail-shaped confirmation would come from. Round 692 read
+> them: `_AddNewChar` **ignores** the start position and gate the ShardManager passes and writes
+> region 25000 (97/168, Jangan) at (993, 0, 130) and `AppointedTeleport` 2094 (`STORE_CH_GATE`,
+> MEASURED in characterdata) for every race, so on this shard Europe characters start in Jangan
+> too -- a shard edit or a shard choice, either way not the ShardManager's table, which srrevamp
+> keeps (the user's decision 5). The ammunition quantity is 250 (below).
 
 | Race | Spawns (region hi/lo, local x, y, z) |
 |---|---|
@@ -868,9 +921,69 @@ pushes):
 `_ReviveChar(CharID)`, `_IsExistingCharName('%s')`. Also present: `_RenameCharNameByID`,
 `_ForceDeleteCharacter`, `_KeepDelCharName`, `_QueryUserCharBy*`, `_GETCHARIDBYNAME`.
 
-**Default skills and quests** come from `_RefCharDefault_Skill` (13 rows), `_RefCharDefault_
-SkillMastery` (13) and `_RefCharDefault_Quest` (15) (EXTERNAL counts). INFERRED: applied in
-`_AddNewChar`.
+### `_AddNewChar`, read (round 692; READ, this package's procedure, EXTERNAL)
+
+Its 20 parameters are the list above, in that order (`@DefaultTeleport` is the 9th: the gate, as
+INFERRED). It has been **edited by the shard's operator** (blocks marked "Initial Equip Edit by
+LemoniscooL", calls into an `ANTHEIA` database, a commented-out level-110 variant of its INSERT),
+so each value below says whether srrevamp takes it.
+
+| Step | What it does | srrevamp |
+|---|---|---|
+| Shard edit | Swaps the 12 `_A_DEF` chests for the matching `*_01_*_A_RARE` set and adds its hands, hat, shoulders, earring, necklace and two rings; swaps the 2 shields and 14 weapons for their `_A_RARE` ids; each item's durability is its `_RefObjItem.Dur_L`. | **Not taken** (the shard's edit). The chosen `_A_DEF` items, as round 682. |
+| Refusals | 4 characters already (`_User` count >= 4) -2; scale > 68 (0x44) -3; `_IsExistingCharName` -4. | Same 4 (0x405) and name rule (0x410). The scale: srrevamp refuses either nibble above 4 (OURS, stricter than `> 68`). |
+| `_Char` row | RefObjID, name, scale, **Strength 20, Intellect 20**, region 25000 (993, 0, 130), AppointedTeleport 2094, **InventorySize 109**, **CurLevel 1**, MaxLevel 1, **RemainGold 2,000,000**, RemainStatPoint 0, **RemainSkillPoint 5,000,000**, **HP 200, MP 200**, job levels 1/1/1, WorldID 1. The position and gate parameters are not used. | Str/Int 20 and HP/MP 200 **now READ** (`character.StartingStr`, was OWN DESIGN; the level-110 variant's 129 = 20 + 109, StatGrowthPerLevel 1, agrees). 109 = 96 + 13, srrevamp's default bag of 96 (`-inventory-size`). Level 1. **Gold and SP not taken** (INFERRED the shard's: that INSERT is the one its operator edited; decision 10). Position: the ShardManager's per-race spawns, as before. |
+| Inventory | `_Inventory` slots 0..108 empty, `_InventoryForAvatar` 0..4 empty. | n/a |
+| Equipment | Each item into its slot (`_FN_ADD_INITIAL_EQUIP`: chest 1, hands 3, hat 0, shoulder 2, legs 4, feet 5, weapon 6, shield 7); **the arrows or bolts into slot 7 with 250**, where every other item gets its durability (INFERRED: the stack's count). | **250 arrows or bolts** (`session.AmmoStartQuantity`, was one full stack, 2,500, OURS), into the bag as before (the slot has no quantity). |
+| **Masteries** | `_CharSkillMastery`: every `_RefCharDefault_SkillMastery` row whose Race is `_GetObjCountry(RefObjID)` or 3, **at Level 0**. | Done (round 692): level-0 rows. |
+| **Skills** | `_CharSkill`: every `_RefCharDefault_Skill` row of that Race or 3, Enable 1. | Done: learned. |
+| **Quests** | `_CharQuest`: the `_RefQuest` id of every `_RefCharDefault_Quest` CodeName of that Race or 3 with **RequiredLevel 1 and Service 1**, Status 1, AchievementCount 0. The higher-level rows are not given here. | Recorded by code name (`character_default_quests`); not quests yet (see below). |
+| Other rows | `_StaticAvatar`, `_CharTrijob (0, 1, 0, 0, 0)`, `_CharNameList`, `_AddNewClientConfig` (the quick slots). | n/a (srrevamp has no such rows) |
+| Shard edit | `_RoyalAddItems`: nine item grants (stacks of 5,000 and 20, a sex-specific item); `ANTHEIA.._AutoEquipment`; a silk row; beta-test silk rewards. | **Not taken.** |
+
+Race 0 is China and 1 Europe (INFERRED: `_GetObjCountry`'s body was not exported; Race 0's
+masteries are China's and Race 1's Europe's by `skillmasterydata.txt`, MEASURED).
+
+**The default tables** (EXTERNAL, 13 + 13 + 15 rows; the rows are the shard's and are not
+reproduced here or anywhere in the repo -- the tests use a synthetic set, and
+`refdata.TestCharDefaultsRealExport` checks the export when `SRREVAMP_TEST_CHARDEFAULTS_DIR` points
+at it). What the rule gives, MEASURED on the export:
+
+| | China (Race 0, and 3) | Europe (Race 1, and 3) |
+|---|---|---|
+| Masteries, level 0 | 7: all seven China masteries, 257-259 and 273-276 (`skillmasterydata.txt`) | 6: all six Europe masteries, 513-518 |
+| Skills | 4: the bare-hand attack (the one Race 3 row) and one basic attack per China weapon family | 10: the same bare-hand attack and one basic attack per Europe weapon family (nine) |
+| Quests at create (RequiredLevel 1, Service 1) | 3: two Race 3 rows and one Race 0 row (China's tutorial) | 2: the two Race 3 rows only |
+| Quest rows not given at create | 12 Race 3 rows at RequiredLevel 5..60: when they are given is not in these procedures (OPEN; INFERRED the game server, at those levels) | the same |
+
+No row has a Race other than 0, 1 or 3 and no id repeats for a race (MEASURED: `Warnings()` is
+empty on the export). The server would log either at boot, give a repeated id once (OURS: the
+procedure's insert would fail on its key and roll the create back, INFERRED) and match no
+character to another Race.
+
+**Europe's quests.** The table has **no Race 1 row**: a Europe character gets only the two Race 3
+quests. The archive does hold a Europe tutorial -- `QTUTORIAL_EU` (questdata id 210) and
+`QTUTORIAL_EU_2` (225), both category 1 in `questcontentsdata.txt` -- and `QTUTORIAL2_EU_1..7`.
+Whether retail gave Europe `QTUTORIAL_EU` at create (a row this shard's table lacks) or some other
+way is OPEN; srrevamp follows the table (READ). `questcontentsdata.txt`'s third column is the same
+0 / 1 / 3 as Race (MEASURED on the archive's tutorial and newcomer quests).
+
+**The `_RefQuest` join.** The procedure inserts `_RefQuest` ids `WHERE CodeName in (...)`, so a code
+with no `_RefQuest` row gives nothing (READ). `_RefQuest` was not exported, and some of the
+export's codes are absent from the archive's `questdata.txt` (MEASURED; that file is the client's
+copy, 697 rows), so whether every code would pass the join is OPEN. srrevamp records every code
+that passes the READ filters (INFERRED to pass the join too).
+
+**Why the quests are recorded, not given.** srrevamp's quest package is an invented catalogue whose
+ids 1 and 2 are real quests' ids in `questdata.txt` (`quest/quest.go`); accepting a default by id
+would start "Mangyang Cull". No real quest's steps are modelled. So each grant is stored as (character,
+code, status 1) in `character_default_quests`, which nothing else reads yet: the record for when
+the quest graph is imported.
+
+**Delivery** (OURS): the three tables are read as exported, from a directory named by
+`-chardefaults-dir` (env `SRREVAMP_CHARDEFAULTS_DIR`); a `_RefCharGen.csv` beside them is compared
+with the catalogue at boot. Without the flag the server warns that new characters get no defaults,
+and creates as before. deploy/README.md, "Character defaults".
 
 ### What we have, and what is missing
 
@@ -907,14 +1020,15 @@ Our wire today is our own (`PROTOCOL_DECISION.md`).
 |---|---|---|
 | Figure ids, codes, bodies | `Media.pk2 server_dep\silkroad\textdata\characterdata_*.txt` (via `characterdata.txt`) -> `Res\Char\{China,Europe}\*.bsr` in Data.pk2 | MEASURED: 52 ids (section 4) |
 | Weapon / armour / shield ids | `itemdata_*.txt` rows whose code ends `_A_DEF`, plus ReqGender (col 59) and Country | MEASURED: 24 China + 28 Europe |
-| The list of creatable ids (`_RefCharGen`) | shard DB (EXTERNAL), 104 rows x 2 columns, **not exported** | the MEASURED rule reproduces 104 ids. Export it to confirm. |
+| The list of creatable ids (`_RefCharGen`) | shard DB (EXTERNAL), 104 rows (Service, RefObjID), all Service 1 | **Confirmed (round 692, MEASURED):** the rule's 104 ids -- the server's (`chargen.csv` from `cmd/export-refdata`) and the client's (`CharCatalog.from_archive` on the box's Media.pk2) -- are exactly `_RefCharGen`'s 104, no id missing or extra on either side. The server compares them at boot when `_RefCharGen.csv` is in `-chardefaults-dir`. |
 | Item and character names | `textdata_equip&skill.txt` (`SN_ITEM_*`), `textdata_object.txt` | MEASURED |
 | UI text (buttons, tooltips, errors, deletion) | `textuisystem` keys named above | READ keys, MEASURED English |
 | Layouts and art | `resinfo\pscharacterselect.txt`, `pscharactercreatechina.txt`, `pscharactercreate_europe.txt`; `interface\...` ddj | MEASURED |
 | Race-select meshes | `Res\interface\box.bsr`, `interface_idol_europe/china.bsr`, `interface_lizard.bsr` | MEASURED |
 | EXP % on the panel | `leveldata.txt` (already imported, `internal/leveldata`) | READ |
-| Deletion delay | `_DeleteCharTemporal` body | OPEN; the client says 7 days |
-| Default skills / masteries / quests | `_RefCharDefault_*` (EXTERNAL, not exported) | OPEN |
+| Deletion delay | `_DeleteCharTemporal`, `_DeleteCharPermanently` (READ round 692) | 7 days: the temporal delete only stamps the date; the permanent one refuses before 6 days 23 hours (section 2). The client says 7 days. |
+| Default skills / masteries / quests | `_RefCharDefault_*` (EXTERNAL, 13 + 13 + 15 rows), applied by `_AddNewChar` (READ round 692) | **Applied** at create from `-chardefaults-dir` (section 5, "`_AddNewChar`, read"): masteries at level 0, skills learned; the level-1 quests recorded by code (the quest system cannot hold them yet). |
+| Starting Str / Int / HP / MP, bag size | `_AddNewChar`'s INSERT (READ round 692) | 20 / 20 / 200 / 200, 109 = 96 + 13: what srrevamp already used (Str/Int were OWN DESIGN until now). Its gold 2,000,000 and SP 5,000,000 are not taken (decision 10). |
 | Start spawns, gate | ShardManager table 0x781b88 (READ, this package) | READ |
 | Music | none pushed by select or create | READ; the intro's track carries over |
 
@@ -961,15 +1075,9 @@ plus the 2 ammunition rows (3655 arrows, 10885 bolts, MaxStack 2500 each). The i
 TypeID4,TwoHanded,MaxStack`, Kind `model` / `item` / `ammo`, catalogue rows by id then the
 ammunition. The client never reads it: it applies the rule to its own archive.
 
-**To close the EXTERNAL OPENs** (one session, nothing enters the repo):
-1. `pct start 104` (the stopped `mssql-temp`, deploy/README.md "External shard DB").
-2. Export `_RefCharGen`, `_RefCharDefault_Skill`, `_RefCharDefault_SkillMastery` and
-   `_RefCharDefault_Quest` to `/opt/sro-files/db/csv/`.
-3. Read `SELECT OBJECT_DEFINITION(OBJECT_ID('<proc>'))` for `_AddNewChar`, `_DeleteCharTemporal`,
-   `_DeleteCharPermanently`, `_ReviveChar` and `_IsExistingCharName`.
-4. `pct stop 104`.
-
-Starting a container is the user's call; this reading did not.
+**The EXTERNAL OPENs are closed** (round 692). The user approved the export (2026-10-02, "yes ct
+104"); the four tables and six procedures are in `/opt/sro-files/db/csv/charsel/` on the render
+box (nothing entered the repo), and CT 104 is stopped again.
 
 ## 7. The implementation, in rounds
 
@@ -1158,16 +1266,38 @@ box. `perf_gate.sh` for B3.
    area." is the retail text for a region not offered)?
 6. **The front-end scene architecture** (section 7): one long-lived backdrop or one per screen.
 7. **Starting items:** retail's server checks only race, sex, equipment type and armour class, not
-   that items are the `_A_DEF` defaults (READ; the procedure is OPEN). Recommended (OURS): accept
-   only the 104-id catalogue, so a modified client cannot create a character in endgame gear.
-8. **Running the shard DB container** (CT 104) once to export `_RefCharGen` and the
-   `_RefCharDefault_*` tables and to read the five procedures (section 6).
+   that items are the `_A_DEF` defaults (READ; this package's `_AddNewChar` checks none either,
+   READ round 692). The user's default (round 682): accept only the 104-id catalogue, which
+   `_RefCharGen` now confirms id for id.
+8. ~~**Running the shard DB container** (CT 104) once to export the tables and read the
+   procedures~~ -- **done** (the user: "yes ct 104", 2026-10-02; read in round 692).
 9. **China's Protector minimum** (a per-server flag, meaning OPEN): require a set (Europe's rule),
    or allow "none" (Protector 0) as a server may?
+10. **The procedure's gold and skill points** (round 692): this shard's `_AddNewChar` starts a
+    character with 2,000,000 gold and 5,000,000 SP. srrevamp keeps its own 1,000 gold and 0 SP
+    (OURS) because that INSERT is the one the shard's operator edited (a level-110 variant sits
+    commented out beside it), so these read as the shard's generosity, not retail's. Take them,
+    keep ours, or pick another?
+11. **The shard's starting kit edit** (round 692): this `_AddNewChar` upgrades the chosen `_A_DEF`
+    set to an `_A_RARE` set with hands, hat, shoulders and jewellery, and grants nine more items
+    (`_RoyalAddItems`). srrevamp gives the chosen `_A_DEF` items, as the ShardManager passes them
+    (READ). Recommended (OURS): keep it so; the edit is marked as the operator's.
+12. **Europe's tutorial quest at create** (round 692): the shard's table gives Europe no Race 1
+    quest, though the archive has `QTUTORIAL_EU` (id 210). srrevamp follows the table (Europe gets
+    the two Race 3 quests only). Add `QTUTORIAL_EU` for Europe as China's tutorial is given to
+    China (OURS, by symmetry), or keep the table?
+13. **The front-end's hour (round 688):** retail draws select and customize at the hour the title
+   picked, so one title visit in four shows them at 23:00, measured 24 % darker than 14:00
+   (section 1, "Time of day"). That random hour is retail's and is kept; pinning the front end to a
+   daytime hour would be OURS. **Our extra darkness was not retail's:** until round 688's review the
+   select bodies were lit with Godot's materials under World3D's tuned light (energy 0.3) and drew
+   1.3-1.8x darker than the same character in the customize preview, which uses retail's character
+   formula (PlayerPortrait). They now use that formula too (WORLD_ISSUES round 688, "Review").
 
 ## 9. Still OPEN
 
-- Where the client's creatable-id list (0xeedf08) comes from (INFERRED `_RefCharGen`).
+- Where the client's creatable-id list (0xeedf08) comes from (INFERRED `_RefCharGen`, which the
+  ShardManager loads; its 104 ids are exactly the MEASURED rule's, round 692).
 - What vslot 0x34 reads (INFERRED: a woman), which picks the Volume table and the harp's `_f`.
 - Whether an avatar hides the armour under it (`FUN_00a60ef0`). What is READ (round 683 review):
   `textdata\charactervisualchange.txt` gives each visual a Slot bit mask (helm 0x0801, mail 0x0002,
@@ -1195,12 +1325,31 @@ box. `perf_gate.sh` for B3.
   (+0x2018, +0x2048). **Which column the English client reads is OPEN** (the filter's +0x14, from
   its constructor 0x8c46a0's argument, GlobalDataManager +0x858). The server's forbidden-word list
   (session.LobbyNameCode: "no such list was found in the archives") may be this file: OPEN.
-- The deletion delay in `_DeleteCharTemporal`.
+- ~~The deletion delay in `_DeleteCharTemporal`.~~ READ round 692: 7 days, the ShardManager's
+  timer, guarded at 6 days 23 hours by `_DeleteCharPermanently` (section 2).
+- (round 692) `_DeleteCharPermanently_NoTX`, `_KeepDelCharName`, `_FN_ADD_INITIAL_EQUIP` and
+  `_GetObjCountry` were not exported: whether a purged character's name is freed or kept, what
+  the ammunition's 250 is (INFERRED the count), and the Race mapping (INFERRED 0 China, 1 Europe).
+- (round 692) The DB collation, so whether `_IsExistingCharName`'s `=` ignores case (INFERRED yes).
+- (round 692) When the higher-level default quests (RequiredLevel 5..60) are given, and Europe's
+  `QTUTORIAL_EU` (decision 12); whether every default code is in the shard's `_RefQuest` (some are
+  not in `questdata.txt`).
+- (round 692's review) **Two sources for the race masteries.** Round 692 seeds each new character's
+  level-0 mastery rows from `_RefCharDefault_SkillMastery` (the export, through
+  `-chardefaults-dir`); lane euroskill691's `skill/race.go` (uncommitted when 692 was reviewed)
+  hard-codes the same 13 ids and derives which masteries a character holds from its Country. They
+  agree today (MEASURED: the same ids). **The seeded rows are the authority** -- they are what
+  `_AddNewChar` writes and what the game server's mastery map is loaded from -- and the hard-coded
+  list must stay equal to the export until 691's code reads the seeded rows instead (recommended,
+  once characters made before round 692 have been backfilled or are gone).
+- (round 692) What `_CharQuest.Status` 1 means (INFERRED: in progress).
 - Restore's u8 vs u16 error code.
 - 0xB007 action 6.
 - The academy byte in the list.
 - The select idle's animation (the preview's is READ, round 685).
-- The lizard's root motion.
+- ~~The lizard's root motion.~~ MEASURED and READ in round 688 (section 3): `_move` walks 4.16 units
+  and is a one-shot; the setter's 200 is the one-shot's 200 ms fade-out (READ, the review), with no
+  visible effect on a lone clip.
 - `FUN_00bbda70(1)` on select open.
 - Re-entering select after create when the previous-process id is neither 0 nor 10.
 - The per-server flag behind China's Protector minimum.

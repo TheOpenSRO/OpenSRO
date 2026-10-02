@@ -7094,6 +7094,179 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-ninety-second round: a new character starts with its race's own masteries, basic skills and first quests, as the shard's `_AddNewChar` gives them -- and the shard's own list of creatable ids is exactly the 104 the rule picks
+
+The user approved the shard DB export (2026-10-02, "yes ct 104"); the four `_RefCharGen` /
+`_RefCharDefault_*` tables and the text of six lobby procedures were exported to
+`/opt/sro-files/db/csv/charsel/` on the render box (EXTERNAL, a private shard's; nothing entered the
+repo). This round reads them and closes charselect.md's EXTERNAL OPENs (lane `defaults692`,
+server only). The user, mid-round: "euros probably have their own quests too, make sure you consider
+that."
+
+### 1. The catalogue (MEASURED)
+
+`_RefCharGen` holds 104 rows, all Service 1. Their RefObjIDs against the rule's:
+- the server's (`chargen.csv` from `cmd/export-refdata -mode chargen` on the box's archive,
+  `/var/tmp/lobby682/chargen.csv`): **identical**, 104 = 104, none missing, none extra
+  (`TestRefCharGenAgreesWithTheRule` with `SRREVAMP_TEST_CHARGEN_CSV` / `SRREVAMP_TEST_REFCHARGEN_CSV`
+  set: `rule 104 ids, _RefCharGen 104 ids, missing 0, extra 0`);
+- the client's (`CharCatalog.from_archive` on the box's Media.pk2, a throwaway script run through
+  `remote_godot.sh script`, not committed): **identical**, `CATIDS 104 ...`, `diff` empty.
+
+So the rule is the shard's list, id for id. The server now also compares them at boot when
+`_RefCharGen.csv` sits in `-chardefaults-dir` (`the creatable catalogue agrees with the shard's
+_RefCharGen ids=104`).
+
+### 2. What the procedures do (READ, this package's; charselect.md sections 2 and 5)
+
+- **`_AddNewChar`** (20 parameters, the order section 5 READ from the ShardManager's pushes): refuses
+  4 characters (-2), scale > 68 (-3), a taken name (-4); inserts `_Char` with **Strength 20,
+  Intellect 20, CurLevel 1, HP 200, MP 200, InventorySize 109**, RemainGold 2,000,000, RemainSkillPoint
+  5,000,000, region 25000 (97/168) at (993, 0, 130), AppointedTeleport 2094 (`STORE_CH_GATE`) -- the
+  position and gate parameters are ignored, every race starts in Jangan on this shard; equips the
+  items (the ammunition into slot 7 **with 250**); then, by `_GetObjCountry(RefObjID)`:
+  `_CharSkillMastery` every `_RefCharDefault_SkillMastery` row of that Race or 3 **at Level 0**,
+  `_CharSkill` every `_RefCharDefault_Skill` row of that Race or 3 (Enable 1), `_CharQuest` every
+  `_RefCharDefault_Quest` CodeName of that Race or 3 **with RequiredLevel 1 and Service 1** (Status
+  1) -- of the codes that have a `_RefQuest` row (its join; `_RefQuest` was not exported, so that every
+  code passes it is INFERRED). It is **edited by the shard's operator**: an `_A_RARE` starting-kit swap ("Initial Equip Edit
+  by LemoniscooL"), nine `_RoyalAddItems` grants, `ANTHEIA` calls, silk rows, and a commented-out
+  level-110 variant of the INSERT.
+- **`_DeleteCharTemporal`**: stamps `_DeletedChar` with GetDate() and sets Deleted 1 (refusing id 0
+  and an already-deleted character); no guild or time check. **`_DeleteCharPermanently`**: refuses
+  before **6 days 23 hours** ("roughly 7 days ... an hour's error is allowed"). So the delay is 7 days,
+  the ShardManager's timer, which srrevamp's `DeleteDelay` (the user's 7 days) already is.
+- **`_ReviveChar`**: needs the `_DeletedChar` row and Deleted 1; removes the row, Deleted 0. No time
+  check. srrevamp's restore is the same. `_RecoverDeletedChar` is disabled in this package.
+- **`_IsExistingCharName`**: `=` against `_CharNameList` (pending characters' names included) and
+  `_CharNickNameList`. Case follows the DB collation, not exported (INFERRED case-insensitive);
+  srrevamp compares without case, as before (OURS until settled).
+
+### 3. What changed
+
+- **Defaults at create** (`session/lobbyhandler.go` `giveDefaults`): after the items, the race's
+  masteries at level 0 (`skill.SeedMasteries`, new in `skill/defaults.go`), its skills
+  (`Learn`), and its level-1 quests recorded (`quest.GrantDefaultQuests`, new in `quest/defaults.go`,
+  table `character_default_quests`: the quest package's invented catalogue's ids 1 and 2 are real
+  quests' ids, so the defaults cannot be accepted as quests). A failure is
+  logged, as the items' is (OURS; the procedure rolls the whole create back).
+- **The tables** (`refdata/chardefaults.go`): read as exported (header checked, BOM and CRLF
+  accepted) from `-chardefaults-dir` / `SRREVAMP_CHARDEFAULTS_DIR`; `Race = Country or 3` (READ).
+  Unset: no-op, and the server warns at boot that new characters get no defaults.
+- **The ammunition** is the procedure's 250 (`session.AmmoStartQuantity`; INFERRED that the 250 is
+  the count, `_FN_ADD_INITIAL_EQUIP` was not exported), not round 682's full stack of 2,500 (OURS).
+- **Labels**: `character.StartingStr/Int` 20 are READ (were OWN DESIGN; the operator's level-110
+  variant's 129 = 20 + 109 agrees with StatGrowthPerLevel 1); `DeleteDelay`'s procedure is READ;
+  `NameTaken`'s rule says what is READ and what OURS; `-inventory-size`'s help notes the procedure's
+  109 = 96 + 13. **Not taken:** the procedure's gold and SP, its `_A_RARE` kit and item grants, its
+  Jangan-for-everyone start (charselect.md decisions 10-11; the ShardManager's per-race spawns stay).
+- Docs: charselect.md sections 2, 4, 5 ("`_AddNewChar`, read"), 6, 8 (decisions 7, 8 closed; 10-12
+  new), 9; deploy/README.md "Character defaults"; TODO.md (the lobby section, and "Europe: what a
+  Europe character still lacks"); round 682's OPEN item closed.
+
+**What a new character gets** (MEASURED on the export; its rows are not reproduced in the repo):
+China 7 masteries at level 0 (257-259, 273-276), 4 skills (the bare-hand attack and a basic attack
+per China weapon family), 3 quests recorded; Europe 6 masteries (513-518), 10 skills (the bare-hand
+attack and nine basic attacks), 2 quests recorded.
+
+**Europe's quests** (the user's question): the table has **no Race 1 row**, so Europe gets only the
+two Race 3 quests, by the READ rule. The archive does carry `QTUTORIAL_EU` (questdata id 210) and
+`QTUTORIAL_EU_2` (225), category 1 in questcontentsdata, whose third column is the same 0/1/3 as
+Race (MEASURED); whether retail gave `QTUTORIAL_EU` at create is OPEN (decision 12). TODO.md's
+Europe heading tracks it and Europe's quest NPCs.
+
+**Coordination with euroskill691:** the mastery ids are skillmasterydata's; this round touches the
+skill package only in a new file (`skill/defaults.go`) and none of the mastery rules. Every race
+mastery now has a level-0 row on a new character, so a rule that counts "masteries chosen" must count
+levels above 0 (the existing sum, maximum and lookup are unaffected; the client reads `get(id, 0)`).
+
+### 4. Tests
+
+FAIL before (behavioural, with LobbyDeps' new fields present and `giveDefaults` not called; the
+synthetic fixture of the review, below -- the first commit's run used the export's rows, which are no
+longer in the repo):
+
+```
+lobbydefaults692_test.go:100: Hanshin: masteries [], want [9001 9002 9301]
+lobbydefaults692_test.go:104: Hanshin: skills [], want [8001 8002 8301]
+lobbydefaults692_test.go:115: Hanshin: default quests [], want [QSYN_ALL QSYN_CH]
+lobbydefaults692_test.go:100: Viktor: masteries [], want [9101 9301]
+lobbydefaults692_test.go:104: Viktor: skills [], want [8101 8301]
+lobbydefaults692_test.go:115: Viktor: default quests [], want [QSYN_ALL QSYN_EU]
+FAIL	github.com/OpenSRO/srrevamp/server/internal/session
+```
+
+and `internal/refdata [build failed]` (`undefined: LoadCharDefaultsDir`, ...) without
+`chardefaults.go`. New: `TestLobbyCreateGivesTheRaceDefaults692`, `TestLobbyCreateWithoutDefaults692`,
+`TestAmmoStartQuantity692`, `TestCharDefaultsByRace`, `TestCharDefaultsRefusesAWrongHeader`,
+`TestCharDefaultsDir`, `TestCompareRefCharGen`, `TestRefCharGenAgreesWithTheRule` (skips without the
+exports), `TestSeedMasteries{Mem,SQL}`, `TestGrantDefaultQuests{Mem,SQL}`.
+
+The first full run failed two doc probes, both fixed: `TestEveryOrphanIsExplained` (`quest.DefaultQuests`
+is read only by tests until real quests land: a `knownOrphans` line says so) and
+`TestServerReadmeIsCurrent` (server/README.md now lists `-chardefaults-dir`). Then
+`cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...`: build and vet clean, 64 packages ok, 0 failing (session 115.5 s).
+
+A boot with `-in-memory -chargen-csv <rule> -chardefaults-dir <export>` logged `character defaults
+loaded ... masteries=13 skills=13 quests=15 china="7 masteries, 4 skills, 3 quests" europe="6
+masteries, 10 skills, 2 quests"` and `the creatable catalogue agrees with the shard's _RefCharGen
+ids=104`; without the flag, the WARN. No client change; `remote_godot.sh check` (RENDER_DIR
+/var/tmp/defaults692): 523 scripts and 8 scenes, ALL LOAD. Server-only round: no perf gate.
+
+### OPEN
+
+- srrevamp-01: stage the tables and set `SRREVAMP_CHARDEFAULTS_DIR` (deploy/README.md, "Character
+  defaults"); until then new characters get no defaults there.
+- Default quests are recorded, not started: the quest system has no real quests (and its ids 1, 2
+  collide with real ones). The higher-level default rows (RequiredLevel 5..60): when they are given
+  is not in these procedures; whether each code is in the shard's `_RefQuest` is OPEN.
+- Europe: no Race 1 default quest in the table; `QTUTORIAL_EU` exists in the archive (decision 12).
+  Europe's quest NPCs and content are unexercised (TODO.md, "Europe").
+- Not exported: `_GetObjCountry` (Race 0/1 INFERRED), `_FN_ADD_INITIAL_EQUIP` (the 250 INFERRED the
+  count), `_DeleteCharPermanently_NoTX` and `_KeepDelCharName` (whether a purged name is freed), the
+  DB collation (name case).
+- Decisions 10-12: the procedure's gold/SP, the shard's kit edit, Europe's tutorial.
+- Characters created before this round have no default masteries or skills (no backfill).
+- On a server without skill refdata, skill ids 1 and 2 still fall back to `skill.Catalog`'s invented
+  "Power Strike" / "Whirlwind" (the known collision); srrevamp-01 has skill refdata.
+- A create whose defaults fail is kept (logged), where the procedure would roll it back (OURS).
+
+### Review (round 692's review, fixed in a second commit)
+
+The review found the selection matches `_AddNewChar` row for row on the real export, everything
+additive and idempotent, level-0 rows tripping no cap, and the round composing with euroskill691's
+uncommitted work. It asked for six fixes:
+
+1. **MEDIUM, collation.** `SQLStore.DefaultQuests` ordered by `quest_code` in the database's own
+   collation: en_US.utf8 on CI's postgres:16 and srrevamp-01, C in the local test DB, bytes in the
+   memory store. Now `ORDER BY quest_code COLLATE "C"`, and the test's codes (`QSYN_A`, `QSYNB`)
+   sort one way by bytes and the other under en_US, so a collation-dependent order fails it. (The
+   local DB is SQL_ASCII with no en_US collation, so the en_US half is CI's to exercise.)
+2. **MEDIUM, DB contents in the repo.** The session test copied all three tables verbatim and
+   charselect.md section 5 repeated every row. Both are gone: the tests use a SYNTHETIC set
+   (made-up ids and codes covering Race 0/1/3, a Race 2 row, a duplicate, and the RequiredLevel and
+   Service filters), charselect.md, TODO.md and this entry give the rule and the counts (China
+   7/4/3, Europe 6/10/2; the public mastery ids), and `refdata.TestCharDefaultsRealExport` checks the
+   real export when `SRREVAMP_TEST_CHARDEFAULTS_DIR` names it (run here: PASS, counts as above, no
+   warnings), skipping otherwise. deploy/README's "never in this repo" now holds. The first commit's
+   message and diff still carry the rows; only history keeps them.
+3. **LOW, `_RefQuest`.** The procedure inserts only codes with a `_RefQuest` row; recording every
+   code is now labelled INFERRED (refdata `Quests`, quest/defaults.go, charselect.md).
+4. **LOW, silent rows.** A Race other than 0/1/3 and an id repeated for a race are reported
+   (`CharDefaults.Warnings`, logged at boot as `character defaults: an odd row`); the dedupe is
+   labelled OURS (the procedure's insert would fail on its key and roll back, INFERRED). A
+   `_RefCharGen.csv` that exists but cannot be opened is logged; only not-found is silent. Booted
+   with a Race 2 row added: `odd row ... SkillID 777 has Race 2, which no character matches`; the
+   real export: no odd row.
+5. **LOW, deploy.** A step checks the files are listed, readable and headed right before the
+   variable is set (a configured directory that fails to load is fatal).
+6. **Coordination.** charselect.md section 9 and TODO.md say 692 seeds the level-0 rows from the
+   export, which is the authority, and euroskill691's hard-coded list must stay equal to it until 691
+   reads the seeded rows.
+
+After the fixes, `cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...`:
+build and vet clean, 64 packages ok, 0 failing.
+
 ## Six-hundred-and-ninetieth round: a Hotan return stands on the plaza, the Alexandria North teleporter is clickable, and a town gate is clicked where retail clicks it -- its own box around the stone, not the whole building
 
 The user (2026-10-02): "when I set Hotan as my default spawn and die I get resurrected back in hotan
@@ -7361,6 +7534,229 @@ trial merge onto dev d6205fc passed, with 205 suites. The follow-up:
    World3D._note_zone_change_request / _match_zone_change_request exist`.
 
 No perf gate: none of this is per-frame code. The matcher runs once per zone change, over 64 points.
+
+## Six-hundred-and-eighty-eighth round: the race-select lizard walks in once and stays, "Name Check" sits centred inside its button at every UI scale, and the select screen's darkness is traced to retail's own random hour
+
+The user (2026-10-02, on v0.1.475): "The animated lizard when selecting the race disappears and
+then come backs. That needs fixed. Also the first time I saw all of the character it was unsually
+dark. Then after doing it again a few times it was bit brighter but probably not as bright as it
+should be. ... Also the name check text in the buttom is misaligned" (their screenshot: the words
+spill past the button's right edge). They play at ~4K with UI scale ~1.95. Labels: READ
+(sro_client.exe's dump and asm on the box), MEASURED (the box, RX 7600, real archives), INFERRED,
+OURS. Front-end files only; no World3D or shared lighting code changed, so no perf gate.
+
+### 1. The lizard: a one-shot clip played as a loop
+
+**MEASURED, before** (`SRREVAMP_QA_LIZARD_PROBE`, `CharSelectQa.lizard_sample`: each frame the
+lizard's 1,143 vertices skinned on the CPU exactly as Godot skins them, tested against the camera's
+frustum and projected; and the box Godot 4.2.2's GLES3 `MeshStorage::mesh_get_aabb` gives the
+instance, tested as the scene cull does): over 602 frames of the race view, **174 had no vertex of
+the lizard in the frustum**. They are clip time 0 to 0.73 s of every 2.666 s loop: the lizard
+walked in from below the frame, grew to a 480x270 px patch by the idols, then jumped back off-screen
+and walked in again. Its meshes were visible in the tree on every frame and the cull box agreed with
+the vertices (kept when they were in view), so culling, visibility, fades and the MapAnimation range
+were not involved; the frames rendered on the box show the same (`liz_montage_before.jpg`).
+
+**MEASURED, the clip** (`client/tools/probe_ban_motion.gd`, new): `interface_lizard_move.ban` has
+81 keys over 2666 ms and **IsCyclic 0**. Its Bip01 walks 4.16 units in model space, from
+(7.02, 0.29, -9.96) to (3.47, 0.29, -7.79) -- exactly where `interface_lizard_stand` (cyclic,
+15 s) holds it. `_run` is IsCyclic 0 too.
+
+**READ** (docs/protocol/BSR_FORMAT.md, rounds 645-647): the client plays a clip with IsCyclic 0
+through `CRTAniOneShot` (0xc75ce0), once, and after it the mixer unlinks the clip and the bones
+keep their last pose. Retail's race view (`CPSCharacterSelect::vslot_012` case 7, 0x85d80c) calls
+the lizard's animation setter `(1, 0, 200, 0, 1.0, 1.0)` (`CCObjAnimation::vslot_003` 0xa5b6d0 ->
+`FUN_00a5b550` -> the compound's slot 29/30, 0xc31f00/0xc31de0) on every arrival, and updates it
+each frame only while +0x220 is set (`FUN_00a5ac80`). So the lizard walks in once from below the
+frame and stops by the idols in the stand's pose; a second Create walks it in again.
+
+**Changed:** `CharSelectStage` poses the lizard with the clip's own IsCyclic
+(`lizard_clip_loops`) instead of always looping.
+
+**MEASURED, after** (same probe, 290 frames): no vertex in view on the first 26 frames only (the
+walk-in's first 0.8 s), then the lizard stays in view with a constant screen box (164, 439,
+479 x 279) and a still root from 2.67 s to the end of the 8 s run (`liz_montage_after.jpg`).
+
+The setter's 200 is a 200 ms fade-out at the end of the one-shot (READ by the review, below); with
+one clip it has no visible effect.
+
+### 2. The select screen's brightness: retail's random hour, not a lighting fault
+
+**MEASURED** (`SRREVAMP_QA_SELECT_LUMA`: 1.5 s after the list is up, the frame's mean Rec. 709 luma
+over the 3D band less the characters, and over the characters' projected boxes, with the light the
+backdrop was given):
+
+| Hour (title phase) | Backdrop | Characters | Light (x 0.30) | Ambient |
+|---|---|---|---|---|
+| 5:00 (0.2083) | 136.1 | 108.6 | (0.63, 0.64, 0.68) | (0.63, 0.66, 0.62) |
+| 14:00 (0.5833), visits 1, 2, 3, 4, 5 in one process | 141.1 each | 112.0 each | (0.62, 0.61, 0.56) | (0.79, 0.71, 0.66) |
+| 18:00 (0.75) | 138.5 | 109.2 | (0.91, 0.87, 0.74) | (0.79, 0.57, 0.43) |
+| 23:00 (0.9583) | 107.4 | 89.8 | (0.48, 0.50, 0.65) | (0.42, 0.46, 0.55) |
+
+At one hour every visit is identical to the decimal: nothing left over from a previous screen, no
+late light, no first-visit difference. What changes is the hour: 23:00 is 24 % darker than 14:00
+(backdrop) and 20 % (characters). Region 105/81 is environment 33 in all 36 blocks (MEASURED), so
+the block-0 environment the world applies is the camera's too. As a picture only, the reference
+`fe_ref1.jpg` (a private server, hour unknown) measures 115 over its 3D band, our 14:00 frame 127
+over the same crop and 23:00 99 (`luma_montage_before.jpg`: 14:00, 23:00, 5:00, 18:00).
+
+**READ, the hour** (closing charselect.md's INFERRED): SWorld is one global (0x1101950) built once
+by the static initialiser 0xd768f0 -> `Map::FUN_00a2f370`, which sets the day phase +0x26a3 to 0.5
+and the clock flag +0x2f18 to 0. The phase's only writers are that constructor, `vslot_020` and the
+world clock at 0xa2d130 (phase += the float 0x110f7fc x 0.0005, wrapping at 1.0), which runs only
+while +0x2f18 is non-zero -- and nothing but the constructor writes +0x2f18 (no other
+`[reg+0x2f18]` store, no absolute 0x1104868 store). `CPSTitle::OnCreate` calls `vslot_020` with
+`rand() & 3` of its four phases unconditionally (0x86b278). The environment graphs are read at the
+phase itself (`Map::FUN_00a1baf0`, 0xa1bb0c). So retail's select and customize show the hour the
+title last picked -- 5, 14, 18 or 23 o'clock -- and a new one each time the title is shown, which
+is what the user saw: "very dark" at a 23:00 title, "a bit brighter" after returning to the title.
+Within one title visit ours already kept the hour (`CharSelectHandoff.day_phase`).
+
+**Changed (OURS, small):** when no title set the hour (a screen opened directly: QA runs), select
+and customize each picked a NEW random hour on every visit; `CharSelectHandoff.front_end_phase()`
+now picks it once and keeps it, as the title's would be.
+
+**Decided, not changed:** the hour stays retail's. Pinning the front end to a daytime hour would be
+OURS against READ; it is recorded as decision 13 for the user (charselect.md section 8). The review
+(below) found the darkness this round missed: the bodies themselves drew 1.3-1.8x darker than retail's
+character formula, at every hour.
+
+### 3. "Name Check": a label sized before it had its face
+
+**READ** (`pscharactercreatechina.txt` / `_europe.txt`, MEASURED from the archive): `GDR_BTN_CHECK`
+is 75 x 25 at (156, 57) in the Custom panel, `overlap.ddj` (a 75 x 25 DDS), FontIndex 0 (12 px),
+HAlign 1 and VAlign 1 (centred), ClientRect 0.
+
+**MEASURED, before** (`client/tools/frontend_at_scale.tscn`, new: each front-end screen at a UI
+scale in 3840x2160, every button's rect and its words' rect -- the string's advance width in the
+face and size the label draws with, placed by the label's alignment -- in canvas units):
+
+| Scale | Button | Words | Past the right edge | Centre off |
+|---|---|---|---|---|
+| 1.0 | x 231, 75 wide | x 244.5, 71 wide | 9.5 | +11.5 |
+| 1.5 | 75 | 70 | 9.0 | +11.5 |
+| 1.95 | 75 | 70 | 9.0 | +11.5 |
+| 2.0 | 75 | 70 | 9.0 | +11.5 |
+
+The same at every scale: the label was 98 units wide. `CharacterCreate._button` sized it with
+`_place_centred` before it was in the tree, where its minimum width came from Godot's default face
+(98 for "Name Check"); a Control never shrinks below a size it was given, so in the tree the client
+face's 71-unit string was centred in 98 units. "Female" had the same fault, smaller (centre -7
+against the inset's -10). Every other front-end button measured inside and centred: Confirm and
+Cancel on both create screens, the confirm box's Create and Cancel, select's Start, Create, Delete,
+Restore and the three Cancels and its delete confirm, login's Connect, Exit and Register.
+
+**Changed:** `CharacterCreate.place_button_text` anchors the words to the button less its
+ClientRect (so they re-fit when the face arrives and whenever the button resizes), growing both
+ways if a string is ever wider than the button. Round 672's crisp text and round 684's one font per
+process are untouched (the label still takes the screen's theme face).
+
+**MEASURED, after:** "Name Check" 2.0-2.5 units in from each side and centre off 0.0 at 1.0, 1.5,
+1.95 and 2.0, China and Europe, and in a 1280x720 window; Female -10 / Male +10, exactly the
+ClientRect inset (INFERRED: the radio mark's room). The words fill 70-71 of the 75 units, as
+retail's 12-px face would (INFERRED: its GGO_BITMAP Arial at FontIndex 0).
+Crops at 1.95: `nc_before_195.png`, `nc_after_195.png`.
+
+### 4. Tests
+
+`client/scripts/frontend/frontend_fixes_test.gd` (new, synthetic): a non-cyclic one-bone clip
+plays once and holds its last key through the stage's own `_process`, a cyclic one still loops; the
+front-end hour is picked once and kept; a create button's words box is the button less its
+ClientRect, centred, inside it and following its size, when the face in the tree is narrower than
+the default face. **NEGATIVE** (the base bf25e7e with this file and `CharSelectQa` copied in):
+
+```
+FAIL a clip that is not cyclic plays once and keeps its last pose at 1.5 s and 2.5 s (got 2, 2)
+FAIL CharSelectHandoff.front_end_phase exists
+FAIL 'Name Check': the words' box is the button less its ClientRect, [P: (156, 57), S: (75, 25)] (got [P: (156, 57), S: (98, 25)])
+FAIL 'Name Check': the words are centred in it (text [P: (182, 61), S: (46, 17)])
+FAIL 'Name Check': the words' box follows the button's size
+FAIL 'Female': the words' box is the button less its ClientRect, [P: (166, 95), S: (50, 25)] (got [P: (166, 95), S: (56, 25)])
+FAIL 'Female': the words are centred in it (text [P: (180, 99), S: (28, 17)])
+FAIL 'Female': the words' box follows the button's size
+FAILURES: 8
+```
+
+On this branch: ALL PASS; `remote_godot.sh check` ALL LOAD; `remote_godot.sh tests`
+204 suites, 0 failing.
+
+### 5. OPEN
+
+- The sun's direction from the hour
+  (`SWorld::vslot_004`, round 678's OPEN) -- a night select keeps the day's light direction.
+- Decision 13 (the front-end's hour) is the user's.
+- New QA hooks (OURS, off unless set): `SRREVAMP_QA_SELECT_RACE`, `SRREVAMP_QA_LIZARD_PROBE`
+  (+ `SRREVAMP_QA_SELECT_SHOT_DIR`, `SRREVAMP_QA_LIZARD_SHOT_EVERY`), `SRREVAMP_QA_SELECT_LUMA`.
+
+### Review (round 688's review: all three fixes held, the READ confirmed; one HIGH and two LOW, fixed in a follow-up commit)
+
+**HIGH: the select bodies were lit about 1.8x darker than the same character on the customize
+preview at the same hour** -- the user's "probably not as bright as it should be". The select screen
+hung its bodies in the backdrop with Godot's lit materials under World3D's DirectionalLight3D at its
+tuned energy 0.3 (OURS since round 43); the customize preview (round 685), the equipment window and
+the portrait draw characters with PlayerPortrait's materials, retail's own formula (READ, its
+header: vertex colour = 0.6 x ambient + max(0, n.l) x material x diffuse, diffuse = environment
+channel 2 clamped x 0.6, ambient = channel 3 clamped; then texture x colour x 2, MODULATE2X).
+
+- **Changed:** `CharSelectStage._dress` gives each body PlayerPortrait's materials fed the backdrop's
+  zone light (`_portrait_zone_light`), as `CharCreatePreview` does, after the body is built -- so the
+  round 687 hides and the round 685 default wear are untouched (MEASURED: 7/6, 10/4 and 8/5 meshes
+  shown/hidden on the three bodies with either light; every mesh in the character light after).
+- **The backdrop's tone mapping:** the first after-run came out 13-37 % BRIGHTER than the preview.
+  READ (Godot 4.2.2 `drivers/gles3/shaders/scene.glsl` 1369 and 1590-1593, `tonemap_inc.glsl` 42-58
+  and 96-108): an unshaded ALBEDO is decoded to linear, times exposure, Filmic-mapped over the mapped
+  white, and encoded again -- World3D's environment is Filmic (tonemap_mode 2), the preview's
+  SubViewport linear (PlayerPortrait: no change, MEASURED round 635). So the characters' colour is
+  pre-inverted through that chain in their shader (`_undo_tonemap`: the Filmic quadratic solved
+  exactly, the decode cubic by Newton's method; OURS on READ source), and the frame carries the
+  client's value.
+- **MEASURED** (`SRREVAMP_QA_SELECT_LUMA`'s per-body line: each body's own pixels -- those that change
+  when it is hidden, its shadows off for that mask -- against the same character, same items, built
+  in a CharCreatePreview in the same process with the backdrop's zone light, zoomed out; mean
+  Rec. 709 luma; `SRREVAMP_QA_SELECT_GODOT_LIGHT=1` keeps the old materials on the same build):
+
+| Hour | Character | Select before | Select after | Preview | Preview / select, before -> after |
+|---|---|---|---|---|---|
+| 14:00 | QA_Bram (1909) | 58.8 | 89.2 | 94.0 | 1.60 -> 1.05 |
+| 14:00 | QA_Aria (1923) | 86.7 | 138.6 | 141.1 | 1.63 -> 1.02 |
+| 14:00 | QA_Wei (1919, seated) | 59.8 | 92.0 | 79.0 | 1.32 -> 0.86 |
+| 23:00 | QA_Bram | 32.6 | 56.8 | 59.4 | 1.82 -> 1.04 |
+| 23:00 | QA_Aria | 50.0 | 89.7 | 91.4 | 1.83 -> 1.02 |
+| 23:00 | QA_Wei (seated) | 32.1 | 61.0 | 49.9 | 1.55 -> 0.82 |
+
+  The standing bodies are within 2-5 % of their preview. The seated one is 14-18 % brighter than the
+  standing preview (INFERRED: the sitting pose turns more of the body up to the light; the preview
+  stands). Without the tone-mapping undo the ratios were 0.89 / 0.86 / 0.73 at 14:00 and
+  0.87 / 0.81 / 0.68 at 23:00.
+- **Cost** (`SRREVAMP_QA_SELECT_FRAMES`, 3 s to 8 s after the list, 300 frames, three runs each,
+  alternating; the box is vsync-capped at 16.67 ms so the viewport's measured render time is the
+  cost): old light CPU 1.930 / 1.941 / 1.923 ms, GPU 1.947 / 1.835 / 1.814 ms; character light CPU
+  2.002 / 1.945 / 1.826 ms, GPU 1.872 / 1.830 / 1.758 ms -- no difference beyond run-to-run noise.
+  No World3D code changed, so no perf gate.
+- Shot: scratchpad `bodies_before_after.jpg` (14:00 old / new, 23:00 old / new).
+
+**LOW, the lizard's 200 (READ by the review):** a 200 ms fade-OUT at the end of the one-shot
+(`CRTAniOneShot::vslot_002` case 4 -> 5 via `AniMixer::FUN_00c554e0(clip, 0, 200)`); the fade-in is
+0, and with one clip on the mixer it has no visible effect. Closed in charselect.md sections 3 and 9
+and TODO.
+
+**LOW, the hour's writers:** `charselect_handoff.gd` said only CPSTitle sets the hour.
+`CPSMission::vslot_012` also calls `SWorld::vslot_020` every frame from the game clock, and two console
+handlers do (0x53a4d0, 0x53a520); CPSTitle is the only caller on the front-end path. Corrected there
+and in charselect.md.
+
+**Found on the way (READ Godot 4.2.2 source, not measured on screen; TODO):**
+`GeometryInstance3D.transparency` is stored by `RenderGeometryInstanceBase::set_transparency` and never
+read by the GLES3 renderer, so round 684's model fades (the 1.0 s fade-in, 0xcc for a character
+pending deletion) are likely not drawn on GL Compatibility.
+
+**TODO added:** the world's own characters still use Godot's tuned lighting, not retail's character
+formula -- for a round after 689 (world bodies), with the perf gate.
+
+**Tests:** `frontend_fixes_test.gd` gains the select-light check (the body's material is
+PlayerPortrait's formula with the tone-mapping undo, its colour kept). NEGATIVE on 12d93b6 (the
+file copied in): `FAIL CharSelectStage dresses its bodies (_dress exists)` -- `FAILURES: 1`. This
+branch: ALL PASS; `remote_godot.sh check` ALL LOAD; `remote_godot.sh tests` 204 suites, 0 failing.
 
 ## Six-hundred-and-eighty-seventh round: the body's own skin no longer shows through worn armour -- each item hides the body pieces it covers, as retail's client does
 
@@ -8779,9 +9175,10 @@ scripts and 8 scenes, ALL LOAD; `tests` 197 suites, 0 failing.
 
 - srrevamp-01: export `chargen.csv` and pass `-chargen-csv` (deploy/README.md "Character lobby");
   until then every create there is refused with 0x403. Players need this release's client.
-- Blocked on the stopped shard DB (CT 104, the user's call): `_RefCharGen` (confirm the 104),
+- ~~Blocked on the stopped shard DB (CT 104, the user's call): `_RefCharGen` (confirm the 104),
   `_RefCharDefault_*` (a new character's default skills and quests: none given), the procedures
-  (`_AddNewChar`'s ammunition quantity, `_DeleteCharTemporal`'s real delay).
+  (`_AddNewChar`'s ammunition quantity, `_DeleteCharTemporal`'s real delay).~~ **Closed in round
+  692**: the 104 confirmed, the defaults given (quests recorded), 250 ammunition, 7 days READ.
 - The name bitmap and forbidden words; the ammunition stack (bag, not worn); the purge leaving
   other tables' rows; Europe's return point, KillExp arm and bodies (lane W); item plus and
   avatars; restore's u8/u16; the 858c00 rename; retiring `OpEnterWorld`. All in docs/TODO.md,
