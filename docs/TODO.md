@@ -1180,7 +1180,14 @@ front-end's next steps.
 - **The message line's colour** (FUN_00860ca0's value) is OPEN: the layout's white is used.
 - **Europe women 12/13** (DEVIL, SUCCUBUS): the tooltip is taken by code name (OURS) until the
   retail order is known.
-- **The body under armour** is round 687's (hidebody687); the preview shows it until that merges.
+- **Default wear** (round 685's review): drawn on the create preview, the select bodies
+  (`CharacterAppearance`) and the world's characters (`World3D._build_assembled_character`).
+  Left: an avatar's own visual record (ConditionID 2) is not consulted for the mask, so default
+  wear can draw under an avatar dress (OPEN, with the avatar arbitration); `CGame+0x129` is
+  assumed clear (OURS, as the Protector minimum).
+- **China's backdrop** does not reproduce fe_ref4's lion-and-gate view at any yaw of the READ
+  pose; Europe's matches fe_ref3 at yaw ~2.6 (the reviewer's sheets, scratchpad `rv685/shots/`).
+  Whether the reference server moved the China camera, or the READ target is read wrong, is OPEN.
 
 ### The server list and setting/ (round 679) — **built: setting/config.yaml with named servers, the LIST window with each server's status, the logo clear of the box, centred fields and a `*` password; these are left**
 

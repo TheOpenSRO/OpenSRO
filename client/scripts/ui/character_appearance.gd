@@ -191,6 +191,11 @@ var _item_templates: Dictionary = {}  # "skeleton|bones|item path" -> Node3D (de
 ## item path (lower case) -> its BsrReader.Attachable, or null when its block
 ## did not parse; filled as the item templates are made.
 var _item_attachables: Dictionary = {}
+## Round 685's review: the default wear table (charactervisualchange.txt),
+## and CGame+0x129 -- the per-server flag that takes it off (READ 0xa5e010).
+## OURS: false, the flag the customize screen's Protector minimum assumes.
+var default_wear: DefaultWear = null
+var default_wear_flag := false
 ## Timings, microseconds: the last build, and the running totals.
 var last_build_usec: int = 0
 var stats := {"builds": 0, "body_assemblies": 0, "item_assemblies": 0, "build_usec": 0, "item_table_usec": 0, "item_table_rows": 0}
@@ -220,6 +225,7 @@ static func from_archives(data_pk2: Pk2Reader, media_pk2: Pk2Reader, items: Dict
 	a._data = data_pk2
 	a._media = media_pk2
 	a._catalog = CharCatalog.from_archive(media_pk2)
+	a.default_wear = DefaultWear.from_archive(media_pk2)
 	for id in a._catalog.entries:
 		var e: CharCatalog.Entry = a._catalog.entries[id]
 		if not e.is_body:
@@ -420,7 +426,7 @@ func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Bo
 		if slot < 0 or (slot > SLOT_SUIT and slot != SLOT_AVATAR):
 			continue
 		var models: PackedStringArray = info["models"]
-		var wear := {"id": id, "plus": plus, "slot": slot,
+		var wear := {"id": id, "plus": plus, "slot": slot, "type_ids": info["type_ids"],
 			"models": item_models(models[0] if not models.is_empty() else "", info["type_ids"], body.is_woman),
 			"nodes": []}
 		if slot == SLOT_AVATAR:
@@ -452,6 +458,7 @@ func build(ref_obj_id: int, scale: int = DEFAULT_SCALE, items: Array = []) -> Bo
 		wear["attachables"] = blocks
 		body.worn.append(wear)
 
+	_refresh_default_wear(body)
 	apply_hides(body)
 	_own_skins(skel)
 	apply_scale(body, scale)
@@ -497,8 +504,51 @@ func unequip(body: Body, slot: int) -> bool:
 			body.weapon_group = "default"
 	body.worn = kept
 	if removed:
+		_refresh_default_wear(body)
 		apply_hides(body)
+		_own_skins(body.skeleton)
+		apply_volume(body.skeleton, body.volume_scales)
 	return removed
+
+## Round 685's review: the default wear on the empty chest and legs (READ,
+## DefaultWear), re-decided from what the body wears now -- the client runs
+## it after every armour change. A default is a worn entry with id 0 and
+## "default" set. `default_wear_flag` stands for CGame+0x129 (set: none).
+func _refresh_default_wear(body: Body) -> void:
+	var kept: Array = []
+	for wear in body.worn:
+		if wear.get("default", false):
+			for n in wear["nodes"]:
+				if is_instance_valid(n):
+					(n as Node).free()
+		else:
+			kept.append(wear)
+	body.worn = kept
+	if default_wear == null or body.skeleton == null or body.assembled == null:
+		return
+	var worn: Array = []
+	for wear in body.worn:
+		if int(wear["slot"]) != SLOT_AVATAR and wear.has("type_ids"):
+			worn.append({"slot": wear["slot"], "type_ids": wear["type_ids"]})
+	var bsr_path := body_path(body.ref_obj_id)
+	for d in default_wear.wear_for(body_race(body), body.is_woman, worn, default_wear_flag):
+		var node := _item_instance(bsr_path, body.assembled, body.skeleton, d["path"])
+		var wear := {"id": 0, "plus": 0, "slot": d["slot"], "default": true, "type_ids": PackedInt32Array(),
+			"models": PackedStringArray([d["path"]]), "nodes": [], "drawn": PackedStringArray(), "attachables": []}
+		if node != null:
+			wear["nodes"].append(node)
+			wear["drawn"].append(d["path"])
+			wear["attachables"].append(_item_attachables.get(String(d["path"]).to_lower()))
+		body.worn.append(wear)
+
+## A body's race for the default wear: the catalogue's Country (INFERRED to
+## be the character data's +0x9c the client reads), else Europe when the
+## body's .bsr lives under `europe`.
+func body_race(body: Body) -> int:
+	var e := _catalog.get_entry(body.ref_obj_id) if _catalog != null else null
+	if e != null and e.is_body:
+		return e.race
+	return CharCatalog.RACE_EUROPE if body_path(body.ref_obj_id).to_lower().contains("europe") else CharCatalog.RACE_CHINA
 
 ## The animation `action_type` (BsrReader.AnimationEntry.TYPE_*) of the body's
 ## own `.bsr`, in the group its weapon picks (falling back to `default`), parsed

@@ -101,6 +101,16 @@ func _catalog() -> CharCatalog:
 		_row(2017, "ITEM_EU_M_CLOTHES_01_BA_A_DEF", [3, 1, 9, 3], 1, 1),
 		_row(2018, "ITEM_EU_M_CLOTHES_01_LA_A_DEF", [3, 1, 9, 4], 1, 1),
 		_row(2019, "ITEM_EU_M_CLOTHES_01_FA_A_DEF", [3, 1, 9, 6], 1, 1),
+		# Europe woman: the same three sets.
+		_row(2021, "ITEM_EU_W_HEAVY_01_BA_A_DEF", [3, 1, 11, 3], 1, 0),
+		_row(2022, "ITEM_EU_W_HEAVY_01_LA_A_DEF", [3, 1, 11, 4], 1, 0),
+		_row(2023, "ITEM_EU_W_HEAVY_01_FA_A_DEF", [3, 1, 11, 6], 1, 0),
+		_row(2024, "ITEM_EU_W_LIGHT_01_BA_A_DEF", [3, 1, 10, 3], 1, 0),
+		_row(2025, "ITEM_EU_W_LIGHT_01_LA_A_DEF", [3, 1, 10, 4], 1, 0),
+		_row(2026, "ITEM_EU_W_LIGHT_01_FA_A_DEF", [3, 1, 10, 6], 1, 0),
+		_row(2027, "ITEM_EU_W_CLOTHES_01_BA_A_DEF", [3, 1, 9, 3], 1, 0),
+		_row(2028, "ITEM_EU_W_CLOTHES_01_LA_A_DEF", [3, 1, 9, 4], 1, 0),
+		_row(2029, "ITEM_EU_W_CLOTHES_01_FA_A_DEF", [3, 1, 9, 6], 1, 0),
 	]
 	return CharCatalog.from_tables(["\n".join(chars)], ["\n".join(items)])
 
@@ -190,6 +200,55 @@ func _init() -> void:
 	_check(_ids(e.preview_items()) == [2014, 2015, 2016, 2002, 2010], "the 1H sword wears the Europe shield")
 	e.set_value(C.WEAPON, 1)
 	_check(_ids(e.preview_items()) == [2001], "a dagger (TwoHanded 1) carries no shield and no armour yet (got %s)" % str(_ids(e.preview_items())))
+
+	# --- a Europe sex change clears the armour (READ 0x852e00 -> 0x853400) ---
+	var es := CharCreateModel.create(cat, CharCatalog.RACE_EUROPE)
+	es.set_value(C.WEAPON, 2)
+	es.set_value(C.PROTECTOR, 1)
+	_check(Array(es.armour_ids()) == [2011, 2012, 2013], "a Europe man in the heavy set with the 1H sword")
+	es.set_sex(CharCatalog.SEX_WOMAN)
+	_check(es.slider_range(C.PROTECTOR) == Vector2i(0, 2), "the woman has sets for the 1H sword too")
+	_check(es.protector == 0 and Array(es.armour_ids()) == [0, 0, 0] and es.weapon == 2,
+		"switching to Female puts the Protector back to 0, the weapon stays (got protector %d, armour %s)" % [es.protector, str(Array(es.armour_ids()))])
+	_check(es.confirm_error() == CharCreateModel.MSG_NO_ARMOUR, "so Confirm refuses with SELECTARMOR")
+	var cs := CharCreateModel.create(cat, CharCatalog.RACE_CHINA)
+	cs.set_value(C.PROTECTOR, 2)
+	cs.set_sex(CharCatalog.SEX_WOMAN)
+	_check(cs.protector == 2, "China keeps its Protector across a sex change (its weapon handler resets nothing)")
+
+	# --- the default wear (READ 0xa5e010 / 0xa5c760; synthetic visual rows) ---
+	var dw := DefaultWear.from_text(_visual_rows())
+	_check(DefaultWear.packed_type_id(PackedInt32Array([3, 1, 1, 3])) == 6316 and DefaultWear.packed_type_id(PackedInt32Array([3, 1, 10, 4])) == 9516,
+		"packed TypeIDs: China garment chest 6316, Europe light legs 9516")
+	_check(DefaultWear.default_type_id(CharCatalog.RACE_CHINA, 0, 0) == 6316 and DefaultWear.default_type_id(CharCatalog.RACE_CHINA, 1, 3) == 8492
+		and DefaultWear.default_type_id(CharCatalog.RACE_EUROPE, 0, 1) == 7340 and DefaultWear.default_type_id(CharCatalog.RACE_EUROPE, 1, 2) == 9516,
+		"BuildDefaultWearTypeID: China 0/1 clothes, 2/3 light; Europe 0/1 robe, 2/3 light; wear 0 chest, 1 legs")
+	var eo := CharCreateModel.create(cat, CharCatalog.RACE_EUROPE)
+	var w0 := dw.wear_for(eo.race, false, _worn(cat, eo.preview_items()))
+	_check(_paths(w0) == ["res\\item\\europe\\man_item\\clothes_01_ba.bsr", "res\\item\\europe\\man_item\\clothes_01_la.bsr"]
+		and _slots(w0) == [CharacterAppearance.SLOT_CHEST, CharacterAppearance.SLOT_LEGS],
+		"Europe at opening wears the default chest and legs, no feet (got %s)" % str(_paths(w0)))
+	_check(_paths(dw.wear_for(eo.race, true, [])) == ["res\\item\\europe\\woman_item\\clothes_01_ba.bsr", "res\\item\\europe\\woman_item\\clothes_01_la.bsr"],
+		"a woman gets the woman's .bsr")
+	eo.set_value(C.WEAPON, 2)
+	_check(dw.wear_for(eo.race, false, _worn(cat, eo.preview_items())).size() == 2, "after a weapon change (Protector 0) still both defaults")
+	eo.set_value(C.PROTECTOR, 2)
+	_check(dw.wear_for(eo.race, false, _worn(cat, eo.preview_items())).is_empty(), "a worn set (mail and pants) leaves no default")
+	var chest_only := [{"slot": CharacterAppearance.SLOT_CHEST, "type_ids": PackedInt32Array([3, 1, 10, 3])}]
+	var w1 := dw.wear_for(CharCatalog.RACE_EUROPE, false, chest_only)
+	_check(_paths(w1) == ["res\\item\\europe\\man_item\\light_01_la.bsr"],
+		"worn mail suppresses the chest default; the legs' default follows the worn light class (got %s)" % str(_paths(w1)))
+	_check(dw.wear_for(CharCatalog.RACE_EUROPE, false, [], true).is_empty(), "CGame+0x129 set: no default wear")
+	var co := CharCreateModel.create(cat, CharCatalog.RACE_CHINA)
+	var china_any := false
+	for sex in [CharCatalog.SEX_MAN, CharCatalog.SEX_WOMAN]:
+		co.set_sex(sex)
+		for w in range(0, 6):
+			co.set_value(C.WEAPON, w)
+			for pr in range(co.slider_range(C.PROTECTOR).x, co.slider_range(C.PROTECTOR).y + 1):
+				co.set_value(C.PROTECTOR, pr)
+				china_any = china_any or not dw.wear_for(co.race, sex == CharCatalog.SEX_WOMAN, _worn(cat, co.preview_items())).is_empty()
+	_check(not china_any, "China never shows default wear on the customize screen (a set is always worn)")
 
 	# --- Confirm's checks, in order (READ 0x84ed50 / 0x8527e0) ---
 	var cc := CharCreateModel.create(cat, CharCatalog.RACE_CHINA)
@@ -310,6 +369,45 @@ func _init() -> void:
 	else:
 		print("FAILURES: %d" % _failures)
 	quit(0)
+
+## charactervisualchange.txt-shaped rows (synthetic paths, the READ Pram1s).
+func _visual_rows() -> String:
+	var rows := ["//Service\tID\tName\tConditionID"]
+	var cond1 := {6316: 0x2, 8364: 0x10, 6444: 0x2, 8492: 0x10, 6572: 0x2, 8620: 0x10, 7340: 0x2, 9388: 0x10, 7468: 0x2, 9516: 0x10, 7596: 0x2, 9644: 0x10, 12460: 0x20, 13484: 0x20}
+	var id := 1
+	for tid in cond1:
+		rows.append(_vrow(id, 1, tid, cond1[tid], "xxx", "xxx"))
+		id += 1
+	var d := {6316: "china\\%s\\clothes_00_ba", 8364: "china\\%s\\clothes_00_la", 6444: "china\\%s\\light_00_ba", 8492: "china\\%s\\light_00_la",
+		7340: "europe\\%s\\clothes_01_ba", 9388: "europe\\%s\\clothes_01_la", 7468: "europe\\%s\\light_01_ba", 9516: "europe\\%s\\light_01_la"}
+	for tid in d:
+		var p: String = d[tid]
+		rows.append(_vrow(2000 + id, 6, tid, 0x2 if tid < 8000 else 0x10, "res\\item\\" + (p % "man_item") + ".bsr", "res\\item\\" + (p % "woman_item") + ".bsr"))
+		id += 1
+	return "\n".join(rows)
+
+func _vrow(id: int, cond: int, tid: int, mask: int, bm: String, bf: String) -> String:
+	return "\t".join(["1", str(id), "x", str(cond), "1", str(tid), "0", "0", "0", "xxx", "xxx", "xxx", "xxx", "0x%04X" % mask, "0x0000", "0", "250", "0", "xxx", bm, bf])
+
+func _worn(cat: CharCatalog, items: Array) -> Array:
+	var out := []
+	for it in items:
+		var e := cat.get_entry(int(it["id"]))
+		if e != null:
+			out.append({"slot": CharacterAppearance.visual_slot(e.type_ids), "type_ids": e.type_ids})
+	return out
+
+func _paths(wears: Array) -> Array:
+	var out := []
+	for w in wears:
+		out.append(w["path"])
+	return out
+
+func _slots(wears: Array) -> Array:
+	var out := []
+	for w in wears:
+		out.append(int(w["slot"]))
+	return out
 
 func _ids(items: Array) -> Array:
 	var out := []

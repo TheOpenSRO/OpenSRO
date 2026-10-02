@@ -261,13 +261,20 @@ func set_value(c: int, v: int) -> bool:
 	return true
 
 ## Sex: the lists change, the indices stay where they are (READ 0x84f350:
-## the ranges are re-set and each position clamped into its own).
+## the ranges are re-set and each position clamped into its own). Europe's
+## (0x852e00) re-sets Figure, then the Protector, then the Weapon, each with
+## its notification (0x6599e0 -> 0x6598a0, which sends 0x2806b at once), so
+## the weapon handler 0x853400 runs last and puts the Protector back to 0 --
+## 0x8531e0 takes the armour off (round 685's review). China's weapon
+## handler resets nothing, so China keeps its set.
 func set_sex(s: int) -> bool:
 	s = SEX_WOMAN if s == SEX_WOMAN else SEX_MAN
 	if s == sex:
 		return false
 	sex = s
 	_clamp_all()
+	if race == RACE_EUROPE:
+		protector = 0
 	return true
 
 func _clamp(c: int) -> void:

@@ -7691,6 +7691,96 @@ FAIL r685: a driver reset frees its objects, sectors and pose groups (5 tracked,
 - `ui/character_preview.gd` has no user left here; delete it once round 684's select is confirmed not
   to use it.
 
+### 8. Review
+
+The review found the layout, ranges, Confirm order, preview constants and backdrop pose as READ
+("Weight" is the archive's own English for `UIO_NEWCHAR_STT_VOLUME`), 0 client/server mismatches
+over a 5,330-request sweep, the MapAnimation fix safe, and a clean merge onto dev f57aee5 (round
+687's body hiding, which this branch now carries). It raised two MEDIUMs and two LOWs; all fixed.
+
+**MEDIUM 1, default wear (READ).** An empty chest or legs is not bare in retail. `FUN_00a5e010` (run
+after every armour change, 0xa61c60 -> `CObjCharacter::FUN_00a611e0`) does nothing but take the
+defaults off when `CGame+0x129` is set; otherwise, for wear 0 (mask 0x2) and wear 1 (mask 0x10), when
+no worn visual's record carries the bit it calls `SetDefaultWear(0, 1)` / `SetDefaultWear(1, 4)`
+(the chest's and legs' visual slots); nothing for the feet. `BuildDefaultWearTypeID` (0xa5c760, asm
+and its two jump tables 0xa5c81c / 0xa5c82c): 0x2c, then by the race byte (+0x9c; INFERRED the
+Country) and `WornArmorClass()` (0xa5c670: the first visual slot with armour, 1 for TypeID3 1/9, 2
+for 2/10, 3 for 3/11, else 0) China 0/1 -> TypeID3 1, 2/3 -> 2, Europe 0/1 -> 9, 2/3 -> 10; then
+`& 0x7ff | 0x1800` (wear 0) or `| 0x2000` (wear 1). `SetDefaultWear` resolves it to a visual record
+and takes BsrName(M) (+0x18) for a man, (F) (+0x34) for a woman (+0x1c4).
+- MEASURED in `charactervisualchange.txt`: the eight ConditionID 6 rows, Pram1 6316/8364 China
+  `clothes_00_ba/_la`, 6444/8492 China `light_00_*`, 7340/9388 Europe `clothes_01_*`, 7468/9516
+  Europe `light_01_*`. The packing TypeID1 << 2 | TypeID2 << 5 | TypeID3 << 7 | TypeID4 << 11
+  reproduces every one and every ConditionID 1 armour row (6316 "ROBE-MAIL" 0x2, 8364 "ROBE-PANTS"
+  0x10, ...), which give a worn item's mask (INFERRED that an equipped item's visual record is that
+  row). The reviewer's "clothes_00" for Europe is Europe's `clothes_01` in this archive.
+- Built: `client/scripts/ui/default_wear.gd` (`DefaultWear`); `CharacterAppearance.build` and
+  `unequip` re-decide the defaults (worn entries with id 0, `default` set) and their attachable
+  blocks hide the body through round 687's `apply_hides`; `World3D._build_assembled_character` does
+  the same for the player, the paper doll and other players, by the drawn body's race and sex. The
+  flag is taken as clear (OURS, as the Protector minimum).
+- Seen (for a human): Europe at opening now wears the red tunic and dark trousers of fe_ref3
+  (`shots/compare_europe_review.png`); after a weapon change and at Cloth 0 too
+  (`europe_review_1/2.png`).
+
+**MEDIUM 2, a Europe sex change keeps the armour -- fixed (READ).** 0x852e00 re-sets Figure, the
+Protector, then the Weapon through 0x6599e0 with its notification, and 0x6598a0 sends 0x2806b at
+once, so 0x853400 runs last and puts the Protector at 0 (0x8531e0 unequips 1-3). `set_sex` now does
+that for Europe; China's weapon handler resets nothing and China keeps its set. A Europe man in the
+heavy set who switches to Female shows default wear and Confirm says SELECTARMOR.
+
+**LOW 3, the backdrop camera -- fixed at the source.** In title mode the Camera3D was still a child
+of the player's SpringArm3D, whose INTERNAL physics re-places its children (`set_physics_process
+(false)` does not stop it). `_title_ready` now also stops the internal process and reparents the
+camera to the World3D, keeping its transform. MEASURED (`measure_create_cycles.gd --mode=camera`,
+98/168, posed once, 240 frames): drift 55.681 units before, 0.000 after. Round 684's
+`CharSelectStage.camera()` workaround is no longer needed (not edited here).
+
+**LOW 4, Cancel while the create is in flight -- fixed (OURS).** The dimmer (12) now takes the mouse
+while box 13 is up and while the 0xB007 is due, so OK, Cancel and the panel cannot be used; the box
+sits above it. A create with no answer in 10 s gives the screen back with "The server did not answer
+the create request." (no retail key fits); a reply after that, or after leaving, is ignored (the
+handler checks the state; a freed screen's connections go with it). What retail's window 12 does
+with the mouse is not read.
+
+**OPEN, recorded:** China's backdrop does not reproduce fe_ref4's lion-and-gate view at any yaw of
+the READ pose, while Europe's matches fe_ref3 at yaw ~2.6 (the reviewer's sheets, scratchpad
+`rv685/shots/china_sheet.jpg`, `europe_sheet.jpg`). The reference is a private server's; whether it
+moved the camera or the READ target is misread is OPEN.
+
+**Tests.** `charcreate_test.gd` 121 checks: the Europe sex change (with sets for the woman in the
+synthetic catalogue), China keeping its set; DefaultWear's packing and TypeIDs per race and class,
+Europe's opening defaults (chest and legs, no feet; the woman's .bsr), still both after a weapon
+change, none under a worn set, worn mail suppressing only the chest default (the legs' following
+the worn light class), none with the flag, and China never showing one in any create state. On the
+tree before these fixes (the merge 501b4ae):
+
+```
+FAIL switching to Female puts the Protector back to 0, the weapon stays (got protector 1, armour [2021, 2022, 2023])
+FAIL so Confirm refuses with SELECTARMOR
+SCRIPT ERROR: Parse Error: Identifier "DefaultWear" not declared in the current scope.
+CAMERA drift after 240 frames without show_pose: 55.681 units
+```
+
+After: `remote_godot.sh check` ALL LOAD (519 scripts, 8 scenes); `remote_godot.sh tests` 202 suites,
+0 failing; whole-screen cycles +0 objects / +0.00 MB (Europe, 3); swaps unchanged (Europe cached
+Figure median 1.6 ms, Weapon/Cloth 1.9 ms).
+
+**Perf gate** (`perf_gate.sh --sites jangan,mobs`; World3D's title camera and character assembly
+changed):
+
+```
+perf gate: base f57aee5 vs head working tree (1280x720, median of 3 run(s))
+jangan  frame ms   base 10.16  head 9.32  (-0.8)  SAME
+jangan  entry ms   base 10014  head 9661  (-353.0)  SAME
+jangan  freeze ms  base 3473  head 3421  (-52.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+mobs    frame ms   base 10.97  head 10.91  (-0.1)  SAME
+mobs    entry ms   base 10670  head 10654  (-16.0)  SAME
+mobs    freeze ms  base 3428  head 3431  (+3.0)  SAME
+mobs    hitches    base 5  head 5  (+0.0)  SAME
+```
+
 ## Six-hundred-and-eighty-third round: one builder dresses any of the 52 bodies -- China and Europe, men and women -- at the Height and Volume picked, and the create screens' choices come from the player's own archive
 
 The user (2026-10-02): "Let's actually work on the character selection/creation part now. I'd like

@@ -7863,6 +7863,9 @@ static func _tag_clip(anim: Object, action_type: int, group: String) -> void:
 ## Falls back to DEFAULT_GENDER if gender's assets never loaded (or gender
 ## is empty/unrecognized -- an older peer, or an EnterWorldResult without
 ## one). Returns null only if even the default's body could not be built.
+## Round 685's review: charactervisualchange.txt's default-wear rows, read once.
+var _default_wear: DefaultWear = null
+
 func _build_assembled_character(equipped: Dictionary = {}, gender: String = DEFAULT_GENDER) -> Skeleton3D:
 	var assets: Dictionary = _character_assets.get(gender, _character_assets.get(DEFAULT_GENDER, {}))
 	if assets.is_empty() or _data_pk2 == null:
@@ -7884,6 +7887,23 @@ func _build_assembled_character(equipped: Dictionary = {}, gender: String = DEFA
 		if attached != null:
 			worn += 1
 			blocks.append(attached.attachable)
+	# The default wear on an empty chest and legs (round 685's review, READ
+	# FUN_00a5e010 / SetDefaultWear / BuildDefaultWearTypeID -- DefaultWear):
+	# decided from what is worn, by the drawn body's race and sex.
+	if _default_wear == null:
+		_default_wear = DefaultWear.from_archive(_media_pk2)
+	var dw_worn: Array = []
+	for slot in equipped:
+		var row = _item_rows.get(int(equipped[slot]))
+		if row != null:
+			var tids: PackedInt32Array = (row as ItemTableReader.Item).type_ids
+			dw_worn.append({"slot": CharacterAppearance.visual_slot(tids), "type_ids": tids})
+	var body_lower := String(assets["bsr_path"]).to_lower()
+	var dw_race := CharCatalog.RACE_EUROPE if body_lower.contains("europe") else CharCatalog.RACE_CHINA
+	for d in _default_wear.wear_for(dw_race, body_lower.contains("woman"), dw_worn):
+		var dw_attached := SkinnedBsrAssembler.attach_item_from_archive(_data_pk2, assembled.skeleton, d["path"])
+		if dw_attached != null:
+			blocks.append(dw_attached.attachable)
 	# The body's own pieces under what it wears are switched off, as retail
 	# does (round 687, READ CCompChar::FUN_00c1f790 / FUN_00c1f890). The local
 	# player's body and the paper doll are rebuilt on every equipment change
@@ -20241,7 +20261,15 @@ func _title_ready() -> void:
 	print("World3D: title mode (round 678) -- a front-end backdrop: no player, HUD, server or loading screen")
 	($UI as CanvasLayer).visible = false
 	player.visible = false
+	# The camera leaves the spring arm for this node (round 685's review):
+	# SpringArm3D re-places its children from its INTERNAL physics process,
+	# which set_physics_process(false) does not stop -- MEASURED, the eye
+	# drifted 55.6 units over a backdrop left without show_pose, so every
+	# screen had to re-pose it each frame. Detached, the camera stays where
+	# the backdrop puts it; the arm is idle too.
 	camera_arm.set_physics_process(false)
+	camera_arm.set_physics_process_internal(false)
+	camera_3d.reparent(self, true)
 	camera_3d.top_level = true
 	camera_3d.make_current()
 	_water_reflection_on = WaterReflection.enabled()

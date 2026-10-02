@@ -6,7 +6,7 @@ extends SceneTree
 ## can be pinned to the piece that leaks it.
 ##
 ##   godot4 --headless --path client --script res://tools/measure_create_cycles.gd -- \
-##     --mode=screen|backdrop|appearance|preview|swaps [--cycles=6] [--race=china|europe]
+##     --mode=screen|backdrop|appearance|preview|swaps|camera [--cycles=6] [--race=china|europe]
 ##
 ## screen: CharacterCreate.tscn as the game opens it; backdrop: only its
 ## FrontEndBackdrop (98/168 or 105/79); appearance: CharacterAppearance built
@@ -86,6 +86,21 @@ func _run() -> void:
 	var media := Pk2Reader.open(Pk2Config.media_path())
 	if mode == "swaps":
 		await _swaps(data, media, race)
+		quit(0)
+		return
+	if mode == "camera":
+		# Round 685's review: the backdrop's camera, posed once and left --
+		# how far it moves by itself over 240 frames (the spring arm).
+		var b := FrontEndBackdrop.new()
+		root.add_child(b)
+		b.begin(CharCreateView.BACKDROP[race]["region"], 1, 0.25)
+		b.show_pose(CharCreateView.backdrop_pose(race, 0))
+		var start := b.camera().global_position
+		await _wait(240)
+		print("CAMERA drift after 240 frames without show_pose: %.3f units (at %s, from %s)" % [
+			b.camera().global_position.distance_to(start), b.camera().global_position, start])
+		b.queue_free()
+		await _wait(5)
 		quit(0)
 		return
 	var prev: Array = []

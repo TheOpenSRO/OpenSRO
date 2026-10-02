@@ -55,6 +55,10 @@ extends Control
 ## tooltip's subject when it is not already; a slider moved does the same.
 
 const FADE_S := 0.5
+## OURS (round 685's review): how long a create waits for its 0xB007 before
+## the screen is given back, and what it says then (no retail key fits).
+const CREATE_REPLY_TIMEOUT_S := 10.0
+const CREATE_TIMEOUT_TEXT := "The server did not answer the create request."
 ## READ: the tooltip window's offset from the rotate window (see the header).
 const EXPLAIN_OFFSET := {
 	CharCatalog.RACE_CHINA: Vector2(-0x3b, -0xdb),
@@ -138,6 +142,7 @@ var _usable_ms := -1
 var _backdrop_ready := false
 var _create_pending := false
 var _box_closing := false
+var _send_serial := 0
 var _qa_state := ""
 ## SRREVAMP_QA_CREATE_SHOTS="spec|spec|..." with SRREVAMP_QA_CREATE_SHOT_DIR:
 ## each spec (as SRREVAMP_QA_CREATE_STATE's) is applied in turn once the
@@ -688,6 +693,7 @@ func _on_confirm() -> void:
 		_say(_t(why), true)
 		return
 	_state = State.BOX
+	_block_input(true)
 	_box_name.text = _name_edit.text
 	_box.visible = true
 	_frame.fade(_box, 0, 255, FADE_S)
@@ -716,9 +722,13 @@ func _on_box_closed() -> void:
 	_box.visible = false
 	if not _create_pending:
 		_state = State.READY
+		_block_input(false)
 		return
 	_create_pending = false
 	_state = State.SENDING
+	_send_serial += 1
+	var serial := _send_serial
+	get_tree().create_timer(CREATE_REPLY_TIMEOUT_S).timeout.connect(func(): _on_create_timeout(serial))
 	var r := _model.request()
 	print("CREATE SEND: name %s %s" % [_name_edit.text, _describe()])
 	NetClient.create_character_full(_name_edit.text, r["model"], r["scale"], r["chest"], r["legs"], r["feet"], r["weapon"])
@@ -734,10 +744,29 @@ func _on_create_result(ok: bool, reason: String) -> void:
 	else:
 		print("CREATE RESULT: refused -- %s" % reason)
 		_state = State.READY
+		_block_input(false)
 		_say(reason, true)
 
+## Round 685's review (OURS: what retail's window 12 does with the mouse is
+## not read): while the box is up or the create is in flight the dimmer
+## takes the mouse, so Cancel and the panel cannot be used and the screen
+## cannot be left with the 0xB007 reply still due. The box sits above the
+## dimmer and stays usable.
+func _block_input(on: bool) -> void:
+	_dim.mouse_filter = Control.MOUSE_FILTER_STOP if on else Control.MOUSE_FILTER_IGNORE
+
+## OURS: a create with no answer in CREATE_REPLY_TIMEOUT_S gives the screen
+## back, saying so, rather than leaving it locked.
+func _on_create_timeout(serial: int) -> void:
+	if _state != State.SENDING or serial != _send_serial or not is_inside_tree():
+		return
+	print("CREATE RESULT: no answer in %.0f s" % CREATE_REPLY_TIMEOUT_S)
+	_state = State.READY
+	_block_input(false)
+	_say(CREATE_TIMEOUT_TEXT, true)
+
 func _on_cancel() -> void:
-	if _state == State.LEAVING:
+	if _state != State.READY and _state != State.OPENING:
 		return
 	_state = State.LEAVING
 	_leave(false)

@@ -426,6 +426,15 @@ the lizard hides. `FUN_0085cbc0` (fly back from an idol) has no references: dead
 - **The confirm box** (0x84ec00): 13 fades 0 -> 255 over 0.5 s with the name in 31; 12 dims
   0 -> 0x80 over 0.5 s. The create OK (0x84cff0) fades 14 to 255 over 0.5 s, then select.
 - **Cancel** (11, 0x84d300) switches to select at once and writes 0xa as the previous process.
+- **A Europe sex change clears the armour** (round 685's review): 0x852e00 re-sets Figure, then
+  the Protector, then the Weapon through 0x6599e0 with its notification, and 0x6598a0 sends 0x2806b
+  at once, so the weapon handler 0x853400 runs last and puts the Protector at 0 (0x8531e0 takes
+  slots 1-3 off). China's weapon handler resets nothing, so China keeps its set.
+- **Default wear** (round 685's review; `client/scripts/ui/default_wear.gd` has the addresses): an
+  empty chest or legs shows `charactervisualchange.txt`'s ConditionID 6 garment -- Europe
+  `clothes_01_ba/_la` (worn armour light or heavy: `light_01_*`), China `clothes_00_*` /
+  `light_00_*` -- unless `CGame+0x129` is set; nothing for the feet. So Europe at opening, after a
+  weapon change and at Cloth 0 wears the red tunic the reference shows.
 - **The sex buttons** (0x84f630 male, 0x84f540 female) swap their art: male man_on / woman_off,
   female man_off / woman_on, with `_press` art (strings 0xdd5f20.., 0xdd5e9c..). Their ClientRects
   (male "20,0,0,0", female "0,0,20,0") keep the text clear of the radio mark (INFERRED).
