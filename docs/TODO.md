@@ -1301,8 +1301,9 @@ Mountain), tunnels, Jangan's gate soldiers, Constantinople's guides and the two 
         srrevamp refuses every return scroll. When built, it goes to `returnPointFor`.
   - [ ] **An unknown designated gate** falls back to the race's gate (OURS); retail falls back to
         `LatestRegion` / `Pos`.
-  - [ ] **Europe characters** get Constantinople's gate once round 682's `characterCountry` reads
-        the body's race (until then every character is China).
+  - [ ] **A Europe character's return, live.** Since round 682 is on dev, `characterCountry`
+        reads the body's race (`RaceOf`) and the tests return a Europe character to
+        Constantinople's gate with no stub; no live run with a created Europe character yet.
   - [ ] **The agreement box's art and button labels** are the talk prompts' panel and "OK" /
         "Cancel" (OURS): kind 5's button controls were not read.
 - [ ] **Which objects offer id 8 is stood in for.** Retail registers id 8 ("Select teleport area") on

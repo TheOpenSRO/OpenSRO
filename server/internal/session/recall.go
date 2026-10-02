@@ -72,6 +72,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"sync/atomic"
 
 	"github.com/OpenSRO/srrevamp/server/internal/character"
@@ -155,7 +156,9 @@ func (t *teleporter) designate(ctx context.Context, sess *gateway.Session, p *pr
 	username, _ := AuthenticatedUsername(sess)
 	refuse := func(code uint16, reason string, attrs ...any) error {
 		if t.logger != nil {
-			t.logger.Info("recall designate refused", append([]any{"account", username, "code", code, "reason", reason}, attrs...)...)
+			// Debug, not Info (round 686's review): a client repeating the
+			// request must not flood the log.
+			t.logger.Debug("recall designate refused", append([]any{"account", username, "code", code, "reason", reason}, attrs...)...)
 		}
 		return sess.Send(&proto.Packet{Opcode: OpRecallDesignateResult, Data: (&RecallDesignateResult{Code: code}).Encode()})
 	}
@@ -242,11 +245,6 @@ func RaceGate(country int) string {
 	return RaceGateChina
 }
 
-// recallCountry is the Country a character's default return point follows:
-// characterCountry (skill.go), which round 682 makes read the body's race. A
-// variable so a test can give a character Europe's before that lands.
-var recallCountry = characterCountry
-
 // recallFallbackZone is where a character of `country` returns when no
 // teleport network is loaded (OURS): spawnZone, where every character entered
 // before round 682 and every return point was before round 686, and
@@ -270,34 +268,66 @@ func recallArrival(p teleport.Point) (zone, bucket string, pos world.Position, f
 }
 
 // returnPointFor is where characterID's return takes it: its designated gate
-// (character.RecallStore), else its race's gate, as zone label, hub bucket,
-// position and frame -- each an arrival warpTo makes. chars may be any Store;
-// one that is not a RecallStore has nothing designated. The fallbacks are in
-// the file's header.
+// (character.RecallStore), else its race's gate (characterCountry, the body's
+// race since round 682), as zone label, hub bucket, position and frame -- each
+// an arrival warpTo makes. chars may be any Store; one that is not a
+// RecallStore has nothing designated. The fallbacks are in the file's header.
+//
+// A failed read is logged with the character's id, never passed over (round
+// 686's review): a character that cannot be read has no known race, so it
+// returns to its designated gate if that still reads, else to spawnZone's
+// arrival -- the point a return used before round 686 and the one used with no
+// network -- with an error naming it, so a Europe character sent to Jangan
+// that way shows in the log. A designated gate that cannot be read falls to
+// the race's gate, also logged.
 func returnPointFor(ctx context.Context, chars character.Store, characterID int64) (zone, bucket string, pos world.Position, frame string) {
 	var c *character.Character
+	readable := false
 	if chars != nil {
-		c, _ = chars.GetByID(ctx, characterID)
+		var err error
+		c, err = chars.GetByID(ctx, characterID)
+		if err != nil || c == nil {
+			slog.Error("return point: reading the character failed; its race is unknown",
+				"character_id", characterID, "error", err)
+		} else {
+			readable = true
+		}
 	}
-	country := recallCountry(c)
+	country := characterCountry(c)
 	network := recallNetwork.Load()
 	if network != nil {
-		if rs, ok := chars.(character.RecallStore); ok && c != nil {
-			if id, err := rs.AppointedTeleport(ctx, characterID); err == nil && id != 0 {
-				if p, ok := network.PointByObject(int(id)); ok {
+		if rs, ok := chars.(character.RecallStore); ok {
+			id, err := rs.AppointedTeleport(ctx, characterID)
+			switch {
+			case err != nil:
+				slog.Error("return point: reading the designated gate failed",
+					"character_id", characterID, "error", err)
+			case id != 0:
+				p, ok := network.PointByObject(int(id))
+				if ok {
 					if zone, bucket, pos, frame, ok := recallArrival(p); ok {
 						return zone, bucket, pos, frame
 					}
 				}
+				slog.Warn("return point: the designated gate is not a point srrevamp can return to; using the race's gate",
+					"character_id", characterID, "gate_object", id, "known", ok)
 			}
 		}
-		if p, ok := network.PointByBuildingCode(RaceGate(country)); ok {
-			if zone, bucket, pos, frame, ok := recallArrival(p); ok {
-				return zone, bucket, pos, frame
+		if readable {
+			if p, ok := network.PointByBuildingCode(RaceGate(country)); ok {
+				if zone, bucket, pos, frame, ok := recallArrival(p); ok {
+					return zone, bucket, pos, frame
+				}
 			}
 		}
 	}
-	zone = recallFallbackZone(country)
+	if !readable && chars != nil {
+		slog.Error("return point: the character could not be read; returning it to the zone arrival",
+			"character_id", characterID, "zone", spawnZone)
+		zone = spawnZone
+	} else {
+		zone = recallFallbackZone(country)
+	}
 	bucket, pos, frame, _ = arrival(zone)
 	return zone, bucket, pos, frame
 }

@@ -3,6 +3,9 @@ package session
 import (
 	"context"
 	"encoding/binary"
+	"errors"
+	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"testing"
@@ -181,26 +184,32 @@ func TestDesignatedGateIsWhereOptionOneReturns(t *testing.T) {
 // A character that never designated a gate returns to its race's: China to
 // GATE_CH's point in jangan (97/168 local 969, 1369 -- STORE_CH_GATE's), and
 // Europe to GATE_EU's in constantinople (105/79 local 950, 1070 --
-// STORE_EU_GATE's). Europe characters arrive with round 682; until then the
-// race is stubbed (recallCountry). Before round 686 both went to jangan's
-// zone arrival.
+// STORE_EU_GATE's). The race is the character's own, through round 682's
+// RaceOf of its Gender (characterCountry) -- no stub: Aria is made a Europe
+// character with the store's own SetGender. Before round 686 both went to
+// jangan's zone arrival.
 func TestUndesignatedReturnPointIsTheRaceGate(t *testing.T) {
 	for _, single := range []bool{false, true} {
 		for _, race := range []struct {
 			name    string
+			gender  string
 			country int
 			zone    string
 			region  int
 			lx, lz  int
 		}{
-			{"china", equipment.CountryChina, "jangan", 25000, 969, 1369},
-			{"europe", equipment.CountryEurope, "constantinople", 26959, 950, 1070},
+			{"china", character.GenderChinaWoman, equipment.CountryChina, "jangan", 25000, 969, 1369},
+			{"europe", character.GenderEuropeMan, equipment.CountryEurope, "constantinople", 26959, 950, 1070},
 		} {
 			t.Run(race.name+map[bool]string{false: ", own frames", true: ", single frame"}[single], func(t *testing.T) {
 				f := recallFixture(t, single)
-				was := recallCountry
-				recallCountry = func(*character.Character) int { return race.country }
-				t.Cleanup(func() { recallCountry = was })
+				if err := f.chars.SetGender(context.Background(), f.aria, race.gender); err != nil {
+					t.Fatal(err)
+				}
+				// The probe of the probe: the race really reads as wanted.
+				if c, _ := f.chars.GetByID(context.Background(), f.aria); characterCountry(c) != race.country {
+					t.Fatalf("a %s character reads country %d, want %d", race.gender, characterCountry(c), race.country)
+				}
 				f.setLevel(t, f.aria, 30)
 				f.goDonwhang(t)
 				if id := f.appointed(t); id != 0 {
@@ -381,5 +390,91 @@ func TestTeleportFromJanganAfterReturningToTheRaceGate(t *testing.T) {
 			}
 			f.teleportToDonwhang(t, logs, "after the race gate return")
 		})
+	}
+}
+
+// failingChars is a store whose character reads fail (round 686's review).
+type failingChars struct {
+	*character.MemStore
+}
+
+func (f failingChars) GetByID(context.Context, int64) (*character.Character, error) {
+	return nil, errors.New("synthetic read failure")
+}
+
+// captureLog points slog's default logger at a buffer for the test.
+func captureLog(t *testing.T) *syncBuffer {
+	t.Helper()
+	buf := &syncBuffer{}
+	was := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(was) })
+	return buf
+}
+
+// A failed read is never silent (round 686's review). A character that
+// cannot be read goes to its designated gate when that still reads -- here
+// Donwhang's -- and otherwise to spawnZone's arrival, each with an error line
+// naming its id; a designated gate that cannot be read falls to the race's
+// gate with an error line.
+func TestReturnPointLogsFailedReads(t *testing.T) {
+	SetRecallNetwork(recallNetworkFixture(t))
+	t.Cleanup(func() { SetRecallNetwork(nil) })
+	ctx := context.Background()
+	mem := character.NewMemStore()
+	c, _ := mem.Create(ctx, 1, "Aria")
+
+	logs := captureLog(t)
+	zone, _, _, _ := returnPointFor(ctx, failingChars{MemStore: mem}, c.ID)
+	if wz, _, _, _ := arrival(spawnZone); zone != spawnZone || wz == "" {
+		t.Errorf("unreadable, nothing designated: zone %q, want spawnZone's arrival %q", zone, spawnZone)
+	}
+	for _, want := range []string{"reading the character failed", "could not be read; returning it to the zone arrival", fmt.Sprintf("character_id=%d", c.ID)} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("no %q in the log:\n%s", want, logs.String())
+		}
+	}
+
+	if err := mem.SetAppointedTeleport(ctx, c.ID, 2095); err != nil {
+		t.Fatal(err)
+	}
+	if zone, _, _, _ := returnPointFor(ctx, failingChars{MemStore: mem}, c.ID); zone != "donwhang" {
+		t.Errorf("unreadable but designated Donwhang: zone %q, want donwhang", zone)
+	}
+
+	logs = captureLog(t)
+	if zone, _, _, _ := returnPointFor(ctx, readableFailingGate{mem}, c.ID); zone != "jangan" {
+		t.Errorf("a gate read failure for a China character: zone %q, want jangan (the race's gate)", zone)
+	}
+	if !strings.Contains(logs.String(), "reading the designated gate failed") || !strings.Contains(logs.String(), fmt.Sprintf("character_id=%d", c.ID)) {
+		t.Errorf("the gate read failure was not logged:\n%s", logs.String())
+	}
+}
+
+// readableFailingGate reads the character but not its designated gate.
+type readableFailingGate struct{ *character.MemStore }
+
+func (r readableFailingGate) AppointedTeleport(context.Context, int64) (int64, error) {
+	return 0, errors.New("synthetic gate read failure")
+}
+
+// The designate refusals log at Debug, not Info (round 686's review): a
+// client repeating a refused request must not flood an Info log.
+func TestDesignateRefusalsLogAtDebug(t *testing.T) {
+	buf := &syncBuffer{}
+	logger := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	SetPlayerDeadState(true)
+	t.Cleanup(func() { SetPlayerDeadState(false) })
+	network := recallNetworkFixture(t)
+	f := startDeadWorldFixtureWith(t, func(chars character.Store, hub *world.Hub) gateway.Handler {
+		return TeleportHandler(chars, nil, hub, network, gm.ParseAccounts("alice"), false, logger, nil)
+	})
+	for i := 0; i < 5; i++ {
+		if got := f.designate(t, 999); string(got) != "\x02\x00\x00" {
+			t.Fatalf("an unknown gate answered % x", got)
+		}
+	}
+	if strings.Contains(buf.String(), "recall designate refused") {
+		t.Errorf("refusals reached an Info log:\n%s", buf.String())
 	}
 }

@@ -1019,9 +1019,11 @@ skill's effect does to reach the return point is unread. srrevamp refuses every 
   {1}. The stored value is `character.RecallStore` (`characters.appointed_teleport`, 0 = none,
   OURS: the race's gate is resolved by code when needed rather than written at creation).
 - **The return point** (`returnPointFor`): the designated gate's teleportdata point, else the race's
-  gate (`RaceGate`, `characterCountry` -- China until round 682 reads the body), through
+  gate (`RaceGate`, `characterCountry` -- the body's race, `RaceOf`, since round 682), through
   `teleportArrival` (frames and `-single-frame` as a gate teleport). Option 1, the flag-off respawn
-  and a dead logout all use it. Fallbacks (OURS): an unknown designated gate -> the race's gate (not
+  and a dead logout all use it. A failed read is logged with the character's id (round 686's review):
+  a character that cannot be read goes to its designated gate if that reads, else to `spawnZone`'s
+  arrival, with an error line. Fallbacks (OURS): an unknown designated gate -> the race's gate (not
   retail's `LatestRegion`); no `-teleport-dir` -> `spawnZone`'s arrival (China, as before) or
   Constantinople's zone arrival (Europe).
 - **Client**: the line opens the agreement box over the talk box (`HudPanels.

@@ -7217,7 +7217,7 @@ the reply), no world, drawing or loading code.
 ### 6. Merge notes against feat/lobby682
 
 - The race comes from `characterCountry` (`skill.go`), which 682 already rewrites to read
-  `character.RaceOf(c.Gender)`; 686 calls it through `recallCountry` and adds no helper, so after the
+  `character.RaceOf(c.Gender)`; 686 called it through `recallCountry` (removed in the review) and added no helper, so after the
   merge a Europe character returns to Constantinople with no further change.
 - Expected textual conflicts, all "keep both": this entry and 682's at the top of the descending
   block; `docs/TODO.md` if 682 edits the same lines. `sqlstore.go`: 686's line is appended after
@@ -7233,7 +7233,39 @@ the reply), no world, drawing or loading code.
 - Return scrolls: the skill effect is unread; srrevamp has none.
 - Retail's fallback for an unknown designated gate (`LatestRegion` / `Pos`); ours is the race's gate.
 - The agreement box's art and button labels.
-- Europe returns live, once 682 lands.
+- A Europe character's return, live: since the review's merge of 682 the tests return a real
+  Europe character (its `Gender`, read by `RaceOf`) to Constantinople; no live run yet.
+
+### Review (round 686's review: no HIGH, no MEDIUM; four LOW -- fixed in a follow-up commit)
+
+The review trial-merged d66ff53 on dev 67937a5 (rounds 682-683) with everything green, resolved a
+Europe character through 682's real race code to Constantinople, found the migration safe and the
+READ claims confirmed. The placeholder pair 0x0111 / 0x0112 stays: our client has no runtime gate
+object id to send in retail's 0x7059. The follow-up:
+
+1. **origin/dev merged** into `feat/recall686` (WORLD_ISSUES by `wi_resolve.py`, rounds in descending
+   order 686, 683, 682; `recovered_names.tsv` keeps both blocks).
+2. **The race seam is gone.** `var recallCountry` was a stand-in until 682; `returnPointFor` calls
+   `characterCountry` (`RaceOf` of the body's `Gender`) directly, and
+   `TestUndesignatedReturnPointIsTheRaceGate` makes Aria a Europe character with the store's own
+   `SetGender(GenderEuropeMan)`, checking first that the race reads Europe (the probe of the probe).
+3. **A failed read is logged, never silent.** `GetByID` and `AppointedTeleport` errors were dropped,
+   so an unreadable Europe character would have gone to Jangan without a word. Now each logs at
+   Error with `character_id`; a character that cannot be read goes to its designated gate when that
+   still reads, else to `spawnZone`'s arrival (the no-network point), logged; an unreadable or
+   unusable designated gate falls to the race's gate, logged. `TestReturnPointLogsFailedReads`.
+4. **Designate refusals log at Debug**, not Info, so a client repeating a refused request cannot
+   flood the log; successes stay at Info. `TestDesignateRefusalsLogAtDebug`.
+
+FAIL lines of the two new tests against d66ff53's `recall.go`: `no "reading the character failed"
+in the log`, `no "character_id=1" in the log`, `unreadable but designated Donwhang: zone "jangan",
+want donwhang`, `the gate read failure was not logged`, `refusals reached an Info log` (the last
+also by flipping the level back to Info alone).
+
+After the follow-up: `go build`, `go vet`, `go test -count=1 -p 1 ./...` green; `remote_godot.sh
+check` 510 scripts ALL LOAD (a first run failed on `scripts/net/character_test.gd`, a file round 682
+deleted that the lane's box directory still held -- the sync never removes; deleted there, not a
+tree defect); `remote_godot.sh tests` 200 suites, 0 failing.
 
 ## Six-hundred-and-eighty-third round: one builder dresses any of the 52 bodies -- China and Europe, men and women -- at the Height and Volume picked, and the create screens' choices come from the player's own archive
 
