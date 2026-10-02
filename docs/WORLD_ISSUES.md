@@ -7094,6 +7094,140 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-ninety-fourth round: the Option window's Video tab -- retail's rows, presets, two Graphic records and brightness curve, each mapped to a Godot effect or marked as drawing nothing here, plus SSAO and the Bloom row as Godot glow
+
+The user (2026-10-02): "Add SSAO and glow as toggable options in Esc -> Option -> Video tab alongside
+the other graphics settings. Also please add those graphics setting to the game like the original
+has but feel free to make any changes that fit godot." Lane `options694`, client. The full record
+and the mapping table are `docs/protocol/OPTION_VIDEO.md`; this entry is the evidence and what
+changed. Labels: READ (`sro_client.exe`, decompile and asm on the box), MEASURED, INFERRED, OURS.
+
+### 1. What the original has (READ)
+
+- **The page** is `res_ui\optionwnd.2dt`'s pane 78 (MEASURED in the box's Media.pk2). Its builder
+  `0x5fef70` fetches Resolution (78->14->15), Set Brightness (78->462->15), the scroll bar (465),
+  Window / Full screen (204 / 203), the three views (207-209), the Graphic 1 / 2 tabs (24 / 25)
+  and twelve CNIFVideoOptionSlot rows (215..248), and pushes fifteen rows (entries 0..13 and 15)
+  with their labels, tooltips (`UIIT_STT_VIDIO_TTDESC_*`) and choices. The user's iSRO
+  screenshots match row for row; this archive has four top tabs (no Extra Settings).
+- **The record** (`CGame+0x570`): two 0x2c-byte records, one per Graphic tab, each with the rows
+  in force, the player's own copy, quality, brightness and resolution; `Setting\SROptionSet.dat`
+  stores them (`0x502680`).
+- **The presets** (`0x5015a0`) for Low / Middle / High / Large scale battle; User control restores
+  the player's copy. After loading, every non-User record gets its preset again (`0x503180`).
+- **Defaults:** the constructor (`0x5f75e0`) and the Default button (`0x5fc340`) choose **Middle**,
+  Normal brightness; Default also full screen and the Free view. **Correction to round 628:** the
+  shipped `SROptionSet.dat`'s record 0 is Middle, whose preset has Water Reflection OFF, so the
+  shipped client draws no reflection; round 628 read tag 5 = 1 and missed the re-application.
+- **What each does** (`CGame::FUN_00835000` -> `SWorld::vslot_043`): brightness is a gamma ramp
+  `65535 * pow(i/255 * B, A)` with (A, B) = (1.4, 0.8) (1.2, 0.9) (1, 1) (0.8, 1.2) (0.6, 1.4),
+  full screen only; Background Sight Range sets the far plane 1500..5500 and the view distance
+  min(0.8 far, 2500) (fog planes, map-object range); Shadow Detail builds per-character shadow
+  targets at Detail; Texture Detail calls `SetLOD(2 - v)` on every texture; Bloom builds glow
+  targets; Lens Flare gates `Map::FUN_00a21280`; Effect Quality filters skill effects
+  (`IDecoSkill::FUN_00a50dc0`); Display Friendly/Enemy gates the large-battle outfit tint.
+  **Not found** (three probes each): readers of Character Sight Range (case 9), Water Detail
+  (case 7) and Texture Filtering (record byte 0xc).
+
+### 2. The mapping (OPTION_VIDEO.md has the table)
+
+Live on Apply / Confirm: Resolution (the window's size), Window Mode, View, Set Brightness (the
+READ curve as a full-screen pass, OURS in a window too), Graphic Quality (the READ presets),
+Shadow Detail (Nothing / the blob / blob + the sun's shadow map), Background Sight Range (READ
+map-object range; fog and far plane scaled, OURS), Character Sight Range (OURS 600 / 1200 at 1 /
+2), Water Detail (OURS reflection rows 256 / 512 / 1024), Lens Flare (the sun glow, INFERRED),
+Effect Quality (READ 0 / 2, INFERRED 1). Forward+ only, greyed under Compatibility with a tooltip:
+Bloom Effect (= the user's glow; one control), SSAO (OURS), Texture Filtering (MSAA 2x, INFERRED
+from its tooltip) and Texture Detail (mipmap bias). Water Reflection applies at the next login
+(a region's water is built for one mode). Kept and saved but drawing nothing here: Metallic
+Sheen, Light Effect, Dynamic Animation, Display Friendly/Enemy. The renderer row records
+Forward+ / Compatibility for the next start through round 693's `RendererChoice` when the build
+has it (looked up by class name); without it the row is greyed and names the running renderer.
+
+**Defaults (OURS):** User control with the look the client drew before this round (Detail
+shadows, sight 3 / 3, reflection on, Middle water, High textures, no MSAA, lens on, no bloom, no
+SSAO, every effect, Normal, a window). Retail's Middle is one choice away; which default to ship
+is the user's call (docs/TODO.md).
+
+### 3. What changed
+
+- `setting/video_options.gd` (new, `VideoOptions`): rows, READ presets / curve / ladders, OURS
+  defaults, storage under `[video]`, `[video_graphic1]`, `[video_graphic2]` (rows by name; `[world]
+  water_reflection` seeds and follows), `apply_post_effects` (the one settings->environment
+  function; defers to round 693's `WorldPostEffects.apply` when present), `apply_brightness`,
+  `apply_display`, `apply_viewport`; QA `SRREVAMP_QA_VIDEO`.
+- `ui/hud/option_video_page.gd` (new, `OptionVideoPage`): the tab over pane 78 -- combos with
+  CNIFComboBox's READ arrow art, the scroll bar with CNIFVerticalScroll's READ art, radio check
+  boxes, the Graphic tabs as two records, tooltips from the archive, greyed rows.
+- `option_window.gd`: builds the page; Default on the Video tab; Apply / Confirm store it and
+  emit `video_applied`; `hud_panels.gd` re-emits it (`video_options_applied`) and prints
+  `QA RECT` lines under `SRREVAMP_QA_UI_RECTS=1`.
+- `World3D.gd`: `apply_video_options` (once at `_ready`, again on every Apply), the fog / far
+  factors, the character range, `SRREVAMP_QA_VIDEO_STEPS`. `MapAnimation.object_range` follows the
+  view distance; `WaterReflection.target_rows` follows Water Detail; `SkillEffects.quality` gates
+  effects; `Boot.gd` applies the window and brightness before the login screen.
+
+### 4. Measurements
+
+- **Real X input** (`/var/tmp/options694/live.sh` + `drive.py`: srv689 in memory, the client on
+  Xvfb :694, xdotool clicks and keys at the client's own `QA RECT` positions): Escape -> System ->
+  Option opens on Video; Graphic Quality -> Low then Apply logs every Low row and `view_distance=1200
+  object_range=720 far=4937 fog_density=0.000104`; Set Brightness -> Very Dark applies; the scroll
+  bar reaches SSAO / Bloom / the renderer, greyed; a Shadow change then Cancel applies nothing;
+  Default + Confirm puts the defaults back; High + Light + Third Person + 1024 x 768 + Confirm
+  resizes the window to 1024x768 (`xdotool getwindowgeometry`). Restarted with the same HOME the
+  world applies High / Light again, and a real start (Boot) logs `SRRevamp video: graphic 1,
+  quality 2, brightness 3, fullscreen false, resolution 1024x768` and opens a 1024x768 window.
+- **MSAA and mip bias** (a synthetic probe scene): pixel-identical under Compatibility; under
+  Forward+ edge pixels 12455 -> 12727 (MSAA) and checker contrast 0.356 -> 0.257 (bias 2). Hence
+  those two rows are greyed under Compatibility.
+- **Each row's effect and cost** at the Jangan spawn (one boot, 17 steps; OPTION_VIDEO.md has the
+  pixel counts): shadows off change 743k pixels (same-settings noise 128k-201k); Very Dark / Very
+  bright move mean grey 0.681 -> 0.594 / 0.815; frame time default 14.2 ms, High 14.3 / 14.7, Low
+  5.6 / 5.7, Background Sight 1 alone 6.1 (another lane's Godot ran throughout).
+- **Shots** (on the box): `/var/tmp/options694/live1/A_01_option_video.png` (the tab),
+  `A_02_low_chosen`, `A_03_low_applied`, `A_04_very_dark`, `A_05_list_end` (SSAO / Bloom / renderer
+  greyed), `A_06_default`, `A_08_high_light_1024`, `A_09_high_applied`, `B_01_option_after_restart`,
+  `C_login.png` (the 1024x768 start); `/var/tmp/options694/steps1/step_<i>.png` (each row's look).
+- **Perf gate** (`--sites jangan`, defaults):
+
+  ```
+  perf gate: base 137e2953 vs head working tree (1280x720, median of 3 run(s)), --frames 4000
+  jangan  frame ms   base 8.78  head 8.86  (+0.1)  SAME
+  jangan  entry ms   base 9595  head 9612  (+17.0)  SAME
+  jangan  freeze ms  base 3396  head 3394  (-2.0)  SAME
+  jangan  hitches    base 5  head 5  (+0.0)  SAME
+  ```
+  The first run at the default 3000 frames said `frame ms base 11.19 head 14.06 (+2.9) SLOWER`.
+  MEASURED, that is the gate's own window: 3000 frames give 27-28 one-second `--print-fps`
+  samples, so "the last 30" includes the first, the startup window that holds the 3.3 s
+  first-cell build. That sample swings widely between runs (base 40 / 48 / 50 / 62 / 67 / 91,
+  head 125 / 143 / 200 / 250 / 333 ms a frame; a head copy with base's World3D.gd and the apply
+  skipped stayed in the head's range, so it is not the apply). With it left out the six runs agree
+  (base 9.01-9.25, head 9.05-9.21 ms; from the 5th sample 8.70-8.91 against 8.71-8.84), and
+  `apply_video_options` takes 0.1 ms (`applied in 109-117 us`). With 4000 frames the window is
+  steady state, and every number is SAME. This also means a 3000-frame Jangan gate can say SLOWER
+  for any branch; that is worth fixing in perf_gate.sh (drop the first sample), which is not
+  this lane's file.
+
+### 5. Tests
+
+- `setting/video_options_test.gd` (new): presets, rows, ladders, curve, storage round trip, the
+  map range, the effect gate, the environment function, and the page on a synthetic
+  optionwnd.2dt (MEASURED ids and rects): labels, the quality combo, the scroll, greyed rows,
+  Graphic 2, the radio boxes, full screen disabling Resolution, Apply's record and file, Default.
+  NEGATIVE: on dev 137e295 the suite does not parse (`VideoOptions`, `OptionVideoPage`,
+  `MapAnimation.object_range`, `SkillEffects.wants_effect` do not exist).
+- `remote_godot.sh check`: ALL LOAD. `remote_godot.sh tests`: 208 suites, 0 failing.
+
+### 6. Open
+
+docs/TODO.md, "The Option window's Video tab (round 694)": the two defaults for the user; the four
+rows that draw nothing; the readers not found; Water Reflection at the next login; Texture Detail
+and Filtering under Compatibility; the inferred pieces (a hand-set row switching to User, the
+scroll step, the combo's drawing, Effect Quality 1's tests); Resolution in full screen.
+
+
 ## Six-hundred-and-ninety-second round: a new character starts with its race's own masteries, basic skills and first quests, as the shard's `_AddNewChar` gives them -- and the shard's own list of creatable ids is exactly the 104 the rule picks
 
 The user approved the shard DB export (2026-10-02, "yes ct 104"); the four `_RefCharGen` /
