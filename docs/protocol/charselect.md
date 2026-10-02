@@ -939,6 +939,31 @@ and its text, Restore.
 - the 4-key camera, hover panels 9/11, the click fly and fade;
 - emitting `race_chosen(race)` to open lane B's create scene.
 
+**Lane A <-> lane B handoff (round 684, OURS; the one contract between select and customize).**
+Kept minimal. `client/scripts/frontend/charselect_handoff.gd`, class `CharSelectHandoff`, holds
+static state that survives the scene change, as retail's `DAT_00ec2d68` global does:
+
+| Static | Meaning |
+|---|---|
+| `race: int` | `CharCatalog.RACE_CHINA` (0) or `RACE_EUROPE` (1); -1 when none was chosen (create opened directly: create picks its own default). |
+| `day_phase: float` | the title's random hour, carried (no front-end screen picks its own, READ); -1 unknown. |
+| `theme: FrontEndTheme` | the branding Login resolved; null when none. |
+| `came_from: int` | `FROM_CREATE_OK` (0) / `FROM_CREATE_CANCEL` (10), READ: the previous-process ids the create screens write; `FROM_OTHER` (-1) otherwise. |
+
+- **Select -> create.** An idol click emits `CharacterSelect.race_chosen(race)` (the same race
+  values), plays the READ fly and 1.0 s fade to black, then calls
+  `CharSelectHandoff.go_create(get_tree(), race)`: it sets `race` and changes scene to
+  `res://scenes/CharacterCreate.tscn`.
+- **Create reads** `CharSelectHandoff.race` in `_ready`. Retail's own index is NOT this value:
+  `DAT_00ec2d68` is 0 for the Europe idol and 1 for China (READ 0x85ca10 and vslot_012 case 9: index
+  0 flies to Europe's (168.5, -34.9, 639.1) and switches to the process at `DAT_00eed8d4`).
+  `race_from_idol_index` translates; nothing else needs the retail index.
+- **Create -> select.** Create leaves with `CharSelectHandoff.back_to_select(get_tree(), created)`,
+  true after the server's OK, false on Cancel. Select runs its list intro either way (READ: previous
+  id 0 or 10).
+- Nothing else is shared: create builds its own backdrop (98/168 or 105/79) and its own
+  `CharacterAppearance`.
+
 **Tests:** headless math tests (placement k/(r+1) and k/5, the camera keys, the countdown text and
 gauge, the sort order). `SRREVAMP_QA_FAKECHARS` is extended with model, scale, items and a pending
 deletion. Renders on the box, batched in one `--shots` run. `perf_gate.sh` (it draws the world).
