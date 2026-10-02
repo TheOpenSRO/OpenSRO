@@ -18,6 +18,19 @@ Round 678's front-end theme request (0x0005 -> 0x0006) is also our own opcode, a
 679's server status request (0x0007 -> 0x0008: version, current, max, state -- retail's shard-entry
 fields; `docs/protocol/server_list.md`).
 
+**The first step (round 681): our client speaks the retail gateway protocol as far as the server
+list.** A `setting/config.yaml` server marked `type: legacy` is asked the way the original client
+asks (`docs/protocol/opcodes/gateway.md`): the 0x5000 key exchange, the security bytes and Blowfish
+(`handshake.md`, "The client's side, READ"), 0x2001, 0x6100 with the archive's own content id and
+version, 0x6101 -> 0xA101 -- and its shards' real Check / Easy / Populated / Crowded / FULL are shown.
+Nothing past the list (no login). Built twice, `client/scripts/net/retail/` and
+`server/internal/retailgw` (with a fake retail gateway for tests and `cmd/retailgw`), held to the same
+bytes. The `type` key is the user's decision (2026-10-01): required, `legacy` or `srrevamp`; once our
+server speaks the retail wire too, `srrevamp` will mean "also has our extensions". Two limits found:
+37 of the 255 checksum tables cannot be generated without the binary's bytes (the client reconnects
+instead; `handshake.md`), and which 0xA101 layout the client reads hangs on a mode word whose
+writer is OPEN (the gateway's rule is used). Our server still speaks only its own wire.
+
 **Noted by the user (2026-10-01), not designed:** a server may want to hand the client settings it
 keeps out of the client's `setting/config.yaml` -- during the server list or after login. That would
 be one more extension message of the kind item 2 below describes (docs/TODO.md).

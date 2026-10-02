@@ -130,6 +130,11 @@ func _ready() -> void:
 	_query = ThemeQuery.new()
 	_query.name = "ThemeQuery"
 	add_child(_query)
+	# Round 681: a `type: legacy` server speaks only the original protocol,
+	# so it is never sent this project's own theme question (0x0005).
+	if qa_server == "" and _address_override == "" and _selected != null and _selected.type == ServerStatus.TYPE_LEGACY:
+		print("SETTING: '%s' is a legacy server -- no theme question" % _selected.name)
+		address = {}
 	_query.start(address.get("host", ""), int(address.get("port", 0)))
 	_media = _open_media()
 	FrontEndUi.apply_client_font(self, _media)
@@ -825,6 +830,12 @@ func _on_register_pressed() -> void:
 func _connect_and_send() -> void:
 	if NetClient.is_connected_to_server():
 		_send_pending_action()
+		return
+	# Round 681 (OURS): logging in over the original protocol is not built;
+	# a legacy server is sent nothing that looks like a login.
+	if _address_override == "" and _selected != null and _selected.type == ServerStatus.TYPE_LEGACY:
+		status_label.text = "'%s' speaks the original protocol: its status is shown, logging in is not supported yet." % _selected.name
+		print("LOGIN: '%s' is a legacy server -- not connecting" % _selected.name)
 		return
 	var address := _parse_server_address(_target_address())
 	if address.is_empty():

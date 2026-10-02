@@ -12,6 +12,14 @@ class_name GatewayQuery
 ##
 ## A subclass gives the request (_request) and reads the reply (_read); the
 ## answer or the reason there is none goes to _answered once.
+##
+## Round 681: a conversation of several steps (the original gateway
+## protocol, ServerStatus's legacy type). _request may be empty (nothing is
+## sent first); _read may answer {"send": bytes} to write more,
+## {"consumed": n} to drop n bytes it has used from the front of the buffer,
+## and {"retry": why} to hang up and connect again (up to max_attempts, all
+## inside the one timeout_ms). max_frame_buffer bounds what is held unread
+## and max_total_bytes what one attempt may read.
 
 ## One frame's worth (header + the largest payload): the answer is one frame,
 ## and nothing past it is read (round 678's review).
@@ -20,6 +28,13 @@ const MAX_BUFFER := 6 + 0x7FFF
 var host := ""
 var port := 0
 var timeout_ms := 1500
+## Round 681 (OURS): connections per query, and the read limits.
+var max_attempts := 1
+var max_frame_buffer := MAX_BUFFER
+var max_total_bytes := MAX_BUFFER
+var attempts := 0
+var _ip := ""
+var _total := 0
 
 var _peer: StreamPeerTCP = null
 var _started_ms := 0
@@ -32,9 +47,13 @@ var _resolve_id := -1
 ## server that accepted the connection is not the same as no server).
 var connected := false
 
-## The request frame to send once connected.
+## The request frame to send once connected (empty: send nothing first).
 func _request() -> PackedByteArray:
 	return PackedByteArray()
+
+## Called before each new connection after the first (a retry).
+func _on_reconnect() -> void:
+	pass
 
 ## Reads what has arrived: {"value": answer} when the reply is complete,
 ## {"error": why} when it is not the reply, {} to keep waiting.
@@ -61,6 +80,11 @@ func start(p_host: String, p_port: int) -> void:
 	set_process(true)
 
 func _connect(ip: String) -> void:
+	_ip = ip
+	attempts += 1
+	_sent = false
+	_buffer = PackedByteArray()
+	_total = 0
 	_peer = StreamPeerTCP.new()
 	var err := _peer.connect_to_host(ip, port)
 	if err != OK:
@@ -107,20 +131,38 @@ func _process(_delta: float) -> void:
 			return
 	connected = true
 	if not _sent:
-		_peer.put_data(_request())
+		var first := _request()
+		if not first.is_empty():
+			_peer.put_data(first)
 		_sent = true
-	var available := mini(_peer.get_available_bytes(), MAX_BUFFER - _buffer.size())
+	var available := mini(_peer.get_available_bytes(), max_frame_buffer - _buffer.size())
 	if available > 0:
 		var got := _peer.get_partial_data(available)
 		if got[0] == OK:
 			_buffer.append_array(got[1])
+			_total += (got[1] as PackedByteArray).size()
 	var result := _read(_buffer)
+	if result.has("consumed"):
+		_buffer = _buffer.slice(int(result["consumed"]))
+	if result.has("send") and not (result["send"] as PackedByteArray).is_empty():
+		_peer.put_data(result["send"])
+	if result.has("retry"):
+		if attempts < max_attempts:
+			_peer.disconnect_from_host()
+			_peer = null
+			_on_reconnect()
+			_connect(_ip)
+		else:
+			_finish(null, "%s (%d attempts)" % [result["retry"], attempts])
+		return
 	if result.has("value"):
 		_finish(result["value"], "answered in %d ms" % (Time.get_ticks_msec() - _started_ms) if result["value"] != null else str(result.get("why", "unreadable answer")))
 	elif result.has("error"):
 		_finish(null, result["error"])
-	elif _buffer.size() >= MAX_BUFFER:
-		_finish(null, "more than %d bytes without an answer" % MAX_BUFFER)
+	elif _buffer.size() >= max_frame_buffer:
+		_finish(null, "more than %d bytes without an answer" % max_frame_buffer)
+	elif _total > max_total_bytes:
+		_finish(null, "more than %d bytes without an answer" % max_total_bytes)
 
 ## The address to connect to among a name's: the first IPv4 one, else the
 ## first. OURS (round 679): "localhost" resolved to ::1 first on the render

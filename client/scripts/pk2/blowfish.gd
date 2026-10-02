@@ -3,8 +3,9 @@ class_name Blowfish
 
 ## Minimal Blowfish-ECB cipher. Blowfish is a public-domain block cipher
 ## (Bruce Schneier, 1993). Needed to read the pk2 (JMXVFS) container format's
-## directory-entry obfuscation — see docs/protocol/PK2_FORMAT.md. Decrypt-only:
-## this project never re-encrypts a pk2's directory table.
+## directory-entry obfuscation — see docs/protocol/PK2_FORMAT.md. This
+## project never re-encrypts a pk2's directory table; encrypt_block and
+## encrypt_le are for the original gateway protocol (round 681).
 ##
 ## Standard 64-bit Blowfish arithmetic doesn't fit GDScript's signed 64-bit
 ## int cleanly at the top bit, so every intermediate value is masked to
@@ -91,6 +92,44 @@ func decrypt_block(data: PackedByteArray) -> PackedByteArray:
 	out.resize(8)
 	_put_be_u32(out, 0, lr[0])
 	_put_be_u32(out, 4, lr[1])
+	return out
+
+## Encrypts one 8-byte ECB block (big-endian halves, the textbook layout),
+## returning a new 8-byte PackedByteArray. Round 681: the original gateway
+## protocol encrypts as well as decrypts.
+func encrypt_block(data: PackedByteArray) -> PackedByteArray:
+	assert(data.size() == 8, "Blowfish operates on 8-byte blocks")
+	var lr := [_be_u32(data, 0), _be_u32(data, 4)]
+	_encrypt_block(lr)
+	var out := PackedByteArray()
+	out.resize(8)
+	_put_be_u32(out, 0, lr[0])
+	_put_be_u32(out, 4, lr[1])
+	return out
+
+## The retail client's network and SV.T layout (round 681, READ: sro_client
+## 0x4a9d40 loads each half as a little-endian u32): every whole 8-byte block
+## of `data` from `start`, encrypted (or decrypted) with its halves read and
+## written little-endian. Returns a new array; a trailing partial block is
+## copied unchanged (callers pad first).
+func encrypt_le(data: PackedByteArray, start: int = 0) -> PackedByteArray:
+	return _crypt_le(data, start, true)
+
+func decrypt_le(data: PackedByteArray, start: int = 0) -> PackedByteArray:
+	return _crypt_le(data, start, false)
+
+func _crypt_le(data: PackedByteArray, start: int, enc: bool) -> PackedByteArray:
+	var out := data.duplicate()
+	var off := start
+	while off + 8 <= out.size():
+		var lr := [out.decode_u32(off), out.decode_u32(off + 4)]
+		if enc:
+			_encrypt_block(lr)
+		else:
+			_decrypt_block(lr)
+		out.encode_u32(off, lr[0])
+		out.encode_u32(off + 4, lr[1])
+		off += 8
 	return out
 
 ## Decrypts data in place, 8 bytes at a time, starting at byte offset

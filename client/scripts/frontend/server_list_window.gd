@@ -35,6 +35,14 @@ class_name ServerListWindow
 ## server (ServerStatus), all at once. The fades are left out (the window
 ## shows and hides at once); the slider's thumb is drawn where the scroll
 ## puts it, and the wheel and the arrows scroll.
+##
+## Round 681 (OURS): a `type: legacy` server is asked the original way and
+## answers with its own shard list; each shard gets a row, named
+## "<config name> - <shard name>" (just the config name when the two are the
+## same), with its own band. Before the answer, and when there is none, the
+## server has one row under its config name, as a srrevamp server does.
+## Choosing any of its rows chooses the server. The content id and version
+## a legacy gateway is told are read from Media.pk2 (RetailClientInfo).
 
 signal chosen(entry: ClientConfig.ServerEntry)
 signal closed()
@@ -63,6 +71,17 @@ const NAME_COLOR := 0xFFFFFFFF
 const WINDOW_SIZE := Vector2(240, 340)
 
 var _entries: Array = [] # of ClientConfig.ServerEntry
+## Round 681: the rows shown, rebuilt from the answers: {entry, shard (-1
+## for the server's own row), name}.
+var _display: Array = []
+## The selected row as (entry, shard), kept across rebuilds.
+var _selected_entry := -1
+var _selected_shard := -1
+## Legacy: the archive's content id and version (RetailClientInfo), set by
+## open() from Media.pk2 unless a test set it first; and a test's fixed key
+## exchange value (-1 random).
+var legacy_info := {}
+var legacy_private_x := -1
 var _queries: Array = [] # of ServerStatus: each row's last finished answer, or null
 var _asking: Array = [] # of ServerStatus: each row's question in flight, or null
 var _selected_index := -1
@@ -94,12 +113,22 @@ func open(media: Pk2Reader, frame: FrontEndFrame, text: UiTextTable, entries: Ar
 	_text = text
 	_entries = entries
 	_thresholds = ServerStatus.thresholds(text)
+	if legacy_info.is_empty():
+		for e in entries:
+			if (e as ClientConfig.ServerEntry).type == ServerStatus.TYPE_LEGACY:
+				legacy_info = RetailClientInfo.from_media(media)
+				print("SERVERLIST: legacy servers are told %s" % (
+					"content id %d, version %d (Media.pk2: DIVISIONINFO.TXT, SV.T)" % [legacy_info["content_id"], legacy_info["version"]]
+					if legacy_info.has("content_id") else "nothing: " + str(legacy_info.get("error", ""))))
+				break
 	print("SERVERLIST: %d servers, bands at %d %% / %d %% (textuisystem UIO_STT_SERVER_35 / _75)" % [
 		entries.size(), _thresholds.x, _thresholds.y])
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_build()
-	_selected_index = entries.find(selected)
+	_selected_entry = entries.find(selected)
+	_selected_shard = -1
+	_rebuild_display()
 	_scroll_to(_selected_index)
 	if _frame != null:
 		_frame.resized.connect(_layout)
@@ -131,7 +160,8 @@ func refresh_now() -> void:
 		add_child(q)
 		q.finished.connect(_on_status.bind(i))
 		_asking[i] = q
-		q.start(e.gateway_host, e.gateway_port)
+		q.private_x = legacy_private_x
+		q.start_for(e, legacy_info)
 	_update_rows()
 
 func _on_status(q: ServerStatus, why: String, i: int) -> void:
@@ -145,8 +175,16 @@ func _on_status(q: ServerStatus, why: String, i: int) -> void:
 	_queries[i] = q
 	var e: ClientConfig.ServerEntry = _entries[i]
 	var b := q.band_with(_thresholds)
-	print("SERVERLIST: %s (%s) %s -- %s" % [e.name, e.gateway_address(),
-		"%d/%d state %d -> %s" % [q.current, q.capacity, q.state, ServerStatus.Band.keys()[b]] if q.answered_ok else "no answer -> CLOSED", why])
+	var what := "no answer -> CLOSED"
+	if q.answered_ok and q.server_type == ServerStatus.TYPE_LEGACY:
+		var parts := PackedStringArray()
+		for sh in q.shards:
+			parts.append("'%s' %d/%d state %d -> %s" % [sh["name"], sh["current"], sh["capacity"], sh["state"],
+				ServerStatus.Band.keys()[ServerStatus.shard_band(sh, _thresholds)]])
+		what = "legacy, %d shard(s): %s" % [q.shards.size(), ", ".join(parts)]
+	elif q.answered_ok:
+		what = "%d/%d state %d -> %s" % [q.current, q.capacity, q.state, ServerStatus.Band.keys()[b]]
+	print("SERVERLIST: %s (%s, %s) %s -- %s" % [e.name, e.gateway_address(), e.type, what, why])
 	_update_rows()
 
 ## The band shown for row i: the last finished answer, or PENDING before the
@@ -159,9 +197,40 @@ func band_of(i: int) -> int:
 		return ServerStatus.Band.PENDING
 	return q.band_with(_thresholds)
 
-func row_text(i: int) -> Array:
-	var b := band_of(i)
-	return [(_entries[i] as ClientConfig.ServerEntry).name, ServerStatus.band_text(b, _text), ServerStatus.band_color(b)]
+## The rows: a server's own row until it lists shards, then one per shard.
+func _rebuild_display() -> void:
+	_display.clear()
+	for i in range(_entries.size()):
+		var e: ClientConfig.ServerEntry = _entries[i]
+		var q: ServerStatus = _queries[i] if i < _queries.size() else null
+		if q != null and q.is_done() and q.answered_ok and q.server_type == ServerStatus.TYPE_LEGACY and not q.shards.is_empty():
+			for k in range(q.shards.size()):
+				var shard_name := str(q.shards[k]["name"])
+				_display.append({"entry": i, "shard": k, "name": e.name if shard_name == e.name or shard_name == "" else "%s - %s" % [e.name, shard_name]})
+		else:
+			_display.append({"entry": i, "shard": -1, "name": e.name})
+	_selected_index = -1
+	for r in range(_display.size()):
+		if _display[r]["entry"] == _selected_entry and (_display[r]["shard"] == _selected_shard or _selected_index < 0):
+			_selected_index = r
+	if _scroll > maxi(_display.size() - VISIBLE_ROWS, 0):
+		_scroll = maxi(_display.size() - VISIBLE_ROWS, 0)
+
+func row_count() -> int:
+	return _display.size()
+
+## Row r's band.
+func display_band(r: int) -> int:
+	var d: Dictionary = _display[r]
+	var i: int = d["entry"]
+	if int(d["shard"]) < 0:
+		return band_of(i)
+	return ServerStatus.shard_band((_queries[i] as ServerStatus).shards[int(d["shard"])], _thresholds)
+
+## Row r: [name, status word, status colour].
+func row_text(r: int) -> Array:
+	var b := display_band(r)
+	return [_display[r]["name"], ServerStatus.band_text(b, _text), ServerStatus.band_color(b)]
 
 func close() -> void:
 	if _closing:
@@ -175,9 +244,16 @@ func close() -> void:
 	queue_free()
 
 func select_current() -> void:
-	if _selected_index >= 0 and _selected_index < _entries.size():
-		chosen.emit(_entries[_selected_index])
+	if _selected_index >= 0 and _selected_index < _display.size():
+		chosen.emit(_entries[int(_display[_selected_index]["entry"])])
 	close()
+
+## Selects row r.
+func _select_row(r: int) -> void:
+	_selected_index = r
+	if r >= 0 and r < _display.size():
+		_selected_entry = _display[r]["entry"]
+		_selected_shard = _display[r]["shard"]
 
 # --- Building -----------------------------------------------------------------
 
@@ -325,10 +401,11 @@ func _layout() -> void:
 # --- Rows ---------------------------------------------------------------------
 
 func _update_rows() -> void:
+	_rebuild_display()
 	for r in range(_rows.size()):
 		var i := _scroll + r
 		var row: Dictionary = _rows[r]
-		if i >= _entries.size():
+		if i >= _display.size():
 			(row["name"] as Label).text = ""
 			(row["status"] as Label).text = ""
 			(row["art"] as TextureRect).texture = null
@@ -341,7 +418,7 @@ func _update_rows() -> void:
 		(row["art"] as TextureRect).texture = _select_tex if i == _selected_index else (_rollover_tex if i == _hover_index else null)
 	if _thumb != null:
 		var span := _slider_rect.size.y - 60.0
-		var steps := maxi(_entries.size() - VISIBLE_ROWS, 0)
+		var steps := maxi(_display.size() - VISIBLE_ROWS, 0)
 		var f := float(_scroll) / float(steps) if steps > 0 else 0.0
 		_thumb.position = _slider_rect.position + Vector2(0, 20.0 + span * f)
 
@@ -350,7 +427,7 @@ func _row_at(pos: Vector2) -> int:
 	if pos.x < 0 or pos.x >= ROW_WIDTH or r < 0 or r >= VISIBLE_ROWS:
 		return -1
 	var i := _scroll + r
-	return i if i < _entries.size() else -1
+	return i if i < _display.size() else -1
 
 func _on_list_input(ev: InputEvent) -> void:
 	if ev is InputEventMouseMotion:
@@ -373,13 +450,13 @@ func _on_list_input(ev: InputEvent) -> void:
 				var twice := mb.double_click or (i == _last_click_index and now - _last_click_ms < 400)
 				_last_click_ms = now
 				_last_click_index = i
-				_selected_index = i
+				_select_row(i)
 				_update_rows()
 				if twice:
 					select_current()
 
 func _scroll_by(d: int) -> void:
-	_scroll = clampi(_scroll + d, 0, maxi(_entries.size() - VISIBLE_ROWS, 0))
+	_scroll = clampi(_scroll + d, 0, maxi(_display.size() - VISIBLE_ROWS, 0))
 	_update_rows()
 
 func _scroll_to(i: int) -> void:
@@ -402,11 +479,11 @@ func _unhandled_key_input(ev: InputEvent) -> void:
 			select_current()
 		KEY_UP:
 			if _selected_index > 0:
-				_selected_index -= 1
+				_select_row(_selected_index - 1)
 				_scroll_to(_selected_index)
 		KEY_DOWN:
-			if _selected_index < _entries.size() - 1:
-				_selected_index += 1
+			if _selected_index < _display.size() - 1:
+				_select_row(_selected_index + 1)
 				_scroll_to(_selected_index)
 		_:
 			return

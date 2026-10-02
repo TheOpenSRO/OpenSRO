@@ -56,9 +56,10 @@ client: setting/config.yaml".
   `CClientNet::vslot_015`).
 - **The entry, READ (as the list code reads it):** +0 u16 shard id, +4 the name (narrow), +0x20 u16
   current users, +0x22 u16 max users, +0x24 state byte, +0x25 farm id byte, +0x28 a flag byte, +0x2c
-  the name (wide, the one shown). The 0xA101 parser itself is not found (no 0xa101 immediate in the
-  asm): the wire layout is INFERRED from this struct and matches the usual shard entry (id u16, name,
-  online u16, capacity u16, operating u8, farm u8). OPEN.
+  the name (wide, the one shown). ~~The 0xA101 parser itself is not found~~ **Found in round 681:**
+  `CClientProcess::FUN_004cda30` (via `vslot_016`) fills these fields from the wire, and
+  GatewayServer's writer (0x405800, 0x412c80) agrees; the farm byte is conditional on both sides.
+  The layout is in `opcodes/gateway.md`.
 - **The status, READ (`FUN_00869cd0`, 0x86a703..0x86ac51):** per entry, `FUN_0080e130(row, 2, text,
   ARGB)`:
 
@@ -146,6 +147,43 @@ client: setting/config.yaml".
   (0xdd2f2c, 0xdd2f38). The box's install also holds `GameStatus.dat`, `SRExtQSOption2.dat` and
   `dances.dat` there (MEASURED). Retail keeps its client options beside the exe in `Setting\`; ours
   is `setting/`.
+
+## Legacy servers (round 681)
+
+Each server in `setting/config.yaml` now says which protocol it speaks: `type: srrevamp` (round 679's
+0x0007 question below) or `type: legacy` -- the ORIGINAL gateway protocol, asked the way the retail
+client asks for its list. `type` is required; an entry without it, or with another word, is skipped
+with a `SETTING:` warning naming the server and the two values (OURS, the user's decision of
+2026-10-01). The plain editable host:port field (no config) is our own server and keeps the
+srrevamp question.
+
+- **The question (READ, `opcodes/gateway.md`):** the server's 0x5000, the key exchange, 0x9000, the
+  client's 0x2001 "SR_Client", the server's 0x2001 "GatewayServer", 0x6100 (content id,
+  "SR_Client", version), 0xA100 (a massive 0x600D pair from GatewayServer), 0x6101, 0xA101. Then the
+  connection is closed (OURS): nothing that looks like a login is ever sent.
+- **The content id and the version are the player's archive's** (`RetailClientInfo`): the first
+  byte of Media.pk2's `divisioninfo.txt` (READ: what the launcher passes as the first command-line
+  number) and the number in `sv.t` (READ: Blowfish with "SILKROAD", atoi). MEASURED in the box's
+  Media.pk2: 22 and 1000. Without Media.pk2 a legacy row is "Closed" with the reason logged: nothing
+  is guessed.
+- **The rows (OURS):** a legacy server that answered has one row per shard it lists, named
+  `<config name> - <shard name>` (the config name alone when the two are the same), each with its
+  own band by the same compare as before (`ServerStatus.shard_band`, state 0 = Check). Before the
+  answer, and when there is none, it has one row under its config name, as a srrevamp server. Any
+  of its rows chooses the server. Retail shows only shard names because it has one gateway; a
+  config may list several, so the server's name stays in front.
+- **Limits (OURS):** 4 s for the whole question, up to 3 connections (a session given a checksum
+  table that cannot be built is ended before anything is sent and tried again: `handshake.md`), 64
+  KiB read per connection, frames of at most 4096 bytes (READ for encrypted ones), 64 frames, a
+  strict reading of every message. Every failure is "Closed" with a `SERVERLIST:` line saying why;
+  the 5 s refresh is retail's.
+- **What a legacy server is never sent:** this project's 0x0007 (status) and 0x0005 (theme: the
+  login screen skips its theme question for a legacy server and keeps its own intro), and no
+  login: Connect on a legacy server says that logging in to it is not supported yet (OURS).
+- **Testing without anyone's server:** `go run ./cmd/retailgw serve -listen 127.0.0.1:15779
+  -shards "Name:120/1000:1,Other:0/500:0"` runs a fake retail gateway (the server side of the
+  handshake, READ); `client/tools/retail_status_probe.gd -- --gateway=127.0.0.1:15779` asks it as
+  the list does and prints the values the archive gives.
 
 ## Ours (round 679)
 

@@ -878,15 +878,17 @@ display, sound, hot bar and the rest; for now it holds one file, the general cli
 `SRREVAMP_SETTING_DIR=<folder>`.
 
 ```yaml
-# setting/config.yaml -- every key is optional.
+# setting/config.yaml -- every key is optional, except each server's type and gateway.
 global:
   loginScreen: constantinople      # the title intro (same names as -login-intro)
   region: US                       # kept, reserved (see below)
 servers:
   MyServer:                        # the name the login screen shows
+    type: srrevamp                 # this project's server
     gateway: { address: login.example.com, port: 15779 }
     agent:   { address: agent.example.com, port: 15884 }
-  MyTestServer:
+  SomePrivateServer:
+    type: legacy                   # a server speaking the original protocol
     gateway: { address: 203.0.113.7 }      # the port defaults to 15779
 ```
 
@@ -895,6 +897,7 @@ servers:
 | `global.loginScreen` | The title intro: a retail name (`roc`, `constantinople`, `china_wharf`, `jupiter_login`, `rm`, `ruby_baghdad`, ...) or your own `custom/intro/<name>.txt`. The server's `-login-intro` wins over it (below). |
 | `global.region` | Kept and reserved: a short code (letters, digits, `_`, `-`). vSRO's client reads no region: its `DIVISIONINFO.TXT` starts with a locale byte (22 in vSRO's archive) that the client's own loader skips, and the iSRO "Located In" bar's art is in the archive but no code names it. A later round may use it for the language or the content id. |
 | `servers.<name>` | One server. `<name>` is what the Server field and the list show (1-32 characters). The file's order is the list's order. |
+| `servers.<name>.type` | **Required** (round 681): the protocol the server speaks. `srrevamp` -- this project's server: its status is asked with this project's own question. `legacy` -- the original gateway protocol (a retail-style private server): the client asks it for its shard list the way the original client does (the handshake, then the patch check and the list) and shows each shard's real status; it is never sent this project's own messages, the login screen keeps its own intro for it (no theme question), and logging in to it is not supported yet. An entry without a type, or with another word, is skipped with a `SETTING:` line naming the server and the two values. Once this project's server also speaks the original protocol (the superset plan in `docs/protocol/PROTOCOL_DECISION.md`), `srrevamp` will mean "also has our extensions" rather than a different wire. |
 | `servers.<name>.gateway` | Where the client connects: `address` (a host name or IP address) and `port` (default 15779). Required. It plays the part of retail's `DIVISIONINFO.TXT` host and `GATEPORT.TXT` port. |
 | `servers.<name>.agent` | Read and kept, **not used yet**: `address` and `port`, both required if given. Retail's gateway tells the client which agent server to connect to in its login reply; this server is one process and has no such hand-off yet. When it does, a configured agent will stand in for the address the gateway names (a proxy feature). |
 
@@ -916,6 +919,16 @@ double click) puts its name in the field; the client remembers it for the next l
 | FULL | 100 % or more |
 | Closed | the server did not answer within 2 s (not running, wrong address, blocked port) |
 
+**A `legacy` server's status is its own.** The client asks its gateway for the shard list and shows
+one row per shard, `<config name> - <shard name>`, with the words and colours above computed from
+the numbers the gateway sends (Check when it marks the shard in inspection). It tells the gateway
+the content id and version of the player's own archive (Media.pk2's `DIVISIONINFO.TXT` and
+`SV.T`), as the original client does, so the client needs the Media.pk2 of the server's own client
+version; a gateway that refuses that version (or is not in service) shows Closed, with the reason in
+the log. Closed also means no answer within 4 s. To try it without a real server:
+`go run ./cmd/retailgw serve -listen 127.0.0.1:15779 -shards "Test:120/1000:1,Check:0/500:0"` runs a
+fake one (`server/README.md`).
+
 The percentages come from the archive's text table (`UIO_STT_SERVER_35` / `UIO_STT_SERVER_75`, 35
 and 97 in the English column), as retail's do. `-max-players` (env `SRREVAMP_MAX_PLAYERS`, 1-65535,
 default 1000) is the capacity; a login is refused with retail's "The server is full, please try
@@ -934,7 +947,8 @@ theme is asked of the chosen server.
 
 **Mistakes.** The client logs every problem in its log file as a `SETTING:` line and carries on: a
 file that does not parse (the line number is in the message) is ignored whole; a server entry
-without a usable gateway is skipped and the others kept; an unknown key is ignored. The file is a
+without a usable gateway, or without a `type` of `srrevamp` or `legacy`, is skipped and the others
+kept; an unknown key is ignored. The file is a
 strict subset of YAML: maps by indentation (spaces, not tabs), `{ a: 1, b: 2 }` and `[1, 2]` on one
 line, `- item` lists, quoted or plain values, `#` comments; no anchors, tags or multi-line strings.
 

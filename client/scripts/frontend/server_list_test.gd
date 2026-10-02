@@ -111,7 +111,7 @@ func _dead_port() -> int:
 func _unreachable() -> void:
 	var port := _dead_port()
 	var w := PackedStringArray()
-	var cfg := ClientConfig.from_text("servers:\n  Gone:\n    gateway: { address: 127.0.0.1, port: %d }\n" % port, "t", w)
+	var cfg := ClientConfig.from_text("servers:\n  Gone:\n    type: srrevamp\n    gateway: { address: 127.0.0.1, port: %d }\n" % port, "t", w)
 	var list := ServerListWindow.new()
 	root.add_child(list)
 	list.open(null, null, null, cfg.servers, cfg.servers[0])

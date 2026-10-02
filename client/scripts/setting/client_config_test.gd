@@ -9,6 +9,11 @@ extends SceneTree
 ##   - ClientConfig: servers in file order with their gateway and agent,
 ##     a bad entry skipped with the others kept, a broken file ignored whole,
 ##     a missing file empty, the remembered server picked while listed.
+##   - Round 681: every server's `type` (srrevamp or legacy) is required; an
+##     entry without one, or with another word, is skipped with a warning
+##     naming the server and the allowed values. NEGATIVE: before round 681
+##     ServerEntry has no `type` and the entries are kept -- those checks
+##     fail.
 ##   - The order: preview > server (else cache) > setting > custom > default.
 ##
 ## NEGATIVE: before round 679 neither YamlLite nor ClientConfig exists -- this
@@ -48,9 +53,11 @@ const EXAMPLE := """global:
   region: US
 servers:
   FirstServer:
+    type: srrevamp
     gateway: { address: login.example.com, port: 15779 }
     agent:   { address: agent.example.com, port: 15884 }
   Second:
+    type: legacy
     gateway: { address: gateway.example.org, port: 15779 }
     agent:   { address: agent.example.org, port: 15884 }
 """
@@ -146,6 +153,7 @@ func _config() -> void:
 	_check(a.name == "FirstServer" and b.name == "Second", "the names are the keys, in order")
 	_check(a.gateway_host == "login.example.com" and a.gateway_port == 15779 and a.gateway_address() == "login.example.com:15779", "the gateway")
 	_check(a.agent_host == "agent.example.com" and a.agent_port == 15884, "the agent is kept")
+	_check(a.type == "srrevamp" and b.type == "legacy", "each server's type: %s, %s" % [a.type, b.type])
 	_check(c.pick_server("Second") == b, "the remembered server while listed")
 	_check(c.pick_server("Gone") == a and c.pick_server("") == a, "else the file's first")
 	_check(ClientConfig.new().pick_server("x") == null, "no servers, no pick")
@@ -155,16 +163,27 @@ func _config() -> void:
 	w = PackedStringArray()
 	c = ClientConfig.from_text("""servers:
   Good:
+    type: srrevamp
     gateway: { address: 192.0.2.10 }
   NoGateway:
+    type: srrevamp
     agent: { address: a.example.com, port: 1 }
   BadPort:
+    type: srrevamp
     gateway: { address: x.example.com, port: 70000 }
   BadHost:
+    type: srrevamp
     gateway: { address: "http://x.example.com/" }
   TextPort:
+    type: srrevamp
     gateway: { address: x.example.com, port: abc }
+  NoType:
+    gateway: { address: n.example.com }
+  BadType:
+    type: retail
+    gateway: { address: b.example.com }
   BadAgent:
+    type: legacy
     gateway: { address: y.example.com, port: 15779 }
     agent: { address: z.example.com }
   NotAMap: 1
@@ -179,15 +198,18 @@ global:
 	var joined := "\n".join(w)
 	for frag in ["NoGateway", "BadPort", "BadHost", "TextPort", "BadAgent", "NotAMap", "global.colour", "loginScreen"]:
 		_check(joined.contains(frag) or (frag == "loginScreen" and joined.contains("evil")), "a warning names %s" % frag)
+	_check(joined.contains("server 'NoType' has no type (one of: srrevamp, legacy) -- skipped"), "a server without a type is skipped, the warning names it and the values")
+	_check(joined.contains("server 'BadType' type 'retail' is not one of: srrevamp, legacy -- skipped"), "a server with an unknown type is skipped likewise")
+	_check(c.server_named("NoType") == null and c.server_named("BadType") == null, "neither is listed")
 
 	# A broken file: ignored whole, the line in the warning.
 	w = PackedStringArray()
-	c = ClientConfig.from_text("servers:\n  A:\n    gateway: { address: a.example.com\n", "broken.yaml", w)
+	c = ClientConfig.from_text("servers:\n  A:\n    type: srrevamp\n    gateway: { address: a.example.com\n", "broken.yaml", w)
 	_check(not c.has_servers() and c.source == "", "a file that does not parse is ignored whole")
-	_check(w.size() == 1 and w[0].contains("broken.yaml line 3:"), "its warning names the file and line: %s" % [w])
+	_check(w.size() == 1 and w[0].contains("broken.yaml line 4:"), "its warning names the file and line: %s" % [w])
 
 	w = PackedStringArray()
-	c = ClientConfig.from_text("servers:\n  \"A \":\n    gateway: { address: a.example.com }\n  A:\n    gateway: { address: b.example.com }\n", "dup.yaml", w)
+	c = ClientConfig.from_text("servers:\n  \"A \":\n    type: srrevamp\n    gateway: { address: a.example.com }\n  A:\n    type: srrevamp\n    gateway: { address: b.example.com }\n", "dup.yaml", w)
 	_check(c.servers.size() == 1 and c.servers[0].gateway_host == "a.example.com", "'A ' and 'A' are one name: the first stands (%s)" % c.describe())
 	_check("\n".join(w).contains("listed twice"), "and the second is warned about: %s" % [w])
 

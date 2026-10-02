@@ -29,50 +29,13 @@ func (r *RollingByte) Next() byte {
 	return b
 }
 
-// lfsrByte runs a 32-bit linear feedback shift register 32 rounds forward
-// from seed and returns the low byte of the result. Each round: compute a
-// feedback bit by XOR-ing five tapped, progressively-shifted versions of the
-// register together (shift amounts 2, 2, 1, 1, 1, each XORed against the
-// register's current value); old bit 0 moves to the new bit 31 (a rotate),
-// and the new bit 0 becomes the feedback bit. See
-// docs/protocol/opcodes/handshake.md for why this specific tap arrangement
-// is documented as a fact rather than guessed at.
-func lfsrByte(seed uint32) byte {
-	v := seed
-	for range 32 {
-		tap := (v >> 2) ^ v
-		tap = (tap >> 2) ^ v
-		tap = (tap >> 1) ^ v
-		tap = (tap >> 1) ^ v
-		tap = (tap >> 1) ^ v
-		feedback := tap & 1
-
-		oldBit0 := (v & 1) << 31
-		v = ((v >> 1) &^ 1) | oldBit0 | feedback
-	}
-	return byte(v)
-}
-
 // DeriveSeed expands a 32-bit session seed into the three seed bytes
-// RollingByte needs, matching the handshake key-derivation behavior in
-// docs/protocol/opcodes/handshake.md: four LFSR-derived bytes (from the
-// seed and three simple variations of it) get XORed pairwise, substituting
-// 1 for a 0 result to avoid a degenerate all-zero state.
+// RollingByte needs. CORRECTED in round 681: it used to run the generator on
+// seed, seed+1, seed+2 and seed+3; the client chains four runs on ONE state
+// and replaces a 0 seed (READ, sro_client 0x4b0cc0; CountSeeds).
 func DeriveSeed(seed uint32) (b0, b1, b2 byte) {
-	a := lfsrByte(seed)
-	b := lfsrByte(seed + 1)
-	c := lfsrByte(seed + 2)
-	d := lfsrByte(seed + 3)
-
-	x := a ^ b
-	y := c ^ d
-	if x == 0 {
-		x = 1
-	}
-	if y == 0 {
-		y = 1
-	}
-	return x ^ y, x, y
+	s := CountSeeds(seed)
+	return s[0], s[1], s[2]
 }
 
 // PacketChecksum is a from-scratch, originally-designed stand-in for the
@@ -86,6 +49,10 @@ func DeriveSeed(seed uint32) (b0, b1, b2 byte) {
 // reproducing the original bit-for-bit. Like RollingByte/DeriveSeed, this
 // is a reference implementation only -- see docs/protocol/PROTOCOL_DECISION.md:
 // this project's real client<->server link doesn't use either.
+//
+// Round 681: the REAL family is CRCTable/CheckByte (retail_security.go), and
+// it restarts the accumulator for every frame, which this stand-in does not;
+// the retail gateway path (internal/retailgw) uses those, not this.
 type PacketChecksum struct {
 	table [256]uint32
 	acc   uint32

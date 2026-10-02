@@ -8,8 +8,14 @@ descriptions of observed behavior, no decompiler output/pseudocode/binary-derive
 
 | Opcode   | Direction       | Role                                                            |
 |----------|-----------------|------------------------------------------------------------------|
-| `0x5000` | client → server | Initial handshake / hello message. Triggers the handshake state machine. |
-| `0x9000` | server → client | Handshake challenge/accept. Sent by the server as a reply to `0x5000`, and also checked for on a later leg of the exchange (the handshake appears to be multi-step, not a single request/response). |
+| `0x5000` | both ways       | The server's hello (flags, keys, seeds, key exchange), the client's 12-byte reply, the server's 0x10 challenge. |
+| `0x9000` | client → server | The client's accept, after the challenge checks out (or at once when there is no key exchange). |
+
+**CORRECTED (round 681):** this table said 0x5000 was client -> server and 0x9000 server -> client.
+Read from the CLIENT's side of the same function (`ACTIVE_SESSION::_OnMsgReceivedBeforeHandshake`,
+sro_client 0x4b1da0, mode 1), the server speaks first with 0x5000 and the client sends 0x9000
+(0x4b1eb1); the server's side below (mode 0) receives the client's 12-byte 0x5000 and its 0x9000.
+The full exchange is in "The client's side, READ (round 681)" below and in `gateway.md`.
 
 Confirmed directly in `GatewayServer.exe` (2026-08-22, real dedicated server binary from the same
 obtained package, not just inferred from the client): both values are checked as literal 16-bit
@@ -157,9 +163,93 @@ Real, concrete facts about the multi-step exchange this doc's opcode table alrea
 
 The handshake object referenced during this exchange carries a same-typed member used later for
 send/receive encryption — consistent with the client<->server link switching to a negotiated
-block cipher (publicly documented elsewhere as Blowfish) once the handshake completes. The actual
-key derivation/exchange has not been pulled apart yet; that's the next piece needed before
-`server/internal/proto` can speak encrypted frames.
+block cipher (publicly documented elsewhere as Blowfish) once the handshake completes. Round 681
+read the key exchange and the cipher: next section.
+
+## The client's side, READ (round 681)
+
+From sro_client (`/var/tmp/decomp_client`, `/var/tmp/sro_client.asm`), the CLIENT branch (mode 1,
+`ACTIVE_SESSION+8 == 1`) of the same code; the server branch agrees wherever it was read.
+Implemented in `server/internal/proto/retail_security.go` + `retail_frame.go` and
+`client/scripts/net/retail/retail_security.gd`; the exchange around it is `gateway.md`.
+
+**The server's hello** (0x5000; read at 0x4b1deb..0x4b1e3a, 0x4b3c60 -> 0x4b3eb0; written by
+SR_GameServer's `CNetEngine::FUN_00965c20`): u8 flags; flag 2: 8 bytes, the Blowfish key; flag 4:
+u32 count seed, u32 crc seed; then flag 0x10: an 8-byte challenge, else flag 8: 8 bytes
+"handshake key", u32 G, u32 P, u32 A. Retail sends flags 0x0E. The server makes G and P two random
+primes, the smaller G (`FUN_004c6fc0` / 0x4c6ef0, 31-bit, odd, a 5-round probabilistic test); its
+private value is a GUID's first dword & 0x7fffffff (0x4c6ff0) and A = G^y mod P.
+
+**Set-up on the hello** (`CNetEngine::FUN_004b0cc0`): flags are kept at +0x16f; flag 1 skips
+everything (not supported by our client, OURS); flag 2 keys Blowfish (+0x158) with the 8 bytes;
+flag 4:
+
+- the count seed (0 -> 0x9abfb3b6, 0x4b0cf7) runs the 32-round generator of point 1 FOUR TIMES ON
+  ONE REGISTER (0x4afb80 updates its argument in place): v1..v4; a = low(v1) ^ low(v2), b = low(v4)
+  ^ low(v3), each 0 -> 1; the rolling byte's state is {a ^ b, a, b} (+0x16c..+0x16e).
+  **CORRECTED:** `proto.DeriveSeed` ran the generator on seed, seed+1, seed+2, seed+3; it now
+  chains (`CountSeeds`).
+- the crc seed's low byte (0 -> 1) is the checksum table index (0x4bf9c0); the accumulator starts at
+  0xffffffff for every frame (0x4bf9e0, which `PacketChecksum` did not do -- its running
+  accumulator is noted in its comment; the new code uses `CheckByte`).
+
+**The key exchange** (0x4c45f0, 0x4c7060, 0x4c70c0, 0x4c42b0, 0x4c4300, 0x4c4330, 0x4c4410;
+`ModPow` = 0x4c6e50, 64-bit square-and-multiply; `T(v, key, b)` = 0x4c4230, which replaces each
+byte v[i] of an 8-byte value with v[i] ^ (v[i] + keybyte[i % 4] + b), key bytes little-endian;
+`(lo, hi)` = two u32s little-endian in 8 bytes):
+
+| Step | Value |
+|---|---|
+| client private x | a fresh GUID's first dword & 0x7fffffff (CoCreateGuid, 0x4c7078) |
+| B | G^x mod P |
+| K | A^x mod P (the server: B^y mod P) |
+| key1 (a second Blowfish, +0x1b8+0x20) | T((A, B), K, K & 3) |
+| the client's challenge | key1-encrypt T((B, A), K, B & 7) |
+| the client's 0x5000 | u32 B, the 8-byte challenge (12 bytes, plain, with count and check) |
+| the server's 0x10 challenge, checked by the client | key1-encrypt T((A, B), K, A & 7) -- a mismatch is "Handshake ServerSignature Error" |
+| the session key (+0x158) | T(handshake key, K, 3) |
+| the client's 0x9000 | empty, plain, with count and check |
+
+Without flag 8 the client sends 0x9000 at once (0x4b1f92..0x4b20b1).
+
+**Blowfish** (`FUN_004aa4c0` key schedule, `FUN_004a9d40`/`FUN_004aa100` block, `FUN_004aa8d0` /
+`FUN_004aaa20` buffers): the standard cipher -- its P-array and S-boxes MEASURED in the exe equal to
+the published pi digits (P[0] 0x243f6a88, S0[0] 0xd1310ba6), the key bytes taken big-endian -- with
+each 8-byte block's halves loaded as LITTLE-endian u32s; a buffer is zero-padded to whole blocks.
+
+**The frame both ways** (`CNetEngine::FUN_004b0d70` send, `FUN_004b0f60` receive): u16 size (bit 15
+= encrypted), u16 opcode, u8 count, u8 check, payload. A client with flag 4 writes the next rolling
+byte, zeroes check, checksums the whole plain frame (header included, size word as sent, bit 15
+too) and stores the result; with flag 2 and bit 15 it then encrypts bytes 2.. (opcode onward)
+padded to 8, so an encrypted frame is 2 + pad8(size + 4) bytes. A server writes count and check 0.
+A receiver: bit 15 without flag 2 is error 0x8011; an encrypted frame over 0x1000 bytes is 0x800d;
+with flag 4 a server checks count (0x800b) then check (0x800c) and a CLIENT requires both 0 (except
+an unencrypted 0x1001). Who sets bit 15: the sender, per packet (the allocator `vslot_018`
+0x4a0930).
+
+### The checksum tables, and why 37 of 255 are not reproduced (the LEGAL check)
+
+- **READ (`CClientNet::FUN_004bf900`):** at start-up the client builds 256 tables of 256 u32s
+  (0x111b0b0, .bss) from a list of 256 u32 polynomials in .data (0xee44a0..0xee48a0): table s, entry
+  i is the textbook reflected-CRC table step -- v = i, eight times `v = v & 1 ? v >> 1 ^ poly[s] :
+  v >> 1`. The table index is never 0 (0x4bf9c0).
+- **MEASURED (round 681, on the render box, by comparison only):** entry s of that list equals entry
+  s of the standard CRC-32 table (the one generated from the public polynomial 0xedb88320) for 218
+  of the 255 usable indices. The other 37 -- 18, 19, 55, 58, 73, 88, 121, 123, 125, 145, 175, 176,
+  177, 182, 184, 192, 193, 198, 199, 200, 208, 216, 217, 240, 241, 242, 243, 244, 245, 246, 248, 250,
+  251, 252, 253, 254, 255 (and 0, unused) -- differ from it by a few bits each. GatewayServer.exe
+  (file offset 0xf6cd0) and SR_GameServer.exe hold a byte-identical list (compared on the box).
+- **What the implementation does:** it GENERATES the 218 tables -- the public CRC-32 table from
+  0xedb88320 gives the polynomials, the read builder gives the tables (the Go side checks every one
+  against `hash/crc32.MakeTable`). No byte of the client's list or tables is in this repository or
+  was copied into code; for the 37 the values were not looked at beyond "differs", and the
+  index list above is the only thing recorded about them. A session whose crc seed selects one of
+  the 37 cannot be checksummed: the client hangs up before sending anything and connects again (the
+  gateway draws a new seed per connection), up to three times within its 4 s (OURS).
+  `docs/LEGAL.md` policy #2 is kept: the algorithm is the client's (READ, described in prose) and
+  the CRC-32 polynomial is public; the 37 entries would need the binary's bytes, so they are not
+  reproduced. Reading them at run time from a player's own sro_client.exe would be possible
+  without putting them in the repository; that is the user's call, not done (OPEN).
 
 ## Status / next steps
 
@@ -189,7 +279,9 @@ key derivation/exchange has not been pulled apart yet; that's the next piece nee
       not the payload alone -- see the new section above. Also surfaced a real, not-yet-fully-traced
       lead on the Size field's top-bit meaning (queue/backpressure related, not confirmed
       encrypted-vs-something-else yet).
-- [ ] Pull key derivation for the session cipher.
+- [x] Pull key derivation for the session cipher (round 681: the client's side, READ, above).
 - [ ] Wire this into `server/internal/proto`/the real gateway, now that the goal is genuine wire
       compatibility rather than a reference implementation -- see
-      `docs/protocol/PROTOCOL_DECISION.md`'s 2026-08-22 reversal.
+      `docs/protocol/PROTOCOL_DECISION.md`'s 2026-08-22 reversal. Round 681 wired the CLIENT side
+      into the server list (`type: legacy`) and built the server side as a test fake
+      (`server/internal/retailgw`); our own server does not speak it yet.

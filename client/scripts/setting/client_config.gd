@@ -17,15 +17,25 @@ class_name ClientConfig
 ##     region: US                      # kept, reserved (see below)
 ##   servers:
 ##     MyServer:                       # the name the login screen shows
+##       type: srrevamp                # REQUIRED: srrevamp or legacy
 ##       gateway: { address: login.example.com, port: 15779 }
 ##       agent:   { address: agent.example.com, port: 15884 }
 ##     Other:
+##       type: legacy
 ##       gateway: { address: 203.0.113.7 }   # port defaults to 15779
 ##
 ## - `servers` present and non-empty: the login screen's Server field shows
 ##   the chosen server's NAME, read-only, with a LIST button to choose
 ##   another; the client connects to its gateway. Absent or empty: today's
 ##   editable host:port field.
+## - `type` (round 681, OURS, required) is the protocol the server speaks:
+##   `srrevamp`, this project's own (the status is asked with 0x0007), or
+##   `legacy`, the original gateway protocol (the status is the gateway's own
+##   shard list, asked the way the retail client asks: ServerStatus,
+##   RetailGatewayClient). An entry without a type, or with another word, is
+##   skipped with a warning. Once this project's server also speaks the
+##   original protocol (the superset plan, docs/protocol/PROTOCOL_DECISION.md),
+##   `srrevamp` will mean "also has our extensions" rather than another wire.
 ## - `gateway` is where the client connects (address + port), as retail's
 ##   DIVISIONINFO.TXT host list and GATEPORT.TXT port are (README).
 ## - `agent` is parsed and kept, not used yet: retail's gateway hands the
@@ -47,11 +57,15 @@ const DEFAULT_PORT := 15779
 ## a file nobody should need to scroll.
 const NAME_MAX := 32
 const SERVERS_MAX := 64
+## Round 681: the values of a server's `type`.
+const TYPES := ["srrevamp", "legacy"]
 
 class ServerEntry:
 	var name := ""
 	var gateway_host := ""
 	var gateway_port := DEFAULT_PORT
+	## "srrevamp" or "legacy" (TYPES).
+	var type := "srrevamp"
 	var agent_host := ""
 	var agent_port := 0
 	## The YAML line the entry starts on is not tracked; its order is.
@@ -159,14 +173,23 @@ static func _entry(name: String, v, where: String, warnings: PackedStringArray) 
 		warnings.append("%s: server '%s' is not a map with a gateway -- skipped" % [where, n])
 		return null
 	for k in v.keys():
-		if not (str(k) in ["gateway", "agent"]):
+		if not (str(k) in ["type", "gateway", "agent"]):
 			warnings.append("%s: unknown key 'servers.%s.%s' -- ignored" % [where, n, k])
+	var t = v.get("type", null)
+	if t == null:
+		warnings.append("%s: server '%s' has no type (one of: %s) -- skipped" % [where, n, ", ".join(TYPES)])
+		return null
+	var type := str(t).strip_edges()
+	if not (type in TYPES):
+		warnings.append("%s: server '%s' type '%s' is not one of: %s -- skipped" % [where, n, type, ", ".join(TYPES)])
+		return null
 	var gw := _endpoint(v.get("gateway", null), DEFAULT_PORT)
 	if gw.has("error"):
 		warnings.append("%s: server '%s' gateway %s -- skipped" % [where, n, gw["error"]])
 		return null
 	var e := ServerEntry.new()
 	e.name = n
+	e.type = type
 	e.gateway_host = gw["host"]
 	e.gateway_port = gw["port"]
 	if v.get("agent", null) != null:
@@ -250,6 +273,6 @@ func to_theme() -> FrontEndTheme:
 func describe() -> String:
 	var names := PackedStringArray()
 	for e in servers:
-		names.append("%s=%s" % [(e as ServerEntry).name, (e as ServerEntry).gateway_address()])
+		names.append("%s=%s (%s)" % [(e as ServerEntry).name, (e as ServerEntry).gateway_address(), (e as ServerEntry).type])
 	return "loginScreen=%s region=%s servers=[%s]" % [login_screen if login_screen != "" else "(unset)",
 		region if region != "" else "(unset)", ", ".join(names)]

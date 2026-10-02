@@ -39,7 +39,30 @@ class_name ServerStatus
 ## the archive carries but the exe never names (READ, string scan) -- in the
 ## list's own default text colour 0xFFB4B4B4 (READ, FUN_008b2ba0(3, ...)).
 
+##
+## Round 681: a server whose config entry says `type: legacy` speaks the
+## ORIGINAL gateway protocol and is asked the way retail asks
+## (RetailGatewayClient: the handshake, 0x2001, 0x6100, then 0x6101 ->
+## 0xA101), never with 0x0007; its answer is a list of shards, each banded by
+## the same compare (band_for). `type: srrevamp` is the 0x0007 question above
+## and never waits for a 0x5000.
+
 signal finished(status: ServerStatus, why: String)
+
+const TYPE_SRREVAMP := "srrevamp"
+const TYPE_LEGACY := "legacy"
+## OURS: the legacy exchange is about five round trips; all of it, every
+## attempt included, inside this, which is under the 5 s refresh.
+const LEGACY_TIMEOUT_MS := 4000
+## OURS: a session given a checksum table that cannot be built is ended
+## before it sends anything and tried again (37 of 255, MEASURED:
+## RetailSecurity.UNKNOWN_CRC_INDICES); three tries fail together about 0.3 %
+## of the time.
+const LEGACY_ATTEMPTS := 3
+## OURS: what one legacy attempt may read, and hold unread (two of the
+## largest frames, RetailSecurity.MAX_FRAME).
+const LEGACY_TOTAL_BYTES := 64 * 1024
+const LEGACY_FRAME_BUFFER := 2 * RetailSecurity.MAX_FRAME
 
 const OP_REQUEST := 0x0007
 const OP_STATUS := 0x0008
@@ -91,9 +114,36 @@ var current := 0
 var capacity := 0
 var state := 0
 var answered_ok := false
+## Round 681: srrevamp or legacy (ClientConfig.ServerEntry.type).
+var server_type := TYPE_SRREVAMP
+## Legacy: {"content_id", "version"} from Media.pk2 (RetailClientInfo), or
+## {"error"} when they cannot be read.
+var client_info := {}
+## Legacy: the key exchange's private value for a test (-1 = random).
+var private_x := -1
+## Legacy: the shards the gateway listed ({id, name, current, capacity,
+## state, farm}).
+var shards: Array = []
+var _conv: RetailGatewayClient = null
 
 func _init() -> void:
 	timeout_ms = TIMEOUT_MS
+
+## Asks `entry`'s server the way its type says. `info` is the archive's
+## content id and version (RetailClientInfo.from_media), used by legacy only.
+func start_for(entry: ClientConfig.ServerEntry, info: Dictionary) -> void:
+	server_type = entry.type
+	client_info = info
+	if server_type == TYPE_LEGACY:
+		timeout_ms = LEGACY_TIMEOUT_MS
+		max_attempts = LEGACY_ATTEMPTS
+		max_total_bytes = LEGACY_TOTAL_BYTES
+		max_frame_buffer = LEGACY_FRAME_BUFFER
+		if not info.has("content_id"):
+			_started_ms = Time.get_ticks_msec()
+			_finish.call_deferred(null, "legacy: %s" % info.get("error", "no content id and version"))
+			return
+	start(entry.gateway_host, entry.gateway_port)
 
 ## READ (above): the band for an answer.
 ## `lo` and `hi` are whole percents (textuisystem's numbers).
@@ -143,9 +193,16 @@ static func argb_color(argb: int) -> Color:
 # --- The query ---------------------------------------------------------------
 
 func _request() -> PackedByteArray:
+	if server_type == TYPE_LEGACY:
+		return PackedByteArray() # READ: a retail gateway speaks first (0x5000)
 	return Packet.new(OP_REQUEST).encode()
 
+func _on_reconnect() -> void:
+	_conv = null
+
 func _read(buf: PackedByteArray) -> Dictionary:
+	if server_type == TYPE_LEGACY:
+		return _read_legacy(buf)
 	var r := parse_frames(buf)
 	if r.has("status"):
 		return {"value": r["status"]}
@@ -168,8 +225,22 @@ static func parse_frames(buf: PackedByteArray) -> Dictionary:
 		return {"error": "status version %d, not %d" % [p[0], VERSION]}
 	return {"status": {"current": p.decode_u16(1), "capacity": p.decode_u16(3), "state": p[5]}}
 
+func _read_legacy(buf: PackedByteArray) -> Dictionary:
+	if _conv == null:
+		_conv = RetailGatewayClient.new(int(client_info["content_id"]), int(client_info["version"]), private_x)
+	var r := _conv.feed(buf)
+	var out := {"consumed": r["consumed"], "send": r["send"]}
+	if r["error"] != "":
+		out["retry" if r["retry"] else "error"] = "legacy: " + str(r["error"])
+	elif _conv.done():
+		out["value"] = {"shards": _conv.shards}
+	return out
+
 func _answered(value, why: String) -> void:
-	if value is Dictionary:
+	if value is Dictionary and value.has("shards"):
+		shards = value["shards"]
+		answered_ok = true
+	elif value is Dictionary:
 		current = value["current"]
 		capacity = value["capacity"]
 		state = value["state"]
@@ -178,10 +249,18 @@ func _answered(value, why: String) -> void:
 		answered_ok = false
 	finished.emit(self, why)
 
-## The band for this query's outcome with the given thresholds.
+## A legacy shard's band (the same compare as retail's list).
+static func shard_band(shard: Dictionary, t: Vector2i) -> int:
+	return band_for(int(shard["current"]), int(shard["capacity"]), int(shard["state"]), t.x, t.y)
+
+## The band for this query's outcome with the given thresholds (for a legacy
+## server that answered: its first shard's, or UNREACHABLE when it listed
+## none).
 func band_with(t: Vector2i) -> int:
 	if not is_done():
 		return Band.PENDING
 	if not answered_ok:
 		return Band.UNREACHABLE
+	if server_type == TYPE_LEGACY:
+		return Band.UNREACHABLE if shards.is_empty() else shard_band(shards[0], t)
 	return band_for(current, capacity, state, t.x, t.y)

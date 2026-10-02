@@ -7094,6 +7094,126 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-eighty-first round: a `type: legacy` server in the list is asked the original way -- the retail handshake, 0x6100, 0x6101 -- and its shards show their real Check / Easy / Populated / Crowded / FULL
+
+The user (2026-10-01): "I want to add a random private server to the server list in yaml for
+testing." Then: "Could you support the original handshake so we begin to start testing
+compatibility? I want to see if it shows check, easy, populated, etc even though I know we can't
+connect to it." And, on the config: each server gets `type: legacy | srrevamp`, **required**; a
+missing or unknown type is skipped with a `SETTING:` warning; `srrevamp` will later mean "also has
+our extensions". Login over the original protocol is out of scope; no third-party server was
+contacted from here.
+
+Labels: READ (sro_client's dump and asm on the box; GatewayServer.exe disassembled with objdump into
+`/var/tmp/retailgw681/gw.asm`; the launcher silkroad.exe likewise; SR_GameServer's CNetEngine),
+MEASURED, INFERRED, OURS, OPEN. Every address is in the new `docs/protocol/opcodes/gateway.md` and
+in `handshake.md`'s new "The client's side, READ (round 681)".
+
+### 1. What was READ
+
+- **The exchange** (gateway.md's table): S 0x5000 (flags 0x0E: Blowfish key; count and crc seeds;
+  handshake key, G, P, A) -> C 0x5000 (u32 B, 8-byte challenge) -> S 0x5000 (0x10 + challenge) ->
+  C 0x9000 -> C 0x2001 "SR_Client" -> S 0x2001 "GatewayServer" -> C 0x6100 (content id,
+  "SR_Client", version) -> S 0xA100 (GatewayServer sends it as a massive 0x600D header + part) ->
+  C 0x6101 -> S 0xA101. Before the handshake ends only 0x5000 is taken (0x4b1dd2). Handshake.md's
+  opcode table had the directions backwards (0x9000 is the client's): corrected.
+- **The key exchange** (0x4c45f0.., 0x4c6e50 modpow, 0x4c4230 the byte mixing T): B = G^x, K = A^x
+  mod P; key1 = T((A,B), K, K&3); the client's challenge key1(T((B,A), K, B&7)); the server's
+  key1(T((A,B), K, A&7)); the session key T(handshake key, K, 3). x = a GUID dword & 0x7fffffff.
+- **The rolling byte's seeds chain four generator runs on one register** (0x4b0cc0; 0 -> 0x9abfb3b6).
+  `proto.DeriveSeed` ran it on seed, seed+1, seed+2, seed+3: **corrected** (`CountSeeds`).
+- **The checksum** restarts at 0xffffffff for every frame (0x4bf9e0) over the whole plain frame
+  (size word with bit 15); the table index is the crc seed's low byte, 0 -> 1.
+- **Blowfish** is the standard cipher (its constants MEASURED in the exe) with LITTLE-endian block
+  halves; encryption is the sender's per-packet choice (the allocator 0x4a0930 sets bit 15 when
+  asked): the client's 0x2001/0x6100/0x6101 are encrypted, GatewayServer's 0xA100 parts and 0xA101
+  are not. A client refuses a server frame whose count or check byte is not 0 (0x4b0f60).
+- **0xA101** -- round 679's missing parser, found: `CClientProcess::FUN_004cda30` (via `vslot_016`),
+  and GatewayServer's writer 0x412c80 agrees: farms (u8 1, id, name)..., 0; shards (u8 1, u16 id,
+  name, u16 cur, u16 max, u8 state, [u8 farm])..., 0. The farm byte: the server writes it for content
+  ids 3, 5, 9, 10, 0x15-0x17, 0x1a, 0x1c, 0x22 (22 included); the client reads it when a mode word
+  at CClientNet+4 is 1 or 4 (0x4ce182) -- its writer OPEN. GatewayServer hides shards flagged 2 and
+  sends a shard flagged 1 with state 1 as **state 0 (Check)**.
+- **0x6100's values come from the archive:** the content id is DIVISIONINFO.TXT's first byte, which
+  the LAUNCHER reads (silkroad.exe 0x4370a7) and passes as the first "/%d" (0x4331dd), and sro_client
+  hands to the net layer (0x844b7e); the version is sv.t: u32 n, Blowfish with "SILKROAD" (the first 8
+  of "SILKROADVERSION"; key length 8 at 0x846c00), ceil(n/8) blocks, atoi. MEASURED on the box's
+  Media.pk2: **content id 22, version 1000** (the plaintext `31303030 00000000`).
+
+### 2. The checksum tables and the legal check
+
+The client builds its 256 tables at start-up from a list of 256 polynomials in .data (0x4bf900;
+0xee44a0). Compared on the box, never copied: **218 of the 255 usable entries are the standard
+CRC-32 table's entry at that index** (generated from the public 0xedb88320), **37 differ** by a few
+bits (indices in handshake.md); GatewayServer and SR_GameServer hold a byte-identical list. So the
+218 tables are GENERATED (the read builder + the public CRC-32 table; Go checks every one against
+`hash/crc32.MakeTable`), and nothing of the binary's list is in the repository. The 37 would need
+the binary's bytes: they are not reproduced. A session whose crc seed selects one is ended before
+anything is sent and reconnected (the gateway draws a new seed each time), up to 3 times in 4 s:
+about 0.3 % of queries fail on that (37/255 cubed, INFERRED from the uniform draw). Reading the
+37 at run time from the player's own sro_client.exe is possible without the repository holding them;
+not done -- the user's call (OPEN, TODO.md).
+
+### 3. What shipped
+
+- **`setting/config.yaml`: `type` is required** (`srrevamp` | `legacy`); missing or unknown -> the
+  entry is skipped with a `SETTING:` line naming the server and the values. The plain host:port
+  field (no config) stays srrevamp.
+- **The client** (`client/scripts/net/retail/`): `RetailSecurity` (the primitives and the frame),
+  `RetailGatewayClient` (the exchange as a socket-free machine), `RetailClientInfo` (content id and
+  version from Media.pk2; none -> "Closed" with the reason, never a guess). `GatewayQuery` grew
+  multi-step conversations (send-more, consume, retry with reconnect, a per-attempt byte cap);
+  `ServerStatus.start_for` picks the question by type.
+- **The list** (OURS): a legacy server that answered has one row per shard, `<config name> - <shard
+  name>`, each banded by round 679's integer compare; before an answer, or without one, one row
+  under the config name; any row chooses the server. The 5 s refresh is retail's.
+- **Never sent to a legacy server:** 0x0007, 0x0005 (the theme question is skipped for it) and any
+  login (Connect says logging in to it is not supported yet).
+- **Limits** (OURS): 4 s per question, 3 connections, 64 KiB per connection, frames <= 4096 bytes
+  (READ for encrypted), 64 frames, strict parsing (exact 0x5000 fields, 0/1 loop bytes, nothing after
+  the list); 16 massive parts / 32 KiB.
+- **Go** (`server/internal/proto/retail_*.go`, `server/internal/retailgw`, `cmd/retailgw`): the same
+  client (`Probe`), a fake retail gateway (`Server`: the server side of the handshake, checks every
+  count and check byte, random 31-bit primes as GatewayServer makes them, 0xA100 as a massive pair,
+  faults on demand), `retailgw serve` / `retailgw probe`.
+
+### 4. Tests
+
+- **Byte-identical, two implementations:** `TestClientTranscripts` records the Go client against the
+  Go fake in 20 scenarios (fixed keys and private values) into
+  `client/scripts/frontend/testdata/retail_gateway_transcripts.json`, with known answers for every
+  primitive; `retail_gateway_test.gd` replays the server's frames and requires the GDScript client's
+  frames to equal the Go client's byte for byte, then the outcome: the five bands incl. Check, one
+  shard, no farm byte (fallback layout), a plain 0xA100, an encrypted 0xA101, no key exchange, an
+  unknown checksum table (two connections, nothing sent on the first), seed low byte 0, a refusal
+  [2, 4], a wrong version, a 0x5000 then a stall, a wrong challenge, a non-zero check byte, a
+  truncated and a malformed list, a frame cut in half, an oversized frame, an AgentServer, a flood
+  of small frames (64-frame cap) and of large ones (64 KiB cap) -- each failure "Closed" with its
+  reason. Also the window's rows and colours; srrevamp sends 0x0007 at once (14 ms) and never waits;
+  legacy against a server that never speaks sends 0 bytes and shows Closed.
+- **MEASURED live:** the Go fake (`retailgw serve`, random handshakes) on the box and the GDScript
+  client (`client/tools/retail_status_probe.gd` with the box's Media.pk2): **200 of 200 queries
+  answered**, ~35 ms each; the fake logged no count or check error.
+- **NEGATIVE** (the new tests on dev 74934cf): `retail_gateway_test.gd` does not parse
+  (`Identifier "RetailSecurity" not declared`); `client_config_test.gd`: `FAIL the example loads
+  without warnings: [... unknown key 'servers.FirstServer.type' ...]` and `SCRIPT ERROR: Invalid get
+  index 'type' (on base: 'RefCounted (ServerEntry)')`; the Go tests do not compile (`CountSeeds`,
+  package `retailgw` absent).
+- `remote_godot.sh check`: 499 scripts, ALL LOAD. `remote_godot.sh tests`: 197 suites, 0 failing.
+  `go build ./... && go vet ./... && go test -count=1 -p 1 ./...`: green.
+- No perf gate: the round changes the login screen's server list and the network code it uses, not
+  the world or its drawing.
+
+### 5. OPEN
+
+- A real private server (the user's test). What it may do differently from the fake: a proxy filter
+  in front of the gateway (re-encrypting 0xA101, other flags, extra frames before 0x2001, its own
+  identity name), a version or content-id gate stricter than GatewayServer's, a different farm-byte
+  rule, a 0xA100 that is not massive, a 0x5000 variant with flag 1 or other bits (refused here),
+  strings in a code page other than ASCII/UTF-8/Latin-1.
+- The 37 checksum tables (above); the client's farm-byte mode word's writer; whether 0x6101 is
+  accepted before 0x6100; 0xA100's other refusal codes.
+
 ## Six-hundred-and-eightieth round: the title preloads its whole scene before the camera moves -- no pop-in during the intro's fly
 
 The user (2026-10-01, about v0.1.469's 3D login): "Another problem to fix is pop-in. As the camera

@@ -35,7 +35,7 @@ func TestRollingByteZeroSeed(t *testing.T) {
 	}
 }
 
-// TestLFSRByteKnownValues cross-checks lfsrByte's 32-round output against an
+// TestLFSRByteKnownValues cross-checks the generator's (lfsr32) low byte against an
 // independently computed reference for the same seeds, to catch transcription
 // bugs in a bit-exact algorithm where "looks about right" isn't good enough.
 func TestLFSRByteKnownValues(t *testing.T) {
@@ -50,8 +50,8 @@ func TestLFSRByteKnownValues(t *testing.T) {
 		{12345, 0xa6},
 	}
 	for _, c := range cases {
-		if got := lfsrByte(c.seed); got != c.want {
-			t.Errorf("lfsrByte(0x%x) = 0x%02x, want 0x%02x", c.seed, got, c.want)
+		if got := byte(lfsr32(c.seed)); got != c.want {
+			t.Errorf("lfsr32(0x%x) low byte = 0x%02x, want 0x%02x", c.seed, got, c.want)
 		}
 	}
 }
