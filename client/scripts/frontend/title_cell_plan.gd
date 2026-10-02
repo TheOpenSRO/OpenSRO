@@ -12,8 +12,9 @@ class_name TitleCellPlan
 ## startup, inside Client_LoadAllRefData and so before the title screen
 ## exists, `FUN_00840670` reads the intro and hands every region of
 ## `FUN_0056c870`'s set to `CGWorld::FUN_00aa2190(region, 1)`, which loads
-## that region and its eight neighbours (diagonals included) through the
-## region manager (`CRegionManagerBody::vslot_005`). Retail's set is built
+## that region through the region manager (`CRegionManagerBody::vslot_005`,
+## flag 1) and, when the region's 0x8000 (dungeon) bit is clear, its eight
+## neighbours, diagonals included, with flag 0. Retail's set is built
 ## from the keyframes' own region words, which for roc misses the regions
 ## the camera's target crosses (100/70 .. 96/70, MEASURED in round 678) --
 ## its 3x3 neighbourhoods are what cover them.
@@ -54,29 +55,46 @@ const MIN_ASPECT := 2.4
 ## the value only trims what lies behind the eye).
 const NEAR := 1.0
 
+## OURS (round 680's review): the most cells a title builds before its fly.
+## The archive's largest plan is 28 (constantinople, MEASURED) and retail's
+## largest preload set 27; a custom intro may name any path inside
+## IntroScript's bounds -- a straight line planned 198 cells and a sweep
+## 5,412 (the review's MEASURED) at ~15-20 MB a cell. A plan past the cap is
+## abandoned as soon as it passes it, and the title streams round 678's
+## window instead, unloading as it goes (TitleIntro).
+const PLAN_MAX_CELLS := 36
+
 ## The plan: every cell any sample needs, as Vector2i(dx, dy), ordered by
 ## the first time a sample needs it, then by distance from the frame region
-## -- so the cells the fly opens on are built first.
-static func cells(path: IntroCameraPath, radius: int, draw_distance: float, aspect: float = MIN_ASPECT, step: float = SAMPLE_STEP_S) -> Array[Vector2i]:
+## -- so the cells the fly opens on are built first. Stops early -- after
+## the sample that takes it past `max_cells` (>= 0), so the result holds more
+## than max_cells, by one sample's cells at most -- or before a sample, as
+## soon as `stop` (if valid) returns true.
+static func cells(path: IntroCameraPath, radius: int, draw_distance: float, aspect: float = MIN_ASPECT, step: float = SAMPLE_STEP_S, max_cells: int = -1, stop: Callable = Callable()) -> Array[Vector2i]:
 	var first_needed := {}
-	for_each_sample(path, step, func(t: float, pose: IntroCameraPath.Pose) -> void:
-		add_sample_cells(first_needed, t, pose, radius, draw_distance, maxf(aspect, MIN_ASPECT)))
+	for_each_sample(path, step, func(t: float, pose: IntroCameraPath.Pose) -> bool:
+		add_sample_cells(first_needed, t, pose, radius, draw_distance, maxf(aspect, MIN_ASPECT))
+		return not _over(first_needed, max_cells), stop)
 	return _ordered(first_needed)
 
 ## The plan without the frustum: the region window (`radius` regions each
 ## way) around the camera's target at every sample -- every cell round 678's
 ## streaming window would have built at some moment of the fly -- in the
-## same order as cells().
-static func window_cells(path: IntroCameraPath, radius: int, step: float = SAMPLE_STEP_S) -> Array[Vector2i]:
+## same order as cells(), with the same early stops.
+static func window_cells(path: IntroCameraPath, radius: int, step: float = SAMPLE_STEP_S, max_cells: int = -1, stop: Callable = Callable()) -> Array[Vector2i]:
 	var first_needed := {}
-	for_each_sample(path, step, func(t: float, pose: IntroCameraPath.Pose) -> void:
+	for_each_sample(path, step, func(t: float, pose: IntroCameraPath.Pose) -> bool:
 		var centre := cell_of(pose.target)
 		for dx in range(-radius, radius + 1):
 			for dy in range(-radius, radius + 1):
 				var c := centre + Vector2i(dx, dy)
 				if not first_needed.has(c):
-					first_needed[c] = t)
+					first_needed[c] = t
+		return not _over(first_needed, max_cells), stop)
 	return _ordered(first_needed)
+
+static func _over(first_needed: Dictionary, max_cells: int) -> bool:
+	return max_cells >= 0 and first_needed.size() > max_cells
 
 static func _ordered(first_needed: Dictionary) -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
@@ -88,12 +106,19 @@ static func _ordered(first_needed: Dictionary) -> Array[Vector2i]:
 		return absi(a.x) + absi(a.y) < absi(b.x) + absi(b.y))
 	return out
 
-## Calls `visit(t, pose)` at t = 0, step, 2 step, ... and at the path's end.
-static func for_each_sample(path: IntroCameraPath, step: float, visit: Callable) -> void:
+## Calls `visit(t, pose)` at t = 0, step, 2 step, ... and at the path's end,
+## walking the path forward (IntroCameraPath.sample_forward). Stops when
+## `visit` returns false, or before a sample when `stop` (if valid) returns
+## true.
+static func for_each_sample(path: IntroCameraPath, step: float, visit: Callable, stop: Callable = Callable()) -> void:
 	var n := maxi(int(ceilf(path.length / maxf(step, 0.001))), 0)
 	for i in range(n + 1):
+		if stop.is_valid() and stop.call():
+			return
 		var t := minf(i * step, path.length)
-		visit.call(t, path.sample(t))
+		var go = visit.call(t, path.sample_forward(t))
+		if go is bool and not go:
+			return
 
 ## The cells one pose needs: the window around its target and every cell its
 ## frustum meets within `draw_distance`.

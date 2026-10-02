@@ -23,6 +23,11 @@ class_name TitlePopProbe
 ## to the viewport (corners behind the eye make it a whole-screen bound):
 ## an upper bound of what it covers. Lines are `QA POP ...`; the summary is
 ## `QA POPS ...` when the path ends. OURS.
+##
+## Its gap (round 680's review): only the world's `RealTerrain*` children are
+## scanned, so the placements of a cell whose `.o` loaded without a `.m` --
+## World3D._objects_commit then adds their container to the world directly
+## -- are not seen.
 
 var _cells := {} # terrain node name -> the cell's AABB (world)
 var _anim_seen := {} # Obj instance id -> was drawn last tick

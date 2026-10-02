@@ -94,10 +94,12 @@ keyframes are all "region 100/71" with x down to -1840 and z down to -7211, so r
 intro (`FUN_0056cb10`) and walks the set (`FUN_0056a980`), handing each region to
 `CGWorld::FUN_00aa2190(region, 1)`. That function loads the region through the region manager
 (`DAT_0111a02c` = `CRegionManagerBody`, vtable 0xe16184, slot 5 `vslot_005`, flag 1) and, with its
-second argument set, **its eight neighbours too** -- two nested loops over -1..1 on the high and the
+second argument set **and the region's 0x8000 bit clear** (the dungeon bit -- an outdoor region),
+**its eight neighbours too, each with flag 0** -- two nested loops over -1..1 on the high and the
 low byte, diagonals included -- keeping each region the manager loaded in a list (`FUN_00aa2090`),
 then runs slot 3 (`vslot_003`: two passes of `RegionManagerBody::FUN_00415520` over the regions).
-So retail's title regions are each keyframe region's 3x3 neighbourhood, loaded during the client's
+What flag 0 changes in slot 5 against flag 1 is not read (OPEN). So retail's title regions, for an
+outdoor intro, are each keyframe region's 3x3 neighbourhood, loaded during the client's
 startup load, and the title's camera never waits on one. For roc that is 24 regions, which do
 contain 100/70 .. 96/70 (MEASURED, `client/tools/title_plan_census.gd`). Whether slot 5 builds a
 region's meshes at once or only queues them is not read (OPEN); no thread hand-off was seen in

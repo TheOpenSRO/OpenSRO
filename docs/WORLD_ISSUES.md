@@ -7143,10 +7143,12 @@ Godot's visibility ranges: 0 of 250 / 8 / 198 / 666 GeometryInstance3D at the fl
 `FUN_00840670`, called from `Client_LoadAllRefData` (0x844cd0) -- the client's startup load, before
 `CPSTitle` exists -- parses the intro (`FUN_0056cb10`) and hands every region of `FUN_0056c870`'s
 preload set to `CGWorld::FUN_00aa2190(region, 1)`. That loads the region through the region manager
-(`DAT_0111a02c` = `CRegionManagerBody`, vtable 0xe16184 read out of the exe, slot 5) and, with its
-second argument set, **all eight neighbours** (two nested -1..1 loops on the high and low byte,
-diagonals included), listing each one the manager loaded (`FUN_00aa2090`), then runs slot 3 (two
-passes over the regions). So retail's title regions are each keyframe region's 3x3, loaded at
+(`DAT_0111a02c` = `CRegionManagerBody`, vtable 0xe16184 read out of the exe, slot 5, flag 1) and,
+with its second argument set and the region's 0x8000 (dungeon) bit clear, its eight neighbours
+**with flag 0** (two nested -1..1 loops on the high and low byte, diagonals included; corrected by
+the review below -- the first text said all eight unconditionally and at the same flag), listing
+each one the manager loaded (`FUN_00aa2090`), then runs slot 3 (two passes over the regions). So
+retail's title regions, for an outdoor intro, are each keyframe region's 3x3, loaded at
 startup: its camera never waits on a region, and a click cannot come before the load, because the
 title is not up yet. For roc that is 24 regions and they do contain the 100/70 .. 96/70 the
 camera's target crosses -- round 678's protocol note ("this set never names") was about
@@ -7295,6 +7297,58 @@ speeds; `-- --media=... --map=...`), `measure_login_ready.gd`'s new lines. The b
 - Whether retail's region manager builds a region at once or queues it (`vslot_005`, INFERRED
   synchronous).
 - A plan cap for a custom intro with a very long path (section 4), the user's call.
+
+### Review (round 680's review: no HIGH, one MEDIUM, three LOW -- fixed in a follow-up commit)
+
+The review confirmed 0 pops on the archive's intros (this probe, base against head, and an
+independent frame-diff render) and, merged with round 679 and the native readers ON, measured roc's
+fly from 3.2 s, constantinople's from 4.1 s, the login usable at 0.75 s (as base), and no keystroke
+lost while typing during the preload.
+
+**M1, a custom intro's plan was unbounded and never unloaded.** Inside IntroScript's bounds a
+straight line planned 198 cells and a sweep 5,412 (7.9 s on the worker; the review's MEASURED), at
+~15-20 MB a cell, and a planned backdrop turns unloading off; `_exit_tree` waited the plan out.
+Fixed:
+- `TitleCellPlan.PLAN_MAX_CELLS` = 36 (OURS; the archive's largest plan is 28, retail's largest set
+  27). The walk stops in the sample that passes it; `TitleIntro` then drops the plan and the
+  backdrop streams round 678's window, unloading as it goes, with a log line
+  (`the scene plan passed 36 cells ... not preloaded`).
+- The walk is O(samples + keys): `IntroCameraPath.sample_forward` resumes the key search where the
+  last sample left it (the same pose as `sample`, exactly -- the suite compares them). A 1024-key,
+  600 s path now plans in 127 ms on the box; roc 13.9 -> 9.6 ms, constantinople 15.8 -> 12.5 ms (one run each).
+- The plan runs in a `TitleIntro.PlanJob` (its own path copy and result, nothing of the node
+  touched on the worker) with a `cancel` flag checked every sample; leaving the screen cancels it
+  (`_cancel_plan`, 1 ms in the suite against an uncapped 1024-key sweep) instead of waiting.
+
+**L1, Connect during PRELOADING** still began the backdrop and queued the plan under
+"Connecting...". `_begin_backdrop` is skipped once `_held` is set, and the plan is cancelled.
+
+**L2, a wrong comment**: World3D's `_title_radius` said "the view is fogged at 2500 units". The far
+plane is 7680 and the exponential fog leaves ~88-90 % showing at 2000-2700 units; the review counted
+23-84 unplanned terrain cells entering the frustum per intro -- the built world's edge, visible in
+the distance, from before this round. The comment says so now, and docs/TODO.md "The 3D title
+screen" records it as OPEN with `title_plan_census.gd`'s counts (cells with terrain the frustum
+meets within the far plane against those planned: roc 49 vs 24, constantinople 114 vs 28,
+china_wharf 28 vs 10, jupiter_login 43 vs 12). The plan is not widened (section 4's frustum costs).
+
+**L3, docs**: `CGWorld::FUN_00aa2190` loads the neighbours with flag 0 and only when the region's
+0x8000 (dungeon) bit is clear -- section 2, `intro_script.md` and `TitleCellPlan`'s header corrected
+(what flag 0 changes is OPEN). The probe's gap is now in its header: it scans only `RealTerrain*`
+children, so the placements of a `.o` cell with no `.m` (their container added to the world
+directly) are not seen.
+
+**Tests.** `title_cell_plan_test.gd` adds: `sample_forward` equals `sample` exactly (forward, and
+after a step back); a 40-region line plans 129 cells and stops at 39 with the cap; a 1024-key 600 s
+path plans in under 5 s (127 ms); a plan past the cap leaves `TitleIntro.plan` empty and
+`_plan_over_cap` set; leaving during an uncapped sweep returns in 1 ms; Connect during PRELOADING
+begins no backdrop. Against 9038feb (the round before this fix, the suite copied in):
+```
+SCRIPT ERROR: Parse Error: Cannot find member "PLAN_MAX_CELLS" in base "TitleCellPlan".   (x6)
+SCRIPT ERROR: Parse Error: Too many arguments for "window_cells()" call. Expected at most 3 but received 4.
+SCRIPT ERROR: Parse Error: Cannot infer the type of "b" variable because the value doesn't have a set type.
+```
+After: the probe again counts 0 pops on roc (24 cells, fly at 4.2 s) and constantinople (28 cells,
+6.7 s) -- box, native readers off; `remote_godot.sh check` ALL LOAD; `tests` 193 suites, 0 failing.
 
 ## Six-hundred-and-seventy-eighth round: the login screen is retail's 3D title -- the intro flown over the world, the archive's own frame, logo and login box where the client puts them, the title music, and a theme the server picks
 

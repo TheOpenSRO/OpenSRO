@@ -20160,7 +20160,13 @@ func _qa_use_first_potion(slots: Array, _error: String) -> void:
 ## Set before add_child: this World3D is a front-end backdrop.
 var title_mode := false
 ## The region window around the focus, in regions (OURS: 1, a 3x3 window,
-## at the title -- the view is fogged at 2500 units, READ 0xec54b0).
+## at the title). It does not reach the camera's far plane (7680 units,
+## _apply_camera_far_plane) and the exponential fog (FOG_DENSITY 0.00005)
+## leaves ~88-90 % showing at 2000-2700 units, so the built world's edge can
+## show in the distance -- OPEN, docs/TODO.md "The 3D title screen". (Retail's
+## view distance, DAT_00ec54b0, is 2500, and its fog is linear, ending at the
+## environment's far-plane channel times that distance -- the FOG_DENSITY
+## comment.)
 var _title_radius := 1
 
 ## The backdrop's half of _ready: the water reflection and the sky, the camera

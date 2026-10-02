@@ -86,10 +86,36 @@ var _login_nodes: Array = []
 var _started_ms := 0
 var _loading_s := 0.0
 ## The scene plan (TitleCellPlan), computed on a worker while the world's
-## scene compiles; the task id until it is done, then -1.
+## scene compiles; the task id until it is done, then -1. Empty when the
+## plan passed TitleCellPlan.PLAN_MAX_CELLS: the backdrop then streams.
 var plan: Array[Vector2i] = []
 var _plan_task := -1
+var _plan_job: PlanJob = null
 var _plan_ms := 0.0
+var _plan_over_cap := false
+
+## The scene plan's worker job (round 680's review): it owns its own copy of
+## the path and its result, so nothing on the worker touches this node --
+## the screen can go while it runs, `cancel` ending it at its next sample.
+class PlanJob extends RefCounted:
+	var path: IntroCameraPath = null
+	var radius := 1
+	var draw := 0.0
+	var max_cells := TitleCellPlan.PLAN_MAX_CELLS
+	var cancel := false
+	var cells: Array[Vector2i] = []
+	var over_cap := false
+	var ms := 0.0
+
+	func run() -> void:
+		var sw := Time.get_ticks_usec()
+		var stop := func() -> bool: return cancel
+		if draw > 0.0:
+			cells = TitleCellPlan.cells(path, radius, draw, TitleCellPlan.MIN_ASPECT, TitleCellPlan.SAMPLE_STEP_S, max_cells, stop)
+		else:
+			cells = TitleCellPlan.window_cells(path, radius, TitleCellPlan.SAMPLE_STEP_S, max_cells, stop)
+		over_cap = cells.size() > max_cells
+		ms = (Time.get_ticks_usec() - sw) / 1000.0
 var _first_view := false
 ## Connect was pressed (hold_backdrop): the scene stops loading for good.
 var _held := false
@@ -152,23 +178,23 @@ func start(media: Pk2Reader, theme: FrontEndTheme, custom_dir: String, frame: Fr
 	_origin = origin
 	state = State.PRELOADING
 	FrontEndBackdrop.preload_world()
-	_plan_task = WorkerThreadPool.add_task(_compute_plan, true, "title scene plan")
+	_start_plan(parsed.keyframes)
 	return true
 
-## The scene plan, on a worker (TitleCellPlan only reads the path).
-func _compute_plan() -> void:
-	var sw := Time.get_ticks_usec()
-	var draw := PLAN_DRAW_DISTANCE
+## Starts the scene plan on a worker (PlanJob), over its own copy of the path.
+func _start_plan(keyframes: Array, max_cells: int = TitleCellPlan.PLAN_MAX_CELLS) -> void:
+	_plan_job = PlanJob.new()
+	_plan_job.max_cells = max_cells
+	_plan_job.path = IntroCameraPath.from_keyframes(keyframes)
+	_plan_job.radius = TITLE_RADIUS
+	_plan_job.draw = PLAN_DRAW_DISTANCE
 	var qa := OS.get_environment("SRREVAMP_QA_TITLE_DRAW")
 	if qa != "" and qa.is_valid_float():
-		draw = qa.to_float()
-	if draw > 0.0:
-		plan = TitleCellPlan.cells(path, TITLE_RADIUS, draw)
-	else:
-		plan = TitleCellPlan.window_cells(path, TITLE_RADIUS)
-	_plan_ms = (Time.get_ticks_usec() - sw) / 1000.0
+		_plan_job.draw = qa.to_float()
+	_plan_task = WorkerThreadPool.add_task(_plan_job.run, true, "title scene plan")
 
-## Whether the plan's task has finished (and been disposed of).
+## Whether the plan's task has finished (and been disposed of); its result
+## is in `plan` then -- empty when it passed the cap.
 func _plan_done() -> bool:
 	if _plan_task < 0:
 		return true
@@ -176,7 +202,21 @@ func _plan_done() -> bool:
 		return false
 	WorkerThreadPool.wait_for_task_completion(_plan_task)
 	_plan_task = -1
+	_plan_ms = _plan_job.ms
+	_plan_over_cap = _plan_job.over_cap
+	plan.clear()
+	if not _plan_over_cap:
+		plan.assign(_plan_job.cells)
 	return true
+
+## Ends a plan still computing without blocking on it: the job stops at its
+## next sample (microseconds), then the task is disposed of.
+func _cancel_plan() -> void:
+	if _plan_task < 0:
+		return
+	_plan_job.cancel = true
+	WorkerThreadPool.wait_for_task_completion(_plan_task)
+	_plan_task = -1
 
 ## The world's scene has loaded (FrontEndBackdrop.preload_world): build the
 ## backdrop and point it where the fly begins.
@@ -186,7 +226,11 @@ func _begin_backdrop() -> void:
 	backdrop.name = "TitleBackdrop"
 	add_child(backdrop)
 	print("TITLE: world scene ready at %d ms" % (Time.get_ticks_msec() - _started_ms))
-	print("TITLE: scene plan -- %d cell(s) for the whole path, computed in %.1f ms on a worker" % [plan.size(), _plan_ms])
+	if _plan_over_cap:
+		print("TITLE: the scene plan passed %d cells (computed in %.1f ms on a worker) -- not preloaded; round 678's window streams instead, unloading as it goes, and may pop" % [
+			TitleCellPlan.PLAN_MAX_CELLS, _plan_ms])
+	else:
+		print("TITLE: scene plan -- %d cell(s) for the whole path, computed in %.1f ms on a worker" % [plan.size(), _plan_ms])
 	if not backdrop.begin(origin, TITLE_RADIUS, day_phase, plan):
 		backdrop.queue_free()
 		backdrop = null
@@ -307,6 +351,7 @@ func _still_covers() -> bool:
 ## cells still preparing.
 func hold_backdrop(why: String) -> void:
 	_held = true
+	_cancel_plan()
 	if backdrop != null and backdrop.world != null:
 		backdrop.world.call("title_hold")
 		print("TITLE: backdrop holds its cells (%s)" % why)
@@ -325,12 +370,10 @@ func _show_login_node(n: Control) -> void:
 	else:
 		n.modulate.a = 1.0
 
-## A plan still computing when the screen goes is waited for (it writes
-## `plan` on this node; it takes tens of milliseconds, MEASURED).
+## A plan still computing when the screen goes is cancelled, not waited
+## out (round 680's review: a custom path planned for 7.9 s).
 func _exit_tree() -> void:
-	if _plan_task >= 0:
-		WorkerThreadPool.wait_for_task_completion(_plan_task)
-		_plan_task = -1
+	_cancel_plan()
 
 func _fall_back(why: String) -> bool:
 	state = State.FALLBACK
@@ -377,7 +420,9 @@ func _process(delta: float) -> void:
 	match state:
 		State.PRELOADING:
 			_loading_s += delta
-			if FrontEndBackdrop.world_loaded() and _plan_done():
+			# Connect before the world's scene was ready (round 680's
+			# review): the screen is about to go -- nothing is built.
+			if not _held and FrontEndBackdrop.world_loaded() and _plan_done():
 				_begin_backdrop()
 		State.LOADING:
 			_loading_s += delta

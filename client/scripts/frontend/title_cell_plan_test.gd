@@ -148,11 +148,93 @@ func _initialize() -> void:
 	held.free()
 	slow.free()
 	stub.free()
+
+	await _review_checks(keys)
 	if _failures == 0:
 		print("ALL PASS")
 	else:
 		print("FAILURES: %d" % _failures)
 	quit()
+
+## Round 680's review: a custom intro's plan is bounded, cheap and
+## cancellable; Connect during PRELOADING builds nothing.
+func _review_checks(keys: Array) -> void:
+	# --- the forward walk is the same path ---
+	var path := IntroCameraPath.from_keyframes(keys)
+	var walker := IntroCameraPath.from_keyframes(keys)
+	var worst := 0.0
+	var times: Array = []
+	var t := -0.5
+	while t <= path.length + 0.5:
+		times.append(t)
+		t += 0.037
+	times.append(2.0) # backwards: the walk starts over
+	times.append(9.99)
+	for tt in times:
+		var a := path.sample(tt)
+		var b := walker.sample_forward(tt)
+		worst = maxf(worst, a.target.distance_to(b.target) + absf(a.pitch - b.pitch) + absf(a.yaw - b.yaw)
+			+ absf(a.roll - b.roll) + absf(a.distance - b.distance))
+	_check(worst == 0.0, "sample_forward gives sample's pose exactly, forward and after a step back (worst %.9f)" % worst)
+
+	# --- a straight line far past the cap stops at cap + 1 ---
+	var line := IntroCameraPath.from_keyframes([
+		kf(0.0, Vector3(900, 100, 900), 0.1, 0.0, 100.0),
+		kf(600.0, Vector3(900 + 40 * 1920.0, 100, 900), 0.1, 0.0, 100.0)])
+	var full_line := TitleCellPlan.window_cells(line, 1)
+	var capped := TitleCellPlan.window_cells(line, 1, TitleCellPlan.SAMPLE_STEP_S, TitleCellPlan.PLAN_MAX_CELLS)
+	_check(full_line.size() > 3 * TitleCellPlan.PLAN_MAX_CELLS and capped.size() > TitleCellPlan.PLAN_MAX_CELLS
+			and capped.size() <= TitleCellPlan.PLAN_MAX_CELLS + 9,
+		"a 40-region line plans %d cells; with the cap the walk stops in the sample that passes it, at %d (PLAN_MAX_CELLS %d, one window more at most)" % [
+		full_line.size(), capped.size(), TitleCellPlan.PLAN_MAX_CELLS])
+	_check(TitleCellPlan.PLAN_MAX_CELLS >= 28, "the cap holds the archive's largest plan (28 cells)")
+
+	# --- the walk's cost: 1024 keys over 600 s, O(samples + keys) ---
+	var many: Array = []
+	for i in range(1024):
+		many.append(kf(i * 600.0 / 1023.0, Vector3(900 + (i % 2) * 10.0, 100, 900), 0.1, 0.0, 100.0))
+	var long_path := IntroCameraPath.from_keyframes(many)
+	var sw := Time.get_ticks_msec()
+	var still := TitleCellPlan.window_cells(long_path, 1)
+	var ms := Time.get_ticks_msec() - sw
+	_check(still.size() == 9 and ms < 5000, "a 1024-key, 600 s path plans its 9 cells in %d ms (under 5 s; the key search per sample made it O(samples x keys))" % ms)
+
+	# --- TitleIntro: past the cap the plan is dropped and the title streams ---
+	var capped_intro := TitleIntro.new()
+	capped_intro._start_plan([
+		kf(0.0, Vector3(900, 100, 900), 0.1, 0.0, 100.0),
+		kf(600.0, Vector3(900 + 40 * 1920.0, 100, 900), 0.1, 0.0, 100.0)])
+	var waited := 0
+	while not capped_intro._plan_done() and waited < 600:
+		await process_frame
+		waited += 1
+	_check(capped_intro._plan_over_cap and capped_intro.plan.is_empty(),
+		"a plan past PLAN_MAX_CELLS is not preloaded (over cap %s, plan %d cells): round 678's streaming instead" % [
+		str(capped_intro._plan_over_cap), capped_intro.plan.size()])
+	capped_intro.free()
+
+	# --- leaving during a big plan does not wait it out ---
+	var sweep: Array = []
+	for i in range(1024):
+		sweep.append(kf(i * 3600.0 / 1023.0, Vector3(900 + (i % 32) * 1920.0, 100, 900 + int(i / 32.0) * 1920.0), 0.1, 0.0, 100.0))
+	var leaving := TitleIntro.new()
+	leaving._start_plan(sweep, 1 << 30) # as if uncapped: minutes of work
+	await process_frame
+	sw = Time.get_ticks_msec()
+	leaving._exit_tree()
+	ms = Time.get_ticks_msec() - sw
+	_check(ms < 200 and leaving._plan_task == -1, "leaving the screen during a big plan returns in %d ms (cancelled, not waited out)" % ms)
+	leaving.free()
+
+	# --- Connect during PRELOADING: nothing is built ---
+	var early := TitleIntro.new()
+	early.path = IntroCameraPath.from_keyframes(keys)
+	early.state = TitleIntro.State.PRELOADING
+	early.hold_backdrop("the test's early Connect")
+	early._process(0.1)
+	_check(early.backdrop == null and early.state == TitleIntro.State.PRELOADING,
+		"Connect before the world's scene is ready: no backdrop is begun (backdrop %s, state %d)" % [early.backdrop, early.state])
+	early.free()
 
 ## A backdrop with no world: only the counts TitleIntro reads.
 class StubBackdrop extends FrontEndBackdrop:
