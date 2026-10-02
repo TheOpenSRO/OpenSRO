@@ -7136,7 +7136,8 @@ frame and stops by the idols in the stand's pose; a second Create walks it in ag
 walk-in's first 0.8 s), then the lizard stays in view with a constant screen box (164, 439,
 479 x 279) and a still root from 2.67 s to the end of the 8 s run (`liz_montage_after.jpg`).
 
-OPEN: the setter's 200 (INFERRED a blend time in ms) is not modelled.
+The setter's 200 is a 200 ms fade-out at the end of the one-shot (READ by the review, below); with
+one clip it has no visible effect.
 
 ### 2. The select screen's brightness: retail's random hour, not a lighting fault
 
@@ -7175,7 +7176,9 @@ and customize each picked a NEW random hour on every visit; `CharSelectHandoff.f
 now picks it once and keeps it, as the title's would be.
 
 **Decided, not changed:** the hour stays retail's. Pinning the front end to a daytime hour would be
-OURS against READ; it is recorded as decision 10 for the user (charselect.md section 8).
+OURS against READ; it is recorded as decision 10 for the user (charselect.md section 8). The review
+(below) found the darkness this round missed: the bodies themselves drew 1.3-1.8x darker than retail's
+character formula, at every hour.
 
 ### 3. "Name Check": a label sized before it had its face
 
@@ -7238,11 +7241,81 @@ On this branch: ALL PASS; `remote_godot.sh check` ALL LOAD; `remote_godot.sh tes
 
 ### 5. OPEN
 
-- The lizard setter's 200 (INFERRED blend time); the sun's direction from the hour
+- The sun's direction from the hour
   (`SWorld::vslot_004`, round 678's OPEN) -- a night select keeps the day's light direction.
 - Decision 10 (the front-end's hour) is the user's.
 - New QA hooks (OURS, off unless set): `SRREVAMP_QA_SELECT_RACE`, `SRREVAMP_QA_LIZARD_PROBE`
   (+ `SRREVAMP_QA_SELECT_SHOT_DIR`, `SRREVAMP_QA_LIZARD_SHOT_EVERY`), `SRREVAMP_QA_SELECT_LUMA`.
+
+### Review (round 688's review: all three fixes held, the READ confirmed; one HIGH and two LOW, fixed in a follow-up commit)
+
+**HIGH: the select bodies were lit about 1.8x darker than the same character on the customize
+preview at the same hour** -- the user's "probably not as bright as it should be". The select screen
+hung its bodies in the backdrop with Godot's lit materials under World3D's DirectionalLight3D at its
+tuned energy 0.3 (OURS since round 43); the customize preview (round 685), the equipment window and
+the portrait draw characters with PlayerPortrait's materials, retail's own formula (READ, its
+header: vertex colour = 0.6 x ambient + max(0, n.l) x material x diffuse, diffuse = environment
+channel 2 clamped x 0.6, ambient = channel 3 clamped; then texture x colour x 2, MODULATE2X).
+
+- **Changed:** `CharSelectStage._dress` gives each body PlayerPortrait's materials fed the backdrop's
+  zone light (`_portrait_zone_light`), as `CharCreatePreview` does, after the body is built -- so the
+  round 687 hides and the round 685 default wear are untouched (MEASURED: 7/6, 10/4 and 8/5 meshes
+  shown/hidden on the three bodies with either light; every mesh in the character light after).
+- **The backdrop's tone mapping:** the first after-run came out 13-37 % BRIGHTER than the preview.
+  READ (Godot 4.2.2 `drivers/gles3/shaders/scene.glsl` 1369 and 1590-1593, `tonemap_inc.glsl` 42-58
+  and 96-108): an unshaded ALBEDO is decoded to linear, times exposure, Filmic-mapped over the mapped
+  white, and encoded again -- World3D's environment is Filmic (tonemap_mode 2), the preview's
+  SubViewport linear (PlayerPortrait: no change, MEASURED round 635). So the characters' colour is
+  pre-inverted through that chain in their shader (`_undo_tonemap`: the Filmic quadratic solved
+  exactly, the decode cubic by Newton's method; OURS on READ source), and the frame carries the
+  client's value.
+- **MEASURED** (`SRREVAMP_QA_SELECT_LUMA`'s per-body line: each body's own pixels -- those that change
+  when it is hidden, its shadows off for that mask -- against the same character, same items, built
+  in a CharCreatePreview in the same process with the backdrop's zone light, zoomed out; mean
+  Rec. 709 luma; `SRREVAMP_QA_SELECT_GODOT_LIGHT=1` keeps the old materials on the same build):
+
+| Hour | Character | Select before | Select after | Preview | Preview / select, before -> after |
+|---|---|---|---|---|---|
+| 14:00 | QA_Bram (1909) | 58.8 | 89.2 | 94.0 | 1.60 -> 1.05 |
+| 14:00 | QA_Aria (1923) | 86.7 | 138.6 | 141.1 | 1.63 -> 1.02 |
+| 14:00 | QA_Wei (1919, seated) | 59.8 | 92.0 | 79.0 | 1.32 -> 0.86 |
+| 23:00 | QA_Bram | 32.6 | 56.8 | 59.4 | 1.82 -> 1.04 |
+| 23:00 | QA_Aria | 50.0 | 89.7 | 91.4 | 1.83 -> 1.02 |
+| 23:00 | QA_Wei (seated) | 32.1 | 61.0 | 49.9 | 1.55 -> 0.82 |
+
+  The standing bodies are within 2-5 % of their preview. The seated one is 14-18 % brighter than the
+  standing preview (INFERRED: the sitting pose turns more of the body up to the light; the preview
+  stands). Without the tone-mapping undo the ratios were 0.89 / 0.86 / 0.73 at 14:00 and
+  0.87 / 0.81 / 0.68 at 23:00.
+- **Cost** (`SRREVAMP_QA_SELECT_FRAMES`, 3 s to 8 s after the list, 300 frames, three runs each,
+  alternating; the box is vsync-capped at 16.67 ms so the viewport's measured render time is the
+  cost): old light CPU 1.930 / 1.941 / 1.923 ms, GPU 1.947 / 1.835 / 1.814 ms; character light CPU
+  2.002 / 1.945 / 1.826 ms, GPU 1.872 / 1.830 / 1.758 ms -- no difference beyond run-to-run noise.
+  No World3D code changed, so no perf gate.
+- Shot: scratchpad `bodies_before_after.jpg` (14:00 old / new, 23:00 old / new).
+
+**LOW, the lizard's 200 (READ by the review):** a 200 ms fade-OUT at the end of the one-shot
+(`CRTAniOneShot::vslot_002` case 4 -> 5 via `AniMixer::FUN_00c554e0(clip, 0, 200)`); the fade-in is
+0, and with one clip on the mixer it has no visible effect. Closed in charselect.md sections 3 and 9
+and TODO.
+
+**LOW, the hour's writers:** `charselect_handoff.gd` said only CPSTitle sets the hour.
+`CPSMission::vslot_012` also calls `SWorld::vslot_020` every frame from the game clock, and two console
+handlers do (0x53a4d0, 0x53a520); CPSTitle is the only caller on the front-end path. Corrected there
+and in charselect.md.
+
+**Found on the way (READ Godot 4.2.2 source, not measured on screen; TODO):**
+`GeometryInstance3D.transparency` is stored by `RenderGeometryInstanceBase::set_transparency` and never
+read by the GLES3 renderer, so round 684's model fades (the 1.0 s fade-in, 0xcc for a character
+pending deletion) are likely not drawn on GL Compatibility.
+
+**TODO added:** the world's own characters still use Godot's tuned lighting, not retail's character
+formula -- for a round after 689 (world bodies), with the perf gate.
+
+**Tests:** `frontend_fixes_test.gd` gains the select-light check (the body's material is
+PlayerPortrait's formula with the tone-mapping undo, its colour kept). NEGATIVE on 12d93b6 (the
+file copied in): `FAIL CharSelectStage dresses its bodies (_dress exists)` -- `FAILURES: 1`. This
+branch: ALL PASS; `remote_godot.sh check` ALL LOAD; `remote_godot.sh tests` 204 suites, 0 failing.
 
 ## Six-hundred-and-eighty-seventh round: the body's own skin no longer shows through worn armour -- each item hides the body pieces it covers, as retail's client does
 

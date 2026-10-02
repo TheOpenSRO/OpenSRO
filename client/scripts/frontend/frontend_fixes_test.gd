@@ -7,6 +7,8 @@ extends SceneTree
 ##      CRTAniOneShot, docs/protocol/BSR_FORMAT.md; MEASURED: the archive's
 ##      interface_lizard_move is not cyclic and walks 4.16 units);
 ##   2. the front-end hour is picked once and kept when no title set it;
+##   2b. (the review) a select body wears the characters' own light, not
+##      Godot's lit materials;
 ##   3. a create-screen button's words fill the button (less its ClientRect)
 ##      and stay centred when the face in the tree is narrower than the
 ##      default face the label was first measured in -- the "Name Check"
@@ -33,6 +35,7 @@ func _initialize() -> void:
 	await process_frame
 	_lizard()
 	_phase()
+	_select_light()
 	await _button_text()
 	print("ALL PASS" if _failures == 0 else "FAILURES: %d" % _failures)
 	quit(1 if _failures > 0 else 0)
@@ -79,6 +82,32 @@ func _lizard() -> void:
 	_check(once[1] == 0.0 and once[2] == 0.0, "a clip that is not cyclic plays once and keeps its last pose at 1.5 s and 2.5 s (got %s, %s)" % [str(once[1]), str(once[2])])
 	var loops := _lizard_xs(true)
 	_check(loops[1] == 2.0 and loops[2] == 2.0, "a cyclic clip still loops (got %s, %s)" % [str(loops[1]), str(loops[2])])
+
+## Round 688's review: a select body wears the characters' own light
+## (PlayerPortrait's materials: the client's formula) with the backdrop's
+## tone mapping undone -- not Godot's lit materials.
+func _select_light() -> void:
+	var stage := CharSelectStage.new()
+	var has := stage.has_method("_dress")
+	_check(has, "CharSelectStage dresses its bodies (_dress exists)")
+	if not has:
+		stage.free()
+		return
+	var body := Node3D.new()
+	var mi := MeshInstance3D.new()
+	mi.mesh = BoxMesh.new()
+	var src := StandardMaterial3D.new()
+	src.albedo_color = Color(0.588, 0.588, 0.588)
+	mi.material_override = src
+	body.add_child(mi)
+	stage.call("_dress", body)
+	var m := mi.material_override as ShaderMaterial
+	var code := m.shader.code if m != null and m.shader != null else ""
+	_check(code.contains("modulate_scale") and code.contains("material_color"), "the body's material is the characters' formula (PlayerPortrait's)")
+	_check(code.contains("undo_tonemap(clamp(modulate_scale * t.rgb * lit, 0.0, 1.0))"), "its colour goes through the tone-mapping undo")
+	_check(m != null and m.get_shader_parameter("material_color") == Color(0.588, 0.588, 0.588), "the material's own colour is kept")
+	body.free()
+	stage.free()
 
 func _phase() -> void:
 	# Called through the script, so the suite still runs (and says FAIL) on a

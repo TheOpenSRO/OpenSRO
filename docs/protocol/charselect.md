@@ -69,7 +69,9 @@ CPSTitle --login--> CPSCharacterSelect (list) --Create--> [same process] race se
   hour carries over (round 678, INFERRED). **Round 688 closes the inference:** SWorld is one global
   (0x1101950) built once at start-up (static initialiser 0xd768f0 -> `Map::FUN_00a2f370`, which
   sets the phase +0x26a3 to 0.5 and the clock flag +0x2f18 to 0). The phase's only writers are that
-  constructor, `vslot_020` and the world clock at 0xa2d130 (phase += the frame-time float 0x110f7fc
+  constructor, `vslot_020` (called on the front-end path only by CPSTitle; in the game by
+  `CPSMission::vslot_012` every frame from the game clock, and by two console handlers 0x53a4d0 and
+  0x53a520 -- round 688's review) and the world clock at 0xa2d130 (phase += the frame-time float 0x110f7fc
   x 0.0005, wrapping at 1.0), and the clock runs only while +0x2f18 is non-zero -- which nothing
   but the constructor writes (no other `[reg+0x2f18]` and no absolute 0x1104868 store in the asm).
   CPSTitle's OnCreate calls `vslot_020` with one of its four phases unconditionally (0x86b278). So
@@ -345,7 +347,9 @@ So guild class 0 none / 1 member / 2 master, academy 0 none / 1 student / 2 guar
     - The setter's other arguments `(1, 0, 200, 0, 1.0, 1.0)` go through
       `CCObjAnimation::vslot_003` 0xa5b6d0 -> `FUN_00a5b550` (clamps the fourth to 1.0) to the
       compound's slot 29 0xc31f00 / slot 30 0xc31de0, which queue a command at compound+0x1c0.
-      INFERRED: 200 is a blend time in ms; not modelled (OPEN).
+      **READ (round 688's review): the 200 is a 200 ms fade-OUT at the end of the one-shot**
+      (`CRTAniOneShot::vslot_002` case 4 -> 5 via `AniMixer::FUN_00c554e0(clip, 0, 200)`); the
+      fade-in is 0. With one clip on the mixer it has no visible effect, so it is not modelled.
 
 **Hover:** each idol is ray-picked. The hovered idol's panel fades in over 1/3 s and the other's
 fades out at the same rate. No glow, no idol animation.
@@ -1190,7 +1194,11 @@ box. `perf_gate.sh` for B3.
    or allow "none" (Protector 0) as a server may?
 10. **The front-end's hour (round 688):** retail draws select and customize at the hour the title
    picked, so one title visit in four shows them at 23:00, measured 24 % darker than 14:00
-   (section 1, "Time of day"). Kept as retail. Pinning the front end to a daytime hour would be OURS.
+   (section 1, "Time of day"). That random hour is retail's and is kept; pinning the front end to a
+   daytime hour would be OURS. **Our extra darkness was not retail's:** until round 688's review the
+   select bodies were lit with Godot's materials under World3D's tuned light (energy 0.3) and drew
+   1.3-1.8x darker than the same character in the customize preview, which uses retail's character
+   formula (PlayerPortrait). They now use that formula too (WORLD_ISSUES round 688, "Review").
 
 ## 9. Still OPEN
 
@@ -1228,7 +1236,8 @@ box. `perf_gate.sh` for B3.
 - The academy byte in the list.
 - The select idle's animation (the preview's is READ, round 685).
 - ~~The lizard's root motion.~~ MEASURED and READ in round 688 (section 3): `_move` walks 4.16 units
-  and is a one-shot. What the setter's 200 does (INFERRED a blend time) is OPEN.
+  and is a one-shot; the setter's 200 is the one-shot's 200 ms fade-out (READ, the review), with no
+  visible effect on a lone clip.
 - `FUN_00bbda70(1)` on select open.
 - Re-entering select after create when the previous-process id is neither 0 nor 10.
 - The per-server flag behind China's Protector minimum.

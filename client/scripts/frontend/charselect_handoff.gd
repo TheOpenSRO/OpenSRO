@@ -41,12 +41,15 @@ static var day_phase: float = -1.0
 ## no title set one (a screen opened directly) one picked the title's way
 ## ONCE and kept, so select, customize and select again share it. READ:
 ## SWorld (one global, built once by the static initialiser 0xd768f0 ->
-## Map::FUN_00a2f370, phase 0.5) keeps its day phase at +0x26a3; only
-## CPSTitle's OnCreate sets it (vslot_020 with rand() & 3, unconditionally,
-## 0x86b278), and the world clock that would advance it (0xa2d130, phase +=
-## dt x 0.0005) runs only while +0x2f18 is set, which only the constructor
-## writes, to 0. So the hour the title picked holds through select and
-## customize until the title is shown again. Until round 688 a screen with
+## Map::FUN_00a2f370, phase 0.5) keeps its day phase at +0x26a3, set through
+## vslot_020. On the front-end path its only caller is CPSTitle's OnCreate
+## (rand() & 3, unconditionally, 0x86b278); in the game CPSMission::vslot_012
+## sets it every frame from the game clock, and two console handlers
+## (0x53a4d0, 0x53a520) set it too (round 688's review). The world clock that
+## would advance it by itself (0xa2d130, phase += dt x 0.0005) runs only while
+## +0x2f18 is set, which only the constructor writes, to 0. So the hour the
+## title picked holds through select and customize until the title is shown
+## again. Until round 688 a screen with
 ## no title's hour picked a NEW one on every visit.
 static func front_end_phase() -> float:
 	if day_phase < 0.0:
