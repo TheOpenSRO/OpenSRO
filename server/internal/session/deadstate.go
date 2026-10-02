@@ -180,14 +180,14 @@ import (
 //
 // STAND-INS, each disclosed at its line and in the round's section:
 //
-//   - The return point is the character's entry point (returnPoint), not
-//     its appointed gate. Retail's is `_CHAR.AppointedTeleport` (above),
-//     which a gate's "Designate as return/recall point" line sets
-//     (UIIT_CTL_RECALL_POSITION, interaction id 7; teleport_network.md);
-//     srrevamp stores no such column and does not serve that line yet, and
-//     every character enters the world at spawnZone's arrival, so that is
-//     "home" here. What a new character's AppointedTeleport holds is not
-//     read (the value is written on the database side).
+//   - The return point (round 686, recall.go) is retail's: the character's
+//     `_CHAR.AppointedTeleport` (above), which a town gate's "Designate as
+//     return/recall point" line sets (GObjPC_HandleDesignateRecallMsg_059),
+//     else its race's gate (STORE_CH_GATE / STORE_EU_GATE, SR_ShardManager
+//     FUN_0042bb20), landing on that gate's teleportdata point. Until round 686 it was every
+//     character's entry point (spawnZone's arrival), and it still is for a
+//     China character on a server with no -teleport-dir (OURS; recall.go's
+//     header has the other fallbacks).
 //   - The level test reads Level for GetMaxLevel (+0x128). They are equal
 //     here: a death never costs a level (GObjPC_OnDeath leaves CurLevel
 //     alone) and srrevamp has no other way down.
@@ -584,18 +584,6 @@ func ReviveHandler(chars character.Store, hub *world.Hub, deps RegenDeps) gatewa
 	}
 }
 
-// returnPoint is where option 1 takes a character: the zone label, hub
-// bucket, position and frame of its arrival. OURS, disclosed in the header:
-// retail's is the character's appointed teleport gate
-// (`_CHAR.AppointedTeleport`, CGObjPC::FUN_004e08a0), which srrevamp does not
-// store; this is the place every character enters the world at, spawnZone's
-// arrival (handleEnterWorld), so a player killed in the field goes back to
-// town. Every character shares it until a bind point is kept.
-func returnPoint() (zone, bucket string, pos world.Position, frame string) {
-	bucket, pos, frame, _ = arrival(spawnZone)
-	return spawnZone, bucket, pos, frame
-}
-
 // returnToPoint moves the character on sess to its return point: the same
 // arrival a zone change or a gate makes (warpTo) -- the mover's
 // OpChangeZoneResult, the old zone's OpEntityLeft, the new zone's
@@ -609,8 +597,15 @@ func returnToPoint(ctx context.Context, sess *gateway.Session, chars character.S
 // warpHome is the move to the return point both paths make (option 1 and
 // returnAfterKill), guarded against the mover's own stale moves
 // (returnGuard): armed before the move, bound to the arrival after it.
+//
+// The point is the character's own since round 686 (returnPointFor,
+// recall.go): its designated gate, else its race's.
 func warpHome(ctx context.Context, sess *gateway.Session, eq equipment.Store, chars character.Store, hub *world.Hub, zerk *berserk.Tracker) (bool, error) {
-	zone, bucket, pos, frame := returnPoint()
+	var characterID int64
+	if e, ok := hub.EntityBySession(sess.ID()); ok {
+		characterID = e.CharacterID
+	}
+	zone, bucket, pos, frame := returnPointFor(ctx, chars, characterID)
 	armReturnGuard(sess, zone, pos, time.Now())
 	moved, err := warpTo(ctx, sess, eq, chars, hub, zerk, zone, bucket, pos, frame)
 	if arrived, in := hub.EntityBySession(sess.ID()); moved && in {
@@ -734,14 +729,14 @@ func returnAfterKill(ctx context.Context, chars character.Store, eq equipment.St
 // PC in the main world, resolves the return point (CGObjPC::FUN_004e08a0,
 // `call 0x4e08a0` at 0x4df188) and writes it as the saved region, position
 // and world (0x4df194 FUN_004f9950, 0x4df1a0 FUN_004f9920, 0x4df1ae
-// FUN_004f9850). The point itself is returnPoint's stand-in. It also points
-// the session's remembered place at the return point's label and frame, which
-// savePosition writes under.
-func savedPlace(sess *gateway.Session, e world.Entity) world.Entity {
+// FUN_004f9850). The point is the character's own (returnPointFor, round
+// 686). It also points the session's remembered place at the return point's
+// label and frame, which savePosition writes under.
+func savedPlace(chars character.Store, sess *gateway.Session, e world.Entity) world.Entity {
 	if e.Life != world.LifeDead || sess == nil {
 		return e
 	}
-	zone, _, pos, frame := returnPoint()
+	zone, _, pos, frame := returnPointFor(context.Background(), chars, e.CharacterID)
 	rememberPlace(sess, zone, frame, time.Now())
 	e.Pos = pos
 	return e

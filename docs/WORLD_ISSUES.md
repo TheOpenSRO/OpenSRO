@@ -7094,6 +7094,147 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-eighty-sixth round: a town gate's "Designate as return/recall point" sets the character's return point, and a return goes there -- else to the race's own gate, Jangan's for China and Constantinople's for Europe
+
+The user (2026-10-02): "you should get the return/recall feature working for town teleporters.
+That will fix where they restore at and just euro to const and chn to jangan."
+
+Labels: READ (the decompiles and asm on the render box; `SR_ShardManager.exe` from the server
+package, disassembled with objdump into `/var/tmp/recall686/sm.asm`), MEASURED, INFERRED, OURS,
+OPEN. The full reading, with every address, is `docs/protocol/teleport_network.md`, "The return
+point (round 686)".
+
+### 1. What retail does (READ)
+
+- **The client.** The gate's line (item 9, `UIIT_CTL_RECALL_POSITION`) opens message box kind 5 over
+  the talk box (`CIF_NPCTalk::FUN_007020c0` case 9, `0x7027b5`): "Agreement window", "The current
+  position : [<zone>]" (`UIIT_MSG_MSGBOX_SETREBIRTH_CURPOS`, the zone looked up by the player's
+  region id -- INFERRED from `textzonename.txt` being keyed that way), "Will you designate the place
+  to be returned /resurrected?" (`..._ASKCERTIFY`; `UI_SILKMALL::FUN_00644c90` entry `0x644f93`).
+  OK sends 0x7059 {u32 object id} (`FUN_00797d90` case 5, `0x797fc5`).
+- **The server.** Dispatch 0x059 (`0x513410`, now `GObjPC_HandleDesignateRecallMsg_059`):
+  `IsWithinInteractionRange` with the structure mask 0x30 (its answer is the code: 0 no object, 3, 4);
+  interaction id 7 on the gate's ref object and `IGObj::IsTeleportGate`, else 3; then
+  `_CHAR.AppointedTeleport` := the gate's **ref object id** when it differs
+  (`CharData_SetAppointedTeleport`, `0x51db20`), and 0xb059 {1}; refusals {2, u16 code}. No fee, no
+  level, no life-state test.
+- **The answer.** `Client_OnDesignateRecallResult` (`0x883520`): on 1, "Resurrection spawn point has
+  changed." to the system window as type 5 and to `GDR_WARNING_WND`; on 2, nothing.
+- **Where it sends a character.** `CGObjPC::ResolveRevivePoint` (`0x4e08a0`) takes the designated
+  gate's teleport record -- the arrival a gate teleport to it makes. Used by option 1 of the dead
+  window, the leave path of a dead character and a siege world's entry.
+- **The default** (the user's "euro to const and chn to jangan", and retail's): the ShardManager's
+  start-position function `FUN_0042bb20` reads the body's Country byte (`0x42bb78`) and gives
+  `_AddNewChar` the ref object id of `STORE_CH_GATE` (`0x783d04`) for China, `STORE_EU_GATE`
+  (`0x783d14`) for Europe. MEASURED on the box's export: 2094 -> `GATE_CH` 97/168 (969, 0, 1369);
+  19554 -> `GATE_EU` 105/79 (950, 84, 1070).
+- **Not served.** Interaction id 9, "Teleport to return point": the teleport request's kind 1 ->
+  `GObjPC::Revive(0)` (`CMainProcess::FUN_004f2b50`, `0x4f2c83`); no town gate offers it. The return
+  scroll: `UseByKind` (`0x49c2b0`) cases 1-3 cast the item's linked skill (`+0x2a0`,
+  `FUN_0059b8d0`); the skill effect is unread, and srrevamp refuses every return scroll.
+
+**A correction to the brief.** It called round 665's Jangan point "READ". It was OURS: every
+character's world entry (`spawnZone`'s arrival, the town centre). Retail's China default is
+Jangan's gate point, 285 units from the gate building; that is where an undesignated China
+character now returns.
+
+### 2. What changed
+
+- **Server.** `session/recall.go`: `OpRecallDesignate 0x0111` {u16 gate teleportdata id} ->
+  `OpRecallDesignateResult 0x0112`, 0xb059's shape (OURS: the pair and the id; free on 2026-10-02 in
+  dev, feat/lobby682 and feat/appear683), served by `TeleportHandler` in the handler's order: unknown
+  gate 0, not a building row 3, `session.reach` 3/4, no interaction 7 3, then the write only when
+  it changes, and {1}. `returnPointFor` resolves the designated gate's point, else the race's gate
+  (`RaceGate(characterCountry(c))`), through `teleportArrival` (frames and `-single-frame` as a gate
+  teleport). Option 1, the flag-off respawn (`returnAfterKill`) and a dead logout (`savedPlace`) all
+  use it; `returnPoint()` is gone. cmd/server hands it the network (`SetRecallNetwork`) and logs
+  whether both race gates were found.
+- **Store.** `character.RecallStore` on MemStore and SQLStore, kept off `Character` (as
+  `InventorySizeStore` is), so no SELECT changes.
+- **Client.** `RecallNet` (`net/recall.gd`), `NetClient.recall_designate` /
+  `recall_designate_result`, `HudPanels.open_recall_designate_prompt` (the archive's three texts;
+  the panel and its "OK" / "Cancel" are OURS -- kind 5's button controls were not read), and
+  `World3D._open_recall_designate` / `_on_recall_designate_result` (type 5 line + warning banner;
+  a refusal goes to the log only, as retail shows nothing). QA: `SRREVAMP_QA_TALK_LINES` now also
+  prints a talk prompt's and the dead window's buttons (`QA PROMPT <tag> BUTTON ...`) for xdotool.
+
+OURS, disclosed in `recall.go`'s header: 0 in the column means "none designated" and is resolved to
+the race's gate by code when needed (retail writes the id at creation); an unknown or unusable
+designated gate falls back to the race's gate (retail: `LatestRegion` / `Pos`); with no
+`-teleport-dir`, China returns to `spawnZone`'s arrival as before and Europe to Constantinople's
+zone arrival.
+
+### 3. The migration
+
+`ALTER TABLE characters ADD COLUMN IF NOT EXISTS appointed_teleport BIGINT NOT NULL DEFAULT 0;`,
+appended to the schema. Every existing row takes 0 -- its race's gate -- and nothing else on the row
+changes; a second run is a no-op (`TestMigration686`: the schema less this line, three characters
+with saved places, opened twice with a designation in between). No backfill is needed, so the line
+is safe on srrevamp-01's live data.
+
+### 4. Tests (each run against dev 3857a5e with a shim for the new symbols first)
+
+| Test | FAIL before |
+|---|---|
+| `TestDesignatedGateIsWhereOptionOneReturns` (own frames, single frame) | `no answer to the designate request for gate 2: ... i/o timeout` |
+| `TestUndesignatedReturnPointIsTheRaceGate` (China/Europe x frames) | `arrived at (0, 0, 0); want the point 97/168 local (969, 1369)`; `the return went to zone "jangan" (frame 97/168), want "constantinople"` |
+| `TestDesignateIsRefusedOutOfRange` (3, 4, 3, 0, 0, then 1 beside the building, then 4) | `no answer to the designate request` |
+| `TestLeavingDeadSavesTheDesignatedGate`, `TestFlagOffRespawnGoesToTheDesignatedGate` | `no answer to the designate request` |
+| `TestTeleportFromJanganAfterReturningToTheRaceGate` (round 675's gate, after the new return) | `arrived at (0, 0, 0); want ... (969, 1369)` |
+| `TestRecallDesignateWire` | `ok encodes , want 01` ... |
+| `TestRecallStores` (memory, postgres), `TestMigration686` | `after designating 2095 the gate reads 0`; `column "appointed_teleport" does not exist`; `the schema has no appointed_teleport line to leave out` |
+| client `net/recall_test.gd` (codec, the box: OK sends once, Cancel nothing) | new suite |
+
+`TestReturnPointWithoutANetworkIsTheZoneArrival` is a guard, not a negative: it passes before and
+after (no `-teleport-dir` keeps the old point). `systems`: `PointByBuildingCode` left the orphan
+list (the race gate is resolved by code), and the three derived tables carry the new name.
+
+### 5. Live (MEASURED, render box, lane recall686, run i1)
+
+A server from this tree with srrevamp-01's flags (`-full-map` -- so `-single-frame` -- `-monster-ai
+-monster-strike-push -monster-spawn-push -monster-battle -monster-aggro -player-dead-state`, plus
+`-persist-position`, `-in-memory`), the box's retail export (`-teleport-dir`, npcpos, monsters, the
+nest DB) and the client from this tree, everything through the Login route with real X input
+(`/var/tmp/recall686/inter.sh`, `x.sh`):
+
+- boot: `return points: designated at a town gate, else the race's gate china_found=true europe_found=true`;
+- `/goto donwhang`; the gate clicked by xdotool at the aimed point -> the talk box: "1. Designate this
+  region as your return & recall point!" (this archive resolves the older row); the line clicked ->
+  `RECALLPROMPT ... opened at 'Donwhang'`; OK clicked -> wire `c2s 0x0111 0200`, `s2c 0x0112 01`;
+  server `recall designated ... gate=STORE_WC_GATE point=GATE_WC object=2095 was=0`; client
+  `SYSLOG [5] Resurrection spawn point has changed.` and the banner;
+- `/goto jangan`, `/spawn tiger 6`: killed in Jangan (`left dead (HP 0)`); "Resurrect at the
+  specified point." clicked -> the zone change `donwhang` at (-28803, 0, -10148) in frame 97/168,
+  which is `GATE_WC`'s 102/153 (957, 1508) in that frame; the client stood at local (957, -106,
+  1508) on terrain, revived at HP 80.
+
+The undesignated China and Europe returns were not run live (the tests cover both frames); a Europe
+character needs round 682.
+
+No perf gate: the client half is UI and network wiring that runs on a click (the talk line, the box,
+the reply), no world, drawing or loading code.
+
+### 6. Merge notes against feat/lobby682
+
+- The race comes from `characterCountry` (`skill.go`), which 682 already rewrites to read
+  `character.RaceOf(c.Gender)`; 686 calls it through `recallCountry` and adds no helper, so after the
+  merge a Europe character returns to Constantinople with no further change.
+- Expected textual conflicts, all "keep both": this entry and 682's at the top of the descending
+  block; `docs/TODO.md` if 682 edits the same lines. `sqlstore.go`: 686's line is appended after
+  `characters_account_id`, 682's block sits above `characters_name_lower` (non-adjacent);
+  `schema.go`: 686 edits only the `AppointedTeleport` line of `EngineOnlyColumns`;
+  `cmd/server/main.go`: 686's lines are inside the teleport block, 682's above it; `orphans_test.go`
+  hunks are apart. `TestMigration686` strips only its own line from whatever the schema is, and its
+  scratch schema (`mig686`) and helper names differ from 682's.
+
+### 7. OPEN
+
+- "Teleport to return point" (id 9): READ, not served (no town gate offers it).
+- Return scrolls: the skill effect is unread; srrevamp has none.
+- Retail's fallback for an unknown designated gate (`LatestRegion` / `Pos`); ours is the race's gate.
+- The agreement box's art and button labels.
+- Europe returns live, once 682 lands.
+
 ## Six-hundred-and-eighty-first round: a `type: legacy` server in the list is asked the original way -- the retail handshake, 0x6100, 0x6101 -- and its shards show their real Check / Easy / Populated / Crowded / FULL
 
 The user (2026-10-01): "I want to add a random private server to the server list in yaml for

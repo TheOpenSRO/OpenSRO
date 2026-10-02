@@ -59,6 +59,14 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS inventory_size INTEGER NOT NULL 
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS heading DOUBLE PRECISION NOT NULL DEFAULT 0;
 CREATE UNIQUE INDEX IF NOT EXISTS characters_name_lower ON characters (LOWER(name));
 CREATE INDEX IF NOT EXISTS characters_account_id ON characters(account_id);
+-- The designated return point (round 686, RecallStore): the engine's
+-- _CHAR.AppointedTeleport (charData +0xa4), the ref object id of the town gate
+-- whose "Designate as return/recall point" line the character last used. 0 is
+-- "none designated": the character's race's gate, STORE_CH_GATE or
+-- STORE_EU_GATE, resolved when needed (OURS: retail writes that id at
+-- creation). Every existing row takes the 0, so it returns where its race's
+-- default sends it; ADD COLUMN IF NOT EXISTS makes a second run a no-op.
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS appointed_teleport BIGINT NOT NULL DEFAULT 0;
 `
 
 // SQLStore is a Store backed by PostgreSQL (via the pgx driver) — same

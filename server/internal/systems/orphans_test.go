@@ -91,12 +91,8 @@ var knownOrphans = map[string]string{
 	// destination LIST, which the client builds from its own copy of the tables
 	// (UI_TELEPORT::FUN_006fd3e0 reads the client's link records,
 	// teleport_network.md "The client's list, read"), so no server message
-	// carries it yet.
-	"PointByBuildingCode": "the join from a gate structure's code to its point, the one the client " +
-		"makes when a gate is clicked (TeleportReader.point_for_building). Round 642's " +
-		"session.gateObject works from the point to its object instead (PointByObject, BuildingByID), " +
-		"since a teleport NPC is not a building row; this lookup stays for the exporter's round-trip " +
-		"test and as the documented join: knowledge, not a gap.",
+	// carries it yet. PointByBuildingCode left the list in round 686: the
+	// return point resolves a race's gate by its code (session.returnPointFor).
 	"LinksFrom": "a gate's outgoing links in file order, the destination list the talk box shows. The " +
 		"client builds that list from its own teleportlink rows, as the retail dialog does " +
 		"(UI_TELEPORT::FUN_006fd3e0); the server answers only the MOVE (session.TeleportHandler, " +

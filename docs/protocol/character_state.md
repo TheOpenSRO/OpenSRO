@@ -340,7 +340,9 @@ unknown gate logs "someone designated unknown teleport gate: %d" and falls back 
 enter it again there; it sets no life state and no pool itself. The re-entry's load path restores
 a stored zero pool to 40 % (`GObjPC::FUN_004e1120`, `character.RespawnFraction`). The gate's
 "Designate as return/recall point" line (`UIIT_CTL_RECALL_POSITION`, interaction id 7) is what
-sets `AppointedTeleport`; its server side and a new character's default value are **not read**.
+sets `AppointedTeleport`: dispatch 0x059, `GObjPC_HandleDesignateRecallMsg_059`, stores the gate building's ref object id;
+a new character's is its race's gate, `STORE_CH_GATE` or `STORE_EU_GATE` (SR_ShardManager
+`FUN_0042bb20`) -- both READ in round 686 (`teleport_network.md`, "The return point (round 686)").
 
 **Leaving dead (server, READ).** `FUN_004df050`, the PC's leave path, asks the life state
 (`cmp al,0x2` at `0x4df129`) and, for a dead PC in the main world, resolves the return point
@@ -381,8 +383,11 @@ srrevamp has no body mode 2.
 
 - Option 1 moves the dead character to its return point (the zone change a warp makes) and then
   revives it there at the load path's pools: HP `trunc(0.4 x MaxHP)` (at least 1), MP kept, or
-  40 % if empty. The **return point is OURS**: srrevamp keeps no `AppointedTeleport`, so it is the
-  place every character enters the world at (`spawnZone`'s arrival, Jangan).
+  40 % if empty. The **return point is retail's since round 686**: the character's
+  `AppointedTeleport` (`character.RecallStore`), else its race's gate, landing on that gate's
+  teleportdata point (`session.returnPointFor`). Before round 686 it was the place every character
+  enters the world at (`spawnZone`'s arrival, Jangan), which stays the fallback without a teleport
+  network (OURS).
 - Option 2 revives in place at 1 + `trunc(0.4 x MaxHP)` (round 550) at level 10 or under, and is
   refused with a reason above it (retail says nothing; OURS).
 - An empty request (a client before round 665) is option 2 at level 10 or under and option 1

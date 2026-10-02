@@ -723,6 +723,18 @@ restated `command:` list), then run `docker compose up -d`; the boot log then re
 on: every gate teleport costs nothing ...`. Remove the line (or set it to `"0"`) and run
 `docker compose up -d` to charge fees again.
 
+**Return points (round 686).** A town gate's "Designate as return/recall point" makes that gate
+the character's return point: the dead window's "Resurrect at the specified point.", the respawn
+with `-player-dead-state` off and a logout while dead all go to the gate's point. A character that
+never designated one returns to its race's gate -- Jangan's for China, Constantinople's for Europe
+(Europe characters come with round 682). It needs the teleport directory above and nothing else:
+there is no flag. The boot log reads `return points: designated at a town gate, else the race's
+gate ... china_found=true europe_found=true`; without `-teleport-dir` it reads `no teleport network:
+every return point is the zone arrival` and returns go where they went before. The database gains
+one column at boot (`characters.appointed_teleport`, 0 for every existing character -- its race's
+gate); no data is rewritten. The designate line needs a client release that carries round 686; an
+older client says "... is not available yet" for it, and everything else works with it.
+
 ## Unique monster notices (on by default)
 
 Round 657: when a unique monster (characterdata rank 3) appears or dies, every character in the

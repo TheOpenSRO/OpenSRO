@@ -110,7 +110,7 @@ var EngineOnlyColumns = map[string]string{
 	"RemainSkillPoint":  "srrevamp keeps SP in internal/skill's own store, not on the character",
 	"GatheredExpPoint":  "a lifetime total beside the per-level ExpOffset",
 	"MP":                "SEE internal/mana: the engine PERSISTS current MP and srrevamp does not",
-	"AppointedTeleport": "a bound return point",
+	"AppointedTeleport": "kept per character since round 686, but not on Character: the characters table's appointed_teleport column through RecallStore, the designated gate's ref object id, 0 for the race's gate",
 	"AutoInvestExp":     "automatic stat investment",
 	"InventorySize":     "kept per character since round 633, but not on Character: the characters table's inventory_size column through InventorySizeStore, as the bag's slots without the engine's 13 equipment slots",
 	"DailyPK":           "the PK economy, which srrevamp has no part of",
