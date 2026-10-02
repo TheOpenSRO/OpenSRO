@@ -1125,6 +1125,34 @@ front-end's next steps.
   cheaper far ring (terrain only, no objects), a nearer far plane or retail's linear fog end at the
   title.
 
+### Character appearance and the creatable catalogue (round 683) — **built: `CharacterAppearance` dresses any of the 52 bodies at the READ Height and Volume, `CharCatalog` derives the create screens' choices from the archive; these are left**
+
+- **The world does not use it yet** (lane W, after S1): bodies by RefObjID + scale through
+  `CharacterAppearance`, replacing `GENDER_BODY_CODE`. That round runs `perf_gate.sh`. It can also
+  turn on the missing-palette-bone rule (`attach_item_from_archive(..., true)`), which the world
+  leaves off today. With it off, a Europe man's heavy legs (`Bone03`) are not drawn in the world. The
+  world also draws no dual axe: the archive has only `axe_01_l/_r.bsr`, which the world never asks
+  for.
+- **The weight half of the missing-bone rule** (`ResObject::FUN_00be2f80` leaves the missing bone's
+  weight out of the sum): not modelled. The position at rest is right.
+- **What vslot 0x34 reads** (INFERRED "a woman": it picks the women's Volume table and the harp's
+  `_f`). Trace `CCompChar` 0xc1f0d0 -> 0xc2bb40's resource +0x28.
+- **Avatars:** attached on top (READ `FUN_00a60ef0`). Which visual wins a slot bit is
+  `charactervisualchange.txt`'s Slot / OverlapSlot / Priority (READ, round 683 review); not modelled.
+- **The body through the armour** (round 683 review): 2-21 % of a worn armour's pixels show the
+  body's own skin at bind (`appearance_probe.gd --showthrough=1`). This is the archive's geometry: the
+  body is outside the armour there, and no client code hiding a body piece was found. Next reads:
+  where `CICPlayer::vslot_025` attaches the body (vslots 0x58/0x5c), and whether a helm's 0x0800 bit
+  hides the body's hair mesh. A retail screenshot of the Europe man in the light set would settle the
+  art question.
+- **The world reads only 7 of itemdata.txt's 63 parts** (`ItemTableReader.TABLE_PATHS`): 3,566 of
+  15,338 item ids, avatars among them, are unknown to World3D and not drawn. The builder and
+  catalogue read through the index (`CharCatalog.index_parts`). Switching the world costs a parse of
+  all 63 parts (~285 ms with the native readers, MEASURED) and needs `perf_gate.sh`.
+- **The plus glow** (INFERRED that plus drives it): the plus is kept on `Body.worn`, not drawn.
+- **`CharacterPreview`** is still the create screen's preview; round 685 replaces it with this
+  builder.
+
 ### The server list and setting/ (round 679) — **built: setting/config.yaml with named servers, the LIST window with each server's status, the logo clear of the box, centred fields and a `*` password; these are left**
 
 `docs/protocol/server_list.md` has everything READ (the status bands and colours, the window, the

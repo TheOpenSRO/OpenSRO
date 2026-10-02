@@ -117,15 +117,41 @@ There is no other "selected" motion.
   neutral). It scales bone groups:
   - for v < 2: `min + (1 - min) * v / 2`; for v >= 2: `1 + (max - 1) * (v - 2) / 2` (0xa5b7e0);
   - so at 2 every group is 1.0.
-- Two {group, min, max} tables, chosen by the model's vslot 0x34 (INFERRED: the sex):
+- Two {group, min, max} tables, chosen by the model's vslot 0x34: 0xec6528 when it is non-zero.
 
 | Table | Groups |
 |---|---|
-| 0xec64c8 | (2, .88, 1.10) (3, .95, 1.11) (8, .92, 1.20) (19, .92, 1.20) (29, .90, 1.15) (33, .90, 1.15) (1, .90, 1.00) |
-| 0xec6528 | (2, .95, 1.10) (3, .95, 1.00) (8, .95, 1.15) (19, .95, 1.15) (29, .90, 1.15) (33, .90, 1.15) (1, .90, 1.08) (37, .80, 1.18) |
+| 0xec64c8 (men, INFERRED) | (2, .88, 1.10) (3, .95, 1.11) (8, .92, 1.20) (19, .92, 1.20) (29, .90, 1.15) (33, .90, 1.15) (1, .90, 1.00) |
+| 0xec6528 (women, INFERRED) | (2, .95, 1.10) (3, .95, 1.00) (8, .95, 1.15) (19, .95, 1.15) (29, .90, 1.15) (33, .90, 1.15) (1, .90, 1.08) (37, .80, 1.18) |
 
-- **OPEN:** what the group numbers index (bone indices of the .bsk? a named group table?). The world
-  lane needs this to apply Volume; Height alone is fully READ.
+**What the group numbers are (READ, round 683; this closes the OPEN):**
+- Each group goes to `CCompChar` vslot 49 (0xc2ca90; the same slot in CCompBldg, CCompSimple and
+  CCompoundObj). It refuses 38 and above (38 is the tables' `&` terminator) and passes the string at
+  **0xed9b68 + group x 0x1c** to 0xc2ca50.
+- Those are 38 std::strings that `FUN_00d79e00` assigns at start-up, in this order: 0 `Bip01`,
+  1 `Bip01 Pelvis`, 2 `Bip01 Spine`, 3 `Bip01 Spine1`, 4 `Bip01 Neck`, 5 `Bip01 Neck1`,
+  6 `Bip01 Head`, 7-17 the left arm (`L Clavicle`, `L UpperArm`, `L Forearm`, `L Hand`, six
+  fingers, `L HandMid`), 18-28 the same for the right, 29-32 `L Thigh`, `L Calf`, `L Foot`,
+  `L Toe0`, 33-36 the same for the right, 37 `Bone01`. So the tables scale **the pelvis (1), the
+  spine (2, 3), both upper arms (8, 19), both thighs (29, 33)** and, in 0xec6528 only, `Bone01` (37).
+- 0xc2ca50 finds the bone by that name in the character's skeletons (0xc2c890) and 0xc4aaf0 stores
+  the factor at CRTBone +0x88 and sets flag 2 in +0x84 (cleared when the factor is exactly 1.0).
+- `RTSkeleton::FUN_00c4a180` (called from the bone update, `CRTBone::vslot_006` and 0xc4bcb0, when
+  flag 2 is set) copies the bone's world matrix, multiplies **rows 1 and 2** (the bone's own Y and Z
+  axes) by the factor, leaves row 0 (the axis along the bone), and stores inverse bind x that matrix
+  at +0x8c. `CObjRendererVS::FUN_00bf0310` uses +0x8c as the bone's skinning matrix when flag 2 is
+  set. Children are composed from the unscaled world matrix.
+- So Volume thickens or thins what is weighted to those bones, across the bone and never along it,
+  and moves no joint. Armour skinned to the body follows it; a weapon on its own skeleton does not.
+- **Which table is whose (INFERRED, two supports):** only the women's skeleton has `Bone01`.
+  Every one of the 52 Figure `.bsr`s names a **Europe** skeleton, China bodies included: the 26 men
+  `prim\skel\char\europe\europeman_skel.bsk`, the 26 women `europewoman_skel.bsk` (MEASURED,
+  round 683 review; `china\chinaman_skel.bsk` is named by one other `.bsr` only). europewoman_skel
+  holds Bone01/Bone02 and europeman_skel does not (MEASURED). And the same vslot 0x34 selects the harp's `_f.bsr` model
+  (`CObjCharacter::FUN_00a5f4f0`). What vslot 0x34 reads (a resource's +0x28, `CCompChar`
+  0xc1f0d0 -> 0xc2bb40) was not traced further.
+- `CharacterAppearance` (client/scripts/ui/character_appearance.gd) applies it as each bone's skin
+  bind pre-multiplied by scale(1, f, f).
 
 ### Picking and highlight (READ)
 
@@ -231,7 +257,17 @@ So guild class 0 none / 1 member / 2 master, academy 0 none / 1 student / 2 guar
 
 - Each of the up to 9 equipped items in the list record is resolved to a visual slot and installed
   with its plus value, the weapon included.
-- Avatar items (type 3/1/13) are installed too.
+  - The slot (READ, `GlobalDataManager::ResolveVisualSlotForItem` 0x9db5e0): an armour piece
+    (TypeID3 1/2/3/9/10/11) by TypeID4 1 head 0, 2 shoulder 2, 3 chest 1, 4 legs 4, 5 hands 3,
+    6 feet 5; a weapon (TypeID3 6) 6; a shield 7; TypeID3 7 8; earring 9, necklace 10, ring 11,
+    else -1. `InstallEquipVisual` draws a mesh for 0..8 only and keeps one visual per slot.
+- Avatar items (TypeID3 13, the 0x680 test) go through `FUN_00a60ef0`, which attaches the avatar's
+  resource (and a second one when +0x34 is set) without removing a slot's visual. Whether an
+  avatar hides the armour under it is OPEN.
+- **Weapon models (READ, `CObjCharacter::FUN_00a5f4f0`):** TypeID4 9 (dual axe) and 13 (dagger)
+  are drawn from the model path's `_l.bsr` and `_r.bsr` (the plain `axe_01.bsr` does not exist,
+  MEASURED); TypeID4 14 (harp) on a body whose vslot 0x34 is set from `_f.bsr`. The create screen's
+  loader (0x80b980) preloads the `_r.bsr` of the same two weapons.
 - INFERRED: plus drives the weapon glow, as in the world.
 
 ### Start (READ, 0x858770)
@@ -913,10 +949,10 @@ deletion. Renders on the box, batched in one `--shots` run. `perf_gate.sh` (it d
 `client/scripts/frontend/charcreate_*.gd`, and **`client/scripts/ui/character_appearance.gd`** (new;
 `CharacterPreview` becomes a thin user of it).
 
-**B1: `CharacterAppearance`**
+**B1: `CharacterAppearance`** (done, round 683)
 - `build(ref_obj_id, scale, items: Array[{id, plus}]) -> Node3D`: the body from characterdata, the
   items in their slots, Height's uniform scale (READ).
-- Volume's bone groups wait on the group-number OPEN; until then they are 1.0, said in the code.
+- Volume's bone groups are READ (section 2) and applied.
 - Used by lanes A and W.
 
 **B2:** the China and Europe screens from their layouts:
@@ -984,7 +1020,17 @@ box. `perf_gate.sh` for B3.
 ## 9. Still OPEN
 
 - Where the client's creatable-id list (0xeedf08) comes from (INFERRED `_RefCharGen`).
-- Volume's bone group numbers (0xec64c8 / 0xec6528).
+- What vslot 0x34 reads (INFERRED: a woman), which picks the Volume table and the harp's `_f`.
+- Whether an avatar hides the armour under it (`FUN_00a60ef0`). What is READ (round 683 review):
+  `textdata\charactervisualchange.txt` gives each visual a Slot bit mask (helm 0x0801, mail 0x0002,
+  shoulder 0x0004, gauntlet 0x0008, pants 0x0010, boots 0x0020, weapon 0x0040, hair 0x0800), an
+  OverlapSlot, a group and a Priority (armour 250, avatars 60-110); `CObjCharacter::FUN_00a5fe00`
+  ORs `Slot & ~OverlapSlot` into +0x174 and `FUN_00a5da10` / `FUN_00a611e0` arbitrate the visuals
+  by it. The arbitration itself is not modelled.
+- What keeps the body's own pieces from showing through worn ones, if anything does. Traced
+  (round 683 review) and nothing found that hides a body mesh: see WORLD_ISSUES round 683, Review.
+- The weight half of the missing-palette-bone rule (`ResObject::FUN_00be2f80` leaves a missing
+  bone's weight out of the sum; this client models only the entry, round 683).
 - The name bitmap at 0x8c3cb0, and the forbidden-word lists' source.
 - The deletion delay in `_DeleteCharTemporal`.
 - Restore's u8 vs u16 error code.
