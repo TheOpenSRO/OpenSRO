@@ -1159,6 +1159,37 @@ front-end's next steps.
   customize screen draws through `CharCreatePreview`. Delete it once lane A's select (round 684)
   is merged and confirmed not to use it.
 
+### The select screen (rounds 684, 688) — **built: retail's CPSCharacterSelect and race select; round 688 fixed the lizard's loop, the "Name Check" overflow and the hour's re-pick; these are left**
+
+`docs/protocol/charselect.md` sections 2 and 3; WORLD_ISSUES rounds 684 and 688.
+- **The front-end's hour is the user's call** (charselect.md section 8, decision 13): retail draws
+  select and customize at the hour the title picked (READ, round 688), so one title visit in four
+  is 23:00, measured 24 % darker than 14:00. Kept as retail.
+- ~~**The lizard's setter's 200**~~ READ (round 688's review): the one-shot's 200 ms fade-out
+  (`CRTAniOneShot::vslot_002` case 4 -> 5, `AniMixer::FUN_00c554e0(clip, 0, 200)`), fade-in 0; no
+  visible effect with one clip, not modelled.
+- **In-world characters use Godot's tuned lighting, not retail's character formula** (round 688's
+  review). The select bodies, the customize preview, the equipment window and the portrait now all
+  draw characters with PlayerPortrait's materials (ambient x 0.6 + n.l x material x diffuse x 0.6,
+  then texture x 2; READ) -- the select bodies with the backdrop's Filmic tone mapping undone
+  (`CharSelectStage._undo_tonemap`). The world's players, NPCs and monsters still wear Godot's lit
+  materials under DirectionalLight3D energy 0.3 (OURS since round 43), MEASURED 1.3-1.8x darker on
+  select before the change. A later round, after round 689 (world bodies) lands: dress the world's
+  characters the same way, with the perf gate.
+- **Model fades do not draw on GL Compatibility** (READ, Godot 4.2.2 source, not measured on screen):
+  `GeometryInstance3D.transparency` is stored as `force_alpha` in
+  `RenderGeometryInstanceBase::set_transparency` and never read by the GLES3 renderer
+  (`rasterizer_scene_gles3.cpp` uses its own `force_alpha` only for the overdraw debug mode). So the
+  select models' READ 1.0 s fade-in and the 0xcc opacity of a character pending deletion (round 684,
+  `CharSelectStage._apply_alpha`) are likely invisible. Measure, then drive the opacity through the
+  characters' material (an alpha uniform) instead.
+- **The sun's direction from the hour** (`SWorld::vslot_004`) is not applied anywhere (round 678's
+  OPEN); a night select keeps the day's light direction.
+- **QA hooks** (round 688, `CharSelectQa`): `SRREVAMP_QA_SELECT_RACE`, `SRREVAMP_QA_LIZARD_PROBE`,
+  `SRREVAMP_QA_SELECT_LUMA` (with each body against its preview), `SRREVAMP_QA_SELECT_FRAMES`,
+  `SRREVAMP_QA_SELECT_GODOT_LIGHT` (the old materials, for a before/after); `client/tools/frontend_at_scale.tscn` measures every front-end
+  button's words against its art at a UI scale.
+
 ### The customize screens (round 685) — **built: China and Europe from their own layouts, every control, the READ ranges and rules, the preview with the READ spin, zoom and idle, the turning 98/168 and 105/79 backdrops; these are left**
 
 `docs/protocol/charselect.md` section 4 has everything READ; WORLD_ISSUES round 685 the evidence.

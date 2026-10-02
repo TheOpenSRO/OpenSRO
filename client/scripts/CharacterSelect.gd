@@ -558,9 +558,7 @@ func _begin_stage() -> void:
 	stage = CharSelectStage.new()
 	stage.name = "CharSelectStage"
 	add_child(stage)
-	var phase := CharSelectHandoff.day_phase
-	if phase < 0.0:
-		phase = TitleIntro.pick_day_phase()
+	var phase := CharSelectHandoff.front_end_phase()
 	_has_3d = stage.begin(phase)
 	if not _has_3d:
 		stage.queue_free()
@@ -763,6 +761,7 @@ func _process(delta: float) -> void:
 			_qa_print_anchors()
 		S.LIST:
 			_hover(_pick_mouse())
+			_qa_list_tick(delta)
 			_qa_reload_tick()
 		S.ZOOM:
 			if done:
@@ -1338,6 +1337,188 @@ func _on_disconnected() -> void:
 		get_tree().create_timer(2.0).timeout.connect(_leave_to_login)
 
 # --- QA ---------------------------------------------------------------------------------------
+
+## Visits of this screen in this process (the QA luminance line's number).
+static var _qa_visits := 0
+var _qa_list_s := -1.0
+var _qa_luma_done := false
+
+## CharSelectQa's hooks (round 688, OURS, QA only): SRREVAMP_QA_SELECT_RACE
+## presses Create once the list is up; SRREVAMP_QA_SELECT_LUMA measures the
+## frame 1.5 s after it (the models' READ 1.0 s fade done).
+func _qa_list_tick(delta: float) -> void:
+	if _qa_list_s < 0.0:
+		_qa_list_s = 0.0
+		_qa_visits += 1
+	_qa_list_s += delta
+	if OS.get_environment("SRREVAMP_QA_SELECT_LUMA") != "" and not _qa_luma_done and _qa_list_s >= 1.5:
+		_qa_luma_done = true
+		_qa_luma()
+	_qa_frame_tick()
+	if OS.get_environment("SRREVAMP_QA_SELECT_RACE") != "" and _qa_list_s >= 2.0 and _slots.size() < LobbyNet.MAX_CHARACTERS:
+		print("QA SELECT: pressing Create")
+		_on_create_pressed()
+
+func _qa_luma() -> void:
+	if stage == null or stage.backdrop == null:
+		return
+	var img := get_viewport().get_texture().get_image()
+	if img == null:
+		return
+	var cam := stage.camera()
+	var w := img.get_width()
+	var h := img.get_height()
+	var band1 := _frame.band_bottom_edge() if _frame != null and _frame.layout != null else int(h * 172.0 / 1200.0)
+	var down := _frame.role_def("screendown") if _frame != null and _frame.layout != null else null
+	var band2 := int(_frame.scaled(down.rect).position.y) if down != null else int(h * 1030.0 / 1200.0)
+	# The viewport image is in physical pixels; the bands in the window's.
+	var k := float(w) / maxf(size.x, 1.0)
+	var band := Rect2i(0, int(band1 * k), w, int((band2 - band1) * k))
+	var chars: Array = []
+	for d in stage.drawn:
+		var dd: CharSelectStage.Drawn = d
+		if dd.body != null and dd.holder.visible:
+			chars.append(CharSelectQa.screen_rect(cam, dd.body.global_transform, dd.bounds))
+	var char_sum := 0.0
+	var char_n := 0
+	for r in chars:
+		var m: float = CharSelectQa.mean_luma(img, r)
+		if m >= 0.0:
+			char_sum += m
+			char_n += 1
+	var world = stage.backdrop.world
+	var light := world.get("directional_light") as DirectionalLight3D
+	var env := (world.get("world_environment") as WorldEnvironment).environment
+	print("QA SELECT LUMA visit %d phase %.4f backdrop %.1f characters %.1f (%d) light %s x %.2f ambient %s x %.2f tonemap %d exposure %.2f frame %d" % [
+		_qa_visits, float(world.get("_env_time")), CharSelectQa.mean_luma(img, band, chars),
+		char_sum / char_n if char_n > 0 else -1.0, char_n, light.light_color, light.light_energy,
+		env.ambient_light_color, env.ambient_light_energy, env.tonemap_mode, env.tonemap_exposure, Engine.get_frames_drawn()])
+	var dir := OS.get_environment("SRREVAMP_QA_SELECT_SHOT_DIR")
+	if dir != "":
+		img.save_png("%s/select_visit%d.png" % [dir, _qa_visits])
+	await _qa_body_luma(img)
+
+## Round 688's review (OURS, QA): each body's own pixels on select against the
+## same character in the customize screen's preview (CharCreatePreview, the
+## backdrop's zone light, the zoomed-out pose), mean Rec. 709 luma of each.
+## The body's pixels are those that change when it is hidden, its meshes'
+## shadows switched off for that comparison so the ground they darken is not
+## counted; the luma itself is read from the real frame `img`.
+func _qa_body_luma(img: Image) -> void:
+	var cam := stage.camera()
+	var meshes: Array[GeometryInstance3D] = []
+	var casts: Array = []
+	for d in stage.drawn:
+		var dd: CharSelectStage.Drawn = d
+		if dd.body == null:
+			continue
+		for n in dd.body.find_children("*", "GeometryInstance3D", true, false):
+			meshes.append(n as GeometryInstance3D)
+			casts.append((n as GeometryInstance3D).cast_shadow)
+			(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	await _qa_frames(3)
+	var unshadowed := get_viewport().get_texture().get_image()
+	var shown := []
+	for d in stage.drawn:
+		shown.append((d as CharSelectStage.Drawn).holder.visible)
+		(d as CharSelectStage.Drawn).holder.visible = false
+	await _qa_frames(3)
+	var empty := get_viewport().get_texture().get_image()
+	for i in range(stage.drawn.size()):
+		(stage.drawn[i] as CharSelectStage.Drawn).holder.visible = shown[i]
+	for i in range(meshes.size()):
+		meshes[i].cast_shadow = casts[i]
+	var zl = stage.backdrop.world.get("_portrait_zone_light")
+	for k in range(stage.drawn.size()):
+		var dd: CharSelectStage.Drawn = stage.drawn[k]
+		if dd.body == null or not shown[k]:
+			continue
+		var r := CharSelectQa.screen_rect(cam, dd.body.global_transform, dd.bounds).intersection(Rect2i(Vector2i.ZERO, img.get_size()))
+		var sum := 0.0
+		var n := 0
+		for y in range(r.position.y, r.end.y):
+			for x in range(r.position.x, r.end.x):
+				var a := unshadowed.get_pixel(x, y)
+				var b := empty.get_pixel(x, y)
+				if absf(a.r - b.r) + absf(a.g - b.g) + absf(a.b - b.b) > 0.03:
+					var c := img.get_pixel(x, y)
+					sum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+					n += 1
+		var select_luma := sum / n * 255.0 if n > 0 else -1.0
+		# The same character in the customize preview.
+		var pv := CharCreatePreview.new()
+		pv.size = Vector2i(512, 768)
+		pv.appearance = stage.appearance
+		add_child(pv)
+		if zl is Array and (zl as Array).size() == 2:
+			pv.set_zone_light(zl[0], zl[1])
+		var items: Array = []
+		items.append_array(dd.record.items)
+		items.append_array(dd.record.avatars)
+		pv.show_character(dd.record.ref_obj_id, dd.record.scale, items, true)
+		pv.set_yaw(0.0)
+		pv.set_pose(CharCreateView.pose_for(false, pv.height_factor(), pv.body != null and pv.body.is_woman))
+		await _qa_frames(3)
+		var pimg := pv.get_texture().get_image()
+		var psum := 0.0
+		var pn := 0
+		for y in range(pimg.get_height()):
+			for x in range(pimg.get_width()):
+				var c := pimg.get_pixel(x, y)
+				if c.a > 0.99:
+					psum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+					pn += 1
+		var preview_luma := psum / pn * 255.0 if pn > 0 else -1.0
+		var vis := 0
+		var hid := 0
+		var portrait_mats := 0
+		for m in dd.body.find_children("*", "MeshInstance3D", true, false):
+			if (m as MeshInstance3D).visible:
+				vis += 1
+			else:
+				hid += 1
+			var mo := (m as MeshInstance3D).material_override
+			if mo is ShaderMaterial and (mo as ShaderMaterial).shader != null and (mo as ShaderMaterial).shader.code.contains("modulate_scale"):
+				portrait_mats += 1
+		print("QA SELECT BODY %d %s (%d) select %.1f over %d px, preview %.1f over %d px, ratio %.2f; meshes %d shown, %d hidden, %d in the character light" % [k, dd.record.char_name,
+			dd.record.ref_obj_id, select_luma, n, preview_luma, pn, preview_luma / select_luma if select_luma > 0.0 else 0.0, vis, hid, portrait_mats])
+		pv.queue_free()
+
+## SRREVAMP_QA_SELECT_FRAMES=1 (OURS, QA, round 688's review): from 3 s to 8 s
+## after the list is up, the mean and worst wall time of a frame and the
+## viewport's measured render time on the CPU and the GPU (the frame is
+## capped by vsync on the box, so the render times are the cost), then quit.
+var _qa_frame_us := -1
+var _qa_frame_sum := 0
+var _qa_frame_n := 0
+var _qa_frame_max := 0
+var _qa_render_cpu := 0.0
+var _qa_render_gpu := 0.0
+func _qa_frame_tick() -> void:
+	if OS.get_environment("SRREVAMP_QA_SELECT_FRAMES") == "":
+		return
+	var vp := get_viewport().get_viewport_rid()
+	if _qa_list_s < 3.0:
+		RenderingServer.viewport_set_measure_render_time(vp, true)
+		return
+	var now := Time.get_ticks_usec()
+	if _qa_frame_us >= 0:
+		var dt := now - _qa_frame_us
+		_qa_frame_sum += dt
+		_qa_frame_n += 1
+		_qa_frame_max = maxi(_qa_frame_max, dt)
+		_qa_render_cpu += RenderingServer.viewport_get_measured_render_time_cpu(vp)
+		_qa_render_gpu += RenderingServer.viewport_get_measured_render_time_gpu(vp)
+	_qa_frame_us = now
+	if _qa_list_s >= 8.0 and _qa_frame_n > 0:
+		print("QA SELECT FRAMES %d frames, mean %.2f ms, worst %.2f ms, render cpu %.3f ms gpu %.3f ms (%s light)" % [_qa_frame_n,
+			_qa_frame_sum / 1000.0 / _qa_frame_n, _qa_frame_max / 1000.0, _qa_render_cpu / _qa_frame_n, _qa_render_gpu / _qa_frame_n,
+			"Godot" if OS.get_environment("SRREVAMP_QA_SELECT_GODOT_LIGHT") != "" else "character"])
+		get_tree().quit()
+
+func _qa_frames(n: int) -> void:
+	for i in range(n):
+		await RenderingServer.frame_post_draw
 
 func _qa_reload_tick() -> void:
 	var want := OS.get_environment("SRREVAMP_QA_SELECT_RELOAD")

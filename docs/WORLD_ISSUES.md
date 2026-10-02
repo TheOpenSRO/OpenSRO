@@ -7267,6 +7267,229 @@ uncommitted work. It asked for six fixes:
 After the fixes, `cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...`:
 build and vet clean, 64 packages ok, 0 failing.
 
+## Six-hundred-and-eighty-eighth round: the race-select lizard walks in once and stays, "Name Check" sits centred inside its button at every UI scale, and the select screen's darkness is traced to retail's own random hour
+
+The user (2026-10-02, on v0.1.475): "The animated lizard when selecting the race disappears and
+then come backs. That needs fixed. Also the first time I saw all of the character it was unsually
+dark. Then after doing it again a few times it was bit brighter but probably not as bright as it
+should be. ... Also the name check text in the buttom is misaligned" (their screenshot: the words
+spill past the button's right edge). They play at ~4K with UI scale ~1.95. Labels: READ
+(sro_client.exe's dump and asm on the box), MEASURED (the box, RX 7600, real archives), INFERRED,
+OURS. Front-end files only; no World3D or shared lighting code changed, so no perf gate.
+
+### 1. The lizard: a one-shot clip played as a loop
+
+**MEASURED, before** (`SRREVAMP_QA_LIZARD_PROBE`, `CharSelectQa.lizard_sample`: each frame the
+lizard's 1,143 vertices skinned on the CPU exactly as Godot skins them, tested against the camera's
+frustum and projected; and the box Godot 4.2.2's GLES3 `MeshStorage::mesh_get_aabb` gives the
+instance, tested as the scene cull does): over 602 frames of the race view, **174 had no vertex of
+the lizard in the frustum**. They are clip time 0 to 0.73 s of every 2.666 s loop: the lizard
+walked in from below the frame, grew to a 480x270 px patch by the idols, then jumped back off-screen
+and walked in again. Its meshes were visible in the tree on every frame and the cull box agreed with
+the vertices (kept when they were in view), so culling, visibility, fades and the MapAnimation range
+were not involved; the frames rendered on the box show the same (`liz_montage_before.jpg`).
+
+**MEASURED, the clip** (`client/tools/probe_ban_motion.gd`, new): `interface_lizard_move.ban` has
+81 keys over 2666 ms and **IsCyclic 0**. Its Bip01 walks 4.16 units in model space, from
+(7.02, 0.29, -9.96) to (3.47, 0.29, -7.79) -- exactly where `interface_lizard_stand` (cyclic,
+15 s) holds it. `_run` is IsCyclic 0 too.
+
+**READ** (docs/protocol/BSR_FORMAT.md, rounds 645-647): the client plays a clip with IsCyclic 0
+through `CRTAniOneShot` (0xc75ce0), once, and after it the mixer unlinks the clip and the bones
+keep their last pose. Retail's race view (`CPSCharacterSelect::vslot_012` case 7, 0x85d80c) calls
+the lizard's animation setter `(1, 0, 200, 0, 1.0, 1.0)` (`CCObjAnimation::vslot_003` 0xa5b6d0 ->
+`FUN_00a5b550` -> the compound's slot 29/30, 0xc31f00/0xc31de0) on every arrival, and updates it
+each frame only while +0x220 is set (`FUN_00a5ac80`). So the lizard walks in once from below the
+frame and stops by the idols in the stand's pose; a second Create walks it in again.
+
+**Changed:** `CharSelectStage` poses the lizard with the clip's own IsCyclic
+(`lizard_clip_loops`) instead of always looping.
+
+**MEASURED, after** (same probe, 290 frames): no vertex in view on the first 26 frames only (the
+walk-in's first 0.8 s), then the lizard stays in view with a constant screen box (164, 439,
+479 x 279) and a still root from 2.67 s to the end of the 8 s run (`liz_montage_after.jpg`).
+
+The setter's 200 is a 200 ms fade-out at the end of the one-shot (READ by the review, below); with
+one clip it has no visible effect.
+
+### 2. The select screen's brightness: retail's random hour, not a lighting fault
+
+**MEASURED** (`SRREVAMP_QA_SELECT_LUMA`: 1.5 s after the list is up, the frame's mean Rec. 709 luma
+over the 3D band less the characters, and over the characters' projected boxes, with the light the
+backdrop was given):
+
+| Hour (title phase) | Backdrop | Characters | Light (x 0.30) | Ambient |
+|---|---|---|---|---|
+| 5:00 (0.2083) | 136.1 | 108.6 | (0.63, 0.64, 0.68) | (0.63, 0.66, 0.62) |
+| 14:00 (0.5833), visits 1, 2, 3, 4, 5 in one process | 141.1 each | 112.0 each | (0.62, 0.61, 0.56) | (0.79, 0.71, 0.66) |
+| 18:00 (0.75) | 138.5 | 109.2 | (0.91, 0.87, 0.74) | (0.79, 0.57, 0.43) |
+| 23:00 (0.9583) | 107.4 | 89.8 | (0.48, 0.50, 0.65) | (0.42, 0.46, 0.55) |
+
+At one hour every visit is identical to the decimal: nothing left over from a previous screen, no
+late light, no first-visit difference. What changes is the hour: 23:00 is 24 % darker than 14:00
+(backdrop) and 20 % (characters). Region 105/81 is environment 33 in all 36 blocks (MEASURED), so
+the block-0 environment the world applies is the camera's too. As a picture only, the reference
+`fe_ref1.jpg` (a private server, hour unknown) measures 115 over its 3D band, our 14:00 frame 127
+over the same crop and 23:00 99 (`luma_montage_before.jpg`: 14:00, 23:00, 5:00, 18:00).
+
+**READ, the hour** (closing charselect.md's INFERRED): SWorld is one global (0x1101950) built once
+by the static initialiser 0xd768f0 -> `Map::FUN_00a2f370`, which sets the day phase +0x26a3 to 0.5
+and the clock flag +0x2f18 to 0. The phase's only writers are that constructor, `vslot_020` and the
+world clock at 0xa2d130 (phase += the float 0x110f7fc x 0.0005, wrapping at 1.0), which runs only
+while +0x2f18 is non-zero -- and nothing but the constructor writes +0x2f18 (no other
+`[reg+0x2f18]` store, no absolute 0x1104868 store). `CPSTitle::OnCreate` calls `vslot_020` with
+`rand() & 3` of its four phases unconditionally (0x86b278). The environment graphs are read at the
+phase itself (`Map::FUN_00a1baf0`, 0xa1bb0c). So retail's select and customize show the hour the
+title last picked -- 5, 14, 18 or 23 o'clock -- and a new one each time the title is shown, which
+is what the user saw: "very dark" at a 23:00 title, "a bit brighter" after returning to the title.
+Within one title visit ours already kept the hour (`CharSelectHandoff.day_phase`).
+
+**Changed (OURS, small):** when no title set the hour (a screen opened directly: QA runs), select
+and customize each picked a NEW random hour on every visit; `CharSelectHandoff.front_end_phase()`
+now picks it once and keeps it, as the title's would be.
+
+**Decided, not changed:** the hour stays retail's. Pinning the front end to a daytime hour would be
+OURS against READ; it is recorded as decision 13 for the user (charselect.md section 8). The review
+(below) found the darkness this round missed: the bodies themselves drew 1.3-1.8x darker than retail's
+character formula, at every hour.
+
+### 3. "Name Check": a label sized before it had its face
+
+**READ** (`pscharactercreatechina.txt` / `_europe.txt`, MEASURED from the archive): `GDR_BTN_CHECK`
+is 75 x 25 at (156, 57) in the Custom panel, `overlap.ddj` (a 75 x 25 DDS), FontIndex 0 (12 px),
+HAlign 1 and VAlign 1 (centred), ClientRect 0.
+
+**MEASURED, before** (`client/tools/frontend_at_scale.tscn`, new: each front-end screen at a UI
+scale in 3840x2160, every button's rect and its words' rect -- the string's advance width in the
+face and size the label draws with, placed by the label's alignment -- in canvas units):
+
+| Scale | Button | Words | Past the right edge | Centre off |
+|---|---|---|---|---|
+| 1.0 | x 231, 75 wide | x 244.5, 71 wide | 9.5 | +11.5 |
+| 1.5 | 75 | 70 | 9.0 | +11.5 |
+| 1.95 | 75 | 70 | 9.0 | +11.5 |
+| 2.0 | 75 | 70 | 9.0 | +11.5 |
+
+The same at every scale: the label was 98 units wide. `CharacterCreate._button` sized it with
+`_place_centred` before it was in the tree, where its minimum width came from Godot's default face
+(98 for "Name Check"); a Control never shrinks below a size it was given, so in the tree the client
+face's 71-unit string was centred in 98 units. "Female" had the same fault, smaller (centre -7
+against the inset's -10). Every other front-end button measured inside and centred: Confirm and
+Cancel on both create screens, the confirm box's Create and Cancel, select's Start, Create, Delete,
+Restore and the three Cancels and its delete confirm, login's Connect, Exit and Register.
+
+**Changed:** `CharacterCreate.place_button_text` anchors the words to the button less its
+ClientRect (so they re-fit when the face arrives and whenever the button resizes), growing both
+ways if a string is ever wider than the button. Round 672's crisp text and round 684's one font per
+process are untouched (the label still takes the screen's theme face).
+
+**MEASURED, after:** "Name Check" 2.0-2.5 units in from each side and centre off 0.0 at 1.0, 1.5,
+1.95 and 2.0, China and Europe, and in a 1280x720 window; Female -10 / Male +10, exactly the
+ClientRect inset (INFERRED: the radio mark's room). The words fill 70-71 of the 75 units, as
+retail's 12-px face would (INFERRED: its GGO_BITMAP Arial at FontIndex 0).
+Crops at 1.95: `nc_before_195.png`, `nc_after_195.png`.
+
+### 4. Tests
+
+`client/scripts/frontend/frontend_fixes_test.gd` (new, synthetic): a non-cyclic one-bone clip
+plays once and holds its last key through the stage's own `_process`, a cyclic one still loops; the
+front-end hour is picked once and kept; a create button's words box is the button less its
+ClientRect, centred, inside it and following its size, when the face in the tree is narrower than
+the default face. **NEGATIVE** (the base bf25e7e with this file and `CharSelectQa` copied in):
+
+```
+FAIL a clip that is not cyclic plays once and keeps its last pose at 1.5 s and 2.5 s (got 2, 2)
+FAIL CharSelectHandoff.front_end_phase exists
+FAIL 'Name Check': the words' box is the button less its ClientRect, [P: (156, 57), S: (75, 25)] (got [P: (156, 57), S: (98, 25)])
+FAIL 'Name Check': the words are centred in it (text [P: (182, 61), S: (46, 17)])
+FAIL 'Name Check': the words' box follows the button's size
+FAIL 'Female': the words' box is the button less its ClientRect, [P: (166, 95), S: (50, 25)] (got [P: (166, 95), S: (56, 25)])
+FAIL 'Female': the words are centred in it (text [P: (180, 99), S: (28, 17)])
+FAIL 'Female': the words' box follows the button's size
+FAILURES: 8
+```
+
+On this branch: ALL PASS; `remote_godot.sh check` ALL LOAD; `remote_godot.sh tests`
+204 suites, 0 failing.
+
+### 5. OPEN
+
+- The sun's direction from the hour
+  (`SWorld::vslot_004`, round 678's OPEN) -- a night select keeps the day's light direction.
+- Decision 13 (the front-end's hour) is the user's.
+- New QA hooks (OURS, off unless set): `SRREVAMP_QA_SELECT_RACE`, `SRREVAMP_QA_LIZARD_PROBE`
+  (+ `SRREVAMP_QA_SELECT_SHOT_DIR`, `SRREVAMP_QA_LIZARD_SHOT_EVERY`), `SRREVAMP_QA_SELECT_LUMA`.
+
+### Review (round 688's review: all three fixes held, the READ confirmed; one HIGH and two LOW, fixed in a follow-up commit)
+
+**HIGH: the select bodies were lit about 1.8x darker than the same character on the customize
+preview at the same hour** -- the user's "probably not as bright as it should be". The select screen
+hung its bodies in the backdrop with Godot's lit materials under World3D's DirectionalLight3D at its
+tuned energy 0.3 (OURS since round 43); the customize preview (round 685), the equipment window and
+the portrait draw characters with PlayerPortrait's materials, retail's own formula (READ, its
+header: vertex colour = 0.6 x ambient + max(0, n.l) x material x diffuse, diffuse = environment
+channel 2 clamped x 0.6, ambient = channel 3 clamped; then texture x colour x 2, MODULATE2X).
+
+- **Changed:** `CharSelectStage._dress` gives each body PlayerPortrait's materials fed the backdrop's
+  zone light (`_portrait_zone_light`), as `CharCreatePreview` does, after the body is built -- so the
+  round 687 hides and the round 685 default wear are untouched (MEASURED: 7/6, 10/4 and 8/5 meshes
+  shown/hidden on the three bodies with either light; every mesh in the character light after).
+- **The backdrop's tone mapping:** the first after-run came out 13-37 % BRIGHTER than the preview.
+  READ (Godot 4.2.2 `drivers/gles3/shaders/scene.glsl` 1369 and 1590-1593, `tonemap_inc.glsl` 42-58
+  and 96-108): an unshaded ALBEDO is decoded to linear, times exposure, Filmic-mapped over the mapped
+  white, and encoded again -- World3D's environment is Filmic (tonemap_mode 2), the preview's
+  SubViewport linear (PlayerPortrait: no change, MEASURED round 635). So the characters' colour is
+  pre-inverted through that chain in their shader (`_undo_tonemap`: the Filmic quadratic solved
+  exactly, the decode cubic by Newton's method; OURS on READ source), and the frame carries the
+  client's value.
+- **MEASURED** (`SRREVAMP_QA_SELECT_LUMA`'s per-body line: each body's own pixels -- those that change
+  when it is hidden, its shadows off for that mask -- against the same character, same items, built
+  in a CharCreatePreview in the same process with the backdrop's zone light, zoomed out; mean
+  Rec. 709 luma; `SRREVAMP_QA_SELECT_GODOT_LIGHT=1` keeps the old materials on the same build):
+
+| Hour | Character | Select before | Select after | Preview | Preview / select, before -> after |
+|---|---|---|---|---|---|
+| 14:00 | QA_Bram (1909) | 58.8 | 89.2 | 94.0 | 1.60 -> 1.05 |
+| 14:00 | QA_Aria (1923) | 86.7 | 138.6 | 141.1 | 1.63 -> 1.02 |
+| 14:00 | QA_Wei (1919, seated) | 59.8 | 92.0 | 79.0 | 1.32 -> 0.86 |
+| 23:00 | QA_Bram | 32.6 | 56.8 | 59.4 | 1.82 -> 1.04 |
+| 23:00 | QA_Aria | 50.0 | 89.7 | 91.4 | 1.83 -> 1.02 |
+| 23:00 | QA_Wei (seated) | 32.1 | 61.0 | 49.9 | 1.55 -> 0.82 |
+
+  The standing bodies are within 2-5 % of their preview. The seated one is 14-18 % brighter than the
+  standing preview (INFERRED: the sitting pose turns more of the body up to the light; the preview
+  stands). Without the tone-mapping undo the ratios were 0.89 / 0.86 / 0.73 at 14:00 and
+  0.87 / 0.81 / 0.68 at 23:00.
+- **Cost** (`SRREVAMP_QA_SELECT_FRAMES`, 3 s to 8 s after the list, 300 frames, three runs each,
+  alternating; the box is vsync-capped at 16.67 ms so the viewport's measured render time is the
+  cost): old light CPU 1.930 / 1.941 / 1.923 ms, GPU 1.947 / 1.835 / 1.814 ms; character light CPU
+  2.002 / 1.945 / 1.826 ms, GPU 1.872 / 1.830 / 1.758 ms -- no difference beyond run-to-run noise.
+  No World3D code changed, so no perf gate.
+- Shot: scratchpad `bodies_before_after.jpg` (14:00 old / new, 23:00 old / new).
+
+**LOW, the lizard's 200 (READ by the review):** a 200 ms fade-OUT at the end of the one-shot
+(`CRTAniOneShot::vslot_002` case 4 -> 5 via `AniMixer::FUN_00c554e0(clip, 0, 200)`); the fade-in is
+0, and with one clip on the mixer it has no visible effect. Closed in charselect.md sections 3 and 9
+and TODO.
+
+**LOW, the hour's writers:** `charselect_handoff.gd` said only CPSTitle sets the hour.
+`CPSMission::vslot_012` also calls `SWorld::vslot_020` every frame from the game clock, and two console
+handlers do (0x53a4d0, 0x53a520); CPSTitle is the only caller on the front-end path. Corrected there
+and in charselect.md.
+
+**Found on the way (READ Godot 4.2.2 source, not measured on screen; TODO):**
+`GeometryInstance3D.transparency` is stored by `RenderGeometryInstanceBase::set_transparency` and never
+read by the GLES3 renderer, so round 684's model fades (the 1.0 s fade-in, 0xcc for a character
+pending deletion) are likely not drawn on GL Compatibility.
+
+**TODO added:** the world's own characters still use Godot's tuned lighting, not retail's character
+formula -- for a round after 689 (world bodies), with the perf gate.
+
+**Tests:** `frontend_fixes_test.gd` gains the select-light check (the body's material is
+PlayerPortrait's formula with the tone-mapping undo, its colour kept). NEGATIVE on 12d93b6 (the
+file copied in): `FAIL CharSelectStage dresses its bodies (_dress exists)` -- `FAILURES: 1`. This
+branch: ALL PASS; `remote_godot.sh check` ALL LOAD; `remote_godot.sh tests` 204 suites, 0 failing.
+
 ## Six-hundred-and-eighty-seventh round: the body's own skin no longer shows through worn armour -- each item hides the body pieces it covers, as retail's client does
 
 Round 683 built the bodies and found the body's own skin showing through worn armour on 2-21 % of

@@ -71,7 +71,20 @@ CPSTitle --login--> CPSCharacterSelect (list) --Create--> [same process] race se
 | Create Europe | `CPSCharacterCreateEurope` (0x853990, per frame 0x8542d0) | 0x694f = 105/79, Constantinople plaza | the same turn | preview model | none pushed |
 
 - **Time of day (READ):** none of these screens calls `SWorld::vslot_020`, so the title's random
-  hour carries over (round 678, INFERRED).
+  hour carries over (round 678, INFERRED). **Round 688 closes the inference:** SWorld is one global
+  (0x1101950) built once at start-up (static initialiser 0xd768f0 -> `Map::FUN_00a2f370`, which
+  sets the phase +0x26a3 to 0.5 and the clock flag +0x2f18 to 0). The phase's only writers are that
+  constructor, `vslot_020` (called on the front-end path only by CPSTitle; in the game by
+  `CPSMission::vslot_012` every frame from the game clock, and by two console handlers 0x53a4d0 and
+  0x53a520 -- round 688's review) and the world clock at 0xa2d130 (phase += the frame-time float 0x110f7fc
+  x 0.0005, wrapping at 1.0), and the clock runs only while +0x2f18 is non-zero -- which nothing
+  but the constructor writes (no other `[reg+0x2f18]` and no absolute 0x1104868 store in the asm).
+  CPSTitle's OnCreate calls `vslot_020` with one of its four phases unconditionally (0x86b278). So
+  the select and create screens show the hour the title last picked: 5:00, 14:00, 18:00 or 23:00,
+  a new one each time the title is shown. The environment graphs are read at that phase
+  (`Map::FUN_00a1baf0` 0xa1bb0c). MEASURED (round 688, region 105/81 is environment 33 in all 36
+  blocks): the select scene's mean luma is 136 / 141 / 139 / 107 at the four hours, the same on
+  every visit at one hour.
 - **The select screen's black fade** (READ, window 21): from alpha 0x80 to 0 over 0.5 s on open.
   `FUN_00bbda70(1)` runs before the region is set; what it does is OPEN.
 - **The create screens** fade in from black over 0.5 s, then windows 3 (title) and 5 (China's
@@ -339,7 +352,22 @@ So guild class 0 none / 1 member / 2 master, academy 0 none / 1 student / 2 guar
 - **The lizard** is shown only now (never in the list view) and switches from clip index 0 to 1.
   - Its clips, in .bsr order, are `interface_lizard_stand`, `_move`, `_run` (MEASURED); index 1 is
     `_move` (INFERRED).
-  - The code never moves it. Whether `_move` carries root motion is OPEN.
+  - The code never moves it. **`_move` carries the motion itself and plays once (round 688):**
+    - MEASURED (`client/tools/probe_ban_motion.gd`): `interface_lizard_move` has 81 keys over
+      2666 ms and **IsCyclic 0**; its Bip01 walks 4.16 units, from (7.02, 0.29, -9.96) to
+      (3.47, 0.29, -7.79) in model space -- exactly the stand clip's Bip01 (cyclic, 15 s).
+      `_run` (IsCyclic 0 too) carries its Bip01 5.38 units from the stand's spot.
+    - READ (BSR_FORMAT.md, "Looping" and "After a one-shot"): a clip with IsCyclic 0 is played by
+      `CRTAniOneShot` once, and after it the bones keep their last pose.
+    - So on arrival the lizard walks in from below the frame (its start is outside the camera's
+      view: MEASURED, no vertex in the frustum for the first 0.73 s) and stops by the idols, in the
+      stand's pose. Each arrival restarts it (case 7 calls the setter every time).
+    - The setter's other arguments `(1, 0, 200, 0, 1.0, 1.0)` go through
+      `CCObjAnimation::vslot_003` 0xa5b6d0 -> `FUN_00a5b550` (clamps the fourth to 1.0) to the
+      compound's slot 29 0xc31f00 / slot 30 0xc31de0, which queue a command at compound+0x1c0.
+      **READ (round 688's review): the 200 is a 200 ms fade-OUT at the end of the one-shot**
+      (`CRTAniOneShot::vslot_002` case 4 -> 5 via `AniMixer::FUN_00c554e0(clip, 0, 200)`); the
+      fade-in is 0. With one clip on the mixer it has no visible effect, so it is not modelled.
 
 **Hover:** each idol is ray-picked. The hovered idol's panel fades in over 1/3 s and the other's
 fades out at the same rate. No glow, no idol animation.
@@ -1258,6 +1286,13 @@ box. `perf_gate.sh` for B3.
     quest, though the archive has `QTUTORIAL_EU` (id 210). srrevamp follows the table (Europe gets
     the two Race 3 quests only). Add `QTUTORIAL_EU` for Europe as China's tutorial is given to
     China (OURS, by symmetry), or keep the table?
+13. **The front-end's hour (round 688):** retail draws select and customize at the hour the title
+   picked, so one title visit in four shows them at 23:00, measured 24 % darker than 14:00
+   (section 1, "Time of day"). That random hour is retail's and is kept; pinning the front end to a
+   daytime hour would be OURS. **Our extra darkness was not retail's:** until round 688's review the
+   select bodies were lit with Godot's materials under World3D's tuned light (energy 0.3) and drew
+   1.3-1.8x darker than the same character in the customize preview, which uses retail's character
+   formula (PlayerPortrait). They now use that formula too (WORLD_ISSUES round 688, "Review").
 
 ## 9. Still OPEN
 
@@ -1312,7 +1347,9 @@ box. `perf_gate.sh` for B3.
 - 0xB007 action 6.
 - The academy byte in the list.
 - The select idle's animation (the preview's is READ, round 685).
-- The lizard's root motion.
+- ~~The lizard's root motion.~~ MEASURED and READ in round 688 (section 3): `_move` walks 4.16 units
+  and is a one-shot; the setter's 200 is the one-shot's 200 ms fade-out (READ, the review), with no
+  visible effect on a lone clip.
 - `FUN_00bbda70(1)` on select open.
 - Re-entering select after create when the previous-process id is neither 0 nor 10.
 - The per-server flag behind China's Protector minimum.

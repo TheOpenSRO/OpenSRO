@@ -132,6 +132,9 @@ func set_characters(records: Array, plan: Array) -> void:
 	clear_characters()
 	if root == null or appearance == null:
 		return
+	if _lighter != null:
+		_lighter.set("_materials", [])
+		_lighter.unmapped_materials = 0
 	var sw := Time.get_ticks_usec()
 	for k in range(records.size()):
 		var r = records[k]
@@ -150,6 +153,7 @@ func set_characters(records: Array, plan: Array) -> void:
 		d.body = appearance.build(r.ref_obj_id, r.scale, items)
 		if d.body != null:
 			d.holder.add_child(d.body)
+			_dress(d.body)
 			d.bounds = _bounds_of(d.body)
 		else:
 			print("CharSelectStage: %s's body %d could not be built" % [r.char_name, r.ref_obj_id])
@@ -161,6 +165,120 @@ func set_characters(records: Array, plan: Array) -> void:
 		_apply_alpha(d)
 		drawn.append(d)
 	print("CharSelectStage: %d character(s) built in %.1f ms" % [records.size(), (Time.get_ticks_usec() - sw) / 1000.0])
+
+## The characters' light (round 688's review): retail draws every character
+## through one vertex shader whose light is the world's (PlayerPortrait's
+## header, READ: oD0 = object colour 0.6 x ambient + max(0, n.l) x material
+## colour x diffuse, diffuse = environment channel 2 clamped x 0.6, ambient =
+## channel 3 clamped, then texture x oD0 x 2 -- MODULATE2X). The customize
+## preview (round 685), the equipment window and the portrait draw bodies so;
+## the select screen hung them in the backdrop with Godot's lit materials under
+## World3D's tuned light (energy 0.3, OURS since round 43), which MEASURED
+## (the review, and SRREVAMP_QA_SELECT_LUMA's per-body line) about 1.8x
+## darker than the same character in the preview at the same hour. Now each
+## body wears PlayerPortrait's materials fed the backdrop's zone light, as
+## CharCreatePreview does; the body hides (round 687) and default wear (round
+## 685) are on the body before this and only its materials change.
+## SRREVAMP_QA_SELECT_GODOT_LIGHT=1 (OURS, QA) keeps the old materials, for a
+## before/after on one build.
+var _lighter: PlayerPortrait = null
+var _zone_light: Array = []
+
+func _dress(body: Node) -> void:
+	if OS.get_environment("SRREVAMP_QA_SELECT_GODOT_LIGHT") != "":
+		return
+	if _lighter == null:
+		_lighter = PlayerPortrait.new()
+		var zl = backdrop.world.get("_portrait_zone_light") if backdrop != null and backdrop.world != null else null
+		if zl is Array and (zl as Array).size() == 2:
+			_zone_light = zl
+	var before: int = (_lighter.get("_materials") as Array).size()
+	_lighter.call("_apply_materials", body)
+	if not _zone_light.is_empty():
+		_lighter.set_zone_light(_zone_light[0], _zone_light[1])
+	var env := _backdrop_environment()
+	var mats: Array = _lighter.get("_materials")
+	for i in range(before, mats.size()):
+		_undo_tonemap(mats[i] as ShaderMaterial, env)
+
+## The backdrop's tone mapping undone on the characters (round 688's review,
+## OURS on READ Godot source). PlayerPortrait's shader computes the client's
+## own colour (gamma space) and, in the preview's and portrait's SubViewports
+## (TONE_MAPPER_LINEAR), that value reaches the screen as written (MEASURED,
+## round 635). The backdrop is World3D's environment: Filmic (tonemap_mode 2)
+## at exposure 1.0, white 1.0. READ, Godot 4.2.2 drivers/gles3/shaders/
+## scene.glsl 1369 and 1590-1593 and tonemap_inc.glsl 42-58 and 96-108: an
+## unshaded ALBEDO is decoded (srgb_to_linear, a cubic), times exposure,
+## filmic-mapped and divided by the mapped white, and encoded (linear_to_srgb,
+## 1.055 x^(1/2.4) - 0.055). MEASURED before this undo: the dressed bodies
+## came out 13-37 % brighter than the same character's preview (0.73-0.89).
+## So the characters' ALBEDO is pre-inverted through that chain -- the
+## filmic's quadratic solved exactly, the cubic by Newton's method -- and the
+## frame carries the client's value.
+const UNDO_TONEMAP := """
+uniform float undo_exposure = 1.0;
+uniform float undo_white = 1.0;
+uniform bool undo_filmic = false;
+float undo_f(float x) {
+	const float FA = 0.88; const float FB = 0.6; const float FC = 0.1; const float FD = 0.2; const float FE = 0.01; const float FF = 0.3;
+	return ((x * (FA * x + FC * FB) + FD * FE) / (x * (FA * x + FB) + FD * FF)) - FE / FF;
+}
+vec3 undo_tonemap(vec3 o) {
+	if (!undo_filmic) {
+		return o;
+	}
+	const float FA = 0.88; const float FB = 0.6; const float FC = 0.1; const float FD = 0.2; const float FE = 0.01; const float FF = 0.3;
+	vec3 r;
+	for (int i = 0; i < 3; i++) {
+		float v = clamp(o[i], 0.0, 1.0);
+		// The linear value the encode must see.
+		float y = pow((v + 0.055) / 1.055, 2.4);
+		// Its pre-filmic linear value.
+		float g = y * undo_f(undo_white) + FE / FF;
+		float qa = FA * (1.0 - g);
+		float qb = FB * (FC - g);
+		float qc = FD * (FE - g * FF);
+		float x = (-qb + sqrt(max(qb * qb - 4.0 * qa * qc, 0.0))) / (2.0 * qa);
+		x = max(x / max(undo_exposure, 1e-4), 0.0);
+		// The albedo whose decode is x: srgb_to_linear(a) = a (a (0.305306011 a + 0.682171111) + 0.012522878).
+		float a = pow(x, 1.0 / 2.2);
+		for (int k = 0; k < 4; k++) {
+			float fa = a * (a * (a * 0.305306011 + 0.682171111) + 0.012522878) - x;
+			float da = 3.0 * 0.305306011 * a * a + 2.0 * 0.682171111 * a + 0.012522878;
+			a = clamp(a - fa / max(da, 1e-4), 0.0, 1.0);
+		}
+		r[i] = a;
+	}
+	return r;
+}
+"""
+const PORTRAIT_ALBEDO := "ALBEDO = clamp(modulate_scale * t.rgb * lit, 0.0, 1.0);"
+const MOD_ALBEDO := "ALBEDO = clamp(lit + unlit, 0.0, 1.0);"
+static var _undo_shaders := {}
+
+static func _undo_tonemap(mat: ShaderMaterial, env: Environment) -> void:
+	if mat == null or mat.shader == null:
+		return
+	var code := mat.shader.code
+	var line := PORTRAIT_ALBEDO if code.contains(PORTRAIT_ALBEDO) else (MOD_ALBEDO if code.contains(MOD_ALBEDO) else "")
+	var frag := code.find("void fragment()")
+	if line == "" or frag < 0:
+		return
+	var key := code.hash()
+	if not _undo_shaders.has(key):
+		var sh := Shader.new()
+		var inner := line.trim_prefix("ALBEDO = ").trim_suffix(";")
+		sh.code = (code.substr(0, frag) + UNDO_TONEMAP + "\n" + code.substr(frag)).replace(line, "ALBEDO = undo_tonemap(%s);" % inner)
+		_undo_shaders[key] = sh
+	mat.shader = _undo_shaders[key]
+	var filmic := env != null and env.tonemap_mode == Environment.TONE_MAPPER_FILMIC
+	mat.set_shader_parameter("undo_filmic", filmic)
+	mat.set_shader_parameter("undo_exposure", env.tonemap_exposure if env != null else 1.0)
+	mat.set_shader_parameter("undo_white", env.tonemap_white if env != null else 1.0)
+
+func _backdrop_environment() -> Environment:
+	var we = backdrop.world.get("world_environment") if backdrop != null and backdrop.world != null else null
+	return (we as WorldEnvironment).environment if we is WorldEnvironment else null
 
 func clear_characters() -> void:
 	for d in drawn:
@@ -301,12 +419,28 @@ func _add_prop(key: String, path: String, pos: Vector3, yaw: float) -> void:
 		parsed.animation_paths.size()])
 
 ## READ: the lizard is shown with clip 1 when the race fly ends and hidden
-## again when the camera is back (vslot_012 cases 7 and 0xb).
+## again when the camera is back (vslot_012 cases 7 and 0xb). Each arrival
+## starts the clip again (case 7 calls the animation setter, vslot_003, every
+## time), so a second Create walks it in again.
 func set_lizard(on: bool) -> void:
 	if props.has("lizard"):
 		(props["lizard"] as Node3D).visible = on
 	_lizard_anim = _lizard_clip(CharSelectMath.LIZARD_RACE_CLIP if on else CharSelectMath.LIZARD_LIST_CLIP)
 	_lizard_anim_start = _clock
+
+## Whether the lizard's clip repeats (round 688): as the clip's own `.ban`
+## says. READ (docs/protocol/BSR_FORMAT.md, "Looping" and "After a
+## one-shot"): the client plays an IsCyclic clip with CRTAniCyclic and any
+## other with CRTAniOneShot, which plays once, after which the bones keep
+## their last pose. MEASURED (round 688, probe_ban_motion.gd):
+## interface_lizard_move is NOT cyclic -- 81 keys over 2666 ms, its Bip01
+## walking 4.16 units, from (7.02, 0.29, -9.96) to (3.47, 0.29, -7.79) in
+## model space, exactly where interface_lizard_stand (cyclic, 15 s) holds it.
+## So on arrival the lizard walks in once, from below the frame, and stops
+## by the idols. Looping it (rounds 684-687) snapped it back off-screen every
+## 2.67 s: the "disappears and then comes back" of the user's report.
+static func lizard_clip_loops(anim: BanReader.ParsedAnimation) -> bool:
+	return anim != null and anim.cyclic
 
 func _lizard_clip(index: int) -> BanReader.ParsedAnimation:
 	if _lizard_assembled == null or index >= _lizard_assembled.animation_paths.size():
@@ -361,7 +495,35 @@ func _process(delta: float) -> void:
 	for d in drawn:
 		_tick(d, delta)
 	if _lizard_skeleton != null and _lizard_anim != null and props.has("lizard") and (props["lizard"] as Node3D).visible:
-		Skeleton3DBuilder.apply_ban_pose_at(_lizard_skeleton, _lizard_anim, _clock - _lizard_anim_start, true)
+		Skeleton3DBuilder.apply_ban_pose_at(_lizard_skeleton, _lizard_anim, _clock - _lizard_anim_start,
+			lizard_clip_loops(_lizard_anim))
+		_qa_lizard_probe()
+
+## SRREVAMP_QA_LIZARD_PROBE=<seconds> (OURS, QA; CharSelectQa): one line a
+## frame about the lizard from its arrival, then the client quits.
+var _qa_lizard_until := -1.0
+func _qa_lizard_probe() -> void:
+	var want := OS.get_environment("SRREVAMP_QA_LIZARD_PROBE")
+	if want == "" or not want.is_valid_float():
+		return
+	if _qa_lizard_until < 0.0:
+		_qa_lizard_until = _clock + want.to_float()
+	var cam := camera()
+	var t := _clock - _lizard_anim_start
+	var dur := _lizard_anim.duration_seconds()
+	var s := CharSelectQa.lizard_sample(props["lizard"] as Node3D, cam, get_viewport().get_visible_rect().size)
+	var r: Rect2 = s["rect"]
+	print("QA LIZARD frame %d t=%.3f clip=%s clip_t=%.3f/%.3f meshes=%d visible=%d verts=%d inside=%d rect=(%d,%d %dx%d) cull_kept=%d/%d root=(%.2f,%.2f,%.2f)" % [
+		Engine.get_frames_drawn(), t, _lizard_anim.animation_name, fposmod(t, dur) if dur > 0.0 else 0.0, dur,
+		s["meshes"], s["visible"], s["verts"], s["inside"], int(r.position.x), int(r.position.y), int(r.size.x), int(r.size.y),
+		s["cull_kept"], s["cull_meshes"], s["root"].x, s["root"].y, s["root"].z])
+	var dir := OS.get_environment("SRREVAMP_QA_SELECT_SHOT_DIR")
+	var every := int(OS.get_environment("SRREVAMP_QA_LIZARD_SHOT_EVERY"))
+	if dir != "" and every > 0 and Engine.get_frames_drawn() % every == 0:
+		get_viewport().get_texture().get_image().save_png("%s/lizard_%05d.png" % [dir, Engine.get_frames_drawn()])
+	if _clock >= _qa_lizard_until:
+		print("QA LIZARD done")
+		get_tree().quit()
 
 func _tick(d: Drawn, delta: float) -> void:
 	if d.alpha_t < CharSelectMath.MODEL_FADE_S and not fades_paused:
@@ -448,3 +610,8 @@ func _exit_tree() -> void:
 	if appearance != null:
 		appearance.free_templates()
 		appearance = null
+
+## The lighter is not in the tree (as CharCreatePreview's): freed with the stage.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE and _lighter != null and is_instance_valid(_lighter):
+		_lighter.free()
