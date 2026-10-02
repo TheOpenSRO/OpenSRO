@@ -90,10 +90,10 @@ var _qa_refl_ms := 0.0
 
 ## The option: the Option window's Water Reflection row in the Graphic
 ## record in force (round 694, VideoOptions; before it, [world]
-## water_reflection, which still seeds it). This client's default is ON, the
-## look it has drawn since round 628. (Round 628 took ON from the shipped
-## SROptionSet.dat's tag 5; round 694 READ that the file's record is Middle,
-## whose preset retail re-applies on load -- Middle has the reflection OFF.)
+## water_reflection, which still wins when stored). The default is OFF:
+## retail's Middle, the user's choice of default (2026-10-02). (Round 628
+## took ON from the shipped SROptionSet.dat's tag 5; round 694 READ that the
+## file's record is Middle, whose preset retail re-applies on load.)
 ## SRREVAMP_WATER_REFLECTION (0 or 1) overrides it for a run.
 static func enabled() -> bool:
 	var env := OS.get_environment("SRREVAMP_WATER_REFLECTION")

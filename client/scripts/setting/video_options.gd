@@ -43,12 +43,15 @@ class_name VideoOptions
 ## and Middle's preset has Water Reflection off. Round 627/628 read the tag
 ## and missed the re-application.)
 ##
-## **This client's default (OURS):** "User control" with the values that draw
-## exactly what the client drew before this round (DEFAULTS), so a player who
-## never opens the window sees no change and the perf gate's default views
-## are unchanged. Retail's Middle is one click away in the Graphic Quality
-## row. Default (the button) restores these, not Middle -- a deliberate
-## difference, recorded here and in the round's entry.
+## **This client's default: retail's Middle** -- the user's decision,
+## 2026-10-02 ("Original's Middle"), for every record with no saved
+## [video_graphic*] section, older settings files included: Middle's preset,
+## Normal brightness, the player's own copy filled from it as the constructor
+## fills it (0x5f75e0). Bloom ON (glow, under Forward+), Water Reflection OFF.
+## The window mode is not part of that choice: it stays as the file has it (a
+## window by default), and Default (the button) restores Middle without
+## touching it. Round 694 first shipped "User control with the look before
+## this round" as the default; the user replaced it.
 ##
 ## **Storage (OURS).** ClientSettings' file (user://settings.cfg), sections
 ## `video` (shared: profile, fullscreen, resolution) and `video_graphic1` /
@@ -154,18 +157,16 @@ const PRESETS := {
 	QUALITY_WAR:    [0, 0, 2, 4, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0],
 }
 
-## OURS: the values this client used before the window existed (see the
-## header): Detail shadows (the blob and the sun's shadow map), sight 3 and 3
-## (the READ default view distance), reflection on, the 512-row reflection
-## target, no MSAA, full-resolution textures, the sun glow, no glow pass,
-## every effect. SSAO off (round 693). Metallic Sheen, Light Effect and
-## Dynamic Animation draw nothing here (see apply notes) and sit at Off.
+## The player's own values in a new record: Middle's preset (READ, 0x5015a0;
+## the constructor 0x5f75e0 copies the preset into the second copy), and SSAO
+## (OURS, no preset names it) off.
 const DEFAULTS := {
-	SHADOW: 2, SCENERY: 2, CHARACTER: 2, WATER_REFLECTION: 1, WATER_DETAIL: 1, METAL: 0,
-	LIGHT: 0, FILTERING: 0, TEXTURE: 2, LENS_FLARE: 1, BLOOM: 0, DYNAMIC_ANIMATION: 0,
+	SHADOW: 1, SCENERY: 2, CHARACTER: 2, WATER_REFLECTION: 0, WATER_DETAIL: 1, METAL: 1,
+	LIGHT: 1, FILTERING: 1, TEXTURE: 1, LENS_FLARE: 1, BLOOM: 1, DYNAMIC_ANIMATION: 1,
 	EFFECT: 2, FRIEND_ENEMY: 0, SSAO: 0,
 }
-const DEFAULT_QUALITY := QUALITY_USER
+## The user's decision (2026-10-02): retail's default, Middle (READ).
+const DEFAULT_QUALITY := QUALITY_MIDDLE
 ## READ, 0x5fc340 / 0x5f75e0: Normal.
 const DEFAULT_BRIGHTNESS := 2
 
@@ -383,15 +384,18 @@ static func load_saved(path: String = ClientSettings.PATH) -> VideoOptions:
 	o.fullscreen = bool(file.get_value(SECTION, KEY_FULLSCREEN, false))
 	o.resolution = parse_resolution(str(file.get_value(SECTION, KEY_RESOLUTION, "")))
 	# Before round 694 the one video setting was [world] water_reflection
-	# (round 628); it seeds both records' Water Reflection when it is set.
+	# (round 628). A record with no section of its own starts as Middle (the
+	# user's decision); a stored explicit choice there still wins -- as the
+	# window would take it, a hand-set row (set_row: User control with
+	# Middle's other rows). No key: Middle's value (off).
 	var has_legacy := file.has_section_key(ClientSettings.SECTION_WORLD, ClientSettings.KEY_WATER_REFLECTION)
-	var legacy_water := bool(file.get_value(ClientSettings.SECTION_WORLD, ClientSettings.KEY_WATER_REFLECTION, true))
+	var legacy_water := 1 if bool(file.get_value(ClientSettings.SECTION_WORLD, ClientSettings.KEY_WATER_REFLECTION, false)) else 0
 	for i in 2:
 		var p: Profile = o.profiles[i]
-		if has_legacy:
-			p.user[WATER_REFLECTION] = 1 if legacy_water else 0
 		var sec: String = PROFILE_SECTIONS[i]
 		if not file.has_section(sec):
+			if has_legacy and p.value(WATER_REFLECTION) != legacy_water:
+				set_row(p, WATER_REFLECTION, legacy_water)
 			continue
 		p.quality = clampi(int(file.get_value(sec, KEY_QUALITY, DEFAULT_QUALITY)), QUALITY_LOW, QUALITY_USER)
 		p.brightness = clampi(int(file.get_value(sec, KEY_BRIGHTNESS, DEFAULT_BRIGHTNESS)), 0, 4)

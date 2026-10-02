@@ -1,7 +1,8 @@
 extends SceneTree
 
 ## The Option window's Video tab (round 694): VideoOptions (the original's
-## presets, ladders and curve as READ; this client's defaults; the saved
+## presets, ladders and curve as READ; the Middle default (the user's
+## decision, 2026-10-02); the saved
 ## file) and OptionVideoPage on a synthetic optionwnd.2dt whose pane-78
 ## records carry the real file's ids, types, parents and rects (MEASURED; no
 ## art, no text, no game data). Also the two places the options reach that
@@ -55,16 +56,21 @@ func _presets() -> void:
 	_check(P[VideoOptions.QUALITY_HIGH] == [0, 2, 4, 4, 1, 2, 1, 1, 1, 2, 1, 1, 1, 2, 0, 0], "High: Detail shadows, sight 5/5, reflection on, water and texture High")
 	_check(P[VideoOptions.QUALITY_WAR] == [0, 0, 2, 4, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0], "Large scale battle: no shadow, background 3, characters 5, texture Middle")
 	var p := VideoOptions.Profile.new()
-	_check(p.quality == VideoOptions.QUALITY_USER and p.brightness == 2, "a new record is User control, Normal brightness (OURS default; brightness READ)")
+	_check(p.quality == VideoOptions.QUALITY_MIDDLE and p.brightness == 2, "a new record is Middle, Normal brightness (READ 0x5f75e0; the user's choice of default)")
 	for e in VideoOptions.DEFAULTS:
 		_check(p.value(e) == int(VideoOptions.DEFAULTS[e]), "default row %s = %d" % [VideoOptions.row_of(e)["key"], VideoOptions.DEFAULTS[e]])
-	_check(p.value(VideoOptions.SHADOW) == 2 and p.value(VideoOptions.WATER_REFLECTION) == 1 and p.value(VideoOptions.TEXTURE) == 2 \
-		and p.value(VideoOptions.FILTERING) == 0 and p.value(VideoOptions.BLOOM) == 0 and p.value(VideoOptions.SSAO) == 0,
-		"the defaults draw what the client drew before: sun shadow + blob, reflection, full textures, no MSAA, no glow, no SSAO")
+	for e in VideoOptions.VALUE_ENTRIES:
+		if e != VideoOptions.SSAO:
+			_check(int(VideoOptions.DEFAULTS[e]) == int(VideoOptions.PRESETS[VideoOptions.QUALITY_MIDDLE][e]), "the player's own copy of %s starts as Middle's" % VideoOptions.row_of(e)["key"])
+	_check(p.value(VideoOptions.BLOOM) == 1 and p.value(VideoOptions.WATER_REFLECTION) == 0 and p.value(VideoOptions.SHADOW) == 1 and p.value(VideoOptions.SSAO) == 0,
+		"the default: bloom ON, reflection OFF, Circle shadows, SSAO off")
+	VideoOptions.set_row(p, VideoOptions.QUALITY, VideoOptions.QUALITY_HIGH)
+	_check(p.value(VideoOptions.SHADOW) == 2 and p.value(VideoOptions.WATER_REFLECTION) == 1, "choosing High fills the rows from its preset (Detail, reflection on)")
+	p.user[VideoOptions.SHADOW] = 0
 	VideoOptions.set_row(p, VideoOptions.QUALITY, VideoOptions.QUALITY_MIDDLE)
 	_check(p.value(VideoOptions.BLOOM) == 1 and p.value(VideoOptions.WATER_REFLECTION) == 0 and p.value(VideoOptions.SHADOW) == 1,
 		"choosing Middle fills the rows from its preset (bloom on, reflection off, Circle)")
-	_check(p.user[VideoOptions.SHADOW] == 2, "the player's own values stay behind a preset (retail's second copy)")
+	_check(p.user[VideoOptions.SHADOW] == 0, "the player's own values stay behind a preset (retail's second copy)")
 	VideoOptions.set_row(p, VideoOptions.WATER_REFLECTION, 1)
 	_check(p.quality == VideoOptions.QUALITY_USER, "setting a row under a preset switches the record to User control")
 	_check(p.value(VideoOptions.WATER_REFLECTION) == 1 and p.value(VideoOptions.BLOOM) == 1 and p.value(VideoOptions.SHADOW) == 1,
@@ -114,8 +120,21 @@ func _storage() -> void:
 	legacy.set_value("ui", "scale", 1.5)
 	legacy.save(path)
 	var o := VideoOptions.load_saved(path)
-	_check(o.value(VideoOptions.WATER_REFLECTION) == 0 and o.profiles[1].value(VideoOptions.WATER_REFLECTION) == 0,
-		"the round-628 key [world] water_reflection=false seeds both records' Water Reflection")
+	_check(o.value(VideoOptions.WATER_REFLECTION) == 0 and o.current().quality == VideoOptions.QUALITY_MIDDLE,
+		"a pre-694 file with [world] water_reflection=false: Middle, as it is (its reflection is off too)")
+	var legacy_on := ConfigFile.new()
+	legacy_on.set_value("world", "water_reflection", true)
+	legacy_on.save(_dir.path_join("legacy_on.cfg"))
+	var lo := VideoOptions.load_saved(_dir.path_join("legacy_on.cfg"))
+	_check(lo.value(VideoOptions.WATER_REFLECTION) == 1 and lo.current().quality == VideoOptions.QUALITY_USER
+		and lo.value(VideoOptions.BLOOM) == 1 and lo.value(VideoOptions.SHADOW) == 1 and lo.profiles[1].value(VideoOptions.WATER_REFLECTION) == 1,
+		"a pre-694 file with water_reflection=true: the stored choice wins -- User control with Middle's other rows, both records")
+	var bare := ConfigFile.new()
+	bare.set_value("ui", "scale", 1.25)
+	bare.save(_dir.path_join("bare.cfg"))
+	var bo := VideoOptions.load_saved(_dir.path_join("bare.cfg"))
+	_check(bo.current().quality == VideoOptions.QUALITY_MIDDLE and bo.value(VideoOptions.WATER_REFLECTION) == 0 and bo.value(VideoOptions.BLOOM) == 1,
+		"a pre-694 file with no video key at all: Middle (reflection off, bloom on)")
 	o.active = 1
 	o.fullscreen = true
 	o.resolution = Vector2i(1600, 900)
@@ -136,7 +155,7 @@ func _storage() -> void:
 		and back.current().quality == VideoOptions.QUALITY_HIGH and back.current().brightness == 3
 		and back.profiles[0].value(VideoOptions.SCENERY) == 0, "load_saved reads back what save wrote")
 	var none := VideoOptions.load_saved(_dir.path_join("missing.cfg"))
-	_check(none.active == 0 and not none.fullscreen and none.current().quality == VideoOptions.QUALITY_USER, "no file: Graphic 1, a window, the defaults")
+	_check(none.active == 0 and not none.fullscreen and none.current().quality == VideoOptions.QUALITY_MIDDLE, "no file: Graphic 1, a window, Middle")
 
 func _map_range() -> void:
 	MapAnimation.set_view_distance(VideoOptions.view_distance(0))
@@ -272,15 +291,15 @@ func _page() -> void:
 		VideoOptions.set_in_force(saved_force)
 		return
 	_check(page.slot_label(0).text == "Graphic Quality" and page.slot_label(1).text == "Shadow Detail", "slot 0/1 labelled Graphic Quality / Shadow Detail (fallback text, no archive)")
-	_check(page.slot_combo(0).item_count == 5 and page.slot_combo(0).get_item_text(4) == "User control" and page.slot_combo(0).selected == 4,
-		"the quality combo lists five choices and shows User control (the default)")
+	_check(page.slot_combo(0).item_count == 5 and page.slot_combo(0).get_item_text(4) == "User control" and page.slot_combo(0).selected == 1,
+		"the quality combo lists five choices and shows Middle (the default)")
 	_check(page.max_line() == 3, "17 rows, two a line, six lines shown: three more lines to scroll (got %d)" % page.max_line())
-	# Middle through the combo's own signal (a real popup choice emits it).
-	page.slot_combo(0).item_selected.emit(1)
+	# Low through the combo's own signal (a real popup choice emits it).
+	page.slot_combo(0).item_selected.emit(0)
 	await _frames()
-	_check(page.edit.current().quality == VideoOptions.QUALITY_MIDDLE and page.slot_combo(1).selected == 1,
-		"choosing Middle shows Circle in Shadow Detail (READ preset)")
-	_check(VideoOptions.in_force().current().quality == VideoOptions.QUALITY_USER, "nothing is in force before Apply")
+	_check(page.edit.current().quality == VideoOptions.QUALITY_LOW and page.slot_combo(1).selected == 0,
+		"choosing Low shows Nothing in Shadow Detail (READ preset)")
+	_check(VideoOptions.in_force().current().quality == VideoOptions.QUALITY_MIDDLE, "nothing is in force before Apply")
 	# Bloom is row 11: line 5 -- the third line shown once scrolled 3 lines.
 	page.scroll_to(3)
 	await _frames()
@@ -302,7 +321,7 @@ func _page() -> void:
 	var tab2: BaseButton = win.control([78, 25])
 	_click(tab2.get_global_rect().get_center())
 	await _frames()
-	_check(page.edit.active == 1 and page.edit.current().quality == VideoOptions.QUALITY_USER, "the Graphic 2 tab shows the second record (still User)")
+	_check(page.edit.active == 1 and page.edit.current().quality == VideoOptions.QUALITY_MIDDLE, "the Graphic 2 tab shows the second record (still Middle)")
 	page.select_profile(0)
 	# The view and window rows.
 	var third: BaseButton = win.control([78, 208])
@@ -321,15 +340,16 @@ func _page() -> void:
 	var had := FileAccess.file_exists(path)
 	var original := FileAccess.get_file_as_bytes(path) if had else PackedByteArray()
 	win.press_apply()
-	_check(got.size() == 1 and (got[0] as VideoOptions).current().quality == VideoOptions.QUALITY_MIDDLE and (got[0] as VideoOptions).camera_view == "third_person",
-		"Apply hands the record on (Middle, Third Person)")
+	_check(got.size() == 1 and (got[0] as VideoOptions).current().quality == VideoOptions.QUALITY_LOW and (got[0] as VideoOptions).camera_view == "third_person",
+		"Apply hands the record on (Low, Third Person)")
 	var cfg := ConfigFile.new()
 	cfg.load(path)
-	_check(int(cfg.get_value("video_graphic1", "quality", -1)) == 1 and bool(cfg.get_value("video", "fullscreen", false)), "Apply saves [video_graphic1] quality=1 and fullscreen")
-	# Default: this client's defaults on the shown record, in a window.
+	_check(int(cfg.get_value("video_graphic1", "quality", -1)) == 0 and bool(cfg.get_value("video", "fullscreen", false)), "Apply saves [video_graphic1] quality=0 and fullscreen")
+	# Default: Middle on the shown record; the window mode untouched.
 	win.press_default()
-	_check(page.edit.current().quality == VideoOptions.QUALITY_USER and not page.edit.fullscreen and page.edit.camera_view == "free",
-		"Default: User control with this client's defaults, a window, the Free view (OURS; retail picks Middle and full screen)")
+	_check(page.edit.current().quality == VideoOptions.QUALITY_MIDDLE and page.edit.fullscreen and page.edit.camera_view == "free"
+		and page.edit.current().brightness == 2,
+		"Default: Middle, Normal, the Free view, and the window mode left as it was (full screen here) -- the user's decision")
 	if had:
 		var f := FileAccess.open(path, FileAccess.WRITE)
 		f.store_buffer(original)

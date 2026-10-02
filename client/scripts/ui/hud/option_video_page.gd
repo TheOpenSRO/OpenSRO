@@ -31,8 +31,8 @@ class_name OptionVideoPage
 ##
 ## **The buttons.** Default on this tab (0x5fc340, READ) sets Middle, Normal
 ## brightness, the 1280 x 1024 mode when listed, FULL SCREEN and the Free
-## view. OURS: Default puts back this client's defaults (VideoOptions.DEFAULTS:
-## the look before round 694, in a window), and keeps the resolution.
+## view. Here: Middle (the user's decision, 2026-10-02), Normal brightness and
+## the Free view; the window mode and the resolution are left as they are.
 ## Apply / Confirm store the record (0x5fdae0, READ) and apply it -- nothing
 ## on this tab changes the screen before then (INFERRED: the store calls the
 ## game's apply, CGame::FUN_00835000; the combo handlers were not read).
@@ -498,13 +498,13 @@ func select_profile(i: int) -> void:
 	show_values()
 	changed.emit()
 
-## Default on this tab (see the header; OURS values).
+## Default on this tab (see the header): Middle, Normal, the Free view; the
+## window mode untouched.
 func press_default() -> void:
 	var p := edit.current()
 	p.quality = VideoOptions.DEFAULT_QUALITY
 	p.brightness = VideoOptions.DEFAULT_BRIGHTNESS
 	p.user = VideoOptions.DEFAULTS.duplicate()
-	edit.fullscreen = false
 	edit.camera_view = VIEWS[0]
 	show_values()
 	changed.emit()

@@ -51,8 +51,9 @@ const KEY_SEASONAL := "seasonal"
 ## The Water Reflection video option (round 628; WaterReflection): true draws
 ## retail's reflection pass, false the plain animated water. Since round 694
 ## the Option window's Video tab owns it (VideoOptions, sections [video],
-## [video_graphic1], [video_graphic2]): this key seeds that row when the
-## sections are absent and is rewritten to match the record in force.
+## [video_graphic1], [video_graphic2]): a value stored here before them still
+## wins over the Middle default; absent, Middle's (off). It is rewritten to
+## match the record in force.
 const KEY_WATER_REFLECTION := "water_reflection"
 
 static func get_value(section: String, key: String, default_val: Variant) -> Variant:

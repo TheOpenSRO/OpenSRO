@@ -430,7 +430,8 @@ func apply_video_options(o: VideoOptions) -> void:
 	# and Nothing free them. Circle is the round blob (READ in label text,
 	# UIIT_STT_VIDIO_TTDESC_04 "simplify shadows into circles"). Here (OURS):
 	# Nothing hides the blob (SkyBox\shadowsphere.ddj) and the sun's shadow
-	# map, Circle draws the blob alone, Detail both -- the look before round 694.
+	# map, Circle draws the blob alone (Middle, the default), Detail both (the
+	# look before round 694).
 	var shadow := o.value(VideoOptions.SHADOW)
 	if directional_light != null:
 		directional_light.shadow_enabled = shadow >= 2
@@ -1511,7 +1512,7 @@ func _ready() -> void:
 	_water_reflection = WaterReflection.new()
 	_water_reflection.name = "WaterReflection"
 	add_child(_water_reflection)
-	print("World3D: water reflection %s" % ("on (retail's Water Reflection option, the shipped default)" if _water_reflection_on else "off"))
+	print("World3D: water reflection %s (the Video tab's Water Reflection row; Middle, the default, has it off)" % ("on" if _water_reflection_on else "off"))
 	# Sound (round 611): distances are measured from the player, left and
 	# right from the camera -- AudioService's header says why (ours).
 	SoundTable.set_listener(player, camera_3d)
