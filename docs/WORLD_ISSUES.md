@@ -7094,6 +7094,217 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-eighty-ninth round: every character is drawn from its own model -- a Europe man is a Europe man, a Kangsi a Kangsi, at its Height and Volume -- for the player, the other players, the paper doll and the portrait, and no body T-poses
+
+The user (2026-10-02): "Euro doesn't seem work once you load in. I'm the default chinese male skin
+and I t-pose. When I do chinese female it goes to the default woman skin too. Euro needs added to
+the actually game with full skin support, animations, and skills. Same with the rest of the chinese
+characters too. Some float and have different ways to sit or hold weapons."
+
+charselect.md's lane W. Europe *skills* are lane euroskill691's; this round is drawing and animation.
+Labels: READ (sro_client.exe's dump and asm on the box), MEASURED, INFERRED, OURS, OPEN.
+
+### 1. Why (the before, MEASURED)
+
+- **The T-pose is our code, not the data.** World3D animated the local player only under
+  `_character_assets.has(_player_gender)`, and only `china_man` / `china_woman` were ever loaded. A
+  Europe character's gender (`europe_man`, round 682) fell back to the China fighter's body for the
+  build and failed that test every frame. The base client (bf25e7e, plus a box-only print) signed in
+  to this round's server as a Europe noble man: `POSECHECK player gender europe_man body (default)
+  posed TPOSE` on **21 of 21** samples, drawn as `chinaman_fighter.bsr` wearing 4 of its 5 items
+  (the Europe heavy legs need a bone the China body lacks).
+- **"The default skin":** every China Figure was drawn as the fighter (`GENDER_BODY_CODE`), the
+  Figure, Height and Volume the player chose were never sent to the world.
+- **129 clips played nothing** (`body_anim_probe.gd --lookup=old`, all 52 Figures x every core
+  action x every weapon group of their race, 4,056 lookups): the Europe bodies' `onehand_sword` types
+  16/17 and `onehand_staff` types 5/16/17 are entries that name no file, and our lookup returned the
+  empty entry instead of falling back -- a 1H-sword or staff user's 2nd-4th swing froze.
+
+### 2. What retail does (READ, addresses)
+
+- **Group:** `CObjCharacter::RefreshAnimationGroup` 0xa5bd10: no weapon in visual slot 6 ->
+  `default`; else `FUN_00a5a7d0(TypeID4, race)` (race = char data +0x9c); `cart` while pulling a
+  transport. The switch is the table we had, plus the fortress weapon 16: race 0 `sword`, race 1
+  `onehand_sword`. **No sex test.**
+- **Entry:** `CCObjCharacter` slot 3 `FUN_00a5faf0` -> `CCObjAnimation::FUN_00a5b550` ->
+  `CCompChar::FUN_00c2bbb0` -> `AniMixer::FUN_00c551a0`: the group by name (`FUN_00bd68e0`), the
+  entry by type (`AniMixer::FUN_00c0e950`), a non-null clip; failing any, the same in `default`;
+  failing that, nothing. `ResObject::FUN_00c0f500` stores a NULL clip for file index -1, and
+  `FUN_00c0f470` overwrites a type in place, so **the last entry of a type wins** and an entry naming
+  no file falls back. The avatar group (+0x190) is tried first, without fallback, when set (not
+  modelled, OPEN).
+- **Nothing race-specific:** the chain reads only the body's own `.bsr` maps. The Europe bodies'
+  `default` group names `chinaman_*` / `chinawoman_*` stand, walk and sit clips (MEASURED, round 684's
+  review and here) and retail plays them; all 52 Figures use the two Europe skeletons.
+- **Sitting:** 0xa5a270 plays type 14 (and 13 from standing), 0xa5a160 type 15 (or 65,
+  `_a_wakeup`, after a knock-down: not modelled), through the same lookup.
+- **Root and Height:** a driven bone's local matrix takes the keyframe's full translation, x, y and
+  z (`RTSkeleton::FUN_00c49f20` / `FUN_00c4bcb0`); the root's world matrix is its local one. Height
+  (`CCompChar::FUN_00c25460` -> skeleton +0xa4 -> `FUN_00c4bcb0`) multiplies the root's whole local
+  matrix: the model scales about its origin, the feet. **No per-body ground offset** was found in the
+  clip / skeleton chain (the position -> compound matrix step, vt+0x54 0xc255e0, was not traced: OPEN).
+- **Weapons:** `CObjCharacter::FUN_00a5f4f0` -- the `_l`/`_r` pair for TypeID4 9/13, `_f` for a
+  harp on a vslot-0x34 body, else the plain model; the bone comes from each item's own `.bsr`. No
+  per-race, per-sex or per-weapon bone table, no hold offset. CharacterAppearance already did this;
+  the world did not (it drew no dual axe, round 683).
+
+### 3. What changed
+
+**The wire (OURS layout, trailing, backward compatible; charselect.md lane W has the bytes):**
+`OpEntityEntered` appends the model (u32 RefObjID, u8 scale) after its wire angle; `OpEnterWorldResult`
+appends the own model and a per-other models list after the own wire angle (making Restored, Seated,
+the headings tail and the angle always written, as the field doc's trap requires);
+`OpChangeZoneResult` appends the models list after its headings. A row with no model is sent as
+`LegacyModelFor(Gender)` at 0x22. The base client read this round's server and entered the world
+(section 1's run) -- the tails reach it unread. No migration.
+
+**The world** (`World3D.gd`):
+- `_build_assembled_character(equipped, body, scale)` builds through `CharacterAppearance`
+  (`from_catalog`: a bodies-only `CharCatalog` from the characterdata parts the world already reads,
+  39 ms MEASURED, and the world's item table). Height goes on the skeleton node, Volume on the bone
+  groups, `_l`/`_r`/`_f`, the missing-palette-bone rule, round 685's default wear and round 687's hides
+  -- select, create and the world now draw a character the same way. The player, every other player,
+  the paper doll and the portrait use it.
+- The body key is the Figure's code name (`WorldBodies.body_key`: the model's, else the gender's
+  legacy body, else the China fighter). Speed (column 47), sound object, BCRadius and Country are the
+  body's own rows. The animation gate tests the body, not a gender.
+- `BodyAnimations` (new, `scripts/assets/body_animations.gd`): the group switch with the fortress
+  weapon by race and the lookup above; `BsrReader.ParsedObject.animation_for` / `_entry_for` /
+  `_group_for` implement the last-wins and null-clip fallback. CharacterAppearance and World3D share
+  the one table. charselect.md "Animations per body" is the contract for euroskill691.
+- The skill-clip folder (`Prim\Ani\Char\China\<man|woman>`) now follows the body's sex; the path
+  rule itself is the skill lane's.
+
+**QA:** `SRREVAMP_QA_BODY=<id>[:<scale>]`; `SRREVAMP_QA_LINEUP` (`scripts/world/qa_lineup.gd`: the
+Figures spawned through the other-player path and measured per action phase -- `posed yes|TPOSE`
+from the bones against their rest, `feet` as the lowest CPU-skinned vertex against the walkable
+surface); `SRREVAMP_QA_CREATE=ref:scale:chest:legs:feet:weapon` in QaSignIn; `tools/body_anim_probe.gd`.
+
+### 4. Measured
+
+**Clips** (`body_anim_probe.gd`, 52 Figures x 12 actions x default + the race's weapon groups, 4,056
+lookups, real archives): `--lookup=old` 129 that play nothing; `--lookup=world` **0** (RESULT: PASS).
+
+**In the world** (GL, Jangan 97/168 (1002, 1100), `SRREVAMP_QA_LINEUP=all`, `_WEAPONS=each`: 364
+bodies -- every Figure with every catalogue weapon of its race -- plus the player, a Europe noble man
+with a 1H sword, `/var/tmp/world689/m2/log.txt`):
+
+| action | bodies | TPOSE | feet (lowest vertex - surface) |
+|---|---|---|---|
+| stand | 365 | 0 | -0.150 .. +0.999 |
+| run | 365 | 0 | -0.150 .. +1.006 |
+| sit | 365 | 0 | -1.120 .. +0.006 |
+| attack | 365 | 0 | -0.099 .. +0.487 |
+
+Two bodies at the lineup's far corner stood on a stair edge (feet -29.3 / -15.5: the surface ray hit
+the steps above where they were placed) and are left out of the ranges; the same Figures with the
+other weapons are in range. A body is about 17-18 tall.
+
+**"Some float" -- what the numbers say (MEASURED; not changed):**
+- Every Figure's bind pose stands on its origin (-0.005 men, -0.004 women).
+- Standing, running and attacking, every body is within -0.15 .. +0.15 of the surface **except
+  CHAR_CH_WOMAN_KANGSI**, whose own stand and run clips (`chinawoman_kangsi_standcity`, `_runforward`)
+  lift the whole body 0.4 to 1.0 off the ground -- the jiangshi's hop. Retail applies a clip's root
+  translation in full and no per-body offset was found (section 2), so retail hops too (INFERRED).
+- Sitting, the clips differ per body (round 607: looked up in each body's own table), and so does how
+  far the lowest vertex goes below the surface: `chinaman_fighter_a_sitbreath` -0.35,
+  `chinawoman_a_sitbreath` -0.40, the Europe men's `chinaman_a_sitbreath` -0.55, the Kangsi -0.54, the
+  Europe women's `chinawoman_merchant_a_sitbreath` -0.35 -- and the eleven China Figures whose table
+  names a merchant sit -1.05 (women) .. -1.12 (men). The same merchant clip sits the Europe women at
+  -0.35 and the China women at -1.05, so the difference is in those bodies' own meshes, not the clip.
+  Nothing was found that would lift a seated body; whether retail shows the same is OPEN.
+- The before drew every China Figure as the fighter, so the user saw one sit and one stand; the
+  Figures they picked now each sit and stand with their own clips.
+
+**Live** (`/var/tmp/world689/live.sh`: this round's server in memory with the creatable catalogue, two
+GL clients signing in and creating through the retail create, each measuring itself and the other
+through stand, sit (the N key's request, relayed by the server), stand):
+
+| pair | client sees | body | clip (stand / sit) | feet stand / sit |
+|---|---|---|---|---|
+| Europe, Constantinople | itself | CHAR_EU_MAN_NOBLE 0x24, 1H sword | chinaman_fighter_standcity / chinaman_a_sitbreath | -0.093 / -0.587 |
+| | the other | CHAR_EU_WOMAN_CRUSADER 0x40, crossbow | skill_eu_rog_bowa_stand01 / chinawoman_merchant_a_sitbreath | -0.239 / +0.008 |
+| China, Jangan | itself | CHAR_CH_WOMAN_KANGSI 0x02, spear | chinawoman_kangsi_standcity / _a_sitbreath | +0.646 / -0.231 |
+| | the other | CHAR_CH_MAN_MONKEY 0x22, bow | chinaman_monkey_standcity / chinaman_fighter_a_sitbreath | -0.140 / -0.208 |
+
+0 TPOSE in every line, on both clients. Each side's log names the other's model as the server sent it
+(`other:CHAR_EU_WOMAN_CRUSADER`, `other:CHAR_CH_WOMAN_KANGSI scale 0x02`).
+
+### 5. Pictures (for a human; nothing above rests on them)
+
+`/var/tmp/world689/sheet/` on the box: `lineup_0_stand.png`, `_1_run`, `_2_sit`, `_3_attack` (the 52
+in four rows -- China men nearest, then China women, Europe men, Europe women -- each with its race's
+weapon i mod n, 2560x1440), and `live1_*` / `live2_*` (each client's view at each phase).
+
+### 6. Tests
+
+- Server: `model689_test.go` (the tails round-trip; a result built without models is the older
+  payload byte for byte; the flows: own result, OpEntityEntered, the arrival list and a zone change
+  carry the model; a legacy row draws 1909/0x22) and `model689_golden_test.go` (the hand-written
+  golden bytes). `facing_test.go`'s three byte-count assertions now expect the model after the angle.
+- Client: `net/world_test.gd` decodes the same golden file; `world/world_bodies_test.gd` (a Europe id
+  is a Europe body, the legacy fallbacks, the group switch with the fortress weapon, the null-clip
+  fallback, last-wins, sitting through the same lookup, every core action in every Europe group);
+  `character_appearance_test.gd` (one table: World3D keeps no copy).
+- **The negatives** (the new tests against the base bf25e7e on the box):
+
+```
+SCRIPT ERROR: Parse Error: Identifier "WorldBodies" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "BodyAnimations" not declared in the current scope.
+SCRIPT ERROR: Invalid get index 'has_model' (on base: 'RefCounted (EntitySnapshot)').
+FAIL empty entry falls back to default (got "")
+FAIL onehand_sword empty 16 falls back (got "")
+FAIL the last entry of a type wins (got "run1.ban")
+```
+
+  (the last three: world_bodies_test's reader checks, run alone on the base reader). The Go tests
+  name fields the base does not have (a compile failure there). The behavioural before/after is
+  section 1's 21/21 TPOSE and 129 silent clips against 0 and 0.
+- `go build ./... && go vet ./... && go test -count=1 -p 1 ./...`: every package ok; `internal/session` hit the 10-minute default timeout (660 s) in the full run while other lanes' `-race` suites shared the CPU, and passed alone (`go test -count=1 -p 1 -timeout 40m ./internal/session/`: ok, 227 s).
+- `remote_godot.sh check`: ALL LOAD. `remote_godot.sh tests`: 204 suites, 0 failing.
+
+### 7. Performance gate
+
+`client/tools/perf_gate.sh --sites jangan,mobs` (base bf25e7e, head d03631e, 1280x720, median of 3):
+
+```
+jangan  frame ms   base 9.37  head 10.78  (+1.4)  SAME
+jangan  entry ms   base 9588  head 9689  (+101.0)  SAME
+jangan  freeze ms  base 3408  head 3417  (+9.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+mobs    frame ms   base 10.71  head 11.00  (+0.3)  SAME
+mobs    entry ms   base 10487  head 10528  (+41.0)  SAME
+mobs    freeze ms  base 3435  head 3408  (-27.0)  SAME
+mobs    hitches    base 5  head 5  (+0.0)  SAME
+```
+
+The Jangan frame is SAME only by the gate's rule (base run 3, 10.55, was slower than head run 2,
+10.33); the runs were base 9.37 / 9.31 / 10.55 and head 11.49 / 10.33 / 10.78, and head run 1 shared
+the box with another lane's Godot for 32 s. So it was re-measured: the same two copies interleaved three times more at the
+Jangan spawn under this lane's lock, with the frame split (`SRREVAMP_QA_MOBSPLIT=300`):
+
+| run | base ms | head ms |
+|---|---|---|
+| 1 | 10.35 | 9.93 |
+| 2 | 9.65 | 12.58 |
+| 3 | 9.27 | 9.43 |
+| median | 9.65 | 9.93 (+0.28) |
+
+Every split line on both sides draws **1968 objects in 1968 draw calls, 1,564,456 primitives**, with
+idle 0.21-0.29 ms and pose 0.12-0.17 ms a frame -- the same scene and the same per-frame script work.
+Head run 2's 12.58 ms is a run with identical work. The +1.4 ms was run-to-run noise on a box other
+lanes share; no cost was found to fix.
+
+### 8. Still OPEN
+
+- The avatar animation group (CObjCharacter +0x190) and the transport `cart` group.
+- Whether retail draws the merchant-family sit 1.1 below the ground and the Kangsi idle 0.4-1.0 above
+  it (no per-body offset READ; the position -> compound matrix step was not traced).
+- Another player's body is built once, on arrival: a later equipment change is recorded but not
+  redrawn (round 687's OPEN, unchanged).
+- The skill cast clip path (`_play_skill_cast_anim`, China folders) -- euroskill691.
+- Plus glow; the visual record's second resource (BsrName) for weapons (round 683's OPENs).
+
 ## Six-hundred-and-eighty-seventh round: the body's own skin no longer shows through worn armour -- each item hides the body pieces it covers, as retail's client does
 
 Round 683 built the bodies and found the body's own skin showing through worn armour on 2-21 % of
