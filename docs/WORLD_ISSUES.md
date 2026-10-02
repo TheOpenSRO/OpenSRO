@@ -7094,6 +7094,198 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-eighty-third round: one builder dresses any of the 52 bodies -- China and Europe, men and women -- at the Height and Volume picked, and the create screens' choices come from the player's own archive
+
+The user (2026-10-02): "Let's actually work on the character selection/creation part now. I'd like
+for all of those features I requested before that matches the original game as much as possible."
+Earlier: "name, race, gender, model, armor, weapon, rotation, name check, height, and volume". The
+user's decisions: retail opcodes, 4 slots, a 7-day delete, Europe offered now, both races render.
+
+This is charselect.md's lane B round B1 (`CharacterAppearance`) and the client half of round 0's
+catalogue (`CharCatalog`); round 682 (lobby682) builds the server half of the same rule. No screen
+changes here: the select screen (684) and the customize preview (685) use this. Labels: READ
+(sro_client.exe's dump and asm on the box, the exe's bytes), MEASURED, INFERRED, OURS, OPEN.
+
+### 1. What was READ
+
+**Volume's bone groups -- charselect.md's OPEN, closed.**
+- The {group, min, max} tables 0xec64c8 / 0xec6528 and the height table 0xec64b0 were re-read from
+  the exe's bytes and agree with charselect.md. `FUN_00a5b7e0`'s constants are 2.0 (neutral) and
+  4.0 (the clamp, 0xd8ada8), and 2.0 / 0.5 in the formula.
+- Each group number goes to the model's vslot 49 (`CCompChar::FUN_00c2ca90`, offset 0xc4, found by
+  scanning the exe's vtables). It refuses 38 and above and passes the string at **0xed9b68 + group x
+  0x1c** to 0xc2ca50.
+- Those 38 strings are assigned by `FUN_00d79e00` at start-up (the asm's `mov ecx, 0xed9b68` before
+  "Bip01", then +0x1c each): 0 `Bip01`, 1 `Bip01 Pelvis`, 2 `Bip01 Spine`, 3 `Bip01 Spine1`, ...,
+  8 `Bip01 L UpperArm`, ..., 19 `Bip01 R UpperArm`, ..., 29 `Bip01 L Thigh`, 33 `Bip01 R Thigh`, ...,
+  37 `Bone01`. So the groups are the pelvis, the spine, both upper arms, both thighs and (women)
+  `Bone01`.
+- 0xc2ca50 finds the bone by name (0xc2c890) and 0xc4aaf0 stores the factor at CRTBone +0x88,
+  flag 2 in +0x84.
+- `RTSkeleton::FUN_00c4a180` copies the bone's world matrix, multiplies **rows 1 and 2** by the
+  factor (row 0, along the bone, is left) and stores inverse bind x that at +0x8c.
+  `CObjRendererVS::FUN_00bf0310` uses +0x8c as the bone's skinning matrix when flag 2 is set; the
+  children are composed from the unscaled matrix. So Volume thickens across the bone, never along
+  it, and moves no joint.
+- **Which table is whose -- INFERRED.** `FUN_00a5b7e0` takes 0xec6528 when vslot 0x34 is non-zero.
+  Only that table names `Bone01`, which only the women's skeletons have (MEASURED: `strings` on the
+  four `*_skel.bsk`; chinawoman and europewoman hold Bone01/Bone02, the men's do not). The same vslot
+  picks the harp's `_f.bsr` (below). So 0xec6528 is the women's.
+
+**What is worn.**
+- `GlobalDataManager::ResolveVisualSlotForItem` (0x9db5e0) maps an item to visual slots 0..11.
+  `InstallEquipVisual` draws 0..8 and keeps one visual per slot (round 283).
+- The select screen (`PSCharacterSelect::FUN_0085a580`) installs each listed item by that slot with
+  its plus, and avatars (TypeID3 13) through `FUN_00a60ef0`, which attaches on top.
+- **`CObjCharacter::FUN_00a5f4f0`:** a weapon of TypeID4 9 (dual axe) or 13 (dagger) is drawn from
+  the model path's `_l.bsr` and `_r.bsr`. A harp (14) on a body whose vslot 0x34 is set is drawn
+  from `_f.bsr`. The archive has no plain `axe_01.bsr` (MEASURED), so the world draws no axe today.
+- **A palette bone the skeleton lacks** (`ResObject::FUN_00be2f80`): `FUN_00bce230` looks the name
+  up; when it is missing the influence gets entry 0 (the object's own space) and its weight is left
+  out of the sum. The Europe man's `heavy_01_la.bms` names `Bone03` (MEASURED), which
+  europeman_skel does not have.
+
+Twelve of these functions are filed in `recovered_names.tsv` (origin `reading`).
+
+**The create screen's choices.**
+- Europe's Protector rule (0x8531e0, with 0x853400's slider ranges) is keyed by the weapon's TypeID4
+  (`FUN_0080b6a0` returns `TID >> 11`). Protector value p selects list position 1/2 for 7, 8, 9;
+  2 for 12, 13; 3 for 10, 11, 14; 2/3 for 15.
+- With the list in id order (INFERRED) that is charselect.md's table exactly (MEASURED below).
+- The loader 0x80b980 sorts by TypeID as charselect.md says. It also preloads the `_r.bsr` of
+  weapons 9 and 13.
+- The starting values: sex man (`FUN_0084f350(1)`), the Figure slider at its minimum 1 (0x6599e0
+  clamps the position into the range), Height and Volume 2, Weapon 0.
+
+### 2. What shipped
+
+**`CharacterAppearance`** (client/scripts/ui/character_appearance.gd, the path charselect.md's
+lane B names). It knows nothing of World3D or Login.
+- `CharacterAppearance.from_archives(data_pk2, media_pk2, items := {})`. `items` takes World3D's
+  already-parsed `_item_rows`. The full item table is otherwise parsed only on the first id the
+  catalogue lacks.
+- `build(ref_obj_id, scale := 0x22, items := [{id, plus}, ...]) -> Body`. `Body` is a Node3D whose
+  child is the Skeleton3D, facing its own -Z. It carries `ref_obj_id`, `scale_byte`, `is_woman`,
+  `height_factor`, `volume_scales`, `weapon_kind`, `weapon_group`, `worn` ({id, plus, slot, models,
+  nodes}) and `assembled`.
+- `body.set_scale_byte(s)` re-applies Height and Volume without a rebuild (the sliders).
+- `animation_for(body, action_type)` returns the body's own clip in its weapon's group: stand 0,
+  sit down 13, sit 14, stand up 15. `body.pose(anim, seconds)` poses it. Which clip each screen plays
+  is 684/685's choice.
+- Statics: `height_index`, `volume_level`, `height_factor`, `volume_factor`, `volume_bone_scales`,
+  `apply_scale`, `apply_volume`, `visual_slot`, `item_models`.
+- **Height:** the node's uniform scale by the READ table.
+- **Volume:** every skin bound to the body skeleton (body pieces and body-weighted armour, not a
+  weapon's own skeleton) gets its bone's bind pre-multiplied by scale(1, f, f) -- rows 1 and 2.
+- **Plus** is kept per item; the glow is not drawn.
+- **Caching (OURS):** a body is assembled once into a detached template and each item once per
+  skeleton layout. A build duplicates them, so meshes, textures and materials are shared, and gives
+  each character its own skin copies. A per-character fade must use the instance's
+  `GeometryInstance3D.transparency`, not the shared materials. `free_templates()` releases them.
+- `WEAPON_ANIMATION_GROUP` is World3D's table. The test reads World3D.gd's source and holds the two
+  equal.
+
+**`CharCatalog`** (client/scripts/frontend/char_catalog.gd).
+- The rule, as `refdata/chargen.go` applies it. A body is a characterdata row with Service 1 and
+  TypeID 1/1. An item is an itemdata row with Service 1, TypeID 3/1 and a code ending `_A_DEF`. The
+  last definition of an id wins. The sex comes from column 58.
+- API: `from_archive(media)`, `from_tables(char_parts, item_parts)`, `figures(race, sex)`,
+  `weapons(race)`, `shield(race)`, `all_armour_sets(race, sex)`, `armour_sets(race, sex, weapon_id)`
+  (Europe's READ restriction; no weapon gives none), `defaults(race, sex, protector_required)` (the
+  READ starting values) and `sample_kit(race, sex, weapon_i, set_i)` (OURS: a creatable kit, with the
+  shield beside a one-handed weapon as the server adds it). Each `Entry` has `piece()`,
+  `armour_class()` and `two_handed` (column 93, as chargen.go reads it).
+
+**The missing-bone rule, opt-in.** `Skeleton3DBuilder.build_skin(..., missing_to_object_space)` and
+`SkinnedBsrAssembler.attach_item_from_archive(..., missing_bones_to_object_space)` default to false,
+so World3D draws exactly as before. CharacterAppearance passes true. The weight half of the READ
+rule is not modelled: at rest the vertex lands in the same place, but animated it may lag.
+
+**`client/tools/appearance_probe.gd`** measures and renders (tools/README.md).
+
+### 3. Measured (`appearance_probe.gd` on the box's vSRO archive, native readers API 5)
+
+- **The catalogue:** 13 Figures per race and sex (1907-1919, 1920-1932, 14875-14887,
+  14888-14900). China weapons are 3632-3636 and Europe's 10887-10895, in id order. There is one
+  shield per race and three whole sets per race and sex, 104 ids in all, every count charselect.md
+  gives.
+- **Europe's weapon -> sets:** dagger light; 1H, 2H sword and axe heavy and light; crossbow light;
+  warlock rod, staff and harp robe; cleric rod light and robe. That is charselect.md's table.
+- **Every Figure dressed:** all 52 built with a kit (weapons rotated, so every catalogue weapon model
+  is drawn, including the dagger's and axe's `_l`/`_r` and the women's harp `_f`). Every kit item
+  hung its models.
+- **Before the opt-in** the same run printed six
+  `PARITY FAIL CHAR_EU_MAN_* ... worn 5/5 items, 4/5 models` lines (EXORCIST, NECROMENCER, MERCHANT,
+  ANGEL, DEVIL, WEREWOLF: the heavy legs). There were 0 after.
+- **Height:** the head bone stands at 15.95 (men) and 15.31 (women) at Height 2. Every one of the 52
+  measured exactly x0.9400 and x1.0600 at Height 0 and 4 (worst error 0.000000).
+- **Volume** (CPU-skinned vertices of the bare body, at Volume 0 / 2 / 4):
+
+| Body | height | torso depth | thigh depth |
+|---|---|---|---|
+| CHAR_CH_MAN_ADVENTURER | 18.12 / 18.12 / 18.12 | 2.36 / 2.61 / 2.71 | 1.68 / 1.86 / 2.14 |
+| CHAR_CH_WOMAN_ADVENTURER | 17.20 / 17.20 / 17.20 | 2.46 / 2.61 / 2.70 | 1.24 / 1.38 / 1.59 |
+| CHAR_EU_MAN_NOBLE | 18.04 / 18.04 / 18.04 | 2.36 / 2.61 / 2.71 | 1.68 / 1.86 / 2.14 |
+| CHAR_EU_WOMAN_NOBLE | 17.88 / 17.88 / 17.88 | 2.49 / 2.64 / 2.74 | 1.24 / 1.38 / 1.59 |
+
+  The height is unchanged and the girth grows with the level. The overall width (arms out) is
+  unchanged too: the arms' length is along their bones.
+- **Build time:**
+  - `from_archives`: 130 ms.
+  - A cold build (assembles the body and its items): median 21.0 ms, max 30.8 ms over the 52.
+  - A warm build (from templates): median 1.1 ms, max 1.1 ms.
+  - 104 builds took 52 body and 61 item assemblies.
+  - With the GDScript readers (the box's stale API-4 library) cold was a median 29.9 ms, max 405 ms
+    (the first).
+  - So four characters on the select screen cost under ~0.1 s the first time, and a customize swap
+    is ~1 ms once its pieces are cached.
+
+### 4. Pictures (for a human; nothing above rests on them)
+
+`appearance_probe.gd --out` renders: `lineup_h0/h2/h4.png` (the 52 at Height 0/2/4, Volume 2;
+rows China men, China women, Europe men, Europe women), `lineup_v0/v4.png` (Volume 0/4), and
+`compare_height.png` / `compare_volume.png` (the first Figure of each race and sex at the three
+values side by side), all orthographic at one scale.
+
+- In one earlier close-up the China woman ADVENTURER's heavy chest drew bright white. At the final
+  framing it does not. Not measured; noted.
+- The body's own pieces still draw under the armour (TODO "The body under armour", round 281/283:
+  retail fills empty slots with default wear).
+
+### 5. Tests
+
+- `scripts/frontend/char_catalog_test.gd` (41 checks, synthetic rows). It covers bodies against
+  Service 0, NPCs and the last definition; items against the suffix, TypeID, Service and ammo; sets
+  in id order; Europe's restriction per weapon type; defaults; kits; and UTF-16.
+- `scripts/ui/character_appearance_test.gd` (70 checks, synthetic skeletons). It covers the scale
+  byte's decode and clamps, both tables, the 38 names, Volume across the bone and not along it, its
+  reset, per-character skins, shared meshes, one visual per slot, `_l`/`_r`/`_f`, the missing-bone
+  opt-in with the default unchanged, Height on the node, and the World3D table.
+- **The negative**, the new suites run on the base (3857a5e):
+
+```
+SCRIPT ERROR: Parse Error: Identifier "CharCatalog" not declared in the current scope.
+          at: GDScript::reload (res://scripts/frontend/char_catalog_test.gd:29)
+SCRIPT ERROR: Parse Error: Identifier "CharacterAppearance" not declared in the current scope.
+          at: GDScript::reload (res://scripts/ui/character_appearance_test.gd:92)
+```
+
+  The behavioural before/after is the probe's six heavy-legs `PARITY FAIL` lines in section 3.
+- `remote_godot.sh check`: ALL LOAD (506 scripts). `remote_godot.sh tests`: 199 suites, 0 failing.
+- No perf gate: World3D's drawing is untouched. The two shared asset files gain parameters whose
+  defaults keep every existing call identical.
+
+### 6. Still OPEN
+
+- What vslot 0x34 reads (INFERRED: a woman). It picks the Volume table and the harp's `_f`.
+- The weight half of the missing-bone rule, and switching the world to the rule (lane W, with
+  `perf_gate.sh`; it also gives the world the dual axe's `_l`/`_r`, which it does not draw today).
+- Whether an avatar hides the armour under it (`FUN_00a60ef0`).
+- The plus glow.
+- The body under armour and default wear (TODO).
+- Which clip the select idle and the preview play (charselect.md section 9).
+- `CharacterPreview` is still the create screen's preview; round 685 replaces it with this builder.
+
 ## Six-hundred-and-eighty-first round: a `type: legacy` server in the list is asked the original way -- the retail handshake, 0x6100, 0x6101 -- and its shards show their real Check / Easy / Populated / Crowded / FULL
 
 The user (2026-10-01): "I want to add a random private server to the server list in yaml for

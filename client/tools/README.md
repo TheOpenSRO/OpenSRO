@@ -493,6 +493,18 @@ remote_godot.sh script res://tools/census_bsk_bind.gd -- --pk2=$PK2/Data.pk2
 `xvfb-run -a ... --write-movie` under its own lock instead of `qa_shot.sh`, whose start-up reap
 kills every Godot on the box.
 
+### Character appearance: the 52 bodies, Height and Volume (round 683)
+
+`appearance_probe.gd` checks `CharCatalog` against charselect.md (52 Figures, 5 + 9 weapons, a
+shield per race, 3 armour sets per race and sex, 104 ids), builds every Figure with a kit through
+`CharacterAppearance` (cold and warm build times), measures the head bone at Height 0/2/4 and the
+CPU-skinned girth at Volume 0/2/4, and with `--out` renders the 52 at each Height and Volume plus
+one body per race and sex side by side. A failed check prints `PARITY FAIL`. It needs a GL context
+for `--out`, so a lane runs it under its own lock with `xvfb-run -a -s "-screen 0 1600x1200x24"
+vglrun -d egl0 ... --rendering-driver opengl3 --resolution 1600x1200 --script
+res://tools/appearance_probe.gd -- --pk2=$PK2/Data.pk2 --media=$PK2/Media.pk2 --out=/var/tmp/<lane>/shots`.
+Without `--out` it runs headless through `remote_godot.sh script`.
+
 ### Load benchmark
 
 Every map and loading change is measured on the two runs below, before and after, and on nothing

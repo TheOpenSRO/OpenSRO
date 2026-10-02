@@ -274,8 +274,13 @@ class AttachedItem:
 ##
 ## Returns null, having attached nothing, if the file is missing, is not an
 ## item, or none of its meshes could be loaded.
+##
+## `missing_bones_to_object_space` passes the client's rule for a palette bone
+## the body lacks to Skeleton3DBuilder.build_skin (round 683; off by default,
+## so the world draws as before until it opts in).
 static func attach_item_from_archive(
-	archive: Pk2Reader, skeleton: Skeleton3D, bsr_path: String
+	archive: Pk2Reader, skeleton: Skeleton3D, bsr_path: String,
+	missing_bones_to_object_space: bool = false
 ) -> AttachedItem:
 	var bsr_data := _read(archive, bsr_path)
 	if bsr_data.is_empty():
@@ -326,7 +331,7 @@ static func attach_item_from_archive(
 		var any_skinned := false
 		for pair in meshes:
 			var mesh: BmsReader.ParsedMesh = pair[0]
-			var mi := _skinned_instance(skeleton, mesh, pair[1])
+			var mi := _skinned_instance(skeleton, mesh, pair[1], missing_bones_to_object_space)
 			if mi == null:
 				continue
 			holder.add_child(mi)
@@ -382,7 +387,7 @@ static func attach_item_from_archive(
 	var any_attached := false
 	for pair in meshes:
 		var mesh: BmsReader.ParsedMesh = pair[0]
-		var mi := _skinned_instance(item_skeleton, mesh, pair[1])
+		var mi := _skinned_instance(item_skeleton, mesh, pair[1], missing_bones_to_object_space)
 		if mi == null:
 			# An item mesh with no weights renders at its own origin, which
 			# is the item skeleton's root -- rigid, but in the right place.
@@ -408,11 +413,13 @@ static func attach_item_from_archive(
 ## null when the mesh carries no weights or names a bone the skeleton
 ## does not have.
 static func _skinned_instance(
-	skeleton: Skeleton3D, mesh: BmsReader.ParsedMesh, material: Material
+	skeleton: Skeleton3D, mesh: BmsReader.ParsedMesh, material: Material,
+	missing_bones_to_object_space: bool = false
 ) -> MeshInstance3D:
 	if not mesh.is_skinned():
 		return null
-	var skin := Skeleton3DBuilder.build_skin(skeleton, mesh.bone_names, mesh.object_space_vertices > 0)
+	var skin := Skeleton3DBuilder.build_skin(skeleton, mesh.bone_names, mesh.object_space_vertices > 0,
+		missing_bones_to_object_space)
 	if skin == null:
 		return null
 	var mi := MeshInstance3D.new()
