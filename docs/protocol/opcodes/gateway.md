@@ -59,8 +59,10 @@ gateway, `Server`); `server/cmd/retailgw` runs either.
 
 A u16 length then that many bytes, no terminator: written by `CClientProcess::FUN_004cc920`
 (`lstrlenA`), GatewayServer's 0x40b6b0 likewise; read by `FUN_004d36a0`. Names are the archive's
-code page; the implementation shows ASCII as is, valid UTF-8 as UTF-8, anything else as Latin-1, and
-drops control characters (OURS).
+code page; the implementation keeps the first 64 bytes of a name, shows valid UTF-8 (checked by
+hand, so the engine never logs a decoding error) as UTF-8 and anything else as Latin-1, and drops
+control characters (OURS; round 681's review: a 32 KB name took 160 ms and printed an error per
+byte before).
 
 ## 0x6100: what the client says about itself
 
@@ -80,7 +82,9 @@ drops control characters (OURS).
   text is `atoi`'d into CGame+0x7e8 and passed to the net init (0xeed668). MEASURED on the box: the
   plaintext is `1000` and four NULs, **version 1000**.
 - The client reads both from the player's archive at run time (`RetailClientInfo`): no value is
-  built in.
+  built in. The 8-byte key is a fact READ from the binary and recorded as an interoperability fact
+  (docs/LEGAL.md, the facts of policy #2 and the interoperability of #3); unlike pk2's 169841
+  (PK2_FORMAT.md) no public source is cited for it, so it is not called "published" here.
 - **GatewayServer's checks (READ, 0x4051a0..):** a 0x6100 too short for its three fields logs
   "certificate client module : invalid msg data (0/1/2)" and disconnects; an unknown content id or
   module logs "someone tried to login with unknown client" (0x4d9490); a version above the
@@ -146,3 +150,7 @@ round 679's 0x0007 question. Details: server_list.md, "Legacy servers".
 - [ ] Whether a GatewayServer accepts 0x6101 before 0x6100 (OPEN; the client never does it).
 - [ ] The refusal codes of 0xA100 other than [2, 4] (OPEN).
 - [ ] Tested against a real private server: the user's (OPEN).
+- [ ] A proxy or emulator that uses a FIXED crc seed whose table index is one of the 37 unknown ones
+      (handshake.md) fails EVERY time, not 0.3 % of the time: three reconnects draw the same seed.
+      The row is Closed with "the session's checksum table N is not a standard one" in the log
+      (OPEN; only reading the 37 from the player's own exe would answer it).

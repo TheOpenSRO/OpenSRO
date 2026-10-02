@@ -45,6 +45,26 @@ const MAX_FRAMES := 64
 
 enum St { HELLO, CHALLENGE, IDENTITY, PATCH, LIST, DONE }
 
+## OURS (round 681's review): Blowfish key schedules per process frame, over
+## every legacy query at once. A hello needs two (the session key and the
+## exchange's key1), the challenge one; ten servers whose hellos land in the
+## same frame are spread over the following frames instead of stalling one.
+const KEY_SCHEDULES_PER_FRAME := 2
+static var _ks_frame := -1
+static var _ks_used := 0
+
+## Takes n key schedules from this frame's budget (a frame's first taker
+## always gets its share).
+static func _take_key_schedules(n: int) -> bool:
+	var frame := Engine.get_process_frames()
+	if frame != _ks_frame:
+		_ks_frame = frame
+		_ks_used = 0
+	if _ks_used > 0 and _ks_used + n > KEY_SCHEDULES_PER_FRAME:
+		return false
+	_ks_used += n
+	return true
+
 var content_id := 0
 var version := 0
 ## The key exchange's private value: READ, the client takes a fresh GUID's
@@ -99,6 +119,8 @@ func feed(buf: PackedByteArray) -> Dictionary:
 		if n == 0:
 			break
 		var r := _frame(rest.slice(0, n))
+		if r.has("wait"):
+			break # this frame's key schedules are spent: again next frame
 		off += n
 		if r.has("error"):
 			out["error"] = r["error"]
@@ -131,6 +153,12 @@ func _frame(raw: PackedByteArray) -> Dictionary:
 			var h := decode_hello(p)
 			if h.has("error"):
 				return h
+			var schedules := 1
+			if state == St.HELLO:
+				schedules = (1 if int(h["flags"]) & RetailSecurity.FLAG_BLOWFISH else 0) + (1 if int(h["flags"]) & RetailSecurity.FLAG_HANDSHAKE else 0)
+			if schedules > 0 and not _take_key_schedules(schedules):
+				_frames -= 1
+				return {"wait": true}
 			return _on_hello(h) if state == St.HELLO else _on_challenge(h)
 		St.IDENTITY:
 			if op != OP_IDENTITY:
@@ -311,30 +339,90 @@ class Reader:
 	func done() -> bool:
 		return not bad and off == p.size()
 
-## A name's bytes as text (OURS: ASCII as is; else UTF-8 when valid, else
-## Latin-1 -- the client's own code page is the archive's and is not read
-## here; control characters dropped).
+## OURS (round 681's review): the most bytes of a name decoded and shown.
+## A name may be as long as its frame (32 KB gathered from 0x600D parts);
+## the list's name column is 120 px.
+const NAME_MAX_BYTES := 64
+
+## A name's bytes as text (OURS): the first NAME_MAX_BYTES bytes; UTF-8 when
+## they are valid UTF-8 (a sequence cut by the cap is dropped), else Latin-1
+## -- the client's own code page is the archive's and is not read here;
+## control characters (C0, DEL, C1) dropped. One pass each way, and the
+## engine's UTF-8 decoder only ever sees valid input, so a hostile or
+## CP1252/GBK/EUC-KR name costs no error lines (round 681's review: the old
+## version printed one "Unicode parsing error" per bad byte, and its string
+## concatenation was quadratic).
 static func decode_name(b: PackedByteArray) -> String:
-	var ascii := true
-	for c in b:
-		if c >= 0x80:
-			ascii = false
+	var capped := b.size() > NAME_MAX_BYTES
+	if capped:
+		b = b.slice(0, NAME_MAX_BYTES)
+	var out: Variant = _utf8_clean(b, capped)
+	if out == null:
+		out = _latin1_clean(b)
+	return (out as PackedByteArray).get_string_from_utf8()
+
+## b's valid UTF-8 re-encoded without control characters, or null when b is
+## not UTF-8. A truncated last sequence is dropped (the cap may cut one).
+static func _utf8_clean(b: PackedByteArray, capped: bool) -> Variant:
+	var out := PackedByteArray()
+	var i := 0
+	var n := b.size()
+	while i < n:
+		var c := b[i]
+		var need := 0
+		var cp := 0
+		var lo := 0
+		if c < 0x80:
+			if c >= 0x20 and c != 0x7f:
+				out.append(c)
+			i += 1
+			continue
+		elif c >= 0xC2 and c <= 0xDF:
+			need = 1
+			cp = c & 0x1F
+			lo = 0x80
+		elif c >= 0xE0 and c <= 0xEF:
+			need = 2
+			cp = c & 0x0F
+			lo = 0x800
+		elif c >= 0xF0 and c <= 0xF4:
+			need = 3
+			cp = c & 0x07
+			lo = 0x10000
+		else:
+			return null
+		if i + need >= n:
+			# A sequence cut short: the cap's doing, or not UTF-8.
+			if not capped:
+				return null
+			for k in range(i + 1, n):
+				if b[k] & 0xC0 != 0x80:
+					return null
 			break
-	var s := ""
-	if ascii:
-		s = b.get_string_from_ascii()
-	else:
-		s = b.get_string_from_utf8()
-		# Valid UTF-8 only if it encodes back to the same bytes.
-		if s.to_utf8_buffer() != b:
-			s = ""
-			for c in b:
-				s += String.chr(c)
-	var clean := ""
-	for ch in s:
-		if ch.unicode_at(0) >= 0x20 and ch.unicode_at(0) != 0x7f:
-			clean += ch
-	return clean
+		for k in range(1, need + 1):
+			var cc := b[i + k]
+			if cc & 0xC0 != 0x80:
+				return null
+			cp = (cp << 6) | (cc & 0x3F)
+		if cp < lo or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF):
+			return null
+		if cp >= 0xA0:
+			for k in range(need + 1):
+				out.append(b[i + k])
+		i += need + 1
+	return out
+
+## b as Latin-1, re-encoded as UTF-8 without control characters.
+static func _latin1_clean(b: PackedByteArray) -> PackedByteArray:
+	var out := PackedByteArray()
+	for c in b:
+		if c < 0x80:
+			if c >= 0x20 and c != 0x7f:
+				out.append(c)
+		elif c >= 0xA0:
+			out.append(0xC0 | (c >> 6))
+			out.append(0x80 | (c & 0x3F))
+	return out
 
 ## A 0x5000: {flags, blowfish_key, count_seed, crc_seed, handshake_key, g, p,
 ## a, challenge} or {"error"} (strict: the fields its flags name and nothing

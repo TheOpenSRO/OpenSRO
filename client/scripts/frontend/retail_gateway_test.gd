@@ -23,6 +23,13 @@ extends SceneTree
 ##     legacy never sends 0x0007 (against a server that speaks first: ours
 ##     does not, so it shows Closed).
 ##   - SV.T: a synthetic file decrypted and atoi'd as the client does.
+##   - Round 681's review: a 32 KB shard name (gathered from 0x600D parts)
+##     decodes in well under 10 ms, capped at 64 bytes, and an invalid-UTF-8
+##     name never reaches the engine's UTF-8 decoder (no "Unicode parsing
+##     error" lines -- counted in the suite's output); key schedules are
+##     spread at most two a frame; a connection to a srrevamp server is not
+##     reused for another server's Connect, and a legacy one is never sent a
+##     login; a reconnect that fails says "connection failed".
 ##
 ## NEGATIVE: before round 681 RetailSecurity, RetailGatewayClient and
 ## ServerStatus.start_for do not exist -- this suite does not parse.
@@ -75,12 +82,16 @@ func _initialize() -> void:
 	_vectors()
 	_payloads()
 	_sv_t()
+	_names()
 	for name in EXPECT:
 		await _scenario(name)
 	_check(_data["scenarios"].size() == EXPECT.size(), "every transcript scenario is played (%d)" % _data["scenarios"].size())
 	await _window()
 	await _srrevamp_asks_at_once()
 	await _legacy_never_asks_0007()
+	await _key_schedules_spread()
+	await _reconnect_failure_reason()
+	await _connect_never_reuses()
 	_finish()
 
 func _finish() -> void:
@@ -156,6 +167,58 @@ func _sv_t() -> void:
 	_check(RetailClientInfo.parse_sv_t(file).has("error"), "a length past the file is refused")
 	_check(RetailClientInfo.atoi(" 42x".to_ascii_buffer()) == 42 and RetailClientInfo.atoi("x".to_ascii_buffer()) == -1, "atoi: spaces, digits, stop at the rest")
 	_check(RetailClientInfo.from_media(null).has("error"), "no Media.pk2: no guess")
+
+func _names() -> void:
+	var long := PackedByteArray()
+	long.resize(32000)
+	long.fill(0xE9)
+	var t0 := Time.get_ticks_usec()
+	var s := RetailGatewayClient.decode_name(long)
+	var ms := (Time.get_ticks_usec() - t0) / 1000.0
+	_check(ms < 10.0 and s == "\u00e9".repeat(RetailGatewayClient.NAME_MAX_BYTES), "a 32000-byte invalid-UTF-8 name: %.2f ms, capped to %d Latin-1 characters" % [ms, s.length()])
+	long.fill(0x41)
+	t0 = Time.get_ticks_usec()
+	s = RetailGatewayClient.decode_name(long)
+	ms = (Time.get_ticks_usec() - t0) / 1000.0
+	_check(ms < 10.0 and s.length() == RetailGatewayClient.NAME_MAX_BYTES, "a 32000-byte ASCII name: %.2f ms, %d characters" % [ms, s.length()])
+	# A 0xA101 gathered from 0x600D parts with that name, through feed().
+	var list := PackedByteArray([0, 1, 7, 0, 0, 0])
+	list.encode_u16(4, 32000)
+	long.fill(0xE9)
+	list.append_array(long)
+	list.append_array(PackedByteArray([1, 0, 10, 0, 1, 1, 0]))
+	var buf := PackedByteArray()
+	var parts := []
+	var off := 0
+	while off < list.size():
+		parts.append(PackedByteArray([0]) + list.slice(off, mini(off + 4000, list.size())))
+		off += 4000
+	var hdr := PackedByteArray([1, 0, 0, 0x01, 0xA1])
+	hdr.encode_u16(1, parts.size())
+	for p in [hdr] + parts:
+		var f := PackedByteArray([0, 0, 0x0D, 0x60, 0, 0])
+		f.encode_u16(0, (p as PackedByteArray).size())
+		f.append_array(p)
+		buf.append_array(f)
+	var c := RetailGatewayClient.new(22, 1000, 1)
+	c.state = RetailGatewayClient.St.LIST
+	c.sec = RetailSecurity.new()
+	t0 = Time.get_ticks_usec()
+	var r := c.feed(buf)
+	ms = (Time.get_ticks_usec() - t0) / 1000.0
+	_check(c.done() and r["error"] == "" and (c.shards[0]["name"] as String).length() == RetailGatewayClient.NAME_MAX_BYTES and ms < 10.0,
+		"feed() of a 0xA101 with a 32000-byte name in %d parts: %.2f ms" % [parts.size(), ms])
+	print("MEASURED feed 32000-byte name: %.2f ms" % ms)
+	# Every byte class: C1 and C0 dropped, a valid sequence kept, overlong / surrogate / cut ones -> Latin-1.
+	_check(RetailGatewayClient.decode_name(PackedByteArray([0x41, 0xC2, 0x85, 0x42, 0xC3, 0xA9])) == "AB\u00e9", "C1 controls dropped from UTF-8")
+	_check(RetailGatewayClient.decode_name(PackedByteArray([0xC0, 0x41])) == "\u00c0A", "an overlong lead byte is not UTF-8")
+	_check(RetailGatewayClient.decode_name(PackedByteArray([0xED, 0xA0, 0x80])) == "\u00ed\u00a0", "a surrogate is not UTF-8 (as Latin-1, the C1 byte 0x80 dropped)")
+	_check(RetailGatewayClient.decode_name(PackedByteArray([0x41, 0xE4, 0xB8])) == "A\u00e4\u00b8", "a name ending mid-sequence is not UTF-8")
+	var cut := PackedByteArray()
+	for _i in range(30):
+		cut.append_array(PackedByteArray([0xE4, 0xB8, 0xAD])) # U+4E2D, 3 bytes each: 64 bytes cut one mid-way
+	_check(RetailGatewayClient.decode_name(cut) == "\u4e2d".repeat(21), "a UTF-8 name cut by the cap keeps its whole characters")
+	_check(RetailGatewayClient.decode_name(PackedByteArray([0xB0, 0xA1, 0xC7, 0xD1])) == "\u00b0\u00a1\u00c7\u00d1", "EUC-KR bytes show as Latin-1, without an engine error")
 
 # --- The replayed gateway -----------------------------------------------------
 
@@ -363,6 +426,115 @@ func _window() -> void:
 	list._select_row(3)
 	list.select_current()
 	_check(chose.size() == 1 and chose[0] == cfg.servers[0], "choosing a shard row chooses its server")
+	await process_frame
+
+# --- Round 681's review ---------------------------------------------------------
+
+func _key_schedules_spread() -> void:
+	var key := PackedByteArray([1, 2, 3, 4, 5, 6, 7, 8])
+	var t0 := Time.get_ticks_usec()
+	for _i in range(10):
+		Blowfish.new(key)
+	var each := (Time.get_ticks_usec() - t0) / 10000.0
+	print("MEASURED Blowfish.new: %.2f ms each" % each)
+	_check(each < 2.71, "the key schedule is cheaper than before the review (2.71 ms): %.2f ms" % each)
+	# Ten conversations given a hello in the same frame: at most two schedules
+	# a frame, so one hello (two) a frame.
+	var sc: Dictionary = _data["scenarios"]["bands"]
+	var hello := Replay.unhex(sc["connections"][0][0]["s"])
+	var convs := []
+	for _i in range(10):
+		convs.append(RetailGatewayClient.new(22, 188, 1))
+	await process_frame
+	var per_frame := []
+	while true:
+		var moved := 0
+		for c in convs:
+			if (c as RetailGatewayClient).state == RetailGatewayClient.St.HELLO:
+				var r := (c as RetailGatewayClient).feed(hello)
+				if int(r["consumed"]) > 0:
+					moved += 1
+		per_frame.append(moved)
+		if moved == 0 or per_frame.size() > 20:
+			break
+		await process_frame
+	_check(per_frame.slice(0, 10) == [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], "ten hellos in one frame are taken one a frame: %s" % [per_frame])
+
+func _reconnect_failure_reason() -> void:
+	# A gateway that hands out an unknown checksum table, then is gone.
+	var server := _listen()
+	var port := server.get_local_port()
+	var q := ServerStatus.new()
+	root.add_child(q)
+	var entry := ClientConfig.ServerEntry.new()
+	entry.name = "Gone"
+	entry.type = ServerStatus.TYPE_LEGACY
+	entry.gateway_host = "127.0.0.1"
+	entry.gateway_port = port
+	var result := {"done": false, "why": ""}
+	q.finished.connect(func(_s, why: String) -> void:
+		result["done"] = true
+		result["why"] = why)
+	q.start_for(entry, {"content_id": 22, "version": 188})
+	var hello := Replay.unhex(_data["scenarios"]["unknown_crc_index_reconnects"]["connections"][0][0]["s"])
+	var peer: StreamPeerTCP = null
+	var started := Time.get_ticks_msec()
+	while not result["done"] and Time.get_ticks_msec() - started < 5000:
+		if peer == null and server.is_connection_available():
+			peer = server.take_connection()
+			peer.put_data(hello)
+			server.stop() # the reconnect finds nobody
+		await process_frame
+	_check(str(result["why"]).begins_with("connection failed"), "a reconnect to a server that is gone: '%s'" % result["why"])
+	q.queue_free()
+	await process_frame
+
+func _connect_never_reuses() -> void:
+	var login_script := load("res://scripts/Login.gd")
+	var t := {"host": "a.example.com", "port": 15779}
+	_check(login_script.connection_serves(true, "a.example.com", 15779, t, false), "a connection to the server shown carries its login")
+	_check(not login_script.connection_serves(true, "b.example.com", 15779, t, false), "not a connection to another host")
+	_check(not login_script.connection_serves(true, "a.example.com", 15780, t, false), "nor to another port")
+	_check(not login_script.connection_serves(true, "a.example.com", 15779, t, true), "nor any connection when the shown server is legacy")
+	# Live: connected to a srrevamp server, the field showing a legacy one.
+	var server := _listen()
+	var net: Node = root.get_node_or_null("NetClient")
+	_check(net != null, "the NetClient autoload")
+	if net == null:
+		return
+	net.call("connect_to_server", "127.0.0.1", server.get_local_port())
+	var peer: StreamPeerTCP = null
+	var started := Time.get_ticks_msec()
+	while (peer == null or not net.call("is_connected_to_server")) and Time.get_ticks_msec() - started < 3000:
+		if peer == null and server.is_connection_available():
+			peer = server.take_connection()
+		await process_frame
+	_check(net.call("is_connected_to_server"), "NetClient connected to the srrevamp server")
+	for _i in range(5):
+		await process_frame
+	peer.poll()
+	var before := peer.get_available_bytes()
+	var login: Control = login_script.new()
+	login.status_label = Label.new()
+	var legacy := ClientConfig.ServerEntry.new()
+	legacy.name = "Legacy"
+	legacy.type = ServerStatus.TYPE_LEGACY
+	legacy.gateway_host = "192.0.2.9"
+	login._selected = legacy
+	login._pending_action = "login"
+	login._connect_and_send()
+	for _i in range(5):
+		await process_frame
+	# poll() drops a closed peer only when nothing is left to read, which then
+	# reads as -1: nothing was sent.
+	peer.poll()
+	var after := maxi(peer.get_available_bytes(), 0)
+	_check(not net.call("is_connected_to_server") and after == before and peer.get_status() != StreamPeerTCP.STATUS_CONNECTED,
+		"Connect with a legacy server shown closes the srrevamp connection and sends it nothing (%d bytes before, %d after)" % [before, after])
+	_check(login.status_label.text.contains("not supported"), "and says logging in to the legacy server is not supported: '%s'" % login.status_label.text)
+	login.status_label.free()
+	login.free()
+	server.stop()
 	await process_frame
 
 # --- The two types --------------------------------------------------------------

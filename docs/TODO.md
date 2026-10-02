@@ -1142,7 +1142,8 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
   (`docs/protocol/opcodes/gateway.md`). Left: **the user's test against a real private server**
   (the fake gateway and the transcripts are all that has been tried); **the 37 checksum tables**
   that cannot be generated (the client reconnects; reading them from the player's own
-  sro_client.exe at run time is possible and is the user's call, handshake.md); **the client's
+  sro_client.exe at run time is possible and is the user's call, handshake.md; a proxy with a FIXED
+  seed on one of them fails every time, not 0.3 %); **the client's
   farm-byte mode word** (`CClientNet+4`, its writer OPEN; the gateway's content-id rule is used);
   whether a gateway takes 0x6101 before 0x6100; the 0xA100 refusal codes past [2, 4]; logging in
   over the original protocol (not started: Connect refuses a legacy server); our own server speaking

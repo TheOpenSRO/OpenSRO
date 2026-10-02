@@ -277,6 +277,11 @@ func _open_server_list() -> void:
 	_set_login_visible(false)
 
 func _on_server_chosen(entry: ClientConfig.ServerEntry) -> void:
+	# Round 681's review: a connection left open to the server chosen before
+	# (a failed login keeps it) must not carry the next login elsewhere.
+	if entry != _selected and NetClient.is_connected_to_server():
+		print("LOGIN: server changed -- closing the connection to %s:%d" % [NetClient.server_host, NetClient.server_port])
+		NetClient.disconnect_from_server()
 	_selected = entry
 	_show_selected_server()
 	ClientSettings.set_value(ClientSettings.SECTION_SERVER, ClientSettings.KEY_SERVER_NAME, entry.name)
@@ -827,13 +832,25 @@ func _on_register_pressed() -> void:
 	_pending_action = "register"
 	_connect_and_send()
 
+## Round 681's review: a live connection carries a login only when it is to
+## the server the field shows -- not to a server chosen before, and never
+## when the shown one is a legacy server.
+static func connection_serves(connected: bool, conn_host: String, conn_port: int, target: Dictionary, target_legacy: bool) -> bool:
+	if not connected or target_legacy or target.is_empty():
+		return false
+	return conn_host == str(target.get("host", "")) and conn_port == int(target.get("port", 0))
+
 func _connect_and_send() -> void:
+	var legacy := _address_override == "" and _selected != null and _selected.type == ServerStatus.TYPE_LEGACY
 	if NetClient.is_connected_to_server():
-		_send_pending_action()
-		return
+		if connection_serves(true, NetClient.server_host, NetClient.server_port, _parse_server_address(_target_address()), legacy):
+			_send_pending_action()
+			return
+		print("LOGIN: connected to %s:%d, not the server shown -- closing it" % [NetClient.server_host, NetClient.server_port])
+		NetClient.disconnect_from_server()
 	# Round 681 (OURS): logging in over the original protocol is not built;
 	# a legacy server is sent nothing that looks like a login.
-	if _address_override == "" and _selected != null and _selected.type == ServerStatus.TYPE_LEGACY:
+	if legacy:
 		status_label.text = "'%s' speaks the original protocol: its status is shown, logging in is not supported yet." % _selected.name
 		print("LOGIN: '%s' is a legacy server -- not connecting" % _selected.name)
 		return

@@ -7213,6 +7213,48 @@ not done -- the user's call (OPEN, TODO.md).
   strings in a code page other than ASCII/UTF-8/Latin-1.
 - The 37 checksum tables (above); the client's farm-byte mode word's writer; whether 0x6101 is
   accepted before 0x6100; 0xA100's other refusal codes.
+- A proxy or emulator with a FIXED crc seed on one of the 37 fails every time, not 0.3 % (review).
+
+### Review (round 681's review: the legal check passed -- no binary-derived blobs, only the 37-index list -- and the READ claims held; fuzzing found no crash or hang in 6,150 GDScript transcripts and 23M Go execs; one MEDIUM, five LOW -- fixed in a follow-up commit)
+
+- **MEDIUM, hostile shard names froze the screen and flooded the log.** `decode_name` had no cap, a
+  0x600D-gathered 0xA101 can carry a 32 KB name, its Latin-1 and filter loops were quadratic, and
+  `get_string_from_utf8` printed one "Unicode parsing error" per bad byte (176,565 lines in the
+  fuzz run; an ordinary CP1252/GBK/EUC-KR name would spam every refresh). Now: names are capped at
+  64 bytes (`NAME_MAX_BYTES`, OURS) before decoding; UTF-8 is validated by hand in one pass
+  (overlong, surrogate, > U+10FFFF and cut sequences refused, a sequence cut by the cap dropped),
+  Latin-1 is built in one pass as UTF-8 bytes, C0/DEL/C1 dropped, and the engine's decoder only sees
+  valid input; `SERVERLIST:` lines cut names to 32 characters and name at most 16 shards.
+  MEASURED (`client/tools/bench_retail_gateway.gd`, the box): decode of 32,000 invalid-UTF-8 bytes
+  156.81 -> 0.01 ms, ASCII 33.43 -> 0.03 ms; `feed()` of a 0xA101 with that name in nine 0x600D
+  parts 159.10 -> 1.40 ms; "Unicode parsing error" lines in the suite's output 32,008 -> 0.
+- **LOW, the Blowfish key schedule cost 2.71 ms** (MEASURED) three times per legacy query, two in
+  one frame. The native library's Blowfish is internal to the pk2 reader (not exposed; exposing it
+  would mean a new GDExtension method and API number, not done). Instead: the schedule's 521 chained
+  encryptions run with the round function inlined over local arrays -- **0.92 ms** (the same
+  cipher: blowfish_test.gd's known answers and the transcripts' bytes) -- and `RetailGatewayClient`
+  takes at most 2 schedules per process frame across all queries (OURS), so ten hellos landing in
+  one frame are taken one a frame (tested: `[1, 1, 1, 1, 1, 1, 1, 1, 1, 1]`, was `[10]`). Worst frame:
+  2 x 0.92 ms instead of 20 x 2.71 ms.
+- **LOW, Connect could carry credentials to the wrong server.** A connection left open to a srrevamp
+  server (a failed login keeps it) was reused when another server -- even a legacy one -- was
+  shown. Now choosing another server closes it, and Connect sends over a live connection only when it
+  is to the host and port the field shows and that server is not legacy (`Login.connection_serves`).
+  Tested live: connected to a srrevamp listener, a legacy server shown, Connect closes the
+  connection, sends it 0 bytes and says logging in is not supported.
+- **LOW, a failed reconnect said "closed without an answer"** (`connected` stayed true across a
+  retry). Now "connection failed"; tested with a gateway that hands out table 18 and is then gone.
+- **LOW, docs:** a proxy with a FIXED seed on one of the 37 tables fails every time (gateway.md,
+  handshake.md, TODO.md); the sv.t key stays labelled READ, an interoperability fact with no public
+  source cited (not called published).
+- **NEGATIVE** (the review's tests on 0ee9720, `NAME_MAX_BYTES` inlined as 64 so the suite parses):
+  `FAIL a 32000-byte invalid-UTF-8 name: 156.83 ms, capped to 32000 Latin-1 characters`, `FAIL a
+  32000-byte ASCII name: 33.57 ms`, `FAIL feed() of a 0xA101 with a 32000-byte name in 9 parts:
+  160.53 ms`, `FAIL C1 controls dropped from UTF-8`, `FAIL a surrogate is not UTF-8`, `FAIL a UTF-8
+  name cut by the cap keeps its whole characters`, `FAIL the key schedule is cheaper than before the
+  review (2.71 ms): 2.72 ms`, `FAIL ten hellos in one frame are taken one a frame: [10, 0]`, `FAIL a
+  reconnect to a server that is gone: 'the connection closed without an answer'`, `SCRIPT ERROR:
+  Invalid call. Nonexistent function 'connection_serves'`; 32,008 "Unicode parsing error" lines.
 
 ## Six-hundred-and-eightieth round: the title preloads its whole scene before the camera moves -- no pop-in during the intro's fly
 

@@ -163,7 +163,8 @@ srrevamp question.
   connection is closed (OURS): nothing that looks like a login is ever sent.
 - **The content id and the version are the player's archive's** (`RetailClientInfo`): the first
   byte of Media.pk2's `divisioninfo.txt` (READ: what the launcher passes as the first command-line
-  number) and the number in `sv.t` (READ: Blowfish with "SILKROAD", atoi). MEASURED in the box's
+  number) and the number in `sv.t` (READ: Blowfish with "SILKROAD", atoi; an interoperability fact
+  read from the binary, no public source cited). MEASURED in the box's
   Media.pk2: 22 and 1000. Without Media.pk2 a legacy row is "Closed" with the reason logged: nothing
   is guessed.
 - **The rows (OURS):** a legacy server that answered has one row per shard it lists, named

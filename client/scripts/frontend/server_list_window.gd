@@ -177,10 +177,15 @@ func _on_status(q: ServerStatus, why: String, i: int) -> void:
 	var b := q.band_with(_thresholds)
 	var what := "no answer -> CLOSED"
 	if q.answered_ok and q.server_type == ServerStatus.TYPE_LEGACY:
+		# OURS (round 681's review): a hostile list does not flood the log --
+		# names cut to 32 characters (they are already capped at 64 bytes),
+		# at most 16 shards named every refresh.
 		var parts := PackedStringArray()
-		for sh in q.shards:
-			parts.append("'%s' %d/%d state %d -> %s" % [sh["name"], sh["current"], sh["capacity"], sh["state"],
+		for sh in q.shards.slice(0, 16):
+			parts.append("'%s' %d/%d state %d -> %s" % [str(sh["name"]).left(32), sh["current"], sh["capacity"], sh["state"],
 				ServerStatus.Band.keys()[ServerStatus.shard_band(sh, _thresholds)]])
+		if q.shards.size() > 16:
+			parts.append("and %d more" % (q.shards.size() - 16))
 		what = "legacy, %d shard(s): %s" % [q.shards.size(), ", ".join(parts)]
 	elif q.answered_ok:
 		what = "%d/%d state %d -> %s" % [q.current, q.capacity, q.state, ServerStatus.Band.keys()[b]]

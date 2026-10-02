@@ -245,7 +245,9 @@ an unencrypted 0x1001). Who sets bit 15: the sender, per packet (the allocator `
   was copied into code; for the 37 the values were not looked at beyond "differs", and the
   index list above is the only thing recorded about them. A session whose crc seed selects one of
   the 37 cannot be checksummed: the client hangs up before sending anything and connects again (the
-  gateway draws a new seed per connection), up to three times within its 4 s (OURS).
+  gateway draws a new seed per connection), up to three times within its 4 s (OURS). A proxy or
+  emulator that uses a FIXED crc seed whose index is one of the 37 fails every time, not 0.3 % of
+  the time (OPEN).
   `docs/LEGAL.md` policy #2 is kept: the algorithm is the client's (READ, described in prose) and
   the CRC-32 polynomial is public; the 37 entries would need the binary's bytes, so they are not
   reproduced. Reading them at run time from a player's own sro_client.exe would be possible

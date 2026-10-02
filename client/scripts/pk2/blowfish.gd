@@ -37,17 +37,46 @@ func _expand_key(key: PackedByteArray) -> void:
 			j = (j + 1) % key.size()
 		_p[i] = (_p[i] ^ d) & MASK32
 
-	var lr := [0, 0]
-	for i in range(0, 18, 2):
-		_encrypt_block(lr)
-		_p[i] = lr[0]
-		_p[i + 1] = lr[1]
-
-	for box in range(4):
-		for i in range(0, 256, 2):
-			_encrypt_block(lr)
-			_s[box][i] = lr[0]
-			_s[box][i + 1] = lr[1]
+	# The 521 chained encryptions of the schedule, with the round function
+	# inlined over local arrays (round 681's review: through _encrypt_block
+	# and _f this took 2.71 ms, three times per legacy server query; the
+	# result is the same cipher, blowfish_test.gd's known answers).
+	var p := _p
+	var s0: PackedInt64Array = _s[0]
+	var s1: PackedInt64Array = _s[1]
+	var s2: PackedInt64Array = _s[2]
+	var s3: PackedInt64Array = _s[3]
+	var l := 0
+	var r := 0
+	for slot in range(0, 18 + 1024, 2):
+		for k in range(0, 16, 2):
+			l ^= p[k]
+			r ^= (((s0[l >> 24] + s1[(l >> 16) & 0xFF]) & MASK32) ^ s2[(l >> 8) & 0xFF]) + s3[l & 0xFF] & MASK32
+			r ^= p[k + 1]
+			l ^= (((s0[r >> 24] + s1[(r >> 16) & 0xFF]) & MASK32) ^ s2[(r >> 8) & 0xFF]) + s3[r & 0xFF] & MASK32
+		var t := l ^ p[16]
+		l = r ^ p[17]
+		r = t
+		if slot < 18:
+			p[slot] = l
+			p[slot + 1] = r
+		else:
+			var i := (slot - 18) & 0xFF
+			match (slot - 18) >> 8:
+				0:
+					s0[i] = l
+					s0[i + 1] = r
+				1:
+					s1[i] = l
+					s1[i + 1] = r
+				2:
+					s2[i] = l
+					s2[i + 1] = r
+				_:
+					s3[i] = l
+					s3[i + 1] = r
+	_p = p
+	_s = [s0, s1, s2, s3]
 
 func _f(x: int) -> int:
 	var a := (x >> 24) & 0xFF

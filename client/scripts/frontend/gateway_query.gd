@@ -150,6 +150,9 @@ func _process(_delta: float) -> void:
 		if attempts < max_attempts:
 			_peer.disconnect_from_host()
 			_peer = null
+			# A new connection is not yet made: its failure is "connection
+			# failed", not "closed without an answer" (round 681's review).
+			connected = false
 			_on_reconnect()
 			_connect(_ip)
 		else:
