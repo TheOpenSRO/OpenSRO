@@ -1604,6 +1604,7 @@ func _ready() -> void:
 	# The front-end's 3D backdrop (round 678, FrontEndBackdrop): none of an
 	# entry's work -- no player, HUD, server or loading screen.
 	if title_mode:
+		_overlay_view.set_rendering(false)
 		_title_ready()
 		return
 	# Every entry names itself and the renderer in the log (round 579), so a

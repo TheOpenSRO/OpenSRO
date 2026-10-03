@@ -50,6 +50,11 @@ func _init() -> void:
 	_rect = TextureRect.new()
 	_rect.name = "Show"
 	_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# The texture is the window in physical pixels; under a UI scale other than
+	# 1 that is bigger than the full rect in UI units, so the rect must not
+	# take the texture's size as its minimum (round 702 final review: at 2.0 it
+	# showed the overlay doubled from the top-left corner).
+	_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_rect.stretch_mode = TextureRect.STRETCH_SCALE
 	# The viewport's colour over a transparent clear is premultiplied.
@@ -67,6 +72,16 @@ func follow(source: Camera3D) -> void:
 	_source = source
 	if source != null:
 		source.cull_mask &= ~BIT
+
+## Stops (or resumes) rendering the overlay viewport: the front-end's 3D
+## backdrop has nothing on the overlay layer (round 702 final review, L1).
+func set_rendering(on: bool) -> void:
+	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if on else SubViewport.UPDATE_DISABLED
+	_rect.visible = on
+
+## The rect the overlay is shown in, for the test.
+func shown_rect() -> Control:
+	return _rect
 
 ## Puts a node (and every visual under it) on the overlay layer.
 static func adopt(node: Node) -> void:

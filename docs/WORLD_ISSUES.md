@@ -7420,6 +7420,27 @@ Forward+, 1280 x 720, median of 3; the head carried the grid bloom and OverlayVi
 
 **Checks:** `remote_godot.sh check` ALL LOAD; `remote_godot.sh tests` 218 suites, 0 failing.
 
+### Final review (the overlay view)
+
+- **H1 (CONFIRMED, fixed): at a UI scale other than 1 the overlay was shown magnified from the
+  top-left corner.** The TextureRect kept Godot's default `EXPAND_KEEP_SIZE`, so its minimum size
+  was the texture's, the window in physical pixels; under `content_scale_factor` 2.0 the full rect is
+  half that in UI units, and the stretch doubled the rest. The review's GPU render put a plate that
+  projects to window (640, 360) at (1251, 715). Fixed with `EXPAND_IGNORE_SIZE`;
+  `world/overlay_view_test.gd` checks the shown rect against the window at 1.0 / 1.5 / 2.0 and fails
+  on c3769753 at 1.5 and 2.0 (got (64, 64) for (42, 42) and (32, 32) in the headless window).
+- **L1 (fixed):** the front-end's backdrop (title, select, create) has nothing on the overlay layer;
+  `OverlayView.set_rendering(false)` stops the viewport there.
+- **L2 (MEASURED, synthetic):** at 3840x2160 the overlay SubViewport costs ~0.26-0.29 ms GPU and the
+  composite ~0.09 ms (400 boxes, a shadowed sun, 30 plates; not measured in the real world).
+- **Checked fine by the review:** input passes through to the world (a push_input probe: left/right
+  press and release, wheel, right-held motion all reach `_unhandled_input`); the copied camera
+  matches the main one every frame; the viewport is the window's pixel size at 1.0 / 1.5 / 2.0 and
+  follows a resize; nothing else needs the overlay layer.
+- **Open (PLAUSIBLE):** text edges with partial alpha may tone-map slightly brighter than in the main
+  view (L3); a camera moved by a Tween would leave the overlay one frame behind (L4; no such writer
+  today).
+
 ## Six-hundred-and-ninety-ninth round: the developer toggles move from Ctrl+F1-F3 to Shift+F1-F3, because macOS keeps Ctrl+F1-F3 for itself
 
 The user (2026-10-03, on v0.1.481 under CrossOver on macOS): "can switch the ctrl+f1-f3 menus to
