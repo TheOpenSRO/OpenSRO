@@ -675,15 +675,11 @@ const MOVE_TARGET_STOP_DISTANCE := 0.3 * PLAYER_SCALE_RATIO
 
 var _camera_orbiting := false
 var _right_button_held := false
+## Whether the left button is down over the world (retail's input byte +0x258,
+## set by WM_LBUTTONDOWN and cleared by WM_LBUTTONUP in 0xba7240). Nothing in
+## the walk reads it: a press is one click and holding it does nothing more
+## (round 701, _unhandled_input has the reading).
 var _left_button_held := false
-var _left_dragging := false
-var _left_press_position := Vector2.ZERO
-# Holding the left button and dragging steers the character toward the
-# cursor (the original's left-drag-to-walk); it never orbits the camera.
-var _left_steering := false
-## How far the mouse has to travel with the left button down before the
-## press counts as an orbit rather than a click. Ours.
-const LEFT_DRAG_THRESHOLD_PIXELS := 6.0
 var _has_move_target := false
 var _move_target := Vector3.ZERO
 ## Round 653: the order in effect is a heading run (SkyRun) -- a click on the
@@ -5457,6 +5453,7 @@ func _reload_zone_assets(zone: String, frame: String = "") -> void:
 	_clear_region_grid()
 	if _ground_markers != null:
 		_ground_markers.zone_changed()
+	_cancel_talk_approach("zone change")
 	ground_mesh.visible = true
 	ground_collision.disabled = false
 
@@ -9248,11 +9245,38 @@ func _pick_character(screen_pos: Vector2) -> String:
 	# in the same frame finds nothing here.
 	if _dying_until.has(int(node.get_meta("monster_id"))):
 		return ""
-	_last_attack_target = int(node.get_meta("monster_id"))
-	_show_target(_last_attack_target)
-	_ring_on_monster(_last_attack_target)
-	_attack_monster(_last_attack_target)
+	var monster_id := int(node.get_meta("monster_id"))
+	# Select first, attack second (round 701; READ). The object click
+	# FUN_00792f00 runs before the selection (0x793570) and sends the attack
+	# 0x7074 for a CICMonster only when Ctrl is held (GetKeyState(0x11)) or
+	# the monster is already the selection (+0x628) with the target window
+	# up (FUN_00778120); otherwise the click selects (FUN_00778650: the ring,
+	# texture 3) and sends the select 0x7045 (FUN_0078f5f0), whose reply shows
+	# the target window. So the first click on a monster selects it and the
+	# next one -- or a double click, WM_LBUTTONDBLCLK -> FUN_00792190, which
+	# attacks a monster outright -- attacks. Until round 701 this client
+	# attacked on the first click.
+	var attack := monster_click_attacks(Input.is_key_pressed(KEY_CTRL), monster_id == _last_attack_target, _target_window_shows(monster_id))
+	_last_attack_target = monster_id
+	_show_target(monster_id)
+	_ring_on_monster(monster_id)
+	if not attack:
+		return "select_monster"
+	_attack_monster(monster_id)
 	return "attack"
+
+## Whether a click on a monster attacks it (READ, FUN_00792f00's CICMonster
+## branch): Ctrl held, or it is the selection and the target window is up.
+static func monster_click_attacks(ctrl: bool, is_selection: bool, window_shows: bool) -> bool:
+	return ctrl or (is_selection and window_shows)
+
+## Whether the target window is showing this monster (READ's FUN_00778120
+## asks the target window for its object). Without a target window (a test's
+## bare world) the selection alone counts.
+func _target_window_shows(monster_id: int) -> bool:
+	if _hud_target == null:
+		return true
+	return _hud_target.visible and _hud_target.shown_key == _fx_owner_key(monster_id, SkillNet.OWNER_MONSTER)
 
 ## The player's own click body (layer 9), made on first need: a capsule the
 ## body's height, a child of the player so it follows.
@@ -10428,6 +10452,9 @@ func _objects_commit(job: Dictionary) -> void:
 		container.position = job["world_offset"]
 		add_child(container)
 	_object_containers[node_suffix] = container
+	# A floor the ring may lie on arrived (round 701's review).
+	if _ground_markers != null:
+		_ground_markers.objects_changed()
 
 	var loaded := 0
 	var skipped_unresolved := 0
@@ -11110,7 +11137,9 @@ func _update_blob_shadow() -> void:
 ##   SRREVAMP_QA_CLICK="monster,npc,ground" (needs --server for monsters) left-click
 ##                          each through the real dispatcher after standing in
 ##                          front of it, logging what the NPC ray and the monster
-##                          ray hit and which path took the click; "gate"
+##                          ray hit and which path took the click (since
+##                          round 701 "monster" selects; "monster,monster"
+##                          attacks); "gate"
 ##                          (round 577) is the nearest teleport gate
 ##                          _bind_region_gates bound, aimed at the middle of
 ##                          its drawn box
@@ -12928,6 +12957,8 @@ func _qa_mob_strike(monster: int, result: CombatNet.AttackResult) -> void:
 ## log shows what the NPC ray and the monster ray each hit at that screen
 ## point and which path took the click. That is the measurement behind
 ## "clicking a monster opened the talk window": the node, not the impression.
+## Since round 701 a click on a monster selects it and the next one attacks
+## (_pick_character), so a QA attack is "monster,monster".
 ## SRREVAMP_QA_ARRIVAL_PROBE=1 (round 690): QA_ARRIVAL_PROBE_DELAY ticks after
 ## each arrival -- the entry, a zone change, a gate teleport, a return to the
 ## return point -- once the grid has stopped loading, prints where the player
@@ -13038,6 +13069,10 @@ const QA_GATE_DRAWN_RADIUS := 20.0
 ## SRREVAMP_QA_AIM_ONLY=1 nothing is dispatched: the player is stood and the
 ## camera aimed as for a click, and `QA AIM <kind>: click at x,y` gives the
 ## point for a real X click.
+## SRREVAMP_QA_CLICK_STANDOFF=<units> or "<kind>=<units>,..." (round 701)
+## stands the player that far short of the target instead of 40 (a click from
+## out of talk reach), for every kind or per kind ("npc=320,gate=860"); a
+## ":<side>" suffix (-z, the default, +z, -x, +x) picks the side stood on.
 var _qa_click_queue: Array = []
 var _qa_click_stage := 0
 var _qa_click_wait := 0
@@ -13085,7 +13120,22 @@ func _qa_advance_click() -> void:
 			# look along +Z at it with a shallow camera so it sits mid-frame.
 			# A gate's pick box is wider than that (round 690: Alexandria's is
 			# 140 across): stand 40 short of its side, so the camera is outside it.
-			var stand: Vector3 = _qa_click_target["pos"] + Vector3(0.0, 0.0, -40.0 - float(_qa_click_target.get("stand_off", 0.0)))
+			# SRREVAMP_QA_CLICK_STANDOFF (round 701): stand that far short
+			# instead of 40, for a click from out of talk or attack reach.
+			var standoff := 40.0
+			var side := "-z"
+			for part in OS.get_environment("SRREVAMP_QA_CLICK_STANDOFF").split(",", false):
+				var kv := String(part).split("=")
+				var value := kv[0] if kv.size() == 1 else (kv[1] if kv.size() == 2 and kind.begins_with(kv[0]) else "")
+				var vs := value.split(":")
+				if vs.size() >= 1 and vs[0].is_valid_float():
+					standoff = float(vs[0])
+					side = vs[1] if vs.size() == 2 else "-z"
+			# The side of the target to stand on, and the camera yaw that
+			# looks from there at it (yaw 180 sits the camera on -z).
+			var axis: Vector3 = {"-z": Vector3(0, 0, -1), "+z": Vector3(0, 0, 1), "-x": Vector3(-1, 0, 0), "+x": Vector3(1, 0, 0)}.get(side, Vector3(0, 0, -1))
+			var yaw: float = {"-z": 180.0, "+z": 0.0, "-x": 270.0, "+x": 90.0}.get(side, 180.0)
+			var stand: Vector3 = _qa_click_target["pos"] + axis * (standoff + float(_qa_click_target.get("stand_off", 0.0)))
 			if hover_only:
 				stand = _qa_click_target["pos"] + Vector3(0.0, 0.0, -kind.get_slice("@", 1).to_float())
 			var pair := _nav_graph_for(stand)
@@ -13095,7 +13145,7 @@ func _qa_advance_click() -> void:
 				stand = group.to_global(Vector3(local.x, (pair[0] as NavGraph).landing_height_at(local.x, local.z), local.z))
 			player.global_position = stand
 			player.velocity = Vector3.ZERO
-			camera_arm.rotation_degrees = Vector3(-15.0, 180.0, 0.0)
+			camera_arm.rotation_degrees = Vector3(-15.0, yaw, 0.0)
 		_qa_click_stage = 1
 		_qa_click_wait = 30
 		return
@@ -14224,10 +14274,8 @@ func _physics_step(delta: float) -> void:
 		_pending_attack = {}
 		_released_attack = {}
 		_pending_friend_cast = {}
-	# Holding the left button walks the character toward the cursor, refreshed
-	# every frame so it follows the pointer while held.
-	if _left_steering and not locked:
-		_try_set_move_target(get_viewport().get_mouse_position())
+	# A talk approach's arrival (round 701): the walk ended last tick.
+	_step_talk_approach(locked)
 	# Round 653's follow-up: an approach whose move a wall ended is re-issued
 	# here on the next tick (_step_move_order).
 	if _has_move_target or not _pending_attack.is_empty() or not _pending_friend_cast.is_empty():
@@ -15696,29 +15744,36 @@ func _unhandled_input(event: InputEvent) -> void:
 				_cancel_ground_pick("right click")
 			_right_button_held = event.pressed
 		elif event.button_index == MOUSE_BUTTON_LEFT:
-			# Either button orbits when dragged. A left press only becomes a
-			# destination if it is released without having dragged, so a
-			# look around does not also send the character somewhere.
+			# The press is the click (round 701; READ): retail's WM_LBUTTONDOWN
+			# runs the whole pick -- CGInterface::vslot_017 case 0x201
+			# (0x77c4a7) -> 0x793570 -> the object click 0x792f00 or the ground
+			# click 0x78f8d0 -> 0x9ec570 (destination, filter, ring) -- and
+			# nothing after it repeats it: WM_LBUTTONUP (case 0x202 ->
+			# 0x78e5d0) only ends process modes 0xae/0xaf, WM_MOUSEMOVE (case
+			# 0x200) turns the camera on the right button (the middle with the
+			# swap flag +0x4f9) and never on the left, and the 500 ms timer 7
+			# (0x777b90) re-plots a sky click's heading run (0x9eb8e0, which
+			# reads no mouse). So a held left button neither moves the ring
+			# nor re-aims the walk: a new press does. Until round 701 the
+			# click went on the release and a drag past 6 pixels re-picked the
+			# destination under the cursor every frame ("the circle will
+			# fluidly move around with your cursor", playtest 2026-10-03).
 			if event.pressed:
-				_left_press_position = event.position
-				_left_dragging = false
-			elif not _left_dragging:
-				_dispatch_left_click(_left_press_position)
+				var took := _dispatch_double_click(event.position) if event.double_click else _dispatch_left_click(event.position)
+				# One line a press (round 701): what a tester's log needs to
+				# tell "it walked where I first clicked" from "it followed the
+				# cursor".
+				print("CLICK: left press at %s -> %s%s" % [str(event.position.round()), took,
+					(" to (%.1f, %.1f, %.1f)" % [_move_target.x, _move_target.y, _move_target.z]) if took == "walk" and _has_move_target and not _move_heading_run else ""])
 			_left_button_held = event.pressed
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			camera_arm.spring_length = clampf(camera_arm.spring_length - CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
 			camera_arm.spring_length = clampf(camera_arm.spring_length + CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
-		# Only the right button orbits the camera. A held left button steers
-		# the character toward the cursor instead (see _physics_process) --
-		# the original never orbits on a left drag.
+		# Only the right button orbits the camera (READ: vslot_017 case 0x200
+		# tests the right byte +0x25a, or the middle +0x259 with the swap
+		# flag; never the left +0x258). A held left button does nothing.
 		_camera_orbiting = _right_button_held
-		if not _left_button_held:
-			_left_steering = false
-	elif event is InputEventMouseMotion and _left_button_held and not _left_dragging \
-			and (event as InputEventMouseMotion).position.distance_to(_left_press_position) > LEFT_DRAG_THRESHOLD_PIXELS:
-		_left_dragging = true
-		_left_steering = true
 	# The orbit's motion is not read here: _input turns the camera, so a drag
 	# keeps orbiting over a STOP control (see orbit_motion_applies).
 
@@ -15978,6 +16033,28 @@ func _apply_cursor(kind: String) -> void:
 		print("CURSOR: %s (0x%x) at %s%s" % [kind, GameCursor.id_for(kind), str(_hover_pos.round()),
 			(" -- " + _hover_target) if _hover_target != "" else ""])
 
+## A double click's second press (round 701's review; READ): retail sends it
+## as WM_LBUTTONDBLCLK, not a second WM_LBUTTONDOWN, to FUN_00792190 (via
+## vslot_017 case 0x203), which picks the object under the cursor and acts
+## only on a character it can act on -- a monster is attacked outright; the
+## ground, an NPC and a gate get nothing, so a far NPC's approach is not
+## rolled again. Another player's case (0x7074 when vslot 0xa8 allows) is not
+## built: nothing here (OURS).
+func _dispatch_double_click(screen_pos: Vector2) -> String:
+	if _player_dead or _self_cast.picking():
+		return "ignore"
+	if not NetClient.is_connected_to_server() or _objects_hidden:
+		return "ignore"
+	var monster_id := _monster_at(screen_pos)
+	if monster_id < 0:
+		return "ignore"
+	_cancel_talk_approach("a double click on a monster")
+	_last_attack_target = monster_id
+	_show_target(monster_id)
+	_ring_on_monster(monster_id)
+	_attack_monster(monster_id)
+	return "attack"
+
 ## The original's left-click scheme, in the original's order: a click on a
 ## monster attacks it, on an NPC talks to it, and anywhere else walks there.
 ##
@@ -15997,6 +16074,10 @@ func _dispatch_left_click(screen_pos: Vector2) -> String:
 		# see must show in the tester's log.
 		print("CLICK: at %s ignored -- the player is dead" % str(screen_pos))
 		return "dead"
+	# Any new click ends a talk approach still walking (round 701; OURS in
+	# part: retail's ground click clears it, FUN_009ec570 writing +0x20 = 0,
+	# and a new object click replaces it; a monster's select is not read to).
+	_cancel_talk_approach("a new click")
 	# Ground-pick mode (round 617): the click is the skill's point, not a
 	# pick-up, an attack, a talk or a walk.
 	if _self_cast.picking():
@@ -16011,7 +16092,7 @@ func _dispatch_left_click(screen_pos: Vector2) -> String:
 	if picked != "":
 		return picked
 	if _try_talk_to_npc(screen_pos):
-		return "talk"
+		return "approach" if not _talk_approach.is_empty() else "talk"
 	_try_set_move_target(screen_pos)
 	return "walk"
 
@@ -16089,6 +16170,33 @@ func _try_talk_to_npc(screen_pos: Vector2) -> bool:
 		return false
 	if _qa_click_logging:
 		print("QA CLICK   npc ray: %s" % _describe_click_hit(hit, "npc_name"))
+	# A CICharactor clicked is the selection (round 701's review; READ:
+	# 0x793570 calls FUN_00778650 for it in reach and before an approach): a
+	# selected monster stops being one, so a later single click on it selects
+	# again rather than attacking. A gate (CITeleportGate) is not a
+	# CICharactor and leaves the selection alone.
+	_select_for_talk(node)
+	# Out of reach the click walks there first (round 701; READ, 0x793570):
+	# beyond 240 from an NPC or 800 from a gate, to a point on the line back
+	# to the player, and the talk follows the arrival (_step_talk_approach).
+	if node is Node3D and _start_talk_approach(node as Node3D):
+		return true
+	_open_talk(node)
+	return true
+
+## The selection a talk click makes (round 701's review): an NPC replaces a
+## selected monster or player (FUN_00778650); a gate does not.
+func _select_for_talk(node: Node) -> void:
+	if node.has_meta("gate_point_id"):
+		return
+	_last_attack_target = -1
+	_selected_character = -1
+	_clear_target()
+
+## Opens the talk window for an NPC or gate holder (the click in reach, or a
+## talk approach's arrival): the name, greeting and lines, the ring under an
+## NPC.
+func _open_talk(node: Node) -> void:
 	var npc_name := str(node.get_meta("npc_name"))
 	if npc_name == "":
 		npc_name = "..."
@@ -16104,7 +16212,138 @@ func _try_talk_to_npc(screen_pos: Vector2) -> bool:
 	# otherwise go out behind the talk window.
 	_drop_pending_attack()
 	_hud_panels.open_npc_talk(npc_name, _npc_greeting_text(code), _npc_services(code))
+
+## The talk approach (round 701). READ from sro_client.exe:
+## - The object click 0x793570 measures the object's +0x24c, the 3-D distance
+##   from the local player that CICPlayer::vslot_005 (0x9d6f19..0x9d6f7e)
+##   writes for every object each frame. A CICNPC beyond 240.0 (double
+##   0xdb9888) and a CITeleportGate (class link 0xef1dac) beyond 800.0
+##   (double 0xd83080) are walked to; nearer, the select request 0x7045 goes
+##   at once (FUN_0078f5f0), whose 0xB045 reply opens the talk window
+##   (FUN_0088b200 -> IF_NPCWindow::FUN_00703ff0).
+## - The walk: FUN_0078f8d0(msg, 1, 0) -> FUN_009ec6b0(id, 20.0, range, 0),
+##   range 240.0 (float 0xdb9884) for an NPC, 640.0 (float 0xdb9890) for a
+##   gate, the near bound 20.0 (float 0xd88108) for both. It picks d =
+##   rand() / 32767.0 (double 0xde4808) * (range - 20) + 20 and the point
+##   object + d * unit(player - object) (FUN_009ed1e0's vector is its second
+##   position less its first: the player less the object), moves the ring
+##   there with the ground texture (FUN_00a631e0) and sends the walk through
+##   the click filter FUN_009ec240. So the ring lands between 20 and 240 (a
+##   gate: 640) short of the target on the line to the player -- not at the
+##   click, and not always at the farthest spot.
+## - The arrival: FUN_009ec380, every frame, waits for the mover to start
+##   (+0x714 != 0) and then to stop (+0x714 == 0, +0x6ec == 0), then calls
+##   FUN_0078ff60(0, id) -> FUN_0078f5f0(id): the same select, so the talk
+##   window opens on arrival. A ground click clears the pending id
+##   (FUN_009ec570 writes +0x20 = 0).
+## - The server's select handler (SR_GameServer 0x50faf0) measures with
+##   GObjPC::IsWithinInteractionRange (0x4a8e10): 300 for an NPC, 800 for a
+##   structure, 3-D; beyond, the reply is an error the client shows nothing
+##   for. This client has no select request, so the arrival applies that
+##   limit itself (talk_out_of_range) and logs a refusal.
+const TALK_APPROACH_NPC_BEYOND := 240.0
+const TALK_APPROACH_NPC_RANGE := 240.0
+const TALK_APPROACH_GATE_BEYOND := 800.0
+const TALK_APPROACH_GATE_RANGE := 640.0
+const TALK_APPROACH_NEAR := 20.0
+
+## The approach in progress: {"id": the holder's instance id, "started":
+## whether the walk has begun}, {} when none.
+var _talk_approach: Dictionary = {}
+## The random source for the approach distance (retail's rand()); a test
+## seeds it.
+var _talk_rng := RandomNumberGenerator.new()
+
+## Whether a click on a target `distance` away walks first (READ, 0x793570).
+static func talk_needs_approach(distance: float, structure: bool) -> bool:
+	return distance > (TALK_APPROACH_GATE_BEYOND if structure else TALK_APPROACH_NPC_BEYOND)
+
+## The approach point (READ, FUN_009ec6b0): `d` from the target on the line
+## to the player. `d` is drawn in [TALK_APPROACH_NEAR, range] by the caller.
+static func talk_approach_point(target: Vector3, from: Vector3, d: float) -> Vector3:
+	var to_player := from - target
+	if to_player.length_squared() < 1e-6:
+		return target
+	return target + to_player.normalized() * d
+
+## Starts the walk to a target out of talk reach; false when it is in reach.
+func _start_talk_approach(node: Node3D) -> bool:
+	if player == null:
+		return false
+	var structure := node.has_meta("gate_point_id")
+	var target := node.global_position
+	var distance := player.global_position.distance_to(target)
+	if not talk_needs_approach(distance, structure):
+		return false
+	var far := TALK_APPROACH_GATE_RANGE if structure else TALK_APPROACH_NPC_RANGE
+	var d := _talk_rng.randf_range(TALK_APPROACH_NEAR, far)
+	var point := _walkable_point(talk_approach_point(target, player.global_position, d))
+	_markers().place_at(point)
+	var took := _issue_walk(point)
+	_talk_approach = {"id": node.get_instance_id(), "started": _has_move_target and took == "walk", "point": point}
+	print("CLICK: %s '%s' %.1f away (talks within %.0f) -- walking to (%.1f, %.1f, %.1f), %.1f short of it (%s)" % [
+		"gate" if structure else "NPC", str(node.get_meta("npc_name", node.name)), distance,
+		TALK_APPROACH_GATE_BEYOND if structure else TALK_APPROACH_NPC_BEYOND, point.x, point.y, point.z,
+		point.distance_to(target), took])
 	return true
+
+## A point on the walkable surface under `p`: the region's walkable graph's
+## landing height there, else `p` as it is (OURS: retail sends the 3-D point
+## and its mover settles it; this client walks on the graph).
+func _walkable_point(p: Vector3) -> Vector3:
+	var pair := _nav_graph_for(p)
+	if pair.is_empty():
+		return p
+	var group: Node3D = pair[1]
+	var local := group.to_local(p)
+	var h := (pair[0] as NavGraph).landing_height_at(local.x, local.z)
+	if is_nan(h):
+		return p
+	return group.to_global(Vector3(local.x, h, local.z))
+
+## Ends a talk approach without talking (a new click, death, a zone change).
+func _cancel_talk_approach(why: String) -> void:
+	if _talk_approach.is_empty():
+		return
+	print("CLICK: talk approach dropped (%s)" % why)
+	_talk_approach = {}
+
+## Once a physics tick: the arrival of a talk approach (READ, FUN_009ec380):
+## once the walk has begun and ended, the talk -- within the server's limit
+## (talk_out_of_range), else a logged refusal; a target gone, nothing.
+func _step_talk_approach(locked: bool = false) -> void:
+	if _talk_approach.is_empty():
+		return
+	var node := instance_from_id(int(_talk_approach["id"])) as Node3D
+	if node == null or not is_instance_valid(node) or not node.is_inside_tree():
+		_cancel_talk_approach("the target is gone")
+		return
+	# A typing or motion lock stops the walk but is no arrival (round 701's
+	# review, OURS: retail's walk does not stop for the chat line): the
+	# approach waits and walks on when the lock lifts.
+	if locked:
+		if bool(_talk_approach["started"]):
+			_talk_approach["started"] = false
+			_talk_approach["resume"] = true
+		return
+	if bool(_talk_approach.get("resume", false)) and not _has_move_target and _wall_root() == 0:
+		_talk_approach["resume"] = false
+		_talk_approach["started"] = _issue_walk(_talk_approach["point"]) == "walk" and _has_move_target
+		return
+	if _has_move_target:
+		_talk_approach["started"] = true
+		return
+	if not bool(_talk_approach["started"]):
+		return
+	_talk_approach = {}
+	var structure := node.has_meta("gate_point_id")
+	if talk_out_of_range(player.global_position, node.global_position, structure):
+		print("CLICK: arrived %.1f from '%s' -- beyond the server's %.0f, no talk (retail's select reply refuses it silently)" % [
+			player.global_position.distance_to(node.global_position), str(node.get_meta("npc_name", node.name)),
+			TALK_RANGE_STRUCTURE if structure else TALK_RANGE_NPC])
+		return
+	print("CLICK: arrived %.1f from '%s' -- talking" % [player.global_position.distance_to(node.global_position), str(node.get_meta("npc_name", node.name))])
+	_open_talk(node)
 
 ## The NPC's real greeting, resolved from npcchat.txt's SN_ id through the
 ## text table; "" when the NPC has none (the talk window then shows "...").
@@ -16428,7 +16667,7 @@ func _on_guild_leave_requested() -> void:
 func _try_set_move_target(screen_pos: Vector2) -> void:
 	var root := _wall_root()
 	if root != 0:
-		_log_root("a move to the clicked point" if not _left_steering else "a held-button steer", root)
+		_log_root("a move to the clicked point", root)
 		return
 	var from := camera_3d.project_ray_origin(screen_pos)
 	var dir := camera_3d.project_ray_normal(screen_pos)
@@ -16462,6 +16701,13 @@ func _move_by_pick_ray(from: Vector3, dir: Vector3, space: PhysicsDirectSpaceSta
 	# The ring goes to the point (round 698; FUN_009ec570 places it whatever
 	# the click filter below decides).
 	_markers().place_at(point)
+	return _issue_walk(point)
+
+## A walk to `point` as retail's destination record sends it: FUN_009ec570's
+## tail and FUN_009ec6b0's (the talk approach, round 701) both store the point
+## and run the click filter FUN_009ec240. The caller has placed the ring.
+## Returns "walk" or "ignore" (the filter sent nothing).
+func _issue_walk(point: Vector3) -> String:
 	# A click on the ground supersedes an attack that was walking into reach,
 	# and a friendly cast walking to its player (round 622's review) -- even
 	# one the filter below does not send (OURS: where retail drops a pending
@@ -16958,8 +17204,8 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 		var mark := _party_mark(label)
 		if mark != null:
 			label.add_child(mark)
-	# A clickable collider so a left click on the monster attacks it (see
-	# _try_attack_monster), tagged with the id the attack is sent for.
+	# A clickable collider so a left click on the monster selects or attacks
+	# it (_pick_character), tagged with the id the attack is sent for.
 	body.set_meta("monster_id", monster.monster_id)
 	# The model drawn, which is what its measured front is keyed by
 	# (MonsterMotion.front_of); "" for the capsule.
@@ -17249,37 +17495,23 @@ func _monster_collider(height: float) -> StaticBody3D:
 	sb.add_child(cs)
 	return sb
 
-## A left click on a monster attacks it, the way clicking one does in the
-## original. Ray-tests the monster layer only; on a hit, targets that
-## monster and sends the attack, returning true so the click does not also
-## walk there.
-func _try_attack_monster(screen_pos: Vector2) -> bool:
-	if not NetClient.is_connected_to_server():
-		return false
-	# Held V hides the monsters, and a hidden object is not picked
-	# (inferred; _apply_key_holds has the reading).
-	if _objects_hidden:
-		return false
+## The monster under a screen point (the monster layer only), or -1: the
+## double click's pick (_dispatch_double_click). A dying monster is none.
+func _monster_at(screen_pos: Vector2) -> int:
 	var from := camera_3d.project_ray_origin(screen_pos)
 	var dir := camera_3d.project_ray_normal(screen_pos)
 	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
 	query.exclude = [player.get_rid()]
 	query.collision_mask = MONSTER_COLLISION_LAYER
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
-	if _qa_click_logging:
-		print("QA CLICK   monster ray: %s" % _describe_click_hit(hit, "monster_id"))
 	if hit.is_empty():
-		return false
+		return -1
 	var node := hit["collider"] as Node
 	while node != null and not node.has_meta("monster_id"):
 		node = node.get_parent()
 	if node == null or _dying_until.has(int(node.get_meta("monster_id"))):
-		return false
-	_last_attack_target = int(node.get_meta("monster_id"))
-	_show_target(_last_attack_target)
-	_ring_on_monster(_last_attack_target)
-	_attack_monster(_last_attack_target)
-	return true
+		return -1
+	return int(node.get_meta("monster_id"))
 
 ## Side-effect-free version of both click rays, for the QA hook: what the
 ## NPC-layer ray and the monster-layer ray each hit at this screen point,
@@ -18404,8 +18636,8 @@ func _enter_dead_state(exp_lost: int) -> void:
 		_hud_player_info.reset_hwan_display()
 		print("World3D: death -- berserk display reset (active now %s)" % str(_hud_player_info.hwan_display_active()))
 	_drop_pending_attack()
+	_cancel_talk_approach("death")
 	_has_move_target = false
-	_left_steering = false
 	player.velocity.x = 0.0
 	player.velocity.z = 0.0
 	# The QA attack loop stops here for good; SRREVAMP_QA_REVIVE_AFTER counts
@@ -18777,8 +19009,8 @@ func _own_toggle_running(skill_id: int) -> bool:
 ## The skill id of this player's own protection wall while one stands, else
 ## 0 (round 640). THE ROOT IS OURS -- the user's choice "Root while walled";
 ## retail's client and server both let a walled caster move (the probes are
-## in docs/protocol/skill_buffs.md). While it holds, no ground click, held-
-## button steer or walk into reach moves the player; attacks, skills and
+## in docs/protocol/skill_buffs.md). While it holds, no ground click or walk
+## into reach moves the player; attacks, skills and
 ## pick-ups go out from where the player stands and the server's ordinary
 ## reach rules judge them. The server drops a rooted caster's moves too
 ## (session/walls.go wallRoots). Whatever ends the wall's buff ends it.
@@ -18792,7 +19024,7 @@ func _wall_root() -> int:
 			return skill
 	return 0
 
-## When a refused move was last logged (a held-button steer asks every frame).
+## When a refused move was last logged (an approach is re-asked every tick).
 var _root_logged_ms := -100000
 
 ## Logs a move the wall refused, at most once a second.
@@ -19059,7 +19291,6 @@ func _request_sit_toggle() -> String:
 			else "not connected" if not NetClient.is_connected_to_server() else "a motion change is in flight")
 	var was_sitting := _sit.sitting
 	_has_move_target = false
-	_left_steering = false
 	_drop_pending_attack()
 	player.velocity.x = 0.0
 	player.velocity.z = 0.0
@@ -19231,7 +19462,7 @@ func _on_key_held(action: String, _down: bool) -> void:
 ## V and Z, while held. V hides what KeyMap.hides_under_v names -- here the
 ## other players and the monsters, the only such objects this client draws;
 ## NPCs, the player and the dropped items stay. A hidden object also cannot
-## be clicked or hovered (_try_attack_monster, _hover_kind_at): 0x9d11c0,
+## be clicked or hovered (_pick_character, _hover_kind_at): 0x9d11c0,
 ## vtable slot 20, returns 0 for it, and 0x9c7620 tests slot 20 before its
 ## ray test (read), so that the pick skips it is **inferred**. The minimap
 ## still shows them (whether retail's minimap reads the flag was not read).

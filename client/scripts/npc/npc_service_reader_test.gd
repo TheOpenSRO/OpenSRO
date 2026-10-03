@@ -1027,12 +1027,11 @@ func _initialize() -> void:
 		# NEGATIVE (fails before round 529: _unhandled_input turned it).
 		_check(is_equal_approx(arm.rotation_degrees.y, yaw_after_input),
 			"World3D._unhandled_input no longer turns it, so motion over the world turns it once (yaw %.2f)" % arm.rotation_degrees.y)
-		# The left drag is unchanged: it steers the character and turns nothing.
+		# A left drag turns no camera (round 701: and steers nothing either --
+		# world/click_hold_test.gd holds the walk's side).
 		w3d.set("_camera_orbiting", false)
 		w3d.set("_right_button_held", false)
 		w3d.set("_left_button_held", true)
-		w3d.set("_left_dragging", false)
-		w3d.set("_left_press_position", Vector2.ZERO)
 		var steer := InputEventMouseMotion.new()
 		steer.position = Vector2(20, 0)
 		steer.relative = Vector2(20, 0)
@@ -1040,8 +1039,8 @@ func _initialize() -> void:
 		var rotation_before := arm.rotation_degrees
 		w3d.call("_input", steer)
 		w3d.call("_unhandled_input", steer)
-		_check(bool(w3d.get("_left_steering")) and arm.rotation_degrees.is_equal_approx(rotation_before),
-			"a left drag still steers the character and turns no camera")
+		_check(not bool(w3d.get("_has_move_target")) and arm.rotation_degrees.is_equal_approx(rotation_before),
+			"a left drag turns no camera and sets no destination")
 		arm.free()
 		w3d.free()
 	hud.free()

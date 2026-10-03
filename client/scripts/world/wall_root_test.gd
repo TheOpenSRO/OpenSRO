@@ -2,8 +2,8 @@ extends SceneTree
 
 ## Round 640's root (OURS -- the user's choice "Root while walled"; retail's
 ## binaries let a walled caster move, docs/protocol/skill_buffs.md): while
-## this player's own protection wall stands, a ground click, a held-button
-## steer and the walk into an attack's reach move nobody; the wall's end frees
+## this player's own protection wall stands, a ground click and the walk into
+## an attack's reach move nobody (the held-button steer went in round 701); the wall's end frees
 ## it. On a bare World3D, with the catalog rows set by hand (SYNTHETIC rows in
 ## the catalog's shape: Fire Wall - Tower lv1 carries 'pw', Grass Walk not).
 ##   godot4 --headless --path client --script res://scripts/world/wall_root_test.gd
@@ -46,10 +46,8 @@ func _initialize() -> void:
 
 	world.call("_try_set_move_target", Vector2(640, 300))
 	_check(not bool(world.get("_has_move_target")), "rooted: a ground click sets no move target (no walk, no walk clip)")
-	world.set("_left_steering", true)
 	world.call("_try_set_move_target", Vector2(700, 300))
-	world.set("_left_steering", false)
-	_check(not bool(world.get("_has_move_target")), "rooted: a held-button steer sets none either")
+	_check(not bool(world.get("_has_move_target")), "rooted: a second click sets none either")
 
 	# The server's answer to a move it dropped (OURS): OpSkillMove naming the
 	# wall puts this player where the server holds it.

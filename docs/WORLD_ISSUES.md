@@ -7094,6 +7094,232 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-first round: a press of the left button is one click -- holding it moves neither the ring nor the walk, as in retail -- the ring lies on Jangan's plaza deck (the user's decision), and a far NPC or gate is walked to before it talks, a monster selected before it is attacked
+
+The user (2026-10-03): "if you click and hold down the click the circle will fluidly move around
+with your cursor and your character will follow. The original game places the circle where you
+first clicked but doesn't follow the cursor if you hold it down. You have to reclick to move the
+circle. Your character also doesn't follow the cursor, they go to circle instead." And, having
+checked a live retail server, that retail draws no ring on Jangan's central plaza deck: "That seems
+like a bug we should fix" (a USER DECISION: ours, an improvement over retail). Lane `move701`,
+client, a world round. Labels: READ (`sro_client.exe` on the box: the decompile and
+`sro_client.asm`), MEASURED, INFERRED, OURS. `docs/protocol/ground_markers.md` has both records
+("Holding the left button", "On a placed floor").
+
+### 1. What holding the left button does in retail (READ)
+
+Nothing after the press.
+
+- **WM_LBUTTONDOWN** (0x201) in `CGInterface::vslot_017` (0x77c260) calls 0x793570 at 0x77c4a7:
+  the pick under the cursor (`FUN_0078ee20`), then the object click `FUN_00792f00` or the ground
+  click `UI_SILKMALL::FUN_0078f8d0` -> `FUN_009ec570` (the 20-unit NPC test, the destination, the
+  5-unit filter `FUN_009ec240`, the ring `FUN_00a631e0`), or a sky run `FUN_009ebec0`. The only
+  place a left click walks.
+- **WM_MOUSEMOVE** (0x200), the same handler: turns the camera when the right byte +0x25a is down
+  (swap flag +0x4f9 clear) or the middle +0x259 (flag set). It never reads the left byte +0x258.
+- **WM_LBUTTONUP** (0x202) -> `FUN_0078e5d0`: only ends process modes 0xae / 0xaf. No pick.
+- **Timer 7** (500 ms, `FUN_00777b90`): set after a sky click and by the per-frame `FUN_009ec380`
+  while a heading run lasts, killed by a ground click (`FUN_00777ba0`); its case in
+  `CGInterface::vslot_005` runs `FUN_009eb8e0`, which re-plots the run from the player's own
+  position and heading and reads no mouse. **Round 698's protocol line "a held button repeats the
+  click (timer 7)" was wrong** and is corrected.
+- The button bytes are written by `gfxmainframe::FUN_00ba7240` (+0x258 left, +0x259 middle, +0x25a
+  right) and read through `FUN_00ba6240(i)`; its only index-0 (left) reader is the hover code's
+  cursor choice (0x9a instead of 0x99 over a ground item while held). The 0xB021 heading echo
+  (`FUN_008a5750`) hides the ring for heading moves only.
+
+So: a press puts the ring down and sends one move; the character walks to the ring; a drag moves
+neither; a new press does. No camera drag on the left button.
+
+### 2. What changed
+
+- **The click is the press** (`World3D._unhandled_input`): `_dispatch_left_click(event.position)`
+  on the press; the release does nothing; the held-button steer (`_left_steering`,
+  `_left_dragging`, `LEFT_DRAG_THRESHOLD_PIXELS`, the per-frame re-pick in `_physics_process`) is
+  gone. Until now the click went on the release, and a drag past 6 pixels re-picked the
+  destination -- and the ring -- under the cursor every physics frame. One log line a press:
+  `CLICK: left press at (x, y) -> walk to (x, y, z)` (or attack / talk / pickup / ignore).
+  The right button's orbit, the 5-unit filter, round 698's 20-unit NPC rule and the wall root
+  are untouched. HELP_PLAYING's "hold the left button to steer" is rewritten.
+- **The ring on a placed floor** (`GroundMarkers`, all OURS): a point more than 1.0 above the
+  drawn terrain whose short ray down (0.5 above to 1.0 below, layers 0b1001) meets a body without
+  the terrain-only bit takes a drape sampled by vertical rays on a 2-unit grid of the region's
+  frame, from 2.0 above the point to 2.0 below; a triangle with a missed or out-of-span corner, or
+  corners more than 1.0 apart, is left out. The same shader, texture and origin uniform as the
+  terrain ring, lifted 0.05. Rebuilt only when the point enters another 6 x 6 cell or moves 0.25
+  in height; samples cached per region and height. On terrain the drape is retail's, unchanged.
+  The region-key lookup is now remembered per group name, which made the terrain path cheaper
+  than before.
+
+### 3. Measurements
+
+**Live, real X input** (MEASURED; the box, Xvfb, `xdotool mousedown / mousemove_relative /
+mouseup / click`, a server built from this tree, `-in-memory -gm-accounts qa` with a transient
+chargen CSV, the QA character stood at the Jangan spawn 97/168 local (1002, 1020) on the plaza
+deck, `SRREVAMP_QA_MARKER=1`, `SRREVAMP_QA_NAVTRACE=2`; scratch driver, not committed):
+
+| Run | Input | Log |
+|---|---|---|
+| Forward+ (RX 7600, RADV) | press at (450, 330), 12 drags of (+25, +8) to (750, 426), 5 s held, release | one `CLICK: left press at (450, 330) -> walk to (71.0, -30.1, -37.2)`, one ring place there; no line from the drag, the hold or the release. The walk: local (1002, 1020) -> (1029.52, 998.37) in 59 ticks, then still for 650 ticks while the cursor sat over other ground -- 1.83 from the ring's (1030.96, 997.24), inside the stop distance |
+| | a second press at (750, 426) | `walk to (56.0, -30.1, -34.5)`, the ring moved there |
+| Compatibility (RX 7600, radeonsi, VirtualGL) | press at (640, 470), drag to (880, 410), release | the ring at the press point (2.5 from the player: the 5-unit filter sent no move, the ring moved anyway, READ); nothing from the drag or release; the second press walked to (11.6, -30.1, -53.5) |
+
+The drape lines, both renderers (`QA MARKER drape: FLOOR ...`):
+
+| Ring | Point | Drape - floor ray at the centre | at +-5 on x and z | Corners from the point | Triangles |
+|---|---|---|---|---|---|
+| ground clicks on the deck (4) | y -30.12, 14.2 above the terrain | +0.050 | +0.050 at all four | +0.050..+0.050 | 162 |
+| Storage-Keeper Sansan (NPC on the deck, clicked by xdotool at the QA hook's aim) | (980.35, 989.19) | +0.050 | +0.050 at all four | +0.050..+0.050 | 162 |
+| a Yeoha off the deck (Forward+) | terrain | +0.050 over the terrain-only ray, point y - terrain 0.398 | | | 18 (retail's 3 x 3 cells) |
+
+Nothing stretched (the corners are all at the deck + 0.05) and nothing on a roof (the rays start
+2.0 above). Pictures (local, not committed): the pale ring under the player on the deck with the
+cursor held elsewhere, both renderers. **Found, not this lane's:** a GM `/spawn mangyang 1` on the
+deck put the body at y -43.90, on the terrain under the deck (`_terrain_hit_height`'s terrain-only
+mask); its ring followed it there and the attack said "too far away" (TODO).
+
+**Cost** (MEASURED, `client/tools/measure_ground_ring.gd`, headless on the box, a body at 50
+units/s for 1,200 ticks, three runs, base and head interleaved): terrain 11.7 / 11.8 / 11.7 us a
+tick (base 13.3 / 13.2 / 13.0); on a synthetic deck (new) 35.2 / 35.4 / 35.0 us, 166 rebuilds and
+5,120 rays (4.3 a tick) -- only while the ring follows a body moving on a floor; a still ring on a
+floor costs what the terrain one does.
+
+### 4. Tests
+
+- `world/click_hold_test.gd` (new): through `_unhandled_input` on a World3D subclass -- the press
+  sets the destination and the ring at the point; ten held drags across 108 units of ground move
+  neither; the release after an arrival walks nowhere; a second press does; a left drag turns no
+  camera; a right drag still orbits with the left held. NEGATIVE (MEASURED) against 34286d92: 2
+  FAIL (the press set nothing, no ring).
+- `world/ground_markers_test.gd` (+23): the floor choice (above 1 AND a placed body; a terrain
+  body, no hit, 0.8 above, no height: terrain), the floor drape (flat; missed and dropped samples
+  clipped; a 1.5 step drawn on both levels and not across), and in the world a deck with a roof 4
+  above, a lower step beside it, the ground beside it (the terrain drape, 54 vertices) and an NPC
+  on it; the cell reuse (no ray inside a cell, 30 rays for the next). Against 34286d92 the suite
+  does not parse (MEASURED).
+- `npc_service_reader_test.gd`, `monster_strikes_test.gd`, `wall_root_test.gd`: their
+  `_left_steering` checks rewritten.
+- `remote_godot.sh check`: ALL LOAD (558 scripts, 9 scenes). `tests`: 217 suites, 0 failing (after section 7 too). `go test -count=1
+  ./internal/systems/...` ok.
+
+### 5. Performance
+
+`client/tools/perf_gate.sh --base 34286d92 --head 98bc0c3e --sites jangan --frames 12000` (both
+parts of the round, Forward+, native readers off, 1280 x 720, median of 3, interleaved):
+
+| Jangan | base | head | | verdict |
+|---|---|---|---|---|
+| frame ms | 1.67 | 1.64 | -0.0 | SAME |
+| entry ms | 9442 | 9357 | -85 | SAME |
+| freeze ms | 3329 | 3297 | -32 | SAME |
+| hitches | 4 | 4 | +0 | SAME |
+
+The gate's views make no click, so the ring and the approach are not exercised there; their own
+cost is the measure tool's (section 3).
+
+### 6. Choices made for the user (asleep)
+
+- The click moved from the release to the press (READ: retail's WM_LBUTTONDOWN), which also
+  means a press on the world that drags onto a window still clicks.
+- Every floor number is OURS: 1.0 above the terrain, the 0.5 / 1.0 probe, the 2-unit grid, 2.0
+  up and down, the 1.0 step, the 6-unit cell, 0.25 of height; no still-water quad on a floor.
+- The live run's monster was the nearest one, a Yeoha off the deck, in Forward+, and the GM's
+  Mangyang (under the deck, above) in Compatibility; the NPC on the deck is the deck case.
+
+### 7. The click side of NPCs, gates and monsters (READ; added mid-round)
+
+The user, from playing the original: "Monsters seem to show the sword far away and it will have
+your character walk to the monster and then attack. NPCs are a little different where I think it
+shows as far as you can see them but it will put the circle not where you clicked exactly but
+where the furthest spot to talk them in the same direction. Currently it seems like we can talk to
+NPCs from any distance." `docs/protocol/ground_markers.md`, "Clicking an NPC, a gate or a
+monster", has the full record.
+
+- **The distance** 0x793570 reads is the object's +0x24c, the 3-D distance from the local player
+  that `CICPlayer::vslot_005` writes for every object each frame (0x9d6f19..0x9d6f7e).
+- **An NPC** within 240.0 (double 0xdb9888) is selected at once (0x7045, `FUN_0078f5f0`); the
+  0xB045 reply opens the talk window. Beyond, `FUN_009ec6b0(id, 20.0, 240.0, 0)` walks to
+  `npc + d * unit(player - npc)` with `d = rand() / 32767.0 * 220 + 20`, moves the ring there
+  with the ground texture, and `FUN_009ec380` fires the select when the mover has started and
+  stopped. So the user's "furthest spot to talk, in the same direction" is the line and the ring
+  is right; the distance is random in 20..240, not always the farthest.
+- **A gate**: 800.0 (double 0xd83080) and a walk to 20..640 (float 0xdb9890) short; no follow ring.
+- **A monster**: no distance test and no walk on the client. The first click selects (ring,
+  target window); `FUN_00792f00` sends the attack 0x7074 only with Ctrl, or when the monster is
+  already the selection with the target window up, or on a double click (`FUN_00792190`). Who
+  walks into reach is the server (READ in the review: the attack tick 0x4ad8e0 calls
+  `GObjPC::MoveTowardObject`); srrevamp's client walks (OURS, as
+  before).
+- **Cancelling**: a ground click clears the pending id (`FUN_009ec570`: +0x20 = 0). Ours drops it
+  on any new click, death, a zone change or the target going (OURS beyond the ground click).
+- **The server**: the select handler (0x50faf0) refuses beyond `IsWithinInteractionRange` (300 for
+  an NPC, 800 for a structure), silently on the client. srrevamp has no select request: the
+  arrival applies that limit itself. The teleport request has applied it since round 642; the shop
+  and storage requests name no NPC, so the server cannot (TODO). No server code changed.
+
+**Built**: `World3D._start_talk_approach`, `_step_talk_approach`, `talk_needs_approach`,
+`talk_approach_point`, `_walkable_point` (the graph's landing height under the point, OURS),
+`monster_click_attacks`; `_dispatch_left_click` answers `approach` and `select_monster`. QA:
+`SRREVAMP_QA_CLICK_STANDOFF` ("npc=330,gate=880:-x,monster=280") stands the QA click's player
+that far short on a chosen side.
+
+**Live, real X input** (MEASURED; Compatibility, a server from this tree, xdotool clicks at the
+QA hook's aim; three runs, the third clean):
+
+| Click | From | Walk and ring | Arrival |
+|---|---|---|---|
+| Storage-Keeper Sansan (NPC) | 329.9 | to (20.7, -30.1, -261.1), 231.9 short on the line (run 1: 223.3) | 234.1 away: `talking` -- the talk window, the ring back under the NPC (texture 1) |
+| Dimensional Gate (STORE_CH_GATE) | 890.0 | 607.2 short | 608.9 away: `talking` -- the gate's three lines (picture) |
+| Mangyang | 280 | first click `select_monster` (ring texture 3, no attack); second click `attack` | walked into reach (18.3, reach 16 + 2), the attack sent |
+
+Runs 1 and 2 stood the QA player on the palace stairs or behind a terrain wall: the straight walk
+ended at the wall (`NAV: the walk is blocked`), 842 and 320 / 832 from the target, and the arrival
+refused the talk -- the server's limit, as designed.
+
+**Tests**: `world/talk_approach_test.gd` (new, 23 checks): the 240 / 800 thresholds, the point on
+the line, the 20..240 / 20..640 bounds over 200 seeded draws, the ring at the point with texture 0,
+no talk while walking, the talk at the arrival, none at an arrival 400 away, a new click and a
+despawn cancelling, and the monster rule (unselected: select; selected with the window: attack;
+Ctrl: attack).
+
+### Review
+
+The review found nothing HIGH. Fixed here:
+
+1. **M1, the help text** (CONFIRMED): HELP_PLAYING said "Click a monster once to attack it" and
+   that the client does not walk back into reach. It now says the first click selects and a second
+   click, a double click or Ctrl+click attacks; that a far NPC or gate is walked to first; and that
+   the character walks back in (retail's server does, and this client does). `bundle_docs.sh`
+   re-run (its RELEASE_NOTES snapshot picked up v0.1.483).
+2. **L2**: the server's walk into reach is READ, not INFERRED -- SR_GameServer's attack tick
+   0x4ad8e0 calls `GObjPC::MoveTowardObject` when the target is out of reach
+   (docs/protocol/auto_command.md, rounds 247 / 256).
+3. **L3**: a click on an NPC now moves the selection off a monster (`_select_for_talk`: retail's
+   0x793570 calls `FUN_00778650` for any CICharactor, in reach or before an approach); a gate does
+   not. Before, a later single click on the old monster attacked at once. With it,
+   `_target_window_shows` now compares the window's own target (`HudTarget.shown_key`, set by
+   `show_target` / `show_player`, cleared by `clear`) with the clicked monster, not only that the
+   window is up.
+4. **L4**: a typing or motion lock no longer reads as an arrival: the approach pauses
+   (`_step_talk_approach(locked)`) and walks on to the same point when the lock lifts (OURS; not
+   while a wall roots the player).
+5. **L5**: a double click's second press is routed as retail's WM_LBUTTONDBLCLK
+   (`_dispatch_double_click`, `FUN_00792190`): a monster under the cursor is attacked; the ground,
+   an NPC and a gate get nothing, so a far NPC's approach is not re-rolled.
+6. **L6**: the dead `_try_attack_monster` is replaced by `_monster_at` (the double click's pick);
+   the comments that named it now name `_pick_character`.
+7. **L7**: objects streaming into a region (`_objects_commit`) drop the floor samples and re-run
+   the floor test for the next three physics frames (`GroundMarkers.objects_changed`); a floor whose
+   every triangle is rejected falls back to the terrain drape instead of drawing nothing.
+8. **L8**: timer 7 is also armed by the arrow-key walks `FUN_0077b070` / `FUN_00780610` (heading
+   runs; the conclusion stands). `SRREVAMP_QA_CLICK=monster` now selects only: a QA attack is
+   `monster,monster` (World3D's QA notes; RE_COMPLETION's round record annotated).
+
+Tests added: talk_approach_test (+6: the lock pauses and resumes, the double click neither re-rolls
+nor drops, an NPC deselects a monster and a gate does not), ground_markers_test (+3: a still point
+fires no ray, streaming objects re-sample, the all-rejected floor falls back to 54 terrain
+vertices). `remote_godot.sh check` ALL LOAD; `tests` 217 suites, 0 failing; `go test -count=1 ./internal/systems/...` ok (TestBundledClientDocsMatchSource among them).
+
 ## Seven-hundredth round: the Option combos' open list drawn by this client -- translucent black over the rows, every item centred, 13-unit lines; the hover reaches only what the original client holds (the 3 x 3 blocks of 320); and a missing sro_client.exe said on screen
 
 The user (2026-10-03), on v0.1.483 under Windows: no game cursor (later: "I had not put

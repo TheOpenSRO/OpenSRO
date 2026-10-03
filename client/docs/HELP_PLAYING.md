@@ -6,7 +6,7 @@ not work, that is a bug worth reporting (see **Debug tools**, or press Shift+F3
 
 ## Moving
 
-- **Click** the ground to walk there, or hold the left button to steer.
+- **Click** the ground to walk there. Holding the button does nothing more, as in the original: click again to change where you are going.
   There is no keyboard walking: the keys are the original game's, where
   W, A and S are the pet-switch, action and skill keys.
 - **Drag** with the right mouse button to turn the camera (not in the Third
@@ -74,12 +74,15 @@ As in the original, Ctrl, Shift and Alt do not change a key: Ctrl+S opens
 Skills like S. The exceptions are Ctrl+1 to 8 (select) and Shift+F1 to F3
 (developer panels); Alt+Tab, Alt+F4 and Alt+Space are left to your system.
 
-Click an NPC to talk, buy, or use storage. **Click a monster once to attack
-it**: as in the original, your character keeps swinging at the weapon's own
-pace until it is dead. Walking away stops the attack, and so does going out of
-reach (the original walks you back in; this client does not yet, so step
-closer and click again). A melee skill hands back to plain attacks when its
-animation ends; the staff, wand and harp bolts do not.
+Click an NPC to talk, buy, or use storage. An NPC or a teleport gate too far
+away is walked to first, as in the original: the ring shows where you are
+going, and the talk window opens when you get there. **Click a monster once
+to select it, and again to attack it** (a double click, or Ctrl+click, attacks
+straight away). As in the original, your character walks into reach and keeps
+swinging at the weapon's own pace until it is dead, walking back in if the
+monster gets out of reach. Walking away stops the attack. A melee skill hands
+back to plain attacks when its animation ends; the staff, wand and harp bolts
+do not.
 
 **Balance note (server round 505).** A plain attack on a monster is now the
 weapon's own basic attack skill, as in the original, so most plain hits got

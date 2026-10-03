@@ -2049,11 +2049,40 @@ census of its texture writes).
       picked point within (R - 5), `select_04` beyond, hidden under 0.25. Probably the ground-target
       cursor round 617 drew with the system cross; the modes and R (`[FUN_008ba440()+0x254]`) are
       not read.
-- [ ] **On a placed floor the ring is under it.** READ: the drape covers terrain cells only and
-      ZFUNC is never anything but LESSEQUAL in the binary, so at the Jangan spawn (the plaza deck,
-      21.8 above the ground, MEASURED in round 698's run) a ground click's ring is drawn on the
-      terrain beneath the deck and not seen. If the user remembers the ring on the plaza, some path
-      was not found; ask before changing it.
+- [x] **On a placed floor the ring is draped on the floor** (round 701, OURS: the user's decision
+      of 2026-10-03 after checking a live retail server, which draws no ring on the plaza deck --
+      retail's drape is terrain only, READ). A point more than 1 above the terrain whose short ray
+      down meets a placed object (layer 1 without the terrain-only bit) takes a drape sampled on a
+      2-unit grid from 2 above the point (roofs never met), triangles with a miss or a step over 1
+      left out; the terrain drape is unchanged. Rebuilt per 6-unit cell, samples cached.
+      ground_markers.md, "On a placed floor".
+- [ ] **The floor drape's open edges.** OURS and untested on the real archive beyond the Jangan
+      plaza: a stair steeper than 1 in 2 loses its triangles (the step rule), and an awning lower
+      than 2 above a floor would be sampled as the floor. Neither was met at Jangan (round 701's
+      live lines: every corner at the deck + 0.05).
+- [ ] **A monster GM-spawned on the plaza deck is drawn on the ground under it.** MEASURED in
+      round 701's live run: `/spawn mangyang 1` at the Jangan spawn put the body at y -43.90, on
+      the terrain 14.2 under the deck (-30.12); its ring followed it there, and the attack
+      answered "too far away". `_terrain_hit_height` places a still monster with the terrain-only
+      mask; how retail places a monster on a placed object's navmesh is not read. Not the ring's
+      code (round 701 stayed in its lane).
+- [x] **A click on an NPC or a gate out of reach walks first** (round 701, READ 0x793570 /
+      `FUN_009ec6b0` / `FUN_009ec380`): beyond 240 (a gate 800) the walk goes to a random point
+      20..240 (640) short of it on the line to the player, the ring there; the talk opens on
+      arrival within the server's 300 / 800. A monster click selects; the next click (or Ctrl, or
+      a double click) attacks.
+- [ ] **The server's range on shop and storage.** Retail's shop handler (0x510250) measures the
+      player against the NPC (`IsWithinInteractionRange`, 300); srrevamp's shop and storage
+      requests carry no NPC, so the server cannot (round 701). A select or talk request naming the
+      NPC would let it. The teleport request has applied the range since round 642.
+- [ ] **A stall's approach** (100 / 80, arrival flag 2 -> `FUN_0081e170`) is read, not built: no
+      stalls yet.
+- [ ] **Who walks a monster attack into reach.** READ: the server (attack tick 0x4ad8e0 ->
+      `GObjPC::MoveTowardObject`; the client sends 0x7074 with no walk). srrevamp's client walks
+      (OURS) because srrevamp's server does not chase.
+- [x] **A held left button does nothing** (round 701, READ: WM_LBUTTONDOWN is the only click,
+      0x77c4a7 -> 0x793570; no reader of the left button byte +0x258 walks; timer 7 is the sky
+      run's re-plot). Ours clicked on the release and steered toward the cursor while held.
 - [ ] **The cell diagonal.** Retail's drape alternates the diagonal by cell parity (0x9f3c10); ours
       follows OUR terrain mesh's single diagonal so it lies on what is drawn. Whether retail's
       terrain mesh alternates too (and so ours is wrong) is not read.

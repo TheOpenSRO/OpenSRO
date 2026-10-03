@@ -61,7 +61,7 @@ beyond ~56 px and on every edge texel.
 
 | Event | Code | Ring |
 |---|---|---|
-| Ground click | `UI_SILKMALL::FUN_0078f8d0` -> `FUN_009ec570` (0x9ec638..0x9ec64e) | Moves to the click point, slot 0. Past the NPC test (next row), after the click filter `FUN_009ec240` with **no branch on its result**: a click the filter does not send (under 5 units with no order, or a snapped heading) still moves it. A held button repeats the click (timer 7, 500 ms, `FUN_00777b90`). |
+| Ground click | `UI_SILKMALL::FUN_0078f8d0` -> `FUN_009ec570` (0x9ec638..0x9ec64e) | Moves to the click point, slot 0. Past the NPC test (next row), after the click filter `FUN_009ec240` with **no branch on its result**: a click the filter does not send (under 5 units with no order, or a snapped heading) still moves it. Only a new press moves it again: holding the button repeats nothing (round 701, the next section; round 698's line here that "a held button repeats the click (timer 7)" was wrong -- timer 7 re-plots a sky click's heading run). |
 | Ground click within 20 units of an NPC | `FUN_009ec570` 0x9ec5a0..0x9ec5eb: walks the object list `0xec4d98` (nodes at object+0x78c); for a CICNPC (0xef1ac4: NPCs and guards) whose 3-D squared distance to the click (`FUN_009ed1e0`) is under 400.0 (double 0xd878a8) and whose +0xc4 is not 0.0, returns | Nothing: no destination, no click filter, no move, the ring stays where it was. +0xc4 is the object's model scale: its writer `FUN_009c4510(scale)` (0x9c451d) stores it and resizes the model's box; the spawns pass it (CICNPC::vslot_025 0x9d487d, CICMonster's rarity x ref scale 0x9d3a53); the CIObject constructor sets 1.0 (0x9c4909). So: an NPC drawn at a non-zero scale. Found by round 698's review. |
 | Sky click (heading run) | `FUN_0078f8d0` -> `FUN_009ebec0` | Not touched there. |
 | Arrow-key walk | `FUN_009ebf40` (from `FUN_0077b070`, `FUN_00780610`) -> `FUN_009ebec0` | Not touched there. |
@@ -75,6 +75,96 @@ beyond ~56 px and on every edge texel.
 | The followed object dies | | Nothing in the code above: the ring stays on the body until it despawns (INFERRED from the absence of a death test in vslot 0x50 / vslot_009). |
 | Leaving a pick mode | `FUN_00779260(0)` and its callers (0x62a55a, 0x62a8bc, 0x797587, 0x79762c, 0x798a4a, `FUN_0078ae00`) | Hidden. |
 | GM free camera (process+0x3ce) | `UI_SILKMALL::FUN_0078e0e0` | Hidden every frame. |
+
+## Holding the left button (round 701, READ)
+
+A press is one click; holding the button, moving the mouse with it held and letting it go do
+nothing more. From `CGInterface::vslot_017` (0x77c260, the world's mouse handler) and the input
+object's button bytes:
+
+| Message | Code | What it does |
+|---|---|---|
+| WM_LBUTTONDOWN (0x201) | 0x77c4a7 `call 0x793570` | SetFocus, then the whole pick: the object under the cursor (`FUN_0078ee20`) to the object click `FUN_00792f00`, else the ground click `FUN_0078f8d0` -> `FUN_009ec570` (the NPC test, the destination, the click filter, the ring) or a sky run `FUN_009ebec0`. This is the only place a left click walks. |
+| WM_MOUSEMOVE (0x200) | vslot_017's first branch | Turns the camera when the RIGHT byte is down and the swap flag +0x4f9 is clear, or the MIDDLE byte with the flag set (`FUN_00ba6240(2)` / `(1)`). Never reads the left byte. Then stores the cursor. |
+| WM_LBUTTONUP (0x202) | `FUN_0078e5d0` | Only when process mode +0x50c is 0xae or 0xaf: ends that mode (`FUN_00592b70`). No walk, no pick. |
+| WM_LBUTTONDBLCLK (0x203) | `FUN_00792190` | A double click on a character: an action request through `SendMagicStateMsg_074_791d40` (0x7074) for the classes it tests; no ground pick. The first press was already a click. |
+| Timer 7 | set by `FUN_00777b90` (500 ms) after a sky click's `FUN_009ebec0`, by the arrow-key walks `FUN_0077b070` and `FUN_00780610` (heading runs too) and by the per-frame `FUN_009ec380`; killed by `FUN_00777ba0` on a ground click | `CGInterface::vslot_005` case 6 -> `FUN_009eb8e0`: re-plots the heading run (mover state +0x6e8 == 2) from the player's own position and heading; it reads no mouse. Killed when it returns 0. |
+
+The button bytes (`gfxmainframe::FUN_00ba7240`): +0x258 left (0x201 sets, 0x202 clears), +0x259
+middle (0x207 / 0x208), +0x25a right (0x204 / 0x205); `FUN_00ba6240(i)` reads +0x258 + i. Its
+callers: vslot_017's WM_MOUSEMOVE (indices 1 and 2) and the hover code `CGInterface::vslot_005`
+case 0 (index 0: cursor 0x9a instead of 0x99 over a ground item, class 0xef1c28, while the left
+button is down -- a cursor, not a walk), plus two UI controls (`CNIFEdit::vslot_017`, `FUN_00637290`, index 1). No
+reader of the left byte issues a move. So retail: the press places the ring and sends one move;
+the character walks to the ring; a drag moves neither; a new press does. The 0xB021 heading echo
+(kind 0, `NetProcessInNavAndSkill::FUN_008a5750`) hides the ring and kills or re-arms timer 7 --
+heading moves only.
+
+srrevamp before round 701 clicked on the RELEASE and, after a drag past 6 pixels, re-picked the
+destination under the cursor every physics frame ("the circle will fluidly move around with your
+cursor", playtest 2026-10-03). Round 701 clicks on the press (`World3D._unhandled_input` ->
+`_dispatch_left_click`) and reads nothing while the button is held; the right button's orbit is
+unchanged.
+
+## Clicking an NPC, a gate or a monster (round 701, READ)
+
+The world's left press runs 0x793570 (above). For an object under the cursor it first calls the
+object click `FUN_00792f00`, then branches on the class. The distance it reads is the object's
++0x24c: the 3-D distance from the local player, which `CICPlayer::vslot_005` writes for every
+object each frame (0x9d6f19..0x9d6f7e: the two world positions +0x90..+0x98, `sqrt`).
+
+| Class | In reach | Out of reach |
+|---|---|---|
+| CICNPC (0xef1ac4; guards too) | distance <= 240.0 (double 0xdb9888): `FUN_00778650` (the ring follows it, texture 1) and the select request 0x7045 (`FUN_0078f5f0`) | > 240.0: the same `FUN_00778650`, then the approach below with range 240.0 (float 0xdb9884) |
+| CITeleportGate (0xef1dac) | <= 800.0 (double 0xd83080): the select 0x7045 | > 800.0: the approach with range 640.0 (float 0xdb9890). No `FUN_00778650`: a gate gets no follow ring |
+| CICUser with a stall open (+0x471 == 4) | <= 100.0 (double 0xe1b7d8): `FUN_0081e170` (the stall) | the approach with range 80.0 (float 0xd8524c), arrival flag 2 (`FUN_0081e170`). Not built |
+| CICMonster, CICCos | `FUN_00778650` (texture 3) and the select 0x7045 -- no walk, no attack | the same: there is no distance test |
+
+**The approach** (`FUN_0078f8d0(msg, 1, 0)` -> `FUN_009ec6b0(id, 20.0, range, flag)`; the 20.0 is
+float 0xd88108, the object fields +0x634 / +0x638 / +0x63c that 0x793570 fills): when the squared
+distance is at least range squared, `d = rand() / 32767.0 * (range - 20) + 20` (double 0xde4808),
+the destination `object + d * unit(player - object)` (`FUN_009ed1e0` returns its second position
+less its first, here the player less the object), the ring moved there with the ground texture
+(`FUN_00a631e0`), the walk sent through the click filter `FUN_009ec240`, and the object's id kept
+at destination+0x20 with the flag at +0x24. So the ring lands between 20 and 240 short of an NPC
+(a gate: 640) on the line to the player: not at the click, and not always at the farthest spot.
+
+**The arrival** (`FUN_009ec380`, every frame): with an id pending it waits for the mover to start
+(+0x714 != 0, then +0x28 = 1) and then to stop (+0x714 == 0 and +0x6ec == 0), and calls
+`FUN_0078ff60(flag, id)`: flag 0 -> `FUN_0078f5f0(id)`, the select. The select's reply
+(`NetProcessInInterface::FUN_0088b200`) opens the talk window for an NPC or a gate
+(`IF_NPCWindow::FUN_00703ff0`, the server's option list read into `FUN_006fcd00`) and, for a
+CICharactor, `FUN_00778650` again: the ring goes back under the NPC. A ground click clears the
+pending id (`FUN_009ec570` writes +0x20 = 0).
+
+**The server** (SR_GameServer, the select handler 0x50faf0, reply 0xB045): it measures with
+`GObjPC::IsWithinInteractionRange` (0x4a8e10; docs/protocol/teleport_network.md has its limits:
+300 for an NPC, 800 for a structure, 500 for a monster, 3-D) and replies an error beyond it; the
+client's reply handler shows a message only for 0x6007. The shop handler (0x510250) and the
+teleport handler (0x513590) measure the same way.
+
+**The monster's attack**: `FUN_00792f00` runs before the selection and sends the action 0x7074
+for a CICMonster only when Ctrl is down (`GetKeyState(0x11)`) or the monster already is the
+selection (+0x628) with the target window up (`FUN_00778120`). So the first click selects and the
+next click attacks; a double click (WM_LBUTTONDBLCLK -> `FUN_00792190`) attacks outright. The
+client has no walk on that path: the server walks the attacker into reach (READ: SR_GameServer's
+attack tick 0x4ad8e0 calls `GObjPC::MoveTowardObject(target, round(stop))` while the target is out
+of reach, docs/protocol/auto_command.md, rounds 247 / 256).
+
+**srrevamp (round 701).** `World3D._start_talk_approach` / `_step_talk_approach`: an NPC beyond 240
+or a gate beyond 800 is walked to a point `talk_approach_point` drawn in 20..240 (640) on the line
+to the player, the ring placed there; the walk's end opens the talk window if the player is within
+the server's limit (`talk_out_of_range`: 300 / 800, 3-D) -- this client has no select request, so
+it applies the server's test itself -- and logs a refusal otherwise. Any new click, death, a zone
+change or the target going ends the approach (OURS in part: retail is not read to drop it on a
+monster's select). A monster click selects (ring, target window) and attacks only on the next
+click while the target window shows that monster, with Ctrl, or on a double click (routed as
+retail's WM_LBUTTONDBLCLK: `_dispatch_double_click` attacks a monster and ignores the ground, an
+NPC and a gate). An NPC click moves the selection off a monster (`_select_for_talk`); a typing
+lock pauses an approach rather than ending it (OURS). The walk into reach stays this client's
+(OURS: srrevamp's server does not chase). The server needs no change for talking: srrevamp has no
+select or talk request, the teleport request has applied the range since round 642, and the shop
+and storage requests carry no NPC to measure (TODO).
 
 ## Where and how it is drawn (READ)
 
@@ -163,3 +253,30 @@ retail's alternating fans, so it lies on what is drawn; the heading-move hide ha
 run starts (this client streams positions and gets no 0xB021 echo); culling off; the still-water
 quad spans the 3 x 3 window with the projected UV (with clamp and the art's transparent border it
 draws the same 12 x 12 square round the point, and need not be rebuilt as the point moves).
+
+## On a placed floor (round 701, OURS: the user's decision)
+
+The user checked a live retail server on 2026-10-03: no ring on Jangan's central plaza deck, the
+terrain-only drape above at work ("That seems like a bug we should fix"). So srrevamp departs from
+retail here, and only here: where the point stands on a placed object's walkable surface the ring
+is draped on that surface; where it stands on the terrain the drape is retail's, unchanged. Every
+number is OURS, named in `GroundMarkers`:
+
+- **Floor or terrain** (`floor_choice`): the point more than 1.0 above the drawn terrain there
+  (`TerrainCollision.mesh_height_at` of the region's heights) AND a short vertical ray (0.5 above
+  to 1.0 below, the pick layers 0b1001) meeting a body without the terrain-only bit 0b1000.
+  Placed objects collide on layer 1 alone, the terrain on layers 1 and 4.
+- **Samples**: vertical rays on a 2-unit grid of the region's frame, from 2.0 above the point to
+  2.0 below it, so a roof or awning over the point is never met.
+- **Edges**: a triangle with a corner that missed or lies outside that span, or whose corners
+  differ by more than 1.0, is left out -- nothing stretches down a deck's side or up a wall; a
+  lower level within reach is drawn on its own.
+- **Look**: the same shader, texture and region-frame origin uniform as the terrain ring, lifted
+  0.05 above the hits; no still-water quad on a floor.
+- **Cost**: the test and the mesh run only when the point enters another 6 x 6 cell or moves 0.25
+  in height; one build covers the art for anywhere in its cell (the 10 x 10 grid points from 6
+  before the cell to 6 after it), and samples are kept per region and reference height (up to
+  2048), so a body walking a deck fires about one new column of 10 rays per 2 units.
+  MEASURED (`client/tools/measure_ground_ring.gd`, headless on the box, a body at 50 units/s,
+  1,200 ticks, three runs): 11.7 us a tick on the terrain (13.0-13.3 before the round, the same
+  runs interleaved), 35.0-35.4 us on a deck with 166 rebuilds and 5,120 rays.

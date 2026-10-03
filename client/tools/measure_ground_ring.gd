@@ -9,6 +9,10 @@ extends SceneTree
 ##   client/tools/remote_godot.sh script res://tools/measure_ground_ring.gd
 ## `-- --script-path=res://...` measures another copy of ground_markers.gd
 ## (the round's first version, for the before figure).
+##
+## Round 701: a second walk on a synthetic deck (a 1 x 1200 x 100 box on
+## layer 1, 5 above the highest terrain), where the ring takes the placed-floor
+## drape, prints the same line with "floor" and the floor rays fired.
 
 func _region() -> MapmReader.ParsedRegion:
 	var region := MapmReader.ParsedRegion.new()
@@ -65,6 +69,39 @@ func _initialize() -> void:
 			last_mesh = ring.mesh
 	print("MEASURE ground ring (%s): step() %.1f us a tick (mean of %d, body at 50 units/s), %d new meshes (%.1f %% of ticks), ring visible %s" % [
 		path, float(total) / ticks, ticks, meshes, 100.0 * meshes / ticks, str(ring.visible)])
+	# The deck walk (round 701).
+	if gm.has_method("floor_choice"):
+		var deck := StaticBody3D.new()
+		deck.collision_layer = 0b1
+		var shape := CollisionShape3D.new()
+		var box := BoxShape3D.new()
+		box.size = Vector3(1200, 1, 100)
+		shape.shape = box
+		deck.add_child(shape)
+		deck.position = Vector3(3000, 12.5, -900)
+		world.add_child(deck)
+		await physics_frame
+		await physics_frame
+		body.global_position = Vector3(2450, 13.0, -900)
+		gm.call("step")
+		total = 0
+		meshes = 0
+		last_mesh = ring.mesh
+		var rays0: int = gm.get("floor_rays")
+		var floor_ticks := 0
+		for i in ticks:
+			body.global_position += Vector3(50.0 / 60.0, 0, 0)
+			var t0 := Time.get_ticks_usec()
+			gm.call("step")
+			total += Time.get_ticks_usec() - t0
+			if bool(gm.get("on_floor")):
+				floor_ticks += 1
+			if ring.mesh != last_mesh:
+				meshes += 1
+				last_mesh = ring.mesh
+		print("MEASURE ground ring floor (%s): step() %.1f us a tick (mean of %d, body at 50 units/s on a deck), %d on the floor drape, %d new meshes (%.1f %% of ticks), %d floor rays (%.1f a tick), ring visible %s" % [
+			path, float(total) / ticks, ticks, floor_ticks, meshes, 100.0 * meshes / ticks, int(gm.get("floor_rays")) - rays0,
+			float(int(gm.get("floor_rays")) - rays0) / ticks, str(ring.visible)])
 	gm.queue_free()
 	await process_frame
 	quit(0)
