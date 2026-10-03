@@ -7204,7 +7204,18 @@ floor costs what the terrain one does.
 
 ### 5. Performance
 
-PERF_TABLE
+`client/tools/perf_gate.sh --base 34286d92 --head 98bc0c3e --sites jangan --frames 12000` (both
+parts of the round, Forward+, native readers off, 1280 x 720, median of 3, interleaved):
+
+| Jangan | base | head | | verdict |
+|---|---|---|---|---|
+| frame ms | 1.67 | 1.64 | -0.0 | SAME |
+| entry ms | 9442 | 9357 | -85 | SAME |
+| freeze ms | 3329 | 3297 | -32 | SAME |
+| hitches | 4 | 4 | +0 | SAME |
+
+The gate's views make no click, so the ring and the approach are not exercised there; their own
+cost is the measure tool's (section 3).
 
 ### 6. Choices made for the user (asleep)
 
