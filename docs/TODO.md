@@ -764,9 +764,13 @@ touches this file.
       `GameCursor.player_kind` / `player_hostile` when it arrives; guards and fortress structures
       likewise (no CICGuard / CICATStruct here).
 - [ ] **Not built:** the forced cursors (store repair 0x96, item applied to a slot 0xa6, socket
-      0xae / 0xaf) wait for those windows; the cursor is not hidden while the camera turns (retail
-      hides it and puts it back at the press point, `0x77b140`); the job-monster test reads the
-      code name, not the TypeID column (equivalent on the box's archive, MEASURED).
+      0xae / 0xaf) wait for those windows; the Option window's camera-rotate **method 2** (the cursor hidden
+      while the camera turns and put back at the press point, `0x77b140` behind +0x82d, set only
+      when settings+0x1c is non-zero, `0x77c535` / `0x77c6c1`, chosen at `0x5fcf40`) -- retail's
+      default, method 1, leaves the cursor free, as here; the job-monster test reads the code name,
+      not the TypeID column (equivalent on the box's archive, MEASURED).
+- [ ] **The window frame and resize borders** show the OS's shapes (retail's WM_SETCURSOR sets its
+      own there too; Godot leaves the non-client area to the OS).
 - [ ] **A window opened under a still mouse** keeps the world's cursor until the mouse moves
       (retail re-tests the window under the mouse every tick; Godot 4.2 has no hovered-control
       query).

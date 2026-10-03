@@ -15793,8 +15793,11 @@ func _input(event: InputEvent) -> void:
 				camera_arm.rotation_degrees.x - motion.relative.y * CAMERA_ORBIT_SENSITIVITY,
 				CAMERA_PITCH_MIN_DEGREES, CAMERA_PITCH_MAX_DEGREES)
 	# The hover follows the mouse with the left button held too (retail's
-	# tick runs then, and a held button over an item is the closed glove).
-	if event is InputEventMouseMotion and not _camera_orbiting:
+	# tick runs then, and a held button over an item is the closed glove),
+	# and while the camera turns: retail's default rotate method leaves the
+	# cursor free and its tick reads where it is (round 697 review, L3). The
+	# orbit above is untouched.
+	if event is InputEventMouseMotion:
 		_hover_pos = (event as InputEventMouseMotion).position
 		_hover_reached_world = false
 
@@ -15824,8 +15827,9 @@ func _settle_hover_cursor() -> void:
 ## the cursor says what a click there would do:
 ##   a dropped item       -> pickup (0x99), pickup_held (0x9a) with the left
 ##                           button down; notes the item, whose name shows
-##   the nearest character -> a monster: GameCursor.monster_kind (0x97, or
-##                           0x95 for a job monster to a jobless player);
+##   the nearest character -> a monster (a dying one passed over):
+##                           GameCursor.monster_kind (0x97, or 0x95 for a
+##                           job monster to a jobless player);
 ##                           another player: GameCursor.player_kind (0xa0
 ##                           outside the party with Alt held, else 0x95)
 ##   the talk ray          -> a gate's pick node (gate_point_id): gate (0xa1),
@@ -15845,8 +15849,6 @@ func _hover_kind_at(screen_pos: Vector2) -> String:
 		var who := _ray_hit_character(screen_pos)
 		if who != null:
 			if who.has_meta("monster_id"):
-				if _dying_until.has(int(who.get_meta("monster_id"))):
-					return "normal"
 				return GameCursor.monster_kind(_monster_code_of(int(who.get_meta("monster_id"))))
 			# Another player: no party, stall or team state reaches this
 			# client yet (GameCursor.player_kind).
@@ -15859,20 +15861,30 @@ func _hover_kind_at(screen_pos: Vector2) -> String:
 ## The character under a screen point, as the click's pick finds it
 ## (_pick_character's mask without the Shift self body: retail's hover pick
 ## passes 0 for include-self): the first ancestor of the nearest monster or
-## player collider carrying monster_id or character_id, or null.
+## player collider carrying monster_id or character_id, or null. A dying
+## monster is passed over and the ray goes on to whatever is behind it, as
+## retail's pick (FUN_0078ee20) skips a character whose +0x65c bit 0 (alive)
+## is clear (round 697 review, L2) -- up to HOVER_RAY_PASSES bodies.
+const HOVER_RAY_PASSES := 4
+
 func _ray_hit_character(screen_pos: Vector2) -> Node:
 	var from := camera_3d.project_ray_origin(screen_pos)
 	var dir := camera_3d.project_ray_normal(screen_pos)
 	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
-	query.exclude = [player.get_rid()]
+	var exclude: Array[RID] = [player.get_rid()]
 	query.collision_mask = MONSTER_COLLISION_LAYER | OTHER_PLAYER_COLLISION_LAYER
-	var hit := get_world_3d().direct_space_state.intersect_ray(query)
-	if hit.is_empty():
-		return null
-	var node := hit["collider"] as Node
-	while node != null and not (node.has_meta("monster_id") or node.has_meta("character_id")):
-		node = node.get_parent()
-	return node
+	for _pass in HOVER_RAY_PASSES:
+		query.exclude = exclude
+		var hit := get_world_3d().direct_space_state.intersect_ray(query)
+		if hit.is_empty():
+			return null
+		var node := hit["collider"] as Node
+		while node != null and not (node.has_meta("monster_id") or node.has_meta("character_id")):
+			node = node.get_parent()
+		if node == null or not (node.has_meta("monster_id") and _dying_until.has(int(node.get_meta("monster_id")))):
+			return node
+		exclude.append(hit["rid"])
+	return null
 
 ## A live monster's characterdata code (MonsterSnapshot.code_name), "" when
 ## unknown.
