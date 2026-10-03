@@ -48,15 +48,21 @@ decompile's argument-less calls resolved from the pushes before them).
 of them reaches any of the three entry points. **No cursor for a ground-targeted skill**: none of
 the forced cursors belongs to a skill. A forced cursor ends on a right press over the world
 (`CGInterface::vslot_017` WM_RBUTTONDOWN, `0x77c72e..0x77c737`) and on Escape (`0x79d620`).
-While the camera turns (right drag) the manager hides the cursor and puts it back at the press
-point (`CGInterface::vslot_012 0x77b140`: `0xba61e0(0)` + `SetCursorPos`).
+**The camera turn leaves the cursor alone by default** (round 697's review, READ): the hide and
+`SetCursorPos` back to the press point in `CGInterface::vslot_012 0x77b140` run only while +0x82d is
+set, and `vslot_017 0x77c260` sets +0x82d only when the option byte settings+0x1c is non-zero
+(`0x77c535`, `0x77c6c1`). That byte is the Option window's camera-rotate choice
+(UIIT_CTL_CAMERA_ROTATE_METHOD1 / METHOD2, `0x5fcf40`), 0 by default (`0x7776c0`). So under the
+default method 1 the cursor stays visible and free while the camera turns -- as here; method 2
+(hidden, put back at the press point) is an Option this client has not built.
 
 ## The hover (READ: CGInterface::vslot_005 case 1, 0x789820)
 
 `vslot_005` is CGInterface's **timer** handler; timer 1 runs every **250 ms**
 (`push 0xfa; push 1; call 0xb93320` at 0x787294). Each tick: the window under the mouse must be
 the interface itself (`FUN_00b9dc00() == this`), else 0x95; the pick (`FUN_0078ee20(x, y, 0)`:
-the nearest object of any class, never the player) must find something, else 0x95; then the
+the nearest object of any class, never the player, passing over a character whose +0x65c bit 0
+-- alive -- is clear) must find something, else 0x95; then the
 object's runtime class, by exact match (vslot 0 returns the class descriptor):
 
 | Descriptor | Class | Cursor |
@@ -64,7 +70,7 @@ object's runtime class, by exact match (vslot 0 returns the class descriptor):
 | 0xef1c28 | CIItem | 0x99, 0x9a with the left button held |
 | 0xef1dac | CITeleportGate | 0xa1 |
 | 0xef1bc0 | CICUser | outside the party (`0x992940`) and its IsHostile(Alt) (vslot 0xa8, `0x9de780`) -> 0xa0; else stalling -> 0xa3; else 0x95. Then in a siege-fortress zone (`0x939a60` on the player's REF_SIEGE_FORTRESS): a party member 0x95, else guild relation `0x998280` 0xca / 0xcc -> 0x97, 0xc9 / 0xcb -> 0x95. Then, while the player's team byte +0x81d != 0xff: another team 0x97, the same 0x95 |
-| 0xef1a84 | CICMonster | 0x97 when its vslot 0xdc (always 1, `0x9d3160`) and the interface's set +0x500 holds key 5 (`0x784ed0`; INFERRED "attack allowed") -- unless the player's vslot 0xac is 4 (INFERRED no job) and the monster is TypeID 1/2/1/2 or 1/2/1/3 (`0x779dd0` / `0x779e20`, on +0x220: the thief and hunter NPC monsters); else 0x95 |
+| 0xef1a84 | CICMonster | 0x97 when its vslot 0xdc (`0x9d3160`: 0 for a player in job mode 1 over a TypeID4 3 monster, mode 2 over one `0x779dd0` matches, mode 3 over one `0x779e20` matches, else 1 -- so 1 for a jobless player; round 697's review corrected "always 1") and the interface's set +0x500 holds key 5 (`0x784ed0`; INFERRED "attack allowed") -- unless the player's vslot 0xac is 4 (INFERRED no job) and the monster is TypeID 1/2/1/2 or 1/2/1/3 (`0x779dd0` / `0x779e20`, on +0x220: the thief and hunter NPC monsters); else 0x95 |
 | 0xee77ac | CICMonsterNPC | 0x97 when vslot 0xdc (`!(+0x7c8 & 2)`, `0x534740`) and key 5; else 0x95 |
 | 0xeef6f0 | CICCos | the player's own (`0x9a0b80` on the player's +0x20d4): 0x95; another's with IsHostile(Alt) -> 0xa0, else 0x95; then its owner by the fortress relation as a CICUser |
 | 0xef1ac4 | CICNPC | 0x98 |
@@ -100,6 +106,30 @@ retail state, and does not mark its opponent hostile.
   `GameCursor: 16 cursor(s) from <path>`, or `GameCursor: no sro_client.exe found -- ... Tried: ...`.
   Before round 697 only `$SRREVAMP_PK2_PATH`'s folder was tried, and a player's build resolves the
   `pk2` folder without that variable -- so a player never got the cursors.
+- **On Windows** (round 700, MEASURED under Wine 10.0 on the box, docs/RENDER_BOX.md "Wine"): the
+  v0.1.483 Windows release, its `pk2\` holding the five archives and `sro_client.exe`, logs
+  `GameCursor: 16 cursor(s) from Z:/.../pk2/sro_client.exe` and the X server's cursor over its window
+  is 0x95 (32 x 32, hotspot (2, 1), 359 opaque pixels, mean (130, 126, 93)) under Compatibility
+  (llvmpipe) and under Forward+ (the RX 7600 through Wine's Vulkan); outside the window the root
+  cursor, back inside 0x95 again. Without the exe the log says `no sro_client.exe found -- ... Tried:`
+  the four paths and the cursor is the system arrow. Godot 4.2.2's Windows path, read: the
+  HCURSOR is built from the texture's image (`cursor_set_custom_image`: 32-bit DIB with alpha,
+  at most 256 x 256, `CreateIconIndirect`), set at once when the shape is current, re-set on every
+  mouse enter (`WM_MOUSEMOVE`'s `window_mouseover_id` change) and after a hidden mode; the window
+  class has no cursor (`wc.hCursor = nullptr`), so `DefWindowProc` never puts the arrow back. The
+  tester's "system cursor on Windows / CrossOver" was the missing exe: the user had not put
+  sro_client.exe beside the pk2s, and with it there the cursors load on Windows (the user,
+  2026-10-03).
+- **Saying so on screen** (round 700): without the cursors the login screen's status line and the
+  world's system messages say `No game cursor: copy sro_client.exe from your Silkroad folder into
+  <the pk2 folder> (beside Data.pk2).` (`GameCursor.missing_hint`), not only the log.
+- **A renamed client** (round 700): when no candidate name is there, every `*.exe` in the same
+  folders (SRREVAMP_CLIENT_EXE's, the pk2 folder, its parent, our exe's; at most 64 a folder, our
+  own exe skipped) is probed for cursor group 0x95 -- the PE headers (4 KB) and the head of `.rsrc`
+  (256 KB at most) only, never the whole file -- and the first that decodes is used
+  (`CursorSet.scan_for_client`; the log says `found by its cursors`). A private server's
+  `SRO_Client_VTX.exe` carries the same cursor groups (MEASURED: the group directory at the same
+  offsets, ids 0x95..0xaf).
 - **Every screen**: Boot shows 0x95 before the login screen; the world chooses the hover kind;
   leaving the world puts 0x95 back. Godot's own shape changes (a text field's I-beam, a link's hand)
   get 0x95 too, as retail's WM_SETCURSOR shows the one cursor everywhere.
@@ -113,8 +143,57 @@ retail state, and does not mark its opponent hostile.
   MEASURED). **Stall (0xa3) is wired but unreachable**: no other player's stall state reaches this
   client yet (TODO in `GameCursor.KIND_IDS`).
 - **Not here**: the forced cursors (repair, item use, socket) belong to windows this client does not
-  have; the ground pick shows the system cross (OURS, round 617; retail shows its hover cursor);
-  the cursor is not hidden while the camera turns.
+  have; the camera-rotate method 2 Option (above).
+- **The ground pick's cross is OURS until the ground-pick decal is built** (round 617): retail sets
+  no cursor for it and shows a ring decal instead (`select_02` in range, `select_04` out of range,
+  `FUN_00629fa0`, read by lane 698). Without the decal the cross is the only cue, so it stays; it
+  goes when the decal comes.
+- **Dying monsters** are passed over by the hover's ray, which goes on to what is behind them, as
+  retail's pick skips characters whose alive bit is clear (round 697's review).
+- **The window frame and resize borders** show the OS's shapes: retail answers WM_SETCURSOR with its
+  own cursor there too (no HTCLIENT test), but Godot gives the non-client area to the OS.
+
+## How far the hover reaches (READ, round 700)
+
+The user (2026-10-03): the gate disc shows "super far away when the game only shows it when you can
+actually teleport"; swords and speech bubbles likewise. What the code does:
+
+- **No class has a distance test.** `CGInterface::vslot_005` case 1 (`0x789820`) switches on the
+  picked object's class and state only: CIItem -> 0x99 / 0x9a, CITeleportGate -> 0xa1 (nothing
+  else is tested), CICUser, CICMonster, CICMonsterNPC, CICCos, CICNPC -> 0x98 (nothing else),
+  CICATStruct, CICGuard. No talk, teleport or attack range is read in the hover.
+- **The pick** (`FUN_0078ee20`): 3 x 3 rays around the mouse (`FUN_00a5ade0` per ray, offsets
+  (i - 1) x a step from the doubles at `0xdb9820` / `0xed7cc4`), over the entity list
+  `DAT_00ec4ae4`, skipping objects with +0x70 bit 0 set (`FUN_009c4150`; set by
+  `FUN_009c4130`, called only from the UI preview code at `0x5611e9` / `0x5618cd`), the player
+  (and the object `FUN_009ce930` returns, not read), and dead characters (+0x65c bit 0); the nearest hit wins from **1e38** (the float at
+  `0xe1b85c`), a centre-ray hit beats an outer one. Each ray is a **segment**: `FUN_00a5ade0` ends
+  it at the camera plus the view-space direction (x, y, 1) times **5000.0** (the double at
+  `0xde5188`, `fld` at `0xa5aecc`) -- 5000 units of view depth. The object's slot 33 (0x84) tests
+  it: for a gate `CITeleportGate::vslot_033` (`0x9e9b60`) puts its position in the box's matrix and
+  calls `FUN_00a5b000` (a sphere test, then the box's 12 triangles through `FUN_00a5af20` ->
+  `FUN_0045c750`, whose plane test `FUN_0045c9a0` needs the segment's ends on opposite sides) --
+  the box is teleportbuilding's BCRadius / BCHeight (round 690).
+- **So the bound is what the client holds.** The server gives a player the objects of the **3 x 3
+  message blocks of 320 units** around its own block (SR_GameServer `CMsgBlock` slot 2 `0x534340`,
+  `CRgnTerrain::vslot_006` `0x53ad30`; READ in round 664, docs/protocol/monster_ai.md): 320 to 640
+  units each way, a square. Out of that window an NPC, gate, monster, item or player does not exist
+  in the original client, so it has no cursor. NPCs are field objects in those blocks (READ, round
+  664), and a gate is a server-sent object like them (READ, round 700's review: CITeleportGate is
+  created only by the spawn parser -- `FUN_008a6bd0`, `FUN_009c1fa0`, NetProcessInObject -- so a
+  gate exists in the client only inside the view window).
+- **Here:** srrevamp's server applies the window to monsters (`session.AOIRadius` = 1), but this
+  client builds NPCs and gate pick boxes itself for all 5 x 5 loaded regions, and other players
+  and drops arrive zone-wide. The hover now applies the window to every class
+  (`GameCursor.in_view_window`: `floor((v + 960) / 320)` on x and z within 1 of the player's, the
+  server's `combat.CellOf`): out of it the object is passed over and the cursor stays 0x95. The
+  log line names the target, its distance and its block offset: `CURSOR: gate (0xa1) at (x, y) --
+  gate STORE_CH_GATE at 210 units (blocks 0, 1)`, or `... -- outside the view window, not held`.
+  The hover's rays stay 2000 units long (OURS; the window's farthest corner is about 905 units from
+  the player and the camera at most 90 behind, so retail's 5000 never binds first).
+- **For the click side (round 701):** the hover reads no range; the walk-then-talk / teleport
+  distance is the server's `GObjPC::IsWithinInteractionRange` (round 642), and the click should
+  pass over what the window does not hold, as the hover does. Not changed here.
 
 ## Size (MEASURED / OURS)
 
@@ -122,7 +201,8 @@ The resource cursors are 32x32 (0x96 34x34, 0x9a 32x31; 0x99 also carries a 36x3
 32x32 one -- Windows picks the 32x32 for the default cursor size). Retail passes no size:
 `LoadCursorA` gives the system cursor size (INFERRED from the Win32 contract). **OURS, the user's
 decision (2026-10-03):** the cursor is scaled by the UI scale (`content_scale_factor`),
-nearest-neighbour, size `round(32 x k)` clamped to Godot's 256, hotspot `floor((h + 0.5) x k)`
+nearest-neighbour -- also the user's choice, 2026-10-03: "pixel-sharp is gonna be more clear"
+(round 672's UI art is drawn linear; the cursor is not) -- size `round(32 x k)` clamped to Godot's 256, hotspot `floor((h + 0.5) x k)`
 (inside its own pixel's block). Godot 4.2.2 does not rescale again: on Windows
 `DisplayServerWindows::cursor_set_custom_image` builds the HCURSOR from a DIB at the texture's own
 pixel size (`CreateIconIndirect`) in a DPI-aware process. So at 4K with UI scale 2.0 the cursor is

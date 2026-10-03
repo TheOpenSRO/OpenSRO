@@ -350,13 +350,13 @@ func _combo_field(page: OptionVideoPage) -> void:
 			var st := combo.get_theme_stylebox("normal")
 			ok = ok and st.content_margin_left == 5 and st.content_margin_right == 5 and combo.get_theme_constant("h_separation") == 0
 			ok = ok and combo.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST and field.texture_filter == CanvasItem.TEXTURE_FILTER_PARENT_NODE
-			ok = ok and combo.get_popup().canvas_item_default_texture_filter == Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_NEAREST
+			ok = ok and combo.has_meta(OptionVideoPage.LIST_META)
 		if ok:
 			good += 1
 		else:
 			print("  combo %s: field %s arrow %s host %s" % [combo.get_path(), str(field.get_rect()) if field != null else "none", str(arrow.get_rect()) if arrow != null else "none", str(hs)])
 	_check(combos.size() == 14 and good == 14,
-		"all 14 combos (Resolution, Set Brightness, the 12 rows) draw a field {0,0,W-20,H} and the arrow {W-20,0,20,H} behind a button whose text room is {5,0,W-30,H}, the text crisp, the open list's too (got %d of %d)" % [good, combos.size()])
+		"all 14 combos (Resolution, Set Brightness, the 12 rows) draw a field {0,0,W-20,H} and the arrow {W-20,0,20,H} behind a button whose text room is {5,0,W-30,H}, the text crisp, the open list ComboList (got %d of %d)" % [good, combos.size()])
 	_check(page.resolution_combo() != null and (page.resolution_combo().get_parent() as Control).size == Vector2(156, 18),
 		"the Resolution combo's record is 156 x 18 (the field 136 x 18)")
 

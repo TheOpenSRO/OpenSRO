@@ -7094,6 +7094,144 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundredth round: the Option combos' open list drawn by this client -- translucent black over the rows, every item centred, 13-unit lines; the hover reaches only what the original client holds (the 3 x 3 blocks of 320); and a missing sro_client.exe said on screen
+
+The user (2026-10-03), on v0.1.483 under Windows: no game cursor (later: "I had not put
+sro_client.exe in the folder"); of the open Option list, beside the original's picture: "we have a
+solid grey in the middle when it should be a transparent black. Also make all of the text in the
+dropdowns centered like the original screenshot"; and of the hover: "limit the teleporter cursor
+to a distance that you can actually teleport from ... Monsters seem to show the sword far away ...
+NPCs ... I think it shows as far as you can see them". Labels: READ, MEASURED, INFERRED, OURS.
+
+### 1. The open list (`client/scripts/ui/hud/combo_list.gd`, docs/protocol/OPTION_VIDEO.md)
+
+**Why it was grey (READ, Godot 4.2.2):** round 697's list was the OptionButton's PopupMenu, a
+Window; `popup.cpp` / `popup_menu.cpp` set no FLAG_TRANSPARENT or transparent_bg, so the 0xb4000000
+fill was drawn over the window's opaque clear colour. **Why the rows were tall:** retail's line is
+`[font object + 4] + 4` (`0x49b88b..0x49b896`), and +4 is the size GNFontChar registered in
+points (`0x4927f9` -> `0xbaa110`, `param_1[1]`, the value MulDiv'd into the LOGFONT): 9 for font 0,
+a **13-unit** line. Round 697 read "font height + 4" and added 4 to Godot's own line height for a
+12 px font: 18. **Width:** MEASURED in the user's 2x picture, the list's frame columns are the
+value field's (x 348 and 606), not the combo's full width round 697 read.
+
+**ComboList** replaces the PopupMenu: a Control on a CanvasLayer (120) in the game's own window,
+opened by a left press on the combo (accepted in the `gui_input` signal so the PopupMenu never
+opens); frame and fill (`OptionVideoPage.popup_panel`), items centred on 13-unit lines from the
+line's top, hover bar 0xff8080ff the text's height, hover text 0xffffff80, at the field's x and
+width 20 below the combo's top. OURS: outside click closes and is eaten; Up / Down / wheel move the
+bar, Enter / Space pick, Escape closes; a list running off the window's bottom moves up.
+**Centring** is READ in `CNIFListCtrl::vslot_013 0x483460` (alignment 1: x + (w - text w) / 2)
+and MEASURED for the video rows in the picture (every item on the field's centre); where the rows
+get alignment 1 was not read.
+
+**Measured live** (box, Xvfb + VirtualGL, real X input, `drive700.py`; UI scale 1; Graphic Quality
+open, `COMBOLIST open 5 item(s) at 629,618 size 130x73`, the combo at 629,598 150 x 20):
+
+| | Original (2x picture, halved) | Round 700 | v0.1.483 (same run on base 34286d92) |
+|---|---|---|---|
+| y of the list below the combo's top | 20 | 20 | 20 |
+| list width / x | 130, the field's x | 130, x 629 = the field's | about 148, over the arrow (looked at) |
+| height, 5 items | 73 | 73 | taller (rows of 18) |
+| row pitch | 13 (baselines 26 apart at 2x) | 13 (text runs at 6, 19, 32, 45, 58) | 18 (36 px at 2x in the user's shot) |
+| text | centred on 65 | centred: run centres 64.0..64.5 of 65 | left-aligned |
+| fill: open / closed pixel ratio | 0x27 -> 0x0b = 0.29 | **0.293** median over 1,881 px (0xb4 black passes 0.294) | opaque grey |
+| frame top / bottom rows | (6,8,6) / (122,121,123) | (5,7,5) / (123,121,123) | the same frame |
+
+The first text cap sits 6 below the list top here against 7 in the picture (one pixel, the font).
+Resolution's 16-item list opens 216 tall at the field's 136 width. Escape, an outside click and a
+row click each closed it; the row click set Low.
+
+### 2. The hover's reach (READ; docs/protocol/CURSOR.md, "How far the hover reaches")
+
+- `CGInterface::vslot_005` case 1 (`0x789820`) has **no distance test in any class branch**: the
+  gate branch is `class == CITeleportGate -> SetHoverCursor(0xa1)`, the NPC branch likewise.
+- The pick `FUN_0078ee20` starts from 1e38 (`0xe1b85c`) and each of its 9 rays is a segment ending
+  5000 units of view depth out (`FUN_00a5ade0`, the double 5000.0 at `0xde5188`); the box test's
+  plane check (`FUN_0045c9a0`) needs the segment's ends on opposite sides. A gate is its BC box.
+- So the bound is the entity list: the server sends a player the objects of the **3 x 3 message
+  blocks of 320** around its block (round 664, READ in SR_GameServer). Out of that square an NPC,
+  gate, monster, item or player does not exist in the original client. NPCs are field objects in
+  the blocks (READ there); a gate is one too (READ in the review below).
+- This client builds NPCs and gate pick boxes for its 5 x 5 loaded regions, and gets other players
+  and drops zone-wide, so the hover now applies the window to every class
+  (`GameCursor.in_view_window`, `floor((v + 960) / 320)` within 1 on x and z -- the server's
+  `combat.CellOf`). No talk / teleport / attack range lives in the hover; the click side is round
+  701's (CURSOR.md notes `GObjPC::IsWithinInteractionRange`, round 642).
+
+**Live** (`qa_shot.sh`, Jangan 97/168, `SRREVAMP_QA_CLICK="gate@80,...,gate@1300"`: stand d units
+south of STORE_CH_GATE's 20 x 50 x 20 box, aim at it, hover only):
+
+| d | Hover | Log |
+|---|---|---|
+| 80 | gate (0xa1) | `gate STORE_CH_GATE at 80 units (blocks 0, 0)` |
+| 250 | gate (0xa1) | `(blocks 0, 1)` |
+| 450 | gate (0xa1) | `(blocks 0, 1)` |
+| 650 | normal (0x95) | `(blocks 0, 2) -- outside the view window, not held` |
+| 900 | normal (0x95) | `(blocks 0, 3) -- outside ...` |
+| 1300 | normal (0x95) | `(blocks 0, 4) -- outside ...` |
+
+At 650, 900 and 1300 the ray met the gate's box (the log names it), so before this round each was
+the disc. Where the cut falls between 320 and 640 depends on where the player stands in its block.
+
+### 3. The cursor exe (docs/protocol/CURSOR.md)
+
+The user's missing cursor was the missing exe. Kept from the investigation: the login status line
+and the system messages say `No game cursor: copy sro_client.exe from your Silkroad folder into
+<pk2 folder> (beside Data.pk2).`; and when no file has a client name, the same folders' `*.exe`
+files are probed for cursor group 0x95 (headers and the head of `.rsrc` only; a private server's
+`SRO_Client_VTX.exe` carries the same groups, MEASURED). Wine 10.0 is on the box
+(docs/RENDER_BOX.md, "Wine"): the v0.1.483 Windows build showed 0x95 (X cursor 32 x 32, hotspot
+(2, 1), 359 px, mean (130, 126, 93)) with the exe in `pk2\` under Compatibility and Forward+ (RX
+7600), and the system arrow without it, its log naming the four paths tried. A config key for the
+exe was built and dropped at the user's direction.
+
+### 4. Tests
+
+`remote_godot.sh check`: ALL LOAD (557 scripts). `tests`: 215 suites, 0 failing (after
+option_popup_test's fix below). New or rewritten: `ui/hud/option_popup_test.gd` (READ values, the
+MEASURED geometry at 1x and 2x, row hit-testing, centring, fit, and ComboList's behaviour: opens on
+a press, not the PopupMenu, on its own layer, hover by motion, keys, wheel, Enter, click picks,
+reselect rule, outside click, Escape, greyed rows, disabled combo, hiding closes);
+`ui/game_cursor_test.gd` (the view window's edges: -320 / -320.01, 639.99 / 640, the corner block,
+a player at the far side of its block, across a region line); `ui/cursor_set_test.gd` (path
+expansion, the scan folders, a synthetic PE probed and scanned as a renamed client, a launcher and
+garbage refused, the on-screen line). The first suite run failed only option_popup_test: the
+headless window is 64 x 64, so the list was moved up to fit; the suite now sets a view height.
+
+### 5. Performance
+
+UI and hover-classification only: the window test is two floors and two compares per hover tick
+(every 250 ms); no world drawing or loading code changed, so no gate was run.
+
+### 6. Process notes
+
+A Wine prefix inside the lane's RENDER_DIR made `check_scripts.gd` walk `dosdevices/z:` -- the whole
+filesystem -- for 16 minutes; keep everything but the client out of RENDER_DIR. The lane's lock
+file had been created by root and live700.sh (as ghidra) could not open it; chowned.
+
+### Review
+
+- **H1 (CONFIRMED by the reviewer's push_input probe): a pick's left release reached the world.**
+  ComboList freed its layer on the PRESS that picked a row or closed the list from outside; Godot
+  4.2.2 then dropped the mouse focus with it (`_gui_hide_control` / `_gui_remove_control`), the
+  release found no focus, viewport.cpp passed it on unhandled, and World3D's `_unhandled_input`
+  repeated the last world click (`_dispatch_left_click(_left_press_position)`) -- walk, attack,
+  talk or pick up -- on every pick. Fixed: a press that closes the list closes it for the combo at
+  once (`current()` null, `closed`, the pick applied) but keeps the layer, drawn as nothing,
+  eating every event until that button's release, which frees it; if the button is already up
+  (its release went elsewhere) `_process` frees it. New `option_popup_test` section through the
+  viewport (`root.push_input` press + release, a probe node's `_unhandled_input`): open, pick row
+  1, close from outside -- no release leaks, the layer is gone after, and the next click reaches
+  the probe. Against the committed ComboList (77047ba8) it fails as the reviewer measured: one
+  leaked release for the row pick, one for the outside click.
+- **L1: the `CURSOR:` line named a stale target** over a window ("normal ... -- gate X at 80
+  units"): `_settle_hover_cursor` now clears `_hover_target` when the mouse is over the UI.
+- **The gate's place in the view window is READ** (the reviewer): CITeleportGate is created only by
+  the spawn parser (`FUN_008a6bd0`, `FUN_009c1fa0`, NetProcessInObject), so a gate is a server-sent
+  object inside the window. Labels updated (CURSOR.md, `GameCursor`, TODO.md).
+
+After the fixes: `remote_godot.sh check` ALL LOAD, `tests` 215 suites, 0 failing (see the commit).
+
 ## Six-hundred-and-ninety-ninth round: the developer toggles move from Ctrl+F1-F3 to Shift+F1-F3, because macOS keeps Ctrl+F1-F3 for itself
 
 The user (2026-10-03, on v0.1.481 under CrossOver on macOS): "can switch the ctrl+f1-f3 menus to
@@ -7328,7 +7466,8 @@ resource id. The live check below reads the X server's cursor on the login and s
 0x95's own 359 opaque pixels and mean colour.
 
 **Hostility (the user's hostile mobs and players), exactly:** a monster is attackable when its
-vslot 0xdc says so (CICMonster: always, 0x9d3160; CICMonsterNPC: `!(+0x7c8 & 2)`) and the
+vslot 0xdc says so (CICMonster `0x9d3160`: by job mode against the monster's TypeID4, 1 for a
+jobless player -- see Review, M2; CICMonsterNPC: `!(+0x7c8 & 2)`) and the
 interface's set +0x500 holds key 5 (INFERRED "attack allowed") -- except that a player whose job
 mode (vslot 0xac) is 4 (INFERRED: no job) gets the arrow over TypeID 1/2/1/2 and 1/2/1/3, the thief
 and hunter NPC monsters. A player: IsHostile (`0x9de780`) is, in order, another team (+0x81d); the
@@ -7426,9 +7565,51 @@ not used.)
 ### 7. OPEN (docs/TODO.md "The mouse cursor")
 
 Stall 0xa3 wired, unreachable (no stall state reaches this client); hostile players only by Alt;
-the forced cursors wait for their windows; the cursor is not hidden while the camera turns; a window
-opened under a still mouse keeps the world's cursor until the mouse moves; the ground pick's cross
-is ours (retail has none) -- the user's call; the list's centring and pressed colour.
+the forced cursors wait for their windows; the Option window's camera-rotate method 2 (cursor
+hidden while turning) is not built -- retail's default, method 1, leaves the cursor free, as here
+(see Review, M1); a window opened under a still mouse keeps the world's cursor until the mouse
+moves; the window frame and resize borders show the OS's shapes; the ground pick's cross is OURS
+until the ground-pick decal is built; the list's centring and pressed colour.
+
+### Review
+
+No HIGH findings. Fixed in this round:
+
+- **M1 (READ): retail does not hide the cursor while the camera turns by default.** The hide and
+  `SetCursorPos` in `CGInterface::vslot_012 0x77b140` run only while +0x82d is set; `vslot_017
+  0x77c260` sets it only when the option byte settings+0x1c is non-zero (`0x77c535`, `0x77c6c1`),
+  the Option window's UIIT_CTL_CAMERA_ROTATE_METHOD1 / METHOD2 choice (`0x5fcf40`), 0 by default
+  (`0x7776c0`). So under method 1 the cursor stays visible and free -- what this client does. The
+  first draft's "retail hides it" was wrong; CURSOR.md and TODO.md now record method 2 as an unbuilt
+  Option.
+- **M2 (READ): CICMonster's vslot 0xdc (`0x9d3160`) is conditional, not "always 1"**: 0 for job mode
+  1 over a TypeID4 3 monster, mode 2 over one `0x779dd0` matches, mode 3 over one `0x779e20`
+  matches, else 1 -- so 1 for a jobless player, this client's only state. Labels fixed
+  (CURSOR.md, `GameCursor.monster_kind`); nothing to model without job state.
+- **L1 (MEASURED by the review): a PE-signed garbage file stalled the parser** (1120 ms, 240k error
+  lines): `_parse_pe` trusted the section count, `_dir_entries` the directory counts. Now the
+  section count is capped at 96 and the table must fit the file, every directory's entries must fit
+  (and at most 4096), each type directory is walked once, and every offset is checked before a
+  read. `cursor_set_test` writes seven 1 MB PE-signed garbage files -- section counts 0xffff, 3, 1, 2
+  over fills 0xff / 0x00 / 0x41, and three with one sane section mapping the resource table onto
+  junk (fills 0x41, 0x00, 0x01; a type directory of 300 entries all claiming type 12 and pointing
+  at themselves): each gives no cursor, in 0 ms and 22 ms respectively, with one log line each.
+- **L2: retail's pick passes over dying characters** (FUN_0078ee20 skips a character whose +0x65c
+  bit 0, alive, is clear). The hover's character ray now passes over a dying monster and goes on
+  to what is behind it (up to 4 bodies), where it used to stop with the arrow.
+- **L3: the hover follows the mouse while the camera turns** (retail method 1 reads the live
+  position every tick); it used to keep the press point. The orbit itself is untouched.
+- **L4:** the window frame and resize borders show the OS's shapes (retail sets its own there; Godot
+  leaves the non-client area to the OS) -- a doc note.
+- **Scaling filter:** the user chose nearest-neighbour (2026-10-03, "pixel-sharp is gonna be more
+  clear"); recorded in CURSOR.md.
+- **6a:** the ground pick's cross stays. Retail sets no cursor for a ground cast and shows a ring
+  decal instead (`select_02` in range, `select_04` out of range, `FUN_00629fa0`, from lane 698);
+  without that decal the cross is the only cue. Marked OURS until the decal is built.
+
+After the fixes: `remote_godot.sh check` ALL LOAD (553 scripts), `tests` 214 suites, 0 failing.
+Not re-run live or through the gate: the changes are the parser's bounds, the hover ray's pass
+over dying monsters, the hover position during an orbit, and documentation.
 
 ## Six-hundred-and-ninety-sixth round: in a window the chosen resolution sizes the OS window (a maximised window is restored first), and every Option combo draws the original's black value box
 

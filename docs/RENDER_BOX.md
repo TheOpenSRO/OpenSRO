@@ -190,6 +190,28 @@ su - ghidra -c '/opt/srrevamp-client/tools/xwl_run.sh /opt/godot-bin/Godot_v4.2.
 **`llvmpipe` in that banner means the run is on the CPU.** `qa_shot.sh` warns about it, and
 `perf_gate.sh` fails the run.
 
+## Wine (the Windows build) -- installed 2026-10-03, round 700
+
+To run a player's Windows release on the box (round 700's cursor question):
+`apt-get install --no-install-recommends wine wine64` added 7 packages -- `wine`, `wine64`,
+`libwine`, `libcapi20-3t64`, `libpcap0.8t64`, `libxkbregistry0`, `libz-mingw-w64` (Wine 10.0,
+64-bit only: Godot's export is x86_64, so no i386 multiarch). Revert: `apt-get remove wine wine64
+libwine && apt-get autoremove`.
+
+- A prefix must sit in a folder owned by the user who runs Wine ("'/var/tmp/x' is not owned by you,
+  refusing to create a configuration directory"); keep it under the lane's `/var/tmp` folder and
+  delete it afterwards. `WINEDLLOVERRIDES="mscoree,mshtml="` skips the Mono / Gecko download
+  prompts, `WINEDEBUG=-all` the noise.
+- **Compatibility** runs under Xvfb (Mesa llvmpipe through Wine's opengl32 -- slow but enough for
+  the login screen). **Forward+** runs on the RX 7600 under Xvfb with `MESA_VK_WSI_DEBUG=sw`
+  (MEASURED, round 700: `Vulkan API 1.4.305 - Forward+ - Using Vulkan Device #0: AMD - AMD Radeon
+  RX 7600 (RADV NAVI33)` from the Windows build); under `xwl_run.sh`'s Xwayland xdotool does not
+  move the pointer, so cursor checks there read nothing.
+- **Reading the cursor back:** Wine draws Win32 cursors as X cursors, so `XFixesGetCursorImage` (a
+  25-line ctypes script) returns what the Windows build set: round 700 read the game's 0x95 (32 x
+  32, hotspot (2, 1), 359 opaque pixels, mean (130, 126, 93)) from the Windows v0.1.483 build.
+- Stop it with `wineserver -k` (as the user who ran it); nothing stays running between runs.
+
 ## Services on the box
 
 `vncserver` (`ghidra`'s desktop on `:1`, port 5901), `novnc` (the same desktop in a browser on port

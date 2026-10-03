@@ -2500,6 +2500,10 @@ func _hide_debug_ui_replaced_by_hud() -> void:
 	$UI.add_child(_debug_panel)
 	_log_system("Debug panel (build, position, entities, loading, performance): Shift+F3")
 	_log_system("Stuck in a wall or building? Type /unstuck to return to the zone entry.")
+	# Round 700: no game cursor -- say where sro_client.exe goes (GameCursor).
+	GameCursor.load_once()
+	if not GameCursor.has_cursors():
+		_log_system(GameCursor.missing_hint())
 	_build_target_window()
 	set_name_plate_range(ClientSettings.name_plate_range(NAME_PLATE_RANGE))
 	var chat_font_size := ClientSettings.chat_font_size()
@@ -11112,7 +11116,10 @@ func _update_blob_shadow() -> void:
 ##                          its drawn box
 ##                          "wait:<ticks>" (round 650) in the list pauses
 ##                          between two clicks ("gate,wait:2400,gate");
-##                          "item" (round 697) the nearest dropped item
+##                          "item" (round 697) the nearest dropped item;
+##                          "gate@<d>" (round 700) no click: stand <d> units
+##                          short of the nearest gate, aim at it, print the
+##                          hover's verdict (`QA HOVER`, the view window)
 ##   SRREVAMP_QA_CLICK_WAIT=<ticks> (round 646) the ticks before the first
 ##                          click (default 120)
 ##   SRREVAMP_QA_MARKER=1   (round 698) `QA MARKER` lines from the ring on the
@@ -13055,8 +13062,11 @@ func _qa_advance_click() -> void:
 		_qa_click_wait = maxi(0, kind.substr(5).to_int())
 		print("QA CLICK wait %d tick(s)" % _qa_click_wait)
 		return
+	# "gate@<d>" (round 700): hover only -- stand <d> units short of the
+	# nearest gate, aim at it and print what the hover finds (QA HOVER).
+	var hover_only := kind.contains("@")
 	if _qa_click_stage == 0:
-		_qa_click_target = _qa_click_target_for(kind)
+		_qa_click_target = _qa_click_target_for(kind.get_slice("@", 0))
 		if _qa_click_target.is_empty():
 			# A named NPC may be in a region still streaming in after a /tp
 			# (round 642): look again for up to a minute before giving up.
@@ -13076,6 +13086,8 @@ func _qa_advance_click() -> void:
 			# A gate's pick box is wider than that (round 690: Alexandria's is
 			# 140 across): stand 40 short of its side, so the camera is outside it.
 			var stand: Vector3 = _qa_click_target["pos"] + Vector3(0.0, 0.0, -40.0 - float(_qa_click_target.get("stand_off", 0.0)))
+			if hover_only:
+				stand = _qa_click_target["pos"] + Vector3(0.0, 0.0, -kind.get_slice("@", 1).to_float())
 			var pair := _nav_graph_for(stand)
 			if not pair.is_empty():
 				var group: Node3D = pair[1]
@@ -13098,6 +13110,15 @@ func _qa_advance_click() -> void:
 		# through"): such a click proves the tag and the layer, not a click a
 		# player could make.
 		var on_screen := get_viewport().get_visible_rect().has_point(screen)
+		if hover_only:
+			var hk := _hover_kind_at(screen)
+			print("QA HOVER %s: '%s' %s at screen %s -> %s (0x%x) -- %s" % [kind, str(_qa_click_target["name"]),
+				"on screen" if on_screen else "OFF-SCREEN", str(screen.round()), hk, GameCursor.id_for(hk),
+				_hover_target if _hover_target != "" else "nothing under the point"])
+			_qa_click_queue.pop_front()
+			_qa_click_stage = 0
+			_qa_click_wait = 30
+			return
 		print("QA CLICK %s: '%s' at world %s -> screen %s%s" % [kind, str(_qa_click_target["name"]), str(aim.round()), str(screen.round()),
 			"" if on_screen else " (OFF-SCREEN: not a click a player could make)"])
 		_probe_click_rays(screen)
@@ -15793,8 +15814,11 @@ func _input(event: InputEvent) -> void:
 				camera_arm.rotation_degrees.x - motion.relative.y * CAMERA_ORBIT_SENSITIVITY,
 				CAMERA_PITCH_MIN_DEGREES, CAMERA_PITCH_MAX_DEGREES)
 	# The hover follows the mouse with the left button held too (retail's
-	# tick runs then, and a held button over an item is the closed glove).
-	if event is InputEventMouseMotion and not _camera_orbiting:
+	# tick runs then, and a held button over an item is the closed glove),
+	# and while the camera turns: retail's default rotate method leaves the
+	# cursor free and its tick reads where it is (round 697 review, L3). The
+	# orbit above is untouched.
+	if event is InputEventMouseMotion:
 		_hover_pos = (event as InputEventMouseMotion).position
 		_hover_reached_world = false
 
@@ -15812,6 +15836,10 @@ func _settle_hover_cursor() -> void:
 	# Also when the game's cursors are not there: the item under the mouse
 	# shows its name (_hovered_ground_item).
 	var t0 := Time.get_ticks_usec()
+	# Over a window no world target is under the mouse: the log line must not
+	# name the last one (round 700 review, L1).
+	if not _hover_reached_world:
+		_hover_target = ""
 	var kind := _hover_kind_at(_hover_pos) if _hover_reached_world else "normal"
 	_cursor_classify_usec += Time.get_ticks_usec() - t0
 	_cursor_classify_count += 1
@@ -15824,8 +15852,9 @@ func _settle_hover_cursor() -> void:
 ## the cursor says what a click there would do:
 ##   a dropped item       -> pickup (0x99), pickup_held (0x9a) with the left
 ##                           button down; notes the item, whose name shows
-##   the nearest character -> a monster: GameCursor.monster_kind (0x97, or
-##                           0x95 for a job monster to a jobless player);
+##   the nearest character -> a monster (a dying one passed over):
+##                           GameCursor.monster_kind (0x97, or 0x95 for a
+##                           job monster to a jobless player);
 ##                           another player: GameCursor.player_kind (0xa0
 ##                           outside the party with Alt held, else 0x95)
 ##   the talk ray          -> a gate's pick node (gate_point_id): gate (0xa1),
@@ -15837,42 +15866,72 @@ func _settle_hover_cursor() -> void:
 ## monster's tall capsule), and the cursor follows the click. A monster or
 ## player hidden by held V is passed over, as its click is.
 func _hover_kind_at(screen_pos: Vector2) -> String:
+	_hover_target = ""
 	var item := _ray_hit_tagged(screen_pos, GroundItems.GROUND_ITEM_COLLISION_LAYER, "ground_item_id")
-	if item != null:
+	if item != null and _hover_held(item, "item"):
 		_hovered_ground_item = int(item.get_meta("ground_item_id"))
 		return GameCursor.item_kind(Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT))
 	if not _objects_hidden:
 		var who := _ray_hit_character(screen_pos)
-		if who != null:
+		if who != null and _hover_held(who, "monster" if who.has_meta("monster_id") else "player"):
 			if who.has_meta("monster_id"):
-				if _dying_until.has(int(who.get_meta("monster_id"))):
-					return "normal"
 				return GameCursor.monster_kind(_monster_code_of(int(who.get_meta("monster_id"))))
 			# Another player: no party, stall or team state reaches this
 			# client yet (GameCursor.player_kind).
 			return GameCursor.player_kind(GameCursor.player_hostile(Input.is_key_pressed(KEY_ALT)), false, false)
 	var talk_node := _talk_ray_at(screen_pos)["node"] as Node
-	if talk_node != null:
+	if talk_node != null and _hover_held(talk_node, "gate" if talk_node.has_meta("gate_point_id") else "npc"):
 		return "gate" if talk_node.has_meta("gate_point_id") else "talk"
 	return "normal"
+
+## What the hover last found, for its log line: "<what> <name> at <d> units
+## (blocks dx, dz)", "" for nothing (round 700).
+var _hover_target := ""
+var _cursor_target := ""
+
+## Round 700: whether the original client would hold `node` -- the 3 x 3
+## message blocks around the player's (GameCursor.in_view_window, READ; see
+## there). Notes the target and its distance from the player for the log.
+func _hover_held(node: Node, what: String) -> bool:
+	var n3 := node as Node3D
+	if n3 == null or player == null:
+		return true
+	var at := n3.global_position
+	var me := player.global_position
+	var held := GameCursor.in_view_window(me, at)
+	_hover_target = "%s %s at %.0f units (blocks %d, %d)%s" % [what, String(node.get_meta("npc_code", node.name)),
+		Vector2(at.x - me.x, at.z - me.z).length(),
+		GameCursor.view_block(at.x) - GameCursor.view_block(me.x), GameCursor.view_block(at.z) - GameCursor.view_block(me.z),
+		"" if held else " -- outside the view window, not held"]
+	return held
 
 ## The character under a screen point, as the click's pick finds it
 ## (_pick_character's mask without the Shift self body: retail's hover pick
 ## passes 0 for include-self): the first ancestor of the nearest monster or
-## player collider carrying monster_id or character_id, or null.
+## player collider carrying monster_id or character_id, or null. A dying
+## monster is passed over and the ray goes on to whatever is behind it, as
+## retail's pick (FUN_0078ee20) skips a character whose +0x65c bit 0 (alive)
+## is clear (round 697 review, L2) -- up to HOVER_RAY_PASSES bodies.
+const HOVER_RAY_PASSES := 4
+
 func _ray_hit_character(screen_pos: Vector2) -> Node:
 	var from := camera_3d.project_ray_origin(screen_pos)
 	var dir := camera_3d.project_ray_normal(screen_pos)
 	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
-	query.exclude = [player.get_rid()]
+	var exclude: Array[RID] = [player.get_rid()]
 	query.collision_mask = MONSTER_COLLISION_LAYER | OTHER_PLAYER_COLLISION_LAYER
-	var hit := get_world_3d().direct_space_state.intersect_ray(query)
-	if hit.is_empty():
-		return null
-	var node := hit["collider"] as Node
-	while node != null and not (node.has_meta("monster_id") or node.has_meta("character_id")):
-		node = node.get_parent()
-	return node
+	for _pass in HOVER_RAY_PASSES:
+		query.exclude = exclude
+		var hit := get_world_3d().direct_space_state.intersect_ray(query)
+		if hit.is_empty():
+			return null
+		var node := hit["collider"] as Node
+		while node != null and not (node.has_meta("monster_id") or node.has_meta("character_id")):
+			node = node.get_parent()
+		if node == null or not (node.has_meta("monster_id") and _dying_until.has(int(node.get_meta("monster_id")))):
+			return node
+		exclude.append(hit["rid"])
+	return null
 
 ## A live monster's characterdata code (MonsterSnapshot.code_name), "" when
 ## unknown.
@@ -15903,12 +15962,21 @@ func _ray_hit_tagged(screen_pos: Vector2, mask: int, meta: String) -> Node:
 ## and says so in the log: one line per change, the evidence a tester's log
 ## carries for "which cursor did it pick there".
 func _apply_cursor(kind: String) -> void:
+	# The target (round 700) is part of the change, so a gate passing out of
+	# the view window logs even while the cursor stays the arrow.
+	var target := _hover_target.get_slice(" at ", 0)
+	if kind == _cursor_kind and target == _cursor_target:
+		return
+	_cursor_target = target
 	if kind == _cursor_kind:
+		if GameCursor.has_cursors() and _hover_target != "":
+			print("CURSOR: %s (0x%x) at %s -- %s" % [kind, GameCursor.id_for(kind), str(_hover_pos.round()), _hover_target])
 		return
 	_cursor_kind = kind
 	GameCursor.show_kind(kind, get_window())
 	if GameCursor.has_cursors():
-		print("CURSOR: %s (0x%x) at %s" % [kind, GameCursor.id_for(kind), str(_hover_pos.round())])
+		print("CURSOR: %s (0x%x) at %s%s" % [kind, GameCursor.id_for(kind), str(_hover_pos.round()),
+			(" -- " + _hover_target) if _hover_target != "" else ""])
 
 ## The original's left-click scheme, in the original's order: a click on a
 ## monster attacks it, on an NPC talks to it, and anywhere else walks there.
