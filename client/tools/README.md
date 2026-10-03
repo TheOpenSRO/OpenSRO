@@ -54,7 +54,11 @@ what each 3D preview renders at.
 runs on the box, under your lock, and fails if the Bloom row draws a black frame under
 Compatibility: `measure_retail_bloom.gd` at 1280 x 720 with a depth-reading 3D pass (the world's
 WorldFog is one, and it is what blacked the screen: RetailBloom's header), then the Jangan spawn
-with Bloom off at start, stepped to on and off. About 2.5 minutes. Run it after a change to
+with Bloom off at start, stepped to on and off (the bloom must ADD light over the plain frame x
+198/255: a pass that read a black screen keeps exactly that), and a second boot with Bloom off
+stepped to Brightness 3 (the brightness pass reads the screen too). About 4 minutes.
+`OPENSRO_QA_BLOOM_NO_ANCHOR=1` is its self-test: RetailBloom's anchor never shows, and every
+check must FAIL. Run it after a change to
 RetailBloom, WorldFog, the brightness pass or any 3D screen or depth read. A Compatibility frame
 must be checked with a 3D view in the scene: round 702's canvas-only measurement passed while the
 game drew black.

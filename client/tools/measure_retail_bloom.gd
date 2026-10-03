@@ -18,7 +18,9 @@ extends SceneTree
 ##    targets retail rounds to. Compatibility (round 707) evaluates it per
 ##    pixel. Exits 1 past the tolerance (Forward+ mean 0.5 / p99 2.0 of 255;
 ##    Compatibility mean 1.6 / p99 7.7 up to 1280 wide -- OURS, from round
-##    702's figures) or on a black frame (`FRAME`).
+##    702's figures), on a black frame, or when the bloom adds under 5/255
+##    of mean luma over S x 198/255 -- what a pass that read a black screen
+##    leaves (`FRAME`; OURS threshold, 32/255 measured on this picture).
 ## 2. **Echoes.** A black frame with one white bar (1/64 of the width); the bloom's
 ##    added light along a row to the right of the bar should fall off
 ##    smoothly, as retail's magnified 512 target does. Prints how many local
@@ -258,9 +260,18 @@ func _compare(b: Image) -> void:
 		var y := rng.randi_range(0, _h - 1)
 		lum_s += _s.get_pixel(x, y).get_luminance()
 		lum_b += b.get_pixel(x, y).get_luminance()
-	print("FRAME %s %dx%d: mean luma without the bloom %.1f/255, with it %.1f/255" % [_rend(), _w, _h, lum_s / 2000.0 * 255.0, lum_b / 2000.0 * 255.0])
+	# And a pass that read a black screen keeps S x 198/255 and adds nothing
+	# (round 707 review: the blend made such a frame 0.776 of the plain one,
+	# which a "not black" test passed). The light the bloom adds over that is
+	# the check: 32/255 on this picture, 0 with nothing read (MEASURED).
+	var added := (lum_b - lum_s * RetailBloom.SCREEN_KEEP) / 2000.0 * 255.0
+	print("FRAME %s %dx%d: mean luma without the bloom %.1f/255, with it %.1f/255, added over S x 198/255 %.1f/255" % [
+		_rend(), _w, _h, lum_s / 2000.0 * 255.0, lum_b / 2000.0 * 255.0, added])
 	if lum_b < 0.25 * lum_s:
 		print("FAIL the frame with the bloom is black (or nearly)")
+		_failures += 1
+	elif added < 5.0:
+		print("FAIL the bloom adds no light (%.1f/255 over S x 198/255, under 5): it read a black screen" % added)
 		_failures += 1
 	print("BLOOM %s %dx%d vs the 512 pipeline: max %.2f/255, p99 %.2f/255, p90 %.2f/255, mean %.3f/255 over %d channels" % [
 		_rend(), _w, _h, float(diffs[-1]) * 255.0, float(diffs[int(diffs.size() * 0.99)]) * 255.0,

@@ -264,15 +264,46 @@ func anchor() -> MeshInstance3D:
 ## bloom, or VideoOptions' brightness pass (round 707: with Bloom off from the
 ## start and Brightness off Normal, Compatibility drew that pass black too --
 ## MEASURED, the frame's mean 0). Off otherwise: no 3D copy of the screen.
+## Synced when either changes (this layer's visibility_changed; the root's
+## child_entered_tree and the brightness layer's own visibility_changed --
+## round 707 review: a sync only in _process left the frame the brightness
+## pass appears in to read a colourless back buffer), and each frame as well.
 func _sync_anchor() -> void:
 	if _anchor != null:
-		_anchor.visible = visible or _brightness_shown()
+		_anchor.visible = not NO_ANCHOR and (visible or _brightness_shown())
+
+## QA only (round 707 review, OURS): OPENSRO_QA_BLOOM_NO_ANCHOR=1 never shows
+## the anchor -- the self-test that tools/retail_bloom_box_test.sh fails
+## without it.
+static var NO_ANCHOR := OS.get_environment("OPENSRO_QA_BLOOM_NO_ANCHOR") == "1"
 
 func _brightness_shown() -> bool:
 	if not is_inside_tree():
 		return false
 	var b := get_tree().root.get_node_or_null(VideoOptions.BRIGHTNESS_LAYER) as CanvasLayer
 	return b != null and b.visible
+
+func _enter_tree() -> void:
+	if _anchor == null:
+		return
+	var r := get_tree().root
+	if not r.child_entered_tree.is_connected(_on_root_child):
+		r.child_entered_tree.connect(_on_root_child)
+	var b := r.get_node_or_null(VideoOptions.BRIGHTNESS_LAYER)
+	if b != null:
+		_on_root_child(b)
+	_sync_anchor()
+
+func _exit_tree() -> void:
+	if _anchor != null and get_tree().root.child_entered_tree.is_connected(_on_root_child):
+		get_tree().root.child_entered_tree.disconnect(_on_root_child)
+
+func _on_root_child(node: Node) -> void:
+	if node is CanvasLayer and node.name == VideoOptions.BRIGHTNESS_LAYER:
+		var layer := node as CanvasLayer
+		if not layer.visibility_changed.is_connected(_sync_anchor):
+			layer.visibility_changed.connect(_sync_anchor)
+		_sync_anchor()
 
 ## The anchor (see the header): one triangle with ANCHOR_SHADER, never culled
 ## and casting nothing.
@@ -297,8 +328,7 @@ static func anchor_node() -> MeshInstance3D:
 func _process(_delta: float) -> void:
 	if _grid_used and visible and is_inside_tree():
 		_material.set_shader_parameter("canvas_size", get_viewport().get_visible_rect().size)
-	# The brightness pass comes and goes on its own (VideoOptions); a frame's
-	# delay at most.
+	# A fallback to the signals above (a brightness layer freed, say).
 	_sync_anchor()
 
 ## The 514 x 514-vertex grid (UV = texel index, -1 .. 512), built once.

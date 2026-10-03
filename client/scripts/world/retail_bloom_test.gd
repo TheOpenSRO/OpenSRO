@@ -9,7 +9,6 @@ extends SceneTree
 
 var _failures := 0
 var _bt: RetailBloom
-var _lay: CanvasLayer
 
 func _check(cond: bool, msg: String) -> void:
 	if cond:
@@ -85,9 +84,6 @@ func _initialize() -> void:
 	_bt = RetailBloom.new(false)
 	root.add_child(_bt)
 	_bt.visible = false
-	_lay = CanvasLayer.new()
-	_lay.name = VideoOptions.BRIGHTNESS_LAYER
-	root.add_child(_lay)
 	var bg := RetailBloom.new(true)
 	_check(bg.anchor() == null, "Forward+ needs no anchor (its canvas copies the screen itself)")
 	bg.free()
@@ -117,13 +113,20 @@ func _initialize() -> void:
 
 func _process(_delta: float) -> bool:
 	# The brightness pass reads the screen as the bloom does, and read black
-	# the same way (round 707): the anchor shows for it too.
-	_bt._process(0.0)
-	var with_brightness := _bt.anchor().visible
-	_lay.visible = false
-	_bt._process(0.0)
-	_check(with_brightness and not _bt.anchor().visible, "the anchor shows while the brightness pass does, Bloom off (and not without it)")
-	_lay.free()
+	# the same way (round 707): the anchor shows for it too -- at once, when
+	# the layer enters or changes, not a frame later (no _bt._process call
+	# here; round 707's review).
+	_check(not _bt.anchor().visible, "Bloom off and no brightness pass: the anchor is off")
+	var lay := CanvasLayer.new()
+	lay.name = VideoOptions.BRIGHTNESS_LAYER
+	root.add_child(lay)
+	var on_enter := _bt.anchor().visible
+	lay.visible = false
+	var on_hide := _bt.anchor().visible
+	lay.visible = true
+	_check(on_enter and not on_hide and _bt.anchor().visible,
+		"the anchor follows the brightness pass the moment it enters, hides and shows (Bloom off)")
+	lay.free()
 	_bt.free()
 	if _failures == 0:
 		print("ALL PASS")

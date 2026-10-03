@@ -7228,13 +7228,12 @@ on this GPU (Bloom off restores it); at 1280 x 720 it is inside the noise.
 ### 5. The guard
 
 - `client/tools/retail_bloom_box_test.sh <client dir> [out dir]` (new; on the box, under the
-  caller's lock, ~2.5 min): `measure_retail_bloom.gd` under Compatibility at 1280 x 720 with the
-  depth-reading 3D pass -- FAIL on a black frame (`FRAME`: with the bloom under a quarter of the
-  plain luma) or past the tolerance (mean 1.6 / p99 7.7 of 255 up to 1280 wide, OURS from round
-  702's figures; Forward+ 0.5 / 2.0); then the game at the Jangan spawn with Bloom off at start,
-  stepped on and off, FAIL if the bloom's frame has under half the plain one's mean grey. On this
-  tree: ALL PASS. On base 65e5d8a8 with the same tools: **FAILURES** (frame luma 0.0, the world's
-  mean grey 0 against 87.9).
+  caller's lock): `measure_retail_bloom.gd` under Compatibility at 1280 x 720 with the
+  depth-reading 3D pass, past the tolerance (mean 1.6 / p99 7.7 of 255 up to 1280 wide, OURS from
+  round 702's figures; Forward+ 0.5 / 2.0) or on a black frame; then the game at the Jangan spawn.
+  As first committed it FAILED on base 65e5d8a8 (frame luma 0.0, the world's mean grey 0 against
+  87.9) -- but its frame tests were too loose to catch a broken anchor: see the review below,
+  which tightened them and added the brightness pass.
 - `retail_bloom_test.gd` (headless, in `tests`): Compatibility's pass reads by texelFetch with no
   mip hint; the anchor exists under Compatibility only, reads the screen, draws nothing, is never
   culled and casts nothing; it follows the Bloom row and the brightness pass.
@@ -7248,6 +7247,55 @@ on this GPU (Bloom off restores it); at 1280 x 720 it is inside the noise.
   p99 0.56, max 1.52 of 255, no echo (round 702's figures).
 - Every run on the RX 7600 (banners checked); nothing left running; the box copies and frame dirs
   under /var/tmp removed.
+
+### Review (round 707 review)
+
+**M1 -- the in-game check passed with the anchor broken (the reviewer's MEASURED finding).** The new
+pass blends instead of writing opaque, so a pass that reads a black screen leaves the frame x
+198/255 (0.776 of the plain one), not black; `a >= 0.5 b` in the box test and `lum_b < 0.25 lum_s`
+in the measurement passed that (anchor forced off: game 68.2 against 87.9, FRAME 95.6 against
+123.2). A ratio cut such as 0.88 would also fail a legitimately dark view, where retail's bloom
+itself keeps 198/255. **Now both test the light the bloom ADDS over S x 198/255** -- zero for a pass
+that read nothing, whatever the scene:
+- `measure_retail_bloom.gd`: FAIL if the added mean luma is under 5/255 (OURS). MEASURED: 32.4 with
+  the anchor, -0.1 without.
+- the box test's game check: FAIL if mean grey on minus off x 198/255 is under 5 (OURS). MEASURED:
+  81.3 on / 87.9 off = **+13.1** with the anchor, 68.2 / 87.9 = **-0.1** without.
+
+**M2 -- the brightness pass was not in the box test.** A second boot, Bloom off from the start (so
+nothing has made the colour texture), stepped to Brightness 3: FAIL under half the plain frame's
+mean grey. A boot of its own because the colour texture, once made, lasts until the target is
+re-made. MEASURED (interface hidden): 119.3 against 87.9 with the anchor, **0** without.
+
+**Self-test** (new): `OPENSRO_QA_BLOOM_NO_ANCHOR=1` (a QA hook in `RetailBloom`, OURS) never shows
+the anchor. With it, every check FAILS (the three above); without it, ALL PASS (MEASURED, this
+tree, the box).
+
+**L -- a possible black frame when the brightness pass appears.** The anchor followed the
+brightness layer only from `_process`, so the frame the layer first drew in (it is added deferred,
+after the nodes' `_process`) could read a colourless back buffer. Now `RetailBloom` connects the
+root's `child_entered_tree` and the brightness layer's `visibility_changed` and syncs the anchor at
+that moment (its own `visibility_changed` already did for the Bloom row); `_process` stays as a
+fallback (a layer freed). `retail_bloom_test.gd` checks the anchor follows the layer's entry, hide
+and show with no `_process` call between.
+
+**Recorded, no code change:**
+- The anchor makes Godot's 3D pass copy the opaque screen into the back buffer every frame the
+  anchor shows, which the canvas's own copy then overwrites: +0.015 / +0.03 / +0.10 ms at 1280 x
+  720 / 1920 x 1080 / 3840 x 2160 (MEASURED, section 4). Godot 4.2.2 offers no way to make the
+  colour texture once and skip the copy (`copy_scene_to_backbuffer` blits whenever a screen reader
+  is in the list, READ).
+- Cheaper Compatibility paths for the 4K cost (+2.3-2.9 ms), none built: (a) one texelFetch a tap
+  (nearest) -- MEASURED 1.40 ms at 4K against 2.90 (with a uniform branch), its 4K error about the
+  same (mean 2.25 against 2.13) but worse at 720 (max 20.7, p99 9.6); (b) choosing (a) only above a
+  width, by swapping the shader on the CPU when the viewport is resized (OURS, unmeasured); (c) a
+  real 512 chain, which needs somewhere to keep the 512 target -- GLES3's canvas has none (section
+  3) -- so it would mean rendering the world into a SubViewport under Compatibility (a World3D
+  change, not this lane's); (d) Godot's mip path, ruled out by the colourless-buffer order and the
+  stale mip count. The user decides whether 4K Compatibility merits (a)/(b).
+
+Checks after the review: `remote_godot.sh check` ALL LOAD; `tests` 223 suites, 0 failing; the box test ALL
+PASS, and FAILURES with `OPENSRO_QA_BLOOM_NO_ANCHOR=1` (above).
 
 ## Seven-hundred-and-fifth round: the user's smoggy Jangan measured at their own spot -- our fog applies nothing to the dragon or the gate at the default settings, Background Sight Range 1 reproduces their picture, and Forward+ now mixes a half-fogged pixel in display values as the original does; the darker, flatter base image is the object lighting, read and measured, not the fog or the tone map
 
