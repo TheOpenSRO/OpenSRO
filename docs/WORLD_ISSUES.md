@@ -126,7 +126,7 @@ run turned up a strong signal that it exercised the **old** build, not the fixed
 - **It loaded pk2 data from `C:\Users\opensro\Downloads\VSRO_Client\VSRO_Client\Data.pk2` instead of
   the local `pk2\` folder** next to the tested exe. `Pk2Config` checks an env var before the local
   folder by design (existing dev/testing convenience) — this means a persistent
-  `OPENSRO_*_PK2_PATH`-shaped env var is very likely still set on that Windows machine from earlier
+  `SRREVAMP_*_PK2_PATH`-shaped env var is very likely still set on that Windows machine from earlier
   dev work, silently overriding the "just drop pk2 files in the folder" flow this project is
   supposed to support for a real downloaded user. Needs confirming/clearing before that flow can
   actually be considered tested.
@@ -143,7 +143,7 @@ run turned up a strong signal that it exercised the **old** build, not the fixed
 - Real pk2/animation scratch data pulled for this check was deleted immediately after
   (`chinaman_skel.bsk`, `chinaman_fighter_standcity.ban`, the throwaway extractor tool/binary), per
   this project's no-persisted-real-assets policy.
-- Waiting on: OpenSRO redownloading `opensro-windows.zip` specifically from
+- Waiting on: OpenSRO redownloading `srrevamp-windows.zip` specifically from
   https://github.com/OpenSRO/OpenSRO/actions/runs/32891267640 into a fresh folder and retesting,
   plus checking for a stray `OPENSRO_*_PK2_PATH` env var on that machine.
 
@@ -7096,7 +7096,7 @@ placed object more than 12 off its region's ground on the box's archive.
 
 ## Seven-hundred-and-fourth round: the project is renamed from srrevamp to OpenSRO -- the code, the tools, the deploy files, the docs and every environment variable -- and a player's saved settings follow the client to its new user folder
 
-The user's decision (2026-10-04): the project is **OpenSRO**. A rename only; nothing a player or
+The user's decision (2026-10-03): the project is **OpenSRO**. A rename only; nothing a player or
 the server does changes, apart from the names below. Labels: OURS = this project's choice.
 
 **The names (the user's decisions, followed as given).**
@@ -7135,7 +7135,12 @@ Audio autoload reads its options from `settings.cfg` -- and, when the new folder
 `settings.cfg` and the old sibling folder exists, copies the old folder's files once
 (`settings.cfg`, `quickslots.cfg`, `screenshots/`; never `logs/`, `shader_cache/` or `vulkan/`,
 and never over a file already there), writes `migrated_from_srrevamp.txt` so it never runs again,
-leaves the old folder as it was, and logs `UserData: copied N file(s) from ... to ...`.
+leaves the old folder as it was, and logs `UserData: copied N file(s) from ... to ...`. The
+marker is written only when every file copied; a failed copy leaves
+`migrating_from_srrevamp.txt`, and the next start copies what is missing even though
+`settings.cfg` arrived the first time (review L4). The shader cache is left behind on purpose: on
+the box it is 70 MB of the old folder's 87 MB (MEASURED, `du`), and the cost is one slower start
+while the engine rebuilds it.
 `user_data_migration_test.gd` builds an old and a new folder and checks the copy, the skipped
 folders, the untouched new log, the once-only marker, a new folder already in use, and a fresh
 install. It also ran for real on the box: the first run of this branch logged
@@ -7152,7 +7157,12 @@ still read, because skipping the entry would leave a player's login screen witho
 **Production** is moved by hand, once: deploy/README.md, "Moving an install from srrevamp to
 OpenSRO" (stop the old timer before the rename reaches `dev`; `ALTER DATABASE srrevamp RENAME
 TO opensro`; copy `srrevamp_srrevamp-postgres-data` into `opensro_opensro-postgres-data`; rename
-the variables, DSN and paths in the override; swap the systemd units). `docker-compose.yml` now
+the variables, DSN and paths in the override; swap the systemd units). It runs in three parts:
+A as the old user (the database and the volume, `-p srrevamp`), B as root from outside that
+user's session (the user and host rename -- `usermod` refuses a user with live processes, and the
+cloud-init sudo rule in `/etc/sudoers.d/90-cloud-init-users` names the user, so it is renamed too
+and checked with `visudo -c`; `/etc/hosts`; `preserve_hostname: true`), C as the install's user
+again (the folders, the remote after checking for an ssh alias or key, the override, the units). `docker-compose.yml` now
 names its project (`name: opensro`), so the volume's name no longer depends on the checkout's
 folder. Left running, the old updater would pull the rename and start a second stack beside the
 first, on an empty database.
@@ -7161,13 +7171,23 @@ first, on an empty database.
 old module path inside them: `server/server` (15 MB), `server/heightat`, `server/o2sectors`,
 `server/whatishere`, `server/wherecoord`. They are out of the tree (kept on disk, `git rm
 --cached`) and in `.gitignore`. `AGENTS.md` says in its opening lines that the project was called
-srrevamp until 2026-10-04.
+srrevamp until 2026-10-03.
 
 **What is left with the old name (`git grep -i srrevamp`).** Only the intentional mentions:
 this entry, AGENTS.md's note, deploy/README.md's migration section and the `docker-compose.yml`
 comment pointing at it, `UserDataMigration` (the old folder name, the marker) and its test,
-`ClientConfig.OLD_TYPE_NAME` and its test, and two lines of `client/docs/RELEASE_NOTES.md`,
-which `bundle_docs.sh` copies verbatim from the messages of tags cut before the rename.
+`ClientConfig.OLD_TYPE_NAME` and its test, two lines of `client/docs/RELEASE_NOTES.md`
+(`bundle_docs.sh` copies them verbatim from the messages of tags cut before the rename),
+`docs/RENDER_BOX.md`'s box-migration table, `client/tools/README.md`'s note on a stale
+`srrevamp_native.gdextension` -- and the facts about the past, which the review (L2) put back as
+they were: the backup `~/backups/srrevamp-20260919T065504Z-before-warehouse-per-account.sql.gz`,
+the CI cache's `_work/srrevamp/srrevamp`, the tester's `SRREVAMP_*_PK2_PATH` and his
+`srrevamp-windows.zip` (the second round of 2026-08-26), the zip listings, log lines and test
+output measured in past rounds (667-668 among them), the v0.1.0-v0.1.5 release assets
+(PROGRESS.md), a user's quote, a panic trace's path on the workstation, a screenshot path in
+RE_COMPLETION, the lane directories `/opt/srrevamp-client-<lane>` and
+`/var/tmp/<lane>/srrevamp-server` that past rounds ran in (the box keeps them under those names),
+and `/root/srrevamp`, the local checkout, whose path stays.
 
 **Checks.**
 
@@ -7179,15 +7199,18 @@ which `bundle_docs.sh` copies verbatim from the messages of tags cut before the 
 | `remote_godot.sh tests`, with `libopensro_native.so` built from this branch | 223 suites, 0 failing; `NativeAssets: native readers ON (library loaded, opensro_native 0.1.0, API 5, .../native_bin/libopensro_native.so)` |
 | a QA run on the box through `qa_shot.sh` with the `OPENSRO_QA_*` hooks | `qa_shot.sh --region '97\168.m' --at 1002,1020` from `/var/tmp/rename704` on Vulkan (RX 7600): the log builds `97\168.m`, which only `OPENSRO_MAPM_PATH` names (the default is 98/168), and 20 frames were written |
 
-No export was made: the box has no Godot export templates and no `zip`. release.yml, the export
-presets and `check_release_zip.sh` were read together instead: the presets export
-`build/windows/OpenSRO.exe` and `build/linux/OpenSRO.x86_64`, the Godot export writes the `.pck`
-and console wrapper beside them under the same base name and copies the `.gdextension`'s
-`opensro_native` library next to the executable, release.yml zips `opensro-windows/` and
-`opensro-linux/` with `opensro-compatibility.*`, and `check_release_zip.sh` fails the release
-unless each zip holds `OpenSRO.exe`/`OpenSRO.x86_64`, `OpenSRO.pck`, the library, the notices and
-the launcher, and the Linux build logs `native readers ON`. The first tagged build is the export's
-real check.
+**A test export** (after the review; MEASURED on the box with round 668's 4.2.2 templates in
+`/var/tmp/ship668/templates`, set as the presets' `custom_template/release` in a scratch copy, and
+both libraries built from this branch): `--export-release "Linux"` wrote `OpenSRO.x86_64`,
+`OpenSRO.pck` (8,281,600 bytes) and `libopensro_native.so`; `--export-release "Windows Desktop"`
+wrote `OpenSRO.exe`, `OpenSRO.pck` and `opensro_native.dll` (no console wrapper in a release
+export, as in round 668's listing). The `.pck` carries `res://opensro_native.gdextension`. The
+Linux export, run headless with a scratch HOME holding an old `app_userdata/SRRevamp/settings.cfg`,
+logged `UserData: copied 1 file(s) from .../SRRevamp to .../OpenSRO`, `OpenSRO log file:
+.../app_userdata/OpenSRO/logs/opensro.log` and `NativeAssets: native readers ON (library loaded,
+opensro_native 0.1.0, API 5, .../build/linux/libopensro_native.so)`, and the new folder held the
+copied `settings.cfg`, the marker and `logs/opensro.log`. The zips themselves were not assembled
+(the box has no `zip`); release.yml's packaging and `check_release_zip.sh` name the same files.
 
 The perf gate was not run: no world, drawing or loading code changed (World3D.gd's changes are
 comments and the hooks' variable names), and the gate cannot compare across this round anyway --
@@ -9024,7 +9047,7 @@ this round" (below, section 4's first gate measured that); the user replaced it.
   bar reaches SSAO / Bloom / the renderer, greyed; a Shadow change then Cancel applies nothing;
   Default + Confirm puts the defaults back; High + Light + Third Person + 1024 x 768 + Confirm
   resizes the window to 1024x768 (`xdotool getwindowgeometry`). Restarted with the same HOME the
-  world applies High / Light again, and a real start (Boot) logs `OpenSRO video: graphic 1,
+  world applies High / Light again, and a real start (Boot) logs `SRRevamp video: graphic 1,
   quality 2, brightness 3, fullscreen false, resolution 1024x768` and opens a 1024x768 window.
 - **MSAA and mip bias** (a synthetic probe scene): pixel-identical under Compatibility; under
   Forward+ edge pixels 12455 -> 12727 (MSAA) and checker contrast 0.356 -> 0.257 (bias 2). Hence
@@ -15188,7 +15211,7 @@ mobs head run 3: frame 10.63 ms, entry 6191 ms, freeze 1537 ms, 5 hitch(es), nat
 ## Six-hundred-and-sixty-eighth round: the release ships the native readers in both zips, and the auto-updater replaces a DLL the running game has loaded
 
 The user (2026-09-30): "Build and ship the DLL. Make sure the Game auto update feature grabs it
-but I'm sure it does just fine. I'll add the OPENSRO folder as an AV exclusion and test it. I'll
+but I'm sure it does just fine. I'll add the SRREVAMP folder as an AV exclusion and test it. I'll
 also rename the DLL extension to test the fallback too." Round 667's library now ships. The
 updater did not "do just fine": it would have taken a loaded DLL only after robocopy's 30-second
 retry, it hung for ever on a file antivirus would not release, and its Linux copy never ran the
@@ -15216,7 +15239,7 @@ recipients be told where the source is.
   run 36808460104), while saving the 1.9 GB `actions/cache` would hold was still running after
   five minutes. The first probes tried a cache and were reverted.
 - **`hashFiles()` fails on it** (MEASURED, probe run 36807629459). `hashFiles('native/Cargo.lock')`
-  failed the job with "Fail to hash files under directory '/home/runner/_work/OpenSRO/OpenSRO'".
+  failed the job with "Fail to hash files under directory '/home/runner/_work/srrevamp/srrevamp'".
   The log does not say which path it choked on. That cache key was the only use, and it went
   with the cache.
 - **`cargo-zigbuild --version` is not a version query** (MEASURED, probe run 36808132225). Called
@@ -15244,20 +15267,20 @@ back to the executable's folder when the `res://native_bin/…` path is not a re
 MEASURED, on a local export made on the box with the downloaded 4.2.2 templates
 (`/var/tmp/ship668/templates`), before the merge with round 667's follow-up. After it, the
 ON line also carries `API 2`:
-- `build/linux` holds `OpenSRO.x86_64`, `OpenSRO.pck` and `libopensro_native.so`.
-- `build/windows` holds `OpenSRO.exe`, `OpenSRO.pck` and `opensro_native.dll`.
+- `build/linux` holds `srrevamp.x86_64`, `srrevamp.pck` and `libsrrevamp_native.so`.
+- `build/windows` holds `srrevamp.exe`, `srrevamp.pck` and `srrevamp_native.dll`.
 - `check_release_zip.sh … linux --run`, as shipped, prints only
-  `NativeAssets: native readers ON (library loaded, opensro_native 0.1.0, …/opensro-linux/libopensro_native.so)`,
+  `NativeAssets: native readers ON (library loaded, srrevamp_native 0.1.0, …/srrevamp-linux/libsrrevamp_native.so)`,
   with no GDExtension error. This settles review item 2 for round 667: with the library present,
   an export logs no extension errors.
 - With the library renamed to `.off`, it prints Godot's four errors and then our line:
 
 ```
-ERROR: Can't open dynamic library: native_bin/libopensro_native.so. Error: …/opensro-linux/../lib/libopensro_native.so: cannot open shared object file: No such file or directory.
-ERROR: GDExtension dynamic library not found: native_bin/libopensro_native.so
-ERROR: Failed loading resource: res://opensro_native.gdextension. Make sure resources have been imported by opening the project in the editor at least once.
-ERROR: Error loading extension: res://opensro_native.gdextension
-NativeAssets: native readers OFF (library not found: …/opensro-linux/libopensro_native.so) -- using the GDScript readers
+ERROR: Can't open dynamic library: native_bin/libsrrevamp_native.so. Error: …/srrevamp-linux/../lib/libsrrevamp_native.so: cannot open shared object file: No such file or directory.
+ERROR: GDExtension dynamic library not found: native_bin/libsrrevamp_native.so
+ERROR: Failed loading resource: res://srrevamp_native.gdextension. Make sure resources have been imported by opening the project in the editor at least once.
+ERROR: Error loading extension: res://srrevamp_native.gdextension
+NativeAssets: native readers OFF (library not found: …/srrevamp-linux/libsrrevamp_native.so) -- using the GDScript readers
 ```
 
 **CI** (MEASURED). Three probe runs of release.yml by `workflow_dispatch` on the throwaway
@@ -15271,13 +15294,13 @@ branch `ci/ship668-probe`, which publishes nothing:
     x86_64-w64-mingw32-gcc 13-win32.
   - Uncached, the toolchain install took 43 s and both builds 36 s. Saving the 1.9 GB cache then
     ran for more than five minutes, so both workflows build uncached.
-  - Its artifact `opensro-test-build`, rechecked on the box with
+  - Its artifact `srrevamp-test-build`, rechecked on the box with
     `check_release_zip.sh … --run`:
 
 | zip (8 entries each) | contents |
 |---|---|
-| opensro-windows.zip | README.md, pk2/PUT_YOUR_PK2_FILES_HERE.txt, OpenSRO.exe 69,707,264, **opensro_native.dll 2,345,472**, THIRD_PARTY_NOTICES.txt 3,872, OpenSRO.pck 6,480,944 |
-| opensro-linux.zip | README.md, pk2/PUT_YOUR_PK2_FILES_HERE.txt, OpenSRO.x86_64 62,204,152, **libopensro_native.so 1,184,400**, THIRD_PARTY_NOTICES.txt 3,724, OpenSRO.pck 6,480,944 |
+| srrevamp-windows.zip | README.md, pk2/PUT_YOUR_PK2_FILES_HERE.txt, srrevamp.exe 69,707,264, **srrevamp_native.dll 2,345,472**, THIRD_PARTY_NOTICES.txt 3,872, srrevamp.pck 6,480,944 |
+| srrevamp-linux.zip | README.md, pk2/PUT_YOUR_PK2_FILES_HERE.txt, srrevamp.x86_64 62,204,152, **libsrrevamp_native.so 1,184,400**, THIRD_PARTY_NOTICES.txt 3,724, srrevamp.pck 6,480,944 |
 
 - **The CI-built DLL** (sha256 5f06c107…). `objdump -p` shows imports api-ms-win-core-synch-l1-2-0,
   bcryptprimitives, KERNEL32, msvcrt, ntdll, USERENV and WS2_32. That is Windows system DLLs only:
@@ -15294,10 +15317,10 @@ branch `ci/ship668-probe`, which publishes nothing:
 [36809080517](https://github.com/OpenSRO/OpenSRO/actions/runs/36809080517). It is **green**:
 every step passed, the publish steps were skipped, and the whole job took 2 min 47 s. Its
 artifact, rechecked on the box with `check_release_zip.sh … --run` (MEASURED):
-- opensro-windows.zip has 8 entries; **opensro_native.dll is 2,348,032 bytes** (sha256
+- srrevamp-windows.zip has 8 entries; **srrevamp_native.dll is 2,348,032 bytes** (sha256
   83bc18f5…). Its imports are the same seven system DLLs, its one export is `gdext_rust_init`, and
   it has 0 debug sections.
-- opensro-linux.zip has 8 entries; **libopensro_native.so is 1,188,736 bytes** (sha256
+- srrevamp-linux.zip has 8 entries; **libsrrevamp_native.so is 1,188,736 bytes** (sha256
   5c291c15…). Its newest glibc symbol is GLIBC_2.28.
 - The exported Linux game, as shipped, logs
   `NativeAssets: native readers ON (library loaded, opensro_native 0.1.0, API 2, …)` and no
@@ -15382,7 +15405,7 @@ What it does now (OURS): `client/scripts/update/update_installer.gd`, `update_fs
 | `.so` install | `installed libopensro_native.so (the old one was moved aside …)` | `installed libopensro_native.so` |
 | installed `.so` | sha256 e701f090… = the zip's; inode 7867910, was 7867892 | sha256 e701f090…; `.so.off` untouched |
 | relaunched client maps | `…/install/libopensro_native.so` (not deleted) | same |
-| relaunched client's log | `native readers ON`, then `OpenSRO update (last run): v0.0.0 -> v0.0.1: installed` and the four install lines | same |
+| relaunched client's log | `native readers ON`, then `SRRevamp update (last run): v0.0.0 -> v0.0.1: installed` and the four install lines | same |
 | leftovers (`.old-update`, staging, zip) | none | none |
 | endpoint requests | `/latest`, the zip, `/latest` (the relaunch, up to date) | same |
 
@@ -15467,9 +15490,9 @@ interface differs and used if it does not; the number changes only with the inte
 
 ```
 FAIL the update installs with the exe running and the DLL loaded
-FAIL opensro_native.dll is the new version
+FAIL srrevamp_native.dll is the new version
 FAIL the loaded DLL was moved aside, not overwritten
-FAIL the update puts opensro_native.dll back
+FAIL the update puts srrevamp_native.dll back
 ```
 
 - **The new suites on round 667's tree (d7b4aba)**:
@@ -15481,7 +15504,7 @@ native_status_test.gd:    SCRIPT ERROR: Parse Error: Static function "describe()
 
 - **`check_release_zip.sh` on an export made with round 667's presets** (the `.gdextension`
   excluded):
-  `FAIL neg/opensro-linux.zip has no opensro-linux/libopensro_native.so`.
+  `FAIL neg/srrevamp-linux.zip has no srrevamp-linux/libsrrevamp_native.so`.
 - **`check_native_library.sh`**:
   - on the host-glibc `.so`: `FAIL needs GLIBC_2.34, above the floor 2.28`;
   - on an unstripped mingw DLL: `FAIL has debug sections`, `FAIL carries 1000 COFF symbols`.
@@ -15526,8 +15549,8 @@ tag-only steps. What it found, and what changed:
 | run | outcome |
 |---|---|
 | **41e0d85**, the 41e0d85 export on the tmpfs (67 MB used, 54 MB free before the download) | all four files logged "installed"; afterwards `OpenSRO.x86_64` was 30,728,192 bytes, and the `.pck`, the `.so` and the notices were 0 bytes; the next start exited 139 (a segfault) -- the review's finding, reproduced |
-| follow-up, as it ships | `OpenSRO update: refused: not enough disk space next to the game: the update needs 66.8 MB (plus 32 MB to spare), 29.3 MB is free`, then `update failed (could not unpack v0.0.1, nothing was changed (…))`; install **byte-identical** (sha256 of every file before and after); the next start exits 0 with `native readers ON` |
-| follow-up, free-space check skipped (`OPENSRO_QA_UPDATE_IGNORE_SPACE=1`, OURS) | `refused: could not write opensro-linux/OpenSRO.x86_64 whole into the staging folder (disk full?)`; install **byte-identical**; the next start exits 0 |
+| follow-up, as it ships | `SRRevamp update: refused: not enough disk space next to the game: the update needs 66.8 MB (plus 32 MB to spare), 29.3 MB is free`, then `update failed (could not unpack v0.0.1, nothing was changed (…))`; install **byte-identical** (sha256 of every file before and after); the next start exits 0 with `native readers ON` |
+| follow-up, free-space check skipped (`SRREVAMP_QA_UPDATE_IGNORE_SPACE=1`, OURS) | `refused: could not write srrevamp-linux/srrevamp.x86_64 whole into the staging folder (disk full?)`; install **byte-identical**; the next start exits 0 |
 
 - **M1:** ci.yml's check `grep -q "NativeAssets: native readers ON"` could not fail, because
   `native_status_test.gd` prints indented sample lines holding those words. It is anchored now
@@ -15581,7 +15604,7 @@ tag-only steps. What it found, and what changed:
 | H1: the copy fallback's length check | `FAIL a short copy is a failure, not an install`, `FAIL and the previous DLL is back` |
 | L1: the retried restore | `FAIL a moved-aside original busy for two tries is still put back` |
 | L2: putting back a missing original | `FAIL a file killed between its two renames is put back, from the newest aside`, `FAIL in subfolders too` |
-| M2: the install path back in the batch file | `FAIL the batch file holds no install path`, `FAIL the batch file is plain ASCII, …`, `FAIL then starts the exe from the script's own folder`, `FAIL a non-ASCII executable name falls back to OpenSRO.exe` |
+| M2: the install path back in the batch file | `FAIL the batch file holds no install path`, `FAIL the batch file is plain ASCII, …`, `FAIL then starts the exe from the script's own folder`, `FAIL a non-ASCII executable name falls back to srrevamp.exe` |
 | L4: any comma counts as running | `FAIL it matches the quoted PID, not any comma` |
 | L3: `cmd /C <path>` as before | `FAIL cmd gets /S /C and the path in its own quotes (got ["/C", "C:\\Users\\José\\Games (x) & y\\opensro_update_relaunch.bat"])` |
 
@@ -15687,8 +15710,8 @@ next, in that order (docs/TODO.md).
   `*.rlib`.
 - **Without the library** (MEASURED: a copy with the `.gdextension` but no `native_bin`, which is
   CI's case and a player's without the DLL), Godot 4.2.2 prints four `ERROR` lines and carries on:
-  `Can't open dynamic library`, `GDExtension dynamic library not found: .../libopensro_native.so`,
-  `Failed loading resource: res://opensro_native.gdextension` and `Error loading extension`.
+  `Can't open dynamic library`, `GDExtension dynamic library not found: .../libsrrevamp_native.so`,
+  `Failed loading resource: res://srrevamp_native.gdextension` and `Error loading extension`.
   `check_scripts.gd` then prints `ALL LOAD` and exits 0, all 179 suites pass, and the client logs
   `NativeAssets: native readers OFF (library not loaded)`.
 - **The export presets exclude the `.gdextension`** (READ, `editor_export_platform_pc.cpp`, 4.2.2).
@@ -15859,7 +15882,7 @@ measure it.
 ### 6. Windows (MEASURED here; NOT run on Windows)
 
 `native/build.sh windows` cross-compiles for `x86_64-pc-windows-gnu` with mingw-w64 13 (Ubuntu's
-`gcc-mingw-w64-x86-64`). The output is `opensro_native.dll`, 2.3 MB stripped, a PE32+ DLL. Its
+`gcc-mingw-w64-x86-64`). The output is `srrevamp_native.dll`, 2.3 MB stripped, a PE32+ DLL. Its
 export table is exactly `gdext_rust_init`, the `.gdextension`'s entry symbol. It imports only
 system DLLs: `KERNEL32`, `msvcrt`, `ntdll`, `USERENV`, `WS2_32`, `bcryptprimitives` and
 `api-ms-win-core-synch-l1-2-0`. No MinGW runtime DLL has to ship beside it.
@@ -16390,8 +16413,8 @@ updated to match.
 
 ```
 panic: runtime error: invalid memory address or nil pointer dereference
-	/tmp/claude-0/-root-opensro/7d4252ff-ae87-4058-aec0-7dceba9ec162/scratchpad/wt-neg665r/server/internal/session/deadstate.go:488 +0x77
-	/tmp/claude-0/-root-opensro/7d4252ff-ae87-4058-aec0-7dceba9ec162/scratchpad/wt-neg665r/server/internal/session/deadstate.go:561 +0x3ca
+	/tmp/claude-0/-root-srrevamp/7d4252ff-ae87-4058-aec0-7dceba9ec162/scratchpad/wt-neg665r/server/internal/session/deadstate.go:488 +0x77
+	/tmp/claude-0/-root-srrevamp/7d4252ff-ae87-4058-aec0-7dceba9ec162/scratchpad/wt-neg665r/server/internal/session/deadstate.go:561 +0x3ca
 FAIL	github.com/OpenSRO/OpenSRO/server/internal/session	0.367s
 FAIL
 --- FAIL: TestAStaleMoveDoesNotUndoTheReturn (0.35s)
@@ -17876,7 +17899,7 @@ test is not read). Frostbite writes walk/run speed at 50.0 and slow at 75.0 in t
       2 FAILURE(S)
 
 - `cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...` on the tree merged with int/mob 345e375 (rounds 656 and 657 in): 61 packages ok, none failing.
-- `remote_godot.sh tests` (lane dir `/opt/opensro-client-status659`): 176 suites, 0 failing;
+- `remote_godot.sh tests` (lane dir `/opt/srrevamp-client-status659`): 176 suites, 0 failing;
   `remote_godot.sh check`: ALL LOAD.
 
 ### 5. Left (docs/TODO.md, "Status effects on monsters and players")
@@ -18091,7 +18114,7 @@ the maroon fill; round 639's "GDR_WARNING_WND shares the notice's y (OPEN)" is a
   `hud_chat_test.gd`'s GDR_NOTICE y check now expects 100.
 - `cd server && go build ./... && go test -count=1 -p 1 ./...`: every package ok (after `bundle_docs.sh`
   and the `-unique-notice-off` row in server/README.md, which the doc probes asked for).
-- Client suites on the render box (`remote_godot.sh tests`, lane dir `/opt/opensro-client-notice657`):
+- Client suites on the render box (`remote_godot.sh tests`, lane dir `/opt/srrevamp-client-notice657`):
   `ran 173 suite(s), 0 failing`; `unique_notice_test.gd` ALL PASS (32 checks). Its negative, the
   suite against the base ab66d9c's client: `FAIL UniqueNoticeNet exists
   (res://scripts/net/unique_notice.gd)`, `FAILURES: 1`.
@@ -18337,7 +18360,7 @@ walk (review follow-up).
 
 The server was built from this branch: `-in-memory -single-frame -monster-ai -monster-spawn-push
 -qa-spread-monsters 5000 -qa-spread-radius 7`. The client came from this branch
-(`/opt/opensro-client-aoi656`, World3D with the QA sign-in), `OPENSRO_QA_AT=1850,1020` (world x
+(`/opt/srrevamp-client-aoi656`, World3D with the QA sign-in), `OPENSRO_QA_AT=1850,1020` (world x
 890, 70 units west of the region line at 960) and `OPENSRO_QA_WALK=90` (east), for 180 s:
 
 - `roster spawned monsters=5024` (the 24 roster anchors + 5,000 spread).
@@ -20461,7 +20484,7 @@ Interleaved per repetition — c306c51, this round, this round with `OPENSRO_NO_
 round with `OPENSRO_MAP_ANIM_NO_SHARE=1` — at Jangan, then the same at the reeds (98/157 local
 900, 900, yaw 0), three repetitions. 1280×720, default radius, `--print-fps --disable-vsync`, mean of
 the last 40 once-a-second samples of 110 s runs, on the RX 5700 XT through VirtualGL, box shared
-with another lane. Base in `/opt/opensro-client-animperf-base` from `git archive c306c51`.
+with another lane. Base in `/opt/srrevamp-client-animperf-base` from `git archive c306c51`.
 
 | Site | Build | Run 1 | Run 2 | Run 3 | Mean ms/frame | Over NO_MAP_ANIM |
 |---|---|---|---|---|---|---|
@@ -20843,7 +20866,7 @@ branch's cleanup helper:
     buffreplay646_test.go:407: after a walk with the wall up Aria stands at {X:0 Y:0 Z:0}, want the landing x 120
 ```
 The other five wire tests pass on dev: the server's replay was already right. The client suite ran
-on dev's client copy (`/opt/opensro-client-fxpersist-base`), 9 failures:
+on dev's client copy (`/opt/srrevamp-client-fxpersist-base`), 9 failures:
 ```
 FAIL BuffRoster exists (client/scripts/net/buff_roster.gd)
 FAIL NetClient keeps a buff_roster
@@ -36502,7 +36525,7 @@ moves). So the warehouse's gold is the USER's balance, exactly as its items are.
 
 - Public server before deploy: 1 warehouse row, 0 stored gold, no account with two
   characters holding anything (counted in the database); `pg_dump` taken
-  (`~/backups/opensro-20260919T065504Z-before-warehouse-per-account.sql.gz`).
+  (`~/backups/srrevamp-20260919T065504Z-before-warehouse-per-account.sql.gz`).
 - `migrate_test.go` on the real schema: two characters on one account, both with
   slot 0 -> the account holds all four rows (the collision moved to slot 2, the
   others where they were), 500 gold summed, legacy table empty, second run a no-op
@@ -36647,7 +36670,7 @@ scripts, 5 scenes); `gm_test.gd`, `console_test.gd`, `md_to_bbcode_test.gd` →
 `ALL PASS`. Two `--server` renders with `SERVER_BIN=/var/tmp/srv-debug` and
 `OPENSRO_QA_COMMANDS` feeding lines through the same parser as the chat: the
 GM run (`OPENSRO_GM_ACCOUNTS=qa`) and the non-GM run (unset) -- both from the
-lane's own client copy (`CLIENT_DIR=/opt/opensro-client-debug`; the first two
+lane's own client copy (`CLIENT_DIR=/opt/srrevamp-client-debug`; the first two
 attempts rendered the default `/opt/opensro-client` and proved nothing, which
 is the trap to remember: `qa_shot.sh` does `cd "$CLIENT_DIR"`).
 
@@ -36656,7 +36679,7 @@ markers):
 
 ```
 Console: GM probe sent for QaTester
-Console: ready (help window authored frame, log .../OpenSRO/logs/opensro.log)
+Console: ready (help window authored frame, log .../SRRevamp/logs/srrevamp.log)
 GM REPLY: GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /kill, /durability <slot> <n>, /sp <n>
 QA HELP: opened the Help window
 QA COMMAND: /where          -> CONSOLE: zone: jangan / local: 42.0, 1860.0 / world: 42.0, -30.1, -60.0 / walkable height ...

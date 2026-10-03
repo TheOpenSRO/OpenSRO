@@ -45,6 +45,22 @@ frame against 12.5-12.7; world entry 9.7-10.7 s against 14.0-15.5; longest freez
 | `/opt/sro-files/server/.../Data/` | ~264 already-extracted `.nvm` files, handy for format work without pk2 decryption. |
 | `/opt/ghidra_12.1.3_PUBLIC` | Ghidra. Project `/home/ghidra/re_client/sro_client_re.gpr` holds the analysed client and server binaries. |
 
+### Box migration (round 704)
+
+The project was renamed from srrevamp on 2026-10-03, and the tools address the box by the new
+names. The box's directories are moved by hand, once (by the coordinator, outside the round):
+
+| Before | After |
+|---|---|
+| `/opt/srrevamp-client` | `/opt/opensro-client` (`remote_godot.sh`'s `RENDER_DIR`, `qa_shot.sh`'s `CLIENT_DIR`) |
+| `/opt/srrevamp-server`, its binary `srrevamp-server` | `/opt/opensro-server`, binary `opensro-server` (`qa_shot.sh`'s `SERVER_BIN`) |
+| `/opt/srrevamp-re` | `/opt/opensro-re` (`re_tick.sh`'s `ROOT`, the lock `/opt/opensro-re/lock`) |
+| crontab `*/15 * * * * /opt/srrevamp-re/re_tick.sh` | `*/15 * * * * /opt/opensro-re/re_tick.sh` |
+
+The per-lane `/opt/srrevamp-client-<lane>` and `-perf-*` copies are not moved: a lane ships a
+fresh `/opt/opensro-client-<lane>`, and `perf_gate.sh` makes its own. A reused directory keeps a
+stale `srrevamp_native.gdextension` beside the new one; delete it (`client/tools/README.md`).
+
 Analyse client data **on this box** and bring back only statistics, so pulled game data never
 reaches the repo tree.
 

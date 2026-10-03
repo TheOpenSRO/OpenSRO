@@ -27,7 +27,7 @@ Old image layers are pruned after each successful update so the disk does not fi
 
 ## Moving an install from srrevamp to OpenSRO (round 704)
 
-The project was called srrevamp until 2026-10-04. The rename changed every name a deployed
+The project was called srrevamp until 2026-10-03. The rename changed every name a deployed
 server depends on, so a server installed before it needs moving once, by hand:
 
 | What | Before | After |
@@ -42,49 +42,112 @@ server depends on, so a server installed before it needs moving once, by hand:
 **Stop the old updater first, before the rename reaches `dev`.** Left running, it pulls the
 renamed commit by itself, and `docker compose up` then builds a second stack (project `opensro`,
 an empty database) beside the old one, which still holds port 5432 and 15779: the update fails
-and is rolled back and held, or worse, a server comes up on an empty database. Then, as the
-install's user, in the old checkout:
+and is rolled back and held, or worse, a server comes up on an empty database.
+
+The move runs in three parts, in this order: **A** as the install's user (`srrevamp`) in the old
+checkout, **B** as root from outside any `srrevamp` session, **C** as the install's user again
+(`opensro` if B renamed it, still `srrevamp` if it did not).
+
+**A. As `srrevamp`, in the old checkout** (steps 1-2; `-p srrevamp` names the old project
+explicitly -- the old `docker-compose.yml` has no `name:`, so its project is the folder's name):
 
 ```
 sudo systemctl disable --now srrevamp-update.timer
 cd ~/srrevamp
 
 # 1. A backup, then the database rename (no session may be connected to it: stop the server).
-docker compose exec -T postgres pg_dumpall -U postgres > ~/srrevamp-before-rename.sql
-docker compose stop server
-docker compose exec -T postgres psql -U postgres -d postgres -c 'ALTER DATABASE srrevamp RENAME TO opensro;'
-docker compose down                      # never -v: that deletes the data
+docker compose -p srrevamp exec -T postgres pg_dumpall -U postgres > ~/srrevamp-before-rename.sql
+docker compose -p srrevamp stop server
+docker compose -p srrevamp exec -T postgres psql -U postgres -d postgres -c 'ALTER DATABASE srrevamp RENAME TO opensro;'
+docker compose -p srrevamp down          # never -v: that deletes the data
 
 # 2. Copy the data into the volume the new project name uses. Check the old name first:
 docker volume ls | grep postgres-data    # srrevamp_srrevamp-postgres-data, for a ~/srrevamp checkout
 docker volume create opensro_opensro-postgres-data
 docker run --rm -v srrevamp_srrevamp-postgres-data:/from:ro -v opensro_opensro-postgres-data:/to \
   postgres:16 sh -c 'cp -a /from/. /to/'
+```
 
-# 3. The checkout and the data folder (and, if wanted, the user and host -- from another
-#    account: `sudo usermod -l opensro -d /home/opensro -m srrevamp; sudo groupmod -n opensro
-#    srrevamp; sudo hostnamectl set-hostname opensro-01`).
+Then log out: no `srrevamp` session may be left for part B.
+
+**B. As root, from outside the `srrevamp` session** (step 3; optional -- skip it to keep the user
+and the host name, and part C says what changes). `usermod` refuses to rename a user with a live
+process, and on a cloud-init VM the user's sudo rule lives in
+`/etc/sudoers.d/90-cloud-init-users` and names `srrevamp`; `usermod -l` does not touch it, so
+renaming the user from its own sudo session leaves `opensro` without sudo. So run it from a root
+login on the console, or from the Proxmox host through the guest agent:
+`qm guest exec <vmid> -- bash -c '<the lines below>'`.
+
+```
+# 3a. Nothing of srrevamp's may be running.
+loginctl terminate-user srrevamp 2>/dev/null; pkill -KILL -u srrevamp; sleep 1
+pgrep -u srrevamp && echo "srrevamp still has processes -- stop them first"
+
+# 3b. The user, its home and its group.
+usermod -l opensro -d /home/opensro -m srrevamp
+groupmod -n opensro srrevamp
+[ -f /var/spool/cron/crontabs/srrevamp ] && mv /var/spool/cron/crontabs/srrevamp /var/spool/cron/crontabs/opensro
+
+# 3c. The sudo rule names the user: rename it there, then check sudo's files parse.
+grep -rl '\bsrrevamp\b' /etc/sudoers /etc/sudoers.d/      # normally only 90-cloud-init-users
+sed -i 's/\bsrrevamp\b/opensro/g' /etc/sudoers.d/90-cloud-init-users
+visudo -c                                # must say "parsed OK" for every file
+
+# 3d. The host name, in /etc/hosts as well (or sudo complains it cannot resolve the host).
+hostnamectl set-hostname opensro-01
+sed -i 's/\bsrrevamp-01\b/opensro-01/g' /etc/hosts
+
+# 3e. Keep cloud-init from setting the old host name back at the next boot.
+echo 'preserve_hostname: true' > /etc/cloud/cloud.cfg.d/99-preserve-hostname.cfg
+```
+
+Instead of 3e, the Proxmox VM's name can be renamed to `opensro-01` too (cloud-init takes the
+host name from it). Changing the VM's cloud-init settings regenerates its cloud-init drive, which
+can make cloud-init treat the next boot as a new instance and re-run its first-boot steps (new SSH
+host keys, the drive's `ciuser` created again); with 3e in place, the VM name can stay as it is.
+
+**C. As the install's user** (`ssh opensro@opensro-01` after B; `srrevamp@srrevamp-01` if B was
+skipped), steps 4-7:
+
+```
+# 4. The checkout and the data folder, under the new home.
 mv ~/srrevamp ~/opensro && mv ~/srrevamp-data ~/opensro-data && cd ~/opensro
+
+# 5. The remote. Look before changing it: the checkout may reach GitHub through a Host alias or
+#    a deploy key named in ~/.ssh/config, or through core.sshCommand.
+git remote get-url origin
+git config --get core.sshCommand
+grep -n -A4 -i 'github\|IdentityFile' ~/.ssh/config
+#    Keep whatever alias it uses, and change only the repository's name, e.g.
+#    git@github-deploy:OpenSRO/srrevamp.git -> git@github-deploy:OpenSRO/OpenSRO.git.
+#    An IdentityFile or core.sshCommand that names /home/srrevamp/... must name /home/opensro/...
+#    after B (or say ~/.ssh/...). Without an alias:
 git remote set-url origin git@github.com:OpenSRO/OpenSRO.git
 git pull --ff-only                       # to a commit that has `name: opensro`
+rm -f .git/update-held                   # a hold left by an update rolled back before A, if any
 
-# 4. The untracked override: the variable names, the DSN's database and the mounted paths.
+# 6. The untracked override: the variable names, the DSN's database and the mounted paths.
+#    $HOME is /home/opensro after B and /home/srrevamp without it, so the mount becomes
+#    /home/opensro/opensro-data or /home/srrevamp/opensro-data -- step 4 moved the folder to it.
 cp docker-compose.override.yml ~/override-before-rename.yml
 sed -i -e 's/SRREVAMP_/OPENSRO_/g' -e 's#5432/srrevamp?#5432/opensro?#g' \
-  -e 's#/home/srrevamp/srrevamp-data#/home/opensro/opensro-data#g' -e 's#srrevamp-data#opensro-data#g' \
+  -e "s#/home/srrevamp/srrevamp-data#$HOME/opensro-data#g" -e 's#srrevamp-data#opensro-data#g' \
   docker-compose.override.yml
-grep -in srrevamp docker-compose.override.yml   # should print nothing; fix by hand what it does
+grep -in srrevamp docker-compose.override.yml   # after B: nothing; without B: nothing but /home/srrevamp
 
-# 5. Start the stack under its new name and check it.
+# 7. Start the stack under its new name and check it, then swap the updater's units.
 docker compose up -d --build
 docker compose exec -T postgres psql -U postgres -d opensro -c 'SELECT count(*) FROM characters;'
 docker compose logs server | tail       # the boot lines; every flag the override set is named
-
-# 6. Swap the updater's units.
 sudo rm /etc/systemd/system/srrevamp-update.service /etc/systemd/system/srrevamp-update.timer
 sudo systemctl daemon-reload
 deploy/install.sh                        # installs and starts opensro-update.timer
 ```
+
+`docker compose up` warns that the volume `opensro_opensro-postgres-data` "already exists but was
+not created by Docker Compose". That is harmless: the stack uses it as it is (step 2 made it by
+hand). Creating it in step 2 with `--label com.docker.compose.project=opensro --label
+com.docker.compose.volume=opensro-postgres-data` avoids the warning.
 
 The old volume stays until it is removed by hand (`docker volume rm srrevamp_srrevamp-postgres-data`,
 once the new stack has run for a while). Any reference-data tool run by hand afterwards takes the

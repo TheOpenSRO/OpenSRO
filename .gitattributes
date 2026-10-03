@@ -1,0 +1,3 @@
+# Windows batch files must reach a Windows player with CRLF line ends (cmd.exe
+# misreads labels and long lines in an LF-only file). Round 704.
+*.bat eol=crlf

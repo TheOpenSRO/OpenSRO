@@ -29,7 +29,7 @@ Every OpenSRO workflow (`.github/workflows/ci.yml` and `release.yml`) runs on
   deleted; that's the user's call.
 - **The work folder must be `/home/runner/_work`** (the `workFolder` in `~/actions-runner/.runner`).
   setup-godot's cache stores Godot at a path relative to the workspace, and the cache entries were
-  saved on the old kakariko pod, whose workspace is `/home/runner/_work/OpenSRO/OpenSRO`. With the
+  saved on the old kakariko pod, whose workspace is `/home/runner/_work/srrevamp/srrevamp`. With the
   default `_work` under `~/actions-runner`, a cache hit unpacked Godot one level too deep, and both
   Godot jobs failed with "No Godot executable found" (CI run 36834736619, attempt 1). With
   `/home/runner/_work`, attempt 2 passed all four jobs. `--work /home/runner/_work` when

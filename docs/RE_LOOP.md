@@ -425,7 +425,7 @@ correction:
    decision; the package plus test is the deliverable.
 4. `docs/SYSTEMS.md`: move the row, update the anchors, update the **headline
    counts** — a test checks they match the table.
-5. `cd /root/opensro/server && go test -p 1 ./...`
+5. `cd /root/srrevamp/server && go test -p 1 ./...` (the local checkout keeps this path through the round-704 rename)
 6. Commit on `dev`, tag `vX.Y.Z`, push both.
 
 Mark a row SPECIFIED only when nothing material is outstanding. Quest scripting

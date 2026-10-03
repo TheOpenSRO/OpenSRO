@@ -20,6 +20,7 @@ func _initialize() -> void:
 	_names()
 	_copies_once()
 	_keeps_existing_settings()
+	_failed_copy_is_retried()
 	_nothing_to_move()
 	_remove_tree(_root)
 	if _failures == 0:
@@ -101,6 +102,25 @@ func _keeps_existing_settings() -> void:
 	_check(FileAccess.get_file_as_string(new.path_join("settings.cfg")) == "new", "its settings.cfg is kept")
 	_check(not FileAccess.file_exists(new.path_join("quickslots.cfg")), "nothing else is mixed in")
 	_check(FileAccess.file_exists(new.path_join(UserDataMigration.MARKER)), "and it is marked, so it is not asked again")
+
+func _failed_copy_is_retried() -> void:
+	var old := _root.path_join("d/SRRevamp")
+	var new := _root.path_join("d/OpenSRO")
+	_put(old.path_join("settings.cfg"), "s")
+	_put(old.path_join("quickslots.cfg"), "q")
+	# A directory where the file should go: that one copy fails.
+	DirAccess.make_dir_recursive_absolute(new.path_join("quickslots.cfg"))
+	var out := UserDataMigration.migrate(old, new)
+	_check(out["copied"] == 1 and out["failed"] == 1, "one file copied, one failed: %s" % [out])
+	_check(not FileAccess.file_exists(new.path_join(UserDataMigration.MARKER)), "a failed copy writes no marker")
+	_check(FileAccess.file_exists(new.path_join(UserDataMigration.PENDING_MARKER)), "it leaves the pending marker")
+	# The next start: the obstacle gone, the copy resumes although settings.cfg is already there.
+	DirAccess.remove_absolute(new.path_join("quickslots.cfg"))
+	out = UserDataMigration.migrate(old, new)
+	_check(out["copied"] == 1 and out["failed"] == 0, "the next start copies what was missing: %s" % [out])
+	_check(FileAccess.get_file_as_string(new.path_join("quickslots.cfg")) == "q", "quickslots.cfg arrived")
+	_check(FileAccess.file_exists(new.path_join(UserDataMigration.MARKER)) and not FileAccess.file_exists(new.path_join(UserDataMigration.PENDING_MARKER)),
+		"then the marker is written and the pending one removed")
 
 func _nothing_to_move() -> void:
 	var new := _root.path_join("c/OpenSRO")

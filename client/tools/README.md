@@ -507,6 +507,9 @@ ranked the port by these lines.
 `client/scripts/pk2/native_assets_test.gd` does the same on synthetic input, and checks the
 fallback when the library is absent (`NO_NATIVE=1 client/tools/remote_godot.sh tests`).
 
+A box directory synced before round 704 (the rename) keeps its old `srrevamp_native.gdextension`
+beside the new `opensro_native.gdextension`, because a sync only adds files: delete the old one.
+
 The text tables (round 671) have their own pair: `table_parity.gd` runs every ported reader both
 ways on every `.txt` of every archive (about 70 s; `--max-fails=N` prints more FAIL lines), and
 `client/scripts/npc/native_tables_test.gd` on synthetic tables. `probe_table_cost.gd` prints, per

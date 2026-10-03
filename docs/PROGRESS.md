@@ -201,7 +201,7 @@ index/summary.
   read-only PAT approach above instead.
 - Cut and published real version tags `v0.1.0` through `v0.1.5`, each via the `Release client`
   GitHub Actions workflow (`.github/workflows/release.yml`), producing
-  `opensro-windows.zip`/`opensro-linux.zip` release assets.
+  `srrevamp-windows.zip`/`srrevamp-linux.zip` release assets.
 - Fixed a real dropped-connection bug (`NetClient` polling a closed socket forever) and real
   other-player movement stutter (added client-side interpolation instead of an unscoped "64 tick
   server" ask — see `OPENSROS-THOUGHTS.md`, still not started).

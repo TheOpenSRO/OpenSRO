@@ -68,7 +68,7 @@ const NAME_MAX := 32
 const SERVERS_MAX := 64
 ## Round 681: the values of a server's `type`.
 const TYPES := ["opensro", "legacy"]
-## Round 704: the project was called srrevamp until 2026-10-04, and a
+## Round 704: the project was called srrevamp until 2026-10-03, and a
 ## config.yaml written before then names this project's servers
 ## `type: srrevamp`. The file lives beside the game, untouched by the update,
 ## so the old word is still read as `opensro`, with a warning to rename it.

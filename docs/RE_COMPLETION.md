@@ -33303,7 +33303,7 @@ Every suite passed again once its file was restored, and the fresh directory was
 re-run after the doc edits.
 
 **Live**, on the render box with hardware GL. The server was built from the tree at `e17cda3` and
-run as `SERVER_BIN=/var/tmp/r540/opensro-server`, with `OPENSRO_QA_ATTACK_FAST=1
+run as `SERVER_BIN=/var/tmp/r540/srrevamp-server`, with `OPENSRO_QA_ATTACK_FAST=1
 OPENSRO_QA_ATTACK_NAME=Mangyang OPENSRO_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames
 600`. The numbers are in `monster_ai.md`, "The strike and spawn pushes":
 
@@ -33933,7 +33933,7 @@ check` (256 scripts, ALL LOAD) and `tests` (85 suites) green after the rewrite.
 **Live check** (`monster_ai.md`, the section's "Measured").
 
 **Measured (round 546, 2026-09-24, server and client at this round's tree).** Server built from
-the tree (`GOOS=linux go build ./cmd/server`) and run as `SERVER_BIN=/var/tmp/mobchase546/opensro-server`
+the tree (`GOOS=linux go build ./cmd/server`) and run as `SERVER_BIN=/var/tmp/mobchase546/srrevamp-server`
 with the three flags and `OPENSRO_AI_TRACE=1`, `--server --attack --frames 600` from the default
 spot with `OPENSRO_QA_ATTACK_NAME=Mangyang OPENSRO_QA_ATTACK_GOTO=1 OPENSRO_QA_ATTACK_RETREAT=60`.
 **Passed:**
@@ -39708,7 +39708,7 @@ the box's `sro_client.exe`, the tables under `/var/tmp/tables`):
 - *The PvPNeutral call site.* `teleporter.use` passes `teleport.PvPNeutral` with the disclosure at
   the call.
 - *The QA teleport CSVs.* Not placed on the box. The box was running another lane's renders
-  (`/opt/opensro-client-white`, `/var/tmp/rwhite`) throughout, and `qa_shot.sh` kills every Godot
+  (`/opt/srrevamp-client-white`, `/var/tmp/rwhite`) throughout, and `qa_shot.sh` kills every Godot
   on the box before it starts, so no live client run was made this round (the end-to-end run with
   the gate click is map-teleport-board's acceptance). Instead the retail tables were copied into
   this session's scratch (never committed), exported with `export-refdata -mode teleport` (222
@@ -40660,7 +40660,7 @@ is this mechanism is still theirs to show. The brightness question (161 under GL
 the box against their 205-227) is unchanged.
 
 **Box note.** The first live run (fx1) was launched in the same ssh command as the idle check,
-which showed another lane's headless suite (`/opt/opensro-client-renderer`,
+which showed another lane's headless suite (`/opt/srrevamp-client-renderer`,
 `world3d_reentry_test.gd`) running; this run's `qa_shot.sh` `pkill` will have stopped that suite,
 and another lane's render (`/var/tmp/r577`) started beside it and ran alongside. The second run was
 launched only on an empty `pgrep`. A stale 22-hour-old `flock` pair from an older lane (pids
@@ -40852,7 +40852,7 @@ Moved to `_initialize`, it exits 1. Both new suites use `_initialize`.
 - NEGATIVE, the fixed `project.godot` with the old `ClientSettings`: `project_settings_test` `ALL
   PASS`; `client_settings_test` `FAILURES 2` (2.0 and 3.0 after a resize read 1.000), exit 1.
 - This tree: both suites `ALL PASS`, exit 0. On the box, lane
-  `RENDER_DIR=/opt/opensro-client-renderer`: `client/tools/remote_godot.sh check` gave `checked
+  `RENDER_DIR=/opt/srrevamp-client-renderer`: `client/tools/remote_godot.sh check` gave `checked
   275 scripts and 5 scenes`, `ALL LOAD`, and `tests` gave `ran 100 suite(s), 0 failing`. `cd
   server && go build ./... && go test -count=1 -p 1 ./...` passed after the doc edits.
 
@@ -40908,7 +40908,7 @@ bullet now says so. Round 578's review bullet above (a reopened board clears the
 this round.
 
 **Verified on the combined tree (rounds 579-582 on round 578; render box lane
-`/opt/opensro-client-r579`, `GODOT_LOCK=/var/tmp/r579/lock`, this tree's server built for
+`/opt/srrevamp-client-r579`, `GODOT_LOCK=/var/tmp/r579/lock`, this tree's server built for
 linux).**
 
 - `go build ./... && go test -count=1 -p 1 ./...`: 59 packages ok.
@@ -41047,7 +41047,7 @@ decompilation checks above.
   interface for now (`docs/TODO.md`).
 
 **Measured on the box's archive** (`client/tools/probe_seasonal.gd`, run headless with
-`remote_godot.sh script` in lane `/opt/opensro-client-r583`, `GODOT_LOCK=/var/tmp/rseason/lock`).
+`remote_godot.sh script` in lane `/opt/srrevamp-client-r583`, `GODOT_LOCK=/var/tmp/rseason/lock`).
 The probe runs World3D's own `_objects_job` and `_objects_prepare` over the nine Jangan regions.
 It loaded `object.ifo` with 3,307 entries. The default hides 57 type ids (christmas 13, halloween
 11, obt 18, summer 15). Hidden per region, counted before the ownership step:
@@ -41174,7 +41174,7 @@ two `ch_line.ddj` dividers. No other control in the 229 layouts reaches past x =
 still built where the layout puts them, and only the size ignores them.
 
 **Measured** (the audit tool `zz_gui_audit.gd` builds every panel and dumps its node tree, run in
-the gui lane `/opt/opensro-client-gui`, GL Compatibility on the RX 5700 XT; a scratch script
+the gui lane `/opt/srrevamp-client-gui`, GL Compatibility on the RX 5700 XT; a scratch script
 compares every frame piece's drawn rect with its texture and with the gap it spans):
 
 - frame groups with a piece at the wrong size, or an edge not spanning its gap exactly: **13 of
@@ -41585,7 +41585,7 @@ the titles this client already hard-coded, except that auto potion's is "Auto po
 ### Measurements
 
 The audit tool (`zz_gui_audit.gd`, not committed) was run in the gui3 lane,
-`/opt/opensro-client-gui3`, with GL Compatibility on the RX 5700 XT. BEFORE is 8cabb5b's
+`/opt/srrevamp-client-gui3`, with GL Compatibility on the RX 5700 XT. BEFORE is 8cabb5b's
 scripts and AFTER is this tree. Both runs printed 0 `SCRIPT ERROR`.
 
 - **Sizes**: the table above. Every other widget is unchanged: inventory 354x355, character
@@ -41788,7 +41788,7 @@ equipment, which lands on the inventory tab.
 
 ### Measured (audit, `zz_gui_audit.gd` extended to dump each panel as it opens)
 
-Run in the popup lane (`/opt/opensro-client-popup`), GL Compatibility on the RX 5700 XT,
+Run in the popup lane (`/opt/srrevamp-client-popup`), GL Compatibility on the RX 5700 XT,
 `--norender`. BEFORE is fcd0b08's scripts, AFTER this tree. 0 `SCRIPT ERROR` in both.
 
 - **Sizes**: inventory/equipment 354x355, character 364x356, skill 364x333, party 364x363, action
@@ -42486,7 +42486,7 @@ own drag writes `position` and then emits `dragged`, which round 592 already fee
 - `hud_target_layout_test.gd`'s comment named the authored 176,9. It now says 216,9 and why.
 - Round 592's party path is gated on rarity as well: `+0x7ad == 1` (0x69b834) **and** rarity ≠ 0
   (`cmp [ebp+0x7ac],bl; je` at 0x69b890). That entry is corrected.
-- Rounds 588-592 recorded `check` as 293 scripts. The lane (`/opt/opensro-client-popup`) also held
+- Rounds 588-592 recorded `check` as 293 scripts. The lane (`/opt/srrevamp-client-popup`) also held
   the scratch audit tool `tools/zz_popup_audit.gd`, which is not in the repo, so the count was one
   too many. With it removed, `check` prints 292. Those entries are corrected.
 - **Open, recorded:** `GDR_TWSM_TEXT_LEV` is authored 168 wide. At the x 105 the client moves it to,
@@ -43841,7 +43841,7 @@ b79036a's scripts before and this tree after. Both runs printed 0 SCRIPT ERROR.
   - captions and world-button visibility;
   - auto-move, the stale flag and the fortress case;
   - both sizes.
-- **NEGATIVE, run against b79036a's scripts** (`/opt/opensro-client-wmap-base`, md5-checked
+- **NEGATIVE, run against b79036a's scripts** (`/opt/srrevamp-client-wmap-base`, md5-checked
   against `git show b79036a`): 2 FAIL lines, and the suite stops there.
   - `FAIL M asks for the world map (HudPanels.world_map_toggle_requested; got 0)`
   - `FAIL the world map builds from res_ui\worldmapguide.2dt and the map table`
@@ -43944,7 +43944,7 @@ state across them. **Open.**
   - Escape closes the open map without raising System;
   - with both open, System closes first;
   - the next Escape closes the map.
-- **NEGATIVE, run against 3f7646e's scripts** (`/opt/opensro-client-wmap-base2`, md5-checked
+- **NEGATIVE, run against 3f7646e's scripts** (`/opt/srrevamp-client-wmap-base2`, md5-checked
   against `git show 3f7646e`): 3 FAIL lines.
   - `FAIL Escape closes the world map (0x79d785..0x79d7c2)`
   - `FAIL and does not raise the System menu while the map was open`
@@ -44457,7 +44457,7 @@ for word; that is fixed here.
 - **World3D checks.** Over synthetic tables, the list, the offline line, the pending guard, a
   refusal, the arrival mark and the zone change.
 
-**NEGATIVE, run against 840466a's scripts** (`/opt/opensro-client-tele-base`, a `git archive
+**NEGATIVE, run against 840466a's scripts** (`/opt/srrevamp-client-tele-base`, a `git archive
 840466a` of `client/`, with only this test copied in): `9 FAILURES`.
 - `FAIL TeleportBoard has price_text, list_lines and dest_from_key`
 - `FAIL PANELS has no teleport window (got ["resinfo\\ifteleportboard.txt", "", 0])`
@@ -44619,7 +44619,7 @@ This round was rebased on dev 3321ce1 and renumbered from 601 to 603.
 - a refused zone change after the yes clears the request and a click works again, while an
   unrelated refused zone change keeps a pending request (NEGATIVE).
 
-**NEGATIVE, run against dae2dc9's scripts** (`/opt/opensro-client-tele-base`, a `git archive
+**NEGATIVE, run against dae2dc9's scripts** (`/opt/srrevamp-client-tele-base`, a `git archive
 dae2dc9` of `client/` with only this test copied in): `5 FAILURES`.
 - `FAIL a malformed format falls back to our own wording with the place (got 1111 gold)`
 - `FAIL a missing free format falls back with the place (got No cost)`
@@ -44976,7 +44976,7 @@ got the same result for its 18 widgets). Every run printed 0 SCRIPT ERROR.
   alchemy window are opened (stand-ins where the layout is not in the fixture) and stacked in the
   reverse of `0x79d620`'s order, the popup on top, so the topmost rule alone would close them
   backwards. Seven presses must close them one each, in the read order.
-- **NEGATIVE, run against 840466a's scripts** (`/opt/opensro-client-ench-base`, `hud_panels.gd`
+- **NEGATIVE, run against 840466a's scripts** (`/opt/srrevamp-client-ench-base`, `hud_panels.gd`
   md5-checked against `git show 840466a`): 12 FAIL lines, and the run reaches its last check.
   - `FAIL PANELS["alchemy"] is res_ui\nifenchantwnd.2dt on Y (got ["resinfo\\ifalchemyprocess.txt", "Alchemy", 89])`
   - `FAIL Y opens CNIFEnchantWnd from res_ui\nifenchantwnd.2dt (0x780a65 -> 0x798e20(1))`
@@ -44992,7 +44992,7 @@ got the same result for its 18 widgets). Every run printed 0 SCRIPT ERROR.
   - `FAIL at 768x432 it is kept at (50, 0) (got <null>)`
 
   The three exchange checks that pass there pass because no alchemy window exists to close.
-- **Mutations of this tree** (a copy, `/opt/opensro-client-ench-mut`, one change each), each
+- **Mutations of this tree** (a copy, `/opt/srrevamp-client-ench-mut`, one change each), each
   1 FAIL:
   - the review's bug, `not window.visible` read after the build:
     `FAIL the FIRST exchange show destroys the alchemy window (0x7b3a4d)`;
@@ -45927,7 +45927,7 @@ A level-1 QA character, six GM-spawned Mangyangs killed, then `OPENSRO_QA_INPUT`
 	KEYMAP Ctrl+1 -> select_self 0: no-op: selecting yourself is not built (the target window shows monsters only)
 	KEYMAP 1 -> quickslot 41: quick slot 41            (Space held)
 	KEYMAP H -> help 9: help opened / help closed
-	KEYMAP Print -> screenshot 0: saved /home/ghidra/.local/share/godot/app_userdata/OpenSRO/screenshots/SRO[2026-09-26 21-08-26]_35.jpg
+	KEYMAP Print -> screenshot 0: saved /home/ghidra/.local/share/godot/app_userdata/SRRevamp/screenshots/SRO[2026-09-26 21-08-26]_35.jpg
 	QA INPUT 24 key:k: open=[] ... keymap=[]
 	QA INPUT 25 key:s: open=[skill] ...
 

@@ -1779,7 +1779,7 @@ OPENSRO_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 600`, with
 - and the server log saying `monster strike push on`.
 
 **Measured (round 543, 2026-09-24): passed.** Server built from `97b4a94` (round 541), client at
-`cea193a` (round 542), the command above with `SERVER_BIN=/var/tmp/mobai/opensro-server-541`,
+`cea193a` (round 542), the command above with `SERVER_BIN=/var/tmp/mobai/srrevamp-server-541`,
 600 frames. The server log says `monster strike push on`. The client log has 138 `attack hit`
 lines, of which 45 report a counter (`took N` with N > 0; no blocked counter occurred in the run),
 and exactly 45 `World3D: monster %d strikes %d for %d (HP %d)` lines, whose damage sequence equals
@@ -2084,7 +2084,7 @@ with the server built to `SERVER_BIN=/var/tmp/<lane>/opensro-server`.
   monster.
 
 **Run 1, measured (round 538, 2026-09-24, server and client at `743f231`).** Server built from the
-tree (`GOOS=linux go build ./cmd/server`) and run as `SERVER_BIN=/var/tmp/mobai/opensro-server`,
+tree (`GOOS=linux go build ./cmd/server`) and run as `SERVER_BIN=/var/tmp/mobai/srrevamp-server`,
 with `OPENSRO_MONSTER_AI=1 OPENSRO_AI_TRACE=1 OPENSRO_QA_MOB_LOG=1`, `--server --frames 600`,
 from the default spot. **Passed**:
 - `server.log`: 551 `IDLE->WANDER` lines and 669 `leg to` lines over the run. The four Mangyang ids
@@ -2100,7 +2100,7 @@ from the default spot. **Passed**:
   did not measure -- the disclosed behaviour, not a failure.
 
 **Run 2, measured (round 539, 2026-09-24, server and client at round 539's tree).** Server built
-from the tree and run as `SERVER_BIN=/var/tmp/mobai539/opensro-server`, with
+from the tree and run as `SERVER_BIN=/var/tmp/mobai539/srrevamp-server`, with
 `OPENSRO_MONSTER_AI=1 OPENSRO_AI_TRACE=1 OPENSRO_QA_MOB_LOG=1 OPENSRO_QA_ATTACK_NAME=Mangyang
 OPENSRO_QA_ATTACK_GOTO=1`, `--server --attack --frames 600`, from the default spot.
 
@@ -2506,7 +2506,7 @@ position in the server's frame. GOTO stands the player at the server's own numbe
 round 539 built it.
 
 **Measured (round 546, 2026-09-24, server and client at this round's tree).** Server built from
-the tree (`GOOS=linux go build ./cmd/server`) and run as `SERVER_BIN=/var/tmp/mobchase546/opensro-server`
+the tree (`GOOS=linux go build ./cmd/server`) and run as `SERVER_BIN=/var/tmp/mobchase546/srrevamp-server`
 with the three flags and `OPENSRO_AI_TRACE=1`, `--server --attack --frames 600` from the default
 spot with `OPENSRO_QA_ATTACK_NAME=Mangyang OPENSRO_QA_ATTACK_GOTO=1 OPENSRO_QA_ATTACK_RETREAT=60`.
 **Passed:**
@@ -3071,7 +3071,7 @@ assertion is a server trace line or a client receipt line, never a drawn positio
 
 **Measured (round 552, 2026-09-25, server and client at this round's tree).** Server built from
 the tree (`GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/server`) and run as
-`SERVER_BIN=/var/tmp/mobaggro552/opensro-server` with the five flags, `OPENSRO_AI_TRACE=1` and
+`SERVER_BIN=/var/tmp/mobaggro552/srrevamp-server` with the five flags, `OPENSRO_AI_TRACE=1` and
 `OPENSRO_QA_MOB_LOG=1`, `--server --attack --frames 600` from the default spot with
 `OPENSRO_QA_ATTACK_NAME=Yeoha OPENSRO_QA_ATTACK_GOTO=1 OPENSRO_QA_REVIVE_AFTER=60`. **Passed**, and
 more cleanly than the design above needed, because the player never landed a blow at all:

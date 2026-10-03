@@ -3,7 +3,7 @@
 A clean-room reimplementation of a Silkroad Online–style MMO: Godot 4.2.2 client, Go server. This
 file is what an agent needs before touching anything. It is tool-neutral; `CLAUDE.md` imports it.
 
-The project was called srrevamp until 2026-10-04 (round 704). Commits and tags from before then,
+The project was called srrevamp until 2026-10-03 (round 704). Commits and tags from before then,
 and any box directory or memory note not yet moved, still use that name; the code, the docs and
 the `OPENSRO_*` variables use the new one (`docs/WORLD_ISSUES.md`, round 704).
 
