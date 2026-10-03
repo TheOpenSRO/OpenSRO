@@ -74,7 +74,7 @@ static var _available := false
 static var _parsers: Object = null
 
 ## The one log line saying which readers run and why (round 668), set by the
-## first available(): Boot calls it at startup, and the Ctrl+F3 debug panel
+## first available(): Boot calls it at startup, and the Shift+F3 debug panel
 ## shows it. docs/NATIVE_ON_WINDOWS.md lists every form it takes.
 static var status := ""
 

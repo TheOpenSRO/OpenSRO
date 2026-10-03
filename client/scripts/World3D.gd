@@ -2149,7 +2149,7 @@ func _try_initialize_pk2_ui() -> void:
 	# is the retail one -- id 10 -> 0x6f5190,
 	# which toggles CNIFOption from res_ui\optionwnd.2dt and hides the System
 	# window, silently (HudPanels.toggle_option). The debug panel stays on
-	# Ctrl+F3.
+	# Shift+F3.
 	_hud_panels.system_option_requested.connect(func():
 		_hud_panels.toggle_option())
 	# The Option window's Video tab (round 694): Apply / Confirm.
@@ -2172,7 +2172,7 @@ func _try_initialize_pk2_ui() -> void:
 		if _help_window != null:
 			_help_window.open()
 		else:
-			_log_system("Controls: click to move, drag to turn the camera, mouse wheel to zoom. I inventory, S skill, M map, G pick up, hold V to hide others, hold Z for item names. Ctrl+F1 dev tools, Ctrl+F3 debug panel. Type /help for commands."))
+			_log_system("Controls: click to move, drag to turn the camera, mouse wheel to zoom. I inventory, S skill, M map, G pick up, hold V to hide others, hold Z for item names. Shift+F1 dev tools, Shift+F3 debug panel. Type /help for commands."))
 	_hud_panels.skill_assign_requested.connect(_on_skill_assign_requested)
 	_hud_panels.skill_drop_requested.connect(_on_skill_drop_requested)
 	_hud_panels.item_drop_requested.connect(_on_item_drop_requested)
@@ -2488,14 +2488,14 @@ func _hide_debug_ui_replaced_by_hud() -> void:
 	# in every screenshot of this game, which is not what it should look
 	# like when someone plays it.
 	_set_dev_ui_visible(false)
-	_log_system("Developer tools (zone travel, log out): Ctrl+F1")
+	_log_system("Developer tools (zone travel, log out): Shift+F1")
 
 	# The debug panel, and the three things a player asked to be able to
 	# change from a couch: name range, UI scale (applied at boot) and chat
 	# font, all remembered by ClientSettings.
 	_debug_panel = DebugPanel.new(self)
 	$UI.add_child(_debug_panel)
-	_log_system("Debug panel (build, position, entities, loading, performance): Ctrl+F3")
+	_log_system("Debug panel (build, position, entities, loading, performance): Shift+F3")
 	_log_system("Stuck in a wall or building? Type /unstuck to return to the zone entry.")
 	_build_target_window()
 	set_name_plate_range(ClientSettings.name_plate_range(NAME_PLATE_RANGE))
@@ -11112,7 +11112,7 @@ func _update_blob_shadow() -> void:
 ##                          holding it, where it stands, its drawn pieces
 ##                          and triangles, whether it is visible and in the
 ##                          camera's frustum (_qa_objects_report, round 643)
-##   SRREVAMP_QA_DEBUG=1    open the debug panel (Ctrl+F3) as soon as the first
+##   SRREVAMP_QA_DEBUG=1    open the debug panel (Shift+F3) as soon as the first
 ##                          region has loaded, so a render shows it
 ##   SRREVAMP_QA_ZONE=z     after the first region loads, reload assets for
 ##                          this zone -- accepts the zone box's own
@@ -15450,11 +15450,11 @@ func _place_player_at_world(x: float, z: float) -> void:
 	NetClient.move_to(player.position.x, player.position.y, player.position.z, true)
 
 ## The developer chrome that has no authored equivalent yet: the zone travel
-## box, Log Out, and the Hide UI button. Shown with Ctrl+F1 (KeyMap, run by
+## box, Log Out, and the Hide UI button. Shown with Shift+F1 (KeyMap, run by
 ## KeyInput; F1..F4 are the quickslot pages).
 const DEV_UI_NODES := ["ZoneInput", "ChangeZoneButton", "DisconnectButton"]
 var _dev_ui_visible := true
-## The Ctrl+F3 panel: build, server, position, entities, loading failures,
+## The Shift+F3 panel: build, server, position, entities, loading failures,
 ## frame times, and the sliders for UI scale, chat font and name range.
 var _debug_panel: DebugPanel = null
 
@@ -15492,7 +15492,7 @@ func _toggle_ui_visibility() -> void:
 	hide_ui_button.text = "Show UI" if not ui_control.visible else "Hide UI"
 
 ## Toggles the tabbed panel holding inventory, equipment, skills, shop, party
-## and the rest -- the developer's debug tabs, on Ctrl+F2 since round 608
+## and the rest -- the developer's debug tabs, on Shift+F2 (Ctrl+F2 from round 608 to round 698)
 ## (they were on Tab, which is retail's berserk key; KeyMap).
 ##
 ## It used to be a permanently visible strip spanning the full window width and
@@ -16350,13 +16350,13 @@ func _send_chat(text: String) -> void:
 ## Frees a player wedged into geometry: teleports them back to the zone's own
 ## entry spawn (a known-open point the server placed them at) and clears any
 ## velocity. A stopgap until movement is navmesh-constrained -- free-physics
-## movement lets the capsule wedge into a concave building corner. Ctrl+F1's
+## movement lets the capsule wedge into a concave building corner. Shift+F1's
 ## zone travel does the same the heavy way; this stays in the zone. The move
 ## sync in _process sends the new position (it differs from _last_sent_pos).
 func _unstuck_player() -> void:
 	var result = NetClient.last_enter_world_result
 	if result == null or not result.ok:
-		_log_system("Unstuck: no spawn point known yet -- try zone travel (Ctrl+F1).")
+		_log_system("Unstuck: no spawn point known yet -- try zone travel (Shift+F1).")
 		return
 	player.velocity = Vector3.ZERO
 	# A restored entry's point is where the character logged out (round 573)

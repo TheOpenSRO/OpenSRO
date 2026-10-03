@@ -149,7 +149,7 @@ func _test_hide_ui_button(world: Node, recorder: Node) -> void:
 	# NEGATIVE (fails before round 531).
 	_check(not _click_reaches_world(recorder, centre) and presses.size() == 1,
 		"the button wins its centre over a full-screen STOP control in UI/Control (presses %d)" % presses.size())
-	# Hidden with the developer tools (Ctrl+F1), it takes nothing.
+	# Hidden with the developer tools (Shift+F1), it takes nothing.
 	button.visible = false
 	presses.clear()
 	_click_reaches_world(recorder, centre)

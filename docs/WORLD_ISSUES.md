@@ -7094,6 +7094,37 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-ninety-ninth round: the developer toggles move from Ctrl+F1-F3 to Shift+F1-F3, because macOS keeps Ctrl+F1-F3 for itself
+
+The user (2026-10-03, on v0.1.481 under CrossOver on macOS): "can switch the ctrl+f1-f3 menus to
+shift+f1-f3? It's not working on macOS for some reason. I wanna be able to test DPI"
+
+**Why Ctrl failed there.** macOS binds Ctrl+F1 (turn keyboard access on or off), Ctrl+F2 (move focus
+to the menu bar) and Ctrl+F3 (move focus to the Dock) by default (System Settings, Keyboard
+Shortcuts, Keyboard). The system takes them before any application, so the client under CrossOver
+never saw them. INFERRED from those defaults; not traced on the user's Mac. Shift+F1-F3 have no default
+binding there. A Mac keyboard may also need Fn for the F keys, unless "Use F1, F2, etc. keys as
+standard function keys" is on.
+
+**The change** (OURS; retail tests no modifier for an F key, `KeyMap.resolve`'s reading, 0x778310
+and 0x780610):
+- `KeyMap.resolve` takes Shift (a new last argument, default false). Shift+F1 opens the
+  developer tools, Shift+F2 the debug tabs and Shift+F3 the debug panel.
+- Ctrl+F1-F3 now select pages 1-3, as plain F1-F3 and every other modifier do, which is retail's
+  behaviour.
+- Both callers pass `shift_pressed`: KeyInput, and HudPanels' window keys.
+- Shift+F1-F3 still run while a text line has the keyboard (`runs_while_typing` is by key code).
+- Every player-facing mention is updated: the controls line, the developer-tools and debug-panel
+  lines, the unstuck hint, HELP_PLAYING, DEBUG_TOOLS and NATIVE_ON_WINDOWS. The older rounds' entries keep
+  the key they had then.
+
+**Checked:** `keymap_test.gd`:
+- Shift+F1/F2/F3 toggle their panel.
+- Ctrl+F1/F2/F3 select their page.
+- Shift+F4 selects page 4.
+- Alt+F1 still selects page 1.
+- With a text line focused, Shift+F1-F3 still run.
+
 ## Six-hundred-and-ninety-sixth round: in a window the chosen resolution sizes the OS window (a maximised window is restored first), and every Option combo draws the original's black value box
 
 The user (2026-10-02, on v0.1.480, Windows at about 4K, UI scale ~1.95, window mode at 3840 x 2019):

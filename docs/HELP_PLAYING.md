@@ -1,7 +1,7 @@
 # Playing the client
 
 A short guide to what the client actually does today. If something here does
-not work, that is a bug worth reporting (see **Debug tools**, or press Ctrl+F3
+not work, that is a bug worth reporting (see **Debug tools**, or press Shift+F3
 → Copy).
 
 ## Moving
@@ -68,10 +68,10 @@ An item's name shows while the mouse is on it, or while you hold **Z**; it is
 hidden otherwise, as in the original.
 
 While the chat line (or any other text box) is open, the letter and number
-keys type into it; the F keys, Ctrl+F1 to F3 and Print Screen still work.
+keys type into it; the F keys, Shift+F1 to F3 and Print Screen still work.
 
 As in the original, Ctrl, Shift and Alt do not change a key: Ctrl+S opens
-Skills like S. The exceptions are Ctrl+1 to 8 (select) and Ctrl+F1 to F3
+Skills like S. The exceptions are Ctrl+1 to 8 (select) and Shift+F1 to F3
 (developer panels); Alt+Tab, Alt+F4 and Alt+Space are left to your system.
 
 Click an NPC to talk, buy, or use storage. **Click a monster once to attack
@@ -187,15 +187,15 @@ sets all three to 50 and clears the mutes, and **Cancel**, the close button or
 Escape put back what was saved. The starting volumes are the original's:
 **Music 30, Effects 50, Environment 50** (0 is -20 dB, 100 is full). They are
 kept in the `[audio]` section of `settings.cfg` (next to the log). The Video,
-Input and Game tabs are drawn but do nothing yet; the debug panel (Ctrl+F3)
+Input and Game tabs are drawn but do nothing yet; the debug panel (Shift+F3)
 still has the UI scale and camera settings. Without `Music.pk2` in your `pk2`
 folder the world is silent and the log says so.
 
 ## Developer and debug panels
 
-- **Ctrl+F1** — developer tools: zone travel and log out.
-- **Ctrl+F2** — the old debug tabs (inventory, shop, party and the rest).
-- **Ctrl+F3** — the debug panel: build, position, entities, loading and
+- **Shift+F1** — developer tools: zone travel and log out.
+- **Shift+F2** — the old debug tabs (inventory, shop, party and the rest).
+- **Shift+F3** — the debug panel: build, position, entities, loading and
   performance, with a **Copy** button that puts a full report on your
   clipboard.
 

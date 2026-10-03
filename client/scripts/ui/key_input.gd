@@ -17,9 +17,9 @@ class_name KeyInput
 ## only tracked here, not consumed.) An action taken marks the event handled.
 ##
 ## **While a text line has the keyboard** (`is_typing`, the rule of rounds
-## 521, 605 and 606) only the keys a line never takes run: F1-F12, Ctrl+F1-F3
+## 521, 605 and 606) only the keys a line never takes run: F1-F12, Shift+F1-F3
 ## and PrintScreen (KeyMap.runs_while_typing), so after a line of chat --
-## which keeps the focus -- Ctrl+F3, F10, the pages, F9 and PrintScreen still
+## which keeps the focus -- Shift+F3, F10, the pages, F9 and PrintScreen still
 ## work. Everything else goes into the line. Ours: retail's CGInterface +0x3ce
 ## makes 0x778310 return -1 for the letter scan codes only (digits pass,
 ## read at 0x778356..0x77837a), but what +0x3ce means is not known
@@ -115,7 +115,7 @@ func _input(event: InputEvent) -> void:
 		_log_typing()
 		return
 	_typing_logged = false
-	var hit := KeyMap.resolve(keycode, key.ctrl_pressed, key.alt_pressed, key.meta_pressed, _space_held)
+	var hit := KeyMap.resolve(keycode, key.ctrl_pressed, key.alt_pressed, key.meta_pressed, _space_held, key.shift_pressed)
 	if hit.is_empty():
 		if not key.echo:
 			_log_key(key, keycode, "no action")

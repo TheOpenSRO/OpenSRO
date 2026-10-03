@@ -232,9 +232,11 @@ static func is_hold(action: String) -> bool:
 ## The only modifier retail reads is in the path for keys the table does
 ## not bind (0x778310 returned -1): GetKeyState(VK_SPACE) at 0x780c11 and
 ## GetKeyState(VK_CONTROL) at 0x780c21, where Ctrl+'1'..'8' selects and
-## Ctrl+'9'/'0' does nothing; the digits are that path. Ours on top: Ctrl+F1,
-## Ctrl+F2 and Ctrl+F3 are the developer toggles (in retail they are F1-F3,
-## the pages), and a key with Meta (the Windows key) does nothing -- the OS
+## Ctrl+'9'/'0' does nothing; the digits are that path. Ours on top: Shift+F1,
+## Shift+F2 and Shift+F3 are the developer toggles (in retail they are F1-F3,
+## the pages; round 699 moved them from Ctrl, which macOS keeps for itself --
+## Ctrl+F1/F2/F3 are its keyboard-access, menu-bar and Dock shortcuts, so
+## under CrossOver they never reached the game), and a key with Meta (the Windows key) does nothing -- the OS
 ## owns those. Alt: the retail message map (0xd71100) registers WM_CHAR,
 ## WM_KEYDOWN and WM_KEYUP only, and Win32 sends a key with Alt held (and F10)
 ## as WM_SYSKEYDOWN; since 0x780610 does have an F10 case, how system keys
@@ -242,10 +244,10 @@ static func is_hold(action: String) -> bool:
 ## user's "as the original"), except for the three window combinations the
 ## OS owns, which do nothing (is_os_combination; ours). PrintScreen resolves
 ## on its release only (resolve_release).
-static func resolve(keycode: int, ctrl: bool, alt: bool, meta: bool, space_held: bool) -> Array:
+static func resolve(keycode: int, ctrl: bool, alt: bool, meta: bool, space_held: bool, shift := false) -> Array:
 	if meta or is_os_combination(keycode, alt):
 		return []
-	if ctrl:
+	if shift:
 		match keycode:
 			KEY_F1:
 				return ["dev_tools", 0]
@@ -253,6 +255,7 @@ static func resolve(keycode: int, ctrl: bool, alt: bool, meta: bool, space_held:
 				return ["debug_tabs", 0]
 			KEY_F3:
 				return ["debug_panel", 0]
+	if ctrl:
 		var d := _digit(keycode)
 		if d == 1:
 			return ["select_self", 0]
@@ -286,7 +289,7 @@ static func is_os_combination(keycode: int, alt: bool) -> bool:
 	return alt and keycode in [KEY_TAB, KEY_F4, KEY_SPACE]
 
 ## Whether a key still runs while a text line has the keyboard: the keys a
-## line never takes -- F1-F12 (with or without Ctrl) and PrintScreen. Letters,
+## line never takes -- F1-F12 (with or without a modifier) and PrintScreen. Letters,
 ## digits, Tab, Space and the editing keys go to the line. Ours: retail's
 ## +0x3ce flag, which makes 0x778310 return -1 for the letter scan codes
 ## (0x10-0x19, 0x1e-0x26, 0x2c-0x32; the table at 0x77856c, read) and lets

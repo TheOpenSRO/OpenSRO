@@ -222,8 +222,11 @@ func _check_outside_keys() -> void:
 	_up(KEY_PRINT)
 	_check(_runs.slice(before) == [["screenshot", 0]], "PrintScreen saves a screenshot on its release (ran %s)" % [_runs.slice(before)])
 	for pair in [[KEY_F1, "dev_tools"], [KEY_F2, "debug_tabs"], [KEY_F3, "debug_panel"]]:
-		var got := _what(pair[0], true)
-		_check(got[0] == [[pair[1], 0]], "Ctrl+%s toggles %s (ran %s)" % [_name(pair[0]), pair[1], got[0]])
+		var got := _what_mod(pair[0], ["shift"])
+		_check(got[0] == [[pair[1], 0]], "Shift+%s toggles %s (ran %s)" % [_name(pair[0]), pair[1], got[0]])
+		# Round 699: Ctrl+F1-F3 are retail's pages again (macOS keeps Ctrl+F1-F3).
+		var page := _what_mod(pair[0], ["ctrl"])
+		_check(page[0] == [["page", pair[0] - KEY_F1 + 1]], "Ctrl+%s selects its page, as retail (ran %s)" % [_name(pair[0]), page[0]])
 	_check_modifiers()
 
 ## A modified press: mods is any of "ctrl", "shift", "alt", "meta".
@@ -254,6 +257,7 @@ func _check_modifiers() -> void:
 	for mods in [["shift"], ["alt"]]:
 		var one := _what_mod(KEY_1, mods)
 		_check(one[0] == [["quickslot_key", 1]], "%s+1 fires the page's slot 1 (ran %s)" % [mods[0], one[0]])
+	for mods in [["ctrl"], ["alt"]]:
 		var f1 := _what_mod(KEY_F1, mods)
 		_check(f1[0] == [["page", 1]], "%s+F1 selects page 1 (ran %s)" % [mods[0], f1[0]])
 	# The OS's window combinations do nothing (ours; retail's are unread).
@@ -268,8 +272,8 @@ func _check_modifiers() -> void:
 	get_root().push_input(_event(KEY_SPACE, false))
 	_check(after_alt_space[0] == [["quickslot_key", 1]],
 		"Alt+Space starts no Space chord: 1 is the page's slot (ran %s)" % [after_alt_space[0]])
-	var ctrl_f4 := _what_mod(KEY_F4, ["ctrl"])
-	_check(ctrl_f4[0] == [["page", 4]], "Ctrl+F4 selects page 4 (only Ctrl+F1-F3 are ours; ran %s)" % [ctrl_f4[0]])
+	var shift_f4 := _what_mod(KEY_F4, ["shift"])
+	_check(shift_f4[0] == [["page", 4]], "Shift+F4 selects page 4 (only Shift+F1-F3 are ours; ran %s)" % [shift_f4[0]])
 	var meta := _what_mod(KEY_G, ["meta"])
 	var meta_s := _what_mod(KEY_S, ["meta"])
 	_check(meta[0].is_empty() and meta_s[1].is_empty(), "Meta+G and Meta+S do nothing (ran %s, toggled %s)" % [meta[0], meta_s[1]])
@@ -326,7 +330,7 @@ func _check_typing() -> void:
 		if not got[0].is_empty():
 			ran.append(_name(code, true))
 	# The keys a line never takes still run (round 608's review): after a
-	# line of chat the line keeps the focus, and Ctrl+F3 is the bug-report
+	# line of chat the line keeps the focus, and Shift+F3 is the bug-report
 	# path.
 	var still := {KEY_F1: ["page", 1], KEY_F4: ["page", 4], KEY_F9: ["camera_cycle", 0], KEY_F10: ["hide_ui", 0]}
 	var dead: Array = []
@@ -335,16 +339,16 @@ func _check_typing() -> void:
 		if got[0] != [still[code]]:
 			dead.append("%s ran %s" % [_name(code), got[0]])
 	for pair in [[KEY_F1, "dev_tools"], [KEY_F2, "debug_tabs"], [KEY_F3, "debug_panel"]]:
-		var got := _what(pair[0], true)
+		var got := _what_mod(pair[0], ["shift"])
 		if got[0] != [[pair[1], 0]]:
-			dead.append("%s ran %s" % [_name(pair[0], true), got[0]])
+			dead.append("Shift+%s ran %s" % [_name(pair[0]), got[0]])
 	var before := _runs.size()
 	_down(KEY_PRINT)
 	_up(KEY_PRINT)
 	if _runs.slice(before) != [["screenshot", 0]]:
 		dead.append("PrintScreen ran %s" % [_runs.slice(before)])
 	_check(dead.is_empty() and get_root().gui_get_focus_owner() == _typing_line,
-		"with a text line focused F1-F4, F9, F10, Ctrl+F1-F3 and PrintScreen still run, and the line keeps the focus (%s)" % [dead])
+		"with a text line focused F1-F4, F9, F10, Shift+F1-F3 and PrintScreen still run, and the line keeps the focus (%s)" % [dead])
 	_down(KEY_V)
 	var held := _key_input != null and bool(_key_input.call("is_held", "hide_objects"))
 	_up(KEY_V)

@@ -3116,7 +3116,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	# With Ctrl, Shift or Alt too: retail tests no modifier for a table key
 	# (KeyMap.resolve has the reading).
-	var hit := KeyMap.resolve(key.keycode, key.ctrl_pressed, key.alt_pressed, key.meta_pressed, false)
+	var hit := KeyMap.resolve(key.keycode, key.ctrl_pressed, key.alt_pressed, key.meta_pressed, false, key.shift_pressed)
 	if hit.is_empty():
 		return
 	var action := String(hit[0])

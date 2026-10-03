@@ -1,7 +1,7 @@
 extends SceneTree
 
 ## NativeAssets' startup line (round 668), one per outcome: what a tester's
-## log and the Ctrl+F3 debug panel say. docs/NATIVE_ON_WINDOWS.md quotes these.
+## log and the Shift+F3 debug panel say. docs/NATIVE_ON_WINDOWS.md quotes these.
 ##
 ##   godot4 --headless --path client --script res://scripts/pk2/native_status_test.gd
 

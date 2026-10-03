@@ -13,7 +13,7 @@ INFERRED from `OS.get_executable_path()`, not seen.
 
 The log the game writes is named on its second line, `SRRevamp log file: …/srrevamp.log`. It
 lives under `%APPDATA%\Godot\app_userdata\SRRevamp\logs\`. The same line also shows in game: open
-Ctrl+F3 (the debug panel). Its first block, `== build`, carries the readers' line, without the
+Shift+F3 (the debug panel). Its first block, `== build`, carries the readers' line, without the
 `NativeAssets: ` prefix.
 
 ## The lines, one per outcome
