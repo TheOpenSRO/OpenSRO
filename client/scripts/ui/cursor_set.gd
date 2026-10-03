@@ -74,6 +74,12 @@ const EXE_NAMES := ["sro_client.exe", "sro_client_NODLL.exe"]
 ## 256 fails).
 const MAX_CURSOR_SIZE := 256
 
+## Bounds on what a file may claim (OURS, round 697 review L1): the PE
+## format's own section limit (96, the Windows loader's) and a resource
+## directory size far beyond what a client's cursors need.
+const MAX_SECTIONS := 96
+const MAX_DIR_ENTRIES := 4096
+
 const RT_CURSOR := 1
 const RT_GROUP_CURSOR := 12
 
@@ -190,33 +196,44 @@ static func _parse_pe(b: PackedByteArray) -> Dictionary:
 	var pe: int = b.decode_u32(0x3c)
 	if pe + 24 > b.size() or b.decode_u32(pe) != 0x00004550:  # "PE\0\0"
 		return {}
+	# Every count and offset is checked against the file before it is used
+	# (round 697's review, L1: a PE-signed garbage file was trusted for its
+	# section count and directory counts -- 1.1 s and 240k error lines).
 	var nsec: int = b.decode_u16(pe + 6)
 	var opt_size: int = b.decode_u16(pe + 20)
 	var opt: int = pe + 24
+	if nsec < 1 or nsec > MAX_SECTIONS or opt + 2 > b.size():
+		return {}
 	var magic: int = b.decode_u16(opt)
 	# Data directory 2 is the resource table: PE32 at +96, PE32+ at +112.
 	var dd: int = opt + (112 if magic == 0x20b else 96) + 8 * 2
+	if dd + 4 > b.size():
+		return {}
 	var rsrc_rva: int = b.decode_u32(dd)
 	if rsrc_rva == 0:
 		return {}
 	var sections: Array = []
 	var sec: int = opt + opt_size
+	if sec + 40 * nsec > b.size():
+		return {}
 	for i in range(nsec):
 		var o: int = sec + 40 * i
 		sections.append({
 			"va": b.decode_u32(o + 12), "vsize": b.decode_u32(o + 8),
 			"raw": b.decode_u32(o + 20), "rsize": b.decode_u32(o + 16)})
 	var rbase: int = _rva_to_offset(sections, rsrc_rva)
-	if rbase < 0:
+	if rbase < 0 or rbase >= b.size():
 		return {}
 	var groups := {}
 	var cursors := {}
+	var seen_types := {}
 	for type_entry in _dir_entries(b, rbase):
 		var type_id: int = type_entry[0]
 		if type_id & 0x80000000 or (type_id != RT_CURSOR and type_id != RT_GROUP_CURSOR):
 			continue
-		if not (type_entry[1] & 0x80000000):
+		if not (type_entry[1] & 0x80000000) or seen_types.has(type_id):
 			continue
+		seen_types[type_id] = true
 		for id_entry in _dir_entries(b, rbase + (type_entry[1] & 0x7fffffff)):
 			var res_id: int = id_entry[0]
 			if res_id & 0x80000000 or not (id_entry[1] & 0x80000000):
@@ -225,6 +242,8 @@ static func _parse_pe(b: PackedByteArray) -> Dictionary:
 			if langs.is_empty():
 				continue
 			var data_entry: int = rbase + (langs[0][1] & 0x7fffffff)
+			if data_entry + 8 > b.size():
+				continue
 			var data_rva: int = b.decode_u32(data_entry)
 			var data_size: int = b.decode_u32(data_entry + 4)
 			var off: int = _rva_to_offset(sections, data_rva)
@@ -246,9 +265,11 @@ static func _rva_to_offset(sections: Array, rva: int) -> int:
 
 ## The entries of one IMAGE_RESOURCE_DIRECTORY: [[name_or_id, offset], ..].
 static func _dir_entries(b: PackedByteArray, o: int) -> Array:
-	if o + 16 > b.size():
+	if o < 0 or o + 16 > b.size():
 		return []
 	var n: int = b.decode_u16(o + 12) + b.decode_u16(o + 14)
+	if n > MAX_DIR_ENTRIES or o + 16 + 8 * n > b.size():
+		return []
 	var out: Array = []
 	for i in range(n):
 		var e: int = o + 16 + 8 * i
@@ -264,7 +285,7 @@ static func _dir_entries(b: PackedByteArray, o: int) -> Array:
 ## taken (every group in this exe is one 32x32 image, two have a second).
 static func _decode_group(b: PackedByteArray, where: Array, images: Dictionary) -> Cursor:
 	var o: int = where[0]
-	if int(where[1]) < 6 + 14 or b.decode_u16(o + 4) < 1:
+	if int(where[1]) < 6 + 14 or o + 20 > b.size() or b.decode_u16(o + 4) < 1:
 		return null
 	var image_id: int = b.decode_u16(o + 6 + 12)
 	if not images.has(image_id):

@@ -13,7 +13,8 @@ class_name GameCursor
 ## **Scale (OURS, the user's decision 2026-10-03):** "Scale the cursor with
 ## the dpi scaling, just like the rasterized images. It doesn't look great
 ## but it's authentic and usable." Each cursor is scaled by the window's
-## content_scale_factor (round 672's UI scale) with nearest-neighbour
+## content_scale_factor (round 672's UI scale) with nearest-neighbour (the
+## user's choice too, 2026-10-03: "pixel-sharp is gonna be more clear")
 ## (CursorSet.scaled); retail itself never scales -- LoadCursorA with no size
 ## gives the system's cursor size (INFERRED from the Win32 contract; the exe
 ## passes no size). Godot does not rescale it again: on Windows
@@ -186,8 +187,12 @@ static func player_hostile(alt_held: bool) -> bool:
 	return alt_held
 
 ## A CICMonster under the mouse (vslot_005's 0xef1a84 branch, READ, asm
-## 0x789aa0..0x789b10): attack (0x97) when its vslot 0xdc says so (always,
-## for CICMonster, 0x9d3160) and the interface's set at +0x500 has key 5
+## 0x789aa0..0x789b10): attack (0x97) when its vslot 0xdc says so -- for a
+## CICMonster (0x9d3160, read again in round 697's review) that is 0 for a
+## player in job mode 1 over a TypeID4 3 monster, mode 2 over one 0x779dd0
+## matches, mode 3 over one 0x779e20 matches, and 1 otherwise, so always 1
+## for a jobless player (this client: no job state) -- and the
+## interface's set at +0x500 has key 5
 ## (INFERRED "attack allowed"; always, here) -- unless this player's job mode
 ## (vslot 0xac) is 4 and the monster is TypeID 1/2/1/2 or 1/2/1/3
 ## (0x779dd0 / 0x779e20: the thief and hunter NPC monsters). Mode 4 is

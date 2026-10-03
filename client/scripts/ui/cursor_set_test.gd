@@ -115,7 +115,55 @@ func _test_scaled() -> void:
 	var same := CursorSet.scaled(_cursor_32(Vector2i(2, 1)), 1.0)
 	_check(same[1] == Vector2i(2, 1), "1.0 keeps the file's hotspot exactly")
 
+## A PE-signed garbage file (round 697 review, L1): rejected fast and
+## quietly, whatever its section count and directory counts claim.
+func _garbage_pe(nsec: int, fill: int) -> PackedByteArray:
+	var b := PackedByteArray()
+	b.resize(1 << 20)
+	b.fill(fill)
+	b.encode_u16(0, 0x5A4D)
+	b.encode_u32(0x3c, 0x40)
+	b.encode_u32(0x40, 0x00004550)
+	b.encode_u16(0x40 + 6, nsec)
+	b.encode_u16(0x40 + 20, 0xe0)
+	b.encode_u16(0x40 + 24, 0x10b)
+	return b
+
+## The same with one sane section that maps the resource table onto the
+## garbage, so the directory walk itself meets the junk counts.
+func _garbage_rsrc(fill: int) -> PackedByteArray:
+	var b := _garbage_pe(1, fill)
+	var opt := 0x40 + 24
+	b.encode_u32(opt + 96 + 16, 0x1000)       # resource table RVA
+	var sec := opt + 0xe0
+	b.encode_u32(sec + 8, 0x100000)            # vsize
+	b.encode_u32(sec + 12, 0x1000)             # va
+	b.encode_u32(sec + 16, 0x100000)           # rsize
+	b.encode_u32(sec + 20, 0x1000)             # raw
+	# A directory claiming type 12 again and again, each pointing back at
+	# itself: walked once, not forever.
+	b.encode_u16(0x1000 + 12, 0)
+	b.encode_u16(0x1000 + 14, 300)
+	for i in 300:
+		b.encode_u32(0x1000 + 16 + 8 * i, 12)
+		b.encode_u32(0x1000 + 20 + 8 * i, 0x80000000)
+	return b
+
+func _test_garbage_pe() -> void:
+	for c in [[0xffff, 0xff], [3, 0xff], [1, 0x00], [2, 0x41], [-1, 0x41], [-1, 0x00], [-1, 0x01]]:
+		var path := "user://cursor_garbage_test.exe"
+		var f := FileAccess.open(path, FileAccess.WRITE)
+		f.store_buffer(_garbage_pe(int(c[0]), int(c[1])) if int(c[0]) >= 0 else _garbage_rsrc(int(c[1])))
+		f.close()
+		var t0 := Time.get_ticks_msec()
+		var got := CursorSet.load_from_exe(path)
+		var ms := Time.get_ticks_msec() - t0
+		_check(got.is_empty(), "garbage (nsec %d, fill 0x%x): no cursor" % [c[0], c[1]])
+		_check(ms < 200, "garbage (nsec %d, fill 0x%x): rejected in %d ms" % [c[0], c[1], ms])
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+
 func _init() -> void:
+	_test_garbage_pe()
 	_test_decode()
 	_test_rejects_garbage()
 	_test_exe_beside()

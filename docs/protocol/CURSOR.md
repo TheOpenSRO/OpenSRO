@@ -48,15 +48,21 @@ decompile's argument-less calls resolved from the pushes before them).
 of them reaches any of the three entry points. **No cursor for a ground-targeted skill**: none of
 the forced cursors belongs to a skill. A forced cursor ends on a right press over the world
 (`CGInterface::vslot_017` WM_RBUTTONDOWN, `0x77c72e..0x77c737`) and on Escape (`0x79d620`).
-While the camera turns (right drag) the manager hides the cursor and puts it back at the press
-point (`CGInterface::vslot_012 0x77b140`: `0xba61e0(0)` + `SetCursorPos`).
+**The camera turn leaves the cursor alone by default** (round 697's review, READ): the hide and
+`SetCursorPos` back to the press point in `CGInterface::vslot_012 0x77b140` run only while +0x82d is
+set, and `vslot_017 0x77c260` sets +0x82d only when the option byte settings+0x1c is non-zero
+(`0x77c535`, `0x77c6c1`). That byte is the Option window's camera-rotate choice
+(UIIT_CTL_CAMERA_ROTATE_METHOD1 / METHOD2, `0x5fcf40`), 0 by default (`0x7776c0`). So under the
+default method 1 the cursor stays visible and free while the camera turns -- as here; method 2
+(hidden, put back at the press point) is an Option this client has not built.
 
 ## The hover (READ: CGInterface::vslot_005 case 1, 0x789820)
 
 `vslot_005` is CGInterface's **timer** handler; timer 1 runs every **250 ms**
 (`push 0xfa; push 1; call 0xb93320` at 0x787294). Each tick: the window under the mouse must be
 the interface itself (`FUN_00b9dc00() == this`), else 0x95; the pick (`FUN_0078ee20(x, y, 0)`:
-the nearest object of any class, never the player) must find something, else 0x95; then the
+the nearest object of any class, never the player, passing over a character whose +0x65c bit 0
+-- alive -- is clear) must find something, else 0x95; then the
 object's runtime class, by exact match (vslot 0 returns the class descriptor):
 
 | Descriptor | Class | Cursor |
@@ -64,7 +70,7 @@ object's runtime class, by exact match (vslot 0 returns the class descriptor):
 | 0xef1c28 | CIItem | 0x99, 0x9a with the left button held |
 | 0xef1dac | CITeleportGate | 0xa1 |
 | 0xef1bc0 | CICUser | outside the party (`0x992940`) and its IsHostile(Alt) (vslot 0xa8, `0x9de780`) -> 0xa0; else stalling -> 0xa3; else 0x95. Then in a siege-fortress zone (`0x939a60` on the player's REF_SIEGE_FORTRESS): a party member 0x95, else guild relation `0x998280` 0xca / 0xcc -> 0x97, 0xc9 / 0xcb -> 0x95. Then, while the player's team byte +0x81d != 0xff: another team 0x97, the same 0x95 |
-| 0xef1a84 | CICMonster | 0x97 when its vslot 0xdc (always 1, `0x9d3160`) and the interface's set +0x500 holds key 5 (`0x784ed0`; INFERRED "attack allowed") -- unless the player's vslot 0xac is 4 (INFERRED no job) and the monster is TypeID 1/2/1/2 or 1/2/1/3 (`0x779dd0` / `0x779e20`, on +0x220: the thief and hunter NPC monsters); else 0x95 |
+| 0xef1a84 | CICMonster | 0x97 when its vslot 0xdc (`0x9d3160`: 0 for a player in job mode 1 over a TypeID4 3 monster, mode 2 over one `0x779dd0` matches, mode 3 over one `0x779e20` matches, else 1 -- so 1 for a jobless player; round 697's review corrected "always 1") and the interface's set +0x500 holds key 5 (`0x784ed0`; INFERRED "attack allowed") -- unless the player's vslot 0xac is 4 (INFERRED no job) and the monster is TypeID 1/2/1/2 or 1/2/1/3 (`0x779dd0` / `0x779e20`, on +0x220: the thief and hunter NPC monsters); else 0x95 |
 | 0xee77ac | CICMonsterNPC | 0x97 when vslot 0xdc (`!(+0x7c8 & 2)`, `0x534740`) and key 5; else 0x95 |
 | 0xeef6f0 | CICCos | the player's own (`0x9a0b80` on the player's +0x20d4): 0x95; another's with IsHostile(Alt) -> 0xa0, else 0x95; then its owner by the fortress relation as a CICUser |
 | 0xef1ac4 | CICNPC | 0x98 |
@@ -113,8 +119,15 @@ retail state, and does not mark its opponent hostile.
   MEASURED). **Stall (0xa3) is wired but unreachable**: no other player's stall state reaches this
   client yet (TODO in `GameCursor.KIND_IDS`).
 - **Not here**: the forced cursors (repair, item use, socket) belong to windows this client does not
-  have; the ground pick shows the system cross (OURS, round 617; retail shows its hover cursor);
-  the cursor is not hidden while the camera turns.
+  have; the camera-rotate method 2 Option (above).
+- **The ground pick's cross is OURS until the ground-pick decal is built** (round 617): retail sets
+  no cursor for it and shows a ring decal instead (`select_02` in range, `select_04` out of range,
+  `FUN_00629fa0`, read by lane 698). Without the decal the cross is the only cue, so it stays; it
+  goes when the decal comes.
+- **Dying monsters** are passed over by the hover's ray, which goes on to what is behind them, as
+  retail's pick skips characters whose alive bit is clear (round 697's review).
+- **The window frame and resize borders** show the OS's shapes: retail answers WM_SETCURSOR with its
+  own cursor there too (no HTCLIENT test), but Godot gives the non-client area to the OS.
 
 ## Size (MEASURED / OURS)
 
@@ -122,7 +135,8 @@ The resource cursors are 32x32 (0x96 34x34, 0x9a 32x31; 0x99 also carries a 36x3
 32x32 one -- Windows picks the 32x32 for the default cursor size). Retail passes no size:
 `LoadCursorA` gives the system cursor size (INFERRED from the Win32 contract). **OURS, the user's
 decision (2026-10-03):** the cursor is scaled by the UI scale (`content_scale_factor`),
-nearest-neighbour, size `round(32 x k)` clamped to Godot's 256, hotspot `floor((h + 0.5) x k)`
+nearest-neighbour -- also the user's choice, 2026-10-03: "pixel-sharp is gonna be more clear"
+(round 672's UI art is drawn linear; the cursor is not) -- size `round(32 x k)` clamped to Godot's 256, hotspot `floor((h + 0.5) x k)`
 (inside its own pixel's block). Godot 4.2.2 does not rescale again: on Windows
 `DisplayServerWindows::cursor_set_custom_image` builds the HCURSOR from a DIB at the texture's own
 pixel size (`CreateIconIndirect`) in a DPI-aware process. So at 4K with UI scale 2.0 the cursor is

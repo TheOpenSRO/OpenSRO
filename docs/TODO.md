@@ -400,9 +400,9 @@ In order. Each is checked off here when it ships in a release, with its round in
       buff's `runSpeed` sets the run speed and OpSkillMove snaps the player. Still open:
       the server half (round 616) was not live-tested with it; the Ghost Walk move is a snap
       (duration OPEN, `tele` value[0] = 500 unread); retail's ground-pick decal (round 697: retail
-      sets NO cursor for a ground cast -- every caller of its cursor manager was read,
-      docs/protocol/CURSOR.md -- so the cross is ours; keep it or show the game's hover cursor is
-      the user's call); the retail answer for a Target_Required 1 heal with nothing selected
+      sets NO cursor for a ground cast and shows a ring decal, `select_02` / `select_04`,
+      `FUN_00629fa0` -- docs/protocol/CURSOR.md; the cross is OURS until that decal is built, then
+      it goes); the retail answer for a Target_Required 1 heal with nothing selected
       (READ in round 622: refused, 0x3011); the targetType echo, ownerKind and OpSelfId 0x00F9 (review
       follow-up) need round 616's server to send them -- until then the client falls back to the
       request queue and learns its own id from its own casts' answers;
@@ -763,9 +763,13 @@ touches this file.
       `GameCursor.player_kind` / `player_hostile` when it arrives; guards and fortress structures
       likewise (no CICGuard / CICATStruct here).
 - [ ] **Not built:** the forced cursors (store repair 0x96, item applied to a slot 0xa6, socket
-      0xae / 0xaf) wait for those windows; the cursor is not hidden while the camera turns (retail
-      hides it and puts it back at the press point, `0x77b140`); the job-monster test reads the
-      code name, not the TypeID column (equivalent on the box's archive, MEASURED).
+      0xae / 0xaf) wait for those windows; the Option window's camera-rotate **method 2** (the cursor hidden
+      while the camera turns and put back at the press point, `0x77b140` behind +0x82d, set only
+      when settings+0x1c is non-zero, `0x77c535` / `0x77c6c1`, chosen at `0x5fcf40`) -- retail's
+      default, method 1, leaves the cursor free, as here; the job-monster test reads the code name,
+      not the TypeID column (equivalent on the box's archive, MEASURED).
+- [ ] **The window frame and resize borders** show the OS's shapes (retail's WM_SETCURSOR sets its
+      own there too; Godot leaves the non-client area to the OS).
 - [ ] **A window opened under a still mouse** keeps the world's cursor until the mouse moves
       (retail re-tests the window under the mouse every tick; Godot 4.2 has no hovered-control
       query).

@@ -7141,7 +7141,8 @@ resource id. The live check below reads the X server's cursor on the login and s
 0x95's own 359 opaque pixels and mean colour.
 
 **Hostility (the user's hostile mobs and players), exactly:** a monster is attackable when its
-vslot 0xdc says so (CICMonster: always, 0x9d3160; CICMonsterNPC: `!(+0x7c8 & 2)`) and the
+vslot 0xdc says so (CICMonster `0x9d3160`: by job mode against the monster's TypeID4, 1 for a
+jobless player -- see Review, M2; CICMonsterNPC: `!(+0x7c8 & 2)`) and the
 interface's set +0x500 holds key 5 (INFERRED "attack allowed") -- except that a player whose job
 mode (vslot 0xac) is 4 (INFERRED: no job) gets the arrow over TypeID 1/2/1/2 and 1/2/1/3, the thief
 and hunter NPC monsters. A player: IsHostile (`0x9de780`) is, in order, another team (+0x81d); the
@@ -7239,9 +7240,51 @@ not used.)
 ### 7. OPEN (docs/TODO.md "The mouse cursor")
 
 Stall 0xa3 wired, unreachable (no stall state reaches this client); hostile players only by Alt;
-the forced cursors wait for their windows; the cursor is not hidden while the camera turns; a window
-opened under a still mouse keeps the world's cursor until the mouse moves; the ground pick's cross
-is ours (retail has none) -- the user's call; the list's centring and pressed colour.
+the forced cursors wait for their windows; the Option window's camera-rotate method 2 (cursor
+hidden while turning) is not built -- retail's default, method 1, leaves the cursor free, as here
+(see Review, M1); a window opened under a still mouse keeps the world's cursor until the mouse
+moves; the window frame and resize borders show the OS's shapes; the ground pick's cross is OURS
+until the ground-pick decal is built; the list's centring and pressed colour.
+
+### Review
+
+No HIGH findings. Fixed in this round:
+
+- **M1 (READ): retail does not hide the cursor while the camera turns by default.** The hide and
+  `SetCursorPos` in `CGInterface::vslot_012 0x77b140` run only while +0x82d is set; `vslot_017
+  0x77c260` sets it only when the option byte settings+0x1c is non-zero (`0x77c535`, `0x77c6c1`),
+  the Option window's UIIT_CTL_CAMERA_ROTATE_METHOD1 / METHOD2 choice (`0x5fcf40`), 0 by default
+  (`0x7776c0`). So under method 1 the cursor stays visible and free -- what this client does. The
+  first draft's "retail hides it" was wrong; CURSOR.md and TODO.md now record method 2 as an unbuilt
+  Option.
+- **M2 (READ): CICMonster's vslot 0xdc (`0x9d3160`) is conditional, not "always 1"**: 0 for job mode
+  1 over a TypeID4 3 monster, mode 2 over one `0x779dd0` matches, mode 3 over one `0x779e20`
+  matches, else 1 -- so 1 for a jobless player, this client's only state. Labels fixed
+  (CURSOR.md, `GameCursor.monster_kind`); nothing to model without job state.
+- **L1 (MEASURED by the review): a PE-signed garbage file stalled the parser** (1120 ms, 240k error
+  lines): `_parse_pe` trusted the section count, `_dir_entries` the directory counts. Now the
+  section count is capped at 96 and the table must fit the file, every directory's entries must fit
+  (and at most 4096), each type directory is walked once, and every offset is checked before a
+  read. `cursor_set_test` writes seven 1 MB PE-signed garbage files -- section counts 0xffff, 3, 1, 2
+  over fills 0xff / 0x00 / 0x41, and three with one sane section mapping the resource table onto
+  junk (fills 0x41, 0x00, 0x01; a type directory of 300 entries all claiming type 12 and pointing
+  at themselves): each gives no cursor, in 0 ms and 22 ms respectively, with one log line each.
+- **L2: retail's pick passes over dying characters** (FUN_0078ee20 skips a character whose +0x65c
+  bit 0, alive, is clear). The hover's character ray now passes over a dying monster and goes on
+  to what is behind it (up to 4 bodies), where it used to stop with the arrow.
+- **L3: the hover follows the mouse while the camera turns** (retail method 1 reads the live
+  position every tick); it used to keep the press point. The orbit itself is untouched.
+- **L4:** the window frame and resize borders show the OS's shapes (retail sets its own there; Godot
+  leaves the non-client area to the OS) -- a doc note.
+- **Scaling filter:** the user chose nearest-neighbour (2026-10-03, "pixel-sharp is gonna be more
+  clear"); recorded in CURSOR.md.
+- **6a:** the ground pick's cross stays. Retail sets no cursor for a ground cast and shows a ring
+  decal instead (`select_02` in range, `select_04` out of range, `FUN_00629fa0`, from lane 698);
+  without that decal the cross is the only cue. Marked OURS until the decal is built.
+
+After the fixes: `remote_godot.sh check` ALL LOAD (553 scripts), `tests` 214 suites, 0 failing.
+Not re-run live or through the gate: the changes are the parser's bounds, the hover ray's pass
+over dying monsters, the hover position during an orbit, and documentation.
 
 ## Six-hundred-and-ninety-sixth round: in a window the chosen resolution sizes the OS window (a maximised window is restored first), and every Option combo draws the original's black value box
 
