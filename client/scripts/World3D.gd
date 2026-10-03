@@ -1286,6 +1286,9 @@ var _last_attack_target := -1
 ## monster selection clears it and it clears the monster selection: one
 ## target at a time, as retail's one selected id (0x110f80c+0x628).
 var _selected_character := -1
+## The ring on the ground (round 698, GroundMarkers): the click destination
+## marker and the selection circle, one object as in retail. Made on first use.
+var _ground_markers: GroundMarkers = null
 ## A friendly cast walking into reach of its player target (round 622):
 ## {character, skill, code, stop, reach}; empty when none.
 var _pending_friend_cast: Dictionary = {}
@@ -5448,6 +5451,8 @@ func _load_initial_region_neighborhood() -> void:
 ## inside that frame (_frame_coords).
 func _reload_zone_assets(zone: String, frame: String = "") -> void:
 	_clear_region_grid()
+	if _ground_markers != null:
+		_ground_markers.zone_changed()
 	ground_mesh.visible = true
 	ground_collision.disabled = false
 
@@ -6721,6 +6726,57 @@ func _show_target(monster_id: int) -> void:
 		return
 	_hud_target.show_target(snap.monster_name, snap.level, snap.rarity, snap.hp, snap.max_hp,
 		_fx_owner_key(monster_id, SkillNet.OWNER_MONSTER), snap.party)
+
+## The ring on the ground (round 698), made on first use: a child of the
+## world, drawn over the RealTerrain_ groups with Media.pk2's select art.
+func _markers() -> GroundMarkers:
+	if _ground_markers == null or not is_instance_valid(_ground_markers):
+		_ground_markers = GroundMarkers.new()
+		_ground_markers.name = "GroundMarkers"
+		_ground_markers.setup(self, _grid, _marker_texture, _marker_target_position)
+		add_child(_ground_markers)
+	return _ground_markers
+
+## A monster clicked (or a QA stand-in for the click): the ring under it
+## (round 698; FUN_00778650 from the object click: texture 3). Not from
+## _show_target, which also re-shows the window for a cast at the selection --
+## retail's casts do not reselect, so a ring a ground click moved stays there.
+func _ring_on_monster(monster_id: int) -> void:
+	if _monster_snapshots.has(monster_id) or _monster_bodies.has(monster_id):
+		_markers().attach("monster:%d" % monster_id, GroundMarkers.Kind.MONSTER)
+
+## A select_0N.ddj out of Media.pk2, or null without the archive.
+func _marker_texture(path: String) -> Texture2D:
+	if _media_pk2 == null:
+		return null
+	var entry := ObjectLoader.find_file(_media_pk2, path)
+	if entry == null:
+		print("World3D: %s not in Media.pk2 -- no ground ring" % path)
+		return null
+	var parsed := DdjReader.parse(_media_pk2.read_file(entry))
+	return DdjReader.to_texture(parsed) if parsed != null else null
+
+## Where the ring's followed object stands now, or null when it is gone or
+## not drawn (CIODecal::vslot_009's two hide tests, round 698).
+func _marker_target_position(key: String) -> Variant:
+	var parts := key.split(":")
+	if parts.size() != 2 or not parts[1].is_valid_int():
+		return null
+	var id := int(parts[1])
+	var node: Variant = null
+	match parts[0]:
+		"monster":
+			node = _monster_bodies.get(id)
+		"player":
+			node = _other_bodies.get(id)
+		"npc":
+			node = instance_from_id(id)
+	if node == null or not is_instance_valid(node) or not (node is Node3D):
+		return null
+	var n := node as Node3D
+	if not n.is_inside_tree() or n.is_queued_for_deletion() or not n.is_visible_in_tree():
+		return null
+	return n.global_position
 
 func _set_target_hp(hp: int, max_hp: int) -> void:
 	if _hud_target != null:
@@ -9190,6 +9246,7 @@ func _pick_character(screen_pos: Vector2) -> String:
 		return ""
 	_last_attack_target = int(node.get_meta("monster_id"))
 	_show_target(_last_attack_target)
+	_ring_on_monster(_last_attack_target)
 	_attack_monster(_last_attack_target)
 	return "attack"
 
@@ -9233,6 +9290,8 @@ func _select_self() -> void:
 func _select_character(character_id: int, char_name: String) -> void:
 	_last_attack_target = -1
 	_selected_character = character_id
+	# The ring under them (round 698; FUN_00778650: a player's is texture 2).
+	_markers().attach("player:%d" % character_id, GroundMarkers.Kind.PLAYER)
 	var race := -1
 	var body = _other_bodies.get(character_id)
 	if body != null and is_instance_valid(body) and (body as Node).has_meta("body"):
@@ -11056,6 +11115,12 @@ func _update_blob_shadow() -> void:
 ##                          "item" (round 697) the nearest dropped item
 ##   SRREVAMP_QA_CLICK_WAIT=<ticks> (round 646) the ticks before the first
 ##                          click (default 120)
+##   SRREVAMP_QA_MARKER=1   (round 698) `QA MARKER` lines from the ring on the
+##                          ground: each place / attach / hide, and each drape's
+##                          centre, cells and height against a terrain ray
+##                          (GroundMarkers); SRREVAMP_QA_MARKER_VIEW="<pitch>,
+##                          <length>" turns the camera arm there at each one
+##                          so the frame shows the ring
 ##   SRREVAMP_QA_ARRIVAL_PROBE=1 (round 690) after the entry, every zone change
 ##                          and every GM move: `QA ARRIVAL` (the feet against the
 ##                          terrain and the walkable graph's landing) and, per
@@ -12459,6 +12524,7 @@ func _qa_attack_nearest() -> void:
 	print("QA ATTACK: monster %d at %.0f" % [nearest_id, nearest])
 	_last_attack_target = nearest_id
 	_show_target(nearest_id)
+	_ring_on_monster(nearest_id)
 	_attack_monster(nearest_id)
 
 ## The GOTO half of a list result (round 539): which monster, and where to
@@ -12513,6 +12579,7 @@ func _qa_goto_from_list(plan: Dictionary) -> void:
 			monster_id, at.x, at.z, drawn])
 	_last_attack_target = monster_id
 	_show_target(monster_id)
+	_ring_on_monster(monster_id)
 	_flush_position()
 	_send_attack(monster_id, 0, "")
 
@@ -14065,6 +14132,9 @@ func _physics_process(delta: float) -> void:
 	_qa_berserk_probe()
 	var cells_before := _load_timings.cell_work_usec
 	_physics_step(delta)
+	# The ring follows its object, or hides (round 698).
+	if _ground_markers != null:
+		_ground_markers.step()
 	var now := Time.get_ticks_usec()
 	var frame := Engine.get_frames_drawn()
 	_load_timings.note_frame((now - sw - (_load_timings.cell_work_usec - cells_before)) / 1000.0, frame, "")
@@ -15958,6 +16028,10 @@ func _try_talk_to_npc(screen_pos: Vector2) -> bool:
 	_talk_npc_name = npc_name
 	_talk_npc_code = code
 	_talk_node = node as Node3D
+	# The ring under an NPC (round 698; the 0xB045 reply selects a CICharactor,
+	# texture 1); a teleport gate is not one and gets none.
+	if not node.has_meta("gate_point_id") and node is Node3D:
+		_markers().attach("npc:%d" % node.get_instance_id(), GroundMarkers.Kind.NPC)
 	# Talking supersedes an attack still walking into reach: the attack would
 	# otherwise go out behind the talk window.
 	_drop_pending_attack()
@@ -16309,6 +16383,17 @@ func _move_by_pick_ray(from: Vector3, dir: Vector3, space: PhysicsDirectSpaceSta
 	if hit.is_empty():
 		return _start_heading_run(dir)
 	var point: Vector3 = hit["position"]
+	# Within 20 units of an NPC the click does nothing: no walk, no ring
+	# (round 698's review; READ, FUN_009ec570 0x9ec5a0..0x9ec5eb,
+	# GroundMarkers.NPC_CLICK_BLOCK_SQ).
+	var npc := GroundMarkers.npc_blocking(point, _markers().npcs())
+	if npc != null:
+		print("CLICK: ground at (%.1f, %.1f, %.1f) ignored -- %.1f from NPC %s (retail walks nowhere within 20 of an NPC)" % [
+			point.x, point.y, point.z, npc.global_position.distance_to(point), str(npc.get_meta("npc_name", npc.name))])
+		return "npc_near"
+	# The ring goes to the point (round 698; FUN_009ec570 places it whatever
+	# the click filter below decides).
+	_markers().place_at(point)
 	# A click on the ground supersedes an attack that was walking into reach,
 	# and a friendly cast walking to its player (round 622's review) -- even
 	# one the filter below does not send (OURS: where retail drops a pending
@@ -16367,6 +16452,9 @@ func _start_heading_run(dir: Vector3) -> String:
 	_move_target = player.position + Vector3(flat.x, 0.0, flat.y) * SkyRun.PICK_LENGTH
 	_has_move_target = true
 	_aim_local_player(Vector3(flat.x, 0.0, flat.y))
+	# A heading move hides the ring (round 698; retail on its 0xB021 echo).
+	if _ground_markers != null:
+		_ground_markers.heading_move()
 	if _qa_move_log:
 		print("MOVE run t=%d ms=%d heading=%.4f wire=%d dir=(%.3f,%.3f)" % [_qa_move_tick + 1, Time.get_ticks_msec(), h, SkyRun.wire_angle(h), flat.x, flat.y])
 	return "run"
@@ -17121,6 +17209,7 @@ func _try_attack_monster(screen_pos: Vector2) -> bool:
 		return false
 	_last_attack_target = int(node.get_meta("monster_id"))
 	_show_target(_last_attack_target)
+	_ring_on_monster(_last_attack_target)
 	_attack_monster(_last_attack_target)
 	return true
 

@@ -7125,6 +7125,162 @@ and 0x780610):
 - Alt+F1 still selects page 1.
 - With a text line focused, Shift+F1-F3 still run.
 
+## Six-hundred-and-ninety-eighth round: the ring on the ground -- the click marker and the selection circle are one decal in retail, built as it is: four select textures, 12 units, draped on the terrain, no hostility or rarity test, and no unique arrow in this client
+
+The user (2026-10-03, from memory): "there's a blue circle that shows up when you click on the
+ground and when you walk to it's below you. It only shows up when clicking but not arrow walking.
+When you click and enemy it shows a red circle underneath them so at that too. I think uniques
+might be a purple circle and a red arrow that points down on them above." and "make sure you
+follow the code exactly". Mid-round: "hostile mobs count for the red sword and circle too btw".
+Lane `marker698`, client, a world-drawing round. Labels: READ (`sro_client.exe` on the box: the
+decompile, `sro_client.asm`, `objdump`; the asset bytes), MEASURED, INFERRED, OURS.
+`docs/protocol/ground_markers.md` has the full record with every address.
+
+### 1. What the code does (READ)
+
+| | Asset | Colour (alpha-weighted mean, MEASURED) | Size | Where | Shows | Goes |
+|---|---|---|---|---|---|---|
+| Ground click | `effect\select_01.ddj` (slot 0) | (148, 169, 169) pale grey-cyan | 12 x 12 | the click point, draped on the 3 x 3 terrain cells round it | every ground pick that hits (`FUN_0078f8d0` -> `FUN_009ec570` -> `FUN_00a631e0`), even one the 5-unit filter does not send | a heading move's echo (0xB021 kind 0, `0x8a5971`: the arrow keys' walk and the sky-click run), the next click or selection, leaving a pick mode. NOT on arrival |
+| Monster or COS selected | `select_04.ddj` (slot 3) | (215, 122, 72) orange-red | 12 x 12, not scaled | under it, following | `FUN_00778650` from the object click `FUN_00792f00` or the 0xB045 reply | the object gone (despawn) or a CICharactor whose vslot 0x50 says no (stealth, hidden) -- `CIODecal::vslot_009` every frame; the next click. NOT on deselect, NOT on death |
+| Player selected | `select_03.ddj` (slot 2) | (101, 136, 203) blue | " | " | " | " |
+| Anything else (NPC, guard, ...) | `select_02.ddj` (slot 1) | (151, 161, 87) yellow-green | " | " | " | " |
+| Yourself | none | | | | `FUN_00780ee0` writes the id only | |
+
+- One `CIODecal` (class link 0x110aab8, created at 0x7872e3 into process+0x640), size +0x104 =
+  12.0 (float 0xd8ace0), never written again. The selection's texture is IsKindOf CICMonster or
+  CICCos -> 3, else CICUser -> 2, else 1 (0x7786b7..0x778718; `FUN_00b94b90` walks the class
+  links' parents, 0xb94b40).
+- **The hostility question (the user's mid-round note).** The ring has no hostility test and no
+  rarity test. The +0x134 (texture) writers in the whole asm are five: the three above
+  (0x7786ed, 0x7786ff, 0x778711), the pick mode's two (0x62a0ef, 0x62a104); `FUN_00a631e0`
+  writes 0. So a murderer, a PK or an opposite-job player gets the blue ring, a guard (CICGuard :
+  CICNPC) the yellow-green one, a unique the orange-red one. "Hostile mobs" -- monsters -- are
+  red, all of them. Hostility drives the attack cursor (the hover code, round 697's lane), not
+  the ring. Nothing was built for hostility here because the code has none.
+- The draw (`SWorld::vslot_022`, 0x9f42d0): LookAt from 1000 below + Ortho size x size, the
+  terrain height-map cells within trunc(size / 20 + 1) = 1 of the point (`Map::FUN_009f3c10`),
+  clamp, texture x 0xFFFFFFFF, SRCALPHA / INVSRCALPHA, ZFUNC LESSEQUAL (the only value ZFUNC
+  takes in the binary). Placed objects get nothing. On a still-water block (PlaneType 1, WaveID
+  != 0) a flat quad 0.1 above the point too. The rotation is the decal's +0x8c, unwritten
+  (INFERRED 0). No animation.
+- The same decal is the pick mode's cursor (`FUN_00629fa0`, modes 1 and 4; not built, OPEN).
+
+### 2. The unique's purple circle and red arrow: not in this client (probed twice)
+
+- Code: the ring reads class only. The monster spawn reader `CICMonster::vslot_025` (0x9d3850)
+  uses rarity only for the model scale (1: x1.5, 4: x3.0, 6: x1.7). The one marker it attaches
+  is `SYSTEM_QUEST_MARK` (0x8000001f, 0x9d3a70), gated on CCharacterData +0x28c -- INFERRED
+  characterdata column 102, 0 on all 17,868 rows (MEASURED); that effect is a parchment "Q"
+  billboard (`quest_monster_paper_q_1.ddj`), not an arrow.
+- Assets: four select textures in Media.pk2's `effect\`, nothing purple; every .efp/.bsr/.txt in
+  Particles.pk2 scanned (a scratch Go walker over the archive, not committed): the arrow meshes
+  are used by skill hits and the tutorial waypoint only.
+
+### 3. What was built
+
+`client/scripts/world/ground_markers.gd` (`GroundMarkers`, one node made on first use by
+`World3D._markers()`), its suite `ground_markers_test.gd`, and hooks in World3D: `place_at` in
+`_move_by_pick_ray` before the click filter; `_ring_on_monster` at the two monster-click sites
+and the QA attack's two stand-ins (not `_show_target`: a cast at the selection re-shows the
+window there, and retail's casts do not reselect); `attach` in `_select_character` and
+`_try_talk_to_npc` (not for a gate); `heading_move` in `_start_heading_run`; `hide_marker` on a
+zone change; `step` after `_physics_step`. `SRREVAMP_QA_MARKER=1` logs each change and each
+drape's measurement.
+
+OURS (each in the code): the drape lifted 0.05; its cells split the way our terrain mesh splits
+them (retail's drape alternates the diagonal by parity, 0x9f3c10); the heading hide at the run's
+start (no echo here); culling off.
+
+### 4. Measurements
+
+Live (MEASURED, render box, `--server` in Jangan's zone frame -- region 98/168 -- QA account,
+`SRREVAMP_QA_MARKER=1`, `SRREVAMP_QA_CLICK="ground,wait:150,monster,wait:150,npc,wait:120"`,
+`/spawn mangyang 1` and `/spawnunique 1954` from the GM console, `SRREVAMP_QA_MARKER_VIEW=-62,70`;
+run 5 Forward+ on the RX 7600 through `xwl_run.sh`, run 6 Compatibility through VirtualGL; the
+in-memory server needs a chargen CSV to create the QA character, made transiently with
+`export-refdata -mode chargen` and deleted):
+
+| Click | Ring | Centre vs the point | Drape at the centre vs a terrain-only ray | Cells | Both renderers |
+|---|---|---|---|---|---|
+| ground, local (1062, 1720) of 98/168 | texture 0 | identical (the hit point) | +0.050 (the lift), point y - terrain 0.000 | x 52..54, z 85..87: 18 triangles | the same lines; ring pixels (pale cyan class) 286 F+ / 283 Compat in the same crop |
+| Mangyang, local (1068, 1750) | texture 3, following | the body's position | +0.050; body y - terrain 0.398 | x 52..54, z 86..88 | orange-class pixels 197 / 168 (the body animates) |
+| Jangan Fortress Clerk (NPC) | texture 1, following | the NPC's position | +0.050 | x 77..79, z 54..56 | same |
+
+- The ring hid when the QA click stood the player at the NPC, 600 units away: the Mangyang left
+  the area of interest, its body went, and `step` logged `hide (monster:25 gone or hidden)` --
+  the despawn rule, live.
+- Run 1 (the plain Jangan spawn): the ground click hit the plaza deck at y -30.12, 21.785 above
+  the terrain; the ring was draped on the terrain under the deck and could not be seen. That is
+  what the code says (terrain cells only, LESSEQUAL); see TODO.
+- Pictures (local, not committed): the four select textures, and frames 480 / 700 of runs 5 and 6
+  side by side -- the pale ring round the player's feet at the destination, the orange-red ring
+  with its transparent cross under the Mangyang.
+
+Tests: `ground_markers_test.gd` (new: 50 checks -- textures per class, the drape, the state
+rules, the world hooks on a synthetic mirrored region); `remote_godot.sh check` ALL LOAD (552
+scripts); `remote_godot.sh tests` 213 suites, 0 failing; `go test -count=1 ./internal/systems/...`
+ok (the doc probes).
+
+Perf gate (`client/tools/perf_gate.sh --sites jangan --frames 12000`, base e1ccf792 vs this
+working tree, Forward+, 1280 x 720, median of 3):
+
+| Jangan | base | head | | verdict |
+|---|---|---|---|---|
+| frame ms | 1.65 | 1.64 | -0.0 | SAME |
+| entry ms | 9451 | 9394 | -57 | SAME |
+| freeze ms | 3350 | 3314 | -36 | SAME |
+| hitches | 4 | 5 | +1 | SAME |
+
+The gate's views make no click, so the ring is never created there (`_markers()` makes it on
+first use): the table says the round costs nothing until a player clicks. Once shown, a ring
+on a still point is built once; a followed moving body rebuilds 54 vertices a physics frame
+(not measured separately).
+
+### Review
+
+The review confirmed the account, the terrain-only drape included (`CIODecal::vslot_010` is
+`SWorld::vslot_022`'s only caller; the vertices come only from the `.m` height record). Not to be
+merged until the user, who believes the ring shows on the Jangan plaza, has checked a live server.
+Fixed here:
+
+1. **The height cache kept dropped regions alive** (MEDIUM). It held `[ParsedRegion, heights]`
+   per group, never evicted, pinning 36 x 289 Vertex objects a region past
+   `RegionGridState.prune_heightmaps()`. It now holds a WeakRef and the plain
+   PackedFloat32Array; `step()` drops an entry whose region left the grid (or was parsed again);
+   `zone_changed()` (called from `_reload_zone_assets`) clears it. Tested: a pruned region leaves
+   the cache on the next step and its ParsedRegion is freed.
+2. **A ground click near an NPC does nothing in retail** (LOW, READ). `FUN_009ec570`
+   0x9ec5a0..0x9ec5eb walks the object list (`0xec4d98`, nodes at object+0x78c) and returns --
+   before the destination, the click filter and `FUN_00a631e0` -- for a CICNPC (0xef1ac4, which
+   CICGuard derives from; not monsters, players or CITeleportGate) under 400.0 squared (double
+   0xd878a8: 20 units, `FUN_009ed1e0`'s 3-D distance) from the click whose +0xc4 is not 0.0.
+   +0xc4 is READ as the object's model scale: `FUN_009c4510(scale)` stores it (0x9c451d) and
+   resizes the model's box; the spawns pass the scale (CICNPC::vslot_025 0x9d487d; CICMonster's
+   rarity x ref scale, 0x9d3a53); the CIObject constructor sets 1.0 (0x9c4909). Built in
+   `_move_by_pick_ray` (`GroundMarkers.npc_blocking` over the holders tagged `npc_name`, not
+   gates): no walk, no ring, and one line, `CLICK: ground at (x, y, z) ignored -- d from NPC
+   <name> (retail walks nowhere within 20 of an NPC)`, for a tester who cannot walk next to one.
+   Tested at 10 (blocked), 25 (walks), exactly 20 (not under 400), a gate, scale 0.
+3. **The drape was rebuilt every tick under a moving body** (LOW). The mesh is now built for the
+   3 x 3 cell window in the region's own frame (the instance takes the group's transform), and a
+   ShaderMaterial (`RING_SHADER`) projects the UV from the vertex's region-local xz with the
+   centre as a uniform -- the same UV `drape_arrays` computes, unshaded, blend mix, opaque-only
+   depth, no culling, linear filter without repeat, sRGB art: StandardMaterial3D's settings. The
+   still-water quad spans the window (with clamp and the transparent border it draws the same
+   12 x 12 square). MEASURED with `client/tools/measure_ground_ring.gd` (a body at 50 units/s,
+   1,200 ticks, headless on the box, three runs each): **116.5 / 117.4 / 116.6 us a tick with a
+   new mesh on every tick before; 13.1 / 13.3 / 13.3 us with 49 new meshes (4.1 % of ticks)
+   after.** The look, MEASURED in the same crops as runs 5 / 6: Compatibility's rerun of the
+   same scene counts 281 pale-cyan ring pixels (283 before) and 168 orange (168 before); the
+   Forward+ rerun drew in 97/168's frame (the zone frame differed between runs), 304 and 191,
+   the rings as before in its frames. The drape lines are unchanged (+0.050 over the terrain
+   ray at every centre).
+4. **Docs.** Round 697 also rewrote docs/TODO.md's line on retail's ground-pick cursor and decal;
+   the coordinator combines the two at integration.
+
+Tests after the fixes: `remote_godot.sh check` ALL LOAD (553 scripts), `tests` 213 suites, 0
+failing (ground_markers_test with the new checks among them).
+
 ## Six-hundred-and-ninety-seventh round: the game's own cursors on every screen -- gold arrow, red sword, speech bubble, glove, blue gate disc -- found wherever a player keeps sro_client.exe, scaled with the UI, chosen by the original's class rules on its 250 ms timer; and the Option combos' open list in retail's translucent black
 
 The user (2026-10-03, from memory, no screenshots): "there's a golden cursor that's the default.

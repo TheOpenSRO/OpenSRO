@@ -399,10 +399,11 @@ In order. Each is checked off here when it ships in a release, with its round in
       decoded (`NetClient.buff_started` / `buff_ended` / `skill_moved`, `send_buff_cancel`), the
       buff's `runSpeed` sets the run speed and OpSkillMove snaps the player. Still open:
       the server half (round 616) was not live-tested with it; the Ghost Walk move is a snap
-      (duration OPEN, `tele` value[0] = 500 unread); retail's ground-pick decal (round 697: retail
+      (duration OPEN, `tele` value[0] = 500 unread); retail's ground-pick cue (round 697: retail
       sets NO cursor for a ground cast -- every caller of its cursor manager was read,
-      docs/protocol/CURSOR.md -- so the cross is ours; keep it or show the game's hover cursor is
-      the user's call); the retail answer for a Target_Required 1 heal with nothing selected
+      docs/protocol/CURSOR.md -- so the cross is ours; round 698 READ the cue retail shows instead:
+      the selection ring's object with `select_02` in range / `select_04` beyond, `FUN_00629fa0`
+      -- not built; once it is, the cross goes); the retail answer for a Target_Required 1 heal with nothing selected
       (READ in round 622: refused, 0x3011); the targetType echo, ownerKind and OpSelfId 0x00F9 (review
       follow-up) need round 616's server to send them -- until then the client falls back to the
       request queue and learns its own id from its own casts' answers;
@@ -2015,6 +2016,42 @@ Read in `docs/protocol/opcodes/movement.md`, "The heading move". The code is `Sk
 - [ ] **The physics fallback** (no `.nvm`) ends any order on `is_on_wall` (OURS).
 - [x] ~~Click walks still slide~~ -- round 653's follow-up: every order stops at the wall, as retail's
       does (the section above).
+
+### The ring on the ground (round 698) — **built: the click marker and the selection circle are one decal, as in retail (READ; docs/protocol/ground_markers.md); these are left**
+
+`GroundMarkers` (`client/scripts/world/ground_markers.gd`): a ground click moves the ring to the
+point with `select_01` (pale grey-cyan), a selection puts it under the character -- `select_04`
+(orange-red) for a monster or a COS, `select_03` (blue) for a player, `select_02` (yellow-green)
+for anything else -- draped on the 3 x 3 terrain cells round the point, 12 units across, never
+scaled; a heading run hides it; arrival, deselecting and death leave it; a despawn or a hidden
+body hides it. There is no hostility or rarity test in the ring's code (round 698, the whole
+census of its texture writes).
+
+- [x] **No walk within 20 units of an NPC** (round 698's review, READ `FUN_009ec570`): a ground
+      click within 20 of an NPC at non-zero scale does nothing, logged as `CLICK: ... ignored`.
+- [ ] **The pick mode's ring** (`UI_SILKMALL::FUN_00629fa0`, modes 1 and 4): `select_02` at the
+      picked point within (R - 5), `select_04` beyond, hidden under 0.25. Probably the ground-target
+      cursor round 617 drew with the system cross; the modes and R (`[FUN_008ba440()+0x254]`) are
+      not read.
+- [ ] **On a placed floor the ring is under it.** READ: the drape covers terrain cells only and
+      ZFUNC is never anything but LESSEQUAL in the binary, so at the Jangan spawn (the plaza deck,
+      21.8 above the ground, MEASURED in round 698's run) a ground click's ring is drawn on the
+      terrain beneath the deck and not seen. If the user remembers the ring on the plaza, some path
+      was not found; ask before changing it.
+- [ ] **The cell diagonal.** Retail's drape alternates the diagonal by cell parity (0x9f3c10); ours
+      follows OUR terrain mesh's single diagonal so it lies on what is drawn. Whether retail's
+      terrain mesh alternates too (and so ours is wrong) is not read.
+- [ ] **The heading hide's timing**: retail hides on the local player's 0xB021 heading echo, one
+      round trip after the run starts; ours when it starts (no echo in our protocol).
+- [ ] **vslot 0x50's other tests** (byte +0xbc, global 0xeef5f4, `FUN_009d0560`) are not mapped;
+      ours hides on a body that is gone or not visible in the tree.
+- [ ] **Pets, horses, transports (CICCos)** get `select_04` when the client draws them; **items**
+      get `select_02` if a selection of one is ever built; **dungeons** (no height map) draw no ring
+      (INFERRED from `FUN_009ef640` failing).
+- [ ] **The unique's "purple circle and red arrow"** the user remembered are not in this client
+      (two probes: the code, and every effect in the archives; the protocol doc has both). The only
+      marker a monster's spawn attaches is the quest-monster parchment (`SYSTEM_QUEST_MARK`), gated
+      on characterdata column 102, 0 on every row. Ask the user which client they remember.
 
 ### The buff bar — **built (round 618); these are left**
 `HudBuffBoard` is retail's `CIFMagicStateBoard`. It has the icons, the draining time bar, the end
