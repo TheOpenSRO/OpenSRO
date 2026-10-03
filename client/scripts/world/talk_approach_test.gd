@@ -159,6 +159,36 @@ func _test_world(world: Node) -> void:
 	target = world.get("_move_target")
 	d = target.distance_to(gate.global_position)
 	_check(d >= 20.0 - 1e-3 and d <= 640.0 + 1e-3 and target.x > 0.0, "%.1f short of the gate (20..640)" % d)
+	# Round 701's review. A typing lock is no arrival: the approach waits and
+	# walks on (L4).
+	_reset(world)
+	world.call("_start_talk_approach", npc)
+	var aim: Vector3 = world.get("_move_target")
+	world.set("_has_move_target", false)
+	world.call("_step_talk_approach", true)
+	_check((world.get("opened") as Array).is_empty() and not (world.get("_talk_approach") as Dictionary).is_empty(),
+		"a typing lock that stops the walk talks to nobody and keeps the approach")
+	world.call("_step_talk_approach", false)
+	_check(bool(world.get("_has_move_target")) and (world.get("_move_target") as Vector3).is_equal_approx(aim),
+		"the lock lifted, the walk goes on to the same point")
+	player.global_position = aim
+	world.set("_has_move_target", false)
+	world.call("_step_talk_approach", false)
+	_check((world.get("opened") as Array).size() == 1, "and the arrival talks")
+	# A double click on no monster changes nothing: no second roll (L5).
+	_reset(world)
+	world.call("_start_talk_approach", npc)
+	aim = world.get("_move_target")
+	var took: String = world.call("_dispatch_double_click", Vector2(10, 10))
+	_check(took == "ignore" and not (world.get("_talk_approach") as Dictionary).is_empty() and (world.get("_move_target") as Vector3).is_equal_approx(aim),
+		"a double click's second press on no monster neither re-rolls nor drops the approach (READ: FUN_00792190)")
+	# An NPC click moves the selection off a monster; a gate does not (L3).
+	world.set("_last_attack_target", 77)
+	world.call("_select_for_talk", npc)
+	_check(int(world.get("_last_attack_target")) == -1, "talking to an NPC deselects the monster (FUN_00778650)")
+	world.set("_last_attack_target", 77)
+	world.call("_select_for_talk", gate)
+	_check(int(world.get("_last_attack_target")) == 77, "a gate leaves the selection alone")
 	# The distance is random over 20..240 (retail's rand()).
 	var lo := INF
 	var hi := -INF

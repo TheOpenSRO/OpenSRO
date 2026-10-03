@@ -88,7 +88,7 @@ object's button bytes:
 | WM_MOUSEMOVE (0x200) | vslot_017's first branch | Turns the camera when the RIGHT byte is down and the swap flag +0x4f9 is clear, or the MIDDLE byte with the flag set (`FUN_00ba6240(2)` / `(1)`). Never reads the left byte. Then stores the cursor. |
 | WM_LBUTTONUP (0x202) | `FUN_0078e5d0` | Only when process mode +0x50c is 0xae or 0xaf: ends that mode (`FUN_00592b70`). No walk, no pick. |
 | WM_LBUTTONDBLCLK (0x203) | `FUN_00792190` | A double click on a character: an action request through `SendMagicStateMsg_074_791d40` (0x7074) for the classes it tests; no ground pick. The first press was already a click. |
-| Timer 7 | set by `FUN_00777b90` (500 ms) after a sky click's `FUN_009ebec0` and by the per-frame `FUN_009ec380`; killed by `FUN_00777ba0` on a ground click | `CGInterface::vslot_005` case 6 -> `FUN_009eb8e0`: re-plots the heading run (mover state +0x6e8 == 2) from the player's own position and heading; it reads no mouse. Killed when it returns 0. |
+| Timer 7 | set by `FUN_00777b90` (500 ms) after a sky click's `FUN_009ebec0`, by the arrow-key walks `FUN_0077b070` and `FUN_00780610` (heading runs too) and by the per-frame `FUN_009ec380`; killed by `FUN_00777ba0` on a ground click | `CGInterface::vslot_005` case 6 -> `FUN_009eb8e0`: re-plots the heading run (mover state +0x6e8 == 2) from the player's own position and heading; it reads no mouse. Killed when it returns 0. |
 
 The button bytes (`gfxmainframe::FUN_00ba7240`): +0x258 left (0x201 sets, 0x202 clears), +0x259
 middle (0x207 / 0x208), +0x25a right (0x204 / 0x205); `FUN_00ba6240(i)` reads +0x258 + i. Its
@@ -147,8 +147,9 @@ teleport handler (0x513590) measure the same way.
 for a CICMonster only when Ctrl is down (`GetKeyState(0x11)`) or the monster already is the
 selection (+0x628) with the target window up (`FUN_00778120`). So the first click selects and the
 next click attacks; a double click (WM_LBUTTONDBLCLK -> `FUN_00792190`) attacks outright. The
-client has no walk on that path: the approach to the weapon's reach is not the client's (INFERRED:
-the server's, from the absence; not read in the server).
+client has no walk on that path: the server walks the attacker into reach (READ: SR_GameServer's
+attack tick 0x4ad8e0 calls `GObjPC::MoveTowardObject(target, round(stop))` while the target is out
+of reach, docs/protocol/auto_command.md, rounds 247 / 256).
 
 **srrevamp (round 701).** `World3D._start_talk_approach` / `_step_talk_approach`: an NPC beyond 240
 or a gate beyond 800 is walked to a point `talk_approach_point` drawn in 20..240 (640) on the line
@@ -157,7 +158,10 @@ the server's limit (`talk_out_of_range`: 300 / 800, 3-D) -- this client has no s
 it applies the server's test itself -- and logs a refusal otherwise. Any new click, death, a zone
 change or the target going ends the approach (OURS in part: retail is not read to drop it on a
 monster's select). A monster click selects (ring, target window) and attacks only on the next
-click, with Ctrl, or as a double click's second press; the walk into reach stays this client's
+click while the target window shows that monster, with Ctrl, or on a double click (routed as
+retail's WM_LBUTTONDBLCLK: `_dispatch_double_click` attacks a monster and ignores the ground, an
+NPC and a gate). An NPC click moves the selection off a monster (`_select_for_talk`); a typing
+lock pauses an approach rather than ending it (OURS). The walk into reach stays this client's
 (OURS: srrevamp's server does not chase). The server needs no change for talking: srrevamp has no
 select or talk request, the teleport request has applied the range since round 642, and the shop
 and storage requests carry no NPC to measure (TODO).

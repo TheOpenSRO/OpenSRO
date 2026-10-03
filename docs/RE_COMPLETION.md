@@ -30479,8 +30479,9 @@ engine's skill tick does.
   exported from the box's itemdata tables. The box's own `items.csv` predates the Range column
   (52 fields), and its server binary (2026-09-19) predates the first-swing reach gate. The
   client ran on the box: `SRREVAMP_QA_CLICK=monster qa_shot.sh --server 192.168.5.103:15919
-  --region '97\168.m' --at 1002,1020 --frames 480 --radius 1`, with no `QA_ATTACK_GOTO`. After
-  the change:
+  --region '97\168.m' --at 1002,1020 --frames 480 --radius 1`, with no `QA_ATTACK_GOTO` (since
+  round 701 a single `monster` click only selects, as retail's first click does; the same run
+  today is `SRREVAMP_QA_CLICK=monster,monster`). After the change:
   ```
   World3D: 13291 BCRadius row(s) from characterdata column 50 (CHAR_CH_MAN_FIGHTER: 4)
   QA CLICK monster: 'Yeoha' at world (70, -22, -220) -> screen (320, 168)

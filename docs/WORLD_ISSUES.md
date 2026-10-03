@@ -7247,7 +7247,8 @@ monster", has the full record.
 - **A monster**: no distance test and no walk on the client. The first click selects (ring,
   target window); `FUN_00792f00` sends the attack 0x7074 only with Ctrl, or when the monster is
   already the selection with the target window up, or on a double click (`FUN_00792190`). Who
-  walks into reach is not the client (INFERRED: the server); srrevamp's client walks (OURS, as
+  walks into reach is the server (READ in the review: the attack tick 0x4ad8e0 calls
+  `GObjPC::MoveTowardObject`); srrevamp's client walks (OURS, as
   before).
 - **Cancelling**: a ground click clears the pending id (`FUN_009ec570`: +0x20 = 0). Ours drops it
   on any new click, death, a zone change or the target going (OURS beyond the ground click).
@@ -7280,6 +7281,44 @@ the line, the 20..240 / 20..640 bounds over 200 seeded draws, the ring at the po
 no talk while walking, the talk at the arrival, none at an arrival 400 away, a new click and a
 despawn cancelling, and the monster rule (unselected: select; selected with the window: attack;
 Ctrl: attack).
+
+### Review
+
+The review found nothing HIGH. Fixed here:
+
+1. **M1, the help text** (CONFIRMED): HELP_PLAYING said "Click a monster once to attack it" and
+   that the client does not walk back into reach. It now says the first click selects and a second
+   click, a double click or Ctrl+click attacks; that a far NPC or gate is walked to first; and that
+   the character walks back in (retail's server does, and this client does). `bundle_docs.sh`
+   re-run (its RELEASE_NOTES snapshot picked up v0.1.483).
+2. **L2**: the server's walk into reach is READ, not INFERRED -- SR_GameServer's attack tick
+   0x4ad8e0 calls `GObjPC::MoveTowardObject` when the target is out of reach
+   (docs/protocol/auto_command.md, rounds 247 / 256).
+3. **L3**: a click on an NPC now moves the selection off a monster (`_select_for_talk`: retail's
+   0x793570 calls `FUN_00778650` for any CICharactor, in reach or before an approach); a gate does
+   not. Before, a later single click on the old monster attacked at once. With it,
+   `_target_window_shows` now compares the window's own target (`HudTarget.shown_key`, set by
+   `show_target` / `show_player`, cleared by `clear`) with the clicked monster, not only that the
+   window is up.
+4. **L4**: a typing or motion lock no longer reads as an arrival: the approach pauses
+   (`_step_talk_approach(locked)`) and walks on to the same point when the lock lifts (OURS; not
+   while a wall roots the player).
+5. **L5**: a double click's second press is routed as retail's WM_LBUTTONDBLCLK
+   (`_dispatch_double_click`, `FUN_00792190`): a monster under the cursor is attacked; the ground,
+   an NPC and a gate get nothing, so a far NPC's approach is not re-rolled.
+6. **L6**: the dead `_try_attack_monster` is replaced by `_monster_at` (the double click's pick);
+   the comments that named it now name `_pick_character`.
+7. **L7**: objects streaming into a region (`_objects_commit`) drop the floor samples and re-run
+   the floor test for the next three physics frames (`GroundMarkers.objects_changed`); a floor whose
+   every triangle is rejected falls back to the terrain drape instead of drawing nothing.
+8. **L8**: timer 7 is also armed by the arrow-key walks `FUN_0077b070` / `FUN_00780610` (heading
+   runs; the conclusion stands). `SRREVAMP_QA_CLICK=monster` now selects only: a QA attack is
+   `monster,monster` (World3D's QA notes; RE_COMPLETION's round record annotated).
+
+Tests added: talk_approach_test (+6: the lock pauses and resumes, the double click neither re-rolls
+nor drops, an NPC deselects a monster and a gate does not), ground_markers_test (+3: a still point
+fires no ray, streaming objects re-sample, the all-rejected floor falls back to 54 terrain
+vertices). `remote_godot.sh check` ALL LOAD; `tests` 217 suites, 0 failing; `go test -count=1 ./internal/systems/...` ok (TestBundledClientDocsMatchSource among them).
 
 ## Six-hundred-and-ninety-ninth round: the developer toggles move from Ctrl+F1-F3 to Shift+F1-F3, because macOS keeps Ctrl+F1-F3 for itself
 

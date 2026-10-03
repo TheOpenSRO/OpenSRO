@@ -369,6 +369,10 @@ var _floor_samples_group: Node3D = null
 var _floor_samples_ref_y := NAN
 ## Rays fired for floor samples, for the cost note and the tests.
 var floor_rays := 0
+## Physics frames left in which the floor samples are dropped and the floor
+## test re-run (objects_changed): a region's objects stream in after its
+## terrain, and their bodies reach the physics space a frame or two later.
+var _objects_changed_frames := 0
 var _floor_query: PhysicsRayQueryParameters3D = null
 ## group name -> [WeakRef to the ParsedRegion, PackedFloat32Array heights]:
 ## only the heights are held, so a region RegionGridState prunes is freed
@@ -461,6 +465,12 @@ func zone_changed() -> void:
 	_built_group = null
 	_dirty = true
 
+## Placed objects arrived in a region (World3D._objects_commit, round 701's
+## review): samples taken before them are stale, so they and the floor test
+## are redone for the next few physics frames.
+func objects_changed() -> void:
+	_objects_changed_frames = 3
+
 ## Hidden, following nothing (+0x108 = 0, +0x138 = 0).
 func hide_marker(why: String = "") -> void:
 	if shown and _qa_log:
@@ -483,6 +493,11 @@ func step() -> void:
 			center = p
 	if not _heights_cache.is_empty():
 		_prune_heights()
+	if _objects_changed_frames > 0:
+		_objects_changed_frames -= 1
+		_floor_samples.clear()
+		_floor_samples_group = null
+		_floor_key_group = null
 	_refresh()
 
 ## Drops cached heights whose region is no longer in the grid (or was parsed
@@ -532,6 +547,10 @@ func _refresh() -> void:
 		on_floor = _floor_test(group, local)
 		if on_floor:
 			_rebuild_floor(group, local, cell)
+			# Every floor triangle rejected (round 701's review): the terrain
+			# drape rather than nothing (OURS).
+			if (last_drape.get("arrays", {}).get("vertices", PackedVector3Array()) as PackedVector3Array).is_empty():
+				on_floor = false
 	if not on_floor:
 		var reach := cell_reach(SIZE)
 		var window := Vector2i(int(floor(local.x / CELL)) - reach, int(floor(local.z / CELL)) - reach)

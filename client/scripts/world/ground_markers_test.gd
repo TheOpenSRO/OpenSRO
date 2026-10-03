@@ -544,6 +544,28 @@ func _test_world_floor(world: Node, group: Node3D, space: PhysicsDirectSpaceStat
 	_check(gm.on_floor and absf(GroundMarkers.drape_height_at(gm.last_drape["arrays"], (gm.last_drape["local"] as Vector3).x, (gm.last_drape["local"] as Vector3).z) - (top + 0.05)) < 1e-3,
 		"an NPC selected on the deck gets the ring on the deck")
 	npc.queue_free()
+	# Round 701's review: objects streaming in drop the samples (L7) ...
+	gm.place_at(Vector3(2100, top, -300))
+	gm.step()
+	var rays_then: int = gm.floor_rays
+	gm.step()
+	_check(gm.floor_rays == rays_then, "a still point fires no ray")
+	gm.objects_changed()
+	gm.step()
+	_check(gm.floor_rays > rays_then and gm.on_floor, "objects streaming in re-sample the floor (%d new rays)" % (gm.floor_rays - rays_then))
+	for i in 3:
+		gm.step()
 	deck.free()
 	roof.free()
+	# ... and a floor whose every triangle is rejected falls back to the
+	# terrain drape: a 1 x 1 post top between the 2-unit samples.
+	var post := _box(world, 0b1, Vector3(1, 1, 1), Vector3(2101, top - 0.5, -301))
+	await physics_frame
+	await physics_frame
+	gm.zone_changed()
+	gm.place_at(Vector3(2101, top, -301))
+	gm.step()
+	_check(not gm.on_floor and (gm.last_drape["arrays"]["vertices"] as PackedVector3Array).size() == 54,
+		"a floor with no triangle left falls back to the terrain drape (54 vertices)")
+	post.free()
 	gm.hide_marker("test")

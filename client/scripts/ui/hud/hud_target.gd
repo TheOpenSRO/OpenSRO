@@ -183,6 +183,10 @@ var _buffs: HudTargetBuffs = null
 var buff_catalog: SkillBuffCatalog = null
 var buff_source: Callable = func(_owner_key: String) -> Array: return []
 var _buff_owner := ""
+## The owner key of what the window shows ("monster:<id>", "character:<id>"),
+## "" when hidden or shown without one (round 701: a click on a monster asks
+## whether the window shows THAT monster, READ FUN_00778120).
+var shown_key := ""
 ## Whether the shown owner still exists (World3D: a monster's body, another
 ## player's body, or this player). Default: always.
 var target_exists: Callable = func(_owner_key: String) -> bool: return true
@@ -501,6 +505,7 @@ func show_target(target_name: String, level: int, rarity: int, hp: int, max_hp: 
 		_rank_row.add_theme_color_override("font_color", Color.WHITE)
 	set_hp(hp, max_hp)
 	visible = true
+	shown_key = owner_key
 	place()
 	_show_buffs(_shown, owner_key)
 
@@ -536,6 +541,7 @@ func show_player(target_name: String, owner_key: String = "", race: int = -1) ->
 		_name.remove_theme_color_override("font_color")
 	set_kindred(race)
 	visible = true
+	shown_key = owner_key
 	place()
 	_show_buffs(_player, owner_key)
 
@@ -584,6 +590,7 @@ func set_hp(hp: int, max_hp: int) -> void:
 
 func clear() -> void:
 	visible = false
+	shown_key = ""
 	# The close path (vslot_043 -> the select with id 0) hides every piece and
 	# the viewer and kills timer 1 (0x69a300).
 	_buff_owner = ""

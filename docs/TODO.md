@@ -2061,8 +2061,9 @@ census of its texture writes).
       NPC would let it. The teleport request has applied the range since round 642.
 - [ ] **A stall's approach** (100 / 80, arrival flag 2 -> `FUN_0081e170`) is read, not built: no
       stalls yet.
-- [ ] **Who walks a monster attack into reach.** The client sends 0x7074 with no walk of its own;
-      the server's chase is INFERRED, not read. srrevamp's client walks (OURS).
+- [ ] **Who walks a monster attack into reach.** READ: the server (attack tick 0x4ad8e0 ->
+      `GObjPC::MoveTowardObject`; the client sends 0x7074 with no walk). srrevamp's client walks
+      (OURS) because srrevamp's server does not chase.
 - [x] **A held left button does nothing** (round 701, READ: WM_LBUTTONDOWN is the only click,
       0x77c4a7 -> 0x793570; no reader of the left button byte +0x258 walks; timer 7 is the sky
       run's re-plot). Ours clicked on the release and steered toward the cursor while held.
