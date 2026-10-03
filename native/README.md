@@ -11,7 +11,7 @@ before.
 |---|---|---|
 | pk2 archive: open, directory read + Blowfish decrypt, name index, path lookup, positional file read | `Pk2Reader` internals and `ObjectLoader.find_file`'s scan | `src/core/pk2.rs`, `src/core/blowfish.rs` |
 | `.ddj` per-pixel decodes: uncompressed (channel masks) and A16B16G16R16F (`q`) | the two looping branches of `DdjReader.to_image` | `src/core/ddj.rs` |
-| the DXT1 transparent-texel scan (round 695): does any block of a DXT1 mark a texel transparent, so Forward+ needs it as RGBA8 | `DdjReader.dxt1_has_transparent`'s block loop | `src/core/dxt.rs` (`ddj_dxt1_has_transparent`, interface 6); `examples/dxt1_alpha_census.rs` counts them in an archive |
+| the DXT1 transparent-texel scan (round 695): does any block of a DXT1 mark a texel transparent, so Forward+ needs it as RGBA8 | `DdjReader.dxt1_has_transparent`'s block loop | `src/core/dxt.rs` (`ddj_dxt1_has_transparent`; interface still 5: an additive method, called behind `has_method`, so an older library keeps the other readers); `examples/dxt1_alpha_census.rs` counts them in an archive |
 | `.bms` mesh: header, vertices (either record size), skin (with its part-way refusal), indices, box, motion and link sections; `to_arrays`' winding and skin arrays | `BmsReader.parse` and `to_arrays` (round 669) | `src/core/bms.rs`, binding `src/gd_models.rs` |
 | `.ban` animation: header, key times, every bone's keyframes | `BanReader.parse` (round 669) | `src/core/ban.rs`, binding `src/gd_models.rs` |
 | `.bsk` skeleton: the announce-then-resolve walk, both record shapes | `BskReader.parse` (round 669) | `src/core/bsk.rs`, binding `src/gd_models.rs` |
@@ -188,7 +188,7 @@ The client uses a library only when its `api()` returns exactly its own number. 
 The client refuses it with one log line naming both numbers, then reads in GDScript:
 
 ```
-NativeAssets: native readers OFF (library REFUSED: API 0, this client needs API 6 -- a stale library, rebuild it with native/build.sh) -- using the GDScript readers
+NativeAssets: native readers OFF (library REFUSED: API 0, this client needs API 5 -- a stale library, rebuild it with native/build.sh) -- using the GDScript readers
 ```
 
 The same line catches the release case: a DLL from an older release left next to a newer exe by an
@@ -313,7 +313,7 @@ On a Windows PC, put `srrevamp_native.dll` in `native_bin\` next to the project,
 exe in an export (see below). Then check the log for:
 
 ```
-NativeAssets: native readers ON (library loaded, srrevamp_native 0.1.0, API 6, <path of the DLL>)
+NativeAssets: native readers ON (library loaded, srrevamp_native 0.1.0, API 5, <path of the DLL>)
 ```
 
 `native readers OFF (library not found: <path>)`, after Godot's `GDExtension dynamic library not

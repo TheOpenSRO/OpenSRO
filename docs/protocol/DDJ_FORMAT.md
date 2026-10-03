@@ -76,10 +76,21 @@ image/texture library can load `data[20:]` directly once the wrapper is stripped
   | Map.pk2 | 839 | 753 | 0 | 0 |
 
 - **What the client does** (DdjReader, round 695): under a RenderingDevice renderer, a DXT1 with
-  at least one transparent texel is decoded to RGBA8 by the engine's own decoder -- what the RD
-  path itself does where BC1 is unsupported (1725-1731) -- so it samples exactly as under
-  Compatibility, at 8x the DXT1's memory. Every other DXT1, and every DXT1 under Compatibility,
-  stays DXT1. The scan is native (`native/src/core/dxt.rs`) with a GDScript fallback.
+  at least one transparent texel is decoded on the CPU by the engine's squish, **one mip level at a
+  time** (squish's whole-chain loop halves both sides with no floor of 1, so a non-square texture's
+  last levels are left undecoded -- round 695's review, M1), and handed to Godot as
+  `Image.FORMAT_RGBA8`, whose upload keeps alpha. (Godot's own RD fallback for an unsupported BC1,
+  1725-1731, decompresses too but still sets `swizzle_a = ONE` at 1735: it is the RGBA8 format
+  that keeps the alpha, not the decompress.) Alpha then matches Compatibility texel for texel;
+  colours are within a few levels of a GPU's DXT1 decode (squish interpolates in integers; GPUs
+  differ by about 1-3/255). It costs 8x the DXT1's memory. Every other DXT1, and every DXT1 under
+  Compatibility, stays DXT1. The scan is native (`native/src/core/dxt.rs`, behind `has_method`)
+  with a GDScript fallback.
+- **What is actually loaded:** no client code loads `Prim\LightMap` (the 2,468 lightmaps above);
+  the ground's lightmaps are Map.pk2's `.t`, unaffected. So the cost is the other 1,503 Data.pk2
+  textures: 122 MB as DXT1, 976 MB as RGBA8 if every one were loaded (monsters 327 MB, items 209,
+  NPCs 132, world 109, characters 35; round 695's review). The largest single ones are the four
+  2048x2048 `avatar_w_*arctic*` textures, no mips, 16 MB each as RGBA8.
 
 ## FourCC 113 ('q'): D3DFMT_A16B16G16R16F (round 621)
 

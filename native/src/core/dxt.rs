@@ -6,9 +6,11 @@
 //! transparent with index 3, which BC1_RGB samples as opaque black. GL Compatibility uploads the
 //! same image as `COMPRESSED_RGBA_S3TC_DXT1` (drivers/gles3/storage/texture_storage.cpp 418-426)
 //! and keeps it transparent. DdjReader (client/scripts/ddj/ddj_reader.gd) therefore decodes such
-//! a texture to RGBA8 under Forward+ -- with the engine's own decoder, as Godot's RD path itself
-//! does when BC1 is unsupported -- and needs to know which textures they are without a GDScript
-//! loop over every block of every DXT1 it loads. This is that scan.
+//! a texture on the CPU (the engine's squish, one mip level at a time) and hands Godot an
+//! Image.FORMAT_RGBA8, whose upload keeps alpha -- Godot's own RD fallback for an unsupported BC1
+//! decompresses too but still swizzles alpha to ONE (1735), so it is the RGBA8 format that keeps
+//! it. It needs to know which textures they are without a GDScript loop over every block of every
+//! DXT1 it loads. This is that scan.
 //!
 //! Round 695 also tried, and rejected, re-encoding them as DXT3 (half the memory of RGBA8): a
 //! four-colour palette cannot hold a three-colour block's colours and its transparent black at

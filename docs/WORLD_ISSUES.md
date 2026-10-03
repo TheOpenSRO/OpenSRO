@@ -7127,8 +7127,8 @@ Lane `alpha695`, client. Labels: READ (Godot 4.2.2-stable source), MEASURED (the
 
 **How many (MEASURED, `native/examples/dxt1_alpha_census.rs`, every mip level):** 4,024 of the
 archives' 24,493 DXT1 textures mark a texel transparent -- Data.pk2 3,971 of 12,091 (183.8 MB;
-2,468 of them lightmaps, 388 monster, 252 building, 210 NPC, 183 item, 67 character textures --
-the hair among them), Media.pk2 44 of 11,640, Particles.pk2 9 of 9, Map.pk2 0 of 753. 23 have
+2,468 of them lightmaps -- which no client code loads (review, L1) -- 388 monster, 252 building, 210
+NPC, 183 item, 67 character textures, the hair among them), Media.pk2 44 of 11,640, Particles.pk2 9 of 9, Map.pk2 0 of 753. 23 have
 their transparent texels only below mip 0 (seen only at a distance).
 
 **The measurement (MEASURED, `client/tools/measure_alpha_cards.gd`).** Nine real cut-out textures
@@ -7149,13 +7149,18 @@ fraction read back from the frame against the engine's own CPU decode of the sam
 | `ruin_takl_wood_07` | 0.0513 | 0.0513 | **0.0000** | 0.0513 |
 
 **The fix.** Under a RenderingDevice renderer, DdjReader decodes a DXT1 with at least one
-transparent texel to RGBA8 with the engine's own decoder (squish, mip levels kept) -- exactly what
-the RD path itself does where BC1 is unsupported (1725-1731) -- so it samples texel for texel as
-Compatibility samples it, transparent texels (0,0,0,0) included. Every other DXT1 stays DXT1, and
-every DXT1 under Compatibility (`ddj_reader_test.gd` checks both). The scan is native
-(`native/src/core/dxt.rs`, `SrNativeParsers.ddj_dxt1_has_transparent`, interface 6): all 24,493
-DXT1s of the four archives in 0.053 s (MEASURED); a GDScript loop is the fallback without the
-library. `native_parity.gd` compares the two scans on every DXT1 of the real archives.
+transparent texel on the CPU with the engine's own decoder (squish), one mip level at a time
+(`DdjReader.dxt1_to_rgba8`; see the review's M1 below), and hands Godot an `Image.FORMAT_RGBA8`,
+whose upload keeps alpha. It is the RGBA8 format that keeps it, not the decompress: Godot's own RD
+fallback for an unsupported BC1 (1725-1731) decompresses too but still sets `swizzle_a = ONE`
+(1735) and would lose it the same way. Alpha then matches Compatibility texel for texel,
+transparent texels (0,0,0,0) included; the colours are within a few levels of a GPU's DXT1 decode
+(squish interpolates the middle colours in integer arithmetic; GPUs differ from it, and from each
+other, by about 1-3/255). Every other DXT1 stays DXT1, and every DXT1 under Compatibility
+(`ddj_reader_test.gd` checks both). The scan is native (`native/src/core/dxt.rs`,
+`SrNativeParsers.ddj_dxt1_has_transparent`, called behind `has_method`, interface number still 5):
+all 24,493 DXT1s of the four archives in 0.053 s (MEASURED); a GDScript loop is the fallback without
+the method. `native_parity.gd` compares the two scans on every DXT1 of the real archives.
 
 **A DXT3 re-encode was tried first and rejected (MEASURED).** It would cost a quarter of RGBA8's
 memory (8 bits a texel against 32), but a four-colour palette cannot hold a three-colour block's
@@ -7242,7 +7247,7 @@ viewport's default))`. In the frame, over a 200x520 box on the doll's body: mean
 the `portrait dressed` line), under retail's 128x128 buffer, so it was never magnified and its
 buffer stays 128: the follower only matters there at a scale above 2.67. Cost: the doll's buffer is 352x636
 RGBA8, 0.9 MB (INFERRED from the size); the customize preview at 3840x2019 renders 4x the pixels
-it did at 1920x1010 (about 31 MB of colour, INFERRED; its frame time is not measured).
+it did at 1920x1010 (its memory: L5 under OPEN; its frame time is not measured).
 
 A QA run dresses the player before the HUD exists, and `_refresh_paper_doll` returns without
 panels, so a QA run never had a doll; the panels' creation now builds it for a body already
@@ -7251,7 +7256,7 @@ dressed, as the player block already did for the portrait (round 635).
 ### Tests, and their FAIL lines against the base (17f7cf29, v0.1.480)
 
 - `client/scripts/ddj/ddj_reader_test.gd` (synthetic DXT1 blocks, both readers): under the
-  Forward+ path a DXT1 with transparent texels becomes RGBA8 equal byte for byte to the engine's
+  Forward+ path a DXT1 with transparent texels becomes RGBA8 equal byte for byte to the engine's CPU
   decode; a transparent texel in the last mip level counts and the levels stay; a DXT1 without one,
   and every DXT1 under Compatibility, stays DXT1. Against the base:
   ```
@@ -7314,13 +7319,61 @@ jangan  hitches    base 5  head 4  (-1.0)  SAME
 (The first base/head attempt at the gate's default 3,000 frames failed for missing numbers: at
 1.65 ms a frame Forward+ quits before 10 samples -- round 694's note; 12,000 frames is the setting.)
 
+### Review
+
+- **M1 (MEDIUM, MEASURED by the review): a non-square texture's smallest mip levels were blank or
+  leftover memory.** The first version called `Image.decompress()` on the whole DXT1 chain. Godot
+  4.2.2's squish loop (`modules/squish/image_decompress_squish.cpp`) halves width and height with
+  no floor of 1, so once the short side reaches 0 it decodes nothing, and the remaining levels
+  keep whatever the buffer held (`Vector::resize` does not zero it). The review's probe: 256x64
+  levels 7-8 came out (0,0,0,0); 64x256 levels 7-8 held a leftover (0,200,0,77). 520 of the
+  transparent DXT1s are non-square with mips. Fixed: `DdjReader.dxt1_to_rgba8` decodes each level
+  as its own Image -- width and height floored at 1, the block-padded slice
+  `ceil(w/4) x ceil(h/4) x 8` bytes that `Image._get_dst_image_size` lays out -- and joins the
+  levels into one RGBA8 Image with mipmaps. `ddj_reader_test.gd` now checks every level's colour
+  of a 256x64 and a 64x256 texture. Against this round's first commit (59ef1aa7):
+  ```
+  FAIL 256x64: every level opaque blue at texel 0, only blue or clear texels ["level 7 (2x1): texel 0 (0, 0, 0, 0), 0 texel(s) neither blue nor clear", "level 8 (1x1): texel 0 (0.0078, 0, 0, 0), 1 texel(s) neither blue nor clear"]
+  FAIL 64x256: every level opaque blue at texel 0, only blue or clear texels ["level 7 (1x2): texel 0 (0, 0, 0, 0), 0 texel(s) neither blue nor clear", "level 8 (1x1): texel 0 (0.0078, 0, 0, 0), 1 texel(s) neither blue nor clear"]
+  ```
+  The nine real cards measured again after the change: all nine MATCH under Forward+, with and
+  without MSAA 2x, and under Compatibility; the forced-DXT1 rows still 0.0000.
+- **L1:** the memory notes counted lightmaps no client code loads; corrected above and in TODO
+  (the 1,503 others, 976 MB as RGBA8 if all were loaded; items and avatars the target).
+- **L2:** "exactly what the RD path does where BC1 is unsupported" was wrong -- that fallback still
+  swizzles alpha to ONE (1735); the RGBA8 format is what keeps it. Corrected in `ddj_reader.gd`,
+  `dxt.rs`, DDJ_FORMAT.md and above.
+- **L3:** RGB is no longer claimed texel for texel: alpha is equal, colours within a few levels.
+- **L6:** the interface number stays 5. `ddj_dxt1_has_transparent` is an added method, called only
+  where `has_method` finds it, so a library left from before this round (an update whose DLL swap
+  rolled back) keeps every other native reader and only this scan falls back to GDScript. The bump
+  was not needed.
+- L4 and L5 are recorded under OPEN.
+- After the fixes: `remote_godot.sh check` ALL LOAD; `tests` 212 suites, 0 failing; `cargo test
+  --release --locked` 45 passed; `native_parity.gd` PARITY PASS (24,493 DXT1 scans, 4,024 with a
+  transparent texel, 208 s); `perf_gate.sh --sites jangan --frames 12000`:
+  ```
+  jangan  frame ms   base 1.65  head 1.64  (-0.0)  SAME
+  jangan  entry ms   base 9263.50  head 9365  (+101.5)  SAME
+  jangan  freeze ms  base 3257.50  head 3320  (+62.5)  SAME
+  jangan  hitches    base 4.50  head 4  (-0.5)  SAME
+  ```
+
 ### OPEN
 
-- The VRAM of the RGBA8 cards is 8x their DXT1 (above: 11.2 MB more in the Hotan desert at
-  radius 1; dungeon lightmaps, 2,468 of the 4,024, are the largest share and are not measured in a
-  dungeon). If a low-memory GPU needs it, the next step is to decode only textures that an
-  alpha-tested or blended material uses and leave lightmaps DXT1 (they sample RGB only, where
-  BC1_RGB's black is already right) -- that needs the material to reach the loader.
+- The RGBA8 textures cost 8x their DXT1 (11.2 MB more in the Hotan desert at radius 1, MEASURED).
+  The 2,468 lightmaps are never loaded (no client code reads `Prim\LightMap`; the ground's are
+  Map.pk2's `.t`), so the cost is the other 1,503: 122 MB as DXT1, 976 MB as RGBA8 if every one
+  were loaded at once (monsters 327, items 209, NPCs 132, world 109, characters 35 MB -- the
+  review's census). The largest are items and avatars: the four 2048x2048 `avatar_w_*arctic*`
+  textures have no mips and are 16 MB each as RGBA8. If memory matters, the target is those --
+  for example decoding only textures an alpha-tested or blended material uses, which needs the
+  material's alpha use to reach the loader.
+- L4 (the review): at a fractional UI scale the doll's picture lands at a fractional screen
+  position, so LINEAR filtering softens it by up to about half a texel; 1:1 is exact only at
+  whole-number scales. The user is at 2.0.
+- L5 (the review): the customize preview's video memory at 4K (about 120-150 MB with its depth
+  buffer) is an ESTIMATE from its size, not a measurement.
 - Not seen on the user's machine yet (Windows, their GPU): the next release's first report is the
   check. The box measured both fixes on Linux/RADV only.
 - The customize preview at 3840x2019 and scale 2.0 renders 4x the pixels it did; its frame time

@@ -150,13 +150,19 @@ static func _native_rgba(tex: ParsedTexture, pixels: PackedByteArray) -> PackedB
 ##
 ## 4.2.2 has no Image format for BC1 with alpha, and texture_rd_create refuses
 ## BC1_RGBA (_texture_format_from_rd has no entry for it). So under Forward+
-## such a texture is decoded to RGBA8 by the engine's own decoder (squish) --
-## exactly what the RD path itself does where BC1 is unsupported (the same
-## file, 1725-1731) -- and samples as Compatibility samples it: transparent
-## texels (0, 0, 0, 0), the rest as stored. It costs 8x the DXT1's memory, for
-## those textures only. A DXT1 with no transparent texel, and every DXT1 under
-## Compatibility, stays DXT1. (A DXT3 re-encode, a quarter of that memory, was
-## tried and rejected: WORLD_ISSUES round 695.)
+## such a texture is decoded on the CPU by the engine's own decoder (squish),
+## one mip level at a time (dxt1_to_rgba8), and handed to Godot as
+## Image.FORMAT_RGBA8, whose upload keeps the alpha channel. (The RD path's own
+## fallback where BC1 is unsupported, 1725-1731, decompresses too but still
+## sets swizzle_a = ONE at 1735 -- it would lose the alpha as well; it is the
+## FORMAT_RGBA8 handed over that keeps it.) Alpha then equals Compatibility's
+## texel for texel: transparent texels (0, 0, 0, 0). The colours are within a
+## few levels of what a GPU's DXT1 decoder gives (squish interpolates the
+## middle colours in integer arithmetic; GPUs differ from it and from each
+## other by about 1-3/255). It costs 8x the DXT1's memory, for those textures
+## only. A DXT1 with no transparent texel, and every DXT1 under Compatibility,
+## stays DXT1. (A DXT3 re-encode, a quarter of that memory, was tried and
+## rejected: WORLD_ISSUES round 695.)
 
 ## Tests set this: -1 asks the renderer, 0 keeps DXT1, 1 decodes. The QA
 ## A/B switch SRREVAMP_QA_DXT1_KEEP=1 (OURS) keeps DXT1 for a whole run: the
@@ -183,8 +189,11 @@ static func dxt1_needs_alpha_format() -> bool:
 ## transparent: colour0 <= colour1 (three-colour mode) and an index of 3.
 ## Through the native library when it is loaded (native/src/core/dxt.rs).
 static func dxt1_has_transparent(pixels: PackedByteArray) -> bool:
+	# Guarded by method, not by the interface number (round 695's review, L6):
+	# a library from before round 695 (an update whose DLL swap rolled back)
+	# keeps every other native reader and only this scan runs in GDScript.
 	var native := NativeAssets.parsers()
-	if native != null:
+	if native != null and native.has_method("ddj_dxt1_has_transparent"):
 		return bool(native.call("ddj_dxt1_has_transparent", pixels))
 	var n := pixels.size() >> 3
 	for b in range(n):
@@ -196,18 +205,49 @@ static func dxt1_has_transparent(pixels: PackedByteArray) -> bool:
 	return false
 
 ## The DXT1 payload decoded to RGBA8 (mip levels kept), or null when no texel
-## is transparent (it stays DXT1) or the engine could not decode it.
+## is transparent (it stays DXT1) or a level could not be decoded.
 static func _dxt1_with_alpha(tex: ParsedTexture, pixels: PackedByteArray) -> Image:
 	if not dxt1_has_transparent(pixels):
 		return null
-	var img := Image.create_from_data(tex.width, tex.height, tex.mip_map_count > 1, Image.FORMAT_DXT1, pixels)
-	if img == null or img.is_empty() or img.decompress() != OK:
+	var img := dxt1_to_rgba8(tex.width, tex.height, tex.mip_map_count > 1, pixels)
+	if img == null:
 		return null
 	_dxt1_count_lock.lock()
 	dxt1_alpha_decoded += 1
-	dxt1_alpha_bytes += pixels.size() * 8 # RGBA8 is 8x DXT1's 4 bits a texel
+	dxt1_alpha_bytes += img.get_data().size() # a copy-on-write reference, not a copy
 	_dxt1_count_lock.unlock()
 	return img
+
+## A DXT1 payload (`mipmaps`: the full chain to 1x1, as Image.create_from_data
+## lays it out) as one RGBA8 Image, decoded ONE LEVEL AT A TIME (round 695's
+## review, M1). Image.decompress on the whole chain is wrong for a non-square
+## texture in 4.2.2: squish's loop halves width and height with no floor of 1
+## (modules/squish/image_decompress_squish.cpp, `w >>= 1; h >>= 1;`), so once
+## the short side reaches 0 the remaining levels are not decoded and keep
+## whatever the buffer held (MEASURED by the review: a 256x64 texture's last
+## two levels came out (0,0,0,0), a 64x256's held leftover bytes). Each level
+## here has its own width and height, floored at 1, and the block-padded size
+## Image._get_dst_image_size gives it: ceil(w/4) x ceil(h/4) blocks of 8 bytes.
+## Null when the payload is short or a level does not decode.
+static func dxt1_to_rgba8(width: int, height: int, mipmaps: bool, pixels: PackedByteArray) -> Image:
+	var out := PackedByteArray()
+	var mw := width
+	var mh := height
+	var ofs := 0
+	while true:
+		var size := ((mw + 3) >> 2) * ((mh + 3) >> 2) * 8
+		if ofs + size > pixels.size():
+			return null
+		var level := Image.create_from_data(mw, mh, false, Image.FORMAT_DXT1, pixels.slice(ofs, ofs + size))
+		if level == null or level.is_empty() or level.decompress() != OK or level.get_format() != Image.FORMAT_RGBA8:
+			return null
+		out.append_array(level.get_data())
+		ofs += size
+		if not mipmaps or (mw == 1 and mh == 1):
+			break
+		mw = maxi(1, mw >> 1)
+		mh = maxi(1, mh >> 1)
+	return Image.create_from_data(width, height, mipmaps, Image.FORMAT_RGBA8, out)
 
 ## The body of to_image, timed by its wrapper above (ParseProfile, round 667).
 static func _pp_to_image(tex: ParsedTexture) -> Image:
