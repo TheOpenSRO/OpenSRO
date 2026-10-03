@@ -55,6 +55,32 @@ image/texture library can load `data[20:]` directly once the wrapper is stripped
 
 `FUN_00b8eb60`, cited in round 621, is a converter path the game does not run.
 
+## DXT1's transparent texels under Forward+ (round 695)
+
+- **The format** (Microsoft's, public): a DXT1 block whose colour0 <= colour1 is in three-colour
+  mode, and index 3 there is a transparent black texel (RGBA 0, 0, 0, 0). Direct3D 9 samples it
+  so; so does Godot's GL Compatibility, which uploads `COMPRESSED_RGBA_S3TC_DXT1` (READ, 4.2.2
+  `drivers/gles3/storage/texture_storage.cpp` 418-426).
+- **Godot 4.2.2's RenderingDevice renderers (Forward+, Mobile) drop it.** `Image.FORMAT_DXT1` is
+  uploaded as `BC1_RGB_UNORM` with the alpha swizzled to ONE (READ, `servers/rendering/renderer_rd/
+  storage_rd/texture_storage.cpp` 1721-1735), so the texel samples opaque black. There is no Image
+  format for BC1 with alpha, and `texture_rd_create` cannot wrap a `BC1_RGBA` texture
+  (`_texture_format_from_rd` has no entry for it, the same file 2184-2194).
+- **How many** (MEASURED, round 695, `native/examples/dxt1_alpha_census.rs`, every mip level):
+
+  | Archive | .ddj | DXT1 | DXT1 with a transparent texel | their bytes (DXT1) |
+  |---|---|---|---|---|
+  | Data.pk2 | 17,945 | 12,091 | 3,971 (2,468 of them lightmaps) | 183.8 MB |
+  | Media.pk2 | 21,641 | 11,640 | 44 | 11.4 MB |
+  | Particles.pk2 | 1,284 | 9 | 9 | 0.5 MB |
+  | Map.pk2 | 839 | 753 | 0 | 0 |
+
+- **What the client does** (DdjReader, round 695): under a RenderingDevice renderer, a DXT1 with
+  at least one transparent texel is decoded to RGBA8 by the engine's own decoder -- what the RD
+  path itself does where BC1 is unsupported (1725-1731) -- so it samples exactly as under
+  Compatibility, at 8x the DXT1's memory. Every other DXT1, and every DXT1 under Compatibility,
+  stays DXT1. The scan is native (`native/src/core/dxt.rs`) with a GDScript fallback.
+
 ## FourCC 113 ('q'): D3DFMT_A16B16G16R16F (round 621)
 
 - D3DX accepts a numeric D3DFORMAT in the FourCC slot. Four retail files store 113 there, the

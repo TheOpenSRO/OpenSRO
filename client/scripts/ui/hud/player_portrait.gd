@@ -112,6 +112,14 @@ class_name PlayerPortrait
 
 ## READ: `BufRender::FUN_009edae0(0x80, 0x80)` in Create (0x007b56ef).
 const BUFFER_SIZE := 128
+
+## The buffer for a picture covering `physical` screen pixels (round 695,
+## ViewportPixels): retail's 128x128, or a square as large as the picture's
+## longer side where that is larger -- at UI scale 2.0 the 128 buffer was
+## drawn magnified. Square, so the camera (KEEP_HEIGHT) frames the same.
+static func buffer_for(physical: Vector2i) -> Vector2i:
+	var side := maxi(BUFFER_SIZE, maxi(physical.x, physical.y))
+	return Vector2i(side, side)
 ## READ: the animation FUN_007b7740 plays, 0x3c = ANI_POSE.
 const ANI_POSE := 0x3c
 ## READ: the bone the camera anchors on (the string at 0x00da95fc).

@@ -211,9 +211,88 @@ func _init() -> void:
 		var short := q.slice(0, q.size() - 8)
 		_check(DdjReader.to_image(DdjReader.parse(short)) == null, "a short A16B16G16R16F payload is refused")
 
+	_dxt1_alpha_checks()
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
 	else:
 		print("%d FAILURES" % _failures)
 		quit(1)
+
+## Round 695: under Forward+ (BC1_RGB, alpha ONE) a DXT1's transparent texels
+## would draw opaque black, so DdjReader decodes such a texture to RGBA8 with
+## the engine's own decoder (what Compatibility samples); under Compatibility,
+## and for a DXT1 with no transparent texel, it stays DXT1. The override is set
+## through the script object so the base, which lacks it, runs these checks
+## and fails them.
+func _dxt1_block(c0: int, c1: int, idx: Array) -> PackedByteArray:
+	var b := PackedByteArray()
+	b.resize(8)
+	b.encode_u16(0, c0)
+	b.encode_u16(2, c1)
+	var v := 0
+	for i in range(16):
+		v |= int(idx[i]) << (2 * i)
+	b.encode_u32(4, v)
+	return b
+
+## A w x h DXT1 .ddj whose payload is `blocks`, with `mips` levels declared.
+func _dxt1_ddj(w: int, h: int, blocks: Array, mips: int = 1) -> PackedByteArray:
+	var buf := _build_ddj(w, h, "DXT1")
+	var off := DdjReader.WRAPPER_SIZE + 4 + DdjReader.DDS_HEADER_SIZE
+	buf.resize(off + 8 * blocks.size())
+	_put_u32(buf, DdjReader.WRAPPER_SIZE + 4 + 24, mips)
+	var at := 0
+	for blk in blocks:
+		for i in range(8):
+			buf[off + at + i] = (blk as PackedByteArray)[i]
+		at += 8
+	return buf
+
+func _dxt1_alpha_checks() -> void:
+	var reader := load("res://scripts/ddj/ddj_reader.gd") as GDScript
+	# Three-colour (c0 <= c1), every index used, index 3 transparent; then a
+	# four-colour block.
+	var idx := [0, 1, 3, 3, 1, 0, 3, 1, 0, 2, 2, 0, 3, 3, 3, 3]
+	var three := _dxt1_block(0x2104, 0x630C, idx)
+	var four := _dxt1_block(0xF800, 0x001F, [0, 1, 2, 3, 3, 2, 1, 0, 0, 1, 2, 3, 3, 2, 1, 0])
+	var data := _dxt1_ddj(8, 4, [three, four])
+	# What Compatibility samples: the engine's own DXT1 decode, alpha kept.
+	var payload := data.slice(DdjReader.WRAPPER_SIZE + 4 + DdjReader.DDS_HEADER_SIZE)
+	var want := Image.create_from_data(8, 4, false, Image.FORMAT_DXT1, payload)
+	want.decompress()
+	_check(want.get_pixel(2, 0) == Color(0, 0, 0, 0) and want.get_pixel(0, 0).a == 1.0,
+		"DXT1 reference: index 3 of a three-colour block is (0, 0, 0, 0), index 0 opaque")
+	# 8x8 with its mip chain (4 + 1 + 1 + 1 blocks), the transparent texel
+	# only in the 1x1 level: the scan covers every level, and the levels stay.
+	var mipped := _dxt1_ddj(8, 8, [four, four, four, four, four, four, _dxt1_block(0x0000, 0xFFFF, [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])], 4)
+	var modes: Array = [true]
+	if NativeAssets.library_usable():
+		modes.append(false)
+	for gd in modes:
+		NativeAssets.force_gdscript = gd
+		var path := "GDScript" if gd else "native"
+		reader.set("dxt1_alpha_override", 1)
+		var img := DdjReader.to_image(DdjReader.parse(data))
+		_check(img != null and img.get_format() == Image.FORMAT_RGBA8,
+			"Forward+ (%s): a DXT1 with transparent texels is decoded to RGBA8 (got format %s)" % [path, img.get_format() if img != null else -1])
+		if img != null and img.get_format() == Image.FORMAT_RGBA8:
+			_check(img.get_data() == want.get_data(), "Forward+ (%s): every texel, alpha and colour, is what Compatibility samples" % path)
+		var mi := DdjReader.to_image(DdjReader.parse(mipped))
+		_check(mi != null and mi.get_format() == Image.FORMAT_RGBA8 and mi.has_mipmaps() and mi.get_mipmap_count() == 3,
+			"Forward+ (%s): a transparent texel in the last mip level counts, and the levels stay (got %s, %s mips)" % [
+				path, mi.get_format() if mi != null else -1, mi.get_mipmap_count() if mi != null else -1])
+		# A DXT1 without a transparent texel stays DXT1, and so does every
+		# DXT1 under Compatibility.
+		var opaque := _dxt1_ddj(8, 4, [_dxt1_block(0x2104, 0x630C, [0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0]), four])
+		var oi := DdjReader.to_image(DdjReader.parse(opaque))
+		_check(oi != null and oi.get_format() == Image.FORMAT_DXT1, "Forward+ (%s): a DXT1 with no transparent texel stays DXT1" % path)
+		reader.set("dxt1_alpha_override", 0)
+		var ci := DdjReader.to_image(DdjReader.parse(data))
+		_check(ci != null and ci.get_format() == Image.FORMAT_DXT1, "Compatibility (%s): DXT1 stays DXT1" % path)
+	NativeAssets.force_gdscript = false
+	reader.set("dxt1_alpha_override", -1)
+	var scan_ok: bool = reader.has_method("dxt1_has_transparent") and bool(reader.call("dxt1_has_transparent", three + four)) \
+		and not bool(reader.call("dxt1_has_transparent", four))
+	_check(scan_ok, "the block scan finds index 3 only in three-colour mode")

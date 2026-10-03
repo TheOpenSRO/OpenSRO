@@ -891,6 +891,16 @@ func set_portrait(skeleton: Skeleton3D, pose: BanReader.ParsedAnimation) -> void
 	if _portrait_view != null:
 		_portrait_view.texture = _portrait.get_texture()
 		_portrait_view.visible = skeleton != null
+		# Retail's 128x128 buffer, or the picture's size on screen in physical
+		# pixels where that is larger (round 695, ViewportPixels): at UI scale
+		# 2.0 the buffer was magnified past 1:1. A new size renders again.
+		var f := ViewportPixels.attach(_portrait_view, _portrait, PlayerPortrait.buffer_for)
+		if not f.pixels_changed.is_connected(_on_portrait_pixels):
+			f.pixels_changed.connect(_on_portrait_pixels)
+
+func _on_portrait_pixels(_size: Vector2i) -> void:
+	if _portrait != null and _portrait.character() != null:
+		_portrait.request_render()
 
 ## The zone's light for the portrait: environment channel 2 (DiffuseColor)
 ## and channel 3 (ObjectAmbientColor) as World3D samples them. Retail's

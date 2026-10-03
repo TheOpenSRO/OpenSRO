@@ -161,9 +161,18 @@ func set_active(active: bool) -> void:
 func is_active() -> bool:
 	return render_target_update_mode == SubViewport.UPDATE_ALWAYS
 
+## Rendered pixels per picture pixel: the buffer follows the picture's size
+## on screen (round 695, ViewportPixels), so at UI scale 2.0 the equipment
+## view's 176x318 picture renders 352x636. 1.0 outside the equipment view.
+func pixel_scale() -> float:
+	if not _equipment_view:
+		return 1.0
+	return float(size.y) / float(EQUIP_VIEW_SIZE.y)
+
 ## Where a bone of the doll's model lands in the doll's picture (x, y in
-## pixels), or (-1, -1): the measurement for which hand is which and which
-## way the model turns (round 633's review).
+## the 176x318 picture's pixels, whatever the buffer's size), or (-1, -1):
+## the measurement for which hand is which and which way the model turns
+## (round 633's review).
 func bone_on_screen(bone: String) -> Vector2:
 	var skel := _character as Skeleton3D
 	if skel == null or not skel.is_inside_tree():
@@ -171,7 +180,7 @@ func bone_on_screen(bone: String) -> Vector2:
 	var i := skel.find_bone(bone)
 	if i < 0:
 		return Vector2(-1, -1)
-	return _camera.unproject_position(skel.global_transform * skel.get_bone_global_pose(i).origin)
+	return _camera.unproject_position(skel.global_transform * skel.get_bone_global_pose(i).origin) / pixel_scale()
 
 ## How far, in pixels, a point 3 units in front of the head lands right of
 ## the head in the picture: positive when the face is turned toward the
@@ -186,7 +195,7 @@ func facing_screen_dx() -> float:
 		return 0.0
 	var head := skel.global_transform * skel.get_bone_global_pose(i).origin
 	var fwd := (_mirror.global_transform.basis * _pivot.transform.basis * Vector3(0, 0, -1)).normalized()
-	return _camera.unproject_position(head + fwd * 3.0).x - _camera.unproject_position(head).x
+	return (_camera.unproject_position(head + fwd * 3.0).x - _camera.unproject_position(head).x) / pixel_scale()
 
 ## Turns the model to `yaw` radians -- CIFEquipment's +0x578, which the rotate
 ## arrows move and the circle zeroes (HudPanels, "Turning the paper doll").

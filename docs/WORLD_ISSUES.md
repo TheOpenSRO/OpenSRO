@@ -7094,6 +7094,240 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-ninety-fifth round: cut-out textures are see-through again under Forward+ -- tree leaves, hair, fences -- and the inventory's character renders at the screen's own resolution
+
+The user (2026-10-02, on v0.1.480, the first release drawing with Forward+ by default; Windows,
+3840 x 2019, UI scale 2.0, Video preset High): "there's a ton of textures now that aren't
+transparent including even some hair" (a screenshot in the Dunhuang/Hotan desert: the trees' leaf
+cards drawn as solid dark quads) and "the preview character in the inventory is much lower
+resolution than the game. Can you make that the same resolution as the actual character please?"
+Lane `alpha695`, client. Labels: READ (Godot 4.2.2-stable source), MEASURED (the render box, RX
+7600), INFERRED, OURS.
+
+### 1. The cut-outs: Forward+ uploads DXT1 without its alpha
+
+**The cause (READ, Godot 4.2.2-stable).**
+- A DXT1 block whose colour0 <= colour1 is in three-colour mode, and its index 3 is a transparent
+  black texel (RGBA 0,0,0,0) -- the format's own rule.
+- GL Compatibility uploads `Image.FORMAT_DXT1` as `_EXT_COMPRESSED_RGBA_S3TC_DXT1_EXT`
+  (`drivers/gles3/storage/texture_storage.cpp` 418-426): the transparent texels stay transparent.
+- The RenderingDevice renderers (Forward+, Mobile) upload it as `DATA_FORMAT_BC1_RGB_UNORM_BLOCK`
+  with `swizzle_a = TEXTURE_SWIZZLE_ONE` (`servers/rendering/renderer_rd/storage_rd/
+  texture_storage.cpp` 1721-1735): alpha is 1 everywhere, and BC1_RGB decodes index 3 as black. The
+  client's alpha test (`ObjectLoader._mod_shader`'s discard below ALPHA_TEST_REF) then keeps every
+  texel, so the card draws as its whole quad, black where it should be empty.
+- Nothing in rounds 693/694's shader work touched this: the shaders sample the texture's alpha as
+  before. It is the texture upload, and only under Forward+ -- which is why it appeared with the
+  first Forward+ release. The other suspects (round 693's `ShaderColour`, Texture Filtering's
+  MSAA, Texture Detail's mip bias, the native readers) are not involved: the card measurement
+  below fails and passes with none of them in play.
+- There is no way to keep it DXT1: 4.2.2 has no Image format for BC1 with alpha, and
+  `texture_rd_create` cannot wrap a `BC1_RGBA` texture (`_texture_format_from_rd`, 2184-2194, has
+  no entry for it; `texture_rd_initialize` fails on FORMAT_MAX).
+
+**How many (MEASURED, `native/examples/dxt1_alpha_census.rs`, every mip level):** 4,024 of the
+archives' 24,493 DXT1 textures mark a texel transparent -- Data.pk2 3,971 of 12,091 (183.8 MB;
+2,468 of them lightmaps, 388 monster, 252 building, 210 NPC, 183 item, 67 character textures --
+the hair among them), Media.pk2 44 of 11,640, Particles.pk2 9 of 9, Map.pk2 0 of 753. 23 have
+their transparent texels only below mip 0 (seen only at a distance).
+
+**The measurement (MEASURED, `client/tools/measure_alpha_cards.gd`).** Nine real cut-out textures
+(the Hotan tree's leaf and branch cards, four hairs, a willow leaf, a ship's planking), each built
+by DdjReader as the game builds it, drawn 1:1 with the client's alpha test over magenta; the cut
+fraction read back from the frame against the engine's own CPU decode of the same payload:
+
+| Texture | expected cut | Compatibility | Forward+ before (DXT1) | Forward+ after |
+|---|---|---|---|---|
+| `w_cd_hotree_leaf01` | 0.7115 | 0.7115 | **0.0000** | 0.7115 |
+| `w_cd_hotree_al01` | 0.5193 | 0.5193 | **0.0000** | 0.5193 |
+| `w_cd_hotree_al02` | 0.8780 | 0.8780 | **0.0000** | 0.8780 |
+| `chinaman_bogy_hair` | 0.0140 | 0.0140 | **0.0000** | 0.0140 |
+| `chinawoman_scholar_hair` | 0.2140 | 0.2140 | **0.0000** | 0.2140 |
+| `chinawoman_fighter_hair` | 0.2100 | 0.2100 | **0.0000** | 0.2100 |
+| `europewoman_angel_hair` | 0.1666 | 0.1666 | **0.0000** | 0.1666 |
+| `tre_willow03_leaf01` | 0.7984 | 0.7984 | **0.0000** | 0.7984 |
+| `ruin_takl_wood_07` | 0.0513 | 0.0513 | **0.0000** | 0.0513 |
+
+**The fix.** Under a RenderingDevice renderer, DdjReader decodes a DXT1 with at least one
+transparent texel to RGBA8 with the engine's own decoder (squish, mip levels kept) -- exactly what
+the RD path itself does where BC1 is unsupported (1725-1731) -- so it samples texel for texel as
+Compatibility samples it, transparent texels (0,0,0,0) included. Every other DXT1 stays DXT1, and
+every DXT1 under Compatibility (`ddj_reader_test.gd` checks both). The scan is native
+(`native/src/core/dxt.rs`, `SrNativeParsers.ddj_dxt1_has_transparent`, interface 6): all 24,493
+DXT1s of the four archives in 0.053 s (MEASURED); a GDScript loop is the fallback without the
+library. `native_parity.gd` compares the two scans on every DXT1 of the real archives.
+
+**A DXT3 re-encode was tried first and rejected (MEASURED).** It would cost a quarter of RGBA8's
+memory (8 bits a texel against 32), but a four-colour palette cannot hold a three-colour block's
+two colours, its midpoint and its transparent black at once. Fitted block by block over the
+archives: alpha exact, but 1,256,345 of 1,278,659 midpoint blocks inexact, 0.42 % of opaque texels
+off by more than 8/255 and up to 37/255, and the transparent texels lose their black -- which an
+alpha-blended edge, a lightmap (2,468 of these textures) or an opaque material samples.
+
+**The world (MEASURED, region 102/154, Hotan trees `w_cd_hotree01`, 1280x720, Middle):** each
+Forward+ frame against the same frame under Compatibility, the fraction of pixels off by more than
+32 levels (`frame_ab.py`):
+
+| View | Forward+ before | Forward+ after |
+|---|---|---|
+| tree (close, behind the player) | 0.044 | 0.000 |
+| far (the trees against the sky) | 0.040 | 0.002 |
+| side | 0.044 | 0.001 |
+| the player close up (body 1920) | 0.009 | 0.009 (its hair has no transparent texel; the rest is round 693's blending, unchanged) |
+
+Sky-blue pixels in the upper 45 % of the far view: 0.4645 before, 0.5342 after, 0.5327 under
+Compatibility. The run decoded 44 such textures to RGBA8 (QA ENTRY's `dxt1_alpha_rgba8`):
+12.8 MB as RGBA8 against 1.6 MB as DXT1, so 11.2 MB more video memory there.
+
+**At the user's preset (High: Texture Filtering On = MSAA 2x under Forward+, Texture Detail High,
+`SRREVAMP_QA_VIDEO=quality=2`) the result is the same:** pixels off by more than 32 against
+Compatibility 0.044 / 0.040 / 0.044 before, 0.000 / 0.002 / 0.001 after; the far view's sky
+0.4645 before, 0.5343 after. And the card measurement with the SubViewport at MSAA 2x
+(`--msaa=2`): before 0.0000 for all nine, after all nine MATCH. So MSAA, the mip bias and the
+preset play no part; the DXT1 upload is the whole cause.
+
+Shots on the box (1280x720): `/var/tmp/alpha695/head-fplus-keep/` (before),
+`head-fplus/` (after), `head-compat/` (Compatibility), `head-fplus-high-keep/` and
+`head-fplus-high/` (High); the views are frames 16 (tree), 44 (far), 72 (the player) and 100
+(side).
+
+**Every alpha path** goes through this one reader: object and building cards (the MTRL mod
+shader's alpha test), characters' hair and cloaks (the same materials), the appear/disappear fade
+twins (they share the textures), the `.efp` particles (Particles.pk2's 9), the interface art
+(Media.pk2's 44), and the water (Map.pk2: none). No path draws a DXT1 any other way
+(`Image.FORMAT_DXT1` is created only in `ddj_reader.gd` and in `mapt_reader.gd`, the `.t` ground
+tiles, which hold no transparent texel and are decompressed on the CPU anyway).
+
+### 2. The paper doll: rendered at the UI's units, magnified by the UI scale
+
+**The cause (READ, our code).** `PaperDoll.use_equipment_view` renders a fixed 176x318 -- the
+pane's rect in UI units, READ in round 633 -- and HudPanels draws it in a 176x318 TextureRect. The
+UI scale is the window's content scale (`ClientSettings.apply_ui_scale`: the canvas is the window
+divided by the scale and stretched back up), so at the user's 2.0 the picture covers 352x636
+screen pixels and each rendered pixel was drawn 2x2. Not a fractional-scale artefact: at 2.0 it is
+exactly half resolution. The same held for the customize screen's model (its SubViewport took the
+screen's size in UI units, 1920x1010 at 3840x2019 and 2.0). The player block's portrait was not
+affected at 2.0 (below).
+
+**The fix.** `ViewportPixels` (new, `client/scripts/ui/viewport_pixels.gd`), a child of the
+TextureRect, keeps the SubViewport at the rect's size on screen in physical pixels -- the rect's
+size through its canvas transform and the window's stretch -- and follows the rect's resizes, the
+window's size and the UI scale (the window's `size_changed`, which `Window::_update_viewport_size`
+emits for both). Applied to the paper doll, the customize preview and the portrait (retail's
+128x128 buffer, READ, kept as the floor: the buffer is a square of max(128, the picture's longer
+side)). The cameras keep their height (`KEEP_HEIGHT`) or the portrait's square, so the picture is
+the same, with more pixels. The doll's pose log stays in the 176x318 picture's pixels
+(`PaperDoll.pixel_scale`). Each size change logs one `ViewportPixels:` line with the filter the
+picture is drawn with. Round 672's crisp text is untouched: it sets NEAREST on text nodes only,
+and the doll's TextureRect inherits the viewport's default, LINEAR (MEASURED in the game's log
+line below). At 1:1 the filter no longer magnifies anything; NEAREST is not wanted for a 3D picture.
+(`CharacterPreview` has no user in the game and keeps its fixed size.)
+
+**MEASURED (headless, `inventory_pages_test.gd`, the real HudPanels):**
+
+| UI scale | picture on screen | doll renders (before) | doll renders (after) | texels per pixel before / after |
+|---|---|---|---|---|
+| 1.00 | 176x318 | 176x318 | 176x318 | 1.000 / 1.000 |
+| 1.50 | 264x477 | 176x318 | 264x477 | 0.667 / 1.000 |
+| 1.95 | 343x621 | 176x318 | 343x621 | 0.512 / 1.000 |
+| 2.00 | 352x636 | 176x318 | 352x636 | 0.500 / 1.000 |
+
+**MEASURED in the game (Forward+, 3840x2160, `SRREVAMP_QA_UI_SCALE=2.0`, the inventory open at
+the Jangan spawn, the China fighter in the starter set):** the log says `ViewportPixels: PaperDoll
+(176, 318) -> (352, 636) for (176, 318) UI units x (2, 2) on screen (drawn with filter linear (the
+viewport's default))`. In the frame, over a 200x520 box on the doll's body: mean |Laplacian| of luma
+9.67 before (v0.1.480 with the same QA hook) against 23.39 after, 2.4x the detail. Side by side:
+`/var/tmp/alpha695/doll_before_after.png` on the box (frames `base-doll/f00000038.png`,
+`head-doll/f00000052.png`). The portrait's picture covers 96x96 screen pixels at 2.0 (MEASURED,
+the `portrait dressed` line), under retail's 128x128 buffer, so it was never magnified and its
+buffer stays 128: the follower only matters there at a scale above 2.67. Cost: the doll's buffer is 352x636
+RGBA8, 0.9 MB (INFERRED from the size); the customize preview at 3840x2019 renders 4x the pixels
+it did at 1920x1010 (about 31 MB of colour, INFERRED; its frame time is not measured).
+
+A QA run dresses the player before the HUD exists, and `_refresh_paper_doll` returns without
+panels, so a QA run never had a doll; the panels' creation now builds it for a body already
+dressed, as the player block already did for the portrait (round 635).
+
+### Tests, and their FAIL lines against the base (17f7cf29, v0.1.480)
+
+- `client/scripts/ddj/ddj_reader_test.gd` (synthetic DXT1 blocks, both readers): under the
+  Forward+ path a DXT1 with transparent texels becomes RGBA8 equal byte for byte to the engine's
+  decode; a transparent texel in the last mip level counts and the levels stay; a DXT1 without one,
+  and every DXT1 under Compatibility, stays DXT1. Against the base:
+  ```
+  FAIL Forward+ (GDScript): a DXT1 with transparent texels is decoded to RGBA8 (got format 17)
+  FAIL Forward+ (GDScript): a transparent texel in the last mip level counts, and the levels stay (got 17, 3 mips)
+  FAIL the block scan finds index 3 only in three-colour mode
+  ```
+- `client/scripts/ui/hud/inventory_pages_test.gd`: the doll at scales 1.0, 2.0, 1.5, 1.95.
+  Against the base:
+  ```
+  FAIL HudPanels.set_paper_doll_texture takes the doll's SubViewport, to size it
+  FAIL at UI scale 2.00 the doll renders (352, 636) for the (352, 636) pixels it covers (got (176, 318))
+  FAIL at UI scale 2.00 one rendered pixel is one screen pixel (texels per pixel 0.500)
+  FAIL at UI scale 1.50 the doll renders (264, 477) for the (264, 477) pixels it covers (got (176, 318))
+  FAIL at UI scale 1.50 one rendered pixel is one screen pixel (texels per pixel 0.667)
+  FAIL at UI scale 1.95 the doll renders (343, 621) for the (343, 621) pixels it covers (got (176, 318))
+  FAIL at UI scale 1.95 one rendered pixel is one screen pixel (texels per pixel 0.512)
+  ```
+- `client/scripts/ui/viewport_pixels_test.gd` (new): resize, scale 2.0 and 1.95, the portrait's
+  128 floor and square, the follower freed with its rect. Against the base it does not compile
+  (`ViewportPixels` does not exist).
+- `native/src/core/dxt.rs` unit tests; the `parity-negative` build reads a one-colour block as
+  four-colour and fails them.
+- The render check: `measure_alpha_cards.gd` (the table above).
+
+Results (the head, the box, the native library loaded): `remote_godot.sh check` ALL LOAD (550
+scripts, 9 scenes); `remote_godot.sh tests` 212 suites, 0 failing; `cargo test --locked
+--no-default-features` 45 passed, and with `--features parity-negative` the dxt test fails
+(`index_3_is_transparent_only_in_three_colour_mode`). `native_parity.gd` over the
+four real archives: PARITY PASS, 24,493 DXT1 scans compared GDScript against native (12,091 /
+753 / 11,640 / 9), 4,024 with a transparent texel (3,971 / 0 / 44 / 9), 209 s.
+
+### Performance
+
+`client/tools/perf_gate.sh --sites jangan,hotan --frames 12000` (base 17f7cf29 against this
+round, both Forward+, both WITHOUT the native library -- so the GDScript scan, the slowest path,
+is what is timed; 1280x720, median of 3):
+
+```
+jangan  frame ms   base 1.65  head 1.65  (+0.0)  SAME
+jangan  entry ms   base 9266  head 9411  (+145.0)  SAME
+jangan  freeze ms  base 3258  head 3314  (+56.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+hotan   frame ms   base 1.84  head 1.85  (+0.0)  SAME
+hotan   entry ms   base 9718  head 9832  (+114.0)  SAME
+hotan   freeze ms  base 3321  head 3401  (+80.0)  SAME
+hotan   hitches    base 6  head 6  (+0.0)  SAME
+```
+
+`perf_gate.sh --ab-renderer gl_compatibility --sites jangan --frames 12000` (this round on
+Compatibility against this round on Forward+):
+
+```
+jangan  frame ms   base 2.64  head 1.65  (-1.0)  FASTER
+jangan  entry ms   base 9338  head 9374  (+36.0)  SAME
+jangan  freeze ms  base 3225  head 3321  (+96.0)  SAME
+jangan  hitches    base 5  head 4  (-1.0)  SAME
+```
+
+(The first base/head attempt at the gate's default 3,000 frames failed for missing numbers: at
+1.65 ms a frame Forward+ quits before 10 samples -- round 694's note; 12,000 frames is the setting.)
+
+### OPEN
+
+- The VRAM of the RGBA8 cards is 8x their DXT1 (above: 11.2 MB more in the Hotan desert at
+  radius 1; dungeon lightmaps, 2,468 of the 4,024, are the largest share and are not measured in a
+  dungeon). If a low-memory GPU needs it, the next step is to decode only textures that an
+  alpha-tested or blended material uses and leave lightmaps DXT1 (they sample RGB only, where
+  BC1_RGB's black is already right) -- that needs the material to reach the loader.
+- Not seen on the user's machine yet (Windows, their GPU): the next release's first report is the
+  check. The box measured both fixes on Linux/RADV only.
+- The customize preview at 3840x2019 and scale 2.0 renders 4x the pixels it did; its frame time
+  there is not measured. The paper doll's frame cost at 352x636 is not separated from the world's.
+- A 2D `Control.scale` on a preview's ancestors is not followed (only sizes and the window's
+  scale are); nothing in the UI scales a Control today.
+
 ## Six-hundred-and-ninety-fourth round: the Option window's Video tab -- retail's rows, presets, two Graphic records and brightness curve, each mapped to a Godot effect or marked as drawing nothing here, plus SSAO and the Bloom row as Godot glow
 
 The user (2026-10-02): "Add SSAO and glow as toggable options in Esc -> Option -> Video tab alongside

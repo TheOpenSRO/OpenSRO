@@ -137,6 +137,78 @@ static func _native_rgba(tex: ParsedTexture, pixels: PackedByteArray) -> PackedB
 			tex.r_mask, tex.g_mask, tex.b_mask, tex.a_mask)
 	return d.get("rgba", PackedByteArray())
 
+## **DXT1's transparent texels under Forward+ (round 695).** Godot 4.2.2's
+## RenderingDevice renderers (Forward+, Mobile) upload Image.FORMAT_DXT1 as
+## Vulkan's BC1_RGB with the alpha swizzled to ONE (READ: servers/rendering/
+## renderer_rd/storage_rd/texture_storage.cpp 1721-1735), so a texel a
+## three-colour DXT1 block marks transparent (index 3) samples as opaque
+## black. GL Compatibility uploads COMPRESSED_RGBA_S3TC_DXT1 (drivers/gles3/
+## storage/texture_storage.cpp 418-426) and keeps it transparent. From round
+## 693 (Forward+ by default) every alpha-tested card in such a texture -- tree
+## leaves, hair, fences -- drew as a solid dark quad. 4,024 of the archives'
+## 24,493 DXT1 textures mark a texel transparent (MEASURED, round 695).
+##
+## 4.2.2 has no Image format for BC1 with alpha, and texture_rd_create refuses
+## BC1_RGBA (_texture_format_from_rd has no entry for it). So under Forward+
+## such a texture is decoded to RGBA8 by the engine's own decoder (squish) --
+## exactly what the RD path itself does where BC1 is unsupported (the same
+## file, 1725-1731) -- and samples as Compatibility samples it: transparent
+## texels (0, 0, 0, 0), the rest as stored. It costs 8x the DXT1's memory, for
+## those textures only. A DXT1 with no transparent texel, and every DXT1 under
+## Compatibility, stays DXT1. (A DXT3 re-encode, a quarter of that memory, was
+## tried and rejected: WORLD_ISSUES round 695.)
+
+## Tests set this: -1 asks the renderer, 0 keeps DXT1, 1 decodes. The QA
+## A/B switch SRREVAMP_QA_DXT1_KEEP=1 (OURS) keeps DXT1 for a whole run: the
+## pre-695 drawing, for a before picture and a cost comparison.
+static var dxt1_alpha_override := -1
+static var _dxt1_rd := -1
+## How many DXT1s were decoded to RGBA8 this way, and their RGBA8 bytes
+## (QA ENTRY's line; round 695).
+static var dxt1_alpha_decoded := 0
+static var dxt1_alpha_bytes := 0
+static var _dxt1_count_lock := Mutex.new()
+
+## True when DXT1's alpha would be lost: a RenderingDevice renderer drawing.
+static func dxt1_needs_alpha_format() -> bool:
+	if dxt1_alpha_override >= 0:
+		return dxt1_alpha_override == 1
+	if _dxt1_rd < 0:
+		# RendererChoice.running()'s test: headless draws nothing.
+		_dxt1_rd = 1 if DisplayServer.get_name() != "headless" and RenderingServer.get_rendering_device() != null \
+			and OS.get_environment("SRREVAMP_QA_DXT1_KEEP") != "1" else 0
+	return _dxt1_rd == 1
+
+## True when any whole 8-byte block of a DXT1 payload marks a texel
+## transparent: colour0 <= colour1 (three-colour mode) and an index of 3.
+## Through the native library when it is loaded (native/src/core/dxt.rs).
+static func dxt1_has_transparent(pixels: PackedByteArray) -> bool:
+	var native := NativeAssets.parsers()
+	if native != null:
+		return bool(native.call("ddj_dxt1_has_transparent", pixels))
+	var n := pixels.size() >> 3
+	for b in range(n):
+		var o := b << 3
+		if pixels.decode_u16(o) <= pixels.decode_u16(o + 2):
+			var idx := pixels.decode_u32(o + 4)
+			if idx & (idx >> 1) & 0x55555555 != 0:
+				return true
+	return false
+
+## The DXT1 payload decoded to RGBA8 (mip levels kept), or null when no texel
+## is transparent (it stays DXT1) or the engine could not decode it.
+static func _dxt1_with_alpha(tex: ParsedTexture, pixels: PackedByteArray) -> Image:
+	if not dxt1_has_transparent(pixels):
+		return null
+	var img := Image.create_from_data(tex.width, tex.height, tex.mip_map_count > 1, Image.FORMAT_DXT1, pixels)
+	if img == null or img.is_empty() or img.decompress() != OK:
+		return null
+	_dxt1_count_lock.lock()
+	dxt1_alpha_decoded += 1
+	dxt1_alpha_bytes += pixels.size() * 8 # RGBA8 is 8x DXT1's 4 bits a texel
+	_dxt1_count_lock.unlock()
+	return img
+
 ## The body of to_image, timed by its wrapper above (ParseProfile, round 667).
 static func _pp_to_image(tex: ParsedTexture) -> Image:
 	var pixels := tex.dds.slice(4 + DDS_HEADER_SIZE)
@@ -151,7 +223,12 @@ static func _pp_to_image(tex: ParsedTexture) -> Image:
 
 	match tex.four_cc:
 		"DXT1":
-			image = Image.create_from_data(tex.width, tex.height, tex.mip_map_count > 1, Image.FORMAT_DXT1, pixels)
+			# Under Forward+ a DXT1 with transparent texels changes format
+			# (round 695, dxt1_needs_alpha_format); null keeps it DXT1.
+			if dxt1_needs_alpha_format():
+				image = _dxt1_with_alpha(tex, pixels)
+			if image == null:
+				image = Image.create_from_data(tex.width, tex.height, tex.mip_map_count > 1, Image.FORMAT_DXT1, pixels)
 		"DXT2", "DXT3":
 			# DXT2 and DXT3 are bit-identical block formats -- the only real
 			# difference is whether DXT2's color channels are premultiplied

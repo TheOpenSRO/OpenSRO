@@ -24,7 +24,8 @@ class_name NativeAssets
 ## both numbers, and the client reads in GDScript. Bump both together.
 ## 4: rounds 669-671 merged; each lane alone was 3, and is refused.
 ## 5: round 677, SrNativeTables.char_decay_by_code.
-const NATIVE_API := 5
+## 6: round 695, SrNativeParsers.ddj_dxt1_has_transparent.
+const NATIVE_API := 6
 
 ## The native pk2 archive class (native/src/gd.rs).
 const PK2_CLASS := "SrNativePk2"

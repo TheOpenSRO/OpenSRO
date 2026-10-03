@@ -179,6 +179,13 @@ impl SrNativeParsers {
         result(ddj::decode_masked(pixels.as_slice(), width.max(0) as u64, height.max(0) as u64, bpp.max(0) as u64, &masks))
     }
 
+    /// DdjReader's DXT1 branch under Forward+ (round 695, core::dxt): whether any whole 8-byte
+    /// block of the payload (every mip level) marks a texel transparent.
+    #[func]
+    fn ddj_dxt1_has_transparent(&self, pixels: PackedByteArray) -> bool {
+        crate::core::dxt::has_transparent(pixels.as_slice())
+    }
+
     /// DdjReader's A16B16G16R16F decode: {rgba} or {error}.
     #[func]
     fn ddj_decode_half(&self, pixels: PackedByteArray, width: i64, height: i64) -> VarDictionary {
