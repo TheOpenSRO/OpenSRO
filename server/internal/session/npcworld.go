@@ -55,6 +55,12 @@ type npcWorld struct {
 
 var npcWorldRuntime atomic.Pointer[npcWorld]
 
+// enterWorldBeforeResultHook, when set, runs in the world entry between
+// hub.Enter and the OpEnterWorldResult send: a test's way to put an area of
+// interest tick in that gap (TestNPCWindowSurvivesATickBeforeTheEntryResult).
+// nil in production.
+var enterWorldBeforeResultHook func(sess *gateway.Session)
+
 // InstallNPCs installs the NPC runtime with npcs, filed under the zone and
 // cell each stands in: the one world frame under -single-frame (read now, so
 // call it after SetSingleFrame), else every named zone whose centre is
@@ -170,6 +176,13 @@ func (w *npcWorld) reconcile(ents []world.Entity) {
 			continue
 		}
 		if err := o.sess.SendBatch(frames...); err != nil {
+			// Not sent (round 708's review, LOW 1): forget the window, so a
+			// session that is still there is sent it whole next tick.
+			w.mu.Lock()
+			if w.sent[o.sess.ID()] == o.cell {
+				delete(w.sent, o.sess.ID())
+			}
+			w.mu.Unlock()
 			continue
 		}
 		if w.logger != nil {

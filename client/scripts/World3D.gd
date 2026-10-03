@@ -7125,8 +7125,15 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 func _on_npc_spawned(rec: NpcSpawnNet.Record) -> void:
 	if rec == null:
 		return
-	_remove_npc_holder(rec.uid)
 	var old: NpcSpawnNet.Record = _npc_records.get(rec.uid)
+	# The same spawn again (round 708's review: the server re-sends the
+	# window after a world entry, and a window sent just before it is sent
+	# twice) leaves the placed NPC alone -- rebuilding it would close a talk
+	# window open on it and restart its idle.
+	if old != null and old.same_placement(rec):
+		_npc_records[rec.uid] = rec
+		return
+	_remove_npc_holder(rec.uid)
 	if old != null:
 		var old_key := "%d_%d" % [old.region_x, old.region_y]
 		if _npc_uids_by_region.has(old_key):

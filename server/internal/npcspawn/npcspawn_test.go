@@ -201,6 +201,7 @@ func testDB() *nest.DB {
 		10: {ID: 10, ObjID: 2001},
 		11: {ID: 11, ObjID: 2002},
 		12: {ID: 12, ObjID: 9999},
+		13: {ID: 13, ObjID: 2003},
 	}
 	nests := []nest.NestRow{
 		{ID: 1, TacticsID: 10, Region: 25000, X: 100.0001, Y: 3, HasY: true, Z: 200, Dir: 16384}, // 2001's own
@@ -208,23 +209,27 @@ func testDB() *nest.DB {
 		{ID: 3, TacticsID: 11, Region: 25000, X: 302, Z: 300, Dir: 2},                            // 2002's own, 2 away: too far
 		{ID: 4, TacticsID: 10, Region: 25001, X: 100, Z: 200, Dir: 3},                            // 2001's in another region
 		{ID: 5, TacticsID: 10, Region: 25000, X: 500, Z: 500, Dir: 49152},                        // 2001's second spot
+		{ID: 6, TacticsID: 13, Region: 25000, X: 1000, Z: 1000, Dir: 7},                          // 2003's own, 201 off its row
 	}
 	return nest.NewDB(tactics, nests, nil)
 }
 
 // The join: a row takes the nest of its own species within the tolerance --
-// not another species' nest at the same spot, not its own two units off, not
-// one in another region -- and gets the nest's position and wInitialDir; the
-// rest keep their npcpos position, with no angle.
+// not another species' nest at the same spot, not one in another region --
+// and gets the nest's position and wInitialDir. A row with none takes, in the
+// second pass, the nearest unclaimed own-species nest of its region within
+// NearRadius (here 2002's, two units off). The rest keep their npcpos
+// position, with no angle.
 func TestPlaceJoin(t *testing.T) {
 	rows := []Row{
 		{RefID: 2001, Region: 25000, X: 100, Y: 0, Z: 200},
 		{RefID: 2002, Region: 25000, X: 300, Y: 0, Z: 300},
 		{RefID: 2001, Region: 25000, X: 500.5, Y: 0, Z: 500},
 		{RefID: 2001, Region: 25000, X: 100.2, Y: 0, Z: 200}, // a second row on nest 1: taken
+		{RefID: 2003, Region: 25000, X: 1201, Y: 0, Z: 1000}, // its nest 201 off: beyond NearRadius
 	}
 	npcs, rep := Place(rows, testDB(), nil, nil)
-	if rep.Rows != 4 || rep.FromNest != 2 || rep.FromNpcpos != 2 || rep.NestTaken != 1 {
+	if rep.Rows != 5 || rep.FromNest != 3 || rep.FromNpcpos != 2 || rep.Near != 1 || rep.NestTaken != 1 {
 		t.Fatalf("report %+v", rep)
 	}
 	byPos := map[[2]float32]NPC{}
@@ -241,8 +246,11 @@ func TestPlaceJoin(t *testing.T) {
 	if n.Source != FromNest || n.NestID != 1 || n.Angle != 16384 || n.X != float32(100.0001) || n.Y != 3 {
 		t.Errorf("row on nest 1: %+v", n)
 	}
-	if n := byPos[[2]float32{300, 300}]; n.Source != FromNpcpos || n.Angle != 0 {
-		t.Errorf("the row with only another species' nest: %+v", n)
+	if n := byPos[[2]float32{302, 300}]; n.Source != FromNest || !n.Near || n.NestID != 3 || n.Angle != 2 {
+		t.Errorf("the row beside its own nest (second pass): %+v", n)
+	}
+	if n := byPos[[2]float32{1201, 1000}]; n.Source != FromNpcpos || n.Angle != 0 {
+		t.Errorf("the row 201 from its nest: %+v", n)
 	}
 	if n := byPos[[2]float32{500, 500}]; n.Source != FromNest || n.Angle != 49152 || n.NestID != 5 {
 		t.Errorf("row on nest 5: %+v", n)
@@ -255,7 +263,7 @@ func TestPlaceJoin(t *testing.T) {
 		uids[n.UID] = true
 	}
 	npcs, rep = Place(rows, nil, nil, nil)
-	if rep.FromNest != 0 || rep.FromNpcpos != 4 {
+	if rep.FromNest != 0 || rep.FromNpcpos != 5 {
 		t.Fatalf("no DB: %+v", rep)
 	}
 	for _, n := range npcs {

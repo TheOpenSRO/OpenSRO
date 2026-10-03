@@ -41,6 +41,9 @@ type NPC struct {
 	Code   string // characterdata CodeName, "" without an NPC table
 	Source Source
 	NestID int64
+	// Near: the nest came from the second pass (NearRadius), not from the
+	// row's own spot.
+	Near bool
 }
 
 // UIDBase is the first unique id an NPC gets: OpenSRO's monsters and
@@ -54,6 +57,19 @@ const UIDBase uint32 = 0x7f000000
 // 0.0002 units).
 const JoinTolerance = nest.JoinTolerance
 
+// NearRadius is the second pass's reach (round 708's review; OURS, from a
+// measurement): an npcpos row with no nest of its own within JoinTolerance
+// takes the nearest unclaimed nest of its own species in its own region
+// within this many units. In the original the server's NPCs ARE the nests
+// (Nest_Hatch places each at its nest; npcpos is the client's table), so a
+// nest of the NPC's own species a short way off is where that server puts
+// it. MEASURED on the user's shard (EXTERNAL): two rows take one this way --
+// NPC_CH_EVENT_KISAENG1 in region 26265 (its nest 58 units off) and
+// NPC_BATTLE_ARENA_MANAGER in the same region (178 off) -- and no other row
+// has an own-species nest in its region at any distance. That the shard
+// moved those two (rather than meaning another NPC) is INFERRED.
+const NearRadius = 200.0
+
 // Info is what the placement needs of an NPC's reference row.
 type Info struct {
 	Code string
@@ -65,8 +81,12 @@ type Report struct {
 	// NestTaken is the rows whose only own-species nests were claimed by an
 	// earlier row (they fall back to npcpos).
 	NestTaken int
-	// MaxDist is the farthest a claimed nest stood from its row.
+	// MaxDist is the farthest a claimed nest stood from its row (first pass).
 	MaxDist float64
+	// Near is the rows placed by the second pass (NearRadius), NearMaxDist
+	// the farthest of those nests from its row.
+	Near        int
+	NearMaxDist float64
 }
 
 // Place builds the NPCs from rows: each row is placed at its own nest -- the
@@ -146,6 +166,45 @@ func Place(rows []Row, db *nest.DB, info func(int64) (Info, bool), interactions 
 		own[p.row], used[p.nest] = p.nest, true
 		rep.MaxDist = math.Max(rep.MaxDist, p.d)
 	}
+	// The second pass (NearRadius): the rows still without a nest take the
+	// nearest unclaimed nest of their own species in their region.
+	near := make([]bool, len(rows))
+	if db != nil {
+		var far []pair
+		for i, r := range rows {
+			if own[i] >= 0 {
+				continue
+			}
+			for _, k := range byRegion[r.Region] {
+				n := &db.Nests[k]
+				t := db.Tactics[n.TacticsID]
+				if used[k] || t == nil || t.ObjID != r.RefID {
+					continue
+				}
+				if d := math.Hypot(n.X-r.X, n.Z-r.Z); d <= NearRadius {
+					far = append(far, pair{i, k, d})
+				}
+			}
+		}
+		sort.SliceStable(far, func(x, y int) bool {
+			a, b := far[x], far[y]
+			if a.d != b.d {
+				return a.d < b.d
+			}
+			if a.row != b.row {
+				return a.row < b.row
+			}
+			return a.nest < b.nest
+		})
+		for _, p := range far {
+			if own[p.row] >= 0 || used[p.nest] {
+				continue
+			}
+			own[p.row], used[p.nest], near[p.row] = p.nest, true, true
+			rep.Near++
+			rep.NearMaxDist = math.Max(rep.NearMaxDist, p.d)
+		}
+	}
 	out := make([]NPC, 0, len(rows))
 	for i, r := range rows {
 		n := NPC{Record: Record{RefID: uint32(r.RefID), UID: UIDBase + uint32(i), Region: uint16(r.Region),
@@ -158,6 +217,7 @@ func Place(rows []Row, db *nest.DB, info func(int64) (Info, bool), interactions 
 				n.Y = float32(ns.Y)
 			}
 			n.Angle = ns.Dir
+			n.Near = near[i]
 			rep.FromNest++
 		} else {
 			if within[i] {

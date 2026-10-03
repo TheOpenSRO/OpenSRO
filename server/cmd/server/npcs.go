@@ -102,7 +102,7 @@ func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.
 			c[1]++
 		}
 		byArea[area] = c
-		logger.Debug("npc placed", "uid", n.UID, "ref", n.RefID, "code", n.Code, "region", n.Region,
+		logger.Debug("npc placed", "near", n.Near, "uid", n.UID, "ref", n.RefID, "code", n.Code, "region", n.Region,
 			"x", n.X, "z", n.Z, "angle", n.Angle, "source", n.Source.String(), "nest", n.NestID, "interactions", n.Interact)
 	}
 	areas := make([]string, 0, len(byArea))
@@ -117,6 +117,6 @@ func installNPCs(logger *slog.Logger, placements spawn.Table, monsters *species.
 	}
 	logger.Info("NPCs spawned by the server (round 708): position and angle from the nest DB where a nest of the NPC's own stands, else the npcpos position with no angle (OURS)",
 		"rows", rep.Rows, "from_nest", rep.FromNest, "from_npcpos", rep.FromNpcpos, "nest_taken", rep.NestTaken,
-		"max_join_distance", rep.MaxDist, "filed", filed, "nest_db", db != nil, "npc_table", table != nil,
+		"max_join_distance", rep.MaxDist, "near_nest", rep.Near, "near_max_distance", rep.NearMaxDist, "filed", filed, "nest_db", db != nil, "npc_table", table != nil,
 		"by_area_nest/npcpos", strings.TrimSpace(b.String()))
 }

@@ -1354,9 +1354,20 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 	// The character's own model (round 689): the body it was made from.
 	ownRef, ownScale := modelOf(owned)
 	result.RefObjID, result.Scale, result.HasModel = ownRef, ownScale, true
+	if enterWorldBeforeResultHook != nil {
+		enterWorldBeforeResultHook(sess)
+	}
 	if err := sess.Send(&proto.Packet{Opcode: OpEnterWorldResult, Data: result.Encode()}); err != nil {
 		return err
 	}
+	// And again after the result (round 708's review, HIGH 1): the area of
+	// interest ticks on its own goroutine, so a tick between hub.Enter above
+	// and this Send could have sent the whole NPC window -- queued BEFORE the
+	// result, which the client answers by clearing its roster. Forgetting
+	// here makes the next tick send the window again, after the result; a
+	// window a tick sends after the result is simply sent twice, and the
+	// client keeps an identical record in place (World3D._on_npc_spawned).
+	forgetNPCWindow(sess.ID())
 
 	// The entry faces the restored heading, or 0 on a fresh arrival.
 	entered := &EntitySnapshot{

@@ -14,9 +14,10 @@ import (
 // matching rule; that call sets flag bit 1. The ids land in a std::set<u8> at
 // +0x130 (CGObj::AddAvailableInteraction 0x484e40 inserts through
 // FUN_00486fe0 after slot 0x390's "already there" test), which the record
-// writes in set order -- ascending -- with its size as the count (0x4c3cb0
-// iterates nodes whose value sits at +0xc, MSVC's tree node; INFERRED from
-// that layout that the order is ascending).
+// writes in set order -- ascending -- with its size as the count. READ (the
+// order confirmed in round 708's review): 0x4c3cb0 starts at the header's
+// _Left (the leftmost, smallest node), reads each value at node+0xc and steps
+// with the in-order successor FUN_004885c0 -- MSVC's std::set iteration.
 //
 // Before the rules, Create copies the reference object's own list at
 // ref+0x90 into the set WITHOUT setting bit 1 (0x4c641a..0x4c647a): the list

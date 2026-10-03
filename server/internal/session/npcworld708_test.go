@@ -1,12 +1,17 @@
 package session
 
 import (
+	"bufio"
+	"context"
 	"encoding/binary"
 	"sort"
 	"testing"
 	"time"
 
+	"github.com/OpenSRO/OpenSRO/server/internal/account"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/world"
@@ -109,7 +114,7 @@ func TestNPCWindowSpawnsAndDespawns(t *testing.T) {
 		if rec.UID == c.UID {
 			want = c
 		}
-		if (rec.X != want.X || rec.Z != want.Z || rec.Angle != want.Angle || rec.RefID != want.RefID) {
+		if rec.X != want.X || rec.Z != want.Z || rec.Angle != want.Angle || rec.RefID != want.RefID {
 			t.Errorf("record %+v, want %+v", rec.Record, want.Record)
 		}
 	}
@@ -159,5 +164,85 @@ func TestNPCsInTheSingleFrame(t *testing.T) {
 	}
 	if n := NPCsInWindow(combat.CellOf("jangan", 0, 0)); n != 0 {
 		t.Fatalf("%d NPC(s) filed under the zone name in the single frame", n)
+	}
+}
+
+// Round 708's review, HIGH 1: an area-of-interest tick between hub.Enter and
+// the OpEnterWorldResult send spawns the window BEFORE the result, which the
+// client answers by clearing its roster. The entry forgets the window again
+// after the result, so the next tick spawns it after the result. The hook
+// puts a tick exactly in that gap.
+func TestNPCWindowSurvivesATickBeforeTheEntryResult(t *testing.T) {
+	ctx := context.Background()
+	npc := npcAt(1, 100, 100, npcspawn.FromNest) // beside jangan's landing (0, 0)
+	installNPCsForTest(t, npc)
+	accounts := account.NewMemStore()
+	accounts.Add("alice", "pw1")
+	chars := character.NewMemStore()
+	chars.Create(ctx, 1, "Aria")
+	hub := world.NewHub()
+	v := installAOIForTest(t, hub, combat.NewHub())
+	ticked := false
+	enterWorldBeforeResultHook = func(*gateway.Session) {
+		v.reconcile() // the tick lands in the gap
+		ticked = true
+	}
+	t.Cleanup(func() { enterWorldBeforeResultHook = nil })
+	addr, cleanup := startTestServer(t, gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, hub)))
+	t.Cleanup(cleanup)
+	conn := dialTestServer(t, addr)
+	t.Cleanup(func() { conn.Close() })
+	c := &chatClient{t: t, conn: conn, r: bufio.NewReader(conn)}
+	c.send(OpLogin, (&LoginRequest{Username: "alice", Password: "pw1"}).Encode())
+	c.next(OpLoginResult)
+	c.send(OpEnterWorld, (&EnterWorldRequest{CharacterName: "Aria"}).Encode())
+
+	// Everything up to the result: the early groups the gap's tick sent.
+	var before []*proto.Packet
+	for {
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		p, err := proto.Read(c.r, nil, nil)
+		if err != nil {
+			t.Fatalf("waiting for the entry result: %v", err)
+		}
+		if p.Opcode == OpEnterWorldResult {
+			break
+		}
+		if p.Opcode >= npcspawn.OpSingleSpawn && p.Opcode <= npcspawn.OpGroupData {
+			before = append(before, p)
+		}
+	}
+	if !ticked {
+		t.Fatal("precondition: the hook did not run")
+	}
+	early, _, _, _ := npcFrames(t, before)
+	if !sameUIDs(early, npc.UID) {
+		t.Fatalf("precondition: the gap's tick spawned %v before the result, want [%d]", early, npc.UID)
+	}
+	// The client cleared its roster on the result; the next tick must spawn
+	// the window again.
+	v.reconcile()
+	var after []*proto.Packet
+	for _, p := range c.quietFrames(300 * time.Millisecond) {
+		if p.Opcode >= npcspawn.OpSingleSpawn && p.Opcode <= npcspawn.OpGroupData || p.Opcode == npcspawn.OpNpcFacingUnknown {
+			after = append(after, p)
+		}
+	}
+	late, _, _, _ := npcFrames(t, after)
+	if !sameUIDs(late, npc.UID) {
+		t.Fatalf("after the result the window spawned %v, want [%d] again", late, npc.UID)
+	}
+}
+
+// quietFrames reads frames until none arrives for d.
+func (c *chatClient) quietFrames(d time.Duration) []*proto.Packet {
+	var out []*proto.Packet
+	for {
+		c.conn.SetReadDeadline(time.Now().Add(d))
+		p, err := proto.Read(c.r, nil, nil)
+		if err != nil {
+			return out
+		}
+		out = append(out, p)
 	}
 }

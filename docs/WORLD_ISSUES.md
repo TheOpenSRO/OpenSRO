@@ -7139,16 +7139,17 @@ message block entering or leaving the player's 3 x 3 window (CMsgBlock slots 2/3
   soldiers among them, 2 read -X, 12 unsettled; the control reads -Z). Model, name, idle, services
   still come from the archive by RefObjID. The click, the hover cursor and round 701's approach use
   the same holders.
-- The fallback (OURS): an NPC with no nest of its own (29 rows in this shard) or a server with no
+- The fallback (OURS): an NPC with no nest of its own (27 rows in this shard, after the review's
+  second pass) or a server with no
   database is named in OpNpcFacingUnknown, sent with angle 0, and faced by `NpcFacing` as before.
 - QA (OURS, QA only): `OPENSRO_QA_LOCAL_NPCS=1` builds records from npcpos.txt and feeds the same
   handler. `qa_shot.sh` sets it without `--server` (and with a server that has no npcpos CSV);
   `perf_gate.sh` sets it for both sides. A QA shot may name its region (`name@x,z,97/168:...`).
 
 **Counts (MEASURED, the shard's nest DB, EXTERNAL; the server's boot line):** 257 npcpos NPC rows,
-228 from their nest, 29 fallback; farthest join 0.0002 units. By the code's town tag (nest/fallback):
-CH 59/8, WC 25/1, KT 29/0, EU 29/4, CA 18/1, SD 34/7, TD 6/0, RM 10/1, TK 2/1, AM 3/0, TQ 0/4,
-BATTLE 5/2, gate pulleys 8/0. **Jangan's own region (97/168): 17 from their nest, 2 fallback**
+230 from a nest (228 at their spot, 2 by the review's same-region pass), 27 fallback; farthest spot
+join 0.0002 units. By the code's town tag (nest/fallback): CH 60/7, WC 25/1, KT 29/0, EU 29/4, CA 18/1, SD 34/7, TD 6/0, RM 10/1, TK 2/1, AM 3/0, TQ 0/4,
+BATTLE 6/1, gate pulleys 8/0. **Jangan's own region (97/168): 17 from their nest, 2 fallback**
 (`NPC_CH_SOLDIER_EM1` "Soldier Choiyoung [Teleport]" and `_SO1`, which have no nest row of their
 tactics id anywhere in the database).
 
@@ -7203,6 +7204,44 @@ failed on an empty run line after an overlapped repeat, rerun clean):
 | entry ms | 9605 | 9551 | -54 | SAME |
 | freeze ms | 3335 | 3324 | -11 | SAME |
 | hitches | 4 | 4 | +0 | SAME |
+
+### Review (round 708)
+
+The review checked the wire layout, the opcodes and the facing against both binaries and found them
+right. It found one HIGH and four LOWs, all fixed:
+
+- **HIGH, NPCs lost at login (a race, confirmed by code order).** `enterOwned` forgot the NPC window
+  and called `hub.Enter` before sending `OpEnterWorldResult`, with database reads in between. An area
+  of interest tick in that gap sent the whole window before the result, recorded it as sent, and the
+  client cleared its roster on the result: no NPCs until the next block line. Now the entry forgets
+  the window again right after the result's Send, so the next tick spawns it after the result; and
+  `World3D._on_npc_spawned` leaves an identical record (`Record.same_placement`: uid, RefObjID,
+  region, position, angle, angle source) in place instead of rebuilding it, so the double send cannot
+  close a talk window. `TestNPCWindowSurvivesATickBeforeTheEntryResult` puts a tick in the gap through
+  a hook (`enterWorldBeforeResultHook`) and requires the window after the result; it FAILS with the
+  second forget removed and passes with it. `npc_spawn_test.gd` holds `same_placement`.
+- **LOW 1:** a delivery whose `SendBatch` fails now clears the session's mark, so the window is sent
+  whole next tick.
+- **LOW 2, the nest-less rows:** all 29 have `Tab_RefTactics` rows (EM1 is 1027 beside EM2's 1028,
+  nest 51; nest ids 47-50 are missing -- INFERRED deleted by the shard). Four have own-species nests:
+  `NPC_CH_EVENT_KISAENG1` (region 26265, 58 units) and `NPC_BATTLE_ARENA_MANAGER` (the same region,
+  178), and the two gacha NPCs (other regions only). **Chosen: a second pass (OURS, INFERRED)** --
+  a row with no nest at its spot takes the nearest unclaimed own-species nest in its region within
+  200 units, since the original's NPCs are its nests. MEASURED: it places exactly those two; no other
+  row has one in its region at any distance. 230 from a nest, 27 fallback; Jangan unchanged (17/2).
+  Recorded as OURS: the NPC list comes from npcpos, not the nests (six custom world-1 nests in
+  Donwhang have no npcpos row and are not spawned; TODO). Recorded from the review's reading: retail
+  has no "no angle" form (`_RefGameWorldNPC` instance NPCs hatch with angle 0, `FUN_00609970`; the
+  teleportdata row for `GATE_NPC_CH_SOLDIER_EM1` holds only an arrival point).
+- **LOW 3:** the interaction set's ascending order is READ, not INFERRED (`_Left` start, values at
+  node+0xc, in-order successor `FUN_004885c0`).
+- **LOW 4:** `client/tools/README.md` says that a `--server` run given `npcpos.csv` /
+  `monsters.csv` also changes where the roster monsters stand.
+
+Re-run after the fixes: `go build ./... && go vet ./... && go test -count=1 -p 1 -timeout 40m ./...`
+green; `remote_godot.sh check` ALL LOAD (577 scripts, 9 scenes), `tests` 224 suites, 0 failing. The
+fixes touch no drawing path (an early return in `_on_npc_spawned`, the server's entry order), so the
+perf gate was not re-run.
 
 ## Seven-hundred-and-fourth round: the project is renamed from srrevamp to OpenSRO -- the code, the tools, the deploy files, the docs and every environment variable -- and a player's saved settings follow the client to its new user folder
 

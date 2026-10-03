@@ -436,7 +436,7 @@ comes into a player's 3 x 3 window, and despawns when it goes out (`docs/protoco
   client faces them by its stand-in. **opensro-01 needs no change for this:** it already runs with
   `-npcpos-csv`, `-monsters-csv` and `-nest-db-dir` (and `-full-map`, so the NPCs are filed in the
   one world frame). The boot log says what it did: `NPCs spawned by the server (round 708) ...
-  rows=257 from_nest=228 from_npcpos=29`.
+  rows=257 from_nest=230 from_npcpos=27 near_nest=2`.
 - **Optional, `-npcs-csv` (`OPENSRO_NPCS_CSV`):** the NPC code names, from which the spawn record's
   interaction list is built (empty without it; the OpenSRO client builds its talk menus from its own
   archive either way). Export it on the same archive as the other tables:

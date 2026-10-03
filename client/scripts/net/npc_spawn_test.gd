@@ -85,6 +85,19 @@ func _test_roster() -> void:
 	_check(roster.despawn(a.uid) and not roster.despawn(a.uid) and roster.npcs.size() == 1, "a despawn drops once")
 	roster.clear()
 	_check(roster.npcs.is_empty(), "clear empties it")
+	# A spawn sent twice (round 708's review) is the same placement; a moved
+	# or turned one is not.
+	var again := NpcSpawnNet.read_record(NpcSpawnNet.Reader.new(_unhex(g.record_a.hex)))
+	var first := NpcSpawnNet.read_record(NpcSpawnNet.Reader.new(_unhex(g.record_a.hex)))
+	_check(first.same_placement(again), "the same record twice is the same placement")
+	again.angle = (again.angle + 1) & 0xffff
+	_check(not first.same_placement(again), "a turned record is not")
+	again.angle = first.angle
+	again.local_position.x += 1.0
+	_check(not first.same_placement(again), "a moved record is not")
+	again.local_position = first.local_position
+	again.has_angle = false
+	_check(not first.same_placement(again), "the same record without its angle is not")
 
 ## The holder's drawn front (its body's -Z) for an angle, as a region-local
 ## direction (x east, z north).

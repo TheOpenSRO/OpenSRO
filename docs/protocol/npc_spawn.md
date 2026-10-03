@@ -81,7 +81,10 @@ and the `STRUCTURE_GATE_PULLEY_*` rows (x = 1) alike.
 and each of its 8 neighbours, `FUN_00533e70(1)` -- that block's objects as a group spawn, to the
 object if it is a player -- and `FUN_00533f70` (0x3015) of the object to the block's players. Slot 3
 0x5344b0 (taken out) sends `FUN_00533e70(2)` -- the block's objects as a group despawn -- and 0x3016.
-One group per block. OpenSRO sends one group per gained / lost block from the player's 3 x 3 window
+One group per block. Around a world entry OpenSRO forgets the session's window twice -- before
+`hub.Enter` and again after `OpEnterWorldResult` is sent -- so a tick that lands between the two
+(and spawns the window before the result, which clears the client's roster) is followed by the whole
+window again after it; the client keeps an identical record in place (round 708's review). OpenSRO sends one group per gained / lost block from the player's 3 x 3 window
 (round 664's blocks), on the area-of-interest tick; its NPCs are all in the world before any player,
 so it never needs a 0x3015 for them. Monsters and players still ride OpenSRO's own messages, so its
 groups carry NPCs only, where retail's carry every object of the block (a departure, OURS).
@@ -92,7 +95,9 @@ groups carry NPCs only, where retail's carry every object of the block (a depart
 fixed lists and adds ids through slot 89 (setting flag bit 1); `npcspawn.Interactions` holds the
 lists. Before them it copies the reference object's list at ref+0x90 into the set without the flag
 -- the 7 and 9 `RefTeleport_ExtractData` 0x6a7be0 adds from the associated teleport row's two flags.
-INFERRED: the set's order on the wire is ascending (an MSVC `std::set<u8>`, value at node +0xc); 0x11
+READ (confirmed in the review): the set's order on the wire is ascending -- `0x4c3cb0` starts at the
+header's `_Left` (the smallest node), reads each value at node+0xc and steps with the in-order
+successor `FUN_004885c0`, MSVC's `std::set<u8>` iteration. INFERRED: 0x11
 is added when a reference map (`FUN_004ccb70`) names the NPC -- taken to be refshopgroup's
 RefNPCCodeName (`-npcs-csv`'s Shop column) -- and only while a world-config byte (+0x42404) is 0,
 taken as 0.
@@ -100,8 +105,8 @@ taken as 0.
 ## OpenSRO's additions (OURS)
 
 - **OpNpcFacingUnknown 0x00B6**: u16 n, n x u32 unique id -- sent just before a group that holds NPCs
-  with no nest angle (an npcpos row with no nest of its own in the database, or a server with no
-  database). Their record's angle is 0; the client faces them by `NpcFacing` (open space on the
+  with no nest angle (an npcpos row with no nest of its own in the database even after the second
+  pass, or a server with no database). Their record's angle is 0; the client faces them by `NpcFacing` (open space on the
   navigation graph, the pre-708 stand-in). Retail has no such NPC.
 - **Unique ids** `0x7f000000 + i` in placement order (region, x, z, id): a range of their own,
   since OpenSRO's monsters and characters number from their own counters.
@@ -116,6 +121,23 @@ taken as 0.
   through the same `FUN_008a6bd0`), but with their own body reader (CITeleportGate slot 25, not read
   here) and from teleportbuilding, not npcpos. They stay client-bound (`_bind_region_gates`); filed
   in docs/TODO.md.
-- The 29 npcpos NPC rows with no nest in the shard (among them Jangan's `NPC_CH_SOLDIER_EM1`
-  "Soldier Choiyoung [Teleport]", `_SO1`, `_EA2`, `_WE1`): the retail server would have a nest for
-  each; the shard's database does not (EXTERNAL, MEASURED round 708).
+- The npcpos NPC rows with no nest at their spot in the shard (EXTERNAL, MEASURED round 708 and its
+  review): 29 at JoinTolerance. Every one has its `Tab_RefTactics` row (Jangan's
+  `NPC_CH_SOLDIER_EM1` "Soldier Choiyoung [Teleport]" is tactics 1027, beside `_EM2`'s 1028 whose
+  nest is 51); four have own-species nests elsewhere -- `NPC_CH_EVENT_KISAENG1` (nest 21022, its own
+  region 26265, 58 units off), `NPC_BATTLE_ARENA_MANAGER` (nest 29729, the same region, 178 off),
+  `NPC_CH_GACHA_MACHINE` and `_OPERATOR` (nests only in other regions); the other 25 have none. The
+  nest ids around `_EM2`'s run 44, 45, 46, then 51: 47-50 are missing, which fits the shard having
+  deleted the soldiers' nests (INFERRED).
+- **The second pass (OURS, INFERRED):** a row with no nest at its spot takes the nearest unclaimed
+  nest of its own species in its own region within `npcspawn.NearRadius` = 200 units, since the
+  original's NPCs ARE its nests (npcpos is the client's table). On this shard that places exactly the
+  two above (KISAENG1 at 58, ARENA_MANAGER at 178); no other row has an own-species nest in its
+  region at any distance. 230 rows are placed from a nest, 27 at their npcpos position.
+- **Where the NPC list comes from (OURS):** OpenSRO's server spawns the npcpos NPC rows, where the
+  original spawns its nests. The difference shows on this shard: six custom world-1 nests in
+  Donwhang (`NPC_TITLES`, `AVATARS`, `GOLDMINER`, `QUESTS`, `EGY`, a second `NPC_CH_SPECIAL`) have
+  no npcpos row and are not spawned.
+- **Retail has no "no angle" form** (read in the review): instance NPCs from `_RefGameWorldNPC`
+  hatch with angle 0 (`FUN_00609970`), and the teleportdata row for `GATE_NPC_CH_SOLDIER_EM1` holds
+  only an arrival point, no facing. OpNpcFacingUnknown and its stand-in are OpenSRO's alone.

@@ -1137,3 +1137,17 @@ A suite that errors in `_init` before its `quit()` does not fail;
 it hangs, because the run never ends -- put the checks in a callee, or
 reach a method through `has_method`/`call` so a missing one FAILS instead.
 
+## NPCs in a render (round 708)
+
+Only a server spawns NPCs now. A run without `--server` sets `OPENSRO_QA_LOCAL_NPCS=1` (QA only):
+the client builds spawn records from the archive's own `npcpos.txt` and faces them by the
+`NpcFacing` stand-in, as before round 708; `perf_gate.sh` sets it on both sides. A `--server` run
+gives the server NPCs when `npcpos.csv` and `monsters.csv` (or `npcs.csv`) sit beside the pk2s or
+are named by `OPENSRO_NPCPOS_CSV` / `OPENSRO_MONSTERS_CSV` / `OPENSRO_NPCS_CSV`, with
+`OPENSRO_NEST_DB_DIR` for the nest angles; otherwise it falls back to `OPENSRO_QA_LOCAL_NPCS`.
+**Note:** `-npcpos-csv` and `-monsters-csv` are also the monster roster's inputs, so such a run's
+roster monsters stand at their real npcpos spots with their table numbers, not at the own-design
+anchors a run without them uses -- compare monster views only between runs with the same inputs.
+`OPENSRO_QA_NPC_FACING_AUDIT=1` prints, for each NPC turned by the server's angle, the navigation
+graph's open side and the angle between them (`QA NPCFACE`). A shot may name its region:
+`name@x,z,97/168:yaw,pitch,dist`.

@@ -347,15 +347,22 @@ In order. Each is checked off here when it ships in a release, with its round in
       nest's `wInitialDir`; the client builds no NPC of its own. The chain is READ end to end:
       `Nest_Hatch` 0x5607b0 -> `EnterWorld` 0x485360 -> SetHeading (cos a, sin a) -> the record's
       `atan2` u16 (0x487ce0/0x488050) = wInitialDir -> the client's `h = angle + pi/2`
-      (0x9c3a70/0x9c40b0) facing (sin h, -cos h) = (cos a, sin a). 228 of the 257 npcpos NPC rows get
-      their nest's angle (MEASURED, the user's shard, EXTERNAL); the other 29 have no nest in that
-      database and keep `NpcFacing` (OpNpcFacingUnknown 0x00B6, OURS).
-- [ ] **The 29 nest-less NPC rows** (round 708): Jangan's teleport soldier "Soldier Choiyoung
+      (0x9c3a70/0x9c40b0) facing (sin h, -cos h) = (cos a, sin a). 230 of the 257 npcpos NPC rows get
+      their nest's angle (MEASURED, the user's shard, EXTERNAL; two of them through the review's
+      200-unit same-region pass, OURS); the other 27 have no nest of their own in that database and
+      keep `NpcFacing` (OpNpcFacingUnknown 0x00B6, OURS).
+- [ ] **The 27 nest-less NPC rows** (round 708): Jangan's teleport soldier "Soldier Choiyoung
       [Teleport]" (`NPC_CH_SOLDIER_EM1`) and its gate-mates `_SO1`, `_EA2`, `_WE1`, the Europe
-      advisers, the SD agents, the treasure boxes ... have no `Tab_RefNest` row in the user's shard
-      (no nest of their tactics id anywhere, MEASURED), so they face by the `NpcFacing` stand-in -- the
-      retail screenshot shows Choiyoung facing south beside Fengil. Needs a shard whose database has
-      them; nothing in the client archive carries the angle.
+      advisers, the SD agents, the treasure boxes ... have their `Tab_RefTactics` rows but no
+      `Tab_RefNest` row in the user's shard (nest ids 47-50 beside `_EM2`'s 51 are missing: INFERRED
+      deleted by the shard), so they face by the `NpcFacing` stand-in -- the retail screenshot shows
+      Choiyoung facing south beside Fengil. The two gacha NPCs have nests only in other regions.
+      Needs a shard whose database has them; nothing in the client archive carries the angle, and
+      retail has no "no angle" form.
+- [ ] **NPCs the shard adds** (round 708, OURS): the server spawns npcpos's NPC rows, not the
+      database's nests, so six custom world-1 nests in Donwhang (`NPC_TITLES`, `AVATARS`,
+      `GOLDMINER`, `QUESTS`, `EGY`, a second `NPC_CH_SPECIAL`) are not spawned. Spawning from the
+      nests (the original's own source) is the alternative; it would bring the shard's customs in.
 - [ ] **Town teleport gates as server-sent objects** (round 708): retail spawns the gates through the
       same 0x3015/0x3017 path as a `CITeleportGate` (class link 0xef1dac) with its own body reader
       (CITeleportGate slot 25, not read). OpenSRO still binds them client-side from teleportbuilding

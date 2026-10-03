@@ -52,6 +52,13 @@ class Record:
 	## OpNpcFacingUnknown named and for QA-local records.
 	var has_angle := true
 
+	## Whether `other` places the same NPC the same way (uid, RefObjID,
+	## region, position, angle and its source) -- the server sends a window
+	## twice around a world entry, and World3D leaves such a spawn alone.
+	func same_placement(other: Record) -> bool:
+		return other != null and uid == other.uid and ref_id == other.ref_id and region == other.region \
+			and local_position == other.local_position and angle == other.angle and has_angle == other.has_angle
+
 class Reader:
 	var data: PackedByteArray
 	var pos := 0
