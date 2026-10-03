@@ -1,0 +1,241 @@
+extends CanvasLayer
+class_name RetailBloom
+
+## The Bloom Effect row, drawn as the original draws it (round 702 review).
+##
+## **READ** (`Map::FUN_00a1d790`, the bloom pass; its constants are set by the
+## world's constructor `Map::FUN_00a2f370`):
+## 1. The finished screen (target world+0x27c3, screen-sized) goes into a
+##    512 x 512 target (+0x27c7), bilinear, stage 0 MODULATE(TEXTURE, TFACTOR)
+##    with TFACTOR RGB 0x80: x 128 / 255.
+## 2. A horizontal blur into a target cleared to 0 (+0x27cb), blended
+##    SRCALPHA / ONE: colour SUBTRACT(TEXTURE, TFACTOR 0x28) -- a threshold of
+##    40 / 255, clamped at 0 -- and each tap's alpha its weight: the centre
+##    0x50, +-1 0x46, +-2 0x32 (/ 255), at +-2.6 and +-5.2 texels of 512
+##    (2 x 13 x i / 10, the step world+0x690b = 13; the tap colours
+##    world+0x68e3..).
+## 3. A vertical blur back, the same weights and offsets in y, no threshold.
+## 4. The composite: the plain screen first, then the blur with SRCBLEND =
+##    BLENDFACTOR 0xc0c0c0 (+0x690d) and DESTBLEND = SRCALPHA, the alpha the
+##    TFACTOR's 0xc6 (+0x690c):  out = clamp(S x 198/255 + Blur x 192/255),
+##    in the frame's display values, before the interface is drawn.
+## So it is a contrast effect as much as a glow: where nothing near is
+## brighter than the threshold, the screen is kept at 198/255.
+##
+## **Here.** One canvas pass on its own layer, above the 3D view and below
+## every interface layer (LAYER; the brightness pass is 120), in both
+## renderers, computing retail's pipeline at retail's resolution (rework
+## review: taps at full resolution landed 19.5 / 39 pixels apart at 3840
+## wide, drew sharp echoes of edges and cost +0.82 ms there; taps on the
+## screen's Gaussian mips cost +2.0 ms there). The pass is a 514 x 514-vertex
+## grid, one vertex per texel of the 512 x 512 target (plus a clamped edge
+## ring): each vertex's shader computes that texel's blurred value exactly as
+## retail's three passes would -- D at the texel centres (one bilinear sample
+## of the screen, x 128/255), the horizontal blur's five taps between them
+## (bilinear in 512 texels, each thresholded at 40/255), the vertical blur's
+## five rows -- and the fragments interpolate it across the grid (retail
+## magnifies its target bilinearly; a grid of triangles interpolates
+## linearly within each half-cell, OURS), and the composite is the blend, as
+## retail's is (premultiplied alpha: Blur x 192/255 + screen x 198/255, the
+## framebuffer clamping at 1), so the fragments never read the screen. The texture is read clamped at the edges
+## (retail's addressing there not read). It replaces round 693's Godot glow,
+## whose parameters were a guess (intensity 0.8, bloom 0.2, threshold 0.85).
+##
+## **Under Compatibility** the vertex stage reads nothing from the screen
+## texture (MEASURED: the grid added no light at all under GL 4.6), so there
+## the pass is a full-screen rect whose 25 taps read the screen's mip level
+## log2(width / 512) instead (MIP_SHADER: Godot's Gaussian mips, smoother
+## than retail's one bilinear downsample, one level for both axes -- OURS).
+
+## Below the default canvas (0), the world's UI (1) and every later layer;
+## above the 3D view, which every canvas layer is.
+const LAYER_INDEX := -1
+const DOWNSAMPLE := 128.0 / 255.0
+const THRESHOLD := 40.0 / 255.0
+## Centre, +-1, +-2.
+const WEIGHTS := [80.0 / 255.0, 70.0 / 255.0, 50.0 / 255.0]
+## In texels of the 512 x 512 target.
+const OFFSETS := [0.0, 2.6, 5.2]
+const TARGET_SIZE := 512.0
+const SCREEN_KEEP := 198.0 / 255.0
+const BLUR_ADD := 192.0 / 255.0
+
+const SHADER := """
+shader_type canvas_item;
+// The original's bloom (RetailBloom, round 702 review and rework):
+// Map::FUN_00a1d790's three passes at 512 x 512, one vertex per texel. The
+// composite is the blend itself, as retail's is: premultiplied alpha,
+// out = src.rgb + dst x (1 - src.a) = Blur x 192/255 + S x 198/255.
+render_mode blend_premul_alpha;
+uniform sampler2D screen_tex : hint_screen_texture, filter_linear, repeat_disable;
+uniform vec2 canvas_size = vec2(1280.0, 720.0);
+const float DOWNSAMPLE = 128.0 / 255.0;
+const float THRESHOLD = 40.0 / 255.0;
+const float SCREEN_KEEP = 198.0 / 255.0;
+const float BLUR_ADD = 192.0 / 255.0;
+const float T = 512.0;
+const float W0 = 80.0 / 255.0;
+const float W1 = 70.0 / 255.0;
+const float W2 = 50.0 / 255.0;
+varying vec3 v_blur;
+// The downsampled target at texel t: one bilinear sample at its centre.
+vec3 d_at(vec2 t) {
+	t = clamp(t, vec2(0.0), vec2(T - 1.0));
+	return textureLod(screen_tex, (t + 0.5) / T, 0.0).rgb * DOWNSAMPLE;
+}
+vec3 th(vec3 v) {
+	return max(v - vec3(THRESHOLD), vec3(0.0));
+}
+// The horizontal pass at texel t: taps at 0, +-2.6, +-5.2, bilinear between
+// texels, each thresholded; the 8-bit target clamps at 1.
+vec3 h_at(vec2 t) {
+	vec2 x = vec2(1.0, 0.0);
+	vec3 h = W0 * th(d_at(t));
+	h += W1 * th(mix(d_at(t + 2.0 * x), d_at(t + 3.0 * x), 0.6));
+	h += W1 * th(mix(d_at(t - 3.0 * x), d_at(t - 2.0 * x), 0.4));
+	h += W2 * th(mix(d_at(t + 5.0 * x), d_at(t + 6.0 * x), 0.2));
+	h += W2 * th(mix(d_at(t - 6.0 * x), d_at(t - 5.0 * x), 0.8));
+	return min(h, vec3(1.0));
+}
+// The vertical pass: the same taps in y, no threshold.
+vec3 v_at(vec2 t) {
+	vec2 y = vec2(0.0, 1.0);
+	vec3 v = W0 * h_at(t);
+	v += W1 * mix(h_at(t + 2.0 * y), h_at(t + 3.0 * y), 0.6);
+	v += W1 * mix(h_at(t - 3.0 * y), h_at(t - 2.0 * y), 0.4);
+	v += W2 * mix(h_at(t + 5.0 * y), h_at(t + 6.0 * y), 0.2);
+	v += W2 * mix(h_at(t - 6.0 * y), h_at(t - 5.0 * y), 0.8);
+	return min(v, vec3(1.0));
+}
+void vertex() {
+	// UV carries the texel index, -1 .. 512 (the ring clamps to the edge).
+	vec2 t = clamp(UV, vec2(0.0), vec2(T - 1.0));
+	VERTEX = clamp((UV + 0.5) / T, vec2(0.0), vec2(1.0)) * canvas_size;
+	v_blur = v_at(t);
+}
+void fragment() {
+	COLOR = vec4(v_blur * BLUR_ADD, 1.0 - SCREEN_KEEP);
+}
+"""
+
+## Compatibility's pass (see the header): the taps on the 512-wide mip.
+const MIP_SHADER := """
+shader_type canvas_item;
+// The original's bloom (RetailBloom) under Compatibility: the 25 taps read the
+// screen's mip level log2(width / 512).
+uniform sampler2D screen_tex : hint_screen_texture, filter_linear_mipmap, repeat_disable;
+const float DOWNSAMPLE = 128.0 / 255.0;
+const float THRESHOLD = 40.0 / 255.0;
+const float SCREEN_KEEP = 198.0 / 255.0;
+const float BLUR_ADD = 192.0 / 255.0;
+const float TARGET = 512.0;
+float w(int i) {
+	int a = abs(i);
+	return a == 0 ? 80.0 / 255.0 : (a == 1 ? 70.0 / 255.0 : 50.0 / 255.0);
+}
+float o(int i) {
+	return float(sign(i)) * (abs(i) == 1 ? 2.6 : (abs(i) == 2 ? 5.2 : 0.0));
+}
+void fragment() {
+	vec3 s = textureLod(screen_tex, SCREEN_UV, 0.0).rgb;
+	float lod = max(log2(1.0 / (SCREEN_PIXEL_SIZE.x * TARGET)), 0.0);
+	vec3 blur = vec3(0.0);
+	for (int j = -2; j <= 2; j++) {
+		vec3 row = vec3(0.0);
+		for (int i = -2; i <= 2; i++) {
+			vec3 t = textureLod(screen_tex, SCREEN_UV + vec2(o(i), o(j)) / TARGET, lod).rgb;
+			row += w(i) * max(t * DOWNSAMPLE - vec3(THRESHOLD), vec3(0.0));
+		}
+		blur += w(j) * row;
+	}
+	COLOR = vec4(clamp(s * SCREEN_KEEP + blur * BLUR_ADD, 0.0, 1.0), 1.0);
+}
+"""
+
+var _pass: CanvasItem
+var _material: ShaderMaterial
+var _grid_used := false
+static var _mesh: ArrayMesh = null
+
+func _init(use_grid: bool = RenderingServer.get_rendering_device() != null) -> void:
+	name = "RetailBloom"
+	layer = LAYER_INDEX
+	_grid_used = use_grid
+	var sh := Shader.new()
+	sh.code = SHADER if use_grid else MIP_SHADER
+	_material = ShaderMaterial.new()
+	_material.shader = sh
+	if use_grid:
+		var grid := MeshInstance2D.new()
+		grid.mesh = grid_mesh()
+		_pass = grid
+	else:
+		var rect := ColorRect.new()
+		rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_pass = rect
+	_pass.name = "Pass"
+	_pass.material = _material
+	add_child(_pass)
+
+## Whether the 512 grid (Forward+) draws the pass, or the mip rect.
+func uses_grid() -> bool:
+	return _grid_used
+
+func _process(_delta: float) -> void:
+	if _grid_used and visible and is_inside_tree():
+		_material.set_shader_parameter("canvas_size", get_viewport().get_visible_rect().size)
+
+## The 514 x 514-vertex grid (UV = texel index, -1 .. 512), built once.
+static func grid_mesh() -> ArrayMesh:
+	if _mesh != null:
+		return _mesh
+	var n := int(TARGET_SIZE) + 2
+	var verts := PackedVector2Array()
+	var uvs := PackedVector2Array()
+	verts.resize(n * n)
+	uvs.resize(n * n)
+	for j in n:
+		for i in n:
+			var k := j * n + i
+			uvs[k] = Vector2(i - 1, j - 1)
+			verts[k] = Vector2(i, j)
+	var idx := PackedInt32Array()
+	idx.resize((n - 1) * (n - 1) * 6)
+	var c := 0
+	for j in n - 1:
+		for i in n - 1:
+			var a := j * n + i
+			idx[c] = a
+			idx[c + 1] = a + 1
+			idx[c + 2] = a + n
+			idx[c + 3] = a + 1
+			idx[c + 4] = a + n + 1
+			idx[c + 5] = a + n
+			c += 6
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = idx
+	_mesh = ArrayMesh.new()
+	_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	# The vertex shader places every vertex; a huge box keeps it from culling.
+	_mesh.custom_aabb = AABB(Vector3(-1.0e6, -1.0e6, -1.0), Vector3(2.0e6, 2.0e6, 2.0))
+	return _mesh
+
+## The blur's value for one channel from the screen's values at the 25 taps
+## (`taps[j + 2][i + 2]`, j the row) -- the separable arithmetic, for the
+## tests (the shader takes its taps between 512 texels, as retail does).
+static func blur_of(taps: Array) -> float:
+	var out := 0.0
+	for j in range(-2, 3):
+		var row := 0.0
+		for i in range(-2, 3):
+			row += float(WEIGHTS[absi(i)]) * maxf(float(taps[j + 2][i + 2]) * DOWNSAMPLE - THRESHOLD, 0.0)
+		out += float(WEIGHTS[absi(j)]) * row
+	return out
+
+## The composite for one channel (READ blend).
+static func composite(screen: float, blur: float) -> float:
+	return clampf(screen * SCREEN_KEEP + blur * BLUR_ADD, 0.0, 1.0)

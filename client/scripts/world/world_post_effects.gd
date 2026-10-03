@@ -26,14 +26,19 @@ class_name WorldPostEffects
 ##
 ## The Compatibility renderer ignores both flags, so this is a no-op there.
 
+##
+## **Round 702 review: glow is never used.** The Bloom row is the original's
+## own bloom now (RetailBloom, READ in full: Map::FUN_00a1d790), drawn by
+## World3D in both renderers; Godot's glow stays off whatever `glow` says,
+## and round 693's guessed glow values are gone from World3D.tscn.
 const SSAO_DEFAULT := false
 const GLOW_DEFAULT := false
 
-static func apply(env: Environment, ssao: bool = SSAO_DEFAULT, glow: bool = GLOW_DEFAULT) -> void:
+static func apply(env: Environment, ssao: bool = SSAO_DEFAULT, _glow: bool = GLOW_DEFAULT) -> void:
 	if env == null:
 		return
 	env.ssao_enabled = ssao
-	env.glow_enabled = glow
+	env.glow_enabled = false
 
 ## The sun under Forward+ (round 693; the user, 2026-10-02: "Raise it to
 ## match"). Compatibility draws World3D's shadow-casting sun in a separate

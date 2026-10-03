@@ -7246,6 +7246,353 @@ The same server's town title "Western China Donwhang" is likewise its own RN_WC_
 **Checked:** `hud_notice_test.gd` adds the synthetic bold's widths, the hold under the loading
 screen, and the routing; `remote_godot.sh check` ALL LOAD; `remote_godot.sh tests` 216 suites, 0 failing.
 
+## Seven-hundred-and-second round: the original's own distance fog -- linear, nothing before the zone's start plane -- replaces Godot's haze from the camera, with a temporary Video row to compare; the saved Video settings reach the world at start-up; Circle shadows under every character and none in Detail
+
+The user (2026-10-03): "this has been a long term problem but I believe there's a fog effect around
+the camera. When I zoom in and out I see shadows come and go. Can we get rid of that fog? I want the
+game to be as vibrant and bright as the original and that fog seems to wash everything out." Asked
+whether to keep fog the original has: "If the original game has it then make a temporary toggle in
+the video settings so I can compare and make a decision." And: "When you do detailed shadows it
+still shows the simple circle shadow when it shouldn't. The no shadow mode works fine." Lane
+`fog702`, client. Labels: READ (`sro_client.exe`, the box's decompile and asm), MEASURED, INFERRED,
+OURS.
+
+### 1. What the client applied (READ in our code, MEASURED on the box)
+
+- **Godot's exponential fog from the camera**: density 0.00005 (OURS, "a disclosed rendering choice"),
+  sun scatter 0.1 and aerial perspective 0.5 (OURS), the zone's fog colour. The READ planes
+  (round 229) were computed and logged but not drawn.
+- **Filmic tone map** (tonemap_mode 2, OURS since the 2026-08-26 atmosphere pass), exposure 1.
+- **Glow** (the Bloom row): intensity 0.8, bloom 0.2, threshold 0.85 (round 693's guess). SSAO off.
+- **The sun's shadow map at Godot's default reach**: `directional_shadow_max_distance` 100 from
+  the camera, faded from 80. The camera sits 20-90 units from the player.
+- **The saved Video record was never applied at start-up** (found this round). The first
+  `apply_video_options` call compared each row against the record in force, which was the record
+  being applied (`video_options()` had just made it so), so no row "changed": every start drew the
+  scene's own settings -- **the sun's shadow map ON even in Circle (Middle, the default)**, glow off
+  although Bloom is on, no MSAA, no mip bias -- until the player changed a row in the window, and
+  then only that row.
+
+So the user's ordinary state was: Filmic, no glow, the exponential fog, the shadow map on with a
+100-unit reach, and the player's circle on top of it.
+
+**Measurement** (`qa_shot.sh` shots with the new `|key=value` per-viewpoint settings and
+`SRREVAMP_QA_PATCHES`, QaShotEnv; Jangan spawn (1002, 1020), yaw 0, pitch -30, camera at 20 / 45 /
+90; ground squares of the plaza 15 and 40 units beyond the player and 40 to each side; Forward+,
+1280 x 720; L = mean Rec. 709 luma of the square, c = its standard deviation, the contrast;
+identical-settings shots differ by <= 0.5):
+
+| before this round (dev 34286d92) | nz2 at z20 / z45 / z90 (L, c) | nz at z20 / z90 | horizon shot, sky band |
+|---|---|---|---|
+| as players had it (Filmic, no glow, shadow map, exp. fog) | 91.0 c20.9 / 90.2 c18.0 / 88.4 c15.9 | 70.1 / 74.2 | 205.5 |
+| tone map Linear | 82.0 c16.0 / 81.0 c13.6 / 79.8 c12.1 (and glow on) | 66.4 / 68.4 | 191.2 |
+| tone map Linear, no glow | 72.4 c15.4 / 71.7 c13.3 / 70.3 c11.7 | 56.7 / 59.9 | 180.4 |
+| glow on | 100.7 c19.8 / 100.1 c17.8 / 99.2 c16.2 | 81.9 / 84.3 | 214.6 |
+| glow on, Godot fog off | 102.3 / 100.2 / 97.2 | 79.5 / 81.5 | 217.2 |
+
+- The exponential fog changes the near ground by at most ~2 luma (the spawn's patches lie 40-130
+  units from the camera, where it is 0.2-0.7 %); it is a distance haze, 10-30 % from 2000 units out.
+- **Glow is the wash**: +10-12 luma on every patch with the contrast unchanged in absolute terms,
+  so contrast relative to brightness falls ~15 % (nz z20 c/L 0.32 -> 0.27).
+- **Filmic is not**: Linear is 13 luma darker with the same relative contrast (0.32 / 0.30).
+- **The shadows that came and went**: with the 100 reach, the player's square at z90 (feet, 98 from
+  the camera) is 2.5 luma lighter than with a 4000 reach -- the player's own shadow fades out as the
+  camera pulls back; with 100 vs 4000, 4-6 % of the frame's pixels change (distant buildings'
+  shadows; frame_ab-style diff, MEASURED).
+
+### 2. What the original does (READ)
+
+**Fog** -- `Map::FUN_00a26f60`, the landscape step: FOGENABLE (0x1c) = 1 at 0xa27549, FOGCOLOR
+(0x22) = world+0x67e6 (sqrt of channel 9, round 628) at 0xa2755c; the range at 0xa27568..0xa2765e:
+world+0x26e1 == 0 -> start = end = 10000.0 (0xd82efc), but its only writer, the constructor, sets it
+to 1 (0xa2f76a); world+0x26bb == 0 -> start / end = world+0x68af / +0x68b3 (DAT_011081ff /
+01108203), channels 10 / 11 x the view distance (round 229); else (set at 0xa2ce1a for a flagged
+cell, INFERRED indoor) start -200.0 (0xde4db8), end far / 10. FOGDENSITY 0.005 (unused by linear),
+RANGEFOGENABLE 0 (0xa276b0: view depth, not radial), table fog LINEAR or vertex fog LINEAR by
+world+0x237e bit 15 (0xa276fc..0xa27735), and the same start / end to the object renderer's fog slot
+(vslot_014, c16; vss0.c's LINEAR fog). **So the original does have distance fog**, at the zone's own
+planes, and nothing before the start plane: it darkens or hazes nothing near the camera. The spawn
+block's record (EnvironmentID 15, "Env7") has channels 10 / 11 = 0.759 / 1.000: fog from 1897 to
+2500 at the default view distance (MEASURED from the archive, logged).
+
+**Shadows** -- `SWorld::vslot_024` (0xa182f0) draws by the Shadow Detail value at SWorld+0x2e58:
+1 (Circle) draws `skybox\shadowsphere.ddj` (world+0x2a3f, loaded by `Map::FUN_00a0d1b0`) through
+`SWorld::vslot_022` for each object that IsKindOf CICharactor (runtime class 0xef1a5c,
+`CICharactor::vslot_000`) -- players, monsters and NPCs -- at most ten (`9 < count` break), size
+`FUN_009c75c0() + 5` = the reference record's +0x118, BCRadius (teleport_network.md, 0x972ce2), colour
+0xa8000000 (alpha 168); vslot_022 projects it over the ground cells (MODULATE TEXTURE x TFACTOR,
+SRCALPHA / INVSRCALPHA; the TFACTOR is a stack argument at 0x9f44cd, INFERRED to be that colour).
+2 (Detail) draws only the projected per-character shadows (`Map::FUN_009f35f0` per slot of
+`SWorld::vslot_025`, 0xa17ab0: up to ten characters, each rendered into the 96 x 96 target and kept
+as a 32 x 32 texture, the list walked while its key is <= 3000) -- **no circle**. 0 draws neither.
+Neither mode depends on the camera's distance (the 3000 key, INFERRED a distance, is past every
+zone's fog end). The original's scenery casts no real-time shadow: its building shadows are baked.
+
+**Bloom** (partly read, not changed): `Map::FUN_00a1d790` -- screen copy x 0.776 (TFACTOR alpha
+world+0x690c = 0xc6) + 512 x 512 blur x 0.753 (BLENDFACTOR +0x690d = 0xc0); OPTION_VIDEO.md.
+
+### 3. What changed
+
+- **`WorldFog` (new): the original's linear fog.** A full-screen quad parented to the camera, its
+  vertex shader putting it over the view, first in the transparent sort (render priority -1),
+  reads the opaque depth, turns it into view depth (both renderers' NDC) and blends the fog colour at
+  `(depth - start) / (end - start)`; the sky (no depth) is left to its own fog. Start / end =
+  channels 10 / 11 x the Background Sight Range's view distance (READ rule; before, a density factor,
+  OURS). The colour is pre-inverted through the tone map (`pass_color`), so a fully fogged pixel
+  shows the READ colour. The terrain's feathered overlays and both water surfaces are drawn before
+  the pass (priority -2) and so fogged with the ground they lie on; a blended MTRL mod, drawn after,
+  fogs itself from the same values (`srr_fog_params` / `srr_fog_color` shader globals in
+  project.godot; Godot's FOG built-in). Godot's own fog is kept enabled at density 0 (Compatibility
+  applies a shader's FOG only while it is on) with the OURS sun scatter and aerial perspective
+  removed. The log line `World3D: environment fog (READ): ...` names each zone's planes.
+- **"Fog (temporary)"** (VideoOptions.FOG = 18, OURS, the user's request): on by default (the
+  original); off draws no fog. Not in any preset, saved as `fog_temporary`; listed after SSAO.
+- **The first `apply_video_options` applies every row.** A default record now draws Middle from the
+  first frame: Circle (no sun shadow map), glow, MSAA 2x, mip bias 1 (Forward+).
+- **`CharacterBlobs` (new): Circle as the original draws it** -- under every character kind (the
+  player, other players, monsters and NPCs register), the ten nearest the camera (INFERRED order),
+  size BCRadius + 5 (READ; taken as the diameter, INFERRED -- 9 for the default body, the size drawn
+  before), alpha 0xa8 / 255 (READ; before: the texture's full alpha). **Detail and Nothing draw no
+  circle** for any of them. Until now one circle followed the player alone, in Circle and Detail.
+- **Detail's shadow map reaches 3000 from the camera** (`SHADOW_MAP_DISTANCE`, READ-anchored to the
+  original's 3000 key) instead of Godot's 100. *(Corrected in the review: the key is 10 x the distance
+  from the player, so 400.)*
+- QA: `QaShotEnv` (`|tonemap=,sdist=,glow_bloom=` or any Video row per viewpoint),
+  `SRREVAMP_QA_PATCHES`, `QA BLOBS` lines; `SRREVAMP_QA_NOFOG` now turns the pass off.
+
+### 4. After (MEASURED, same shots; the default is now Middle with glow)
+
+| this round | nz2 z20 / z45 / z90 | nz z20 / z90 | horizon sky band |
+|---|---|---|---|
+| default (Middle: glow, Circle, fog) | 102.3 c20.3 / 100.0 c16.6 / 96.3 c13.5 | 79.0 / 81.4 | 215.7 |
+| fog off | 102.4 / 100.3 / 96.7 | 79.5 / 81.4 | 215.0 |
+| Bloom off | 90.2 c19.3 / 89.2 c16.9 / 86.6 c14.1 | 70.0 / 72.3 | 204.0 |
+
+- **Near the camera the fog changes nothing** (fog on vs off: every square within 0.5 luma; the
+  spawn's ground is 40-130 from the camera, the start plane 1897).
+- **Far away it fogs as the original does**: the town from 700 back (pitch -25), fog on vs off: the
+  top two sixths of the frame +12 to +62 luma, the rest 0.0; under Compatibility the same 11.8 % of
+  pixels change and 34,468 pixels (3.7 %) are within 3 levels of the READ colour (152, 194, 210)
+  with fog on, 0 with it off. (Under Forward+ the glow shifts the fogged colour, so the exact-colour
+  count is Compatibility's.)
+- **Bloom off gives back exactly the pre-round near scene** (nz z20 70.0 vs 70.1 before): the near
+  picture's only change is the glow the user's Middle now actually turns on.
+- **Shadows no longer change with the zoom**: Detail's darkening of the player's square against
+  Nothing is -2.2 / -2.8 / -3.1 at z20 / z45 / z90 (before: the shadow faded to nothing by z90).
+- **Bug 2** -- the player's circle (screen box from `QA BLOBS`): Circle darkens 8,032 / 1,678 / 413
+  pixels by more than 8 luma against Nothing (deepest -51) at z20 / z45 / z90, ten circles shown;
+  Detail and Nothing show 0 circles; Detail's own darkening there is the sun's shadow (3,446 / 779 /
+  198 pixels). Compatibility: Circle 8,586 / 454 pixels; Detail 302 / 20 (its shadow pass also
+  over-brightens, round 693's known GLES3 behaviour).
+
+### 5. Open (docs/TODO.md)
+
+- Detail's projected character shadows: here the sun's map lands only on shaded objects, so on the
+  unshaded terrain a character in Detail casts no shadow at all now that the circle is gone.
+- The Bloom row's look (the glow is round 693's guess and is now on by default).
+- The tone map: Filmic is OURS; the original shows its output as is (finding only, no change).
+- The fog's indoor branch, its per-frame easing between zones, and Forward+'s linear-light blend of
+  half-fogged pixels (Compatibility blends in display values, as Direct3D 9).
+
+### 6. Checks
+
+- `remote_godot.sh check`: ALL LOAD (561 scripts). `remote_godot.sh tests`: 217 suites, 0 failing
+  (new: `world_fog_test.gd`, `character_blobs_test.gd`; `video_options_test.gd` and
+  `mapm_terrain_builder_test.gd` updated for the row and the overlays' priority).
+- Both renderers live: Forward+ (Vulkan, RX 7600) and Compatibility (GL 4.6, radeonsi) -- the
+  numbers in section 4.
+- Perf gate (`client/tools/perf_gate.sh --sites jangan,reeds,cross --frames 12000`; all three: the
+  fog pass and the start-up apply are global), base 34286d92 vs this working tree, Forward+,
+  1280 x 720, median of 3, on the box user's saved Video record:
+
+| | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 1.66 -> 1.53 SAME | 9448 -> 9489 SAME | 3324 -> 3343 SAME | 4 -> 4 SAME |
+| reeds | 1.31 -> 1.29 SAME | 7023 -> 7007 SAME | 1978 -> 1972 SAME | 2 -> 2 SAME |
+| cross | 1.57 -> 1.53 SAME | 10198 -> 10265 SAME | 3345 -> 3334 SAME | 4 -> 4 SAME |
+
+  Exit 0. The default's sun shadow map now off (Circle) outweighs the fog pass, glow and MSAA. Not
+  timed: Detail's 3000-unit shadow reach (`qa_shot`'s per-step timing is bound by its movie writer,
+  262 ms a frame in every step, so it cannot separate it).
+
+### Review
+
+The review found two blockers and several corrections; all are fixed here (commit after cf7b7d14).
+
+**H1 -- the start-up fix made "washed out" worse.** It turned on Middle's Bloom, which was Godot glow
+at round 693's guessed values: the near ground went 91.0 -> 102.3 luma with less contrast (section
+4). The reviewer read the original's bloom in full (`Map::FUN_00a1d790`, constants from the
+constructor `Map::FUN_00a2f370`; OPTION_VIDEO.md has every step): downsample to 512 x 512 at
+x 128/255; a horizontal blur with a 40/255 threshold (this pass only) and weights 80 / 70 / 50 (/255)
+at 0 / +-2.6 / +-5.2 texels of 512; the same vertical blur without the threshold; composite
+`clamp(S x 198/255 + Blur x 192/255)` in display values. A flat field crosses over at 0.5: darker
+below, brighter above -- it raises contrast.
+- **`RetailBloom`** (new): that formula as one canvas pass on layer -1 (above the 3D view, under every
+  interface layer and the brightness pass), in both renderers; the Bloom row shows it. Godot's glow
+  is always off and round 693's glow values are gone from World3D.tscn. The Bloom row is no longer
+  greyed under Compatibility.
+- **Formula check** (`tools/measure_retail_bloom.gd`: ramps and seeded 7-pixel blocks, 4000 pixels x
+  3 channels, the CPU formula from the bloom-off frame against the bloom-on frame): Forward+ max
+  0.62/255 (mean 0.24), Compatibility max 0.95/255 (mean 0.27); 100 % within 1/255.
+- **The same squares** (Jangan spawn, z20 / z45 / z90; L, c):
+
+| | nz2 | nz z20 / z90 | nz2 c / L at z20 | horizon sky band |
+|---|---|---|---|---|
+| dev before the round (as players had it) | 91.0 c20.9 / 90.2 c18.0 / 88.4 c15.9 | 70.1 / 74.2 | 0.23 | 205.5 |
+| the round's first version (Godot glow on) | 102.3 c20.3 / 100.0 c16.6 / 96.3 c13.5 | 79.0 / 81.4 | 0.20 | 215.7 |
+| **now: the original's bloom (default)** | **80.3 c21.0 / 76.7 c14.5 / 72.3 c11.6** | **55.8 / 56.0** | **0.26** | **226.5** |
+| now, Bloom off | 91.2 c20.9 / 89.9 c17.2 / 86.8 c13.9 | 69.7 / 72.0 | 0.23 | 204.7 |
+
+  The paved ground (luma 70-90, under the crossover) is drawn darker and with more relative contrast
+  and saturation (nz2 s 21.4 -> 26.5); the bright sky brighter. That is the original's look by its
+  own arithmetic (READ), not a tuning.
+
+**H2 -- Detail cost +2.2 ms, and the 3000 was misread.** The list key is `(int)(|object - player| x
+10)` (CICPlayer::vslot_005 0x9d6f19..0x9d6fad), so `key <= 3000` is 300 units from the PLAYER.
+- `SHADOW_MAP_DISTANCE` is 400 (300 + the camera's farthest 90 + a margin, OURS).
+- In Detail only characters cast: the terrain patches and every placed-object template (so every
+  placed copy) have casting off -- the original's scenery casts none, its shadows are baked.
+- **Detail on terrain** (the review's M2): `ShadowCatcher`, a next pass on each terrain base
+  (`blend_mul`, no ambient / specular / fog, `light()` adding `mix(k, 1, ATTENUATION)` for the sun),
+  Forward+ only. k: READ in `FUN_009f2f80`, which builds the redrawn ground's vertices -- DIFFUSE black
+  with alpha `round(150 - clamp((h - ref - 12) x 9, 0, 150))` (0xd83058, 0xd89248, 0xdd7ca8,
+  0xdb8d74), so the ground keeps 1 - 150/255 = 0.412 of its colour under a solid silhouette; the
+  catcher multiplies in linear light, so k = 0.412 decoded (INFERRED conversion). The fade with
+  height is not reproduced. Render priorities: overlays and water -3, catcher -2, fog -1.
+- **Placed floors: no catcher.** They are shaded, so they receive the shadow map natively (MEASURED
+  at the spawn plaza: Detail darkens 2,502 / 533 / 150 pixels of the player's square against
+  Nothing); a catcher there would darken twice.
+- **Terrain, MEASURED** (farmland 96/168 at (960, 960), Forward+; the player's square): Detail
+  against Nothing -5.1 / -6.0 / -6.5 luma at z20 / z45 / z90, 3,141 / 701 / 173 pixels darker by
+  more than 8 (Circle: 7,647 / 1,635 / 375); before the review, Detail had no ground shadow there.
+
+**L1:** the ten circles are the ten nearest the LOCAL PLAYER (READ, the same key); Circle has no
+distance limit; the size is the diameter (READ, D3DXMatrixOrthoLH at 0x9f4462) and the colour
+argument is the TFACTOR (READ, 0x9f44cd). **L5:** on a placed floor our circle stays on the floor;
+the original's lies on the terrain under it (OURS, consistent with the user's ring-on-floors decision
+of 2026-10-03). **L6:** OPTION_VIDEO.md's bloom paragraph is the full reading above.
+
+**M1 -- perf with the same settings.** `perf_gate.sh` gained `--env` (both sides) and `--base-env`
+(base side). Both sides were put on Middle through the Apply path the base build does apply
+(`SRREVAMP_QA_VIDEO_STEPS=quality=0|quality=1`), so the comparison is the same rows; Forward+,
+1280 x 720, median of 3:
+
+| base 34286d92 vs head, both Middle | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 1.50 -> 1.49 SAME | 9387 -> 9399 SAME | 3283 -> 3314 SAME | 4 -> 4 SAME |
+| reeds | 1.29 -> 1.30 SAME | 6967 -> 6970 SAME | 1954 -> 1954 SAME | 2 -> 2 SAME |
+| cross | 1.48 -> 1.49 SAME | 10143 -> 10178 SAME | 3322 -> 3331 SAME | 4 -> 4 SAME |
+| crowd (L2: 2,500 monsters, the circles' reselect) | 9.35 -> 9.57 SAME | 10355 -> 10409 SAME | 3308 -> 3309 SAME | 5 -> 5 SAME |
+
+Circle vs Detail on this head (`--base HEAD --env SRREVAMP_QA_VIDEO=shadow_detail=1 --base-env
+SRREVAMP_QA_VIDEO=shadow_detail=2`, jangan): Detail 1.62 ms, Circle 1.52 ms -- **+0.10 ms** (the
+review measured +2.2 ms before casting was limited to characters). The crowd's +0.2 ms is under the
+gate's threshold; the reselect (a group walk every 6 frames) is kept.
+
+**Checks:** `remote_godot.sh check` ALL LOAD (565 scripts); `remote_godot.sh tests` 218 suites, 0
+failing (new: `retail_bloom_test.gd`).
+
+### Rework review
+
+**H2 + M2 -- the bloom's 4K cost and its edge echoes.** Taps at full resolution, at the 512-texel
+offsets, land 19.5 / 39 px apart at 3840 wide: sharp echoes of every edge, and +0.82 ms there.
+- A first fix took the taps on the screen's mip level log2(width / 512): no echoes, but Godot builds
+  those mips by a Gaussian blur of every level and the trilinear taps run per screen pixel -- the
+  4K gate measured **+2.0 ms** (4.03 -> 6.07 ms, SLOWER). Dropped for Forward+.
+- **Now (Forward+):** retail's pipeline at retail's resolution. A 514 x 514-vertex grid, one vertex
+  per texel of the 512 x 512 target, whose vertex shader computes that texel exactly as retail's
+  three passes do (81 screen samples: D at the texel centres, the horizontal taps between texels
+  thresholded, the vertical taps); the fragments interpolate across the grid (linear within each
+  half-cell where retail magnifies bilinearly -- OURS) and the composite is the blend itself
+  (premultiplied alpha: Blur x 192/255 + screen x 198/255), as retail's.
+- **Compatibility** reads nothing from the screen texture in a vertex stage (MEASURED: the grid
+  added no light under GL 4.6), so there the pass keeps the 25 taps on the 512-wide mip.
+- **Against retail's own pipeline**, computed on the CPU from the same frame (the rewritten
+  `tools/measure_retail_bloom.gd`; 4000 pixels x 3 channels):
+
+| | mean | p99 | max |
+|---|---|---|---|
+| Forward+ 1280 x 720 | 0.24/255 | 0.56/255 | 1.5/255 |
+| Forward+ 3840 x 2160 | 0.30/255 | 1.43/255 | 5.8/255 |
+| Compatibility 1280 x 720 (mips) | 1.6/255 | 7.7/255 | 11.9/255 |
+
+  A white bar 1/64 of the width wide: the light the bloom adds beside it falls from 47-50/255 to 0
+  with **no echo peak** at either size, in both renderers.
+- **Cost at 3840 x 2160** (`perf_gate.sh` gained `--size`): Bloom on against off on this head
+  (`--base HEAD --env SRREVAMP_QA_VIDEO=bloom=1 --base-env ...=0`, jangan, median of 3):
+  **4.03 -> 4.72 ms, +0.69, SLOWER**. Against the base build on the same Video rows (base Middle =
+  round 693's Godot glow): 4.37 -> 4.79, +0.42, SAME. Where it goes (`tools/time_retail_bloom.gd`,
+  the root viewport's GPU time at 4K over a synthetic picture): nothing 0.14 ms; a stub that only
+  reads the screen once and writes it back 0.74 ms; the bloom 1.18-1.21 ms. So about 0.6 ms is Godot
+  4.2's full-screen back-buffer copy that any canvas pass reading the screen pays at 4K, and ~0.45 ms
+  the grid's work. **Recorded for the user, not fixed:** the remaining +0.7 ms at 4K is the
+  Bloom row's (Middle turns it on; off restores it).
+
+**H1 -- overlays were bloomed.** Retail draws its world, then the bloom, then the lens flare
+(`SWorld::vslot_005` -> `FUN_00a1d790` -> `FUN_00a21280`), and its names as 2D text over that.
+- **`OverlayView`** (new): name plates, damage numbers, party marks and name boxes go on their own
+  render layer (bit 16), which the main camera leaves out; a transparent SubViewport of the window's
+  size, sharing the world, renders that layer through a camera copying the main one each frame, and
+  shows it at canvas layer 0 (over the bloom at -1, under the world's UI at 1). All of them draw
+  with no depth test, so leaving the scene's depth behind changes nothing; their colours go through a
+  linear tone map there (retail draws text colours as they are).
+- **MEASURED** (the Jangan spawn at z90, an NPC's plate in view): pixels within 6 of the plate colour
+  (255, 240, 184): 123 with the bloom on, 124 with it off, 123 the same pixel -- the plate is no
+  longer touched by the bloom (before, (1.0, 0.94, 0.72) came out near (204, 191, 148)).
+- **Not moved (OURS, disclosed in TODO):** the lens-flare sun sprite (depth-tested against the
+  scene) and the character-select characters are still bloomed.
+
+**M1 -- the catcher's k.** The decoded 0.141 assumed a linear tone map; the world is Filmic. Fitted
+on the screen: the shadow core's displayed ratio (Detail over Nothing, farmland 96/168 top-down,
+ground at luma ~98) measured 0.38 at k = 0.219 (Filmic's own prediction for 0.412 at luma 95), so k
+= **0.25**; at 0.25 the core measures **0.414 / 0.429** (median, z45 / z90) and the histogram's mode
+**0.413** -- the READ 0.412. FITTED, labelled so in ShadowCatcher.
+
+**L4:** `_terrain_patches` drops freed patches whenever a patch is added.
+
+**M3 (record):** on High (Detail), buildings and hills no longer cast real-time shadows -- only the
+baked ones remain, as in retail, whose scenery casts none; characters cast, on objects and (through
+the catcher) on the terrain. *Release note:* "High (Detail) shadows: only characters cast real-time
+shadows now, as in the original -- building and hill shadows are the baked ones."
+
+**L1, L2, L5:** BerserkFlash after the bloom (PLAUSIBLE), the character-create preview not bloomed
+(PLAUSIBLE), and CLAMP against a possible WRAP at the target's edges are in docs/TODO.md.
+
+**Perf, matched settings** (`--env SRREVAMP_QA_VIDEO_STEPS=quality=0|quality=1`, both sides Middle;
+Forward+, 1280 x 720, median of 3; the head carried the grid bloom and OverlayView):
+
+| base 34286d92 vs head | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 1.50 -> 1.65 SAME | 9504 -> 9433 SAME | 3333 -> 3328 SAME | 4 -> 4 SAME |
+| reeds | 1.30 -> 1.45 SAME | 6987 -> 6991 SAME | 1974 -> 1981 SAME | 2 -> 2 SAME |
+| cross | 1.49 -> 1.64 SAME | 10115 -> 10238 SAME | 3317 -> 3320 SAME | 4 -> 4 SAME |
+
+  About +0.15 ms a frame at 720p: the overlay viewport's own render and the bloom pass. Under the
+  gate's threshold.
+
+**Checks:** `remote_godot.sh check` ALL LOAD; `remote_godot.sh tests` 218 suites, 0 failing.
+
+### Final review (the overlay view)
+
+- **H1 (CONFIRMED, fixed): at a UI scale other than 1 the overlay was shown magnified from the
+  top-left corner.** The TextureRect kept Godot's default `EXPAND_KEEP_SIZE`, so its minimum size
+  was the texture's, the window in physical pixels; under `content_scale_factor` 2.0 the full rect is
+  half that in UI units, and the stretch doubled the rest. The review's GPU render put a plate that
+  projects to window (640, 360) at (1251, 715). Fixed with `EXPAND_IGNORE_SIZE`;
+  `world/overlay_view_test.gd` checks the shown rect against the window at 1.0 / 1.5 / 2.0 and fails
+  on c3769753 at 1.5 and 2.0 (got (64, 64) for (42, 42) and (32, 32) in the headless window).
+- **L1 (fixed):** the front-end's backdrop (title, select, create) has nothing on the overlay layer;
+  `OverlayView.set_rendering(false)` stops the viewport there.
+- **L2 (MEASURED, synthetic):** at 3840x2160 the overlay SubViewport costs ~0.26-0.29 ms GPU and the
+  composite ~0.09 ms (400 boxes, a shadowed sun, 30 plates; not measured in the real world).
+- **Checked fine by the review:** input passes through to the world (a push_input probe: left/right
+  press and release, wheel, right-held motion all reach `_unhandled_input`); the copied camera
+  matches the main one every frame; the viewport is the window's pixel size at 1.0 / 1.5 / 2.0 and
+  follows a resize; nothing else needs the overlay layer.
+- **Open (PLAUSIBLE):** text edges with partial alpha may tone-map slightly brighter than in the main
+  view (L3); a camera moved by a Tween would leave the overlay one frame behind (L4; no such writer
+  today).
+
 ## Seven-hundred-and-first round: a press of the left button is one click -- holding it moves neither the ring nor the walk, as in retail -- the ring lies on Jangan's plaza deck (the user's decision), and a far NPC or gate is walked to before it talks, a monster selected before it is attacked
 
 The user (2026-10-03): "if you click and hold down the click the circle will fluidly move around

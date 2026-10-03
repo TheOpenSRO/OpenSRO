@@ -305,6 +305,9 @@ static func water_material(frames: Texture2D, water_color: Color) -> StandardMat
 	mat.vertex_color_is_srgb = ShaderColour.VERTEX_COLOR_IS_SRGB
 	mat.albedo_texture = frames
 	set_water_color(mat, water_color)
+	# Drawn before the fog pass, so it is fogged with the ground it covers
+	# (round 702, WorldFog.UNDER_PASS_PRIORITY).
+	mat.render_priority = WorldFog.UNDER_PASS_PRIORITY
 	return mat
 
 ## The texture factor's RGB: WaterColor clamped to [0, 1], as
@@ -322,6 +325,7 @@ static func still_material(tex: Texture2D) -> StandardMaterial3D:
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.albedo_texture = tex
 	mat.albedo_color = Color(1, 1, 1, STILL_ALPHA)
+	mat.render_priority = WorldFog.UNDER_PASS_PRIORITY
 	return mat
 
 ## How many of a mesh's triangles face up by Godot's own front-face rule

@@ -339,6 +339,9 @@ func _ready() -> void:
 ## A material for one kind of surface, fed every frame by this node.
 func make_material(still: bool, bump: Texture2D, still_tex: Texture2D, water_color: Color) -> ShaderMaterial:
 	var m := ShaderMaterial.new()
+	# Drawn before the fog pass, so it is fogged with the ground it covers
+	# (round 702, WorldFog.UNDER_PASS_PRIORITY).
+	m.render_priority = WorldFog.UNDER_PASS_PRIORITY
 	m.shader = SHADER
 	m.set_shader_parameter("still", still)
 	m.set_shader_parameter("bump_tex", bump)

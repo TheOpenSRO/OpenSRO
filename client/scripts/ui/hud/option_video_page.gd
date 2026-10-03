@@ -63,13 +63,14 @@ const ID_SLOT_LABEL := 216
 const ID_SLOT_COMBO := 217
 const VIEWS := ["free", "third_person", "quarter"]
 
-## The rows the list shows, in order: retail's 0..13 and 15 (READ), then SSAO
-## and the renderer (OURS).
+## The rows the list shows, in order: retail's 0..13 and 15 (READ), then SSAO,
+## the temporary fog toggle (round 702) and the renderer (OURS).
 const LIST := [VideoOptions.QUALITY, VideoOptions.SHADOW, VideoOptions.SCENERY,
 	VideoOptions.CHARACTER, VideoOptions.WATER_REFLECTION, VideoOptions.WATER_DETAIL,
 	VideoOptions.METAL, VideoOptions.LIGHT, VideoOptions.FILTERING, VideoOptions.TEXTURE,
 	VideoOptions.LENS_FLARE, VideoOptions.BLOOM, VideoOptions.DYNAMIC_ANIMATION,
-	VideoOptions.EFFECT, VideoOptions.FRIEND_ENEMY, VideoOptions.SSAO, VideoOptions.RENDERER]
+	VideoOptions.EFFECT, VideoOptions.FRIEND_ENEMY, VideoOptions.SSAO, VideoOptions.FOG,
+	VideoOptions.RENDERER]
 const COLUMNS := 2
 
 const ARROW_DDJ := "interface\\ifcommon\\com_qst_downarrow_button.ddj"
@@ -567,7 +568,7 @@ func combo_of(entry: int) -> OptionButton:
 ## Compatibility, and change under Forward+ (edge pixels 12455 -> 12727,
 ## checker contrast 0.356 -> 0.257).
 static func available(entry: int) -> bool:
-	if entry in [VideoOptions.SSAO, VideoOptions.BLOOM, VideoOptions.FILTERING, VideoOptions.TEXTURE]:
+	if entry in [VideoOptions.SSAO, VideoOptions.FILTERING, VideoOptions.TEXTURE]:
 		return VideoOptions.post_effects_available()
 	if entry == VideoOptions.RENDERER:
 		var rc := VideoOptions.renderer_choice_script()
@@ -595,13 +596,15 @@ func tooltip_of(entry: int) -> String:
 	var ours := ""
 	match entry:
 		VideoOptions.BLOOM:
-			ours = "Godot glow."
+			ours = "The original's bloom: the bright parts blurred over a slightly darkened picture."
 		VideoOptions.SSAO:
 			ours = "Screen-space ambient occlusion (this client's own option). A light effect here: the ground and most buildings are drawn with their own lighting, which ambient occlusion cannot darken."
 		VideoOptions.FILTERING:
 			ours = "Multisample anti-aliasing (2x); a small change on screen."
 		VideoOptions.TEXTURE:
 			ours = "A mipmap bias: it reaches only textures with mipmaps, and most world textures here have none yet, so it changes little."
+		VideoOptions.FOG:
+			ours = "Temporary, for comparing: On draws the original's distance fog (its own start, end and colour for the zone); Off draws none. The original always has it."
 		VideoOptions.RENDERER:
 			ours = "Forward+ (Vulkan) or Compatibility (OpenGL). Takes effect at the next start."
 		VideoOptions.WATER_REFLECTION:

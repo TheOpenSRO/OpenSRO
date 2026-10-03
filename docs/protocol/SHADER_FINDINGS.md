@@ -43,6 +43,12 @@ neither is recoverable from the asset data alone.
 
 ## Distance haze is atmospheric scattering, not linear fog
 
+> **Superseded for what the client draws (round 702).** The client's own landscape step
+> (`Map::FUN_00a26f60`) sets up plain Direct3D LINEAR fog between the zone's channels 10 and 11
+> times the view distance, for the terrain and the objects alike (`WorldFog`'s header has the
+> addresses); the scattering shaders below ship in the archive but are not what it uses for the
+> world's distance fog. `World3D.FOG_DENSITY` is gone; the fog is drawn at the READ planes.
+
 The same vertex shader implements a full Rayleigh/Mie scattering model — named
 constants `CV_BETA_1`, `CV_BETA_2`, `CV_BETA_DASH_1`, `CV_BETA_DASH_2`,
 `CV_HG` (`= 1-g^2, 1+g, 2g, 0`, the Henyey-Greenstein phase term) — and computes

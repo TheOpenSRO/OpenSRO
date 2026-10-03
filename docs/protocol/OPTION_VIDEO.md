@@ -166,8 +166,8 @@ value)` (`0xa194a0`), which also stores it at `SWorld+0x2e50 + case*4` (getter `
 | View | camera mode 0/1/2 (`UI_CHANGED::FUN_00780420`) | `World3D.set_camera_view` (round 639's three views), saved as [ui] camera_view |
 | Set Brightness | case 0: gamma ramp `65535 * pow(i/255 * B, A)`, (A, B) = (1.4, 0.8) (1.2, 0.9) (1, 1) (0.8, 1.2) (0.6, 1.4); full screen only | the same curve as a full-screen canvas pass over the finished frame (OURS: in a window too); none at Normal |
 | Graphic Quality | the presets above | the same presets; any hand-set row switches to User (INFERRED) |
-| Shadow Detail | case 2: Detail builds a 96 x 96 target and 32 x 32 shadow textures per character; Circle (TTDESC_04 "circles") | Nothing: no blob, no sun shadow map; Circle: the blob (`SkyBox\shadowsphere.ddj`); Detail: blob and the DirectionalLight3D's shadow (OURS) |
-| Background Sight Range | case 8: far plane 1500/2500/3500/4500/5500; view distance `min(0.8 far, 2500)` = 1200/2000/2500/2500/2500 scales the fog planes and is the map-object range + 480; world+0x23db = 800..2048 (reader not found) | map-object animation range = view - 480 (READ rule); fog density x 2500/view and camera far x min(1, far/3500) (OURS); 3 = as before |
+| Shadow Detail | case 2: Detail builds a 96 x 96 target and 32 x 32 shadow textures per character; `SWorld::vslot_024` (0xa182f0, round 702) draws by the value: 1 Circle -- `skybox\shadowsphere.ddj` under the first ten CICharactors (players, monsters, NPCs) of the world's object map, keyed by `(int)(|object - player| x 10)` (CICPlayer::vslot_005 0x9d6f19..0x9d6fad), no distance limit, size BCRadius + 5 = the diameter (D3DXMatrixOrthoLH 0x9f4462), TFACTOR 0xa8000000 (0x9f44cd); 2 Detail -- the projected per-character shadows (`Map::FUN_009f35f0`, up to ten, key <= 3000 = 300 units from the player; the ground keeps 1 - 150/255 of its colour under a solid silhouette, fading over the 17 units below, FUN_009f2f80) and **no circle**; 0 neither | Nothing: no circle, no sun shadow map; Circle: the circles (`CharacterBlobs`: every character kind, the ten nearest the player, BCRadius + 5, alpha 0xa8; on a placed floor the circle stays on the floor -- OURS, the original's lies on the terrain under it, consistent with the user's ring-on-floors decision of 2026-10-03); Detail: no circle, and the DirectionalLight3D's shadow map reaching 400 from the camera (READ 300 from the player + the camera's 90), cast by characters only (terrain and placed objects cast none, as the original's scenery: its shadows are baked), received by the shaded placed objects natively and by the terrain through `ShadowCatcher` (a multiplying next pass, k = the READ 0.412 decoded; Forward+ only). Nothing changes with the zoom |
+| Background Sight Range | case 8: far plane 1500/2500/3500/4500/5500; view distance `min(0.8 far, 2500)` = 1200/2000/2500/2500/2500 scales the fog planes and is the map-object range + 480; world+0x23db = 800..2048 (reader not found) | map-object animation range = view - 480 (READ rule); the fog planes = the zone's channels 10 / 11 x view (READ rule, round 702: `WorldFog`); camera far x min(1, far/3500) (OURS); 3 = as before |
 | Character Sight Range | case 9: stored only; no reader found (asm `+0x2e74` has one writer; 17 getter calls carry other cases; no record-offset reader) | OURS: other players' and monsters' meshes drawn to 600 / 1200 from the camera at 1 / 2; unlimited at 3..5 (as before). NPCs are built into their region's group here and are not reached; the original's rule (no reader found) is unknown |
 | Water Reflection | case 6: builds / frees the reflection target and two 512 x 512 textures | round 628's pass; from the next login (a region's water is built for one mode) |
 | Water Detail | case 7: stored only; no reader found | OURS: the reflection target's rows 256 / 512 (READ size) / 1024, live |
@@ -176,12 +176,61 @@ value)` (`0xa194a0`), which also stores it at `SWorld+0x2e50 + case*4` (getter `
 | Texture Filtering | byte 0xc; no reader found; TTDESC_15 "compensates rough outlines" | INFERRED anti-aliasing: MSAA 2x on the 3D view (OURS level); Forward+ only -- greyed under Compatibility (MEASURED below). Under Forward+ the change on screen is small (the review: barely visible) |
 | Texture Detail | case 5: `IDirect3DBaseTexture9::SetLOD(2 - v)` on every texture (vtable +0x2c) | `Viewport.texture_mipmap_bias` 2 / 1 / 0 (INFERRED equivalent look, not the memory saving); Forward+ only -- greyed under Compatibility (MEASURED below). **Little effect in the world yet:** the bias reaches only mipmapped textures, and the terrain's are built without mipmaps (the review, `mapm_terrain_builder.gd`); docs/TODO.md |
 | Lens Flare | case 0xd: `SWorld::vslot_005` draws `Map::FUN_00a21280` while +0x2e84 is set | the sun glow sprite (`SkyBox\glow.ddj`, INFERRED to be the flare's piece) |
-| Bloom Effect | case 1: screen-size and 512 x 512 render targets (a glow pass; look not read) | Godot glow (Forward+ only); the user's "glow" toggle is this row |
+| Bloom Effect | case 1: screen-size and 512 x 512 render targets; the pass `Map::FUN_00a1d790` (READ in full, round 702 review: below) | `RetailBloom`, the original's formula, both renderers; the user's "glow" toggle is this row |
 | Dynamic Animation | case 0xe -> renderer +0x19c, re-inits the animated objects; TTDESC_14 fabrics and hair | kept, draws nothing: no cloth or hair motion here |
 | Effect Quality | `IDecoSkill::FUN_00a50dc0(q, owner)`: 0 none, 2 all, 1 only owners passing two unread tests | `SkillEffects.quality`: 1 shows effects the player casts, takes or carries (INFERRED) |
 | Display Friendly/Enemy | 0 lets `GlobalDataManager::FUN_009dae90/9db750` swap a large-battle outfit tint; 1 (General) never | kept, draws nothing: no battle outfits here |
 | SSAO | (none in the exe) | OURS: Godot SSAO, Forward+ only, default off; radius 16, intensity 4, light affect 1 (OURS). **A light effect only:** the terrain is unshaded and the object mods write EMISSION, which SSAO does not darken (measured below) |
+| Fog (temporary) | (none: the original always fogs -- `Map::FUN_00a26f60` turns FOGENABLE on and sets linear fog between the zone's planes, `WorldFog`'s header) | OURS, TEMPORARY (round 702, the user's request: "make a temporary toggle in the video settings so I can compare and make a decision"): On (default) draws the original's linear fog at its own planes and colour; Off draws none. No preset names it; saved as `fog_temporary` |
 | Renderer | (none) | OURS: Forward+ / Compatibility at the next start, through round 693's RendererChoice when the build has it |
+
+## Applied at start-up (round 702)
+
+Until round 702 the saved record never reached the world when it started: `apply_video_options`
+compared each row with the record in force, and on the first call that record was the one being
+applied (`video_options()` had just made it so), so no row "changed" and nothing was set. Every
+start therefore drew the scene's own settings whatever the window said -- the sun's shadow map on
+(in Circle too, which is why the shadows changed with the zoom: Godot's shadow distance is 100 from
+the camera), no glow (Bloom on in Middle), no MSAA (Filtering on), no mipmap bias (Texture Detail
+Middle) -- until a row was changed in the window; even then only the changed row was applied. The
+first call now applies every row. So a default record now draws, from the first frame: Circle (no
+sun shadow map, the round shadows), the bloom (RetailBloom since the review), MSAA 2x (Forward+) and mipmap bias 1.
+
+**Bloom is the original's own (round 702 review).** Turning the Bloom row's Godot glow on from
+start-up made the picture brighter and flatter (MEASURED: +10-12 luma on the spawn's ground, contrast
+relative to brightness -15 %): round 693's glow values (intensity 0.8, bloom 0.2, threshold 0.85)
+were a guess. The original's bloom, READ in full (`Map::FUN_00a1d790`; constants from the world's
+constructor `Map::FUN_00a2f370`):
+
+1. **Downsample:** the screen (target +0x27c3) into a 512 x 512 target (+0x27c7), bilinear,
+   MODULATE(TEXTURE, TFACTOR) with TFACTOR RGB 0x80: x 128/255.
+2. **Horizontal blur** into a target cleared to 0 (+0x27cb), blend SRCALPHA / ONE: colour
+   SUBTRACT(TEXTURE, TFACTOR 0x28) -- the threshold, 40/255, clamped at 0, in this pass only --
+   and each tap's alpha its weight: centre 0x50, +-1 0x46, +-2 0x32 (/255; the table at +0x68e3
+   holds five values, three are used per side), at +-2.6 and +-5.2 texels of 512 (2 x 13 x i / 10,
+   step +0x690b = 13).
+3. **Vertical blur** back into +0x27c7: the same weights and offsets in y, no threshold.
+4. **Composite:** the plain screen first, then the blur with SRCBLEND = BLENDFACTOR 0xc0c0c0
+   (+0x690d) and DESTBLEND = SRCALPHA, alpha the TFACTOR's 0xc6 (+0x690c):
+   `out = clamp(S x 198/255 + Blur x 192/255)`, in display values, before the interface.
+
+A flat field below 0.5 comes out darker and above 0.5 brighter: it raises contrast. `RetailBloom`
+draws it as one canvas pass on layer -1 (above the 3D view, under every interface layer and the
+brightness pass), Godot's glow always off. Under Forward+ the pass is a 514 x 514-vertex grid, one
+vertex per texel of the 512 x 512 target: each vertex computes retail's three passes for its texel
+(81 screen samples: the downsample at the texel centres, the horizontal taps between texels with the
+threshold, the vertical taps), the fragments interpolate across the grid (linear within each
+half-cell where retail magnifies bilinearly -- OURS), and the composite is the blend itself
+(premultiplied alpha), as retail's is. Under Compatibility the vertex stage reads nothing from the
+screen texture (MEASURED), so there the 25 taps read the screen's mip level log2(width / 512)
+(Godot's Gaussian mips -- OURS). MEASURED (`tools/measure_retail_bloom.gd`, the CPU running retail's
+whole 512 pipeline on the same frame, 4000 pixels x 3 channels): Forward+ mean 0.24 / 0.30 of 255,
+p99 0.56 / 1.43, max 1.5 / 5.8 at 1280 x 720 / 3840 x 2160; Compatibility (mips) mean 1.6, p99 7.7,
+max 11.9 at 1280 x 720; a white bar's added light falls off with no echo peak in either. **Overlays
+come after it** (`OverlayView`): name plates, damage numbers, party marks and name boxes render in
+their own transparent viewport over the bloom, as retail draws its 2D text over the finished frame;
+the lens-flare sun sprite and the character-select characters are still bloomed (OURS,
+docs/TODO.md).
 
 ## This client's default: Middle (the user's decision, 2026-10-02)
 
@@ -189,9 +238,8 @@ The user chose "Original's Middle": every record with no saved section -- a new 
 settings file from before round 694 alike -- is retail's **Middle** (READ above): Circle
 shadows, sight 3 / 3, Water Reflection **off**, Middle water, Metallic Sheen / Light Effect /
 Filtering / Lens Flare / **Bloom on**, Middle textures, Dynamic Animation on, every effect;
-Normal brightness; SSAO (OURS) off. Under Compatibility, Bloom, Filtering and Texture Detail
-draw nothing (greyed), so there Middle differs from the look before round 694 by the sun's
-shadow map (off), the water reflection (off) and nothing else drawn. The window mode was not part
+Normal brightness; SSAO (OURS) off. Under Compatibility, Filtering and Texture Detail draw
+nothing (greyed); the Bloom row draws RetailBloom in both renderers since the round 702 review. The window mode was not part
 of the choice: it stays a window unless saved otherwise, and Default (the button) restores
 Middle, Normal and the Free view without touching it (retail's Default also picks full screen).
 
@@ -215,7 +263,7 @@ step. QA: `SRREVAMP_QA_VIDEO="quality=0,shadow_detail=2,..."` sets rows for one 
   mipmapped 2-px checker plane; `msaa_3d` 2x, then `texture_mipmap_bias` 2): Compatibility
   (GL 4.6, RX 7600) -- edge pixels 12555 and checker contrast 0.2943 in all four states,
   pixel-identical; Forward+ (Vulkan, RADV) -- edge pixels 12455 -> 12727 with MSAA, contrast
-  0.3557 -> 0.2573 with bias 2. So both rows are Forward+'s, like SSAO and glow.
+  0.3557 -> 0.2573 with bias 2. So both rows are Forward+'s, like SSAO (glow was too until the round 702 review; the Bloom row is RetailBloom now, both renderers).
 - **Each row at the Jangan spawn** (one boot, `SRREVAMP_QA_VIDEO_STEPS`, 1280x720, offline,
   pixels differing by more than 2 % from the first default frame; same-settings frames differ
   by 128k-201k from animation alone): Shadow Nothing 743k, Circle 692k (the sun's shadow map

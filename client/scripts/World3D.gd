@@ -401,9 +401,28 @@ func set_camera_view(view: String) -> void:
 ## pieces built later (the blob, the sun glow, a new character's meshes)
 ## read it as they are made.
 var _video: VideoOptions = null
-## The fog and far-plane factors of the Background Sight Range (see
+## Whether apply_video_options has run once (round 702: the first applies
+## every row).
+var _video_applied := false
+## The sun's shadow-map reach under Shadow Detail "Detail" (round 702), from
+## the camera. Godot's default, 100, faded every shadow out from 80 units,
+## so zooming the camera out (20..90 units from the player) made the
+## player's own shadow and its surroundings' come and go. The original's
+## projected shadows cover the characters whose key in its list is at most
+## 3000 (SWorld::vslot_025's `3000 < key` break), the key being
+## `(int)(|object - player| x 10)` (READ, round 702 review:
+## CICPlayer::vslot_005 0x9d6f19..0x9d6fad) -- 300 units from the PLAYER.
+## So 400: those 300 plus the camera's farthest 90 from the player, plus a
+## margin (OURS), and no shadow near the player changes with the zoom.
+const SHADOW_MAP_DISTANCE := 400.0
+## The terrain patches built, for Detail's catcher (ShadowCatcher).
+var _terrain_patches: Array = []
+## The original's bloom (RetailBloom, round 702 review), the Bloom row.
+var _retail_bloom: RetailBloom = null
+## The overlays drawn after it (OverlayView).
+var _overlay_view: OverlayView = null
+## The far-plane factor of the Background Sight Range (see
 ## _apply_view_distance).
-var _fog_scale := 1.0
 var _far_scale := 1.0
 ## The Character Sight Range in force, 0 for none, and the meshes it reaches:
 ## every GeometryInstance3D added under other_entities (players, monsters,
@@ -426,8 +445,15 @@ func apply_video_options(o: VideoOptions) -> void:
 	if o == null:
 		return
 	var t0 := Time.get_ticks_usec()
-	var before := _video
+	# The first application applies every row (round 702): until then
+	# `before` was the very record being applied -- video_options() had just
+	# made it the one in force -- so nothing "changed" and the saved choices
+	# never reached the world at start-up. The sun's shadow map stayed on in
+	# Circle (the scene's default), Bloom's glow stayed off, Filtering and
+	# Texture Detail were never set, until a row was changed in the window.
+	var before: VideoOptions = _video if _video_applied else null
 	_video = o
+	_video_applied = true
 	VideoOptions.set_in_force(o)
 	# Only what changed is applied again (round 694 review: Apply on any tab
 	# re-applied the whole record); everything on the first apply.
@@ -435,17 +461,22 @@ func apply_video_options(o: VideoOptions) -> void:
 		return before == null or before.value(entry) != o.value(entry)
 	# Shadow Detail. READ, SWorld::vslot_043 case 2: Detail builds a 96x96
 	# target and 32x32 shadow textures per character -- a real shadow; Circle
-	# and Nothing free them. Circle is the round blob (READ in label text,
-	# UIIT_STT_VIDIO_TTDESC_04 "simplify shadows into circles"). Here (OURS):
-	# Nothing hides the blob (SkyBox\shadowsphere.ddj) and the sun's shadow
-	# map, Circle draws the blob alone (Middle, the default), Detail both (the
-	# look before round 694).
+	# and Nothing free them. READ, SWorld::vslot_024 (round 702,
+	# CharacterBlobs): Circle draws the round blob under up to ten
+	# characters, Detail the projected shadows and NO blob, Nothing neither.
+	# Here: Circle draws the blobs (CharacterBlobs, every frame); Detail the
+	# sun's shadow map (OURS stand-in for the projected shadows), with no
+	# blob; Nothing neither.
 	var shadow := o.value(VideoOptions.SHADOW)
 	if changed.call(VideoOptions.SHADOW):
 		if directional_light != null:
 			directional_light.shadow_enabled = shadow >= 2
-		if _blob_shadow != null and shadow < 1:
-			_blob_shadow.visible = false
+			directional_light.directional_shadow_max_distance = SHADOW_MAP_DISTANCE
+		_apply_shadow_catchers()
+		_update_blob_shadow()
+	# Fog (temporary), OURS (round 702): the original's fog or none.
+	if changed.call(VideoOptions.FOG):
+		_apply_fog()
 	# Background Sight Range (READ distances, OURS drawing; _apply_view_distance).
 	if changed.call(VideoOptions.SCENERY):
 		_apply_view_distance(o.value(VideoOptions.SCENERY))
@@ -470,10 +501,13 @@ func apply_video_options(o: VideoOptions) -> void:
 	# flare's nearest piece.
 	if _sun_glow != null:
 		_sun_glow.visible = o.value(VideoOptions.LENS_FLARE) == 1
-	# Bloom Effect = glow, and SSAO (OURS): one environment function.
+	# SSAO (OURS) through the environment; Bloom Effect is the original's
+	# bloom (RetailBloom, round 702 review), in both renderers.
 	if world_environment != null and (changed.call(VideoOptions.SSAO) or changed.call(VideoOptions.BLOOM)):
 		VideoOptions.apply_post_effects(world_environment.environment,
 			o.value(VideoOptions.SSAO) == 1, o.value(VideoOptions.BLOOM) == 1)
+	if _retail_bloom != null:
+		_retail_bloom.visible = o.value(VideoOptions.BLOOM) == 1
 	# Effect Quality (READ, IDecoSkill::FUN_00a50dc0; SkillEffects.quality).
 	SkillEffects.quality = o.value(VideoOptions.EFFECT)
 	# Set Brightness (READ curve; a pass over the whole screen).
@@ -562,9 +596,10 @@ func describe_video(o: VideoOptions) -> String:
 	for e in VideoOptions.VALUE_ENTRIES:
 		parts.append("%s=%d" % [VideoOptions.row_of(e)["key"], o.value(e)])
 	parts.append("fullscreen=%s resolution=%s" % [str(o.fullscreen), VideoOptions.format_resolution(o.resolution)])
-	parts.append("view_distance=%.0f object_range=%.0f far=%.0f fog_density=%.6f char_range=%.0f water_rows=%d msaa=%d mip_bias=%.1f renderer=%s" % [
+	parts.append("view_distance=%.0f object_range=%.0f far=%.0f fog=%.0f..%.0f%s char_range=%.0f water_rows=%d msaa=%d mip_bias=%.1f renderer=%s" % [
 		VideoOptions.view_distance(o.value(VideoOptions.SCENERY)), MapAnimation.object_range,
-		camera_3d.far if camera_3d != null else 0.0, FOG_DENSITY * _fog_scale, _character_range,
+		camera_3d.far if camera_3d != null else 0.0, _fog_near_real, _fog_far_real,
+		"" if _fog_pass != null and _fog_pass.visible else " (off)", _character_range,
 		WaterReflection.target_rows, get_viewport().msaa_3d if is_inside_tree() else -1,
 		get_viewport().texture_mipmap_bias if is_inside_tree() else 0.0,
 		"forward_plus" if VideoOptions.forward_plus_running() else "gl_compatibility"])
@@ -574,8 +609,8 @@ func describe_video(o: VideoOptions) -> String:
 ## 1500..5500 and the view distance min(0.8 x far, 2500), which scales the
 ## fog planes and is the map objects' animation range plus 480. Here:
 ## - the map objects' range follows the view distance (READ rule);
-## - the drawn fog's density scales by 2500 / view distance (OURS: Godot
-##   4.2's fog is exponential, not retail's linear planes -- FOG_DENSITY);
+## - the fog planes are the zone's channels times the view distance (READ
+##   rule, round 702: _apply_fog);
 ## - the camera's far plane scales by far / 3500, the READ default, at the
 ##   settings below it (OURS: this client's far plane is its streamed region
 ##   window's, not retail's; settings 3 to 5 keep it, since nothing past the
@@ -584,13 +619,51 @@ func describe_video(o: VideoOptions) -> String:
 func _apply_view_distance(scenery: int) -> void:
 	var view := VideoOptions.view_distance(scenery)
 	MapAnimation.set_view_distance(view)
-	_fog_scale = VideoOptions.VIEW_DISTANCE_MAX / maxf(view, 1.0)
 	_far_scale = minf(1.0, VideoOptions.far_plane(scenery) / VideoOptions.SCENERY_FAR[2])
-	if world_environment != null and world_environment.environment != null \
-			and world_environment.environment.fog_enabled:
-		world_environment.environment.fog_density = FOG_DENSITY * _fog_scale
+	_apply_fog()
 	if camera_3d != null:
 		_apply_camera_far_plane()
+
+## The world's fog from the zone's channels (_apply_real_environment_lighting),
+## the Background Sight Range's view distance (READ rule) and the Video tab's
+## "Fog (temporary)" row (OURS, round 702: the user's comparison toggle; on
+## is the original's look). Sets the shader globals every fogged shader reads
+## and shows or hides the pass. SRREVAMP_QA_NOFOG turns it off for a run.
+func _apply_fog() -> void:
+	var o := video_options()
+	var view := VideoOptions.view_distance(o.value(VideoOptions.SCENERY))
+	var fog_planes := WorldFog.planes(_fog_channel_near, _fog_channel_far, view)
+	_fog_near_real = fog_planes.x
+	_fog_far_real = fog_planes.y
+	var on := _fog_ready and o.value(VideoOptions.FOG) == 1 and OS.get_environment("SRREVAMP_QA_NOFOG") == ""
+	var env: Environment = world_environment.environment if world_environment != null else null
+	WorldFog.set_globals(fog_planes, on, WorldFog.pass_color(_fog_display_color, env))
+	if _fog_pass != null:
+		_fog_pass.visible = on
+
+## Whether Detail's terrain catcher draws: Shadow Detail "Detail", under
+## Forward+ (ShadowCatcher: the Compatibility renderer's shadowed sun is its
+## own additive pass).
+func _shadow_catchers_on() -> bool:
+	return video_options().value(VideoOptions.SHADOW) >= 2 and RendererChoice.running() == RendererChoice.FORWARD_PLUS
+
+## Puts Detail's catcher on every terrain patch built, or takes it off.
+func _apply_shadow_catchers() -> void:
+	var on := _shadow_catchers_on()
+	var kept: Array = []
+	for p in _terrain_patches:
+		if is_instance_valid(p):
+			ShadowCatcher.set_on(p as MeshInstance3D, on)
+			kept.append(p)
+	_terrain_patches = kept
+
+## Puts the fog pass under the camera (once; _ready, world and title alike).
+func _build_fog_pass() -> void:
+	if _fog_pass != null or camera_3d == null:
+		return
+	_fog_pass = WorldFog.build_pass(RendererChoice.running() != RendererChoice.FORWARD_PLUS)
+	_fog_pass.visible = false
+	camera_3d.add_child(_fog_pass)
 
 ## Character Sight Range: other players' and monsters' meshes are drawn to
 ## `range_` from the camera (GeometryInstance3D.visibility_range_end; 0
@@ -713,48 +786,27 @@ var _last_grounded_position := Vector3.ZERO
 ## should ever cross; anything below it can only be a real gap.
 const WORLD_FLOOR_Y := -500.0
 
-## Aerial-perspective haze strength. See _apply_real_environment_lighting for
-## the real recovered model this feeds (real per-channel extinction
-## `exp(-(beta_1+beta_2) * s)` plus additive inscattering, from the real client
-## terrain shaders shipped in Data.pk2's `Shader\` folder).
+## The world's distance fog (round 702, WorldFog): the original's linear fog
+## between the zone's own planes, drawn by a full-screen pass. Until round 702
+## this was Godot's exponential fog from the camera at an OURS density
+## (0.00005), with an OURS sun scatter (0.1) and aerial perspective (0.5): a
+## haze from the camera outward that the original does not have (it fogs
+## nothing nearer than the start plane, Jangan 1250), and far too little
+## beyond the end plane, where the original draws the fog colour itself.
 ##
-## **A disclosed rendering choice, not real data**, the same as
-## BOUNDARY_BLEND_ALPHA: the real scattering coefficients are runtime shader
-## constants, and environment.ifo's own two real scalar fog channels hold
-## normalized [-1, +1] values rather than world distances, so the real density
-## isn't recoverable from the asset data.
-##
-## **Lowered 2026-09-05** from 0.00015, which was chosen to leave one region
-## span (1920 units) about a quarter hazed and the far edge of the 5x5 grid
-## (5760 units) about three-fifths hazed. That turned out to hide real data:
-## reported from a real playtest of real Asia Minor as a "white floor", and
-## confirmed by rendering the same frame with fog on and off -- the real
-## ground textures are correct and richly coloured (real green grass, real
-## tan sand, real brown dirt) and the haze was washing all of it out. A
-## setting that erases real recovered detail at ordinary walking distance is
-## the wrong disclosed choice regardless of taste.
-##
-## At 0.00005, with Godot's `1 - exp(-density * depth)`, the player's own
-## region span is about a tenth hazed, the far edge of the streamed 5x5 grid
-## about a quarter, and distant terrain still fades -- so real aerial
-## perspective stays, and real ground detail survives. Still a disclosed
-## choice, only now one bounded by real evidence rather than by feel.
-const FOG_DENSITY := 0.00005
-## The zone's real fog planes in world units (channels 10/11 of environment.ifo
-## times the client's view distance), kept for the log and QA_LOOK; see
-## _apply_real_environment_lighting for why they are not yet what is drawn.
+## The zone's channels 10 and 11 (READ: fractions of the view distance) and
+## its fog colour (READ: the square root of channel 9), as the environment
+## step left them; the planes in world units follow the Background Sight
+## Range's view distance (_apply_fog).
+var _fog_channel_near := 0.0
+var _fog_channel_far := 0.0
+var _fog_display_color := Color(0, 0, 0, 1)
+var _fog_ready := false
+## The planes in force (world units), for the log and QA_LOOK.
 var _fog_near_real := 0.0
 var _fog_far_real := 0.0
-
-## How much the haze brightens toward the sun -- Godot's approximation of the
-## real Henyey-Greenstein phase term in the real terrain vertex shader. Also a
-## disclosed choice, not real data (see FOG_DENSITY).
-const FOG_SUN_SCATTER := 0.1
-
-## How strongly the haze takes its color from the sky behind it rather than
-## from fog_light_color alone. Also a disclosed choice (see FOG_DENSITY); kept
-## partial so the real per-zone FogColor still reads as itself.
-const FOG_AERIAL_PERSPECTIVE := 0.5
+## The full-screen pass (WorldFog.build_pass), a child of the camera.
+var _fog_pass: MeshInstance3D = null
 ## Minimum real-world distance moved, and minimum time elapsed, before
 ## sending another OpMove -- avoids flooding the connection with a packet
 ## every single physics frame while walking. **Raised 2026-08-26** (see
@@ -1530,6 +1582,19 @@ func _ready() -> void:
 	# its own choice (WorldPostEffects). Before the title branch: the title's
 	# backdrop is this scene too.
 	WorldPostEffects.apply(world_environment.environment)
+	# The distance fog's pass (round 702, WorldFog); the zone's environment
+	# fills it in.
+	_build_fog_pass()
+	# The original's bloom (round 702 review); the Bloom row shows it.
+	_retail_bloom = RetailBloom.new()
+	_retail_bloom.visible = false
+	add_child(_retail_bloom)
+	# Name plates, damage numbers and their marks, drawn after the bloom
+	# (OverlayView, round 702 rework review: retail draws them as 2D text
+	# over the finished, bloomed frame).
+	_overlay_view = OverlayView.new()
+	add_child(_overlay_view)
+	_overlay_view.follow(camera_3d)
 	# The sun's energy under Forward+, matched to Compatibility's look (round
 	# 693, WorldPostEffects.sun_scale; 1.0 under Compatibility).
 	directional_light.light_energy *= WorldPostEffects.sun_scale()
@@ -1539,6 +1604,7 @@ func _ready() -> void:
 	# The front-end's 3D backdrop (round 678, FrontEndBackdrop): none of an
 	# entry's work -- no player, HUD, server or loading screen.
 	if title_mode:
+		_overlay_view.set_rendering(false)
 		_title_ready()
 		return
 	# Every entry names itself and the renderer in the log (round 579), so a
@@ -4039,30 +4105,13 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	_set_water_color(_env_water_color)
 	print("World3D: environment %d water colour (channel 14) %s" % [env_id, str(_env_water_color)])
 
-	# Real per-zone aerial-perspective haze (2026-09-03). The real client's
-	# own terrain shaders were found shipped as readable source inside
-	# Data.pk2's `Shader\` folder (see docs/protocol/SHADER_FINDINGS.md), and
-	# they show the real distance model is not a simple linear near/far fog at
-	# all -- it's atmospheric scattering. `scattervsdetail10.vsh` computes a
-	# per-channel extinction `E = exp(-(beta_1 + beta_2) * s)` over view-space
-	# distance s, and `terrainps14.psh` combines it as
-	# `final = surf_color * extinction + inscattering`.
-	#
-	# That is structurally the same operation as Godot's own exponential fog
-	# (surface blended toward a fog color by `1 - exp(-density * depth)`), so
-	# the model here is real and recovered, not invented -- and the *color* is
-	# real per-zone data: environment.ifo's own FogColor channel, sampled at
-	# the same fixed ENVIRONMENT_REFERENCE_TIME as the sky and sun above.
-	#
-	# The real fog RANGE is read now (round 229, EnvironmentReader's channel
-	# notes): the client's fog near and far planes are channels 10 and 11
-	# times its view distance (2500 by default) -- a linear D3D fog that is
-	# zero until the near plane and complete at the far one. What is still a
-	# disclosed rendering choice is FOG_DENSITY: Godot 4.2's fog is
-	# exponential from the camera (no depth-range mode until 4.3), so the
-	# real planes cannot be applied without a shader pass; until that exists
-	# they are computed, logged and shown by QA_LOOK, and the density stays
-	# the bounded choice described at FOG_DENSITY.
+	# The zone's distance fog (round 702, WorldFog): the original's linear
+	# fog, colour sqrt(channel 9), planes channels 10 and 11 times the view
+	# distance -- all READ (WorldFog's header has the addresses). Before
+	# round 702 this was Godot's exponential fog at an OURS density; the
+	# scattering model the terrain shaders in Data.pk2's Shader\ folder carry
+	# (docs/protocol/SHADER_FINDINGS.md) is not what the client's own
+	# landscape step sets up, which is plain D3D linear fog.
 	var fog_channel := EnvironmentReader.sample_color_channel(record, EnvironmentReader.CHANNEL_FOG_COLOR, _env_time)
 	# What the client fogs with is the square root of the clamped channel
 	# (READ, rounds 623-628 integration review: EnvironmentReader.
@@ -4082,32 +4131,32 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 		_sky_dome_material.set_shader_parameter("cloud_alpha", ca)
 		_sky_dome_material.set_shader_parameter("fog_color", Vector3(fog_color.r, fog_color.g, fog_color.b))
 		print("World3D: cloud layer colour (channel 4) %s, alpha (channel 12) %.3f" % [str(cc), ca])
-	_fog_near_real = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_NEAR_PLANE, _env_time) * EnvironmentReader.VIEW_DISTANCE_DEFAULT
-	_fog_far_real = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_FAR_PLANE, _env_time) * EnvironmentReader.VIEW_DISTANCE_DEFAULT
-	print("World3D: environment fog planes (real, channels 10/11 x view distance %.0f): near %.0f, far %.0f -- drawn with Godot density %.5f (disclosed)" % [
-		EnvironmentReader.VIEW_DISTANCE_DEFAULT, _fog_near_real, _fog_far_real, FOG_DENSITY])
+	_fog_channel_near = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_NEAR_PLANE, _env_time)
+	_fog_channel_far = EnvironmentReader.sample_float_channel(record, EnvironmentReader.CHANNEL_FOG_FAR_PLANE, _env_time)
+	_fog_display_color = fog_color
+	_fog_ready = true
 	var env := world_environment.environment
+	# Godot's own fog draws nothing (density 0, no sun scatter, no aerial
+	# perspective -- all three were OURS). It stays enabled because the
+	# Compatibility renderer applies a shader's own FOG only while the
+	# environment's fog is on (gles3 scene.glsl 1580-1588); WorldFog.SHADER_FN
+	# is that FOG for the transparent shaders drawn after the pass.
 	env.fog_enabled = true
+	env.fog_density = 0.0
+	env.fog_sun_scatter = 0.0
+	env.fog_aerial_perspective = 0.0
+	env.fog_height_density = 0.0
 	env.fog_light_color = fog_color
-	# Times the Background Sight Range's factor (round 694; 1 at the default).
-	env.fog_density = FOG_DENSITY * _fog_scale
-	# The real model's inscattering is strongest looking toward the sun (the
-	# Henyey-Greenstein phase term in the real vertex shader), which is exactly
-	# what Godot's fog_sun_scatter approximates.
-	# Divided by the Forward+ sun scale (round 693): both renderers scale the
-	# fog's sun scatter by the light's energy (READ, gles3 scene.glsl 1183 /
-	# scene_forward_clustered.glsl 833), and the raised Forward+ sun is there
-	# to match the shadow pass, not to brighten the haze (READ; no change
-	# MEASURED at the shots taken, where the sky's sun was what had brightened
-	# -- GammaSkyMaterial's sun_energy_scale).
-	env.fog_sun_scatter = FOG_SUN_SCATTER / WorldPostEffects.sun_scale()
-	env.fog_aerial_perspective = FOG_AERIAL_PERSPECTIVE
 	# The sky is not fogged (round 693): Compatibility's sky shader never
 	# mixes the environment fog in (READ, drivers/gles3/shaders/sky.glsl,
 	# 4.2.2), Forward+ does by fog_sky_affect (default 1.0, renderer_rd sky.
-	# glsl 263-265), which hazed the Jangan sky shot's top band +22 luma
-	# (MEASURED). The cloud layer fogs itself (cloud_dome.gdshader).
+	# glsl 263-265). The cloud layer fogs itself (cloud_dome.gdshader).
 	env.fog_sky_affect = 0.0
+	_apply_fog()
+	print("World3D: environment fog (READ): channels 10/11 = %.3f / %.3f -> linear in view depth from %.0f to %.0f (view distance %.0f), colour %s; drawn %s" % [
+		_fog_channel_near, _fog_channel_far, _fog_near_real, _fog_far_real,
+		VideoOptions.view_distance(video_options().value(VideoOptions.SCENERY)), str(fog_color),
+		"yes" if _fog_pass != null and _fog_pass.visible else "no"])
 
 	# The real sun-disc colour belongs on the real sun sprite. Its alpha stays
 	# a disclosed rendering choice (see _build_sun_glow); only the real colour
@@ -5858,6 +5907,12 @@ func _load_object_template(model_path: String) -> Node3D:
 	else:
 		_templates_unprepared += 1
 		node = ObjectLoader.load_object(_open_pk2_if_set(), model_path, _object_textures)
+	# Placed objects cast no shadow: in Detail only characters do, as in the
+	# original, whose scenery shadows are baked (round 702 review). Every
+	# placed copy is a duplicate() of this template.
+	if node != null:
+		for g in node.find_children("*", "GeometryInstance3D", true, false):
+			(g as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_load_timings.lap("objects", "templates", sw)
 	return node
 
@@ -6469,6 +6524,8 @@ func _name_plate(text: String, above: float, swept: bool = true) -> Label3D:
 	# the scene (NamePlates).
 	label.no_depth_test = true
 	label.render_priority = 1
+	# Drawn after the bloom, as retail's 2D names (OverlayView, round 702).
+	label.layers = OverlayView.BIT
 	label.add_to_group("name_plates")
 	# Shown while its owner is within NamePlates.RANGE of the player (READ),
 	# from any camera angle; hidden until the sweep first measures it.
@@ -6501,6 +6558,7 @@ func _party_mark(label: Label3D) -> Sprite3D:
 	mark.fixed_size = true
 	mark.no_depth_test = true
 	mark.render_priority = label.render_priority
+	mark.layers = OverlayView.BIT
 	_fit_party_mark(label, mark)
 	# A child of the plate: shown and hidden with it (round 673).
 	return mark
@@ -6574,6 +6632,7 @@ func _monster_name_look(label: Label3D) -> void:
 	# Under the text: a lower render priority among the transparent overlays.
 	box.render_priority = label.render_priority - 1
 	box.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	box.layers = OverlayView.BIT
 	label.add_child(box)
 	_fit_monster_name_box(label)
 
@@ -6836,6 +6895,7 @@ func _floating_damage(anchor: Node3D, height: float, amount: int, colour: Color)
 	label.outline_modulate = NAME_PLATE_OUTLINE_COLOUR
 	label.no_depth_test = true
 	label.render_priority = 3
+	label.layers = OverlayView.BIT
 	label.position = Vector3(0.0, height, 0.0)
 	anchor.add_child(label)
 	# During a QA attack render, log where the number landed on screen, so a
@@ -7120,6 +7180,9 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 		holder.set_meta("npc_id", spawn.npc_id)
 		holder.set_meta("npc_name", npc_name if npc_name != "" else "")
 		holder.set_meta("npc_code", _npc_codes.get(spawn.npc_id, ""))
+		# Its round shadow in Circle (round 702, CharacterBlobs: every
+		# CICharactor casts one in the original, NPCs included).
+		CharacterBlobs.register(holder, float(_bc_radius_by_code.get(String(_npc_codes.get(spawn.npc_id, "")), 0.0)))
 		if npc_name != "":
 			holder.add_child(_name_plate(npc_name, bounds.y))
 			named += 1
@@ -7872,8 +7935,16 @@ func _terrain_commit(job: Dictionary) -> float:
 	single_patch.name = "SubPatch"
 	single_patch.mesh = terrain_mesh
 	single_patch.material_override = mat
+	# The original's scenery casts no real-time shadow (its building shadows
+	# are baked): in Detail only characters cast (round 702 review).
+	single_patch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	single_patch.add_child(patch_body)
 	terrain_group.add_child(single_patch)
+	# Patches go with their regions: the freed ones are dropped as new ones
+	# come (rework review, L4).
+	_terrain_patches = _terrain_patches.filter(func(p) -> bool: return is_instance_valid(p))
+	_terrain_patches.append(single_patch)
+	ShadowCatcher.set_on(single_patch, _shadow_catchers_on())
 	_add_mirror_terrain(terrain_group, single_patch)
 
 	_add_navmesh_walls(terrain_group, job)
@@ -10904,81 +10975,58 @@ func _nav_footing_name(graph: NavGraph, footing: int) -> String:
 		return "object %s" % placed.get_meta("model")
 	return "object %d" % footing
 
-## How wide the real character shadow blob is drawn, in world units.
-##
-## A disclosed rendering choice, not real data: the real texture is a plain
-## radial gradient with no scale baked into it, and nothing found so far says
-## how large the real client draws it. Sized here a little wider than the real
-## player capsule (radius 2) so it reads as a shadow under the feet.
-const BLOB_SHADOW_SIZE := 9.0
+## The round character shadows -- Shadow Detail "Circle" (round 702,
+## CharacterBlobs: the original's rules, READ in SWorld::vslot_024). Until
+## round 702 one blob followed the player alone, in Circle and in Detail
+## alike, 9 units wide and at the texture's full alpha; the original draws it
+## under every character (up to ten), only in Circle, BCRadius + 5 wide, at
+## 0xa8 / 255 of the texture's alpha.
+var _character_blobs: CharacterBlobs = null
 
-## How far above the real ground the blob sits, to keep it from z-fighting the
-## terrain it lies on. Also a disclosed choice.
-const BLOB_SHADOW_LIFT := 0.15
-
-var _blob_shadow: MeshInstance3D
-
-## Builds the real character shadow.
-##
-## The real client does not shadow-map its terrain -- it lights terrain per
-## vertex (see MapmTerrainBuilder._lit_vertex_color) and draws a character's
-## shadow as a real soft radial blob, shipped as `SkyBox\shadowsphere.ddj` in
-## a real Map.pk2: a real 64x64 DXT3 gradient, black at the centre fading to
-## a real 64x64 DXT3 texture whose RGB is solid black and whose **alpha** is the
-## radial gradient, so it draws as a soft alpha-blended black disc.
-##
-## Added 2026-09-07 because baking real terrain lighting made terrain unshaded,
-## which removed the engine's own dynamic shadow from the ground. This restores
-## a shadow the way the real client actually draws one, rather than putting the
-## engine's back.
+## Builds the circle pool from `SkyBox\shadowsphere.ddj`: a 64x64 DXT3 whose
+## RGB is solid black and whose alpha is the radial gradient (MEASURED,
+## 2026-09-07), so it draws as a soft alpha-blended black disc. The terrain
+## is drawn with the client's own baked light (MapmTerrainBuilder), which no
+## engine shadow reaches, as the original's terrain is lit per vertex.
 func _build_blob_shadow(blob_tex: Texture2D) -> void:
-	var quad := QuadMesh.new()
-	quad.size = Vector2(BLOB_SHADOW_SIZE, BLOB_SHADOW_SIZE)
+	if _character_blobs == null:
+		_character_blobs = CharacterBlobs.new()
+		_character_blobs.name = "CharacterShadows"
+		add_child(_character_blobs)
+	_character_blobs.setup(blob_tex)
+	CharacterBlobs.register(player, _player_bc_radius())
 
-	var mat := StandardMaterial3D.new()
-	mat.albedo_texture = blob_tex
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	# The real texture's shape lives entirely in its **alpha**: measured, its
-	# RGB is solid black (mean 0, standard deviation 0) while its alpha is the
-	# radial gradient (mean 0.33, standard deviation 0.34). So it is drawn as
-	# an ordinary alpha-blended black quad, and the gradient does the shaping.
-	#
-	# Two earlier attempts got this wrong by trusting a converted preview of
-	# the texture, which composited that alpha over white and so *looked* like
-	# a black-centre-to-white-edge multiply map. Both drew a hard black square.
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+## The player body's BCRadius (characterdata column 50), the default body's
+## while the body is not built.
+func _player_bc_radius() -> float:
+	var body_code: String = _player_body if _player_body != "" else String(GENDER_BODY_CODE[DEFAULT_GENDER])
+	return float(_bc_radius_by_code.get(body_code, 0.0))
 
-	_blob_shadow = MeshInstance3D.new()
-	_blob_shadow.name = "CharacterShadow"
-	_blob_shadow.mesh = quad
-	_blob_shadow.material_override = mat
-	# A QuadMesh faces +Z; lay it flat on the ground.
-	_blob_shadow.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
-	_blob_shadow.visible = false
-	add_child(_blob_shadow)
-
-## Keeps the real character shadow under the player, on the real ground.
-##
-## The height comes from the real walkable graph rather than a raycast, so the
-## shadow lands on whatever the player is actually standing on -- real terrain,
-## or a real object's own navigation mesh such as a staircase or bridge.
-func _update_blob_shadow() -> void:
-	if _blob_shadow == null:
-		return
+## Where a caster's circle lies: the player's on the walkable graph under
+## it (so it lands on whatever the player stands on, a bridge or a stair,
+## also mid-jump); everyone else's at their own feet, where the world puts
+## them. NAN when the player is off every graph.
+func _blob_ground_y(node: Node3D) -> float:
+	if node != player:
+		return node.global_position.y
 	var pair := _nav_graph_for(player.global_position)
 	if pair.is_empty():
-		_blob_shadow.visible = false
-		return
+		return NAN
 	var graph: NavGraph = pair[0]
 	var group: Node3D = pair[1]
 	var local := group.to_local(player.global_position)
-	local.y = graph.height_at(local.x, local.z, local.y) + BLOB_SHADOW_LIFT
-	_blob_shadow.global_position = group.to_global(local)
-	# Shadow Detail "Nothing" draws no blob (round 694, apply_video_options).
-	_blob_shadow.visible = video_options().value(VideoOptions.SHADOW) >= 1
+	local.y = graph.height_at(local.x, local.z, local.y)
+	return group.to_global(local).y
+
+## Keeps the circles under the nearest characters, by the Shadow Detail row.
+func _update_blob_shadow() -> void:
+	if _character_blobs == null or camera_3d == null:
+		return
+	# The player's radius once its body (and the table) is known.
+	if float(player.get_meta(CharacterBlobs.META_RADIUS, 0.0)) <= 0.0:
+		CharacterBlobs.register(player, _player_bc_radius())
+	_character_blobs.update(player.global_position, video_options().value(VideoOptions.SHADOW),
+		_blob_ground_y, _character_range)
 
 ## ---------------------------------------------------------------------------
 ## QA screenshot harness
@@ -11148,7 +11196,10 @@ func _update_blob_shadow() -> void:
 ##                          563). x,z are local to the region under the
 ##                          player, so a spot past its edge (x = -30) hops
 ##                          one region over -- how round 563's tour crossed
-##                          boundaries in 28 ticks a hop
+##                          boundaries in 28 ticks a hop. A trailing
+##                          `|key=value,...` sets that viewpoint's effects
+##                          (QaShotEnv, round 702); SRREVAMP_QA_PATCHES
+##                          prints ground squares' screen boxes per shot
 ##   SRREVAMP_QA_RADIUS=n   load an n-region radius instead of the default
 ##   SRREVAMP_QA_MAPANIM=n  every n frames, `QA MAPANIM ... registered=
 ##                          running= driver_us= process_ms=`: the animated
@@ -11663,15 +11714,8 @@ func _qa_step() -> void:
 		if OS.get_environment("SRREVAMP_QA_NOSHADOW") != "" and directional_light != null:
 			directional_light.shadow_enabled = false
 		if OS.get_environment("SRREVAMP_QA_NOFOG") != "":
-			if world_environment != null and world_environment.environment != null:
-				var env := world_environment.environment
-				env.fog_enabled = false
-				# The aerial-perspective haze is a separate term from the
-				# fog toggle, and at the altitude an overview shot needs it
-				# washes the whole city out -- which defeats the point of
-				# taking one to compare against authored art.
-				env.fog_aerial_perspective = 0.0
-				env.fog_density = 0.0
+			# The fog pass (round 702): _apply_fog reads the same variable.
+			_apply_fog()
 			camera_3d.far = 40000.0
 			# So is the cloud layer, and for a more interesting reason: until
 			# round 628's review it was a finite dome over the player, so a
@@ -12161,10 +12205,17 @@ static func _parse_shot(spec: String) -> Dictionary:
 		return {}
 	var name := "shot"
 	var rest := spec
-	var at := spec.find("@")
+	# Round 702 (QaShotEnv): `|key=value,...` after the camera sets this
+	# viewpoint's effects.
+	var env_spec := ""
+	var bar := rest.find("|")
+	if bar >= 0:
+		env_spec = rest.substr(bar + 1)
+		rest = rest.substr(0, bar)
+	var at := rest.find("@")
 	if at >= 0:
-		name = spec.substr(0, at).strip_edges()
-		rest = spec.substr(at + 1)
+		name = rest.substr(0, at).strip_edges()
+		rest = rest.substr(at + 1)
 	var camera := ""
 	var colon := rest.find(":")
 	if colon >= 0:
@@ -12174,6 +12225,8 @@ static func _parse_shot(spec: String) -> Dictionary:
 	if pos.size() < 2 or not pos[0].strip_edges().is_valid_float() or not pos[1].strip_edges().is_valid_float():
 		return {}
 	var out := {"name": name, "x": float(pos[0]), "z": float(pos[1])}
+	if env_spec != "":
+		out["env"] = env_spec
 	var cam := camera.split(",") if camera != "" else PackedStringArray()
 	var keys := ["yaw", "pitch", "dist"]
 	for i in range(mini(cam.size(), keys.size())):
@@ -12409,6 +12462,7 @@ func _qa_advance_shots() -> void:
 			_qa_objects_report(_qa_shots[_qa_shot_index]["name"], wanted.split(",", false))
 		if OS.get_environment("SRREVAMP_QA_PLATES") != "":
 			_qa_plates_report(_qa_shots[_qa_shot_index]["name"])
+		QaShotEnv.report_patches(self, _qa_shots[_qa_shot_index]["name"])
 	_qa_shot_frames -= 1
 	if _qa_shot_frames > 0:
 		return
@@ -12435,6 +12489,8 @@ func _qa_advance_shots() -> void:
 		camera_arm.rotation_degrees = Vector3(
 			shot.get("pitch", camera_arm.rotation_degrees.x),
 			shot.get("yaw", camera_arm.rotation_degrees.y), 0.0)
+	if shot.has("env") or has_meta(&"qa_shot_env_base"):
+		QaShotEnv.apply(self, shot.get("env", ""))
 	_qa_shot_frames = QA_SHOT_SETTLE + QA_SHOT_HOLD
 
 ## SRREVAMP_QA_PLATES=1 (round 673): at each QA SHOT, one `QA PLATE` line per
@@ -14096,7 +14152,8 @@ func _qa_look_report() -> void:
 	print("QA LOOK from %s facing %s -- %d real object(s) under the crosshair" % [
 		origin.round(), direction.round(), hits.size()])
 	if _fog_far_real > 0.0:
-		print("QA LOOK   zone fog planes (real): near %.0f, far %.0f; drawn with density %g" % [_fog_near_real, _fog_far_real, FOG_DENSITY])
+		print("QA LOOK   zone fog planes (READ): near %.0f, far %.0f, linear in view depth; drawn %s" % [_fog_near_real, _fog_far_real,
+			"yes" if _fog_pass != null and _fog_pass.visible else "no"])
 	for i in range(mini(hits.size(), 10)):
 		print("QA LOOK   %7.1f away  %s  placed at local %s" % [
 			hits[i][0], hits[i][1], (hits[i][2] as Vector3).round()])
@@ -14829,6 +14886,8 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 
 	other_entities.add_child(node)
 	_other_bodies[character_id] = node
+	# Its round shadow in Circle (round 702, CharacterBlobs).
+	CharacterBlobs.register(node, float(_bc_radius_by_code.get(String(node.get_meta("body", "")), 0.0)))
 	_other_body_targets[character_id] = pos
 	# The auras of the buffs this client holds for them go on the new body
 	# (round 646): a zone change's arrival list and the world entry build the
@@ -17320,6 +17379,8 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 		_qa_split_strip(body, monster_skeleton)
 	other_entities.add_child(body)
 	_monster_bodies[monster.monster_id] = body
+	# Its round shadow in Circle (round 702, CharacterBlobs).
+	CharacterBlobs.register(body, float(_bc_radius_by_code.get(monster.code_name, 0.0)))
 	_monster_builds += 1
 	# It fades into existence over 2.0 s, as retail's spawn does (round 676,
 	# AppearFade: READ, CICharactor vslot 0x6c FUN_009d17e0 -> CIDecoAppear).
@@ -21561,12 +21622,11 @@ func _qa_use_first_potion(slots: Array, _error: String) -> void:
 var title_mode := false
 ## The region window around the focus, in regions (OURS: 1, a 3x3 window,
 ## at the title). It does not reach the camera's far plane (7680 units,
-## _apply_camera_far_plane) and the exponential fog (FOG_DENSITY 0.00005)
-## leaves ~88-90 % showing at 2000-2700 units, so the built world's edge can
-## show in the distance -- OPEN, docs/TODO.md "The 3D title screen". (Retail's
-## view distance, DAT_00ec54b0, is 2500, and its fog is linear, ending at the
-## environment's far-plane channel times that distance -- the FOG_DENSITY
-## comment.)
+## _apply_camera_far_plane). Since round 702 the fog is retail's linear fog
+## (WorldFog), complete at the zone's end plane (Jangan 2250), so past it the
+## window's edge is fog-coloured as retail's; before, an exponential fog left
+## ~88-90 % showing at 2000-2700 units and the built world's edge could show
+## (docs/TODO.md "The 3D title screen").
 var _title_radius := 1
 
 ## The backdrop's half of _ready: the water reflection and the sky, the camera

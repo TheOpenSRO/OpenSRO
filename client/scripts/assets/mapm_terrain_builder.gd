@@ -267,6 +267,9 @@ static func _surface_material(surface: Dictionary, texture_lookup: Dictionary, l
 		# opaque pass they sit exactly on top of.
 		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+		# Drawn before the fog pass, which then fogs it with the opaque pass
+		# under it -- the same depth (round 702, WorldFog).
+		mat.render_priority = WorldFog.UNDER_PASS_PRIORITY
 	if lightmap != null:
 		# Retail's lightmap pass multiplies the drawn ground by the
 		# lightmap term (lightmap_term). A detail layer in MUL mode multiplies

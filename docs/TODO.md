@@ -559,13 +559,49 @@ In order. Each is checked off here when it ships in a release, with its round in
       `_slot_nodes` then indexes only the second set of slots, so a page flip hides and shows only
       those. Fix: call `setup()` before `add_child`, or guard the second call. Then check it with
       the built tree (`tools/dump_window_tree.gd`-style) before and after.
-- [ ] **Linear fog between the real planes.** Read in round 229: the client's fog is D3D linear fog
-      from `channel 10 x view distance` to `channel 11 x view distance` (2500 by default) -- zero
-      until the near plane (Jangan: 1250), complete at the far one (2250). `FOG_DENSITY` is an
-      exponential-from-the-camera stand-in because Godot 4.2 has no depth-range fog; the honest
-      fix is a full-screen depth pass (a quad with `hint_depth_texture`) or per-material fog code
-      applying `(d - near) / (far - near)` with the zone's real FogColor. The planes are already
-      computed and logged (`World3D: environment fog planes`, and in QA_LOOK).
+- [x] **Linear fog between the real planes** -- round 702. `WorldFog`: a full-screen pass, first in
+      the transparent sort, reads the opaque depth and blends the zone's READ fog colour at
+      `(view depth - start) / (end - start)`, start/end = channels 10/11 x the Background Sight
+      Range's view distance (READ, `Map::FUN_00a26f60`); terrain overlays and water are drawn before
+      it, blended MTRL mods fog themselves (`srr_fog_*` shader globals); Godot's exponential fog
+      (OURS density, sun scatter and aerial perspective) draws nothing. A **temporary** Video row
+      "Fog (temporary)" (the user's request, on = the original) is to be removed once the user
+      decides. Left: the indoor branch (world+0x26bb set: start -200, end far / 10 -- when the flag
+      is set is INFERRED, not drawn); the per-frame easing toward a new zone's planes; Forward+
+      blends half-fogged pixels in linear light, lighter than the original's display-value blend
+      (Compatibility matches it); fading-in characters (AppearFade) are not fogged during their
+      2 s fade.
+- [ ] **Shadow Detail "Detail": the original's projected character shadows** (READ in round 702
+      and its review: `SWorld::vslot_025` 0xa17ab0, `Map::FUN_009f35f0`, `FUN_009f2f80`): up to ten
+      characters within 300 units of the player (key `(int)(dist x 10)` <= 3000), each drawn into a
+      96 x 96 target from the sun and kept as 32 x 32, the ground cells under it redrawn with it
+      projected; the ground keeps 1 - 150/255 of its colour under a solid silhouette, fading over the
+      17 units below. **Built in the review (closest match, OURS method):** characters are the only
+      shadow casters, the sun's map reaches 400, and a multiplying next pass on each terrain base
+      (`ShadowCatcher`, k = 0.412 decoded) shows their shadows on the terrain. Left: the fade with
+      height; the catcher under Compatibility (its shadowed sun is an additive pass: no catcher
+      there, so no ground shadow on terrain in Detail under Compatibility); the 96 x 96 silhouette
+      method itself.
+- [x] **The Bloom row's look** -- round 702 review and rework: `RetailBloom` draws the original's
+      bloom, READ in full (`Map::FUN_00a1d790`; OPTION_VIDEO.md), computed per 512 texel on a vertex
+      grid under Forward+ (the screen's 512-wide mip under Compatibility); Godot's glow is off for
+      good. Overlays (name plates, damage numbers, party marks,
+      name boxes) are drawn after it (`OverlayView`). Left (OURS, each noted by the rework review):
+      under Compatibility the mip is a Gaussian, not retail's one bilinear downsample (mean
+      1.6/255 from retail's pipeline); the 4K cost, most of it Godot's full-screen back-buffer copy
+      (round 702's rework entry); **the lens-flare sun sprite and the character-select
+      characters are bloomed** (retail draws the flare after the bloom, and the select screen's
+      characters and names after its slot 5); BerserkFlash may belong after the bloom too
+      (PLAUSIBLE, not read); the character-create preview is not bloomed (PLAUSIBLE that retail's
+      is); the screen texture is sampled CLAMP at the edges where retail's target may WRAP (not
+      read).
+- [ ] **The tone map (finding, round 702; no change made).** World3D's environment is Filmic
+      (tonemap_mode 2, an OURS choice of the 2026-08-26 atmosphere pass); Direct3D 9 shows the
+      shader's output as is. MEASURED at the Jangan spawn: Linear draws the same ground patches
+      about 13 luma darker (70 -> 57) with the same contrast relative to brightness (0.32 / 0.30)
+      and lower saturation in absolute terms -- Filmic is not what washes the picture out, but it is
+      not the original's mapping either. Changing it re-tunes every lit surface (the Forward+ sun
+      scale, the undo passes of the water, clouds, select screen); the user's call.
 - [x] ~~Day/night cycle~~ -- **not a gap** (round 226, `docs/protocol/game_clock.md`): the retail
       client renders the environment at a FIXED phase of 0.5 (SWorld's constructor sets it; the
       per-frame advance is gated by a flag nothing sets; the graphs are sampled at the raw phase), and
@@ -979,6 +1015,11 @@ the following:
       water_reflection` still wins; Default restores Middle and leaves the window mode alone.
       Under Forward+ this turns glow on by default, against round 693's "glow off" -- the user's
       decision is the later one.
+- [x] **The saved record reaches the world at start-up** -- round 702. Until then the first
+      `apply_video_options` compared the record with itself and applied nothing, so every start drew
+      the scene's defaults (sun shadow map on in Circle, no glow, no MSAA, no mip bias) until a row
+      was changed (OPTION_VIDEO.md, "Applied at start-up"). Middle's glow and MSAA now show from
+      the first frame (Forward+).
 - [ ] **Rows kept that draw nothing here:** Metallic Sheen (no env-map sheen pass), Light Effect
       (no torch / sun light effect), Dynamic Animation (no cloth or hair; TEXANI and DYVERTEX are
       their own items above), Display Friendly/Enemy (no battle outfits).
@@ -1271,10 +1312,12 @@ front-end's next steps.
   falls back to round 678's streaming. Left: one cell's commit is 100-340 ms for a dense
   Constantinople cell, felt as a hitch while typing during the preload; splitting a cell's object
   placement over frames would remove it.
-- **The loaded world's edge in the distance (OPEN, predates round 680).** The title's camera far
-  plane is 7680 units (`REGION_SPAN * (radius + 1) * 2`) and the fog is exponential at density
-  0.00005 (~88-90 % of a colour still shows at 2000-2700 units), but only the 3x3 window around the
-  target is built, so the edge of the built world is visible beyond it. MEASURED: round 680's review
+- **The loaded world's edge in the distance (OPEN, predates round 680; round 702 changed the
+  fog).** The title's camera far plane is 7680 units (`REGION_SPAN * (radius + 1) * 2`). Until round
+  702 the fog was exponential at density 0.00005 (~88-90 % of a colour still showed at 2000-2700
+  units); since round 702 it is retail's linear fog, complete at the zone's end plane (Jangan
+  2250), so the 3x3 window's edge past that is fog-coloured -- re-measure the census with the new
+  fog before choosing an option below. MEASURED: round 680's review
   counted 23-84 unplanned terrain cells entering the frustum per intro; `title_plan_census.gd`
   counts the cells with terrain that the view frustum meets along the path within the far plane
   against those planned -- roc 49 vs 24, constantinople 114 vs 28, china_wharf 28 vs 10,
