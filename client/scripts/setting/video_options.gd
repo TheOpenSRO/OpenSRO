@@ -212,6 +212,14 @@ const WATER_ROWS := [256, 512, 1024]
 ## equivalent look, not the memory saving).
 const TEXTURE_MIP_BIAS := [2.0, 1.0, 0.0]
 
+## READ (0x5fef70): retail lists only modes wider than 799 and taller than
+## 599. Here that is the smallest VIEW -- the window's size over the UI scale
+## (round 672's content_scale_factor) -- the client lays out in: the Option
+## window alone is 700 x 500, and at the user's scale 2.0 a 1280 x 720 window
+## is a 640 x 360 view that leaves its buttons off the screen (round 696
+## review, M1).
+const MIN_VIEW := Vector2i(800, 600)
+
 ## Resolution choices (OURS): Godot cannot list an adapter's modes, so the
 ## usual sizes no larger than the screen, as retail lists modes from
 ## 800 x 600 up (READ: 0x5fef70, width > 799 and height > 599).
@@ -254,6 +262,11 @@ var active := 0
 var fullscreen := false
 ## The window size asked for; Vector2i.ZERO leaves the window as it is.
 var resolution := Vector2i.ZERO
+## Whether the player picked a Resolution in the window since the last store,
+## even the one already stored (round 696 review, L1: a stored 1280 x 720
+## re-picked while the window is maximised must resize it). Not saved and
+## not copied by duplicate_options; OptionVideoPage.store hands it on once.
+var resolution_touched := false
 ## A line for the player about the last store (a renderer choice that could
 ## not be written, say); "" for none. Not saved.
 var notice := ""
@@ -461,16 +474,35 @@ static func parse_resolution(s: String) -> Vector2i:
 	return r if r.x >= 320 and r.y >= 200 else Vector2i.ZERO
 
 ## The resolution choices for a screen of `screen` pixels (see RESOLUTIONS),
-## with `current` added when it is not one of them.
-static func resolution_choices(screen: Vector2i, current_size: Vector2i) -> Array:
+## with `current` added when it is not one of them -- only those whose view at
+## UI scale `scale` is at least MIN_VIEW (READ minimum, round 696 review). If
+## the screen has none at that scale, the largest size that fits it (OURS: the
+## list is never empty; apply_display raises it as far as the screen allows).
+static func resolution_choices(screen: Vector2i, current_size: Vector2i, scale: float = 1.0) -> Array:
 	var out: Array = []
+	var fitting: Array = []
 	for r in RESOLUTIONS:
 		if screen.x <= 0 or (r.x <= screen.x and r.y <= screen.y):
-			out.append(r)
-	if current_size.x > 0 and not out.has(current_size):
+			fitting.append(r)
+			if view_fits(r, scale):
+				out.append(r)
+	if current_size.x > 0 and not out.has(current_size) and view_fits(current_size, scale):
 		out.append(current_size)
-		out.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.x < b.x or (a.x == b.x and a.y < b.y))
+	if out.is_empty() and not fitting.is_empty():
+		out.append(fitting[-1])
+	out.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.x < b.x or (a.x == b.x and a.y < b.y))
 	return out
+
+## Whether a window of `size` at UI scale `scale` is a view of at least
+## MIN_VIEW.
+static func view_fits(size: Vector2i, scale: float) -> bool:
+	var m := min_window(scale)
+	return size.x >= m.x and size.y >= m.y
+
+## The smallest window whose view at `scale` is MIN_VIEW.
+static func min_window(scale: float) -> Vector2i:
+	var k := maxf(scale, 0.01)
+	return Vector2i(ceili(MIN_VIEW.x * k - 0.001), ceili(MIN_VIEW.y * k - 0.001))
 
 ## The process-wide copy in force: loaded on first use, replaced by apply.
 static var _in_force: VideoOptions = null
@@ -578,26 +610,181 @@ static func apply_brightness(root: Node, choice: int) -> CanvasLayer:
 ## screen and a window and sets the chosen mode. OURS: Godot's full screen
 ## keeps the desktop's resolution (4.2.2 changes no display mode), so the
 ## Resolution row sizes the window and is unavailable in full screen.
+##
+## **In a window the OS window itself takes the size (round 696).** READ,
+## retail's resolution apply in a window (`FUN_00835510`, from the Video
+## tab's store `0x5fdae0`): it gives the window a caption and system menu
+## (style |= 0xC80000), turns the chosen client size into the frame's size
+## with AdjustWindowRect, and MoveWindow's the frame there, centred at
+## ((SM_CXFULLSCREEN - frame w) / 2, (SM_CYFULLSCREEN - frame h) / 2); the
+## device is then reset to the new size (`FUN_004694d0`, `FUN_008354c0`).
+## Its style has no WS_THICKFRAME / WS_MAXIMIZEBOX, so retail's window is
+## never maximised.
+##
+## Ours can be, and the user's was (3840 x 2019, a maximised window on a
+## 4K screen). The black border was this (READ, Godot 4.2.2):
+## `Window::set_size` stores the size and sizes the viewport from it
+## (`_update_window_size` -> `_update_viewport_size`, scene/main/window.cpp),
+## but `DisplayServerWindows::window_set_size` returns at once while the
+## window is maximised (`if (wd.fullscreen || wd.maximized) return;`), and
+## so does `window_set_position`. The OS window kept its maximised size, no
+## resize event came back to correct the node, and the game drew a 1280 x
+## 720 viewport in the corner of a 3840 x 2019 window: the rest black.
+##
+## So (OURS, retail's steps where it has them): a maximised or minimised
+## window is restored first; the size is the chosen one, no larger than the
+## usable area of the window's screen less the window's own frame (round
+## 694's clamp, now with the title bar counted, so the frame never leaves the
+## screen); the frame is centred in that area (retail centres it on the
+## primary screen's full-screen area); and afterwards the node's size is
+## checked against the OS window's (`sync_window_size`), so a size the OS
+## did not take can never leave a viewport smaller than its window.
 static func apply_display(window: Window, o: VideoOptions) -> void:
 	if window == null or o == null:
 		return
 	if DisplayServer.get_name() == "headless":
 		return
+	_watch_window(window)
 	if o.fullscreen:
 		if window.mode != Window.MODE_FULLSCREEN and window.mode != Window.MODE_EXCLUSIVE_FULLSCREEN:
 			window.mode = Window.MODE_FULLSCREEN
+		_log_display(window, o)
 		return
-	if window.mode == Window.MODE_FULLSCREEN or window.mode == Window.MODE_EXCLUSIVE_FULLSCREEN:
+	var restored := restore_for_size(window.mode)
+	if restored:
 		window.mode = Window.MODE_WINDOWED
 	if o.resolution.x > 0 and o.resolution.y > 0:
-		# Never larger than the screen the window is on, and never off it
-		# (round 694 review: a size saved on a bigger monitor put the window
-		# at a negative position).
-		var area := DisplayServer.screen_get_usable_rect(DisplayServer.window_get_current_screen())
-		var want := fit_resolution(o.resolution, area.size)
-		if window.size != want:
-			window.size = want
-			window.position = area.position + (area.size - want) / 2
+		var id := window.get_window_id()
+		var area := DisplayServer.screen_get_usable_rect(DisplayServer.window_get_current_screen(id))
+		var inset := frame_insets(DisplayServer.window_get_position(id), DisplayServer.window_get_size(id),
+			DisplayServer.window_get_position_with_decorations(id), DisplayServer.window_get_size_with_decorations(id))
+		var placed := window_placement(o.resolution, area, inset, window.content_scale_factor)
+		if placed.size != o.resolution:
+			print("VideoOptions: %s asked; %s is what this screen and UI scale %.2f allow (a view of at least %s, READ minimum)" % [
+				format_resolution(o.resolution), format_resolution(placed.size), window.content_scale_factor, format_resolution(MIN_VIEW)])
+		if window.size != placed.size or restored:
+			window.size = placed.size
+			window.position = placed.position
+	sync_window_size(window)
+	_log_display(window, o)
+
+## One line for a tester's log: the window node, the OS window and the view's
+## render-target size -- the three that differed in the black-border report.
+static func _log_display(window: Window, o: VideoOptions) -> void:
+	print("VideoOptions: window %s, %s at %s (asked %s); OS window %s; view %s" % [
+		_mode_name(window.mode), format_resolution(window.size), str(window.position),
+		format_resolution(o.resolution) if o.resolution.x > 0 else "(as started)",
+		format_resolution(DisplayServer.window_get_size(window.get_window_id())),
+		format_resolution(Vector2i(window.get_texture().get_size())) if window.get_texture() != null else "?"])
+
+## A line in the log when the window's view has changed size afterwards --
+## a full-screen switch or a maximise the window manager finishes later, a
+## drag -- with the OS window's size beside the view's, so a tester's log
+## shows whether they differ (round 696). Logged once the size has SETTLED:
+## no further change for RESIZE_SETTLE_MS (OURS), so a drag on Windows, which
+## resizes every frame, writes one line, not one a frame (round 696 review, L2).
+const RESIZE_SETTLE_MS := 300
+const _WATCH_META := &"video_options_watch"
+const _WATCH_STAMP := &"video_options_watch_ms"
+
+static func _watch_window(window: Window) -> void:
+	if window.has_meta(_WATCH_META):
+		return
+	window.set_meta(_WATCH_META, false)
+	window.size_changed.connect(func() -> void: _on_watched_resize(window))
+
+static func _on_watched_resize(window: Window) -> void:
+	if not is_instance_valid(window) or not window.is_inside_tree():
+		return
+	window.set_meta(_WATCH_STAMP, Time.get_ticks_msec())
+	if bool(window.get_meta(_WATCH_META, false)):
+		return
+	window.set_meta(_WATCH_META, true)
+	_check_settled(window)
+
+static func _check_settled(window: Window) -> void:
+	if not is_instance_valid(window) or not window.is_inside_tree():
+		return
+	var quiet := Time.get_ticks_msec() - int(window.get_meta(_WATCH_STAMP, 0))
+	if quiet < RESIZE_SETTLE_MS:
+		window.get_tree().create_timer((RESIZE_SETTLE_MS - quiet) / 1000.0).timeout.connect(func() -> void: _check_settled(window))
+		return
+	window.set_meta(_WATCH_META, false)
+	print("VideoOptions: view resized -- window %s, %s; OS window %s; view %s" % [
+		_mode_name(window.mode), format_resolution(window.size),
+		format_resolution(DisplayServer.window_get_size(window.get_window_id())),
+		format_resolution(Vector2i(window.get_texture().get_size())) if window.get_texture() != null else "?"])
+
+## Whether a window in `mode` must be restored before a size can take: a
+## maximised (or minimised) window ignores window_set_size on Windows (READ,
+## DisplayServerWindows::window_set_size, 4.2.2). Full screen is left by the
+## mode switch before it.
+static func restore_for_size(mode: Window.Mode) -> bool:
+	return mode == Window.MODE_MAXIMIZED or mode == Window.MODE_MINIMIZED \
+		or mode == Window.MODE_FULLSCREEN or mode == Window.MODE_EXCLUSIVE_FULLSCREEN
+
+## The window's frame around its client area: `position` is the client's
+## offset inside the frame (the left border and the title bar), `size` the
+## frame's extra width and height. Zero where the OS reports no frame (a box
+## X server with no window manager).
+static func frame_insets(client_pos: Vector2i, client_size: Vector2i, frame_pos: Vector2i, frame_size: Vector2i) -> Rect2i:
+	var lead := _at_least(client_pos - frame_pos, Vector2i.ZERO)
+	var extra := _at_least(frame_size - client_size, Vector2i.ZERO)
+	return Rect2i(lead, _at_least(extra, lead))
+
+## Where a window's client area goes for a chosen size: the size at least
+## min_window(scale) -- a view of MIN_VIEW at the UI scale, so a size saved by
+## an older build or at another scale cannot strand the player at start-up
+## (round 696 review, M1) -- and no larger than the usable `area` less the
+## frame (`inset`, frame_insets), which wins where the two disagree; the frame
+## centred in the area, never above or left of it. Returns the client's rect
+## (what Window.position / Window.size take).
+static func window_placement(want: Vector2i, area: Rect2i, inset: Rect2i, scale: float = 1.0) -> Rect2i:
+	var room := area.size - inset.size if area.size.x > 0 and area.size.y > 0 else Vector2i.ZERO
+	var size := fit_resolution(_at_least(want, min_window(scale)), room)
+	var frame := size + inset.size
+	var at := area.position + _at_least((area.size - frame) / 2, Vector2i.ZERO)
+	return Rect2i(at + inset.position, size)
+
+## Makes the window node's size the OS window's when they differ (see
+## apply_display): the viewport is sized from the node, so a node size the
+## OS did not take is the black border. Returns whether it corrected one.
+static func sync_window_size(window: Window) -> bool:
+	if window == null or DisplayServer.get_name() == "headless":
+		return false
+	var real := DisplayServer.window_get_size(window.get_window_id())
+	if real.x <= 0 or real.y <= 0 or real == window.size:
+		return false
+	print("VideoOptions: the window is %s, not the %s asked; the view follows the window" % [format_resolution(real), format_resolution(window.size)])
+	window.size = real
+	return true
+
+## Each component no less than `floor`'s (Vector2i has no max() in 4.2).
+static func _at_least(v: Vector2i, floor: Vector2i) -> Vector2i:
+	return Vector2i(maxi(v.x, floor.x), maxi(v.y, floor.y))
+
+## Whether an Apply of `o` must size the window although its Resolution did
+## not change (round 696 review, L1): the row was picked again and the window
+## is maximised / minimised, or is not the size `o` gives it here.
+static func needs_resize(window: Window, o: VideoOptions) -> bool:
+	if window == null or o == null or o.fullscreen or not o.resolution_touched or o.resolution.x <= 0:
+		return false
+	if restore_for_size(window.mode):
+		return true
+	var id := window.get_window_id()
+	var area := DisplayServer.screen_get_usable_rect(DisplayServer.window_get_current_screen(id))
+	var inset := frame_insets(DisplayServer.window_get_position(id), DisplayServer.window_get_size(id),
+		DisplayServer.window_get_position_with_decorations(id), DisplayServer.window_get_size_with_decorations(id))
+	return window.size != window_placement(o.resolution, area, inset, window.content_scale_factor).size
+
+static func _mode_name(mode: Window.Mode) -> String:
+	match mode:
+		Window.MODE_WINDOWED: return "windowed"
+		Window.MODE_MINIMIZED: return "minimized"
+		Window.MODE_MAXIMIZED: return "maximized"
+		Window.MODE_FULLSCREEN: return "fullscreen"
+		Window.MODE_EXCLUSIVE_FULLSCREEN: return "exclusive fullscreen"
+	return str(mode)
 
 ## A window size no larger than `screen` (the usable area); ZERO screen keeps it.
 static func fit_resolution(want: Vector2i, screen: Vector2i) -> Vector2i:

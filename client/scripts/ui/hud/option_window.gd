@@ -365,6 +365,28 @@ func _on_close_pressed() -> void:
 	restore_saved()
 	closed.emit()
 
+## Round 696 (OURS): centred again whenever the view changes size while the
+## window is open. The Video tab's own Apply resizes the game window under it
+## (VideoOptions.apply_display); left where it was, the window kept its old
+## position -- MEASURED on the box: after 1920 x 1056 -> 1024 x 768 its
+## right half and its Cancel / Apply buttons were off the screen. Retail
+## tells its UI the new size after a resolution change (message 0x80a with
+## w, h from CGFXVideo3d::vslot_020, 0xbad590); what its windows do with it
+## is not read.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_ENTER_TREE:
+		var vp := get_viewport()
+		if vp != null and not vp.size_changed.is_connected(_on_view_resized):
+			vp.size_changed.connect(_on_view_resized)
+	elif what == NOTIFICATION_EXIT_TREE:
+		var vp := get_viewport()
+		if vp != null and vp.size_changed.is_connected(_on_view_resized):
+			vp.size_changed.disconnect(_on_view_resized)
+
+func _on_view_resized() -> void:
+	if visible:
+		place_centred()
+
 ## 0x798c50(0x62): centred.
 func place_centred() -> void:
 	var view := get_viewport_rect().size

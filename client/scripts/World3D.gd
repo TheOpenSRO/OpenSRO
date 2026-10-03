@@ -642,7 +642,11 @@ func _on_video_options_applied(o: VideoOptions) -> void:
 	# The window only when its own rows changed: Apply on another tab must not
 	# snap a moved window back (round 694 review).
 	var before := _video
-	if before == null or before.fullscreen != o.fullscreen or before.resolution != o.resolution:
+	# ... or when the Resolution was picked again and the window is maximised
+	# or not at that size (round 696 review, L1: a stored 1280 x 720 re-picked
+	# after maximising did nothing).
+	if before == null or before.fullscreen != o.fullscreen or before.resolution != o.resolution \
+			or VideoOptions.needs_resize(get_window(), o):
 		VideoOptions.apply_display(get_window(), o)
 	if o.camera_view != "" and o.camera_view != _camera_view:
 		set_camera_view(o.camera_view)

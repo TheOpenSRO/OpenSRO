@@ -52,6 +52,37 @@ natural-looking objects", TTDESC_14 "a technique of expressing better animation 
 texture, and hair", TTDESC_17 "When a large-scale combat outfit is worn, the combat outfit of
 nearby players are unified to improve performance".
 
+## The combo box (READ, round 696)
+
+Every Video-tab combo is a CNIFComboBox (MEASURED: the file's 14 CNIFComboBox records are all
+under pane 78 -- Resolution and Set Brightness at 156 x 18, the twelve rows' 217 at 150 x 20; no
+other Option tab has one). Its create (`vslot_010`, `0x486d30`, asm `0x486d6e..0x486ee1`) takes
+its own client rect (`0xb8f420`, {x, y, w, h}) and makes three children:
+
+| Child | Rect | What |
+|---|---|---|
+| 1 (+0x384) | {W-20, 0, 20, H} | button, `interface\ifcommon\com_qst_downarrow_button.ddj` (20 x 20, MEASURED) |
+| 2 (+0x388) | {0, 0, W-20, H} | CNIFStretchWnd, base `interface\ifcommon\com_blacksquare_` (`0x49b040`: the four corners, `left_side` twice, `right_side` twice); +0x1c4 = 0xff000000 |
+| 3 (+0x38c) | {5, 0, W-30, H} | CNIFStatic, text "" -- the value |
+
+CNIFStretchWnd's draw (`0x49aeb0`) fills its rect with the +0x1c4 colour when it is non-zero
+(`0x46d2a0`: a quad over the window rect in that colour) and then draws its frame pieces, so
+child 2 is the **black value box**. Round 694 read it as the list's frame and drew no field (the
+user's report, 2026-10-02: "the drop downs need a black box in them"). The pieces are 4 x 4 each
+(MEASURED): a near-black top-left edge (0x080808..0x100c10) and a grey bottom-right one (0x6a656a,
+0x7b797b) -- a sunken field. The six-piece class's UVs (`0x49a140` / `0x49a7d0`) were not read; the
+reference picture (the user's, at 2x) has continuous one-pixel top and bottom edges in exactly the
+side pieces' outer-column colours, so the top and bottom are drawn as `left_side` / `right_side`
+transposed (MEASURED against the picture, not read): the bottom row then matches it pixel for
+pixel (0x7b797b); the top row is 0x080808 with every fourth pixel 0x000400 against the picture's
+0x080808 throughout, so the top's exact source is not established (within 8 levels). The arrow is drawn at its button's rect: an
+18-tall combo draws the 20 x 20 texture 18 tall (MEASURED, 36 picture pixels at 2x).
+
+Measured against the reference (the user's picture, 1384 x 1004, the window at 2x): the row
+field spans 260 x 40 picture pixels = 130 x 20, its arrow 40 = 20; the Resolution field 272 x 36 =
+136 x 18, its arrow 40 x 36 = 20 x 18 -- every number the READ rects give. The value text is
+centred in {5, 0, W-30, H}, white (MEASURED in the picture).
+
 ## The record (READ)
 
 `CGame+0x570` (`FUN_00835240`): a selector byte, then two records of 0x2c bytes -- one per
@@ -88,7 +119,7 @@ value)` (`0xa194a0`), which also stores it at `SWorld+0x2e50 + case*4` (getter `
 
 | Setting | Original (READ unless marked) | srrevamp |
 |---|---|---|
-| Resolution | the device mode | the window's size (OURS list of usual sizes up to the screen); unavailable in full screen, where Godot keeps the desktop's size |
+| Resolution | the device mode; in a window also the window: `FUN_00835510` adds WS_CAPTION / WS_SYSMENU (0xC80000), AdjustWindowRect's the client size into a frame and MoveWindow's it centred at ((SM_CXFULLSCREEN - w) / 2, (SM_CYFULLSCREEN - h) / 2) | the OS window's client size (OURS list of usual sizes up to the screen): a maximised window is restored first, the size is cut to the usable area less the frame, the frame centred there, and the node's size checked against the OS window's (round 696, below); listed and applied only at a size whose view (window / UI scale) is at least retail's 800 x 600 minimum (round 696 review); unavailable in full screen, where Godot keeps the desktop's size |
 | Window Mode | device full screen / window (`opt+9`, `0x5fdae0`) | `Window.mode` full screen / windowed, live |
 | View | camera mode 0/1/2 (`UI_CHANGED::FUN_00780420`) | `World3D.set_camera_view` (round 639's three views), saved as [ui] camera_view |
 | Set Brightness | case 0: gamma ramp `65535 * pow(i/255 * B, A)`, (A, B) = (1.4, 0.8) (1.2, 0.9) (1, 1) (0.8, 1.2) (0.6, 1.4); full screen only | the same curve as a full-screen canvas pass over the finished frame (OURS: in a window too); none at Normal |

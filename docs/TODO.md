@@ -951,10 +951,15 @@ the following:
 - [ ] **Water Reflection applies at the next login**: a region's water is built for one mode.
       Live would mean rebuilding every loaded region's water and mirror terrain.
 - [ ] **Inferred, not read:** a hand-set row switching the record to User (the slot's change
-      handler); the scroll bar's line step; the combo's own drawing (only its arrow and list frame
-      art are read); Effect Quality 1's two owner tests (FUN_00b94b70 on DAT_00ef1a84 / b44).
+      handler); the scroll bar's line step; Effect Quality 1's two owner tests (FUN_00b94b70 on
+      DAT_00ef1a84 / b44). The combo's field, arrow and text rects are READ (round 696); its open
+      list (a Godot PopupMenu here) and the six-piece frame's UVs (`0x49a140` / `0x49a7d0`: the
+      top and bottom edges are drawn transposed, MEASURED against the user's picture) are not.
 - [ ] **Resolution** is the window's size; in full screen Godot keeps the desktop's (no mode
-      change in 4.2.2). A 3D render scale would be the Godot way to honour it there.
+      change in 4.2.2). A 3D render scale would be the Godot way to honour it there. In a window
+      the OS window takes the size, a maximised one restored first (round 696). Retail's window
+      cannot be resized or maximised by hand (style 0xC80000, no WS_THICKFRAME); ours can --
+      whether to lock it like retail is the user's call.
 - [ ] **Texture Detail has little to act on, even under Forward+** (round 694 review): the terrain
       textures are built without mipmaps (`mapm_terrain_builder.gd`), so the mipmap bias does not
       reach them. Generating mipmaps would also cut distant shimmer; measure its VRAM, load time and
