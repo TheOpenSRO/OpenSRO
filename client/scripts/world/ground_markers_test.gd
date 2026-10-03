@@ -35,8 +35,23 @@ extends SceneTree
 ## - the mesh is rebuilt only when the 3 x 3 window changes: a body moving
 ##   inside it moves the shader's origin, one crossing a cell edge rebuilds.
 ##
+## Round 701, the ring on a placed floor (OURS, the user's decision of
+## 2026-10-03):
+## - the floor test: more than 1 above the terrain AND the short ray meets a
+##   placed object (layer 1 without the terrain-only bit); a terrain body, no
+##   hit, or a point near the ground is the terrain;
+## - the floor drape: a 2-unit grid at the hit heights + 0.05; a missed or
+##   far-dropped sample and a step over 1 leave their triangles out;
+## - in the world: a click on a synthetic deck drapes the deck (centre, edges,
+##   nothing past its side), a roof 4 above it is never hit, a click on the
+##   ground beside it is the terrain drape unchanged, an NPC standing on the
+##   deck gets the floor ring, and a point moving inside one 6-unit cell keeps
+##   the mesh while samples are reused across cells.
+##
 ## NEGATIVE: against dev e1ccf792 GroundMarkers does not exist; the suite
-## loads it by path and reports one FAIL line and stops.
+## loads it by path and reports one FAIL line and stops. Against dev 34286d92
+## (MEASURED) the suite does not parse: floor_choice, floor_drape_arrays,
+## floor_sample_ok and FLOOR_MAX_RISE are not in GroundMarkers.
 
 var _failures := 0
 var _GM: GDScript
@@ -61,6 +76,7 @@ func _initialize() -> void:
 		_test_textures()
 		_test_drape()
 		_test_states()
+		_test_floor_rules()
 		await _test_world()
 	print("ground_markers_test: %s (%d failure(s))" % ["PASS" if _failures == 0 else "FAIL", _failures])
 	quit(0 if _failures == 0 else 1)
@@ -130,6 +146,57 @@ func _test_drape() -> void:
 	n1.scale = Vector3.ZERO
 	_check(GroundMarkers.npc_blocking(Vector3(25, 0, 0), [n1]) == null, "an NPC at scale 0 (+0xc4 == 0) does not")
 	n1.queue_free()
+
+func _test_floor_rules() -> void:
+	if not _GM.has_method("floor_choice"):
+		_check(false, "GroundMarkers has the placed-floor branch (floor_choice)")
+		return
+	var placed := StaticBody3D.new()
+	placed.collision_layer = 0b1
+	var ground := StaticBody3D.new()
+	ground.collision_layer = 0b1001
+	_check(GroundMarkers.floor_choice(3.0, {"collider": placed}), "3 above the terrain on a placed object: a floor")
+	_check(not GroundMarkers.floor_choice(0.8, {"collider": placed}), "0.8 above (not more than 1): the terrain")
+	_check(not GroundMarkers.floor_choice(3.0, {"collider": ground}), "3 above but the ray meets a terrain body: the terrain")
+	_check(not GroundMarkers.floor_choice(3.0, {}), "3 above and the short ray meets nothing: the terrain (retail's drape)")
+	_check(not GroundMarkers.floor_choice(NAN, {"collider": placed}), "no terrain height known: the terrain path")
+	placed.free()
+	ground.free()
+	# A flat floor at 10 over the 10 x 10 grid: 81 cells, 162 triangles at 10.05.
+	var flat := func(_i: int, _j: int) -> float: return 10.0
+	var d: Dictionary = GroundMarkers.floor_drape_arrays(Vector2i(-3, -3), 10, 2.0, GroundMarkers.floor_heights(Vector2i(-3, -3), 10, flat), 10.0, 0.05)
+	var v: PackedVector3Array = d["vertices"]
+	var level := true
+	for p in v:
+		if absf(p.y - 10.05) > 1e-5:
+			level = false
+	_check(v.size() == 162 * 3 and level, "a flat floor: 162 triangles, every corner at the hit + 0.05 (%d vertices)" % v.size())
+	_check(v[0] == Vector3(-6, 10.05, -6), "the grid starts at index * 2 (%s)" % str(v[0]))
+	# Samples off the floor's side (a miss) and far below the point drop their
+	# triangles only.
+	var edge := func(i: int, _j: int) -> float: return NAN if i >= 4 else 10.0
+	d = GroundMarkers.floor_drape_arrays(Vector2i(-3, -3), 10, 2.0, GroundMarkers.floor_heights(Vector2i(-3, -3), 10, edge), 10.0, 0.05)
+	var max_x := -INF
+	for p in d["vertices"]:
+		max_x = maxf(max_x, (p as Vector3).x)
+	_check((d["vertices"] as PackedVector3Array).size() == 6 * 9 * 2 * 3 and max_x <= 6.0,
+		"missed samples (x >= 8) leave out their cells: 6 of 9 columns drawn, nothing past x 6 (max %.1f)" % max_x)
+	var drop := func(i: int, _j: int) -> float: return 7.5 if i >= 4 else 10.0
+	d = GroundMarkers.floor_drape_arrays(Vector2i(-3, -3), 10, 2.0, GroundMarkers.floor_heights(Vector2i(-3, -3), 10, drop), 10.0, 0.05)
+	_check((d["vertices"] as PackedVector3Array).size() == 6 * 9 * 2 * 3, "samples 2.5 below the point (past the 2 drop) are left out the same way")
+	# A step of 1.5 inside the drop: both levels drawn, nothing across the step.
+	var step := func(i: int, _j: int) -> float: return 8.5 if i >= 4 else 10.0
+	d = GroundMarkers.floor_drape_arrays(Vector2i(-3, -3), 10, 2.0, GroundMarkers.floor_heights(Vector2i(-3, -3), 10, step), 10.0, 0.05)
+	var sv: PackedVector3Array = d["vertices"]
+	var stretched := false
+	for t in range(0, sv.size(), 3):
+		var hi := maxf(sv[t].y, maxf(sv[t + 1].y, sv[t + 2].y))
+		var lo := minf(sv[t].y, minf(sv[t + 1].y, sv[t + 2].y))
+		if hi - lo > 1.0:
+			stretched = true
+	_check(sv.size() == 8 * 9 * 2 * 3 and not stretched, "a 1.5 step: both levels drawn, the 9 cells across it left out, no triangle stretched (%d vertices)" % sv.size())
+	_check(GroundMarkers.floor_sample_ok(11.9, 10.0) and not GroundMarkers.floor_sample_ok(12.1, 10.0),
+		"a sample above the ray's start (2 over the point) is not on the floor")
 
 func _uv_at(d: Dictionary, x: float, z: float) -> Vector2:
 	var v: PackedVector3Array = d["vertices"]
@@ -376,9 +443,107 @@ func _test_world() -> void:
 	_check(gm.cached_regions() == 0, "a region pruned from the grid leaves the cache")
 	_check(held.get_ref() == null, "and the pruned ParsedRegion is freed (nothing else holds it)")
 	grid.parsed_heightmaps["1_1"] = _region(false)
+	await _test_world_floor(world, group, space)
 	# A zone change hides it.
 	world.call("_select_character", OTHER, "Bram")
 	world.call("_reload_zone_assets", "")
 	_check(not gm.shown and gm.cached_regions() == 0, "a zone change hides the ring and forgets the heights")
 	world.queue_free()
 	await process_frame
+
+func _box(world: Node, layer: int, size: Vector3, at: Vector3) -> StaticBody3D:
+	var body := StaticBody3D.new()
+	body.collision_layer = layer
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = size
+	shape.shape = box
+	body.add_child(shape)
+	body.position = at
+	world.add_child(body)
+	return body
+
+## Round 701: a deck (layer 1) 5 above the synthetic terrain, a roof 4 over
+## it, a lower step beside it.
+func _test_world_floor(world: Node, group: Node3D, space: PhysicsDirectSpaceState3D) -> void:
+	if not _GM.has_method("floor_choice"):
+		_check(false, "the world test has the placed-floor branch")
+		return
+	var gm: GroundMarkers = world.get("_ground_markers")
+	# World (2100, -300) is region-local (180, 300): terrain 0.02 * 180 + 0.01 * 300 + 4 = 10.6.
+	var terrain := 10.6
+	var top := terrain + 5.0
+	var deck := _box(world, 0b1, Vector3(10, 1, 10), Vector3(2100, top - 0.5, -300))
+	var roof := _box(world, 0b1, Vector3(30, 1, 30), Vector3(2100, top + 4.5, -300))
+	await physics_frame
+	await physics_frame
+	var took: String = world.call("_move_by_pick_ray", Vector3(2100, top + 3.0, -300), Vector3(0, -1, 0), space)
+	_check(took == "walk" and absf(gm.center.y - top) < 0.01, "a click under the roof lands on the deck (took %s, y %.2f)" % [took, gm.center.y])
+	gm.step()
+	var drape: Dictionary = gm.last_drape
+	_check(gm.on_floor and bool(drape.get("floor", false)), "the point 5 above the terrain on a placed object takes the floor drape")
+	var arrays: Dictionary = drape.get("arrays", {})
+	var local: Vector3 = drape.get("local", Vector3.ZERO)
+	var verts: PackedVector3Array = arrays.get("vertices", PackedVector3Array())
+	var dh := GroundMarkers.drape_height_at(arrays, local.x, local.z)
+	_check(absf(dh - (top + GroundMarkers.DRAPE_LIFT)) < 1e-3, "the drape at the centre is the deck + 0.05 (%.3f, deck %.2f)" % [dh, top])
+	var on_deck := true
+	var inside := true
+	for p in verts:
+		if absf(p.y - (top + GroundMarkers.DRAPE_LIFT)) > 1e-3:
+			on_deck = false
+		if absf(p.x - 180.0) > 5.01 or absf(p.z - 300.0) > 5.01:
+			inside = false
+	_check(verts.size() > 0 and on_deck, "every corner is on the deck, none on the roof 4 above (%d vertices)" % verts.size())
+	_check(inside, "nothing past the deck's sides: every corner within its 10 x 10")
+	_check(is_nan(GroundMarkers.drape_height_at(arrays, local.x + 5.5, local.z)) and not is_nan(GroundMarkers.drape_height_at(arrays, local.x + 3.5, local.z)),
+		"the art's edge: drawn 3.5 out on the deck, nothing 5.5 out past its side")
+	var ring := gm.get_node("Ring") as MeshInstance3D
+	_check(ring.visible and ring.global_transform.is_equal_approx(group.global_transform)
+		and ((ring.material_override as ShaderMaterial).get_shader_parameter("origin") as Vector2).distance_to(Vector2(local.x, local.z) - Vector2(6, 6)) < 1e-3,
+		"the floor ring is drawn in the region's frame with the same shader origin")
+	# Inside the same 6-unit cell: the same mesh. The next cell: a new one, the
+	# overlapping samples reused.
+	var mesh_before: Mesh = ring.mesh
+	var rays_before: int = gm.floor_rays
+	gm.place_at(gm.center + Vector3(0.5, 0, -0.5))
+	gm.step()
+	_check(ring.mesh == mesh_before and gm.floor_rays == rays_before, "a point 0.7 on in the same 6-unit cell keeps the mesh and fires no ray")
+	gm.place_at(Vector3(2099.5, top, -300))
+	gm.step()
+	_check(ring.mesh != mesh_before and gm.floor_rays - rays_before <= 30,
+		"the next cell builds a new mesh with %d new rays (the other 70 samples reused)" % (gm.floor_rays - rays_before))
+	# A lower step beside the deck, 1.5 down: drawn on its own, nothing across.
+	var low := _box(world, 0b1, Vector3(10, 1, 10), Vector3(2110, top - 2.0, -300))
+	await physics_frame
+	gm.zone_changed()
+	gm.place_at(Vector3(2103.0, top, -300))
+	gm.step()
+	var sv: PackedVector3Array = (gm.last_drape["arrays"] as Dictionary)["vertices"]
+	var stretched := false
+	var lower := false
+	for t in range(0, sv.size(), 3):
+		var hi := maxf(sv[t].y, maxf(sv[t + 1].y, sv[t + 2].y))
+		var lo := minf(sv[t].y, minf(sv[t + 1].y, sv[t + 2].y))
+		stretched = stretched or hi - lo > GroundMarkers.FLOOR_MAX_RISE + 1e-4
+		lower = lower or absf(hi - (top - 1.5 + GroundMarkers.DRAPE_LIFT)) < 1e-3
+	_check(not stretched and lower, "a step 1.5 down beside the deck: drawn on it too, no triangle down the deck's side")
+	low.free()
+	# A click on the ground beside the deck: the terrain drape, unchanged.
+	took = world.call("_move_by_pick_ray", Vector3(2130, 50, -300), Vector3(0, -1, 0), space)
+	gm.step()
+	_check(not gm.on_floor and not bool(gm.last_drape.get("floor", true)) and (gm.last_drape["arrays"]["vertices"] as PackedVector3Array).size() == 54,
+		"a click on the terrain floor box (layer 0b1001) beside it keeps retail's terrain drape")
+	# An NPC standing on the deck: its ring on the deck.
+	var npc := Node3D.new()
+	npc.set_meta("npc_name", "Deckhand")
+	group.add_child(npc)
+	npc.global_position = Vector3(2101, top, -301)
+	gm.attach("npc:%d" % npc.get_instance_id(), GroundMarkers.Kind.NPC, npc.global_position)
+	gm.step()
+	_check(gm.on_floor and absf(GroundMarkers.drape_height_at(gm.last_drape["arrays"], (gm.last_drape["local"] as Vector3).x, (gm.last_drape["local"] as Vector3).z) - (top + 0.05)) < 1e-3,
+		"an NPC selected on the deck gets the ring on the deck")
+	npc.queue_free()
+	deck.free()
+	roof.free()
+	gm.hide_marker("test")

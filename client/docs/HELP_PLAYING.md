@@ -6,7 +6,7 @@ not work, that is a bug worth reporting (see **Debug tools**, or press Shift+F3
 
 ## Moving
 
-- **Click** the ground to walk there, or hold the left button to steer.
+- **Click** the ground to walk there. Holding the button does nothing more, as in the original: click again to change where you are going.
   There is no keyboard walking: the keys are the original game's, where
   W, A and S are the pet-switch, action and skill keys.
 - **Drag** with the right mouse button to turn the camera (not in the Third

@@ -61,7 +61,7 @@ beyond ~56 px and on every edge texel.
 
 | Event | Code | Ring |
 |---|---|---|
-| Ground click | `UI_SILKMALL::FUN_0078f8d0` -> `FUN_009ec570` (0x9ec638..0x9ec64e) | Moves to the click point, slot 0. Past the NPC test (next row), after the click filter `FUN_009ec240` with **no branch on its result**: a click the filter does not send (under 5 units with no order, or a snapped heading) still moves it. A held button repeats the click (timer 7, 500 ms, `FUN_00777b90`). |
+| Ground click | `UI_SILKMALL::FUN_0078f8d0` -> `FUN_009ec570` (0x9ec638..0x9ec64e) | Moves to the click point, slot 0. Past the NPC test (next row), after the click filter `FUN_009ec240` with **no branch on its result**: a click the filter does not send (under 5 units with no order, or a snapped heading) still moves it. Only a new press moves it again: holding the button repeats nothing (round 701, the next section; round 698's line here that "a held button repeats the click (timer 7)" was wrong -- timer 7 re-plots a sky click's heading run). |
 | Ground click within 20 units of an NPC | `FUN_009ec570` 0x9ec5a0..0x9ec5eb: walks the object list `0xec4d98` (nodes at object+0x78c); for a CICNPC (0xef1ac4: NPCs and guards) whose 3-D squared distance to the click (`FUN_009ed1e0`) is under 400.0 (double 0xd878a8) and whose +0xc4 is not 0.0, returns | Nothing: no destination, no click filter, no move, the ring stays where it was. +0xc4 is the object's model scale: its writer `FUN_009c4510(scale)` (0x9c451d) stores it and resizes the model's box; the spawns pass it (CICNPC::vslot_025 0x9d487d, CICMonster's rarity x ref scale 0x9d3a53); the CIObject constructor sets 1.0 (0x9c4909). So: an NPC drawn at a non-zero scale. Found by round 698's review. |
 | Sky click (heading run) | `FUN_0078f8d0` -> `FUN_009ebec0` | Not touched there. |
 | Arrow-key walk | `FUN_009ebf40` (from `FUN_0077b070`, `FUN_00780610`) -> `FUN_009ebec0` | Not touched there. |
@@ -75,6 +75,36 @@ beyond ~56 px and on every edge texel.
 | The followed object dies | | Nothing in the code above: the ring stays on the body until it despawns (INFERRED from the absence of a death test in vslot 0x50 / vslot_009). |
 | Leaving a pick mode | `FUN_00779260(0)` and its callers (0x62a55a, 0x62a8bc, 0x797587, 0x79762c, 0x798a4a, `FUN_0078ae00`) | Hidden. |
 | GM free camera (process+0x3ce) | `UI_SILKMALL::FUN_0078e0e0` | Hidden every frame. |
+
+## Holding the left button (round 701, READ)
+
+A press is one click; holding the button, moving the mouse with it held and letting it go do
+nothing more. From `CGInterface::vslot_017` (0x77c260, the world's mouse handler) and the input
+object's button bytes:
+
+| Message | Code | What it does |
+|---|---|---|
+| WM_LBUTTONDOWN (0x201) | 0x77c4a7 `call 0x793570` | SetFocus, then the whole pick: the object under the cursor (`FUN_0078ee20`) to the object click `FUN_00792f00`, else the ground click `FUN_0078f8d0` -> `FUN_009ec570` (the NPC test, the destination, the click filter, the ring) or a sky run `FUN_009ebec0`. This is the only place a left click walks. |
+| WM_MOUSEMOVE (0x200) | vslot_017's first branch | Turns the camera when the RIGHT byte is down and the swap flag +0x4f9 is clear, or the MIDDLE byte with the flag set (`FUN_00ba6240(2)` / `(1)`). Never reads the left byte. Then stores the cursor. |
+| WM_LBUTTONUP (0x202) | `FUN_0078e5d0` | Only when process mode +0x50c is 0xae or 0xaf: ends that mode (`FUN_00592b70`). No walk, no pick. |
+| WM_LBUTTONDBLCLK (0x203) | `FUN_00792190` | A double click on a character: an action request through `SendMagicStateMsg_074_791d40` (0x7074) for the classes it tests; no ground pick. The first press was already a click. |
+| Timer 7 | set by `FUN_00777b90` (500 ms) after a sky click's `FUN_009ebec0` and by the per-frame `FUN_009ec380`; killed by `FUN_00777ba0` on a ground click | `CGInterface::vslot_005` case 6 -> `FUN_009eb8e0`: re-plots the heading run (mover state +0x6e8 == 2) from the player's own position and heading; it reads no mouse. Killed when it returns 0. |
+
+The button bytes (`gfxmainframe::FUN_00ba7240`): +0x258 left (0x201 sets, 0x202 clears), +0x259
+middle (0x207 / 0x208), +0x25a right (0x204 / 0x205); `FUN_00ba6240(i)` reads +0x258 + i. Its
+callers: vslot_017's WM_MOUSEMOVE (indices 1 and 2) and the hover code `CGInterface::vslot_005`
+case 0 (index 0: cursor 0x9a instead of 0x99 over a ground item, class 0xef1c28, while the left
+button is down -- a cursor, not a walk), plus two UI controls (`CNIFEdit::vslot_017`, `FUN_00637290`, index 1). No
+reader of the left byte issues a move. So retail: the press places the ring and sends one move;
+the character walks to the ring; a drag moves neither; a new press does. The 0xB021 heading echo
+(kind 0, `NetProcessInNavAndSkill::FUN_008a5750`) hides the ring and kills or re-arms timer 7 --
+heading moves only.
+
+srrevamp before round 701 clicked on the RELEASE and, after a drag past 6 pixels, re-picked the
+destination under the cursor every physics frame ("the circle will fluidly move around with your
+cursor", playtest 2026-10-03). Round 701 clicks on the press (`World3D._unhandled_input` ->
+`_dispatch_left_click`) and reads nothing while the button is held; the right button's orbit is
+unchanged.
 
 ## Where and how it is drawn (READ)
 
@@ -163,3 +193,30 @@ retail's alternating fans, so it lies on what is drawn; the heading-move hide ha
 run starts (this client streams positions and gets no 0xB021 echo); culling off; the still-water
 quad spans the 3 x 3 window with the projected UV (with clamp and the art's transparent border it
 draws the same 12 x 12 square round the point, and need not be rebuilt as the point moves).
+
+## On a placed floor (round 701, OURS: the user's decision)
+
+The user checked a live retail server on 2026-10-03: no ring on Jangan's central plaza deck, the
+terrain-only drape above at work ("That seems like a bug we should fix"). So srrevamp departs from
+retail here, and only here: where the point stands on a placed object's walkable surface the ring
+is draped on that surface; where it stands on the terrain the drape is retail's, unchanged. Every
+number is OURS, named in `GroundMarkers`:
+
+- **Floor or terrain** (`floor_choice`): the point more than 1.0 above the drawn terrain there
+  (`TerrainCollision.mesh_height_at` of the region's heights) AND a short vertical ray (0.5 above
+  to 1.0 below, the pick layers 0b1001) meeting a body without the terrain-only bit 0b1000.
+  Placed objects collide on layer 1 alone, the terrain on layers 1 and 4.
+- **Samples**: vertical rays on a 2-unit grid of the region's frame, from 2.0 above the point to
+  2.0 below it, so a roof or awning over the point is never met.
+- **Edges**: a triangle with a corner that missed or lies outside that span, or whose corners
+  differ by more than 1.0, is left out -- nothing stretches down a deck's side or up a wall; a
+  lower level within reach is drawn on its own.
+- **Look**: the same shader, texture and region-frame origin uniform as the terrain ring, lifted
+  0.05 above the hits; no still-water quad on a floor.
+- **Cost**: the test and the mesh run only when the point enters another 6 x 6 cell or moves 0.25
+  in height; one build covers the art for anywhere in its cell (the 10 x 10 grid points from 6
+  before the cell to 6 after it), and samples are kept per region and reference height (up to
+  2048), so a body walking a deck fires about one new column of 10 rays per 2 units.
+  MEASURED (`client/tools/measure_ground_ring.gd`, headless on the box, a body at 50 units/s,
+  1,200 ticks, three runs): 11.7 us a tick on the terrain (13.0-13.3 before the round, the same
+  runs interleaved), 35.0-35.4 us on a deck with 166 rebuilds and 5,120 rays.

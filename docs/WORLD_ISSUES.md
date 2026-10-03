@@ -7094,6 +7094,127 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-first round: a press of the left button is one click -- holding it moves neither the ring nor the walk, as in retail -- and the ring lies on Jangan's plaza deck (the user's decision; retail draws it on the ground under the deck)
+
+The user (2026-10-03): "if you click and hold down the click the circle will fluidly move around
+with your cursor and your character will follow. The original game places the circle where you
+first clicked but doesn't follow the cursor if you hold it down. You have to reclick to move the
+circle. Your character also doesn't follow the cursor, they go to circle instead." And, having
+checked a live retail server, that retail draws no ring on Jangan's central plaza deck: "That seems
+like a bug we should fix" (a USER DECISION: ours, an improvement over retail). Lane `move701`,
+client, a world round. Labels: READ (`sro_client.exe` on the box: the decompile and
+`sro_client.asm`), MEASURED, INFERRED, OURS. `docs/protocol/ground_markers.md` has both records
+("Holding the left button", "On a placed floor").
+
+### 1. What holding the left button does in retail (READ)
+
+Nothing after the press.
+
+- **WM_LBUTTONDOWN** (0x201) in `CGInterface::vslot_017` (0x77c260) calls 0x793570 at 0x77c4a7:
+  the pick under the cursor (`FUN_0078ee20`), then the object click `FUN_00792f00` or the ground
+  click `UI_SILKMALL::FUN_0078f8d0` -> `FUN_009ec570` (the 20-unit NPC test, the destination, the
+  5-unit filter `FUN_009ec240`, the ring `FUN_00a631e0`), or a sky run `FUN_009ebec0`. The only
+  place a left click walks.
+- **WM_MOUSEMOVE** (0x200), the same handler: turns the camera when the right byte +0x25a is down
+  (swap flag +0x4f9 clear) or the middle +0x259 (flag set). It never reads the left byte +0x258.
+- **WM_LBUTTONUP** (0x202) -> `FUN_0078e5d0`: only ends process modes 0xae / 0xaf. No pick.
+- **Timer 7** (500 ms, `FUN_00777b90`): set after a sky click and by the per-frame `FUN_009ec380`
+  while a heading run lasts, killed by a ground click (`FUN_00777ba0`); its case in
+  `CGInterface::vslot_005` runs `FUN_009eb8e0`, which re-plots the run from the player's own
+  position and heading and reads no mouse. **Round 698's protocol line "a held button repeats the
+  click (timer 7)" was wrong** and is corrected.
+- The button bytes are written by `gfxmainframe::FUN_00ba7240` (+0x258 left, +0x259 middle, +0x25a
+  right) and read through `FUN_00ba6240(i)`; its only index-0 (left) reader is the hover code's
+  cursor choice (0x9a instead of 0x99 over a ground item while held). The 0xB021 heading echo
+  (`FUN_008a5750`) hides the ring for heading moves only.
+
+So: a press puts the ring down and sends one move; the character walks to the ring; a drag moves
+neither; a new press does. No camera drag on the left button.
+
+### 2. What changed
+
+- **The click is the press** (`World3D._unhandled_input`): `_dispatch_left_click(event.position)`
+  on the press; the release does nothing; the held-button steer (`_left_steering`,
+  `_left_dragging`, `LEFT_DRAG_THRESHOLD_PIXELS`, the per-frame re-pick in `_physics_process`) is
+  gone. Until now the click went on the release, and a drag past 6 pixels re-picked the
+  destination -- and the ring -- under the cursor every physics frame. One log line a press:
+  `CLICK: left press at (x, y) -> walk to (x, y, z)` (or attack / talk / pickup / ignore).
+  The right button's orbit, the 5-unit filter, round 698's 20-unit NPC rule and the wall root
+  are untouched. HELP_PLAYING's "hold the left button to steer" is rewritten.
+- **The ring on a placed floor** (`GroundMarkers`, all OURS): a point more than 1.0 above the
+  drawn terrain whose short ray down (0.5 above to 1.0 below, layers 0b1001) meets a body without
+  the terrain-only bit takes a drape sampled by vertical rays on a 2-unit grid of the region's
+  frame, from 2.0 above the point to 2.0 below; a triangle with a missed or out-of-span corner, or
+  corners more than 1.0 apart, is left out. The same shader, texture and origin uniform as the
+  terrain ring, lifted 0.05. Rebuilt only when the point enters another 6 x 6 cell or moves 0.25
+  in height; samples cached per region and height. On terrain the drape is retail's, unchanged.
+  The region-key lookup is now remembered per group name, which made the terrain path cheaper
+  than before.
+
+### 3. Measurements
+
+**Live, real X input** (MEASURED; the box, Xvfb, `xdotool mousedown / mousemove_relative /
+mouseup / click`, a server built from this tree, `-in-memory -gm-accounts qa` with a transient
+chargen CSV, the QA character stood at the Jangan spawn 97/168 local (1002, 1020) on the plaza
+deck, `SRREVAMP_QA_MARKER=1`, `SRREVAMP_QA_NAVTRACE=2`; scratch driver, not committed):
+
+| Run | Input | Log |
+|---|---|---|
+| Forward+ (RX 7600, RADV) | press at (450, 330), 12 drags of (+25, +8) to (750, 426), 5 s held, release | one `CLICK: left press at (450, 330) -> walk to (71.0, -30.1, -37.2)`, one ring place there; no line from the drag, the hold or the release. The walk: local (1002, 1020) -> (1029.52, 998.37) in 59 ticks, then still for 650 ticks while the cursor sat over other ground -- 1.83 from the ring's (1030.96, 997.24), inside the stop distance |
+| | a second press at (750, 426) | `walk to (56.0, -30.1, -34.5)`, the ring moved there |
+| Compatibility (RX 7600, radeonsi, VirtualGL) | press at (640, 470), drag to (880, 410), release | the ring at the press point (2.5 from the player: the 5-unit filter sent no move, the ring moved anyway, READ); nothing from the drag or release; the second press walked to (11.6, -30.1, -53.5) |
+
+The drape lines, both renderers (`QA MARKER drape: FLOOR ...`):
+
+| Ring | Point | Drape - floor ray at the centre | at +-5 on x and z | Corners from the point | Triangles |
+|---|---|---|---|---|---|
+| ground clicks on the deck (4) | y -30.12, 14.2 above the terrain | +0.050 | +0.050 at all four | +0.050..+0.050 | 162 |
+| Storage-Keeper Sansan (NPC on the deck, clicked by xdotool at the QA hook's aim) | (980.35, 989.19) | +0.050 | +0.050 at all four | +0.050..+0.050 | 162 |
+| a Yeoha off the deck (Forward+) | terrain | +0.050 over the terrain-only ray, point y - terrain 0.398 | | | 18 (retail's 3 x 3 cells) |
+
+Nothing stretched (the corners are all at the deck + 0.05) and nothing on a roof (the rays start
+2.0 above). Pictures (local, not committed): the pale ring under the player on the deck with the
+cursor held elsewhere, both renderers. **Found, not this lane's:** a GM `/spawn mangyang 1` on the
+deck put the body at y -43.90, on the terrain under the deck (`_terrain_hit_height`'s terrain-only
+mask); its ring followed it there and the attack said "too far away" (TODO).
+
+**Cost** (MEASURED, `client/tools/measure_ground_ring.gd`, headless on the box, a body at 50
+units/s for 1,200 ticks, three runs, base and head interleaved): terrain 11.7 / 11.8 / 11.7 us a
+tick (base 13.3 / 13.2 / 13.0); on a synthetic deck (new) 35.2 / 35.4 / 35.0 us, 166 rebuilds and
+5,120 rays (4.3 a tick) -- only while the ring follows a body moving on a floor; a still ring on a
+floor costs what the terrain one does.
+
+### 4. Tests
+
+- `world/click_hold_test.gd` (new): through `_unhandled_input` on a World3D subclass -- the press
+  sets the destination and the ring at the point; ten held drags across 108 units of ground move
+  neither; the release after an arrival walks nowhere; a second press does; a left drag turns no
+  camera; a right drag still orbits with the left held. NEGATIVE (MEASURED) against 34286d92: 2
+  FAIL (the press set nothing, no ring).
+- `world/ground_markers_test.gd` (+23): the floor choice (above 1 AND a placed body; a terrain
+  body, no hit, 0.8 above, no height: terrain), the floor drape (flat; missed and dropped samples
+  clipped; a 1.5 step drawn on both levels and not across), and in the world a deck with a roof 4
+  above, a lower step beside it, the ground beside it (the terrain drape, 54 vertices) and an NPC
+  on it; the cell reuse (no ray inside a cell, 30 rays for the next). Against 34286d92 the suite
+  does not parse (MEASURED).
+- `npc_service_reader_test.gd`, `monster_strikes_test.gd`, `wall_root_test.gd`: their
+  `_left_steering` checks rewritten.
+- `remote_godot.sh check`: ALL LOAD (557 scripts, 9 scenes). `tests`: 216 suites, 0 failing. `go test -count=1
+  ./internal/systems/...` ok.
+
+### 5. Performance
+
+PERF_TABLE
+
+### 6. Choices made for the user (asleep)
+
+- The click moved from the release to the press (READ: retail's WM_LBUTTONDOWN), which also
+  means a press on the world that drags onto a window still clicks.
+- Every floor number is OURS: 1.0 above the terrain, the 0.5 / 1.0 probe, the 2-unit grid, 2.0
+  up and down, the 1.0 step, the 6-unit cell, 0.25 of height; no still-water quad on a floor.
+- The live run's monster was the nearest one, a Yeoha off the deck, in Forward+, and the GM's
+  Mangyang (under the deck, above) in Compatibility; the NPC on the deck is the deck case.
+
 ## Six-hundred-and-ninety-ninth round: the developer toggles move from Ctrl+F1-F3 to Shift+F1-F3, because macOS keeps Ctrl+F1-F3 for itself
 
 The user (2026-10-03, on v0.1.481 under CrossOver on macOS): "can switch the ctrl+f1-f3 menus to

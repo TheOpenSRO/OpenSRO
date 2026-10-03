@@ -376,11 +376,10 @@ func _test_world_dead_state(world_script: GDScript) -> void:
 
 	# A server with the dead state: HP 0, and the player stays down.
 	world.set("_has_move_target", true)
-	world.set("_left_steering", true)
 	world.set("_qa_attacking", true)
 	world.call("_on_monster_attacked", _push_for(_result(200, 0, false, true, true), 77))
 	_check(bool(world.get("_player_dead")), "a kill reported at HP 0 leaves the player dead")
-	_check(not bool(world.get("_has_move_target")) and not bool(world.get("_left_steering")),
+	_check(not bool(world.get("_has_move_target")),
 		"the walk under way ends with it")
 	_check(not bool(world.get("_qa_attacking")), "and so does the QA attack loop")
 	_check(String(world.call("_dispatch_left_click", Vector2.ZERO)) == "dead", "a world click does nothing while dead")

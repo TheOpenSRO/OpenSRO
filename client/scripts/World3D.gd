@@ -675,15 +675,11 @@ const MOVE_TARGET_STOP_DISTANCE := 0.3 * PLAYER_SCALE_RATIO
 
 var _camera_orbiting := false
 var _right_button_held := false
+## Whether the left button is down over the world (retail's input byte +0x258,
+## set by WM_LBUTTONDOWN and cleared by WM_LBUTTONUP in 0xba7240). Nothing in
+## the walk reads it: a press is one click and holding it does nothing more
+## (round 701, _unhandled_input has the reading).
 var _left_button_held := false
-var _left_dragging := false
-var _left_press_position := Vector2.ZERO
-# Holding the left button and dragging steers the character toward the
-# cursor (the original's left-drag-to-walk); it never orbits the camera.
-var _left_steering := false
-## How far the mouse has to travel with the left button down before the
-## press counts as an orbit rather than a click. Ours.
-const LEFT_DRAG_THRESHOLD_PIXELS := 6.0
 var _has_move_target := false
 var _move_target := Vector3.ZERO
 ## Round 653: the order in effect is a heading run (SkyRun) -- a click on the
@@ -14203,10 +14199,6 @@ func _physics_step(delta: float) -> void:
 		_pending_attack = {}
 		_released_attack = {}
 		_pending_friend_cast = {}
-	# Holding the left button walks the character toward the cursor, refreshed
-	# every frame so it follows the pointer while held.
-	if _left_steering and not locked:
-		_try_set_move_target(get_viewport().get_mouse_position())
 	# Round 653's follow-up: an approach whose move a wall ended is re-issued
 	# here on the next tick (_step_move_order).
 	if _has_move_target or not _pending_attack.is_empty() or not _pending_friend_cast.is_empty():
@@ -15675,29 +15667,36 @@ func _unhandled_input(event: InputEvent) -> void:
 				_cancel_ground_pick("right click")
 			_right_button_held = event.pressed
 		elif event.button_index == MOUSE_BUTTON_LEFT:
-			# Either button orbits when dragged. A left press only becomes a
-			# destination if it is released without having dragged, so a
-			# look around does not also send the character somewhere.
+			# The press is the click (round 701; READ): retail's WM_LBUTTONDOWN
+			# runs the whole pick -- CGInterface::vslot_017 case 0x201
+			# (0x77c4a7) -> 0x793570 -> the object click 0x792f00 or the ground
+			# click 0x78f8d0 -> 0x9ec570 (destination, filter, ring) -- and
+			# nothing after it repeats it: WM_LBUTTONUP (case 0x202 ->
+			# 0x78e5d0) only ends process modes 0xae/0xaf, WM_MOUSEMOVE (case
+			# 0x200) turns the camera on the right button (the middle with the
+			# swap flag +0x4f9) and never on the left, and the 500 ms timer 7
+			# (0x777b90) re-plots a sky click's heading run (0x9eb8e0, which
+			# reads no mouse). So a held left button neither moves the ring
+			# nor re-aims the walk: a new press does. Until round 701 the
+			# click went on the release and a drag past 6 pixels re-picked the
+			# destination under the cursor every frame ("the circle will
+			# fluidly move around with your cursor", playtest 2026-10-03).
 			if event.pressed:
-				_left_press_position = event.position
-				_left_dragging = false
-			elif not _left_dragging:
-				_dispatch_left_click(_left_press_position)
+				var took := _dispatch_left_click(event.position)
+				# One line a press (round 701): what a tester's log needs to
+				# tell "it walked where I first clicked" from "it followed the
+				# cursor".
+				print("CLICK: left press at %s -> %s%s" % [str(event.position.round()), took,
+					(" to (%.1f, %.1f, %.1f)" % [_move_target.x, _move_target.y, _move_target.z]) if took == "walk" and _has_move_target and not _move_heading_run else ""])
 			_left_button_held = event.pressed
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			camera_arm.spring_length = clampf(camera_arm.spring_length - CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
 			camera_arm.spring_length = clampf(camera_arm.spring_length + CAMERA_ZOOM_STEP, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
-		# Only the right button orbits the camera. A held left button steers
-		# the character toward the cursor instead (see _physics_process) --
-		# the original never orbits on a left drag.
+		# Only the right button orbits the camera (READ: vslot_017 case 0x200
+		# tests the right byte +0x25a, or the middle +0x259 with the swap
+		# flag; never the left +0x258). A held left button does nothing.
 		_camera_orbiting = _right_button_held
-		if not _left_button_held:
-			_left_steering = false
-	elif event is InputEventMouseMotion and _left_button_held and not _left_dragging \
-			and (event as InputEventMouseMotion).position.distance_to(_left_press_position) > LEFT_DRAG_THRESHOLD_PIXELS:
-		_left_dragging = true
-		_left_steering = true
 	# The orbit's motion is not read here: _input turns the camera, so a drag
 	# keeps orbiting over a STOP control (see orbit_motion_applies).
 
@@ -16360,7 +16359,7 @@ func _on_guild_leave_requested() -> void:
 func _try_set_move_target(screen_pos: Vector2) -> void:
 	var root := _wall_root()
 	if root != 0:
-		_log_root("a move to the clicked point" if not _left_steering else "a held-button steer", root)
+		_log_root("a move to the clicked point", root)
 		return
 	var from := camera_3d.project_ray_origin(screen_pos)
 	var dir := camera_3d.project_ray_normal(screen_pos)
@@ -18337,7 +18336,6 @@ func _enter_dead_state(exp_lost: int) -> void:
 		print("World3D: death -- berserk display reset (active now %s)" % str(_hud_player_info.hwan_display_active()))
 	_drop_pending_attack()
 	_has_move_target = false
-	_left_steering = false
 	player.velocity.x = 0.0
 	player.velocity.z = 0.0
 	# The QA attack loop stops here for good; SRREVAMP_QA_REVIVE_AFTER counts
@@ -18709,8 +18707,8 @@ func _own_toggle_running(skill_id: int) -> bool:
 ## The skill id of this player's own protection wall while one stands, else
 ## 0 (round 640). THE ROOT IS OURS -- the user's choice "Root while walled";
 ## retail's client and server both let a walled caster move (the probes are
-## in docs/protocol/skill_buffs.md). While it holds, no ground click, held-
-## button steer or walk into reach moves the player; attacks, skills and
+## in docs/protocol/skill_buffs.md). While it holds, no ground click or walk
+## into reach moves the player; attacks, skills and
 ## pick-ups go out from where the player stands and the server's ordinary
 ## reach rules judge them. The server drops a rooted caster's moves too
 ## (session/walls.go wallRoots). Whatever ends the wall's buff ends it.
@@ -18724,7 +18722,7 @@ func _wall_root() -> int:
 			return skill
 	return 0
 
-## When a refused move was last logged (a held-button steer asks every frame).
+## When a refused move was last logged (an approach is re-asked every tick).
 var _root_logged_ms := -100000
 
 ## Logs a move the wall refused, at most once a second.
@@ -18991,7 +18989,6 @@ func _request_sit_toggle() -> String:
 			else "not connected" if not NetClient.is_connected_to_server() else "a motion change is in flight")
 	var was_sitting := _sit.sitting
 	_has_move_target = false
-	_left_steering = false
 	_drop_pending_attack()
 	player.velocity.x = 0.0
 	player.velocity.z = 0.0

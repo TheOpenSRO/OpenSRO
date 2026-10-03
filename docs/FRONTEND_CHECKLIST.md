@@ -127,9 +127,9 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done (with the round/tag) · `[
 
 ## 7. In-game HUD & gameplay (dumped 2026-09-11, with reference screenshots)
 Ordered roughly quick-fix → needs-a-server-system.
-- [x] **Left-click drag must not orbit the camera** — only right-drag orbits; a held left button now
-  steers the character toward the cursor (v0.1.106; input isn't headless-verifiable, needs in-game
-  confirmation).
+- [x] **Left-click drag must not orbit the camera** — only right-drag orbits. A held left button
+  steered the character toward the cursor from v0.1.106; round 701 removed that, as retail does
+  nothing on a held button (the press is the click, `docs/protocol/ground_markers.md`).
 - [x] **Character runs backwards on click-to-move** — fixed: the body's visual front is local -Z
   while the player node points +Z at the movement dir, so the skeleton is turned 180°
   (`skeleton.rotation.y = PI`) to align them. Verified by a `--walk 45` render (v0.1.128): the

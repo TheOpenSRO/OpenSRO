@@ -68,6 +68,31 @@ class_name GroundMarkers
 ##   (local xz - origin) / size, the projection drape_arrays computes, so the
 ##   look is the same). Round 698's review measured 118 us a physics tick
 ##   rebuilding the mesh every tick under a moving target.
+## - ON A PLACED FLOOR (round 701; THE USER'S DECISION of 2026-10-03, an
+##   improvement over retail, which draws no ring on Jangan's plaza deck --
+##   "That seems like a bug we should fix"): where the point stands on a
+##   placed object's walkable surface, the ring is draped on that surface
+##   instead of on the terrain under it. Where the point is on the terrain
+##   the drape is retail's, unchanged. Every number in this branch is OURS:
+##   - the floor test (floor_choice): the point more than
+##     FLOOR_MIN_ABOVE_TERRAIN above the drawn terrain there, and a short ray
+##     down from it (FLOOR_PROBE_UP above to FLOOR_PROBE_DOWN below, the pick
+##     layers PICK_MASK) meets a body without the terrain-only bit
+##     (TERRAIN_ONLY_MASK) -- placed objects collide on layer 1 alone, the
+##     terrain on 0b1001;
+##   - the samples: vertical rays on a FLOOR_STEP grid of the region's frame,
+##     each from FLOOR_RAY_START above the point down to FLOOR_MAX_DROP below
+##     it, so a roof or an awning over the point is never hit;
+##   - the edges: a triangle with a corner that missed, or whose corners
+##     differ by more than FLOOR_MAX_RISE, is left out, so nothing stretches
+##     down a deck's side or up a wall;
+##   - the look: the same shader, material and origin uniform in the
+##     region's frame, so it is the terrain ring's projection;
+##   - the cost: the test and the mesh run only when the point enters another
+##     FLOOR_CELL x FLOOR_CELL cell or moves FLOOR_HEIGHT_TOLERANCE in height;
+##     each build covers the art for anywhere in that cell, and samples are
+##     kept until the height or the region changes. No still-water quad on a
+##     floor.
 
 ## The four textures, slot = texture index (READ, 0x787300..0x78733c).
 const TEXTURE_PATHS: Array[String] = [
@@ -89,6 +114,23 @@ const STILL_WATER := 1
 const BLOCK_SPAN := 320.0
 ## OURS: see the header.
 const DRAPE_LIFT := 0.05
+
+## The placed-floor drape (round 701, all OURS: see the header).
+const FLOOR_MIN_ABOVE_TERRAIN := 1.0
+const FLOOR_PROBE_UP := 0.5
+const FLOOR_PROBE_DOWN := 1.0
+const FLOOR_STEP := 2.0
+const FLOOR_RAY_START := 2.0
+const FLOOR_MAX_DROP := 2.0
+const FLOOR_MAX_RISE := 1.0
+const FLOOR_CELL := 6.0
+const FLOOR_HEIGHT_TOLERANCE := 0.25
+## Samples kept before the cache starts over (a body walking a long deck).
+const FLOOR_CACHE_MAX := 2048
+## World3D.TERRAIN_COLLISION_LAYER (the ground pick's mask: placed objects on
+## layer 1, the terrain on layers 1 and 4) and TERRAIN_ONLY_COLLISION_MASK.
+const PICK_MASK := 0b1001
+const TERRAIN_ONLY_MASK := 0b1000
 
 ## What was selected, for the texture (READ: the IsKindOf chain at 0x7786b7).
 enum Kind { MONSTER, COS, PLAYER, NPC, ITEM }
@@ -146,6 +188,78 @@ static func water_quad_arrays(center: Vector2, size: float, y: float) -> Diction
 	var d := Vector3(center.x - h, y, center.y + h)
 	return {"vertices": PackedVector3Array([a, b, c, a, c, d]),
 		"uvs": PackedVector2Array([Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 0), Vector2(1, 1), Vector2(0, 1)])}
+
+## Whether a vertical ray's hit is a placed object rather than the terrain:
+## a body on the pick layers without the terrain-only bit (OURS, round 701).
+static func is_floor_hit(hit: Dictionary) -> bool:
+	if hit.is_empty():
+		return false
+	var body := hit.get("collider") as CollisionObject3D
+	return body != null and (body.collision_layer & TERRAIN_ONLY_MASK) == 0
+
+## The floor test (OURS, round 701): `above_terrain` = the point's height less
+## the drawn terrain's there; `probe` = the short ray down from the point.
+static func floor_choice(above_terrain: float, probe: Dictionary) -> bool:
+	return not is_nan(above_terrain) and above_terrain > FLOOR_MIN_ABOVE_TERRAIN and is_floor_hit(probe)
+
+## Whether a floor sample at height `y` is on the floor round a point at
+## `ref_y`: hit, and inside the ray's span.
+static func floor_sample_ok(y: float, ref_y: float) -> bool:
+	return not is_nan(y) and y >= ref_y - FLOOR_MAX_DROP and y <= ref_y + FLOOR_RAY_START
+
+## The floor drape (OURS, round 701): the `count` x `count` grid points from
+## index `lo`, point (i, j) at local (i * step, heights[(j - lo.y) * count +
+## i - lo.x], j * step), each cell split on the terrain's diagonal (i, j)-(i +
+## 1, j + 1). A triangle is left out when a corner fails floor_sample_ok or
+## its corners differ by more than FLOOR_MAX_RISE. Corners at height + `lift`.
+## Returns {"vertices": PackedVector3Array}, three a triangle, in the same
+## frame.
+static func floor_drape_arrays(lo: Vector2i, count: int, step: float, hs: PackedFloat32Array, ref_y: float, lift: float) -> Dictionary:
+	if hs.size() != count * count:
+		return {"vertices": PackedVector3Array()}
+	var verts := PackedVector3Array()
+	verts.resize((count - 1) * (count - 1) * 6)
+	var n := 0
+	for j in count - 1:
+		for i in count - 1:
+			var h00 := hs[j * count + i]
+			var h10 := hs[j * count + i + 1]
+			var h01 := hs[(j + 1) * count + i]
+			var h11 := hs[(j + 1) * count + i + 1]
+			var x0 := float(lo.x + i) * step
+			var z0 := float(lo.y + j) * step
+			var first := _floor_triangle_ok(h00, h10, h11, ref_y)
+			var second := _floor_triangle_ok(h00, h11, h01, ref_y)
+			if not (first or second):
+				continue
+			var p00 := Vector3(x0, h00 + lift, z0)
+			var p11 := Vector3(x0 + step, h11 + lift, z0 + step)
+			if first:
+				verts[n] = p00
+				verts[n + 1] = Vector3(x0 + step, h10 + lift, z0)
+				verts[n + 2] = p11
+				n += 3
+			if second:
+				verts[n] = p00
+				verts[n + 1] = p11
+				verts[n + 2] = Vector3(x0, h01 + lift, z0 + step)
+				n += 3
+	verts.resize(n)
+	return {"vertices": verts}
+
+## The heights floor_drape_arrays takes, from `sample.call(i, j)` (the tests).
+static func floor_heights(lo: Vector2i, count: int, sample: Callable) -> PackedFloat32Array:
+	var hs := PackedFloat32Array()
+	hs.resize(count * count)
+	for j in count:
+		for i in count:
+			hs[j * count + i] = float(sample.call(lo.x + i, lo.y + j))
+	return hs
+
+static func _floor_triangle_ok(a: float, b: float, c: float, ref_y: float) -> bool:
+	if not (floor_sample_ok(a, ref_y) and floor_sample_ok(b, ref_y) and floor_sample_ok(c, ref_y)):
+		return false
+	return maxf(a, maxf(b, c)) - minf(a, minf(b, c)) <= FLOOR_MAX_RISE
 
 ## READ: a ground click within this squared distance (double 0xd878a8 =
 ## 400.0, so 20 units, `FUN_009ed1e0`'s 3-D squared distance) of a CICNPC
@@ -238,6 +352,24 @@ var _built_group: Node3D = null
 var _built_window := Vector2i(1 << 30, 1 << 30)
 var _built_water_y := NAN
 var _dirty := true
+## The placed-floor branch (round 701): what the floor test last ran for (the
+## group, the FLOOR_CELL cell, the height), its answer, and whether the mesh
+## is a floor drape. The samples: grid index -> region-local height (NAN: a
+## miss), valid for one group and one reference height.
+var on_floor := false
+var _floor_key_group: Node3D = null
+## The key's cell as its lower corner (region-local x, z) -- float compares
+## are what a tick pays on the terrain path.
+var _floor_key_x0 := INF
+var _floor_key_z0 := INF
+var _floor_key_y := NAN
+var _built_is_floor := false
+var _floor_samples: Dictionary = {}
+var _floor_samples_group: Node3D = null
+var _floor_samples_ref_y := NAN
+## Rays fired for floor samples, for the cost note and the tests.
+var floor_rays := 0
+var _floor_query: PhysicsRayQueryParameters3D = null
 ## group name -> [WeakRef to the ParsedRegion, PackedFloat32Array heights]:
 ## only the heights are held, so a region RegionGridState prunes is freed
 ## (round 698's review); an entry whose region left the grid is dropped.
@@ -323,6 +455,9 @@ func _qa_frame_view() -> void:
 func zone_changed() -> void:
 	hide_marker("zone change")
 	_heights_cache.clear()
+	_floor_samples.clear()
+	_floor_samples_group = null
+	_floor_key_group = null
 	_built_group = null
 	_dirty = true
 
@@ -383,12 +518,27 @@ func _refresh() -> void:
 		last_drape = {}
 		return
 	var local := group.to_local(center)
-	var reach := cell_reach(SIZE)
-	var window := Vector2i(int(floor(local.x / CELL)) - reach, int(floor(local.z / CELL)) - reach)
-	var water_y := local.y + WATER_QUAD_LIFT if block_has_still_water(_block_at(group, local)) else NAN
-	var water_changed := is_nan(water_y) != is_nan(_built_water_y) or (not is_nan(water_y) and absf(water_y - _built_water_y) > 1e-4)
-	if _dirty or group != _built_group or window != _built_window or water_changed:
-		_rebuild(group, local, window, water_y)
+	# The placed-floor branch (round 701, OURS): the test and the floor mesh
+	# run only when the point enters another FLOOR_CELL cell or moves in
+	# height.
+	if _dirty or group != _floor_key_group or local.x < _floor_key_x0 or local.z < _floor_key_z0 \
+			or local.x >= _floor_key_x0 + FLOOR_CELL or local.z >= _floor_key_z0 + FLOOR_CELL \
+			or not (absf(local.y - _floor_key_y) <= FLOOR_HEIGHT_TOLERANCE):
+		var cell := Vector2i(floori(local.x / FLOOR_CELL), floori(local.z / FLOOR_CELL))
+		_floor_key_group = group
+		_floor_key_x0 = cell.x * FLOOR_CELL
+		_floor_key_z0 = cell.y * FLOOR_CELL
+		_floor_key_y = local.y
+		on_floor = _floor_test(group, local)
+		if on_floor:
+			_rebuild_floor(group, local, cell)
+	if not on_floor:
+		var reach := cell_reach(SIZE)
+		var window := Vector2i(int(floor(local.x / CELL)) - reach, int(floor(local.z / CELL)) - reach)
+		var water_y := local.y + WATER_QUAD_LIFT if block_has_still_water(_block_at(group, local)) else NAN
+		var water_changed := is_nan(water_y) != is_nan(_built_water_y) or (not is_nan(water_y) and absf(water_y - _built_water_y) > 1e-4)
+		if _dirty or _built_is_floor or group != _built_group or window != _built_window or water_changed:
+			_rebuild(group, local, window, water_y)
 	if _mesh_instance.global_transform != group.global_transform:
 		_mesh_instance.global_transform = group.global_transform
 	if _mesh_instance.material_override != material:
@@ -405,6 +555,7 @@ func _refresh() -> void:
 ## the group's transform, so the shader's VERTEX.xz is region-local).
 func _rebuild(group: Node3D, local: Vector3, window: Vector2i, water_y: float) -> void:
 	_dirty = false
+	_built_is_floor = false
 	_built_group = group
 	_built_window = window
 	_built_water_y = water_y
@@ -421,7 +572,7 @@ func _rebuild(group: Node3D, local: Vector3, window: Vector2i, water_y: float) -
 		var span := float(2 * reach + 1) * CELL
 		var q := water_quad_arrays(Vector2(window) * CELL + Vector2(span, span) * 0.5, span, water_y)
 		verts.append_array(q["vertices"])
-	last_drape = {"arrays": drape, "group": group, "local": local, "water": water}
+	last_drape = {"arrays": drape, "group": group, "local": local, "water": water, "floor": false}
 	_mesh_instance.global_transform = group.global_transform
 	if verts.is_empty():
 		_mesh_instance.mesh = null
@@ -437,26 +588,136 @@ func _rebuild(group: Node3D, local: Vector3, window: Vector2i, water_y: float) -
 		if _qa_rebuilds % 120 == 0:
 			_qa_measure(group, local, drape, water)
 
+## The floor test at region-local `local` of `group` (round 701, OURS;
+## floor_choice).
+func _floor_test(group: Node3D, local: Vector3) -> bool:
+	var terrain := TerrainCollision.mesh_height_at(_heights_for(group), local.x, local.z)
+	if is_nan(terrain) or local.y - terrain <= FLOOR_MIN_ABOVE_TERRAIN or not is_inside_tree():
+		return false
+	var world := group.global_transform * local
+	var probe := TerrainCollision.vertical_ray(get_world_3d().direct_space_state, world.x, world.z,
+		world.y + FLOOR_PROBE_UP, world.y - FLOOR_PROBE_DOWN, PICK_MASK)
+	return floor_choice(local.y - terrain, probe)
+
+## The floor mesh for the FLOOR_CELL cell `cell` round a point at `local`:
+## the grid points whose 12 x 12 art can reach from anywhere in the cell.
+func _rebuild_floor(group: Node3D, local: Vector3, cell: Vector2i) -> void:
+	_dirty = false
+	_built_is_floor = true
+	_built_group = group
+	_built_window = Vector2i(1 << 30, 1 << 30)
+	_built_water_y = NAN
+	if _floor_samples_group != group or not (absf(local.y - _floor_samples_ref_y) <= FLOOR_HEIGHT_TOLERANCE) \
+			or _floor_samples.size() > FLOOR_CACHE_MAX:
+		_floor_samples.clear()
+		_floor_samples_group = group
+		_floor_samples_ref_y = local.y
+	var ref_y := _floor_samples_ref_y
+	var per_cell := int(FLOOR_CELL / FLOOR_STEP)
+	var reach := int(ceil(SIZE * 0.5 / FLOOR_STEP))
+	var lo := Vector2i(cell.x * per_cell - reach, cell.y * per_cell - reach)
+	var count := per_cell + 2 * reach + 1
+	var space := get_world_3d().direct_space_state
+	var xf := group.global_transform
+	if _floor_query == null:
+		_floor_query = PhysicsRayQueryParameters3D.new()
+		_floor_query.collision_mask = PICK_MASK
+	var query := _floor_query
+	# A terrain group is translated and mirrored on z only
+	# (TerrainCollision.place_group), so a local height is world y less its y.
+	var y0 := xf.origin.y
+	# One query object reused (OURS, the cost); each column nudged off a
+	# terrain grid line as TerrainCollision.vertical_ray does, where a vertical
+	# ray can slip through the heightfield.
+	var hs := PackedFloat32Array()
+	hs.resize(count * count)
+	var top := ref_y + y0 + FLOOR_RAY_START
+	var bottom := ref_y + y0 - FLOOR_MAX_DROP - 0.01
+	for j in count:
+		for i in count:
+			var key := Vector2i(lo.x + i, lo.y + j)
+			var known: Variant = _floor_samples.get(key)
+			if known == null:
+				var w := xf * Vector3(float(key.x) * FLOOR_STEP, 0.0, float(key.y) * FLOOR_STEP)
+				var x := TerrainCollision.ray_columns(w.x)[0]
+				var z := TerrainCollision.ray_columns(w.z)[0]
+				query.from = Vector3(x, top, z)
+				query.to = Vector3(x, bottom, z)
+				var hit := space.intersect_ray(query)
+				floor_rays += 1
+				known = NAN if hit.is_empty() else (hit["position"] as Vector3).y - y0
+				_floor_samples[key] = known
+			hs[j * count + i] = known
+	var drape := floor_drape_arrays(lo, count, FLOOR_STEP, hs, ref_y, DRAPE_LIFT)
+	last_drape = {"arrays": drape, "group": group, "local": local, "water": false, "floor": true}
+	_mesh_instance.global_transform = group.global_transform
+	var verts: PackedVector3Array = drape["vertices"]
+	if verts.is_empty():
+		_mesh_instance.mesh = null
+		return
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	_mesh_instance.mesh = mesh
+	if _qa_log:
+		print("QA MARKER floor: cell %s, %d grid points from %s, %d triangles, %d floor rays so far" % [
+			str(cell), count * count, str(lo), verts.size() / 3, floor_rays])
+
 ## The QA measurement (SRREVAMP_QA_MARKER=1): the ring's centre against the
 ## point it was put at, the drape's own height there against a vertical ray
 ## at the terrain-only layer (a different probe: the physics heightfield),
-## the cells and triangles drawn.
+## the cells and triangles drawn. On a placed floor (round 701) the ray is the
+## pick layers' from FLOOR_RAY_START above the point, and the drape is also
+## held against rays at the art's edges (+-5 on x and z); the drape's highest
+## and lowest corners against the point say whether anything went up onto a
+## roof or down a deck's side.
 func _qa_measure(group: Node3D, local: Vector3, drape: Dictionary, water: bool) -> void:
+	var floor_mode := bool(last_drape.get("floor", false))
 	var drape_h := drape_height_at(drape, local.x, local.z)
-	var ray_h := NAN
-	if is_inside_tree():
-		var hit := TerrainCollision.vertical_ray(get_world_3d().direct_space_state, center.x, center.z,
-			center.y + 1000.0, center.y - 1000.0, 0b1000)
-		if not hit.is_empty():
-			ray_h = (hit["position"] as Vector3).y
+	var ray_h := _qa_ray_height(group, local, floor_mode)
 	var drape_world := (group.global_transform * Vector3(local.x, drape_h, local.z)).y if not is_nan(drape_h) else NAN
+	var verts: PackedVector3Array = drape["vertices"]
+	var tri := verts.size() / 3
+	if floor_mode:
+		var edges := PackedStringArray()
+		for off in [Vector2(5, 0), Vector2(-5, 0), Vector2(0, 5), Vector2(0, -5)]:
+			var o: Vector2 = off
+			var p := Vector3(local.x + o.x, local.y, local.z + o.y)
+			var dh := drape_height_at(drape, p.x, p.z)
+			var rh := _qa_ray_height(group, p, true)
+			edges.append("%+.0f,%+.0f: drape - ray %.3f" % [o.x, o.y, (dh + group.global_position.y) - rh] if not is_nan(dh) and not is_nan(rh)
+				else "%+.0f,%+.0f: %s" % [o.x, o.y, "no triangle" if is_nan(dh) else "ray missed"])
+		var hi := -INF
+		var lo := INF
+		for v in verts:
+			hi = maxf(hi, v.y)
+			lo = minf(lo, v.y)
+		print("QA MARKER drape: FLOOR texture %d follow '%s' centre world (%.2f, %.2f, %.2f) in %s local (%.2f, %.2f); %d triangles; drape at centre %.3f, floor ray %.3f, drape - ray %.3f (lift %.2f); corners from point %+.3f..%+.3f; edges [%s]" % [
+			texture_index, follow_key, center.x, center.y, center.z, group.name, local.x, local.z, tri,
+			drape_world, ray_h, drape_world - ray_h, DRAPE_LIFT, lo - local.y, hi - local.y, ", ".join(edges)])
+		return
 	var reach := cell_reach(SIZE)
 	var c0 := int(floor(local.x / CELL))
 	var r0 := int(floor(local.z / CELL))
 	print("QA MARKER drape: texture %d follow '%s' centre world (%.2f, %.2f, %.2f) in %s local (%.2f, %.2f); cells x %d..%d z %d..%d; %d triangles; drape at centre %.3f, terrain ray %.3f, drape - ray %.3f (lift %.2f); point y - terrain %.3f; water quad %s" % [
 		texture_index, follow_key, center.x, center.y, center.z, group.name, local.x, local.z,
-		c0 - reach, c0 + reach, r0 - reach, r0 + reach, (drape["vertices"] as PackedVector3Array).size() / 3,
+		c0 - reach, c0 + reach, r0 - reach, r0 + reach, tri,
 		drape_world, ray_h, drape_world - ray_h, DRAPE_LIFT, center.y - ray_h, str(water)])
+
+## A vertical ray's height (world) under region-local `p` of `group`: the
+## terrain-only layer from 1000 above, or on a floor the pick layers from
+## FLOOR_RAY_START above the point. NAN on a miss.
+func _qa_ray_height(group: Node3D, p: Vector3, floor_mode: bool) -> float:
+	if not is_inside_tree():
+		return NAN
+	var w := group.global_transform * p
+	var top := center.y + (FLOOR_RAY_START if floor_mode else 1000.0)
+	var bottom := center.y - (FLOOR_MAX_DROP if floor_mode else 1000.0)
+	var hit := TerrainCollision.vertical_ray(get_world_3d().direct_space_state, w.x, w.z, top, bottom,
+		PICK_MASK if floor_mode else TERRAIN_ONLY_MASK)
+	return NAN if hit.is_empty() else (hit["position"] as Vector3).y
 
 ## READ: colour and alpha = texture x factor 0xFFFFFFFF, unlit, SRCALPHA /
 ## INVSRCALPHA, clamp addressing (0x9f4508..0x9f468c); the UV is the vertical
@@ -515,11 +776,19 @@ func _group_at(p: Vector3) -> Node3D:
 	return null
 
 ## "RealTerrain_97_168" -> "97_168" (RegionGridState.region_key), or "".
+## Remembered per name (round 701: the floor test asks on every 6-unit cell a
+## followed body enters, and the split cost the terrain path 2 us a tick).
 static func _region_key_of(group_name: String) -> String:
+	var known: Variant = _region_keys.get(group_name)
+	if known != null:
+		return known
 	var parts := group_name.trim_prefix("RealTerrain_").split("_")
-	if parts.size() != 2 or not parts[0].is_valid_int() or not parts[1].is_valid_int():
-		return ""
-	return RegionGridState.region_key(int(parts[0]), int(parts[1]))
+	var key := ""
+	if parts.size() == 2 and parts[0].is_valid_int() and parts[1].is_valid_int():
+		key = RegionGridState.region_key(int(parts[0]), int(parts[1]))
+	_region_keys[group_name] = key
+	return key
+static var _region_keys: Dictionary = {}
 
 func _parsed_for(group: Node3D) -> MapmReader.ParsedRegion:
 	if _grid == null:
