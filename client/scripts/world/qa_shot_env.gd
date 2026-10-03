@@ -13,6 +13,10 @@ class_name QaShotEnv
 ## - `tonemap=<n>`: Environment.tonemap_mode (0 linear, 2 Filmic);
 ## - `sdist=<units>`: DirectionalLight3D.directional_shadow_max_distance;
 ## - `glow_bloom=<f>`: Environment.glow_bloom.
+## - `fogprobe=1` (round 705): the fog pass draws its own measurement, opaque
+##   -- red the fog amount it applies, green the view depth / 5000 it reads
+##   from the depth buffer (WorldFog's qa_probe); read it with `tonemap=0` and
+##   `bloom=0` so the frame shows the values as written.
 ## The fog is the Video tab's `fog_temporary` row.
 ##
 ## OPENSRO_QA_PATCHES="name:dx,dz,half;..." names squares on the ground
@@ -41,6 +45,7 @@ static func apply(world: Node, spec: String) -> void:
 	var tonemap: int = b["tonemap"]
 	var sdist: float = b["sdist"]
 	var bloom: float = b["glow_bloom"]
+	var probe := false
 	for pair in spec.split(",", false):
 		var kv := pair.split("=")
 		if kv.size() != 2:
@@ -54,6 +59,8 @@ static func apply(world: Node, spec: String) -> void:
 				sdist = float(v)
 			"glow_bloom":
 				bloom = float(v)
+			"fogprobe":
+				probe = v == "1"
 			_:
 				video_spec.append(pair)
 	VideoOptions.apply_spec(video, ",".join(video_spec))
@@ -61,15 +68,65 @@ static func apply(world: Node, spec: String) -> void:
 	if env != null:
 		env.tonemap_mode = tonemap
 		env.glow_bloom = bloom
+		# The fog's colour and the pass's mix follow the tone map (round 705).
+		world._apply_fog()
 	if light != null:
 		light.directional_shadow_max_distance = sdist
 	var blobs: CharacterBlobs = world.get("_character_blobs")
 	var fog_pass: Node3D = world.get("_fog_pass")
+	if fog_pass is MeshInstance3D and (fog_pass as MeshInstance3D).material_override is ShaderMaterial:
+		((fog_pass as MeshInstance3D).material_override as ShaderMaterial).set_shader_parameter("qa_probe", probe)
 	print("QA SHOT ENV '%s': tonemap %d sdist %.0f glow %s bloom %.2f fog_pass %s ssao %s shadow_map %s blobs %d" % [
 		spec, tonemap, light.directional_shadow_max_distance if light != null else 0.0,
 		str(env.glow_enabled) if env != null else "-", bloom,
 		str(fog_pass.visible) if fog_pass != null else "-", str(env.ssao_enabled) if env != null else "-",
 		str(light.shadow_enabled) if light != null else "-", blobs.shown_count() if blobs != null else -1])
+
+## OPENSRO_QA_DEPTH="name:fx,fy;..." (round 705) names screen points as
+## fractions of the view; at every `QA SHOT` the line `QA DEPTH <shot> <name>
+## px <x> <y> hit <dist> depth <view depth> fog <amount> planes <start>..<end>
+## <collider>` gives what a physics ray from the camera through that pixel
+## hits, its view depth (along the camera's axis, what linear fog reads) and
+## the fog amount the planes in force give there; `QA CAMERA` gives the
+## camera's place, near and far planes and fov.
+static func report_depth(world: Node, shot: String) -> void:
+	var spec := OS.get_environment("OPENSRO_QA_DEPTH")
+	var cam: Camera3D = world.get_viewport().get_camera_3d()
+	if spec == "" or cam == null:
+		return
+	var near_plane: float = world.get("_fog_near_real")
+	var far_plane: float = world.get("_fog_far_real")
+	var size := world.get_viewport().get_visible_rect().size
+	var fwd := -cam.global_transform.basis.z
+	print("QA CAMERA %s at %s forward %s near %.3f far %.0f fov %.1f view %s fog planes %.0f..%.0f" % [
+		shot, cam.global_position, fwd, cam.near, cam.far, cam.fov, size, near_plane, far_plane])
+	var space := cam.get_world_3d().direct_space_state
+	for item in spec.split(";", false):
+		var parts := item.split(":")
+		if parts.size() != 2:
+			continue
+		var nums := parts[1].split(",")
+		if nums.size() != 2:
+			continue
+		var px := Vector2(float(nums[0]) * size.x, float(nums[1]) * size.y)
+		var from := cam.project_ray_origin(px)
+		var dir := cam.project_ray_normal(px)
+		var q := PhysicsRayQueryParameters3D.create(from, from + dir * 8000.0)
+		var exclude: Array[RID] = []
+		var player: Node = world.get("player")
+		if player is CollisionObject3D:
+			exclude.append((player as CollisionObject3D).get_rid())
+		q.exclude = exclude
+		var hit := space.intersect_ray(q)
+		if hit.is_empty():
+			print("QA DEPTH %s %s px %.0f %.0f no hit" % [shot, parts[0], px.x, px.y])
+			continue
+		var p: Vector3 = hit["position"]
+		var depth := (p - cam.global_position).dot(fwd)
+		var who := String((hit["collider"] as Node).get_path()) if hit["collider"] is Node else "?"
+		print("QA DEPTH %s %s px %.0f %.0f hit %.1f depth %.1f fog %.3f planes %.0f..%.0f %s" % [
+			shot, parts[0], px.x, px.y, from.distance_to(p), depth,
+			WorldFog.amount(depth, near_plane, far_plane), near_plane, far_plane, who])
 
 static func report_patches(world: Node, shot: String) -> void:
 	var cam: Camera3D = world.get_viewport().get_camera_3d()

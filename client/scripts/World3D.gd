@@ -640,6 +640,8 @@ func _apply_fog() -> void:
 	WorldFog.set_globals(fog_planes, on, WorldFog.pass_color(_fog_display_color, env))
 	if _fog_pass != null:
 		_fog_pass.visible = on
+		# Forward+ mixes in display values under this tone map (round 705).
+		WorldFog.set_pass_tonemap(_fog_pass, env)
 
 ## Whether Detail's terrain catcher draws: Shadow Detail "Detail", under
 ## Forward+ (ShadowCatcher: the Compatibility renderer's shadowed sun is its
@@ -11199,7 +11201,12 @@ func _update_blob_shadow() -> void:
 ##                          boundaries in 28 ticks a hop. A trailing
 ##                          `|key=value,...` sets that viewpoint's effects
 ##                          (QaShotEnv, round 702); OPENSRO_QA_PATCHES
-##                          prints ground squares' screen boxes per shot
+##                          prints ground squares' screen boxes per shot;
+##                          OPENSRO_QA_DEPTH="name:fx,fy;..." (round 705)
+##                          a ray's hit, view depth and fog amount through
+##                          those screen points (`QA CAMERA` / `QA DEPTH`),
+##                          and `|fogprobe=1` makes the fog pass draw its
+##                          own amount and depth
 ##   OPENSRO_QA_RADIUS=n   load an n-region radius instead of the default
 ##   OPENSRO_QA_MAPANIM=n  every n frames, `QA MAPANIM ... registered=
 ##                          running= driver_us= process_ms=`: the animated
@@ -12463,6 +12470,7 @@ func _qa_advance_shots() -> void:
 		if OS.get_environment("OPENSRO_QA_PLATES") != "":
 			_qa_plates_report(_qa_shots[_qa_shot_index]["name"])
 		QaShotEnv.report_patches(self, _qa_shots[_qa_shot_index]["name"])
+		QaShotEnv.report_depth(self, _qa_shots[_qa_shot_index]["name"])
 	_qa_shot_frames -= 1
 	if _qa_shot_frames > 0:
 		return

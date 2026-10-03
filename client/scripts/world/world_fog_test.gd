@@ -59,6 +59,52 @@ func _initialize() -> void:
 	_check(code.contains("hint_depth_texture") and code.contains("depth_test_disabled") and code.contains("blend_mix") and code.contains("discard"),
 		"the pass reads the opaque depth, ignores the depth test, blends, and leaves the sky (no depth) alone")
 	pass_mi.free()
+	# Round 705: Forward+ mixes in display values, as Direct3D 9 and Compatibility do -- without
+	# reading the screen (Godot's copy cost +1.4 ms at 4K, MEASURED).
+	var fwd := WorldFog.pass_shader_code(false)
+	var gl := WorldFog.pass_shader_code(true)
+	_check(not fwd.contains("hint_screen_texture") and fwd.contains("srr_unshown(mix(vec3(0.2), srr_fog_shown, f.a))")
+		and is_equal_approx(WorldFog.REFERENCE_SHOWN, 0.2),
+		"Forward+: the pass mixes in the values the screen shows, at the reference destination (0.2), with no screen read")
+	_check(not gl.contains("hint_screen_texture") and gl.contains(WorldFog.BLEND_COMPATIBILITY),
+		"Compatibility: the framebuffer blend already mixes display values")
+	# The shader's algebra on the CPU (linear tone map): exact at the reference and at the fog
+	# colour, close between, much closer than the linear blend was.
+	var fog_shown := [jangan.r, jangan.g, jangan.b]
+	var worst := 0.0
+	var worst_linear := 0.0
+	for dshown in [0.05, 0.1, 0.2, 0.3, 0.4, 0.6]:
+		for a in [0.05, 0.25, 0.37, 0.5, 0.75, 1.0]:
+			var lref := WorldFog.srgb_to_linear(WorldFog.REFERENCE_SHOWN)
+			var slopes := 0.0
+			var at_ref := []
+			for c in 3:
+				var lf := WorldFog.srgb_to_linear(fog_shown[c])
+				var g := WorldFog.srgb_to_linear(lerpf(WorldFog.REFERENCE_SHOWN, fog_shown[c], a))
+				at_ref.append(g)
+				slopes += (lf - g) / (lf - lref)
+			var la := clampf(1.0 - slopes / 3.0, 0.0, 1.0)
+			for c in 3:
+				var src := maxf((float(at_ref[c]) - lref * (1.0 - la)) / la, 0.0)
+				var dst := WorldFog.srgb_to_linear(dshown)
+				var mixed := WorldFog.linear_to_srgb(src * la + dst * (1.0 - la))
+				var want := lerpf(dshown, fog_shown[c], a)
+				worst = maxf(worst, absf(mixed - want))
+				var lf2 := WorldFog.srgb_to_linear(fog_shown[c])
+				worst_linear = maxf(worst_linear, absf(WorldFog.linear_to_srgb(lerpf(dst, lf2, a)) - want))
+				if is_equal_approx(dshown, WorldFog.REFERENCE_SHOWN) or a == 1.0:
+					_check(absf(mixed - want) < 0.002, "exact at %s (destination %.2f, %.0f%% fog, channel %d)" % [
+						"the reference" if a < 1.0 else "full fog", dshown, a * 100.0, c])
+	_check(worst < 0.075 and worst_linear > 0.15, "the mix's worst error %.1f/255 against the display mix (the linear blend's: %.1f/255)" % [worst * 255.0, worst_linear * 255.0])
+	var tm_pass := WorldFog.build_pass(false)
+	var tm_env := Environment.new()
+	tm_env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	tm_env.tonemap_exposure = 1.25
+	WorldFog.set_pass_tonemap(tm_pass, tm_env)
+	var tmm := tm_pass.material_override as ShaderMaterial
+	_check(bool(tmm.get_shader_parameter("tm_filmic")) and is_equal_approx(float(tmm.get_shader_parameter("tm_exposure")), 1.25),
+		"the Forward+ pass takes the environment's tone map")
+	tm_pass.free()
 	_check(ProjectSettings.has_setting("shader_globals/srr_fog_params") and ProjectSettings.has_setting("shader_globals/srr_fog_color"),
 		"project.godot declares the fog's shader globals")
 	var water := MapmWater.water_material(null, Color(0.3, 0.6, 0.6))

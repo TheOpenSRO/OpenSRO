@@ -567,10 +567,21 @@ In order. Each is checked off here when it ships in a release, with its round in
       (OURS density, sun scatter and aerial perspective) draws nothing. A **temporary** Video row
       "Fog (temporary)" (the user's request, on = the original) is to be removed once the user
       decides. Left: the indoor branch (world+0x26bb set: start -200, end far / 10 -- when the flag
-      is set is INFERRED, not drawn); the per-frame easing toward a new zone's planes; Forward+
-      blends half-fogged pixels in linear light, lighter than the original's display-value blend
-      (Compatibility matches it); fading-in characters (AppearFade) are not fogged during their
-      2 s fade.
+      is set is INFERRED, not drawn); the per-frame easing toward a new zone's planes (and the
+      environment following the camera's block at all: `Map::FUN_00a1baf0` takes its record from
+      the first drawn block, the camera's -- MapmWater.environment_at -- every frame, lerping
+      by dt x 0.5 unless a snap flag is set; here only the water follows the camera, the fog, sky
+      and light stay the grid centre's); fading-in characters (AppearFade) are not fogged during
+      their 2 s fade; the blended MTRL mods' own FOG still mixes in linear light under Forward+.
+      **Round 705:** the Forward+ pass mixes in display values (`BLEND_FORWARD`), as Direct3D 9
+      and Compatibility do -- exactly at a reference destination shown at 0.2 (OURS) and at full
+      fog, within 17/255 elsewhere; the exact mix needs the screen read, +1.4 ms at 4K (MEASURED),
+      so it was not kept. **The user's near fog (v0.1.486 on macOS/CrossOver) was not
+      reproduced at the default settings** on the box: at the user's spot the pass applies 0 to
+      the dragon (view depth 1018) and the gate (1450-1520), probe-measured. Background Sight
+      Range 1 (planes 911..1200, the READ rule) reproduces the shape of their picture; their fog
+      colour is greyer than ours, unexplained. Ask for their log's `World3D: video options
+      applied ... background_sight_range=... fog=A..B` and `environment fog (READ)` lines.
 - [ ] **Shadow Detail "Detail": the original's projected character shadows** (READ in round 702
       and its review: `SWorld::vslot_025` 0xa17ab0, `Map::FUN_009f35f0`, `FUN_009f2f80`): up to ten
       characters within 300 units of the player (key `(int)(dist x 10)` <= 3000), each drawn into a
@@ -595,13 +606,32 @@ In order. Each is checked off here when it ships in a release, with its round in
       (PLAUSIBLE, not read); the character-create preview is not bloomed (PLAUSIBLE that retail's
       is); the screen texture is sampled CLAMP at the edges where retail's target may WRAP (not
       read).
+- [ ] **Compatibility + the Bloom row renders black frames on the box** (round 705, MEASURED on
+      base 1bcbd825 and on round 705's tree alike: every `qa_shot.sh RENDERER=gl_compatibility`
+      frame with bloom=1 is (0, 0, 0) everywhere, bloom=0 draws normally; nothing in the log). Round
+      702's review measured RetailBloom under Compatibility, so something after it broke it -- or
+      the movie writer path alone. Middle (the default) has Bloom on: find out whether a
+      Compatibility player sees black.
+- [ ] **The camera's field of view** (round 705 finding): the original's projection is fovy 60
+      (READ, MAPM_FORMAT.md "Depth", 0x00d89ddc); ours is Godot's default 75, so the same spot
+      shows the dragon and the gate about 1.3x smaller here (the user's two pictures). The camera
+      zoom limits were derived from 75 (WORLD_ISSUES rounds 20-22).
+- [ ] **The day phase** (round 705 finding, a contradiction to settle): the Day/night item below
+      says the in-game phase is a fixed 0.5 and the server clock feeds nothing; CharSelectHandoff's
+      header (round 688's review) says `CPSMission::vslot_012` sets SWorld's phase every frame from
+      the game clock. If the latter is right, the original's environment (fog planes, colours,
+      light) follows the server's time of day.
 - [ ] **The tone map (finding, round 702; no change made).** World3D's environment is Filmic
       (tonemap_mode 2, an OURS choice of the 2026-08-26 atmosphere pass); Direct3D 9 shows the
       shader's output as is. MEASURED at the Jangan spawn: Linear draws the same ground patches
       about 13 luma darker (70 -> 57) with the same contrast relative to brightness (0.32 / 0.30)
       and lower saturation in absolute terms -- Filmic is not what washes the picture out, but it is
       not the original's mapping either. Changing it re-tunes every lit surface (the Forward+ sun
-      scale, the undo passes of the water, clouds, select screen); the user's call.
+      scale, the undo passes of the water, clouds, select screen); the user's call. **Round 705**,
+      at the user's spot looking at the dragon (Forward+, Middle): Linear against Filmic -- gate
+      wall 37 / 47 luma, dirt 50 / 65, paving 41 / 51, sky 211 / 238 (saturation 0.44 / 0.26). The
+      original there: 81, 83, 61, 190. Linear moves every surface further from the original
+      except the sky's saturation; the darkness is the object lighting (above), not Filmic.
 - [x] ~~Day/night cycle~~ -- **not a gap** (round 226, `docs/protocol/game_clock.md`): the retail
       client renders the environment at a FIXED phase of 0.5 (SWorld's constructor sets it; the
       per-frame advance is gated by a flag nothing sets; the graphs are sampled at the raw phase), and
@@ -717,6 +747,24 @@ are not drawn.
   texture × lit diffuse × 2. Our flag-word path is tuned by eye (light energy 0.3, round 43).
   Before any global change, read c10's upload, the env record → D3DLIGHT9 mapping and the object
   colour, then compare numerically in Jangan. The decision is the user's.
+  **Round 705 read c10 and measured Jangan** (WORLD_ISSUES round 705): `CObjRendererVS::
+  vslot_024` uploads c10 from the stack block at its entry ESP+0x30 (asm 0xbf1e18..0xbf1e37,
+  upload 0xbf1f4e..0xbf1f60), built as the OBJECT's colour (+0x14..+0x1c of the drawn object)
+  times the D3DLIGHT9 Ambient (0x1112e28..30), w 1 -- READ; c11 per material = the file's second
+  colour (BmtReader `diffuse`) times the light's Diffuse (FUN_00bf0e20) -- READ. So the material's
+  first colour (BmtReader `ambient`, which our flag-word path uses as the albedo) is not in the
+  object shader's lighting at all. Retail: `clamp(2 x tex x clamp(obj x La + sat(N.L) x
+  diffuse x Ld))` in display values. MEASURED against the user's original (same spot): the gate
+  wall 81 luma there, 35 in the user's v0.1.486 frame, 47 on the box; the dragon's gold pixels
+  (90, 77, 31) there, (32, 22, 15) in the user's frame -- its layer's `ambient` is (0.34, 0.21,
+  0.05), its texture's mean (0.47, 0.37, 0.12). Open: the object colour's default (INFERRED white),
+  the light's direction (VSC_DLIGHT_DIRECTION c9 is the object-space transform of SWorld's
+  +0x130..0x138, whose writer was not read), and every consumer of the flag-word
+  StandardMaterial3D (BerserkLook, AppearFade, the portrait, the paper doll, the select stage).
+  A restructuring, not a value: the user's call, with these numbers.
+- **Metallic Sheen and the dragon** (round 705, INFERRED): the Jangan dragon's layer is the only
+  one in `cj_jang_gate01.bmt` with a Power (1.48) and a near-white specular; the Middle preset's
+  Metallic Sheen (case 0xc -> object renderer +0x194) is drawn as nothing here.
 - **MTRL blend pairs drawn OURS** (BMT_FORMAT.md): 7 pairs drop a term. BLENDFACTOR's live
   value for objects is OPEN. TFACTOR is drawn white, although the mod's own colour is available.
 - **The 355 bit-9 item layers with no ENVMAP mod** are cut at 128 by the READ rule. That is right

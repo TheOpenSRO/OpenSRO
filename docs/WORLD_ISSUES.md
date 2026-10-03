@@ -7094,6 +7094,191 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-fifth round: the user's smoggy Jangan measured at their own spot -- our fog applies nothing to the dragon or the gate at the default settings, Background Sight Range 1 reproduces their picture, and Forward+ now mixes a half-fogged pixel in display values as the original does; the darker, flatter base image is the object lighting, read and measured, not the fog or the tone map
+
+The user (v0.1.485/486, macOS under CrossOver, a 2548-wide window): "the fog is better and worse
+than before. Now it looks like a smoggy day in China ... A lot more fog and less vibrant. Let's
+try to match the original game as best as possible." Three pictures of one spot, Jangan at the
+game's X:6432-6433 Y:1147-1148 looking at the dragon statue and the palace's gate: the original
+(PNG), ours with fog, ours with "Fog (temporary)" off (JPEGs). Lane `fog705`, client. Labels:
+READ (`sro_client.exe`: the box's decompile and `sro_client.asm`), MEASURED, INFERRED, OURS.
+
+### 1. The spot and the pictures (MEASURED)
+
+- **Where.** The minimap's own formula (`HudMinimap.update_player`) puts X:6432 Y:1148 at region
+  97/168 local (965, 1885). Standing there, yaw 180 of `qa_shot.sh` faces the dragon (yaw 0 faces the
+  gate building the user stands in). Rays through the frame (new `OPENSRO_QA_DEPTH`): the dragon
+  `Obj_cj_jang_gate_dragon_79` at view depth 1018, the gate wall and the trees beside it 1450-1520,
+  the plaza 80-240.
+- **The three pictures, per region** (`stats.py`: mean RGB, Rec. 709 luma L, mean HSV saturation s;
+  regions chosen per picture on the same surfaces):
+
+| region | original | ours, fog on | ours, fog off |
+|---|---|---|---|
+| sky | (170, 195, 200) L 190 s 0.16 | (187, 236, 251) L 227 s 0.26 | (205, 248, 254) L 239 s 0.19 |
+| gate wall | (77, 83, 72) L 81 | (166, 184, 190) L 180 | (34, 35, 32) L 35 |
+| dragon | (92, 87, 52) L 86 s 0.49 | (138, 153, 160) L 151 s 0.14 | (37, 33, 29) L 34 s 0.29 |
+| dragon, gold pixels only (s >= 0.45) | (90, 77, 31), p90 (138, 118, 47) | -- | (32, 22, 15) |
+| dirt plaza | (95, 82, 54) L 83 s 0.44 | (92, 68, 44) L 72 | (96, 69, 43) L 73 s 0.56 |
+| stone paving | L 61 | L 59 | L 61 |
+| soldier's clothes | (76, 59, 52) L 62 | L 39 | L 37 |
+
+  So the user's two problems separate cleanly: fog on vs off changes only what is far (the plaza
+  within 2-3 luma, the two frames' cameras differ a little; the dragon +117, the wall +145); fog off vs the original is the darker base:
+  the paving is equal, the dirt 10 darker, but the placed objects and characters are 2-2.8x darker
+  (wall 35 vs 81, dragon's gold 32 vs 90, soldier 37 vs 62) and the sky is brighter and paler.
+
+### 2. The near fog
+
+**On the box it does not happen.** At the user's spot, Forward+, Middle (the default), 1280 x 720:
+- the log: `environment fog (READ): channels 10/11 = 0.759 / 1.000 -> linear in view depth from 1897
+  to 2500 (view distance 2500)`, EnvironmentID 15 (Env7), phase 0.5;
+- the pass's own measurement (new `|fogprobe=1`: the pass writes its fog amount as red and the view
+  depth it reads / 5000 as green, opaque, read with `tonemap=0,bloom=0`): red 0 on the dragon and the
+  gate; only the gate tower's top and what lies past 1897 carry fog. The depth it reads agrees with
+  the rays to the probe's 20-unit step: green 53/255 = 1039 against the ray's 1052 on the dragon,
+  77-78 = 1510-1529 against 1520-1526 on the gate wall. The rays' own prediction is 0.000 there.
+- `Map::FUN_00a26f60` re-read: FOGSTART / FOGEND (0x24 / 0x25) are `DAT_011081ff` / `DAT_01108203`
+  = world+0x68af / +0x68b3, which `Map::FUN_00a1baf0` sets to channel 10 / 11 times `_DAT_00ec54b0`;
+  `SWorld::vslot_043` (0xa194a0) case 8 writes that as `+0x2729 (far) x 0.8, at most 2500`: 1200 /
+  2000 / 2500 / 2500 / 2500 for Background Sight Range 1..5 -- READ, as round 702 had it. The far
+  plane is not what multiplies; the units are world units of view depth.
+- Every other link checked (MEASURED, the same spot, `|key=value` per shot): High (Detail shadows,
+  water reflection, sight 5), water reflection alone, Detail alone -- 0 on the dragon and the gate.
+  Depth: Godot 4.2.2 has no reversed Z (4.3 added it); the pass's [0, 1] / [-1, 1] choice matches the
+  rays in both renderers. The environment: every block of 97/167..169 and 98/167..169 is
+  EnvironmentID 15; the regions around them are 0, whose record holds the same values; Env20 north
+  of the palace (99/167..169) has 0.147 / 0.900 -> 368..2250 and a
+  green ambient (0.30, 0.68, 0.67) -- rendered there, everything turns green, which the user's
+  picture is not). The phase: Env15's channel 10 is 0.493..0.760 over the whole day (MEASURED at 21
+  phases), so no hour starts the fog nearer than 1233.
+- **What reproduces the user's picture: Background Sight Range 1.** Planes 911..1200: the gate fully
+  fogged, the dragon at 37 % (the probe), the plaza clear -- the same shape (rendered: gate (161, 219,
+  241), dragon L 167 against their 151). Range 2 (1518..2000) gives the dragon L 75 -- too little.
+  That is the original's own rule at that setting, so if their OpenSRO is on 1 and their original on
+  3 or more, the difference is the setting. **Not established:** their fog colour is greyer than
+  ours (their fully fogged wall (166, 184, 190), s 0.13; ours (161, 219, 241), s 0.33), and their
+  pictures show sun shadows, which only Detail draws -- not Low. Their log names it: `World3D:
+  video options applied ... background_sight_range=N ... fog=A..B` and `environment fog (READ)`.
+
+**What was ours and wrong: Forward+ mixed a half-fogged pixel in linear light.** Direct3D 9 fogs in
+the framebuffer's display values (the client sets no D3DRS_SRGBWRITEENABLE: no render state 0xc2 in
+the decompile -- MEASURED, one probe), and so does our Compatibility. Forward+ blends in its linear
+buffer, so a pixel at 37 % fog came out much lighter than the original's (round 702 noted it).
+- **First fix, exact, dropped for its cost:** the pass read the opaque colour (hint_screen_texture),
+  mixed it with the fog in the values the screen shows and wrote what Godot's linear blend turns into
+  that mix. It matched Compatibility to 0.3 luma, but the perf gate at 3840 x 2160 measured **+1.4 ms
+  a frame (4.79 -> 6.16, SLOWER; +0.0 at 1280 x 720)** -- Godot's copy of the 3D buffer.
+- **Shipped (OURS method):** no screen read. The pass writes the colour and alpha whose linear blend
+  is the display-value mix exactly for a destination that shows `REFERENCE_SHOWN` = 0.2 (OURS,
+  anchored on the spawn's surfaces: gate wall, dragon and paving 44-51 / 255, MEASURED) and for one
+  already at the fog colour, and close between (`WorldFog.BLEND_FORWARD`; the alpha from the three
+  channels' mean slope, the colour per channel). Against the exact display mix over destinations
+  0.05..0.6 and amounts 0.05..1: worst 17.1 / 255 (the linear blend's: 50.5), `world_fog_test.gd`.
+  Compatibility unchanged. MEASURED at the user's spot:
+
+| Background Sight Range 1 (planes 911..1200), bloom off | dragon | gate wall (fully fogged) |
+|---|---|---|
+| Forward+, before (base 1bcbd825) | L 154 (125, 161, 176) | (152, 194, 210) |
+| Forward+, the exact first fix | L 130 (112, 133, 143) | (152, 194, 210) |
+| **Forward+, round 705 as shipped** | **L 133 (114, 138, 147)** | (152, 194, 210) |
+| Compatibility (display-value blend all along) | L 129 (113, 133, 141) | (153, 194, 210) |
+
+With the bloom (the default): the dragon 167 -> 140 (exact: 135). At range 2 (1518..2000) the wall
+167-172 -> 151. At the default range nothing near changes (dirt, paving, soldier identical to the
+frame before the change); a view of the town from 700 back (pitch -25) shows the band past 1897
+darker as in the original: the gate roof 131 -> 114 (Compatibility, bloom off, 115). A fully fogged
+pixel is still exactly the READ colour (152, 194, 209).
+
+### 3. "Less vibrant": what each part does (MEASURED, the box, the same view)
+
+| (L) | sky | gate wall | dragon | dirt | paving | soldier |
+|---|---|---|---|---|---|---|
+| the original (section 1) | 190 | 81 | 86 | 83 | 61 | 62 |
+| ours, default (Filmic, RetailBloom, fog) | 238 | 47 | 48 | 65 | 51 | 28 |
+| tone map Linear | 211 | 37 | 41 | 50 | 41 | 24 |
+| RetailBloom off | 214 | 58 | 54 | 79 | 65 | 37 |
+| Linear and bloom off | 189 | 48 | 46 | 63 | 53 | 31 |
+| fog off | 235 | 42 | 45 | 65 | 51 | 28 |
+| Forward+ sun x1 (not x4) | 238 | 44 | 47 | 65 | 51 | 25 |
+
+- **Fog:** nothing near at the default range (section 2).
+- **RetailBloom** darkens every surface below 0.5 by 10-14 luma and brightens the sky +24: retail's
+  own arithmetic (READ, round 702), unchanged.
+- **Filmic** makes the picture brighter, not darker (Linear: -10 to -15 on every surface), and less
+  saturated in the sky (0.26 against Linear's 0.44). Switching to Linear moves every surface further
+  from the original; not changed (docs/TODO.md, the tone map).
+- **The Forward+ sun x4** (round 693): 3-4 luma on what it lights.
+- **The objects' lighting -- the largest part, and ours.** READ this round: `CObjRendererVS::vslot_024`
+  builds c10 (VSC_DLIGHT_AMBIENT) in the stack block at [esp+0x30] as it stands after 0xbf1df8,
+  from the drawn OBJECT's colour (+0x14..+0x1c)
+  times the D3DLIGHT9 Ambient (0x1112e28..30), w 1, and uploads it at 0xbf1f4e..0xbf1f60 (the block
+  round 625's review could not place); `FUN_00bf0e20` uploads c11 per material as the file's second
+  colour (BmtReader `diffuse`) times the light's Diffuse -- that +0x10 of the runtime material is
+  the record CPrimMtrl::FUN_00bf9270 fills, file's second colour first, is INFERRED from the flag
+  word sitting at +0x70 there and +0x60 in the record. With `Shader\vertexshader0.c` (oD0 = sat(N.L) x c11 + c10,
+  saturated) and stage 0 MODULATE2X, the original draws an object at `2 x texture x (object x La +
+  sat(N.L) x diffuse x Ld)` in display values: at Jangan's La 0.68 that is 1.36 to 2 times the
+  texture. Ours multiplies the texture by the layer's FIRST colour (BmtReader `ambient`, 0.59 on
+  most Jangan layers) and lights it with Godot's light (energy 0.3, by eye, round 43). The dragon:
+  its layer's first colour is (0.34, 0.21, 0.05) and its texture's mean (0.47, 0.37, 0.12) -- the
+  original's formula, object colour white (INFERRED), gives (164..242, 126..176, 41..44) gold; ours
+  multiplies the gold texture by a dark brown and draws it (32, 22, 15) in the user's frame. Its
+  layer is also the only one with a Power (1.48), so the Middle preset's Metallic Sheen, drawn as
+  nothing here, may add more (INFERRED). **Not changed this round:** it replaces the material of
+  every object and character (the flag-word StandardMaterial3D that BerserkLook, AppearFade, the
+  portrait, the paper doll and the select stage all build on), with two values still open (the
+  object colour's default, the light's direction); docs/TODO.md had reserved it for the user with
+  exactly this reading, and it is filed there with the numbers.
+- **The sky** is brighter and paler than the original's (L 238 against 190, more cyan); the
+  original's sky at that spot is mostly cloud, so the comparison is loose. Not changed.
+- **The field of view** (found, not changed): the original's camera is fovy 60 (READ, round 648),
+  ours 75, so the dragon and the gate are drawn about 1.3x smaller at the same spot.
+
+### 4. What changed
+
+- `WorldFog`: the Forward+ pass mixes in display values about a reference destination
+  (`FORWARD_DECL`, `BLEND_FORWARD`, `REFERENCE_SHOWN`, `set_pass_tonemap`; no screen read);
+  `pass_shader_code(compatibility)`; the header's stale "Jangan 1250 .. 2250"
+  corrected (1897 .. 2500, and the ladder per Background Sight Range).
+- QA: `|fogprobe=1` (QaShotEnv; the pass writes its amount and depth), `OPENSRO_QA_DEPTH=
+  "name:fx,fy;..."` (`QA CAMERA` / `QA DEPTH` lines per shot: ray hit, view depth, the planes'
+  amount); QaShotEnv re-applies the fog after a `tonemap=` change (its colour depends on the tone
+  map).
+- docs/TODO.md: the fog item, the object brightness reading, Metallic Sheen and the dragon, the field
+  of view, the day-phase contradiction, Compatibility's black bloom frames; OPTION_VIDEO.md.
+
+### 5. Found on the way
+
+- **Compatibility with the Bloom row on renders black frames on the box** -- base 1bcbd825 and this
+  tree alike (every `RENDERER=gl_compatibility` frame with bloom=1 is (0, 0, 0); bloom=0 is normal;
+  nothing in the log). Round 702's review measured RetailBloom under Compatibility, so it broke
+  later, or only the movie writer does it. Filed; a Compatibility player on Middle may see black.
+- The day phase: CharSelectHandoff's header (round 688's review) says `CPSMission::vslot_012` sets
+  the world's phase every frame from the game clock, against the Day/night item's "fixed 0.5".
+  Filed.
+
+### 6. Checks
+
+- `remote_godot.sh check`: ALL LOAD (579 scripts). `remote_godot.sh tests`: 223 suites, 0 failing
+  (`world_fog_test.gd`: the Forward+ code mixes shown values at the reference with no screen read,
+  the blend's algebra on the CPU is exact at the reference and at full fog and within 17.1 / 255
+  elsewhere against 50.5 for the linear blend, the pass takes the tone map).
+- Both renderers rendered at the spot: Forward+ (Vulkan, RX 7600) and Compatibility (GL 4.6,
+  radeonsi), the table in section 2 (Compatibility with bloom off: section 5).
+- Perf gate (`perf_gate.sh --base 1bcbd825 --frames 12000 --env 'OPENSRO_QA_VIDEO_STEPS=quality=0|
+  quality=1'`, both sides Middle, Forward+, median of 3), the shipped tree:
+
+| | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 1.70 -> 1.70 SAME | 9565 -> 9504 SAME | 3311 -> 3322 SAME | 5 -> 4 SAME |
+| reeds | 1.48 -> 1.48 SAME | 7085 -> 7103 SAME | 1977 -> 1977 SAME | 2 -> 2 SAME |
+| cross | 1.68 -> 1.68 SAME | 10311 -> 10329 SAME | 3335 -> 3304 SAME | 4 -> 4 SAME |
+| jangan at 3840 x 2160 | 4.79 -> 4.79 SAME | 9566 -> 9557 SAME | 3303 -> 3338 SAME | 5 -> 5 SAME |
+
+  Exit 0. The exact first fix (screen read) gated SLOWER at 4K (4.79 -> 6.16 ms) and SAME at 720p
+  (1.70 / 1.70, 1.49 / 1.49, 1.68 / 1.70); it was replaced in the round (section 2).
+
 ## Seven-hundred-and-fourth round: the project is renamed from srrevamp to OpenSRO -- the code, the tools, the deploy files, the docs and every environment variable -- and a player's saved settings follow the client to its new user folder
 
 The user's decision (2026-10-03): the project is **OpenSRO**. A rename only; nothing a player or
