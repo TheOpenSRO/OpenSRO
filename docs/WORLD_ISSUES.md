@@ -7203,7 +7203,8 @@ world+0x690c = 0xc6) + 512 x 512 blur x 0.753 (BLENDFACTOR +0x690d = 0xc0); OPTI
   before), alpha 0xa8 / 255 (READ; before: the texture's full alpha). **Detail and Nothing draw no
   circle** for any of them. Until now one circle followed the player alone, in Circle and Detail.
 - **Detail's shadow map reaches 3000 from the camera** (`SHADOW_MAP_DISTANCE`, READ-anchored to the
-  original's 3000 key) instead of Godot's 100.
+  original's 3000 key) instead of Godot's 100. *(Corrected in the review: the key is 10 x the distance
+  from the player, so 400.)*
 - QA: `QaShotEnv` (`|tonemap=,sdist=,glow_bloom=` or any Video row per viewpoint),
   `SRREVAMP_QA_PATCHES`, `QA BLOBS` lines; `SRREVAMP_QA_NOFOG` now turns the pass off.
 
@@ -7261,6 +7262,83 @@ world+0x690c = 0xc6) + 512 x 512 blur x 0.753 (BLENDFACTOR +0x690d = 0xc0); OPTI
   Exit 0. The default's sun shadow map now off (Circle) outweighs the fog pass, glow and MSAA. Not
   timed: Detail's 3000-unit shadow reach (`qa_shot`'s per-step timing is bound by its movie writer,
   262 ms a frame in every step, so it cannot separate it).
+
+### Review
+
+The review found two blockers and several corrections; all are fixed here (commit after cf7b7d14).
+
+**H1 -- the start-up fix made "washed out" worse.** It turned on Middle's Bloom, which was Godot glow
+at round 693's guessed values: the near ground went 91.0 -> 102.3 luma with less contrast (section
+4). The reviewer read the original's bloom in full (`Map::FUN_00a1d790`, constants from the
+constructor `Map::FUN_00a2f370`; OPTION_VIDEO.md has every step): downsample to 512 x 512 at
+x 128/255; a horizontal blur with a 40/255 threshold (this pass only) and weights 80 / 70 / 50 (/255)
+at 0 / +-2.6 / +-5.2 texels of 512; the same vertical blur without the threshold; composite
+`clamp(S x 198/255 + Blur x 192/255)` in display values. A flat field crosses over at 0.5: darker
+below, brighter above -- it raises contrast.
+- **`RetailBloom`** (new): that formula as one canvas pass on layer -1 (above the 3D view, under every
+  interface layer and the brightness pass), in both renderers; the Bloom row shows it. Godot's glow
+  is always off and round 693's glow values are gone from World3D.tscn. The Bloom row is no longer
+  greyed under Compatibility.
+- **Formula check** (`tools/measure_retail_bloom.gd`: ramps and seeded 7-pixel blocks, 4000 pixels x
+  3 channels, the CPU formula from the bloom-off frame against the bloom-on frame): Forward+ max
+  0.62/255 (mean 0.24), Compatibility max 0.95/255 (mean 0.27); 100 % within 1/255.
+- **The same squares** (Jangan spawn, z20 / z45 / z90; L, c):
+
+| | nz2 | nz z20 / z90 | nz2 c / L at z20 | horizon sky band |
+|---|---|---|---|---|
+| dev before the round (as players had it) | 91.0 c20.9 / 90.2 c18.0 / 88.4 c15.9 | 70.1 / 74.2 | 0.23 | 205.5 |
+| the round's first version (Godot glow on) | 102.3 c20.3 / 100.0 c16.6 / 96.3 c13.5 | 79.0 / 81.4 | 0.20 | 215.7 |
+| **now: the original's bloom (default)** | **80.3 c21.0 / 76.7 c14.5 / 72.3 c11.6** | **55.8 / 56.0** | **0.26** | **226.5** |
+| now, Bloom off | 91.2 c20.9 / 89.9 c17.2 / 86.8 c13.9 | 69.7 / 72.0 | 0.23 | 204.7 |
+
+  The paved ground (luma 70-90, under the crossover) is drawn darker and with more relative contrast
+  and saturation (nz2 s 21.4 -> 26.5); the bright sky brighter. That is the original's look by its
+  own arithmetic (READ), not a tuning.
+
+**H2 -- Detail cost +2.2 ms, and the 3000 was misread.** The list key is `(int)(|object - player| x
+10)` (CICPlayer::vslot_005 0x9d6f19..0x9d6fad), so `key <= 3000` is 300 units from the PLAYER.
+- `SHADOW_MAP_DISTANCE` is 400 (300 + the camera's farthest 90 + a margin, OURS).
+- In Detail only characters cast: the terrain patches and every placed-object template (so every
+  placed copy) have casting off -- the original's scenery casts none, its shadows are baked.
+- **Detail on terrain** (the review's M2): `ShadowCatcher`, a next pass on each terrain base
+  (`blend_mul`, no ambient / specular / fog, `light()` adding `mix(k, 1, ATTENUATION)` for the sun),
+  Forward+ only. k: READ in `FUN_009f2f80`, which builds the redrawn ground's vertices -- DIFFUSE black
+  with alpha `round(150 - clamp((h - ref - 12) x 9, 0, 150))` (0xd83058, 0xd89248, 0xdd7ca8,
+  0xdb8d74), so the ground keeps 1 - 150/255 = 0.412 of its colour under a solid silhouette; the
+  catcher multiplies in linear light, so k = 0.412 decoded (INFERRED conversion). The fade with
+  height is not reproduced. Render priorities: overlays and water -3, catcher -2, fog -1.
+- **Placed floors: no catcher.** They are shaded, so they receive the shadow map natively (MEASURED
+  at the spawn plaza: Detail darkens 2,502 / 533 / 150 pixels of the player's square against
+  Nothing); a catcher there would darken twice.
+- **Terrain, MEASURED** (farmland 96/168 at (960, 960), Forward+; the player's square): Detail
+  against Nothing -5.1 / -6.0 / -6.5 luma at z20 / z45 / z90, 3,141 / 701 / 173 pixels darker by
+  more than 8 (Circle: 7,647 / 1,635 / 375); before the review, Detail had no ground shadow there.
+
+**L1:** the ten circles are the ten nearest the LOCAL PLAYER (READ, the same key); Circle has no
+distance limit; the size is the diameter (READ, D3DXMatrixOrthoLH at 0x9f4462) and the colour
+argument is the TFACTOR (READ, 0x9f44cd). **L5:** on a placed floor our circle stays on the floor;
+the original's lies on the terrain under it (OURS, consistent with the user's ring-on-floors decision
+of 2026-10-03). **L6:** OPTION_VIDEO.md's bloom paragraph is the full reading above.
+
+**M1 -- perf with the same settings.** `perf_gate.sh` gained `--env` (both sides) and `--base-env`
+(base side). Both sides were put on Middle through the Apply path the base build does apply
+(`SRREVAMP_QA_VIDEO_STEPS=quality=0|quality=1`), so the comparison is the same rows; Forward+,
+1280 x 720, median of 3:
+
+| base 34286d92 vs head, both Middle | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 1.50 -> 1.49 SAME | 9387 -> 9399 SAME | 3283 -> 3314 SAME | 4 -> 4 SAME |
+| reeds | 1.29 -> 1.30 SAME | 6967 -> 6970 SAME | 1954 -> 1954 SAME | 2 -> 2 SAME |
+| cross | 1.48 -> 1.49 SAME | 10143 -> 10178 SAME | 3322 -> 3331 SAME | 4 -> 4 SAME |
+| crowd (L2: 2,500 monsters, the circles' reselect) | 9.35 -> 9.57 SAME | 10355 -> 10409 SAME | 3308 -> 3309 SAME | 5 -> 5 SAME |
+
+Circle vs Detail on this head (`--base HEAD --env SRREVAMP_QA_VIDEO=shadow_detail=1 --base-env
+SRREVAMP_QA_VIDEO=shadow_detail=2`, jangan): Detail 1.62 ms, Circle 1.52 ms -- **+0.10 ms** (the
+review measured +2.2 ms before casting was limited to characters). The crowd's +0.2 ms is under the
+gate's threshold; the reselect (a group walk every 6 frames) is kept.
+
+**Checks:** `remote_godot.sh check` ALL LOAD (565 scripts); `remote_godot.sh tests` 218 suites, 0
+failing (new: `retail_bloom_test.gd`).
 
 ## Six-hundred-and-ninety-ninth round: the developer toggles move from Ctrl+F1-F3 to Shift+F1-F3, because macOS keeps Ctrl+F1-F3 for itself
 
