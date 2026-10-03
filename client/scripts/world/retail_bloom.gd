@@ -24,12 +24,16 @@ class_name RetailBloom
 ##
 ## **Here.** One full-screen canvas pass on its own layer, above the 3D view
 ## and below every interface layer (LAYER; the brightness pass is 120), in
-## both renderers: the screen sampled bilinear at the 25 tap positions of the
-## separable blur (OURS: at the screen's own resolution, not through a
-## 512 x 512 copy -- the taps' offsets are the READ 512-texel ones), each
-## through the READ downsample and threshold, weighted by the READ weights
-## and composited by the READ blend. It replaces round 693's Godot glow, whose
-## parameters were a guess (intensity 0.8, bloom 0.2, threshold 0.85).
+## both renderers. The 512 x 512 downsample is the screen texture's mipmap
+## at level log2(width / 512) (rework review: full-resolution taps at the
+## 512-texel offsets landed 19.5 / 39 pixels apart at 3840 wide and drew
+## sharp echoes of edges, and cost +0.82 ms there). Godot builds those mips
+## by a Gaussian blur (OURS: smoother than retail's one bilinear step; one
+## level for both axes, so the y axis is downsampled by the width's factor
+## too). On that level the 25 taps of the separable blur go through the READ
+## downsample factor and threshold, the READ weights and offsets, and the
+## READ composite. It replaces round 693's Godot glow, whose parameters were
+## a guess (intensity 0.8, bloom 0.2, threshold 0.85).
 
 ## Below the default canvas (0), the world's UI (1) and every later layer;
 ## above the 3D view, which every canvas layer is.
@@ -47,7 +51,7 @@ const BLUR_ADD := 192.0 / 255.0
 const SHADER := """
 shader_type canvas_item;
 // The original's bloom (RetailBloom, round 702 review): Map::FUN_00a1d790.
-uniform sampler2D screen_tex : hint_screen_texture, filter_linear, repeat_disable;
+uniform sampler2D screen_tex : hint_screen_texture, filter_linear_mipmap, repeat_disable;
 const float DOWNSAMPLE = 128.0 / 255.0;
 const float THRESHOLD = 40.0 / 255.0;
 const float SCREEN_KEEP = 198.0 / 255.0;
@@ -61,12 +65,14 @@ float o(int i) {
 	return float(sign(i)) * (abs(i) == 1 ? 2.6 : (abs(i) == 2 ? 5.2 : 0.0));
 }
 void fragment() {
-	vec3 s = texture(screen_tex, SCREEN_UV).rgb;
+	vec3 s = textureLod(screen_tex, SCREEN_UV, 0.0).rgb;
+	// The 512 x 512 copy: the mip level whose width is about 512.
+	float lod = max(log2(1.0 / (SCREEN_PIXEL_SIZE.x * TARGET)), 0.0);
 	vec3 blur = vec3(0.0);
 	for (int j = -2; j <= 2; j++) {
 		vec3 row = vec3(0.0);
 		for (int i = -2; i <= 2; i++) {
-			vec3 t = texture(screen_tex, SCREEN_UV + vec2(o(i), o(j)) / TARGET).rgb;
+			vec3 t = textureLod(screen_tex, SCREEN_UV + vec2(o(i), o(j)) / TARGET, lod).rgb;
 			row += w(i) * max(t * DOWNSAMPLE - vec3(THRESHOLD), vec3(0.0));
 		}
 		blur += w(j) * row;
@@ -105,3 +111,7 @@ static func blur_of(taps: Array) -> float:
 ## The composite for one channel (READ blend).
 static func composite(screen: float, blur: float) -> float:
 	return clampf(screen * SCREEN_KEEP + blur * BLUR_ADD, 0.0, 1.0)
+
+## The mip level standing in for the 512 x 512 target at a screen width.
+static func lod_for(width: float) -> float:
+	return maxf(log(width / TARGET_SIZE) / log(2.0), 0.0)

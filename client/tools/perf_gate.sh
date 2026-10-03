@@ -116,7 +116,7 @@ PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
 GODOT="${RENDER_GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-base="" head="" sites="jangan,reeds,cross" runs=3 frames=3000 ab_env="" cold=0 renderer="" ab_renderer="" both_env="" base_env=""
+base="" head="" sites="jangan,reeds,cross" runs=3 frames=3000 ab_env="" cold=0 renderer="" ab_renderer="" both_env="" base_env="" size="1280x720"
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) base="$2"; shift 2 ;;
@@ -126,11 +126,12 @@ while [ $# -gt 0 ]; do
     --frames) frames="$2"; shift 2 ;;
     --ab-env) ab_env="$2"; shift 2 ;;
     --env) both_env="$2"; shift 2 ;;
+    --size) size="$2"; shift 2 ;;
     --base-env) base_env="$2"; shift 2 ;;
     --cold) cold=1; shift ;;
     --renderer) renderer="$2"; shift 2 ;;
     --ab-renderer) ab_renderer="$2"; shift 2 ;;
-    *) echo "usage: $0 [--base REV] [--head REV] [--sites jangan,reeds,cross,hotan,ferry,mobs,crowd] [--runs N] [--frames N] [--ab-env 'VAR=value ...'] [--env 'VAR=value ...'] [--base-env 'VAR=value ...'] [--cold] [--renderer forward_plus|gl_compatibility] [--ab-renderer forward_plus|gl_compatibility]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--base REV] [--head REV] [--sites jangan,reeds,cross,hotan,ferry,mobs,crowd] [--runs N] [--frames N] [--ab-env 'VAR=value ...'] [--env 'VAR=value ...'] [--base-env 'VAR=value ...'] [--size WxH] [--cold] [--renderer forward_plus|gl_compatibility] [--ab-renderer forward_plus|gl_compatibility]" >&2; exit 2 ;;
   esac
 done
 cd "$repo_root"
@@ -252,12 +253,12 @@ rm -f "\$2.others"
 # (weston + Xwayland: Vulkan presents there, not to Xvfb), Compatibility
 # through VirtualGL on Xvfb as before.
 if [ "\${10:-gl_compatibility}" = forward_plus ]; then
-  LAUNCH="$box_head/tools/xwl_run.sh -s 1280x720"; RFLAGS="--rendering-method forward_plus --rendering-driver vulkan"
+  LAUNCH="$box_head/tools/xwl_run.sh -s $size"; RFLAGS="--rendering-method forward_plus --rendering-driver vulkan"
 else
-  LAUNCH="xvfb-run -a -s '-screen 0 1280x720x24' vglrun -d egl0"; RFLAGS="--rendering-driver opengl3"
+  LAUNCH="xvfb-run -a -s '-screen 0 ${size}x24' vglrun -d egl0"; RFLAGS="--rendering-driver opengl3"
 fi
 eval "\$LAUNCH" $GODOT \$RFLAGS \
-  --resolution 1280x720 --path "\$1" res://scenes/World3D.tscn --quit-after "\${7:-$frames}" \
+  --resolution $size --path "\$1" res://scenes/World3D.tscn --quit-after "\${7:-$frames}" \
   --print-fps --disable-vsync > "\$2" 2>&1 &
 G=\$!; wait \$G
 kill \$W 2>/dev/null
@@ -359,7 +360,7 @@ for s in ${sites//,/ }; do
   cached=""
   # Same-build A/B and cold runs never use or fill the base cache: neither is
   # the base revision's ordinary warm measurement.
-  [ -z "$ab_env" ] && [ -z "$ab_renderer" ] && [ -z "$both_env$base_env" ] && [ $cold = 0 ] && cached=$(ssh -n "$RENDER_HOST" "cat '$cfile' 2>/dev/null" || true)
+  [ -z "$ab_env" ] && [ -z "$ab_renderer" ] && [ -z "$both_env$base_env" ] && [ "$size" = 1280x720 ] && [ $cold = 0 ] && cached=$(ssh -n "$RENDER_HOST" "cat '$cfile' 2>/dev/null" || true)
   ncached=$(printf '%s\n' "$cached" | grep -c . || true)
   use_cache=0
   if [ "$ncached" -ge "$runs" ]; then
@@ -382,7 +383,7 @@ for s in ${sites//,/ }; do
     fi
     r=$(one1 head "$i") || exit 1; add head "$r"
   done
-  if [ $use_cache = 0 ] && [ -n "$newbase" ] && [ -z "$ab_env" ] && [ -z "$ab_renderer" ] && [ -z "$both_env$base_env" ] && [ $cold = 0 ]; then
+  if [ $use_cache = 0 ] && [ -n "$newbase" ] && [ -z "$ab_env" ] && [ -z "$ab_renderer" ] && [ -z "$both_env$base_env" ] && [ "$size" = 1280x720 ] && [ $cold = 0 ]; then
     printf '%s' "$newbase" | ssh "$RENDER_HOST" "cat > '$cfile'"
   fi
   for m in "frame ms|0.5|0.05" "entry ms|1000|0.10" "freeze ms|100|0.25" "hitches|2|0"; do
@@ -395,7 +396,7 @@ for s in ${sites//,/ }; do
 done
 
 echo
-echo "perf gate: base $base_label ($base_renderer) vs head $head_label ($head_renderer) (1280x720, median of $runs run(s)$([ $cold = 1 ] && echo ', cold page cache'))"
+echo "perf gate: base $base_label ($base_renderer) vs head $head_label ($head_renderer) ($size, median of $runs run(s)$([ $cold = 1 ] && echo ', cold page cache'))"
 printf '%s' "$report"
 if [ $slower = 1 ]; then
   echo "SLOWER: the head is slower than its base. Fix it, or record the cost and ask the user." >&2

@@ -44,9 +44,11 @@ func _initialize() -> void:
 	var b := RetailBloom.new()
 	var rect := b.get_node("Pass") as ColorRect
 	var code := (rect.material as ShaderMaterial).shader.code
-	_check(code.contains("hint_screen_texture") and code.contains("filter_linear") and code.contains("198.0 / 255.0") and code.contains("192.0 / 255.0")
-		and code.contains("TARGET = 512.0") and code.contains("2.6") and code.contains("5.2"),
-		"the shader samples the screen bilinear at the 512-texel offsets 2.6 / 5.2 and composites 198/255 + 192/255")
+	_check(code.contains("hint_screen_texture, filter_linear_mipmap") and code.contains("198.0 / 255.0") and code.contains("192.0 / 255.0")
+		and code.contains("TARGET = 512.0") and code.contains("2.6") and code.contains("5.2") and code.contains("/ TARGET, lod)"),
+		"the shader takes its taps on the screen's 512-wide mip level at the 512-texel offsets 2.6 / 5.2 and composites 198/255 + 192/255")
+	_check(is_equal_approx(RetailBloom.lod_for(512.0), 0.0) and absf(RetailBloom.lod_for(3840.0) - log(7.5) / log(2.0)) < 1.0e-5
+		and RetailBloom.lod_for(400.0) == 0.0, "the 512 target is mip level log2(width / 512): 0 at 512, 2.91 at 3840")
 	b.free()
 	# Godot's glow never; the scene carries no guessed glow values.
 	var tscn := FileAccess.get_file_as_string("res://scenes/World3D.tscn")
@@ -54,10 +56,17 @@ func _initialize() -> void:
 		"World3D.tscn has none of round 693's guessed glow values")
 	var src := FileAccess.get_file_as_string("res://scripts/World3D.gd")
 	_check(src.contains("_retail_bloom.visible = o.value(VideoOptions.BLOOM) == 1"), "the Bloom row shows and hides the pass")
+	_check(src.count("layers = OverlayView.BIT") >= 4 and src.contains("_overlay_view.follow(camera_3d)"),
+		"name plates, party marks, name boxes and damage numbers are drawn after the bloom (OverlayView)")
+	_check(OverlayView.LAYER_INDEX > RetailBloom.LAYER_INDEX and OverlayView.LAYER_INDEX < 1, "the overlays' layer sits over the bloom and under the world's UI")
 
 	# Detail's terrain catcher: the original keeps 1 - 150/255 of the ground's displayed colour.
 	_check(is_equal_approx(ShadowCatcher.K_DISPLAY, 105.0 / 255.0), "the catcher's darkness is READ: 1 - 150/255 (FUN_009f2f80's vertex alpha 150)")
-	_check(absf(ShadowCatcher.k_linear() - WorldFog.srgb_to_linear(105.0 / 255.0)) < 1.0e-6, "decoded for the linear multiply")
+	var shown := ShadowCatcher.shown_ratio(ShadowCatcher.k_linear(), ShadowCatcher.FIT_DISPLAY)
+	_check(shown > ShadowCatcher.K_DISPLAY and shown < 0.46,
+		"the k fitted on the screen (0.25) is above the curve's own 0.412 point (curve: %.3f at 95/255), as the screen measured darker" % shown)
+	_check(ShadowCatcher.shown_ratio(WorldFog.srgb_to_linear(ShadowCatcher.K_DISPLAY), ShadowCatcher.FIT_DISPLAY) < 0.38,
+		"the plain decode (0.141) would keep too little there (the rework review's M1)")
 	var cm := ShadowCatcher.material()
 	_check(cm.render_priority == ShadowCatcher.PRIORITY and (cm.shader.code.contains("blend_mul") and cm.shader.code.contains("LIGHT_IS_DIRECTIONAL")),
 		"the catcher multiplies by the sun's shadow alone, at its own priority")

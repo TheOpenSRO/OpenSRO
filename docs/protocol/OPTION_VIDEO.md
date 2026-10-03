@@ -197,12 +197,18 @@ constructor `Map::FUN_00a2f370`):
    `out = clamp(S x 198/255 + Blur x 192/255)`, in display values, before the interface.
 
 A flat field below 0.5 comes out darker and above 0.5 brighter: it raises contrast. `RetailBloom`
-draws exactly this as one canvas pass on layer -1 (above the 3D view, under every interface layer
-and the brightness pass), in both renderers: the screen sampled bilinear at the 25 taps of the
-separable blur (at the screen's own resolution; the 512 copy is not made -- OURS), Godot's glow
-always off. MEASURED on a synthetic picture (ramps and random 7-pixel blocks, 4000 pixels x 3
-channels, `tools/measure_retail_bloom.gd`): the screen equals the formula within 0.62/255 under
-Forward+ and 0.95/255 under Compatibility.
+draws this as one canvas pass on layer -1 (above the 3D view, under every interface layer and the
+brightness pass), in both renderers, Godot's glow always off. The 512 x 512 downsample is the screen
+texture's mip level log2(width / 512) (rework review: taps at full resolution landed 19.5 / 39 px apart
+at 3840 wide, drew edge echoes and cost +0.82 ms there); Godot builds those mips by a Gaussian blur, so
+ours is smoother than retail's single bilinear step, and one level serves both axes (OURS). MEASURED
+(`tools/measure_retail_bloom.gd`, the CPU running retail's whole 512 pipeline on the same frame,
+4000 pixels x 3 channels): mean 2.6 / 2.6 / 1.6 of 255, p90 7.8 / 7.3 / 4.8, max 18.9 / 24.4 / 11.9
+(Forward+ 1280 x 720 / Forward+ 3840 x 2160 / Compatibility 1280 x 720); a white bar's added light falls
+off with no echo peak at either size. **Overlays come after it** (`OverlayView`): name plates, damage
+numbers, party marks and name boxes render in their own transparent viewport over the bloom, as retail
+draws its 2D text over the finished frame; the lens-flare sun sprite and the character-select
+characters are still bloomed (OURS, docs/TODO.md).
 
 ## This client's default: Middle (the user's decision, 2026-10-02)
 

@@ -419,6 +419,8 @@ const SHADOW_MAP_DISTANCE := 400.0
 var _terrain_patches: Array = []
 ## The original's bloom (RetailBloom, round 702 review), the Bloom row.
 var _retail_bloom: RetailBloom = null
+## The overlays drawn after it (OverlayView).
+var _overlay_view: OverlayView = null
 ## The far-plane factor of the Background Sight Range (see
 ## _apply_view_distance).
 var _far_scale := 1.0
@@ -1587,6 +1589,12 @@ func _ready() -> void:
 	_retail_bloom = RetailBloom.new()
 	_retail_bloom.visible = false
 	add_child(_retail_bloom)
+	# Name plates, damage numbers and their marks, drawn after the bloom
+	# (OverlayView, round 702 rework review: retail draws them as 2D text
+	# over the finished, bloomed frame).
+	_overlay_view = OverlayView.new()
+	add_child(_overlay_view)
+	_overlay_view.follow(camera_3d)
 	# The sun's energy under Forward+, matched to Compatibility's look (round
 	# 693, WorldPostEffects.sun_scale; 1.0 under Compatibility).
 	directional_light.light_energy *= WorldPostEffects.sun_scale()
@@ -6493,6 +6501,8 @@ func _name_plate(text: String, above: float, swept: bool = true) -> Label3D:
 	# the scene (NamePlates).
 	label.no_depth_test = true
 	label.render_priority = 1
+	# Drawn after the bloom, as retail's 2D names (OverlayView, round 702).
+	label.layers = OverlayView.BIT
 	label.add_to_group("name_plates")
 	# Shown while its owner is within NamePlates.RANGE of the player (READ),
 	# from any camera angle; hidden until the sweep first measures it.
@@ -6525,6 +6535,7 @@ func _party_mark(label: Label3D) -> Sprite3D:
 	mark.fixed_size = true
 	mark.no_depth_test = true
 	mark.render_priority = label.render_priority
+	mark.layers = OverlayView.BIT
 	_fit_party_mark(label, mark)
 	# A child of the plate: shown and hidden with it (round 673).
 	return mark
@@ -6598,6 +6609,7 @@ func _monster_name_look(label: Label3D) -> void:
 	# Under the text: a lower render priority among the transparent overlays.
 	box.render_priority = label.render_priority - 1
 	box.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	box.layers = OverlayView.BIT
 	label.add_child(box)
 	_fit_monster_name_box(label)
 
@@ -6860,6 +6872,7 @@ func _floating_damage(anchor: Node3D, height: float, amount: int, colour: Color)
 	label.outline_modulate = NAME_PLATE_OUTLINE_COLOUR
 	label.no_depth_test = true
 	label.render_priority = 3
+	label.layers = OverlayView.BIT
 	label.position = Vector3(0.0, height, 0.0)
 	anchor.add_child(label)
 	# During a QA attack render, log where the number landed on screen, so a
@@ -7904,6 +7917,9 @@ func _terrain_commit(job: Dictionary) -> float:
 	single_patch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	single_patch.add_child(patch_body)
 	terrain_group.add_child(single_patch)
+	# Patches go with their regions: the freed ones are dropped as new ones
+	# come (rework review, L4).
+	_terrain_patches = _terrain_patches.filter(func(p) -> bool: return is_instance_valid(p))
 	_terrain_patches.append(single_patch)
 	ShadowCatcher.set_on(single_patch, _shadow_catchers_on())
 	_add_mirror_terrain(terrain_group, single_patch)

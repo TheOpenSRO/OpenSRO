@@ -582,10 +582,17 @@ In order. Each is checked off here when it ships in a release, with its round in
       height; the catcher under Compatibility (its shadowed sun is an additive pass: no catcher
       there, so no ground shadow on terrain in Detail under Compatibility); the 96 x 96 silhouette
       method itself.
-- [x] **The Bloom row's look** -- round 702 review: `RetailBloom` draws the original's bloom, READ
-      in full (`Map::FUN_00a1d790`; OPTION_VIDEO.md), within 1/255 of the formula on a synthetic
-      picture in both renderers; Godot's glow is off for good. Left (OURS): the taps sample the
-      full-resolution screen instead of a 512 x 512 copy.
+- [x] **The Bloom row's look** -- round 702 review and rework: `RetailBloom` draws the original's
+      bloom, READ in full (`Map::FUN_00a1d790`; OPTION_VIDEO.md), its taps on the screen's 512-wide
+      mip level; Godot's glow is off for good. Overlays (name plates, damage numbers, party marks,
+      name boxes) are drawn after it (`OverlayView`). Left (OURS, each noted by the rework review):
+      the mip is a Gaussian, not retail's one bilinear downsample, and one level serves both axes
+      (mean 2.6/255 from retail's pipeline); **the lens-flare sun sprite and the character-select
+      characters are bloomed** (retail draws the flare after the bloom, and the select screen's
+      characters and names after its slot 5); BerserkFlash may belong after the bloom too
+      (PLAUSIBLE, not read); the character-create preview is not bloomed (PLAUSIBLE that retail's
+      is); the screen texture is sampled CLAMP at the edges where retail's target may WRAP (not
+      read).
 - [ ] **The tone map (finding, round 702; no change made).** World3D's environment is Filmic
       (tonemap_mode 2, an OURS choice of the 2026-08-26 atmosphere pass); Direct3D 9 shows the
       shader's output as is. MEASURED at the Jangan spawn: Linear draws the same ground patches

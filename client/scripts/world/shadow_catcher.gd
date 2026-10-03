@@ -25,9 +25,15 @@ class_name ShadowCatcher
 ## casting off on terrain and placed objects, as the original's scenery casts
 ## none -- its building shadows are baked), so the shadow map holds the
 ## characters' silhouettes; this pass darkens the terrain by them. K_DISPLAY
-## is the READ 0.412; the pass multiplies in the frame's linear light before
-## tone mapping, so the factor is that value decoded (K_LINEAR, INFERRED: the
-## display factor exactly under a linear tone map and a pure power curve).
+## is the READ 0.412 of the displayed colour. The pass multiplies in the
+## frame's linear light BEFORE the Filmic tone map, so no single factor
+## gives 0.412 at every brightness: K_LINEAR is FITTED (rework review, M1)
+## on the screen -- the shadow core's displayed ratio (Detail over Nothing,
+## the farmland at 96/168, ground at luma ~97, top-down) measured 0.38 with
+## k = 0.219, the value Godot's Filmic curve alone predicts for 0.412 at luma
+## 95, so k is raised to 0.25 (the curve predicts 0.448 there; the screen
+## measures the round's figure, docs/WORLD_ISSUES.md). The decoded 0.141 the
+## review rejected kept ~0.36 by the curve.
 ## The original's fade with height is not reproduced. Forward+ only: the
 ## Compatibility renderer draws a shadowed sun in its own additive pass,
 ## where a multiplying material cannot work (World3D leaves the catcher off
@@ -43,7 +49,7 @@ const SHADER := """
 shader_type spatial;
 // Shadow Detail's catcher (ShadowCatcher, round 702 review).
 render_mode blend_mul, depth_draw_never, cull_disabled, ambient_light_disabled, specular_disabled, fog_disabled;
-uniform float k = 0.142;
+uniform float k = 0.25;
 void fragment() {
 	ALBEDO = vec3(1.0);
 }
@@ -56,8 +62,26 @@ void light() {
 
 static var _material: ShaderMaterial = null
 
+## FITTED on the screen (see above).
+const K_LINEAR := 0.25
+## The ground's typical displayed luma the fit is made at (MEASURED).
+const FIT_DISPLAY := 95.0 / 255.0
+
 static func k_linear() -> float:
-	return WorldFog.srgb_to_linear(K_DISPLAY)
+	return K_LINEAR
+
+## The displayed fraction the catcher keeps of a ground pixel shown at
+## `display` under Godot's Filmic (white 1, exposure 1), for the tests.
+static func shown_ratio(k: float, display: float) -> float:
+	var lo := 0.0
+	var hi := 8.0
+	for _i in 60:
+		var m := (lo + hi) * 0.5
+		if WorldFog.linear_to_srgb(WorldFog.filmic(m)) < display:
+			lo = m
+		else:
+			hi = m
+	return WorldFog.linear_to_srgb(WorldFog.filmic(k * lo)) / display
 
 ## The one material every terrain base shares as its next pass.
 static func material() -> ShaderMaterial:
