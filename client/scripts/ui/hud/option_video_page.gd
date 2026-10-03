@@ -636,7 +636,7 @@ func combo_of(entry: int) -> OptionButton:
 ## Compatibility, and change under Forward+ (edge pixels 12455 -> 12727,
 ## checker contrast 0.356 -> 0.257).
 static func available(entry: int) -> bool:
-	if entry in [VideoOptions.SSAO, VideoOptions.BLOOM, VideoOptions.FILTERING, VideoOptions.TEXTURE]:
+	if entry in [VideoOptions.SSAO, VideoOptions.FILTERING, VideoOptions.TEXTURE]:
 		return VideoOptions.post_effects_available()
 	if entry == VideoOptions.RENDERER:
 		var rc := VideoOptions.renderer_choice_script()
@@ -664,7 +664,7 @@ func tooltip_of(entry: int) -> String:
 	var ours := ""
 	match entry:
 		VideoOptions.BLOOM:
-			ours = "Godot glow."
+			ours = "The original's bloom: the bright parts blurred over a slightly darkened picture."
 		VideoOptions.SSAO:
 			ours = "Screen-space ambient occlusion (this client's own option). A light effect here: the ground and most buildings are drawn with their own lighting, which ambient occlusion cannot darken."
 		VideoOptions.FILTERING:

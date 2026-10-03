@@ -48,7 +48,7 @@ class_name VideoOptions
 ## 2026-10-02 ("Original's Middle"), for every record with no saved
 ## [video_graphic*] section, older settings files included: Middle's preset,
 ## Normal brightness, the player's own copy filled from it as the constructor
-## fills it (0x5f75e0). Bloom ON (glow, under Forward+), Water Reflection OFF.
+## fills it (0x5f75e0). Bloom ON (RetailBloom, the original's), Water Reflection OFF.
 ## The window mode is not part of that choice: it stays as the file has it (a
 ## window by default), and Default (the button) restores Middle without
 ## touching it. Round 694 first shipped "User control with the look before
@@ -385,9 +385,9 @@ static func _global_script(class_name_: StringName) -> Script:
 # --- the environment ------------------------------------------------------------
 
 ## The one place the window's choices reach the WorldEnvironment (round 694):
-## SSAO (OURS) and glow, which is the Bloom Effect row (READ: retail's bloom
-## builds screen-size and 512 x 512 render targets, SWorld::vslot_043 case 1
-## -- a glow pass; the look's parameters are not read and stay round 693's).
+## SSAO (OURS). The Bloom Effect row no longer reaches the environment: since
+## the round 702 review it is the original's own bloom (RetailBloom, READ in
+## full), which World3D shows and hides; Godot's glow stays off.
 ## Round 693's WorldPostEffects.apply is used when this build has it, so its
 ## defaults and these toggles are one path; without it the flags are set here.
 ## Under Compatibility both flags are inert.

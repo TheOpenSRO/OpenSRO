@@ -571,20 +571,21 @@ In order. Each is checked off here when it ships in a release, with its round in
       blends half-fogged pixels in linear light, lighter than the original's display-value blend
       (Compatibility matches it); fading-in characters (AppearFade) are not fogged during their
       2 s fade.
-- [ ] **Shadow Detail "Detail": the original's projected character shadows** (READ in round 702,
-      `SWorld::vslot_025` 0xa17ab0 and `Map::FUN_009f35f0`): each of up to ten characters (list key
-      at most 3000) is drawn into a 96 x 96 target from the sun, kept as a 32 x 32 texture, and the
-      ground cells under it are redrawn with that texture projected (stage 0 colour SELECTARG2
-      DIFFUSE, alpha MODULATE(TEXTURE, DIFFUSE), SRCALPHA / INVSRCALPHA). Here Detail draws the sun's
-      shadow map instead (OURS) and, since round 702, no circle -- so on the unshaded terrain a
-      character in Detail casts no shadow at all. Next step: a 96 x 96 SubViewport per slot (an
-      orthographic camera along the light, a cull layer holding the characters) and a ground quad
-      projecting it; the shadow's own alpha (the DIFFUSE the redraw carries) is not read yet.
-- [ ] **The Bloom row's look** (round 702 made it show from start-up, MEASURED +10-12 luma on the
-      spawn's ground). READ so far: `Map::FUN_00a1d790` composites screen x 0.776 + 512 x 512 blur
-      x 0.753 (OPTION_VIDEO.md "Applied at start-up"); not read: the downsample's TFACTOR, the blur
-      taps' geometry. Until read, the glow is round 693's guess (intensity 0.8, bloom 0.2, threshold
-      0.85).
+- [ ] **Shadow Detail "Detail": the original's projected character shadows** (READ in round 702
+      and its review: `SWorld::vslot_025` 0xa17ab0, `Map::FUN_009f35f0`, `FUN_009f2f80`): up to ten
+      characters within 300 units of the player (key `(int)(dist x 10)` <= 3000), each drawn into a
+      96 x 96 target from the sun and kept as 32 x 32, the ground cells under it redrawn with it
+      projected; the ground keeps 1 - 150/255 of its colour under a solid silhouette, fading over the
+      17 units below. **Built in the review (closest match, OURS method):** characters are the only
+      shadow casters, the sun's map reaches 400, and a multiplying next pass on each terrain base
+      (`ShadowCatcher`, k = 0.412 decoded) shows their shadows on the terrain. Left: the fade with
+      height; the catcher under Compatibility (its shadowed sun is an additive pass: no catcher
+      there, so no ground shadow on terrain in Detail under Compatibility); the 96 x 96 silhouette
+      method itself.
+- [x] **The Bloom row's look** -- round 702 review: `RetailBloom` draws the original's bloom, READ
+      in full (`Map::FUN_00a1d790`; OPTION_VIDEO.md), within 1/255 of the formula on a synthetic
+      picture in both renderers; Godot's glow is off for good. Left (OURS): the taps sample the
+      full-resolution screen instead of a 512 x 512 copy.
 - [ ] **The tone map (finding, round 702; no change made).** World3D's environment is Filmic
       (tonemap_mode 2, an OURS choice of the 2026-08-26 atmosphere pass); Direct3D 9 shows the
       shader's output as is. MEASURED at the Jangan spawn: Linear draws the same ground patches

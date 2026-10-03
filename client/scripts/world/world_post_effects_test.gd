@@ -24,7 +24,7 @@ func _initialize() -> void:
 	WorldPostEffects.apply(env, true, false)
 	_check(env.ssao_enabled and not env.glow_enabled, "SSAO on alone")
 	WorldPostEffects.apply(env, false, true)
-	_check(not env.ssao_enabled and env.glow_enabled, "glow on alone")
+	_check(not env.ssao_enabled and not env.glow_enabled, "glow never: the Bloom row is RetailBloom's (round 702 review)")
 	WorldPostEffects.apply(null)
 	_check(true, "a null environment is ignored")
 

@@ -407,12 +407,18 @@ var _video_applied := false
 ## The sun's shadow-map reach under Shadow Detail "Detail" (round 702), from
 ## the camera. Godot's default, 100, faded every shadow out from 80 units,
 ## so zooming the camera out (20..90 units from the player) made the
-## player's own shadow and its surroundings' come and go. 3000: the
-## original's projected shadows cover the characters whose key in its list
-## is at most 3000 (READ, SWorld::vslot_025's `3000 < key` break; the key
-## INFERRED to be a distance), which is past the fog's end in every zone, so
-## no shadow changes with the zoom (MEASURED, docs/WORLD_ISSUES.md round 702).
-const SHADOW_MAP_DISTANCE := 3000.0
+## player's own shadow and its surroundings' come and go. The original's
+## projected shadows cover the characters whose key in its list is at most
+## 3000 (SWorld::vslot_025's `3000 < key` break), the key being
+## `(int)(|object - player| x 10)` (READ, round 702 review:
+## CICPlayer::vslot_005 0x9d6f19..0x9d6fad) -- 300 units from the PLAYER.
+## So 400: those 300 plus the camera's farthest 90 from the player, plus a
+## margin (OURS), and no shadow near the player changes with the zoom.
+const SHADOW_MAP_DISTANCE := 400.0
+## The terrain patches built, for Detail's catcher (ShadowCatcher).
+var _terrain_patches: Array = []
+## The original's bloom (RetailBloom, round 702 review), the Bloom row.
+var _retail_bloom: RetailBloom = null
 ## The far-plane factor of the Background Sight Range (see
 ## _apply_view_distance).
 var _far_scale := 1.0
@@ -464,6 +470,7 @@ func apply_video_options(o: VideoOptions) -> void:
 		if directional_light != null:
 			directional_light.shadow_enabled = shadow >= 2
 			directional_light.directional_shadow_max_distance = SHADOW_MAP_DISTANCE
+		_apply_shadow_catchers()
 		_update_blob_shadow()
 	# Fog (temporary), OURS (round 702): the original's fog or none.
 	if changed.call(VideoOptions.FOG):
@@ -492,10 +499,13 @@ func apply_video_options(o: VideoOptions) -> void:
 	# flare's nearest piece.
 	if _sun_glow != null:
 		_sun_glow.visible = o.value(VideoOptions.LENS_FLARE) == 1
-	# Bloom Effect = glow, and SSAO (OURS): one environment function.
+	# SSAO (OURS) through the environment; Bloom Effect is the original's
+	# bloom (RetailBloom, round 702 review), in both renderers.
 	if world_environment != null and (changed.call(VideoOptions.SSAO) or changed.call(VideoOptions.BLOOM)):
 		VideoOptions.apply_post_effects(world_environment.environment,
 			o.value(VideoOptions.SSAO) == 1, o.value(VideoOptions.BLOOM) == 1)
+	if _retail_bloom != null:
+		_retail_bloom.visible = o.value(VideoOptions.BLOOM) == 1
 	# Effect Quality (READ, IDecoSkill::FUN_00a50dc0; SkillEffects.quality).
 	SkillEffects.quality = o.value(VideoOptions.EFFECT)
 	# Set Brightness (READ curve; a pass over the whole screen).
@@ -628,6 +638,22 @@ func _apply_fog() -> void:
 	WorldFog.set_globals(fog_planes, on, WorldFog.pass_color(_fog_display_color, env))
 	if _fog_pass != null:
 		_fog_pass.visible = on
+
+## Whether Detail's terrain catcher draws: Shadow Detail "Detail", under
+## Forward+ (ShadowCatcher: the Compatibility renderer's shadowed sun is its
+## own additive pass).
+func _shadow_catchers_on() -> bool:
+	return video_options().value(VideoOptions.SHADOW) >= 2 and RendererChoice.running() == RendererChoice.FORWARD_PLUS
+
+## Puts Detail's catcher on every terrain patch built, or takes it off.
+func _apply_shadow_catchers() -> void:
+	var on := _shadow_catchers_on()
+	var kept: Array = []
+	for p in _terrain_patches:
+		if is_instance_valid(p):
+			ShadowCatcher.set_on(p as MeshInstance3D, on)
+			kept.append(p)
+	_terrain_patches = kept
 
 ## Puts the fog pass under the camera (once; _ready, world and title alike).
 func _build_fog_pass() -> void:
@@ -1557,6 +1583,10 @@ func _ready() -> void:
 	# The distance fog's pass (round 702, WorldFog); the zone's environment
 	# fills it in.
 	_build_fog_pass()
+	# The original's bloom (round 702 review); the Bloom row shows it.
+	_retail_bloom = RetailBloom.new()
+	_retail_bloom.visible = false
+	add_child(_retail_bloom)
 	# The sun's energy under Forward+, matched to Compatibility's look (round
 	# 693, WorldPostEffects.sun_scale; 1.0 under Compatibility).
 	directional_light.light_energy *= WorldPostEffects.sun_scale()
@@ -5846,6 +5876,12 @@ func _load_object_template(model_path: String) -> Node3D:
 	else:
 		_templates_unprepared += 1
 		node = ObjectLoader.load_object(_open_pk2_if_set(), model_path, _object_textures)
+	# Placed objects cast no shadow: in Detail only characters do, as in the
+	# original, whose scenery shadows are baked (round 702 review). Every
+	# placed copy is a duplicate() of this template.
+	if node != null:
+		for g in node.find_children("*", "GeometryInstance3D", true, false):
+			(g as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_load_timings.lap("objects", "templates", sw)
 	return node
 
@@ -7863,8 +7899,13 @@ func _terrain_commit(job: Dictionary) -> float:
 	single_patch.name = "SubPatch"
 	single_patch.mesh = terrain_mesh
 	single_patch.material_override = mat
+	# The original's scenery casts no real-time shadow (its building shadows
+	# are baked): in Detail only characters cast (round 702 review).
+	single_patch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	single_patch.add_child(patch_body)
 	terrain_group.add_child(single_patch)
+	_terrain_patches.append(single_patch)
+	ShadowCatcher.set_on(single_patch, _shadow_catchers_on())
 	_add_mirror_terrain(terrain_group, single_patch)
 
 	_add_navmesh_walls(terrain_group, job)
@@ -10915,7 +10956,7 @@ func _update_blob_shadow() -> void:
 	# The player's radius once its body (and the table) is known.
 	if float(player.get_meta(CharacterBlobs.META_RADIUS, 0.0)) <= 0.0:
 		CharacterBlobs.register(player, _player_bc_radius())
-	_character_blobs.update(camera_3d.global_position, video_options().value(VideoOptions.SHADOW),
+	_character_blobs.update(player.global_position, video_options().value(VideoOptions.SHADOW),
 		_blob_ground_y, _character_range)
 
 ## ---------------------------------------------------------------------------

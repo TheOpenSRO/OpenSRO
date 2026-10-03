@@ -22,25 +22,31 @@ class_name CharacterBlobs
 ##   at most 3000).
 ## - 0 (Nothing): neither.
 ## SWorld::vslot_022 projects the texture onto the ground under the position
-## (it re-draws the ground cells there, Map::FUN_009f3c10) with stage 0
+## (it re-draws the ground cells there, Map::FUN_009f3c10) through an
+## orthographic projection of width and height `size` (D3DXMatrixOrthoLH at
+## 0x9f4462: the size is the circle's diameter), with stage 0
 ## MODULATE(TEXTURE, TFACTOR) and SRCALPHA / INVSRCALPHA blending; the
-## TFACTOR it sets (0x9f44d4) is a stack argument, INFERRED to be the colour
-## argument -- so the circle is black at 0xa8 / 255 = 0.659 of the texture's
-## alpha.
+## TFACTOR (0x9f44cd) is the colour argument -- so the circle is black at
+## 0xa8 / 255 = 0.659 of the texture's alpha (READ, round 702 review).
+## The list is the world's object map keyed by `(int)(|object - player| x
+## 10)` (CICPlayer::vslot_005 0x9d6f19..0x9d6fad), so the ten are the ten
+## nearest the LOCAL PLAYER; Circle has no distance limit (Detail's walk
+## stops at key 3000, 300 units).
 ##
 ## **Here.** A pool of MAX_BLOBS flat quads (OURS: laid at the character's
-## feet, not draped over the ground cells), shown only in Circle, under the
-## nearest characters to the camera (INFERRED: the original's list order was
-## not read; nearest first keeps the player's own). Size BCRadius + 5, taken
-## as the circle's diameter (INFERRED: the texture matrix was not read; for
-## the default body, BCRadius 4, it is the 9 units this client drew before).
+## feet, not draped over the ground cells -- so a character on a placed floor,
+## the Jangan plaza deck, keeps its circle on the deck, where the original's
+## would lie on the terrain under the deck and be hidden; consistent with the
+## user's ring-on-floors decision of 2026-10-03), shown only in Circle, under
+## the ten characters nearest the player (READ). Size BCRadius + 5, the
+## diameter (READ; 9 for the default body, BCRadius 4).
 
 ## READ: vslot_024 draws at most ten.
 const MAX_BLOBS := 10
-## READ: the colour argument 0xa8000000 (alpha 0xa8); INFERRED to be the
-## TFACTOR the draw modulates the texture's alpha by.
+## READ: the colour argument 0xa8000000 (alpha 0xa8), the TFACTOR the draw
+## modulates the texture's alpha by (0x9f44cd).
 const ALPHA := 168.0 / 255.0
-## READ: the size is the character's BCRadius plus 5.
+## READ: the size (the diameter) is the character's BCRadius plus 5.
 const SIZE_ADD := 5.0
 ## OURS: a character whose BCRadius is not known is drawn as the default
 ## body's (characterdata column 50 of CHAR_CH_MAN_FIGHTER is 4, MEASURED).
@@ -65,7 +71,7 @@ var _texture: Texture2D = null
 static func blobs_visible(shadow_detail: int) -> bool:
 	return shadow_detail == 1
 
-## The circle's size for a BCRadius (READ: + 5; INFERRED: the diameter).
+## The circle's size (diameter) for a BCRadius (READ).
 static func blob_size(bc_radius: float) -> float:
 	return (bc_radius if bc_radius > 0.0 else DEFAULT_RADIUS) + SIZE_ADD
 
@@ -140,7 +146,9 @@ static func nearest(nodes: Array, from: Vector3, limit: int, max_distance: float
 			best_d.pop_back()
 	return best
 
-## Places the circles for this frame. `shadow_detail` is the Video tab's
+## Places the circles for this frame. `from` is the local player's
+## position (READ: the original's list is by distance from the player);
+## `shadow_detail` is the Video tab's
 ## row; `ground_y` maps a caster to the height its circle lies at (NAN: none
 ## found, no circle); `max_distance` is the Character Sight Range (0: any).
 func update(from: Vector3, shadow_detail: int, ground_y: Callable, max_distance: float = 0.0) -> void:

@@ -57,13 +57,14 @@ class_name WorldFog
 const GLOBAL_PARAMS := &"srr_fog_params"
 const GLOBAL_COLOR := &"srr_fog_color"
 
-## The pass's place in the transparent sort: after the cloud layer (-128) and
-## the surfaces it must fog (UNDER_PASS_PRIORITY), before every other
+## The pass's place in the transparent sort: after the cloud layer (-128),
+## the surfaces it must fog (UNDER_PASS_PRIORITY) and Detail's terrain
+## shadow catcher (ShadowCatcher.PRIORITY, -2), before every other
 ## transparent surface (priority 0 and up). Godot sorts the transparent list
 ## by priority before depth in both renderers (render_list
 ## sort_by_reverse_depth_and_priority).
 const PASS_PRIORITY := -1
-const UNDER_PASS_PRIORITY := -2
+const UNDER_PASS_PRIORITY := -3
 
 ## The view distance the planes scale by when no row says otherwise
 ## (READ, 0xec54b0 = 2500.0).

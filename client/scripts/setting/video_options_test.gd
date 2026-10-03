@@ -262,7 +262,7 @@ func _post_effects() -> void:
 	VideoOptions.apply_post_effects(env, true, false)
 	_check(env.ssao_enabled and not env.glow_enabled, "apply_post_effects: SSAO on, glow off")
 	VideoOptions.apply_post_effects(env, false, true)
-	_check(not env.ssao_enabled and env.glow_enabled, "apply_post_effects: SSAO off, glow (Bloom) on")
+	_check(not env.ssao_enabled and not env.glow_enabled, "apply_post_effects: Bloom on never turns Godot's glow on (round 702 review: RetailBloom draws the original's bloom)")
 	VideoOptions.apply_post_effects(env, true, true)
 	_check(is_equal_approx(env.ssao_radius, 16.0) and is_equal_approx(env.ssao_light_affect, 1.0) and is_equal_approx(env.ssao_intensity, 4.0),
 		"SSAO on takes this world's scale: radius 16, intensity 4, light affect 1 (OURS; Godot's radius 1 drew nothing measurable)")
@@ -426,7 +426,7 @@ func _page() -> void:
 		"scrolled 3 lines: Metallic Sheen first, Lens Flare / Bloom on the third line, the temporary fog row and the renderer last")
 	var bloom := page.combo_of(VideoOptions.BLOOM)
 	var ssao := page.combo_of(VideoOptions.SSAO)
-	_check(bloom != null and bloom.disabled and ssao != null and ssao.disabled, "Bloom (Glow) and SSAO are greyed without Forward+")
+	_check(bloom != null and not bloom.disabled and ssao != null and ssao.disabled, "SSAO is greyed without Forward+; Bloom is not (the original's bloom is a canvas pass both renderers draw)")
 	var filt := page.combo_of(VideoOptions.FILTERING)
 	var texd := page.combo_of(VideoOptions.TEXTURE)
 	_check(filt != null and filt.disabled and texd != null and texd.disabled, "so are Texture Filtering and Texture Detail (MSAA and the mip bias draw nothing under Compatibility, MEASURED)")
