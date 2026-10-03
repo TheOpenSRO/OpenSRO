@@ -63,6 +63,11 @@ class_name GroundMarkers
 ## - The heading-move hide happens when this client starts the run (it sends
 ##   positions, not retail's 0x7021 heading, and gets no echo).
 ## - Culling off (the terrain group's z mirror flips the winding).
+## - The mesh is rebuilt only when the 3 x 3 cell window under the ring
+##   changes; inside it the art moves by a shader uniform (RING_SHADER: UV =
+##   (local xz - origin) / size, the projection drape_arrays computes, so the
+##   look is the same). Round 698's review measured 118 us a physics tick
+##   rebuilding the mesh every tick under a moving target.
 
 ## The four textures, slot = texture index (READ, 0x787300..0x78733c).
 const TEXTURE_PATHS: Array[String] = [
@@ -142,6 +147,46 @@ static func water_quad_arrays(center: Vector2, size: float, y: float) -> Diction
 	return {"vertices": PackedVector3Array([a, b, c, a, c, d]),
 		"uvs": PackedVector2Array([Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 0), Vector2(1, 1), Vector2(0, 1)])}
 
+## READ: a ground click within this squared distance (double 0xd878a8 =
+## 400.0, so 20 units, `FUN_009ed1e0`'s 3-D squared distance) of a CICNPC
+## (class link 0xef1ac4: NPCs and guards, not monsters, players or gates)
+## whose +0xc4 is not 0 returns from `FUN_009ec570` (0x9ec5a0..0x9ec5eb)
+## before the destination, the click filter and FUN_00a631e0: no walk, no
+## ring. +0xc4 is the object's model scale (READ: its writer `FUN_009c4510`
+## takes the spawn's scale -- CICNPC::vslot_025 0x9d487d, CICMonster's
+## rarity x ref scale at 0x9d3a53 -- and resizes the model's box with it;
+## the CIObject constructor sets 1.0), so the test is "an NPC drawn at a
+## non-zero scale".
+const NPC_CLICK_BLOCK_SQ := 400.0
+
+## The NPC (from `npcs`, each a Node3D at its feet) that blocks a ground click
+## at `point`, or null: the first within NPC_CLICK_BLOCK_SQ whose scale is
+## not zero (READ: the list walk returns at the first hit).
+static func npc_blocking(point: Vector3, npcs: Array) -> Node3D:
+	for n in npcs:
+		var npc := n as Node3D
+		if npc == null or not is_instance_valid(npc):
+			continue
+		if npc.global_transform.basis.get_scale().is_zero_approx():
+			continue
+		if npc.global_position.distance_squared_to(point) < NPC_CLICK_BLOCK_SQ:
+			return npc
+	return null
+
+## The world's NPC bodies (the RealTerrain_ groups' holders tagged npc_name;
+## a teleport gate, tagged gate_point_id, is not a CICNPC).
+func npcs() -> Array:
+	var out := []
+	if _terrain_root == null or not is_instance_valid(_terrain_root):
+		return out
+	for group in _terrain_root.get_children():
+		if not (group is Node3D) or not String(group.name).begins_with("RealTerrain_"):
+			continue
+		for holder in group.get_children():
+			if holder is Node3D and holder.has_meta("npc_name") and not holder.has_meta("gate_point_id"):
+				out.append(holder)
+	return out
+
 ## Whether a block draws the still-water quad (READ: 0x9f492e's two tests).
 static func block_has_still_water(block: MapmReader.Block) -> bool:
 	return block != null and block.plane_type == STILL_WATER and block.wave_id != 0
@@ -185,15 +230,22 @@ var _grid: RegionGridState
 var _texture_loader: Callable
 
 var _mesh_instance: MeshInstance3D
-var _materials: Dictionary = {} ## texture index -> StandardMaterial3D, or null when the art did not load
-var _built_center := Vector3.INF
-var _built_index := -1
+var _materials: Dictionary = {} ## texture index -> ShaderMaterial, or null when the art did not load
+## What the mesh was built for: the group, the window's first cell, the water
+## quad's height (NAN: none). A centre moving inside the window only moves the
+## shader's origin.
 var _built_group: Node3D = null
+var _built_window := Vector2i(1 << 30, 1 << 30)
+var _built_water_y := NAN
 var _dirty := true
-## group name -> [ParsedRegion, PackedFloat32Array heights]
+## group name -> [WeakRef to the ParsedRegion, PackedFloat32Array heights]:
+## only the heights are held, so a region RegionGridState prunes is freed
+## (round 698's review); an entry whose region left the grid is dropped.
 var _heights_cache: Dictionary = {}
 var _qa_log := false
 var _qa_rebuilds := 0
+## A place or attach since the last QA line: measure the next draw.
+var _qa_pending := false
 ## SRREVAMP_QA_MARKER_VIEW="<pitch>,<length>" (QA only): each place / attach
 ## turns the camera arm to that pitch and length, so a frame shows the ring
 ## rather than the QA click's shallow aim. Vector2.ZERO: off.
@@ -236,8 +288,8 @@ func place_at(point: Vector3) -> void:
 	center = point
 	texture_index = INDEX_GROUND
 	shown = true
-	_dirty = true
 	_qa_frame_view()
+	_qa_pending = _qa_log
 	if _qa_log:
 		print("QA MARKER place: click point (%.2f, %.2f, %.2f), texture %d (%s)" % [point.x, point.y, point.z, texture_index, TEXTURE_PATHS[texture_index]])
 
@@ -253,8 +305,8 @@ func attach(key: String, kind: int, at: Variant = null) -> void:
 		var p: Variant = _resolver.call(key)
 		if p is Vector3:
 			center = p
-	_dirty = true
 	_qa_frame_view()
+	_qa_pending = _qa_log
 	if _qa_log:
 		print("QA MARKER attach: %s kind %d -> texture %d (%s) at (%.2f, %.2f, %.2f)" % [key, kind, texture_index, TEXTURE_PATHS[texture_index], center.x, center.y, center.z])
 
@@ -266,6 +318,13 @@ func _qa_frame_view() -> void:
 	if arm != null:
 		arm.rotation_degrees.x = _qa_view.x
 		arm.spring_length = _qa_view.y
+
+## A zone change: hidden, and the terrain it was draped on forgotten.
+func zone_changed() -> void:
+	hide_marker("zone change")
+	_heights_cache.clear()
+	_built_group = null
+	_dirty = true
 
 ## Hidden, following nothing (+0x108 = 0, +0x138 = 0).
 func hide_marker(why: String = "") -> void:
@@ -287,8 +346,22 @@ func step() -> void:
 			hide_marker("%s gone or hidden" % follow_key)
 		elif (p as Vector3).distance_squared_to(center) > 1e-6:
 			center = p
-			_dirty = true
+	if not _heights_cache.is_empty():
+		_prune_heights()
 	_refresh()
+
+## Drops cached heights whose region is no longer in the grid (or was parsed
+## again).
+func _prune_heights() -> void:
+	for name in _heights_cache.keys():
+		var entry: Array = _heights_cache[name]
+		var held: Object = (entry[0] as WeakRef).get_ref()
+		if held == null or _grid == null or _grid.parsed_heightmaps.get(_region_key_of(String(name))) != held:
+			_heights_cache.erase(name)
+
+## How many regions' heights are cached (the review's test).
+func cached_regions() -> int:
+	return _heights_cache.size()
 
 func _refresh() -> void:
 	if _mesh_instance == null:
@@ -302,53 +375,66 @@ func _refresh() -> void:
 		_mesh_instance.visible = false
 		return
 	var group := _group_at(center)
-	if _dirty or group != _built_group or texture_index != _built_index or center != _built_center:
-		_rebuild(group, material)
-	_mesh_instance.visible = _mesh_instance.mesh != null
-
-func _rebuild(group: Node3D, material: Material) -> void:
-	_dirty = false
-	_built_group = group
-	_built_index = texture_index
-	_built_center = center
-	last_drape = {}
 	if group == null:
 		# READ: no height-map block under the point (FUN_009ef640 fails): no drape.
 		_mesh_instance.mesh = null
+		_mesh_instance.visible = false
+		_built_group = null
+		last_drape = {}
 		return
 	var local := group.to_local(center)
+	var reach := cell_reach(SIZE)
+	var window := Vector2i(int(floor(local.x / CELL)) - reach, int(floor(local.z / CELL)) - reach)
+	var water_y := local.y + WATER_QUAD_LIFT if block_has_still_water(_block_at(group, local)) else NAN
+	var water_changed := is_nan(water_y) != is_nan(_built_water_y) or (not is_nan(water_y) and absf(water_y - _built_water_y) > 1e-4)
+	if _dirty or group != _built_group or window != _built_window or water_changed:
+		_rebuild(group, local, window, water_y)
+	if _mesh_instance.global_transform != group.global_transform:
+		_mesh_instance.global_transform = group.global_transform
+	if _mesh_instance.material_override != material:
+		_mesh_instance.material_override = material
+	material.set_shader_parameter("origin", Vector2(local.x, local.z) - Vector2(SIZE, SIZE) * 0.5)
+	if not last_drape.is_empty():
+		last_drape["local"] = local
+		if _qa_pending:
+			_qa_pending = false
+			_qa_measure(group, local, last_drape["arrays"], bool(last_drape["water"]))
+	_mesh_instance.visible = _mesh_instance.mesh != null
+
+## The mesh for one 3 x 3 window, in the group's own frame (the instance takes
+## the group's transform, so the shader's VERTEX.xz is region-local).
+func _rebuild(group: Node3D, local: Vector3, window: Vector2i, water_y: float) -> void:
+	_dirty = false
+	_built_group = group
+	_built_window = window
+	_built_water_y = water_y
 	var lc := Vector2(local.x, local.z)
 	var drape := drape_arrays(lc, SIZE, func(c: int, r: int) -> float: return _vertex_height(group, c, r), DRAPE_LIFT)
-	var water := false
 	var verts: PackedVector3Array = (drape["vertices"] as PackedVector3Array).duplicate()
-	var uvs: PackedVector2Array = (drape["uvs"] as PackedVector2Array).duplicate()
-	var block := _block_at(group, local)
-	if block_has_still_water(block):
-		water = true
-		var q := water_quad_arrays(lc, SIZE, local.y + WATER_QUAD_LIFT)
+	var water := not is_nan(water_y)
+	if water:
+		# The still-water quad over the whole window at the point's height + 0.1:
+		# with clamp addressing and the art's transparent border this draws
+		# exactly the READ size x size quad round the point, and it need not be
+		# rebuilt as the point moves across the water.
+		var reach := cell_reach(SIZE)
+		var span := float(2 * reach + 1) * CELL
+		var q := water_quad_arrays(Vector2(window) * CELL + Vector2(span, span) * 0.5, span, water_y)
 		verts.append_array(q["vertices"])
-		uvs.append_array(q["uvs"])
 	last_drape = {"arrays": drape, "group": group, "local": local, "water": water}
+	_mesh_instance.global_transform = group.global_transform
 	if verts.is_empty():
 		_mesh_instance.mesh = null
 		return
-	var world := PackedVector3Array()
-	world.resize(verts.size())
-	var xf := group.global_transform
-	var to_self := global_transform.affine_inverse()
-	for i in verts.size():
-		world[i] = to_self * (xf * verts[i])
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = world
-	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_VERTEX] = verts
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	mesh.surface_set_material(0, material)
 	_mesh_instance.mesh = mesh
-	if _qa_log:
+	if _qa_log and not _qa_pending:
 		_qa_rebuilds += 1
-		if _qa_rebuilds <= 8 or _qa_rebuilds % 120 == 0:
+		if _qa_rebuilds % 120 == 0:
 			_qa_measure(group, local, drape, water)
 
 ## The QA measurement (SRREVAMP_QA_MARKER=1): the ring's centre against the
@@ -372,23 +458,44 @@ func _qa_measure(group: Node3D, local: Vector3, drape: Dictionary, water: bool) 
 		c0 - reach, c0 + reach, r0 - reach, r0 + reach, (drape["vertices"] as PackedVector3Array).size() / 3,
 		drape_world, ray_h, drape_world - ray_h, DRAPE_LIFT, center.y - ray_h, str(water)])
 
-func _material_for(index: int) -> StandardMaterial3D:
+## READ: colour and alpha = texture x factor 0xFFFFFFFF, unlit, SRCALPHA /
+## INVSRCALPHA, clamp addressing (0x9f4508..0x9f468c); the UV is the vertical
+## projection of a size x size square at `origin` (region-local), what
+## drape_arrays' UVs are. The settings StandardMaterial3D had in round 698's
+## first version: unshaded, alpha blend, depth drawn for opaque only, no
+## culling, linear filter without mipmaps, no repeat, the art as sRGB colour.
+const RING_SHADER := """
+shader_type spatial;
+render_mode unshaded, blend_mix, depth_draw_opaque, cull_disabled, shadows_disabled;
+uniform sampler2D art : source_color, filter_linear, repeat_disable;
+uniform vec2 origin;
+uniform float size = 12.0;
+void vertex() {
+	UV = (VERTEX.xz - origin) / size;
+}
+void fragment() {
+	vec4 c = texture(art, UV);
+	ALBEDO = c.rgb;
+	ALPHA = c.a;
+}
+"""
+static var _ring_shader: Shader = null
+
+func _material_for(index: int) -> ShaderMaterial:
 	if _materials.has(index):
 		return _materials[index]
 	var tex: Texture2D = null
 	if _texture_loader.is_valid():
 		tex = _texture_loader.call(TEXTURE_PATHS[index])
-	var mat: StandardMaterial3D = null
+	var mat: ShaderMaterial = null
 	if tex != null:
-		mat = StandardMaterial3D.new()
-		mat.albedo_texture = tex
-		# READ: colour and alpha = texture x factor 0xFFFFFFFF, unlit,
-		# SRCALPHA / INVSRCALPHA, clamp addressing (0x9f4508..0x9f468c).
-		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		mat.texture_repeat = false
-		mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
-		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		if _ring_shader == null:
+			_ring_shader = Shader.new()
+			_ring_shader.code = RING_SHADER
+		mat = ShaderMaterial.new()
+		mat.shader = _ring_shader
+		mat.set_shader_parameter("art", tex)
+		mat.set_shader_parameter("size", SIZE)
 	_materials[index] = mat
 	return mat
 
@@ -407,23 +514,27 @@ func _group_at(p: Vector3) -> Node3D:
 			return g
 	return null
 
+## "RealTerrain_97_168" -> "97_168" (RegionGridState.region_key), or "".
+static func _region_key_of(group_name: String) -> String:
+	var parts := group_name.trim_prefix("RealTerrain_").split("_")
+	if parts.size() != 2 or not parts[0].is_valid_int() or not parts[1].is_valid_int():
+		return ""
+	return RegionGridState.region_key(int(parts[0]), int(parts[1]))
+
 func _parsed_for(group: Node3D) -> MapmReader.ParsedRegion:
 	if _grid == null:
 		return null
-	var parts := String(group.name).trim_prefix("RealTerrain_").split("_")
-	if parts.size() != 2 or not parts[0].is_valid_int() or not parts[1].is_valid_int():
-		return null
-	return _grid.parsed_heightmaps.get(RegionGridState.region_key(int(parts[0]), int(parts[1])))
+	return _grid.parsed_heightmaps.get(_region_key_of(String(group.name)))
 
 func _heights_for(group: Node3D) -> PackedFloat32Array:
 	var parsed := _parsed_for(group)
 	if parsed == null:
 		return PackedFloat32Array()
 	var cached: Array = _heights_cache.get(group.name, [])
-	if cached.size() == 2 and cached[0] == parsed:
+	if cached.size() == 2 and (cached[0] as WeakRef).get_ref() == parsed:
 		return cached[1]
 	var heights := TerrainCollision.heights_from_region(parsed)
-	_heights_cache[group.name] = [parsed, heights]
+	_heights_cache[group.name] = [weakref(parsed), heights]
 	return heights
 
 ## The terrain's height at vertex (col, row) of `group`'s grid, which may lie

@@ -61,7 +61,8 @@ beyond ~56 px and on every edge texel.
 
 | Event | Code | Ring |
 |---|---|---|
-| Ground click | `UI_SILKMALL::FUN_0078f8d0` -> `FUN_009ec570` (0x9ec638..0x9ec64e) | Moves to the click point, slot 0. After the click filter `FUN_009ec240` with **no branch on its result**: a click the filter does not send (under 5 units with no order, or a snapped heading) still moves it. A held button repeats the click (timer 7, 500 ms, `FUN_00777b90`). |
+| Ground click | `UI_SILKMALL::FUN_0078f8d0` -> `FUN_009ec570` (0x9ec638..0x9ec64e) | Moves to the click point, slot 0. Past the NPC test (next row), after the click filter `FUN_009ec240` with **no branch on its result**: a click the filter does not send (under 5 units with no order, or a snapped heading) still moves it. A held button repeats the click (timer 7, 500 ms, `FUN_00777b90`). |
+| Ground click within 20 units of an NPC | `FUN_009ec570` 0x9ec5a0..0x9ec5eb: walks the object list `0xec4d98` (nodes at object+0x78c); for a CICNPC (0xef1ac4: NPCs and guards) whose 3-D squared distance to the click (`FUN_009ed1e0`) is under 400.0 (double 0xd878a8) and whose +0xc4 is not 0.0, returns | Nothing: no destination, no click filter, no move, the ring stays where it was. +0xc4 is the object's model scale: its writer `FUN_009c4510(scale)` (0x9c451d) stores it and resizes the model's box; the spawns pass it (CICNPC::vslot_025 0x9d487d, CICMonster's rarity x ref scale 0x9d3a53); the CIObject constructor sets 1.0 (0x9c4909). So: an NPC drawn at a non-zero scale. Found by round 698's review. |
 | Sky click (heading run) | `FUN_0078f8d0` -> `FUN_009ebec0` | Not touched there. |
 | Arrow-key walk | `FUN_009ebf40` (from `FUN_0077b070`, `FUN_00780610`) -> `FUN_009ebec0` | Not touched there. |
 | The local player's 0xB021 with a heading (kind 0) | `NetProcessInNavAndSkill::FUN_008a5750`, 0x8a5971..0x8a59c5 | **Hidden** (+0x108 = +0x138 = 0), and timer 7 killed or set. So arrow walking and sky runs hide the ring one round trip after they start. |
@@ -148,7 +149,17 @@ private server's patched client may differ; that would be a different binary.
 frame (follow or hide). The drape is the 3 x 3 cells of the region's own heights, the
 projected UV, `select_0N.ddj` through DdjReader, unshaded alpha blend, clamp.
 
+A ground click within 20 units of an NPC returns from `_move_by_pick_ray` before the ring and
+the walk (`GroundMarkers.npc_blocking`, the holders tagged `npc_name`, not gates; logged as
+`CLICK: ground at ... ignored -- d from NPC <name>`). The mesh is built for the 3 x 3 cell window
+only; inside it the art follows the point through a shader uniform (`RING_SHADER`, UV = (local
+xz - origin) / 12, the projection itself), so a followed body costs 13 us a tick instead of 117
+(MEASURED, `client/tools/measure_ground_ring.gd`). The height cache holds plain height arrays and
+drops a region the grid prunes.
+
 OURS, each said in the code: the drape is lifted 0.05 (different transforms could z-fight on
 equal heights); it splits cells the way OUR terrain mesh does (always (r, c)-(r+1, c+1)), not
 retail's alternating fans, so it lies on what is drawn; the heading-move hide happens when the
-run starts (this client streams positions and gets no 0xB021 echo); culling off.
+run starts (this client streams positions and gets no 0xB021 echo); culling off; the still-water
+quad spans the 3 x 3 window with the projected UV (with clamp and the art's transparent border it
+draws the same 12 x 12 square round the point, and need not be rebuilt as the point moves).

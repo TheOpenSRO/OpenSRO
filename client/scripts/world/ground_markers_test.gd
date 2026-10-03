@@ -26,7 +26,14 @@ extends SceneTree
 ##   texture 2 under the player, _select_self no ring; deselecting
 ##   (_clear_target) leaves the ring (READ: FUN_00778650(0) clears the id
 ##   only); the monster's body going (a despawn) hides it on the next step;
-## - a zone change hides it.
+## - a zone change hides it and forgets the cached heights.
+## Round 698's review:
+## - the height cache holds only heights: a region the grid prunes is freed
+##   and leaves the cache on the next step;
+## - a ground click within 20 units of an NPC neither walks nor moves the ring
+##   (READ, FUN_009ec570), a gate does not block, one at 25 units does not;
+## - the mesh is rebuilt only when the 3 x 3 window changes: a body moving
+##   inside it moves the shader's origin, one crossing a cell edge rebuilds.
 ##
 ## NEGATIVE: against dev e1ccf792 GroundMarkers does not exist; the suite
 ## loads it by path and reports one FAIL line and stops.
@@ -115,6 +122,14 @@ func _test_drape() -> void:
 	b.plane_type = 0
 	b.wave_id = 2
 	_check(not GroundMarkers.block_has_still_water(b), "animated water (PlaneType 0) does not")
+	var n1 := Node3D.new()
+	root.add_child(n1)
+	n1.position = Vector3(10, 0, 0)
+	_check(GroundMarkers.npc_blocking(Vector3(25, 0, 0), [n1]) == n1, "an NPC 15 from the click blocks it (under 20)")
+	_check(GroundMarkers.npc_blocking(Vector3(30, 0, 0), [n1]) == null, "one exactly 20 away does not (400 is not under 400)")
+	n1.scale = Vector3.ZERO
+	_check(GroundMarkers.npc_blocking(Vector3(25, 0, 0), [n1]) == null, "an NPC at scale 0 (+0xc4 == 0) does not")
+	n1.queue_free()
 
 func _uv_at(d: Dictionary, x: float, z: float) -> Vector2:
 	var v: PackedVector3Array = d["vertices"]
@@ -267,12 +282,41 @@ func _test_world() -> void:
 		_check(drape["water"] == true, "block 0 is still water: the flat quad is drawn too")
 	var ring := gm.get_node_or_null("Ring") as MeshInstance3D
 	_check(ring != null and ring.visible and ring.mesh != null, "the ring's mesh is drawn")
+	var mat := ring.material_override as ShaderMaterial
+	_check(mat != null and (mat.get_shader_parameter("origin") as Vector2).distance_to(Vector2(74, 124)) < 0.01,
+		"the art's origin is the point's local (80, 130) less 6 (got %s)" % (str(mat.get_shader_parameter("origin")) if mat != null else "no material"))
+	_check(ring.global_transform.is_equal_approx(group.global_transform), "the mesh is drawn in the region's own frame")
+	_check(gm.cached_regions() == 1, "one region's heights are cached")
 	# A click under the 5-unit filter with no order in effect still moves it.
 	world.set("_player_move_order", false)
 	player.global_position = Vector3(2000, 0, -100)
 	took = world.call("_move_by_pick_ray", Vector3(2002, 50, -101), Vector3(0, -1, 0), space)
 	_check(took == "ignore" and gm.center.distance_to(Vector3(2002, 0, -101)) < 0.01,
 		"a click the filter ignores still moves the ring (READ: no branch before FUN_00a631e0) (took %s)" % took)
+	# Moving inside the window keeps the mesh; crossing a cell edge rebuilds it.
+	gm.step()
+	var mesh_before: Mesh = ring.mesh
+	gm.place_at(Vector3(2003, 0, -103))
+	gm.step()
+	_check(ring.mesh == mesh_before, "a point 3 units on, in the same cell window, keeps the mesh")
+	gm.place_at(Vector3(2030, 0, -103))
+	gm.step()
+	_check(ring.mesh != mesh_before, "a point in the next cell builds a new window")
+	# An NPC 10 units from the click: nothing walks, the ring stays where it was.
+	var npc := Node3D.new()
+	npc.set_meta("npc_name", "Clerk")
+	group.add_child(npc)
+	npc.global_position = Vector3(2010, 0, -150)
+	var ring_was := gm.center
+	took = world.call("_move_by_pick_ray", Vector3(2010, 50, -160), Vector3(0, -1, 0), space)
+	_check(took == "npc_near" and gm.center == ring_was, "a click 10 from an NPC neither walks nor moves the ring (took %s)" % took)
+	took = world.call("_move_by_pick_ray", Vector3(2010, 50, -175), Vector3(0, -1, 0), space)
+	_check(took == "walk" and gm.center.distance_to(Vector3(2010, 0, -175)) < 0.01, "a click 25 from it walks (took %s)" % took)
+	npc.set_meta("gate_point_id", 7)
+	took = world.call("_move_by_pick_ray", Vector3(2010, 50, -155), Vector3(0, -1, 0), space)
+	_check(took != "npc_near", "a teleport gate (not a CICNPC) does not block (took %s)" % took)
+	npc.queue_free()
+	await process_frame
 	# A sky click: a heading run hides the ring.
 	took = world.call("_move_by_pick_ray", Vector3(2000, 50, -100), Vector3(0, 1, 0), space)
 	_check(took == "run" and not gm.shown, "a sky click's heading run hides the ring (took %s)" % took)
@@ -321,9 +365,20 @@ func _test_world() -> void:
 	world.call("_select_self")
 	_check(not gm.shown, "selecting yourself shows no ring (READ: FUN_00780ee0 writes the id only)")
 
+	# The cache does not keep a pruned region alive.
+	grid.parsed_heightmaps["1_1"] = _region(false)
+	var held: WeakRef = weakref(grid.parsed_heightmaps["1_1"])
+	gm.place_at(Vector3(2000, 0, -130))
+	gm.step()
+	_check(gm.cached_regions() == 1, "the re-parsed region's heights are cached")
+	grid.parsed_heightmaps.erase("1_1")
+	gm.step()
+	_check(gm.cached_regions() == 0, "a region pruned from the grid leaves the cache")
+	_check(held.get_ref() == null, "and the pruned ParsedRegion is freed (nothing else holds it)")
+	grid.parsed_heightmaps["1_1"] = _region(false)
 	# A zone change hides it.
 	world.call("_select_character", OTHER, "Bram")
 	world.call("_reload_zone_assets", "")
-	_check(not gm.shown, "a zone change hides the ring")
+	_check(not gm.shown and gm.cached_regions() == 0, "a zone change hides the ring and forgets the heights")
 	world.queue_free()
 	await process_frame

@@ -1995,6 +1995,8 @@ scaled; a heading run hides it; arrival, deselecting and death leave it; a despa
 body hides it. There is no hostility or rarity test in the ring's code (round 698, the whole
 census of its texture writes).
 
+- [x] **No walk within 20 units of an NPC** (round 698's review, READ `FUN_009ec570`): a ground
+      click within 20 of an NPC at non-zero scale does nothing, logged as `CLICK: ... ignored`.
 - [ ] **The pick mode's ring** (`UI_SILKMALL::FUN_00629fa0`, modes 1 and 4): `select_02` at the
       picked point within (R - 5), `select_04` beyond, hidden under 0.25. Probably the ground-target
       cursor round 617 drew with the system cross; the modes and R (`[FUN_008ba440()+0x254]`) are

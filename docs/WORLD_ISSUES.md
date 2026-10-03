@@ -7205,6 +7205,51 @@ first use): the table says the round costs nothing until a player clicks. Once s
 on a still point is built once; a followed moving body rebuilds 54 vertices a physics frame
 (not measured separately).
 
+### Review
+
+The review confirmed the account, the terrain-only drape included (`CIODecal::vslot_010` is
+`SWorld::vslot_022`'s only caller; the vertices come only from the `.m` height record). Not to be
+merged until the user, who believes the ring shows on the Jangan plaza, has checked a live server.
+Fixed here:
+
+1. **The height cache kept dropped regions alive** (MEDIUM). It held `[ParsedRegion, heights]`
+   per group, never evicted, pinning 36 x 289 Vertex objects a region past
+   `RegionGridState.prune_heightmaps()`. It now holds a WeakRef and the plain
+   PackedFloat32Array; `step()` drops an entry whose region left the grid (or was parsed again);
+   `zone_changed()` (called from `_reload_zone_assets`) clears it. Tested: a pruned region leaves
+   the cache on the next step and its ParsedRegion is freed.
+2. **A ground click near an NPC does nothing in retail** (LOW, READ). `FUN_009ec570`
+   0x9ec5a0..0x9ec5eb walks the object list (`0xec4d98`, nodes at object+0x78c) and returns --
+   before the destination, the click filter and `FUN_00a631e0` -- for a CICNPC (0xef1ac4, which
+   CICGuard derives from; not monsters, players or CITeleportGate) under 400.0 squared (double
+   0xd878a8: 20 units, `FUN_009ed1e0`'s 3-D distance) from the click whose +0xc4 is not 0.0.
+   +0xc4 is READ as the object's model scale: `FUN_009c4510(scale)` stores it (0x9c451d) and
+   resizes the model's box; the spawns pass the scale (CICNPC::vslot_025 0x9d487d; CICMonster's
+   rarity x ref scale, 0x9d3a53); the CIObject constructor sets 1.0 (0x9c4909). Built in
+   `_move_by_pick_ray` (`GroundMarkers.npc_blocking` over the holders tagged `npc_name`, not
+   gates): no walk, no ring, and one line, `CLICK: ground at (x, y, z) ignored -- d from NPC
+   <name> (retail walks nowhere within 20 of an NPC)`, for a tester who cannot walk next to one.
+   Tested at 10 (blocked), 25 (walks), exactly 20 (not under 400), a gate, scale 0.
+3. **The drape was rebuilt every tick under a moving body** (LOW). The mesh is now built for the
+   3 x 3 cell window in the region's own frame (the instance takes the group's transform), and a
+   ShaderMaterial (`RING_SHADER`) projects the UV from the vertex's region-local xz with the
+   centre as a uniform -- the same UV `drape_arrays` computes, unshaded, blend mix, opaque-only
+   depth, no culling, linear filter without repeat, sRGB art: StandardMaterial3D's settings. The
+   still-water quad spans the window (with clamp and the transparent border it draws the same
+   12 x 12 square). MEASURED with `client/tools/measure_ground_ring.gd` (a body at 50 units/s,
+   1,200 ticks, headless on the box, three runs each): **116.5 / 117.4 / 116.6 us a tick with a
+   new mesh on every tick before; 13.1 / 13.3 / 13.3 us with 49 new meshes (4.1 % of ticks)
+   after.** The look, MEASURED in the same crops as runs 5 / 6: Compatibility's rerun of the
+   same scene counts 281 pale-cyan ring pixels (283 before) and 168 orange (168 before); the
+   Forward+ rerun drew in 97/168's frame (the zone frame differed between runs), 304 and 191,
+   the rings as before in its frames. The drape lines are unchanged (+0.050 over the terrain
+   ray at every centre).
+4. **Docs.** Round 697 also rewrote docs/TODO.md's line on retail's ground-pick cursor and decal;
+   the coordinator combines the two at integration.
+
+Tests after the fixes: `remote_godot.sh check` ALL LOAD (553 scripts), `tests` 213 suites, 0
+failing (ground_markers_test with the new checks among them).
+
 ## Six-hundred-and-ninety-sixth round: in a window the chosen resolution sizes the OS window (a maximised window is restored first), and every Option combo draws the original's black value box
 
 The user (2026-10-02, on v0.1.480, Windows at about 4K, UI scale ~1.95, window mode at 3840 x 2019):

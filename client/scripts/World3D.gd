@@ -5452,7 +5452,7 @@ func _load_initial_region_neighborhood() -> void:
 func _reload_zone_assets(zone: String, frame: String = "") -> void:
 	_clear_region_grid()
 	if _ground_markers != null:
-		_ground_markers.hide_marker("zone change")
+		_ground_markers.zone_changed()
 	ground_mesh.visible = true
 	ground_collision.disabled = false
 
@@ -16309,6 +16309,14 @@ func _move_by_pick_ray(from: Vector3, dir: Vector3, space: PhysicsDirectSpaceSta
 	if hit.is_empty():
 		return _start_heading_run(dir)
 	var point: Vector3 = hit["position"]
+	# Within 20 units of an NPC the click does nothing: no walk, no ring
+	# (round 698's review; READ, FUN_009ec570 0x9ec5a0..0x9ec5eb,
+	# GroundMarkers.NPC_CLICK_BLOCK_SQ).
+	var npc := GroundMarkers.npc_blocking(point, _markers().npcs())
+	if npc != null:
+		print("CLICK: ground at (%.1f, %.1f, %.1f) ignored -- %.1f from NPC %s (retail walks nowhere within 20 of an NPC)" % [
+			point.x, point.y, point.z, npc.global_position.distance_to(point), str(npc.get_meta("npc_name", npc.name))])
+		return "npc_near"
 	# The ring goes to the point (round 698; FUN_009ec570 places it whatever
 	# the click filter below decides).
 	_markers().place_at(point)
