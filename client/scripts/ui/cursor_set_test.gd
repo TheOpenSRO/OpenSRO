@@ -68,10 +68,59 @@ func _test_exe_beside() -> void:
 	_check(CursorSet.exe_beside("") == "", "no archive -> no exe path")
 	_check(CursorSet.load_from_exe("/definitely/not/here.exe").is_empty(), "missing exe -> empty set, no error")
 
+## The exe search order (round 697): override, then each name in the
+## Data.pk2 folder, its parent, our own exe's folder; no duplicates.
+func _test_exe_candidates() -> void:
+	var c := CursorSet.exe_candidates("D:/srrevamp/pk2/Data.pk2", "D:/srrevamp/SRRevamp.exe")
+	var want := PackedStringArray([
+		"D:/srrevamp/pk2/sro_client.exe", "D:/srrevamp/sro_client.exe",
+		"D:/srrevamp/pk2/sro_client_NODLL.exe", "D:/srrevamp/sro_client_NODLL.exe"])
+	_check(c == want, "a pk2 folder beside our exe: pk2/, then the exe's folder (once), per name: %s" % str(c))
+	var r := CursorSet.exe_candidates("C:/Silkroad/Data.pk2", "D:/srrevamp/SRRevamp.exe", "E:/x/sro_client.exe")
+	_check(r.size() == 7 and r[0] == "E:/x/sro_client.exe", "the override comes first: %s" % str(r))
+	_check(r[1] == "C:/Silkroad/sro_client.exe" and r[2] == "C:/sro_client.exe" and r[3] == "D:/srrevamp/sro_client.exe",
+		"retail's layout, its parent, our exe's folder: %s" % str(r))
+	_check(CursorSet.exe_candidates("", "") .is_empty(), "nothing known -> nothing to try")
+	_check(not CursorSet.EXE_NAMES.has("silkroad.exe"), "the launcher is not a client exe")
+	var none := CursorSet.load_first(PackedStringArray(["/definitely/not/here/sro_client.exe"]))
+	_check(none["path"] == "" and (none["cursors"] as Dictionary).is_empty() and (none["tried"] as PackedStringArray).size() == 1,
+		"a missing exe: no set, and the path is in the tried list")
+
+## A 32 x 32 cursor with its hotspot at (2, 1), as 0x95 has (MEASURED).
+func _cursor_32(hot: Vector2i) -> CursorSet.Cursor:
+	var cur := CursorSet.Cursor.new()
+	cur.image = Image.create(32, 32, false, Image.FORMAT_RGBA8)
+	cur.image.fill(Color(0, 0, 0, 0))
+	cur.image.set_pixelv(hot, Color(1, 0, 0, 1))
+	cur.hotspot = hot
+	return cur
+
+## Scaling (round 697, OURS: the user's decision): size, nearest pixels, and
+## the hotspot inside its own source pixel's block, at 1.0, 1.5, 1.95, 2.0.
+func _test_scaled() -> void:
+	for hot in [Vector2i(2, 1), Vector2i(2, 26), Vector2i(0, 0), Vector2i(31, 31)]:
+		var cur := _cursor_32(hot)
+		for k in [1.0, 1.5, 1.95, 2.0]:
+			var pair := CursorSet.scaled(cur, k)
+			var img: Image = pair[0]
+			var h: Vector2i = pair[1]
+			var n := roundi(32 * k)
+			_check(img.get_width() == n and img.get_height() == n, "%.2f: %dx%d (got %dx%d)" % [k, n, n, img.get_width(), img.get_height()])
+			var src := Vector2i(floori(h.x * 32.0 / n), floori(h.y * 32.0 / n))
+			_check(src == hot, "%.2f: hotspot %s maps back to source pixel %s (got %s)" % [k, str(h), str(hot), str(src)])
+			_check(img.get_pixelv(h) == Color(1, 0, 0, 1), "%.2f: the pixel under hotspot %s is the hotspot's own (nearest)" % [k, str(h)])
+	var big := CursorSet.scaled(_cursor_32(Vector2i(2, 1)), 9.0)
+	_check((big[0] as Image).get_width() == CursorSet.MAX_CURSOR_SIZE, "a huge scale clamps to Godot's 256 (got %d)" % (big[0] as Image).get_width())
+	_check((big[1] as Vector2i).x < CursorSet.MAX_CURSOR_SIZE, "and the hotspot stays inside")
+	var same := CursorSet.scaled(_cursor_32(Vector2i(2, 1)), 1.0)
+	_check(same[1] == Vector2i(2, 1), "1.0 keeps the file's hotspot exactly")
+
 func _init() -> void:
 	_test_decode()
 	_test_rejects_garbage()
 	_test_exe_beside()
+	_test_exe_candidates()
+	_test_scaled()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

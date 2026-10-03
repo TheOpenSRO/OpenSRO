@@ -34,7 +34,8 @@ class_name OptionVideoPage
 ## frame pieces over it. Round 694 read the second child as the list's frame
 ## and drew no field, so each value sat on the row's grey art (the user's
 ## report, 2026-10-02). See `_make_combo` for what is READ and what MEASURED.
-## The list (the popup) is still a Godot PopupMenu (OURS).
+## The list (round 697) is a Godot PopupMenu styled as retail's open list,
+## a CNIFPopupListCtrl -- see style_popup for what is READ.
 ##
 ## **The buttons.** Default on this tab (0x5fc340, READ) sets Middle, Normal
 ## brightness, the 1280 x 1024 mode when listed, FULL SCREEN and the Free
@@ -273,6 +274,7 @@ func _make_combo(host: Control) -> OptionButton:
 	UiBuilder.guard_button_font(combo)
 	UiBuilder.crisp_text(combo)
 	crisp_popup(combo)
+	style_popup(combo, pieces, font)
 	host.mouse_filter = Control.MOUSE_FILTER_PASS
 	host.add_child(combo)
 	return combo
@@ -285,6 +287,146 @@ func _make_combo(host: Control) -> OptionButton:
 static func crisp_popup(combo: OptionButton) -> void:
 	if combo != null:
 		combo.get_popup().canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_NEAREST
+
+## **The open list (READ, round 697).** A combo's open (`0x486f50`) makes a
+## CNIFPopupListCtrl (runtime class 0x115e2c0, base CNIFPopup, base
+## CNIFStretchWnd) as the combo's child at {0, 20, W, 0} -- x 0, y the
+## constant 0x14 (`0x486fd3`), the combo's full width W -- gives it the same
+## six `com_blacksquare_` pieces as the value field (`0x49b040`), and sets
+## its fill +0x1c4 to the combo's +0x380 (`0x487050`). The combo's
+## constructor makes that 0x80000000 (`0x486af3`) and every Option-window
+## combo sets it to **0xb4000000** -- black at alpha 0xb4 (Resolution
+## `0x5ff532`, Brightness `0x5ff1f6`, each video row `0x6f7200`) -- and its
+## row count to its item count, so it never scrolls (`0x5ff1d2`, `0x5ff50e`,
+## `0x6f71fb`). The list's create (`vslot_010` 0x49b820) puts a CNIFListCtrl
+## at {4, 4} (W-8, H-8 by `vslot_022`), the list's height being rows x line +
+## 8 (`0x48707f..0x48708e`), its line the font's height + 4
+## (`FUN_00ba5460(0) + 4`), and sets its item colours (`0x4845a0` ->
+## `0x475d10`): normal **0xffffffff**, hover **0xffffff80**, pressed
+## 0xff8080ff; and turns on the hover bar (+0x362 = 1) in **0xff8080ff**
+## (+0x3a0; the bar's draw `0x483a70` takes +0x3a0 for the hover row, an
+## untextured quad). The text is aligned as the combo's own (`0x4870a1`
+## passes the combo's +0x88; the Option window sets 1, centred, on
+## Resolution and Brightness: `0x5ff1ec`, `0x5ff528`).
+const POPUP_FILL := Color8(0, 0, 0, 0xb4)
+const POPUP_TOP := 20
+const POPUP_INSET := 4
+const POPUP_LINE_EXTRA := 4
+const POPUP_TEXT := Color8(255, 255, 255)
+const POPUP_TEXT_HOVER := Color8(255, 255, 128)
+const POPUP_HOVER_BAR := Color8(128, 128, 255)
+
+static var _blank_check_tex: ImageTexture = null
+
+## Styles the combo's PopupMenu as retail's open list, with the READ values
+## above. Where Godot's PopupMenu cannot follow, OURS:
+##  - the text is left-aligned (4.2's PopupMenu has no item alignment);
+##  - no pressed colour (0xff8080ff while the button is down: PopupMenu has
+##    no pressed state);
+##  - the hover bar spans the item's text height as retail's does (its
+##    height is the text's own: +0x360 is not set), placed by trimming
+##    Godot's row-high hover box by half the line gap above and below;
+##  - the six frame pieces are laid out as the value field's
+##    (draw_combo_field: top and bottom transposed, MEASURED, not read) in a
+##    12 x 12 nine-patch tiled along the edges.
+## The row geometry: retail draws the first text 4 below the frame's top and
+## each line font + 4 apart, the box rows x line + 8 tall. PopupMenu puts
+## half its v_separation above the first item and ends one v_separation
+## short, so the panel's content margins are 2 top and 10 bottom (2 + 2 = 4
+## to the first text; 2 + (rows x line - 4) + 10 = rows x line + 8).
+static func style_popup(combo: OptionButton, pieces: Dictionary, font: Font) -> void:
+	if combo == null:
+		return
+	var pm := combo.get_popup()
+	pm.add_theme_stylebox_override("panel", popup_panel(pieces))
+	var bar := StyleBoxFlat.new()
+	bar.bg_color = POPUP_HOVER_BAR
+	bar.expand_margin_top = -POPUP_LINE_EXTRA / 2.0
+	bar.expand_margin_bottom = -POPUP_LINE_EXTRA / 2.0
+	pm.add_theme_stylebox_override("hover", bar)
+	pm.add_theme_constant_override("v_separation", POPUP_LINE_EXTRA)
+	pm.add_theme_constant_override("h_separation", 0)
+	pm.add_theme_constant_override("item_start_padding", 0)
+	pm.add_theme_constant_override("item_end_padding", 0)
+	pm.add_theme_color_override("font_color", POPUP_TEXT)
+	pm.add_theme_color_override("font_hover_color", POPUP_TEXT_HOVER)
+	pm.add_theme_color_override("font_disabled_color", DISABLED_TEXT)
+	# Retail's list draws text and the bar only: no check or radio mark.
+	if _blank_check_tex == null:
+		_blank_check_tex = ImageTexture.create_from_image(Image.create(1, 1, false, Image.FORMAT_RGBA8))
+	for icon in ["checked", "unchecked", "radio_checked", "radio_unchecked",
+			"checked_disabled", "unchecked_disabled", "radio_checked_disabled", "radio_unchecked_disabled"]:
+		pm.add_theme_icon_override(icon, _blank_check_tex)
+	if font != null:
+		pm.add_theme_font_override("font", font)
+	pm.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+	# y = 20 below the combo's top (READ), where OptionButton puts it at the
+	# combo's bottom (18 for Resolution and Brightness).
+	pm.about_to_popup.connect(Callable(OptionVideoPage, "_place_popup").bind(combo))
+
+static func _place_popup(combo: OptionButton) -> void:
+	if combo == null or not combo.is_inside_tree() or combo.size.y <= 0.0:
+		return
+	var k: float = combo.get_screen_rect().size.y / combo.size.y
+	var pm := combo.get_popup()
+	pm.position.y += roundi((POPUP_TOP - combo.size.y) * k)
+
+## The list's frame and fill as one StyleBoxTexture: a 12 x 12 image of the
+## four corner pieces, left_side / right_side down the sides and transposed
+## along the top / bottom, over the READ fill, with 4-pixel margins. Without
+## the pieces (no Media.pk2), the fill alone.
+static func popup_panel(pieces: Dictionary) -> StyleBox:
+	var img := Image.create(12, 12, false, Image.FORMAT_RGBA8)
+	img.fill(POPUP_FILL)
+	var got := 0
+	var spots := {"left_up": Vector2i(0, 0), "right_up": Vector2i(8, 0),
+		"left_down": Vector2i(0, 8), "right_down": Vector2i(8, 8),
+		"left_side": Vector2i(0, 4), "right_side": Vector2i(8, 4)}
+	for name in spots:
+		var piece := _piece_image(pieces.get(name) as Texture2D)
+		if piece == null:
+			continue
+		img.blend_rect(piece, Rect2i(0, 0, 4, 4), spots[name])
+		got += 1
+	var ls := _piece_image(pieces.get("left_side") as Texture2D)
+	var rs := _piece_image(pieces.get("right_side") as Texture2D)
+	if ls != null:
+		img.blend_rect(_transposed(ls), Rect2i(0, 0, 4, 4), Vector2i(4, 0))
+	if rs != null:
+		img.blend_rect(_transposed(rs), Rect2i(0, 0, 4, 4), Vector2i(4, 8))
+	var sb := StyleBoxTexture.new()
+	sb.texture = ImageTexture.create_from_image(img)
+	for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+		sb.set_texture_margin(side, 4.0 if got > 0 else 0.0)
+	sb.axis_stretch_horizontal = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
+	sb.axis_stretch_vertical = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
+	sb.content_margin_left = POPUP_INSET
+	sb.content_margin_right = POPUP_INSET
+	sb.content_margin_top = POPUP_INSET - POPUP_LINE_EXTRA / 2.0
+	sb.content_margin_bottom = POPUP_INSET * 2 + POPUP_LINE_EXTRA / 2.0
+	return sb
+
+## A piece's 4 x 4 image in RGBA8, or null.
+static func _piece_image(tex: Texture2D) -> Image:
+	if tex == null:
+		return null
+	var img := tex.get_image()
+	if img == null or img.is_empty():
+		return null
+	img = img.duplicate() as Image
+	if img.is_compressed():
+		img.decompress()
+	img.convert(Image.FORMAT_RGBA8)
+	if img.get_width() != 4 or img.get_height() != 4:
+		img.resize(4, 4, Image.INTERPOLATE_NEAREST)
+	return img
+
+static func _transposed(img: Image) -> Image:
+	var out := Image.create(img.get_height(), img.get_width(), false, Image.FORMAT_RGBA8)
+	for y in img.get_height():
+		for x in img.get_width():
+			out.set_pixel(y, x, img.get_pixel(x, y))
+	return out
 
 static var _blank_arrow_tex: ImageTexture = null
 

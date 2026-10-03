@@ -83,6 +83,30 @@ field spans 260 x 40 picture pixels = 130 x 20, its arrow 40 = 20; the Resolutio
 136 x 18, its arrow 40 x 36 = 20 x 18 -- every number the READ rects give. The value text is
 centred in {5, 0, W-30, H}, white (MEASURED in the picture).
 
+## The open list (READ, round 697)
+
+The combo's open function (`0x486f50`) creates a **CNIFPopupListCtrl** (runtime class 0x115e2c0,
+"CNIFPopupListCtrl"; base CNIFPopup 0x115e2e0; base CNIFStretchWnd 0x115e2a0 -- the class names
+are the descriptors' init strings) as the combo's child:
+
+| What | Value | Where |
+|---|---|---|
+| rect | {0, **20**, W, 0}: x 0, y the constant 0x14 (not the combo's height), the combo's full width | `0x486fc1..0x486fdf` |
+| frame | the six `interface\ifcommon\com_blacksquare_` pieces, as the value field | `0x486f8a`, `0x49b040` |
+| fill (+0x1c4) | the combo's +0x380: **0x80000000** by the constructor (`0x486af3`), **0xb4000000** for every Option-window combo | `0x487050`; `0x5ff1f6` (Brightness), `0x5ff532` (Resolution), `0x6f7200` (each video row) |
+| rows | the item count for every Option combo (no scroll bar) | `0x5ff1d2`, `0x5ff50e`, `0x6f71fb` |
+| list | a CNIFListCtrl at {4, 4}, sized W-8 x H-8 | `0x49b820`, `0x49b920` |
+| height | rows x line + 8 | `0x48707f..0x48708e` |
+| line | the font's height + 4 | `0x49b820`: `FUN_00ba5460(0)` + 4 |
+| item text | normal **0xffffffff**, hover **0xffffff80**, pressed 0xff8080ff | `0x4845a0` -> `0x475d10` with the list's +0x368 / +0x370 / +0x36c |
+| hover bar | on (+0x362 = 1), **0xff8080ff** (+0x3a0), an untextured quad the text's height | `0x49b820`; draw `0x483a70`, `vslot_013 0x483460` |
+| alignment | the combo's own (+0x88 forwarded); the Option window sets 1 (centred) on Resolution and Brightness | `0x4870a1`; `0x5ff1ec`, `0x5ff528` |
+| scroll bar | a CNIFVerticalScroll (child 5), shown only with more items than rows | `0x49bba0` |
+
+So the "transparent black" the user remembers is 0xb4000000: black at 180/255. The Godot list
+(`OptionVideoPage.style_popup`) takes the fill, frame, insets, line, colours, bar and the y of 20;
+it cannot centre its items or show a pressed colour (OURS, docs/TODO.md).
+
 ## The record (READ)
 
 `CGame+0x570` (`FUN_00835240`): a selector byte, then two records of 0x2c bytes -- one per

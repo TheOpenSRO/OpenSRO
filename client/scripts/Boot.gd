@@ -36,6 +36,13 @@ func _ready() -> void:
 	# Before any screen draws, so the login screen is already the size the
 	# player asked for last time (the debug panel changes it live).
 	ClientSettings.apply_ui_scale(get_window(), ClientSettings.ui_scale())
+	# The game's cursor from the first screen on (round 697): retail's first
+	# process state sets resource cursor 0x95 before the login screen
+	# (CPSVersionCheck::vslot_011 0x86d150, READ), read here from the
+	# player's own sro_client.exe (GameCursor; the log names the file or
+	# every path tried).
+	GameCursor.load_once()
+	GameCursor.show(CursorSet.ID_NORMAL, get_window())
 	# The Option window's Video tab (round 694): the window mode and size and
 	# the brightness pass from the start, the login screen included; the
 	# world applies the rest when it loads.

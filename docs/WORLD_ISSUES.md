@@ -7094,6 +7094,155 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Six-hundred-and-ninety-seventh round: the game's own cursors on every screen -- gold arrow, red sword, speech bubble, glove, blue gate disc -- found wherever a player keeps sro_client.exe, scaled with the UI, chosen by the original's class rules on its 250 ms timer; and the Option combos' open list in retail's translucent black
+
+The user (2026-10-03, from memory, no screenshots): "there's a golden cursor that's the default.
+Then when you hover a teleporter it shows a blue teleporter icon. If you hover an npc it shows a
+chat looking icon. If you hover over an enemy it shows a red sword. If you hover a stall (not
+implemented yet) it shows a chest or something like that. Add that feature but make sure you follow
+the code exactly." And: "those dropdown menus that you fixed, the actual dropdown background needs
+to be a transparent black." Later: "hostile mobs count for the red sword and circle too btw", and
+"Scale the cursor with the dpi scaling, just like the rasterized images. It doesn't look great but
+it's authentic and usable."
+
+### 1. Why the user never saw a cursor
+
+Round 206 already read the cursors out of the exe, but `World3D` looked for it only at
+`$SRREVAMP_PK2_PATH`'s folder. A player's build finds its archives in the `pk2` folder by
+`Pk2Config` WITHOUT that variable, so the path was empty and the system arrow stayed -- for every
+player, on every screen. And the user's install is a bare `pk2/` folder with no exe in it.
+
+### 2. What the client does (READ; the full table is docs/protocol/CURSOR.md)
+
+Every direct caller of the three cursor entry points was read (the manager `0xba6260` x4,
+SetHoverCursor `0x777ec0` x16, ForceCursor `0x777e70` x20; asm call sites, the decompile's
+argument-less calls resolved from the pushes):
+
+| Id | Art (MEASURED) | When |
+|---|---|---|
+| 0x95 | gold arrow | default, every screen from `CPSVersionCheck::vslot_011` (0x86d150) on; nothing / a window / a friendly under the mouse |
+| 0x97 | sword, red edge | attackable CICMonster / CICMonsterNPC; enemy guild in fortress war; another team |
+| 0x98 | speech bubble | CICNPC (exact class) |
+| 0x99 / 0x9a | open / closed glove | a CIItem; closed while the left button is held (input +0x258, WM_LBUTTONDOWN) |
+| 0xa0 | sword, bright red edge | a player (or another's COS) outside the party whose IsHostile(Alt held) is true |
+| 0xa1 | blue disc | CITeleportGate |
+| 0xa3 | pouch | a stalling player (+0x471 == 4, set by the 0x30b8 broadcast 0x873c10) -- the user's "chest" |
+| 0x96, 0xa6, 0xae, 0xaf | hammer, bright arrow, socket tools | forced by the store's repair, an item applied to a slot, the socket window |
+
+0x9d, 0x9e, 0x9f, 0xa2 are in the exe and never passed. **Nothing sets a cursor for a
+ground-targeted skill.** The hover is CGInterface's **timer 1, every 250 ms** (`push 0xfa; push 1;
+call 0xb93320`, 0x787294) -- `vslot_005` is the timer handler -- not mouse motion.
+
+**The golden default is the resource 0x95, not the tga.** `Media.pk2`'s
+`cursor\cursor_normal1.tga` decodes to a 32x32 glowing golden hand with alpha (looked at -- art
+identification only); no string in the exe names it (ASCII and UTF-16) and no archive text does
+(raw grep of Media.pk2 and Data.pk2: 0 hits). The manager only ever calls `LoadCursorA` with a
+resource id. The live check below reads the X server's cursor on the login and select screens:
+0x95's own 359 opaque pixels and mean colour.
+
+**Hostility (the user's hostile mobs and players), exactly:** a monster is attackable when its
+vslot 0xdc says so (CICMonster: always, 0x9d3160; CICMonsterNPC: `!(+0x7c8 & 2)`) and the
+interface's set +0x500 holds key 5 (INFERRED "attack allowed") -- except that a player whose job
+mode (vslot 0xac) is 4 (INFERRED: no job) gets the arrow over TypeID 1/2/1/2 and 1/2/1/3, the thief
+and hunter NPC monsters. A player: IsHostile (`0x9de780`) is, in order, another team (+0x81d); the
+base character test (job modes, murder state 0x9c7a40); fortress war enemy guild; differing job
+bytes (+0x824); then -- when not both in job suits -- **Alt held**; then PK flags and a name list
+(0x992a90, unread). Guards and fortress structures are hostile only in fortress war. This client
+has none of teams, fortress war, jobs, murder state or that list, so **Alt over another player is
+the only hostile player** here (0xa0; INFERRED: every other branch tests a state that never
+reaches this client).
+
+### 3. What changed
+
+- **`CursorSet`** (`client/scripts/ui/cursor_set.gd`): every id named; `exe_candidates` -- the
+  `SRREVAMP_CLIENT_EXE` override (OURS), then for `sro_client.exe` and the vSRO
+  `sro_client_NODLL.exe` (same 16 images, MEASURED; the launcher `silkroad.exe` has 1-bit system
+  cursors and is refused) the Data.pk2 folder, its parent, our exe's folder; `load_first` keeps the
+  first that carries 0x95; `scaled` (nearest-neighbour, `round(32k)` clamped to 256, hotspot
+  `floor((h + 0.5)k)`).
+- **`GameCursor`** (new, static): loads once at Boot and shows 0x95 before the login screen;
+  logs `GameCursor: 16 cursor(s) from <path>` or every path tried; one scaled set per UI scale;
+  re-shows on a scale change (`ClientSettings.apply_ui_scale`); the I-beam and link-hand shapes get
+  0x95 (retail's WM_SETCURSOR shows the one cursor everywhere); `player_kind`, `monster_kind`,
+  `item_kind` hold the class rules above; `KIND_IDS` has the stall id with a TODO.
+- **World3D** (cursor code only): the hover on retail's 250 ms timer from the physics step (was a
+  50 ms throttle on motion, ours); in the click's ray order: item 0x99 / 0x9a, the nearest
+  character (monster by `monster_kind`; another player 0xa0 with Alt), the talk ray's gate
+  (`gate_point_id`) 0xa1 -- **before, a gate showed the NPC bubble** -- or NPC 0x98, else 0x95; the
+  hover follows the mouse with the left button held; a `CURSOR: <kind> (0x..) at (x, y)` log line
+  per change; leaving the world puts 0x95 back; the ground pick suspends and resumes the game
+  cursor. QA: `SRREVAMP_QA_CLICK` gained `item` (the nearest drop, retried until one falls).
+- **Scale (OURS, the user's decision):** by `content_scale_factor`, nearest-neighbour. Godot 4.2.2
+  does not rescale again (`DisplayServerWindows::cursor_set_custom_image`: a DIB at the texture's
+  pixel size through `CreateIconIndirect`, DPI-aware process). At 4K with UI scale 2.0 the cursor
+  is 64 x 64 screen pixels with doubled pixels. (Round 672's UI ART is drawn LINEAR, only its text
+  NEAREST; the cursor follows the request, nearest -- the user's to change.)
+- **The Option combos' open list** (`OptionVideoPage.style_popup`, READ in
+  docs/protocol/OPTION_VIDEO.md "The open list"): retail's CNIFPopupListCtrl, fill **0xb4000000**
+  (black at alpha 180 -- the "transparent black"; 0x80000000 is the class default, every Option
+  combo sets 0xb4), the com_blacksquare_ frame, the list 4 px in, line = font + 4, rows x line + 8
+  tall, white text, hover text 0xffffff80 on a 0xff8080ff bar the text's height, no radio marks, 20
+  below the combo's top. OURS where PopupMenu cannot: left-aligned (retail centres Resolution and
+  Brightness), no pressed colour.
+
+### 4. Tests
+
+`remote_godot.sh check`: ALL LOAD (553 scripts). `tests`: 214 suites, 0 failing. New:
+`ui/game_cursor_test.gd` (the kind -> id table, the player / monster / item rules, the per-scale
+cache, show / suspend / resume), `ui/cursor_set_test.gd` (+ the search order, scaling at 1.0, 1.5,
+1.95, 2.0 with the hotspot mapping back to its source pixel and the pixel under it, the 256 clamp),
+`ui/hud/option_popup_test.gd` (every READ value, the margins, the 12 x 12 frame).
+
+### 5. Live, real X input (MEASURED; box, Xvfb :697, xdotool, Compatibility; `/var/tmp/cursor697/live.sh`, `live2.sh`)
+
+A server from this tree (`-in-memory -chargen-csv`, the box's retail export). `XCUR` is the X
+server's own cursor (XFixesGetCursorImage), against each decoded resource (size, hotspot, opaque
+pixels, mean colour):
+
+| Where | Client log | X cursor | Is |
+|---|---|---|---|
+| no exe in the pk2 folder, its parent or Godot's folder | `GameCursor: no sro_client.exe found -- ... Tried: <6 paths>` | 24x24 system arrow | -- |
+| exe one folder above the pk2 folder | `GameCursor: 16 cursor(s) from /var/tmp/cursor697/sro_client.exe` | | |
+| Boot, login screen, character select (Boot -> Login -> select -> world) | | 32x32 (2,1) 359 px (130,126,93) | 0x95 |
+| a gate | `CURSOR: gate (0xa1)` | 32x32 (0,0) 711 px (113,147,142) | 0xa1 |
+| the storage keeper (NPC_CH_WAREHOUSE_M) | `CURSOR: talk (0x98)` | 32x32 (2,26) 745 px (200,200,193) | 0x98 |
+| the same with Alt held | | unchanged | 0x98 |
+| a tiger (farmland 96/168) | `CURSOR: attack (0x97)` | 32x32 (2,1) 370 px (167,139,111) | 0x97 |
+| its gold drop | `CURSOR: pickup (0x99)` | 32x32 (9,6) 515 px | 0x99 |
+| the same, left button held | `CURSOR: pickup_held (0x9a)` | 32x31 (9,4) 504 px | 0x9a |
+| ground; the minimap; the inventory open (I) and over it, then closed | `CURSOR: normal (0x95)` | 0x95 each time | 0x95 |
+| UI scale 2.0 / 1.5 | | 64x64 (5,3) 1436 px / 48x48 (3,2) 807 px | 0x95 x2 / x1.5 |
+
+The Login-route run's QA commands did not run (no `/spawn`), so the monster and item rows come from
+the World3D-signed-in runs.
+
+### 6. Performance
+
+`client/tools/perf_gate.sh --sites jangan --frames 12000` (base e1ccf792 against this working
+tree, both Forward+, native readers off, 1280x720, median of 3):
+
+```
+jangan  frame ms   base 1.64  head 1.65  (+0.0)  SAME
+jangan  entry ms   base 9422  head 9395  (-27.0)  SAME
+jangan  freeze ms  base 3317  head 3324  (+7.0)  SAME
+jangan  hitches    base 4  head 4  (+0.0)  SAME
+```
+
+The gate's views move no mouse, so the classification itself was timed by the QA click hook
+(`QA CURSOR ... classify N us`, qa_shot at the Jangan spawn, MEASURED): a gate 43 and 30 us, an NPC
+33 us, the ground 22 and 22 us -- once per 250 ms while the mouse is over the world, so under 0.2 us
+per millisecond of play. The cursor images are made once per UI scale and cached; a hover change
+hands Godot a texture it already has. (A first timing run went to the box's default
+`/opt/srrevamp-client` -- qa_shot's `CLIENT_DIR` default -- and timed the old code; its numbers are
+not used.)
+
+### 7. OPEN (docs/TODO.md "The mouse cursor")
+
+Stall 0xa3 wired, unreachable (no stall state reaches this client); hostile players only by Alt;
+the forced cursors wait for their windows; the cursor is not hidden while the camera turns; a window
+opened under a still mouse keeps the world's cursor until the mouse moves; the ground pick's cross
+is ours (retail has none) -- the user's call; the list's centring and pressed colour.
+
 ## Six-hundred-and-ninety-sixth round: in a window the chosen resolution sizes the OS window (a maximised window is restored first), and every Option combo draws the original's black value box
 
 The user (2026-10-02, on v0.1.480, Windows at about 4K, UI scale ~1.95, window mode at 3840 x 2019):

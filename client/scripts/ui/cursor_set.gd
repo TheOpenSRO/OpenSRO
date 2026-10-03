@@ -3,32 +3,76 @@ class_name CursorSet
 
 ## The game's mouse cursors, read out of the player's own `sro_client.exe`.
 ##
-## The original draws no cursor art from the archives: `Media.pk2` holds a
-## single `cursor\cursor_normal1.tga`, and the client hides the system cursor
-## (`SetCursor(NULL)`) and sets Win32 *resource* cursors by id --
-## `LoadCursorA(hInstance, MAKEINTRESOURCE(id))` in the cursor manager at
-## `0x00ba6260`, fed by `SetHoverCursor` (`0x00777ec0`) from the mouse-move
-## handler `CGInterface::vslot_005` (`0x00789820`). That handler picks the
-## object under the mouse and chooses the id by the object's class:
+## **What the client shows (READ, round 697).** The cursor manager at
+## `0x00ba6260` takes an id and does `LoadCursorA(hInstance,
+## MAKEINTRESOURCE(id))` then `SetCursor` (while its show flag +0x20 is set;
+## the constructor 0xba6960 sets it, and WM_SETCURSOR in the main window's
+## proc 0xba6f10 re-sets the same handle). So every cursor is a Win32
+## *resource* cursor; `Media.pk2`'s lone `cursor\cursor_normal1.tga` (a 32x32
+## golden hand with alpha, MEASURED) is named nowhere in the exe (ASCII and
+## UTF-16 searched) and no archive text names it (raw grep of Media.pk2 and
+## Data.pk2: 0 hits) -- it is never drawn. The default "golden" cursor is
+## resource 0x95, set before the login screen (CPSVersionCheck::vslot_011
+## 0x86d150 calls the manager with 0x95) and on every screen after it.
 ##
-##   default / nothing hostile        0x95   (arrow, hotspot 2,1)
-##   CICMonster, hostile CICUser/Guard 0x97  (attack)
-##   CICNPC                           0x98   (talk, hotspot 2,26)
-##   CIItem on the ground             0x99   (pick up; 0x9a with a modifier)
-##   CITeleportGate                   0xa1
-##   CICUser / CICCos with Alt held   0xa0
+## Who sets an id -- every direct caller of the three entry points (0xba6260
+## x4, SetHoverCursor 0x777ec0 x16, the forced cursor 0x777e70 x20; asm):
 ##
-## So the art lives in the exe's `.rsrc` section as RT_GROUP_CURSOR (type 12)
-## groups over RT_CURSOR (type 1) images: 17 groups, ids 0x95..0xaf, each a
-## 32x32 8-bit DIB with an AND mask and a real hotspot (the first two WORDs
-## of the RT_CURSOR data). Nothing here is extracted or shipped: the exe sits
-## beside the archives the client already opens, and is parsed the same way.
+##   0x95  arrow: default, nothing under the mouse, a window under it,
+##         friendly characters; version check, skill-mastery toggle, Escape
+##   0x96  hammer: the NPC store's repair mode (CIFStore 0x6cea60, the
+##         package store 0x6d28d0), forced
+##   0x97  red-edged sword: an attackable CICMonster / CICMonsterNPC; a
+##         CICUser, CICCos owner, CICGuard or CICATStruct in an enemy guild in
+##         a siege-fortress zone; a CICUser of another team (+0x81d)
+##   0x98  speech bubble: a CICNPC (exact class, so a CICGuard is not one)
+##   0x99  open glove: a CIItem on the ground; 0x9a closed glove while the
+##         left button is held (input manager +0x258, set by WM_LBUTTONDOWN)
+##   0xa0  bright red sword: a CICUser or another's CICCos outside the party
+##         for whom the target's IsHostile(Alt held) (vslot 0xa8) is true
+##   0xa1  blue disc: a CITeleportGate
+##   0xa3  pouch: a CICUser whose +0x471 is 4 -- the stall state the 0x30b8
+##         broadcast (0x873c10) sets
+##   0xa6  bright gold arrow: an inventory item applied to another slot,
+##         forced (0x676570)
+##   0xae / 0xaf  the socket window's two modes, forced (0x592be0 / 0x592c30)
+##
+## 0x9d, 0x9e, 0x9f and 0xa2 are in the exe but no call passes them (literal
+## pushes and the decompile both searched). Nothing sets a cursor for a
+## ground-targeted skill. The hover is re-chosen by CGInterface's timer 1
+## every 250 ms (`push 0xfa; push 1; call 0xb93320` at 0x787294), not on
+## mouse motion: `CGInterface::vslot_005` is the timer handler and case 1 is
+## the hover (`0x00789820`), picking the object under the mouse with
+## FUN_0078ee20 (no self) and testing its class by exact runtime class.
+##
+## The art lives in the exe's `.rsrc` as RT_GROUP_CURSOR (type 12) groups
+## over RT_CURSOR (type 1) images: 16 numbered groups, ids 0x95..0xaf, and one named (skipped),
+## 8-bit DIBs with an AND mask and a hotspot (the first two WORDs of the
+## RT_CURSOR data); 32x32 except 0x96 (34x34) and 0x9a (32x31), and 0x99
+## carries a second 36x34 image after its 32x32 one (MEASURED). Nothing here
+## is extracted or shipped: the exe the player has is parsed at runtime.
 
 const ID_NORMAL := 0x95
+const ID_REPAIR := 0x96
 const ID_ATTACK := 0x97
 const ID_TALK := 0x98
 const ID_PICKUP := 0x99
+const ID_PICKUP_HELD := 0x9a
+const ID_PLAYER_HOSTILE := 0xa0
 const ID_GATE := 0xa1
+const ID_STALL := 0xa3
+const ID_ITEM_USE := 0xa6
+
+## The client exe's names worth reading (round 697): retail's, and the vSRO
+## package's DLL-less copy, whose cursor groups decode to the same 16 images
+## (MEASURED on the box). The launcher `silkroad.exe` is NOT one: its 15
+## cursor groups are 1-bit system-style images (ids 0x7901..), MEASURED.
+const EXE_NAMES := ["sro_client.exe", "sro_client_NODLL.exe"]
+
+## Godot's limit on a custom cursor image (DisplayServerWindows /
+## DisplayServerMacOS::cursor_set_custom_image, 4.2.2: width or height over
+## 256 fails).
+const MAX_CURSOR_SIZE := 256
 
 const RT_CURSOR := 1
 const RT_GROUP_CURSOR := 12
@@ -71,6 +115,69 @@ static func exe_beside(pk2_path: String) -> String:
 	if pk2_path == "":
 		return ""
 	return pk2_path.get_base_dir().path_join("sro_client.exe")
+
+## Where a player's install has the client exe, in the order tried (round
+## 697): `override` (SRREVAMP_CLIENT_EXE, OURS, for a dev box) first; then,
+## for each of EXE_NAMES, the folder of Data.pk2 (retail's layout), its
+## parent (a `pk2` folder made inside the install, or beside our exe inside
+## the install), and the folder of our own executable. Duplicates are
+## dropped, so a pk2 folder that is our exe's folder is tried once.
+static func exe_candidates(data_pk2: String, own_exe: String, override: String = "") -> PackedStringArray:
+	var out := PackedStringArray()
+	if override != "":
+		out.append(override)
+	var dirs: Array[String] = []
+	if data_pk2 != "":
+		var d := data_pk2.get_base_dir()
+		dirs.append(d)
+		var parent := d.get_base_dir()
+		if parent != "" and parent != d:
+			dirs.append(parent)
+	if own_exe != "":
+		dirs.append(own_exe.get_base_dir())
+	for exe_name in EXE_NAMES:
+		for d in dirs:
+			var p := String(d).path_join(String(exe_name))
+			if not out.has(p):
+				out.append(p)
+	return out
+
+## Reads the first candidate that exists and carries the default cursor
+## (ID_NORMAL): {"path": the file used or "", "cursors": {id: Cursor},
+## "tried": every path looked at, in order}. Never guesses: no file, no set.
+static func load_first(candidates: PackedStringArray) -> Dictionary:
+	var tried := PackedStringArray()
+	for p in candidates:
+		tried.append(p)
+		if not FileAccess.file_exists(p):
+			continue
+		var found := load_from_exe(p)
+		if found.has(ID_NORMAL):
+			return {"path": p, "cursors": found, "tried": tried}
+	return {"path": "", "cursors": {}, "tried": tried}
+
+## A cursor scaled by the UI scale (round 697, the user's decision: "Scale
+## the cursor with the dpi scaling, just like the rasterized images" --
+## OURS; the 32x32 art and its hotspot are READ). Nearest-neighbour, the size
+## rounded and clamped to 1..MAX_CURSOR_SIZE; the hotspot is the scaled
+## centre of its own source pixel, floor((h + 0.5) * k), so it lands inside
+## the block that pixel became, and stays within the image. Returns
+## [Image, Vector2i].
+static func scaled(cur: Cursor, factor: float) -> Array:
+	var w: int = cur.image.get_width()
+	var h: int = cur.image.get_height()
+	var k := maxf(factor, 0.01)
+	var sw := clampi(roundi(w * k), 1, MAX_CURSOR_SIZE)
+	var sh := clampi(roundi(h * k), 1, MAX_CURSOR_SIZE)
+	var img: Image = cur.image
+	if sw != w or sh != h:
+		img = cur.image.duplicate() as Image
+		img.resize(sw, sh, Image.INTERPOLATE_NEAREST)
+	var kx := float(sw) / float(w)
+	var ky := float(sh) / float(h)
+	var hot := Vector2i(clampi(floori((cur.hotspot.x + 0.5) * kx), 0, sw - 1),
+		clampi(floori((cur.hotspot.y + 0.5) * ky), 0, sh - 1))
+	return [img, hot]
 
 # --- PE -----------------------------------------------------------------
 

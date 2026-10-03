@@ -5859,6 +5859,13 @@ func _exit_tree() -> void:
 		print(ParseProfile.report("after the entry"))
 	SoundTable.set_listener(null)
 	_leave_ground_pick("the world left the tree")
+	# The screens after the world (character select, login) show the
+	# default cursor, as retail's do (round 697).
+	if not title_mode:
+		GameCursor.show(CursorSet.ID_NORMAL, get_window())
+		if _cursor_classify_count > 0:
+			print("CURSOR: %d hover classification(s), %.1f us each on average" % [
+				_cursor_classify_count, float(_cursor_classify_usec) / _cursor_classify_count])
 	# The skilleffect.txt parse (_preload_skill_effect_table) is not left
 	# running behind a world that is gone.
 	if _skill_table_task >= 0:
@@ -9509,10 +9516,13 @@ func _play_other_cast_anim(character_id: int, skill_id: int) -> float:
 		anim = _body_animation_for(body, BsrReader.AnimationEntry.TYPE_ATTACK, group)
 	return _play_once(skel, anim) if anim != null else 0.0
 
-## The ground-pick mode's cursor. OURS: retail's ground-cast cursor (and its
-## decal) is not read (skills_spec §6, OPEN), so the mode shows the system
-## cross in place of the game's arrow, and the hover cursor is not settled
-## while it lasts (_settle_hover_cursor).
+## The ground-pick mode's cursor. OURS: the mode shows the system cross in
+## place of the game's arrow, and the hover cursor is not settled while it
+## lasts (_settle_hover_cursor). Round 697 read every caller of the client's
+## cursor manager: none sets a cursor for a ground-targeted skill (the
+## forced cursors are the store's repair, an item applied to a slot and the
+## socket window's two modes), so retail keeps its hover cursor here -- the
+## cross is ours, kept until the user decides (docs/TODO.md).
 ## The default cursor shape this world last set -- kept because a headless
 ## display server reports none back (Input.get_current_cursor_shape), so the
 ## suite reads this.
@@ -9523,16 +9533,16 @@ func _set_default_cursor(shape: Input.CursorShape) -> void:
 	_default_cursor_shape = shape
 
 func _begin_ground_pick_cursor() -> void:
-	Input.set_custom_mouse_cursor(null, Input.CURSOR_ARROW)
+	GameCursor.suspend()
 	_set_default_cursor(Input.CURSOR_CROSS)
 	print("GROUND PICK: cursor -> cross (ours)")
 
 func _end_ground_pick_cursor() -> void:
 	_set_default_cursor(Input.CURSOR_ARROW)
 	# Force the game's arrow back on (it is only re-applied on a change).
-	_cursor_kind = ""
-	if not _cursor_textures.is_empty():
-		_apply_cursor("normal")
+	_cursor_kind = "normal"
+	if GameCursor.is_suspended():
+		GameCursor.resume(get_window())
 
 ## Ends ground-pick mode, if it is on, saying why in the log.
 func _cancel_ground_pick(why: String) -> bool:
@@ -11042,7 +11052,8 @@ func _update_blob_shadow() -> void:
 ##                          _bind_region_gates bound, aimed at the middle of
 ##                          its drawn box
 ##                          "wait:<ticks>" (round 650) in the list pauses
-##                          between two clicks ("gate,wait:2400,gate")
+##                          between two clicks ("gate,wait:2400,gate");
+##                          "item" (round 697) the nearest dropped item
 ##   SRREVAMP_QA_CLICK_WAIT=<ticks> (round 646) the ticks before the first
 ##                          click (default 120)
 ##   SRREVAMP_QA_ARRIVAL_PROBE=1 (round 690) after the entry, every zone change
@@ -12982,7 +12993,8 @@ func _qa_advance_click() -> void:
 		if _qa_click_target.is_empty():
 			# A named NPC may be in a region still streaming in after a /tp
 			# (round 642): look again for up to a minute before giving up.
-			if kind.begins_with("npc:") and _qa_click_retries < 60:
+			# A dropped item (round 697) may not have fallen yet: the same.
+			if (kind.begins_with("npc:") or kind == "item") and _qa_click_retries < 60:
 				_qa_click_retries += 1
 				_qa_click_wait = 60
 				return
@@ -13037,11 +13049,15 @@ func _qa_advance_click() -> void:
 		# The cursor the same point would show, and a swatch of it drawn at
 		# that point so the frame carries the decoded art (the OS cursor is
 		# never in an offscreen frame; this is a QA swatch, not the cursor).
+		var t0 := Time.get_ticks_usec()
 		var hover := _hover_kind_at(screen)
-		var cid: int = CURSOR_KIND_IDS.get(hover, -1)
-		print("QA CURSOR at %s: kind=%s id=0x%x hotspot=%s (of %d loaded) frame %d" % [
-			str(screen.round()), hover, cid, str(_cursor_hotspots.get(cid, Vector2i(-1, -1))),
-			_cursor_textures.size(), Engine.get_frames_drawn()])
+		var took_usec := Time.get_ticks_usec() - t0
+		var cid: int = GameCursor.id_for(hover)
+		var entry := GameCursor.scaled_entry(cid, get_window().content_scale_factor)
+		print("QA CURSOR at %s: kind=%s id=0x%x size=%s hotspot=%s scale %.2f (from %s) classify %d us frame %d" % [
+			str(screen.round()), hover, cid, str(entry[0].get_size()) if not entry.is_empty() else "-",
+			str(entry[1]) if not entry.is_empty() else "-", get_window().content_scale_factor,
+			GameCursor.source_path() if GameCursor.has_cursors() else "no exe", took_usec, Engine.get_frames_drawn()])
 		_qa_show_cursor_swatch(cid, screen)
 	_qa_click_queue.pop_front()
 	_qa_click_stage = 0
@@ -13156,6 +13172,15 @@ func _qa_click_target_for(kind: String) -> Dictionary:
 			if best_g == null:
 				return {}
 			return _qa_gate_target(best_g)
+		"item":
+			# The nearest dropped item (round 697, for the hover cursor's
+			# live check): aimed at its spot on the ground.
+			if _ground_items == null:
+				return {}
+			var gid := _ground_items.nearest_id(player.global_position)
+			if gid < 0:
+				return {}
+			return {"pos": _ground_items.position_of(gid), "half_height": 0.0, "name": "ground item %d" % gid}
 		"ground":
 			var spot := player.global_position + Vector3(0.0, 0.0, 30.0)
 			var pair := _nav_graph_for(spot)
@@ -13170,7 +13195,8 @@ func _qa_click_target_for(kind: String) -> Dictionary:
 ## size with its hotspot on the point -- a QA stand-in for the OS cursor,
 ## which offscreen frames never capture.
 func _qa_show_cursor_swatch(cursor_id: int, at: Vector2) -> void:
-	if not _cursor_textures.has(cursor_id):
+	var entry := GameCursor.scaled_entry(cursor_id, 1.0)
+	if entry.is_empty():
 		return
 	var swatch: TextureRect = get_node_or_null("UI/QaCursorSwatch")
 	if swatch == null:
@@ -13180,10 +13206,10 @@ func _qa_show_cursor_swatch(cursor_id: int, at: Vector2) -> void:
 		swatch.stretch_mode = TextureRect.STRETCH_SCALE
 		swatch.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 		$UI.add_child(swatch)
-	var tex: Texture2D = _cursor_textures[cursor_id]
+	var tex: Texture2D = entry[0]
 	swatch.texture = tex
 	swatch.size = tex.get_size() * 2.0
-	swatch.position = at - Vector2(_cursor_hotspots[cursor_id]) * 2.0
+	swatch.position = at - Vector2(entry[1]) * 2.0
 
 ## The QA click's target for a bound gate (round 577): the middle of its
 ## drawn meshes' world box -- "pos" the box's bottom centre, "half_height"
@@ -14028,6 +14054,7 @@ func _physics_process(delta: float) -> void:
 		_title_physics(delta)
 		return
 	var sw := Time.get_ticks_usec()
+	_hover_tick()
 	if _qa_split != null:
 		_qa_split.on_step(Engine.get_frames_drawn())
 	SkillEffects.tick(delta)
@@ -15640,40 +15667,37 @@ static func orbit_motion_applies(event: InputEvent, orbiting: bool, camera_view:
 ## _npc_collider puts on NAVMESH_WALL_COLLISION_LAYER); returns true when it
 ## opened a dialogue, so the caller does not also walk there. The holder the
 ## collider hangs under carries the NPC's name (set where it is placed).
-## The game's own cursors (see CursorSet), keyed by resource id, as textures
-## for Input.set_custom_mouse_cursor with each one's hotspot. Empty when the
-## client exe is not beside the archives -- the system arrow then stays, and
-## the log says so once.
-var _cursor_textures: Dictionary = {}
-var _cursor_hotspots: Dictionary = {}
+## The game's own cursors (round 697: GameCursor holds the set, read once
+## at boot from the player's sro_client.exe, and shows it on every screen at
+## the UI scale). The world only chooses which: the hover kind under the
+## mouse, re-chosen on retail's timer -- CGInterface's timer 1 fires every
+## 250 ms (`push 0xfa; push 1; call 0xb93320`, 0x787294, READ) and its
+## handler (vslot_005 case 1, 0x789820) picks the object and its cursor. It
+## was a 50 ms throttle on mouse motion until round 697 (ours); the timer
+## also turns the cursor when a monster walks under a still mouse.
 var _cursor_kind := ""
 var _cursor_last_check_ms := 0
-const CURSOR_HOVER_INTERVAL_MS := 50
-## Hover kind -> the resource id the client's own mouse-move handler picks
-## for that object class (CGInterface::vslot_005; the table in CursorSet).
-const CURSOR_KIND_IDS := {
-	"normal": CursorSet.ID_NORMAL, "attack": CursorSet.ID_ATTACK, "talk": CursorSet.ID_TALK,
-	"pickup": CursorSet.ID_PICKUP, "gate": CursorSet.ID_GATE,
-}
+const CURSOR_HOVER_INTERVAL_MS := 250
+## Classification cost, for the perf note: microseconds summed and counted.
+var _cursor_classify_usec := 0
+var _cursor_classify_count := 0
 
 func _try_load_cursors() -> void:
-	var loaded := CursorSet.load_from_exe(CursorSet.exe_beside(OS.get_environment("SRREVAMP_PK2_PATH")))
-	for id in loaded:
-		var cur: CursorSet.Cursor = loaded[id]
-		_cursor_textures[id] = ImageTexture.create_from_image(cur.image)
-		_cursor_hotspots[id] = cur.hotspot
-	if not _cursor_textures.is_empty():
-		_apply_cursor("normal")
+	GameCursor.load_once()
+	_cursor_kind = ""
+	_apply_cursor("normal")
 
 ## Every mouse motion is seen here first; whether it then reaches
-## _unhandled_input says if a window consumed it. The hover is settled once
-## per frame, deferred, after both have had their turn -- so the cursor is
-## the arrow over a window and the world's kind over the world, using the
-## engine's own GUI routing rather than a hit-test of our own (4.2 has no
-## gui_get_hovered_control; that arrived in 4.3).
+## _unhandled_input says if a window consumed it. The hover tick
+## (_hover_tick, from _physics_process) reads both after the frame's input
+## has been routed -- so the cursor is the arrow over a window and the
+## world's kind over the world, using the engine's own GUI routing rather
+## than a hit-test of our own (4.2 has no gui_get_hovered_control; that
+## arrived in 4.3). Retail's tick asks the same question: a window under the
+## mouse that is not the interface itself gives 0x95 (FUN_00b9dc00 !=
+## CGInterface, READ).
 var _hover_pos := Vector2.ZERO
 var _hover_reached_world := false
-var _hover_settle_queued := false
 
 func _input(event: InputEvent) -> void:
 	if title_mode:
@@ -15698,46 +15722,95 @@ func _input(event: InputEvent) -> void:
 			camera_arm.rotation_degrees.x = clampf(
 				camera_arm.rotation_degrees.x - motion.relative.y * CAMERA_ORBIT_SENSITIVITY,
 				CAMERA_PITCH_MIN_DEGREES, CAMERA_PITCH_MAX_DEGREES)
-	if event is InputEventMouseMotion and not _camera_orbiting and not _left_button_held:
+	# The hover follows the mouse with the left button held too (retail's
+	# tick runs then, and a held button over an item is the closed glove).
+	if event is InputEventMouseMotion and not _camera_orbiting:
 		_hover_pos = (event as InputEventMouseMotion).position
 		_hover_reached_world = false
-		if not _hover_settle_queued:
-			_hover_settle_queued = true
-			call_deferred("_settle_hover_cursor")
+
+## The hover tick (_physics_process): retail's 250 ms timer.
+func _hover_tick() -> void:
+	if Time.get_ticks_msec() - _cursor_last_check_ms >= CURSOR_HOVER_INTERVAL_MS:
+		_settle_hover_cursor()
 
 func _settle_hover_cursor() -> void:
-	_hover_settle_queued = false
+	_cursor_last_check_ms = Time.get_ticks_msec()
 	# Ground-pick mode keeps its own cursor (round 617).
 	if _self_cast.picking():
 		return
-	var now := Time.get_ticks_msec()
-	if now - _cursor_last_check_ms < CURSOR_HOVER_INTERVAL_MS:
-		return
-	_cursor_last_check_ms = now
+	GameCursor.refresh(get_window())
 	# Also when the game's cursors are not there: the item under the mouse
 	# shows its name (_hovered_ground_item).
+	var t0 := Time.get_ticks_usec()
 	var kind := _hover_kind_at(_hover_pos) if _hover_reached_world else "normal"
-	if kind != "pickup":
+	_cursor_classify_usec += Time.get_ticks_usec() - t0
+	_cursor_classify_count += 1
+	if kind != "pickup" and kind != "pickup_held":
 		_hovered_ground_item = -1
-	if not _cursor_textures.is_empty():
-		_apply_cursor(kind)
+	_apply_cursor(kind)
 
-## What the cursor should be over this screen point in the world: the rays
-## the click uses, in the same order -- a dropped item means pick up (and
-## notes the item, whose name then shows: _hovered_ground_item), a monster's
-## click capsule attack, an NPC's talk, anything else the arrow. Gates plug
-## in here when the world has them. A monster hidden by held V is passed
-## over, as its click is (inferred; _apply_key_holds).
+## What the cursor should be over this screen point in the world, in the
+## order the click dispatch tests the same rays (_dispatch_left_click), so
+## the cursor says what a click there would do:
+##   a dropped item       -> pickup (0x99), pickup_held (0x9a) with the left
+##                           button down; notes the item, whose name shows
+##   the nearest character -> a monster: GameCursor.monster_kind (0x97, or
+##                           0x95 for a job monster to a jobless player);
+##                           another player: GameCursor.player_kind (0xa0
+##                           outside the party with Alt held, else 0x95)
+##   the talk ray          -> a gate's pick node (gate_point_id): gate (0xa1),
+##                           an NPC: talk (0x98)
+##   anything else         -> normal (0x95)
+## Retail picks the one nearest object of any class (FUN_0078ee20) and
+## switches on its class (vslot_005); this client's click tests the item
+## first on purpose (round 207: an item at a monster's feet sits inside the
+## monster's tall capsule), and the cursor follows the click. A monster or
+## player hidden by held V is passed over, as its click is.
 func _hover_kind_at(screen_pos: Vector2) -> String:
 	var item := _ray_hit_tagged(screen_pos, GroundItems.GROUND_ITEM_COLLISION_LAYER, "ground_item_id")
 	if item != null:
 		_hovered_ground_item = int(item.get_meta("ground_item_id"))
-		return "pickup"
-	if not _objects_hidden and _ray_hit_tagged(screen_pos, MONSTER_COLLISION_LAYER, "monster_id") != null:
-		return "attack"
-	if _talk_ray_at(screen_pos)["node"] != null:
-		return "talk"
+		return GameCursor.item_kind(Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT))
+	if not _objects_hidden:
+		var who := _ray_hit_character(screen_pos)
+		if who != null:
+			if who.has_meta("monster_id"):
+				if _dying_until.has(int(who.get_meta("monster_id"))):
+					return "normal"
+				return GameCursor.monster_kind(_monster_code_of(int(who.get_meta("monster_id"))))
+			# Another player: no party, stall or team state reaches this
+			# client yet (GameCursor.player_kind).
+			return GameCursor.player_kind(GameCursor.player_hostile(Input.is_key_pressed(KEY_ALT)), false, false)
+	var talk_node := _talk_ray_at(screen_pos)["node"] as Node
+	if talk_node != null:
+		return "gate" if talk_node.has_meta("gate_point_id") else "talk"
 	return "normal"
+
+## The character under a screen point, as the click's pick finds it
+## (_pick_character's mask without the Shift self body: retail's hover pick
+## passes 0 for include-self): the first ancestor of the nearest monster or
+## player collider carrying monster_id or character_id, or null.
+func _ray_hit_character(screen_pos: Vector2) -> Node:
+	var from := camera_3d.project_ray_origin(screen_pos)
+	var dir := camera_3d.project_ray_normal(screen_pos)
+	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 2000.0)
+	query.exclude = [player.get_rid()]
+	query.collision_mask = MONSTER_COLLISION_LAYER | OTHER_PLAYER_COLLISION_LAYER
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty():
+		return null
+	var node := hit["collider"] as Node
+	while node != null and not (node.has_meta("monster_id") or node.has_meta("character_id")):
+		node = node.get_parent()
+	return node
+
+## A live monster's characterdata code (MonsterSnapshot.code_name), "" when
+## unknown.
+func _monster_code_of(monster_id: int) -> String:
+	var snap = _monster_snapshots.get(monster_id)
+	if snap != null and snap is CombatNet.MonsterSnapshot:
+		return (snap as CombatNet.MonsterSnapshot).code_name
+	return ""
 
 ## The tagged node under a screen point on a collision layer, or null: the
 ## ray from the camera through the point, then the first ancestor of the
@@ -15756,15 +15829,16 @@ func _ray_hit_tagged(screen_pos: Vector2, mask: int, meta: String) -> Node:
 		node = node.get_parent()
 	return node
 
-## Sets the mouse cursor for a kind (CURSOR_KIND_IDS) when it changes.
+## Shows the cursor for a hover kind (GameCursor.KIND_IDS) when it changes,
+## and says so in the log: one line per change, the evidence a tester's log
+## carries for "which cursor did it pick there".
 func _apply_cursor(kind: String) -> void:
 	if kind == _cursor_kind:
 		return
-	var id: int = CURSOR_KIND_IDS.get(kind, CursorSet.ID_NORMAL)
-	if not _cursor_textures.has(id):
-		return
-	Input.set_custom_mouse_cursor(_cursor_textures[id], Input.CURSOR_ARROW, _cursor_hotspots[id])
 	_cursor_kind = kind
+	GameCursor.show_kind(kind, get_window())
+	if GameCursor.has_cursors():
+		print("CURSOR: %s (0x%x) at %s" % [kind, GameCursor.id_for(kind), str(_hover_pos.round())])
 
 ## The original's left-click scheme, in the original's order: a click on a
 ## monster attacks it, on an NPC talks to it, and anywhere else walks there.

@@ -399,8 +399,10 @@ In order. Each is checked off here when it ships in a release, with its round in
       decoded (`NetClient.buff_started` / `buff_ended` / `skill_moved`, `send_buff_cancel`), the
       buff's `runSpeed` sets the run speed and OpSkillMove snaps the player. Still open:
       the server half (round 616) was not live-tested with it; the Ghost Walk move is a snap
-      (duration OPEN, `tele` value[0] = 500 unread); retail's ground-pick cursor and decal (the
-      cross is ours); the retail answer for a Target_Required 1 heal with nothing selected
+      (duration OPEN, `tele` value[0] = 500 unread); retail's ground-pick decal (round 697: retail
+      sets NO cursor for a ground cast -- every caller of its cursor manager was read,
+      docs/protocol/CURSOR.md -- so the cross is ours; keep it or show the game's hover cursor is
+      the user's call); the retail answer for a Target_Required 1 heal with nothing selected
       (READ in round 622: refused, 0x3011); the targetType echo, ownerKind and OpSelfId 0x00F9 (review
       follow-up) need round 616's server to send them -- until then the client falls back to the
       request queue and learns its own id from its own casts' answers;
@@ -747,6 +749,30 @@ the next cohesive piece after that.
 Panels, the window recipe, and the reference screenshots. The item below is the part of it that
 touches this file.
 
+### The mouse cursor (round 697) — **the game's cursors from the player's sro_client.exe on every screen, at the UI scale; these are left**
+
+`docs/protocol/CURSOR.md` has every id the client sets and the hover's class rules.
+
+- [ ] **The player must have sro_client.exe** beside Data.pk2, one folder above it, or beside our
+      exe (`sro_client_NODLL.exe` also accepted). Without it the system arrow stays and the log
+      lists every path tried. Nothing is shipped.
+- [ ] **Stall (0xa3)** is wired (`GameCursor.KIND_IDS`, `player_kind`'s `stalling`) and
+      unreachable: no other player's stall state (the 0x30b8 broadcast) reaches this client.
+- [ ] **Hostile players** show 0xa0 only with Alt held: teams (+0x81d), fortress war, job modes,
+      the murder state and the list `0x992a90` reads are not in this client. Each plugs into
+      `GameCursor.player_kind` / `player_hostile` when it arrives; guards and fortress structures
+      likewise (no CICGuard / CICATStruct here).
+- [ ] **Not built:** the forced cursors (store repair 0x96, item applied to a slot 0xa6, socket
+      0xae / 0xaf) wait for those windows; the cursor is not hidden while the camera turns (retail
+      hides it and puts it back at the press point, `0x77b140`); the job-monster test reads the
+      code name, not the TypeID column (equivalent on the box's archive, MEASURED).
+- [ ] **A window opened under a still mouse** keeps the world's cursor until the mouse moves
+      (retail re-tests the window under the mouse every tick; Godot 4.2 has no hovered-control
+      query).
+- [ ] **Scale** (OURS, the user's decision 2026-10-03): nearest-neighbour by the UI scale. A
+      native macOS build would double it again (NSImage points); the CrossOver run is not
+      measured.
+
 ### The keyboard — **the retail key table since round 608; what it cannot do yet**
 Every key is `client/scripts/ui/keymap.gd` (`KeyMap.SLOTS`, the 33 retail slots, plus
 `OTHER_KEYS`), run by `KeyInput` and, for the windows, `HudPanels`. No key walks the character
@@ -952,9 +978,14 @@ the following:
       Live would mean rebuilding every loaded region's water and mirror terrain.
 - [ ] **Inferred, not read:** a hand-set row switching the record to User (the slot's change
       handler); the scroll bar's line step; Effect Quality 1's two owner tests (FUN_00b94b70 on
-      DAT_00ef1a84 / b44). The combo's field, arrow and text rects are READ (round 696); its open
-      list (a Godot PopupMenu here) and the six-piece frame's UVs (`0x49a140` / `0x49a7d0`: the
+      DAT_00ef1a84 / b44). The combo's field, arrow and text rects are READ (round 696), and its
+      open list's fill 0xb4000000, placement, insets, line height, colours and hover bar (round
+      697, `OptionVideoPage.style_popup`); the six-piece frame's UVs (`0x49a140` / `0x49a7d0`: the
       top and bottom edges are drawn transposed, MEASURED against the user's picture) are not.
+- [ ] **The open list where Godot's PopupMenu cannot follow** (round 697, OURS): retail centres
+      the items on Resolution and Brightness (the combo's alignment 1, forwarded to the list) --
+      4.2's PopupMenu left-aligns; no pressed colour (0xff8080ff); the list is a separate Window.
+      A list drawn by this client (an ItemList in a panel) would follow all of it.
 - [ ] **Resolution** is the window's size; in full screen Godot keeps the desktop's (no mode
       change in 4.2.2). A 3D render scale would be the Godot way to honour it there. In a window
       the OS window takes the size, a maximised one restored first (round 696). Retail's window
