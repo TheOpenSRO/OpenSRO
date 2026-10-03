@@ -2312,6 +2312,24 @@ refusals, the global chatting item's "Chat to all" window, the GM notice's line 
 - "Remaining turns" in the global window overruns into its count (the authored static is 55 px
   wide; our font draws the caption wider).
 
+### Notice banners and the area banner (round 703) — **built; these are left**
+
+What round 703 read and built is in `docs/protocol/notice_banner.md`: CIFNotify's band drawn as
+CIFStretchWnd lays it out (the fill over the text, the 40 x 8 fades outside it), the bold notice
+text, and CIFRegionView's area banner from regioncode.txt and textzonename.txt.
+
+- **The fortress town's third line** (`0x665d00`: UIIT_MSG_FORTRESS_TOWN_GUILD_NAME with the owning
+  guild) is not built: this client keeps no fortress data, so the line keeps its `_03` text.
+- **The weight-600 face** is the system's bold file of the UI face when it has one, else FreeType's
+  embolden (OURS). On the box (no Tahoma) every bold render is the embolden stand-in.
+- **The text manager's miss** (`0x8c9bb0` for a key it lacks) is not read; srrevamp shows nothing.
+  MEASURED: every one of the box archive's 146 region codes has its `_01` text.
+- **Which notices stack over the area banner** (draw order between interface children 0x14, 0x23
+  and 0x53) is not read; srrevamp draws the area banner under both notices.
+- **The user's reference pictures** (a private server) show the town title as "Western China
+  Donwhang" in (169, 246, 253); the box's archive says "Donwhang" and ifregionview.txt
+  (61, 253, 255). srrevamp follows the archive.
+
 ### The system message window and the saved quick slots (round 639) — **built; these are left**
 
 What round 639 read and built is in `docs/protocol/system_message.md`.

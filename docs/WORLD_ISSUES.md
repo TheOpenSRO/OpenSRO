@@ -7094,6 +7094,103 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-third round: the notice band is drawn as the original's CIFStretchWnd lays it out -- the fill over the text, 40-pixel fades outside it -- the notice text is bold, and walking into a named area raises CIFRegionView's banner from regioncode.txt and textzonename.txt
+
+The user (2026-10-03), with three pictures: ours, "You have advanced to level [101].", a hard-edged
+blue rectangle hugging the text with broken streaks and gaps to its right (a long-standing bug, the
+same under Compatibility as under Forward+); the original's "[Smile] has killed [Tiger Girl
+(EU-STR)].", a wide translucent band with soft ends; and the original's town banner over Donwhang.
+"Remember there are different color banners for notices, it's like a pinkish redish color I think
+but whatever the game files say."
+
+Labels: READ = read from `sro_client.exe` or the data; MEASURED = counted; INFERRED = follows from
+what was read; OURS = srrevamp's choice. `docs/protocol/notice_banner.md` has every address.
+
+**What the original does (READ).**
+
+| Kind | Instance | Band | y | Text | Timing |
+|---|---|---|---|---|---|
+| GM notice, guild created, arena, `0x887330` (`0x777bf0`'s four callers) | GDR_NOTICE | fill (128, 45, 67) + `com_notice_*` frame -- the pink-red one | 100 | 12 px, weight 600, white, no shadow | 7000 ms, last 2000 fading |
+| level-up, unique appeared/killed, recall point, siege, training camp, error codes (`0x77b580`, ~70 sites) | GDR_WARNING_WND | fill (0, 52, 92) + `com_warning_*` -- the blue one | 130 | the same | the same |
+| a named area entered (`0x783610` every move, `0x786f30` at world set-up) | GDR_REGION_INFO_VIEW (`#ifdef EUROPE_SYSTEM`) | `area_deco.ddj` 744 x 104 | 95 | title 20 px x1.5 weight 600 cyan (61, 253, 255) + shadow; line 2 15 px white + shadow; line 3 11 px (255, 255, 92) + shadow | 0.5 s in, held to 3 s, 0.5 s out |
+
+There is no third notice colour: the pink-red the user remembers is GDR_NOTICE's fill.
+
+- **The band** (CIFStretchWnd `0x8182e0`, drawn by `0x819d80`): the fill quad over the text's rect
+  at alpha 128, and eight frame quads **outside** it, each its texture's own size -- corners
+  mirrored to the four corners, edge2 (40 x 8) left and right, edge (4 x 8) above and below
+  (vslot_010 hands `0x819690` edge2, edge, edge2, edge). MEASURED: the frame textures are one colour
+  each (their fill), edge2's alpha 0 -> 127 over 40 columns, edge's rows 51, 89, 128... So the band
+  is (w + 80) x (h + 16) with 40-px soft ends -- the reference measures the same (2x picture: 28.5 px
+  tall over 12 px text, a two-row top ramp, fading past the text both sides).
+- **Text flags** (`0x8b44b0`/`0x8b4400`): flag 2 picks the face's lfWeight-600 variant (`0x8b39e0`,
+  variants made in `0x00baa110`), flag 1 is a one-pixel drop shadow (`0x8b2290`). The notice text
+  has flag 2 only -- bold, no shadow. MEASURED on the reference: 2-px strokes, no dark pixel beside
+  them.
+- **One at a time per instance**: a second show replaces the first (`0x7b3eb0`), no queue; the GM
+  notice and the warning are separate windows, up together.
+- **The area banner** (CIFRegionView): the region id's code from `textdata\regioncode.txt` (rows
+  with a non-zero service and a code other than "xxx"); an unnamed region clears the remembered
+  code, the same code shows nothing, another code shows code_01 / code_02 / code_03 from
+  textzonename.txt ("xxx" blanked). Every one of the 146 codes, not only towns: fields, dungeons,
+  ferries. Layout 744 x 104 at (W/2 - 372, 95), the title at W/2 - trunc(w x 0.75),
+  119 - trunc(h x 0.375).
+
+**Why ours was broken (READ, in every renderer).** Round 634's `_draw` put the fill over the text's
+rect and the frame pieces inside it (left/top at 0..40, 0..8), and the right and bottom ones through
+negative-size rects. Godot 4.2's `canvas_item_add_texture_rect` flips a negative-size rect but keeps
+its position as the left/top edge (renderer_canvas_cull.cpp), so those landed a piece's width
+outside the rect at different heights. MEASURED, before (Forward+, sky behind, blue band, row 148):
+alpha <= 10 left of the text's rect at x 556, a 35-px ramp inside it, 0 again at 690-720, a fade
+piece at 725-760 beyond the right edge; column 600: 151-191 in the top rows (fill + in-rect edge) and
+a lip below the rect only. Row 148 is below the 14-px window: the bottom-left corner (556-596) and
+the bottom edge (596-684) drawn under it, nothing at 684-724, the bottom-right corner past the edge
+-- the gaps. Compatibility measures the same row the same way (0 at 690-720, the piece at 725-760). Not the texture path: the six frame textures are A8R8G8B8 and decode with
+their alpha.
+
+**Built.**
+- `HudNotice` (`hud_notice.gd`): `frame_pieces` is `0x8182e0`'s layout, drawn mirrored through the
+  canvas transform; the text measured and drawn in the bold face (`bold_font`: the system's own bold
+  file of the face when there is one, else FreeType embolden 16/size -- OURS); x by `0x7b3eb0`'s two
+  truncating halvings; the frame point-sampled; `style_for_kind` the kind table.
+- `HudRegionView` (`hud_region_view.gd`): the trigger rule, texts, fade and layout above, from the
+  archive (1,862 region ids, 4,142 zone texts parsed in 22 ms on the box).
+- `World3D`: the area banner is built with the HUD and tested in `_update_zone_label_for_region` (every
+  region the player enters) and once when the HUD is built; `SRREVAMP_QA_NOTICES` raises any banner at
+  a QA tick (notice, warning, level, unique, region, goto, bands) and logs `QA BANDS` rects.
+
+**Measured, after** (1280 x 720, QA_NOTICES at 240/600/900/1400/1700; Forward+ and Compatibility
+alike):
+- GM notice band 482,92 317 x 30 (text 237 x 14 + 80 x 16); row 118's alpha (pink fill) 1 at 482,
+  rising to 128 at 522, 127-131 across, falling from 759 to 0 at 797. Compatibility: 4 -> 127 over
+  476-524, 126 across, 0 at 800.
+- Blue band, column 545 (in the left fade): two fading rows at the bottom, 115 -> 80 -> 48 -> 0.
+- Area banner row 190 (fill (0, 37, 73)): 0 at the window's ends, rising to 148-155 over the middle,
+  area_deco's own 4 -> 151.
+- Text: the notice 908 glyph pixels, all (255, 255, 255), none with a black pixel at +1,+1 (no
+  shadow); the title 757 of 998 at exactly (61, 253, 255); line 2 white, 762 of 1039 with the shadow
+  at +1,+1; line 3 (255, 255, 92).
+- The real region change fired both ways: China Grassland ("Monster Level 1~2" on line 3) at the
+  goto into 97/170, Jangan again on the way back, Donwhang at world entry in 102/152.
+
+**Choices made for the user (OURS unless READ):** the pink-red banner is GDR_NOTICE's (READ) and no
+new colour was added; the area banner shows for every named area, as the original does (READ), not
+only towns; EUROPE_SYSTEM treated as defined (the user's Europe-on choice, round 682); the area banner
+under the notices; the bold face from the system's bold file, else embolden; area_deco stretched to
+the window (INFERRED); a missing zone text shows nothing (INFERRED). The user's reference is a
+private server whose archive differs: its title reads "Western China Donwhang" in (169, 246, 253),
+the box's archive "Donwhang" in (61, 253, 255); srrevamp follows the archive.
+
+**Not this round:** the vertical light streak in the user's picture is not drawn by the banner
+(nothing in either banner draws outside its band); INFERRED to be the level-up burst
+(`_play_level_up_effect`, which the same event plays), not measured here; the fortress town's guild line (no fortress data).
+
+**Checked:** `hud_notice_test.gd` (new: kind -> style, the eight frame rects, the band's size, x,
+the fade, no queue, regioncode.txt's rules, the area banner's trigger, fade and layout);
+`hud_chat_test.gd` and `text_crispness_test.gd` updated for the bold face and the point-sampled
+frame; `remote_godot.sh check` ALL LOAD; `remote_godot.sh tests` 216 suites, 0 failing. A UI round:
+no perf gate.
+
 ## Six-hundred-and-ninety-ninth round: the developer toggles move from Ctrl+F1-F3 to Shift+F1-F3, because macOS keeps Ctrl+F1-F3 for itself
 
 The user (2026-10-03, on v0.1.481 under CrossOver on macOS): "can switch the ctrl+f1-f3 menus to
