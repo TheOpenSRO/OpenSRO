@@ -2050,6 +2050,19 @@ census of its texture writes).
       answered "too far away". `_terrain_hit_height` places a still monster with the terrain-only
       mask; how retail places a monster on a placed object's navmesh is not read. Not the ring's
       code (round 701 stayed in its lane).
+- [x] **A click on an NPC or a gate out of reach walks first** (round 701, READ 0x793570 /
+      `FUN_009ec6b0` / `FUN_009ec380`): beyond 240 (a gate 800) the walk goes to a random point
+      20..240 (640) short of it on the line to the player, the ring there; the talk opens on
+      arrival within the server's 300 / 800. A monster click selects; the next click (or Ctrl, or
+      a double click) attacks.
+- [ ] **The server's range on shop and storage.** Retail's shop handler (0x510250) measures the
+      player against the NPC (`IsWithinInteractionRange`, 300); srrevamp's shop and storage
+      requests carry no NPC, so the server cannot (round 701). A select or talk request naming the
+      NPC would let it. The teleport request has applied the range since round 642.
+- [ ] **A stall's approach** (100 / 80, arrival flag 2 -> `FUN_0081e170`) is read, not built: no
+      stalls yet.
+- [ ] **Who walks a monster attack into reach.** The client sends 0x7074 with no walk of its own;
+      the server's chase is INFERRED, not read. srrevamp's client walks (OURS).
 - [x] **A held left button does nothing** (round 701, READ: WM_LBUTTONDOWN is the only click,
       0x77c4a7 -> 0x793570; no reader of the left button byte +0x258 walks; timer 7 is the sky
       run's re-plot). Ours clicked on the release and steered toward the cursor while held.

@@ -5449,6 +5449,7 @@ func _reload_zone_assets(zone: String, frame: String = "") -> void:
 	_clear_region_grid()
 	if _ground_markers != null:
 		_ground_markers.zone_changed()
+	_cancel_talk_approach("zone change")
 	ground_mesh.visible = true
 	ground_collision.disabled = false
 
@@ -9240,11 +9241,38 @@ func _pick_character(screen_pos: Vector2) -> String:
 	# in the same frame finds nothing here.
 	if _dying_until.has(int(node.get_meta("monster_id"))):
 		return ""
-	_last_attack_target = int(node.get_meta("monster_id"))
-	_show_target(_last_attack_target)
-	_ring_on_monster(_last_attack_target)
-	_attack_monster(_last_attack_target)
+	var monster_id := int(node.get_meta("monster_id"))
+	# Select first, attack second (round 701; READ). The object click
+	# FUN_00792f00 runs before the selection (0x793570) and sends the attack
+	# 0x7074 for a CICMonster only when Ctrl is held (GetKeyState(0x11)) or
+	# the monster is already the selection (+0x628) with the target window
+	# up (FUN_00778120); otherwise the click selects (FUN_00778650: the ring,
+	# texture 3) and sends the select 0x7045 (FUN_0078f5f0), whose reply shows
+	# the target window. So the first click on a monster selects it and the
+	# next one -- or a double click, WM_LBUTTONDBLCLK -> FUN_00792190, which
+	# attacks a monster outright -- attacks. Until round 701 this client
+	# attacked on the first click.
+	var attack := monster_click_attacks(Input.is_key_pressed(KEY_CTRL), monster_id == _last_attack_target, _target_window_shows(monster_id))
+	_last_attack_target = monster_id
+	_show_target(monster_id)
+	_ring_on_monster(monster_id)
+	if not attack:
+		return "select_monster"
+	_attack_monster(monster_id)
 	return "attack"
+
+## Whether a click on a monster attacks it (READ, FUN_00792f00's CICMonster
+## branch): Ctrl held, or it is the selection and the target window is up.
+static func monster_click_attacks(ctrl: bool, is_selection: bool, window_shows: bool) -> bool:
+	return ctrl or (is_selection and window_shows)
+
+## Whether the target window is showing this monster (READ's FUN_00778120
+## asks the target window for its object). Without a target window (a test's
+## bare world) the selection alone counts.
+func _target_window_shows(monster_id: int) -> bool:
+	if _hud_target == null:
+		return true
+	return _hud_target.visible and _monster_snapshots.has(monster_id)
 
 ## The player's own click body (layer 9), made on first need: a capsule the
 ## body's height, a child of the player so it follows.
@@ -13027,6 +13055,10 @@ const QA_GATE_DRAWN_RADIUS := 20.0
 ## SRREVAMP_QA_AIM_ONLY=1 nothing is dispatched: the player is stood and the
 ## camera aimed as for a click, and `QA AIM <kind>: click at x,y` gives the
 ## point for a real X click.
+## SRREVAMP_QA_CLICK_STANDOFF=<units> or "<kind>=<units>,..." (round 701)
+## stands the player that far short of the target instead of 40 (a click from
+## out of talk reach), for every kind or per kind ("npc=320,gate=860"); a
+## ":<side>" suffix (-z, the default, +z, -x, +x) picks the side stood on.
 var _qa_click_queue: Array = []
 var _qa_click_stage := 0
 var _qa_click_wait := 0
@@ -13071,7 +13103,22 @@ func _qa_advance_click() -> void:
 			# look along +Z at it with a shallow camera so it sits mid-frame.
 			# A gate's pick box is wider than that (round 690: Alexandria's is
 			# 140 across): stand 40 short of its side, so the camera is outside it.
-			var stand: Vector3 = _qa_click_target["pos"] + Vector3(0.0, 0.0, -40.0 - float(_qa_click_target.get("stand_off", 0.0)))
+			# SRREVAMP_QA_CLICK_STANDOFF (round 701): stand that far short
+			# instead of 40, for a click from out of talk or attack reach.
+			var standoff := 40.0
+			var side := "-z"
+			for part in OS.get_environment("SRREVAMP_QA_CLICK_STANDOFF").split(",", false):
+				var kv := String(part).split("=")
+				var value := kv[0] if kv.size() == 1 else (kv[1] if kv.size() == 2 and kind.begins_with(kv[0]) else "")
+				var vs := value.split(":")
+				if vs.size() >= 1 and vs[0].is_valid_float():
+					standoff = float(vs[0])
+					side = vs[1] if vs.size() == 2 else "-z"
+			# The side of the target to stand on, and the camera yaw that
+			# looks from there at it (yaw 180 sits the camera on -z).
+			var axis: Vector3 = {"-z": Vector3(0, 0, -1), "+z": Vector3(0, 0, 1), "-x": Vector3(-1, 0, 0), "+x": Vector3(1, 0, 0)}.get(side, Vector3(0, 0, -1))
+			var yaw: float = {"-z": 180.0, "+z": 0.0, "-x": 270.0, "+x": 90.0}.get(side, 180.0)
+			var stand: Vector3 = _qa_click_target["pos"] + axis * (standoff + float(_qa_click_target.get("stand_off", 0.0)))
 			var pair := _nav_graph_for(stand)
 			if not pair.is_empty():
 				var group: Node3D = pair[1]
@@ -13079,7 +13126,7 @@ func _qa_advance_click() -> void:
 				stand = group.to_global(Vector3(local.x, (pair[0] as NavGraph).landing_height_at(local.x, local.z), local.z))
 			player.global_position = stand
 			player.velocity = Vector3.ZERO
-			camera_arm.rotation_degrees = Vector3(-15.0, 180.0, 0.0)
+			camera_arm.rotation_degrees = Vector3(-15.0, yaw, 0.0)
 		_qa_click_stage = 1
 		_qa_click_wait = 30
 		return
@@ -14199,6 +14246,8 @@ func _physics_step(delta: float) -> void:
 		_pending_attack = {}
 		_released_attack = {}
 		_pending_friend_cast = {}
+	# A talk approach's arrival (round 701): the walk ended last tick.
+	_step_talk_approach()
 	# Round 653's follow-up: an approach whose move a wall ended is re-issued
 	# here on the next tick (_step_move_order).
 	if _has_move_target or not _pending_attack.is_empty() or not _pending_friend_cast.is_empty():
@@ -15928,6 +15977,10 @@ func _dispatch_left_click(screen_pos: Vector2) -> String:
 		# see must show in the tester's log.
 		print("CLICK: at %s ignored -- the player is dead" % str(screen_pos))
 		return "dead"
+	# Any new click ends a talk approach still walking (round 701; OURS in
+	# part: retail's ground click clears it, FUN_009ec570 writing +0x20 = 0,
+	# and a new object click replaces it; a monster's select is not read to).
+	_cancel_talk_approach("a new click")
 	# Ground-pick mode (round 617): the click is the skill's point, not a
 	# pick-up, an attack, a talk or a walk.
 	if _self_cast.picking():
@@ -15942,7 +15995,7 @@ func _dispatch_left_click(screen_pos: Vector2) -> String:
 	if picked != "":
 		return picked
 	if _try_talk_to_npc(screen_pos):
-		return "talk"
+		return "approach" if not _talk_approach.is_empty() else "talk"
 	_try_set_move_target(screen_pos)
 	return "walk"
 
@@ -16020,6 +16073,18 @@ func _try_talk_to_npc(screen_pos: Vector2) -> bool:
 		return false
 	if _qa_click_logging:
 		print("QA CLICK   npc ray: %s" % _describe_click_hit(hit, "npc_name"))
+	# Out of reach the click walks there first (round 701; READ, 0x793570):
+	# beyond 240 from an NPC or 800 from a gate, to a point on the line back
+	# to the player, and the talk follows the arrival (_step_talk_approach).
+	if node is Node3D and _start_talk_approach(node as Node3D):
+		return true
+	_open_talk(node)
+	return true
+
+## Opens the talk window for an NPC or gate holder (the click in reach, or a
+## talk approach's arrival): the name, greeting and lines, the ring under an
+## NPC.
+func _open_talk(node: Node) -> void:
 	var npc_name := str(node.get_meta("npc_name"))
 	if npc_name == "":
 		npc_name = "..."
@@ -16035,7 +16100,126 @@ func _try_talk_to_npc(screen_pos: Vector2) -> bool:
 	# otherwise go out behind the talk window.
 	_drop_pending_attack()
 	_hud_panels.open_npc_talk(npc_name, _npc_greeting_text(code), _npc_services(code))
+
+## The talk approach (round 701). READ from sro_client.exe:
+## - The object click 0x793570 measures the object's +0x24c, the 3-D distance
+##   from the local player that CICPlayer::vslot_005 (0x9d6f19..0x9d6f7e)
+##   writes for every object each frame. A CICNPC beyond 240.0 (double
+##   0xdb9888) and a CITeleportGate (class link 0xef1dac) beyond 800.0
+##   (double 0xd83080) are walked to; nearer, the select request 0x7045 goes
+##   at once (FUN_0078f5f0), whose 0xB045 reply opens the talk window
+##   (FUN_0088b200 -> IF_NPCWindow::FUN_00703ff0).
+## - The walk: FUN_0078f8d0(msg, 1, 0) -> FUN_009ec6b0(id, 20.0, range, 0),
+##   range 240.0 (float 0xdb9884) for an NPC, 640.0 (float 0xdb9890) for a
+##   gate, the near bound 20.0 (float 0xd88108) for both. It picks d =
+##   rand() / 32767.0 (double 0xde4808) * (range - 20) + 20 and the point
+##   object + d * unit(player - object) (FUN_009ed1e0's vector is its second
+##   position less its first: the player less the object), moves the ring
+##   there with the ground texture (FUN_00a631e0) and sends the walk through
+##   the click filter FUN_009ec240. So the ring lands between 20 and 240 (a
+##   gate: 640) short of the target on the line to the player -- not at the
+##   click, and not always at the farthest spot.
+## - The arrival: FUN_009ec380, every frame, waits for the mover to start
+##   (+0x714 != 0) and then to stop (+0x714 == 0, +0x6ec == 0), then calls
+##   FUN_0078ff60(0, id) -> FUN_0078f5f0(id): the same select, so the talk
+##   window opens on arrival. A ground click clears the pending id
+##   (FUN_009ec570 writes +0x20 = 0).
+## - The server's select handler (SR_GameServer 0x50faf0) measures with
+##   GObjPC::IsWithinInteractionRange (0x4a8e10): 300 for an NPC, 800 for a
+##   structure, 3-D; beyond, the reply is an error the client shows nothing
+##   for. This client has no select request, so the arrival applies that
+##   limit itself (talk_out_of_range) and logs a refusal.
+const TALK_APPROACH_NPC_BEYOND := 240.0
+const TALK_APPROACH_NPC_RANGE := 240.0
+const TALK_APPROACH_GATE_BEYOND := 800.0
+const TALK_APPROACH_GATE_RANGE := 640.0
+const TALK_APPROACH_NEAR := 20.0
+
+## The approach in progress: {"id": the holder's instance id, "started":
+## whether the walk has begun}, {} when none.
+var _talk_approach: Dictionary = {}
+## The random source for the approach distance (retail's rand()); a test
+## seeds it.
+var _talk_rng := RandomNumberGenerator.new()
+
+## Whether a click on a target `distance` away walks first (READ, 0x793570).
+static func talk_needs_approach(distance: float, structure: bool) -> bool:
+	return distance > (TALK_APPROACH_GATE_BEYOND if structure else TALK_APPROACH_NPC_BEYOND)
+
+## The approach point (READ, FUN_009ec6b0): `d` from the target on the line
+## to the player. `d` is drawn in [TALK_APPROACH_NEAR, range] by the caller.
+static func talk_approach_point(target: Vector3, from: Vector3, d: float) -> Vector3:
+	var to_player := from - target
+	if to_player.length_squared() < 1e-6:
+		return target
+	return target + to_player.normalized() * d
+
+## Starts the walk to a target out of talk reach; false when it is in reach.
+func _start_talk_approach(node: Node3D) -> bool:
+	if player == null:
+		return false
+	var structure := node.has_meta("gate_point_id")
+	var target := node.global_position
+	var distance := player.global_position.distance_to(target)
+	if not talk_needs_approach(distance, structure):
+		return false
+	var far := TALK_APPROACH_GATE_RANGE if structure else TALK_APPROACH_NPC_RANGE
+	var d := _talk_rng.randf_range(TALK_APPROACH_NEAR, far)
+	var point := _walkable_point(talk_approach_point(target, player.global_position, d))
+	_markers().place_at(point)
+	var took := _issue_walk(point)
+	_talk_approach = {"id": node.get_instance_id(), "started": _has_move_target and took == "walk"}
+	print("CLICK: %s '%s' %.1f away (talks within %.0f) -- walking to (%.1f, %.1f, %.1f), %.1f short of it (%s)" % [
+		"gate" if structure else "NPC", str(node.get_meta("npc_name", node.name)), distance,
+		TALK_APPROACH_GATE_BEYOND if structure else TALK_APPROACH_NPC_BEYOND, point.x, point.y, point.z,
+		point.distance_to(target), took])
 	return true
+
+## A point on the walkable surface under `p`: the region's walkable graph's
+## landing height there, else `p` as it is (OURS: retail sends the 3-D point
+## and its mover settles it; this client walks on the graph).
+func _walkable_point(p: Vector3) -> Vector3:
+	var pair := _nav_graph_for(p)
+	if pair.is_empty():
+		return p
+	var group: Node3D = pair[1]
+	var local := group.to_local(p)
+	var h := (pair[0] as NavGraph).landing_height_at(local.x, local.z)
+	if is_nan(h):
+		return p
+	return group.to_global(Vector3(local.x, h, local.z))
+
+## Ends a talk approach without talking (a new click, death, a zone change).
+func _cancel_talk_approach(why: String) -> void:
+	if _talk_approach.is_empty():
+		return
+	print("CLICK: talk approach dropped (%s)" % why)
+	_talk_approach = {}
+
+## Once a physics tick: the arrival of a talk approach (READ, FUN_009ec380):
+## once the walk has begun and ended, the talk -- within the server's limit
+## (talk_out_of_range), else a logged refusal; a target gone, nothing.
+func _step_talk_approach() -> void:
+	if _talk_approach.is_empty():
+		return
+	var node := instance_from_id(int(_talk_approach["id"])) as Node3D
+	if node == null or not is_instance_valid(node) or not node.is_inside_tree():
+		_cancel_talk_approach("the target is gone")
+		return
+	if _has_move_target:
+		_talk_approach["started"] = true
+		return
+	if not bool(_talk_approach["started"]):
+		return
+	_talk_approach = {}
+	var structure := node.has_meta("gate_point_id")
+	if talk_out_of_range(player.global_position, node.global_position, structure):
+		print("CLICK: arrived %.1f from '%s' -- beyond the server's %.0f, no talk (retail's select reply refuses it silently)" % [
+			player.global_position.distance_to(node.global_position), str(node.get_meta("npc_name", node.name)),
+			TALK_RANGE_STRUCTURE if structure else TALK_RANGE_NPC])
+		return
+	print("CLICK: arrived %.1f from '%s' -- talking" % [player.global_position.distance_to(node.global_position), str(node.get_meta("npc_name", node.name))])
+	_open_talk(node)
 
 ## The NPC's real greeting, resolved from npcchat.txt's SN_ id through the
 ## text table; "" when the NPC has none (the talk window then shows "...").
@@ -16393,6 +16577,13 @@ func _move_by_pick_ray(from: Vector3, dir: Vector3, space: PhysicsDirectSpaceSta
 	# The ring goes to the point (round 698; FUN_009ec570 places it whatever
 	# the click filter below decides).
 	_markers().place_at(point)
+	return _issue_walk(point)
+
+## A walk to `point` as retail's destination record sends it: FUN_009ec570's
+## tail and FUN_009ec6b0's (the talk approach, round 701) both store the point
+## and run the click filter FUN_009ec240. The caller has placed the ring.
+## Returns "walk" or "ignore" (the filter sent nothing).
+func _issue_walk(point: Vector3) -> String:
 	# A click on the ground supersedes an attack that was walking into reach,
 	# and a friendly cast walking to its player (round 622's review) -- even
 	# one the filter below does not send (OURS: where retail drops a pending
@@ -18335,6 +18526,7 @@ func _enter_dead_state(exp_lost: int) -> void:
 		_hud_player_info.reset_hwan_display()
 		print("World3D: death -- berserk display reset (active now %s)" % str(_hud_player_info.hwan_display_active()))
 	_drop_pending_attack()
+	_cancel_talk_approach("death")
 	_has_move_target = false
 	player.velocity.x = 0.0
 	player.velocity.z = 0.0

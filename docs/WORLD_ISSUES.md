@@ -7094,7 +7094,7 @@ the next measurement. Alexandria's "things floating in the air":
 `SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
-## Seven-hundred-and-first round: a press of the left button is one click -- holding it moves neither the ring nor the walk, as in retail -- and the ring lies on Jangan's plaza deck (the user's decision; retail draws it on the ground under the deck)
+## Seven-hundred-and-first round: a press of the left button is one click -- holding it moves neither the ring nor the walk, as in retail -- the ring lies on Jangan's plaza deck (the user's decision), and a far NPC or gate is walked to before it talks, a monster selected before it is attacked
 
 The user (2026-10-03): "if you click and hold down the click the circle will fluidly move around
 with your cursor and your character will follow. The original game places the circle where you
@@ -7199,7 +7199,7 @@ floor costs what the terrain one does.
   does not parse (MEASURED).
 - `npc_service_reader_test.gd`, `monster_strikes_test.gd`, `wall_root_test.gd`: their
   `_left_steering` checks rewritten.
-- `remote_godot.sh check`: ALL LOAD (557 scripts, 9 scenes). `tests`: 216 suites, 0 failing. `go test -count=1
+- `remote_godot.sh check`: ALL LOAD (558 scripts, 9 scenes). `tests`: 217 suites, 0 failing (after section 7 too). `go test -count=1
   ./internal/systems/...` ok.
 
 ### 5. Performance
@@ -7214,6 +7214,61 @@ PERF_TABLE
   up and down, the 1.0 step, the 6-unit cell, 0.25 of height; no still-water quad on a floor.
 - The live run's monster was the nearest one, a Yeoha off the deck, in Forward+, and the GM's
   Mangyang (under the deck, above) in Compatibility; the NPC on the deck is the deck case.
+
+### 7. The click side of NPCs, gates and monsters (READ; added mid-round)
+
+The user, from playing the original: "Monsters seem to show the sword far away and it will have
+your character walk to the monster and then attack. NPCs are a little different where I think it
+shows as far as you can see them but it will put the circle not where you clicked exactly but
+where the furthest spot to talk them in the same direction. Currently it seems like we can talk to
+NPCs from any distance." `docs/protocol/ground_markers.md`, "Clicking an NPC, a gate or a
+monster", has the full record.
+
+- **The distance** 0x793570 reads is the object's +0x24c, the 3-D distance from the local player
+  that `CICPlayer::vslot_005` writes for every object each frame (0x9d6f19..0x9d6f7e).
+- **An NPC** within 240.0 (double 0xdb9888) is selected at once (0x7045, `FUN_0078f5f0`); the
+  0xB045 reply opens the talk window. Beyond, `FUN_009ec6b0(id, 20.0, 240.0, 0)` walks to
+  `npc + d * unit(player - npc)` with `d = rand() / 32767.0 * 220 + 20`, moves the ring there
+  with the ground texture, and `FUN_009ec380` fires the select when the mover has started and
+  stopped. So the user's "furthest spot to talk, in the same direction" is the line and the ring
+  is right; the distance is random in 20..240, not always the farthest.
+- **A gate**: 800.0 (double 0xd83080) and a walk to 20..640 (float 0xdb9890) short; no follow ring.
+- **A monster**: no distance test and no walk on the client. The first click selects (ring,
+  target window); `FUN_00792f00` sends the attack 0x7074 only with Ctrl, or when the monster is
+  already the selection with the target window up, or on a double click (`FUN_00792190`). Who
+  walks into reach is not the client (INFERRED: the server); srrevamp's client walks (OURS, as
+  before).
+- **Cancelling**: a ground click clears the pending id (`FUN_009ec570`: +0x20 = 0). Ours drops it
+  on any new click, death, a zone change or the target going (OURS beyond the ground click).
+- **The server**: the select handler (0x50faf0) refuses beyond `IsWithinInteractionRange` (300 for
+  an NPC, 800 for a structure), silently on the client. srrevamp has no select request: the
+  arrival applies that limit itself. The teleport request has applied it since round 642; the shop
+  and storage requests name no NPC, so the server cannot (TODO). No server code changed.
+
+**Built**: `World3D._start_talk_approach`, `_step_talk_approach`, `talk_needs_approach`,
+`talk_approach_point`, `_walkable_point` (the graph's landing height under the point, OURS),
+`monster_click_attacks`; `_dispatch_left_click` answers `approach` and `select_monster`. QA:
+`SRREVAMP_QA_CLICK_STANDOFF` ("npc=330,gate=880:-x,monster=280") stands the QA click's player
+that far short on a chosen side.
+
+**Live, real X input** (MEASURED; Compatibility, a server from this tree, xdotool clicks at the
+QA hook's aim; three runs, the third clean):
+
+| Click | From | Walk and ring | Arrival |
+|---|---|---|---|
+| Storage-Keeper Sansan (NPC) | 329.9 | to (20.7, -30.1, -261.1), 231.9 short on the line (run 1: 223.3) | 234.1 away: `talking` -- the talk window, the ring back under the NPC (texture 1) |
+| Dimensional Gate (STORE_CH_GATE) | 890.0 | 607.2 short | 608.9 away: `talking` -- the gate's three lines (picture) |
+| Mangyang | 280 | first click `select_monster` (ring texture 3, no attack); second click `attack` | walked into reach (18.3, reach 16 + 2), the attack sent |
+
+Runs 1 and 2 stood the QA player on the palace stairs or behind a terrain wall: the straight walk
+ended at the wall (`NAV: the walk is blocked`), 842 and 320 / 832 from the target, and the arrival
+refused the talk -- the server's limit, as designed.
+
+**Tests**: `world/talk_approach_test.gd` (new, 23 checks): the 240 / 800 thresholds, the point on
+the line, the 20..240 / 20..640 bounds over 200 seeded draws, the ring at the point with texture 0,
+no talk while walking, the talk at the arrival, none at an arrival 400 away, a new click and a
+despawn cancelling, and the monster rule (unselected: select; selected with the window: attack;
+Ctrl: attack).
 
 ## Six-hundred-and-ninety-ninth round: the developer toggles move from Ctrl+F1-F3 to Shift+F1-F3, because macOS keeps Ctrl+F1-F3 for itself
 

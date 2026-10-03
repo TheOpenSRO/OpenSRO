@@ -106,6 +106,62 @@ cursor", playtest 2026-10-03). Round 701 clicks on the press (`World3D._unhandle
 `_dispatch_left_click`) and reads nothing while the button is held; the right button's orbit is
 unchanged.
 
+## Clicking an NPC, a gate or a monster (round 701, READ)
+
+The world's left press runs 0x793570 (above). For an object under the cursor it first calls the
+object click `FUN_00792f00`, then branches on the class. The distance it reads is the object's
++0x24c: the 3-D distance from the local player, which `CICPlayer::vslot_005` writes for every
+object each frame (0x9d6f19..0x9d6f7e: the two world positions +0x90..+0x98, `sqrt`).
+
+| Class | In reach | Out of reach |
+|---|---|---|
+| CICNPC (0xef1ac4; guards too) | distance <= 240.0 (double 0xdb9888): `FUN_00778650` (the ring follows it, texture 1) and the select request 0x7045 (`FUN_0078f5f0`) | > 240.0: the same `FUN_00778650`, then the approach below with range 240.0 (float 0xdb9884) |
+| CITeleportGate (0xef1dac) | <= 800.0 (double 0xd83080): the select 0x7045 | > 800.0: the approach with range 640.0 (float 0xdb9890). No `FUN_00778650`: a gate gets no follow ring |
+| CICUser with a stall open (+0x471 == 4) | <= 100.0 (double 0xe1b7d8): `FUN_0081e170` (the stall) | the approach with range 80.0 (float 0xd8524c), arrival flag 2 (`FUN_0081e170`). Not built |
+| CICMonster, CICCos | `FUN_00778650` (texture 3) and the select 0x7045 -- no walk, no attack | the same: there is no distance test |
+
+**The approach** (`FUN_0078f8d0(msg, 1, 0)` -> `FUN_009ec6b0(id, 20.0, range, flag)`; the 20.0 is
+float 0xd88108, the object fields +0x634 / +0x638 / +0x63c that 0x793570 fills): when the squared
+distance is at least range squared, `d = rand() / 32767.0 * (range - 20) + 20` (double 0xde4808),
+the destination `object + d * unit(player - object)` (`FUN_009ed1e0` returns its second position
+less its first, here the player less the object), the ring moved there with the ground texture
+(`FUN_00a631e0`), the walk sent through the click filter `FUN_009ec240`, and the object's id kept
+at destination+0x20 with the flag at +0x24. So the ring lands between 20 and 240 short of an NPC
+(a gate: 640) on the line to the player: not at the click, and not always at the farthest spot.
+
+**The arrival** (`FUN_009ec380`, every frame): with an id pending it waits for the mover to start
+(+0x714 != 0, then +0x28 = 1) and then to stop (+0x714 == 0 and +0x6ec == 0), and calls
+`FUN_0078ff60(flag, id)`: flag 0 -> `FUN_0078f5f0(id)`, the select. The select's reply
+(`NetProcessInInterface::FUN_0088b200`) opens the talk window for an NPC or a gate
+(`IF_NPCWindow::FUN_00703ff0`, the server's option list read into `FUN_006fcd00`) and, for a
+CICharactor, `FUN_00778650` again: the ring goes back under the NPC. A ground click clears the
+pending id (`FUN_009ec570` writes +0x20 = 0).
+
+**The server** (SR_GameServer, the select handler 0x50faf0, reply 0xB045): it measures with
+`GObjPC::IsWithinInteractionRange` (0x4a8e10; docs/protocol/teleport_network.md has its limits:
+300 for an NPC, 800 for a structure, 500 for a monster, 3-D) and replies an error beyond it; the
+client's reply handler shows a message only for 0x6007. The shop handler (0x510250) and the
+teleport handler (0x513590) measure the same way.
+
+**The monster's attack**: `FUN_00792f00` runs before the selection and sends the action 0x7074
+for a CICMonster only when Ctrl is down (`GetKeyState(0x11)`) or the monster already is the
+selection (+0x628) with the target window up (`FUN_00778120`). So the first click selects and the
+next click attacks; a double click (WM_LBUTTONDBLCLK -> `FUN_00792190`) attacks outright. The
+client has no walk on that path: the approach to the weapon's reach is not the client's (INFERRED:
+the server's, from the absence; not read in the server).
+
+**srrevamp (round 701).** `World3D._start_talk_approach` / `_step_talk_approach`: an NPC beyond 240
+or a gate beyond 800 is walked to a point `talk_approach_point` drawn in 20..240 (640) on the line
+to the player, the ring placed there; the walk's end opens the talk window if the player is within
+the server's limit (`talk_out_of_range`: 300 / 800, 3-D) -- this client has no select request, so
+it applies the server's test itself -- and logs a refusal otherwise. Any new click, death, a zone
+change or the target going ends the approach (OURS in part: retail is not read to drop it on a
+monster's select). A monster click selects (ring, target window) and attacks only on the next
+click, with Ctrl, or as a double click's second press; the walk into reach stays this client's
+(OURS: srrevamp's server does not chase). The server needs no change for talking: srrevamp has no
+select or talk request, the teleport request has applied the range since round 642, and the shop
+and storage requests carry no NPC to measure (TODO).
+
 ## Where and how it is drawn (READ)
 
 `SWorld::vslot_022` (0x9f42d0; the arguments from the caller's pushes at 0xa63181..0xa631b9 and
