@@ -52,6 +52,7 @@ const PLAIN_SHAPES := [Input.CURSOR_IBEAM, Input.CURSOR_POINTING_HAND]
 static var _base: Dictionary = {}      # id -> CursorSet.Cursor (unscaled)
 static var _loaded := false
 static var _source := ""
+static var _pk2_dir := ""
 static var _scaled_sets: Dictionary = {}   # factor key -> {id: [ImageTexture, Vector2i]}
 static var _current_id := -1
 static var _current_key := ""
@@ -61,22 +62,50 @@ static func id_for(kind: String) -> int:
 	return int(KIND_IDS.get(kind, CursorSet.ID_NORMAL))
 
 ## Loads the set once: the exe search (CursorSet.exe_candidates) against
-## where Data.pk2 resolved and where this executable is, logging the file
-## used or every path tried -- a tester's log then says why the cursor is
-## the system arrow.
+## SRREVAMP_CLIENT_EXE, where Data.pk2 resolved and where this executable is,
+## then (round 700) a scan of those folders for a renamed client; logs the
+## file used or every path tried, and missing_hint() says it on screen.
 static func load_once() -> void:
 	if _loaded:
 		return
 	_loaded = true
-	var candidates := CursorSet.exe_candidates(Pk2Config.data_path(), OS.get_executable_path(),
-		OS.get_environment("SRREVAMP_CLIENT_EXE"))
+	_pk2_dir = Pk2Config.data_path().get_base_dir()
+	if _pk2_dir == "":
+		_pk2_dir = Pk2Config.pk2_dir()
+	var override := OS.get_environment("SRREVAMP_CLIENT_EXE")
+	var own := OS.get_executable_path()
+	var candidates := CursorSet.exe_candidates(Pk2Config.data_path(), own, override)
 	var r := CursorSet.load_first(candidates)
+	var how := ""
+	if String(r["path"]) == "":
+		# Round 700: a private server's install may rename the exe (the
+		# box's SRO_Client_VTX.exe carries the same cursor groups,
+		# MEASURED); any *.exe in the same folders that carries the default
+		# cursor's group is the client.
+		var skip := PackedStringArray(r["tried"])
+		skip.append(own)
+		var dirs := CursorSet.scan_dirs(Pk2Config.data_path(), own, override)
+		var sr := CursorSet.scan_for_client(dirs, skip)
+		print("GameCursor: scanned %d other .exe file(s) in %s in %d ms" % [int(sr["probed"]), ", ".join(dirs), int(sr["usec"]) / 1000])
+		if String(sr["path"]) != "":
+			r = sr
+			how = " (no file named %s; found by its cursors)" % " or ".join(CursorSet.EXE_NAMES)
 	_base = r["cursors"]
 	_source = r["path"]
 	if _source != "":
-		print("GameCursor: %d cursor(s) from %s" % [_base.size(), _source])
+		print("GameCursor: %d cursor(s) from %s%s" % [_base.size(), _source, how])
 	else:
-		print("GameCursor: no sro_client.exe found -- the system cursor stays. Tried: %s. Put your own sro_client.exe beside Data.pk2 to get the game's cursors." % ", ".join(r["tried"]))
+		print("GameCursor: no sro_client.exe found -- the system cursor stays. Tried: %s. %s" % [", ".join(candidates), missing_hint()])
+
+## The one line a player sees when the cursors are missing (round 700: the
+## log alone left a tester on Windows with the system arrow and no reason),
+## shown on the login screen and in the world's system messages. "" when the
+## cursors loaded. `pk2_dir` defaults to where load_once looked.
+static func missing_hint(pk2_dir: String = "\u0001") -> String:
+	if has_cursors():
+		return ""
+	var dir := _pk2_dir if pk2_dir == "\u0001" else pk2_dir
+	return "No game cursor: copy sro_client.exe from your Silkroad folder into %s (beside Data.pk2)." % [dir if dir != "" else "the pk2 folder"]
 
 static func has_cursors() -> bool:
 	return not _base.is_empty()
@@ -216,11 +245,51 @@ static func is_job_monster(code_name: String) -> bool:
 static func item_kind(left_held: bool) -> String:
 	return "pickup_held" if left_held else "pickup"
 
+## **How far the hover reaches (READ, round 700).** The hover
+## (CGInterface::vslot_005 case 1, 0x789820) has no distance test of its own
+## for any class -- the item, the gate, the NPC, the monster and the player
+## branches test only the class and its state. Its pick (FUN_0078ee20) keeps
+## the nearest object any of its 9 rays meets, starting from 1e38 (the float
+## at 0xe1b85c), and each ray is a SEGMENT: FUN_00a5ade0 ends it at the camera
+## position plus the view-space direction (x, y, 1) times 5000.0 (the double
+## at 0xde5188, `fld` at 0xa5aecc) -- 5000 units of view depth -- and the box
+## test FUN_00a5b000 -> FUN_00a5af20 -> FUN_0045c750 / FUN_0045c9a0 hits only
+## where the segment's two ends lie on opposite sides of a face's plane. A
+## gate is its own box (round 690: teleportbuilding's BCRadius / BCHeight).
+## So what bounds the hover is which objects the client HOLDS: the pick walks
+## the entity list (DAT_00ec4ae4), and the server gives a player the objects
+## of the 3 x 3 message blocks of 320 units around the block it stands in
+## (SR_GameServer CMsgBlock slot 2 0x534340, CRgnTerrain::vslot_006
+## 0x53ad30's 320.0 -- READ in round 664, docs/protocol/monster_ai.md): 320
+## to 640 units each way. srrevamp's server applies that window to monsters
+## (session.AOIRadius); this client builds NPCs and gates itself for its 5 x 5
+## loaded regions, so the hover applies the window here, to every class. That
+## a teleport structure travels by the same blocks is INFERRED (round 664
+## left "whether any object kind is sent from farther (a unique, a structure)"
+## open); NPCs are field objects in the blocks (READ there).
+const VIEW_BLOCK_SPAN := 320.0
+const VIEW_BLOCK_RADIUS := 1
+## Half a region: region lines fall at 960 + 1920k in this client's world
+## frame (TerrainCollision.place_group), as in the server's (worldmap.ToWorld).
+const VIEW_BLOCK_ORIGIN := 960.0
+
+## The message block a world coordinate is in, on one axis: the server's
+## combat.CellOf (floor((v + 960) / 320)).
+static func view_block(v: float) -> int:
+	return floori((v + VIEW_BLOCK_ORIGIN) / VIEW_BLOCK_SPAN)
+
+## Whether an object at `obj` is one the original client would hold for a
+## player at `player`: its block within one of the player's on both axes.
+static func in_view_window(player: Vector3, obj: Vector3) -> bool:
+	return absi(view_block(obj.x) - view_block(player.x)) <= VIEW_BLOCK_RADIUS \
+		and absi(view_block(obj.z) - view_block(player.z)) <= VIEW_BLOCK_RADIUS
+
 ## For the suite: forget the loaded set.
 static func reset_for_test() -> void:
 	_base = {}
 	_loaded = false
 	_source = ""
+	_pk2_dir = ""
 	_scaled_sets = {}
 	_current_id = -1
 	_current_key = ""

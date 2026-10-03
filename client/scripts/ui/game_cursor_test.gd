@@ -70,7 +70,31 @@ func _test_cache_and_show() -> void:
 	GameCursor.reset_for_test()
 	_check(not GameCursor.show(0x95, w), "no exe: nothing to show, no error")
 
+## Round 700: the hover reaches the objects the original client holds --
+## the 3 x 3 message blocks of 320 around the player's (READ, server
+## CMsgBlock / CRgnTerrain; the client's pick has no per-class range).
+func _test_view_window() -> void:
+	_check(GameCursor.VIEW_BLOCK_SPAN == 320.0 and GameCursor.VIEW_BLOCK_RADIUS == 1, "blocks of 320, one block each way")
+	_check(GameCursor.view_block(0.0) == 3 and GameCursor.view_block(-960.0) == 0 and GameCursor.view_block(959.99) == 5
+		and GameCursor.view_block(960.0) == 6 and GameCursor.view_block(-960.01) == -1,
+		"blocks line up with the region lines at 960 + 1920k, as the server's CellOf")
+	var me := Vector3(0, 0, 0)  # block 3 on both axes: [0, 320)
+	_check(GameCursor.in_view_window(me, Vector3(-320.0, 50, 0)) and not GameCursor.in_view_window(me, Vector3(-320.01, 0, 0)),
+		"behind: the block before holds to -320, not past it")
+	_check(GameCursor.in_view_window(me, Vector3(639.99, 0, 0)) and not GameCursor.in_view_window(me, Vector3(640.0, 0, 0)),
+		"ahead: to the end of the next block (640), not into the one after")
+	_check(GameCursor.in_view_window(me, Vector3(0, 0, 639.0)) and not GameCursor.in_view_window(me, Vector3(0, 0, 641.0)), "the same on z")
+	_check(GameCursor.in_view_window(me, Vector3(639, 0, -320)) and not GameCursor.in_view_window(me, Vector3(641, 0, -320)),
+		"a square, not a circle: the corner block holds (723 units away)")
+	var edge := Vector3(319.99, 0, 100)  # the far side of block 3
+	_check(GameCursor.in_view_window(edge, Vector3(-320, 0, 100)) and not GameCursor.in_view_window(edge, Vector3(640, 0, 100)),
+		"320 to 640 units each way, by where the player stands in its block: 639.99 behind, 320.01 ahead is out")
+	_check(GameCursor.in_view_window(Vector3(950, 0, 0), Vector3(970, 0, 0)) and GameCursor.in_view_window(Vector3(970, 0, 0), Vector3(1500, 0, 0))
+		and not GameCursor.in_view_window(Vector3(950, 0, 0), Vector3(1600, 0, 0)),
+		"across a region line like anywhere else (the blocks link across regions)")
+
 func _init() -> void:
+	_test_view_window()
 	_test_ids()
 	_test_rules()
 	_test_cache_and_show()

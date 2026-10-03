@@ -454,6 +454,7 @@ func _build_title_ui(custom_dir: String) -> void:
 	status_label.add_theme_constant_override("outline_size", 3)
 	status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(status_label)
+	_show_cursor_hint()
 	_frame.resized.connect(_layout_login_window)
 	_layout_login_window()
 
@@ -461,6 +462,16 @@ func _build_title_ui(custom_dir: String) -> void:
 ## the line midway between the bands (FrontEndFrame.centre_line), the login
 ## window at (cx - 0x90, mid + 6), Connect at (cx - 100, mid + 0x9c) and
 ## Exit at (cx + 9, mid + 0x9c) -- in pixels, unscaled.
+## Round 700: without the game's cursors (no readable sro_client.exe), the
+## status line says where to put it -- the log alone left a tester on
+## Windows with the system arrow and no reason (GameCursor.missing_hint).
+## The next connection message replaces it.
+func _show_cursor_hint() -> void:
+	GameCursor.load_once()
+	var hint := GameCursor.missing_hint()
+	if hint != "" and status_label != null and status_label.text == "":
+		status_label.text = hint
+
 func _layout_login_window() -> void:
 	if _frame == null or _login_window == null:
 		return
@@ -735,6 +746,7 @@ func _build_ui() -> void:
 	status_label.position = Vector2(0.0, -40.0)
 	status_label.size = Vector2(get_viewport_rect().size.x, 30.0)
 	add_child(status_label)
+	_show_cursor_hint()
 
 ## One labelled input laid over a frame slot. `slot` is
 ## [label_x, field_x, field_right, centre_y] in frame fractions.

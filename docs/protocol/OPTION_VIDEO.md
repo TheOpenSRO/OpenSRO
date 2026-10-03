@@ -83,29 +83,47 @@ field spans 260 x 40 picture pixels = 130 x 20, its arrow 40 = 20; the Resolutio
 136 x 18, its arrow 40 x 36 = 20 x 18 -- every number the READ rects give. The value text is
 centred in {5, 0, W-30, H}, white (MEASURED in the picture).
 
-## The open list (READ, round 697)
+## The open list (READ, round 697; corrected and rebuilt in round 700)
 
 The combo's open function (`0x486f50`) creates a **CNIFPopupListCtrl** (runtime class 0x115e2c0,
 "CNIFPopupListCtrl"; base CNIFPopup 0x115e2e0; base CNIFStretchWnd 0x115e2a0 -- the class names
-are the descriptors' init strings) as the combo's child:
+are the descriptors' init strings) as the combo's child. MEASURED below is the user's 2x screenshot
+of the original with Graphic Quality open (664 x 382, every value doubled exactly):
 
 | What | Value | Where |
 |---|---|---|
-| rect | {0, **20**, W, 0}: x 0, y the constant 0x14 (not the combo's height), the combo's full width | `0x486fc1..0x486fdf` |
-| frame | the six `interface\ifcommon\com_blacksquare_` pieces, as the value field | `0x486f8a`, `0x49b040` |
-| fill (+0x1c4) | the combo's +0x380: **0x80000000** by the constructor (`0x486af3`), **0xb4000000** for every Option-window combo | `0x487050`; `0x5ff1f6` (Brightness), `0x5ff532` (Resolution), `0x6f7200` (each video row) |
+| y | **20** below the combo's top (the constant 0x14, not the combo's height) | READ `0x486fc1..0x486fdf`; MEASURED: the list's top frame row 40 px under the field's top row (y 152 vs 112) |
+| x, width | **the value field's: x 0, W - 20** | MEASURED: the list's frame columns are the field's (x 348 and 606), and beside it the arrow's column shows the row art undimmed. Round 697 read the rect as `{0, 20, W, 0}`, the combo's full width -- the picture says otherwise; the W the open function passes was not re-read |
+| frame | the six `interface\ifcommon\com_blacksquare_` pieces, as the value field | `0x486f8a`, `0x49b040`; the user, 2026-10-03: the white and black border look right |
+| fill (+0x1c4) | the combo's +0x380: **0x80000000** by the constructor (`0x486af3`), **0xb4000000** for every Option-window combo | `0x487050`; `0x5ff1f6` (Brightness), `0x5ff532` (Resolution), `0x6f7200` (each video row); MEASURED: row art of 0x27 reads 0x0b under it (0x27 x 75 / 255) |
 | rows | the item count for every Option combo (no scroll bar) | `0x5ff1d2`, `0x5ff50e`, `0x6f71fb` |
 | list | a CNIFListCtrl at {4, 4}, sized W-8 x H-8 | `0x49b820`, `0x49b920` |
-| height | rows x line + 8 | `0x48707f..0x48708e` |
-| line | the font's height + 4 | `0x49b820`: `FUN_00ba5460(0)` + 4 |
+| height | rows x line + 8 | `0x48707f..0x48708e`; MEASURED 146 = 2 x (5 x 13 + 8) |
+| line | **the font's size in points + 4 = 13** | `0x49b88b..0x49b896`: `[FUN_00ba5460(0) + 4] + 4`, where +4 of the font object is the size GNFontChar registered (`0x4927f9` -> `0xbaa110`'s `param_1[1]`, the value it MulDiv's into the LOGFONT), 9 for index 0 (FUN_00469350); MEASURED: baselines 26 px apart at 2x |
+| text | from the line's top by the font's cell | MEASURED: cap tops 3 below each line top, baselines 12 (GDI's cell origin) |
 | item text | normal **0xffffffff**, hover **0xffffff80**, pressed 0xff8080ff | `0x4845a0` -> `0x475d10` with the list's +0x368 / +0x370 / +0x36c |
-| hover bar | on (+0x362 = 1), **0xff8080ff** (+0x3a0), an untextured quad the text's height | `0x49b820`; draw `0x483a70`, `vslot_013 0x483460` |
-| alignment | the combo's own (+0x88 forwarded); the Option window sets 1 (centred) on Resolution and Brightness | `0x4870a1`; `0x5ff1ec`, `0x5ff528` |
+| hover bar | on (+0x362 = 1), **0xff8080ff** (+0x3a0), an untextured quad from the line's top, the item text's height | `0x49b820`; `CNIFListCtrl::vslot_013 0x483460`: the bar's height is the text extent's +0x50 high word unless +0x360 is set; draw `0x483a70` |
+| alignment | the combo's own (+0x88 forwarded): 1 = centred at (width - text width) / 2, 2 = right | `0x4870a1`; `vslot_013 0x483460`; the Option window sets 1 on Resolution and Brightness (`0x5ff1ec`, `0x5ff528`); MEASURED: every Graphic Quality item is centred on the field's centre (x 478 at 2x), so the video rows are centred too (where they get it was not read) |
 | scroll bar | a CNIFVerticalScroll (child 5), shown only with more items than rows | `0x49bba0` |
 
-So the "transparent black" the user remembers is 0xb4000000: black at 180/255. The Godot list
-(`OptionVideoPage.style_popup`) takes the fill, frame, insets, line, colours, bar and the y of 20;
-it cannot centre its items or show a pressed colour (OURS, docs/TODO.md).
+So the "transparent black" the user remembers is 0xb4000000: black at 180/255.
+
+**Round 697's PopupMenu, and why it went (round 700).** Round 697 styled the OptionButton's own
+PopupMenu with these values. The user's screenshot of it on Windows (v0.1.483) showed an opaque
+grey list: a PopupMenu is a Window whose viewport Godot 4.2.2 does not make transparent (no
+FLAG_TRANSPARENT / transparent_bg in `popup.cpp` or `popup_menu.cpp`), so the translucent fill was
+drawn over an opaque clear colour. It also left-aligned the items and spaced them by Godot's line
+height for a 12 px font plus 4 -- 18 units, against retail's 13 (the line was read as "font height
++ 4" and the font's height taken as Godot's). And it spanned the arrow.
+
+**ComboList** (`client/scripts/ui/hud/combo_list.gd`) replaces it: a Control on a CanvasLayer (layer
+120) above the game, in the game's own window, so the rows below show through. It draws the frame
+and fill (`OptionVideoPage.popup_panel`), the hover bar and the items centred on 13-unit lines,
+at the field's x and width, 20 below the combo's top, scaled with the combo. A left press on the
+combo opens it (the OptionButton stays for the value text and the item API; its press is
+accepted in the `gui_input` signal so its PopupMenu never opens). OURS: a click outside closes it
+and is eaten; Up / Down / the wheel move the bar, Enter / Space pick, Escape closes; a list that
+would run off the bottom of the window is moved up to fit; no pressed colour.
 
 ## The record (READ)
 

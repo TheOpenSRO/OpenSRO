@@ -757,6 +757,14 @@ touches this file.
 - [ ] **The player must have sro_client.exe** beside Data.pk2, one folder above it, or beside our
       exe (`sro_client_NODLL.exe` also accepted). Without it the system arrow stays and the log
       lists every path tried. Nothing is shipped.
+- [x] **Round 700: "no game cursor on Windows" (v0.1.483)** was the missing exe (the user had not
+      put sro_client.exe beside the pk2s). Now the login screen and the system messages say where
+      it goes, and a renamed client exe in the same folders is found by its cursors. Wine 10.0 is
+      on the box for the Windows build (docs/RENDER_BOX.md, "Wine").
+- [x] **The hover's reach** (round 700): no class has a range in retail's hover; the bound is the
+      3 x 3 message blocks of 320 the server sends, now applied to every hover class here
+      (CURSOR.md, "How far the hover reaches"). Left: the gate's place in the blocks is INFERRED;
+      the click (round 701) still reaches NPCs and gates outside the window.
 - [ ] **Stall (0xa3)** is wired (`GameCursor.KIND_IDS`, `player_kind`'s `stalling`) and
       unreachable: no other player's stall state (the 0x30b8 broadcast) reaches this client.
 - [ ] **Hostile players** show 0xa0 only with Alt held: teams (+0x81d), fortress war, job modes,
@@ -985,12 +993,16 @@ the following:
       handler); the scroll bar's line step; Effect Quality 1's two owner tests (FUN_00b94b70 on
       DAT_00ef1a84 / b44). The combo's field, arrow and text rects are READ (round 696), and its
       open list's fill 0xb4000000, placement, insets, line height, colours and hover bar (round
-      697, `OptionVideoPage.style_popup`); the six-piece frame's UVs (`0x49a140` / `0x49a7d0`: the
+      697; ComboList from round 700, with the line corrected to 13 and the width to the field's);
+      the six-piece frame's UVs (`0x49a140` / `0x49a7d0`: the
       top and bottom edges are drawn transposed, MEASURED against the user's picture) are not.
-- [ ] **The open list where Godot's PopupMenu cannot follow** (round 697, OURS): retail centres
-      the items on Resolution and Brightness (the combo's alignment 1, forwarded to the list) --
-      4.2's PopupMenu left-aligns; no pressed colour (0xff8080ff); the list is a separate Window.
-      A list drawn by this client (an ItemList in a panel) would follow all of it.
+- [x] **The open list is drawn by this client** (round 700, `ComboList`): translucent over the
+      rows below (the PopupMenu's opaque Window drew it grey), every item centred (MEASURED in the
+      user's picture of the original; the user's instruction), 13-unit lines (font 9 pt + 4, READ
+      and MEASURED; round 697 had 18), the field's width. Left: **no pressed colour** (0xff8080ff
+      while the button is held); where the video rows get their centred alignment (the slot's
+      combo, `0x6f7200`'s neighbours) was not read; retail's outside-click handling (CNIFPopup)
+      was not read -- ours eats the click; the list's keys are OURS.
 - [ ] **Resolution** is the window's size; in full screen Godot keeps the desktop's (no mode
       change in 4.2.2). A 3D render scale would be the Godot way to honour it there. In a window
       the OS window takes the size, a maximised one restored first (round 696). Retail's window
