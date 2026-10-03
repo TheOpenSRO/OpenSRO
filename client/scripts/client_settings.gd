@@ -146,6 +146,9 @@ static func apply_ui_scale(window: Window, scale: float) -> void:
 	window.content_scale_factor = factor
 	if changed and window.is_inside_tree():
 		_refresh_text(window)
+	# The cursor follows the UI scale (round 697, the user's decision).
+	if changed:
+		GameCursor.refresh(window)
 
 ## After a scale change made while text is up (the debug panel's slider):
 ## the window has already re-rasterised every glyph at the new scale and

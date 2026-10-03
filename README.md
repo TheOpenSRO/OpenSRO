@@ -24,6 +24,10 @@ Every tagged release publishes ready-to-run Windows and Linux client builds unde
    BYO game assets, see [docs/LEGAL.md](docs/LEGAL.md)) into the `pk2` folder sitting next to the
    executable. No environment variables or config editing needed — the client looks in that folder
    automatically (see `Pk2Config` in `client/scripts/assets/pk2_config.gd`).
+   For the game's own mouse cursors, also copy your client's `sro_client.exe` into that `pk2`
+   folder (or next to the executable); the cursors are read out of it at runtime and nothing is
+   shipped. Without it the system arrow stays, and the log lists every place it looked
+   (`docs/protocol/CURSOR.md`).
 3. Run the executable. On boot it checks GitHub Releases for a newer tagged build and offers an
    opt-in update (never applied silently) before continuing to the login screen — see
    `client/scripts/update/auto_updater.gd`. At login, type the server's address (`host` or
