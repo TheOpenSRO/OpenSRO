@@ -41,15 +41,20 @@ func _initialize() -> void:
 		"flat fields: 0.4 -> %.3f, 0.5 -> %.3f, 0.6 -> %.3f (the bloom raises contrast about 0.5)" % [lo, half, hi])
 	_check(RetailBloom.LAYER_INDEX < 0 and RetailBloom.LAYER_INDEX < VideoOptions.BRIGHTNESS_LAYER_INDEX,
 		"the pass sits under the default canvas, the world's UI (layer 1) and the brightness pass (%d)" % VideoOptions.BRIGHTNESS_LAYER_INDEX)
-	var b := RetailBloom.new()
-	var rect := b.get_node("Pass") as ColorRect
-	var code := (rect.material as ShaderMaterial).shader.code
-	_check(code.contains("hint_screen_texture, filter_linear_mipmap") and code.contains("198.0 / 255.0") and code.contains("192.0 / 255.0")
-		and code.contains("TARGET = 512.0") and code.contains("2.6") and code.contains("5.2") and code.contains("/ TARGET, lod)"),
-		"the shader takes its taps on the screen's 512-wide mip level at the 512-texel offsets 2.6 / 5.2 and composites 198/255 + 192/255")
-	_check(is_equal_approx(RetailBloom.lod_for(512.0), 0.0) and absf(RetailBloom.lod_for(3840.0) - log(7.5) / log(2.0)) < 1.0e-5
-		and RetailBloom.lod_for(400.0) == 0.0, "the 512 target is mip level log2(width / 512): 0 at 512, 2.91 at 3840")
+	var b := RetailBloom.new(true)
+	var grid := b.get_node("Pass") as MeshInstance2D
+	var code := (grid.material as ShaderMaterial).shader.code
+	_check(code.contains("hint_screen_texture, filter_linear,") and code.contains("198.0 / 255.0") and code.contains("192.0 / 255.0")
+		and code.contains("T = 512.0") and code.contains("0.6))") and code.contains("0.2))") and code.contains("v_blur = v_at(t)"),
+		"the shader runs retail's three passes per 512 texel in its vertex stage (taps 2.6 / 5.2 between texels) and composites 198/255 + 192/255")
+	var arrays := grid.mesh.surface_get_arrays(0)
+	_check((arrays[Mesh.ARRAY_VERTEX] as PackedVector2Array).size() == 514 * 514, "one vertex per texel of the 512 x 512 target, plus the edge ring")
 	b.free()
+	var bm := RetailBloom.new(false)
+	_check(bm.get_node("Pass") is ColorRect and not bm.uses_grid()
+		and ((bm.get_node("Pass") as CanvasItem).material as ShaderMaterial).shader.code.contains("filter_linear_mipmap"),
+		"under Compatibility (no vertex-stage screen reads) the pass is a rect on the 512-wide mip")
+	bm.free()
 	# Godot's glow never; the scene carries no guessed glow values.
 	var tscn := FileAccess.get_file_as_string("res://scenes/World3D.tscn")
 	_check(not tscn.contains("glow_intensity") and not tscn.contains("glow_bloom") and not tscn.contains("glow_hdr_threshold"),

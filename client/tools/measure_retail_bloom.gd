@@ -12,8 +12,9 @@ extends SceneTree
 ##    the vertical blur without it, a bilinear magnification back, and
 ##    `clamp(S x 198/255 + Blur x 192/255)`. Prints the differences over 4000
 ##    seeded pixels away from the edges (`BLOOM <renderer> <w>x<h> vs 512
-##    pipeline: max .. p99 .. mean ..`). Ours blurs the downsample (Godot's
-##    Gaussian mips), so this is a closeness figure, not a pass/fail.
+##    pipeline: max .. p99 .. mean ..`). Ours runs the same pipeline per
+##    512 texel; it differs by the grid's linear (not bilinear) magnification
+##    within each half-cell and the 8-bit targets retail rounds to.
 ## 2. **Echoes.** A black frame with one white bar (1/64 of the width); the bloom's
 ##    added light along a row to the right of the bar should fall off
 ##    smoothly, as retail's magnified 512 target does. Prints how many local
