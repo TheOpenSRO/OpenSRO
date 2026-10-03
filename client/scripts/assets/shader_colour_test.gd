@@ -59,10 +59,11 @@ func _gl_semantics_shaders() -> void:
 	for blend in ["opaque", "mix", "add"]:
 		for fade in [false, true]:
 			var code := ObjectLoader._mod_shader("back", blend, blend != "opaque", fade).code
+			# Round 706: unshaded, the whole stage result is ALBEDO (no EMISSION).
 			_gl_rule("the mod shader (%s%s)" % [blend, ", fade" if fade else ""], code,
-				[ShaderColour.DECODE_FN, ShaderColour.DECODE_ALBEDO, ShaderColour.DECODE_EMISSION])
+				[ShaderColour.DECODE_FN, ShaderColour.DECODE_ALBEDO])
 			# The decode comes after the stage result is written.
-			_check(code.find(ShaderColour.DECODE_ALBEDO) > code.find("EMISSION = unlit;"), "  ... after ALBEDO and EMISSION are written")
+			_check(code.find(ShaderColour.DECODE_ALBEDO) > code.find("ALBEDO = ") and not code.contains("EMISSION"), "  ... after ALBEDO is written")
 			_check(code.contains("srr_color(albedo, OUTPUT_IS_SRGB)") and not code.contains("* albedo.rgb"), "  ... and reads its Color parameter as stored (srr_color)")
 			_check(code.find("vec4 srr_color(") >= 0 and code.find("vec4 srr_color(") < code.find("Split carg("), "  ... with the helpers defined before they are used")
 	for cls in ["mix", "add", "add_one", "darken"]:

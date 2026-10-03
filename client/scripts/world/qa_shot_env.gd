@@ -11,6 +11,9 @@ class_name QaShotEnv
 ## - a Video-tab row's key, `quality` or `brightness` (VideoOptions.apply_spec),
 ##   applied as Apply would (World3D._on_video_options_applied);
 ## - `tonemap=<n>`: Environment.tonemap_mode (0 linear, 2 Filmic);
+## - `objtm=0|1` (round 706): whether the object shaders undo the tone map
+##   (ObjectLight); `objdiag=1|2`: the objects' diffuse term alone / ambient
+##   term alone (ObjectLight.qa_diag);
 ## - `sdist=<units>`: DirectionalLight3D.directional_shadow_max_distance;
 ## - `glow_bloom=<f>`: Environment.glow_bloom.
 ## - `fogprobe=1` (round 705): the fog pass draws its own measurement, opaque
@@ -46,6 +49,8 @@ static func apply(world: Node, spec: String) -> void:
 	var sdist: float = b["sdist"]
 	var bloom: float = b["glow_bloom"]
 	var probe := false
+	ObjectLight.qa_undo = -1
+	var diag := 0
 	for pair in spec.split(",", false):
 		var kv := pair.split("=")
 		if kv.size() != 2:
@@ -61,10 +66,17 @@ static func apply(world: Node, spec: String) -> void:
 				bloom = float(v)
 			"fogprobe":
 				probe = v == "1"
+			"objtm":
+				# Round 706: whether the object shaders undo the tone map.
+				ObjectLight.qa_undo = int(v)
+			"objdiag":
+				diag = int(v)
 			_:
 				video_spec.append(pair)
 	VideoOptions.apply_spec(video, ",".join(video_spec))
+	ObjectLight.qa_diag = diag
 	world._on_video_options_applied(video)
+	ObjectLight.reapply()
 	if env != null:
 		env.tonemap_mode = tonemap
 		env.glow_bloom = bloom

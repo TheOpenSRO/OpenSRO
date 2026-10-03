@@ -49,12 +49,11 @@ extends RefCounted
 ## diffuse, `fld [edi]`) with the pulse colour: vertex-shader constants c11 =
 ## light diffuse x colour, c10 = light ambient x colour, c14 = second light x
 ## colour. The end clears it (slot +0x4c, FUN_00c258b0), so the next draw is
-## the material's own again. HERE the character's materials draw the layer
-## colour as their albedo (ObjectLoader._commit_material, round 136), so the
-## pulse colour REPLACES that albedo on every piece of the body -- the skin,
-## the clothes, the worn items -- and the original material goes back at the
-## end (INFERRED mapping: our one albedo stands for both of the client's
-## light terms, as it already does for the material's own colour).
+## the material's own again. HERE (round 706) the character's materials
+## compute the client's vertex colour themselves (ObjectLight), so the pulse
+## is their `object_tint`: c10 = ambient x pulse, c11 = diffuse x pulse, on
+## every piece of the body -- the skin, the clothes, the worn items -- and
+## the original material goes back at the end.
 ##
 ## THE SIZE (READ). `SCT_CHAR_SCALE,s,ms` is flag 0x1000: the apply sets the
 ## character's scale target to s, reached over ms x 0.001 s (FUN_00a513a0,
@@ -475,9 +474,20 @@ static func _paint(m: Material, c: Color) -> void:
 		sm.albedo_color = Color(c.r, c.g, c.b, sm.albedo_color.a)
 	elif m is ShaderMaterial:
 		var sh := m as ShaderMaterial
+		if sh.shader != null and sh.shader.code.contains("srr_obj_od0") or _includes_object_light(sh.shader):
+			# The object shaders (round 706, ObjectLight): the pulse stands in
+			# for both the material's and the object's colour (c11 and c10),
+			# as the original's does. A Vector4: as given in both renderers.
+			sh.set_shader_parameter("object_tint", Vector4(c.r, c.g, c.b, 1.0))
+			return
 		var was = sh.get_shader_parameter("albedo")
 		if was is Color:
 			sh.set_shader_parameter("albedo", Color(c.r, c.g, c.b, (was as Color).a))
+
+## Whether a file shader is built on the object lighting include (its code
+## names the include, not the functions).
+static func _includes_object_light(shader: Shader) -> bool:
+	return shader != null and shader.code.contains("object.gdshaderinc")
 
 static func _restore_materials(look: Dictionary) -> void:
 	for id in (look["meshes"] as Dictionary).keys():

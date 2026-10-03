@@ -391,6 +391,8 @@ func _doll_checks() -> void:
 	var fwd := (mirror.global_transform.basis * pivot.transform.basis * forward_d3d)
 	var right := cam.global_transform.basis.x
 	_check(fwd.dot(right) > 0.4, "a growing yaw (the right arrow) turns the face toward screen-right (dot %.3f)" % fwd.dot(right))
+	# The Bloom row off: channel 2 x 0.6 (round 706, ObjectLight).
+	ObjectLight.current_bloom = false
 	doll.call("set_zone_light", Color(0.5, 0.25, 1.4), Color(0.4, 0.4, 0.4))
 	var light: Dictionary = doll.call("zone_light")
 	_check((light.get("diffuse", Vector3.ZERO) as Vector3).is_equal_approx(Vector3(0.3, 0.15, 0.6))

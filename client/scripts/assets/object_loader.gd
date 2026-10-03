@@ -536,26 +536,71 @@ const ALPHA_TEST_REF := 0x80
 const ENV_MAP_FLAG_ALPHA_TEST := 0x2
 const ENV_MAP_ALPHA_REF := 1
 
-## Real cutout foliage shaders -- see foliage.gdshaderinc's top comment for
-## why a real double-sided card cannot be a StandardMaterial3D and still
-## light the way the real client lights it. One per cull mode, because a
-## Godot shader's cull mode is a compile-time render_mode.
-const FOLIAGE_SHADER := preload("res://scripts/assets/foliage.gdshader")
-const FOLIAGE_SHADER_ONE_SIDED := preload("res://scripts/assets/foliage_one_sided.gdshader")
+## The object shaders (round 706): the original's object lighting
+## (ObjectLight; the body is object.gdshaderinc), built at run time by
+## object_shader so the renderer can be named in the code -- GL Compatibility
+## in Godot 4.2 has no instance uniforms and no renderer define. One per cull
+## mode (a compile-time render_mode): FOLIAGE_SHADER a two-sided layer (flag
+## 0x1, READ round 625), FOLIAGE_SHADER_ONE_SIDED an alpha-tested one-sided
+## layer (the .bms winding is reversed on load, BmsReader.to_arrays, so
+## Godot's back-face cull is the client's CCW cull), OBJECT_SHADER a solid
+## layer. The names are historical: before round 706 the solid layer was a
+## StandardMaterial3D and the two foliage shaders lit with Godot's light.
+static var _object_shaders := {}
+static var FOLIAGE_SHADER: Shader = object_shader("two")
+static var FOLIAGE_SHADER_ONE_SIDED: Shader = object_shader("one")
+static var OBJECT_SHADER: Shader = object_shader("solid")
 ## The (cull, blend, zwrite) a generated MTRL-mod shader was built for, on
 ## the Shader (round 676): AppearFade asks _mod_shader for its fade twin.
 const MOD_SHADER_KEY_META := "opensro_mod_shader_key"
+## The kind an object shader was built for (object_shader).
+const OBJECT_SHADER_KIND_META := "opensro_object_shader_kind"
+
+## The renderer's line for the generated object shaders: GL Compatibility
+## (Godot 4.2) cannot compile an instance uniform (MEASURED, round 706).
+static func renderer_defines() -> String:
+	return "#define OBJECT_NO_INSTANCE_UNIFORMS\n" if RendererChoice.running() == RendererChoice.COMPATIBILITY else ""
+
+## An object shader: `kind` "solid" (no alpha test, back faces culled), "one"
+## (alpha-tested, back faces culled) or "two" (no cull); `fade` gives the twin
+## a character fading into existence draws with (AppearFade, round 676):
+## blended at the fade's alpha, depth_draw_always keeping the model's near
+## faces in front of its far ones while it is translucent (OURS).
+static func object_shader(kind: String, fade: bool = false) -> Shader:
+	var key := "%s/%s" % [kind, fade]
+	_static_lock.lock()
+	var cached: Shader = _object_shaders.get(key)
+	_static_lock.unlock()
+	if cached != null:
+		return cached
+	var modes := "unshaded, " + ("cull_disabled" if kind == "two" else "cull_back")
+	if fade:
+		modes += ", blend_mix, depth_draw_always"
+	var defs := renderer_defines()
+	if kind == "solid" and not fade:
+		defs += "#define OBJECT_SOLID\n"
+	if fade:
+		defs += "#define APPEAR_FADE\n"
+	var sh := Shader.new()
+	sh.code = "shader_type spatial;\n// An object layer, kind %s%s (ObjectLoader.object_shader, round 706).\nrender_mode %s;\n%s#include \"res://scripts/assets/object.gdshaderinc\"\n" % [
+		kind, ", fading" if fade else "", modes, defs]
+	sh.set_meta(OBJECT_SHADER_KIND_META, kind)
+	_static_lock.lock()
+	if _object_shaders.has(key):
+		sh = _object_shaders[key]
+	else:
+		_object_shaders[key] = sh
+	_static_lock.unlock()
+	return sh
 
 ## The shader a character's material is drawn with while it fades into
-## existence (AppearFade, round 676), or null for one with no fade twin: the
-## foliage shaders' *_fade variants and a mod shader's `fade` twin.
+## existence (AppearFade, round 676), or null for one with no fade twin: an
+## object shader's fade twin and a mod shader's `fade` twin.
 static func appear_fade_shader(shader: Shader) -> Shader:
 	if shader == null:
 		return null
-	if shader == FOLIAGE_SHADER:
-		return load("res://scripts/assets/foliage_fade.gdshader")
-	if shader == FOLIAGE_SHADER_ONE_SIDED:
-		return load("res://scripts/assets/foliage_one_sided_fade.gdshader")
+	if shader.has_meta(OBJECT_SHADER_KIND_META) and not shader.code.contains("APPEAR_FADE"):
+		return object_shader(String(shader.get_meta(OBJECT_SHADER_KIND_META)), true)
 	if shader.has_meta(MOD_SHADER_KEY_META):
 		var k: Array = shader.get_meta(MOD_SHADER_KEY_META)
 		return _mod_shader(String(k[0]), String(k[1]), bool(k[2]), true)
@@ -743,21 +788,19 @@ static func blend_mode(src: int, dest: int) -> String:
 ##   FUN_00c42a60 turns into COLOROP 5).
 ## - DIFFUSE is the lit vertex colour (READ, Shader\vertexshader0.c:
 ##   saturate(N.L) * c11 + c10). Its alpha is 1: c10.w and c11.w are 1.0 in
-##   the renderer's uploads and oD0 saturates (READ). Its colour is not
-##   computed in the shader: the stage result is split into the part that
-##   multiplies DIFFUSE (drawn as ALBEDO, lit by Godot's lights like every
-##   other material) and the part that does not (drawn as EMISSION, unlit,
-##   as a SELECTARG1 TEXTURE draw is). OURS: DIFFUSE times DIFFUSE is drawn
-##   as DIFFUSE; TFACTOR is white (the mod's own colour is not passed yet).
-## - Brightness is anchored to the flag-word path (OURS): that path draws
-##   ALBEDO = layer ambient x texture for what the client draws as
-##   MODULATE2X(TEXTURE, DIFFUSE), so a lit coefficient L is drawn as
-##   ALBEDO = L x ambient / 2 -- MODULATE2X here is exactly the flag-word
-##   path, MODULATE half of it. Whether the flag-word path's own brightness
-##   matches the client's is a separate, global question (docs/
-##   WORLD_ISSUES.md, round 625-626 material review follow-up).
+##   the renderer's uploads and oD0 saturates (READ). Since round 706 it is
+##   computed as the original computes it, per vertex (ObjectLight: c10 =
+##   object colour x the light's ambient, c11 = the layer's SECOND colour x
+##   the light's diffuse), and the draw is unshaded: the stage result is
+##   evaluated in full, value for value. Until then the part multiplying
+##   DIFFUSE was drawn as ALBEDO = L x the layer's FIRST colour / 2 and lit
+##   by Godot's sun, anchored to the old flag-word path. OURS: TFACTOR is
+##   white (the mod's own colour is not passed yet).
+## - The tone map: undone on an opaque or "mix" draw's colour (ObjectLight.
+##   srr_obj_present), not on an adding or multiplying blend's (its source
+##   is a factor on what is under it, not a colour shown) -- OURS.
 ## - The alpha test reads full-resolution alpha (mip 0), as
-##   foliage.gdshaderinc does and for the same reason: a leaf card's
+##   object.gdshaderinc does and for the same reason: a leaf card's
 ##   mipmapped alpha falls with distance and the canopy disappears (OURS,
 ##   the client tests the filtered alpha). The blend still uses the
 ##   filtered alpha.
@@ -790,7 +833,7 @@ static func _mod_shader(cull: String, godot_blend: String, zwrite: bool, fade: b
 	if cached != null:
 		return cached
 	var opaque := godot_blend == "opaque"
-	var modes := ["cull_" + cull]
+	var modes := ["unshaded", "cull_" + cull]
 	if not opaque:
 		modes.append("blend_" + godot_blend)
 		modes.append("depth_draw_always" if zwrite else "depth_draw_never")
@@ -813,8 +856,10 @@ render_mode %s;
 // a raw colour, decoded at the end where the output is linear (ShaderColour,
 // round 693): the stage arithmetic is the client's gamma-space arithmetic in
 // both renderers.
-// `albedo` is set as a Color (BmtReader's layer ambient): read through
-// srr_color (ShaderColour).
+// `albedo` is set as a Color (BmtReader's layer diffuse, the second colour:
+// c11's material term, round 706): read through srr_color (ShaderColour).
+// DIFFUSE is the original's lit vertex colour (ObjectLight), computed per
+// vertex; the draw is unshaded.
 uniform vec4 albedo = vec4(1.0);
 uniform sampler2D albedo_texture : filter_linear_mipmap, repeat_enable;
 // The alpha test: the ref byte / 255 and its D3DCMPFUNC (0 = no test).
@@ -915,39 +960,35 @@ void fragment() {
 	}
 	Split c = cop(color_op, carg(color_arg1, tex), carg(color_arg2, tex), aarg(color_arg1, tex));
 	float a = clamp(aop(alpha_op, aarg(alpha_arg1, tex), aarg(alpha_arg2, tex), tex.a), 0.0, 1.0);
-	vec3 lit = c.lit * srr_color(albedo, OUTPUT_IS_SRGB).rgb * 0.5;
-	vec3 unlit = c.unlit;
+	vec3 lit = c.lit * srr_od0;
+	vec3 stage = clamp(lit + c.unlit, vec3(0.0), vec3(1.0));
 	if (blend_color == 1) {
-		vec3 s = clamp(lit + unlit, vec3(0.0), vec3(1.0));
-		lit *= s;
-		unlit *= s;
+		stage *= stage;
 	} else if (blend_color == 2) {
-		lit = vec3(0.0);
-		unlit = vec3(0.0);
+		stage = vec3(0.0);
 	}
 	float out_a = a;
 	if (blend_alpha == 1) out_a = 1.0;
 	else if (blend_alpha == 2) out_a = 1.0 - a;
 	else if (blend_alpha == 3) {
 		float d = max(a, 1.0 / 255.0);
-		lit /= d;
-		unlit /= d;
+		stage /= d;
 	}
-	ALBEDO = lit;
-	EMISSION = unlit;
+	ALBEDO = %s;
 	%s
 	%s
 	%s
-	%s
-	if (!FRONT_FACING) {
-		NORMAL = -NORMAL;
-	}
 }
-""" % [", ".join(modes), "uniform float appear_alpha = 1.0;\n" if fade else "", alpha_line,
-		ShaderColour.DECODE_ALBEDO, ShaderColour.DECODE_EMISSION, WorldFog.SHADER_FOG_LINE if blended else ""]
+""" % [", ".join(modes), "uniform float appear_alpha = 1.0;\n" if fade else "",
+		# The tone map is undone on what is drawn over (opaque, mix): a
+		# multiplying or adding blend's source is a factor, not a colour
+		# shown (OURS, ObjectLight).
+		"srr_obj_present(clamp(stage, vec3(0.0), vec3(1.0)))" if opaque or godot_blend == "mix" or fade else "clamp(stage, vec3(0.0), vec3(1.0))",
+		alpha_line, ShaderColour.DECODE_ALBEDO, WorldFog.SHADER_FOG_LINE if blended else ""]
 	# The helpers go before the first function (the stage arithmetic and the
-	# portrait's injected vertex() both call them).
-	shader.code = code.replace("\nstruct Split {", ShaderColour.DECODE_FN + (WorldFog.SHADER_FN if blended else "") + "\nstruct Split {")
+	# vertex colour call them).
+	shader.code = code.replace("shader_type spatial;\n", "shader_type spatial;\n" + renderer_defines()).replace("\nstruct Split {", ShaderColour.DECODE_FN + ObjectLight.SHADER_FN + (WorldFog.SHADER_FN if blended else "")
+		+ "\nvoid vertex() {\n\t" + ObjectLight.OD0_LINE + "\n}\n" + "\nstruct Split {")
 	shader.set_meta(MOD_SHADER_KEY_META, [cull, godot_blend, zwrite])
 	_static_lock.lock()
 	if _mod_shaders.has(key):
@@ -1016,7 +1057,8 @@ static func _mod_pass(layer: BmtReader.Layer, tex: Texture2D, rule: Dictionary, 
 	var mat := ShaderMaterial.new()
 	mat.resource_name = layer.layer_name
 	mat.shader = _mod_shader(cull, emu["godot"], rule["zwrite"])
-	mat.set_shader_parameter("albedo", layer.ambient)
+	# The layer's second colour, c11's material term (round 706, ObjectLight).
+	mat.set_shader_parameter("albedo", layer.diffuse)
 	mat.set_shader_parameter("albedo_texture", tex)
 	var ref := int(rule["alpha_ref"])
 	mat.set_shader_parameter("alpha_scissor", float(ref) / 255.0)
@@ -1038,9 +1080,10 @@ static func _build_foliage_material(layer: BmtReader.Layer, tex: Texture2D, alph
 	var mat := ShaderMaterial.new()
 	mat.resource_name = layer.layer_name
 	mat.shader = FOLIAGE_SHADER if two_sided else FOLIAGE_SHADER_ONE_SIDED
-	# The ambient colour, for the reason build_godot_material gives.
-	mat.set_shader_parameter("albedo", layer.ambient)
-	mat.set_shader_parameter("albedo_texture", tex)
+	# The layer's second colour, c11's material term (round 706, ObjectLight).
+	mat.set_shader_parameter("albedo", layer.diffuse)
+	if tex != null:
+		mat.set_shader_parameter("albedo_texture", tex)
 	# 0 means no alpha test (a two-sided solid layer): the shader then keeps
 	# every texel.
 	mat.set_shader_parameter("alpha_scissor", float(alpha_ref) / 255.0)
@@ -1131,52 +1174,52 @@ static func _prepare_material(archive: Pk2Reader, bmt_path: String, layer: BmtRe
 				" (env map 0x%x)" % env_map if env_map >= 0 else ""])
 	return plan
 
-## The commit half of a layer's material, on the main thread: the
-## StandardMaterial3D the layer's colours make, textured from
-## `texture_cache` (commit_textures has put the prepare's upload there), or
-## the foliage material when the rule draws the layer alpha-tested or
-## two-sided.
+## The commit half of a layer's material, on the main thread: the object
+## material the layer's rule asks for (round 706: every one lit as the
+## original lights objects -- ObjectLight), textured from `texture_cache`
+## (commit_textures has put the prepare's upload there): an MTRL mod's own
+## draw, the alpha-tested or two-sided foliage shaders, or object.gdshader
+## for a solid layer.
 static func _commit_material(plan: Dictionary, texture_cache: Dictionary) -> Material:
 	var layer: BmtReader.Layer = plan["layer"]
-	var mat := StandardMaterial3D.new()
-	mat.resource_name = layer.layer_name
-	# The layer's colours are a D3DMATERIAL9 -- ambient, diffuse, specular,
-	# emissive, power, in that order -- and the fixed-function pipeline
-	# multiplies the *ambient* light by the ambient colour and only the
-	# directional light by the diffuse. This used to set the albedo from
-	# the diffuse, which is the same 0.59 as the ambient on every Jangan
-	# layer measured and so never showed -- until Alexandria, where 24 of
-	# the houses' 40 layers carry diffuse 0.14 against ambient 0.59 and
-	# every wall came out black (docs/WORLD_ISSUES.md, round 136). The
-	# ambient is the term a mostly-ambient scene is lit by. What this still
-	# gets wrong: a StandardMaterial3D scales the sun by the same colour, so
-	# a sunlit face of such a layer draws brighter here than in the original
-	# by diffuse/ambient; an exact split needs a shader's light() function.
-	mat.albedo_color = layer.ambient
-	if plan.get("two_sided", false):
-		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-
+	var godot_tex: Texture2D = null
 	var key: String = plan["texture_key"]
-	if key == "" or not texture_cache.has(key):
-		return mat
-	var godot_tex: Texture2D = texture_cache[key]["texture"]
-	if godot_tex == null:
-		return mat
-	mat.albedo_texture = godot_tex
+	if key != "" and texture_cache.has(key):
+		godot_tex = texture_cache[key]["texture"]
 	var alpha_ref := int(plan.get("alpha_ref", 0))
 	var rule: Dictionary = plan.get("rule", {})
-	if rule.get("mtrl", false) and (rule.get("blend", "") != "" or int(rule.get("alpha_ref", 0)) > 0
+	if godot_tex != null and rule.get("mtrl", false) and (rule.get("blend", "") != "" or int(rule.get("alpha_ref", 0)) > 0
 			or int(rule.get("alpha_func", D3DCMP_GREATEREQUAL)) not in [D3DCMP_GREATEREQUAL, D3DCMP_ALWAYS]):
 		# An MTRL mod's blend or test (READ): its own blend -- the only
 		# per-material blending the client has; the flag word never blends
 		# -- and its own alpha func, which may be any D3DCMPFUNC.
 		return _build_mod_material(layer, godot_tex, rule)
-	if alpha_ref > 0 or plan.get("two_sided", false):
-		# Not a StandardMaterial3D: a real double-sided card has to keep
-		# its authored normal on both faces to light the way the real
-		# client lights it, which StandardMaterial3D cannot express, and
-		# the alpha test reads full-resolution alpha (foliage.gdshaderinc).
-		return _build_foliage_material(layer, godot_tex, alpha_ref, plan.get("two_sided", false))
+	if (godot_tex != null and alpha_ref > 0) or plan.get("two_sided", false):
+		# A real double-sided card keeps its authored normal on both faces
+		# (one vertex colour, object.gdshaderinc), and the alpha test reads
+		# full-resolution alpha. An untextured layer has nothing to test.
+		return _build_foliage_material(layer, godot_tex, alpha_ref if godot_tex != null else 0, plan.get("two_sided", false))
+	return _build_object_material(layer, godot_tex)
+
+## A solid layer's material (object.gdshader): the layer's SECOND colour as
+## the material colour c11 multiplies (READ, ObjectLight), its texture or
+## none (the shader's white default).
+##
+## Until round 706 this was a StandardMaterial3D with the layer's FIRST colour
+## as its albedo, lit by Godot's sun (energy 0.3, round 43) and ambient: the
+## first colour is in no object lighting of the original's (it is
+## D3DMATERIAL9.Ambient, which the vertex shader never reads), and round 136's
+## reason for preferring it -- Alexandria's 24 of 40 house layers with a 0.14
+## second colour drew black -- does not hold for the original's formula,
+## whose ambient term (0.6 x La) does not depend on the material at all.
+static func _build_object_material(layer: BmtReader.Layer, tex: Texture2D) -> ShaderMaterial:
+	var mat := ShaderMaterial.new()
+	mat.resource_name = layer.layer_name
+	mat.shader = OBJECT_SHADER
+	mat.set_shader_parameter("albedo", layer.diffuse)
+	if tex != null:
+		mat.set_shader_parameter("albedo_texture", tex)
+	mat.set_shader_parameter("alpha_scissor", 0.0)
 	return mat
 
 ## A texture read and decoded for a prepare: `{"image", "four_cc", "alpha":

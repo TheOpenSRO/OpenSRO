@@ -612,10 +612,13 @@ In order. Each is checked off here when it ships in a release, with its round in
       702's review measured RetailBloom under Compatibility, so something after it broke it -- or
       the movie writer path alone. Middle (the default) has Bloom on: find out whether a
       Compatibility player sees black.
-- [ ] **The camera's field of view** (round 705 finding): the original's projection is fovy 60
-      (READ, MAPM_FORMAT.md "Depth", 0x00d89ddc); ours is Godot's default 75, so the same spot
-      shows the dragon and the gate about 1.3x smaller here (the user's two pictures). The camera
-      zoom limits were derived from 75 (WORLD_ISSUES rounds 20-22).
+- [x] **The camera's field of view** -- round 706: 60 degrees VERTICAL at any aspect (READ: the
+      camera constructor `FUN_00bae0a0` stores 60.0 at +0x50; `CGFXVideo3d::FUN_00bae810` hands it
+      x pi/180 and width / height to `FUN_00aa4ef0`, a PerspectiveFovLH with m11 = cot(fov / 2) and
+      m00 = m11 / aspect), which is Camera3D.fov under KEEP_HEIGHT (`World3D.CAMERA_FOV_DEG`, the
+      scene's camera). MEASURED at the user's spot: the dragon is 12.5 % of the frame's height
+      here, 12.4 % in the original. Left: the zoom range (20..90) is still the OURS framing choice
+      of round 55, chosen at 75 degrees.
 - [ ] **The day phase** (round 705 finding, a contradiction to settle): the Day/night item below
       says the in-game phase is a fixed 0.5 and the server clock feeds nothing; CharSelectHandoff's
       header (round 688's review) says `CPSMission::vslot_012` sets SWorld's phase every frame from
@@ -632,6 +635,11 @@ In order. Each is checked off here when it ships in a release, with its round in
       wall 37 / 47 luma, dirt 50 / 65, paving 41 / 51, sky 211 / 238 (saturation 0.44 / 0.26). The
       original there: 81, 83, 61, 190. Linear moves every surface further from the original
       except the sky's saturation; the darkness is the object lighting (above), not Filmic.
+      **Round 706:** objects and characters now undo Filmic after the original's formula
+      (`ObjectLight.srr_obj_present`, as the select screen's bodies and the fog pass already did),
+      so they show the formula's display values: MEASURED at the user's spot, bloom off, the gate
+      wall 82 against the original's 81 with the undo and about 90-97 without. The terrain, the
+      water and the sky still go through Filmic.
 - [x] ~~Day/night cycle~~ -- **not a gap** (round 226, `docs/protocol/game_clock.md`): the retail
       client renders the environment at a FIXED phase of 0.5 (SWorld's constructor sets it; the
       per-frame advance is gated by a flag nothing sets; the graphs are sampled at the raw phase), and
@@ -743,28 +751,39 @@ are not drawn.
 - **Object-space skin entry.** An empty skin slot lands on the client's palette entry 0, drawn
   here in the model's own space (BMS_FORMAT.md). That entry 0 is the object transform is
   INFERRED, not read from the vertex shader's constant upload.
-- **Object brightness against the client** (material review follow-up). The client draws
-  texture × lit diffuse × 2. Our flag-word path is tuned by eye (light energy 0.3, round 43).
-  Before any global change, read c10's upload, the env record → D3DLIGHT9 mapping and the object
-  colour, then compare numerically in Jangan. The decision is the user's.
-  **Round 705 read c10 and measured Jangan** (WORLD_ISSUES round 705): `CObjRendererVS::
-  vslot_024` uploads c10 from the stack block at its entry ESP+0x30 (asm 0xbf1e18..0xbf1e37,
-  upload 0xbf1f4e..0xbf1f60), built as the OBJECT's colour (+0x14..+0x1c of the drawn object)
-  times the D3DLIGHT9 Ambient (0x1112e28..30), w 1 -- READ; c11 per material = the file's second
-  colour (BmtReader `diffuse`) times the light's Diffuse (FUN_00bf0e20) -- READ. So the material's
-  first colour (BmtReader `ambient`, which our flag-word path uses as the albedo) is not in the
-  object shader's lighting at all. Retail: `clamp(2 x tex x clamp(obj x La + sat(N.L) x
-  diffuse x Ld))` in display values. MEASURED against the user's original (same spot): the gate
-  wall 81 luma there, 35 in the user's v0.1.486 frame, 47 on the box; the dragon's gold pixels
-  (90, 77, 31) there, (32, 22, 15) in the user's frame -- its layer's `ambient` is (0.34, 0.21,
-  0.05), its texture's mean (0.47, 0.37, 0.12). Open: the object colour's default (INFERRED white),
-  the light's direction (VSC_DLIGHT_DIRECTION c9 is the object-space transform of SWorld's
-  +0x130..0x138, whose writer was not read), and every consumer of the flag-word
-  StandardMaterial3D (BerserkLook, AppearFade, the portrait, the paper doll, the select stage).
-  A restructuring, not a value: the user's call, with these numbers.
+- ~~**Object brightness against the client**~~ -- **done in round 706** (WORLD_ISSUES has the
+  measurements). Every object and character draws the original's own object lighting
+  (`ObjectLight`, all READ): `saturate(2 x texture x saturate(object x La + max(0, N.L) x
+  material x Ld))` in display values, per vertex, unshaded, with Godot's Filmic undone after it.
+  La = channel 3 clamped; Ld = channel 2 clamped x 0.8 with the Bloom row on (world+0x2e54, the
+  bloom target) and x 0.6 off; the material is the .bmt layer's SECOND colour (`CPrimMtrl::
+  vslot_001` -> `FUN_00bf9270` put the file's second colour at the D3DMATERIAL9's Diffuse, which
+  c11 reads); the light's direction is normalize(-1, -1, 0), set once (`Map::FUN_00a2f370`); the
+  object colour is 0.6 for every placed object (CCompoundObj's constructor, the setter's only
+  callers being the decoration records and the characters) and, for a character on a terrain
+  cell, the region's .t ShadowMap byte under it / 384 (`GlobalDataManager::FUN_009cf530`,
+  `SWorld::vslot_041`; `CharacterLight`). The first colour, the sun's energy 0.3 and the Forward+
+  x4 no longer reach objects. Left:
+  - **The Jangan dragon is about 1.3x brighter than the original's** (gold pixels (127, 98, 30)
+    against (91, 79, 33), bloom off), while the gate wall beside it matches (82 / 81) and the
+    diffuse term adds only 18 luma on it (`objdiag=1`): the ambient term alone draws it at
+    (119, 94, 29). Candidates, none read: Metallic Sheen's environment-map pass on Middle
+    (below), a different stage op for that layer, the texture.
+  - **GL Compatibility has no instance uniforms** in Godot 4.2 (MEASURED: "Uniform instances are
+    not supported in gl_compatibility shaders"), so there every character keeps 0.6 instead of
+    its shadow tile (`ObjectLoader.renderer_defines`, `OBJECT_NO_INSTANCE_UNIFORMS`).
+  - A character's colour follows its tile on a visit every few frames (CharacterLight, OURS
+    cadence), not with every position as the original's setter; the dungeon branch (1.0 in a
+    region with id bit 0x8000) is not reached.
+  - **The user's original appears to have Bloom off** (MEASURED, the gate roof's edge against the
+    sky: the original falls from 200 to 73 in one pixel with no halo; ours with RetailBloom keeps
+    +20 for 4 pixels inside the edge, without it none). Ask; every comparison above is bloom off.
+  - Detail's shadow map no longer lands on objects (the plaza deck): unshaded objects receive no
+    light, and the original projects character shadows on ground cells only (READ, round 702).
 - **Metallic Sheen and the dragon** (round 705, INFERRED): the Jangan dragon's layer is the only
   one in `cj_jang_gate01.bmt` with a Power (1.48) and a near-white specular; the Middle preset's
   Metallic Sheen (case 0xc -> object renderer +0x194) is drawn as nothing here.
+  Round 706: the candidate for the dragon's remaining 1.3x (above).
 - **MTRL blend pairs drawn OURS** (BMT_FORMAT.md): 7 pairs drop a term. BLENDFACTOR's live
   value for objects is OPEN. TFACTOR is drawn white, although the mod's own colour is available.
 - **The 355 bit-9 item layers with no ENVMAP mod** are cut at 128 by the READ rule. That is right
@@ -1411,14 +1430,9 @@ front-end's next steps.
 - ~~**The lizard's setter's 200**~~ READ (round 688's review): the one-shot's 200 ms fade-out
   (`CRTAniOneShot::vslot_002` case 4 -> 5, `AniMixer::FUN_00c554e0(clip, 0, 200)`), fade-in 0; no
   visible effect with one clip, not modelled.
-- **In-world characters use Godot's tuned lighting, not retail's character formula** (round 688's
-  review). The select bodies, the customize preview, the equipment window and the portrait now all
-  draw characters with PlayerPortrait's materials (ambient x 0.6 + n.l x material x diffuse x 0.6,
-  then texture x 2; READ) -- the select bodies with the backdrop's Filmic tone mapping undone
-  (`CharSelectStage._undo_tonemap`). The world's players, NPCs and monsters still wear Godot's lit
-  materials under DirectionalLight3D energy 0.3 (OURS since round 43), MEASURED 1.3-1.8x darker on
-  select before the change. A later round, after round 689 (world bodies) lands: dress the world's
-  characters the same way, with the perf gate.
+- ~~**In-world characters use Godot's tuned lighting, not retail's character formula**~~ -- done
+  in round 706: the world's players, NPCs and monsters draw the original's formula too
+  (`ObjectLight`; their object colour by the tile under them, `CharacterLight`).
 - **Model fades do not draw on GL Compatibility** (READ, Godot 4.2.2 source, not measured on screen):
   `GeometryInstance3D.transparency` is stored as `force_alpha` in
   `RenderGeometryInstanceBase::set_transparency` and never read by the GLES3 renderer

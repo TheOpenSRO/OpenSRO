@@ -553,12 +553,15 @@ func _distinct_albedo_textures(objects: Array) -> int:
 ## render box, 2026-09-25), with round 625's material rule applied: the
 ## scissor is 128/255 (0.5020), the shader says which cull it is (`two` /
 ## `one`), and dxt1solid's 0x141 layer is the two-sided shader untested.
+## Round 706: a solid layer is object.gdshader (`solid`, scissor 0) where it
+## was a StandardMaterial3D, and every material's colour is the layer's
+## SECOND colour (testobj's 1.0 where its first is 0.588; ObjectLight).
 ## Everything else in them is the pre-split loader's, unchanged.
 const EXPECTED_FINGERPRINTS := {
-	"testobj": "0:Node3D:TestObj | 1:MeshInstance3D:wall01 surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Shader(layer0,shader=two,tex=4x4,scissor=0.5020,albedo=(0.588, 0.588, 0.588, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false | 1:MeshInstance3D:wall02 surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Shader(layer0,shader=two,tex=4x4,scissor=0.5020,albedo=(0.588, 0.588, 0.588, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false",
-	"namematch": "0:Node3D:NameMatchObj | 1:MeshInstance3D:pieceA surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Standard(piece_a,tex=null,albedo=(1, 1, 1, 1),transparency=0,cull=0) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false | 1:MeshInstance3D:pieceB surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Standard(piece_b,tex=null,albedo=(1, 1, 1, 1),transparency=0,cull=0) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false",
+	"testobj": "0:Node3D:TestObj | 1:MeshInstance3D:wall01 surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Shader(layer0,shader=two,tex=4x4,scissor=0.5020,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false | 1:MeshInstance3D:wall02 surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Shader(layer0,shader=two,tex=4x4,scissor=0.5020,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false",
+	"namematch": "0:Node3D:NameMatchObj | 1:MeshInstance3D:pieceA surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Shader(piece_a,shader=solid,tex=null,scissor=0.0000,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false | 1:MeshInstance3D:pieceB surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=Shader(piece_b,shader=solid,tex=null,scissor=0.0000,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false",
 	"compound": "0:Node3D:TestCompound | 1:Node3D:TestCompoundPiece | 2:MeshInstance3D:simple surfaces=1 [v=3 i=3 isum=3 psum=1.0000,0.0000,1.0000] mat=null | 3:StaticBody3D:@ | 4:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=1.0000,0.0000,1.0000 backface=false",
-	"alphaobj": "0:Node3D:AlphaObj | 1:MeshInstance3D:bin surfaces=1 [v=3 i=6 isum=4 psum=0.5468,5.4445,1.2655] mat=Shader(bin,shader=two,tex=4x4,scissor=0.5020,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=6 fsum=3.9354,7.4444,5.0309 backface=false | 1:MeshInstance3D:graded surfaces=1 [v=3 i=3 isum=3 psum=0.5468,5.4445,1.2655] mat=Standard(graded,tex=4x4,albedo=(1, 1, 1, 1),transparency=0,cull=0) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=0.5468,5.4444,1.2655 backface=false | 1:MeshInstance3D:dxt1cut surfaces=1 [v=3 i=3 isum=3 psum=0.5468,5.4445,1.2655] mat=Shader(dxt1cut,shader=one,tex=4x4,scissor=0.5020,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=0.5468,5.4444,1.2655 backface=false | 1:MeshInstance3D:dxt1solid surfaces=1 [v=3 i=3 isum=3 psum=0.5468,5.4445,1.2655] mat=Shader(dxt1solid,shader=two,tex=4x4,scissor=0.0000,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=0.5468,5.4444,1.2655 backface=false",
+	"alphaobj": "0:Node3D:AlphaObj | 1:MeshInstance3D:bin surfaces=1 [v=3 i=6 isum=4 psum=0.5468,5.4445,1.2655] mat=Shader(bin,shader=two,tex=4x4,scissor=0.5020,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=6 fsum=3.9354,7.4444,5.0309 backface=false | 1:MeshInstance3D:graded surfaces=1 [v=3 i=3 isum=3 psum=0.5468,5.4445,1.2655] mat=Shader(graded,shader=solid,tex=4x4,scissor=0.0000,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=0.5468,5.4444,1.2655 backface=false | 1:MeshInstance3D:dxt1cut surfaces=1 [v=3 i=3 isum=3 psum=0.5468,5.4445,1.2655] mat=Shader(dxt1cut,shader=one,tex=4x4,scissor=0.5020,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=0.5468,5.4444,1.2655 backface=false | 1:MeshInstance3D:dxt1solid surfaces=1 [v=3 i=3 isum=3 psum=0.5468,5.4445,1.2655] mat=Shader(dxt1solid,shader=two,tex=4x4,scissor=0.0000,albedo=(1, 1, 1, 1)) | 2:StaticBody3D:@ | 3:CollisionShape3D:@ shape=ConcavePolygonShape3D faces=3 fsum=0.5468,5.4444,1.2655 backface=false",
 }
 
 ## The four alpha layers of the r566 archive, by piece: whether the rule
@@ -595,7 +598,7 @@ func _test_round_625() -> void:
 	# The needle card first, with the three-argument call BASE also has.
 	var needle: Material = ObjectLoader.build_godot_material(archive, "", layer_for.call(0x340))
 	var sm := needle as ShaderMaterial
-	_check(sm != null and sm.shader == _ol_const("FOLIAGE_SHADER_ONE_SIDED")
+	_check(sm != null and sm.shader == ObjectLoader.FOLIAGE_SHADER_ONE_SIDED
 			and is_equal_approx(float(sm.get_shader_parameter("alpha_scissor")), 128.0 / 255.0),
 		"r625: a 0x340 layer is alpha-tested at 128/255 and ONE-sided (got %s)" % needle)
 	var OL = load("res://scripts/assets/object_loader.gd")
@@ -626,13 +629,14 @@ func _test_round_625() -> void:
 		if c[2] > 0 or c[3]:
 			var shader := mat as ShaderMaterial
 			_check(shader != null
-					and shader.shader == (ObjectLoader.FOLIAGE_SHADER if c[3] else _ol_const("FOLIAGE_SHADER_ONE_SIDED"))
+					and shader.shader == (ObjectLoader.FOLIAGE_SHADER if c[3] else ObjectLoader.FOLIAGE_SHADER_ONE_SIDED)
 					and is_equal_approx(float(shader.get_shader_parameter("alpha_scissor")), float(c[2]) / 255.0),
 				"r625: flags 0x%x env %d builds the %s foliage shader at %d/255 (got %s)" % [c[0], c[1],
 					"two-sided" if c[3] else "one-sided", c[2], mat])
 		else:
-			_check(mat is StandardMaterial3D and (mat as StandardMaterial3D).cull_mode == BaseMaterial3D.CULL_BACK
-					and (mat as StandardMaterial3D).transparency == BaseMaterial3D.TRANSPARENCY_DISABLED,
+			# Round 706: a solid layer is object.gdshader (unshaded, cull_back, no
+			# alpha), lit as the original lights objects.
+			_check(mat is ShaderMaterial and (mat as ShaderMaterial).shader == ObjectLoader.OBJECT_SHADER,
 				"r625: flags 0x%x env %d is solid and one-sided whatever the texture's alpha (got %s)" % [
 					c[0], c[1], mat])
 	_test_round_625_mods(OL, archive, layer_for)
@@ -702,9 +706,11 @@ func _test_material_review(OL, archive: Pk2Reader, layer_for: Callable, base_mod
 	_check(m != null and int(m.get_shader_parameter("color_arg1")) == 0 and int(m.get_shader_parameter("alpha_arg1")) == 0,
 		"review 2: D3DTA_DIFFUSE (0) is sent, not skipped (got color_arg1 %s alpha_arg1 %s)" % [
 			m.get_shader_parameter("color_arg1") if m != null else "-", m.get_shader_parameter("alpha_arg1") if m != null else "-"])
-	_check(m != null and m.shader.code.contains("ALBEDO = lit;") and m.shader.code.contains("EMISSION = unlit;")
-			and m.shader.code.contains("srr_color(albedo, OUTPUT_IS_SRGB).rgb * 0.5"),
-		"review 2-3: DIFFUSE is the lit term (ALBEDO, lit by the scene), TEXTURE alone unlit (EMISSION), MODULATE2X = the flag-word brightness")
+	# Round 706: DIFFUSE is the original's own vertex colour (ObjectLight),
+	# and the stage result is drawn whole, unshaded.
+	_check(m != null and m.shader.code.contains("vec3 lit = c.lit * srr_od0;") and m.shader.code.contains(ObjectLight.OD0_LINE)
+			and m.shader.code.contains("render_mode unshaded") and not m.shader.code.contains("EMISSION"),
+		"review 2-3 (round 706): DIFFUSE is the client's vertex colour (c10 + N.L x c11), the stage drawn whole and unshaded")
 	var two := OL.build_godot_material(archive, "", layer_for.call(0x340), {}, -1, leaf, true) as ShaderMaterial
 	# Integration review: the front pass is not a next_pass at a higher
 	# render_priority (global: it drew over every nearer transparent) but a
@@ -814,7 +820,8 @@ func _test_round_566() -> void:
 		DirAccess.remove_absolute(spec[0])
 
 ## The four alpha pieces' materials: a cutout is the foliage ShaderMaterial,
-## anything else a StandardMaterial3D -- each textured.
+## anything else object.gdshader (round 706; a StandardMaterial3D before) --
+## each textured.
 func _check_alpha_classes(root: Node, via: String) -> void:
 	for piece in ALPHA_EXPECTED:
 		var mi := root.get_node_or_null(piece) as MeshInstance3D
@@ -828,12 +835,12 @@ func _check_alpha_classes(root: Node, via: String) -> void:
 			var sm := mat as ShaderMaterial
 			_check(sm != null and sm.get_shader_parameter("albedo_texture") != null
 					and is_equal_approx(float(sm.get_shader_parameter("alpha_scissor")), 128.0 / 255.0 if cutout else 0.0)
-					and sm.shader == (ObjectLoader.FOLIAGE_SHADER if two else _ol_const("FOLIAGE_SHADER_ONE_SIDED")),
+					and sm.shader == (ObjectLoader.FOLIAGE_SHADER if two else ObjectLoader.FOLIAGE_SHADER_ONE_SIDED),
 				"%s: flags 0x%x make %s %s, %s (got %s)" % [via, LAYER_FLAGS[piece], piece,
 					"alpha-tested at 128" if cutout else "untested", "two-sided" if two else "one-sided", mat])
 		else:
-			_check(mat is StandardMaterial3D and (mat as StandardMaterial3D).albedo_texture != null
-					and (mat as StandardMaterial3D).cull_mode == BaseMaterial3D.CULL_BACK,
+			_check(mat is ShaderMaterial and (mat as ShaderMaterial).get_shader_parameter("albedo_texture") != null
+					and (mat as ShaderMaterial).shader == ObjectLoader.OBJECT_SHADER,
 				"%s: flags 0x%x leave %s solid and one-sided (got %s)" % [via, LAYER_FLAGS[piece], piece, mat])
 
 ## Each prepared piece's faces against the trimesh the engine builds from
@@ -935,7 +942,8 @@ func _test_alpha_on_the_image(OL, archive: Pk2Reader) -> void:
 		for layer in material.layers:
 			var mat: Material = ObjectLoader.build_godot_material(archive, "alpha.bmt", layer)
 			var shader_expected: bool = ALPHA_EXPECTED[layer.layer_name] or TWO_SIDED_EXPECTED[layer.layer_name]
-			_check((mat is ShaderMaterial) == shader_expected,
+			# Round 706: a solid layer is object.gdshader, not a StandardMaterial3D.
+			_check(mat is ShaderMaterial and ((mat as ShaderMaterial).shader != ObjectLoader.OBJECT_SHADER) == shader_expected,
 				"build_godot_material: %s is %s (got %s)" % [layer.layer_name,
 					"the foliage material" if shader_expected else "solid", mat])
 
@@ -1037,7 +1045,7 @@ func _mat_fp(mat: Material) -> String:
 		var sm := mat as ShaderMaterial
 		var tex: Texture2D = sm.get_shader_parameter("albedo_texture")
 		return "Shader(%s,shader=%s,tex=%s,scissor=%.4f,albedo=%s)" % [sm.resource_name,
-			"two" if sm.shader == ObjectLoader.FOLIAGE_SHADER else ("one" if sm.shader == _ol_const("FOLIAGE_SHADER_ONE_SIDED") else "other"),
+			"two" if sm.shader == ObjectLoader.FOLIAGE_SHADER else ("one" if sm.shader == ObjectLoader.FOLIAGE_SHADER_ONE_SIDED else ("solid" if sm.shader == ObjectLoader.OBJECT_SHADER else "other")),
 			"%dx%d" % [tex.get_width(), tex.get_height()] if tex != null else "null",
 			sm.get_shader_parameter("alpha_scissor"), sm.get_shader_parameter("albedo")]
 	if mat is StandardMaterial3D:
@@ -1320,8 +1328,8 @@ func _init() -> void:
 				by_name[child.name] = child
 			_check(by_name.has("pieceA") and by_name.has("pieceB"), "both real pieces loaded (got %s)" % [by_name.keys()])
 			if by_name.has("pieceA") and by_name.has("pieceB"):
-				var mat_a: StandardMaterial3D = by_name["pieceA"].material_override
-				var mat_b: StandardMaterial3D = by_name["pieceB"].material_override
+				var mat_a: Material = by_name["pieceA"].material_override
+				var mat_b: Material = by_name["pieceB"].material_override
 				_check(mat_a != null and mat_a.resource_name == "piece_a", "pieceA gets its real name-matched layer, not the positionally-first one (got %s)" % (mat_a.resource_name if mat_a != null else "null"))
 				_check(mat_b != null and mat_b.resource_name == "piece_b", "pieceB gets its real name-matched layer, not the positionally-second one (got %s)" % (mat_b.resource_name if mat_b != null else "null"))
 			obj.free()
@@ -1346,7 +1354,7 @@ func _init() -> void:
 		untested.texture_path = "leaf.ddj"
 		untested.unknown = 0x140
 		var solid := ObjectLoader.build_godot_material(alpha_archive, "", untested)
-		_check(solid is StandardMaterial3D, "a 0x140 layer over an alpha texture is solid (got %s)" % solid.get_class())
+		_check(solid is ShaderMaterial and (solid as ShaderMaterial).shader == ObjectLoader.OBJECT_SHADER, "a 0x140 layer over an alpha texture is solid (got %s)" % solid.get_class())
 		var mat := ObjectLoader.build_godot_material(alpha_archive, "", layer)
 		# A real texture carrying real alpha now yields the real cutout
 		# foliage material, not a StandardMaterial3D -- see

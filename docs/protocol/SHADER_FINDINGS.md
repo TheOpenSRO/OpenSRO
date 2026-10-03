@@ -9,6 +9,19 @@ Direct3D 8/9-era shaders — some as assembled `.vsh`/`.psh`, many as readable
 same way as every other format in this project (see `LEGAL.md`); nothing is
 copied into this repo, only the behaviour they describe is documented here.
 
+## Object and character lighting (round 706, READ)
+
+The object renderer (`CObjRendererVS`, static `vslot_024`, skinned `vslot_038`) lights every
+placed object and character in its vertex shader (`vertexshader0.c`, `vertexshader2.c`):
+`oD0 = saturate(c10 + max(0, N . c9) x c11)`, then stage 0 MODULATE2X with the texture. c10 = the
+object's colour (0.6 from CCompoundObj's constructor; a character's shadow tile / 384 while it
+stands on a terrain cell) x the light's ambient (environment channel 3); c11 = the .bmt layer's
+SECOND colour x the light's diffuse (channel 2 x 0.8 with the Bloom row on, 0.6 off); c9 = the
+light's direction (DAT_01109510 = normalize(-1, -1, 0), set once) x -1 in object space. No
+specular, no tone map. `client/scripts/assets/object_light.gd` has the addresses;
+`object.gdshaderinc` and the MTRL mod shader evaluate it, unshaded, in display values, with Godot's
+Filmic tone map undone after it (OURS method, measured in WORLD_ISSUES round 706).
+
 ## Terrain lighting equation
 
 `Shader\terrainps14.psh` states it outright in its own header comment:
