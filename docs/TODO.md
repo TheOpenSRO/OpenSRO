@@ -583,11 +583,13 @@ In order. Each is checked off here when it ships in a release, with its round in
       there, so no ground shadow on terrain in Detail under Compatibility); the 96 x 96 silhouette
       method itself.
 - [x] **The Bloom row's look** -- round 702 review and rework: `RetailBloom` draws the original's
-      bloom, READ in full (`Map::FUN_00a1d790`; OPTION_VIDEO.md), its taps on the screen's 512-wide
-      mip level; Godot's glow is off for good. Overlays (name plates, damage numbers, party marks,
+      bloom, READ in full (`Map::FUN_00a1d790`; OPTION_VIDEO.md), computed per 512 texel on a vertex
+      grid under Forward+ (the screen's 512-wide mip under Compatibility); Godot's glow is off for
+      good. Overlays (name plates, damage numbers, party marks,
       name boxes) are drawn after it (`OverlayView`). Left (OURS, each noted by the rework review):
-      the mip is a Gaussian, not retail's one bilinear downsample, and one level serves both axes
-      (mean 2.6/255 from retail's pipeline); **the lens-flare sun sprite and the character-select
+      under Compatibility the mip is a Gaussian, not retail's one bilinear downsample (mean
+      1.6/255 from retail's pipeline); the 4K cost, most of it Godot's full-screen back-buffer copy
+      (round 702's rework entry); **the lens-flare sun sprite and the character-select
       characters are bloomed** (retail draws the flare after the bloom, and the select screen's
       characters and names after its slot 5); BerserkFlash may belong after the bloom too
       (PLAUSIBLE, not read); the character-create preview is not bloomed (PLAUSIBLE that retail's

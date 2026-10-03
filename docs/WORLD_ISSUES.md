@@ -7340,6 +7340,86 @@ gate's threshold; the reselect (a group walk every 6 frames) is kept.
 **Checks:** `remote_godot.sh check` ALL LOAD (565 scripts); `remote_godot.sh tests` 218 suites, 0
 failing (new: `retail_bloom_test.gd`).
 
+### Rework review
+
+**H2 + M2 -- the bloom's 4K cost and its edge echoes.** Taps at full resolution, at the 512-texel
+offsets, land 19.5 / 39 px apart at 3840 wide: sharp echoes of every edge, and +0.82 ms there.
+- A first fix took the taps on the screen's mip level log2(width / 512): no echoes, but Godot builds
+  those mips by a Gaussian blur of every level and the trilinear taps run per screen pixel -- the
+  4K gate measured **+2.0 ms** (4.03 -> 6.07 ms, SLOWER). Dropped for Forward+.
+- **Now (Forward+):** retail's pipeline at retail's resolution. A 514 x 514-vertex grid, one vertex
+  per texel of the 512 x 512 target, whose vertex shader computes that texel exactly as retail's
+  three passes do (81 screen samples: D at the texel centres, the horizontal taps between texels
+  thresholded, the vertical taps); the fragments interpolate across the grid (linear within each
+  half-cell where retail magnifies bilinearly -- OURS) and the composite is the blend itself
+  (premultiplied alpha: Blur x 192/255 + screen x 198/255), as retail's.
+- **Compatibility** reads nothing from the screen texture in a vertex stage (MEASURED: the grid
+  added no light under GL 4.6), so there the pass keeps the 25 taps on the 512-wide mip.
+- **Against retail's own pipeline**, computed on the CPU from the same frame (the rewritten
+  `tools/measure_retail_bloom.gd`; 4000 pixels x 3 channels):
+
+| | mean | p99 | max |
+|---|---|---|---|
+| Forward+ 1280 x 720 | 0.24/255 | 0.56/255 | 1.5/255 |
+| Forward+ 3840 x 2160 | 0.30/255 | 1.43/255 | 5.8/255 |
+| Compatibility 1280 x 720 (mips) | 1.6/255 | 7.7/255 | 11.9/255 |
+
+  A white bar 1/64 of the width wide: the light the bloom adds beside it falls from 47-50/255 to 0
+  with **no echo peak** at either size, in both renderers.
+- **Cost at 3840 x 2160** (`perf_gate.sh` gained `--size`): Bloom on against off on this head
+  (`--base HEAD --env SRREVAMP_QA_VIDEO=bloom=1 --base-env ...=0`, jangan, median of 3):
+  **4.03 -> 4.72 ms, +0.69, SLOWER**. Against the base build on the same Video rows (base Middle =
+  round 693's Godot glow): 4.37 -> 4.79, +0.42, SAME. Where it goes (`tools/time_retail_bloom.gd`,
+  the root viewport's GPU time at 4K over a synthetic picture): nothing 0.14 ms; a stub that only
+  reads the screen once and writes it back 0.74 ms; the bloom 1.18-1.21 ms. So about 0.6 ms is Godot
+  4.2's full-screen back-buffer copy that any canvas pass reading the screen pays at 4K, and ~0.45 ms
+  the grid's work. **Recorded for the user, not fixed:** the remaining +0.7 ms at 4K is the
+  Bloom row's (Middle turns it on; off restores it).
+
+**H1 -- overlays were bloomed.** Retail draws its world, then the bloom, then the lens flare
+(`SWorld::vslot_005` -> `FUN_00a1d790` -> `FUN_00a21280`), and its names as 2D text over that.
+- **`OverlayView`** (new): name plates, damage numbers, party marks and name boxes go on their own
+  render layer (bit 16), which the main camera leaves out; a transparent SubViewport of the window's
+  size, sharing the world, renders that layer through a camera copying the main one each frame, and
+  shows it at canvas layer 0 (over the bloom at -1, under the world's UI at 1). All of them draw
+  with no depth test, so leaving the scene's depth behind changes nothing; their colours go through a
+  linear tone map there (retail draws text colours as they are).
+- **MEASURED** (the Jangan spawn at z90, an NPC's plate in view): pixels within 6 of the plate colour
+  (255, 240, 184): 123 with the bloom on, 124 with it off, 123 the same pixel -- the plate is no
+  longer touched by the bloom (before, (1.0, 0.94, 0.72) came out near (204, 191, 148)).
+- **Not moved (OURS, disclosed in TODO):** the lens-flare sun sprite (depth-tested against the
+  scene) and the character-select characters are still bloomed.
+
+**M1 -- the catcher's k.** The decoded 0.141 assumed a linear tone map; the world is Filmic. Fitted
+on the screen: the shadow core's displayed ratio (Detail over Nothing, farmland 96/168 top-down,
+ground at luma ~98) measured 0.38 at k = 0.219 (Filmic's own prediction for 0.412 at luma 95), so k
+= **0.25**; at 0.25 the core measures **0.414 / 0.429** (median, z45 / z90) and the histogram's mode
+**0.413** -- the READ 0.412. FITTED, labelled so in ShadowCatcher.
+
+**L4:** `_terrain_patches` drops freed patches whenever a patch is added.
+
+**M3 (record):** on High (Detail), buildings and hills no longer cast real-time shadows -- only the
+baked ones remain, as in retail, whose scenery casts none; characters cast, on objects and (through
+the catcher) on the terrain. *Release note:* "High (Detail) shadows: only characters cast real-time
+shadows now, as in the original -- building and hill shadows are the baked ones."
+
+**L1, L2, L5:** BerserkFlash after the bloom (PLAUSIBLE), the character-create preview not bloomed
+(PLAUSIBLE), and CLAMP against a possible WRAP at the target's edges are in docs/TODO.md.
+
+**Perf, matched settings** (`--env SRREVAMP_QA_VIDEO_STEPS=quality=0|quality=1`, both sides Middle;
+Forward+, 1280 x 720, median of 3; the head carried the grid bloom and OverlayView):
+
+| base 34286d92 vs head | frame ms | entry ms | freeze ms | hitches |
+|---|---|---|---|---|
+| jangan | 1.50 -> 1.65 SAME | 9504 -> 9433 SAME | 3333 -> 3328 SAME | 4 -> 4 SAME |
+| reeds | 1.30 -> 1.45 SAME | 6987 -> 6991 SAME | 1974 -> 1981 SAME | 2 -> 2 SAME |
+| cross | 1.49 -> 1.64 SAME | 10115 -> 10238 SAME | 3317 -> 3320 SAME | 4 -> 4 SAME |
+
+  About +0.15 ms a frame at 720p: the overlay viewport's own render and the bloom pass. Under the
+  gate's threshold.
+
+**Checks:** `remote_godot.sh check` ALL LOAD; `remote_godot.sh tests` 218 suites, 0 failing.
+
 ## Six-hundred-and-ninety-ninth round: the developer toggles move from Ctrl+F1-F3 to Shift+F1-F3, because macOS keeps Ctrl+F1-F3 for itself
 
 The user (2026-10-03, on v0.1.481 under CrossOver on macOS): "can switch the ctrl+f1-f3 menus to

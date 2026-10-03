@@ -197,18 +197,22 @@ constructor `Map::FUN_00a2f370`):
    `out = clamp(S x 198/255 + Blur x 192/255)`, in display values, before the interface.
 
 A flat field below 0.5 comes out darker and above 0.5 brighter: it raises contrast. `RetailBloom`
-draws this as one canvas pass on layer -1 (above the 3D view, under every interface layer and the
-brightness pass), in both renderers, Godot's glow always off. The 512 x 512 downsample is the screen
-texture's mip level log2(width / 512) (rework review: taps at full resolution landed 19.5 / 39 px apart
-at 3840 wide, drew edge echoes and cost +0.82 ms there); Godot builds those mips by a Gaussian blur, so
-ours is smoother than retail's single bilinear step, and one level serves both axes (OURS). MEASURED
-(`tools/measure_retail_bloom.gd`, the CPU running retail's whole 512 pipeline on the same frame,
-4000 pixels x 3 channels): mean 2.6 / 2.6 / 1.6 of 255, p90 7.8 / 7.3 / 4.8, max 18.9 / 24.4 / 11.9
-(Forward+ 1280 x 720 / Forward+ 3840 x 2160 / Compatibility 1280 x 720); a white bar's added light falls
-off with no echo peak at either size. **Overlays come after it** (`OverlayView`): name plates, damage
-numbers, party marks and name boxes render in their own transparent viewport over the bloom, as retail
-draws its 2D text over the finished frame; the lens-flare sun sprite and the character-select
-characters are still bloomed (OURS, docs/TODO.md).
+draws it as one canvas pass on layer -1 (above the 3D view, under every interface layer and the
+brightness pass), Godot's glow always off. Under Forward+ the pass is a 514 x 514-vertex grid, one
+vertex per texel of the 512 x 512 target: each vertex computes retail's three passes for its texel
+(81 screen samples: the downsample at the texel centres, the horizontal taps between texels with the
+threshold, the vertical taps), the fragments interpolate across the grid (linear within each
+half-cell where retail magnifies bilinearly -- OURS), and the composite is the blend itself
+(premultiplied alpha), as retail's is. Under Compatibility the vertex stage reads nothing from the
+screen texture (MEASURED), so there the 25 taps read the screen's mip level log2(width / 512)
+(Godot's Gaussian mips -- OURS). MEASURED (`tools/measure_retail_bloom.gd`, the CPU running retail's
+whole 512 pipeline on the same frame, 4000 pixels x 3 channels): Forward+ mean 0.24 / 0.30 of 255,
+p99 0.56 / 1.43, max 1.5 / 5.8 at 1280 x 720 / 3840 x 2160; Compatibility (mips) mean 1.6, p99 7.7,
+max 11.9 at 1280 x 720; a white bar's added light falls off with no echo peak in either. **Overlays
+come after it** (`OverlayView`): name plates, damage numbers, party marks and name boxes render in
+their own transparent viewport over the bloom, as retail draws its 2D text over the finished frame;
+the lens-flare sun sprite and the character-select characters are still bloomed (OURS,
+docs/TODO.md).
 
 ## This client's default: Middle (the user's decision, 2026-10-02)
 
