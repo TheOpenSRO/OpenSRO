@@ -60,3 +60,20 @@ renderer/rendering_method.mobile="gl_compatibility"
 ; ClientSettings.apply_ui_scale has why it is on from start-up and never
 ; toggled (docs/WORLD_ISSUES.md round 672).
 fonts/dynamic_fonts/use_oversampling=true
+
+[shader_globals]
+
+; The world's distance fog (round 702, WorldFog): x the fog start, y the fog
+; end (view depth, world units), z 1 while the fog is drawn; READ from the
+; client's environment step (docs/protocol/ENVIRONMENT_FORMAT.md). The colour
+; is the zone's fog colour as the frame's linear value before tone mapping.
+; A shader drawn after the fog pass (a transparent MTRL mod) fogs itself with
+; them; the pass reads them too.
+srr_fog_params={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+srr_fog_color={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 1)
+}

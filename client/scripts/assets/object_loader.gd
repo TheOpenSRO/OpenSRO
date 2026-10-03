@@ -797,6 +797,9 @@ static func _mod_shader(cull: String, godot_blend: String, zwrite: bool, fade: b
 	elif fade:
 		modes.append("blend_mix")
 		modes.append("depth_draw_always")
+	# A blended pass is drawn after the world's fog pass, so it fogs itself
+	# (round 702, WorldFog.SHADER_FN); an opaque one is fogged by the pass.
+	var blended := not opaque or fade
 	var alpha_line := "" if opaque else "ALPHA = clamp(out_a, 0.0, 1.0);"
 	if fade:
 		alpha_line = "ALPHA = appear_alpha;" if opaque else "ALPHA = clamp(out_a, 0.0, 1.0) * appear_alpha;"
@@ -935,15 +938,16 @@ void fragment() {
 	%s
 	%s
 	%s
+	%s
 	if (!FRONT_FACING) {
 		NORMAL = -NORMAL;
 	}
 }
 """ % [", ".join(modes), "uniform float appear_alpha = 1.0;\n" if fade else "", alpha_line,
-		ShaderColour.DECODE_ALBEDO, ShaderColour.DECODE_EMISSION]
+		ShaderColour.DECODE_ALBEDO, ShaderColour.DECODE_EMISSION, WorldFog.SHADER_FOG_LINE if blended else ""]
 	# The helpers go before the first function (the stage arithmetic and the
 	# portrait's injected vertex() both call them).
-	shader.code = code.replace("\nstruct Split {", ShaderColour.DECODE_FN + "\nstruct Split {")
+	shader.code = code.replace("\nstruct Split {", ShaderColour.DECODE_FN + (WorldFog.SHADER_FN if blended else "") + "\nstruct Split {")
 	shader.set_meta(MOD_SHADER_KEY_META, [cull, godot_blend, zwrite])
 	_static_lock.lock()
 	if _mod_shaders.has(key):

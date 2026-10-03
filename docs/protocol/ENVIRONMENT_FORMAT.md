@@ -143,9 +143,10 @@ What 7, 8, 12 and 15 mean is not named here: the world fields they land in (`+0x
 `+0x689f`, `+0x68c7`) were not followed to their shader constants in this pass.
 
 `EnvironmentReader.CHANNEL_FOG_NEAR_PLANE/FAR_PLANE` are 10 and 11 accordingly, and
-`VIEW_DISTANCE_DEFAULT` is 2500. The client computes and logs each zone's real planes;
-drawing them needs a depth-range fog Godot 4.2 does not offer (its fog is exponential from
-the camera) -- see `docs/TODO.md`.
+`VIEW_DISTANCE_DEFAULT` is 2500. Since round 702 the client draws them: `WorldFog` is the
+original's linear fog in view depth between the two planes (times the Background Sight Range's
+view distance), as `Map::FUN_00a26f60` sets it up (FOGENABLE, FOGCOLOR, RANGEFOGENABLE 0, table
+or vertex fog LINEAR); Godot's exponential fog draws nothing.
 
 **This matches this project's own independently-confirmed real per-channel group-float-count
 sequence exactly** (`[4,4,4,4,4,4,4,2,2,4,2,2,2,4,4,2]`, derived from decompiling the real reader's

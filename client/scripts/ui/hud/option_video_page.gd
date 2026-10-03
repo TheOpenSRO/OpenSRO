@@ -63,13 +63,14 @@ const ID_SLOT_LABEL := 216
 const ID_SLOT_COMBO := 217
 const VIEWS := ["free", "third_person", "quarter"]
 
-## The rows the list shows, in order: retail's 0..13 and 15 (READ), then SSAO
-## and the renderer (OURS).
+## The rows the list shows, in order: retail's 0..13 and 15 (READ), then SSAO,
+## the temporary fog toggle (round 702) and the renderer (OURS).
 const LIST := [VideoOptions.QUALITY, VideoOptions.SHADOW, VideoOptions.SCENERY,
 	VideoOptions.CHARACTER, VideoOptions.WATER_REFLECTION, VideoOptions.WATER_DETAIL,
 	VideoOptions.METAL, VideoOptions.LIGHT, VideoOptions.FILTERING, VideoOptions.TEXTURE,
 	VideoOptions.LENS_FLARE, VideoOptions.BLOOM, VideoOptions.DYNAMIC_ANIMATION,
-	VideoOptions.EFFECT, VideoOptions.FRIEND_ENEMY, VideoOptions.SSAO, VideoOptions.RENDERER]
+	VideoOptions.EFFECT, VideoOptions.FRIEND_ENEMY, VideoOptions.SSAO, VideoOptions.FOG,
+	VideoOptions.RENDERER]
 const COLUMNS := 2
 
 const ARROW_DDJ := "interface\\ifcommon\\com_qst_downarrow_button.ddj"
@@ -670,6 +671,8 @@ func tooltip_of(entry: int) -> String:
 			ours = "Multisample anti-aliasing (2x); a small change on screen."
 		VideoOptions.TEXTURE:
 			ours = "A mipmap bias: it reaches only textures with mipmaps, and most world textures here have none yet, so it changes little."
+		VideoOptions.FOG:
+			ours = "Temporary, for comparing: On draws the original's distance fog (its own start, end and colour for the zone); Off draws none. The original always has it."
 		VideoOptions.RENDERER:
 			ours = "Forward+ (Vulkan) or Compatibility (OpenGL). Takes effect at the next start."
 		VideoOptions.WATER_REFLECTION:

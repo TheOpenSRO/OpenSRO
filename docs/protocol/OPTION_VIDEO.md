@@ -148,8 +148,8 @@ value)` (`0xa194a0`), which also stores it at `SWorld+0x2e50 + case*4` (getter `
 | View | camera mode 0/1/2 (`UI_CHANGED::FUN_00780420`) | `World3D.set_camera_view` (round 639's three views), saved as [ui] camera_view |
 | Set Brightness | case 0: gamma ramp `65535 * pow(i/255 * B, A)`, (A, B) = (1.4, 0.8) (1.2, 0.9) (1, 1) (0.8, 1.2) (0.6, 1.4); full screen only | the same curve as a full-screen canvas pass over the finished frame (OURS: in a window too); none at Normal |
 | Graphic Quality | the presets above | the same presets; any hand-set row switches to User (INFERRED) |
-| Shadow Detail | case 2: Detail builds a 96 x 96 target and 32 x 32 shadow textures per character; Circle (TTDESC_04 "circles") | Nothing: no blob, no sun shadow map; Circle: the blob (`SkyBox\shadowsphere.ddj`); Detail: blob and the DirectionalLight3D's shadow (OURS) |
-| Background Sight Range | case 8: far plane 1500/2500/3500/4500/5500; view distance `min(0.8 far, 2500)` = 1200/2000/2500/2500/2500 scales the fog planes and is the map-object range + 480; world+0x23db = 800..2048 (reader not found) | map-object animation range = view - 480 (READ rule); fog density x 2500/view and camera far x min(1, far/3500) (OURS); 3 = as before |
+| Shadow Detail | case 2: Detail builds a 96 x 96 target and 32 x 32 shadow textures per character; `SWorld::vslot_024` (0xa182f0, round 702) draws by the value: 1 Circle -- `skybox\shadowsphere.ddj` under each CICharactor (players, monsters, NPCs), at most ten, size BCRadius + 5, colour 0xa8000000; 2 Detail -- the projected per-character shadows (`Map::FUN_009f35f0`, up to ten, list key at most 3000) and **no circle**; 0 neither | Nothing: no circle, no sun shadow map; Circle: the circles (`CharacterBlobs`: every character kind, ten nearest the camera, BCRadius + 5, alpha 0xa8); Detail: no circle, and the DirectionalLight3D's shadow map (OURS stand-in for the projected shadows) reaching 3000 from the camera, so nothing changes with the zoom (round 702; Godot's default 100 faded the player's own shadow out as the camera pulled back). OPEN: the original's Detail projects each character's silhouette onto the ground; here the sun's map lands only on shaded objects, so on the (unshaded, baked-light) terrain a character in Detail casts no shadow |
+| Background Sight Range | case 8: far plane 1500/2500/3500/4500/5500; view distance `min(0.8 far, 2500)` = 1200/2000/2500/2500/2500 scales the fog planes and is the map-object range + 480; world+0x23db = 800..2048 (reader not found) | map-object animation range = view - 480 (READ rule); the fog planes = the zone's channels 10 / 11 x view (READ rule, round 702: `WorldFog`); camera far x min(1, far/3500) (OURS); 3 = as before |
 | Character Sight Range | case 9: stored only; no reader found (asm `+0x2e74` has one writer; 17 getter calls carry other cases; no record-offset reader) | OURS: other players' and monsters' meshes drawn to 600 / 1200 from the camera at 1 / 2; unlimited at 3..5 (as before). NPCs are built into their region's group here and are not reached; the original's rule (no reader found) is unknown |
 | Water Reflection | case 6: builds / frees the reflection target and two 512 x 512 textures | round 628's pass; from the next login (a region's water is built for one mode) |
 | Water Detail | case 7: stored only; no reader found | OURS: the reflection target's rows 256 / 512 (READ size) / 1024, live |
@@ -163,7 +163,31 @@ value)` (`0xa194a0`), which also stores it at `SWorld+0x2e50 + case*4` (getter `
 | Effect Quality | `IDecoSkill::FUN_00a50dc0(q, owner)`: 0 none, 2 all, 1 only owners passing two unread tests | `SkillEffects.quality`: 1 shows effects the player casts, takes or carries (INFERRED) |
 | Display Friendly/Enemy | 0 lets `GlobalDataManager::FUN_009dae90/9db750` swap a large-battle outfit tint; 1 (General) never | kept, draws nothing: no battle outfits here |
 | SSAO | (none in the exe) | OURS: Godot SSAO, Forward+ only, default off; radius 16, intensity 4, light affect 1 (OURS). **A light effect only:** the terrain is unshaded and the object mods write EMISSION, which SSAO does not darken (measured below) |
+| Fog (temporary) | (none: the original always fogs -- `Map::FUN_00a26f60` turns FOGENABLE on and sets linear fog between the zone's planes, `WorldFog`'s header) | OURS, TEMPORARY (round 702, the user's request: "make a temporary toggle in the video settings so I can compare and make a decision"): On (default) draws the original's linear fog at its own planes and colour; Off draws none. No preset names it; saved as `fog_temporary` |
 | Renderer | (none) | OURS: Forward+ / Compatibility at the next start, through round 693's RendererChoice when the build has it |
+
+## Applied at start-up (round 702)
+
+Until round 702 the saved record never reached the world when it started: `apply_video_options`
+compared each row with the record in force, and on the first call that record was the one being
+applied (`video_options()` had just made it so), so no row "changed" and nothing was set. Every
+start therefore drew the scene's own settings whatever the window said -- the sun's shadow map on
+(in Circle too, which is why the shadows changed with the zoom: Godot's shadow distance is 100 from
+the camera), no glow (Bloom on in Middle), no MSAA (Filtering on), no mipmap bias (Texture Detail
+Middle) -- until a row was changed in the window; even then only the changed row was applied. The
+first call now applies every row. So a default record now draws, from the first frame: Circle (no
+sun shadow map, the round shadows), glow (Forward+), MSAA 2x (Forward+) and mipmap bias 1.
+
+**Bloom's look is still not the original's.** The Bloom row turns on Godot's glow with round 693's
+guessed parameters (intensity 0.8, bloom 0.2, HDR threshold 0.85), and with the start-up fix that
+glow is now on by default. MEASURED (round 702, Jangan spawn): it raises the same ground patches by
+about 10-12 luma and lowers their contrast relative to their brightness by about 15 %. READ so far
+of the original's (`Map::FUN_00a1d790`): it copies the screen (target +0x27c3, screen-sized) to a
+512 x 512 target through MODULATE by a TFACTOR, blurs it in passes whose tap colours are
+0x28282828 | alpha 0x50 / 0x46 / 0x32 / 0x28 / 0x14 (world +0x68e3.., set in the world's
+constructor with step +0x690b = 13), and composites with SRCBLEND = BLENDFACTOR (+0x690d = 0xc0)
+and DESTBLEND = SRCALPHA with TFACTOR alpha +0x690c (0xc6): screen x 0.776 + blur x 0.753. The
+downsample's TFACTOR and the blur's exact taps are not read; docs/TODO.md.
 
 ## This client's default: Middle (the user's decision, 2026-10-02)
 

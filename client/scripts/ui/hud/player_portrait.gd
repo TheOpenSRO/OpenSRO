@@ -535,6 +535,8 @@ func _mod_material(src: ShaderMaterial) -> ShaderMaterial:
 		var out := code.substr(0, rm) + "render_mode unshaded, " + code.substr(rm + 12, rm_end - rm - 12) + code.substr(rm_end, frag - rm_end) + MOD_INJECT + "\n" + code.substr(frag)
 		out = out.replace(lit_line, "vec3 lit = c.lit * portrait_od0;")
 		out = out.replace(out_lines, "ALBEDO = clamp(lit + unlit, 0.0, 1.0);")
+		# The portrait is not in the world's fog (round 702, WorldFog).
+		out = out.replace(WorldFog.SHADER_FOG_LINE, "")
 		var sh := Shader.new()
 		sh.code = out
 		_shaders[key] = sh

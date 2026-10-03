@@ -93,9 +93,15 @@ const FRIEND_ENEMY := 15
 ## per-profile value but is listed with the others.
 const SSAO := 16
 const RENDERER := 17
+## OURS, TEMPORARY (round 702): the world's distance fog on or off, so the
+## user can compare the original's fog (on, the default -- WorldFog draws it
+## at the original's own planes and colour) with none, and decide. Retail has
+## no such option: its fog is always on (READ, Map::FUN_00a26f60). Like SSAO,
+## no preset names it: the player's value in every quality.
+const FOG := 18
 ## The values a profile holds, by entry (QUALITY is held apart).
 const VALUE_ENTRIES := [SHADOW, SCENERY, CHARACTER, WATER_REFLECTION, WATER_DETAIL, METAL, LIGHT,
-	FILTERING, TEXTURE, LENS_FLARE, BLOOM, DYNAMIC_ANIMATION, EFFECT, FRIEND_ENEMY, SSAO]
+	FILTERING, TEXTURE, LENS_FLARE, BLOOM, DYNAMIC_ANIMATION, EFFECT, FRIEND_ENEMY, SSAO, FOG]
 
 const QUALITY_LOW := 0
 const QUALITY_MIDDLE := 1
@@ -145,6 +151,8 @@ const ROWS := [
 		"fallback": ["Display Friendly/Enemy", "Friend/Enemy Dress", "General"]},
 	{"entry": SSAO, "key": "ssao", "label": "", "tip": "",
 		"choices": ["", ""], "fallback": ["SSAO (Ambient Occlusion)", "Off", "On"]},
+	{"entry": FOG, "key": "fog_temporary", "label": "", "tip": "",
+		"choices": ["", ""], "fallback": ["Fog (temporary)", "Off", "On"]},
 	{"entry": RENDERER, "key": "renderer", "label": "", "tip": "",
 		"choices": ["", ""], "fallback": ["Renderer (on restart)", "Forward+", "Compatibility"]},
 ]
@@ -159,12 +167,13 @@ const PRESETS := {
 }
 
 ## The player's own values in a new record: Middle's preset (READ, 0x5015a0;
-## the constructor 0x5f75e0 copies the preset into the second copy), and SSAO
-## (OURS, no preset names it) off.
+## the constructor 0x5f75e0 copies the preset into the second copy), SSAO
+## (OURS, no preset names it) off, and the temporary fog row (OURS) on --
+## the original's look.
 const DEFAULTS := {
 	SHADOW: 1, SCENERY: 2, CHARACTER: 2, WATER_REFLECTION: 0, WATER_DETAIL: 1, METAL: 1,
 	LIGHT: 1, FILTERING: 1, TEXTURE: 1, LENS_FLARE: 1, BLOOM: 1, DYNAMIC_ANIMATION: 1,
-	EFFECT: 2, FRIEND_ENEMY: 0, SSAO: 0,
+	EFFECT: 2, FRIEND_ENEMY: 0, SSAO: 0, FOG: 1,
 }
 ## The user's decision (2026-10-02): retail's default, Middle (READ).
 const DEFAULT_QUALITY := QUALITY_MIDDLE
@@ -243,7 +252,8 @@ class Profile:
 		user = DEFAULTS.duplicate()
 
 	## The value in force: the preset's for Low..War, else the player's.
-	## SSAO is OURS and no preset names it: the player's in every quality.
+	## SSAO and FOG are OURS and no preset names them: the player's in every
+	## quality.
 	func value(entry: int) -> int:
 		if quality != QUALITY_USER and PRESETS.has(quality) and entry < 16:
 			return int(PRESETS[quality][entry])
@@ -317,8 +327,8 @@ static func set_row(profile: Profile, entry: int, v: int) -> void:
 	if entry == RENDERER:
 		return
 	v = clampi(v, 0, maxi(choice_count(entry) - 1, 0))
-	if entry == SSAO:
-		profile.user[SSAO] = v
+	if entry == SSAO or entry == FOG:
+		profile.user[entry] = v
 		return
 	if profile.quality != QUALITY_USER:
 		for e in VALUE_ENTRIES:
