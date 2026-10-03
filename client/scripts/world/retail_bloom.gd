@@ -35,8 +35,9 @@ class_name RetailBloom
 ## (bilinear in 512 texels, each thresholded at 40/255), the vertical blur's
 ## five rows -- and the fragments interpolate it across the grid (retail
 ## magnifies its target bilinearly; a grid of triangles interpolates
-## linearly within each half-cell, OURS), then composite with the screen at
-## the READ 198/255 and 192/255. The texture is read clamped at the edges
+## linearly within each half-cell, OURS), and the composite is the blend, as
+## retail's is (premultiplied alpha: Blur x 192/255 + screen x 198/255, the
+## framebuffer clamping at 1), so the fragments never read the screen. The texture is read clamped at the edges
 ## (retail's addressing there not read). It replaces round 693's Godot glow,
 ## whose parameters were a guess (intensity 0.8, bloom 0.2, threshold 0.85).
 ##
@@ -62,7 +63,10 @@ const BLUR_ADD := 192.0 / 255.0
 const SHADER := """
 shader_type canvas_item;
 // The original's bloom (RetailBloom, round 702 review and rework):
-// Map::FUN_00a1d790's three passes at 512 x 512, one vertex per texel.
+// Map::FUN_00a1d790's three passes at 512 x 512, one vertex per texel. The
+// composite is the blend itself, as retail's is: premultiplied alpha,
+// out = src.rgb + dst x (1 - src.a) = Blur x 192/255 + S x 198/255.
+render_mode blend_premul_alpha;
 uniform sampler2D screen_tex : hint_screen_texture, filter_linear, repeat_disable;
 uniform vec2 canvas_size = vec2(1280.0, 720.0);
 const float DOWNSAMPLE = 128.0 / 255.0;
@@ -110,8 +114,7 @@ void vertex() {
 	v_blur = v_at(t);
 }
 void fragment() {
-	vec3 s = textureLod(screen_tex, SCREEN_UV, 0.0).rgb;
-	COLOR = vec4(clamp(s * SCREEN_KEEP + v_blur * BLUR_ADD, 0.0, 1.0), 1.0);
+	COLOR = vec4(v_blur * BLUR_ADD, 1.0 - SCREEN_KEEP);
 }
 """
 
