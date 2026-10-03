@@ -1497,6 +1497,10 @@ var _hud_syslog: HudSystemMessage
 ## level-up line goes there (0x8a9c26 -> 0x77b580 -> 0x7b3eb0), not to the
 ## system window (round 639).
 var _hud_warning: HudNotice
+## GDR_REGION_INFO_VIEW, the area banner (round 703, HudRegionView).
+var _hud_region: HudRegionView
+## The region _update_zone_label_for_region last saw (-1, -1 before any).
+var _zone_region := Vector2i(-1, -1)
 ## Whether the last party answer put this player in a party (chat's #).
 var _chat_in_party := false
 ## The party's members by character id, from the party answers and join
@@ -2260,6 +2264,17 @@ func _try_initialize_pk2_ui() -> void:
 	# The quick-slot bar as this character left it (round 639, HotbarStore):
 	# the bar and the panels (for the icons) both exist now.
 	_restore_hotbar()
+	# GDR_REGION_INFO_VIEW (round 703): the area banner a region change raises
+	# (_update_zone_label_for_region), under the two notice banners.
+	_hud_region = HudRegionView.new()
+	_hud_region.name = "HudRegionView"
+	ui_control.add_child(_hud_region)
+	_hud_region.setup(_ui_builder)
+	_hud_region.covered = func() -> bool: return _loading_screen != null
+	# The world's set-up runs the same test for the region it starts in
+	# (0x786f30 at 0x787609, READ), which may have loaded before the HUD.
+	if _zone_region.x >= 0:
+		_hud_region.enter_region(TextZoneNameReader.region_id(_zone_region.x, _zone_region.y))
 	# GDR_NOTICE, the GM notice banner (round 634), over everything else.
 	_hud_notice = HudNotice.new()
 	_hud_notice.name = "HudNotice"
@@ -3064,6 +3079,11 @@ func _zone_name_for_region(region_x: int, region_y: int) -> String:
 	return RegioninfoNames.display_for_region(table, region_x, region_y)
 
 func _update_zone_label_for_region(region_x: int, region_y: int) -> void:
+	# The area banner's test runs on every region the player enters (round
+	# 703; HudRegionView.enter_region is 0x665aa0's rule).
+	_zone_region = Vector2i(region_x, region_y)
+	if _hud_region != null:
+		_hud_region.enter_region(TextZoneNameReader.region_id(region_x, region_y))
 	var zone_name := _zone_name_for_region(region_x, region_y)
 	if zone_name == "":
 		return
@@ -5245,6 +5265,7 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 		return
 	_loading_screen.queue_free()
 	_loading_screen = null
+	print("LoadingScreen: lifted at frame %d" % Engine.get_frames_drawn())
 	_land_restored_return_point()
 	_initial_load_done = true
 
@@ -11108,6 +11129,11 @@ func _update_blob_shadow() -> void:
 ##                          (docs/DEBUG_TOOLS.md) 2 s after boot; each prints
 ##                          "QA COMMAND: <line>" and a GM reply "GM REPLY: ..."
 ##   SRREVAMP_QA_HELP=1     open the in-client Help window 2 s after boot
+##   SRREVAMP_QA_NOTICES="<tick>:<what>;.." raise the notice banners and the
+##                          area banner at those ticks (round 703; see
+##                          _qa_notices_step): notice:/warning:<text>,
+##                          level:<n>, unique:spawn|kill:<ref>[:<killer>],
+##                          region:<x>:<y>; `QA BANDS` lines give their rects
 ##   SRREVAMP_QA_FLOAT=r     report placed objects within r that sit clear
 ##                          of their own region's ground
 ##   SRREVAMP_QA_THROUGH=z0,z1,y[,step]
@@ -11716,6 +11742,8 @@ func _qa_step() -> void:
 		print("QA HELP: opened the Help window")
 	if OS.get_environment("SRREVAMP_QA_COMMANDS") != "" and _qa_tick == 60:
 		_run_qa_commands(OS.get_environment("SRREVAMP_QA_COMMANDS"))
+	if OS.get_environment("SRREVAMP_QA_NOTICES") != "":
+		_qa_notices_step(OS.get_environment("SRREVAMP_QA_NOTICES"))
 	# SRREVAMP_QA_PARTY=create | join:<party id> (round 634): forms a party at
 	# tick 70 through the same requests the old party panel sent, so a live
 	# run can type party chat; the retail party window's invite is not built.
@@ -15227,8 +15255,8 @@ func _on_chat_update(u: ChatNet.Update) -> void:
 		_last_whisperer = u.sender_name
 	if _hud_chat != null:
 		_hud_chat.add_chat(u.type, u.sender_name, u.message_text)
-	if u.type == HudChat.TYPE_NOTICE and _hud_notice != null:
-		_hud_notice.show_notice(u.message_text)
+	if u.type == HudChat.TYPE_NOTICE:
+		_show_banner("gm_notice", u.message_text)
 	if chat_log != null:
 		chat_log.add_text("%s: %s\n" % [u.sender_name, u.message_text])
 
@@ -15507,6 +15535,83 @@ func _refresh_command_tooltip() -> void:
 ## Feeds SRREVAMP_QA_COMMANDS through the console -- the same parser the chat
 ## uses -- printing a "QA COMMAND:" marker per line so the log pairs each with
 ## its reply. Called from the QA tick block once the world has settled.
+## Raises a centre-screen banner for a line of `kind` on the instance the
+## original uses for it (HudNotice.style_for_kind: GDR_NOTICE for the GM
+## notice, GDR_WARNING_WND for the rest; round 703).
+func _show_banner(kind: String, text: String) -> void:
+	var on := _hud_notice if HudNotice.style_for_kind(kind)["name"] == "GDR_NOTICE" else _hud_warning
+	if on != null:
+		on.show_notice(text)
+
+## SRREVAMP_QA_NOTICES="<tick>:<what>;..." (round 703) raises the banners at
+## those QA ticks through the handlers the network drives:
+##   notice:<text>                 GDR_NOTICE, as a chat notice does
+##   warning:<text>                GDR_WARNING_WND
+##   level:<n>                     _on_level_up(n) -- the level-up line
+##   unique:spawn|kill:<ref>[:<killer>]  _on_unique_notice, as 0x300C's
+##   region:<x>:<y>                the area banner's test for that region
+##   bands                         only print the `QA BANDS` line
+##   goto:<x>:<y>:<lx>:<lz>        stand at a spot in a loaded region (the
+##                                 region change then runs the real path)
+## Each prints `QA NOTICE <tick> <what>` and, a frame later, the banners'
+## bands on screen (`QA BANDS ...`).
+func _qa_notices_step(plan: String) -> void:
+	for raw in plan.split(";", false):
+		var spec := String(raw).strip_edges()
+		var colon := spec.find(":")
+		if colon < 0 or not spec.substr(0, colon).is_valid_int():
+			continue
+		var tick := int(spec.substr(0, colon))
+		var what := spec.substr(colon + 1)
+		if _qa_tick == tick + 2:
+			_qa_bands_report(what)
+		if _qa_tick != tick:
+			continue
+		print("QA NOTICE %d %s frame %d" % [tick, what, Engine.get_frames_drawn()])
+		var parts := what.split(":")
+		match parts[0]:
+			"notice":
+				_show_banner("gm_notice", what.substr(7))
+			"warning":
+				_show_banner("system", what.substr(8))
+			"level":
+				_on_level_up(int(parts[1]) if parts.size() > 1 else 2, 0)
+			"unique":
+				var n := UniqueNoticeNet.Notice.new()
+				n.kind = UniqueNoticeNet.KIND_KILL if parts.size() > 1 and parts[1] == "kill" else UniqueNoticeNet.KIND_SPAWN
+				n.ref_obj_id = int(parts[2]) if parts.size() > 2 else 1954
+				n.killer = parts[3] if parts.size() > 3 else ""
+				_on_unique_notice(n)
+			"bands":
+				_qa_bands_report("probe")
+			"goto":
+				# A placement in a loaded region, so the next stream check
+				# runs the real region-change path.
+				if parts.size() > 4:
+					_place_at_region_local(int(parts[1]), int(parts[2]), float(parts[3]), float(parts[4]))
+			"region":
+				if _hud_region != null and parts.size() > 2:
+					_hud_region.enter_region(TextZoneNameReader.region_id(int(parts[1]), int(parts[2])))
+
+func _qa_bands_report(what: String) -> void:
+	var out := PackedStringArray()
+	for item in [_hud_notice, _hud_warning]:
+		var b := item as HudNotice
+		if b != null and b.visible:
+			var r: Rect2 = b.band_screen_rect()
+			out.append("%s band %d,%d %dx%d text '%s'" % [b.style_name(), int(r.position.x), int(r.position.y),
+				int(r.size.x), int(r.size.y), b.text()])
+	if _hud_region != null and _hud_region.visible:
+		var xf := _hud_region.get_global_transform_with_canvas()
+		var lay := _hud_region.layout()
+		var w: Rect2 = lay["window"]
+		var t: Rect2 = lay["title"]
+		out.append("REGION %s window %d,%d %dx%d title %d,%d %dx%d scale %.2f" % [_hud_region.current_code,
+			int(w.position.x), int(w.position.y), int(w.size.x), int(w.size.y),
+			int(t.position.x), int(t.position.y), int(t.size.x), int(t.size.y), xf.get_scale().x])
+	print("QA BANDS after %s frame %d: %s" % [what, Engine.get_frames_drawn(),
+		" | ".join(out) if not out.is_empty() else "none"])
+
 func _run_qa_commands(list: String) -> void:
 	for raw in list.split(";", false):
 		var line := String(raw).strip_edges()
@@ -16508,8 +16613,7 @@ func _on_recall_designate_result(result: RecallNet.Result) -> void:
 			line = t
 	print("SYSLOG recall: %s" % line)
 	_log_system(line, HudSystemMessage.TYPE_GAME)
-	if _hud_warning != null:
-		_hud_warning.show_notice(line)
+	_show_banner("recall_point", line)
 
 ## The gate the destination list was last opened at (a teleportdata id), what
 ## a destination line sends as the source (_on_teleport_requested); 0 before any.
@@ -20269,7 +20373,7 @@ func _on_unique_notice(n: UniqueNoticeNet.Notice) -> void:
 		return
 	_log_system(line, UniqueNoticeNet.SYSTEM_TYPE)
 	if _hud_warning != null:
-		_hud_warning.show_notice(line)
+		_show_banner("unique", line)
 		# Where it is on the screen (the harness measures the pixels there).
 		var xf := _hud_warning.get_global_transform_with_canvas()
 		var r := Rect2(xf.origin, _hud_warning.size * xf.get_scale())
@@ -20343,7 +20447,7 @@ func _on_level_up(new_level: int, _stat_points: int) -> void:
 	# system window. Logged for the tester's file all the same.
 	print("SYSLOG warning: %s" % msg)
 	if _hud_warning != null:
-		_hud_warning.show_notice(msg)
+		_show_banner("level_up", msg)
 	else:
 		_log_system(msg)
 	# 0x3054's handler 0x8a7020: snd_levup, 2-D (read; UiSounds.level_up).

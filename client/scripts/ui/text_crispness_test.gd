@@ -188,7 +188,9 @@ func _run() -> void:
 	var layer := notice.get_node_or_null("TextLayer") as CanvasItem
 	_check(layer != null and layer.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST,
 		"the notice banner's text is on an unfiltered layer")
-	_check(notice.texture_filter == CanvasItem.TEXTURE_FILTER_PARENT_NODE, "the notice banner's frame art keeps its filter")
+	# The one piece of UI art that is point-sampled by the client itself
+	# (CIFStretchWnd's 0x819d80 sets sampler states 5/6 to 1; round 703).
+	_check(notice.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST, "the notice banner's frame is point-sampled, as 0x819d80 draws it")
 
 	# A Button's last glyph (the 2026-09-11 "Registe", round 672's "Sel"): a
 	# Button draws its text clipped to the ceiling of its own width, so a
