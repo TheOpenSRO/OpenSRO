@@ -7634,6 +7634,11 @@ and 0x780610):
   lines, the unstuck hint, HELP_PLAYING, DEBUG_TOOLS and NATIVE_ON_WINDOWS. The older rounds' entries keep
   the key they had then.
 
+**Follow-up (the user, 2026-10-03, later the same day).** "that worked but I think dxvk was the proper
+fix to pick up fn key. Let's keep it at shift for now though." So the cause given above is
+UNCONFIRMED: with DXVK switched on in CrossOver the F keys reached the game. Whether Ctrl+F1-F3 also
+reach it with DXVK on was not tried. The keys stay on Shift (the user's choice).
+
 **Checked:** `keymap_test.gd`:
 - Shift+F1/F2/F3 toggle their panel.
 - Ctrl+F1/F2/F3 select their page.

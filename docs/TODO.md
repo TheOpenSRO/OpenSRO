@@ -1789,6 +1789,16 @@ on srrevamp-01 (`deploy/README.md`, "Towns"). Left:
 
 Round 660 (`docs/protocol/monster_ai.md`, "Nests on the map"; WORLD_ISSUES.md, round 660). Left:
 
+- [ ] **Tiger Girl stands sunk into the ground at her spot-0 nest** (the user, 2026-10-03, on
+      srrevamp-01: found her with `/tp -18864 13644`, "she was in the ground"). The server logged her
+      hatch at x -18864.1, z 13643.6 (nest 5908, spot 0 of 11). Not yet read whether the height comes
+      from the nest row, the server's ResolveCellAndHeight, or the client's placement of a unique;
+      check the other six uniques' spots too. Related: a GM `/spawn` monster on the Jangan plaza deck is
+      drawn on the terrain 14.2 below the deck (round 701 found it; `_terrain_hit_height` uses the
+      terrain-only mask).
+- [ ] **`/goto <unique>`** does not know a full-map unique's current spot (`gmSpeciesLookup` marks
+      table species Unplaced). A `/goto` that follows a unique's rotation, and a `/uniques` list, were
+      offered to the user 2026-10-03; not asked for yet.
 - [x] ~~The uniques~~ -- **round 661**: the seven field uniques rotate over their 70 spots (the
       build pin 0x55efe0, the re-pin at death with its last-nest bias 0x55eec0, every nest of a
       capped hive re-armed 0x560e50), fight with their own skills under their tactics, summon by
