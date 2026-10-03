@@ -7132,7 +7132,7 @@ There is no third notice colour: the pink-red the user remembers is GDR_NOTICE's
 - **The area banner** (CIFRegionView): the region id's code from `textdata\regioncode.txt` (rows
   with a non-zero service and a code other than "xxx"); an unnamed region clears the remembered
   code, the same code shows nothing, another code shows code_01 / code_02 / code_03 from
-  textzonename.txt ("xxx" blanked). Every one of the 146 codes, not only towns: fields, dungeons,
+  textzonename.txt ("xxx" blanked). Every one of the 147 codes, not only towns: fields, dungeons,
   ferries. Layout 744 x 104 at (W/2 - 372, 95), the title at W/2 - trunc(w x 0.75),
   119 - trunc(h x 0.375).
 
@@ -7151,7 +7151,7 @@ their alpha.
 **Built.**
 - `HudNotice` (`hud_notice.gd`): `frame_pieces` is `0x8182e0`'s layout, drawn mirrored through the
   canvas transform; the text measured and drawn in the bold face (`bold_font`: the system's own bold
-  file of the face when there is one, else FreeType embolden 16/size -- OURS); x by `0x7b3eb0`'s two
+  file of the face when there is one, else a stand-in -- replaced in the review below); x by `0x7b3eb0`'s two
   truncating halvings; the frame point-sampled; `style_for_kind` the kind table.
 - `HudRegionView` (`hud_region_view.gd`): the trigger rule, texts, fade and layout above, from the
   archive (1,862 region ids, 4,142 zone texts parsed in 22 ms on the box).
@@ -7176,7 +7176,7 @@ alike):
 **Choices made for the user (OURS unless READ):** the pink-red banner is GDR_NOTICE's (READ) and no
 new colour was added; the area banner shows for every named area, as the original does (READ), not
 only towns; EUROPE_SYSTEM treated as defined (the user's Europe-on choice, round 682); the area banner
-under the notices; the bold face from the system's bold file, else embolden; area_deco stretched to
+under the notices; the bold face from the system's bold file, else a stand-in (see the review); area_deco stretched to
 the window (INFERRED); a missing zone text shows nothing (INFERRED). The user's reference is a
 private server whose archive differs: its title reads "Western China Donwhang" in (169, 246, 253),
 the box's archive "Donwhang" in (61, 253, 255); srrevamp follows the archive.
@@ -7190,6 +7190,61 @@ the fade, no queue, regioncode.txt's rules, the area banner's trigger, fade and 
 `hud_chat_test.gd` and `text_crispness_test.gd` updated for the bold face and the point-sampled
 frame; `remote_godot.sh check` ALL LOAD; `remote_godot.sh tests` 216 suites, 0 failing. A UI round:
 no perf gate.
+
+### Review (round 703)
+
+Nothing HIGH. Fixed:
+
+- **M1, the fallback bold (CONFIRMED by measurement).** FreeType's embolden thickened the horizontals
+  as well as the stems (2 px, x-height 8): the blobby look. The client asks GDI for lfWeight 600
+  of UIC_STT_FONTNAME, the archive's Arial at 9 pt, as 1-bit GGO_BITMAP glyphs (READ, `0x00baa110`,
+  `0x8b0a00`); GDI takes arialbd.ttf where it exists (`bold_file` does too: Windows, macOS). Without
+  one the stand-in is now GDI's simulated bold by hand -- each glyph drawn at x and x + 1, its
+  advance one pixel wider (`HudNotice.draw_bold` / `bold_width`; the area title uses it too).
+  MEASURED, white-pixel runs over the text (the reference sampled at its 2x grid, ours 1:1, the box
+  without a system Arial Bold, Forward+ with the loading screen forced):
+
+  | | stem widths (horizontal runs) | stroke heights (vertical runs) | x-height |
+  |---|---|---|---|
+  | reference, "[Smile] has killed [Tiger Girl (EU-STR)]." | 2 px x323, 4-5 px x36 | 1 px x164, 2 px x27 | 7 rows (body rows 4-10) |
+  | ours, "Server maintenance begins in 10 minutes." | 2 px x283, 3 px x38, 4-5 px x44 | 1 px x132, 2 px x33 | 7 rows (body rows 6-12) |
+
+  The band grew with the wider advances: the GM notice 349 x 30 (269 x 14 text) against 317 x 30.
+  The TODO's "no Tahoma" is corrected: the face asked for is Arial; what the box lacks is a system
+  Arial Bold.
+- **M2, the area banner under the loading screen (CONFIRMED).** A world entry with the loading
+  screen forced (`SRREVAMP_QA_FORCE_LOADING=1`): `REGION BANNER ... at frame 0`, `LoadingScreen:
+  lifted at frame 26`, and `region grid loaded in 10798 ms ... over 26 awaited frames`. A movie run
+  steps 1/60 s a frame, so it lost only 433 ms; a live run's clock is the wall clock, so its 3.5 s
+  banner ran out under "NOW LOADING". Now (OURS: retail's loading state at `0x786f30` is not read)
+  `HudRegionView.covered` is World3D's `_loading_screen != null`; a banner raised while it holds is
+  held with its texts and starts -- fade in, 3 s hold, fade out -- the frame the screen lifts. The
+  teleport's drain takes the same path.
+  After (the same forced entry): `held under the loading screen at frame 0`, `lifted at frame 26`,
+  `raised as the loading screen lifted, at frame 26`, `fades out at frame 214` (26 + 188: 0.5 s in
+  and the hold to 3000 ms at 1/60 s a frame); a later area change (QA `region:102:152`) raises at
+  once, `at frame 701`.
+- **L1, EUROPE_SYSTEM.** The reason is the binary's (READ): `0x783667..0x783685` fetches child 0x53
+  and calls `0x665aa0` / `0x665d00` on it with no NULL check, so the shipping client has the window.
+  That conflicts with `frontend_frame.gd` and `intro_script.md`, which took pstitle.txt's `#else`
+  art (INFERRED there); the IFTVariable lookup that decides it is not read (OPEN, recorded in both
+  docs). intro_script.md's fade said "round": `0x6552f0` chops (`or eax,0xc00; fldcw`).
+- **L2.** 147 distinct codes over 1,862 region ids (first row wins), not 146; `sar` at `0x66575a`
+  (the title), `shr` in `0x6657f0` (the window).
+- **L3.** `style_for_kind` was dead: World3D's four banners (the GM notice, the recall point, the
+  unique notices, the level-up line) and the QA hook now go through `_show_banner(kind, text)`, and
+  the test checks no other `show_notice` call is left.
+- **L4.** Region 22478 is listed twice (RN_JUPITER_GOD wins over RN_JUPITER_SEA); the 14 ids above
+  32767 and the one negative id are dungeons `region_id(x, y)` cannot produce here. In the doc.
+
+**The texts in the user's pictures.** Ours is the right entry for the box's archive. The private
+server's "[Smile] has killed [Tiger Girl (EU-STR)]." is the generic UIIT_MSG_ANYONE_DEAD_UNIC line
+with that server's own monster name; the box's SN_MOB_CH_TIGERWOMAN is "Tiger Girl[INT]" in
+textdata_object, and that key takes the named line ("[%s] killed Tiger girl from Tiger Mountain.").
+The same server's town title "Western China Donwhang" is likewise its own RN_WC_DUNHWANG_01.
+
+**Checked:** `hud_notice_test.gd` adds the synthetic bold's widths, the hold under the loading
+screen, and the routing; `remote_godot.sh check` ALL LOAD; `remote_godot.sh tests` 216 suites, 0 failing.
 
 ## Six-hundred-and-ninety-ninth round: the developer toggles move from Ctrl+F1-F3 to Shift+F1-F3, because macOS keeps Ctrl+F1-F3 for itself
 

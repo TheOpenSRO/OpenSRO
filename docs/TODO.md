@@ -2320,8 +2320,16 @@ text, and CIFRegionView's area banner from regioncode.txt and textzonename.txt.
 
 - **The fortress town's third line** (`0x665d00`: UIIT_MSG_FORTRESS_TOWN_GUILD_NAME with the owning
   guild) is not built: this client keeps no fortress data, so the line keeps its `_03` text.
-- **The weight-600 face** is the system's bold file of the UI face when it has one, else FreeType's
-  embolden (OURS). On the box (no Tahoma) every bold render is the embolden stand-in.
+- **The weight-600 face** is the system's bold file of the UI face when it has one (arialbd.ttf on
+  Windows and macOS), else GDI's simulated bold drawn by hand: each glyph at x and x + 1, its
+  advance one pixel wider (OURS as code). The face asked for is the archive's Arial
+  (UIC_STT_FONTNAME); the box has no system Arial Bold, so every bold render there is the
+  simulated one -- as Linux players, and possibly CrossOver ones, see it.
+- **EUROPE_SYSTEM.** The area banner's window is under `#ifdef EUROPE_SYSTEM` and the binary uses it
+  with no NULL check (READ), while pstitle.txt's front-end art was taken as the `#else` branch
+  (INFERRED, frontend_frame.gd). The IFTVariable lookup that decides it is not read: OPEN.
+- **The area banner under the loading screen** is held and raised when the screen lifts (OURS);
+  retail's loading state at `0x786f30` is not read.
 - **The text manager's miss** (`0x8c9bb0` for a key it lacks) is not read; srrevamp shows nothing.
   MEASURED: every one of the box archive's 146 region codes has its `_01` text.
 - **Which notices stack over the area banner** (draw order between interface children 0x14, 0x23

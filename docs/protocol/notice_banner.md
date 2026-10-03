@@ -16,7 +16,7 @@ choice. Addresses are `sro_client.exe` virtual addresses.
 |---|---|---|---|---|---|---|
 | GM notice (chat type 7, `0x876810`), guild created (`0x8852c0`), `0x887330`, arena (`0x89f860`) | GDR_NOTICE, child 0x14, via `0x777bf0` | (128, 45, 67), the pink-red banner | `com_notice_edge/edge2/corner.ddj` | 100 | 12 px, weight 600, white, no shadow, centred | 7000 ms, the last 2000 fading |
 | Level-up (`0x8a97c0`), unique appeared/killed (`0x874ea0`, 15 sites), recall point, siege, training camp, the error dispatcher `0x7b8b40`, ~70 sites | GDR_WARNING_WND, child 0x23, via `0x77b580` | (0, 52, 92), the blue banner | `com_warning_*.ddj` | 130 | the same | the same |
-| Area entered (`0x783610`, `0x786f30`) | GDR_REGION_INFO_VIEW, child 0x53, `#ifdef EUROPE_SYSTEM` | `interface\game\area_deco.ddj`, (0, 37, 73) | none | 95 (window) | title 20 px x1.5, weight 600, cyan (61, 253, 255), shadow; line 2 15 px white, shadow; line 3 11 px (255, 255, 92), shadow | fade in 0.5 s, held to 3 s, fade out 0.5 s |
+| Area entered (`0x783610`, `0x786f30`) | GDR_REGION_INFO_VIEW, child 0x53, `#ifdef EUROPE_SYSTEM` (defined in the shipping build: see below) | `interface\game\area_deco.ddj`, (0, 37, 73) | none | 95 (window) | title 20 px x1.5, weight 600, cyan (61, 253, 255), shadow; line 2 15 px white, shadow; line 3 11 px (255, 255, 92), shadow | fade in 0.5 s, held to 3 s, fade out 0.5 s |
 
 All READ except the colour names. The fills and y values are CGInterface's set-up (round 657:
 `0x78cbbe`, `0x78cbed`, `0x78cbd2..0x78cbe8`, `0x78cd00..0x78cd12`, frame names
@@ -99,8 +99,12 @@ black at the text's alpha, then the glyph in its colour. `0x8b2290` samples poin
 - **The codes.** Game::FUN_00844310 loads `textdata\regioncode.txt` (ANSI, tab-separated: service,
   region id, code, Korean note): a row is kept when `atol(service) != 0` and the id column is set,
   unless the code is exactly `xxx` (`0xdae70c`); the first row of an id wins. MEASURED on the box's
-  archive: 3,144 rows with service 1, 146 distinct codes, every one with a `_01` text. The ids pack
-  regions as `(x << 8) | y` -- 25000 is Jangan's 97/168, as in textzonename.txt.
+  archive: 1,862 region ids (first row wins) carrying 147 distinct codes, every one with a `_01`
+  text. The ids pack regions as `(x << 8) | y` -- 25000 is Jangan's 97/168, as in textzonename.txt.
+  Id 22478 is listed twice, RN_JUPITER_GOD then RN_JUPITER_SEA: the first wins. The 14 ids above
+  32767 and the one negative id (-32743, RN_ARABIA_FIELD_02_BOSS) are dungeon regions that
+  `TextZoneNameReader.region_id(x, y)` cannot produce in this client, so their banners are
+  unreachable here.
 - **Texts** `0x665d00`: code + `_01` (`0xda10ac`) -> title (child 1), + `_02` -> line 2 (child 0xb),
   + `_03` -> line 3 (child 0xc), through the text manager `0x8c9bb0` (textzonename.txt). Lines 2
   and 3 are blanked when the text is exactly `xxx` (`0xd81d38`, length 3). A fortress town's line 3
@@ -108,7 +112,8 @@ black at the text's alpha, then the glyph in its colour. `0x8b2290` samples poin
 - **Timing.** The fade `0x6552f0`: alpha = trunc(from * (1 - t) + to * t) over 0.5 s. vslot_012
   `0x6656f0` starts the fade out (255 -> 0, 0.5 s) once more than 3000 ms have passed since the texts
   were set (`+0x388`). The fade's end (`0x652850`) hides the window when its target alpha is 0.
-- **Layout** (`0x6657f0`, `0x665740`; W/2 by `shr`; `0xb42d10` truncates):
+- **Layout** (`0x6657f0`, `0x665740`; W/2 by `shr` in `0x6657f0` and by `sar` at `0x66575a`;
+  `0xb42d10` truncates):
   - window 744 x 104 (`0x2e8 x 0x68`) at (W/2 - 372, 95);
   - title at x = W/2 - trunc(w x 1.5 x 0.5), y = 119 - trunc(h x 1.5 x 0.25), scale 1.5
     (`+0xcc` = `0xd819ec`);
@@ -129,10 +134,21 @@ black at the text's alpha, then the glyph in its colour. `0x8b2290` samples poin
 - `HudRegionView`: the trigger rule, the texts, the fade and the layout above, fed from the
   archive's regioncode.txt and textzonename.txt; called from `World3D._update_zone_label_for_region`
   on every region the player enters and once when the HUD is built.
-- OURS: the weight-600 face is the system's own bold file of the UI face when there is one (as
-  GDI picks it); otherwise FreeType's embolden at 16 / size, which thickens a 12 px stem from 1 to
-  2 px. EUROPE_SYSTEM is treated as defined (the user chose the Europe content on, round 682), so
-  the area banner exists. The area banner draws under the two notice banners.
+- The weight-600 face: the system's own bold file of the UI face when there is one (arialbd.ttf
+  for the archive's Arial on Windows and macOS), as GDI picks it. Without one -- Linux, possibly
+  CrossOver -- GDI's simulated bold: each glyph drawn at x and x + 1 with its advance one pixel
+  wider (`HudNotice.draw_bold`; OURS as code, round 703's review). MEASURED, see the review
+  section of round 703 in WORLD_ISSUES: 2 px verticals, 1 px horizontals, x-height 7, as the
+  reference.
+- The area banner exists because the shipping client defines EUROPE_SYSTEM (READ:
+  `0x783667..0x783685` fetches child 0x53 and calls `0x665aa0` / `0x665d00` on it with no NULL
+  check). This conflicts with `frontend_frame.gd` and `docs/protocol/intro_script.md`, which take
+  pstitle.txt's `#else` art (INFERRED there from `FUN_00866760` replacing window 9's texture by
+  hand); the client's IFTVariable lookup that decides the symbol is not read.
+- Held under the loading screen (OURS, round 703's review M2): a banner raised while "NOW
+  LOADING" covers the HUD starts -- fade, hold and all -- the frame the screen lifts.
+- `World3D._show_banner(kind, text)` routes every banner it raises through `style_for_kind`.
+- The area banner draws under the two notice banners (OURS).
 
 ## The broken band before round 703
 
@@ -145,3 +161,13 @@ each at a different height (top-right corner at 0..8, right edge at 8..h-8, bott
 below the rect, bottom edge below it from 40 to w - 40). That is the hard rectangle hugging the
 text and the broken streaks and gaps to its right, in every renderer. The texture loading was not
 at fault: the six frame textures are A8R8G8B8 and decode with their alpha.
+
+## The texts in the user's reference pictures
+
+The private server's "[Smile] has killed [Tiger Girl (EU-STR)]." is the generic
+UIIT_MSG_ANYONE_DEAD_UNIC line (`[%s] has killed [%s].`) with that server's own monster name,
+"Tiger Girl (EU-STR)", which the box's archive does not have: its SN_MOB_CH_TIGERWOMAN is "Tiger
+Girl[INT]" in textdata_object, and that key takes the named line UIIT_MSG_ANYONE_DEAD_TIGER_GIRL
+("[%s] killed Tiger girl from Tiger Mountain.", 0x874ea0's table in unique_notice.md). Ours is
+the right entry for the box's archive. Likewise its "Western China Donwhang" title is that
+server's RN_WC_DUNHWANG_01; the box's says "Donwhang".

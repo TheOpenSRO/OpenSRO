@@ -2274,6 +2274,7 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_region.name = "HudRegionView"
 	ui_control.add_child(_hud_region)
 	_hud_region.setup(_ui_builder)
+	_hud_region.covered = func() -> bool: return _loading_screen != null
 	# The world's set-up runs the same test for the region it starts in
 	# (0x786f30 at 0x787609, READ), which may have loaded before the HUD.
 	if _zone_region.x >= 0:
@@ -5264,6 +5265,7 @@ func _drain_initial_load(region_started_ms: int, frames_already_awaited: int = 0
 		return
 	_loading_screen.queue_free()
 	_loading_screen = null
+	print("LoadingScreen: lifted at frame %d" % Engine.get_frames_drawn())
 	_land_restored_return_point()
 	_initial_load_done = true
 
@@ -15184,8 +15186,8 @@ func _on_chat_update(u: ChatNet.Update) -> void:
 		_last_whisperer = u.sender_name
 	if _hud_chat != null:
 		_hud_chat.add_chat(u.type, u.sender_name, u.message_text)
-	if u.type == HudChat.TYPE_NOTICE and _hud_notice != null:
-		_hud_notice.show_notice(u.message_text)
+	if u.type == HudChat.TYPE_NOTICE:
+		_show_banner("gm_notice", u.message_text)
 	if chat_log != null:
 		chat_log.add_text("%s: %s\n" % [u.sender_name, u.message_text])
 
@@ -15464,6 +15466,14 @@ func _refresh_command_tooltip() -> void:
 ## Feeds SRREVAMP_QA_COMMANDS through the console -- the same parser the chat
 ## uses -- printing a "QA COMMAND:" marker per line so the log pairs each with
 ## its reply. Called from the QA tick block once the world has settled.
+## Raises a centre-screen banner for a line of `kind` on the instance the
+## original uses for it (HudNotice.style_for_kind: GDR_NOTICE for the GM
+## notice, GDR_WARNING_WND for the rest; round 703).
+func _show_banner(kind: String, text: String) -> void:
+	var on := _hud_notice if HudNotice.style_for_kind(kind)["name"] == "GDR_NOTICE" else _hud_warning
+	if on != null:
+		on.show_notice(text)
+
 ## SRREVAMP_QA_NOTICES="<tick>:<what>;..." (round 703) raises the banners at
 ## those QA ticks through the handlers the network drives:
 ##   notice:<text>                 GDR_NOTICE, as a chat notice does
@@ -15492,11 +15502,9 @@ func _qa_notices_step(plan: String) -> void:
 		var parts := what.split(":")
 		match parts[0]:
 			"notice":
-				if _hud_notice != null:
-					_hud_notice.show_notice(what.substr(7))
+				_show_banner("gm_notice", what.substr(7))
 			"warning":
-				if _hud_warning != null:
-					_hud_warning.show_notice(what.substr(8))
+				_show_banner("system", what.substr(8))
 			"level":
 				_on_level_up(int(parts[1]) if parts.size() > 1 else 2, 0)
 			"unique":
@@ -16298,8 +16306,7 @@ func _on_recall_designate_result(result: RecallNet.Result) -> void:
 			line = t
 	print("SYSLOG recall: %s" % line)
 	_log_system(line, HudSystemMessage.TYPE_GAME)
-	if _hud_warning != null:
-		_hud_warning.show_notice(line)
+	_show_banner("recall_point", line)
 
 ## The gate the destination list was last opened at (a teleportdata id), what
 ## a destination line sends as the source (_on_teleport_requested); 0 before any.
@@ -20067,7 +20074,7 @@ func _on_unique_notice(n: UniqueNoticeNet.Notice) -> void:
 		return
 	_log_system(line, UniqueNoticeNet.SYSTEM_TYPE)
 	if _hud_warning != null:
-		_hud_warning.show_notice(line)
+		_show_banner("unique", line)
 		# Where it is on the screen (the harness measures the pixels there).
 		var xf := _hud_warning.get_global_transform_with_canvas()
 		var r := Rect2(xf.origin, _hud_warning.size * xf.get_scale())
@@ -20141,7 +20148,7 @@ func _on_level_up(new_level: int, _stat_points: int) -> void:
 	# system window. Logged for the tester's file all the same.
 	print("SYSLOG warning: %s" % msg)
 	if _hud_warning != null:
-		_hud_warning.show_notice(msg)
+		_show_banner("level_up", msg)
 	else:
 		_log_system(msg)
 	# 0x3054's handler 0x8a7020: snd_levup, 2-D (read; UiSounds.level_up).

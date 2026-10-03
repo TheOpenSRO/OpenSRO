@@ -213,11 +213,15 @@ camera_transform`, `World3D.title_world_from_local`).
   calls `FUN_00865630` early.
 - **The fade** (CIFFade): `FUN_006526e0(from, to, duration, start)` -> `FUN_006552b0` stores them;
   each step (`FUN_006552f0`) alpha = from while elapsed <= 0, = to once elapsed >= duration, else
-  `round(from (1 - u) + to u)`, u = elapsed / duration. That elapsed grows by the frame time is
+  `trunc(from (1 - u) + to u)`, u = elapsed / duration -- truncated: `0x6552f0` sets the FPU's
+  rounding control to chop (`or eax,0xc00; fldcw`) before its `fistp` (round 703's review). That elapsed grows by the frame time is
   INFERRED.
 - Which `#ifdef` branch pstitle's art takes: the undefined (`#else`) one, INFERRED from
   `FUN_00866760` replacing window 9's art by hand, which a build defining EUROPE_SYSTEM would not
-  need.
+  need. CONFLICT (round 703's review): the in-game interface reads as a build that DOES define it --
+  `0x783667..0x783685` fetches ginterface.txt's `#ifdef EUROPE_SYSTEM` window GDR_REGION_INFO_VIEW
+  (child 0x53) and calls into it with no NULL check (docs/protocol/notice_banner.md). The client's
+  IFTVariable lookup that resolves the symbol is not read, so which reading is right is OPEN.
 
 ## The operator's front-end theme (OURS)
 

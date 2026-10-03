@@ -123,7 +123,8 @@ const STYLE_WARNING := {
 	"corner": "interface\\ifcommon\\com_warning_corner.ddj",
 }
 
-## Which instance a line goes to (READ: the callers of the two show paths).
+## Which instance a line goes to (READ: the callers of the two show paths);
+## World3D._show_banner routes every banner it raises through it.
 ## 0x777bf0 (GDR_NOTICE) has four callers: the chat's notice type 7
 ## (0x876810), the guild-created result (UI_GUILD::Guild_OnCreateResult
 ## 0x8852c0), 0x887330 and the arena's 0x89f860. 0x77b580 (GDR_WARNING_WND)
@@ -149,12 +150,13 @@ const EDGE_SIZE := Vector2(4, 8)
 const EDGE2_SIZE := Vector2(40, 8)
 ## GDR_NOTIFY_TXT's FontColor (255,255,255,255) and FontIndex 0.
 const TEXT_COLOR := Color.WHITE
-## Text flag 2 (READ): the weight-600 face.
+## Text flag 2 (READ): the weight-600 face (bold_file / draw_bold).
 const TEXT_BOLD := true
 ## Text flag 1, the drop shadow (READ): not set on the notice text.
 const TEXT_SHADOW := false
 
 var _font: Font
+## The face's own bold file, or null for the synthetic bold (bold_file).
 var _bold: Font
 var _font_size := 12
 var _edge: Texture2D
@@ -190,7 +192,7 @@ func setup(builder: UiBuilder, style: Dictionary = STYLE_NOTICE) -> void:
 		_corner = builder.load_texture(String(style["corner"]))
 	if _font == null:
 		_font = ThemeDB.fallback_font
-	_bold = bold_font(_font, _font_size) if TEXT_BOLD else _font
+	_bold = bold_file(_font) if TEXT_BOLD else _font
 
 ## The style a line of `kind` (KIND_STYLES) is shown in; an unknown kind is
 ## a warning, the instance nearly every caller uses.
@@ -205,10 +207,18 @@ func style_name() -> String:
 func fill_color() -> Color:
 	return _style["fill"]
 
-## The face the text is drawn and measured in: the UI face's weight-600
-## variant (text flag 2).
+## The UI face the text is drawn in (text flag 2 makes it the weight-600
+## variant: the face's bold file when there is one, bold_file).
 func text_font() -> Font:
+	return _font
+
+## The bold file in use, or null when the synthetic bold is drawn.
+func text_bold_file() -> Font:
 	return _bold
+
+## How wide `s` is in the notice's bold text.
+func text_width(s: String) -> float:
+	return bold_width(_font, _bold, s, _font_size)
 
 func text_size() -> int:
 	return _font_size
@@ -232,9 +242,8 @@ static func window_x(screen_w: int, text_w: int) -> int:
 func show_notice(text: String) -> void:
 	_text = text
 	_left_ms = LIFE_MS
-	var extent := _bold.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size)
-	extent.y = _bold.get_height(_font_size)
-	extent = extent.ceil()
+	var face: Font = _bold if _bold != null else _font
+	var extent := Vector2(bold_width(_font, _bold, text, _font_size), face.get_height(_font_size)).ceil()
 	size = extent
 	position = Vector2(float(window_x(int(_screen_width()), int(extent.x))), float(_style["y"]))
 	_alpha = 255
@@ -351,43 +360,68 @@ func _blit(tex: Texture2D, r: Rect2, flip_h: bool, flip_v: bool, tint: Color) ->
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 func _draw_text(on: CanvasItem) -> void:
-	if _bold == null or _text == "":
+	if _font == null or _text == "":
 		return
 	var c := Color(TEXT_COLOR, TEXT_COLOR.a * float(_alpha) / 255.0)
-	var at := Vector2(0, _bold.get_ascent(_font_size))
+	var face: Font = _bold if _bold != null else _font
+	var at := Vector2(0, face.get_ascent(_font_size))
 	if TEXT_SHADOW:
-		on.draw_string(_bold, at + Vector2.ONE, _text, HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size,
-			Color(0, 0, 0, c.a))
-	on.draw_string(_bold, at, _text, HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size, c)
+		draw_bold(on, _font, _bold, at + Vector2.ONE, _text, _font_size, Color(0, 0, 0, c.a))
+	draw_bold(on, _font, _bold, at, _text, _font_size, c)
 
 # --- The weight-600 face (text flag 2) ---------------------------------------
+#
+# READ: 0x00baa110 creates the variant with CreateFontIndirectA, lfWeight
+# 600, from the same face name (UIC_STT_FONTNAME: Arial at 9 pt, 12 px), and
+# GFontChar 0x8b0a00 rasterises its glyphs one bit deep (GetGlyphOutlineW,
+# GGO_BITMAP). GDI picks the face's own bold file when the system has one
+# (arialbd.ttf on Windows and macOS); so does bold_file. Without one GDI
+# emboldens the outline itself: each glyph smeared one pixel to the right and
+# its advance one pixel wider -- what draw_bold does then (OURS as code; GDI's
+# simulation, round 703's review M1). MEASURED against the reference
+# (notice_gZ0D3bn.png, 2x nearest of the 1-bit text): verticals 2 px,
+# horizontals 1 px, x-height 7 -- FreeType's embolden, round 703's first
+# stand-in, thickened the horizontals to 2 px and the x-height to 8.
 
-## The cache of bold faces, by base font and size.
+## The cache of bold files, by base font ("" for none).
 static var _bold_cache := {}
 
-## The weight-600 variant of `font` at `px` (READ: 0x00baa110 creates it
-## with lfWeight 600 from the same face name). GDI picks the face's own bold
-## file when the system has one; so does this, when the face is a system
-## font whose family has a heavier file (OS.get_system_font_path with weight
-## 600). Otherwise -- the box's Linux, a bundled face -- FreeType's embolden
-## stands in for GDI's synthetic bold: OURS, sized to thicken a stem by one
-## pixel (strength = embolden x size x 4 in 1/64 px, UiBuilder's note on
-## FreeType), which is the 1 -> 2 px stem the reference's 12 px text shows
-## (MEASURED, docs/protocol/notice_banner.md).
-static func bold_font(font: Font, px: int) -> Font:
+## The face's weight-600 file from the system, or null when there is none
+## (the synthetic bold is drawn then).
+static func bold_file(font: Font) -> Font:
 	if font == null:
 		return null
-	var key := "%d|%d" % [font.get_instance_id(), px]
-	if _bold_cache.has(key):
-		return _bold_cache[key]
-	var out: Font = _system_bold(font)
-	if out == null:
-		var v := FontVariation.new()
-		v.base_font = font
-		v.variation_embolden = clampf(16.0 / float(maxi(px, 1)), 0.0, 2.0)
-		out = v
-	_bold_cache[key] = out
-	return out
+	var key := font.get_instance_id()
+	if not _bold_cache.has(key):
+		_bold_cache[key] = _system_bold(font)
+	return _bold_cache[key]
+
+## `s`'s width in the weight-600 text: the bold file's, or the face's
+## advances each one pixel wider.
+static func bold_width(font: Font, bold: Font, s: String, px: int) -> float:
+	if bold != null:
+		return bold.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, px).x
+	if font == null:
+		return 0.0
+	var w := 0.0
+	for ch in s:
+		w += font.get_char_size(ch.unicode_at(0), px).x + 1.0
+	return w
+
+## Draws `s` in the weight-600 text with its baseline at `at`: the bold
+## file's glyphs, or each of the face's glyphs drawn at x and x + 1 with the
+## advance one pixel wider.
+static func draw_bold(on: CanvasItem, font: Font, bold: Font, at: Vector2, s: String, px: int, color: Color) -> void:
+	if bold != null:
+		on.draw_string(bold, at, s, HORIZONTAL_ALIGNMENT_LEFT, -1, px, color)
+		return
+	if font == null:
+		return
+	var x := at.x
+	for ch in s:
+		on.draw_char(font, Vector2(x, at.y), ch, px, color)
+		on.draw_char(font, Vector2(x + 1.0, at.y), ch, px, color)
+		x += font.get_char_size(ch.unicode_at(0), px).x + 1.0
 
 static func _system_bold(font: Font) -> Font:
 	var family := font.get_font_name()

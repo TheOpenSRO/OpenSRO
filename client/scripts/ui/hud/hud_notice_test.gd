@@ -134,11 +134,17 @@ func _show_checks(s: Script) -> void:
 	n.call("setup", null)
 	n.call("show_notice", "Server maintenance")
 	await process_frame
-	var bold: Font = n.call("text_font")
-	var regular: Font = ThemeDB.fallback_font
-	_check(bold != null and bold != regular, "the text is drawn in a bold variant of the face")
-	var ext := bold.get_string_size("Server maintenance", HORIZONTAL_ALIGNMENT_LEFT, -1, 12).ceil()
-	_check(n.size.x == ext.x, "the window is the bold text's extent (got %s, want %s)" % [n.size, ext])
+	var face: Font = n.call("text_font")
+	var plain := face.get_string_size("Server maintenance", HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+	var adv := 0.0
+	for ch in "Server maintenance":
+		adv += face.get_char_size(ch.unicode_at(0), 12).x
+	var want_w := ceilf(adv + "Server maintenance".length()) if n.call("text_bold_file") == null \
+		else ceilf((n.call("text_bold_file") as Font).get_string_size("Server maintenance", HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x)
+	_check(n.size.x == want_w and n.size.x > plain,
+		"the window is the bold text's extent: each glyph's advance plus 1 px without a bold file (got %s, want %s)" % [n.size, want_w])
+	_check(s.call("bold_width", face, null, "ab", 12) == face.get_char_size(97, 12).x + face.get_char_size(98, 12).x + 2.0,
+		"the synthetic bold widens every advance by one pixel (GDI's simulation)")
 	var first_x := n.position.x
 	n.call("advance", 3000)
 	n.call("show_notice", "A longer second line replaces the first")
@@ -241,6 +247,20 @@ func _region_timing_checks(s: Script) -> void:
 	_check(v.call("alpha") == 127, "and runs 500 ms")
 	v.call("advance", 250)
 	_check(not v.visible and v.call("alpha") == 0, "then the window is hidden")
+	# Under the loading screen (OURS, round 703's review M2): held, then the
+	# whole banner from the frame the screen lifts.
+	var up := [true]
+	v.set("covered", func() -> bool: return up[0])
+	v.call("enter_region", 25002)
+	_check(v.call("held") and not v.visible and v.get("title") == "Test Field",
+		"a banner raised under the loading screen is held with its texts")
+	v.call("_process", 5.0)
+	_check(v.call("held") and not v.visible, "and stays held while the screen is up, its clock stopped")
+	up[0] = false
+	v.call("_process", 0.016)
+	_check(not v.call("held") and v.visible and v.call("alpha") == 0, "the frame the screen lifts it starts at alpha 0")
+	v.call("advance", 500)
+	_check(v.call("alpha") == 255, "and fades in from there")
 	v.free()
 
 func _region_layout_checks(s: Script) -> void:
@@ -267,3 +287,12 @@ func _world_checks() -> void:
 	_check(body.contains("_hud_region.enter_region(TextZoneNameReader.region_id(region_x, region_y))"),
 		"every region the player enters runs the area banner's test")
 	_check(src.contains("_hud_region.setup(_ui_builder)"), "World3D builds the area banner")
+	_check(src.contains("_hud_region.covered = func() -> bool: return _loading_screen != null"),
+		"and holds it while the loading screen is up")
+	var routed := true
+	for k in ["gm_notice", "recall_point", "unique", "level_up"]:
+		if not src.contains("_show_banner(\"%s\"" % k):
+			routed = false
+	_check(routed and src.contains("HudNotice.style_for_kind(kind)"),
+		"every banner World3D raises goes through style_for_kind (the GM notice, recall point, unique, level-up)")
+	_check(src.count(".show_notice(") == 1, "and nothing raises one around it")

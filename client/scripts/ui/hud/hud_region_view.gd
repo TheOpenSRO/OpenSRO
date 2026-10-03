@@ -27,9 +27,20 @@ class_name HudRegionView
 ##   - another code: 0x665d00 sets the texts and remembers the code, and
 ##     0x6526e0(0, 255, 0.5 s, 0, 1) fades the window in from 0.
 ##
-## So it is not only towns: every one of regioncode.txt's 146 codes (fields,
-## dungeons, ferries, fortresses) has its banner. MEASURED: all 146 have a
-## `_01` text in textzonename.txt.
+## So it is not only towns: every one of regioncode.txt's 147 codes (over
+## 1,862 region ids; fields, dungeons, ferries, fortresses) has its banner.
+## MEASURED: all 147 have a `_01` text in textzonename.txt. Id 22478 is
+## listed twice (RN_JUPITER_GOD, then RN_JUPITER_SEA; the first wins), and
+## the 14 ids above 32767 and the one negative id (dungeons) cannot come out
+## of TextZoneNameReader.region_id(x, y) in this client.
+##
+## **Why the window exists (READ).** It is inside ginterface.txt's `#ifdef
+## EUROPE_SYSTEM`, but 0x783667..0x783685 fetches child 0x53 and calls
+## 0x665aa0 and 0x665d00 on it with no NULL check, so the shipping client
+## has the window: the build defines EUROPE_SYSTEM. (frontend_frame.gd and
+## docs/protocol/intro_script.md inferred the `#else` art for pstitle.txt;
+## that conflict is recorded in notice_banner.md. How the client resolves
+## the symbol -- its IFTVariable lookup -- is not read.)
 ##
 ## **The texts (READ, 0x665d00).** The code plus `_01` (`0xda10ac`) is the
 ## title (child 1), plus `_02` the description (child 0xb), plus `_03` the
@@ -47,7 +58,8 @@ class_name HudRegionView
 ## hides the window (0x652850: target alpha 0 and +0x20c set). The texts
 ## fade with it (a child's alpha is its own times its parent's, 0x652670).
 ##
-## **Layout (READ, 0x6657f0 / 0x665740 on a W-wide screen, W/2 = `shr`).**
+## **Layout (READ, 0x6657f0 / 0x665740 on a W-wide screen; W/2 by `shr` in
+## 0x6657f0, by `sar` at 0x66575a in 0x665740 -- the same for any screen).**
 ##
 ##   window   744 x 104 (0x2e8 x 0x68) at (W/2 - 372, 95)
 ##   title    child 1 at x = W/2 - trunc(w * 1.5 * 0.5),
@@ -116,7 +128,9 @@ var line3 := ""
 
 var _texts: UiTextTable
 var _art: Texture2D
+## The title's face and its bold file (null: the synthetic bold, HudNotice.draw_bold).
 var _title_font: Font
+var _title_bold: Font
 var _line2_font: Font
 var _line3_font: Font
 ## The window's alpha, 0..255, and the fade it is in.
@@ -128,6 +142,14 @@ var _fade_elapsed := 0
 var _fading := false
 ## ms since the texts were set; -1 once the fade out has started.
 var _since_set := -1
+## Whether the loading screen covers the HUD now (World3D sets it; null:
+## never). OURS (round 703's review, M2): retail's world set-up (0x786f30)
+## and its loading state were not read, but a world entry or a teleport here
+## keeps "NOW LOADING" up for 5-7 s, longer than the banner's whole 3.5 s,
+## so a banner raised under it is held and starts -- fade, hold and all --
+## the frame the screen lifts.
+var covered := Callable()
+var _held := false
 
 var _title_layer: Control
 var _text_layer: UiBuilder.TextLayer
@@ -169,7 +191,8 @@ func setup(builder: UiBuilder) -> void:
 				Time.get_ticks_msec() - t])
 	if font == null:
 		font = ThemeDB.fallback_font
-	_title_font = HudNotice.bold_font(font, UiBuilder.FONT_SIZES[TITLE_FONT_INDEX])
+	_title_font = font
+	_title_bold = HudNotice.bold_file(font)
 	_line2_font = font
 	_line3_font = font
 
@@ -244,11 +267,33 @@ func show_code(code: String) -> void:
 	title = _text(code + "_01")
 	line2 = _blank_xxx(_text(code + "_02"))
 	line3 = _blank_xxx(_text(code + "_03"))
+	if _is_covered():
+		# Held until the loading screen lifts (see `covered`).
+		_held = true
+		_since_set = -1
+		_fading = false
+		_alpha = 0
+		visible = false
+		print("REGION BANNER: %s title '%s' line2 '%s' line3 '%s' held under the loading screen at frame %d" % [
+			code, title, line2, line3, Engine.get_frames_drawn()])
+		return
+	_raise()
+	print("REGION BANNER: %s title '%s' line2 '%s' line3 '%s' at frame %d" % [code, title, line2, line3,
+		Engine.get_frames_drawn()])
+
+func _raise() -> void:
+	_held = false
 	_since_set = 0
 	_start_fade(0, 255)
 	visible = true
-	print("REGION BANNER: %s title '%s' line2 '%s' line3 '%s'" % [code, title, line2, line3])
 	_redraw()
+
+func _is_covered() -> bool:
+	return covered.is_valid() and bool(covered.call())
+
+## Whether a banner is waiting for the loading screen to lift.
+func held() -> bool:
+	return _held
 
 ## A key's text, or "" when the table has none (INFERRED: the text manager's
 ## miss is not read).
@@ -281,6 +326,12 @@ func alpha() -> int:
 	return _alpha
 
 func _process(delta: float) -> void:
+	if _held:
+		if not _is_covered():
+			_raise()
+			print("REGION BANNER: %s raised as the loading screen lifted, at frame %d" % [current_code,
+				Engine.get_frames_drawn()])
+		return
 	if visible:
 		advance(int(delta * 1000.0))
 
@@ -291,6 +342,7 @@ func advance(ms: int) -> void:
 		if _since_set > HOLD_MS:
 			_since_set = -1
 			_start_fade(255, 0)
+			print("REGION BANNER: %s fades out at frame %d" % [current_code, Engine.get_frames_drawn()])
 			# The fade starts on this update's step, as 0x6528a0 runs first.
 			ms = 0
 	if _fading:
@@ -323,8 +375,8 @@ static func title_origin(half_w: int, extent: Vector2) -> Vector2:
 
 func _title_extent() -> Vector2:
 	var px: int = UiBuilder.FONT_SIZES[TITLE_FONT_INDEX]
-	var e := _title_font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, px)
-	return Vector2(ceilf(e.x), _title_font.get_height(px))
+	var face: Font = _title_bold if _title_bold != null else _title_font
+	return Vector2(ceilf(HudNotice.bold_width(_title_font, _title_bold, title, px)), face.get_height(px))
 
 ## The banner's parts on the parent, for the QA log: window, title, lines.
 func layout() -> Dictionary:
@@ -347,13 +399,14 @@ func _draw_title(_unused = null) -> void:
 	var px: int = UiBuilder.FONT_SIZES[TITLE_FONT_INDEX]
 	var at := title_origin(_half_width(), _title_extent())
 	var a := float(_alpha) / 255.0
-	var base := Vector2(0, _title_font.get_ascent(px))
+	var face: Font = _title_bold if _title_bold != null else _title_font
+	var base := Vector2(0, face.get_ascent(px))
 	var s := Vector2(TITLE_SCALE, TITLE_SCALE)
 	# The shadow, one screen pixel right and down, then the glyphs.
 	_title_layer.draw_set_transform(at + Vector2.ONE, 0.0, s)
-	_title_layer.draw_string(_title_font, base, title, HORIZONTAL_ALIGNMENT_LEFT, -1, px, Color(0, 0, 0, a))
+	HudNotice.draw_bold(_title_layer, _title_font, _title_bold, base, title, px, Color(0, 0, 0, a))
 	_title_layer.draw_set_transform(at, 0.0, s)
-	_title_layer.draw_string(_title_font, base, title, HORIZONTAL_ALIGNMENT_LEFT, -1, px, Color(TITLE_COLOR, a))
+	HudNotice.draw_bold(_title_layer, _title_font, _title_bold, base, title, px, Color(TITLE_COLOR, a))
 	_title_layer.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 func _draw_lines(on: CanvasItem) -> void:

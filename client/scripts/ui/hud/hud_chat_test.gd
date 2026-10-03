@@ -364,9 +364,9 @@ func _notice_checks() -> void:
 		"a notice shows for 7000 ms at GDR_NOTICE's y, 100 (0x78cbbe; round 657)")
 	# Measured in the text's own face, the weight-600 variant (text flag 2,
 	# round 703).
-	var f: Font = n.call("text_font") if n.has_method("text_font") else ThemeDB.fallback_font
-	_check(n.size.x == ceilf(f.get_string_size("Server maintenance", HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x),
-		"the banner is the text's extent (0x7b3eb0) (got %s)" % n.size)
+	var want: float = ceilf(n.call("text_width", "Server maintenance")) if n.has_method("text_width") \
+		else ThemeDB.fallback_font.get_string_size("Server maintenance", HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+	_check(n.size.x == want, "the banner is the text's extent (0x7b3eb0) (got %s)" % n.size)
 	n.call("advance", 7000)
 	_check(not n.visible, "and is gone after 7000 ms")
 	n.free()
