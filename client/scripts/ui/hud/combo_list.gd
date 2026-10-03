@@ -87,6 +87,10 @@ var _text: Control
 var _last_xf := Transform2D()
 var _watch := Callable()
 var _gone := Callable()
+## Set by close(): the combo is done with this list.
+var _closed := false
+## The mouse button whose release still belongs to this list (0: none).
+var _await_button := 0
 
 static var _open: ComboList = null
 ## For the suite: the view height place() fits the list into (the headless
@@ -204,6 +208,13 @@ func place() -> void:
 		_text.queue_redraw()
 
 func _process(_dt: float) -> void:
+	if _closed:
+		# Waiting for the closing press's release: if the button is already
+		# up (its release went elsewhere), nothing is left to eat.
+		if _await_button != 0 and not Input.is_mouse_button_pressed(_await_button):
+			_await_button = 0
+			_free_layer()
+		return
 	if _combo == null or not is_instance_valid(_combo) or not _combo.is_visible_in_tree():
 		close()
 		return
@@ -217,6 +228,8 @@ func to_list(canvas_p: Vector2) -> Vector2:
 	return (to_canvas.affine_inverse() * canvas_p) - list_rect.position
 
 func _draw() -> void:
+	if _closed:
+		return
 	draw_set_transform_matrix(to_canvas)
 	var r := list_rect
 	if panel != null:
@@ -254,6 +267,17 @@ func _set_hover(i: int) -> void:
 			_text.queue_redraw()
 
 func _gui_input(e: InputEvent) -> void:
+	if _await_button != 0:
+		# Closed by a press (round 700 review, H1): every event is eaten until
+		# that button's release, which then frees the layer. Freed on the
+		# press, the layer took Godot's mouse focus with it and the release
+		# fell through to World3D._unhandled_input as a world click.
+		accept_event()
+		var rb := e as InputEventMouseButton
+		if rb != null and not rb.pressed and rb.button_index == _await_button:
+			_await_button = 0
+			_free_layer()
+		return
 	if e is InputEventMouseMotion:
 		var p := to_list((e as InputEventMouseMotion).position)
 		_set_hover(row_at(list_rect.size, items.size(), p))
@@ -269,20 +293,20 @@ func _gui_input(e: InputEvent) -> void:
 			var p := to_list(mb.position)
 			var inside := Rect2(Vector2.ZERO, list_rect.size).has_point(p)
 			if not inside:
-				close()
+				close(MOUSE_BUTTON_LEFT)
 				return
 			var i := row_at(list_rect.size, items.size(), p)
 			if i >= 0:
-				choose(i)
-		else:
-			close()
+				choose(i, MOUSE_BUTTON_LEFT)
+		elif mb.button_index != MOUSE_BUTTON_WHEEL_LEFT and mb.button_index != MOUSE_BUTTON_WHEEL_RIGHT:
+			close(mb.button_index)
 	elif e is InputEventMouseButton:
 		accept_event()
 
 ## Escape and the keys, before the HUD sees them (input runs from the last
 ## node in the tree, and the layer is the root's last child).
 func _input(e: InputEvent) -> void:
-	if not (e is InputEventKey) or not (e as InputEventKey).pressed:
+	if _closed or not (e is InputEventKey) or not (e as InputEventKey).pressed:
 		return
 	var k := (e as InputEventKey).keycode
 	match k:
@@ -318,17 +342,23 @@ func step(d: int) -> void:
 			_set_hover(i)
 			return
 
-func choose(i: int) -> void:
+## Picks row i. `await_button`: the mouse button whose press picked it --
+## the list stays (drawn as nothing) eating input until that release.
+func choose(i: int, await_button: int = 0) -> void:
 	if i < 0 or i >= items.size() or disabled_items[i]:
 		return
-	close()
+	close(await_button)
 	chosen.emit(i)
 
 func _on_combo_gone() -> void:
 	if _combo == null or not is_instance_valid(_combo) or not _combo.is_visible_in_tree():
 		close()
 
-func close() -> void:
+## Closes the list: at once for the combo (current() is null, `closed`
+## emitted), and the layer goes now -- or, with `await_button`, when that
+## mouse button is released (see _gui_input), so its release never reaches
+## the world.
+func close(await_button: int = 0) -> void:
 	if _open == self:
 		_open = null
 	if _combo != null and is_instance_valid(_combo):
@@ -338,6 +368,23 @@ func close() -> void:
 			_combo.visibility_changed.disconnect(_watch)
 	_watch = Callable()
 	_gone = Callable()
+	if _closed:
+		if await_button == 0 and _await_button != 0:
+			_await_button = 0
+			_free_layer()
+		return
+	_closed = true
+	if await_button != 0 and _layer != null and is_instance_valid(_layer) and is_inside_tree():
+		_await_button = await_button
+		queue_redraw()
+		if _text != null:
+			_text.visible = false
+		closed.emit()
+		return
+	_free_layer()
+	closed.emit()
+
+func _free_layer() -> void:
 	if _layer != null and is_instance_valid(_layer):
 		var layer := _layer
 		_layer = null
@@ -346,7 +393,6 @@ func close() -> void:
 		# on the root could find it busy.
 		layer.visible = false
 		layer.queue_free()
-		closed.emit()
 
 func is_open() -> bool:
-	return _layer != null
+	return _layer != null and not _closed

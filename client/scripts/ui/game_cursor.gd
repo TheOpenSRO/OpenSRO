@@ -263,10 +263,11 @@ static func item_kind(left_held: bool) -> String:
 ## 0x53ad30's 320.0 -- READ in round 664, docs/protocol/monster_ai.md): 320
 ## to 640 units each way. srrevamp's server applies that window to monsters
 ## (session.AOIRadius); this client builds NPCs and gates itself for its 5 x 5
-## loaded regions, so the hover applies the window here, to every class. That
-## a teleport structure travels by the same blocks is INFERRED (round 664
-## left "whether any object kind is sent from farther (a unique, a structure)"
-## open); NPCs are field objects in the blocks (READ there).
+## loaded regions, so the hover applies the window here, to every class. A
+## gate is a server-sent object too (READ, round 700's review: CITeleportGate
+## is made only by the spawn parser -- FUN_008a6bd0, FUN_009c1fa0,
+## NetProcessInObject), so it exists only inside that window; NPCs are field
+## objects in the blocks (READ, round 664).
 const VIEW_BLOCK_SPAN := 320.0
 const VIEW_BLOCK_RADIUS := 1
 ## Half a region: region lines fall at 960 + 1920k in this client's world

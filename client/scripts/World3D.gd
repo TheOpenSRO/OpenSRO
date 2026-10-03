@@ -15836,6 +15836,10 @@ func _settle_hover_cursor() -> void:
 	# Also when the game's cursors are not there: the item under the mouse
 	# shows its name (_hovered_ground_item).
 	var t0 := Time.get_ticks_usec()
+	# Over a window no world target is under the mouse: the log line must not
+	# name the last one (round 700 review, L1).
+	if not _hover_reached_world:
+		_hover_target = ""
 	var kind := _hover_kind_at(_hover_pos) if _hover_reached_world else "normal"
 	_cursor_classify_usec += Time.get_ticks_usec() - t0
 	_cursor_classify_count += 1

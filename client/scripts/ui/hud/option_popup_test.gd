@@ -175,11 +175,75 @@ func _test_behaviour() -> void:
 	ComboList.view_height_for_test = 0.0
 	host.free()
 
+## Round 700 review, H1: through the viewport, as a player's mouse arrives --
+## a press that picks a row or closes the list from outside, then its
+## release: the release must not reach any node's _unhandled_input (World3D
+## takes an unhandled left release as a world click and repeats it).
+func _test_release_does_not_leak() -> void:
+	ComboList.view_height_for_test = 720.0
+	var probe_script := GDScript.new()
+	probe_script.source_code = "extends Node\nvar seen: Array = []\nfunc _unhandled_input(e: InputEvent) -> void:\n\tif e is InputEventMouseButton:\n\t\tseen.append([(e as InputEventMouseButton).button_index, (e as InputEventMouseButton).pressed])\n"
+	probe_script.reload()
+	var probe := Node.new()
+	probe.set_script(probe_script)
+	root.add_child(probe)
+	var host := Control.new()
+	# Everything inside the headless window's 64 x 64: the combo at (2, 2),
+	# a two-item list from y 22 to 56, "outside" at (30, 60).
+	host.position = Vector2(2, 2)
+	host.size = Vector2(150, 20)
+	root.add_child(host)
+	var combo := OptionButton.new()
+	combo.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	host.add_child(combo)
+	for t in ["Low", "Middle"]:
+		combo.add_item(t)
+	OptionVideoPage.attach_list(combo, {}, null)
+	await process_frame
+	var picked: Array = []
+	combo.item_selected.connect(func(i: int) -> void: picked.append(i))
+	var at_combo := Vector2(30, 10)
+	var row1 := Vector2(30, 2 + 20 + 4 + 13 + 6)
+	# Open: press and release on the combo.
+	root.push_input(_press(MOUSE_BUTTON_LEFT, at_combo))
+	root.push_input(_press(MOUSE_BUTTON_LEFT, at_combo, false))
+	_check(ComboList.current() != null, "through the viewport: a click on the combo opens the list")
+	_check(probe.get("seen").is_empty(), "and neither its press nor its release reaches _unhandled_input (%s)" % str(probe.get("seen")))
+	# Pick row 1: the press picks, the release must be eaten.
+	root.push_input(_press(MOUSE_BUTTON_LEFT, row1))
+	_check(picked == [1] and ComboList.current() == null, "the press on row 1 picks it (%s)" % str(picked))
+	root.push_input(_press(MOUSE_BUTTON_LEFT, row1, false))
+	_check(probe.get("seen").is_empty(), "the row click's release does not reach _unhandled_input (%s)" % str(probe.get("seen")))
+	await process_frame
+	# Close from outside: the same.
+	root.push_input(_press(MOUSE_BUTTON_LEFT, at_combo))
+	root.push_input(_press(MOUSE_BUTTON_LEFT, at_combo, false))
+	var outside := Vector2(30, 60)
+	root.push_input(_press(MOUSE_BUTTON_LEFT, outside))
+	_check(ComboList.current() == null, "a press outside closes it")
+	root.push_input(_press(MOUSE_BUTTON_LEFT, outside, false))
+	_check(probe.get("seen").is_empty(), "the outside click's release does not reach _unhandled_input (%s)" % str(probe.get("seen")))
+	await process_frame
+	await process_frame
+	var layers := 0
+	for c in root.get_children():
+		if c is CanvasLayer and (c as CanvasLayer).layer == ComboList.LAYER:
+			layers += 1
+	_check(layers == 0, "the layer is gone after the release (%d left)" % layers)
+	# And after it, a world click is the world's again.
+	root.push_input(_press(MOUSE_BUTTON_LEFT, outside))
+	root.push_input(_press(MOUSE_BUTTON_LEFT, outside, false))
+	_check(probe.get("seen").size() == 2, "with the list gone the next click reaches _unhandled_input (%s)" % str(probe.get("seen")))
+	ComboList.view_height_for_test = 0.0
+	host.free()
+	probe.free()
+
 func _initialize() -> void:
 	_test_values()
 	_test_geometry()
 	_test_frame()
 	await _test_behaviour()
+	await _test_release_does_not_leak()
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

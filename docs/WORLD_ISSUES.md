@@ -7151,7 +7151,7 @@ row click each closed it; the row click set Low.
 - So the bound is the entity list: the server sends a player the objects of the **3 x 3 message
   blocks of 320** around its block (round 664, READ in SR_GameServer). Out of that square an NPC,
   gate, monster, item or player does not exist in the original client. NPCs are field objects in
-  the blocks (READ there); a teleport structure travelling the same way is INFERRED.
+  the blocks (READ there); a gate is one too (READ in the review below).
 - This client builds NPCs and gate pick boxes for its 5 x 5 loaded regions, and gets other players
   and drops zone-wide, so the hover now applies the window to every class
   (`GameCursor.in_view_window`, `floor((v + 960) / 320)` within 1 on x and z -- the server's
@@ -7208,6 +7208,29 @@ UI and hover-classification only: the window test is two floors and two compares
 A Wine prefix inside the lane's RENDER_DIR made `check_scripts.gd` walk `dosdevices/z:` -- the whole
 filesystem -- for 16 minutes; keep everything but the client out of RENDER_DIR. The lane's lock
 file had been created by root and live700.sh (as ghidra) could not open it; chowned.
+
+### Review
+
+- **H1 (CONFIRMED by the reviewer's push_input probe): a pick's left release reached the world.**
+  ComboList freed its layer on the PRESS that picked a row or closed the list from outside; Godot
+  4.2.2 then dropped the mouse focus with it (`_gui_hide_control` / `_gui_remove_control`), the
+  release found no focus, viewport.cpp passed it on unhandled, and World3D's `_unhandled_input`
+  repeated the last world click (`_dispatch_left_click(_left_press_position)`) -- walk, attack,
+  talk or pick up -- on every pick. Fixed: a press that closes the list closes it for the combo at
+  once (`current()` null, `closed`, the pick applied) but keeps the layer, drawn as nothing,
+  eating every event until that button's release, which frees it; if the button is already up
+  (its release went elsewhere) `_process` frees it. New `option_popup_test` section through the
+  viewport (`root.push_input` press + release, a probe node's `_unhandled_input`): open, pick row
+  1, close from outside -- no release leaks, the layer is gone after, and the next click reaches
+  the probe. Against the committed ComboList (77047ba8) it fails as the reviewer measured: one
+  leaked release for the row pick, one for the outside click.
+- **L1: the `CURSOR:` line named a stale target** over a window ("normal ... -- gate X at 80
+  units"): `_settle_hover_cursor` now clears `_hover_target` when the mouse is over the UI.
+- **The gate's place in the view window is READ** (the reviewer): CITeleportGate is created only by
+  the spawn parser (`FUN_008a6bd0`, `FUN_009c1fa0`, NetProcessInObject), so a gate is a server-sent
+  object inside the window. Labels updated (CURSOR.md, `GameCursor`, TODO.md).
+
+After the fixes: `remote_godot.sh check` ALL LOAD, `tests` 215 suites, 0 failing (see the commit).
 
 ## Six-hundred-and-ninety-ninth round: the developer toggles move from Ctrl+F1-F3 to Shift+F1-F3, because macOS keeps Ctrl+F1-F3 for itself
 

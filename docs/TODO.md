@@ -763,8 +763,8 @@ touches this file.
       on the box for the Windows build (docs/RENDER_BOX.md, "Wine").
 - [x] **The hover's reach** (round 700): no class has a range in retail's hover; the bound is the
       3 x 3 message blocks of 320 the server sends, now applied to every hover class here
-      (CURSOR.md, "How far the hover reaches"). Left: the gate's place in the blocks is INFERRED;
-      the click (round 701) still reaches NPCs and gates outside the window.
+      (CURSOR.md, "How far the hover reaches"; the gate is a spawned object, READ in the review).
+      Left: the click (round 701) still reaches NPCs and gates outside the window.
 - [ ] **Stall (0xa3)** is wired (`GameCursor.KIND_IDS`, `player_kind`'s `stalling`) and
       unreachable: no other player's stall state (the 0x30b8 broadcast) reaches this client.
 - [ ] **Hostile players** show 0xa0 only with Alt held: teams (+0x81d), fortress war, job modes,

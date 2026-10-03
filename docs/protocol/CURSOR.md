@@ -179,8 +179,9 @@ actually teleport"; swords and speech bubbles likewise. What the code does:
   `CRgnTerrain::vslot_006` `0x53ad30`; READ in round 664, docs/protocol/monster_ai.md): 320 to 640
   units each way, a square. Out of that window an NPC, gate, monster, item or player does not exist
   in the original client, so it has no cursor. NPCs are field objects in those blocks (READ, round
-  664); that a teleport structure is sent the same way is INFERRED (round 664 left "whether any
-  object kind is sent from farther (a unique, a structure)" open).
+  664), and a gate is a server-sent object like them (READ, round 700's review: CITeleportGate is
+  created only by the spawn parser -- `FUN_008a6bd0`, `FUN_009c1fa0`, NetProcessInObject -- so a
+  gate exists in the client only inside the view window).
 - **Here:** srrevamp's server applies the window to monsters (`session.AOIRadius` = 1), but this
   client builds NPCs and gate pick boxes itself for all 5 x 5 loaded regions, and other players
   and drops arrive zone-wide. The hover now applies the window to every class
