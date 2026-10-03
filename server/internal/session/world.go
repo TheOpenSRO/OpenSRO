@@ -1317,6 +1317,10 @@ func enterOwned(ctx context.Context, sess *gateway.Session, owned *character.Cha
 		// rather than moving it to the zone's own landing spot.
 		zone, bucket, pos, frame, restored = startZone, startBucket, startPos, startFrame, true
 	}
+	// The client starts its NPC roster over at the result (round 708), so the
+	// NPC window forgets what it sent this session and spawns it whole again
+	// on its next tick, even when the character re-enters where it left.
+	forgetNPCWindow(sess.ID())
 	others := hub.Enter(sess, owned.ID, owned.Name, owned.Level, bucket, pos)
 	// The heading comes back with a restored position (round 637's review
 	// follow-up; character.HeadingStore, OURS): the zone sees the character

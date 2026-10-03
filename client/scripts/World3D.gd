@@ -1734,6 +1734,14 @@ func _ready() -> void:
 	NetClient.monster_motion_list.connect(_on_monster_motion_list)
 	NetClient.monster_attacked.connect(_on_monster_attacked)
 	NetClient.monster_spawned.connect(_on_monster_spawned)
+	# The NPCs (round 708): the server's spawns, replayed from the roster
+	# for those that came before this scene, then followed.
+	NetClient.npc_spawned.connect(_on_npc_spawned)
+	NetClient.npc_despawned.connect(_on_npc_despawned)
+	var npc_roster: NpcSpawnNet.Roster = NetClient.get("npc_roster") as NpcSpawnNet.Roster
+	if npc_roster != null:
+		for uid in npc_roster.npcs:
+			_on_npc_spawned(npc_roster.npcs[uid])
 	NetClient.attack_result.connect(_on_attack_result)
 	NetClient.revive_result.connect(_on_revive_result)
 	NetClient.state_changed.connect(_on_state_changed)
@@ -6335,11 +6343,15 @@ var _monster_assembled: Dictionary = {}
 ## the death when known (_monster_corpse_seconds), else the clip's end.
 var _dying_until: Dictionary = {}
 
-## Every NPC the client knows how to place, grouped by region, and the
-## id -> model table that goes with them. Both come out of the player's own
-## Media.pk2 (see NpcTableReader), so nothing is shipped and no server has
-## to supply them. Loaded once, on the first region that asks.
-var _npc_spawns_by_region: Dictionary = {}
+## The NPCs the server has spawned (round 708): uid -> NpcSpawnNet.Record,
+## "rx_ry" -> {uid: true}, and uid -> the placed holder (freed with its
+## region; is_instance_valid tells). The client places no NPC of its own --
+## except OPENSRO_QA_LOCAL_NPCS (QA only).
+var _npc_records: Dictionary = {}
+var _npc_uids_by_region: Dictionary = {}
+var _npc_holders: Dictionary = {}
+## npc id -> model, from the player's own Media.pk2 (see NpcTableReader).
+## Loaded once, on the first region that asks.
 var _npc_models: Dictionary = {}
 ## npc id -> the name the game calls it, from characterdata joined with
 ## textdata_object.
@@ -6414,15 +6426,6 @@ func _load_npc_tables() -> void:
 		_media_pk2 = _open_media_pk2_if_set()
 	if _media_pk2 == null:
 		return
-	var pos_entry := ObjectLoader.find_file(_media_pk2, NpcTableReader.POSITION_TABLE_PATH)
-	if pos_entry == null:
-		print("World3D: no npcpos.txt in Media.pk2 -- no NPCs")
-		return
-	for spawn in NpcTableReader.parse_positions(_media_pk2.read_file(pos_entry)):
-		var key := "%d_%d" % [spawn.region_x, spawn.region_y]
-		if not _npc_spawns_by_region.has(key):
-			_npc_spawns_by_region[key] = []
-		_npc_spawns_by_region[key].append(spawn)
 	# The same characterdata parts give the model and the name: a row
 	# carries an id, an `SN_` key and a `.bsr`, and textdata_object turns
 	# the key into what the game calls the NPC. Read once, joined twice.
@@ -6467,9 +6470,10 @@ func _load_npc_tables() -> void:
 	# a second time on the first gate.
 	if _object_name_table == null and names != null:
 		_object_name_table = names
-	print("World3D: NPC tables -- %d spawn(s) across %d region(s), %d model(s), %d name(s), %d shop, %d greetings; %s" % [
-		_npc_spawn_total(), _npc_spawns_by_region.size(), _npc_models.size(), _npc_names.size(), _npc_shop_set.size(), _npc_greetings.size(),
+	print("World3D: NPC tables -- %d model(s), %d name(s), %d shop, %d greetings; %s (NPC placements come from the server's spawns, round 708)" % [
+		_npc_models.size(), _npc_names.size(), _npc_shop_set.size(), _npc_greetings.size(),
 		_teleport_reader.summary()])
+	_qa_feed_local_npcs()
 
 ## A floating name over an NPC's head.
 ##
@@ -7051,28 +7055,30 @@ func _qa_npc_body_report() -> void:
 		blocked, checked, QA_NPCBODY_RANGE])
 
 func _npc_spawn_total() -> int:
-	var n := 0
-	for key in _npc_spawns_by_region:
-		n += (_npc_spawns_by_region[key] as Array).size()
-	return n
+	return _npc_records.size()
 
-## Places every NPC that stands in one region, assembling each from its own
-## .bsr the way the player's body is assembled.
+## Places the NPCs the server has spawned in one region (round 708), once the
+## region's terrain group stands, assembling each from its own .bsr the way
+## the player's body is assembled.
 ##
-## Height comes from the walkable graph rather than from npcpos.txt's own Y:
-## that column is authored against the real client's terrain, and this
-## project's terrain is rebuilt from the same heightmaps but anchored per
-## region, so standing them on the graph is what actually puts their feet on
-## this ground. The authored Y is kept as the fallback when a region has no
-## graph.
+## The NPCs are the server's: the client builds none from npcpos. A spawn
+## record (NpcSpawnNet, the retail 0x3017/0x3019/0x3018 group or 0x3015)
+## names the RefObjID, unique id, region, position and angle; the model, the
+## name, the idle and the services still come from the client's own pk2 by the
+## RefObjID. A record that arrives before its region streams in waits in
+## _npc_records and is placed here; one that arrives after is placed at once
+## (_on_npc_spawned). A despawn frees the holder.
+##
+## Height comes from the walkable graph rather than from the record's Y: that
+## value is authored against the real client's terrain, and this project's
+## terrain is rebuilt from the same heightmaps but anchored per region, so
+## standing them on the graph is what actually puts their feet on this ground.
+## The record's Y is the fallback when a region has no graph.
 ##
 ## The guard below is per loaded region, not per region ever seen: the mark
-## is set once the NPCs stand under the region's terrain node and cleared
+## is set once the region's NPCs stand under its terrain node and cleared
 ## when that node is unloaded (`_maybe_stream_regions` -> `_grid.unload`,
 ## round 563), because the NPCs are its children and are freed with it.
-## Until then the mark outlived the node -- the only clearing was the zone
-## change's `_clear_region_grid` -- so a town walked away from and back to
-## came back with nobody in it.
 func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 	if _grid.npcs_done(region_x, region_y):
 		return
@@ -7081,11 +7087,6 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 	var sw := Time.get_ticks_usec()
 	_load_npc_tables()
 	_load_timings.lap("npcs", "tables", sw)
-	if _npc_spawns_by_region.is_empty():
-		return
-	var archive := _open_pk2_if_set()
-	if archive == null:
-		return
 	var group := get_node_or_null("RealTerrain_%d_%d" % [region_x, region_y]) as Node3D
 	if group == null:
 		return
@@ -7093,104 +7094,224 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 	# The region's teleport gates, under the same mark (round 577): both
 	# callers have committed the region's objects just before this, so the
 	# placed portal is in the tree, and a region streamed out and back in is
-	# bound again with its fresh copies. Before the spawn list, which a
-	# region with a gate and no NPC would return on.
+	# bound again with its fresh copies.
 	_bind_region_gates(region_x, region_y, group)
-	var region_pair := _grid.nav_graph_for_region(region_x, region_y)
-
-	var spawns: Array = _npc_spawns_by_region.get("%d_%d" % [region_x, region_y], [])
-	if spawns.is_empty():
+	var key := "%d_%d" % [region_x, region_y]
+	var uids: Dictionary = _npc_uids_by_region.get(key, {})
+	if uids.is_empty():
 		return
 	var placed := 0
-	var skipped := 0
-	var named := 0
-	var monsters_skipped := 0
-	var faced := 0
+	var faced_db := 0
+	var faced_stand_in := 0
 	var facing_usec := 0
-	for spawn in spawns:
-		# npcpos is not a table of NPCs: it holds every placed character,
-		# monsters included, and placing those here made Mangyangs stand in
-		# the fields outside Jangan as talkable NPCs (playtest 2026-09-20,
-		# item 1) -- clicking one opened a talk window instead of attacking.
-		#
-		# The engine's own naming separates them: characterdata's code is
-		# `NPC_CH_SMITH` for a shopkeeper and `MOB_CH_MANGNYANG` for a
-		# Mangyang. Monsters belong to the server, which spawns them from
-		# its own npcpos import (round 253) as real, attackable monsters, so
-		# the client must not also place a decorative copy.
-		if String(_npc_codes.get(spawn.npc_id, "")).begins_with("MOB_"):
-			monsters_skipped += 1
+	for uid in uids.keys():
+		var rec: NpcSpawnNet.Record = _npc_records.get(uid)
+		if rec == null:
 			continue
-		var model: String = _npc_models.get(spawn.npc_id, "")
-		if model == "":
-			skipped += 1
+		var r: Dictionary = _place_npc_record(rec, group)
+		if r.is_empty():
 			continue
-		# Assemble a model once into a detached template, then duplicate it for
-		# each NPC that uses it -- the repeat spawns skip the expensive .bsr
-		# assembly and just copy a node (sharing its mesh/texture resources).
-		var template: SkinnedBsrAssembler.AssembledCharacter = _npc_model_cache.get(model)
-		if template == null:
-			template = SkinnedBsrAssembler.assemble_from_archive(archive, model, true)
-			if template == null:
-				skipped += 1
-				continue
-			_npc_model_cache[model] = template
-		var skeleton := template.skeleton.duplicate() as Skeleton3D
-		if skeleton == null:
-			skipped += 1
-			continue
-		var idle_anim: BanReader.ParsedAnimation = template.idle_animation
-		var holder := Node3D.new()
-		holder.name = "Npc_%d_%d" % [spawn.npc_id, placed]
-		var local: Vector3 = spawn.local_position
-		var height: float = local.y
-		var npc_graph: NavGraph = null
-		if not region_pair.is_empty():
-			npc_graph = region_pair[0] as NavGraph
-			# The authored Y is passed as the mover's height, not
-			# discarded: height_at resolves several stacked walkable
-			# surfaces by picking the one nearest the mover, and asking
-			# from 0 puts anyone standing on a raised deck underneath it.
-			# Jangan's octagonal plaza is a placed object, so every NPC
-			# on the town square came out buried in it.
-			height = npc_graph.landing_height_at(local.x, local.z)
-		holder.position = Vector3(local.x, height, local.z)
-		# Which way it faces is a DISCLOSED STAND-IN: the game's value is
-		# Tab_RefNest.wInitialDir, server-database data no shipped file
-		# carries (see NpcFacing). Facing the most open space on the region's
-		# own navigation graph beats every NPC facing the same authored way;
-		# an NPC with open space all round keeps the old facing.
-		if npc_graph != null:
-			var facing_started := Time.get_ticks_usec()
-			var standing_on := npc_graph.surface_at(local.x, local.z, height).object_index
-			var facing := NpcFacing.open_direction(npc_graph, holder.position, standing_on)
-			if facing != Vector2.ZERO:
-				holder.rotation.y = NpcFacing.holder_yaw(facing)
-				faced += 1
-			facing_usec += Time.get_ticks_usec() - facing_started
-		holder.add_child(skeleton)
-		var bounds := _skeleton_bounds(skeleton)
-		# Its idle is posed only while seen (round 655, MonsterDraw).
-		skeleton.set_meta(MonsterDraw.META_CULL, true)
-		skeleton.set_meta(MonsterDraw.META_RADIUS, MonsterDraw.cull_radius(skeleton, maxf(bounds.x, bounds.y)))
-		holder.add_child(_npc_collider(bounds))
-		var npc_name: String = _npc_names.get(spawn.npc_id, "")
-		# Tagged so a click on the collider can name the NPC it talks to
-		# (see _try_talk_to_npc) -- the plate is a Label3D, no use for that.
-		holder.set_meta("npc_id", spawn.npc_id)
-		holder.set_meta("npc_name", npc_name if npc_name != "" else "")
-		holder.set_meta("npc_code", _npc_codes.get(spawn.npc_id, ""))
-		# Its round shadow in Circle (round 702, CharacterBlobs: every
-		# CICharactor casts one in the original, NPCs included).
-		CharacterBlobs.register(holder, float(_bc_radius_by_code.get(String(_npc_codes.get(spawn.npc_id, "")), 0.0)))
-		if npc_name != "":
-			holder.add_child(_name_plate(npc_name, bounds.y))
-			named += 1
-		group.add_child(holder)
-		_animate_skeleton(skeleton, idle_anim)
 		placed += 1
-	print("World3D: %d/%d NPC(s) placed in %d/%d (%d had no model, %d named, %d monster rows left to the server; %d faced toward open space in %.1f ms)" % [
-		placed, spawns.size(), region_x, region_y, skipped, named, monsters_skipped, faced, facing_usec / 1000.0])
+		facing_usec += int(r["facing_usec"])
+		if bool(r["db"]):
+			faced_db += 1
+		else:
+			faced_stand_in += 1
+	print("World3D: %d/%d NPC(s) placed in %d/%d from the server's spawns (%d facing the server's angle, %d by the NpcFacing stand-in in %.1f ms)" % [
+		placed, uids.size(), region_x, region_y, faced_db, faced_stand_in, facing_usec / 1000.0])
+
+## A spawn record arrived (NetClient.npc_spawned, or the roster replayed when
+## this scene starts): kept, and placed now when its region already stands.
+func _on_npc_spawned(rec: NpcSpawnNet.Record) -> void:
+	if rec == null:
+		return
+	_remove_npc_holder(rec.uid)
+	var old: NpcSpawnNet.Record = _npc_records.get(rec.uid)
+	if old != null:
+		var old_key := "%d_%d" % [old.region_x, old.region_y]
+		if _npc_uids_by_region.has(old_key):
+			(_npc_uids_by_region[old_key] as Dictionary).erase(rec.uid)
+	_npc_records[rec.uid] = rec
+	var key := "%d_%d" % [rec.region_x, rec.region_y]
+	if not _npc_uids_by_region.has(key):
+		_npc_uids_by_region[key] = {}
+	_npc_uids_by_region[key][rec.uid] = true
+	if _grid.npcs_done(rec.region_x, rec.region_y):
+		var group := get_node_or_null("RealTerrain_%d_%d" % [rec.region_x, rec.region_y]) as Node3D
+		if group != null:
+			_load_npc_tables()
+			_place_npc_record(rec, group)
+
+## A despawn (NetClient.npc_despawned): the record is forgotten and its
+## holder freed.
+func _on_npc_despawned(uid: int) -> void:
+	_remove_npc_holder(uid)
+	var rec: NpcSpawnNet.Record = _npc_records.get(uid)
+	if rec == null:
+		return
+	print("World3D: NPC uid=%d ref=%d despawned (left the view window)" % [uid, rec.ref_id])
+	_npc_records.erase(uid)
+	var key := "%d_%d" % [rec.region_x, rec.region_y]
+	if _npc_uids_by_region.has(key):
+		(_npc_uids_by_region[key] as Dictionary).erase(uid)
+
+func _remove_npc_holder(uid: int) -> void:
+	var holder = _npc_holders.get(uid)
+	_npc_holders.erase(uid)
+	if holder != null and is_instance_valid(holder):
+		(holder as Node).queue_free()
+
+## Builds one NPC's holder under its region's group. Returns {} when nothing
+## was placed, else {"db": whether it faces the server's angle,
+## "facing_usec": the stand-in's cost}.
+func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
+	var existing = _npc_holders.get(rec.uid)
+	if existing != null and is_instance_valid(existing):
+		return {}
+	# The server sends NPCs only (TypeID 1,2,2,x); a monster's RefObjID here
+	# would be a server bug, and its body belongs to the monster path.
+	var code := String(_npc_codes.get(rec.ref_id, ""))
+	if code.begins_with("MOB_"):
+		return {}
+	var model: String = _npc_models.get(rec.ref_id, "")
+	if model == "":
+		return {}
+	var archive := _open_pk2_if_set()
+	if archive == null:
+		return {}
+	# Assemble a model once into a detached template, then duplicate it for
+	# each NPC that uses it -- the repeat spawns skip the expensive .bsr
+	# assembly and just copy a node (sharing its mesh/texture resources).
+	var template: SkinnedBsrAssembler.AssembledCharacter = _npc_model_cache.get(model)
+	if template == null:
+		template = SkinnedBsrAssembler.assemble_from_archive(archive, model, true)
+		if template == null:
+			return {}
+		_npc_model_cache[model] = template
+	var skeleton := template.skeleton.duplicate() as Skeleton3D
+	if skeleton == null:
+		return {}
+	var idle_anim: BanReader.ParsedAnimation = template.idle_animation
+	var holder := Node3D.new()
+	holder.name = "Npc_%d_%d" % [rec.ref_id, rec.uid]
+	var local: Vector3 = rec.local_position
+	var height: float = local.y
+	var npc_graph: NavGraph = null
+	var region_pair := _grid.nav_graph_for_region(rec.region_x, rec.region_y)
+	if not region_pair.is_empty():
+		npc_graph = region_pair[0] as NavGraph
+		# The record's Y is passed as the mover's height, not discarded:
+		# height_at resolves several stacked walkable surfaces by picking the
+		# one nearest the mover, and asking from 0 puts anyone standing on a
+		# raised deck underneath it. Jangan's octagonal plaza is a placed
+		# object, so every NPC on the town square came out buried in it.
+		height = npc_graph.landing_height_at(local.x, local.z)
+	holder.position = Vector3(local.x, height, local.z)
+	var facing_usec := 0
+	var facing_source := "none"
+	if rec.has_angle:
+		# The server's angle (round 708, READ end to end; NpcSpawnNet,
+		# docs/protocol/npc_spawn.md): its nest's wInitialDir, which the
+		# client turns into the heading h = angle + pi/2 facing (sin h, 0,
+		# -cos h) region-local.
+		holder.rotation.y = NpcSpawnNet.holder_yaw(NpcSpawnNet.heading_of(rec.angle))
+		facing_source = "server"
+	elif npc_graph != null:
+		# No nest angle for this NPC (OpNpcFacingUnknown: an npcpos row the
+		# server's database has no nest for, a server with no database, or
+		# OPENSRO_QA_LOCAL_NPCS): the DISCLOSED STAND-IN, facing the most open
+		# space on the region's own navigation graph (NpcFacing, OURS).
+		var facing_started := Time.get_ticks_usec()
+		var standing_on := npc_graph.surface_at(local.x, local.z, height).object_index
+		var facing := NpcFacing.open_direction(npc_graph, holder.position, standing_on)
+		if facing != Vector2.ZERO:
+			holder.rotation.y = NpcFacing.holder_yaw(facing)
+			facing_source = "stand-in"
+		facing_usec = Time.get_ticks_usec() - facing_started
+	holder.add_child(skeleton)
+	var bounds := _skeleton_bounds(skeleton)
+	# Its idle is posed only while seen (round 655, MonsterDraw).
+	skeleton.set_meta(MonsterDraw.META_CULL, true)
+	skeleton.set_meta(MonsterDraw.META_RADIUS, MonsterDraw.cull_radius(skeleton, maxf(bounds.x, bounds.y)))
+	holder.add_child(_npc_collider(bounds))
+	var npc_name: String = _npc_names.get(rec.ref_id, "")
+	# Tagged so a click on the collider can name the NPC it talks to
+	# (see _try_talk_to_npc) -- the plate is a Label3D, no use for that.
+	holder.set_meta("npc_id", rec.ref_id)
+	holder.set_meta("npc_uid", rec.uid)
+	holder.set_meta("npc_name", npc_name if npc_name != "" else "")
+	holder.set_meta("npc_code", code)
+	holder.set_meta("npc_interactions", rec.interactions)
+	holder.set_meta("npc_facing_source", facing_source)
+	# Its round shadow in Circle (round 702, CharacterBlobs: every
+	# CICharactor casts one in the original, NPCs included).
+	CharacterBlobs.register(holder, float(_bc_radius_by_code.get(code, 0.0)))
+	if npc_name != "":
+		holder.add_child(_name_plate(npc_name, bounds.y))
+	group.add_child(holder)
+	_animate_skeleton(skeleton, idle_anim)
+	_npc_holders[rec.uid] = holder
+	# One line per NPC: which source turned it, and the way it faces as a
+	# compass bearing in the region-local frame (0 north, 90 east) -- read
+	# off the holder's own basis (its body's front is local -Z), so the line
+	# is a measurement of what was drawn, not of what was asked.
+	var front := holder.basis * Vector3(0, 0, -1)
+	var bearing := fposmod(rad_to_deg(atan2(front.x, front.z)), 360.0)
+	print("World3D: NPC %s uid=%d ref=%d region %d/%d at %.1f,%.1f angle=%d facing %s bearing %.1f" % [
+		code, rec.uid, rec.ref_id, rec.region_x, rec.region_y, local.x, local.z, rec.angle, facing_source, bearing])
+	# OPENSRO_QA_NPC_FACING_AUDIT=1 (round 708, measurement only): for an NPC
+	# turned by the server's angle, the open side the navigation graph names
+	# (NpcFacing's walk, the pre-708 stand-in, here only as an independent
+	# probe of where the counter opening / doorway / street is) and the angle
+	# between the two.
+	if _qa_npc_facing_audit and facing_source == "server" and npc_graph != null:
+		var standing_on := npc_graph.surface_at(local.x, local.z, height).object_index
+		var open := NpcFacing.open_direction(npc_graph, holder.position, standing_on)
+		if open == Vector2.ZERO:
+			print("QA NPCFACE %s uid=%d server %.1f open none (open on every side)" % [code, rec.uid, bearing])
+		else:
+			var open_bearing := fposmod(rad_to_deg(atan2(open.x, open.y)), 360.0)
+			var diff := absf(fposmod(bearing - open_bearing + 180.0, 360.0) - 180.0)
+			print("QA NPCFACE %s uid=%d server %.1f open %.1f diff %.1f" % [code, rec.uid, bearing, open_bearing, diff])
+	return {"db": facing_source == "server", "facing_usec": facing_usec}
+
+## OPENSRO_QA_LOCAL_NPCS=1 (round 708, OURS, QA ONLY): with no server -- the
+## offline renders, the perf gate, the headless suites -- nobody spawns NPCs,
+## so this builds spawn records from the archive's own npcpos.txt (every row
+## whose code is not MOB_) and feeds them to the same handler a server's
+## spawns reach, with no angle (the NpcFacing stand-in). Never set in play:
+## qa_shot.sh sets it for a run without --server.
+var _qa_local_npcs := OS.get_environment("OPENSRO_QA_LOCAL_NPCS") != ""
+var _qa_npc_facing_audit := OS.get_environment("OPENSRO_QA_NPC_FACING_AUDIT") != ""
+var _qa_local_npcs_fed := false
+
+func _qa_feed_local_npcs() -> void:
+	if not _qa_local_npcs or _qa_local_npcs_fed:
+		return
+	_qa_local_npcs_fed = true
+	if _media_pk2 == null:
+		return
+	var pos_entry := ObjectLoader.find_file(_media_pk2, NpcTableReader.POSITION_TABLE_PATH)
+	if pos_entry == null:
+		print("World3D: QA local NPCs -- no npcpos.txt in Media.pk2")
+		return
+	var uid := 0
+	var fed := 0
+	for spawn in NpcTableReader.parse_positions(_media_pk2.read_file(pos_entry)):
+		uid += 1
+		if String(_npc_codes.get(spawn.npc_id, "")).begins_with("MOB_"):
+			continue
+		var rec := NpcSpawnNet.Record.new()
+		rec.ref_id = spawn.npc_id
+		rec.uid = uid
+		rec.region_x = spawn.region_x
+		rec.region_y = spawn.region_y
+		rec.region = (spawn.region_x << 8) | spawn.region_y
+		rec.local_position = spawn.local_position
+		rec.has_angle = false
+		_on_npc_spawned(rec)
+		fed += 1
+	print("World3D: QA local NPCs (OPENSRO_QA_LOCAL_NPCS, OURS) -- %d record(s) from npcpos.txt, no angle" % fed)
 
 ## Makes each town's Dimensional Gate standing in a region clickable (round
 ## 577; retail's pick box since round 690).
@@ -12198,8 +12319,8 @@ var _qa_shot_frames := 0
 const QA_SHOT_SETTLE := 12
 const QA_SHOT_HOLD := 16
 
-## Parses one `name@x,z:yaw,pitch,dist` viewpoint. Everything after the
-## position is optional.
+## Parses one `name@x,z[,rx/ry]:yaw,pitch,dist` viewpoint. Everything after the
+## position is optional; `rx/ry` (round 708) names the region x, z are local to.
 static func _parse_shot(spec: String) -> Dictionary:
 	if spec == "":
 		return {}
@@ -12225,6 +12346,11 @@ static func _parse_shot(spec: String) -> Dictionary:
 	if pos.size() < 2 or not pos[0].strip_edges().is_valid_float() or not pos[1].strip_edges().is_valid_float():
 		return {}
 	var out := {"name": name, "x": float(pos[0]), "z": float(pos[1])}
+	# Round 708: an optional third part "rx/ry" names the region the x, z are
+	# local to (default: the region under the player when the shot starts).
+	if pos.size() >= 3 and pos[2].contains("/"):
+		out["rx"] = int(pos[2].get_slice("/", 0))
+		out["ry"] = int(pos[2].get_slice("/", 1))
 	if env_spec != "":
 		out["env"] = env_spec
 	var cam := camera.split(",") if camera != "" else PackedStringArray()
@@ -12475,6 +12601,10 @@ func _qa_advance_shots() -> void:
 
 	var shot: Dictionary = _qa_shots[_qa_shot_index]
 	var pair := _nav_graph_for(player.global_position)
+	if shot.has("rx"):
+		var named := _grid.nav_graph_for_region(int(shot["rx"]), int(shot["ry"]))
+		var named_group := get_node_or_null("RealTerrain_%d_%d" % [int(shot["rx"]), int(shot["ry"])])
+		pair = [named[0], named_group] if not named.is_empty() and named_group != null else []
 	if not pair.is_empty():
 		var graph: NavGraph = pair[0]
 		var group: Node3D = pair[1]

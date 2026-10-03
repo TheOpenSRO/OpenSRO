@@ -42,7 +42,7 @@ extends SceneTree
 ## Usage (render box only -- never run Godot on the developer's machine):
 ##   client/tools/remote_godot.sh sync
 ##   client/tools/remote_godot.sh script res://tools/probe_monster_front.gd -- \
-##     --pk2=/opt/sro-files/client/Data.pk2 --media=/opt/sro-files/client/Media.pk2 [--all=1]
+##     --pk2=/opt/sro-files/client/Data.pk2 --media=/opt/sro-files/client/Media.pk2 [--all=1 [--prefix=NPC_]]
 ##
 ## --all=1 (round 673) measures every MOB_ row's model instead of the roster,
 ## and ends with a TALLY line: how many models read each front.
@@ -98,9 +98,12 @@ func _init() -> void:
 		var seen := {}
 		var codes: Array = models.keys()
 		codes.sort()
+		# --prefix=NPC_ (round 708): the NPC models instead (the facing the
+		# spawn's angle turns needs their front too).
+		var prefix := _arg("--prefix") if _arg("--prefix") != "" else "MOB_"
 		for code in codes:
 			var path := String(models[code])
-			if not String(code).begins_with("MOB_") or path == "" or seen.has(path.to_lower()):
+			if not String(code).begins_with(prefix) or path == "" or seen.has(path.to_lower()):
 				continue
 			seen[path.to_lower()] = true
 			rows.append([code, ""])

@@ -47,6 +47,7 @@ import (
 	"strings"
 	"unicode/utf16"
 
+	"github.com/OpenSRO/OpenSRO/server/internal/npcspawn"
 	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 	"github.com/OpenSRO/OpenSRO/server/internal/safezone"
 	"github.com/OpenSRO/OpenSRO/server/internal/skillparam"
@@ -455,12 +456,13 @@ const (
 
 func main() {
 	out := flag.String("out", "-", "output CSV path, or - for stdout")
-	mode := flag.String("mode", "items", "which reference table the input files are: items, skills, npcpos, teleport, monsters, regions or chargen")
+	mode := flag.String("mode", "items", "which reference table the input files are: items, skills, npcpos, teleport, monsters, npcs, regions or chargen")
 	flag.Parse()
-	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "regions" && *mode != "chargen") {
+	if flag.NArg() == 0 || (*mode != "items" && *mode != "skills" && *mode != "npcpos" && *mode != "teleport" && *mode != "monsters" && *mode != "npcs" && *mode != "regions" && *mode != "chargen") {
 		fmt.Fprintln(os.Stderr, "usage: export-refdata [-mode items|skills|npcpos] -out out.csv <data_*.txt> ...")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode teleport -out <dir> teleportdata.txt teleportlink.txt teleportbuilding.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode monsters -out monsters.csv characterdata_*.txt [levelgold.txt] [textdata_object.txt]")
+		fmt.Fprintln(os.Stderr, "       export-refdata -mode npcs -out npcs.csv characterdata_*.txt refshopgroup.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode regions -out regions.csv refregion.txt")
 		fmt.Fprintln(os.Stderr, "       export-refdata -mode chargen -out chargen.csv characterdata_*.txt itemdata_*.txt   (each in its index's order)")
 		os.Exit(2)
@@ -480,6 +482,16 @@ func main() {
 		// species under species.CSVColumns: what cmd/server's -monsters-csv
 		// loads (round 654).
 		if err := exportMonsters(*out, flag.Args()); err != nil {
+			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	case "npcs":
+		// Every characterdata row of TypeID (1,2,2,x) and whether
+		// refshopgroup.txt names it: what cmd/server's -npcs-csv loads
+		// (round 708, internal/npcspawn) -- the code names the NPC spawn
+		// record's interaction list is built from.
+		if err := exportNpcs(*out, flag.Args()); err != nil {
 			fmt.Fprintf(os.Stderr, "export-refdata: %v\n", err)
 			os.Exit(1)
 		}
@@ -2373,6 +2385,80 @@ func exportMonsters(out string, paths []string) error {
 		fmt.Fprintln(os.Stderr, "export-refdata: no textdata_object.txt among the inputs: Name is empty")
 	} else {
 		fmt.Fprintf(os.Stderr, "export-refdata: %d species' name keys resolve in textdata_object\n", st.Named)
+	}
+	return nil
+}
+
+// exportNpcs writes the NPC reference rows (round 708): the characterdata
+// parts' (1,2,2,x) rows under npcspawn.CSVColumns, with Shop 1 for a code
+// refshopgroup.txt names in its RefNPCCodeName column.
+func exportNpcs(out string, paths []string) error {
+	rows := map[int64]npcspawn.TableRow{}
+	tids := map[int64][4]int{}
+	shops := map[string]bool{}
+	sawShop := false
+	for _, path := range paths {
+		tab, err := readTable(path)
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", path, err)
+		}
+		if strings.EqualFold(filepath.Base(path), "refshopgroup.txt") {
+			sawShop = true
+			for _, cols := range tab {
+				if len(cols) > npcspawn.ShopNPCCol {
+					if c := strings.TrimSpace(cols[npcspawn.ShopNPCCol]); c != "" {
+						shops[strings.ToUpper(c)] = true
+					}
+				}
+			}
+			continue
+		}
+		for _, cols := range tab {
+			if r, tid, ok := npcspawn.ExportRow(cols); ok {
+				rows[r.ID], tids[r.ID] = r, tid
+			}
+		}
+	}
+	ids := make([]int64, 0, len(rows))
+	for id := range rows {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	var buf strings.Builder
+	w := csv.NewWriter(&buf)
+	if err := w.Write(npcspawn.CSVColumns); err != nil {
+		return err
+	}
+	withShop := 0
+	for _, id := range ids {
+		r, tid := rows[id], tids[id]
+		shop := "0"
+		if shops[strings.ToUpper(r.Code)] {
+			shop = "1"
+			withShop++
+		}
+		if err := w.Write([]string{strconv.FormatInt(id, 10), r.Code, strconv.Itoa(tid[0]), strconv.Itoa(tid[1]),
+			strconv.Itoa(tid[2]), strconv.Itoa(tid[3]), shop}); err != nil {
+			return err
+		}
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return err
+	}
+	if _, err := npcspawn.Read(strings.NewReader(buf.String())); err != nil {
+		return fmt.Errorf("the export does not load back: %w", err)
+	}
+	if out == "-" {
+		if _, err := os.Stdout.WriteString(buf.String()); err != nil {
+			return err
+		}
+	} else if err := os.WriteFile(out, []byte(buf.String()), 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "export-refdata: wrote %d NPC rows (TypeID 1,2,2,x), %d named by refshopgroup\n", len(ids), withShop)
+	if !sawShop {
+		fmt.Fprintln(os.Stderr, "export-refdata: no refshopgroup.txt among the inputs: every Shop is 0")
 	}
 	return nil
 }

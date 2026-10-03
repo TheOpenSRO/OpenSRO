@@ -321,11 +321,14 @@ func diagnostics() -> String:
 			snap.hp, snap.max_hp, body.global_position.distance_to(p),
 			_world._monster_model_path(snap.code_name, snap.monster_name)])
 
+	# Round 708: the server's spawns (NetClient's roster), and how many of
+	# them stand (a holder in a loaded region).
 	var placed := 0
-	for region in _world._npc_spawns_by_region:
-		placed += (_world._npc_spawns_by_region[region] as Array).size()
-	lines.append("== npcs: %d placed in %d region(s), %d named, %d with models" % [
-		placed, _world._npc_spawns_by_region.size(), _world._npc_names.size(), _world._npc_models.size()])
+	for uid in _world._npc_holders:
+		if is_instance_valid(_world._npc_holders[uid]):
+			placed += 1
+	lines.append("== npcs: %d spawned by the server, %d placed, %d named, %d with models" % [
+		_world._npc_records.size(), placed, _world._npc_names.size(), _world._npc_models.size()])
 
 	lines.append("== nearest name plates")
 	var plates: Array = []

@@ -423,6 +423,32 @@ What it changes, and what it does not:
 A configured path that does not load is fatal at boot, the `-npcpos-csv` rule. Without the flag
 the server behaves exactly as before.
 
+## NPCs (round 708): the server spawns them
+
+Since round 708 the client places no NPC of its own: as in the original, every NPC is an object the
+server spawns and sends as the retail group spawn (0x3017 / 0x3019 / 0x3018) when its 320-unit block
+comes into a player's 3 x 3 window, and despawns when it goes out (`docs/protocol/npc_spawn.md`).
+
+- **What the server needs:** `-npcpos-csv` (where the NPCs stand) and a way to tell an NPC row from a
+  monster's: `-monsters-csv` (an NPC row is one it does not name) or the new `-npcs-csv`.
+  `-nest-db-dir` gives each NPC its nest's position and `wInitialDir` -- the direction it faces --
+  where the shard has a nest of its own for it; the others stand at their npcpos position and the
+  client faces them by its stand-in. **opensro-01 needs no change for this:** it already runs with
+  `-npcpos-csv`, `-monsters-csv` and `-nest-db-dir` (and `-full-map`, so the NPCs are filed in the
+  one world frame). The boot log says what it did: `NPCs spawned by the server (round 708) ...
+  rows=257 from_nest=228 from_npcpos=29`.
+- **Optional, `-npcs-csv` (`OPENSRO_NPCS_CSV`):** the NPC code names, from which the spawn record's
+  interaction list is built (empty without it; the OpenSRO client builds its talk menus from its own
+  archive either way). Export it on the same archive as the other tables:
+
+  ```
+  export-refdata -mode npcs -out npcs.csv $(order characterdata.txt) refshopgroup.txt
+  ```
+
+  (`refshopgroup.txt` extracted like the other textdata files; `order` as in "Reference data" above.)
+- **Order of rollout:** a client from round 708 shows no NPC on a server older than round 708 (which
+  sends none). Deploy the server first, or with the client.
+
 ## Monster AI (off by default)
 
 The server can run the monster AI tick: monsters stand for 2-6 s, then 76 times in 100 walk a

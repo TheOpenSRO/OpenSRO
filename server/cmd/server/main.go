@@ -887,6 +887,11 @@ func main() {
 			"takes its numbers from its row, and the GM console's /spawn knows every species in it by code "+
 			"name, id or English name. Without -full-map, who spawns where does not change; with it, every "+
 			"field nest spawns from this table (round 660). Without it the hand-typed roster is all the server knows. A configured path that does not load is fatal.")
+	npcsCSV := flag.String("npcs-csv", os.Getenv("OPENSRO_NPCS_CSV"),
+		"path to the NPC reference rows (from cmd/export-refdata -mode npcs on a client's own characterdata "+
+			"parts and refshopgroup.txt; round 708): the code names the NPC spawn record's interaction list "+
+			"is built from. Optional: without it the server still spawns every NPC row of -npcpos-csv (the rows "+
+			"-monsters-csv does not name), with an empty interaction list. A configured path that does not load is fatal.")
 	teleportDir := flag.String("teleport-dir", os.Getenv("OPENSRO_TELEPORT_DIR"),
 		"directory holding the game's teleport network as teleportdata.csv, teleportlink.csv and "+
 			"teleportbuilding.csv (from cmd/export-refdata -mode teleport on a client's own "+
@@ -1784,6 +1789,10 @@ func main() {
 	} else {
 		logger.Info("monster spawn push off (-monster-spawn-push / OPENSRO_MONSTER_SPAWN_PUSH)")
 	}
+	// The NPCs (round 708): the server spawns them, as retail does, and the
+	// client builds none of its own. Installed after SetSingleFrame (their
+	// frame) and before the area of interest's first tick.
+	installNPCs(logger, npcPlacements, speciesTable, nestDB, teleportNetwork, *npcsCSV)
 	// The monsters' area of interest (round 656): each player hears about the
 	// monsters of the 3x3 message blocks around it (retail's, READ in round
 	// 664: 320-unit blocks and their 8 neighbours), and is told as they come

@@ -274,6 +274,24 @@ if [ "$SERVER" = "start" ]; then
   [ -f "$TELEPORT_DIR/teleportdata.csv" ] && SERVER_ARGS+=(-teleport-dir "$TELEPORT_DIR")
   if [ -f "$CHARGEN_CSV" ]; then SERVER_ARGS+=(-chargen-csv "$CHARGEN_CSV")
   else echo "qa_shot: no chargen CSV at $CHARGEN_CSV (set OPENSRO_CHARGEN_CSV) -- the server can create no character" >&2; fi
+  # The NPCs (round 708): the server spawns them from npcpos (an NPC row is
+  # one the monster table -- or the NPC table -- names), at their nests when
+  # a nest DB is given. Without an npcpos CSV the server spawns none, and the
+  # client is told to place its own from the archive (OPENSRO_QA_LOCAL_NPCS,
+  # QA only) so a --server render still has its town.
+  NPCPOS_CSV="${OPENSRO_NPCPOS_CSV:-$PK2_DIR/npcpos.csv}"
+  MONSTERS_CSV="${OPENSRO_MONSTERS_CSV:-$PK2_DIR/monsters.csv}"
+  NPCS_CSV="${OPENSRO_NPCS_CSV:-$PK2_DIR/npcs.csv}"
+  NEST_DB_DIR="${OPENSRO_NEST_DB_DIR:-}"
+  if [ -f "$NPCPOS_CSV" ] && { [ -f "$MONSTERS_CSV" ] || [ -f "$NPCS_CSV" ]; }; then
+    SERVER_ARGS+=(-npcpos-csv "$NPCPOS_CSV")
+    [ -f "$MONSTERS_CSV" ] && SERVER_ARGS+=(-monsters-csv "$MONSTERS_CSV")
+    [ -f "$NPCS_CSV" ] && SERVER_ARGS+=(-npcs-csv "$NPCS_CSV")
+    [ -n "$NEST_DB_DIR" ] && SERVER_ARGS+=(-nest-db-dir "$NEST_DB_DIR")
+  else
+    echo "qa_shot: no npcpos CSV at $NPCPOS_CSV (or no monster/NPC table beside it) -- the server spawns no NPC; OPENSRO_QA_LOCAL_NPCS=1 places the archive's" >&2
+    export OPENSRO_QA_LOCAL_NPCS="${OPENSRO_QA_LOCAL_NPCS-1}"
+  fi
   "$SERVER_BIN" "${SERVER_ARGS[@]}" >"$OUT/server.log" 2>&1 &
   SERVER_PID=$!
   # SIGKILL, not SIGTERM: the in-memory server did not always die on TERM, so
@@ -298,6 +316,9 @@ if [ "$SERVER" = "start" ]; then
   SERVER="127.0.0.1:$SERVER_PORT"
 fi
 [ -n "$SERVER" ] && export OPENSRO_QA_SERVER="$SERVER"
+# No server, no NPCs (round 708: only the server spawns them) -- an offline
+# render places the archive's own from npcpos.txt instead (QA only, OURS).
+[ -z "$SERVER" ] && export OPENSRO_QA_LOCAL_NPCS="${OPENSRO_QA_LOCAL_NPCS-1}"
 [ -n "$SAY" ] && export OPENSRO_QA_SAY="$SAY"
 [ -n "$GENDER" ] && export OPENSRO_QA_GENDER="$GENDER"
 [ -n "$ATTACK" ] && export OPENSRO_QA_ATTACK=1

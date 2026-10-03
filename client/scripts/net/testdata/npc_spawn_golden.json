@@ -1,0 +1,19 @@
+{
+ "note": "Round 708: the NPC spawn messages, golden bytes written BY HAND from docs/protocol/npc_spawn.md (the layout SR_GameServer.exe writes, CGObjNPC::vslot_294 0x4c3cb0, and sro_client.exe reads, FUN_008a6bd0 -> CICNPC::vslot_025 0x9d46c0). One field per '|'-separated group; spaces and '|' are ignored. server/internal/npcspawn TestGolden encodes the values and requires exactly each 'hex', and decodes it; client/scripts/net/npc_spawn_test.gd decodes each 'hex' and requires the values. Every value is a TEST value (ids are archive references, positions and angles are invented), never a database row.",
+ "record_a": {
+  "hex": "d1070000 | 0000007f | a861 | 00606a44 | 00000000 | 00d0ed44 | 0040 | 00 | 01 | 00 | 0040 | 01 | 00 | 00 | 00 | 00000000 | 00000000 | 0000c842 | 00 | 02 | 02 | 04 20",
+  "ref_id": 2001, "uid": 2130706432, "region": 25000, "x": 937.5, "y": 0.0, "z": 1902.5, "angle": 16384,
+  "flags": 2, "name": "", "interactions": [4, 32]
+ },
+ "record_b": {
+  "hex": "d2070000 | 0100007f | a861 | 00606a44 | 00000000 | 00d0ed44 | 00c0 | 00 | 01 | 00 | 00c0 | 01 | 00 | 00 | 00 | 00000000 | 00000000 | 0000c842 | 00 | 03 | 0300 426f62 | 01 | 1e",
+  "ref_id": 2002, "uid": 2130706433, "region": 25000, "x": 937.5, "y": 0.0, "z": 1902.5, "angle": 49152,
+  "flags": 3, "name": "Bob", "interactions": [30]
+ },
+ "group_begin_spawn": "01 | 0200",
+ "group_begin_despawn": "02 | 0100",
+ "despawn_body": "0000007f",
+ "single_despawn": "0000007f",
+ "single_spawn_tail": "05",
+ "facing_unknown": "0100 | 0100007f"
+}

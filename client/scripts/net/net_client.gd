@@ -152,6 +152,12 @@ signal buff_started(start: SkillNet.BuffStart)
 ## auras back. Updated before buff_started / buff_ended / entity_left /
 ## change_zone_result are emitted.
 var buff_roster := BuffRoster.new()
+## Round 708: every NPC the server has spawned for this connection (the retail
+## spawn messages, NpcSpawnNet). Kept here for the same reason as buff_roster;
+## World3D builds its NPCs from it and from npc_spawned / npc_despawned.
+var npc_roster := NpcSpawnNet.Roster.new()
+signal npc_spawned(rec: NpcSpawnNet.Record)
+signal npc_despawned(uid: int)
 ## Every character's berserk body mode (0x30BF kind 4) as this connection was
 ## last told (round 651): character id -> 1 while berserk. Kept, cleared and
 ## dropped with buff_roster, and for the same reason -- the server's in-view
@@ -356,6 +362,7 @@ func connect_to_server(host: String, port: int, use_tls: bool = false) -> void:
 	_attack_types_in_flight.clear()
 	own_character_id = -1
 	buff_roster.clear()
+	npc_roster.clear()
 	body_modes.clear()
 	_unhandled_warned.clear()
 	_use_tls = use_tls
@@ -433,6 +440,7 @@ func disconnect_from_server() -> void:
 	_pending_learns.clear()
 	own_character_id = -1
 	buff_roster.clear()
+	npc_roster.clear()
 	body_modes.clear()
 	_forget_session_lists()
 	_list_watch.answered()
@@ -911,6 +919,10 @@ func _dispatch(p: Packet) -> void:
 				# starts over from them.
 				buff_roster.clear()
 				body_modes.clear()
+				# So does the NPC window: the server forgets what it sent this
+				# session at the entry (session.forgetNPCWindow) and spawns
+				# the whole window again.
+				npc_roster.clear()
 			enter_world_result.emit(result)
 		WorldNet.OP_ENTITY_ENTERED:
 			entity_entered.emit(WorldNet.decode_entity_entered(p.data))
@@ -1036,6 +1048,33 @@ func _dispatch(p: Packet) -> void:
 					var whole := _monster_list_pages.duplicate()
 					_monster_list_pages.clear()
 					monster_list_result.emit(whole, "")
+		NpcSpawnNet.OP_FACING_UNKNOWN:
+			npc_roster.facing_unknown(NpcSpawnNet.decode_facing_unknown(p.data))
+		NpcSpawnNet.OP_SINGLE_SPAWN:
+			var single := NpcSpawnNet.decode_single_spawn(p.data)
+			if single == null:
+				push_warning("NetClient: a 0x3015 that does not read as an NPC record (%d bytes)" % p.data.size())
+			else:
+				npc_spawned.emit(npc_roster.spawn(single))
+		NpcSpawnNet.OP_SINGLE_DESPAWN:
+			var gone := NpcSpawnNet.decode_single_despawn(p.data)
+			if gone >= 0 and npc_roster.despawn(gone):
+				npc_despawned.emit(gone)
+		NpcSpawnNet.OP_GROUP_BEGIN:
+			npc_roster.group.begin(p.data)
+		NpcSpawnNet.OP_GROUP_DATA:
+			npc_roster.group.append(p.data)
+		NpcSpawnNet.OP_GROUP_END:
+			var g: Dictionary = npc_roster.group.finish()
+			if g.error != "":
+				push_warning("NetClient: a group spawn that does not read (%s) -- dropped" % g.error)
+			elif g.kind == NpcSpawnNet.GROUP_SPAWN:
+				for rec in g.records:
+					npc_spawned.emit(npc_roster.spawn(rec))
+			else:
+				for u in g.uids:
+					if npc_roster.despawn(u):
+						npc_despawned.emit(u)
 		CombatNet.OP_MONSTER_LEFT:
 			monster_left.emit(CombatNet.decode_monster_left(p.data))
 		CombatNet.OP_MONSTER_MOVED:

@@ -43,6 +43,21 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	"DecodeGroup": "round 708: the NPC group spawn read back the way sro_client.exe reads it (npcspawn/wire.go) -- " +
+		"the client consumes the bytes over the socket; the npcspawn and session tests hold the server's frames to it.",
+	"SingleSpawn": "round 708: the retail 0x3015 payload (record + spawn-type byte). OpenSRO's NPCs are all in the " +
+		"world before any player, so a player always meets them in a group spawn and the server never sends this " +
+		"(docs/protocol/npc_spawn.md); kept with its golden test so both sides hold the layout.",
+	"SingleDespawn": "round 708: the retail 0x3016 payload. OpenSRO's NPCs never leave a block (they are static), " +
+		"so only the group despawn is sent; kept with its golden test, as SingleSpawn.",
+	"HeadingOf": "round 708: the client's heading of a spawn's angle (FUN_009c3a70 + FUN_009c40b0), the READ " +
+		"chain written down and tested end to end (TestWireAngleRoundTrip, TestCardinalAngles); the server sends " +
+		"the angle, the client applies it.",
+	"NestRadians": "round 708: Nest_Hatch's conversion of wInitialDir; the server sends the nest's u16 unchanged " +
+		"(the chain's round trip is the identity, TestWireAngleRoundTrip), so only the test runs it.",
+	"WireAngleOf": "round 708: FUN_00488050's radians-to-u16; as NestRadians -- the round trip is the identity, " +
+		"held by TestWireAngleRoundTrip, so the server sends wInitialDir as it is.",
+	"NPCsInWindow": "round 708: how many NPC placements a window holds, for tests of the single-frame filing.",
 	"DefaultQuests": "round 692: the reader of character_default_quests, the default quests a new " +
 		"character is given (quest/defaults.go). The quest system has no real quests yet (its catalogue is " +
 		"invented and its ids 1/2 collide with QEVENT_GUIDE/QTUTORIAL_CH), so nothing starts them; this is " +

@@ -234,6 +234,10 @@ ssh "$RENDER_HOST" "cat > '$work/run1.sh'" <<EOF
 export OPENSRO_PK2_PATH=$PK2_DIR/Data.pk2 OPENSRO_MAP_PK2_PATH=$PK2_DIR/Map.pk2 OPENSRO_MEDIA_PK2_PATH=$PK2_DIR/Media.pk2
 export OPENSRO_PARTICLES_PK2_PATH=$PK2_DIR/Particles.pk2 OPENSRO_MUSIC_PK2_PATH=$PK2_DIR/Music.pk2
 export OPENSRO_MAPM_PATH="\$3" OPENSRO_QA_AT="\$4" OPENSRO_QA_YAW="\$5" OPENSRO_QA_FORCE_LOADING=1
+# Round 708: NPCs come only from a server's spawns; the gate runs offline, so
+# the head places the archive's own (OPENSRO_QA_LOCAL_NPCS, QA only) -- the
+# same NPCs a base before round 708 placed by itself, so the views compare.
+export OPENSRO_QA_LOCAL_NPCS=1
 [ -n "\${6:-}" ] && export OPENSRO_QA_WALK="\$6"
 read -r -a kvs <<< "\${8:-}"; for kv in "\${kvs[@]}"; do export "\$kv"; done  # split on spaces, no globbing
 # Another lane's Godot, rendered or headless (both load the CPU, the shared

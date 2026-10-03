@@ -7094,6 +7094,116 @@ the next measurement. Alexandria's "things floating in the air":
 `OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
 
+## Seven-hundred-and-eighth round: the server spawns the NPCs as the original does -- the retail group spawn 0x3017/0x3019/0x3018 per message block, each NPC at its nest and facing its nest's wInitialDir -- and the client builds none of its own
+
+The user asked whether the NPCs could now be placed, cardinal direction included, without guessing,
+and then decided the transport: "match how the original game does it down to the exact opcodes".
+Labels: READ, MEASURED, INFERRED, OURS, EXTERNAL (the user's shard database, never committed).
+
+**The chain, READ end to end** (`docs/protocol/npc_spawn.md` has every address):
+`Nest_Hatch` 0x5607b0 turns `Tab_RefNest.wInitialDir` (+0x1c) into radians `a` (0x560a1b..0x560a3c:
+/65535, *360, *pi/180) for every TypeID shape but the field monster's, so for every NPC; the angle
+travels as the 7th argument through `FUN_005f6eb0` and the game world's slot 6 (`FUN_005eb9a0`) into
+`CGObj::EnterWorld` 0x485360 as its 14th, which calls SetHeading (slot 230, 0x48ba10: heading vector
+`(cos a, 0, sin a)`) and then `SetLifeState(1)`. The spawn record writes `atan2(+0x2c, +0x24)`
+(0x487ce0 -> the CRT atan2 at 0x9fc1aa, its table naming "atan2") as `round(a * 57.2957.. / 360 *
+65535)` (0x488050) -- wInitialDir again, within one unit on every u16 (`TestWireAngleRoundTrip`). The
+client (`FUN_009c3a70`) makes radians of it and adds pi/2 (`FUN_009c40b0`): heading `h = a + pi/2`,
+facing `(sin h, 0, -cos h)` = `(cos a, 0, sin a)`, the server's own vector. So **wInitialDir 0 faces
+east, 16384 north, 32768 west, 49152 south**, and the long-open question of round 637 -- whether
+wInitialDir goes through the same +pi/2 -- is settled: it does, because every spawn angle does.
+
+**The record, READ on both sides:** `CGObjNPC::vslot_294` 0x4c3cb0 against `FUN_008a6bd0` ->
+`CICNPC::vslot_025` 0x9d46c0: RefObjID, unique id, region, x/y/z, angle; the mover block (no
+destination: 0, 1, 0, the angle again -- `CGObjMobile::vslot_000`'s defaults and SetHeading's
++0x164); four stance bytes (life 1 READ, motion 0 READ, the other two 0 INFERRED); params 23/24/140
+(0, 0, 100: an NPC's stat initialisers are `return 1`, the registry defaults stand); no buffs; the
+flag byte with the interaction set (`CGObjNPCNPC::Create` 0x4c6350's strstr rules on the code name,
+READ, three parts INFERRED). The group: 0x3017 {u8 type, u16 count}, the body in 0x3019 frames,
+0x3018 empty (server `FUN_00533e70`'s pushes, client `FUN_008ac0e0`/`008ac170`/`008ac3d0`), one per
+message block entering or leaving the player's 3 x 3 window (CMsgBlock slots 2/3).
+
+**What was built:**
+- Server: `internal/npcspawn` (record, groups, singles, the interaction rules, the nest join, the
+  NPC table); `session/npcworld.go` sends one group spawn per gained block and one group despawn per
+  lost block on the area of interest's tick, and forgets a session's window at its world entry;
+  `cmd/server` installs the NPCs from `-npcpos-csv` (an NPC row is one `-monsters-csv` does not name --
+  MEASURED: exactly the 257 TypeID (1,2,2,x) rows of 12,367 -- or one the new optional `-npcs-csv`
+  names), at the nest of the NPC's own species within 1.0 when `-nest-db-dir` has one. New export
+  mode `export-refdata -mode npcs` (343 rows, 103 with a shop).
+- Client: `net/npc_spawn.gd` reads 0x3015/0x3016/0x3017/0x3019/0x3018 and OpenSRO's
+  OpNpcFacingUnknown 0x00B6; NetClient keeps the roster (the first groups land before World3D
+  exists, as the buffs do); World3D places an NPC from its record when its region stands and frees
+  it on a despawn. Holder rotation `-h` (the body's front is -Z: **MEASURED** with
+  `probe_monster_front.gd --all=1 --prefix=NPC_`, 195 of 209 NPC models read -Z, both palace
+  soldiers among them, 2 read -X, 12 unsettled; the control reads -Z). Model, name, idle, services
+  still come from the archive by RefObjID. The click, the hover cursor and round 701's approach use
+  the same holders.
+- The fallback (OURS): an NPC with no nest of its own (29 rows in this shard) or a server with no
+  database is named in OpNpcFacingUnknown, sent with angle 0, and faced by `NpcFacing` as before.
+- QA (OURS, QA only): `OPENSRO_QA_LOCAL_NPCS=1` builds records from npcpos.txt and feeds the same
+  handler. `qa_shot.sh` sets it without `--server` (and with a server that has no npcpos CSV);
+  `perf_gate.sh` sets it for both sides. A QA shot may name its region (`name@x,z,97/168:...`).
+
+**Counts (MEASURED, the shard's nest DB, EXTERNAL; the server's boot line):** 257 npcpos NPC rows,
+228 from their nest, 29 fallback; farthest join 0.0002 units. By the code's town tag (nest/fallback):
+CH 59/8, WC 25/1, KT 29/0, EU 29/4, CA 18/1, SD 34/7, TD 6/0, RM 10/1, TK 2/1, AM 3/0, TQ 0/4,
+BATTLE 5/2, gate pulleys 8/0. **Jangan's own region (97/168): 17 from their nest, 2 fallback**
+(`NPC_CH_SOLDIER_EM1` "Soldier Choiyoung [Teleport]" and `_SO1`, which have no nest row of their
+tactics id anywhere in the database).
+
+**Measured in a live run** (server from this tree with the box's npcpos/monsters/npcs CSVs and the
+nest DB, client against it, `OPENSRO_QA_NPC_FACING_AUDIT=1`; each `World3D: NPC ... bearing` is read
+off the drawn holder's basis, 0 north, 90 east):
+- **The two soldiers.** The retail screenshot (scratchpad fog705_refs/fog_original.png) stands at
+  X:6433 Y:1148 = 97/168 local (973, 1880), north of the dragon (local z 917), which is in view, and
+  its minimap arrow points down: **the camera looks SOUTH**, so the soldiers whose backs are to it
+  face south, toward the town -- not north toward the palace, as the round's brief read the picture.
+  Ours: **Soldier Fengil (`_EM2`) is drawn at bearing 179.0 -- south, from its nest angle**, the
+  retail picture within a degree. **Soldier Choiyoung (`_EM1`) has no nest in the shard: stand-in
+  bearing 255.0**, 75 degrees off the picture. Nothing in the archive or this database can say more;
+  filed (docs/TODO.md).
+- **Against the navigation graph's open side** (NpcFacing's walk used only as a probe, 15-degree
+  resolution): Potion 1, Special 0, Doctor 0, Arena Manager 0, Gacha Operator 1, both warehouse
+  keepers 1, Smith 15, Armor 15, Horse 15, Accessory 16, south gate soldier `_SO2` 16 -- 12 of the 16 within one probe
+  step (16 degrees or less) -- and Europe 31, Islam 59, Kisaeng 90, palace soldier `_EM2` 89 (it
+  stands at the side of the gate passage: the open side is across it, the nest faces along it, and
+  the retail picture agrees with the nest). The shops: west-side smith/armor/horse face east, east-side
+  merchants west, the warehouse north -- every counter toward the street.
+- **Spawn and despawn:** walking the four quarters of Jangan and back, the server logged 6 window
+  moves (`spawned=3/7/6 despawned=3/7/6`) and the client a placement for every spawn and
+  `despawned (left the view window)` for every despawn; coming back re-spawned the same uids.
+- **Talk and shop:** `OPENSRO_QA_CLICK=npc` at the smith hit `Npc_2003_<uid>/Body` and dispatched to
+  talk ("Blacksmith Chulsan", Buy / End), the hover cursor read `kind=talk`; the store window opened
+  with its goods.
+
+**Tests:** Go `npcspawn` (the golden bytes written by hand from the layout, chunked groups, the angle
+round trip on every u16, the compass, the nest join, the interaction rules, the table), `session`
+(window spawn/despawn and the facing-unknown message over a real socket; nothing without the
+runtime; the single frame), `cmd/server` (the NPC row rule); GDScript `npc_spawn_test.gd` on the same
+golden bytes plus the holder's drawn front for every 97th angle. `go build/vet/test -count=1 -p 1`
+green; `remote_godot.sh check` ALL LOAD, `tests` 224 suites, 0 failing.
+
+**Deploy:** none needed for NPCs to appear and face: opensro-01 already runs `-npcpos-csv`,
+`-monsters-csv`, `-nest-db-dir` and `-full-map`. `-npcs-csv` is optional (the interaction bytes).
+A round-708 client on an older server shows no NPCs: server first.
+
+**Not done, filed:** the town teleport gates (retail sends them through the same parser as
+`CITeleportGate`, a different record); the talk menu from the record's interaction set; the 29
+nest-less rows.
+
+**Perf gate** (`perf_gate.sh --base 65e5d8a8 --sites jangan --frames 12000 --env
+'OPENSRO_QA_VIDEO_STEPS=quality=0|quality=1'`, both sides with `OPENSRO_QA_LOCAL_NPCS=1`, so the head
+places the same NPCs the base placed itself; Forward+ on the RX 7600, median of 3; a first attempt
+failed on an empty run line after an overlapped repeat, rerun clean):
+
+| jangan | base | head | | verdict |
+|---|---|---|---|---|
+| frame ms | 1.70 | 1.70 | +0.0 | SAME |
+| entry ms | 9605 | 9551 | -54 | SAME |
+| freeze ms | 3335 | 3324 | -11 | SAME |
+| hitches | 4 | 4 | +0 | SAME |
+
 ## Seven-hundred-and-fourth round: the project is renamed from srrevamp to OpenSRO -- the code, the tools, the deploy files, the docs and every environment variable -- and a player's saved settings follow the client to its new user folder
 
 The user's decision (2026-10-03): the project is **OpenSRO**. A rename only; nothing a player or

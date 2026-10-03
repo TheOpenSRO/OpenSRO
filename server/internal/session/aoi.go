@@ -361,6 +361,11 @@ func (v *monsterAOI) reconcile() {
 	for _, ev := range owed {
 		v.deliverViewEvents(ev)
 	}
+	// The NPCs' spawns and despawns (round 708, npcworld.go) ride this tick:
+	// the same entities, the same window.
+	if w := npcWorldRuntime.Load(); w != nil {
+		w.reconcile(ents)
+	}
 }
 
 // windowDiff is the cells the window centred on to holds and the one centred

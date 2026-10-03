@@ -3,6 +3,13 @@ class_name NpcFacing
 
 ## Which way a town NPC faces -- a DISCLOSED STAND-IN, not the game's value.
 ##
+## Since round 708 this is the FALLBACK only: the server spawns every NPC with
+## its nest's wInitialDir (NpcSpawnNet, docs/protocol/npc_spawn.md), and the
+## client turns it by that. This walk faces only the NPCs the server names in
+## OpNpcFacingUnknown -- an npcpos row its database has no nest for, or a
+## server with no database -- and the QA-only OPENSRO_QA_LOCAL_NPCS records.
+## The history below is why it was written.
+##
 ## The game's own answer is data this project does not have. The server
 ## spawns every NPC facing the direction stored in its nest row:
 ## `Nest_Hatch` (`0x005607b0` in SR_GameServer.exe) reads the row's u16 at

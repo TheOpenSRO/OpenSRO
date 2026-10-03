@@ -341,18 +341,29 @@ In order. Each is checked off here when it ships in a release, with its round in
       their Org's model (MEASURED, `probe_monster_build.gd`). Still open: col 48 (Scale), which
       CICMonster applies as scale / 100 from the row's own record (a `_CLON` is often smaller than
       its base: `MOB_CH_TIGER_CLON` is 80), is not applied to any monster.
-- [ ] **NPC facing is a stand-in until `Tab_RefNest` is imported.** Round 510: the game faces each
-      NPC by its nest row's `wInitialDir` (u16 at +0x1c, read by `Nest_Hatch` `0x5607b0`; radians =
-      `wInitialDir / 65535 * 360 * pi/180`), which lives only in the server database -- no shipped
-      file carries it (`npcpos.txt` is id/region/x/y/z). `NpcFacing` faces NPCs toward open space on
-      the navigation graph instead, disclosed as own design. Next step: get a `Tab_RefNest` export
-      (NestID, RegionDBID, LocalPosX/Y/Z, InitialDir) from a VSRO shard database, match rows to
-      `npcpos` by region and position, and turn each NPC by the real angle -- through the same
-      engine-to-Godot conversion as map objects (`NavGraph.godot_yaw`), after confirming the
-      character-facing convention (the spawn packet's angle -> the body's front) in the client.
-      Round 637 read that conversion: the heading is the wire angle plus pi/2 (`FUN_009c40b0`), and
-      heading `h` faces `(sin h, 0, -cos h)` region-local, which is `rotation.y = h` on a +Z-front
-      node (`RemoteFacing`). Whether `wInitialDir` goes through the same `+pi/2` is not read.
+- [x] ~~NPC facing is a stand-in until `Tab_RefNest` is imported~~ -- **done, round 708**: the server
+      spawns every NPC as the original does (retail 0x3017/0x3019/0x3018 group spawns per 320-unit
+      block of the player's window, `docs/protocol/npc_spawn.md`) at its nest's position, facing its
+      nest's `wInitialDir`; the client builds no NPC of its own. The chain is READ end to end:
+      `Nest_Hatch` 0x5607b0 -> `EnterWorld` 0x485360 -> SetHeading (cos a, sin a) -> the record's
+      `atan2` u16 (0x487ce0/0x488050) = wInitialDir -> the client's `h = angle + pi/2`
+      (0x9c3a70/0x9c40b0) facing (sin h, -cos h) = (cos a, sin a). 228 of the 257 npcpos NPC rows get
+      their nest's angle (MEASURED, the user's shard, EXTERNAL); the other 29 have no nest in that
+      database and keep `NpcFacing` (OpNpcFacingUnknown 0x00B6, OURS).
+- [ ] **The 29 nest-less NPC rows** (round 708): Jangan's teleport soldier "Soldier Choiyoung
+      [Teleport]" (`NPC_CH_SOLDIER_EM1`) and its gate-mates `_SO1`, `_EA2`, `_WE1`, the Europe
+      advisers, the SD agents, the treasure boxes ... have no `Tab_RefNest` row in the user's shard
+      (no nest of their tactics id anywhere, MEASURED), so they face by the `NpcFacing` stand-in -- the
+      retail screenshot shows Choiyoung facing south beside Fengil. Needs a shard whose database has
+      them; nothing in the client archive carries the angle.
+- [ ] **Town teleport gates as server-sent objects** (round 708): retail spawns the gates through the
+      same 0x3015/0x3017 path as a `CITeleportGate` (class link 0xef1dac) with its own body reader
+      (CITeleportGate slot 25, not read). OpenSRO still binds them client-side from teleportbuilding
+      (`_bind_region_gates`). Read the gate record, spawn the teleportbuilding rows from the server.
+- [ ] **The talk menu from the spawn's interaction set** (round 708): the client keeps a record's
+      interaction ids on the holder (`npc_interactions`) but builds its talk menu from its own
+      archive; the retail client builds it from the set at +0x500 (`FUN_00700440`). Needs
+      `-npcs-csv` on the server for the list to be non-empty.
 - [ ] **Exact fixed-function lighting**: a spatial shader whose `light()` scales the sun by the
       material's diffuse and the ambient by its ambient (round 136's stated approximation).
 - [x] ~~Real spawn points for every roster species~~ -- **done, v0.1.403 (round 253)**: `export-refdata
@@ -662,9 +673,9 @@ defence/attack/gold, HP-per-level, the berserk numbers, and skill damage.
 screen-space, which is why they are visible at all — and why the monster labels became visible at
 the same time.
 
-**Facing is settled as a negative**: `npcpos.txt` is 12,367 rows of exactly five columns (id,
-region, x, y, z) and the archive has no other NPC table, so there is no authored facing anywhere.
-Any direction this project turns an NPC would be invented. Not an open question.
+**Facing is done (round 708)**: `npcpos.txt` has no facing, but the server's `Tab_RefNest.wInitialDir`
+does; the server now spawns the NPCs with it (the item above, `docs/protocol/npc_spawn.md`). (This
+paragraph used to call facing "settled as a negative" -- true of the client archive only.)
 
 **Blocking is done** (hundred-and-twenty-second round): each NPC carries a capsule sized from its
 own geometry, on the layer the player masks and the camera does not. `OPENSRO_QA_NPCBODY=1`

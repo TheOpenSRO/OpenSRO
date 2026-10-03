@@ -31,6 +31,13 @@ server speaks the retail wire too, `opensro` will mean "also has our extensions"
 instead; `handshake.md`), and which 0xA101 layout the client reads hangs on a mode word whose
 writer is OPEN (the gateway's rule is used). Our server still speaks only its own wire.
 
+**Round 708: the first retail opcodes on OpenSRO's game connection.** The user decided (2026-10-03)
+that NPCs reach the client "exactly as the original game does it, down to the exact opcodes": the
+server spawns them with the retail group spawn 0x3017 / 0x3019 / 0x3018 (and the client also reads
+0x3015 / 0x3016), the CICNPC record byte for byte (`docs/protocol/npc_spawn.md`). One OpenSRO
+extension rides beside them, OpNpcFacingUnknown 0x00B6 (the NPCs with no nest angle), sent only ahead
+of a group that holds such an NPC. Monsters and players still use OpenSRO's own messages.
+
 **Noted by the user (2026-10-01), not designed:** a server may want to hand the client settings it
 keeps out of the client's `setting/config.yaml` -- during the server list or after login. That would
 be one more extension message of the kind item 2 below describes (docs/TODO.md).
