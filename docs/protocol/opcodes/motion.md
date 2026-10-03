@@ -2,7 +2,7 @@
 
 Recovered in round 607. Labels: **read** = from the binary at the cited address;
 **measured** = counted in the archive or a dump; **inferred** = a conclusion from
-read or measured facts, with its basis; **ours** = srrevamp's own choice.
+read or measured facts, with its basis; **ours** = OpenSRO's own choice.
 
 Sources: `SR_GameServer.exe` (`/var/tmp/SR_GameServer.exe`, dump
 `/var/tmp/decomp_server`, asm `/var/tmp/srv.asm`), `sro_client.exe`
@@ -192,7 +192,7 @@ The client never names a sit clip: its sit entry (`0xa5a270`) plays action type
 the previous state mask had bit 3 (standing), type **13** with `(0xd, 0, 200, 0,
 1.0, 1.0)`; its stand entry (`0xa5a160`) plays type **15** when the previous mask
 had bit 6 (sitting), then enters state 8 (unread). The type is resolved in the
-body `.bsr`'s animation group, falling back to `default`. srrevamp's two bodies:
+body `.bsr`'s animation group, falling back to `default`. OpenSRO's two bodies:
 
 | body | 13 sit down | 14 loop | 15 stand up |
 |---|---|---|---|
@@ -203,7 +203,7 @@ Other bodies use other sets (`chinaman_fighter_a_*`, `chinaman_merchant_a_*`,
 `chinawoman_merchant_a_*`, `chinawoman_kangsi_a_*`, ...); `sit_bodies.txt` has
 every body.
 
-## srrevamp
+## OpenSRO
 
 - **Server** (`server/internal/session/motion.go`, `regen.go`,
   `server/internal/mana`): `0x704f` toggles through the 1.5 s CHANGEMOTION, the
@@ -231,7 +231,7 @@ every body.
   (inferred from re-creation, not read); the refusal text for `0x3009`; the
   results' `Seated` tail (the retail spawn packet's motion field was not
   read); a character alive at HP 0 (being killed, or an HP-cost caster)
-  regenerates no HP -- MP still -- because srrevamp's blow and death are not
+  regenerates no HP -- MP still -- because OpenSRO's blow and death are not
   one step as the engine's are (the window is narrowed, not closed); the gate's
   KNOCKDOWN and SKILL_ACTIONOFF states do not exist here. SKILL_PROTECTIONWALL
   (0x11) does since round 640: a wall's engage sets it, its end stands the

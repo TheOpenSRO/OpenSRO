@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
 )
 
 // StartingKitFor is the LEGACY dressing: what a character with nothing worn

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 func clearWarpLanding(id int64) { warpLandings.Delete(id) }

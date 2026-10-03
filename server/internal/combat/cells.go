@@ -3,7 +3,7 @@ package combat
 import (
 	"math"
 
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // The hub's cell index (round 656; the cell is retail's message block since

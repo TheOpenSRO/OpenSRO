@@ -544,7 +544,7 @@ const FOLIAGE_SHADER := preload("res://scripts/assets/foliage.gdshader")
 const FOLIAGE_SHADER_ONE_SIDED := preload("res://scripts/assets/foliage_one_sided.gdshader")
 ## The (cull, blend, zwrite) a generated MTRL-mod shader was built for, on
 ## the Shader (round 676): AppearFade asks _mod_shader for its fade twin.
-const MOD_SHADER_KEY_META := "srrevamp_mod_shader_key"
+const MOD_SHADER_KEY_META := "opensro_mod_shader_key"
 
 ## The shader a character's material is drawn with while it fades into
 ## existence (AppearFade, round 676), or null for one with no fade twin: the
@@ -970,7 +970,7 @@ void fragment() {
 ## on the back pass as metadata (FRONT_PASS_META), and add_front_pass puts
 ## it on a twin MeshInstance3D with a small sorting_offset, priority 0 --
 ## ordered after its own back pass by depth, and by depth against the rest.
-const FRONT_PASS_META := "srrevamp_front_pass"
+const FRONT_PASS_META := "opensro_front_pass"
 ## Enough to order the twin after its back pass (the same AABB, so the same
 ## sort depth) and far below any real depth difference. OURS.
 const FRONT_PASS_SORTING_OFFSET := 0.01
@@ -1117,12 +1117,12 @@ static func _prepare_material(archive: Pk2Reader, bmt_path: String, layer: BmtRe
 	plan["texture_key"] = cache_key
 	var four_cc: String = decoded["four_cc"]
 
-	# The decision above needs no pixels. SRREVAMP_QA_MATS still reports a
+	# The decision above needs no pixels. OPENSRO_QA_MATS still reports a
 	# texture that is heavily transparent while its layer is drawn without
 	# a test -- which the client does too (a gloss or glow mask on an item,
 	# an env-map mask), so the line is a pointer for a human, not an error.
 	# Gated, so an ordinary run measures nothing.
-	if not plan["cutout"] and OS.get_environment("SRREVAMP_QA_MATS") != "":
+	if not plan["cutout"] and OS.get_environment("OPENSRO_QA_MATS") != "":
 		var fraction := float(_alpha_stat(decoded, "fraction", archive, tex_path, bmt_path, prepared))
 		if fraction > _QA_MATS_REPORT_MIN_ALPHA_FRACTION:
 			(prepared["log"] as Array).append("QA MAT: %s (%s, %s) is %.1f%% non-opaque, flags 0x%04x, no alpha test%s" % [
@@ -1202,7 +1202,7 @@ static func _decode_texture(archive: Pk2Reader, tex_path: String, bmt_path: Stri
 	return {"image": image, "four_cc": parsed_tex.four_cc, "alpha": {}}
 
 ## One alpha statistic of a decoded texture -- only `fraction`
-## (_real_alpha_fraction) since round 625, which SRREVAMP_QA_MATS reports --
+## (_real_alpha_fraction) since round 625, which OPENSRO_QA_MATS reports --
 ## measured on its decoded Image once and remembered in `decoded["alpha"]`,
 ## which commit_textures carries into the texture cache, so a texture is
 ## measured once per world. A texture the cache already holds but whose
@@ -1211,7 +1211,7 @@ static func _decode_texture(archive: Pk2Reader, tex_path: String, bmt_path: Stri
 ## material decision itself consulted `binary_cutout` and `variance` too;
 ## the client decides from the layer's flag word alone.)
 ##
-## SRREVAMP_QA_ALPHA_LOG=1 logs every consult -- `QA ALPHA: <file> (<fourCC>)
+## OPENSRO_QA_ALPHA_LOG=1 logs every consult -- `QA ALPHA: <file> (<fourCC>)
 ## <stat> <value> -- from the decoded Image | from a statistic measured
 ## earlier`.
 static func _alpha_stat(decoded: Dictionary, stat: String, archive: Pk2Reader, tex_path: String, bmt_path: String, prepared: Dictionary) -> Variant:
@@ -1226,20 +1226,20 @@ static func _alpha_stat(decoded: Dictionary, stat: String, archive: Pk2Reader, t
 				decoded["image"] = image
 		alpha[stat] = _real_alpha_fraction(image)
 		source = "the decoded Image"
-	if OS.get_environment("SRREVAMP_QA_ALPHA_LOG") != "":
+	if OS.get_environment("OPENSRO_QA_ALPHA_LOG") != "":
 		var value = alpha[stat]
 		(prepared["log"] as Array).append("QA ALPHA: %s (%s) %s %s -- from %s" % [
 			tex_path.get_file(), decoded["four_cc"] if decoded["four_cc"] != "" else "uncompressed", stat,
 			("%.4f" % value) if value is float else str(value), source])
 	return alpha[stat]
 
-## How transparent a texture has to be before SRREVAMP_QA_MATS bothers
+## How transparent a texture has to be before OPENSRO_QA_MATS bothers
 ## reporting that it is being drawn without an alpha test.
 const _QA_MATS_REPORT_MIN_ALPHA_FRACTION := 0.20
 
 ## Fraction of a texture's texels whose alpha is below 250/255 (a
 ## tolerance for DXT rounding on a fully opaque source) -- what
-## SRREVAMP_QA_MATS reports, never what decides a material (round 625).
+## OPENSRO_QA_MATS reports, never what decides a material (round 625).
 ## 0.0 for a texture that can't be decoded. The decoded Image since round
 ## 566; a copy is decompressed, so the uploaded Image stays as it was.
 static func _real_alpha_fraction(source: Image) -> float:

@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/durability"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/durability"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // Hit rate and parry take each worn item's OWN value, as the engine

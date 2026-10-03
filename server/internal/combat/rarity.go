@@ -6,7 +6,7 @@ package combat
 // per-level gold roll (CRefDropGold: rand()%101 <= chance, then [min, max])
 // times FOUR -- unless the species id is 10100 or 11000. No other rank takes
 // that path, and no ordinary kill rolls that table (combat.RollGold's note).
-// srrevamp spawns no rank-7 species today, so nothing applies it; it is
+// OpenSRO spawns no rank-7 species today, so nothing applies it; it is
 // recorded here so the rule is not re-derived when one is added.
 //
 // RarityHPPercent is the engine's HP scale for a monster's rank, as a percent.
@@ -40,7 +40,7 @@ package combat
 // GetMonsterClass (the rank above, slot 75) -- and IsPartySupportMonster
 // (slot 193) is exactly `(byte & 0xf0) == 0x10`, i.e. MonsterType == 1. A
 // party monster therefore carries ten times the HP percentage before its
-// rank multiplies it (a party giant is x200). Nothing srrevamp spawns is a
+// rank multiplies it (a party giant is x200). Nothing OpenSRO spawns is a
 // party monster today; the flag is carried so the first one will be right.
 // The rank names are the ones combat.Monster.Rarity already documents from
 // characterdata column 15.

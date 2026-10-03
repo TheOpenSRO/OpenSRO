@@ -309,7 +309,7 @@ review of round 614).
   weapon's **base attack** -- the retail server's `g_DefaultAttackSkillByTID4`
   (`SkillBook::DefaultAttackSkillIDForWeaponTID`, 0x0059e650; `combat.BaseAttackSkillFor`, READ in
   round 256), mirrored as `CombatAudio.BASE_ATTACK_SKILL`: the server resolves a swing to it and
-  retail's decoration carries it, while srrevamp's OpAttackResult names no skill. Critical is
+  retail's decoration carries it, while OpenSRO's OpAttackResult names no skill. Critical is
   `AttackResult.player_critical`, berserk `berserk_active`. A plain swing sounds whatever it
   dealt, 0 included (as retail, above); a **cast** that dealt 0 is silent (OURS: OpAttackResult
   cannot tell a zero-damage blow from a cast with no damage record, a self-heal or a buff). A sword swing therefore plays
@@ -325,7 +325,7 @@ review of round 614).
 - **A block** (`_audio_block`): the player's shield stopped the counter (`player_blocked`, or
   OpMonsterAttacked's blocked flag for any character), at the blocker, when the monster's blow
   would land; CRITYCAL from the blow's critical flag (READ, above).
-- **`snd_ddmg`**: no caller. srrevamp has no absorbing skill (ice wall, screens), so the client
+- **`snd_ddmg`**: no caller. OpenSRO has no absorbing skill (ice wall, screens), so the client
   never learns of such a blow (OPEN). `CombatAudio.play_ddmg` is ready.
 - **`snd_activate`**: when the server accepts a cast (INFERRED for the moment, below). Its only
   rows are five `SKILL_CH_BOW_NORMAL_*` and two rogue stealth skills (MEASURED).
@@ -357,7 +357,7 @@ WAIT 1, SHOT 2, ACT_OS 3, ACT_OL 4, ACT_OE 5, ACT_S 6, ACT_L 7, DEACT 8, S_RETUR
   or 0 (ACT_OS/ACT_OL), then `snd_activate` (READ).
 
 **When this client fires a phase** (INFERRED / OURS: retail runs them off the server's
-skill-action messages and the clip's events, which srrevamp does not have):
+skill-action messages and the clip's events, which OpenSRO does not have):
 
 | Moment | Rows |
 |---|---|

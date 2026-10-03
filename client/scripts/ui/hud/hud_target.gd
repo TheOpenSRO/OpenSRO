@@ -511,7 +511,7 @@ func show_target(target_name: String, level: int, rarity: int, hp: int, max_hp: 
 
 ## Shows the window for a selected PLAYER (round 622): the player piece
 ## (iftw_player.txt, CIFTargetWindow's CICUser branch -- its "player window"
-## kind, ID 0; the job-player kind needs a job state srrevamp does not send)
+## kind, ID 0; the job-player kind needs a job state OpenSRO does not send)
 ## with the name in GDR_TWP_TEXT_NAME and, since round 638, the race emblem
 ## in GDR_TW_KINDRED_MARK (0x69b0d0, see set_kindred; `race` is the target's
 ## Country, -1 for unknown) and the buff viewer under the piece for
@@ -584,7 +584,7 @@ func set_hp(hp: int, max_hp: int) -> void:
 		return
 	var fraction := clampf(float(hp) / float(max_hp), 0.0, 1.0)
 	_gauge.value = fraction * 100.0
-	if OS.get_environment("SRREVAMP_QA_ATTACK") != "":
+	if OS.get_environment("OPENSRO_QA_ATTACK") != "":
 		print("HudTarget: gauge %s size %s fill %.1f%% (%d/%d) window at %s" % [
 			str(_gauge.position), str(_gauge.size), fraction * 100.0, hp, max_hp, str(global_position)])
 

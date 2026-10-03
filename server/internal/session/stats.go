@@ -7,15 +7,15 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/durability"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/mana"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/durability"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
 )
 
 // The character-stats exchange: the client asks what its own character is
@@ -267,7 +267,7 @@ func defenderMagicArmor(ctx context.Context, characterID int64, eq equipment.Sto
 //
 // DISCLOSED, what retail adds and this does not: params 11 and 9 also take
 // buffs and masteries, and each item's per-plus increment (columns 115 and
-// 70) -- srrevamp's params carry no buff or mastery term here and its
+// 70) -- OpenSRO's params carry no buff or mastery term here and its
 // instances no plus level. So a buffed or enhanced character reads lower here
 // than on a retail panel.
 func characterRates(ctx context.Context, level int, characterID int64, eq equipment.Store, items combat.ItemLookup) (hit, parry int, err error) {

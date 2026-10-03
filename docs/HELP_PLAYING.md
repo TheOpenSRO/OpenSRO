@@ -202,5 +202,5 @@ folder the world is silent and the log says so.
   performance, with a **Copy** button that puts a full report on your
   clipboard.
 
-Your session writes a log to `user://logs/srrevamp.log`; type `/log` to see
+Your session writes a log to `user://logs/opensro.log`; type `/log` to see
 exactly where, or to open the folder on desktop.

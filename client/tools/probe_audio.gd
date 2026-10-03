@@ -5,7 +5,7 @@ extends SceneTree
 ## whether the named sounds decode, with their format and length. Prints
 ## counts and formats only; nothing is extracted or kept.
 ##
-##   SRREVAMP_PK2_PATH=... SRREVAMP_MEDIA_PK2_PATH=... SRREVAMP_MUSIC_PK2_PATH=... \
+##   OPENSRO_PK2_PATH=... OPENSRO_MEDIA_PK2_PATH=... OPENSRO_MUSIC_PK2_PATH=... \
 ##   godot4 --headless --path client --script res://tools/probe_audio.gd -- \
 ##     [--sounds "prim\snd\ui\uiwinopen.wav,jangan_town.ogg"] [--keys "UI:snd_window_open:-:-:-:-"]
 ##

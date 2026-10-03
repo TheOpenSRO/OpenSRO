@@ -59,12 +59,12 @@ slot 17 cuts physical defence and bit 17 is "decay"; slot 18 cuts magical defenc
 is "weakness"; slot 13 cuts attack rate and bit 13 is "dark" -- and for those the mask table
 is the identity, so slot and bit coincide.
 
-## What srrevamp does (round 659)
+## What OpenSRO does (round 659)
 
 Monsters give and receive states: `internal/statuseffect` lands a skill's status runs
 (`Resolve`), keeps one record per slot (`Holder`) and ticks them; `session/status.go` wires it to
 monsters and characters and sends every change of an object's mask as retail's 0x3057 abnormal
-block (see "The wire" below). Of the params the table lists, srrevamp applies the move speed
+block (see "The wire" below). Of the params the table lists, OpenSRO applies the move speed
 (frostbite 50 %, slow 75 %), bleeding's flat defence cut on a monster, and the three damage ticks;
 the others are not published (myopia's range cut, dark's attack rate, the curses' params, electric
 shock's parry -- OPEN). The params a state writes were harvested from the appliers' own
@@ -98,7 +98,7 @@ carries `ps:34,100,16` (always lands, 34 s, 16 a tick), `SKILL_CH_COLD_GIGONGTA_
 
 The non-elemental blocks roll the same dice (`mov ecx,0x7000000; lea edx,[esi+0xa30]; call
 0x5a1a20` at `0x59106f` for sleep, `0xf000000` at `0x592051` for stun) with round 277's chance,
-after three terms srrevamp holds at zero: 0x59de50's lookup in the target's effect map (what its
+after three terms OpenSRO holds at zero: 0x59de50's lookup in the target's effect map (what its
 own buffs take off), that lookup's percent cut, and the disease bonus. `record+0x18 =
 (byte)value[2]`, the level. Bleeding (`0x591a11..0x591c52`) also writes `+0x38 = value[3]` (the
 damage a tick), `+0x40 = value[4]` (the flat defence cut) and `+0x10` = 'puls' or 2000.
@@ -118,7 +118,7 @@ struck event), and a kill by a tick is credited to its caster even after the cas
 
 `0x5906c0 cmp [edi+5],2` in the prologue tests the HIT RECORD's blocked flag (`[ebp+5] = 2` is
 written after the block roll at `0x58f0ef`, where the damage is zeroed): a blocked blow applies no
-state, in both directions. That srrevamp never afflicts a dead character is OURS.
+state, in both directions. That OpenSRO never afflicts a dead character is OURS.
 
 ### What a state stops (READ)
 
@@ -130,26 +130,26 @@ state, in both directions. That srrevamp never afflicts a dead character is OURS
   the move (`vslot 0x4c0` moving? then `0x4b0`), cancel the running action through the action queue
   at `+0xa30`, and **vslot 0x55c**, `GObjPC::FUN_004a9d00` (slot 343): SetMotionState to 10 FROZEN,
   9 STUN or 0x13 (sleep; past the MOTIONSTATE table's 18), back to 0 STAND on removal -- freeze's
-  removal passes a 1.5 s AJStateChanger delay (`_DAT_00b45c10` = 1.5): srrevamp holds a thawing
+  removal passes a 1.5 s AJStateChanger delay (`_DAT_00b45c10` = 1.5): OpenSRO holds a thawing
 monster from acting for those 1.5 s (`Holder.CanActAt`). INFERRED:
   that no new attack starts while the motion state is one of those -- the refusing test on the
   monster's attack path is not read. `Holder.CanAct`.
 - **Speed**: frostbite writes params 23/24 (walk, run) at 50.0 in the abnormal context's scale slot
   (`push 5; push 3`, `0xb4603c`), slow at 75.0 (`0xb45de0`) only while no frostbite bit is set,
   its tick taking over once frostbite lets go; 100.0 (`0xb45e10`) on removal. Each then republishes
-the speed at once (vslots `0x4e8`/`0x4ec`); srrevamp restarts a moving monster's leg at the new
+the speed at once (vslots `0x4e8`/`0x4ec`); OpenSRO restarts a moving monster's leg at the new
 speed on the next AI tick. Both also write
   param 140 (200.0 / 125.0, unnamed; not modelled). `Holder.SpeedPercent`.
 - **Root** (`0x4a4a50`) stops a moving object (`0x4c0`/`0x4b0`) and nothing else.
 - **Fear** (`0x4a4bd0`) sends the object's AI message 0x14 with the source -- what the AI does with
-  it is OPEN; srrevamp shows fear and does nothing else with it.
+  it is OPEN; OpenSRO shows fear and does nothing else with it.
 
 ### The wire (round 659)
 
 Retail's 0x3057 is the HP/MP/abnormal update (`sro_client.exe` `0x8a9e30`): u32 id, u16, u8 flags;
 flag 1 u32 HP, flag 2 u32 MP, flag 8 u16, **flag 4 u32 mask** (`0x9cd5e0` stores it at `+0x2c4`
 and diffs it), **then one u8 level per set bit with `(1<<b) & 0x17fefc0`, low bit first**
-(`MsgStreamBuffer::FUN_009d2220`). srrevamp's `OpObjectStatus 0x3057` carries that block after
+(`MsgStreamBuffer::FUN_009d2220`). OpenSRO's `OpObjectStatus 0x3057` carries that block after
 its own head (u8 owner kind, i64 id -- OURS), flag 4 only. The client (`StatusNet`) keeps each
 object's mask and the target window's buff viewer adds one icon per bit after the skill buffs,
 in the second list (`0x699480` -> `0x7fd2e0`), icon and label from `0x7fdab0`, tooltip from

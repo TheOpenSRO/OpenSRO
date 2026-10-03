@@ -4,7 +4,7 @@ extends Node
 # their own legally-owned pk2 files (not needed yet for the login/character
 # select flow, only once real asset rendering exists). See Pk2Config for
 # how those files are found: a real "pk2" folder next to the executable,
-# or the SRREVAMP_*_PK2_PATH environment variables for development.
+# or the OPENSRO_*_PK2_PATH environment variables for development.
 #
 # Real auto-update check (2026-08-26, see docs/WORLD_ISSUES.md and
 # AutoUpdater's own top comment for the honest scope: the check/download/
@@ -15,9 +15,9 @@ extends Node
 var _updater: AutoUpdater
 
 func _ready() -> void:
-	print("SRRevamp boot: no bundled game data -- put your own *.pk2 files in the 'pk2' folder next to this executable.")
-	print("SRRevamp log file: %s" % ProjectSettings.globalize_path("user://logs/srrevamp.log"))
-	print("SRRevamp version: %s" % UpdateChecker.CLIENT_VERSION)
+	print("OpenSRO boot: no bundled game data -- put your own *.pk2 files in the 'pk2' folder next to this executable.")
+	print("OpenSRO log file: %s" % ProjectSettings.globalize_path("user://logs/opensro.log"))
+	print("OpenSRO version: %s" % UpdateChecker.CLIENT_VERSION)
 	# The renderer running, and the one recorded for the next start: an
 	# exported game brings override.cfg in line with setting/config.yaml's
 	# display.renderer, or records the Compatibility launcher's choice
@@ -49,7 +49,7 @@ func _ready() -> void:
 	var video := VideoOptions.in_force()
 	VideoOptions.apply_display(get_window(), video)
 	VideoOptions.apply_brightness(get_tree().root, video.current().brightness)
-	print("SRRevamp video: graphic %d, quality %d, brightness %d, fullscreen %s, resolution %s" % [
+	print("OpenSRO video: graphic %d, quality %d, brightness %d, fullscreen %s, resolution %s" % [
 		video.active + 1, video.current().quality, video.current().brightness, str(video.fullscreen),
 		VideoOptions.format_resolution(video.resolution) if video.resolution.x > 0 else "(as started)"])
 
@@ -65,18 +65,18 @@ func _on_update_check_failed(reason: String) -> void:
 	# A real update check failing (no network, GitHub unreachable, etc.)
 	# should never block a player from actually playing -- log it and
 	# continue exactly as if no update were available.
-	print("SRRevamp: update check failed (%s) -- continuing without one" % reason)
+	print("OpenSRO: update check failed (%s) -- continuing without one" % reason)
 	_proceed_to_login()
 
 func _on_update_failed(reason: String) -> void:
-	printerr("SRRevamp: update failed (%s) -- continuing with the current version" % reason)
+	printerr("OpenSRO: update failed (%s) -- continuing with the current version" % reason)
 	_proceed_to_login()
 
 func _on_update_available(tag: String, download_url: String) -> void:
 	# QA hook (round 668): accept without the dialog, for an unattended update
-	# test against SRREVAMP_QA_UPDATE_URL. OURS.
-	if OS.get_environment("SRREVAMP_QA_UPDATE_ACCEPT") == "1":
-		print("SRRevamp: downloading update %s (accepted by SRREVAMP_QA_UPDATE_ACCEPT)..." % tag)
+	# test against OPENSRO_QA_UPDATE_URL. OURS.
+	if OS.get_environment("OPENSRO_QA_UPDATE_ACCEPT") == "1":
+		print("OpenSRO: downloading update %s (accepted by OPENSRO_QA_UPDATE_ACCEPT)..." % tag)
 		_updater.begin_download(download_url)
 		return
 	var dialog := ConfirmationDialog.new()
@@ -84,7 +84,7 @@ func _on_update_available(tag: String, download_url: String) -> void:
 	dialog.dialog_text = "A new version (%s) is available. Download and restart now?" % tag
 	add_child(dialog)
 	dialog.confirmed.connect(func():
-		print("SRRevamp: downloading update %s..." % tag)
+		print("OpenSRO: downloading update %s..." % tag)
 		_updater.begin_download(download_url))
 	dialog.canceled.connect(_proceed_to_login)
 	dialog.popup_centered()
@@ -93,8 +93,8 @@ func _proceed_to_login() -> void:
 	# QA hook (round 668): stop here instead of opening Login, so an
 	# unattended update test's relaunched client exits by itself and its log
 	# is complete. OURS.
-	if OS.get_environment("SRREVAMP_QA_QUIT_AT_LOGIN") == "1":
-		print("SRRevamp: quitting before Login (SRREVAMP_QA_QUIT_AT_LOGIN)")
+	if OS.get_environment("OPENSRO_QA_QUIT_AT_LOGIN") == "1":
+		print("OpenSRO: quitting before Login (OPENSRO_QA_QUIT_AT_LOGIN)")
 		get_tree().quit.call_deferred()
 		return
 	# Deferred: calling change_scene_to_file directly from _ready() fights

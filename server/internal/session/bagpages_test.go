@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/account"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/account"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 )
 
 // Round 633: the bag has a per-character size, which the client pages 32 to a

@@ -45,7 +45,7 @@ In order. Each is checked off here when it ships in a release, with its round in
       (round 521)". Still open for the guild store itself (round 530, record): the real server
       does not refuse the store to anyone. It refuses the goods, all of which have a guild-point
       price (PaymentDevice 8). A buyer with no guild, or who is not the master, gets `0x18c4`, and
-      a guild short of points gets `0x18c5`, after the gold flag. srrevamp charges only the gold,
+      a guild short of points gets `0x18c5`, after the gold flag. OpenSRO charges only the gold,
       so a guildless player who sends the buy is served. Needed: import the goods' device-8
       amounts, add the two refusals, and spend the points (its own item below, "The guild stores'
       guild-point price"; `character_state.md`, "What the server checks at a guild store (round
@@ -92,10 +92,10 @@ In order. Each is checked off here when it ships in a release, with its round in
         every selected NPC (the class test at `0x88b78b` is IsKindOf `CICNPC`). It shows them again
         only for an NPC with interaction 4, and vtable `+0x5c` is show/hide. The server gives id 4 to
         22 codename literals: the town `SMITH`/`ARMOR` NPCs and the fortress smiths
-        (`CGObjNPCNPC::Create`, `0x4c677f` / `0x4c736f`). srrevamp derives it from the codename
+        (`CGObjNPCNPC::Create`, `0x4c677f` / `0x4c736f`). OpenSRO derives it from the codename
         (`NpcServiceReader.offers_repair`) and hides both buttons at every other store. A headless
         test drives `_show_repair_buttons` on a synthetic store window (check (j) of
-        `npc_service_reader_test.gd`). Not yet seen in a running client: a `SRREVAMP_QA_SHOP` run
+        `npc_service_reader_test.gd`). Not yet seen in a running client: a `OPENSRO_QA_SHOP` run
         reading the `STORE` log line.
 - [x] **Item tooltips** with the real stats -- round 140 (weapon attack, pinned against the Copper
       Sword +5 the user sent) and round 170 (armour/shield defence at columns 65-77, grounded from
@@ -114,7 +114,7 @@ In order. Each is checked off here when it ships in a release, with its round in
       `MaxHPFor(StartingStr 20, level 1) = 200` exactly, and a respawn at 80 is the binary's
       `RespawnFraction 0.4` x 200. The two grounded numbers coincide with the old placeholder.
 - [x] ~~Two `internal/session` full-flow tests race under host load~~ -- **not a race in the code**
-      (2026-09-19): eleven packages' tests share the local `srrevamp_test` PostgreSQL database, and
+      (2026-09-19): eleven packages' tests share the local `opensro_test` PostgreSQL database, and
       two `go test` processes on one host clobbered each other's rows (the trade test's 0x00DE was
       the system cancel from mismatched state). `internal/testdb.Lock` now serialises processes via
       an advisory file lock held in each such package's `TestMain`; two concurrent runs both pass.
@@ -146,7 +146,7 @@ In order. Each is checked off here when it ships in a release, with its round in
       pc+0x2184 starts at zero on every new PC (CGObjPC::vslot_000, 0x4dea77) and FUN_004def90
       (0x4def90, its call to RequestAddGuildPoints at 0x4defbd) flushes any count above zero when
       the PC leaves the world;
-      srrevamp flushes it on disconnect (`session.GuildPointsDisconnectHandler`) and at a clean stop
+      OpenSRO flushes it on disconnect (`session.GuildPointsDisconnectHandler`) and at a clean stop
       (`FlushAllPending`, its own handling). That stop flush does not wait for the gateway's
       connection goroutines or the keep-up swings, so points booked after it passes a character are
       lost at exit (round 527, disclosed in `guildpoints.go` and `guild.md`). **Levels: done (round
@@ -164,7 +164,7 @@ In order. Each is checked off here when it ships in a release, with its round in
       refuses guild-store goods at payment, not at the store: every good the five
       `STORE_*_GUILD` stores sell has a PaymentDevice 8 row in `refpricepolicyofitem`, which the
       server loads as payment flag 8 with its amount at `+0x20` (`ReferenceData::FUN_006a99c0` ->
-      `0x4b2bd0`, round 531). srrevamp charges only the itemdata gold, so a guildless player who
+      `0x4b2bd0`, round 531). OpenSRO charges only the itemdata gold, so a guildless player who
       sends the buy gets the crest. To build: (1) import each good's device-8 amount
       (`refpricepolicyofitem` joined through `refscrapofpackageitem`); (2) in `shop.Service.Buy`,
       after the gold test, as `GObjPC::CheckCurrencyRequirement` (`0x617360`) orders them, refuse
@@ -197,7 +197,7 @@ In order. Each is checked off here when it ships in a release, with its round in
         (`+0x1cd8 & 0xf0`, combat.MonsterHPPercent) comes from -- is not read.
       - 18 species name 49 skill ids the skills export does not hold; they swing what resolves.
       - with a skills table from before round 654 (no AI_AttackChance) a non-roster species
-        swings its primary skill only; srrevamp-01 needs the re-export (deploy/README.md).
+        swings its primary skill only; opensro-01 needs the re-export (deploy/README.md).
       - the classic uniques in this archive are the "[INT]" rows at level 110 -- MOB_CH_TIGERWOMAN
         is "Tiger Girl[INT]" -- so `/spawn tiger girl` finds nothing; the code name (or id) works.
         188 display names are shared by 7,087 rows, and a name picks the first in table order;
@@ -213,14 +213,14 @@ In order. Each is checked off here when it ships in a release, with its round in
       strike only when struck (round 254's cadence cap; the counter is still a synchronous reply in
       the player's attack handler). **Round 537 built the monster AI tick** (`session.RunMonsterAI`,
       `server/internal/session/monsterai.go`) behind cmd/server's `-monster-ai` flag
-      (`SRREVAMP_MONSTER_AI`), which is **off by default**: SPAWN -> IDLE -> the 76-in-100 WANDER
+      (`OPENSRO_MONSTER_AI`), which is **off by default**: SPAWN -> IDLE -> the 76-in-100 WANDER
       roll, legs at the walk speed pushed to the zone as `OpMonsterMoved 0x007C`, IDLE never
       stopping a leg under way (`0x559c80`), HOMING at the run speed past a 200-unit roam radius
       (own design), one `OpMonsterMotionList 0x007F` after each monster list, and an interim hold
       that stops a struck monster at the blow and keeps it in BATTLE while a keep-up of any player in
       its zone is on it, released only after two ticks in a row without one (round 539). It stands on round 536's core (the roster's real speeds, `combat.MoverStep` with both
       of the engine's clamps, the hub motion API, the pure rules) and round 533's client, first
-      released in v0.1.435. Every stand-in is in `docs/protocol/monster_ai.md`, "srrevamp's
+      released in v0.1.435. Every stand-in is in `docs/protocol/monster_ai.md`, "OpenSRO's
       runtime". What is left, in order:
       - **Turn it on for the public server**: once v0.1.435 or later is published with green CI,
         per `deploy/README.md`, "Monster AI (off by default)". The two render-box live checks in
@@ -262,7 +262,7 @@ In order. Each is checked off here when it ships in a release, with its round in
         never answered (the first attacker is the target until it leaves, dies or is out of reach).
       - **mob-player-dead-state -- BOTH halves are BUILT**: the client half in round 548 (the die
         clip held, movement and attack input locked, a Revive button sending `OpRevive 0x0028`,
-        `OpReviveResult 0x0029` decoded, `SRREVAMP_QA_REVIVE_AFTER`), the server half in round 549
+        `OpReviveResult 0x0029` decoded, `OPENSRO_QA_REVIVE_AFTER`), the server half in round 549
         behind `-player-dead-state` (off by default; `docs/protocol/monster_ai.md`, "The player's
         dead state: the server half"): a monster's kill leaves life state 2 at HP 0 in the result
         and the push (no `RespawnHP`), the potion queue emptied as `FUN_004e67b0` does and
@@ -273,11 +273,11 @@ In order. Each is checked off here when it ships in a release, with its round in
         the 30 s auto-revive fallback (own design) and revive on entry for a character logged out
         dead (the load path's fraction). **What is left, in order**: (1) tag the client release that
         carries round 548 and confirm its `Release client` run is green BEFORE the flag is ever
-        flipped; (2) the render-box live check (`SRREVAMP_PLAYER_DEAD_STATE=1`, `/spawn` a killer,
-        `--attack`, assert HP 0 then "Revived." after the button or `SRREVAMP_QA_REVIVE_AFTER`);
+        flipped; (2) the render-box live check (`OPENSRO_PLAYER_DEAD_STATE=1`, `/spawn` a killer,
+        `--attack`, assert HP 0 then "Revived." after the button or `OPENSRO_QA_REVIVE_AFTER`);
         (3) the flag's flip (`deploy/README.md`, "Player dead state (off by default)"). Stand-ins,
         each disclosed at its line: reviving in place above max level 10 (retail returns the
-        character to `_CHAR.AppointedTeleport`, `CGObjPC::ResolveRevivePoint` -- srrevamp has no
+        character to `_CHAR.AppointedTeleport`, `CGObjPC::ResolveRevivePoint` -- OpenSRO has no
         appointed teleport; its town gates, round 576, move a player but record no return point -- kept since round 686), the empty request against retail 0x7053's u8
         option, the fallback and its 30 s, the refusal wording, the pick-up / duel / zone-change / GM
         refusals (their retail handlers not read for a life-state test), the item kind usable while
@@ -294,7 +294,7 @@ In order. Each is checked off here when it ships in a release, with its round in
         gate's point, else the race's gate (`STORE_CH_GATE` / `STORE_EU_GATE`, SR_ShardManager
         `FUN_0042bb20`, READ) -- see "Town teleporters" below for what is left;
         (2) body mode 2 after a revive, 6.0 s invincible (`0xb45b78`) and the world entry's own
-        time (world slot `0x70`, unread) -- srrevamp has no body mode 2; (3) resurrection by
+        time (world slot `0x70`, unread) -- OpenSRO has no body mode 2; (3) resurrection by
         another player and by scroll (`trs_wait_response::vslot_002`, `FUN_0049ff20`), which the
         "Waiting for other player's help." button stands for -- shown disabled today, while
         retail's click closes the box; (4) the retail message box art
@@ -321,7 +321,7 @@ In order. Each is checked off here when it ships in a release, with its round in
         forwarded hate -- 100/50/25 % of the record's **hate**, floored at 1, the victim booking
         1.15f x it (round 537's correction of round 258's "damage": the link zeroes the record's
         damage (+4) at `0x547797`; `CreditAttacker` `0x5473c0`, `OnAttacked` `0x558ebd..0x558ecc`)
-        -- is not carried: srrevamp's blows have no hate value, and the magnitudes wait on
+        -- is not carried: OpenSRO's blows have no hate value, and the magnitudes wait on
         mob-threat-retarget. Live check not feasible with one driven client.
       - Then the threat table's retarget rules (round 259, `ai.ThreatTable`, mob-threat-retarget),
         the AI-skill triggers (round 260, mob-ai-skill-triggers; the second attack skill is built,
@@ -330,7 +330,7 @@ In order. Each is checked off here when it ships in a release, with its round in
         a user decision).
       Background, still true: a monster moves in retail by issuing the client's own movement
       request `0x7021` (`FUN_00540f70`; payload in `docs/protocol/opcodes/movement.md`, round 364),
-      the retail shape srrevamp's placeholder push will eventually give way to
+      the retail shape OpenSRO's placeholder push will eventually give way to
       (`PROTOCOL_DECISION.md`); the server's unprompted pushes are the 0x3NNN group of
       `docs/protocol/server_senders.tsv` (round 368).
 - [x] **Four roster species are drawn as capsules: their characterdata rows name no model (round
@@ -385,7 +385,7 @@ In order. Each is checked off here when it ships in a release, with its round in
       moves into `+0x2c`, and phase 3 adds `+0x2c` to the final link's wait, so the final link
       waits up to 500 ms longer (`docs/protocol/auto_command.md`, phase 2). Phase 3 re-enters
       phase 2 with the next link's row, and only the LAST link's `AutoAttackType` decides the
-      hand-off. srrevamp resolves only the row the player cast, so a row with a non-zero
+      hand-off. OpenSRO resolves only the row the player cast, so a row with a non-zero
       `Basic_ChainCode` resolves one row's blow and does not hand off (round 502's disclosed
       departure). Counted in round 507 on the player rows: 1,246 carry one, 582 true heads that no
       other row names (e.g. `SKILL_CH_SWORD_SMASH_D_01` -> 7140 `..._D2_01`) and 664 intermediate
@@ -429,7 +429,7 @@ In order. Each is checked off here when it ships in a release, with its round in
       is the row's own `getv MAAT` parameter (`SkillGlobal::RefSkill_ParseParams` `0x587630`).
       Measured on the retail rows (`/var/tmp/allskills.txt`): of the rows carrying `att`, 2,027
       of 2,028 `SKILL_CH_` rows carry MAAT but only 24 of 1,502 `SKILL_EU_` rows do (the EU staff
-      and both wand base attacks among them). refdata exports no MAAT flag, so srrevamp gets it
+      and both wand base attacks among them). refdata exports no MAAT flag, so OpenSRO gets it
       wrong both ways:
       - plain swings pass mastery 0 (round 505), where the engine scales the CH, staff and wand
         swings;
@@ -474,7 +474,7 @@ In order. Each is checked off here when it ships in a release, with its round in
       the plain-ATTACK tick of `CGCharAutoCommandActor` (the skill tick 0x4ae590 computes the same
       band, but only for a skill that needs a target -- see round 519 below); the keep-up's REPEATS are gated by the reach test (`session.keepUpInReach`) -- a
       repeat out of reach ends the run -- and since the 2026-09-20 playtest the first click and a
-      cast are too. **Round 519 built the walk on the client** (srrevamp's server does not drive
+      cast are too. **Round 519 built the walk on the client** (OpenSRO's server does not drive
       player movement): `CombatNet.approach_band`/`in_reach`/`approach_point` mirror `combat/reach.go`,
       the BCRadius comes from characterdata col 50 by code name, the weapon's Range from itemdata
       col 94 (0 while broken), a skill's from its level's own skilldata col 21; an out-of-reach
@@ -489,7 +489,7 @@ In order. Each is checked off here when it ships in a release, with its round in
       +2)"), where the same run before the change logged "attack refused: too far away". Still
       open:
       - a keep-up repeat that finds the target out of reach ends the run (the engine walks again);
-      - **a filed server departure**: srrevamp's server reach-gates the `Target_Required` 0 rows
+      - **a filed server departure**: OpenSRO's server reach-gates the `Target_Required` 0 rows
         that deal damage (the exporter's `ZeroDamage` 0, run over the box's skilldata tables):
         147 China board rows, every level of the
         15 `SKILL_CH_COLD/FIRE/LIGHTNING_GIGONGTA_A..E` skills, all `Basic_Activity` 1. The engine's
@@ -513,7 +513,7 @@ In order. Each is checked off here when it ships in a release, with its round in
         refusal, the walk releases only inside the stop distance (`CombatNet.approach_releases`), a
         margin of at least 3 units (`int(d) <= reach + 2` holds for every d below reach + 3, plus
         whatever the reach exceeds the stop by); and a "too far away" refusal of an attack the walk
-        released walks again, up to `CombatNet.APPROACH_RETRY_CAP` (3, srrevamp's own) times -- a
+        released walks again, up to `CombatNet.APPROACH_RETRY_CAP` (3, OpenSRO's own) times -- a
         plain swing only since round 534: a refused SKILL is not sent again, since the client plays
         the cast when the request goes out, and the server now charges nothing for a cast refused as
         too far away (`session/skill.go` tests the reach before it spends HP/MP or arms the cooldown,
@@ -627,7 +627,7 @@ In order. Each is checked off here when it ships in a release, with its round in
       **read** in round 223: that update is the PC's 1.0-second timer job (`CGObjChar::Create`
       registers it with `fld1`; the timer vector is ticked by `CGObjChar::Update` with the main
       loop's seconds delta), so the stance lasts 20 s -- and berserk's 60 s and regen's 4 s are
-      read in the same pass (`docs/protocol/character_state.md`). Left: srrevamp's server carries
+      read in the same pass (`docs/protocol/character_state.md`). Left: OpenSRO's server carries
       no battle-state byte, so other players do not see the stance.
 
 ## Next up
@@ -667,7 +667,7 @@ region, x, y, z) and the archive has no other NPC table, so there is no authored
 Any direction this project turns an NPC would be invented. Not an open question.
 
 **Blocking is done** (hundred-and-twenty-second round): each NPC carries a capsule sized from its
-own geometry, on the layer the player masks and the camera does not. `SRREVAMP_QA_NPCBODY=1`
+own geometry, on the layer the player masks and the camera does not. `OPENSRO_QA_NPCBODY=1`
 reports the capsule and whether a ray is actually stopped — 5 of 5 in Jangan town.
 
 **What is left**: nothing on this item. NPCs stand, animate, are named, and are solid.
@@ -675,7 +675,7 @@ reports the capsule and whether a ray is actually stopped — 5 of 5 in Jangan t
 **Animated, and properly skinned** (hundred-and-tenth round). `.bms` does carry per-vertex
 skinning after all -- a bone palette and two weighted influences per vertex, in their own section
 pointed at by header word `0x10`, which is why an audit of the 44-byte vertex record found none.
-NPCs now deform correctly and animate; `SRREVAMP_NO_IDLE_ANIM=1` turns animation off.
+NPCs now deform correctly and animate; `OPENSRO_NO_IDLE_ANIM=1` turns animation off.
 
 ### 2. Monsters as real models — **done** (hundred-and-fourteenth round)
 Verified against a live server rather than asserted: `Mangyang -> mob\china\mangnyang.bsr` and
@@ -737,7 +737,7 @@ are not drawn.
 
 ### Rendering against a real server
 `qa_shot.sh --server` starts the server in memory on a spare port and signs the client in
-(`SRREVAMP_QA_SERVER`, `--say` to send a chat message). Every render before this was of a client
+(`OPENSRO_QA_SERVER`, `--say` to send a chat message). Every render before this was of a client
 with no server, which is why the character was bare, the health bar blank and the panels empty in
 all of them. Use it for anything the server owns.
 
@@ -863,7 +863,7 @@ live check is still to run, so this closes when the operator turns it on (`deplo
 "Monster spawn push (off by default)"); (4) ~~`client/docs/RELEASE_NOTES.md`
 is a committed snapshot~~ — done at merge: the release workflow fetches tags and runs
 `bundle_docs.sh` before the export, and `internal/systems/bundled_docs_test.go` keeps the committed
-copies equal to `docs/`; (5) the GM run's `SRREVAMP_QA_COMMANDS` verification used frame ticks
+copies equal to `docs/`; (5) the GM run's `OPENSRO_QA_COMMANDS` verification used frame ticks
 because a `SceneTreeTimer` did not fire inside a movie-writer run — worth understanding; (6) ~~**a real bug
 the tools surfaced**: every zone change prints `Trying to assign invalid previously freed instance` from
 `_tick_idle_animations` (World3D.gd:3406) ~125 times~~ — fixed at merge (round 214): the raw
@@ -875,7 +875,7 @@ clears the caches and resets the viewport's `debug_draw`, the scene's `Environme
 a batch into a dead world (round 558's one `SCRIPT ERROR` per drop is 0). **What this did not
 settle**: the tester's white ground after a reconnect was not reproduced on the render box (round
 558, Mesa/VirtualGL: pass 2 textured to the fourth decimal of pass 1's frame mean, on both routes
-and both timings); the tester's `user://logs/srrevamp.log` from a reconnect — the second
+and both timings); the tester's `user://logs/opensro.log` from a reconnect — the second
 `character/item/NPC tables loaded` block's `ground textures for 97\168.m -- N ids, N resolved`
 line, any `pk2: could not open`, any `SCRIPT ERROR`, and whether buildings and water were white too
 — decides it. `qa_shot.sh --reconnect <tick|drain>` is the run to re-measure with. Still open, and
@@ -963,7 +963,7 @@ the following:
   Middle -- the user's chosen default -- has it ON; SSAO (OURS) is off.
 - **Compatibility stays available.** It is chosen per install in `override.cfg` beside the game
   (`RendererChoice`), written from `setting/config.yaml`'s `display.renderer` or by the release's
-  `srrevamp-compatibility.bat` / `.sh`. Godot 4.2.2 does not fall back from Vulkan to OpenGL by
+  `opensro-compatibility.bat` / `.sh`. Godot 4.2.2 does not fall back from Vulkan to OpenGL by
   itself (READ).
 
 **Still open:**
@@ -1142,7 +1142,7 @@ Round 667's spike moved the pk2 reader (the directory's Blowfish decrypt, the na
 path lookup and the file read) and DdjReader's two per-pixel decodes into a GDExtension. The build,
 the parity check, the negative and the Windows cross-build are in native/README.md. The
 measurement, warm and cold, is in WORLD_ISSUES.md, round 667. The rest of the parse time, ranked by
-what the same `SRREVAMP_PARSE_PROFILE=1` Jangan entry measured with the native readers ON:
+what the same `OPENSRO_PARSE_PROFILE=1` Jangan entry measured with the native readers ON:
 
 - [x] **`BmsReader.parse`**, with `to_arrays`, `BanReader.parse` and `BskReader.parse`: native
       in round 669 (native/README.md, "The model readers"; the numbers in WORLD_ISSUES.md, round
@@ -1274,7 +1274,7 @@ what the same `SRREVAMP_PARSE_PROFILE=1` Jangan entry measured with the native r
         over TLS without a pinned sum. zig comes from ziglang.org, a single host that asks
         heavy users to use mirrors. Both are fine for a few builds a day.
 - [ ] **Low-end hardware.** The user will emulate a slow CPU and slow storage. `perf_gate.sh
-      --ab-env SRREVAMP_NATIVE=0 --cold` is the reproducible run (client/tools/README.md,
+      --ab-env OPENSRO_NATIVE=0 --cold` is the reproducible run (client/tools/README.md,
       "Native readers A/B").
 
 ### The 3D title screen (round 678) — **built: retail's intro flown over the world's own regions, the archive's frame and login window at READ positions, the operator's theme; these are left**
@@ -1380,9 +1380,9 @@ front-end's next steps.
   characters' material (an alpha uniform) instead.
 - **The sun's direction from the hour** (`SWorld::vslot_004`) is not applied anywhere (round 678's
   OPEN); a night select keeps the day's light direction.
-- **QA hooks** (round 688, `CharSelectQa`): `SRREVAMP_QA_SELECT_RACE`, `SRREVAMP_QA_LIZARD_PROBE`,
-  `SRREVAMP_QA_SELECT_LUMA` (with each body against its preview), `SRREVAMP_QA_SELECT_FRAMES`,
-  `SRREVAMP_QA_SELECT_GODOT_LIGHT` (the old materials, for a before/after); `client/tools/frontend_at_scale.tscn` measures every front-end
+- **QA hooks** (round 688, `CharSelectQa`): `OPENSRO_QA_SELECT_RACE`, `OPENSRO_QA_LIZARD_PROBE`,
+  `OPENSRO_QA_SELECT_LUMA` (with each body against its preview), `OPENSRO_QA_SELECT_FRAMES`,
+  `OPENSRO_QA_SELECT_GODOT_LIGHT` (the old materials, for a before/after); `client/tools/frontend_at_scale.tscn` measures every front-end
   button's words against its art at a UI scale.
 
 ### The customize screens (round 685) — **built: China and Europe from their own layouts, every control, the READ ranges and rules, the preview with the READ spin, zoom and idle, the turning 98/168 and 105/79 backdrops; these are left**
@@ -1452,7 +1452,7 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
 
 ### The character lobby (round 682) — **built: retail's 0x7007/0x7001 on our framing, create with the READ checks and the player's own items, 4 an account, the 7-day delete and restore, per-race start spawns; these are left**
 
-- [ ] **Deploy on srrevamp-01**: export `chargen.csv` and pass `-chargen-csv` (deploy/README.md,
+- [ ] **Deploy on opensro-01**: export `chargen.csv` and pass `-chargen-csv` (deploy/README.md,
       "Character lobby"). Until then every create there is refused with 0x403. The schema migrates
       itself; players need the new client.
 - [x] ~~**Blocked on the shard DB**~~ -- **done in round 692** (the user approved the export,
@@ -1461,8 +1461,8 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
       quests recorded by code; the ammunition is the procedure's 250; the 7-day delay and the
       restore rule are READ and agree; Str/Int 20 and HP/MP 200 are READ (were OWN DESIGN).
       charselect.md section 5, "`_AddNewChar`, read".
-- [ ] **Deploy round 692 on srrevamp-01**: stage the three `_RefCharDefault_*` CSVs and `_RefCharGen.csv`
-      and set `SRREVAMP_CHARDEFAULTS_DIR` (deploy/README.md, "Character defaults"). Until then new
+- [ ] **Deploy round 692 on opensro-01**: stage the three `_RefCharDefault_*` CSVs and `_RefCharGen.csv`
+      and set `OPENSRO_CHARDEFAULTS_DIR` (deploy/README.md, "Character defaults"). Until then new
       characters get no defaults; the server says so at boot.
 - [ ] **Default quests are recorded, not given** (round 692): `character_default_quests` holds each new
       character's level-1 default quests by code at Status 1 (China 3, Europe 2). The quest package is
@@ -1493,7 +1493,7 @@ refresh, DIVISIONINFO / GATEPORT, the agent hand-off, the edit alignment and mas
       the entity wire); death returns and the warp home go to Jangan, not `STORE_EU_GATE`;
       `leveldata.KillExp`'s Europe arm is never selected (the killer's race is not passed); Europe's
       NPCs and shops are unexercised.
-- [ ] **Item plus and avatars** in the list record are 0 / none: srrevamp keeps no plus and no avatars.
+- [ ] **Item plus and avatars** in the list record are 0 / none: OpenSRO keeps no plus and no avatars.
 - [ ] **Restore's asynchronous error**: u8 in the server, u16 in the client (READ both); u16 is sent.
 - [ ] **recovered_names**: rename `SendNameCheckRequest_858c00` (it is the delete/restore confirm
       sender) once the rename is applied in Ghidra too.
@@ -1555,7 +1555,7 @@ commit them on the main thread, and round 567 makes the terrain's collision a he
       surface pinning a capsule at a seam); the camera arm's sphere meeting the terrain from below
       (round 567's sweeps start 30 above the ground); and the 4 slanted rays both shapes miss in
       98/170 and 99/170. A `--walk` across a seam on a region with no navmesh, with
-      `SRREVAMP_QA_GROUND_RAYS`, is the check.
+      `OPENSRO_QA_GROUND_RAYS`, is the check.
 - [x] **Round 567's heightfield has no answer on its own grid lines** (found and fixed in round
       572). A vertical ray exactly on a grid line of a `HeightMapShape3D` tests one cell with
       closed barycentric bounds and misses about as often as not (the synthetic grid probe: 6,909
@@ -1600,7 +1600,7 @@ Mountain), tunnels, Jangan's gate soldiers, Constantinople's guides and the two 
         gate offers it; the client still answers "not available yet".
   - [ ] **Return scrolls**: `UseByKind` (`0x49c2b0`) cases 1-3 cast the item's linked skill (ref
         object `+0x2a0`, `FUN_0059b8d0`); the skill effect that moves the player is unread, and
-        srrevamp refuses every return scroll. When built, it goes to `returnPointFor`.
+        OpenSRO refuses every return scroll. When built, it goes to `returnPointFor`.
   - [ ] **An unknown designated gate** falls back to the race's gate (OURS); retail falls back to
         `LatestRegion` / `Pos`.
   - [ ] **A Europe character's return, live.** Since round 682 is on dev, `characterCountry`
@@ -1616,18 +1616,18 @@ Mountain), tunnels, Jangan's gate soldiers, Constantinople's guides and the two 
       12.19 under its plaza). Left open:
   - [ ] **The pick's 3 x 3 ray grid.** `FUN_0078ee20` casts a 3 x 3 grid around the cursor, the
         step INFERRED to be 1.6 % of the screen; a nearer hit replaces the best, and a centre hit
-        replaces an outer best whatever its distance. srrevamp casts the centre ray only.
+        replaces an outer best whatever its distance. OpenSRO casts the centre ray only.
   - [ ] **A ray from inside a gate's box** does not take it (Godot's `hit_from_inside` is off). It
         is unknown whether retail's triangle test `FUN_00a5b000` hits back faces. A camera inside
         Alexandria's 140-unit box cannot click that gate until the player steps back.
   - [ ] **The spawn position of a structure** is INFERRED to be its teleportbuilding row. The
         server's structure spawn was not read.
   - [ ] **Retail's arrival height**: the server copies the table's y unchanged (READ). Whether the
-        client or the re-entry snaps it to the navmesh is unread. srrevamp lands on the graph.
+        client or the re-entry snaps it to the navmesh is unread. OpenSRO lands on the graph.
 - [ ] **Which objects offer id 8 is stood in for.** Retail registers id 8 ("Select teleport area") on
       a link source's object when a byte of the point's record (`+0x34`, the last
       `RefTeleport_ExtractData` reads, `0x6a7f45`) is 1. The client's teleportdata.txt has no column
-      for it. srrevamp offers the line on every point with an outgoing link, server and client. The
+      for it. OpenSRO offers the line on every point with an outgoing link, server and client. The
       server's database column is the source, and this project has no copy of it.
 - [ ] **Walk-in portals are not served.** 69 retail links leave a point with no associated object:
       64 in and out of the Qin-Shi tomb (`GATE_JINSI_*`), two for the Donwhang cave
@@ -1635,12 +1635,12 @@ Mountain), tunnels, Jangan's gate soldiers, Constantinople's guides and the two 
       moves a player through them from a region event, not a talk: `CGObjPC::vslot_309` (`0x4ef480`) compares its event's string with `"TELEPORT"` and takes the
       link from `GObjPC::FUN_004f88d0`. The server refuses such a point with code 2, and the client
       offers nothing there. MEASURED over the export: 68 of the 69 start or end in a dungeon (a negative
-      region), which srrevamp cannot place, and the 69th is the Roc gate's return from world 40.
+      region), which OpenSRO cannot place, and the 69th is the Roc gate's return from world 40.
 - [ ] **Instanced destinations are refused** (OURS; code 0, nothing charged): every destination
       whose teleportdata column 12 (`WorldID`) is not 1. That covers the fortress gates (worlds 2,
       4, 7), the Roc gate (40), the Pharaoh tombs (57-59), the desert temples (60) and the survival,
       arena and garden maps. Retail enters the world (`GameWorldMgr_FindByID`, `0x5137ac`);
-      srrevamp has one world.
+      OpenSRO has one world.
 - [ ] **Open-world gate structures beyond the seven town gates are served but not clickable.** The
       server now serves any point with an associated object. The client still binds only the
       id-7 buildings (round 577's rule). That leaves the Delta, Storm Desert and King's Valley gates
@@ -1657,7 +1657,7 @@ Mountain), tunnels, Jangan's gate soldiers, Constantinople's guides and the two 
       charged (`TestTeleportInteractionRange`). OURS within it: the height term is dropped, and an
       NPC the server has no npcpos row for is not measured.
 - [ ] **The engine's "already teleporting" state** (0x1c14, `IGObj::GetTeleportState`, the first
-      test in `HandleTeleportUse`) is still not modelled: a srrevamp teleport completes inside one
+      test in `HandleTeleportUse`) is still not modelled: an OpenSRO teleport completes inside one
       request. With the range in place it no longer lets a second request through from the old
       gate; its lifetime is unread.
 - [x] **Donwhang's and Samarkand's gates could not be clicked** (round 650). Round 643's one-object-
@@ -1672,7 +1672,7 @@ Mountain), tunnels, Jangan's gate soldiers, Constantinople's guides and the two 
       that portal is the gate is not established. Widening the radius would be a guess. Alexandria
       (South) binds its `alex_portal` at 8.4.
 - [ ] **"After I died, the Jangan teleport stopped working" (round 675) is not reproduced.**
-      srrevamp-01's log shows the player's client never sent OpTeleportUse (0 in the whole
+      opensro-01's log shows the player's client never sent OpTeleportUse (0 in the whole
       session) after the option-1 revive took it to Jangan, though it ran into the gate's AOI cell
       and clicked around for about 4 s; six dev runs with the live flags (QA hook, real X input,
       the user's saved place and `/speed 3`, the native readers, 4K at UI scale 1.95) all went
@@ -1804,15 +1804,15 @@ interest, the paged list and the sleep"; WORLD_ISSUES.md, round 656). Left:
 ### Towns (round 674) — **built: a monster that walks into a town region, or is placed in one, is removed (READ: CGObjMob::SetCurRegion 0x4c1270); these are left**
 
 Round 674 (`docs/protocol/monster_ai.md`, "Towns"; WORLD_ISSUES.md, round 674). Needs `-regions-csv`
-on srrevamp-01 (`deploy/README.md`, "Towns"). Left:
+on opensro-01 (`deploy/README.md`, "Towns"). Left:
 
 - [ ] **The player's side of the town byte** (READ, not built): a player-vs-player attack where
       either side stands in a town is refused `0x3018` ITS_NOT_A_BATTLE_FIELD (CGObjPC slot 394,
       0x5293a0); an offensive skill cast FROM a town is refused `0x3018` (`0x3009` for a quest skill;
       the skill gate's row 13, 0x58e186, `FUN_00589d20` the "offensive" test); a thief with a cart
-      cannot cross into a town (`0x0c01`, CGObjPC slot 220, 0x4eb220). srrevamp lets a player in
+      cannot cross into a town (`0x0c01`, CGObjPC slot 220, 0x4eb220). OpenSRO lets a player in
       town attack a monster outside.
-- [ ] **Whether the nest counts a removal as a loss** (INFERRED yes: srrevamp re-arms the nest as
+- [ ] **Whether the nest counts a removal as a loss** (INFERRED yes: OpenSRO re-arms the nest as
       for a death). The engine's hook, `AI::CNest::OnHatchedRemoved` 0x560d00, still has no caller
       found.
 - [x] **What the players are sent** for a removal (round 677, READ): the despawn `0x3016`.
@@ -1820,7 +1820,7 @@ on srrevamp-01 (`deploy/README.md`, "Towns"). Left:
       0x358 (0x4c10b0 -> `CGObjChar::vslot_214` -> `CGObj::vslot_214` 0x484a80) -> slot 0x364 (the
       leave-world 0x485150) -> slot 0x3b0(0, 0, 0) (0x4c1e00 -> 0x485bb0) -> the block's slot 3
       (0x5344b0) -> `FUN_00534050`, `0x3016` with the object's id to the nine blocks' players. The
-      client fades it out over 1.5 s; srrevamp's `OpMonsterLeft` now draws the same fade.
+      client fades it out over 1.5 s; OpenSRO's `OpMonsterLeft` now draws the same fade.
 - [ ] **A monster whose leg ends exactly on a z region line** is checked only at its next cell
       crossing (OURS: the cell index files the line on the field side, worldmap.FromWorld on the
       town side). Immaterial in play.
@@ -1833,7 +1833,7 @@ on srrevamp-01 (`deploy/README.md`, "Towns"). Left:
 Round 660 (`docs/protocol/monster_ai.md`, "Nests on the map"; WORLD_ISSUES.md, round 660). Left:
 
 - [ ] **Tiger Girl stands sunk into the ground at her spot-0 nest** (the user, 2026-10-03, on
-      srrevamp-01: found her with `/tp -18864 13644`, "she was in the ground"). The server logged her
+      opensro-01: found her with `/tp -18864 13644`, "she was in the ground"). The server logged her
       hatch at x -18864.1, z 13643.6 (nest 5908, spot 0 of 11). Not yet read whether the height comes
       from the nest row, the server's ResolveCellAndHeight, or the client's placement of a unique;
       check the other six uniques' spots too. Related: a GM `/spawn` monster on the Jangan plaza deck is
@@ -1865,7 +1865,7 @@ Round 660 (`docs/protocol/monster_ai.md`, "Nests on the map"; WORLD_ISSUES.md, r
   - [ ] **MOB_SD_APIS** (rarity 8, region 74/73) has no nest of its own in the shard (its spot's
         nest is the shard's DEADWARRIOR at cap 0); not placed until a real nest is known.
   - [ ] **The Pharaoh temple** (worlds 57-59, `INS_PHARAOH_*`, EXTERNAL): its 90 npcpos rows --
-        the SD elites and the fifteen bosses -- belong to instance worlds srrevamp does not run.
+        the SD elites and the fifteen bosses -- belong to instance worlds OpenSRO does not run.
 - [ ] **The dungeons.** 1,915 npcpos rows in regions >= 0x8000 are not placed (only 330 of them
       have a shard nest at their spot, round 658).
 - [x] ~~The swapped spots run stand-in nests~~ -- the user's decision (round 660's review): the
@@ -1903,7 +1903,7 @@ Round 660 (`docs/protocol/monster_ai.md`, "Nests on the map"; WORLD_ISSUES.md, r
 
 ### Status effects on monsters and players (round 659) — **built: receive, give, DoT kills, stun/freeze/sleep/root/slow, the 0x3057 mask and its icons; these are left**
 
-Round 659 (`docs/protocol/status_effects.md`, "What srrevamp does"; WORLD_ISSUES.md round 659).
+Round 659 (`docs/protocol/status_effects.md`, "What OpenSRO does"; WORLD_ISSUES.md round 659).
 Left:
 
 - [ ] **Burn deals 0 a tick.** Its damage is `table[value2]` from the server binary's 0xc63c94 word
@@ -1921,7 +1921,7 @@ Left:
       (11), electric shock's parry (9), the curses (3, 4, 5, 6, 178..181), param 140 under
       frostbite/slow, and all of them on a character. The mask shows; the numbers do not move.
 - [ ] **Unread blocks**: the halving loop the slow, bleeding and stun blocks run on the chance (its
-      count; srrevamp rolls the base chance, never lower than retail's); the stun block's own guards
+      count; OpenSRO rolls the base chance, never lower than retail's); the stun block's own guards
       (`[esp+0x43]`, the call's fifth argument); 'tb' (+0x474, not applied) and 'csmp' (no
       applier, not applied); the target flags word whose bits 4 and 8 withhold states
       (`0x58f3f4`); fear's AI message 0x14.
@@ -1949,14 +1949,14 @@ Left:
       (`noteMonsterKilled`) with the tick's credited applier as the killer, as a blow's kill does. A
       tick that names nobody (a dead poisoner, `statuseffect.SourceRule`) counts no party.
 - [ ] **A skills table imported before round 659 lands no status, anywhere.** Round 666 made the
-      boot WARN (`skills store has NO status params`), and the srrevamp-01 procedure
-      (deploy/README.md, "Deploying the monster-epic release to srrevamp-01") re-imports it; the
+      boot WARN (`skills store has NO status params`), and the opensro-01 procedure
+      (deploy/README.md, "Deploying the monster-epic release to opensro-01") re-imports it; the
       server still boots and runs without statuses on such a table, by design (never an exit).
 
 ### Other bodies' facing (round 637 and its review follow-up) — **built: every body, this player's too, turns to face where it goes at 3 pi rad/s, and an arrival faces the way it last walked; these are left**
 
 READ and measured in `docs/WORLD_ISSUES.md`'s 637th round; the rule is `RemoteFacing`.
-`SRREVAMP_QA_FACING_LOG=1` plus `client/tools/facing_measure.py` is the measurement.
+`OPENSRO_QA_FACING_LOG=1` plus `client/tools/facing_measure.py` is the measurement.
 
 - [x] ~~The local player still snaps its own facing~~ -- **done in round 637's review follow-up**:
       it turns at 3 pi rad/s (READ: the echoed `0xB021` -> `FUN_008a5750` -> `FUN_009e0550`), with
@@ -1972,7 +1972,7 @@ READ and measured in `docs/WORLD_ISSUES.md`'s 637th round; the rule is `RemoteFa
         and restored with it. With the flag off, an entry still faces 0.
 - [ ] **The retail re-aim guard is not applied.** `0xB021` aims only when the order is in effect
       (mover `+0xac`, `obj+0x714`) or the destination is more than 5 units (squared 25.0) from the
-      mover's current POSITION (`+0x54/+0x58`). srrevamp streams positions about 2.5 units apart
+      mover's current POSITION (`+0x54/+0x58`). OpenSRO streams positions about 2.5 units apart
       and has no stop message, so the guard would only drop the first sample of each walk after a
       spawn or placement. Revisit if the move packet becomes a destination (`0x7021`/`0xB021`).
 - [ ] **The cast start's and a standing monster's turns toward a target are OURS snaps.** They
@@ -2030,7 +2030,7 @@ READ and measured in `docs/WORLD_ISSUES.md`'s 673rd round; the name rule is `Nam
 
 ### The click walk's arrival (round 649) — **the /speed stutter fixed: the step is cut to land on the point, as retail's is; these are left**
 
-Measured in `docs/WORLD_ISSUES.md`'s 649th round (`SRREVAMP_QA_MOVE_LOG=1`, a trace every tick).
+Measured in `docs/WORLD_ISSUES.md`'s 649th round (`OPENSRO_QA_MOVE_LOG=1`, a trace every tick).
 The rule is `ClickWalk.step`, READ from the mover tick `FUN_009e0e60` (`docs/protocol/opcodes/movement.md`).
 
 - [x] ~~A walk into something solid holds its order and runs in place~~ -- **done in round 649's
@@ -2050,7 +2050,7 @@ The rule is `ClickWalk.step`, READ from the mover tick `FUN_009e0e60` (`docs/pro
         within 0.5 of the one the wall stopped (OURS), the body stands at the wall facing its target
         and the reach is tested every tick. It walks on when the target moves.
     - [ ] **What a retail body shows then** (the client's display of a server-side re-issue every
-          30 ms at most) was not read. srrevamp's body stands.
+          30 ms at most) was not read. OpenSRO's body stands.
     - [ ] **The pick-up walk** ends at the wall and asks for the item from there
           (`_ask_pickup_after_walk`); the server judges the 10 units. Retail's pick-up approach was
           not read.
@@ -2066,13 +2066,13 @@ The rule is `ClickWalk.step`, READ from the mover tick `FUN_009e0e60` (`docs/pro
 Read in `docs/protocol/opcodes/movement.md`, "The heading move". The code is `SkyRun` and
 `World3D._move_by_pick_ray` / `_start_heading_run`.
 
-- [ ] **The server does not run the heading move itself.** srrevamp's movement is client-authoritative
+- [ ] **The server does not run the heading move itself.** OpenSRO's movement is client-authoritative
       positions. The server relays each position with the heading form and faces the character that
       way, but it does not step a `CGObjMoverByCmd` of its own.
 - [ ] **Whether retail's server tells the watchers of the stop** (a stop message when its own
-      navmesh ends the run) was not read. srrevamp's watchers settle on the last position.
+      navmesh ends the run) was not read. OpenSRO's watchers settle on the last position.
 - [x] ~~`+0x6e8`~~ is the mover's `+0x80`, the move kind (round 653's review, READ). The window
-      keeps only a heading run, and srrevamp tests `_has_move_target and _move_heading_run`.
+      keeps only a heading run, and OpenSRO tests `_has_move_target and _move_heading_run`.
       `+0x65c` bit 9 meaning "moving" is still INFERRED.
 - [ ] **Requests that do not end a run yet** (round 653's review; retail's skill-start and
       pick-up-start paths were not read for a mover stop): a self or ground cast, an attack sent
@@ -2125,14 +2125,14 @@ census of its texture writes).
       arrival within the server's 300 / 800. A monster click selects; the next click (or Ctrl, or
       a double click) attacks.
 - [ ] **The server's range on shop and storage.** Retail's shop handler (0x510250) measures the
-      player against the NPC (`IsWithinInteractionRange`, 300); srrevamp's shop and storage
+      player against the NPC (`IsWithinInteractionRange`, 300); OpenSRO's shop and storage
       requests carry no NPC, so the server cannot (round 701). A select or talk request naming the
       NPC would let it. The teleport request has applied the range since round 642.
 - [ ] **A stall's approach** (100 / 80, arrival flag 2 -> `FUN_0081e170`) is read, not built: no
       stalls yet.
 - [ ] **Who walks a monster attack into reach.** READ: the server (attack tick 0x4ad8e0 ->
-      `GObjPC::MoveTowardObject`; the client sends 0x7074 with no walk). srrevamp's client walks
-      (OURS) because srrevamp's server does not chase.
+      `GObjPC::MoveTowardObject`; the client sends 0x7074 with no walk). OpenSRO's client walks
+      (OURS) because OpenSRO's server does not chase.
 - [x] **A held left button does nothing** (round 701, READ: WM_LBUTTONDOWN is the only click,
       0x77c4a7 -> 0x793570; no reader of the left button byte +0x258 walks; timer 7 is the sky
       run's re-plot). Ours clicked on the release and steered toward the cursor while held.
@@ -2196,10 +2196,10 @@ is in `docs/protocol/target_window_buffs.md`. Left open:
       are not built, so the viewer's tooltip is the name, level and description only.
 - [ ] **Monster buffs.** The viewer shows a monster's buffs, but the server starts none
       (`OwnerKind` is always `OwnerCharacter`), so a monster's row is always empty.
-- [ ] **Abnormal states** (the target's `+0x2c4` bits go in the second list). srrevamp sends no
+- [ ] **Abnormal states** (the target's `+0x2c4` bits go in the second list). OpenSRO sends no
       one's abnormal states to the client.
 - [ ] **0xB0BE**, the type-3 buff that carries a name (the tooltip's "Target :" line). What it is
-      in retail is unread, and srrevamp sends nothing like it.
+      in retail is unread, and OpenSRO sends nothing like it.
 - [ ] **The byte behind `+0x36c`** (the "Not affected" state; now known to come from 0x9d25e0's
       comparison of two 32-entry arrays, 0x9c7830 / 0x9cdf00). What the arrays are is unread.
 - [ ] **A rarity-2 monster's viewer position.** Retail never writes it; ours hides the viewer.
@@ -2217,7 +2217,7 @@ is in `docs/protocol/target_window_buffs.md`. Left open:
     a type-3 CTJ_PremiumKeeper job), BFI1 and UQL1.
 - [ ] **What `+0x21c == -1` means** for an owner whose 0xB0BD object is destroyed, not attached
       (0x8a5d58).
-- [ ] **Pets** (the CICCos branch shows the viewer too). srrevamp's pets cannot be targeted yet.
+- [ ] **Pets** (the CICCos branch shows the viewer too). OpenSRO's pets cannot be targeted yet.
 
 ### Store and warehouse confirm boxes — **crash fixed (round 631); next: the retail CIFMessageBox**
 Round 631 fixed the crash the user hit on v0.1.458 (a box freed from its own button: SIGSEGV).
@@ -2392,7 +2392,7 @@ drag), the channel marks `# @ % & $`, R's `$name ` reply, the sender's echo and 
 refusals, the global chatting item's "Chat to all" window, the GM notice's line and banner, and
 `/notice`.
 
-- **Union and academy chat have no audience**: srrevamp forms no alliances and has no academy, so
+- **Union and academy chat have no audience**: OpenSRO forms no alliances and has no academy, so
   the server refuses both (the client shows the game's own refusal lines).
 - **Built in the review follow-up**: the size modes and button, bottom-stacked lines, grey idle
   tabs, the hover bar, the client-side group refusals, first-row-wins for the text table.
@@ -2403,9 +2403,9 @@ refusals, the global chatting item's "Chat to all" window, the GM notice's line 
   (round 639; its own list is below).
 - **Open questions**: whether the client strips CSV quote marks from a text row (24 first rows on
   the box's archive keep them since first-row-wins); whether retail's server strips the channel mark from the text; the
-  range of ordinary chat (srrevamp: the zone bucket); the wheel
+  range of ordinary chat (OpenSRO: the zone bucket); the wheel
   step. The user's screenshot (a private server) draws notices cyan (0, 174, 195) without the
-  "(Notice):" prefix; the binary says pink `0xffffaec3` with the prefix -- srrevamp follows the
+  "(Notice):" prefix; the binary says pink `0xffffaec3` with the prefix -- OpenSRO follows the
   binary; the private client's source for the cyan is not known.
 - "Remaining turns" in the global window overruns into its count (the authored static is 55 px
   wide; our font draws the caption wider).
@@ -2428,13 +2428,13 @@ text, and CIFRegionView's area banner from regioncode.txt and textzonename.txt.
   (INFERRED, frontend_frame.gd). The IFTVariable lookup that decides it is not read: OPEN.
 - **The area banner under the loading screen** is held and raised when the screen lifts (OURS);
   retail's loading state at `0x786f30` is not read.
-- **The text manager's miss** (`0x8c9bb0` for a key it lacks) is not read; srrevamp shows nothing.
+- **The text manager's miss** (`0x8c9bb0` for a key it lacks) is not read; OpenSRO shows nothing.
   MEASURED: every one of the box archive's 146 region codes has its `_01` text.
 - **Which notices stack over the area banner** (draw order between interface children 0x14, 0x23
-  and 0x53) is not read; srrevamp draws the area banner under both notices.
+  and 0x53) is not read; OpenSRO draws the area banner under both notices.
 - **The user's reference pictures** (a private server) show the town title as "Western China
   Donwhang" in (169, 246, 253); the box's archive says "Donwhang" and ifregionview.txt
-  (61, 253, 255). srrevamp follows the archive.
+  (61, 253, 255). OpenSRO follows the archive.
 
 ### The system message window and the saved quick slots (round 639) — **built; these are left**
 
@@ -2444,13 +2444,13 @@ What round 639 read and built is in `docs/protocol/system_message.md`.
   its five checkboxes, their art (set in code, not read) and `Setting\chop.dat`. The filter button
   does nothing yet; the filters stay at the no-file defaults (FIGHT off, the rest on).
 - **The system window's auto-hide option** (round 641 read it: `settings+7`, the Game options'
-  "System UI Autohide", `Setting\SROptionSet.dat` tag 0x7d8). srrevamp keeps auto-hide always on at
+  "System UI Autohide", `Setting\SROptionSet.dat` tag 0x7d8). OpenSRO keeps auto-hide always on at
   the user's request, with no option. OPEN: retail's default with no file (the block's initializer
   was not found), and the Game options checkbox itself, if the user later wants the toggle.
 - **The chat's whisper list** (ID 51) and its button (ID 14, `0x7a99d0`) are not built. The
   auto-hide's rect test already counts the list's hidden rect above the window (READ, round 641).
 - **Guide lines.** The window shows retail's type-6 "[Guide]" tips (`0x789e53`) when they arrive;
-  srrevamp's server sends none. (The unique notices are built: round 657.)
+  OpenSRO's server sends none. (The unique notices are built: round 657.)
 - **Unique notices (round 657, open parts).** Built: 0x0C05/0x0C06 in `OpUniqueNotice 0x0110`, the
   top-damage-group killer, the line choice and the blue GDR_WARNING_WND banner
   (`docs/protocol/unique_notice.md`). Round 661's rotation announces each hatch through the spawn
@@ -2460,11 +2460,11 @@ What round 639 read and built is in `docs/protocol/system_message.md`.
   `/spawnunique` carries the disclosed attack curve and no attack skill. A GM-spawned unique's model
   load stalls the frame (round 657's live check); round 661 measured a rotation's respawn in view
   (see its WORLD_ISSUES entry).
-- **Retail's messages for srrevamp's refusals.** The server sends English text; retail sends a code
+- **Retail's messages for OpenSRO's refusals.** The server sends English text; retail sends a code
   that `0x7b8b40` turns into the UIIT_ message.
 - **Quest EXP** writes no line (only a kill's result carries the EXP).
 - **The quick slots on the server.** Retail saves them with 0x7158 and loads them from the character
-  data (`0x8a7c50`); srrevamp keeps them client-side at the user's request (OURS,
+  data (`0x8a7c50`); OpenSRO keeps them client-side at the user's request (OURS,
   `user://quickslots.cfg`). A new character's default slots (`0x786f30`) and dragging a slot off the
   bar to clear it (vslot 26 `0x60c1b0`) are still not wired, as before.
 - **The paper doll's step** is 36 degrees a click at the user's request (OURS); a held arrow repeats
@@ -2578,7 +2578,7 @@ drawing, round 643). Left:
 The user decided on 2026-09-26 that early testing gets no seasonal decorations. Christmas,
 Halloween, the China open-beta (OBT) event set and the summer festival set are left out of every
 region's objects before any model is read (`SeasonalObjects`; `World3D._objects_prepare`). Each set
-comes back on its own with `SRREVAMP_SEASONAL=christmas,halloween,obt,summer` (any subset), or with
+comes back on its own with `OPENSRO_SEASONAL=christmas,halloween,obt,summer` (any subset), or with
 `seasonal="christmas,halloween"` under `[world]` in `user://settings.cfg`. The value must be
 quoted: unquoted, the whole file fails to parse, every setting reads as its default, and the next
 save keeps only the keys above the bad line. The two sources are added together. They are read
@@ -2598,7 +2598,7 @@ layer-key lead). Left open:
 ### Buffs on the server (skills epic, round 616) — **started: the book, Grass Walk's speed, cancel, Ghost Walk**
 The server starts an action-kind-3 cast as a record in the caster's book, ends it at its time or
 on cancel, and moves the caster for a Ghost Walk; the wire and every rule's source are in
-`docs/protocol/skill_buffs.md`. srrevamp-01 needs the skills CSV re-exported and re-imported
+`docs/protocol/skill_buffs.md`. opensro-01 needs the skills CSV re-exported and re-imported
 (`deploy/README.md`, "ROUND 616"). Left open, each with what is already read:
 - [ ] **The other publishing params.** Only `hste`/`hst3` (run speed) reach anything. `defr`,
       `defp`, `apau`/`apru`, `hpi`/`mpi`, `irgc`, `er`/`terd`/`thrd` are read in `0x594ac0` (the
@@ -2648,14 +2648,14 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       `dttp` and `efr` kind-2 (`+0x290`) branches, and the book's state bit set that Action_Overlap
       and `ovl2` fill (`SkillBook::SetGroupBits` 0x59dc00 / `FUN_0059db10`). Fire Protection no longer
       stacks; a second Grass Walk variant is refused 0x300c while one runs, as retail refuses it. The
-      whole table is driven by `TestRecastRuleCensus` (`SRREVAMP_SKILLS_CSV`). Still open:
+      whole table is driven by `TestRecastRuleCensus` (`OPENSRO_SKILLS_CSV`). Still open:
       - the `lnks` path `FUN_0059dc80` is built (round 636's review and its follow-up: the gate's
         call for the 32 trap rows, the target test's for the 276 Target_Required 1 rows, through
         the caster's link entries). Still open there: retail's link record ending the target's
         record when it ends (a caster's death or logout leaves the target's buff running here);
         whether a trap's record ends with its object;
       - row 16's `hide` rule (the caster's vslot 0x100 state 4: which state is not read);
-      - the running-action half of `FUN_0059db10` (a buff between its cast and its engage; srrevamp
+      - the running-action half of `FUN_0059db10` (a buff between its cast and its engage; OpenSRO
         engages at the cast);
       - the buff restore through `CTJ_SkillKeeper` slot 12 (`FUN_00650e70`, a SetGroupBits caller);
       - the category end's other callers: movement (mask 1) and berserk (mask 4) end nothing by the
@@ -2672,10 +2672,10 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       move while its own wall stands; attacks and skills go out where the player stands; a move it
       dropped is answered with the held position). Ghost Walk is refused while walled (READ,
       0x3009). Left open:
-      - summons, mercenary scrolls and mounting while walled (retail refuses them; srrevamp has
-        none), and knockback/knockdown skipped on a walled target (srrevamp's blows have none);
+      - summons, mercenary scrolls and mounting while walled (retail refuses them; OpenSRO has
+        none), and knockback/knockdown skipped on a walled target (OpenSRO's blows have none);
       - the attacker's-imbue term of the absorb test;
-      - player-versus-player blows on a wall (srrevamp has none);
+      - player-versus-player blows on a wall (OpenSRO has none);
       - which sounds retail plays for a kind-7 entry (the monster's blow sound is kept).
 - [ ] **The duration extension** (`ctx+0x24`): `RPBU`/`STDU`/`DTDR` through `FUN_005a0330`'s map at
       book `+0x244` -- needs whatever files entries there (passive skills, INFERRED).
@@ -2684,7 +2684,7 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       built, round 636.)
 - [x] **Buffs on entering view -- round 646.** READ: retail's spawn record (0x3015 / the group
       spawn) carries the owner's buffs and the client attaches them to the new body with the start
-      effect skipped (skill_buffs.md "Entering view"). srrevamp's replay of `OpBuffStart`s after the
+      effect skipped (skill_buffs.md "Entering view"). OpenSRO's replay of `OpBuffStart`s after the
       body was already sent; the client now keeps them per connection (`BuffRoster`) and applies
       them whenever a body is built (world entry, a zone change's arrival, `OpEntityEntered`, a
       monster body), and a walled caster's warp landing is taken. Left open:
@@ -2693,12 +2693,12 @@ on cancel, and moves the caster for a Ghost Walk; the wire and every rule's sour
       - `OpEntityEntered` carrying the buff block itself, as retail's spawn does (a contract change;
         the separate replay stands in for it);
       - the `efta` creator byte (the Bard guards and dances, the Cleric group recovery pick a
-        different effect variant for their caster, `FUN_00a53850` `+0xbc`), not on srrevamp's wire;
+        different effect variant for their caster, `FUN_00a53850` `+0xbc`), not on OpenSRO's wire;
       - the server's own arrival is still the centre region's middle (`worldmap.Landing`), and the
         client moves a Jangan arrival onto its spawn spot itself. Since the review, the server knows
         that spot (`worldmap.LandingSpot`, kept in step with `ZONE_SPAWN_LOCAL` by hand), but it
         does not land there;
-      - view ranges: srrevamp's server has none (a zone -- under `-single-frame` the whole world --
+      - view ranges: OpenSRO's server has none (a zone -- under `-single-frame` the whole world --
         is one broadcast bucket), so "walks out of view and back" does not occur yet.
 
 ### Berserk's look and mechanics (round 651) -- **the look, the sounds and the view built; the speed is OPEN**
@@ -2718,17 +2718,17 @@ it from NetClient's `body_modes`. Left:
   the change is: scale the run speed by v/100 on activation and back at the end, through the buff
   book's speed packet (as `/speed` does), and cut 174-177 in the damage pipeline.
 - **The hwan level (`+0x764` client, `+0x1c58` server)**: `SYSTEM_CH_HWAN2MODE` (blue, x1.2) and the
-  party link mode (`SYSTEM_CH_HWAN2LINK*`, extra byte 1) are not drawn; srrevamp has no hwan level.
+  party link mode (`SYSTEM_CH_HWAN2LINK*`, extra byte 1) are not drawn; OpenSRO has no hwan level.
 - **skillaniset2's SYSTEM_CH_HWANMODE row**: DamageEfp `hiteffect\hit_4_hwan.efp` and the weapon trail
   (160, 200/255/255/255, ONE, `mirage_texture_hwan.ddj`) while berserk -- where the client swaps
-  them in is not traced; srrevamp draws neither.
+  them in is not traced; OpenSRO draws neither.
 - **The teleport's first link.** That a zone change ends berserk rests on the re-entry chain
   (CharDataSavingCompleted -> 0x34b5 -> 0x34b6 -> the entry rebuilt, whose world entry sets body
   mode 2/4); the step from `GObjPC::HandleTeleportUse` (0x513590) to the char-data save is not traced.
 - **The flash's starting RGB**: the weather manager's constructor colour (`_DAT_00de523c`) is not
-  read; srrevamp flashes white.
+  read; OpenSRO flashes white.
 - **The look's light terms.** Retail replaces the material's diffuse and scales the ambient light
-  by the pulse colour (c11/c10/c14); srrevamp's one albedo stands for both (INFERRED mapping).
+  by the pulse colour (c11/c10/c14); OpenSRO's one albedo stands for both (INFERRED mapping).
 
 ### Berserk potions and Energy of life (round 632 and its review) -- **built**
 
@@ -2742,7 +2742,7 @@ of berserk (param 60); COOLTIME keys are per item for key 0; a GM account skips 
   Their timers end them on real time (OpCompositeEnd), and logout forgets a character's turn,
   charges and expired entries.
 - **FUN_004a0600's movement stop.** `CGObjPC::vslot_300` (`0x4ef340` -> `FUN_004a9430`) runs before
-  AddHwanCount -- INFERRED a movement stop (it may send `0xB023`); no srrevamp item use stops
+  AddHwanCount -- INFERRED a movement stop (it may send `0xB023`); no OpenSRO item use stops
   movement. Read what `0xB023` carries and what `+0x4c0` tests before mirroring it.
 - **Other composite kinds** (UIU1 of a TypeID4-4 item, BCS1, BFI1, PSU1, UQL1, USL1, USU1) are
   refused; only the Energy of life's UIL1 + 0x706874 UIU1 is modelled. UIL1's "P" flag and the
@@ -2751,7 +2751,7 @@ of berserk (param 60); COOLTIME keys are per item for key 0; a GM account skips 
   (`UI_SILKMALL::FUN_00655ec0`) are not recovered; ours disables it.
 - **Quest items 5921/10491**: the use path's quest gates are item-agnostic -- `0x185f` is
   `CGObjPC::QB_IsBlocked(8)` over a quest-script block mask (`pc+0x217c`), and the event-0xc
-  listener list (`FUN_0063d4a0`/`FUN_0063d190`) can veto -- srrevamp has neither state, so
+  listener list (`FUN_0063d4a0`/`FUN_0063d190`) can veto -- OpenSRO has neither state, so
   nothing stops their fill. Who registers event-0xc listeners is not traced.
 
 ### Particle effects (`.efp`): **decoder done (round 619), renderer and skill effects (round 620), Link modes (round 621)**
@@ -2845,7 +2845,7 @@ Still open, by the files each would add:
   the driver's per-sector bounds and a held camera leave it almost nothing to do; the saving and the
   split are in WORLD_ISSUES, round 647. What is left:
   - **Drawing the skinned instances.** At the reeds (98/157 at 900, 900, 1280×720) the animated
-    objects still cost +4.94 ms over `SRREVAMP_NO_MAP_ANIM=1` (11.11 against 6.17 ms), with 40
+    objects still cost +4.94 ms over `OPENSRO_NO_MAP_ANIM=1` (11.11 against 6.17 ms), with 40
     reeds on one pose. Pausing every pose changes nothing (+0.20, the drift); drawing them unskinned
     takes 4.70 ms off and the GPU time from 3.79 to 1.50 ms at the same 1,013 draws. So it is Godot
     4.2's GL Compatibility cost of drawing skinned instances, pose or no pose (MEASURED; that the
@@ -2942,7 +2942,7 @@ The server will send hundreds of monsters per view (the densest 5 x 5-region win
 spawns holds about 500). Round 655 made the client draw them: one template per species model
 (`MonsterDraw.Templates`), bodies built a frame budget at a time, clips posed only in range and in
 view, no body outside the loaded regions, and no full monster list after a hit, a kill or an own
-attack result. `SRREVAMP_QA_MOBS=<N>` and the perf gate's `mobs` site measure it.
+attack result. `OPENSRO_QA_MOBS=<N>` and the perf gate's `mobs` site measure it.
 
 - [ ] **A species seen for the first time is still assembled on the main thread**: 4-14 ms for most
       Chinese field species, 133 ms for the first (cold archive) and 791 ms for
@@ -2975,7 +2975,7 @@ attack result. `SRREVAMP_QA_MOBS=<N>` and the perf gate's `mobs` site measure it
   - [ ] **The corpse's time is the client's.** Retail's server keeps a dead monster in life
         state 2 until `CGObj::Update` (0x484d10) finds its dead time past its DecayTime
         (characterdata column 13; 5 s for most monsters), then deletes it and sends `0x3016`
-        (READ). srrevamp's server drops the monster at its death and sends nothing more, so the
+        (READ). OpenSRO's server drops the monster at its death and sends nothing more, so the
         client holds the corpse for the species' DecayTime from when it learns of the death and
         fades it then (OURS). A server-sent removal would put it on the server's clock.
   - [ ] **The CICMonster +0x7b0 branch** (a 0 s fade-out for the monster whose ref is the id at
@@ -3063,7 +3063,7 @@ Retail draws water from each `.m` block's PlaneType/PlaneHeight, not from the `.
 83 objects fell to 60 once each `.o2` entry was assigned to the region whose heightmap explains
 its height (eighty-fifth round). Round 643 replaced that height test with the record's own owner
 field (bytes 28-29, READ): every object now stands in its owner region's frame. The 60 have not
-been re-counted under the new rule (`SRREVAMP_QA_FLOAT`).
+been re-counted under the new rule (`OPENSRO_QA_FLOAT`).
 
 ### The `cj_s` city wall's copies — **one object since round 643**
 The wall is one key (owner 97/168), listed by five regions; `World3D._placed_objects` places it
@@ -3074,7 +3074,7 @@ recorded is no longer involved.
 It was 232 objects world-wide, not the eight Jangan ones the count named. The graph resolved an
 object by its **first** mesh only, and a building's walkable surface is one piece among many in
 alphabetical order — `cj_luxu_floor.bms` is the fourth of twelve. All of an object's meshes are
-read and merged now. Every region around Jangan places 100% of its objects, and `SRREVAMP_QA_SCAN`
+read and merged now. Every region around Jangan places 100% of its objects, and `OPENSRO_QA_SCAN`
 finds none of the eight among the spots that put a player under solid geometry; what it still
 finds is tree canopies and balloons, which is what walking under a canopy looks like.
 

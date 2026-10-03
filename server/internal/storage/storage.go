@@ -32,9 +32,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/OpenSRO/srrevamp/server/internal/account"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/account"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 )
 
 // DefaultCapacity is the warehouse's slot count for every account.
@@ -59,7 +59,7 @@ import (
 // warehouse by 30 (CIFStorageRoom::Create builds 0x1e slot controls and
 // addresses a slot as cell + page*0x1e, client 0x6cd350), so 50 shows as a
 // full page and a page of 20. It is the size of every account whose
-// `accounts.chest_size` is still 0 -- srrevamp's stand-in for the missing
+// `accounts.chest_size` is still 0 -- OpenSRO's stand-in for the missing
 // `_ChestInfo` row. The warehouse expansion item (round 498, Expand) stores a
 // size from here upwards, capped at MaxCapacity.
 const DefaultCapacity = 50
@@ -160,7 +160,7 @@ func (s *Service) Capacity(ctx context.Context, characterID int64) (int, error) 
 //
 // One divergence, disclosed: kind 3 answers 2 (a plain failure) when the size
 // byte is 0 (0x4e1935 `test al,al`), because a real user always has a
-// `_ChestInfo` row; srrevamp's 0 means "no row, the default size" and grows
+// `_ChestInfo` row; OpenSRO's 0 means "no row, the default size" and grows
 // from DefaultCapacity instead.
 func (s *Service) Expand(ctx context.Context, characterID int64, amount int) (int, error) {
 	if s.ChestSizes == nil {

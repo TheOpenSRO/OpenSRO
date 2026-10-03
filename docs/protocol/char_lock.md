@@ -122,9 +122,9 @@ neighbours are named — `0x2c0a` is `PARTYERR_TOO_LOW_CREATOR_LEVEL`, `0x680f` 
 string; a transient race guard the client should never provoke does not. This is
 corroboration, not proof: an unnamed code is also just an unnamed code.
 
-## For srrevamp
+## For OpenSRO
 
-**Nothing to wire.** srrevamp's Go server does not have this shape — its
+**Nothing to wire.** OpenSRO's Go server does not have this shape — its
 character mutations are synchronous inside a request, so there is no window for
 a second request to race a database round trip. The value of this round is that
 eleven gates that read an unexplained byte now read a named one, and that the

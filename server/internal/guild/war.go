@@ -2,7 +2,7 @@ package guild
 
 // Guild war. RECOVERED 2026-09-17 from FUN_005c6b60 (1,102 bytes), the
 // declaration handler, which docs/protocol/guild.md listed under "What is not
-// recovered". Nothing in srrevamp declares a war yet; this is the rule set it
+// recovered". Nothing in OpenSRO declares a war yet; this is the rule set it
 // would need.
 //
 // Located the same way the alliance rules were: every code the function raises
@@ -74,7 +74,7 @@ const (
 	ErrWarBreakWar = 0x4c46
 )
 
-// CanDeclareWar reproduces FUN_005c6b60's ladder for the part srrevamp can
+// CanDeclareWar reproduces FUN_005c6b60's ladder for the part OpenSRO can
 // express. It has no distance, no guild-master enforcement and no arena, so
 // what survives is the target's existence, the two caps and the two
 // exclusions -- in the engine's order, because a validator returning the right
@@ -107,7 +107,7 @@ func CanDeclareWar(declarerHostiles, targetHostiles int, targetGuildID int64, al
 //	PointGain x2  Data1  Data2
 //
 // so a war has a TYPE, a victory-point index, **staked gold**, an end time, the
-// two guilds and a per-side point total. srrevamp models none of this; it is
+// two guilds and a per-side point total. OpenSRO models none of this; it is
 // recorded because the shape rules out the simplest reading -- a war is not a
 // boolean between two guilds, and any implementation that starts there will
 // have to be undone.

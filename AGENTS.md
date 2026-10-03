@@ -1,7 +1,11 @@
-# Working on srrevamp
+# Working on OpenSRO
 
 A clean-room reimplementation of a Silkroad Online–style MMO: Godot 4.2.2 client, Go server. This
 file is what an agent needs before touching anything. It is tool-neutral; `CLAUDE.md` imports it.
+
+The project was called srrevamp until 2026-10-04 (round 704). Commits and tags from before then,
+and any box directory or memory note not yet moved, still use that name; the code, the docs and
+the `OPENSRO_*` variables use the new one (`docs/WORLD_ISSUES.md`, round 704).
 
 ## Hard rules
 
@@ -36,7 +40,7 @@ file is what an agent needs before touching anything. It is tool-neutral; `CLAUD
 This is the thing to get right, because it is where the time goes.
 
 `client/tools/qa_shot.sh` runs the client against real archives, puts the player somewhere, frames
-the camera, and collects frames. It drives the `SRREVAMP_QA_*` hooks documented at the top of
+the camera, and collects frames. It drives the `OPENSRO_QA_*` hooks documented at the top of
 `client/scripts/World3D.gd`:
 
 | Hook | Answers |

@@ -29,7 +29,7 @@ const (
 // imbue brings: with 'att' value[4] set and the context's +0x78 (filled from
 // the attacker's book[0x79], the imbue record) non-zero, the imbue's damage
 // joins the wall entry scaled by att[4]/100 and its magical half is tested
-// too (0x58ef1f..0x58f03e). srrevamp's monsters carry no imbue, so the term
+// too (0x58ef1f..0x58f03e). OpenSRO's monsters carry no imbue, so the term
 // never applies here (not modelled). A blow with no 'att' at all passes both
 // clauses.
 func WallAbsorbs(mask, att uint32) bool {
@@ -67,7 +67,7 @@ type WallHit struct {
 // type the wall does not cover costs it nothing, and a mixed 4|8 blow on a
 // one-type wall would cost it the covered half while the caster takes the
 // blow (no 'att' row carries both bits -- MEASURED, 0 of 31,605 -- so
-// srrevamp's single-type blows never split). damage(w) is the blow against
+// OpenSRO's single-type blows never split). damage(w) is the blow against
 // the wall's own defence, asked only when the wall shares a type with it.
 // Combat_ApplyActionEffects then takes the damage off the HP: `if (HP < dmg)
 // HP = 0; else HP -= dmg` (the +0x10 != 0 branch of 0x593800).
@@ -142,7 +142,7 @@ func (b *Books) WallRecord(ownerID int64) (Record, bool) {
 // 'ovl2' for a record on another character), book[0x77] zeroed, the motion
 // state reset (vslot 0x55c(0, 0xff, 0)) and 3 returned, which the book update
 // ends as any end: its contributions go and its token goes out as 0xB072.
-// srrevamp ends it through the same path as every end (endLocked); a wall row
+// OpenSRO ends it through the same path as every end (endLocked); a wall row
 // carries no 'ovl2', 'lnks' or speed run (MEASURED on the 61 rows), so the
 // two ends clear the same state.
 //

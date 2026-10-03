@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/OpenSRO/srrevamp/server/internal/durability"
+	"github.com/OpenSRO/OpenSRO/server/internal/durability"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 )

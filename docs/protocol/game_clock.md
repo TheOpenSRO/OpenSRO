@@ -69,12 +69,12 @@ day/night **phase** at `+0x26a3`:
   that compares the time against `key+0xc`).
 
 So the retail client renders the environment at a **fixed phase of 0.5** -- midday -- and
-the server clock above has nothing to do with the sky. srrevamp's
+the server clock above has nothing to do with the sky. OpenSRO's
 `ENVIRONMENT_REFERENCE_TIME = 0.5` is the binary's own value, no longer a disclosed choice.
-A live day/night cycle would be srrevamp's design; the engine's machinery for one (the
+A live day/night cycle would be OpenSRO's design; the engine's machinery for one (the
 rate, the shift, the sun angle) is recorded here for that day.
 
-## What srrevamp does
+## What OpenSRO does
 
 Nothing, and correctly so: the client samples the environment at the same fixed 0.5 the
 retail client does. A `0x34be`-shaped time sync would feed only a `ServerTime` display.

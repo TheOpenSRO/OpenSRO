@@ -51,10 +51,10 @@ func _initialize() -> void:
 		quit(1))
 	# The root enters the tree only after _initialize returns.
 	await process_frame
-	var mapm_path := OS.get_environment("SRREVAMP_MAPM_PATH")
+	var mapm_path := OS.get_environment("OPENSRO_MAPM_PATH")
 	# The QA path loads a fixed region instead of the server's zone; the rule
 	# under test is the logged-in path.
-	OS.unset_environment("SRREVAMP_MAPM_PATH")
+	OS.unset_environment("OPENSRO_MAPM_PATH")
 	_net = root.get_node_or_null("NetClient")
 	_check(_net != null, "the NetClient autoload is registered")
 	if _net == null:
@@ -72,7 +72,7 @@ func _initialize() -> void:
 	_net.set("last_enter_world_result", saved_result)
 	_net.set("current_zone", saved_zone)
 	if mapm_path != "":
-		OS.set_environment("SRREVAMP_MAPM_PATH", mapm_path)
+		OS.set_environment("OPENSRO_MAPM_PATH", mapm_path)
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)

@@ -1,7 +1,7 @@
 # The buff bar: `CIFMagicStateBoard`
 
 Round 618 records here how retail's buff bar works. The bar is the row of active-buff icons to the
-right of the HP bar. srrevamp's version is `client/scripts/ui/hud/hud_buff_board.gd`, and it reads
+right of the HP bar. OpenSRO's version is `client/scripts/ui/hud/hud_buff_board.gd`, and it reads
 skill rows through `skill_buff_catalog.gd`.
 
 Every address is in `sro_client.exe`: the dump is `/var/tmp/decomp_client` and the disassembly is
@@ -23,7 +23,7 @@ The labels are:
 | Classes | `CIFMagicStateBoard` (vtable 0xdd0564), a `CIFStateSlot` per icon (0xdd068c), a `CIFGauge` per time bar (0xd9af64) | READ (RTTI) |
 | Lists | The main list is at `+0x370`. The second list, at `+0x37c`, takes a skill with `bbuf` when the add's param_4 is 0. **New**: the 0xB0BD handler always passes 0 (asm 0x8a5cbc..0x8a5cc6: `push ebp` with ebp = 0), so every `bbuf` buff from the server goes to the second list. | READ |
 | Order | Arrival order: 0x803ec0 inserts before the head sentinel. | READ |
-| Zero duration | **New**: 0x7fda20 refuses the add when the skill has a `dura` whose first value is 0, so no icon appears. srrevamp maps this to a durationMs of 0. That mapping is INFERRED. | READ |
+| Zero duration | **New**: 0x7fda20 refuses the add when the skill has a `dura` whose first value is 0, so no icon appears. OpenSRO maps this to a durationMs of 0. That mapping is INFERRED. | READ |
 | Remaining time on add | **New**: the add's param_6 is the time left, and elapsed is set to total − param_6 (0x8048c0). 0xB0BD passes 0. The contract's `remainingMs` fills this slot. | READ |
 
 ## Layout (0x7ffc10)
@@ -148,7 +148,7 @@ The world passes (`SWorld`, `Map`, `CObjRendererVS`) set their own filters befor
 - The effect is that retail shows 20 of the 32 columns and rows, texels 0 2 4 5 7 8 10 12 13 15 16
   18 20 21 23 24 26 28 29 31, with no blending. That is the "lower resolution" look.
 
-**srrevamp** (`HudBuffBoard.AUTHENTIC_ICONS`, a static var, on):
+**OpenSRO** (`HudBuffBoard.AUTHENTIC_ICONS`, a static var, on):
 - The icon's Image is read with `UiBuilder.load_image`. `HudBuffBoard.retail_icon_image` samples it
   once, in integer arithmetic, to those 20 × 20 texels, and the result is drawn with
   `TEXTURE_FILTER_NEAREST`.
@@ -163,7 +163,7 @@ The world passes (`SWorld`, `Map`, `CObjRendererVS`) set their own filters befor
 
 **The skill window and the hotbar** (READ): they draw the same 32 × 32 files through the same sprite
 path, into 32 × 32 slots. So each pixel lands on a texel centre, and POINT and LINEAR give the same
-picture. srrevamp's `hud_panels.gd` (`SKILL_CELL` 32) and `hud_underbar.gd` (32 × 32) already draw
+picture. OpenSRO's `hud_panels.gd` (`SKILL_CELL` 32) and `hud_underbar.gd` (32 × 32) already draw
 them 1:1 with the canvas's linear filter, which matches at UI scale 1. They are unchanged.
 
 ## The gauge (0x8056a0 per frame; 0x638310 and 0x6387d0)
@@ -191,23 +191,23 @@ INFERRED: the overlay is its own child window, so it does not fade with the icon
 
 ## Right-click (`vslot_033`, 0x800820, the WM_RBUTTONUP case)
 
-1. Only the main list is hit-tested (0xb8f3d0 per slot), at the point where the button came **up**. A slot's rect is 20 × 24, the icon plus its gauge. srrevamp tests the release point against every main-list slot. Godot delivers the release to the slot the press was on, so a press on one icon and a release on another cancels the other, and a release off every icon does nothing.
+1. Only the main list is hit-tested (0xb8f3d0 per slot), at the point where the button came **up**. A slot's rect is 20 × 24, the icon plus its gauge. OpenSRO tests the release point against every main-list slot. Godot delivers the release to the slot the press was on, so a press on one icon and a release on another cancels the other, and a release off every icon does nothing.
 2. A slot whose `+0x386` is 1 (already ending) does nothing.
 3. The entry must be kind 1, a skill buff.
 4. If the skill has `nbuf` and no `lnks`, nothing happens.
-5. `0x93f5d0(skill)` must be non-null, on both paths. Its first dword must not be `0xc0000000`, but that test is on the **send path only**; the `cbuf` box opens regardless. What this lookup is, is OPEN, and srrevamp does not model it.
+5. `0x93f5d0(skill)` must be non-null, on both paths. Its first dword must not be `0xc0000000`, but that test is on the **send path only**; the `cbuf` box opens regardless. What this lookup is, is OPEN, and OpenSRO does not model it.
 6. If the skill has `cbuf`, box 0x6ec5d0 opens instead, with type 0x20 and an empty text (`DAT_00e17460`). The box is 308 × 148 and centred.
-7. Otherwise the client sends 0x7074 `01 05 u32 skill [u32 lnks word] 00` (0x81c5b0). srrevamp sends `OpBuffCancel` 0x00F7 through `NetClient.send_buff_cancel`.
+7. Otherwise the client sends 0x7074 `01 05 u32 skill [u32 lnks word] 00` (0x81c5b0). OpenSRO sends `OpBuffCancel` 0x00F7 through `NetClient.send_buff_cancel`.
 
-What box type 0x20's OK does was not read. srrevamp's OK sends the cancel, which is INFERRED. The box's text is OPEN, so srrevamp's box is titled with the client's own `UIIT_STT_CONFIRM_BOX` ("Confirmation window") and has an empty body (OURS).
+What box type 0x20's OK does was not read. OpenSRO's OK sends the cancel, which is INFERRED. The box's text is OPEN, so OpenSRO's box is titled with the client's own `UIIT_STT_CONFIRM_BOX` ("Confirmation window") and has an empty body (OURS).
 
 ## The tooltip (0x800a10, kind 1)
 
 The tooltip's lines are, in order:
 1. `"%s %s %d"`: the name (`+0x128`, resolved), `UIIT_STT_LEVEL_LV`, and the level (`+0x60`).
    - A few mall and fortress skills show the name alone: `SN_SKILL_MALL_PRE_APRU_4W`, `SN_SKILL_ASSAULTING_SOILDER`, `SN_SKILL_CENTURION`, `SN_SKILL_MALL_PET_*` and others.
-   - Each is compared at its full length (the first against 0x19 characters, the rest through 0x47ec20 / 0x47ea60 with their own lengths), which is equality (READ). srrevamp compares for equality.
-2. `"(%s)"` with `UIIT_TOOLTIP_OPERATION_STOP` ("Not affected"), in colour 0xffff4a4a, when the slot's `+0x36c` is set. What sets that byte is OPEN, so srrevamp does not draw this line.
+   - Each is compared at its full length (the first against 0x19 characters, the rest through 0x47ec20 / 0x47ea60 with their own lengths), which is equality (READ). OpenSRO compares for equality.
+2. `"(%s)"` with `UIIT_TOOLTIP_OPERATION_STOP` ("Not affected"), in colour 0xffff4a4a, when the slot's `+0x36c` is set. What sets that byte is OPEN, so OpenSRO does not draw this line.
 3. The description (`+0x15c`, resolved).
 4. `"%s : %s"`, which is `UIIT_STT_TARGETTING` ("Target ") and a name, when entry `+0x44` is non-zero. OPEN, not drawn.
 5. When total ≠ −1, a time line, where r = total − elapsed in ms:
@@ -238,7 +238,7 @@ Every key is in the box's `textuisystem.txt` (MEASURED). The English texts are "
 - Duplicates:
   - 27,697 ids appear more than once in the plain files. Only one disagrees: 35958, where shard 35000 has no tags and shard 36000 has `nbuf`+`bbuf`.
   - In the decrypted ENC set, 27,714 ids appear more than once and none disagree. So retail's duplicate rule, which was not read, does not matter for retail's own data.
-- srrevamp resolves a duplicate to the **first file in list order**. With that rule, every one of the ENC set's 33,632 ids gets exactly the ENC row's four tags, level, icon, name code and description code from the plain files: 0 missing, 0 differences, checked by the catalog itself on the box.
+- OpenSRO resolves a duplicate to the **first file in list order**. With that rule, every one of the ENC set's 33,632 ids gets exactly the ENC row's four tags, level, icon, name code and description code from the plain files: 0 missing, 0 differences, checked by the catalog itself on the box.
 - The plain files also have 66 ids the ENC set lacks. They are harmless.
 
 **The walk** (READ, the client's parser `GlobalDataManager::FUN_009bbca0`):

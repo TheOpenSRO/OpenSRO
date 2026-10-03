@@ -10,7 +10,7 @@ import (
 // InventorySizeStore is each character's own bag size: the engine's
 // `_CHAR.InventorySize` (charData+0xac, CInstancePC::CharData_BindDBColumns),
 // which counts the 13 equipment slots, kept here as the bag's slots alone --
-// srrevamp's bag indices start at 0, apart from the equipment.
+// OpenSRO's bag indices start at 0, apart from the equipment.
 //
 // The client reads the engine's value, takes the 13 off (0x9d9aee `sub
 // dl,0xd`) and pages the bag by it: 32 slots a page, at most three

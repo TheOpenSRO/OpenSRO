@@ -87,7 +87,7 @@ func validRace(r int) bool { return r == 0 || r == 1 || r == RaceAny }
 // Duplicates: a second row giving the same character the same mastery or
 // skill (same id, matching Race sets overlapping) would break `_CharSkill` /
 // `_CharSkillMastery`'s key, and the procedure would roll the create back
-// (INFERRED from its error path: an insert error returns -15/-16). srrevamp
+// (INFERRED from its error path: an insert error returns -15/-16). OpenSRO
 // gives the id once instead (OURS) and says so at boot.
 func NewCharDefaults(masteries, skills [][2]int64, quests []DefaultQuest) *CharDefaults {
 	d := &CharDefaults{quests: append([]DefaultQuest(nil), quests...)}

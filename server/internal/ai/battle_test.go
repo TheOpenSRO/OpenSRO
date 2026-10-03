@@ -2,7 +2,7 @@ package ai
 
 import "testing"
 
-// The stand-ins the tests below chase with: srrevamp's own roam radius
+// The stand-ins the tests below chase with: OpenSRO's own roam radius
 // (session.MonsterRoamRadius, 200, own design) and the four disclosed
 // _RefTactics columns. The numbers here are pinned so that a change to a
 // disclosed value is a deliberate edit of both the constant and its record.

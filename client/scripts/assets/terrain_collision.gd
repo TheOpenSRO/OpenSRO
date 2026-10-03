@@ -47,7 +47,7 @@ class_name TerrainCollision
 ## 4.2.2) names -- an editor warning, never printed at run time. Whether
 ## GodotPhysics honours it is MEASURED, not read: terrain_collision_test.gd
 ## fires rays and sweeps a sphere and a capsule at both shapes under the
-## group's transform, and World3D's SRREVAMP_QA_GROUND_RAYS does the same on
+## group's transform, and World3D's OPENSRO_QA_GROUND_RAYS does the same on
 ## the real regions.
 ##
 ## What differs from the trimesh, read from the same 4.2.2 source: a VERTICAL
@@ -103,7 +103,7 @@ const SIDE := MapmReader.BLOCKS_PER_SIDE * (MapmTerrainBuilder.GRID_WIDTH - 1) +
 ## RAY_GRID_EPSILON off the line on each side in turn (ray_columns). The shape
 ## is not changed.
 ##
-## RAY_GRID_EPSILON is srrevamp's own engineering choice, in world units,
+## RAY_GRID_EPSILON is OpenSRO's own engineering choice, in world units,
 ## justified by that probe: with every vertex of the 25 regions moved (d, d)
 ## into its cell, plain vertical rays miss at 50,391 of 235,225 for d =
 ## 0.00001 (as many as on the vertices themselves: a move that small is below
@@ -120,7 +120,7 @@ const SIDE := MapmReader.BLOCKS_PER_SIDE * (MapmTerrainBuilder.GRID_WIDTH - 1) +
 ## 0.01 would round back onto the line. What it costs: the height is read up
 ## to RAY_GRID_EPSILON away on each axis, so it can be off by RAY_GRID_EPSILON
 ## times the steepest triangle's |dh/dx| + |dh/dz| -- MEASURED on Jangan's 25
-## regions by SRREVAMP_QA_MOB_HEIGHTS's slope line (docs/RE_COMPLETION.md,
+## regions by OPENSRO_QA_MOB_HEIGHTS's slope line (docs/RE_COMPLETION.md,
 ## round 572) -- and only where the column lies within RAY_GRID_EPSILON of a
 ## line; everywhere else the ray is the plain one.
 const RAY_GRID_EPSILON := 0.01
@@ -234,7 +234,7 @@ static func make_shape(heights: PackedFloat32Array) -> HeightMapShape3D:
 ## The height of the DRAWN mesh's own triangle at group-local (x, z), from
 ## heights_from_region's grid: the quad's corners interpolated on the side of
 ## the mesh's (r, c)-(r + 1, c + 1) diagonal the point is on. NAN outside the
-## grid. What World3D's SRREVAMP_QA_GROUND_RAYS holds every terrain ray's hit
+## grid. What World3D's OPENSRO_QA_GROUND_RAYS holds every terrain ray's hit
 ## against, so a ray is compared with the ground that is drawn, not with the
 ## shape that answered it.
 static func mesh_height_at(heights: PackedFloat32Array, x: float, z: float) -> float:

@@ -18,8 +18,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/OpenSRO/srrevamp/server/internal/efp"
-	"github.com/OpenSRO/srrevamp/server/internal/pk2"
+	"github.com/OpenSRO/OpenSRO/server/internal/efp"
+	"github.com/OpenSRO/OpenSRO/server/internal/pk2"
 )
 
 func main() {

@@ -3,7 +3,7 @@
 Recovered in round 639 from `sro_client.exe` (the dump in `/var/tmp/decomp_client`,
 `/var/tmp/sro_client.asm`) and the Media archive's `resinfo` layouts. Labels: **READ** (the code
 or data says it), **MEASURED** (taken from a picture or a run), **INFERRED** (a reasoned reading
-the code does not state), **OURS** (srrevamp's choice), **OPEN** (not known).
+the code does not state), **OURS** (OpenSRO's choice), **OPEN** (not known).
 
 ## The window (READ)
 
@@ -25,7 +25,7 @@ The text box (`0x7bc216..0x7bc2c9`): its owner pointer +0x1ec is the window; pit
 stacked from the bottom, as the chat); `0x64e380(1)` (the wrap with the hanging indent);
 `0x638d40(1)` (+0x385, not identified -- OPEN); the scroll bar bound through the box's +0x36c
 object; the bar's range set by `0x65a390(0xc3, 0, 0, 1)` and scrolled to 999. The chat's Create
-also sets a hover colour (`0x638cf0`); this one does not, and srrevamp draws no hover bar here
+also sets a hover colour (`0x638cf0`); this one does not, and OpenSRO draws no hover bar here
 (INFERRED that none shows without it). The two buttons get tooltips UIIT_STT_MESSAGE_FILTERING
 (`0xdc8424`) and UIIT_STT_TOGGLE_CHATING_WINDOW_SETING (`0xdbbbb0`).
 
@@ -81,14 +81,14 @@ Mode 6 is the layout's own geometry (285 = 4 + 277 + 4; 195 = 6 * 42 - 57). MEAS
     0x7d1..0x7ec are 5-byte records. Tag 0x7d8 holds 1, which matches the user's screenshot with the
     log auto-hidden.
 
-**srrevamp (OURS, the user's decision in round 641):** auto-hide is always on, with no option
+**OpenSRO (OURS, the user's decision in round 641):** auto-hide is always on, with no option
 (`HudSystemMessage.AUTO_HIDE`). Otherwise it follows the reading above: `update_frame` runs from
 `_process` every frame on the real mouse position.
 
 **The mouse (READ, with one inference).** CGWndBase's mouse slot (vslot 17, `0xb91440`) offers a
 message to the children first, then keeps it for the window when the point is inside the
 window's rect (`0xb8f3d0`, the rect less the client insets) -- a rect test, not an art test. So a
-click anywhere in the system window's rect is the window's, as srrevamp's MOUSE_FILTER_STOP over
+click anywhere in the system window's rect is the window's, as OpenSRO's MOUSE_FILTER_STOP over
 the whole rect has it (INFERRED that the window's own handler, vslot 0x44, then reports it
 handled, so the world does not also get it).
 
@@ -159,7 +159,7 @@ immediate at 428 of the 507 typed sites; the other 79 pass it in a register, not
 - The live quick-slot bar (CNIFUnderMenuBar, `0x60a000..0x60efff`) writes no line when a slot is
   filled: none of the four adds is called there.
 
-## What srrevamp writes where (round 639)
+## What OpenSRO writes where (round 639)
 
 `World3D._log_system(text, type)` writes to the window; the chat's All list no longer gets system
 lines. With retail's own message and type:
@@ -175,7 +175,7 @@ lines. With retail's own message and type:
 | the chat's party/guild/academy refusals | 4 | HudChat.system_sink (READ) |
 | the chat's server refusals, the global chat's refusals | 0 | READ |
 | the camera-view line (F9) | 0 | READ |
-| the server's refusals (attack, skill, use item, composite, teleport, pickup) | 0 | retail's path is `0x778190` with a code; srrevamp's server sends English text (OURS wording) |
+| the server's refusals (attack, skill, use item, composite, teleport, pickup) | 0 | retail's path is `0x778190` with a code; OpenSRO's server sends English text (OURS wording) |
 | "You have advanced to level [N]." | -- | GDR_WARNING_WND (HudNotice, top centre, y 130, the blue banner), READ (round 657: CGInterface's setup, `push 0x82` at `0x78cbed`; `unique_notice.md`) |
 
 OURS, type 0: the help and developer hints at login ("Type /help ...", "Developer tools ...
@@ -190,7 +190,7 @@ only.
 
 **The kill's EXP (OURS carrier, READ lines).** Retail's EXP arrives in its own packet
 (`0x8a97c0` reads 4 bytes, an s64 EXP, an s64 skill EXP and a flag byte, then optional parts; the
-opcode was not looked up). srrevamp appends two s64s to
+opcode was not looked up). OpenSRO appends two s64s to
 OpAttackResult after the targetType byte: ExpGained and SkillExpGained, what the server granted
 (`session.AttackResult`, `CombatNet.AttackResult.exp_gained / skill_exp_gained`). The skill EXP is
 the disclosed M = 1 of `combat.go` (a kill's skill EXP is not recovered). ExpGained is what the
@@ -233,13 +233,13 @@ Retail keeps the bar **on the server**:
 - `Setting\SRExtQSOption.dat` / `SRExtQSOption2.dat` exist on the box but are not the slots
   (not read further).
 
-srrevamp (round 639's review) follows both: `HotbarStore.rebind_for_skill` on every successful
+OpenSRO (round 639's review) follows both: `HotbarStore.rebind_for_skill` on every successful
 learn (NetClient queues the requested ids, since the learn result names no skill), and the item
 re-resolve on every bag move's answer as well as every bag list. This server has no skill
 withdrawal, so the withdrawal half is built and tested but reached by nothing (OPEN). Where retail
 re-binds one bag slot, ours re-resolves every item slot (slot first, then the item anywhere).
 
-srrevamp (OURS, the user's request): `HotbarStore` writes `user://quickslots.cfg`, one entry per
+OpenSRO (OURS, the user's request): `HotbarStore` writes `user://quickslots.cfg`, one entry per
 `server:port/character` (percent-encoded), holding every skill slot (id, Basic_Code) and item slot
 (item id, bag slot) on every page and the "m" slot, on every change -- each field type-checked
 on load (a bad entry is skipped, the rest load), nothing written over a file that does not load

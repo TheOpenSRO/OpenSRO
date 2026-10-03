@@ -5,7 +5,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 )
 
 // MemStore is an in-memory Store, for tests and for running the server

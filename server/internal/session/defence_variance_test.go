@@ -5,9 +5,9 @@ import (
 	"math"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/durability"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/durability"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // fixedEquipment is an equipment.Store that answers Get with a fixed set of

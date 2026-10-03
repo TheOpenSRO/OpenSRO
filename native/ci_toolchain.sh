@@ -55,7 +55,7 @@ if [ -n "${GITHUB_PATH:-}" ]; then echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; fi
 
 # zig 0.15.2 (sum from https://ziglang.org/download/index.json) and cargo-zigbuild 0.23.4
 # (sum from its release's .sha256 file), both read on 2026-09-30.
-tools="$HOME/.local/srrevamp-ci"
+tools="$HOME/.local/opensro-ci"
 zig_dir="$tools/zig-x86_64-linux-0.15.2"
 if [ ! -x "$zig_dir/zig" ]; then
   mkdir -p "$tools"

@@ -42,7 +42,7 @@ const STOREHOUSE_STRID := "UIIT_STT_NPC_CHATTING_WND_STOREHOUSE"
 ## FUN_007001a0(n), which emits item 0 as the last numbered line when the
 ## talk object's +0x7f1 flag is set (0x7001a3-0x7001b5).
 const TALKEND_STRID := "UIIT_STT_NPC_CHATTING_WND_TALKEND"
-## The guild NPC's two lines srrevamp offers (round 521). FUN_00700440's id
+## The guild NPC's two lines OpenSRO offers (round 521). FUN_00700440's id
 ## 0x0f block (lookup `mov byte [esp+0x1c],0xf` at 0x70105e) emits item 0x12
 ## when FUN_009870e0 answers 0 (0x701096 `call 0x9870e0`, 0x70109d
 ## `je 0x701165`, then 0x701165-0x70116c `push 0; push 0x12; push ebx;
@@ -249,7 +249,7 @@ static func services_for(code: String, shop_npcs: Dictionary, guild_id: int = -1
 	# kind) and 0x6fded0-0x6fded6 `push ebx; push 0x1e; push eax (n);
 	# call 0x6fcd60`. The same function's other lines
 	# (0x1f-0x24, 0x26 and, at three desert NPCs, 0x3c) have no server in
-	# srrevamp and are not offered -- this project's choice, not a claim that
+	# OpenSRO and are not offered -- this project's choice, not a claim that
 	# the real client lacks them (character_state.md, "The job guilds' lines
 	# (round 526)").
 	if player_job_kind == 0:
@@ -284,7 +284,7 @@ static func services_for(code: String, shop_npcs: Dictionary, guild_id: int = -1
 	# The FORTRESS smith (NPC_*_FORTRESS_SMITH*) does have a real repair line:
 	# interaction 0x1a -> FUN_00700200 -> IF_NPCTalk::FUN_006fe030 case 0x36
 	# adds SN_FORTRESS_SMITH_REPAIR (beside SN_FORTRESS_SMITH_PRODUCT), behind
-	# a gate that is not named. srrevamp has no fortress system, so it is
+	# a gate that is not named. OpenSRO has no fortress system, so it is
 	# deliberately not offered here -- a choice of this project, not a claim
 	# that the real client lacks it.
 	#
@@ -322,7 +322,7 @@ static func services_for(code: String, shop_npcs: Dictionary, guild_id: int = -1
 ##     non-zero branch is the one with GUILD_BREAK and MASTERLEAVE.
 ## So guildless -> "guild_create", a member -> "guild_leave". A master is
 ## never offered secession (the 0x1c push is only in the zero branch), and
-## the master's own items have no server in srrevamp, so a master keeps the
+## the master's own items have no server in OpenSRO, so a master keeps the
 ## "Guild" placeholder. Items 0x19/0x1a (MASTERRELEASE / MRELEASE_VOTE), 0x1d
 ## (GUILD_WAREHOUSE) and 0x43 (GP_HISTORY), which a member also gets, have no
 ## server either and are not offered -- this project's choice, not a claim
@@ -566,8 +566,8 @@ static func _job_patterns(kind: int) -> Array:
 ## there are only these two. The two other `push 4` calls in the function
 ## (0x4c6df7, 0x4c775c) go through slot 0x318 instead. The refdata-driven
 ## inserts register only ids 7, 8 and 9 (character_state.md, rounds 454-455).
-## The fortress smiths are kept although srrevamp has no fortress, because
-## this list is the id-4 set and not a list of the NPCs srrevamp spawns.
+## The fortress smiths are kept although OpenSRO has no fortress, because
+## this list is the id-4 set and not a list of the NPCs OpenSRO spawns.
 const REPAIR_PATTERNS := [
 	"NPC_CH_SMITH",
 	"NPC_CH_ARMOR",

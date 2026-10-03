@@ -546,7 +546,7 @@ func _distinct_albedo_textures(objects: Array) -> int:
 ##   the Image fails them;
 ## - the texture cache carries the measured statistics, so a texture the
 ##   world holds is neither decoded nor measured again, and one whose
-##   statistic is missing is decoded for it; SRREVAMP_QA_ALPHA_LOG says
+##   statistic is missing is decoded for it; OPENSRO_QA_ALPHA_LOG says
 ##   which.
 
 ## The pre-split loader's fingerprints (BASE f8704c4's load_object on the
@@ -579,7 +579,7 @@ const TWO_SIDED_EXPECTED := {"bin": true, "graded": false, "dxt1cut": false, "dx
 ## NEGATIVE: before this round bit 0 was the "alpha" bit, so a 0x340 needle
 ## card (alpha test, one-sided) drew as a solid StandardMaterial3D.
 func _test_round_625() -> void:
-	var path := "user://srrevamp_objloader_r625.pk2"
+	var path := "user://opensro_objloader_r625.pk2"
 	_build_alpha_archive(path)
 	var archive := Pk2Reader.open(path)
 	_check(archive != null, "r625: opens the alpha archive")
@@ -775,10 +775,10 @@ func _test_round_566() -> void:
 		_check(names.has(needed), "ObjectLoader has %s (absent before round 566)" % needed)
 
 	var archives := {
-		"main": ["user://srrevamp_r566_objloader_main.pk2", "_build_archive", "prim/testobj.bsr", "testobj"],
-		"namematch": ["user://srrevamp_r566_objloader_nm.pk2", "_build_name_match_archive", "nameMatchObj.bsr", "namematch"],
-		"cpd": ["user://srrevamp_r566_objloader_cpd.pk2", "_build_cpd_archive", "testcompound.cpd", "compound"],
-		"alpha": ["user://srrevamp_r566_objloader_alpha.pk2", "_build_r566_archive", "alphaobj.bsr", "alphaobj"],
+		"main": ["user://opensro_r566_objloader_main.pk2", "_build_archive", "prim/testobj.bsr", "testobj"],
+		"namematch": ["user://opensro_r566_objloader_nm.pk2", "_build_name_match_archive", "nameMatchObj.bsr", "namematch"],
+		"cpd": ["user://opensro_r566_objloader_cpd.pk2", "_build_cpd_archive", "testcompound.cpd", "compound"],
+		"alpha": ["user://opensro_r566_objloader_alpha.pk2", "_build_r566_archive", "alphaobj.bsr", "alphaobj"],
 	}
 	for which in archives:
 		var spec: Array = archives[which]
@@ -867,7 +867,7 @@ func _collect_pieces(node, out: Array) -> void:
 ## piece, the statistic measured on the decoded Image, the cache carrying
 ## it, and the QA line saying where each came from.
 func _test_alpha_on_the_image(OL, archive: Pk2Reader) -> void:
-	OS.set_environment("SRREVAMP_QA_ALPHA_LOG", "1")
+	OS.set_environment("OPENSRO_QA_ALPHA_LOG", "1")
 	var prepared: Dictionary = OL.prepare_object(archive, "alphaobj.bsr")
 	var plans := {}
 	var pieces: Array = []
@@ -888,7 +888,7 @@ func _test_alpha_on_the_image(OL, archive: Pk2Reader) -> void:
 		_check((textures[key]["alpha"] as Dictionary).is_empty(),
 			"prepare: no pixel statistic measured on %s (got %s)" % [key, textures[key]["alpha"]])
 	var log_text := "\n".join(PackedStringArray(prepared["log"]))
-	_check(not log_text.contains("QA ALPHA"), "SRREVAMP_QA_ALPHA_LOG: nothing consulted the pixels (log: %s)" % log_text)
+	_check(not log_text.contains("QA ALPHA"), "OPENSRO_QA_ALPHA_LOG: nothing consulted the pixels (log: %s)" % log_text)
 
 	# Committed into a cache, the textures travel; a second prepare over the
 	# snapshot decodes nothing and classifies the same.
@@ -913,19 +913,19 @@ func _test_alpha_on_the_image(OL, archive: Pk2Reader) -> void:
 		_check_alpha_classes(second, "commit over the snapshot")
 		second.free()
 
-	# SRREVAMP_QA_MATS still measures -- the one statistic left, `fraction`,
+	# OPENSRO_QA_MATS still measures -- the one statistic left, `fraction`,
 	# on an untested layer -- and a cached texture lacking it is decoded
 	# from the file for it, never read back from the cached texture.
-	OS.set_environment("SRREVAMP_QA_MATS", "1")
+	OS.set_environment("OPENSRO_QA_MATS", "1")
 	var third: Dictionary = OL.prepare_object(archive, "alphaobj.bsr", OL.snapshot_textures(cache))
-	OS.set_environment("SRREVAMP_QA_MATS", "")
+	OS.set_environment("OPENSRO_QA_MATS", "")
 	var third_log := "\n".join(PackedStringArray(third["log"]))
 	_check(third["textures"]["graded.ddj"]["image"] is Image
 			and is_equal_approx(float(third["textures"]["graded.ddj"]["alpha"].get("fraction", -1.0)), 1.0)
 			and third_log.contains("QA MAT: graded (graded.ddj, ) is 100.0% non-opaque, flags 0x0140, no alpha test"),
 		"QA_MATS: an untested layer's texture is decoded and measured, and reported (got %s / %s)" % [
 			third["textures"]["graded.ddj"]["alpha"], third_log])
-	OS.set_environment("SRREVAMP_QA_ALPHA_LOG", "")
+	OS.set_environment("OPENSRO_QA_ALPHA_LOG", "")
 
 	# build_godot_material (SkinnedBsrAssembler's path) takes the same rule.
 	var bmt_entry := ObjectLoader.find_file(archive, "alpha.bmt")
@@ -1239,7 +1239,7 @@ func _write_block_entry(block: PackedByteArray, i: int, entry_type: int, name: S
 	_put_u32(block, base + Pk2Reader.ENTRY_OFF_SIZE, size)
 
 func _init() -> void:
-	var path := "user://srrevamp_objloader_test.pk2"
+	var path := "user://opensro_objloader_test.pk2"
 	_build_archive(path)
 
 	var archive := Pk2Reader.open(path)
@@ -1307,7 +1307,7 @@ func _init() -> void:
 		archive.close()
 	DirAccess.remove_absolute(path)
 
-	var name_match_path := "user://srrevamp_objloader_namematch_test.pk2"
+	var name_match_path := "user://opensro_objloader_namematch_test.pk2"
 	_build_name_match_archive(name_match_path)
 	var nm_archive := Pk2Reader.open(name_match_path)
 	_check(nm_archive != null, "opens name-match synthetic archive")
@@ -1328,7 +1328,7 @@ func _init() -> void:
 		nm_archive.close()
 	DirAccess.remove_absolute(name_match_path)
 
-	var alpha_path := "user://srrevamp_objloader_alpha_test.pk2"
+	var alpha_path := "user://opensro_objloader_alpha_test.pk2"
 	_build_alpha_archive(alpha_path)
 	var alpha_archive := Pk2Reader.open(alpha_path)
 	_check(alpha_archive != null, "opens alpha synthetic archive")
@@ -1383,7 +1383,7 @@ func _init() -> void:
 	# scenery) -- load_object() must recurse through a real compound
 	# object's real sub-.bsr reference(s), not fail outright on the real,
 	# different magic.
-	var cpd_path := "user://srrevamp_objloader_cpd_test.pk2"
+	var cpd_path := "user://opensro_objloader_cpd_test.pk2"
 	_build_cpd_archive(cpd_path)
 	var cpd_archive := Pk2Reader.open(cpd_path)
 	_check(cpd_archive != null, "opens cpd synthetic archive")

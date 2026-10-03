@@ -18,17 +18,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/account"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/mana"
-	"github.com/OpenSRO/srrevamp/server/internal/quest"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/account"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/quest"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 const walls640CSV = `99,246,SKILL_CH_COLD_BINGBYEOK_A_01,0,1,0,0,1000,1000,1000,10000,0,0,0,0,0,0,0,165,35,0,SN_SKILL_CH_COLD_BINGBYEOK_A,273,17,0,0,0,0,0,255,255,0,,0,1,1,0,0,0,0,0,0,0,0,0,0,1,3,0,0,0,0,0,0,0,0,0,0,0,0,"onff:5000,41",0,0,0,11,0,0,0,0,0,0,0,0,0,SKILL_CH_COLD_BINGBYEOK_A,2,0,0,0,0,0,0,0,7,824,0,11

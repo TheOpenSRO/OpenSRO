@@ -150,12 +150,12 @@ client: setting/config.yaml".
 
 ## Legacy servers (round 681)
 
-Each server in `setting/config.yaml` now says which protocol it speaks: `type: srrevamp` (round 679's
+Each server in `setting/config.yaml` now says which protocol it speaks: `type: opensro` (round 679's
 0x0007 question below) or `type: legacy` -- the ORIGINAL gateway protocol, asked the way the retail
 client asks for its list. `type` is required; an entry without it, or with another word, is skipped
 with a `SETTING:` warning naming the server and the two values (OURS, the user's decision of
 2026-10-01). The plain editable host:port field (no config) is our own server and keeps the
-srrevamp question.
+OpenSRO question.
 
 - **The question (READ, `opcodes/gateway.md`):** the server's 0x5000, the key exchange, 0x9000, the
   client's 0x2001 "SR_Client", the server's 0x2001 "GatewayServer", 0x6100 (content id,
@@ -170,7 +170,7 @@ srrevamp question.
 - **The rows (OURS):** a legacy server that answered has one row per shard it lists, named
   `<config name> - <shard name>` (the config name alone when the two are the same), each with its
   own band by the same compare as before (`ServerStatus.shard_band`, state 0 = Check). Before the
-  answer, and when there is none, it has one row under its config name, as a srrevamp server. Any
+  answer, and when there is none, it has one row under its config name, as an OpenSRO server. Any
   of its rows chooses the server. Retail shows only shard names because it has one gateway; a
   config may list several, so the server's name stays in front.
 - **Limits (OURS):** 4 s for the whole question, up to 3 connections (a session given a checksum
@@ -189,7 +189,7 @@ srrevamp question.
 ## Ours (round 679)
 
 - **setting/config.yaml** (`ClientConfig`, `YamlLite`): `global.loginScreen`, `global.region`,
-  `servers.<name>.gateway` / `.agent`; the folder is `<exe dir>/setting` or `SRREVAMP_SETTING_DIR`.
+  `servers.<name>.gateway` / `.agent`; the folder is `<exe dir>/setting` or `OPENSRO_SETTING_DIR`.
   Data only.
 - **The status exchange:** `OpServerStatusRequest` 0x0007 (no payload) -> `OpServerStatus` 0x0008:
   `u8 version (1) | u16 LE current | u16 LE max | u8 state` -- retail's three entry fields in retail's

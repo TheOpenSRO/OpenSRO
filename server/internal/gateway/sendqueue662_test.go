@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 )
 
 // Round 662: every session has its own outbound queue and writer goroutine.
@@ -366,7 +366,7 @@ func TestSendBatchIsNeverInterleaved(t *testing.T) {
 // A handler that sends and then returns an error closes its session (the
 // gateway's rule), and what it sent first still reaches the client, in order,
 // before the connection ends: the session drains its queue before closing
-// (closeAfterDrain). srrevamp has no kick and no logout reply; this is its
+// (closeAfterDrain). OpenSRO has no kick and no logout reply; this is its
 // one send-then-close. 40 frames of 16 KB (640 KB, under the 2 MB queue
 // limit) go through a 16 KB send buffer, so most of them are still queued
 // when the handler returns.

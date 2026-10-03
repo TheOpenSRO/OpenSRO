@@ -8,11 +8,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/safezone"
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/safezone"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // Towns (round 674): a monster that walks into a town region is removed.
@@ -28,7 +28,7 @@ import (
 // no region, so a monster still on the field side can hit a player standing
 // just inside, within its reach.
 //
-// srrevamp: the monster AI's pass checks each monster whose step carried it
+// OpenSRO: the monster AI's pass checks each monster whose step carried it
 // over a cell line -- a region line is always one (combat.CellSpan divides
 // worldmap.RegionSpan) -- and each monster it meets for the first time, and
 // removes the ones standing in a town (combat.Hub.Remove). The players whose

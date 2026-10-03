@@ -4,7 +4,7 @@ class_name NativeAssets
 ## The switch between the native (Rust, GDExtension) asset readers and the
 ## GDScript ones (round 667; native/README.md).
 ##
-## The native library is optional. client/srrevamp_native.gdextension names
+## The native library is optional. client/opensro_native.gdextension names
 ## it; when the file it names is absent -- CI's Godot validation, every test
 ## suite, a client shipped without the DLL -- Godot 4.2.2 prints four ERROR
 ## lines while loading the extension and registers no classes, and everything here
@@ -12,7 +12,7 @@ class_name NativeAssets
 ## Nothing in the client names a native class as a type: they are looked up
 ## by string through ClassDB, so no script fails to compile without them.
 ##
-## SRREVAMP_NATIVE=0 forces the GDScript path even when the library loaded:
+## OPENSRO_NATIVE=0 forces the GDScript path even when the library loaded:
 ## the A/B switch perf_gate.sh's `--ab-env` uses to compare one build both
 ## ways (client/tools/README.md, "Native readers A/B").
 
@@ -42,7 +42,7 @@ const TERRAIN_CLASS := "SrNativeTerrain"
 ## handle opened and every decode made while it is set is GDScript's.
 static var force_gdscript := false
 
-## True when the library loaded, whatever SRREVAMP_NATIVE or force_gdscript
+## True when the library loaded, whatever OPENSRO_NATIVE or force_gdscript
 ## say -- what a parity check needs to know before comparing anything.
 static func library_loaded() -> bool:
 	return ClassDB.class_exists(PK2_CLASS) and ClassDB.class_exists(PARSERS_CLASS)
@@ -78,13 +78,13 @@ static var _parsers: Object = null
 ## shows it. docs/NATIVE_ON_WINDOWS.md lists every form it takes.
 static var status := ""
 
-## True when the extension loaded and SRREVAMP_NATIVE is not "0". Logged once.
+## True when the extension loaded and OPENSRO_NATIVE is not "0". Logged once.
 static func available() -> bool:
 	if not _checked:
 		_checked = true
 		var loaded := library_loaded()
 		var refusal := api_verdict(library_api())
-		var forced_off := OS.get_environment("SRREVAMP_NATIVE") == "0"
+		var forced_off := OS.get_environment("OPENSRO_NATIVE") == "0"
 		_available = loaded and refusal == "" and not forced_off
 		var version := ""
 		if loaded and refusal == "":
@@ -102,7 +102,7 @@ static func available() -> bool:
 ## executable's folder, os_windows.cpp:358-361 / os_unix.cpp:649-652), under
 ## res://native_bin/ when run from the project.
 static func library_path() -> String:
-	var file := "srrevamp_native.dll" if OS.get_name() == "Windows" else "libsrrevamp_native.so"
+	var file := "opensro_native.dll" if OS.get_name() == "Windows" else "libopensro_native.so"
 	if OS.has_feature("template"):
 		return OS.get_executable_path().get_base_dir().path_join(file)
 	return ProjectSettings.globalize_path("res://native_bin/" + file)
@@ -112,7 +112,7 @@ static func library_path() -> String:
 ## reads that word. `refusal` is api_verdict()'s answer for a loaded library.
 static func describe(loaded: bool, refusal: String, forced_off: bool, version: String, path: String, file_exists: bool) -> String:
 	if forced_off:
-		return "NativeAssets: native readers OFF (forced off by SRREVAMP_NATIVE=0; the library is %s) -- using the GDScript readers" % (
+		return "NativeAssets: native readers OFF (forced off by OPENSRO_NATIVE=0; the library is %s) -- using the GDScript readers" % (
 			"loaded but unused" if loaded else "not loaded either")
 	if loaded and refusal != "":
 		return "NativeAssets: native readers OFF (library REFUSED: %s) -- using the GDScript readers" % refusal

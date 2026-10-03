@@ -6,7 +6,7 @@ package session
 // and cited there: how a skill's status run lands (statuseffect.Resolve), one
 // record per slot (Holder.Put), the pass that expires and ticks them
 // (Holder.Step), and what a state stops (CanMove, CanAct, SpeedPercent). This
-// file wires them to srrevamp's objects:
+// file wires them to OpenSRO's objects:
 //
 //   - a player's skill that lands on a monster applies its runs to it
 //     (applyToMonster: skill.go, after the blow, and for a zero-damage cast);
@@ -32,14 +32,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/ai"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/statuseffect"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/ai"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/statuseffect"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // OpObjectStatus is an object's abnormal-state mask, server -> every session
@@ -48,7 +48,7 @@ import (
 // `if (flags & 4) { Read(mask, 4); 0x9cd5e0(mask); 0x9d2220(mask, stream) }`,
 // the second reading one level byte for each set bit in
 // statuseffect.LevelBits, low bit first). READ, the block. OURS, the head:
-// srrevamp names an object by (owner kind, int64 id) where retail sends a u32
+// OpenSRO names an object by (owner kind, int64 id) where retail sends a u32
 // unique id, and sends only flag 4 -- retail's flag 1 (HP) and 2 (MP) are not
 // used, since OpMonsterDamaged and OpCharacterStatsResult already carry them.
 //
@@ -71,7 +71,7 @@ type ObjectStatus struct {
 	Levels    []byte
 }
 
-// Encode writes the payload (little-endian, as every srrevamp message).
+// Encode writes the payload (little-endian, as every OpenSRO message).
 func (m *ObjectStatus) Encode() []byte {
 	out := []byte{m.OwnerKind}
 	out = binary.LittleEndian.AppendUint64(out, uint64(m.OwnerID))
@@ -288,7 +288,7 @@ func (s *statusRuntime) applyToCharacter(ctx context.Context, d strikeDeps, mons
 		return
 	}
 	// OPEN: a character's resist params (27-32, 145-150) are not published
-	// by srrevamp, so every character resists nothing for now.
+	// by OpenSRO, so every character resists nothing for now.
 	now := time.Now()
 	recs := statuseffect.ResolveAll(runs, statuseffect.Target{Level: c.Level}, s.ms(now), statusRoller(monster.ID))
 	if len(recs) == 0 {
@@ -393,7 +393,7 @@ type statusPush struct {
 
 // casterLookup answers the damage appliers' question about a record's caster
 // (statuseffect.SourceRule): a character in the world is alive unless her
-// life state is DEAD; a monster is alive while the hub holds it -- srrevamp
+// life state is DEAD; a monster is alive while the hub holds it -- OpenSRO
 // removes a monster at its death, where the engine keeps the object a while
 // in state 2, so a dead monster reads as gone (INFERRED equivalent: either
 // way a poison it left names nobody).
@@ -561,7 +561,7 @@ func (s *statusRuntime) step(ctx context.Context, now time.Time) {
 // that a named tick is booked on the monster's damage list (round 657; a
 // DoT's damage then counts toward the unique notice's killer) and is the
 // monster's struck event, as a blow is (a DoT-only debuff draws the monster
-// onto its caster), are srrevamp's reading of it, not the engine's text. Whether
+// onto its caster), are OpenSRO's reading of it, not the engine's text. Whether
 // the tick is fatal is decided against the HP the monster has NOW (review L1),
 // and a kill is credited from the damage call's own died result.
 func (s *statusRuntime) dealMonsterTick(ctx context.Context, d combatDeps, mt monsterTick) error {
@@ -808,7 +808,7 @@ func monsterStatusPacket(id int64) *proto.Packet {
 
 // statusPacketsOfList is what follows a monster list: the masks of the
 // monsters it named and of every character in the zone (characters are
-// zone-wide in srrevamp's view; OURS). handleMonsterList appends them to the
+// zone-wide in OpenSRO's view; OURS). handleMonsterList appends them to the
 // list's own batch, under the session's monster wire lock.
 func statusPacketsOfList(hub *world.Hub, listed []combat.Monster, zone string) []*proto.Packet {
 	var out []*proto.Packet

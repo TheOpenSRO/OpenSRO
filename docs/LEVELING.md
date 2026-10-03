@@ -74,7 +74,7 @@ path that updates the job record's running total at `+0x20` -- the same shape
 the character's experience path has. Which is why this page's older note that
 "cols 6-8 look job/cost/gold-related" was right about the family.
 
-srrevamp does not model job levels yet, so nothing here is wired in; the
+OpenSRO does not model job levels yet, so nothing here is wired in; the
 columns are recorded for when `internal/jobs` needs them.
 
 ### Columns 3 and 4 have no reader, and the sweep that says so lied twice first
@@ -127,7 +127,7 @@ is a rule, not a table value. A new character is level 1 with 0 spent points.
 1. **Load the EXP curve at runtime.** ✅ **Built.** `leveldata.txt` is game data, so it is not
    committed: `cmd/export-leveldata` turns a client's own `leveldata.txt` (UTF-16LE) into a small
    `level,exp` CSV, and `internal/leveldata` parses it into a `Table` with the level-up math
-   (`Advance`). An operator points the server at the CSV (`SRREVAMP_LEVELDATA_CSV`); without it,
+   (`Advance`). An operator points the server at the CSV (`OPENSRO_LEVELDATA_CSV`); without it,
    characters do not level. Both are tested (level 9 = 17978 pinned).
 2. **Character fields.** ✅ **Built.** `character.Character` gained `Exp` (progress at the current
    level) and `StatPoints` (unspent, `leveldata.StatPointsPerLevel` = 3 per level), with a

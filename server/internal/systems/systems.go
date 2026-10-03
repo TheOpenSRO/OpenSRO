@@ -3,7 +3,7 @@
 //
 // WHY THIS EXISTS. This project has had two forward-looking summaries and both
 // rotted. `docs/RE_COMPLETION.md`'s work queue listed three of seven items as
-// open after they had shipped -- one of them told a reader srrevamp "still runs
+// open after they had shipped -- one of them told a reader OpenSRO "still runs
 // base + bonus - defence" months after the real formula went in.
 // `docs/GROUNDING_AUDIT.md` told readers the server binary was "a third-party
 // emulator bundle, not authoritative", which discounted the artifact most of

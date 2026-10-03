@@ -41,7 +41,7 @@ const SECTION_WORLD := "world"
 ## "summer". Empty, the default, hides all four. Read once per world scene,
 ## when it builds its first region's objects, so a change shows after the
 ## next login or restart; no window writes it yet -- a tester edits the
-## file, or sets SRREVAMP_SEASONAL, which adds to it. In the file the value
+## file, or sets OPENSRO_SEASONAL, which adds to it. In the file the value
 ## MUST be quoted: `seasonal="christmas,halloween"` under `[world]`. An
 ## unquoted `seasonal=christmas,halloween` is a ConfigFile parse error
 ## (ERR_PARSE_ERROR, measured on the box): get_value then returns every

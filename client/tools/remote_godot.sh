@@ -19,7 +19,7 @@
 set -euo pipefail
 
 RENDER_HOST="${RENDER_HOST:-root@192.168.10.78}"
-RENDER_DIR="${RENDER_DIR:-/opt/srrevamp-client}"
+RENDER_DIR="${RENDER_DIR:-/opt/opensro-client}"
 RENDER_GODOT="${RENDER_GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
 

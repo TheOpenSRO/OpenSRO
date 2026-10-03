@@ -19,7 +19,7 @@ extends SceneTree
 ##     byte cap) -- each a row that reads "Closed" with a log line, never a
 ##     crash.
 ##   - The window: a legacy server's shards as rows with retail's words.
-##   - The types: srrevamp asks 0x0007 at once and never waits for a 0x5000;
+##   - The types: OpenSRO asks 0x0007 at once and never waits for a 0x5000;
 ##     legacy never sends 0x0007 (against a server that speaks first: ours
 ##     does not, so it shows Closed).
 ##   - SV.T: a synthetic file decrypted and atoi'd as the client does.
@@ -27,7 +27,7 @@ extends SceneTree
 ##     decodes in well under 10 ms, capped at 64 bytes, and an invalid-UTF-8
 ##     name never reaches the engine's UTF-8 decoder (no "Unicode parsing
 ##     error" lines -- counted in the suite's output); key schedules are
-##     spread at most two a frame; a connection to a srrevamp server is not
+##     spread at most two a frame; a connection to an OpenSRO server is not
 ##     reused for another server's Connect, and a legacy one is never sent a
 ##     login; a reconnect that fails says "connection failed".
 ##
@@ -87,7 +87,7 @@ func _initialize() -> void:
 		await _scenario(name)
 	_check(_data["scenarios"].size() == EXPECT.size(), "every transcript scenario is played (%d)" % _data["scenarios"].size())
 	await _window()
-	await _srrevamp_asks_at_once()
+	await _opensro_asks_at_once()
 	await _legacy_never_asks_0007()
 	await _key_schedules_spread()
 	await _reconnect_failure_reason()
@@ -496,7 +496,7 @@ func _connect_never_reuses() -> void:
 	_check(not login_script.connection_serves(true, "b.example.com", 15779, t, false), "not a connection to another host")
 	_check(not login_script.connection_serves(true, "a.example.com", 15780, t, false), "nor to another port")
 	_check(not login_script.connection_serves(true, "a.example.com", 15779, t, true), "nor any connection when the shown server is legacy")
-	# Live: connected to a srrevamp server, the field showing a legacy one.
+	# Live: connected to an OpenSRO server, the field showing a legacy one.
 	var server := _listen()
 	var net: Node = root.get_node_or_null("NetClient")
 	_check(net != null, "the NetClient autoload")
@@ -509,7 +509,7 @@ func _connect_never_reuses() -> void:
 		if peer == null and server.is_connection_available():
 			peer = server.take_connection()
 		await process_frame
-	_check(net.call("is_connected_to_server"), "NetClient connected to the srrevamp server")
+	_check(net.call("is_connected_to_server"), "NetClient connected to the OpenSRO server")
 	for _i in range(5):
 		await process_frame
 	peer.poll()
@@ -530,7 +530,7 @@ func _connect_never_reuses() -> void:
 	peer.poll()
 	var after := maxi(peer.get_available_bytes(), 0)
 	_check(not net.call("is_connected_to_server") and after == before and peer.get_status() != StreamPeerTCP.STATUS_CONNECTED,
-		"Connect with a legacy server shown closes the srrevamp connection and sends it nothing (%d bytes before, %d after)" % [before, after])
+		"Connect with a legacy server shown closes the OpenSRO connection and sends it nothing (%d bytes before, %d after)" % [before, after])
 	_check(login.status_label.text.contains("not supported"), "and says logging in to the legacy server is not supported: '%s'" % login.status_label.text)
 	login.status_label.free()
 	login.free()
@@ -539,13 +539,13 @@ func _connect_never_reuses() -> void:
 
 # --- The two types --------------------------------------------------------------
 
-func _srrevamp_asks_at_once() -> void:
+func _opensro_asks_at_once() -> void:
 	var server := _listen()
 	var q := ServerStatus.new()
 	root.add_child(q)
 	var entry := ClientConfig.ServerEntry.new()
 	entry.name = "Ours"
-	entry.type = ServerStatus.TYPE_SRREVAMP
+	entry.type = ServerStatus.TYPE_OPENSRO
 	entry.gateway_host = "127.0.0.1"
 	entry.gateway_port = server.get_local_port()
 	var result := {"done": false}
@@ -563,7 +563,7 @@ func _srrevamp_asks_at_once() -> void:
 			if n > 0:
 				got.append_array(peer.get_partial_data(n)[1])
 		await process_frame
-	_check(got.size() == 6 and got.decode_u16(2) == ServerStatus.OP_REQUEST, "srrevamp sends 0x0007 at once, without waiting for a 0x5000 (%s after %d ms)" % [got.hex_encode(), Time.get_ticks_msec() - started])
+	_check(got.size() == 6 and got.decode_u16(2) == ServerStatus.OP_REQUEST, "OpenSRO sends 0x0007 at once, without waiting for a 0x5000 (%s after %d ms)" % [got.hex_encode(), Time.get_ticks_msec() - started])
 	if peer != null:
 		peer.put_data(PackedByteArray([6, 0, 0x08, 0x00, 0, 0, 1, 50, 0, 100, 0, 1]))
 	started = Time.get_ticks_msec()

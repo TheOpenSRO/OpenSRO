@@ -87,8 +87,8 @@ func _test_the_walk_sees_what_it_forbids() -> void:
 	node.free()
 
 func _test_objects_off_the_main_thread(S: GDScript) -> void:
-	var map_path := "user://srrevamp_r566_objects_map.pk2"
-	var data_path := "user://srrevamp_r566_objects_data.pk2"
+	var map_path := "user://opensro_r566_objects_map.pk2"
+	var data_path := "user://opensro_r566_objects_data.pk2"
 	_write_pk2(map_path, {
 		"97\\168.o2": _build_mapo2(),
 		"97\\168.m": _build_flat_mapm(0.0),
@@ -361,7 +361,7 @@ func _test_prepared_again(S: GDScript, map_pk2: Pk2Reader, data_pk2: Pk2Reader) 
 ## the decode was needed and does not count.
 ##
 ## Since round 625 the material rule reads only the layer's flag word, so the
-## one statistic left is `fraction`, measured under SRREVAMP_QA_MATS for a
+## one statistic left is `fraction`, measured under OPENSRO_QA_MATS for a
 ## layer drawn without an alpha test (flag word 0x40 here). The texture is
 ## the uncompressed scenery.ddj (fourCC ""); the world's entry for it holds
 ## no statistic (QA_MATS was off while the world loaded).
@@ -378,7 +378,7 @@ func _test_held_texture_decoded_again(w: Node, data_pk2: Pk2Reader, none: Dictio
 	pixels.layer_name = "pixels"
 	pixels.texture_path = "scenery.ddj"
 	pixels.unknown = 0x40
-	OS.set_environment("SRREVAMP_QA_MATS", "1")
+	OS.set_environment("OPENSRO_QA_MATS", "1")
 	var snapshot := ObjectLoader.snapshot_textures(world_textures)
 	var fifth := {"textures": {}, "missing": [], "log": []}
 	ObjectLoader._prepare_material(data_pk2, "prim\\scenery.bmt", pixels, snapshot, fifth)
@@ -393,7 +393,7 @@ func _test_held_texture_decoded_again(w: Node, data_pk2: Pk2Reader, none: Dictio
 	var sixth := {"textures": {}, "missing": [], "log": []}
 	ObjectLoader._prepare_material(data_pk2, "prim\\scenery.bmt", pixels, ObjectLoader.snapshot_textures(world_textures), sixth)
 	ObjectLoader.commit_textures(sixth["textures"], world_textures)
-	OS.set_environment("SRREVAMP_QA_MATS", "")
+	OS.set_environment("OPENSRO_QA_MATS", "")
 	_check((world_textures[key]["alpha"] as Dictionary).has("fraction"),
 		"that commit merged the statistic into the uploaded texture's entry (ObjectLoader.commit_textures)")
 	got = w.call("_prepared_again", job)

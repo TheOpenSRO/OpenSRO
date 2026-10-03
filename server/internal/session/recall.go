@@ -59,7 +59,7 @@ package session
 //   - The store's 0 for "none designated" (character.RecallStore): resolved to
 //     the race's gate by code when it is needed.
 //   - An unknown or unusable designated gate (a table re-exported without it,
-//     a point srrevamp cannot place) falls back to the race's gate, not to
+//     a point OpenSRO cannot place) falls back to the race's gate, not to
 //     retail's LatestRegion/Pos (which would put a dead character back where
 //     it fell); without a teleport network (-teleport-dir) a China character
 //     returns to spawnZone's arrival, the pre-686 point, and a Europe one to
@@ -75,15 +75,15 @@ import (
 	"log/slog"
 	"sync/atomic"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/teleport"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
-// The designate pair, srrevamp's own placeholders (PROTOCOL_DECISION.md).
+// The designate pair, OpenSRO's own placeholders (PROTOCOL_DECISION.md).
 // 0x0111/0x0112 were free on 2026-10-02: the highest ops in server/internal
 // and client/scripts/net were OpUniqueNotice 0x0110 and the composite ops
 // 0x0104..0x0108, and neither feat/lobby682 nor feat/appear683 uses them. The
@@ -191,14 +191,14 @@ func (t *teleporter) designate(ctx context.Context, sess *gateway.Session, p *pr
 		return refuse(uint16(code), teleportRefusalReason(uint16(code)), "gate", gateCode, "measured", measured)
 	}
 	// Interaction id 7 on the gate's ref object (teleportdata column 10), and
-	// a point srrevamp can return a character to. A gate in an instance
+	// a point OpenSRO can return a character to. A gate in an instance
 	// (the two Roc gates' worlds) could not be returned to here; retail would
 	// accept it (OURS, the latter test).
 	if !gatePoint.Interaction7 {
 		return refuse(teleport.ErrInteractionTarget, "this gate offers no return point", "gate", gateCode)
 	}
 	if _, _, _, _, ok := recallArrival(gatePoint); !ok {
-		return refuse(teleport.ErrInteractionTarget, "srrevamp cannot return a character to that gate yet", "gate", gateCode)
+		return refuse(teleport.ErrInteractionTarget, "OpenSRO cannot return a character to that gate yet", "gate", gateCode)
 	}
 	rs, ok := t.chars.(character.RecallStore)
 	if !ok {
@@ -258,7 +258,7 @@ func recallFallbackZone(country int) string {
 
 // recallArrival is where a return to gate point p lands: the arrival a gate
 // teleport to it makes (teleportArrival -- ResolveRevivePoint reads the same
-// record fields as HandleTeleportUse), when it is a point srrevamp can put a
+// record fields as HandleTeleportUse), when it is a point OpenSRO can put a
 // player at (the open world, an overworld region).
 func recallArrival(p teleport.Point) (zone, bucket string, pos world.Position, frame string, ok bool) {
 	if !inOpenWorld(p) {
@@ -309,7 +309,7 @@ func returnPointFor(ctx context.Context, chars character.Store, characterID int6
 						return zone, bucket, pos, frame
 					}
 				}
-				slog.Warn("return point: the designated gate is not a point srrevamp can return to; using the race's gate",
+				slog.Warn("return point: the designated gate is not a point OpenSRO can return to; using the race's gate",
 					"character_id", characterID, "gate_object", id, "known", ok)
 			}
 		}

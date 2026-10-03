@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
 )
 
 // Round 664: the window a player is sent is retail's -- the 3 x 3 message

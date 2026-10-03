@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // The centre-biased roll is LIVE on the player's attack, and it moves the blow

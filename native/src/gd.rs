@@ -168,7 +168,7 @@ impl SrNativeParsers {
 
     #[func]
     fn version(&self) -> GString {
-        GString::from(concat!("srrevamp_native ", env!("CARGO_PKG_VERSION")))
+        GString::from(concat!("opensro_native ", env!("CARGO_PKG_VERSION")))
     }
 
     /// DdjReader's uncompressed decode: {rgba: PackedByteArray} or {error: String}.

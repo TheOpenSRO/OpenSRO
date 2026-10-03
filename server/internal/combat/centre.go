@@ -49,7 +49,7 @@ const (
 )
 
 // MonsterRate is a monster's attack rate and parry rate, which for the species
-// srrevamp spawns are the same number: characterdata col 77 (`'hra'`) and col
+// OpenSRO spawns are the same number: characterdata col 77 (`'hra'`) and col
 // 75 (`'era'`) both hold 2*level + 25.
 //
 // VERIFIED ON THE ROSTER, NOT ON THE TABLE, and the distinction is the point.
@@ -58,7 +58,7 @@ const (
 // 75 and 77 agreeing row for row. Across the whole table the rule holds for
 // only about 37 % of monster rows -- MOB_EU_KERBEROS is level 110 with 73 where
 // the formula wants 245 -- so this is a regularity of the low-level China
-// monsters srrevamp ships, NOT a law of the data. An earlier note in
+// monsters OpenSRO ships, NOT a law of the data. An earlier note in
 // docs/RE_COMPLETION.md stated it as the latter; that is corrected there.
 //
 // **Adding a species means checking it.** A monster outside that 37 % gets a
@@ -73,7 +73,7 @@ func MonsterRate(level int) float64 { return float64(2*level + 25) }
 //
 // NOT MODELLED, and it only ever reduces the rate: buffs and skill modifiers
 // also contribute through the same slots (`AbnormalState_Apply13_p11` is one).
-// srrevamp has no such modifiers on these two params, so there is nothing to
+// OpenSRO has no such modifiers on these two params, so there is nothing to
 // add rather than something omitted.
 func CharacterRate(level int, equipment float64) float64 {
 	r := InnateRate + float64(level) + equipment

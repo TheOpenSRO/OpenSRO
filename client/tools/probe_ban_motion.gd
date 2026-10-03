@@ -10,7 +10,7 @@ extends SceneTree
 ##   remote_godot.sh script res://tools/probe_ban_motion.gd -- \
 ##       --bsr=res\\interface\\interface_lizard.bsr
 ##
-## Needs SRREVAMP_PK2_PATH (Data.pk2). Prints, reads nothing else.
+## Needs OPENSRO_PK2_PATH (Data.pk2). Prints, reads nothing else.
 
 func _init() -> void:
 	var bsr_path := "res\\interface\\interface_lizard.bsr"

@@ -43,7 +43,7 @@ var host: Dictionary = {}
 var _held: Dictionary = {}
 var _space_held := false
 ## Every action run, "<key> -> <action> <arg>: <result>", newest last (the
-## suite and SRREVAMP_QA_INPUT read it; capped).
+## suite and OPENSRO_QA_INPUT read it; capped).
 var dispatched: Array = []
 const DISPATCH_LOG_CAP := 64
 

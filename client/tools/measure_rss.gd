@@ -4,7 +4,7 @@ extends Node
 ## the world, so a front-end that leaves memory behind shows as a number.
 ## Instances res://scenes/Login.tscn (unless MEASURE_SKIP_LOGIN=1), lets it
 ## run MEASURE_LOGIN_S seconds (default 8), frees it, then instances
-## res://scenes/World3D.tscn (an offline QA entry: SRREVAMP_MAPM_PATH names the
+## res://scenes/World3D.tscn (an offline QA entry: OPENSRO_MAPM_PATH names the
 ## centre) and samples VmRSS and Godot's own counters every 2 s for
 ## MEASURE_WORLD_S seconds (default 40). Runs against any revision with those
 ## scenes. OURS.

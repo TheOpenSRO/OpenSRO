@@ -11,7 +11,7 @@ class_name HudNotice
 ##
 ## Labels: READ = read from the binary or the data; MEASURED = counted from
 ## real files or reference pixels; INFERRED = follows from what was read but
-## was not read itself; OURS = srrevamp's choice.
+## was not read itself; OURS = OpenSRO's choice.
 ##
 ## **Showing (READ, 0x7b3eb0).** 0x876810's type-7 branch calls 0x777bf0,
 ## which fetches the interface's child 0x14 -- ginterface.txt's GDR_NOTICE,

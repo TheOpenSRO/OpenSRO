@@ -6,18 +6,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/account"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/durability"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/quest"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/account"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/durability"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/quest"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // The base attack rows as the retail skilldata carries them (the `att` run
@@ -63,7 +63,7 @@ func TestPlainSwingIsTheBaseSkillsAtt(t *testing.T) {
 		t.Errorf("bare-handed swing = %+v; want SKILL_PUNCH_01's 150%%", got)
 	}
 
-	// No skill lookup at all (stubCombatItems): the plain blow srrevamp dealt
+	// No skill lookup at all (stubCombatItems): the plain blow OpenSRO dealt
 	// before round 505.
 	fallback := plainSwing{hits: 1, atk: combat.AttackPhysical}
 	plain := stubCombatItems{100: {ID: 100, TypeID4: combat.WeaponCHSword, PhysAttackMax: 30}}

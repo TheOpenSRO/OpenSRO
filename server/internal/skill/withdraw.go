@@ -3,7 +3,7 @@ package skill
 import "math"
 
 // Skill withdrawal -- the engine's skill reset -- recovered 2026-09-17 from
-// SR_GameServer.exe. Nothing in srrevamp offers the feature yet; this is the
+// SR_GameServer.exe. Nothing in OpenSRO offers the feature yet; this is the
 // rule set it would have to implement, with the cost formula exact.
 //
 // See docs/protocol/skill_withdraw.md for the refusal ladder and the

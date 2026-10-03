@@ -5,14 +5,14 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/berserk"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/mana"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // RunRegen is the engine's passive recovery: CGObjPC::vslot_362 on each

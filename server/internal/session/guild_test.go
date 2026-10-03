@@ -11,18 +11,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/account"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/guild"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/account"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/guild"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 )
 
 func guildTestDSN() string {
-	if v := os.Getenv("SRREVAMP_TEST_POSTGRES_DSN"); v != "" {
+	if v := os.Getenv("OPENSRO_TEST_POSTGRES_DSN"); v != "" {
 		return v
 	}
-	return "postgres://postgres:postgres@localhost:5432/srrevamp_test?sslmode=disable"
+	return "postgres://postgres:postgres@localhost:5432/opensro_test?sslmode=disable"
 }
 
 func openTestGuildStore(t *testing.T) *guild.SQLStore {
@@ -425,7 +425,7 @@ func (spentGoldStore) DeductGold(context.Context, int64, int64) error {
 	return character.ErrInsufficientGold
 }
 
-// TestGuildCreateRollsBackWhenGoldCannotBeTaken covers srrevamp's own handling
+// TestGuildCreateRollsBackWhenGoldCannotBeTaken covers OpenSRO's own handling
 // of a deduction that fails after the guild exists (the engine's OffsetGold has
 // no refusal path): the founder is left guildless, the name is free again, the
 // gold is untouched and the reply is the not-enough-gold message.
@@ -731,7 +731,7 @@ func (failAfterPayGuilds) LevelUp(_ context.Context, _ int64, _ bool, _ int64, p
 	return nil, errors.New("commit failed")
 }
 
-// TestGuildLevelUpGoldIsNotLost covers srrevamp's own handling around the
+// TestGuildLevelUpGoldIsNotLost covers OpenSRO's own handling around the
 // payment (round 528). A deduction that fails (the gold spent since the
 // check) is the gold refusal, 0x4c31, and the guild keeps its level; a store
 // that fails after taking the gold gives it back, and the reply is our own
@@ -878,7 +878,7 @@ func TestGuildLevelUpRefundSurvivesAStop(t *testing.T) {
 		t.Fatalf("DecodeGuildLevelResult: %v", err)
 	}
 	if lr.Code != 0 || lr.Error != "failed to level up the guild" {
-		t.Fatalf("got %+v, want srrevamp's own failure with no engine code", lr)
+		t.Fatalf("got %+v, want OpenSRO's own failure with no engine code", lr)
 	}
 	// The probe: the deduction really happened on the live ctx, and the
 	// stop really cancelled it, so the refund is what put the gold back.

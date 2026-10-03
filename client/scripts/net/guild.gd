@@ -17,13 +17,13 @@ const OP_INFO := 0x0096            # client -> server
 const OP_INFO_RESULT := 0x0097     # server -> client
 ## The guild's points (round 525): GatheredSP and each member's GP_Donation,
 ## the two totals CGuild::AddPoints (0x5c4110) raises from members' skill
-## points. srrevamp placeholder opcodes, mirroring session.OpGuildPoints /
+## points. OpenSRO placeholder opcodes, mirroring session.OpGuildPoints /
 ## OpGuildPointsResult.
 const OP_POINTS := 0x0098          # client -> server
 const OP_POINTS_RESULT := 0x0099   # server -> client
 ## The guild's level (round 528): a report of the level and the next level's
 ## cost, or, with the level-up byte set, the master's level-up
-## (CGuild::HandleLevelUp, 0x5c63d0). srrevamp placeholder opcodes, mirroring
+## (CGuild::HandleLevelUp, 0x5c63d0). OpenSRO placeholder opcodes, mirroring
 ## session.OpGuildLevel / OpGuildLevelResult.
 const OP_LEVEL := 0x009A           # client -> server
 const OP_LEVEL_RESULT := 0x009B    # server -> client

@@ -5,7 +5,7 @@ class_name MdToBbcode
 ## Help window's RichTextLabel. It covers what our bundled help docs actually
 ## use -- headings, bold/italic, inline and fenced code, bullet/numbered
 ## lists, links (as plain "text (url)"), and tables (as monospace rows) --
-## and nothing more. It is srrevamp's own code; the original client showed
+## and nothing more. It is OpenSRO's own code; the original client showed
 ## help through an embedded Internet Explorer control, which Godot has no
 ## equivalent for, so this renders our Markdown natively instead.
 ##

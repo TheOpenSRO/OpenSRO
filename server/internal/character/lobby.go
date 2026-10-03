@@ -23,7 +23,7 @@ type LobbyStore interface {
 	// character's name, pending ones included) and in `_CharNickNameList`
 	// with `=`; whether that `=` ignores case is the database collation's,
 	// not exported (OPEN; INFERRED case-insensitive, SQL Server's default --
-	// "without case" is OURS until then). srrevamp has no nicknames.
+	// "without case" is OURS until then). OpenSRO has no nicknames.
 	NameTaken(ctx context.Context, name string) (bool, error)
 	// MarkDeleted starts characterID's deletion at at. ErrNotFound when the
 	// account has no such character, ErrAlreadyDeleting when it is already

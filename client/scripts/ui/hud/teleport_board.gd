@@ -35,7 +35,7 @@ class_name TeleportBoard
 ## Not reproduced, disclosed: the line colours (0xffefdaa4, 0xffff8a00 and
 ## 0xff969696 for a greyed line are read; the talk box draws every line in one
 ## colour today); the greying itself (only for STORE_TOMB_GATE_IN, a gate
-## srrevamp does not bind); the fee surcharge (FUN_006fc910; srrevamp has no
+## OpenSRO does not bind); the fee surcharge (FUN_006fc910; OpenSRO has no
 ## fortresses); the client-side checks before the send that end in messages
 ## 0x1c1c and 0x1c1e (0x702817..0x702916, not read further).
 
@@ -59,11 +59,11 @@ const FREE_TOKEN := "UIIT_CTL_TELEPORT_FREE_RESULT"
 ## never asks for it. The fee is the raw link fee; the retail list adds a
 ## surcharge from a short at this+0x804 (FUN_006fc910, unread meaning; 0
 ## without fortresses) -- docs/protocol/teleport_network.md "The client's
-## list, read". `waived` is srrevamp's display of the
+## list, read". `waived` is OpenSRO's display of the
 ## engine's level waiver only (GObjPC::HandleTeleportUse, `cmp al,0x14; ja`
 ## at 0x5136de); the retail dialog does not apply it, and the GM and testing
 ## waivers are the server's to report in the receipt. A format that is not
-## exactly those placeholders (TeleportNet._fits) falls back to srrevamp's
+## exactly those placeholders (TeleportNet._fits) falls back to OpenSRO's
 ## own wording (ours, not the archive's): "<place> -- <fee> gold" or
 ## "<place> -- No cost", keeping the place so the line still says where it
 ## goes; with no place, "<fee> gold" or "No cost".

@@ -87,9 +87,9 @@ const FULL := 255.0
 ## Meta on a mesh while it fades: the material it gets back. BerserkLook
 ## reads it (original_material), so a berserk starting mid-fade keeps the
 ## real one.
-const ORIGINAL_META := "srrevamp_appear_original"
+const ORIGINAL_META := "opensro_appear_original"
 ## Meta on a fade twin (a material made by fade_twin).
-const TWIN_META := "srrevamp_appear_twin"
+const TWIN_META := "opensro_appear_twin"
 
 ## The twin of a plain StandardMaterial3D (OURS): the shader Godot 4.2
 ## generates for one -- albedo colour times the albedo texture's colour,
@@ -237,7 +237,7 @@ static func _make_twin(src: Material) -> Material:
 		var std := (src as BaseMaterial3D).duplicate() as BaseMaterial3D
 		std.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		std.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_ALWAYS
-		std.set_meta("srrevamp_appear_base_alpha", (src as BaseMaterial3D).albedo_color.a)
+		std.set_meta("opensro_appear_base_alpha", (src as BaseMaterial3D).albedo_color.a)
 		set_twin_alpha(std, 0.0)
 		return std
 	if src is ShaderMaterial:
@@ -255,7 +255,7 @@ static func set_twin_alpha(twin: Material, a: float) -> void:
 	if twin is BaseMaterial3D:
 		var std := twin as BaseMaterial3D
 		var c := std.albedo_color
-		c.a = float(std.get_meta("srrevamp_appear_base_alpha", 1.0)) * a
+		c.a = float(std.get_meta("opensro_appear_base_alpha", 1.0)) * a
 		std.albedo_color = c
 	elif twin is ShaderMaterial:
 		(twin as ShaderMaterial).set_shader_parameter("appear_alpha", a)

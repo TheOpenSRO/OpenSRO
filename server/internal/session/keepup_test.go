@@ -8,17 +8,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/account"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/quest"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/account"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/quest"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // The tracker repeats until the swing says the fight is over, then forgets
@@ -141,7 +141,7 @@ func TestSkillHandOffRule(t *testing.T) {
 
 	// A row with a non-zero Basic_ChainCode does not hand off: the engine
 	// would play its links first and test the LAST link's byte, which
-	// srrevamp does not model.
+	// OpenSRO does not model.
 	chained := &refdata.Skill{ReqLearnSP: 1, ID: 2, AutoAttackType: 1, BasicChainCode: 12, CastingTimeMs: 411, ActionDurationMs: 834}
 	if skillHandsOff(chained) {
 		t.Error("a row with BasicChainCode 12 handed off; the engine plays the chain link by link first")
@@ -382,7 +382,7 @@ func TestFirstSwingIsGatedByReach(t *testing.T) {
 // folded into +0x74 at load (SkillGlobal::PostLoadSkillTable 0x5893e0).
 //
 // And the two refusals that sit in front of it: a row with a non-zero
-// Basic_ChainCode (srrevamp does not play the links, keepup.go's package
+// Basic_ChainCode (OpenSRO does not play the links, keepup.go's package
 // comment) and a ZeroDamage row (useSkillHandler's no-blow early return comes
 // before the hand-off) must leave nothing running.
 func TestSkillCastHandsOffToPlainSwings(t *testing.T) {

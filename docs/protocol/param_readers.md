@@ -56,13 +56,13 @@ here":
   resist gate, recovered in `damage_pipeline.md`.
 - **params 12, 57, 178/179, 187/188, 259 -> the damage pipeline** (`Combat_ResolveDamage`,
   `Formula_MitigatePhysicalDamage`/`MagicalDamage`). Already documented there; 178/179 are attacker
-  percentages srrevamp cannot reach because nothing publishes them (`combat.go`).
+  percentages OpenSRO cannot reach because nothing publishes them (`combat.go`).
 - **param 141 (`dcmp`) -> `Skill_CheckUseConditions`** and three skill functions -- a skill-use
   gate, not a damage term.
 - **param 184 (`hwir`) -> `FUN_00410880`**; **params 23/24 -> `CGObjPC::vslot_215`** (an
   HP/MP-stamina accessor).
 
-None is wired into srrevamp: they feed enchant, status and buff systems the server does not have,
+None is wired into OpenSRO: they feed enchant, status and buff systems the server does not have,
 or are attacker/buff percentages nothing publishes. This map is reference data -- the point is that
 each now has a cited consumer or a stated "unresolved by literal scan", so the buff write side
 (`DrivesParams`) is no longer a set of grants with unknown effect.

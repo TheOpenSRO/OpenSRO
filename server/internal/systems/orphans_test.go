@@ -50,10 +50,10 @@ var knownOrphans = map[string]string{
 	"DeathPenaltyFactorFor": "the per-cause EXP death penalty. Triaged out of the baseline in " +
 		"round 351: cause 5 (the lesser, 20x branch) requires BOTH parties to be guilded -- " +
 		"GObjPC::IsKilledByPlayer tests victim+0x1cbc and killer[0x72f], which are PARTY and " +
-		"GUILD -- so it is a guild-war or siege death. srrevamp has neither, and its only PvP is " +
+		"GUILD -- so it is a guild-war or siege death. OpenSRO has neither, and its only PvP is " +
 		"a consensual duel, which duel.go declines to charge for because which death kind a duel " +
-		"is has not been read. Unreachable until srrevamp grows open-world PK, not forgotten.",
-	"WithdrawCostForLevels": "the recovered skill-reset cost formula; srrevamp offers no " +
+		"is has not been read. Unreachable until OpenSRO grows open-world PK, not forgotten.",
+	"WithdrawCostForLevels": "the recovered skill-reset cost formula; OpenSRO offers no " +
 		"withdrawal feature (docs/protocol/skill_withdraw.md says so in its first paragraph). " +
 		"This entry is also this test's positive CONTROL -- see TestOrphanDetectorIgnoresComments.",
 	// internal/ai, unparked in round 537 when session/monsterai.go began driving
@@ -62,7 +62,7 @@ var knownOrphans = map[string]string{
 	"AggroLinkHate": "the hate each successive link carries (the record's +8 floored at 1 and scaled " +
 		"by MONSTER_AGGRO_LINK_DECREASE_RATIO, round 258, corrected in round 537, named in round 553). " +
 		"The link itself is wired (round 553, session/monsterai.go's linkAggro, behind -monster-battle) " +
-		"but forwards no hate: a blow carries no hate value in srrevamp, and the magnitudes are the " +
+		"but forwards no hate: a blow carries no hate value in OpenSRO, and the magnitudes are the " +
 		"threat table's -- wired by mob-threat-retarget.",
 	"AttackIntervalRange": "a monster's swing interval, ReuseDelay + rand % (J + 1) (ArmNextAttack " +
 		"0x5619e0, round 259). Round 545's timer read settled that the jitter never delays a swing: " +

@@ -6,7 +6,7 @@
 # any difference in any field of any node changes a hash. Exit 0 when the two
 # lists are identical.
 #
-#   RENDER_DIR=/opt/srrevamp-client-<lane> GODOT_LOCK=/var/tmp/<lane>/lock \
+#   RENDER_DIR=/opt/opensro-client-<lane> GODOT_LOCK=/var/tmp/<lane>/lock \
 #     client/tools/efp_dump_diff.sh
 #
 # Ship the client first (remote_godot.sh check). To find where one file's

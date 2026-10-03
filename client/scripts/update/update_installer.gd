@@ -11,7 +11,7 @@ class_name UpdateInstaller
 ## run on Windows here). So for each file: move the current one aside to
 ## "<name>.old-update", move the new one into its place, and delete the old
 ## one when nothing holds it any more -- at once on Linux, on the next launch
-## on Windows (cleanup(), which finds them by name). srrevamp_native.dll is loaded by this very process,
+## on Windows (cleanup(), which finds them by name). opensro_native.dll is loaded by this very process,
 ## so it is exactly that case. On Linux a rename gives the new file a new
 ## inode and the running process keeps the old one mapped.
 ##
@@ -31,14 +31,14 @@ const ASIDE_SUFFIX := ".old-update"
 ## Round 668's first cut listed the moved-aside files here; cleanup() now finds
 ## them by name instead (the review's L2: a run killed mid-install never wrote
 ## the list). An old list is still read and removed.
-const CLEANUP_LIST := "srrevamp_update_cleanup.txt"
+const CLEANUP_LIST := "opensro_update_cleanup.txt"
 ## What the last update did, next to the executable: written by the old
 ## process, printed into the new process's log by take_summary() and removed,
 ## so a tester's log of the first run after an update says what happened.
-const SUMMARY_FILE := "srrevamp_update.log"
-const NATIVE_LIBRARIES := ["srrevamp_native.dll", "libsrrevamp_native.so"]
+const SUMMARY_FILE := "opensro_update.log"
+const NATIVE_LIBRARIES := ["opensro_native.dll", "libopensro_native.so"]
 ## Names the updater itself makes; never installed, never overwritten.
-const OWN_FILES := ["srrevamp_update.zip", "srrevamp_update_relaunch.bat", CLEANUP_LIST, SUMMARY_FILE]
+const OWN_FILES := ["opensro_update.zip", "opensro_update_relaunch.bat", CLEANUP_LIST, SUMMARY_FILE]
 const RETRIES := 5
 const RETRY_MS := 200
 

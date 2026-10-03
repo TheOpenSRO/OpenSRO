@@ -5,8 +5,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
 )
 
 func member(id uint64, characterID int64, name string) Member {
@@ -189,7 +189,7 @@ func TestLeaveBySessionNotInAnyParty(t *testing.T) {
 // TestMaxSizeMatchesTheEngine pins the recovered join-time caps. The engine has
 // two, selected by bit 0 of the party's flags -- the exp-sharing bit, named by
 // the errors each branch raises (MEMBER_FULL_EXP_SHARED_PARTY at 8,
-// MEMBER_FULL_NONEEXP_SHARED_PARTY at 4). srrevamp's parties always share
+// MEMBER_FULL_NONEEXP_SHARED_PARTY at 4). OpenSRO's parties always share
 // experience, so 8 is the one that applies.
 func TestMaxSizeMatchesTheEngine(t *testing.T) {
 	if MaxSize != 8 {

@@ -168,7 +168,7 @@ what a real outdoor region scattering 39/11/7/1 objects of those types would pla
 
 **Implemented**: `server/internal/objidx` (Go) and `client/scripts/objidx/objidx_reader.gd`
 (GDScript) parse this table and expose `Lookup(type_id)`. `World3D.gd` uses it
-(`SRREVAMP_MAPO_PATH`) to render real placed objects with their real resolved `.bsr` models
+(`OPENSRO_MAPO_PATH`) to render real placed objects with their real resolved `.bsr` models
 instead of a placeholder marker — see `README.md` and `docs/PROGRESS.md`.
 
 **A real client-version mismatch, confirmed 2026-08-24, not a bug**: some real Jangan-area regions

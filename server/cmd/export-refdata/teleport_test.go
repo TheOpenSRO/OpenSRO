@@ -8,7 +8,7 @@ import (
 	"testing"
 	"unicode/utf16"
 
-	"github.com/OpenSRO/srrevamp/server/internal/teleport"
+	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
 )
 
 // utf16le encodes text the way the Media.pk2 tables are stored: UTF-16LE with

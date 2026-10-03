@@ -6,7 +6,7 @@ import (
 )
 
 // The client's own fixtures (client/scripts/net/combat_test.gd, MOVED_FIXTURE
-// and MOTION_LIST_FIXTURE; docs/protocol/monster_ai.md, "srrevamp's own
+// and MOTION_LIST_FIXTURE; docs/protocol/monster_ai.md, "OpenSRO's own
 // monster protocol"): monster 7 from (100, -200) to (140, -200) at 8 u/s,
 // walking. The server's encoders must produce them byte for byte.
 var (

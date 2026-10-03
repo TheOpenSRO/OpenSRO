@@ -1,6 +1,6 @@
 # Durability and repair
 
-srrevamp has item durability columns in its reference data and no repair path.
+OpenSRO has item durability columns in its reference data and no repair path.
 This is the path, recovered from `SR_GameServer.exe`. Implemented in
 `server/internal/repair`.
 
@@ -214,7 +214,7 @@ and that is an inference.
 
 ## Creating an item: the variance roll and the initial durability (2026-09-19)
 
-Where `q` comes from, read from the creation path so that srrevamp never has to
+Where `q` comes from, read from the creation path so that OpenSRO never has to
 invent it.
 
 ### `GObjPC::InitItemVarianceAndData` -- `0x007286c0`
@@ -258,7 +258,7 @@ honest: for equipment kinds it computes
 through `GObjPC::SetItemVariance` (`0x0042fb80`, a plain `(lo, hi)` setter).
 Durability's variance and the durability itself can therefore never disagree.
 
-### What srrevamp needs, all of it now grounded
+### What OpenSRO needs, all of it now grounded
 
 | step | rule | source |
 |---|---|---|
@@ -426,7 +426,7 @@ field count is 1-based over the row and the text column index is 0-based. So
 
 That off-by-one was live in the exporter. `fRepairCost = 28` read `+0xa8`, the
 adjacent restore cost, which the authored data sets at **1.5x the basis** — so
-every repair srrevamp quoted was half again too expensive. The Copper Sword
+every repair OpenSRO quoted was half again too expensive. The Copper Sword
 (`ITEM_CH_SWORD_01_A`) is 198 at column 27 and 297 at column 28.
 
 **Four disjoint anchors fix field k to row field k**, none of which relies on

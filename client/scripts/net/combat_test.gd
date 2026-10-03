@@ -361,7 +361,7 @@ func _test_skill_tick_approaches() -> void:
 	_check(CombatNet.skill_tick_approaches(2, 1),
 		"Target_Required other than 0/1 (no China board row has one; the asm's own branch): the land test is skipped (0x4ae74b jne), so it walks")
 
-## The protocol table's fixture (docs/protocol/monster_ai.md, "srrevamp's own
+## The protocol table's fixture (docs/protocol/monster_ai.md, "OpenSRO's own
 ## monster protocol (placeholders)"): monster 7 from (100,-200) to
 ## (140,-200) at 8 u/s, walking.
 const MOVED_FIXTURE := [0x07, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x00, 0xc8, 0x42, 0x00, 0x00, 0x48, 0xc3,
@@ -396,7 +396,7 @@ func _test_decode_monster_motion_list() -> void:
 	_check(CombatNet.decode_monster_motion_list(PackedByteArray([1])).is_empty(), "a payload without its count gives none")
 
 ## The protocol table's OpMonsterAttacked fixture (docs/protocol/monster_ai.md,
-## "srrevamp's own monster protocol (placeholders)"): monster 7 strikes
+## "OpenSRO's own monster protocol (placeholders)"): monster 7 strikes
 ## character 42 for 200, critical and killing (flags 0x05), which leaves it on
 ## 76 HP and costs it 25900 experience. The numbers are a fixture, not any
 ## species' own.

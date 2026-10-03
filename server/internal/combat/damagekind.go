@@ -46,7 +46,7 @@ const (
 	// KindTransformed: the attacker is under the monster transform. Damage is
 	// Formula_RollLevelDamage, a roll built from the two levels and no weapon,
 	// which is what a player who has become a monster would need. NOT MODELLED:
-	// srrevamp has no transform, and what attacker[0x308] is has not been read
+	// OpenSRO has no transform, and what attacker[0x308] is has not been read
 	// beyond "an object whose skill record carries 'msch'".
 	KindTransformed DamageKind = 1
 	// KindEventMob: the target is on the hard-coded event list. Damage is the
@@ -89,7 +89,7 @@ func IsFortressStructure(t1, t2, t3 int) bool {
 type KindInput struct {
 	AttackerIsPC bool
 	// AttackerTransformed: the attacker's attached object carries 'msch' with
-	// value[0] == 1. Always false in srrevamp today.
+	// value[0] == 1. Always false in OpenSRO today.
 	AttackerTransformed bool
 	// The target's TypeID1..4. A zero TypeID1 means unknown, and an unknown
 	// target is not a structure.
@@ -126,7 +126,7 @@ func SelectDamageKind(in KindInput) DamageKind {
 
 // FixedDamagePerHit returns the damage each hit deals for the kinds whose
 // damage is a constant, and ok=false for the kinds that compute it (ordinary)
-// or that srrevamp does not model (transformed, structure).
+// or that OpenSRO does not model (transformed, structure).
 //
 // It is per HIT: the kind switch sits inside the engine's per-hit loop, so a
 // three-hit skill swung with a fortress weapon deals 1 three times.

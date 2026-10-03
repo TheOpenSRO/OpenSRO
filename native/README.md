@@ -1,4 +1,4 @@
-# srrevamp_native: the native (Rust) asset readers
+# opensro_native: the native (Rust) asset readers
 
 Round 667's spike (docs/WORLD_ISSUES.md, "Six-hundred-and-sixty-seventh round"): a GDExtension
 that does, in Rust, the asset-reading work the world load measured as most expensive in
@@ -27,7 +27,7 @@ before.
   never a Variant per element.
 - The client never names these classes as types. `client/scripts/pk2/native_assets.gd` looks them
   up by string through `ClassDB`, so every script compiles without the library.
-  `client/srrevamp_native.gdextension` names the library files.
+  `client/opensro_native.gdextension` names the library files.
 
 ## The Vulkan -> OpenGL fall back (round 693's review)
 
@@ -46,11 +46,11 @@ binding: no class, no `#[func]`, so `core::API` is unchanged.
   extension. It then counts the physical devices. If any step fails, it starts the game again with
   `--rendering-driver opengl3`, put before any `--`, and ends this process: `exec` on Linux,
   spawn + `TerminateProcess` on Windows.
-- **The record.** `SRREVAMP_VK_PROBE` carries the result (`ok N device(s) in X ms` /
+- **The record.** `OPENSRO_VK_PROBE` carries the result (`ok N device(s) in X ms` /
   `fallback to OpenGL: <why> (X ms)`). Boot logs it, and `RendererChoice` records the Compatibility
   start in `override.cfg`.
 - **When it does nothing:** a renderer, driver or display driver on the command line, `--headless`,
-  the editor or an export, a set `SRREVAMP_VK_PROBE` (the restarted child), or an `override.cfg`
+  the editor or an export, a set `OPENSRO_VK_PROBE` (the restarted child), or an `override.cfg`
   beside the executable that already chooses `gl_compatibility`.
 - **Why the editor and imports stay at Scene.** A first `--headless --import --quit` of a project
   whose `.godot/` does not list the extension yet never finished with the library at Core.
@@ -171,8 +171,8 @@ and `experimental-threads`. Cargo.lock is committed, and the builds use `--locke
 
 ```
 curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-native/build.sh            # Linux: client/native_bin/libsrrevamp_native.so
-native/build.sh windows    # Windows: client/native_bin/srrevamp_native.dll
+native/build.sh            # Linux: client/native_bin/libopensro_native.so
+native/build.sh windows    # Windows: client/native_bin/opensro_native.dll
 native/build.sh linux-release  # the release .so, glibc floor 2.28 (needs zig + cargo-zigbuild; see "CI")
 ```
 
@@ -289,7 +289,7 @@ client/tools/remote_godot.sh script res://tools/native_parity_terrain.gd -- --pk
 
 ## A/B
 
-`SRREVAMP_NATIVE=0` forces the GDScript path in a build that has the library. The client logs
+`OPENSRO_NATIVE=0` forces the GDScript path in a build that has the library. The client logs
 `NativeAssets: native readers ON|OFF (...)` once. `client/tools/README.md`, "Native readers A/B",
 gives the perf-gate recipe (`--ab-env`, `--cold`). The same section has the rule that keeps the
 ordinary gate from crediting a round with the native speed-up.
@@ -309,11 +309,11 @@ Why GNU and not MSVC:
 It exports `gdext_rust_init`, the entry symbol the `.gdextension` names (checked with
 `x86_64-w64-mingw32-objdump -p`). **It has not been run on Windows.**
 
-On a Windows PC, put `srrevamp_native.dll` in `native_bin\` next to the project, or next to the
+On a Windows PC, put `opensro_native.dll` in `native_bin\` next to the project, or next to the
 exe in an export (see below). Then check the log for:
 
 ```
-NativeAssets: native readers ON (library loaded, srrevamp_native 0.1.0, API 5, <path of the DLL>)
+NativeAssets: native readers ON (library loaded, opensro_native 0.1.0, API 5, <path of the DLL>)
 ```
 
 `native readers OFF (library not found: <path>)`, after Godot's `GDExtension dynamic library not
@@ -332,10 +332,10 @@ export templates. Static linking is why the core is kept free of Godot types.
 each in its zip **next to the executable**. Godot 4.2.2 exports a GDExtension library there
 (`editor_export_platform_pc.cpp`). At runtime, `OS::open_dynamic_library` falls back to the
 executable's folder when `res://native_bin/…` is not a real file. `export_presets.cfg` includes
-`srrevamp_native.gdextension` again.
+`opensro_native.gdextension` again.
 
 The steps, in order:
-1. `native/ci_toolchain.sh` sets up the toolchain on the runner (the persistent `srrevamp-pve`
+1. `native/ci_toolchain.sh` sets up the toolchain on the runner (the persistent `opensro-pve`
    runners since 2026-10-01, docs/CI_RUNNERS.md; until then the ephemeral `kakariko-runner` pod). It
    installs mingw-w64 (and a host `cc`) through apt, as root or with `sudo -n`. It installs
    rustup with the pinned toolchain (`RUST_TOOLCHAIN`, 1.98.1, set in release.yml and ci.yml)
@@ -367,7 +367,7 @@ The steps, in order:
    - as shipped, it must log `native readers ON` and no GDExtension error;
    - with the library renamed to `.off`, it must log `native readers OFF`.
 7. A `workflow_dispatch` run without a tag keeps both zips as a 3-day artifact
-   (`srrevamp-test-build`) and publishes nothing.
+   (`opensro-test-build`) and publishes nothing.
 
 **The glibc floor is 2.28, chosen deliberately.** Godot 4.2.2's own Linux binary and its export
 template need GLIBC_2.28 at most (MEASURED with `objdump -T`, round 668). A `.so` linked on the

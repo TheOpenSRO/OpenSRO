@@ -52,7 +52,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 )
 
 // PickRange is how close a player must stand to pick an item up, in world
@@ -270,7 +270,7 @@ const ownerOnlyExemptName = "ITEM_QNO_RM_ARCHEMY"
 // of the combined itemdata have codenames made of those alone, so they agree
 // on every retail codename.
 //
-// An empty codename answers false. That is srrevamp's own rule, not the
+// An empty codename answers false. That is OpenSRO's own rule, not the
 // engine's (whose items always have one): an export older than the CodeName
 // column cannot tell the ITEM_QNO_RM_ARCHEMY items from the rest, and such a
 // deployment keeps the party allowance for every item, as it had before
@@ -350,7 +350,7 @@ func (h *Hub) InZone(zone string) []Item {
 // Two engine tests in that sequence have nothing to act on here. Between
 // CanPick and the range, an item whose slot 46 (IGObj::IsQuest_n_EventItem)
 // answers yes has the picker's quest state asked, refusing 0x1874
-// UIIT_MSG_STRGERR_CANNOT_BE_PICKED_AT_QUEST_ACHIEVE_CONDITION; srrevamp
+// UIIT_MSG_STRGERR_CANNOT_BE_PICKED_AT_QUEST_ACHIEVE_CONDITION; OpenSRO
 // has no quest-achieve condition to ask. Between the range and the busy
 // flag, a life state other than 2 answers 3; every item in the hub is on the
 // ground, which this project INFERS is life state 2 -- slot 62 in the item

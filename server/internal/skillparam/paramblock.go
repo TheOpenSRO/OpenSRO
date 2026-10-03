@@ -657,7 +657,7 @@ var CombatParameters = []Code{
 // field+offset is read as a mode by FUN_00593f50 (the skill-effect applier
 // called by EngageSkill), which special-cases modes 6 and 7; the two functions
 // share no call path, which is what grounds it. See docs/protocol/skill_params.md,
-// "efr is a targeting mode". srrevamp has no area-targeting path, so this is the
+// "efr is a targeting mode". OpenSRO has no area-targeting path, so this is the
 // citation for the constant rather than something wired in.
 const EfrCombatSelector = 6
 
@@ -842,7 +842,7 @@ const (
 const HealScaleBuffCode Code = "rhru"
 
 // SelfHealAmounts is the HP and MP a skill's 'heal' run restores to its CASTER,
-// for the one shape whose result srrevamp can compute exactly, and (0, 0) for
+// for the one shape whose result OpenSRO can compute exactly, and (0, 0) for
 // every other skill (round 503).
 //
 // THE ENGINE'S PATH, read from the asm of Skill_ApplyEffectsAndNotify
@@ -873,16 +873,16 @@ const HealScaleBuffCode Code = "rhru"
 //   - 'heal' is present, once (the engine keeps one pointer per field; a row
 //     with two is a shape no real row has and is not modelled);
 //   - no 'nmh' (percent-of-MaxHP mode), 'mwhh'/'mwmh' (the weapon-damage
-//     terms) or getv 'HLRU' (the v1/v3 bonus), none of which srrevamp computes;
+//     terms) or getv 'HLRU' (the v1/v3 bonus), none of which OpenSRO computes;
 //   - no 'efr': it fills the target vector (Skill_CollectTargetsByEffect), so
-//     the heal would go to the collected targets, and srrevamp has no area
+//     the heal would go to the collected targets, and OpenSRO has no area
 //     targeting;
-//   - CarriesCombatParameter decides false: srrevamp answers such a cast on its
+//   - CarriesCombatParameter decides false: OpenSRO answers such a cast on its
 //     no-blow path, and a skill that both strikes and heals is not modelled;
 //   - v1 == 0 for the HP amount and v3 == 0 for the MP one (their +% bonus is
 //     not carried); the halves are independent.
 //
-// p170/p171 are 0 in srrevamp: their only writer is the 'rhru' buff
+// p170/p171 are 0 in OpenSRO: their only writer is the 'rhru' buff
 // (ApplySkillParamsToChar 0x594ac0), and there is no buff system, so the
 // scale is exactly 1.
 //

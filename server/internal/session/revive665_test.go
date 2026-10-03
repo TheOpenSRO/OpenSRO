@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/gm"
-	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/gm"
+	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // Round 665: retail's resurrect choices (deadstate.go, "THE CHOICES"). These

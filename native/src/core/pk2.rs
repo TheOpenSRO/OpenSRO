@@ -342,7 +342,7 @@ mod tests {
                 use std::sync::atomic::{AtomicUsize, Ordering};
                 static N: AtomicUsize = AtomicUsize::new(0);
                 let n = N.fetch_add(1, Ordering::Relaxed);
-                TempPath(std::env::temp_dir().join(format!("srrevamp_native_test_{}_{n}.pk2", std::process::id())))
+                TempPath(std::env::temp_dir().join(format!("opensro_native_test_{}_{n}.pk2", std::process::id())))
             }
         }
         impl Drop for TempPath {

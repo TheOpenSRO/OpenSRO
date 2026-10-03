@@ -16,38 +16,38 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/account"
-	"github.com/OpenSRO/srrevamp/server/internal/ai"
-	"github.com/OpenSRO/srrevamp/server/internal/berserk"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/duel"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/friend"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/gm"
-	"github.com/OpenSRO/srrevamp/server/internal/grounditem"
-	"github.com/OpenSRO/srrevamp/server/internal/guild"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
-	"github.com/OpenSRO/srrevamp/server/internal/mana"
-	"github.com/OpenSRO/srrevamp/server/internal/nest"
-	"github.com/OpenSRO/srrevamp/server/internal/party"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/quest"
-	"github.com/OpenSRO/srrevamp/server/internal/rates"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/safezone"
-	"github.com/OpenSRO/srrevamp/server/internal/session"
-	"github.com/OpenSRO/srrevamp/server/internal/shop"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
-	"github.com/OpenSRO/srrevamp/server/internal/spawn"
-	"github.com/OpenSRO/srrevamp/server/internal/species"
-	"github.com/OpenSRO/srrevamp/server/internal/storage"
-	"github.com/OpenSRO/srrevamp/server/internal/teleport"
-	"github.com/OpenSRO/srrevamp/server/internal/trade"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/account"
+	"github.com/OpenSRO/OpenSRO/server/internal/ai"
+	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/duel"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/friend"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/gm"
+	"github.com/OpenSRO/OpenSRO/server/internal/grounditem"
+	"github.com/OpenSRO/OpenSRO/server/internal/guild"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
+	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/nest"
+	"github.com/OpenSRO/OpenSRO/server/internal/party"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/quest"
+	"github.com/OpenSRO/OpenSRO/server/internal/rates"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/safezone"
+	"github.com/OpenSRO/OpenSRO/server/internal/session"
+	"github.com/OpenSRO/OpenSRO/server/internal/shop"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/spawn"
+	"github.com/OpenSRO/OpenSRO/server/internal/species"
+	"github.com/OpenSRO/OpenSRO/server/internal/storage"
+	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
+	"github.com/OpenSRO/OpenSRO/server/internal/trade"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // monsterSpec describes one species of monster to keep alive somewhere in
@@ -94,7 +94,7 @@ type monsterSpec struct {
 	// monsters here, not a law of the table: it holds for only ~37 % of the
 	// retail characterdata's monster rows (round 380). Read cols 75 and 77 for
 	// the new row. Col 76 ('bri', blocking) is 0 for all eleven and non-zero on
-	// 939 rows table-wide, so a blocking species also needs a mechanic srrevamp
+	// 939 rows table-wide, so a blocking species also needs a mechanic OpenSRO
 	// does not have yet.
 	// AttackReuseMs / AttackRange are the primary attack skill's ReuseDelay
 	// and Range (characterdata col 83 -> skilldata columns 14 and 21), read
@@ -434,7 +434,7 @@ var monsterSpecs = []monsterSpec{
 		Skills: []combat.MonsterSkill{{ID: 166, ReuseMs: 2000, Range: 16, AttMin: 41, AttMax: 47, Chance: 100}, {ID: 167, ReuseMs: 2500, Range: 16, AttMin: 41, AttMax: 47, Chance: 100}}, X: 500, Z: -360, Count: 2},
 	// Water Ghost's second skill, MSKILL_CH_WATERGHOST_ATTACK02 169, carries a
 	// zero-damage 'att' block (9,0,0,0,100) beside a `ps` param 28787
-	// (34,100,16): a status skill, which srrevamp has no system for, so a
+	// (34,100,16): a status skill, which OpenSRO has no system for, so a
 	// swing of it lands nothing (session.monsterStrike). Its chance is 10
 	// against ATTACK01's 100.
 	{Zone: "jangan", Name: "Water Ghost", CodeName: "MOB_CH_WATERGHOST", RefObjID: 1939, WalkSpeed: 15, RunSpeed: 55, AttackReuseMs: 2000, AttackRange: 16, Level: 7, BCRadius: 6, Critical: 2, MaxHP: 156, Defense: 15, AttackMin: 47, AttackMax: 54, GoldMin: 49, GoldMax: 103,
@@ -762,7 +762,7 @@ func statusParamsWarning(inMemory bool, skills, withStatus int, err error, monst
 // regions" two rounds after the window changed).
 func monsterSleepUsage() string {
 	side := 2*session.AOIRadius + 1
-	return fmt.Sprintf("with -monster-ai, let the brains of monsters no player is near sleep (env SRREVAMP_MONSTER_SLEEP): a "+
+	return fmt.Sprintf("with -monster-ai, let the brains of monsters no player is near sleep (env OPENSRO_MONSTER_SLEEP): a "+
 		"monster whose %g-unit block is outside every player's area of interest -- the %dx%d blocks of %g units "+
 		"around the block a player stands in (retail's message blocks, 6x6 to a region) -- is neither moved nor run "+
 		"until a player comes that near, and its brain is dropped until then, keeping only what it must "+
@@ -857,7 +857,7 @@ func serverCapacity(v int, logger *slog.Logger) int {
 
 func main() {
 	addr := flag.String("addr", ":15779", "listen address for the gateway service")
-	postgresDSN := flag.String("postgres-dsn", "postgres://postgres:postgres@localhost:5432/srrevamp?sslmode=disable",
+	postgresDSN := flag.String("postgres-dsn", "postgres://postgres:postgres@localhost:5432/opensro?sslmode=disable",
 		"PostgreSQL connection string for account/character storage")
 	tlsCert := flag.String("tls-cert", "", "path to a TLS certificate (PEM); if set with -tls-key, the gateway serves TLS instead of plain TCP")
 	tlsKey := flag.String("tls-key", "", "path to a TLS private key (PEM); see -tls-cert")
@@ -870,127 +870,127 @@ func main() {
 			"account, character, guild and friendship is gone when the process exits. For "+
 			"development, for end-to-end client runs, and for anyone who wants to try the "+
 			"server without setting up a database.")
-	leveldataCSV := flag.String("leveldata-csv", os.Getenv("SRREVAMP_LEVELDATA_CSV"),
+	leveldataCSV := flag.String("leveldata-csv", os.Getenv("OPENSRO_LEVELDATA_CSV"),
 		"path to a level,exp CSV (generated by cmd/export-leveldata from a client's own "+
 			"leveldata.txt); enables EXP/leveling. Without it, characters never level.")
-	skillsCSV := flag.String("skills-csv", os.Getenv("SRREVAMP_SKILLS_CSV"),
+	skillsCSV := flag.String("skills-csv", os.Getenv("OPENSRO_SKILLS_CSV"),
 		"path to a skill-refdata CSV (from cmd/export-refdata -mode skills); with -in-memory it "+
 			"lets the server gate learning on real skills. With PostgreSQL, import it via "+
 			"cmd/import-refdata instead. Without either, learning real skills is unavailable.")
-	npcposCSV := flag.String("npcpos-csv", os.Getenv("SRREVAMP_NPCPOS_CSV"),
+	npcposCSV := flag.String("npcpos-csv", os.Getenv("OPENSRO_NPCPOS_CSV"),
 		"path to the game's monster placements (from cmd/export-refdata -mode npcpos on a client's "+
 			"own npcpos.txt). Every roster species with rows in it stands where the game puts it; "+
 			"without the file the species keep their own-design anchors near the town.")
-	monstersCSV := flag.String("monsters-csv", os.Getenv("SRREVAMP_MONSTERS_CSV"),
+	monstersCSV := flag.String("monsters-csv", os.Getenv("OPENSRO_MONSTERS_CSV"),
 		"path to the monster species table (from cmd/export-refdata -mode monsters on a client's own "+
 			"characterdata parts, levelgold.txt and textdata_object.txt; round 654). Every roster species "+
 			"takes its numbers from its row, and the GM console's /spawn knows every species in it by code "+
 			"name, id or English name. Without -full-map, who spawns where does not change; with it, every "+
 			"field nest spawns from this table (round 660). Without it the hand-typed roster is all the server knows. A configured path that does not load is fatal.")
-	teleportDir := flag.String("teleport-dir", os.Getenv("SRREVAMP_TELEPORT_DIR"),
+	teleportDir := flag.String("teleport-dir", os.Getenv("OPENSRO_TELEPORT_DIR"),
 		"directory holding the game's teleport network as teleportdata.csv, teleportlink.csv and "+
 			"teleportbuilding.csv (from cmd/export-refdata -mode teleport on a client's own "+
 			"teleportdata.txt, teleportlink.txt and teleportbuilding.txt). Loaded, checked and counted "+
 			"at boot; the town teleporters' OpTeleportUse 0x00F3 charges and moves by it (round 576), "+
 			"and without it every teleport is refused. A configured directory that does not load is fatal.")
-	regionsCSV := flag.String("regions-csv", os.Getenv("SRREVAMP_REGIONS_CSV"),
-		"path to the game's region table as CSV (env SRREVAMP_REGIONS_CSV; from cmd/export-refdata -mode regions "+
+	regionsCSV := flag.String("regions-csv", os.Getenv("OPENSRO_REGIONS_CSV"),
+		"path to the game's region table as CSV (env OPENSRO_REGIONS_CSV; from cmd/export-refdata -mode regions "+
 			"on a client's own server_dep\\silkroad\\textdata\\refregion.txt, round 674). Its IsBattleField 0 regions "+
 			"are the towns: with the monster AI on, a monster that walks into one -- chasing a player, say -- or is "+
 			"placed in one is removed, as SR_GameServer.exe's CGObjMob::SetCurRegion does (no death, no reward; "+
 			"docs/protocol/monster_ai.md). Without it no region is a town and monsters follow players in. "+
 			"A configured path that does not load is fatal.")
-	chargenCSV := flag.String("chargen-csv", os.Getenv("SRREVAMP_CHARGEN_CSV"),
-		"path to the creatable catalogue as CSV (env SRREVAMP_CHARGEN_CSV; from cmd/export-refdata -mode chargen "+
+	chargenCSV := flag.String("chargen-csv", os.Getenv("OPENSRO_CHARGEN_CSV"),
+		"path to the creatable catalogue as CSV (env OPENSRO_CHARGEN_CSV; from cmd/export-refdata -mode chargen "+
 			"on a client's own characterdata_*.txt and itemdata_*.txt, round 682): the 52 bodies and 52 starting items a "+
 			"new character may be made from, and the two ammunition rows. Without it every character create is refused "+
 			"(0x403) -- the server cannot tell what it may make. A configured path that does not load is fatal.")
-	charDefaultsDir := flag.String("chardefaults-dir", os.Getenv("SRREVAMP_CHARDEFAULTS_DIR"),
+	charDefaultsDir := flag.String("chardefaults-dir", os.Getenv("OPENSRO_CHARDEFAULTS_DIR"),
 		"a directory holding the shard DB's _RefCharDefault_SkillMastery.csv, _RefCharDefault_Skill.csv and "+
-			"_RefCharDefault_Quest.csv as exported (env SRREVAMP_CHARDEFAULTS_DIR; EXTERNAL, round 692): a new "+
+			"_RefCharDefault_Quest.csv as exported (env OPENSRO_CHARDEFAULTS_DIR; EXTERNAL, round 692): a new "+
 			"character gets its race's default masteries at level 0, its default skills, and its level-1 default "+
 			"quests recorded, as the shard's _AddNewChar gives them. A _RefCharGen.csv beside them is compared with "+
 			"the creatable catalogue at boot. Without it new characters get no defaults. A configured directory "+
 			"that does not load is fatal. See deploy/README.md, \"Character defaults\".")
-	itemsCSV := flag.String("items-csv", os.Getenv("SRREVAMP_ITEMS_CSV"),
+	itemsCSV := flag.String("items-csv", os.Getenv("OPENSRO_ITEMS_CSV"),
 		"path to an item-refdata CSV (from cmd/export-refdata -mode items); with -in-memory it "+
 			"feeds the shop catalogue and prices, item stat lookups and inventory stack limits. "+
 			"With PostgreSQL, import it via cmd/import-refdata instead. Without either, the shop "+
 			"has no items to sell.")
-	gmAccounts := flag.String("gm-accounts", os.Getenv("SRREVAMP_GM_ACCOUNTS"),
-		"comma-separated account usernames allowed to run GM commands (env SRREVAMP_GM_ACCOUNTS). "+
+	gmAccounts := flag.String("gm-accounts", os.Getenv("OPENSRO_GM_ACCOUNTS"),
+		"comma-separated account usernames allowed to run GM commands (env OPENSRO_GM_ACCOUNTS). "+
 			"Case is compared as stored in accounts.username. Default none: nobody is a GM. See "+
 			"docs/DEBUG_TOOLS.md.")
 	// The operator's front-end theme (round 678, OURS): served to any client
 	// before login over OpFrontEndThemeRequest; see session/frontendtheme.go.
-	loginIntro := flag.String("login-intro", os.Getenv("SRREVAMP_LOGIN_INTRO"),
-		"the title intro the login screen plays (env SRREVAMP_LOGIN_INTRO): a retail intro's short name "+
+	loginIntro := flag.String("login-intro", os.Getenv("OPENSRO_LOGIN_INTRO"),
+		"the title intro the login screen plays (env OPENSRO_LOGIN_INTRO): a retail intro's short name "+
 			"(roc, egypt, china_whatf, china_wharf, constantinople, rm, rmzh, jupiter_login, ruby_baghdad -- "+
 			"the files in Media.pk2 script\\intro\\), an operator's own name the client finds as "+
 			"custom/intro/<name>.txt, or an archive path like script\\intro\\roc.txt. A name is letters, digits, _ and - "+
 			"(an archive path's may also hold spaces); anything else is refused with a warning and none is served. Default empty: the client plays option.txt's IntroName.")
-	loginBGM := flag.String("login-bgm", os.Getenv("SRREVAMP_LOGIN_BGM"),
-		"the title music's file name (env SRREVAMP_LOGIN_BGM), e.g. maintheme_cut.ogg: letters, digits, "+
+	loginBGM := flag.String("login-bgm", os.Getenv("OPENSRO_LOGIN_BGM"),
+		"the title music's file name (env OPENSRO_LOGIN_BGM), e.g. maintheme_cut.ogg: letters, digits, "+
 			"space, _ . -, ending .ogg (the only music the client looks up in Music.pk2). Default empty: the client plays option.txt's IntroBGM.")
-	loginLogo := flag.String("login-logo", os.Getenv("SRREVAMP_LOGIN_LOGO"),
-		"a logo file name the client loads from its own custom/frontend/ folder (env SRREVAMP_LOGIN_LOGO), "+
+	loginLogo := flag.String("login-logo", os.Getenv("OPENSRO_LOGIN_LOGO"),
+		"a logo file name the client loads from its own custom/frontend/ folder (env OPENSRO_LOGIN_LOGO), "+
 			"e.g. mylogo.png: letters, digits, _ and -, ending .png or .ddj. Default empty: the archive's own logo.")
-	loginCopyright := flag.String("login-copyright", os.Getenv("SRREVAMP_LOGIN_COPYRIGHT"),
+	loginCopyright := flag.String("login-copyright", os.Getenv("OPENSRO_LOGIN_COPYRIGHT"),
 		"one line of copyright or branding text for the login screen's bottom band (env "+
-			"SRREVAMP_LOGIN_COPYRIGHT), at most 200 characters; control characters are removed. Default empty: none.")
-	loginBandTop := flag.String("login-band-top", os.Getenv("SRREVAMP_LOGIN_BAND_TOP"),
+			"OPENSRO_LOGIN_COPYRIGHT), at most 200 characters; control characters are removed. Default empty: none.")
+	loginBandTop := flag.String("login-band-top", os.Getenv("OPENSRO_LOGIN_BAND_TOP"),
 		"the front-end's top band art, a file name the client loads from its own custom/frontend/ folder "+
-			"(env SRREVAMP_LOGIN_BAND_TOP): letters, digits, _ and -, ending .png or .ddj. Default empty: the archive's own band art.")
-	loginBandBottom := flag.String("login-band-bottom", os.Getenv("SRREVAMP_LOGIN_BAND_BOTTOM"),
+			"(env OPENSRO_LOGIN_BAND_TOP): letters, digits, _ and -, ending .png or .ddj. Default empty: the archive's own band art.")
+	loginBandBottom := flag.String("login-band-bottom", os.Getenv("OPENSRO_LOGIN_BAND_BOTTOM"),
 		"the front-end's bottom band art, a file name the client loads from its own custom/frontend/ folder "+
-			"(env SRREVAMP_LOGIN_BAND_BOTTOM): letters, digits, _ and -, ending .png or .ddj. Default empty: the archive's own band art.")
-	monsterAIEnv, monsterAIEnvErr := envBool("SRREVAMP_MONSTER_AI")
+			"(env OPENSRO_LOGIN_BAND_BOTTOM): letters, digits, _ and -, ending .png or .ddj. Default empty: the archive's own band art.")
+	monsterAIEnv, monsterAIEnvErr := envBool("OPENSRO_MONSTER_AI")
 	// The server list's status (round 679, OURS): the capacity the client's
 	// population band divides by, and the inspection switch it shows as
 	// "Check"; both also turn logins away (session.LoginGate).
-	maxPlayersEnv, maxPlayersEnvErr := envInt("SRREVAMP_MAX_PLAYERS", defaultMaxPlayers)
-	inspectionEnv, inspectionEnvErr := envBool("SRREVAMP_INSPECTION")
+	maxPlayersEnv, maxPlayersEnvErr := envInt("OPENSRO_MAX_PLAYERS", defaultMaxPlayers)
+	inspectionEnv, inspectionEnvErr := envBool("OPENSRO_INSPECTION")
 	maxPlayers := flag.Int("max-players", maxPlayersEnv,
-		"the server's capacity: the client's server list shows current/max as Easy, Populated, Crowded or FULL, and a login is refused once this many characters are in the world (1-65535; SRREVAMP_MAX_PLAYERS)")
+		"the server's capacity: the client's server list shows current/max as Easy, Populated, Crowded or FULL, and a login is refused once this many characters are in the world (1-65535; OPENSRO_MAX_PLAYERS)")
 	inspection := flag.Bool("inspection", inspectionEnv,
-		"under inspection: the client's server list shows \"Check\" and every login is refused with retail's inspection message (SRREVAMP_INSPECTION)")
+		"under inspection: the client's server list shows \"Check\" and every login is refused with retail's inspection message (OPENSRO_INSPECTION)")
 	monsterAI := flag.Bool("monster-ai", monsterAIEnv,
-		"run the monster AI (env SRREVAMP_MONSTER_AI): monsters idle, wander, run home past their "+
+		"run the monster AI (env OPENSRO_MONSTER_AI): monsters idle, wander, run home past their "+
 			"roam radius, and stand where a blow found them while any player in the zone has an "+
 			"auto-attack on them, each move pushed to the zone. Default OFF, and the kill switch: off, no monster moves "+
 			"and the wire is what it was. Needs a client that draws OpMonsterMoved (v0.1.435 or "+
 			"later). See deploy/README.md, \"Monster AI (off by default)\".")
-	strikePushEnv, strikePushEnvErr := envBool("SRREVAMP_MONSTER_STRIKE_PUSH")
+	strikePushEnv, strikePushEnvErr := envBool("OPENSRO_MONSTER_STRIKE_PUSH")
 	strikePush := flag.Bool("monster-strike-push", strikePushEnv,
 		"push a monster's counterattack to its whole zone, the attacker included (env "+
-			"SRREVAMP_MONSTER_STRIKE_PUSH): OpMonsterAttacked 0x007D, sent after the attacker's "+
+			"OPENSRO_MONSTER_STRIKE_PUSH): OpMonsterAttacked 0x007D, sent after the attacker's "+
 			"OpAttackResult, so everyone sees the blow. Default OFF: off, nothing is sent and the wire "+
 			"is what it was. Needs a client release that carries round 540. See deploy/README.md, "+
 			"\"Monster strike push (off by default)\".")
-	spawnPushEnv, spawnPushEnvErr := envBool("SRREVAMP_MONSTER_SPAWN_PUSH")
+	spawnPushEnv, spawnPushEnvErr := envBool("OPENSRO_MONSTER_SPAWN_PUSH")
 	spawnPush := flag.Bool("monster-spawn-push", spawnPushEnv,
 		"push a monster that has just appeared -- a respawn or a GM /spawn -- to its whole zone at "+
-			"once (env SRREVAMP_MONSTER_SPAWN_PUSH): OpMonsterSpawned 0x007E, the list's record plus "+
+			"once (env OPENSRO_MONSTER_SPAWN_PUSH): OpMonsterSpawned 0x007E, the list's record plus "+
 			"the heading it hatched facing. Default OFF: off, nothing is sent and the wire is what it "+
 			"was, so a respawn appears on each client's next monster list. Needs a client release that "+
 			"carries round 540. See deploy/README.md, \"Monster spawn push (off by default)\".")
-	uniqueOffEnv, uniqueOffEnvErr := envBool("SRREVAMP_UNIQUE_NOTICE_OFF")
+	uniqueOffEnv, uniqueOffEnvErr := envBool("OPENSRO_UNIQUE_NOTICE_OFF")
 	uniqueNoticeOff := flag.Bool("unique-notice-off", uniqueOffEnv,
-		"silence the unique monster notices (env SRREVAMP_UNIQUE_NOTICE_OFF): retail's "+
+		"silence the unique monster notices (env OPENSRO_UNIQUE_NOTICE_OFF): retail's "+
 			"CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG=ON. Default OFF: a unique's appearance and its "+
 			"killer are announced to every character, as retail does with the key absent (round 657).")
-	battleEnv, battleEnvErr := envBool("SRREVAMP_MONSTER_BATTLE")
+	battleEnv, battleEnvErr := envBool("OPENSRO_MONSTER_BATTLE")
 	battle := flag.Bool("monster-battle", battleEnv,
-		"let a struck monster fight on its own (env SRREVAMP_MONSTER_BATTLE): it chases its attacker "+
+		"let a struck monster fight on its own (env OPENSRO_MONSTER_BATTLE): it chases its attacker "+
 			"to its attack band at its run speed, swings on its attack skill's ReuseDelay with each blow "+
 			"pushed to the zone (OpMonsterAttacked 0x007D), and gives up by distance; the counterattack "+
 			"inside the attacker's OpAttackResult is then no longer made. Default OFF: off, the interim "+
 			"hold and the counter are what they were. Forced off with a WARN unless -monster-ai and "+
 			"-monster-strike-push are both on. Needs a client release that carries round 546. See "+
 			"deploy/README.md, \"Monster battle (off by default)\".")
-	deadStateEnv, deadStateEnvErr := envBool("SRREVAMP_PLAYER_DEAD_STATE")
+	deadStateEnv, deadStateEnvErr := envBool("OPENSRO_PLAYER_DEAD_STATE")
 	deadState := flag.Bool("player-dead-state", deadStateEnv,
-		"leave a player a monster kills dead (env SRREVAMP_PLAYER_DEAD_STATE): life state 2 at HP 0, "+
+		"leave a player a monster kills dead (env OPENSRO_PLAYER_DEAD_STATE): life state 2 at HP 0, "+
 			"its potion queue emptied, its moves, attacks, casts, items, pick-ups, duel blows, trade "+
 			"requests, zone changes and GM teleports refused, and no monster's target, until it asks for "+
 			"one of retail's resurrect choices with OpRevive 0x0028: option 1 returns it to its return point "+
@@ -999,9 +999,9 @@ func main() {
 			"the return point. Needs a client release that carries round 665 (the two buttons); an older "+
 			"client's one Revive button gets option 2 at level 10 or under and option 1 above. See "+
 			"deploy/README.md, \"Player dead state (off by default)\".")
-	aggroEnv, aggroEnvErr := envBool("SRREVAMP_MONSTER_AGGRO")
+	aggroEnv, aggroEnvErr := envBool("OPENSRO_MONSTER_AGGRO")
 	aggro := flag.Bool("monster-aggro", aggroEnv,
-		"let monsters notice players (env SRREVAMP_MONSTER_AGGRO): a monster idle, wandering or, once "+
+		"let monsters notice players (env OPENSRO_MONSTER_AGGRO): a monster idle, wandering or, once "+
 			"its blackout has passed, running home scans every 1001-1500 ms for the nearest living player "+
 			"within its collision radius + 100 units (the detection distance, an own-design stand-in for "+
 			"a server-database column: 104-111 units for the roster) and engages it as a blow would, "+
@@ -1009,9 +1009,9 @@ func main() {
 			"struck and the wire is what it was. Forced off with a WARN unless -monster-battle is in "+
 			"effect and -player-dead-state is on. Needs the client releases those two need (rounds 546 "+
 			"and 548). See deploy/README.md, \"Monster aggro (off by default)\".")
-	singleFrameEnv, singleFrameEnvErr := envBool("SRREVAMP_SINGLE_FRAME")
+	singleFrameEnv, singleFrameEnvErr := envBool("OPENSRO_SINGLE_FRAME")
 	singleFrame := flag.Bool("single-frame", singleFrameEnv,
-		"put the whole world in ONE coordinate frame (env SRREVAMP_SINGLE_FRAME): every zone with a "+
+		"put the whole world in ONE coordinate frame (env OPENSRO_SINGLE_FRAME): every zone with a "+
 			"frame is named in Jangan's 97/168 (FrameRegion \"97/168\") and kept in one broadcast bucket, "+
 			"every roster monster with it, and a zone change (so a GM /goto <town> too) lands at the "+
 			"town's landing named in that frame -- so a player who walks from Jangan toward Donwhang meets Donwhang's "+
@@ -1021,15 +1021,15 @@ func main() {
 			"builds a zone's grid inside the server's FrameRegion) and 571 (it finds the grid's corner "+
 			"when the centre region's terrain fails to load). See deploy/README.md, \"Single world "+
 			"frame (off by default)\".")
-	teleportFreeEnv, teleportFreeEnvErr := envBool("SRREVAMP_TELEPORT_FREE")
+	teleportFreeEnv, teleportFreeEnvErr := envBool("OPENSRO_TELEPORT_FREE")
 	teleportFree := flag.Bool("teleport-free", teleportFreeEnv,
-		"every gate teleport costs nothing (env SRREVAMP_TELEPORT_FREE): the free-while-testing switch "+
+		"every gate teleport costs nothing (env OPENSRO_TELEPORT_FREE): the free-while-testing switch "+
 			"(own design, round 576). Default OFF: off, a teleport charges its link's fee from the table, "+
 			"waived below level 21 (the engine's rule) and for GM accounts (-gm-accounts, own design). "+
 			"See deploy/README.md, \"Town teleporters\".")
-	persistPositionEnv, persistPositionEnvErr := envBool("SRREVAMP_PERSIST_POSITION")
+	persistPositionEnv, persistPositionEnvErr := envBool("OPENSRO_PERSIST_POSITION")
 	persistPosition := flag.Bool("persist-position", persistPositionEnv,
-		"a character logs back in where it left off (env SRREVAMP_PERSIST_POSITION): its zone label, "+
+		"a character logs back in where it left off (env OPENSRO_PERSIST_POSITION): its zone label, "+
 			"frame region and position are saved on its row -- on a disconnect, on each zone change, at "+
 			"most every 30 s while it walks (own design) and for everyone still in the world when the "+
 			"server stops -- and the next OpEnterWorldResult answers them, named in the zone's frame of "+
@@ -1037,52 +1037,52 @@ func main() {
 			"entry lands at the zone spawn with the wire as it was. Needs a client release that carries "+
 			"round 573: an older one moves a restored Jangan entry on to Jangan's landing spot. See "+
 			"deploy/README.md, \"Saved position (off by default)\".")
-	sleepEnv, sleepEnvErr := envBoolDefault("SRREVAMP_MONSTER_SLEEP", true)
+	sleepEnv, sleepEnvErr := envBoolDefault("OPENSRO_MONSTER_SLEEP", true)
 	monsterSleep := flag.Bool("monster-sleep", sleepEnv, monsterSleepUsage())
-	qaSpreadEnv, qaSpreadEnvErr := envInt("SRREVAMP_QA_SPREAD_MONSTERS", 0)
+	qaSpreadEnv, qaSpreadEnvErr := envInt("OPENSRO_QA_SPREAD_MONSTERS", 0)
 	qaSpread := flag.Int("qa-spread-monsters", qaSpreadEnv,
-		"QA ONLY (env SRREVAMP_QA_SPREAD_MONSTERS): spawn N more monsters of Jangan's roster species at "+
+		"QA ONLY (env OPENSRO_QA_SPREAD_MONSTERS): spawn N more monsters of Jangan's roster species at "+
 			"deterministic pseudo-random spots over the regions around Jangan (-qa-spread-radius), kept alive "+
 			"by the respawn scheduler like the roster -- a synthetic crowd for load tests of the area of "+
 			"interest (round 656). Not a claim about where any monster stands. Default 0: none.")
-	qaSpreadRadiusEnv, qaSpreadRadiusEnvErr := envInt("SRREVAMP_QA_SPREAD_RADIUS", 7)
+	qaSpreadRadiusEnv, qaSpreadRadiusEnvErr := envInt("OPENSRO_QA_SPREAD_RADIUS", 7)
 	qaSpreadRadius := flag.Int("qa-spread-radius", qaSpreadRadiusEnv,
-		"QA ONLY (env SRREVAMP_QA_SPREAD_RADIUS): how many regions out from Jangan's region -qa-spread-monsters "+
+		"QA ONLY (env OPENSRO_QA_SPREAD_RADIUS): how many regions out from Jangan's region -qa-spread-monsters "+
 			"spreads its monsters, on each axis (default 7: a 15x15-region square).")
-	fullMapEnv, fullMapEnvErr := envBool("SRREVAMP_FULL_MAP")
+	fullMapEnv, fullMapEnvErr := envBool("OPENSRO_FULL_MAP")
 	fullMap := flag.Bool("full-map", fullMapEnv,
-		"place every field monster of the game (env SRREVAMP_FULL_MAP, round 660): each monster row of -npcpos-csv "+
+		"place every field monster of the game (env OPENSRO_FULL_MAP, round 660): each monster row of -npcpos-csv "+
 			"outside the dungeons and the shard's custom species becomes a nest hatching its species from "+
 			"-monsters-csv (a unique, rarity 3, rotates over its spots through its DB hive; a rarity-8 boss stands on its own field nest; the Pharaoh temple's rows are left to their instance worlds -- round 661) -- with -nest-db-dir, the DB nest's "+
 			"window, radius, cap, champion chance and tactics (EXTERNAL); without it one monster per row, "+
 			"respawning after 10 s, with the stand-in behaviour. Needs -npcpos-csv and -monsters-csv (forced off "+
 			"with a WARN otherwise) and turns -single-frame on. Default OFF: off, the hand-typed roster stands "+
 			"where it always has.")
-	nestDBDir := flag.String("nest-db-dir", os.Getenv("SRREVAMP_NEST_DB_DIR"),
+	nestDBDir := flag.String("nest-db-dir", os.Getenv("OPENSRO_NEST_DB_DIR"),
 		"directory holding the shard DB's AI tables as Tab_RefTactics.csv, tab_refnest.csv and tab_refhive.csv "+
 			"(round 660; EXTERNAL: exported from the user's VSRO shard backup, never committed -- deploy/README.md), "+
 			"and optionally Tab_RefAISkill.csv and _RefSkill.csv (round 661: the uniques' triggers and summons). "+
 			"With -full-map every npcpos row joins the DB nest at its spot. A configured directory that does not load "+
 			"is fatal.")
-	swappedStandInEnv, swappedStandInEnvErr := envBool("SRREVAMP_NEST_SWAPPED_STAND_IN")
+	swappedStandInEnv, swappedStandInEnvErr := envBool("OPENSRO_NEST_SWAPPED_STAND_IN")
 	swappedStandIn := flag.Bool("nest-swapped-stand-in", swappedStandInEnv,
 		"with -full-map and -nest-db-dir, place each of the 6,042 spots whose shard nest was repointed to "+
 			"the shard's own monsters as a one-monster stand-in nest (10 s, radius 200, no champion roll; OURS) "+
 			"instead of on that nest's own cap, window, radii and champion chance (EXTERNAL, the default; "+
-			"round 660's review, the user's decision). Env SRREVAMP_NEST_SWAPPED_STAND_IN.")
-	nestRespawnEnv, nestRespawnEnvErr := envDuration("SRREVAMP_NEST_RESPAWN", 0)
+			"round 660's review, the user's decision). Env OPENSRO_NEST_SWAPPED_STAND_IN.")
+	nestRespawnEnv, nestRespawnEnvErr := envDuration("OPENSRO_NEST_RESPAWN", 0)
 	nestRespawn := flag.Duration("nest-respawn", nestRespawnEnv,
-		"every nest's respawn window but the uniques', both ends, in whole seconds (env SRREVAMP_NEST_RESPAWN, round 660): an "+
+		"every nest's respawn window but the uniques', both ends, in whole seconds (env OPENSRO_NEST_RESPAWN, round 660): an "+
 			"override for testing. Default 0: each DB nest's own [min, max] window (1-3 s on most, EXTERNAL) and 10 s "+
 			"for a stand-in nest.")
-	uniqueRespawnEnv, uniqueRespawnEnvErr := envDuration("SRREVAMP_UNIQUE_RESPAWN", 0)
+	uniqueRespawnEnv, uniqueRespawnEnvErr := envDuration("OPENSRO_UNIQUE_RESPAWN", 0)
 	uniqueRespawn := flag.Duration("unique-respawn", uniqueRespawnEnv,
-		"the uniques' respawn wait after a death, both ends, in whole seconds (env SRREVAMP_UNIQUE_RESPAWN, round 661): "+
+		"the uniques' respawn wait after a death, both ends, in whole seconds (env OPENSRO_UNIQUE_RESPAWN, round 661): "+
 			"an OURS override for testing. Default 0: the hive's nests' own window (EXTERNAL: 1,200-1,400 s for Tiger Girl, "+
 			"Uruchi, Isyutaru, Cerberus and Captain Ivy; 2,100-2,200 s for Lord Yarkan and Demon Shaitan).")
-	inventorySizeEnv, inventorySizeEnvErr := envInt("SRREVAMP_INVENTORY_SIZE", inventory.DefaultBagSlots)
+	inventorySizeEnv, inventorySizeEnvErr := envInt("OPENSRO_INVENTORY_SIZE", inventory.DefaultBagSlots)
 	inventorySize := flag.Int("inventory-size", inventorySizeEnv,
-		"the bag's size in slots for every character without one of its own (env SRREVAMP_INVENTORY_SIZE): "+
+		"the bag's size in slots for every character without one of its own (env OPENSRO_INVENTORY_SIZE): "+
 			"the client shows it as pages of 32, at most three (IFInventory 0x6b6620), and locks the "+
 			"slots of the last page past it. 1..96. Default 96, three full pages -- OURS, the test "+
 			"server's choice (round 633); the shard DB's _AddNewChar gives a new character "+
@@ -1092,63 +1092,63 @@ func main() {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	if maxPlayersEnvErr != nil {
-		logger.Warn("SRREVAMP_MAX_PLAYERS is not a number; the capacity keeps its default unless -max-players is given",
+		logger.Warn("OPENSRO_MAX_PLAYERS is not a number; the capacity keeps its default unless -max-players is given",
 			"err", maxPlayersEnvErr, "default", defaultMaxPlayers)
 	}
 	if inspectionEnvErr != nil {
-		logger.Warn("SRREVAMP_INSPECTION is not a boolean; the server is open unless -inspection is given", "err", inspectionEnvErr)
+		logger.Warn("OPENSRO_INSPECTION is not a boolean; the server is open unless -inspection is given", "err", inspectionEnvErr)
 	}
 	capacity := serverCapacity(*maxPlayers, logger)
 	if *inspection {
 		logger.Info("under inspection (-inspection): the server list shows Check and every login is refused")
 	}
 	if inventorySizeEnvErr != nil {
-		logger.Warn("SRREVAMP_INVENTORY_SIZE is not a number; the bag keeps its default unless -inventory-size is given",
+		logger.Warn("OPENSRO_INVENTORY_SIZE is not a number; the bag keeps its default unless -inventory-size is given",
 			"err", inventorySizeEnvErr, "default", inventory.DefaultBagSlots)
 	}
-	for name, err := range map[string]error{"SRREVAMP_MONSTER_SLEEP": sleepEnvErr, "SRREVAMP_QA_SPREAD_MONSTERS": qaSpreadEnvErr,
-		"SRREVAMP_QA_SPREAD_RADIUS": qaSpreadRadiusEnvErr, "SRREVAMP_FULL_MAP": fullMapEnvErr, "SRREVAMP_NEST_SWAPPED_STAND_IN": swappedStandInEnvErr, "SRREVAMP_NEST_RESPAWN": nestRespawnEnvErr,
-		"SRREVAMP_UNIQUE_RESPAWN": uniqueRespawnEnvErr} {
+	for name, err := range map[string]error{"OPENSRO_MONSTER_SLEEP": sleepEnvErr, "OPENSRO_QA_SPREAD_MONSTERS": qaSpreadEnvErr,
+		"OPENSRO_QA_SPREAD_RADIUS": qaSpreadRadiusEnvErr, "OPENSRO_FULL_MAP": fullMapEnvErr, "OPENSRO_NEST_SWAPPED_STAND_IN": swappedStandInEnvErr, "OPENSRO_NEST_RESPAWN": nestRespawnEnvErr,
+		"OPENSRO_UNIQUE_RESPAWN": uniqueRespawnEnvErr} {
 		if err != nil {
 			logger.Warn(name+" does not parse; its flag keeps its default unless given", "err", err)
 		}
 	}
 	if teleportFreeEnvErr != nil {
-		logger.Warn("SRREVAMP_TELEPORT_FREE is not a boolean; teleports stay charged unless -teleport-free is given",
+		logger.Warn("OPENSRO_TELEPORT_FREE is not a boolean; teleports stay charged unless -teleport-free is given",
 			"err", teleportFreeEnvErr)
 	}
 	if persistPositionEnvErr != nil {
-		logger.Warn("SRREVAMP_PERSIST_POSITION is not a boolean; the saved position stays off unless -persist-position is given",
+		logger.Warn("OPENSRO_PERSIST_POSITION is not a boolean; the saved position stays off unless -persist-position is given",
 			"err", persistPositionEnvErr)
 	}
 	if singleFrameEnvErr != nil {
-		logger.Warn("SRREVAMP_SINGLE_FRAME is not a boolean; the single frame stays off unless -single-frame is given",
+		logger.Warn("OPENSRO_SINGLE_FRAME is not a boolean; the single frame stays off unless -single-frame is given",
 			"err", singleFrameEnvErr)
 	}
 	frontEndTheme := frontEndThemeFromFlags(session.FrontEndTheme{Intro: *loginIntro, BGM: *loginBGM, Logo: *loginLogo,
 		Copyright: *loginCopyright, BandTop: *loginBandTop, BandBottom: *loginBandBottom}, logger)
 	if monsterAIEnvErr != nil {
-		logger.Warn("SRREVAMP_MONSTER_AI is not a boolean; the monster AI stays off unless -monster-ai is given",
+		logger.Warn("OPENSRO_MONSTER_AI is not a boolean; the monster AI stays off unless -monster-ai is given",
 			"err", monsterAIEnvErr)
 	}
 	if strikePushEnvErr != nil {
-		logger.Warn("SRREVAMP_MONSTER_STRIKE_PUSH is not a boolean; the strike push stays off unless -monster-strike-push is given",
+		logger.Warn("OPENSRO_MONSTER_STRIKE_PUSH is not a boolean; the strike push stays off unless -monster-strike-push is given",
 			"err", strikePushEnvErr)
 	}
 	if spawnPushEnvErr != nil {
-		logger.Warn("SRREVAMP_MONSTER_SPAWN_PUSH is not a boolean; the spawn push stays off unless -monster-spawn-push is given",
+		logger.Warn("OPENSRO_MONSTER_SPAWN_PUSH is not a boolean; the spawn push stays off unless -monster-spawn-push is given",
 			"err", spawnPushEnvErr)
 	}
 	if battleEnvErr != nil {
-		logger.Warn("SRREVAMP_MONSTER_BATTLE is not a boolean; the monster battle stays off unless -monster-battle is given",
+		logger.Warn("OPENSRO_MONSTER_BATTLE is not a boolean; the monster battle stays off unless -monster-battle is given",
 			"err", battleEnvErr)
 	}
 	if deadStateEnvErr != nil {
-		logger.Warn("SRREVAMP_PLAYER_DEAD_STATE is not a boolean; the player dead state stays off unless -player-dead-state is given",
+		logger.Warn("OPENSRO_PLAYER_DEAD_STATE is not a boolean; the player dead state stays off unless -player-dead-state is given",
 			"err", deadStateEnvErr)
 	}
 	if aggroEnvErr != nil {
-		logger.Warn("SRREVAMP_MONSTER_AGGRO is not a boolean; the monster aggro stays off unless -monster-aggro is given",
+		logger.Warn("OPENSRO_MONSTER_AGGRO is not a boolean; the monster aggro stays off unless -monster-aggro is given",
 			"err", aggroEnvErr)
 	}
 
@@ -1172,7 +1172,7 @@ func main() {
 		session.SetLevelTable(table)
 		logger.Info("loaded EXP curve", "path", *leveldataCSV, "maxLevel", table.MaxLevel())
 	} else {
-		logger.Info("no leveldata CSV set (SRREVAMP_LEVELDATA_CSV) -- characters will not level")
+		logger.Info("no leveldata CSV set (OPENSRO_LEVELDATA_CSV) -- characters will not level")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -1487,7 +1487,7 @@ func main() {
 	if *deadState {
 		logger.Info("player dead state on: a monster's kill leaves the player dead (life state 2, HP 0) until OpRevive 0x0028 -- option 1 to the return point, option 2 where it lies at level 10 or under")
 	} else {
-		logger.Info("player dead state off (-player-dead-state / SRREVAMP_PLAYER_DEAD_STATE): a monster's kill respawns the player at once at the return point")
+		logger.Info("player dead state off (-player-dead-state / OPENSRO_PLAYER_DEAD_STATE): a monster's kill respawns the player at once at the return point")
 	}
 	monsters := combat.NewHub()
 	// Abnormal states (round 659, session/status.go): every monster's and
@@ -1562,7 +1562,7 @@ func main() {
 			logger.Warn("roster species kept hand-typed fields the table could not supply (re-export skills/levelgold/textdata_object, deploy/README.md)", "kept", k)
 		}
 	} else {
-		logger.Info("no monster species table (-monsters-csv / SRREVAMP_MONSTERS_CSV): the hand-typed roster is every species the server knows")
+		logger.Info("no monster species table (-monsters-csv / OPENSRO_MONSTERS_CSV): the hand-typed roster is every species the server knows")
 	}
 	// The game's own placements, when the operator supplies them: every
 	// species with rows takes them all, replacing both the embedded rows and
@@ -1618,7 +1618,7 @@ func main() {
 				"path", *regionsCSV, "regions", regions.Len(), "towns", regions.SafeCount())
 		}
 	} else {
-		logger.Info("no region table (-regions-csv / SRREVAMP_REGIONS_CSV): no region is a town, and a monster follows a player into one")
+		logger.Info("no region table (-regions-csv / OPENSRO_REGIONS_CSV): no region is a town, and a monster follows a player into one")
 	}
 	// The creatable catalogue (round 682): what the lobby's create checks
 	// bodies and items against (session.LobbyDeps.Catalogue).
@@ -1635,7 +1635,7 @@ func main() {
 		}
 		logger.Info("creatable catalogue loaded: characters can be created", "path", *chargenCSV, "ids", chargen.Len())
 	} else {
-		logger.Warn("no creatable catalogue (-chargen-csv / SRREVAMP_CHARGEN_CSV): every character create is refused (0x403) -- see deploy/README.md \"Reference data\"")
+		logger.Warn("no creatable catalogue (-chargen-csv / OPENSRO_CHARGEN_CSV): every character create is refused (0x403) -- see deploy/README.md \"Reference data\"")
 	}
 	// A new character's default masteries, skills and quests (round 692):
 	// the shard DB's _RefCharDefault_* tables, as _AddNewChar applies them
@@ -1684,7 +1684,7 @@ func main() {
 			}
 		}
 	} else {
-		logger.Warn("no character defaults (-chardefaults-dir / SRREVAMP_CHARDEFAULTS_DIR): new characters get no default masteries, skills or quests -- see deploy/README.md \"Character defaults\"")
+		logger.Warn("no character defaults (-chardefaults-dir / OPENSRO_CHARDEFAULTS_DIR): new characters get no default masteries, skills or quests -- see deploy/README.md \"Character defaults\"")
 	}
 	// The game's teleport network, when the operator supplies it (round 575).
 	// Loaded and checked here so a bad export fails at boot, the npcpos rule;
@@ -1727,7 +1727,7 @@ func main() {
 	if *teleportFree {
 		logger.Info("teleport free on: every gate teleport costs nothing (-teleport-free, own design, for testing)")
 	} else {
-		logger.Info("teleport free off (-teleport-free / SRREVAMP_TELEPORT_FREE): a teleport charges its link's fee, waived below level 21 and for GM accounts")
+		logger.Info("teleport free off (-teleport-free / OPENSRO_TELEPORT_FREE): a teleport charges its link's fee, waived below level 21 and for GM accounts")
 	}
 	// The full map (round 660): every field monster row, as nests. It needs the
 	// placements and the species table, and the one world frame -- its rows
@@ -1764,7 +1764,7 @@ func main() {
 		logger.Info(fmt.Sprintf("single frame on: origin %d/%d -- every zone with a frame is named in one frame and kept in one bucket (%q), every roster monster with it; a zone change lands at the town's landing in that frame",
 			worldmap.WorldOrigin[0], worldmap.WorldOrigin[1], worldmap.WorldBucket))
 	} else {
-		logger.Info("single frame off (-single-frame / SRREVAMP_SINGLE_FRAME)")
+		logger.Info("single frame off (-single-frame / OPENSRO_SINGLE_FRAME)")
 	}
 	// The saved position (round 573), behind its own flag. Set before the
 	// gateway serves, like the single frame above: every world handler reads
@@ -1773,7 +1773,7 @@ func main() {
 	if *persistPosition {
 		logger.Info("persist position on: a character re-enters where it last stood (saved on disconnect, zone change, every 30 s of walking and at stop)")
 	} else {
-		logger.Info("persist position off (-persist-position / SRREVAMP_PERSIST_POSITION)")
+		logger.Info("persist position off (-persist-position / OPENSRO_PERSIST_POSITION)")
 	}
 	// The spawn push (round 542), behind its own flag: a respawn or a GM /spawn
 	// is sent to its zone as OpMonsterSpawned the moment it appears. Set
@@ -1782,7 +1782,7 @@ func main() {
 	if *spawnPush {
 		logger.Info("monster spawn push on: OpMonsterSpawned 0x007E to the zone for each respawn and GM /spawn")
 	} else {
-		logger.Info("monster spawn push off (-monster-spawn-push / SRREVAMP_MONSTER_SPAWN_PUSH)")
+		logger.Info("monster spawn push off (-monster-spawn-push / OPENSRO_MONSTER_SPAWN_PUSH)")
 	}
 	// The monsters' area of interest (round 656): each player hears about the
 	// monsters of the 3x3 message blocks around it (retail's, READ in round
@@ -1796,7 +1796,7 @@ func main() {
 	// unique's hatch is announced from the same spawn hook as the push.
 	session.SetUniqueNoticeOff(*uniqueNoticeOff)
 	if uniqueOffEnvErr != nil {
-		logger.Warn("SRREVAMP_UNIQUE_NOTICE_OFF is not a boolean; the unique notices stay on unless -unique-notice-off is given",
+		logger.Warn("OPENSRO_UNIQUE_NOTICE_OFF is not a boolean; the unique notices stay on unless -unique-notice-off is given",
 			"error", uniqueOffEnvErr)
 	}
 	if *uniqueNoticeOff {
@@ -1817,11 +1817,11 @@ func main() {
 	// One respawn scheduler for all of them (round 656), where there was a
 	// goroutine per placement.
 	if err := checkNestRespawn(*nestRespawn); err != nil {
-		logger.Error("-nest-respawn / SRREVAMP_NEST_RESPAWN refused", "err", err)
+		logger.Error("-nest-respawn / OPENSRO_NEST_RESPAWN refused", "err", err)
 		os.Exit(1)
 	}
 	if err := checkUniqueRespawn(*uniqueRespawn); err != nil {
-		logger.Error("-unique-respawn / SRREVAMP_UNIQUE_RESPAWN refused", "err", err)
+		logger.Error("-unique-respawn / OPENSRO_UNIQUE_RESPAWN refused", "err", err)
 		os.Exit(1)
 	}
 	respawns := newRespawnScheduler(monsters, logger, spawned)
@@ -1882,7 +1882,7 @@ func main() {
 	if battleOn {
 		logger.Info("monster battle on: a struck monster chases to its attack band at its run speed and swings on its skill's ReuseDelay, each blow pushed as OpMonsterAttacked 0x007D; a party member's first hit on a monster links as many of its ten nearest neighbours as the party has members within 1000 units")
 	} else {
-		logger.Info("monster battle off (-monster-battle / SRREVAMP_MONSTER_BATTLE)")
+		logger.Info("monster battle off (-monster-battle / OPENSRO_MONSTER_BATTLE)")
 	}
 
 	// Target acquisition (round 552), behind its own flag, which needs the
@@ -1898,14 +1898,14 @@ func main() {
 	if aggroOn {
 		logger.Info(fmt.Sprintf("monster aggro on: an aggressive monster notices the nearest living player within its collision radius + its tactics row's sight (EXTERNAL; %d units for a monster without one, own design) every 1001-1500 ms while idle, wandering or home from its blackout, and engages it; a passive one fights only when struck", ai.TacticsDetectionDistance))
 	} else {
-		logger.Info("monster aggro off (-monster-aggro / SRREVAMP_MONSTER_AGGRO)")
+		logger.Info("monster aggro off (-monster-aggro / OPENSRO_MONSTER_AGGRO)")
 	}
 
 	// The monster AI (round 537), behind its kill switch. Installed here,
 	// before the gateway serves, so no handler ever sees it half-started.
 	if *monsterAI {
 		session.RunMonsterAI(ctx, hub, monsters, logger, session.MonsterAIConfig{
-			Trace: os.Getenv("SRREVAMP_AI_TRACE") != "",
+			Trace: os.Getenv("OPENSRO_AI_TRACE") != "",
 			// What a monster's own swing reads and writes (-monster-battle),
 			// the potion queue its kill empties (-player-dead-state), and the
 			// party hub the aggro link reads (round 553, with the battle on).
@@ -1914,12 +1914,12 @@ func main() {
 			// The sleep (round 656, -monster-sleep).
 			Sleep: *monsterSleep,
 			// The tick's cost, once a minute (round 660).
-			TickStats: os.Getenv("SRREVAMP_AI_TICK_STATS") != "",
+			TickStats: os.Getenv("OPENSRO_AI_TICK_STATS") != "",
 		})
 		logger.Info(fmt.Sprintf("monster AI on: tick %v (own design), roam radius %.0f (own design), sleep %v (own design)",
 			session.MonsterAITick, session.MonsterRoamRadius, *monsterSleep))
 	} else {
-		logger.Info("monster AI off (-monster-ai / SRREVAMP_MONSTER_AI)")
+		logger.Info("monster AI off (-monster-ai / OPENSRO_MONSTER_AI)")
 	}
 
 	// The strike push (round 541), behind its own flag and independent of the
@@ -1929,7 +1929,7 @@ func main() {
 	if *strikePush {
 		logger.Info("monster strike push on: OpMonsterAttacked 0x007D to the zone after each counterattack")
 	} else {
-		logger.Info("monster strike push off (-monster-strike-push / SRREVAMP_MONSTER_STRIKE_PUSH)")
+		logger.Info("monster strike push off (-monster-strike-push / OPENSRO_MONSTER_STRIKE_PUSH)")
 	}
 
 	// The GM console (docs/DEBUG_TOOLS.md). The gate is the account-username
@@ -1940,7 +1940,7 @@ func main() {
 	if names := gmGate.Names(); len(names) > 0 {
 		logger.Info("GM accounts enabled", "accounts", names)
 	} else {
-		logger.Info("no GM accounts set (-gm-accounts / SRREVAMP_GM_ACCOUNTS) -- the GM console is off")
+		logger.Info("no GM accounts set (-gm-accounts / OPENSRO_GM_ACCOUNTS) -- the GM console is off")
 	}
 	gmDeps := &gm.Deps{
 		Chars: chars, Inv: inv, Equip: eq, Items: refItems, Skills: skills,
@@ -2122,8 +2122,8 @@ func main() {
 	// The gateway does not run OnDisconnect for sessions still open when it
 	// stops, so the guild points they have pending are flushed here, before
 	// the deferred store Closes (see GuildPointSkills.FlushAllPending: this
-	// is srrevamp's own handling). ctx is already cancelled at this point;
-	// the 30 s bound is srrevamp's own too, so a stalled database cannot hold
+	// is OpenSRO's own handling). ctx is already cancelled at this point;
+	// the 30 s bound is OpenSRO's own too, so a stalled database cannot hold
 	// the stop open. It runs while connection goroutines and keep-up swings
 	// may still be booking points, and main does not wait for them: points
 	// booked after the flush passes a character are lost at exit (up to nine

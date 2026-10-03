@@ -17,10 +17,10 @@
 //! - The loader is opened at run time (dlopen / LoadLibrary), so a machine without one is a
 //!   clean "no", not a missing-import failure of this library.
 //! - Nothing happens when the command line already names a renderer or a display driver, under
-//!   `--headless` / the editor / an export, when SRREVAMP_VK_PROBE is already set (the re-started
+//!   `--headless` / the editor / an export, when OPENSRO_VK_PROBE is already set (the re-started
 //!   child: no loop), or when override.cfg beside the game already chooses gl_compatibility
 //!   (Godot then starts on OpenGL by itself).
-//! - What it found is left in SRREVAMP_VK_PROBE ("ok <ms>" / "fallback <reason>"), which the
+//! - What it found is left in OPENSRO_VK_PROBE ("ok <ms>" / "fallback <reason>"), which the
 //!   client's Boot logs and RendererChoice reads (a Compatibility start with nothing recorded is
 //!   then recorded, so later starts skip the restart).
 //! OURS throughout; the Vulkan calls are the API's own (vkCreateInstance,
@@ -29,7 +29,7 @@
 use std::ffi::{c_char, c_void, CString, OsString};
 use std::time::Instant;
 
-pub const PROBE_ENV: &str = "SRREVAMP_VK_PROBE";
+pub const PROBE_ENV: &str = "OPENSRO_VK_PROBE";
 
 /// Whether this start should probe at all, from the raw process arguments (Godot's own
 /// `OS.get_cmdline_args()` never holds the renderer flags, which Main consumes), the probe
@@ -194,7 +194,7 @@ unsafe fn probe_with(lib: *mut c_void) -> Result<u32, String> {
         return Err("no vkCreateInstance".into());
     };
     let create: PfnCreateInstance = std::mem::transmute(create);
-    let app_name = CString::new("srrevamp vulkan probe").unwrap();
+    let app_name = CString::new("OpenSRO vulkan probe").unwrap();
     let app = ApplicationInfo {
         s_type: STRUCTURE_TYPE_APPLICATION_INFO,
         p_next: std::ptr::null(),
@@ -284,7 +284,7 @@ pub fn run_at_core_init() {
         }
         Err(why) => {
             let note = format!("fallback to OpenGL: {why} ({ms:.1} ms)");
-            eprintln!("srrevamp: Vulkan probe: {note} -- restarting with --rendering-driver opengl3");
+            eprintln!("OpenSRO: Vulkan probe: {note} -- restarting with --rendering-driver opengl3");
             let Some(exe) = exe else { return };
             let raw: Vec<OsString> = std::env::args_os().collect();
             let mut cmd = std::process::Command::new(exe);
@@ -294,7 +294,7 @@ pub fn run_at_core_init() {
                 use std::os::unix::process::CommandExt;
                 // Replaces this process (same PID); returns only on failure.
                 let e = cmd.exec();
-                eprintln!("srrevamp: Vulkan probe: could not restart ({e}); carrying on");
+                eprintln!("OpenSRO: Vulkan probe: could not restart ({e}); carrying on");
                 std::env::set_var(PROBE_ENV, format!("{note}; restart failed: {e}"));
             }
             #[cfg(target_os = "windows")]
@@ -318,8 +318,8 @@ mod tests {
 
     #[test]
     fn probes_a_plain_start() {
-        assert!(should_probe(&a(&["srrevamp.exe"]), None, ""));
-        assert!(should_probe(&a(&["srrevamp.x86_64", "--verbose"]), None, ""));
+        assert!(should_probe(&a(&["OpenSRO.exe"]), None, ""));
+        assert!(should_probe(&a(&["OpenSRO.x86_64", "--verbose"]), None, ""));
     }
 
     #[test]
@@ -334,30 +334,30 @@ mod tests {
         assert!(editor_or_import(&a(&["godot", "--headless", "--path", ".", "--import", "--quit"])));
         assert!(editor_or_import(&a(&["godot", "-e"])));
         assert!(editor_or_import(&a(&["godot", "--export-release", "Linux", "x"])));
-        assert!(!editor_or_import(&a(&["srrevamp.exe"])));
+        assert!(!editor_or_import(&a(&["OpenSRO.exe"])));
         assert!(!editor_or_import(&a(&["godot", "--headless", "--script", "res://x.gd"])));
     }
 
     #[test]
     fn never_loops() {
-        assert!(!should_probe(&a(&["srrevamp.exe"]), Some("fallback to OpenGL: x"), ""));
+        assert!(!should_probe(&a(&["OpenSRO.exe"]), Some("fallback to OpenGL: x"), ""));
     }
 
     #[test]
     fn respects_a_recorded_choice() {
-        let written = "; Written by SRRevamp (round 693)\n[rendering]\n\nrenderer/rendering_method=\"gl_compatibility\"\n";
-        assert!(!should_probe(&a(&["srrevamp.exe"]), None, written));
-        assert!(should_probe(&a(&["srrevamp.exe"]), None, "[rendering]\nrenderer/rendering_method=\"forward_plus\"\n"));
-        assert!(should_probe(&a(&["srrevamp.exe"]), None, ";renderer/rendering_method=\"gl_compatibility\"\n"));
-        assert!(should_probe(&a(&["srrevamp.exe"]), None, "renderer/rendering_method.mobile=\"gl_compatibility\"\n"));
+        let written = "; Written by OpenSRO (round 693)\n[rendering]\n\nrenderer/rendering_method=\"gl_compatibility\"\n";
+        assert!(!should_probe(&a(&["OpenSRO.exe"]), None, written));
+        assert!(should_probe(&a(&["OpenSRO.exe"]), None, "[rendering]\nrenderer/rendering_method=\"forward_plus\"\n"));
+        assert!(should_probe(&a(&["OpenSRO.exe"]), None, ";renderer/rendering_method=\"gl_compatibility\"\n"));
+        assert!(should_probe(&a(&["OpenSRO.exe"]), None, "renderer/rendering_method.mobile=\"gl_compatibility\"\n"));
     }
 
     #[test]
     fn restarts_with_the_same_arguments_and_the_gl_driver() {
-        let raw: Vec<OsString> = ["srrevamp.exe", "--verbose", "--", "--x=1"].iter().map(OsString::from).collect();
+        let raw: Vec<OsString> = ["OpenSRO.exe", "--verbose", "--", "--x=1"].iter().map(OsString::from).collect();
         let out: Vec<String> = fallback_args(&raw).into_iter().map(|o| o.into_string().unwrap()).collect();
         assert_eq!(out, vec!["--verbose", "--rendering-driver", "opengl3", "--", "--x=1"]);
-        let plain: Vec<OsString> = ["srrevamp.exe"].iter().map(OsString::from).collect();
+        let plain: Vec<OsString> = ["OpenSRO.exe"].iter().map(OsString::from).collect();
         assert_eq!(fallback_args(&plain), vec![OsString::from("--rendering-driver"), OsString::from("opengl3")]);
     }
 }

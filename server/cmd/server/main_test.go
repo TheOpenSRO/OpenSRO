@@ -12,14 +12,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/grounditem"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/session"
-	"github.com/OpenSRO/srrevamp/server/internal/spawn"
-	"github.com/OpenSRO/srrevamp/server/internal/teleport"
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/grounditem"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/session"
+	"github.com/OpenSRO/OpenSRO/server/internal/spawn"
+	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // What is left of the monster stat curve is own design, and must at least be
@@ -749,10 +749,10 @@ func monsterSpecLines() []string {
 }
 
 // TestWriteMonsterSpecsForVerifier holds the verifier's input to its shape
-// (three tab fields, one skill per list entry) and, when SRREVAMP_WRITE_SPECS
+// (three tab fields, one skill per list entry) and, when OPENSRO_WRITE_SPECS
 // names a path, writes it there for a run on the RE box:
 //
-//	SRREVAMP_WRITE_SPECS=/path/specs.txt go test ./cmd/server -run TestWriteMonsterSpecsForVerifier
+//	OPENSRO_WRITE_SPECS=/path/specs.txt go test ./cmd/server -run TestWriteMonsterSpecsForVerifier
 func TestWriteMonsterSpecsForVerifier(t *testing.T) {
 	lines := monsterSpecLines()
 	if len(lines) != len(monsterSpecs) {
@@ -768,7 +768,7 @@ func TestWriteMonsterSpecsForVerifier(t *testing.T) {
 			t.Fatalf("line %d lists %d skill(s), the spec %d: %q", i, n, len(monsterSpecs[i].Skills), line)
 		}
 	}
-	if path := os.Getenv("SRREVAMP_WRITE_SPECS"); path != "" {
+	if path := os.Getenv("OPENSRO_WRITE_SPECS"); path != "" {
 		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
 			t.Fatalf("writing %s: %v", path, err)
 		}
@@ -838,7 +838,7 @@ func TestGroundDropRulesAdapter(t *testing.T) {
 // and a value that does not parse leaves it OFF with an error for main's WARN
 // -- a typo must never switch the AI on (round 537).
 func TestEnvBoolLeavesAnUnparsableSwitchOff(t *testing.T) {
-	const name = "SRREVAMP_TEST_ENVBOOL"
+	const name = "OPENSRO_TEST_ENVBOOL"
 	for _, c := range []struct {
 		v       string
 		want    bool

@@ -49,9 +49,9 @@ const RULES := {
 }
 
 ## The environment variable that shows sets again: a comma list of set
-## names, e.g. `SRREVAMP_SEASONAL=christmas,halloween`. Empty (the default)
+## names, e.g. `OPENSRO_SEASONAL=christmas,halloween`. Empty (the default)
 ## hides all four.
-const ENV := "SRREVAMP_SEASONAL"
+const ENV := "OPENSRO_SEASONAL"
 
 ## The set a model path belongs to, or "" for an ordinary object.
 static func classify(path: String) -> String:
@@ -71,7 +71,7 @@ static func parse_enabled(list: String) -> Dictionary:
 			out[wanted] = true
 	return out
 
-## The sets shown again: SRREVAMP_SEASONAL and the settings file's
+## The sets shown again: OPENSRO_SEASONAL and the settings file's
 ## `[world]` `seasonal="christmas,halloween"` together
 ## (ClientSettings.seasonal_shown; the value must be quoted).
 static func enabled_from_environment() -> Dictionary:

@@ -103,7 +103,7 @@ var _config: ClientConfig = null
 ## The chosen server when the config lists servers, else null (the typed
 ## host:port field).
 var _selected: ClientConfig.ServerEntry = null
-## SRREVAMP_QA_SERVER's address, which a QA run connects to whatever the
+## OPENSRO_QA_SERVER's address, which a QA run connects to whatever the
 ## config lists.
 var _address_override := ""
 var _list_button: Button = null
@@ -122,9 +122,9 @@ func _ready() -> void:
 	# (round 678's review), so its round trip overlaps the archive work
 	# below; the screen is built when it answers or gives up.
 	# The theme comes from the server this screen will connect to: the one
-	# remembered from last time (or a QA run's SRREVAMP_QA_SERVER).
+	# remembered from last time (or a QA run's OPENSRO_QA_SERVER).
 	_load_config()
-	var qa_server := OS.get_environment("SRREVAMP_QA_SERVER")
+	var qa_server := OS.get_environment("OPENSRO_QA_SERVER")
 	_theme_address = (qa_server if qa_server != "" else _target_address()).strip_edges()
 	var address := _parse_server_address(_theme_address)
 	_query = ThemeQuery.new()
@@ -190,15 +190,15 @@ func _finish_ready() -> void:
 	for field in [username_edit, password_edit, server_address_edit]:
 		field.text_submitted.connect(func(_t): _on_login_pressed())
 	_set_tab_order()
-	# SRREVAMP_QA_RECONNECT_VIA_LOGIN (round 558): a scripted reconnect that
+	# OPENSRO_QA_RECONNECT_VIA_LOGIN (round 558): a scripted reconnect that
 	# takes the tester's route lands here from World3D._on_disconnected.
 	# Sign back in with the QA account through the same Connect path a click
 	# takes, so this screen's own work (Media.pk2, the net flow, the
 	# remembered settings) runs as it does for a player; CharacterSelect
 	# then starts the QA character.
-	if OS.get_environment("SRREVAMP_QA_RECONNECT_VIA_LOGIN") != "":
+	if OS.get_environment("OPENSRO_QA_RECONNECT_VIA_LOGIN") != "":
 		if _title != null:
-			_title.skip("SRREVAMP_QA_RECONNECT_VIA_LOGIN")
+			_title.skip("OPENSRO_QA_RECONNECT_VIA_LOGIN")
 		_qa_sign_in()
 
 func _remembered_address() -> String:
@@ -316,14 +316,14 @@ func _set_login_visible(on: bool) -> void:
 			(n as CanvasItem).visible = true
 	_hidden_for_list.clear()
 
-## SRREVAMP_QA_RECONNECT_VIA_LOGIN: fill the fields from the QA environment
-## (SRREVAMP_QA_SERVER; the account QaSignIn reads) and press Connect. Says
+## OPENSRO_QA_RECONNECT_VIA_LOGIN: fill the fields from the QA environment
+## (OPENSRO_QA_SERVER; the account QaSignIn reads) and press Connect. Says
 ## why when it cannot, so a run that stalls on this screen says so in its
 ## log rather than in a status label no log carries.
 func _qa_sign_in() -> void:
-	var target := OS.get_environment("SRREVAMP_QA_SERVER")
+	var target := OS.get_environment("OPENSRO_QA_SERVER")
 	if target == "":
-		printerr("QA RECONNECT: Login has no SRREVAMP_QA_SERVER to sign in to -- staying on the login screen")
+		printerr("QA RECONNECT: Login has no OPENSRO_QA_SERVER to sign in to -- staying on the login screen")
 		return
 	var credentials := QaSignIn.account_credentials()
 	_address_override = target
@@ -334,10 +334,10 @@ func _qa_sign_in() -> void:
 	print("QA RECONNECT: Login signing in to %s as %s at frame %d" % [target, credentials[0], Engine.get_frames_drawn()])
 	_on_login_pressed()
 
-## Under SRREVAMP_QA_RECONNECT_VIA_LOGIN the status label's text also goes
+## Under OPENSRO_QA_RECONNECT_VIA_LOGIN the status label's text also goes
 ## to the log, which is all a scripted run can read.
 func _qa_report(text: String) -> void:
-	if OS.get_environment("SRREVAMP_QA_RECONNECT_VIA_LOGIN") != "":
+	if OS.get_environment("OPENSRO_QA_RECONNECT_VIA_LOGIN") != "":
 		print("QA RECONNECT: Login: %s" % text)
 
 # --- The 3D title (round 678) ---------------------------------------------

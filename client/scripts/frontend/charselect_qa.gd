@@ -4,11 +4,11 @@ class_name CharSelectQa
 ## QA measurements for the select screen (round 688, OURS, QA only -- every
 ## hook is off unless its environment variable is set):
 ##
-## - SRREVAMP_QA_SELECT_RACE=1: once the list intro ends, Create is pressed,
+## - OPENSRO_QA_SELECT_RACE=1: once the list intro ends, Create is pressed,
 ##   so a run reaches the race table without input.
-## - SRREVAMP_QA_LIZARD_PROBE=<seconds>: from the lizard's arrival, one line a
+## - OPENSRO_QA_LIZARD_PROBE=<seconds>: from the lizard's arrival, one line a
 ##   frame about it (`lizard_sample`), then the client quits.
-## - SRREVAMP_QA_SELECT_LUMA=1: when the list is up and the models have faded
+## - OPENSRO_QA_SELECT_LUMA=1: when the list is up and the models have faded
 ##   in, the frame's mean luminance over the 3D band and over the characters
 ##   (`luma_report`), with the light the backdrop was given.
 ##

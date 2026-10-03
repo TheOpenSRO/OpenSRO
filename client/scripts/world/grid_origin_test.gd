@@ -62,7 +62,7 @@ func _initialize() -> void:
 
 	var mapm := _build_mapm()
 	var frame_anchor := MapmTerrainBuilder.near_row_middle_height(MapmReader.parse(mapm))
-	var path := "user://srrevamp_r571_grid_origin.pk2"
+	var path := "user://opensro_r571_grid_origin.pk2"
 	_write_pk2(path, {"97\\168.m": mapm})
 	var pk2 := Pk2Reader.open(path)
 	_check(pk2 != null, "the synthetic archive opens")

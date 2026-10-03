@@ -2,14 +2,14 @@ extends Node
 
 ## Round 679's render tool (OURS): the login screen at a UI scale, as a
 ## player whose settings carry that scale sees it -- Boot applies the scale
-## before Login; this applies SRREVAMP_QA_UI_SCALE (default 1.0) and
+## before Login; this applies OPENSRO_QA_UI_SCALE (default 1.0) and
 ## instances res://scenes/Login.tscn, without Boot's update check. Then, by
 ## the clock: the title skipped at SKIP_S; at SHOT_S the logo's and the login
 ## box's rects printed (canvas units) and the screen saved to
-## <SRREVAMP_QA_SHOT_DIR>/login.png; the server list opened (as LIST does);
+## <OPENSRO_QA_SHOT_DIR>/login.png; the server list opened (as LIST does);
 ## at LIST_SHOT_S the screen saved to list.png; quit.
 ##
-##   SRREVAMP_QA_UI_SCALE=1.95 SRREVAMP_QA_SHOT_DIR=/var/tmp/x xvfb-run godot \
+##   OPENSRO_QA_UI_SCALE=1.95 OPENSRO_QA_SHOT_DIR=/var/tmp/x xvfb-run godot \
 ##     --path client res://tools/login_at_scale.tscn --resolution 3840x2160
 ##   -> `LOGINRECT logo (x, y, w, h) box (x, y, w, h) gap g canvas WxH`
 
@@ -23,9 +23,9 @@ var _step := 0
 var _dir := ""
 
 func _ready() -> void:
-	var scale := OS.get_environment("SRREVAMP_QA_UI_SCALE")
+	var scale := OS.get_environment("OPENSRO_QA_UI_SCALE")
 	ClientSettings.apply_ui_scale(get_window(), scale.to_float() if scale != "" else 1.0)
-	_dir = OS.get_environment("SRREVAMP_QA_SHOT_DIR")
+	_dir = OS.get_environment("OPENSRO_QA_SHOT_DIR")
 	_login = (load("res://scenes/Login.tscn") as PackedScene).instantiate()
 	add_child(_login)
 

@@ -19,7 +19,7 @@ import "math"
 // MATTR_EVADE_BLOCK on a weapon.
 //
 // THIS FUNCTION IS CALLED WITH ZERO EVERYWHERE TODAY, and it exists precisely
-// so that stays visible. Round 406 censused the six divisors srrevamp's three
+// so that stays visible. Round 406 censused the six divisors OpenSRO's three
 // attack directions need and found only TWO justified by the measurement the
 // code cited for all of them:
 //
@@ -34,7 +34,7 @@ import "math"
 // 23, 24, 27-33 and 140, and neither 56 nor 57 is among them, so a monster
 // genuinely has no evasion term.
 //
-// A DISCLOSED zero is a simplification: srrevamp has no magic-option ("blue"
+// A DISCLOSED zero is a simplification: OpenSRO has no magic-option ("blue"
 // stat) aggregation at all, so no player can carry 'evcr' or 'evbl' either.
 // That was measured four ways in round 406 -- the TagEvadeCri/TagEvadeBlock
 // constants have no consumer outside the vocabulary table, the raw strings

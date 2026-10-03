@@ -64,7 +64,7 @@ The percentage itself remains disclosed — `'mprg'` is 0 on every real row, and
 
 > **Both paragraphs corrected in round 607.** The cap is half the MAXIMUM, so a character on 1
 > point does regenerate (1 a tick standing at MaxHP 200); the dead are kept at 0 by the life-state
-> test, and a character alive at 0 by srrevamp's kill lock. The percentage is read, not disclosed:
+> test, and a character alive at 0 by OpenSRO's kill lock. The percentage is read, not disclosed:
 > 0.8 standing, 8.0 sitting, written by `SetMotionState`.
 
 ## 5, 6, 11 — unequip

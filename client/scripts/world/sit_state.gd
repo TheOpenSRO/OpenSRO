@@ -62,7 +62,7 @@ func classify(object_id: int, is_other_body: bool, now: float) -> String:
 
 ## The server's answer for this player: value 4 sits, 0 stands. Returns
 ## "sit_down" (play 13 then the loop), "sit" (the loop only), "stand_up" (play
-## 15), "stand" (nothing to play) or "" for a value srrevamp does not play.
+## 15), "stand" (nothing to play) or "" for a value OpenSRO does not play.
 func answer(value: int, now: float) -> String:
 	request_sent_at = -1.0
 	var was := sitting

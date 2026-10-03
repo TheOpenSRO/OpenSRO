@@ -9,10 +9,10 @@ import (
 )
 
 func testDSN() string {
-	if v := os.Getenv("SRREVAMP_TEST_POSTGRES_DSN"); v != "" {
+	if v := os.Getenv("OPENSRO_TEST_POSTGRES_DSN"); v != "" {
 		return v
 	}
-	return "postgres://postgres:postgres@localhost:5432/srrevamp_test?sslmode=disable"
+	return "postgres://postgres:postgres@localhost:5432/opensro_test?sslmode=disable"
 }
 
 func openTestSQLStore(t *testing.T) *SQLStore {

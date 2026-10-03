@@ -6,19 +6,19 @@ class_name TeleportNet
 ## is at and the destination it chose, both teleportdata ids, and the server
 ## answers with a receipt -- then, on success, the ordinary
 ## OpChangeZoneResult that moves the player (World3D._on_change_zone_result,
-## the loading screen and all). srrevamp's own placeholder pair
+## the loading screen and all). OpenSRO's own placeholder pair
 ## (docs/protocol/PROTOCOL_DECISION.md); 0x00F3/0x00F4 were free on
 ## 2026-09-26, the highest op in client/scripts/net being GmNet's 0x00F2. The
 ## retail request (0x705a, CIF_NPCTalk::FUN_0081ddf0) and reply (0xb05a, read
 ## by FUN_008809d0) are recorded in docs/protocol/teleport_network.md, "What
-## srrevamp built", not copied.
+## OpenSRO built", not copied.
 
 const OP_USE := 0x00F3     # client -> server
 const OP_RESULT := 0x00F4  # server -> client, the requester
 
 ## Why a charged fee is 0 when the link has one (server/internal/teleport's
 ## Waiver): the engine's own waiver below level 21 (GObjPC::HandleTeleportUse,
-## `cmp al,0x14; ja` at 0x5136de), and srrevamp's own two -- a GM account, and
+## `cmp al,0x14; ja` at 0x5136de), and OpenSRO's own two -- a GM account, and
 ## the server's -teleport-free testing switch.
 const WAIVER_NONE := 0
 const WAIVER_LEVEL := 1
@@ -26,7 +26,7 @@ const WAIVER_GM := 2
 const WAIVER_FLAG := 3
 
 ## The engine's refusal for a link that does not exist: HandleTeleportUse's
-## `uStack_2c = 2` when the gate has no such link (0x513910). srrevamp's
+## `uStack_2c = 2` when the gate has no such link (0x513910). OpenSRO's
 ## server answers it for an unknown gate as well.
 const ERR_NO_LINK := 2
 
@@ -84,7 +84,7 @@ static func decode_result(data: PackedByteArray) -> Result:
 ## the destination's name ("" when textdata_object has none). The file carries
 ## two rows of each token and UiTextTable keeps the last; either shape is
 ## filled. A template whose placeholders are not exactly those, a missing
-## row, or no place falls back to srrevamp's own wording.
+## row, or no place falls back to OpenSRO's own wording.
 static func receipt_line(place: String, fee: int, table: UiTextTable) -> String:
 	var key := "UIIT_CTL_TELEPORT_RESULT" if fee > 0 else "UIIT_CTL_TELEPORT_FREE_RESULT"
 	var template := ""

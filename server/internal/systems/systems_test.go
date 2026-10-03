@@ -395,7 +395,7 @@ func sameSubject(a, b string) bool {
 }
 
 // docs/GROUNDING_AUDIT.md's "what is genuinely still assumed" section makes
-// claims about what srrevamp does NOT implement. Those claims decay silently as
+// claims about what OpenSRO does NOT implement. Those claims decay silently as
 // the code catches up, and this one has decayed twice: the 2026-09-17 pass found
 // it calling the server binary unauthoritative, and round 314 found it saying
 // combat had no criticals, no blocking and an always-counterattacking monster --

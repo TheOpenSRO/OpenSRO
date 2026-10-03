@@ -9,14 +9,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/berserk"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/mana"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // The player's dead state, the server half (round 549; the client half is
@@ -24,7 +24,7 @@ import (
 // half"). Until this round a monster's killing blow put the player back on
 // its feet in the same call (monsterStrike's RespawnHP), so no player was ever
 // dead on the wire. Behind cmd/server's -player-dead-state
-// (SRREVAMP_PLAYER_DEAD_STATE), OFF by default, a monster's kill now leaves the
+// (OPENSRO_PLAYER_DEAD_STATE), OFF by default, a monster's kill now leaves the
 // character in life state 2 (world.LifeDead) at HP 0, with its potion queue
 // emptied and its keep-up cancelled; while dead its moves are neither stored
 // nor relayed and its attacks, casts, items, pick-ups, duel blows, trade
@@ -102,7 +102,7 @@ import (
 //     GetLifeState (0x510c9c; `cmp al,0x1` at 0x510ca6) and answers 0x1889
 //     (0x510cd0) unless the state is 1 -- or 2 for one exempt TID class
 //     (`(tid & 0xf800) == 0x3000` under FUN_004929c0, `cmp al,0x2` at
-//     0x510cb6), which srrevamp does not model.
+//     0x510cb6), which OpenSRO does not model.
 //   - A dead player may not ask for a trade: GObjPC_HandleTradeMsg_081
 //     (0x5154e0) asks the REQUESTER's GetLifeState (0x515607; `cmp al,0x1` at
 //     0x515611) and answers 0x181d otherwise.
@@ -135,10 +135,10 @@ import (
 //     byte 1 (0x797f06..0x797f4a) and any other sends NOTHING (0x797efd `jne
 //     0x798a61`). So the request is 0x3053 {u8 option}, the handler's one
 //     byte; "0x7053" in earlier rounds was the project's 0x7000|op
-//     precedent, not a read. srrevamp keeps its placeholder OpRevive.
+//     precedent, not a read. OpenSRO keeps its placeholder OpRevive.
 //   - The server answers with no message of its own: the handler's paths
 //     end in Revive and ApplyHPMPDelta, whose state and pool changes are
-//     what the client hears. srrevamp's OpReviveResult stands for them.
+//     what the client hears. OpenSRO's OpReviveResult stands for them.
 //   - No timed revive in the open world. GObjPC::Revive has THIRTEEN call
 //     sites (`call 0x4df290` in srv.asm: 0x406181, 0x4158de, 0x46ccd0,
 //     0x49ff54, 0x4f2c95, 0x5100e7, 0x51018b, 0x510210, 0x51e5af, 0x51e67b,
@@ -160,7 +160,7 @@ import (
 //     nothing left to read (+0x103e == +0x103c) takes the PC out of the world
 //     (FUN_004df050(4), the leave path) before any option is read; and a
 //     death of cause 2 (the byte at +0x72d, leveldata.DeathCauseNoPenalty)
-//     revives in place whatever the option and the level. srrevamp's dead
+//     revives in place whatever the option and the level. OpenSRO's dead
 //     state only ever follows a monster's kill (cause 3), so the cause-2 arm
 //     is not reached; its empty request is the pre-665 client's, read as the
 //     level's one choice (ReviveOption), not as a disconnect (OURS).
@@ -190,9 +190,9 @@ import (
 //     header has the other fallbacks).
 //   - The level test reads Level for GetMaxLevel (+0x128). They are equal
 //     here: a death never costs a level (GObjPC_OnDeath leaves CurLevel
-//     alone) and srrevamp has no other way down.
+//     alone) and OpenSRO has no other way down.
 //   - The revived MP. Retail ADDS trunc(0.4 x MaxMP) to the MP the character
-//     died with (ApplyHPMPDelta above); srrevamp SETS the tracker to
+//     died with (ApplyHPMPDelta above); OpenSRO SETS the tracker to
 //     character.RespawnMP, a stand-in. (Corrected round 607: this used to
 //     say mana.Tracker regenerates by wall clock while dead. It regenerates
 //     nothing now, and the regen tick's first test is the life state --
@@ -206,7 +206,7 @@ import (
 //     what an older client's tests pin, and the compression of a death and
 //     a revive into one call is the stand-in there, not the number.
 //   - The empty request. Round 548's client sends OpRevive with no payload;
-//     retail's request carries the u8 option, and since round 665 srrevamp's
+//     retail's request carries the u8 option, and since round 665 OpenSRO's
 //     does too (the option's first byte). An empty request -- a client from
 //     before round 665 with its one Revive button -- is read as option 2 at
 //     level 10 or under and option 1 above it: the one choice retail offers
@@ -215,13 +215,13 @@ import (
 //     (reviveRefusedLevel). Retail's handler does nothing at all (the
 //     `bVar3 < 0xb` test at 0x51017f falls out of the handler), and its
 //     client never sends it (FUN_00797d90 sends nothing for that button above
-//     level 10); srrevamp answers so a stray request does not hang.
+//     level 10); OpenSRO answers so a stray request does not hang.
 //   - The protection after a revive is not modelled (OPEN). Retail's
 //     Revive(1) sets body mode 2, BODYMODE_INVINCIBLE, for 6.0 s (0xb45b78;
 //     11.0 s, 0xb45bb8, in the other world kind), and a return to the return
 //     point is a world re-entry, whose CGObjPC::vslot_391 (0x4df9e0) sets body
 //     mode 2 for the world's own time (its slot 0x70, not read; 6.0 s when no
-//     world is found). srrevamp has no body mode 2 (berserk.go, combat.go
+//     world is found). OpenSRO has no body mode 2 (berserk.go, combat.go
 //     endBerserk).
 //   - The refusal strings (deadRefusal, "not dead") and the pick-up, duel,
 //     zone-change and GM-teleport refusals, whose retail handlers were not
@@ -292,7 +292,7 @@ func ReviveOption(data []byte, level int) byte {
 }
 
 // deadRefusal is the error string a request refused for being dead carries.
-// srrevamp's own wording; the engine answers a code (0x1889 for an item,
+// OpenSRO's own wording; the engine answers a code (0x1889 for an item,
 // 0x181d for a trade request, GUILDERR_IM_DEAD for guild work).
 const deadRefusal = "you are dead"
 

@@ -29,7 +29,7 @@ var _oneshot := false
 var _oneshot_frames: Array = []
 
 func _init() -> void:
-	var dir := OS.get_environment("SRREVAMP_PK2_DIR")
+	var dir := OS.get_environment("OPENSRO_PK2_DIR")
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--pk2dir="):
 			dir = a.substr(9)

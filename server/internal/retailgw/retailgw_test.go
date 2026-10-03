@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 )
 
 // Test values only (not claims about any real archive or server).

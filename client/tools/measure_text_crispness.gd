@@ -221,7 +221,7 @@ func _build() -> void:
 		# Godot's own font, as the 2026-09-11 login form had: no theme here.
 		_ui.add_child(box)
 		var t := Label.new()
-		t.text = "SRRevamp"
+		t.text = "OpenSRO"
 		box.add_child(t)
 		for p in ["127.0.0.1:15779", "Username"]:
 			var e := LineEdit.new()

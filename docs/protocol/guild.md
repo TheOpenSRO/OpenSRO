@@ -3,7 +3,7 @@
 What the engine enforces about guilds, recovered from `SR_GameServer.exe`.
 Implemented in `server/internal/guild`.
 
-srrevamp already had a guild system — persistent membership, create/join/leave —
+OpenSRO already had a guild system — persistent membership, create/join/leave —
 and parts of it were grounded earlier: the per-level member capacity and the
 permission bitmask. This page is that plus what a second pass, using the
 error-code table, added.
@@ -28,8 +28,8 @@ was fixed by a bounds assert in the fullness predicate; the cap of 5 comes from
 a different function entirely. Two independent readings landing on the same
 number is what makes either one safe to rely on.
 
-The name length corrects a value srrevamp had as own design (`32`). The
-**minimum** matters more than the maximum: srrevamp used to enforce none, so a
+The name length corrects a value OpenSRO had as own design (`32`). The
+**minimum** matters more than the maximum: OpenSRO used to enforce none, so a
 one-character guild name was legal here and is not in the engine.
 
 **Enforced since round 481.** Both stores' `Create` (`MemStore`, `SQLStore`)
@@ -47,7 +47,7 @@ covers.
 One divergence remains, in the unit: the engine's name is a narrow
 `std::string` (initialised with capacity `0xf`, the MSVC small-string buffer of
 a `char` string), so it counts bytes in the client's codepage; Go's `len()`
-counts UTF-8 bytes, which is what srrevamp's client sends. ASCII names agree;
+counts UTF-8 bytes, which is what OpenSRO's client sends. ASCII names agree;
 a non-ASCII name can be refused here that the engine would accept.
 
 ## Founding a guild — `FUN_00514b20` (round 487)
@@ -57,14 +57,14 @@ it reads the name, and goes on to the length test only when it answers 1.
 `in_EAX` is the founder's `GObjPC`. The whole function is seven tests, and the
 create job's reply adds an eighth step, the payment:
 
-| step | engine test | refusal | srrevamp |
+| step | engine test | refusal | OpenSRO |
 |---|---|---|---|
-| 1 | `*(char *)(in_EAX[0xc] + 4) == 1`, the character lock | `0x4c09`, not in the client's message table | not modelled: no lock to hold (`char_lock.md`, "For srrevamp") |
+| 1 | `*(char *)(in_EAX[0xc] + 4) == 1`, the character lock | `0x4c09`, not in the client's message table | not modelled: no lock to hold (`char_lock.md`, "For OpenSRO") |
 | 2 | vtable `+0xf8` `IGObj::GetLifeState` `!= 1` | `0x4c07` `GUILDERR_IM_DEAD` | **enforced**: the world hub's life state since round 550 (`handleGuildCreate`, `deadBySession` -- a monster's kill under `-player-dead-state`), with HP ≤ 0 the stand-in for a character the hub does not hold |
 | 3 | vtable `+0x124` `IGObj::GetLevel` `< 0x14` | `0x4c0a` `GUILDERR_TOO_LOW_CREATOR_LEVEL` | **enforced**: `guild.MinCreatorLevel` = 20 |
 | 4 | 64-bit gold at `in_EAX[0xd] + 0x78/+0x7c` `< 500000` | `0x4c0c` `GUILDERR_NOT_ENOUGH_GOLD` | **enforced**: `guild.CreateGoldRequired` = 500,000 |
-| 5 | vtable `+0x11c` `IGObj::GetJobState` `!= 4` | `0x4c57` `UIIT_CTL_GUILD_CREATE_JOB_ERROR` | not modelled: srrevamp has no job state |
-| 6 | `GObjPC::FindTimedJob(2,1)` finds one | `0x4c3c` `GUILDWARERR_GUILD_CREATE_PENALTY` | not modelled: srrevamp has no penalty timer |
+| 5 | vtable `+0x11c` `IGObj::GetJobState` `!= 4` | `0x4c57` `UIIT_CTL_GUILD_CREATE_JOB_ERROR` | not modelled: OpenSRO has no job state |
+| 6 | `GObjPC::FindTimedJob(2,1)` finds one | `0x4c3c` `GUILDWARERR_GUILD_CREATE_PENALTY` | not modelled: OpenSRO has no penalty timer |
 | 7 | `in_EAX[0x72f] != 0`, already in a guild | `0x4c17` `GUILDERR_MEMBER_OF_ANOTHER_GUILD` | **enforced** already: the stores' `ErrAlreadyInGuild` |
 | 8 | the create job's reply spends 500,000 | none | **enforced**: `DeductGold` after `Create` |
 
@@ -109,7 +109,7 @@ The other 500,000 in the guild module is `FUN_005d0e00`'s. It belongs to
 `FUN_005c7900`, which refuses a guild below level 4 (`0x4c52`) before calling it.
 That is a guild service, not founding.
 
-**What srrevamp does.** `session.handleGuildCreate` reads the founder and calls
+**What OpenSRO does.** `session.handleGuildCreate` reads the founder and calls
 `guild.CheckCreator(HP > 0, Level, Gold)` before `guilds.Create`. That call covers
 steps 2 to 4, in the engine's order. `guilds.Create` then covers step 7 and the
 length test. After `Create` succeeds, the handler takes
@@ -118,8 +118,8 @@ length test. After `Create` succeeds, the handler takes
 `a guild founder must be at least level 20` and
 `founding a guild requires 500000 gold`.
 
-**srrevamp's own handling, not the engine's: the rollback.** The engine's
-`OffsetGold` has no refusal path. srrevamp's `DeductGold` does: it fails if the
+**OpenSRO's own handling, not the engine's: the rollback.** The engine's
+`OffsetGold` has no refusal path. OpenSRO's `DeductGold` does: it fails if the
 gold was spent between the check and the deduction. A guild left standing then
 would have been founded for free. So the handler calls `guilds.Leave` for the
 founder, which disbands a guild once its last member leaves, in both stores. It
@@ -222,7 +222,7 @@ this binary.**
   That dispatcher case 9 answers job 9 is a match of numbers and fields, not a
   traced path.
 
-**srrevamp spends the checked guild points, as a disclosed stand-in.** Two
+**OpenSRO spends the checked guild points, as a disclosed stand-in.** Two
 readings point that way, and neither proves it:
 
 1. The other guild purchase gated on `GatheredSP`, `FUN_005c7900` (the
@@ -247,7 +247,7 @@ and hands it to the error dispatcher with category `0x10` (`0x881c53 push
 repair refusal"): `0x4c07`, `0x4c1e`, `0x4c21`, `0x4c31` and `0x4c32` each have a
 message, and `0x4c0d` goes to the default, which shows nothing.
 
-### What srrevamp does (round 528)
+### What OpenSRO does (round 528)
 
 - **The level.** `guild.Guild.Level` is `_GUILD.Lvl`, stored in both stores
   (`lvl INTEGER NOT NULL DEFAULT 1` in Postgres, added with `ADD COLUMN IF NOT
@@ -287,7 +287,7 @@ message, and `0x4c0d` goes to the default, which shows nothing.
 - **Wire.** A placeholder pair in `session/guild.go`: `OpGuildLevel`
   (`0x009A`) carries a name and one byte (1 to level up, 0 only to report), and
   `OpGuildLevelResult` (`0x009B`) carries the error string, a `u16` engine code
-  (0 for srrevamp's own failures), then on success the guild id, the level, a
+  (0 for OpenSRO's own failures), then on success the guild id, the level, a
   levelled-up byte, the member cap and the next level's gold and guild points
   (both 0 at level 5). `0x009A`/`0x009B` were unused in `server/internal` and
   `client/scripts` when claimed.
@@ -301,9 +301,9 @@ message, and `0x4c0d` goes to the default, which shows nothing.
   the server pushes neither.
 - **Not modelled.** The real client offers the level-up at the guild NPC, the
   master's item `0x17` (`UIIT_MSG_GUILD_LEVEL_UP`,
-  `docs/protocol/character_state.md`); srrevamp's master still gets the
+  `docs/protocol/character_state.md`); OpenSRO's master still gets the
   "Guild" placeholder there. The engine broadcasts the new level to the
-  guild's members (`0x38F5` type 5); srrevamp's other members see it on their
+  guild's members (`0x38F5` type 5); OpenSRO's other members see it on their
   next guild reply.
 
 ### A third purchase gated on `GatheredSP`: the guild store's goods (round 530)
@@ -320,7 +320,7 @@ amount at `+0x20` (round 531). For these goods `GObjPC::CheckCurrencyRequirement
 (`0x617360`) tests that flag (`0x61787d` `test bl,0x8`), after the gold flag.
 It refuses `0x18c4` `UIIT_MSG_GUILD_STORE_BUY_LIMIT` when `pc+0x1cbc` is 0 or
 `CGuild::IsGuildMaster` answers 0. It refuses `0x18c5` `UIIT_MSG_GUILD_LACK_GP`
-when `guild + 0x3c` is below the amount at `+0x20`. srrevamp models none of
+when `guild + 0x3c` is below the amount at `+0x20`. OpenSRO models none of
 this yet. See `docs/protocol/character_state.md`, "What the server checks at a
 guild store (round 530)".
 
@@ -407,13 +407,13 @@ is left, one to nine, when they leave the world. Both callers zero the
 accumulator once the count is handed over, without testing the request's
 result.
 
-### What srrevamp does (round 525)
+### What OpenSRO does (round 525)
 
 - **Storage.** `guild.Guild.GatheredSP` and `guild.Member.GPDonation`, in both
   stores (`gathered_sp` / `gp_donation` in Postgres). `Store.AddPoints(guild,
   member, points)` raises both or neither: `ErrGuildNotFound` for a missing
   guild, `ErrNotInGuild` for a character outside it, and a count of zero or
-  less does nothing. The engine's fields are dwords; srrevamp stores 64-bit.
+  less does nothing. The engine's fields are dwords; OpenSRO stores 64-bit.
 - **Crediting.** `session.NewGuildPointSkills` wraps the skill store that
   `cmd/server` hands the combat and skill-use handlers, the only callers of
   `AddSkillExp`. After a conversion that yields points, a guild member's points
@@ -430,7 +430,7 @@ result.
   character no longer in a guild has its count dropped, as the engine's PC
   object does. The gateway does not run `OnDisconnect` for sessions still open
   when the process stops, so `cmd/server` calls `FlushAllPending` once the
-  listener returns. That shutdown flush is srrevamp's own handling: the engine's
+  listener returns. That shutdown flush is OpenSRO's own handling: the engine's
   clean-shutdown path has not been read, and its all-users-out path that has
   (the ShardManager drop, above) flushes every PC. A session that enters the
   world as a second character without disconnecting keeps the first one's count
@@ -449,19 +449,19 @@ result.
     gateway that tracks, closes and waits for its connections, and keep-up
     loops stopped first.
   - **A membership lookup error.** The engine tests `pc[0x72f]` in memory;
-    srrevamp asks the store (`GuildIDOf`). If that fails with a database error
+    OpenSRO asks the store (`GuildIDOf`). If that fails with a database error
     (not `ErrNotInGuild`), the conversion's points are logged and not booked,
     and a logout flush drops its count. Disclosed in `AddSkillExp`'s and
     `FlushPending`'s comments.
 - **The request's life test** (`GetLifeState == 1`, else `0x4c07`) uses the
   stand-in the founder check uses for the same engine test (step 2 of the
   founder-check table above, enforced in `session.handleGuildCreate`): alive is
-  HP above 0. srrevamp stores no life state, and 0 HP is what
+  HP above 0. OpenSRO stores no life state, and 0 HP is what
   `character.Store.ApplyDamage` reports as died. A dead earner's batch, or a
   dead character's logout flush, is dropped and the count zeroed, as in the
   engine.
-- **Not modelled.** The level test cannot fail: srrevamp's guilds have had a
-  level since round 528, and it stops at 5. There is no `0x38F5` push: the client asks with srrevamp's placeholder
+- **Not modelled.** The level test cannot fail: OpenSRO's guilds have had a
+  level since round 528, and it stops at 5. There is no `0x38F5` push: the client asks with OpenSRO's placeholder
   `OpGuildPoints` (`0x0098`), and `OpGuildPointsResult` (`0x0099`) answers with
   the guild's id, its `GatheredSP` and every member's name and `GPDonation`. The
   client asks after each successful guild reply (world entry, create or join,
@@ -469,11 +469,11 @@ result.
   **the numbers shown do not update live** while members earn: they are as of
   the last guild reply.
 - **The rate inherits a disclosed choice.** How much skill experience a kill is
-  worth is not recovered; srrevamp takes it 1:1 from the kill's experience
+  worth is not recovered; OpenSRO takes it 1:1 from the kill's experience
   (the comment above `AddSkillExp` in `session/combat.go`), so guild points
   from kills grow at that disclosed rate.
 - **Still open** until round 528: a guild level, and spending `GatheredSP` on a
-  level-up. Both are built now (see "Levelling up" above, "What srrevamp does
+  level-up. Both are built now (see "Levelling up" above, "What OpenSRO does
   (round 528)").
 
 ## Permissions
@@ -651,7 +651,7 @@ will have to be undone.
 - **The warehouse.** Only the permission bit and `GUILD_WAREHOUSE_LIMIT` are
   known; the limit's value is not.
 - ~~**Guild points: where they come from.**~~ READ in round 272 -- see "Where guild
-  points come from" above; credited in srrevamp since round 525.
+  points come from" above; credited in OpenSRO since round 525.
 - **What a level-up spends in guild points.** The ShardManager decides it, and
-  it is not in `SR_GameServer.exe`; srrevamp spends the checked cost as a
+  it is not in `SR_GameServer.exe`; OpenSRO spends the checked cost as a
   disclosed stand-in ("What a level-up spends (round 528)" above).

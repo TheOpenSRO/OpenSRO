@@ -43,7 +43,7 @@ class_name MapmTerrainBuilder
 ## the real correction. build_full_region_mesh_textured() below is the
 ## real per-quad-textured renderer this enables; build_full_region_mesh()
 ## (the flat-color version) remains for callers with no texture_lookup
-## (e.g. no SRREVAMP_MAP_PK2_PATH set) or as a fallback per-quad surface.
+## (e.g. no OPENSRO_MAP_PK2_PATH set) or as a fallback per-quad surface.
 
 const GRID_WIDTH := 17
 
@@ -65,7 +65,7 @@ const TILE_SIZE := 20.0
 ## there is no real case where this project actually needs to invent an
 ## appearance instead of using the real texture. _vertex_color now returns
 ## one honest, unmistakably-neutral flat gray whenever a real texture
-## isn't available (SRREVAMP_MAP_PK2_PATH unset, or a genuinely-missing
+## isn't available (OPENSRO_MAP_PK2_PATH unset, or a genuinely-missing
 ## real texture file) instead of pretending a color choice represents
 ## anything real.
 

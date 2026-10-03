@@ -403,7 +403,7 @@ Worth singling out, because they touch params this project already models:
 - **`er`** and **`terd`** both publish param 9 (`'era'`, parry rate), and
   **`thrd`** publishes 11 (`'hra'`, attack rate).
 
-None of these is wired: srrevamp has no buff system, and a value with no
+None of these is wired: OpenSRO has no buff system, and a value with no
 consumer is the pattern this project keeps correcting. They are recorded so that
 a buff system, when it exists, starts from the game's own vocabulary rather than
 from invented effects.
@@ -504,7 +504,7 @@ damage bounds (13-16), `defr`/`pmdp` the defences (5, 6, 7), `hst3`/`hste` the
   by `Combat_ResolveDamage`, `FUN_00589d20` and the cure/resurrect handler at
   `FUN_00593f50` (`cura`, `curt`, `heal`, `rcur`, `resu`, `rmut`, `tran`) are
   not joined here.
-- None of it is wired into srrevamp, which models skill damage but no stat
+- None of it is wired into OpenSRO, which models skill damage but no stat
   buffs. It is vocabulary for when that changes.
 
 ## The combat-side codes, and a correction to the census above (2026-09-16)
@@ -554,7 +554,7 @@ knockback duration in seconds. It is in the preceding block, not the `kb` branch
 and is NOT attributed here. The same care that separates a guard from an action
 separates a neighbouring block from the one being read.
 
-None of this is wired into srrevamp: it has no target-kind concept for `da` and
+None of this is wired into OpenSRO: it has no target-kind concept for `da` and
 no knockback result for `kb`.
 
 
@@ -921,7 +921,7 @@ small term.
 | physical | required | 9,631 |
 | neither | none | 10 |
 
-**Not yet wired into srrevamp.** The gate needs the equipped item's TID, and
+**Not yet wired into OpenSRO.** The gate needs the equipped item's TID, and
 `refdata.Item` does not carry one — exporting it is the next step.
 
 ## The vocabulary is 148 codes, and the walk now closes (2026-09-16)
@@ -1109,7 +1109,7 @@ The switch also handles kinds 1, 2, 3 and 11 — China's garment/protector/armou
 and Europe's heavy — which no shipped skill uses.
 
 Kind 14 is the exception: its case tests a character flag through vtable `+0x584`
-and `FUN_00498610`, not equipment at all. The flag is not recovered, so srrevamp
+and `FUN_00498610`, not equipment at all. The flag is not recovered, so OpenSRO
 treats that requirement as satisfied rather than refusing a cast on a condition
 it cannot evaluate. Disclosed, not read.
 
@@ -1205,7 +1205,7 @@ descriptions of the mechanism, not asserted names):
 
 Modes 1–4 fall through to the applier's default loop, which was not traced further.
 
-**Not wired.** srrevamp has no area-targeting or multi-target skill path, so this changes no
+**Not wired.** OpenSRO has no area-targeting or multi-target skill path, so this changes no
 behaviour; it is recorded because it explains `skillparam.EfrCombatSelector` (the `== 6` in the
 damage path is "area mode 6") and because it is the anchor for a targeting system when one is built.
 The field offsets (`0x28c`/`0x290`/`0x294` and the `+4` mode) are grounded; the mechanics of modes 6
@@ -1253,7 +1253,7 @@ read at the cast (this section), by `Combat_ResolveDamage` (mode 6), and by the 
 switch (the section above).
 
 `skillparam.EfrKind*`, the four value offsets and `skillparam.AreaTargetShare` carry the vocabulary
-with a test. **Not wired**: srrevamp resolves a skill against one monster; an area or line skill
+with a test. **Not wired**: OpenSRO resolves a skill against one monster; an area or line skill
 hits its primary target only. Building the patterns needs the server to hold positions of every
 monster (it does) and to send several results per cast.
 
@@ -1329,9 +1329,9 @@ Ending early is the same path: a disabling condition (the equipment checks, a `S
 name test on a weapon change, a lost target) sets the end flag.
 
 `skillparam.ActionKind*` and `skillparam.BuffEndsAt` carry the vocabulary and the first rule with a
-test. **Not wired**: srrevamp has no buff records; a non-damaging cast succeeds and does nothing
+test. **Not wired**: OpenSRO has no buff records; a non-damaging cast succeeds and does nothing
 (round 223's "faithful half") except the flat self-heal wired in round 503 (`heal.md`, "What
-srrevamp does"), which uses `ActionKindInstant` as its first gate. What a build needs is now all read: the params to write
+OpenSRO does"), which uses `ActionKindInstant` as its first gate. What a build needs is now all read: the params to write
 (`ApplySkillParamsToChar`, 43 fields -> ~60 ParamKeeper ids), the duration, the end path and both
 packets (`0xB0BD` start, `0xB072` end).
 

@@ -7,7 +7,7 @@
 // CGObjCOS_Mercenary), so it is used here rather than "pet", which names only
 // two of the six.
 //
-// srrevamp has no COS system. This is the rule set one would be built from.
+// OpenSRO has no COS system. This is the rule set one would be built from.
 //
 // See docs/protocol/pets.md.
 package cos

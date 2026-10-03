@@ -10,7 +10,7 @@
 // from their own archive, exactly as for -npcpos-csv. The column map, the
 // counts in a retail archive (222 points, 292 links, 77 buildings) and how
 // each column was established are in docs/protocol/teleport_network.md,
-// "The columns srrevamp reads (round 575)".
+// "The columns OpenSRO reads (round 575)".
 package teleport
 
 import (
@@ -93,7 +93,7 @@ type Point struct {
 }
 
 // MainWorld is the WorldID of the open world (INFERRED, above): the one world
-// srrevamp models. A point in any other world is an instanced area.
+// OpenSRO models. A point in any other world is an instanced area.
 const MainWorld = 1
 
 // Rule is one restriction triple of a link: a type and two data words, walked

@@ -174,18 +174,18 @@ func set_characters(records: Array, plan: Array) -> void:
 ## preview (round 685), the equipment window and the portrait draw bodies so;
 ## the select screen hung them in the backdrop with Godot's lit materials under
 ## World3D's tuned light (energy 0.3, OURS since round 43), which MEASURED
-## (the review, and SRREVAMP_QA_SELECT_LUMA's per-body line) about 1.8x
+## (the review, and OPENSRO_QA_SELECT_LUMA's per-body line) about 1.8x
 ## darker than the same character in the preview at the same hour. Now each
 ## body wears PlayerPortrait's materials fed the backdrop's zone light, as
 ## CharCreatePreview does; the body hides (round 687) and default wear (round
 ## 685) are on the body before this and only its materials change.
-## SRREVAMP_QA_SELECT_GODOT_LIGHT=1 (OURS, QA) keeps the old materials, for a
+## OPENSRO_QA_SELECT_GODOT_LIGHT=1 (OURS, QA) keeps the old materials, for a
 ## before/after on one build.
 var _lighter: PlayerPortrait = null
 var _zone_light: Array = []
 
 func _dress(body: Node) -> void:
-	if OS.get_environment("SRREVAMP_QA_SELECT_GODOT_LIGHT") != "":
+	if OS.get_environment("OPENSRO_QA_SELECT_GODOT_LIGHT") != "":
 		return
 	if _lighter == null:
 		_lighter = PlayerPortrait.new()
@@ -499,11 +499,11 @@ func _process(delta: float) -> void:
 			lizard_clip_loops(_lizard_anim))
 		_qa_lizard_probe()
 
-## SRREVAMP_QA_LIZARD_PROBE=<seconds> (OURS, QA; CharSelectQa): one line a
+## OPENSRO_QA_LIZARD_PROBE=<seconds> (OURS, QA; CharSelectQa): one line a
 ## frame about the lizard from its arrival, then the client quits.
 var _qa_lizard_until := -1.0
 func _qa_lizard_probe() -> void:
-	var want := OS.get_environment("SRREVAMP_QA_LIZARD_PROBE")
+	var want := OS.get_environment("OPENSRO_QA_LIZARD_PROBE")
 	if want == "" or not want.is_valid_float():
 		return
 	if _qa_lizard_until < 0.0:
@@ -517,8 +517,8 @@ func _qa_lizard_probe() -> void:
 		Engine.get_frames_drawn(), t, _lizard_anim.animation_name, fposmod(t, dur) if dur > 0.0 else 0.0, dur,
 		s["meshes"], s["visible"], s["verts"], s["inside"], int(r.position.x), int(r.position.y), int(r.size.x), int(r.size.y),
 		s["cull_kept"], s["cull_meshes"], s["root"].x, s["root"].y, s["root"].z])
-	var dir := OS.get_environment("SRREVAMP_QA_SELECT_SHOT_DIR")
-	var every := int(OS.get_environment("SRREVAMP_QA_LIZARD_SHOT_EVERY"))
+	var dir := OS.get_environment("OPENSRO_QA_SELECT_SHOT_DIR")
+	var every := int(OS.get_environment("OPENSRO_QA_LIZARD_SHOT_EVERY"))
 	if dir != "" and every > 0 and Engine.get_frames_drawn() % every == 0:
 		get_viewport().get_texture().get_image().save_png("%s/lizard_%05d.png" % [dir, Engine.get_frames_drawn()])
 	if _clock >= _qa_lizard_until:

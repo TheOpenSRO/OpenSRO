@@ -101,10 +101,10 @@ func clampStatRatio(num, den float64) float64 {
 // DOES make about the intended scale, so they are the yardstick for any future
 // attempt to ground character.StartingStr.
 //
-// Measured against srrevamp's own numbers, which is why stage 15 of the damage
+// Measured against OpenSRO's own numbers, which is why stage 15 of the damage
 // pipeline is not wired: a character putting every point into Str reaches
 // `StartingStr + 4*(level-1)` = 20, 96 and 216 at levels 1, 20 and 50, against
-// an engine ceiling of 41.6, 140.4 and 296.4. srrevamp's stats sit below the
+// an engine ceiling of 41.6, 140.4 and 296.4. OpenSRO's stats sit below the
 // scale the ratio expects at every level, so feeding them in produces a
 // systematic multiplier under 1 -- an artifact of our Str, not a recovered
 // value. See docs/protocol/damage_pipeline.md.

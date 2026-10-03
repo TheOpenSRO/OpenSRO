@@ -15,8 +15,8 @@ extends SceneTree
 ## Run it as:
 ##
 ## ```
-## SRREVAMP_PK2_PATH=Data.pk2 SRREVAMP_MAP_PK2_PATH=Map.pk2 \
-##   SRREVAMP_MEDIA_PK2_PATH=Media.pk2 AUDIT_REGIONS="98,168;97,168" \
+## OPENSRO_PK2_PATH=Data.pk2 OPENSRO_MAP_PK2_PATH=Map.pk2 \
+##   OPENSRO_MEDIA_PK2_PATH=Media.pk2 AUDIT_REGIONS="98,168;97,168" \
 ##   godot4 --headless --path client --script res://tools/audit_terrain_fidelity.gd
 ## ```
 ##
@@ -91,9 +91,9 @@ func _minimap(media: Pk2Reader, rx: int, ry: int) -> Image:
 	return img
 
 func _initialize() -> void:
-	var data := Pk2Reader.open(OS.get_environment("SRREVAMP_PK2_PATH"))
-	var map := Pk2Reader.open(OS.get_environment("SRREVAMP_MAP_PK2_PATH"))
-	var media := Pk2Reader.open(OS.get_environment("SRREVAMP_MEDIA_PK2_PATH"))
+	var data := Pk2Reader.open(OS.get_environment("OPENSRO_PK2_PATH"))
+	var map := Pk2Reader.open(OS.get_environment("OPENSRO_MAP_PK2_PATH"))
+	var media := Pk2Reader.open(OS.get_environment("OPENSRO_MEDIA_PK2_PATH"))
 	var table := TileIndexReader.parse(AssetSource.read_bytes("navmesh\\tile2d.ifo", data))
 	var wanted := OS.get_environment("AUDIT_REGIONS").split(";", false)
 	for spec in wanted:

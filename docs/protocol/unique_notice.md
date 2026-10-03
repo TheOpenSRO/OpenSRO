@@ -5,11 +5,11 @@ Tiger Mountain." when one dies: a line in the system window and the blue banner 
 screen. Built in `server/internal/session/uniquenotice.go` and `client/scripts/net/unique_notice.gd`.
 
 Labels: READ = read from the binary or the data; MEASURED = counted from real files; INFERRED =
-follows from what was read but was not read itself; OURS = srrevamp's choice.
+follows from what was read but was not read itself; OURS = OpenSRO's choice.
 
 ## Wire
 
-Retail sends `0x300C` with a u16 word and a payload. srrevamp sends the same payload behind its own
+Retail sends `0x300C` with a u16 word and a payload. OpenSRO sends the same payload behind its own
 opcode, `OpUniqueNotice 0x0110` (OURS; `PROTOCOL_DECISION.md`, the monster epic's decision D11):
 
 | Word | Payload | Sent |
@@ -19,7 +19,7 @@ opcode, `OpUniqueNotice 0x0110` (OURS; `PROTOCOL_DECISION.md`, the monster epic'
 
 READ, client: the handler `0x874ea0` reads the word (`0x874ee4`), then 4 bytes for `0x0C05`
 (`push 4` at `0x8752ad`) and 4 bytes plus a string for `0x0C06` (`0x875521`, `0x875541`
-`0x4f7a70`, an ASCII string widened by `0x4fc700`). srrevamp's name is UTF-8 with a u16 byte length
+`0x4f7a70`, an ASCII string widened by `0x4fc700`). OpenSRO's name is UTF-8 with a u16 byte length
 (the project's string shape, `encodeStrings`).
 
 ## Server (READ, SR_GameServer.exe)
@@ -47,7 +47,7 @@ slot 75); `vslot 398`/`399`/`311` are RTTI slot numbers.
   - not when the killer's `vtable +0x53c` answers 1 (what that is: OPEN);
   - the name: `"???"` (the string at `0xaedda4`, `0x4c1dd1`) when the killer's `vtable +0x1c`
     answers 0, else the name by `vtable +0xec` for a killer whose `vtable +0x11c` is 4 and by
-    `+0xf0` otherwise (which name each gives: OPEN; srrevamp sends the character's name). Vslot 399
+    `+0xf0` otherwise (which name each gives: OPEN; OpenSRO sends the character's name). Vslot 399
     has already dropped every entry whose `vtable +0x1c` answers 0, so from this caller the "???"
     branch is not reached.
 - **The killer (vslot 399, `0x4c44a0`).** Over the monster's damage list (`+0x1ca4`, entries with
@@ -67,18 +67,18 @@ slot 75); `vslot 398`/`399`/`311` are RTTI slot numbers.
   damage argument added, and the base `CGObjChar` slot is then called with the same arguments.
   Whether its caller passes the blow's damage or the damage clipped to the HP left was not traced
   (its callers reach it through the vtable and a forwarding thunk, `0x605140`, with no direct call).
-  srrevamp books the blow unclipped: INFERRED, so an overkill finisher is credited the whole blow.
+  OpenSRO books the blow unclipped: INFERRED, so an overkill finisher is credited the whole blow.
 - **The suppress key.** `CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG` is read at `0x60936f`; equal to
   `"ON"` (`0xb012f4`) it sets the world's `+0x108` (`0x6093b1`), which `0x608350` returns;
   `0x5f9910` finds the world and calls a vtable getter (INFERRED to be that one). Absent: nest
   hatches and kills are announced.
 
-srrevamp (OURS unless marked): `-unique-notice-off` is the key (default off: announce); it silences
+OpenSRO (OURS unless marked): `-unique-notice-off` is the key (default off: announce); it silences
 the roster's (nest) spawns and every kill, not a GM spawn (READ, above). The damage list is
 `combat.Hub`'s, booked per attacker in first-hit order on every blow a player lands
 (`ApplyDamageFrom`). The attackers no longer in the world are dropped before the rule runs (READ:
 `0x485d90`), so a departed top-damager does not win and the notice never carries "???" from a
-player's kill. Every srrevamp party shares experience, and a party of one is no party (the engine
+player's kill. Every OpenSRO party shares experience, and a party of one is no party (the engine
 never makes one), so a group is a party of two or more. The notice goes to every character on the
 server, queued per recipient off the killer's goroutine (since round 662 by the general per-session send
 queue; round 657's notice-only queue is folded into it).

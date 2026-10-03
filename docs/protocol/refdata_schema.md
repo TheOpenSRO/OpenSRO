@@ -185,7 +185,7 @@ characterdata.txt's order, last definition of an id kept):**
   are placed by 4,649 rows. (The round-654 plan counted 80 species and 4,554 rows by another
   de-duplication; these are the index-order, last-wins numbers the server loads.)
 - The eleven roster species re-derive exactly: `TestSpeciesTableMatchesTheRealExport` with
-  `SRREVAMP_MONSTERS_CSV`/`SRREVAMP_SKILLS_CSV` set reports overlaid 11, missing 0, changed 0,
+  `OPENSRO_MONSTERS_CSV`/`OPENSRO_SKILLS_CSV` set reports overlaid 11, missing 0, changed 0,
   kept 0 -- names, gold and the full skill lists (chances included) as monsterSpecs types them.
 
 ## Other reference tables found (not yet schema-inspected)

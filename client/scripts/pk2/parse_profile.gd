@@ -14,11 +14,11 @@ class_name ParseProfile
 ## preparation onto those). Keys nest: `pk2.find_file` includes the directory
 ## reads it triggers; the report says which keys are exclusive.
 ##
-## Off unless SRREVAMP_PARSE_PROFILE=1 -- then each `add` takes one mutex and
+## Off unless OPENSRO_PARSE_PROFILE=1 -- then each `add` takes one mutex and
 ## two dictionary writes, measured below a microsecond; off, one static bool.
 ## World3D prints `report()` with the entry's LoadTimings summary.
 
-static var enabled := OS.get_environment("SRREVAMP_PARSE_PROFILE") == "1"
+static var enabled := OS.get_environment("OPENSRO_PARSE_PROFILE") == "1"
 static var _lock := Mutex.new()
 ## key -> [main usec, main calls, worker usec, worker calls]
 static var _rows := {}

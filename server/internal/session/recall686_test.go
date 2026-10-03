@@ -11,14 +11,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/gm"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/teleport"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/gm"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // Round 686: the town gates' return point (recall.go). The designate request
@@ -143,7 +143,7 @@ func wantArrivalAt(t *testing.T, czr *ChangeZoneResult, zone string, region, loc
 // The user's case: a level-30 character designates Donwhang's gate there,
 // dies in Jangan and takes option 1 -- and comes back at GATE_WC's point in
 // donwhang (102/153 local 957, 1508), not at Jangan's. With -single-frame on
-// and off (srrevamp-01 runs it). Before round 686 nothing answers the
+// and off (opensro-01 runs it). Before round 686 nothing answers the
 // request.
 func TestDesignatedGateIsWhereOptionOneReturns(t *testing.T) {
 	for _, single := range []bool{false, true} {

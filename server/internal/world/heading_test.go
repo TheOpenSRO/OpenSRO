@@ -6,7 +6,7 @@ import (
 )
 
 // Round 637's review follow-up: the character's heading, FUN_009ed130's rule
-// in srrevamp's frame (+z is heading 0, +x is pi/2), kept by a walk, left by
+// in OpenSRO's frame (+z is heading 0, +x is pi/2), kept by a walk, left by
 // a relocation, carried through a zone change.
 func TestHeadingTowardIsTheClientsRule(t *testing.T) {
 	cases := []struct {

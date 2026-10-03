@@ -2,7 +2,7 @@
 // own server_dep\silkroad\textdata\leveldata.txt (see docs/LEVELING.md), and
 // the level-up math built on it. The curve is game data, so it is never
 // committed: an operator generates a CSV from their own client with
-// cmd/export-leveldata and points the server at it (SRREVAMP_LEVELDATA_CSV).
+// cmd/export-leveldata and points the server at it (OPENSRO_LEVELDATA_CSV).
 // Without it the server has no curve and characters do not level.
 package leveldata
 
@@ -65,7 +65,7 @@ import (
 // The old evidence and the new agree on 3, so nothing changes here. What changes
 // is that the reason is the engine's rather than one character window's.
 //
-// NOT MODELLED YET: the automatic +1 Str and +1 Int per level. srrevamp keeps a
+// NOT MODELLED YET: the automatic +1 Str and +1 Int per level. OpenSRO keeps a
 // character's Str and Int at their starting values and accumulates the three
 // spendable points without spending them, so a high-level character here has far
 // lower stats -- and therefore far lower MaxHP -- than the real game's. That is a
@@ -169,7 +169,7 @@ type Table struct {
 // familiar "mastery lagging your level costs you experience" rule. That is a
 // hypothesis with two coincidences behind it and no use-site, which is the
 // shape of the reasoning that has been wrong twice on this project, so it stays
-// a hypothesis. srrevamp does not model the term at all.
+// a hypothesis. OpenSRO does not model the term at all.
 //
 // Beware the offset: +0x1cd8 means three different things by receiver class --
 // a float here on CGObjPC, the rank BYTE on CGObjMob (see
@@ -203,7 +203,7 @@ func (t *Table) ExpUnit(level int) (int64, bool) {
 
 // SkillExpPerPoint is how much SKILL EXPERIENCE buys one skill point: 400.
 //
-// **RECOVERED, and it is a mechanism rather than a number.** srrevamp used to
+// **RECOVERED, and it is a mechanism rather than a number.** OpenSRO used to
 // hand out whole skill points per kill. The game does not: it grants skill
 // experience, accumulates it on the character, and converts whole points out of
 // the running total, carrying the remainder.
@@ -397,7 +397,7 @@ func MasteryExpScale(charLevel, maxMasteryLevel int) float64 {
 //
 // `party + 0x1c` is the **same field the join-time cap compares against 8 or 4**
 // (see party.MaxSize). So it is the TOTAL party size, not a subset filtered by
-// range or eligibility, and srrevamp passing len(pt.Members) is the right input.
+// range or eligibility, and OpenSRO passing len(pt.Members) is the right input.
 //
 // TWO GATES, AND ONE THAT IS ABSENT. The chain applies the bonus only when
 //
@@ -408,16 +408,16 @@ func MasteryExpScale(charLevel, maxMasteryLevel int) float64 {
 // and it does **not** test the party's exp-sharing flag. That absence is worth
 // recording now that the flag is known to exist: bit 0 of the party's +0x10
 // selects the member cap (8 shared, 4 not), so a reader could reasonably expect
-// the exp bonus to depend on it too. It does not. srrevamp applying the bonus
+// the exp bonus to depend on it too. It does not. OpenSRO applying the bonus
 // unconditionally is therefore correct, and now checked rather than unexamined.
 //
 // SCOPE, because this is only part of what the engine does with a party. The
 // real server also scales each contributor's award by its share of the victim's
 // maximum HP -- Formula_ExpShareByDamage clamps damage/MaxHP to [1e-6, 1.0] --
 // and then distributes to party members through GObjPC_DistributePartyExp.
-// srrevamp does neither: it awards the whole unit to the killer. For the killer
+// OpenSRO does neither: it awards the whole unit to the killer. For the killer
 // that is exactly right, because a solo contributor's share clamps to 1.0, and
-// the bonus below then matches the engine for that character. What srrevamp
+// the bonus below then matches the engine for that character. What OpenSRO
 // still does NOT do is give the other party members anything, which is a
 // separate missing feature rather than a wrong number.
 const PartyExpBonusPerMember = 0.03
@@ -490,12 +490,12 @@ func PartyExpBonus(members int) float64 {
 // +0x88 is Country (the common table's column 14: 0 China, 1 Europe, 3 either),
 // the same byte the equip check compares for `0x182f STRGERR_COUNTRY_MISMATCH`.
 //
-// srrevamp's parties are all exp-sharing -- party.MaxSize is the exp-shared cap
+// OpenSRO's parties are all exp-sharing -- party.MaxSize is the exp-shared cap
 // and no non-sharing party exists -- so the gate reduces to being in a party.
 // The engine tests the pointer, not the member count, but it never CREATES a
 // party of one (a party is born on an accepted invite with two members,
 // docs/protocol/party.md round 271), so the session's caller asks for a second
-// member rather than reward srrevamp's own create-alone path (round 485; see
+// member rather than reward OpenSRO's own create-alone path (round 485; see
 // session.killExpFor).
 //
 // The cap is still unreachable: with the bonus the scale peaks at 1.84 for
@@ -579,8 +579,8 @@ func ExpDiffScale(killerLevel, victimLevel int, expSharingParty, europe bool) fl
 //
 // BOTH level-gap scalers the real formula applies are now recovered and applied
 // here -- see ExpDiffScale and ExpWindowScale. expSharingParty is ExpDiffScale's
-// party gate (the killer is in an exp-sharing party, which every srrevamp party
-// is). Its Country selector is passed as China, always: every srrevamp
+// party gate (the killer is in an exp-sharing party, which every OpenSRO party
+// is). Its Country selector is passed as China, always: every OpenSRO
 // character was one until round 682 made Europe creatable, and the selector
 // is not yet passed the killer's race, so the Europe arm of the bonus is
 // recovered but never selected (OPEN, docs/TODO.md, round 682).

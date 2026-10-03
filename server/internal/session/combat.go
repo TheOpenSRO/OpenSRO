@@ -11,23 +11,23 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/berserk"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/durability"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/grounditem"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
-	"github.com/OpenSRO/srrevamp/server/internal/mana"
-	"github.com/OpenSRO/srrevamp/server/internal/party"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/quest"
-	"github.com/OpenSRO/srrevamp/server/internal/rates"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/durability"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/grounditem"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
+	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/party"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/quest"
+	"github.com/OpenSRO/OpenSRO/server/internal/rates"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // Combat opcodes, our own protocol. OpAttack requires a prior successful
@@ -175,7 +175,7 @@ func broadcastBodyMode(hub *world.Hub, characterID int64, value byte) {
 // reader 0x9d1300 reads it to +0x470 after the life and motion bytes, and
 // FUN_009d17e0 applies it through the body-mode setter FUN_009cf880(mode, 1,
 // 0) -- written by the server's GObjPC::FUN_004a9b70 from chardata+3, the
-// byte CGObjChar::SetBodyMode sets. srrevamp's OpEntityEntered and arrival
+// byte CGObjChar::SetBodyMode sets. OpenSRO's OpEntityEntered and arrival
 // lists are not retail's spawn, so the byte goes as the state change the
 // client already applies (OURS, the carrier), after the snapshots that name
 // the characters, beside the zone's buffs (sendBuffsInView). The arriving
@@ -243,7 +243,7 @@ func scheduleBerserkEnd(hub *world.Hub, zerk *berserk.Tracker, characterID int64
 //     change (FUN_00787860, READ), and ending the server's berserk there
 //     keeps the two consistent.
 //
-// OURS: the broadcast value is 0, not the engine's 2. srrevamp has no body
+// OURS: the broadcast value is 0, not the engine's 2. OpenSRO has no body
 // mode 2 -- neither the invincibility nor its timer -- so the character's
 // body mode after the end is 0 here; the client's 0x30BF kind-4 handler
 // starts the display only on value 1 and does nothing else to the orbs on
@@ -703,9 +703,9 @@ type MonsterSnapshot struct {
 
 // MonsterRarityPartyBit is where the rarity word carries the party flag
 // (round 660): bit 8, above every rank (0..8). OURS, an additive placeholder
-// like every srrevamp field (docs/protocol/PROTOCOL_DECISION.md). Retail
+// like every OpenSRO field (docs/protocol/PROTOCOL_DECISION.md). Retail
 // sends one byte, `class | party << 4` (CICMonster::vslot_025 0x9d3850: `and
-// cl,0xf` to +0x7ac at 0x9d38e1, `shr al,4` to +0x7ad at 0x9d38e7); srrevamp's
+// cl,0xf` to +0x7ac at 0x9d38e1, `shr al,4` to +0x7ad at 0x9d38e7); OpenSRO's
 // rarity word is a u32 already, so the flag rides in its second byte.
 const MonsterRarityPartyBit = 0x100
 
@@ -871,7 +871,7 @@ func monsterPartyAsked(sess *gateway.Session) bool {
 // (OpGroundItemSpawned 0x006c, docs/protocol/ground_items.md): one packet to
 // every session in the zone, a failed write left to that session's reader.
 //
-// Behind cmd/server's -monster-spawn-push (SRREVAMP_MONSTER_SPAWN_PUSH), OFF by
+// Behind cmd/server's -monster-spawn-push (OPENSRO_MONSTER_SPAWN_PUSH), OFF by
 // default: off, nothing is sent and the wire is what it was. It is flipped only
 // once a client release that draws the push is out; an older client ignores
 // 0x007E with an "unhandled opcode" warning.
@@ -884,7 +884,7 @@ const OpMonsterSpawned uint16 = 0x007e // server -> every session in the zone: a
 
 // MonsterSpawned is the OpMonsterSpawned payload: one record in
 // OpMonsterListResult's own encoding, then an f32 heading in radians from +x
-// toward +z (srrevamp's world frame, never an engine angle). A new message
+// toward +z (OpenSRO's world frame, never an engine angle). A new message
 // rather than a longer list record: the list's records carry no per-record
 // length, so no record can grow without breaking every client.
 type MonsterSpawned struct {
@@ -1175,14 +1175,14 @@ func inParty(parties *party.Hub, characterID int64) bool {
 // and rate multipliers, and whether the level table knows it. Being in a party
 // is Formula_ExpScaleByLevelDiff's gate for its gap bonus (0x410018-0x410027:
 // `pc[0x72e]` non-null and bit 0 -- exp-sharing -- of the party's flags), and
-// every srrevamp party shares experience (party.MaxSize). See
+// every OpenSRO party shares experience (party.MaxSize). See
 // leveldata.ExpDiffScale.
 //
 // The gate here asks for a SECOND member, which the engine's does not: it
 // tests the party pointer. But the engine never creates a party of one. A
 // party is born when an invite is accepted, with two member records at once
 // (trs_wait_response::FUN_005be4f0, docs/protocol/party.md round 271), while
-// srrevamp's own create path makes a party of just the leader -- so a pointer
+// OpenSRO's own create path makes a party of just the leader -- so a pointer
 // test here would pay the bonus to a lone player for clicking "create party",
 // a state the engine has no way into (round 485). What the engine does when a
 // party of two drops to one is UNREAD (the party lives in another server
@@ -1209,7 +1209,7 @@ func inPartyWithOthers(parties *party.Hub, characterID int64) bool {
 // Returns exp unchanged when there is no skill store, when the lookup fails, or
 // when the scale works out to 1.0. A lookup FAILURE deliberately does not
 // penalise the player: the engine always has the number to hand, so a missing
-// one here is srrevamp's problem and should not cost someone 90% of a kill.
+// one here is OpenSRO's problem and should not cost someone 90% of a kill.
 func applyMasteryExpScale(ctx context.Context, skills skill.Store, characterID int64, charLevel int, exp int64) int64 {
 	if skills == nil || exp == 0 {
 		return exp
@@ -1238,7 +1238,7 @@ func applyMasteryExpScale(ctx context.Context, skills skill.Store, characterID i
 // applyPartyExpBonus scales a kill's experience by the engine's party
 // multiplier -- 1.0 plus 3% for every member past the first, recovered from the
 // FMUL 0.03 / FADD 1.0 pair in CGObjCOS_GoldPet::vslot_399. See
-// leveldata.PartyExpBonusPerMember, which also records what srrevamp still does
+// leveldata.PartyExpBonusPerMember, which also records what OpenSRO still does
 // NOT do: distribute a share to the other members.
 //
 // Returns exp unchanged when there is no party hub (the handler is constructed
@@ -1281,7 +1281,7 @@ func performAttack(
 	// roll is scaled by `1 + masteryPercent/100` BEFORE mitigation. See
 	// combat.MasteryDamageScale.
 	//
-	// A plain swing passes 0, and that is srrevamp's limit, NOT the engine's
+	// A plain swing passes 0, and that is OpenSRO's limit, NOT the engine's
 	// answer for every weapon. The swing is the weapon's base attack skill
 	// (PrepareAction 0x4ad030, see plainSwingOf), and
 	// Skill_GetRequiredMasteryLevel (0x59e770) returns a mastery level for
@@ -1435,7 +1435,7 @@ func performAttack(
 	// weapon or the winter event cannot arrive ahead of it. The other two kinds
 	// (the monster transform, fortress structures) are identified but NOT
 	// modelled -- the first needs a transform system and the second's formula
-	// is unread -- and an srrevamp monster carries no TypeID, so a target is
+	// is unread -- and an OpenSRO monster carries no TypeID, so a target is
 	// never taken for a structure.
 	kindIn := combat.KindInput{AttackerIsPC: true, TargetCodeName: monster.CodeName}
 	if _, t4, known := equippedWeaponType(ctx, characterID, eq, items); known {
@@ -1729,7 +1729,7 @@ func weaponInstance(e equipment.Equipped) combat.Instance {
 // passes CGItemEquip::CheckEquipRequirements, calls Char_PublishCombatStats
 // (0x00497830) with the ITEM -- +0x198 -> param 5, +0x1a8 -> param 6 -- so a
 // shield's defence counts exactly as armour's does (round 246; until then
-// srrevamp left the shield out of the sum). A weapon's block carries no
+// OpenSRO left the shield out of the sum). A weapon's block carries no
 // defence (its branch never stores +0x198), so weapons add nothing here.
 //
 // Until 2026-09-19 this summed PhysDefenseMax, a disclosed stand-in from
@@ -1780,7 +1780,7 @@ func monsterBlow(m combat.Monster, playerLevel int, parry float64) int {
 // param 9 (0x497920..0x49792f). The instance rule is defenderDefence's: a
 // piece that never rolled a variance (Untracked) counts at the top of its
 // range; a row without its hi end reads the lo end. The per-plus increment
-// (column 70) is not added: srrevamp instances carry no plus level.
+// (column 70) is not added: OpenSRO instances carry no plus level.
 //
 // A broken piece parries for nothing, the same rule defenderDefence uses.
 func defenderParryRate(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup) (float64, error) {
@@ -1829,7 +1829,7 @@ func defenderArmor(ctx context.Context, characterID int64, eq equipment.Store, i
 // twin: the worn armour and shield, each piece's range through its instance's
 // variance group (armourGroup for the six armour slots, shieldGroup for the
 // shield), summed and rounded once at the end (the engine keeps floats and
-// srrevamp's wire field is an int32).
+// OpenSRO's wire field is an int32).
 func defenderDefence(ctx context.Context, characterID int64, eq equipment.Store, items combat.ItemLookup, rangeOf func(*refdata.Item) (float64, float64), armourGroup, shieldGroup int) (int, error) {
 	equipped, err := eq.Get(ctx, characterID)
 	if err != nil {
@@ -1952,7 +1952,7 @@ func attackerCritical(ctx context.Context, characterID int64, eq equipment.Store
 // disassembly shows how the engine tells them apart -- a key byte in the high
 // bits of ECX, 'B' (0x42) for blocks against 'C' (0x43) for criticals, which is
 // also the key the bad-luck accumulator is filed under. So the two have
-// independent streak protection in the real game; srrevamp models neither.
+// independent streak protection in the real game; OpenSRO models neither.
 //
 // As with attackerCritical, the divisor belongs to the caller: this block is
 // opposed by the ATTACKER's 'evbl', which is a grounded zero when a monster is
@@ -2004,7 +2004,7 @@ const (
 	monsterEvasion = 0.0
 
 	// playerEvasion is a player's 'evcr' or 'evbl'. DISCLOSED: both arrive only
-	// as magic options ("blue" stats), and srrevamp aggregates none, so no
+	// as magic options ("blue" stats), and OpenSRO aggregates none, so no
 	// player can carry either. combat.TestNoPlayerEvasionSourceExists fails the
 	// day that stops being true, and the fix is to compute the real term here.
 	playerEvasion = 0.0
@@ -2180,7 +2180,7 @@ func grantKill(ctx context.Context, d combatDeps, characterID int64, monster com
 		//     conversion or a skill/mastery WITHDRAWAL refund.
 		//
 		// So no kill path in this binary feeds the currency at all, and
-		// there is no M to read for a kill. srrevamp takes M = 1 -- a kill
+		// there is no M to read for a kill. OpenSRO takes M = 1 -- a kill
 		// is worth its own experience in skill experience -- which is a
 		// DISCLOSED choice and the single knob to turn if a kill-side
 		// source is ever found.

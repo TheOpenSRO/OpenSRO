@@ -4,9 +4,9 @@ import (
 	"math"
 	"sync/atomic"
 
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/party"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/party"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // The kill's word to the nests (round 660, internal/nest). The engine's death
@@ -43,8 +43,8 @@ func noteMonsterKilled(hub *world.Hub, parties *party.Hub, killer int64, m comba
 }
 
 // partyMembersNear is the death command's count: the members of killer's
-// party -- a party of two or more, which every srrevamp party is by the time
-// it shares (inPartyWithOthers; every srrevamp party shares experience, the
+// party -- a party of two or more, which every OpenSRO party is by the time
+// it shares (inPartyWithOthers; every OpenSRO party shares experience, the
 // flag FUN_005bca60 asserts, `party+0x10 & 1`) -- that are in the world,
 // alive, in the monster's zone and at most nest.PartyArmRange (1000.0, the
 // double at 0xb45c68) from the dead monster on the ground plane. READ: the

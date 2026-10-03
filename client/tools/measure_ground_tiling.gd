@@ -7,8 +7,8 @@ extends SceneTree
 ## region's own authored minimap with and without that lightmap term.
 ##
 ## ```
-## SRREVAMP_PK2_PATH=Data.pk2 SRREVAMP_MAP_PK2_PATH=Map.pk2 \
-##   SRREVAMP_MEDIA_PK2_PATH=Media.pk2 \
+## OPENSRO_PK2_PATH=Data.pk2 OPENSRO_MAP_PK2_PATH=Map.pk2 \
+##   OPENSRO_MEDIA_PK2_PATH=Media.pk2 \
 ##   MEASURE_SPOT="97,168,955,185" MEASURE_REGIONS="97,168;96,168" \
 ##   godot4 --headless --path client --script res://tools/measure_ground_tiling.gd
 ## ```
@@ -128,9 +128,9 @@ static func _pearson(xs: PackedFloat32Array, ys: PackedFloat32Array) -> float:
 	return sxy / sqrt(sxx * syy) if sxx > 0.0 and syy > 0.0 else 0.0
 
 func _initialize() -> void:
-	var data := Pk2Reader.open(OS.get_environment("SRREVAMP_PK2_PATH"))
-	var map := Pk2Reader.open(OS.get_environment("SRREVAMP_MAP_PK2_PATH"))
-	var media := Pk2Reader.open(OS.get_environment("SRREVAMP_MEDIA_PK2_PATH"))
+	var data := Pk2Reader.open(OS.get_environment("OPENSRO_PK2_PATH"))
+	var map := Pk2Reader.open(OS.get_environment("OPENSRO_MAP_PK2_PATH"))
+	var media := Pk2Reader.open(OS.get_environment("OPENSRO_MEDIA_PK2_PATH"))
 	var table := TileIndexReader.parse(AssetSource.read_bytes("navmesh\\tile2d.ifo", data))
 	var spot := OS.get_environment("MEASURE_SPOT").split(",")
 	var regions := OS.get_environment("MEASURE_REGIONS").split(";", false)

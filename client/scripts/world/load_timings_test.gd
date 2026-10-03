@@ -139,7 +139,7 @@ func _test_end_cell_notes_the_frame() -> void:
 ## (_terrain_prepare_read, _terrain_prepare_build: its laps go into the job
 ## through _job_lap, since LoadTimings is the main thread's) and a commit on
 ## the main thread (_terrain_commit). A synchronous cell -- the grid's centre,
-## or every cell under SRREVAMP_SYNC_LOAD=1 -- lists all of them in one
+## or every cell under OPENSRO_SYNC_LOAD=1 -- lists all of them in one
 ## `terrain [..]` in that order, with the centre's `env` (in
 ## _try_load_real_terrain) between `parse` and `lightmap`; a streamed cell
 ## lists the commit's as its main-thread terrain and the prepare's off the
@@ -238,7 +238,7 @@ func _test_world3d_terrain_laps_are_exhaustive() -> void:
 		"the README's streamed cell-line template names the prepare's laps: `%s`" % off_template)
 
 ## Round 566: the objects' laps, held the way round 565's terrain laps are.
-## The synchronous path (the grid's centre, SRREVAMP_SYNC_LOAD=1) records
+## The synchronous path (the grid's centre, OPENSRO_SYNC_LOAD=1) records
 ## [snapshot, parse, own, models, textures, templates, place] -- the job's
 ## snapshot, the prepare's three laps as main-thread phases, the commit's --
 ## and a streamed cell the commit's [textures, templates, place] with the

@@ -158,7 +158,7 @@ func TestEveryParamForTagPacks(t *testing.T) {
 
 // TestBonusUnitIsAboutTheBonusNotTheStat guards the misreading the comment
 // warns about. Block rate's bonus is flat -- the option adds points -- while
-// the stat it adds to is a percentage srrevamp rolls against 0..100. If some
+// the stat it adds to is a percentage OpenSRO rolls against 0..100. If some
 // future change reads "flat" as "not a percentage" and stops rolling block as
 // a chance, this is the test that should have stopped it.
 func TestBonusUnitIsAboutTheBonusNotTheStat(t *testing.T) {

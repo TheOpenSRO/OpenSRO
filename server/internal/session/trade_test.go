@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/account"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/shop"
-	"github.com/OpenSRO/srrevamp/server/internal/trade"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/account"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/shop"
+	"github.com/OpenSRO/OpenSRO/server/internal/trade"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 func TestTradeRequestRequestRoundTrip(t *testing.T) {
@@ -534,7 +534,7 @@ func TestTradeRefusesWhenRecipientIsFull(t *testing.T) {
 //
 // This matters more than it looks. In a real itemdata the flag is clear on every
 // starter item (all 52 `_A_DEF` rows) and every quest item (all 558 `ITEM_QNO_`
-// rows), so without it srrevamp let players trade away gear the real game pins
+// rows), so without it OpenSRO let players trade away gear the real game pins
 // to the character.
 func TestTradeRefusesUntradeableItem(t *testing.T) {
 	ctx := context.Background()
@@ -582,7 +582,7 @@ func TestTradeRefusesUntradeableItem(t *testing.T) {
 // the wire. CGStorage::TradeOfferItem (`0x00526910`) returns 0x183a
 // UIIT_MSG_STRGERR_CANNOT_BE_TRADED from the offer itself, before
 // TradeMgr::OfferItemToPartner runs, so the refused item is never recorded and
-// the partner never sees it. Before round 482 srrevamp accepted the offer,
+// the partner never sees it. Before round 482 OpenSRO accepted the offer,
 // showed it to the partner, and only failed the whole trade at the final
 // confirm.
 func TestTradeOfferRefusesUntradeableItem(t *testing.T) {
@@ -882,7 +882,7 @@ func TestTradeRequestNeedsTheEngineRange(t *testing.T) {
 	readCancelledBy(t, bram, "Aria")
 	readCancelledBy(t, aria, "Aria")
 
-	// Another zone is out of range whatever the coordinates say: srrevamp's
+	// Another zone is out of range whatever the coordinates say: OpenSRO's
 	// zones share no coordinate space. Bram changes zone and lands on the same
 	// spawn point (0,0,0) Aria is standing on.
 	resp = doSend(t, bram.conn, bram.r, OpChangeZone, (&ChangeZoneRequest{Zone: "elsewhere"}).Encode())

@@ -24,7 +24,7 @@ uniform bool still = false;
 uniform float tonemap_exposure = 1.0;
 uniform float tonemap_white = 1.0;
 uniform bool tonemap_filmic = true;
-// QA only (SRREVAMP_QA_WATER_OUTMODE): 1 writes the displayed value straight.
+// QA only (OPENSRO_QA_WATER_OUTMODE): 1 writes the displayed value straight.
 uniform int qa_output_mode = 0;
 // Retail's vertical squeeze (READ): the texture matrix's 0.8 over its
 // projection's P22 / 2 = 0.866 (fovy 60 degrees).

@@ -6,7 +6,7 @@ package equipment
 import (
 	"context"
 	"errors"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 )
 
 // Slot identifies one equipment slot, numbered in the game's own order.
@@ -91,7 +91,7 @@ const (
 	//	if (given == 0xc) return 1;
 	//	return 0x180e;
 	//
-	// -- so a character wears two rings. Added 2026-09-16; srrevamp had one.
+	// -- so a character wears two rings. Added 2026-09-16; OpenSRO had one.
 	SlotRingLeft
 	SlotRingRight
 )
@@ -149,7 +149,7 @@ const (
 //
 // THIS IS A SANITY CEILING, NOT A GAMEPLAY ONE. Real items are enhanced to
 // single digits; 250 is where the engine stops believing the number at all.
-// Recorded as the engine's bound, not as a balance figure -- srrevamp does not
+// Recorded as the engine's bound, not as a balance figure -- OpenSRO does not
 // model option levels, and an implementation that treated 250 as a reachable
 // target would be reading a validation limit as a design limit.
 const MaxItemOptLevel = 250

@@ -1,6 +1,6 @@
 # Installed by deploy/install.sh.
 [Unit]
-Description=srrevamp: check origin/dev every five minutes
+Description=OpenSRO: check origin/dev every five minutes
 
 [Timer]
 OnBootSec=2min

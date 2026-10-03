@@ -68,7 +68,7 @@ Combined with the character-side reading, where params 6 and 7 come from authore
 `RefObjChar` fields with no equipment term in the arithmetic, **equipment does not reach
 params 5 or 7 by either route** in this build.
 
-That is a statement about the engine, not a verdict on srrevamp. srrevamp's `defenderArmor`
+That is a statement about the engine, not a verdict on OpenSRO. OpenSRO's `defenderArmor`
 adds equipment armour into the flat term, which the engine does not do — but what equipment
 *does* contribute defensively is still unread (several of the writable ids, 25-32 and
 128-131, are unidentified), so there is nothing yet to replace it with. The damage model is

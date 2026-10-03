@@ -14,7 +14,7 @@ class_name TeleportReader
 ##
 ## Columns are 0-based and the same ones server/cmd/export-refdata reads
 ## (its tp*/tl*/tb* constants), each checked against the retail rows in
-## round 575: docs/protocol/teleport_network.md, "The columns srrevamp
+## round 575: docs/protocol/teleport_network.md, "The columns OpenSRO
 ## reads". Column 0 is the service flag.
 
 const DATA_TABLE := "server_dep\\silkroad\\textdata\\teleportdata.txt"

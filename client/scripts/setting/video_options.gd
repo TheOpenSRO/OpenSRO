@@ -523,17 +523,17 @@ static func in_force() -> VideoOptions:
 		_qa_override(_in_force)
 	return _in_force
 
-## QA hook (round 694, OURS): SRREVAMP_QA_VIDEO="quality=0,shadow_detail=2,..."
+## QA hook (round 694, OURS): OPENSRO_QA_VIDEO="quality=0,shadow_detail=2,..."
 ## sets rows of the record in force for one run -- `quality`, `brightness`,
 ## `profile` (1 or 2) or a row's key (ROWS) -- in the order given, as the
 ## window would (set_row: a row after a quality switches to User). Nothing
 ## is saved. For measuring each setting's cost and look.
 static func _qa_override(o: VideoOptions) -> void:
-	var spec := OS.get_environment("SRREVAMP_QA_VIDEO")
+	var spec := OS.get_environment("OPENSRO_QA_VIDEO")
 	if spec == "":
 		return
 	apply_spec(o, spec)
-	print("VideoOptions: SRREVAMP_QA_VIDEO=%s -> graphic %d quality %d" % [spec, o.active + 1, o.current().quality])
+	print("VideoOptions: OPENSRO_QA_VIDEO=%s -> graphic %d quality %d" % [spec, o.active + 1, o.current().quality])
 
 ## Sets rows of `o` from "key=value,..." (see _qa_override).
 static func apply_spec(o: VideoOptions, spec: String) -> void:

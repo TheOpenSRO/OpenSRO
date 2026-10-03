@@ -7,8 +7,8 @@ import (
 	"math"
 )
 
-// srrevamp's own monster-movement messages, the server half of round 533's
-// client (docs/protocol/monster_ai.md, "srrevamp's own monster protocol
+// OpenSRO's own monster-movement messages, the server half of round 533's
+// client (docs/protocol/monster_ai.md, "OpenSRO's own monster protocol
 // (placeholders)"; client/scripts/net/combat.gd decodes both). Additive
 // placeholders like every opcode here (docs/protocol/PROTOCOL_DECISION.md):
 // retail moves a monster with 0x7021/0xB021, which carry no speed. Only the

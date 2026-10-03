@@ -220,8 +220,8 @@ unless the row's `+0x574` is non-zero. The only writer is the row's own
 = DAT_00c826bc + 1`). So in the engine the CH swings and the EU staff and wand
 swings are scaled at stage 1 by the caster's level in the row's mastery
 (`ReqCommon_Mastery1`, e.g. 257 for the CH sword, 514 for the staff), and the
-punch and the other EU swings are not. srrevamp does not export MAAT, so every plain swing takes
-mastery 0 (see "What srrevamp does with it").
+punch and the other EU swings are not. OpenSRO does not export MAAT, so every plain swing takes
+mastery 0 (see "What OpenSRO does with it").
 
 ## The cooldown test the keep-up waits on
 
@@ -236,7 +236,7 @@ per-id map and, for a non-zero `+0x8f`, in the group map too. The `+0x2c` map is
 also the one `ItemCooldowns::IsReady` (`0x64c040`) reads for item cooltime
 groups: skills and items share it (round 504).
 
-## What srrevamp does with it (v0.1.406)
+## What OpenSRO does with it (v0.1.406)
 
 `server/internal/session/keepup.go`: after an accepted plain swing the server
 repeats it every `ReuseDelay` of the base attack; a cast with
@@ -248,8 +248,8 @@ code:
 - The server cannot walk the player back into reach, so a repeat that is out
   of reach ends the run. The reach test itself is the engine's.
 - The retail client's explicit cancel on a move click is stood in for by the
-  position update, which srrevamp's client only sends for a real move.
-- A row with a non-zero `ChainCode` does not hand off at all. srrevamp does
+  position update, which OpenSRO's client only sends for a real move.
+- A row with a non-zero `ChainCode` does not hand off at all. OpenSRO does
   not play the links, and the engine tests the LAST link's byte after the last
   link's duration. (Older text here called every such row a "chain head"; round
   507 counted them: of the 1,246 player rows with a non-zero `ChainCode`, 582
@@ -258,12 +258,12 @@ code:
   type 2, 70 type 0 -- so this departure costs the hand-off on the 463 type-1
   true heads.)
 - A zero-damage row does not hand off. Phase 3 tests only `+0x90 == 1`, the
-  target and the queue depth, and never looks at damage. But srrevamp's cast
+  target and the queue depth, and never looks at damage. But OpenSRO's cast
   handler (`useSkillHandler`, `session/skill.go`) returns early for a row with
   `NoCombatParam` or `ZeroDamage`, and that return comes before the hand-off.
   On the real rows this affects five player rows:
   `SKILL_EU_WARRIOR_DUALA_STUN_A_01..05` (ids 9245-9249), which are type 1
-  with no chain and `ZeroDamage` 1. Retail hands off after them. srrevamp does
+  with no chain and `ZeroDamage` 1. Retail hands off after them. OpenSRO does
   not.
 
 **Round 502: the hand-off did not fire until then.** `cmd/export-refdata`
@@ -271,11 +271,11 @@ wrote a literal `"0"` into both `AutoAttackType` and `Basic_ChainCode`, so every
 real export carried 0 and `skillHandsOff` never saw a 1. The exporter now reads
 column 19 and column 9 (the `CopyFixedColumns` offsets above). The wait is also
 corrected: phase 3 waits `+0x74 + +0x78`, and `+0x74` has `PreparingTime`
-(`+0x70`) added at load, but srrevamp's refdata keeps both columns raw, so the
+(`+0x70`) added at load, but OpenSRO's refdata keeps both columns raw, so the
 server sums all three. The `+0x2c` term is the chain carry described under
 phase 2. The release zeroes it, phase 0 zeroes it again, and only a chain
 link's bookkeeping adds to it. A standalone row never reaches that bookkeeping,
-so the term is 0 for every row srrevamp hands off.
+so the term is 0 for every row OpenSRO hands off.
 
 Measured on the 33,632 real rows: column 19 is 1 on 28,702, 0 on 4,608 and 2
 on 322. Of the 6,981 player rows (`Basic_Code` `SKILL_*`), 2,051 carry 1.
@@ -284,7 +284,7 @@ links; round 507) and 1,039 do not. Of the 1,039, 1,034 pass the hand-off test
 and the damage gate: **571 standalone castable rows**, which now hand off when
 cast, and **463 final links** (named by another row's column 9), which the
 engine plays as the last step of a head's chain. Whether a player can cast a
-final link by its own id was not read; srrevamp hands off after one if a cast
+final link by its own id was not read; OpenSRO hands off after one if a cast
 names it. The other five are the zero-damage stun rows
 `SKILL_EU_WARRIOR_DUALA_STUN_A_01..05` (ids 9245-9249, `ZeroDamage` 1), which
 the fourth departure above stops. 177 of the 1,034, all standalone, have a
@@ -301,7 +301,7 @@ share one timer. The group tracker is the item cooltime tracker itself
 (`session/itemcooldown.go`), because the engine has one map at `+0x2c`. Two
 kinds of row take no part in a group:
 
-- a row with no `ReuseDelay`, which `IsReady` never holds. srrevamp does not
+- a row with no `ReuseDelay`, which `IsReady` never holds. OpenSRO does not
   arm the group for it, and on the real rows neither does the engine (round
   507, corrected): the arm `FUN_0064c700` is called by the action-kind
   handlers in the table at `.data 0xc63c7c`, and the kind-0 handler
@@ -341,12 +341,12 @@ not the engine's:
 
 - Mastery. Every plain swing passes mastery 0. The engine applies the caster's
   mastery to the rows that carry `getv MAAT` (the CH swings and the EU staff and
-  wand swings), and srrevamp does not export that flag. See `docs/TODO.md`.
+  wand swings), and OpenSRO does not export that flag. See `docs/TODO.md`.
 - The empty hand's roll. The punch's 150% scales `session.unarmedDamage`, a
   disclosed 5. What the engine rolls with no weapon (params 190/191 from the
   equipment aggregate) is not read.
 - Defence. A magical swing (staff, wands, harp) is mitigated by the monster's
-  one `Defense` value, as a magical skill already is. srrevamp models no
+  one `Defense` value, as a magical skill already is. OpenSRO models no
   separate magical defence for monsters.
 
 A skill-less blow remains the fallback when there is no base row to read: a
@@ -354,9 +354,9 @@ store that cannot look skills up, or a weapon type the table does not list. A
 base row with no percentage (an export predating the damage columns) adds
 nothing, and a row whose mask names no damage half stays physical.
 
-## srrevamp's cast and buff messages (round 617, the client half)
+## OpenSRO's cast and buff messages (round 617, the client half)
 
-srrevamp does not speak 0x7074. The skills epic's shared contract (rounds
+OpenSRO does not speak 0x7074. The skills epic's shared contract (rounds
 616-619; OURS, with the retail analogues named) extends `OpUseSkill` and adds
 four messages. The client half is `client/scripts/net/skill.gd` (codec) and
 `net_client.gd` (signals `buff_started`, `buff_ended`, `skill_moved`, and

@@ -83,16 +83,16 @@ static func set_view_distance(view: float) -> void:
 ## The frame's sector list (+0x2783) is taken to be this grid (INFERRED).
 const SECTOR_SIZE := 1920.0 / 6.0
 
-## SRREVAMP_NO_MAP_ANIM=1: every model is built as before round 645, still,
+## OPENSRO_NO_MAP_ANIM=1: every model is built as before round 645, still,
 ## with no skeleton, skin or player -- the A/B baseline. Not a player option.
-static var disabled := OS.get_environment("SRREVAMP_NO_MAP_ANIM") != ""
+static var disabled := OS.get_environment("OPENSRO_NO_MAP_ANIM") != ""
 
 ## Node names in a template, and the meta keys that mark one.
 const SKELETON_NODE := "MapSkeleton"
 const PLAYER_NODE := "MapAnimation"
 const CLIP_NAME := "default"
-const META_ANIMATED := "srrevamp_map_animated"
-const META_RADIUS := "srrevamp_map_anim_radius"
+const META_ANIMATED := "opensro_map_animated"
+const META_RADIUS := "opensro_map_anim_radius"
 
 ## The entry the map plays for `obj`, or null when it does not move: no
 ## skeleton, no animation, or no `default` type-0 entry.
@@ -301,10 +301,10 @@ static func sector_in_view(centre: Vector3, planes: Array) -> bool:
 ## band, not a retail value); inside the band every object is tested.
 const BOUND_MARGIN := 1.0
 
-## SRREVAMP_MAP_ANIM_NO_SHARE=1: every running clip keeps its own player and
+## OPENSRO_MAP_ANIM_NO_SHARE=1: every running clip keeps its own player and
 ## skeleton (round 645's path) -- the A/B for the shared poses' saving, and
 ## what MapAnimationProbe's cost modes need. Not a player option.
-static var no_share := OS.get_environment("SRREVAMP_MAP_ANIM_NO_SHARE") != ""
+static var no_share := OS.get_environment("OPENSRO_MAP_ANIM_NO_SHARE") != ""
 
 ## One registered clip: a placed object's player, skeleton and skinned
 ## pieces, where it stands, and whose pose it is drawn with.
@@ -394,7 +394,7 @@ class Driver:
 	## and objects tested one by one.
 	var sectors_viewed := 0
 	var objects_tested := 0
-	## Set by MapAnimationProbe (SRREVAMP_QA_MAPANIM_SPLIT): the driver stops
+	## Set by MapAnimationProbe (OPENSRO_QA_MAPANIM_SPLIT): the driver stops
 	## testing, leaving the probe's state in place. Never set in play.
 	var halted := false
 	## Round 680 (OURS, the title's backdrop only): an object out of range
@@ -793,7 +793,7 @@ class Driver:
 	## back -- RefCounted cycles, which outlive the driver. MEASURED: every
 	## World3D freed left its animated objects behind (+559 objects and
 	## +1.3 MB a front-end backdrop of 98/168, client/tools/
-	## measure_create_cycles.gd, 0 with SRREVAMP_NO_MAP_ANIM), and so does
+	## measure_create_cycles.gd, 0 with OPENSRO_NO_MAP_ANIM), and so does
 	## every reset (a zone change). The links are cut here.
 	func _break_cycles() -> void:
 		for key in _sectors:

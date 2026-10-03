@@ -339,7 +339,7 @@ func build_control(def: UiLayoutParser.ControlDef) -> Control:
 const STYLE_HIDDEN_AT_CREATION := 0x40
 
 ## Where build_control stashes the rect the layout asked for.
-const AUTHORED_RECT_META := "srrevamp_authored_rect"
+const AUTHORED_RECT_META := "opensro_authored_rect"
 
 ## Re-applies every authored rect, after the tree has settled.
 ##
@@ -389,17 +389,17 @@ static func apply_authored_rects(root: Node) -> void:
 ## Arial fallback): GDR_PMI_TXT_HP, 124x12 with a 13-pixel line, now starts at
 ## y 25 rather than 26. That the client's text height (the extent 0x64d9b0
 ## reads at +0xde) equals Godot's line height for the same face is INFERRED.
-const RELAY_META := "srrevamp_label_relay"
+const RELAY_META := "opensro_label_relay"
 ## Marks a label this builder made for a CIFStatic's or CIFButton's text:
 ## the ones the client lays out with 0x64d9b0, and so the only ones
 ## place_label moves.
 ## Other labels that carry an authored rect (a window's caption strip) keep
 ## their rect as before -- their draw was not read.
-const STATIC_TEXT_META := "srrevamp_static_text"
+const STATIC_TEXT_META := "opensro_static_text"
 ## A text label's ClientRect (left, top, right, bottom insets, as the layout
 ## writes them), and an art static's def.
-const CLIENT_RECT_META := "srrevamp_client_rect"
-const STATIC_DEF_META := "srrevamp_static_def"
+const CLIENT_RECT_META := "opensro_client_rect"
+const STATIC_DEF_META := "opensro_static_def"
 
 ## The rect a control's text is laid out in. READ: 0x64d9b0 asks 0x652800
 ## for it, which takes the control's rect and moves its left and top in by

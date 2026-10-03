@@ -464,7 +464,7 @@ exists so it is cited rather than discovered as a divergence later. Deliberate,
 and disclosed at the definition.
 
 **`skill.WithdrawCost` stands as the third instance**, and it is *disclosed* —
-`docs/protocol/skill_withdraw.md` opens by saying srrevamp offers no withdrawal
+`docs/protocol/skill_withdraw.md` opens by saying OpenSRO offers no withdrawal
 feature. That is the difference from the HP-regen and drop-table cases, which
 claimed nothing and simply did not run.
 

@@ -6,20 +6,20 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/berserk"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/durability"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/grounditem"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/mana"
-	"github.com/OpenSRO/srrevamp/server/internal/party"
-	"github.com/OpenSRO/srrevamp/server/internal/quest"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/durability"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/grounditem"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/party"
+	"github.com/OpenSRO/OpenSRO/server/internal/quest"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // The keep-up. In the original ONE click starts a plain attack and the
@@ -47,20 +47,20 @@ import (
 // Round 256 built the hand-off, but the exporter wrote a literal 0 into
 // AutoAttackType until round 502, so on a real export it never fired.
 //
-// Four things srrevamp cannot do the engine's way, and does not pretend to:
+// Four things OpenSRO cannot do the engine's way, and does not pretend to:
 //
 //   - The engine WALKS the attacker back into reach (phase 1's
-//     MoveTowardObject). srrevamp's server does not move players, so a
+//     MoveTowardObject). OpenSRO's server does not move players, so a
 //     repeat that finds its target out of reach ENDS the run instead. The
 //     reach test itself is the engine's (combat.InReach on the round-247
 //     band).
 //   - The retail client cancels a running action when the player clicks to
-//     move (0x7074 with the cancel byte). srrevamp's client has no such
+//     move (0x7074 with the cancel byte). OpenSRO's client has no such
 //     packet, so a position update (OpMove, only ever sent for a real move)
 //     cancels the run. That mapping is this project's, not read.
 //   - The engine runs a chain skill (Basic_ChainCode, +0x68, non-zero) link
 //     by link: phase 3 re-enters phase 2 with the next link's row, and only
-//     the LAST link's AutoAttackType decides the hand-off. srrevamp resolves
+//     the LAST link's AutoAttackType decides the hand-off. OpenSRO resolves
 //     only the row the player cast and does not walk the chain, so a row with
 //     a non-zero Basic_ChainCode does not hand off at all rather than hand off
 //     on its own timing. See skillHandsOff. Re-measured in round 507 on the
@@ -72,7 +72,7 @@ import (
 //   - The engine's phase-3 test does not look at damage. It reads only
 //     AutoAttackType (`*(char*)(ref+0x90) == '\x01'`), the target
 //     (FUN_0048db90, then IGObj slots 62, 6 and 63) and the queue depth
-//     (`+0xc == 1`). srrevamp's useSkillHandler (skill.go) returns early for
+//     (`+0xc == 1`). OpenSRO's useSkillHandler (skill.go) returns early for
 //     a row that resolves no blow or a zero-damage blow (NoCombatParam /
 //     ZeroDamage), and that return comes before the hand-off. So a
 //     zero-damage row does not hand off even when its AutoAttackType is 1.
@@ -238,11 +238,11 @@ type plainSwing struct {
 // guard: skillDamageBonus returns the DISCLOSED per-level bonus for a row with
 // no `att`, and a plain swing must not pick that up. A base row that carries
 // no percentage (an export predating the damage columns, or a test row) adds
-// nothing, which is exactly the swing srrevamp dealt before.
+// nothing, which is exactly the swing OpenSRO dealt before.
 //
 // With no base row -- a store that cannot look skills up, or a weapon type the
 // default-attack table has no entry for -- the swing is {0, 0, 1, physical},
-// the plain blow srrevamp dealt before round 505. A row whose mask names no
+// the plain blow OpenSRO dealt before round 505. A row whose mask names no
 // damage half (an export predating the AttackType column) stays physical for
 // the same reason; see combat.AttackType.IsPhysical.
 //
@@ -423,7 +423,7 @@ func armKeepUp(
 // link's wait by what is left of `+0x28`, and on the link where `+0x28` runs
 // out it adds the remainder to `+0x2c`. So a chain's final link waits up to
 // 500 ms longer. A standalone row (`+0x68` == 0) never reaches that
-// bookkeeping, so the term is 0 for every row srrevamp hands off
+// bookkeeping, so the term is 0 for every row OpenSRO hands off
 // (skillHandsOff refuses every row with a non-zero `+0x68`). Re-read in round
 // 507 against the review's reading: both release paths write `+0x28 = 500`
 // and `+0x2c = 0`, phase 0 writes `+0x2c = 0` before its gate, and phase 2
@@ -443,7 +443,7 @@ func handOffDelay(ref *refdata.Skill) time.Duration {
 // A row with a non-zero BasicChainCode does not hand off either. That is a
 // DEPARTURE, disclosed in the package comment: the engine plays the chain link
 // by link and tests the last link's byte after the last link's duration;
-// srrevamp does not walk the chain, so handing off after the cast row's own
+// OpenSRO does not walk the chain, so handing off after the cast row's own
 // timing would start the swings early, mid-chain. "Chain head" in this
 // project's older text meant any such row; 582 of the 1,246 player rows that
 // carry one are true heads and 664 are intermediate links (round 507).

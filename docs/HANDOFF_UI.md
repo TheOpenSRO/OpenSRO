@@ -93,7 +93,7 @@ Two more practical points:
 - **Announce the seam in the commit message** so the world lane can read it.
 
 Also note `World3D.gd` carries a ~600-line **QA harness** at the bottom (`_qa_*` functions, driven
-by `SRREVAMP_QA_*` env hooks). That is diagnostics for the world lane, not UI — leave it where it
+by `OPENSRO_QA_*` env hooks). That is diagnostics for the world lane, not UI — leave it where it
 is. `docs/TODO.md` lists extracting it separately.
 
 ## The real client's UI art is available, and already decodable
@@ -205,7 +205,7 @@ texture bugs that only showed up in a live client. So caveat "verified" claims h
 "tests pass" when tests pass, and "verified in a render" only when you have looked at a picture.
 
 **To look at the UI**, `client/tools/qa_shot.sh` runs the real client and collects frames; see
-`client/tools/README.md` first. `SRREVAMP_QA_NOUI` exists to hide the UI for world shots — for
+`client/tools/README.md` first. `OPENSRO_QA_NOUI` exists to hide the UI for world shots — for
 your purposes you want it *off*. Startup dominates (~65 s of loading against ~0.33 s a frame), so
 batch viewpoints with `--shots` rather than taking one picture per run.
 

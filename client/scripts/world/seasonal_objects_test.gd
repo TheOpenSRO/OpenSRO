@@ -2,7 +2,7 @@ extends SceneTree
 
 ## Seasonal event decorations hidden by default (round 583): the
 ## classifier (SeasonalObjects) over the real path shapes of Map.pk2's
-## object.ifo, the SRREVAMP_SEASONAL list, and World3D's objects prepare
+## object.ifo, the OPENSRO_SEASONAL list, and World3D's objects prepare
 ## leaving the hidden pieces out before the model loop -- against a
 ## synthetic archive (never real game data). Run headless:
 ##   godot4 --headless --path client --script res://scripts/world/seasonal_objects_test.gd
@@ -13,11 +13,11 @@ extends SceneTree
 ##   `alex_burner` (Alexandria, in none of the four folders), the Jangan gate
 ##   and wall, and the event sets the user did not choose (the new-year
 ##   piece, the season door) are ordinary objects;
-## - SRREVAMP_SEASONAL's comma list shows again exactly the sets it names;
+## - OPENSRO_SEASONAL's comma list shows again exactly the sets it names;
 ## - World3D._objects_prepare drops a hidden piece after the de-duplication
 ##   and before the model loop (its model is never read), keeps
 ##   arabia_fouad, and logs `hid N seasonal placement(s) (...)`; with
-##   SRREVAMP_SEASONAL=christmas only the Christmas piece comes back.
+##   OPENSRO_SEASONAL=christmas only the Christmas piece comes back.
 ##
 ## Everything is reached through load() and call(), so on a tree without
 ## round 583 the suite FAILS instead of failing to parse.
@@ -104,13 +104,13 @@ func _test_prepare_hides() -> void:
 	_check(S != null and S.can_instantiate(), "World3D.gd loads and can instantiate headless")
 	if S == null or not S.can_instantiate():
 		return
-	var map_path := "user://srrevamp_r583_seasonal_map.pk2"
-	var data_path := "user://srrevamp_r583_seasonal_data.pk2"
+	var map_path := "user://opensro_r583_seasonal_map.pk2"
+	var data_path := "user://opensro_r583_seasonal_data.pk2"
 	_write_pk2(map_path, {"97\\168.o2": _build_mapo2()})
 	_write_pk2(data_path, {"prim\\none.txt": "x".to_ascii_buffer()})
 
-	var saved := OS.get_environment("SRREVAMP_SEASONAL")
-	OS.set_environment("SRREVAMP_SEASONAL", "")
+	var saved := OS.get_environment("OPENSRO_SEASONAL")
+	OS.set_environment("OPENSRO_SEASONAL", "")
 	var job := _prepare(S, map_path, data_path)
 	var placements: Array = job.get("placements", [])
 	var ids: Array = []
@@ -129,22 +129,22 @@ func _test_prepare_hides() -> void:
 	_check(text.contains("4 object(s) from 5 record(s) of lists 1 and 2 (1 listed again by another sector"),
 		"the second listing of one key was merged before the filter (got %s)" % text)
 
-	OS.set_environment("SRREVAMP_SEASONAL", "christmas")
+	OS.set_environment("OPENSRO_SEASONAL", "christmas")
 	job = _prepare(S, map_path, data_path)
 	ids = []
 	for p in job.get("placements", []):
 		ids.append(p["type_id"])
-	_check(ids == [1, 2, 4], "SRREVAMP_SEASONAL=christmas brings back only the Christmas piece (got %s)" % str(ids))
+	_check(ids == [1, 2, 4], "OPENSRO_SEASONAL=christmas brings back only the Christmas piece (got %s)" % str(ids))
 	_check(job.get("seasonal_hid", {}) == {"halloween": 1}, "and still hides the Halloween one (got %s)" % str(job.get("seasonal_hid")))
 
-	OS.set_environment("SRREVAMP_SEASONAL", "christmas,halloween,obt,summer")
+	OS.set_environment("OPENSRO_SEASONAL", "christmas,halloween,obt,summer")
 	job = _prepare(S, map_path, data_path)
 	ids = []
 	for p in job.get("placements", []):
 		ids.append(p["type_id"])
 	_check(ids == [1, 2, 3, 4] and not _log_text(job).contains("seasonal"),
 		"all four enabled: everything is placed and nothing is logged (got %s)" % str(ids))
-	OS.set_environment("SRREVAMP_SEASONAL", saved)
+	OS.set_environment("OPENSRO_SEASONAL", saved)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(map_path))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(data_path))
 

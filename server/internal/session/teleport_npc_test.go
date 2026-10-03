@@ -13,15 +13,15 @@ import (
 	"context"
 
 	"fmt"
-	"github.com/OpenSRO/srrevamp/server/internal/spawn"
+	"github.com/OpenSRO/OpenSRO/server/internal/spawn"
 	"math"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/teleport"
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // A synthetic network of NPC-hosted points, shaped on the retail rows (each
@@ -268,7 +268,7 @@ func TestTeleportNPCFreeForGMs(t *testing.T) {
 
 // Every link of the retail network, driven through the handler one after
 // another by one character (the server has no range test, so each request is
-// served wherever the last put her). Runs only when SRREVAMP_TELEPORT_DIR
+// served wherever the last put her). Runs only when OPENSRO_TELEPORT_DIR
 // names a directory of the three CSVs cmd/export-refdata -mode teleport
 // writes -- the operator's own export; no archive data is in the repo. For
 // each link the level is set to the lowest its level rules allow, and the
@@ -276,24 +276,24 @@ func TestTeleportNPCFreeForGMs(t *testing.T) {
 //
 //   - the source point has no associated object: code 2 (nothing to talk to);
 //   - the destination is in another game world or has a dungeon region:
-//     refused, code 0 (OURS -- srrevamp has the open world only);
+//     refused, code 0 (OURS -- OpenSRO has the open world only);
 //   - a type-4/5 rule (the Roc quest item) or a type-6 rule: 0x1c23 / 0x1c24;
 //   - otherwise: charged the link's fee (the level is above 20 unless a rule
 //     keeps it lower) and moved to the destination point, exactly.
 func TestTeleportEveryRetailLink(t *testing.T) {
-	dir := os.Getenv("SRREVAMP_TELEPORT_DIR")
+	dir := os.Getenv("OPENSRO_TELEPORT_DIR")
 	if dir == "" {
-		t.Skip("SRREVAMP_TELEPORT_DIR is not set (a directory of cmd/export-refdata -mode teleport's CSVs)")
+		t.Skip("OPENSRO_TELEPORT_DIR is not set (a directory of cmd/export-refdata -mode teleport's CSVs)")
 	}
 	tab, err := teleport.Load(dir)
 	if err != nil {
 		t.Fatalf("teleport.Load(%s): %v", dir, err)
 	}
 	// The NPCs' places, as cmd/server records them from -npcpos-csv, when
-	// SRREVAMP_NPCPOS_CSV names the operator's npcpos export; without it an
+	// OPENSRO_NPCPOS_CSV names the operator's npcpos export; without it an
 	// NPC's range is not measured and she stands on the point.
 	placed := 0
-	if path := os.Getenv("SRREVAMP_NPCPOS_CSV"); path != "" {
+	if path := os.Getenv("OPENSRO_NPCPOS_CSV"); path != "" {
 		npcs, err := spawn.LoadCSV(path)
 		if err != nil {
 			t.Fatalf("spawn.LoadCSV(%s): %v", path, err)

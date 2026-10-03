@@ -48,7 +48,7 @@ const (
 )
 
 // The lobby's error codes (READ codes, charselect.md section 5's table; what
-// this server raises each for is that table's "srrevamp" column). The client
+// this server raises each for is that table's "OpenSRO" column). The client
 // shows the text the table names.
 const (
 	LobbyOK                uint16 = 0x401

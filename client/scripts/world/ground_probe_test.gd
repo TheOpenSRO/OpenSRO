@@ -107,14 +107,14 @@ func _test_entry_and_exit_records(P: GDScript, S: GDScript) -> void:
 	var gl_env: String = P.get_script_constant_map()["PREV_GL_ENV"]
 	OS.set_environment(entry_env, "")
 	_check(int(P.call("next_entry")) == 1 and int(P.call("next_entry")) == 2 and OS.get_environment(entry_env) == "2",
-		"next_entry counts entries in SRREVAMP_WORLD_ENTRY")
+		"next_entry counts entries in OPENSRO_WORLD_ENTRY")
 	_check(String(P.call("reached_text", 1)).contains("first world entry"), "entry 1 is the first of the process")
 	var w: Node = S.new()
 	w._world_entry = 1
 	w._ground_texture_cache["a.ddj"] = ImageTexture.create_from_image(Image.create(4, 4, false, Image.FORMAT_RGB8))
 	P.call("record_exit", w, false)
 	_check(OS.get_environment(exit_env).contains("entry 1") and OS.get_environment(exit_env).contains("connected=false"),
-		"record_exit leaves how the entry ended in SRREVAMP_WORLD_LAST_EXIT (got %s)" % OS.get_environment(exit_env))
+		"record_exit leaves how the entry ended in OPENSRO_WORLD_LAST_EXIT (got %s)" % OS.get_environment(exit_env))
 	_check(OS.get_environment(gl_env).begins_with("ground:") and OS.get_environment(gl_env).length() > "ground:".length(),
 		"and the ground textures' GL names, one per texture (got %s)" % OS.get_environment(gl_env))
 	_check(String(P.call("reached_text", 2)).contains(OS.get_environment(exit_env)), "entry 2 names what entry 1 left")

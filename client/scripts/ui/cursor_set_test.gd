@@ -71,14 +71,14 @@ func _test_exe_beside() -> void:
 ## The exe search order (round 697): override, then each name in the
 ## Data.pk2 folder, its parent, our own exe's folder; no duplicates.
 func _test_exe_candidates() -> void:
-	var c := CursorSet.exe_candidates("D:/srrevamp/pk2/Data.pk2", "D:/srrevamp/SRRevamp.exe")
+	var c := CursorSet.exe_candidates("D:/opensro/pk2/Data.pk2", "D:/opensro/OpenSRO.exe")
 	var want := PackedStringArray([
-		"D:/srrevamp/pk2/sro_client.exe", "D:/srrevamp/sro_client.exe",
-		"D:/srrevamp/pk2/sro_client_NODLL.exe", "D:/srrevamp/sro_client_NODLL.exe"])
+		"D:/opensro/pk2/sro_client.exe", "D:/opensro/sro_client.exe",
+		"D:/opensro/pk2/sro_client_NODLL.exe", "D:/opensro/sro_client_NODLL.exe"])
 	_check(c == want, "a pk2 folder beside our exe: pk2/, then the exe's folder (once), per name: %s" % str(c))
-	var r := CursorSet.exe_candidates("C:/Silkroad/Data.pk2", "D:/srrevamp/SRRevamp.exe", "E:/x/sro_client.exe")
+	var r := CursorSet.exe_candidates("C:/Silkroad/Data.pk2", "D:/opensro/OpenSRO.exe", "E:/x/sro_client.exe")
 	_check(r.size() == 7 and r[0] == "E:/x/sro_client.exe", "the override comes first: %s" % str(r))
-	_check(r[1] == "C:/Silkroad/sro_client.exe" and r[2] == "C:/sro_client.exe" and r[3] == "D:/srrevamp/sro_client.exe",
+	_check(r[1] == "C:/Silkroad/sro_client.exe" and r[2] == "C:/sro_client.exe" and r[3] == "D:/opensro/sro_client.exe",
 		"retail's layout, its parent, our exe's folder: %s" % str(r))
 	_check(CursorSet.exe_candidates("", "") .is_empty(), "nothing known -> nothing to try")
 	_check(not CursorSet.EXE_NAMES.has("silkroad.exe"), "the launcher is not a client exe")
@@ -173,11 +173,11 @@ func _test_expand() -> void:
 	_check(CursorSet.expand("D:\\Games\\SRO\\") == PackedStringArray(["D:/Games/SRO/sro_client.exe", "D:/Games/SRO/sro_client_NODLL.exe"]),
 		"a folder (trailing separator dropped): each client name in it")
 	_check(CursorSet.expand("C:/") == PackedStringArray(["C:/sro_client.exe", "C:/sro_client_NODLL.exe"]), "a drive root stays a root")
-	var c := CursorSet.exe_candidates("D:/srrevamp/pk2/Data.pk2", "D:/srrevamp/SRRevamp.exe", "C:\\Silkroad")
-	_check(c.size() == 6 and c[0] == "C:/Silkroad/sro_client.exe" and c[1] == "C:/Silkroad/sro_client_NODLL.exe" and c[2] == "D:/srrevamp/pk2/sro_client.exe",
-		"SRREVAMP_CLIENT_EXE naming a folder (backslashes) comes first: %s" % str(c))
-	var dirs := CursorSet.scan_dirs("D:/srrevamp/pk2/Data.pk2", "D:/srrevamp/SRRevamp.exe", "C:/Silkroad/SRO_Client_VTX.exe")
-	_check(dirs == PackedStringArray(["C:/Silkroad", "D:/srrevamp/pk2", "D:/srrevamp"]),
+	var c := CursorSet.exe_candidates("D:/opensro/pk2/Data.pk2", "D:/opensro/OpenSRO.exe", "C:\\Silkroad")
+	_check(c.size() == 6 and c[0] == "C:/Silkroad/sro_client.exe" and c[1] == "C:/Silkroad/sro_client_NODLL.exe" and c[2] == "D:/opensro/pk2/sro_client.exe",
+		"OPENSRO_CLIENT_EXE naming a folder (backslashes) comes first: %s" % str(c))
+	var dirs := CursorSet.scan_dirs("D:/opensro/pk2/Data.pk2", "D:/opensro/OpenSRO.exe", "C:/Silkroad/SRO_Client_VTX.exe")
+	_check(dirs == PackedStringArray(["C:/Silkroad", "D:/opensro/pk2", "D:/opensro"]),
 		"the scan's folders: the override's, the pk2 folder, its parent (= our exe's, once): %s" % str(dirs))
 
 ## A minimal PE32 whose .rsrc holds one RT_CURSOR (id 1, the synthetic
@@ -241,16 +241,16 @@ func _test_scan() -> void:
 	_write(dir.path_join("SRO_Client_VTX.exe"), _tiny_pe(CursorSet.ID_NORMAL))
 	_write(dir.path_join("Launcher.exe"), _tiny_pe(0x7901))
 	_write(dir.path_join("aaa_garbage.exe"), _garbage_pe(3, 0xff))
-	_write(dir.path_join("srrevamp.exe"), _tiny_pe(CursorSet.ID_NORMAL))
+	_write(dir.path_join("OpenSRO.exe"), _tiny_pe(CursorSet.ID_NORMAL))
 	_write(dir.path_join("Data.pk2"), PackedByteArray([1, 2, 3]))
 	_check(CursorSet.probe_has_group(dir.path_join("SRO_Client_VTX.exe"), CursorSet.ID_NORMAL), "the probe sees group 0x95 in a renamed client")
 	_check(not CursorSet.probe_has_group(dir.path_join("Launcher.exe"), CursorSet.ID_NORMAL), "not in a launcher whose groups are 0x7901..")
 	_check(not CursorSet.probe_has_group(dir.path_join("aaa_garbage.exe"), CursorSet.ID_NORMAL), "not in garbage")
 	_check(not CursorSet.probe_has_group(dir.path_join("missing.exe"), CursorSet.ID_NORMAL), "not in a missing file")
-	var listed := CursorSet.exes_in(dir, PackedStringArray([dir.path_join("SRREVAMP.EXE")]))
+	var listed := CursorSet.exes_in(dir, PackedStringArray([dir.path_join("OPENSRO.EXE")]))
 	_check(listed == PackedStringArray([dir.path_join("aaa_garbage.exe"), dir.path_join("Launcher.exe"), dir.path_join("SRO_Client_VTX.exe")]),
 		"the folder's .exe files, sorted without case, our own skipped without case: %s" % str(listed))
-	var r := CursorSet.scan_for_client(PackedStringArray([dir]), PackedStringArray([dir.path_join("srrevamp.exe")]))
+	var r := CursorSet.scan_for_client(PackedStringArray([dir]), PackedStringArray([dir.path_join("OpenSRO.exe")]))
 	_check(String(r["path"]) == dir.path_join("SRO_Client_VTX.exe") and (r["cursors"] as Dictionary).has(CursorSet.ID_NORMAL),
 		"the scan takes the renamed client: %s" % r["path"])
 	var cur: CursorSet.Cursor = (r["cursors"] as Dictionary).get(CursorSet.ID_NORMAL)
@@ -265,8 +265,8 @@ func _test_scan() -> void:
 ## Round 700: the line a player sees without the cursors.
 func _test_hint() -> void:
 	GameCursor.install_for_test({})
-	var plain := GameCursor.missing_hint("C:/srrevamp/pk2")
-	_check(plain.contains("sro_client.exe") and plain.contains("C:/srrevamp/pk2"), "no exe: where to copy it (%s)" % plain)
+	var plain := GameCursor.missing_hint("C:/opensro/pk2")
+	_check(plain.contains("sro_client.exe") and plain.contains("C:/opensro/pk2"), "no exe: where to copy it (%s)" % plain)
 	var c := CursorSet.Cursor.new()
 	c.image = Image.create(2, 2, false, Image.FORMAT_RGBA8)
 	GameCursor.install_for_test({CursorSet.ID_NORMAL: c})

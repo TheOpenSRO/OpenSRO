@@ -511,7 +511,7 @@ type. **The union across `sword` and `default` is 99 distinct types**, running
 **This settles how a cast animation is selected, and it is not by filename.**
 The decompiled client contains **zero** references to the `.ban` extension: it
 never builds a clip path in code, it looks an entry up in this table by action
-type and follows the index into the animation list. srrevamp's client derives
+type and follows the index into the animation list. OpenSRO's client derives
 `Prim\Ani\Char\China\<gender>\<basic_code>.ban` instead, which is why only
 **59 of 338** skills find anything (`docs/protocol/skill_fields.md`) -- it is
 the wrong mechanism, not a broken path.
@@ -547,7 +547,7 @@ required mastery level. The action type is not in skilldata.
 | in the BSR but not on disk | **0** |
 
 The entries point at exactly that directory (`prim\ani\char\china\man\...`),
-so srrevamp's path construction was never wrong, and switching to the BSR
+so OpenSRO's path construction was never wrong, and switching to the BSR
 lookup would find **two fewer** clips rather than more.
 
 **What this leaves.** The body carries 217 distinct clips against 338 skills, so
@@ -600,7 +600,7 @@ puts the visual array at base `0x38` with stride `0xc` and WEAPON at `0x80`, and
 `(0x80 - 0x38) / 0xc = 6`.
 
 So the group is a function of **the held weapon's TypeID4 and the race byte**,
-and of nothing per-skill. That is exactly what srrevamp's client already does
+and of nothing per-skill. That is exactly what OpenSRO's client already does
 (`_weapon_group_for`), which is now confirmed rather than assumed — and it means
 the skill -> **action type** link, still unfound after four routes
 (`skill_fields.md`), cannot be hiding in the group selection either.
@@ -753,7 +753,7 @@ files of object type 0 or 1:
 
 ### Which set plays (INFERRED)
 
-The runtime lookup of a list-2 set was not found in the decompile. srrevamp plays the set keyed
+The runtime lookup of a list-2 set was not found in the decompile. OpenSRO plays the set keyed
 by **the entry the clip was found as**: the action type and the group
 `ParsedObject.animation_group_for` finds it in (the weapon group, or `default` when the weapon
 group has no entry of that type). Measured over the same files, for the basic types

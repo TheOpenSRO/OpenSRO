@@ -92,7 +92,7 @@ func TestPermissionMasksMatchTheEngine(t *testing.T) {
 // --- values recovered 2026-09-17 -------------------------------------
 
 // `len - 2u < 0xb` accepts 2 through 12. The boundaries are what a restatement
-// of the range gets wrong, and the minimum is the half srrevamp did not have.
+// of the range gets wrong, and the minimum is the half OpenSRO did not have.
 func TestValidNameMatchesTheUnsignedCheck(t *testing.T) {
 	for n := MinNameLength; n <= MaxNameLength; n++ {
 		if !ValidName(strings.Repeat("a", n)) {

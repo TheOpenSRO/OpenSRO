@@ -54,12 +54,12 @@ static func apply(env: Environment, ssao: bool = SSAO_DEFAULT, _glow: bool = GLO
 ## its look stays exactly as it was.
 const FORWARD_PLUS_SUN_SCALE := 4.0
 
-## The factor for the renderer running. SRREVAMP_QA_SUN_SCALE overrides it
+## The factor for the renderer running. OPENSRO_QA_SUN_SCALE overrides it
 ## under Forward+ (QA only: the calibration runs).
 static func sun_scale() -> float:
 	if RendererChoice.running() != RendererChoice.FORWARD_PLUS:
 		return 1.0
-	var qa := OS.get_environment("SRREVAMP_QA_SUN_SCALE")
+	var qa := OS.get_environment("OPENSRO_QA_SUN_SCALE")
 	if qa.is_valid_float():
 		return qa.to_float()
 	return FORWARD_PLUS_SUN_SCALE

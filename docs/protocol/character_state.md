@@ -98,10 +98,10 @@ kind 2. That family belongs to the quest epic
 (`docs/protocol/quest_*`), and is recorded here only so the next round does not
 rediscover it.
 
-## For srrevamp
+## For OpenSRO
 
 > **SUPERSEDED (round 499).** This section used to say "nothing to wire yet"
-> because srrevamp had no player-to-player trade. It has one now
+> because OpenSRO had no player-to-player trade. It has one now
 > (`internal/trade`, `internal/session/trade.go`), and the trade half of this
 > state machine is wired. Stall and open market are still not built.
 
@@ -120,7 +120,7 @@ Two gates read those modes:
 
 - **The NPC-service gate.** `GObjPC_HandleShopMsg_046` (`0x00510250`) refuses
   with `0x1c0b` `UIIT_MSG_INTERACTION_FAIL_IM_BUSY` while the byte is non-zero.
-  That handler opens every NPC service. srrevamp refuses these while `Busy`:
+  That handler opens every NPC service. OpenSRO refuses these while `Busy`:
   - the shop buy and the shop sell;
   - the warehouse list, deposit, withdraw and gold requests;
   - a repair. Its result carries the code, `0x1c0b` (`session.interactionBusyCode`).
@@ -132,13 +132,13 @@ Two gates read those modes:
   that function's own guard (`0x50f7cd`–`0x50f7e3`) runs first. At 2 or 7 it
   answers `0x1834` `UIIT_MSG_STRGERR_STORAGE_OPERATION_BLOCKED` for every op
   except 4, 5 and 0xd, so the engine's equip refusal is sent as `0x1834`
-  (round 499, read on review). srrevamp refuses an equip or unequip while
+  (round 499, read on review). OpenSRO refuses an equip or unequip while
   `Established`. A pending request (mode 1) passes both tests, so it does not
   lock equipment. The same guard also refuses an ordinary bag move during an
-  accepted trade. srrevamp does not model that yet.
+  accepted trade. OpenSRO does not model that yet.
 
 **The adaptation, disclosed.** The engine refuses once, when an NPC
-interaction is *opened*. srrevamp has no interaction-open message, because its
+interaction is *opened*. OpenSRO has no interaction-open message, because its
 shop, storage and repair opcodes are stateless placeholders
 (`PROTOCOL_DECISION.md`). So it applies the same test to each operation
 instead. The reverse direction is not modelled. In the engine, an open NPC
@@ -152,10 +152,10 @@ places:
 - **The target.** `CTradeMgr::OpenTradeSession` runs the check on the target and
   answers `0x181e` (`0x47f6e0`).
 
-Neither route gives `0x1811` (`RE_COMPLETION.md`, round 499). srrevamp has no
+Neither route gives `0x1811` (`RE_COMPLETION.md`, round 499). OpenSRO has no
 open-interaction state that could hold that. The two refusal texts (the shop
 and warehouse `tradeBusyReason`, the equip `tradeEquipLockedReason`) are
-srrevamp's own wording because those results carry a string and no code. This
+OpenSRO's own wording because those results carry a string and no code. This
 used to say the client has no message for either code. That holds for `0x1811`
 in the storage category: its index byte (`0x7bb6d4` + 6) is `0xa6`, whose target
 (`0x7bb6d0`) is the default `0x7b913a`. It does not hold for `0x1c0b`: the
@@ -167,10 +167,10 @@ message for it (`client/scripts/net/error_text.gd`).
 ### The trade request reads the same byte (round 500)
 
 The NPC half above is still not modelled. The **trade** half of those two
-checks now is, because the trade modes are the ones srrevamp keeps. Read
+checks now is, because the trade modes are the ones OpenSRO keeps. Read
 from `GObjPC_HandleTradeMsg_081`, the request handler:
 
-- **Mode 2 or 7 on the requester: `0x1833`.** srrevamp answers "already
+- **Mode 2 or 7 on the requester: `0x1833`.** OpenSRO answers "already
   trading" when the requester is `trade.Hub.Established`.
 - **Mode 1 on the requester: cancel and reopen, not a refusal.** At mode 1,
   081 does not answer `0x181d`. It looks up the requester's pending session
@@ -187,13 +187,13 @@ from `GObjPC_HandleTradeMsg_081`, the request handler:
   `trade.Hub.PendingOf`, then `cancelPendingTrade`. `trade.Hub.Request`
   refuses a requester already in a request (`ErrRequestPending`) as defence
   in depth.
-- **Any non-zero mode on the target: `0x181e`.** srrevamp answers "target is
+- **Any non-zero mode on the target: `0x181e`.** OpenSRO answers "target is
   busy" when the target is `Busy` in any phase. That now includes being the
   *sender* of a pending request. Before round 500 only an incoming request or
   an open trade made a target busy.
 - **The remaining conditions of `FUN_004ea050` are not modelled:** a dead
   character, GROUPMODE 1, and INTERACTMODE 4, 5, 6 or 9. On the requester they
-  give `0x181d`, and on the target `0x181e`. srrevamp keeps none of those states
+  give `0x181d`, and on the target `0x181e`. OpenSRO keeps none of those states
   for a trade request to read.
 
 Between the mode checks and `OpenTradeSession`, 081 measures the pair and
@@ -296,7 +296,7 @@ seconds, but nothing here says what it is initialised to.
 
 What a dead player may do, read from both binaries on the render box (the server's decompile
 and `srv.asm`, the client's decompile and `sro_client.asm`, the client's wide strings read out
-of `sro_client.exe`). srrevamp's implementation is `server/internal/session/deadstate.go`
+of `sro_client.exe`). OpenSRO's implementation is `server/internal/session/deadstate.go`
 ("THE CHOICES") and `client/scripts/ui/hud/hud_panels.gd` (`show_revive_prompt`).
 
 **The window (client, READ).** Message box kind 3, built by `UI_SILKMALL::FUN_00644c90` case 3:
@@ -320,7 +320,7 @@ case (the jump table at `0x798a8c`, index table `0x798afc`) reads the MaxLevel a
 
 So the wire request is **0x3053** with one byte. Earlier rounds wrote 0x7053 from the project's
 `0x7000 | op` precedent for handler `_053`; that was never a read, and the client's push says
-0x3053. srrevamp keeps its placeholder `OpRevive 0x0028`, now carrying the byte.
+0x3053. OpenSRO keeps its placeholder `OpRevive 0x0028`, now carrying the byte.
 
 **The handler (server, READ, round 550's reading re-checked).** `GObjPC_HandleResurrectMsg_053`
 (`0x50fee0`): life state 2 only; a siege countdown above 0xa5 blocks it; death cause 2 revives
@@ -369,17 +369,17 @@ made after three minutes", `UIIT_MSG_FORT_REVIVE_PENALTY_TEXT_02`).
 (the message's read position `+0x103e` equal to its end `+0x103c`) takes the PC out of the world
 (`FUN_004df050(4)`, the leave path) before any option is read. A death of **cause 2** (the byte at
 `+0x72d`, `leveldata.DeathCauseNoPenalty`, not a monster's kill) revives in place whatever the
-option and the level. srrevamp's dead state only ever follows a monster's kill (cause 3), so that
-arm is not reached; srrevamp's empty request is the pre-665 client's and is read as the level's one
+option and the level. OpenSRO's dead state only ever follows a monster's kill (cause 3), so that
+arm is not reached; OpenSRO's empty request is the pre-665 client's and is read as the level's one
 choice, not as a disconnect (OURS).
 
 **Protection after the revive (READ; not modelled).** `Revive(1)` sets body mode 2
 (`BODYMODE_INVINCIBLE`) for 6.0 s (`0xb45b78`; 11.0 s, `0xb45bb8`, in the other world kind). A
 return to the return point is a world re-entry, and `CGObjPC::vslot_391` (`0x4df9e0`) sets body
 mode 2 there for the world's own time (its slot `0x70`, not read; 6.0 s when no world is found).
-srrevamp has no body mode 2.
+OpenSRO has no body mode 2.
 
-**What srrevamp does, and what is OURS.**
+**What OpenSRO does, and what is OURS.**
 
 - Option 1 moves the dead character to its return point (the zone change a warp makes) and then
   revives it there at the load path's pools: HP `trunc(0.4 x MaxHP)` (at least 1), MP kept, or
@@ -398,7 +398,7 @@ srrevamp has no body mode 2.
   return point after the kill's messages (OURS: the dead state compressed with option 1).
 - The window is drawn as the talk prompts' box, not retail's message box art; the help button is
   shown disabled and the box stays up (retail's click closes it, INFERRED) -- no one can
-  resurrect another player in srrevamp yet (OURS).
+  resurrect another player in OpenSRO yet (OURS).
 
 ## Life-state 2 is the character's DEAD state, closed with a typed receiver (round 413)
 
@@ -600,12 +600,12 @@ Round 424 read `FUN_00540de0` as refusing a candidate whose `GetBodyMode()` is i
 and flag bit 9 lets it target the two unnamed modes. That reading is now from the
 engine's own strings rather than from the shape of the comparison.
 
-### A naming trap: srrevamp's "berserk" is HWAN, not BERSERKER
+### A naming trap: OpenSRO's "berserk" is HWAN, not BERSERKER
 
 `server/internal/berserk` keys on `GetBodyMode() == 1`, and that is **correct** —
 in this game the berserk mechanic is Hwan (`RemainHwanCount`, `HwanLevel`,
 `GObjPC::HwanGainChance`). `BODYMODE_BERSERKER` is a *separate* mode at value 4
-and is not what srrevamp's berserk uses. Nobody should "fix" the 1 to a 4.
+and is not what OpenSRO's berserk uses. Nobody should "fix" the 1 to a 4.
 
 ## The engine names all of these itself (round 426)
 
@@ -1030,7 +1030,7 @@ the address that does each step. Every arrow was read; none is assumed.
 columns 9 and 10 are booleans that register ids 7 and 9 on the gate object
 (`docs/protocol/teleport_network.md`), and a second loader registers id 8 the
 same way from a byte at its row's `+0x34`. So which services an NPC offers is a
-table, and srrevamp can in principle read the same columns rather than hardcode
+table, and OpenSRO can in principle read the same columns rather than hardcode
 a list.
 
 **The gap, stated plainly.** Only **three** registration sites are found, and
@@ -1234,7 +1234,7 @@ four dwords from record `+0x18`..`+0x24` (`FUN_006ac220`). The same probe finds
 `1 9251 1 2`. That is a candidate, not a finding. It is why the gacha machine,
 which also reaches `SetBodyMode` when the byte is not 0, is **not** in the "none"
 row (the gacha operator is not either: it has 0x12). Neither id is used by
-srrevamp. The rows now say where each is registered; what the map's table is,
+OpenSRO. The rows now say where each is registered; what the map's table is,
 and what 0x11 and 0x12 do, still need their own round.
 
 ### Three earlier items closed or corrected
@@ -1525,7 +1525,7 @@ row with `0` at `[8]` and the English at `[9]` (read with
 picks `[9]` when `[8]` is `0`). So the storage line reads "Deposit into
 storage.". Which layout the real client reads was not established.
 
-### What srrevamp does with it
+### What OpenSRO does with it
 
 `NpcServiceReader` carries the storage line's token (`STOREHOUSE_STRID`) and
 the end line's (`TALKEND_STRID`). `NpcServiceReader.talk_menu_lines`, which
@@ -1534,7 +1534,7 @@ the player's text table. It falls back to the English label when the archive
 has no text, and numbers the lines `"%d. "` as `FUN_006fcd60` does. It prints
 one `NPCTALK` log line per menu line.
 
-**Most town warehouse keepers get three lines in srrevamp, not two.** The player's
+**Most town warehouse keepers get three lines in OpenSRO, not two.** The player's
 `refshopgroup.txt` lists 8 of the 9 warehouse keepers `npcpos.txt` spawns as running a
 store. `NPC_WC_WAREHOUSE_M` is the exception: it spawns beside `NPC_WC_WAREHOUSE_W`,
 but WC's second HONOR row names `_W` again, so `_M` runs no store and gets two lines
@@ -1549,7 +1549,7 @@ are 9 rows. Col 3 is `GROUP_STORE_*_HONOR` and col 4 the keeper:
 therefore puts each keeper in the shop set, and `services_for` returns
 `[shop, storage]` in that order. At `NPC_CH_WAREHOUSE_M` the menu is:
 
-	1. Buy                     (srrevamp's own label, no strid)
+	1. Buy                     (OpenSRO's own label, no strid)
 	2. Deposit into storage.   (STOREHOUSE, the later 19-column row)
 	3. End conversation.       (TALKEND)
 
@@ -1558,27 +1558,27 @@ numbered lines, using a synthetic text table. No running client has printed
 the `NPCTALK` lines yet.
 
 **Not modelled:**
-- row 0a's early exit, which srrevamp never takes;
+- row 0a's early exit, which OpenSRO never takes;
 - the lines with no number (rows 0b, 2, 3 and 12);
-- item 1's per-store lines. srrevamp's "Buy" is its own label. It stands where
+- item 1's per-store lines. OpenSRO's "Buy" is its own label. It stands where
   the real client puts `FUN_006fb630`'s lines, and at a keeper (ids 1 and 3, no
   0xf) the real client shows those only if `FUN_00989d20` answers nonzero (call
   at `0x700a71`, in row 5's 0xf-absent branch);
 - `TC_OPEN` and `TC_HONOR_RANKING` after the storage line;
-- the `+0x7f1` gate on the end line, which srrevamp always shows;
+- the `+0x7f1` gate on the end line, which OpenSRO always shows;
 - `TALKEND2`, which only a siege pulley gets.
 
-So at a keeper srrevamp gives a "Buy" line, srrevamp's numbers match the real
+So at a keeper OpenSRO gives a "Buy" line, OpenSRO's numbers match the real
 client's only in part, and how far depends on how many store lines the real
 client writes. By the table above, every item but 0x2a advances `n`, including
 0x2e. The `+0x7f1` gate decides only whether an end line follows the others, so
 none of the cases below depends on it:
 
 - **No item 1** (`FUN_00989d20` answers 0). The real client's storage line is
-  1 (srrevamp: 2).
+  1 (OpenSRO: 2).
 - **Item 1 with no store line** (`FUN_00989d20` answers nonzero and
   `FUN_006fb630` writes no line). The storage line is 2, the same number as
-  srrevamp's, though the real client shows no line 1 where srrevamp shows
+  OpenSRO's, though the real client shows no line 1 where OpenSRO shows
   "1. Buy". Item 1 takes a number without drawing a line. Its case (index byte
   `0x6fd394`+1 is `0x01`, and jump-table entry `0x6fd2d8`[1] is `0x6fceb0`)
   calls `FUN_006fb630(&n)` (`0x6fceb0`-`0x6fcebc`). It then assigns its own text
@@ -1597,11 +1597,11 @@ none of the cases below depends on it:
   unchanged. (Round 518 first put this case with the one above, giving a
   storage line of 1. Review caught it.)
 - **Exactly one store line.** Lines 1 (the store) and 2 (storage) match. Line 3
-  differs: srrevamp's end line against the real client's `TC_OPEN` (when its
+  differs: OpenSRO's end line against the real client's `TC_OPEN` (when its
   gate passes) or `TC_HONOR_RANKING`. The real end line, when the `+0x7f1` gate
   shows it, is 4 or 5.
 - **Two or more store lines with consecutive numbers.** The real storage line
-  is 3 or higher (srrevamp: 2).
+  is 3 or higher (OpenSRO: 2).
 
 The last case needs consecutive numbers, and `FUN_006fb630` does not always
 give them (read in round 518). It bumps `n` only between lines of one pass of
@@ -1638,7 +1638,7 @@ The lookup is `0x70105e` `mov byte [esp+0x1c],0xf` and the membership test
 | otherwise, `FUN_00989ce0(name)` is 0 (`0x7010c4`, `0x7010f6` `cmp byte [esp+0x14],0`, `0x7010ff` `je 0x70112a`) | item 0x1c (`0x70112a` `push 0x1c`), then 0x19 or 0x1a, 0x1d, 0x43 | `UIIT_CTL_GUILD_SECESSION`, then as below |
 | otherwise | items 0x17, 0x14, 0x18, 0x1b (`0x701101`-`0x70112d`), then 0x19 or 0x1a (by `FUN_0099da70`, `0x701139`-`0x70114d`), 0x1d, 0x43 (`0x701152`-`0x70116c`) | `UIIT_MSG_GUILD_LEVEL_UP`, `UIIT_CTL_GUILD_BREAK`, `UIIT_CTL_MASTERLEAVE`, `UIIT_CTL_GUILD_COMPENSATION`; `UIIT_CTL_MASTERRELEASE` / `UIIT_CTL_MRELEASE_VOTE`, `UIIT_CTL_GUILD_WAREHOUSE`, `UIIT_STT_GUILD_GP_HISTORY` |
 
-**The two tokens srrevamp uses, from `FUN_006fcd60`'s tables.** Item 0x12
+**The two tokens OpenSRO uses, from `FUN_006fcd60`'s tables.** Item 0x12
 takes index byte `0x0e` (`0x6fd394`+0x12). Jump-table entry `0x6fd310` is
 `0x6fd076`, `push 0xdad440`. Item 0x1c takes index byte `0x17`, entry
 `0x6fd334`, which is `0x6fd0bc`, `push 0xdad2ec`. `objdump -s` on the render
@@ -1663,7 +1663,7 @@ guild" and "Leave guild.".
   of `..._CONFIRM`. And the true branch is the one with `GUILD_BREAK` and
   `MASTERLEAVE`.
 
-**What srrevamp does with it.** `NpcServiceReader.guild_services(guild_id,
+**What OpenSRO does with it.** `NpcServiceReader.guild_services(guild_id,
 is_master)`, reached through `services_for`'s new optional arguments, gives a
 guild NPC:
 - guild state unknown (`-1`, no guild reply yet): the `"guild"` placeholder,
@@ -1680,7 +1680,7 @@ guild NPC:
   either (see "The leave line's click" below);
 - the master: the `"guild"` placeholder. A master is never offered secession,
   since the `0x1c` push is only in the not-master branch. The master's own
-  items have no server in srrevamp.
+  items have no server in OpenSRO.
 
 `World3D` keeps the state from each guild reply: `_guild_id`, and
 `_guild_master`, true when the member with the player's name holds
@@ -1690,7 +1690,7 @@ so a stale state, such as the server's "not in a guild", is set right by the
 reply.
 
 **The state can go stale, and only a refused leave asks again** (disclosed in
-round 523; no behaviour change). srrevamp's server sends no guild broadcasts:
+round 523; no behaviour change). OpenSRO's server sends no guild broadcasts:
 `session/guild.go` answers only the character that asked. The state therefore
 moves only on this player's own replies: world entry and opening the guild
 window ask for the guild (`guild_info`), and create, join and leave answer for
@@ -1726,10 +1726,10 @@ centred `0x134` x `0x94` gwnd (`0x6ec689`-`0x6ec6e2`); not all of its callees
 were read. Item 0x1d's case, the next entry (`0x702c1f`), sends its request at
 once (`0x702c31` `push 0x7046`, `call 0x841780`, `Net_SendRequestPacket`). What
 the kind 0x14 window shows, and how it goes on to the leave, were not read.
-The srrevamp prompt stands in for it and is not a copy of it.
+The OpenSRO prompt stands in for it and is not a copy of it.
 
 **Not modelled:** items 0x19/0x1a, 0x1d and 0x43, which a member also gets,
-and the master's items 0x17, 0x14, 0x18 and 0x1b. srrevamp has no server for
+and the master's items 0x17, 0x14, 0x18 and 0x1b. OpenSRO has no server for
 any of them, so the member's menu is one guild line where the real client's
 has four. None of this was measured on a running real client.
 
@@ -1751,24 +1751,24 @@ lines in the real client, and the create line is numbered 1. The meaning of
 The player's `refshopgroup.txt` names every guild NPC as running a
 `GROUP_STORE_*_GUILD` store (`/var/tmp/tables/refshopgroup.txt`, 7 rows, for
 example `GROUP_STORE_CH_GUILD` / `NPC_CH_GENARAL_SP`), so until round 524
-srrevamp showed "1. Buy", "2. Create a new guild", "3. End conversation." there.
+OpenSRO showed "1. Buy", "2. Create a new guild", "3. End conversation." there.
 `NpcServiceReader.services_for` now leaves the shop service out at a
 `GUILD_PATTERNS` NPC when `guild_id` is 0, so the menu is "1. Create a new
 guild", "2. End conversation.". A member (and a master) keeps "Buy", ahead of
 the guild line, since item 1 comes before row 15. While the guild state is not
 known yet (`-1`, no guild reply) "Buy" stays, as before. None of the guild
-NPC's lines srrevamp offers besides these depends on the gate: the seven
+NPC's lines OpenSRO offers besides these depends on the gate: the seven
 codenames hold no `WAREHOUSE`, so there is no storage line, and the store
 window's repair buttons are id 4's, which no guild NPC has.
 
 ### What the server checks at a guild store (round 530)
 
 Round 524 hid "Buy" from a guildless player on the client. Its implementer
-noted that srrevamp's server does not check the guild when that player buys
+noted that OpenSRO's server does not check the guild when that player buys
 anyway, and this round asked whether the real server does. **It does not check
 at the store. It checks at the goods.** Every guild-store good has a
 guild-point price, and only a guild's master can pay one. No code changed:
-srrevamp does not model that price yet. Everything below was read on the render
+OpenSRO does not model that price yet. Everything below was read on the render
 box (`/var/tmp/srv.asm`, `/var/tmp/decomp_server`, and `objdump -s` on
 `SR_GameServer.exe`), read-only.
 
@@ -1890,7 +1890,7 @@ So in the real engine:
 Round 524's "a member keeps Buy" still describes the client's menu correctly.
 A member who then buys is refused `0x18c4`.
 
-**srrevamp.** `handleShopBuy` (`internal/session/shop.go`) charges
+**OpenSRO.** `handleShopBuy` (`internal/session/shop.go`) charges
 `shop.Price` in gold, which is itemdata column 26. For the guild crest
 (`ITEM_ETC_GUILD_CREST_USER`, id 9268) that is 1,000,000, the same amount as
 the device-1 row. It checks neither the guild nor the master, and it spends no
@@ -1906,7 +1906,7 @@ gold. No code changed, for three reasons:
   spends no guild points (round 531's wording assumed this one). Each wording
   holds for the rule it assumed; round 531 called round 530's "backwards", and
   round 534 names both rules instead.
-- srrevamp imports no price policy. `refdata.Item` has no payment device.
+- OpenSRO imports no price policy. `refdata.Item` has no payment device.
 - `OpShopBuy` names only the item, not the NPC or the store. A store-keyed test
   would need a new packet layout. A price-keyed one would not.
 
@@ -1990,22 +1990,22 @@ Job!", "Join the Thief Job!" and "Join the Hunter Job!". The later 19-column
 rows, which `UiTextTable` keeps, say "Join merchant guild", "Join thief guild"
 and "Join hunter guild".
 
-**What srrevamp does with it.** `NpcServiceReader.services_for` adds one
+**What OpenSRO does with it.** `NpcServiceReader.services_for` adds one
 `"job_guild"` service after the guild lines when the codename contains one of
 `JOB_TRADER_PATTERNS`, `JOB_HUNTER_PATTERNS` or `JOB_THIEF_PATTERNS` (the
 server's literals, checked in the order 1, 3, 2) and `player_job_kind` is 0.
 Its strid is the kind's join token (`JOB_JOIN_STRIDS`), which the talk window
 resolves through the player's text table, and its `job_kind` is the kind.
 Choosing it reports that it is not available yet (`World3D`'s default arm):
-srrevamp has no job-guild join on the client yet.
+OpenSRO has no job-guild join on the client yet.
 
 The client has no record of the player's job. `World3D` passes no
 `player_job_kind`, so every player is treated as jobless, which is the case
 `FUN_006fdeb0` shows the join line for. A player who holds a job would see a
-join line srrevamp should not offer.
+join line OpenSRO should not offer.
 
 All 14 of these NPCs are store NPCs in the player's `refshopgroup.txt`
-(`GROUP_STORE_*_TRADER`, `_HUNTER`, `_THIEF`; `/var/tmp/tables`), so srrevamp
+(`GROUP_STORE_*_TRADER`, `_HUNTER`, `_THIEF`; `/var/tmp/tables`), so OpenSRO
 shows "Buy" first, as it does at every store NPC. At `NPC_CH_DOCTOR` the menu is
 "1. Buy", "2. Join merchant guild", "3. End conversation.". Whether the real
 client gives these NPCs store lines was not read: `CGObjNPCNPC::Create`
@@ -2013,7 +2013,7 @@ registers id 1 at five sites (`0x4c6589`, `0x4c694f`, `0x4c6a65`, `0x4c6ff9`,
 `0x4c7243`), none of them in the three job chains. So the numbering is not
 claimed to match the real client's.
 
-**Not modelled:** items 0x1f-0x24, 0x26 and 0x3c. srrevamp has no server for
+**Not modelled:** items 0x1f-0x24, 0x26 and 0x3c. OpenSRO has no server for
 any of them. None of this was measured on a running real client.
 
 ## Interaction id 4 and the store's repair buttons (round 514)
@@ -2079,7 +2079,7 @@ In the 0xb045 NPC-select reply handler `NetProcessInInterface::FUN_0088b200`:
   `FUN_006d2840`, but no call, jump or absolute pointer reaches it. The 0xb045
   block reads `CIFStoreForPackage`'s offsets from window 0xf (`FUN_007994b0`,
   `0x7994b2`), so it is written for the `RENEWAL_SHOP_SYSTEM` build. That is
-  inferred from the offsets, not from a define. srrevamp builds ifstore with no
+  inferred from the offsets, not from a define. OpenSRO builds ifstore with no
   defines, which is the `CIFStore` branch (`PANEL_DEFINES` in `hud_panels.gd`).
   Both repair buttons sit outside ifstore's `#ifdef` blocks, so they are the same
   controls either way.
@@ -2090,14 +2090,14 @@ In the 0xb045 NPC-select reply handler `NetProcessInInterface::FUN_0088b200`:
   separate enable byte `+0x62` (`0xb91446`/`0xb91450`; setter `0xb8f540`). A
   button with `+0x61` clear is neither drawn nor clickable.
 
-### What srrevamp does with it
+### What OpenSRO does with it
 
 `NpcServiceReader.REPAIR_PATTERNS` is the 22 literals, and
 `NpcServiceReader.offers_repair(code)` tests them with a case-sensitive
 `contains`, as `strstr` does. `HudPanels.open_shop` takes the codename, and
 `_show_repair_buttons` sets both buttons' `visible` to `offers_repair(code)` each
 time the store opens. It prints `STORE <code> repair buttons shown|hidden`. The
-real client decides at NPC select. srrevamp decides at store open, from the
+real client decides at NPC select. OpenSRO decides at store open, from the
 codename of the NPC being talked to, which is the NPC whose store it is. The
 store is reached only that way.
 
@@ -2106,4 +2106,4 @@ check (j) drives `_show_repair_buttons` on a synthetic store window from the
 suite's `_initialize`. `hud_panels.gd` does not compile in a suite's `_init`,
 because the `NetClient` autoload's global is registered only after it. A potion
 seller's store hides both buttons, and a smith's then shows them again. No running
-client has printed the `STORE` line yet. That needs a `SRREVAMP_QA_SHOP` run.
+client has printed the `STORE` line yet. That needs a `OPENSRO_QA_SHOP` run.

@@ -34,20 +34,20 @@ package session
 //
 // OURS, disclosed:
 //
-//   - srrevamp has no WALK or RUN state on the server: its client streams
+//   - OpenSRO has no WALK or RUN state on the server: its client streams
 //     positions (OpMove) rather than a destination. A character is counted
 //     as walking while an accepted OpMove is younger than movingWindow.
 //   - The request gates this server does not have the state for are not
 //     modelled: vtable slot 0x5a0 (0x4ef880, unread), a running action at
 //     +0xc20 and chardata+0xe == 1 (both unread).
-//   - A dead character's request is dropped, as every srrevamp handler drops
+//   - A dead character's request is dropped, as every OpenSRO handler drops
 //     a dead character's.
 //   - What makes a blow stand the sitter is narrowed to a blow that landed
 //     damage: the engine also tests the per-target record's +0x10 and status
 //     bit 0x40, neither read.
 //   - A zone change stands the character (the teleported character is
 //     entered anew; the retail object's re-creation is inferred, not read).
-//   - The 0x30bf id field is srrevamp's character id in the retail u32.
+//   - The 0x30bf id field is OpenSRO's character id in the retail u32.
 
 import (
 	"context"
@@ -55,11 +55,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/mana"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // The retail opcodes (docs/protocol/PROTOCOL_DECISION.md: real opcodes where
@@ -110,7 +110,7 @@ const movingWindow = 500 * time.Millisecond
 // sets to its FIFTH argument just before it broadcasts -- the flag that, at
 // 1, grants param 189 its 0.3 base (the berserk damage bonus) -- and the
 // berserk activation passes 0 there (`push 0x0` at 0x515cc6, the first push
-// of SetBodyMode(1, 0, duration, 0)). So srrevamp's 0 is the activation's own
+// of SetBodyMode(1, 0, duration, 0)). So OpenSRO's 0 is the activation's own
 // value.
 type StateChange struct {
 	ObjectID uint32
@@ -213,7 +213,7 @@ func (t *motionTracker) state(characterID int64, now time.Time) byte {
 	return t.entryLocked(characterID, now).state
 }
 
-// request is FUN_004b1480 for the requests srrevamp has: 4 (the toggle) and 0
+// request is FUN_004b1480 for the requests OpenSRO has: 4 (the toggle) and 0
 // (stand, what a blow asks for). It returns the value to broadcast, or false
 // when the engine would do nothing.
 func (t *motionTracker) request(characterID int64, req byte, now time.Time) (byte, bool) {
@@ -245,7 +245,7 @@ func (t *motionTracker) request(characterID int64, req byte, now time.Time) (byt
 			return 0, false
 		}
 	default:
-		// 2/3 (walk/run mode) and 0xc (REQ_HELP) have no srrevamp state.
+		// 2/3 (walk/run mode) and 0xc (REQ_HELP) have no OpenSRO state.
 		return 0, false
 	}
 	e.state = MotionChangeMotion
@@ -265,7 +265,7 @@ func (t *motionTracker) setWall(characterID int64, now time.Time) {
 // endWall is the wall's end's SetMotionState(0, 0xff, 0): STAND, when the
 // character is still in SKILL_PROTECTIONWALL. A move since the wall went up
 // has already left the state (the movement handler's SetMotionState(WALK or
-// RUN), `moved`), and srrevamp counts a walker as standing, so a character in
+// RUN), `moved`), and OpenSRO counts a walker as standing, so a character in
 // any other state is left as it is.
 func (t *motionTracker) endWall(characterID int64, now time.Time) {
 	t.mu.Lock()
@@ -349,7 +349,7 @@ func (t *motionTracker) regenDue(characterID int64, now time.Time) bool {
 //
 //   - SitGateActionOff (the skill carries 'ao' at +0x274 or 'pw' at +0x2b4):
 //     for a PC, refused in SIT, CHANGEMOTION, KNOCKDOWN, SKILL_ACTIONOFF and
-//     SKILL_PROTECTIONWALL (0x58e0a0..0x58e0ed). srrevamp has SIT,
+//     SKILL_PROTECTIONWALL (0x58e0a0..0x58e0ed). OpenSRO has SIT,
 //     CHANGEMOTION and, since round 640, SKILL_PROTECTIONWALL (walls.go).
 //   - SitGateTransform ('msch' value[0] == 1, +0x4a4): refused in SIT
 //     (0x58de46..0x58ded4); the same branch also refuses when vtable slot

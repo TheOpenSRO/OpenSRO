@@ -7,7 +7,7 @@ other lines) and the CIFRegionView area banner shown on walking into a named are
 `client/scripts/ui/hud/hud_notice_test.gd`.
 
 Labels: READ = read from `sro_client.exe` or the data; MEASURED = counted from real files or from
-reference pixels; INFERRED = follows from what was read but was not read itself; OURS = srrevamp's
+reference pixels; INFERRED = follows from what was read but was not read itself; OURS = OpenSRO's
 choice. Addresses are `sro_client.exe` virtual addresses.
 
 ## The kinds
@@ -126,7 +126,7 @@ black at the text's alpha, then the glyph in its colour. `0x8b2290` samples poin
   with a plateau in the middle, the same in every row. INFERRED: CIFWnd draws it over the window's
   rect, stretched to 744.
 
-## What srrevamp builds
+## What OpenSRO builds
 
 - `HudNotice`: the fill over the text's rect and the eight frame pieces outside it, mirrored
   through the canvas transform; the text in the face's weight-600 variant with no shadow.

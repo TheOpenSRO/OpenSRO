@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 )
 
 // generateTestCert returns a self-signed TLS certificate valid for
@@ -31,7 +31,7 @@ func generateTestCert(t *testing.T) tls.Certificate {
 	}
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "srrevamp-test"},
+		Subject:      pkix.Name{CommonName: "opensro-test"},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

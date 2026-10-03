@@ -90,7 +90,7 @@ simply is not part of this check's vocabulary.
 The eight `0x301` rows are the second-job scrolls, pairing a tier of 1..4 with
 character levels 95/100/105/110.
 
-## What srrevamp does
+## What OpenSRO does
 
 `equipment.CheckRequirements` implements the rule above.
 `equipment.RequirementsOf` reads all four slots off `refdata.Item`, which
@@ -98,7 +98,7 @@ carries them as of 2026-09-16 — only the first was carried before, which is
 right for 11,636 rows and silently drops every requirement in the rest.
 
 The mastery and tier categories take a lookup function, and **a nil lookup
-means the category is carried but not enforced**. srrevamp tracks neither value
+means the category is carried but not enforced**. OpenSRO tracks neither value
 yet; refusing every mastery-gated item because nothing records a mastery level
 would be further from the engine's answer, not closer. When mastery tracking
 lands, passing a real lookup is the whole change.

@@ -71,9 +71,9 @@ static func is_newer_version(current_tag: String, latest_tag: String) -> bool:
 static func asset_name_for_os(os_name: String) -> String:
 	match os_name:
 		"Windows":
-			return "srrevamp-windows.zip"
+			return "opensro-windows.zip"
 		"Linux":
-			return "srrevamp-linux.zip"
+			return "opensro-linux.zip"
 		_:
 			return ""
 

@@ -51,7 +51,7 @@ func _file() -> void:
 	_check(RendererChoice.choose(RendererChoice.COMPATIBILITY, p) == OK, "Compatibility is recorded")
 	_check(RendererChoice.chosen(p) == RendererChoice.COMPATIBILITY, "and read back")
 	var text := FileAccess.get_file_as_string(p)
-	_check(text.begins_with("; Written by SRRevamp"), "the file says whose it is")
+	_check(text.begins_with("; Written by OpenSRO"), "the file says whose it is")
 	_check(text.contains("[rendering]") and text.contains("renderer/rendering_method=\"gl_compatibility\""),
 		"in the section and key Godot reads: %s" % text.c_escape())
 	_check(RendererChoice.choose("mobile", p) == ERR_INVALID_PARAMETER, "only the two renderers are accepted")

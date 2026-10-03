@@ -155,7 +155,7 @@ func _fields() -> void:
 	_check(config_script != null, "ClientConfig exists")
 	if config_script == null:
 		return
-	var cfg = config_script.call("from_text", "servers:\n  FirstServer:\n    type: srrevamp\n    gateway: { address: login.example.com }\n  Second:\n    type: srrevamp\n    gateway: { address: 192.0.2.5, port: 1234 }\n", "t", PackedStringArray())
+	var cfg = config_script.call("from_text", "servers:\n  FirstServer:\n    type: opensro\n    gateway: { address: login.example.com }\n  Second:\n    type: opensro\n    gateway: { address: 192.0.2.5, port: 1234 }\n", "t", PackedStringArray())
 	var entry = cfg.pick_server("Second")
 	login.call("show_server_field", server, entry, "127.0.0.1:15779")
 	_check(server.text == "Second" and not server.editable and server.focus_mode == Control.FOCUS_NONE,

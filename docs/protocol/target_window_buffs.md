@@ -1,7 +1,7 @@
 # The target window's buffs and race emblem: `CIFBuffViewer` and the kindred mark
 
 Round 638 records here how retail shows a selected target's buffs, at the top middle of the screen
-under the target's name bar, and the race emblem at the left of a player's bar. srrevamp's
+under the target's name bar, and the race emblem at the left of a player's bar. OpenSRO's
 versions are `client/scripts/ui/hud/hud_target_buffs.gd` (the viewer and the per-owner buff book)
 and `client/scripts/ui/hud/hud_target.gd` (where the viewer sits, the emblem).
 
@@ -53,7 +53,7 @@ under the shown piece, at the window's left edge. The layout's own `Rect=0,37` i
 
 A rarity-2 (or > 8) monster shows no piece and nothing writes the rect, so its viewer position is
 not defined by anything read (OPEN). No monster in the archive has rarity 2 (MEASURED, round 589).
-srrevamp hides the viewer then (OURS).
+OpenSRO hides the viewer then (OURS).
 
 MEASURED against the retail screenshot (`scratchpad/ui3/target_buffs.png`, a player target
 "DragonDive"): the name bar is 35 tall from y 8 and the first icon row starts at y 44, 36 below it;
@@ -78,10 +78,10 @@ the icons repeat every 23 px across and the second row sits about 24-25 px under
   0x80000023, 0x80000024 and 0x80000025 (0x873743..0x873769), which are negative as the signed
   `+0x5c` the collector tests (`js`), so they never reach the viewer.
 - Type 3 objects are made by 0xa53fc0 (`+0x54 = 3`, the name copied to `+0x74`), called only from
-  the **0xB0BE** handler (0x8a5da0, at 0x8a5e7d). What 0xB0BE carries in retail is OPEN; srrevamp
+  the **0xB0BE** handler (0x8a5da0, at 0x8a5e7d). What 0xB0BE carries in retail is OPEN; OpenSRO
   sends nothing like it.
 - Then the abnormal-state mask at `+0x2c4`: each set bit of the 32 goes in through 0x7fd2e0, which
-  appends to the **second** list (0x7fd433..0x7fd463). srrevamp sends no one's abnormal states to
+  appends to the **second** list (0x7fd433..0x7fd463). OpenSRO sends no one's abnormal states to
   the client, so none is shown (OPEN).
 
 **The premium shows; the item-time kinds do not (READ; corrected by the round 638 review).** The
@@ -110,7 +110,7 @@ premium never shows here; that was wrong.
 - The factory 0x655be0 runs the job's slot 12 (0x650e70) as it makes it. That registers the skill
   in the book (0x59e220), calls EngageSkill (0x593540) and Skill_BroadcastBuffAdded_B0BD (0x59af00).
 - The event log records it as 0x6e (0x49fe46).
-- srrevamp starts the buff on the user's book with that duration and tells the zone.
+- OpenSRO starts the buff on the user's book with that duration and tells the zone.
 - The skill gate 0x58d8f0 is not modelled, and neither are the buff's params (dru, odar, hr, luck,
   alcu, inti, stri): the book models only run speed.
 - The other premium entries (the UIU1 premium time 3/3/13/4, BFI1, UQL1) are skipped (OURS,
@@ -153,7 +153,7 @@ premium never shows here; that was wrong.
   `+0x244`, against 0x9cdf00 on the target). What the two arrays are is OPEN, so neither the
   sprites nor the tooltip's red line is drawn.
 - The icon is kind 1's: the skill row's `+0x108` path (0x7ff240), the same 32 x 32 skill-window
-  file the buff bar draws. srrevamp point-samples it to 20 x 20 the same way
+  file the buff bar draws. OpenSRO point-samples it to 20 x 20 the same way
   (`HudBuffBoard.retail_icon_image`, round 624). That the same sampler state holds for this window
   is INFERRED: its draw order was not audited as the board's was.
 
@@ -185,7 +185,7 @@ premium never shows here; that was wrong.
   cleared on this path.
 - **Found, a CICharactor whose vslot 0x54 answers 0** (INFERRED: "alive"): `+0x36c` = 0, it
   hides, and 0x778650(0) clears the selection (`+0x628` = 0).
-- srrevamp: `HudTarget.check_target` runs each frame. The owner exists when it is a monster with
+- OpenSRO: `HudTarget.check_target` runs each frame. The owner exists when it is a monster with
   a body or a snapshot, another player with a body, or this player (`World3D._target_exists`).
   A target that is gone hides the window and World3D drops `_last_attack_target` /
   `_selected_character`.
@@ -217,14 +217,14 @@ premium never shows here; that was wrong.
      list without `SN_SKILL_MALL_PRE_APRU_4W`.
   2. The description (the row's `+0x15c` code, resolved) plus `"\n\n"`, when it is not empty.
   3. The skill's parameter text from 0x96e480(7, ...) (the damage, range and similar lines the
-     skill window's tooltip builds). **Not built by srrevamp (OPEN).**
+     skill window's tooltip builds). **Not built by OpenSRO (OPEN).**
   4. A remaining-time line only when the entry's `+0x28` is non-zero. 0x7fb0f0 zeroes it and
      0x7fd020 never writes it, so **a target's buff has no time line**.
   5. `"%s : %s"`, `UIIT_STT_TARGETTING` and the entry's name, when the name is not empty. Only
      type 3 entries have one.
 - The skill id `0xc0000000` has its own branch: `"%s \n\n"`, then `"(%s)"` with
   `UIIT_TOOLTIP_OPERATION_STOP`, then the row's `+0x140` text.
-- OURS: srrevamp trims the trailing blank lines, so Godot's tooltip does not draw empty rows.
+- OURS: OpenSRO trims the trailing blank lines, so Godot's tooltip does not draw empty rows.
 
 ## The race emblem (the kindred mark)
 
@@ -242,19 +242,19 @@ premium never shows here; that was wrong.
 - The `…16.ddj` twins are for a non-zero second argument. The target window passes 0.
 - The monster pieces have no kindred control. A monster shows its level gem instead (round 589).
 - **Race for another player.** Retail reads it from the object's reference object, which the spawn
-  names; it is not a packet field. srrevamp's `Gender` is its stand-in for the reference object
-  (`server/internal/character/schema.go`: "RefObjID: … what srrevamp's Gender stands in for").
+  names; it is not a packet field. OpenSRO's `Gender` is its stand-in for the reference object
+  (`server/internal/character/schema.go`: "RefObjID: … what OpenSRO's Gender stands in for").
   The entity snapshot already carries it. The client maps it to the body code (`GENDER_BODY_CODE`)
   and that body's characterdata Country (column 14). Every playable body here is `CHAR_CH_*`,
   Country 0 (MEASURED, round 629). So no server change was needed.
 
-## Where srrevamp's data comes from
+## Where OpenSRO's data comes from
 
 - The server broadcasts `OpBuffStart` / `OpBuffEnd` to the owner's whole zone, and replays active
   buffs on zone entry in both directions (rounds 616 and 622, `sendBuffsInView`).
 - `World3D` keeps every owner's buffs in a `HudTargetBuffs.Book`, keyed like the auras
   (`character:<id>`, `monster:<id>`) and in start order.
 - An owner's entries are dropped when it leaves view or dies, and all of them on world entry.
-- **Monsters:** srrevamp's server starts no buff on a monster (`OwnerKind` is always
+- **Monsters:** OpenSRO's server starts no buff on a monster (`OwnerKind` is always
   `OwnerCharacter` in `session/buffs.go`). So a monster's row is empty, which is what retail shows
   for a monster with no buffs. Monster buffs themselves are OPEN (a server feature).

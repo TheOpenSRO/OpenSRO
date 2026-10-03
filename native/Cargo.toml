@@ -1,9 +1,9 @@
 [package]
-name = "srrevamp_native"
+name = "opensro_native"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Native pk2 archive reader and asset parsers for the srrevamp client (round 667 spike)"
+description = "Native pk2 archive reader and asset parsers for the OpenSRO client (round 667 spike)"
 license = "MIT"
 
 [lib]

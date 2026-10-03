@@ -58,18 +58,18 @@ Real shop tables are far sparser than 240.
 `m_btMagParamNum`'s persisted counterpart is the `_ITEMS` column `MagParamNum`,
 beside `MagParam` (`docs/protocol/db_columns.md`) — the same quantity, stored.
 
-## Where they are, and are not, in srrevamp
+## Where they are, and are not, in OpenSRO
 
 `combat.MaxMagicOptionsPerItem` and `shop.MaxItemsPerShopTab` carry the two that
 have a home, each with the citation and a test pinning it to the literal.
 
-**Neither is enforced anywhere yet**, and both say so: srrevamp has the
+**Neither is enforced anywhere yet**, and both say so: OpenSRO has the
 magic-option tag vocabulary but no per-item option list to cap, and no shop-tab
-model at all. `MAX_LOCALOBJID_BITS` has no home at all — srrevamp allocates no
+model at all. `MAX_LOCALOBJID_BITS` has no home at all — OpenSRO allocates no
 live object ids — so it is recorded here only.
 
 That is the honest shape of this recovery: three engine facts, two of them
-parked where they will be needed, none of them changing a number srrevamp
+parked where they will be needed, none of them changing a number OpenSRO
 computes today.
 
 ## The rest of the 49

@@ -3,7 +3,7 @@
 // WHY THIS EXISTS. Naming coverage on this project sat at exactly 7,386 named
 // server functions (21.7%) across fifteen ticks of active reverse engineering,
 // and the reason was not that nothing was recovered. It was that every name
-// went into srrevamp's comments and docs and NOTHING WROTE IT BACK into the
+// went into OpenSRO's comments and docs and NOTHING WROTE IT BACK into the
 // Ghidra project the metric reads. The dump tick runs analyzeHeadless with
 // `-readOnly`, so it structurally cannot. See the RE_COMPLETION entry
 // "the metric that could not move".
@@ -44,7 +44,7 @@
 // and better than the one offered here. Nothing is renamed twice, so the script
 // is safe to re-run.
 //
-// @category srrevamp
+// @category OpenSRO
 
 import java.io.BufferedReader;
 import java.io.FileReader;
@@ -75,7 +75,7 @@ public class ApplyRecoveredNames extends GhidraScript {
 		if (evidence.length() == 0) {
 			return;
 		}
-		fn.setComment("Identified by srrevamp RE (origin=" + origin + ").\n" + evidence);
+		fn.setComment("Identified by OpenSRO RE (origin=" + origin + ").\n" + evidence);
 	}
 
 	// Move a function into the class the TSV names, creating that class

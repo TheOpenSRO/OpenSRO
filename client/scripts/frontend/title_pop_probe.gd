@@ -1,7 +1,7 @@
 extends RefCounted
 class_name TitlePopProbe
 
-## SRREVAMP_QA_TITLE_POPS=1 (round 680, QA only): measures pop-in during the
+## OPENSRO_QA_TITLE_POPS=1 (round 680, QA only): measures pop-in during the
 ## title's fly -- anything that BECOMES drawn while it is inside the camera's
 ## view frustum -- and says where it came from:
 ##
@@ -42,7 +42,7 @@ var max_frac := 0.0
 var _summary_done := false
 
 static func enabled() -> bool:
-	return OS.get_environment("SRREVAMP_QA_TITLE_POPS") != ""
+	return OS.get_environment("OPENSRO_QA_TITLE_POPS") != ""
 
 ## One frame: `flying` while the camera moves (TitleIntro.State.FLYING).
 func tick(world: Node3D, cam: Camera3D, path_t: float, flying: bool, ms: int) -> void:
@@ -124,14 +124,14 @@ func _check_ranges(world: Node3D) -> void:
 	print("QA POP ranges: %d of %d GeometryInstance3D carry a visibility range" % [ranged, total])
 
 ## The path ended (or the run is ending): the totals. With
-## SRREVAMP_QA_TITLE_POPS=quit the run ends QUIT_AFTER_S later (OURS).
+## OPENSRO_QA_TITLE_POPS=quit the run ends QUIT_AFTER_S later (OURS).
 const QUIT_AFTER_S := 2.0
 
 func summary(intro: String, path_t: float, tree: SceneTree = null) -> void:
 	if _summary_done:
 		return
 	_summary_done = true
-	if tree != null and OS.get_environment("SRREVAMP_QA_TITLE_POPS") == "quit":
+	if tree != null and OS.get_environment("OPENSRO_QA_TITLE_POPS") == "quit":
 		tree.create_timer(QUIT_AFTER_S).timeout.connect(func() -> void: tree.quit())
 	print("QA POPS intro=%s t=%.2f cells_built_during_fly=%d cell_pops=%d placement_pops=%d anim_pops=%d popouts=%d total_in_view=%d max_frac=%.3f" % [
 		intro, path_t, cells_during_fly, cell_pops, placement_pops, anim_pops, popouts,

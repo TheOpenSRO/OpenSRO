@@ -17,7 +17,7 @@ import (
 // only to `docker compose up`. So the server's first connection could reach
 // postgres before it accepted connections. The single ping in OpenSQLStore
 // then failed ("connect: connection refused") and the server exited, to be
-// restarted by Docker a second later: srrevamp-01, 2026-09-30, on both
+// restarted by Docker a second later: opensro-01, 2026-09-30, on both
 // reboots (00:26:59 and 00:28:02). Waiting here makes the start clean
 // whatever the order.
 func waitForDatabase(ping func() error, wait, interval time.Duration, sleep func(time.Duration), logger *slog.Logger) error {

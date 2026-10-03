@@ -9,7 +9,7 @@ class_name HudRegionView
 ##
 ## Labels: READ = read from the binary or the data; MEASURED = counted from
 ## real files or reference pixels; INFERRED = follows from what was read but
-## was not read itself; OURS = srrevamp's choice.
+## was not read itself; OURS = OpenSRO's choice.
 ##
 ## **When (READ).** Every position update of the player
 ## (GlobalDataManager::FUN_00783610) and the world's set-up on entry

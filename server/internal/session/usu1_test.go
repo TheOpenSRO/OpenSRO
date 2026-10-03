@@ -65,7 +65,7 @@ func TestUsu1StartsTheSkillBuff(t *testing.T) {
 	}
 }
 
-// An item none of whose entries srrevamp models is refused and not spent.
+// An item none of whose entries OpenSRO models is refused and not spent.
 func TestCompositeWithNothingModelledIsRefused(t *testing.T) {
 	f := newBerserkPotionFixture(t, nil)
 	if err := f.inv.AddItem(f.ctx, f.charID, testOnlyUnmodelled, 1); err != nil {

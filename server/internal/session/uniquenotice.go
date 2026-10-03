@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/party"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/party"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // The unique monster notices (round 657): "Tiger Girl has appeared on Tiger
@@ -45,11 +45,11 @@ import (
 // READ, client (sro_client.exe): the handler 0x874ea0 reads the word, then
 // a u32 RefObjID for 0x0C05 (`push 4` at 0x8752ad) and a u32 plus a u16-length
 // string for 0x0C06 (0x875521, 0x875541). client/scripts/net/unique_notice.gd
-// picks the line; the wire here is that payload behind srrevamp's own opcode
+// picks the line; the wire here is that payload behind OpenSRO's own opcode
 // (docs/protocol/PROTOCOL_DECISION.md; decision D11 of the monster epic).
 const (
 	// OpUniqueNotice is server -> every character in the world. OURS: the
-	// opcode is srrevamp's; the payload is retail 0x300C's.
+	// opcode is OpenSRO's; the payload is retail 0x300C's.
 	OpUniqueNotice uint16 = 0x0110
 
 	// UniqueNoticeSpawn / UniqueNoticeKill are 0x300C's words (READ).
@@ -130,13 +130,13 @@ func UniqueNoticeFor(rarity int) bool {
 //   - it walks the monster's damage list (+0x1ca4), resolving each entry's
 //     id to its object (0x485d90 -> 0x41ccf0, a map lookup that answers 0
 //     for an object no longer in the world) and skipping a null one, maps a
-//     pet to its owner (+0x736 * 4; srrevamp has no pet that deals damage),
+//     pet to its owner (+0x736 * 4; OpenSRO has no pet that deals damage),
 //     and skips any attacker that is not a player (vtable +0x1c). The caller
 //     does the first step: presentHits keeps the characters still in the
 //     world;
 //   - the group is the player's party when the party shares experience
 //     (+0x72e * 4 non-null and its flag bit 0), else the player alone. Every
-//     srrevamp party shares experience, and a party of one is no party (the
+//     OpenSRO party shares experience, and a party of one is no party (the
 //     engine never makes one, see inPartyWithOthers), so the group is a
 //     party of two or more;
 //   - a group's damage is its members' sum; within it the member with the

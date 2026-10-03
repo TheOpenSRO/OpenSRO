@@ -263,7 +263,7 @@ func diagnostics() -> String:
 		RenderingServer.get_video_adapter_name(), RenderingServer.get_video_adapter_api_version()])
 	# Which asset readers loaded this world (round 668): the startup log line.
 	lines.append(NativeAssets.status.trim_prefix("NativeAssets: ") if NativeAssets.status != "" else "native readers: not checked yet")
-	lines.append("log %s" % ProjectSettings.globalize_path("user://logs/srrevamp.log"))
+	lines.append("log %s" % ProjectSettings.globalize_path("user://logs/opensro.log"))
 	lines.append("settings %s" % ProjectSettings.globalize_path(ClientSettings.PATH))
 
 	lines.append("== server")
@@ -387,10 +387,10 @@ func diagnostics() -> String:
 
 	return "\n".join(lines)
 
-## The last `n` lines of the session log (user://logs/srrevamp.log), or empty
+## The last `n` lines of the session log (user://logs/opensro.log), or empty
 ## if it cannot be read -- for the Copy payload above.
 func _tail_log_lines(n: int) -> PackedStringArray:
-	var path := "user://logs/srrevamp.log"
+	var path := "user://logs/opensro.log"
 	if not FileAccess.file_exists(path):
 		return PackedStringArray()
 	var f := FileAccess.open(path, FileAccess.READ)

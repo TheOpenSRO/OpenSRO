@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 )
 
 func member(id int64, name string) Member {

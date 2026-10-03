@@ -157,7 +157,7 @@ The unit is worth pinning because it is easy to get wrong: the value is
 **minutes**, not seconds (so not an HP/MP-potion cooldown, which is seconds and
 category-based elsewhere) and not days (the `TimeSpan` helper's first argument is
 days, but the call passes the cooltime as its *minutes* argument). It is the
-long-cooldown reuse delay a scroll or special consumable carries. srrevamp
+long-cooldown reuse delay a scroll or special consumable carries. OpenSRO
 imports neither this column nor enforces any item cooldown; `session.useitem`
 lets a consumable be used with no reuse delay at all. Recovered, not wired.
 

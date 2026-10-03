@@ -11,7 +11,7 @@ class_name Console
 ## recording stubs. A missing host entry is a no-op, so a partial host (a
 ## test, or the world before everything is wired) never crashes.
 ##
-## This is srrevamp's own tooling. Everything here is disclosed, not read
+## This is OpenSRO's own tooling. Everything here is disclosed, not read
 ## from the original client, which had no slash console.
 
 ## Client-side commands the console runs itself.

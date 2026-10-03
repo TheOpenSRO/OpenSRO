@@ -260,12 +260,12 @@ func _set_bar(gauge: TextureProgressBar, label: Label, current: int, maximum: in
 #     0x00d81950). player+0x20f8 is the Energy of life scroll's duration
 #     bonus: FUN_0089a0d0 stores the value of a timed job whose FourCC is
 #     0x706874 there (FUN_009d4e00) while the job has time left, and
-#     FUN_0089a1a0 clears it when that job ends. srrevamp's server sends the
+#     FUN_0089a1a0 clears it when that job ends. OpenSRO's server sends the
 #     same bonus in its composite state (CompositeNet.State.bonus_seconds,
 #     set_hwan_time_bonus), the seconds its own berserk adds to param 60.
 #     "stones" is FUN_006ac0a0: +0x19c of each worn item's
 #     SKILL_ITEM_ETC_SOCKET_STONE_HWAN_E_01..03 socket -- OPEN, 0 here:
-#     srrevamp has no socket stones.
+#     OpenSRO has no socket stones.
 #   * The refresh FUN_007b4f40(0) (the count arriving without a start)
 #     leaves both timers, the face and the glow alone: a running drain
 #     goes on and fades orb k on its next step whatever the refresh lit.
@@ -299,7 +299,7 @@ const HWAN_FACE_FADE_SEC := 3.0
 ## READ base of the client's display duration (0x007b4f40: `+ 60.0`, the
 ## double at 0x00d880d8); the header has the whole period.
 const HWAN_DISPLAY_BASE_SEC := 60.0
-## The Hwan socket stones' bonus (FUN_006ac0a0). OPEN: srrevamp has no
+## The Hwan socket stones' bonus (FUN_006ac0a0). OPEN: OpenSRO has no
 ## socket stones, so it is 0.
 const HWAN_SOCKET_STONE_SEC := 0
 

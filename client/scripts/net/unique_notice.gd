@@ -8,7 +8,7 @@ class_name UniqueNoticeNet
 ##
 ## The payload is retail 0x300C's: a u16 word (0x0C05 appeared, 0x0C06
 ## killed), the monster's u32 RefObjID and, for a kill, the killer's name
-## (u16 length + bytes). The opcode is srrevamp's own (PROTOCOL_DECISION.md).
+## (u16 length + bytes). The opcode is OpenSRO's own (PROTOCOL_DECISION.md).
 ##
 ## READ, the handler 0x874ea0 (sro_client.exe): the line is chosen by the
 ## monster's name key -- its characterdata SN_ string (the object's +0x60) --

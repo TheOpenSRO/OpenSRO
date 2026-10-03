@@ -79,7 +79,7 @@ const (
 	// decays, 0.25% per level past a five-level gap, to a 0.25% floor.
 	//
 	// Param 184 (registry: default 0, max 1000, no tag recovered) is the
-	// engine's own gain modifier; srrevamp publishes no source for it, so it
+	// engine's own gain modifier; OpenSRO publishes no source for it, so it
 	// is 0 here and the branch is inert -- carried as Kill.GainPercent so a
 	// buff that sets it can reach it. The rarity values are characterdata
 	// column 15's (0 normal, 1 champion, 3/8 unique, 4 giant, 5 titan, 6
@@ -155,7 +155,7 @@ const (
 	//
 	// The charge model is now recovered too, and it is NOT this package's
 	// gauge: berserk requires all five charges and spends all five at once.
-	// srrevamp fills a 0..100 bar and activates when full, which is the same
+	// OpenSRO fills a 0..100 bar and activates when full, which is the same
 	// shape by luck rather than by design -- see Max/FillPerHit, still own
 	// design, and Orbs, which this path grounds for a third time (the spend is
 	// literally -5 against a field clamped to [0, 5]).
@@ -219,7 +219,7 @@ const (
 	// character's baseline -- Char_PublishCombatStats, GObjMob_PublishStats,
 	// GObjPC_InitStats -- writes any of them (they write only 0x0-0x25,
 	// 0x34-0x3c, 0x8c/0x8d and 0xbe-0xc8). Their only writers are skill
-	// effects and tagged item modifiers, which srrevamp has none of.
+	// effects and tagged item modifiers, which OpenSRO has none of.
 	//
 	// RE-CHECKED 2026-09-16 against the dump's blind spot, because the writer
 	// census above is a census over what Ghidra recovered rather than over the
@@ -265,7 +265,7 @@ type Kill struct {
 	// read when VictimIsMonster.
 	VictimRarity int
 	// GainPercent is the killer's param 184, the engine's own modifier
-	// (chance = chance * GainPercent / 100 when non-zero). srrevamp has no
+	// (chance = chance * GainPercent / 100 when non-zero). OpenSRO has no
 	// source for it yet; pass 0.
 	GainPercent int
 }
@@ -543,9 +543,9 @@ func (t *Tracker) SetCharges(characterID int64, n int) int {
 // already running is refused first, count untouched: READ,
 // GObjPC_HandleBerserkMsg_0a7 (0x515b30) sends error 3 when GetBodyMode()
 // answers 1 for an activation request -- before it looks at the count -- and
-// also for body modes 3 and 4, which srrevamp never sets. Its error 4 for
+// also for body modes 3 and 4, which OpenSRO never sets. Its error 4 for
 // body mode 2 (the invincible spell after a revive or a world entry) is not
-// modelled: srrevamp has no body mode 2 (OPEN).
+// modelled: OpenSRO has no body mode 2 (OPEN).
 func (t *Tracker) Activate(characterID int64) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -623,7 +623,7 @@ func (t *Tracker) Forget(characterID int64) {
 	// A RUNNING durationBonus is kept: it is a timed job, which the engine
 	// keeps across a relog (its jobs carry __time32_t stamps), and its own
 	// timer (SetDurationBonus) deletes it when it runs out. An expired one
-	// goes now. srrevamp keeps it in memory, so a restart loses it --
+	// goes now. OpenSRO keeps it in memory, so a restart loses it --
 	// disclosed.
 	if b, ok := t.durationBonus[characterID]; ok && !time.Now().Before(b.until) {
 		delete(t.durationBonus, characterID)

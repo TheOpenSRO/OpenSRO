@@ -5,22 +5,22 @@ class_name QaLineup
 ## PLAYER path -- World3D._spawn_or_update_other, exactly what a server's
 ## OpEntityEntered with a model builds -- and measured there.
 ##
-##   SRREVAMP_QA_LINEUP=all | <id>[:<scale>],... | none
+##   OPENSRO_QA_LINEUP=all | <id>[:<scale>],... | none
 ##       which bodies (all = the 52); none spawns nothing and measures the
 ##       player and the other players a server put in the world
-##   SRREVAMP_QA_LINEUP_WEAPONS=rotate | each | none
+##   OPENSRO_QA_LINEUP_WEAPONS=rotate | each | none
 ##       rotate: Figure i holds its race's catalogue weapon i mod n (default);
 ##       each:   one body per Figure per weapon of its race (364 bodies);
 ##       none:   bare-handed
-##   SRREVAMP_QA_LINEUP_ACTIONS=stand,run,sit,attack   phases, in order
-##   SRREVAMP_QA_LINEUP_PHASE=<seconds>                each phase's length (8)
-##   SRREVAMP_QA_LINEUP_COLUMNS=<n>                    bodies a row (13)
-##   SRREVAMP_QA_LINEUP_DELAY=<seconds>                wait after the ground is there (3),
+##   OPENSRO_QA_LINEUP_ACTIONS=stand,run,sit,attack   phases, in order
+##   OPENSRO_QA_LINEUP_PHASE=<seconds>                each phase's length (8)
+##   OPENSRO_QA_LINEUP_COLUMNS=<n>                    bodies a row (13)
+##   OPENSRO_QA_LINEUP_DELAY=<seconds>                wait after the ground is there (3),
 ##                                                     so the QA camera has settled
-##   SRREVAMP_QA_LINEUP_QUIT=1                         quit when the last phase is measured
-##   SRREVAMP_QA_LINEUP_SHOTS=<dir>                    save the screen at each measure
+##   OPENSRO_QA_LINEUP_QUIT=1                         quit when the last phase is measured
+##   OPENSRO_QA_LINEUP_SHOTS=<dir>                    save the screen at each measure
 ##                                                     (<dir>/lineup_<phase>_<action>.png)
-##   SRREVAMP_QA_LINEUP_ASIDE=<units>                  first step the player that far to its
+##   OPENSRO_QA_LINEUP_ASIDE=<units>                  first step the player that far to its
 ##                                                     right (a live pair then stands apart)
 ##
 ## The kit is OURS for the picture: the race's `_A_DEF` weapon (CharCatalog's
@@ -36,7 +36,7 @@ class_name QaLineup
 ## CPU-skinned vertex of the body (the sum the GPU does) against the walkable
 ## surface under the body (_ground_at), so + is floating and - is sunk. Then a summary per phase:
 ##   LINEUP SUMMARY action <a>: <n> bodies, <t> TPOSE, feet min/max, <f> beyond
-##   the tolerance (SRREVAMP_QA_LINEUP_TOLERANCE, 1.0 units)
+##   the tolerance (OPENSRO_QA_LINEUP_TOLERANCE, 1.0 units)
 
 const COLUMNS := 13
 ## OURS, for the kit only: the weapons drawn with the race's shield beside them
@@ -60,24 +60,24 @@ var _spawned := false
 var _done := false
 
 static func from_env(w: Node) -> QaLineup:
-	var spec := OS.get_environment("SRREVAMP_QA_LINEUP")
+	var spec := OS.get_environment("OPENSRO_QA_LINEUP")
 	if spec == "":
 		return null
 	var q := QaLineup.new()
 	q.world = w
-	var a := OS.get_environment("SRREVAMP_QA_LINEUP_ACTIONS")
+	var a := OS.get_environment("OPENSRO_QA_LINEUP_ACTIONS")
 	if a != "":
 		q.actions = a.split(",", false)
-	var ph := OS.get_environment("SRREVAMP_QA_LINEUP_PHASE")
+	var ph := OS.get_environment("OPENSRO_QA_LINEUP_PHASE")
 	if ph.is_valid_float():
 		q.phase_seconds = float(ph)
-	var c := OS.get_environment("SRREVAMP_QA_LINEUP_COLUMNS")
+	var c := OS.get_environment("OPENSRO_QA_LINEUP_COLUMNS")
 	if c.is_valid_int():
 		q.columns = maxi(1, int(c))
-	var dl := OS.get_environment("SRREVAMP_QA_LINEUP_DELAY")
+	var dl := OS.get_environment("OPENSRO_QA_LINEUP_DELAY")
 	if dl.is_valid_float():
 		q.spawn_delay = float(dl)
-	var tol := OS.get_environment("SRREVAMP_QA_LINEUP_TOLERANCE")
+	var tol := OS.get_environment("OPENSRO_QA_LINEUP_TOLERANCE")
 	if tol.is_valid_float():
 		q.tolerance = float(tol)
 	return q
@@ -92,14 +92,14 @@ func step(delta: float) -> void:
 	if not _spawned:
 		if not _ground_ready():
 			return
-		# The QA camera hooks (SRREVAMP_QA_YAW/_PITCH/_DIST) settle in the
+		# The QA camera hooks (OPENSRO_QA_YAW/_PITCH/_DIST) settle in the
 		# first ticks; the lineup is laid out in front of where they leave
 		# the camera.
 		_wait += delta
 		if _wait < spawn_delay:
 			return
 		_spawned = true
-		var aside := OS.get_environment("SRREVAMP_QA_LINEUP_ASIDE")
+		var aside := OS.get_environment("OPENSRO_QA_LINEUP_ASIDE")
 		if aside.is_valid_float():
 			var b: Basis = world.player.global_transform.basis
 			world.player.global_position += b.x.normalized() * float(aside)
@@ -117,7 +117,7 @@ func step(delta: float) -> void:
 		if _phase >= actions.size():
 			_done = true
 			print("LINEUP DONE")
-			if OS.get_environment("SRREVAMP_QA_LINEUP_QUIT") != "":
+			if OS.get_environment("OPENSRO_QA_LINEUP_QUIT") != "":
 				world.get_tree().quit()
 			return
 		_start_phase()
@@ -140,7 +140,7 @@ func _ground_at(p: Vector3) -> float:
 func _spawn(appearance: CharacterAppearance) -> void:
 	var cat := appearance.catalog()
 	var ids: Array = []
-	var spec := OS.get_environment("SRREVAMP_QA_LINEUP")
+	var spec := OS.get_environment("OPENSRO_QA_LINEUP")
 	if spec == "none":
 		# Spawn nothing: measure the player and the other players a server
 		# put in the world (the live test, round 689).
@@ -156,7 +156,7 @@ func _spawn(appearance: CharacterAppearance) -> void:
 			var kv := String(part).split(":")
 			if kv[0].is_valid_int():
 				ids.append([int(kv[0]), _int_of(kv[1]) if kv.size() > 1 else CharacterAppearance.DEFAULT_SCALE])
-	var mode := OS.get_environment("SRREVAMP_QA_LINEUP_WEAPONS")
+	var mode := OS.get_environment("OPENSRO_QA_LINEUP_WEAPONS")
 	if mode == "":
 		mode = "rotate"
 	var k := 0
@@ -345,7 +345,7 @@ func _measure() -> void:
 		print("LINEUP %-28s %6d scale 0x%02x weapon %5d group %-14s action %-6s clip %-40s posed %-5s feet %+.3f" % [
 			r[0], r[1], r[2], r[3], r[4], action, clip, "yes" if posed else "TPOSE", feet])
 	print("LINEUP SUMMARY action %s: %d bodies, %d TPOSE, feet %+.3f .. %+.3f, %d beyond %.2f" % [action, n, tposes, lo, hi, beyond, tolerance])
-	var dir := OS.get_environment("SRREVAMP_QA_LINEUP_SHOTS")
+	var dir := OS.get_environment("OPENSRO_QA_LINEUP_SHOTS")
 	if dir != "":
 		DirAccess.make_dir_recursive_absolute(dir)
 		var img := world.get_viewport().get_texture().get_image()

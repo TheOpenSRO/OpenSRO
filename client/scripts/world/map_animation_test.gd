@@ -235,7 +235,7 @@ func _initialize() -> void:
 		driver.tick(cam.global_position, cam.get_frustum())
 		_check(driver.size() == 0, "r645: a freed object leaves the driver")
 
-		# --- SRREVAMP_NO_MAP_ANIM builds the pre-645 object: no skeleton,
+		# --- OPENSRO_NO_MAP_ANIM builds the pre-645 object: no skeleton,
 		# no skin, no player -- a clean A/B baseline ---
 		MA.disabled = true
 		var plain := ObjectLoader.load_object(archive, "res\\sway.bsr")
@@ -243,7 +243,7 @@ func _initialize() -> void:
 		var plain_leaf := plain.get_node_or_null("leaf") as MeshInstance3D if plain != null else null
 		_check(plain != null and plain.get_node_or_null("MapSkeleton") == null and plain.get_node_or_null("MapAnimation") == null
 				and plain_leaf != null and plain_leaf.skin == null,
-			"r645 review: SRREVAMP_NO_MAP_ANIM builds the object as before 645")
+			"r645 review: OPENSRO_NO_MAP_ANIM builds the object as before 645")
 		if plain != null:
 			plain.free()
 	else:

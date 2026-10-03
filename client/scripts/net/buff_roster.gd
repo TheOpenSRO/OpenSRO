@@ -18,7 +18,7 @@ extends RefCounted
 ## the spawn record's buff block (u8 count, {u32 skill id, u32 token}) goes to
 ## a pending list that FUN_009cf270 turns into IDecoSkill objects on the new
 ## body, the start effect skipped (READ, docs/protocol/skill_buffs.md
-## "Entering view"). srrevamp's bodies are rebuilt from its own messages, so
+## "Entering view"). OpenSRO's bodies are rebuilt from its own messages, so
 ## the list is kept here, beside the connection, and applied to the body when
 ## it exists.
 

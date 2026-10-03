@@ -6,7 +6,7 @@
 // "Next Exp" a real level-9 character showed; see docs/LEVELING.md).
 //
 // No game data is committed: the operator runs this against their own client
-// and points the server at the CSV (SRREVAMP_LEVELDATA_CSV).
+// and points the server at the CSV (OPENSRO_LEVELDATA_CSV).
 //
 // Usage:
 //

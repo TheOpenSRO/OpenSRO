@@ -10,13 +10,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/berserk"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // World opcodes, our own protocol. OpEnterWorld requires a prior OpLogin;
@@ -115,7 +115,7 @@ func (e *EntitySnapshot) Encode() []byte {
 // heading as a u16 wire angle -- proto.EncodeMovementAngle of
 // world.WireAngle(Heading), the client's FUN_009c40b0 adding pi/2 back.
 // Retail's spawn carries the angle among its position fields (FUN_009c3a70);
-// srrevamp's goes last so an older client, whose decode_entity_entered reads
+// OpenSRO's goes last so an older client, whose decode_entity_entered reads
 // one snapshot and stops, is unaffected.
 //
 // Round 689: then the model, a u32 RefObjID and the u8 scale byte, when the
@@ -724,7 +724,7 @@ func frameFor(zone string) string {
 	return fmt.Sprintf("%d/%d", rx, ry)
 }
 
-// singleFrame is cmd/server's -single-frame (SRREVAMP_SINGLE_FRAME), OFF by
+// singleFrame is cmd/server's -single-frame (OPENSRO_SINGLE_FRAME), OFF by
 // default (round 571): every zone with a frame in ONE world frame, centred on
 // worldmap.WorldOrigin (Jangan's 97/168), and in ONE hub bucket,
 // worldmap.WorldBucket, where every roster monster is kept too -- so a player
@@ -806,7 +806,7 @@ type MoveRequest struct {
 	// (docs/protocol/opcodes/movement.md; proto.Movement): kind 0, the
 	// command byte (RunCommand, proto.MovementCommandForward from the sky
 	// click) and the u16 wire angle (RunAngle). The framing -- a heading form
-	// riding on a position -- is OURS: srrevamp's movement is client-
+	// riding on a position -- is OURS: OpenSRO's movement is client-
 	// authoritative positions, retail's is 0x7021 requests the server steps.
 	Run        bool
 	RunCommand byte
@@ -1410,7 +1410,7 @@ func handleChangeZone(ctx context.Context, sess *gateway.Session, p *proto.Packe
 		return sess.Send(&proto.Packet{Opcode: OpChangeZoneResult, Data: (&ChangeZoneResult{Reason: "not in the world"}).Encode()})
 	}
 	// A dead character does not change zone (round 549, deadstate.go). OWN
-	// DESIGN, disclosed: srrevamp's zone change is its own discrete warp with
+	// DESIGN, disclosed: OpenSRO's zone change is its own discrete warp with
 	// no retail message to read a life-state test from, and round 548's
 	// client keeps its dead state across a ChangeZoneResult -- so a warp
 	// would put a held die pose at the new zone's spawn. Refusing keeps the

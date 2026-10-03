@@ -73,11 +73,11 @@ has a model**. Across the whole table 161 `xxx` rows get a model through their O
 special classes above (2,800 thief rows, 2,800 hunter rows, 2,100 guild soldiers). No row needs a
 chain.
 
-### In srrevamp
+### In OpenSRO
 
 `NpcTableReader.parse_org_codes` reads column 4 (`xxx` and "" name none) and
 `NpcTableReader.model_with_org` applies the rule; `World3D._monster_model_path` resolves a
 monster's model through it before the display-name join. The Mangyang fallback is not taken: in
 the real table no monster row reaches it except the thief/hunter/guild classes, which retail draws
-from their own list, so srrevamp keeps the labelled capsule there (OURS). Column 48 (Scale) is not
+from their own list, so OpenSRO keeps the labelled capsule there (OURS). Column 48 (Scale) is not
 applied to any monster yet (OPEN, docs/TODO.md).

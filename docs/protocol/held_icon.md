@@ -148,7 +148,7 @@ slots are sent as `slot + 13` (the 13 worn slots come first).
   therefore puts an unequipped item in the first free slot whatever was
   clicked.
 
-srrevamp does the same (READ, by the user's choice, 2026-09-30: "Match
+OpenSRO does the same (READ, by the user's choice, 2026-09-30: "Match
 original"): the client sends the clicked slot as retail's does (a trailing
 int32 on OpUnequip), and the server parses it and puts the item in the first
 free bag slot, as DetachEquipItem does -- no swap onto an occupied slot. Equip

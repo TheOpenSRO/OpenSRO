@@ -271,7 +271,7 @@ func _terrain_body(placement: Vector3, layer_bit: int, cs: CollisionShape3D, mir
 	return group
 
 ## The trimesh World3D built until round 567 (and still builds under
-## SRREVAMP_TERRAIN_TRIMESH=1): MapmTerrainBuilder.surface_faces of the
+## OPENSRO_TERRAIN_TRIMESH=1): MapmTerrainBuilder.surface_faces of the
 ## region's surface in a ConcavePolygonShape3D, one-sided unless `two_sided`.
 func _trimesh_shape(region: MapmReader.ParsedRegion, two_sided: bool = false) -> CollisionShape3D:
 	var tri := ConcavePolygonShape3D.new()

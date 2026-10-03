@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
+	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
 )
 
 // utf16le encodes a string as UTF-16LE with a BOM, the form the Media text

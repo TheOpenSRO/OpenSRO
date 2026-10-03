@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // Which region a monster stands in is its hub bucket's frame's (round 674):

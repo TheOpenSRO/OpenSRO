@@ -16,7 +16,7 @@ class_name RecallNet
 ## UIIT_MSG_STATE_REBIRTH_POINT_APPOINT on 1 -- the system window as type 5
 ## and GDR_WARNING_WND -- and nothing on 2.
 ##
-## srrevamp's own placeholder pair (docs/protocol/PROTOCOL_DECISION.md);
+## OpenSRO's own placeholder pair (docs/protocol/PROTOCOL_DECISION.md);
 ## 0x0111/0x0112 were free on 2026-10-02 (the highest op in client/scripts/net
 ## was UniqueNoticeNet's 0x0110). Retail's are 0x7059 / 0xb059.
 

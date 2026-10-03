@@ -456,7 +456,7 @@ func TestExpDiffScalePartyBonus(t *testing.T) {
 }
 
 // TestApplyDeathPenaltyReduction pins the SHAPE of the engine's death-penalty
-// reduction, which matters even though srrevamp's own rate is zero: the term is
+// reduction, which matters even though OpenSRO's own rate is zero: the term is
 // a percentage of the loss, not a flat subtraction, and a premium system later
 // has to slot into the right arithmetic.
 //
@@ -469,7 +469,7 @@ func TestApplyDeathPenaltyReduction(t *testing.T) {
 		percent int
 		want    int64
 	}{
-		{"srrevamp's own rate is zero", 1000, 0, 1000},
+		{"OpenSRO's own rate is zero", 1000, 0, 1000},
 		{"a negative rate never adds", 1000, -20, 1000},
 		{"a quarter off", 1000, 25, 750},
 		{"rounds rather than truncates", 101, 50, 50}, // 50.5 -> 51 off

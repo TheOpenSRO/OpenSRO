@@ -1,7 +1,7 @@
 // Package trade implements this project's own player-to-player trading
 // system: a live, session-scoped request/accept/offer/confirm flow (like
 // duel and party -- not persisted, a trade dissolving on server restart is
-// normal). The window and its messages are srrevamp's own design. The rules
+// normal). The window and its messages are OpenSRO's own design. The rules
 // for making a request follow the engine's request handler since round 500:
 // RequestRange, RequestTimeout, one request per character, and no request
 // to or from a busy character (docs/RE_COMPLETION.md, round 500).
@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 )
 
 // RequestRange is how close two players must stand for a trade request to be
@@ -25,7 +25,7 @@ import (
 // the same constant again at `0x47facc` when the target accepts. The distance
 // is FUN_00405270, sqrt(dx*dx + dy*dy + dz*dz) through the CRT's fsqrt, with
 // region offsets folded in by FUN_00430ba0 at 1920 units a region (.rdata
-// 0xb45ad0), the span srrevamp's world coordinates already use.
+// 0xb45ad0), the span OpenSRO's world coordinates already use.
 const RequestRange = 320.0
 
 // RequestTimeout is how long a request waits for its target's answer before

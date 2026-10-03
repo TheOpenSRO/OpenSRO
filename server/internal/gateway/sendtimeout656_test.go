@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 )
 
 // Round 656: a client that stops reading costs its writer at most

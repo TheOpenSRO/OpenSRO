@@ -25,9 +25,9 @@ class_name HudTargetBuffs
 ## 0x9cd050 inserts before the head), those of type 2 -- made by 0xa54020,
 ## which the 0xB0BD buff-start handler calls for EVERY owner it finds, not
 ## only this player -- and type 3 (0xa53fc0, from 0xB0BE, a buff carrying a
-## name; srrevamp sends none). Then the abnormal-state bits of +0x2c4
+## name; OpenSRO sends none). Then the abnormal-state bits of +0x2c4
 ## (0x7fd2e0, into the second list), one icon per set bit, low to high --
-## since round 659 srrevamp sends every object's mask (StatusNet, 0x3057), and
+## since round 659 OpenSRO sends every object's mask (StatusNet, 0x3057), and
 ## World3D hands them in as entries with a negative id (abnormal_id): the
 ## icon is icon\stateodd\ + 0x7fdab0's file, drawn like a skill icon, and
 ## the tooltip StatusNet.tooltip's (0x7fc260 kind 2, READ in part). The premium IS a skill buff (round 638 review): the premium items
@@ -73,7 +73,7 @@ class_name HudTargetBuffs
 ## bar's list less SN_SKILL_MALL_PRE_APRU_4W); then the description plus
 ## "\n\n" when it is not empty; then the skill's parameter lines from
 ## 0x96e480(7) -- NOT built here (OPEN: that is the skill window's parameter
-## text, which srrevamp does not generate). No remaining-time line: the
+## text, which OpenSRO does not generate). No remaining-time line: the
 ## entry's +0x28 stays 0 (0x7fb0f0) for a skill buff. A type-3 entry adds
 ## "%s : %s" (UIIT_STT_TARGETTING, its name); none are sent.
 ## OURS: the trailing blank lines are trimmed, so Godot's tooltip does not
@@ -139,7 +139,7 @@ class Slot extends Control:
 		return viewer.tooltip_for(skill_id) if viewer != null else ""
 
 ## Every owner's active buffs in the order they started, as OpBuffStart and
-## OpBuffEnd tell the zone: srrevamp's stand-in for each object's +0x284
+## OpBuffEnd tell the zone: OpenSRO's stand-in for each object's +0x284
 ## list (0xB0BD adds to it for any owner, 0xB072 removes). Keyed by the
 ## owner key World3D's effects use ("character:<id>" / "monster:<id>").
 class Book:

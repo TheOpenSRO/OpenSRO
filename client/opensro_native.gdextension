@@ -9,5 +9,5 @@ compatibility_minimum = 4.2
 reloadable = false
 
 [libraries]
-linux.x86_64 = "res://native_bin/libsrrevamp_native.so"
-windows.x86_64 = "res://native_bin/srrevamp_native.dll"
+linux.x86_64 = "res://native_bin/libopensro_native.so"
+windows.x86_64 = "res://native_bin/opensro_native.dll"

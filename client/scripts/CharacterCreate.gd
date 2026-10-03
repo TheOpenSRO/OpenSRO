@@ -144,8 +144,8 @@ var _create_pending := false
 var _box_closing := false
 var _send_serial := 0
 var _qa_state := ""
-## SRREVAMP_QA_CREATE_SHOTS="spec|spec|..." with SRREVAMP_QA_CREATE_SHOT_DIR:
-## each spec (as SRREVAMP_QA_CREATE_STATE's) is applied in turn once the
+## OPENSRO_QA_CREATE_SHOTS="spec|spec|..." with OPENSRO_QA_CREATE_SHOT_DIR:
+## each spec (as OPENSRO_QA_CREATE_STATE's) is applied in turn once the
 ## backdrop's scene is built, and the screen saved QA_SHOT_SETTLE_S later as
 ## shot_<n>.png; the client quits after the last. Renders only, off in play.
 var _qa_shots: PackedStringArray = []
@@ -182,10 +182,10 @@ func _ready() -> void:
 	_apply_all(true)
 	_relayout()
 	resized.connect(_relayout)
-	_qa_state = OS.get_environment("SRREVAMP_QA_CREATE_STATE")
-	_qa_shot_dir = OS.get_environment("SRREVAMP_QA_CREATE_SHOT_DIR")
+	_qa_state = OS.get_environment("OPENSRO_QA_CREATE_STATE")
+	_qa_shot_dir = OS.get_environment("OPENSRO_QA_CREATE_SHOT_DIR")
 	if _qa_shot_dir != "":
-		_qa_shots = OS.get_environment("SRREVAMP_QA_CREATE_SHOTS").split("|", false)
+		_qa_shots = OS.get_environment("OPENSRO_QA_CREATE_SHOTS").split("|", false)
 		if _qa_shots.is_empty():
 			_qa_shots = PackedStringArray([""])
 	print("CREATE: %s screen built in %d ms" % ["China" if _race == CharCatalog.RACE_CHINA else "Europe", Time.get_ticks_msec() - _started_ms])
@@ -195,10 +195,10 @@ static var _qa_opens := 0
 
 ## The race the select screen chose (CharSelectHandoff, round 684). OURS:
 ## China when none was (the create screen opened directly). QA:
-## SRREVAMP_QA_CREATE_RACE="europe" or a list "europe,china,..." taken one
+## OPENSRO_QA_CREATE_RACE="europe" or a list "europe,china,..." taken one
 ## per opening (the last repeating), for runs before the race select exists.
 func _pick_race() -> int:
-	var qa := OS.get_environment("SRREVAMP_QA_CREATE_RACE").to_lower().split(",", false)
+	var qa := OS.get_environment("OPENSRO_QA_CREATE_RACE").to_lower().split(",", false)
 	_qa_opens += 1
 	if not qa.is_empty():
 		var pick := qa[mini(_qa_opens - 1, qa.size() - 1)].strip_edges()
@@ -867,7 +867,7 @@ func _print_layout() -> void:
 			var bx := _box.position + b.position
 			print("CREATE LAYOUT %s %d %d %d %d" % [pair[0], bx.x, bx.y, b.size.x, b.size.y])
 
-## SRREVAMP_QA_CREATE_STATE="sex=0;figure=5;height=4;volume=0;weapon=2;
+## OPENSRO_QA_CREATE_STATE="sex=0;figure=5;height=4;volume=0;weapon=2;
 ## protector=1;name=QaName;spin=2;zoom=1;tip=4": drives the same handlers the
 ## controls do, for renders. Off in real play.
 func _apply_qa_state(spec: String) -> void:

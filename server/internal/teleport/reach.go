@@ -59,7 +59,7 @@ type Place struct {
 // when within reach, ErrInteractionTarget when the regions are of different
 // kinds or more than one apart, ErrTooFar when farther than the limit.
 //
-// OURS, disclosed: the height term is dropped (horizontal=true). srrevamp's
+// OURS, disclosed: the height term is dropped (horizontal=true). OpenSRO's
 // server does not know a player's height reliably -- an arrival and a zone
 // entry hold y = 0 until the client's first move, and the client sends none
 // after it lands a teleport (World3D._land_teleport_arrival) -- so the 3-D

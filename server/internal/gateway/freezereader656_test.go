@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 )
 
 // Round 656's third review: a healthy client reads its socket from the game's

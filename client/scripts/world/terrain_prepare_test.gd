@@ -15,7 +15,7 @@ extends SceneTree
 ## world has already uploaded is named by filename and flag, never handed
 ## over as its texture, and is not decoded again. Also that the task
 ## actually produced the terrain (the surfaces, the collision's height grid --
-## or, under SRREVAMP_TERRAIN_TRIMESH=1's job flag, the trimesh faces (round
+## or, under OPENSRO_TERRAIN_TRIMESH=1's job flag, the trimesh faces (round
 ## 567) -- the lightmap and ground-tile Images, the navmesh, the walls and the
 ## walkable graph) and that the same prepare on the main thread produces the
 ## same. And (round 568) that _terrain_commit wires the collision the prepare
@@ -76,8 +76,8 @@ func _test_the_walk_sees_what_it_forbids() -> void:
 	node.free()
 
 func _test_prepare_off_the_main_thread(S: GDScript) -> void:
-	var map_path := "user://srrevamp_r565_map.pk2"
-	var data_path := "user://srrevamp_r565_data.pk2"
+	var map_path := "user://opensro_r565_map.pk2"
+	var data_path := "user://opensro_r565_data.pk2"
 	_write_pk2(map_path, {
 		"97\\168.m": _build_mapm(),
 		"97\\168.t": _build_mapt(8, 8),
@@ -159,13 +159,13 @@ func _test_prepare_off_the_main_thread(S: GDScript) -> void:
 			same = false
 	_check(same, "the prepare on the main thread builds the same surfaces and height grid as the task")
 
-	# SRREVAMP_TERRAIN_TRIMESH=1 (A/B, round 567): the job's flag, read by
+	# OPENSRO_TERRAIN_TRIMESH=1 (A/B, round 567): the job's flag, read by
 	# _terrain_job on the main thread, makes the prepare build the pre-567
 	# trimesh faces -- MapmTerrainBuilder.surface_faces of the same surfaces --
 	# in the same lap, and no height grid.
 	var job_tri: Dictionary = w.call("_terrain_job", "97\\168.m", "", Vector3.ZERO, "_97_168", false, NAN, false)
 	_check(job_tri.has("trimesh") and not job_tri["trimesh"],
-		"_terrain_job reads the trimesh flag on the main thread (off when SRREVAMP_TERRAIN_TRIMESH is unset)")
+		"_terrain_job reads the trimesh flag on the main thread (off when OPENSRO_TERRAIN_TRIMESH is unset)")
 	job_tri["trimesh"] = true
 	w.call("_terrain_prepare", job_tri)
 	var tri_faces: PackedVector3Array = job_tri.get("faces", PackedVector3Array())
@@ -210,7 +210,7 @@ func _test_prepare_off_the_main_thread(S: GDScript) -> void:
 ## TerrainCollision.make_shape(heights)` and `patch_shape.transform =
 ## TerrainCollision.shape_transform()` -- so deleting the transform line left
 ## every suite green (terrain_collision_test holds TerrainCollision in its own
-## group; only the render box's SRREVAMP_QA_GROUND_RAYS runs would have
+## group; only the render box's OPENSRO_QA_GROUND_RAYS runs would have
 ## caught it). Here the prepared jobs above are committed on the bare world
 ## (not in the tree; the scene's ground stand-ins, which the commit hides,
 ## are stubbed) and the shapes the commit built are read back: the

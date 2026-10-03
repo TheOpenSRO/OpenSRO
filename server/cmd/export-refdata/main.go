@@ -47,13 +47,13 @@ import (
 	"strings"
 	"unicode/utf16"
 
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/safezone"
-	"github.com/OpenSRO/srrevamp/server/internal/skillparam"
-	"github.com/OpenSRO/srrevamp/server/internal/spawn"
-	"github.com/OpenSRO/srrevamp/server/internal/species"
-	"github.com/OpenSRO/srrevamp/server/internal/statuseffect"
-	"github.com/OpenSRO/srrevamp/server/internal/teleport"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/safezone"
+	"github.com/OpenSRO/OpenSRO/server/internal/skillparam"
+	"github.com/OpenSRO/OpenSRO/server/internal/spawn"
+	"github.com/OpenSRO/OpenSRO/server/internal/species"
+	"github.com/OpenSRO/OpenSRO/server/internal/statuseffect"
+	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
 )
 
 // Field indices into a tab-split itemdata row (0-indexed; field 0 is the
@@ -175,7 +175,7 @@ const (
 	// 105/107/109/111 across all 1,568 weapon rows. Four constants, four
 	// column floors.
 	//
-	// srrevamp models no per-instance variance and no plus level, so it takes
+	// OpenSRO models no per-instance variance and no plus level, so it takes
 	// the low end, which is also the end the innate defaults correspond to.
 	fReinforcePhysMin = 105 // and 107 for max
 	fReinforcePhysMax = 107
@@ -772,7 +772,7 @@ func itemRecord(cols []string) ([]string, bool) {
 		cooltimeGroup, cooltimeMs,
 		// 66-67: body armour's parry pair, itemdata columns 68/69. The engine
 		// reads it as ParamKeeper param 9 ('era'), the defender's half of the
-		// damage centre. srrevamp models neither per-instance variance nor plus
+		// damage centre. OpenSRO models neither per-instance variance nor plus
 		// level, so the lo end is the value that applies -- the same rule the
 		// attack and reinforce pairs follow.
 		num(fParryRatio),     // 66 ParryRatioMin (body armour only)
@@ -1490,7 +1490,7 @@ func sitGate(cols []string) string {
 // SelfHealHP/SelfHealMP columns: skillparam.SelfHealAmounts over the row's
 // action kind (skActionKind), Target_Required (skTargetRequired) and Param
 // block. Anything it cannot read answers ("0", "0"), which is also what an
-// export predating the columns loads -- no heal, the behaviour srrevamp had.
+// export predating the columns loads -- no heal, the behaviour OpenSRO had.
 func selfHeal(cols []string) (hp, mp string) {
 	words, ok := paramWords(cols)
 	if !ok {
@@ -1848,7 +1848,7 @@ func floorBlow(cols []string) string {
 // This is WIDER than noCombatParam and contains it: 2,482 real rows carry
 // neither, of which 1,813 also carry none of the 33 and return earlier still.
 // Both columns are exported because the distinction is real -- no blow at all
-// versus a blow of zero -- even though srrevamp models both as no damage today.
+// versus a blow of zero -- even though OpenSRO models both as no damage today.
 //
 // Positive sense is safe here for the same reason the other column's negative
 // sense is: an export predating this one loads false, which means "this skill's
@@ -2062,7 +2062,7 @@ func exportNpcPos(out string) {
 // the client's Client_LoadAllRefData, 0x844cd0) and its service handling is
 // not read, so its column 0 is not filtered. Every column was checked against
 // the retail rows on the render box (round 575,
-// docs/protocol/teleport_network.md "The columns srrevamp reads").
+// docs/protocol/teleport_network.md "The columns OpenSRO reads").
 const (
 	// teleportdata.txt, 14 fields: GlobalDataManager::RefParse_teleportdata
 	// (client 0x976840) reads id, codename, associated object, zone name,

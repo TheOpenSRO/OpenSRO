@@ -7,11 +7,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/guild"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/guild"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // NewGuildPointSkills wraps a skill store so that the skill points a guild
@@ -62,7 +62,7 @@ import (
 // RequestAddGuildPoints' (0x5c62e0) own gates, for both callers:
 //   - its life test (vtable +0xf8 IGObj::GetLifeState == 1, else 0x4c07) is
 //     applied with the stand-in session/guild.go's founder check uses for the
-//     same engine test: alive is HP > 0 (srrevamp stores no life state, and
+//     same engine test: alive is HP > 0 (OpenSRO stores no life state, and
 //     0 HP is what character.Store.ApplyDamage reports as died). A dead
 //     earner's batch is dropped, not kept. That includes the logout flush:
 //     FUN_004df050's branch for a PC in state 2 (DEAD), read in round 525,
@@ -71,7 +71,7 @@ import (
 //     runs, with no SetLifeState (+0x1f0) call among them, so a PC dead at
 //     logout meets the request's 0x4c07;
 //   - its guild-level test (`cmp al,0x5; ja` at 0x5c6335) cannot fail for
-//     srrevamp: a guild's Level stops at guild.MaxLevel, 5, because
+//     OpenSRO: a guild's Level stops at guild.MaxLevel, 5, because
 //     guild.Store.LevelUp refuses past it (round 528), so it is not repeated.
 func NewGuildPointSkills(inner skill.Store, guilds guild.Store, chars character.Store) *GuildPointSkills {
 	return &GuildPointSkills{Store: inner, guilds: guilds, chars: chars, acc: make(map[int64]*guild.PointAccumulator)}
@@ -88,7 +88,7 @@ type GuildPointSkills struct {
 	acc map[int64]*guild.PointAccumulator // characterID -> the engine's pc+0x2184
 }
 
-// guildPointsFlushTimeout bounds one logout or shutdown flush. srrevamp's own
+// guildPointsFlushTimeout bounds one logout or shutdown flush. OpenSRO's own
 // value, not the engine's: a stalled database must not hold a disconnecting
 // session's goroutine, or the process's stop, indefinitely.
 const guildPointsFlushTimeout = 5 * time.Second
@@ -162,11 +162,11 @@ func (s *GuildPointSkills) FlushPending(ctx context.Context, characterID int64) 
 }
 
 // FlushAllPending flushes every character with points pending, for a server
-// that is stopping. SRREVAMP'S OWN HANDLING: the engine's clean-shutdown path
+// that is stopping. OPENSRO'S OWN HANDLING: the engine's clean-shutdown path
 // has not been read. Its one all-users-out path that has, the ShardManager
 // link dropping (CMainProcess::FUN_00416f80 logs "all user connections will
 // be lost (but, data saved)" and calls FUN_00417a80), runs FUN_004df050(4),
-// and so the flush, for every PC. srrevamp's gateway does not run OnDisconnect
+// and so the flush, for every PC. OpenSRO's gateway does not run OnDisconnect
 // for sessions still open when it stops, so cmd/server calls this once the
 // listener has returned.
 //
@@ -198,7 +198,7 @@ func (s *GuildPointSkills) FlushAllPending(ctx context.Context) {
 
 // request is CGuildManager::RequestAddGuildPoints (0x5c62e0) and its echo,
 // CGuild::AddPoints (0x5c4110), for a count the caller has already taken off
-// the accumulator: the life gate srrevamp can test, then the credit.
+// the accumulator: the life gate OpenSRO can test, then the credit.
 func (s *GuildPointSkills) request(ctx context.Context, guildID, characterID int64, points int) {
 	c, err := s.chars.GetByID(ctx, characterID)
 	if err != nil {

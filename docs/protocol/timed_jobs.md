@@ -138,9 +138,9 @@ entry *is* the penalty; the clock work happens on the tick, not at the check.
 That is why `academy.md` could find no literal at the invite and entry checks and
 had to go to `Create` for the durations.
 
-## Why this matters to srrevamp
+## Why this matters to OpenSRO
 
-srrevamp already has things this mechanism exists to hold and implements them
+OpenSRO already has things this mechanism exists to hold and implements them
 ad hoc: the death penalty, berserk's duration, skill cooldowns. The engine has
 one machine for all of them, with one table, one manager per owner kind, and a
 one-second sweep that is both the countdown and the test.

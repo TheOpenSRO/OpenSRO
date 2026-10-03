@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/gm"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/species"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/gm"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/species"
 )
 
 // rosterAsTables writes the hand-typed roster back out as SYNTHETIC client
@@ -227,14 +227,14 @@ func TestGMSpawnsAnyTableSpecies(t *testing.T) {
 }
 
 // TestSpeciesTableMatchesTheRealExport is the MEASUREMENT behind the claim that
-// the loader re-derives the roster: point SRREVAMP_MONSTERS_CSV and
-// SRREVAMP_SKILLS_CSV at CSVs exported from a real Media.pk2 (deploy/README.md)
+// the loader re-derives the roster: point OPENSRO_MONSTERS_CSV and
+// OPENSRO_SKILLS_CSV at CSVs exported from a real Media.pk2 (deploy/README.md)
 // and every roster species must come back with no change and nothing kept.
 // Skipped without them -- no game data is committed, so CI cannot run it.
 func TestSpeciesTableMatchesTheRealExport(t *testing.T) {
-	mpath, spath := os.Getenv("SRREVAMP_MONSTERS_CSV"), os.Getenv("SRREVAMP_SKILLS_CSV")
+	mpath, spath := os.Getenv("OPENSRO_MONSTERS_CSV"), os.Getenv("OPENSRO_SKILLS_CSV")
 	if mpath == "" || spath == "" {
-		t.Skip("SRREVAMP_MONSTERS_CSV and SRREVAMP_SKILLS_CSV name no real export")
+		t.Skip("OPENSRO_MONSTERS_CSV and OPENSRO_SKILLS_CSV name no real export")
 	}
 	tab, err := species.LoadCSV(mpath)
 	if err != nil {

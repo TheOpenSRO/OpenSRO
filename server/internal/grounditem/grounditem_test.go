@@ -432,7 +432,7 @@ func TestQuestItemIsOwnerOnlyEvenForParty(t *testing.T) {
 // "ITEM_QNO_RM_ARCHEMY", with dwCmpFlags 0 -- case-sensitive, so a lowercase
 // or mixed-case spelling is NOT exempt -- and a codename shorter than 19
 // characters cannot match. An empty codename (an export without the column)
-// answers false by srrevamp's own rule.
+// answers false by OpenSRO's own rule.
 func TestOwnerOnlyPickPredicate(t *testing.T) {
 	for _, c := range []struct {
 		t1, t2, t3 int

@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/nest"
-	"github.com/OpenSRO/srrevamp/server/internal/session"
-	"github.com/OpenSRO/srrevamp/server/internal/spawn"
-	"github.com/OpenSRO/srrevamp/server/internal/species"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/nest"
+	"github.com/OpenSRO/OpenSRO/server/internal/session"
+	"github.com/OpenSRO/OpenSRO/server/internal/spawn"
+	"github.com/OpenSRO/OpenSRO/server/internal/species"
 )
 
 // Round 661: the uniques on the full map, on SYNTHETIC rows only.

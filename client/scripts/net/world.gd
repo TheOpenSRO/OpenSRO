@@ -14,7 +14,7 @@ const OP_ENTITY_LEFT := 0x0025         # server -> client, broadcast
 const OP_CHANGE_ZONE := 0x0026         # client -> server
 const OP_CHANGE_ZONE_RESULT := 0x0027  # server -> client
 ## The player's own revive (round 548; docs/protocol/monster_ai.md, "The
-## player's dead state"). Two more of srrevamp's own placeholders
+## player's dead state"). Two more of OpenSRO's own placeholders
 ## (docs/protocol/PROTOCOL_DECISION.md), free in the world group on
 ## 2026-09-24: 0x0028/0x0029 appeared in no non-test file under
 ## server/internal or client/scripts/net. OpRevive is empty; OpReviveResult
@@ -29,7 +29,7 @@ const OP_CHANGE_ZONE_RESULT := 0x0027  # server -> client
 ## returns the character to its return point (GObjPC::Revive(0)), 2 revives it
 ## where it lies -- only while its max level is at most 10 (`cmp al,0xa` at
 ## 0x51017f on IGObj::GetMaxLevel, vtable +0x128). Since round 665
-## srrevamp's placeholder carries that byte (encode_revive); an empty request
+## OpenSRO's placeholder carries that byte (encode_revive); an empty request
 ## (a client before it) is read by the server as the one choice the level has.
 const OP_REVIVE := 0x0028              # client -> server, u8 option
 const OP_REVIVE_RESULT := 0x0029       # server -> client

@@ -9,17 +9,17 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/gm"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/gm"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // Round 675: "after I died, the Jangan teleport stopped working". These tests
 // walk the server's half of the report -- die, come back by each of the ways
 // a character comes back, walk to Jangan's gate, ask for Donwhang -- with and
-// without -single-frame, which srrevamp-01 runs (-full-map turns it on). They
+// without -single-frame, which opensro-01 runs (-full-map turns it on). They
 // speak the wire and the fixtures only, so the same file runs against the
 // tree before the round. They PASS there too: the live log (WORLD_ISSUES,
 // round 675) shows the player's client never sent the request, and no server

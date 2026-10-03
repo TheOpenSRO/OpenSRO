@@ -19,7 +19,7 @@ class_name ClientConfig
 ##     renderer: compatibility         # or forward_plus (round 693, RendererChoice)
 ##   servers:
 ##     MyServer:                       # the name the login screen shows
-##       type: srrevamp                # REQUIRED: srrevamp or legacy
+##       type: opensro                 # REQUIRED: opensro or legacy
 ##       gateway: { address: login.example.com, port: 15779 }
 ##       agent:   { address: agent.example.com, port: 15884 }
 ##     Other:
@@ -31,13 +31,13 @@ class_name ClientConfig
 ##   another; the client connects to its gateway. Absent or empty: today's
 ##   editable host:port field.
 ## - `type` (round 681, OURS, required) is the protocol the server speaks:
-##   `srrevamp`, this project's own (the status is asked with 0x0007), or
+##   `opensro`, this project's own (the status is asked with 0x0007), or
 ##   `legacy`, the original gateway protocol (the status is the gateway's own
 ##   shard list, asked the way the retail client asks: ServerStatus,
 ##   RetailGatewayClient). An entry without a type, or with another word, is
 ##   skipped with a warning. Once this project's server also speaks the
 ##   original protocol (the superset plan, docs/protocol/PROTOCOL_DECISION.md),
-##   `srrevamp` will mean "also has our extensions" rather than another wire.
+##   `opensro` will mean "also has our extensions" rather than another wire.
 ## - `gateway` is where the client connects (address + port), as retail's
 ##   DIVISIONINFO.TXT host list and GATEPORT.TXT port are (README).
 ## - `agent` is parsed and kept, not used yet: retail's gateway hands the
@@ -67,14 +67,19 @@ const DEFAULT_PORT := 15779
 const NAME_MAX := 32
 const SERVERS_MAX := 64
 ## Round 681: the values of a server's `type`.
-const TYPES := ["srrevamp", "legacy"]
+const TYPES := ["opensro", "legacy"]
+## Round 704: the project was called srrevamp until 2026-10-04, and a
+## config.yaml written before then names this project's servers
+## `type: srrevamp`. The file lives beside the game, untouched by the update,
+## so the old word is still read as `opensro`, with a warning to rename it.
+const OLD_TYPE_NAME := "srrevamp"
 
 class ServerEntry:
 	var name := ""
 	var gateway_host := ""
 	var gateway_port := DEFAULT_PORT
-	## "srrevamp" or "legacy" (TYPES).
-	var type := "srrevamp"
+	## "opensro" or "legacy" (TYPES).
+	var type := "opensro"
 	var agent_host := ""
 	var agent_port := 0
 	## The YAML line the entry starts on is not tracked; its order is.
@@ -92,10 +97,10 @@ var servers: Array = [] # of ServerEntry, in the file's order
 ## Where it was read from ("" when no file).
 var source := ""
 
-## `<executable's folder>/setting`, or SRREVAMP_SETTING_DIR (a developer's or
+## `<executable's folder>/setting`, or OPENSRO_SETTING_DIR (a developer's or
 ## a QA run's own folder), as custom_dir and the pk2 folder are found.
 static func setting_dir() -> String:
-	var env := OS.get_environment("SRREVAMP_SETTING_DIR")
+	var env := OS.get_environment("OPENSRO_SETTING_DIR")
 	if env != "":
 		return env
 	return OS.get_executable_path().get_base_dir().path_join("setting")
@@ -206,6 +211,9 @@ static func _entry(name: String, v, where: String, warnings: PackedStringArray) 
 		warnings.append("%s: server '%s' has no type (one of: %s) -- skipped" % [where, n, ", ".join(TYPES)])
 		return null
 	var type := str(t).strip_edges()
+	if type == OLD_TYPE_NAME:
+		warnings.append("%s: server '%s' type '%s' is the project's old name -- read as 'opensro'; rename it in the file" % [where, n, type])
+		type = "opensro"
 	if not (type in TYPES):
 		warnings.append("%s: server '%s' type '%s' is not one of: %s -- skipped" % [where, n, type, ", ".join(TYPES)])
 		return null

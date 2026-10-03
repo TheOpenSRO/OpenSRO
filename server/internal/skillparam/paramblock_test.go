@@ -560,7 +560,7 @@ func TestBuffEndsAt(t *testing.T) {
 }
 
 // Round 503: the self-heal shape. Only an instant (kind 0), untargeted row whose
-// completed walk carries a flat 'heal' and none of the terms srrevamp does not
+// completed walk carries a flat 'heal' and none of the terms OpenSRO does not
 // compute returns an amount; everything else returns (0, 0).
 func TestSelfHealAmounts(t *testing.T) {
 	heal := WordOf("heal")

@@ -3,7 +3,7 @@
 What the engine enforces about parties. Implemented in `server/internal/party`.
 
 Small system, and most of it was already recovered — this page collects it and
-adds the one rule srrevamp was missing entirely.
+adds the one rule OpenSRO was missing entirely.
 
 ## Size: two caps, selected by a flag
 
@@ -25,7 +25,7 @@ applies when; the errors do, because the client names them:
 So **bit 0 of the party's `+0x10` is the experience-sharing flag**, and an
 exp-sharing party holds eight while a non-sharing one holds four.
 
-srrevamp's parties share experience unconditionally — every member counts toward
+OpenSRO's parties share experience unconditionally — every member counts toward
 `leveldata.PartyExpBonus` and no flag turns it off — so eight is the cap that
 applies, and `MaxSizeNotShared` is recorded for completeness rather than use.
 
@@ -39,7 +39,7 @@ above is from the join-time check itself.
 
 ## A party leader must be level 5
 
-**Recovered 2026-09-17**, and srrevamp had no such rule.
+**Recovered 2026-09-17**, and OpenSRO had no such rule.
 
 Two call sites enforce it, both calling vtable slot 73 (`+0x124`, the level
 getter) and comparing against the same literal:
@@ -85,7 +85,7 @@ hit pulls neighbouring monsters in only in an exp-sharing party;
 `pc+0x1cb8` rather than the getter (`0x410018 mov eax,[esi+0x1cb8]`, `0x410024
 test byte [eax+0x10],cl` with `cl = 1`) and adds 0.15/0.30/0.45 for a target 5/7/9
 or more levels up only when it is set (round 480, `leveldata.ExpDiffScale`;
-srrevamp pays it only to a party of two or more, round 485, because the engine
+OpenSRO pays it only to a party of two or more, round 485, because the engine
 never creates a party of one);
 **bit 1** is item sharing --
 `ground_items.md`: a party member may pick a reserved drop when the party
@@ -104,7 +104,7 @@ party two 0x68-byte member records (`0x5bad30`/`0x5bae80`: name, level,
 HP ratio, position...) at `+0x38/+0x3c`; it is dispatched through the request's
 slot 3 to another server (the party lives in the global/agent process), and the
 flag byte lands in the party object when the response comes back -- a path the
-local store patterns cannot see. srrevamp's parties are its own design, so
+local store patterns cannot see. OpenSRO's parties are its own design, so
 nothing shipped depends on it.
 
 ## Not recovered

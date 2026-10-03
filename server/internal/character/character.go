@@ -252,7 +252,7 @@ const (
 //
 // THIS IS WHY A LEVEL-40 CHARACTER IS NOT A LEVEL-1 ONE WITH MORE HEALTH.
 // MaxHPFor is Str * 10 * 1.02^(level-1): the exponential term is the smaller
-// half of the growth, and the Str term is the larger. srrevamp held Str and Int
+// half of the growth, and the Str term is the larger. OpenSRO held Str and Int
 // fixed for a character's whole life until 2026-09-16, which left a level-40
 // character on roughly a third of the health the real game gives one.
 const StatGrowthPerLevel = 1
@@ -450,7 +450,7 @@ type Character struct {
 	// `CInstancePC::CharData_BindDBColumns` to charData `+0x86`
 	// (docs/protocol/db_bind_offsets.tsv, an offset verified twice over -- from
 	// the decompilation and again from raw disassembly). The engine keeps the
-	// count in the character row, so it survives a logout; srrevamp used to drop
+	// count in the character row, so it survives a logout; OpenSRO used to drop
 	// it on disconnect and said so in berserk.Tracker's comment.
 	//
 	// The orbs are earned on a killing blow and spent five at a time on
@@ -467,11 +467,11 @@ type Character struct {
 	// `PosX`/`PosY`/`PosZ` are bound by CharData_BindDBColumns to charData
 	// +0x94, +0x98, +0x9c and +0xa0 (docs/protocol/db_bind_offsets.tsv), so
 	// the engine keeps the position on the character row. The SHAPE is
-	// srrevamp's own (schema.go's Mapping says how): the engine's position is
-	// local to LatestRegion, srrevamp's is a world point in the frame centred
+	// OpenSRO's own (schema.go's Mapping says how): the engine's position is
+	// local to LatestRegion, OpenSRO's is a world point in the frame centred
 	// on region Frame ("x/y", the FrameRegion the session named -- see
 	// worldmap.ToWorld), plus the zone label the client builds its grid from.
-	// When the save happens is srrevamp's own too (session/position.go).
+	// When the save happens is OpenSRO's own too (session/position.go).
 	Zone             string
 	Frame            string
 	PosX, PosY, PosZ float64

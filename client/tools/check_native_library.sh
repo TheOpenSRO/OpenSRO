@@ -1,12 +1,12 @@
 #!/bin/bash
 # Checks a built native-readers library before it ships (round 668; native/README.md, "CI").
-#   client/tools/check_native_library.sh <srrevamp_native.dll> windows
-#   client/tools/check_native_library.sh <libsrrevamp_native.so> linux
+#   client/tools/check_native_library.sh <opensro_native.dll> windows
+#   client/tools/check_native_library.sh <libopensro_native.so> linux
 #
 # windows: the DLL must stand alone. Every DLL it imports must be a Windows system DLL --
 #   no MinGW runtime (libgcc_s_seh-1.dll, libwinpthread-1.dll, libstdc++-6.dll) and nothing
 #   else a player would have to install. It must export gdext_rust_init (the entry symbol
-#   client/srrevamp_native.gdextension names) and carry no debug sections or COFF symbols.
+#   client/opensro_native.gdextension names) and carry no debug sections or COFF symbols.
 # linux: the .so must export gdext_rust_init, need only base system libraries, ask for no
 #   glibc symbol newer than $GLIBC_FLOOR (default 2.28: Godot 4.2.2's own Linux binary
 #   needs GLIBC_2.28 at most, MEASURED round 668), and be stripped.

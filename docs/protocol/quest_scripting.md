@@ -178,9 +178,9 @@ the next probe, and it is a code question now rather than a data one.
 | objectives, the other 543 | no table exists anywhere; the generic `CBasicQuest` path is unread |
 | helpers the handlers call | `CBasicQuest__SetupMissionNPC` and the rest of the `CBasicQuest` surface |
 
-## What this means for srrevamp
+## What this means for OpenSRO
 
-Any quest objectives srrevamp ships are **own design**, for all 696 quests —
+Any quest objectives OpenSRO ships are **own design**, for all 696 quests —
 there is no table to import, and that is now proven by enumerating the server's
 85 reference tables rather than by failing to find one.
 
@@ -193,7 +193,7 @@ previous note.
 
 **Not recovered:** the bodies. Specifying the *lifecycle* does not specify what
 any individual quest does; that is 29 compiled classes' worth of reading, and
-nothing in srrevamp needs it until it ships those quests. The lifecycle is the
+nothing in OpenSRO needs it until it ships those quests. The lifecycle is the
 part that generalises.
 
 
@@ -594,9 +594,9 @@ the binary names their functions for us even though the files are unreachable.
 **A refutation that names the part it could not test is what made this
 recoverable.**
 
-### What a srrevamp implementation would need
+### What an OpenSRO implementation would need
 
 The convention is now known: for each of the 542, a Lua function per event named
-`Handler<Event>_<QUESTNAME>`. srrevamp has no Lua and no quest system, so nothing
+`Handler<Event>_<QUESTNAME>`. OpenSRO has no Lua and no quest system, so nothing
 is wired — but if quests are ever built, this is the shape the retail data
 expects, and `questdata.txt` column 2 supplies the `<QUESTNAME>`.

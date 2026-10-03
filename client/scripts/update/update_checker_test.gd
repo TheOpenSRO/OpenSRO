@@ -30,21 +30,27 @@ func _init() -> void:
 	_check(not UpdateChecker.is_newer_version("v1.0.0", "not-a-version"), "unparseable latest tag never claims an update")
 	_check(not UpdateChecker.is_newer_version("not-a-version", "v1.0.0"), "unparseable current tag never claims an update")
 
-	_check(UpdateChecker.asset_name_for_os("Windows") == "srrevamp-windows.zip", "real Windows asset name (got %s)" % UpdateChecker.asset_name_for_os("Windows"))
-	_check(UpdateChecker.asset_name_for_os("Linux") == "srrevamp-linux.zip", "real Linux asset name (got %s)" % UpdateChecker.asset_name_for_os("Linux"))
+	_check(UpdateChecker.asset_name_for_os("Windows") == "opensro-windows.zip", "real Windows asset name (got %s)" % UpdateChecker.asset_name_for_os("Windows"))
+	_check(UpdateChecker.asset_name_for_os("Linux") == "opensro-linux.zip", "real Linux asset name (got %s)" % UpdateChecker.asset_name_for_os("Linux"))
 	_check(UpdateChecker.asset_name_for_os("macOS") == "", "no real asset name for a platform this project doesn't build for")
+	# Round 704: the project and its repository are OpenSRO; old installs look
+	# for the old names and are not updated (the user's decision, 2026-10-04).
+	_check(AutoUpdater.RELEASES_API_URL == "https://api.github.com/repos/OpenSRO/OpenSRO/releases/latest",
+		"the releases API is the OpenSRO repository's (got %s)" % AutoUpdater.RELEASES_API_URL)
+	_check(AutoUpdater.windows_relaunch_script(1, "C:/G/jogo-a\u00e7\u00e3o.exe").contains("%~dp0OpenSRO.exe"),
+		"a non-ASCII executable name falls back to OpenSRO.exe, release.yml's name")
 
 	var assets := [
-		{"name": "srrevamp-windows.zip", "browser_download_url": "https://example.com/windows.zip", "url": "https://api.example.com/assets/1"},
-		{"name": "srrevamp-linux.zip", "browser_download_url": "https://example.com/linux.zip", "url": "https://api.example.com/assets/2"},
+		{"name": "opensro-windows.zip", "browser_download_url": "https://example.com/windows.zip", "url": "https://api.example.com/assets/1"},
+		{"name": "opensro-linux.zip", "browser_download_url": "https://example.com/linux.zip", "url": "https://api.example.com/assets/2"},
 	]
-	_check(UpdateChecker.find_asset_url(assets, "srrevamp-windows.zip") == "https://example.com/windows.zip", "finds the real matching asset's URL")
-	_check(UpdateChecker.find_asset_url(assets, "srrevamp-macos.zip") == "", "no real URL for an asset that isn't present")
+	_check(UpdateChecker.find_asset_url(assets, "opensro-windows.zip") == "https://example.com/windows.zip", "finds the real matching asset's URL")
+	_check(UpdateChecker.find_asset_url(assets, "opensro-macos.zip") == "", "no real URL for an asset that isn't present")
 	_check(UpdateChecker.find_asset_url(assets, "") == "", "empty asset name never matches")
-	_check(UpdateChecker.find_asset_url([], "srrevamp-windows.zip") == "", "no real assets at all -> no URL")
+	_check(UpdateChecker.find_asset_url([], "opensro-windows.zip") == "", "no real assets at all -> no URL")
 
-	_check(UpdateChecker.find_asset_api_url(assets, "srrevamp-windows.zip") == "https://api.example.com/assets/1", "finds the real matching asset's API url")
-	_check(UpdateChecker.find_asset_api_url(assets, "srrevamp-macos.zip") == "", "no real API url for an asset that isn't present")
+	_check(UpdateChecker.find_asset_api_url(assets, "opensro-windows.zip") == "https://api.example.com/assets/1", "finds the real matching asset's API url")
+	_check(UpdateChecker.find_asset_api_url(assets, "opensro-macos.zip") == "", "no real API url for an asset that isn't present")
 	_check(UpdateChecker.find_asset_api_url(assets, "") == "", "empty asset name never matches (API url)")
 
 	if _failures == 0:

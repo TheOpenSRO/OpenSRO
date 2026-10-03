@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 )
 
 // LegacyWarehouseTable is the per-character warehouse table this server

@@ -1,4 +1,4 @@
-# Audit of srrevamp's "nothing to recover here" claims
+# Audit of OpenSRO's "nothing to recover here" claims
 
 Fifteen packages under `server/internal/` carry a comment saying some value is
 own design, or that there is no real data to recover. Those read like settled
@@ -40,7 +40,7 @@ word anywhere in the name.
 | `friend` | FRIEND, 8 codes | **was wrong** — list cap 20 recovered |
 | `guild` | GUILD, 61 codes | **was incomplete** — member cap and permission mask recovered |
 | `inventory` | STRG, 92 codes | **was incomplete** — bounds and the quantity guard recovered |
-| `trade` | STRG (deal codes) | holds; the two exploit questions it raised were checked and srrevamp was already correct |
+| `trade` | STRG (deal codes) | holds; the two exploit questions it raised were checked and OpenSRO was already correct |
 | `duel` | 2 codes, both free-PvP mode changes | **holds** — no duel challenge/accept/refuse family exists |
 | `quest` | 4 genuine codes (Roc entrance, trap-making) | **holds** — specific mechanics, no system limit |
 | `berserk` | 1 code, `HWANITEM_CANNOT_USE`, about an item | holds — and the mechanic was separately recovered anyway |

@@ -62,7 +62,7 @@ static func id_for(kind: String) -> int:
 	return int(KIND_IDS.get(kind, CursorSet.ID_NORMAL))
 
 ## Loads the set once: the exe search (CursorSet.exe_candidates) against
-## SRREVAMP_CLIENT_EXE, where Data.pk2 resolved and where this executable is,
+## OPENSRO_CLIENT_EXE, where Data.pk2 resolved and where this executable is,
 ## then (round 700) a scan of those folders for a renamed client; logs the
 ## file used or every path tried, and missing_hint() says it on screen.
 static func load_once() -> void:
@@ -72,7 +72,7 @@ static func load_once() -> void:
 	_pk2_dir = Pk2Config.data_path().get_base_dir()
 	if _pk2_dir == "":
 		_pk2_dir = Pk2Config.pk2_dir()
-	var override := OS.get_environment("SRREVAMP_CLIENT_EXE")
+	var override := OS.get_environment("OPENSRO_CLIENT_EXE")
 	var own := OS.get_executable_path()
 	var candidates := CursorSet.exe_candidates(Pk2Config.data_path(), own, override)
 	var r := CursorSet.load_first(candidates)
@@ -261,7 +261,7 @@ static func item_kind(left_held: bool) -> String:
 ## of the 3 x 3 message blocks of 320 units around the block it stands in
 ## (SR_GameServer CMsgBlock slot 2 0x534340, CRgnTerrain::vslot_006
 ## 0x53ad30's 320.0 -- READ in round 664, docs/protocol/monster_ai.md): 320
-## to 640 units each way. srrevamp's server applies that window to monsters
+## to 640 units each way. OpenSRO's server applies that window to monsters
 ## (session.AOIRadius); this client builds NPCs and gates itself for its 5 x 5
 ## loaded regions, so the hover applies the window here, to every class. A
 ## gate is a server-sent object too (READ, round 700's review: CITeleportGate

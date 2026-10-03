@@ -22,7 +22,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/OpenSRO/srrevamp/server/internal/retailgw"
+	"github.com/OpenSRO/OpenSRO/server/internal/retailgw"
 )
 
 func main() {

@@ -271,7 +271,7 @@ func _test_world_tick(world: Node) -> void:
 		skel.set_meta(MonsterDraw.META_CULL, true)
 		skel.set_meta(MonsterDraw.META_RADIUS, radius)
 		skel.set_meta(MonsterDraw.META_HIDE, true)
-		skel.set_meta("srrevamp_crowd_layout", "synthetic") # MonsterCrowd.META_LAYOUT, spelled out so the base parses
+		skel.set_meta("opensro_crowd_layout", "synthetic") # MonsterCrowd.META_LAYOUT, spelled out so the base parses
 		body.add_child(skel)
 		holder.add_child(body)
 		world.call("_animate_skeleton", skel, clip)

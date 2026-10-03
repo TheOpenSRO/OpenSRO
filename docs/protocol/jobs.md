@@ -144,7 +144,7 @@ readers pin (`docs/LEVELING.md`). So each job kind has its own per-level column
 in the same `leveldata.txt` the character curve comes from, and the function
 that reads it is the one maintaining the job record's running total at `+0x20`.
 
-srrevamp models job kinds but not job levels, so this is recorded rather than
+OpenSRO models job kinds but not job levels, so this is recorded rather than
 wired.
 
 ## The reward statement is issued for two kinds only (round 297)

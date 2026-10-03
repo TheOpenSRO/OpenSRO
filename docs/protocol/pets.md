@@ -228,7 +228,7 @@ than a resemblance: not "140 rows looks like leveldata" but "the character's
 own level-set indexes this exact vector by level".
 
 By `refdata_tables.md`'s enumeration the per-level table is `_REFLEVEL`
-(`leveldata.txt`), which srrevamp already loads as `leveldata.csv`. The link
+(`leveldata.txt`), which OpenSRO already loads as `leveldata.csv`. The link
 from this vector to that loader is **not** traced -- the rows are placed from
 further out than `0x0082afc0`, and no function references both the global and a
 `"_REF…"` literal -- so the identification rests on the use site and the

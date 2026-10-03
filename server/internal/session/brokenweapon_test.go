@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/durability"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/durability"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // The serviceability half of a skill's cast requirement.
@@ -16,7 +16,7 @@ import (
 // Skill_CheckCastRequirement (0x0058d480) returns 0x300f when vtable slot 372,
 // 399 or 400 answers 0, and the client names 0x300f
 // UIIT_SKILL_USE_FAIL_BROKEN_WEAPON -- so a cast requirement wants the item
-// present AND not broken (docs/protocol/igobj_vtable.md). srrevamp already
+// present AND not broken (docs/protocol/igobj_vtable.md). OpenSRO already
 // dropped a broken item's STATS and still let the cast through; weaponIsBroken
 // is what closes that, and this pins its contract.
 //

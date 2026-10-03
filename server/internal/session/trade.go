@@ -8,13 +8,13 @@ import (
 	"math"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/trade"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/trade"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // Trade opcodes, our own protocol. All require a prior successful
@@ -370,7 +370,7 @@ var tradeRequestTimeout = trade.RequestTimeout
 // tradeTooFarReason refuses a trade request, or its acceptance, when the two
 // players are trade.RequestRange or more apart. The engine answers 4,
 // UIIT_STT_ERR_COMMON_TOO_FAR (docs/protocol/error_codes.md). Our result
-// carries a text, so the wording is srrevamp's own.
+// carries a text, so the wording is OpenSRO's own.
 const tradeTooFarReason = "too far away"
 
 // tradeInRange reports whether a and b stand closer than trade.RequestRange:
@@ -397,7 +397,7 @@ func tradeInRange(a, b world.Entity) bool {
 // GObjPC_HandleTradeMsg_081 (`0x005154e0`), in its order (round 500):
 //
 //  1. the target is the requester, or is not a player in the world: 3.
-//     The two texts below are srrevamp's own;
+//     The two texts below are OpenSRO's own;
 //  2. the requester is in an accepted trade (INTERACTMODE 2): 0x1833;
 //  3. the requester is a party to a pending request (INTERACTMODE 1, which
 //     OpenTradeSession sets on BOTH parties, so this covers the requester and
@@ -410,7 +410,7 @@ func tradeInRange(a, b world.Entity) bool {
 //  5. the target is busy: 0x181e, from CTradeMgr::OpenTradeSession
 //     (`0x0047f620`) running GObjPC::FUN_004ea050 on it (`0x47f6e0`).
 //
-// Not modelled, because srrevamp has no state to test:
+// Not modelled, because OpenSRO has no state to test:
 //   - the first two checks (FUN_004f0a00, a silent drop; vcall 0x244, 0x185f);
 //   - the requester's life state and GROUPMODE, which FUN_004ea050 also
 //     requires and whose failure answers 0x181d, as do the INTERACTMODE
@@ -458,7 +458,7 @@ func handleTradeRequest(ctx context.Context, sess *gateway.Session, p *proto.Pac
 	if !ok {
 		// A requester with no position cannot be measured. The engine has no
 		// such case -- every player object has a position -- so this refusal
-		// and its wording are srrevamp's own.
+		// and its wording are OpenSRO's own.
 		return refuse("not in the world")
 	}
 	if !tradeInRange(self, targetEntity) {
@@ -932,11 +932,11 @@ func tradeErrorMessage(err error) string {
 //
 // Also worth copying: the check happens before anything is removed. The engine
 // goes further and refuses at OFFER time, so the player finds out while
-// arranging the trade rather than on confirming it; srrevamp checks at commit,
+// arranging the trade rather than on confirming it; OpenSRO checks at commit,
 // which closes the item-loss hole but reports later.
 //
 // Worth noting: the `0xd` is the engine counting from slot 13, because slots
-// 0..12 are the equipment slots in the same array (see inventory.go). srrevamp
+// 0..12 are the equipment slots in the same array (see inventory.go). OpenSRO
 // keeps the two spaces separate, so there is no offset to apply here.
 func tradeSpaceShortfall(ctx context.Context, inv inventory.Store, sess *trade.Session) (string, error) {
 	for _, side := range []struct {

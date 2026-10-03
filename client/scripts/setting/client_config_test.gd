@@ -9,7 +9,7 @@ extends SceneTree
 ##   - ClientConfig: servers in file order with their gateway and agent,
 ##     a bad entry skipped with the others kept, a broken file ignored whole,
 ##     a missing file empty, the remembered server picked while listed.
-##   - Round 681: every server's `type` (srrevamp or legacy) is required; an
+##   - Round 681: every server's `type` (opensro or legacy) is required; an
 ##     entry without one, or with another word, is skipped with a warning
 ##     naming the server and the allowed values. NEGATIVE: before round 681
 ##     ServerEntry has no `type` and the entries are kept -- those checks
@@ -53,7 +53,7 @@ const EXAMPLE := """global:
   region: US
 servers:
   FirstServer:
-    type: srrevamp
+    type: opensro
     gateway: { address: login.example.com, port: 15779 }
     agent:   { address: agent.example.com, port: 15884 }
   Second:
@@ -153,7 +153,7 @@ func _config() -> void:
 	_check(a.name == "FirstServer" and b.name == "Second", "the names are the keys, in order")
 	_check(a.gateway_host == "login.example.com" and a.gateway_port == 15779 and a.gateway_address() == "login.example.com:15779", "the gateway")
 	_check(a.agent_host == "agent.example.com" and a.agent_port == 15884, "the agent is kept")
-	_check(a.type == "srrevamp" and b.type == "legacy", "each server's type: %s, %s" % [a.type, b.type])
+	_check(a.type == "opensro" and b.type == "legacy", "each server's type: %s, %s" % [a.type, b.type])
 	_check(c.pick_server("Second") == b, "the remembered server while listed")
 	_check(c.pick_server("Gone") == a and c.pick_server("") == a, "else the file's first")
 	_check(ClientConfig.new().pick_server("x") == null, "no servers, no pick")
@@ -163,19 +163,19 @@ func _config() -> void:
 	w = PackedStringArray()
 	c = ClientConfig.from_text("""servers:
   Good:
-    type: srrevamp
+    type: opensro
     gateway: { address: 192.0.2.10 }
   NoGateway:
-    type: srrevamp
+    type: opensro
     agent: { address: a.example.com, port: 1 }
   BadPort:
-    type: srrevamp
+    type: opensro
     gateway: { address: x.example.com, port: 70000 }
   BadHost:
-    type: srrevamp
+    type: opensro
     gateway: { address: "http://x.example.com/" }
   TextPort:
-    type: srrevamp
+    type: opensro
     gateway: { address: x.example.com, port: abc }
   NoType:
     gateway: { address: n.example.com }
@@ -198,18 +198,25 @@ global:
 	var joined := "\n".join(w)
 	for frag in ["NoGateway", "BadPort", "BadHost", "TextPort", "BadAgent", "NotAMap", "global.colour", "loginScreen"]:
 		_check(joined.contains(frag) or (frag == "loginScreen" and joined.contains("evil")), "a warning names %s" % frag)
-	_check(joined.contains("server 'NoType' has no type (one of: srrevamp, legacy) -- skipped"), "a server without a type is skipped, the warning names it and the values")
-	_check(joined.contains("server 'BadType' type 'retail' is not one of: srrevamp, legacy -- skipped"), "a server with an unknown type is skipped likewise")
+	_check(joined.contains("server 'NoType' has no type (one of: opensro, legacy) -- skipped"), "a server without a type is skipped, the warning names it and the values")
+	_check(joined.contains("server 'BadType' type 'retail' is not one of: opensro, legacy -- skipped"), "a server with an unknown type is skipped likewise")
 	_check(c.server_named("NoType") == null and c.server_named("BadType") == null, "neither is listed")
+
+	# Round 704: a file written before the rename names this project's
+	# servers `type: srrevamp`; it is read as opensro, with a warning.
+	w = PackedStringArray()
+	c = ClientConfig.from_text("servers:\n  Old:\n    type: srrevamp\n    gateway: { address: o.example.com }\n", "old.yaml", w)
+	_check(c.servers.size() == 1 and c.servers[0].type == "opensro", "the old type name is read as opensro (%s)" % c.describe())
+	_check("\n".join(w).contains("type 'srrevamp' is the project's old name"), "and warned about: %s" % [w])
 
 	# A broken file: ignored whole, the line in the warning.
 	w = PackedStringArray()
-	c = ClientConfig.from_text("servers:\n  A:\n    type: srrevamp\n    gateway: { address: a.example.com\n", "broken.yaml", w)
+	c = ClientConfig.from_text("servers:\n  A:\n    type: opensro\n    gateway: { address: a.example.com\n", "broken.yaml", w)
 	_check(not c.has_servers() and c.source == "", "a file that does not parse is ignored whole")
 	_check(w.size() == 1 and w[0].contains("broken.yaml line 4:"), "its warning names the file and line: %s" % [w])
 
 	w = PackedStringArray()
-	c = ClientConfig.from_text("servers:\n  \"A \":\n    type: srrevamp\n    gateway: { address: a.example.com }\n  A:\n    type: srrevamp\n    gateway: { address: b.example.com }\n", "dup.yaml", w)
+	c = ClientConfig.from_text("servers:\n  \"A \":\n    type: opensro\n    gateway: { address: a.example.com }\n  A:\n    type: opensro\n    gateway: { address: b.example.com }\n", "dup.yaml", w)
 	_check(c.servers.size() == 1 and c.servers[0].gateway_host == "a.example.com", "'A ' and 'A' are one name: the first stands (%s)" % c.describe())
 	_check("\n".join(w).contains("listed twice"), "and the second is warned about: %s" % [w])
 
@@ -233,10 +240,10 @@ func _files() -> void:
 	w = PackedStringArray()
 	c = ClientConfig.load_file(big, w)
 	_check(not c.has_servers() and w.size() == 1 and w[0].contains("bytes, more than"), "a file over %d bytes is not read: %s" % [YamlLite.MAX_BYTES, w])
-	OS.set_environment("SRREVAMP_SETTING_DIR", _dir)
-	_check(ClientConfig.setting_dir() == _dir and ClientConfig.config_path() == _dir.path_join("config.yaml"), "SRREVAMP_SETTING_DIR overrides the folder")
+	OS.set_environment("OPENSRO_SETTING_DIR", _dir)
+	_check(ClientConfig.setting_dir() == _dir and ClientConfig.config_path() == _dir.path_join("config.yaml"), "OPENSRO_SETTING_DIR overrides the folder")
 	_check(ClientConfig.load_default().servers.size() == 2, "load_default reads <setting dir>/config.yaml")
-	OS.set_environment("SRREVAMP_SETTING_DIR", "")
+	OS.set_environment("OPENSRO_SETTING_DIR", "")
 	_check(ClientConfig.setting_dir() == OS.get_executable_path().get_base_dir().path_join("setting"), "else setting/ beside the executable")
 
 func _theme(intro: String) -> FrontEndTheme:

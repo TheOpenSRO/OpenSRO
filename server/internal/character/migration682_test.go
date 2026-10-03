@@ -37,7 +37,7 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS str INTEGER NOT NULL DEFAULT 20;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS intel INTEGER NOT NULL DEFAULT 20;
 -- Where the character last stood (round 573, cmd/server's -persist-position):
 -- the engine's _CHAR.LatestRegion / PosX / PosY / PosZ (charData +0x94..+0xa0,
--- docs/protocol/db_bind_offsets.tsv), in srrevamp's shape -- the zone label,
+-- docs/protocol/db_bind_offsets.tsv), in OpenSRO's shape -- the zone label,
 -- the frame region "x/y" and a world point in that frame (Character.Zone).
 -- latest_zone '' is "nothing saved": every existing row enters at the spawn.
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS latest_zone TEXT NOT NULL DEFAULT '';

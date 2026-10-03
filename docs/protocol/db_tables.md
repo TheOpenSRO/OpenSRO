@@ -2,7 +2,7 @@
 
 **Recovered 2026-09-18.** The server binary carries the names of the SQL objects it uses:
 **216 identifiers of the form `_Name`**, plus the handful of statements it builds inline.
-Together they say what the real server persists, which is the check srrevamp's own storage can
+Together they say what the real server persists, which is the check OpenSRO's own storage can
 be read against.
 
 ## Why the names are trustworthy and the mapping mostly is not

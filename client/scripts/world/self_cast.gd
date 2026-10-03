@@ -33,13 +33,13 @@ class_name SelfCast
 ##     tick's phase 0, before any walk (FUN_0058d7a0; PLAN_FRIEND_AT_MONSTER:
 ##     sent at once, no walk);
 ##   - at **another player** (CICUser) it is cast at that player
-##     (PLAN_FRIEND), after the client's own PK-state checks, which srrevamp
+##     (PLAN_FRIEND), after the client's own PK-state checks, which OpenSRO
 ##     has nothing to feed (no murder or job states).
 ## - **Every other row** needs a monster (PLAN_TARGET), or is refused with
 ##   nothing selected (PLAN_NEED_TARGET; PLAN_NO_TARGET with the retail text
 ##   when the 0x3011 test above holds). At a selected player it is refused
 ##   (PLAN_HOSTILE_AT_CHARACTER): a hostile cast at a player is
-##   player-versus-player, which srrevamp does not model (OURS).
+##   player-versus-player, which OpenSRO does not model (OURS).
 
 const PLAN_SELF := "self"
 const PLAN_GROUND := "ground"

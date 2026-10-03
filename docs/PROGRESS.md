@@ -201,7 +201,7 @@ index/summary.
   read-only PAT approach above instead.
 - Cut and published real version tags `v0.1.0` through `v0.1.5`, each via the `Release client`
   GitHub Actions workflow (`.github/workflows/release.yml`), producing
-  `srrevamp-windows.zip`/`srrevamp-linux.zip` release assets.
+  `opensro-windows.zip`/`opensro-linux.zip` release assets.
 - Fixed a real dropped-connection bug (`NetClient` polling a closed socket forever) and real
   other-player movement stutter (added client-side interpolation instead of an unscoped "64 tick
   server" ask — see `OPENSROS-THOUGHTS.md`, still not started).
@@ -243,7 +243,7 @@ full list and root-cause detail on each. Summary:
   directory blocks from scratch, repeatedly, for every object/texture a region needs. Added a
   per-archive directory cache keyed by file offset (safe: this reader is read-only).
 - **No log file to attach to a bug report.** Enabled Godot's built-in file logging
-  (`user://logs/srrevamp.log`), with the resolved path printed once at boot and documented in
+  (`user://logs/opensro.log`), with the resolved path printed once at boot and documented in
   README for both Windows/Linux.
 - Ground textures/grass, "randomly scattered" object placement, and the real-coordinate mismatch
   against jellybitz.github.io/xSROMap remain open — investigated by inspection (no bugs found in
@@ -310,7 +310,7 @@ placement using the character actually created, an SRO-style top-down-behind cam
 collision, and an exhaustive sweep for any real texture/asset mapping gaps.
 
 - **SOLVED a real, significant gap: a normal login never loaded any terrain at all.**
-  `_load_initial_region_neighborhood()` only ever read `SRREVAMP_MAPM_PATH`/`SRREVAMP_MAPO_PATH` --
+  `_load_initial_region_neighborhood()` only ever read `OPENSRO_MAPM_PATH`/`OPENSRO_MAPO_PATH` --
   this project's own dev/testing env vars -- to decide which real region to load at boot. It never
   once looked at the real server's own `EnterWorldResult.zone`. That meant a real downloaded client
   with real pk2 files in its local `pk2/` folder (from the previous entry) and zero env vars set
@@ -321,7 +321,7 @@ collision, and an exhaustive sweep for any real texture/asset mapping gaps.
   whenever the env var isn't set and a real logged-in session exists. **Live-verified end-to-end**
   the way a real downloaded user would experience it: built the actual Linux export, symlinked
   real `Map.pk2`/`Data.pk2` into a `pk2/` folder next to the real `.x86_64` binary, ran the real
-  standalone executable (not the editor) with zero `SRREVAMP_*` env vars and only a real zone
+  standalone executable (not the editor) with zero `OPENSRO_*` env vars and only a real zone
   ("jangan") supplied — real Jangan terrain and its full 3x3 region neighborhood loaded
   automatically, exactly as a real player's login should produce.
 - **SRO-style camera**: raised `CameraArm`'s pitch from 20° to 42° and its distance from ~10.8 to
@@ -396,7 +396,7 @@ data, a hideable UI, real Silkroad-style mouse controls, and GitHub Releases bui
 landed this pass.
 
 - **Local `pk2/` folder auto-detection**: new `Pk2Config` (`client/scripts/assets/pk2_config.gd`)
-  resolves each real archive as "the matching `SRREVAMP_*_PK2_PATH` env var if set, else a real
+  resolves each real archive as "the matching `OPENSRO_*_PK2_PATH` env var if set, else a real
   `pk2/<Name>.pk2` file next to the running executable" — `OS.get_executable_path().get_base_dir()`,
   not the current working directory, so it works regardless of how the user launches it. Wired into
   all three of `World3D.gd`'s pk2-opening functions, replacing the raw env-var reads directly but
@@ -853,8 +853,8 @@ landed this pass.
   used consistently by both `_zone_paths()` (per-zone-change reload) and `_reload_zone_assets()`
   (which previously called `_parse_region_coords()` on the raw zone string directly, so it needed
   its own fix to actually benefit from the new resolution).
-- **Live-verified end-to-end**: ran the real client with `SRREVAMP_MAPM_PATH` deliberately unset
-  (confirmed in the log: "SRREVAMP_MAPM_PATH not set -- ground stays a placeholder") and triggered
+- **Live-verified end-to-end**: ran the real client with `OPENSRO_MAPM_PATH` deliberately unset
+  (confirmed in the log: "OPENSRO_MAPM_PATH not set -- ground stays a placeholder") and triggered
   a zone reload for `"jangan"` via a temporary debug hook (removed after use) — the real terrain
   that loaded immediately afterward was `98\168.m`, proving the zone-label path alone (not any
   direct env var) now resolves to real, correctly-identified Jangan terrain.
@@ -1153,7 +1153,7 @@ landed this pass.
   on a second UV channel (`ao_on_uv2`) so it still spans the whole region continuously instead of
   repeating per quad. `World3D._load_real_ground_textures()` resolves a region's real vertex
   TextureInfo IDs through `tile2d.ifo` to real filenames and loads them from
-  `SRREVAMP_MAP_PK2_PATH`'s `Tile2D\` folder, cached by filename across regions. Added test
+  `OPENSRO_MAP_PK2_PATH`'s `Tile2D\` folder, cached by filename across regions. Added test
   coverage for the new builder function (2 surfaces from a mixed resolved/unresolved region, full
   quad coverage, correct per-surface material flags).
 - **Live-verified** against real region `100/100`: a close-up top-down render shows unmistakably
@@ -1923,7 +1923,7 @@ landed this pass.
   optional `max_rows` cap, reshaping the ribbon into an actual square using only the
   already-confirmed real per-tile data (no new claims). `World3D.gd` uses this to build a real,
   walkable **3x3 grid of regions** (`_load_region_neighborhood`) around whichever region
-  `SRREVAMP_MAPM_PATH`/a zone change resolves to, each region's own real `.m`/`.o` pair loaded and
+  `OPENSRO_MAPM_PATH`/a zone change resolves to, each region's own real `.m`/`.o` pair loaded and
   tiled at a fixed, this-project's-own-designed spacing (`REGION_SPAN`) -- real per-region world
   scale/adjacency still isn't confirmed, so this is honestly documented as scaffolding, not a claim
   about the real game's true spatial layout. Missing neighbor files (very likely near a real
@@ -2421,7 +2421,7 @@ registration table) rather than wide open.
 - Caught one real regression risk before it shipped: `World.gd`'s initial `_ready()` data requests
   (`list_monsters`, `list_inventory`, etc.) assumed a live connection unconditionally, since 2D was
   never used any other way. `World3D.gd` is deliberately also a standalone dev/asset-preview tool
-  (loaded directly with `SRREVAMP_*` env vars, no login flow) -- ported verbatim, those calls would
+  (loaded directly with `OPENSRO_*` env vars, no login flow) -- ported verbatim, those calls would
   have spammed `_send called while not connected` errors in that mode. Guarded them behind
   `NetClient.is_connected_to_server()`, matching the caution `_real_player_equipped_slots()`
   already uses for the same reason.
@@ -2537,7 +2537,7 @@ registration table) rather than wide open.
   naming (`"<x>/<y>"`, e.g. `"100/100"`, `"102/101"` -- the real (x, y) folder/filename convention
   confirmed in `MAPM_FORMAT.md`/`MAPO_FORMAT.md`) into that region's real internal paths
   (`"100\100.m"`, `"100\100.o"`, `"minimap\100x100.ddj"`, matching the exact convention this file's
-  own `SRREVAMP_MAPM_PATH`/`SRREVAMP_MAPO_PATH` doc comments already described). Returns `{}` for
+  own `OPENSRO_MAPM_PATH`/`OPENSRO_MAPO_PATH` doc comments already described). Returns `{}` for
   anything not shaped that way (e.g. the default spawn zone `"jangan"`) -- no guessed path for a
   zone that isn't a real region coordinate.
 - `_try_load_real_terrain`/`_try_load_real_map_objects`/`_load_real_terrain_texture` now take an
@@ -2588,7 +2588,7 @@ registration table) rather than wide open.
   signal/`current_zone` state, with GDScript tests in `world_test.gd`. All 35 GDScript suites still
   pass.
 - **Deliberately not done this pass**: `World3D.gd`'s actual terrain/object rendering is still a
-  one-time, env-var-driven load at scene startup (`SRREVAMP_MAPM_PATH`/`SRREVAMP_MAPO_PATH`) -- it
+  one-time, env-var-driven load at scene startup (`OPENSRO_MAPM_PATH`/`OPENSRO_MAPO_PATH`) -- it
   doesn't yet react to `NetClient.current_zone` changing by re-resolving those into real per-zone
   pk2 paths (`"100/100"` -> `Map\100\100.m`/`.o`) and reloading. That's real, scoped, honestly
   unfinished follow-up work (documented in `World3D.gd`'s top comment), not attempted here to avoid
@@ -3037,7 +3037,7 @@ registration table) rather than wide open.
   armor through the existing, already-tested equip flow — more honest than showing the one fixed
   armor set unconditionally on every character regardless of real state.
 - Guarded against hanging the many standalone dev-tool/screenshot contexts this project's asset
-  work relies on (`World3D.tscn` loaded directly with `SRREVAMP_*` env vars set, no real
+  work relies on (`World3D.tscn` loaded directly with `OPENSRO_*` env vars set, no real
   login/enter-world flow): the query is skipped entirely (defaults to no armor) unless
   `NetClient.is_connected_to_server()` is actually true, since awaiting a signal that can never
   fire would otherwise hang the scene forever. Verified this guard directly: rendered the scene
@@ -3060,7 +3060,7 @@ registration table) rather than wide open.
   they're built from the exact same real triangle data.
 - `World3D.gd`'s `_try_load_real_terrain()` now disables the placeholder `Ground/Collision` shape
   and attaches a `StaticBody3D`/`CollisionShape3D` built this way to the real terrain node
-  whenever `SRREVAMP_MAPM_PATH` loads successfully.
+  whenever `OPENSRO_MAPM_PATH` loads successfully.
 - Verified against a real region (`100/100.m`, loose file, no pk2 needed for this check): rendered
   headless and confirmed visually — the player capsule rests directly on the real terrain surface
   with a real cast shadow, not floating above it or clipping through.
@@ -3082,8 +3082,8 @@ registration table) rather than wide open.
   their real `.bsr` models.
 - Pulled real `Map.pk2`/`Data.pk2`/`Media.pk2` data for region 100/100 from the RE box and packed
   it into synthetic test archives (same technique used throughout this project — real bytes at
-  conventional real paths, never fabricated). Loaded both `SRREVAMP_MAPM_PATH` and
-  `SRREVAMP_MAPO_PATH` from the same region in one `World3D` run.
+  conventional real paths, never fabricated). Loaded both `OPENSRO_MAPM_PATH` and
+  `OPENSRO_MAPO_PATH` from the same region in one `World3D` run.
 - Confirmed working end-to-end via log output: 13211 real terrain tiles parsed (777 complete rows
   rendered), 58/58 real map objects loaded and resolved to just 4 distinct real `.bsr` models
   (added a `templates` cache in `_try_load_real_map_objects` keyed by resolved `.bsr` path, so
@@ -3137,7 +3137,7 @@ registration table) rather than wide open.
 - Full regression: Go clean (new nature-order test), all 19 GDScript suites pass.
 - This resolves the last open item from the object-index work — real outdoor map objects
   (buildings and vegetation both) now render with their real models through
-  `SRREVAMP_MAPO_PATH`. Remaining open items: real per-account character loadouts (the bigger
+  `OPENSRO_MAPO_PATH`. Remaining open items: real per-account character loadouts (the bigger
   architectural piece, not started), real-world object placement scale/position (objects render,
   but not necessarily at their true in-game size/position), and the `.t` texture-blend-map format.
 
@@ -3155,7 +3155,7 @@ registration table) rather than wide open.
   scattering dozens of those types would plausibly place.
 - Implemented `server/internal/objidx` (Go) and `client/scripts/objidx/objidx_reader.gd`
   (GDScript), both verified against the real file. Wired into `World3D.gd`
-  (`SRREVAMP_MAPO_PATH`): real `.mapo` placements now resolve through this table and render with
+  (`OPENSRO_MAPO_PATH`): real `.mapo` placements now resolve through this table and render with
   their real `.bsr` model instead of a placeholder marker.
 - Found a real, separate gap along the way: `res\nature\...` (tree/grass) `.bsr` files don't parse
   correctly with the current reader (mesh/material path fields come out garbled), while
@@ -3312,7 +3312,7 @@ registration table) rather than wide open.
   trees empirically via `..` back-references) in `docs/protocol/PK2_FORMAT.md` so a future pass
   doesn't re-tread this.
 - Real impact, scoped honestly: this doesn't invalidate anything already shipped via an exact,
-  known-in-advance path (every `SRREVAMP_*_PATH` env var still works fine — reading one named file
+  known-in-advance path (every `OPENSRO_*_PATH` env var still works fine — reading one named file
   doesn't require enumerating its siblings). It only affects *browsing* for paths this project
   doesn't already know, which is exactly what `pk2list` (no `-extract`) is for — so that tool's
   listings should be treated as a lower bound, not a complete inventory, until this is solved.
@@ -3333,8 +3333,8 @@ registration table) rather than wide open.
 - Extended `server/cmd/pk2list` with `-extract <path> -out <local file>` so a real file's bytes
   can actually be pulled out, not just listed — pulled the real `100x100.ddj` and its matching
   real `100/100.m` (a Shape-B region) to verify the pairing end-to-end.
-- `World3D.gd`'s terrain loader now takes `SRREVAMP_MAPM_TEXTURE_PATH` (+ its own
-  `SRREVAMP_MEDIA_PK2_PATH`, since minimap images live in yet a third separate archive from
+- `World3D.gd`'s terrain loader now takes `OPENSRO_MAPM_TEXTURE_PATH` (+ its own
+  `OPENSRO_MEDIA_PK2_PATH`, since minimap images live in yet a third separate archive from
   `Data.pk2`/`Map.pk2`) and applies it as the terrain's real texture, falling back to the previous
   per-tile vertex-color variation if unset. First render badly streaked (one square image
   stretched across a ~777-row-long recovered strip); fixed by tiling the texture roughly once per
@@ -3433,7 +3433,7 @@ registration table) rather than wide open.
   synthetic Shape-A-shaped fixtures (a resync-dropped-tile case included) and verified against a
   real `0/0.m`: 12417 real tiles in, 584 complete real rows recovered (9928 vertices, 18656
   triangles), real height range -53.8 to 598.5.
-- Wired into `World3D.gd` behind `SRREVAMP_MAPM_PATH` (+ its own separate `SRREVAMP_MAP_PK2_PATH`,
+- Wired into `World3D.gd` behind `OPENSRO_MAPM_PATH` (+ its own separate `OPENSRO_MAP_PK2_PATH`,
   since `Map.pk2` is a separate archive from `Data.pk2` in a real retail install — confirmed from
   the user's own file listing) — replaces the placeholder ground's visual mesh (not its collision
   shape yet) when set. Found and fixed two real placement bugs verified end-to-end against a
@@ -3517,14 +3517,14 @@ registration table) rather than wide open.
   instead of manual per-frame updates). Unit tested against a synthetic mirrored-triangle fixture,
   then **verified against all 7 real body-part files + the real skeleton**: a genuinely
   recognizable human T-pose figure, screenshot sent to OpenSRO.
-- Fixed a real usability gap this surfaced: `SRREVAMP_BSK_PATH`/`SRREVAMP_BAN_PATH` only accepted
+- Fixed a real usability gap this surfaced: `OPENSRO_BSK_PATH`/`OPENSRO_BAN_PATH` only accepted
   loose files, but real client installs only ship pk2 archives (confirmed by the user's own file
   listing — no loose files at all). New `client/scripts/assets/asset_source.gd` (`AssetSource`)
-  tries a path as a loose file first, falling back to a path inside `SRREVAMP_PK2_PATH` if set —
+  tries a path as a loose file first, falling back to a path inside `OPENSRO_PK2_PATH` if set —
   unit tested against both a real loose file and a real synthetic pk2 archive.
 - **Real "auto select" fix for the player's own character**: `World3D.gd` now auto-loads a real
   assembled character (real skeleton + real body-part meshes via `CharacterAssembler`) as the
-  player's body whenever `SRREVAMP_PK2_PATH` is set, using the conventional real path layout found
+  player's body whenever `OPENSRO_PK2_PATH` is set, using the conventional real path layout found
   during RE — no other env vars needed. Verified end-to-end by packing the real skeleton + body
   part bytes into a real synthetic pk2 at that exact conventional layout (a throwaway packer
   script, not committed) and running `World3D.tscn` against it: a real, correctly-scaled character
@@ -3544,8 +3544,8 @@ registration table) rather than wide open.
   fair callout: `World3D.gd` only had placeholder capsules and a placeholder ground, none of the
   proven `ObjectLoader`/`Skeleton3DBuilder` pipelines were reachable from it. Wired both in for
   real, gated behind environment variables (this project ships no game data, BYO):
-  `SRREVAMP_PK2_PATH`+`SRREVAMP_BSR_PATH` loads real textured scenery via `ObjectLoader`;
-  `SRREVAMP_BSK_PATH`+`SRREVAMP_BAN_PATH` builds a real, live-animated `Skeleton3D` via
+  `OPENSRO_PK2_PATH`+`OPENSRO_BSR_PATH` loads real textured scenery via `ObjectLoader`;
+  `OPENSRO_BSK_PATH`+`OPENSRO_BAN_PATH` builds a real, live-animated `Skeleton3D` via
   `Skeleton3DBuilder`, cycling through the `.ban` track's keyframes at a plausible (unconfirmed)
   30fps. Either can be left unset — same graceful-degradation pattern used throughout this
   project.
@@ -3556,7 +3556,7 @@ registration table) rather than wide open.
   `client/tools/render_skeleton3d_animated.gd` uses, now reusable and kept in sync with the
   animated pose every frame.
 - **Verified against real data, not just a compile check**: rendered `World3D.tscn` live with
-  `SRREVAMP_BSK_PATH`/`SRREVAMP_BAN_PATH` pointed at the real `sample.bsk`/`sample_bandi.ban`
+  `OPENSRO_BSK_PATH`/`OPENSRO_BAN_PATH` pointed at the real `sample.bsk`/`sample_bandi.ban`
   samples this project has used throughout — a real 38-bone, 100-keyframe skeleton animating
   live next to the player capsule, screenshot sent to OpenSRO. For scenery, no real `.bsr` exists
   inside any pk2 archive available in this environment (every real `.bsr` sample found so far was
@@ -5059,8 +5059,8 @@ select.
   of SQLite's `COLLATE NOCASE` (Postgres has no direct equivalent).
   Installed PostgreSQL 14 locally to actually test against a real instance rather than guessing —
   SQLite's `:memory:` trick doesn't exist for Postgres, so tests now share one local
-  `srrevamp_test` database and `TRUNCATE` their own tables per test for isolation
-  (`SRREVAMP_TEST_POSTGRES_DSN` env var overrides the default local connection string, used by CI's
+  `opensro_test` database and `TRUNCATE` their own tables per test for isolation
+  (`OPENSRO_TEST_POSTGRES_DSN` env var overrides the default local connection string, used by CI's
   new `postgres:16` service container). `cmd/server` and `cmd/import-refdata` now take a single
   `-postgres-dsn` flag instead of per-store SQLite file paths. Full test suite passes against the
   real local Postgres instance, and the built server binary smoke-tested starting up and connecting
@@ -5365,7 +5365,7 @@ select.
 
 ## 2026-08-19
 
-- Repo created at github.com/OpenSRO/srrevamp (private), `main` (default-intended prod) +
+- Repo created at github.com/OpenSRO/OpenSRO (private), `main` (default-intended prod) +
   `dev` (default branch, day-to-day work) pushed.
 - Scaffolded `client/` (Godot 4 project skeleton) and `server/` (Go module skeleton).
 - CI workflow added: builds/vets/tests server on every push/PR to main+dev, validates Godot
@@ -5382,7 +5382,7 @@ select.
   only. Revisit once repo goes public or account upgrades.
 - PR #1 (`dev` -> `main`, adds CONTRIBUTING.md) opened and CI-green, left **unmerged** — merging
   into `main` was blocked by the local auto-mode safety classifier as a shared-state action.
-  Needs a human merge: https://github.com/OpenSRO/srrevamp/pull/1
+  Needs a human merge: https://github.com/OpenSRO/OpenSRO/pull/1
 - No protocol/format work implemented yet — next up: `docs/protocol/PK2_FORMAT.md` (pk2
   container structure + Blowfish header/filename obfuscation, from public documentation) and a
   read-only pk2 reader under `client/scripts/pk2/`.
@@ -5394,8 +5394,8 @@ select.
   implementation here — not decompiler output.
 
 ### Open items for OpenSRO / OpenSRO
-- [ ] Merge PR #1 (dev -> main) — https://github.com/OpenSRO/srrevamp/pull/1
-- [ ] OpenSRO: accept the GitHub collaborator invite on OpenSRO/srrevamp
+- [ ] Merge PR #1 (dev -> main) — https://github.com/OpenSRO/OpenSRO/pull/1
+- [ ] OpenSRO: accept the GitHub collaborator invite on OpenSRO/OpenSRO
 - [ ] Decide: upgrade to GitHub Pro (unlocks real branch protection on private repo) vs. go
       public vs. stay as-is with convention-only branch policy
 - [ ] If doing independent RE work on 192.168.5.120 (or elsewhere), hand off structured findings

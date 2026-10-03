@@ -14,18 +14,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/account"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/mana"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/quest"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/account"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/quest"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // SKILL_CH_WATER_HEAL_A_01: id 149, group 296, kind 0, Target_Required 1,
@@ -152,7 +152,7 @@ func healRefusedCostsNothing(t *testing.T, w *healWorld, req *UseSkillRequest, w
 // READ, the retail client FUN_0081ba10 0x81be5e..0x81be99: Target_Required,
 // TargetType_Animal, no Land, no Building, and the selected id 0 -> 0x3011
 // UIIT_SKILL_USE_FAIL_NONESELECTETARGET, "The target is not selected."
-// Before round 622 srrevamp healed nobody and charged the cast.
+// Before round 622 OpenSRO healed nobody and charged the cast.
 func TestHealWithNothingSelectedIsRefused(t *testing.T) {
 	w := startHealWorld(t)
 	healRefusedCostsNothing(t, w, &UseSkillRequest{TargetType: TargetNone, HasTargetType: true}, "The target is not selected.")

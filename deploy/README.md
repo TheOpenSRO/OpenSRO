@@ -7,9 +7,9 @@ The timer runs it every five minutes, so **pushing to `dev` is deploying**.
 
 ```
 deploy/install.sh                              # once, as the user that owns the checkout
-systemctl list-timers srrevamp-update.timer    # when it next runs
-journalctl -u srrevamp-update                  # every update, build failure and rollback
-sudo systemctl start srrevamp-update.service   # do not wait for the timer
+systemctl list-timers opensro-update.timer    # when it next runs
+journalctl -u opensro-update                  # every update, build failure and rollback
+sudo systemctl start opensro-update.service   # do not wait for the timer
 FORCE=1 deploy/update.sh                       # rebuild even if nothing changed
 ```
 
@@ -24,6 +24,79 @@ What it refuses to do, and says so in the journal:
   again until `dev` moves past it, or the hold file is removed.
 
 Old image layers are pruned after each successful update so the disk does not fill over months.
+
+## Moving an install from srrevamp to OpenSRO (round 704)
+
+The project was called srrevamp until 2026-10-04. The rename changed every name a deployed
+server depends on, so a server installed before it needs moving once, by hand:
+
+| What | Before | After |
+|---|---|---|
+| Compose project, volume | folder name (`srrevamp`), `srrevamp_srrevamp-postgres-data` | `name: opensro`, `opensro_opensro-postgres-data` |
+| Database | `srrevamp` | `opensro` |
+| Environment variables | `SRREVAMP_*` | `OPENSRO_*` (a clean break: the old names are not read) |
+| Updater units | `srrevamp-update.service` / `.timer` | `opensro-update.service` / `.timer` |
+| Host, user, checkout, data | `srrevamp-01`, `srrevamp`, `~/srrevamp`, `~/srrevamp-data` | `opensro-01`, `opensro`, `~/opensro`, `~/opensro-data` |
+| Repository | `github.com/OpenSRO/srrevamp` | `github.com/OpenSRO/OpenSRO` |
+
+**Stop the old updater first, before the rename reaches `dev`.** Left running, it pulls the
+renamed commit by itself, and `docker compose up` then builds a second stack (project `opensro`,
+an empty database) beside the old one, which still holds port 5432 and 15779: the update fails
+and is rolled back and held, or worse, a server comes up on an empty database. Then, as the
+install's user, in the old checkout:
+
+```
+sudo systemctl disable --now srrevamp-update.timer
+cd ~/srrevamp
+
+# 1. A backup, then the database rename (no session may be connected to it: stop the server).
+docker compose exec -T postgres pg_dumpall -U postgres > ~/srrevamp-before-rename.sql
+docker compose stop server
+docker compose exec -T postgres psql -U postgres -d postgres -c 'ALTER DATABASE srrevamp RENAME TO opensro;'
+docker compose down                      # never -v: that deletes the data
+
+# 2. Copy the data into the volume the new project name uses. Check the old name first:
+docker volume ls | grep postgres-data    # srrevamp_srrevamp-postgres-data, for a ~/srrevamp checkout
+docker volume create opensro_opensro-postgres-data
+docker run --rm -v srrevamp_srrevamp-postgres-data:/from:ro -v opensro_opensro-postgres-data:/to \
+  postgres:16 sh -c 'cp -a /from/. /to/'
+
+# 3. The checkout and the data folder (and, if wanted, the user and host -- from another
+#    account: `sudo usermod -l opensro -d /home/opensro -m srrevamp; sudo groupmod -n opensro
+#    srrevamp; sudo hostnamectl set-hostname opensro-01`).
+mv ~/srrevamp ~/opensro && mv ~/srrevamp-data ~/opensro-data && cd ~/opensro
+git remote set-url origin git@github.com:OpenSRO/OpenSRO.git
+git pull --ff-only                       # to a commit that has `name: opensro`
+
+# 4. The untracked override: the variable names, the DSN's database and the mounted paths.
+cp docker-compose.override.yml ~/override-before-rename.yml
+sed -i -e 's/SRREVAMP_/OPENSRO_/g' -e 's#5432/srrevamp?#5432/opensro?#g' \
+  -e 's#/home/srrevamp/srrevamp-data#/home/opensro/opensro-data#g' -e 's#srrevamp-data#opensro-data#g' \
+  docker-compose.override.yml
+grep -in srrevamp docker-compose.override.yml   # should print nothing; fix by hand what it does
+
+# 5. Start the stack under its new name and check it.
+docker compose up -d --build
+docker compose exec -T postgres psql -U postgres -d opensro -c 'SELECT count(*) FROM characters;'
+docker compose logs server | tail       # the boot lines; every flag the override set is named
+
+# 6. Swap the updater's units.
+sudo rm /etc/systemd/system/srrevamp-update.service /etc/systemd/system/srrevamp-update.timer
+sudo systemctl daemon-reload
+deploy/install.sh                        # installs and starts opensro-update.timer
+```
+
+The old volume stays until it is removed by hand (`docker volume rm srrevamp_srrevamp-postgres-data`,
+once the new stack has run for a while). Any reference-data tool run by hand afterwards takes the
+new DSN (`.../5432/opensro?sslmode=disable`). A deployment that keeps `-postgres-dsn` in a script
+or a shell history, or sets a variable outside the override, needs the same renaming there.
+
+Players' clients: the executable is `OpenSRO.exe` (Linux `OpenSRO.x86_64`), and the release zips
+are `opensro-windows.zip` / `opensro-linux.zip` on the renamed repository. A client from before
+the rename looks for the old zip names and does not update itself; it is replaced by downloading
+the new zip. The new client copies its settings from the old user folder once (`UserDataMigration`;
+docs/WORLD_ISSUES.md, round 704), and still reads `type: srrevamp` in `setting/config.yaml` as
+`opensro`, with a warning.
 
 ## Reference data: making EXP, real weapon damage and skills work (BYO)
 
@@ -80,7 +153,7 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 # an older CSV still loads, but the new column reads as 0 until the export is re-run.
 # Re-run steps 1-3 after pulling such a change.
 #
-# ROUND 607 (sitting) NEEDS THIS ON srrevamp-01: re-run `export-refdata -mode skills` with the NEW
+# ROUND 607 (sitting) NEEDS THIS ON opensro-01: re-run `export-refdata -mode skills` with the NEW
 # binary (step 2), then the NEW `import-refdata` (step 3) -- the import is what applies the schema
 # change: its store adds the skills.sit_gate column before it writes the rows. The server restart
 # (`docker compose up -d` after the pull) is only to run the new server binary, which reads the
@@ -89,7 +162,7 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 # monster transform) can be cast sitting. Check: `SELECT count(*) FROM skills WHERE sit_gate <> 0;`
 # answers 59 on a retail archive.
 #
-# ROUND 616 (buffs, Grass Walk, Ghost Walk) NEEDS THE SAME ON srrevamp-01: re-run `export-refdata
+# ROUND 616 (buffs, Grass Walk, Ghost Walk) NEEDS THE SAME ON opensro-01: re-run `export-refdata
 # -mode skills` with the NEW binary (step 2; the CSV grows to 62 columns), then the NEW
 # `import-refdata` (step 3) -- its store adds the fifteen columns (skills.action_kind,
 # target_required, target_land, target_self/ally/party, dura_ms, cbuf, nbuf, bbuf, lnks, tele0,
@@ -119,7 +192,7 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 # store adds skills.pw0..pw3): the same re-export and re-import, then restart. Until then no wall
 # takes a blow (the toggles' MP drain and switch-off work without them: 'onff' rides in
 # BuffParams). Check: `SELECT count(*) FROM skills WHERE pw0 <> 0;` answers 55 on a retail archive.
-# ROUND 632 (berserk potions, the Energy of life scroll) NEEDS THE ITEMS RE-EXPORT ON srrevamp-01:
+# ROUND 632 (berserk potions, the Energy of life scroll) NEEDS THE ITEMS RE-EXPORT ON opensro-01:
 # re-run `export-refdata -mode items` with the NEW binary (step 1; items.csv grows to 72 columns --
 # column 70 CodeName, round 497, which an older CSV may also lack, and the new column 71
 # CompositeDesc), then the NEW `import-refdata` (step 3) -- its store adds items.composite_desc and
@@ -129,7 +202,7 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 # `[UIL1:ITEM_ETC_SECOND_HWAN,A,3600,1],[UIU1:ITEM_ETC_INCREASE_HWAN_TIME_01]`, and
 # `SELECT code_name FROM items WHERE id = 23937;` answers `ITEM_ETC_SECOND_HWAN`, on a retail
 # archive. A client that predates round 632 ignores the new opcodes 0x0104-0x0108.
-# ROUND 654 (the monster species table) NEEDS THREE THINGS ON srrevamp-01, in this order:
+# ROUND 654 (the monster species table) NEEDS THREE THINGS ON opensro-01, in this order:
 #   a. re-run `export-refdata -mode skills` with the NEW binary (step 2; the CSV grew to 90
 #      columns here -- 91 since round 659, see "Deploying the monster-epic release" -- column 89 is AI_AttackChance, skilldata column 66), then the NEW `import-refdata`
 #      (step 3) -- its store adds skills.ai_attack_chance (default -1, "unknown") before it writes
@@ -137,7 +210,7 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 #      and `... WHERE ai_attack_chance < 0;` answers 0, on a retail archive.
 #   b. run the NEW `export-refdata -mode monsters` line from step 2 (characterdata parts in the
 #      index's order, plus levelgold.txt and textdata_object.txt) and copy monsters.csv to
-#      ~/srrevamp-data. It reports 7,604 species, 156 of them drawing their Org row's model, 7,604
+#      ~/opensro-data. It reports 7,604 species, 156 of them drawing their Org row's model, 7,604
 #      with a levelgold row and 7,509 whose name key resolves, on a retail archive.
 #   c. add "-monsters-csv=/data/monsters.csv" to the override's command (step 4) and restart.
 #   The boot log then reads `monster species table loaded ... species=7604 roster_overlaid=11
@@ -175,7 +248,7 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 # 0) is now refused (retail's 0x3409), and a held skill a player may not hold -- a mastery-less,
 # cost-less row that is not a base attack (the monster/pet/guard/trap rows), or another race's --
 # is refused at the cast and DROPPED, logged as "dropped a learned skill no player may hold"; the
-# skill-state request the client sends drops them too. To see what srrevamp-01 holds BEFORE the
+# skill-state request the client sends drops them too. To see what opensro-01 holds BEFORE the
 # deploy (the deploy then drops these at each character's next login or cast):
 #   SELECT c.name, c.gender, cs.skill_id, s.basic_code, s.req_learn_race, s.mastery1
 #   FROM character_skills cs JOIN skills s ON s.id = cs.skill_id JOIN characters c ON c.id = cs.character_id
@@ -188,22 +261,22 @@ rm -f itemdata.txt itemdata_* skilldata.txt skilldata_* characterdata.txt charac
 #   ORDER BY c.name, cs.skill_id;
 # This mirrors playerHoldRefusal exactly (round 691's review: an earlier version missed the
 # mastery clause -- 807 race-3 item/mall/quest rows on Mastery1 1, and China base attacks held by a
-# Europe character). An empty answer means nothing will be dropped. Run on srrevamp-01 on
+# Europe character). An empty answer means nothing will be dropped. Run on opensro-01 on
 # 2026-10-02 before the deploy: empty.
-# 3. On the server host (CSVs and import-refdata copied to ~/srrevamp-data; Postgres is pinned to
+# 3. On the server host (CSVs and import-refdata copied to ~/opensro-data; Postgres is pinned to
 #    127.0.0.1:5432 by docker-compose.override.yml):
-~/srrevamp-data/import-refdata -items-csv ~/srrevamp-data/items.csv -skills-csv ~/srrevamp-data/skills.csv \
-    -postgres-dsn 'postgres://postgres:postgres@127.0.0.1:5432/srrevamp?sslmode=disable'
+~/opensro-data/import-refdata -items-csv ~/opensro-data/items.csv -skills-csv ~/opensro-data/skills.csv \
+    -postgres-dsn 'postgres://postgres:postgres@127.0.0.1:5432/opensro?sslmode=disable'
 
 # 4. leveldata is a command-line flag: mount the directory and restate the command in the
 #    (untracked) docker-compose.override.yml -- `command` in an override REPLACES the base list:
 #   services:
 #     server:
 #       volumes:
-#         - /home/srrevamp/srrevamp-data:/data:ro
+#         - /home/opensro/opensro-data:/data:ro
 #       command:
 #         - "-addr=:15779"
-#         - "-postgres-dsn=postgres://postgres:postgres@postgres:5432/srrevamp?sslmode=disable"
+#         - "-postgres-dsn=postgres://postgres:postgres@postgres:5432/opensro?sslmode=disable"
 #         - "-leveldata-csv=/data/leveldata.csv"
 #         - "-npcpos-csv=/data/npcpos.csv"       # real monster placements (round 253); omit for the town anchors
 #         - "-teleport-dir=/data/teleport"       # the teleport network (round 575); the town teleporters use it (round 576)
@@ -217,7 +290,7 @@ docker compose up -d
 **At a host's boot** Docker restarts the server and postgres containers together and ignores the
 compose file's `depends_on: condition: service_healthy`, which applies only to `docker compose up`.
 The server therefore waits for postgres itself: `-postgres-wait` (default 60s) retries every second,
-logging `waiting for postgres` each time. Before this, every reboot of srrevamp-01 logged one
+logging `waiting for postgres` each time. Before this, every reboot of opensro-01 logged one
 `opening account store ... connection refused` and a Docker restart of the server.
 
 The boot log then reads `loaded EXP curve path=/data/leveldata.csv maxLevel=140` and
@@ -248,7 +321,7 @@ NPC teleporter works with it. But without the column, a link into an instanced a
 up front: the fortress, tomb, temple, survival and Roc gates. To re-export:
 1. Re-run the `pk2list` loop and the `export-refdata -mode teleport` line from step 1 into a
    directory named `teleport`.
-2. Copy it over `~/srrevamp-data/teleport` on the server host. It is mounted as `/data/teleport`.
+2. Copy it over `~/opensro-data/teleport` on the server host. It is mounted as `/data/teleport`.
 3. Run `docker compose up -d`.
 
 The new `teleportdata.csv` header ends in `Interaction9,WorldID`. There is no database step.
@@ -257,7 +330,7 @@ Reference data is otherwise not touched by the update loop.
 
 ## Monster species table
 
-`-monsters-csv` (env `SRREVAMP_MONSTERS_CSV`, round 654) loads every monster species in the
+`-monsters-csv` (env `OPENSRO_MONSTERS_CSV`, round 654) loads every monster species in the
 client's characterdata: `cmd/export-refdata -mode monsters` writes one row per TypeID (1,2,1,x)
 row -- id, code name, the Org code name and id, the name key and its English, TypeID4, rarity,
 level, HP, walk/run speed, collision radius, the eight combat columns 71-78, the ten attack-skill
@@ -299,12 +372,12 @@ stands while anyone keeps auto-attacking it (the interim hold); `-monster-battle
 chase and swing on its own, `-monster-aggro` makes it notice players, and a unique fights with its
 own skills and summons (round 661). The players whose area of interest holds a monster see each
 move (round 664: the 3 x 3 blocks of 320 units around each player). What is grounded and what is a
-stand-in is in `docs/protocol/monster_ai.md`, "srrevamp's runtime" and the rounds after it.
+stand-in is in `docs/protocol/monster_ai.md`, "OpenSRO's runtime" and the rounds after it.
 
-It is behind the `-monster-ai` flag (env `SRREVAMP_MONSTER_AI`), and **the default is off**. Off,
+It is behind the `-monster-ai` flag (env `OPENSRO_MONSTER_AI`), and **the default is off**. Off,
 nothing moves and the wire is exactly what it was, so pushing to `dev` changes nothing until the
 operator turns it on. After an update the boot log reads
-`monster AI off (-monster-ai / SRREVAMP_MONSTER_AI)`.
+`monster AI off (-monster-ai / OPENSRO_MONSTER_AI)`.
 
 **Turn it on only when both of these hold:**
 
@@ -329,8 +402,8 @@ budget, is closed without holding anyone else.
 services:
   server:
     environment:
-      SRREVAMP_MONSTER_AI: "1"
-      # SRREVAMP_AI_TRACE: "1"     # every state change, leg and strike in the log; only for a check
+      OPENSRO_MONSTER_AI: "1"
+      # OPENSRO_AI_TRACE: "1"     # every state change, leg and strike in the log; only for a check
 ```
 
 Or append `- "-monster-ai=true"` to the `command:` list the override already restates (step 4 of the
@@ -350,9 +423,9 @@ target. The counter itself has not changed, and no number changes: the push repe
 attacker's result already says. It does not depend on the monster AI. What is grounded and what is
 a stand-in is in `docs/protocol/monster_ai.md`, "The strike push's server half (round 541)".
 
-It is behind the `-monster-strike-push` flag (env `SRREVAMP_MONSTER_STRIKE_PUSH`), and **the
+It is behind the `-monster-strike-push` flag (env `OPENSRO_MONSTER_STRIKE_PUSH`), and **the
 default is off**. With it off nothing is sent, and the wire is exactly what it was. After an update
-the boot log reads `monster strike push off (-monster-strike-push / SRREVAMP_MONSTER_STRIKE_PUSH)`.
+the boot log reads `monster strike push off (-monster-strike-push / OPENSRO_MONSTER_STRIKE_PUSH)`.
 
 **Turn it on only when both of these hold:**
 
@@ -363,8 +436,8 @@ the boot log reads `monster strike push off (-monster-strike-push / SRREVAMP_MON
 2. The live check in that `monster_ai.md` section passes on the render box. It passed in round
    543 ("Measured (round 543)" there).
 
-**On.** Add `SRREVAMP_MONSTER_STRIKE_PUSH: "1"` under the server's `environment:` in the untracked
-`docker-compose.override.yml`, the same way as `SRREVAMP_MONSTER_AI` above, then run
+**On.** Add `OPENSRO_MONSTER_STRIKE_PUSH: "1"` under the server's `environment:` in the untracked
+`docker-compose.override.yml`, the same way as `OPENSRO_MONSTER_AI` above, then run
 `docker compose up -d`. You can instead append `- "-monster-strike-push=true"` to the override's
 restated `command:` list. The boot log then reads
 `monster strike push on: OpMonsterAttacked 0x007D to the zone after each counterattack`.
@@ -403,12 +476,12 @@ older client needs nothing new: the legs and blows are the same `OpMonsterMoved`
 separate switch. Its reading and stand-ins: `docs/protocol/monster_ai.md`, "The second attack
 skill: the runtime (round 554)".
 
-It is behind the `-monster-battle` flag (env `SRREVAMP_MONSTER_BATTLE`), and **the default is
+It is behind the `-monster-battle` flag (env `OPENSRO_MONSTER_BATTLE`), and **the default is
 off**. Off, the interim hold and the counter are exactly what they were. It also **needs
-`SRREVAMP_MONSTER_AI` and `SRREVAMP_MONSTER_STRIKE_PUSH` both on**: without them the boot log reads
+`OPENSRO_MONSTER_AI` and `OPENSRO_MONSTER_STRIKE_PUSH` both on**: without them the boot log reads
 `monster battle forced off why=...` and the flag does nothing (never an exit, so the update loop
 never rolls back over a flag combination). After an update the boot log reads
-`monster battle off (-monster-battle / SRREVAMP_MONSTER_BATTLE)`.
+`monster battle off (-monster-battle / OPENSRO_MONSTER_BATTLE)`.
 
 **Turn it on only when all of these hold:**
 
@@ -423,14 +496,14 @@ never rolls back over a flag combination). After an update the boot log reads
 3. The live check in that `monster_ai.md` section passes on the render box (its "Measured"
    paragraph says whether it has).
 
-**On.** Add `SRREVAMP_MONSTER_BATTLE: "1"` under the server's `environment:` in the untracked
-`docker-compose.override.yml`, beside `SRREVAMP_MONSTER_AI` and `SRREVAMP_MONSTER_STRIKE_PUSH`, then
+**On.** Add `OPENSRO_MONSTER_BATTLE: "1"` under the server's `environment:` in the untracked
+`docker-compose.override.yml`, beside `OPENSRO_MONSTER_AI` and `OPENSRO_MONSTER_STRIKE_PUSH`, then
 run `docker compose up -d`. You can instead append `- "-monster-battle=true"` to the override's
 restated `command:` list. The boot log then reads
 `monster battle on: a struck monster chases to its attack band ...`.
 
 **Off, the kill switch.** Remove that line (or set it to `"0"`), then run `docker compose up -d`.
-Turning `SRREVAMP_MONSTER_AI` off also turns this off (the chase runs in the AI tick).
+Turning `OPENSRO_MONSTER_AI` off also turns this off (the chase runs in the AI tick).
 
 ## Monster spawn push (off by default)
 
@@ -445,9 +518,9 @@ roll, `rand() / 32767 * 2pi`, and the monster AI starts the monster from the sam
 does not depend on the monster AI. What is grounded and what is a stand-in is in
 `docs/protocol/monster_ai.md`, "The spawn push's server half (round 542)".
 
-It is behind the `-monster-spawn-push` flag (env `SRREVAMP_MONSTER_SPAWN_PUSH`), and **the default
+It is behind the `-monster-spawn-push` flag (env `OPENSRO_MONSTER_SPAWN_PUSH`), and **the default
 is off**. With it off nothing is sent, and the wire is exactly what it was. After an update the
-boot log reads `monster spawn push off (-monster-spawn-push / SRREVAMP_MONSTER_SPAWN_PUSH)`.
+boot log reads `monster spawn push off (-monster-spawn-push / OPENSRO_MONSTER_SPAWN_PUSH)`.
 
 **Turn it on only when both of these hold:**
 
@@ -459,8 +532,8 @@ boot log reads `monster spawn push off (-monster-spawn-push / SRREVAMP_MONSTER_S
 2. The live check in that `monster_ai.md` section passes on the render box. It has not been run
    yet.
 
-**On.** Add `SRREVAMP_MONSTER_SPAWN_PUSH: "1"` under the server's `environment:` in the untracked
-`docker-compose.override.yml`, the same way as `SRREVAMP_MONSTER_AI` above, then run
+**On.** Add `OPENSRO_MONSTER_SPAWN_PUSH: "1"` under the server's `environment:` in the untracked
+`docker-compose.override.yml`, the same way as `OPENSRO_MONSTER_AI` above, then run
 `docker compose up -d`. You can instead append `- "-monster-spawn-push=true"` to the override's
 restated `command:` list. The boot log then reads
 `monster spawn push on: OpMonsterSpawned 0x007E to the zone for each respawn and GM /spawn`.
@@ -477,7 +550,7 @@ requests, zone changes, GM `/tp`/`/goto` and guild founding and level-ups, empti
 queue, and no monster targets it.
 Since round 665 the client offers retail's two choices and `OpRevive 0x0028` carries the
 option: "Resurrect at the specified point." takes the character to its return point and revives
-it there at 40 % HP -- srrevamp's return point is the world entry in Jangan, a stand-in for
+it there at 40 % HP -- OpenSRO's return point is the world entry in Jangan, a stand-in for
 retail's designated gate -- and "Resurrect at the present point." revives it where it lies (HP at
 1 + 40 % of the maximum, the retail handler's arithmetic), at level 10 or under only, as retail.
 Nothing revives a dead player unasked any more: retail has no timed revive outside a fortress war,
@@ -486,14 +559,14 @@ A character that logs out dead is saved at the return point (with `-persist-posi
 What is grounded and what is a stand-in is in `docs/protocol/character_state.md`, "The
 resurrect choices (round 665)".
 
-It is behind the `-player-dead-state` flag (env `SRREVAMP_PLAYER_DEAD_STATE`), and **the default
+It is behind the `-player-dead-state` flag (env `OPENSRO_PLAYER_DEAD_STATE`), and **the default
 is off**. Off, a kill respawns the player at once, and since round 665 the respawn is moved to the
 return point after the kill's messages (an `OpChangeZoneResult` to Jangan), so it no longer comes
 back among its killers; the one other flag-independent piece is the entry revive of a stored HP 0
 (the last paragraph). It does not
 depend on the monster flags: it covers the counterattack inside the attacker's result and the
 monster's own swings under `-monster-battle` alike. After an update the boot log reads
-`player dead state off (-player-dead-state / SRREVAMP_PLAYER_DEAD_STATE): a monster's kill respawns
+`player dead state off (-player-dead-state / OPENSRO_PLAYER_DEAD_STATE): a monster's kill respawns
 the player at once at the return point`.
 
 **Turn it on only when both of these hold:**
@@ -511,8 +584,8 @@ the player at once at the return point`.
    the round's own build. (The round-549 check in `monster_ai.md` asserted the 30 s auto-revive,
    which is gone.)
 
-**On.** Add `SRREVAMP_PLAYER_DEAD_STATE: "1"` under the server's `environment:` in the untracked
-`docker-compose.override.yml`, the same way as `SRREVAMP_MONSTER_AI` above, then run
+**On.** Add `OPENSRO_PLAYER_DEAD_STATE: "1"` under the server's `environment:` in the untracked
+`docker-compose.override.yml`, the same way as `OPENSRO_MONSTER_AI` above, then run
 `docker compose up -d`. You can instead append `- "-player-dead-state=true"` to the override's
 restated `command:` list. The boot log then reads
 `player dead state on: a monster's kill leaves the player dead ...`.
@@ -534,15 +607,15 @@ takes to run its own radius (4818 ms for a Mangyang, a value derived from the st
 player is never noticed. What is grounded and what is a stand-in is in
 `docs/protocol/monster_ai.md`, "Target acquisition: the runtime (round 552)".
 
-It is behind the `-monster-aggro` flag (env `SRREVAMP_MONSTER_AGGRO`), and **the default is off**:
-off, a monster fights only when struck, exactly as before. It also **needs `SRREVAMP_MONSTER_BATTLE`
-in effect (so `SRREVAMP_MONSTER_AI` and `SRREVAMP_MONSTER_STRIKE_PUSH` too) and
-`SRREVAMP_PLAYER_DEAD_STATE` on**: a noticed player is engaged by the chase and the monster's own
+It is behind the `-monster-aggro` flag (env `OPENSRO_MONSTER_AGGRO`), and **the default is off**:
+off, a monster fights only when struck, exactly as before. It also **needs `OPENSRO_MONSTER_BATTLE`
+in effect (so `OPENSRO_MONSTER_AI` and `OPENSRO_MONSTER_STRIKE_PUSH` too) and
+`OPENSRO_PLAYER_DEAD_STATE` on**: a noticed player is engaged by the chase and the monster's own
 swings, and a monster that seeks players out kills ones who never struck it, who must then stay
 dead rather than respawn in place. Without them the boot log reads `monster aggro forced off
 why=...` and the flag does nothing (never an exit, so the update loop never rolls back over a flag
 combination). After an update the boot log reads
-`monster aggro off (-monster-aggro / SRREVAMP_MONSTER_AGGRO)`.
+`monster aggro off (-monster-aggro / OPENSRO_MONSTER_AGGRO)`.
 
 **Turn it on only when all of these hold:**
 
@@ -554,13 +627,13 @@ combination). After an update the boot log reads
 3. You want EVERY roster species aggressive at 100 units. That is the stand-in; there is no
    per-species setting yet, and the only other setting is this flag off.
 
-**On.** Add `SRREVAMP_MONSTER_AGGRO: "1"` under the server's `environment:` in the untracked
+**On.** Add `OPENSRO_MONSTER_AGGRO: "1"` under the server's `environment:` in the untracked
 `docker-compose.override.yml`, beside the four flags above, then run `docker compose up -d`. You
 can instead append `- "-monster-aggro=true"` to the override's restated `command:` list. The boot
 log then reads `monster aggro on: a monster notices the nearest living player ...`.
 
 **Off, the kill switch.** Remove that line (or set it to `"0"`), then run `docker compose up -d`.
-Turning `SRREVAMP_MONSTER_BATTLE` or `SRREVAMP_PLAYER_DEAD_STATE` off also turns this off.
+Turning `OPENSRO_MONSTER_BATTLE` or `OPENSRO_PLAYER_DEAD_STATE` off also turns this off.
 
 ## Single world frame (off by default)
 
@@ -581,9 +654,9 @@ One bucket has no spatial filter, so moves, local chat and the monster list (413
 `-npcpos-csv`) reach every player. A label with no frame (a typo, "Jangan" with a capital) keeps its
 own bucket and the old wire.
 
-It is behind the `-single-frame` flag (env `SRREVAMP_SINGLE_FRAME`), and **the default is off**:
+It is behind the `-single-frame` flag (env `OPENSRO_SINGLE_FRAME`), and **the default is off**:
 off, every zone keeps its own frame and bucket and the wire is what it was. After an update the boot
-log reads `single frame off (-single-frame / SRREVAMP_SINGLE_FRAME)`.
+log reads `single frame off (-single-frame / OPENSRO_SINGLE_FRAME)`.
 
 **Turn it on only when all of these hold:**
 
@@ -633,8 +706,8 @@ log reads `single frame off (-single-frame / SRREVAMP_SINGLE_FRAME)`.
    list split over several packets in `handleMonsterList`) is built; it is a `docs/TODO.md` item to
    close before the flip (round 571's review).
 
-**On.** Add `SRREVAMP_SINGLE_FRAME: "1"` under the server's `environment:` in the untracked
-`docker-compose.override.yml`, the same way as `SRREVAMP_MONSTER_AI` above, then run
+**On.** Add `OPENSRO_SINGLE_FRAME: "1"` under the server's `environment:` in the untracked
+`docker-compose.override.yml`, the same way as `OPENSRO_MONSTER_AI` above, then run
 `docker compose up -d`. You can instead append `- "-single-frame=true"` to the override's restated
 `command:` list. The boot log then reads `single frame on: origin 97/168 ...`.
 
@@ -652,7 +725,7 @@ login's `OpEnterWorldResult` answers them: the saved label, that label's bucket 
 are that day, and the saved point named in that frame, with a trailing `Restored` byte after
 `FrameRegion`. The engine keeps the same fields on its own row (`_CHAR.LatestRegion`, `PosX`,
 `PosY`, `PosZ`, bound to charData +0x94..+0xa0 in `docs/protocol/db_bind_offsets.tsv`); when
-srrevamp saves them, their shape and the frame rule are own design -- `docs/RE_COMPLETION.md`,
+OpenSRO saves them, their shape and the frame rule are own design -- `docs/RE_COMPLETION.md`,
 round 573.
 
 The columns (`latest_zone`, `latest_frame`, `pos_x`, `pos_y`, `pos_z`) are added by the character
@@ -681,10 +754,10 @@ What changes for players with it on:
   (`handleEnterWorld`'s revive of a stored HP 0, `character.RespawnFraction`). Before round 665 it
   was saved where it fell and re-entered beside the monster that killed it.
 
-It is behind the `-persist-position` flag (env `SRREVAMP_PERSIST_POSITION`), and **the default is
+It is behind the `-persist-position` flag (env `OPENSRO_PERSIST_POSITION`), and **the default is
 off**: off, nothing is saved or read, every entry lands at the zone spawn, and the wire is what it
 was. After an update the boot log reads
-`persist position off (-persist-position / SRREVAMP_PERSIST_POSITION)`.
+`persist position off (-persist-position / OPENSRO_PERSIST_POSITION)`.
 
 **Turn it on only when:** a client release that carries round 573 is tagged, CI is green for it
 (`gh run list`), and its zips are published. An older client ignores the `Restored` byte: it moves
@@ -694,8 +767,8 @@ first move the server and everyone else hold it at the saved point, not at the l
 a restored entry in any other zone where the server put it, and its `/unstuck` returns such a
 player to the saved point itself.
 
-**On.** Add `SRREVAMP_PERSIST_POSITION: "1"` under the server's `environment:` in the untracked
-`docker-compose.override.yml`, the same way as `SRREVAMP_MONSTER_AI` above, then run
+**On.** Add `OPENSRO_PERSIST_POSITION: "1"` under the server's `environment:` in the untracked
+`docker-compose.override.yml`, the same way as `OPENSRO_MONSTER_AI` above, then run
 `docker compose up -d`. You can instead append `- "-persist-position=true"` to the override's
 restated `command:` list. The boot log then reads `persist position on: a character re-enters
 where it last stood ...`.
@@ -716,7 +789,7 @@ ordinary `OpChangeZoneResult` to the destination gate's own point -- the client 
 behind its loading screen, as for any zone change. Every teleport is logged:
 `msg=teleport account=... character=... gate=STORE_CH_GATE from=GATE_CH dest=GATE_WC zone=donwhang
 ... fee=5000 waiver=0`. What is grounded and what is a stand-in: `docs/RE_COMPLETION.md`, round
-576, and `docs/protocol/teleport_network.md`, "What srrevamp built".
+576, and `docs/protocol/teleport_network.md`, "What OpenSRO built".
 
 It needs the teleport directory above (`-teleport-dir`). There is no flag for the teleport itself:
 the request is new, and a client release before round 576's client half never sends it, so pushing
@@ -735,26 +808,26 @@ to `dev` changes nothing for tagged clients until the release that carries the g
 Since round 642's review the server also measures the retail interaction range from the
 player: 300 units from an NPC and 800 from a gate structure, and the player's own region or a
 neighbouring one. It measures NPCs from their npcpos rows, so it needs `-npcpos-csv`
-(`/data/npcpos.csv` on srrevamp-01). Without it the boot log warns `teleport NPCs' interaction
+(`/data/npcpos.csv` on opensro-01). Without it the boot log warns `teleport NPCs' interaction
 range is not measured`, and NPC teleports are served from anywhere. A teleport directory
 exported before round 642 logs `teleport network has no WorldID column` at boot; re-export it as
 described above.
 
 Talk to one, then 'Select teleport area', then a destination. The log names the NPC's point:
 `gate=GATE_NPC_CH_FERRY`. A destination in an instanced area (a fortress, tomb, temple, arena or
-survival map) is refused with nothing charged: srrevamp has only the open world.
+survival map) is refused with nothing charged: OpenSRO has only the open world.
 
 **Who pays.** Everyone pays the link's fee from the table (5,000 gold from Jangan to Donwhang),
 except:
 
 - characters below level 21 -- the engine's own waiver (`GObjPC::HandleTeleportUse`, `0x513590`);
-- GM accounts (`-gm-accounts` / `SRREVAMP_GM_ACCOUNTS`), always -- own design, the user's ask;
-- everyone, while `-teleport-free` (env `SRREVAMP_TELEPORT_FREE`) is on -- own design, the
+- GM accounts (`-gm-accounts` / `OPENSRO_GM_ACCOUNTS`), always -- own design, the user's ask;
+- everyone, while `-teleport-free` (env `OPENSRO_TELEPORT_FREE`) is on -- own design, the
   free-while-testing switch. **The default is off**; after an update the boot log reads
-  `teleport free off (-teleport-free / SRREVAMP_TELEPORT_FREE): ...`.
+  `teleport free off (-teleport-free / OPENSRO_TELEPORT_FREE): ...`.
 
 **Whether the public server runs `-teleport-free` on is the user's decision**, not the deploy
-loop's. To turn it on, add `SRREVAMP_TELEPORT_FREE: "1"` under the server's `environment:` in the
+loop's. To turn it on, add `OPENSRO_TELEPORT_FREE: "1"` under the server's `environment:` in the
 untracked `docker-compose.override.yml` (or append `- "-teleport-free=true"` to the override's
 restated `command:` list), then run `docker compose up -d`; the boot log then reads `teleport free
 on: every gate teleport costs nothing ...`. Remove the line (or set it to `"0"`) and run
@@ -787,7 +860,7 @@ them no unique is placed, and a notice follows only a GM's `/spawnunique <id|nam
 
 It is on by default, as the original is with its `CONTROL_NOTIFY_SPAWN_UNIQUE_MONSTER_MSG` key
 absent. The boot log reads `unique notices on: ...`. **Off:** add
-`SRREVAMP_UNIQUE_NOTICE_OFF: "1"` under the server's `environment:` in the override (or
+`OPENSRO_UNIQUE_NOTICE_OFF: "1"` under the server's `environment:` in the override (or
 `- "-unique-notice-off=true"` in its `command:`), then `docker compose up -d`; the boot log then
 reads `unique notices off (-unique-notice-off): no nest-hatch or kill notice is sent; a GM spawn is still
 announced`. As in the original, the
@@ -800,7 +873,7 @@ Round 633 gave every character its own bag size, and the client pages the bag by
 page, up to three pages ("Page 1 / Page 2 / Page 3" above the grid, the client's own tabs), with the
 slots of the last page past the size drawn locked, as the original draws them.
 
-- `-inventory-size` (env `SRREVAMP_INVENTORY_SIZE`) is the size of every character nobody has sized:
+- `-inventory-size` (env `OPENSRO_INVENTORY_SIZE`) is the size of every character nobody has sized:
   **96 by default, three full pages** -- our choice for the test server, not a retail value. Set
   it lower (for example 32, one page) with `- "-inventory-size=32"` in the override's `command`, or
   the env variable, and `docker compose up -d`.
@@ -831,19 +904,19 @@ format and every recovered value: `docs/protocol/intro_script.md`.
 
 | Piece | Server setting (flag / env) | Client file (next to the executable) | Default |
 |---|---|---|---|
-| The intro (the camera's flight) | `-login-intro` / `SRREVAMP_LOGIN_INTRO` | `custom/intro/<name>.txt` | option.txt's `IntroName` (roc) |
-| The title music | `-login-bgm` / `SRREVAMP_LOGIN_BGM` | -- (a file in the archives) | option.txt's `IntroBGM` |
-| The logo above the login box | `-login-logo` / `SRREVAMP_LOGIN_LOGO` | `custom/frontend/<file>`, or `custom/frontend/logo.png` | Media.pk2 `interface\outer\logo.ddj` |
-| The top band | `-login-band-top` / `SRREVAMP_LOGIN_BAND_TOP` | `custom/frontend/<file>`, or `custom/frontend/band_top.png` | `blackbar_up_18.ddj` |
-| The bottom band | `-login-band-bottom` / `SRREVAMP_LOGIN_BAND_BOTTOM` | `custom/frontend/<file>`, or `custom/frontend/band_bottom.png` | `blackbar_down_copyright.ddj` |
-| A copyright / branding line | `-login-copyright` / `SRREVAMP_LOGIN_COPYRIGHT` | -- | none (the archive's band art carries its own line) |
+| The intro (the camera's flight) | `-login-intro` / `OPENSRO_LOGIN_INTRO` | `custom/intro/<name>.txt` | option.txt's `IntroName` (roc) |
+| The title music | `-login-bgm` / `OPENSRO_LOGIN_BGM` | -- (a file in the archives) | option.txt's `IntroBGM` |
+| The logo above the login box | `-login-logo` / `OPENSRO_LOGIN_LOGO` | `custom/frontend/<file>`, or `custom/frontend/logo.png` | Media.pk2 `interface\outer\logo.ddj` |
+| The top band | `-login-band-top` / `OPENSRO_LOGIN_BAND_TOP` | `custom/frontend/<file>`, or `custom/frontend/band_top.png` | `blackbar_up_18.ddj` |
+| The bottom band | `-login-band-bottom` / `OPENSRO_LOGIN_BAND_BOTTOM` | `custom/frontend/<file>`, or `custom/frontend/band_bottom.png` | `blackbar_down_copyright.ddj` |
+| A copyright / branding line | `-login-copyright` / `OPENSRO_LOGIN_COPYRIGHT` | -- | none (the archive's band art carries its own line) |
 
 All server settings default to empty: with none set, players see retail's screen. Set them in the
 compose override's `command` (`- "-login-intro=constantinople"`) or as environment variables, then
 `docker compose up -d`. The server logs what it serves at startup (`front-end theme ...`) and warns
 about, and refuses, anything that is not a plain file name.
 
-**How the client picks** (per piece): a `SRREVAMP_LOGIN_*` variable on the player's own machine
+**How the client picks** (per piece): a `OPENSRO_LOGIN_*` variable on the player's own machine
 (for previewing, below) > the server's answer > the answer it cached last launch > the client's
 `setting/config.yaml` (round 679: only the intro, `global.loginScreen`; next section) > a
 `custom/theme.json` shipped with the client > retail's default. The client asks the server it is
@@ -908,11 +981,11 @@ layout: the top one at y 0, the bottom one at y 1030), so draw them 1600 x 172. 
 your line centred where the archive's own line sits, so the two never overlap.
 
 **Previewing on your own machine, no server needed.** Run the client with the same names as
-environment variables, e.g. `SRREVAMP_LOGIN_INTRO=myserver SRREVAMP_LOGIN_LOGO=mylogo.png`, and
-`SRREVAMP_CUSTOM_DIR=<folder>` to use a folder other than `custom/` next to the executable. They win
+environment variables, e.g. `OPENSRO_LOGIN_INTRO=myserver OPENSRO_LOGIN_LOGO=mylogo.png`, and
+`OPENSRO_CUSTOM_DIR=<folder>` to use a folder other than `custom/` next to the executable. They win
 over the server's answer, so you see your files at once; the client's log (`FrontEnd:` and `TITLE:`
-lines) says what it used and why it fell back. For a render on the box: `SRREVAMP_QA_TITLE_SEEK=0,10,20`
-stands the camera at those times and logs `QA TITLE SHOT t=.. frame ..`; `SRREVAMP_QA_TITLE_HOUR=0..3`
+lines) says what it used and why it fell back. For a render on the box: `OPENSRO_QA_TITLE_SEEK=0,10,20`
+stands the camera at those times and logs `QA TITLE SHOT t=.. frame ..`; `OPENSRO_QA_TITLE_HOUR=0..3`
 pins the time of day (retail picks 5, 14, 18 or 23 o'clock at random).
 
 ## Configuring the client: setting/config.yaml (round 679)
@@ -924,7 +997,7 @@ reads it. (Retail keeps its own options in a `Setting\` folder beside its exe to
 `wndpos.dat` and others.) This folder will later hold the client's own saved settings as well --
 display, sound, hot bar and the rest; for now it holds one file, the general client config,
 `setting/config.yaml`. Developers can point the client at another folder with
-`SRREVAMP_SETTING_DIR=<folder>`.
+`OPENSRO_SETTING_DIR=<folder>`.
 
 ```yaml
 # setting/config.yaml -- every key is optional, except each server's type and gateway.
@@ -933,7 +1006,7 @@ global:
   region: US                       # kept, reserved (see below)
 servers:
   MyServer:                        # the name the login screen shows
-    type: srrevamp                 # this project's server
+    type: opensro                 # this project's server
     gateway: { address: login.example.com, port: 15779 }
     agent:   { address: agent.example.com, port: 15884 }
   SomePrivateServer:
@@ -946,7 +1019,7 @@ servers:
 | `global.loginScreen` | The title intro: a retail name (`roc`, `constantinople`, `china_wharf`, `jupiter_login`, `rm`, `ruby_baghdad`, ...) or your own `custom/intro/<name>.txt`. The server's `-login-intro` wins over it (below). |
 | `global.region` | Kept and reserved: a short code (letters, digits, `_`, `-`). vSRO's client reads no region: its `DIVISIONINFO.TXT` starts with a locale byte (22 in vSRO's archive) that the client's own loader skips, and the iSRO "Located In" bar's art is in the archive but no code names it. A later round may use it for the language or the content id. |
 | `servers.<name>` | One server. `<name>` is what the Server field and the list show (1-32 characters). The file's order is the list's order. |
-| `servers.<name>.type` | **Required** (round 681): the protocol the server speaks. `srrevamp` -- this project's server: its status is asked with this project's own question. `legacy` -- the original gateway protocol (a retail-style private server): the client asks it for its shard list the way the original client does (the handshake, then the patch check and the list) and shows each shard's real status; it is never sent this project's own messages, the login screen keeps its own intro for it (no theme question), and logging in to it is not supported yet. An entry without a type, or with another word, is skipped with a `SETTING:` line naming the server and the two values. Once this project's server also speaks the original protocol (the superset plan in `docs/protocol/PROTOCOL_DECISION.md`), `srrevamp` will mean "also has our extensions" rather than a different wire. |
+| `servers.<name>.type` | **Required** (round 681): the protocol the server speaks. `opensro` -- this project's server: its status is asked with this project's own question. `legacy` -- the original gateway protocol (a retail-style private server): the client asks it for its shard list the way the original client does (the handshake, then the patch check and the list) and shows each shard's real status; it is never sent this project's own messages, the login screen keeps its own intro for it (no theme question), and logging in to it is not supported yet. An entry without a type, or with another word, is skipped with a `SETTING:` line naming the server and the two values. Once this project's server also speaks the original protocol (the superset plan in `docs/protocol/PROTOCOL_DECISION.md`), `opensro` will mean "also has our extensions" rather than a different wire. |
 | `servers.<name>.gateway` | Where the client connects: `address` (a host name or IP address) and `port` (default 15779). Required. It plays the part of retail's `DIVISIONINFO.TXT` host and `GATEPORT.TXT` port. |
 | `servers.<name>.agent` | Read and kept, **not used yet**: `address` and `port`, both required if given. Retail's gateway tells the client which agent server to connect to in its login reply; this server is one process and has no such hand-off yet. When it does, a configured agent will stand in for the address the gateway names (a proxy feature). |
 
@@ -961,7 +1034,7 @@ double click) puts its name in the field; the client remembers it for the next l
 
 | Shown | When |
 |---|---|
-| Check | the server runs with `-inspection` (env `SRREVAMP_INSPECTION`) |
+| Check | the server runs with `-inspection` (env `OPENSRO_INSPECTION`) |
 | Easy | fewer than 35 % of `-max-players` in the world |
 | Populated | 35 % to under 97 % |
 | Crowded | 97 % to under 100 % |
@@ -979,14 +1052,14 @@ the log. Closed also means no answer within 4 s. To try it without a real server
 fake one (`server/README.md`).
 
 The percentages come from the archive's text table (`UIO_STT_SERVER_35` / `UIO_STT_SERVER_75`, 35
-and 97 in the English column), as retail's do. `-max-players` (env `SRREVAMP_MAX_PLAYERS`, 1-65535,
+and 97 in the English column), as retail's do. `-max-players` (env `OPENSRO_MAX_PLAYERS`, 1-65535,
 default 1000) is the capacity; a login is refused with retail's "The server is full, please try
 again later." once that many characters are in the world (characters that have entered the world,
 not accounts at character select). Under `-inspection` every login is refused with retail's "Cannot
 connect to the server because the server is now in inspection." The `-gm-accounts` names are let
 through both, so staff can test a server under inspection or a full one.
 
-**Which setting wins when two places set the intro:** the player's `SRREVAMP_LOGIN_INTRO` (a preview)
+**Which setting wins when two places set the intro:** the player's `OPENSRO_LOGIN_INTRO` (a preview)
 > the server's `-login-intro` (its fresh answer, else the one cached from the last launch) >
 `setting/config.yaml`'s `global.loginScreen` > `custom/theme.json`'s `intro` > retail's `option.txt`.
 The reasoning: the server's answer is the branding of the server being connected to, which its own
@@ -996,7 +1069,7 @@ theme is asked of the chosen server.
 
 **Mistakes.** The client logs every problem in its log file as a `SETTING:` line and carries on: a
 file that does not parse (the line number is in the message) is ignored whole; a server entry
-without a usable gateway, or without a `type` of `srrevamp` or `legacy`, is skipped and the others
+without a usable gateway, or without a `type` of `opensro` or `legacy`, is skipped and the others
 kept; an unknown key is ignored. The file is a
 strict subset of YAML: maps by indentation (spaces, not tabs), `{ a: 1, b: 2 }` and `[1, 2]` on one
 line, `- item` lists, quoted or plain values, `#` comments; no anchors, tags or multi-line strings.
@@ -1006,7 +1079,7 @@ during the server list or after login (docs/TODO.md).
 
 ## The full map (round 660)
 
-`-full-map` (env `SRREVAMP_FULL_MAP`, off by default) places every field monster of the game.
+`-full-map` (env `OPENSRO_FULL_MAP`, off by default) places every field monster of the game.
 Each monster row of `-npcpos-csv` outside the dungeon regions becomes a nest hatching its species
 from `-monsters-csv`, run by the engine's own hatch rules (`server/internal/nest`,
 `docs/protocol/monster_ai.md`, "Nests on the map"). Left out: the dungeons (1,915 rows), the
@@ -1022,7 +1095,7 @@ uses its summon skills each time it loses a tenth of its HP -- but only Cerberus
 nothing for them (READ). For the summons and Captain Ivy's trigger the directory also needs
 `Tab_RefAISkill.csv` and `_RefSkill.csv` (below). Without those two files the uniques still rotate
 and fight but summon nothing, and the boot log says so. `-unique-respawn=60s` (env
-`SRREVAMP_UNIQUE_RESPAWN`) shortens the wait for testing (OURS); `-nest-respawn` does not reach
+`OPENSRO_UNIQUE_RESPAWN`) shortens the wait for testing (OURS); `-nest-respawn` does not reach
 the uniques. The boot log has one `unique rotation` line per unique, and every hatch, re-pin and
 summon is logged (`unique hatched`, `unique rotation: re-pinned`, `unique summons`).
 
@@ -1030,7 +1103,7 @@ summon is logged (`unique hatched`, `unique rotation: re-pinned`, `unique summon
 bucket, so local chat, other players' moves and the ground-item lists go world-wide rather than
 zone-wide, and players need a client that carries rounds 569-571 (see "Single world frame").
 
-- **With `-nest-db-dir`** (env `SRREVAMP_NEST_DB_DIR`, the three CSVs of the section below, mounted
+- **With `-nest-db-dir`** (env `OPENSRO_NEST_DB_DIR`, the three CSVs of the section below, mounted
   at `/data/nestdb`): a row whose spot's shard nest hatches the same species (`matched=4063` in this release's boot
   log; round 660 counted 4,068 before round 661's changes) takes that
   nest's numbers -- its cap (up to 17 alive), its respawn window (1-3 s on most, 8-12 s on 459), its
@@ -1039,7 +1112,7 @@ zone-wide, and players need a client that carries rounds 569-571 (see "Single wo
   to its own custom monster (6,041 rows) places the original species, under its own tactics row
   when it has one (2,346 rows; the stand-in behaviour otherwise), on that nest's own cap, window,
   radii and champion chance (the user's decision, round 660's review). EXTERNAL values throughout.
-  `-nest-swapped-stand-in` (env `SRREVAMP_NEST_SWAPPED_STAND_IN`, OURS) puts those rows back on a
+  `-nest-swapped-stand-in` (env `OPENSRO_NEST_SWAPPED_STAND_IN`, OURS) puts those rows back on a
   one-monster stand-in nest each (10 s, no champion roll) -- half the monsters.
 - **Without it**: one monster per row, respawning 10 s after its death, all aggressive with the
   stand-in sight and leash, no champions. The boot log says so.
@@ -1050,16 +1123,16 @@ a player in a matched field and 6.4 ms at the densest window, RSS 127-165 MB. Th
 logs `placed=10104` and `matched=4063` (round 661 changed which rows are placed; the difference is
 not re-derived here).
 
-**The full population is what srrevamp-01 runs** (the user's decision, "DB numbers now", round
+**The full population is what opensro-01 runs** (the user's decision, "DB numbers now", round
 660's review): `-nest-swapped-stand-in` is NOT set there. Round 660 measured the client at 7-10 fps
 where the swapped spots cluster (the Europe starter field 108/77, the densest window) with a
 round-655 client; round 664 then made a player be sent only the monsters of the 3 x 3 blocks of 320
 units around it (retail's message blocks, READ) and made the client draw a dense field at 60 fps
 (its WORLD_ISSUES entry has the numbers). `-nest-swapped-stand-in` stays as an optional OURS
 fallback -- one monster per swapped spot, about half the monsters -- for a host that cannot carry
-the full population; it is off by default and off on srrevamp-01.
+the full population; it is off by default and off on opensro-01.
 
-The flags srrevamp-01 needs for the monster world, in the override's `command:` (restate the whole
+The flags opensro-01 needs for the monster world, in the override's `command:` (restate the whole
 list) or as environment variables:
 
 ```
@@ -1068,7 +1141,7 @@ list) or as environment variables:
 #         - "-skills-csv=/data/skills.csv"        # only with -in-memory; PostgreSQL holds the skills
 #         - "-nest-db-dir=/data/nestdb"           # EXTERNAL, the three shard CSVs (+ the two of round 661)
 #         - "-full-map=true"                      # turns -single-frame on itself
-#         # -nest-swapped-stand-in=true           # OURS fallback, OFF on srrevamp-01: one monster per swapped spot
+#         # -nest-swapped-stand-in=true           # OURS fallback, OFF on opensro-01: one monster per swapped spot
 #         - "-monster-ai=true"
 #         - "-monster-strike-push=true"
 #         - "-monster-spawn-push=true"
@@ -1083,7 +1156,7 @@ list) or as environment variables:
 A client must be a release that carries round 656 (the paged list and the enter/leave pushes) for
 a window this dense; one that also carries round 660 gets the party flag and draws champions,
 giants and elites at their retail scale. An older client is sent no party flag and draws every
-rank at its species' size. `SRREVAMP_AI_TICK_STATS=1` logs the AI tick's p50/p99 once a minute.
+rank at its species' size. `OPENSRO_AI_TICK_STATS=1` logs the AI tick's p50/p99 once a minute.
 
 ## Character lobby (round 682)
 
@@ -1099,27 +1172,27 @@ Round 682 moves character select and create onto the retail lobby (0x7007 / 0x70
   only 1909 and 1923 for the old rows.
 - **Creating a character needs the creatable catalogue.** Without `-chargen-csv` the server
   refuses every create with 0x403 ("Failed to create a character...") and warns at boot
-  (`no creatable catalogue (-chargen-csv / SRREVAMP_CHARGEN_CSV): every character create is
+  (`no creatable catalogue (-chargen-csv / OPENSRO_CHARGEN_CSV): every character create is
   refused`). Existing characters list, start and play as before.
 
-On srrevamp-01, in this order (round 682's review: nothing breaks at any step, and the data is
+On opensro-01, in this order (round 682's review: nothing breaks at any step, and the data is
 backed up before the migration runs):
 1. **Before the release reaches the host, stage the catalogue.** Export `chargen.csv` (step 2 of
    "Reference data": the `-mode chargen` line, after the characterdata and itemdata parts are
    extracted; it prints `wrote 104 creatable ids (52 bodies, 52 items) and 2 ammunition rows`),
    then
-   `scp chargen.csv srrevamp@<server-host>:~/srrevamp-data/ && ssh srrevamp@<server-host> 'chmod 644 ~/srrevamp-data/chargen.csv'`.
+   `scp chargen.csv opensro@<server-host>:~/opensro-data/ && ssh opensro@<server-host> 'chmod 644 ~/opensro-data/chargen.csv'`.
    Set it in the untracked override as the environment form of `-chargen-csv`, under the server's
-   `environment:` (edit only that key): `SRREVAMP_CHARGEN_CSV: /data/chargen.csv`, then
-   `cd ~/srrevamp && docker compose up -d`. The server running now is the old one; it does not
+   `environment:` (edit only that key): `OPENSRO_CHARGEN_CSV: /data/chargen.csv`, then
+   `cd ~/opensro && docker compose up -d`. The server running now is the old one; it does not
    read the variable and runs on unchanged.
 2. **Back up the characters table**:
-   `docker compose exec -T postgres pg_dump -U postgres -t characters srrevamp > ~/characters-before-682.sql`.
+   `docker compose exec -T postgres pg_dump -U postgres -t characters opensro > ~/characters-before-682.sql`.
 3. **Merge to dev**; the update timer deploys it within 5 minutes (step 0 of "Deploying the
    monster-epic release"). The new server migrates the table at its first boot.
 4. **Check** the boot line, `docker compose logs server | grep 'creatable catalogue loaded'`
    (`... ids=104`), and the migration:
-   `docker compose exec -T postgres psql -U postgres srrevamp -c "SELECT ref_obj_id, count(*) FROM characters GROUP BY 1;"`
+   `docker compose exec -T postgres psql -U postgres opensro -c "SELECT ref_obj_id, count(*) FROM characters GROUP BY 1;"`
    lists only 1909 and 1923. The names the new rules would refuse are kept and still play; to see
    them:
    `... -c "SELECT id, name FROM characters WHERE name ~ '[ ''\"]' OR name ~ '[^ -~]' OR octet_length(name) NOT BETWEEN 2 AND 12;"`
@@ -1138,11 +1211,11 @@ A new character gets its race's default masteries (level 0), skills and level-1 
 shard DB's `_AddNewChar` gives them (`docs/protocol/charselect.md` section 5, "`_AddNewChar`,
 read"). The tables are the shard DB's `_RefCharDefault_SkillMastery`, `_RefCharDefault_Skill` and
 `_RefCharDefault_Quest` (EXTERNAL, a private shard's export; **never in this repo**). The server
-reads them as exported, from the directory `-chardefaults-dir` (env `SRREVAMP_CHARDEFAULTS_DIR`)
+reads them as exported, from the directory `-chardefaults-dir` (env `OPENSRO_CHARDEFAULTS_DIR`)
 names; a `_RefCharGen.csv` in the same directory is compared with the creatable catalogue at boot.
 
 - **Unset** (the default): nothing changes. The server warns at boot, `no character defaults
-  (-chardefaults-dir / SRREVAMP_CHARDEFAULTS_DIR): new characters get no default masteries, skills
+  (-chardefaults-dir / OPENSRO_CHARDEFAULTS_DIR): new characters get no default masteries, skills
   or quests`, and creates characters as before.
 - **Set**: the boot log reads `character defaults loaded ... masteries=13 skills=13 quests=15
   china="7 masteries, 4 skills, 3 quests" europe="6 masteries, 10 skills, 2 quests"` and, with
@@ -1154,27 +1227,27 @@ names; a `_RefCharGen.csv` in the same directory is compared with the creatable 
 - **Only characters created afterwards** get them, as in the original (the procedure runs at
   create). Existing characters are not changed.
 
-On srrevamp-01:
+On opensro-01:
 1. **Stage the tables** (from the render box, where the export lives; the three default tables and
    `_RefCharGen.csv`, nothing else -- the procedures' text is not needed):
    ```
    ssh root@192.168.10.78 'tar cf - -C /opt/sro-files/db/csv/charsel _RefCharDefault_SkillMastery.csv _RefCharDefault_Skill.csv _RefCharDefault_Quest.csv _RefCharGen.csv' \
-     | ssh srrevamp@<server-host> 'mkdir -p ~/srrevamp-data/chardefaults && tar xf - -C ~/srrevamp-data/chardefaults && chmod 644 ~/srrevamp-data/chardefaults/*.csv'
+     | ssh opensro@<server-host> 'mkdir -p ~/opensro-data/chardefaults && tar xf - -C ~/opensro-data/chardefaults && chmod 644 ~/opensro-data/chardefaults/*.csv'
    ```
 2. **Check the files are readable** before the server is told about them -- a configured directory
    that does not load stops the server at boot:
-   `ssh srrevamp@<server-host> 'ls -l ~/srrevamp-data/chardefaults/ && head -1 ~/srrevamp-data/chardefaults/_RefCharDefault_*.csv'`
+   `ssh opensro@<server-host> 'ls -l ~/opensro-data/chardefaults/ && head -1 ~/opensro-data/chardefaults/_RefCharDefault_*.csv'`
    must list four `-rw-r--r--` files and print the headers `Race,MasteryID`, `Race,SkillID` and
    `Service,ID,Race,CodeName,RequiredLevel`. The container reads them as another user, so
    `chmod 644` (step 1) matters; a directory the container cannot enter needs `chmod 755`.
 3. **Set it** in the untracked override, under the server's `environment:` (edit only that key):
-   `SRREVAMP_CHARDEFAULTS_DIR: /data/chardefaults` (the data directory is mounted at `/data`). The
+   `OPENSRO_CHARDEFAULTS_DIR: /data/chardefaults` (the data directory is mounted at `/data`). The
    server running now does not read the variable; nothing changes until the release lands.
 4. **Merge to dev**; the update timer deploys it within 5 minutes.
 5. **Check** `docker compose logs server | grep -E 'character defaults loaded|agrees with the shard|odd row'`
    (no `odd row` line on the shard's export),
    then create a character and look:
-   `docker compose exec -T postgres psql -U postgres srrevamp -c "SELECT mastery_id, level FROM character_mastery_levels WHERE character_id = <id>;"`
+   `docker compose exec -T postgres psql -U postgres opensro -c "SELECT mastery_id, level FROM character_mastery_levels WHERE character_id = <id>;"`
    (7 rows at 0 for China, 6 for Europe),
    `... -c "SELECT skill_id FROM character_skills WHERE character_id = <id>;"` (4 China, 10 Europe), and
    `... -c "SELECT quest_code, status FROM character_default_quests WHERE character_id = <id>;"`.
@@ -1183,7 +1256,7 @@ To undo: remove the variable and `docker compose up -d`; characters already give
 
 ## Towns (round 674)
 
-`-regions-csv` (env `SRREVAMP_REGIONS_CSV`) gives the server the game's region table, `_RefRegion`,
+`-regions-csv` (env `OPENSRO_REGIONS_CSV`) gives the server the game's region table, `_RefRegion`,
 whose `IsBattleField` 0 regions are the towns. With the monster AI on, a monster that walks into a
 town region -- a monster chasing a player through Jangan's gate, say -- is removed at the line: no
 death, no reward, the players who could see it told it left (`OpMonsterLeft`; the client drops the
@@ -1192,13 +1265,13 @@ body). That is SR_GameServer.exe's own rule (`CGObjMob::SetCurRegion` 0x4c1270, 
 line can still hit a player standing just inside it, as in retail. Without the file no region is a
 town and monsters follow players in, as before round 674.
 
-On srrevamp-01, with this release's server running (the update timer, step 0 of the next section):
+On opensro-01, with this release's server running (the update timer, step 0 of the next section):
 1. Export `regions.csv` (step 2 of "Reference data": the `refregion.txt` and `-mode regions` lines).
    The exporter prints `wrote 3194 regions to regions.csv, 103 of them towns (IsBattleField 0)` on
    a retail archive.
-2. `scp regions.csv srrevamp@<server-host>:~/srrevamp-data/ && ssh srrevamp@<server-host> 'chmod 644 ~/srrevamp-data/regions.csv'`
+2. `scp regions.csv opensro@<server-host>:~/opensro-data/ && ssh opensro@<server-host> 'chmod 644 ~/opensro-data/regions.csv'`
 3. Add `- "-regions-csv=/data/regions.csv"` to the override's `command:` list (edit only that key,
-   as in step 6 of the next section), then `cd ~/srrevamp && docker compose up -d`.
+   as in step 6 of the next section), then `cd ~/opensro && docker compose up -d`.
 4. The boot log (`docker compose logs server`) says
    `region table loaded: a monster entering a town region is removed (IsBattleField 0) ... regions=3194 towns=103`,
    and a monster that walks in logs `monster removed: it entered a town ... name=... how="walked in" ... area=Town_Jangan`
@@ -1212,26 +1285,26 @@ player comes near) and hatches again after its nest's window -- what the engine'
 nest in a town (INFERRED: its placement goes through the same region change). Each nest's window
 is 1-3 s with a cap of 24 (EXTERNAL), so near them the per-minute count runs at about 30-60.
 
-## Deploying the monster-epic release to srrevamp-01 (round 666)
+## Deploying the monster-epic release to opensro-01 (round 666)
 
 The release that carries rounds 653-666 changes the reference data, adds the shard's nest files
-and turns the monster world on. The final release review ran steps 1, 2 and 4 and checked step 7's boot lines on the render box (steps 0, 5 and 6 need srrevamp-01 and its Postgres, so they were not run there); do them in this order.
-`<server-host>` is srrevamp-01 (`srrevamp@192.168.5.25`); the checkout there is `~/srrevamp`, and
-`~/srrevamp-data` is mounted into the server container as `/data`.
+and turns the monster world on. The final release review ran steps 1, 2 and 4 and checked step 7's boot lines on the render box (steps 0, 5 and 6 need opensro-01 and its Postgres, so they were not run there); do them in this order.
+`<server-host>` is opensro-01 (`opensro@192.168.5.25`); the checkout there is `~/opensro`, and
+`~/opensro-data` is mounted into the server container as `/data`.
 
 0. **First, the host must be running this release's server.** Steps 6-7 pass `-full-map` and
    `-nest-db-dir`; a server built before them (dev at ab66d9c has neither) exits with `flag
-   provided but not defined`, and Docker restarts it in a loop. srrevamp-01 follows `dev` by
-   itself: `deploy/update.sh` runs from the `srrevamp-update.timer` (enabled there, every 5 min,
+   provided but not defined`, and Docker restarts it in a loop. opensro-01 follows `dev` by
+   itself: `deploy/update.sh` runs from the `opensro-update.timer` (enabled there, every 5 min,
    `OnUnitActiveSec=5min`; checked 2026-09-30), fetches `origin/dev`, fast-forwards, rebuilds and
    restarts the stack, and rolls back a build that does not come up. So once the release is merged
    to `dev`, either wait for the timer or run it now, then check the host's commit:
    ```
-   ssh srrevamp@<server-host> 'sudo systemctl start srrevamp-update.service; journalctl -u srrevamp-update -n 5 --no-pager'
-   ssh srrevamp@<server-host> 'cd ~/srrevamp && git log --oneline -1'
+   ssh opensro@<server-host> 'sudo systemctl start opensro-update.service; journalctl -u opensro-update -n 5 --no-pager'
+   ssh opensro@<server-host> 'cd ~/opensro && git log --oneline -1'
    ```
    The journal line `server at <commit> listening on 15779` and a `git log` at the release's
-   commit (or later) mean it is running. (By hand, the same thing: `cd ~/srrevamp && git pull &&
+   commit (or later) mean it is running. (By hand, the same thing: `cd ~/opensro && git pull &&
    docker compose up -d --build`.) Until then, change nothing in the override: the old server
    runs happily on the old one, and the new server boots on it too (without `-full-map` it places
    the roster as before).
@@ -1253,15 +1326,15 @@ and turns the monster world on. The final release review ran steps 1, 2 and 4 an
 3. **Copy the three changed CSVs and the importer** to the host, and make them readable by the
    container:
    ```
-   scp skills.csv monsters.csv npcpos.csv /tmp/import-refdata srrevamp@<server-host>:~/srrevamp-data/
-   ssh srrevamp@<server-host> 'chmod 644 ~/srrevamp-data/*.csv'
+   scp skills.csv monsters.csv npcpos.csv /tmp/import-refdata opensro@<server-host>:~/opensro-data/
+   ssh opensro@<server-host> 'chmod 644 ~/opensro-data/*.csv'
    ```
-4. **Copy exactly the five shard files** into `~/srrevamp-data/nestdb/` -- `Tab_RefTactics.csv`,
+4. **Copy exactly the five shard files** into `~/opensro-data/nestdb/` -- `Tab_RefTactics.csv`,
    `tab_refnest.csv`, `tab_refhive.csv`, `Tab_RefAISkill.csv`, `_RefSkill.csv` (EXTERNAL; from the
    render box's `/opt/sro-files/db/csv/`, or exported as in "The three files `-nest-db-dir`
    reads" below) -- then, on the host:
    ```
-   chmod 755 ~/srrevamp-data/nestdb; chmod 644 ~/srrevamp-data/nestdb/*.csv
+   chmod 755 ~/opensro-data/nestdb; chmod 644 ~/opensro-data/nestdb/*.csv
    ```
    Without the chmod the nonroot container cannot read them and the server crash-loops (see that
    section).
@@ -1269,24 +1342,24 @@ and turns the monster world on. The final release review ran steps 1, 2 and 4 an
    compose, so it runs from the checkout (after `ssh` the working directory is `~`, where compose
    finds no file):
    ```
-   ~/srrevamp-data/import-refdata -skills-csv ~/srrevamp-data/skills.csv \
-       -postgres-dsn 'postgres://postgres:postgres@127.0.0.1:5432/srrevamp?sslmode=disable'
-   cd ~/srrevamp && docker compose exec postgres psql -U postgres -d srrevamp \
+   ~/opensro-data/import-refdata -skills-csv ~/opensro-data/skills.csv \
+       -postgres-dsn 'postgres://postgres:postgres@127.0.0.1:5432/opensro?sslmode=disable'
+   cd ~/opensro && docker compose exec postgres psql -U postgres -d opensro \
        -c "SELECT count(*) FROM skills WHERE status_params <> '';" \
        -c "SELECT count(*) FROM skills WHERE ai_attack_chance > 0;"
    ```
    The first count must be **above 0** (0 means the import read an old CSV: no skill would land a
    status); the second should be about **26650**.
-6. **Edit only the `command:` key of the override** (`~/srrevamp/docker-compose.override.yml`,
-   untracked). Leave its `environment:` and `volumes:` as they are: srrevamp-01's override sets
-   the GM accounts, `SRREVAMP_PERSIST_POSITION` and the six monster flags there (checked
+6. **Edit only the `command:` key of the override** (`~/opensro/docker-compose.override.yml`,
+   untracked). Leave its `environment:` and `volumes:` as they are: opensro-01's override sets
+   the GM accounts, `OPENSRO_PERSIST_POSITION` and the six monster flags there (checked
    2026-09-30), and a pasted `services:` block would drop them. `command` REPLACES the base list,
    so it restates all of it; add the last three lines below to what is there. No
    `-nest-swapped-stand-in`, no `-unique-respawn`:
    ```
        command:
          - "-addr=:15779"
-         - "-postgres-dsn=postgres://postgres:postgres@postgres:5432/srrevamp?sslmode=disable"
+         - "-postgres-dsn=postgres://postgres:postgres@postgres:5432/opensro?sslmode=disable"
          - "-leveldata-csv=/data/leveldata.csv"
          - "-npcpos-csv=/data/npcpos.csv"
          - "-teleport-dir=/data/teleport"
@@ -1296,10 +1369,10 @@ and turns the monster world on. The final release review ran steps 1, 2 and 4 an
    ```
    The six monster flags -- `-monster-ai`, `-monster-strike-push`, `-monster-spawn-push`,
    `-monster-battle`, `-player-dead-state`, `-monster-aggro` -- must be on too: as
-   `SRREVAMP_MONSTER_AI: "1"` and the rest under `environment:` (srrevamp-01's way), or as
+   `OPENSRO_MONSTER_AI: "1"` and the rest under `environment:` (opensro-01's way), or as
    `- "-monster-ai=true"` lines in `command:`. One of the two is enough.
 7. **Start it and read the boot log**, from the checkout:
-   `cd ~/srrevamp && docker compose up -d && docker compose logs server`.
+   `cd ~/opensro && docker compose up -d && docker compose logs server`.
    Expect:
    - `nest DB loaded (EXTERNAL ...) ... tactics=1743 nests=16381 hives=1170 ai_skill_tactics=132 skills=36144`
    - `full map: npcpos joined to nests ... placed=10104 ...`
@@ -1412,16 +1485,16 @@ for t in ("Tab_RefTactics", "tab_refnest", "tab_refhive", "Tab_RefAISkill", "_Re
             w.writerow(["" if v is None else f32(v) if cols[i][1] == "real" else str(v) for i, v in enumerate(row)])
 PY
 # From the host: pct pull 104 /srv/export/tab_refnest.csv ./tab_refnest.csv (and the other four), then
-# copy the five to the server host's ~/srrevamp-data/nestdb/ -- mounted as /data/nestdb:
+# copy the five to the server host's ~/opensro-data/nestdb/ -- mounted as /data/nestdb:
 scp Tab_RefTactics.csv tab_refnest.csv tab_refhive.csv Tab_RefAISkill.csv _RefSkill.csv \
-  srrevamp@<server-host>:~/srrevamp-data/nestdb/
+  opensro@<server-host>:~/opensro-data/nestdb/
 # Then, ON THE SERVER HOST, make them readable by the container:
-chmod 755 ~/srrevamp-data/nestdb; chmod 644 ~/srrevamp-data/nestdb/*.csv
+chmod 755 ~/opensro-data/nestdb; chmod 644 ~/opensro-data/nestdb/*.csv
 # The render box already holds all five, from round 658's full export: /opt/sro-files/db/csv/.
 ```
 
 **The chmod is not optional.** The server image runs as distroless `nonroot` (`server/Dockerfile`),
-not as the host user that owns `~/srrevamp-data`. The export above runs under `umask 077`, so its
+not as the host user that owns `~/opensro-data`. The export above runs under `umask 077`, so its
 CSVs are mode 0600, and scp keeps that mode on a new file: the container cannot read them, the
 boot fails, and Docker restarts it in a loop. Since round 666 that boot error reads
 `loading the nest DB ... permission denied: chmod 644 the nest DB's CSVs and chmod 755 their

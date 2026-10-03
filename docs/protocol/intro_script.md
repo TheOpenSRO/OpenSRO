@@ -240,7 +240,7 @@ One structure, the same on the wire, in the settings cache and in `custom/theme.
   unauthenticated asker's session after the answer (`gateway.ErrEndSession`); a repeat on a logged-in
   session gets nothing. Nothing is logged per request. The client caches the answer per server
   address.
-- **Order, per field:** `SRREVAMP_LOGIN_*` preview variables > the server's fresh answer (else the
+- **Order, per field:** `OPENSRO_LOGIN_*` preview variables > the server's fresh answer (else the
   answer cached from the last launch -- one layer, so a field the operator cleared stays cleared) >
   `custom/theme.json` > retail's defaults.
 - **Names never leave their folders:** an intro is a bare name (`[A-Za-z0-9_-]{1,64}`, looked up as

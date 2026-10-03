@@ -79,7 +79,7 @@ func (c DeathCause) CarriesExpPenalty() bool {
 // ok is false for a cause that never reaches the penalty block, so a caller
 // cannot silently charge a death the engine would have let go.
 //
-// SRREVAMP ONLY EVER REACHES DeathCauseMonster: there is no PK system, no job
+// OPENSRO ONLY EVER REACHES DeathCauseMonster: there is no PK system, no job
 // suit and no siege zone, so the other causes are implemented and tested but
 // unreachable. That is a disclosure, not a claim that they are dead code in the
 // real game.

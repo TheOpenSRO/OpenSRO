@@ -10,7 +10,7 @@ on:
 jobs:
   server:
     name: Build & test server (Go)
-    runs-on: [self-hosted, srrevamp-pve]
+    runs-on: [self-hosted, opensro-pve]
     # Bounded (OURS): a stalled step held the only runner for 10+ min on 2026-10-01.
     timeout-minutes: 30
     defaults:
@@ -22,7 +22,7 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: srrevamp_test
+          POSTGRES_DB: opensro_test
         ports:
           - 5432:5432
         options: >-
@@ -31,7 +31,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      SRREVAMP_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/srrevamp_test?sslmode=disable
+      OPENSRO_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/opensro_test?sslmode=disable
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
@@ -54,7 +54,7 @@ jobs:
 
   client:
     name: Validate client (Godot)
-    runs-on: [self-hosted, srrevamp-pve]
+    runs-on: [self-hosted, opensro-pve]
     # Bounded (OURS): a stalled step held the only runner for 10+ min on 2026-10-01.
     timeout-minutes: 30
     steps:
@@ -74,7 +74,7 @@ jobs:
         run: godot --headless --path . --script res://tools/check_scripts.gd
 
       # No native library here, on purpose: this is the client a player
-      # without srrevamp_native.dll runs (Godot prints its extension-load
+      # without opensro_native.dll runs (Godot prints its extension-load
       # errors, then every reader is GDScript). The "native" job below runs
       # the same suites with the library loaded.
       - name: Run GDScript tests
@@ -83,7 +83,7 @@ jobs:
 
   native:
     name: Native readers (Rust) and the suites with the library loaded
-    runs-on: [self-hosted, srrevamp-pve]
+    runs-on: [self-hosted, opensro-pve]
     # Bounded (OURS): a stalled step held the only runner for 10+ min on 2026-10-01.
     timeout-minutes: 40
     env:
@@ -106,7 +106,7 @@ jobs:
       - name: Build the release .so and check it
         run: |
           native/build.sh linux-release
-          bash client/tools/check_native_library.sh client/native_bin/libsrrevamp_native.so linux
+          bash client/tools/check_native_library.sh client/native_bin/libopensro_native.so linux
       - name: Set up Godot
         uses: chickensoft-games/setup-godot@v2
         with:
@@ -127,7 +127,7 @@ jobs:
 
   no-assets-check:
     name: Guard against committed pk2/game assets
-    runs-on: [self-hosted, srrevamp-pve]
+    runs-on: [self-hosted, opensro-pve]
     # Bounded (OURS): a stalled step held the only runner for 10+ min on 2026-10-01.
     timeout-minutes: 10
     steps:

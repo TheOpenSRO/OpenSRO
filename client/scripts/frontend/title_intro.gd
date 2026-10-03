@@ -65,7 +65,7 @@ const SCENE_TIMEOUT_S := 60.0
 ## A distance > 0 adds every cell the view frustum meets within it
 ## (TitleCellPlan); 0 keeps the scene to the window, which costs least --
 ## the measured trade-off is in the round 680 WORLD_ISSUES entry.
-## SRREVAMP_QA_TITLE_DRAW=<units> overrides it for a measurement.
+## OPENSRO_QA_TITLE_DRAW=<units> overrides it for a measurement.
 const PLAN_DRAW_DISTANCE := 0.0
 ## OURS: the still's fade-out once the 3D view is ready.
 const STILL_FADE_S := 0.5
@@ -121,14 +121,14 @@ var _first_view := false
 var _held := false
 var _qa_skip_at := -1.0
 var _qa_shots: PackedFloat32Array = PackedFloat32Array()
-## SRREVAMP_QA_TITLE_SEEK=<t,t,...> (OURS, QA): instead of flying, stand the
+## OPENSRO_QA_TITLE_SEEK=<t,t,...> (OURS, QA): instead of flying, stand the
 ## camera at each time in turn, wait for the window's cells, and print a
 ## `QA TITLE SHOT` line naming the frame -- a render's few viewpoints
 ## without recording the whole flight.
 var _qa_seek: PackedFloat32Array = PackedFloat32Array()
 var _qa_seek_frames := 0
 var _qa_login_shot := false
-## SRREVAMP_QA_TITLE_POPS (round 680, QA): the pop-in measurement.
+## OPENSRO_QA_TITLE_POPS (round 680, QA): the pop-in measurement.
 var _pop_probe: TitlePopProbe = null
 ## The archive's logo held back while the 2D still (which carries its own)
 ## is up.
@@ -145,12 +145,12 @@ func start(media: Pk2Reader, theme: FrontEndTheme, custom_dir: String, frame: Fr
 	_frame = frame
 	_still = still
 	_login_nodes = login_nodes
-	var qa_skip := OS.get_environment("SRREVAMP_QA_TITLE_SKIP_AT")
+	var qa_skip := OS.get_environment("OPENSRO_QA_TITLE_SKIP_AT")
 	if qa_skip != "":
 		_qa_skip_at = qa_skip.to_float()
-	for part in OS.get_environment("SRREVAMP_QA_TITLE_SHOTS").split(",", false):
+	for part in OS.get_environment("OPENSRO_QA_TITLE_SHOTS").split(",", false):
 		_qa_shots.append(part.to_float())
-	for part in OS.get_environment("SRREVAMP_QA_TITLE_SEEK").split(",", false):
+	for part in OS.get_environment("OPENSRO_QA_TITLE_SEEK").split(",", false):
 		_qa_seek.append(part.to_float())
 	if TitlePopProbe.enabled():
 		_pop_probe = TitlePopProbe.new()
@@ -191,7 +191,7 @@ func _start_plan(keyframes: Array, max_cells: int = TitleCellPlan.PLAN_MAX_CELLS
 	_plan_job.path = IntroCameraPath.from_keyframes(keyframes)
 	_plan_job.radius = TITLE_RADIUS
 	_plan_job.draw = PLAN_DRAW_DISTANCE
-	var qa := OS.get_environment("SRREVAMP_QA_TITLE_DRAW")
+	var qa := OS.get_environment("OPENSRO_QA_TITLE_DRAW")
 	if qa != "" and qa.is_valid_float():
 		_plan_job.draw = qa.to_float()
 	_plan_task = WorkerThreadPool.add_task(_plan_job.run, true, "title scene plan")
@@ -301,10 +301,10 @@ static func option_intro_name(media: Pk2Reader) -> String:
 		return ""
 	return IntroScript.parse_option_intro_name(media.read_file(entry))
 
-## READ: rand() & 3 over the four phases. SRREVAMP_QA_TITLE_HOUR=<0..3>
+## READ: rand() & 3 over the four phases. OPENSRO_QA_TITLE_HOUR=<0..3>
 ## pins it for a render (OURS).
 static func pick_day_phase() -> float:
-	var pinned := OS.get_environment("SRREVAMP_QA_TITLE_HOUR")
+	var pinned := OS.get_environment("OPENSRO_QA_TITLE_HOUR")
 	if pinned != "" and pinned.is_valid_int():
 		return TITLE_PHASES[clampi(pinned.to_int(), 0, 3)]
 	return TITLE_PHASES[randi() & 3]
@@ -427,7 +427,7 @@ func _process(delta: float) -> void:
 	var since_s := (Time.get_ticks_msec() - _started_ms) / 1000.0
 	if _qa_skip_at >= 0.0 and since_s >= _qa_skip_at and not login_up:
 		_qa_skip_at = -1.0
-		skip("SRREVAMP_QA_TITLE_SKIP_AT")
+		skip("OPENSRO_QA_TITLE_SKIP_AT")
 	match state:
 		State.PRELOADING:
 			_loading_s += delta
@@ -459,7 +459,7 @@ func _process(delta: float) -> void:
 		if state == State.FLYING and path.finished():
 			_pop_probe.summary(intro_source, path.time, get_tree())
 	if login_up and not _qa_login_shot and _qa_seek.is_empty() and _frame != null and _frame.fades_running() == 0 \
-			and (OS.get_environment("SRREVAMP_QA_TITLE_SKIP_AT") != "" or OS.get_environment("SRREVAMP_QA_TITLE_SEEK") != ""):
+			and (OS.get_environment("OPENSRO_QA_TITLE_SKIP_AT") != "" or OS.get_environment("OPENSRO_QA_TITLE_SEEK") != ""):
 		_qa_login_shot = true
 		print("QA LOGIN SHOT frame %d" % Engine.get_frames_drawn())
 
@@ -478,4 +478,4 @@ func _qa_seek_step() -> void:
 		_qa_seek_frames = 0
 		if _qa_seek.is_empty():
 			print("QA TITLE SEEK done")
-			skip("the end of SRREVAMP_QA_TITLE_SEEK")
+			skip("the end of OPENSRO_QA_TITLE_SEEK")

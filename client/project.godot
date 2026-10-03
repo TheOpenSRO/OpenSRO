@@ -10,13 +10,16 @@ config_version=5
 
 [application]
 
-config/name="SRRevamp"
-config/description="Clean-room MMO client scaffold. Requires user-supplied *.pk2 data files at runtime."
+config/name="OpenSRO"
+config/description="OpenSRO: a clean-room Silkroad Online-style MMO client. Requires user-supplied *.pk2 data files at runtime."
 run/main_scene="res://scenes/Boot.tscn"
 config/features=PackedStringArray("4.2")
 
 [autoload]
 
+; Round 704 (UserDataMigration): FIRST, so a player's settings are copied from
+; the old SRRevamp user folder before the Audio autoload reads them.
+UserDataMigrator="*res://scripts/setting/user_data_migration.gd"
 NetClient="*res://scripts/net/net_client.gd"
 ; The client's sound (round 611): buses, options, the effect table, the
 ; music and ambient. docs/protocol/SOUND_FORMAT.md holds the contract.
@@ -30,7 +33,7 @@ Audio="*res://scripts/audio/audio_service.gd"
 ; had nothing to attach. Boot.gd prints the resolved absolute path once at
 ; startup so it's easy to find.
 file_logging/enable_file_logging=true
-file_logging/log_path="user://logs/srrevamp.log"
+file_logging/log_path="user://logs/opensro.log"
 file_logging/max_log_files=10
 
 [rendering]

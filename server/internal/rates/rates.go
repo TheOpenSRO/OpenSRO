@@ -39,9 +39,9 @@
 // by it. It is kept here as the engine's own vocabulary; nothing applies it,
 // and nothing should.
 //
-// srrevamp reads them from the environment, since that is how this server is
-// already configured (SRREVAMP_LEVELDATA_CSV and friends), under the game's own
-// names with an SRREVAMP_ prefix.
+// OpenSRO reads them from the environment, since that is how this server is
+// already configured (OPENSRO_LEVELDATA_CSV and friends), under the game's own
+// names with an OPENSRO_ prefix.
 package rates
 
 import (
@@ -72,7 +72,7 @@ type Rates struct {
 	// ExpRatioParty;` in GObjPC_ReceiveKillReward -- so they are alternatives
 	// and are never multiplied together.
 	PartyExp float64
-	// DropItem multiplies drop chances. Carried for completeness; srrevamp's
+	// DropItem multiplies drop chances. Carried for completeness; OpenSRO's
 	// loot is still its own table, so nothing applies this yet.
 	DropItem float64
 	// Gold multiplies a kill's gold.
@@ -111,15 +111,15 @@ func resolve(raw string, cap float64) float64 {
 }
 
 // FromEnv resolves every knob from the environment, under the game's own names
-// with an SRREVAMP_ prefix. Unset, malformed and too-small values all resolve to
+// with an OPENSRO_ prefix. Unset, malformed and too-small values all resolve to
 // 1x, exactly as the engine's "system default" branch does.
 func FromEnv() Rates {
 	return Rates{
-		Exp:      resolve(os.Getenv("SRREVAMP_EXP_RATIO"), MaxExpRatio),
-		PartyExp: resolve(os.Getenv("SRREVAMP_EXP_RATIO_PARTY"), MaxPartyExpRatio),
-		DropItem: resolve(os.Getenv("SRREVAMP_DROP_ITEM_RATIO"), MaxDropItemRatio),
-		Gold:     resolve(os.Getenv("SRREVAMP_DROP_GOLD_AMOUNT_COEF"), MaxGoldRatio),
-		HwanGain: resolve(os.Getenv("SRREVAMP_HWAN_GAIN_FACTOR"), MaxHwanGainFactor),
+		Exp:      resolve(os.Getenv("OPENSRO_EXP_RATIO"), MaxExpRatio),
+		PartyExp: resolve(os.Getenv("OPENSRO_EXP_RATIO_PARTY"), MaxPartyExpRatio),
+		DropItem: resolve(os.Getenv("OPENSRO_DROP_ITEM_RATIO"), MaxDropItemRatio),
+		Gold:     resolve(os.Getenv("OPENSRO_DROP_GOLD_AMOUNT_COEF"), MaxGoldRatio),
+		HwanGain: resolve(os.Getenv("OPENSRO_HWAN_GAIN_FACTOR"), MaxHwanGainFactor),
 	}
 }
 

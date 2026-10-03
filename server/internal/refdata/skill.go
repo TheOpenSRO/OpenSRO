@@ -126,7 +126,7 @@ type Skill struct {
 	// different path. 1,094 real skills carry 'reqi', and 517 of them also carry
 	// a weapon requirement the engine therefore never applies.
 	//
-	// What the list HOLDS is not recovered, so srrevamp does not model the other
+	// What the list HOLDS is not recovered, so OpenSRO does not model the other
 	// branch -- it simply declines to apply a check the engine would not.
 	ReqCastListCount int
 
@@ -145,7 +145,7 @@ type Skill struct {
 	// skillparam.CombatParameters.
 	//
 	// 1,797 of the 32,367 real skill rows that walk cleanly (5.6%) are like
-	// this -- the buffs, heals and passives. Before this column srrevamp gave
+	// this -- the buffs, heals and passives. Before this column OpenSRO gave
 	// every one of them an invented per-level damage bonus, because
 	// session.skillDamageBonus fell back to the disclosed value whenever
 	// AttackPercent was zero.
@@ -163,7 +163,7 @@ type Skill struct {
 	// Wider than NoCombatParam and containing it -- 2,482 real rows against
 	// 1,813 -- because that one decides whether a blow is resolved at all and
 	// this one decides whether a resolved blow carries damage. Both are kept
-	// because the distinction is real, even though srrevamp models both as no
+	// because the distinction is real, even though OpenSRO models both as no
 	// damage today.
 	//
 	// This is what finally removes DisclosedSkillDamagePerLevel from real data:
@@ -240,7 +240,7 @@ type Skill struct {
 	// MP one.
 	//
 	// Zero means no self-heal, which is also what an export predating the
-	// columns loads -- the behaviour srrevamp had before round 503.
+	// columns loads -- the behaviour OpenSRO had before round 503.
 	SelfHealHP int
 	SelfHealMP int
 
@@ -257,7 +257,7 @@ type Skill struct {
 	// rows carry one -- Smash A and Smash D are both group 2.
 	//
 	// Zero means no group, which is also what an export predating the column
-	// loads -- the per-skill timer srrevamp had before round 504.
+	// loads -- the per-skill timer OpenSRO had before round 504.
 	CooldownGroup int
 
 	// SitGate is which of the skill-use gate's motion-state refusals apply
@@ -271,7 +271,7 @@ type Skill struct {
 
 	// The buff and self-cast columns (round 616, docs/protocol/skill_buffs.md),
 	// a strict suffix: an export predating them loads every one as zero, which
-	// is exactly the behaviour srrevamp had before -- no buff, no ground cast,
+	// is exactly the behaviour OpenSRO had before -- no buff, no ground cast,
 	// every cast resolved as an instant action.
 	//
 	// ActionKind is the first raw Param word, CRefSkill+0x168, the index
@@ -364,7 +364,7 @@ type Skill struct {
 	// Tel2 and Tel3 are whether the row carries 'tel2' (+0x2f0) and 'tel3'
 	// (+0x2f4) (CSV 87/88, the rounds 636-640 integration review):
 	// Skill_CheckUseConditions refuses 'tele', 'tel2' and 'tel3' rows alike
-	// while the caster holds a wall (HasTeleport). srrevamp moves nobody by
+	// while the caster holds a wall (HasTeleport). OpenSRO moves nobody by
 	// them (their own actions are not modelled). An older export loads false.
 	Tel2, Tel3 bool
 	// AIAttackChance is AI_AttackChance, skilldata column 66 (CRefSkill+0x164;

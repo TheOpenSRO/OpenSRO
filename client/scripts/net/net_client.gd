@@ -89,13 +89,13 @@ signal monster_left(ids: Array)
 ## one frame arrives as several, and monster_list_result fires once, on the
 ## last, with all of them.
 var _monster_list_pages: Array = []
-## srrevamp's own monster movement (CombatNet.OP_MONSTER_MOVED /
+## OpenSRO's own monster movement (CombatNet.OP_MONSTER_MOVED /
 ## OP_MONSTER_MOTION_LIST): one monster's new leg, and the legs of the listed
 ## monsters sent right after a monster list. The server sends both only with
 ## its -monster-ai flag on (off by default).
 signal monster_moved(moved: CombatNet.MonsterMoved)
 signal monster_motion_list(entries: Array)
-## srrevamp's own monster pushes (CombatNet.OP_MONSTER_ATTACKED /
+## OpenSRO's own monster pushes (CombatNet.OP_MONSTER_ATTACKED /
 ## OP_MONSTER_SPAWNED): one monster's blow on a player, sent to the whole zone
 ## with the attacker included, and a monster that has just appeared. No server
 ## sends either yet (round 540 built this half first).
@@ -555,7 +555,7 @@ func change_zone(zone: String) -> void:
 
 ## Asks to be revived (WorldNet.OP_REVIVE) with retail's option: 1 at the
 ## return point, 2 where the character lies (round 665). Sent by the dead
-## window's buttons or the SRREVAMP_QA_REVIVE_AFTER hook. The reply is
+## window's buttons or the OPENSRO_QA_REVIVE_AFTER hook. The reply is
 ## revive_result -- after the zone change to the return point for option 1.
 func revive(option: int) -> void:
 	_send(WorldNet.OP_REVIVE, WorldNet.encode_revive(option))

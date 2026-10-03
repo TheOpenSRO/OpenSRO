@@ -23,7 +23,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 func main() {
@@ -37,7 +37,7 @@ func main() {
 	// -- so this is strictly a bring-your-own-data path, like the rest.
 	dropsCSV := flag.String("drops-csv", "", "path to a headerless CSV export of per-monster drop rows")
 	dropGroupsCSV := flag.String("drop-groups-csv", "", "path to a headerless CSV export of drop-group item weights")
-	dsn := flag.String("postgres-dsn", "postgres://postgres:postgres@localhost:5432/srrevamp?sslmode=disable",
+	dsn := flag.String("postgres-dsn", "postgres://postgres:postgres@localhost:5432/opensro?sslmode=disable",
 		"PostgreSQL connection string to populate")
 	flag.Parse()
 

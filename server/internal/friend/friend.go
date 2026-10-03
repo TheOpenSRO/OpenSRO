@@ -31,7 +31,7 @@ import (
 // here. The engine has a separate `0x640f FRIENDERR_TARGETLISTFULL` for the
 // other side, but **the server never returns it** -- `0x640f` appears nowhere in
 // its .text -- so where the engine enforces the target's limit is not
-// established. srrevamp checks both because it adds to both; that is the
+// established. OpenSRO checks both because it adds to both; that is the
 // conservative reading rather than a claim about where the engine checks.
 const MaxFriends = 20
 

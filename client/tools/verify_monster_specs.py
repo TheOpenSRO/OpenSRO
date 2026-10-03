@@ -44,7 +44,7 @@ Run it on the RE box, where the extracted tables live:
     python3 verify_monster_specs.py --specs specs.txt --tables /var/tmp/tables
 The spec file is `code<TAB>name<TAB>K=V,K=V,...`; cmd/server's
 TestWriteMonsterSpecsForVerifier writes it from the live roster when
-SRREVAMP_WRITE_SPECS names a path. `--specs -` reads it from stdin, so the
+OPENSRO_WRITE_SPECS names a path. `--specs -` reads it from stdin, so the
 script and the specs can both be shipped over one ssh without writing there:
     ssh root@box python3 -c "$(cat verify_monster_specs.py)" --specs - < specs.txt
 """

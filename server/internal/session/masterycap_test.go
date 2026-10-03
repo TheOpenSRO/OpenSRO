@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/account"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/account"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
 )
 
 // seedMasteryCap is the level cap the tests hand the store when seeding a
@@ -57,7 +57,7 @@ func TestMasteryTotalRefusal(t *testing.T) {
 }
 
 // TestRaiseMasteryTotalCapIsFlatForChina drives RaiseMasteryHandler for China
-// characters (every srrevamp character is one): the total cap is a flat 330,
+// characters (every OpenSRO character is one): the total cap is a flat 330,
 // whatever the character's level, and the per-mastery character-level cap still
 // binds on its own.
 func TestRaiseMasteryTotalCapIsFlatForChina(t *testing.T) {

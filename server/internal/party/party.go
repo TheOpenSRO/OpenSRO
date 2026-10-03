@@ -9,7 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 )
 
 // MaxSize caps how many characters can be in one party. **RECOVERED
@@ -31,7 +31,7 @@ import (
 // project's open-items list had carried unnamed -- and an exp-sharing party
 // holds 8 while a non-sharing one holds 4.
 //
-// srrevamp's parties share experience unconditionally: every member counts
+// OpenSRO's parties share experience unconditionally: every member counts
 // toward leveldata.PartyExpBonus and no flag exists to turn it off. So the
 // exp-shared branch is the one that applies, and MaxSize is 8.
 //
@@ -47,7 +47,7 @@ import (
 const MaxSize = 8
 
 // MinCreatorLevel is 5: a character below level 5 cannot form a party.
-// **RECOVERED 2026-09-17**, and srrevamp had no such rule at all.
+// **RECOVERED 2026-09-17**, and OpenSRO had no such rule at all.
 //
 // Two independent call sites enforce it, both by calling vtable slot 73
 // (`+0x124`, the level getter) and comparing:
@@ -72,7 +72,7 @@ var ErrCreatorTooLow = errors.New("party: a party leader must be at least level 
 func CanCreate(level int) bool { return level >= MinCreatorLevel }
 
 // MaxSizeNotShared is the engine's OTHER cap -- the one for a party that does
-// not share experience (bit 0 of its flags clear). srrevamp has no such party,
+// not share experience (bit 0 of its flags clear). OpenSRO has no such party,
 // so nothing uses this; it is recorded because the two limits are easy to
 // collapse into one number and the engine keeps them apart.
 const MaxSizeNotShared = 4

@@ -1,6 +1,6 @@
 extends SceneTree
 
-## Exercises QaAttackGoto -- which monster SRREVAMP_QA_ATTACK_GOTO stands
+## Exercises QaAttackGoto -- which monster OPENSRO_QA_ATTACK_GOTO stands
 ## beside, and where, from a fresh monster list (round 539) -- run headless:
 ## `godot4 --headless --path client --script res://scripts/qa/qa_attack_goto_test.gd`
 ##
@@ -46,7 +46,7 @@ func _test_nearest_by_the_lists_position_otherwise() -> void:
 func _test_name_filter() -> void:
 	var fresh := [_snap(3, "Yeoha", 5.0, 0.0), _snap(4, "Mangyang", 50.0, 0.0)]
 	_check(_id_of(QaAttackGoto.pick(fresh, -1, "Mangyang", Vector3.ZERO, {})) == 4,
-		"SRREVAMP_QA_ATTACK_NAME narrows the pick (the nearer Yeoha is passed over)")
+		"OPENSRO_QA_ATTACK_NAME narrows the pick (the nearer Yeoha is passed over)")
 	_check(_id_of(QaAttackGoto.pick(fresh, -1, "", Vector3.ZERO, {})) == 3,
 		"no name: any species")
 	_check(_id_of(QaAttackGoto.pick(fresh, 3, "Mangyang", Vector3.ZERO, {})) == 4,

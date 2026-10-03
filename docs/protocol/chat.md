@@ -3,7 +3,7 @@
 Recovered in round 634 from `sro_client.exe` (the dump in `/var/tmp/decomp_client`,
 `/var/tmp/sro_client.asm`) and the Media archive's `resinfo` layouts. Labels: **READ** (the code
 or data says it), **MEASURED** (taken from a picture or a texture's pixels), **INFERRED** (a
-reasoned reading the code does not state), **OURS** (srrevamp's choice), **OPEN** (not known).
+reasoned reading the code does not state), **OURS** (OpenSRO's choice), **OPEN** (not known).
 
 ## The packets (retail)
 
@@ -17,7 +17,7 @@ reasoned reading the code does not state), **OURS** (srrevamp's choice), **OPEN*
 `client_senders.tsv` lists only CIFConsole's four senders for `0x7025`; `0x7ad400` is a fifth,
 CIFChatViewer's (READ, round 634).
 
-srrevamp keeps its own framing (`server/internal/session/chat.go`, `client/scripts/net/chat.gd`,
+OpenSRO keeps its own framing (`server/internal/session/chat.go`, `client/scripts/net/chat.gd`,
 OURS): `0x00A5` send (type, index, target, text), `0x00A6` update (type, sender name, text --
 a name even where retail sends a unique id), `0x00A7` result (ok, type, index, code u16, target),
 `0x00A8` global (slot as int64, text).
@@ -47,7 +47,7 @@ Before sending, `0x7ad400` refuses a party line without a party (UIIT_MSG_PARTYE
 line outside one (UIIT_MSG_TC_ERROR_NOT_POSITION, `0x987140`). A lone mark (length 1) ends the
 input without sending (`0x7ad7dc`). The flood block: four lines inside 4000 ms or six inside 9999 ms
 end in `0x7a9bb0` (not built, OPEN). Whether the mark itself is sent is INFERRED: `0x7ad904` copies
-the raw line when the split left the message empty; srrevamp's client strips it (OURS).
+the raw line when the split left the message empty; OpenSRO's client strips it (OURS).
 
 After a line goes out (`0x7add04..0x7ade70`): types 1 and 6 empty the box; type 3 leaves `;` if the
 line began with one; a whisper leaves `$name `; party/guild/union/academy leave their mark; and on
@@ -58,7 +58,7 @@ R's reply (`0x7ab470`): `"$" + name + " "` (`0xdbb848`, `0xe19330`), set through
 `0xB025` codes (`0x877340`): 3 UIIT_CHATERR_CANT_FIND_TARGET "Cannot find [%s].", 0x2006
 UIIT_CHATERR_YOU_ARE_SQUELCHED, 0x2008 UIIT_CHATERR_INVALID_COMMAND, 0x200a
 UIIT_CHATERR_NOT_A_PARTY_MEMBER, 0x200b/0x200c UIIT_CHATERR_ALLIANCE_PERMISSION_DENIED, 0x200d
-UIIT_STT_CANT_CHATTING (formatted with 10), 0x200e UIIT_MSG_GUILD_UNION_CHAT_LIMIT. srrevamp adds
+UIIT_STT_CANT_CHATTING (formatted with 10), 0x200e UIIT_MSG_GUILD_UNION_CHAT_LIMIT. OpenSRO adds
 0xf001 (no guild), 0xf002 (no academy), 0xf003 (no global item), 0xf004 (empty) (OURS; the first two
 show the strings the retail client shows for its own refusals).
 
@@ -159,7 +159,7 @@ the client's own code gives). The user's retail screenshot is mode 5 (its down a
   If the frame is not wanted, it is set to +0x48c (`0x7a9bd0(+0x48c)`). If it is wanted, it is shown
   unless the lock already shows it. In short, shown = locked or wanted. Retail calls `0x7a9bd0(1)` on every frame the
   frame is wanted and unlocked (`0x77b407`), not only on a change; its show is idempotent
-  (`0x652b70` returns when the flag already matches), so srrevamp's call-on-change is equivalent.
+  (`0x652b70` returns when the flag already matches), so OpenSRO's call-on-change is equivalent.
 - **No delay, no fade.** The test runs every frame, and `0x7a9bd0` calls each control's show
   (vslot 0x5c). CIFWnd's show `0x652b70` flips the flag and redraws, with no timer.
   CIFChatViewer's own slot 23 (`0x7a9b60`) shows its ID-12 button along with the whole window.
@@ -175,7 +175,7 @@ the client's own code gives). The user's retail screenshot is mode 5 (its down a
     background, as in the user's screenshot.
 - **Enter.** Enter gives the focus to +0x4a0 (see "Input"). On the next update the focus makes the
   frame wanted. Escape ends the input, and the update after that hides the frame.
-- **srrevamp.** `HudChat.update_frame` runs this test from `_process` on the real mouse position.
+- **OpenSRO.** `HudChat.update_frame` runs this test from `_process` on the real mouse position.
   Enter and R's reply open the line while the frame is hidden, so the check is now whether the
   window is shown, not the line. Godot will not focus a hidden control, so `focus_input` shows the
   frame first (OURS: one update early). The lock is `locked`, false at start and never saved.
@@ -183,7 +183,7 @@ the client's own code gives). The user's retail screenshot is mode 5 (its down a
   tests only once a frame), so a click that comes with the move into the window finds the line
   shown.
   The window keeps clicks on its inclusive right and bottom edges (`_has_point`, as `0xb8f3d0`;
-  Godot's own test is half-open). `SRREVAMP_QA_FRAME_LOG` logs each frame change with the rect.
+  Godot's own test is half-open). `OPENSRO_QA_FRAME_LOG` logs each frame change with the rect.
 - **MEASURED on the box**, by real X input through Login -> CharacterSelect (round 641):
   - the frame hid with the mouse on the world and showed on hover over the chat;
   - Enter showed it with the frame hidden, and a sent line kept it;
@@ -194,7 +194,7 @@ the client's own code gives). The user's retail screenshot is mode 5 (its down a
 is refused by the client: UIIT_MSG_PARTYERR_CANT_FIND_PARTY "Cannot find the corresponding
 party.", UIIT_MSG_GUILD_NON_EXISTING "Cannot carry this function out because you do not belong to
 the guild.", UIIT_MSG_TC_ERROR_NOT_POSITION "You do not belong to an Academy.", and the box is
-emptied (SetText "" at `0x7ad875`). srrevamp's client knows the party and guild from their info
+emptied (SetText "" at `0x7ad875`). OpenSRO's client knows the party and guild from their info
 answers; the server still refuses with its own codes.
 
 **Not built (OPEN):** the whisper list (`GDR_WHISPERLIST`, `0x7acfd0` adds to it; its button,
@@ -202,7 +202,7 @@ ID 14, runs `0x7a99d0`, which shows the list when it is hidden and hides it othe
 chat-mode button and viewer (IDs 41/42), speech balloons
 (`0x9c77c0` for types 1, 3, 6, 0xd). The system message window (interface child 0x44, `0x7781b0`)
 is built since round 639 (docs/protocol/system_message.md): the chat's refusals go there, the
-group refusals with type 4 (`0x7ad866`) and the server's with type 0 (`0x877798`), and srrevamp's
+group refusals with type 4 (`0x7ad866`) and the server's with type 0 (`0x877798`), and OpenSRO's
 system lines with them; the All list no longer gets them.
 
 ## Globals (READ)
@@ -236,7 +236,7 @@ instance (`0x7b3d40` with `push 0x64` at `0x78cbbe`, round 657) and gives it a f
 (MEASURED); their arrangement as a stretch frame over the window -- which is the text's extent --
 is INFERRED. The fill is the class's own (round 657).
 
-srrevamp's `/notice <text>` GM command (OURS) sends type 7 to everyone.
+OpenSRO's `/notice <text>` GM command (OURS) sends type 7 to everyone.
 
 ## The retail screenshot's colours
 
@@ -244,7 +244,7 @@ The colours are READ (`0x876810`). The user's screenshot, a private server's cli
 byte order: its global lines are (255, 255, 0), `0xffffff00` read as ARGB. Its notice / warning
 lines are (0, 174, 195):
 exactly `0xffffaec3`'s green and blue bytes with the red byte zeroed, and they carry no "(Notice):"
-prefix. The binary on the box says pink `0xffffaec3` and the prefix; srrevamp draws what the binary
+prefix. The binary on the box says pink `0xffffaec3` and the prefix; OpenSRO draws what the binary
 says. Where the private client's cyan comes from (its `vsroplus_lib.dll` is the likely suspect) is
 OPEN.
 

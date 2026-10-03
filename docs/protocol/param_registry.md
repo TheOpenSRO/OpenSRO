@@ -265,17 +265,17 @@ The formula asks the EDX object *what kind of monster it is* and, on the answer,
 reads a param off the stack object. A bonus conditioned on what the target is
 belongs to the attacker, so EDX is the target. Two routes, one answer.
 
-### A mechanic srrevamp does not model
+### A mechanic OpenSRO does not model
 
 Step 4 is an **anti-monster-class damage bonus**: attacker param 259, applied as
 a percentage, only when the defender is a monster whose `GetMonsterClass()`
 returns 3. `CGObjMob::GetMonsterClass` is `MOV AL,[ECX+0x1cd8] ; AND AL,0xF`, so
 the class is the low nibble of a byte on the mob.
 
-srrevamp has no item or skill that grants param 259, so the bonus is
+OpenSRO has no item or skill that grants param 259, so the bonus is
 unreachable rather than omitted — recorded here so it is not mistaken for a gap
 in the formula. The same goes for steps 3, 5 and 6, which are attacker
-percentages no srrevamp source publishes.
+percentages no OpenSRO source publishes.
 
 ## Params are read through TWO paths, and one grep sees only half (2026-09-16)
 
@@ -369,7 +369,7 @@ tag resolves to **four** params, chosen by damage type and the second axis, each
 bounded 0..100 and read off the defender inside mitigation. That is an avatar
 damage-reduction percentage.
 
-srrevamp has no source for `dara`, so this is unreachable rather than omitted,
+OpenSRO has no source for `dara`, so this is unreachable rather than omitted,
 the same as the anti-monster-class bonus recorded above.
 
 ## The damage pipeline holds 47 params, and a depth-0 walk sees 16 (2026-09-16)

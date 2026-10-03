@@ -85,7 +85,7 @@ func _init() -> void:
 			town_smith + " lists no repair talk line (interaction 4 adds no item in FUN_00700440)")
 	# The fortress smith's real SN_FORTRESS_SMITH_REPAIR line comes from
 	# interaction 0x1a (FUN_00700200 -> IF_NPCTalk::FUN_006fe030 case 0x36),
-	# a fortress system srrevamp does not have -- deliberately not offered.
+	# a fortress system OpenSRO does not have -- deliberately not offered.
 	var fs := NpcServiceReader.services_for("NPC_KT_FORTRESS_SMITH", shops)
 	_check(not fs.map(func(s): return s.key).has("repair"),
 		"NPC_KT_FORTRESS_SMITH offers no repair (its real line is interaction 0x1a, fortress only)")
@@ -519,7 +519,7 @@ func _init() -> void:
 	for code in want_repair:
 		var yes: bool = has_offers_repair and bool(reader_script.call("offers_repair", code))
 		_check(yes, "%s shows the store's repair buttons (interaction 4)" % code)
-	# NEGATIVE: every other store hides them. Before this round srrevamp showed
+	# NEGATIVE: every other store hides them. Before this round OpenSRO showed
 	# both buttons at every store. None of these carries id 4: a warehouse
 	# keeper (ids 1 and 3), a potion seller, an accessory merchant, a guild NPC
 	# (0x0f, 1) and a guild agent (no id by codename, round 520). An

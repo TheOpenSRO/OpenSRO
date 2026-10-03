@@ -1,4 +1,4 @@
-module github.com/OpenSRO/srrevamp/server
+module github.com/OpenSRO/OpenSRO/server
 
 go 1.25.0
 

@@ -32,8 +32,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // Column indices into a tab-split characterdata row (0-indexed).

@@ -1,4 +1,4 @@
-# SRRevamp
+# OpenSRO
 
 A from-scratch, clean-room reimplementation of a Silkroad Online–style MMO client and server.
 
@@ -19,7 +19,7 @@ eyeballing, and the traps that have each cost this project hours.
 Every tagged release publishes ready-to-run Windows and Linux client builds under
 [GitHub Releases](../../releases) — no Godot install needed.
 
-1. Download and unzip `srrevamp-windows.zip` (or `srrevamp-linux.zip`).
+1. Download and unzip `opensro-windows.zip` (or `opensro-linux.zip`).
 2. Copy your own real Silkroad Online client's `*.pk2` files (`Data.pk2`, `Map.pk2`, `Media.pk2` —
    BYO game assets, see [docs/LEGAL.md](docs/LEGAL.md)) into the `pk2` folder sitting next to the
    executable. No environment variables or config editing needed — the client looks in that folder
@@ -41,8 +41,8 @@ draw with OpenGL 3.3 (the Compatibility renderer), which runs on more and older 
   start-up and restarts itself on OpenGL. The log's `RENDERER:` line then says
   `vulkan_probe="fallback to OpenGL: ..."`. From then on it starts on OpenGL directly: the choice is
   kept in `override.cfg` next to the executable.
-- **Choosing OpenGL yourself.** Run `srrevamp-compatibility.bat` (Windows) or
-  `srrevamp-compatibility.sh` (Linux), which ship next to the executable, once. The client keeps the
+- **Choosing OpenGL yourself.** Run `opensro-compatibility.bat` (Windows) or
+  `opensro-compatibility.sh` (Linux), which ship next to the executable, once. The client keeps the
   choice the same way.
 - **Choosing a renderer in a config file.** Set it in `setting/config.yaml` next to the executable:
 
@@ -58,7 +58,7 @@ draw with OpenGL 3.3 (the Compatibility renderer), which runs on more and older 
   kept. The log says so, and the automatic check runs again at every start, costing a few
   milliseconds. Install it in a folder you own.
 - **The automatic fall back needs the native library** next to the executable
-  (`srrevamp_native.dll` / `libsrrevamp_native.so`). Without it, a machine without Vulkan stops at
+  (`opensro_native.dll` / `libopensro_native.so`). Without it, a machine without Vulkan stops at
   Godot's "Unable to initialize Vulkan video driver" message. Use the Compatibility launcher then.
 - **If neither renderer starts**, update the graphics driver. On OpenGL, Godot stops with "Unable to
   initialize OpenGL video driver" if the driver lacks OpenGL 3.3.
@@ -75,14 +75,14 @@ render text slightly softer (Godot 4.2 drops glyphs under fractional font oversa
 off there).
 
 **If something looks wrong**: the client always writes a log file, printed once at startup (look
-for a line like `SRRevamp log file: <path>`) — Windows: `%APPDATA%\Godot\app_userdata\SRRevamp\
-logs\srrevamp.log`, Linux: `~/.local/share/godot/app_userdata/SRRevamp/logs/srrevamp.log`. Attach
+for a line like `OpenSRO log file: <path>`) — Windows: `%APPDATA%\Godot\app_userdata\OpenSRO\
+logs\opensro.log`, Linux: `~/.local/share/godot/app_userdata/OpenSRO/logs/opensro.log`. Attach
 that file (not just a description) when reporting a bug — no terminal needed to get it.
 Type `/help` on the chat line for the tester console: `/where`, `/copy` (the F3 report plus the
 last log lines and script errors, straight to the clipboard), `/entities`, `/fps`, `/errors`,
 `/wire on` and more; the Escape menu's Help opens the in-client Help window. GM commands
 (`/tp`, `/give`, `/level`, `/spawn`, ...) exist for accounts an operator names in
-`SRREVAMP_GM_ACCOUNTS`. All of it is in [docs/DEBUG_TOOLS.md](docs/DEBUG_TOOLS.md).
+`OPENSRO_GM_ACCOUNTS`. All of it is in [docs/DEBUG_TOOLS.md](docs/DEBUG_TOOLS.md).
 
 ## Running locally
 
@@ -97,7 +97,7 @@ volume across restarts; `docker compose down -v` wipes it for a clean slate. Req
 host that can actually run containers — an LXC container needs nesting enabled for this to work.
 
 **Without Docker** (needs a local Postgres at `localhost:5432`, user/pass `postgres`/`postgres`,
-databases `srrevamp` + `srrevamp_test`):
+databases `opensro` + `opensro_test`):
 
 ```
 cd server
@@ -115,26 +115,26 @@ resolves them automatically), or, for development/testing a single specific file
 the `pk2` folder, set any of these environment variables before launching the client (each one
 takes priority over the matching real `pk2/<Name>.pk2` file when set) to have `World3D.tscn` load
 and place them live (see `client/scripts/World3D.gd`):
-- `SRREVAMP_PK2_PATH` — a real pk2 archive (e.g. `Data.pk2`). On its own, this auto-loads a real
+- `OPENSRO_PK2_PATH` — a real pk2 archive (e.g. `Data.pk2`). On its own, this auto-loads a real
   assembled, textured player character (see "Status" below).
-- `SRREVAMP_PK2_PATH` + `SRREVAMP_BSR_PATH` — also loads a real, textured static scenery object
+- `OPENSRO_PK2_PATH` + `OPENSRO_BSR_PATH` — also loads a real, textured static scenery object
   (a `.bsr` path inside the archive) via `ObjectLoader`.
-- `SRREVAMP_BSK_PATH` + `SRREVAMP_BAN_PATH` — a real `.bsk` skeleton and `.ban` animation (either
-  loose files or paths inside `SRREVAMP_PK2_PATH` — see `AssetSource`), built into a real,
+- `OPENSRO_BSK_PATH` + `OPENSRO_BAN_PATH` — a real `.bsk` skeleton and `.ban` animation (either
+  loose files or paths inside `OPENSRO_PK2_PATH` — see `AssetSource`), built into a real,
   live-animated decoration `Skeleton3D` via `Skeleton3DBuilder`.
-- `SRREVAMP_MAP_PK2_PATH` + `SRREVAMP_MAPM_PATH` — `Map.pk2` (a separate archive from `Data.pk2`
+- `OPENSRO_MAP_PK2_PATH` + `OPENSRO_MAPM_PATH` — `Map.pk2` (a separate archive from `Data.pk2`
   in a real retail install) and a region `.m` path inside it (e.g. `100\100.m`), loaded as real
   terrain via `MapmTerrainBuilder`, tiled into a real 3x3 grid of regions around it (see
   `World3D.gd`'s `_load_region_neighborhood` — this project's own multi-region layout, since real
   per-region world scale/adjacency isn't confirmed; see `docs/protocol/MAPM_FORMAT.md`).
-- `SRREVAMP_MEDIA_PK2_PATH` + `SRREVAMP_MAPM_TEXTURE_PATH` — `Media.pk2` (a third separate
+- `OPENSRO_MEDIA_PK2_PATH` + `OPENSRO_MAPM_TEXTURE_PATH` — `Media.pk2` (a third separate
   archive) and a real per-region minimap image inside it (e.g. `minimap\100x100.ddj`, matching the
-  same region number as `SRREVAMP_MAPM_PATH`), textures the *center* region of that grid with real,
+  same region number as `OPENSRO_MAPM_PATH`), textures the *center* region of that grid with real,
   region-accurate art instead of the procedural per-tile color fallback (neighbors always use the
   fallback — no minimap texture is looked up per-neighbor yet).
-- `SRREVAMP_MAPO_PATH` — a real `Map.pk2` region's `.o` object-placement file (via
-  `SRREVAMP_MAP_PK2_PATH`, e.g. `0\0.o`), rendered with each placement's real resolved `.bsr`
-  model (via `SRREVAMP_PK2_PATH`'s `Data.pk2` and a real object-index table — see "Status" below).
+- `OPENSRO_MAPO_PATH` — a real `Map.pk2` region's `.o` object-placement file (via
+  `OPENSRO_MAP_PK2_PATH`, e.g. `0\0.o`), rendered with each placement's real resolved `.bsr`
+  model (via `OPENSRO_PK2_PATH`'s `Data.pk2` and a real object-index table — see "Status" below).
   Also tiled per-region across the same 3x3 grid as terrain.
 
 Leave any of them unset and that piece is skipped — the scene works fine with none of them set.
@@ -315,7 +315,7 @@ and what a deeper future pass would need.
 `client/tools/` screenshots are now live in the actual playable scene.
 
 The player's own body is no longer a bare skeleton or a placeholder capsule: setting just
-`SRREVAMP_PK2_PATH` auto-loads a real assembled character — a real `.bsk` skeleton with real
+`OPENSRO_PK2_PATH` auto-loads a real assembled character — a real `.bsk` skeleton with real
 body-part `.bms` meshes rigidly attached via `client/scripts/assets/character_assembler.gd`
 (`CharacterAssembler`), textured with the character's actual real skin texture (resolved from a
 real `.bmt`/`.ddj` pair, matched to each body part by its own `material_name` field — see
@@ -373,8 +373,8 @@ checked and dropped after its own real `material_name` ("China_shield_14") turne
 any real file anywhere in the archive) deterministically from the real equipped shield item's ID.
 Gated on real `SLOT_SHIELD` equip state, broadcast per-player the same way as armor and weapon.
 
-The ground is no longer just a placeholder box either: setting `SRREVAMP_MAPM_PATH` (+ its own
-`SRREVAMP_MAP_PK2_PATH`, since `Map.pk2` is a separate archive from `Data.pk2` in a real retail
+The ground is no longer just a placeholder box either: setting `OPENSRO_MAPM_PATH` (+ its own
+`OPENSRO_MAP_PK2_PATH`, since `Map.pk2` is a separate archive from `Data.pk2` in a real retail
 install) loads a real `Map.pk2` region's real elevation data and builds a real triangulated
 terrain mesh via `client/scripts/assets/mapm_terrain_builder.gd` (`MapmTerrainBuilder`), replacing
 both the placeholder's visual mesh and its collision shape (the latter built straight from the
@@ -404,7 +404,7 @@ every region's placed objects for a given real resource-path substring. Found Ja
 cluster this way (x=97-99, y=166-169; `98/168`, the real palace core, has the densest match). The
 server's own symbolic default spawn zone, `"jangan"`, now resolves to this real region
 (`World3D._resolve_zone_region`) instead of clearing to placeholder ground — live-verified with
-`SRREVAMP_MAPM_PATH` deliberately unset, confirming the zone-label path alone loads real Jangan
+`OPENSRO_MAPM_PATH` deliberately unset, confirming the zone-label path alone loads real Jangan
 terrain. A real `.nvm` navmesh format (per-region walkability/pathfinding, `docs/protocol/
 NVM_FORMAT.md`) and a real `.cpd` "Compound" object format (groups several real `.bsr` references
 under one name — a decorated tree, a fully-armored character — `docs/protocol/CPD_FORMAT.md`) were
@@ -419,7 +419,7 @@ semantics: solved". Cross-checked three more ways: 264 real files split with zer
 polarity is forced because global edges must stay passable or no region could ever be left, and the
 blocking set forms closed contours. Each streamed region now loads its own
 `navmesh\nv_%04x.nvm` and adds those edges as real collision on their own layer — the player is
-stopped by them, the camera deliberately is not. `SRREVAMP_DEBUG_NAVMESH_WALLS=1` draws them, which
+stopped by them, the camera deliberately is not. `OPENSRO_DEBUG_NAVMESH_WALLS=1` draws them, which
 is how the placement was checked: over real Jangan they wrap each building and leave the streets
 open.
 
@@ -453,7 +453,7 @@ the exact failure it was built to fix: dropped at the foot of the real Jangan pa
 22.1-unit ramp) with the step-up assist disabled, the player walks y=2.12 → 10.74 → 19.64 → 21.94,
 arriving at the ramp's own top height and holding it for 450 further frames while still moving —
 where the collision-shape approach produced *zero* displacement. Set
-`SRREVAMP_NO_NAVMESH_MOVEMENT=1` to compare against the old physics movement.
+`OPENSRO_NO_NAVMESH_MOVEMENT=1` to compare against the old physics movement.
 
 How objects attach to a region was measured rather than assumed, and one measurement saved a wrong
 design: `MapObject.linked_edges` looks like the object-to-terrain link but is not — only 4 of 122
@@ -478,8 +478,8 @@ regions; the region-only query still answers for the 1,516 carrying no `RECT` an
 rather than picking a side. Live against a real install, real Jangan (`98/168`) reads
 "Zone: Jangan".
 
-Real placed objects have automatic asset selection now too: `SRREVAMP_MAPO_PATH` (a real `Map.pk2`
-region's `.o` file, via `SRREVAMP_MAP_PK2_PATH`) resolves each real placement's type ID through a
+Real placed objects have automatic asset selection now too: `OPENSRO_MAPO_PATH` (a real `Map.pk2`
+region's `.o` file, via `OPENSRO_MAP_PK2_PATH`) resolves each real placement's type ID through a
 real object-index table (`object.ifo`, root level in `Data.pk2`, magic `JMXVOBJI1000` — a real,
 plain-text table this project had previously called a confirmed dead end, found once the pk2
 directory-chain bug above was fixed) and renders it with its real `.bsr` model — see
@@ -502,7 +502,7 @@ of the same real model are cached and
 `duplicate()`d rather than re-parsed (`_try_load_real_map_objects` in `World3D.gd`), since real
 regions turn out to reuse very few distinct models across many placements.
 
-Real terrain collision is wired up too: whenever `SRREVAMP_MAPM_PATH` loads real terrain, the
+Real terrain collision is wired up too: whenever `OPENSRO_MAPM_PATH` loads real terrain, the
 ground's collision shape is rebuilt from that same real triangle data (`Mesh.create_trimesh_shape()`
 on the exact `ArrayMesh` `MapmTerrainBuilder` produced — no separate collision geometry to keep in
 sync), replacing the flat placeholder box. Verified against a real region: the player capsule

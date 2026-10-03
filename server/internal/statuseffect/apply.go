@@ -45,7 +45,7 @@ import (
 // The sleep block, 0x590f06..0x5910f9, is NonElementalDurationMs and
 // NonElementalChance (round 277) and then, READ this round, the same dice:
 // `mov ecx,0x7000000; lea edx,[esi+0xa30]; call 0x5a1a20` with the chance in
-// EAX, after three terms srrevamp holds as zero -- a lookup in the target's
+// EAX, after three terms OpenSRO holds as zero -- a lookup in the target's
 // effect map (0x59de50, what the target's own buffs take off the chance), its
 // percent cut, and the disease bonus. record+0x18 = (byte)value[2], the
 // state's level, which is the byte the client's 0x3057 carries for every
@@ -57,7 +57,7 @@ import (
 //
 // OPEN, and not modelled: the extra halving loop the slow, bleeding and stun
 // blocks run on the chance before the roll (`sar eax,1` per step at
-// 0x591bc0), whose count is unread -- so srrevamp's chance for those three is
+// 0x591bc0), whose count is unread -- so OpenSRO's chance for those three is
 // the base one, which is never lower than retail's; the stun block's own
 // guards (`[esp+0x43]`, and its skip when the call's fifth argument is set);
 // the incubation block ('tb', +0x474), which has neither the 2.5 nor the 0.5
@@ -126,7 +126,7 @@ func IsElemental(code string) bool {
 	return false
 }
 
-// Applied reports whether srrevamp applies a code at all: every state the
+// Applied reports whether OpenSRO applies a code at all: every state the
 // table names except 'tb' (its block's computation is unread) and 'csmp'
 // (bit 23: no applier, no icon). See the package notes above.
 func Applied(code string) bool {
@@ -145,7 +145,7 @@ type Target struct {
 	// ResistPercent and ResistFlat are the target's params 27..32 and
 	// 145..150 for an elemental state, indexed by its slot (0..5). Zero for
 	// every monster (characterdata cols 61-66 are 0 on every row, MEASURED)
-	// and, today, for every character: srrevamp publishes no resist params
+	// and, today, for every character: OpenSRO publishes no resist params
 	// (OPEN).
 	ResistPercent [6]int
 	ResistFlat    [6]int
@@ -156,7 +156,7 @@ type Target struct {
 // accumulator by `kind << 24` in the TARGET's map (see above).
 type Roller func(chance, kind int) bool
 
-// Record is one state on an object: srrevamp's version of the engine's
+// Record is one state on an object: OpenSRO's version of the engine's
 // 0x70-byte record (see the field table in docs/protocol/status_effects.md).
 type Record struct {
 	Code string
@@ -203,7 +203,7 @@ func Resolve(run Run, t Target, nowMs uint32, roll Roller) (Record, bool) {
 	slot := SlotForBit(st.Bit)
 	rec := Record{Code: st.Code, Slot: slot, Bit: st.Bit, StartMs: nowMs, LastTickMs: nowMs}
 	if IsElemental(run.Code) {
-		// The disease bonus (param 169) is 0: srrevamp applies no disease.
+		// The disease bonus (param 169) is 0: OpenSRO applies no disease.
 		if roll == nil || !roll(run.Value(1), st.Kind) {
 			return Record{}, false
 		}

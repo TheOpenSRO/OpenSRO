@@ -38,7 +38,7 @@ func _initialize() -> void:
 	var archive = F.archive()
 	var template := ObjectLoader.load_object(archive, "res\\sway.bsr")
 	var once_template := ObjectLoader.load_object(archive, "res\\sway_once.bsr")
-	_check(MA != null and template != null and template.has_meta("srrevamp_map_animated"),
+	_check(MA != null and template != null and template.has_meta("opensro_map_animated"),
 		"the synthetic tree loads animated")
 	if MA == null or template == null:
 		_finish()
@@ -221,7 +221,7 @@ func _test_shared_poses(MA, template: Node3D, once_template: Node3D) -> void:
 	driver.tick(cam.global_position, cam.get_frustum())
 	_check(driver.poses == before + 2, "r647: two one-shot clips starting together keep a player each (poses %d -> %d)" % [before, driver.poses])
 
-	# SRREVAMP_MAP_ANIM_NO_SHARE's path: every clip on its own player.
+	# OPENSRO_MAP_ANIM_NO_SHARE's path: every clip on its own player.
 	var solo = MA.Driver.new()
 	solo.pose_parent = poses
 	solo.share = false

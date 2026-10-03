@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // A death ends the wall -- and so its root -- on the default respawn path too

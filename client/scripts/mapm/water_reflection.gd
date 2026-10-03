@@ -80,8 +80,8 @@ var plane_height := NAN
 var underwater := false
 var active := false
 var _qa_timing := false
-## SRREVAMP_QA_WATER_DUMP=<dir>:<frame> saves the target and the screen at
-## that process frame; SRREVAMP_QA_WATER_NOBUMP=1 zeroes the bump, for a
+## OPENSRO_QA_WATER_DUMP=<dir>:<frame> saves the target and the screen at
+## that process frame; OPENSRO_QA_WATER_NOBUMP=1 zeroes the bump, for a
 ## pixel fit.
 var _qa_dump_dir := ""
 var _qa_dump_frame := 0
@@ -97,9 +97,9 @@ var _qa_refl_ms := 0.0
 ## took ON from the shipped SROptionSet.dat's tag 5, which is Water Detail --
 ## tag 4, the reflection, is 0 there; round 694 READ also that the
 ## file's record is Middle, whose preset retail re-applies on load.)
-## SRREVAMP_WATER_REFLECTION (0 or 1) overrides it for a run.
+## OPENSRO_WATER_REFLECTION (0 or 1) overrides it for a run.
 static func enabled() -> bool:
-	var env := OS.get_environment("SRREVAMP_WATER_REFLECTION")
+	var env := OS.get_environment("OPENSRO_WATER_REFLECTION")
 	if env != "":
 		return env != "0"
 	return VideoOptions.in_force().value(VideoOptions.WATER_REFLECTION) == 1
@@ -326,9 +326,9 @@ func _ready() -> void:
 	# sky, terrain, scenery.
 	_camera.cull_mask = MIRROR_TERRAIN_BIT | REFLECTED_BIT
 	_viewport.add_child(_camera)
-	_qa_timing = OS.get_environment("SRREVAMP_QA_WATER_TIMING") != ""
-	_qa_nobump = OS.get_environment("SRREVAMP_QA_WATER_NOBUMP") != ""
-	var dump := OS.get_environment("SRREVAMP_QA_WATER_DUMP")
+	_qa_timing = OS.get_environment("OPENSRO_QA_WATER_TIMING") != ""
+	_qa_nobump = OS.get_environment("OPENSRO_QA_WATER_NOBUMP") != ""
+	var dump := OS.get_environment("OPENSRO_QA_WATER_DUMP")
 	if dump.contains(":"):
 		_qa_dump_dir = dump.get_slice(":", 0)
 		_qa_dump_frame = dump.get_slice(":", 1).to_int()
@@ -348,7 +348,7 @@ func make_material(still: bool, bump: Texture2D, still_tex: Texture2D, water_col
 	m.set_shader_parameter("still_tex", still_tex)
 	m.set_shader_parameter("reflection_tex", _viewport.get_texture())
 	m.set_shader_parameter("water_color", Vector3(water_color.r, water_color.g, water_color.b))
-	m.set_shader_parameter("qa_output_mode", OS.get_environment("SRREVAMP_QA_WATER_OUTMODE").to_int())
+	m.set_shader_parameter("qa_output_mode", OS.get_environment("OPENSRO_QA_WATER_OUTMODE").to_int())
 	materials.append(m)
 	return m
 
@@ -461,7 +461,7 @@ func _process(_delta: float) -> void:
 	if _qa_dump_frame > 0 and Engine.get_process_frames() == _qa_dump_frame:
 		_qa_dump(main)
 
-## SRREVAMP_QA_WATER_TIMING: every QA_WINDOW frames, the main viewport's and the
+## OPENSRO_QA_WATER_TIMING: every QA_WINDOW frames, the main viewport's and the
 ## reflection target's measured render time (CPU + GPU), averaged.
 func _qa_time() -> void:
 	_qa_frames += 1
@@ -479,7 +479,7 @@ func _set_active(on: bool) -> void:
 	active = on
 	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if on else SubViewport.UPDATE_DISABLED
 
-## SRREVAMP_QA_WATER_DUMP: the target and the screen as PNGs, and what a
+## OPENSRO_QA_WATER_DUMP: the target and the screen as PNGs, and what a
 ## pixel fit needs to map one onto the other.
 func _qa_dump(main: Camera3D) -> void:
 	_viewport.get_texture().get_image().save_png("%s/refl.png" % _qa_dump_dir)

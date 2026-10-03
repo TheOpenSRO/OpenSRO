@@ -38,7 +38,7 @@ Taking "one past the guard" as a rule would have made the last one wrong.
 quantity with `0xc < value` at three sites and logs
 `"Item's MagParamNum(%d) is out of range"`. Two binaries, one number.
 
-**None of these is used by srrevamp**, which models no magic options, quickslots
+**None of these is used by OpenSRO**, which models no magic options, quickslots
 or auto-potions, and whose equipment slots are server-side rather than the
 client's visual ones. They are recorded because they are recovered.
 

@@ -2,10 +2,10 @@ package equipment
 
 import (
 	"context"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 )
 
 // A nil stack lookup means "nothing stacks", one item per slot -- which

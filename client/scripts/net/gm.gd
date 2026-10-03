@@ -4,7 +4,7 @@ class_name GmNet
 ## Opcodes and payload encoding for the GM console, mirroring
 ## server/internal/session/gm.go. ONE additive op pair: the client sends a
 ## command line, the server answers with a text reply plus the little
-## structure a reply needs. This is srrevamp's own tooling, not an
+## structure a reply needs. This is OpenSRO's own tooling, not an
 ## original-client feature.
 
 const OP_COMMAND := 0x00F1        # client -> server

@@ -2,7 +2,7 @@ package inventory
 
 import (
 	"context"
-	"github.com/OpenSRO/srrevamp/server/internal/durability"
+	"github.com/OpenSRO/OpenSRO/server/internal/durability"
 	"sort"
 	"sync"
 )

@@ -40,7 +40,7 @@ class_name ServerListWindow
 ## answers with its own shard list; each shard gets a row, named
 ## "<config name> - <shard name>" (just the config name when the two are the
 ## same), with its own band. Before the answer, and when there is none, the
-## server has one row under its config name, as a srrevamp server does.
+## server has one row under its config name, as an OpenSRO server does.
 ## Choosing any of its rows chooses the server. The content id and version
 ## a legacy gateway is told are read from Media.pk2 (RetailClientInfo).
 

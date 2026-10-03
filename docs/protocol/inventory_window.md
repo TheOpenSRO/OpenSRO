@@ -269,7 +269,7 @@ and tile (ID 5), then the 3D model, then the slot backdrops, then the children.
   - release: no click;
   - moving off the button pauses the repeat (`0xb93290` / `0xb93240`).
 - **Reset** fires on release, like any plain button.
-- **srrevamp's step is 36 degrees (OURS, round 639).** The user found retail's step (one
+- **OpenSRO's step is 36 degrees (OURS, round 639).** The user found retail's step (one
   frame's worth, about 1.4 degrees at 60 fps) too slow and asked for 36 degrees a click, ten
   clicks to a full turn. A held arrow repeats the same 36 degrees after retail's 1000 ms and
   then every 250 ms (OURS, round 639's review: retail's 50 ms made 720 degrees a second, too fast

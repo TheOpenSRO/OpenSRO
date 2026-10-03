@@ -18,7 +18,7 @@
 #            `--print-fps`'s per-second samples after the first 5 (start-up;
 #            round 693), at least 10 (1280x720, vsync off);
 #   entry    the world entry a player waits through: `region grid loaded in
-#            N ms` (the real loading drain, SRREVAMP_QA_FORCE_LOADING=1);
+#            N ms` (the real loading drain, OPENSRO_QA_FORCE_LOADING=1);
 #   freeze   the longest main-thread frame: the largest `longest work frame
 #            W ms` of the run's LoadTimings summaries (round 561);
 #   hitches  frames over 100 ms: the summaries' `H over 100 ms`, summed.
@@ -26,13 +26,13 @@
 # animated objects in view), cross (a walk west from 97/168 into 97/167, so a
 # region streams in during play -- where a freeze is felt), hotan, ferry (the
 # Donwhang-region ferry landing 90/143, reeds and river in view; round 648),
-# mobs (the Jangan spawn with SRREVAMP_QA_MOBS=500: a 500-monster list of 24
+# mobs (the Jangan spawn with OPENSRO_QA_MOBS=500: a 500-monster list of 24
 # real species over the 5 x 5-region window, delivered during the loading
 # drain as a server's list would be -- the density the server will send;
 # round 655. A base without the hook draws no monsters there: gate it against
 # a base that has the hook), crowd (the Jangan spawn with 2,500 monsters of 17
-# real species packed within 1,920 of the player -- SRREVAMP_QA_MOBS=2500 and
-# SRREVAMP_QA_MOBS_SPREAD=1920 -- the density round 660's swapped spots put in
+# real species packed within 1,920 of the player -- OPENSRO_QA_MOBS=2500 and
+# OPENSRO_QA_MOBS_SPREAD=1920 -- the density round 660's swapped spots put in
 # view: 1,378 bodies at the Europe starter field, 2,412 at the densest window;
 # round 664. A base without the SPREAD hook spreads them over the whole load
 # window instead: gate it against a base that has the hook).
@@ -59,11 +59,11 @@
 #
 # Settings for both sides (round 702 review): `--env "VAR=value ..."` adds
 # variables to every run, `--base-env` to the base side's only -- e.g. both
-# sides on the same Video rows (SRREVAMP_QA_VIDEO_STEPS), or `--base HEAD
+# sides on the same Video rows (OPENSRO_QA_VIDEO_STEPS), or `--base HEAD
 # --base-env ...` for one build in two settings without the native library
 # --ab-env needs. A run with --env or --base-env is never cached.
 #
-# One build, two settings (round 667): `--ab-env "SRREVAMP_NATIVE=0"` runs the
+# One build, two settings (round 667): `--ab-env "OPENSRO_NATIVE=0"` runs the
 # BASE side on the head's own copy with those variables added, so the gate
 # compares one build both ways -- the native readers against the GDScript ones
 # (client/tools/README.md, "Native readers A/B"). No base revision is shipped
@@ -146,8 +146,8 @@ fi
 if [ -n "$ab_env" ]; then
   [ -z "$base" ] || { echo "--ab-env compares the head with itself: give no --base" >&2; exit 2; }
   [ -z "$head" ] || { echo "--ab-env needs the working tree's built library: --head REV carries none, so both sides would read in GDScript" >&2; exit 2; }
-  if [ ! -f client/native_bin/libsrrevamp_native.so ] && [ "${PERF_SELFTEST_DROP_LIB:-0}" != 1 ]; then
-    echo "--ab-env: no client/native_bin/libsrrevamp_native.so -- run native/build.sh first, or both sides read in GDScript" >&2; exit 2
+  if [ ! -f client/native_bin/libopensro_native.so ] && [ "${PERF_SELFTEST_DROP_LIB:-0}" != 1 ]; then
+    echo "--ab-env: no client/native_bin/libopensro_native.so -- run native/build.sh first, or both sides read in GDScript" >&2; exit 2
   fi
   base="HEAD"
 fi
@@ -159,8 +159,8 @@ lane="${PERF_LANE:-$(git rev-parse --abbrev-ref HEAD | tr -c 'a-zA-Z0-9\n' '-')}
 # gate that measures it: shipped and imported once, reused after (the ship and
 # the import were a large part of each gate).
 base_full_rev="$(git rev-parse "$base")"
-box_base="/opt/srrevamp-client-perf-base-${base_full_rev:0:12}"
-box_head="/opt/srrevamp-client-perf-${lane}-head"
+box_base="/opt/opensro-client-perf-base-${base_full_rev:0:12}"
+box_head="/opt/opensro-client-perf-${lane}-head"
 [ -n "$ab_env" ] && box_base="$box_head"
 [ -n "$ab_renderer" ] && box_base="$box_head"
 work="/var/tmp/perf-${lane}"
@@ -173,8 +173,8 @@ view() {
     cross)  echo '97\168.m|120,1020|270|270' ;; # walk west into 97/167 (client/tools/README.md, "Load benchmark" (b))
     hotan)  echo '92\135.m|960,960|0|' ;;     # Hotan, the zone landing
     ferry)  echo '90\143.m|464,879|270||12000' ;;   # Donwhang-region ferry GATE_NPC_WC_FERRY4, looking at the dock over the reeds (round 648); 12000 frames: at 2.6 ms a frame 3000 gave 8 samples, under the minimum of 10 (the figure averages the last 30)
-    mobs)   echo '97\168.m|1002,1020|0||3000|SRREVAMP_QA_MOBS=500' ;;   # the spawn with 500 monsters (round 655)
-    crowd)  echo '97\168.m|1002,1020|0||3000|SRREVAMP_QA_MOBS=2500 SRREVAMP_QA_MOBS_SPREAD=1920' ;;   # 2,500 monsters within 1,920 (round 664)
+    mobs)   echo '97\168.m|1002,1020|0||3000|OPENSRO_QA_MOBS=500' ;;   # the spawn with 500 monsters (round 655)
+    crowd)  echo '97\168.m|1002,1020|0||3000|OPENSRO_QA_MOBS=2500 OPENSRO_QA_MOBS_SPREAD=1920' ;;   # 2,500 monsters within 1,920 (round 664)
     *) echo "unknown site $1" >&2; exit 2 ;;
   esac
 }
@@ -231,10 +231,10 @@ ship "$box_head" "$head"
 ssh "$RENDER_HOST" "cat > '$work/run1.sh'" <<EOF
 #!/bin/bash
 # run1.sh <client dir> <log> <mapm> <x,z> <yaw> [walk heading] [frames] [VAR=value] [cold: 1] [renderer]
-export SRREVAMP_PK2_PATH=$PK2_DIR/Data.pk2 SRREVAMP_MAP_PK2_PATH=$PK2_DIR/Map.pk2 SRREVAMP_MEDIA_PK2_PATH=$PK2_DIR/Media.pk2
-export SRREVAMP_PARTICLES_PK2_PATH=$PK2_DIR/Particles.pk2 SRREVAMP_MUSIC_PK2_PATH=$PK2_DIR/Music.pk2
-export SRREVAMP_MAPM_PATH="\$3" SRREVAMP_QA_AT="\$4" SRREVAMP_QA_YAW="\$5" SRREVAMP_QA_FORCE_LOADING=1
-[ -n "\${6:-}" ] && export SRREVAMP_QA_WALK="\$6"
+export OPENSRO_PK2_PATH=$PK2_DIR/Data.pk2 OPENSRO_MAP_PK2_PATH=$PK2_DIR/Map.pk2 OPENSRO_MEDIA_PK2_PATH=$PK2_DIR/Media.pk2
+export OPENSRO_PARTICLES_PK2_PATH=$PK2_DIR/Particles.pk2 OPENSRO_MUSIC_PK2_PATH=$PK2_DIR/Music.pk2
+export OPENSRO_MAPM_PATH="\$3" OPENSRO_QA_AT="\$4" OPENSRO_QA_YAW="\$5" OPENSRO_QA_FORCE_LOADING=1
+[ -n "\${6:-}" ] && export OPENSRO_QA_WALK="\$6"
 read -r -a kvs <<< "\${8:-}"; for kv in "\${kvs[@]}"; do export "\$kv"; done  # split on spaces, no globbing
 # Another lane's Godot, rendered or headless (both load the CPU, the shared
 # resource): a Godot process whose --path is not this run's client dir.

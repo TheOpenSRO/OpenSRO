@@ -1,7 +1,7 @@
 extends RefCounted
 class_name QaShotEnv
 
-## QA only (round 702, OURS): per-viewpoint settings for SRREVAMP_QA_SHOTS and
+## QA only (round 702, OURS): per-viewpoint settings for OPENSRO_QA_SHOTS and
 ## a screen box for named ground patches, so one boot can measure the same
 ## patch at several zooms with each effect on and off.
 ##
@@ -15,7 +15,7 @@ class_name QaShotEnv
 ## - `glow_bloom=<f>`: Environment.glow_bloom.
 ## The fog is the Video tab's `fog_temporary` row.
 ##
-## SRREVAMP_QA_PATCHES="name:dx,dz,half;..." names squares on the ground
+## OPENSRO_QA_PATCHES="name:dx,dz,half;..." names squares on the ground
 ## around the player (world offsets from the player's feet, `half` units each
 ## way); at every `QA SHOT` the line `QA PATCH <shot> <name> x0 y0 x1 y1
 ## dist <d>` gives each square's box on screen (the four corners projected)
@@ -93,7 +93,7 @@ static func report_patches(world: Node, shot: String) -> void:
 				hi = Vector2(maxf(hi.x, sp.x), maxf(hi.y, sp.y))
 			boxes.append("%.0f,%.0f,%.0f,%.0f size %.1f" % [lo.x, lo.y, hi.x, hi.y, half * 2.0])
 		print("QA BLOBS %s shown %d%s" % [shot, boxes.size(), (": " + "; ".join(boxes)) if not boxes.is_empty() else ""])
-	var spec := OS.get_environment("SRREVAMP_QA_PATCHES")
+	var spec := OS.get_environment("OPENSRO_QA_PATCHES")
 	if spec == "":
 		return
 	var feet := player.global_position

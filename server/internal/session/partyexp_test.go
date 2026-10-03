@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
-	"github.com/OpenSRO/srrevamp/server/internal/party"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
+	"github.com/OpenSRO/OpenSRO/server/internal/party"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
 )
 
 // member builds a party member with a distinct session, which Hub.Create and
@@ -112,7 +112,7 @@ func TestKillExpPartyGapBonus(t *testing.T) {
 
 	// A party of one does NOT earn it (round 485). The engine's gate tests the
 	// party pointer, but the engine only ever creates a party with two members
-	// (an accepted invite); srrevamp's create-alone path is its own, and must
+	// (an accepted invite); OpenSRO's create-alone path is its own, and must
 	// not turn "create party" into a solo exp bonus.
 	pt, err := hub.Create(member(1, 42, "Leader"))
 	if err != nil {

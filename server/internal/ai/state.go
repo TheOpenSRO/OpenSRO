@@ -3,11 +3,11 @@
 //
 // WIRED BEHIND A DEFAULT-OFF FLAG (round 537). session/monsterai.go drives
 // this machine on its own tick when cmd/server runs with -monster-ai
-// (SRREVAMP_MONSTER_AI); without the flag nothing here runs and the server
+// (OPENSRO_MONSTER_AI); without the flag nothing here runs and the server
 // behaves exactly as it did before. The tick runs SPAWN, IDLE, WANDER and
 // HOMING by the rules below and in wander.go, and an interim BATTLE that only
 // holds a struck monster where the blow found it. Every stand-in it carries is
-// listed in docs/protocol/monster_ai.md, "srrevamp's runtime".
+// listed in docs/protocol/monster_ai.md, "OpenSRO's runtime".
 //
 // Since then, each behind its own default-off flag: the BATTLE chase and the
 // monster's own swing (round 546, -monster-battle; battle.go's rules), target
@@ -252,7 +252,7 @@ func (m *Machine) State() State { return m.cur }
 
 // Resume puts a freshly built machine back into s WITHOUT running any
 // OnLeave or OnEnter: the state is being restored, not entered. OURS, not the
-// engine's: srrevamp's -monster-sleep drops the brain of a monster no player is
+// engine's: OpenSRO's -monster-sleep drops the brain of a monster no player is
 // near and rebuilds it when one comes near (session/monsterai.go, round 666),
 // and the rebuilt brain must carry on in the state it slept in, with the
 // timers it slept with, rather than re-enter it and roll a new dwell. An
@@ -536,9 +536,9 @@ func LevelScaledRadius(base float64, monsterLevel, targetLevel int) int {
 // 0x53d7a0 with the owner in eax and the candidate in ecx, 0x540a85..0x540a8d),
 // stored as a float, is AT MOST the radius (`fStack_48 <= fStack_58`, the
 // radius an int the routine widens to a float), nearest first, at most
-// AggroLinkMaxHelpers of them (the pop loop's `< 10`). srrevamp's own,
+// AggroLinkMaxHelpers of them (the pop loop's `< 10`). OpenSRO's own,
 // disclosed: the ground-plane distance (the engine's sums three axes and
-// srrevamp's monsters carry no height, as acquire measures), and ties broken
+// OpenSRO's monsters carry no height, as acquire measures), and ties broken
 // by id (the engine's sorted container keeps the region walk's order).
 func GatherWithin(cands []Candidate, x, z float64, radius int) []Candidate {
 	type at struct {
@@ -658,7 +658,7 @@ func AggroLinkCount(membersNear, gathered int) int {
 // _ftol2_sse does (0x54780c..0x54781a) -- 45 hate reaches the links as 45,
 // 22, 11, 5, 2, 1, 1, ... and never 0. Named AggroLinkDamage until round 553
 // (the factor acts on the hate, +8, not the damage, +4: round 537). Nothing
-// forwards a hate yet: srrevamp's blows carry no hate value, and the
+// forwards a hate yet: OpenSRO's blows carry no hate value, and the
 // magnitudes are the threat table's (mob-threat-retarget).
 func AggroLinkHate(hate int, link int, ratio float64) int {
 	for i := 0; i < link; i++ {

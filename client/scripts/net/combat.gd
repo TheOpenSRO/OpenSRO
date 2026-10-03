@@ -15,8 +15,8 @@ const OP_MONSTER_LIST_RESULT := 0x0066 # server -> client
 const OP_LEVEL_UP := 0x0067         # server -> client, direct to the character that levelled
 const OP_BERSERK := 0x0068          # client -> server, request to go berserk
 const OP_BERSERK_RESULT := 0x0069   # server -> client, the gauge/active after the request
-## srrevamp's own monster messages (placeholders, additive; layouts in
-## docs/protocol/monster_ai.md, "srrevamp's own monster protocol
+## OpenSRO's own monster messages (placeholders, additive; layouts in
+## docs/protocol/monster_ai.md, "OpenSRO's own monster protocol
 ## (placeholders)"). The server sends 0x007C/0x007F only with its -monster-ai
 ## flag on, 0x007D only with -monster-strike-push (round 541) and 0x007E only
 ## with -monster-spawn-push (round 542); all three flags are off by default,
@@ -85,7 +85,7 @@ class MonsterAttacked:
 ## echoed targetType) and on OpMonsterAttacked (after its 33 bytes), present
 ## only when there is one. u8 flags, s32 the damage the wall took, s32 the
 ## wall's HP left, s32 its maximum. Retail's damage entry of kind 7
-## (FUN_00a55e00, READ) carries the same numbers; this layout is srrevamp's.
+## (FUN_00a55e00, READ) carries the same numbers; this layout is OpenSRO's.
 class WallHit:
 	## The wall took the whole blow: the target's HP did not move.
 	var absorbed: bool = false
@@ -236,7 +236,7 @@ class MonsterSnapshot:
 	## rank gem is picked from it (mapping recovered from the retail client).
 	var rarity: int
 	## The party-monster flag (round 660): retail's +0x7ad, the high nibble
-	## of the class byte (CICMonster::vslot_025 0x9d3850). srrevamp's server
+	## of the class byte (CICMonster::vslot_025 0x9d3850). OpenSRO's server
 	## sends it in bit 8 of the rarity word, and only to a client whose list
 	## request carries MONSTER_LIST_FLAG_PARTY.
 	var party: bool
@@ -256,7 +256,7 @@ class MonsterListResult:
 ## faces.
 class MonsterSpawned:
 	var monster: MonsterSnapshot
-	## Radians in srrevamp's world frame, measured from +x toward +z: the
+	## Radians in OpenSRO's world frame, measured from +x toward +z: the
 	## direction is (cos h, sin h) on the (x, z) ground plane, the unit
 	## heading SetHeading writes (server/internal/ai/wander.go;
 	## MonsterMotion.heading_dir).
@@ -284,14 +284,14 @@ class LootDropped:
 ## (skill_tick_approaches). Its modifiers for the rest -- reqc bit 1, the
 ## weapon-range +0x250 param, CBRA/WIRU, the Myopia cut
 ## (docs/protocol/auto_command.md, "The skill tick") -- are not applied by
-## srrevamp's skillInReach either, and the client mirrors the server. The
+## OpenSRO's skillInReach either, and the client mirrors the server. The
 ## server decides: firstSwingInReach and skillInReach (session/keepup.go)
 ## refuse a blow out of reach with "too far away". What the engine does next
 ## is WALK: phase 1 tests
 ## Action_IsTargetWithinReach (0x004ad4a0: `int(dist) <= reach + 2`) on every
 ## tick and, while it fails, GObjPC::MoveTowardObject(target, round(stop))
 ## (0x004b0350) aims the walk at the stop distance. The retail engine walks the
-## attacker on the SERVER; srrevamp's server does not drive player movement,
+## attacker on the SERVER; OpenSRO's server does not drive player movement,
 ## so World3D does the walk and only then sends (see World3D._attack_monster).
 ## docs/protocol/auto_command.md, "The attack tick".
 
@@ -367,7 +367,7 @@ static func in_reach(distance: float, reach: float) -> bool:
 ## followed (docs/TODO.md, "Attack distance"). On the box's skilldata all 256
 ## such China board rows (174 with Activity 1, 82 with 0; re-counted round 523)
 ## carry Target_Required 0, so this function gives them no walk either way.
-## srrevamp's server accepts the non-damaging ones at any distance
+## OpenSRO's server accepts the non-damaging ones at any distance
 ## (session/skill.go skips skillInReach for a NoCombatParam/ZeroDamage row) --
 ## see docs/TODO.md, "Attack distance", for the damaging Target_Required 0 rows
 ## it still reach-gates.
@@ -389,11 +389,11 @@ static func approach_point(from: Vector2, target: Vector2, stop: float) -> Vecto
 	return target + away / gap * stop
 
 ## The refusal session/combat.go and session/skill.go send for a blow out of
-## reach (firstSwingInReach / skillInReach). srrevamp's own wording; the result
+## reach (firstSwingInReach / skillInReach). OpenSRO's own wording; the result
 ## carries no code, so the text is what marks it.
 const REFUSED_TOO_FAR := "too far away"
 ## How many times an attack the server refused as too far away walks again
-## before the client gives up. srrevamp's own number: the engine's phase 1
+## before the client gives up. OpenSRO's own number: the engine's phase 1
 ## re-tests reach every tick and walks for as long as it fails
 ## (docs/protocol/auto_command.md, "The attack tick"), with no count.
 const APPROACH_RETRY_CAP := 3
@@ -409,7 +409,7 @@ const APPROACH_RETRY_CAP := 3
 ## or after a refusal, the release waits for `stop` -- the distance the walk
 ## aims at (phase 0's band), never beyond the reach -- which leaves at least 3
 ## units (`int(d) <= reach + 2` holds for every d below reach + 3) plus the
-## reach's excess over the stop. srrevamp's own rule, for srrevamp's
+## reach's excess over the stop. OpenSRO's own rule, for OpenSRO's
 ## client-side walk: the engine walks on the server and has no round trip to
 ## cover.
 static func approach_releases(distance: float, stop: float, reach: float, tight: bool) -> bool:

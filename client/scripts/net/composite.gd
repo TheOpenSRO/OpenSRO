@@ -6,7 +6,7 @@ class_name CompositeNet
 ## regeneration fill" for an hour. Retail shows the grant as a buff-bar icon
 ## (kind 5 on CIFMagicStateBoard, the scroll's own icon with its time gauge),
 ## a left-click on it opens CIFCompositeItemWnd, and a button there sends
-## 0x715F. srrevamp carries the same exchange on its own opcodes (OURS):
+## 0x715F. OpenSRO carries the same exchange on its own opcodes (OURS):
 const OP_USE := 0x0104      # client -> server: spend one use of a granted item
 const OP_USE_RESULT := 0x0105
 const OP_LIST := 0x0106     # client -> server: which grants do I hold

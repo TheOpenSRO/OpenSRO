@@ -144,8 +144,8 @@ func _canon_items(items: Dictionary) -> Dictionary:
 
 func _init() -> void:
 	# ON when the readers would be used: a usable library with the class, and
-	# SRREVAMP_NATIVE not 0 (round 671's review: library_usable() alone said ON
-	# under SRREVAMP_NATIVE=0, where new_tables() answers null).
+	# OPENSRO_NATIVE not 0 (round 671's review: library_usable() alone said ON
+	# under OPENSRO_NATIVE=0, where new_tables() answers null).
 	var loaded := NativeAssets.new_tables() != null
 	print("native tables: %s" % ("loaded" if loaded else "not loaded"))
 	var names := _names()
@@ -252,7 +252,7 @@ func _init() -> void:
 
 	if not loaded:
 		_check(NativeAssets.new_tables() == null, "with the native readers off there is no native table reader")
-		print("SKIP native-only checks: the native readers are off (no usable library, or SRREVAMP_NATIVE=0)")
+		print("SKIP native-only checks: the native readers are off (no usable library, or OPENSRO_NATIVE=0)")
 	else:
 		var nt := NativeAssets.new_tables()
 		_check(nt.call("char_codes", cases["lone surrogate"]).has("fallback"), "a lone surrogate is handed back to GDScript")

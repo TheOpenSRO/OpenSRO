@@ -576,13 +576,13 @@ func _process(delta: float) -> void:
 	if stepped > 0 and _qa_log():
 		print("QA FXLOG %s frame %d particles %d drawn %d" % [path, sim.age, sim.particles.size(), drawn_particles()])
 
-## SRREVAMP_QA_FXLOG=1 (round 623): every effect prints its particle and
+## OPENSRO_QA_FXLOG=1 (round 623): every effect prints its particle and
 ## drawn counts after each simulation frame, so a render's frames can be
 ## matched to what was drawn.
 static var _qa_log_state := -1
 static func _qa_log() -> bool:
 	if _qa_log_state < 0:
-		_qa_log_state = 1 if OS.get_environment("SRREVAMP_QA_FXLOG") != "" else 0
+		_qa_log_state = 1 if OS.get_environment("OPENSRO_QA_FXLOG") != "" else 0
 	return _qa_log_state == 1
 
 ## The particles this effect draws now: its drawn nodes' MultiMesh instances

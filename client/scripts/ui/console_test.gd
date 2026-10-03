@@ -28,7 +28,7 @@ func _host() -> Dictionary:
 		"log": func(t: String) -> void: _logged.append(t),
 		"open_help": func() -> void: _calls["open_help"] = true,
 		"where": func() -> PackedStringArray: return PackedStringArray(["zone: jangan", "region 97/168"]),
-		"log_path": func() -> String: return "/home/x/.local/share/srrevamp/logs/srrevamp.log",
+		"log_path": func() -> String: return "/home/x/.local/share/opensro/logs/opensro.log",
 		"open_log_dir": func() -> bool: return false,
 		"copy_payload": func() -> String: return "== build\nx",
 		"set_clipboard": func(s: String) -> void: _calls["clipboard"] = s,
@@ -84,7 +84,7 @@ func _test_client_commands() -> void:
 
 	_reset()
 	c.submit("/log")
-	_check(_joined().contains("srrevamp.log"), "/log prints the log path")
+	_check(_joined().contains("opensro.log"), "/log prints the log path")
 
 	_reset()
 	c.submit("/copy")

@@ -71,7 +71,7 @@ This is a third independent witness that slot `0x110` is `GetMaxHP` and not the
 slots were current HP the test would read `cur*0.3 < cur`, true for every
 positive HP, and the branch would be unreachable.
 
-## What srrevamp already matches
+## What OpenSRO already matches
 
 `session.UseSkillHandler` checks the skill is known, then the cooldown, then
 **HP cost, then MP cost**, each gated on the cost being greater than zero. That
@@ -83,7 +83,7 @@ claims and only the second is worth anything.
 **Row 14 at exactly the cost (round 551).** The compare is `jge`, so `CurHP ==
 hpCost` passes and `EngageSkill` then spends the whole pool: the caster stands
 at 0. What the engine does with a pool its own cost emptied was not recovered
-(no `OnDeath` call was traced from slot `0x308`'s spend). srrevamp's rule,
+(no `OnDeath` call was traced from slot `0x308`'s spend). OpenSRO's rule,
 disclosed at `combat.CanPaySkillHealth` and `session/skill.go`'s payment: the
 caster is left ALIVE at 0 -- life state 1, no death penalty, no respawn -- and
 the next monster or duel blow whose damage lands on her is her death, decided
@@ -129,7 +129,7 @@ So, for a targeted cast: **cooldown and affordability, then the reach, then the
 costs and the cooldown arm.** A cast whose target is out of reach costs nothing:
 the engine walks instead.
 
-**srrevamp since round 534.** `session/skill.go` refuses a cast out of reach
+**OpenSRO since round 534.** `session/skill.go` refuses a cast out of reach
 ("too far away") instead of walking, and until round 534 it did so after
 spending the HP and MP and recording the use. It now tests, in order: the
 cooldowns, affordability (`skillCostRefusal`, the same comparisons without

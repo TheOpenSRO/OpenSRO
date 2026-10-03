@@ -682,7 +682,7 @@ const (
 // and then clamps its result against a participant's current HP (virtual slot
 // 66, GetCurHP).
 //
-// WHAT THIS MEANS FOR srrevamp: it implements the 'pdmg' formula only. A skill
+// WHAT THIS MEANS FOR OpenSRO: it implements the 'pdmg' formula only. A skill
 // carrying 'lfst' would take the other branch in the real engine and does not
 // here. That is a missing branch, not a wrong constant, and it is recorded
 // rather than approximated.

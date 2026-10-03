@@ -75,11 +75,11 @@ const SlotsPerCharacter = 50
 // 0xd is equipment.MaxEquipSlots, recovered independently four times over.
 //
 // So the engine's "inventory size" of 77 or 99 is the whole array: **at most 86
-// usable backpack slots, not 99.** srrevamp models the two spaces separately --
+// usable backpack slots, not 99.** OpenSRO models the two spaces separately --
 // equipment.Slot is its own enum and inventory slots start at 0 -- which is a
 // different design, not a wrong one, and it is why nothing here changes. What
 // would be wrong is reading MaxSlotsExpanded as 99 free backpack slots.
-// TestSrrevampSlotsFitTheEnginesCombinedArray (in the equipment package, which
+// TestOpenSROSlotsFitTheEnginesCombinedArray (in the equipment package, which
 // is the one that can see both) holds the two models to the engine's total.
 
 // The engine's own inventory bounds, RECOVERED from CGObjPC::ExpandInventory.
@@ -163,7 +163,7 @@ const (
 // hold the item (all slots full, and no existing stack has spare capacity).
 //
 // The game makes the same refusal and names it: engine code `0x281c`,
-// `UIIT_MSG_STRGERR_INVENTORY_FULL` (docs/protocol/error_codes.md). srrevamp
+// `UIIT_MSG_STRGERR_INVENTORY_FULL` (docs/protocol/error_codes.md). OpenSRO
 // arrived at this independently; the name is recorded so the two can be
 // compared.
 var ErrNoRoom = errors.New("inventory: no room for item")
@@ -182,9 +182,9 @@ var ErrSlotEmpty = errors.New("inventory: slot is empty")
 // The game makes the same refusal and names it: engine code `0x1829`,
 // `UIIT_MSG_STRGERR_SPECIFY_POSITIVE_NUMBER_ONLY`, raised from three separate
 // storage handlers (`00480f30`, `004b2450`, `005243d0`). Its companion `0x1814`
-// `..._ENABLEINPUT_FEWERTHAN_REMAIN` is the upper bound, which srrevamp already
+// `..._ENABLEINPUT_FEWERTHAN_REMAIN` is the upper bound, which OpenSRO already
 // had as ErrInsufficientQuantity -- so the engine guards both ends of the range
-// and srrevamp was guarding only one.
+// and OpenSRO was guarding only one.
 //
 // THIS WAS A DUPLICATION BUG, not a tidiness issue. RemoveItem checked only
 // `quantity > slot.Quantity`, so a negative quantity passed every guard and
@@ -334,7 +334,7 @@ type CapacityFunc func(ctx context.Context, owner int64) int
 // states rather than a unique terminal one, and the write that sets it was not
 // found -- it goes through a computed pointer, not a literal `[reg+0x20]`.
 //
-// srrevamp has no quests yet, so nothing consumes this. It is recorded because
+// OpenSRO has no quests yet, so nothing consumes this. It is recorded because
 // "the cap is 77 or 99" was in this package for a week without the reason.
 var ExpansionQuestCodes = []string{
 	"QSP_CH_EXINVENTORY_1",

@@ -1,7 +1,7 @@
 # The teleport network
 
-Three real tables describe every gate in the game and how they connect. srrevamp
-builds its town teleporters from them (rounds 575 to 577, "What srrevamp built"
+Three real tables describe every gate in the game and how they connect. OpenSRO
+builds its town teleporters from them (rounds 575 to 577, "What OpenSRO built"
 below).
 
 **All three came out of `Media.pk2` this pass.** Only `teleportdata.txt` had been
@@ -147,9 +147,9 @@ allocates a 0x18-byte list item, numbers it `"%d. %s"`, and formats the name wit
 `fee + share`, the share computed through `FUN_00b42d46` from a short at
 `this+0x804` (added when `param_4` is 1, subtracted when 0); the sum is printed with
 `%d`. So the retail list shows the fee **plus a surcharge** from that short, whose
-meaning is unread (a fortress-tax-shaped rate is a guess, not a reading). srrevamp's
+meaning is unread (a fortress-tax-shaped rate is a guess, not a reading). OpenSRO's
 board shows the raw link fee -- the same number while that short is 0, which is all
-srrevamp has (no fortresses). The dialog uses `UIIT_CTL_TELEPORT_RESULT` and
+OpenSRO has (no fortresses). The dialog uses `UIIT_CTL_TELEPORT_RESULT` and
 `_FREE_RESULT` only; `UIIT_CTL_TELEPORT_RESULT_IMPROVE` (`[%s]gold`, a string
 argument) is in `textuisystem.txt` but `FUN_006fd3e0` never asks for it -- not a
 drop-in for the board's price line. `+0x10` is the third direct field of `RefParse_teleportlink`
@@ -181,7 +181,7 @@ are applied when the server BINDS links at load (`RestrictBindMethod` would be t
 name for it, if the DB column names match the client parser's shape -- the server's
 `_REFTELELINK` binder keeps its column names in a static descriptor table, so they are
 not greppable in the dump), or these builds do not apply them to ordinary gates at all.
-srrevamp does not consume them. *Next probe:* the pass that fills a `CRefTeleport`'s
+OpenSRO does not consume them. *Next probe:* the pass that fills a `CRefTeleport`'s
 link vector from `CRefTeleLink` rows (the runtime link's first word is the destination
 ref pointer, its second the fee); a read of the triples there would settle it.
 
@@ -214,19 +214,19 @@ a placed map object, and the building row's position finds it: "The clickable ga
 `refoptionalteleport.txt` (6,204 bytes) — the counterpart to the
 `_REFOPTIONALTELEPORT` table in the server's catalogue.
 
-## What srrevamp built
+## What OpenSRO built
 
 The points are grounded and positioned, the graph is real, and the cost and the
 level gate are read: the fee at its use-site (2026-09-19) and the restriction
-evaluator (round 575, below). srrevamp loads the three tables since round 575
+evaluator (round 575, below). OpenSRO loads the three tables since round 575
 (`internal/teleport`, cmd/server's `-teleport-dir`), and since round 576 a gate's
 MOVE is charged and moved by them. Since round 577 the client reads them too
 (`TeleportReader`): each town's Dimensional Gate is clickable and lists its lines
 ("The clickable gate (round 577)").
 
-### srrevamp wire: OpTeleportUse / OpTeleportResult (round 576)
+### OpenSRO wire: OpTeleportUse / OpTeleportResult (round 576)
 
-srrevamp's own placeholder pair (`docs/protocol/PROTOCOL_DECISION.md`), free on
+OpenSRO's own placeholder pair (`docs/protocol/PROTOCOL_DECISION.md`), free on
 2026-09-26 (the highest op in `server/internal/session` and `client/scripts/net`
 was `0x00F2`, `OpGMCommandResult`):
 
@@ -251,7 +251,7 @@ the link (`teleport.Table.LinkBetween`) -- refused with the engine's own code `2
 when there is none, `GObjPC::HandleTeleportUse`'s `uStack_2c = 2` at `0x513910`;
 the link's restrictions (`teleport.CheckRestrictions`, run before the fee as on
 `CMainProcess::FUN_004f2b50`'s path, call `0x4f2e24`) with the PvP state passed as
-NEUTRAL (srrevamp models none -- a stand-in; no retail link has a type-3 rule);
+NEUTRAL (OpenSRO models none -- a stand-in; no retail link has a type-3 rule);
 the fee and its waiver (`teleport.QuoteFee`: below level 21 the engine's, then a
 GM account and `-teleport-free`, own design); the charge, refused `0x1c07` with
 nothing moved -- `HandleTeleportUse` refuses on the gold compare (`0x513749`)
@@ -259,7 +259,7 @@ before it sets the teleport state; then the receipt and the move.
 
 **The arrival spot is READ since round 642** ("Teleport NPCs (round 642)": `0x407760` copies
 the point's region and x/y/z, no radius term). What round 576 wrote: A destination row carries one
-position, its teleportdata point (region + local x, y, z + radius), and srrevamp
+position, its teleportdata point (region + local x, y, z + radius), and OpenSRO
 lands the player there: `worldmap.ToWorld(region, x, z, frame)` at height 0, which
 the client replaces with its walkable graph's landing height at that point
 (`World3D._land_teleport_arrival`). The retail completion stage
@@ -294,13 +294,13 @@ by `CIF_NPCTalk::FUN_0081ddf0`: `{u32 gate object, u8 kind, kind 2: u32 target}`
 read by `FUN_008809d0`, which `FUN_0086fbb0` registers for `0xb05a`: a u8 result,
 and on 2 a u16 code passed to `FUN_00778190(0xd, code, ...)` -- category `0xd`,
 the interaction message table, where `0x1c07`, `0x1c10` and `0x1c15` have
-messages (`client/scripts/net/error_text.gd`). srrevamp's client shows those three
+messages (`client/scripts/net/error_text.gd`). OpenSRO's client shows those three
 in the archive's words, our own wording for `2` (category `0xd` sends it to the
 default, no message), and the server's words for its own refusals (code 0).
 
 **Not modelled, disclosed:** (the interaction-range test was here until round 642's
 review, which read and applied it -- "The interaction range (round 642's review)" below)
-the "already teleporting" state (`0x1c14`: a srrevamp teleport completes inside one
+the "already teleporting" state (`0x1c14`: an OpenSRO teleport completes inside one
 request), the fortress tax (no fortresses), and the retail receipt line's source
 (the client shows `UIIT_CTL_TELEPORT_RESULT` / `_FREE_RESULT` from its own
 archive, choosing the free one when nothing was charged -- the retail dialog's
@@ -311,7 +311,7 @@ own choice on a zero fee word, `UI_TELEPORT::FUN_006fd3e0`).
 The client binds each gate structure to the object the player sees and gives it
 the gate's talk lines. `TeleportReader` (`client/scripts/npc/teleport_reader.gd`)
 reads the three tables out of the player's own Media.pk2 -- the columns in "The
-columns srrevamp reads" below, the same ones the server's exporter reads -- and
+columns OpenSRO reads" below, the same ones the server's exporter reads -- and
 `World3D._bind_region_gates` runs when a region's NPCs are placed, after its
 objects commit, and again when a streamed-out region comes back.
 
@@ -364,7 +364,7 @@ so. There is no stand-in collider: the talk layer is the navmesh-wall bit
 (`NPC_COLLISION_LAYER`, 0b10000), which the player's body masks
 (`collision_mask = 17` in World3D.tscn), so any body put there is a wall where
 retail has none. Measured on the render box (radius 0, 102/153 at (621, 330),
-`SRREVAMP_QA_CLICK=gate`): the first cut printed `teleport gate STORE_SURVIVAL_DW
+`OPENSRO_QA_CLICK=gate`): the first cut printed `teleport gate STORE_SURVIVAL_DW
 -- no placed object within 10 units ... a stand-in collider was used (cylinder
 r=5 h=30 at local y -103.46)`; with the id-7 rule the region prints no gate line
 and the click finds no target. Jangan's gate still binds (`Obj_cj_portal_312`, 3.6
@@ -422,7 +422,7 @@ come from teleportdata columns 10 and 11. **Id 8 does not have a table to read:*
 its registrar (`0x6a7f70`) reads a table this project has not attributed
 (`character_state.md`, "One discrepancy left open"), so "the gate's point has an
 outgoing link" stands in for it, disclosed. Whether a gate also offers id 2 ("Talk
-to this person.") is not read, and srrevamp does not offer it. A town gate
+to this person.") is not read, and OpenSRO does not offer it. A town gate
 (columns 10/11 = 1, 0, with links) therefore lists the designate line, the
 teleport line and the end line. The text is whatever the player's
 textuisystem.txt resolves. `UiTextTable` keeps the later 19-column rows ("Designate
@@ -434,7 +434,7 @@ destination list (round 603)" below; round 578 opened a separate board). Since r
 designate line (id 7) opens retail's agreement box and sets the character's return point ("The
 return point (round 686)" below); the "Teleport to return point" line (id 9, offered by no town
 gate) still says "... is not available yet" (`World3D._on_npc_service_selected`'s default).
-`SRREVAMP_QA_CLICK=gate` clicks the nearest bound gate through the real
+`OPENSRO_QA_CLICK=gate` clicks the nearest bound gate through the real
 dispatcher.
 
 ### The destination list (round 603)
@@ -461,12 +461,12 @@ dispatcher.
   and `tpt_window` are in neither the exe's ASCII nor its UTF-16 strings, and no `.2dt` of the 42
   is a teleport window.
 
-srrevamp now does the same. The gate's 'Select teleport area' line rewrites the talk box
+OpenSRO now does the same. The gate's 'Select teleport area' line rewrites the talk box
 (`HudPanels.open_teleport_list`, `TeleportBoard.list_lines`). The box's own text stays on top,
 followed by a blank line, one numbered line per link in file order, and the end line. A click on
-a destination line is `OpTeleportUse` (srrevamp's wire, round 576). The talk box stays up and
+a destination line is `OpTeleportUse` (OpenSRO's wire, round 576). The talk box stays up and
 closes on any zone change. The fee, the place, the level-waiver display and the one-request
-guard are as in round 578 (below), and the guard is srrevamp's own: the retail click path sends
+guard are as in round 578 (below), and the guard is OpenSRO's own: the retail click path sends
 through `Net_SendRequestPacket(0x705a, 0)`, which marks nothing pending. An accepted reply keeps
 the request pending until the arrival's zone change, since the list is still up between the two
 (round 603's review). The server still serves a second request once the first has moved the
@@ -531,7 +531,7 @@ The 56 links out of these points carry four rule sets (MEASURED over the exporte
 
 **The directions are the table's own.** Every link out of an NPC point has its reverse except the
 two into Thief Town (`7 -> 8` and `34 -> 8`), whose destination `GATE_TD` has no link out. 62 of the
-292 retail links are one-way; those two are the only ones out of an NPC point. srrevamp reads the
+292 retail links are one-way; those two are the only ones out of an NPC point. OpenSRO reads the
 same directed table and adds nothing.
 
 "Roc Mountain" in the user's request is the airship network: Hotan's Karakoram docks (16, 17) to the
@@ -560,7 +560,7 @@ route: its link needs `ITEM_QNO_RM_MEETROC_6_01`, and its destination is in worl
   is 1**. That byte is the last one `RefTeleport_ExtractData` reads (`0x6a7f45`, after the word it
   stores at `+0x48`). The client's `teleportdata.txt` has no column for it; its 13 columns end at
   column 12, which is the `+0x48` word (below). So which points set it is not in the player's data.
-  srrevamp keeps the stand-in the gate lines use: **a point with an outgoing link offers id 8**, on
+  OpenSRO keeps the stand-in the gate lines use: **a point with an outgoing link offers id 8**, on
   the server (`gateObject`, then `LinkBetween`) and the client (`NpcServiceReader.gate_services`).
   Disclosed.
 
@@ -569,7 +569,7 @@ target record, and it calls `0x407760`. `0x407760` copies the record's region wo
 x/y/z words (`+0x26/+0x28/+0x2a`, `movsx` then `fild`) into the arrival, and the `+0x48` word into a
 second out-parameter. There is no radius term. The one place the server scatters an arrival over a
 point's radius is the battle arena's `FUN_00662380`, which uses `rand()` over `+/- radius` on x and z.
-So a gate or NPC teleport lands **on the point exactly**. srrevamp sends (region, x, z) and the
+So a gate or NPC teleport lands **on the point exactly**. OpenSRO sends (region, x, z) and the
 client stands the player on its walkable graph there. Until round 642 this page called the
 arrival an inference.
 
@@ -579,8 +579,8 @@ refusal 2 (`0x513802`). It is the `w` that `RefTeleport_ExtractData` stores at `
 the token after the two flag bytes (READ). That the client text's column 12 carries it is INFERRED
 from its position and its values: 1 on all 153 open-world rows (every town gate, ferry, airship,
 tunnel, soldier and guide), and other small numbers on the fortress (2, 4, 7), Roc (40), tomb
-(57-59), temple (60) and arena or survival rows (95-170). srrevamp exports it as `WorldID` and
-**refuses a destination in any world but 1** with code 0 (OURS: srrevamp has the open world only).
+(57-59), temple (60) and arena or survival rows (95-170). OpenSRO exports it as `WorldID` and
+**refuses a destination in any world but 1** with code 0 (OURS: OpenSRO has the open world only).
 This covers the fortress, tomb, temple, survival and Roc instances. A CSV exported before round 642
 has no `WorldID`. It still loads, and then only the negative-region test (dungeons) refuses.
 
@@ -602,7 +602,7 @@ drawn water.
 
 The table's y is not used; the client lands on the graph (`World3D._land_teleport_arrival`).
 
-**srrevamp.**
+**OpenSRO.**
 - Server: `session.gateObject` accepts a point whose associated object is not a building row, and
   names it by the point's code in the log. `teleport.Point.WorldID` and `teleport.MainWorld` carry the
   world, and `Table.PointByObject` and `Table.BuildingByID` are the lookups.
@@ -616,7 +616,7 @@ The table's y is not used; the client lands on the graph (`World3D._land_telepor
 - the interaction range's height term and unplaced NPCs (next section);
 - the `+0x34` byte, stood in for as above;
 - the instanced worlds.
-- The Thief Town arrival (`GATE_TD`, 96/182) moves the player like any other. srrevamp has no thief
+- The Thief Town arrival (`GATE_TD`, 96/182) moves the player like any other. OpenSRO has no thief
   town rules.
 
 ### The interaction range (round 642's review)
@@ -655,7 +655,7 @@ were read from the exe's `.rdata`.
 The reply carries 3 or 4 as they are. The client's category-0xd table shows 4 as
 `UIIT_MSG_INTERACTION_FAIL_TOO_FAR` (`0x7ba03b`) and sends 3 to its default, which shows no message.
 
-**srrevamp.**
+**OpenSRO.**
 - **Server.** `teleport.Reach` and `session.teleporter.reach` apply it before the link, as the
   engine does.
   - The object's place is its teleportbuilding row for a gate structure (limit 800). For an NPC it
@@ -697,7 +697,7 @@ rows are the gate point's links in file order -- the order `UI_TELEPORT::FUN_006
 them in -- with the link's fee (column 3). PLACE is the destination's zone name through
 textdata_object (else its teleportdata codename); PRICE is the list format the retail dialog
 chooses, `UIIT_CTL_TELEPORT_RESULT` with the fee, or `UIIT_CTL_TELEPORT_FREE_RESULT` when the
-fee word is 0. srrevamp also shows the free format when the engine's level waiver applies (the
+fee word is 0. OpenSRO also shows the free format when the engine's level waiver applies (the
 character's current level is 20 or less; the engine reads `GetMaxLevel`), which the retail
 dialog does not -- own display, disclosed; the GM and testing waivers show only in the receipt.
 Move sends `OpTeleportUse` with the board's gate; the board closes on the server's yes and on
@@ -706,10 +706,10 @@ any zone change, and stays up on a refusal. Not wired, disclosed: the board's wi
 own), per-destination icons, the Move button's art (its layout names none), the `"%d. %s"`
 numbering, the gate cursor. Measured on the render box: `docs/RE_COMPLETION.md`, round 578.
 
-### srrevamp wire: FrameRegion (round 570)
+### OpenSRO wire: FrameRegion (round 570)
 
 A teleport lands a player in another town's coordinates, so both ends must
-agree which region those coordinates are relative to. srrevamp's own
+agree which region those coordinates are relative to. OpenSRO's own
 placeholder world results name it (`docs/protocol/PROTOCOL_DECISION.md`: own
 scaffolding, not a retail layout). `OpEnterWorldResult` (0x0021) and
 `OpChangeZoneResult` (0x0027) end with a **FrameRegion**: a u16 length, then
@@ -851,7 +851,7 @@ bytes), not a column parser this project has read.
 **So whether the retail server enforces these rules at all turns on that
 byte.** At 0 a failing rule refuses; at any non-zero value other than 1 every
 failure is dropped (`0x513ccf`, `0x513d35`) and the walk ends like a clean one.
-srrevamp enforces them -- it models mode 0 -- and that is a **disclosed
+OpenSRO enforces them -- it models mode 0 -- and that is a **disclosed
 stand-in**, not a read value. It also refuses type 5 before any post-pass could
 run.
 
@@ -891,7 +891,7 @@ either). At level 50, 245 links pass,
 46 refuse `0x1c15` and the Roc link refuses `0x1c23` (measured over the exported
 CSVs with `teleport.CheckRestrictions`, round 575).
 
-## The columns srrevamp reads (round 575)
+## The columns OpenSRO reads (round 575)
 
 `cmd/export-refdata -mode teleport -out <dir>` writes `teleportdata.csv`,
 `teleportlink.csv` and `teleportbuilding.csv`; `internal/teleport` reads them
@@ -926,18 +926,18 @@ in file order: to 2 `GATE_WC` 5000 `(2,0,0)`; to 175 `GATE_SD1` and 176 `GATE_SD
 40000 `(1,0,999)+(2,0,0)`; to 5 `GATE_KT`, 20 `GATE_EU` and 25 `GATE_CA` 5000
 `(1,1,110)+(2,0,0)`.
 
-The rules srrevamp applies (`internal/teleport/rules.go`): `QuoteFee` -- the
+The rules OpenSRO applies (`internal/teleport/rules.go`): `QuoteFee` -- the
 link's fee, waived below level 21 (`cmp al,0x14; ja` at `0x5136de`), then two
 own-design waivers, GM accounts and a testing flag; `CheckRestrictions` -- the
-table above, with the arms that need state srrevamp does not model disclosed:
+table above, with the arms that need state OpenSRO does not model disclosed:
 types 2 and 7 pass (no trade carts); type 3 is evaluated against the PvP state
-the caller passes, and srrevamp, which models no PvP state (no PK system; the
+the caller passes, and OpenSRO, which models no PvP state (no PK system; the
 own-design duel sets none), passes `NEUTRAL` -- a disclosed stand-in; types 4
 and 5 refuse when their data 1 is non-zero and type 6 refuses on `(0, 0)` (the
 inventory and the job state are not consulted -- fail closed with the engine's
 code); and the rules are enforced as mode 0 enforces them, the mode byte's
 filler being unread (above). Level stands in for MaxLevel (equal unless a
-character lost levels, which srrevamp cannot do); no fortress tax (no
+character lost levels, which OpenSRO cannot do); no fortress tax (no
 fortresses).
 
 ## The return point (round 686)
@@ -1008,14 +1008,14 @@ another. MEASURED on the render box's export: `STORE_CH_GATE` 2094 -> `GATE_CH` 
 **The other line, id 9** ("Teleport to return point", item 0x10). It is kind 1 of the teleport
 request: `CMainProcess::FUN_004f2b50` case 1 (`0x4f2c83`) refuses 0x1c10 with a trade cart and
 otherwise calls `GObjPC::Revive(0)` -- the same move -- with `GameEventLog_Record(0xb, 3, 0)`. No
-town gate offers it (teleportdata column 11 is 0 on all seven); srrevamp does not serve it.
+town gate offers it (teleportdata column 11 is 0 on all seven); OpenSRO does not serve it.
 
 **The return scroll (OPEN).** `CGItemExpendable::UseByKind` (`0x49c2b0`) cases 1-3 cast the skill
 the item's ref object names at `+0x2a0` through `FUN_0059b8d0` (the skill system's queue); what the
-skill's effect does to reach the return point is unread. srrevamp refuses every return scroll
+skill's effect does to reach the return point is unread. OpenSRO refuses every return scroll
 (`useitem.go`, "restores nothing"), so there is nothing to point at the return point yet.
 
-### What srrevamp built
+### What OpenSRO built
 
 - **Server** (`session/recall.go`): `OpRecallDesignate 0x0111` (u16 gate teleportdata id) ->
   `OpRecallDesignateResult 0x0112`, retail's 0xb059 shape exactly (OURS: the placeholder pair and
@@ -1078,7 +1078,7 @@ The seven town gates' boxes, from the archive's rows (READ):
 | `STORE_SD_GATE1` | 90/48 | 612, 910, 1089 | 70 | 70 |
 | `STORE_SD_GATE2` | 92/50 | 1719, 1586, 760 | 70 | 70 |
 
-**srrevamp** (`World3D._bind_region_gates`, `_gate_pick_node`; `TeleportReader.TB_BC_HEIGHT` and
+**OpenSRO** (`World3D._bind_region_gates`, `_gate_pick_node`; `TeleportReader.TB_BC_HEIGHT` and
 `TB_BC_RADIUS`):
 - Each id-7 gate standing in a region gets a `GatePick_<code>` node at the row's position, in the
   building region's frame. Its world basis is the identity, which undoes the region group's z
@@ -1089,7 +1089,7 @@ The seven town gates' boxes, from the archive's rows (READ):
 - `_talk_ray` masks both layers. It goes on through untagged talk-layer bodies (the navmesh walls),
   up to 8 hits.
 - The placed map objects are no longer click targets.
-- OPEN: the 3 x 3 ray grid (srrevamp casts the centre ray only). A ray that starts inside a box does not take it
+- OPEN: the 3 x 3 ray grid (OpenSRO casts the centre ray only). A ray that starts inside a box does not take it
   (Godot's `hit_from_inside` is off). Retail's triangle test was not read for back faces.
 
 **Round 577's binding, measured against this (round 690, render box):**
@@ -1128,7 +1128,7 @@ The teleport's internal message 0x7ce6 carries the world id and the object id, n
 **Unread:** whatever reads the stored destination on re-entry, and the client's 0x3013 placement. So
 whether retail snaps the table's y to the navmesh is not established either way.
 
-**srrevamp's arrival:**
+**OpenSRO's arrival:**
 - The table's y is not used. The server sends height 0, and the client stands the point on its
   walkable graph (`_land_teleport_arrival`, the highest walkable surface).
 - That was already true for a gate teleport. Since round 690 it is also true for a return to the

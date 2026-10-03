@@ -1,6 +1,6 @@
 # Installed by deploy/install.sh, which fills in @REPO@ and @USER@.
 [Unit]
-Description=srrevamp: update the server from origin/dev
+Description=OpenSRO: update the server from origin/dev
 After=docker.service network-online.target
 Wants=network-online.target
 

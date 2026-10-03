@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/OpenSRO/srrevamp/server/internal/gm"
-	"github.com/OpenSRO/srrevamp/server/internal/species"
+	"github.com/OpenSRO/OpenSRO/server/internal/gm"
+	"github.com/OpenSRO/OpenSRO/server/internal/species"
 )
 
 // The monster species table (round 654). With -monsters-csv the server holds

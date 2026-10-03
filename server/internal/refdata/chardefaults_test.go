@@ -135,14 +135,14 @@ func TestCompareRefCharGen(t *testing.T) {
 }
 
 // TestRefCharGenAgreesWithTheRule runs on real exports when both are given
-// (they are never in the repo): SRREVAMP_TEST_CHARGEN_CSV, the rule's
-// chargen.csv from the operator's archive, and SRREVAMP_TEST_REFCHARGEN_CSV,
+// (they are never in the repo): OPENSRO_TEST_CHARGEN_CSV, the rule's
+// chargen.csv from the operator's archive, and OPENSRO_TEST_REFCHARGEN_CSV,
 // the shard's `_RefCharGen.csv`. Round 692 ran it on the render box's two
 // (MEASURED: the same 104 ids).
 func TestRefCharGenAgreesWithTheRule(t *testing.T) {
-	rulePath, refPath := os.Getenv("SRREVAMP_TEST_CHARGEN_CSV"), os.Getenv("SRREVAMP_TEST_REFCHARGEN_CSV")
+	rulePath, refPath := os.Getenv("OPENSRO_TEST_CHARGEN_CSV"), os.Getenv("OPENSRO_TEST_REFCHARGEN_CSV")
 	if rulePath == "" || refPath == "" {
-		t.Skip("SRREVAMP_TEST_CHARGEN_CSV and SRREVAMP_TEST_REFCHARGEN_CSV not set")
+		t.Skip("OPENSRO_TEST_CHARGEN_CSV and OPENSRO_TEST_REFCHARGEN_CSV not set")
 	}
 	f, err := os.Open(rulePath)
 	if err != nil {
@@ -170,15 +170,15 @@ func TestRefCharGenAgreesWithTheRule(t *testing.T) {
 }
 
 // TestCharDefaultsRealExport runs on the shard's export when
-// SRREVAMP_TEST_CHARDEFAULTS_DIR names a directory holding it (never in the
+// OPENSRO_TEST_CHARDEFAULTS_DIR names a directory holding it (never in the
 // repo), and skips otherwise. It checks the counts round 692 MEASURED (China
 // 7 masteries, 4 skills, 3 level-1 quests; Europe 6, 10, 2), that the
 // masteries are each race's own (skillmasterydata.txt: China 257-276, Europe
 // 513-518), and that nothing in it is odd enough to warn about.
 func TestCharDefaultsRealExport(t *testing.T) {
-	dir := os.Getenv("SRREVAMP_TEST_CHARDEFAULTS_DIR")
+	dir := os.Getenv("OPENSRO_TEST_CHARDEFAULTS_DIR")
 	if dir == "" {
-		t.Skip("SRREVAMP_TEST_CHARDEFAULTS_DIR not set")
+		t.Skip("OPENSRO_TEST_CHARDEFAULTS_DIR not set")
 	}
 	d, err := LoadCharDefaultsDir(dir)
 	if err != nil {

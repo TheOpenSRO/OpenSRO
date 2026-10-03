@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/OpenSRO/srrevamp/server/internal/durability"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/durability"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // AttackType is a skill's damage-type mask -- `att` value[0] in the skill's
@@ -168,7 +168,7 @@ func (t AttackType) Known() bool { return t&(AttackPhysical|AttackMagical) != 0 
 // item+0x1d8, and Char_PublishCombatStats publishes +0x1d8 as param 11
 // (0x497ace..0x497add). The instance rule is WeaponRange's: NoInstance, or a
 // row without its hi end, reads the lo end. The per-plus increment (column
-// 115) is not added: srrevamp instances carry no plus level.
+// 115) is not added: OpenSRO instances carry no plus level.
 func WeaponAttackRate(item *refdata.Item, inst Instance) float64 {
 	if item == nil {
 		return 0
@@ -223,7 +223,7 @@ func WeaponRange(item *refdata.Item, inst Instance, str, intel int, atk AttackTy
 	// builder regardless of the weapon (0040dc10 reads the descriptor's +0xc),
 	// and for those 4,144 skills the median flat is 2,068 against a median
 	// percent of 263. The weapon contribution is the small term, not the whole
-	// blow. srrevamp adds that flat separately as damageBonus, so the shape
+	// blow. OpenSRO adds that flat separately as damageBonus, so the shape
 	// already matches.
 	//
 	// What IS true, and is what makes the zero correct: the magical half draws
@@ -246,7 +246,7 @@ func WeaponRange(item *refdata.Item, inst Instance, str, intel int, atk AttackTy
 	// skill carries the matching mask (SKILL_CH_SWORD_BASE_01 is physical,
 	// SKILL_EU_STAFF_BASE_01 magical).
 	//
-	// Since round 505 srrevamp's plain swing does run that skill
+	// Since round 505 OpenSRO's plain swing does run that skill
 	// (session.plainSwingOf) and passes its mask, so with a real base row a
 	// staff's swing arrives magical and takes the case above. This case is
 	// KEPT for the swings that still have no mask to pass: no base row (a
@@ -523,7 +523,7 @@ func ParseCastRequirements(packed string) []CastRequirement {
 // WHAT HAPPENS AT EXACTLY ZERO IS NOT RECOVERED. The comparison permitting
 // `currentHP == cost` is read; whether the engine then treats the caster as
 // dead is not (the cost is taken later, by EngageSkill's slot 0x308, and no
-// OnDeath call was traced from there). srrevamp's rule, disclosed: the caster
+// OnDeath call was traced from there). OpenSRO's rule, disclosed: the caster
 // is left ALIVE at 0 -- life state 1, no penalty, no respawn -- and the next
 // monster or duel blow whose damage lands on her is her death
 // (session/monsterstrike.go's killLock, round 551). Round 550's arbiter, the

@@ -5,7 +5,7 @@ dropped, used and so on from **one flags word on the item's reference row**, at
 offset `+0x8c` — reached by the `item[0xd] + 0x18` chain used throughout the
 server for an object's ref row.
 
-**STALE HEADER, CORRECTED ROUND 460.** This used to read "srrevamp models none
+**STALE HEADER, CORRECTED ROUND 460.** This used to read "OpenSRO models none
 of this yet, and cannot until the columns are found". Both halves were wrong by
 then: `server/internal/refdata/item.go` already carries `CanTrade`, `CanSell`
 and `CanDrop` with their itemdata columns (**16, 17** and **20**; the exporter
@@ -15,13 +15,13 @@ the code and never reached this file — and round 459 believed the header,
 concluded "the column hunt stays open", and went looking for something already
 found.
 
-**What srrevamp carries and enforces (rounds 482-494).**
+**What OpenSRO carries and enforces (rounds 482-494).**
 
 | flag | itemdata column | carried as | enforced by |
 |---|---:|---|---|
 | `CanTrade` | 16 | `refdata.Item.CanTrade` | trade offer and trade commit (`0x183a`, round 482); a drop on the ground is never released from its owner when clear (`grounditem.Item.Bound`, `GObjPC::FUN_004901c0`, round 492, `ground_items.md`) |
 | `CanSell` | 17 | `refdata.Item.CanSell` | `shop.Sell` |
-| `CanDrop` | 20, cleared when `CanTrade` is 0 and the byte is exactly 1 (round 494) | `refdata.Item.CanDrop` | nothing: srrevamp has no drop-from-bag path |
+| `CanDrop` | 20, cleared when `CanTrade` is 0 and the byte is exactly 1 (round 494) | `refdata.Item.CanDrop` | nothing: OpenSRO has no drop-from-bag path |
 | `CanUse` | 24 | `refdata.Item.CanUse` | `session.UseItemHandler` (`0x183e`, round 489) |
 | `CanPick` | 21 | `refdata.Item.CanPick` | `grounditem.Hub.PickCheck` (`0x1839`, round 493): the first test on a found item in `GObjPC::CheckCanPickUp`, before the range, the busy flag and the owner (`ground_items.md`, "Picking up", step 1) |
 
@@ -68,7 +68,7 @@ the berserk potion (`AddHwanCount`), 9 the pet feed, 10 the fortress repair kit
 recovery kinds (3/3/1/1, /2, /3) and 530 are not -- return and reverse-return
 scrolls, cure pills, pet and berserk potions, mall tickets and expansions, cash
 avatars -- and `session.UseItemHandler` now refuses those without consuming them
-instead of healing from their Param1. That refusal is srrevamp's disclosed gap
+instead of healing from their Param1. That refusal is OpenSRO's disclosed gap
 (it models none of their effects), not an engine refusal.
 
 **`CanDrop` is column 20 (round 494).** Until round 494 `export-refdata` read
@@ -167,7 +167,7 @@ if (iVar3 == 0) return 0x183a;
 ```
 
 So the engine refuses the offer itself, and the partner never sees the item.
-srrevamp now does the same: `session.handleTradeSetOffer` calls
+OpenSRO now does the same: `session.handleTradeSetOffer` calls
 `offerTradeFlagRefusal` before `trade.Hub.SetOffer`. It answers
 `OpTradeOfferResult` with `that item cannot be traded`, and it does not store the
 offer, clear either side's confirmation, or send the partner an
@@ -178,7 +178,7 @@ and an inventory move can put an untradeable item into the offered slot after
 the offer was accepted. Both checks refuse nothing when there is no reference
 data, or when the tables do not know the item.
 
-`TradeOfferItem` deals only with the item, but srrevamp's placeholder
+`TradeOfferItem` deals only with the item, but OpenSRO's placeholder
 `OpTradeSetOffer` carries gold and an item together, so a refusal also leaves
 that request's gold unstored. The function's other refusals are not modelled.
 They are `0x1806`, `0x1809`, a bare `return 3`, `0x18b6`
@@ -249,7 +249,7 @@ consequences:
 - **Bit 2 is dead**: no writer and no reader. A gap in the numbering rather than a
   flag this project has failed to identify.
 
-If srrevamp ever models borrowing, the grounded answer is *false for everything*,
+If OpenSRO ever models borrowing, the grounded answer is *false for everything*,
 and that is the engine's answer rather than an omission here.
 
 ## How the flags word is built
@@ -310,7 +310,7 @@ add [edi+0x28],ebx` bumps the column counter. That is column 18, so read 13
 (`esp+0x23`, `CanPick`) **21** — stored at `0x6a3464` after the bump at
 `0x6a3455`, folded into bit 5 at `0x6a3590` (`and eax,0x20`). Counting on, read 18
 (`bl`) lands on column 24, which round 489 confirmed as `CanUse` from the data.
-srrevamp reads `CanPick` from column 21 (round 493).
+OpenSRO reads `CanPick` from column 21 (round 493).
 
 ## The read-to-column arithmetic, now established
 
@@ -410,7 +410,7 @@ Applying the arithmetic to the nine capability reads gives:
 against real data", below), which moves each of these one column right. For
 `CanUse` the data decides it. Every HP potion reads 0 in column 23 and 1 in
 column 24. A potion is the item most plainly usable, so column 24 is `CanUse` and
-column 23 is not. srrevamp reads 24 (round 489).
+column 23 is not. OpenSRO reads 24 (round 489).
 
 Column 19 is the tell that the mapping is right rather than merely plausible: the
 flags expression extracts **two separate bits** from that slot
@@ -555,7 +555,7 @@ These are paths into the user's own archives, not data this repo carries.
 `READn -> col n+5` holds while the inline reads are contiguous, which is true
 from column 7 through column 51. The five-string block then consumes 52..56
 without an inline read, so the *next* inline read is column **57**, not 52.
-Anything applying `n+5` past that point is five columns low. srrevamp's own
+Anything applying `n+5` past that point is five columns low. OpenSRO's own
 column constants are raw indices rather than derived through the rule, so none
 of them were wrong — but the rule as written would have produced wrong ones.
 
@@ -689,12 +689,12 @@ fail if the run were shifted:
 
 A shifted mapping cannot produce both splits at once.
 
-### `CanRepair` is measured redundant for srrevamp, and deliberately not wired
+### `CanRepair` is measured redundant for OpenSRO, and deliberately not wired
 
 The obvious wiring is to refuse repair when bit 6 is clear. **Measured across
 three itemdata parts — 3,879 rows — column 22's set is *exactly* the non-zero
 set of the repair-cost columns 27/28, with no exception in any file.**
-srrevamp's `RepairHandler` already skips items with `DurabilityMax <= 0`, so the
+OpenSRO's `RepairHandler` already skips items with `DurabilityMax <= 0`, so the
 flag would change no behaviour. Recorded rather than implemented.
 
 **`CanRevive` is not the same flag**, despite tracking `CanRepair` closely:

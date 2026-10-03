@@ -165,7 +165,7 @@ static func _native_rgba(tex: ParsedTexture, pixels: PackedByteArray) -> PackedB
 ## rejected: WORLD_ISSUES round 695.)
 
 ## Tests set this: -1 asks the renderer, 0 keeps DXT1, 1 decodes. The QA
-## A/B switch SRREVAMP_QA_DXT1_KEEP=1 (OURS) keeps DXT1 for a whole run: the
+## A/B switch OPENSRO_QA_DXT1_KEEP=1 (OURS) keeps DXT1 for a whole run: the
 ## pre-695 drawing, for a before picture and a cost comparison.
 static var dxt1_alpha_override := -1
 static var _dxt1_rd := -1
@@ -182,7 +182,7 @@ static func dxt1_needs_alpha_format() -> bool:
 	if _dxt1_rd < 0:
 		# RendererChoice.running()'s test: headless draws nothing.
 		_dxt1_rd = 1 if DisplayServer.get_name() != "headless" and RenderingServer.get_rendering_device() != null \
-			and OS.get_environment("SRREVAMP_QA_DXT1_KEEP") != "1" else 0
+			and OS.get_environment("OPENSRO_QA_DXT1_KEEP") != "1" else 0
 	return _dxt1_rd == 1
 
 ## True when any whole 8-byte block of a DXT1 payload marks a texel

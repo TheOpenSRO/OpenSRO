@@ -5,7 +5,7 @@ declares in its schema pool (`docs/protocol/db_columns.md`). It introduces **42
 column names**, and that is the fullest available statement of what the game
 considers a character to be.
 
-srrevamp's `Character` has **twelve** fields. This page is the map between them,
+OpenSRO's `Character` has **twelve** fields. This page is the map between them,
 and `server/internal/character/schema.go` holds it in code with tests that fail
 if a field is added without an entry or if the column list drifts from the
 extracted pool.
@@ -25,9 +25,9 @@ extracted pool.
 	DiedRegion  DiedPosX  DiedPosY  DiedPosZ
 	WorldID  TelWorldID  DiedWorldID  HwanLevel
 
-## What srrevamp has, and what the engine calls it
+## What OpenSRO has, and what the engine calls it
 
-| srrevamp | `_CHAR` | |
+| OpenSRO | `_CHAR` | |
 |---|---|---|
 | `Name` | `CharName16` | |
 | `Gold` | `RemainGold` | |
@@ -42,21 +42,21 @@ extracted pool.
 | `Gender` | — | **divergence, below** |
 | `StorageGold` | — | **divergence, below** |
 
-**`Strength` and `Intellect` are naming confirmations.** srrevamp guessed at
+**`Strength` and `Intellect` are naming confirmations.** OpenSRO guessed at
 `Str`/`Int` and the engine spells them out — a small thing, but it is the
 difference between a convention and a citation.
 
 ## Two divergences worth naming
 
 **`Gender` is not a column.** A character's race and sex follow from
-`RefObjID`, the reference object it is built from. srrevamp stores a string
+`RefObjID`, the reference object it is built from. OpenSRO stores a string
 (`china_man` / `china_woman`) because it selects asset paths directly. That is a
 reasonable shortcut and it is a shortcut.
 
 **`StorageGold` is not on the character.** Warehouse gold lives in the separate
-`_CHEST` table. srrevamp hangs it off `Character`.
+`_CHEST` table. OpenSRO hangs it off `Character`.
 
-## The engine persists MP, and srrevamp does not
+## The engine persists MP, and OpenSRO does not
 
 `_CHAR` carries **`MP`** immediately beside **`HP`**.
 
@@ -65,7 +65,7 @@ topped up on mana should not be worth reconnecting for, because the pool refills
 anyway" — which reads as though the design followed the game. **It does not.**
 The real server saves current mana, so relogging does not refill it there.
 
-The choice can stand on its own merits — srrevamp has no cross-session
+The choice can stand on its own merits — OpenSRO has no cross-session
 consequence that turns on a mana total — but it is **own design**, and it is now
 recorded as one, with a test that keeps it stated rather than assumed.
 
@@ -73,24 +73,24 @@ This is the third time this project has found a claim about the engine resting
 on a plausible assumption rather than a reading, and the pattern is the same
 each time: the design was fine, the justification was not.
 
-## What the engine keeps that srrevamp models nowhere
+## What the engine keeps that OpenSRO models nowhere
 
 | columns | what they are |
 |---|---|
-| `LatestRegion`, `PosX/Y/Z`, `WorldID` | position on the row — srrevamp keeps it in the live world only |
+| `LatestRegion`, `PosX/Y/Z`, `WorldID` | position on the row — OpenSRO keeps it in the live world only |
 | `TelRegion`, `TelPosX/Y/Z`, `TelWorldID` | the bound return point, five columns |
 | `DiedRegion`, `DiedPosX/Y/Z`, `DiedWorldID` | where the character last died, five columns |
 | `DailyPK`, `TotalPK`, `PKPenaltyPoint` | the PK economy |
 | `HwanLevel`, `RemainHwanCount` | the berserk economy, **persisted** |
-| `RemainSkillPoint` | srrevamp keeps SP in `internal/skill`'s own store |
+| `RemainSkillPoint` | OpenSRO keeps SP in `internal/skill`'s own store |
 | `SExpOffset`, `GatheredExpPoint` | skill experience and a lifetime total |
-| `InventorySize` | per-character inventory width; srrevamp's is fixed |
+| `InventorySize` | per-character inventory width; OpenSRO's is fixed |
 | `AutoInvestExp` | automatic stat investment |
 | `AppointedTeleport` | a bound teleport |
 | `NickName16`, `Scale`, `Deleted`, `GuildID`, `LastLogout`, `MaxLevel`, `RefObjID` | |
 
 **Five columns for the return point and five for the death point** is the detail
-most likely to matter to srrevamp later: the engine treats "where you go back
+most likely to matter to OpenSRO later: the engine treats "where you go back
 to" and "where you died" as first-class persisted state, each with its own
 region, three coordinates and world id.
 
@@ -100,7 +100,7 @@ region, three coordinates and world id.
 
 ## What this is not
 
-A persistence design. srrevamp does not use this schema and nothing here says it
+A persistence design. OpenSRO does not use this schema and nothing here says it
 should. The value is that every field on `Character` is now either matched to
 the engine's own name or recorded as a deliberate divergence, and a test makes
 the next field added answer the same question.

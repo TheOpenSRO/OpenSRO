@@ -61,7 +61,7 @@ func (s *SQLStore) GrantDefaultQuests(ctx context.Context, characterID int64, co
 
 // DefaultQuests returns characterID's stored grants, by code in byte order
 // (COLLATE "C": the database's own collation differs between hosts -- en_US
-// on CI and srrevamp-01, C locally -- and the memory store sorts by bytes).
+// on CI and opensro-01, C locally -- and the memory store sorts by bytes).
 func (s *SQLStore) DefaultQuests(ctx context.Context, characterID int64) ([]GrantedQuest, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT quest_code, status FROM character_default_quests WHERE character_id = $1 ORDER BY quest_code COLLATE "C"`, characterID)

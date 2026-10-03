@@ -6,7 +6,7 @@ extends SceneTree
 ## (MonsterDraw.Templates, the path now) -- and how many characterdata rows
 ## the Org rule gives a model (NpcTableReader.model_with_org).
 ##
-## The species are the ones SRREVAMP_QA_MOBS spawns (World3D._qa_mobs_step:
+## The species are the ones OPENSRO_QA_MOBS spawns (World3D._qa_mobs_step:
 ## every k-th of the sorted `MOB_CH_` codes with a model of their own, 24 of
 ## them) plus the four roster `_CLON`s. Each is assembled once, cold, and
 ## then duplicated DUPS times.

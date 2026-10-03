@@ -355,7 +355,7 @@ static func _archive_label(which: String) -> String:
 
 static func _archive_env(which: String) -> String:
 	match which:
-		"data": return "SRREVAMP_PK2_PATH"
-		"music": return "SRREVAMP_MUSIC_PK2_PATH"
-		"media": return "SRREVAMP_MEDIA_PK2_PATH"
+		"data": return "OPENSRO_PK2_PATH"
+		"music": return "OPENSRO_MUSIC_PK2_PATH"
+		"media": return "OPENSRO_MEDIA_PK2_PATH"
 	return "?"

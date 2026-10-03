@@ -39,8 +39,8 @@ frame against 12.5-12.7; world entry 9.7-10.7 s against 14.0-15.5; longest freez
 | Path | What |
 |---|---|
 | `/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64` | Godot, matching the version CI builds with. |
-| `/opt/srrevamp-client` | A copy of this repo's `client/`. Refresh with `scp` of changed files; re-run `--import --quit` only when a new `class_name` appears. Owned by `ghidra`. |
-| `/opt/srrevamp-server` | A copy of `server/`, for the Go analysis tools (`whatishere`, `o2sectors`, `pk2list`, `findregionassets`). Go 1.24 is installed. |
+| `/opt/opensro-client` | A copy of this repo's `client/`. Refresh with `scp` of changed files; re-run `--import --quit` only when a new `class_name` appears. Owned by `ghidra`. |
+| `/opt/opensro-server` | A copy of `server/`, for the Go analysis tools (`whatishere`, `o2sectors`, `pk2list`, `findregionassets`). Go 1.24 is installed. |
 | `/opt/sro-files/client/` | Real client archives — `Data.pk2`, `Map.pk2`, `Media.pk2`, `Music.pk2`, `Particles.pk2` — plus `sro_client.exe`, byte-identical to the image in Ghidra. On the new box all five are real files here, and `/var/tmp/pslocal/*.pk2` are symlinks back to them for older scripts (on the old box it was the reverse: `Data.pk2` and `Map.pk2` lived in `pslocal` because its 40 GB disk could not hold two copies). Everything (`qa_shot.sh`, `remote_godot.sh`, the docs) addresses them through this directory, so if a run reports `pk2: could not open .../Data.pk2: 7`, check the symlinks resolve before looking anywhere else — that error means the file is missing, not that the archive is corrupt. |
 | `/opt/sro-files/server/.../Data/` | ~264 already-extracted `.nvm` files, handy for format work without pk2 decryption. |
 | `/opt/ghidra_12.1.3_PUBLIC` | Ghidra. Project `/home/ghidra/re_client/sro_client_re.gpr` holds the analysed client and server binaries. |
@@ -50,21 +50,21 @@ reaches the repo tree.
 
 ## The 15-minute tick, and the lock you must actually take
 
-`/opt/srrevamp-re/re_tick.sh` runs from cron every 15 minutes. It keeps the
+`/opt/opensro-re/re_tick.sh` runs from cron every 15 minutes. It keeps the
 evidence fresh — rebuilds a decomp dump whose binary is newer than the dump's
 own `DONE` marker, re-runs the standing probes, and writes `STATUS`.
 
-**It guards itself with `flock -n 9` on `/opt/srrevamp-re/lock`.** That is an
+**It guards itself with `flock -n 9` on `/opt/opensro-re/lock`.** That is an
 *advisory* lock on the open file descriptor, not a lock on the file existing.
 Two consequences, both of which have already cost this project a dump:
 
-- **`touch /opt/srrevamp-re/lock` takes no lock and prevents nothing.** A job
+- **`touch /opt/opensro-re/lock` takes no lock and prevents nothing.** A job
   that announces itself that way will be run straight over.
-- **`rm -f /opt/srrevamp-re/lock` is worse than useless** — it destroys the
+- **`rm -f /opt/opensro-re/lock` is worse than useless** — it destroys the
   inode the cron holds its lock on, so the next tick creates a fresh file and
   locks that, and the mutex stops working entirely.
 
-Any long Ghidra job must do `exec 9>/opt/srrevamp-re/lock; flock -n 9 || exit`
+Any long Ghidra job must do `exec 9>/opt/opensro-re/lock; flock -n 9 || exit`
 and simply let the descriptor close when it finishes. `/var/tmp/dump_all.sh`
 does this and is the thing to copy.
 
@@ -182,7 +182,7 @@ its own compositor and stops it.
 
 ```
 su - ghidra -c 'vulkaninfo --summary | grep deviceName'          # want: AMD Radeon RX 7600 (RADV NAVI33)
-su - ghidra -c '/opt/srrevamp-client/tools/xwl_run.sh /opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64 \
+su - ghidra -c '/opt/opensro-client/tools/xwl_run.sh /opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64 \
   --rendering-method forward_plus --rendering-driver vulkan --path <client> --quit-after 30' | grep "Vulkan API"
 # want: Vulkan API 1.4.305 - Forward+ - Using Vulkan Device #0: AMD - AMD Radeon RX 7600 (RADV NAVI33)
 ```

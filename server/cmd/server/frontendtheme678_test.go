@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 )
 
 // runServerEnv makes this test binary run the real server's main() instead
@@ -21,7 +21,7 @@ import (
 // itself with it set, so what answers is the server's own boot -- its flags,
 // its environment, the handler chain main builds -- not a chain the test
 // assembled.
-const runServerEnv = "SRREVAMP_TEST_RUN_SERVER_MAIN"
+const runServerEnv = "OPENSRO_TEST_RUN_SERVER_MAIN"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(runServerEnv) == "1" {
@@ -51,7 +51,7 @@ func (b *lockedBuffer) String() string {
 }
 
 // Round 678 (OURS): the server answers a front-end theme request on a fresh
-// connection, before login, with the theme its SRREVAMP_LOGIN_* settings
+// connection, before login, with the theme its OPENSRO_LOGIN_* settings
 // give -- an unsafe name refused with a WARN and served empty -- within the
 // 1.5 s the client waits. Before round 678 nothing answers opcode 0x0005 and
 // the read times out. The opcodes are literals so the test also builds
@@ -66,19 +66,19 @@ func TestFrontEndThemeServedByTheRealServer(t *testing.T) {
 
 	cmd := exec.Command(os.Args[0])
 	for _, kv := range os.Environ() { // nothing of the developer's own server settings
-		if !strings.HasPrefix(kv, "SRREVAMP_") {
+		if !strings.HasPrefix(kv, "OPENSRO_") {
 			cmd.Env = append(cmd.Env, kv)
 		}
 	}
 	cmd.Env = append(cmd.Env,
 		runServerEnv+"=1",
 		runServerEnv+"_ARGS=-in-memory -addr "+addr,
-		"SRREVAMP_LOGIN_INTRO=roc",
-		"SRREVAMP_LOGIN_BGM=../../evil.ogg",
-		"SRREVAMP_LOGIN_LOGO=mylogo.png",
-		"SRREVAMP_LOGIN_COPYRIGHT=(c) 2026 Our Server <test>",
-		"SRREVAMP_LOGIN_BAND_TOP=top_band.png",
-		`SRREVAMP_LOGIN_BAND_BOTTOM=C:\bottom.png`,
+		"OPENSRO_LOGIN_INTRO=roc",
+		"OPENSRO_LOGIN_BGM=../../evil.ogg",
+		"OPENSRO_LOGIN_LOGO=mylogo.png",
+		"OPENSRO_LOGIN_COPYRIGHT=(c) 2026 Our Server <test>",
+		"OPENSRO_LOGIN_BAND_TOP=top_band.png",
+		`OPENSRO_LOGIN_BAND_BOTTOM=C:\bottom.png`,
 	)
 	var out lockedBuffer
 	cmd.Stdout, cmd.Stderr = &out, &out

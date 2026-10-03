@@ -3,7 +3,7 @@ class_name MonsterMotion
 
 ## How a server-driven monster move is drawn: the leg an OpMonsterMoved push
 ## or an OpMonsterMotionList entry starts (docs/protocol/monster_ai.md,
-## "srrevamp's own monster protocol (placeholders)"), stepped every physics
+## "OpenSRO's own monster protocol (placeholders)"), stepped every physics
 ## frame by the engine's own mover, with the walk or run clip and the body
 ## turned along its path. Pure and static so a headless test can hold every
 ## rule to account; World3D._on_monster_moved, _on_monster_motion_list and
@@ -26,24 +26,24 @@ class_name MonsterMotion
 const MOVER_STEP_CAP := 160.0
 
 ## How far the drawn body may drift from the server's position before it is
-## put back there. srrevamp's own number: it must exceed the lag a moving body
+## put back there. OpenSRO's own number: it must exceed the lag a moving body
 ## legitimately carries, and the fastest roster run -- Earth Ghost's 75 u/s
 ## (characterdata col 47, docs/protocol/monster_ai.md "The roster's real walk
 ## and run speeds") -- over a 0.3 s round trip is 22.5.
 const RESYNC_DISTANCE := 32.0
-## How far a walking body moves between two height resolves. srrevamp's own
+## How far a walking body moves between two height resolves. OpenSRO's own
 ## number; the height comes from the region's walkable graph, with the
 ## terrain-only ray where no loaded region covers the body
 ## (World3D._moving_monster_height_at, round 557; before it the ray alone).
 const HEIGHT_RESOLVE_STEP := 2.0
 ## At most this many height resolves a frame across every walking body; the
-## rest keep their height until a later frame. srrevamp's own number.
+## rest keep their height until a later frame. OpenSRO's own number.
 const MAX_HEIGHT_RESOLVES_PER_FRAME := 32
 ## A move for a monster the client has not been told about asks for the list,
-## but no more than once in this many seconds. srrevamp's own number.
+## but no more than once in this many seconds. OpenSRO's own number.
 const UNKNOWN_MOVE_PULL_SECONDS := 5.0
 ## A motion-list entry re-aims a body only when its destination differs from
-## the one being walked to by more than this. srrevamp's own number.
+## the one being walked to by more than this. OpenSRO's own number.
 const REAIM_EPSILON := 0.5
 
 const MODE_WALK := 0
@@ -167,7 +167,7 @@ static func front_yaw(front: String) -> float:
 			return -PI / 2.0
 	return 0.0
 
-## The ground direction (x, z) a server heading points along. srrevamp's
+## The ground direction (x, z) a server heading points along. OpenSRO's
 ## headings are radians in its world frame, measured from +x toward +z
 ## (server/internal/ai/wander.go): the unit heading the engine's SetHeading
 ## writes to an object's +0x24/+0x28/+0x2c is (cos a, 0, sin a) --
@@ -201,7 +201,7 @@ static func gait_clip(archive: Pk2Reader, assembled: SkinnedBsrAssembler.Assembl
 ## new gait. A death hold (entry[7] true, set by World3D._play_once for a
 ## death) keeps its last frame: nothing is swapped. A one-shot that is NOT a
 ## hold but has nothing to resume -- a hit on a body whose idle was never
-## registered (a clip of one frame, SRREVAMP_NO_IDLE_ANIM) -- is given the new
+## registered (a clip of one frame, OPENSRO_NO_IDLE_ANIM) -- is given the new
 ## loop to resume (round 534; it used to be taken for a death and never got a
 ## walk clip). A skeleton with no entry gets one. Never a second loop: a swap
 ## that appended whenever it found no loop entry would, beside a one-shot,
@@ -249,7 +249,7 @@ static func needs_height(last_xz: Vector2, pos: Vector2) -> bool:
 ## (World3D._step_heights). Until round 572 the items had only what the
 ## monsters left, and from MAX_HEIGHT_RESOLVES_PER_FRAME monster bodies that
 ## can never resolve (listed outside every loaded region) they had nothing.
-## The even split is srrevamp's own design, not a tuned number.
+## The even split is OpenSRO's own design, not a tuned number.
 static func monster_height_share(budget: int, item_wants: int) -> int:
 	return budget - mini(maxi(item_wants, 0), budget / 2)
 

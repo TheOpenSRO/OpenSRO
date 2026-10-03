@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 )
 
 // startTestServer spins up a gateway.Server on an ephemeral port with the

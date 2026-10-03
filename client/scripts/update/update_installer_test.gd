@@ -151,11 +151,11 @@ class FakeFs extends UpdateFs:
 	func sleep_ms(ms: int) -> void:
 		slept_ms += ms
 
-const I := "C:/Games/srrevamp"
-const S := "C:/Games/srrevamp/srrevamp_update_staging/srrevamp-windows"
-const EXE := "srrevamp.exe"
-const DLL := "srrevamp_native.dll"
-const FILES := ["srrevamp.exe", "srrevamp.console.exe", "srrevamp.pck", "srrevamp_native.dll",
+const I := "C:/Games/opensro"
+const S := "C:/Games/opensro/opensro_update_staging/opensro-windows"
+const EXE := "OpenSRO.exe"
+const DLL := "opensro_native.dll"
+const FILES := ["OpenSRO.exe", "OpenSRO.console.exe", "OpenSRO.pck", "opensro_native.dll",
 	"THIRD_PARTY_NOTICES.txt", "README.md", "pk2/PUT_YOUR_PK2_FILES_HERE.txt"]
 
 var _failures := 0
@@ -215,9 +215,9 @@ func _initialize() -> void:
 func _test_order() -> void:
 	var order := UpdateInstaller.install_order(PackedStringArray(FILES), EXE)
 	_check(not order.has("pk2/PUT_YOUR_PK2_FILES_HERE.txt"), "the pk2 folder is never touched")
-	_check(order[order.size() - 1] == "srrevamp.pck" and order[order.size() - 2] == EXE and order[order.size() - 3] == DLL,
+	_check(order[order.size() - 1] == "OpenSRO.pck" and order[order.size() - 2] == EXE and order[order.size() - 3] == DLL,
 		"the native library, then the exe, then the .pck go last (got %s)" % [order])
-	_check(not UpdateInstaller.install_order(PackedStringArray(["srrevamp_native.dll.old-update", "srrevamp_update.log"]), EXE).size(),
+	_check(not UpdateInstaller.install_order(PackedStringArray(["opensro_native.dll.old-update", "opensro_update.log"]), EXE).size(),
 		"moved-aside files and the updater's own files are never installed")
 
 func _test_locked_exe_and_dll() -> void:
@@ -238,7 +238,7 @@ func _test_locked_exe_and_dll() -> void:
 		"the new DLL is not the locked file; the lock stayed with the old one")
 	_check(Array(out.pending_cleanup) == [I + "/" + DLL + ".old-update", I + "/" + EXE + ".old-update"],
 		"the two in-use originals wait for the next start (got %s)" % [out.pending_cleanup])
-	_check(not fs.files.has(I + "/srrevamp.pck.old-update") and not fs.files.has(I + "/README.md.old-update"),
+	_check(not fs.files.has(I + "/OpenSRO.pck.old-update") and not fs.files.has(I + "/README.md.old-update"),
 		"originals nothing holds are deleted at once")
 	_check(fs.slept_ms == 0, "no retry was needed")
 	# The game exits; the next start cleans up.
@@ -249,13 +249,13 @@ func _test_locked_exe_and_dll() -> void:
 	_check(not fs.files.keys().any(func(k): return str(k).contains(".old-update")), "and nothing is left over")
 
 func _test_dll_renamed_off() -> void:
-	print("-- the fallback test: srrevamp_native.dll renamed to .dll.off, then an update")
+	print("-- the fallback test: opensro_native.dll renamed to .dll.off, then an update")
 	var fs := _windows_world()
 	fs.locks.erase(I + "/" + DLL)
 	fs.files[I + "/" + DLL + ".off"] = fs.files[I + "/" + DLL]
 	fs.files.erase(I + "/" + DLL)
 	var out: Dictionary = _run(fs)[1]
-	_check(out.ok and fs.files.get(I + "/" + DLL) == "new " + DLL, "the update puts srrevamp_native.dll back")
+	_check(out.ok and fs.files.get(I + "/" + DLL) == "new " + DLL, "the update puts opensro_native.dll back")
 	_check(fs.files.get(I + "/" + DLL + ".off") == "old " + DLL, "the renamed .off copy is left as it was")
 
 func _test_dll_quarantined_in_staging() -> void:
@@ -266,7 +266,7 @@ func _test_dll_quarantined_in_staging() -> void:
 	_check(out.ok, "the rest of the update still installs")
 	_check(Array(out.failed) == [DLL], "the DLL is reported as not installed (got %s)" % [out.failed])
 	_check(fs.files.get(I + "/" + DLL) == "old " + DLL, "the previous DLL stays in place")
-	_check(fs.files.get(I + "/" + EXE) == "new " + EXE and fs.files.get(I + "/srrevamp.pck") == "new srrevamp.pck",
+	_check(fs.files.get(I + "/" + EXE) == "new " + EXE and fs.files.get(I + "/OpenSRO.pck") == "new OpenSRO.pck",
 		"the exe and the .pck are the new version")
 
 func _test_dll_blocked_on_install() -> void:
@@ -282,7 +282,7 @@ func _test_dll_blocked_on_install() -> void:
 func _test_pck_held_open_rolls_back() -> void:
 	print("-- the .pck is held open: nothing changes")
 	var fs := _windows_world()
-	fs.locks[I + "/srrevamp.pck"] = "open"
+	fs.locks[I + "/OpenSRO.pck"] = "open"
 	var out: Dictionary = _run(fs)[1]
 	_check(not out.ok, "the update reports failure")
 	for f in FILES:
@@ -332,22 +332,22 @@ func _test_linux_semantics() -> void:
 	_check(int(fs.perms.get(I + "/" + EXE, 0)) & 73 == 73, "the new executable is executable (%o)" % int(fs.perms.get(I + "/" + EXE, 0)))
 
 func _test_relaunch_scripts() -> void:
-	var bat := AutoUpdater.windows_relaunch_script(4242, "C:/Games/srrevamp/srrevamp.exe")
+	var bat := AutoUpdater.windows_relaunch_script(4242, "C:/Games/opensro/OpenSRO.exe")
 	_check(bat.contains("tasklist /FI \"PID eq 4242\""), "the Windows relaunch polls the old process by its PID")
 	_check(not bat.contains("timeout") and not bat.contains("robocopy"), "with no `timeout` and no robocopy")
 	_check(bat.contains("if %n% GEQ 60 goto start"), "and gives up waiting after 60 polls")
-	_check(bat.contains("start \"\" /D \"%~dp0.\" \"%~dp0srrevamp.exe\""), "then starts the exe from the script's own folder")
-	var args := AutoUpdater.linux_relaunch_args(4242, "/home/a b/srrevamp.x86_64")
-	_check(args[0] == "-c" and args[3] == "4242" and args[4] == "/home/a b/srrevamp.x86_64" and not args[1].contains("a b"),
+	_check(bat.contains("start \"\" /D \"%~dp0.\" \"%~dp0OpenSRO.exe\""), "then starts the exe from the script's own folder")
+	var args := AutoUpdater.linux_relaunch_args(4242, "/home/a b/OpenSRO.x86_64")
+	_check(args[0] == "-c" and args[3] == "4242" and args[4] == "/home/a b/OpenSRO.x86_64" and not args[1].contains("a b"),
 		"the Linux relaunch passes the PID and path as parameters, not spliced into the script")
 	_check(not args[1].contains("--exclude"), "and has no cp --exclude")
 
 func _test_digest() -> void:
-	var assets := [{"name": "srrevamp-windows.zip", "digest": "sha256:47015B26D5C7CCBF8D74A2BFC867BA9852A048C6CD237D16183E3148A881C838"},
-		{"name": "srrevamp-linux.zip"}]
-	var d := UpdateChecker.find_asset_digest(assets, "srrevamp-windows.zip")
+	var assets := [{"name": "opensro-windows.zip", "digest": "sha256:47015B26D5C7CCBF8D74A2BFC867BA9852A048C6CD237D16183E3148A881C838"},
+		{"name": "opensro-linux.zip"}]
+	var d := UpdateChecker.find_asset_digest(assets, "opensro-windows.zip")
 	_check(d == "47015b26d5c7ccbf8d74a2bfc867ba9852a048c6cd237d16183e3148a881c838", "reads the asset's sha256 digest")
-	_check(UpdateChecker.find_asset_digest(assets, "srrevamp-linux.zip") == "", "an asset without one gives none")
+	_check(UpdateChecker.find_asset_digest(assets, "opensro-linux.zip") == "", "an asset without one gives none")
 	_check(UpdateChecker.digest_problem(d, d) == "", "a matching download passes")
 	_check(UpdateChecker.digest_problem("00" + d.substr(2), d) != "", "a different download is refused")
 
@@ -357,7 +357,7 @@ func _test_real_filesystem() -> void:
 	var root := OS.get_user_data_dir().path_join("update_installer_test")
 	AutoUpdater.remove_tree(root)
 	var inst_dir := root.path_join("install")
-	var staged := root.path_join("staging/srrevamp-linux")
+	var staged := root.path_join("staging/opensro-linux")
 	DirAccess.make_dir_recursive_absolute(inst_dir.path_join("pk2"))
 	DirAccess.make_dir_recursive_absolute(staged.path_join("docs"))
 	var put := func(p: String, t: String) -> void:
@@ -366,28 +366,28 @@ func _test_real_filesystem() -> void:
 		f.close()
 	put.call(inst_dir.path_join("game.x86_64"), "old exe")
 	FileAccess.set_unix_permissions(inst_dir.path_join("game.x86_64"), 493)
-	put.call(inst_dir.path_join("libsrrevamp_native.so"), "old so")
+	put.call(inst_dir.path_join("libopensro_native.so"), "old so")
 	put.call(inst_dir.path_join("pk2/Data.pk2"), "data")
 	put.call(staged.path_join("game.x86_64"), "new exe")
 	put.call(staged.path_join("game.pck"), "new pck")
-	put.call(staged.path_join("libsrrevamp_native.so"), "new so")
+	put.call(staged.path_join("libopensro_native.so"), "new so")
 	put.call(staged.path_join("docs/a.md"), "doc")
 	var inst := UpdateInstaller.new()
 	var out := inst.install(staged, inst_dir, AutoUpdater.list_files(staged), "game.x86_64")
 	_check(out.ok, "installs on the real filesystem")
-	_check(FileAccess.get_file_as_string(inst_dir.path_join("libsrrevamp_native.so")) == "new so"
+	_check(FileAccess.get_file_as_string(inst_dir.path_join("libopensro_native.so")) == "new so"
 		and FileAccess.get_file_as_string(inst_dir.path_join("game.pck")) == "new pck"
 		and FileAccess.get_file_as_string(inst_dir.path_join("docs/a.md")) == "doc", "every file is the new one, subfolders too")
 	_check(int(FileAccess.get_unix_permissions(inst_dir.path_join("game.x86_64"))) & 73 == 73, "the executable stays executable")
 	_check(FileAccess.get_file_as_string(inst_dir.path_join("pk2/Data.pk2")) == "data", "pk2 untouched")
-	_check(not FileAccess.file_exists(inst_dir.path_join("libsrrevamp_native.so.old-update")), "no leftovers on Linux")
+	_check(not FileAccess.file_exists(inst_dir.path_join("libopensro_native.so.old-update")), "no leftovers on Linux")
 	AutoUpdater.remove_tree(root)
 
 ## The review's M2/L3/L4: the batch file must hold no install path (cmd reads
 ## it in the OEM code page), must match the quoted PID, and must reach cmd
 ## intact whatever the path holds.
 func _test_relaunch_unicode_and_specials() -> void:
-	var exe := "C:/Users/José/Games (x) & y/srrevamp.exe"
+	var exe := "C:/Users/José/Games (x) & y/OpenSRO.exe"
 	var bat := AutoUpdater.windows_relaunch_script(4242, exe)
 	_check(not bat.contains("José") and not bat.contains("Games (x)"), "the batch file holds no install path")
 	var ascii := true
@@ -395,10 +395,10 @@ func _test_relaunch_unicode_and_specials() -> void:
 		ascii = ascii and bat.unicode_at(i) < 127
 	_check(ascii, "the batch file is plain ASCII, so the OEM code page cannot mangle it")
 	_check(bat.contains("find \"\"\"4242\"\"\""), "it matches the quoted PID, not any comma")
-	_check(AutoUpdater.windows_relaunch_script(1, "C:/G/jogo-ação.exe").contains("%~dp0srrevamp.exe"),
-		"a non-ASCII executable name falls back to srrevamp.exe")
-	var args := AutoUpdater.windows_relaunch_args("C:/Users/José/Games (x) & y/srrevamp_update_relaunch.bat")
-	_check(args.size() == 4 and args[2] == "/C" and args[1] == "/S" and args[3] == "\"C:\\Users\\José\\Games (x) & y\\srrevamp_update_relaunch.bat\"",
+	_check(AutoUpdater.windows_relaunch_script(1, "C:/G/jogo-ação.exe").contains("%~dp0OpenSRO.exe"),
+		"a non-ASCII executable name falls back to OpenSRO.exe")
+	var args := AutoUpdater.windows_relaunch_args("C:/Users/José/Games (x) & y/opensro_update_relaunch.bat")
+	_check(args.size() == 4 and args[2] == "/C" and args[1] == "/S" and args[3] == "\"C:\\Users\\José\\Games (x) & y\\opensro_update_relaunch.bat\"",
 		"cmd gets /S /C and the path in its own quotes (got %s)" % [args])
 
 ## The review's H1, in the installer: the copy fallback ending short.
@@ -454,21 +454,21 @@ func _test_stage() -> void:
 	var zip := root.path_join("u.zip")
 	var packer := ZIPPacker.new()
 	packer.open(zip)
-	var payload := {"srrevamp-linux/srrevamp.x86_64": "exe".repeat(4000), "srrevamp-linux/srrevamp.pck": "pck".repeat(3000),
-		"srrevamp-linux/libsrrevamp_native.so": "lib".repeat(2000), "srrevamp-linux/docs/a.md": "doc"}
+	var payload := {"opensro-linux/OpenSRO.x86_64": "exe".repeat(4000), "opensro-linux/OpenSRO.pck": "pck".repeat(3000),
+		"opensro-linux/libopensro_native.so": "lib".repeat(2000), "opensro-linux/docs/a.md": "doc"}
 	for name in payload:
 		packer.start_file(name)
 		packer.write_file(payload[name].to_utf8_buffer())
 		packer.close_file()
 	packer.close()
 	var sizes := UpdateStager.zip_entry_sizes(zip)
-	_check(sizes.size() == 4 and int(sizes["srrevamp-linux/srrevamp.x86_64"]) == 12000, "the central directory gives every entry's size (%s)" % [sizes])
+	_check(sizes.size() == 4 and int(sizes["opensro-linux/OpenSRO.x86_64"]) == 12000, "the central directory gives every entry's size (%s)" % [sizes])
 	var total := 12000 + 9000 + 6000 + 3
 
 	# Real filesystem, enough room.
 	var st := UpdateStager.new()
 	var out := st.stage(zip, root.path_join("staging"), root)
-	_check(out.ok and FileAccess.get_file_as_string(root.path_join("staging/srrevamp-linux/srrevamp.pck")) == payload["srrevamp-linux/srrevamp.pck"],
+	_check(out.ok and FileAccess.get_file_as_string(root.path_join("staging/opensro-linux/OpenSRO.pck")) == payload["opensro-linux/OpenSRO.pck"],
 		"a whole archive is unpacked (%s)" % out.reason)
 
 	# Not enough room: refused before writing anything.
@@ -492,8 +492,8 @@ func _test_stage() -> void:
 	# error. Flip a byte inside the .pck entry's compressed data (past its
 	# local header: 30 bytes, the name, the extra field).
 	var bytes := FileAccess.get_file_as_bytes(zip)
-	var name_at := _find_bytes(bytes, "srrevamp-linux/srrevamp.pck".to_utf8_buffer())
-	var data_at := name_at + "srrevamp-linux/srrevamp.pck".length() + bytes.decode_u16(name_at - 2) + 2
+	var name_at := _find_bytes(bytes, "opensro-linux/OpenSRO.pck".to_utf8_buffer())
+	var data_at := name_at + "opensro-linux/OpenSRO.pck".length() + bytes.decode_u16(name_at - 2) + 2
 	var corrupt := bytes.duplicate()
 	corrupt[data_at] = corrupt[data_at] ^ 0x5A
 	var bad := root.path_join("bad.zip")
@@ -503,14 +503,14 @@ func _test_stage() -> void:
 	fs = FakeFs.new()
 	var st4 := UpdateStager.new(fs)
 	out = st4.stage(bad, "/x/staging", "/x")
-	_check(not out.ok and out.reason.contains("srrevamp.pck came out of the archive as"), "a damaged entry is refused: " + out.reason)
+	_check(not out.ok and out.reason.contains("OpenSRO.pck came out of the archive as"), "a damaged entry is refused: " + out.reason)
 
 	# Antivirus refuses the new native library: the rest is still staged.
 	fs = FakeFs.new()
-	fs.quarantine[payload["srrevamp-linux/libsrrevamp_native.so"]] = true
+	fs.quarantine[payload["opensro-linux/libopensro_native.so"]] = true
 	var st5 := UpdateStager.new(fs)
 	out = st5.stage(zip, "/x/staging", "/x")
-	_check(out.ok and not fs.files.has("/x/staging/srrevamp-linux/libsrrevamp_native.so") and fs.files.has("/x/staging/srrevamp-linux/srrevamp.pck"),
+	_check(out.ok and not fs.files.has("/x/staging/opensro-linux/libopensro_native.so") and fs.files.has("/x/staging/opensro-linux/OpenSRO.pck"),
 		"a refused native library is skipped and the rest staged")
 	UpdateFs.new().remove_tree(root)
 

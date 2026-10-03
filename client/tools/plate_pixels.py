@@ -4,8 +4,8 @@ point the client's `QA PLATE` line says the plate projects to.
 
   plate_pixels.py <dir with log.txt and fNNNNNNNN.png> [--white]
 
-The directory is a movie run (--write-movie <dir>/f.png) with SRREVAMP_QA_SHOTS
-and SRREVAMP_QA_PLATES=1 set (World3D._qa_plates_report). The frame read for a
+The directory is a movie run (--write-movie <dir>/f.png) with OPENSRO_QA_SHOTS
+and OPENSRO_QA_PLATES=1 set (World3D._qa_plates_report). The frame read for a
 shot is the announced one + 2, inside its hold. Pure Python: the render box has
 no PIL.
 

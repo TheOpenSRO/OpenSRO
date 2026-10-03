@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 func TestCategoryOfMirrorsEngineVocabulary(t *testing.T) {
@@ -83,7 +83,7 @@ func TestDifferentCategoriesAreAnded(t *testing.T) {
 }
 
 // A nil lookup means the category is carried but not enforced. This is the
-// state srrevamp is actually in, and it must not refuse mastery-gated items.
+// state OpenSRO is actually in, and it must not refuse mastery-gated items.
 func TestUnenforcedCategoriesDoNotRefuse(t *testing.T) {
 	// ITEM_CH_... shaped: pair 0 a mastery, nothing else. 1,776 real rows.
 	it := &refdata.Item{ID: 3, ReqLevelType1: 0x201, ReqLevel1: 60}
@@ -130,7 +130,7 @@ func TestUnusedSlotsAreSkipped(t *testing.T) {
 
 // The guild soldier scrolls carry a type the equip check has no branch for.
 // The engine logs and refuses, but those rows are ETC items that are never
-// equipped -- so the category must not make srrevamp refuse anything real.
+// equipped -- so the category must not make OpenSRO refuse anything real.
 func TestUnknownTypeDoesNotRefuse(t *testing.T) {
 	it := &refdata.Item{ID: 6, ReqLevelType1: 10, ReqLevel1: 3}
 	if err := CheckRequirements(RequirementsOf(it), 1, nil, nil); err != nil {

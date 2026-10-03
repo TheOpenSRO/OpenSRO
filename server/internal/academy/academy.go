@@ -6,7 +6,7 @@
 // This package uses the engine's word in the identifiers and the player-facing
 // word in the package name, which is the same split internal/cos makes.
 //
-// srrevamp has no academy. This is the rule set one would be built from.
+// OpenSRO has no academy. This is the rule set one would be built from.
 //
 // See docs/protocol/academy.md.
 package academy

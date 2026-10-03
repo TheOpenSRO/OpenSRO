@@ -10,15 +10,15 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/grounditem"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/party"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/grounditem"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/party"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // Items on the ground. A kill no longer drops straight into the killer's
@@ -388,7 +388,7 @@ func rollDrops(monsterName string) []LootDrop {
 
 // samePartyFunc is the party rule CheckCanPickUp applies to someone else's
 // drop: allowed when picker and owner are in the same party and the party
-// shares items (its flag bit with value 2, `FUN_004ea200() & 2`). srrevamp's
+// shares items (its flag bit with value 2, `FUN_004ea200() & 2`). OpenSRO's
 // parties share unconditionally, the same choice already made for
 // experience (internal/party), so being in the same party is enough here.
 // The engine never reaches this rule for an owned TypeID 3/3/9 item whose
@@ -448,7 +448,7 @@ func GroundItemHandler(chars character.Store, hub *world.Hub, ground *grounditem
 				return reply(&PickUpResult{Code: grounditem.ErrCannotPick, GroundItemID: req.GroundItemID})
 			}
 			// The engine measures the 10 units in 3-D. Here the vertical term is
-			// dropped ON PURPOSE: srrevamp's monsters (and so their drops) sit
+			// dropped ON PURPOSE: OpenSRO's monsters (and so their drops) sit
 			// at a placeholder y of 0 (combat.Monster: "own design placeholder
 			// position") while clients report their real terrain height, so
 			// a faithful 3-D distance in Jangan is ~50 units of pure height

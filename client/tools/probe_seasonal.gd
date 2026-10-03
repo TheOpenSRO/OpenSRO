@@ -8,7 +8,7 @@ extends SceneTree
 ## seasonal -- navigation would need changing if any were.
 ##
 ## The prepare is run without Data.pk2, so it stops right after the filter
-## and the ownership step (the "SRREVAMP_PK2_PATH not set" early return)
+## and the ownership step (the "OPENSRO_PK2_PATH not set" early return)
 ## instead of reading every model. With --full it runs to the end and the
 ## seasonal pieces among the placements it hands the commit are counted
 ## (`DRAWN`), by set.
@@ -17,7 +17,7 @@ extends SceneTree
 ##     --map=/opt/sro-files/client/Map.pk2 --data=/opt/sro-files/client/Data.pk2 \
 ##     [--seasonal=christmas] [--region=97/168 ...] [--full=1]
 ##
-## --seasonal is SRREVAMP_SEASONAL (set here because the remote runner does
+## --seasonal is OPENSRO_SEASONAL (set here because the remote runner does
 ## not pass the environment through). Default regions: Jangan's nine,
 ## 96-98 / 167-169.
 
@@ -36,7 +36,7 @@ func _initialize() -> void:
 		quit(2)
 		return
 	var seasonal := _args("--seasonal")
-	OS.set_environment("SRREVAMP_SEASONAL", seasonal[0] if not seasonal.is_empty() else "")
+	OS.set_environment("OPENSRO_SEASONAL", seasonal[0] if not seasonal.is_empty() else "")
 	var regions := _args("--region")
 	if regions.is_empty():
 		for y in [96, 97, 98]:

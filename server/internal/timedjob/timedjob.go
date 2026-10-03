@@ -3,7 +3,7 @@
 // time", which it uses for premium periods, skill cooldowns, death penalties,
 // market tickets and more.
 //
-// srrevamp has none of it, and several things it does have -- the death
+// OpenSRO has none of it, and several things it does have -- the death
 // penalty, berserk's duration -- are the kind of thing this mechanism exists
 // to hold.
 //

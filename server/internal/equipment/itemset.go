@@ -1,6 +1,6 @@
 package equipment
 
-import "github.com/OpenSRO/srrevamp/server/internal/refdata"
+import "github.com/OpenSRO/OpenSRO/server/internal/refdata"
 
 // Item sets: which pieces belong together, and when a character is wearing a
 // whole one.
@@ -26,7 +26,7 @@ import "github.com/OpenSRO/srrevamp/server/internal/refdata"
 // holds 5, which is SET_A's accessory group. A value being a legal id is not
 // evidence that it is one.
 //
-// srrevamp still grants nothing: it has no magic-option system to grant into,
+// OpenSRO still grants nothing: it has no magic-option system to grant into,
 // and `refmagicoptgroup.txt` is not loaded. What it has is the rule, tested.
 // See refdata.Item.SetID and BonusTier.
 //

@@ -8,12 +8,12 @@ import (
 )
 
 // testDSN points at a local PostgreSQL instance for tests. Override with
-// SRREVAMP_TEST_POSTGRES_DSN if your dev setup differs (e.g. CI).
+// OPENSRO_TEST_POSTGRES_DSN if your dev setup differs (e.g. CI).
 func testDSN() string {
-	if v := os.Getenv("SRREVAMP_TEST_POSTGRES_DSN"); v != "" {
+	if v := os.Getenv("OPENSRO_TEST_POSTGRES_DSN"); v != "" {
 		return v
 	}
-	return "postgres://postgres:postgres@localhost:5432/srrevamp_test?sslmode=disable"
+	return "postgres://postgres:postgres@localhost:5432/opensro_test?sslmode=disable"
 }
 
 // stubMaxStacks is a fixed-answer MaxStackLookup for tests, so they don't

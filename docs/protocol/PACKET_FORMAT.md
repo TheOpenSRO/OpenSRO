@@ -130,8 +130,8 @@ as this row's next probe since the row existed. Measured:
 |---|---:|
 | real opcodes the client registers a handler for | **318** |
 | real server request indices | **162** |
-| opcodes srrevamp declares | **143** |
-| **srrevamp opcodes that are real ones** | **0** |
+| opcodes OpenSRO declares | **143** |
+| **OpenSRO opcodes that are real ones** | **0** |
 
 Zero is the expected answer, not a failure: `PROTOCOL_DECISION.md` reversed the
 direction on 2026-08-22 to a full wire-level reimplementation and says of the
@@ -145,7 +145,7 @@ dump, and 115 of 162 exist there at all. That is the adoption roadmap: for these
 the handler is identified, so the remaining work per opcode is the payload
 layout rather than finding the code.
 
-Several land on systems srrevamp ships today -- `Item_HandleUseItem` is real
+Several land on systems OpenSRO ships today -- `Item_HandleUseItem` is real
 opcode **`0x04c`** replying **`0xb04c`**, which is the same message this project
 had to relocate to `0x008a` this week after it collided with party-create.
 
@@ -391,9 +391,9 @@ inside a loop over something belonging to the item, reassigned from that same
 source on the matching branch, and appended to the reply. That is its whole
 observed behaviour; what it selects has not been settled, so it gets no name.
 
-**srrevamp does not implement this.** Its `OpUseItem` carries `(u16 name length,
+**OpenSRO does not implement this.** Its `OpUseItem` carries `(u16 name length,
 name, s64 slot)`, which is its own invention -- consistent with round 324's
-finding that 0 of 143 srrevamp opcodes are real. The gap is now measured rather
+finding that 0 of 143 OpenSRO opcodes are real. The gap is now measured rather
 than suspected, and nothing was changed on the strength of it.
 
 ## Round 329: every handler's payload, in one pass
@@ -1051,7 +1051,7 @@ eight against `2`, so the 1/2 convention is dominant but not universal. And a
 handler comparing its first byte to 1 could occasionally mean something else;
 the claim rests on the three sources agreeing, not on any one.
 
-**Nothing is wired from this.** srrevamp's `RepairResult` leads with a `u32`
+**Nothing is wired from this.** OpenSRO's `RepairResult` leads with a `u32`
 code rather than a `u8` result, which diverges — but `PROTOCOL_DECISION.md`
 records the current opcodes and layouts as "**placeholder scaffolding, not the
 destination**", so changing the wire format now would be a design change, not a

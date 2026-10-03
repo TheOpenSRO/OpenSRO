@@ -5,7 +5,7 @@ extends SceneTree
 ##
 ## The user (2026-10-02): "when I set Hotan as my default spawn and die I get
 ## resurrected back in hotan but im clipped half way through the ground."
-## MEASURED on the render box (lane tele690, run i2, srrevamp-01's flags): the
+## MEASURED on the render box (lane tele690, run i2, opensro-01's flags): the
 ## revive's zone change put the feet at 234.59 on Hotan's gate point, the
 ## terrain there at 234.25 and the walkable graph's landing (the castle plaza)
 ## at 246.78 -- 12.19 under the floor -- because a zone change the client did

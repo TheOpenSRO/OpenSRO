@@ -313,7 +313,7 @@ enumeration that settled starting Str: not "we looked and it was not there", but
 
 ## Using it
 
-For a value srrevamp needs, the table is the place to look first, and the loader
+For a value OpenSRO needs, the table is the place to look first, and the loader
 address is where to read how it is parsed. Eight of these have been read so far
 (`_REFOBJCOMMON`/`_REFOBJITEM`/`_REFOBJCHAR` via the shared parser,
 `_REFSHOP*` for the goods chain, `_REFQUEST`, `_REFCHARGEN`, `_REFDROPGOLD`);

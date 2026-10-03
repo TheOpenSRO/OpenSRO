@@ -855,7 +855,7 @@ func _make_slot(b: Buff) -> BuffSlot:
 	slot.burst = burst
 	return slot
 
-## SRREVAMP_QA_BUFFS: "<skill>:<duration ms>[:<ms left>],..." added as the
+## OPENSRO_QA_BUFFS: "<skill>:<duration ms>[:<ms left>],..." added as the
 ## server would add them, tokens QA_FIRST_TOKEN up; `ends` ("<i>@<ms>,...")
 ## ends the i-th that many ms of board time later. Prints one `QA BUFFS` line
 ## per icon with where it sits on screen, so a run can aim a real click.

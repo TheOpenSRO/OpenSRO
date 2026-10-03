@@ -2,14 +2,14 @@ extends RefCounted
 class_name MapAnimationProbe
 
 ## QA only (round 645 cost split): where the frame time of the animated map
-## objects goes. `SRREVAMP_QA_MAPANIM_SPLIT=<frame>` with
-## `SRREVAMP_QA_MAPANIM_MODE=<mode>` switches, at that frame, every
+## objects goes. `OPENSRO_QA_MAPANIM_SPLIT=<frame>` with
+## `OPENSRO_QA_MAPANIM_MODE=<mode>` switches, at that frame, every
 ## registered object to one of the states below and halts the driver, so a
 ## run's `QA MAPANIM` process time before and after the frame -- against a
-## `SRREVAMP_NO_MAP_ANIM=1` run for the drift -- prices that part. Each mode
+## `OPENSRO_NO_MAP_ANIM=1` run for the drift -- prices that part. Each mode
 ## is one-way: the objects are not put back. Every mode but `census` and
 ## `freeze_poses` works on each object's own player, so run it with
-## SRREVAMP_MAP_ANIM_NO_SHARE=1 since round 647 (a shared pose's members
+## OPENSRO_MAP_ANIM_NO_SHARE=1 since round 647 (a shared pose's members
 ## have theirs paused).
 ##
 ##   manual       every player on manual stepping, advanced here once a

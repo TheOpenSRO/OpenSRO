@@ -3,7 +3,7 @@ class_name MonsterStrikes
 
 ## Which of a counterattack's two reports the attacker's own client draws it
 ## from -- its OpAttackResult, or the zone's OpMonsterAttacked push (0x007D,
-## docs/protocol/monster_ai.md, "srrevamp's own monster protocol
+## docs/protocol/monster_ai.md, "OpenSRO's own monster protocol
 ## (placeholders)") -- so a counter is drawn once, never twice and never not at
 ## all, against a server that sends the push and one that does not. Pure and
 ## static so a headless test can hold it to account; World3D's

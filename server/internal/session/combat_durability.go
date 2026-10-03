@@ -6,14 +6,14 @@ import (
 	"math/rand"
 	"os"
 
-	"github.com/OpenSRO/srrevamp/server/internal/durability"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/durability"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
 )
 
 // durabilityAlwaysLose forces every wear roll to succeed. A QA accelerant
-// (SRREVAMP_DURABILITY_LOSS_ALWAYS=1), never real play: at the real 2% a hit
+// (OPENSRO_DURABILITY_LOSS_ALWAYS=1), never real play: at the real 2% a hit
 // a break takes hundreds of swings, too many for one render. Read once.
-var durabilityAlwaysLose = os.Getenv("SRREVAMP_DURABILITY_LOSS_ALWAYS") != ""
+var durabilityAlwaysLose = os.Getenv("OPENSRO_DURABILITY_LOSS_ALWAYS") != ""
 
 // combatRand is the wear rolls' source; a test can swap it.
 type combatRand interface{ Intn(n int) int }

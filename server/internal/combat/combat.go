@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // ItemLookup resolves an item's stats, for reading a weapon's attack power.
@@ -68,10 +68,10 @@ type Monster struct {
 	// docs/protocol/monster_ai.md, "HOMING"). Set by SpawnSpecies.
 	HomeX, HomeZ float64
 	// Heading is the way the monster faced when it hatched, in radians from
-	// +x toward +z (srrevamp's world frame, internal/ai/wander.go): Nest_Hatch
+	// +x toward +z (OpenSRO's world frame, internal/ai/wander.go): Nest_Hatch
 	// (0x005607b0) gives every species of the roster's shape whose rarity is
 	// not 3 rand() / 32767.0 * 2pi (0x5609ee..0x560a15, ai.SpawnHeading), and
-	// a rarity-3 species its nest row's own direction, which srrevamp does not
+	// a rarity-3 species its nest row's own direction, which OpenSRO does not
 	// hold (docs/protocol/monster_ai.md, "The _RefNest row", row 8). Rolled by
 	// SpawnSpecies with the hub's spawn-heading roll (SetSpawnHeadingRoll) and
 	// fixed from then on; 0 on a hub given no roll. The monster AI's brain
@@ -194,7 +194,7 @@ type Monster struct {
 	// level table is loaded. Normally the skill economy is fed by skill
 	// EXPERIENCE converted at leveldata.SkillExpPerPoint -- see that constant,
 	// and session's kill path. The conversion is recovered; how much skill
-	// experience a kill is worth is not, and srrevamp credits the kill's own
+	// experience a kill is worth is not, and OpenSRO credits the kill's own
 	// experience as a disclosed stand-in.
 	SPReward int64
 }
@@ -202,7 +202,7 @@ type Monster struct {
 // MitigateDamage applies the game's own mitigation, which is a SHAPE this
 // project had wrong rather than a number it had wrong.
 //
-// srrevamp subtracted defence flatly. SR_GameServer.exe does not:
+// OpenSRO subtracted defence flatly. SR_GameServer.exe does not:
 // Formula_MitigatePhysicalDamage (0040e450) and its magical twin
 // Formula_MitigateMagicalDamage (0040e830) -- structurally identical, gated on
 // bits 4 and 8 of the flags at +0x230 -- compute
@@ -234,11 +234,11 @@ type Monster struct {
 // A bonus conditioned on what the target IS belongs to the attacker, so EDX is
 // the target. Two independent routes, one answer.
 //
-// WHAT SRREVAMP DOES NOT MODEL, so it is not mistaken for a gap: the full
+// WHAT OPENSRO DOES NOT MODEL, so it is not mistaken for a gap: the full
 // pipeline reads seven params, four of them the attacker's. Step 4 above is an
 // anti-monster-class bonus (param 259, a percentage, only against monster class
 // 3); steps 3, 5 and 6 are further attacker percentages (128/129, 189,
-// 178/179). No srrevamp item or skill publishes any of them, so they are
+// 178/179). No OpenSRO item or skill publishes any of them, so they are
 // unreachable rather than omitted. The defender's side -- params 5/7 here, plus
 // 180 -- is what this function implements. Full table:
 // docs/protocol/param_registry.md.
@@ -246,7 +246,7 @@ type Monster struct {
 // THE FLOOR OF 1 IS THE GAME'S OWN, corrected 2026-09-16. This note used to say
 // "the floor stays at 1 here rather than the game's 0. That is own design and
 // disclosed" -- which was wrong about the game, and wrong in the direction that
-// makes srrevamp look less faithful than it is.
+// makes OpenSRO look less faithful than it is.
 //
 // The zero the earlier reading found is real but is not the end of the
 // pipeline: Formula_MitigatePhysicalDamage clamps its result at 0, and then
@@ -263,7 +263,7 @@ type Monster struct {
 // swing (SKILL_CH_SWORD_BASE_01 carries att at 60%). For those the engine
 // guarantees at least 1 damage.
 //
-// So srrevamp's floor is faithful rather than invented. The earlier note read
+// So OpenSRO's floor is faithful rather than invented. The earlier note read
 // the mitigation clamp and stopped there, missing the floor applied a stage
 // later -- which is why this file now says where in the pipeline each clamp
 // lives.
@@ -285,7 +285,7 @@ type Monster struct {
 // resolves anything. No blow, not a blow of zero.
 //
 // That is 1,797 of the 32,367 real skill rows that walk cleanly (5.6%).
-// srrevamp gives every one of them DisclosedSkillDamagePerLevel * level
+// OpenSRO gives every one of them DisclosedSkillDamagePerLevel * level
 // instead, because session.skillDamageBonus falls back to the disclosed bonus
 // whenever AttackPercent is zero. Closing that needs the exporter to say
 // whether a skill carries any combat parameter, which is a new column rather
@@ -293,7 +293,7 @@ type Monster struct {
 //
 // The REASON attached to the old note is unaffected and still correct: an even
 // earlier version said a zero-damage hit is a miss in the real game and that
-// srrevamp "has no hit/evade roll yet", implying one was waiting to be
+// OpenSRO "has no hit/evade roll yet", implying one was waiting to be
 // implemented.
 //
 // There is no such roll to implement. ParamKeeper params 9 ('era', parry rate)
@@ -306,14 +306,14 @@ type Monster struct {
 //
 // What the engine actually rolls in Combat_ResolveDamage is blocking (param 10,
 // 'bri') opposed by 56 ('evbl'), and critical (12, 'cri') opposed by 57
-// ('evcr') -- both of which this project already models. So srrevamp is not
+// ('evcr') -- both of which this project already models. So OpenSRO is not
 // missing a hit/miss mechanic; the game resolves a swing as blocked or not,
 // never as a miss.
 //
 // NARROWED IN ROUND 406. This paragraph used to end "both of which are
 // unopposed against monsters because GObjMob_PublishStats publishes neither 56
 // nor 57", and that reason is true but covers only TWO of the six divisors
-// srrevamp's three attack directions need -- the evader is a player in the
+// OpenSRO's three attack directions need -- the evader is a player in the
 // other four, and a monster's publisher says nothing about those. All six are
 // still zero; four of them for a different and weaker reason. The census and
 // both reasons are in EvadedChance, which every call site now goes through.
@@ -538,7 +538,7 @@ func ApplyLevelAdvantage(damage, attackerLevel, defenderLevel int) int {
 // at `ebp` and this result is ADDed into +0x20 (58f522, 58fbd1), while the
 // mitigated weapon blow lands in +0x28 (physical) and +0x24 (magical). So the
 // term scales the skill's OWN flat damage contribution, not the weapon blow --
-// which is srrevamp's `damageBonus`, the half that joins the roll before
+// which is OpenSRO's `damageBonus`, the half that joins the roll before
 // mitigation.
 const (
 	SkillLevelPenaltyPerLevel     = 0.025
@@ -721,7 +721,7 @@ func ExpFor(maxHP int) int64 {
 //
 // The normal path does not use it. The game grants skill EXPERIENCE and
 // converts it at leveldata.SkillExpPerPoint, carrying the remainder on the
-// character; srrevamp does the same, crediting a kill's own experience as skill
+// character; OpenSRO does the same, crediting a kill's own experience as skill
 // experience. Granting whole points per kill cannot reproduce that pacing at
 // any rate, because it rounds each kill up or down to a whole point.
 func SPFor(maxHP int) int64 {
@@ -826,7 +826,7 @@ func (h *Hub) SetSpawnHeadingRoll(roll func() float64) {
 // CounterattackReady reports whether monster id may strike at now, and when
 // it may, records the blow. A monster's blows are at least its attack skill's
 // ReuseDelay apart (Monster.AttackReuseMs); a monster with no known delay is
-// always ready. srrevamp's monster still strikes only when struck (it has no
+// always ready. OpenSRO's monster still strikes only when struck (it has no
 // BATTLE loop of its own yet), so this is a ceiling on its cadence, not the
 // cadence -- the real one is the skill's re-use delay on its own timer.
 func (h *Hub) CounterattackReady(id int64, now time.Time) bool {
@@ -994,7 +994,7 @@ type AITrigger struct {
 // A skill whose Chance is 0 is never drawn (`cmp word [esi+0x164],0; je` at
 // 0x561c26). A skill whose AttMax is 0 -- MSKILL_CH_WATERGHOST_ATTACK02 169,
 // att 9,0,0,0,100 beside a `ps` param 28787 (34,100,16) whose effect
-// srrevamp has no status system for -- deals nothing (session.monsterStrike
+// OpenSRO has no status system for -- deals nothing (session.monsterStrike
 // resolves it to 0 explicitly rather than falling through to the flat
 // disclosed Attack). The 'att' percent (value [1]) is not applied to a
 // monster's blow, as it never has been (deferred, mob-monster-att-percent).
@@ -1104,7 +1104,7 @@ func (h *Hub) SpawnHatched(zone string, species Species, x, y, z float64, maxHP,
 	// direction instead: the row's +0x1c word (fild, then / 65535.0 * 360.0
 	// * pi/180 -- the doubles at 0xb45c28, 0xb45c30 and 0xb45e00, which
 	// round 239's row reads and round 547 read back with objdump -s:
-	// 40efffe000000000, 4076800000000000, 3f91df46a0000000), which srrevamp
+	// 40efffe000000000, 4076800000000000, 3f91df46a0000000), which OpenSRO
 	// does not hold
 	// (docs/protocol/monster_ai.md, "The _RefNest row", row 8). DISCLOSED:
 	// this roll runs for every species, whatever its rarity or shape, so a
@@ -1329,7 +1329,7 @@ type Blow struct {
 }
 
 // ResolveBlow runs the game's damage pipeline once, in the order the engine
-// runs it. Every attack in srrevamp goes through here -- a player hitting a
+// runs it. Every attack in OpenSRO goes through here -- a player hitting a
 // monster, a monster's counterattack, and one player duelling another -- so the
 // three cannot drift apart again.
 //
@@ -1375,7 +1375,7 @@ func ResolveBlow(base, mitigationPercent, flat, critChance, blockChance, attacke
 		out.Damage = ApplyLevelAdvantage(out.Damage, attackerLevel, defenderLevel)
 	}
 	// Stage 16: the engine's floor band, applied after the level term and
-	// before the attacker percentages srrevamp cannot reach. See
+	// before the attacker percentages OpenSRO cannot reach. See
 	// ApplyFloorBand.
 	out.Damage = ApplyFloorBand(out.Damage, base, r)
 	return out
@@ -1510,7 +1510,7 @@ func MasteryDamagePercent(hasSkill, slot1, slot2 bool, level1, level2 int) int {
 // What the second record is has NOT been identified; it is the object the
 // mitigation formula receives as its context, distinct from the one the first
 // percentage is read off. Pass secondary equal to primary when there is only
-// one, which is what srrevamp does.
+// one, which is what OpenSRO does.
 func ClampMasteryPercent(primary, secondary int) int {
 	if primary <= MasteryDamageCap {
 		return primary
@@ -1567,7 +1567,7 @@ func ApplyMasteryScale(base, pct int) int {
 // `Formula_MitigateMagicalDamage` (`0x0040e830`) carries the same two constants,
 // which is the confirmation rather than the finding.
 //
-// It is unreachable with today's content -- nothing srrevamp spawns can deal
+// It is unreachable with today's content -- nothing OpenSRO spawns can deal
 // sixteen million -- and it is here because a ceiling that exists in the engine
 // should exist in the reimplementation, cited, rather than being discovered as
 // a divergence later.

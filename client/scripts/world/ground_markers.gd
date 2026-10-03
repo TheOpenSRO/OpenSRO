@@ -382,7 +382,7 @@ var _qa_log := false
 var _qa_rebuilds := 0
 ## A place or attach since the last QA line: measure the next draw.
 var _qa_pending := false
-## SRREVAMP_QA_MARKER_VIEW="<pitch>,<length>" (QA only): each place / attach
+## OPENSRO_QA_MARKER_VIEW="<pitch>,<length>" (QA only): each place / attach
 ## turns the camera arm to that pitch and length, so a frame shows the ring
 ## rather than the QA click's shallow aim. Vector2.ZERO: off.
 var _qa_view := Vector2.ZERO
@@ -395,8 +395,8 @@ func setup(terrain_root: Node, grid: RegionGridState, texture_loader: Callable, 
 	_grid = grid
 	_texture_loader = texture_loader
 	_resolver = resolver
-	_qa_log = OS.get_environment("SRREVAMP_QA_MARKER") != ""
-	var view := OS.get_environment("SRREVAMP_QA_MARKER_VIEW").split(",")
+	_qa_log = OS.get_environment("OPENSRO_QA_MARKER") != ""
+	var view := OS.get_environment("OPENSRO_QA_MARKER_VIEW").split(",")
 	if view.size() == 2 and view[0].is_valid_float() and view[1].is_valid_float():
 		_qa_view = Vector2(float(view[0]), float(view[1]))
 
@@ -684,7 +684,7 @@ func _rebuild_floor(group: Node3D, local: Vector3, cell: Vector2i) -> void:
 		print("QA MARKER floor: cell %s, %d grid points from %s, %d triangles, %d floor rays so far" % [
 			str(cell), count * count, str(lo), verts.size() / 3, floor_rays])
 
-## The QA measurement (SRREVAMP_QA_MARKER=1): the ring's centre against the
+## The QA measurement (OPENSRO_QA_MARKER=1): the ring's centre against the
 ## point it was put at, the drape's own height there against a vertical ray
 ## at the terrain-only layer (a different probe: the physics heightfield),
 ## the cells and triangles drawn. On a placed floor (round 701) the ray is the

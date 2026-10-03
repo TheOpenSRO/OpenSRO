@@ -12,12 +12,12 @@ extends SceneTree
 ##     --body="CHAR_CH_WOMAN_FIGHTER:3652,3653,3654,3632"
 ##   --env=<EnvironmentID> lights the portrait with that environment.ifo
 ##   record's zone light (channels 2 and 3 at World3D's reference time 0.5,
-##   from SRREVAMP_MAP_PK2_PATH); --list-env prints every record's two.
+##   from OPENSRO_MAP_PK2_PATH); --list-env prints every record's two.
 ##   (items by id or by exact code name; --list=<substring> prints matching
 ##   item code names and quits; --cost=<code> times the frame with the
 ##   portrait idle and re-rendering every frame)
 ##
-## Archives from SRREVAMP_PK2_PATH / SRREVAMP_MEDIA_PK2_PATH. Writes, per body:
+## Archives from OPENSRO_PK2_PATH / OPENSRO_MEDIA_PK2_PATH. Writes, per body:
 ## <code>_raw128.png (the 128x128 buffer), <code>_block.png (the player block
 ## with the portrait, 3x) and prints the dress's CPU cost and the viewport's
 ## measured render time.
@@ -38,10 +38,10 @@ func _args(flag: String) -> Array:
 	return out
 
 func _init() -> void:
-	_data = Pk2Reader.open(OS.get_environment("SRREVAMP_PK2_PATH"))
-	_media = Pk2Reader.open(OS.get_environment("SRREVAMP_MEDIA_PK2_PATH"))
+	_data = Pk2Reader.open(OS.get_environment("OPENSRO_PK2_PATH"))
+	_media = Pk2Reader.open(OS.get_environment("OPENSRO_MEDIA_PK2_PATH"))
 	if _data == null or _media == null:
-		printerr("portrait_shot: set SRREVAMP_PK2_PATH and SRREVAMP_MEDIA_PK2_PATH")
+		printerr("portrait_shot: set OPENSRO_PK2_PATH and OPENSRO_MEDIA_PK2_PATH")
 		quit(2)
 		return
 	for path in NpcTableReader.MODEL_TABLE_PATHS:
@@ -54,7 +54,7 @@ func _init() -> void:
 			for item in ItemTableReader.parse(_media.read_file(entry)).values():
 				_items[item.id] = item
 				_by_code[item.code_name] = item.id
-	var map_pk2 := Pk2Reader.open(OS.get_environment("SRREVAMP_MAP_PK2_PATH"))
+	var map_pk2 := Pk2Reader.open(OS.get_environment("OPENSRO_MAP_PK2_PATH"))
 	if map_pk2 != null:
 		var env_bytes := AssetSource.read_bytes("environment.ifo", map_pk2)
 		if not env_bytes.is_empty():

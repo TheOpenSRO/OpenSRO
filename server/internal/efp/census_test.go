@@ -5,18 +5,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/pk2"
+	"github.com/OpenSRO/OpenSRO/server/internal/pk2"
 )
 
 // TestRetailCensus runs the coverage census over the player's own
-// Particles.pk2 when SRREVAMP_PARTICLES_PK2 points at it, and is skipped
+// Particles.pk2 when OPENSRO_PARTICLES_PK2 points at it, and is skipped
 // otherwise (CI has no game data). The targets are round 619's: at least 98%
 // of files parse their header, and every file whose header parses decodes to
 // the end of its root node. Run it with -v to see the report.
 func TestRetailCensus(t *testing.T) {
-	path := os.Getenv("SRREVAMP_PARTICLES_PK2")
+	path := os.Getenv("OPENSRO_PARTICLES_PK2")
 	if path == "" {
-		t.Skip("SRREVAMP_PARTICLES_PK2 not set; the census needs the player's Particles.pk2")
+		t.Skip("OPENSRO_PARTICLES_PK2 not set; the census needs the player's Particles.pk2")
 	}
 	a, err := pk2.Open(path)
 	if err != nil {

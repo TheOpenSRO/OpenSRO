@@ -18,7 +18,7 @@ class_name FrontEndTheme
 ##
 ## Which source wins, per field (OURS; docs/protocol/intro_script.md, deploy/
 ## README.md "Branding your front-end"):
-##   1. SRREVAMP_LOGIN_* preview variables (a developer or operator trying a
+##   1. OPENSRO_LOGIN_* preview variables (a developer or operator trying a
 ##      theme on their own machine, no server needed);
 ##   2. the server's answer, if it arrived before the title started -- or, when
 ##      it did not, the last answer cached from an earlier launch, per server
@@ -183,7 +183,7 @@ static func is_safe_file(s: String, exts: Array, allow_spaces_dots: bool) -> boo
 
 ## The layered theme (see the header for the order). `server` is the fresh
 ## answer or null; `cached` the settings copy or null; `custom` the folder's
-## theme.json or null; `preview` the SRREVAMP_LOGIN_* variables or null;
+## theme.json or null; `preview` the OPENSRO_LOGIN_* variables or null;
 ## `setting` setting/config.yaml's share (ClientConfig.to_theme) or null.
 static func resolve(preview: FrontEndTheme, server: FrontEndTheme, cached: FrontEndTheme, custom: FrontEndTheme,
 		setting: FrontEndTheme = null) -> FrontEndTheme:
@@ -199,14 +199,14 @@ static func resolve(preview: FrontEndTheme, server: FrontEndTheme, cached: Front
 				break
 	return out
 
-## The SRREVAMP_LOGIN_* preview variables (the same names the server's flags
-## read: SRREVAMP_LOGIN_INTRO, _BGM, _LOGO, _COPYRIGHT, _BAND_TOP,
+## The OPENSRO_LOGIN_* preview variables (the same names the server's flags
+## read: OPENSRO_LOGIN_INTRO, _BGM, _LOGO, _COPYRIGHT, _BAND_TOP,
 ## _BAND_BOTTOM), or null when none is set.
 static func from_environment(warnings: PackedStringArray = PackedStringArray()) -> FrontEndTheme:
 	var t := FrontEndTheme.new()
 	var any := false
 	for f in FIELDS:
-		var v := OS.get_environment("SRREVAMP_LOGIN_" + f.to_upper())
+		var v := OS.get_environment("OPENSRO_LOGIN_" + f.to_upper())
 		if v != "":
 			t.set(f, sanitize(f, v, warnings))
 			any = true
@@ -235,10 +235,10 @@ static func cache_key(address: String) -> String:
 
 # --- The operator's folder ----------------------------------------------------
 
-## `<executable's folder>/custom`, or SRREVAMP_CUSTOM_DIR (a developer's or a
+## `<executable's folder>/custom`, or OPENSRO_CUSTOM_DIR (a developer's or a
 ## QA run's own folder).
 static func custom_dir() -> String:
-	var env := OS.get_environment("SRREVAMP_CUSTOM_DIR")
+	var env := OS.get_environment("OPENSRO_CUSTOM_DIR")
 	if env != "":
 		return env
 	return OS.get_executable_path().get_base_dir().path_join("custom")

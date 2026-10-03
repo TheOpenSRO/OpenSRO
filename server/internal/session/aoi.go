@@ -10,10 +10,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // The monsters' area of interest (round 656). Until this round every monster
@@ -82,7 +82,7 @@ const AOITick = MonsterAITick
 // OpMonsterLeft names the monsters that have left a player's area of interest
 // (round 656): u16 n, then n s64 ids. The client drops each body as a zone
 // change does -- no death, no loot -- unless it is still playing a death.
-// OURS, an additive placeholder like every srrevamp opcode
+// OURS, an additive placeholder like every OpenSRO opcode
 // (docs/protocol/PROTOCOL_DECISION.md). 0x00B5 was free in server/ and
 // client/scripts/net (grep, 2026-09-30).
 const OpMonsterLeft uint16 = 0x00b5

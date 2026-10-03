@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // A timer belongs to the cooltime GROUP: two items in group 0xC8 share it, an

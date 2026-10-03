@@ -1,6 +1,6 @@
 package session
 
-import "github.com/OpenSRO/srrevamp/server/internal/combat"
+import "github.com/OpenSRO/OpenSRO/server/internal/combat"
 
 // The round-661 shim: everything summon661_test.go needs of the round's new
 // API, in one file. The round's negative runs summon661_test.go against the

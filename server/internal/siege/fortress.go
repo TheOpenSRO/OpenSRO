@@ -1,6 +1,6 @@
 // Package siege holds the fortress-war rules recovered from SR_GameServer.exe.
 //
-// srrevamp has no fortress war and is not about to grow one; this package is
+// OpenSRO has no fortress war and is not about to grow one; this package is
 // the recovered rule set, with the numbers the engine actually enforces, so
 // that building one later starts from the game's own behaviour instead of a
 // guess. Every constant below is a literal in the binary, cited to the check

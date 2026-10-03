@@ -1,7 +1,7 @@
 extends RefCounted
 class_name QaAttackGoto
 
-## SRREVAMP_QA_ATTACK_GOTO's choice of which monster to stand beside and where,
+## OPENSRO_QA_ATTACK_GOTO's choice of which monster to stand beside and where,
 ## taken from a FRESH monster list rather than from the drawn bodies (round
 ## 539). Kept apart from World3D so a headless test can hold it to account.
 ##

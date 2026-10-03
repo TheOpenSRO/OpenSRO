@@ -450,10 +450,10 @@ func _test_qa_and_net() -> void:
 	var board: HudBuffBoard = made[0]
 	board.qa_inject("1:20000:15000,2:-1", "0@500")
 	_check(board.buff(HudBuffBoard.QA_FIRST_TOKEN) != null and board.buff(HudBuffBoard.QA_FIRST_TOKEN + 1) != null,
-		"SRREVAMP_QA_BUFFS injects two icons")
+		"OPENSRO_QA_BUFFS injects two icons")
 	_check(is_equal_approx(board.buff(HudBuffBoard.QA_FIRST_TOKEN).gauge_value(), 0.75), "15 s of 20 left: 0.75")
 	board.advance(500.0)
-	_check(board.buff(HudBuffBoard.QA_FIRST_TOKEN).ending, "SRREVAMP_QA_BUFFS_END ends the first at 500 ms")
+	_check(board.buff(HudBuffBoard.QA_FIRST_TOKEN).ending, "OPENSRO_QA_BUFFS_END ends the first at 500 ms")
 	# The real NetClient class, its real signals.
 	var net: Node = (load("res://scripts/net/net_client.gd") as GDScript).new()
 	board.is_self = func(owner_id: int, owner_kind: int) -> bool:

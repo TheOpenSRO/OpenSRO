@@ -66,7 +66,7 @@ func TestFixedDamagePerHit(t *testing.T) {
 	if d, ok := FixedDamagePerHit(KindEventMob, "MOB_EV_WINTER_SNOWMAN"); !ok || d != 1 {
 		t.Errorf("winter snowman = (%d, %v), want (1, true)", d, ok)
 	}
-	// The kinds that compute their damage, or that srrevamp does not model,
+	// The kinds that compute their damage, or that OpenSRO does not model,
 	// must leave the blow alone rather than invent a constant for it.
 	for _, k := range []DamageKind{KindOrdinary, KindTransformed, KindStructure} {
 		if _, ok := FixedDamagePerHit(k, "MOB_CH_MANGNYANG"); ok {

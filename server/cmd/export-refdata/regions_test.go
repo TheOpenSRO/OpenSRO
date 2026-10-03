@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/safezone"
+	"github.com/OpenSRO/OpenSRO/server/internal/safezone"
 )
 
 // A SYNTHETIC refregion.txt in the real file's shape (21 tab-separated fields:

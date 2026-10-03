@@ -1,7 +1,7 @@
 #!/bin/bash
 # Keeps a deployed server on the tip of a branch.
 #
-# Run by srrevamp-update.timer every few minutes: fetch, and if the branch
+# Run by opensro-update.timer every few minutes: fetch, and if the branch
 # moved, fast-forward, rebuild the compose stack and check the gateway came
 # back. A build that fails, or a server that never listens, is rolled back
 # to the commit that was running, and that origin commit is *held*: the
@@ -9,8 +9,8 @@
 # removed). When nothing changed it exits 0 without a word, so the journal
 # only shows real events.
 #
-#   sudo systemctl start srrevamp-update.service   # update now
-#   journalctl -u srrevamp-update                  # what it did, and why
+#   sudo systemctl start opensro-update.service   # update now
+#   journalctl -u opensro-update                  # what it did, and why
 #   FORCE=1 deploy/update.sh                       # rebuild even if unchanged
 #
 # Local edits to tracked files stop the update (loudly) rather than being

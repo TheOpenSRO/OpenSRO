@@ -129,7 +129,7 @@ static func exe_beside(pk2_path: String) -> String:
 	return pk2_path.get_base_dir().path_join("sro_client.exe")
 
 ## Where a player's install has the client exe, in the order tried (round
-## 697): `override` (SRREVAMP_CLIENT_EXE, OURS, for a dev box; the exe or the
+## 697): `override` (OPENSRO_CLIENT_EXE, OURS, for a dev box; the exe or the
 ## folder holding it, expand) first; then, for each of EXE_NAMES, the folder
 ## of Data.pk2 (retail's layout), its parent (a `pk2` folder made inside the
 ## install, or beside our exe inside the install), and the folder of our own
@@ -156,7 +156,7 @@ static func exe_candidates(data_pk2: String, own_exe: String, override: String =
 				out.append(p)
 	return out
 
-## A path given by SRREVAMP_CLIENT_EXE, as the files to try (round 700,
+## A path given by OPENSRO_CLIENT_EXE, as the files to try (round 700,
 ## OURS): backslashes become slashes (a Windows path, `C:\Silkroad`; Godot
 ## takes `/` on every platform), one pair of
 ## surrounding quotes and a trailing separator are dropped; a path ending in

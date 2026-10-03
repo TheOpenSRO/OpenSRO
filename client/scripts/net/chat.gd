@@ -2,7 +2,7 @@ extends RefCounted
 class_name ChatNet
 
 ## Opcodes and payload encoding for chat, mirroring
-## server/internal/session/chat.go (round 634). The framing is srrevamp's own;
+## server/internal/session/chat.go (round 634). The framing is OpenSRO's own;
 ## the fields are the retail client's (0x7025's request, 0x3026's line,
 ## 0xB025's answer, and 0x704c's global chatting item use) -- see
 ## docs/protocol/chat.md. Requires the character to already be in the world.

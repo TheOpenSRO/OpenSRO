@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Movement versus facing, from a client log written with
-SRREVAMP_QA_FACING_LOG=1 (round 637; World3D._qa_facing_report).
+OPENSRO_QA_FACING_LOG=1 (round 637; World3D._qa_facing_report).
 
   facing_measure.py <log> [player|monster]              per-leg report
   facing_measure.py <log> [player|monster] --runs [ms]  turn runs, skipping

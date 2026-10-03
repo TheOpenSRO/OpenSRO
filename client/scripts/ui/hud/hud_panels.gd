@@ -411,11 +411,11 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ensure_held_icon()
-	_qa_slots = OS.get_environment("SRREVAMP_QA_SLOTS") != ""
+	_qa_slots = OS.get_environment("OPENSRO_QA_SLOTS") != ""
 	if _qa_slots:
 		add_to_group(QA_SLOTS_GROUP)
 
-## SRREVAMP_QA_SLOTS is set (read once): F11 prints the slots, Shift+F11
+## OPENSRO_QA_SLOTS is set (read once): F11 prints the slots, Shift+F11
 ## opens the warehouse. QA only.
 var _qa_slots := false
 
@@ -625,13 +625,13 @@ func toggle_option() -> OptionWindow:
 		_qa_print_option_rects.call_deferred()
 	return window
 
-## SRREVAMP_QA_UI_RECTS=1 (round 694, OURS): print the screen rect of the
+## OPENSRO_QA_UI_RECTS=1 (round 694, OURS): print the screen rect of the
 ## controls a real-input run clicks -- the System window's Option button,
 ## the Option window's tabs, buttons and Video rows -- as `QA RECT <window>
 ## <name> <centre x> <centre y> <w> <h>` in window pixels, so an xdotool
 ## driver clicks what is drawn, at any UI scale.
 static func qa_rects_on() -> bool:
-	return OS.get_environment("SRREVAMP_QA_UI_RECTS") == "1"
+	return OS.get_environment("OPENSRO_QA_UI_RECTS") == "1"
 
 func _qa_print_rects(tag: String, controls: Dictionary) -> void:
 	var k := get_window().content_scale_factor if is_inside_tree() else 1.0
@@ -1004,7 +1004,7 @@ func is_typing() -> bool:
 ## so after a line of chat the focus stayed in the chat through every click
 ## on them, and I, C, K, Q, U, M, Y, the number keys and WASD all went into
 ## the chat line until the player happened to click the open world
-## (World3D.take_focus_back). Measured in the world with SRREVAMP_QA_INPUT
+## (World3D.take_focus_back). Measured in the world with OPENSRO_QA_INPUT
 ## (docs/RE_COMPLETION.md, round 605): on v0.1.450 a click on the bar's
 ## community button left the focus on that button and K opened the skill
 ## window; on d4d1303 a click on the bar's inventory button left it in the
@@ -1299,7 +1299,7 @@ func open_recall_designate_prompt(npc_name: String, zone_name: String) -> void:
 # our death line stays above retail's; and the help button is shown disabled
 # and the box stays up, where retail's click closes the box (INFERRED, the
 # result goes through FUN_00777dd0) -- no one can resurrect another player in
-# srrevamp yet, so the return point must stay one click away.
+# OpenSRO yet, so the return point must stay one click away.
 
 ## The prompt's node name under this HUD; at most one is up at a time.
 const REVIVE_PROMPT := "RevivePrompt"
@@ -1451,12 +1451,12 @@ func open_teleport_list(gate_name: String, entries: Array) -> bool:
 	_qa_print_talk_lines.call_deferred(body)
 	return true
 
-## SRREVAMP_QA_TALK_LINES, for a prompt (round 686): each button of `panel`
+## OPENSRO_QA_TALK_LINES, for a prompt (round 686): each button of `panel`
 ## with the screen point at its middle (`QA PROMPT <tag> BUTTON <name> at
 ## x,y`), a frame after it is placed, so a real X click can be aimed at it.
 ## QA only; prints nothing without the variable.
 func _qa_print_buttons(panel: Control, tag: String) -> void:
-	if OS.get_environment("SRREVAMP_QA_TALK_LINES") == "" or not is_instance_valid(panel) or not panel.is_inside_tree():
+	if OS.get_environment("OPENSRO_QA_TALK_LINES") == "" or not is_instance_valid(panel) or not panel.is_inside_tree():
 		return
 	await get_tree().process_frame
 	if not is_instance_valid(panel):
@@ -1466,12 +1466,12 @@ func _qa_print_buttons(panel: Control, tag: String) -> void:
 		var c := b.get_global_rect().get_center()
 		print("QA PROMPT %s BUTTON %s at %d,%d: %s" % [tag, b.name, int(c.x), int(c.y), b.text])
 
-## SRREVAMP_QA_TALK_LINES (round 642): each paragraph of the talk box as drawn,
+## OPENSRO_QA_TALK_LINES (round 642): each paragraph of the talk box as drawn,
 ## with the screen point at its middle, so a real X click can be aimed at a
 ## line (`QA TALK LINE <n> at x,y: <text>`). QA only; prints nothing without
 ## the variable.
 func _qa_print_talk_lines(body: RichTextLabel) -> void:
-	if OS.get_environment("SRREVAMP_QA_TALK_LINES") == "" or not is_instance_valid(body):
+	if OS.get_environment("OPENSRO_QA_TALK_LINES") == "" or not is_instance_valid(body):
 		return
 	await get_tree().process_frame
 	await get_tree().process_frame
@@ -1488,7 +1488,7 @@ func _qa_print_talk_lines(body: RichTextLabel) -> void:
 func teleport_list_shown() -> bool:
 	return is_open("npctalk") and bool((_windows["npctalk"] as HudWindow).get_meta(TELEPORT_LIST_META, false))
 
-## SRREVAMP_QA_TELEPORT (World3D): prints the talk box's lines as drawn and
+## OPENSRO_QA_TELEPORT (World3D): prints the talk box's lines as drawn and
 ## clicks dest_id's line through the label's own meta_clicked, the signal a
 ## click raises. False when the list is not shown or does not hold dest_id.
 func qa_press_teleport_line(dest_id: int) -> bool:
@@ -3873,7 +3873,7 @@ func _drop_bag_item(from: int, at: Vector2) -> void:
 	var icon := _item_icon(item_id) if item_id >= 0 else null
 	item_drop_requested.emit(at, item_id, from, icon)
 
-## QA only (SRREVAMP_QA_SLOTS): where every slot of the open windows is, so a
+## QA only (OPENSRO_QA_SLOTS): where every slot of the open windows is, so a
 ## live run can click them with xdotool (HudUnderbar prints the bar's).
 const QA_SLOTS_GROUP := "qa_slots"
 func qa_print_slots() -> void:
@@ -3954,7 +3954,7 @@ static func _describe_bag(slots: Array) -> String:
 		parts.append("%s:%s x%s" % [str(index), str(item_id), str(quantity) if quantity != null else "1"])
 	return "{" + ", ".join(parts) + "}"
 
-## QA only (SRREVAMP_QA_MOVE="from,to"): exercises a bag move end to end with
+## QA only (OPENSRO_QA_MOVE="from,to"): exercises a bag move end to end with
 ## a REAL item and nothing seeded. A new character's bag is empty -- its kit
 ## is equipped straight out of it -- so the sequence first unequips the boots
 ## (real OP_UNEQUIP; they land in the lowest free slot, 0), lists the bag,
@@ -4048,7 +4048,7 @@ func _qa_move_drop_when_doll_ready() -> void:
 ## QA only: fills the bag grid with sample items so a render can show a
 ## populated inventory without needing kills or a seeded server. The item IDs
 ## are real (the private-server consumables the loot table drops), so their
-## icons resolve. Never used in real play -- driven by SRREVAMP_QA_FAKEITEMS.
+## icons resolve. Never used in real play -- driven by OPENSRO_QA_FAKEITEMS.
 func qa_fill_sample_inventory() -> void:
 	var window: HudWindow = _windows.get("inventory")
 	if window == null:
@@ -4358,7 +4358,7 @@ func _load_skill_catalog_for(race: int) -> void:
 					}
 	print("HudPanels: skill catalog (race %d) -- %d masteries with groups, %d group-rows of skills"
 		% [race, _skill_groups.size(), _skill_grid.size()])
-	if OS.has_environment("SRREVAMP_QA_PANELS"):
+	if OS.has_environment("OPENSRO_QA_PANELS"):
 		var dbg := ""
 		for r in range(9):
 			var k := "257:%d" % r
@@ -4410,13 +4410,13 @@ func _on_raise_mastery_result(result: SkillNet.RaiseMasteryResult) -> void:
 		NetClient.skill_state(who)
 
 ## A mastery's trained level -- the server's, or a QA override for demoing the
-## window lit up (SRREVAMP_QA_MASTERY applies one level to every mastery). The
+## window lit up (OPENSRO_QA_MASTERY applies one level to every mastery). The
 ## board greys any skill whose required mastery level is above this (the real
 ## availability rule, recovered from CIFSkillSlot).
 func _mastery_level(mastery_id: int) -> int:
 	var lvl: int = int(_skill_mastery_levels.get(mastery_id, 0))
-	if OS.has_environment("SRREVAMP_QA_MASTERY"):
-		lvl = maxi(lvl, int(OS.get_environment("SRREVAMP_QA_MASTERY")))
+	if OS.has_environment("OPENSRO_QA_MASTERY"):
+		lvl = maxi(lvl, int(OS.get_environment("OPENSRO_QA_MASTERY")))
 	return lvl
 
 ## Builds the skill window's board the way the real client's CIFSkillBoard does:
@@ -4431,11 +4431,11 @@ func _fill_skill_masteries(window: HudWindow) -> void:
 	_load_masteries()
 	_load_level_data()
 	_load_skill_catalog()
-	# QA: SRREVAMP_QA_SKILL_STATE="sp=9,level=3,257=3" sets the points, the
+	# QA: OPENSRO_QA_SKILL_STATE="sp=9,level=3,257=3" sets the points, the
 	# character level and any mastery levels (id=level) the board explains
 	# against, so a render can show a given player's window without a server.
-	if OS.has_environment("SRREVAMP_QA_SKILL_STATE"):
-		for part in OS.get_environment("SRREVAMP_QA_SKILL_STATE").split(",", false):
+	if OS.has_environment("OPENSRO_QA_SKILL_STATE"):
+		for part in OS.get_environment("OPENSRO_QA_SKILL_STATE").split(",", false):
 			var kv: PackedStringArray = String(part).split("=")
 			if kv.size() != 2 or not kv[1].strip_edges().is_valid_int():
 				continue
@@ -4602,7 +4602,7 @@ func _build_mastery_board(board: Control, mastery: MasteryReader.Mastery) -> voi
 	elif real_level == 0 or real_level > MASTERY_COST_LEVEL_CEILING:
 		# The two raises the engine never charges (LevelDataReader.mastery_up_cost).
 		levelup.tooltip_text = "Raising this mastery to Lv %d costs no skill points." % (real_level + 1)
-	if OS.has_environment("SRREVAMP_QA_SKILL_STATE"):
+	if OS.has_environment("OPENSRO_QA_SKILL_STATE"):
 		print("QA SKILL: %s Lv %d, %d SP, char Lv %d, total %d/%d, cost %d -> LEVEL UP %s%s" % [
 			mastery.display_name(_text_table(), _skill_text_table()), real_level, _skill_points, _skill_char_level, total_now,
 			total_cap, cost, "disabled: " if reason != "" else "enabled", reason])
@@ -4716,7 +4716,7 @@ func _build_group_row(host: Control, mastery: MasteryReader.Mastery, group: Skil
 			icon.modulate = SKILL_LOCKED_TINT
 		icon.mouse_filter = Control.MOUSE_FILTER_PASS
 		icon.tooltip_text = _skill_cell_tooltip(s, learned, mastery)
-		if OS.has_environment("SRREVAMP_QA_SKILL_STATE") and group.row == 0 and col == 0:
+		if OS.has_environment("OPENSRO_QA_SKILL_STATE") and group.row == 0 and col == 0:
 			print("QA SKILL: first cell (%s) state: learned=%d available=%s; tooltip:\n%s" % [
 				s.basic_code, learned, str(available), icon.tooltip_text])
 
@@ -4834,8 +4834,8 @@ func _skill_by_base_id(base_id: int) -> SkillDataReader.BaseSkill:
 func _skill_learned_level(s: SkillDataReader.BaseSkill) -> int:
 	# QA only: pretend the first N levels of every skill are learned, so a render
 	# can show the learned badge + the next level's "+" without a live server.
-	if OS.has_environment("SRREVAMP_QA_LEARNED"):
-		return mini(int(OS.get_environment("SRREVAMP_QA_LEARNED")), s.max_level)
+	if OS.has_environment("OPENSRO_QA_LEARNED"):
+		return mini(int(OS.get_environment("OPENSRO_QA_LEARNED")), s.max_level)
 	var lvl := 0
 	for i in range(s.level_ids.size()):
 		var id := s.level_ids[i]
@@ -5491,10 +5491,10 @@ func _fill_character_window(window: HudWindow, s: StatsNet.Stats) -> void:
 		_level_title(s.level), s.exp, s.exp_to_next, s.stat_points, s.str, s.intel,
 		s.hp, s.max_hp, s.mp, s.max_mp, s.phys_attack_min, s.phys_attack, s.phys_defense,
 		s.mag_attack_min, s.mag_attack_max, s.mag_defense, str(s.has_character_rows)])
-	# QA: SRREVAMP_QA_SPEND_STAT=1 presses the Str "+" once as soon as there is
+	# QA: OPENSRO_QA_SPEND_STAT=1 presses the Str "+" once as soon as there is
 	# a point to spend, so a render's log shows the round trip (str +1, pool
 	# -1, MaxHP up) against the server's own reply.
-	if OS.get_environment("SRREVAMP_QA_SPEND_STAT") != "" and not _qa_spent_stat \
+	if OS.get_environment("OPENSRO_QA_SPEND_STAT") != "" and not _qa_spent_stat \
 			and s.has_character_rows and s.stat_points > 0:
 		_qa_spent_stat = true
 		_spend_stat_point(1, 0)

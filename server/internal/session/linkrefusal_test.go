@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/buff"
+	"github.com/OpenSRO/OpenSRO/server/internal/buff"
 )
 
 // The review of round 636: FUN_0059dc80's three answers reach the client as

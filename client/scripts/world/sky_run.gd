@@ -54,7 +54,7 @@ extends RefCounted
 ##   object's heading times the speed (`CGObjMoverByDest::FUN_0048bff0`), with
 ##   no distance of its own.
 ##
-## OURS: srrevamp's movement is client-authoritative positions. The run is the
+## OURS: OpenSRO's movement is client-authoritative positions. The run is the
 ## click walk's order with a heading instead of a point (World3D
 ## `_move_heading_run`); each position it sends carries the heading form
 ## (WorldNet.encode_move), which the server relays so other players face the

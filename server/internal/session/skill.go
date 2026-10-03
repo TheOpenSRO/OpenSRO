@@ -9,22 +9,22 @@ import (
 	"sort"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/berserk"
-	"github.com/OpenSRO/srrevamp/server/internal/buff"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/durability"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/grounditem"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/mana"
-	"github.com/OpenSRO/srrevamp/server/internal/party"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/quest"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/OpenSRO/OpenSRO/server/internal/buff"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/durability"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/grounditem"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/party"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/quest"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // Skill opcodes, our own protocol. All three require a prior OpLogin;
@@ -115,7 +115,7 @@ const (
 // The engine's sum (FUN_0059e7c0, called at each total compare) skips a mastery
 // entry whose status byte, `*(entry+0x10)+0xc`, is 3 -- the same state
 // FUN_0059d6f0, Mastery_LevelUp's first check, treats as "no such mastery"
-// (0x3801). srrevamp stores no such state, so the caller's total counts every
+// (0x3801). OpenSRO stores no such state, so the caller's total counts every
 // stored mastery; nothing it holds would be excluded.
 func masteryTotalRefusal(country, total, requested, charLevel int) uint16 {
 	sum := total + requested
@@ -138,7 +138,7 @@ func masteryTotalRefusal(country, total, requested, charLevel int) uint16 {
 
 // characterCountry is the Country byte (ref object +0x88, common column 14) of
 // a character: its body's race (character.RaceOf its Gender, which round 682
-// derives from RefObjID). Until round 682 every srrevamp character was China
+// derives from RefObjID). Until round 682 every OpenSRO character was China
 // and this returned China outright; Europe is creatable now (the user's
 // decision, 2026-10-02), so the mastery total cap and the potion reuse delay
 // read the real race here.
@@ -417,7 +417,7 @@ func LearnSkillHandler(chars character.Store, skills skill.Store, skillRef Skill
 			}
 		}
 		// FUN_0059e450 tests the race byte after the masteries (and the Str/Int
-		// requirements, which srrevamp does not model) and before the chain.
+		// requirements, which OpenSRO does not model) and before the chain.
 		if !skill.LearnRaceAllows(ref.ReqLearnRace, country) {
 			return fail("not your race's skill")
 		}
@@ -754,7 +754,7 @@ func useSkillHandler(
 		var reqCastAll bool
 		// noCombat: the engine resolves no blow at all for this skill, and
 		// zeroDmg: it resolves one whose damage is zero. The first is a strict
-		// subset of the second and srrevamp treats them the same way today; see
+		// subset of the second and OpenSRO treats them the same way today; see
 		// refdata.Skill.NoCombatParam and refdata.Skill.ZeroDamage.
 		var noCombat, zeroDmg bool
 		// The row itself, kept for the keep-up hand-off below (its
@@ -838,7 +838,7 @@ func useSkillHandler(
 					trained = levels[ref.Mastery1]
 				}
 				pct := combat.MasteryDamagePercent(true, true, false, trained, 0)
-				// srrevamp has one attack record, so the engine's two-record
+				// OpenSRO has one attack record, so the engine's two-record
 				// clamp collapses to a cap at 90. See ClampMasteryPercent.
 				masteryPercent = combat.ClampMasteryPercent(pct, pct)
 			}
@@ -895,7 +895,7 @@ func useSkillHandler(
 		// and `+0x3a0` is a five-slot list filled by the skill's 'reqi'
 		// parameter. So a skill with a list never has its weapon bytes
 		// consulted. 1,094 real skills carry 'reqi' and **517 of them also
-		// carry a weapon requirement the engine ignores** -- srrevamp was
+		// carry a weapon requirement the engine ignores** -- OpenSRO was
 		// refusing casts the game allows.
 		//
 		// What the other branch checks is not recovered, so this does not model
@@ -916,7 +916,7 @@ func useSkillHandler(
 				// docs/protocol/igobj_vtable.md, which reads those three as
 				// serviceability predicates.
 				//
-				// srrevamp already dropped a broken item's STATS (the combat
+				// OpenSRO already dropped a broken item's STATS (the combat
 				// sums skip it, matching the engine dropping its ParamKeeper
 				// entry) but still let the cast through, so a broken weapon
 				// cost you its damage and nothing else. It now refuses.
@@ -997,7 +997,7 @@ func useSkillHandler(
 		// (TypeID3, TypeID4, count): one arrow for bows, one or three bolts for
 		// rogues. See docs/protocol/skill_params.md.
 		//
-		// srrevamp neither stocks nor spends ammunition, so there is nothing to
+		// OpenSRO neither stocks nor spends ammunition, so there is nothing to
 		// check. Written down so that adding quivers later comes with the
 		// requirement already stated.
 
@@ -1016,13 +1016,13 @@ func useSkillHandler(
 		// whose first step takes both costs through vtable slot 0x308
 		// (docs/protocol/skill_params.md, "EngageSkill, step by step"). The
 		// function that consumes 0x7070 and dispatches them was not traced.
-		// srrevamp cannot walk the player, so it refuses instead -- and until
+		// OpenSRO cannot walk the player, so it refuses instead -- and until
 		// round 534 it refused only AFTER paying the HP and MP and recording
 		// the use, so a cast refused as too far away cost its MP and its
 		// cooldown, and the client's retry after the walk was refused on
 		// cooldown or paid twice.
 		//
-		// What the engine DOES test before the reach, srrevamp tests first
+		// What the engine DOES test before the reach, OpenSRO tests first
 		// too: the cooldown (above) and whether the caster can pay. Both
 		// gates the tick runs before the reach test -- mask 0x17 in phase 0
 		// (0x4ae6af) and 0x91 in phase 1 (0x4aea11, called at 0x4aea18) --
@@ -1083,7 +1083,7 @@ func useSkillHandler(
 		// monster field is ignored. Retail's skill tick clears the action
 		// context's target vector for a Target_Required 0 row (0x4ae6f0,
 		// auto_command.md) and the targets then come from the row's 'efr'
-		// collector around the caster -- which srrevamp does not build
+		// collector around the caster -- which OpenSRO does not build
 		// (skillparam.EfrKind*; OPEN): the 23 class rows of that shape that
 		// carry 'att' (SKILL_EU_BARD_BATTLAA_EXPLOSION_A/B, 'efr' kind 1,
 		// radius 80, five targets -- MEASURED) resolve no blow here. A
@@ -1101,7 +1101,7 @@ func useSkillHandler(
 		// case 4 -> FUN_0058cc70) before its approach walk. A character
 		// target passes the rest of FUN_0058d7a0 (Self for oneself, the same
 		// party for a Party-only row) or is refused 0x3006. A hostile row
-		// named at a character would be player-versus-player, which srrevamp
+		// named at a character would be player-versus-player, which OpenSRO
 		// does not model: refused with the same text (OURS).
 		friendly := friendlyTargeted(castRow)
 		var friendTarget world.Entity
@@ -1212,7 +1212,7 @@ func useSkillHandler(
 		// transition to 0) is not a death and is not read. What the engine
 		// does with a pool its own cost emptied was not recovered
 		// (EngageSkill's slot 0x308 spends it; no OnDeath call was traced
-		// from there -- disclosed). What srrevamp guarantees instead: she
+		// from there -- disclosed). What OpenSRO guarantees instead: she
 		// stays killable -- the next monster or duel blow whose damage lands
 		// on her is her death (killLock, monsterstrike.go, round 551).
 		if hpCost > 0 {
@@ -1275,7 +1275,7 @@ func useSkillHandler(
 		keepUp.Cancel(characterID)
 
 		// NO DAMAGE, and this is the engine's own answer rather than a choice.
-		// Combat_ResolveDamage (0x0058e5f0) reaches it two ways, and srrevamp
+		// Combat_ResolveDamage (0x0058e5f0) reaches it two ways, and OpenSRO
 		// treats them alike because it models neither of the differences yet:
 		//
 		//   - It RETURNS before resolving anything when the skill carries none
@@ -1311,7 +1311,7 @@ func useSkillHandler(
 		// caster (0x5942c0 vtbl+0xf8 GetLifeState == 1; the pool adjust
 		// 0x4a87d0 tests it again). Two disclosed gaps: ApplyHPMPDelta
 		// (0x4a86a0) first scales the amounts by (1 - p143/100) and
-		// (1 - p144/100), the panic/combustion states srrevamp does not model;
+		// (1 - p144/100), the panic/combustion states OpenSRO does not model;
 		// and buffs, status effects and heals on others remain unbuilt.
 		//
 		// WHO IS HEALED, stated exactly (round 507). This heals the caster
@@ -1349,7 +1349,7 @@ func useSkillHandler(
 		// skipping it here is a DISCLOSED DEPARTURE (keepup.go's package
 		// comment). On the real rows it affects the five type-1, no-chain,
 		// ZeroDamage rows SKILL_EU_WARRIOR_DUALA_STUN_A_01..05 (ids
-		// 9245-9249): retail hands off after them, and srrevamp does not.
+		// 9245-9249): retail hands off after them, and OpenSRO does not.
 		//
 		// A CASTER BUFF and a GROUND CAST (round 616) end here too, whatever
 		// their damage columns say: SkillAction_Buff resolves no blow when it
@@ -1525,7 +1525,7 @@ func echoed(req *UseSkillRequest, res *AttackResult) *AttackResult {
 //     either path; neither is modelled;
 //   - ReuseDelay is 300 000 ms or more. FUN_0064c700 sends such a delay down
 //     the persisted CTJ_CoolTimeKeeper branch (0x64c8bb `cmp [esp+0x1c],
-//     0x493e0`, i.e. 300 000), which srrevamp does not model, so these rows
+//     0x493e0`, i.e. 300 000), which OpenSRO does not model, so these rows
 //     keep only their per-id timer -- a DISCLOSED departure. That branch
 //     still files the entry in the group map (0x64cae4-0x64cafb) when it
 //     finds a keeper slot free; with none free (0x64cb82-0x64cbd5) it
@@ -2090,7 +2090,7 @@ func equippedTypes(ctx context.Context, characterID int64, eq equipment.Store, i
 		// 277 (+0x454, an avatar-item predicate, RE_COMPLETION.md's
 		// CanBeEquipedAt note) or 284 (+0x470, unnamed) (495982-4959bd).
 		// IsBroken does not test those. Two of them cannot arise here:
-		// srrevamp has no avatar slots (equipment.SlotFor gives TypeID3 13/14
+		// OpenSRO has no avatar slots (equipment.SlotFor gives TypeID3 13/14
 		// none), and inventory.FreshInstance makes an item with no durability
 		// range Untracked (-1), never 0. The third, vslot 284, is unread, so
 		// an item answering it at durability 0 would be read as broken here
@@ -2136,7 +2136,7 @@ func equippedTypes(ctx context.Context, characterID int64, eq equipment.Store, i
 // and "we match a read" are different claims, and only the second is worth
 // anything later.
 //
-// The thirteen refusals srrevamp does not implement are listed on that page
+// The thirteen refusals OpenSRO does not implement are listed on that page
 // with the shape of each test: stealth and musical range, trap placement, buff
 // duplication and overlap, ammunition, line of sight, and a level requirement
 // read off the TARGET's ref object rather than the skill's.

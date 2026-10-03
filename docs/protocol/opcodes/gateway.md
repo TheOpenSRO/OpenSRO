@@ -137,7 +137,7 @@ while u8 == 1:   u16 shard id, string name, u16 current, u16 capacity, u8 state[
 connection and closes right after 0xA101. Limits: 4 s for the whole question, up to 3 connections
 (a session whose checksum table cannot be built, handshake.md, is ended before anything is sent
 and tried again), 64 KiB read per connection, frames of at most 4096 bytes, 64 frames. Every
-failure is the row's "Closed" with a `SERVERLIST:` log line naming why. `type: srrevamp` keeps
+failure is the row's "Closed" with a `SERVERLIST:` log line naming why. `type: opensro` keeps
 round 679's 0x0007 question. Details: server_list.md, "Legacy servers".
 
 ## Status

@@ -139,7 +139,7 @@ have added three invented values to the state vocabulary.
 
 ## How the client turns a moved object (round 637)
 
-Read from `sro_client.exe` (`docs/WORLD_ISSUES.md`, 637th round, has the full trace). srrevamp's
+Read from `sro_client.exe` (`docs/WORLD_ISSUES.md`, 637th round, has the full trace). OpenSRO's
 `World3D` follows it in `client/scripts/world/remote_facing.gd`.
 
 - **The reader.** `NetProcessInNavAndSkill::FUN_008a5750` is `0xB021`'s client reader.
@@ -210,7 +210,7 @@ Read from `sro_client.exe` (`docs/WORLD_ISSUES.md`, 637th round, has the full tr
     `FUN_009e0050`, and sets the caller's `+0x2c`.
   - **Every other click** is sent. Its echo (`0xB021` -> `FUN_008a5750` -> `FUN_009e0550`) turns
     the player at 3 pi, as it turns anyone else.
-- **srrevamp's protocol** (OURS) does not match retail's here:
+- **OpenSRO's protocol** (OURS) does not match retail's here:
   - `OpEntityEntered` carries the heading as this page's u16 wire angle, AFTER the snapshot (older
     clients stop at the gender and ignore it).
   - `OpMove`/`OpEntityMoved` carry a trailing relocated flag, so a placement is relayed as one and
@@ -224,7 +224,7 @@ Read from `sro_client.exe` (`docs/WORLD_ISSUES.md`, 637th round, has the full tr
 
 ## How the client steps a mover and stops it at its destination (round 649)
 
-Read from `sro_client.exe`'s decompile on the RE box (`/var/tmp/decomp_client`). srrevamp's
+Read from `sro_client.exe`'s decompile on the RE box (`/var/tmp/decomp_client`). OpenSRO's
 `World3D._step_click_walk` follows it through `client/scripts/world/click_walk.gd`.
 
 - **The tick.** `FUN_009e0e60` (the mover, `this` = `obj+0x668`) runs every frame. With no
@@ -246,20 +246,20 @@ Read from `sro_client.exe`'s decompile on the RE box (`/var/tmp/decomp_client`).
   (`+0x74..+0x7c`) times the step. It is taken only if the collision query (`[0x111a02c]` vtable `+0x30`) does not
   return bit `0x10000000`. That bit, and the failure path, end the movement. Bit 0 also ends it
   after the move is taken.
-- **So a retail mover never passes its destination, at any speed.** srrevamp's walk before round
+- **So a retail mover never passes its destination, at any speed.** OpenSRO's walk before round
   649 did pass it. It took a full step every tick until it stood within its own stop distance of
   2.39 units (OURS). With a step longer than 4.78 units (a run speed over about 287 at 60 ticks a
   second), it could jump across that band on every tick and never stop. Round 649 measured this
   live and adopted the cut. The early stop is kept, because the attack approach is built on it.
 - **The same cut on the server** (SR_GameServer.exe): `CGObjMoverByDest::vslot_003` (`0x48c4e0`)
-  also replaces a step longer than what is left with `dest - position`. srrevamp already draws
+  also replaces a step longer than what is left with `dest - position`. OpenSRO already draws
   monster legs that way (`client/scripts/world/monster_motion.gd`, `MonsterMotion.step`, READ).
 - **A refused step ends the move** (round 649's follow-up). This is the failure path above:
-  bit `0x10000000`. srrevamp's walk now ends a click walk whose step the navigation graph blocks
+  bit `0x10000000`. OpenSRO's walk now ends a click walk whose step the navigation graph blocks
   dead (`ClickWalk.blocked_ends`), instead of holding its order with the run animation playing.
-  - ~~OURS: srrevamp's graph slides along a wall. "Dead" means a blocked step that covers no more
+  - ~~OURS: OpenSRO's graph slides along a wall. "Dead" means a blocked step that covers no more
     than 1 % of what was asked.~~ Superseded by round 653's follow-up. Retail's query does not
-    slide (see "The stop at a wall" below). Every srrevamp order now walks with the no-slide walk
+    slide (see "The stop at a wall" below). Every OpenSRO order now walks with the no-slide walk
     and ends at its first blocked step (`ClickWalk.blocked_ends`).
   - An attack's or friendly cast's approach ends at the wall like any walk. Its pending action is
     kept, and `World3D._step_move_order` re-issues it on the next tick. This follows retail's
@@ -272,7 +272,7 @@ Read from `sro_client.exe`'s decompile on the RE box (`/var/tmp/decomp_client`).
 
 Read from `sro_client.exe`'s decompile (`/var/tmp/decomp_client`), its disassembly
 (`/var/tmp/sro_client.asm`) and its PE image; the server half from `SR_GameServer.exe`'s decompile.
-srrevamp follows it in `client/scripts/world/sky_run.gd` (`SkyRun`) and `World3D._move_by_pick_ray`.
+OpenSRO follows it in `client/scripts/world/sky_run.gd` (`SkyRun`) and `World3D._move_by_pick_ray`.
 
 ### The click
 
@@ -371,9 +371,9 @@ The heading form's byte was "not read" above. It is now:
   runs its own mover (`CGObjMoverByCmd`). Whether it sends its own stop to the watchers when its
   navmesh refuses a step was not read.
 
-### srrevamp (OURS framing, READ form)
+### OpenSRO (OURS framing, READ form)
 
-srrevamp's movement is client-authoritative positions (`OpMove`/`OpEntityMoved`), not retail's
+OpenSRO's movement is client-authoritative positions (`OpMove`/`OpEntityMoved`), not retail's
 0x7021 requests that the server steps. So:
 
 - **The run is the client's.** A sky click (no pick hit within 1000) starts a heading run
@@ -401,7 +401,7 @@ srrevamp's movement is client-authoritative positions (`OpMove`/`OpEntityMoved`)
     facing the target instead of stepping into the wall again. Each no-slide stop nudges the body
     up to 0.2 toward its cell's centre, and at 60 re-issues a second that crept it along the wall
     by 22.7 units in 2 s (MEASURED, `click_walk_test.gd`).
-  - Only the QA walk (`SRREVAMP_QA_WALK`, no order) still slides.
+  - Only the QA walk (`OPENSRO_QA_WALK`, no order) still slides.
 
 ## Not read
 
@@ -419,7 +419,7 @@ srrevamp's movement is client-authoritative positions (`OpMove`/`OpEntityMoved`)
   means is not.
 - **Vtable slot `0xfc`**, whose 8 / 0x10 / 0x12 returns block movement.
 
-## For srrevamp
+## For OpenSRO
 
 This is a **destination format, not reference material**: `PROTOCOL_DECISION.md` (2026-08-22) sets
 the goal as a real wire-level reimplementation, with the own-designed opcodes in

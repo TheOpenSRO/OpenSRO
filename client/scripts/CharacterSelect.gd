@@ -19,8 +19,8 @@ extends Control
 ## is ours it says OURS. docs/protocol/charselect.md has the reading.
 ##
 ## The wiring of round 682 is kept: LobbyNet through NetClient (list,
-## delete, restore, Start), SRREVAMP_QA_FAKECHARS and the scripted
-## SRREVAMP_QA_RECONNECT_VIA_LOGIN.
+## delete, restore, Start), OPENSRO_QA_FAKECHARS and the scripted
+## OPENSRO_QA_RECONNECT_VIA_LOGIN.
 
 ## An idol was clicked: CharCatalog.RACE_CHINA or RACE_EUROPE. The screen
 ## then flies, fades and opens the customize screen (CharSelectHandoff).
@@ -107,7 +107,7 @@ var _busy := 0
 var _list_arrived := false
 var _scene_ready := false
 var _fake := false
-## SRREVAMP_QA_SELECT_RELOAD=<n> (OURS, QA): the leak check -- once the list
+## OPENSRO_QA_SELECT_RELOAD=<n> (OURS, QA): the leak check -- once the list
 ## is up, the screen is left for itself again, n times, printing the
 ## engine's counts each time.
 static var _qa_reloads := 0
@@ -143,7 +143,7 @@ func _ready() -> void:
 	_begin_stage()
 	# QA render hook: with no logged-in session this screen would list
 	# nothing, so a render can inject clearly-fake sample characters.
-	_fake = OS.get_environment("SRREVAMP_QA_FAKECHARS") != ""
+	_fake = OS.get_environment("OPENSRO_QA_FAKECHARS") != ""
 	if _fake:
 		_on_list_result.call_deferred(_qa_sample_characters(), "")
 	else:
@@ -631,10 +631,10 @@ func _set_state(s: int) -> void:
 
 func _qa_sample_characters() -> Array:
 	# OURS, QA only: clearly-fake names over real catalogue ids (charselect.md
-	# section 4 lists them; references, not data). SRREVAMP_QA_FAKECHARS=<n>
+	# section 4 lists them; references, not data). OPENSRO_QA_FAKECHARS=<n>
 	# gives n of them (default 3); the third is pending deletion.
 	var n := 3
-	var v := OS.get_environment("SRREVAMP_QA_FAKECHARS")
+	var v := OS.get_environment("OPENSRO_QA_FAKECHARS")
 	if v.is_valid_int():
 		n = clampi(v.to_int(), 0, 8)
 	var specs := [
@@ -711,7 +711,7 @@ func _on_list_result(characters: Array, error: String) -> void:
 					stage.play_restored(k)
 			_select(k, true)
 		return
-	if OS.get_environment("SRREVAMP_QA_RECONNECT_VIA_LOGIN") != "" and not _slots.is_empty():
+	if OS.get_environment("OPENSRO_QA_RECONNECT_VIA_LOGIN") != "" and not _slots.is_empty():
 		_qa_start(QaSignIn.character_name())
 
 func _slot_of(char_name: String) -> int:
@@ -720,7 +720,7 @@ func _slot_of(char_name: String) -> int:
 			return k
 	return -1
 
-## SRREVAMP_QA_RECONNECT_VIA_LOGIN: start `who` the way Start does.
+## OPENSRO_QA_RECONNECT_VIA_LOGIN: start `who` the way Start does.
 func _qa_start(who: String) -> void:
 	var k := _slot_of(who)
 	if k < 0:
@@ -732,7 +732,7 @@ func _qa_start(who: String) -> void:
 
 func _qa_report(text: String) -> void:
 	print("SELECT: %s" % text)
-	if OS.get_environment("SRREVAMP_QA_RECONNECT_VIA_LOGIN") != "":
+	if OS.get_environment("OPENSRO_QA_RECONNECT_VIA_LOGIN") != "":
 		print("QA RECONNECT: CharacterSelect: %s" % text)
 
 # --- Each frame ------------------------------------------------------------------------------
@@ -1343,19 +1343,19 @@ static var _qa_visits := 0
 var _qa_list_s := -1.0
 var _qa_luma_done := false
 
-## CharSelectQa's hooks (round 688, OURS, QA only): SRREVAMP_QA_SELECT_RACE
-## presses Create once the list is up; SRREVAMP_QA_SELECT_LUMA measures the
+## CharSelectQa's hooks (round 688, OURS, QA only): OPENSRO_QA_SELECT_RACE
+## presses Create once the list is up; OPENSRO_QA_SELECT_LUMA measures the
 ## frame 1.5 s after it (the models' READ 1.0 s fade done).
 func _qa_list_tick(delta: float) -> void:
 	if _qa_list_s < 0.0:
 		_qa_list_s = 0.0
 		_qa_visits += 1
 	_qa_list_s += delta
-	if OS.get_environment("SRREVAMP_QA_SELECT_LUMA") != "" and not _qa_luma_done and _qa_list_s >= 1.5:
+	if OS.get_environment("OPENSRO_QA_SELECT_LUMA") != "" and not _qa_luma_done and _qa_list_s >= 1.5:
 		_qa_luma_done = true
 		_qa_luma()
 	_qa_frame_tick()
-	if OS.get_environment("SRREVAMP_QA_SELECT_RACE") != "" and _qa_list_s >= 2.0 and _slots.size() < LobbyNet.MAX_CHARACTERS:
+	if OS.get_environment("OPENSRO_QA_SELECT_RACE") != "" and _qa_list_s >= 2.0 and _slots.size() < LobbyNet.MAX_CHARACTERS:
 		print("QA SELECT: pressing Create")
 		_on_create_pressed()
 
@@ -1393,7 +1393,7 @@ func _qa_luma() -> void:
 		_qa_visits, float(world.get("_env_time")), CharSelectQa.mean_luma(img, band, chars),
 		char_sum / char_n if char_n > 0 else -1.0, char_n, light.light_color, light.light_energy,
 		env.ambient_light_color, env.ambient_light_energy, env.tonemap_mode, env.tonemap_exposure, Engine.get_frames_drawn()])
-	var dir := OS.get_environment("SRREVAMP_QA_SELECT_SHOT_DIR")
+	var dir := OS.get_environment("OPENSRO_QA_SELECT_SHOT_DIR")
 	if dir != "":
 		img.save_png("%s/select_visit%d.png" % [dir, _qa_visits])
 	await _qa_body_luma(img)
@@ -1484,7 +1484,7 @@ func _qa_body_luma(img: Image) -> void:
 			dd.record.ref_obj_id, select_luma, n, preview_luma, pn, preview_luma / select_luma if select_luma > 0.0 else 0.0, vis, hid, portrait_mats])
 		pv.queue_free()
 
-## SRREVAMP_QA_SELECT_FRAMES=1 (OURS, QA, round 688's review): from 3 s to 8 s
+## OPENSRO_QA_SELECT_FRAMES=1 (OURS, QA, round 688's review): from 3 s to 8 s
 ## after the list is up, the mean and worst wall time of a frame and the
 ## viewport's measured render time on the CPU and the GPU (the frame is
 ## capped by vsync on the box, so the render times are the cost), then quit.
@@ -1495,7 +1495,7 @@ var _qa_frame_max := 0
 var _qa_render_cpu := 0.0
 var _qa_render_gpu := 0.0
 func _qa_frame_tick() -> void:
-	if OS.get_environment("SRREVAMP_QA_SELECT_FRAMES") == "":
+	if OS.get_environment("OPENSRO_QA_SELECT_FRAMES") == "":
 		return
 	var vp := get_viewport().get_viewport_rid()
 	if _qa_list_s < 3.0:
@@ -1513,7 +1513,7 @@ func _qa_frame_tick() -> void:
 	if _qa_list_s >= 8.0 and _qa_frame_n > 0:
 		print("QA SELECT FRAMES %d frames, mean %.2f ms, worst %.2f ms, render cpu %.3f ms gpu %.3f ms (%s light)" % [_qa_frame_n,
 			_qa_frame_sum / 1000.0 / _qa_frame_n, _qa_frame_max / 1000.0, _qa_render_cpu / _qa_frame_n, _qa_render_gpu / _qa_frame_n,
-			"Godot" if OS.get_environment("SRREVAMP_QA_SELECT_GODOT_LIGHT") != "" else "character"])
+			"Godot" if OS.get_environment("OPENSRO_QA_SELECT_GODOT_LIGHT") != "" else "character"])
 		get_tree().quit()
 
 func _qa_frames(n: int) -> void:
@@ -1521,7 +1521,7 @@ func _qa_frames(n: int) -> void:
 		await RenderingServer.frame_post_draw
 
 func _qa_reload_tick() -> void:
-	var want := OS.get_environment("SRREVAMP_QA_SELECT_RELOAD")
+	var want := OS.get_environment("OPENSRO_QA_SELECT_RELOAD")
 	if want == "" or _qa_reloads >= want.to_int():
 		return
 	if _qa_reload_at < 0.0:

@@ -227,7 +227,7 @@ func _init(builder: UiBuilder = null, media_pk2: Pk2Reader = null, text_table: U
 
 func _ready() -> void:
 	setup()
-	if OS.get_environment("SRREVAMP_QA_SLOTS") != "":
+	if OS.get_environment("OPENSRO_QA_SLOTS") != "":
 		add_to_group("qa_slots")
 
 ## Builds the bar. `file` is a parsed `.2dt` (or its bytes) for a caller that
@@ -845,7 +845,7 @@ func slot_icon_rect(slot_index: int) -> TextureRect:
 		return null
 	return (_slot_nodes[slot_index] as Control).get_node_or_null(ICON_NODE) as TextureRect
 
-## QA only (SRREVAMP_QA_SLOTS, F11 -- HudPanels): where the shown quick slots
+## QA only (OPENSRO_QA_SLOTS, F11 -- HudPanels): where the shown quick slots
 ## are, for a live run's xdotool clicks.
 func qa_print_slots() -> void:
 	for i in _slot_nodes:

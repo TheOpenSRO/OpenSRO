@@ -43,7 +43,7 @@ type Item struct {
 	// not correct, it is the bug: the engine's own resolver
 	// (GObjPC::FUN_00496c20) has a second arm that returns the SHIELD slot for
 	// TypeID2 == 3, TypeID3 == 4. Arrows are equipped, where a shield would go.
-	// The note reasoned about srrevamp's code and never asked the engine.
+	// The note reasoned about OpenSRO's code and never asked the engine.
 	TypeID1, TypeID2, TypeID3, TypeID4 int
 	// Country is the race the item belongs to: 0 China, 1 Europe, 3 either.
 	Country int
@@ -141,7 +141,7 @@ type Item struct {
 	// The bonus is a `MagicOptGroupID` into `refmagicoptgroup.txt`, chosen by
 	// how many pieces are worn -- see equipment.BonusTier, which carries the
 	// tier rule and the evidence. (A note here said the tier columns "are not
-	// decoded"; they were decoded the following tick.) srrevamp models set
+	// decoded"; they were decoded the following tick.) OpenSRO models set
 	// membership, completion and tier selection, and grants nothing, because
 	// it has no magic-option system to grant into.
 	SetID int
@@ -181,7 +181,7 @@ type Item struct {
 	// 750 against 10, but "cash-shop items are droppable" was an expectation,
 	// not a measurement. The binary's column counter decides it.
 	//
-	// Nothing in srrevamp reads CanDrop yet: it has no drop-from-bag path.
+	// Nothing in OpenSRO reads CanDrop yet: it has no drop-from-bag path.
 	CanTrade bool
 	CanSell  bool
 	CanDrop  bool
@@ -224,13 +224,13 @@ type Item struct {
 	PhysDefenseMin, PhysDefenseMax float64
 	MagDefenseMin, MagDefenseMax   float64
 
-	// WHICH END OF A RANGE srrevamp USES, in one place, because the answer is
+	// WHICH END OF A RANGE OpenSRO USES, in one place, because the answer is
 	// not consistent and the inconsistency is deliberate rather than an
 	// oversight.
 	//
 	// A real item has per-instance variance: the table gives a range and each
 	// dropped or bought instance sits somewhere inside it. Since 2026-09-19
-	// srrevamp instances carry that variance (inventory.Instance.Variance),
+	// OpenSRO instances carry that variance (inventory.Instance.Variance),
 	// and the two DEFENCE sums read the engine's own interpolation through it
 	// (session.defenderArmor, durability.WhiteStat). The consumers below
 	// still pick an end, for the reasons given:
@@ -317,7 +317,7 @@ type Item struct {
 	// complement of BlockRatio: across all 21,560 rows no item carries both, and
 	// every non-zero block row is a shield while no non-zero parry row is.
 	// Carried but NOT YET CONSUMED -- it is the defender's half of the engine's
-	// damage centre, which srrevamp still rolls uniformly
+	// damage centre, which OpenSRO still rolls uniformly
 	// (docs/RE_COMPLETION.md, "The distribution is still uniform").
 	ParryRatioMin, ParryRatioMax float64
 	CriticalMin, CriticalMax     float64
@@ -477,7 +477,7 @@ const (
 //
 // ok is false for any other kind, for a Param2 that is neither container
 // (UseByKind's refusal 3), and for a zero amount -- which the engine would
-// pass through as a use that grows nothing; srrevamp refuses it rather than
+// pass through as a use that grows nothing; OpenSRO refuses it rather than
 // eat the item (no real row has one).
 func (it *Item) ContainerExpansion() (container, slots int, ok bool) {
 	if it.TypeID1 != 3 || it.TypeID2 != 3 || it.TypeID3 != expansionTypeID3 || it.TypeID4 != expansionTypeID4 {

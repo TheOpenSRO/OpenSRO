@@ -276,11 +276,11 @@ So guild class 0 none / 1 member / 2 master, academy 0 none / 1 student / 2 guar
     in case the shard has a bug -- an hour's error is allowed"), one whose `Deleted` is not 1 (-3)
     and one not on the account (-5), then calls `_DeleteCharPermanently_NoTX` (not exported). So
     the 7 days are the ShardManager's timer and the procedure is a guard an hour short of them;
-    the client's text and gauge say 7 days (READ). srrevamp purges at 7 days (the user's choice,
+    the client's text and gauge say 7 days (READ). OpenSRO purges at 7 days (the user's choice,
     `character.DeleteDelay`): the same.
   - **Restore** (READ, `_ReviveChar`): refused when the character is not in `_DeletedChar` (-1) or
     its `Deleted` is not 1 (-2); otherwise the `_DeletedChar` row goes and `Deleted` returns to 0.
-    No time check: a purged character simply is no longer there. srrevamp's restore is the same
+    No time check: a purged character simply is no longer there. OpenSRO's restore is the same
     (0x419 when not pending). `_RecoverDeletedChar` is an old operator tool, disabled in this
     package (its body only selects an error string, "do not use, it changed").
 
@@ -816,7 +816,7 @@ per character:
 "(S)" means the client appends "(S<decimal code>)". The decode is through the byte index table at
 0x861b84 (select) and 0x861a40 (create).
 
-### What srrevamp sends (round 682)
+### What OpenSRO sends (round 682)
 
 The lobby rides **our framing on retail's opcode numbers** (USER DECISION 1): 0x7007 / 0xB007 /
 0x7001 / 0xB001 in a `proto.Packet`, payloads byte for byte the layouts above. Codec:
@@ -825,7 +825,7 @@ hand from the layouts: `client/scripts/net/testdata/lobby_golden.json` (both sid
 Our 0x0010-0x0015 are gone. Start's OK is followed by today's `OpEnterWorldResult`; the old
 `OpEnterWorld` (0x0020) still works and refuses a pending character too.
 
-| Code | srrevamp raises it for (OURS where marked) |
+| Code | OpenSRO raises it for (OURS where marked) |
 |---|---|
 | 0x402 | Start: an empty name, a character pending deletion (READ). Delete: a guild member or master (READ), a guild lookup that fails (OURS, fails closed), a character already pending (OURS). Any action: a store error or a payload too short to read (OURS). Retail also refuses a quote in a Start name with 0x402: **not applied** (round 682's review), so a grandfathered name with one still starts. |
 | 0x403 | Create: no catalogue loaded; a body or item outside it (OURS, on top of READ); a body not TypeID 1/1; an item not equipment, of the other race (not 3), of the other sex (not 2) (READ); an item in the wrong field (OURS); a missing chest, legs or feet (OURS: China's Protector "none" is not offered); a Height or Volume nibble above 4 (OURS). |
@@ -837,7 +837,7 @@ Our 0x0010-0x0015 are gone. Start's OK is followed by today's `OpEnterWorldResul
 | 0x40b | Delete, restore, Start: no character of that name on the account (READ). |
 | 0x40c | Create, name check: not 2..12 bytes (READ). |
 | 0x40d | Create, name check: a space, `'` or `"` (READ); a byte outside printable ASCII (OURS: the client's bitmap is OPEN). |
-| 0x410 | Create, name check: the name exists, pending deletion or not (READ, `_IsExistingCharName` round 692: `_CharNameList`, which keeps a pending character's name, and `_CharNickNameList`, by `=`); compared without case (OURS: the `=`'s case rule is the DB collation's, not exported; INFERRED case-insensitive). srrevamp has no nicknames. |
+| 0x410 | Create, name check: the name exists, pending deletion or not (READ, `_IsExistingCharName` round 692: `_CharNameList`, which keeps a pending character's name, and `_CharNickNameList`, by `=`); compared without case (OURS: the `=`'s case rule is the DB collation's, not exported; INFERRED case-insensitive). OpenSRO has no nicknames. |
 | 0x419 | Restore: the character is not pending deletion (READ), sent as a u16 (OURS, see above). |
 | 0x40e | Any 0x7007 action from a session already in the world (OURS choice of code: "an operation is pending" is the nearest READ meaning; what the ShardManager answers there was not read). |
 
@@ -889,12 +889,12 @@ own `_A_RARE` sets and passes any other id through unchanged).
 > above are READ from a **private-server package's** SR_ShardManager.exe, not from a retail
 > binary. Nothing modded was seen in its lobby code, but these are exactly the kind of values a
 > server operator edits (where a new character starts, what it is given), so they may be that
-> package's rather than retail's. srrevamp uses them (round 682) labelled so; the shard DB
+> package's rather than retail's. OpenSRO uses them (round 682) labelled so; the shard DB
 > procedures (section 6) are where a retail-shaped confirmation would come from. Round 692 read
 > them: `_AddNewChar` **ignores** the start position and gate the ShardManager passes and writes
 > region 25000 (97/168, Jangan) at (993, 0, 130) and `AppointedTeleport` 2094 (`STORE_CH_GATE`,
 > MEASURED in characterdata) for every race, so on this shard Europe characters start in Jangan
-> too -- a shard edit or a shard choice, either way not the ShardManager's table, which srrevamp
+> too -- a shard edit or a shard choice, either way not the ShardManager's table, which OpenSRO
 > keeps (the user's decision 5). The ammunition quantity is 250 (below).
 
 | Race | Spawns (region hi/lo, local x, y, z) |
@@ -926,19 +926,19 @@ pushes):
 Its 20 parameters are the list above, in that order (`@DefaultTeleport` is the 9th: the gate, as
 INFERRED). It has been **edited by the shard's operator** (blocks marked "Initial Equip Edit by
 LemoniscooL", calls into an `ANTHEIA` database, a commented-out level-110 variant of its INSERT),
-so each value below says whether srrevamp takes it.
+so each value below says whether OpenSRO takes it.
 
-| Step | What it does | srrevamp |
+| Step | What it does | OpenSRO |
 |---|---|---|
 | Shard edit | Swaps the 12 `_A_DEF` chests for the matching `*_01_*_A_RARE` set and adds its hands, hat, shoulders, earring, necklace and two rings; swaps the 2 shields and 14 weapons for their `_A_RARE` ids; each item's durability is its `_RefObjItem.Dur_L`. | **Not taken** (the shard's edit). The chosen `_A_DEF` items, as round 682. |
-| Refusals | 4 characters already (`_User` count >= 4) -2; scale > 68 (0x44) -3; `_IsExistingCharName` -4. | Same 4 (0x405) and name rule (0x410). The scale: srrevamp refuses either nibble above 4 (OURS, stricter than `> 68`). |
-| `_Char` row | RefObjID, name, scale, **Strength 20, Intellect 20**, region 25000 (993, 0, 130), AppointedTeleport 2094, **InventorySize 109**, **CurLevel 1**, MaxLevel 1, **RemainGold 2,000,000**, RemainStatPoint 0, **RemainSkillPoint 5,000,000**, **HP 200, MP 200**, job levels 1/1/1, WorldID 1. The position and gate parameters are not used. | Str/Int 20 and HP/MP 200 **now READ** (`character.StartingStr`, was OWN DESIGN; the level-110 variant's 129 = 20 + 109, StatGrowthPerLevel 1, agrees). 109 = 96 + 13, srrevamp's default bag of 96 (`-inventory-size`). Level 1. **Gold and SP not taken** (INFERRED the shard's: that INSERT is the one its operator edited; decision 10). Position: the ShardManager's per-race spawns, as before. |
+| Refusals | 4 characters already (`_User` count >= 4) -2; scale > 68 (0x44) -3; `_IsExistingCharName` -4. | Same 4 (0x405) and name rule (0x410). The scale: OpenSRO refuses either nibble above 4 (OURS, stricter than `> 68`). |
+| `_Char` row | RefObjID, name, scale, **Strength 20, Intellect 20**, region 25000 (993, 0, 130), AppointedTeleport 2094, **InventorySize 109**, **CurLevel 1**, MaxLevel 1, **RemainGold 2,000,000**, RemainStatPoint 0, **RemainSkillPoint 5,000,000**, **HP 200, MP 200**, job levels 1/1/1, WorldID 1. The position and gate parameters are not used. | Str/Int 20 and HP/MP 200 **now READ** (`character.StartingStr`, was OWN DESIGN; the level-110 variant's 129 = 20 + 109, StatGrowthPerLevel 1, agrees). 109 = 96 + 13, OpenSRO's default bag of 96 (`-inventory-size`). Level 1. **Gold and SP not taken** (INFERRED the shard's: that INSERT is the one its operator edited; decision 10). Position: the ShardManager's per-race spawns, as before. |
 | Inventory | `_Inventory` slots 0..108 empty, `_InventoryForAvatar` 0..4 empty. | n/a |
 | Equipment | Each item into its slot (`_FN_ADD_INITIAL_EQUIP`: chest 1, hands 3, hat 0, shoulder 2, legs 4, feet 5, weapon 6, shield 7); **the arrows or bolts into slot 7 with 250**, where every other item gets its durability (INFERRED: the stack's count). | **250 arrows or bolts** (`session.AmmoStartQuantity`, was one full stack, 2,500, OURS), into the bag as before (the slot has no quantity). |
 | **Masteries** | `_CharSkillMastery`: every `_RefCharDefault_SkillMastery` row whose Race is `_GetObjCountry(RefObjID)` or 3, **at Level 0**. | Done (round 692): level-0 rows. |
 | **Skills** | `_CharSkill`: every `_RefCharDefault_Skill` row of that Race or 3, Enable 1. | Done: learned. |
 | **Quests** | `_CharQuest`: the `_RefQuest` id of every `_RefCharDefault_Quest` CodeName of that Race or 3 with **RequiredLevel 1 and Service 1**, Status 1, AchievementCount 0. The higher-level rows are not given here. | Recorded by code name (`character_default_quests`); not quests yet (see below). |
-| Other rows | `_StaticAvatar`, `_CharTrijob (0, 1, 0, 0, 0)`, `_CharNameList`, `_AddNewClientConfig` (the quick slots). | n/a (srrevamp has no such rows) |
+| Other rows | `_StaticAvatar`, `_CharTrijob (0, 1, 0, 0, 0)`, `_CharNameList`, `_AddNewClientConfig` (the quick slots). | n/a (OpenSRO has no such rows) |
 | Shard edit | `_RoyalAddItems`: nine item grants (stacks of 5,000 and 20, a sex-specific item); `ANTHEIA.._AutoEquipment`; a silk row; beta-test silk rewards. | **Not taken.** |
 
 Race 0 is China and 1 Europe (INFERRED: `_GetObjCountry`'s body was not exported; Race 0's
@@ -946,7 +946,7 @@ masteries are China's and Race 1's Europe's by `skillmasterydata.txt`, MEASURED)
 
 **The default tables** (EXTERNAL, 13 + 13 + 15 rows; the rows are the shard's and are not
 reproduced here or anywhere in the repo -- the tests use a synthetic set, and
-`refdata.TestCharDefaultsRealExport` checks the export when `SRREVAMP_TEST_CHARDEFAULTS_DIR` points
+`refdata.TestCharDefaultsRealExport` checks the export when `OPENSRO_TEST_CHARDEFAULTS_DIR` points
 at it). What the rule gives, MEASURED on the export:
 
 | | China (Race 0, and 3) | Europe (Race 1, and 3) |
@@ -965,23 +965,23 @@ character to another Race.
 quests. The archive does hold a Europe tutorial -- `QTUTORIAL_EU` (questdata id 210) and
 `QTUTORIAL_EU_2` (225), both category 1 in `questcontentsdata.txt` -- and `QTUTORIAL2_EU_1..7`.
 Whether retail gave Europe `QTUTORIAL_EU` at create (a row this shard's table lacks) or some other
-way is OPEN; srrevamp follows the table (READ). `questcontentsdata.txt`'s third column is the same
+way is OPEN; OpenSRO follows the table (READ). `questcontentsdata.txt`'s third column is the same
 0 / 1 / 3 as Race (MEASURED on the archive's tutorial and newcomer quests).
 
 **The `_RefQuest` join.** The procedure inserts `_RefQuest` ids `WHERE CodeName in (...)`, so a code
 with no `_RefQuest` row gives nothing (READ). `_RefQuest` was not exported, and some of the
 export's codes are absent from the archive's `questdata.txt` (MEASURED; that file is the client's
-copy, 697 rows), so whether every code would pass the join is OPEN. srrevamp records every code
+copy, 697 rows), so whether every code would pass the join is OPEN. OpenSRO records every code
 that passes the READ filters (INFERRED to pass the join too).
 
-**Why the quests are recorded, not given.** srrevamp's quest package is an invented catalogue whose
+**Why the quests are recorded, not given.** OpenSRO's quest package is an invented catalogue whose
 ids 1 and 2 are real quests' ids in `questdata.txt` (`quest/quest.go`); accepting a default by id
 would start "Mangyang Cull". No real quest's steps are modelled. So each grant is stored as (character,
 code, status 1) in `character_default_quests`, which nothing else reads yet: the record for when
 the quest graph is imported.
 
 **Delivery** (OURS): the three tables are read as exported, from a directory named by
-`-chardefaults-dir` (env `SRREVAMP_CHARDEFAULTS_DIR`); a `_RefCharGen.csv` beside them is compared
+`-chardefaults-dir` (env `OPENSRO_CHARDEFAULTS_DIR`); a `_RefCharGen.csv` beside them is compared
 with the catalogue at boot. Without the flag the server warns that new characters get no defaults,
 and creates as before. deploy/README.md, "Character defaults".
 
@@ -1028,7 +1028,7 @@ Our wire today is our own (`PROTOCOL_DECISION.md`).
 | EXP % on the panel | `leveldata.txt` (already imported, `internal/leveldata`) | READ |
 | Deletion delay | `_DeleteCharTemporal`, `_DeleteCharPermanently` (READ round 692) | 7 days: the temporal delete only stamps the date; the permanent one refuses before 6 days 23 hours (section 2). The client says 7 days. |
 | Default skills / masteries / quests | `_RefCharDefault_*` (EXTERNAL, 13 + 13 + 15 rows), applied by `_AddNewChar` (READ round 692) | **Applied** at create from `-chardefaults-dir` (section 5, "`_AddNewChar`, read"): masteries at level 0, skills learned; the level-1 quests recorded by code (the quest system cannot hold them yet). |
-| Starting Str / Int / HP / MP, bag size | `_AddNewChar`'s INSERT (READ round 692) | 20 / 20 / 200 / 200, 109 = 96 + 13: what srrevamp already used (Str/Int were OWN DESIGN until now). Its gold 2,000,000 and SP 5,000,000 are not taken (decision 10). |
+| Starting Str / Int / HP / MP, bag size | `_AddNewChar`'s INSERT (READ round 692) | 20 / 20 / 200 / 200, 109 = 96 + 13: what OpenSRO already used (Str/Int were OWN DESIGN until now). Its gold 2,000,000 and SP 5,000,000 are not taken (decision 10). |
 | Start spawns, gate | ShardManager table 0x781b88 (READ, this package) | READ |
 | Music | none pushed by select or create | READ; the intro's track carries over |
 
@@ -1191,7 +1191,7 @@ static state that survives the scene change, as retail's `DAT_00ec2d68` global d
   `CharacterAppearance`.
 
 **Tests:** headless math tests (placement k/(r+1) and k/5, the camera keys, the countdown text and
-gauge, the sort order). `SRREVAMP_QA_FAKECHARS` is extended with model, scale, items and a pending
+gauge, the sort order). `OPENSRO_QA_FAKECHARS` is extended with model, scale, items and a pending
 deletion. Renders on the box, batched in one `--shots` run. `perf_gate.sh` (it draws the world).
 
 ### Lane B, client customize (rounds B1-B3)
@@ -1215,7 +1215,7 @@ deletion. Renders on the box, batched in one `--shots` run. `perf_gate.sh` (it d
 **Round 685 built B2 and B3** (`CharacterCreate.gd` with `frontend/charcreate_model.gd`,
 `charcreate_view.gd`, `charcreate_preview.gd`, `charcreate_slider.gd`; WORLD_ISSUES round 685). It
 reads `CharSelectHandoff.race` and leaves through `CharSelectHandoff.back_to_select` (the contract
-above); `SRREVAMP_QA_CREATE_RACE` stands in for the race select until lane A's merges.
+above); `OPENSRO_QA_CREATE_RACE` stands in for the race select until lane A's merges.
 
 **B3:** the 3D backdrop (98/168 and 105/79, the turning camera), the preview window with READ
 rotation physics and zoom, China's `back_image.ddj`.
@@ -1343,16 +1343,16 @@ var entry := BodyAnimations.entry_for(parsed, action_type, group)      # BsrRead
 9. **China's Protector minimum** (a per-server flag, meaning OPEN): require a set (Europe's rule),
    or allow "none" (Protector 0) as a server may?
 10. **The procedure's gold and skill points** (round 692): this shard's `_AddNewChar` starts a
-    character with 2,000,000 gold and 5,000,000 SP. srrevamp keeps its own 1,000 gold and 0 SP
+    character with 2,000,000 gold and 5,000,000 SP. OpenSRO keeps its own 1,000 gold and 0 SP
     (OURS) because that INSERT is the one the shard's operator edited (a level-110 variant sits
     commented out beside it), so these read as the shard's generosity, not retail's. Take them,
     keep ours, or pick another?
 11. **The shard's starting kit edit** (round 692): this `_AddNewChar` upgrades the chosen `_A_DEF`
     set to an `_A_RARE` set with hands, hat, shoulders and jewellery, and grants nine more items
-    (`_RoyalAddItems`). srrevamp gives the chosen `_A_DEF` items, as the ShardManager passes them
+    (`_RoyalAddItems`). OpenSRO gives the chosen `_A_DEF` items, as the ShardManager passes them
     (READ). Recommended (OURS): keep it so; the edit is marked as the operator's.
 12. **Europe's tutorial quest at create** (round 692): the shard's table gives Europe no Race 1
-    quest, though the archive has `QTUTORIAL_EU` (id 210). srrevamp follows the table (Europe gets
+    quest, though the archive has `QTUTORIAL_EU` (id 210). OpenSRO follows the table (Europe gets
     the two Race 3 quests only). Add `QTUTORIAL_EU` for Europe as China's tutorial is given to
     China (OURS, by symmetry), or keep the table?
 13. **The front-end's hour (round 688):** retail draws select and customize at the hour the title

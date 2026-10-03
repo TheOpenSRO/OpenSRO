@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/session"
+	"github.com/OpenSRO/OpenSRO/server/internal/session"
 )
 
 // Round 678: the startup lines. Nothing set says the client keeps its

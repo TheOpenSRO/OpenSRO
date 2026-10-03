@@ -159,7 +159,7 @@ func _both(parse: Callable, parse_native: Callable, printer: Callable, bytes: Pa
 
 func _init() -> void:
 	# What the client itself would use: no library, a stale one, or one forced
-	# off with SRREVAMP_NATIVE=0 all answer null here (round 670's review).
+	# off with OPENSRO_NATIVE=0 all answer null here (round 670's review).
 	var usable := NativeAssets.terrain() != null
 	if not usable:
 		_check(MapmReader.parse_native(_mapm(7)) == null,

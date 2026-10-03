@@ -20,9 +20,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // ErrItemNotFound is returned by Service.Buy when itemID isn't in the
@@ -58,7 +58,7 @@ var ErrNothingToSell = errors.New("shop: quantity must be positive")
 // goods record.
 //
 // This is a bound on the slot INDEX, not a statement that a tab holds 240
-// items -- the real shop tables are far sparser. srrevamp does not model shop
+// items -- the real shop tables are far sparser. OpenSRO does not model shop
 // tabs at all yet, so nothing enforces it; it is recorded for when it does.
 const MaxItemsPerShopTab = 240
 

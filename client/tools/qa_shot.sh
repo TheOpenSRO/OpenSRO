@@ -37,7 +37,7 @@
 #                     at, and the server's coordinates are in the zone-centre
 #                     frame, so the default drew a Jangan monster on 98/168's
 #                     ground (round 557; _qa_columns_report says the same).
-#   --teleport <id>   (round 578; needs --server and SRREVAMP_QA_CLICK=gate)
+#   --teleport <id>   (round 578; needs --server and OPENSRO_QA_CLICK=gate)
 #                     once the gate's talk box is up, choose its teleport
 #                     line, then click the talk box's destination line for
 #                     this teleportdata id (round 603; 2 = Donwhang from
@@ -57,12 +57,12 @@
 #                     one a movie frame) or "drain", the first tick that
 #                     finds the entry's loading screen up, i.e. a drop while
 #                     the world is still loading. Exports
-#                     SRREVAMP_QA_FORCE_LOADING=1 (both entries take the
+#                     OPENSRO_QA_FORCE_LOADING=1 (both entries take the
 #                     real loading-screen drain; the QA path would build the
 #                     grid in one frame and "drain" could never fire) and
-#                     SRREVAMP_QA_NOUI=1 (the run's product is a frame-colour
+#                     OPENSRO_QA_NOUI=1 (the run's product is a frame-colour
 #                     statistic over the lower part of the picture, where
-#                     the chat log and hotbar sit). Every SRREVAMP_QA_* hook
+#                     the chat log and hotbar sit). Every OPENSRO_QA_* hook
 #                     re-arms on the second entry, so --shots names each
 #                     viewpoint twice: `QA SHOT <name> frame <n>` once per
 #                     entry, and each entry prints `QA ENTRY <n> ...` and
@@ -111,13 +111,13 @@ if [ -z "${QA_SHOT_LOCKED:-}" ]; then
   exec env QA_SHOT_LOCKED=1 flock "$GODOT_LOCK" "$0" "$@"
 fi
 
-CLIENT_DIR="${CLIENT_DIR:-/opt/srrevamp-client}"
+CLIENT_DIR="${CLIENT_DIR:-/opt/opensro-client}"
 PK2_DIR="${PK2_DIR:-/opt/sro-files/client}"
 GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 
 REGION='98\168.m'; FRAMES=120; SIZE=1280x720; OUT=""; SCENE="res://scenes/World3D.tscn"
 AT=""; YAW=""; PITCH=""; DIST=""; WALK=""; NOFOG=""; FREE=""; RADIUS=""; SHOTS=""
-PANELS=""; WORLDMAP=""; SAY=""; SERVER=""; GENDER=""; ATTACK=""; DEBUG=""; COLUMNS=""; EQUIP=""; SERVER_BIN="${SERVER_BIN:-/opt/srrevamp-server/srrevamp-server}"
+PANELS=""; WORLDMAP=""; SAY=""; SERVER=""; GENDER=""; ATTACK=""; DEBUG=""; COLUMNS=""; EQUIP=""; SERVER_BIN="${SERVER_BIN:-/opt/opensro-server/opensro-server}"
 RECONNECT=""; RECONNECT_VIA_LOGIN=""; TELEPORT=""; PANELS_IN_PLACE=""
 
 while [ $# -gt 0 ]; do
@@ -183,7 +183,7 @@ pkill -9 -x Xvfb 2>/dev/null || true
 pkill -9 -f "tools/xwl_run.sh" 2>/dev/null || true
 pkill -9 -x weston 2>/dev/null || true
 pkill -9 -x Xwayland 2>/dev/null || true
-pkill -9 -f "srrevamp-server -in-memory" 2>/dev/null || true
+pkill -9 -f "opensro-server -in-memory" 2>/dev/null || true
 sleep 1
 fi
 rm -rf "$OUT"; mkdir -p "$OUT"
@@ -224,25 +224,25 @@ if [ "$RENDERER" = gl_compatibility ]; then
     echo "qa_shot: no usable render node -- falling back to software GL (slow)" >&2
   fi
 fi
-export SRREVAMP_PK2_PATH="$PK2_DIR/Data.pk2"
-export SRREVAMP_MAP_PK2_PATH="$PK2_DIR/Map.pk2"
-export SRREVAMP_MEDIA_PK2_PATH="$PK2_DIR/Media.pk2"
-export SRREVAMP_PARTICLES_PK2_PATH="$PK2_DIR/Particles.pk2"
+export OPENSRO_PK2_PATH="$PK2_DIR/Data.pk2"
+export OPENSRO_MAP_PK2_PATH="$PK2_DIR/Map.pk2"
+export OPENSRO_MEDIA_PK2_PATH="$PK2_DIR/Media.pk2"
+export OPENSRO_PARTICLES_PK2_PATH="$PK2_DIR/Particles.pk2"
 # Music.pk2 holds the zone music (round 611, AudioBank); without it the world is silent.
-export SRREVAMP_MUSIC_PK2_PATH="$PK2_DIR/Music.pk2"
-export SRREVAMP_MAPM_PATH="$REGION"
-[ -n "$AT" ]    && export SRREVAMP_QA_AT="$AT"
-[ -n "$YAW" ]   && export SRREVAMP_QA_YAW="$YAW"
-[ -n "$PITCH" ] && export SRREVAMP_QA_PITCH="$PITCH"
-[ -n "$DIST" ]  && export SRREVAMP_QA_DIST="$DIST"
-[ -n "$WALK" ]  && export SRREVAMP_QA_WALK="$WALK"
-[ -n "$NOFOG" ] && export SRREVAMP_QA_NOFOG=1
-[ -n "$FREE" ]  && export SRREVAMP_QA_FREE=1
-[ -n "$RADIUS" ] && export SRREVAMP_QA_RADIUS="$RADIUS"
-[ -n "$SHOTS" ]  && export SRREVAMP_QA_SHOTS="$SHOTS"
-[ -n "$PANELS" ] && export SRREVAMP_QA_PANELS="$PANELS"
-[ -n "$PANELS_IN_PLACE" ] && export SRREVAMP_QA_PANELS_IN_PLACE=1
-[ -n "$WORLDMAP" ] && export SRREVAMP_QA_WORLDMAP="$WORLDMAP"
+export OPENSRO_MUSIC_PK2_PATH="$PK2_DIR/Music.pk2"
+export OPENSRO_MAPM_PATH="$REGION"
+[ -n "$AT" ]    && export OPENSRO_QA_AT="$AT"
+[ -n "$YAW" ]   && export OPENSRO_QA_YAW="$YAW"
+[ -n "$PITCH" ] && export OPENSRO_QA_PITCH="$PITCH"
+[ -n "$DIST" ]  && export OPENSRO_QA_DIST="$DIST"
+[ -n "$WALK" ]  && export OPENSRO_QA_WALK="$WALK"
+[ -n "$NOFOG" ] && export OPENSRO_QA_NOFOG=1
+[ -n "$FREE" ]  && export OPENSRO_QA_FREE=1
+[ -n "$RADIUS" ] && export OPENSRO_QA_RADIUS="$RADIUS"
+[ -n "$SHOTS" ]  && export OPENSRO_QA_SHOTS="$SHOTS"
+[ -n "$PANELS" ] && export OPENSRO_QA_PANELS="$PANELS"
+[ -n "$PANELS_IN_PLACE" ] && export OPENSRO_QA_PANELS_IN_PLACE=1
+[ -n "$WORLDMAP" ] && export OPENSRO_QA_WORLDMAP="$WORLDMAP"
 
 # A render with a server behind it. Without one the client shows an
 # undressed character, a blank HP bar and an empty inventory, because none
@@ -256,24 +256,24 @@ if [ "$SERVER" = "start" ]; then
   # Feed the in-memory server its refdata so the shop has items to sell (and
   # prices) and learning has skills: an items/skills CSV beside the pk2s, or
   # named explicitly. Without them the shop opens but sells nothing.
-  ITEMS_CSV="${SRREVAMP_ITEMS_CSV:-$PK2_DIR/items.csv}"
-  SKILLS_CSV="${SRREVAMP_SKILLS_CSV:-$PK2_DIR/skills.csv}"
-  LEVELDATA_CSV="${SRREVAMP_LEVELDATA_CSV:-$PK2_DIR/leveldata.csv}"
+  ITEMS_CSV="${OPENSRO_ITEMS_CSV:-$PK2_DIR/items.csv}"
+  SKILLS_CSV="${OPENSRO_SKILLS_CSV:-$PK2_DIR/skills.csv}"
+  LEVELDATA_CSV="${OPENSRO_LEVELDATA_CSV:-$PK2_DIR/leveldata.csv}"
   # The teleport network (round 575): export-refdata -mode teleport's three
   # CSVs in a teleport/ directory beside the pk2s. The server logs its counts.
-  TELEPORT_DIR="${SRREVAMP_TELEPORT_DIR:-$PK2_DIR/teleport}"
+  TELEPORT_DIR="${OPENSRO_TELEPORT_DIR:-$PK2_DIR/teleport}"
   # The creatable catalogue (round 682's lobby; export-refdata -mode
   # chargen): without it the server refuses every create (S1027, "no
   # creatable catalogue loaded"), the QA sign-in renders offline and a
   # --reconnect-via-login finds no character to start (round 693).
-  CHARGEN_CSV="${SRREVAMP_CHARGEN_CSV:-$PK2_DIR/chargen.csv}"
+  CHARGEN_CSV="${OPENSRO_CHARGEN_CSV:-$PK2_DIR/chargen.csv}"
   SERVER_ARGS=(-in-memory -addr "127.0.0.1:$SERVER_PORT")
   [ -f "$ITEMS_CSV" ]     && SERVER_ARGS+=(-items-csv "$ITEMS_CSV")
   [ -f "$SKILLS_CSV" ]    && SERVER_ARGS+=(-skills-csv "$SKILLS_CSV")
   [ -f "$LEVELDATA_CSV" ] && SERVER_ARGS+=(-leveldata-csv "$LEVELDATA_CSV")
   [ -f "$TELEPORT_DIR/teleportdata.csv" ] && SERVER_ARGS+=(-teleport-dir "$TELEPORT_DIR")
   if [ -f "$CHARGEN_CSV" ]; then SERVER_ARGS+=(-chargen-csv "$CHARGEN_CSV")
-  else echo "qa_shot: no chargen CSV at $CHARGEN_CSV (set SRREVAMP_CHARGEN_CSV) -- the server can create no character" >&2; fi
+  else echo "qa_shot: no chargen CSV at $CHARGEN_CSV (set OPENSRO_CHARGEN_CSV) -- the server can create no character" >&2; fi
   "$SERVER_BIN" "${SERVER_ARGS[@]}" >"$OUT/server.log" 2>&1 &
   SERVER_PID=$!
   # SIGKILL, not SIGTERM: the in-memory server did not always die on TERM, so
@@ -297,27 +297,27 @@ if [ "$SERVER" = "start" ]; then
   echo "qa_shot: in-memory server on 127.0.0.1:$SERVER_PORT (pid $SERVER_PID)" >&2
   SERVER="127.0.0.1:$SERVER_PORT"
 fi
-[ -n "$SERVER" ] && export SRREVAMP_QA_SERVER="$SERVER"
-[ -n "$SAY" ] && export SRREVAMP_QA_SAY="$SAY"
-[ -n "$GENDER" ] && export SRREVAMP_QA_GENDER="$GENDER"
-[ -n "$ATTACK" ] && export SRREVAMP_QA_ATTACK=1
-[ -n "$DEBUG" ] && export SRREVAMP_QA_DEBUG=1
-[ -n "$COLUMNS" ] && export SRREVAMP_QA_COLUMNS="$COLUMNS"
-[ -n "$EQUIP" ] && export SRREVAMP_QA_EQUIP="$EQUIP"
+[ -n "$SERVER" ] && export OPENSRO_QA_SERVER="$SERVER"
+[ -n "$SAY" ] && export OPENSRO_QA_SAY="$SAY"
+[ -n "$GENDER" ] && export OPENSRO_QA_GENDER="$GENDER"
+[ -n "$ATTACK" ] && export OPENSRO_QA_ATTACK=1
+[ -n "$DEBUG" ] && export OPENSRO_QA_DEBUG=1
+[ -n "$COLUMNS" ] && export OPENSRO_QA_COLUMNS="$COLUMNS"
+[ -n "$EQUIP" ] && export OPENSRO_QA_EQUIP="$EQUIP"
 if [ -n "$TELEPORT" ]; then
-  export SRREVAMP_QA_TELEPORT="$TELEPORT"
-  [ -n "${SRREVAMP_QA_CLICK:-}" ] || echo "qa_shot: --teleport without SRREVAMP_QA_CLICK=gate -- nothing opens the gate's talk box, so no Move is pressed" >&2
+  export OPENSRO_QA_TELEPORT="$TELEPORT"
+  [ -n "${OPENSRO_QA_CLICK:-}" ] || echo "qa_shot: --teleport without OPENSRO_QA_CLICK=gate -- nothing opens the gate's talk box, so no Move is pressed" >&2
   [ -n "$SERVER" ] || echo "qa_shot: --teleport without --server -- the request has nobody to go to" >&2
 fi
 # --reconnect (round 558): both entries take the real loading-screen drain,
 # and the HUD is hidden -- see the option's note in the header.
 if [ -n "$RECONNECT" ]; then
-  export SRREVAMP_QA_RECONNECT="$RECONNECT"
-  export SRREVAMP_QA_FORCE_LOADING=1
-  export SRREVAMP_QA_NOUI=1
+  export OPENSRO_QA_RECONNECT="$RECONNECT"
+  export OPENSRO_QA_FORCE_LOADING=1
+  export OPENSRO_QA_NOUI=1
 fi
 if [ -n "$RECONNECT_VIA_LOGIN" ]; then
-  export SRREVAMP_QA_RECONNECT_VIA_LOGIN=1
+  export OPENSRO_QA_RECONNECT_VIA_LOGIN=1
   [ -n "$SERVER" ] || echo "qa_shot: --reconnect-via-login without --server -- Login has nothing to sign back in to, the run will stop on the login screen" >&2
 fi
 

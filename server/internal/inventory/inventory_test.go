@@ -11,7 +11,7 @@ import (
 // the real game's recovered bounds. SlotsPerCharacter is own design, but it is
 // not free: CGObjPC::ExpandInventory never lets an inventory reach 100 slots,
 // and caps expansion at 99. A later change that exceeds either would put
-// srrevamp outside anything the engine can represent, and fails here with the
+// OpenSRO outside anything the engine can represent, and fails here with the
 // citation rather than silently shipping.
 func TestSlotsPerCharacterFitsTheEngine(t *testing.T) {
 	if SlotsPerCharacter >= SlotsHardLimit {
@@ -60,7 +60,7 @@ func TestSlotsPerCharacterFitsTheEngine(t *testing.T) {
 //
 // The engine guards both ends of the range -- 0x1829
 // SPECIFY_POSITIVE_NUMBER_ONLY below, 0x1814 ENABLEINPUT_FEWERTHAN_REMAIN above
-// -- and srrevamp was guarding only the upper one.
+// -- and OpenSRO was guarding only the upper one.
 func TestRemoveItemRejectsNonPositiveQuantity(t *testing.T) {
 	ctx := context.Background()
 	m := NewMemStore(nil)

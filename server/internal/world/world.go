@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
 )
 
 // Position is a point in 3D space. Units are arbitrary at this stage — no
@@ -24,7 +24,7 @@ type Position struct {
 	X, Y, Z float64
 }
 
-// LifeState is the engine's life-state byte as srrevamp keeps it: chardata[0],
+// LifeState is the engine's life-state byte as OpenSRO keeps it: chardata[0],
 // read through IGObj::GetLifeState (vtable +0xf8) and written only through
 // IGObj::SetLifeState (+0x1f0) -- docs/protocol/character_state.md, "The life
 // state, and the siege revive countdown (round 411)" through "Life-state 2 is

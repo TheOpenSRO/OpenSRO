@@ -21,7 +21,7 @@ class_name BodyAnimations
 ##   WEAPON_GROUPS below, with the fortress weapon (16) `sword` for race 0 (China)
 ##   and `onehand_sword` for race 1 (Europe); the race is the character data's
 ##   +0x9c byte (the body's Country). No sex test anywhere. While pulling a
-##   transport the group is `cart` (not modelled: srrevamp has no transports).
+##   transport the group is `cart` (not modelled: OpenSRO has no transports).
 ## - **The entry.** `CCObjAnimation::FUN_00a5b550` -> `CCompChar::FUN_00c2bbb0` ->
 ##   `AniMixer::FUN_00c551a0`: the group by name, the entry by action type, and a
 ##   non-null clip; failing any, the same type in `default`; failing that,

@@ -45,7 +45,7 @@ var evasionTagAllowlist = map[string]bool{
 	"internal/combat/evasion_test.go":   true,
 }
 
-// The disclosure in EvadedChance rests on a precondition: NO PLAYER IN SRREVAMP
+// The disclosure in EvadedChance rests on a precondition: NO PLAYER IN OPENSRO
 // CAN CARRY 'evcr' OR 'evbl', because nothing aggregates an item's magic
 // options into combat stats. Four of the six evasion divisors are zero for that
 // reason alone.

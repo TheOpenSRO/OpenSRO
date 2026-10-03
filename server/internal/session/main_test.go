@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/testdb"
+	"github.com/OpenSRO/OpenSRO/server/internal/testdb"
 )
 
 // TestMain pins the damage roll to its maximum for every test in this package.

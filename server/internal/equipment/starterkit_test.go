@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
 )
 
 // fakeStores stands in for the inventory and equipment stores. Small enough

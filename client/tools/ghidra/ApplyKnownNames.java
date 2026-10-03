@@ -1006,7 +1006,7 @@ public class ApplyKnownNames extends GhidraScript {
             }
             if (!apply) { println("  would name " + k[0] + " -> " + k[1]); done++; continue; }
             f.setName(k[1], SourceType.ANALYSIS);
-            f.setComment("Identified by srrevamp RE.\n" + k[2]);
+            f.setComment("Identified by OpenSRO RE.\n" + k[2]);
             done++;
         }
         println("===KNOWNNAMES=== named=" + done + " missing=" + missing + " alreadyNamed=" + skipped

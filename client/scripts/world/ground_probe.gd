@@ -5,7 +5,7 @@ class_name GroundProbe
 ## tester sees after a disconnect + reconnect in one client process
 ## (reported 2026-09-25 and 2026-09-26; never reproduced on the render box,
 ## docs/RE_COMPLETION.md rounds 558-560). A player on a Windows release build
-## cannot set SRREVAMP_QA_* variables, so what round 558's QA ENTRY /
+## cannot set OPENSRO_QA_* variables, so what round 558's QA ENTRY /
 ## QA TEXPROBE lines measure has to be something they can type at the moment
 ## they see it: `/groundprobe` in the chat line, or the F3 panel's
 ## "Ground probe" button (both reach World3D._run_ground_probe).
@@ -18,7 +18,7 @@ class_name GroundProbe
 ## - the build, the GL adapter and driver, the renderer settings that the
 ##   investigators' hypotheses turn on (depth prepass, shader cache, ANGLE
 ##   fallback), this World3D's entry number in the process and what the
-##   previous one left behind (SRREVAMP_WORLD_ENTRY / SRREVAMP_WORLD_LAST_EXIT,
+##   previous one left behind (OPENSRO_WORLD_ENTRY / OPENSRO_WORLD_LAST_EXIT,
 ##   process environment -- never a static, statics are what a reconnect
 ##   changes);
 ## - the viewport, the renderer's memory and draw counts, the environment and
@@ -60,13 +60,13 @@ class_name GroundProbe
 
 const PREFIX := "GROUNDPROBE"
 ## World entries in this process (World3D._ready bumps it).
-const ENTRY_ENV := "SRREVAMP_WORLD_ENTRY"
+const ENTRY_ENV := "OPENSRO_WORLD_ENTRY"
 ## What the previous World3D said when it left the tree (record_exit).
-const LAST_EXIT_ENV := "SRREVAMP_WORLD_LAST_EXIT"
+const LAST_EXIT_ENV := "OPENSRO_WORLD_LAST_EXIT"
 ## The previous World3D's ground / lightmap / water GL names (record_exit).
-const PREV_GL_ENV := "SRREVAMP_GROUNDPROBE_PREV_GL"
+const PREV_GL_ENV := "OPENSRO_GROUNDPROBE_PREV_GL"
 ## Probe runs in this process, so two runs' lines never share a tag.
-const RUNS_ENV := "SRREVAMP_GROUNDPROBE_RUNS"
+const RUNS_ENV := "OPENSRO_GROUNDPROBE_RUNS"
 ## The unix time the first A/B sequence of this process started
 ## (_arm_steps): its steps can compile shaders of their own
 ## (`opaque_as_alpha` gives the passes' StandardMaterial3D a different
@@ -74,8 +74,8 @@ const RUNS_ENV := "SRREVAMP_GROUNDPROBE_RUNS"
 ## (drivers/gles3/shader_gles3.cpp, ShaderGLES3::_initialize_version,
 ## 4.2.2-stable) -- so a later run's `shadercache` line counts the files
 ## written before it apart.
-const CHECKS_FROM_ENV := "SRREVAMP_GROUNDPROBE_CHECKS_FROM"
-const LOG_PATH := "user://logs/srrevamp.log"
+const CHECKS_FROM_ENV := "OPENSRO_GROUNDPROBE_CHECKS_FROM"
+const LOG_PATH := "user://logs/opensro.log"
 const REGION_SPAN := 1920.0
 ## Frames an A/B change is held before its frame is measured, and frames
 ## after it is undone before the next one.

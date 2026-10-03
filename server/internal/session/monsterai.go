@@ -12,20 +12,20 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/ai"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/mana"
-	"github.com/OpenSRO/srrevamp/server/internal/party"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/ai"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/party"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // The monster AI tick (round 537): the runtime that drives internal/ai's
 // state machine over the live monsters, behind cmd/server's -monster-ai kill
-// switch (SRREVAMP_MONSTER_AI), which is OFF by default. With it off
+// switch (OPENSRO_MONSTER_AI), which is OFF by default. With it off
 // RunMonsterAI is never called, monsterAIRuntime stays nil, noteStruck does
 // nothing and the monster list is answered exactly as before, byte for byte.
 //
@@ -37,7 +37,7 @@ import (
 // found it while a keep-up of any player in its zone is on it (round 539; the
 // first attacker's only in round 537). The rules are internal/ai's,
 // each cited where it is defined; the runtime's own choices are the stand-ins
-// in docs/protocol/monster_ai.md, "srrevamp's runtime", and each is marked
+// in docs/protocol/monster_ai.md, "OpenSRO's runtime", and each is marked
 // OWN DESIGN at the line that makes it.
 //
 // With -monster-battle on as well (SetMonsterBattle, round 546; OFF by
@@ -77,7 +77,7 @@ const MonsterAITick = 100 * time.Millisecond
 // answers "within" without measuring (`cmp [row+0x84],0; jg` at 0x545fde)
 // unless the owner's slot 242 or 243 answers non-zero. So retail never
 // applies 200 to such a monster. The real per-nest radius is _RefNest column
-// 9 (+0x20), which is server-database only; srrevamp treats each placement as
+// 9 (+0x20), which is server-database only; OpenSRO treats each placement as
 // a nest with this radius.
 const MonsterRoamRadius = 200.0
 
@@ -105,7 +105,7 @@ const MonsterHoldReleaseTicks = 2
 // MonsterAIConfig is what the operator sets on the runtime.
 type MonsterAIConfig struct {
 	// Trace logs every state change, leg, strike, release and out-of-reach
-	// keep-up end (SRREVAMP_AI_TRACE). Off by default: at about 350 monsters
+	// keep-up end (OPENSRO_AI_TRACE). Off by default: at about 350 monsters
 	// in Jangan it is several lines a second.
 	Trace bool
 	// What a monster's own swing reads and writes (monsterStrike's strikeDeps):
@@ -131,7 +131,7 @@ type MonsterAIConfig struct {
 	Parties *party.Hub
 	// TickStats logs the tick's cost once a minute -- p50, p99 and the
 	// longest pass, with the monsters alive and the brains run (round 660,
-	// SRREVAMP_AI_TICK_STATS). Off by default.
+	// OPENSRO_AI_TICK_STATS). Off by default.
 	TickStats bool
 	// Sleep lets the brains of monsters no player is near sleep (round 656,
 	// cmd/server's -monster-sleep, on by default there): a monster whose
@@ -145,7 +145,7 @@ type MonsterAIConfig struct {
 	Sleep bool
 }
 
-// monsterBattle is cmd/server's -monster-battle (SRREVAMP_MONSTER_BATTLE),
+// monsterBattle is cmd/server's -monster-battle (OPENSRO_MONSTER_BATTLE),
 // OFF by default. An atomic because cmd/server sets it on the boot goroutine
 // while performAttack reads it on session readers and keep-up goroutines and
 // the tick reads it on its own.
@@ -160,7 +160,7 @@ var monsterBattle atomic.Bool
 // counter and the interim hold are what they were.
 func SetMonsterBattle(on bool) { monsterBattle.Store(on) }
 
-// monsterAggro is cmd/server's -monster-aggro (SRREVAMP_MONSTER_AGGRO), OFF
+// monsterAggro is cmd/server's -monster-aggro (OPENSRO_MONSTER_AGGRO), OFF
 // by default. An atomic for the same reason monsterBattle is one: set on the
 // boot goroutine, read by the tick on its own.
 var monsterAggro atomic.Bool
@@ -986,7 +986,7 @@ func (a *monsterAI) onStruck(id int64, ev struckEvent) {
 // "The aggro link: the runtime (round 553)"), in the engine's order:
 //
 //  1. the record's hate must be non-zero and the attacker a PC (0x547570's
-//     opening tests). Every srrevamp attacker is a character; a blow carries
+//     opening tests). Every OpenSRO attacker is a character; a blow carries
 //     no hate value here, so every blow is taken as carrying some --
 //     DISCLOSED: what hate a plain blow's record holds is unread. The
 //     stand-in is the one the runtime already rests on rather than a fresh
@@ -997,9 +997,9 @@ func (a *monsterAI) onStruck(id int64, ev struckEvent) {
 //     not even engage its victim, which round 546's BATTLE entry on every
 //     blow already assumes it does; the magnitudes are mob-threat-retarget's;
 //  2. the attacker's party must exist (pc+0x1cb8) and share EXP (party+0x10
-//     bit 0). Every srrevamp party shares EXP (party.go), and, as killExpFor's
+//     bit 0). Every OpenSRO party shares EXP (party.go), and, as killExpFor's
 //     gate reads it (round 485), a party is one of two or more: the engine
-//     never creates a party of one, srrevamp's create path does;
+//     never creates a party of one, OpenSRO's create path does;
 //  3. the gather (AITactics_CollectNearbyMonsters 0x540580 -> ai.GatherWithin):
 //     the ten nearest OTHER monsters within ai.LevelScaledRadius(the victim's
 //     detection radius, victim level - attacker level) of the VICTIM. The
@@ -1007,7 +1007,7 @@ func (a *monsterAI) onStruck(id int64, ev struckEvent) {
 //     read off the world entity's cache (world.Entity.Level: the row's at
 //     enter-world, moved by the level-up and /level) -- round 555; until then
 //     one chars.GetByID per link event under a.mu, so one slow store read
-//     stalled every monster's tick. srrevamp's own, disclosed: the candidates
+//     stalled every monster's tick. OpenSRO's own, disclosed: the candidates
 //     are the monsters of the victim's zone (the engine walks the owner's
 //     regions), on the ground plane, and a monster hatched since this pass's
 //     step 2 has no brain yet and is skipped for this blow;
@@ -1015,7 +1015,7 @@ func (a *monsterAI) onStruck(id int64, ev struckEvent) {
 //     (0x5476e9..0x5476f6, inclusive; ai.AggroLinkMemberRange), the attacker
 //     counted without measuring; a member counts only when it resolves in
 //     the world and its region is the attacker's or adjacent (0x430ce0) --
-//     srrevamp: in world.Hub, in the attacker's zone, on the ground plane;
+//     OpenSRO: in world.Hub, in the attacker's zone, on the ground plane;
 //  5. n = CLAMP(n, 0, gathered) (ai.AggroLinkCount);
 //  6. the record's damage is zeroed (0x547797) and each of the n nearest gets
 //     command 0xe -> slot 29 (0x5477fd..0x54780a) when ValidTargetOrNull
@@ -1179,7 +1179,7 @@ func (a *monsterAI) update(b *brain) {
 		// (0x00540dc0, which wraps AITactics_IsValidTarget 0x00540de0's alive
 		// and life-state-1 tests; named in round 545). The life-state test is
 		// the engine's own (`GetLifeState() == 1`, round 549: a player dead
-		// under -player-dead-state is no target); the rest of srrevamp's
+		// under -player-dead-state is no target); the rest of OpenSRO's
 		// validity test is its own, disclosed: in world.Hub, same zone.
 		var e world.Entity
 		ok := false
@@ -1261,7 +1261,7 @@ func (a *monsterAI) update(b *brain) {
 //     and best-so-far compares and into the pick slot with NO null test
 //     (`mov [eax],esi` 0x546702) -- so a rejected player is not skipped: it
 //     leaves a NULL pick at its own distance, which a later candidate must
-//     be strictly nearer than to replace. srrevamp drops dead players before
+//     be strictly nearer than to replace. OpenSRO drops dead players before
 //     the scan instead, so a dead player nearer the monster than a living
 //     one never shadows the living one here as it would in the engine.
 //     DISCLOSED, not modelled: a dead body that close is the round-552 live
@@ -1273,11 +1273,11 @@ func (a *monsterAI) update(b *brain) {
 //     with battleTick's nest reading) before ChangeState(3). A pick out of
 //     chase range stays the target and the state stays.
 //
-// srrevamp's own, disclosed: the flag gate; the candidates are the world hub's
-// entities in the monster's zone (srrevamp has no regions), taken in
+// OpenSRO's own, disclosed: the flag gate; the candidates are the world hub's
+// entities in the monster's zone (OpenSRO has no regions), taken in
 // character-id order where the engine walks the region's player list; the
 // distance is the ground plane's, as battleTick's (GObj_DistanceBetween
-// 0x53d7a0 sums three axes, and srrevamp's monsters carry no height); the
+// 0x53d7a0 sums three axes, and OpenSRO's monsters carry no height); the
 // timer is not polled while the flag is off, which nothing can observe. Not
 // modelled: the summoned-object detour and the owner's slot-355 test inside
 // the selector (ai.Nearest), and the +0x168 byte's other writers.
@@ -1348,7 +1348,7 @@ func (a *monsterAI) acquire(b *brain) bool {
 // Target validity: the engine's IsValidTarget (0x540de0) wants life state 1,
 // which a kill leaves -- under -player-dead-state (round 549) the world hub
 // holds that state and a dead player is refused here on it, the engine's own
-// test. The rest is srrevamp's own, disclosed: in world.Hub, in this zone, and
+// test. The rest is OpenSRO's own, disclosed: in world.Hub, in this zone, and
 // not killed by this monster's last swing -- with the flag off a dead player
 // is back on its feet at once (monsterStrike's RespawnHP), so the strike
 // worker reports the kill (kills) and the next tick takes the same 0x23 exit.
@@ -1374,7 +1374,7 @@ func (a *monsterAI) battleTick(b *brain) {
 	dist := math.Hypot(e.Pos.X-b.m.X, e.Pos.Z-b.m.Z)
 	fromHome := math.Hypot(b.m.X-b.m.HomeX, b.m.Z-b.m.HomeZ)
 
-	// 2. The reach test. Every srrevamp placement is a nest -- its DB nest's
+	// 2. The reach test. Every OpenSRO placement is a nest -- its DB nest's
 	// position and radius (round 660), or a stand-in's spawn point and
 	// MonsterRoamRadius -- so this is the nest path: inclusive against the
 	// give-up distance reduced by the excess beyond 1.5 x the radius
@@ -2006,7 +2006,7 @@ func (a *monsterAI) leaveBattle(b *brain) {
 
 // startLeg starts a leg to (destX, destZ) in clip mode (0 walk, 1 run) and
 // queues its push. The speed follows the mode: the walk speed for 0, the run
-// speed for 1 -- an inference (docs/protocol/monster_ai.md, "srrevamp's own
+// speed for 1 -- an inference (docs/protocol/monster_ai.md, "OpenSRO's own
 // monster protocol": the mover's use of +0x155/+0x174 is untraced). The
 // heading turns toward the destination, as the move's start does
 // (CGObjMoverByDest 0x0048c330 -> its slot 10, 0x0048c660, SetHeading). what
@@ -2039,7 +2039,7 @@ func (a *monsterAI) startLeg(b *brain, destX, destZ float64, mode uint8, what st
 
 // queueStop queues the stop push for a monster standing at m's position:
 // destination = position, with the leg's own speed and mode
-// (docs/protocol/monster_ai.md, "srrevamp's own monster protocol", the stop).
+// (docs/protocol/monster_ai.md, "OpenSRO's own monster protocol", the stop).
 func (a *monsterAI) queueStop(m combat.Monster) {
 	a.queue(m, &MonsterMoved{
 		MonsterID: m.ID, X: float32(m.X), Z: float32(m.Z),
@@ -2175,7 +2175,7 @@ func motionListOf(listed []combat.Monster) *MonsterMotionList {
 }
 
 // tracef logs one AI trace line when the operator asked for them
-// (SRREVAMP_AI_TRACE).
+// (OPENSRO_AI_TRACE).
 func (a *monsterAI) tracef(format string, args ...any) {
 	if a.trace && a.logger != nil {
 		a.logger.Info(fmt.Sprintf(format, args...))

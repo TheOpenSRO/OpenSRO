@@ -1,7 +1,7 @@
 # Ground items: dropping and picking up
 
 How the real server (SR_GameServer.exe) handles an item lying on the ground,
-recovered by reading the pick-up path, and what srrevamp built on it.
+recovered by reading the pick-up path, and what OpenSRO built on it.
 
 ## The object
 
@@ -100,7 +100,7 @@ decides a pick. In order:
      `ITEM_ETC_JAPAN_EVENT_GIFTBOX` -- are owner-only for their 30 s window
      and anyone's after it.
 
-   **srrevamp's `PickCheck` models the owner, the TypeID 3/3/9 exclusion and
+   **OpenSRO's `PickCheck` models the owner, the TypeID 3/3/9 exclusion and
    the party test (round 497).** `grounditem.OwnerOnlyPick(TypeID1, TypeID2,
    TypeID3, CodeName)` is the exclusion: true for TypeID 3/3/9 unless the
    codename begins `ITEM_QNO_RM_ARCHEMY`, compared case-sensitively (the
@@ -134,7 +134,7 @@ decides a pick. In order:
    first string read, `0x6a3130`/`0x6a3139`, into `ref+0x10`, which
    `CGObj::GetCodeName` (`0x004824c0`, slot 58) returns), exported as CSV
    column 70 and stored in `items.code_name`. **An empty codename -- an export
-   that predates the column -- answers not owner-only**, srrevamp's own rule:
+   that predates the column -- answers not owner-only**, OpenSRO's own rule:
    without the name the eight `ITEM_QNO_RM_ARCHEMY_1..8` ids cannot be told
    from the other 682 3/3/9 ids (690 distinct over the combined itemdata), so
    such a deployment keeps the party rule for every item until it re-exports.
@@ -143,7 +143,7 @@ decides a pick. In order:
    (`session.samePartyFunc`) asks party membership, not whether the owner is in
    the world. That is a **known, unmodelled divergence**.
 
-**srrevamp's `PickCheck` follows that order (round 493):** a gone id answers
+**OpenSRO's `PickCheck` follows that order (round 493):** a gone id answers
 `ErrNotThere` (3); an item whose row clears `CanPick` answers `ErrCannotPick`
 (`0x1839`) to everyone, its owner included, before the range, the busy flag and
 the owner are looked at; then the range (4), the busy flag (`0x1813`, moved
@@ -155,7 +155,7 @@ a failed lookup means pickable). Since round 497 that one lookup answers
 everything a drop needs -- DecayTime, CanTrade, CanPick and the owner-only
 exclusion -- from a single `GetItem`, called before `Drop` takes the hub's
 lock; before it, `Drop` made three reference-data lookups while holding it.
-The quest-condition refusal (`0x1874`) is not modelled: srrevamp has no
+The quest-condition refusal (`0x1874`) is not modelled: OpenSRO has no
 quest-achieve condition to ask. The life-state test has nothing to act on,
 since every item in the hub is on the ground.
 
@@ -206,10 +206,10 @@ HP/MP potions carry `CanTrade = 1` and DecayTime 10000, so they are unaffected
 
 The release has a second caller, `0x4e98b7`, in a job handler that asserts the
 item's `+0x150` is `-1` and chooses between it and `FUN_004901b0` on
-`[ebp+0x118]`; srrevamp models no such reservation, so only the 30 s path is
+`[ebp+0x118]`; OpenSRO models no such reservation, so only the 30 s path is
 wired.
 
-srrevamp: `grounditem.Item.Bound`, set at `Drop` from the hub's rules lookup
+OpenSRO: `grounditem.Item.Bound`, set at `Drop` from the hub's rules lookup
 (`DropRules.Bound`; `cmd/server` wires it to `refdata.Item.CanTrade` through
 `groundDropRules`). A bound item's `OwnerAt` keeps its owner and
 `ReleaseOwnerships` skips it, so the zone is never sent
@@ -223,12 +223,12 @@ DecayTime only its owner may pick it, party or not -- as in the engine.
 - ~~**How long an unclaimed item lies there before it vanishes.**~~ **Read in
   round 227** (`refobj_binary_format.md`, "Field 14 of the common prefix is
   DecayTime"): the item's own `DecayTime`, itemdata column 13, in ms, counted by
-  `CGObj::Update` (`0x484d10`). The 3 minutes srrevamp used before is now only
+  `CGObj::Update` (`0x484d10`). The 3 minutes OpenSRO used before is now only
   `grounditem.FallbackLifetime`, for an export without the column.
 - **The drop's scatter around the corpse.** Set in the spawn path, not in
-  `CGItem`; srrevamp uses a 2-unit disc, own design.
+  `CGItem`; OpenSRO uses a 2-unit disc, own design.
 
-## srrevamp's protocol (own, additive)
+## OpenSRO's protocol (own, additive)
 
 Server `internal/session/grounditem.go`, client `scripts/net/ground_items.gd`:
 
@@ -251,7 +251,7 @@ now answers `3`, and the client's refusal line tells the two apart. Since round
 515 the refusal line for `0x1812` and `0x1839` is the game's own text, read from
 the player's `textuisystem.txt` (`UIIT_MSG_STRGERR_LOCKED_BY_OTHER_ONE`,
 `UIIT_MSG_STRGERR_CANNOT_BE_PICKED`, `client/scripts/net/error_text.gd`). `3`,
-`4` and `0x1813` keep srrevamp's own wording: the client's storage switch has no
+`4` and `0x1813` keep OpenSRO's own wording: the client's storage switch has no
 case for `4` or `0x1813`, and `3` is category-dependent. The drop
 CONTENT (`combat.LootTables`) stays placeholder own design; the real per-monster
 drop tables are DB-only and unavailable.

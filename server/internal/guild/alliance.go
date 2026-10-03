@@ -2,7 +2,7 @@ package guild
 
 // Guild alliances -- the game calls them unions. RECOVERED 2026-09-17, from
 // FUN_005c6550 (the request validator) and the three functions that maintain
-// the member array. Nothing in srrevamp forms an alliance yet; this is the rule
+// the member array. Nothing in OpenSRO forms an alliance yet; this is the rule
 // set it would have to implement, and the cap below settles a claim this
 // project has carried unverified for a long time.
 //
@@ -79,7 +79,7 @@ const (
 )
 
 // CanRequestAlliance reproduces FUN_005c6550's ladder for the part of it this
-// project can express: srrevamp has no life state, no permission enforcement
+// project can express: OpenSRO has no life state, no permission enforcement
 // and no pending-request flow, so the checks that survive are the two guild
 // levels, the same-guild test and the target's existing alliance.
 //

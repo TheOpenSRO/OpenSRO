@@ -134,7 +134,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "srrevamp_native"
+name = "opensro_native"
 version = "0.1.0"
 dependencies = [
  "godot",

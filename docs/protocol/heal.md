@@ -8,7 +8,7 @@ the "what a non-damaging skill DOES" question, opened for the heal case.
 arithmetic): `'nmh'` takes its percent from value[1], not value[0]; outside `'nmh'`, value[1] is a
 +% bonus on value[0]; the rounding is a truncation; `'HLRU'` adds to value[1] and value[3]; and the
 caller heals only for action kind 0. Round 503 also wires the one exact case, a flat self-heal (see
-"What srrevamp does" below).
+"What OpenSRO does" below).
 
 ## The formula
 
@@ -87,7 +87,7 @@ clamps to `[0, GetMaxHP]` or `[0, GetMaxMP]` (vtable `+0x110` / `+0x114`). After
 pool with its snapshot at `+0xa00` / `+0xa04`, the adjust ORs the `0x40` flag into the word at
 `+0xa0e` (`0x4a88d5`). What reads that word was not read.
 
-## What srrevamp does (round 503)
+## What OpenSRO does (round 503)
 
 It wires **one case: a flat self-heal.** The rule is `skillparam.SelfHealAmounts`, and
 `cmd/export-refdata` writes its result as skill CSV columns 43/44 (`SelfHealHP`, `SelfHealMP`). A
@@ -98,7 +98,7 @@ row gets a non-zero amount only when all of these hold:
 - it carries none of `'efr'`, `'nmh'`, `'mwhh'`, `'mwmh'` or getv `'HLRU'`;
 - for HP, value[1] is 0; for MP, value[3] is 0.
 
-With p170/p171 at 0 (their one writer is the `'rhru'` buff, and srrevamp has no buff system),
+With p170/p171 at 0 (their one writer is the `'rhru'` buff, and OpenSRO has no buff system),
 `dHP = v0` and `dMP = v2` exactly.
 
 On the retail table that selects **57 rows**:

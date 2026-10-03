@@ -18,7 +18,7 @@
 // **HP** (docs/protocol/db_columns.md), so the real server persists current
 // mana and relogging does not refill it.
 //
-// The choice can stand on its own merits -- srrevamp has no cross-session
+// The choice can stand on its own merits -- OpenSRO has no cross-session
 // consequence that turns on a mana total -- but it is own design, and
 // internal/character's EngineOnlyColumns records it as one with a test that
 // keeps it stated.
@@ -76,7 +76,7 @@ import (
 // Worked: MaxHP 1000 -> 8 a tick standing, 80 sitting. MaxHP 200 -> 1 standing
 // (the floor; 1.6 truncates to 1), 16 sitting.
 //
-// NOT MODELLED, disclosed: the PK-penalty branch (srrevamp keeps no
+// NOT MODELLED, disclosed: the PK-penalty branch (OpenSRO keeps no
 // PKPenaltyPoint), the zombie status and the timed-effect switch (no status
 // effects), skill buffs on 'hprg'/'mprg' (their slot-1/slot-3 writers are skill
 // effects), and ApplyHPMPDelta's params 143/144 cut (no source of either).

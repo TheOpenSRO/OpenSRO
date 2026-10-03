@@ -126,7 +126,7 @@ static func open(path: String) -> Pk2Reader:
 	reader._native = _open_native(path)
 	return reader
 
-## The archive opened natively, or null: no library, SRREVAMP_NATIVE=0, or a
+## The archive opened natively, or null: no library, OPENSRO_NATIVE=0, or a
 ## native open that failed (logged; the GDScript reader then serves it alone).
 static func _open_native(path: String) -> Object:
 	var native := NativeAssets.new_pk2()

@@ -4,16 +4,16 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
 )
 
 // Which learned skills a player may hold and cast (the round 691 review).
 //
 // Retail never puts a skill into a player's book that the learn check
 // FUN_0059e450 would refuse, except the defaults _AddNewChar writes (the race's
-// base attacks, `_RefCharDefault_Skill`). srrevamp's learn gate refused too
+// base attacks, `_RefCharDefault_Skill`). OpenSRO's learn gate refused too
 // little before round 691 and its review -- no 0x3409, no race clause -- so a
 // character can hold a monster's skill or another race's. The cast path checks
 // only that a skill is known, so such a skill would cast. playerHoldRefusal is

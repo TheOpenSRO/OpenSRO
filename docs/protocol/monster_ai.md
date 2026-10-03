@@ -259,9 +259,9 @@ locals) found no reader in the AI namespace.
 | 3 | `+0x08` | u8 |  |
 | 4 | `+0x0c` | u32 |  |
 | 5 | `+0x10` | u8 |  |
-| 6 | `+0x14` | u32 | the **detection distance** (world units): the target-acquisition radius is `BCRadius + this` (`ctx+0x15c`, round 257 below). Non-zero installs the acquire-a-target behaviour at context `+0xf8` (`AITactics_AcquireTarget`, `0x5478f0`; zero installs the no-op `FUN_00559000`), lets the AI-skill scan (`AI::CTactics::RegisterAISkill`, `0x53fa70`) raise the context's max skill range `+0x160`, and at `Init` seeds `+0x7c` from that range for an immobile monster (run speed `+0x170 <= 0`). `FUN_005473c0` (behaviour `+0xec`) credits an attacker of an immobile monster only when `Distance(self, attacker) <= +0x14`. **srrevamp's stand-in: 100** for every species (`ai.TacticsDetectionDistance`, round 552; own design, a user decision) |
-| 7 | `+0x18` | u8 | **aggression mode** 0/1/2 (above). **srrevamp's stand-in: 0**, every species aggressive (`ai.TacticsAggressionMode`, round 552; own design, a user decision -- the `-monster-aggro` flag itself is the "none aggressive" setting) |
-| 8 | `+0x1c` | u32 | **aggressive chance, percent**, for mode 2. srrevamp's stand-in: 0, not read under mode 0 (`ai.TacticsAggressionPct`) |
+| 6 | `+0x14` | u32 | the **detection distance** (world units): the target-acquisition radius is `BCRadius + this` (`ctx+0x15c`, round 257 below). Non-zero installs the acquire-a-target behaviour at context `+0xf8` (`AITactics_AcquireTarget`, `0x5478f0`; zero installs the no-op `FUN_00559000`), lets the AI-skill scan (`AI::CTactics::RegisterAISkill`, `0x53fa70`) raise the context's max skill range `+0x160`, and at `Init` seeds `+0x7c` from that range for an immobile monster (run speed `+0x170 <= 0`). `FUN_005473c0` (behaviour `+0xec`) credits an attacker of an immobile monster only when `Distance(self, attacker) <= +0x14`. **OpenSRO's stand-in: 100** for every species (`ai.TacticsDetectionDistance`, round 552; own design, a user decision) |
+| 7 | `+0x18` | u8 | **aggression mode** 0/1/2 (above). **OpenSRO's stand-in: 0**, every species aggressive (`ai.TacticsAggressionMode`, round 552; own design, a user decision -- the `-monster-aggro` flag itself is the "none aggressive" setting) |
+| 8 | `+0x1c` | u32 | **aggressive chance, percent**, for mode 2. OpenSRO's stand-in: 0, not read under mode 0 (`ai.TacticsAggressionPct`) |
 | 9 | `+0x20` | u8 | **retarget rule** (round 259, "The threat table"): 0 keep the first attacker; 1 face the latest attacker; 2 by hate -- `AITactics_ResolveTarget`: the challenger overtakes on more hate or after two idle attack intervals, a third attacker only when it stands farther than the target (round 238 read `FUN_00545680` as an owner lookup; it is the hate resolver) |
 | 10 | `+0x21` | u8 | `== 2` disables behaviour `+0x10c` (`FUN_00548950`), whose message builder `FUN_00541200` writes this byte, the object id, the TacticsID and slot 73's byte into a request. In this build the trigger also needs the HP bucket (`FUN_00541d70`: `GetCurHP/GetMaxHP` against 0.2/0.4/0.6/0.8) to be **negative**, which it never is -- `jge` at `0x54898d` -- so the request is dead |
 | 11 | `+0x22` | u8 | read by `AI::CTactics::FUN_00540120` (unread) |
@@ -281,7 +281,7 @@ locals) found no reader in the AI namespace.
 | 39 | `+0x88` | u8 |  |
 | 40 | `+0x89` | u8 | 0..3 in `FUN_00548120` (behaviour `+0x100`, the reach test `BATTLE::OnUpdate` runs first): 1 or 2 -> returns 1 at once; 3 -> returns 1 while the HP bucket is < 2 (HP under 40%); otherwise the `+0x7c` test decides |
 | 41 | `+0x8c` | u32 |  |
-| 42 | `+0x90` | u32 | **flags**. Bit 2 (`0x4`), bit 7 (`0x80`) and bit 8 (`0x100`) pick the target-kind filter pair the acquire behaviour scans with ((2,1) default, (3,5) bit 2, (4,5) bit 7, (5,0x11) bit 8 -- each pair is (selector, kind mask): the default is selector 2, the nearest, over kind mask 1, players; round 552 corrected a reading of it as kinds (1,2)); bits 2/7 also swap the `+0x100` behaviour for `FUN_005481a0`/`FUN_00548270`, make the give-up check return 0, disable the `+0x10c` trigger, and shorten `Init`'s scan timer (tactics timer 1, the acquire's cadence: base 1000 ms with spread `10 + |rand| % 491`, to base 200 with spread `10 + |rand| % 41`; the unit is milliseconds and the arming is `AITactics_ArmTimer` `0x53d600` -- read in round 552, "Target acquisition: the runtime"). srrevamp's stand-in: 0 (`ai.TacticsFlags`) |
+| 42 | `+0x90` | u32 | **flags**. Bit 2 (`0x4`), bit 7 (`0x80`) and bit 8 (`0x100`) pick the target-kind filter pair the acquire behaviour scans with ((2,1) default, (3,5) bit 2, (4,5) bit 7, (5,0x11) bit 8 -- each pair is (selector, kind mask): the default is selector 2, the nearest, over kind mask 1, players; round 552 corrected a reading of it as kinds (1,2)); bits 2/7 also swap the `+0x100` behaviour for `FUN_005481a0`/`FUN_00548270`, make the give-up check return 0, disable the `+0x10c` trigger, and shorten `Init`'s scan timer (tactics timer 1, the acquire's cadence: base 1000 ms with spread `10 + |rand| % 491`, to base 200 with spread `10 + |rand| % 41`; the unit is milliseconds and the arming is `AITactics_ArmTimer` `0x53d600` -- read in round 552, "Target acquisition: the runtime"). OpenSRO's stand-in: 0 (`ai.TacticsFlags`) |
 | 43 | string | 2-byte length + bytes | stored at record `+0x94`; no reader found (round 238 called it the skill list -- wrong, the skills come from `_RefAISkill` rows, below) |
 
 **The give-up distance, `+0x7c`.** `BATTLE::OnUpdate` calls behaviour `+0x100`
@@ -363,7 +363,7 @@ out-flag 1 halves `base` with a floor of 1000 ms (`NestSlot_HalveHatchDelay`,
 `0x560e10`) and retries sooner. `AIHive_HatchPass_TotalCapped` (`0x55ec10`) is
 the same pass under a hive-wide count read from the hive row's `+0x08`.
 
-**What this settles for srrevamp.** `respawnDelay = 10 s` in
+**What this settles for OpenSRO.** `respawnDelay = 10 s` in
 `server/cmd/server/main.go` is own design with a proven reason: the real delay
 is a per-nest window `[col12, col13]` seconds in a table the project does not
 hold (the client's `npcpos.txt` is the five-column projection id/region/x/y/z).
@@ -602,11 +602,11 @@ FLEE, HOMING and EMOTION:
 WANDER stores 1000 ms instead when no leg could be picked. So an idle monster stands
 2-6 s, walks 46-124 units at 22.5-67.5 degrees off its heading for 5-6 s, and repeats -- going
 HOMING (via `0x26`) whenever `IsWithinRoamRadius` says it has strayed. `server/internal/ai` carries the
-table (`DwellRange`) and the leg constants; srrevamp's server does not move monsters yet.
+table (`DwellRange`) and the leg constants; OpenSRO's server does not move monsters yet.
 
 ## The roster's real walk and run speeds (round 362)
 
-WANDER needs a speed and srrevamp carries none. These are the game's own, read
+WANDER needs a speed and OpenSRO carries none. These are the game's own, read
 from the retail `characterdata_5000.txt` on 2026-09-21.
 
 *Carried since round 536*: `cmd/server`'s `monsterSpec.WalkSpeed`/`RunSpeed` hold the table below
@@ -687,7 +687,7 @@ leg's. `AITactics_Handler_110` (`0x5489b0`) picks the move's clip byte, 0 or 1 -
 0, every other state 1, and 0 or 1 outright when a speed is absent (round 536, "The server half") --
 and `FUN_00541820`, which WANDER's `OnEnter` calls at `0x559e82` before the move, passes it on (the
 behaviour-table row for `+0x110` below). That 0/1 selection is **read**. That 0 is the walk clip
-walked at the walk speed, and 1 the run clip at the run speed, is the **inference** srrevamp's
+walked at the walk speed, and 1 the run clip at the run speed, is the **inference** OpenSRO's
 runtime carries (below), because the mover's use of the owner's `+0x155`/`+0x174` is untraced. So a
 WANDER leg walks at the walk speed, and HOMING runs at the run speed, by inference.
 
@@ -729,7 +729,7 @@ PE images as doubles and are **byte-identical across the two binaries**. A full
 turn maps to **65535**. The full spec, with its controls, is now
 `docs/protocol/opcodes/movement.md`.
 
-**What this means for srrevamp's move packet** (`docs/TODO.md`): there is a
+**What this means for OpenSRO's move packet** (`docs/TODO.md`): there is a
 retail shape to mirror, and the speed belongs to whatever consumes `0x7021`, not
 to the state machine. The walk/run table above is still the data that consumer
 will need.
@@ -824,13 +824,13 @@ the radius widened to a float (`fStack_48 <= fStack_58`), the owner skipped, sor
 pops at most ten. `ai.LevelScaledRadius` returns that int since round 553, through the same float
 store, and `ai.GatherWithin` is the gather.
 
-**What srrevamp can use.** `ai.DetectionRadius` and `ai.LevelScaledRadius`
+**What OpenSRO can use.** `ai.DetectionRadius` and `ai.LevelScaledRadius`
 carry the two rules with a test. The per-species `+0x14` distances are in no
 archive this project holds: `_RefTactics` is a shard-database table, the
 server package on the box has no shard backup (its `SR_GameRefData` folder is
 the client-side text tables plus shop/teleport/quest files; its three
 `SR_GameServer` minidumps are 2 MB thread-and-module dumps with no heap). So
-when srrevamp's monsters learn to notice a player, the distance itself will be
+when OpenSRO's monsters learn to notice a player, the distance itself will be
 disclosed per species, and the rule around it will not be. *Round 552 built it
 that way*: the scan runs in the runtime behind `-monster-aggro` with one disclosed distance for
 every species (`ai.TacticsDetectionDistance`, 100), and the rest -- the radius, the nearest rule,
@@ -990,7 +990,7 @@ idle window above. The cadence between swings is the action machine's cooldown, 
 and the timer read (round 545)", below.
 
 `ai.ThreatTable` (`internal/ai/threat.go`) carries the credit, the drop, the
-three rules and the interval with tests; nothing in srrevamp runs it yet.
+three rules and the interval with tests; nothing in OpenSRO runs it yet.
 
 ## The skill choice: triggers first, then a weighted draw (round 260)
 
@@ -1153,7 +1153,7 @@ So a tactics row shapes a monster through three fields of this table
 above; everything else in the row is data the states have not been seen to
 touch, and stays unlabelled until a reader is found.
 
-## What this gives srrevamp
+## What this gives OpenSRO
 
 The server has monster spawns and a combat loop but no AI: monsters do not
 wander, chase, give up, or go home. This is the machine that does all four, and
@@ -1172,7 +1172,7 @@ what WANDER picks for a destination or how BATTLE chooses a skill; those are
 above gives the rules that are now implementable without a tactics table at
 all: the roam radius (x1.5 under rule 1) with
 its HOMING exit, and the give-up distance with its IDLE exit. Both wait on
-srrevamp's server moving monsters at all (`docs/TODO.md`).
+OpenSRO's server moving monsters at all (`docs/TODO.md`).
 
 *Corrected in round 537.* This paragraph said the roam radius is "200 units when nothing sets it".
 `AI::CTactics::Attach` (`0x53f2a0`) does store 200.0 (`0xb45d68`, `fld` at `0x53f367`) when there is
@@ -1180,7 +1180,7 @@ no nest, no caller radius and the row's `+0x84` (column 38) is not positive -- b
 case `IsWithinRoamRadius` (`0x545f70`) answers "within" without measuring (`cmp [row+0x84],0; jg`
 at `0x545fde`, then `mov al,1`), unless the owner's slot 242 or 243 answers non-zero (the (1,2,4,x)
 TID shapes; slot 243 answering 1 makes `Attach` store 5.0 instead). So retail never applies the 200
-to a roster monster. srrevamp's runtime uses 200 as its own roam radius (below), disclosed as such.
+to a roster monster. OpenSRO's runtime uses 200 as its own roam radius (below), disclosed as such.
 Round 537 built the roam radius and its HOMING exit; the give-up distance waits on the BATTLE chase.
 Round 545 built its two rules as pure functions (`ai.TargetWithinChaseRange`, `ai.GiveUpCode`), and
 round 546 runs them in the runtime's BATTLE tick behind `-monster-battle` ("BATTLE's chase and the
@@ -1315,14 +1315,14 @@ independently.
 `GObjPC` function that reaches the tactics row through `param_1[0x62]` rather
 than the AI context, so a sweep anchored on the AI module does not see it.
 
-## srrevamp's own monster protocol (placeholders)
+## OpenSRO's own monster protocol (placeholders)
 
 Round 533 added two messages so the client can draw a monster the server moves. Both are
-srrevamp's own, additive placeholders (`docs/protocol/PROTOCOL_DECISION.md`); no existing layout
+OpenSRO's own, additive placeholders (`docs/protocol/PROTOCOL_DECISION.md`); no existing layout
 changed. Client: `scripts/net/combat.gd` (`CombatNet.decode_monster_moved`,
 `decode_monster_motion_list`), drawn by `scripts/world/monster_motion.gd` (`MonsterMotion`) and
 `World3D._on_monster_moved` / `_on_monster_motion_list` / `_step_monster_bodies`. Since round 537
-the server sends both, and only with its `-monster-ai` flag on, which is off by default ("srrevamp's
+the server sends both, and only with its `-monster-ai` flag on, which is off by default ("OpenSRO's
 runtime", below). On 2026-09-23,
 0x007C..0x007F appeared in no non-test file under `server/internal/session`,
 `server/internal/proto` or `client/scripts/net`. Round 536 declared the two in
@@ -1343,8 +1343,8 @@ on 2026-09-24 neither appeared in any non-test file under `server/internal` or
 | `OpMonsterMoved 0x007c` | s→zone | s64 monster id, f32 x, f32 z (the server's position when it issued the move), f32 dest_x, f32 dest_z, f32 speed (world units per second), u8 mode (0 walk clip, 1 run clip) -- 29 bytes |
 | `OpMonsterMotionList 0x007f` | s→requester | u16 n, then n entries of {s64 id, f32 dest_x, f32 dest_z, f32 speed, u8 mode} (21 bytes each); sent right after an `OpMonsterListResult`, ONE packet per list |
 | `OpMonsterAttacked 0x007d` | s→zone, the attacker included | s64 monster id, s64 target character id, s32 damage (0 when blocked), u8 flags (bit 0 the monster's critical, bit 1 blocked, bit 2 the target died), s32 target HP after the blow (after a death, the HP it was put back on its feet with -- or 0 under `-player-dead-state`, round 549), s64 death exp lost -- 33 bytes; sent right AFTER the attacker's `OpAttackResult`, from the same goroutine, and after the zone's `OpMonsterDamaged` for the same swing; only with `-monster-strike-push` on (round 541). With `-monster-battle` on as well (round 546) the same message carries the monster's OWN swing, from the AI tick's strike worker, with no `OpAttackResult` before it; the layout is unchanged |
-| `OpMonsterSpawned 0x007e` | s→zone | one record in `OpMonsterListResult`'s own encoding (s64 id, u16-prefixed name, u16-prefixed code name, f32 x/y/z, u32 max HP, HP, level, rarity), then f32 heading (radians, srrevamp's world frame: from +x toward +z); sent when a monster appears -- a roster respawn or a GM `/spawn` -- only with `-monster-spawn-push` on (round 542) |
-| `OpRevive 0x0028` | c→s | one u8 option since round 665, retail's own byte: 1 the return point, 2 the present point (level 10 or under). Sent by the dead window's two buttons (`HudPanels.show_revive_prompt` -> `World3D._on_revive_requested(option)` -> `NetClient.revive(option)`) and by `SRREVAMP_QA_REVIVE_AFTER` with `SRREVAMP_QA_REVIVE_OPTION`. An empty request (a client before round 665) is option 2 at level 10 or under and option 1 above it. The retail request is **0x3053** {u8} (the client's `FUN_00797d90`, `push 0x3053` at `0x797e30`; round 665 -- the 0x7053 written here before was the `0x7000 \| op` precedent, never a read). `character_state.md`, "The resurrect choices (round 665)" |
+| `OpMonsterSpawned 0x007e` | s→zone | one record in `OpMonsterListResult`'s own encoding (s64 id, u16-prefixed name, u16-prefixed code name, f32 x/y/z, u32 max HP, HP, level, rarity), then f32 heading (radians, OpenSRO's world frame: from +x toward +z); sent when a monster appears -- a roster respawn or a GM `/spawn` -- only with `-monster-spawn-push` on (round 542) |
+| `OpRevive 0x0028` | c→s | one u8 option since round 665, retail's own byte: 1 the return point, 2 the present point (level 10 or under). Sent by the dead window's two buttons (`HudPanels.show_revive_prompt` -> `World3D._on_revive_requested(option)` -> `NetClient.revive(option)`) and by `OPENSRO_QA_REVIVE_AFTER` with `OPENSRO_QA_REVIVE_OPTION`. An empty request (a client before round 665) is option 2 at level 10 or under and option 1 above it. The retail request is **0x3053** {u8} (the client's `FUN_00797d90`, `push 0x3053` at `0x797e30`; round 665 -- the 0x7053 written here before was the `0x7000 \| op` precedent, never a read). `character_state.md`, "The resurrect choices (round 665)" |
 | `OpReviveResult 0x0029` | s→requester | u16-prefixed error string (empty on success), then s32 HP and s32 MP -- HP `1 + trunc(0.4 x MaxHP)`, the retail handler's additive arithmetic from 0 (round 550, `session.reviveHPDelta`), MP `character.RespawnMP` (0.4 of the maximum, a disclosed stand-in for the same additive rule); the decoder takes a refusal with or without the tail. Sent only with `-player-dead-state` on (the server half), and only after an `OpRevive`: round 665 removed the auto-revive fallback. For option 1 it follows the `OpChangeZoneResult` to the return point and carries the load path's HP `trunc(0.4 x MaxHP)` |
 
 Fixtures, pinned by `client/scripts/net/combat_test.gd`:
@@ -1400,13 +1400,13 @@ turning the body, and ends in the stand clip.
 
 **Stand-ins, each disclosed at its constant:**
 
-- **The f32 speed is srrevamp's own.** Retail `0x7021`/`0xB021` carry no speed
+- **The f32 speed is OpenSRO's own.** Retail `0x7021`/`0xB021` carry no speed
   (`docs/protocol/opcodes/movement.md`); the engine's mover reads it off the object (+0x174).
 - **Mode 0/1 -> walk/run clip is an inference.** Grounded: `AITactics_Handler_110` (`0x5489b0`)
   picks 0 or 1, and the `0x704f` byte is `(mode == 1) + 2` (`0x54184d..0x541859`). Untraced: the
   mover's use of owner+0x155/+0x174. Unread: `GInterfaceSend::FUN_009d4a00` sends 2 when +0x25d is
   set, and what +0x25d means.
-- **srrevamp's own numbers:** `RESYNC_DISTANCE` 32 (it must exceed Earth Ghost's 75 u/s run over a
+- **OpenSRO's own numbers:** `RESYNC_DISTANCE` 32 (it must exceed Earth Ghost's 75 u/s run over a
   0.3 s round trip, 22.5), `HEIGHT_RESOLVE_STEP` 2, `MAX_HEIGHT_RESOLVES_PER_FRAME` 32,
   `UNKNOWN_MOVE_PULL_SECONDS` 5, `REAIM_EPSILON` 0.5.
 - **The height along a leg** was the terrain-only ray, not the navmesh, until round 557. It is now
@@ -1423,7 +1423,7 @@ turning the body, and ends in the stand clip.
 **Inert when built.** Nothing called any of it in round 536: `OpMonsterListResult` and its handler
 were unchanged (the list's round-trip and flow tests are the control), `combat.Hub`'s motion API had
 no caller outside tests, and `server/internal/ai` was still parked. Round 537's tick calls it, behind
-`-monster-ai` ("srrevamp's runtime", below). Every address below was re-read in
+`-monster-ai` ("OpenSRO's runtime", below). Every address below was re-read in
 `/var/tmp/srv.asm` and `/var/tmp/decomp_server` on 2026-09-24.
 
 **The wire.** `server/internal/session/monstermove.go` declares `OpMonsterMoved 0x007c` and
@@ -1499,7 +1499,7 @@ with `(mode == 1) + 2` when the byte differs from the owner's `+0x155`.
 - `AITactics_HasArrived` (`0x541f60`): `fcomp DWORD 0xb45b28` (5.0f) at `0x541fb2`, then
   `test ah,0x5; jp`. Arrived only while dist < 5.0.
 - The two measure differently. `IsWithinRoamRadius`'s difference (`FUN_00430ad0`) zeroes y, and
-  `HasArrived`'s (`FUN_00430d40`) keeps it. srrevamp's monsters carry no height of their own, so
+  `HasArrived`'s (`FUN_00430d40`) keeps it. OpenSRO's monsters carry no height of their own, so
   `ai.HasArrived` compares on the ground plane.
 - `ai.WithinRoamRadius` and `ai.HasArrived` carry them.
 
@@ -1524,12 +1524,12 @@ with `(mode == 1) + 2` when the byte differs from the owner's `+0x155`.
 **Not modelled, disclosed:**
 
 - `PickWanderLeg`'s `ctx+0x14c` term (unread; for a nest monster it is not verified to be empty);
-- the 30-unit blocked-probe reversal (srrevamp's server holds no collision world);
+- the 30-unit blocked-probe reversal (OpenSRO's server holds no collision world);
 - the four IDLE-roll owner conditions;
 - `MoveHome`'s slot-243 exact-home case;
 - the mover's 0.01f component zeroing.
 
-Headings stay in srrevamp's world frame; the tick that drives these rules carries that disclosure.
+Headings stay in OpenSRO's world frame; the tick that drives these rules carries that disclosure.
 
 ### Which way each roster model faces (round 533, measured)
 
@@ -1577,7 +1577,7 @@ front. How the retail client draws a `_CLON` row is not established.
 
 ### The strike and spawn pushes (round 540: the client half)
 
-Two more of srrevamp's own placeholders, in the table above. Round 540 built the client half.
+Two more of OpenSRO's own placeholders, in the table above. Round 540 built the client half.
 **Round 541 built the strike push's server half** ("The strike push's server half (round 541)",
 below), behind `-monster-strike-push`, which is off by default. **Round 542 built the spawn push's
 server half** ("The spawn push's server half (round 542)", below), behind `-monster-spawn-push`,
@@ -1659,7 +1659,7 @@ the start, which `docs/TODO.md` now files as the follow-up that would make the p
 
 **The spawn push** makes the body the way a listed one is made (`_spawn_or_update_monster`). It
 then faces the body along the heading, when the body is standing and its model's front was
-measured. `MonsterMotion.heading_dir` is (cos h, sin h) on (x, z). That is srrevamp's heading frame
+measured. `MonsterMotion.heading_dir` is (cos h, sin h) on (x, z). That is OpenSRO's heading frame
 (`server/internal/ai/wander.go`), and it is the unit heading the engine's SetHeading writes to
 +0x24/+0x28/+0x2c as (cos a, 0, sin a): `GObjPC::FUN_00482440` (IGObj slot 230; the CGObjMobile
 override `0x0048ba10` writes the same three), through `FUN_00489490` -> `0x009fc0b0` (the CRT's
@@ -1680,8 +1680,8 @@ push's server half (round 541)"):
   push off, it is the reverse.
 
 **Measured live (round 540, 2026-09-24, render box, hardware GL).** The server was built from the
-tree at `e17cda3`, which sends no push. Both runs used `SRREVAMP_QA_ATTACK_FAST=1
-SRREVAMP_QA_ATTACK_NAME=Mangyang SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames
+tree at `e17cda3`, which sends no push. Both runs used `OPENSRO_QA_ATTACK_FAST=1
+OPENSRO_QA_ATTACK_NAME=Mangyang OPENSRO_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames
 600`.
 
 - **Run A, as it is (no push).** There were 38 counter results (took > 0; none blocked, since the
@@ -1689,7 +1689,7 @@ SRREVAMP_QA_ATTACK_NAME=Mangyang SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server -
   first 37 counters in order, and no `strikes` line. The 38th counter's result came at t=9.63, and
   its blow was due about 0.2 s of game time later; the run's last result came at t=9.73, and the
   run ended before the blow was due.
-- **Run B, with `SRREVAMP_QA_MOB_STRIKE=1`.** There were 44 counter results and 44 stand-in
+- **Run B, with `OPENSRO_QA_MOB_STRIKE=1`.** There were 44 counter results and 44 stand-in
   pushes. The log has 44 `strikes` lines, all `own counter, drawn as the blow lands`, matching the
   results monster for monster and number for number. It has no `counter from the result` line,
   and 43 red numbers rose over the player. The 44th counter's result came at t=9.65, too late
@@ -1699,21 +1699,21 @@ SRREVAMP_QA_ATTACK_NAME=Mangyang SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server -
 
 **Stand-ins:**
 
-- Both layouts are srrevamp's own.
+- Both layouts are OpenSRO's own.
 - The pairing test (the numbers repeat, and the target is not another drawn player) stands in for
   the character id the client is not told when it enters the world.
 - The target's number is drawn over its head at the height the player's own number uses.
-- `SRREVAMP_QA_MOB_STRIKE=1` stands in for a server with the push. It sends each counter result's
+- `OPENSRO_QA_MOB_STRIKE=1` stands in for a server with the push. It sends each counter result's
   push through `NetClient._dispatch`, deferred to the end of the frame, with -1 for the target.
 
 ### The strike push's server half (round 541)
 
 `server/internal/session/monsterstrike.go` sends `OpMonsterAttacked`. It is sent only when
-`cmd/server` runs with **`-monster-strike-push`** (env `SRREVAMP_MONSTER_STRIKE_PUSH`, read like
-`SRREVAMP_MONSTER_AI`: a value that does not parse leaves it off with a WARN), which is **off by
+`cmd/server` runs with **`-monster-strike-push`** (env `OPENSRO_MONSTER_STRIKE_PUSH`, read like
+`OPENSRO_MONSTER_AI`: a value that does not parse leaves it off with a WARN), which is **off by
 default**. With it off nothing is sent, and the wire is what it was before round 541. It does not
 depend on `-monster-ai`. The boot log says which: `monster strike push on: ...` or
-`monster strike push off (-monster-strike-push / SRREVAMP_MONSTER_STRIKE_PUSH)`.
+`monster strike push off (-monster-strike-push / OPENSRO_MONSTER_STRIKE_PUSH)`.
 
 - **The counter did not change.** `performAttack`'s counter branch moved unchanged into
   `monsterStrike`. The function returns the outcome (damage, critical, blocked, died, HP, death exp
@@ -1768,8 +1768,8 @@ Bram in jangan, Cyra moved to donwhang):
 **The live check** (run in round 543, below; round 541's session was not allowed to write to the
 render box). Use a server built from the tree, with the flag on in qa_shot's environment. qa_shot
 passes its environment to the server it starts:
-`SRREVAMP_MONSTER_STRIKE_PUSH=1 SRREVAMP_QA_ATTACK_FAST=1 SRREVAMP_QA_ATTACK_NAME=Mangyang
-SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 600`, with
+`OPENSRO_MONSTER_STRIKE_PUSH=1 OPENSRO_QA_ATTACK_FAST=1 OPENSRO_QA_ATTACK_NAME=Mangyang
+OPENSRO_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 600`, with
 `SERVER_BIN=<that build>`. Expect:
 
 - one `World3D: monster %d strikes %d for %d (HP %d)` line for **every** counter result, blocked
@@ -1779,7 +1779,7 @@ SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 600`, with
 - and the server log saying `monster strike push on`.
 
 **Measured (round 543, 2026-09-24): passed.** Server built from `97b4a94` (round 541), client at
-`cea193a` (round 542), the command above with `SERVER_BIN=/var/tmp/mobai/srrevamp-server-541`,
+`cea193a` (round 542), the command above with `SERVER_BIN=/var/tmp/mobai/opensro-server-541`,
 600 frames. The server log says `monster strike push on`. The client log has 138 `attack hit`
 lines, of which 45 report a counter (`took N` with N > 0; no blocked counter occurred in the run),
 and exactly 45 `World3D: monster %d strikes %d for %d (HP %d)` lines, whose damage sequence equals
@@ -1788,17 +1788,17 @@ the counters' `took` sequence in order (13, 13, 12, 12, ...). There is no `count
 character carries no shield), and an observer's screen (one client). The frames were deleted from
 `/var/tmp`; the logs were kept off the box.
 
-**Stand-ins:** none new. Every number is the counter's own, and the layout is srrevamp's own and
+**Stand-ins:** none new. Every number is the counter's own, and the layout is OpenSRO's own and
 additive.
 
 ### The spawn push's server half (round 542)
 
 `session.BroadcastMonsterSpawned` (`server/internal/session/combat.go`) sends `OpMonsterSpawned`. It
-sends only when `cmd/server` runs with **`-monster-spawn-push`** (env `SRREVAMP_MONSTER_SPAWN_PUSH`,
-read like `SRREVAMP_MONSTER_AI`: a value that does not parse leaves it off with a WARN), which is
+sends only when `cmd/server` runs with **`-monster-spawn-push`** (env `OPENSRO_MONSTER_SPAWN_PUSH`,
+read like `OPENSRO_MONSTER_AI`: a value that does not parse leaves it off with a WARN), which is
 **off by default**. With it off nothing is sent, and the wire is what it was before round 542. It
 does not depend on `-monster-ai` or `-monster-strike-push`. The boot log says which:
-`monster spawn push on: ...` or `monster spawn push off (-monster-spawn-push / SRREVAMP_MONSTER_SPAWN_PUSH)`.
+`monster spawn push on: ...` or `monster spawn push off (-monster-spawn-push / OPENSRO_MONSTER_SPAWN_PUSH)`.
 
 - **Who sends it.** `cmd/server`'s `maintainMonster` hands its first spawn and every respawn to a
   `spawned` callback, and `main` passes `BroadcastMonsterSpawned`. The GM console sends one for each
@@ -1826,7 +1826,7 @@ does not depend on `-monster-ai` or `-monster-strike-push`. The boot log says wh
   drawing `ai.SpawnHeading` from its own rng, so the pushed heading and the brain's first heading are
   the same number. The brain's rng draws one value fewer per monster, which changes the sequences the
   seeded AI tests replay; they all still pass.
-- **The frame** is srrevamp's world frame, radians from +x toward +z (`internal/ai/wander.go`), never
+- **The frame** is OpenSRO's world frame, radians from +x toward +z (`internal/ai/wander.go`), never
   an engine angle. The client faces the body along (cos h, sin h) (`MonsterMotion.heading_dir`, "The
   strike and spawn pushes" above).
 - **The pattern** is the ground-item spawn push (`OpGroundItemSpawned 0x006c`,
@@ -1869,8 +1869,8 @@ push's zone):
 **The live check has not been run yet.** This session was not allowed to write to the render box.
 Run it before the flag is turned on for the public server, with a server built from the tree and
 the flag on in qa_shot's environment:
-`SRREVAMP_MONSTER_SPAWN_PUSH=1 SRREVAMP_QA_ATTACK_FAST=1 SRREVAMP_QA_ATTACK_NAME=Mangyang
-SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 600`, with `SERVER_BIN=<that build>`.
+`OPENSRO_MONSTER_SPAWN_PUSH=1 OPENSRO_QA_ATTACK_FAST=1 OPENSRO_QA_ATTACK_NAME=Mangyang
+OPENSRO_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 600`, with `SERVER_BIN=<that build>`.
 The client runs about 20x slower than the server (the time dilation under "The live checks",
 below), so a kill early in the run leaves time for its 10 s respawn. Expect:
 
@@ -1887,7 +1887,7 @@ below), so a kill early in the run leaves time for its 10 s respawn. Expect:
 
 **Stand-ins:**
 
-- The layout is srrevamp's own and additive.
+- The layout is OpenSRO's own and additive.
 - `respawnDelay` stays 10 s, under its existing disclosure (`cmd/server/main.go`; "The `_RefNest`
   row", above).
 - A rarity-3 species of the roster's TypeID shape, and a species of any other shape, would face its
@@ -1900,14 +1900,14 @@ below), so a kill early in the run leaves time for its 10 s respawn. Expect:
   reader. The ground-item pushes, regen and the AI tick already stall the same way. The kill switch
   is the mitigation.
 
-## srrevamp's runtime: the monster AI tick (round 537)
+## OpenSRO's runtime: the monster AI tick (round 537)
 
 `server/internal/session/monsterai.go` runs the machine above over the live monsters. It runs only
-when `cmd/server` is started with **`-monster-ai`** (env `SRREVAMP_MONSTER_AI`, parsed with
+when `cmd/server` is started with **`-monster-ai`** (env `OPENSRO_MONSTER_AI`, parsed with
 `strconv.ParseBool`; anything unparsable is off, with a WARN). **The default is off**, and off is
 the kill switch: `RunMonsterAI` is never called, the runtime pointer stays nil, `noteStruck` does
 nothing and `OpMonsterList` is answered with the one list result it always was, byte for byte. The
-boot log says which: `monster AI off (-monster-ai / SRREVAMP_MONSTER_AI)` or
+boot log says which: `monster AI off (-monster-ai / OPENSRO_MONSTER_AI)` or
 `monster AI on: tick 100ms (own design), roam radius 200 (own design)`. How an operator flips it is
 in `deploy/README.md`, "Monster AI (off by default)".
 
@@ -1939,7 +1939,7 @@ in `deploy/README.md`, "Monster AI (off by default)".
 survives it: a click, a keep-up repeat and a cast all come through there. The tick drains the
 blows and, for a monster not already in BATTLE, does what `CAIState::OnAttacked` (`0x558ea0`) does:
 `SetTarget(1)` (`0x53ffe0`: `push 1` at `0x558eed`, the call at `0x558eef`), then `ChangeState(3)` (`lea edi,[ebx+3]` at `0x558f01`)
--- no aggression test and no range test. Trace lines, with `SRREVAMP_AI_TRACE` set:
+-- no aggression test and no range test. Trace lines, with `OPENSRO_AI_TRACE` set:
 `ai: monster %d %s->%s`, `ai: monster %d leg to (%.0f,%.0f) speed %.0f mode %d`,
 `ai: monster %d struck by %d, holding`, `ai: monster %d released (%s)`, and from the keep-up,
 `ai: keep-up of %d on monster %d ended out of reach`.
@@ -1962,8 +1962,8 @@ leg. The lock is per session, so a stalled client holds up only its own replies 
 - **The roam radius, 200, for every placement, rule 0.** This is a user decision. It is the number
   `AI::CTactics::Attach` stores for a nestless monster (`0xb45d68`), but in that case `0x545f70`
   answers "within" without measuring, so retail never applies it (the correction in "What this
-  gives srrevamp", above). The real radius is the nest row's column 9 (`+0x20`), which is
-  server-database only. srrevamp treats each placement as a nest.
+  gives OpenSRO", above). The real radius is the nest row's column 9 (`+0x20`), which is
+  server-database only. OpenSRO treats each placement as a nest.
 - **No blocked probe.** A leg can cross walls and objects: `PickWanderLeg`'s 30-unit probe needs a
   collision world the server does not hold (mob-server-geometry-probe).
 - **Not modelled:**
@@ -1977,7 +1977,7 @@ leg. The lock is per session, so a stalled client holds up only its own replies 
   - the acquire behaviour every `OnUpdate` calls -- modelled since round 552, behind
     `-monster-aggro` ("Target acquisition: the runtime (round 552)", below); with that flag off it
     is still not run.
-- **Headings stay in srrevamp's world frame.** The engine's frame differs by the z mirror. That
+- **Headings stay in OpenSRO's world frame.** The engine's frame differs by the z mirror. That
   changes no distribution: the hatch heading is uniform and the turns are symmetric.
 - **HOMING walks one straight leg.** `AITactics_HomingStep`'s heading wobble is deferred
   (mob-homing-wobble), and its arrival is tested every tick.
@@ -2035,7 +2035,7 @@ leg. The lock is per session, so a stalled client holds up only its own replies 
 - **Not modelled on a blow:** the attacker accounting's refusals (`CreditAttacker`, behaviour
   `+0xec`). The aggro link (behaviour `+0xf0`) is modelled since round 553 with `-monster-battle` on
   ("The aggro link: the runtime (round 553)", below); with that flag off it is still not run.
-- **Target validity is srrevamp's own:** "in `world.Hub`, same zone". The engine's is
+- **Target validity is OpenSRO's own:** "in `world.Hub`, same zone". The engine's is
   `AITactics_ValidTargetOrNull` / `AITactics_IsValidTarget` (`0x540dc0` / `0x540de0`: alive, life
   state 1, the body-mode refusals; named in round 545), and its exit is `0x23` (round 545 settled
   the branch).
@@ -2054,19 +2054,19 @@ leg. The lock is per session, so a stalled client holds up only its own replies 
   blows as well as the tick. The kill switch is the mitigation.
 
 **The live checks, before the flag is flipped on the public server.** Both run on the render box
-with the server built to `SERVER_BIN=/var/tmp/<lane>/srrevamp-server`.
+with the server built to `SERVER_BIN=/var/tmp/<lane>/opensro-server`.
 
 - **Time dilation, which every assertion here has to allow for.** `qa_shot.sh`'s movie writer steps
   the client 1/60 s per frame at about 0.33 s of wall time a frame, so the client runs about 20x
   slower than the wall-clock server. A client's view of a monster is therefore stale, and a check
   asserts **receipt** and the server's own trace, never the drawn position.
 - **Run 1:**
-  `SRREVAMP_MONSTER_AI=1 SRREVAMP_AI_TRACE=1 SRREVAMP_QA_MOB_LOG=1 client/tools/qa_shot.sh --server --frames 600 --out /var/tmp/mob_ai_tick`,
+  `OPENSRO_MONSTER_AI=1 OPENSRO_AI_TRACE=1 OPENSRO_QA_MOB_LOG=1 client/tools/qa_shot.sh --server --frames 600 --out /var/tmp/mob_ai_tick`,
   from the default spot, with no GOTO and no `--attack`. `server.log` must have `IDLE->WANDER` and
   `leg to ... speed 8 mode 0` lines for Mangyang ids, and no leg starting beyond 324 of its home.
   The client log must have `monster <id> walk` for the same ids.
-- **Run 2:** the same with `--attack`, `SRREVAMP_QA_ATTACK_NAME=Mangyang` and
-  `SRREVAMP_QA_ATTACK_GOTO=1`. It must show:
+- **Run 2:** the same with `--attack`, `OPENSRO_QA_ATTACK_NAME=Mangyang` and
+  `OPENSRO_QA_ATTACK_GOTO=1`. It must show:
   - at least one `struck by` line and at least one kill, or the run FAILS -- without a strike, the
     rest holds vacuously;
   - after `struck by` for id N, no `leg to` for N until `released`;
@@ -2084,8 +2084,8 @@ with the server built to `SERVER_BIN=/var/tmp/<lane>/srrevamp-server`.
   monster.
 
 **Run 1, measured (round 538, 2026-09-24, server and client at `743f231`).** Server built from the
-tree (`GOOS=linux go build ./cmd/server`) and run as `SERVER_BIN=/var/tmp/mobai/srrevamp-server`,
-with `SRREVAMP_MONSTER_AI=1 SRREVAMP_AI_TRACE=1 SRREVAMP_QA_MOB_LOG=1`, `--server --frames 600`,
+tree (`GOOS=linux go build ./cmd/server`) and run as `SERVER_BIN=/var/tmp/mobai/opensro-server`,
+with `OPENSRO_MONSTER_AI=1 OPENSRO_AI_TRACE=1 OPENSRO_QA_MOB_LOG=1`, `--server --frames 600`,
 from the default spot. **Passed**:
 - `server.log`: 551 `IDLE->WANDER` lines and 669 `leg to` lines over the run. The four Mangyang ids
   (4, 7, 10, 14; the in-memory server's own-design anchors, not npcpos) walked 22, 22, 19 and 23
@@ -2100,13 +2100,13 @@ from the default spot. **Passed**:
   did not measure -- the disclosed behaviour, not a failure.
 
 **Run 2, measured (round 539, 2026-09-24, server and client at round 539's tree).** Server built
-from the tree and run as `SERVER_BIN=/var/tmp/mobai539/srrevamp-server`, with
-`SRREVAMP_MONSTER_AI=1 SRREVAMP_AI_TRACE=1 SRREVAMP_QA_MOB_LOG=1 SRREVAMP_QA_ATTACK_NAME=Mangyang
-SRREVAMP_QA_ATTACK_GOTO=1`, `--server --attack --frames 600`, from the default spot.
+from the tree and run as `SERVER_BIN=/var/tmp/mobai539/opensro-server`, with
+`OPENSRO_MONSTER_AI=1 OPENSRO_AI_TRACE=1 OPENSRO_QA_MOB_LOG=1 OPENSRO_QA_ATTACK_NAME=Mangyang
+OPENSRO_QA_ATTACK_GOTO=1`, `--server --attack --frames 600`, from the default spot.
 
 - **The first attempt never swung, and that was a QA bug.** It printed no `QA ATTACK` line and
   made 3 list requests in 600 frames. The QA setup block runs on the first physics frame. With no
-  `SRREVAMP_QA_AT` to wait for, that frame came while `_ready` was still awaiting the QA sign-in,
+  `OPENSRO_QA_AT` to wait for, that frame came while `_ready` was still awaiting the QA sign-in,
   so the block found no connection and never armed the attack. Round 539 arms it when a QA server
   is configured and swings only once connected. The re-run logs `QA ATTACK: armed at tick 0
   (connected: false)`, which confirms that ordering.
@@ -2184,7 +2184,7 @@ add eax,1`). In the engine's order it answers:
 `ai.ChaseRange` is the nest path's reduction and `ai.TargetWithinChaseRange` the four answers, with
 the path as an argument. The position the nest path measures from is `ctx+0x1b4` and the radius
 `ctx+0x1cc`, which on this path are the nest's own (column 38's note: `Attach` stores
-`refNest+0x20` there when there is a nest); srrevamp treats each placement as a nest whose
+`refNest+0x20` there when there is a nest); OpenSRO treats each placement as a nest whose
 position is the spawn point and whose radius is `MonsterRoamRadius` (own design), so the chase
 item passes those. The strict/inclusive split is measured at the two `fcompp`s, not read off the
 decompile, whose `local_34 < param_1` on the nest path is the `return 0` arm of the same test.
@@ -2203,7 +2203,7 @@ byte is set to 0xff, the distance measured (`0x54841a`) and compared with the **
 float at `0xb45e10`, read: `00 00 c8 42`) for a target whose slot 304 (`[edx+0x4c0]` `0x54845a`)
 answers 1, else at >= 150.0 (`0xb45f04`, read: `00 00 16 43`), and 2 below either. `ai.GiveUpCode`
 carries the switch guard and code 1, and returns 0 elsewhere: the timer is the caller's
-(`ai.GiveUpCheckPeriodMs`), the flag word srrevamp does not hold, and codes 2 and 3 are notices,
+(`ai.GiveUpCheckPeriodMs`), the flag word OpenSRO does not hold, and codes 2 and 3 are notices,
 not transitions.
 
 **Why code 1 is all but unreachable under the stand-ins**, and the chase item still runs it. The
@@ -2288,7 +2288,7 @@ calls slot 8 is not traced; round 547). From that:
 - **The one case the period applies**: a `PickSkill` that returns nothing consumes the timer and
   does not re-arm, so the next attempt waits `+0x48` (or the 1 ms the gate left). Every roster
   species has an attack skill (round 260: a monster with one always swings it), so it does not
-  arise in srrevamp.
+  arise in OpenSRO.
 - **The give-up check runs on the first tick and then every 1500 ms.** `Init` arms timer 6 once with
   base `0x5dc` and spread 0 (`push 0` `0x53f6ea`, `mov eax,0x5dc` `0x53f6ec`, `mov ecx,6` `0x53f6f1`,
   call `0x53f6f6`); no other `call 0x53d600` in the image uses index 6. `ai.GiveUpCheckPeriodMs`.
@@ -2331,7 +2331,7 @@ bucket; the target's slot 304.
 ## BATTLE's chase and the monster's own swing (round 546)
 
 `session/monsterai.go`'s `battleTick` runs the engine's BATTLE tick behind **`-monster-battle`**
-(env `SRREVAMP_MONSTER_BATTLE`, parsed like `-monster-ai`'s; **off by default**; `cmd/server`
+(env `OPENSRO_MONSTER_BATTLE`, parsed like `-monster-ai`'s; **off by default**; `cmd/server`
 forces it off with a WARN, never an exit, unless `-monster-ai` and `-monster-strike-push` are both
 on -- the chase runs in the AI tick, and a swing nobody is told about would be silent HP loss).
 Off, round 539's interim hold and `performAttack`'s synchronous counter are exactly what they were,
@@ -2344,9 +2344,9 @@ How an operator flips it is in `deploy/README.md`, "Monster battle (off by defau
 re-read in `srv.asm` for this round):**
 
 1. **The target must be valid** (`AITactics_ValidTargetOrNull` `0x540dc0` at `0x55a0dc`), else
-   message `0x23` -> IDLE (`0x55a116`). srrevamp's validity is its own, disclosed: in `world.Hub`,
+   message `0x23` -> IDLE (`0x55a116`). OpenSRO's validity is its own, disclosed: in `world.Hub`,
    in this zone, and not killed by this monster's last swing. The engine's `IsValidTarget`
-   (`0x540de0`) wants life state 1, which a kill leaves; srrevamp puts a dead player back on its
+   (`0x540de0`) wants life state 1, which a kill leaves; OpenSRO puts a dead player back on its
    feet at once (`monsterStrike`'s `RespawnHP`), so the strike worker reports the kill and the
    next tick takes the same exit. The `+0x10c`/`+0x108` calls between 1 and 2
    (`0x55a12e..0x55a15e`, message `0x2b`, the follow-owner path) are not modelled: no roster
@@ -2439,7 +2439,7 @@ is never answered** -- disclosed; today, with the flag off, every striker is (th
 released mid-chase runs to its last aim point; its roam check then sends one strayed past the
 radius home (HOMING, a new leg), which is how a chase that gave up "walks home".
 
-**Trace lines** (`SRREVAMP_AI_TRACE`): `ai: monster %d struck by %d, engaging`, `ai: monster %d
+**Trace lines** (`OPENSRO_AI_TRACE`): `ai: monster %d struck by %d, engaging`, `ai: monster %d
 BATTLE chase to (%.0f,%.0f) speed %.0f mode %d`, `ai: monster %d swings at %d`, `ai: monster %d
 strike %d for %d (HP %d)[ blocked][ killed]`, `ai: monster %d swing at %d dropped: ...`, and
 `ai: monster %d released (target gone | target killed | out of reach: ... | give-up: ...)`.
@@ -2476,14 +2476,14 @@ threat seats; the armed pick's clear IS modelled since round 555, `leaveBattle`)
 attacker accounting, the threat table's retarget rules (mob-threat-retarget), and every
 "not modelled" item of round 545's section.
 
-**The live check** (`SRREVAMP_QA_ATTACK_RETREAT`, a client QA hook added this round: once the
+**The live check** (`OPENSRO_QA_ATTACK_RETREAT`, a client QA hook added this round: once the
 first blow lands, the player walks that many units straight back from the target and stops the QA
 attack loop, so the server has to chase). On the render box, with the server built from the tree:
 
 ```
-SRREVAMP_MONSTER_AI=1 SRREVAMP_MONSTER_STRIKE_PUSH=1 SRREVAMP_MONSTER_BATTLE=1 SRREVAMP_AI_TRACE=1 \
-SRREVAMP_QA_ATTACK_NAME=Mangyang SRREVAMP_QA_ATTACK_GOTO=1 SRREVAMP_QA_ATTACK_RETREAT=60 \
-SERVER_BIN=/var/tmp/<lane>/srrevamp-server client/tools/qa_shot.sh --server --attack \
+OPENSRO_MONSTER_AI=1 OPENSRO_MONSTER_STRIKE_PUSH=1 OPENSRO_MONSTER_BATTLE=1 OPENSRO_AI_TRACE=1 \
+OPENSRO_QA_ATTACK_NAME=Mangyang OPENSRO_QA_ATTACK_GOTO=1 OPENSRO_QA_ATTACK_RETREAT=60 \
+SERVER_BIN=/var/tmp/<lane>/opensro-server client/tools/qa_shot.sh --server --attack \
   --frames 600 --out /var/tmp/<run>
 ```
 
@@ -2506,9 +2506,9 @@ position in the server's frame. GOTO stands the player at the server's own numbe
 round 539 built it.
 
 **Measured (round 546, 2026-09-24, server and client at this round's tree).** Server built from
-the tree (`GOOS=linux go build ./cmd/server`) and run as `SERVER_BIN=/var/tmp/mobchase546/srrevamp-server`
-with the three flags and `SRREVAMP_AI_TRACE=1`, `--server --attack --frames 600` from the default
-spot with `SRREVAMP_QA_ATTACK_NAME=Mangyang SRREVAMP_QA_ATTACK_GOTO=1 SRREVAMP_QA_ATTACK_RETREAT=60`.
+the tree (`GOOS=linux go build ./cmd/server`) and run as `SERVER_BIN=/var/tmp/mobchase546/opensro-server`
+with the three flags and `OPENSRO_AI_TRACE=1`, `--server --attack --frames 600` from the default
+spot with `OPENSRO_QA_ATTACK_NAME=Mangyang OPENSRO_QA_ATTACK_GOTO=1 OPENSRO_QA_ATTACK_RETREAT=60`.
 **Passed:**
 
 - `server.log` boots `monster battle on: ...` (no `forced off`; the two WARN lines are the
@@ -2534,7 +2534,7 @@ spot with `SRREVAMP_QA_ATTACK_NAME=Mangyang SRREVAMP_QA_ATTACK_GOTO=1 SRREVAMP_Q
   `took 0`; the second, `attack hit for 18 (16 left)`, is the keep-up's one repeat before the
   retreat's OpMove ended it). No `dropped` swing, no `released` before the kill.
 - Not measured in this run: the client's `monster 4 run` lines are printed only under
-  `SRREVAMP_QA_MOB_LOG=1`, which this run did not set; a second run of the same command with it set (Mangyang 1, GOTO at `230.8,2410.1`, the retreat to `298.8,2409.7`) drew **23 `monster 1 run from (...) to (...) at 22.0/s` legs** after the retreat -- the chase legs, each 2-5 units on toward the player as the retreat's OpMoves arrived, with a `stop ... at 22.0/s` where the band was reached -- and 19 `own blow` strikes, again with no `took N` result. The `walk ... at 8.0/s` lines before the fight are its WANDER legs.
+  `OPENSRO_QA_MOB_LOG=1`, which this run did not set; a second run of the same command with it set (Mangyang 1, GOTO at `230.8,2410.1`, the retreat to `298.8,2409.7`) drew **23 `monster 1 run from (...) to (...) at 22.0/s` legs** after the retreat -- the chase legs, each 2-5 units on toward the player as the retreat's OpMoves arrived, with a `stop ... at 22.0/s` where the band was reached -- and 19 `own blow` strikes, again with no `took N` result. The `walk ... at 8.0/s` lines before the fight are its WANDER legs.
 - Time dilation applies as in the round-538/539 runs: the client saw the fight 20x slower, so its
   drawn positions were not asserted; every assertion above is a server trace line or a client
   receipt line.
@@ -2622,7 +2622,7 @@ round 540/544; a blow on itself is recognised by the pairing and by elimination 
   the prompt), the HP painted from the result, the MP through the stats refresh (the scene keeps no
   MP maximum), "Revived." in chat; an error -> the server's string in chat, the state unchanged.
   [Round 665: no result arrives unasked any more -- the server's auto-revive fallback is gone.]
-- **`SRREVAMP_QA_REVIVE_AFTER=n`**: n physics frames after a kill left the player dead, send
+- **`OPENSRO_QA_REVIVE_AFTER=n`**: n physics frames after a kill left the player dead, send
   `OpRevive` as the button would; once per death.
 
 **Stand-ins, each disclosed at its code:**
@@ -2630,7 +2630,7 @@ round 540/544; a blow on itself is recognised by the pairing and by elimination 
 - **[Superseded in round 665: the request carries retail's option byte, and option 1 goes to a
   return point; the retail opcode is 0x3053.]** **The request carries no option and revives in place at any level.** Retail's 0x7053 carries
   the u8 above, and reviving in place is for a max level of 10 or under (or a no-penalty death);
-  everyone else returns to a return point srrevamp does not have. The option byte and the return
+  everyone else returns to a return point OpenSRO does not have. The option byte and the return
   point are a later round's, under `PROTOCOL_DECISION.md`.
 - **[Superseded in round 665: the dialogue is read and its texts are retail's.]** **The button, its placement and its wording** are this project's: the retail resurrection
   dialogue was not read. `DEAD_INPUT_LINE` and "Revived." likewise.
@@ -2639,7 +2639,7 @@ round 540/544; a blow on itself is recognised by the pairing and by elimination 
 - **[Removed in round 665.]** **The auto-revive fallback** (a disclosed 30 s in the plan) is the server half's; the client only
   takes its result.
 - **The button needs the pk2 HUD.** It is wired when `_hud_panels` initialises (the archives
-  present); without archives a dead player has `SRREVAMP_QA_REVIVE_AFTER` (round 550's note; the
+  present); without archives a dead player has `OPENSRO_QA_REVIVE_AFTER` (round 550's note; the
   server half's fallback is gone since round 665). Consistent with the client requiring archives.
 
 **Not modelled:** ~~the return point (option 1)~~ (built in round 665, with a stand-in point), the
@@ -2664,7 +2664,7 @@ running client (a render, once the server half exists to kill against).
 ## The player's dead state: the server half (round 549)
 
 The server half of `mob-player-dead-state`, behind `cmd/server`'s `-player-dead-state`
-(`SRREVAMP_PLAYER_DEAD_STATE`), **off by default** (`server/README.md`; `deploy/README.md`, "Player
+(`OPENSRO_PLAYER_DEAD_STATE`), **off by default** (`server/README.md`; `deploy/README.md`, "Player
 dead state (off by default)"). With it off nothing changes ON A KILL: a monster's kill respawns the
 player in the same call at `character.RespawnFraction` and the kill's wire is what it was (the
 flag-off kill tests of rounds 541 and 546 still pin the respawned HP); the one flag-independent
@@ -2697,7 +2697,7 @@ swing under `-monster-battle` alike, both through `monsterStrike` -- leaves the 
 - **the experience penalty as before** (`leveldata.DeathPenaltyKilledByMonster`, unchanged).
 
 **While dead, the server refuses** (each at the handler, each answering the request's own error
-string `deadRefusal` = "you are dead", srrevamp's wording):
+string `deadRefusal` = "you are dead", OpenSRO's wording):
 
 | request | gate | grounding |
 |---|---|---|
@@ -2709,11 +2709,11 @@ string `deadRefusal` = "you are dead", srrevamp's wording):
 | `OpDuelAttack` | `handleDuelAttack`: the attacker dead, or the opponent dead ("your opponent is dead") | own design; the opponent's side matters because a blow on a character a monster killed would report a second death and `ResetHP` a character in life state 2. A duel's own death path is unchanged (`ResetHP`, alive): the flag covers a monster's kill only |
 | `OpTradeRequest` | `handleTradeRequest`, first | **read**: `GObjPC_HandleTradeMsg_081` (`0x5154e0`) asks the REQUESTER's `GetLifeState` once the target is found (`0x515607`) and answers `0x181d` unless it is 1 (`cmp al,0x1` at `0x515611`) |
 | `OpTradeRespond` (accept) | `handleTradeRespond`; the pending request is cancelled for the requester; a decline goes through | own design: `GObjPC_HandleTradeMsg_084` not opened for a life-state test |
-| `OpChangeZone` | `handleChangeZone` | own design: srrevamp's warp has no retail message, and round 548's client keeps its dead state across a `ChangeZoneResult`, so a warp would put a held die pose at the new zone's spawn |
+| `OpChangeZone` | `handleChangeZone` | own design: OpenSRO's warp has no retail message, and round 548's client keeps its dead state across a `ChangeZoneResult`, so a warp would put a held die pose at the new zone's spawn |
 | GM `/tp`, `/goto` | `gm.Actor.Dead` -> "you are dead: revive first"; the other commands run (`/heal` fills the pools without reviving) | own design |
 | `OpGuildCreate`, `OpGuildLevel` (level-up) | `handleGuildCreate` / `handleGuildLevel` (round 550): alive is the hub's life state, with HP > 0 kept as the stand-in for a character the hub does not hold; `0x4c07`'s message and code | **read**: `FUN_00514b20` (the founder's pre-check) and `CGuild::HandleLevelUp` (`0x5c63d0`: `mov edx,[eax+0xf8]` at `0x5c63e3`, `call edx` at `0x5c63eb`, `cmp al,0x1` at `0x5c63ed`, `mov ax,0x4c07` at `0x5c63f1`) ask `IGObj::GetLifeState` for 1 and answer `0x4c07` `GUILDERR_IM_DEAD` otherwise (`guild.md`). HP alone let a dead character healed by a GM found a guild |
 
-**Left allowed while dead, one by one** (round 550; each is a request srrevamp handles that the
+**Left allowed while dead, one by one** (round 550; each is a request OpenSRO handles that the
 engine's `0x4c07`/life-state guards were not found on, or whose retail handler was not read for
 one). `OpGuildJoin`, `OpGuildLeave`, `OpGuildInfo`, `OpGuildPoints` (the read-back): not gated --
 the functions returning `0x4c07` in `SR_GameServer.exe` are the founder's pre-check, the points
@@ -2785,19 +2785,19 @@ with its last stored position as the fallback.
 **Stand-ins, each disclosed at its line (`session/deadstate.go`'s header):**
 
 - **[Superseded in round 665: both options are served -- option 1 to the return point (a stand-in point, the world entry's), option 2 in place at level 10 or under only.]** **Reviving in place at any level.** Grounded as retail's option 2 for a max level of 10 or under;
-  above that retail offers only the return point, which srrevamp cannot build: no
+  above that retail offers only the return point, which OpenSRO cannot build: no
   `_CHAR.AppointedTeleport` and no teleport gates (a `LatestRegion`/`Pos`-shaped last position is
   kept on the row since round 573, under `-persist-position`, but it is where the character already
   stands). A character of level 11 or more therefore revives
   where it fell, a stand-in. No level test is made: both cases take the one in-place path, and
-  `GetMaxLevel` is not modelled (srrevamp's `Level` would equal it -- a death never costs a level,
+  `GetMaxLevel` is not modelled (OpenSRO's `Level` would equal it -- a death never costs a level,
   `GObjPC_OnDeath` leaves `CurLevel` alone -- but nothing reads it; round 550 corrected the prose
   that read as if a test existed). No wire field distinguishes them; the client message already
   says "in place at any level" (round 548).
 - **The revived MP** (round 550). Retail ADDS `trunc(0.4 x MaxMP)` to the MP the character died
   with (`ApplyHPMPDelta` is additive on both pools; no MP write was found in `GObjPC_OnDeath`
   `0x4e6980` or `FUN_004e67b0` -- one probe over their decompiles for the MP slots and the
-  setters, not a proof); srrevamp SETS the tracker to `character.RespawnMP`. A stand-in.
+  setters, not a proof); OpenSRO SETS the tracker to `character.RespawnMP`. A stand-in.
   [Corrected round 607: this used to add that `mana.Tracker` regenerates by wall clock while dead.
   It no longer regenerates at all, and the regen tick's first test is the life state (read,
   `0x4e29a9`), so the MP a character died with is intact at the revive; SET instead of ADD is now
@@ -2861,18 +2861,18 @@ queue, and `TestCounterKillLeavesThePlayerDeadUntilRevived` on `PlayerHP 80, wan
 
 **[Superseded in round 665: its second half checked the removed auto-revive. Round 665's live
 check (WORLD_ISSUES round 665, section 4) replaces it: a death in the densest window, option 1,
-the arrival in Jangan alive.]** **Live check (not yet run).** On the render box, server built with `SRREVAMP_PLAYER_DEAD_STATE=1`
-(and the monster flags as wanted), a client carrying round 548: `SRREVAMP_QA_COMMANDS='/spawn earth
-ghost'` beside a fresh character, `--attack`, `SRREVAMP_QA_REVIVE_AFTER=120`; assert in the client
+the arrival in Jangan alive.]** **Live check (not yet run).** On the render box, server built with `OPENSRO_PLAYER_DEAD_STATE=1`
+(and the monster flags as wanted), a client carrying round 548: `OPENSRO_QA_COMMANDS='/spawn earth
+ghost'` beside a fresh character, `--attack`, `OPENSRO_QA_REVIVE_AFTER=120`; assert in the client
 log the death line at HP 0 with no `strikes <self>` line until "Revived.", then a swing that lands;
 in the server log `auto-revive` absent (the request came first). A second run without
-`SRREVAMP_QA_REVIVE_AFTER` asserts `auto-revive character=... after=30s` and the client's "Revived."
+`OPENSRO_QA_REVIVE_AFTER` asserts `auto-revive character=... after=30s` and the client's "Revived."
 without a click.
 
 ## Target acquisition: the runtime (round 552)
 
 `session/monsterai.go`'s `acquire` runs the engine's acquire behaviour behind **`-monster-aggro`**
-(env `SRREVAMP_MONSTER_AGGRO`, parsed like `-monster-ai`'s; **off by default**; `cmd/server` forces
+(env `OPENSRO_MONSTER_AGGRO`, parsed like `-monster-ai`'s; **off by default**; `cmd/server` forces
 it off with a WARN, never an exit, unless `-monster-battle` is in effect -- so `-monster-ai` and
 `-monster-strike-push` too -- and `-player-dead-state` is on: a noticed player is engaged by the
 chase and the monster's own swings, and a monster that seeks players out kills ones who never
@@ -2928,7 +2928,7 @@ the row's `+0x14` is non-zero), followed by the `0x22` the calling state dispatc
      -- dead, under `-player-dead-state` -- is not skipped the way `acquire` skips one: it leaves a
      NULL pick at its own distance, which a later candidate must be strictly nearer than. `acquire`
      drops dead players before the scan, so a dead body nearer the monster than a living player
-     never shadows the living one in srrevamp; in the engine it would. Round 552's "one
+     never shadows the living one in OpenSRO; in the engine it would. Round 552's "one
      `ValidTargetOrNull` accepts" overstated the selector's fidelity by this much. Disclosed.
 5. The pick -> `AI::CTactics::SetTarget` (`0x53ffe0` at `0x547a67`) -> return 2 -> the state
    dispatches `0x22`; `CAIState::OnMsg_0x22` (`0x559900`) asks `ValidTargetOrNull` again and then
@@ -2988,7 +2988,7 @@ order, takes `ai.Nearest`'s pick, sets the target, tests `ai.TargetWithinChaseRa
 `0x22` -> BATTLE, where round 546's `battleTick` chases and swings. The blackout is set at every
 HOMING entry (`homingBlackoutMs`) whether or not the flag is on: it is arithmetic.
 
-**Trace lines** (`SRREVAMP_AI_TRACE`): `ai: monster %d noticed %d at %.0f, engaging`, `ai: monster
+**Trace lines** (`OPENSRO_AI_TRACE`): `ai: monster %d noticed %d at %.0f, engaging`, `ai: monster
 %d noticed %d at %.0f, out of chase range (%.0f from home)`, `ai: monster %d homing, noticing
 nobody for %d ms`; then round 546's `BATTLE chase` and `strike` lines.
 
@@ -3002,11 +3002,11 @@ nobody for %d ms`; then round 546's `BATTLE chase` and `strike` lines.
   user decision. Column 8 is not read under it (`ai.TacticsAggressionPct`, 0).
 - **Column 42, the flag word: 0** (`ai.TacticsFlags`): the slow timer and the (players, nearest)
   pair. A non-zero word would also need the wider kind masks, which the runtime does not carry.
-- **Candidates are players only**, the world hub's entities in the zone -- srrevamp has no
+- **Candidates are players only**, the world hub's entities in the zone -- OpenSRO has no
   regions -- in character-id order where the engine walks the region's player list. A pet is never
-  a candidate: srrevamp summons nothing.
+  a candidate: OpenSRO summons nothing.
 - **The distance is the ground plane's**, as `battleTick`'s; `GObj_DistanceBetween` (`0x53d7a0`)
-  sums three axes across regions, and srrevamp's monsters carry no height.
+  sums three axes across regions, and OpenSRO's monsters carry no height.
 - **The timer is not polled while the flag is off**, and the brains roll nothing for it then, so
   the flag-off runtime draws exactly what it drew before this round (seeded replays unchanged);
   nothing on the wire can tell.
@@ -3041,21 +3041,21 @@ want 1666".
 wait -- has no QA hook that can do it in the server's frame: `--say` is chat (`NetClient.say`), not
 a GM command (`OpGMCommand 0x00F1`, which only the chat box's `forward_gm` sends), so `--say "/spawn
 Mangyang"` spawns nothing (tried first this round: the server logged the session and no command);
-`SRREVAMP_QA_AT` converts a region-local spot relative to the LOADED region, not the zone frame
+`OPENSRO_QA_AT` converts a region-local spot relative to the LOADED region, not the zone frame
 (round 546's finding); and the GOTO swings. What the existing hooks CAN do is make the monster's
 re-engagement provably unstruck: the QA character attacks a **Yeoha** (249 HP, 67-79 a blow every
 2500 ms: it kills a fresh 200-HP character in three blows, while she barely scratches it) from the
 GOTO's 8 units, dies to it, lies dead at ~8 units -- and is not noticed, since a dead player is no
-candidate -- until `SRREVAMP_QA_REVIVE_AFTER` sends `OpRevive`; the QA attack loop has stopped for
+candidate -- until `OPENSRO_QA_REVIVE_AFTER` sends `OpRevive`; the QA attack loop has stopped for
 good at the death (`World3D._enter_dead_state`), so from the revive on the only way the Yeoha can
 re-engage her is the scan. On the render box, with the server built from the tree and all five
 flags on:
 
 ```
-SRREVAMP_MONSTER_AI=1 SRREVAMP_MONSTER_STRIKE_PUSH=1 SRREVAMP_MONSTER_SPAWN_PUSH=1 \
-SRREVAMP_MONSTER_BATTLE=1 SRREVAMP_PLAYER_DEAD_STATE=1 SRREVAMP_MONSTER_AGGRO=1 \
-SRREVAMP_AI_TRACE=1 SRREVAMP_QA_MOB_LOG=1 SRREVAMP_QA_ATTACK_NAME=Yeoha SRREVAMP_QA_ATTACK_GOTO=1 \
-SRREVAMP_QA_REVIVE_AFTER=60 SERVER_BIN=/var/tmp/<lane>/srrevamp-server \
+OPENSRO_MONSTER_AI=1 OPENSRO_MONSTER_STRIKE_PUSH=1 OPENSRO_MONSTER_SPAWN_PUSH=1 \
+OPENSRO_MONSTER_BATTLE=1 OPENSRO_PLAYER_DEAD_STATE=1 OPENSRO_MONSTER_AGGRO=1 \
+OPENSRO_AI_TRACE=1 OPENSRO_QA_MOB_LOG=1 OPENSRO_QA_ATTACK_NAME=Yeoha OPENSRO_QA_ATTACK_GOTO=1 \
+OPENSRO_QA_REVIVE_AFTER=60 SERVER_BIN=/var/tmp/<lane>/opensro-server \
 client/tools/qa_shot.sh --server --attack --frames 600 --out /var/tmp/<run>
 ```
 
@@ -3071,9 +3071,9 @@ assertion is a server trace line or a client receipt line, never a drawn positio
 
 **Measured (round 552, 2026-09-25, server and client at this round's tree).** Server built from
 the tree (`GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/server`) and run as
-`SERVER_BIN=/var/tmp/mobaggro552/srrevamp-server` with the five flags, `SRREVAMP_AI_TRACE=1` and
-`SRREVAMP_QA_MOB_LOG=1`, `--server --attack --frames 600` from the default spot with
-`SRREVAMP_QA_ATTACK_NAME=Yeoha SRREVAMP_QA_ATTACK_GOTO=1 SRREVAMP_QA_REVIVE_AFTER=60`. **Passed**, and
+`SERVER_BIN=/var/tmp/mobaggro552/opensro-server` with the five flags, `OPENSRO_AI_TRACE=1` and
+`OPENSRO_QA_MOB_LOG=1`, `--server --attack --frames 600` from the default spot with
+`OPENSRO_QA_ATTACK_NAME=Yeoha OPENSRO_QA_ATTACK_GOTO=1 OPENSRO_QA_REVIVE_AFTER=60`. **Passed**, and
 more cleanly than the design above needed, because the player never landed a blow at all:
 
 - `server.log` boots `monster aggro on: ...` (no `forced off`; the two WARN lines are the in-memory
@@ -3146,7 +3146,7 @@ the accounting refuses, `ChangeState(1)`s to IDLE -- `lea edi,[ebx+1]; call 0x53
 `0x55a342..0x55a345` -- a branch the round-258 paragraph records and this section had compressed to
 "only credits" until round 555; the refusal is not modelled, so here it keeps its target under rule
 0) and still uses up its place among the n; so does a DEAD one, which the forward reaches and which
-refuses the transition. Trace lines, with `SRREVAMP_AI_TRACE` set: `ai: monster %d struck by %d
+refuses the transition. Trace lines, with `OPENSRO_AI_TRACE` set: `ai: monster %d struck by %d
 of a party: %d member(s) within 1000, %d neighbour(s) within %d, linking %d`, `ai: monster %d linked
 to %d by the hit on monster %d, engaging`, and `... already in BATTLE, keeps its target`.
 
@@ -3196,7 +3196,7 @@ stays listed for mob-threat-retarget.
 **Stand-ins, each disclosed at its line:**
 
 - **Every blow carries hate.** The routine returns before gathering when the record's hate is 0,
-  and srrevamp's blows carry no hate value. What hate a plain blow's record holds is UNREAD. The
+  and OpenSRO's blows carry no hate value. What hate a plain blow's record holds is UNREAD. The
   stand-in is consistent with the model the runtime already rests on rather than a fresh inference
   (round 555): `CreditAttacker` `0x5473c0` returns 1 -- drop -- for a code-0 record whose hate
   lands below 1, and `CAIState::OnAttacked` only `SetTarget`s and `ChangeState(3)`s when `+0xec`
@@ -3204,9 +3204,9 @@ stays listed for mob-threat-retarget.
   entry on every blow already assumes a blow engages. The magnitudes are mob-threat-retarget's, and
   no hate is forwarded (`ai.AggroLinkHate` is not called).
 - **A party is two or more.** The engine tests only the party pointer, but never creates a party
-  of one; srrevamp's create path does (round 485's reading, `killExpFor`).
+  of one; OpenSRO's create path does (round 485's reading, `killExpFor`).
 - **The zone for the region set** (the gather's regions; the member test's region adjacency, which
-  1000 units already implies), **the ground plane** (the engine sums three axes; srrevamp's
+  1000 units already implies), **the ground plane** (the engine sums three axes; OpenSRO's
   monsters have no height; as `acquire` and `battleTick` measure), **ties by id** in the gather
   (the engine's container keeps the region walk's order).
 - **The attacker's level is the world entity's cached level** (`world.Entity.Level`; round 555,
@@ -3361,7 +3361,7 @@ mismatched).
   `OnEnter` through `SetTarget(0)`), and the cooldown is the action machine's and persists;
 - **the `att` percent unapplied** (mob-monster-att-percent);
 - **a zero-`att` skill lands 0**, pushed as a 0-damage `OpMonsterAttacked` (unblocked, no
-  critical, the target's HP as found); srrevamp has no status system for its `ps` param, and the
+  critical, the target's HP as found); OpenSRO has no status system for its `ps` param, and the
   client may draw the 0;
 - **no `_RefAISkill` triggers**: the rows are server-database only, so every skill is an
   attack-list skill (mob-ai-skill-triggers);
@@ -3371,7 +3371,7 @@ mismatched).
   target's exit releases it (`battleTick` returns before the chase when `armSkill` answers false;
   noted in round 555).
 
-**Trace line** (`SRREVAMP_AI_TRACE`), for a species with more than one skill only: `ai: monster %d
+**Trace line** (`OPENSRO_AI_TRACE`), for a species with more than one skill only: `ai: monster %d
 arms skill %d (range %d) at %.0f`.
 
 **Tests** (`cd server && go build ./... && go test -count=1 -p 1 ./...` green; re-run after the doc
@@ -3403,8 +3403,8 @@ the explicit zero removed from `monsterStrike` -- both zero tests fail with `Dam
 Client untouched (`remote_godot.sh tests` not needed).
 
 **Live check: not run.** The Go tests are the evidence. The optional run is round 546's command
-with `SRREVAMP_QA_ATTACK_NAME=Yeoha SRREVAMP_QA_ATTACK_GOTO=1 SRREVAMP_QA_ATTACK_RETREAT=60` and
-`SRREVAMP_AI_TRACE=1`: after the retreat a Yeoha that logs `arms skill 177 (range 100)` must
+with `OPENSRO_QA_ATTACK_NAME=Yeoha OPENSRO_QA_ATTACK_GOTO=1 OPENSRO_QA_ATTACK_RETREAT=60` and
+`OPENSRO_AI_TRACE=1`: after the retreat a Yeoha that logs `arms skill 177 (range 100)` must
 `strike` with no `BATTLE chase` leg before it, and one that logs `arms skill 176 (range 7)` must
 chase to 22 first; every `strike` after an `arms skill 177` line is for 94 or more on an
 unarmoured character.
@@ -3625,7 +3625,7 @@ constants), round 664. The chain, bottom up:
 
 So: **a player holds the objects of the 3 x 3 blocks of 320 around the block it stands in** --
 a 960-unit square, reaching 320 to 640 units from the player on each axis depending on where in
-its block it stands. srrevamp: `combat.CellSpan` = 320, `session.AOIRadius` = 1
+its block it stands. OpenSRO: `combat.CellSpan` = 320, `session.AOIRadius` = 1
 (`TestAOIWindowIsRetailsMessageBlocks`).
 
 Not read, OPEN: whether any object kind is sent from farther (a unique, a structure); the
@@ -3638,8 +3638,8 @@ draw slot (`GlobalDataManager::FUN_009c4aa0` 0x9c4aa0) tests the view frustum (t
 vslot 0x14) and, when graphics option 0x17 is on, passes a LOD factor -- the object's vslot 0x44
 divided by the double **800.0** at 0xd83080 (`fdiv` at 0x9c4c05) -- to the model's draw
 (vslot 8), with a GM log line `"[%s] LOD Level Change [scale : %f ] (%d) => (%d)"`. That is a
-mesh LOD (the draw indexes `pFDB->Indices[iLOD]`), not an animation one; srrevamp has no LOD
-meshes (OPEN). No distance test on posing a character was found; srrevamp's animation LOD
+mesh LOD (the draw indexes `pFDB->Indices[iLOD]`), not an animation one; OpenSRO has no LOD
+meshes (OPEN). No distance test on posing a character was found; OpenSRO's animation LOD
 (`MonsterCrowd.pose_interval`) is OURS.
 
 ## Nests on the map (round 660)
@@ -3711,7 +3711,7 @@ a pinned nest (round 661).
 **Not modelled, disclosed.** The level > 110 refusal under `FUN_005f9930` (a config test); the
 event-monster substitution list (`DAT_00d6a9b4`, `FUN_005f85a0`); the placement's navmesh query
 (the spawn routine's `[cc387c]+0x30` call at 0x5f7068, whose bit 0 is Nest_Hatch's out-flag 1 and
-halves the delay) -- srrevamp has no server-side navigation mesh, so no placement fails, and
+halves the delay) -- OpenSRO has no server-side navigation mesh, so no placement fails, and
 `nest.HalvedDelayMs` is exercised by a test only; the hive population rate (col 2 = 1, 2,355 of the
 placed nests' hives: it only shortens a 1-3 s window, and its region sample is unread); column 39
 `btAggressTypeOnHoming` (no reader found) and column 9's retarget rule (the threat table has no hate
@@ -3750,11 +3750,11 @@ scan's fast-timer bits (42).
 the killer's exp-sharing party members that are alive and within 1000.0 units (GObjPC::
 FUN_005bca60; the double at 0xb45c68), and `FUN_00558f20` arms the nest when it is above 1. The
 range is measured from the dead monster (INFERRED: the object FUN_005bca60 shares experience out
-of). srrevamp counts the members in the world, alive, in the monster's zone, on the ground plane.
+of). OpenSRO counts the members in the world, alive, in the monster's zone, on the ground plane.
 
 **The wire: the party flag.** Retail sends one class byte, `rank | party << 4` (CICMonster::
 vslot_025 0x9d3850: `and cl,0xf` to +0x7ac at 0x9d38e1, `shr al,4` to +0x7ad at 0x9d38e7).
-srrevamp's list record carries the rank in a u32 already, so the party flag rides in bit 8 of that
+OpenSRO's list record carries the rank in a u32 already, so the party flag rides in bit 8 of that
 word (`session.MonsterRarityPartyBit`, OURS) -- in the list, the spawn push and the area of
 interest's enter -- and only to a session whose list request set bit 1 of the capability byte
 (`MonsterListFlagParty` 0x02). An older client is sent the rank alone.
@@ -3765,7 +3765,7 @@ switch on class - 1 (0x9d3995, table 0x9d3c70) multiplies it: champion 1.5 (0xd8
 overhead name's colour does not depend on the class (no colour write in 0x9d0a80 reads +0x7ac or
 +0x7ad); class 7 alone prefixes UIIT_STT_MOB_STRONG ("Elite"). A party monster gets
 `icon\item\etc\europe_partymob.ddj`, 16 x 16, 20 px left of its name box, top-aligned (vslot 15
-0x9d3e70, the test at 0x9d3f2a; srrevamp sizes it to its own plate's line height, OURS), and its
+0x9d3e70, the test at 0x9d3f2a; OpenSRO sizes it to its own plate's line height, OURS), and its
 target window's rank row gets UIIT_STT_PARTYMOB_TARGET's text appended with no separator (0x69b834,
 "Champion(Party)").
 
@@ -3788,7 +3788,7 @@ behind the same 300 test (`FUN_009cef40`).
 
 NOT read: what `+0xf0` is; the pass's other early returns (a vcall at +0xb0 on FUN_009edd60's
 object; the bits `+0xd4 & 2` and `+0x464 & 2`); the global byte 0xec4b58 the overlay pass is drawn
-under. srrevamp: `NamePlates` (client/scripts/world/name_plates.gd) shows a plate while its owner
+under. OpenSRO: `NamePlates` (client/scripts/world/name_plates.gd) shows a plate while its owner
 is within 300 of the player, tested a sixth of the plates a frame (OURS); before round 673 the
 plates hid at 80 from the CAMERA (OURS), which is why a monster's name came and went with the
 camera's pitch and zoom.
@@ -3925,14 +3925,14 @@ A minion never respawns: it has no nest.
 1, 1}`, ...). The seven field uniques' 130 tuples (123 once Summon_A's two dropped skills are left out) read 0..0 but two: Cerberus's Ladon (5866) 2..3 in
 R1_80 and 1..2 (class 6) in R1_40. The executor spawns nothing for a 0..0 tuple -- `n = min +
 abs(rand()) % (0 + 1) = 0` (0x597060..0x59707f), then `test esi,esi; jle 0x597844` skips the spawn
-loop (0x59776b) -- after throwing its radius and count dice. srrevamp does exactly that
+loop (0x59776b) -- after throwing its radius and count dice. OpenSRO does exactly that
 (`nest.ExecuteSummon`): **only Cerberus summons**, its Ladons; the other six use their summon skills
 and nothing appears. (Round 661's first commit gave 0..0 tuples a 2..3 stand-in; the review removed
 it -- the "decision" behind it was a planner's proposal.) The DB's `_RefSkill` blocks are the client's word for word for every unique's
 summon skill (286 of the 292 `ssou` skills identical; the six that differ are none of theirs), and
 `_RefAISkill` carries no counts, so nothing replaces the stand-in.
 
-### srrevamp
+### OpenSRO
 
 `internal/nest` (`PinAtBuild`, `Repin`, the join's rotation spots and world filter, the summon
 loaders and executor arithmetic), `internal/ai` (`HPBucket`, `SummonDue`, `SummonAIndex`,
@@ -3990,7 +3990,7 @@ with the guess: the monster disappears.
   0x485150) -> slot 0x3b0(0, 0, 0) (CGObjMob's 0x4c1e00 -> 0x485bb0) -> the block's slot 3
   (0x5344b0) -> `FUN_00534050`: **`0x3016`**, the despawn, to the players of the nine blocks. The
   client answers a despawn with a 1.5 s fade-out (`CIDecoDisappear`, docs/protocol/appear_fade.md),
-  which srrevamp's client draws on `OpMonsterLeft` since round 677. A dead monster leaves the same
+  which OpenSRO's client draws on `OpMonsterLeft` since round 677. A dead monster leaves the same
   way once its corpse's DecayTime has run (`CGObj::Update` 0x484d10 -> slot 218, SetLifeState(3)).
 - **It runs on every region change.** Slot 235 has one call site, `0x485ad4` in `FUN_004858e0`,
   the object's move into a new cell: when the new region differs from `this[0x4a]` it calls the
@@ -4017,7 +4017,7 @@ with the guess: the monster disappears.
   the nest's loss hook (`AI::CNest::OnHatchedRemoved`, `0x560d00`, caller not found) runs for a
   removal as for a death -- a nest that never learned of it would stop hatching at its cap.
 
-### srrevamp
+### OpenSRO
 
 - `internal/safezone` reads the CSV `export-refdata -mode regions` writes from refregion.txt
   (`RegionID,ContinentName,AreaName,IsBattleField`); cmd/server's `-regions-csv` installs it

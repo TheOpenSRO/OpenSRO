@@ -164,7 +164,7 @@ Dunhuang reeds `w_cd_reeds_l` (444 placements), the Tarim rope bridge `oas_tarim
 stores a world bind equal to its local, so the file places the root at the origin. Every other
 root's translation is at most 4,767 units (`roc_event_cam.bsk`).
 
-srrevamp composes each bone's rest from the locals and binds the skin to its inverse (OURS, not
+OpenSRO composes each bone's rest from the locals and binds the skin to its inverse (OURS, not
 retail's use of the stored inverse bind). An unset root therefore put every bind 1e24 units away,
 and the reeds and the bridge were drawn as streaks. Since round 648, `Skeleton3DBuilder` takes an
 unusable root's rest from what its children's stored world binds imply. The wider difference stays

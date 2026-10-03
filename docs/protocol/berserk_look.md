@@ -128,7 +128,7 @@ starts from the manager's current colour (`FUN_00a42280` copies it as the
 base). Every finished fade with a non-zero alpha goes back to alpha 0, so the
 alpha starts at 0; the starting RGB is whatever the last fade left, and the
 constructor's first colour (`_DAT_00de523c`) was not read, so it is OPEN.
-srrevamp draws white throughout.
+OpenSRO draws white throughout.
 
 ## The mechanics (READ, server)
 
@@ -138,14 +138,14 @@ srrevamp draws white throughout.
 - Duration: 60 s plus param 195 (`berserk.Duration`).
 - **Death does not end it (READ, round 651's review):** `GObjPC_OnDeath`
   (`0x4e6980`) and `SetLifeState` (`0x4a9c80`) call no SetBodyMode; the end
-  comes with the revive (`GObjPC::Revive`, body mode 2), as srrevamp does.
+  comes with the revive (`GObjPC::Revive`, body mode 2), as OpenSRO does.
 - **A teleport ends it (INFERRED):** no SetBodyMode caller sits in
   `GObjPC::HandleTeleportUse` (`0x513590`); the world-entry setter
   `CGObjPC::vslot_391` (`0x4df9e0`, body mode 2 or 4) is the one that
   replaces mode 1, and a teleport reaching it is the re-entry chain
   character-data save -> `CMainProcess::CharDataSavingCompleted` -> 0x34b5 ->
   the client's 0x34b6 (`FUN_0086e100`) -> the entry handed off and rebuilt,
-  whose link from the teleport handler is still not traced. srrevamp ends a
+  whose link from the teleport handler is still not traced. OpenSRO ends a
   running berserk on a zone change (`endBerserk`) and the mover's client drops
   its own look silently on that arrival -- no DEACT burst or sound, since the
   original meets it with a rebuilt object (`BerserkLook.end(host, true)`).
@@ -163,16 +163,16 @@ srrevamp draws white throughout.
   Both values are `_RefHWANLevel` DB rows. Neither Media.pk2
   (`hwanleveldata.txt` is titles only, re-checked) nor the server package on
   the box (`/opt/sro-files/server/y0gi_Easy_vPLUS`, no database) carries
-  them, and the client moves by the speed the server sends. So srrevamp
+  them, and the client moves by the speed the server sends. So OpenSRO
   applies no berserk speed change and no DABR; the mechanism above is what a
   found value plugs into.
 
-## srrevamp (round 651)
+## OpenSRO (round 651)
 
 - Server: `sendBodyModesInView` (session/combat.go) sends an arrival -- world
   entry (`handleEnterWorld`) and zone change (`warpTo`) -- a 0x30BF kind 4
   value 1 for each character in its zone that is berserk, under that
-  character's berserk turn. OURS: the carrier (srrevamp's spawn is not
+  character's berserk turn. OURS: the carrier (OpenSRO's spawn is not
   retail's state block).
 - Client: `effects/berserk_look.gd` (BerserkLook) draws all of the above on
   any body whose body mode is 1; `World3D._berserk_apply`; NetClient keeps

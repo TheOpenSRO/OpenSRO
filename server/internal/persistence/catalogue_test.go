@@ -77,7 +77,7 @@ func TestTheProceduresTheFirstHarvestMissed(t *testing.T) {
 	}
 }
 
-// The storage procedures are the ones srrevamp's inventory code has to be able
+// The storage procedures are the ones OpenSRO's inventory code has to be able
 // to express. Spot-checking their arity catches a regenerated catalogue that
 // silently lost an argument.
 func TestStorageProcArities(t *testing.T) {
@@ -187,7 +187,7 @@ func TestTablesAreDistinctAndDisjoint(t *testing.T) {
 	}
 }
 
-// The tables srrevamp already persists to should all be in the runtime list.
+// The tables OpenSRO already persists to should all be in the runtime list.
 // This is the check that would catch a harvest that missed something obvious.
 func TestTheObviousRuntimeTablesArePresent(t *testing.T) {
 	need := []string{

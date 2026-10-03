@@ -1,19 +1,19 @@
 # Buffs, self-casts and Ghost Walk: the server (round 616)
 
-What srrevamp's server does with a skill that needs no monster, where each rule came from, and
+What OpenSRO's server does with a skill that needs no monster, where each rule came from, and
 the wire contract rounds 617 (client cast), 618 (buff bar) and 619 (effects) build against.
 
 Labels: **READ** from `SR_GameServer.exe` (dump `/var/tmp/decomp_server` on the RE box) at the
 address given; **MEASURED** from the retail archives on the RE box; **INFERRED** with the
 reasoning given; **OURS** a design choice; **OPEN** not established.
 
-## The wire (srrevamp's own opcodes)
+## The wire (OpenSRO's own opcodes)
 
 `0x00F5`..`0x00F9` were free when this round began: the highest session opcode in use was
 `OpTeleportResult 0x00F4`, and no file under `server/` or `client/scripts/` defined any of them
 (re-measured by grep; the only textual hits were unrelated struct offsets such as `+0xf8`).
 
-All little-endian, in srrevamp's own encoders (`session/wire.go`: a string is u16 length + bytes).
+All little-endian, in OpenSRO's own encoders (`session/wire.go`: a string is u16 length + bytes).
 
 | opcode | direction | payload | retail analogue |
 |---|---|---|---|
@@ -56,7 +56,7 @@ move land on one character.
 **Coordinates (review).** A ground point, or an `OpMove`, with a NaN or an infinity in it is
 refused (the cast, before any cost) or dropped (the move).
 
-**Entering view** (srrevamp's messages OURS; the retail mechanism READ in round 646): after
+**Entering view** (OpenSRO's messages OURS; the retail mechanism READ in round 646): after
 `OpEnterWorldResult` and after a zone change, the arriving session is sent an `OpBuffStart` for
 every active buff of everyone in its zone, its own included, and everyone already there is sent
 the arriving character's -- always after the `OpEntityEntered` / arrival list that names the
@@ -94,11 +94,11 @@ A logout sends nothing extra: `OpEntityLeft` takes the owner's buffs with it.
   view wrappers `0x534340` / `0x5344b0` are reached indirectly and were not traced to the teleport
   code. INFERRED that it does, since every buff an observer sees rides a spawn or a 0xB0BD.
 
-srrevamp's `OpEntityEntered` carries no buff block (its layout predates buffs, and changing it is a
+OpenSRO's `OpEntityEntered` carries no buff block (its layout predates buffs, and changing it is a
 contract change), so the replay is the separate `OpBuffStart`s above, sent right after it; the
 client keeps them per connection (`BuffRoster`, round 646) and applies them to the body when it is
 built, drawing the ACT_L aura only -- the spawned buff's lasting effect, as `FUN_00a53850`'s arg4 1
-does. srrevamp also sends observers the time left (the aura's grace bound); retail does not.
+does. OpenSRO also sends observers the time left (the aura's grace bound); retail does not.
 
 **A walled caster's warp (round 646 and its review, OURS, with the root):**
 - **Arming.** A zone change, a gate teleport or a GM `/tp` or `/goto` names the points the client
@@ -157,7 +157,7 @@ The Param block is walked (`skillparam.Walk`), never scanned.
   on 26. Publishing runs: `dru` 651, `defp` 314, `tant` 293, `ru` 138, `hr` 129, `onff` 116, `odar`
   91, `reat` 70, `hpi` 69, `apau` 64, `hste` 60, `hide` 48, ... `hst3` 29, `hst2` 11.
 
-**srrevamp-01**: the VM's `skills` table is imported from this CSV. Re-run `export-refdata -mode
+**opensro-01**: the VM's `skills` table is imported from this CSV. Re-run `export-refdata -mode
 skills` with the new binary, then the new `import-refdata` (its store adds the fifteen columns
 before it writes the rows), then restart the server. Until then every skill loads kind 0 and no
 buff starts. `deploy/README.md` has the steps and a check query.
@@ -183,7 +183,7 @@ buff starts. `deploy/README.md` has the steps and a check query.
    and **ignores the monster field** (the reply's `MonsterID` is 0):
    - retail's skill tick clears the action context's target vector for a Target_Required 0 row
      (`0x4ae6f0`, `auto_command.md`), and the targets then come from the row's `efr` collector
-     around the caster (READ, `skill_params.md`); srrevamp builds no collector (OPEN), so such a
+     around the caster (READ, `skill_params.md`); OpenSRO builds no collector (OPEN), so such a
      row resolves **no blow**: the 23 class rows of that shape carrying `att` are
      `SKILL_EU_BARD_BATTLAA_EXPLOSION_A/B` (`efr` kind 1, radius 80, five targets, 35 % falloff —
      MEASURED). Its costs are paid, and a self-heal row heals as before;
@@ -210,14 +210,14 @@ buff starts. `deploy/README.md` has the steps and a check query.
   kind 3 (`+0x294`, round 636: the field `efr` value[0] == 3 files) -- which walks the self-cast records carrying an attached object (`ctx+0x68`) and
   compares `lnks` values, skill ids, `lks2` and the attached object's id (answers `0x300c`,
   `0x3029`, `0x3037`; below). An `lnks` row without `efr` kind 3 gets no check at all
-  (0x58e308 -> 0x58e32d). srrevamp: `buff.linkLocked` (the review of round 636);
+  (0x58e308 -> 0x58e32d). OpenSRO: `buff.linkLocked` (the review of round 636);
 - a Target_Required 1 row gets no check at this gate, **but the target test runs the same
   function on each target's book** (READ in round 622's review): `FUN_0058cc70`, for each target,
   calls `FUN_0059d870(target+0xa30, skill, caster)` (0x58d2ca..0x58d2d3) and refuses `0x300c` on a 0
   answer -- `lnks` rows included, after their `FUN_0059dc80` on the caster's book (0x58d294). The
   one skip (0x58d2ac..0x58d2c8): the target is the caster and the caster's running action
-  (`+0xc08` -> `+0x18` -> `+8`) is this same skill; srrevamp keeps no running action, so it never
-  skips. srrevamp applies `FUN_0059d870` on the target's book (`buff.Books.CheckOverlap` /
+  (`+0xc08` -> `+0x18` -> `+8`) is this same skill; OpenSRO keeps no running action, so it never
+  skips. OpenSRO applies `FUN_0059d870` on the target's book (`buff.Books.CheckOverlap` /
   `Start` for the owner the cast names) -- since round 636 the whole of it, below. Until the review a Target_Required 1 recast added a second record.
 
 `FUN_0059d870(book, skill, caster)` -- **READ in full in round 636** (asm 0x59d870..0x59db06; the
@@ -241,7 +241,7 @@ Ghidra C of it is garbled, read the asm). `*book` is the book's owner (`FUN_005a
      above the new one (`+0x64`), `efr` kind 2 itself, `FUN_00589d20` 0, and a ctx `+0x6c`;
      otherwise it is passed over. **The GroupID branch is never tried for such a row.** ctx `+0x6c`
      is built by SkillAction_Buff for an `efr` kind-2 row without `dtt` (`+0x420`): `+0x10` = the
-     caster's id (`param_2[2]`) -- READ; srrevamp gives it to the caster's own record only
+     caster's id (`param_2[2]`) -- READ; OpenSRO gives it to the caster's own record only
      (INFERRED: the other branches that build target records do not write it).
    - **GroupID**: the new row carries no `lks2` (`+0x374`), the record is not an `lnks` record its
      owner cast on itself (`old+0x370 == 0 || ctx+0x20 != 1`), the new GroupID (`+0x8`) is not 0 and
@@ -271,7 +271,7 @@ nine, READ; round 636 listed seven and missed the last two):
   and `ovl2` value[0];
 - 0x584d5a, 0x585128, 0x58533f: the `ovl2` / pulse paths inside SkillAction_Buff (not needed here);
 - `CTJ_SkillKeeper` slot 12, `FUN_00650e70` (0x651178, 0x651194): a buff restore (not modelled:
-  srrevamp restores no buffs, OPEN with the login restore below).
+  OpenSRO restores no buffs, OPEN with the login restore below).
 
 **SkillAction_Buff's sub-state 0 (READ in round 636's review, 0x583ffb..0x584044).** After the
 casting time, for a row with no `efr` of kind 3 (`+0x294`, the trap branch) that is not an `efr`
@@ -283,9 +283,9 @@ spend (vslot `0x308`) runs only on the other path. The retail client's kind-2 ha
 (`FUN_00a56680` -> `FUN_00a50a00`) ends the cast deco and shows no text. The collector branch
 instead spends first (vslot `0x308`), sends 0xB071 kind 1 and runs `FUN_0059d870` on each target;
 the record then meets the engage's test (sub-state 1, above) and, on a hit, simply does not start.
-srrevamp: `buff.Books.CheckEngage`, after the category end and before the costs; a hit answers the
+OpenSRO: `buff.Books.CheckEngage`, after the category end and before the costs; a hit answers the
 cast with `session.silentRefusal`, a marker the client ends the cast on without logging (OURS, since
-srrevamp's reply has no "error 0"); a collector row's engage refusal (`buff.RefusedEngage`) keeps
+OpenSRO's reply has no "error 0"); a collector row's engage refusal (`buff.RefusedEngage`) keeps
 the costs and answers the success, as retail does. MEASURED: the 18 `dttp` rows with a state byte
 (`SKILL_CH_FIRE_DETECT_*` byte 0x2f, `SKILL_CH_FIRE_DESCRY_*` 0x2e) carry `efr` kind 1 with
 Activity 2 -- the collector branch: a second cast while one runs passes the gate (the `dttp` owner
@@ -318,22 +318,22 @@ ends the old record; a lower one is refused).
 
 **Also on row 16 (READ, 0x58e2c2..0x58e2d9):** when the caster's vslot `0x100` answers 4 and the row
 carries `hide` (`+0x428`), `0x300c` at once. Which state 4 is was not read -- **not modelled
-(OPEN)**. And the gate orders its rows HP (0x58e292), MP (0x58e2b1), then row 16: srrevamp now
+(OPEN)**. And the gate orders its rows HP (0x58e292), MP (0x58e2b1), then row 16: OpenSRO now
 tests the costs before the recast rule (round 636; until then the other way round).
 
-srrevamp: `buff.Books.CheckOverlap` / `CheckEngage` / `Start` (`gateLocked`, `linkLocked`,
+OpenSRO: `buff.Books.CheckOverlap` / `CheckEngage` / `Start` (`gateLocked`, `linkLocked`,
 `overlapLocked`, `gateApplies`, the bit set in the book, `engageBits` / `endBits`). The ended records
 leave the book (their bits with them) before the new one's tests -- INFERRED order, as before.
-**Not modelled:** the running-action half of `FUN_0059db10` (srrevamp engages a buff at its cast, so
+**Not modelled:** the running-action half of `FUN_0059db10` (OpenSRO engages a buff at its cast, so
 there is none); the `hide` rule above.
 
 ### Every row, by rule (round 636)
 
 `TestRecastRuleCensus` (`server/internal/session/buffstack_census_test.go`, run with
-`SRREVAMP_SKILLS_CSV` naming the player's own export) drives the rule over every row. MEASURED on
+`OPENSRO_SKILLS_CSV` naming the player's own export) drives the rule over every row. MEASURED on
 the RE box's export, the 2,348 action-kind-3 rows by the rule that decides a recast:
 
-| rows | rule | srrevamp |
+| rows | rule | OpenSRO |
 |---:|---|---|
 | 1,341 | GroupID branch; other groups meet the bit test | modelled |
 | 397 | `cbuf`: the list passes them over; the bit test refuses | modelled (Fire / Cold Protection) |
@@ -350,9 +350,9 @@ Round 636 filed 160 of the 276 as "`lks2` with no state byte: nothing stops a re
 was wrong: every one of the 160 carries `lnks` and is Target_Required 1 (142
 `SKILL_EU_WARLOCK_DOTA_*`, 18 `SKILL_EU_BARD_BATTLAA_MPSTEAL_A`), and the target test calls
 `FUN_0059dc80` for every `lnks` row (0x58d27d..0x58d2a6). The Warlock DOTs have no friendly group,
-so srrevamp does not start them at all (a debuff on a monster).
+so OpenSRO does not start them at all (a debuff on a monster).
 
-202 of them are Target_Required 1 rows with only hostile groups, which srrevamp does not start
+202 of them are Target_Required 1 rows with only hostile groups, which OpenSRO does not start
 (debuffs on a monster, not modelled). Every pair of rows that share a state byte and differ in
 group -- 311,259 pairs -- is refused as the second, except where the first is an `lnks` row cast on
 oneself (it sets no bits, READ) or the second is a `dttp` or `lnks`/Target_Required 0 row. A
@@ -389,22 +389,22 @@ MEASURED: all 32 Target_Required 0 `lnks` rows carry `efr` kind 3 and `trap`, an
 25 `SKILL_EU_WIZARD_FIREA_TRAP_A/B_*` rows (`lnks` 14 300 1 1) and 7 `SKILL_QNO_*` rows (`lnks` 0
 300 1 0, with `qest`). So a second Fire Trap of the same skill is `0x3029`, any other Fire Trap
 `0x300c`, and a second quest trap of the same skill `0x3037` (quest traps of other skills pass:
-value[0] is 0). **srrevamp** (`buff.linkLocked`, skill CSV columns 77..81): an `lnks` + `efr`
-kind-3 record its owner cast is the link record (INFERRED); srrevamp makes no object, and the
+value[0] is 0). **OpenSRO** (`buff.linkLocked`, skill CSV columns 77..81): an `lnks` + `efr`
+kind-3 record its owner cast is the link record (INFERRED); OpenSRO makes no object, and the
 gate passes none, so the linked id never matters there. Whether retail's record also ends when
-its object goes was not read (OPEN); srrevamp's lasts its `dura` (120 s for a Fire Trap).
+its object goes was not read (OPEN); OpenSRO's lasts its `dura` (120 s for a Fire Trap).
 
 **The target test's call (the review's follow-up).** For a Target_Required 1 `lnks` row the
 target test calls `FUN_0059dc80` on the **caster's** book with the target as the linked object
 (0x58d294: `push ebp` the target, EAX `caster+0xa30`), before `FUN_0059d870` on the target's book.
 The records it counts are the second records SkillAction_Buff's Target_Required 1 branch builds for
-the caster (READ, the link struct `+0xc` the caster's id, `+0x10` the target's id). srrevamp keeps
+the caster (READ, the link struct `+0xc` the caster's id, `+0x10` the target's id). OpenSRO keeps
 them as the caster's link entries (`buff.Books.links`): out of the caster's visible book (OURS: no
 icon; an `lnks` record cast on oneself sets no bits, READ), added when the target's record starts,
 dropped when it ends (INFERRED) or at the caster's teardown. So a Warrior's guard (`lnks` 1 . 2)
 links two party members; a third is `0x3029`, the same one again `0x300c`, and another level of the
 guard `0x300c` while a link stands. **OPEN:** retail's link record, when it ends, also ends the
-target's record (SkillAction_BuffEnd's ctx `+0x68` branch, `FUN_0059eff0(1)`); srrevamp does not
+target's record (SkillAction_BuffEnd's ctx `+0x68` branch, `FUN_0059eff0(1)`); OpenSRO does not
 end the target's buff when its caster dies or leaves.
 
 ### The run speed (READ, and one MEASURED base)
@@ -444,7 +444,7 @@ arriving client learns it in `sendBuffsInView`. It survives a death and a zone c
 cleared when the character leaves the world (round 636's review: pruned on logout, so a GM demoted by
 a restart without the account in `-gm-accounts` keeps nothing), or by `/speed off`.
 
-**Other publishing codes — OPEN.** srrevamp computes damage, defence and HP/MP without a
+**Other publishing codes — OPEN.** OpenSRO computes damage, defence and HP/MP without a
 ParamKeeper, so nothing there has a slot to take a buff's contribution. The next ones to wire,
 with what is already READ in `0x594ac0`: `defr` (params 5/6 slot 1 = value[0]/value[1]), `defp`
 (5/6 slot 0 = value[0]/[1] plus the context's `+0x34`/`+0x38`, capped by value[2] percent of the
@@ -463,7 +463,7 @@ the book today.
   at `+0x244` keyed by the code; what files entries there was not read (the `P`-named passives
   `SKILL_EU_ROG_STEALTHP_TIME_*` and `SKILL_EU_WARLOCK_MINDP_MAINTAIN_*` carry the codes too, which
   suggests passive skills -- INFERRED only). Rows naming a code
-  (MEASURED, a literal scan): `DTDR` 142 kind-3 / 4 kind-4, `RPBU` 10 / 6, `STDU` 9 / 9. srrevamp
+  (MEASURED, a literal scan): `DTDR` 142 kind-3 / 4 kind-4, `RPBU` 10 / 6, `STDU` 9 / 9. OpenSRO
   keeps no passive records, so the extension stays 0 -- **OPEN, not modelled**.
   `session.RunBuffTicker` polls every 100 ms (OURS, as regen's poll is; retail's book update runs
   per server frame, period OPEN); the test itself is exact to the millisecond.
@@ -479,7 +479,7 @@ the book today.
   cancelled; your own can.**
   (The retail client refuses every `nbuf` row without `lnks` before sending — spec §3.2; that is the
   buff bar's rule, round 618.)
-- **Death**: srrevamp ends every buff (`markDead` → OpBuffEnd under `-player-dead-state`; on the
+- **Death**: OpenSRO ends every buff (`markDead` → OpBuffEnd under `-player-dead-state`; on the
   default respawn path `monsterStrike` does the same since the rounds 636-640 integration review --
   before it that path ended none). **OURS**: `GObjPC_OnDeath`
   (`0x4e6980`) clears no book, and `CGObjChar::SetLifeState` (`0x4a9c80`) on state 2 calls slot 4
@@ -506,7 +506,7 @@ the book today.
   gate runs at request time (`GObjPC::HandleCharacterActionRequest_7074` 0x4acc40, 0x4aced4); the
   skill tick's case 2 then posts 0x7070 -> vslot 383 `FUN_004b21b0` -> `FUN_0059b7c0` ->
   `FUN_0059b480`, which builds the use's context and runs the category end at 0x59b745 just before
-  `SkillActionHandler`. So a refused cast ends nothing. **srrevamp**: `buff.Books.EndCategory` with
+  `SkillActionHandler`. So a refused cast ends nothing. **OpenSRO**: `buff.Books.EndCategory` with
   mask 2, run once every refusal of `OpUseSkill` has passed (after the gate, the cost test and the
   reach test; before the sub-state 0 test and the costs) -- so a cast that goes through ends a
   stealth, and a Bard dance ends the dance before it. Movement, berserk and mask 8 are not wired (nothing carries
@@ -554,11 +554,11 @@ slot 305: `CGObjPC::vslot_305` (0x4ef300) → `GObjPC::FUN_0048b920`, which sets
 in its region's own coordinates, and that is the position the server then has. Which packet
 tells the clients was not read.
 
-srrevamp: `session.ghostWalkDestination` is the clamp; `moveBySkill` stores the point through
+OpenSRO: `session.ghostWalkDestination` is the clamp; `moveBySkill` stores the point through
 `world.Hub.Move`, saves the position the way `handleMove` does (`savePositionEvery`), stands a
 seated caster (`motions.moved`), cancels the keep-up, and sends `OpSkillMove` to the zone.
 
-**The navmesh test runs on the client** (round 616-618 integration): srrevamp's server has no
+**The navmesh test runs on the client** (round 616-618 integration): OpenSRO's server has no
 navmesh, so the client resolves the landing before it sends the cast (`GhostWalk.resolve`,
 `client/scripts/world/ghost_walk.gd`): the 3-D clamp to `tele` value[1] (the catalog's
 `tele_reach`), then a walk on its `NavGraph` from the player toward it with sliding off
@@ -598,7 +598,7 @@ from a clicked object, and 0 when nothing is selected.
 - **Another player selected** (`CICUser`, 0xef1bc0). A non-offensive Target_Required 1 row first
   compares the two players' PK/job flag bytes (`FUN_009dd8f0` on each; different -> `0x3006`).
   Outside the caster's party (`FUN_00992940`) it then asks the target's vslot 0xa8 (-> `0x3006`).
-  Otherwise the request goes out at that player. srrevamp has no murder or job states, so those
+  Otherwise the request goes out at that player. OpenSRO has no murder or job states, so those
   two checks have nothing to test.
 - **The request.** A Target_Required 0 row sends `01 04 u32 skillId 00`; a targeted one
   `01 04 u32 skillId 01 u32 targetId` (0x81c02c..0x81c0ea). A row with no target group at all
@@ -627,7 +627,7 @@ at a monster is refused by the server** in phase 0, and it costs nothing. MEASUR
 friendly rows with Self alone carry no Enemy_M, and no friendly row carries Enemy_M without
 Enemy_P. So a monster fails every friendly row, and a character passes step 7.
 
-**srrevamp** (`session/friendlycast.go`, `useSkillHandler`):
+**OpenSRO** (`session/friendlycast.go`, `useSkillHandler`):
 
 - **The request.** `OpUseSkill` targetType **3** names a character in the id field. This is OURS:
   monster and character ids overlap, so the kind travels with the id, as OpBuffStart's ownerKind
@@ -658,7 +658,7 @@ Enemy_P. So a monster fails every friendly row, and a character passes step 7.
   under the target's kill lock and pushes the target `OpCharacterStatsResult`, so its bars move.
   The caster's reply carries the caster's HP when it healed itself. p170/p171 are 0 (nothing
   grants `rhru` here), so the amount is exactly `v0`/`v2`.
-- **Parties** use srrevamp's `party.Hub` (step 8). Server-side, retail's **Ally** means only "a PC".
+- **Parties** use OpenSRO's `party.Hub` (step 8). Server-side, retail's **Ally** means only "a PC".
   The client's PK/job checks are not modelled: there are no states to test.
 - **Selecting oneself** (READ in round 622's review; implemented):
   - a **left press on the HUD's player block**: `CIFPlayerMiniInfo::vslot_030` is the
@@ -702,7 +702,7 @@ Retail tells every client in view that a cast started, and then that it acted (R
   `u32 castId`, and finds the cast by id (`FUN_00a565b0`). Kind 1 reads the target/damage block
   (`FUN_00a54be0`) and forces SHOT (`FUN_00a53090`); kind 2 runs `FUN_00a50a00`.
 
-srrevamp resolves a cast at once, so its broadcast is its own message, **OpSkillCast 0x00FA**
+OpenSRO resolves a cast at once, so its broadcast is its own message, **OpSkillCast 0x00FA**
 (OURS). 0x00FA was free: the highest session opcode in use was OpSelfID 0x00F9, and no file under
 `server/` or `client/scripts/` used 0x00FA.
 
@@ -713,7 +713,7 @@ srrevamp resolves a cast at once, so its broadcast is its own message, **OpSkill
   PreparingTime + CastingTime.
 - **Which casts.** A refused cast is not announced. Every accepted cast is: self casts, ground
   casts, casts at a monster (after the blow) and casts at a character. `casterKind` 1 is carried
-  for monsters, but no monster cast is announced yet: srrevamp's monster AI strikes through its own
+  for monsters, but no monster cast is announced yet: OpenSRO's monster AI strikes through its own
   push (OPEN).
 - **The client** (`World3D._on_skill_cast`). The start plays the caster's body clip (chosen the way
   the player's own cast chooses it), its READY/SHOT-0 sounds and `SkillEffects.cast`. The act forces
@@ -730,7 +730,7 @@ srrevamp resolves a cast at once, so its broadcast is its own message, **OpSkill
 the walls (55) and the Bard's songs and dances (`SKILL_EU_BARD_BATTLAA_GUARD_*`,
 `_SPEEDUPA_HITRATE_*`, `_DANCEA_*`, 61). Every one is action kind 3, a caster buff with Target_Required
 0, and carries **no `dura`**; the 61 Bard rows carry an `efr` of kind 2 (targets gathered by the `efr`
-collector, which srrevamp does not build -- it starts them on the caster only, as before), none an
+collector, which OpenSRO does not build -- it starts them on the caster only, as before), none an
 `efr` of kind 3.
 The same code runs all of them:
 
@@ -743,7 +743,7 @@ The same code runs all of them:
   equal to the cost pays it, to 0); otherwise `vslot 0x308(0, cost, 4)` takes the MP and the clock is
   re-stamped (0x5852df..0x5852eb). Between the test and the take a row with `BDMD` (`+0x554`) scales
   the cost by `(1 - v/100)` with `v` from the entry `FUN_005a0330` finds in the caster's book map
-  (0x58528a..0x5852cb) -- the MP test is against the unscaled cost. **Not modelled (OPEN):** srrevamp
+  (0x58528a..0x5852cb) -- the MP test is against the unscaled cost. **Not modelled (OPEN):** OpenSRO
   keeps none of the passive entries that map holds.
 - **The recast is the switch-off** -- `CGCharAutoCommandActor::Tick_UseSkill` phase 0
   (0x4ae622..0x4ae64d): after its first two refusals (0x3003 for a missing skill, 0x3030 from
@@ -754,9 +754,9 @@ The same code runs all of them:
   its own gate for an `onff` row (`cmp [edi+0x284],0` at 0x4acec0). No 0xB070 follows (phase 2's
   0x7070 is never posted), so no cast is drawn.
 - **Other ends:** a cancel from the buff bar (the dispel, above -- no wall row carries `nbuf`), a
-  death (srrevamp's `EndAll`, OURS as before), a logout, and the wall's own break (below).
+  death (OpenSRO's `EndAll`, OURS as before), a logout, and the wall's own break (below).
 
-srrevamp: `buff.Record.DrainDue` / `Books.DueDrains` / `Drained` / `ToggleOff`; `session/walls.go`
+OpenSRO: `buff.Record.DrainDue` / `Books.DueDrains` / `Drained` / `ToggleOff`; `session/walls.go`
 `RunToggleTicker` polls every 100 ms (OURS, as the buff ticker does) and pushes the owner's
 `OpCharacterStatsResult` after a drain, as regen does; `toggleOffOnCast` runs in `useSkillHandler`
 before the motion-state gate, answering `OpAttackResult` with the wall suffix's toggled-off flag
@@ -799,11 +799,11 @@ into `pc+0xc0c` (`in_EAX[0x303]`, book `+0x1dc`) and `Combat_ResolveDamage` read
    second term, **the attacker's imbue**: with `att` value[4] set and the context's `+0x78` (filled
    from the attacker's `book[0x79]`, the running imbue record) non-zero, the imbue's damage is
    added to the wall entry scaled by `att[4]/100` and its magical half is tested too
-   (0x58ef1f..0x58f03e). srrevamp's monsters carry no imbue: **not modelled**.
+   (0x58ef1f..0x58f03e). OpenSRO's monsters carry no imbue: **not modelled**.
 4. Not absorbed: the wall entry is marked 8, the blow resolves on the target as usual, and the
    halves `pw` covers are zeroed (bit 4 physical, bit 8 magical). A mixed 4|8 blow on a one-type
    wall would split -- the wall pays the shared half, the target the other -- but no `att` row
-   carries both bits (MEASURED, 0 of 31,605), so srrevamp's single-type blows never split.
+   carries both bits (MEASURED, 0 of 31,605), so OpenSRO's single-type blows never split.
 5. `Combat_ApplyActionEffects`, the wall entry (`+0x10 != 0`): `if (HP < dmg) HP = 0; else HP -= dmg`.
    The caster's HP is untouched; no stand-up, no wear.
 6. `SkillAction_Buff` sub-state 2 (0x5851e9..0x585372): a record whose wall object's HP is 0 clears
@@ -840,7 +840,7 @@ nothing (`CGObjPC::vslot_362` only in STAND and SIT). `SkillAction_BuffEnd` for 
   (the movement handler's SetMotionState(WALK/RUN)) and the wall keeps absorbing.
 
 **The root is OURS (round 640, the user's choice "Root while walled", asked after the probes above
-came back empty).** srrevamp departs from retail here, on purpose:
+came back empty).** OpenSRO departs from retail here, on purpose:
 - **Server** (`session/walls.go` `wallRoots`, checked in `motions.moved`): while a `pw` record is
   active on the caster's book (`buff.Books.HoldsWall`), an `OpMove` is dropped, and answered to the
   mover alone with an `OpSkillMove` carrying the wall's skill id and the position the server holds
@@ -867,10 +867,10 @@ nowhere. While any skill deco whose anim set has `+0x80` is attached, a blow on 
 highest-Priority deco's `+0x80` efp (`IDecoSkill::FUN_009cd480` from `FUN_00a4f720`), else the
 attacker's DamageEfp. `+0x80` is skillaniset2's **DefenseEfp** column, READ: the aniset loader
 `FUN_00a9c470` files column 13 (the table's header: "DefenseEfp") there and column 14 (DamageEfp) at
-`+0x84` -- `fire_ganggi_damage_a.efp` and `hit_2_ice.efp` for the walls. srrevamp plays HitEffect's
+`+0x84` -- `fire_ganggi_damage_a.efp` and `hit_2_ice.efp` for the walls. OpenSRO plays HitEffect's
 default layers in place of the attacker's DamageEfp (OURS: the monster's skill is not on its wire).
 
-**srrevamp.** `buff.Books.HitWall` / `EndBrokenWalls` (the holder `book.wallHolder`);
+**OpenSRO.** `buff.Books.HitWall` / `EndBrokenWalls` (the holder `book.wallHolder`);
 `session.monsterStrike` resolves an absorbed blow with `resolveBlow(raw, pw[3], pw[2], crit, 0, ...)`
 -- the same pipeline as a landed blow, the wall's defence in the player's place, no block roll -- and
 the strike's caller ends a broken wall right after the messages that report the blow (retail: the
@@ -885,13 +885,13 @@ wall is up"` (OURS text; the engine's 0x3009 string is not identified).
 **What else a wall refuses (READ in round 640's review).**
 - **Ghost Walk**: `Skill_CheckUseConditions` refuses a row carrying `tele`, `tel2` or `tel3` while the
   caster's book holds a wall (`book+0x1dc`), 0x3009 (0x58e033..0x58e061), before the cooldown test and
-  the motion gate. srrevamp: `useSkillHandler` (`wallTeleRefusal`, OURS text) -- this is retail's
+  the motion gate. OpenSRO: `useSkillHandler` (`wallTeleRefusal`, OURS text) -- this is retail's
   rule, not the OURS root. All three are tested (`refdata.Skill.HasTeleport`, CSV 87/88 for
   `tel2`/`tel3`); the `tel2`/`tel3` rows are EU skills (MEASURED, the table above), so a walled
   Chinese caster meets it through Ghost Walk's `tele`.
 - **Summons and mounts**: a COS/pet summon, a mercenary scroll and mounting are refused while walled
-  (0x4931d6, 0x49be6f, 0x49b507, 0x4fc52a). srrevamp has none of them: **OPEN**.
-- **Knockback and knockdown** are skipped on a walled target (0x58fee5; `FUN_0058e540`). srrevamp's
+  (0x4931d6, 0x49be6f, 0x49b507, 0x4fc52a). OpenSRO has none of them: **OPEN**.
+- **Knockback and knockdown** are skipped on a walled target (0x58fee5; `FUN_0058e540`). OpenSRO's
   monster blows carry neither: **OPEN**.
 - **Potions are not refused.**
 - The toggle ticker ends a broken wall only once `buff.BrokenGrace` (1 s, OURS) has passed since the

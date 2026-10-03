@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/buff"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/buff"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // TestToggleAndWallCensus (round 640) walks EVERY row of the player's own
-// skill export when SRREVAMP_SKILLS_CSV names it, and is skipped otherwise
+// skill export when OPENSRO_SKILLS_CSV names it, and is skipped otherwise
 // (CI has no game data). Run it with -v for the report.
 //
 // Every row carrying 'onff' is started as its own caster's buff on an empty
@@ -23,9 +23,9 @@ import (
 // and a mask of 7 or 11, and its wall must take a blow of a type it covers
 // and refuse one it does not. The families are listed.
 func TestToggleAndWallCensus(t *testing.T) {
-	path := os.Getenv("SRREVAMP_SKILLS_CSV")
+	path := os.Getenv("OPENSRO_SKILLS_CSV")
 	if path == "" {
-		t.Skip("SRREVAMP_SKILLS_CSV not set; the census needs the player's own skill export")
+		t.Skip("OPENSRO_SKILLS_CSV not set; the census needs the player's own skill export")
 	}
 	f, err := os.Open(path)
 	if err != nil {

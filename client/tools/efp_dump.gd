@@ -16,7 +16,7 @@ var _one := ""
 var _out := PackedStringArray()
 
 func _init() -> void:
-	var path := OS.get_environment("SRREVAMP_PARTICLES_PK2")
+	var path := OS.get_environment("OPENSRO_PARTICLES_PK2")
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--pk2="):
 			path = a.substr(6)

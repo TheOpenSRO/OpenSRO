@@ -11,7 +11,7 @@ extends SceneTree
 ## screen: CharacterCreate.tscn as the game opens it; backdrop: only its
 ## FrontEndBackdrop (98/168 or 105/79); appearance: CharacterAppearance built
 ## and a body made; preview: CharCreatePreview showing that body. Needs the
-## SRREVAMP_*_PK2_PATH variables like any run against real archives.
+## OPENSRO_*_PK2_PATH variables like any run against real archives.
 ##
 ## swaps: the slider swap latency instead -- one CharCreatePreview walks every
 ## Figure of both sexes, every weapon and every armour set twice, and prints

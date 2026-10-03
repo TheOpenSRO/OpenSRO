@@ -239,7 +239,7 @@ func (r *Record) tick(nowMs uint32, curHP int, caster CasterLookup) (Tick, bool)
 		return Tick{Code: r.Code, Damage: d, NeverKills: true, Source: r.source(caster, true), SourceID: r.SourceID, SourceIsMonster: r.SourceIsMonster}, true
 	case SlotBurn:
 		// AbnormalState_Apply02 (0x4a46f0): the same 2001 ms. Param 8 is 0
-		// on everything srrevamp spawns, and the factor is the 1.0 the block
+		// on everything OpenSRO spawns, and the factor is the 1.0 the block
 		// writes. READ.
 		if nowMs-r.LastTickMs < TickIntervalMs {
 			return Tick{}, false

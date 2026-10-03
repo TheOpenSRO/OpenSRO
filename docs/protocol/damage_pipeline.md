@@ -52,7 +52,7 @@ order:
 | defender % | 180 | 181 |
 
 All four are range 0..100 with default **0** in the registry and carry no tag,
-so they are inert on every object srrevamp builds -- the same shape as the
+so they are inert on every object OpenSRO builds -- the same shape as the
 player's percentage reduction.
 
 **Stage 19 is a ceiling of 16,777,215**, from the double at `.rdata 0x00b46110`
@@ -115,7 +115,7 @@ The same constant appears at four sites (`0058f2c1`, `0058f2d7`, `0058f97d`,
 
 **What the second record is has not been identified.** It is the object the
 mitigation formula receives as its context, distinct from the one the first
-percentage is read off. srrevamp passes the same value for both, which makes its
+percentage is read off. OpenSRO passes the same value for both, which makes its
 clamp a plain cap at 90 — correct for every case it can currently reach, and
 wrong the day a second record exists. Said here so that day is noticed.
 
@@ -129,7 +129,7 @@ is `equipment.MaxEquipSlots`, 3 and 7 in `HandleSiegeRequest` are the
 fortress-war requirements, 40 in the siege module is the −20…+20 tax range
 biased by 20, 5 in the guild fullness predicate is `MaxLevel`. These four sites
 were the largest thing the audit found that **nothing claimed**, sitting in the
-one function srrevamp reimplements most closely.
+one function OpenSRO reimplements most closely.
 
 ## The damage resolution's full input list (2026-09-17)
 
@@ -169,17 +169,17 @@ See `docs/protocol/skill_fields.md`.
 `0x28c` is the one field still unnamed — `reqi` and `getv` are the codes the
 extractor cannot place, and one of them may own it.
 
-### What srrevamp models of this
+### What OpenSRO models of this
 
 **One.** `att` — its percentage, minimum and maximum — plus the mastery scale
 that multiplies the roll (stage 1). The other 36 are read by the engine and not
-by srrevamp.
+by OpenSRO.
 
 That is a measurement of scope, not a defect list. Most of these have no source
-srrevamp can reach: they are consumed as pointers into a Param stream this
+OpenSRO can reach: they are consumed as pointers into a Param stream this
 project reads only through the client's `skilldata_*.txt`, and
 `docs/protocol/skill_params.md` decodes the *meaning* of a subset. Recording the
-count matters because "srrevamp implements the damage pipeline" and "srrevamp
+count matters because "OpenSRO implements the damage pipeline" and "OpenSRO
 implements one of the pipeline's 37 inputs" are very different claims, and until
 now nothing in this project could tell them apart.
 
@@ -249,7 +249,7 @@ whole low end.
 
 ## What is recovered but not wired
 
-Stages 2, 7, 8, 9, 10, 11, 12, 15 and 17. srrevamp publishes no source for
+Stages 2, 7, 8, 9, 10, 11, 12, 15 and 17. OpenSRO publishes no source for
 params 128/129, 178, 189 or 259, nor for `dara`, so most are unreachable rather
 than missing.
 
@@ -270,26 +270,26 @@ statement the binary does make about the scale is the ratio's own ceiling —
 solving `1.2 = (Str + 2L + 14) / (6*(L+7))` gives **Str = 5.2*L + 36.4**, the
 point past which more Str does nothing (`combat.StrForMaxRatio`).
 
-Against that, srrevamp's stats are systematically low:
+Against that, OpenSRO's stats are systematically low:
 
-| level | srrevamp Str, all points invested | engine ceiling |
+| level | OpenSRO Str, all points invested | engine ceiling |
 |---|---|---|
 | 1 | 20 | 41.6 |
 | 20 | 96 | 140.4 |
 | 50 | 216 | 296.4 |
 
-So every srrevamp character lands below 1.0 on a multiplier the engine designed
+So every OpenSRO character lands below 1.0 on a multiplier the engine designed
 to straddle 1. Wiring it would apply an exactly-recovered formula to a
 differently-scaled input and produce a flat ~25% damage cut that is an artifact
 of `character.StartingStr` — which is own design — rather than anything
-recovered. `combat.TestSrrevampStatScaleIsBelowTheEnginesCeiling` fails the day
+recovered. `combat.TestOpenSROStatScaleIsBelowTheEnginesCeiling` fails the day
 that stops being true, so the decision gets revisited deliberately instead of by
 drift.
 
 **Grounding `character.StartingStr` is the unblocker**, and the ledger already
 names where it lives: `_REFCHARGEN`.
 
-### srrevamp's order against the engine's
+### OpenSRO's order against the engine's
 
 `combat.ResolveBlow` implements stages 4, 13, 14 and 16 and runs them in the
 engine's order: mitigate (4) -> critical/berserk (13) -> level gap (14) ->
@@ -298,7 +298,7 @@ mitigation, which is also where the engine puts it.
 
 One thing worth stating because it looks like a difference and is not: the
 engine folds berserk and critical into a **single** term at stage 13 —
-`t = attacker_p189 + 2.0`, then `t += t` on flag bit `0x2` — where srrevamp
+`t = attacker_p189 + 2.0`, then `t += t` on flag bit `0x2` — where OpenSRO
 applies two separate doublings. With param 189 at its default of 0 both give x2
 alone and x4 together, so the two agree.
 
@@ -309,7 +309,7 @@ This page records `LevelAdvantage` — 3% per level, capped at 30%, the **bonus*
 an attacker gets for out-levelling its target, from
 `Formula_MitigatePhysicalDamage`.
 
-There is a second, opposite term. srrevamp did not model it until 2026-09-17;
+There is a second, opposite term. OpenSRO did not model it until 2026-09-17;
 it now does, as `combat.SkillLevelPenalty`.
 `Formulae::Formula_SkillPhysDamage` (`0x0040f5f0`, 248 bytes) scales skill
 physical damage **down** when the level difference runs the other way:
@@ -458,7 +458,7 @@ chain at all.
 ### Wired
 
 `combat.SkillLevelPenalty`, applied in `session.performAttack` to `damageBonus`
-— srrevamp's name for exactly that half — before it joins the roll. The rate,
+— OpenSRO's name for exactly that half — before it joins the roll. The rate,
 the floor and the truncation (`__ftol2`, not rounding) are all from the
 disassembly; `TestSkillLevelPenaltyIsNotTheLevelAdvantage` fails if a later
 refactor collapses the two level terms into one.
@@ -546,7 +546,7 @@ bit 1 clear, `& 0x1c == 0xc` (TypeID1 3, an item) and **bit 0 set**. In the comb
 column 7 is 1 on 728 of the 779 rows whose codename contains `MALL` and on 1,273 of the other
 20,783.
 
-**What this means for srrevamp.** None of the four is reachable with the content it spawns — no
+**What this means for OpenSRO.** None of the four is reachable with the content it spawns — no
 transform, no structures, no fortress weapons in play, no snowman — so kind 0 was the right thing
 to have built first, and that is now a statement with the conditions written down rather than an
 assumption. Kinds 2 and 4 are wired into `session.performAttack` anyway, because they are fully
@@ -584,7 +584,7 @@ because the read side has two afflictions sharing that gear. The two sides, from
 agree.
 
 Recorded as `combat.AfflictionResistParam` / `AfflictionSecondParam` with a cross-check test. **Not
-wired** — srrevamp has no status-effect system — so these are reference data, read by no game code.
+wired** — OpenSRO has no status-effect system — so these are reference data, read by no game code.
 
 ## Every shipped combat constant re-verified from the exe (2026-09-18)
 
@@ -605,17 +605,17 @@ re-derived from asm. All the rest hold:
 
 Two formula checks worth recording:
 
-- **Core mitigation is correct despite srrevamp rounding a stage earlier.** The engine computes
+- **Core mitigation is correct despite OpenSRO rounding a stage earlier.** The engine computes
   `attack/(1+red/100) - flat` as one float and rounds once at the end; `MitigateDamage` rounds the
   quotient then subtracts the integer `flat`. Subtracting an integer commutes with rounding, so the
-  two agree; the only residue is that srrevamp rounds between mitigation and the level term, a ≤1
+  two agree; the only residue is that OpenSRO rounds between mitigation and the level term, a ≤1
   difference, not a systematic bias.
 
 - **A disclosed ordering divergence, berserk vs the floor band.** The engine folds the critical and
   berserk factors into ONE multiplier applied at stage 13, *before* the floor band at stage 16.
-  srrevamp applies the critical inside `ResolveBlow` (before the floor band, ✓) but berserk in
+  OpenSRO applies the critical inside `ResolveBlow` (before the floor band, ✓) but berserk in
   `performAttack` *after* `ResolveBlow` returns (after the floor band). So for the rare case of a
-  berserk blow mitigated below 5% of base, srrevamp runs the floor band on the un-doubled damage and
+  berserk blow mitigated below 5% of base, OpenSRO runs the floor band on the un-doubled damage and
   then doubles, where the engine doubles first. It only reaches the band on a berserk hit into a
   high-defence target, and both paths end at a small value; recorded as a known low-impact
   divergence rather than a silent one, because fixing it means threading the berserk tracker into
@@ -664,7 +664,7 @@ minimum of three, biased toward zero, which is why blows cluster near the centre
 
 ### The cascade
 
-- **Round 370** renamed it the hit chance and edited `GROUNDING_AUDIT.md` to say "what srrevamp
+- **Round 370** renamed it the hit chance and edited `GROUNDING_AUDIT.md` to say "what OpenSRO
   lacks is a HIT ROLL, not a parry roll". Both wrong.
 - **Round 371** computed a bare level-1 character's `hra = 11` against a monster's `era = 27` and
   called the resulting **20 %** "implausibly low for a starting fight". **There was nothing
@@ -690,7 +690,7 @@ minimum of three, biased toward zero, which is why blows cluster near the centre
   centre. That was always the real basis; the census added nothing and claimed more.
 - **The player's base rates**, recovered in round 371 and genuinely new: a bare character has
   `hra = era = 10 + Level`, from a base of 10.0 at slot 0 plus a direct `Level →` edge at slot 0,
-  under a slot-0 sum. This matters because the 2026-09-15 entry closed with *"srrevamp has no
+  under a slot-0 sum. This matters because the 2026-09-15 entry closed with *"OpenSRO has no
   attack-rate or parry-rate stat, so porting the centre would mean inventing its only input"* —
   **the input is no longer invented.** With `hr` on weapons and `er` on armour
   (`magic_options.md`), the damage centre becomes portable.

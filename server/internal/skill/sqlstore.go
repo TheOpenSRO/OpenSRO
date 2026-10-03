@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
+	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // driver registration ("pgx")
 )

@@ -7,7 +7,7 @@ import (
 
 // Target acquisition, the runtime's half (round 552): the pure rules
 // session/monsterai.go's acquire runs behind cmd/server's -monster-aggro
-// (SRREVAMP_MONSTER_AGGRO), OFF by default. The rule itself -- BCRadius plus
+// (OPENSRO_MONSTER_AGGRO), OFF by default. The rule itself -- BCRadius plus
 // the row's detection distance, the nearest player, no level term -- was read
 // in round 257 (state.go, DetectionRadius, and docs/protocol/monster_ai.md,
 // "Target acquisition"); what is below is the rest of what the scan needs and
@@ -93,7 +93,7 @@ const TacticsFlagsFastScan = 0x84
 // so the period lies in [1001, 1500] ms, or [201, 250] on the fast branch,
 // rolled once per spawn, and the first scan is immediate; the path draws
 // rand() twice, the second draw to no effect but the engine's rng stream,
-// which srrevamp's own rng does not share (round 555). AITactics_TimerDue
+// which OpenSRO's own rng does not share (round 555). AITactics_TimerDue
 // (0x53d6e0) answers due on the fired byte (`cmp byte [..+1],1; je` 0x53d751)
 // and otherwise once now - last >= period (`sub edx,[ecx+8]; cmp edx,[ecx+4];
 // jb not-due` 0x53d75d..0x53d763), consuming it (`mov [ecx+4],edi` 0x53d765).
@@ -171,10 +171,10 @@ type Candidate struct {
 //     `cmp [edx],ebx`), so any later candidate in range replaces it.
 //     Carried as read.
 //
-// The distance srrevamp measures is the ground plane's, the one battleTick
+// The distance OpenSRO measures is the ground plane's, the one battleTick
 // uses; GObj_DistanceBetween (0x53d7a0) sums three axes across regions, and
-// srrevamp's monsters carry no height. The candidates' order is the caller's;
-// the engine's is the region's player list, which srrevamp does not have.
+// OpenSRO's monsters carry no height. The candidates' order is the caller's;
+// the engine's is the region's player list, which OpenSRO does not have.
 //
 // Not modelled, read closer in round 555: the PC branch (0x546563..0x546675)
 // stores AITactics_ValidTargetOrNull's result back OVER the candidate (`mov
@@ -186,7 +186,7 @@ type Candidate struct {
 // test before the store (`mov [eax],esi` at 0x546702). So a player the
 // validity test rejects -- dead, under -player-dead-state -- is not skipped
 // the way Nearest's caller skips one: it leaves a NULL pick at its own
-// distance, which a later candidate must be strictly nearer than. srrevamp's
+// distance, which a later candidate must be strictly nearer than. OpenSRO's
 // callers drop dead players before the scan, so a dead body nearer than a
 // living player never shadows the living one here; in the engine it would.
 func Nearest(cands []Candidate, x, z, radius float64) (best Candidate, dist float64, ok bool) {

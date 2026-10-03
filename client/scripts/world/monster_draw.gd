@@ -46,12 +46,12 @@ const POSE_RANGE := MapAnimation.OBJECT_RANGE
 ## Meta on a skeleton whose clip is culled (monsters and NPCs; never the
 ## player, other players or the character window's doll), and the radius of
 ## its bounding sphere in world units.
-const META_CULL := "srrevamp_pose_cull"
-const META_RADIUS := "srrevamp_pose_radius"
+const META_CULL := "opensro_pose_cull"
+const META_RADIUS := "opensro_pose_radius"
 ## Meta on a monster's skeleton: hidden while out of POSE_RANGE (round 655's
 ## review; OURS, as MapAnimation hides a map object out of its range). An NPC
 ## is only left unposed.
-const META_HIDE := "srrevamp_hide_out_of_range"
+const META_HIDE := "opensro_hide_out_of_range"
 
 ## The model scale a monster's class gives it (round 660), READ from the
 ## retail spawn parser CICMonster::vslot_025 (0x9d3850): the scale starts at
@@ -132,7 +132,7 @@ class Templates:
 	## on the main thread inside the frame that drew it -- Tiger Girl's 844 ms,
 	## a rotation's respawn in view froze the game for 862 ms (round 661's
 	## live check). instance() still assembles on the spot a model nobody
-	## requested (the synchronous path, SRREVAMP_SYNC_LOAD=1, the tests).
+	## requested (the synchronous path, OPENSRO_SYNC_LOAD=1, the tests).
 	var _tasks := {} # model -> WorkerThreadPool task id
 	var _done := {} # model -> [AssembledCharacter or null, usec], written by the task
 	var _lock := Mutex.new()

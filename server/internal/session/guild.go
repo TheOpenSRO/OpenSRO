@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/guild"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/guild"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // Guild opcodes, our own protocol. All require a prior OpLogin. Unlike
@@ -33,7 +33,7 @@ const (
 	// raises. Placeholder scaffolding like the rest of this block
 	// (docs/protocol/PROTOCOL_DECISION.md): the engine pushes the same two
 	// numbers as 0x38F5 types 5 and 6 through CGuild::BroadcastToLocalMember,
-	// which srrevamp does not model, so the client asks instead.
+	// which OpenSRO does not model, so the client asks instead.
 	OpGuildPoints       uint16 = 0x0098 // client -> server
 	OpGuildPointsResult uint16 = 0x0099 // server -> client
 	// OpGuildLevel reports the requester's guild's level and what the next
@@ -307,7 +307,7 @@ func DecodeGuildLevelRequest(data []byte) (*GuildLevelRequest, error) {
 // always sent; on failure (Error != "") nothing follows. Code is the engine's
 // refusal code for a level-up the engine would refuse (guild.LevelUpCode:
 // 0x4c07, 0x4c0d, 0x4c1e, 0x4c21, 0x4c31, 0x4c32), which the client can show
-// in the game's own words, and 0 for srrevamp's own failures. On success:
+// in the game's own words, and 0 for OpenSRO's own failures. On success:
 // the guild's id, its Level (u8), whether this reply raised it (u8), the
 // member cap at that level (u16, guild.MaxMembersFor) and what the next level
 // costs in gold and guild points (s64 each, guild.LevelUpCost; both 0 at
@@ -478,7 +478,7 @@ func handleGuildPoints(ctx context.Context, sess *gateway.Session, p *proto.Pack
 // takes it with an OffsetGold that cannot refuse, on the ShardManager job's
 // reply (trs_sm_guildjob::FUN_005c8fd0); DeductGold can, when the gold was
 // spent since the check, and that is reported as the gold refusal, 0x4c31.
-// SRREVAMP'S OWN HANDLING, the round-487 rollback's counterpart: if the
+// OPENSRO'S OWN HANDLING, the round-487 rollback's counterpart: if the
 // store fails after the gold was taken (its UPDATE, read-back or commit),
 // the gold is given back with AddGold, and a failed refund is logged.
 //
@@ -494,7 +494,7 @@ func handleGuildPoints(ctx context.Context, sess *gateway.Session, p *proto.Pack
 //
 // A commit error is not proof the level was not kept: a connection that drops
 // after the server committed reports an error too (SQLStore.LevelUp). The
-// refund then pays back a level the guild kept. srrevamp takes that side of
+// refund then pays back a level the guild kept. OpenSRO takes that side of
 // the ambiguity, since the other side loses the player's gold.
 //
 // The server pushes no gold update (as after founding): the client re-reads
@@ -607,7 +607,7 @@ func handleGuildCreate(ctx context.Context, sess *gateway.Session, p *proto.Pack
 	// FUN_005c8bf0 -> GObjPC::FUN_004e4140, OffsetGold(-500000)), after
 	// uniqueness is settled. See guild.CreateGoldRequired.
 	if err := chars.DeductGold(ctx, characterID, guild.CreateGoldRequired); err != nil {
-		// SRREVAMP'S OWN HANDLING, not the engine's. OffsetGold has no
+		// OPENSRO'S OWN HANDLING, not the engine's. OffsetGold has no
 		// refusal path, but DeductGold can fail here if the gold was spent
 		// between the check above and now. Leaving the guild in place would
 		// found it for free, so it is taken down again: Leave disbands a guild

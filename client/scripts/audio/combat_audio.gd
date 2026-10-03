@@ -108,7 +108,7 @@ const WEAPON_TOKENS := {
 ## 256 and kept in server/internal/combat/baseattack.go (BaseAttackSkillFor),
 ## which this mirrors. The server resolves the swing to this skill and the
 ## client's damage decoration carries it, so a plain hit keys by its
-## Basic_Group (SKILL_CH_SWORD_BASE). srrevamp's OpAttackResult names no skill,
+## Basic_Group (SKILL_CH_SWORD_BASE). OpenSRO's OpAttackResult names no skill,
 ## so the client resolves it the same way from the weapon in hand.
 const BASE_ATTACK_SKILL := {
 	1: 1,  # SKILL_PUNCH_01
@@ -216,7 +216,7 @@ static func play_block(blocker_obj: String, critical: bool, at: Node3D, what: St
 	return _fire("block", PackedStringArray([key]) if key != "" else PackedStringArray(), at, what)
 
 ## A defensive skill that absorbed a blow (snd_ddmg). Nothing calls this yet:
-## srrevamp's server has no absorbing skill, so the client never learns of
+## OpenSRO's server has no absorbing skill, so the client never learns of
 ## such a blow (OPEN until one exists).
 static func play_ddmg(defender_obj: String, hwan: bool, group: String, code: String, weapon: String,
 		at: Node3D, what: String) -> String:

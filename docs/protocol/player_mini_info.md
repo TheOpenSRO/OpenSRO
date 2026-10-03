@@ -63,7 +63,7 @@ A left press anywhere else on the block is `vslot_030` (0x007b4be0), selecting t
   is `FUN_006ac0a0`, which looks for `SKILL_ITEM_ETC_SOCKET_STONE_HWAN_E_01..03`). `player+0x20f8`
   is the Energy of life scroll's bonus (READ): `FUN_0089a0d0` stores the value of a timed job with
   FourCC `0x706874` there (`FUN_009d4e00`) while the job has time left, and `FUN_0089a1a0` clears
-  it at that job's end. srrevamp feeds it from the composite state's bonus
+  it at that job's end. OpenSRO feeds it from the composite state's bonus
   (`HudPlayerInfo.set_hwan_time_bonus`; round 629-632 integration); the socket bonus is OPEN (0:
   no socket stones). Each flame starts
   on frame `rand() % 12`, shows, and fades 0 -> 255 over 1.0 s (`FUN_006526e0(0, 0xff, 1.0f)`);
@@ -86,10 +86,10 @@ A left press anywhere else on the block is `vslot_030` (0x007b4be0), selecting t
   its fifth argument just before broadcasting (the flag granting param 189's 0.3), and the berserk
   activation passes 0 there (`push 0x0` at 0x515cc6; READ, round 629-632 integration) -- and for
   its own player `FUN_00778ae0(0, 1)` -- the display starts; value 0 = off, which ends the body mode
-  and leaves the display to timer 2. srrevamp's server sends both (round 629's review): on at
+  and leaves the display to timer 2. OpenSRO's server sends both (round 629's review): on at
   activation, off when the tracker's activation runs out (`scheduleBerserkEnd`), and off when a
   revive or a zone change ends the berserk (`endBerserk`: the engine's revive and world entry set
-  body mode 2, broadcast as value 2; srrevamp has no body mode 2 and sends 0, OURS).
+  body mode 2, broadcast as value 2; OpenSRO has no body mode 2 and sends 0, OURS).
 - **Hwan level art**, `FUN_007b5f40` (READ): when the byte at `player+0x764` is not 0 the orbs,
   flames, button, face and glow swap to `pmi_jahwan_02*.ddj` (blue). INFERRED: that byte is
   `_CHAR.HwanLevel` -- its setter 0x009ca930 builds the Hwan title through `hwanleveldata`.
@@ -135,7 +135,7 @@ and 1 on all 26 `CHAR_EU_*` rows.
 
 ## The portrait (READ; drawn since round 635)
 
-`UI_SILKMALL::FUN_007b7740` renders the portrait. srrevamp's version is
+`UI_SILKMALL::FUN_007b7740` renders the portrait. OpenSRO's version is
 `client/scripts/ui/hud/player_portrait.gd`.
 
 **The model (READ).** `IFMainPopup::FUN_006a1d50` returns the popup's +0x7c0, the CIFEquipment
@@ -288,7 +288,7 @@ MEASURED channel values at the reference time 0.5:
 `CIFApprenticeShipSlot::FUN_006eb740`) use the same camera and light constants. No target-window
 code creates a BufRender (INFERRED from the xref list of `BufRender::FUN_009edae0`).
 
-**srrevamp** (round 635), in `client/scripts/ui/hud/player_portrait.gd`:
+**OpenSRO** (round 635), in `client/scripts/ui/hud/player_portrait.gd`:
 - it copies the player's dressed body and hangs it under a z -> -z node;
 - it poses ANI_POSE at the first key (INFERRED: within one frame of retail's step);
 - it applies the READ camera and yaw;

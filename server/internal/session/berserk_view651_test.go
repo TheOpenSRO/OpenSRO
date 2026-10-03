@@ -3,7 +3,7 @@ package session
 // Round 651: a character that is berserk when another player arrives is drawn
 // berserk by the arrival -- retail carries the body mode in every spawn's
 // state block (the client's 0x9d1300 -> +0x470, applied by FUN_009d17e0;
-// the server's GObjPC::FUN_004a9b70 writes chardata+3), and srrevamp sends it
+// the server's GObjPC::FUN_004a9b70 writes chardata+3), and OpenSRO sends it
 // as the 0x30bf kind 4 the client already applies (sendBodyModesInView).
 
 import (
@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/berserk"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 )
 
 // bodyModesUntilQuiet reads conn until it stays quiet for 300 ms and returns

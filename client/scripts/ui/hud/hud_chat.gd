@@ -418,11 +418,11 @@ static func _inside(r: Rect2, p: Vector2) -> bool:
 func _has_point(point: Vector2) -> bool:
 	return _inside(Rect2(Vector2.ZERO, size), point)
 
-## SRREVAMP_QA_FRAME_LOG set: each frame change is logged with the window's
+## OPENSRO_QA_FRAME_LOG set: each frame change is logged with the window's
 ## rect (the round-641 e2e's measurement). Off by default: hovering would
 ## otherwise write a line on every pass over a window.
 static func frame_log() -> bool:
-	return OS.get_environment("SRREVAMP_QA_FRAME_LOG") != ""
+	return OS.get_environment("OPENSRO_QA_FRAME_LOG") != ""
 
 ## 0x7a9bd0(show).
 func set_frame_shown(show: bool) -> void:
@@ -900,7 +900,7 @@ func scroll_bar() -> ChatScroll:
 ## A channel mark with nothing after it is TYPE_INCOMPLETE (the length-1
 ## test at 0x7ad7dc). The mark is not sent as part of the text (INFERRED:
 ## 0x7ad904 copies the raw line when the split left the message empty;
-## whether retail's server strips it was not read -- srrevamp's client does).
+## whether retail's server strips it was not read -- OpenSRO's client does).
 static func parse_line(text: String, gm: bool = false) -> Dictionary:
 	var out := {"type": TYPE_INCOMPLETE, "target": "", "message": ""}
 	if text == "":
@@ -1042,7 +1042,7 @@ func group_refusal(type: int) -> String:
 	return ""
 
 ## The refusal line for a result code (0x877340's switch; the guild and
-## academy ones are 0x7ad400's own client-side refusals, which srrevamp's
+## academy ones are 0x7ad400's own client-side refusals, which OpenSRO's
 ## server answers -- see server/internal/session/chat.go).
 func refusal_text(code: int, target: String) -> String:
 	match code:

@@ -21,7 +21,7 @@ package skill
 // (+0x234) and returns nothing for an id it does not hold, and both callers
 // refuse on that -- Mastery_LevelUp (0x0059c4e0) with 0x3801 and the learn
 // check FUN_0059e450 (called from Skill_HandleLearn 0x0059bfe0) with 0x3401.
-// srrevamp's held list is derived from the Country here. Since round 692 a new
+// OpenSRO's held list is derived from the Country here. Since round 692 a new
 // character is also seeded with its race's masteries as level-0 rows
 // (SeedMasteries, from the same table) -- characters made before 692 hold only
 // the rows they raised -- and the two agree: every seeded row is one

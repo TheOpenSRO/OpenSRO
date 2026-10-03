@@ -18,8 +18,8 @@ const OP_STATE_RESULT := 0x0076   # server -> client
 const OP_RAISE := 0x0077          # client -> server
 const OP_RAISE_RESULT := 0x0078   # server -> client
 # Buffs and the Ghost Walk move (round 617, the client half of the skills
-# epic's shared contract, docs/protocol/auto_command.md "srrevamp's cast and
-# buff messages"; OURS -- srrevamp's own
+# epic's shared contract, docs/protocol/auto_command.md "OpenSRO's cast and
+# buff messages"; OURS -- OpenSRO's own
 # protocol, with retail analogues 0xB0BD / 0xB072 / 0x7074 kind 5 / 0xB070).
 const OP_BUFF_START := 0x00F5     # server -> client (the region)
 const OP_BUFF_END := 0x00F6       # server -> client (the region)

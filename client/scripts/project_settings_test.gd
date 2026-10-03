@@ -59,7 +59,7 @@ func _initialize() -> void:
 	_setting_is("rendering/renderer/rendering_method.mobile", "gl_compatibility")
 
 	_setting_is("debug/file_logging/enable_file_logging", true)
-	_setting_is("debug/file_logging/log_path", "user://logs/srrevamp.log")
+	_setting_is("debug/file_logging/log_path", "user://logs/opensro.log")
 	_setting_is("debug/file_logging/max_log_files", 10)
 
 	# On (round 672): glyphs are rasterised at the UI scale, every scale, and

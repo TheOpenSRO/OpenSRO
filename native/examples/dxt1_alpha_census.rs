@@ -5,8 +5,8 @@
 //!   cargo run --release --no-default-features --example dxt1_alpha_census -- /path/Data.pk2 [-v]
 //!
 //! Prints nothing from the archive but paths and numbers (docs/LEGAL.md).
-use srrevamp_native::core::dxt;
-use srrevamp_native::core::pk2::Archive;
+use opensro_native::core::dxt;
+use opensro_native::core::pk2::Archive;
 use std::time::Instant;
 
 #[derive(Default)]

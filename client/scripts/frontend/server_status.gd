@@ -44,12 +44,12 @@ class_name ServerStatus
 ## ORIGINAL gateway protocol and is asked the way retail asks
 ## (RetailGatewayClient: the handshake, 0x2001, 0x6100, then 0x6101 ->
 ## 0xA101), never with 0x0007; its answer is a list of shards, each banded by
-## the same compare (band_for). `type: srrevamp` is the 0x0007 question above
+## the same compare (band_for). `type: opensro` is the 0x0007 question above
 ## and never waits for a 0x5000.
 
 signal finished(status: ServerStatus, why: String)
 
-const TYPE_SRREVAMP := "srrevamp"
+const TYPE_OPENSRO := "opensro"
 const TYPE_LEGACY := "legacy"
 ## OURS: the legacy exchange is about five round trips; all of it, every
 ## attempt included, inside this, which is under the 5 s refresh.
@@ -114,8 +114,8 @@ var current := 0
 var capacity := 0
 var state := 0
 var answered_ok := false
-## Round 681: srrevamp or legacy (ClientConfig.ServerEntry.type).
-var server_type := TYPE_SRREVAMP
+## Round 681: opensro or legacy (ClientConfig.ServerEntry.type).
+var server_type := TYPE_OPENSRO
 ## Legacy: {"content_id", "version"} from Media.pk2 (RetailClientInfo), or
 ## {"error"} when they cannot be read.
 var client_info := {}

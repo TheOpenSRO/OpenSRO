@@ -285,7 +285,7 @@ static func _object_space_bone(skeleton: Skeleton3D) -> int:
 	return obj
 
 ## The bone build_skin adds for vertices on the client's palette entry 0.
-const OBJECT_SPACE_BONE := "__srrevamp_object_space__"
+const OBJECT_SPACE_BONE := "__opensro_object_space__"
 
 ## False for the OBJECT_SPACE_BONE build_skin adds: a bone of the model's
 ## own, not of its skeleton, sitting at the origin -- a loop measuring a

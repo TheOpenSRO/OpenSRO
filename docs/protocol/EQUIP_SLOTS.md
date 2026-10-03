@@ -128,8 +128,8 @@ The archive shows what those resolve to: `Res\Item\China\MAN_ITEM\clothes_00_ba.
 character with no chest armour is not bare — the chest slot is showing a **garment item**, and
 equipping armour replaces that garment, not a body mesh.
 
-**This corrects a conclusion**, not an observation: round 281 recorded that srrevamp never hides
+**This corrects a conclusion**, not an observation: round 281 recorded that OpenSRO never hides
 body meshes (true) and concluded that was the cause of skin showing through armour. The engine
 does not hide body meshes either — the body `.bsr`'s skin is drawn under the slot visual in both.
-What srrevamp is actually missing is the **default wear**, and whatever keeps the engine's worn
+What OpenSRO is actually missing is the **default wear**, and whatever keeps the engine's worn
 geometry clear of the skin. See `docs/PLAYTEST_2026_09_20.md` item 6.

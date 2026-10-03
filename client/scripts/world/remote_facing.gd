@@ -23,7 +23,7 @@ class_name RemoteFacing
 ## body that stops keeps its last heading.
 ##
 ## The heading-only form of the message (kind 0: FUN_009e08a0) goes through
-## the same FUN_009e02f0, so it turns at the same rate. srrevamp's protocol
+## the same FUN_009e02f0, so it turns at the same rate. OpenSRO's protocol
 ## sends neither form for a player: OpEntityMoved is a stream of positions,
 ## each of which World3D treats as the destination (see World3D._on_entity_moved).
 ##

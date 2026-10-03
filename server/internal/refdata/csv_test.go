@@ -523,7 +523,7 @@ func TestSkillCSVSelfHealIsAStrictSuffix(t *testing.T) {
 
 // CooldownGroup (round 504, Action_Overlap's high byte) is appended at 45 and
 // is a strict suffix like the rest: a 45-column export -- through SelfHealMP --
-// loads group 0, the per-skill timer srrevamp had before; the 46th column
+// loads group 0, the per-skill timer OpenSRO had before; the 46th column
 // loads as the group.
 func TestSkillCSVCooldownGroupIsAStrictSuffix(t *testing.T) {
 	old := make([]string, 45) // through SelfHealMP, no further

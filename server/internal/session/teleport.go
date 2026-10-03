@@ -33,7 +33,7 @@ package session
 //     which copies the record's region word (+0x20) and its x/y/z words
 //     (+0x26/+0x28/+0x2a) as floats, with no scatter over the radius (the
 //     battle arena's FUN_00662380 is the one place that scatters, by
-//     rand() over +/- radius). srrevamp lands on (region, x, z); the height
+//     rand() over +/- radius). OpenSRO lands on (region, x, z); the height
 //     is spawnPos's 0, and the client stands the player on its walkable graph
 //     there (World3D._land_teleport_arrival) -- measured in round 642 to be
 //     within a unit of the table's y at 33 of the 42 open-world points
@@ -44,15 +44,15 @@ package session
 //     structure 800, the requester's region or a neighbour). OURS within it:
 //     the height term is dropped, and an NPC the server has no npcpos row for
 //     is not measured. Still no "already teleporting" state (0x1c14,
-//     IGObj::GetTeleportState): a srrevamp teleport completes inside one
+//     IGObj::GetTeleportState): an OpenSRO teleport completes inside one
 //     request, so there is no state to be in -- and a second request from
 //     the old gate is now refused by the range (the player has moved).
 //   - A point with no associated object is refused with code 2 as well; the
 //     engine answers nothing when its gate lookup (FUN_00485d90) fails -- a
-//     bare `return` -- and srrevamp does not leave a client waiting.
+//     bare `return` -- and OpenSRO does not leave a client waiting.
 //   - The GM and -teleport-free waivers (teleport.QuoteFee), the refusal
 //     reasons' wording, and the refusals that carry code 0 (not in the
-//     world, dead, no network loaded, a destination srrevamp cannot place).
+//     world, dead, no network loaded, a destination OpenSRO cannot place).
 
 import (
 	"context"
@@ -61,18 +61,18 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/OpenSRO/srrevamp/server/internal/berserk"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/gm"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/teleport"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/gm"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/teleport"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
-// The teleport pair, srrevamp's own placeholders. 0x00F3/0x00F4 were free on
+// The teleport pair, OpenSRO's own placeholders. 0x00F3/0x00F4 were free on
 // 2026-09-26: the highest op in server/internal/session and
 // client/scripts/net was 0x00F2 (OpGMCommandResult), and no file under
 // server/, client/scripts or docs/ named either. The client half pins them
@@ -118,7 +118,7 @@ func DecodeTeleportUseRequest(data []byte) (*TeleportUseRequest, error) {
 // (SN_ZONE_22002 for Donwhang's gate), which the client resolves through its
 // own textdata_object; the OpChangeZoneResult that moves the player follows
 // it. On a refusal OK is 0, Code is the engine's refusal code (2, 0x1c07,
-// 0x1c10, 0x1c15, 0x1c19, 0x1c23, 0x1c24) or 0 for a refusal of srrevamp's
+// 0x1c10, 0x1c15, 0x1c19, 0x1c23, 0x1c24) or 0 for a refusal of OpenSRO's
 // own, Reason is the server's own wording (the client's fallback), and
 // nothing moved or was charged.
 type TeleportResult struct {
@@ -234,9 +234,9 @@ func (t *teleporter) use(ctx context.Context, sess *gateway.Session, p *proto.Pa
 	}
 	// A gate in another game world -- a fortress, tomb, temple or arena
 	// point -- is refused as its destinations are (OURS, round 642's review:
-	// srrevamp has the open world only, so a player cannot stand at one).
+	// OpenSRO has the open world only, so a player cannot stand at one).
 	if !inOpenWorld(gatePoint) {
-		return refuse(0, "that gate is in an instanced area srrevamp does not have yet", "gate", gateCode, "world", gatePoint.WorldID)
+		return refuse(0, "that gate is in an instanced area OpenSRO does not have yet", "gate", gateCode, "world", gatePoint.WorldID)
 	}
 	// The interaction range, READ (round 642's review): HandleTeleportUse
 	// calls GObjPC::IsWithinInteractionRange (0x4a8e10) here, before the
@@ -253,13 +253,13 @@ func (t *teleporter) use(ctx context.Context, sess *gateway.Session, p *proto.Pa
 	dest, _ := t.network.PointByID(link.To)
 	zone, bucket, pos, frame, ok := teleportArrival(dest)
 	if !ok {
-		return refuse(0, "that destination is not a place srrevamp can put a player yet", "gate", gateCode, "dest", dest.Code)
+		return refuse(0, "that destination is not a place OpenSRO can put a player yet", "gate", gateCode, "dest", dest.Code)
 	}
 	c, err := t.chars.GetByID(ctx, current.CharacterID)
 	if err != nil || c == nil {
 		return refuse(0, "lookup failed")
 	}
-	// The PvP state is a DISCLOSED STAND-IN: srrevamp models none (no PK
+	// The PvP state is a DISCLOSED STAND-IN: OpenSRO models none (no PK
 	// system; internal/duel's own-design duel sets none), so every character
 	// is PvPSTATE_NEUTRAL here. It decides only rule type 3, which no retail
 	// link carries (0 of 1,460 slots, round 575) -- no current outcome turns
@@ -268,14 +268,14 @@ func (t *teleporter) use(ctx context.Context, sess *gateway.Session, p *proto.Pa
 		return refuse(code, teleportRefusalReason(code), "gate", gateCode, "dest", dest.Code, "level", c.Level)
 	}
 	// A destination in another game world -- a fortress, tomb, arena or
-	// survival instance (teleport.Point.WorldID) -- is refused: srrevamp has
+	// survival instance (teleport.Point.WorldID) -- is refused: OpenSRO has
 	// the open world only. OURS: the engine looks the world up
 	// (GameWorldMgr_FindByID, 0x5137ac) and enters it, or refuses with code 2
 	// when there is none (0x513802). It does so after the restrictions and
-	// the gold compare, as here -- except that srrevamp refuses the world
+	// the gold compare, as here -- except that OpenSRO refuses the world
 	// before a short purse, since its charge is the compare.
 	if !inOpenWorld(dest) {
-		return refuse(0, "that destination is an instanced area srrevamp does not have yet", "gate", gateCode, "dest", dest.Code, "world", dest.WorldID)
+		return refuse(0, "that destination is an instanced area OpenSRO does not have yet", "gate", gateCode, "dest", dest.Code, "world", dest.WorldID)
 	}
 	isGM := t.gate.Allows(username)
 	fee, waiver := teleport.QuoteFee(link, c.Level, isGM, t.free)
@@ -351,7 +351,7 @@ func gateObject(network *teleport.Table, p teleport.Point) (string, bool) {
 	return p.Code, true
 }
 
-// inOpenWorld reports whether point p is in the open world, the one srrevamp
+// inOpenWorld reports whether point p is in the open world, the one OpenSRO
 // has: WorldID 1, or 0 for a teleportdata.csv exported before round 642,
 // which does not say (cmd/server warns at boot).
 func inOpenWorld(p teleport.Point) bool {

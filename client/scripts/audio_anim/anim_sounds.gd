@@ -130,10 +130,10 @@ var _ticks := 0
 var now_msec: Callable = func() -> int: return Time.get_ticks_msec()
 ## Print the AUDIO lines (a test turns it off and reads `lines`).
 var print_lines := true
-## SRREVAMP_QA_AUDIO_TRACE=1: one `AUDIO clip` line each time a registered
+## OPENSRO_QA_AUDIO_TRACE=1: one `AUDIO clip` line each time a registered
 ## body starts a clip -- which entry it is tagged as, and whether that entry
 ## has a sound set -- so a run shows why a sound did or did not fire.
-var trace := OS.get_environment("SRREVAMP_QA_AUDIO_TRACE") != ""
+var trace := OS.get_environment("OPENSRO_QA_AUDIO_TRACE") != ""
 ## The last AUDIO lines, newest last (at most 200).
 var lines: Array[String] = []
 ## Every key sent to the core, with its clip time -- [key, key_ms, label] --

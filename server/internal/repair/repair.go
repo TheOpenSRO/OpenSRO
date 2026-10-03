@@ -1,7 +1,7 @@
 // Package repair holds the item-repair cost model recovered from
 // SR_GameServer.exe.
 //
-// srrevamp has item durability columns in its reference data and no repair
+// OpenSRO has item durability columns in its reference data and no repair
 // path. This is the path.
 //
 // See docs/protocol/durability.md.

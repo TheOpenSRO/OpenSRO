@@ -125,17 +125,17 @@ func TestStatCeilingSolutionsReachTheClampExactly(t *testing.T) {
 	}
 }
 
-// srrevamp's own stat scale sits below the engine's at every level, which is
+// OpenSRO's own stat scale sits below the engine's at every level, which is
 // the measured reason stage 15 stays unwired. If character.StartingStr or the
 // growth ever rises to meet it, this test fails and the decision gets revisited
 // deliberately rather than by drift.
-func TestSrrevampStatScaleIsBelowTheEnginesCeiling(t *testing.T) {
+func TestOpenSROStatScaleIsBelowTheEnginesCeiling(t *testing.T) {
 	// 20 starting, 4 a level at full investment -- character.StartingStr plus
 	// StatGrowthPerLevel plus leveldata.StatPointsPerLevel.
-	srrevampStr := func(level int) float64 { return 20 + 4*float64(level-1) }
+	opensroStr := func(level int) float64 { return 20 + 4*float64(level-1) }
 	for _, level := range []int{1, 20, 50, 110} {
-		if ours, ceiling := srrevampStr(level), StrForMaxRatio(level); ours >= ceiling {
-			t.Errorf("level %d: srrevamp Str %v has reached the engine's ceiling %v -- "+
+		if ours, ceiling := opensroStr(level), StrForMaxRatio(level); ours >= ceiling {
+			t.Errorf("level %d: OpenSRO Str %v has reached the engine's ceiling %v -- "+
 				"revisit wiring stage 15", level, ours, ceiling)
 		}
 	}

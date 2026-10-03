@@ -1,7 +1,7 @@
 extends SceneTree
 
 ## Dev tool: dumps real wearable item rows from the player's own Media.pk2 item
-## table, so a QA equipment loadout (SRREVAMP_QA_EQUIP) is built from real item
+## table, so a QA equipment loadout (OPENSRO_QA_EQUIP) is built from real item
 ## ids the server could actually send -- never invented ones.
 ##
 ## Prints, for every item that has a worn model, its id, code name, display

@@ -12,14 +12,14 @@ extends Node3D
 ##
 ## The ground is a placeholder collision box by default, but both its
 ## *visual* mesh and its *collision* shape are replaced by real terrain if
-## you set SRREVAMP_MAPM_PATH to a real Map.pk2 region .m file (see below)
+## you set OPENSRO_MAPM_PATH to a real Map.pk2 region .m file (see below)
 ## -- .mapm's grid width (17) is now a real, mechanistically confirmed
 ## constant (see docs/protocol/MAPM_FORMAT.md and MapmTerrainBuilder), not
 ## the unresolved blocker it used to be. The real collision shape is a
 ## HeightMapShape3D over the same real 97x97 height grid the visual mesh is
 ## built from, split into the mesh's own triangles (TerrainCollision, round
 ## 567; a ConcavePolygonShape3D of the mesh's triangles until then, still
-## built under SRREVAMP_TERRAIN_TRIMESH=1 for A/B), so the player physically
+## built under OPENSRO_TERRAIN_TRIMESH=1 for A/B), so the player physically
 ## walks on the actual real terrain surface, not a flat box, whenever real
 ## terrain data loads.
 ## The terrain's real world position/scale relative to a player's actual
@@ -33,8 +33,8 @@ extends Node3D
 ##
 ## The *player's own* body is no longer a placeholder if you point this
 ## project at your own real game data (this project ships with none --
-## BYO, see docs/LEGAL.md): set SRREVAMP_PK2_PATH to a real Data.pk2 and
-## SRREVAMP_MEDIA_PK2_PATH to a real Media.pk2, and the character is
+## BYO, see docs/LEGAL.md): set OPENSRO_PK2_PATH to a real Data.pk2 and
+## OPENSRO_MEDIA_PK2_PATH to a real Media.pk2, and the character is
 ## assembled the way the game assembles it. The body is a row of
 ## characterdata (`CHAR_CH_MAN_FIGHTER` -> `char\china\chinaman_fighter.bsr`,
 ## see GENDER_BODY_CODE), a `.bsr` naming the skeleton, nine skinned body
@@ -56,41 +56,41 @@ extends Node3D
 ## (OpEnterWorldResult/OpEntityEntered, queried live from the equipment
 ## store -- see equippedItems in server/internal/session/world.go).
 ##
-## SRREVAMP_PK2_PATH + SRREVAMP_BSR_PATH also loads one real, textured
+## OPENSRO_PK2_PATH + OPENSRO_BSR_PATH also loads one real, textured
 ## static scenery object nearby via ObjectLoader, and
-## SRREVAMP_BSK_PATH + SRREVAMP_BAN_PATH loads a real animated decoration
+## OPENSRO_BSK_PATH + OPENSRO_BAN_PATH loads a real animated decoration
 ## skeleton (its own separate .bsk/.ban pair, not the player's body) via
 ## Skeleton3DBuilder -- both accept either a loose file path or a path
-## inside SRREVAMP_PK2_PATH (see AssetSource). SRREVAMP_MAPM_PATH loads real
+## inside OPENSRO_PK2_PATH (see AssetSource). OPENSRO_MAPM_PATH loads real
 ## terrain (a real Map.pk2 region's .m file, e.g. "100\\100.m") via
 ## MapmTerrainBuilder -- Map.pk2 is a separate archive from Data.pk2 in a
 ## real retail install, so it accepts either a loose file or a path inside
-## SRREVAMP_MAP_PK2_PATH (its own separate pk2 env var, not
-## SRREVAMP_PK2_PATH). SRREVAMP_MAPM_TEXTURE_PATH additionally textures that
+## OPENSRO_MAP_PK2_PATH (its own separate pk2 env var, not
+## OPENSRO_PK2_PATH). OPENSRO_MAPM_TEXTURE_PATH additionally textures that
 ## terrain with a real per-region minimap image (e.g. "minimap\\100x100.ddj",
-## matching the same region number as SRREVAMP_MAPM_PATH) -- these live in
+## matching the same region number as OPENSRO_MAPM_PATH) -- these live in
 ## Media.pk2, a third separate archive, so it accepts either a loose file or
-## a path inside its own SRREVAMP_MEDIA_PK2_PATH. Falls back to real
+## a path inside its own OPENSRO_MEDIA_PK2_PATH. Falls back to real
 ## per-tile vertex-color variation (see MapmTerrainBuilder) if unset -- no
 ## real-time 3D ground-texture system has been found yet (see
 ## docs/protocol/MAPM_FORMAT.md), so a region's own real minimap art is the
 ## closest real, region-accurate substitute currently available.
-## SRREVAMP_MAPO_PATH loads real placed objects (a real Map.pk2 region's
-## .o file, e.g. "0\\0.o", via SRREVAMP_MAP_PK2_PATH) and renders each with
+## OPENSRO_MAPO_PATH loads real placed objects (a real Map.pk2 region's
+## .o file, e.g. "0\\0.o", via OPENSRO_MAP_PK2_PATH) and renders each with
 ## its real resolved .bsr model -- not a placeholder marker -- via a real
 ## type-ID-to-resource-path lookup (a real, root-level "object.ifo" file
-## inside SRREVAMP_PK2_PATH's Data.pk2, see docs/protocol/MAPO_FORMAT.md
+## inside OPENSRO_PK2_PATH's Data.pk2, see docs/protocol/MAPO_FORMAT.md
 ## for how this was found; it was a confirmed dead end earlier in this
-## project). SRREVAMP_SYNC_LOAD=1 (round 565, kept for one release as an
+## project). OPENSRO_SYNC_LOAD=1 (round 565, kept for one release as an
 ## escape hatch) builds every streamed cell's terrain and objects on the main
 ## thread on the pre-round-565 schedule instead of preparing them on
 ## WorkerThreadPool tasks (_threaded_load, _terrain_prepare,
 ## _objects_prepare) -- the schedule only: both still run their split
-## prepare and commit halves, back to back. SRREVAMP_TERRAIN_TRIMESH=1 (round
+## prepare and commit halves, back to back. OPENSRO_TERRAIN_TRIMESH=1 (round
 ## 567, kept for A/B) gives each region's terrain the trimesh collision it had
 ## until round 567 -- a ConcavePolygonShape3D of every triangle of the drawn
 ## mesh (MapmTerrainBuilder.surface_faces) -- instead of the heightfield
-## (TerrainCollision). SRREVAMP_SEASONAL (round 583) is a comma list of the
+## (TerrainCollision). OPENSRO_SEASONAL (round 583) is a comma list of the
 ## seasonal event decoration sets to draw -- christmas, halloween, obt,
 ## summer -- which are otherwise left out of every region (SeasonalObjects;
 ## the settings file's `[world]` `seasonal="..."`, quoted, adds to it). Any variable left unset is skipped gracefully (a printed hint, not an error)
@@ -105,7 +105,7 @@ extends Node3D
 ## a zone label shaped like this project's real Map.pk2 region naming
 ## ("<x>/<y>", e.g. "100/100") resolves to that region's real internal
 ## paths ("100\\100.m", "100\\100.o", "minimap\\100x100.ddj"), the same
-## convention SRREVAMP_MAPM_PATH/SRREVAMP_MAPO_PATH's doc comments above
+## convention OPENSRO_MAPM_PATH/OPENSRO_MAPO_PATH's doc comments above
 ## already describe. The server's own default spawn zone, "jangan", is a
 ## special case resolved by _resolve_zone_region to the real region this
 ## project found Jangan actually lives in (JANGAN_ZONE_REGION: "97/168", the
@@ -526,16 +526,16 @@ func apply_video_options(o: VideoOptions) -> void:
 	# outfits (docs/protocol/OPTION_VIDEO.md).
 	print("World3D: video options applied in %d us -- %s" % [Time.get_ticks_usec() - t0, describe_video(o)])
 
-## SRREVAMP_QA_VIDEO_STEPS="spec|spec|..." (round 694, OURS): once the
-## world's load is done, every SRREVAMP_QA_VIDEO_STEP_FRAMES ticks (default
-## 90) the next spec -- SRREVAMP_QA_VIDEO's syntax, over this client's
+## OPENSRO_QA_VIDEO_STEPS="spec|spec|..." (round 694, OURS): once the
+## world's load is done, every OPENSRO_QA_VIDEO_STEP_FRAMES ticks (default
+## 90) the next spec -- OPENSRO_QA_VIDEO's syntax, over this client's
 ## defaults -- is applied as Apply would, and `QA VIDEO STEP i frame f: spec`
 ## is printed, so one boot shows (or times) every setting a question needs.
 ## Each step's end prints its mean wall time a frame over its second half
 ## (`QA VIDEO TIME i <ms> ms over <n> frames`) and, with
-## SRREVAMP_QA_VIDEO_SHOT_DIR, saves the frame as step_<i>.png; with
-## SRREVAMP_QA_VIDEO_QUIT=1 the run quits after the last.
-var _qa_video_steps_spec := OS.get_environment("SRREVAMP_QA_VIDEO_STEPS")
+## OPENSRO_QA_VIDEO_SHOT_DIR, saves the frame as step_<i>.png; with
+## OPENSRO_QA_VIDEO_QUIT=1 the run quits after the last.
+var _qa_video_steps_spec := OS.get_environment("OPENSRO_QA_VIDEO_STEPS")
 var _qa_video_steps: PackedStringArray = []
 var _qa_video_step_i := -1
 var _qa_video_step_at := -1
@@ -567,7 +567,7 @@ func _qa_video_step() -> void:
 		var frames := Engine.get_frames_drawn() - _qa_video_frames
 		print("QA VIDEO TIME %d %.2f ms over %d frames" % [done,
 			float(Time.get_ticks_usec() - _qa_video_last_usec) / 1000.0 / float(maxi(frames, 1)), frames])
-		var dir := OS.get_environment("SRREVAMP_QA_VIDEO_SHOT_DIR")
+		var dir := OS.get_environment("OPENSRO_QA_VIDEO_SHOT_DIR")
 		if dir != "":
 			var img := get_viewport().get_texture().get_image()
 			if img != null:
@@ -576,7 +576,7 @@ func _qa_video_step() -> void:
 	if _qa_video_step_i >= _qa_video_steps.size():
 		_qa_video_step_i += 1
 		print("QA VIDEO STEPS done")
-		if OS.get_environment("SRREVAMP_QA_VIDEO_QUIT") == "1":
+		if OS.get_environment("OPENSRO_QA_VIDEO_QUIT") == "1":
 			get_tree().quit()
 		return
 	var o := VideoOptions.new()
@@ -584,7 +584,7 @@ func _qa_video_step() -> void:
 	print("QA VIDEO STEP %d frame %d: %s" % [_qa_video_step_i, Engine.get_frames_drawn(), _qa_video_steps[_qa_video_step_i]])
 	_on_video_options_applied(o)
 	_qa_video_step_i += 1
-	var every := OS.get_environment("SRREVAMP_QA_VIDEO_STEP_FRAMES")
+	var every := OS.get_environment("OPENSRO_QA_VIDEO_STEP_FRAMES")
 	_qa_video_step_len = int(every) if every.is_valid_int() else 90
 	_qa_video_step_at = _qa_tick + _qa_video_step_len
 
@@ -628,14 +628,14 @@ func _apply_view_distance(scenery: int) -> void:
 ## the Background Sight Range's view distance (READ rule) and the Video tab's
 ## "Fog (temporary)" row (OURS, round 702: the user's comparison toggle; on
 ## is the original's look). Sets the shader globals every fogged shader reads
-## and shows or hides the pass. SRREVAMP_QA_NOFOG turns it off for a run.
+## and shows or hides the pass. OPENSRO_QA_NOFOG turns it off for a run.
 func _apply_fog() -> void:
 	var o := video_options()
 	var view := VideoOptions.view_distance(o.value(VideoOptions.SCENERY))
 	var fog_planes := WorldFog.planes(_fog_channel_near, _fog_channel_far, view)
 	_fog_near_real = fog_planes.x
 	_fog_far_real = fog_planes.y
-	var on := _fog_ready and o.value(VideoOptions.FOG) == 1 and OS.get_environment("SRREVAMP_QA_NOFOG") == ""
+	var on := _fog_ready and o.value(VideoOptions.FOG) == 1 and OS.get_environment("OPENSRO_QA_NOFOG") == ""
 	var env: Environment = world_environment.environment if world_environment != null else null
 	WorldFog.set_globals(fog_planes, on, WorldFog.pass_color(_fog_display_color, env))
 	if _fog_pass != null:
@@ -864,7 +864,7 @@ const BODY_ANIMATION_HINTS := {
 	"death_anim": ["_a_diehardhit.ban", "diehardhit.ban"],
 }
 
-## Real file inside Data.pk2 (SRREVAMP_PK2_PATH) mapping a real .mapo
+## Real file inside Data.pk2 (OPENSRO_PK2_PATH) mapping a real .mapo
 ## placement's type ID to a real .bsr resource path -- see
 ## docs/protocol/MAPO_FORMAT.md and ObjidxReader for the full derivation.
 ## This was a confirmed dead end earlier in this project (no such mapping
@@ -890,7 +890,7 @@ const MAP_OBJECT_INDEX_PATH := "object.ifo"
 ## docs/protocol/TILE2D_FORMAT.md (TileIndexReader). Confirmed present at
 ## this real path (and, identically, at pk2 root) in a real Data.pk2.
 const TILE_INDEX_PATH := "navmesh\\tile2d.ifo"
-## How many real *placements* from SRREVAMP_MAPO_PATH's region to
+## How many real *placements* from OPENSRO_MAPO_PATH's region to
 ## instantiate -- an arbitrary, honestly-scoped cap, not a real engine
 ## limit. Distinct real .bsr models are only parsed once each and
 ## duplicated for repeat placements (see _try_load_real_map_objects), so
@@ -1610,19 +1610,19 @@ func _ready() -> void:
 	# Every entry names itself and the renderer in the log (round 579), so a
 	# player's log carries the GPU and how many times this process has
 	# entered the world without anyone typing /groundprobe. Counted in the
-	# process environment (SRREVAMP_WORLD_ENTRY), never a static.
+	# process environment (OPENSRO_WORLD_ENTRY), never a static.
 	_world_entry = GroundProbe.next_entry()
 	print(GroundProbe.entry_line(_world_entry, get_instance_id()))
-	# SRREVAMP_QA_UI_SCALE=<f> (round 695, OURS): a QA run boots this scene
+	# OPENSRO_QA_UI_SCALE=<f> (round 695, OURS): a QA run boots this scene
 	# directly, past Boot's ClientSettings.apply_ui_scale, so it ran at 1.0
 	# whatever the settings say; this applies a scale for the run (nothing is
 	# saved) -- how the paper doll is measured at the user's 2.0.
-	if OS.get_environment("SRREVAMP_QA_UI_SCALE") != "":
-		ClientSettings.apply_ui_scale(get_window(), OS.get_environment("SRREVAMP_QA_UI_SCALE").to_float())
-		print("World3D: SRREVAMP_QA_UI_SCALE -> UI scale %.2f" % get_window().content_scale_factor)
+	if OS.get_environment("OPENSRO_QA_UI_SCALE") != "":
+		ClientSettings.apply_ui_scale(get_window(), OS.get_environment("OPENSRO_QA_UI_SCALE").to_float())
+		print("World3D: OPENSRO_QA_UI_SCALE -> UI scale %.2f" % get_window().content_scale_factor)
 	_qa_split_init()
 	# The Water Reflection option (round 628): the node always exists, so
-	# SRREVAMP_QA_WATER_TIMING can time a run with the option off too.
+	# OPENSRO_QA_WATER_TIMING can time a run with the option off too.
 	_water_reflection_on = WaterReflection.enabled()
 	WaterReflection.ensure_globals()
 	# The mirror-only terrain copies are the reflection's, never the screen's.
@@ -1664,24 +1664,24 @@ func _ready() -> void:
 	var entry_music := _audio_music()
 	if entry_music != null:
 		entry_music.enter_loading("world entry")
-	# SRREVAMP_QA_RECONNECT (round 558): number this process's world entries
+	# OPENSRO_QA_RECONNECT (round 558): number this process's world entries
 	# through the environment -- never a static, statics are what a reconnect
 	# run measures. The count arms the QA ENTRY / QA TEXPROBE prints and is
 	# off unless a reconnect run set it or is about to.
-	var qa_reconnect := OS.get_environment("SRREVAMP_QA_RECONNECT")
-	if qa_reconnect != "" or OS.get_environment("SRREVAMP_QA_ENTRY") != "":
-		_qa_entry = OS.get_environment("SRREVAMP_QA_ENTRY").to_int() + 1
-		OS.set_environment("SRREVAMP_QA_ENTRY", str(_qa_entry))
+	var qa_reconnect := OS.get_environment("OPENSRO_QA_RECONNECT")
+	if qa_reconnect != "" or OS.get_environment("OPENSRO_QA_ENTRY") != "":
+		_qa_entry = OS.get_environment("OPENSRO_QA_ENTRY").to_int() + 1
+		OS.set_environment("OPENSRO_QA_ENTRY", str(_qa_entry))
 	if qa_reconnect == "drain" and not _should_show_loading_screen():
-		printerr("QA RECONNECT: 'drain' needs SRREVAMP_QA_FORCE_LOADING=1 -- the QA path builds the grid in one frame, so this hook would never fire")
+		printerr("QA RECONNECT: 'drain' needs OPENSRO_QA_FORCE_LOADING=1 -- the QA path builds the grid in one frame, so this hook would never fire")
 	# A QA run boots this scene directly, so there is no Login or character
-	# select behind it. With SRREVAMP_QA_SERVER set, sign in first -- that
+	# select behind it. With OPENSRO_QA_SERVER set, sign in first -- that
 	# is what makes a render show real equipment, real vitals and the
 	# server's own monsters rather than a client talking to nothing. A
 	# reconnect run that came back through Login and CharacterSelect
-	# (SRREVAMP_QA_RECONNECT_VIA_LOGIN) arrives already signed in, the way a
+	# (OPENSRO_QA_RECONNECT_VIA_LOGIN) arrives already signed in, the way a
 	# player does, so it must not sign in a second time here.
-	if OS.get_environment("SRREVAMP_QA_SERVER") != "" and not NetClient.is_connected_to_server():
+	if OS.get_environment("OPENSRO_QA_SERVER") != "" and not NetClient.is_connected_to_server():
 		await QaSignIn.run(get_tree())
 
 	character_label.text = "Character: %s" % NetClient.current_character_name
@@ -1690,7 +1690,7 @@ func _ready() -> void:
 	_load_character_assets()
 	print("World3D: character/item/NPC tables loaded in %d ms" % (Time.get_ticks_msec() - _t_assets))
 	# The readers' own time so far, by function (round 667, ParseProfile;
-	# SRREVAMP_PARSE_PROFILE=1): boot and these tables, then a fresh window
+	# OPENSRO_PARSE_PROFILE=1): boot and these tables, then a fresh window
 	# for the entry's drain, reported beside its LoadTimings summary.
 	if ParseProfile.enabled:
 		print(ParseProfile.report("before the entry"))
@@ -2116,7 +2116,7 @@ func _try_initialize_pk2_ui() -> void:
 			# same from the outside. (A cast retail ends without a text --
 			# SelfCast.SILENT_END_TEXT, round 636's review -- stays silent.)
 			_log_system(result.error)
-			if OS.get_environment("SRREVAMP_QA_HOTKEY") != "":
+			if OS.get_environment("OPENSRO_QA_HOTKEY") != "":
 				print("QA ATTACK RESULT: refused (%s)" % result.error)
 		if result != null and result.error == "":
 			_audio_set_hwan(result.berserk_active)
@@ -2133,7 +2133,7 @@ func _try_initialize_pk2_ui() -> void:
 				# The count only (round 629's review): an AttackResult is not a
 				# start, and a running display ends on its own timers.
 				_hud_player_info.set_berserk(result.berserk_gauge, false)
-				if OS.get_environment("SRREVAMP_QA_HOTKEY") != "":
+				if OS.get_environment("OPENSRO_QA_HOTKEY") != "":
 					# The orbs as drawn: an unlit orb is hidden (round 629).
 					var lit := 0
 					var orbs: Array = _hud_player_info.get("_berserk_orbs")
@@ -2149,11 +2149,11 @@ func _try_initialize_pk2_ui() -> void:
 				_request_world_stats()
 			# QA: auto-activate berserk once the gauge fills, so a render shows
 			# the orbs light and the berserk glow. Never fires in real play.
-			# SRREVAMP_QA_BERSERK=tab presses Tab instead, through the viewport
+			# OPENSRO_QA_BERSERK=tab presses Tab instead, through the viewport
 			# (push_input), so the run measures the key (round 608).
-			if OS.get_environment("SRREVAMP_QA_BERSERK") != "" and result.berserk_gauge >= 100 and not result.berserk_active \
+			if OS.get_environment("OPENSRO_QA_BERSERK") != "" and result.berserk_gauge >= 100 and not result.berserk_active \
 					and NetClient.current_character_name != "":
-				if OS.get_environment("SRREVAMP_QA_BERSERK") == "tab":
+				if OS.get_environment("OPENSRO_QA_BERSERK") == "tab":
 					if not _qa_berserk_tab_sent:
 						_qa_berserk_tab_sent = true
 						print("QA BERSERK: gauge %d -- pressing Tab" % result.berserk_gauge)
@@ -2181,7 +2181,7 @@ func _try_initialize_pk2_ui() -> void:
 	NetClient.use_item_result.connect(_on_use_item_result)
 	# QA: once a kill has dropped a potion into the bag, drink it, so a render
 	# can show a consumable actually working. Never fires in real play.
-	if OS.get_environment("SRREVAMP_QA_USEITEM") != "":
+	if OS.get_environment("OPENSRO_QA_USEITEM") != "":
 		NetClient.inventory_list_result.connect(_qa_use_first_potion)
 	# Until the first stats packet lands the bar is drawn full with no
 	# readout rather than a made-up number -- see set_mp_unknown. The stats
@@ -2206,13 +2206,13 @@ func _try_initialize_pk2_ui() -> void:
 	# the HUD is built, and _refresh_paper_doll returns without panels).
 	if _player_skeleton != null and is_instance_valid(_player_skeleton) and _paper_doll == null:
 		_refresh_paper_doll(_player_equipped_last, _player_body)
-	# QA: rearrange the bag once (SRREVAMP_QA_MOVE="from,to") so a render's
-##   SRREVAMP_QA_STORAGE_ITEM=1 (needs --server) unequip the boots into the bag, open the
+	# QA: rearrange the bag once (OPENSRO_QA_MOVE="from,to") so a render's
+##   OPENSRO_QA_STORAGE_ITEM=1 (needs --server) unequip the boots into the bag, open the
 ##                          warehouse, the quantity dialog, and deposit 1 of the
 ##                          first bag item -- the flow that crashed a playtest
 	# log shows a drag landing server-side -- see HudPanels.qa_move_sequence.
-	if OS.get_environment("SRREVAMP_QA_MOVE") != "" and NetClient.is_connected_to_server():
-		_hud_panels.qa_move_sequence(OS.get_environment("SRREVAMP_QA_MOVE"))
+	if OS.get_environment("OPENSRO_QA_MOVE") != "" and NetClient.is_connected_to_server():
+		_hud_panels.qa_move_sequence(OS.get_environment("OPENSRO_QA_MOVE"))
 	# The Escape / System menu (see HudPanels): Restart returns to the login
 	# screen, Exit quits, and Help opens the help window. The Option button
 	# is the retail one -- id 10 -> 0x6f5190,
@@ -2307,7 +2307,7 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_chat.is_gm = _is_gm
 	# 0x7ad400's own refusals need the groups the player is in (round 634's
 	# review): the party from the party results, the guild from the kept
-	# guild info; srrevamp has no academy.
+	# guild info; OpenSRO has no academy.
 	_hud_chat.group_check = func(t: int) -> bool:
 		match t:
 			HudChat.TYPE_PARTY:
@@ -2398,16 +2398,16 @@ func _build_buff_board() -> void:
 	_hud_buff_board.catalog.object_names_provider = _object_names
 	_hud_buff_board.preload_catalog()
 	if not _hud_buff_board.connect_net(NetClient):
-		print("World3D: NetClient has no buff_started signal -- the buff bar is fed by SRREVAMP_QA_BUFFS only")
+		print("World3D: NetClient has no buff_started signal -- the buff bar is fed by OPENSRO_QA_BUFFS only")
 	# This player's buffs that started before the bar was built (round 646):
 	# the board keys by token, so one it already shows is not added twice.
 	var roster: BuffRoster = NetClient.get("buff_roster") as BuffRoster
 	if roster != null:
 		for bs in roster.all_starts(Time.get_ticks_msec()):
 			_hud_buff_board.on_buff_started(bs)
-	var qa := OS.get_environment("SRREVAMP_QA_BUFFS")
+	var qa := OS.get_environment("OPENSRO_QA_BUFFS")
 	if qa != "":
-		_hud_buff_board.qa_inject(qa, OS.get_environment("SRREVAMP_QA_BUFFS_END"))
+		_hud_buff_board.qa_inject(qa, OS.get_environment("OPENSRO_QA_BUFFS_END"))
 
 ## Item grants (round 632 review): a used Energy of life scroll grants one
 ## use of the Hwan regeneration fill for an hour. Retail shows the grant as
@@ -2621,14 +2621,14 @@ func _apply_camera_far_plane() -> void:
 
 ## Loads real static scenery through the exact same pk2 -> BsrReader ->
 ## ObjectLoader pipeline client/tools/render_asset.gd verifies standalone,
-## live in this scene -- if SRREVAMP_PK2_PATH and SRREVAMP_BSR_PATH are
+## live in this scene -- if OPENSRO_PK2_PATH and OPENSRO_BSR_PATH are
 ## both set. Skips gracefully (a printed hint, not an error) otherwise,
 ## since this project ships with no game data.
 func _try_load_real_scenery() -> void:
 	var pk2_path := Pk2Config.data_path()
-	var bsr_path := OS.get_environment("SRREVAMP_BSR_PATH")
+	var bsr_path := OS.get_environment("OPENSRO_BSR_PATH")
 	if pk2_path == "" or bsr_path == "":
-		print("World3D: Data.pk2/SRREVAMP_BSR_PATH not set -- no real scenery loaded")
+		print("World3D: Data.pk2/OPENSRO_BSR_PATH not set -- no real scenery loaded")
 		return
 
 	var archive := Pk2Reader.open(pk2_path)
@@ -2652,14 +2652,14 @@ func _try_load_real_scenery() -> void:
 ## (see client/tools/render_skeleton3d_animated.gd for the standalone
 ## verification of this same pipeline), live in this scene as an animated
 ## decoration (not the player's own body -- see _try_load_real_player_character())
-## -- if SRREVAMP_BSK_PATH and SRREVAMP_BAN_PATH are both set. Each accepts
-## either a loose file path or a path inside SRREVAMP_PK2_PATH (see
+## -- if OPENSRO_BSK_PATH and OPENSRO_BAN_PATH are both set. Each accepts
+## either a loose file path or a path inside OPENSRO_PK2_PATH (see
 ## AssetSource). Skips gracefully otherwise.
 func _try_load_real_decoration_skeleton() -> void:
-	var bsk_path := OS.get_environment("SRREVAMP_BSK_PATH")
-	var ban_path := OS.get_environment("SRREVAMP_BAN_PATH")
+	var bsk_path := OS.get_environment("OPENSRO_BSK_PATH")
+	var ban_path := OS.get_environment("OPENSRO_BAN_PATH")
 	if bsk_path == "" or ban_path == "":
-		print("World3D: SRREVAMP_BSK_PATH/SRREVAMP_BAN_PATH not set -- no real decoration skeleton loaded")
+		print("World3D: OPENSRO_BSK_PATH/OPENSRO_BAN_PATH not set -- no real decoration skeleton loaded")
 		return
 
 	var archive := _open_pk2_if_set()
@@ -2691,7 +2691,7 @@ func _try_load_real_decoration_skeleton() -> void:
 	print("World3D: loaded real skeleton %s + animation %s (%d bones, %d keyframes on track %s)" % [
 		bsk_path, ban_path, skel.bones.size(), _real_skeleton_track.keyframes.size(), _real_skeleton_track.bone_name])
 
-## Opens the real Data.pk2 -- SRREVAMP_PK2_PATH if set, else a real
+## Opens the real Data.pk2 -- OPENSRO_PK2_PATH if set, else a real
 ## "pk2/Data.pk2" next to the running executable (see Pk2Config) -- or
 ## returns null if neither resolves or the open fails. Used so AssetSource
 ## can fall back to an in-archive path for any of the loose-file-shaped
@@ -2723,10 +2723,10 @@ var _portrait_zone_light: Array = []
 var _tile_index_load_attempted := false
 
 ## Loads and caches the real tile2d.ifo table (see TILE_INDEX_PATH) from
-## SRREVAMP_PK2_PATH's Data.pk2, for MapmTerrainBuilder's real per-vertex
+## OPENSRO_PK2_PATH's Data.pk2, for MapmTerrainBuilder's real per-vertex
 ## ground-tile-type coloring. Only ever parsed once per scene lifetime --
 ## every real region shares the same real table. Returns null (logged
-## once) if SRREVAMP_PK2_PATH isn't set or the file can't be found/parsed;
+## once) if OPENSRO_PK2_PATH isn't set or the file can't be found/parsed;
 ## callers already treat a null table as "fall back to the generic hue
 ## sweep," so this isn't a hard failure.
 ## Real parsed region-zone table, loaded once per run (it covers the whole
@@ -2881,7 +2881,7 @@ func _refresh_minimap() -> void:
 	if _hud_worldmap != null and is_instance_valid(_hud_worldmap) \
 			and (_hud_worldmap.is_visible_in_tree() or _zone_label_tick % 10 == 0):
 		_hud_worldmap.update_player(rx, ry, local, facing)
-	# SRREVAMP_QA_WALK runs log what the minimap was told, twice a second,
+	# OPENSRO_QA_WALK runs log what the minimap was told, twice a second,
 	# so a facing test is read from the log, not a frame (round 630).
 	if _qa_walk != "" and _zone_label_tick % 30 == 0:
 		print("QA MINIMAP %d/%d local (%.0f, %.0f) facing (%.2f, %.2f) arrow %.0f deg" % [
@@ -3048,10 +3048,10 @@ func _qa_open_panels(spec: String) -> void:
 	if _hud_panels == null:
 		print("QA PANELS: no HUD (Media.pk2 not loaded)")
 		return
-	# SRREVAMP_QA_PANELS_IN_PLACE=1 leaves every window where it places
+	# OPENSRO_QA_PANELS_IN_PLACE=1 leaves every window where it places
 	# itself (the main popup's tab side, clamped into the viewport) instead of
 	# centring or tiling it for the shot.
-	var in_place := OS.get_environment("SRREVAMP_QA_PANELS_IN_PLACE") != ""
+	var in_place := OS.get_environment("OPENSRO_QA_PANELS_IN_PLACE") != ""
 	var ids := spec.split(",", false)
 	var placed := 0
 	var windows: Array = []   # distinct windows opened, in order
@@ -3289,7 +3289,7 @@ var _water_frames_load_attempted := false
 ## Loads the real 30-frame water flip-book animation
 ## (Water\water101.ddj..water130.ddj -- a real numbered-frame sequence, not
 ## a shader effect) into an AnimatedTexture, or null if none of the 30 real
-## frames were found (e.g. SRREVAMP_MAP_PK2_PATH unset, or a real archive
+## frames were found (e.g. OPENSRO_MAP_PK2_PATH unset, or a real archive
 ## that doesn't ship this folder). Frame timing READ (round 627): the client
 ## picks frame (GetTickCount() / 100) % 30 in `Map::FUN_00a220b0`, so 100 ms
 ## a frame -- 10 fps, not the 8 fps this used to guess.
@@ -3673,7 +3673,7 @@ func _add_navmesh_walls(terrain_group: Node3D, job: Dictionary) -> void:
 	body_shape.shape = shape
 	body.add_child(body_shape)
 	terrain_group.add_child(body)
-	if OS.get_environment("SRREVAMP_DEBUG_NAVMESH_WALLS") != "":
+	if OS.get_environment("OPENSRO_DEBUG_NAVMESH_WALLS") != "":
 		_add_navmesh_wall_debug_mesh(terrain_group, faces)
 	print(job["wall_line"])
 
@@ -3682,7 +3682,7 @@ func _add_navmesh_walls(terrain_group: Node3D, job: Dictionary) -> void:
 ## walkability, not scenery -- which also means a misplaced one is
 ## impossible to see, and misplacement is exactly the failure this
 ## project's own headless checks have repeatedly missed. Gated behind
-## SRREVAMP_DEBUG_NAVMESH_WALLS so it costs a normal run nothing.
+## OPENSRO_DEBUG_NAVMESH_WALLS so it costs a normal run nothing.
 func _add_navmesh_wall_debug_mesh(terrain_group: Node3D, faces: PackedVector3Array) -> void:
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
@@ -3713,9 +3713,9 @@ func _add_navmesh_wall_debug_mesh(terrain_group: Node3D, faces: PackedVector3Arr
 ## in 3,846 blocks the `.m` says have none, and leaves out 6,259 the client
 ## draws (MEASURED, waterat -census) -- the `.m` is what the client reads.
 func _try_add_real_water(terrain_group: Node3D, region: MapmReader.ParsedRegion, mapm_path: String) -> void:
-	# SRREVAMP_QA_NOWATER=1 (round 648): build no water at all, so a pixel
+	# OPENSRO_QA_NOWATER=1 (round 648): build no water at all, so a pixel
 	# diff against a normal run measures exactly what the water draws.
-	if OS.get_environment("SRREVAMP_QA_NOWATER") != "":
+	if OS.get_environment("OPENSRO_QA_NOWATER") != "":
 		return
 	var coords := _parse_region_coords(mapm_path)
 	if not coords.is_empty():
@@ -3876,7 +3876,7 @@ var _environment_load_attempted := false
 func _try_add_real_sky() -> void:
 	var archive := _open_map_pk2_if_set()
 	if archive == null:
-		print("World3D: SRREVAMP_MAP_PK2_PATH not set -- sky stays a flat placeholder color")
+		print("World3D: OPENSRO_MAP_PK2_PATH not set -- sky stays a flat placeholder color")
 		return
 
 	# Real gradient sky (Godot's own ProceduralSkyMaterial, not a real
@@ -4007,7 +4007,7 @@ func _load_environment_table(archive: Pk2Reader) -> EnvironmentReader.ParsedFile
 ## Real per-zone sky color, from a real region's own EnvironmentID (see this
 ## file's _sky_material doc comment for the real-data justification and
 ## ENVIRONMENT_REFERENCE_TIME's honest scope). No-op if _sky_material was
-## never built (e.g. no SRREVAMP_MAP_PK2_PATH) or no matching real record is
+## never built (e.g. no OPENSRO_MAP_PK2_PATH) or no matching real record is
 ## found -- leaves the existing flat-color-derived gradient rather than
 ## guessing.
 func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: Pk2Reader) -> void:
@@ -4117,7 +4117,7 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# (READ, rounds 623-628 integration review: EnvironmentReader.
 	# render_fog_color). Until then the raw channel was used, darker.
 	var fog_color := EnvironmentReader.render_fog_color(fog_channel)
-	if OS.get_environment("SRREVAMP_QA_FOG_RAW") != "":
+	if OS.get_environment("OPENSRO_QA_FOG_RAW") != "":
 		# QA only: the pre-review colour, for a before/after on one build.
 		fog_color = fog_channel
 	# The cloud layer's texture factor (READ, round 628 review): RGB is
@@ -4172,7 +4172,7 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 
 	print("World3D: applied real environment.ifo lighting (%s, EnvironmentID=%d) -- sky_top=%s sky_bottom=%s sun_disc=%s light_diffuse=%s ambient=%s fog=%s (channel 9 %s)" % [record.name1, env_id, top, bottom, sun_color, diffuse_color, ambient_color, fog_color, fog_channel])
 
-## Opens the real Map.pk2 -- SRREVAMP_MAP_PK2_PATH if set, else a real
+## Opens the real Map.pk2 -- OPENSRO_MAP_PK2_PATH if set, else a real
 ## "pk2/Map.pk2" next to the running executable (see Pk2Config) -- or
 ## returns null if neither resolves or the open fails. Map.pk2 is a separate
 ## archive from Data.pk2 in a real retail install (confirmed from the
@@ -4188,10 +4188,10 @@ func _open_map_pk2_if_set() -> Pk2Reader:
 	_map_pk2 = Pk2Reader.open(map_pk2_path)
 	return _map_pk2
 
-## Opens the real Media.pk2 -- SRREVAMP_MEDIA_PK2_PATH if set, else a real
+## Opens the real Media.pk2 -- OPENSRO_MEDIA_PK2_PATH if set, else a real
 ## "pk2/Media.pk2" next to the running executable (see Pk2Config) -- or
 ## returns null if neither resolves or the open fails. A real client's
-## per-map-region minimap image (see SRREVAMP_MAPM_TEXTURE_PATH below) lives
+## per-map-region minimap image (see OPENSRO_MAPM_TEXTURE_PATH below) lives
 ## in Media.pk2, a third separate archive from both Data.pk2 and Map.pk2 in
 ## a real retail install.
 func _open_media_pk2_if_set() -> Pk2Reader:
@@ -4215,9 +4215,9 @@ func _open_particles_pk2_if_set() -> Pk2Reader:
 	_particles_pk2 = Pk2Reader.open(particles_pk2_path)
 	return _particles_pk2
 
-## Loads a real per-region minimap image (SRREVAMP_MAPM_TEXTURE_PATH, e.g.
+## Loads a real per-region minimap image (OPENSRO_MAPM_TEXTURE_PATH, e.g.
 ## "minimap\100x100.ddj") as the terrain's real ground texture, if set.
-## Accepts either a loose file path or a path inside SRREVAMP_MEDIA_PK2_PATH
+## Accepts either a loose file path or a path inside OPENSRO_MEDIA_PK2_PATH
 ## (see AssetSource) -- a real client's minimap images live in Media.pk2,
 ## confirmed via this project's own real-file search tooling
 ## (server/cmd/pk2list) against a real client install.
@@ -4233,11 +4233,11 @@ func _open_particles_pk2_if_set() -> Pk2Reader:
 ## for -- but it's a real top-down painted image, not sampled per-tile 3D
 ## terrain texture data.
 ## path_override lets a zone reload (see _reload_zone_assets) pass a
-## specific real path instead of reading SRREVAMP_MAPM_TEXTURE_PATH -- empty
+## specific real path instead of reading OPENSRO_MAPM_TEXTURE_PATH -- empty
 ## string (the default) means "use the env var", same as every call site
 ## before zone reloading existed.
 func _load_real_terrain_texture(path_override: String = "") -> Texture2D:
-	var tex_path := path_override if path_override != "" else OS.get_environment("SRREVAMP_MAPM_TEXTURE_PATH")
+	var tex_path := path_override if path_override != "" else OS.get_environment("OPENSRO_MAPM_TEXTURE_PATH")
 	if tex_path == "":
 		return null
 
@@ -4583,7 +4583,7 @@ func _load_region_neighborhood(center_x: int, center_y: int, radius: int = REGIO
 		anchor = _frame_anchor_height(frame_x, frame_y)
 	# Timed like every other cell (round 561): the centre is the one cell a
 	# player waits for with nothing on screen yet. It is built whole on the
-	# main thread -- prepare and commit -- whatever SRREVAMP_SYNC_LOAD says:
+	# main thread -- prepare and commit -- whatever OPENSRO_SYNC_LOAD says:
 	# its near_height anchors every neighbour, its environment lights them,
 	# and the caller places the player on it next (round 565 keeps it so).
 	_load_timings.begin_cell(center_x, center_y)
@@ -4919,7 +4919,7 @@ static func _chain_transform(node: Node3D) -> Transform3D:
 ## crossing streams over several frames rather than freezing for one long
 ## one. A cell the player has since moved away from is dropped, not built.
 ##
-## Since round 565 (the default; SRREVAMP_SYNC_LOAD=1 keeps the loop below)
+## Since round 565 (the default; OPENSRO_SYNC_LOAD=1 keeps the loop below)
 ## a cell's terrain (and since round 566 its objects) prepares on a
 ## WorkerThreadPool task and this commits at
 ## most STREAM_CELLS_PER_FRAME finished ones a frame (_pump_cell_jobs) --
@@ -4955,7 +4955,7 @@ func _outside_stream_window(cell: Dictionary, margin: int) -> bool:
 	return absi(int(cell["dx"]) - _last_stream_cell.x) > margin or absi(int(cell["dy"]) - _last_stream_cell.y) > margin
 
 ## Whether streamed cells prepare their terrain (round 565) and objects (round
-## 566) on WorkerThreadPool tasks, the default. SRREVAMP_SYNC_LOAD=1 turns
+## 566) on WorkerThreadPool tasks, the default. OPENSRO_SYNC_LOAD=1 turns
 ## that off for one release, as an escape hatch: every cell is then prepared
 ## and committed on the main thread on the pre-round-565 schedule -- the entry drain's
 ## LOADING_CELLS_PER_FRAME a frame plus the physics step's
@@ -4963,14 +4963,14 @@ func _outside_stream_window(cell: Dictionary, margin: int) -> bool:
 ## It restores the SCHEDULE only, not the old code: the terrain still goes
 ## through _terrain_job / _terrain_prepare / _terrain_commit and the
 ## collision round 567 gives it (the heightfield, TerrainCollision; the faces
-## MapmTerrainBuilder.surface_faces builds under SRREVAMP_TERRAIN_TRIMESH=1),
+## MapmTerrainBuilder.surface_faces builds under OPENSRO_TERRAIN_TRIMESH=1),
 ## and the objects
 ## through _objects_job / _objects_prepare / _objects_commit, the split
 ## ObjectLoader (prepare_object then commit_object) and the trimesh faces
 ## ObjectLoader._piece_faces builds -- each half run back to back on the
 ## main thread.
 func _threaded_load() -> bool:
-	return OS.get_environment("SRREVAMP_SYNC_LOAD") == ""
+	return OS.get_environment("OPENSRO_SYNC_LOAD") == ""
 
 ## The one pump of the threaded cell pipeline (round 565): commits up to
 ## `commit_budget` cells whose terrain has finished preparing, oldest first,
@@ -5103,7 +5103,7 @@ func _finish_cell_job(flight: Dictionary) -> void:
 ## prepare's statistics into a texture already cached). A snapshot taken
 ## after that commit would have spared the decode only if EVERY such
 ## statistic had been carried in. Since round 625 there is one statistic,
-## `fraction`, measured only under SRREVAMP_QA_MATS (the material rule reads
+## `fraction`, measured only under OPENSRO_QA_MATS (the material rule reads
 ## the layer's flag word, not the pixels), so the two rules agree. (Round
 ## 568's review: with the old pixel rule a QA_MATS job could measure two
 ## statistics on one held texture and this count could run over by it.)
@@ -5114,7 +5114,7 @@ func _finish_cell_job(flight: Dictionary) -> void:
 ## ADD a texture the old rule skipped, and only after a re-decode: the load
 ## benchmark's command (a) consults no alpha probe at all (0 in round 566's
 ## alpha_after.log), so its recorded counts cannot move; the crossing, (b),
-## was never run with SRREVAMP_QA_ALPHA_LOG. And the region's own
+## was never run with OPENSRO_QA_ALPHA_LOG. And the region's own
 ## heightmap taken over from the terrain prepare's parse (job["here"],
 ## _cell_prepare) was parsed for the terrain, which needs it whatever the
 ## snapshot held, so a heightmap counts only if it is not that parse.
@@ -5177,11 +5177,11 @@ func _drop_cell_jobs(why: String) -> void:
 		n, why, (Time.get_ticks_usec() - started) / 1000.0])
 
 ## Whether world entry shows the "NOW LOADING" screen: a real player does; a
-## QA/dev render (SRREVAMP_MAPM_PATH set) does not, because its synchronous
-## load is what the screenshot depends on -- unless SRREVAMP_QA_FORCE_LOADING
+## QA/dev render (OPENSRO_MAPM_PATH set) does not, because its synchronous
+## load is what the screenshot depends on -- unless OPENSRO_QA_FORCE_LOADING
 ## asks for it, to render the screen itself.
 func _should_show_loading_screen() -> bool:
-	return OS.get_environment("SRREVAMP_MAPM_PATH") == "" or OS.get_environment("SRREVAMP_QA_FORCE_LOADING") != ""
+	return OS.get_environment("OPENSRO_MAPM_PATH") == "" or OS.get_environment("OPENSRO_QA_FORCE_LOADING") != ""
 
 # Cells built per frame while the loading screen is up: the player is not
 # moving yet, so a bigger batch than the in-play stream is fine.
@@ -5192,7 +5192,7 @@ func _should_show_loading_screen() -> bool:
 # only as many as have finished preparing, with TERRAIN_JOBS_IN_FLIGHT = 2
 # preparing at once.
 #
-# Under SRREVAMP_SYNC_LOAD=1, the pre-round-565 schedule: not the whole
+# Under OPENSRO_SYNC_LOAD=1, the pre-round-565 schedule: not the whole
 # frame, though -- the same frame's physics step runs _process_stream_queue,
 # which pops STREAM_CELLS_PER_FRAME more from the same _load_queue (nothing
 # gates it on the drain there; _grid_has_origin is set before it), so round
@@ -5427,7 +5427,7 @@ func _show_loading_screen() -> int:
 	return 1
 
 ## Builds the next queued cell, if it is still wanted, prepare and commit on
-## the main thread -- the SRREVAMP_SYNC_LOAD=1 path of the entry-time drain
+## the main thread -- the OPENSRO_SYNC_LOAD=1 path of the entry-time drain
 ## (round 565: the threaded default pumps _pump_cell_jobs instead).
 func _build_one_queued_cell() -> void:
 	if _load_queue.is_empty():
@@ -5437,7 +5437,7 @@ func _build_one_queued_cell() -> void:
 	if not _grid.loaded_cells.has(cell["key"]):
 		_load_region_cell(cell["rx"], cell["ry"], cell["dx"], cell["dy"], _grid_shared_anchor_height)
 
-## _ready()'s own entry point into the region grid: reads SRREVAMP_MAPM_PATH
+## _ready()'s own entry point into the region grid: reads OPENSRO_MAPM_PATH
 ## the same way this scene always has, but now treats it as the *center* of
 ## a real multi-region neighborhood (see _load_region_neighborhood) instead
 ## of the one and only region loaded. Falls back to the original
@@ -5454,20 +5454,20 @@ func _build_one_queued_cell() -> void:
 func _region_load_radius() -> int:
 	if title_mode:
 		return _title_radius
-	var override := OS.get_environment("SRREVAMP_QA_RADIUS")
+	var override := OS.get_environment("OPENSRO_QA_RADIUS")
 	if override != "" and override.is_valid_int():
 		return maxi(int(override), 0)
 	return REGION_LOAD_RADIUS
 
 func _load_initial_region_neighborhood() -> void:
-	var mapm_path := OS.get_environment("SRREVAMP_MAPM_PATH")
+	var mapm_path := OS.get_environment("OPENSRO_MAPM_PATH")
 	if mapm_path != "":
 		var coords := _parse_region_coords(mapm_path)
 		if coords.is_empty():
 			_try_load_real_terrain()
 			_try_load_real_map_objects()
 			return
-		_load_region_neighborhood(coords["x"], coords["y"], _region_load_radius(), OS.get_environment("SRREVAMP_MAPM_TEXTURE_PATH"))
+		_load_region_neighborhood(coords["x"], coords["y"], _region_load_radius(), OS.get_environment("OPENSRO_MAPM_TEXTURE_PATH"))
 		return
 
 	# No dev/testing env var set -- the real, normal path for an actual
@@ -5506,11 +5506,11 @@ func _load_initial_region_neighborhood() -> void:
 		else:
 			_place_at_zone_spawn(result.zone)
 	else:
-		print("World3D: no real zone to load (no SRREVAMP_MAPM_PATH set and no real logged-in session) -- ground stays a placeholder")
+		print("World3D: no real zone to load (no OPENSRO_MAPM_PATH set and no real logged-in session) -- ground stays a placeholder")
 
 ## Tears down whatever real terrain/map-object nodes are currently loaded
 ## and reloads them for zone, resolving real per-zone paths via _zone_paths
-## instead of the fixed SRREVAMP_MAPM_PATH/SRREVAMP_MAPO_PATH env vars this
+## instead of the fixed OPENSRO_MAPM_PATH/OPENSRO_MAPO_PATH env vars this
 ## scene's initial _ready() load still uses. If zone isn't shaped like a
 ## real region coordinate (see _zone_paths), this just clears back to the
 ## placeholder ground with no objects -- same honest "nothing to load"
@@ -6024,7 +6024,7 @@ func _exit_tree() -> void:
 ## deform properly. The same NPC in the same spot now stands in a red dress
 ## holding a fan, animated.
 ##
-## `SRREVAMP_NO_IDLE_ANIM=1` turns it off again, which is how that A/B was
+## `OPENSRO_NO_IDLE_ANIM=1` turns it off again, which is how that A/B was
 ## run and how the next one can be.
 func _animate(assembled: SkinnedBsrAssembler.AssembledCharacter) -> void:
 	if assembled == null:
@@ -6037,7 +6037,7 @@ func _animate(assembled: SkinnedBsrAssembler.AssembledCharacter) -> void:
 func _animate_skeleton(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation) -> void:
 	if skeleton == null or anim == null:
 		return
-	if OS.get_environment("SRREVAMP_NO_IDLE_ANIM") != "":
+	if OS.get_environment("OPENSRO_NO_IDLE_ANIM") != "":
 		return
 	var frames := _frame_count(anim)
 	if frames <= 1:
@@ -6071,7 +6071,7 @@ func _play_once(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, hold: boo
 			break
 	# entry[7] marks the hold itself (round 534): a one-shot with no resume is
 	# not necessarily a death -- a body whose idle was never registered (a
-	# clip of one frame, SRREVAMP_NO_IDLE_ANIM) has nothing to resume after a
+	# clip of one frame, OPENSRO_NO_IDLE_ANIM) has nothing to resume after a
 	# hit either -- and MonsterMotion.swap_loop must tell the two apart.
 	_animated.append([skeleton, anim, frames, 0.0, false, _idle_anim_time, null if hold else resume, hold])
 	return anim.duration_seconds()
@@ -6291,20 +6291,20 @@ func _tick_map_animations() -> void:
 		var cam := get_viewport().get_camera_3d() if get_viewport() != null else null
 		var eye: Vector3 = cam.global_position if cam != null else (player.global_position if player != null else Vector3.ZERO)
 		_map_animations.tick(eye, cam.get_frustum() if cam != null else [])
-		# SRREVAMP_QA_MAPANIM_SPLIT=<frame> + _MODE=<mode>: the cost split
+		# OPENSRO_QA_MAPANIM_SPLIT=<frame> + _MODE=<mode>: the cost split
 		# (MapAnimationProbe). QA only.
-		var split := int(OS.get_environment("SRREVAMP_QA_MAPANIM_SPLIT"))
+		var split := int(OS.get_environment("OPENSRO_QA_MAPANIM_SPLIT"))
 		if split > 0:
-			var mode := OS.get_environment("SRREVAMP_QA_MAPANIM_MODE")
+			var mode := OS.get_environment("OPENSRO_QA_MAPANIM_MODE")
 			if Engine.get_process_frames() == split:
 				MapAnimationProbe.apply(_map_animations, mode)
 			if mode == "manual" and Engine.get_process_frames() > split:
 				MapAnimationProbe.step(_map_animations, get_process_delta_time())
-	# SRREVAMP_QA_MAPANIM=n: every n ticks, the clips registered and running
+	# OPENSRO_QA_MAPANIM=n: every n ticks, the clips registered and running
 	# and what the frame cost -- process time, and the viewport's measured
 	# render time on the CPU and the GPU (the skinning and the draws) -- the
 	# measurement behind round 645's cost figures.
-	var every := int(OS.get_environment("SRREVAMP_QA_MAPANIM"))
+	var every := int(OS.get_environment("OPENSRO_QA_MAPANIM"))
 	if every > 0:
 		var vp := get_viewport().get_viewport_rid()
 		if Engine.get_process_frames() <= 1:
@@ -7217,7 +7217,7 @@ func _try_spawn_region_npcs(region_x: int, region_y: int) -> void:
 ##   else. (It casts a 3 x 3 grid of rays a little apart around the cursor;
 ##   any nearer hit replaces the best, and a centre hit replaces a best from
 ##   an outer ray whatever its distance -- `d < best || (best_idx != 4 &&
-##   idx == 4)`. srrevamp casts the centre ray only -- OPEN.)
+##   idx == 4)`. OpenSRO casts the centre ray only -- OPEN.)
 ## - The position is the structure's spawn position. INFERRED: the server
 ##   spawns the structure at its teleportbuilding row (columns 41, 43-45), as
 ##   GObjPC::IsWithinInteractionRange measures from it (round 642).
@@ -7341,8 +7341,8 @@ func _gate_display_name(building: TeleportReader.Building) -> String:
 ## Loads real terrain from a real Map.pk2 region .m file via MapmReader +
 ## MapmTerrainBuilder, replacing both the placeholder ground's visual mesh
 ## and its collision shape (see this file's top comment) -- if
-## SRREVAMP_MAPM_PATH is set. Accepts either a loose file path or a path
-## inside SRREVAMP_MAP_PK2_PATH (see AssetSource). Skips gracefully
+## OPENSRO_MAPM_PATH is set. Accepts either a loose file path or a path
+## inside OPENSRO_MAP_PK2_PATH (see AssetSource). Skips gracefully
 ## otherwise. path_override/texture_override let _reload_zone_assets pass
 ## real per-zone paths it resolved itself instead of reading the env vars --
 ## empty (the default) preserves the original env-var-only behavior for
@@ -7370,9 +7370,9 @@ func _gate_display_name(building: TeleportReader.Building) -> String:
 ## used (NAN on any failure path) so a caller building a grid can capture
 ## the center tile's value and pass it to every other cell.
 func _try_load_real_terrain(path_override: String = "", texture_override: String = "", world_offset: Vector3 = Vector3.ZERO, node_suffix: String = "", snap_player: bool = true, shared_vertical_anchor: float = NAN, apply_environment_lighting: bool = true) -> float:
-	var mapm_path := path_override if path_override != "" else OS.get_environment("SRREVAMP_MAPM_PATH")
+	var mapm_path := path_override if path_override != "" else OS.get_environment("OPENSRO_MAPM_PATH")
 	if mapm_path == "":
-		print("World3D: SRREVAMP_MAPM_PATH not set -- ground stays a placeholder")
+		print("World3D: OPENSRO_MAPM_PATH not set -- ground stays a placeholder")
 		return NAN
 
 	# Both halves on this thread (round 565: see _terrain_prepare), in the
@@ -7404,7 +7404,7 @@ func _try_load_real_terrain(path_override: String = "", texture_override: String
 ## decoded to Images, the mesh surfaces and the collision's height grid as
 ## arrays (MapmTerrainBuilder.build_full_region_surfaces_textured,
 ## TerrainCollision.heights_from_region -- round 567; the trimesh's faces,
-## surface_faces, until then and under SRREVAMP_TERRAIN_TRIMESH=1),
+## surface_faces, until then and under OPENSRO_TERRAIN_TRIMESH=1),
 ## the navmesh read and parsed, the wall triangles and the walkable graph
 ## (NavGraph.build) -- produces plain data, and a streamed cell runs it on a
 ## WorkerThreadPool task (_dispatch_cell). The COMMIT half -- _terrain_commit:
@@ -7495,7 +7495,7 @@ static func _terrain_prepare_read(job: Dictionary) -> bool:
 
 ## The prepare's second half, over job["region"]: the lightmap, the ground
 ## tiles, the mesh surfaces, the collision's height grid (or, under
-## SRREVAMP_TERRAIN_TRIMESH=1, the trimesh's faces), the navmesh, the wall
+## OPENSRO_TERRAIN_TRIMESH=1, the trimesh's faces), the navmesh, the wall
 ## triangles and the walkable graph. Sets job["prepared"] last, so a commit
 ## can tell a task that finished from one a script error ended.
 static func _terrain_prepare_build(job: Dictionary) -> void:
@@ -7561,7 +7561,7 @@ static func _terrain_prepare_build(job: Dictionary) -> void:
 	job["near_height"] = MapmTerrainBuilder.near_row_middle_height(region)
 	# The collision's data (round 567): the region's height grid, which the
 	# commit hands a HeightMapShape3D (TerrainCollision -- the mesh's own
-	# grid and triangles). Under SRREVAMP_TERRAIN_TRIMESH=1 (A/B), the
+	# grid and triangles). Under OPENSRO_TERRAIN_TRIMESH=1 (A/B), the
 	# trimesh's faces instead, as create_trimesh_shape() would have read them
 	# back out of the mesh (MapmTerrainBuilder.surface_faces; `faces` was
 	# this lap's name until round 567).
@@ -7639,7 +7639,7 @@ func _terrain_job(mapm_path: String, texture_override: String, world_offset: Vec
 		# The terrain's collision shape: the heightfield (round 567), or the
 		# pre-567 trimesh for A/B -- read here, on the main thread, because
 		# the prepare is static and may run on a task.
-		"trimesh": OS.get_environment("SRREVAMP_TERRAIN_TRIMESH") == "1",
+		"trimesh": OS.get_environment("OPENSRO_TERRAIN_TRIMESH") == "1",
 		"threaded": false,
 		"dispatched_frame": -1,
 		"laps": [],
@@ -7904,7 +7904,7 @@ func _terrain_commit(job: Dictionary) -> float:
 	# 567 a HeightMapShape3D over the region's height grid, which the prepare
 	# laid out (TerrainCollision: the mesh's own vertices and triangles, the
 	# shape's transform in this group's local space). Until then -- and under
-	# SRREVAMP_TERRAIN_TRIMESH=1, kept for A/B -- a ConcavePolygonShape3D of
+	# OPENSRO_TERRAIN_TRIMESH=1, kept for A/B -- a ConcavePolygonShape3D of
 	# the faces the prepare built, the list create_trimesh_shape() read back
 	# out of the mesh until round 565 (MapmTerrainBuilder.surface_faces; the
 	# builder's suite compares the two), whose BVH build was this lap: 25-33
@@ -8156,11 +8156,11 @@ func _has_roof_overhead(pos: Vector3) -> bool:
 ## them: a bodies-only catalogue from the same characterdata bytes (the 52
 ## Figures, CharCatalog's rule) and this item table, so nothing is parsed
 ## twice. Each body is assembled the first time a character needs it
-## (_body_assets). Leaves _appearance null if SRREVAMP_PK2_PATH isn't set.
+## (_body_assets). Leaves _appearance null if OPENSRO_PK2_PATH isn't set.
 func _load_character_assets() -> void:
 	_data_pk2 = _open_pk2_if_set()
 	if _data_pk2 == null:
-		print("World3D: SRREVAMP_PK2_PATH not set -- characters stay placeholders")
+		print("World3D: OPENSRO_PK2_PATH not set -- characters stay placeholders")
 		return
 	if _media_pk2 == null:
 		_media_pk2 = _open_media_pk2_if_set()
@@ -8533,7 +8533,7 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	if ewr != null and ewr.has_model:
 		ref_obj_id = ewr.ref_obj_id
 		scale = ewr.scale
-	# SRREVAMP_QA_BODY="<ref_obj_id>[:<scale>]" (round 689): this body and scale
+	# OPENSRO_QA_BODY="<ref_obj_id>[:<scale>]" (round 689): this body and scale
 	# byte for a run with no server, as a server would name them. With a server
 	# the server's word stands (round 689's review).
 	var qa_body := _qa_body_spec() if not NetClient.is_connected_to_server() else []
@@ -8880,7 +8880,7 @@ func _on_quickslot_activated(slot_index: int) -> void:
 		_log_system(DEAD_INPUT_LINE)
 		return
 	var entry = _quickslot_skills.get(slot_index)
-	if OS.get_environment("SRREVAMP_QA_HOTKEY") != "":
+	if OS.get_environment("OPENSRO_QA_HOTKEY") != "":
 		print("QA QUICKSLOT %d (%s): %s, target %d" % [slot_index, HudUnderbar.slot_label(slot_index),
 			("skill %d" % int(entry["id"])) if entry != null else ("item" if _quickslot_items.has(slot_index) else "empty"),
 			_last_attack_target])
@@ -9126,7 +9126,7 @@ func _restore_hotbar() -> void:
 		_resync_quickslot_items(_inventory_slots)
 	_hotbar_restoring = false
 
-## SRREVAMP_QA_LEARN's steps (see the hook in _qa_step): "<mastery>x<n>"
+## OPENSRO_QA_LEARN's steps (see the hook in _qa_step): "<mastery>x<n>"
 ## raises that mastery n times, "<id>" learns that skill; each waits for its
 ## reply and prints it, and the skill state is re-read at the end so the
 ## hotbar's known-skill gate sees the result.
@@ -9209,7 +9209,7 @@ func _cast_skill(skill_id: int, basic_code: String) -> void:
 			# row at a player SILENTLY when the player is not attackable (its
 			# vslot 0xa8 false, 0x81bc93..0x81bcaf: `je 0x81c577`, no message),
 			# and shows 0x3022 CANT_ATTACK_PARTY_MEMBER only for an attackable
-			# party member. srrevamp has no player-versus-player, so no player
+			# party member. OpenSRO has no player-versus-player, so no player
 			# is attackable: nothing is sent and nothing is said.
 			print("World3D: skill %d at player %d: an offensive row at a player who is not attackable -- dropped silently, as retail drops it" % [
 				skill_id, _selected_character])
@@ -9467,7 +9467,7 @@ func _friend_band(skill_id: int) -> Dictionary:
 
 ## Casts a friendly skill at a selected player (round 622): walks into the
 ## skill's reach first when the player is out of it -- the skill tick's
-## phase 1 walk (MoveTowardObject), done here because srrevamp's server does
+## phase 1 walk (MoveTowardObject), done here because OpenSRO's server does
 ## not walk players, as for a monster (_attack_monster) -- then sends it.
 func _cast_on_character(skill_id: int, basic_code: String, character_id: int) -> void:
 	if _player_dead:
@@ -9815,7 +9815,7 @@ var _ground_landing: GhostWalk.Landing = null
 ## that walk's target (FUN_004b0450 zeroes the +8 MoveTowardObject stored), and
 ## the blow is sent (phase 2). docs/protocol/auto_command.md, "The attack tick".
 ##
-## In retail that walk is the SERVER's. srrevamp's server does not move
+## In retail that walk is the SERVER's. OpenSRO's server does not move
 ## players -- it refuses a blow out of reach with "too far away"
 ## (session/keepup.go firstSwingInReach / skillInReach) -- so the walk is done
 ## here and the request goes out only once the player stands in reach: an
@@ -10089,7 +10089,7 @@ func _send_attack(monster_id: int, skill_id: int, basic_code: String) -> void:
 	_pending_skill_hit_code = basic_code
 	_pending_skill_id = skill_id
 	_audio_cast_start(skill_id, monster_id)
-	if OS.get_environment("SRREVAMP_QA_HOTKEY") != "":
+	if OS.get_environment("OPENSRO_QA_HOTKEY") != "":
 		print("QA CAST: use_skill %d (%s) on monster %d" % [skill_id, basic_code, monster_id])
 	NetClient.use_skill(NetClient.current_character_name, skill_id, monster_id)
 
@@ -10112,7 +10112,7 @@ func _body_animation_path(body: String, action_type: int, group: String) -> Stri
 ## slot -> item id. Returns nothing without querying if there's no live
 ## server connection -- the standalone dev-tool/screenshot contexts used
 ## throughout this project's asset work, which load World3D.tscn directly
-## with SRREVAMP_* env vars set but no real login/enter-world flow, so a
+## with OPENSRO_* env vars set but no real login/enter-world flow, so a
 ## query would otherwise await a signal that can never fire.
 func _real_player_equipped_items() -> Dictionary:
 	if not NetClient.is_connected_to_server() or NetClient.current_character_name == "":
@@ -10120,7 +10120,7 @@ func _real_player_equipped_items() -> Dictionary:
 		# character be rendered for a screenshot. The ids resolve through the
 		# real item table exactly as the server's list would, so this exercises
 		# the real id -> worn-model path, not a shortcut around it.
-		var qa_equip := OS.get_environment("SRREVAMP_QA_EQUIP")
+		var qa_equip := OS.get_environment("OPENSRO_QA_EQUIP")
 		if qa_equip != "":
 			return _parse_qa_equip(qa_equip)
 		return {}
@@ -10139,23 +10139,23 @@ func _real_player_equipped_items() -> Dictionary:
 ## slot -> item id dictionary _build_assembled_character expects. Slots are the
 ## EquipmentNet.SLOT_* numbers; item ids are real ones from the item table. A
 ## malformed pair is skipped with a log line rather than guessed at. Only the
-## QA screenshot harness sets SRREVAMP_QA_EQUIP -- see _real_player_equipped_items.
+## QA screenshot harness sets OPENSRO_QA_EQUIP -- see _real_player_equipped_items.
 func _parse_qa_equip(spec: String) -> Dictionary:
 	var equipped := {}
 	for pair in spec.split(",", false):
 		var kv: PackedStringArray = String(pair).split("=")
 		if kv.size() != 2 or not kv[0].strip_edges().is_valid_int() or not kv[1].strip_edges().is_valid_int():
-			printerr("World3D: SRREVAMP_QA_EQUIP: bad pair '%s' (want slot=item_id)" % pair)
+			printerr("World3D: OPENSRO_QA_EQUIP: bad pair '%s' (want slot=item_id)" % pair)
 			continue
 		equipped[int(kv[0].strip_edges())] = int(kv[1].strip_edges())
 	print("World3D: QA equipment loadout %s" % str(equipped))
 	return equipped
 
-## Loads a real Map.pk2 region's real object placements (SRREVAMP_MAPO_PATH,
-## e.g. "0\\0.o", via SRREVAMP_MAP_PK2_PATH -- same archive as
-## SRREVAMP_MAPM_PATH) and renders up to MAX_MAP_OBJECTS of them with their
+## Loads a real Map.pk2 region's real object placements (OPENSRO_MAPO_PATH,
+## e.g. "0\\0.o", via OPENSRO_MAP_PK2_PATH -- same archive as
+## OPENSRO_MAPM_PATH) and renders up to MAX_MAP_OBJECTS of them with their
 ## real resolved .bsr models, via a real type-ID lookup
-## (OBJECT_INDEX_PATH, from SRREVAMP_PK2_PATH's Data.pk2) -- see
+## (OBJECT_INDEX_PATH, from OPENSRO_PK2_PATH's Data.pk2) -- see
 ## docs/protocol/MAPO_FORMAT.md for how this real mapping was found (it was
 ## a confirmed dead end earlier in this project). Skips gracefully if
 ## either env var is unset, or if a specific placement's type ID isn't in
@@ -10163,7 +10163,7 @@ func _parse_qa_equip(spec: String) -> Dictionary:
 ## resolvable, and this project doesn't try to hide that by falling back
 ## to a placeholder marker here). path_override lets _reload_zone_assets
 ## pass a real per-zone path it resolved itself instead of reading
-## SRREVAMP_MAPO_PATH -- empty (the default) preserves the original
+## OPENSRO_MAPO_PATH -- empty (the default) preserves the original
 ## env-var-only behavior for _ready()'s own call. world_offset/node_suffix
 ## let _load_region_neighborhood place multiple of these side by side --
 ## defaults preserve the original single-region behavior. Also tries the
@@ -10173,12 +10173,12 @@ func _parse_qa_equip(spec: String) -> Dictionary:
 ## MAPM_FORMAT.md's Shape A/B split), so a missing .o2 is the normal,
 ## expected case for Shape A regions, not an error.
 func _try_load_real_map_objects(path_override: String = "", world_offset: Vector3 = Vector3.ZERO, node_suffix: String = "") -> void:
-	var mapo_path := path_override if path_override != "" else OS.get_environment("SRREVAMP_MAPO_PATH")
+	var mapo_path := path_override if path_override != "" else OS.get_environment("OPENSRO_MAPO_PATH")
 	if mapo_path == "":
-		print("World3D: SRREVAMP_MAPO_PATH not set -- no real map objects loaded")
+		print("World3D: OPENSRO_MAPO_PATH not set -- no real map objects loaded")
 		return
 	# Both halves on this thread (round 566: see _objects_prepare) -- the
-	# grid's centre, every cell under SRREVAMP_SYNC_LOAD=1 and the standalone
+	# grid's centre, every cell under OPENSRO_SYNC_LOAD=1 and the standalone
 	# paths. A streamed cell prepares the same job on its WorkerThreadPool
 	# task, after its terrain (_cell_prepare), and commits it here in
 	# _load_region_cell.
@@ -10282,7 +10282,7 @@ static func _objects_prepare(job: Dictionary) -> void:
 		return
 	var data_archive: Pk2Reader = job["data_pk2"]
 	if data_archive == null:
-		job["error"] = "World3D: SRREVAMP_PK2_PATH not set -- can't resolve real object type IDs"
+		job["error"] = "World3D: OPENSRO_PK2_PATH not set -- can't resolve real object type IDs"
 		job["prepared"] = true
 		return
 	var table: ObjidxReader.Table = job["object_index"]
@@ -10460,7 +10460,7 @@ func _force_rows_for(coords: Dictionary, table: ObjidxReader.Table) -> Array:
 
 ## The seasonal event pieces to leave out of this world's regions (round
 ## 583): type id -> set name over the object index's own paths
-## (SeasonalObjects.hidden_ids), minus the sets SRREVAMP_SEASONAL and the
+## (SeasonalObjects.hidden_ids), minus the sets OPENSRO_SEASONAL and the
 ## settings file show again. Built once per index, on the main thread; the
 ## jobs share the one Dictionary read-only.
 func _seasonal_hidden_for(table: ObjidxReader.Table) -> Dictionary:
@@ -10709,7 +10709,7 @@ func _player_capsule_height() -> float:
 ##   * The same harness, on the same stairs, with the reverted
 ##     collision-shape approach produced *zero* displacement
 ##     (docs/WORLD_ISSUES.md's sixty-third round).
-const NAV_MOVEMENT_DISABLE_ENV := "SRREVAMP_NO_NAVMESH_MOVEMENT"
+const NAV_MOVEMENT_DISABLE_ENV := "OPENSRO_NO_NAVMESH_MOVEMENT"
 
 ## Moves the player on the real walkable graph, the way the real client does:
 ## the ground's height comes from the real cell underfoot, and a move is
@@ -10748,7 +10748,7 @@ func _move_on_nav_graph(delta: float) -> bool:
 	# when something other than this walk moved the player -- a teleport, a
 	# zone change, the physics fallback -- or when the player crossed into a
 	# region whose graph numbers its objects differently.
-	var trace := _qa_walk != "" or OS.get_environment("SRREVAMP_QA_NAVTRACE") != ""
+	var trace := _qa_walk != "" or OS.get_environment("OPENSRO_QA_NAVTRACE") != ""
 	if graph != _nav_footing_graph or player.global_position.distance_to(_nav_footing_pos) > NAV_FOOTING_RESETTLE_DISTANCE:
 		_nav_footing = graph.surface_at(local.x, local.z, local.y).object_index
 		_nav_footing_graph = graph
@@ -10762,13 +10762,13 @@ func _move_on_nav_graph(delta: float) -> bool:
 	# blocking edge with the crossing point, nudged at most 0.2 toward the
 	# cell centre, and bit 0, which ends the mover's movement, for every
 	# movement kind). An attack's or friendly cast's approach is re-issued on
-	# the next tick by _step_move_order. Only the QA walk (SRREVAMP_QA_WALK, a
+	# the next tick by _step_move_order. Only the QA walk (OPENSRO_QA_WALK, a
 	# measurement path with no order) still slides.
 	var slide := _qa_walk != "" and not _has_move_target
 	var step := graph.step_tracked(local, asked, _nav_footing, slide)
 	if _has_move_target and ClickWalk.blocked_ends(step.blocked):
 		_end_blocked_click_walk(graph, step)
-	if trace and OS.get_environment("SRREVAMP_QA_NAVTRACE") == "2":
+	if trace and OS.get_environment("OPENSRO_QA_NAVTRACE") == "2":
 		print("NAV %4d: %.2f, %.2f -> %.2f, %.2f (y %.2f) on %s" % [
 			_qa_tick, local.x, local.z, step.position.x, step.position.z, step.position.y,
 			_nav_footing_name(graph, step.standing_on)])
@@ -10922,7 +10922,7 @@ func _end_blocked_click_walk(graph: NavGraph, step: NavGraph.StepResult) -> void
 	_move_heading_run = false
 	player.velocity.x = 0.0
 	player.velocity.z = 0.0
-	if _qa_move_log or _qa_walk != "" or OS.get_environment("SRREVAMP_QA_NAVTRACE") != "":
+	if _qa_move_log or _qa_walk != "" or OS.get_environment("OPENSRO_QA_NAVTRACE") != "":
 		# An approach meets its wall on every tick it is re-issued: logged
 		# once a second at most.
 		var now_ms := Time.get_ticks_msec()
@@ -11035,46 +11035,46 @@ func _update_blob_shadow() -> void:
 ## anyone driving the client by hand. Every hook below is off unless its
 ## environment variable is set, so a normal run is untouched.
 ##
-##   SRREVAMP_QA_AT="x,z"   teleport to that region-local spot, standing on
+##   OPENSRO_QA_AT="x,z"   teleport to that region-local spot, standing on
 ##                          whatever the real walkable graph says is there
-##   SRREVAMP_QA_YAW=deg    camera yaw (0 looks along +Z)
-##   SRREVAMP_QA_PITCH=deg  camera pitch (-90 is straight down)
-##   SRREVAMP_QA_DIST=n     camera distance from the player
-##   SRREVAMP_QA_WALK=deg   walk continuously on that heading
-##   SRREVAMP_QA_FREE=1     let the camera pass through geometry
-##   SRREVAMP_QA_NOFOG=1    disable fog (for high overview shots)
-##   SRREVAMP_QA_NOSHADOW=1 the sun casts no shadows (round 693's renderer A/B)
-##   SRREVAMP_QA_NOUI=1     hide the HUD (for comparison shots)
-##   SRREVAMP_QA_NOWATER=1  build no block water (round 648: the pixel diff
+##   OPENSRO_QA_YAW=deg    camera yaw (0 looks along +Z)
+##   OPENSRO_QA_PITCH=deg  camera pitch (-90 is straight down)
+##   OPENSRO_QA_DIST=n     camera distance from the player
+##   OPENSRO_QA_WALK=deg   walk continuously on that heading
+##   OPENSRO_QA_FREE=1     let the camera pass through geometry
+##   OPENSRO_QA_NOFOG=1    disable fog (for high overview shots)
+##   OPENSRO_QA_NOSHADOW=1 the sun casts no shadows (round 693's renderer A/B)
+##   OPENSRO_QA_NOUI=1     hide the HUD (for comparison shots)
+##   OPENSRO_QA_NOWATER=1  build no block water (round 648: the pixel diff
 ##                          that measures what the water draws)
-##   SRREVAMP_QA_FORCE_LOADING=1  show the "NOW LOADING" screen on a QA run,
+##   OPENSRO_QA_FORCE_LOADING=1  show the "NOW LOADING" screen on a QA run,
 ##                          which builds its grid synchronously and shows
 ##                          none otherwise (_should_show_loading_screen); the
 ##                          load benchmark's two runs set it. Since round 562
 ##                          the screen goes up, and one frame is awaited,
 ##                          BEFORE the centre cell (_ready). So WITHOUT
-##                          SRREVAMP_QA_AT, _qa_step's first tick and its
+##                          OPENSRO_QA_AT, _qa_step's first tick and its
 ##                          one-time block run before the world and the HUD
 ##                          exist -- with --server too: there the block runs
 ##                          during QaSignIn's awaited frames, before the
 ##                          world, as it has since before round 562 (round
 ##                          539 found it: the block's ATTACK comment), so a
 ##                          --server run is no safer. In that block
-##                          SRREVAMP_QA_DEBUG and SRREVAMP_QA_WORLDMAP do
+##                          OPENSRO_QA_DEBUG and OPENSRO_QA_WORLDMAP do
 ##                          nothing, through their null guards; the
-##                          SRREVAMP_QA_HIDE, _FLOAT, _THROUGH, _SCAN and
+##                          OPENSRO_QA_HIDE, _FLOAT, _THROUGH, _SCAN and
 ##                          _COLUMNS probes run against a world not yet
 ##                          built, so an empty report there says nothing
-##                          about the world; and SRREVAMP_QA_ZONE's
+##                          about the world; and OPENSRO_QA_ZONE's
 ##                          _reload_zone_assets runs before
 ##                          _load_initial_region_neighborhood builds the
-##                          SRREVAMP_MAPM_PATH centre. And, still without
-##                          SRREVAMP_QA_AT, every tick-indexed hook below
+##                          OPENSRO_MAPM_PATH centre. And, still without
+##                          OPENSRO_QA_AT, every tick-indexed hook below
 ##                          fires one physics tick earlier relative to the
 ##                          world build than it did before round 562 (the
 ##                          screen's awaited frame; one step a frame: the
 ##                          project sets no physics rate and the movie
-##                          writer's fps is 60). WITH SRREVAMP_QA_AT neither
+##                          writer's fps is 60). WITH OPENSRO_QA_AT neither
 ##                          applies: _qa_step returns before it counts a
 ##                          tick (`_qa_tick += 1`) until the region under the
 ##                          player has a graph, so the block runs on a built
@@ -11085,65 +11085,65 @@ func _update_blob_shadow() -> void:
 ##                          Read from _ready, _qa_step and QaSignIn.run in
 ##                          rounds 564 and 568, not measured; nothing was
 ##                          moved
-##   SRREVAMP_QA_WORLDMAP=1 open the world map window over the world
-##   SRREVAMP_QA_BUFFS="<skill>:<ms>[:<left>],..."  put these buffs on the
+##   OPENSRO_QA_WORLDMAP=1 open the world map window over the world
+##   OPENSRO_QA_BUFFS="<skill>:<ms>[:<left>],..."  put these buffs on the
 ##                          buff bar as if the server had started them
 ##                          (duration ms, -1 for none; ms left), tokens
 ##                          900001 up, so it renders without the server
-##                          round; SRREVAMP_QA_BUFFS_END="<i>@<ms>,..." ends
+##                          round; OPENSRO_QA_BUFFS_END="<i>@<ms>,..." ends
 ##                          the i-th (0-based) that many ms after (round 618)
-##   SRREVAMP_QA_INPUT="<tick>:<action>;..."  a player's clicks, keys and
+##   OPENSRO_QA_INPUT="<tick>:<action>;..."  a player's clicks, keys and
 ##                          hovers through push_input, each followed by a
 ##                          `QA INPUT` line (open windows, focus, the keys
 ##                          that reached _unhandled_input); _qa_input_step
 ##                          has the actions (round 605)
-##   SRREVAMP_QA_ATTACK_NAME=s  only monsters whose plate contains s (e.g. Mangyang)
-##   SRREVAMP_QA_ATTACK_GOTO=1  stand next to the target first (QA teleport);
+##   OPENSRO_QA_ATTACK_NAME=s  only monsters whose plate contains s (e.g. Mangyang)
+##   OPENSRO_QA_ATTACK_GOTO=1  stand next to the target first (QA teleport);
 ##                          without it the player walks into reach the way a
 ##                          click does (_attack_monster). With a server it
 ##                          asks for the monster list and stands beside where
 ##                          the list puts the target (QaAttackGoto, round 539)
-##   SRREVAMP_QA_ATTACK_ALTERNATE=1  with QA_ATTACK: swing at the nearest and the
+##   OPENSRO_QA_ATTACK_ALTERNATE=1  with QA_ATTACK: swing at the nearest and the
 ##                          second-nearest monster in turn (a retarget every swing)
-##   SRREVAMP_QA_ATTACK_RETREAT=n  with QA_ATTACK: once the first blow lands, walk
+##   OPENSRO_QA_ATTACK_RETREAT=n  with QA_ATTACK: once the first blow lands, walk
 ##                          n units straight back from the target and stop
 ##                          attacking, so a server with -monster-battle has to
 ##                          chase (round 546's live check; _qa_retreat)
-##   SRREVAMP_QA_ATTACK=1   attack the nearest monster every second, so a
+##   OPENSRO_QA_ATTACK=1   attack the nearest monster every second, so a
 ##                          hit reaction and a death can be rendered
-##   SRREVAMP_QA_ATTACK_UNTIL=t  with QA_ATTACK: stop the attack loop at tick t
+##   OPENSRO_QA_ATTACK_UNTIL=t  with QA_ATTACK: stop the attack loop at tick t
 ##                          (round 607: take damage, then sit and measure)
-##   SRREVAMP_QA_STATS_LOG=1  print every stats update's HP and MP with the
+##   OPENSRO_QA_STATS_LOG=1  print every stats update's HP and MP with the
 ##                          time and whether the player sits (`QA STATS:`),
 ##                          so regeneration is measured from the log
-##   SRREVAMP_QA_REVIVE_AFTER=n  with a server whose -player-dead-state is on:
+##   OPENSRO_QA_REVIVE_AFTER=n  with a server whose -player-dead-state is on:
 ##                          once a killing blow has left the player dead, send
 ##                          OpRevive n physics frames later, as a dead-window
 ##                          button would (round 548; _on_revive_requested),
-##                          with SRREVAMP_QA_REVIVE_OPTION's option (round 665;
+##                          with OPENSRO_QA_REVIVE_OPTION's option (round 665;
 ##                          1, the default, the return point; 2 the present
 ##                          point)
-##   SRREVAMP_QA_MOB_MOVE="dx,dz,speed,mode"  send the nearest monster on a
+##   OPENSRO_QA_MOB_MOVE="dx,dz,speed,mode"  send the nearest monster on a
 ##                          server-style leg (OpMonsterMoved, built and decoded
 ##                          here) from where it stands; with --server the list
 ##                          is asked for at half the leg (_qa_mob_move)
-##   SRREVAMP_QA_FACING_LOG=1  (round 637) every 50 ms, each other player's
+##   OPENSRO_QA_FACING_LOG=1  (round 637) every 50 ms, each other player's
 ##                          and each walking monster's drawn position and the
 ##                          way its model faces (_qa_facing_report), for
 ##                          client/tools/facing_measure.py
-##   SRREVAMP_QA_MOVE_LOG=1  (round 649) every physics tick, this player's
+##   OPENSRO_QA_MOVE_LOG=1  (round 649) every physics tick, this player's
 ##                          position, click destination and run speed, each
 ##                          position sent, each other player's received
 ##                          position and where its body is drawn
 ##                          (_qa_move_report) -- the per-frame trace the /speed
 ##                          stutter was measured with
-##   SRREVAMP_QA_MOB_LOG=1  print each monster leg, its progress every 30
+##   OPENSRO_QA_MOB_LOG=1  print each monster leg, its progress every 30
 ##                          frames, its arrival, each height resolve's navmesh
 ##                          and terrain-ray answers side by side (round 557),
 ##                          and every 10 s the walking legs' resolve rate and
 ##                          cost, with the retries of bodies still waiting
 ##                          for ground counted apart (round 572)
-##   SRREVAMP_QA_MOB_HEIGHTS="t1,t2,..."  (round 572) at each listed QA tick,
+##   OPENSRO_QA_MOB_HEIGHTS="t1,t2,..."  (round 572) at each listed QA tick,
 ##                          one `QA MOB HEIGHT` line per monster body: where
 ##                          it is drawn against the terrain ray (the game's
 ##                          own, TerrainCollision.vertical_ray, and which
@@ -11154,40 +11154,40 @@ func _update_blob_shadow() -> void:
 ##                          TERRAIN SLOPE` line per held region, the steepest
 ##                          triangle -- what bounds the grid-line nudge's
 ##                          height error (_qa_terrain_slope_report)
-##   SRREVAMP_QA_ALPHA_LOG=1  print every alpha-cutout probe a material build
+##   OPENSRO_QA_ALPHA_LOG=1  print every alpha-cutout probe a material build
 ##                          consults (ObjectLoader._alpha_stat, round 566):
 ##                          `QA ALPHA: <texture> (<fourCC>) <statistic> <value>
 ##                          -- from the decoded Image | from a statistic
 ##                          measured earlier`. The load benchmark's count of
 ##                          alpha probes in the load path; since round 566 none
 ##                          reads a texture back
-##   SRREVAMP_QA_MOB_STRIKE=1  stand in for a server with the strike push:
+##   OPENSRO_QA_MOB_STRIKE=1  stand in for a server with the strike push:
 ##                          behind each result that reports a counter, the
 ##                          OpMonsterAttacked it would send goes through
 ##                          NetClient's own dispatch (_qa_mob_strike)
-##   SRREVAMP_QA_MOBS=<N>   (round 655) as soon as the region grid has its
+##   OPENSRO_QA_MOBS=<N>   (round 655) as soon as the region grid has its
 ##                          origin, a monster list of N synthetic monsters of
 ##                          QA_MOB_SPECIES real species spread over the load
 ##                          window goes through _on_monster_list_result, as a
 ##                          server's list would (_qa_mobs_step); the perf
 ##                          gate's `mobs` site
-##   SRREVAMP_QA_PARTY=create|join:<id>  form a party at tick 70 (round 634)
-##   SRREVAMP_QA_COMMANDS="/a;/b"  feed these lines through the chat console
+##   OPENSRO_QA_PARTY=create|join:<id>  form a party at tick 70 (round 634)
+##   OPENSRO_QA_COMMANDS="/a;/b"  feed these lines through the chat console
 ##                          ("wait <seconds>" pauses the list, round 642)
 ##                          (docs/DEBUG_TOOLS.md) 2 s after boot; each prints
 ##                          "QA COMMAND: <line>" and a GM reply "GM REPLY: ..."
-##   SRREVAMP_QA_HELP=1     open the in-client Help window 2 s after boot
-##   SRREVAMP_QA_NOTICES="<tick>:<what>;.." raise the notice banners and the
+##   OPENSRO_QA_HELP=1     open the in-client Help window 2 s after boot
+##   OPENSRO_QA_NOTICES="<tick>:<what>;.." raise the notice banners and the
 ##                          area banner at those ticks (round 703; see
 ##                          _qa_notices_step): notice:/warning:<text>,
 ##                          level:<n>, unique:spawn|kill:<ref>[:<killer>],
 ##                          region:<x>:<y>; `QA BANDS` lines give their rects
-##   SRREVAMP_QA_FLOAT=r     report placed objects within r that sit clear
+##   OPENSRO_QA_FLOAT=r     report placed objects within r that sit clear
 ##                          of their own region's ground
-##   SRREVAMP_QA_THROUGH=z0,z1,y[,step]
+##   OPENSRO_QA_THROUGH=z0,z1,y[,step]
 ##                          fire horizontal rays through that band and
 ##                          report which X spans are clear through it
-##   SRREVAMP_QA_SHOTS=...   visit several viewpoints in one run, as
+##   OPENSRO_QA_SHOTS=...   visit several viewpoints in one run, as
 ##                          `name@x,z:yaw,pitch,dist` separated by `;` --
 ##                          each prints the movie frame it landed on
 ##                          (`QA SHOT <name> frame <n>`) and, on its own
@@ -11198,20 +11198,20 @@ func _update_blob_shadow() -> void:
 ##                          one region over -- how round 563's tour crossed
 ##                          boundaries in 28 ticks a hop. A trailing
 ##                          `|key=value,...` sets that viewpoint's effects
-##                          (QaShotEnv, round 702); SRREVAMP_QA_PATCHES
+##                          (QaShotEnv, round 702); OPENSRO_QA_PATCHES
 ##                          prints ground squares' screen boxes per shot
-##   SRREVAMP_QA_RADIUS=n   load an n-region radius instead of the default
-##   SRREVAMP_QA_MAPANIM=n  every n frames, `QA MAPANIM ... registered=
+##   OPENSRO_QA_RADIUS=n   load an n-region radius instead of the default
+##   OPENSRO_QA_MAPANIM=n  every n frames, `QA MAPANIM ... registered=
 ##                          running= driver_us= process_ms=`: the animated
 ##                          map objects (round 645) and what the frame cost;
-##                          SRREVAMP_NO_MAP_ANIM=1 leaves them still (the A/B);
-##                          SRREVAMP_QA_MAPANIM_SPLIT=<frame> with _MODE=<mode>
+##                          OPENSRO_NO_MAP_ANIM=1 leaves them still (the A/B);
+##                          OPENSRO_QA_MAPANIM_SPLIT=<frame> with _MODE=<mode>
 ##                          switches them to one probe state at that frame
 ##                          (MapAnimationProbe: the cost split)
-##   SRREVAMP_QA_ANIM=1     play the real character animation (off by
+##   OPENSRO_QA_ANIM=1     play the real character animation (off by
 ##                          default -- it still renders wrongly, see
 ##                          docs/WORLD_ISSUES.md's ninetieth round)
-##   SRREVAMP_QA_CLICK="monster,npc,ground" (needs --server for monsters) left-click
+##   OPENSRO_QA_CLICK="monster,npc,ground" (needs --server for monsters) left-click
 ##                          each through the real dispatcher after standing in
 ##                          front of it, logging what the NPC ray and the monster
 ##                          ray hit and which path took the click (since
@@ -11226,91 +11226,91 @@ func _update_blob_shadow() -> void:
 ##                          "gate@<d>" (round 700) no click: stand <d> units
 ##                          short of the nearest gate, aim at it, print the
 ##                          hover's verdict (`QA HOVER`, the view window)
-##   SRREVAMP_QA_CLICK_WAIT=<ticks> (round 646) the ticks before the first
+##   OPENSRO_QA_CLICK_WAIT=<ticks> (round 646) the ticks before the first
 ##                          click (default 120)
-##   SRREVAMP_QA_MARKER=1   (round 698) `QA MARKER` lines from the ring on the
+##   OPENSRO_QA_MARKER=1   (round 698) `QA MARKER` lines from the ring on the
 ##                          ground: each place / attach / hide, and each drape's
 ##                          centre, cells and height against a terrain ray
-##                          (GroundMarkers); SRREVAMP_QA_MARKER_VIEW="<pitch>,
+##                          (GroundMarkers); OPENSRO_QA_MARKER_VIEW="<pitch>,
 ##                          <length>" turns the camera arm there at each one
 ##                          so the frame shows the ring
-##   SRREVAMP_QA_ARRIVAL_PROBE=1 (round 690) after the entry, every zone change
+##   OPENSRO_QA_ARRIVAL_PROBE=1 (round 690) after the entry, every zone change
 ##                          and every GM move: `QA ARRIVAL` (the feet against the
 ##                          terrain and the walkable graph's landing) and, per
 ##                          town gate in range, `QA GATEPICK` (its pick box
 ##                          against the placed object drawn there, a sweep of the
 ##                          talk ray) and `QA GATEAIM` (the box's screen point)
 ##                          (_qa_arrival_probe, GatePickProbe)
-##   SRREVAMP_QA_TELEPORT=<dest id> (round 578; with SRREVAMP_QA_CLICK=gate
+##   OPENSRO_QA_TELEPORT=<dest id> (round 578; with OPENSRO_QA_CLICK=gate
 ##                          and a server) choose the gate's teleport line,
 ##                          then click the talk box's line for that teleportdata
 ##                          id: `QA TELEPORT: requested <gate> -> <dest>`
 ##                          (_qa_advance_teleport)
-##   SRREVAMP_QA_UI_SCALE=<f> run the world at this UI scale (round 695; a
+##   OPENSRO_QA_UI_SCALE=<f> run the world at this UI scale (round 695; a
 ##                          QA run starts past Boot, which applies the saved
 ##                          one); `ViewportPixels:` lines say what the 3D
 ##                          previews then render at
-##   SRREVAMP_QA_DXT1_KEEP=1 keep every DXT1 as DXT1 under Forward+ (round
+##   OPENSRO_QA_DXT1_KEEP=1 keep every DXT1 as DXT1 under Forward+ (round
 ##                          695's before: transparent texels drawn opaque)
-##   SRREVAMP_QA_BODY="<ref_obj_id>[:<scale>]"  the player's model and scale
+##   OPENSRO_QA_BODY="<ref_obj_id>[:<scale>]"  the player's model and scale
 ##                          byte when no server names them (round 689; e.g.
 ##                          "14875:0x24", the Europe noble man at Height 4)
-##   SRREVAMP_QA_LINEUP=all|<ids>|none  the creatable Figures spawned through
+##   OPENSRO_QA_LINEUP=all|<ids>|none  the creatable Figures spawned through
 ##                          the other-player path and measured per action
 ##                          phase -- posed or T-posed, feet against the
 ##                          ground -- as `LINEUP` lines (QaLineup has the
 ##                          companion variables; round 689)
-##   SRREVAMP_QA_EQUIP="s=id,.." dress the player from this loadout when no
+##   OPENSRO_QA_EQUIP="s=id,.." dress the player from this loadout when no
 ##                          server is present: "slot=item_id" pairs (slots per
 ##                          EquipmentNet, e.g. "1=3637,4=3638,5=3639,6=3632"
 ##                          for the China-man heavy set plus the starter sword),
 ##                          resolved through the real item table
-##   SRREVAMP_QA_PICKUP=1   (needs --server) when a ground item appears, step onto
+##   OPENSRO_QA_PICKUP=1   (needs --server) when a ground item appears, step onto
 ##                          it and pick it up, printing the server's answers:
 ##                          the item's position, the pick result and the bag after
-##   SRREVAMP_QA_MOVE="from,to" (needs --server) unequip the boots into the bag,
+##   OPENSRO_QA_MOVE="from,to" (needs --server) unequip the boots into the bag,
 ##                          then move that bag slot onto another and print the
 ##                          bag before and after from the server's own answers
 ##                          (see HudPanels.qa_move_sequence)
-##   SRREVAMP_QA_RIG=1      report where each assembled character piece is
+##   OPENSRO_QA_RIG=1      report where each assembled character piece is
 ##                          against where its own bone is
-##   SRREVAMP_QA_SCAN=n     sweep the region on an n x n grid and report
+##   OPENSRO_QA_SCAN=n     sweep the region on an n x n grid and report
 ##                          where the walkable graph sits below the solid
 ##                          geometry (i.e. where a player walks underneath)
-##   SRREVAMP_QA_COLUMNS="x,z;rx/ry@x,z"  what the walkable graph knows at
+##   OPENSRO_QA_COLUMNS="x,z;rx/ry@x,z"  what the walkable graph knows at
 ##                          these region-local columns: every surface, the
 ##                          objects it considers, and any it does not index.
 ##                          A bare `x,z` asks the region the player stands
 ##                          in; `rx/ry@x,z` asks any loaded region, which is
 ##                          how a real npcpos spawn point (a region id plus
 ##                          a local position) gets a world coordinate
-##   SRREVAMP_QA_GROUND_RAYS=n  (round 567) fire rays and sweep the camera
+##   OPENSRO_QA_GROUND_RAYS=n  (round 567) fire rays and sweep the camera
 ##                          arm's sphere and the player's capsule at the
 ##                          terrain collision on an n x n lattice of every
 ##                          loaded region, and hold each ray's hit against the
 ##                          drawn mesh's own triangle (`QA GROUND` lines; see
 ##                          _qa_ground_rays_report) -- the heightfield against
-##                          SRREVAMP_TERRAIN_TRIMESH=1's trimesh, by number
-##   SRREVAMP_QA_HIDE=a,b    hide every mesh whose own real mesh name
+##                          OPENSRO_TERRAIN_TRIMESH=1's trimesh, by number
+##   OPENSRO_QA_HIDE=a,b    hide every mesh whose own real mesh name
 ##                          contains one of these fragments
-##   SRREVAMP_QA_LOOK=1     print which real placed objects the camera is
+##   OPENSRO_QA_LOOK=1     print which real placed objects the camera is
 ##                          pointing at (model name, distance, placement)
-##   SRREVAMP_QA_OBJECTS=a,b at each `--shots` viewpoint, one `QA OBJECT`
+##   OPENSRO_QA_OBJECTS=a,b at each `--shots` viewpoint, one `QA OBJECT`
 ##                          line per placed map object whose node name
 ##                          contains a fragment: its `.o2` key, the region
 ##                          holding it, where it stands, its drawn pieces
 ##                          and triangles, whether it is visible and in the
 ##                          camera's frustum (_qa_objects_report, round 643)
-##   SRREVAMP_QA_DEBUG=1    open the debug panel (Shift+F3) as soon as the first
+##   OPENSRO_QA_DEBUG=1    open the debug panel (Shift+F3) as soon as the first
 ##                          region has loaded, so a render shows it
-##   SRREVAMP_QA_ZONE=z     after the first region loads, reload assets for
+##   OPENSRO_QA_ZONE=z     after the first region loads, reload assets for
 ##                          this zone -- accepts the zone box's own
 ##                          `x/y@localX,localZ` form. Reproduces a real
 ##                          zone change's *sequence* (build a grid, then
 ##                          rebuild it for somewhere else) with no server
 ##                          in the loop, which is how the stale-node bug
 ##                          in _clear_region_grid was caught and checked.
-##   SRREVAMP_QA_RECONNECT=<tick|drain>
+##   OPENSRO_QA_RECONNECT=<tick|drain>
 ##                          leave the world and re-enter it in the SAME
 ##                          process (round 558): the tester's "disconnect
 ##                          and reconnect without closing the client", after
@@ -11321,17 +11321,17 @@ func _update_blob_shadow() -> void:
 ##                          suspended on a frame await (the screen is up from
 ##                          before the centre cell since round 562, so "up"
 ##                          alone would be _ready's own await; needs
-##                          SRREVAMP_QA_FORCE_LOADING=1; qa_shot --reconnect
+##                          OPENSRO_QA_FORCE_LOADING=1; qa_shot --reconnect
 ##                          exports it). Direct by default: World3D ->
 ##                          World3D (until round 560 the route that isolated
 ##                          this script's `static var`s; they are instance
-##                          state now). With SRREVAMP_QA_RECONNECT_VIA_LOGIN=1 it
+##                          state now). With OPENSRO_QA_RECONNECT_VIA_LOGIN=1 it
 ##                          takes the tester's route -- disconnect_from_server
 ##                          -> `disconnected` -> _on_disconnected -> Login ->
 ##                          CharacterSelect -> World3D, the front-end screens
 ##                          signing back in with the QA account. Cleared once
 ##                          it fires, so the next instance does not fire again.
-##   SRREVAMP_QA_ENTRY=n    set by the hook above (a player run never has it):
+##   OPENSRO_QA_ENTRY=n    set by the hook above (a player run never has it):
 ##                          how many times this process has entered the world.
 ##                          While set, each entry prints `QA ENTRY <n> ...`
 ##                          beside `region grid loaded` -- renderer texture /
@@ -11356,19 +11356,19 @@ func _update_blob_shadow() -> void:
 ## built -- the numbers of client/tools/README.md's "Load benchmark".
 var _qa_done := false
 var _qa_tick := 0
-## SRREVAMP_QA_GROUND_RAYS's lattice size once armed (0: not armed, or
+## OPENSRO_QA_GROUND_RAYS's lattice size once armed (0: not armed, or
 ## fired), and the ticks it has waited with the grid loaded (round 567).
 var _qa_ground_rays := 0
 var _qa_ground_rays_waited := 0
-## SRREVAMP_QA_ENTRY as this instance read it in _ready: 0 outside a reconnect
+## OPENSRO_QA_ENTRY as this instance read it in _ready: 0 outside a reconnect
 ## run; the world entry number (1, 2, ...) inside one.
 var _qa_entry := 0
-## SRREVAMP_QA_WALK, read once: a heading in degrees to keep walking on,
+## OPENSRO_QA_WALK, read once: a heading in degrees to keep walking on,
 ## driven from _physics_process like a held key so the run plays.
-var _qa_walk := OS.get_environment("SRREVAMP_QA_WALK")
+var _qa_walk := OS.get_environment("OPENSRO_QA_WALK")
 
 ## Puts the player at a region-local spot in the region they stand in,
-## landing on the highest walkable surface there -- what SRREVAMP_QA_AT
+## landing on the highest walkable surface there -- what OPENSRO_QA_AT
 ## and the debug panel's teleport both do. False when no region has
 ## streamed in yet.
 func _teleport_local(lx: float, lz: float) -> bool:
@@ -11383,12 +11383,12 @@ func _teleport_local(lx: float, lz: float) -> bool:
 	player.velocity = Vector3.ZERO
 	return true
 
-# --- SRREVAMP_QA_INPUT --------------------------------------------------------
+# --- OPENSRO_QA_INPUT --------------------------------------------------------
 #
-# SRREVAMP_QA_INPUT="<tick>:<action>[;<tick>:<action>...]" plays a player's
+# OPENSRO_QA_INPUT="<tick>:<action>[;<tick>:<action>...]" plays a player's
 # input into the real viewport (push_input), one action per tick, so Godot's
 # own hit-testing, focus and key routing decide who gets each event -- what
-# the one-key SRREVAMP_QA_HOTKEY cannot show, since a player clicks before
+# the one-key OPENSRO_QA_HOTKEY cannot show, since a player clicks before
 # pressing keys. Actions:
 #   key:<name>          press and release a key, as the OS delivers it:
 #                       keycode, physical_keycode, key_label and (letters,
@@ -11418,17 +11418,17 @@ var _qa_input_armed := false
 var _qa_input_report := ""
 var _qa_input_seen: Array = []
 var _qa_input_count := 0
-## SRREVAMP_QA_BERSERK=tab: Tab pushed once the gauge filled.
+## OPENSRO_QA_BERSERK=tab: Tab pushed once the gauge filled.
 var _qa_berserk_tab_sent := false
 
-## SRREVAMP_QA_PMI="<start tick>,<hold ticks>" (round 629): walks the player
+## OPENSRO_QA_PMI="<start tick>,<hold ticks>" (round 629): walks the player
 ## block through its states for a render, one every <hold> ticks from
 ## <start>, printing `QA PMI <state> frame <n>` for each: the gauge at 0, at
 ## two orbs, full with the stat panel opened by a mouse click pushed through
 ## the viewport at the button's rect, the weapon taken off and put back (with
 ## a server) so the open panel's numbers change, the ready circle clicked,
 ## berserk on, and the European emblem. QA only; never set in real play.
-var _qa_pmi_spec := OS.get_environment("SRREVAMP_QA_PMI")
+var _qa_pmi_spec := OS.get_environment("OPENSRO_QA_PMI")
 var _qa_pmi_state := -1
 
 func _qa_pmi_click(control_name: String) -> void:
@@ -11488,7 +11488,7 @@ func _qa_pmi_step() -> void:
 var _qa_input_keymap_mark := 0
 
 func _qa_input_step() -> void:
-	var spec := OS.get_environment("SRREVAMP_QA_INPUT")
+	var spec := OS.get_environment("OPENSRO_QA_INPUT")
 	if spec == "":
 		return
 	if not _qa_input_armed:
@@ -11634,7 +11634,7 @@ func _qa_open_windows() -> String:
 func _qa_step() -> void:
 	var pair := _nav_graph_for(player.global_position)
 	if not _qa_done:
-		var at := OS.get_environment("SRREVAMP_QA_AT")
+		var at := OS.get_environment("OPENSRO_QA_AT")
 		if at != "" and pair.is_empty():
 			return # region not streamed in yet; try again next frame
 		_qa_done = true
@@ -11642,56 +11642,56 @@ func _qa_step() -> void:
 			var parts := at.split(",")
 			if parts.size() >= 2:
 				_teleport_local(float(parts[0]), float(parts[1]))
-		if OS.get_environment("SRREVAMP_QA_DEBUG") != "" and _debug_panel != null:
+		if OS.get_environment("OPENSRO_QA_DEBUG") != "" and _debug_panel != null:
 			_debug_panel.toggle()
-		if OS.get_environment("SRREVAMP_QA_FREE") != "":
+		if OS.get_environment("OPENSRO_QA_FREE") != "":
 			camera_arm.collision_mask = 0
-		if OS.get_environment("SRREVAMP_QA_DIST") != "":
-			camera_arm.spring_length = float(OS.get_environment("SRREVAMP_QA_DIST"))
-		var yaw := OS.get_environment("SRREVAMP_QA_YAW")
-		var pitch := OS.get_environment("SRREVAMP_QA_PITCH")
+		if OS.get_environment("OPENSRO_QA_DIST") != "":
+			camera_arm.spring_length = float(OS.get_environment("OPENSRO_QA_DIST"))
+		var yaw := OS.get_environment("OPENSRO_QA_YAW")
+		var pitch := OS.get_environment("OPENSRO_QA_PITCH")
 		if yaw != "" or pitch != "":
 			camera_arm.rotation_degrees = Vector3(
 				float(pitch) if pitch != "" else camera_arm.rotation_degrees.x,
 				float(yaw) if yaw != "" else camera_arm.rotation_degrees.y, 0.0)
-		if OS.get_environment("SRREVAMP_QA_NOUI") != "":
+		if OS.get_environment("OPENSRO_QA_NOUI") != "":
 			# Comparing a render against the authored minimap is a lot
 			# easier without a chat box across the bottom of it.
 			for node in [$UI/Control, $UI/HideUIButton]:
 				(node as CanvasItem).visible = false
-		# SRREVAMP_QA_ATTACK needs a server. This block runs on the first
+		# OPENSRO_QA_ATTACK needs a server. This block runs on the first
 		# physics frame, which can come while _ready is still awaiting the QA
 		# sign-in, so a run signing in to a QA server is armed here and swings
 		# only once connected (the tick below). Round 539: a `--server
 		# --attack` run from the default spot printed no QA ATTACK line at
-		# all -- with no SRREVAMP_QA_AT to wait for, this block had found the
+		# all -- with no OPENSRO_QA_AT to wait for, this block had found the
 		# connection not yet up.
-		if OS.get_environment("SRREVAMP_QA_ATTACK") != "" \
-				and (NetClient.is_connected_to_server() or OS.get_environment("SRREVAMP_QA_SERVER") != ""):
+		if OS.get_environment("OPENSRO_QA_ATTACK") != "" \
+				and (NetClient.is_connected_to_server() or OS.get_environment("OPENSRO_QA_SERVER") != ""):
 			_qa_attacking = true
 			print("QA ATTACK: armed at tick %d (connected: %s)" % [_qa_tick, str(NetClient.is_connected_to_server())])
-		# SRREVAMP_QA_CLICK="monster,npc,ground": synthetic left clicks through
+		# OPENSRO_QA_CLICK="monster,npc,ground": synthetic left clicks through
 		# the real dispatcher, one after another (see _qa_advance_click).
-		var qa_click := OS.get_environment("SRREVAMP_QA_CLICK")
+		var qa_click := OS.get_environment("OPENSRO_QA_CLICK")
 		if qa_click != "":
 			for kind in qa_click.split(",", false):
 				_qa_click_queue.append(String(kind).strip_edges())
 			# The monster list arrives after the connect; give it two seconds.
 			_qa_click_wait = 120
-			# SRREVAMP_QA_CLICK_WAIT=<ticks> (round 646) waits longer, so a
+			# OPENSRO_QA_CLICK_WAIT=<ticks> (round 646) waits longer, so a
 			# live run can cast buffs by real input before a gate's click.
-			var qa_click_wait := OS.get_environment("SRREVAMP_QA_CLICK_WAIT")
+			var qa_click_wait := OS.get_environment("OPENSRO_QA_CLICK_WAIT")
 			if qa_click_wait.is_valid_int() and int(qa_click_wait) > 0:
 				_qa_click_wait = int(qa_click_wait)
-		# SRREVAMP_QA_LEVELUP=<level> fires the real level-up burst a moment
+		# OPENSRO_QA_LEVELUP=<level> fires the real level-up burst a moment
 		# after the player is placed, so a movie render catches it mid-play
 		# (it lasts LevelUpEffect.LIFE). Movie mode advances 1/60 a frame, so
 		# 15 frames is a quarter second -- enough for the camera to settle.
-		var qa_levelup := OS.get_environment("SRREVAMP_QA_LEVELUP")
+		var qa_levelup := OS.get_environment("OPENSRO_QA_LEVELUP")
 		if qa_levelup != "":
 			var lvl: int = int(qa_levelup) if qa_levelup.is_valid_int() else 10
 			get_tree().create_timer(15.0 / 60.0).timeout.connect(_on_level_up.bind(lvl, 0))
-		var qa_worldmap := OS.get_environment("SRREVAMP_QA_WORLDMAP")
+		var qa_worldmap := OS.get_environment("OPENSRO_QA_WORLDMAP")
 		if qa_worldmap != "" and _hud_worldmap != null:
 			# The window only builds its tiles for what can be seen, so it
 			# has to be opened *after* the player is in place -- otherwise
@@ -11711,9 +11711,9 @@ func _qa_step() -> void:
 				get_tree().create_timer(20.0 / 60.0).timeout.connect(_hud_worldmap.show_world)
 		# Round 693's renderer A/B: the sun's shadows off, so a Forward+ /
 		# Compatibility difference can be put on them or not. QA only.
-		if OS.get_environment("SRREVAMP_QA_NOSHADOW") != "" and directional_light != null:
+		if OS.get_environment("OPENSRO_QA_NOSHADOW") != "" and directional_light != null:
 			directional_light.shadow_enabled = false
-		if OS.get_environment("SRREVAMP_QA_NOFOG") != "":
+		if OS.get_environment("OPENSRO_QA_NOFOG") != "":
 			# The fog pass (round 702): _apply_fog reads the same variable.
 			_apply_fog()
 			camera_3d.far = 40000.0
@@ -11730,36 +11730,36 @@ func _qa_step() -> void:
 				_sky_dome.visible = false
 			if _sun_glow != null:
 				_sun_glow.visible = false
-		var hide := OS.get_environment("SRREVAMP_QA_HIDE")
+		var hide := OS.get_environment("OPENSRO_QA_HIDE")
 		if hide != "":
 			_qa_hide_meshes(hide.split(","))
-		var floating := OS.get_environment("SRREVAMP_QA_FLOAT")
+		var floating := OS.get_environment("OPENSRO_QA_FLOAT")
 		if floating != "":
 			_qa_float_report(float(floating))
-		var through := OS.get_environment("SRREVAMP_QA_THROUGH")
+		var through := OS.get_environment("OPENSRO_QA_THROUGH")
 		if through != "":
 			# Several bands in one run: the useful height is rarely known
 			# in advance, and each run costs minutes.
 			for spec in through.split(";"):
 				if spec.strip_edges() != "":
 					_qa_through_report(spec.strip_edges())
-		var shots := OS.get_environment("SRREVAMP_QA_SHOTS")
+		var shots := OS.get_environment("OPENSRO_QA_SHOTS")
 		if shots != "":
 			for spec in shots.split(";"):
 				var parsed := _parse_shot(spec.strip_edges())
 				if not parsed.is_empty():
 					_qa_shots.append(parsed)
-		var scan := OS.get_environment("SRREVAMP_QA_SCAN")
+		var scan := OS.get_environment("OPENSRO_QA_SCAN")
 		if scan != "":
 			_qa_scan_report(maxi(int(scan), 2))
-		var columns := OS.get_environment("SRREVAMP_QA_COLUMNS")
+		var columns := OS.get_environment("OPENSRO_QA_COLUMNS")
 		if columns != "":
 			_qa_columns_report(columns)
-		var ground_rays := OS.get_environment("SRREVAMP_QA_GROUND_RAYS")
+		var ground_rays := OS.get_environment("OPENSRO_QA_GROUND_RAYS")
 		if ground_rays != "":
 			# Armed here, fired below once the grid is in.
 			_qa_ground_rays = maxi(int(ground_rays), 1)
-		var qa_zone := OS.get_environment("SRREVAMP_QA_ZONE")
+		var qa_zone := OS.get_environment("OPENSRO_QA_ZONE")
 		if qa_zone != "":
 			var target := _split_zone_target(qa_zone)
 			var zone: String = target["zone"]
@@ -11770,48 +11770,48 @@ func _qa_step() -> void:
 				_place_at_region_local(coords["x"], coords["y"], spot.x, spot.y)
 			_refresh_zone_label_position()
 
-	# SRREVAMP_QA_PANELS opens named HUD windows so a render can show them.
+	# OPENSRO_QA_PANELS opens named HUD windows so a render can show them.
 	# Comma-separated panel ids from HudPanels.PANELS, e.g.
 	# "inventory,character,skill". Opened once the world has settled, and
 	# tiled rather than centred so several are visible in one shot.
-	if OS.get_environment("SRREVAMP_QA_PANELS") != "" and _qa_tick == 30:
-		_qa_open_panels(OS.get_environment("SRREVAMP_QA_PANELS"))
+	if OS.get_environment("OPENSRO_QA_PANELS") != "" and _qa_tick == 30:
+		_qa_open_panels(OS.get_environment("OPENSRO_QA_PANELS"))
 
-	# SRREVAMP_QA_HELP=1 opens the in-client Help window at tick 30;
-	# SRREVAMP_QA_COMMANDS="/a;/b" feeds those lines through the chat console
+	# OPENSRO_QA_HELP=1 opens the in-client Help window at tick 30;
+	# OPENSRO_QA_COMMANDS="/a;/b" feeds those lines through the chat console
 	# at tick 60 (docs/DEBUG_TOOLS.md). Frame ticks, like every hook here: a
 	# SceneTreeTimer did not fire inside a movie-writer run.
-	if OS.get_environment("SRREVAMP_QA_HELP") != "" and _qa_tick == 30 and _help_window != null:
+	if OS.get_environment("OPENSRO_QA_HELP") != "" and _qa_tick == 30 and _help_window != null:
 		_help_window.open()
 		print("QA HELP: opened the Help window")
-	if OS.get_environment("SRREVAMP_QA_COMMANDS") != "" and _qa_tick == 60:
-		_run_qa_commands(OS.get_environment("SRREVAMP_QA_COMMANDS"))
-	if OS.get_environment("SRREVAMP_QA_NOTICES") != "":
-		_qa_notices_step(OS.get_environment("SRREVAMP_QA_NOTICES"))
-	# SRREVAMP_QA_PARTY=create | join:<party id> (round 634): forms a party at
+	if OS.get_environment("OPENSRO_QA_COMMANDS") != "" and _qa_tick == 60:
+		_run_qa_commands(OS.get_environment("OPENSRO_QA_COMMANDS"))
+	if OS.get_environment("OPENSRO_QA_NOTICES") != "":
+		_qa_notices_step(OS.get_environment("OPENSRO_QA_NOTICES"))
+	# OPENSRO_QA_PARTY=create | join:<party id> (round 634): forms a party at
 	# tick 70 through the same requests the old party panel sent, so a live
 	# run can type party chat; the retail party window's invite is not built.
-	var qa_party := OS.get_environment("SRREVAMP_QA_PARTY")
+	var qa_party := OS.get_environment("OPENSRO_QA_PARTY")
 	if qa_party != "" and _qa_tick == 70 and NetClient.current_character_name != "":
 		print("QA PARTY: %s" % qa_party)
 		if qa_party == "create":
 			NetClient.create_party(NetClient.current_character_name)
 		elif qa_party.begins_with("join:"):
 			NetClient.join_party(NetClient.current_character_name, qa_party.substr(5).to_int())
-	var mob_heights := OS.get_environment("SRREVAMP_QA_MOB_HEIGHTS")
+	var mob_heights := OS.get_environment("OPENSRO_QA_MOB_HEIGHTS")
 	if mob_heights != "" and mob_heights.split(",").has(str(_qa_tick)):
 		_qa_mob_heights_report()
 		_qa_terrain_slope_report()
 
-	# SRREVAMP_QA_CASTANIM="<anim_base>" plays a skill's cast animation on the
+	# OPENSRO_QA_CASTANIM="<anim_base>" plays a skill's cast animation on the
 	# player at tick 90 (and replays it), so a render can verify the grounded
 	# Basic_Code -> .ban mapping. QA only, no target/server needed.
-	if OS.get_environment("SRREVAMP_QA_CASTANIM") != "" and _qa_tick % 90 == 0 and _qa_tick > 0:
-		_play_skill_cast_anim(OS.get_environment("SRREVAMP_QA_CASTANIM"))
+	if OS.get_environment("OPENSRO_QA_CASTANIM") != "" and _qa_tick % 90 == 0 and _qa_tick > 0:
+		_play_skill_cast_anim(OS.get_environment("OPENSRO_QA_CASTANIM"))
 	# ... and measures the pose it drives (round 691's merge): at eight ticks
 	# of each 90 the angle of each upper arm from its bind (rest) rotation --
 	# a T-pose reads ~0 on both -- and the clip playing. QA only.
-	if OS.get_environment("SRREVAMP_QA_CASTANIM") != "" and _qa_tick > 90 and _qa_tick % 90 in [5, 15, 25, 35, 45, 55, 65, 75] \
+	if OS.get_environment("OPENSRO_QA_CASTANIM") != "" and _qa_tick > 90 and _qa_tick % 90 in [5, 15, 25, 35, 45, 55, 65, 75] \
 			and _player_skeleton != null:
 		var angles := PackedStringArray()
 		for bone_name in ["Bip01 L UpperArm", "Bip01 R UpperArm"]:
@@ -11825,55 +11825,55 @@ func _qa_step() -> void:
 		print("QA CASTPOSE tick %d body %s: %s; one-shot %s" % [_qa_tick, _player_body, ", ".join(angles),
 			_player_one_shot.animation_name if _player_one_shot != null else "none"])
 
-	# SRREVAMP_QA_TARGET=1 opens the target window on the first known monster so a
+	# OPENSRO_QA_TARGET=1 opens the target window on the first known monster so a
 	# render can verify its real level (from characterdata) shows. QA only.
-	if OS.get_environment("SRREVAMP_QA_TARGET") != "" and _qa_tick == 90 and not _monsters.is_empty():
+	if OS.get_environment("OPENSRO_QA_TARGET") != "" and _qa_tick == 90 and not _monsters.is_empty():
 		var m: CombatNet.MonsterSnapshot = _monsters[0]
 		_monster_snapshots[m.monster_id] = m
 		_show_target(m.monster_id)
 
-	# SRREVAMP_QA_STANCE=1 keeps the player "recently in combat" so a render shows
+	# OPENSRO_QA_STANCE=1 keeps the player "recently in combat" so a render shows
 	# the battle stance (STAND_BATTLE) instead of the town idle. QA only.
-	if OS.get_environment("SRREVAMP_QA_STANCE") != "":
+	if OS.get_environment("OPENSRO_QA_STANCE") != "":
 		_last_combat_time = _player_anim_time
 
-	# SRREVAMP_QA_HITFX=1 plays the critical-hit slash burst on the player every
+	# OPENSRO_QA_HITFX=1 plays the critical-hit slash burst on the player every
 	# 90 ticks, so a render can verify the recovered hit_3_critical layers.
-	if OS.get_environment("SRREVAMP_QA_HITFX") != "" and _qa_tick >= 15 and _qa_tick % 15 == 0 and player != null:
+	if OS.get_environment("OPENSRO_QA_HITFX") != "" and _qa_tick >= 15 and _qa_tick % 15 == 0 and player != null:
 		# Exercise the real per-skill path: look the effect up in skilleffect.txt
 		# by Basic_Code and play it via the generic .efp loader.
-		_play_skill_hit_effect_on(player, _player_world_height(), OS.get_environment("SRREVAMP_QA_HITFX"))
+		_play_skill_hit_effect_on(player, _player_world_height(), OS.get_environment("OPENSRO_QA_HITFX"))
 
-	# SRREVAMP_QA_EFFECT="<efp>[;<efp>...]" (round 620) plays those Particles.pk2
-	# effects on the player at tick 20, looping, spaced SRREVAMP_QA_EFFECT_SPACING
+	# OPENSRO_QA_EFFECT="<efp>[;<efp>...]" (round 620) plays those Particles.pk2
+	# effects on the player at tick 20, looping, spaced OPENSRO_QA_EFFECT_SPACING
 	# (default 40) native units apart along the body's X -- a render shows
-	# EfpEffect drawing them. SRREVAMP_QA_CAST="<skill id>[,<id>...]" plays each
+	# EfpEffect drawing them. OPENSRO_QA_CAST="<skill id>[,<id>...]" plays each
 	# skill's effect phases on the player in turn, every
-	# SRREVAMP_QA_CAST_PERIOD ticks (default 160) through SkillEffects' cast
+	# OPENSRO_QA_CAST_PERIOD ticks (default 160) through SkillEffects' cast
 	# sequencer: cast at +0 (READY now, WAIT and SHOT by the skill's timing
 	# columns), shot + hit (SHOT/1) at +30, act (ACT_S) at +40 and the ACT_L
 	# aura (token 1) from +41 to the next skill. Each step prints a `QA CAST` line with its tick.
-	var qa_fx := OS.get_environment("SRREVAMP_QA_EFFECT")
+	var qa_fx := OS.get_environment("OPENSRO_QA_EFFECT")
 	if qa_fx != "" and _qa_tick == 20 and player != null:
 		_qa_play_effects(qa_fx)
-	var qa_cast := OS.get_environment("SRREVAMP_QA_CAST")
+	var qa_cast := OS.get_environment("OPENSRO_QA_CAST")
 	if qa_cast != "" and _qa_tick >= 20 and player != null:
 		_qa_cast_step(qa_cast)
 
-	# SRREVAMP_QA_HOTBAR=1 assigns two real skills to the hotbar (the same path a
+	# OPENSRO_QA_HOTBAR=1 assigns two real skills to the hotbar (the same path a
 	# window click takes) so a render can show their icons in the quickslots.
 	# A value above 1 is the tick to do it at (default 60), for a run that
-	# learns the skill first (SRREVAMP_QA_LEARN). The path refuses a skill the
+	# learns the skill first (OPENSRO_QA_LEARN). The path refuses a skill the
 	# server has not said the character knows.
-	var qa_hotbar := OS.get_environment("SRREVAMP_QA_HOTBAR")
+	var qa_hotbar := OS.get_environment("OPENSRO_QA_HOTBAR")
 	var qa_hotbar_tick := int(qa_hotbar) if qa_hotbar.is_valid_int() and int(qa_hotbar) > 1 else 60
 	if qa_hotbar != "" and _qa_tick == qa_hotbar_tick and _ui_builder != null:
 		print("QA HOTBAR: assigning at tick %d (skill 3 known: %s)" % [_qa_tick,
 			str(_hud_panels != null and _hud_panels.is_skill_known(3))])
-		# SRREVAMP_QA_HOTBAR_SKILLS="<id>,<id>..." (round 614) assigns those
+		# OPENSRO_QA_HOTBAR_SKILLS="<id>,<id>..." (round 614) assigns those
 		# skills instead, in order, each with the Basic_Code its skilldata row
 		# names and no icon -- a run can cast a skill with cast sounds.
-		var qa_ids := OS.get_environment("SRREVAMP_QA_HOTBAR_SKILLS")
+		var qa_ids := OS.get_environment("OPENSRO_QA_HOTBAR_SKILLS")
 		if qa_ids != "":
 			for part in qa_ids.split(",", false):
 				if String(part).strip_edges().is_valid_int():
@@ -11888,13 +11888,13 @@ func _qa_step() -> void:
 			_on_skill_assign_requested(177, "SKILL_CH_SWORD_CHAIN_A_01",
 				_ui_builder.load_texture("icon\\skill\\china\\sword_chain_a.ddj"))
 
-	# SRREVAMP_QA_HOTKEY="<tick>:<key>[,<tick>:<key>...]" presses a key at
+	# OPENSRO_QA_HOTKEY="<tick>:<key>[,<tick>:<key>...]" presses a key at
 	# each tick through the viewport's real input path (push_input), as a
 	# player's key press arrives -- the number keys reach the underbar's quick
 	# slots through KeyInput (the key table, KeyMap). Each press and each quick slot
 	# it fires is printed (_on_quickslot_activated), so a run measures the
 	# key -> quick slot -> cast chain from its log. QA only.
-	var qa_hotkey := OS.get_environment("SRREVAMP_QA_HOTKEY")
+	var qa_hotkey := OS.get_environment("OPENSRO_QA_HOTKEY")
 	if qa_hotkey != "":
 		for part in qa_hotkey.split(",", false):
 			var key_at := String(part).split(":")
@@ -11909,49 +11909,49 @@ func _qa_step() -> void:
 					ev.pressed = pressed
 					get_viewport().push_input(ev)
 
-	# SRREVAMP_QA_INPUT: a player's clicks and keys, through push_input
+	# OPENSRO_QA_INPUT: a player's clicks and keys, through push_input
 	# (_qa_input_step has the syntax).
 	_qa_input_step()
 
-	# SRREVAMP_QA_LEARN="<mastery>x<n>;<skill id>[;...]" raises a mastery n
+	# OPENSRO_QA_LEARN="<mastery>x<n>;<skill id>[;...]" raises a mastery n
 	# times and learns skills, one request after another, each waiting for
-	# its reply, starting at tick 90 (after SRREVAMP_QA_COMMANDS, which can
+	# its reply, starting at tick 90 (after OPENSRO_QA_COMMANDS, which can
 	# give the skill points with a GM account). Each reply is printed. QA only.
-	var qa_learn := OS.get_environment("SRREVAMP_QA_LEARN")
+	var qa_learn := OS.get_environment("OPENSRO_QA_LEARN")
 	if qa_learn != "" and _qa_tick == 90 and NetClient.is_connected_to_server():
 		_qa_learn(qa_learn)
 
-	# SRREVAMP_QA_FAKEITEMS fills the bag with sample items (real IDs) a little
+	# OPENSRO_QA_FAKEITEMS fills the bag with sample items (real IDs) a little
 	# after it opens -- past the server's empty-inventory reply -- so a render
 	# can show a populated inventory. QA only.
-	if OS.get_environment("SRREVAMP_QA_FAKEITEMS") != "" and _qa_tick == 50 and _hud_panels != null:
+	if OS.get_environment("OPENSRO_QA_FAKEITEMS") != "" and _qa_tick == 50 and _hud_panels != null:
 		_hud_panels.qa_fill_sample_inventory()
 
-	# SRREVAMP_QA_TALK="<name>" opens the NPC dialogue for a render, standing
+	# OPENSRO_QA_TALK="<name>" opens the NPC dialogue for a render, standing
 	# in for a click on an NPC (which a render cannot make).
-	if OS.get_environment("SRREVAMP_QA_TALK") != "" and _qa_tick == 30 and _hud_panels != null:
+	if OS.get_environment("OPENSRO_QA_TALK") != "" and _qa_tick == 30 and _hud_panels != null:
 		# The env value is an NPC codename (e.g. NPC_CH_SMITH) so a render shows
 		# its real greeting + services; falls back to using it as a display name.
 		_load_npc_tables()
-		var code := OS.get_environment("SRREVAMP_QA_TALK")
+		var code := OS.get_environment("OPENSRO_QA_TALK")
 		_talk_npc_name = code
 		_talk_npc_code = code
 		_hud_panels.open_npc_talk(code, _npc_greeting_text(code), _npc_services(code))
 
-	# SRREVAMP_QA_SHOP="<NPC_CODE>" opens that NPC's store window for a render,
+	# OPENSRO_QA_SHOP="<NPC_CODE>" opens that NPC's store window for a render,
 	# standing in for talk -> Buy. Shows the real goods grid + tabs.
-	if OS.get_environment("SRREVAMP_QA_SHOP") != "" and _qa_tick == 40 and _hud_panels != null:
+	if OS.get_environment("OPENSRO_QA_SHOP") != "" and _qa_tick == 40 and _hud_panels != null:
 		_load_npc_tables()
-		var scode := OS.get_environment("SRREVAMP_QA_SHOP")
+		var scode := OS.get_environment("OPENSRO_QA_SHOP")
 		_talk_npc_name = scode
 		_talk_npc_code = scode
 		if _shop_reader != null:
 			_hud_panels.open_shop(scode, _shop_reader.tabs_for(scode), scode)
 
-	# SRREVAMP_QA_SHOP_BUY exercises the buy flow for a render: show the confirm
+	# OPENSRO_QA_SHOP_BUY exercises the buy flow for a render: show the confirm
 	# popup (proving the price + purse loaded), then actually buy (proving the
 	# transaction; the purse drops and the server logs it).
-	if OS.get_environment("SRREVAMP_QA_SHOP_BUY") != "" and _hud_panels != null:
+	if OS.get_environment("OPENSRO_QA_SHOP_BUY") != "" and _hud_panels != null:
 		# Buy a stack, then sell part of it back -- the whole shop loop. The bag
 		# opens with the shop, so the stack and the sell dialog both show.
 		if _qa_tick == 55:
@@ -11961,9 +11961,9 @@ func _qa_step() -> void:
 		elif _qa_tick == 90:
 			_hud_panels.qa_sell_first(5)
 
-	# SRREVAMP_QA_STORAGE (with SRREVAMP_QA_SHOP set to a shop) exercises the
+	# OPENSRO_QA_STORAGE (with OPENSRO_QA_SHOP set to a shop) exercises the
 	# warehouse: buy a stack into the bag, open storage, then deposit part of it.
-	if OS.get_environment("SRREVAMP_QA_STORAGE") != "" and _hud_panels != null:
+	if OS.get_environment("OPENSRO_QA_STORAGE") != "" and _hud_panels != null:
 		if _qa_tick == 52:
 			_hud_panels.qa_buy_first_item()
 		elif _qa_tick == 66:
@@ -11974,12 +11974,12 @@ func _qa_step() -> void:
 		elif _qa_tick == 92:
 			_hud_panels.qa_gold_deposit(250)
 
-	# SRREVAMP_QA_STORAGE_ITEM=1 deposits the first ITEM in the bag into the
-	# warehouse (SRREVAMP_QA_MOVE="0,9" first puts the boots there): open
+	# OPENSRO_QA_STORAGE_ITEM=1 deposits the first ITEM in the bag into the
+	# warehouse (OPENSRO_QA_MOVE="0,9" first puts the boots there): open
 	# storage, the quantity dialog, then the deposit itself -- the flow a
 	# playtest reported crashing the client on 2026-09-19, so a render's log
 	# carries the error instead of a description of it.
-	if OS.get_environment("SRREVAMP_QA_STORAGE_ITEM") != "" and _hud_panels != null:
+	if OS.get_environment("OPENSRO_QA_STORAGE_ITEM") != "" and _hud_panels != null:
 		if _qa_tick == 120 and NetClient.is_connected_to_server():
 			# Something real in the bag first: the boots, the same real OP_UNEQUIP
 			# the move sequence uses (they land in the lowest free slot).
@@ -11995,19 +11995,19 @@ func _qa_step() -> void:
 			_hud_panels.qa_do_deposit_first(1)
 			print("QA STORAGE_ITEM: deposit of 1 sent")
 
-	# SRREVAMP_QA_NAVGAP compares each nearby object's *solid* footprint
+	# OPENSRO_QA_NAVGAP compares each nearby object's *solid* footprint
 	# against its *walkable* one. A player can stand inside anything where
 	# the first is bigger than the second, so this says which objects those
 	# are rather than leaving it to be discovered by falling into one.
-	if OS.get_environment("SRREVAMP_QA_NAVGAP") != "" and _qa_tick == 60:
+	if OS.get_environment("OPENSRO_QA_NAVGAP") != "" and _qa_tick == 60:
 		_qa_navgap_report()
 
-	# SRREVAMP_QA_NPCBODY fires a short horizontal ray at each nearby NPC
+	# OPENSRO_QA_NPCBODY fires a short horizontal ray at each nearby NPC
 	# and reports whether anything stops it. "The player walks through the
 	# merchants" is not something a still frame can answer, and walking into
 	# one on camera to find out is exactly the kind of check this project
 	# has been wrong with before.
-	if OS.get_environment("SRREVAMP_QA_NPCBODY") != "" and _qa_tick == 60:
+	if OS.get_environment("OPENSRO_QA_NPCBODY") != "" and _qa_tick == 60:
 		_qa_npc_body_report()
 
 	# Whether the idle animations are actually moving anything. A still
@@ -12015,10 +12015,10 @@ func _qa_step() -> void:
 	# ticks and prints how far their bones travelled between them: zero
 	# means the pose is being applied but nothing is changing, which is what
 	# a broken animation looks like from the outside.
-	if OS.get_environment("SRREVAMP_QA_ANIM") != "" and (_qa_tick == 60 or _qa_tick == 130):
+	if OS.get_environment("OPENSRO_QA_ANIM") != "" and (_qa_tick == 60 or _qa_tick == 130):
 		_qa_animation_report()
 
-	if OS.get_environment("SRREVAMP_QA_LOOK") != "" and (_qa_tick == 60 or _qa_tick == 120):
+	if OS.get_environment("OPENSRO_QA_LOOK") != "" and (_qa_tick == 60 or _qa_tick == 120):
 		_qa_look_report()
 
 	# Reported from a later tick, not the one-time setup block: the
@@ -12028,44 +12028,44 @@ func _qa_step() -> void:
 	# and off.
 	# Sampled at several ticks, so "is anything moving at all" can be read
 	# off the numbers rather than inferred from a still image.
-	if OS.get_environment("SRREVAMP_QA_RIG") != "" and _qa_tick in [30, 60, 90]:
+	if OS.get_environment("OPENSRO_QA_RIG") != "" and _qa_tick in [30, 60, 90]:
 		_qa_rig_report()
-	# Normally one attack a game-second (60 ticks). SRREVAMP_QA_ATTACK_FAST
+	# Normally one attack a game-second (60 ticks). OPENSRO_QA_ATTACK_FAST
 	# attacks every 10 ticks so a render can land enough hits to kill and level
 	# within a reasonable frame budget -- a QA-only accelerant, never real play.
-	var _qa_attack_interval := 10 if OS.get_environment("SRREVAMP_QA_ATTACK_FAST") != "" else 60
-	# SRREVAMP_QA_ATTACK_UNTIL=<tick> ends the QA attack loop at that tick, so a
+	var _qa_attack_interval := 10 if OS.get_environment("OPENSRO_QA_ATTACK_FAST") != "" else 60
+	# OPENSRO_QA_ATTACK_UNTIL=<tick> ends the QA attack loop at that tick, so a
 	# run can take damage and then rest (round 607's sit measurement). QA only.
-	var qa_attack_until := OS.get_environment("SRREVAMP_QA_ATTACK_UNTIL")
+	var qa_attack_until := OS.get_environment("OPENSRO_QA_ATTACK_UNTIL")
 	if _qa_attacking and qa_attack_until.is_valid_int() and _qa_tick >= int(qa_attack_until):
 		_qa_attacking = false
-		print("QA ATTACK: stopped at tick %d (SRREVAMP_QA_ATTACK_UNTIL)" % _qa_tick)
+		print("QA ATTACK: stopped at tick %d (OPENSRO_QA_ATTACK_UNTIL)" % _qa_tick)
 	if _qa_attacking and _qa_tick % _qa_attack_interval == 0 and NetClient.is_connected_to_server():
 		_qa_attack_nearest()
-	# SRREVAMP_QA_REVIVE_AFTER=n: n physics frames after a killing blow left
+	# OPENSRO_QA_REVIVE_AFTER=n: n physics frames after a killing blow left
 	# the player dead (_enter_dead_state), send OpRevive, as the Revive button
 	# would (round 548). Once per death; never fires in real play.
-	var qa_revive_after := OS.get_environment("SRREVAMP_QA_REVIVE_AFTER")
+	var qa_revive_after := OS.get_environment("OPENSRO_QA_REVIVE_AFTER")
 	if qa_revive_after != "" and _player_dead and not _qa_revive_sent and _qa_dead_tick >= 0 \
 			and _qa_tick - _qa_dead_tick >= int(qa_revive_after) and NetClient.is_connected_to_server():
 		_qa_revive_sent = true
-		# SRREVAMP_QA_REVIVE_OPTION picks the button (round 665): 1, the
+		# OPENSRO_QA_REVIVE_OPTION picks the button (round 665): 1, the
 		# default, the return point; 2 the present point.
-		var qa_option := int(OS.get_environment("SRREVAMP_QA_REVIVE_OPTION")) if OS.get_environment("SRREVAMP_QA_REVIVE_OPTION") != "" else 1
+		var qa_option := int(OS.get_environment("OPENSRO_QA_REVIVE_OPTION")) if OS.get_environment("OPENSRO_QA_REVIVE_OPTION") != "" else 1
 		print("QA REVIVE: sending OpRevive option %d %d frames after the death" % [qa_option, _qa_tick - _qa_dead_tick])
 		_on_revive_requested(qa_option)
-	if not _qa_mob_move_done and OS.get_environment("SRREVAMP_QA_MOB_MOVE") != "":
+	if not _qa_mob_move_done and OS.get_environment("OPENSRO_QA_MOB_MOVE") != "":
 		_qa_mob_move()
 	if not _qa_click_queue.is_empty():
 		_qa_advance_click()
-	if _qa_teleport_stage < 2 and OS.get_environment("SRREVAMP_QA_TELEPORT") != "":
+	if _qa_teleport_stage < 2 and OS.get_environment("OPENSRO_QA_TELEPORT") != "":
 		_qa_advance_teleport()
 
 	# Not before the entry has finished loading: see _initial_load_done.
 	if not _qa_shots.is_empty() and _initial_load_done:
 		_qa_advance_shots()
 
-	# SRREVAMP_QA_RECONNECT=<tick|drain> (round 558): leave and re-enter the
+	# OPENSRO_QA_RECONNECT=<tick|drain> (round 558): leave and re-enter the
 	# world in this process. "drain" fires on the first tick that finds the
 	# entry's loading screen up WITH cells still queued -- _drain_initial_load
 	# is then suspended on `await get_tree().process_frame`, which is where a
@@ -12073,7 +12073,7 @@ func _qa_step() -> void:
 	# is round 562's: the screen is up from before the centre cell now, so
 	# the first tick that finds it has an empty queue and is _ready's own
 	# await, not the drain's.
-	var reconnect := OS.get_environment("SRREVAMP_QA_RECONNECT")
+	var reconnect := OS.get_environment("OPENSRO_QA_RECONNECT")
 	if reconnect != "" and ((reconnect == "drain" and _loading_screen != null \
 			and (not _load_queue.is_empty() or not _cell_jobs.is_empty())) \
 			or (reconnect.is_valid_int() and _qa_tick == int(reconnect))):
@@ -12085,13 +12085,13 @@ func _qa_step() -> void:
 		# `direct_space_state` on a null world) -- the hook's own artefact,
 		# not the tester's path, where the drop arrives from NetClient's
 		# _process, outside any World3D callback.
-		OS.set_environment("SRREVAMP_QA_RECONNECT", "")
+		OS.set_environment("OPENSRO_QA_RECONNECT", "")
 		# The tick it was armed on goes with it: the deferred call runs
 		# after this tick's increment, and round 558's line read
 		# `tick 201 (200, ...)`.
 		call_deferred("_qa_reconnect", reconnect, _qa_tick)
 
-	# SRREVAMP_QA_GROUND_RAYS fires ten ticks after the grid is in -- nothing
+	# OPENSRO_QA_GROUND_RAYS fires ten ticks after the grid is in -- nothing
 	# queued or preparing and the centre region's group in the tree -- so
 	# every shape the entry built is in the physics space and the deferred
 	# ground snap has run. A run signed in to a server builds the grid only
@@ -12105,7 +12105,7 @@ func _qa_step() -> void:
 			_qa_ground_rays = 0
 			_qa_ground_rays_report(samples)
 
-	# SRREVAMP_QA_ARRIVAL_PROBE (round 690): the entry's arrival once its
+	# OPENSRO_QA_ARRIVAL_PROBE (round 690): the entry's arrival once its
 	# load is done, then each zone change's (armed in _on_change_zone_result).
 	if _qa_arrival_probe_enabled():
 		if not _qa_arrival_entry_armed and _initial_load_done:
@@ -12234,11 +12234,11 @@ static func _parse_shot(spec: String) -> Dictionary:
 			out[keys[i]] = float(cam[i])
 	return out
 
-## SRREVAMP_QA_RECONNECT (round 558): leave the world and come back in this
+## OPENSRO_QA_RECONNECT (round 558): leave the world and come back in this
 ## process, the tester's reconnect. Direct: drop the socket without letting
 ## `disconnected` send this instance to Login, and change scene straight
 ## back to World3D -- the new instance's _ready signs in again (QaSignIn)
-## and re-arms every SRREVAMP_QA_* hook from the unchanged environment.
+## and re-arms every OPENSRO_QA_* hook from the unchanged environment.
 ## Until round 560 this route was what isolated this script's `static var`s
 ## (_ground_texture_cache, _water_frames_cache, _environment_table and
 ## their load flags), which outlived the instance; they are instance state
@@ -12247,15 +12247,15 @@ static func _parse_shot(spec: String) -> Dictionary:
 ## screens. Via Login: the same call NetClient._process makes when the
 ## peer drops (disconnect_from_server -> `disconnected` -> _on_disconnected
 ## -> Login), with Login and CharacterSelect signing back in under
-## SRREVAMP_QA_RECONNECT_VIA_LOGIN. The env var was cleared when _qa_step
+## OPENSRO_QA_RECONNECT_VIA_LOGIN. The env var was cleared when _qa_step
 ## armed this, so the next instance does not fire again; the entry count
-## lives in SRREVAMP_QA_ENTRY, never in this script, because what this
+## lives in OPENSRO_QA_ENTRY, never in this script, because what this
 ## script keeps across entries is what is under measurement. Server side
 ## there is no per-character dedupe: the first socket's entity leaves
 ## through WorldDisconnectHandler -> hub.Leave when the gateway sees the
 ## close, so two QaTester entities can coexist briefly.
 func _qa_reconnect(when: String, armed_tick: int) -> void:
-	var via_login := OS.get_environment("SRREVAMP_QA_RECONNECT_VIA_LOGIN") != ""
+	var via_login := OS.get_environment("OPENSRO_QA_RECONNECT_VIA_LOGIN") != ""
 	print("QA RECONNECT: leaving the world at frame %d, tick %d (%s, route %s, entry %d, %d cells still queued, %d preparing)" % [
 		Engine.get_frames_drawn(), armed_tick, when, "login" if via_login else "direct", _qa_entry, _load_queue.size(), _cell_jobs.size()])
 	if via_login:
@@ -12267,7 +12267,7 @@ func _qa_reconnect(when: String, armed_tick: int) -> void:
 	get_tree().change_scene_to_file("res://scenes/World3D.tscn")
 
 ## One `QA ENTRY <n> loaded ...` line per world entry, printed beside `region
-## grid loaded` when SRREVAMP_QA_ENTRY is set (round 558): the renderer's
+## grid loaded` when OPENSRO_QA_ENTRY is set (round 558): the renderer's
 ## texture, buffer and video memory; the object, node, orphan-node and
 ## resource counts and static memory; the root viewport's debug_draw (the
 ## one cross-instance state that paints every surface white by itself --
@@ -12373,7 +12373,7 @@ func _qa_texel_mean(tex: Texture2D) -> String:
 			sum += img.get_pixel(gx * img.get_width() / 8, gy * img.get_height() / 8)
 	return "(%.2f, %.2f, %.2f)" % [sum.r / 64.0, sum.g / 64.0, sum.b / 64.0]
 
-## SRREVAMP_QA_OBJECTS (round 643): every placed map object whose node name
+## OPENSRO_QA_OBJECTS (round 643): every placed map object whose node name
 ## contains one of `fragments`, measured -- `QA OBJECT <shot> <name> key
 ## <owner x>/<owner y>#<uid> held by <region> (listed by N) at world (x, y,
 ## z) region-local (x, z) of <region>: P piece(s), T triangle(s), visible
@@ -12457,10 +12457,10 @@ func _qa_advance_shots() -> void:
 			int(Performance.get_monitor(Performance.OBJECT_COUNT)),
 			int(Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT)),
 			int(Performance.get_monitor(Performance.MEMORY_STATIC))])
-		var wanted := OS.get_environment("SRREVAMP_QA_OBJECTS")
+		var wanted := OS.get_environment("OPENSRO_QA_OBJECTS")
 		if wanted != "":
 			_qa_objects_report(_qa_shots[_qa_shot_index]["name"], wanted.split(",", false))
-		if OS.get_environment("SRREVAMP_QA_PLATES") != "":
+		if OS.get_environment("OPENSRO_QA_PLATES") != "":
 			_qa_plates_report(_qa_shots[_qa_shot_index]["name"])
 		QaShotEnv.report_patches(self, _qa_shots[_qa_shot_index]["name"])
 	_qa_shot_frames -= 1
@@ -12493,7 +12493,7 @@ func _qa_advance_shots() -> void:
 		QaShotEnv.apply(self, shot.get("env", ""))
 	_qa_shot_frames = QA_SHOT_SETTLE + QA_SHOT_HOLD
 
-## SRREVAMP_QA_PLATES=1 (round 673): at each QA SHOT, one `QA PLATE` line per
+## OPENSRO_QA_PLATES=1 (round 673): at each QA SHOT, one `QA PLATE` line per
 ## monster body and one for the player -- the name plate's distance from the
 ## camera and from the player, where it projects on screen, and whether the
 ## node is shown -- so a frame crop can count the plate's own pixels there.
@@ -12531,17 +12531,17 @@ func _qa_plates_report(shot: String) -> void:
 ## ended up, and how far apart they are.
 var _qa_attacking := false
 var _qa_alternate_flip := false
-## SRREVAMP_QA_ATTACK_RETREAT: the first landed blow is still to come.
-var _qa_retreat_pending := OS.get_environment("SRREVAMP_QA_ATTACK_RETREAT") != ""
-## SRREVAMP_QA_ATTACK_GOTO with a server: the monster the next list result
+## OPENSRO_QA_ATTACK_RETREAT: the first landed blow is still to come.
+var _qa_retreat_pending := OS.get_environment("OPENSRO_QA_ATTACK_RETREAT") != ""
+## OPENSRO_QA_ATTACK_GOTO with a server: the monster the next list result
 ## stands the player beside (QaAttackGoto), -1 when no GOTO is waiting.
 var _qa_goto_pending_id := -1
-## SRREVAMP_QA_REVIVE_AFTER (round 548): the tick a killing blow left the
+## OPENSRO_QA_REVIVE_AFTER (round 548): the tick a killing blow left the
 ## player dead (-1: never), and whether that death's OpRevive has gone out.
 var _qa_dead_tick := -1
 var _qa_revive_sent := false
 
-## SRREVAMP_QA_ATTACK_RETREAT=n (round 546): the first blow has landed on
+## OPENSRO_QA_ATTACK_RETREAT=n (round 546): the first blow has landed on
 ## `monster`, so walk n units straight back from it -- the click-to-move walk,
 ## whose OpMove ends this player's keep-up (session/world.go handleMove) -- and
 ## stop the QA attack loop, so a server with -monster-battle has to chase the
@@ -12549,7 +12549,7 @@ var _qa_revive_sent := false
 func _qa_retreat(monster: int) -> void:
 	_qa_retreat_pending = false
 	_qa_attacking = false
-	var units := float(OS.get_environment("SRREVAMP_QA_ATTACK_RETREAT"))
+	var units := float(OS.get_environment("OPENSRO_QA_ATTACK_RETREAT"))
 	var body = _monster_bodies.get(monster)
 	var away := Vector3(1.0, 0.0, 0.0)
 	if body != null and is_instance_valid(body):
@@ -12574,10 +12574,10 @@ func _qa_attack_nearest() -> void:
 		return
 	var nearest_id := -1
 	var nearest := INF
-	# SRREVAMP_QA_ATTACK_NAME narrows the pick to monsters whose name plate
+	# OPENSRO_QA_ATTACK_NAME narrows the pick to monsters whose name plate
 	# contains it (the nearest monster to the spawn is a Yeoha that kills a
 	# fresh character; a drop test wants a Mangyang).
-	var wanted := OS.get_environment("SRREVAMP_QA_ATTACK_NAME")
+	var wanted := OS.get_environment("OPENSRO_QA_ATTACK_NAME")
 	var candidates: Array = []  # [distance, id], nearest first
 	for monster_id in _monster_bodies:
 		if _dying_until.has(monster_id):
@@ -12596,16 +12596,16 @@ func _qa_attack_nearest() -> void:
 	candidates.sort_custom(func(a, b): return float(a[0]) < float(b[0]))
 	nearest = float(candidates[0][0])
 	nearest_id = int(candidates[0][1])
-	# SRREVAMP_QA_ATTACK_ALTERNATE=1 swings at the nearest and the second
+	# OPENSRO_QA_ATTACK_ALTERNATE=1 swings at the nearest and the second
 	# nearest in turn, so the target changes between a swing and its landing
 	# -- the situation that made the wrong monster animate (round on the
 	# result's monster id). With one candidate it degrades to the nearest.
-	if OS.get_environment("SRREVAMP_QA_ATTACK_ALTERNATE") != "" and candidates.size() > 1:
+	if OS.get_environment("OPENSRO_QA_ATTACK_ALTERNATE") != "" and candidates.size() > 1:
 		_qa_alternate_flip = not _qa_alternate_flip
 		if _qa_alternate_flip:
 			nearest = float(candidates[1][0])
 			nearest_id = int(candidates[1][1])
-	# SRREVAMP_QA_ATTACK_GOTO=1 stands the player a few units from the target
+	# OPENSRO_QA_ATTACK_GOTO=1 stands the player a few units from the target
 	# first (a QA teleport, no collision), so the frames -- and any drop --
 	# are in front of the camera rather than 2,000 units away.
 	#
@@ -12621,13 +12621,13 @@ func _qa_attack_nearest() -> void:
 	# swings (_qa_goto_from_list, round 539). Every swing, not only when the
 	# drawn body is more than 12 away: that distance is the stale one, both
 	# ways.
-	if OS.get_environment("SRREVAMP_QA_ATTACK_GOTO") != "" and NetClient.is_connected_to_server():
+	if OS.get_environment("OPENSRO_QA_ATTACK_GOTO") != "" and NetClient.is_connected_to_server():
 		_qa_goto_pending_id = nearest_id
 		print("QA ATTACK: asking for the monster list to stand beside monster %d where the server has it (drawn %.0f away)" % [
 			nearest_id, nearest])
 		NetClient.list_monsters()
 		return
-	if OS.get_environment("SRREVAMP_QA_ATTACK_GOTO") != "" and nearest > 12.0:
+	if OS.get_environment("OPENSRO_QA_ATTACK_GOTO") != "" and nearest > 12.0:
 		var target: Node3D = _monster_bodies[nearest_id]
 		var spot := target.global_position + Vector3(8.0, 0.0, 0.0)
 		spot.y = _terrain_height_at(spot)
@@ -12657,7 +12657,7 @@ func _qa_goto_plan(fresh: Array) -> Dictionary:
 		return {}
 	var preferred := _qa_goto_pending_id
 	_qa_goto_pending_id = -1
-	var m := QaAttackGoto.pick(fresh, preferred, OS.get_environment("SRREVAMP_QA_ATTACK_NAME"),
+	var m := QaAttackGoto.pick(fresh, preferred, OS.get_environment("OPENSRO_QA_ATTACK_NAME"),
 		player.global_position, _dying_until)
 	if m == null:
 		print("QA ATTACK: the fresh list has no monster to stand beside (wanted %d)" % preferred)
@@ -12703,7 +12703,7 @@ func _qa_goto_from_list(plan: Dictionary) -> void:
 	_flush_position()
 	_send_attack(monster_id, 0, "")
 
-## SRREVAMP_QA_MOB_HEIGHTS (round 572): every monster body's drawn height
+## OPENSRO_QA_MOB_HEIGHTS (round 572): every monster body's drawn height
 ## against the ground under it now, three ways. The terrain ray is the one
 ## the game places a body with (TerrainCollision.vertical_ray on the
 ## terrain-only layer, the stand-in floors excluded) fired by the report at
@@ -12780,7 +12780,7 @@ func _qa_drawn_mesh_height(p: Vector3, held: Dictionary) -> Array:
 ## _qa_terrain_slope_report, so each region's 18,432 triangles are read once.
 var _qa_slopes := {}
 
-## SRREVAMP_QA_MOB_HEIGHTS' second report (round 572): for every loaded
+## OPENSRO_QA_MOB_HEIGHTS' second report (round 572): for every loaded
 ## region with a parsed heightmap, the steepest of the drawn mesh's
 ## triangles, as |dh/dx| + |dh/dz| over the triangle -- the most a height
 ## read RAY_GRID_EPSILON off on each axis (TerrainCollision.vertical_ray) can
@@ -12829,13 +12829,13 @@ func _qa_terrain_slope_report() -> void:
 	print("QA TERRAIN SLOPE: %d region(s) read; steepest triangle %.3f (%s): the grid-line nudge (%.2f) moves a height by at most %.4f" % [
 		_qa_slopes.size(), worst, worst_name, TerrainCollision.RAY_GRID_EPSILON, worst * TerrainCollision.RAY_GRID_EPSILON])
 
-## SRREVAMP_QA_MOB_MOVE="dx,dz,speed,mode": once monster bodies exist, the
+## OPENSRO_QA_MOB_MOVE="dx,dz,speed,mode": once monster bodies exist, the
 ## nearest living one is sent on a leg from where it is drawn to (x+dx, z+dz)
 ## at `speed` units a second, mode 0 walk / 1 run -- a 29-byte OpMonsterMoved
 ## payload built here and decoded by CombatNet.decode_monster_moved, the same
 ## path a server's push takes. With --server the list is requested once at half
 ## the leg, so the refresh's reconcile runs mid-walk. Pair with
-## SRREVAMP_QA_MOB_LOG=1 for the move, progress and arrival lines.
+## OPENSRO_QA_MOB_LOG=1 for the move, progress and arrival lines.
 var _qa_mob_move_done := false
 
 func _qa_mob_move() -> void:
@@ -12852,7 +12852,7 @@ func _qa_mob_move() -> void:
 	if nearest_id == -1:
 		return
 	_qa_mob_move_done = true
-	var parts := OS.get_environment("SRREVAMP_QA_MOB_MOVE").split(",")
+	var parts := OS.get_environment("OPENSRO_QA_MOB_MOVE").split(",")
 	var dx := float(parts[0]) if parts.size() > 0 else 0.0
 	var dz := float(parts[1]) if parts.size() > 1 else 0.0
 	var speed := float(parts[2]) if parts.size() > 2 else 0.0
@@ -12875,7 +12875,7 @@ func _qa_mob_move() -> void:
 			print("QA MOB MOVE: asking for the monster list at half the leg")
 			NetClient.list_monsters())
 
-## SRREVAMP_QA_MOBS=<N> (round 655): a list of N monsters, the density the
+## OPENSRO_QA_MOBS=<N> (round 655): a list of N monsters, the density the
 ## server will send (the densest 5 x 5-region window of the field spawns
 ## holds about 500), for the perf gate's `mobs` site. Delivered once, as soon
 ## as the grid has its origin -- during the loading drain, where a real list
@@ -12886,21 +12886,21 @@ func _qa_mob_move() -> void:
 ## the (2 * radius + 1)^2 regions of the load window, at the player's height.
 const QA_MOB_SPECIES := 24
 var _qa_mobs_done := false
-## SRREVAMP_QA_LINEUP (round 689, QaLineup): the creatable Figures spawned
+## OPENSRO_QA_LINEUP (round 689, QaLineup): the creatable Figures spawned
 ## through the other-player path in front of the player and measured --
 ## posed or T-posed, feet against the ground -- per action phase. QA only.
 var _qa_lineup: QaLineup = QaLineup.from_env(self)
 
-## SRREVAMP_QA_BODY="<ref_obj_id>[:<scale>]" (round 689): the player's model
+## OPENSRO_QA_BODY="<ref_obj_id>[:<scale>]" (round 689): the player's model
 ## and scale byte for a run with no server (a server names them in its
 ## enter-world result). [] when unset or malformed.
 func _qa_body_spec() -> Array:
-	var spec := OS.get_environment("SRREVAMP_QA_BODY")
+	var spec := OS.get_environment("OPENSRO_QA_BODY")
 	if spec == "":
 		return []
 	var kv := spec.split(":")
 	if not kv[0].is_valid_int():
-		printerr("World3D: SRREVAMP_QA_BODY: bad model '%s' (want <ref_obj_id>[:<scale>])" % spec)
+		printerr("World3D: OPENSRO_QA_BODY: bad model '%s' (want <ref_obj_id>[:<scale>])" % spec)
 		return []
 	var scale := CharacterAppearance.DEFAULT_SCALE
 	if kv.size() > 1:
@@ -12911,7 +12911,7 @@ func _qa_body_spec() -> Array:
 func _qa_mobs_step() -> void:
 	if _qa_mobs_done or not _grid_has_origin:
 		return
-	var spec := OS.get_environment("SRREVAMP_QA_MOBS")
+	var spec := OS.get_environment("OPENSRO_QA_MOBS")
 	if spec == "" or not spec.is_valid_int():
 		return
 	_qa_mobs_done = true
@@ -12935,10 +12935,10 @@ func _qa_mobs_step() -> void:
 	var span := 1920.0
 	var centre := _grid_origin_world + Vector3(span / 2.0, 0.0, -span / 2.0)
 	var half := span * (float(radius) + 0.5)
-	# SRREVAMP_QA_MOBS_SPREAD=<half-width> (round 664): the crowd in a square
+	# OPENSRO_QA_MOBS_SPREAD=<half-width> (round 664): the crowd in a square
 	# of that half-width around the player instead, as a dense field packs
 	# its nests (the perf gate's `crowd` site).
-	var spread := OS.get_environment("SRREVAMP_QA_MOBS_SPREAD")
+	var spread := OS.get_environment("OPENSRO_QA_MOBS_SPREAD")
 	if spread.is_valid_float() and float(spread) > 0.0:
 		centre = player.position
 		half = float(spread)
@@ -12958,8 +12958,8 @@ func _qa_mobs_step() -> void:
 		list.size(), species.size(), half * 2.0, half * 2.0, centre.x, centre.z, ", ".join(PackedStringArray(species))])
 	_on_monster_list_result(list, "")
 
-## SRREVAMP_QA_MOBSPLIT=<frames> (round 664): the frame split, one line every
-## <frames> rendered frames (MonsterCrowd.Split). SRREVAMP_QA_MOBSPLIT_OFF, a
+## OPENSRO_QA_MOBSPLIT=<frames> (round 664): the frame split, one line every
+## <frames> rendered frames (MonsterCrowd.Split). OPENSRO_QA_MOBSPLIT_OFF, a
 ## comma list, switches parts of every monster body off for the A/B that
 ## splits the renderer's share: `pose` (no clip is posed), `labels` (the name
 ## hidden), `collide` (no click collider), `mesh` (the model hidden,
@@ -12967,11 +12967,11 @@ func _qa_mobs_step() -> void:
 var _qa_split: MonsterCrowd.Split = null
 var _qa_split_off := PackedStringArray()
 func _qa_split_init() -> void:
-	var every := int(OS.get_environment("SRREVAMP_QA_MOBSPLIT"))
+	var every := int(OS.get_environment("OPENSRO_QA_MOBSPLIT"))
 	if every <= 0:
 		return
 	_qa_split = MonsterCrowd.Split.new(every)
-	var off := OS.get_environment("SRREVAMP_QA_MOBSPLIT_OFF")
+	var off := OS.get_environment("OPENSRO_QA_MOBSPLIT_OFF")
 	if off != "":
 		_qa_split_off = off.split(",", false)
 	RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
@@ -13005,7 +13005,7 @@ func _qa_split_strip(body: Node3D, skeleton: Skeleton3D) -> void:
 		for mi in skeleton.find_children("*", "MeshInstance3D", true, false):
 			(mi as MeshInstance3D).visible = false
 
-## SRREVAMP_QA_MOB_STRIKE=1: stands in for a server with the strike push
+## OPENSRO_QA_MOB_STRIKE=1: stands in for a server with the strike push
 ## (OpMonsterAttacked 0x007D), which a server sends only with its
 ## -monster-strike-push flag on (round 541; off by default). Right behind each
 ## result that reports a counter, the push such a server sends -- the result's
@@ -13035,7 +13035,7 @@ func _qa_mob_strike(monster: int, result: CombatNet.AttackResult) -> void:
 	print("QA MOB STRIKE: monster %d's counter pushed behind its result" % monster)
 	NetClient.call_deferred("_dispatch", Packet.new(CombatNet.OP_MONSTER_ATTACKED, payload))
 
-## SRREVAMP_QA_CLICK="monster,npc,ground": each kind becomes a real left
+## OPENSRO_QA_CLICK="monster,npc,ground": each kind becomes a real left
 ## click through _dispatch_left_click -- after the player is put 40 units in
 ## front of the nearest such target with the camera aimed at it -- and the
 ## log shows what the NPC ray and the monster ray each hit at that screen
@@ -13043,7 +13043,7 @@ func _qa_mob_strike(monster: int, result: CombatNet.AttackResult) -> void:
 ## "clicking a monster opened the talk window": the node, not the impression.
 ## Since round 701 a click on a monster selects it and the next one attacks
 ## (_pick_character), so a QA attack is "monster,monster".
-## SRREVAMP_QA_ARRIVAL_PROBE=1 (round 690): QA_ARRIVAL_PROBE_DELAY ticks after
+## OPENSRO_QA_ARRIVAL_PROBE=1 (round 690): QA_ARRIVAL_PROBE_DELAY ticks after
 ## each arrival -- the entry, a zone change, a gate teleport, a return to the
 ## return point -- once the grid has stopped loading, prints where the player
 ## stands against the ground under it (`QA ARRIVAL`: the feet, the terrain-only
@@ -13065,7 +13065,7 @@ var _qa_arrival_entry_armed := false
 var _qa_arrival_count := 0
 
 func _qa_arrival_probe_enabled() -> bool:
-	return OS.get_environment("SRREVAMP_QA_ARRIVAL_PROBE") != ""
+	return OS.get_environment("OPENSRO_QA_ARRIVAL_PROBE") != ""
 
 func _qa_arm_arrival_probe(label: String) -> void:
 	if not _qa_arrival_probe_enabled():
@@ -13150,10 +13150,10 @@ const QA_GATE_DRAWN_RADIUS := 20.0
 
 ## "gate" (round 577) clicks the nearest bound teleport gate (_qa_gate_target).
 ## "npc:<CODE>" (round 642) the nearest NPC with that codename. With
-## SRREVAMP_QA_AIM_ONLY=1 nothing is dispatched: the player is stood and the
+## OPENSRO_QA_AIM_ONLY=1 nothing is dispatched: the player is stood and the
 ## camera aimed as for a click, and `QA AIM <kind>: click at x,y` gives the
 ## point for a real X click.
-## SRREVAMP_QA_CLICK_STANDOFF=<units> or "<kind>=<units>,..." (round 701)
+## OPENSRO_QA_CLICK_STANDOFF=<units> or "<kind>=<units>,..." (round 701)
 ## stands the player that far short of the target instead of 40 (a click from
 ## out of talk reach), for every kind or per kind ("npc=320,gate=860"); a
 ## ":<side>" suffix (-z, the default, +z, -x, +x) picks the side stood on.
@@ -13174,7 +13174,7 @@ func _qa_advance_click() -> void:
 	var kind: String = _qa_click_queue[0]
 	# "wait:<ticks>" (round 650): a pause between two clicks, so a live run
 	# can aim at one gate, teleport by real input, and aim at the next gate
-	# after the arrival (SRREVAMP_QA_CLICK="gate,wait:2400,gate").
+	# after the arrival (OPENSRO_QA_CLICK="gate,wait:2400,gate").
 	if kind.begins_with("wait:"):
 		_qa_click_queue.pop_front()
 		_qa_click_stage = 0
@@ -13204,11 +13204,11 @@ func _qa_advance_click() -> void:
 			# look along +Z at it with a shallow camera so it sits mid-frame.
 			# A gate's pick box is wider than that (round 690: Alexandria's is
 			# 140 across): stand 40 short of its side, so the camera is outside it.
-			# SRREVAMP_QA_CLICK_STANDOFF (round 701): stand that far short
+			# OPENSRO_QA_CLICK_STANDOFF (round 701): stand that far short
 			# instead of 40, for a click from out of talk or attack reach.
 			var standoff := 40.0
 			var side := "-z"
-			for part in OS.get_environment("SRREVAMP_QA_CLICK_STANDOFF").split(",", false):
+			for part in OS.get_environment("OPENSRO_QA_CLICK_STANDOFF").split(",", false):
 				var kv := String(part).split("=")
 				var value := kv[0] if kv.size() == 1 else (kv[1] if kv.size() == 2 and kind.begins_with(kv[0]) else "")
 				var vs := value.split(":")
@@ -13256,9 +13256,9 @@ func _qa_advance_click() -> void:
 		print("QA CLICK %s: '%s' at world %s -> screen %s%s" % [kind, str(_qa_click_target["name"]), str(aim.round()), str(screen.round()),
 			"" if on_screen else " (OFF-SCREEN: not a click a player could make)"])
 		_probe_click_rays(screen)
-		# SRREVAMP_QA_AIM_ONLY (round 642): stand and aim, print the point,
+		# OPENSRO_QA_AIM_ONLY (round 642): stand and aim, print the point,
 		# and leave the click to real X input (the e2e harness's xdotool).
-		if OS.get_environment("SRREVAMP_QA_AIM_ONLY") != "":
+		if OS.get_environment("OPENSRO_QA_AIM_ONLY") != "":
 			print("QA AIM %s: click at %d,%d" % [kind, int(round(screen.x)), int(round(screen.y))])
 			_qa_click_queue.pop_front()
 			_qa_click_stage = 0
@@ -13285,8 +13285,8 @@ func _qa_advance_click() -> void:
 	_qa_click_stage = 0
 	_qa_click_wait = 30
 
-## SRREVAMP_QA_TELEPORT=<dest id> (round 578): once a gate's talk box is up
-## (SRREVAMP_QA_CLICK=gate), choose its 'Select teleport area' line through
+## OPENSRO_QA_TELEPORT=<dest id> (round 578): once a gate's talk box is up
+## (OPENSRO_QA_CLICK=gate), choose its 'Select teleport area' line through
 ## the talk box's own handler, then click that destination's line in the talk
 ## box (HudPanels.qa_press_teleport_line, round 603) and print
 ## `QA TELEPORT: requested <gate> -> <dest>`. Stage 0 waits for the talk box,
@@ -13295,7 +13295,7 @@ var _qa_teleport_stage := 0
 var _qa_teleport_wait := 0
 
 func _qa_advance_teleport() -> void:
-	var want := OS.get_environment("SRREVAMP_QA_TELEPORT")
+	var want := OS.get_environment("OPENSRO_QA_TELEPORT")
 	if not want.is_valid_int() or _hud_panels == null:
 		_qa_teleport_stage = 2
 		print("QA TELEPORT: '%s' is not a teleportdata id" % want)
@@ -13708,7 +13708,7 @@ func _qa_through_report(spec: String) -> void:
 ## walking there ends up under a floor they should be on top of. The
 ## graph being above is normal and not reported -- that is a bridge, a
 ## roof, or an upper storey with the ray having hit the ground beneath it.
-## SRREVAMP_QA_COLUMNS="x,z;x,z": for each region-local column, every
+## OPENSRO_QA_COLUMNS="x,z;x,z": for each region-local column, every
 ## surface the walkable graph knows there, which placed objects it
 ## considers and their footprints, and any object whose footprint holds
 ## the column but which the graph's index does not return there -- so
@@ -13854,7 +13854,7 @@ static func _vec_min(a: Vector3, b: Vector3) -> Vector3:
 static func _vec_max(a: Vector3, b: Vector3) -> Vector3:
 	return Vector3(maxf(a.x, b.x), maxf(a.y, b.y), maxf(a.z, b.z))
 
-## Where in a quad SRREVAMP_QA_GROUND_RAYS aims, as a fraction of a tile on
+## Where in a quad OPENSRO_QA_GROUND_RAYS aims, as a fraction of a tile on
 ## local x and z: off the grid lines and off both of the quad's diagonals,
 ## where a shape that split the quad the other way from the mesh would be off
 ## by 0.45 of the quad's non-planarity (h00 + h11 - h10 - h01). A probe
@@ -13868,9 +13868,9 @@ const QA_GROUND_IN_QUAD := Vector2(0.45, 0.55)
 const QA_GROUND_SWEEP_START := 30.0
 const QA_GROUND_SWEEP := 60.0
 
-## SRREVAMP_QA_GROUND_RAYS=n (round 567): the terrain's collision measured
+## OPENSRO_QA_GROUND_RAYS=n (round 567): the terrain's collision measured
 ## against the ground that is DRAWN, so the heightfield (TerrainCollision)
-## and the trimesh it replaced (SRREVAMP_TERRAIN_TRIMESH=1) can be compared
+## and the trimesh it replaced (OPENSRO_TERRAIN_TRIMESH=1) can be compared
 ## by number rather than by picture. For every loaded region, on an n x n
 ## lattice of region-local columns each inside a quad (QA_GROUND_IN_QUAD),
 ## four probes against the terrain alone (TERRAIN_ONLY_COLLISION_MASK):
@@ -14320,9 +14320,9 @@ func _physics_step(delta: float) -> void:
 	_step_heights(delta)
 	if _qa_split != null:
 		_qa_split.heights_usec += Time.get_ticks_usec() - split_sw
-	# SRREVAMP_QA_MOBS (round 655): a dense monster list, once.
+	# OPENSRO_QA_MOBS (round 655): a dense monster list, once.
 	_qa_mobs_step()
-	# SRREVAMP_QA_LINEUP (round 689): the Figures as other players, measured.
+	# OPENSRO_QA_LINEUP (round 689): the Figures as other players, measured.
 	if _qa_lineup != null:
 		_qa_lineup.step(delta)
 	# The monster bodies a list queued, a frame's budget of them (round 655).
@@ -14366,7 +14366,7 @@ func _physics_step(delta: float) -> void:
 	if _has_move_target or not _pending_attack.is_empty() or not _pending_friend_cast.is_empty():
 		_step_move_order(delta)
 	elif _qa_walk != "" and not _player_dead:
-		# SRREVAMP_QA_WALK: walk on a fixed world heading (its own path; no
+		# OPENSRO_QA_WALK: walk on a fixed world heading (its own path; no
 		# key moves the character since round 608), so a render shows the
 		# run and the log the path.
 		var ang := deg_to_rad(float(_qa_walk))
@@ -14603,7 +14603,7 @@ func _physics_step(delta: float) -> void:
 				# Pinnable, so the in-world pose can be held against the same
 				# frame applied offline by check_ban_pose.gd -- which is how
 				# the two were shown to agree exactly.
-				var pinned := OS.get_environment("SRREVAMP_QA_ANIM_FRAME")
+				var pinned := OS.get_environment("OPENSRO_QA_ANIM_FRAME")
 				if pinned != "" and pinned.is_valid_int():
 					Skeleton3DBuilder.apply_ban_pose(_player_skeleton, anim, int(pinned) % ref_track.keyframes.size())
 				else:
@@ -14619,7 +14619,7 @@ func _physics_step(delta: float) -> void:
 ## a placement, a recovery) or a displacement (x, z) from the last sent
 ## position that the physics step's walk since then cannot account for
 ## (_walked_since_send + RELOCATE_MARGIN) -- a QA or GM placement, the
-## unstuck landing. OURS: srrevamp's OpMove is a position stream, and this is
+## unstuck landing. OURS: OpenSRO's OpMove is a position stream, and this is
 ## how its sender tells a placement from a step; the retail client sends a
 ## destination and the server places objects with a message of its own.
 func _position_relocated() -> bool:
@@ -14642,7 +14642,7 @@ var _player_turn_snap := false
 ## READ): FUN_009e0550 / FUN_009e04b0 / FUN_009e08a0 set it; the stop or
 ## position message (FUN_008a4f80 -> FUN_009e00f0), FUN_009e0150,
 ## FUN_009e11e0 and FUN_009e0960 clear it, and arriving does NOT (FUN_009e0e60
-## clears +0x84 only). srrevamp has no stop message: it is set by an accepted
+## clears +0x84 only). OpenSRO has no stop message: it is set by an accepted
 ## ground click and cleared by a new world entry or zone change (a new object)
 ## and by the player's own skill move -- the last two mappings INFERRED.
 var _player_move_order := false
@@ -14669,19 +14669,19 @@ func _step_local_turn(delta: float) -> void:
 	if not bool(r["turning"]):
 		_player_turn_target = NAN
 
-## SRREVAMP_QA_FACING_LOG=1 (round 637): every 50 ms, one line for this
+## OPENSRO_QA_FACING_LOG=1 (round 637): every 50 ms, one line for this
 ## player ("self", from its review follow-up), one per other player's body
 ## and per monster on a leg, with where it is drawn and the way
 ## its MODEL faces, read off the drawn skeleton's global basis (the player
 ## body's front is its skeleton's -Z, MEASURED in round 533; a monster's is
 ## MonsterMotion.MODEL_FRONT, -Z). client/tools/facing_measure.py turns
 ## consecutive lines into movement-versus-facing angles. Measurement only.
-var _qa_facing_log := OS.get_environment("SRREVAMP_QA_FACING_LOG") != ""
-## SRREVAMP_QA_MOVE_LOG=1 (round 649): see _qa_move_report. Measurement only.
-var _qa_move_log := OS.get_environment("SRREVAMP_QA_MOVE_LOG") != ""
+var _qa_facing_log := OS.get_environment("OPENSRO_QA_FACING_LOG") != ""
+## OPENSRO_QA_MOVE_LOG=1 (round 649): see _qa_move_report. Measurement only.
+var _qa_move_log := OS.get_environment("OPENSRO_QA_MOVE_LOG") != ""
 var _qa_move_tick := 0
 
-## One tick of SRREVAMP_QA_MOVE_LOG (round 649): "MOVE self" is this player
+## One tick of OPENSRO_QA_MOVE_LOG (round 649): "MOVE self" is this player
 ## after the walk (world x, z, the click destination and whether one is in
 ## effect, the run speed, the distance left), "MOVE body" each other player's
 ## drawn position and its latest received target. Sends and receipts print
@@ -14751,7 +14751,7 @@ func _qa_facing_report() -> void:
 		print("QA FACING monster %d ms=%d pos=(%.3f,%.3f) front=(%.4f,%.4f)" % [
 			id, now, (mbody as Node3D).global_position.x, (mbody as Node3D).global_position.z, mf.x, mf.z])
 
-## SRREVAMP_QA_FACING_LOG (round 673): at each blow a monster swings, the
+## OPENSRO_QA_FACING_LOG (round 673): at each blow a monster swings, the
 ## angle between its model's front (its skeleton's -Z, as the facing report
 ## reads it) and the line to its target, and whether it was walking a leg.
 func _qa_strike_facing(monster: int, target: Node3D) -> void:
@@ -14920,7 +14920,7 @@ func _on_entity_entered(snapshot: WorldNet.EntitySnapshot) -> void:
 
 ## Another player's position (OpEntityMoved): their body's new walk target,
 ## and (round 637) the heading toward it, which the body turns to at the
-## client's own rate (RemoteFacing; _step_remote_turns). srrevamp streams
+## client's own rate (RemoteFacing; _step_remote_turns). OpenSRO streams
 ## positions, not retail's destinations (0xB021), so each position is the
 ## destination the client's mover would aim at from where the body is drawn
 ## (FUN_009e0550 aims from the object's own position, +0x74). Nothing turns
@@ -15358,7 +15358,7 @@ func _on_global_chat_requested(slot: int, count: int) -> void:
 ## 0x7781b0(type, text) writes its own -- `type` is the window's filter type
 ## (HudSystemMessage.TYPE_*; 0 always shows). Every line this client writes
 ## here is either retail's own message for the same event (the pickup, EXP and
-## party lines, refusals) or srrevamp's own (the help hints, the dev tools,
+## party lines, refusals) or OpenSRO's own (the help hints, the dev tools,
 ## the quickslot and zone lines; docs/protocol/system_message.md lists them).
 ## Before the window exists (and on a bare World3D) the chat's All list
 ## takes it, as before.
@@ -15401,11 +15401,11 @@ func _setup_console_and_help() -> void:
 		if menu_btn != null:
 			menu_btn.tooltip_text = _command_tooltip()
 
-	# The QA hooks (SRREVAMP_QA_COMMANDS, SRREVAMP_QA_HELP) fire from the
+	# The QA hooks (OPENSRO_QA_COMMANDS, OPENSRO_QA_HELP) fire from the
 	# frame-tick block in the QA process function, like every other hook.
 	print("Console: ready (help window %s, log %s)" % [
 		"authored frame" if _help_window != null and _help_window.has_authored_frame() else "plain frame",
-		ProjectSettings.globalize_path("user://logs/srrevamp.log")])
+		ProjectSettings.globalize_path("user://logs/opensro.log")])
 
 ## The documents the Help window lists, shipped under res://docs/ by
 ## client/tools/bundle_docs.sh.
@@ -15420,7 +15420,7 @@ func _help_documents() -> Array:
 ## itself has no dependency on World3D and is tested headless with stubs.
 func _console_host() -> Dictionary:
 	return {
-		# Chat AND the log file (print reaches user://logs/srrevamp.log), so a
+		# Chat AND the log file (print reaches user://logs/opensro.log), so a
 		# report can quote the console's own output.
 		"log": func(t: String) -> void:
 			_log_system(t)
@@ -15429,7 +15429,7 @@ func _console_host() -> Dictionary:
 			if _help_window != null:
 				_help_window.open(),
 		"where": Callable(self, "_where_report"),
-		"log_path": func() -> String: return ProjectSettings.globalize_path("user://logs/srrevamp.log"),
+		"log_path": func() -> String: return ProjectSettings.globalize_path("user://logs/opensro.log"),
 		"open_log_dir": Callable(self, "_open_log_dir"),
 		"copy_payload": func() -> String: return _debug_panel.diagnostics() if _debug_panel != null else "",
 		"set_clipboard": func(s: String) -> void: DisplayServer.clipboard_set(s),
@@ -15446,7 +15446,7 @@ func _console_host() -> Dictionary:
 
 ## This World3D's entry number in the process: 1 on a fresh launch, 2 after
 ## the first reconnect or return from character select (GroundProbe.next_entry
-## -- the SRREVAMP_WORLD_ENTRY environment variable, never a static: what
+## -- the OPENSRO_WORLD_ENTRY environment variable, never a static: what
 ## outlives an instance is what the white ground after a reconnect is
 ## suspected of). Round 579.
 var _world_entry := 0
@@ -15548,10 +15548,10 @@ func _recent_script_errors(count: int) -> PackedStringArray:
 		out = out.slice(out.size() - count)
 	return out
 
-## The last `n` lines of the log file (user://logs/srrevamp.log), or empty if
+## The last `n` lines of the log file (user://logs/opensro.log), or empty if
 ## it cannot be read.
 func _tail_log_lines(n: int) -> PackedStringArray:
-	var path := "user://logs/srrevamp.log"
+	var path := "user://logs/opensro.log"
 	if not FileAccess.file_exists(path):
 		return PackedStringArray()
 	var f := FileAccess.open(path, FileAccess.READ)
@@ -15591,7 +15591,7 @@ func _refresh_command_tooltip() -> void:
 			(input as Control).tooltip_text = _command_tooltip()
 		_hud_chat.tooltip_text = _command_tooltip()
 
-## Feeds SRREVAMP_QA_COMMANDS through the console -- the same parser the chat
+## Feeds OPENSRO_QA_COMMANDS through the console -- the same parser the chat
 ## uses -- printing a "QA COMMAND:" marker per line so the log pairs each with
 ## its reply. Called from the QA tick block once the world has settled.
 ## Raises a centre-screen banner for a line of `kind` on the instance the
@@ -15602,7 +15602,7 @@ func _show_banner(kind: String, text: String) -> void:
 	if on != null:
 		on.show_notice(text)
 
-## SRREVAMP_QA_NOTICES="<tick>:<what>;..." (round 703) raises the banners at
+## OPENSRO_QA_NOTICES="<tick>:<what>;..." (round 703) raises the banners at
 ## those QA ticks through the handlers the network drives:
 ##   notice:<text>                 GDR_NOTICE, as a chat notice does
 ##   warning:<text>                GDR_WARNING_WND
@@ -16693,7 +16693,7 @@ var _player_level := 0
 ## engine's level waiver (fee zeroed unless the level is above 20,
 ## `cmp al,0x14; ja` at 0x5136de); it reads the current level where the
 ## engine reads GetMaxLevel, and the GM and testing waivers are the server's
-## to report in the receipt -- srrevamp's display, disclosed in TeleportBoard.
+## to report in the receipt -- OpenSRO's display, disclosed in TeleportBoard.
 func _open_teleport_list() -> void:
 	# No NPC being talked to (a zone change cleared it, _close_gate_ui): no
 	# gate to list, and nothing to say.
@@ -16786,7 +16786,7 @@ static func talk_out_of_range(from: Vector3, to: Vector3, structure: bool) -> bo
 ## dest_id (NetClient.teleport_use, round 576). The reply is
 ## _on_teleport_result; the arrival _on_change_zone_result.
 ##
-## One request at a time (round 578's review; srrevamp's guard -- the client's
+## One request at a time (round 578's review; OpenSRO's guard -- the client's
 ## click path at 0x70293d sends with no such check): a second click before
 ## the reply would be a second OpTeleportUse, which the server -- with no
 ## range test -- serves from wherever the first put the player, charging the
@@ -17419,7 +17419,7 @@ var _monster_assemble := Callable()
 ## Round 661: a species' template is assembled on a WorkerThreadPool task
 ## (MonsterDraw.Templates.request) and its first bodies wait for it, instead
 ## of the frame that met the species assembling it on the main thread. On
-## whenever the threaded load is (SRREVAMP_SYNC_LOAD unset) and the model
+## whenever the threaded load is (OPENSRO_SYNC_LOAD unset) and the model
 ## comes from the archive; a test with its own assembler sets it itself.
 var _monster_async_templates := true
 ## Whether the off-thread assembly also runs a test's own assembler
@@ -17767,7 +17767,7 @@ func _on_ground_item_spawned(snap: GroundItemsNet.Snapshot) -> void:
 		_ground_items.position_of(snap.id).distance_to(player.global_position)])
 	# QA: step onto the drop and pick it, so a render's log carries the
 	# server's own verdict and the bag after (see the hook list above).
-	if OS.get_environment("SRREVAMP_QA_PICKUP") != "" and NetClient.is_connected_to_server():
+	if OS.get_environment("OPENSRO_QA_PICKUP") != "" and NetClient.is_connected_to_server():
 		_pending_pickup_id = snap.id
 		var pos := _ground_items.position_of(snap.id)
 		player.global_position = pos + Vector3(2.0, 0.0, 0.0)
@@ -17835,11 +17835,11 @@ func _on_pick_up_result(result: GroundItemsNet.PickUpResult) -> void:
 					NetClient.character_stats(NetClient.current_character_name)
 				else:
 					NetClient.list_inventory(NetClient.current_character_name)
-			if OS.get_environment("SRREVAMP_QA_PICKUP") != "":
+			if OS.get_environment("OPENSRO_QA_PICKUP") != "":
 				print("QA PICKUP: result 0 -> %s" % what)
 		GroundItemsNet.ERR_TOO_FAR:
 			print("World3D: ground item %d is out of reach (%.0f units) -- walking to it" % [result.ground_id, GroundItemsNet.PICK_RANGE])
-			if OS.get_environment("SRREVAMP_QA_PICKUP") != "":
+			if OS.get_environment("OPENSRO_QA_PICKUP") != "":
 				print("QA PICKUP: result 4 (too far)")
 		_:
 			_pending_pickup_id = -1
@@ -17849,7 +17849,7 @@ func _on_pick_up_result(result: GroundItemsNet.PickUpResult) -> void:
 			# reported it as "loot does not go into my inventory" (playtest
 			# 2026-09-20, item 9). The server has the reason; show it.
 			_log_system(_pick_up_refusal_line(result.code))
-			if OS.get_environment("SRREVAMP_QA_PICKUP") != "":
+			if OS.get_environment("OPENSRO_QA_PICKUP") != "":
 				print("QA PICKUP: result 0x%x" % result.code)
 
 ## A server refusal code in words.
@@ -17984,7 +17984,7 @@ func _on_monster_list_result(monsters: Array, error: String) -> void:
 		monster_status_label.text = "Error: %s" % error
 		push_warning("World3D: monster list refused: %s" % error)
 		return
-	# One line, not one per monster (round 655); SRREVAMP_QA_MOB_LOG or /wire
+	# One line, not one per monster (round 655); OPENSRO_QA_MOB_LOG or /wire
 	# lists them.
 	print("World3D: server reports %d monster(s)" % monsters.size())
 	if _mob_logging():
@@ -18028,16 +18028,16 @@ func _on_monster_left(ids: Array) -> void:
 
 # --- Server-driven monster movement (round 533) ---------------------------
 #
-# srrevamp's own OpMonsterMoved (0x007C) and OpMonsterMotionList (0x007F),
-# docs/protocol/monster_ai.md "srrevamp's own monster protocol
+# OpenSRO's own OpMonsterMoved (0x007C) and OpMonsterMotionList (0x007F),
+# docs/protocol/monster_ai.md "OpenSRO's own monster protocol
 # (placeholders)". The server sends both only with its -monster-ai flag on
-# (round 537, off by default); SRREVAMP_QA_MOB_MOVE drives the path without it.
+# (round 537, off by default); OPENSRO_QA_MOB_MOVE drives the path without it.
 # The rules are MonsterMotion's; what follows is the glue.
 
-## Whether the move lines are printed: SRREVAMP_QA_MOB_LOG, or the /wire
+## Whether the move lines are printed: OPENSRO_QA_MOB_LOG, or the /wire
 ## console switch (NetClient.wire_logging).
 func _mob_logging() -> bool:
-	return OS.get_environment("SRREVAMP_QA_MOB_LOG") != "" or NetClient.wire_logging
+	return OS.get_environment("OPENSRO_QA_MOB_LOG") != "" or NetClient.wire_logging
 
 ## Whether `monster_id`'s body is walking a leg (a stop's glide does not count):
 ## the approach walk then releases only inside the stop distance
@@ -18137,7 +18137,7 @@ func _apply_monster_leg(moved: CombatNet.MonsterMoved) -> void:
 	elif bool(state["stop"]) and _remote_turns.has(body.get_instance_id()):
 		# A stop: the client's stop message snaps the heading to the server's
 		# angle and ends the turn (FUN_008a4f80 -> FUN_009e00f0 ->
-		# FUN_009e0050, round 637's review follow-up). srrevamp's stop carries
+		# FUN_009e0050, round 637's review follow-up). OpenSRO's stop carries
 		# no angle; the turn's own target stands in for it (INFERRED: the
 		# server's heading is its last leg's).
 		var stopping: Dictionary = _remote_turns[body.get_instance_id()]
@@ -18156,7 +18156,7 @@ func _apply_monster_leg(moved: CombatNet.MonsterMoved) -> void:
 ## Plays a gait on a monster's body: its own idle for 0 (stand), its walk or
 ## run clip otherwise. A model with no such clip keeps the loop it has.
 func _set_monster_gait(monster_id: int, gait: int) -> void:
-	if OS.get_environment("SRREVAMP_NO_IDLE_ANIM") != "":
+	if OS.get_environment("OPENSRO_NO_IDLE_ANIM") != "":
 		return
 	var assembled: SkinnedBsrAssembler.AssembledCharacter = _monster_assembled.get(monster_id)
 	if assembled == null:
@@ -18197,9 +18197,9 @@ func _step_monster_bodies(delta: float, budget: int = MonsterMotion.MAX_HEIGHT_R
 	if _monster_motion.is_empty() and _monster_heights_pending.is_empty():
 		return 0
 	var logging := _mob_logging()
-	# SRREVAMP_QA_MOB_LOG alone, not /wire: the measurement line below fires
+	# OPENSRO_QA_MOB_LOG alone, not /wire: the measurement line below fires
 	# the terrain ray beside the navmesh lookup, a second answer per resolve.
-	var compare := logging and OS.get_environment("SRREVAMP_QA_MOB_LOG") != ""
+	var compare := logging and OS.get_environment("OPENSRO_QA_MOB_LOG") != ""
 	# The bodies stepped this frame and whether each wants a height resolve,
 	# in the same order; the resolves are handed out after the loop.
 	var stepped: Array = []
@@ -18402,7 +18402,7 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	if monster != _last_attack_target:
 		print("World3D: attack result for monster %d while targeting %d -- animating %d" % [
 			monster, _last_attack_target, monster])
-	elif OS.get_environment("SRREVAMP_QA_ATTACK") != "":
+	elif OS.get_environment("OPENSRO_QA_ATTACK") != "":
 		print("World3D: attack result for monster %d -> animating %d" % [monster, monster])
 	if _qa_retreat_pending and monster != -1 and result.monster_damage > 0 and not result.monster_died:
 		_qa_retreat(monster)
@@ -18454,7 +18454,7 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 		_after(lands_after, func() -> void:
 			# The moment that used to go wrong: the blow lands a swing after it
 			# was sent, and the live target may already be another monster.
-			if OS.get_environment("SRREVAMP_QA_ATTACK") != "" and monster != _last_attack_target:
+			if OS.get_environment("OPENSRO_QA_ATTACK") != "" and monster != _last_attack_target:
 				print("World3D: blow lands on monster %d (now targeting %d) -- animating %d" % [
 					monster, _last_attack_target, monster])
 			# A monster this blow killed plays its die animation as the blow
@@ -18484,7 +18484,7 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 	# (_draw_counter_at_landing, round 540). Only the monster that took the
 	# blow counterattacks, so it is pinned to `monster` too.
 	_draw_counter_at_landing(monster, result, lands_after)
-	if OS.get_environment("SRREVAMP_QA_MOB_STRIKE") != "":
+	if OS.get_environment("OPENSRO_QA_MOB_STRIKE") != "":
 		_qa_mob_strike(monster, result)
 	if result.monster_died:
 		monster_status_label.text = "Hit for %d%s -- it died!" % [
@@ -18517,8 +18517,8 @@ func _on_attack_result(result: CombatNet.AttackResult) -> void:
 
 # --- A monster's blow (round 540) -------------------------------------------
 #
-# srrevamp's own OpMonsterAttacked (0x007D), docs/protocol/monster_ai.md
-# "srrevamp's own monster protocol (placeholders)": one monster's blow on a
+# OpenSRO's own OpMonsterAttacked (0x007D), docs/protocol/monster_ai.md
+# "OpenSRO's own monster protocol (placeholders)": one monster's blow on a
 # player, sent to everyone in the zone, the attacker included, right behind the
 # attacker's own OpAttackResult. No server sends it yet. Without it a counter is
 # drawn from the attacker's result, on the attacker's screen only; with it,
@@ -18620,7 +18620,7 @@ func _draw_counter_from_result(monster: int, result: CombatNet.AttackResult) -> 
 	var strike_after := 0.0
 	if monster != -1:
 		strike_after = _monster_strike_seconds(monster)
-		if OS.get_environment("SRREVAMP_QA_ATTACK") != "" and monster != _last_attack_target:
+		if OS.get_environment("OPENSRO_QA_ATTACK") != "" and monster != _last_attack_target:
 			print("World3D: counter-swing by monster %d (now targeting %d) -- animating %d" % [
 				monster, _last_attack_target, monster])
 		_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_ATTACK)
@@ -18805,7 +18805,7 @@ func _enter_dead_state(exp_lost: int) -> void:
 	_has_move_target = false
 	player.velocity.x = 0.0
 	player.velocity.z = 0.0
-	# The QA attack loop stops here for good; SRREVAMP_QA_REVIVE_AFTER counts
+	# The QA attack loop stops here for good; OPENSRO_QA_REVIVE_AFTER counts
 	# from this tick.
 	_qa_attacking = false
 	_qa_dead_tick = _qa_tick
@@ -18892,7 +18892,7 @@ func _draw_monster_strike(attacked: CombatNet.MonsterAttacked, on_self: bool) ->
 	if body != null and is_instance_valid(body) and not _dying_until.has(monster):
 		if target != null:
 			_face_monster_toward(monster, Vector2(target.position.x, target.position.z))
-			if OS.get_environment("SRREVAMP_QA_FACING_LOG") != "":
+			if OS.get_environment("OPENSRO_QA_FACING_LOG") != "":
 				_qa_strike_facing(monster, target)
 		_play_monster_action(monster, BsrReader.AnimationEntry.TYPE_ATTACK)
 		strike_after = _monster_strike_seconds(monster)
@@ -19215,7 +19215,7 @@ func _draw_wall_blow(anchor: Node3D, owner_key: String, wall: CombatNet.WallHit,
 	_audio_monster_blow(monster, wall.critical, "blow on %s's wall" % who)
 	# With no DefenseEfp on the body (the wall's buff already ended by the
 	# breaking blow, say), retail plays the attacker's DamageEfp. The
-	# monster's skill is not on srrevamp's wire, so HitEffect's default
+	# monster's skill is not on OpenSRO's wire, so HitEffect's default
 	# layers stand in for it (OURS).
 	_play_hit_efp_on(anchor, 2.0 * PLAYER_SCALE_RATIO, efp)
 	_floating_damage(anchor, 2.0 * PLAYER_SCALE_RATIO, wall.damage, DAMAGE_TAKEN_COLOUR)
@@ -19282,10 +19282,10 @@ func _fx_self_cast_refused() -> void:
 	SkillEffects.cancel_cast(player)
 	_fx_self_cast = {}
 
-## SRREVAMP_QA_EFFECT's plays (see the hook).
+## OPENSRO_QA_EFFECT's plays (see the hook).
 func _qa_play_effects(spec: String) -> void:
 	var particles := _open_particles_pk2_if_set()
-	var spacing_text := OS.get_environment("SRREVAMP_QA_EFFECT_SPACING")
+	var spacing_text := OS.get_environment("OPENSRO_QA_EFFECT_SPACING")
 	var spacing := float(spacing_text) if spacing_text.is_valid_float() else 40.0
 	var paths := spec.split(";", false)
 	for i in range(paths.size()):
@@ -19296,16 +19296,16 @@ func _qa_play_effects(spec: String) -> void:
 			continue
 		fx.loop = true
 		var x := (float(i) - float(paths.size() - 1) * 0.5) * spacing
-		# SRREVAMP_QA_EFFECT_BONE (round 621) attaches them at that bone
+		# OPENSRO_QA_EFFECT_BONE (round 621) attaches them at that bone
 		# instead ("Bip01 R Hand" shows a trail behind a swinging hand).
-		var bone := OS.get_environment("SRREVAMP_QA_EFFECT_BONE")
+		var bone := OS.get_environment("OPENSRO_QA_EFFECT_BONE")
 		SkillEffects.attach(fx, player, bone if bone != "" else "none", Vector3(x, 0, 0))
 		print("QA EFFECT %s at x %.0f: %d node(s) drawn, skipped %s" % [path, x, fx.draw_count(), str(fx.skipped)])
 
-## SRREVAMP_QA_CAST's schedule (see the hook).
+## OPENSRO_QA_CAST's schedule (see the hook).
 func _qa_cast_step(spec: String) -> void:
 	var ids := spec.split(",", false)
-	var period_text := OS.get_environment("SRREVAMP_QA_CAST_PERIOD")
+	var period_text := OS.get_environment("OPENSRO_QA_CAST_PERIOD")
 	var period := int(period_text) if period_text.is_valid_int() else 160
 	var t := _qa_tick - 20
 	var idx := t / period
@@ -19410,7 +19410,7 @@ func _audio_blow_lands(blow: Dictionary, dealt: int, monster: int) -> void:
 	SkillEffects.act(skill, player, player, false)
 
 ## A monster's blow lands on a character: its hit sound at the monster (the
-## attacker), keyed by its sound object and its attack skill. srrevamp's
+## attacker), keyed by its sound object and its attack skill. OpenSRO's
 ## server names no monster skill, so the skill token is "-" -- and every
 ## monster row names one (MEASURED), so this is logged and silent until the
 ## server sends the skill (OPEN).
@@ -19656,7 +19656,7 @@ func _apply_key_holds() -> void:
 
 var _item_names_near := false
 
-## QA (SRREVAMP_QA_INPUT): at each V change, what the hover ray makes of the
+## QA (OPENSRO_QA_INPUT): at each V change, what the hover ray makes of the
 ## nearest monster's click capsule, and how many monster bodies are drawn --
 ## the measurement that a hidden monster is neither drawn nor picked.
 func _qa_probe_hidden_pick() -> void:
@@ -20021,11 +20021,11 @@ func _berserk_resync_all(why: String) -> void:
 ## screen-sized quad adding white x alpha (SRCBLEND SRCALPHA, DESTBLEND
 ## SRCCOLOR, READ), drawn over the world and under the HUD (the weather
 ## manager draws it in the world pass, INFERRED from where vslot_010 runs).
-## QA (round 651): SRREVAMP_QA_BERSERK_PROBE=1 prints, once a second, where
+## QA (round 651): OPENSRO_QA_BERSERK_PROBE=1 prints, once a second, where
 ## every drawn player's chest is on this client's screen and the colour
 ## BerserkLook draws their body with -- the point a live run samples the
 ## frame at, so the glow is measured as pixels rather than judged by eye.
-var _qa_berserk_probe_on := OS.get_environment("SRREVAMP_QA_BERSERK_PROBE") != ""
+var _qa_berserk_probe_on := OS.get_environment("OPENSRO_QA_BERSERK_PROBE") != ""
 var _qa_berserk_probe_frame := 0
 
 func _qa_berserk_probe() -> void:
@@ -20102,7 +20102,7 @@ func _apply_player_motion(value: int) -> void:
 				print("SIT: player stands -- clip %s (action type 15)" % _body_animation_path(
 					_player_body, BsrReader.AnimationEntry.TYPE_STAND_UP, _player_weapon_group))
 		_:
-			print("SIT: motion value %d for the player is not one srrevamp plays" % value)
+			print("SIT: motion value %d for the player is not one OpenSRO plays" % value)
 
 ## A move while seated: the server accepts it and puts the character on its
 ## feet at once (its movement handler's SetMotionState(WALK/RUN), no
@@ -20186,7 +20186,7 @@ func _apply_other_motion(character_id: int, value: int) -> void:
 
 # --- A monster appearing (round 540) ------------------------------------------
 
-## A monster that has just appeared (srrevamp's own OpMonsterSpawned, 0x007E: a
+## A monster that has just appeared (OpenSRO's own OpMonsterSpawned, 0x007E: a
 ## respawn or a GM /spawn), pushed to the zone the moment it appears rather than
 ## found on the next list. Its body is made the way a listed one is
 ## (_spawn_or_update_monster) and faced along its heading. A server sends it
@@ -20593,7 +20593,7 @@ func _request_world_stats() -> void:
 func _on_world_stats(stats: StatsNet.Stats) -> void:
 	if stats == null or stats.error != "":
 		return
-	if OS.get_environment("SRREVAMP_QA_STATS_LOG") != "":
+	if OS.get_environment("OPENSRO_QA_STATS_LOG") != "":
 		print("QA STATS: t=%.2f tick=%d HP %d/%d MP %d/%d sitting=%s pelvis %s" % [_player_anim_time, _qa_tick,
 			stats.hp, stats.max_hp, stats.mp, stats.max_mp, str(_sit.sitting), _qa_pelvis_height()])
 	# While dead the HP a stats reply carries is not taken (round 607's third
@@ -20619,7 +20619,7 @@ func _on_world_stats(stats: StatsNet.Stats) -> void:
 			_hud_player_info.set_mp(stats.mp, stats.max_mp)
 		# The stat panel, the orbs and the "+" -- the same packet the
 		# character window reads, applied on every arrival (round 629).
-		# SRREVAMP_QA_PMI drives the orbs itself; the server's count would
+		# OPENSRO_QA_PMI drives the orbs itself; the server's count would
 		# undo each state it sets.
 		if _qa_pmi_spec != "":
 			stats.has_hwan_count = false
@@ -21594,7 +21594,7 @@ func _on_use_item_result(result) -> void:
 		NetClient.list_inventory(NetClient.current_character_name)
 
 ## QA only: uses the first potion found in the bag, once. Driven by
-## SRREVAMP_QA_USEITEM; the ids are the real consumables the loot tables drop.
+## OPENSRO_QA_USEITEM; the ids are the real consumables the loot tables drop.
 var _qa_used_potion := false
 func _qa_use_first_potion(slots: Array, _error: String) -> void:
 	if _qa_used_potion or NetClient.current_character_name == "" or _player_dead:

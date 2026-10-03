@@ -5,7 +5,7 @@ class_name AutoUpdater
 ## GitHub Releases API for a newer tag than this build, download the matching
 ## platform zip, check it against the SHA-256 the release lists, install it
 ## over this install from inside the running game (UpdateInstaller: anything in
-## use is renamed aside, never overwritten -- srrevamp_native.dll is loaded by
+## use is renamed aside, never overwritten -- opensro_native.dll is loaded by
 ## this very process), then start the new executable once this process has
 ## exited, and quit.
 ##
@@ -27,12 +27,12 @@ signal check_failed(reason: String)
 signal download_progress(fraction: float)
 signal update_failed(reason: String)
 
-const RELEASES_API_URL := "https://api.github.com/repos/OpenSRO/srrevamp/releases/latest"
+const RELEASES_API_URL := "https://api.github.com/repos/OpenSRO/OpenSRO/releases/latest"
 ## QA hook (round 668): a different "latest release" endpoint, so the whole
 ## update can be run against a local server. OURS.
-const QA_URL_ENV := "SRREVAMP_QA_UPDATE_URL"
-const STAGING_DIR := "srrevamp_update_staging"
-const RELAUNCH_BAT := "srrevamp_update_relaunch.bat"
+const QA_URL_ENV := "OPENSRO_QA_UPDATE_URL"
+const STAGING_DIR := "opensro_update_staging"
+const RELAUNCH_BAT := "opensro_update_relaunch.bat"
 ## How long the relaunch waits for this process to exit before starting the
 ## new one anyway: 60 polls about a second apart. OURS.
 const RELAUNCH_POLLS := 60
@@ -61,7 +61,7 @@ static func releases_url() -> String:
 ## Headers for a GitHub API/asset request; an Authorization header only when
 ## a release build embedded UpdateChecker.GITHUB_TOKEN.
 static func _auth_headers(extra: Array[String] = []) -> PackedStringArray:
-	var headers: Array[String] = ["User-Agent: srrevamp-client"]
+	var headers: Array[String] = ["User-Agent: opensro-client"]
 	headers.append_array(extra)
 	if UpdateChecker.GITHUB_TOKEN != "":
 		headers.append("Authorization: Bearer %s" % UpdateChecker.GITHUB_TOKEN)
@@ -124,13 +124,13 @@ func _on_download_completed(result: int, response_code: int, _headers: PackedStr
 		update_failed.emit("the download is damaged or not the release's file (%s)" % problem)
 		return
 	if _pending_digest == "":
-		print("SRRevamp update: %s downloaded, NOT verified (the release lists no SHA-256), sha256 %s" % [_pending_asset_name, actual])
+		print("OpenSRO update: %s downloaded, NOT verified (the release lists no SHA-256), sha256 %s" % [_pending_asset_name, actual])
 	else:
-		print("SRRevamp update: %s downloaded and verified, sha256 %s" % [_pending_asset_name, actual])
+		print("OpenSRO update: %s downloaded and verified, sha256 %s" % [_pending_asset_name, actual])
 	_apply_update(zip_path)
 
 func _download_target_path() -> String:
-	return _exe_dir().path_join("srrevamp_update.zip")
+	return _exe_dir().path_join("opensro_update.zip")
 
 func _exe_dir() -> String:
 	return OS.get_executable_path().get_base_dir()
@@ -158,13 +158,13 @@ func _apply_update(zip_path: String) -> void:
 	var stager := UpdateStager.new()
 	var staged := stager.stage(zip_path, staging_dir, install_dir)
 	for line in stager.lines:
-		print("SRRevamp update: " + line)
+		print("OpenSRO update: " + line)
 	if not staged.ok:
 		DirAccess.remove_absolute(zip_path)
 		update_failed.emit("could not unpack %s, nothing was changed (%s)" % [_pending_tag, staged.reason])
 		return
 
-	# The zip wraps everything in one folder ("srrevamp-windows/", release.yml).
+	# The zip wraps everything in one folder ("opensro-windows/", release.yml).
 	var extracted_root := staging_dir
 	var top_dirs := DirAccess.get_directories_at(staging_dir)
 	if top_dirs.size() == 1 and DirAccess.get_files_at(staging_dir).is_empty():
@@ -173,7 +173,7 @@ func _apply_update(zip_path: String) -> void:
 	var installer := UpdateInstaller.new()
 	var outcome := installer.install(extracted_root, install_dir, list_files(extracted_root), exe_path.get_file())
 	for line in installer.lines:
-		print("SRRevamp update: " + line)
+		print("OpenSRO update: " + line)
 	remove_tree(staging_dir)
 	DirAccess.remove_absolute(zip_path)
 
@@ -186,7 +186,7 @@ func _apply_update(zip_path: String) -> void:
 		return
 
 	var pid := _relaunch(exe_path, install_dir)
-	print("SRRevamp update: installed %s, %s" % [_pending_tag,
+	print("OpenSRO update: installed %s, %s" % [_pending_tag,
 		"restarting (the new client starts as soon as this one has exited)" if pid > 0 else "start the game again (could not start it)"])
 	get_tree().quit()
 
@@ -214,7 +214,7 @@ func _relaunch(exe_path: String, install_dir: String) -> int:
 ##   the OEM code page, so a UTF-8 path such as C:\Users\José\... would be
 ##   mangled. Every path is relative to the script's own folder, %~dp0, which
 ##   cmd keeps as UTF-16. Only the executable's NAME is written, and only when
-##   it is plain ASCII (otherwise "srrevamp.exe", release.yml's name).
+##   it is plain ASCII (otherwise "OpenSRO.exe", release.yml's name).
 ## - `tasklist /FO CSV` prints `"name","<pid>",...` for a live process; the
 ##   quoted PID is matched (`find """<pid>"""`), not just any comma (L4).
 ## v0.1.464's own batch file has the OEM problem too (PRE-EXISTING): an install
@@ -223,7 +223,7 @@ func _relaunch(exe_path: String, install_dir: String) -> int:
 static func windows_relaunch_script(pid: int, exe_path: String) -> String:
 	var exe_name := exe_path.get_file()
 	if not _is_ascii(exe_name):
-		exe_name = "srrevamp.exe"
+		exe_name = "OpenSRO.exe"
 	return "\r\n".join(PackedStringArray([
 		"@echo off",
 		"set /a n=0",
@@ -260,7 +260,7 @@ static func windows_relaunch_args(bat: String) -> PackedStringArray:
 ## positional parameters, never spliced into the script.
 static func linux_relaunch_args(pid: int, exe_path: String) -> PackedStringArray:
 	var script := "i=0; while kill -0 \"$1\" 2>/dev/null && [ \"$i\" -lt %d ]; do sleep 0.5; i=$((i+1)); done; cd \"$(dirname \"$2\")\" && exec \"$2\"" % RELAUNCH_POLLS
-	return PackedStringArray(["-c", script, "srrevamp-relaunch", str(pid), exe_path])
+	return PackedStringArray(["-c", script, "opensro-relaunch", str(pid), exe_path])
 
 ## At startup in an exported build: finish the last update's cleanup and put
 ## its summary into this log.
@@ -270,9 +270,9 @@ static func after_update_startup() -> void:
 	var install_dir := OS.get_executable_path().get_base_dir()
 	var installer := UpdateInstaller.new()
 	for line in installer.take_summary(install_dir):
-		print("SRRevamp update (last run): " + line)
+		print("OpenSRO update (last run): " + line)
 	for line in installer.cleanup(install_dir):
-		print("SRRevamp update: " + line)
+		print("OpenSRO update: " + line)
 	var bat := install_dir.path_join(RELAUNCH_BAT)
 	if FileAccess.file_exists(bat):
 		DirAccess.remove_absolute(bat)

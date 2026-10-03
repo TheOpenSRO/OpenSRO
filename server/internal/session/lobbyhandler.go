@@ -12,16 +12,16 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/guild"
-	"github.com/OpenSRO/srrevamp/server/internal/mana"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/guild"
+	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // LobbyStores is the character store the lobby needs: Store plus the lobby's
@@ -241,7 +241,7 @@ var StartSpawns = map[int][3]StartSpawn{
 
 // startZones is the zone label a race's spawns are named in: the town whose
 // frame they lie in, so the character shares the town's hub bucket with
-// everyone already there (OURS: the label is srrevamp's; the spawns are
+// everyone already there (OURS: the label is OpenSRO's; the spawns are
 // region-local in retail).
 var startZones = map[int]string{
 	character.RaceChina:  "jangan",
@@ -434,7 +434,7 @@ func ammoQuantity(maxStack int) int {
 // the race's shield, worn.
 //
 // The ammunition is AmmoStartQuantity (round 692; see there), and goes into
-// the bag, not worn (OURS): srrevamp's equipment slot carries no quantity and
+// the bag, not worn (OURS): OpenSRO's equipment slot carries no quantity and
 // ammunition is not modelled (session/skill.go). The durability byte the
 // server writes for each item is the inventory's own fresh roll here (the
 // procedure writes each item's `_RefObjItem.Dur_L`).
@@ -487,7 +487,7 @@ func findOwned(list []*character.Character, name string) *character.Character {
 // empty name 0x408 (retail also refuses a quote there: not applied, see
 // below); a name not on the account 0x40b; a guild member or master 0x402
 // (the client refuses those before sending, 0x858b40) -- and, failing closed,
-// a guild lookup that errs (OURS). Academy members cannot occur: srrevamp has no academy. A
+// a guild lookup that errs (OURS). Academy members cannot occur: OpenSRO has no academy. A
 // character already pending is refused with 0x402 (OURS).
 func (d *LobbyDeps) remove(ctx context.Context, accountID int64, req *LobbyRequest) *LobbyResult {
 	r := &LobbyResult{Action: LobbyDelete}
@@ -598,14 +598,14 @@ func (d *LobbyDeps) list(ctx context.Context, sess *gateway.Session, accountID i
 //
 //   - Level is a u8 and Exp the current-level progress (ExpOffset) the row
 //     keeps; Str, Int and the unspent stat points are the row's.
-//   - MP: srrevamp does not persist current MP (character/schema.go's
+//   - MP: OpenSRO does not persist current MP (character/schema.go's
 //     EngineOnlyColumns "MP"), so a character not in the world reports the
 //     mana tracker's value, which is its maximum when it has none (OURS).
 //   - Items: the worn items in slots 0..8, the nine the record holds (INFERRED:
-//     the nine non-accessory slots, which is srrevamp's WearableSlots), each
-//     with plus 0 -- srrevamp keeps no plus on an item yet (OURS).
-//   - No avatars: srrevamp has none.
-//   - Academy 0: srrevamp has no academy.
+//     the nine non-accessory slots, which is OpenSRO's WearableSlots), each
+//     with plus 0 -- OpenSRO keeps no plus on an item yet (OURS).
+//   - No avatars: OpenSRO has none.
+//   - Academy 0: OpenSRO has no academy.
 func (d *LobbyDeps) record(ctx context.Context, c *character.Character, now time.Time) LobbyCharacter {
 	maxMP := c.MaxMP()
 	mp := maxMP

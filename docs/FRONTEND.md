@@ -44,7 +44,7 @@ decodes it with `DdjReader`. Nothing here is extracted into the repo.
 
 ## Plumbing already in place
 
-- `Pk2Config.media_path()` → `Pk2Reader.open(path)` opens Media.pk2 (env `SRREVAMP_MEDIA_PK2_PATH`
+- `Pk2Config.media_path()` → `Pk2Reader.open(path)` opens Media.pk2 (env `OPENSRO_MEDIA_PK2_PATH`
   or the `pk2` folder next to the executable).
 - `UiBuilder.new(media_pk2, text_table)` with `load_texture` / `load_texture_region` / `media_archive`.
 - `SkinnedBsrAssembler` builds a character from its `.bsr`; `paper_doll.gd` renders a skeleton into
@@ -92,15 +92,15 @@ swapped for the 3D flowing-camera town of the later pass without touching the sc
 ## Verifying a front-end screen
 
 `qa_shot.sh --scene res://scenes/Login.tscn` boots that scene instead of `World3D.tscn` under the
-same xvfb + movie capture, with `SRREVAMP_MEDIA_PK2_PATH` already exported, so the screen loads its
+same xvfb + movie capture, with `OPENSRO_MEDIA_PK2_PATH` already exported, so the screen loads its
 real art. No server is needed to render a screen (login only connects when Connect is pressed; the
 boot-time theme query gives up at once on a refused connection).
 
-The title since round 678: `SRREVAMP_QA_TITLE_SEEK=0,12,26,40` stands the intro's camera at those
+The title since round 678: `OPENSRO_QA_TITLE_SEEK=0,12,26,40` stands the intro's camera at those
 times, waits for the regions, and logs `QA TITLE SHOT t=.. frame ..` (then `QA LOGIN SHOT frame ..`
-once the login window has faded in); `SRREVAMP_QA_TITLE_SKIP_AT=<s>` clicks through at that many
-seconds; `SRREVAMP_QA_TITLE_HOUR=0..3` pins the random hour; `SRREVAMP_LOGIN_INTRO=<name>` (and the
-other `SRREVAMP_LOGIN_*`) previews a theme. `client/tools/measure_login_ready.tscn` measures how long
+once the login window has faded in); `OPENSRO_QA_TITLE_SKIP_AT=<s>` clicks through at that many
+seconds; `OPENSRO_QA_TITLE_HOUR=0..3` pins the random hour; `OPENSRO_LOGIN_INTRO=<name>` (and the
+other `OPENSRO_LOGIN_*`) previews a theme. `client/tools/measure_login_ready.tscn` measures how long
 the screen takes to become usable with a click at its first frame, and its longest frame;
 `client/tools/check_intro_scripts.gd` checks every intro in an archive (counts, path accuracy, the
 clamp, the regions).

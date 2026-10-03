@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // The rules for who may wear what, as the item table states them. Every
@@ -50,7 +50,7 @@ var (
 	ErrWrongSlot = errors.New("equipment: item does not go in that slot")
 	// The three below are refusals the real game makes too, and each has the
 	// engine's own error code and message name -- recovered from the client's
-	// dispatcher, see docs/protocol/error_codes.md. srrevamp arrived at these
+	// dispatcher, see docs/protocol/error_codes.md. OpenSRO arrived at these
 	// independently from the itemdata columns; the names are recorded because
 	// agreeing with the game about WHICH refusals exist is worth being able to
 	// check.

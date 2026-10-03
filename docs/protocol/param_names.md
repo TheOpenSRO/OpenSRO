@@ -59,7 +59,7 @@ later pass can settle them at a use-site, not so they can be quoted as answers.
 
 ## What this independently CONFIRMS
 
-Two of the joins land on values srrevamp already ships, derived by completely
+Two of the joins land on values OpenSRO already ships, derived by completely
 different routes — which is the useful kind of agreement:
 
 - **`PARAM_MC_COUNT` ↔ `mc`.** `refdata.HitCount` / `HitsFor()` was recovered

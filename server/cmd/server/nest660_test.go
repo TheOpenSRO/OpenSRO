@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/nest"
-	"github.com/OpenSRO/srrevamp/server/internal/spawn"
-	"github.com/OpenSRO/srrevamp/server/internal/species"
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/nest"
+	"github.com/OpenSRO/OpenSRO/server/internal/spawn"
+	"github.com/OpenSRO/OpenSRO/server/internal/species"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // Round 660's full map, on SYNTHETIC rows only: no npcpos, characterdata or

@@ -3,7 +3,7 @@
 //
 // Nothing here is designed. The procedure names and their argument counts were
 // read out of the ODBC call literals the binary builds and the table names out
-// of its string pool. srrevamp does not have to use this schema, but it is what
+// of its string pool. OpenSRO does not have to use this schema, but it is what
 // the game's own operations are, and a reimplementation that cannot express one
 // of these has found a gap.
 //

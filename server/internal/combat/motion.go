@@ -11,7 +11,7 @@ import "math"
 // MoverMaxStep is the most a mover advances an object in one step, whatever
 // the speed and the elapsed time: the .rdata float at 0x00b45ea8, 0x43200000
 // = 160.0f, which CGObjMoverByDest::FUN_0048bff0 clamps |speed x dt| to
-// (docs/protocol/monster_ai.md, "srrevamp's own monster protocol").
+// (docs/protocol/monster_ai.md, "OpenSRO's own monster protocol").
 const MoverMaxStep = 160.0
 
 // MoverStep is one step of the engine's destination mover, on the ground
@@ -73,7 +73,7 @@ func (h *Hub) SetMotion(id int64, destX, destZ, speed float64, mode uint8) (Mons
 // StopMotion ends monster id's leg where it stands: its destination becomes
 // its own position and Moving is cleared. The speed and mode are left as they
 // were, so the stop push can carry them (docs/protocol/monster_ai.md,
-// "srrevamp's own monster protocol", the stop). ok is false when the monster
+// "OpenSRO's own monster protocol", the stop). ok is false when the monster
 // is gone.
 func (h *Hub) StopMotion(id int64) (Monster, bool) {
 	h.mu.Lock()

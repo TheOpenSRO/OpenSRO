@@ -104,7 +104,7 @@ filename, which `World3D._prepare_ground_textures()` loads from `Map.pk2\Tile2D\
 cached by filename across regions by `World3D._terrain_commit`; `_load_real_ground_textures()`
 did both on the main thread before) and passes back in as a real per-ID texture lookup
 — each real quad gets its own real texture on its own mesh surface. A quad whose resolved ID has no
-real texture (or when no `SRREVAMP_MAP_PK2_PATH` is set at all) falls back to
+real texture (or when no `OPENSRO_MAP_PK2_PATH` is set at all) falls back to
 `_vertex_color()`'s `TileType`-driven color coding, unchanged from before this correction.
 
 **Live-verified** against a real Shape B region (`100/100`, both a wide 3x3-region top-down render

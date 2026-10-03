@@ -1,6 +1,6 @@
 package session
 
-import "github.com/OpenSRO/srrevamp/server/internal/gateway"
+import "github.com/OpenSRO/OpenSRO/server/internal/gateway"
 
 // accountIDKey is the gateway.Session value key this package stores the
 // authenticated account's ID under. Unexported: other packages should go

@@ -2,7 +2,7 @@
 
 A whole system, recovered 2026-09-17, that this project had no trace of.
 Implemented as far as it can be in `server/internal/skill/withdraw.go` — the
-cost formula is exact; srrevamp offers no withdrawal feature yet.
+cost formula is exact; OpenSRO offers no withdrawal feature yet.
 
 ## How it was found
 

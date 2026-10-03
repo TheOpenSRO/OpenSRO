@@ -3,7 +3,7 @@ package equipment
 import (
 	"context"
 
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 )
 
 // Where an item moved between the body and the bag lands (round 652).

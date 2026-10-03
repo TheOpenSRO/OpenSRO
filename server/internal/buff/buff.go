@@ -1,6 +1,6 @@
 // Package buff is the per-character book of active timed buffs (round 616,
 // docs/protocol/skill_buffs.md): the engine's active-effect book at char+0xa30
-// reduced to what srrevamp models -- one record per applied action-kind-3
+// reduced to what OpenSRO models -- one record per applied action-kind-3
 // skill, its duration, the ParamKeeper contributions it made, and the rules
 // that start, refuse, end and cancel it.
 //
@@ -11,7 +11,7 @@
 //     greater (skillparam.BuffEndsAt). The extension ctx+0x24 is 0 here: its
 //     setter in 0x5830b0 adds a value found by FUN_005a0330 (a lookup in the
 //     book's map at +0x244, keyed by the row's 'RPBU'/'STDU'/'DTDR' word) --
-//     the caster's passive records, which srrevamp does not keep (OPEN).
+//     the caster's passive records, which OpenSRO does not keep (OPEN).
 //   - The END effects: SkillBook::Update (0x59bb80) erases the record,
 //     removes its contributions (ParamKeeper_RemoveContributionsOf, 0x4b3660,
 //     keyed by the record) and queues its token for 0xB072.
@@ -47,7 +47,7 @@
 //
 // OURS, disclosed: the record's shape, the token allocator (a server-wide
 // counter), and that only the run-speed contributions are recorded -- they
-// are the only ones something in srrevamp consumes. The other publishing
+// are the only ones something in OpenSRO consumes. The other publishing
 // codes are listed OPEN in docs/protocol/skill_buffs.md.
 package buff
 
@@ -58,7 +58,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/skillparam"
+	"github.com/OpenSRO/OpenSRO/server/internal/skillparam"
 )
 
 // The run-speed params, 'hste'/'hst2'/'hst3' publish both
@@ -170,7 +170,7 @@ type Record struct {
 	SkcEnd        uint8
 	// FUN_0059dc80's fields (see linkLocked): the row's 'lnks' value[0] and
 	// 'lks2', whether the record carries retail's link struct (ctx+0x68), and
-	// the struct's linked object id (+0x10) -- always 0 here: srrevamp
+	// the struct's linked object id (+0x10) -- always 0 here: OpenSRO
 	// creates no object for an 'efr' kind-3 row.
 	LnksGroup    uint32
 	Lks2         bool
@@ -243,7 +243,7 @@ func (r Record) SelfCast() bool { return r.CasterID == r.OwnerID }
 // 'dtt' (`puVar12[0xa4] != 0 && puVar12[0x108] == 0`) and stores the
 // CASTER's id at its +0x10 (`= param_2[2]`) -- READ. That record is the
 // caster's own (registered through the caster's book, +0x1d8); a record
-// srrevamp builds on another character's book carries none (INFERRED: the
+// OpenSRO builds on another character's book carries none (INFERRED: the
 // target records are built by the other branches, which do not write
 // ctx+0x6c).
 func (r Record) attached() bool { return r.Efr2 && !r.Dtt && r.SelfCast() }
@@ -342,7 +342,7 @@ func (bk *book) setGroupBits(mask uint32, clear bool) {
 // mask's three low bytes other than 0, 0x1d and 0x23, whether its bit is
 // set. The function also answers 1 when the byte appears among the RUNNING
 // action's Action_Overlap / 'ovl2' bytes (book+0x1d8, a buff between its
-// cast and its engage); srrevamp engages a buff at its cast and keeps no
+// cast and its engage); OpenSRO engages a buff at its cast and keeps no
 // running action, so that half has nothing to test.
 func (bk *book) bitsHit(mask uint32) bool {
 	for sh := 0; sh < 24; sh += 8 {
@@ -514,7 +514,7 @@ const (
 // SkillAction_Buff builds for the CASTER of an 'lnks' row cast on another
 // character (0x5830b0, READ: a record with the link struct at ctx+0x68,
 // +0xc the caster's id, +0x10 the target's id; ctx+0x20 FUN_005a9ae0's
-// default 1). srrevamp keeps it out of the caster's visible book (OURS: no
+// default 1). OpenSRO keeps it out of the caster's visible book (OURS: no
 // icon, no bits -- an 'lnks' record cast on oneself sets none, READ) and
 // ends it with the target's record (INFERRED); FUN_0059dc80 counts it.
 type linkEntry struct {
@@ -534,8 +534,8 @@ type linkEntry struct {
 // record is the caster's own; ctx+0x20 keeps FUN_005a9ae0's default 1), with
 // +0x10 the id of the object that branch creates; and the Target_Required 1
 // branch, as a second record for the caster whose +0x10 is the target's id.
-// srrevamp creates no object: the first is the 'lnks' + 'efr' kind-3 row's
-// own record, cast by its owner (INFERRED that srrevamp's record stands for
+// OpenSRO creates no object: the first is the 'lnks' + 'efr' kind-3 row's
+// own record, cast by its owner (INFERRED that OpenSRO's record stands for
 // retail's link record; retail's also ends when the object goes, which is
 // OPEN here); the second is a linkEntry (Books.links).
 func linked(spec Spec, ownerID int64) bool {
@@ -646,7 +646,7 @@ func linkLocked(bk *book, links []linkEntry, spec Spec, linkedID int64) Refusal 
 //     answer refusing 0x300c) -- every Target_Required 1 row, 'lnks' or not.
 //     The one skip (0x58d2ac..0x58d2c8): the target is the caster and the
 //     caster's running action (+0xc08 -> +0x18 -> +8) is this very skill;
-//     srrevamp keeps no running action, so it never applies.
+//     OpenSRO keeps no running action, so it never applies.
 //
 // It returns the records the cast ends (none, one, or -- the 'efr' kind-2
 // branch -- the record and the caster's record of its skill, usually the
@@ -1150,7 +1150,7 @@ func (b *Books) EndAll(ownerID int64) ([]Record, Speed) {
 	}
 	// The owner's own link records go with its book (the book teardown
 	// FUN_0059c820). Retail's link record also ends the target's record when
-	// it ends (SkillAction_BuffEnd's ctx+0x68 branch); srrevamp leaves the
+	// it ends (SkillAction_BuffEnd's ctx+0x68 branch); OpenSRO leaves the
 	// target's record to its own end (OPEN).
 	delete(b.links, ownerID)
 	after := b.speedLocked(ownerID, nil)

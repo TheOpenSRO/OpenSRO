@@ -215,7 +215,7 @@ and the artwork order above, so the two orderings were derived independently and
 Checked cell by cell against a real client's complete itemdata: 11,772 `TypeID1 == 3` rows, no
 disagreement anywhere.
 
-Three consequences, all of which srrevamp had wrong:
+Three consequences, all of which OpenSRO had wrong:
 
 - **Slot 8 is the job suit**, not an unexplained "extra". The client calls its artwork
   `equip_slot_specialdress.ddj`; every item the resolver sends there is a trade outfit.
@@ -223,8 +223,8 @@ Three consequences, all of which srrevamp had wrong:
   an exact slot match everywhere except a ring, where it takes 11 or 12 — matching the client's
   `equip_slot_l_ring.ddj` / `equip_slot_r_ring.ddj`.
 - **Ammunition is equipped, in the shield slot.** A bow user gives up the shield to carry arrows.
-  srrevamp refused quivers entirely, and the note claiming that was correct reasoned about
-  srrevamp's own code without asking the engine.
+  OpenSRO refused quivers entirely, and the note claiming that was correct reasoned about
+  OpenSRO's own code without asking the engine.
 
 The check also bounds the set: `if ((slot == 0xff) || (0xc < slot)) return 0x1806` — **13 slots,
 0…12**, with `0xff` the same not-set sentinel the skill table uses for an unused weapon
@@ -470,7 +470,7 @@ never do: the item groups are `0x71`, `0xA7`, `0xC8`-`0xCB`, `0xF0`-`0xF2` and
 `0xF6`, and no skill uses any of those bytes (the skill groups stop at 114 and
 skip 113).
 
-**srrevamp** exports the pair as item columns 64-65 (`CooltimeGroup`,
+**OpenSRO** exports the pair as item columns 64-65 (`CooltimeGroup`,
 `CooltimeMs`; `refdata.Item`), and `UseItemHandler` refuses a use inside the
 group's timer with "wait for the reuse delay" and arms it on success
 (`session/itemcooldown.go`, in memory; the 300 s persistence is not built --
@@ -549,7 +549,7 @@ takes Param1's byte (5). The tooltip says it: "During the Effect, 100% gauge
 charge can be used once. (After use of 100% Gauge charge, extend time will be
 removed and unable to use Energy of life for 20 Mins)".
 
-### The composite path, end to end (round 632 review; srrevamp builds it)
+### The composite path, end to end (round 632 review; OpenSRO builds it)
 
 - **Which rows carry a list.** RefObjItem's ExtractData (loop `0x6a558e..0x6a55aa`)
   hands Desc_k to the list parser `ReferenceData::FUN_00864bc0` only for TID
@@ -569,7 +569,7 @@ removed and unable to use Energy of life for 20 Mins)".
   0xf800 == 0x2000) makes a type-3 job (not modelled, refused); otherwise
   `FUN_00488db0` (0x488db0: TID bit 1 clear, TypeID **3/3/3/10**) gates the
   type-10 job, and on 0 the branch jumps to `0x49fd55` and makes **no job at
-  all**, silently -- srrevamp skips such an entry the same way.
+  all**, silently -- OpenSRO skips such an entry the same way.
 - **The fill**: client `0x715F` {u32 compositeRefId, u32 limitedRefId} ->
   `GObjPC_HandleCompositeItemMsg_15f` (`0x511640`): no job -> 2, no use left ->
   `0x18c6` ("Exceeded one day use limit."), else `CUsedItemLimit::vslot_007`:
@@ -583,7 +583,7 @@ removed and unable to use Energy of life for 20 Mins)".
   `CGObjMobile::vslot_300` (`0x48b730`: both move controllers' `+0x18`), may
   send `0xB023` (a NetProcessInNavAndSkill message on the client), copies the
   position block and resets the stance from body state 2/3 -- INFERRED a
-  movement stop. **OPEN, not mirrored**: no srrevamp item use stops movement.
+  movement stop. **OPEN, not mirrored**: no OpenSRO item use stops movement.
   vslot_007 does not ask IsReady: the 20 minutes block the next scroll.
 - **What the client shows** (retail client, READ): `0x3159` {compositeRefId,
   secs, limitedRefId, count} adds a kind-5 icon on CIFMagicStateBoard -- the
@@ -602,14 +602,14 @@ removed and unable to use Energy of life for 20 Mins)".
   hit-tests all count + 1 (composite review).
 - **The end**: the CUsedItemLimit job sends `0x315B` {compositeRefId,
   limitedRefId} when it ends (`0x653e80`), consumed or expired, and the client
-  (`FUN_008993b0`) removes the entry and the kind-5 icon. srrevamp pushes
+  (`FUN_008993b0`) removes the entry and the kind-5 icon. OpenSRO pushes
   `OpCompositeEnd` (0x0108) from a timer and from the last use, before the
   use's result (vslot_007 ends the job before `0xB15F`), and sends the state
   after a refused fill too.
 - **Texts**: 0x185b's authored text is `UIIT_MSG_STRGERR_WAIT_FOR_REUSE_DELAY`,
   "Still have time to reuse the item." -- every item path's reuse refusal now
   uses it.
-- **srrevamp** carries this on its own opcodes 0x0104-0x0108 (OURS; see
+- **OpenSRO** carries this on its own opcodes 0x0104-0x0108 (OURS; see
   `session/composite.go`, `client/scripts/net/composite.gd`), keeps the jobs in
   memory (a restart loses them), and a GM account neither checks nor arms the
   scroll's or the fill's COOLTIME (OURS, the user's request).

@@ -11,14 +11,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 )
 
 // Round 679 (OURS): the real server answers the server list's status
 // request on a fresh connection, before login: version 1, the characters in
 // the world (none), its -max-players and the state byte -- 0, retail's
-// "Check", under -inspection (both given as SRREVAMP_MAX_PLAYERS and
-// SRREVAMP_INSPECTION) -- and under inspection a login is refused with
+// "Check", under -inspection (both given as OPENSRO_MAX_PLAYERS and
+// OPENSRO_INSPECTION) -- and under inspection a login is refused with
 // retail's inspection message. Before round 679 nothing answers opcode 0x0007
 // and the read times out. The opcodes are literals so the test also builds
 // against a server that has never heard of them.
@@ -32,7 +32,7 @@ func TestServerStatusServedByTheRealServer(t *testing.T) {
 
 	cmd := exec.Command(os.Args[0])
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "SRREVAMP_") {
+		if !strings.HasPrefix(kv, "OPENSRO_") {
 			cmd.Env = append(cmd.Env, kv)
 		}
 	}
@@ -41,8 +41,8 @@ func TestServerStatusServedByTheRealServer(t *testing.T) {
 		runServerEnv+"_ARGS=-in-memory -addr "+addr,
 		// Through the environment, so a server without the flags still boots
 		// and the missing answer is what fails (round 679's negative).
-		"SRREVAMP_MAX_PLAYERS=50",
-		"SRREVAMP_INSPECTION=1",
+		"OPENSRO_MAX_PLAYERS=50",
+		"OPENSRO_INSPECTION=1",
 	)
 	var out lockedBuffer
 	cmd.Stdout, cmd.Stderr = &out, &out

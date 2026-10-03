@@ -89,8 +89,8 @@ func stage(zip_path: String, staging_dir: String, space_dir: String) -> Dictiona
 	var space := space_problem(needed, fs.space_left(space_dir))
 	# QA hook (OURS): skip the free-space check, so a test on a small disk
 	# reaches the second line of defence, the read-back of every write.
-	if space != "" and OS.get_environment("SRREVAMP_QA_UPDATE_IGNORE_SPACE") == "1":
-		lines.append("free-space check skipped (SRREVAMP_QA_UPDATE_IGNORE_SPACE): " + space)
+	if space != "" and OS.get_environment("OPENSRO_QA_UPDATE_IGNORE_SPACE") == "1":
+		lines.append("free-space check skipped (OPENSRO_QA_UPDATE_IGNORE_SPACE): " + space)
 		space = ""
 	if space != "":
 		return _fail(staging_dir, space)

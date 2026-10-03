@@ -51,16 +51,16 @@ var parked = map[string]string{
 	// (efp left this list in round 619: cmd/efpcensus imports it.)
 	"environment": "parses environment.ifo; lighting is a client concern, kept here with the other format readers",
 
-	// Recovered rule sets with no system in srrevamp to attach to. Each one
+	// Recovered rule sets with no system in OpenSRO to attach to. Each one
 	// says so in its own package doc; this is the index of them.
-	"academy":     "recovered training-camp rules; srrevamp has no training camp",
-	"alchemy":     "recovered reinforce success model; srrevamp has no reinforcement",
-	"arena":       "recovered battle-arena shape; its own doc opens 'srrevamp has no arena'",
-	"cos":         "recovered summon rules for pets/carts/mercenaries; srrevamp summons nothing",
-	"jobs":        "recovered trade-route job rules; srrevamp has no job system",
+	"academy":     "recovered training-camp rules; OpenSRO has no training camp",
+	"alchemy":     "recovered reinforce success model; OpenSRO has no reinforcement",
+	"arena":       "recovered battle-arena shape; its own doc opens 'OpenSRO has no arena'",
+	"cos":         "recovered summon rules for pets/carts/mercenaries; OpenSRO summons nothing",
+	"jobs":        "recovered trade-route job rules; OpenSRO has no job system",
 	"persistence": "the recovered DB surface of the real server, a specification rather than a store",
-	"siege":       "recovered fortress-war rules; its own doc says srrevamp 'is not about to grow one'",
-	"timedjob":    "recovered expiry machinery; srrevamp has no timed jobs to expire",
+	"siege":       "recovered fortress-war rules; its own doc says OpenSRO 'is not about to grow one'",
+	"timedjob":    "recovered expiry machinery; OpenSRO has no timed jobs to expire",
 
 	// "ai" left this map in round 537: session/monsterai.go imports it and
 	// drives the state machine behind cmd/server's -monster-ai (off by
@@ -120,7 +120,7 @@ func unimportedInternalPackages(t *testing.T) []string {
 
 	var out []string
 	for _, p := range pkgs {
-		needle := "srrevamp/server/internal/" + p + `"`
+		needle := "OpenSRO/server/internal/" + p + `"`
 		imported := false
 		for _, f := range files {
 			if f.pkg == p {

@@ -6,8 +6,14 @@
 #   docker compose up --build
 # The server listens on localhost:15779 (plain TCP; see server/README.md
 # or -tls-cert/-tls-key for TLS). Postgres data persists in the
-# `srrevamp-postgres-data` named volume across restarts; `docker compose
+# `opensro-postgres-data` named volume across restarts; `docker compose
 # down -v` wipes it for a clean slate.
+#
+# The project name is fixed (round 704), so the stack's containers and its
+# volume (`opensro_opensro-postgres-data`) are named the same whatever the
+# checkout's folder is called. An install from before the rename is moved
+# over by deploy/README.md, "Moving an install from srrevamp to OpenSRO".
+name: opensro
 
 services:
   postgres:
@@ -16,11 +22,11 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: srrevamp
+      POSTGRES_DB: opensro
     ports:
       - "5432:5432"
     volumes:
-      - srrevamp-postgres-data:/var/lib/postgresql/data
+      - opensro-postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 2s
@@ -38,7 +44,7 @@ services:
       - "15779:15779"
     command:
       - "-addr=:15779"
-      - "-postgres-dsn=postgres://postgres:postgres@postgres:5432/srrevamp?sslmode=disable"
+      - "-postgres-dsn=postgres://postgres:postgres@postgres:5432/opensro?sslmode=disable"
 
 volumes:
-  srrevamp-postgres-data:
+  opensro-postgres-data:

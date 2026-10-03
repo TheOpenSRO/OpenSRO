@@ -6,14 +6,14 @@ import (
 	"os"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 )
 
 func testDSN() string {
-	if v := os.Getenv("SRREVAMP_TEST_POSTGRES_DSN"); v != "" {
+	if v := os.Getenv("OPENSRO_TEST_POSTGRES_DSN"); v != "" {
 		return v
 	}
-	return "postgres://postgres:postgres@localhost:5432/srrevamp_test?sslmode=disable"
+	return "postgres://postgres:postgres@localhost:5432/opensro_test?sslmode=disable"
 }
 
 type stubMaxStacks map[int64]int

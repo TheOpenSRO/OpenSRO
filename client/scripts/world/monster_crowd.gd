@@ -160,8 +160,8 @@ static func recheck_due(tick: int, slot: int) -> bool:
 ## for any pose change. The pose itself is the same: the same two keys, the
 ## same blend (the test compares the two bone by bone). A skeleton without
 ## META_LAYOUT (the player, other players, NPCs) takes the old path.
-const META_LAYOUT := "srrevamp_crowd_layout"
-const META_BONE_MAPS := "srrevamp_crowd_bone_maps"
+const META_LAYOUT := "opensro_crowd_layout"
+const META_BONE_MAPS := "opensro_crowd_bone_maps"
 
 static func pose_at(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation, seconds: float, loop: bool) -> void:
 	if not skeleton.has_meta(META_LAYOUT):
@@ -215,7 +215,7 @@ static func bone_map(skeleton: Skeleton3D, anim: BanReader.ParsedAnimation) -> P
 	anim.set_meta(META_BONE_MAPS, maps)
 	return out
 
-## The frame split (SRREVAMP_QA_MOBSPLIT=<frames>): every <frames> rendered
+## The frame split (OPENSRO_QA_MOBSPLIT=<frames>): every <frames> rendered
 ## frames, one line of where the time went -- the physics steps a rendered
 ## frame ran, the monster work inside them, and the renderer's own CPU and
 ## GPU times and counts. QA only.

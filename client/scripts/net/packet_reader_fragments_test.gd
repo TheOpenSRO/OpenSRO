@@ -188,7 +188,7 @@ func _test_reads_only_when_it_lacks_a_frame() -> void:
 func _test_tls_page() -> void:
 	var crypto := Crypto.new()
 	var key := crypto.generate_rsa(2048)
-	var cert := crypto.generate_self_signed_certificate(key, "CN=127.0.0.1,O=srrevamp,C=US")
+	var cert := crypto.generate_self_signed_certificate(key, "CN=127.0.0.1,O=opensro,C=US")
 	var server := TCPServer.new()
 	if server.listen(0, "127.0.0.1") != OK:
 		_check(false, "TLS: loopback listen")

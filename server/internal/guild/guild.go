@@ -42,7 +42,7 @@ import (
 var MaxMembersByLevel = [5]int{15, 20, 25, 35, 50}
 
 // MaxMembers is a new guild's cap: **15**, the entry for FoundingLevel. Until
-// round 528 srrevamp's guilds had no level and this was every guild's cap;
+// round 528 OpenSRO's guilds had no level and this was every guild's cap;
 // Store.Join now takes the cap from the guild's own Level (MaxMembersFor).
 const MaxMembers = 15
 
@@ -133,7 +133,7 @@ func (p Permission) Has(required Permission) bool {
 // the fortress tax check in internal/siege: a symmetric bound written as one
 // unsigned subtract-and-compare rather than two signed tests.
 //
-// srrevamp had NO minimum at all, which is the more consequential half: a
+// OpenSRO had NO minimum at all, which is the more consequential half: a
 // one-character guild name was legal here and is not in the engine.
 //
 // **ENFORCED since round 481**: both stores' Create refuse a name outside the
@@ -146,7 +146,7 @@ func (p Permission) Has(required Permission) bool {
 // client's codepage. Go's len() counts UTF-8 bytes. The two agree for ASCII
 // names; for non-ASCII they do not (a CJK character is 3 UTF-8 bytes, typically
 // 2 in a double-byte codepage), so such a name can be refused here that the
-// engine would accept. srrevamp's client sends the name as UTF-8
+// engine would accept. OpenSRO's client sends the name as UTF-8
 // (client/scripts/net/guild.gd, to_utf8_buffer), and which codepage the
 // engine's client used is not established here, so there is no faithful byte
 // count to take instead.
@@ -184,8 +184,8 @@ var ErrInvalidNameLength = errors.New("guild: name must be 2 to 12 characters")
 // IGObj::GetJobState (docs/protocol/igobj_vtable.md); the codes' names are the
 // client's (docs/protocol/error_codes.md). CheckCreator is steps 2-4. The last
 // step is the stores' ErrAlreadyInGuild. Steps 1, 5 and 6 are not modelled:
-// srrevamp's character mutations are synchronous, so there is no lock to hold
-// (docs/protocol/char_lock.md, "For srrevamp"), and it has no job state and no
+// OpenSRO's character mutations are synchronous, so there is no lock to hold
+// (docs/protocol/char_lock.md, "For OpenSRO"), and it has no job state and no
 // guild-war penalty timer.
 const (
 	// MinCreatorLevel is the `bVar3 < 0x14` -> 0x4c0a test: a founder must be
@@ -345,7 +345,7 @@ const FoundingLevel = 1
 // SR_GameServer.exe. (That case 9 answers job 9 is a match of numbers and of
 // fields, not a traced path.)
 //
-// SRREVAMP SPENDS THE CHECKED GUILD POINTS, AS A DISCLOSED STAND-IN. The
+// OPENSRO SPENDS THE CHECKED GUILD POINTS, AS A DISCLOSED STAND-IN. The
 // evidence leans that way, for two reasons. The other guild purchase gated
 // on GatheredSP, FUN_005c7900 (the mercenary attribute, guild+0x98, job
 // 0x2b), is answered through the dispatcher's case 0x2b (FUN_005cc590 ->
@@ -394,7 +394,7 @@ func CheckLevelUp(alive, inGuild, master bool, level int, gold, gatheredSP int64
 	g, gp, ok := LevelUpCost(level)
 	if !ok {
 		// A level below 1. The engine's switch would assert and let it
-		// through (CheckLevelUpCost's default case returns 1). srrevamp's
+		// through (CheckLevelUpCost's default case returns 1). OpenSRO's
 		// levels start at FoundingLevel and only rise, so this is a damaged
 		// row, refused rather than priced.
 		return 0, 0, fmt.Errorf("guild: level %d has no level-up cost", level)
@@ -409,7 +409,7 @@ func CheckLevelUp(alive, inGuild, master bool, level int, gold, gatheredSP int64
 }
 
 // LevelUpCode is the engine's code for a level-up refusal, or 0 for an error
-// that is srrevamp's own (a database failure, a damaged level).
+// that is OpenSRO's own (a database failure, a damaged level).
 func LevelUpCode(err error) int {
 	switch {
 	case errors.Is(err, ErrLevelUpDead):

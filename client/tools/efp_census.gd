@@ -7,7 +7,7 @@ extends SceneTree
 ##
 ##   godot4 --headless --path client --script res://tools/efp_census.gd -- --pk2=/path/Particles.pk2
 ##
-## (or set SRREVAMP_PARTICLES_PK2). Exits 0 when every file whose header
+## (or set OPENSRO_PARTICLES_PK2). Exits 0 when every file whose header
 ## parses also decodes, 1 otherwise.
 ##
 ## `-- --pk2=... --build` (round 620) also builds every decoded file into an
@@ -56,7 +56,7 @@ var _bad_assets := {} # "texture|path" or "mesh|path" -> files naming it
 var _pk2_dir := ""
 
 func _init() -> void:
-	var path := OS.get_environment("SRREVAMP_PARTICLES_PK2")
+	var path := OS.get_environment("OPENSRO_PARTICLES_PK2")
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--pk2="):
 			path = a.substr(6)

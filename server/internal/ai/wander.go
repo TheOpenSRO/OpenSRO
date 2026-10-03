@@ -45,7 +45,7 @@ func crandSign(rng *rand.Rand) int {
 // is `cmp [edi+0x89],3` at 0x5609b6. Every other shape (0x560a1b), and a
 // rarity-3 species of this one (0x5609bf), faces its nest row's own
 // direction (+0x1c; docs/protocol/monster_ai.md, "The _RefNest row", row 8),
-// which srrevamp does not hold. Every roster species is TypeID (1,2,1,1),
+// which OpenSRO does not hold. Every roster species is TypeID (1,2,1,1),
 // this shape (see IdleStayThreshold), and none is rarity 3, so all of them
 // take the random heading. The engine rounds each step to a float; this
 // keeps float64.
@@ -117,7 +117,7 @@ func IdleNext(rng *rand.Rand) State {
 // the blocked-probe reversal, which probes position + direction * 30
 // (0xb45e58) through the world singleton's slot 12 and reverses the
 // direction (* -1.0, 0xb45e68) when bit 0 or bit 28 reports it blocked --
-// srrevamp's server holds no collision world to ask.
+// OpenSRO's server holds no collision world to ask.
 func PickWanderLeg(rng *rand.Rand, x, z, heading, runSpeed float64) (destX, destZ, legHeading float64, ok bool) {
 	if !(runSpeed > WanderMinRunSpeed) {
 		return x, z, heading, false
@@ -132,7 +132,7 @@ func PickWanderLeg(rng *rand.Rand, x, z, heading, runSpeed float64) (destX, dest
 }
 
 // MotionMode is the clip byte AITactics_Handler_110 (0x005489b0..0x00548a20)
-// picks for a move, 0 or 1 (docs/protocol/monster_ai.md, "srrevamp's own
+// picks for a move, 0 or 1 (docs/protocol/monster_ai.md, "OpenSRO's own
 // monster protocol": 0 walk clip, 1 run clip):
 //
 //   - run speed (+0x170) <= 1e-6 (the float at 0xb45c84, fcom at 0x5489bc) -> 0;
@@ -217,7 +217,7 @@ func HomeDestination(rng *rand.Rand, homeX, homeZ, x, z, r float64) (destX, dest
 // HasArrived is AITactics_HasArrived (0x00541f60): the monster at (x, z) is at
 // (destX, destZ) while the distance is STRICTLY under 5.0 (fcomp DWORD
 // 0xb45b28 at 0x541fb2, `test ah,0x5; jp`), so exactly 5.0 is not there yet.
-// The engine's difference (FUN_00430d40) keeps y; srrevamp's monsters carry
+// The engine's difference (FUN_00430d40) keeps y; OpenSRO's monsters carry
 // no height of their own (a roster spawn stands at y = 0 and the mover only
 // moves x and z), so the ground-plane distance is compared.
 func HasArrived(x, z, destX, destZ float64) bool {

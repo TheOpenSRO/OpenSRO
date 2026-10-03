@@ -99,12 +99,12 @@ retail state, and does not mark its opponent hostile.
 
 ## In this client
 
-- **Where the exe is found** (round 697): `SRREVAMP_CLIENT_EXE` (OURS, dev) first; then, for
+- **Where the exe is found** (round 697): `OPENSRO_CLIENT_EXE` (OURS, dev) first; then, for
   `sro_client.exe` and the vSRO package's `sro_client_NODLL.exe` (the same 16 numbered cursors,
   MEASURED), the folder of Data.pk2, its parent, and the folder of our own executable. The launcher
   `silkroad.exe` is not accepted (15 1-bit system-style cursors, MEASURED). The log says
   `GameCursor: 16 cursor(s) from <path>`, or `GameCursor: no sro_client.exe found -- ... Tried: ...`.
-  Before round 697 only `$SRREVAMP_PK2_PATH`'s folder was tried, and a player's build resolves the
+  Before round 697 only `$OPENSRO_PK2_PATH`'s folder was tried, and a player's build resolves the
   `pk2` folder without that variable -- so a player never got the cursors.
 - **On Windows** (round 700, MEASURED under Wine 10.0 on the box, docs/RENDER_BOX.md "Wine"): the
   v0.1.483 Windows release, its `pk2\` holding the five archives and `sro_client.exe`, logs
@@ -124,7 +124,7 @@ retail state, and does not mark its opponent hostile.
   world's system messages say `No game cursor: copy sro_client.exe from your Silkroad folder into
   <the pk2 folder> (beside Data.pk2).` (`GameCursor.missing_hint`), not only the log.
 - **A renamed client** (round 700): when no candidate name is there, every `*.exe` in the same
-  folders (SRREVAMP_CLIENT_EXE's, the pk2 folder, its parent, our exe's; at most 64 a folder, our
+  folders (OPENSRO_CLIENT_EXE's, the pk2 folder, its parent, our exe's; at most 64 a folder, our
   own exe skipped) is probed for cursor group 0x95 -- the PE headers (4 KB) and the head of `.rsrc`
   (256 KB at most) only, never the whole file -- and the first that decodes is used
   (`CursorSet.scan_for_client`; the log says `found by its cursors`). A private server's
@@ -182,7 +182,7 @@ actually teleport"; swords and speech bubbles likewise. What the code does:
   664), and a gate is a server-sent object like them (READ, round 700's review: CITeleportGate is
   created only by the spawn parser -- `FUN_008a6bd0`, `FUN_009c1fa0`, NetProcessInObject -- so a
   gate exists in the client only inside the view window).
-- **Here:** srrevamp's server applies the window to monsters (`session.AOIRadius` = 1), but this
+- **Here:** OpenSRO's server applies the window to monsters (`session.AOIRadius` = 1), but this
   client builds NPCs and gate pick boxes itself for all 5 x 5 loaded regions, and other players
   and drops arrive zone-wide. The hover now applies the window to every class
   (`GameCursor.in_view_window`: `floor((v + 960) / 320)` on x and z within 1 of the player's, the

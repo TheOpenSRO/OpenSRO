@@ -22,7 +22,7 @@ class_name RendererChoice
 ##   unless the start already fell back (below).
 ## - a start that is RUNNING Compatibility while nothing is recorded and the
 ##   project's default is Forward+ (OURS): it got there through the native
-##   Vulkan fallback, the Compatibility launcher (`srrevamp-compatibility.bat`
+##   Vulkan fallback, the Compatibility launcher (`opensro-compatibility.bat`
 ##   / `.sh`, `--rendering-driver opengl3`) or a hand-typed flag, and the
 ##   choice is written so that plain starts, and the auto-updater's relaunch
 ##   (which passes no arguments), start on Compatibility directly. The
@@ -41,13 +41,13 @@ class_name RendererChoice
 ## vk_fallback.rs, round 693's review): at its Core initialisation, before
 ## Main reads the renderer, it asks the system's Vulkan loader for an
 ## instance and a physical device, and if there is none it starts the game
-## again with `--rendering-driver opengl3` (SRREVAMP_VK_PROBE carries what it
+## again with `--rendering-driver opengl3` (OPENSRO_VK_PROBE carries what it
 ## found, and Boot logs it). Without the library (a player who deleted the
 ## DLL) there is no automatic fall back: the launcher is the way in.
 ##
 ## A source run (the editor binary, the render box) reads `override.cfg` from
 ## the project folder instead, so nothing here writes outside an exported
-## build; SRREVAMP_OVERRIDE_CFG names a file to use instead (tests, QA).
+## build; OPENSRO_OVERRIDE_CFG names a file to use instead (tests, QA).
 
 const FORWARD_PLUS := "forward_plus"
 const COMPATIBILITY := "gl_compatibility"
@@ -56,10 +56,10 @@ const KEY := "renderer/rendering_method"
 ## The project.godot default (client/project.godot, round 693).
 const PROJECT_DEFAULT := FORWARD_PLUS
 
-const HEADER := "; Written by SRRevamp (round 693): the renderer this install starts with.\n; Delete this file to start with the default (Forward+).\n"
+const HEADER := "; Written by OpenSRO (round 693): the renderer this install starts with.\n; Delete this file to start with the default (Forward+).\n"
 
 static func override_path() -> String:
-	var env := OS.get_environment("SRREVAMP_OVERRIDE_CFG")
+	var env := OS.get_environment("OPENSRO_OVERRIDE_CFG")
 	if env != "":
 		return env
 	return OS.get_executable_path().get_base_dir().path_join("override.cfg")
@@ -67,7 +67,7 @@ static func override_path() -> String:
 ## Whether this build reads override_path() at all: an exported game does;
 ## a run from source does not (it reads the project folder's).
 static func applies_here() -> bool:
-	return OS.get_environment("SRREVAMP_OVERRIDE_CFG") != "" or OS.has_feature("template")
+	return OS.get_environment("OPENSRO_OVERRIDE_CFG") != "" or OS.has_feature("template")
 
 ## The renderer actually running. Godot 4.2.2 binds no call that names it;
 ## a RenderingDevice exists under Forward+ and Mobile, never under
@@ -150,7 +150,7 @@ static func apply_at_boot(config_word: String) -> String:
 		running(), RenderingServer.get_video_adapter_name(), RenderingServer.get_video_adapter_api_version(), PROJECT_DEFAULT]
 	# What the native library's Vulkan probe found (vk_fallback.rs): "ok ..."
 	# or "fallback to OpenGL: <why>"; unset without the library.
-	var probe := OS.get_environment("SRREVAMP_VK_PROBE")
+	var probe := OS.get_environment("OPENSRO_VK_PROBE")
 	line += " vulkan_probe=\"%s\"" % (probe if probe != "" else "(none: no native library, or a named renderer)")
 	if not here:
 		line += " override=(not read by a source run)"

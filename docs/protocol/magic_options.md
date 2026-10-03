@@ -267,7 +267,7 @@ is no stride to record. An item carries at most 12 of them, from the client's ow
 `"m_btMagicParamNum <= MAX_MAGPARAM_PER_ITEM"`.
 
 Shipped as `combat.BlessTags` and the `MagicOption*Offset` constants. Nothing consumes them yet —
-srrevamp implements no magic options — but a later implementation that modelled these four as
+OpenSRO implements no magic options — but a later implementation that modelled these four as
 unconditional would be wrong, which is why they are recorded now.
 
 **What the data could not confirm.** No column of `MagicOption.txt` is populated on every bless
@@ -277,5 +277,5 @@ being a per-item-instance field rather than a table one, though that was not sep
 ## What is NOT here
 
 The bonus *magnitudes*. Columns 4/5 hold a level and a factor and columns 8–16 further numbers,
-none of which are decoded. srrevamp grants no magic options and has no system to grant them
+none of which are decoded. OpenSRO grants no magic options and has no system to grant them
 into, so nothing here is wired into gameplay — it is a naming resource.

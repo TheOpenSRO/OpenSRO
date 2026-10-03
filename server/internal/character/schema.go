@@ -1,13 +1,13 @@
 package character
 
-// The engine's own character row, and how srrevamp's Character maps onto it.
+// The engine's own character row, and how OpenSRO's Character maps onto it.
 //
 // `_CHAR` is one of the 54 runtime tables whose column names SR_GameServer.exe
 // declares in its schema pool (docs/protocol/db_columns.md). It introduces 42
 // column names, which is the fullest statement available of what the game
 // considers a character to be.
 //
-// This file is not a persistence layer and srrevamp does not use this schema.
+// This file is not a persistence layer and OpenSRO does not use this schema.
 // It exists so that every field on Character is either matched to the engine's
 // name or recorded as a deliberate divergence -- and so that a divergence
 // cannot quietly become an accident.
@@ -30,11 +30,11 @@ var EngineCharColumns = []string{
 	"WorldID", "TelWorldID", "DiedWorldID", "HwanLevel",
 }
 
-// FieldMapping is one of srrevamp's Character fields against the engine's.
+// FieldMapping is one of OpenSRO's Character fields against the engine's.
 type FieldMapping struct {
 	// Field is the Go field name on Character.
 	Field string
-	// Column is the `_CHAR` column it corresponds to, or "" when srrevamp
+	// Column is the `_CHAR` column it corresponds to, or "" when OpenSRO
 	// keeps the value somewhere the engine does not.
 	Column string
 	// Note explains a divergence. Empty means the two agree.
@@ -57,15 +57,15 @@ var Mapping = []FieldMapping{
 	{Field: "Gender", Column: "",
 		Note: "DIVERGENCE. The engine has no gender column: a character's race and " +
 			"sex follow from RefObjID, the reference object it is built from. " +
-			"srrevamp keeps the string, derived from RefObjID since round 682, because " +
+			"OpenSRO keeps the string, derived from RefObjID since round 682, because " +
 			"the world wire still carries it for older clients (round 689 draws bodies from RefObjID)"},
 	{Field: "Level", Column: "CurLevel",
-		Note: "the engine also keeps MaxLevel, a separate high-water mark srrevamp " +
+		Note: "the engine also keeps MaxLevel, a separate high-water mark OpenSRO " +
 			"has no equivalent for. _TRAININGCAMPMEMBER carries CharMaxLevel too, " +
 			"so it is really tracked and not a duplicate of CurLevel"},
 	{Field: "Exp", Column: "ExpOffset",
 		Note: "the engine also keeps SExpOffset (skill experience) and " +
-			"GatheredExpPoint; srrevamp has neither"},
+			"GatheredExpPoint; OpenSRO has neither"},
 	{Field: "StatPoints", Column: "RemainStatPoint"},
 	{Field: "Str", Column: "Strength",
 		Note: "name confirmed: the engine calls it Strength, not STR"},
@@ -77,16 +77,16 @@ var Mapping = []FieldMapping{
 	{Field: "HwanCount", Column: "RemainHwanCount",
 		Note: "the berserk orbs. Bound by CharData_BindDBColumns to charData +0x86 " +
 			"(docs/protocol/db_bind_offsets.tsv), so the engine persists it on the " +
-			"character row and srrevamp now does too -- it used to clear on disconnect"},
+			"character row and OpenSRO now does too -- it used to clear on disconnect"},
 	{Field: "Zone", Column: "",
-		Note: "DIVERGENCE. The engine has no zone label: a region id says where. srrevamp " +
+		Note: "DIVERGENCE. The engine has no zone label: a region id says where. OpenSRO " +
 			"keeps the label the client built its grid from (\"jangan\", \"97/168\"), " +
 			"because the label is what picks the hub bucket and the client's grid centre " +
 			"(round 573, cmd/server's -persist-position)"},
 	{Field: "Frame", Column: "LatestRegion",
 		Note: "the region the position is relative to, bound to charData +0x94 " +
 			"(docs/protocol/db_bind_offsets.tsv). The engine's position is LOCAL to that " +
-			"region's corner; srrevamp's is a world point in the frame centred on it " +
+			"region's corner; OpenSRO's is a world point in the frame centred on it " +
 			"(worldmap.ToWorld), kept as \"x/y\" -- the FrameRegion the session named -- so a " +
 			"position saved in one frame can be named in another (round 573)"},
 	{Field: "PosX", Column: "PosX",
@@ -100,7 +100,7 @@ var Mapping = []FieldMapping{
 		Note: "Height low nibble, Volume high nibble (round 682, charselect.md section 2)"},
 	{Field: "DeletedAt", Column: "Deleted",
 		Note: "the engine keeps a Deleted flag on the row and the date in " +
-			"_DeleteCharTemporal (its body is OPEN); srrevamp keeps the time of the " +
+			"_DeleteCharTemporal (its body is OPEN); OpenSRO keeps the time of the " +
 			"deletion, zero when the character is not deleting (round 682)"},
 	{Field: "StartZone", Column: "",
 		Note: "DIVERGENCE, OURS. Where a character enters while it has no saved position: " +
@@ -115,23 +115,23 @@ var Mapping = []FieldMapping{
 			"region-local (round 573)"},
 }
 
-// EngineOnlyColumns are `_CHAR` columns srrevamp models nowhere. Listed rather
+// EngineOnlyColumns are `_CHAR` columns OpenSRO models nowhere. Listed rather
 // than ignored, because "the engine keeps this and we do not" is the useful
 // half of a schema comparison.
 var EngineOnlyColumns = map[string]string{
 	"NickName16":        "a second name, separate from CharName16",
 	"MaxLevel":          "a high-water mark beside CurLevel",
 	"SExpOffset":        "skill experience, beside ExpOffset",
-	"RemainSkillPoint":  "srrevamp keeps SP in internal/skill's own store, not on the character",
+	"RemainSkillPoint":  "OpenSRO keeps SP in internal/skill's own store, not on the character",
 	"GatheredExpPoint":  "a lifetime total beside the per-level ExpOffset",
-	"MP":                "SEE internal/mana: the engine PERSISTS current MP and srrevamp does not",
+	"MP":                "SEE internal/mana: the engine PERSISTS current MP and OpenSRO does not",
 	"AppointedTeleport": "kept per character since round 686, but not on Character: the characters table's appointed_teleport column through RecallStore, the designated gate's ref object id, 0 for the race's gate",
 	"AutoInvestExp":     "automatic stat investment",
 	"InventorySize":     "kept per character since round 633, but not on Character: the characters table's inventory_size column through InventorySizeStore, as the bag's slots without the engine's 13 equipment slots",
-	"DailyPK":           "the PK economy, which srrevamp has no part of",
+	"DailyPK":           "the PK economy, which OpenSRO has no part of",
 	"TotalPK":           "the PK economy",
 	"PKPenaltyPoint":    "the PK economy",
-	"GuildID":           "srrevamp's guild membership lives in internal/guild's store",
+	"GuildID":           "OpenSRO's guild membership lives in internal/guild's store",
 	"LastLogout":        "session bookkeeping",
 	"TelRegion":         "the return-scroll position, four columns",
 	"TelPosX":           "the return-scroll position",

@@ -8,10 +8,10 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/.." && pwd)
 user=$(id -un)
 
-for unit in srrevamp-update.service srrevamp-update.timer; do
+for unit in opensro-update.service opensro-update.timer; do
 	sed -e "s|@REPO@|$repo|g" -e "s|@USER@|$user|g" "$here/$unit" |
 		sudo tee "/etc/systemd/system/$unit" >/dev/null
 done
 sudo systemctl daemon-reload
-sudo systemctl enable --now srrevamp-update.timer
-systemctl list-timers srrevamp-update.timer --no-pager
+sudo systemctl enable --now opensro-update.timer
+systemctl list-timers opensro-update.timer --no-pager

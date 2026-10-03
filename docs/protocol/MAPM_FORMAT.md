@@ -140,7 +140,7 @@ with **near 1.0** (`fld1` in the camera constructor `FUN_00bae0a0`, never writte
 60 degrees (0x00d89ddc) and far set to the view distance (world+0x2729: 1500 / 2500 / **3500** by
 default / 4500 / 5500). The device asks for a 24-bit depth buffer with no stencil (minimum depth
 bits raised to 24 in `CGame::vslot_007`, 0x841ced), so D24X8 where the card has it. The water pass
-writes no depth. srrevamp's camera keeps Godot's default near of 0.05 and a far of 1920 x (radius
+writes no depth. OpenSRO's camera keeps Godot's default near of 0.05 and a far of 1920 x (radius
 + 1) x 2, about 20 times less depth precision at a given distance (docs/TODO.md).
 
 OPEN: a region-level flag at region+0x2475 makes the loader force -1 on every block; it is set in
@@ -660,7 +660,7 @@ coordinates as `Map.pk2`'s `<x>/<y>.m` files.
 This is **not** a claim that this is the live 3D ground texture the real client's terrain shaders
 sample at runtime (see the section above — that still hasn't been found or confirmed). It's real,
 region-accurate painted art standing in for it, which is why `World3D.gd` documents it the same
-way. See `README.md`'s `SRREVAMP_MAPM_TEXTURE_PATH`/`SRREVAMP_MEDIA_PK2_PATH` and
+way. See `README.md`'s `OPENSRO_MAPM_TEXTURE_PATH`/`OPENSRO_MEDIA_PK2_PATH` and
 `docs/PROGRESS.md` for the real screenshot this produced.
 
 ## Real samples available for future verification

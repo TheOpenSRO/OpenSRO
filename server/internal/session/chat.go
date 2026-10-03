@@ -5,17 +5,17 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/gm"
-	"github.com/OpenSRO/srrevamp/server/internal/guild"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/party"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/gm"
+	"github.com/OpenSRO/OpenSRO/server/internal/guild"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/party"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
-// Chat (round 634). The opcodes and their framing are srrevamp's own; what
+// Chat (round 634). The opcodes and their framing are OpenSRO's own; what
 // they carry is the retail client's, READ from sro_client.exe and written up
 // in docs/protocol/chat.md:
 //
@@ -62,7 +62,7 @@ const (
 	ChatErrGuildUnionLimit uint16 = 0x200e // UIIT_MSG_GUILD_UNION_CHAT_LIMIT
 	// OURS: the retail client refuses these two itself before it sends
 	// (0x7ad400 asks 0x9870e0 / 0x987140 and shows UIIT_MSG_GUILD_NON_EXISTING
-	// / UIIT_MSG_TC_ERROR_NOT_POSITION); srrevamp's client does not hold the
+	// / UIIT_MSG_TC_ERROR_NOT_POSITION); OpenSRO's client does not hold the
 	// guild or academy state, so the server answers and the client shows the
 	// same two strings. The values are outside every code 0x877340 reads.
 	ChatErrNoGuild   uint16 = 0xf001
@@ -112,7 +112,7 @@ func DecodeChatSendRequest(data []byte) (*ChatSendRequest, error) {
 
 // ChatUpdate is OpChatUpdate: one line for the receiver's chat. Sender is ""
 // for a notice. Retail's 0x3026 carries a unique id instead of a name for
-// types 1, 3 and 0xd (0x877810 resolves it); srrevamp sends the name (OURS).
+// types 1, 3 and 0xd (0x877810 resolves it); OpenSRO sends the name (OURS).
 type ChatUpdate struct {
 	Type    byte
 	Sender  string
@@ -318,13 +318,13 @@ func handleChatSend(ctx context.Context, sess *gateway.Session, p *proto.Packet,
 		return okResult()
 
 	case ChatUnion:
-		// srrevamp forms no alliances (internal/guild/alliance.go), so no
+		// OpenSRO forms no alliances (internal/guild/alliance.go), so no
 		// sender is in one: 0x200b, the client's "Cannot use the Ally Chat"
 		// line.
 		return fail(ChatErrAllianceDenied, "")
 
 	case ChatAcademy:
-		// srrevamp has no academy (internal/academy's package comment).
+		// OpenSRO has no academy (internal/academy's package comment).
 		return fail(ChatErrNoAcademy, "")
 
 	default:

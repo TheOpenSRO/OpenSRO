@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/buff"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/buff"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // TestRecastRuleCensus (round 636) drives the recast rule over EVERY row of
-// the player's own skill export when SRREVAMP_SKILLS_CSV names it (the CSV
+// the player's own skill export when OPENSRO_SKILLS_CSV names it (the CSV
 // cmd/export-refdata -mode skills writes from Media.pk2), and is skipped
 // otherwise (CI has no game data). Run it with -v for the report.
 //
@@ -28,9 +28,9 @@ import (
 // pair of rows that share a state byte and different groups, and requires
 // the second to be refused.
 func TestRecastRuleCensus(t *testing.T) {
-	path := os.Getenv("SRREVAMP_SKILLS_CSV")
+	path := os.Getenv("OPENSRO_SKILLS_CSV")
 	if path == "" {
-		t.Skip("SRREVAMP_SKILLS_CSV not set; the census needs the player's own skill export")
+		t.Skip("OPENSRO_SKILLS_CSV not set; the census needs the player's own skill export")
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -65,12 +65,12 @@ func TestRecastRuleCensus(t *testing.T) {
 				byByte[b] = append(byByte[b], r)
 			}
 		}
-		// Who can cast it at whom, as srrevamp starts it (startsCasterBuff,
+		// Who can cast it at whom, as OpenSRO starts it (startsCasterBuff,
 		// friendlyTargetRefusal = FUN_0058d7a0 steps 4-5): the owner on
 		// itself for a Target_Required 0 row or one with Self; another
 		// character for a Target_Required 1 row with Ally or Party. A
 		// Target_Required 1 row with only hostile groups is not a buff
-		// srrevamp starts (a debuff on a monster; not modelled).
+		// OpenSRO starts (a debuff on a monster; not modelled).
 		var casters []int64
 		if !r.TargetRequired || r.TargetSelf {
 			casters = append(casters, 1)
@@ -159,7 +159,7 @@ func TestRecastRuleCensus(t *testing.T) {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	t.Logf("%d kind-3 rows of %d; %d of them Target_Required 1 with only hostile groups (not started by srrevamp)", kind3, len(rows), notStarted)
+	t.Logf("%d kind-3 rows of %d; %d of them Target_Required 1 with only hostile groups (not started by OpenSRO)", kind3, len(rows), notStarted)
 	for _, k := range keys {
 		t.Logf("  %5d  %s", class[k], k)
 	}

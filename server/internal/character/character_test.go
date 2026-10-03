@@ -68,7 +68,7 @@ func TestRespawnMP(t *testing.T) {
 // TestStatGrowthPerLevelIsAppliedToMaxHP is the reason the growth matters, in
 // the one number a player would notice.
 //
-// srrevamp held Str and Int fixed for a character's whole life until
+// OpenSRO held Str and Int fixed for a character's whole life until
 // 2026-09-16. MaxHPFor is Str * 10 * 1.02^(level-1), so the exponential term is
 // the smaller half of the growth and the Str term the larger -- a level-40
 // character on a fixed Str had roughly a third of the health the real game

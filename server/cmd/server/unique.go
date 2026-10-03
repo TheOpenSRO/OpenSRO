@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/nest"
-	"github.com/OpenSRO/srrevamp/server/internal/session"
-	"github.com/OpenSRO/srrevamp/server/internal/species"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/nest"
+	"github.com/OpenSRO/OpenSRO/server/internal/session"
+	"github.com/OpenSRO/OpenSRO/server/internal/species"
 )
 
 // The uniques on the full map (round 661). Each field unique -- rarity 3 --

@@ -15,20 +15,20 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/mana"
-	"github.com/OpenSRO/srrevamp/server/internal/party"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/party"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // TargetCharacter is OpUseSkill's fourth targetType (round 622): the
-// targetMonsterId field names a CHARACTER. srrevamp's monster ids (combat.Hub)
+// targetMonsterId field names a CHARACTER. OpenSRO's monster ids (combat.Hub)
 // and character ids (the database) overlap, so the kind has to travel with
 // the id, as OpBuffStart's ownerKind does. A server before round 622 answers
 // such a request "malformed request": it names a target that server cannot
@@ -41,7 +41,7 @@ const TargetCharacter uint8 = 3
 // skill id, u32 caster id, u32 and builds the caster's IDecoSkill through
 // FUN_00a54f00) and 0xB071 (the skill acts -- FUN_008a4960 -> FUN_00a56680:
 // u8 kind, u32 cast id, kind 1 forces the cast's SHOT through FUN_00a53090).
-// srrevamp's own layout, sent to every session in the caster's zone except
+// OpenSRO's own layout, sent to every session in the caster's zone except
 // the caster's own (whose client drew the cast when it sent it):
 //
 //	{i64 casterId, u8 casterKind (0 character, 1 monster), i64 skillId,
@@ -130,7 +130,7 @@ const castActMax = 5 * time.Second
 // The retail server posts the cast (0xB070) when its skill tick enters phase
 // 2 and the action (0xB071) when the context builder engages it, which waits
 // CastingTime -- the server's +0x74 already holds PreparingTime + CastingTime
-// (SkillGlobal::PostLoadSkillTable, auto_command.md). srrevamp resolves the
+// (SkillGlobal::PostLoadSkillTable, auto_command.md). OpenSRO resolves the
 // cast itself at once (its blow, heal or buff land when the request is
 // accepted), so only the announcement waits: an observer sees the cast's
 // READY and WAIT run for the row's own time before its SHOT and ACT, as the
@@ -252,13 +252,13 @@ func friendlyTargeted(ref *refdata.Skill) bool {
 
 // friendlyTargetRefusal is the server's target test (FUN_0058d7a0, READ;
 // registers ESI the skill, EBX the caster, EDI the target at 0x58cf3f) for a
-// friendly row, over the two kinds of target srrevamp has, in the engine's
+// friendly row, over the two kinds of target OpenSRO has, in the engine's
 // order:
 //
 //  1. TargetGroup_DontCare (+0x9e) passes anything -- no friendly row
 //     carries it (the census above), so it is not exported;
 //  2. the caster must be a PC (vtable +0x1c) -- it always is here;
-//  3. a target that is an NPC-NPC (+0x24) fails -- srrevamp cannot name one;
+//  3. a target that is an NPC-NPC (+0x24) fails -- OpenSRO cannot name one;
 //  4. **Ally or Party (+0x99/+0x9a) with a target that is not a PC fails** --
 //     a monster;
 //  5. **no Self (+0x98) and the target is the caster fails**;
@@ -277,7 +277,7 @@ func friendlyTargeted(ref *refdata.Skill) bool {
 //
 // Before it, FUN_0058cc70 (the loop over the context's targets) refuses a
 // target that does not resolve or stands where the caster's region test
-// (FUN_00430ce0) fails -- srrevamp: not in the world or not in the caster's
+// (FUN_00430ce0) fails -- OpenSRO: not in the world or not in the caster's
 // zone -- and, without SelectDeadBody, a dead one (life state 2 or 3).
 // Every failure is 0x3006.
 func friendlyTargetRefusal(hub *world.Hub, parties *party.Hub, ref *refdata.Skill, caster world.Entity, targetType uint8, targetID int64) (world.Entity, string) {
@@ -324,7 +324,7 @@ func friendlyTargetRefusal(hub *world.Hub, parties *party.Hub, ref *refdata.Skil
 // `int(dist) <= reach + 2`) for a character target: the same band a monster
 // target gets (skillInReach), with the target's BCRadius the player body's
 // (combat.PlayerBCRadius -- all 52 playable rows read 4). Retail walks the
-// caster into reach instead (phase 1, MoveTowardObject); srrevamp's server
+// caster into reach instead (phase 1, MoveTowardObject); OpenSRO's server
 // cannot walk a player, so the client walks first and the server refuses
 // "too far away" before anything is spent, as it does for a monster (round
 // 534).
@@ -380,7 +380,7 @@ func healCharacter(ctx context.Context, hub *world.Hub, chars character.Store, e
 // startBuffOnLocked starts ref's buff on ownerID, cast by casterID, and tells
 // the owner's zone -- the Target_Required 1 friendly buff (SkillAction_Buff,
 // 0x5830b0, writes ctx+0x20 = 2 on a record it builds for a target that is
-// not the caster: srrevamp's Record.SelfCast is CasterID == OwnerID). A
+// not the caster: OpenSRO's Record.SelfCast is CasterID == OwnerID). A
 // Target_Required 1 row gets no overlap check at the gate (row 16 tests only
 // Target_Required 0 rows without 'lnks'; skill_buffs.md, "The recast rule"),
 // so buff.Books.Start is asked for none. The caller holds ownerID's buff lock.

@@ -1,14 +1,14 @@
 #!/bin/bash
 # Checks a release zip carries the native readers' library where the exported game looks for
 # it (round 668; native/README.md, "CI").
-#   client/tools/check_release_zip.sh dist/srrevamp-windows.zip windows
-#   client/tools/check_release_zip.sh dist/srrevamp-linux.zip linux [--run]
+#   client/tools/check_release_zip.sh dist/opensro-windows.zip windows
+#   client/tools/check_release_zip.sh dist/opensro-linux.zip linux [--run]
 #
 # Every zip must hold, in its one top-level folder: the executable, its .pck, the library
 # NEXT TO the executable (Godot 4.2.2 exports a GDExtension library beside the executable,
 # editor_export_platform_pc.cpp, and OS::open_dynamic_library falls back to the
 # executable's folder when res://native_bin/... is not a real file), and
-# THIRD_PARTY_NOTICES.txt. The .pck must carry srrevamp_native.gdextension and the
+# THIRD_PARTY_NOTICES.txt. The .pck must carry opensro_native.gdextension and the
 # .godot/extension_list.cfg that names it, or the exported game never loads the library.
 # The library itself goes through check_native_library.sh (imports, export, stripped).
 #
@@ -26,14 +26,14 @@ fail=0
 bad() { echo "FAIL $*"; fail=1; }
 
 case "$kind" in
-  windows) top=srrevamp-windows; exe=srrevamp.exe; lib=srrevamp_native.dll; launcher=srrevamp-compatibility.bat ;;
-  linux) top=srrevamp-linux; exe=srrevamp.x86_64; lib=libsrrevamp_native.so; launcher=srrevamp-compatibility.sh ;;
+  windows) top=opensro-windows; exe=OpenSRO.exe; lib=opensro_native.dll; launcher=opensro-compatibility.bat ;;
+  linux) top=opensro-linux; exe=OpenSRO.x86_64; lib=libopensro_native.so; launcher=opensro-compatibility.sh ;;
   *) echo "usage: $0 <zip> windows|linux [--run]" >&2; exit 2 ;;
 esac
 
 listing=$(unzip -Z1 "$zip")
 # The Compatibility launcher (round 693): the way in for a machine without Vulkan.
-for f in "$exe" srrevamp.pck "$lib" THIRD_PARTY_NOTICES.txt "$launcher"; do
+for f in "$exe" OpenSRO.pck "$lib" THIRD_PARTY_NOTICES.txt "$launcher"; do
   grep -qx "$top/$f" <<< "$listing" || bad "$zip has no $top/$f"
 done
 echo "$zip: $(grep -c . <<< "$listing") entries"
@@ -42,10 +42,10 @@ tmp=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/var/tmp}}/check_release_zip.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 unzip -q "$zip" -d "$tmp"
 dir="$tmp/$top"
-if [ -f "$dir/srrevamp.pck" ]; then
-  pck=$(LC_ALL=C grep -aoE 'res://srrevamp_native\.gdextension|srrevamp_native\.gdextension|\.godot/extension_list\.cfg' "$dir/srrevamp.pck" | sort -u || true)
-  grep -q 'srrevamp_native.gdextension' <<< "$pck" || bad "srrevamp.pck does not carry srrevamp_native.gdextension"
-  grep -q 'extension_list.cfg' <<< "$pck" || bad "srrevamp.pck does not carry .godot/extension_list.cfg"
+if [ -f "$dir/OpenSRO.pck" ]; then
+  pck=$(LC_ALL=C grep -aoE 'res://opensro_native\.gdextension|opensro_native\.gdextension|\.godot/extension_list\.cfg' "$dir/OpenSRO.pck" | sort -u || true)
+  grep -q 'opensro_native.gdextension' <<< "$pck" || bad "OpenSRO.pck does not carry opensro_native.gdextension"
+  grep -q 'extension_list.cfg' <<< "$pck" || bad "OpenSRO.pck does not carry .godot/extension_list.cfg"
 fi
 if [ -f "$dir/$lib" ]; then
   bash "$here/check_native_library.sh" "$dir/$lib" "$kind" || fail=1

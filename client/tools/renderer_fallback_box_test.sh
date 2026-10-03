@@ -5,7 +5,7 @@
 #   client/tools/renderer_fallback_box_test.sh <client dir> [out dir]
 #
 # Each case boots the game's own main scene (Boot -> Login) for 200 frames on xwl_run.sh's
-# Xwayland, with SRREVAMP_OVERRIDE_CFG naming a fresh file (RendererChoice writes there instead of
+# Xwayland, with OPENSRO_OVERRIDE_CFG naming a fresh file (RendererChoice writes there instead of
 # beside the executable), and checks Godot's banner and that file:
 #   1. `--rendering-driver opengl3` (the Compatibility launcher's start): Compatibility runs, and
 #      the file records gl_compatibility -- so plain starts and the updater's relaunch stay there.
@@ -19,7 +19,7 @@ D="${1:?client dir}"; O="${2:-/var/tmp/renderer-fallback-test.$$}"
 G="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 P="${PK2_DIR:-/opt/sro-files/client}"
 mkdir -p "$O"
-export SRREVAMP_PK2_PATH=$P/Data.pk2 SRREVAMP_MAP_PK2_PATH=$P/Map.pk2 SRREVAMP_MEDIA_PK2_PATH=$P/Media.pk2
+export OPENSRO_PK2_PATH=$P/Data.pk2 OPENSRO_MAP_PK2_PATH=$P/Map.pk2 OPENSRO_MEDIA_PK2_PATH=$P/Media.pk2
 fail=0
 check() { if [ "$1" = 0 ]; then echo "PASS $2"; else echo "FAIL $2"; fail=1; fi; }
 boot() { # name [env...] -- [godot args...]
@@ -28,7 +28,7 @@ boot() { # name [env...] -- [godot args...]
   while [ $# -gt 0 ] && [ "$1" != -- ]; do envs+=("$1"); shift; done
   shift
   rm -f "$O/$n.cfg"
-  ( cd "$D" && env SRREVAMP_OVERRIDE_CFG="$O/$n.cfg" "${envs[@]}" timeout 120 "$D/tools/xwl_run.sh" "$G" --path . --quit-after 200 "$@" > "$O/$n.log" 2>&1 )
+  ( cd "$D" && env OPENSRO_OVERRIDE_CFG="$O/$n.cfg" "${envs[@]}" timeout 120 "$D/tools/xwl_run.sh" "$G" --path . --quit-after 200 "$@" > "$O/$n.log" 2>&1 )
 }
 banner() { grep -m1 -E "^(Vulkan|OpenGL) API" "$O/$1.log"; }
 recorded() { grep -s "renderer/rendering_method=\"gl_compatibility\"" "$O/$1.cfg" >/dev/null; }

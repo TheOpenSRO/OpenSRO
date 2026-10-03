@@ -3,8 +3,8 @@ package combat
 import (
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/durability"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/durability"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // TestWeaponRangeReadsTheInstance pins the weapon branch of

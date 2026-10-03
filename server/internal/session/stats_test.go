@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
 )
 
 func TestCharacterStatsResultRoundTrip(t *testing.T) {

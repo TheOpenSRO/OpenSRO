@@ -1,7 +1,7 @@
 # The Option window's Video tab
 
 Round 694. What `sro_client.exe` offers on the Video tab of its Option window, what each
-setting does in that client, and what each does in srrevamp. Code: `client/scripts/setting/
+setting does in that client, and what each does in OpenSRO. Code: `client/scripts/setting/
 video_options.gd` (the data), `client/scripts/ui/hud/option_video_page.gd` (the tab),
 `World3D.apply_video_options` (the world). Labels: **READ** (the exe; addresses are its own),
 **MEASURED** (the archive or a run), **INFERRED**, **OURS**.
@@ -159,7 +159,7 @@ the re-application.
 `CGame::FUN_00835000` copies the record in and passes each byte to `SWorld::vslot_043(case,
 value)` (`0xa194a0`), which also stores it at `SWorld+0x2e50 + case*4` (getter `vslot_044`).
 
-| Setting | Original (READ unless marked) | srrevamp |
+| Setting | Original (READ unless marked) | OpenSRO |
 |---|---|---|
 | Resolution | the device mode; in a window also the window: `FUN_00835510` adds WS_CAPTION / WS_SYSMENU (0xC80000), AdjustWindowRect's the client size into a frame and MoveWindow's it centred at ((SM_CXFULLSCREEN - w) / 2, (SM_CYFULLSCREEN - h) / 2) | the OS window's client size (OURS list of usual sizes up to the screen): a maximised window is restored first, the size is cut to the usable area less the frame, the frame centred there, and the node's size checked against the OS window's (round 696, below); listed and applied only at a size whose view (window / UI scale) is at least retail's 800 x 600 minimum (round 696 review); unavailable in full screen, where Godot keeps the desktop's size |
 | Window Mode | device full screen / window (`opt+9`, `0x5fdae0`) | `Window.mode` full screen / windowed, live |
@@ -255,7 +255,7 @@ user's decision replaced it.
 `user://settings.cfg`: `[video]` profile (1 / 2), fullscreen, resolution ("WxH", "" = as
 started); `[video_graphic1]` and `[video_graphic2]`: quality, brightness and every row by name
 (the User values). `[world] water_reflection` (round 628) still wins over the Middle default for a record with no section of its own, and is kept in
-step. QA: `SRREVAMP_QA_VIDEO="quality=0,shadow_detail=2,..."` sets rows for one run, unsaved.
+step. QA: `OPENSRO_QA_VIDEO="quality=0,shadow_detail=2,..."` sets rows for one run, unsaved.
 
 ## Measured (round 694, the box)
 
@@ -264,7 +264,7 @@ step. QA: `SRREVAMP_QA_VIDEO="quality=0,shadow_detail=2,..."` sets rows for one 
   (GL 4.6, RX 7600) -- edge pixels 12555 and checker contrast 0.2943 in all four states,
   pixel-identical; Forward+ (Vulkan, RADV) -- edge pixels 12455 -> 12727 with MSAA, contrast
   0.3557 -> 0.2573 with bias 2. So both rows are Forward+'s, like SSAO (glow was too until the round 702 review; the Bloom row is RetailBloom now, both renderers).
-- **Each row at the Jangan spawn** (one boot, `SRREVAMP_QA_VIDEO_STEPS`, 1280x720, offline,
+- **Each row at the Jangan spawn** (one boot, `OPENSRO_QA_VIDEO_STEPS`, 1280x720, offline,
   pixels differing by more than 2 % from the first default frame; same-settings frames differ
   by 128k-201k from animation alone): Shadow Nothing 743k, Circle 692k (the sun's shadow map
   gone), Very Dark mean grey 0.594 and Very bright 0.815 against 0.681, Background Sight 1

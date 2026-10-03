@@ -6,11 +6,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/storage"
-	"github.com/OpenSRO/srrevamp/server/internal/trade"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/storage"
+	"github.com/OpenSRO/OpenSRO/server/internal/trade"
 )
 
 // Storage (warehouse) opcodes, our own protocol. Requires a prior OpLogin.

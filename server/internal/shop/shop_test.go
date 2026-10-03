@@ -6,16 +6,16 @@ import (
 	"os"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 func testDSN() string {
-	if v := os.Getenv("SRREVAMP_TEST_POSTGRES_DSN"); v != "" {
+	if v := os.Getenv("OPENSRO_TEST_POSTGRES_DSN"); v != "" {
 		return v
 	}
-	return "postgres://postgres:postgres@localhost:5432/srrevamp_test?sslmode=disable"
+	return "postgres://postgres:postgres@localhost:5432/opensro_test?sslmode=disable"
 }
 
 // stubItems is a fixed-answer ItemLookup for tests.

@@ -2,7 +2,7 @@
 // SR_GameServer.exe -- the trader/hunter/thief system, its job guilds, the
 // specialty goods they move, and the flea market.
 //
-// srrevamp has none of this. The package is the recovered rule set.
+// OpenSRO has none of this. The package is the recovered rule set.
 //
 // See docs/protocol/jobs.md.
 package jobs

@@ -919,7 +919,7 @@ number is fifteen and not twenty-one.
 > `0x7b8c91` `je 0x7b8ca6`, and `0x7b8ca6` pushes `0xdc7ea0`, the UTF-16 key
 > `UIIT_MSG_STRGERR_INVENTORY_FULL`. So fourteen of the fifteen remain with no
 > message found. Whether a compare chain in another category
-> catches any of the other fourteen was not searched. Nothing in srrevamp sends
+> catches any of the other fourteen was not searched. Nothing in OpenSRO sends
 > `0x1807`, so nothing changes for a player.
 
 **The membership changed from the withdrawn list**, which is the point of
@@ -1027,7 +1027,7 @@ first half held -- it travels as a value, in a return or a register.
 >
 > These do not share one meaning. The Attach/Detach and EstablishTradeSession
 > sites refuse on INTERACTMODE; the StorageOperation op-type site and the
-> `FUN_00481730` route do not test it. srrevamp's equip refusal is a text
+> `FUN_00481730` route do not test it. OpenSRO's equip refusal is a text
 > (`session.tradeEquipLockedReason`) in its own wording. The engine code it
 > stands for is `0x1834` from StorageOperation's guard, not Attach/Detach's
 > `0x1811`, and the client has no message for `0x1811` in any case.
@@ -1086,15 +1086,15 @@ compare chain that decompiles as `if (param_2 != 0x1807)` rather than a
 `case`. A compare chain with `0x181d` or `0x1833` in some category would also
 be missed. Whether one exists was not searched.
 
-srrevamp models the codes it has state for (`session.handleTradeRequest`,
+OpenSRO models the codes it has state for (`session.handleTradeRequest`,
 round 500): `3` as its own texts "player not found" and "cannot trade with
 yourself", `0x1833` as "already trading", the cancel-and-reopen, `4` as "too
 far away" on request and on acceptance, `0x181e` as "target is busy", `0x182c`
 for a cancel from either side, and `0x1826` for the 30 s timeout. Its replies
 carry texts, not codes. The cancel and the timeout arrive as `OpTradeCancelled`,
-and an empty name marks the timeout as a system cancellation. The codes srrevamp
+and an empty name marks the timeout as a system cancellation. The codes OpenSRO
 does not model are the silent drop at `FUN_004f0a00`, `0x185f`, `0x181d`,
-`0x1840` and `0x0002`. None of them has a state srrevamp keeps.
+`0x1840` and `0x0002`. None of them has a state OpenSRO keeps.
 
 **The sweep reproduces this page's own arithmetic independently.** It finds
 exactly **21** codes at or above `0x100` that no client case names, and this page
@@ -1179,7 +1179,7 @@ two are no longer unexplained.
 > `0x7bbaac`) sends `0x1c0b` to `0x7ba09d`, which pushes `0xdc24d0`
 > `UIIT_MSG_INTERACTION_FAIL_IM_BUSY` -- the row this page's own table carries
 > for it. The claim above was not re-derived this round for `0x1c0d`.
-> Since round 518 srrevamp's client shows that message for a repair refused
+> Since round 518 OpenSRO's client shows that message for a repair refused
 > `0x1c0b` (`client/scripts/net/error_text.gd`).
 
 
@@ -1224,7 +1224,7 @@ The category is picked by the jump table at `0x7bb378`. Index 1 goes to
 pick-up reply is dispatched under category 1 (storage); the real reply's
 category was not read. Under category 1, code `3` would be
 `UIIT_MSG_STRGERR_INVALID_TARGET` (`0x7b8c9c` `push 0xdc7ee0`), so keeping
-srrevamp's own wording for `3` is the conservative side of the same assumption.
+OpenSRO's own wording for `3` is the conservative side of the same assumption.
 
 Four codes the server sends for these two actions are left out. Two have no
 case in the category they would be dispatched under, and two depend on a
@@ -1245,7 +1245,7 @@ category that was not read:
   pick-up reply uses was not read. So which message `4` gets there is open.
 
 The fourth, `3` (the drop that is gone), is one of the nine category-dependent
-codes. srrevamp's own wording stands in for these four codes and for a
+codes. OpenSRO's own wording stands in for these four codes and for a
 key the archive lacks. The resolver checks the key with `has()`, so a missing key
 never shows the raw token.
 
@@ -1280,5 +1280,5 @@ dispatcher reads its category from the first one (`0x7b8b90 movzx eax,BYTE PTR
 
 **`0x4c0d` is left out.** Its index byte (`0x7bbc87`) is `0x41`, the entry
 (`0x7bbc7c`) that sends it to the default, `0x7b913a`, which shows no message.
-It has no row in the table above either. srrevamp shows the server's own wording
+It has no row in the table above either. OpenSRO shows the server's own wording
 for it, as for a key the archive lacks.

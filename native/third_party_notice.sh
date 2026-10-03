@@ -19,8 +19,8 @@ cargo="${CARGO:-cargo}"
 command -v "$cargo" >/dev/null || cargo="$HOME/.cargo/bin/cargo"
 
 case "$target" in
-  *windows*) lib="srrevamp_native.dll" ;;
-  *) lib="libsrrevamp_native.so" ;;
+  *windows*) lib="opensro_native.dll" ;;
+  *) lib="libopensro_native.so" ;;
 esac
 
 # name vX.Y.Z[ (proc-macro)]|licence|repository, once each. Normal and build edges: the
@@ -31,8 +31,8 @@ rows=$("$cargo" tree --locked --manifest-path "$here/Cargo.toml" -e normal,build
 cat <<EOF
 THIRD-PARTY NOTICES
 
-$lib, next to the game's executable, is srrevamp's native asset reader (the source is
-the srrevamp repository's native/ folder, MIT licence). It is built from the Rust crates
+$lib, next to the game's executable, is OpenSRO's native asset reader (the source is
+the OpenSRO repository's native/ folder, MIT licence). It is built from the Rust crates
 below. Each line gives the crate, its licence, and where its exact source can be
 downloaded; https://crates.io/crates/<name>/<version> shows the same.
 
@@ -54,8 +54,8 @@ while IFS='|' read -r pkg licence repo; do
   version="${rest%% *}"
   note=""
   case "$pkg" in *"(proc-macro)"*) note=" (build time only)" ;; esac
-  if [ "$name" = srrevamp_native ]; then
-    echo "  srrevamp_native $version  $licence  (this project, native/)"
+  if [ "$name" = opensro_native ]; then
+    echo "  opensro_native $version  $licence  (this project, native/)"
     continue
   fi
   echo "  $name $version  $licence$note"
@@ -93,7 +93,7 @@ done
 
 if [ -n "$godot_licenses" ]; then
   printf '\n\n================================================================================\n'
-  printf 'srrevamp.exe / srrevamp.x86_64 is the Godot Engine export template:\n\n'
+  printf 'OpenSRO.exe / OpenSRO.x86_64 is the Godot Engine export template:\n\n'
   cat "$godot_licenses"
 fi
 

@@ -24,7 +24,7 @@ import (
 // OURS: 0 stands for "none designated", the character's race's gate
 // (session's return point resolves it). Retail never stores 0 for a living
 // character -- SR_ShardManager's FUN_0042bb20 hands `_AddNewChar` the race's
-// STORE_CH_GATE / STORE_EU_GATE id at creation -- but srrevamp's tables are
+// STORE_CH_GATE / STORE_EU_GATE id at creation -- but OpenSRO's tables are
 // the operator's export, so the id is looked up by the gate's code when it is
 // needed rather than written into rows. Kept off Character, as
 // InventorySizeStore and HeadingStore are, so Character's mapping onto

@@ -11,10 +11,10 @@
 # binaries, the standing probes re-run, and STATUS says what changed. The
 # in-session loop reads STATUS and does the thinking.
 #
-# Install:  crontab -l | { cat; echo "*/15 * * * * /opt/srrevamp-re/re_tick.sh"; } | crontab -
+# Install:  crontab -l | { cat; echo "*/15 * * * * /opt/opensro-re/re_tick.sh"; } | crontab -
 set -u
 
-ROOT=/opt/srrevamp-re
+ROOT=/opt/opensro-re
 LOCK=$ROOT/lock
 LOG=$ROOT/tick.log
 STATUS=$ROOT/STATUS

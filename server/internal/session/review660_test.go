@@ -3,8 +3,8 @@ package session
 import (
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/ai"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/ai"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
 )
 
 // Round 660's review: the brain must run the NEST's radius and the row's

@@ -59,7 +59,7 @@ What still cost time, measured:
 
 ## The third batch: the monster world, rounds 653-666 (2026-09-30 08:16 to 2026-10-01 00:24)
 
-**16 h 08 min from the request to the tag (v0.1.464), 16 h 27 min to srrevamp-01 running it.**
+**16 h 08 min from the request to the tag (v0.1.464), 16 h 27 min to opensro-01 running it.**
 That covers fourteen rounds, which include two the final review added (665, the die-revive
 loop it found live; 666, the deploy guide and its LOWs), plus an infra round (658, restoring the
 user's shard DB). The rounds were far larger than batches one and two, so wall time per round

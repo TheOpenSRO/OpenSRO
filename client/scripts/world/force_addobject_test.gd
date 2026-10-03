@@ -91,9 +91,9 @@ func _test_world() -> void:
 		"World3D.gd has _force_rows_for and placement_model_path (absent before round 643's review)")
 	if not names.has("_force_rows_for"):
 		return
-	var map_path := "user://srrevamp_r643_force_map.pk2"
-	var data_path := "user://srrevamp_r643_force_data.pk2"
-	var media_path := "user://srrevamp_r643_force_media.pk2"
+	var map_path := "user://opensro_r643_force_map.pk2"
+	var data_path := "user://opensro_r643_force_data.pk2"
+	var media_path := "user://opensro_r643_force_media.pk2"
 	_write_pk2(map_path, {"124\\247.o2": _empty_o2()})
 	_write_pk2(data_path, {"prim\\none.txt": "x".to_ascii_buffer()})
 	_write_pk2(media_path, {"server_dep\\silkroad\\textdata\\force_addobject.txt": _table_bytes()})

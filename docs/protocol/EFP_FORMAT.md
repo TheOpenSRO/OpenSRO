@@ -927,7 +927,7 @@ drawn with a guessed colour.
 The census covers every `.efp` in the retail `Particles.pk2` on the RE box. There are two
 implementations:
 - `go run ./cmd/efpcensus -pk2 <Particles.pk2>` from `server/`. The same census also runs as
-  `TestRetailCensus` when `SRREVAMP_PARTICLES_PK2` is set.
+  `TestRetailCensus` when `OPENSRO_PARTICLES_PK2` is set.
 - `client/tools/efp_census.gd`, the GDScript twin.
 
 | | files | % |

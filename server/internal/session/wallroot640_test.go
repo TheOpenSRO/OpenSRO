@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 func (w *wallWorld) pos(t *testing.T) world.Position {

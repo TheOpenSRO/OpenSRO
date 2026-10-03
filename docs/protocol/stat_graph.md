@@ -113,7 +113,7 @@ values that equipment does not touch by either route in this build.
   the block `Char_BuildAggregateStats` fills, and which characterdata columns those are
   has not been traced.
 
-**What this means for srrevamp, and why nothing was changed yet.** `defenderArmor` adds
+**What this means for OpenSRO, and why nothing was changed yet.** `defenderArmor` adds
 armour into the flat term. The engine multiplies: a Strength base scaled by an
 equipment-fed percentage. That is a different model, not a different constant, so
 changing it is a real behaviour change and it needs the two unread pieces above first --

@@ -4,7 +4,7 @@ The largest system in `docs/SYSTEMS.md` by class count — 39 classes — and th
 one with the richest refusal vocabulary in the whole protocol: **111 of the 609
 codes in `docs/protocol/error_codes.md` are fortress codes.**
 
-Implemented as a rule set in `server/internal/siege`. srrevamp has no fortress
+Implemented as a rule set in `server/internal/siege`. OpenSRO has no fortress
 war and is not about to grow one; the point of this page is that building one
 later starts from the game's own numbers.
 

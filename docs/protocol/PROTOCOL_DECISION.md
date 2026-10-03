@@ -9,7 +9,7 @@
 - If that needs a compatibility layer, build one.
 
 **State on 2026-10-01 (MEASURED):** the wire we run is still the placeholder scaffolding described
-below. None of srrevamp's 143 opcodes is a real one (SYSTEMS.md, round 324). The groundwork exists:
+below. None of OpenSRO's 143 opcodes is a real one (SYSTEMS.md, round 324). The groundwork exists:
 - `payload_layouts.tsv` maps 262 real opcodes' field widths;
 - the reply envelope is known: result byte 1 = ok, 2 = u16 error code (rounds 467-468);
 - the handshake is implemented in `server/internal/proto` but not wired in.
@@ -25,8 +25,8 @@ asks (`docs/protocol/opcodes/gateway.md`): the 0x5000 key exchange, the security
 version, 0x6101 -> 0xA101 -- and its shards' real Check / Easy / Populated / Crowded / FULL are shown.
 Nothing past the list (no login). Built twice, `client/scripts/net/retail/` and
 `server/internal/retailgw` (with a fake retail gateway for tests and `cmd/retailgw`), held to the same
-bytes. The `type` key is the user's decision (2026-10-01): required, `legacy` or `srrevamp`; once our
-server speaks the retail wire too, `srrevamp` will mean "also has our extensions". Two limits found:
+bytes. The `type` key is the user's decision (2026-10-01): required, `legacy` or `opensro`; once our
+server speaks the retail wire too, `opensro` will mean "also has our extensions". Two limits found:
 37 of the 255 checksum tables cannot be generated without the binary's bytes (the client reconnects
 instead; `handshake.md`), and which 0xA101 layout the client reads hangs on a mode word whose
 writer is OPEN (the gateway's rule is used). Our server still speaks only its own wire.
@@ -41,7 +41,7 @@ be one more extension message of the kind item 2 below describes (docs/TODO.md).
    (per client version: vSRO, iSRO, ...) and an extension codec.
 2. **Extensions on the same game connection, negotiated.**
    - Keep retail's framing on the one TCP stream.
-   - Our client advertises "srrevamp extensions vN" during the handshake.
+   - Our client advertises "OpenSRO extensions vN" during the handshake.
    - Only then does the server use extension packets, in an opcode range retail never uses, with
      Protobuf payloads so they can evolve.
    - An original client never negotiates, so it never sees them. Our client facing an old server

@@ -117,7 +117,7 @@ func _read_many(reader: Pk2Reader, entry: Pk2Reader.Entry, expected: PackedByteA
 	lock.unlock()
 
 func _test_concurrent_reads() -> void:
-	var path := "user://srrevamp_concurrent_test.pk2"
+	var path := "user://opensro_concurrent_test.pk2"
 	var payload := PackedByteArray()
 	payload.resize(CONCURRENT_PAYLOAD)
 	for i in range(payload.size()):
@@ -173,7 +173,7 @@ func _test_concurrent_reads() -> void:
 	DirAccess.remove_absolute(path)
 
 func _init() -> void:
-	var path := "user://srrevamp_test.pk2"
+	var path := "user://opensro_test.pk2"
 	_build_simple_archive(path)
 
 	var reader := Pk2Reader.open(path)
@@ -190,7 +190,7 @@ func _init() -> void:
 	reader.close()
 	DirAccess.remove_absolute(path)
 
-	var chained_path := "user://srrevamp_chained_test.pk2"
+	var chained_path := "user://opensro_chained_test.pk2"
 	_build_chained_archive(chained_path)
 	var chained_reader := Pk2Reader.open(chained_path)
 	_check(chained_reader != null, "opens synthetic chained archive")

@@ -9,12 +9,12 @@ import (
 	"sort"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/nest"
-	"github.com/OpenSRO/srrevamp/server/internal/session"
-	"github.com/OpenSRO/srrevamp/server/internal/spawn"
-	"github.com/OpenSRO/srrevamp/server/internal/species"
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/nest"
+	"github.com/OpenSRO/OpenSRO/server/internal/session"
+	"github.com/OpenSRO/OpenSRO/server/internal/spawn"
+	"github.com/OpenSRO/OpenSRO/server/internal/species"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // The monster world's nests (round 660). Every placement the server keeps --
@@ -167,7 +167,7 @@ func (s *respawnScheduler) addSlot(sl *nest.Slot) {
 // that rolled champion is a champion, x2 HP; giant x20; the party flag x10 --
 // combat.ScaleHPForMonster), and a champion or giant runs under its tactics
 // row's champion row -- or, when that row does not exist, as the engine's
-// assert path does, with its rank cleared under its own row. srrevamp has no
+// assert path does, with its rank cleared under its own row. OpenSRO has no
 // server-side navigation mesh, so no placement fails.
 func (s *respawnScheduler) hatch(sl *nest.Slot, roll nest.HatchRoll, dx, dz float64) (int64, bool, bool) {
 	d, ok := sl.Data.(*hatchData)
@@ -542,7 +542,7 @@ func logFullMap(logger *slog.Logger, rep fullMapReport, withDB bool) {
 		}
 		logger.Info("full map: swapped spots place the npcpos species; the DB nest's species is not used", "swapped_to_top", top)
 	} else {
-		logger.Info("full map: no nest DB (-nest-db-dir / SRREVAMP_NEST_DB_DIR) -- every npcpos row is a stand-in nest " +
+		logger.Info("full map: no nest DB (-nest-db-dir / OPENSRO_NEST_DB_DIR) -- every npcpos row is a stand-in nest " +
 			"of one monster, respawning 10 s after its death, with the stand-in behaviour (all aggressive, sight 100, " +
 			"give-up 400, roam 200; OURS), and no champions")
 	}

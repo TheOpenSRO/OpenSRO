@@ -47,14 +47,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/buff"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/buff"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // MotionProtectionWall is MOTIONSTATE_SKILL_PROTECTIONWALL (0x11, the
@@ -259,7 +259,7 @@ func toggleOffOnCast(hub *world.Hub, casterID int64, ref *refdata.Skill) bool {
 // toggledOffResult answers the OpUseSkill a toggle-off consumed. The retail
 // server answers the 0x7074 request with 0xB074 result 1 when it queues the
 // action (before the tick ends the toggle) and sends no 0xB070, so the
-// client draws no cast; srrevamp's request has one reply, and this one
+// client draws no cast; OpenSRO's request has one reply, and this one
 // carries no error, no costs and no blow. OURS: the marker Error text is
 // empty and ToggledOff tells the client not to draw a cast.
 func toggledOffResult(req *UseSkillRequest, hp int32) *AttackResult {
@@ -271,7 +271,7 @@ func toggledOffResult(req *UseSkillRequest, hp int32) *AttackResult {
 // endBrokenWall ends ownerID's wall once its HP is 0 and tells the zone:
 // the sub-state 2 tail (buff.Books.EndBrokenWalls). Retail's book update runs
 // it on the next server frame after the blow, so the blow's packet goes
-// first; srrevamp runs it right after the messages that report the breaking
+// first; OpenSRO runs it right after the messages that report the breaking
 // blow (performAttack's counter, the AI's strike), and the toggle ticker
 // catches any other within its poll.
 func endBrokenWall(hub *world.Hub, ownerID int64) {
@@ -301,7 +301,7 @@ func SetMonsterSkillRefs(s SkillRefStore) { monsterSkillRefs = s }
 
 // monsterBlowType is the 'att' value[0] of the skill monster swings: skill
 // itself when named, else the monster's primary range's -- the col-83
-// skill's, which srrevamp knows only through its range: the first of the
+// skill's, which OpenSRO knows only through its range: the first of the
 // monster's skills whose AttMin/AttMax are the monster's own (INFERRED; the
 // Jangan ladder's primaries match that way, cmd/server). A mask with neither
 // bit 4 nor bit 8 known -- no table, an export predating the column -- is
@@ -435,7 +435,7 @@ func togglePass(ctx context.Context, hub *world.Hub, chars character.Store, deps
 // MP -= cost (vslot 0x308(0, cost, 4)); stamp now }` -- a pool equal to the
 // cost pays it and stays at 0. Between the test and the take, a row with
 // 'BDMD' (+0x554) scales the cost by (1 - v/100) with v from the entry
-// FUN_005a0330 finds in the caster's book map (0x58528a..0x5852cb); srrevamp
+// FUN_005a0330 finds in the caster's book map (0x58528a..0x5852cb); OpenSRO
 // keeps no such entries (the passives that file them are not modelled), so
 // the cost is onff[1] (OPEN). The owner's bar is pushed afterwards, as regen
 // pushes it.

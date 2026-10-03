@@ -16,7 +16,7 @@ on:
 jobs:
   release:
     name: Build & Release Client
-    runs-on: [self-hosted, srrevamp-pve]
+    runs-on: [self-hosted, opensro-pve]
     # Bounded (OURS): a stalled step held the only runner for 10+ min on 2026-10-01.
     timeout-minutes: 45
     permissions:
@@ -66,7 +66,7 @@ jobs:
           bash client/tools/bundle_docs.sh
 
       # The native (Rust) asset readers, round 667/668 (native/README.md, "CI"):
-      # srrevamp_native.dll (x86_64-pc-windows-gnu) and libsrrevamp_native.so,
+      # opensro_native.dll (x86_64-pc-windows-gnu) and libopensro_native.so,
       # built before the import so the editor sees the library the
       # .gdextension names, and before the exports so each zip carries its
       # platform's library next to the executable. The toolchain is pinned.
@@ -85,8 +85,8 @@ jobs:
           set -euo pipefail
           native/build.sh linux-release
           native/build.sh windows
-          bash client/tools/check_native_library.sh client/native_bin/srrevamp_native.dll windows
-          bash client/tools/check_native_library.sh client/native_bin/libsrrevamp_native.so linux
+          bash client/tools/check_native_library.sh client/native_bin/opensro_native.dll windows
+          bash client/tools/check_native_library.sh client/native_bin/libopensro_native.so linux
 
       - name: Import project
         working-directory: client
@@ -106,40 +106,40 @@ jobs:
       - name: Export Windows Desktop
         working-directory: client
         run: |
-          mkdir -p build/windows dist/srrevamp-windows/pk2
-          godot --headless --path . --export-release "Windows Desktop" build/windows/srrevamp.exe
-          cp -r build/windows/. dist/srrevamp-windows/
+          mkdir -p build/windows dist/opensro-windows/pk2
+          godot --headless --path . --export-release "Windows Desktop" build/windows/OpenSRO.exe
+          cp -r build/windows/. dist/opensro-windows/
           # Round 693: Forward+ is the default and Godot 4.2.2 does not fall
           # back to OpenGL when Vulkan fails, so a PC without Vulkan starts
           # once through this (RendererChoice remembers it).
-          cp launchers/srrevamp-compatibility.bat dist/srrevamp-windows/
-          cp ../README.md dist/srrevamp-windows/README.md || true
-          bash ../native/third_party_notice.sh x86_64-pc-windows-gnu "${RUNNER_TEMP}/godot_licenses.txt" > dist/srrevamp-windows/THIRD_PARTY_NOTICES.txt
-          cat > dist/srrevamp-windows/pk2/PUT_YOUR_PK2_FILES_HERE.txt <<'EOF'
+          cp launchers/opensro-compatibility.bat dist/opensro-windows/
+          cp ../README.md dist/opensro-windows/README.md || true
+          bash ../native/third_party_notice.sh x86_64-pc-windows-gnu "${RUNNER_TEMP}/godot_licenses.txt" > dist/opensro-windows/THIRD_PARTY_NOTICES.txt
+          cat > dist/opensro-windows/pk2/PUT_YOUR_PK2_FILES_HERE.txt <<'EOF'
           Copy your own real Silkroad Online client's *.pk2 files into this
           folder (Data.pk2, Map.pk2, Media.pk2, at minimum) before running
           the client. This project ships with no game data of its own --
           see docs/LEGAL.md in the source repository for why.
           EOF
-          cd dist && zip -r srrevamp-windows.zip srrevamp-windows
+          cd dist && zip -r opensro-windows.zip opensro-windows
 
       - name: Export Linux
         working-directory: client
         run: |
-          mkdir -p build/linux dist/srrevamp-linux/pk2
-          godot --headless --path . --export-release "Linux" build/linux/srrevamp.x86_64
-          cp -r build/linux/. dist/srrevamp-linux/
-          cp launchers/srrevamp-compatibility.sh dist/srrevamp-linux/
-          cp ../README.md dist/srrevamp-linux/README.md || true
-          bash ../native/third_party_notice.sh x86_64-unknown-linux-gnu "${RUNNER_TEMP}/godot_licenses.txt" > dist/srrevamp-linux/THIRD_PARTY_NOTICES.txt
-          cat > dist/srrevamp-linux/pk2/PUT_YOUR_PK2_FILES_HERE.txt <<'EOF'
+          mkdir -p build/linux dist/opensro-linux/pk2
+          godot --headless --path . --export-release "Linux" build/linux/OpenSRO.x86_64
+          cp -r build/linux/. dist/opensro-linux/
+          cp launchers/opensro-compatibility.sh dist/opensro-linux/
+          cp ../README.md dist/opensro-linux/README.md || true
+          bash ../native/third_party_notice.sh x86_64-unknown-linux-gnu "${RUNNER_TEMP}/godot_licenses.txt" > dist/opensro-linux/THIRD_PARTY_NOTICES.txt
+          cat > dist/opensro-linux/pk2/PUT_YOUR_PK2_FILES_HERE.txt <<'EOF'
           Copy your own real Silkroad Online client's *.pk2 files into this
           folder (Data.pk2, Map.pk2, Media.pk2, at minimum) before running
           the client. This project ships with no game data of its own --
           see docs/LEGAL.md in the source repository for why.
           EOF
-          chmod +x dist/srrevamp-linux/srrevamp.x86_64 dist/srrevamp-linux/srrevamp-compatibility.sh || true
-          cd dist && zip -r srrevamp-linux.zip srrevamp-linux
+          chmod +x dist/opensro-linux/OpenSRO.x86_64 dist/opensro-linux/opensro-compatibility.sh || true
+          cd dist && zip -r opensro-linux.zip opensro-linux
 
       # Both zips must carry their library where the exported game looks for
       # it (next to the executable; Godot 4.2.2's OS::open_dynamic_library
@@ -150,9 +150,9 @@ jobs:
         working-directory: client
         run: |
           set -euo pipefail
-          bash tools/check_release_zip.sh dist/srrevamp-windows.zip windows
-          bash tools/check_release_zip.sh dist/srrevamp-linux.zip linux
-          bash tools/check_release_zip.sh dist/srrevamp-linux.zip linux --run
+          bash tools/check_release_zip.sh dist/opensro-windows.zip windows
+          bash tools/check_release_zip.sh dist/opensro-linux.zip linux
+          bash tools/check_release_zip.sh dist/opensro-linux.zip linux --run
 
       # A test build (workflow_dispatch, no tag) keeps its zips for three days
       # so they can be downloaded and checked without publishing a release.
@@ -160,10 +160,10 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@v4
         with:
-          name: srrevamp-test-build
+          name: opensro-test-build
           path: |
-            client/dist/srrevamp-windows.zip
-            client/dist/srrevamp-linux.zip
+            client/dist/opensro-windows.zip
+            client/dist/opensro-linux.zip
           retention-days: 3
 
       # The release body is the tag's own annotation -- the human changelog
@@ -188,7 +188,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            client/dist/srrevamp-windows.zip
-            client/dist/srrevamp-linux.zip
+            client/dist/opensro-windows.zip
+            client/dist/opensro-linux.zip
           body_path: ${{ runner.temp }}/release_body.md
           generate_release_notes: true

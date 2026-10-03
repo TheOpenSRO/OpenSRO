@@ -3,7 +3,7 @@
 READ from the decompiled client (`/var/tmp/decomp_client`, `/var/tmp/sro_client.asm` and
 `objdump` of `sro_client.exe` on the render box; constants read out of the exe's data) and
 from the asset bytes (Media.pk2, Data.pk2, Particles.pk2). Labels: READ, MEASURED, INFERRED,
-OURS, OPEN. srrevamp builds it in `client/scripts/world/ground_markers.gd`.
+OURS, OPEN. OpenSRO builds it in `client/scripts/world/ground_markers.gd`.
 
 **The click-to-move marker and the selection circle are the same object.** The game process
 owns one `CIODecal`; a ground click moves it to the clicked point with the ground texture, a
@@ -100,7 +100,7 @@ the character walks to the ring; a drag moves neither; a new press does. The 0xB
 (kind 0, `NetProcessInNavAndSkill::FUN_008a5750`) hides the ring and kills or re-arms timer 7 --
 heading moves only.
 
-srrevamp before round 701 clicked on the RELEASE and, after a drag past 6 pixels, re-picked the
+OpenSRO before round 701 clicked on the RELEASE and, after a drag past 6 pixels, re-picked the
 destination under the cursor every physics frame ("the circle will fluidly move around with your
 cursor", playtest 2026-10-03). Round 701 clicks on the press (`World3D._unhandled_input` ->
 `_dispatch_left_click`) and reads nothing while the button is held; the right button's orbit is
@@ -151,7 +151,7 @@ client has no walk on that path: the server walks the attacker into reach (READ:
 attack tick 0x4ad8e0 calls `GObjPC::MoveTowardObject(target, round(stop))` while the target is out
 of reach, docs/protocol/auto_command.md, rounds 247 / 256).
 
-**srrevamp (round 701).** `World3D._start_talk_approach` / `_step_talk_approach`: an NPC beyond 240
+**OpenSRO (round 701).** `World3D._start_talk_approach` / `_step_talk_approach`: an NPC beyond 240
 or a gate beyond 800 is walked to a point `talk_approach_point` drawn in 20..240 (640) on the line
 to the player, the ring placed there; the walk's end opens the talk window if the player is within
 the server's limit (`talk_out_of_range`: 300 / 800, 3-D) -- this client has no select request, so
@@ -162,7 +162,7 @@ click while the target window shows that monster, with Ctrl, or on a double clic
 retail's WM_LBUTTONDBLCLK: `_dispatch_double_click` attacks a monster and ignores the ground, an
 NPC and a gate). An NPC click moves the selection off a monster (`_select_for_talk`); a typing
 lock pauses an approach rather than ending it (OURS). The walk into reach stays this client's
-(OURS: srrevamp's server does not chase). The server needs no change for talking: srrevamp has no
+(OURS: OpenSRO's server does not chase). The server needs no change for talking: OpenSRO has no
 select or talk request, the teleport request has applied the range since round 642, and the shop
 and storage requests carry no NPC to measure (TODO).
 
@@ -230,7 +230,7 @@ The user remembered "a purple circle and a red arrow that points down" on unique
 So in this client a unique has the same orange-red ring as any monster, and no arrow. A
 private server's patched client may differ; that would be a different binary.
 
-## What srrevamp builds (round 698)
+## What OpenSRO builds (round 698)
 
 `GroundMarkers` (one node, `World3D._markers()`): `place_at` on every ground pick that hits
 (`_move_by_pick_ray`, before the click filter), `attach` from the monster clicks (`_ring_on_monster`, not `_show_target`, which a cast at the selection also calls -- retail's casts do not reselect),
@@ -257,7 +257,7 @@ draws the same 12 x 12 square round the point, and need not be rebuilt as the po
 ## On a placed floor (round 701, OURS: the user's decision)
 
 The user checked a live retail server on 2026-10-03: no ring on Jangan's central plaza deck, the
-terrain-only drape above at work ("That seems like a bug we should fix"). So srrevamp departs from
+terrain-only drape above at work ("That seems like a bug we should fix"). So OpenSRO departs from
 retail here, and only here: where the point stands on a placed object's walkable surface the ring
 is draped on that surface; where it stands on the terrain the drape is retail's, unchanged. Every
 number is OURS, named in `GroundMarkers`:

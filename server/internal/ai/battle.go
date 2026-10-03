@@ -28,7 +28,7 @@ package ai
 // to `xor eax,eax`). 1 enables them. OWN DESIGN: the column is server-database
 // only and no roster value was read; 1 is the one value under which the two
 // rules do anything, and a monster that never gives up its target is not what
-// srrevamp wants (Init 0x53f4d0 also asserts an immobile monster with a
+// OpenSRO wants (Init 0x53f4d0 also asserts an immobile monster with a
 // detection distance has +0x79 == 1, monster_ai.md column 35).
 const TacticsChaseSwitch uint8 = 1
 
@@ -97,7 +97,7 @@ const GiveUpCheckPeriodMs = 1500
 // radius is ctx+0x1cc, the nest's own radius (monster_ai.md, column 38's
 // note: AI::CTactics::Attach stores refNest+0x20 there when there is a nest).
 // The multiplier is the same double WithinRoamRadius reads under rule 1
-// (RoamRule1Factor). srrevamp treats each placement as a nest whose position
+// (RoamRule1Factor). OpenSRO treats each placement as a nest whose position
 // is the spawn point and whose radius is session.MonsterRoamRadius (own
 // design, monsterai.go), so the chase item passes those. The reduction can
 // take the threshold below zero, and the engine compares it as it is.
@@ -128,14 +128,14 @@ func ChaseRange(giveUp, roamRadius, distFromHome float64) float64 {
 //     jne 0x545f4e`: only threshold < dist reaches `xor eax,eax`; equal
 //     reaches `mov eax,1` at 0x545f41).
 //
-// nest picks the path; every srrevamp placement is a nest. Not modelled, and
+// nest picks the path; every OpenSRO placement is a nest. Not modelled, and
 // disclosed: on the nest path the engine first asks
 // Location_SameOrAdjacentRegion (0x430ce0 at 0x545ecc) whether the monster's
 // own location record (owner +0x84) and the nest's share a world and lie in
 // the same or an adjacent region, and answers "out" when they do not
 // (`test al,al; je 0x545ea4` at 0x545ed1, `xor al,al`). A region is 1920
 // units, so that needs a monster farther from its nest than
-// TacticsGiveUpDistance lets any chase run under the stand-ins; srrevamp's
+// TacticsGiveUpDistance lets any chase run under the stand-ins; OpenSRO's
 // monsters have no region record to compare anyway.
 func TargetWithinChaseRange(dist float64, chaseSwitch uint8, giveUp float64, nest bool, roamRadius, distFromHome float64) bool {
 	if chaseSwitch == 0 || chaseSwitch == 2 || giveUp == 0 {
@@ -166,7 +166,7 @@ func TargetWithinChaseRange(dist float64, chaseSwitch uint8, giveUp float64, nes
 // test runs only when tactics timer 6 is due (GiveUpCheckPeriodMs). The flag
 // gate is not carried: a row whose +0x90 word has bit 2 or bit 7 gets 0 before
 // anything else (`test cl,4` 0x5483cc, `test cl,cl; js` 0x5483d7; round 421),
-// and srrevamp holds no flag word. Nearer than giveUp, once 5000 ms have
+// and OpenSRO holds no flag word. Nearer than giveUp, once 5000 ms have
 // passed since the last swing (ctx+0xcc: `sub ecx,[esi+0xcc]; cmp ecx,0x1388;
 // jb` 0x54844a..0x548456 returns 0 inside the window), the code is 3 when
 // dist >= 100.0 (the float at 0xb45e10, read: 00 00 c8 42) for a target whose
@@ -175,7 +175,7 @@ func TargetWithinChaseRange(dist float64, chaseSwitch uint8, giveUp float64, nes
 // notice, not a transition (recovered_names.tsv, 0x559ad0), so the chase item
 // has no use for them and this returns 0 there.
 //
-// Under srrevamp's stand-ins (TacticsChaseSwitch 1, TacticsReachRule 0) a 1
+// Under OpenSRO's stand-ins (TacticsChaseSwitch 1, TacticsReachRule 0) a 1
 // is all but unreachable, because the reach test runs first and exits by
 // 0x27. With no nest it never is: within iff dist < giveUp, code 1 iff
 // dist >= giveUp, and the two never both hold. With a nest it is only at dist

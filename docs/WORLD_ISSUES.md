@@ -12,7 +12,7 @@ cause (still needs a real human retest to confirm — see the note below on what
 here), `[?]` investigated, root cause understood, fix not yet possible/safe or not yet found.
 
 - [x] **No log file.** Enabled Godot's built-in `debug/file_logging` (project.godot) — every run
-  now writes `user://logs/srrevamp.log` (a real per-OS path, printed once at boot by `Boot.gd` so
+  now writes `user://logs/opensro.log` (a real per-OS path, printed once at boot by `Boot.gd` so
   it's easy to find without a terminal). README documents the real Windows/Linux paths.
 - [x] **WASD doesn't move the player, arrow keys do.** Root cause: `World3D.gd`'s movement code
   used Godot's *built-in* `ui_left`/`ui_right`/`ui_up`/`ui_down` actions, which are bound to arrow
@@ -97,7 +97,7 @@ real retest confirms it, not just once a plausible fix lands.
 ## Next steps
 
 1. Cut a new build (workflow_dispatch) with all of the above and get it in front of OpenSRO/OpenSRO.
-2. Get the new `srrevamp.log` file back along with the playtest report this time — several of the
+2. Get the new `opensro.log` file back along with the playtest report this time — several of the
    remaining `[ ]` items (grass, scattered objects) may turn out to already be fixed as a side
    effect of the renderer change, or may need the log to diagnose further.
 3. If the coordinate-mismatch item is still wanted, do a deliberate side-by-side comparison against
@@ -126,7 +126,7 @@ run turned up a strong signal that it exercised the **old** build, not the fixed
 - **It loaded pk2 data from `C:\Users\opensro\Downloads\VSRO_Client\VSRO_Client\Data.pk2` instead of
   the local `pk2\` folder** next to the tested exe. `Pk2Config` checks an env var before the local
   folder by design (existing dev/testing convenience) — this means a persistent
-  `SRREVAMP_*_PK2_PATH`-shaped env var is very likely still set on that Windows machine from earlier
+  `OPENSRO_*_PK2_PATH`-shaped env var is very likely still set on that Windows machine from earlier
   dev work, silently overriding the "just drop pk2 files in the folder" flow this project is
   supposed to support for a real downloaded user. Needs confirming/clearing before that flow can
   actually be considered tested.
@@ -143,9 +143,9 @@ run turned up a strong signal that it exercised the **old** build, not the fixed
 - Real pk2/animation scratch data pulled for this check was deleted immediately after
   (`chinaman_skel.bsk`, `chinaman_fighter_standcity.ban`, the throwaway extractor tool/binary), per
   this project's no-persisted-real-assets policy.
-- Waiting on: OpenSRO redownloading `srrevamp-windows.zip` specifically from
-  https://github.com/OpenSRO/srrevamp/actions/runs/32891267640 into a fresh folder and retesting,
-  plus checking for a stray `SRREVAMP_*_PK2_PATH` env var on that machine.
+- Waiting on: OpenSRO redownloading `opensro-windows.zip` specifically from
+  https://github.com/OpenSRO/OpenSRO/actions/runs/32891267640 into a fresh folder and retesting,
+  plus checking for a stray `OPENSRO_*_PK2_PATH` env var on that machine.
 
 ## 2026-08-26, third round — real retest via a Windows Remote Control session: MAJOR bug found
 
@@ -764,7 +764,7 @@ soft ambient-shadow blob than a sky asset, but that's a guess, not a finding, so
 anything.
 
 Full verification: `godot4 --headless --path . --import --quit` and a headless `--quit-after 60`
-boot both clean, no parse/runtime errors. Gated entirely behind `SRREVAMP_MAP_PK2_PATH`/a real
+boot both clean, no parse/runtime errors. Gated entirely behind `OPENSRO_MAP_PK2_PATH`/a real
 `pk2/Map.pk2`, same as every other real-asset loader in this file -- falls back to the original flat
 color with no clouds/sun if unset or the real files aren't found. Not yet visually verified against
 a real playtest screenshot -- needs a real retest.
@@ -884,7 +884,7 @@ well over a hundred real `skill_*`/`skill_ch_*` attack/cast animations. `World3D
 an incomplete list: those two loaded animations are never actually applied to the real assembled
 player body at all.** The only thing that calls `Skeleton3DBuilder.apply_ban_keyframe` every frame
 is `_real_skeleton`/`_real_skeleton_track` -- a completely separate, dev-only decoration-skeleton
-demo path gated behind `SRREVAMP_BSK_PATH`/`SRREVAMP_BAN_PATH`, not the real player. The real
+demo path gated behind `OPENSRO_BSK_PATH`/`OPENSRO_BAN_PATH`, not the real player. The real
 assembled character's own animation playback was **deliberately disabled on 2026-08-26** (already
 documented in-code, in a large comment right above where the call would go) after a real playtest
 showed the assembled body's limbs flying apart the instant it ran -- root-caused at the time to
@@ -1607,7 +1607,7 @@ deleted after use.
 
 Direct response to an open-ended "make it finished" request. Did a real, broad audit rather than
 guessing what to fix next: pulled real `Data.pk2`/`Map.pk2` (deleted after use) and added a temporary
-top-down orthographic debug camera mode (`SRREVAMP_DEBUG_TOPDOWN`, removed before commit) to survey
+top-down orthographic debug camera mode (`OPENSRO_DEBUG_TOPDOWN`, removed before commit) to survey
 large areas of the new Jangan continent (`98/168`, see the fortieth round) at once, plus normal
 ground-level renders.
 
@@ -1637,7 +1637,7 @@ unmodified. `_sky_dome_material` changed from `StandardMaterial3D` to `ShaderMat
 `uv1_offset`).
 
 **Real-verified, not just theorized**: rendered real `98/168` with the camera pitched to 85° and then
-89.5° (near-true-zenith, using a temporary `SRREVAMP_DEBUG_LOOKUP` debug mode, removed before commit)
+89.5° (near-true-zenith, using a temporary `OPENSRO_DEBUG_LOOKUP` debug mode, removed before commit)
 -- both show soft, real, wispy cloud texture with **zero sunburst artifact**, a clean transition to
 the plain sky gradient exactly where the fade completes. This is the real dome's pole, not a
 convenient sub-maximum angle -- the previous bug was confirmed reproducible at exactly this kind of
@@ -1681,7 +1681,7 @@ looks correct at the lower energy too -- tested both zones, not just the one tha
 
 Full verification: all 45 real GDScript test suites pass, `godot4 --headless --path . --import --quit`
 clean. All pulled real data (`Data.pk2`, `Map.pk2`) and the scratch tool (`envprobe_scratch`) deleted
-after use; the temporary `SRREVAMP_DEBUG_UNLIT`/`SRREVAMP_DEBUG_HIDE_UI` diagnostic hooks used to
+after use; the temporary `OPENSRO_DEBUG_UNLIT`/`OPENSRO_DEBUG_HIDE_UI` diagnostic hooks used to
 isolate the bug were fully removed before commit (verified via `git diff`).
 
 ## 2026-09-02, forty-fourth round — cross-region height-mismatch, rigorously measured for the first
@@ -1769,7 +1769,7 @@ artifact -- left alone.
 
 Full verification: all 45 real GDScript test suites pass, `godot4 --headless --path . --import --quit`
 clean. All pulled real data (`Data.pk2`, `Map.pk2`) and the scratch tool (`seamcheck_scratch`)
-deleted after use; temporary `SRREVAMP_DEBUG_HIDE_UI`/`SRREVAMP_DEBUG_LOOKDOWN` hooks fully removed
+deleted after use; temporary `OPENSRO_DEBUG_HIDE_UI`/`OPENSRO_DEBUG_LOOKDOWN` hooks fully removed
 before commit (verified via `git diff`).
 
 ## 2026-09-02, forty-sixth round — THE region bug found and fixed: the region grid's axes were
@@ -2018,7 +2018,7 @@ with real evidence:
   it. Not applied.
 - **Not the `.t` lightmap.** Rendered the same view with the lightmap disabled: essentially identical.
 - **Not the placed objects.** With object loading genuinely disabled (an earlier attempt at this test
-  was invalid -- objects load from region coordinates regardless of `SRREVAMP_MAPO_PATH`), the dark
+  was invalid -- objects load from region coordinates regardless of `OPENSRO_MAPO_PATH`), the dark
   areas in the courtyard are simply real dark paving texture, which is plausibly correct.
 - **Not DXT1 foliage cutout.** `_ALPHA_FOURCCS` excludes DXT1, and real tree branch/trunk cards are
   DXT1, so the theory was that they render as opaque rectangles. Adding DXT1 and letting the existing
@@ -2843,7 +2843,7 @@ diagonal moves sliding rather than sticking.
 
 Objects still render exactly as before, and meshes with no navigation section still
 carry render-mesh collision for the camera. `_try_step_up` stays for terrain.
-`SRREVAMP_NO_NAVMESH_MOVEMENT=1` restores the old physics movement for comparison.
+`OPENSRO_NO_NAVMESH_MOVEMENT=1` restores the old physics movement for comparison.
 
 ## Sixty-fifth round: region streaming was a half-region early, and ponds were dry
 
@@ -3515,7 +3515,7 @@ both latitudes is unverified.
 Three tools came out of this and are worth keeping:
 `server/cmd/whatishere` lists what a region places near a spot,
 `server/cmd/o2sectors` measures the sector/list structure above, and the
-client's own `SRREVAMP_QA_LOOK` / `SRREVAMP_QA_HIDE` hooks report what
+client's own `OPENSRO_QA_LOOK` / `OPENSRO_QA_HIDE` hooks report what
 the camera is pointing at and switch individual meshes off in the built
 world -- which is what identified the wall in the first place, since a
 piece of a big model only means anything in the place the other pieces
@@ -3560,7 +3560,7 @@ west at that same real armour shop steps up onto its terrace and stops
 against its wall, where before they would have carried on into the
 footprint under its floor.
 
-`SRREVAMP_QA_SCAN=n` is the sweep, kept: it reports every spot in the
+`OPENSRO_QA_SCAN=n` is the sweep, kept: it reports every spot in the
 player's region where the graph sits below the geometry, worst first,
 naming the model responsible.
 
@@ -3572,7 +3572,7 @@ gate's arches still read as brick recesses, and this document called them
 wrong, and worth recording as wrong -- reading a rendered image is how
 this project has repeatedly talked itself into the wrong answer.
 
-`SRREVAMP_QA_THROUGH="z0,z1,y[,step];..."` settles it by measurement:
+`OPENSRO_QA_THROUGH="z0,z1,y[,step];..."` settles it by measurement:
 it fires horizontal rays through a band of the region at a given height
 and reports which X spans come out the other side. Reading a mesh file's
 own triangles answers this for one mesh; this answers it for what was
@@ -3649,14 +3649,14 @@ Two guesses were wrong on the way, and both were cheap to test and should
 have been tested sooner: that it was the fog or the aerial-perspective
 term (disabling both changed nothing), and that it was an llvmpipe
 artifact that hardware rendering would clear (it survived the move to the
-GPU unchanged). `SRREVAMP_QA_NOFOG` now hides the dome and the sun glow
+GPU unchanged). `OPENSRO_QA_NOFOG` now hides the dome and the sun glow
 along with the fog, since a shot framing a whole region is by definition
 taken from above the cloud layer.
 
 ## Eighty-second round: scenery standing off the ground, measured
 
 A real playtest walked out of the town gate into the fields and found
-grass clumps hanging in mid-air. `SRREVAMP_QA_FLOAT=<radius>` measures
+grass clumps hanging in mid-air. `OPENSRO_QA_FLOAT=<radius>` measures
 it: for every placed object within the radius it drops a physics ray onto
 the *rendered* terrain of the region that object is actually parented to
 (not the navigation mesh, and not the region the player happens to be
@@ -3760,7 +3760,7 @@ the problem and the decision or its application is.
 ## Eighty-fourth round: three wrong answers from one instrument
 
 Scenery standing off the ground was reported from the fields, and
-`SRREVAMP_QA_FLOAT` was built to measure it. It took three corrections
+`OPENSRO_QA_FLOAT` was built to measure it. It took three corrections
 before it measured the thing it claimed to.
 
 **First version** compared an object against the *navigation mesh* height
@@ -4086,8 +4086,8 @@ disabled until it holds together.
 ## Ninety-first round: measuring the rig, and an instrument that measured too early
 
 Two hooks were added to measure the assembled character rather than
-reason about it: `SRREVAMP_QA_ANIM` plays the animation (off by default,
-so the wrong-looking result is never shipped) and `SRREVAMP_QA_RIG`
+reason about it: `OPENSRO_QA_ANIM` plays the animation (off by default,
+so the wrong-looking result is never shipped) and `OPENSRO_QA_RIG`
 reports, for every piece, where its bone is and where the piece ended up.
 
 **The first run of it was worthless, in an instructive way.** It reported
@@ -4190,7 +4190,7 @@ same frame, and find the first bone at which they diverge.
 ## Ninety-third round: every part of the rig verified correct, and the render still disagrees
 
 Pinning the in-world animation to a chosen frame
-(`SRREVAMP_QA_ANIM_FRAME`) makes the two paths directly comparable, and
+(`OPENSRO_QA_ANIM_FRAME`) makes the two paths directly comparable, and
 on frame 0 they agree **exactly**:
 
 ```
@@ -5167,7 +5167,7 @@ too, since a viewpoint jump is an arrival like any other.
 
 ### The instrument
 
-`SRREVAMP_QA_NAVGAP` reports, for the player's exact spot, every surface the
+`OPENSRO_QA_NAVGAP` reports, for the player's exact spot, every surface the
 walkable graph offers and every solid object covering it. That pairing is
 what settles "am I standing in something" without a screenshot, and it is
 what caught both the real bug and the bad name-matching in the first
@@ -5276,7 +5276,7 @@ predicted exactly this ("adequate for NPCs standing in a town... not a
 solved skinning model"); this round is that prediction being tested and
 holding.
 
-So idle animation is **off by default**, behind `SRREVAMP_IDLE_ANIM=1`. Kept
+So idle animation is **off by default**, behind `OPENSRO_IDLE_ANIM=1`. Kept
 rather than deleted: the pipeline is right and only the skinning model is
 missing, so whatever replaces rigid attachment can switch it on and use the
 same two renders to show it is better.
@@ -5631,7 +5631,7 @@ inventory, the real monster list. Two things fix it:
   `refdata`), each with its own tests, and `main` picks a wiring rather
   than a fork. Worth having on its own: the server is now a single binary
   anyone can run without setting a database up.
-- **`SRREVAMP_QA_SERVER`** plus `qa_shot.sh --server`: the QA run performs
+- **`OPENSRO_QA_SERVER`** plus `qa_shot.sh --server`: the QA run performs
   the same sequence a player does -- connect, register, log in, create a
   character, enter the world -- and hands over to World3D, which reads
   `NetClient.last_enter_world_result` exactly as it does after a real
@@ -6040,7 +6040,7 @@ layer, standing in a crowd would have the camera shoved about by every
 merchant in it.
 
 Verified by measurement rather than by walking into one on camera:
-`SRREVAMP_QA_NPCBODY=1` fires a short horizontal ray at each nearby NPC's
+`OPENSRO_QA_NPCBODY=1` fires a short horizontal ray at each nearby NPC's
 middle and reports the capsule it was given and whether anything stops the
 ray. **5 of 5** in Jangan town. The first run said 4 of 5, and the miss was
 the check's fault rather than the collider's -- two NPCs stand within half a
@@ -6092,7 +6092,7 @@ would turn the far side of a wall into a reference to a real cell.
 
 **Verified two ways.** Every region around Jangan now places 100% of its
 objects (62/62, 90/90, 114/114, 122/122 …) with no "could not be resolved"
-line at all, where the town used to report eight. And `SRREVAMP_QA_SCAN=40`,
+line at all, where the town used to report eight. And `OPENSRO_QA_SCAN=40`,
 which is the measure of this exact symptom, finds **none of the eight** among
 the spots where a player stands under solid geometry -- the 82 that remain
 are Christmas trees, balloons, lion statues and water, which is what walking
@@ -6110,7 +6110,7 @@ The same sweep says 815 objects carry navigation data in no mesh anywhere,
 is not: the region's own `.nvm` terrain edges enclose the palace, so the
 buildings inside it need no walkable mesh of their own.
 
-Checked rather than argued. `SRREVAMP_QA_SCAN=40` over 1,566 sampled spots
+Checked rather than argued. `OPENSRO_QA_SCAN=40` over 1,566 sampled spots
 flags 82, and the objects behind them are **fifteen distinct models, every
 one a canopy or a decoration** -- Christmas trees, dry trees, a water plane,
 event balloons and pillars, a Halloween pumpkin, a lion's pedestal. Not one
@@ -6137,7 +6137,7 @@ through the server, the underbar, and NPCs with the names the game calls
 them.
 
 Also measured this round, and better than the parked note says: within 1,400
-units of Jangan town, `SRREVAMP_QA_FLOAT` finds **four** objects clear of
+units of Jangan town, `OPENSRO_QA_FLOAT` finds **four** objects clear of
 their own ground -- two event doors 14 above and two grass clumps 12 below --
 and none of them is the "large structure standing on its own platform" the
 note describes as the unresolvable case.
@@ -7064,7 +7064,7 @@ Constantinople, Samarkand, Alexandria -- each the zone box's own
 `x/y@localX,localZ` target that was being typed by hand.
 
 Reported and not reproduced: "when I touch a building I get stuck in
-it". Two measurements with the new `SRREVAMP_QA_COLUMNS` probe (what the
+it". Two measurements with the new `OPENSRO_QA_COLUMNS` probe (what the
 walkable graph knows at a column: the navmesh cell's own object list, each
 placed object's cells, footprint and drawn extent, and the blocking edges
 within 40 units), plus a walk:
@@ -7091,8 +7091,107 @@ within 40 units), plus a walk:
 So the report is not this. A Copy from the panel at the moment it
 happens -- position, camera, and what the graph says underfoot -- is
 the next measurement. Alexandria's "things floating in the air":
-`SRREVAMP_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
+`OPENSRO_QA_FLOAT=400` around its spawn (90/48 at 663, 526) finds no
 placed object more than 12 off its region's ground on the box's archive.
+
+## Seven-hundred-and-fourth round: the project is renamed from srrevamp to OpenSRO -- the code, the tools, the deploy files, the docs and every environment variable -- and a player's saved settings follow the client to its new user folder
+
+The user's decision (2026-10-04): the project is **OpenSRO**. A rename only; nothing a player or
+the server does changes, apart from the names below. Labels: OURS = this project's choice.
+
+**The names (the user's decisions, followed as given).**
+
+- `OpenSRO` is the display name and the executable: Godot's `config/name`, the window title,
+  the Windows product name, `OpenSRO.exe` (and `OpenSRO.console.exe`, `OpenSRO.pck`), and the
+  Linux `OpenSRO.x86_64`. The `.pck` must share the executable's base name for Godot to find it,
+  so it follows the executable rather than the lowercase rule.
+- `opensro` everywhere else: the zips `opensro-windows.zip` / `opensro-linux.zip` (their top
+  folders `opensro-windows/`, `opensro-linux/`), the Go module `github.com/OpenSRO/OpenSRO/server`
+  (the repository's path is `OpenSRO/OpenSRO`), the Rust crate and library `opensro_native`
+  (`opensro_native.dll`, `libopensro_native.so`, `client/opensro_native.gdextension`), the
+  Compatibility launchers `opensro-compatibility.bat` / `.sh`, the log `user://logs/opensro.log`,
+  the updater's own files (`opensro_update.zip`, `opensro_update_staging`,
+  `opensro_update_relaunch.bat`, `opensro_update.log`, `opensro_update_cleanup.txt`), the
+  databases `opensro`, `opensro_test`, the compose project and volume, the systemd units
+  `opensro-update.service` / `.timer`, the CI runner label `opensro-pve`, and the box paths
+  `/opt/opensro-client*`, `/opt/opensro-server`, `/opt/opensro-re`.
+- **Environment variables, a clean break**: all 266 `SRREVAMP_*` names (server flags and the
+  client's QA hooks) are `OPENSRO_*`. Nothing reads the old names.
+- **The updater** asks `https://api.github.com/repos/OpenSRO/OpenSRO/releases/latest` for
+  `opensro-*.zip`. A client from before the rename asks for `srrevamp-*.zip` and finds nothing,
+  so it does not update itself: the user accepted that, and players download the new zip once.
+
+**What stayed.** "Silkroad", SRO and every name of the original game's own; the `srr_` prefix
+of the two shader globals (`srr_fog_params`, `srr_fog_color`) and similar internal
+abbreviations, which name nothing a player or operator sees. docs/LEGAL.md had no mention of
+the old name and is unchanged.
+
+**A player's saved settings (UserDataMigration, OURS).** Godot keys the user folder by
+`config/name` (the project sets no `use_custom_user_dir`), so the rename moves it:
+`%APPDATA%\Godot\app_userdata\SRRevamp` becomes `...\OpenSRO`, and the same under
+`~/.local/share/godot/app_userdata/` and macOS's `~/Library/Application Support/Godot/app_userdata/`.
+`client/scripts/setting/user_data_migration.gd` is the project's first autoload -- before the
+Audio autoload reads its options from `settings.cfg` -- and, when the new folder has no
+`settings.cfg` and the old sibling folder exists, copies the old folder's files once
+(`settings.cfg`, `quickslots.cfg`, `screenshots/`; never `logs/`, `shader_cache/` or `vulkan/`,
+and never over a file already there), writes `migrated_from_srrevamp.txt` so it never runs again,
+leaves the old folder as it was, and logs `UserData: copied N file(s) from ... to ...`.
+`user_data_migration_test.gd` builds an old and a new folder and checks the copy, the skipped
+folders, the untouched new log, the once-only marker, a new folder already in use, and a fresh
+install. It also ran for real on the box: the first run of this branch logged
+`UserData: copied 1 file(s) from /home/ghidra/.local/share/godot/app_userdata/SRRevamp to
+.../OpenSRO` (the box's `settings.cfg`).
+
+The two files beside the executable are unaffected by the user folder: `override.cfg`
+(RendererChoice) is only written, never recognised by its header, so an old one keeps working;
+`setting/config.yaml` (ClientConfig) is not shipped in the zip and a private server's file may
+say `type: srrevamp`. ClientConfig still reads that word, as `opensro`, with a warning naming the
+server (`OLD_TYPE_NAME`; a new case in `client_config_test.gd`) -- the one place the old name is
+still read, because skipping the entry would leave a player's login screen without its server.
+
+**Production** is moved by hand, once: deploy/README.md, "Moving an install from srrevamp to
+OpenSRO" (stop the old timer before the rename reaches `dev`; `ALTER DATABASE srrevamp RENAME
+TO opensro`; copy `srrevamp_srrevamp-postgres-data` into `opensro_opensro-postgres-data`; rename
+the variables, DSN and paths in the override; swap the systemd units). `docker-compose.yml` now
+names its project (`name: opensro`), so the volume's name no longer depends on the checkout's
+folder. Left running, the old updater would pull the rename and start a second stack beside the
+first, on an empty database.
+
+**Also in the round.** Five compiled Go binaries had been committed by accident and carried the
+old module path inside them: `server/server` (15 MB), `server/heightat`, `server/o2sectors`,
+`server/whatishere`, `server/wherecoord`. They are out of the tree (kept on disk, `git rm
+--cached`) and in `.gitignore`. `AGENTS.md` says in its opening lines that the project was called
+srrevamp until 2026-10-04.
+
+**What is left with the old name (`git grep -i srrevamp`).** Only the intentional mentions:
+this entry, AGENTS.md's note, deploy/README.md's migration section and the `docker-compose.yml`
+comment pointing at it, `UserDataMigration` (the old folder name, the marker) and its test,
+`ClientConfig.OLD_TYPE_NAME` and its test, and two lines of `client/docs/RELEASE_NOTES.md`,
+which `bundle_docs.sh` copies verbatim from the messages of tags cut before the rename.
+
+**Checks.**
+
+| Check | Result |
+|---|---|
+| `go build ./... && go vet ./... && go test -count=1 -p 1 ./...` against `opensro_test` | all packages ok (the first run caught `internal/systems`' import probe still matching the old lowercase path; fixed) |
+| `cargo test --release --locked` (native/) | 45 passed; Cargo.lock carries the new crate name |
+| `remote_godot.sh check` | 575 scripts and 9 scenes, ALL LOAD |
+| `remote_godot.sh tests`, with `libopensro_native.so` built from this branch | 223 suites, 0 failing; `NativeAssets: native readers ON (library loaded, opensro_native 0.1.0, API 5, .../native_bin/libopensro_native.so)` |
+| a QA run on the box through `qa_shot.sh` with the `OPENSRO_QA_*` hooks | `qa_shot.sh --region '97\168.m' --at 1002,1020` from `/var/tmp/rename704` on Vulkan (RX 7600): the log builds `97\168.m`, which only `OPENSRO_MAPM_PATH` names (the default is 98/168), and 20 frames were written |
+
+No export was made: the box has no Godot export templates and no `zip`. release.yml, the export
+presets and `check_release_zip.sh` were read together instead: the presets export
+`build/windows/OpenSRO.exe` and `build/linux/OpenSRO.x86_64`, the Godot export writes the `.pck`
+and console wrapper beside them under the same base name and copies the `.gdextension`'s
+`opensro_native` library next to the executable, release.yml zips `opensro-windows/` and
+`opensro-linux/` with `opensro-compatibility.*`, and `check_release_zip.sh` fails the release
+unless each zip holds `OpenSRO.exe`/`OpenSRO.x86_64`, `OpenSRO.pck`, the library, the notices and
+the launcher, and the Linux build logs `native readers ON`. The first tagged build is the export's
+real check.
+
+The perf gate was not run: no world, drawing or loading code changed (World3D.gd's changes are
+comments and the hooks' variable names), and the gate cannot compare across this round anyway --
+it drives both builds with `OPENSRO_QA_*`, which the base does not read.
 
 ## Seven-hundred-and-third round: the notice band is drawn as the original's CIFStretchWnd lays it out -- the fill over the text, 40-pixel fades outside it -- the notice text is bold, and walking into a named area raises CIFRegionView's banner from regioncode.txt and textzonename.txt
 
@@ -7104,7 +7203,7 @@ same under Compatibility as under Forward+); the original's "[Smile] has killed 
 but whatever the game files say."
 
 Labels: READ = read from `sro_client.exe` or the data; MEASURED = counted; INFERRED = follows from
-what was read; OURS = srrevamp's choice. `docs/protocol/notice_banner.md` has every address.
+what was read; OURS = OpenSRO's choice. `docs/protocol/notice_banner.md` has every address.
 
 **What the original does (READ).**
 
@@ -7156,7 +7255,7 @@ their alpha.
 - `HudRegionView` (`hud_region_view.gd`): the trigger rule, texts, fade and layout above, from the
   archive (1,862 region ids, 4,142 zone texts parsed in 22 ms on the box).
 - `World3D`: the area banner is built with the HUD and tested in `_update_zone_label_for_region` (every
-  region the player enters) and once when the HUD is built; `SRREVAMP_QA_NOTICES` raises any banner at
+  region the player enters) and once when the HUD is built; `OPENSRO_QA_NOTICES` raises any banner at
   a QA tick (notice, warning, level, unique, region, goto, bands) and logs `QA BANDS` rects.
 
 **Measured, after** (1280 x 720, QA_NOTICES at 240/600/900/1400/1700; Forward+ and Compatibility
@@ -7179,7 +7278,7 @@ only towns; EUROPE_SYSTEM treated as defined (the user's Europe-on choice, round
 under the notices; the bold face from the system's bold file, else a stand-in (see the review); area_deco stretched to
 the window (INFERRED); a missing zone text shows nothing (INFERRED). The user's reference is a
 private server whose archive differs: its title reads "Western China Donwhang" in (169, 246, 253),
-the box's archive "Donwhang" in (61, 253, 255); srrevamp follows the archive.
+the box's archive "Donwhang" in (61, 253, 255); OpenSRO follows the archive.
 
 **Not this round:** the vertical light streak in the user's picture is not drawn by the banner
 (nothing in either banner draws outside its band); INFERRED to be the level-up burst
@@ -7213,7 +7312,7 @@ Nothing HIGH. Fixed:
   The TODO's "no Tahoma" is corrected: the face asked for is Arial; what the box lacks is a system
   Arial Bold.
 - **M2, the area banner under the loading screen (CONFIRMED).** A world entry with the loading
-  screen forced (`SRREVAMP_QA_FORCE_LOADING=1`): `REGION BANNER ... at frame 0`, `LoadingScreen:
+  screen forced (`OPENSRO_QA_FORCE_LOADING=1`): `REGION BANNER ... at frame 0`, `LoadingScreen:
   lifted at frame 26`, and `region grid loaded in 10798 ms ... over 26 awaited frames`. A movie run
   steps 1/60 s a frame, so it lost only 433 ms; a live run's clock is the wall clock, so its 3.5 s
   banner ran out under "NOW LOADING". Now (OURS: retail's loading state at `0x786f30` is not read)
@@ -7277,7 +7376,7 @@ So the user's ordinary state was: Filmic, no glow, the exponential fog, the shad
 100-unit reach, and the player's circle on top of it.
 
 **Measurement** (`qa_shot.sh` shots with the new `|key=value` per-viewpoint settings and
-`SRREVAMP_QA_PATCHES`, QaShotEnv; Jangan spawn (1002, 1020), yaw 0, pitch -30, camera at 20 / 45 /
+`OPENSRO_QA_PATCHES`, QaShotEnv; Jangan spawn (1002, 1020), yaw 0, pitch -30, camera at 20 / 45 /
 90; ground squares of the plaza 15 and 40 units beyond the player and 40 to each side; Forward+,
 1280 x 720; L = mean Rec. 709 luma of the square, c = its standard deviation, the contrast;
 identical-settings shots differ by <= 0.5):
@@ -7358,7 +7457,7 @@ world+0x690c = 0xc6) + 512 x 512 blur x 0.753 (BLENDFACTOR +0x690d = 0xc0); OPTI
   original's 3000 key) instead of Godot's 100. *(Corrected in the review: the key is 10 x the distance
   from the player, so 400.)*
 - QA: `QaShotEnv` (`|tonemap=,sdist=,glow_bloom=` or any Video row per viewpoint),
-  `SRREVAMP_QA_PATCHES`, `QA BLOBS` lines; `SRREVAMP_QA_NOFOG` now turns the pass off.
+  `OPENSRO_QA_PATCHES`, `QA BLOBS` lines; `OPENSRO_QA_NOFOG` now turns the pass off.
 
 ### 4. After (MEASURED, same shots; the default is now Middle with glow)
 
@@ -7474,7 +7573,7 @@ of 2026-10-03). **L6:** OPTION_VIDEO.md's bloom paragraph is the full reading ab
 
 **M1 -- perf with the same settings.** `perf_gate.sh` gained `--env` (both sides) and `--base-env`
 (base side). Both sides were put on Middle through the Apply path the base build does apply
-(`SRREVAMP_QA_VIDEO_STEPS=quality=0|quality=1`), so the comparison is the same rows; Forward+,
+(`OPENSRO_QA_VIDEO_STEPS=quality=0|quality=1`), so the comparison is the same rows; Forward+,
 1280 x 720, median of 3:
 
 | base 34286d92 vs head, both Middle | frame ms | entry ms | freeze ms | hitches |
@@ -7484,8 +7583,8 @@ of 2026-10-03). **L6:** OPTION_VIDEO.md's bloom paragraph is the full reading ab
 | cross | 1.48 -> 1.49 SAME | 10143 -> 10178 SAME | 3322 -> 3331 SAME | 4 -> 4 SAME |
 | crowd (L2: 2,500 monsters, the circles' reselect) | 9.35 -> 9.57 SAME | 10355 -> 10409 SAME | 3308 -> 3309 SAME | 5 -> 5 SAME |
 
-Circle vs Detail on this head (`--base HEAD --env SRREVAMP_QA_VIDEO=shadow_detail=1 --base-env
-SRREVAMP_QA_VIDEO=shadow_detail=2`, jangan): Detail 1.62 ms, Circle 1.52 ms -- **+0.10 ms** (the
+Circle vs Detail on this head (`--base HEAD --env OPENSRO_QA_VIDEO=shadow_detail=1 --base-env
+OPENSRO_QA_VIDEO=shadow_detail=2`, jangan): Detail 1.62 ms, Circle 1.52 ms -- **+0.10 ms** (the
 review measured +2.2 ms before casting was limited to characters). The crowd's +0.2 ms is under the
 gate's threshold; the reselect (a group walk every 6 frames) is kept.
 
@@ -7519,7 +7618,7 @@ offsets, land 19.5 / 39 px apart at 3840 wide: sharp echoes of every edge, and +
   A white bar 1/64 of the width wide: the light the bloom adds beside it falls from 47-50/255 to 0
   with **no echo peak** at either size, in both renderers.
 - **Cost at 3840 x 2160** (`perf_gate.sh` gained `--size`): Bloom on against off on this head
-  (`--base HEAD --env SRREVAMP_QA_VIDEO=bloom=1 --base-env ...=0`, jangan, median of 3):
+  (`--base HEAD --env OPENSRO_QA_VIDEO=bloom=1 --base-env ...=0`, jangan, median of 3):
   **4.03 -> 4.72 ms, +0.69, SLOWER**. Against the base build on the same Video rows (base Middle =
   round 693's Godot glow): 4.37 -> 4.79, +0.42, SAME. Where it goes (`tools/time_retail_bloom.gd`,
   the root viewport's GPU time at 4K over a synthetic picture): nothing 0.14 ms; a stub that only
@@ -7558,7 +7657,7 @@ shadows now, as in the original -- building and hill shadows are the baked ones.
 **L1, L2, L5:** BerserkFlash after the bloom (PLAUSIBLE), the character-create preview not bloomed
 (PLAUSIBLE), and CLAMP against a possible WRAP at the target's edges are in docs/TODO.md.
 
-**Perf, matched settings** (`--env SRREVAMP_QA_VIDEO_STEPS=quality=0|quality=1`, both sides Middle;
+**Perf, matched settings** (`--env OPENSRO_QA_VIDEO_STEPS=quality=0|quality=1`, both sides Middle;
 Forward+, 1280 x 720, median of 3; the head carried the grid bloom and OverlayView):
 
 | base 34286d92 vs head | frame ms | entry ms | freeze ms | hitches |
@@ -7655,7 +7754,7 @@ neither; a new press does. No camera drag on the left button.
 **Live, real X input** (MEASURED; the box, Xvfb, `xdotool mousedown / mousemove_relative /
 mouseup / click`, a server built from this tree, `-in-memory -gm-accounts qa` with a transient
 chargen CSV, the QA character stood at the Jangan spawn 97/168 local (1002, 1020) on the plaza
-deck, `SRREVAMP_QA_MARKER=1`, `SRREVAMP_QA_NAVTRACE=2`; scratch driver, not committed):
+deck, `OPENSRO_QA_MARKER=1`, `OPENSRO_QA_NAVTRACE=2`; scratch driver, not committed):
 
 | Run | Input | Log |
 |---|---|---|
@@ -7747,19 +7846,19 @@ monster", has the full record.
   target window); `FUN_00792f00` sends the attack 0x7074 only with Ctrl, or when the monster is
   already the selection with the target window up, or on a double click (`FUN_00792190`). Who
   walks into reach is the server (READ in the review: the attack tick 0x4ad8e0 calls
-  `GObjPC::MoveTowardObject`); srrevamp's client walks (OURS, as
+  `GObjPC::MoveTowardObject`); OpenSRO's client walks (OURS, as
   before).
 - **Cancelling**: a ground click clears the pending id (`FUN_009ec570`: +0x20 = 0). Ours drops it
   on any new click, death, a zone change or the target going (OURS beyond the ground click).
 - **The server**: the select handler (0x50faf0) refuses beyond `IsWithinInteractionRange` (300 for
-  an NPC, 800 for a structure), silently on the client. srrevamp has no select request: the
+  an NPC, 800 for a structure), silently on the client. OpenSRO has no select request: the
   arrival applies that limit itself. The teleport request has applied it since round 642; the shop
   and storage requests name no NPC, so the server cannot (TODO). No server code changed.
 
 **Built**: `World3D._start_talk_approach`, `_step_talk_approach`, `talk_needs_approach`,
 `talk_approach_point`, `_walkable_point` (the graph's landing height under the point, OURS),
 `monster_click_attacks`; `_dispatch_left_click` answers `approach` and `select_monster`. QA:
-`SRREVAMP_QA_CLICK_STANDOFF` ("npc=330,gate=880:-x,monster=280") stands the QA click's player
+`OPENSRO_QA_CLICK_STANDOFF` ("npc=330,gate=880:-x,monster=280") stands the QA click's player
 that far short on a chosen side.
 
 **Live, real X input** (MEASURED; Compatibility, a server from this tree, xdotool clicks at the
@@ -7811,7 +7910,7 @@ The review found nothing HIGH. Fixed here:
    the floor test for the next three physics frames (`GroundMarkers.objects_changed`); a floor whose
    every triangle is rejected falls back to the terrain drape instead of drawing nothing.
 8. **L8**: timer 7 is also armed by the arrow-key walks `FUN_0077b070` / `FUN_00780610` (heading
-   runs; the conclusion stands). `SRREVAMP_QA_CLICK=monster` now selects only: a QA attack is
+   runs; the conclusion stands). `OPENSRO_QA_CLICK=monster` now selects only: a QA attack is
    `monster,monster` (World3D's QA notes; RE_COMPLETION's round record annotated).
 
 Tests added: talk_approach_test (+6: the lock pauses and resumes, the double click neither re-rolls
@@ -7883,7 +7982,7 @@ row click each closed it; the row click set Low.
   `combat.CellOf`). No talk / teleport / attack range lives in the hover; the click side is round
   701's (CURSOR.md notes `GObjPC::IsWithinInteractionRange`, round 642).
 
-**Live** (`qa_shot.sh`, Jangan 97/168, `SRREVAMP_QA_CLICK="gate@80,...,gate@1300"`: stand d units
+**Live** (`qa_shot.sh`, Jangan 97/168, `OPENSRO_QA_CLICK="gate@80,...,gate@1300"`: stand d units
 south of STORE_CH_GATE's 20 x 50 x 20 box, aim at it, hover only):
 
 | d | Hover | Log |
@@ -8052,7 +8151,7 @@ decompile, `sro_client.asm`, `objdump`; the asset bytes), MEASURED, INFERRED, OU
 and the QA attack's two stand-ins (not `_show_target`: a cast at the selection re-shows the
 window there, and retail's casts do not reselect); `attach` in `_select_character` and
 `_try_talk_to_npc` (not for a gate); `heading_move` in `_start_heading_run`; `hide_marker` on a
-zone change; `step` after `_physics_step`. `SRREVAMP_QA_MARKER=1` logs each change and each
+zone change; `step` after `_physics_step`. `OPENSRO_QA_MARKER=1` logs each change and each
 drape's measurement.
 
 OURS (each in the code): the drape lifted 0.05; its cells split the way our terrain mesh splits
@@ -8062,8 +8161,8 @@ start (no echo here); culling off.
 ### 4. Measurements
 
 Live (MEASURED, render box, `--server` in Jangan's zone frame -- region 98/168 -- QA account,
-`SRREVAMP_QA_MARKER=1`, `SRREVAMP_QA_CLICK="ground,wait:150,monster,wait:150,npc,wait:120"`,
-`/spawn mangyang 1` and `/spawnunique 1954` from the GM console, `SRREVAMP_QA_MARKER_VIEW=-62,70`;
+`OPENSRO_QA_MARKER=1`, `OPENSRO_QA_CLICK="ground,wait:150,monster,wait:150,npc,wait:120"`,
+`/spawn mangyang 1` and `/spawnunique 1954` from the GM console, `OPENSRO_QA_MARKER_VIEW=-62,70`;
 run 5 Forward+ on the RX 7600 through `xwl_run.sh`, run 6 Compatibility through VirtualGL; the
 in-memory server needs a chargen CSV to create the QA character, made transiently with
 `export-refdata -mode chargen` and deleted):
@@ -8163,7 +8262,7 @@ it's authentic and usable."
 ### 1. Why the user never saw a cursor
 
 Round 206 already read the cursors out of the exe, but `World3D` looked for it only at
-`$SRREVAMP_PK2_PATH`'s folder. A player's build finds its archives in the `pk2` folder by
+`$OPENSRO_PK2_PATH`'s folder. A player's build finds its archives in the `pk2` folder by
 `Pk2Config` WITHOUT that variable, so the path was empty and the system arrow stayed -- for every
 player, on every screen. And the user's install is a bare `pk2/` folder with no exe in it.
 
@@ -8211,7 +8310,7 @@ reaches this client).
 ### 3. What changed
 
 - **`CursorSet`** (`client/scripts/ui/cursor_set.gd`): every id named; `exe_candidates` -- the
-  `SRREVAMP_CLIENT_EXE` override (OURS), then for `sro_client.exe` and the vSRO
+  `OPENSRO_CLIENT_EXE` override (OURS), then for `sro_client.exe` and the vSRO
   `sro_client_NODLL.exe` (same 16 images, MEASURED; the launcher `silkroad.exe` has 1-bit system
   cursors and is refused) the Data.pk2 folder, its parent, our exe's folder; `load_first` keeps the
   first that carries 0x95; `scaled` (nearest-neighbour, `round(32k)` clamped to 256, hotspot
@@ -8227,7 +8326,7 @@ reaches this client).
   (`gate_point_id`) 0xa1 -- **before, a gate showed the NPC bubble** -- or NPC 0x98, else 0x95; the
   hover follows the mouse with the left button held; a `CURSOR: <kind> (0x..) at (x, y)` log line
   per change; leaving the world puts 0x95 back; the ground pick suspends and resumes the game
-  cursor. QA: `SRREVAMP_QA_CLICK` gained `item` (the nearest drop, retried until one falls).
+  cursor. QA: `OPENSRO_QA_CLICK` gained `item` (the nearest drop, retried until one falls).
 - **Scale (OURS, the user's decision):** by `content_scale_factor`, nearest-neighbour. Godot 4.2.2
   does not rescale again (`DisplayServerWindows::cursor_set_custom_image`: a DIB at the texture's
   pixel size through `CreateIconIndirect`, DPI-aware process). At 4K with UI scale 2.0 the cursor
@@ -8289,7 +8388,7 @@ The gate's views move no mouse, so the classification itself was timed by the QA
 33 us, the ground 22 and 22 us -- once per 250 ms while the mouse is over the world, so under 0.2 us
 per millisecond of play. The cursor images are made once per UI scale and cached; a hover change
 hands Godot a texture it already has. (A first timing run went to the box's default
-`/opt/srrevamp-client` -- qa_shot's `CLIENT_DIR` default -- and timed the old code; its numbers are
+`/opt/opensro-client` -- qa_shot's `CLIENT_DIR` default -- and timed the old code; its numbers are
 not used.)
 
 ### 7. OPEN (docs/TODO.md "The mouse cursor")
@@ -8641,7 +8740,7 @@ Compatibility. The run decoded 44 such textures to RGBA8 (QA ENTRY's `dxt1_alpha
 12.8 MB as RGBA8 against 1.6 MB as DXT1, so 11.2 MB more video memory there.
 
 **At the user's preset (High: Texture Filtering On = MSAA 2x under Forward+, Texture Detail High,
-`SRREVAMP_QA_VIDEO=quality=2`) the result is the same:** pixels off by more than 32 against
+`OPENSRO_QA_VIDEO=quality=2`) the result is the same:** pixels off by more than 32 against
 Compatibility 0.044 / 0.040 / 0.044 before, 0.000 / 0.002 / 0.001 after; the far view's sky
 0.4645 before, 0.5343 after. And the card measurement with the SubViewport at MSAA 2x
 (`--msaa=2`): before 0.0000 for all nine, after all nine MATCH. So MSAA, the mip bias and the
@@ -8693,7 +8792,7 @@ line below). At 1:1 the filter no longer magnifies anything; NEAREST is not want
 | 1.95 | 343x621 | 176x318 | 343x621 | 0.512 / 1.000 |
 | 2.00 | 352x636 | 176x318 | 352x636 | 0.500 / 1.000 |
 
-**MEASURED in the game (Forward+, 3840x2160, `SRREVAMP_QA_UI_SCALE=2.0`, the inventory open at
+**MEASURED in the game (Forward+, 3840x2160, `OPENSRO_QA_UI_SCALE=2.0`, the inventory open at
 the Jangan spawn, the China fighter in the starter set):** the log says `ViewportPixels: PaperDoll
 (176, 318) -> (352, 636) for (176, 318) UI units x (2, 2) on screen (drawn with filter linear (the
 viewport's default))`. In the frame, over a 200x520 box on the doll's body: mean |Laplacian| of luma
@@ -8904,15 +9003,15 @@ this round" (below, section 4's first gate measured that); the user replaced it.
   Middle default (the user's), storage under `[video]`, `[video_graphic1]`, `[video_graphic2]` (rows by name; `[world]
   water_reflection`, when stored, wins over the default and then follows), `apply_post_effects` (the one settings->environment
   function; defers to round 693's `WorldPostEffects.apply` when present), `apply_brightness`,
-  `apply_display`, `apply_viewport`; QA `SRREVAMP_QA_VIDEO`.
+  `apply_display`, `apply_viewport`; QA `OPENSRO_QA_VIDEO`.
 - `ui/hud/option_video_page.gd` (new, `OptionVideoPage`): the tab over pane 78 -- combos with
   CNIFComboBox's READ arrow art, the scroll bar with CNIFVerticalScroll's READ art, radio check
   boxes, the Graphic tabs as two records, tooltips from the archive, greyed rows.
 - `option_window.gd`: builds the page; Default on the Video tab; Apply / Confirm store it and
   emit `video_applied`; `hud_panels.gd` re-emits it (`video_options_applied`) and prints
-  `QA RECT` lines under `SRREVAMP_QA_UI_RECTS=1`.
+  `QA RECT` lines under `OPENSRO_QA_UI_RECTS=1`.
 - `World3D.gd`: `apply_video_options` (once at `_ready`, again on every Apply), the fog / far
-  factors, the character range, `SRREVAMP_QA_VIDEO_STEPS`. `MapAnimation.object_range` follows the
+  factors, the character range, `OPENSRO_QA_VIDEO_STEPS`. `MapAnimation.object_range` follows the
   view distance; `WaterReflection.target_rows` follows Water Detail; `SkillEffects.quality` gates
   effects; `Boot.gd` applies the window and brightness before the login screen.
 
@@ -8925,7 +9024,7 @@ this round" (below, section 4's first gate measured that); the user replaced it.
   bar reaches SSAO / Bloom / the renderer, greyed; a Shadow change then Cancel applies nothing;
   Default + Confirm puts the defaults back; High + Light + Third Person + 1024 x 768 + Confirm
   resizes the window to 1024x768 (`xdotool getwindowgeometry`). Restarted with the same HOME the
-  world applies High / Light again, and a real start (Boot) logs `SRRevamp video: graphic 1,
+  world applies High / Light again, and a real start (Boot) logs `OpenSRO video: graphic 1,
   quality 2, brightness 3, fullscreen false, resolution 1024x768` and opens a 1024x768 window.
 - **MSAA and mip bias** (a synthetic probe scene): pixel-identical under Compatibility; under
   Forward+ edge pixels 12455 -> 12727 (MSAA) and checker contrast 0.356 -> 0.257 (bias 2). Hence
@@ -9062,7 +9161,7 @@ source, sro_client.exe's dump), MEASURED (the render box, RX 7600, real archives
     every start;
   - by a start with `--rendering-driver opengl3` when no choice is recorded yet, so plain starts
     and the updater's argument-less relaunch stay on Compatibility. The release zips now carry
-    `srrevamp-compatibility.bat` / `.sh` for that first start. **Corrected by the review below:**
+    `opensro-compatibility.bat` / `.sh` for that first start. **Corrected by the review below:**
     that cut looked for the flag in `OS.get_cmdline_args()`, which never holds it, and never wrote
     the file. It now decides from the renderer running.
   - Boot prints `RENDERER: running=... adapter=... override=... chosen=...`.
@@ -9153,7 +9252,7 @@ and clouds); the rest are pixel-identical.
 - READ: GLES3 draws a shadowed directional light in an additive pass, tone-mapped and encoded on
   its own, then added in display values (scene.glsl 1805-1808). So with shadows on it adds enc(a) +
   enc(b) rather than enc(a + b).
-- In the world (new `SRREVAMP_QA_NOSHADOW`): Jangan spawn's lower band is GL 70.7 with shadows and
+- In the world (new `OPENSRO_QA_NOSHADOW`): Jangan spawn's lower band is GL 70.7 with shadows and
   58.7 without, against Forward+ 56.9 either way. With shadows off the gap is -3.6 instead of
   -14.6.
 - So the look Compatibility showed since round 581 includes that over-brightening. Forward+ draws
@@ -9296,7 +9395,7 @@ areas look as they did under Compatibility.
     `FOG_SUN_SCATTER / sun_scale()`;
   - the sky's sun disc and halo (GammaSkyMaterial's `sun_energy_scale`).
   Neither moved any measured shot; they are kept so the factor reaches only the lit surfaces.
-- `SRREVAMP_QA_SUN_SCALE` overrides the factor under Forward+ (QA only).
+- `OPENSRO_QA_SUN_SCALE` overrides the factor under Forward+ (QA only).
 - **Compatibility is untouched:** its factor is 1, and `world_post_effects_test` checks it.
 
 **Calibration (MEASURED, frame_ab.py):** Jangan (no fog) and the Dunhuang reeds against the
@@ -9378,7 +9477,7 @@ costs nothing.
 - When the folder cannot be written (Program Files), the RENDERER line now says so in plain words,
   and the README says to install in a folder you own.
 - **Windowed box test** (new `client/tools/renderer_fallback_box_test.sh`: real starts of the game's
-  own main scene on xwl_run.sh, `SRREVAMP_OVERRIDE_CFG` set). This tree: ALL PASS.
+  own main scene on xwl_run.sh, `OPENSRO_OVERRIDE_CFG` set). This tree: ALL PASS.
 - **NEGATIVE** (c18419dc's client with the same library):
   - `FAIL 1. ... and records it for the next start ()`
   - `FAIL 3. ... the native probe says why ()`
@@ -9394,7 +9493,7 @@ costs nothing.
     extensions and a physical device;
   - on failure, starts the game again with `--rendering-driver opengl3` (before any `--`) and ends
     this start (exec on Linux; spawn + TerminateProcess on Windows).
-  - `SRREVAMP_VK_PROBE` carries the result: Boot logs it, and RendererChoice records the
+  - `OPENSRO_VK_PROBE` carries the result: Boot logs it, and RendererChoice records the
     Compatibility start.
 - **MEASURED on the box** (the editor binary running the project windowed, plain start, no
   renderer flag):
@@ -9466,7 +9565,7 @@ that."
 `_RefCharGen` holds 104 rows, all Service 1. Their RefObjIDs against the rule's:
 - the server's (`chargen.csv` from `cmd/export-refdata -mode chargen` on the box's archive,
   `/var/tmp/lobby682/chargen.csv`): **identical**, 104 = 104, none missing, none extra
-  (`TestRefCharGenAgreesWithTheRule` with `SRREVAMP_TEST_CHARGEN_CSV` / `SRREVAMP_TEST_REFCHARGEN_CSV`
+  (`TestRefCharGenAgreesWithTheRule` with `OPENSRO_TEST_CHARGEN_CSV` / `OPENSRO_TEST_REFCHARGEN_CSV`
   set: `rule 104 ids, _RefCharGen 104 ids, missing 0, extra 0`);
 - the client's (`CharCatalog.from_archive` on the box's Media.pk2, a throwaway script run through
   `remote_godot.sh script`, not committed): **identical**, `CATIDS 104 ...`, `diff` empty.
@@ -9493,12 +9592,12 @@ _RefCharGen ids=104`).
 - **`_DeleteCharTemporal`**: stamps `_DeletedChar` with GetDate() and sets Deleted 1 (refusing id 0
   and an already-deleted character); no guild or time check. **`_DeleteCharPermanently`**: refuses
   before **6 days 23 hours** ("roughly 7 days ... an hour's error is allowed"). So the delay is 7 days,
-  the ShardManager's timer, which srrevamp's `DeleteDelay` (the user's 7 days) already is.
+  the ShardManager's timer, which OpenSRO's `DeleteDelay` (the user's 7 days) already is.
 - **`_ReviveChar`**: needs the `_DeletedChar` row and Deleted 1; removes the row, Deleted 0. No time
-  check. srrevamp's restore is the same. `_RecoverDeletedChar` is disabled in this package.
+  check. OpenSRO's restore is the same. `_RecoverDeletedChar` is disabled in this package.
 - **`_IsExistingCharName`**: `=` against `_CharNameList` (pending characters' names included) and
   `_CharNickNameList`. Case follows the DB collation, not exported (INFERRED case-insensitive);
-  srrevamp compares without case, as before (OURS until settled).
+  OpenSRO compares without case, as before (OURS until settled).
 
 ### 3. What changed
 
@@ -9509,7 +9608,7 @@ _RefCharGen ids=104`).
   quests' ids, so the defaults cannot be accepted as quests). A failure is
   logged, as the items' is (OURS; the procedure rolls the whole create back).
 - **The tables** (`refdata/chardefaults.go`): read as exported (header checked, BOM and CRLF
-  accepted) from `-chardefaults-dir` / `SRREVAMP_CHARDEFAULTS_DIR`; `Race = Country or 3` (READ).
+  accepted) from `-chardefaults-dir` / `OPENSRO_CHARDEFAULTS_DIR`; `Race = Country or 3` (READ).
   Unset: no-op, and the server warns at boot that new characters get no defaults.
 - **The ammunition** is the procedure's 250 (`session.AmmoStartQuantity`; INFERRED that the 250 is
   the count, `_FN_ADD_INITIAL_EQUIP` was not exported), not round 682's full stack of 2,500 (OURS).
@@ -9551,7 +9650,7 @@ lobbydefaults692_test.go:115: Hanshin: default quests [], want [QSYN_ALL QSYN_CH
 lobbydefaults692_test.go:100: Viktor: masteries [], want [9101 9301]
 lobbydefaults692_test.go:104: Viktor: skills [], want [8101 8301]
 lobbydefaults692_test.go:115: Viktor: default quests [], want [QSYN_ALL QSYN_EU]
-FAIL	github.com/OpenSRO/srrevamp/server/internal/session
+FAIL	github.com/OpenSRO/OpenSRO/server/internal/session
 ```
 
 and `internal/refdata [build failed]` (`undefined: LoadCharDefaultsDir`, ...) without
@@ -9573,7 +9672,7 @@ ids=104`; without the flag, the WARN. No client change; `remote_godot.sh check` 
 
 ### OPEN
 
-- srrevamp-01: stage the tables and set `SRREVAMP_CHARDEFAULTS_DIR` (deploy/README.md, "Character
+- opensro-01: stage the tables and set `OPENSRO_CHARDEFAULTS_DIR` (deploy/README.md, "Character
   defaults"); until then new characters get no defaults there.
 - Default quests are recorded, not started: the quest system has no real quests (and its ids 1, 2
   collide with real ones). The higher-level default rows (RequiredLevel 5..60): when they are given
@@ -9586,7 +9685,7 @@ ids=104`; without the flag, the WARN. No client change; `remote_godot.sh check` 
 - Decisions 10-12: the procedure's gold/SP, the shard's kit edit, Europe's tutorial.
 - Characters created before this round have no default masteries or skills (no backfill).
 - On a server without skill refdata, skill ids 1 and 2 still fall back to `skill.Catalog`'s invented
-  "Power Strike" / "Whirlwind" (the known collision); srrevamp-01 has skill refdata.
+  "Power Strike" / "Whirlwind" (the known collision); opensro-01 has skill refdata.
 - A create whose defaults fail is kept (logged), where the procedure would roll it back (OURS).
 
 ### Review (round 692's review, fixed in a second commit)
@@ -9596,7 +9695,7 @@ additive and idempotent, level-0 rows tripping no cap, and the round composing w
 uncommitted work. It asked for six fixes:
 
 1. **MEDIUM, collation.** `SQLStore.DefaultQuests` ordered by `quest_code` in the database's own
-   collation: en_US.utf8 on CI's postgres:16 and srrevamp-01, C in the local test DB, bytes in the
+   collation: en_US.utf8 on CI's postgres:16 and opensro-01, C in the local test DB, bytes in the
    memory store. Now `ORDER BY quest_code COLLATE "C"`, and the test's codes (`QSYN_A`, `QSYNB`)
    sort one way by bytes and the other under en_US, so a collation-dependent order fails it. (The
    local DB is SQL_ASCII with no en_US collation, so the en_US half is CI's to exercise.)
@@ -9605,7 +9704,7 @@ uncommitted work. It asked for six fixes:
    (made-up ids and codes covering Race 0/1/3, a Race 2 row, a duplicate, and the RequiredLevel and
    Service filters), charselect.md, TODO.md and this entry give the rule and the counts (China
    7/4/3, Europe 6/10/2; the public mastery ids), and `refdata.TestCharDefaultsRealExport` checks the
-   real export when `SRREVAMP_TEST_CHARDEFAULTS_DIR` names it (run here: PASS, counts as above, no
+   real export when `OPENSRO_TEST_CHARDEFAULTS_DIR` names it (run here: PASS, counts as above, no
    warnings), skipping otherwise. deploy/README's "never in this repo" now holds. The first commit's
    message and diff still carry the rows; only history keeps them.
 3. **LOW, `_RefQuest`.** The procedure inserts only codes with a `_RefQuest` row; recording every
@@ -9638,7 +9737,7 @@ skills." This lane (euroskill691) is the skills; skin and animation are world689
   WHERE Race = @country or Race = 3`; the table's 13 rows are Race 0: 257 258 259 273 274 275 276,
   Race 1: 513 514 515 516 517 518 (no Race-3 row). `_RefCharDefault_Skill` gives Race 3 skill 1
   (the punch), Race 0 the three CH base attacks, Race 1 the nine EU base attacks (8419 8420 8421
-  9354 9355 9944 10625 11162 11526) -- srrevamp already picks the base attack by weapon
+  9354 9355 9944 10625 11162 11526) -- OpenSRO already picks the base attack by weapon
   (`combat.BaseAttackSkillFor`), so those need nothing.
 - **The game server refuses another race's mastery by the list, not by a race test.**
   `FUN_0059d6f0` looks the id up in the character's mastery map (+0x234) and answers 0 for one it
@@ -9695,14 +9794,14 @@ Str/Int clauses, the second mastery slot (refdata carries Mastery1 only).
 
 Client -- `MasteryReader.parse_all/for_race/race_of_masteries` and `RACE_MASTERIES`; HudPanels
 takes the race from the server's mastery list (`set_skill_state`; `set_skill_race`; QA
-`SRREVAMP_QA_SKILL_STATE=race=1`), reads that race's skill files (`SkillDataReader.tables_for_race`;
+`OPENSRO_QA_SKILL_STATE=race=1`), reads that race's skill files (`SkillDataReader.tables_for_race`;
 the other race's only on a lookup miss), shows the total against `mastery_total_cap(race, level)`,
 falls back to Melee/Caster/Buff (OURS words, the archive's own English) for an unresolved Europe tab,
 resolves Europe mastery names through the skill-name table, and adds the cast weapon to a skill's
 tooltip ("Weapon: Light Staff"; OURS labels for READ codes; a `reqi` list's requirement is not
 shown -- OPEN). `SkillDataReader` reads SKILL_EU_ rows and europe\ groups, `cast_clip_path`
 puts a Europe body's clip under `Europe\<sex>`, World3D's two clip paths call it (an adapter: see
-§6). SkillAudio/SkillEffects read both races' files (`all_tables`). QA: `SRREVAMP_QA_KIT=body,chest,
+§6). SkillAudio/SkillEffects read both races' files (`all_tables`). QA: `OPENSRO_QA_KIT=body,chest,
 legs,feet,weapon` creates the sign-in character with those ids (the gender kit has only China's).
 
 ### 3. What works per Europe mastery (MEASURED live unless marked; §5)
@@ -9738,8 +9837,8 @@ legs,feet,weapon` creates the sign-in character with those ids (the gender kit h
 (`/var/tmp/euroskill691/skills.csv`, 33,698 rows, 91 columns) and final664's items/leveldata/
 monsters; the wire tap between client and server. Per mastery one client signs in and creates a
 Europe man (body 14875, the EU clothes 11623-11625) with that mastery's weapon
-(`SRREVAMP_QA_KIT`), runs `/level 20`, `/sp 2000`, `/spawn MOV_EV_WOLF_A_010 2`, raises the mastery
-to 4 and learns its first skill (`SRREVAMP_QA_LEARN`), puts it on quick slot 1, clicks a wolf, and
+(`OPENSRO_QA_KIT`), runs `/level 20`, `/sp 2000`, `/spawn MOV_EV_WOLF_A_010 2`, raises the mastery
+to 4 and learns its first skill (`OPENSRO_QA_LEARN`), puts it on quick slot 1, clicks a wolf, and
 then **real X input** (xdotool): `1` three times 4-5 s apart, `S` for the skill window, and clicks on
 the window's race tab and mastery tab. `casts691.py` pairs each 0x0072 with its 0x0061 (every reply
 0-1 ms after its request):
@@ -9775,7 +9874,7 @@ stands normally. That is the world lane's body/clip question; this round did not
   lands, keep its lookup and drop the adapter; the retail path for a Europe cast is the aniset's SHOT
   action type in the body's AniGroup (only 33 of 284 Europe board Basic_Code stems have a name-matched clip).
   The bind pose of §5 is for that lane to measure.
-- **fe688**: `qa/qa_sign_in.gd` gained `SRREVAMP_QA_KIT` (five lines). `net/character.gd`'s
+- **fe688**: `qa/qa_sign_in.gd` gained `OPENSRO_QA_KIT` (five lines). `net/character.gd`'s
   INTERIM_KIT is untouched.
 - OPEN: Cleric heals (`mwhh` weapon-scaled heal and `getv HLRU` not read; `TargetHealAmounts`
   refuses them, so Heal A heals nobody); resurrections; hostile debuffs/DoT records on the target;
@@ -9801,7 +9900,7 @@ jangan  hitches    base 5.00  head 5  (+0.0)  SAME
 (A first gate, under heavy overlap from other lanes, ran out of its own time limit after two pairs;
 its numbers were within the same spread.)
 
-### Review (round 691's review: no regression for China characters; one HIGH, predating 691 and live on srrevamp-01, and three LOW -- fixed in a follow-up commit)
+### Review (round 691's review: no regression for China characters; one HIGH, predating 691 and live on opensro-01, and three LOW -- fixed in a follow-up commit)
 
 The review tested pre-692 and 692-shaped characters, crafted mastery ids and a trial merge onto dev
 d6205fc (green). origin/dev d6205fc is merged in (WORLD_ISSUES by `wi_resolve.py`).
@@ -9829,11 +9928,11 @@ d6205fc (green). origin/dev d6205fc is merged in (WORLD_ISSUES by `wi_resolve.py
   - **Purge**: the refused skill is dropped from the store (`skill.Forgetter`, both stores),
     logged `dropped a learned skill no player may hold` with the character, skill and reason; the
     skill-state request the client sends on entering the world does the same for every held skill
-    (`SkillStateHandlerWithRefs`, wired in cmd/server). The check query for srrevamp-01 is in
+    (`SkillStateHandlerWithRefs`, wired in cmd/server). The check query for opensro-01 is in
     deploy/README.md, ROUND 691'S REVIEW.
 - **LOW: another race's skills learned before 691 stayed castable.** The cast now re-checks the race
   clause and the held mastery (the same `playerHoldRefusal`) and drops a refused skill, logged.
-- **LOW: a stale comment in skill/race.go** said srrevamp stores only raised masteries. It now says
+- **LOW: a stale comment in skill/race.go** said OpenSRO stores only raised masteries. It now says
   the held list is the Country's, that round 692 seeds the race's masteries as level-0 rows from the
   same table, and that the two agree; the deploy note says the same.
 - **LOW: a lookup miss parsed the other race's ~10 MB of skilldata on the main thread mid-game**
@@ -9855,9 +9954,9 @@ d6205fc (green). origin/dev d6205fc is merged in (WORLD_ISSUES by `wi_resolve.py
 `SkillDataReader.cast_clip_path(_body_gender(body), code)`, `_body_gender` reading the race and
 sex from `_body_assets_or_default(body)` (as the review's trial merge 56510fe did);
 docs/protocol/charselect.md's cast-path note says so. `qa_sign_in.gd` keeps both hooks, round 689's
-`SRREVAMP_QA_CREATE` first, then `SRREVAMP_QA_KIT`. MEASURED, headless on the box
-(`/var/tmp/euroskill691/pose.sh`, offline World3D, `SRREVAMP_QA_BODY=14875` -- the Europe man
-`char\europe\europeman_noble.bsr` -- with the EU one-hand sword and `SRREVAMP_QA_CASTANIM=
+`OPENSRO_QA_CREATE` first, then `OPENSRO_QA_KIT`. MEASURED, headless on the box
+(`/var/tmp/euroskill691/pose.sh`, offline World3D, `OPENSRO_QA_BODY=14875` -- the Europe man
+`char\europe\europeman_noble.bsr` -- with the EU one-hand sword and `OPENSRO_QA_CASTANIM=
 skill_eu_warrior_onehanda_strike_a`; a new QA CASTPOSE line prints, at eight ticks of each 90, each
 upper arm's angle from its bind rotation): the clip plays as the one-shot and the arms read 63.9-146.6
 deg (left) and 89.1-179.8 deg (right) over the eight samples, the same in each of five replays -- 8/8
@@ -9880,7 +9979,7 @@ reading is in `docs/protocol/teleport_network.md`, "The gate's pick box and the 
 (round 690)".
 
 The live runs used the render box, lane `tele690`, with real X input through the Login route:
-- the server was dev's, with srrevamp-01's flags: `-full-map` (so `-single-frame`), `-monster-ai
+- the server was dev's, with opensro-01's flags: `-full-map` (so `-single-frame`), `-monster-ai
   -monster-strike-push -monster-spawn-push -monster-battle -monster-aggro -player-dead-state
   -persist-position`, `-regions-csv` and `-chargen-csv`;
 - the box's exports were loaded: teleport, npcpos, monsters, the nest DB, regions and chargen.
@@ -9892,7 +9991,7 @@ The harness is `/var/tmp/tele690/inter.sh`, `x.sh`, `gate.sh`, `hop.sh` and `rel
 - **i5**: this tree's client: a Jangan revive, a Hotan revive and a dead logout at Hotan.
 - **i6**: dev's client again, at Alexandria North.
 
-A new QA hook, `SRREVAMP_QA_ARRIVAL_PROBE=1`, takes the measurements:
+A new QA hook, `OPENSRO_QA_ARRIVAL_PROBE=1`, takes the measurements:
 - `QA ARRIVAL`: the feet against the terrain-only ray and the walkable graph's landing, after every
   entry, zone change and GM move;
 - `QA GATEPICK`: a gate's pick body against the placed object drawn there, with a sweep of the talk
@@ -10081,7 +10180,7 @@ head's frame median is +0.9 ms, inside the gate's threshold: its three runs were
 ### 6. OPEN
 
 - The pick's 3 x 3 ray grid: retail casts nine around the cursor (step INFERRED to be 1.6 % of the
-  screen); srrevamp casts one.
+  screen); OpenSRO casts one.
 - A ray starting inside a gate's box does not take it. Retail's triangle test's back faces are
   unread.
 - A structure's spawn position is INFERRED to be its teleportbuilding row.
@@ -10216,17 +10315,17 @@ the headings tail and the angle always written, as the field doc's trap requires
 - The skill-clip folder (`Prim\Ani\Char\China\<man|woman>`) now follows the body's sex; the path
   rule itself is the skill lane's.
 
-**QA:** `SRREVAMP_QA_BODY=<id>[:<scale>]`; `SRREVAMP_QA_LINEUP` (`scripts/world/qa_lineup.gd`: the
+**QA:** `OPENSRO_QA_BODY=<id>[:<scale>]`; `OPENSRO_QA_LINEUP` (`scripts/world/qa_lineup.gd`: the
 Figures spawned through the other-player path and measured per action phase -- `posed yes|TPOSE`
 from the bones against their rest, `feet` as the lowest CPU-skinned vertex against the walkable
-surface); `SRREVAMP_QA_CREATE=ref:scale:chest:legs:feet:weapon` in QaSignIn; `tools/body_anim_probe.gd`.
+surface); `OPENSRO_QA_CREATE=ref:scale:chest:legs:feet:weapon` in QaSignIn; `tools/body_anim_probe.gd`.
 
 ### 4. Measured
 
 **Clips** (`body_anim_probe.gd`, 52 Figures x 12 actions x default + the race's weapon groups, 4,056
 lookups, real archives): `--lookup=old` 129 that play nothing; `--lookup=world` **0** (RESULT: PASS).
 
-**In the world** (GL, Jangan 97/168 (1002, 1100), `SRREVAMP_QA_LINEUP=all`, `_WEAPONS=each`: 364
+**In the world** (GL, Jangan 97/168 (1002, 1100), `OPENSRO_QA_LINEUP=all`, `_WEAPONS=each`: 364
 bodies -- every Figure with every catalogue weapon of its race -- plus the player, a Europe noble man
 with a 1H sword, `/var/tmp/world689/m2/log.txt`):
 
@@ -10322,7 +10421,7 @@ mobs    hitches    base 5  head 5  (+0.0)  SAME
 The Jangan frame is SAME only by the gate's rule (base run 3, 10.55, was slower than head run 2,
 10.33); the runs were base 9.37 / 9.31 / 10.55 and head 11.49 / 10.33 / 10.78, and head run 1 shared
 the box with another lane's Godot for 32 s. So it was re-measured: the same two copies interleaved three times more at the
-Jangan spawn under this lane's lock, with the frame split (`SRREVAMP_QA_MOBSPLIT=300`):
+Jangan spawn under this lane's lock, with the frame split (`OPENSRO_QA_MOBSPLIT=300`):
 
 | run | base ms | head ms |
 |---|---|---|
@@ -10372,7 +10471,7 @@ this round. One MEDIUM and three LOWs, fixed in the review commit:
   `HasHeading` set (from a copy), so the angle written is `Heading` by rule.
   `TestRound689AModelForcesTheOwnHeading` pins it (the bytes were already the same before: this
   makes the rule explicit rather than fixing a wrong byte).
-- **LOW:** `SRREVAMP_QA_BODY` applies only with no server connection, as documented; charselect.md's
+- **LOW:** `OPENSRO_QA_BODY` applies only with no server connection, as documented; charselect.md's
   note on `_play_skill_cast_anim` now says the cast-clip path is reconciled in round 691's merge.
 
 **Merged origin/dev a351775** (rounds 690 and 692): World3D.gd merged without a conflict, as the
@@ -10392,7 +10491,7 @@ OURS. Front-end files only; no World3D or shared lighting code changed, so no pe
 
 ### 1. The lizard: a one-shot clip played as a loop
 
-**MEASURED, before** (`SRREVAMP_QA_LIZARD_PROBE`, `CharSelectQa.lizard_sample`: each frame the
+**MEASURED, before** (`OPENSRO_QA_LIZARD_PROBE`, `CharSelectQa.lizard_sample`: each frame the
 lizard's 1,143 vertices skinned on the CPU exactly as Godot skins them, tested against the camera's
 frustum and projected; and the box Godot 4.2.2's GLES3 `MeshStorage::mesh_get_aabb` gives the
 instance, tested as the scene cull does): over 602 frames of the race view, **174 had no vertex of
@@ -10427,7 +10526,7 @@ one clip it has no visible effect.
 
 ### 2. The select screen's brightness: retail's random hour, not a lighting fault
 
-**MEASURED** (`SRREVAMP_QA_SELECT_LUMA`: 1.5 s after the list is up, the frame's mean Rec. 709 luma
+**MEASURED** (`OPENSRO_QA_SELECT_LUMA`: 1.5 s after the list is up, the frame's mean Rec. 709 luma
 over the 3D band less the characters, and over the characters' projected boxes, with the light the
 backdrop was given):
 
@@ -10530,8 +10629,8 @@ On this branch: ALL PASS; `remote_godot.sh check` ALL LOAD; `remote_godot.sh tes
 - The sun's direction from the hour
   (`SWorld::vslot_004`, round 678's OPEN) -- a night select keeps the day's light direction.
 - Decision 13 (the front-end's hour) is the user's.
-- New QA hooks (OURS, off unless set): `SRREVAMP_QA_SELECT_RACE`, `SRREVAMP_QA_LIZARD_PROBE`
-  (+ `SRREVAMP_QA_SELECT_SHOT_DIR`, `SRREVAMP_QA_LIZARD_SHOT_EVERY`), `SRREVAMP_QA_SELECT_LUMA`.
+- New QA hooks (OURS, off unless set): `OPENSRO_QA_SELECT_RACE`, `OPENSRO_QA_LIZARD_PROBE`
+  (+ `OPENSRO_QA_SELECT_SHOT_DIR`, `OPENSRO_QA_LIZARD_SHOT_EVERY`), `OPENSRO_QA_SELECT_LUMA`.
 
 ### Review (round 688's review: all three fixes held, the READ confirmed; one HIGH and two LOW, fixed in a follow-up commit)
 
@@ -10555,10 +10654,10 @@ channel 2 clamped x 0.6, ambient = channel 3 clamped; then texture x colour x 2,
   pre-inverted through that chain in their shader (`_undo_tonemap`: the Filmic quadratic solved
   exactly, the decode cubic by Newton's method; OURS on READ source), and the frame carries the
   client's value.
-- **MEASURED** (`SRREVAMP_QA_SELECT_LUMA`'s per-body line: each body's own pixels -- those that change
+- **MEASURED** (`OPENSRO_QA_SELECT_LUMA`'s per-body line: each body's own pixels -- those that change
   when it is hidden, its shadows off for that mask -- against the same character, same items, built
   in a CharCreatePreview in the same process with the backdrop's zone light, zoomed out; mean
-  Rec. 709 luma; `SRREVAMP_QA_SELECT_GODOT_LIGHT=1` keeps the old materials on the same build):
+  Rec. 709 luma; `OPENSRO_QA_SELECT_GODOT_LIGHT=1` keeps the old materials on the same build):
 
 | Hour | Character | Select before | Select after | Preview | Preview / select, before -> after |
 |---|---|---|---|---|---|
@@ -10573,7 +10672,7 @@ channel 2 clamped x 0.6, ambient = channel 3 clamped; then texture x colour x 2,
   standing preview (INFERRED: the sitting pose turns more of the body up to the light; the preview
   stands). Without the tone-mapping undo the ratios were 0.89 / 0.86 / 0.73 at 14:00 and
   0.87 / 0.81 / 0.68 at 23:00.
-- **Cost** (`SRREVAMP_QA_SELECT_FRAMES`, 3 s to 8 s after the list, 300 frames, three runs each,
+- **Cost** (`OPENSRO_QA_SELECT_FRAMES`, 3 s to 8 s after the list, 300 frames, three runs each,
   alternating; the box is vsync-capped at 16.67 ms so the viewport's measured render time is the
   cost): old light CPU 1.930 / 1.941 / 1.923 ms, GPU 1.947 / 1.835 / 1.814 ms; character light CPU
   2.002 / 1.945 / 1.826 ms, GPU 1.872 / 1.830 / 1.758 ms -- no difference beyond run-to-run noise.
@@ -10725,7 +10824,7 @@ type "Attachable" under base "BsrReader"`, `Cannot find member "BODY_MESH_META" 
 0 failing.
 
 **In the world (MEASURED, the log):** World3D booted with no server and
-`SRREVAMP_QA_EQUIP="1=3640,4=3641,5=3642"` (the China man's light chest, legs and boots) on the base
+`OPENSRO_QA_EQUIP="1=3640,4=3641,5=3642"` (the China man's light chest, legs and boots) on the base
 and on the head, under this lane's own lock. Base: `World3D: china_man wears 3/3 item(s)`. Head:
 `World3D: china_man wears 3/3 item(s), 5 body mesh(es) hidden under them`. That is the same 5 the
 probe counts for that body and set through the builder. The frames of that run (no map loaded,
@@ -10855,7 +10954,7 @@ point (round 686)".
 - **Not served.** Interaction id 9, "Teleport to return point": the teleport request's kind 1 ->
   `GObjPC::Revive(0)` (`CMainProcess::FUN_004f2b50`, `0x4f2c83`); no town gate offers it. The return
   scroll: `UseByKind` (`0x49c2b0`) cases 1-3 cast the item's linked skill (`+0x2a0`,
-  `FUN_0059b8d0`); the skill effect is unread, and srrevamp refuses every return scroll.
+  `FUN_0059b8d0`); the skill effect is unread, and OpenSRO refuses every return scroll.
 
 **A correction to the brief.** It called round 665's Jangan point "READ". It was OURS: every
 character's world entry (`spawnZone`'s arrival, the town centre). Retail's China default is
@@ -10879,7 +10978,7 @@ character now returns.
   `recall_designate_result`, `HudPanels.open_recall_designate_prompt` (the archive's three texts;
   the panel and its "OK" / "Cancel" are OURS -- kind 5's button controls were not read), and
   `World3D._open_recall_designate` / `_on_recall_designate_result` (type 5 line + warning banner;
-  a refusal goes to the log only, as retail shows nothing). QA: `SRREVAMP_QA_TALK_LINES` now also
+  a refusal goes to the log only, as retail shows nothing). QA: `OPENSRO_QA_TALK_LINES` now also
   prints a talk prompt's and the dead window's buttons (`QA PROMPT <tag> BUTTON ...`) for xdotool.
 
 OURS, disclosed in `recall.go`'s header: 0 in the column means "none designated" and is resolved to
@@ -10894,7 +10993,7 @@ zone arrival.
 appended to the schema. Every existing row takes 0 -- its race's gate -- and nothing else on the row
 changes; a second run is a no-op (`TestMigration686`: the schema less this line, three characters
 with saved places, opened twice with a designation in between). No backfill is needed, so the line
-is safe on srrevamp-01's live data.
+is safe on opensro-01's live data.
 
 ### 4. Tests (each run against dev 3857a5e with a shim for the new symbols first)
 
@@ -10915,7 +11014,7 @@ list (the race gate is resolved by code), and the three derived tables carry the
 
 ### 5. Live (MEASURED, render box, lane recall686, run i1)
 
-A server from this tree with srrevamp-01's flags (`-full-map` -- so `-single-frame` -- `-monster-ai
+A server from this tree with opensro-01's flags (`-full-map` -- so `-single-frame` -- `-monster-ai
 -monster-strike-push -monster-spawn-push -monster-battle -monster-aggro -player-dead-state`, plus
 `-persist-position`, `-in-memory`), the box's retail export (`-teleport-dir`, npcpos, monsters, the
 nest DB) and the client from this tree, everything through the Login route with real X input
@@ -10954,7 +11053,7 @@ the reply), no world, drawing or loading code.
 ### 7. OPEN
 
 - "Teleport to return point" (id 9): READ, not served (no town gate offers it).
-- Return scrolls: the skill effect is unread; srrevamp has none.
+- Return scrolls: the skill effect is unread; OpenSRO has none.
 - Retail's fallback for an unknown designated gate (`LatestRegion` / `Pos`); ours is the race's gate.
 - The agreement box's art and button labels.
 - A Europe character's return, live: since the review's merge of 682 the tests return a real
@@ -11081,9 +11180,9 @@ This is charselect.md's lane B, rounds B2 and B3. It consumes round 683's `Chara
   cuts them in `reset()` and when it is deleted.
 - **`tools/measure_create_cycles.gd`**: per-cycle object and memory growth by piece, and the swap
   latencies.
-- QA hooks (off in play): `SRREVAMP_QA_CREATE_RACE` (a race or a per-opening list, until lane A's
-  race select merges), `SRREVAMP_QA_CREATE_STATE`, `SRREVAMP_QA_CREATE_SHOTS` +
-  `SRREVAMP_QA_CREATE_SHOT_DIR`, and `CREATE LAYOUT` lines giving every clickable control's rect.
+- QA hooks (off in play): `OPENSRO_QA_CREATE_RACE` (a race or a per-opening list, until lane A's
+  race select merges), `OPENSRO_QA_CREATE_STATE`, `OPENSRO_QA_CREATE_SHOTS` +
+  `OPENSRO_QA_CREATE_SHOT_DIR`, and `CREATE LAYOUT` lines giving every clickable control's rect.
 
 ### 3. The handoff contract (round 684's, unchanged)
 
@@ -11139,7 +11238,7 @@ In the GPU e2e a first-time Figure took 20-35 ms (build plus 0.4-1.0 ms of mater
 +3.0 MB of static memory per opening, the same screen each time. Bisected with
 `measure_create_cycles.gd` (headless, per cycle): appearance 0, preview 0, the World3D scene alone 0,
 `begin` without frames 0, **the backdrop with its cells loaded +559 objects, +1.32 MB -- and 0 with
-`SRREVAMP_NO_MAP_ANIM=1`**: MapAnimation's RefCounted cycles (section 2). After the fix: backdrop
+`OPENSRO_NO_MAP_ANIM=1`**: MapAnimation's RefCounted cycles (section 2). After the fix: backdrop
 +0 / +0.00 MB over 4 cycles, the whole screen +0 / +0.00 MB over 4 (Europe). While open the screen
 holds ~230-250 MB of static memory (the backdrop's 9 cells and the preview), released on leaving
 (e2e `CREATE MEM` lines: 95.8 MB before the first opening, 346 MB inside).
@@ -11331,8 +11430,8 @@ from the exe's bytes), MEASURED, INFERRED, OURS, OPEN.
 - `client/scripts/CharacterSelect.gd`, rewritten: the 2D list is gone. The states are retail's
   (+0xe4's numbers); every window is the layout's (`pscharacterselect.txt`: Select, Info, Remain,
   Warning, China, Europe sections) with the archive's art and words. Kept: LobbyNet through NetClient
-  (list, delete, restore, Start), `SRREVAMP_QA_FAKECHARS` (now `=<n>`, real catalogue bodies and
-  items, one pending deletion), `SRREVAMP_QA_RECONNECT_VIA_LOGIN`.
+  (list, delete, restore, Start), `OPENSRO_QA_FAKECHARS` (now `=<n>`, real catalogue bodies and
+  items, one pending deletion), `OPENSRO_QA_RECONNECT_VIA_LOGIN`.
 - `client/scripts/frontend/charselect_stage.gd` (new, `CharSelectStage`): the harbour 105/81 through
   `FrontEndBackdrop` (radius 1, OURS: every viewpoint lies in 105/81), the characters through
   `CharacterAppearance` with the list's items and avatars, the box, both idols and the lizard (clip 1
@@ -11402,7 +11501,7 @@ lobby by a throwaway tool (0, 1 and 4 characters, one of them deleted):
   swap slots between lists, and the READ re-select by slot index then lands on another character
   after a restore. Retail's order comes from its procedure; with Postgres ours is stable. Not
   changed here (server, lane S).
-- **5 and 6 characters** (the server refuses a fifth, READ 0x405, so with `SRREVAMP_QA_FAKECHARS`):
+- **5 and 6 characters** (the server refuses a fifth, READ 0x405, so with `OPENSRO_QA_FAKECHARS`):
   page 1 of 4 at k/5, the arrows and "[ 1 / 2 ]"; page 2 with one at the midpoint (two at thirds).
 - **Race select:** the fly, the lizard walking (clip 1), the Europe and China panels with the
   archive's tooltips on hover, Cancel 17 flying back, and an idol click: `race_chosen`, the 1.0 s
@@ -11969,7 +12068,7 @@ the create race is exact, item bypasses are refused, the purge and clock are rig
   at INFO. The client waits 5 s for the list (`LobbyNet.ListWatch`, OURS) and then reports an empty
   list with "The server did not answer the character list -- the client or server may need
   updating." No retail key fits (the nearest, `UIO_MSG_ERROR_SEVER_CONNECT`, would be false).
-- **LOW:** `SRREVAMP_CHARGEN_CSV` is the flag's env form (it was already). deploy/README's
+- **LOW:** `OPENSRO_CHARGEN_CSV` is the flag's env form (it was already). deploy/README's
   "Character lobby" is now in the safe order: stage `chargen.csv` (644) and the env var before the
   release (the old binary ignores it), `pg_dump -t characters`, merge, check the boot line and
   that `ref_obj_id` holds only 1909/1923, then tag the client; with a query listing the names the
@@ -12018,7 +12117,7 @@ scripts and 8 scenes, ALL LOAD; `tests` 197 suites, 0 failing.
 
 ### OPEN
 
-- srrevamp-01: export `chargen.csv` and pass `-chargen-csv` (deploy/README.md "Character lobby");
+- opensro-01: export `chargen.csv` and pass `-chargen-csv` (deploy/README.md "Character lobby");
   until then every create there is refused with 0x403. Players need this release's client.
 - ~~Blocked on the stopped shard DB (CT 104, the user's call): `_RefCharGen` (confirm the 104),
   `_RefCharDefault_*` (a new character's default skills and quests: none given), the procedures
@@ -12034,8 +12133,8 @@ scripts and 8 scenes, ALL LOAD; `tests` 197 suites, 0 failing.
 The user (2026-10-01): "I want to add a random private server to the server list in yaml for
 testing." Then: "Could you support the original handshake so we begin to start testing
 compatibility? I want to see if it shows check, easy, populated, etc even though I know we can't
-connect to it." And, on the config: each server gets `type: legacy | srrevamp`, **required**; a
-missing or unknown type is skipped with a `SETTING:` warning; `srrevamp` will later mean "also has
+connect to it." And, on the config: each server gets `type: legacy | opensro`, **required**; a
+missing or unknown type is skipped with a `SETTING:` warning; `opensro` will later mean "also has
 our extensions". Login over the original protocol is out of scope; no third-party server was
 contacted from here.
 
@@ -12091,9 +12190,9 @@ not done -- the user's call (OPEN, TODO.md).
 
 ### 3. What shipped
 
-- **`setting/config.yaml`: `type` is required** (`srrevamp` | `legacy`); missing or unknown -> the
+- **`setting/config.yaml`: `type` is required** (`opensro` | `legacy`); missing or unknown -> the
   entry is skipped with a `SETTING:` line naming the server and the values. The plain host:port
-  field (no config) stays srrevamp.
+  field (no config) stays OpenSRO.
 - **The client** (`client/scripts/net/retail/`): `RetailSecurity` (the primitives and the frame),
   `RetailGatewayClient` (the exchange as a socket-free machine), `RetailClientInfo` (content id and
   version from Media.pk2; none -> "Closed" with the reason, never a guess). `GatewayQuery` grew
@@ -12124,7 +12223,7 @@ not done -- the user's call (OPEN, TODO.md).
   [2, 4], a wrong version, a 0x5000 then a stall, a wrong challenge, a non-zero check byte, a
   truncated and a malformed list, a frame cut in half, an oversized frame, an AgentServer, a flood
   of small frames (64-frame cap) and of large ones (64 KiB cap) -- each failure "Closed" with its
-  reason. Also the window's rows and colours; srrevamp sends 0x0007 at once (14 ms) and never waits;
+  reason. Also the window's rows and colours; OpenSRO sends 0x0007 at once (14 ms) and never waits;
   legacy against a server that never speaks sends 0 bytes and shows Closed.
 - **MEASURED live:** the Go fake (`retailgw serve`, random handshakes) on the box and the GDScript
   client (`client/tools/retail_status_probe.gd` with the box's Media.pk2): **200 of 200 queries
@@ -12171,11 +12270,11 @@ not done -- the user's call (OPEN, TODO.md).
   takes at most 2 schedules per process frame across all queries (OURS), so ten hellos landing in
   one frame are taken one a frame (tested: `[1, 1, 1, 1, 1, 1, 1, 1, 1, 1]`, was `[10]`). Worst frame:
   2 x 0.92 ms instead of 20 x 2.71 ms.
-- **LOW, Connect could carry credentials to the wrong server.** A connection left open to a srrevamp
+- **LOW, Connect could carry credentials to the wrong server.** A connection left open to an OpenSRO
   server (a failed login keeps it) was reused when another server -- even a legacy one -- was
   shown. Now choosing another server closes it, and Connect sends over a live connection only when it
   is to the host and port the field shows and that server is not legacy (`Login.connection_serves`).
-  Tested live: connected to a srrevamp listener, a legacy server shown, Connect closes the
+  Tested live: connected to an OpenSRO listener, a legacy server shown, Connect closes the
   connection, sends it 0 bytes and says logging in is not supported.
 - **LOW, a failed reconnect said "closed without an answer"** (`connected` stayed true across a
   retry). Now "connection failed"; tested with a gateway that hands out table 18 and is then gone.
@@ -12202,7 +12301,7 @@ MEASURED (the render box, GL Compatibility on the RX 7600, 1280x720, real time, 
 
 ### 1. The pop-in, measured first
 
-`SRREVAMP_QA_TITLE_POPS=1` (new, `client/scripts/frontend/title_pop_probe.gd`, QA only) watches the
+`OPENSRO_QA_TITLE_POPS=1` (new, `client/scripts/frontend/title_pop_probe.gd`, QA only) watches the
 title every frame and prints a `QA POP` line for anything that becomes drawn while its world AABB is
 inside the camera's frustum during the fly, by source:
 
@@ -12319,7 +12418,7 @@ the column is that minus the click (the click lands on the first frame).
   commit (e.g. 105/81 342 ms, 105/78 166 ms), so a player who clicked at once and starts typing
   sees 5-10 such frames in the first ~9 s instead of 3; the longest is unchanged (~360-410 ms, one
   cell's commit). The fly itself no longer hitches on a commit.
-- **The frustum variant** (`SRREVAMP_QA_TITLE_DRAW=2500`, more of the horizon): roc 54 cells, fly at
+- **The frustum variant** (`OPENSRO_QA_TITLE_DRAW=2500`, more of the horizon): roc 54 cells, fly at
   6.41 s, 1442 MB, 197 MB video; constantinople 67 cells, fly at **10.73 s, 2042 MB, 301 MB video**;
   china_wharf 40 cells, 3.83 s, 911 MB; jupiter_login 47 cells, 5.36 s, 1279 MB, 149 MB. Also 0
   pops on all four (below). Too heavy for the user's low-end testing: not the default.
@@ -12378,7 +12477,7 @@ jangan  hitches    base 5  head 5  (+0.0)  SAME
 
 ### Tools
 
-`client/scripts/frontend/title_pop_probe.gd` (`SRREVAMP_QA_TITLE_POPS=1`, `=quit` ends the run 2 s
+`client/scripts/frontend/title_pop_probe.gd` (`OPENSRO_QA_TITLE_POPS=1`, `=quit` ends the run 2 s
 after the path), `client/tools/title_plan_census.gd` (plan sizes, retail's set, the camera's
 speeds; `-- --media=... --map=...`), `measure_login_ready.gd`'s new lines. The box harness was
 `/var/tmp/preload680/{pops,measure,runall}.sh`.
@@ -12510,7 +12609,7 @@ address is in the new `docs/protocol/server_list.md`; the operator's guide is de
   INFERRED as the intended padding); elsewhere it is exactly retail's; its size is retail's.
 - **The fields** (`Login.style_login_edit`): alignment from the layout's HAlign (centred), the mask
   `*`; the plain no-archive panel too.
-- **`setting/`** (OURS): `<exe dir>/setting` or `SRREVAMP_SETTING_DIR`; `setting/config.yaml` read by
+- **`setting/`** (OURS): `<exe dir>/setting` or `OPENSRO_SETTING_DIR`; `setting/config.yaml` read by
   `YamlLite` (a strict subset: block maps, flow maps and lists on a line, `- ` lists, quoted and
   plain scalars, comments; refusals name their line) into `ClientConfig` (`global.loginScreen`,
   `global.region` kept/reserved, `servers.<name>.gateway` required, `.agent` kept/unused). A broken
@@ -12526,7 +12625,7 @@ address is in the new `docs/protocol/server_list.md`; the operator's guide is de
 - **The status exchange** (OURS): `OpServerStatusRequest` 0x0007 -> `OpServerStatus` 0x0008,
   `u8 version | u16 current | u16 max | u8 state` (retail's fields in retail's order), answered before
   login once per connection and the asker's connection ended. Server: `-max-players` (1-65535,
-  default 1000, OURS) and `-inspection` (+ `SRREVAMP_MAX_PLAYERS` / `SRREVAMP_INSPECTION`); current =
+  default 1000, OURS) and `-inspection` (+ `OPENSRO_MAX_PLAYERS` / `OPENSRO_INSPECTION`); current =
   `world.Hub.Count()`; `session.LoginGate` refuses a login under inspection or at capacity with
   retail's two messages. Client: every listed server asked at once, 2 s timeout, IPv4 preferred
   (MEASURED: "localhost" resolved to ::1 first on the box, with the server on 127.0.0.1, and showed
@@ -12569,7 +12668,7 @@ streaming is untouched; `FrontEndFrame` and `Login` are the front-end's 2D).
 
 - `client/scripts/setting/client_config_test.gd` (YamlLite: the user's example shape with
   placeholder hosts, the subset, 19 refusals each with its line; ClientConfig: entries, defaults,
-  skipped entries, a broken file, a missing file, `SRREVAMP_SETTING_DIR`; the intro's order).
+  skipped entries, a broken file, a missing file, `OPENSRO_SETTING_DIR`; the intro's order).
 - `client/scripts/frontend/login_screen_test.gd` (the logo at 1024x768 / 1920x1080 / 2560x1440 /
   3840x2160 at scales 1.0 and 1.95 on pstitle's READ rects; `*`; centred; the vanity name read-only;
   editable without servers).
@@ -12578,8 +12677,8 @@ streaming is untouched; `FrontEndFrame` and `Login` are the front-end's 2D).
   first; a dead port -> UNREACHABLE and a "Gone | Closed" row in the window's labels).
 - `server/internal/session/serverstatus679_test.go` (exact bytes, strict decode, the handler on a real
   gateway answering the status at the moment it is asked and ending the connection, the gate) and
-  `server/cmd/server/serverstatus679_test.go` (the real `main()` with `SRREVAMP_MAX_PLAYERS=50
-  SRREVAMP_INSPECTION=1`).
+  `server/cmd/server/serverstatus679_test.go` (the real `main()` with `OPENSRO_MAX_PLAYERS=50
+  OPENSRO_INSPECTION=1`).
 
 Against base 75fa1fa (a separate worktree, the new tests copied in):
 ```
@@ -12742,12 +12841,12 @@ front-end".
   compiles on a worker (`ResourceLoader.load_threaded_request`) -- loaded on demand it froze the
   window 1.3 s (MEASURED, below).
 - **The operator's theme (OURS)**: server `-login-intro`, `-login-bgm`, `-login-logo`,
-  `-login-copyright`, `-login-band-top`, `-login-band-bottom` (and `SRREVAMP_LOGIN_*`), validated
+  `-login-copyright`, `-login-band-top`, `-login-band-bottom` (and `OPENSRO_LOGIN_*`), validated
   (no path can leave its folder; refused names are logged and served empty); answered before login
   on `OpFrontEndThemeRequest` 0x0005 -> `OpFrontEndTheme` 0x0006 (JSON `{v, intro, bgm, logo,
   copyright, band_top, band_bottom, charselect: null, create: null}` -- the last two reserved for
   the later scenes). The client asks at boot on its own short TCP connection (1.5 s), caches the
-  answer, and resolves per field: `SRREVAMP_LOGIN_*` preview > the server's fresh answer (else the
+  answer, and resolves per field: `OPENSRO_LOGIN_*` preview > the server's fresh answer (else the
   cached one) > `custom/theme.json` > retail's default. Custom files: `custom/intro/<name>.txt`
   (retail format, UTF-16 or UTF-8), `custom/frontend/` PNG/DDJ for the logo (kept to its aspect in
   the retail logo's box) and bands; each falls back to the archive's with a log line. A copyright
@@ -12888,7 +12987,7 @@ and `intro_camera_path_test.gd` never reaches its 1e17 check's verdict: the run 
 | this fix (2 runs) | 890-916 MB | 1982-2006 MB | 1026.0 MB |
 | this fix, `MALLOC_ARENA_MAX=2` | 596 MB | **1564 MB** | 1026.1 MB |
 | base, `MALLOC_ARENA_MAX=2` | 254 MB | **1564 MB** | 1024.6 MB |
-| this fix, `SRREVAMP_TITLE_3D=0` | 269 MB | 1781 MB | 1025.5 MB |
+| this fix, `OPENSRO_TITLE_3D=0` | 269 MB | 1781 MB | 1025.5 MB |
 
 - **The cause is glibc's per-thread arenas, not a leak.** With `MALLOC_ARENA_MAX=2`, head and base
   are equal within 1 MB. Godot's own counters are equal once in the world, because what the title
@@ -12906,7 +13005,7 @@ and `intro_camera_path_test.gd` never reaches its 1e17 check's verdict: the run 
 - **Not fixed:** the remaining ~205-230 MB on Linux is the arena retention. The worker-thread
   compile was kept deliberately: the alternative is a 1.2 s freeze of the login screen.
 - **Ways to remove it, OURS and the user's call:**
-  - The player's new switch `[frontend] title_3d=false` / `SRREVAMP_TITLE_3D=0` (equal to base).
+  - The player's new switch `[frontend] title_3d=false` / `OPENSRO_TITLE_3D=0` (equal to base).
   - `MALLOC_ARENA_MAX=2` in a Linux launcher, which also takes ~215 MB off the base world.
   - Windows' allocator has no per-thread arenas of this kind. NOT measured there.
 - glibc does not hand this memory back on its own under pressure. It is free inside the process
@@ -13100,7 +13199,7 @@ last frame with model pixels at t = 1.483 and the model freed from t = 1.517 (th
 past 1.5 s); no unfadable piece. The base: gone the frame after the despawn.
 
 **Live** (`/var/tmp/fadeout677/live.sh r1 on`, round 674's harness: this tree's server with
-srrevamp-01's flags -- `-full-map`, `-monster-ai -monster-strike-push -monster-spawn-push
+opensro-01's flags -- `-full-map`, `-monster-ai -monster-strike-push -monster-spawn-push
 -monster-battle -player-dead-state -monster-aggro`, the EXTERNAL nest DB -- and `-regions-csv`;
 the GM spawns an Earth Ghost south of Jangan's south gate, strikes it and walks north through the
 gate into the town):
@@ -13442,16 +13541,16 @@ Perf gate after the fixes (`--base 4104a11 --sites mobs`, the shader and the war
 | mobs | freeze ms | 3,426.5 | 3,379 | -47.5 | SAME |
 | mobs | hitches | 5 | 5 | 0 | SAME |
 
-## Six-hundred-and-seventy-fifth round: the Jangan gate after a death -- not reproduced on dev under srrevamp-01's flags; the live server was never asked, the server's half is now pinned by tests, and a world click the client drops now shows in the tester's log
+## Six-hundred-and-seventy-fifth round: the Jangan gate after a death -- not reproduced on dev under opensro-01's flags; the live server was never asked, the server's half is now pinned by tests, and a world click the client drops now shows in the tester's log
 
 The user (2026-10-01, playing v0.1.467): "Also when I died it seems the Jangan teleport stopped
 working? I had to manually tp to donwhang."
 
-Labels: MEASURED (srrevamp-01's own server log; live runs on the render box), READ (this tree's
+Labels: MEASURED (opensro-01's own server log; live runs on the render box), READ (this tree's
 code), INFERRED, OURS, OPEN. **The cause on the player's machine is not found.** This round did
 not reproduce the bug and ships no fix for it; what it ships is below, in section 4.
 
-### 1. What the live server saw (MEASURED, srrevamp-01's docker log)
+### 1. What the live server saw (MEASURED, opensro-01's docker log)
 
 The container ran 4104a11 (v0.1.467) from 09:42:24 UTC, with `-full-map` (so `-single-frame`),
 the monster flags, `-player-dead-state` and `-persist-position` on (its own boot lines). Every
@@ -13492,7 +13591,7 @@ revive with option 1, reach Jangan's gate, ask for Donwhang (teleportdata 2).
 
 | Run | Death | Revive and gate | Result |
 |---|---|---|---|
-| r1 | level 30 GM, the full map's densest window (-223840, 13920) | `SRREVAMP_QA_REVIVE_OPTION=1`; `SRREVAMP_QA_CLICK=gate` + `SRREVAMP_QA_TELEPORT=2` | `QA CLICK gate: dispatched -> talk`, `teleport requested 1 -> 2`, accepted |
+| r1 | level 30 GM, the full map's densest window (-223840, 13920) | `OPENSRO_QA_REVIVE_OPTION=1`; `OPENSRO_QA_CLICK=gate` + `OPENSRO_QA_TELEPORT=2` | `QA CLICK gate: dispatched -> talk`, `teleport requested 1 -> 2`, accepted |
 | i1 | same | **real X input**: the dead window's "Resurrect at the specified point", walked by ground clicks, clicked the gate, "Select a teleport area", "Donwhang" | server `msg=teleport ... gate=STORE_CH_GATE dest=GATE_WC fee=0 waiver=2`; arrival at 102/153 (957, 1508) |
 | i2 (twice) | level 5, **saved place at the user's death area** (-25300, -7500), re-entered there (`the server restored jangan at (-25300.0, -11.9, -7500.0)`), `/speed 3`, killed by Earth Ghosts; the second death inside Donwhang | real X input as i1; the second time the gate clicked from under its platform at local (1250, 1330) | both accepted (`waiver=1`) |
 | r2 | as r1 | as r1, **with the native (Rust) readers** (`NativeAssets: native readers ON`), as the release ships | accepted |
@@ -13549,7 +13648,7 @@ or loading code.
 ### 5. OPEN
 
 - **The cause on the player's machine.** The next measurement is the player's client log for
-  18:04:20-18:04:37 UTC on 2026-10-01 (`user://logs/srrevamp.log`; `/log` in game shows where,
+  18:04:20-18:04:37 UTC on 2026-10-01 (`user://logs/opensro.log`; `/log` in game shows where,
   docs/HELP_PLAYING.md): its `PICK:`, `NPCTALK`, `World3D:
   teleport ...` and `talk box closes` lines say whether the clicks reached the gate. It predates
   this round's `CLICK:` lines. Not covered by the runs: the Windows build and its DLL, PostgreSQL
@@ -13560,7 +13659,7 @@ or loading code.
 The user (2026-10-01): "There should also be safe zones in towns but I had a mob follow me into town
 and attack me. I think the usually disappear if they follow you into safe zone but check the game
 logic." The game logic says the guess is right: the original server removes a monster the moment
-its move takes it into a town region. srrevamp had no towns at all on the server, so a monster
+its move takes it into a town region. OpenSRO had no towns at all on the server, so a monster
 chased a player through Jangan's gate and kept swinging.
 
 Labels: READ (SR_GameServer.exe: `/var/tmp/decomp_server`, `srv.asm`, the exe's vtables read with
@@ -13616,7 +13715,7 @@ kept from spawning or wandering there, they are removed on arrival.
 - `cmd/export-refdata -mode regions`: refregion.txt -> regions.csv, refusing a short or non-numeric
   row, loading its output back. On the box's archive: `wrote 3194 regions to regions.csv, 103 of
   them towns (IsBattleField 0)`.
-- `cmd/server -regions-csv` (env `SRREVAMP_REGIONS_CSV`): loads it, fatal when it does not load,
+- `cmd/server -regions-csv` (env `OPENSRO_REGIONS_CSV`): loads it, fatal when it does not load,
   `session.SetSafeRegions`. Without it nothing changes.
 - `session` (monster AI, `monsterai.go` step 1b and the new-brain path, `safezone.go`): after the
   mover's step, each monster that crossed a cell line (a region line is always a cell line) and each
@@ -13626,7 +13725,7 @@ kept from spawning or wandering there, they are removed on arrival.
   client already drops a body on `OpMonsterLeft`), its states and blocking streak forgotten, and an
   INFO line `monster removed: it entered a town ...` with its state, target, region and area.
 - Docs: `monster_ai.md` "Towns", `server/README.md` (`-regions-csv`), `deploy/README.md` (the export
-  line, the compose line, "Towns (round 674)" with the srrevamp-01 steps), `TODO.md` "Towns".
+  line, the compose line, "Towns (round 674)" with the opensro-01 steps), `TODO.md` "Towns".
 - No client change: the removal reaches the client as the area-of-interest leave it already handles.
 
 ### 4. Tests
@@ -13671,7 +13770,7 @@ No perf gate: server-only round.
 
 ### 5. Live (MEASURED, render box, lane safezone674)
 
-`/var/tmp/safezone674/live.sh`: this branch's server with srrevamp-01's flags (`-full-map` =>
+`/var/tmp/safezone674/live.sh`: this branch's server with opensro-01's flags (`-full-map` =>
 `-single-frame`, `-monster-ai -monster-strike-push -monster-spawn-push -monster-battle
 -player-dead-state -monster-aggro`, `-nest-db-dir` the EXTERNAL shard nests) and
 `-regions-csv` from the archive's refregion.txt; one client through the wire tap. The GM stands
@@ -13709,7 +13808,7 @@ one 480 critical), her HP 8452 -> 3949 and still falling when the run ended -- t
 - A monster whose leg ends exactly on a z region line is checked at its next cell crossing (OURS).
 - Six retail placements stand in Alexandria's town regions (90/49, 91/51): with `-full-map` they
   hatch and are removed again while a player is near (INFERRED retail-like), one log line each.
-- srrevamp-01 needs `regions.csv` and the `-regions-csv` line (deploy/README.md, "Towns").
+- opensro-01 needs `regions.csv` and the `-regions-csv` line (deploy/README.md, "Towns").
 
 ### 7. Review (cd992ed): READ claims confirmed, nothing HIGH; four fixes
 
@@ -13786,8 +13885,8 @@ angle and zoom do not enter into it.
 on its arm, so a monster a few dozen units from the player sits 80-115 units from the camera, and
 which side of 80 it falls on turns with the pitch and the zoom.
 
-**MEASURED** (the render box, 1280 x 720, `SRREVAMP_QA_MOBS=24` real species around the Jangan
-spawn, `SRREVAMP_QA_PLATES=1`, eight viewpoints at pitch -42 / -80 / -10 and zoom 45 / 75 / 90;
+**MEASURED** (the render box, 1280 x 720, `OPENSRO_QA_MOBS=24` real species around the Jangan
+spawn, `OPENSRO_QA_PLATES=1`, eight viewpoints at pitch -42 / -80 / -10 and zoom 45 / 75 / 90;
 `client/tools/plate_pixels.py` counts the plate's cream-beside-black pixels at the point each
 `QA PLATE` line says it projects to):
 
@@ -13865,10 +13964,10 @@ The client turns a monster on a leg toward its destination at retail's 3 pi rad/
 eleven-species roster; every other model was "facing unmeasured" and never turned. Round 660 put
 every field species on the map.
 
-**MEASURED, live** (`/var/tmp/mobui673/live.sh`: a server built from dev with the srrevamp-01 flags
+**MEASURED, live** (`/var/tmp/mobui673/live.sh`: a server built from dev with the opensro-01 flags
 -- `-full-map` (so `-single-frame`), `-monster-ai -monster-strike-push -monster-spawn-push
 -monster-battle -monster-aggro -player-dead-state` -- the full-map nest DB, a level-40 GM sent
-`/goto earth ghost` beside Donwhang; `SRREVAMP_QA_FACING_LOG=1` now logs every walking monster with a
+`/goto earth ghost` beside Donwhang; `OPENSRO_QA_FACING_LOG=1` now logs every walking monster with a
 model, and its model once; `client/tools/facing_measure.py`). The Earth Ghosts the user saw share
 that ground with Gun Powder ghosts (`mob\wchina\gunpowderghost.bsr`, not in the table):
 
@@ -14011,7 +14110,7 @@ archive), INFERRED, OURS.
   the texture is one bit deep. This is why round 199 measured one luminance level in the reference
   screenshots (`{12: 162}`); it is now read, not only measured.
 - **The scale.** The original never scales its UI (UI_TODO's "Scaling" note): its glyphs are drawn
-  1:1. srrevamp's UI scale has no retail counterpart; the target at scale s is the same look --
+  1:1. OpenSRO's UI scale has no retail counterpart; the target at scale s is the same look --
   one level, a 1-pixel edge -- with glyphs rasterised AT s, not a 1x bitmap magnified.
 
 ### 2. The measurement (MEASURED, `client/tools/measure_text_crispness.gd`)
@@ -14277,12 +14376,12 @@ native/README.md, "The text tables". What is left: docs/TODO.md, "Native (Rust) 
 
 Labels: MEASURED (render box, real archives at /opt/sro-files/client, perf_gate's `jangan` view --
 97/168 at 1002,1020, loading screen forced, 1280x720 -- and its `mobs` view, the same spot with
-SRREVAMP_QA_MOBS=500), READ (Godot 4.2.2's source: core/string/ustring.cpp, ucaps.h,
+OPENSRO_QA_MOBS=500), READ (Godot 4.2.2's source: core/string/ustring.cpp, ucaps.h,
 variant_construct.h), INFERRED, OURS.
 
 ### 1. The profile, before porting (MEASURED)
 
-ParseProfile (`SRREVAMP_PARSE_PROFILE=1`) gained a key per table reader -- each NpcTableReader
+ParseProfile (`OPENSRO_PARSE_PROFILE=1`) gained a key per table reader -- each NpcTableReader
 parser, `text.items`, `text.shop_goods`, `text.teleport`, `text.skill_effects` -- and
 `text.decode_split`, nested inside them: the FF FE strip, `get_string_from_utf16`,
 `replace("\r", "")` and `split("\n")` that every reader repeats. Round 667's pk2 and ddj readers ON,
@@ -14464,7 +14563,7 @@ The ported keys, run 2 (main / workers, ms):
 What remains of the boot tables is `text.items`' 83 ms -- 12k `Item.new()` with ~30 fields each,
 in GDScript -- and the two `.bsr` parses (34). `npc_positions` keeps 13 ms of `Spawn.new()`.
 
-**The A/B gate**, `PERF_LANE=tables671 perf_gate.sh --ab-env SRREVAMP_NATIVE=0 --sites
+**The A/B gate**, `PERF_LANE=tables671 perf_gate.sh --ab-env OPENSRO_NATIVE=0 --sites
 jangan,mobs`: one build, the base side with every native reader OFF (round 667's included), so this
 is the whole native path against GDScript. The run's shell was stopped at its 30-minute limit after
 the three Jangan pairs; its Jangan verdicts below are the gate's own `verdict` arithmetic on those
@@ -14574,14 +14673,14 @@ case tables is left to the engine. The ASCII compares are exact for the reason t
 measured: no code point outside ASCII lower-cases into ASCII. Corrected in core/tables.rs,
 native/README.md and §2.
 
-**L2. The native suites under SRREVAMP_NATIVE=0.** `native_tables_test.gd` decided "native" from
+**L2. The native suites under OPENSRO_NATIVE=0.** `native_tables_test.gd` decided "native" from
 `library_usable()`, so with the library present and the switch off it called a null reader; round
 667's `native_assets_test.gd` expected a native handle the same way. Both now ask whether the
 readers are ON (`NativeAssets.new_tables() != null`; `library_usable() and available()`).
 
 Re-run (MEASURED): `cargo test --no-default-features` 21 pass; `table_parity.gd` `TABLE PARITY
 PASS`, 0 FAIL lines (680 files, 11,550 reader runs); the suites in all three modes -- with the
-library, `SRREVAMP_NATIVE=0` (the log says `forced off by SRREVAMP_NATIVE=0`) and `NO_NATIVE=1` --
+library, `OPENSRO_NATIVE=0` (the log says `forced off by OPENSRO_NATIVE=0`) and `NO_NATIVE=1` --
 182 suites, 0 failing each; the Windows DLL still `stands alone, exports gdext_rust_init,
 stripped`.
 
@@ -14594,7 +14693,7 @@ lane. It covers `.m`, `.nvm`, the `.o2`/`.ifo` lists, and the terrain prepare's 
 parsers". What is left: docs/TODO.md, "Native (Rust) readers".
 
 Labels: MEASURED (the render box, real archives at /opt/sro-files/client, 1280x720, the loading
-screen forced, `SRREVAMP_PARSE_PROFILE=1`), READ (this repo), OURS.
+screen forced, `OPENSRO_PARSE_PROFILE=1`), READ (this repo), OURS.
 
 ### 1. Where the terrain time goes, ranked, native readers ON, before porting
 
@@ -14756,7 +14855,7 @@ Jangan entry, and about 0.82 s and 26 ms off the cross entry. The entry wall tim
 than its run-to-run spread. The workers are not the drain's critical path at Jangan (round 667's
 centre cell is), so the saving shows as CPU freed rather than as seconds.
 
-**The A/B gate.** `PERF_LANE=terrain670 perf_gate.sh --ab-env SRREVAMP_NATIVE=0 --sites
+**The A/B gate.** `PERF_LANE=terrain670 perf_gate.sh --ab-env OPENSRO_NATIVE=0 --sites
 jangan,mobs,cross` compares this build native (head) against the same build in GDScript (base),
 3 runs a side. It measures everything native, round 667's pk2 and ddj included:
 
@@ -14803,7 +14902,7 @@ cross   hitches    base 5  head 5  (+0.0)  SAME
 
 ### 8. Review follow-up
 
-- **`terrain_native_test.gd` failed under `SRREVAMP_NATIVE=0`** (MEDIUM). It asked
+- **`terrain_native_test.gd` failed under `OPENSRO_NATIVE=0`** (MEDIUM). It asked
   `library_usable()`, which is true for a library that is loaded but forced off, so it printed 7
   FAILs. It now asks `NativeAssets.terrain() != null`, which is what the client itself uses.
 - **A native lightmap that always fell back went unseen** (LOW).
@@ -14825,7 +14924,7 @@ cross   hitches    base 5  head 5  (+0.0)  SAME
 - **Suites (MEASURED):**
   - with the library: 182 suites, 0 failing;
   - `NO_NATIVE=1`: 182 suites, 0 failing;
-  - `SRREVAMP_NATIVE=0`: 182 suites, 1 failing. The failure is `native_assets_test.gd`, which
+  - `OPENSRO_NATIVE=0`: 182 suites, 1 failing. The failure is `native_assets_test.gd`, which
     8894f21 fixes at the merge.
   - `terrain_native_test.gd` passes in all three modes.
 
@@ -14843,7 +14942,7 @@ OURS.
 
 ### 1. The profile, ranked, before porting (MEASURED)
 
-`SRREVAMP_PARSE_PROFILE=1` on dev 520c44e, native readers ON (round 667's pk2 and ddj). A new
+`OPENSRO_PARSE_PROFILE=1` on dev 520c44e, native readers ON (round 667's pk2 and ddj). A new
 window, `after the entry`, reports at exit whatever loaded after the entry (World3D `_exit_tree`),
 so a species or character met for the first time would show there. At both sites it held only a
 few file reads: the mobs site's 24 species are all assembled during the entry drain (their
@@ -15000,7 +15099,7 @@ SCRIPT ERROR: Parse Error: Cannot infer the type of "native_used" variable becau
 ### 5. The gain (MEASURED)
 
 **This round's own change**: dev 520c44e with its native library, against this build, both with
-the native readers ON. `SRREVAMP_PARSE_PROFILE=1`, 2 runs a side, interleaved. Another lane's Godot
+the native readers ON. `OPENSRO_PARSE_PROFILE=1`, 2 runs a side, interleaved. Another lane's Godot
 ran beside every run (`others` 1 throughout), on both sides alike:
 
 | | dev 520c44e (runs 1 / 2) | this round (runs 1 / 2) |
@@ -15031,7 +15130,7 @@ Each table-read parse reads the sound section three times (`material_mods`,
 (`_attach_sound_sets`). Reading it once is a GDScript change, and porting the 1,281-line reader is
 a round of its own (docs/TODO.md).
 
-**The A/B the brief asks for**: `perf_gate.sh --ab-env SRREVAMP_NATIVE=0 --sites jangan,mobs`,
+**The A/B the brief asks for**: `perf_gate.sh --ab-env OPENSRO_NATIVE=0 --sites jangan,mobs`,
 the same build with every native reader (667's and this round's) against GDScript:
 
 ```
@@ -15089,7 +15188,7 @@ mobs head run 3: frame 10.63 ms, entry 6191 ms, freeze 1537 ms, 5 hitch(es), nat
 ## Six-hundred-and-sixty-eighth round: the release ships the native readers in both zips, and the auto-updater replaces a DLL the running game has loaded
 
 The user (2026-09-30): "Build and ship the DLL. Make sure the Game auto update feature grabs it
-but I'm sure it does just fine. I'll add the SRREVAMP folder as an AV exclusion and test it. I'll
+but I'm sure it does just fine. I'll add the OPENSRO folder as an AV exclusion and test it. I'll
 also rename the DLL extension to test the fallback too." Round 667's library now ships. The
 updater did not "do just fine": it would have taken a loaded DLL only after robocopy's 30-second
 retry, it hung for ever on a file antivirus would not release, and its Linux copy never ran the
@@ -15107,7 +15206,7 @@ INFERRED, OURS.
 - `client/tools/check_native_library.sh` on both libraries.
 
 After the exports, the zips go through `client/tools/check_release_zip.sh`. `export_presets.cfg`
-includes `srrevamp_native.gdextension` again. Each zip gets a `THIRD_PARTY_NOTICES.txt`
+includes `opensro_native.gdextension` again. Each zip gets a `THIRD_PARTY_NOTICES.txt`
 generated from Cargo.lock: the godot-rust crates are MPL-2.0, whose section 3.2(a) asks that
 recipients be told where the source is.
 
@@ -15117,7 +15216,7 @@ recipients be told where the source is.
   run 36808460104), while saving the 1.9 GB `actions/cache` would hold was still running after
   five minutes. The first probes tried a cache and were reverted.
 - **`hashFiles()` fails on it** (MEASURED, probe run 36807629459). `hashFiles('native/Cargo.lock')`
-  failed the job with "Fail to hash files under directory '/home/runner/_work/srrevamp/srrevamp'".
+  failed the job with "Fail to hash files under directory '/home/runner/_work/OpenSRO/OpenSRO'".
   The log does not say which path it choked on. That cache key was the only use, and it went
   with the cache.
 - **`cargo-zigbuild --version` is not a version query** (MEASURED, probe run 36808132225). Called
@@ -15145,40 +15244,40 @@ back to the executable's folder when the `res://native_bin/…` path is not a re
 MEASURED, on a local export made on the box with the downloaded 4.2.2 templates
 (`/var/tmp/ship668/templates`), before the merge with round 667's follow-up. After it, the
 ON line also carries `API 2`:
-- `build/linux` holds `srrevamp.x86_64`, `srrevamp.pck` and `libsrrevamp_native.so`.
-- `build/windows` holds `srrevamp.exe`, `srrevamp.pck` and `srrevamp_native.dll`.
+- `build/linux` holds `OpenSRO.x86_64`, `OpenSRO.pck` and `libopensro_native.so`.
+- `build/windows` holds `OpenSRO.exe`, `OpenSRO.pck` and `opensro_native.dll`.
 - `check_release_zip.sh … linux --run`, as shipped, prints only
-  `NativeAssets: native readers ON (library loaded, srrevamp_native 0.1.0, …/srrevamp-linux/libsrrevamp_native.so)`,
+  `NativeAssets: native readers ON (library loaded, opensro_native 0.1.0, …/opensro-linux/libopensro_native.so)`,
   with no GDExtension error. This settles review item 2 for round 667: with the library present,
   an export logs no extension errors.
 - With the library renamed to `.off`, it prints Godot's four errors and then our line:
 
 ```
-ERROR: Can't open dynamic library: native_bin/libsrrevamp_native.so. Error: …/srrevamp-linux/../lib/libsrrevamp_native.so: cannot open shared object file: No such file or directory.
-ERROR: GDExtension dynamic library not found: native_bin/libsrrevamp_native.so
-ERROR: Failed loading resource: res://srrevamp_native.gdextension. Make sure resources have been imported by opening the project in the editor at least once.
-ERROR: Error loading extension: res://srrevamp_native.gdextension
-NativeAssets: native readers OFF (library not found: …/srrevamp-linux/libsrrevamp_native.so) -- using the GDScript readers
+ERROR: Can't open dynamic library: native_bin/libopensro_native.so. Error: …/opensro-linux/../lib/libopensro_native.so: cannot open shared object file: No such file or directory.
+ERROR: GDExtension dynamic library not found: native_bin/libopensro_native.so
+ERROR: Failed loading resource: res://opensro_native.gdextension. Make sure resources have been imported by opening the project in the editor at least once.
+ERROR: Error loading extension: res://opensro_native.gdextension
+NativeAssets: native readers OFF (library not found: …/opensro-linux/libopensro_native.so) -- using the GDScript readers
 ```
 
 **CI** (MEASURED). Three probe runs of release.yml by `workflow_dispatch` on the throwaway
 branch `ci/ship668-probe`, which publishes nothing:
 - 36807629459 failed on `hashFiles`.
 - 36808132225 failed on the cargo-zigbuild sanity line.
-- [36808460104](https://github.com/OpenSRO/srrevamp/actions/runs/36808460104) was **green**.
+- [36808460104](https://github.com/OpenSRO/OpenSRO/actions/runs/36808460104) was **green**.
   - The runner reported "user runner (uid 1001), Ubuntu 24.04.4 LTS, 4 cores". It installed gcc,
     libc6-dev, gcc-mingw-w64-x86-64, binutils-mingw-w64-x86-64, xz-utils and binutils through
     `sudo -n` apt; the toolchain was rustc 1.98.1, zig 0.15.2, cargo-zigbuild 0.23.4 and
     x86_64-w64-mingw32-gcc 13-win32.
   - Uncached, the toolchain install took 43 s and both builds 36 s. Saving the 1.9 GB cache then
     ran for more than five minutes, so both workflows build uncached.
-  - Its artifact `srrevamp-test-build`, rechecked on the box with
+  - Its artifact `opensro-test-build`, rechecked on the box with
     `check_release_zip.sh … --run`:
 
 | zip (8 entries each) | contents |
 |---|---|
-| srrevamp-windows.zip | README.md, pk2/PUT_YOUR_PK2_FILES_HERE.txt, srrevamp.exe 69,707,264, **srrevamp_native.dll 2,345,472**, THIRD_PARTY_NOTICES.txt 3,872, srrevamp.pck 6,480,944 |
-| srrevamp-linux.zip | README.md, pk2/PUT_YOUR_PK2_FILES_HERE.txt, srrevamp.x86_64 62,204,152, **libsrrevamp_native.so 1,184,400**, THIRD_PARTY_NOTICES.txt 3,724, srrevamp.pck 6,480,944 |
+| opensro-windows.zip | README.md, pk2/PUT_YOUR_PK2_FILES_HERE.txt, OpenSRO.exe 69,707,264, **opensro_native.dll 2,345,472**, THIRD_PARTY_NOTICES.txt 3,872, OpenSRO.pck 6,480,944 |
+| opensro-linux.zip | README.md, pk2/PUT_YOUR_PK2_FILES_HERE.txt, OpenSRO.x86_64 62,204,152, **libopensro_native.so 1,184,400**, THIRD_PARTY_NOTICES.txt 3,724, OpenSRO.pck 6,480,944 |
 
 - **The CI-built DLL** (sha256 5f06c107…). `objdump -p` shows imports api-ms-win-core-synch-l1-2-0,
   bcryptprimitives, KERNEL32, msvcrt, ntdll, USERENV and WS2_32. That is Windows system DLLs only:
@@ -15187,21 +15286,21 @@ branch `ci/ship668-probe`, which publishes nothing:
 - **The CI-built .so** (sha256 581bae19…) needs libpthread.so.0, libc.so.6, libdl.so.2 and
   ld-linux-x86-64.so.2. Its glibc symbols are 2.2.5, 2.3, 2.3.4, 2.14, 2.17, 2.25 and **2.28**.
 - **The exported CI Linux game, run headless**, logs `NativeAssets: native readers ON (library
-  loaded, srrevamp_native 0.1.0, …)` and no GDExtension error. With the library renamed to `.off`,
+  loaded, opensro_native 0.1.0, …)` and no GDExtension error. With the library renamed to `.off`,
   it logs the four Godot errors and then `native readers OFF (library not found: …)`. The same
   lines appear in the run's own "Check the zips" step on the runner.
 
 **The final probe**, on the merged tree (d836348 plus this round), is
-[36809080517](https://github.com/OpenSRO/srrevamp/actions/runs/36809080517). It is **green**:
+[36809080517](https://github.com/OpenSRO/OpenSRO/actions/runs/36809080517). It is **green**:
 every step passed, the publish steps were skipped, and the whole job took 2 min 47 s. Its
 artifact, rechecked on the box with `check_release_zip.sh … --run` (MEASURED):
-- srrevamp-windows.zip has 8 entries; **srrevamp_native.dll is 2,348,032 bytes** (sha256
+- opensro-windows.zip has 8 entries; **opensro_native.dll is 2,348,032 bytes** (sha256
   83bc18f5…). Its imports are the same seven system DLLs, its one export is `gdext_rust_init`, and
   it has 0 debug sections.
-- srrevamp-linux.zip has 8 entries; **libsrrevamp_native.so is 1,188,736 bytes** (sha256
+- opensro-linux.zip has 8 entries; **libopensro_native.so is 1,188,736 bytes** (sha256
   5c291c15…). Its newest glibc symbol is GLIBC_2.28.
 - The exported Linux game, as shipped, logs
-  `NativeAssets: native readers ON (library loaded, srrevamp_native 0.1.0, API 2, …)` and no
+  `NativeAssets: native readers ON (library loaded, opensro_native 0.1.0, API 2, …)` and no
   extension error. Renamed `.off`, it logs the four Godot errors and then
   `native readers OFF (library not found: …) -- using the GDScript readers`.
 
@@ -15212,8 +15311,8 @@ the linux-release build and its check on this LXC, and the suites with the libra
 ### 3. The auto-updater, read before changing it
 
 What it did (READ, `client/scripts/update/auto_updater.gd` at d7b4aba):
-- **What it downloads:** the whole platform zip, the release's `srrevamp-<os>.zip` (lines 76-95).
-- **Where it extracts:** in-process, into `srrevamp_update_staging` next to the executable
+- **What it downloads:** the whole platform zip, the release's `opensro-<os>.zip` (lines 76-95).
+- **Where it extracts:** in-process, into `opensro_update_staging` next to the executable
   (lines 129-148).
 - **How it replaces the running exe:** it writes a helper script, starts it, and quits
   (lines 159-170). On Windows the script ran `timeout /t 2`, then
@@ -15254,18 +15353,18 @@ What it does now (OURS): `client/scripts/update/update_installer.gd`, `update_fs
 - **Any other file failing, the DLL included, is logged.** Its previous version is restored, the
   update continues, and the client falls back to GDScript if it cannot use the old library.
 - **Moved-aside files are deleted at once where possible.** The rest are listed in
-  `srrevamp_update_cleanup.txt` and deleted at the next start.
+  `opensro_update_cleanup.txt` and deleted at the next start.
 - **The pk2 folder is never touched, and no file is ever deleted** that the new version lacks.
 - **The relaunch waits for the old process.** It polls the old PID: `kill -0` on Linux, a batch
   file using `tasklist` and `ping` on Windows (no `timeout`), for at most 60 polls. Then it starts
   the new executable, so the two never write the same log. If the relaunch fails, the files are
   already installed.
-- **The summary reaches the new log.** The old process writes `srrevamp_update.log`. The new one
-  prints it as `SRRevamp update (last run): …` and removes it.
+- **The summary reaches the new log.** The old process writes `opensro_update.log`. The new one
+  prints it as `OpenSRO update (last run): …` and removes it.
 - **Only an exported build updates itself.** A run from source would have installed a release
   zip over the Godot editor's folder.
-- **QA hooks** (OURS): `SRREVAMP_QA_UPDATE_URL` (another "latest release" endpoint),
-  `SRREVAMP_QA_UPDATE_ACCEPT=1` (no dialog) and `SRREVAMP_QA_QUIT_AT_LOGIN=1`.
+- **QA hooks** (OURS): `OPENSRO_QA_UPDATE_URL` (another "latest release" endpoint),
+  `OPENSRO_QA_UPDATE_ACCEPT=1` (no dialog) and `OPENSRO_QA_QUIT_AT_LOGIN=1`.
 
 ### 4. A real update on Linux
 
@@ -15278,12 +15377,12 @@ What it does now (OURS): `client/scripts/update/update_installer.gd`, `update_fs
 
 | | plain | `off` (the `.so` renamed to `.so.off` first) |
 |---|---|---|
-| old client's startup line | `native readers ON (library loaded, srrevamp_native 0.1.0, API 2, …)` | `native readers OFF (library not found: …)` |
+| old client's startup line | `native readers ON (library loaded, opensro_native 0.1.0, API 2, …)` | `native readers OFF (library not found: …)` |
 | download | `downloaded and verified, sha256 3bd5d5d9…` | same |
-| `.so` install | `installed libsrrevamp_native.so (the old one was moved aside …)` | `installed libsrrevamp_native.so` |
+| `.so` install | `installed libopensro_native.so (the old one was moved aside …)` | `installed libopensro_native.so` |
 | installed `.so` | sha256 e701f090… = the zip's; inode 7867910, was 7867892 | sha256 e701f090…; `.so.off` untouched |
-| relaunched client maps | `…/install/libsrrevamp_native.so` (not deleted) | same |
-| relaunched client's log | `native readers ON`, then `SRRevamp update (last run): v0.0.0 -> v0.0.1: installed` and the four install lines | same |
+| relaunched client maps | `…/install/libopensro_native.so` (not deleted) | same |
+| relaunched client's log | `native readers ON`, then `OpenSRO update (last run): v0.0.0 -> v0.0.1: installed` and the four install lines | same |
 | leftovers (`.old-update`, staging, zip) | none | none |
 | endpoint requests | `/latest`, the zip, `/latest` (the relaunch, up to date) | same |
 
@@ -15330,11 +15429,11 @@ What this does NOT prove: that real Windows behaves like FakeFs. The rules are I
 
 ### 6. The log lines (item 5 of the brief)
 
-`Boot._ready` now calls `NativeAssets.available()` right after `SRRevamp version: …`, so exactly
+`Boot._ready` now calls `NativeAssets.available()` right after `OpenSRO version: …`, so exactly
 one line is printed at startup:
 - ON: `native readers ON (library loaded, <version>, <path>)`.
 - OFF: `library not found: <path>`, `library failed to load: <path> is there but…`, or `forced
-  off by SRREVAMP_NATIVE=0`.
+  off by OPENSRO_NATIVE=0`.
 
 The OFF lines all end `-- using the GDScript readers`. The Ctrl+F3 debug panel's `== build` block
 shows the same line. `client/scripts/pk2/native_status_test.gd` holds every form, and
@@ -15350,7 +15449,7 @@ NativeAssets: native readers OFF (library REFUSED: API 0, this client needs API 
 ```
 
 That line covers the partial update: a DLL the installer could not replace (`NOT installed
-srrevamp_native.dll: … kept the previous one`) sits beside a newer exe. It is refused if its
+opensro_native.dll: … kept the previous one`) sits beside a newer exe. It is refused if its
 interface differs and used if it does not; the number changes only with the interface.
 
 ### 7. Tests
@@ -15368,9 +15467,9 @@ interface differs and used if it does not; the number changes only with the inte
 
 ```
 FAIL the update installs with the exe running and the DLL loaded
-FAIL srrevamp_native.dll is the new version
+FAIL opensro_native.dll is the new version
 FAIL the loaded DLL was moved aside, not overwritten
-FAIL the update puts srrevamp_native.dll back
+FAIL the update puts opensro_native.dll back
 ```
 
 - **The new suites on round 667's tree (d7b4aba)**:
@@ -15382,7 +15481,7 @@ native_status_test.gd:    SCRIPT ERROR: Parse Error: Static function "describe()
 
 - **`check_release_zip.sh` on an export made with round 667's presets** (the `.gdextension`
   excluded):
-  `FAIL neg/srrevamp-linux.zip has no srrevamp-linux/libsrrevamp_native.so`.
+  `FAIL neg/opensro-linux.zip has no opensro-linux/libopensro_native.so`.
 - **`check_native_library.sh`**:
   - on the host-glibc `.so`: `FAIL needs GLIBC_2.34, above the floor 2.28`;
   - on an unstripped mingw DLL: `FAIL has debug sections`, `FAIL carries 1000 COFF symbols`.
@@ -15426,9 +15525,9 @@ tag-only steps. What it found, and what changed:
 
 | run | outcome |
 |---|---|
-| **41e0d85**, the 41e0d85 export on the tmpfs (67 MB used, 54 MB free before the download) | all four files logged "installed"; afterwards `srrevamp.x86_64` was 30,728,192 bytes, and the `.pck`, the `.so` and the notices were 0 bytes; the next start exited 139 (a segfault) -- the review's finding, reproduced |
-| follow-up, as it ships | `SRRevamp update: refused: not enough disk space next to the game: the update needs 66.8 MB (plus 32 MB to spare), 29.3 MB is free`, then `update failed (could not unpack v0.0.1, nothing was changed (…))`; install **byte-identical** (sha256 of every file before and after); the next start exits 0 with `native readers ON` |
-| follow-up, free-space check skipped (`SRREVAMP_QA_UPDATE_IGNORE_SPACE=1`, OURS) | `refused: could not write srrevamp-linux/srrevamp.x86_64 whole into the staging folder (disk full?)`; install **byte-identical**; the next start exits 0 |
+| **41e0d85**, the 41e0d85 export on the tmpfs (67 MB used, 54 MB free before the download) | all four files logged "installed"; afterwards `OpenSRO.x86_64` was 30,728,192 bytes, and the `.pck`, the `.so` and the notices were 0 bytes; the next start exited 139 (a segfault) -- the review's finding, reproduced |
+| follow-up, as it ships | `OpenSRO update: refused: not enough disk space next to the game: the update needs 66.8 MB (plus 32 MB to spare), 29.3 MB is free`, then `update failed (could not unpack v0.0.1, nothing was changed (…))`; install **byte-identical** (sha256 of every file before and after); the next start exits 0 with `native readers ON` |
+| follow-up, free-space check skipped (`OPENSRO_QA_UPDATE_IGNORE_SPACE=1`, OURS) | `refused: could not write opensro-linux/OpenSRO.x86_64 whole into the staging folder (disk full?)`; install **byte-identical**; the next start exits 0 |
 
 - **M1:** ci.yml's check `grep -q "NativeAssets: native readers ON"` could not fail, because
   `native_status_test.gd` prints indented sample lines holding those words. It is anchored now
@@ -15482,9 +15581,9 @@ tag-only steps. What it found, and what changed:
 | H1: the copy fallback's length check | `FAIL a short copy is a failure, not an install`, `FAIL and the previous DLL is back` |
 | L1: the retried restore | `FAIL a moved-aside original busy for two tries is still put back` |
 | L2: putting back a missing original | `FAIL a file killed between its two renames is put back, from the newest aside`, `FAIL in subfolders too` |
-| M2: the install path back in the batch file | `FAIL the batch file holds no install path`, `FAIL the batch file is plain ASCII, …`, `FAIL then starts the exe from the script's own folder`, `FAIL a non-ASCII executable name falls back to srrevamp.exe` |
+| M2: the install path back in the batch file | `FAIL the batch file holds no install path`, `FAIL the batch file is plain ASCII, …`, `FAIL then starts the exe from the script's own folder`, `FAIL a non-ASCII executable name falls back to OpenSRO.exe` |
 | L4: any comma counts as running | `FAIL it matches the quoted PID, not any comma` |
-| L3: `cmd /C <path>` as before | `FAIL cmd gets /S /C and the path in its own quotes (got ["/C", "C:\\Users\\José\\Games (x) & y\\srrevamp_update_relaunch.bat"])` |
+| L3: `cmd /C <path>` as before | `FAIL cmd gets /S /C and the path in its own quotes (got ["/C", "C:\\Users\\José\\Games (x) & y\\opensro_update_relaunch.bat"])` |
 
 The first pass of these mutations caught two test gaps:
 - **The read-back.** FakeFs's write reported a short write itself, so undoing the stager's
@@ -15518,7 +15617,7 @@ OURS.
 
 ### 1. Where the time went: ranked, before porting anything
 
-`client/scripts/pk2/parse_profile.gd` (new, `SRREVAMP_PARSE_PROFILE=1`) times every pk2 directory
+`client/scripts/pk2/parse_profile.gd` (new, `OPENSRO_PARSE_PROFILE=1`) times every pk2 directory
 read, with the disk read and the Blowfish decrypt apart. It also times every file read, every path
 lookup (`ObjectLoader.find_file`) and 23 parser entry points, by thread, and prints `PARSEPROF`
 lines. Two runs gave the same picture within 3 %; these are run 2's entry window, from the drain's
@@ -15580,16 +15679,16 @@ next, in that order (docs/TODO.md).
     native handle; without it, nothing changes.
   - `DdjReader.to_image` sends its two per-pixel branches to native when available. A native
     refusal falls through to the GDScript branch, which reports its own error.
-  - `SRREVAMP_NATIVE=0` forces GDScript in a build that has the library. The client logs which
+  - `OPENSRO_NATIVE=0` forces GDScript in a build that has the library. The client logs which
     path it took: `NativeAssets: native readers ON|OFF (...)`.
-- **`client/srrevamp_native.gdextension`** gives the linux.x86_64 and windows.x86_64 paths
+- **`client/opensro_native.gdextension`** gives the linux.x86_64 and windows.x86_64 paths
   (`res://native_bin/`, git-ignored). Libraries are build output: `native/build.sh [windows]`.
   `.gitignore` covers `native/target/`, `client/native_bin/`, `*.so`, `*.dll`, `*.dylib` and
   `*.rlib`.
 - **Without the library** (MEASURED: a copy with the `.gdextension` but no `native_bin`, which is
   CI's case and a player's without the DLL), Godot 4.2.2 prints four `ERROR` lines and carries on:
-  `Can't open dynamic library`, `GDExtension dynamic library not found: .../libsrrevamp_native.so`,
-  `Failed loading resource: res://srrevamp_native.gdextension` and `Error loading extension`.
+  `Can't open dynamic library`, `GDExtension dynamic library not found: .../libopensro_native.so`,
+  `Failed loading resource: res://opensro_native.gdextension` and `Error loading extension`.
   `check_scripts.gd` then prints `ALL LOAD` and exits 0, all 179 suites pass, and the client logs
   `NativeAssets: native readers OFF (library not loaded)`.
 - **The export presets exclude the `.gdextension`** (READ, `editor_export_platform_pc.cpp`, 4.2.2).
@@ -15654,9 +15753,9 @@ Tests:
   suites, 0 failing. The existing pk2, asset-source and object-loader suites then run through the
   native path. Without it (`NO_NATIVE=1`): ALL LOAD, 179 suites, 0 failing.
 
-### 4. The gain, warm (MEASURED; same build, `--ab-env SRREVAMP_NATIVE=0`)
+### 4. The gain, warm (MEASURED; same build, `--ab-env OPENSRO_NATIVE=0`)
 
-`perf_gate.sh --ab-env SRREVAMP_NATIVE=0 --sites jangan,mobs` ran 3 runs a side, interleaved, on
+`perf_gate.sh --ab-env OPENSRO_NATIVE=0 --sites jangan,mobs` ran 3 runs a side, interleaved, on
 one shipped copy. The base is this build with the GDScript path forced. The verdicts are the gate's
 own functions. The run's final print was lost to a shell fault, because perf_gate.sh was edited
 while it ran (bash reads a script as it goes), so the table was recomputed from the gate's own
@@ -15725,11 +15824,11 @@ The box's container cannot drop the page cache: `/proc/sys/vm/drop_caches` is re
 `posix_fadvise(POSIX_FADV_DONTNEED)` before every run and records `fincore` afterwards. Godot, the
 project and the shader cache stay cached, so this is cold archives, not a cold machine.
 
-`--ab-env SRREVAMP_NATIVE=0 --sites jangan,mobs --cold`, 3 runs a side. `fincore` read
+`--ab-env OPENSRO_NATIVE=0 --sites jangan,mobs --cold`, 3 runs a side. `fincore` read
 **0 pages** of the five archives resident after every one of the 12 evictions.
 
 ```
-perf gate: base working tree with SRREVAMP_NATIVE=0 vs head working tree (1280x720, median of 3 run(s), cold page cache)
+perf gate: base working tree with OPENSRO_NATIVE=0 vs head working tree (1280x720, median of 3 run(s), cold page cache)
 jangan  frame ms   base 9.49  head 9.72  (+0.2)  SAME
 jangan  entry ms   base 10118  head 6230  (-3888.0)  FASTER
 jangan  freeze ms  base 3477  head 1752  (-1725.0)  FASTER
@@ -15760,7 +15859,7 @@ measure it.
 ### 6. Windows (MEASURED here; NOT run on Windows)
 
 `native/build.sh windows` cross-compiles for `x86_64-pc-windows-gnu` with mingw-w64 13 (Ubuntu's
-`gcc-mingw-w64-x86-64`). The output is `srrevamp_native.dll`, 2.3 MB stripped, a PE32+ DLL. Its
+`gcc-mingw-w64-x86-64`). The output is `opensro_native.dll`, 2.3 MB stripped, a PE32+ DLL. Its
 export table is exactly `gdext_rust_init`, the `.gdextension`'s entry symbol. It imports only
 system DLLs: `KERNEL32`, `msvcrt`, `ntdll`, `USERENV`, `WS2_32`, `bcryptprimitives` and
 `api-ms-win-core-synch-l1-2-0`. No MinGW runtime DLL has to ship beside it.
@@ -15770,7 +15869,7 @@ Why GNU and not MSVC (`cargo-xwin`):
 - The GDExtension interface is a C ABI, so the compiler that built Godot does not matter.
 
 What the user should check on the PC: `Initialize godot-rust (API v4.2..., runtime v4.2.2...)`
-and `NativeAssets: native readers ON (library loaded, srrevamp_native 0.1.0)` in the log. The DLL is
+and `NativeAssets: native readers ON (library loaded, opensro_native 0.1.0)` in the log. The DLL is
 unsigned. SmartScreen or antivirus may quarantine a new unsigned DLL, and the client then simply
 runs in GDScript. The fixes are signing, or the static link the core was kept Godot-free for. How
 CI would build it on `kakariko-runner` is in native/README.md, "Exports and CI". This round does
@@ -15799,7 +15898,7 @@ DLL) takes L2, the MPL notice and the CI build.
 has one. The rule now (perf_gate.sh header; client/tools/README.md, "Native readers A/B"):
 - In base/head mode, NEITHER side gets the library or the `.gdextension`.
 - In `--ab-env` mode, one copy has the working tree's library. `--head REV` and a tree without
-  `client/native_bin/libsrrevamp_native.so` are refused.
+  `client/native_bin/libopensro_native.so` are refused.
 - Every run's `NativeAssets: native readers ...` line is read back. In `--ab-env` mode a head run
   must say ON; any other run must not.
 
@@ -15814,7 +15913,7 @@ jangan  entry ms   base 9932.00  head 9945  (+13.0)  SAME
 
 d7b4aba, --ab-env with no library built -- GDScript against GDScript, passed as a comparison:
 jangan  entry ms   base 9812  head 9861  (+49.0)  SAME           exit 0
-now: --ab-env: no client/native_bin/libsrrevamp_native.so -- run native/build.sh first, or both sides read in GDScript   (exit 2)
+now: --ab-env: no client/native_bin/libopensro_native.so -- run native/build.sh first, or both sides read in GDScript   (exit 2)
 now, --ab-env --head HEAD: --ab-env needs the working tree's built library: --head REV carries none, so both sides would read in GDScript   (exit 2)
 now, PERF_SELFTEST_DROP_LIB=1 (the copy shipped without its library):
   jangan head run 1: FAIL native readers OFF, this side must be ON -- the comparison would not be what it says   (exit 1)
@@ -15836,7 +15935,7 @@ MEASURED:
 - **The new suite on d7b4aba's client:** `SCRIPT ERROR: Parse Error: Static function
   "api_verdict()" not found in base "NativeAssets".` and `Cannot find member "NATIVE_API"`.
 - **The sync, with no library in the local tree:** d7b4aba's `remote_godot.sh sync` left
-  `box native_bin: libsrrevamp_native.so`. Now: `ls: cannot access '.../native_bin': No such file
+  `box native_bin: libopensro_native.so`. Now: `ls: cannot access '.../native_bin': No such file
   or directory`.
 
 **M3. An entry's size went straight to an allocation.** `Archive::read` allocated `size` bytes as
@@ -15867,7 +15966,7 @@ noted in native/README.md; where the release's library is built is round 668's d
 - `cargo test`: 11 pass. With `parity-negative`: 5 of 11 fail.
 - Box `check`: ALL LOAD. `tests`: 179 suites, 0 failing.
 - `native_parity.gd`: PARITY PASS, the same counts as §3.
-- `perf_gate.sh --ab-env SRREVAMP_NATIVE=0 --sites jangan`: entry 9,941 -> 6,258 ms and freeze
+- `perf_gate.sh --ab-env OPENSRO_NATIVE=0 --sites jangan`: entry 9,941 -> 6,258 ms and freeze
   3,484 -> 1,680 ms FASTER, frame SAME; every head run logged `native readers ON` and every base
   run OFF. Other lanes were rendering during it: base run 3 was repeated twice for overlap, and
   head run 1's entry was 7,387 ms.
@@ -15887,7 +15986,7 @@ Labels: READ (the binaries, the decompiles), MEASURED (here, on the dev machine)
 
 - **M1, the monster population.** The guide still called `-nest-swapped-stand-in` "the setting for
   a public server" and quoted round 660's 7-10 fps. It now says what the user decided (round 660's
-  review, "DB numbers now"): srrevamp-01 runs the full population with the stand-in OFF, round 664
+  review, "DB numbers now"): opensro-01 runs the full population with the stand-in OFF, round 664
   having made the dense fields hold 60 fps; the stand-in is an optional OURS fallback.
 - **M2, the skills re-import.** The guide said the skills CSV "grows to 90 columns". It has 91:
   column 90 is StatusParams (`refdata/csv.go`, the column list and `f[90]`), stored as
@@ -15897,8 +15996,8 @@ Labels: READ (the binaries, the decompiles), MEASURED (here, on the dev machine)
   26650). The server also warns at every boot while no skill carries status params (§2).
 - **M3, the nest files' permissions.** The image runs as distroless `nonroot` (`server/Dockerfile`);
   the export runs under `umask 077` and scp keeps 0600, so the container cannot read the CSVs and
-  the boot crash-loops. The guide now has `chmod 755 ~/srrevamp-data/nestdb; chmod 644
-  ~/srrevamp-data/nestdb/*.csv`, and the boot error says so (§2).
+  the boot crash-loops. The guide now has `chmod 755 ~/opensro-data/nestdb; chmod 644
+  ~/opensro-data/nestdb/*.csv`, and the boot error says so (§2).
 - **Stale lines corrected**: "No unique is placed in the world yet" (they are, with `-full-map` and
   `-nest-db-dir`, round 661); "Who spawns where does not change" (only without `-full-map`); "a
   client that stops reading stalls the tick" (not since round 662's per-session queue); the Monster
@@ -15907,8 +16006,8 @@ Labels: READ (the binaries, the decompiles), MEASURED (here, on the dev machine)
   step 2's `rm` left `itemdata.txt`, `skilldata.txt` and `leveldata.txt` behind (added).
   server/README.md had the same staleness in `-monsters-csv`, `-monster-ai`, `-monster-sleep` ("5x5
   regions") and `-nest-swapped-stand-in`; corrected.
-- **The srrevamp-01 procedure**: a numbered section, "Deploying the monster-epic release to
-  srrevamp-01 (round 666)", with the seven steps the final reviewer verified (build with
+- **The opensro-01 procedure**: a numbered section, "Deploying the monster-epic release to
+  opensro-01 (round 666)", with the seven steps the final reviewer verified (build with
   `CGO_ENABLED=0`; export; copy skills/monsters/npcpos and the importer; copy exactly the five shard
   files and chmod; re-import the skills and run the checks; the override's command with
   `-monsters-csv -nest-db-dir -full-map` and the six monster flags, no stand-in and no
@@ -16005,7 +16104,7 @@ AOI, battle, strike, status, summon, nest) and `./internal/nest ./internal/ai` -
 ### 4. Open
 
 - The deploy procedure's expected boot numbers are the final reviewer's; this round did not run
-  srrevamp-01's deploy.
+  opensro-01's deploy.
 - A memory of a monster that dies asleep is swept 64 a pass, not at its death (OURS bound).
 - The aggro link never gathers a sleeping monster now; before, it gathered one only when its brain
   survived an earlier visit. Which of the owner's regions the engine wakes is UNREAD.
@@ -16015,11 +16114,11 @@ AOI, battle, strike, status, summon, nest) and `./internal/nest ./internal/ai` -
 
 No HIGH. Fixed:
 
-- **M1, the guide never put the release on srrevamp-01.** Step 7's `docker compose up -d` neither
+- **M1, the guide never put the release on opensro-01.** Step 7's `docker compose up -d` neither
   pulls nor builds, and dev at ab66d9c has neither `-full-map` nor `-nest-db-dir`: the new command
   would exit `flag provided but not defined` and restart in a loop. A **step 0** now comes first:
   the release merged to `dev`, and the host running it before the override changes. How
-  srrevamp-01 updates was checked read-only over ssh (MEASURED 2026-09-30): `srrevamp-update.timer`
+  opensro-01 updates was checked read-only over ssh (MEASURED 2026-09-30): `opensro-update.timer`
   is enabled (`OnBootSec=2min`, `OnUnitActiveSec=5min`), last ran 23:40:20 UTC, the checkout is on
   `dev` at ab66d9c, and `deploy/update.sh` fetches, fast-forwards, rebuilds and rolls back. So the
   timer applies; step 0 says to wait for it or start the service, and how to see the commit.
@@ -16048,7 +16147,7 @@ No HIGH. Fixed:
   (each under `--- FAIL: TestWokenBrainKeepsWhatItFiled`, `TestStatusHoldWakesAFiledMonster`,
   `TestDeadSleepersAreSwept` or `TestResumeRestoresWithoutEnteringAndRefusesSpawn`; the state
   mutant also fails enteredAt, dwellMs, target and the no-rng-draw check.)
-- **M3**: step 5's `psql` and step 7's compose commands now run from `cd ~/srrevamp`.
+- **M3**: step 5's `psql` and step 7's compose commands now run from `cd ~/opensro`.
 - **L3**: the boot warning fits the store -- an empty in-memory store says "no skills loaded
   (-in-memory with no -skills-csv)", an in-memory CSV without the column says re-export (no
   import, no SQL), an empty table says EMPTY -- and a count query's error is reported as "could not
@@ -16056,9 +16155,9 @@ No HIGH. Fixed:
 - **L4**: `skills.csv` is headerless and a StatusParams cell is quoted with commas inside, so the
   column check is now a CSV reader (`python3 -c 'import csv; ...'` must print `[91]`).
 - **L5**: the strike-worker test counts the runtime's own workers (`monsterAI.workers`, an atomic
-  the worker's start and end keep, also logged with `SRREVAMP_AI_TICK_STATS` as
+  the worker's start and end keep, also logged with `OPENSRO_AI_TICK_STATS` as
   `strike_workers`), not the process's goroutines.
-- **L7**: step 6 shows only the `command:` key and says to leave `environment:` (srrevamp-01's GM
+- **L7**: step 6 shows only the `command:` key and says to leave `environment:` (opensro-01's GM
   accounts, persist position and six monster flags, MEASURED read-only) and `volumes:` alone.
 - Not changed, as the review said: L1 (the aggro link skips sleeping neighbours, disclosed), L2,
   L6.
@@ -16067,7 +16166,7 @@ No HIGH. Fixed:
 
 The final release review (run r3) watched a GM under `-player-dead-state` auto-revived in place
 at 366.0, 397.0, 428.0 and 459.0 s and killed again within 0.1-0.5 s each time, losing 933,800
-EXP per death; `/tp` is refused while dead, and a level-30 player looped the same way. srrevamp
+EXP per death; `/tp` is refused while dead, and a level-30 player looped the same way. OpenSRO
 only revived in place: round 549's 30 s auto-revive, and a Revive button that sent an empty
 `OpRevive`. This round read retail's resurrect flow in both binaries and built its choices.
 
@@ -16112,7 +16211,7 @@ and `server/internal/session/deadstate.go`, "THE CHOICES".
   `AJStateChanger::vslot_002` (kind 0xb / 0) also calls `Revive(0)`; its creators were not traced.
 - **The handler's other arms** (the review): an empty 0x3053 takes the PC out of the world
   (`FUN_004df050(4)`) before any option is read, and a cause-2 death (`+0x72d`, no penalty)
-  revives in place whatever the option and level. srrevamp's dead state is only a monster's kill
+  revives in place whatever the option and level. OpenSRO's dead state is only a monster's kill
   (cause 3); its empty request is the pre-665 client's (OURS, the level's one choice).
 - **Protection**: `Revive(1)` sets body mode 2 (invincible) for 6.0 s (`0xb45b78`; 11.0 s,
   `0xb45bb8`, in the other world kind); a return to the return point is a world re-entry, where
@@ -16131,7 +16230,7 @@ Server (`session/deadstate.go`):
   two -- then revives it there at the load path's pools (`reviveWith`: HP `trunc(0.4 x MaxHP)`, at
   least 1; MP kept, or 40 % if empty). **Option 2** revives in place (round 550's 1 +
   `trunc(0.4 x MaxHP)`) at level 10 or under (`PresentPointMaxLevel`) and is refused above it.
-- **The return point is OURS**: srrevamp keeps no `AppointedTeleport`, so it is the place every
+- **The return point is OURS**: OpenSRO keeps no `AppointedTeleport`, so it is the place every
   character enters the world at, `spawnZone`'s arrival (`returnPoint`).
 - **The 30 s in-place auto-revive is removed** (`RunAutoRevive`, `autoReviveTick`,
   `AutoReviveAfter`; cmd/server no longer starts it).
@@ -16147,12 +16246,12 @@ Server (`session/deadstate.go`):
 Client: the dead window has retail's line and two buttons, their text resolved from the player's
 own textuisystem.txt (`HudPanels.show_revive_prompt(line, level)`; the second button is the
 present point at level 10 or under, else the disabled help button), and `NetClient.revive(option)`
-sends the byte. `SRREVAMP_QA_REVIVE_OPTION` picks the QA hook's button (default 1).
+sends the byte. `OPENSRO_QA_REVIVE_OPTION` picks the QA hook's button (default 1).
 
 OURS in the window: the talk prompts' box instead of the retail message-box art; our death line
 kept above retail's; the help button disabled and the box left up, where retail's click closes it
 (INFERRED: its result goes through `FUN_00777dd0`), because no one can resurrect another player
-in srrevamp yet.
+in OpenSRO yet.
 
 ### 3. Tests
 
@@ -16194,13 +16293,13 @@ no present point and a disabled help button at 11) and `net/world_test.gd` (`enc
 --- FAIL: TestLeavingDeadSavesTheReturnPoint (2.18s)
     revive665_test.go:283: Aria left dead in donwhang and was saved in "donwhang" at (0, 0), want the return point "jangan" at (0, 0)
 FAIL
-FAIL	github.com/OpenSRO/srrevamp/server/internal/session	91.130s
+FAIL	github.com/OpenSRO/OpenSRO/server/internal/session	91.130s
 FAIL
 --- FAIL: TestServerStartsNoAutoRevive (0.00s)
     revive665_test.go:33: main.go:1297:6: main.go uses session.RunAutoRevive: a dead player must stay dead until it chooses retail's return point or present point
     revive665_test.go:33: main.go:1300:179: main.go uses session.AutoReviveAfter: a dead player must stay dead until it chooses retail's return point or present point
 FAIL
-FAIL	github.com/OpenSRO/srrevamp/server/cmd/server	0.005s
+FAIL	github.com/OpenSRO/OpenSRO/server/cmd/server	0.005s
 FAIL
 ```
 
@@ -16291,14 +16390,14 @@ updated to match.
 
 ```
 panic: runtime error: invalid memory address or nil pointer dereference
-	/tmp/claude-0/-root-srrevamp/7d4252ff-ae87-4058-aec0-7dceba9ec162/scratchpad/wt-neg665r/server/internal/session/deadstate.go:488 +0x77
-	/tmp/claude-0/-root-srrevamp/7d4252ff-ae87-4058-aec0-7dceba9ec162/scratchpad/wt-neg665r/server/internal/session/deadstate.go:561 +0x3ca
-FAIL	github.com/OpenSRO/srrevamp/server/internal/session	0.367s
+	/tmp/claude-0/-root-opensro/7d4252ff-ae87-4058-aec0-7dceba9ec162/scratchpad/wt-neg665r/server/internal/session/deadstate.go:488 +0x77
+	/tmp/claude-0/-root-opensro/7d4252ff-ae87-4058-aec0-7dceba9ec162/scratchpad/wt-neg665r/server/internal/session/deadstate.go:561 +0x3ca
+FAIL	github.com/OpenSRO/OpenSRO/server/internal/session	0.367s
 FAIL
 --- FAIL: TestAStaleMoveDoesNotUndoTheReturn (0.35s)
     revive665r_test.go:128: after a step sent from where she fell: Aria at {X:705 Y:0 Z:700}, want still at the return point {X:0 Y:0 Z:0}
 FAIL
-FAIL	github.com/OpenSRO/srrevamp/server/internal/session	4.856s
+FAIL	github.com/OpenSRO/OpenSRO/server/internal/session	4.856s
 FAIL
 ```
 
@@ -16316,7 +16415,7 @@ pass on ddfe5b9 -- they guard against regressions, and each kills a mutant, appl
 --- FAIL: TestATickKillWithTheFlagOffReturnsHome (0.53s)
     revive665r_test.go:217: after a bleed killed her with the flag off: HP 80, life 1 at {X:700 Y:0 Z:700}; want respawned alive at the return point {X:0 Y:0 Z:0}, not where she bled out ({X:700 Y:0 Z:700})
 FAIL
-FAIL	github.com/OpenSRO/srrevamp/server/internal/session	4.939s
+FAIL	github.com/OpenSRO/OpenSRO/server/internal/session	4.939s
 FAIL
 ```
 
@@ -16375,14 +16474,14 @@ found. Round 655's 2,020 pose range stays OURS; the animation LOD below is OURS.
 
 ### 2. Where the frame went (MEASURED, before any fix)
 
-A new QA hook, `SRREVAMP_QA_MOBSPLIT=<frames>`, prints one line of the frame's split every
+A new QA hook, `OPENSRO_QA_MOBSPLIT=<frames>`, prints one line of the frame's split every
 `<frames>` rendered frames (`MonsterCrowd.Split`): physics steps a frame, the clip tick
 (`_tick_idle_animations`) and inside it the pose and the sound calls, the height stepping, the
 build pump, the minimap, the renderer's own CPU and GPU time, draws and primitives, and
-Godot's `TIME_PROCESS` (which holds the draw). `SRREVAMP_QA_MOBSPLIT_OFF=pose,sound,labels,
+Godot's `TIME_PROCESS` (which holds the draw). `OPENSRO_QA_MOBSPLIT_OFF=pose,sound,labels,
 collide,mesh` switches parts of every body off for the A/B. The stress case is the new gate
 site `crowd`: the Jangan spawn with **2,500 monsters of 17 real species within 1,920 of the
-player** (`SRREVAMP_QA_MOBS=2500 SRREVAMP_QA_MOBS_SPREAD=1920`). int/mob 46559e0's code, medians
+player** (`OPENSRO_QA_MOBS=2500 OPENSRO_QA_MOBS_SPREAD=1920`). int/mob 46559e0's code, medians
 of the steady lines:
 
 | run | ms/frame (`--print-fps`, median) | physics steps a frame | clip tick a step | renderer CPU / GPU | what it shows |
@@ -16463,7 +16562,7 @@ Jangan scene alone is 9.6 of it. That is OPEN below, with the next step.
 
 Round 660's follow-up setup (`/var/tmp/dense664/live.sh`, from `/var/tmp/nest660/live.sh`): the
 server with `-full-map`, the shard's nests and the six monster switches, 65,321 monsters alive;
-one QA client at `SRREVAMP_QA_RADIUS=1`, `/tp` to the spot, 150-180 s, `--print-fps` (vsync on,
+one QA client at `OPENSRO_QA_RADIUS=1`, `/tp` to the spot, 150-180 s, `--print-fps` (vsync on,
 as round 660's, so 16.66 is the 60 Hz ceiling), the medians of the last 60 once-a-second samples.
 "Before" is int/mob 46559e0's server and client (the client with only the split line added,
 to count the bodies); "after" is this round's. Another lane's render ran during part of these.
@@ -16849,7 +16948,7 @@ close** (kept by the drain). 354 call sites outside the gateway (an AST walk of 
   `repair.go` (2); `shop.go` (13); `skill.go` (49); `stats.go` (7); `storage.go` (16);
   `teleport.go` (2); `trade.go` (20); `useitem.go` (4); `walls.go:87`; `world.go` (13). The full
   line list is what an AST walk of `server/` prints (the walker is kept out of the repo).
-- **Needs a flush before a close: none explicitly.** srrevamp has no kick, no logout reply
+- **Needs a flush before a close: none explicitly.** OpenSRO has no kick, no logout reply
   (`OpLogoutRequest`/`OpLogoutResponse` are defined at `proto/opcodes.go:203-204` and handled
   nowhere) and no shutdown notice (the SIGTERM context sends nothing). The one send-then-close is
   implicit: a handler that sends and then returns an error, which makes the gateway close the
@@ -16945,12 +17044,12 @@ round 663.
 --- FAIL: TestSendBatchIsNeverInterleaved (0.87s)
 --- PASS: TestTheFramesBeforeAHandlersErrorAreDelivered (0.01s)
 --- PASS: TestNoGoroutineLeakAcrossConnectDisconnect (0.24s)
-FAIL	github.com/OpenSRO/srrevamp/server/internal/gateway	7.923s
+FAIL	github.com/OpenSRO/OpenSRO/server/internal/gateway	7.923s
 
     sendqueue662_test.go:57: only 260 of 1000 ticks ran in 5 s
     sendqueue662_test.go:60: the longest tick took 9.954s: the tick waited on the client that does not read
 --- FAIL: TestASlowClientNeverHoldsTheAITick (10.34s)
-FAIL	github.com/OpenSRO/srrevamp/server/internal/session	10.340s
+FAIL	github.com/OpenSRO/OpenSRO/server/internal/session	10.340s
 ```
 
 The two that pass on the base pass because the base writes synchronously (it has nothing to
@@ -17103,7 +17202,7 @@ swapped stand-ins); 17 capped hives (round 660's 10 plus the seven unique hives)
 alive. The boot log writes one `unique rotation` line per unique, and each `unique hatched`,
 `unique rotation: re-pinned` and `unique summons`.
 
-`-unique-respawn=<dur>` (env `SRREVAMP_UNIQUE_RESPAWN`, OURS, testing) replaces the uniques' wait;
+`-unique-respawn=<dur>` (env `OPENSRO_UNIQUE_RESPAWN`, OURS, testing) replaces the uniques' wait;
 `-nest-respawn` no longer reaches them. The two new DB files (`Tab_RefAISkill.csv`, `_RefSkill.csv`)
 are optional: without them the uniques rotate and fight but summon nothing, and the boot log says so.
 
@@ -17161,7 +17260,7 @@ The seven field uniques' 130 tuples read 0..0 except Cerberus's Ladon (5866): 2.
 1..2 as elite in R1_40. The shard DB's `_RefSkill` carries the same blocks word for word (286 of the
 292 `ssou` skills identical, every unique's among them), and `_RefAISkill` has no counts. With the
 rows as they are the executor spawns nothing for a 0..0 tuple (`n = min + abs(rand()) % 1 = 0`,
-then `test esi,esi; jle` past the spawn loop, 0x597060..0x59707f, 0x59776b; READ), and srrevamp
+then `test esi,esi; jle` past the spawn loop, 0x597060..0x59707f, 0x59776b; READ), and OpenSRO
 does the same: **of the seven field uniques only Cerberus summons** -- Ladon 2..3 with R1_80 and
 1..2 elites with R1_40 (the counts READ from the tuples, EXTERNAL where they come from the DB
 rows). The other six still use their summon skills on each tenth of HP (the dice are thrown, the
@@ -17225,7 +17324,7 @@ session file runs through a stub shim that spawns the unique plainly):
     rotation661_test.go:161: a nest hatched 9.999s after the loss, inside the 10 s window every nest was re-armed to
 --- FAIL: TestJoinPlacesUniqueSpotsNotTheirTwins (0.00s)
     rotation661_test.go:229: row 0 joined {Spot:{ObjectID:5006 Region:29376 ...} Cat:matched ...} (hive &{ID:611 ... WorldID:57 ...}), want the unique on its own hive 193
-FAIL	github.com/OpenSRO/srrevamp/server/internal/nest
+FAIL	github.com/OpenSRO/OpenSRO/server/internal/nest
 --- FAIL: TestUniqueSummonsAtATenthOfItsHP (0.00s)
     summon661_test.go:79: no summon within 30 s of losing a tenth of its HP
 --- FAIL: TestUniqueSummonsEachTenthByBucket (0.00s)
@@ -17236,7 +17335,7 @@ FAIL	github.com/OpenSRO/srrevamp/server/internal/nest
     summon661_test.go:170: no summon
 --- FAIL: TestHPTriggerFiresOnceAtItsThreshold (0.00s)
     summon661_test.go:219: the trigger skill armed 5 times at 50.001 % HP, want 0
-FAIL	github.com/OpenSRO/srrevamp/server/internal/session
+FAIL	github.com/OpenSRO/OpenSRO/server/internal/session
 ```
 
 and the client test against round 660's client (`monster_draw_test.gd` on a base copy):
@@ -17283,7 +17382,7 @@ one client (`World3D.tscn`, QA sign-in) in its own Xvfb, following Tiger Girl by
 species' first body no longer assembles its model on the main thread; the model is assembled on a
 WorkerThreadPool task (the Pk2 reader is locked since round 565; the object prepare already builds
 meshes and materials off the main thread) and the monster waits for it, its snapshot kept; the pump
-queues the waiters when the task finishes. `SRREVAMP_SYNC_LOAD=1` keeps the old path, as do round
+queues the waiters when the task finishes. `OPENSRO_SYNC_LOAD=1` keeps the old path, as do round
 655's tests with their own assembler. This is every species' first body, not only a unique's.
 
 **Perf gate** (`client/tools/perf_gate.sh --base 4bcc2cf --sites jangan,mobs`, 1280x720, median of 3):
@@ -17309,7 +17408,7 @@ Pharaoh temple's instance worlds.
 ### 8. Round 661's review (on top of the int/mob merge c0f6667)
 
 - **H1 -- the 0..0 stand-in is gone.** The executor spawns nothing for a 0..0 tuple (section 3), and
-  so does srrevamp now: `nest.ExecuteSummon` throws each tuple's radius and count dice in the
+  so does OpenSRO now: `nest.ExecuteSummon` throws each tuple's radius and count dice in the
   engine's order and places `min + rand % (max-min+1)` minions -- none for 0..0; the summon skill is
   still used (cooldown, damage total zeroed). `SummonCountStandIn*` and the `StandIn` flag are
   deleted; the boot line reports `zero_count_tuples`. Only Cerberus summons.
@@ -17455,7 +17554,7 @@ champion roll -- and the boot log says so.
 - The client: the class scale (label, collider and cull radius grown with it), the party mark
   beside the name, "(Party)" in the target window, the capability bit.
 - Flags: `-full-map`, `-nest-db-dir`, `-nest-respawn` (override every window, testing only);
-  `SRREVAMP_AI_TICK_STATS=1` logs the AI tick's p50/p99 once a minute.
+  `OPENSRO_AI_TICK_STATS=1` logs the AI tick's p50/p99 once a minute.
 
 ### 4. Tests
 
@@ -17482,17 +17581,17 @@ champion roll -- and the boot log says so.
     nest660_test.go:59: a monster seeing 6 + 200 did not notice Aria 150 units off; state IDLE
 --- FAIL: TestLeashFromTactics (0.00s)
     nest660_test.go:88: still in BATTLE with its target 160 units off and a give-up distance of 150
-FAIL	github.com/OpenSRO/srrevamp/server/internal/session	0.013s
+FAIL	github.com/OpenSRO/OpenSRO/server/internal/session	0.013s
 ```
 
 The rest do not build on the base (`no required module provides package .../internal/nest`,
-`FAIL github.com/OpenSRO/srrevamp/server/cmd/server [setup failed]`).
+`FAIL github.com/OpenSRO/OpenSRO/server/cmd/server [setup failed]`).
 
 ### 5. Scale and the live check (MEASURED, render box)
 
 Scripts on the box: `/var/tmp/nest660/live.sh` (lane display :160, port 16660; the server with
-`-full-map`, the shard's three tables, the six monster switches, `SRREVAMP_AI_TICK_STATS=1` and
-`SRREVAMP_AI_TRACE=1`; one QA client). Our archive's exports (`/var/tmp/rv654/refsrc`), in memory.
+`-full-map`, the shard's three tables, the six monster switches, `OPENSRO_AI_TICK_STATS=1` and
+`OPENSRO_AI_TRACE=1`; one QA client). Our archive's exports (`/var/tmp/rv654/refsrc`), in memory.
 
 - **Fill** (r1): 9,953 monsters hatch on the first pass (one a nest; cap-0 nests excluded), 34,321
   within the first minute, 34,365 of the 34,678 possible by the second (the 8-12 s and 3 h
@@ -17534,7 +17633,7 @@ mobs    freeze ms  base 3375  head 3361  (-14.0)  SAME
 mobs    hitches    base 6  head 6  (+0.0)  SAME
 ```
 
-### 7. The flags srrevamp-01 needs
+### 7. The flags opensro-01 needs
 
 `-npcpos-csv`, `-monsters-csv`, `-nest-db-dir=/data/nestdb` (the three shard CSVs, EXTERNAL,
 copied as `deploy/README.md` says), `-full-map` (turns `-single-frame` on itself), and the six
@@ -17666,7 +17765,7 @@ The user (2026-09-30), part of the monster request: "Also make sure monsters giv
 status effects." Server and target-window UI; no world drawing changed, so **no performance gate**
 (`World3D.gd` only gains a dictionary of masks and a log line). Labels: READ (the binaries),
 MEASURED (the archives), INFERRED, OURS, OPEN. The full record is
-`docs/protocol/status_effects.md`, "What srrevamp does (round 659)".
+`docs/protocol/status_effects.md`, "What OpenSRO does (round 659)".
 
 ### 1. The correction: value[1] is the chance (READ)
 
@@ -17760,15 +17859,15 @@ test is not read). Frostbite writes walk/run speed at 50.0 and slow at 75.0 in t
   there --
 
       internal/statuseffect/apply_test.go:32:13: undefined: Resolve
-      FAIL	github.com/OpenSRO/srrevamp/server/internal/statuseffect [build failed]
+      FAIL	github.com/OpenSRO/OpenSRO/server/internal/statuseffect [build failed]
       internal/session/status_test.go:25:37: undefined: statusRuntime
       internal/session/status_test.go:43:56: undefined: ObjectStatus
-      FAIL	github.com/OpenSRO/srrevamp/server/internal/session [build failed]
+      FAIL	github.com/OpenSRO/OpenSRO/server/internal/session [build failed]
 
   -- the export test in a form the base compiles fails at run time:
 
       neg659_test.go:15: a poison bite's export: 90 fields, no column 90 carrying ps:34,100,16
-      FAIL	github.com/OpenSRO/srrevamp/server/cmd/export-refdata
+      FAIL	github.com/OpenSRO/OpenSRO/server/cmd/export-refdata
 
   -- and the client suite, run on the base's client on the box:
 
@@ -17777,7 +17876,7 @@ test is not read). Frostbite writes walk/run speed at 50.0 and slow at 75.0 in t
       2 FAILURE(S)
 
 - `cd server && go build ./... && go vet ./... && go test -count=1 -p 1 ./...` on the tree merged with int/mob 345e375 (rounds 656 and 657 in): 61 packages ok, none failing.
-- `remote_godot.sh tests` (lane dir `/opt/srrevamp-client-status659`): 176 suites, 0 failing;
+- `remote_godot.sh tests` (lane dir `/opt/opensro-client-status659`): 176 suites, 0 failing;
   `remote_godot.sh check`: ALL LOAD.
 
 ### 5. Left (docs/TODO.md, "Status effects on monsters and players")
@@ -17954,7 +18053,7 @@ the maroon fill; round 639's "GDR_WARNING_WND shares the notice's y (OPEN)" is a
   on its death (the combat kill; GM `/damage`/`/kill`). `combat.Hub` now keeps each monster's damage
   list (`ApplyDamageFrom`, first-hit order) and hands it to the killing blow; `UniqueKiller` is the
   vslot-399 rule over it (a party of two or more is a group; ties: the first in first-hit order,
-  OURS). `-unique-notice-off` (env `SRREVAMP_UNIQUE_NOTICE_OFF`) is the key, default off.
+  OURS). `-unique-notice-off` (env `OPENSRO_UNIQUE_NOTICE_OFF`) is the key, default off.
 - GM tools (OURS): `/spawnunique <id|name>` (Tiger Girl 1954, Isyutaru 2002, Uruchi 1982, Lord
   Yarkan 3810, Demon Shaitan 3875, Cerberus 5871 -- level, HP, defence, radius and speeds READ from
   the box's characterdata; attack the disclosed curve, no attack skill); `/damage <n> [id]`, a blow
@@ -17992,7 +18091,7 @@ the maroon fill; round 639's "GDR_WARNING_WND shares the notice's y (OPEN)" is a
   `hud_chat_test.gd`'s GDR_NOTICE y check now expects 100.
 - `cd server && go build ./... && go test -count=1 -p 1 ./...`: every package ok (after `bundle_docs.sh`
   and the `-unique-notice-off` row in server/README.md, which the doc probes asked for).
-- Client suites on the render box (`remote_godot.sh tests`, lane dir `/opt/srrevamp-client-notice657`):
+- Client suites on the render box (`remote_godot.sh tests`, lane dir `/opt/opensro-client-notice657`):
   `ran 173 suite(s), 0 failing`; `unique_notice_test.gd` ALL PASS (32 checks). Its negative, the
   suite against the base ab66d9c's client: `FAIL UniqueNoticeNet exists
   (res://scripts/net/unique_notice.gd)`, `FAILURES: 1`.
@@ -18086,7 +18185,7 @@ one Xvfb, both through Login -> Character select; A types into its chat line wit
   (CGObjNPC's override at `vtable +0x4f4`; the dump's propagated `CanBeEquipedAt` is wrong for
   it): pets to owners, insert or `+0x14 += damage argument`. Its caller reaches it through the
   vtable and a thunk (`0x605140`) with no direct call, and was not traced, so whether the argument
-  is clipped to the HP left is OPEN; srrevamp keeps the unclipped blow (INFERRED).
+  is clipped to the HP left is OPEN; OpenSRO keeps the unclipped blow (INFERRED).
 - **Re-run after the fixes.** Go: session, gm, combat, systems, cmd/server ok (`-count=1 -p 1`).
   Client: `ran 173 suite(s), 0 failing`. Live (`r2-165614`): both clients got all four notices, the
   Mangyang kill sent nothing (`A notices 4 -> 4, B notices 4 -> 4`), and the banner fits (0.6, 52.2,
@@ -18183,7 +18282,7 @@ object, effect, animation, movement or loading code on the client, so no perform
 --- FAIL: TestMonsterListLargerThanAFramePages (0.02s)
     monsterlist656_test.go:181: handleMonsterList: proto: payload of 96004 bytes too large for a single frame
 FAIL
-FAIL	github.com/OpenSRO/srrevamp/server/internal/session	0.019s
+FAIL	github.com/OpenSRO/OpenSRO/server/internal/session	0.019s
 ```
 
 - `TestMonsterListIsTheAreaOfInterest` (the window, not a cell further out, not another zone);
@@ -18238,8 +18337,8 @@ walk (review follow-up).
 
 The server was built from this branch: `-in-memory -single-frame -monster-ai -monster-spawn-push
 -qa-spread-monsters 5000 -qa-spread-radius 7`. The client came from this branch
-(`/opt/srrevamp-client-aoi656`, World3D with the QA sign-in), `SRREVAMP_QA_AT=1850,1020` (world x
-890, 70 units west of the region line at 960) and `SRREVAMP_QA_WALK=90` (east), for 180 s:
+(`/opt/opensro-client-aoi656`, World3D with the QA sign-in), `OPENSRO_QA_AT=1850,1020` (world x
+890, 70 units west of the region line at 960) and `OPENSRO_QA_WALK=90` (east), for 180 s:
 
 - `roster spawned monsters=5024` (the 24 roster anchors + 5,000 spread).
 - The client's one list: `World3D: server reports 594 monster(s)`. That is the 25-region window. The spread
@@ -18334,7 +18433,7 @@ slowreader656_test.go:86: the slow reader held the fan-out 5.203s, then: <nil>
     slowreader656_test.go:88: the slow reader was never closed: it held the fan-out 5.203s over 5 s (budget 1s)
 --- FAIL: TestASlowSteadyReaderIsClosedWithinItsBudget (5.22s)
 FAIL
-FAIL	github.com/OpenSRO/srrevamp/server/internal/gateway	5.219s
+FAIL	github.com/OpenSRO/OpenSRO/server/internal/gateway	5.219s
 FAIL
 ```
 
@@ -18352,7 +18451,7 @@ aoistress656_test.go:354: the reconcile ran inside the step: nothing kept a view
     aoistress656_test.go:361: left [], want [2]: the monster that walked out of the window stays a ghost
 --- FAIL: TestAOIReconcileWaitsForTheStep (0.32s)
 FAIL
-FAIL	github.com/OpenSRO/srrevamp/server/internal/session	0.320s
+FAIL	github.com/OpenSRO/OpenSRO/server/internal/session	0.320s
 FAIL
 ```
 
@@ -18470,7 +18569,7 @@ species cost about 26.5 s built the old way and about 1.3 s built from templates
   death that has played out asks for one list, at most every 10 s (`DEATH_PULL_SECONDS`, OURS),
   so a server with `-monster-spawn-push` off (the default) still shows respawns and GM spawns.
 - **No per-monster prints or rows.** The build line, the "height resolved" line and the list's
-  per-monster lines are printed only with `SRREVAMP_QA_MOB_LOG` or `/wire`. A queue that drains
+  per-monster lines are printed only with `OPENSRO_QA_MOB_LOG` or `/wire`. A queue that drains
   prints one summary. The debug tabs' ItemList is filled only while the tabs are shown.
 
 ### The `_CLON` model rule (READ; docs/protocol/characterdata.md has the addresses)
@@ -18481,7 +18580,7 @@ species cost about 26.5 s built the old way and about 1.3 s built from templates
 - **The pick.** At object creation `CICMonster::vslot_025` (0x9d3850, and three twins) takes the
   row's own model at +0x124 unless it is empty, and then the Org row's model. It goes one level
   only; nothing loaded means `res\mob\china\mangnyang.bsr`.
-- **srrevamp.** `NpcTableReader.parse_org_codes` and `model_with_org` implement the rule, and
+- **OpenSRO.** `NpcTableReader.parse_org_codes` and `model_with_org` implement the rule, and
   `_monster_model_path` resolves through it before the display-name join.
   - The Mangyang fallback is not taken. In the real table only the thief, hunter and guild-soldier
     classes reach it, and retail draws those from their own list (`ICMonster::FUN_009d3470`).
@@ -18565,7 +18664,7 @@ is empty.
 
 ### Performance gate
 
-A new site, `mobs`, is the Jangan spawn with `SRREVAMP_QA_MOBS=500`. That is a 500-monster list
+A new site, `mobs`, is the Jangan spawn with `OPENSRO_QA_MOBS=500`. That is a 500-monster list
 of the 17 `MOB_CH_` species with a model of their own (13 distinct models), at seeded positions
 over the 5 x 5-region window. It is delivered through `_on_monster_list_result` as soon as the
 grid has its origin, during the loading drain, where a real list asked for in `_ready` lands.
@@ -18604,7 +18703,7 @@ is the Jangan centre cell's own build, which is the same as on the `jangan` site
 frame against Jangan's 9.40 ms is what 500 monsters now cost standing still: +1.35 ms (MEASURED
 across the two gates, not interleaved with each other).
 
-**A smoke run of the head** (`SRREVAMP_QA_MOBS=500`, one boot):
+**A smoke run of the head** (`OPENSRO_QA_MOBS=500`, one boot):
 - 87 bodies were built during the drain over 28 frames, and the rest as their cells loaded, in
   frames of 3.2-3.8 ms.
 - The longest monster frame was 786 ms: the first `MOB_CH_TIGERWOMAN`, one assembly.
@@ -18647,7 +18746,7 @@ Server and tooling only (no client file touched), so no performance gate.
   monster_ai.md). An older export or database reads -1, UNKNOWN, never 0 (0 is a real "never
   drawn": `ai.SkillWeight` enters nothing for it). The store adds `skills.ai_attack_chance`
   (default -1).
-- `cmd/server -monsters-csv` (env `SRREVAMP_MONSTERS_CSV`): each roster species takes every
+- `cmd/server -monsters-csv` (env `OPENSRO_MONSTERS_CSV`): each roster species takes every
   species number from its row (`specFromRow`) and keeps its zone, anchor and placements; a
   difference from the hand-typed value is logged as a WARN; what the table cannot supply (no
   textdata_object, no levelgold, a skill store without AI_AttackChance) keeps the hand-typed value
@@ -18702,7 +18801,7 @@ export-refdata: wrote 33698 skill rows, skipped 0 non-skill rows
 data is committed):
 
 ```
-SRREVAMP_MONSTERS_CSV=.../monsters.csv SRREVAMP_SKILLS_CSV=.../skills.csv go test -run TestSpeciesTableMatchesTheRealExport -v ./cmd/server/
+OPENSRO_MONSTERS_CSV=.../monsters.csv OPENSRO_SKILLS_CSV=.../skills.csv go test -run TestSpeciesTableMatchesTheRealExport -v ./cmd/server/
     species_test.go:251: real export: 7604 species, 33698 skills; roster overlaid 11, missing 0, changed 0, kept 0
 --- PASS: TestSpeciesTableMatchesTheRealExport (0.13s)
 ```
@@ -18737,13 +18836,13 @@ The same test files against the base (ab66d9c, a detached worktree):
 ```
 internal/species/species_test.go:22:29: undefined: ColOrgCodeName
 internal/species/species_test.go:35:34: undefined: Exporter
-FAIL	github.com/OpenSRO/srrevamp/server/internal/species [build failed]
-FAIL	github.com/OpenSRO/srrevamp/server/cmd/server [build failed]
+FAIL	github.com/OpenSRO/OpenSRO/server/internal/species [build failed]
+FAIL	github.com/OpenSRO/OpenSRO/server/cmd/server [build failed]
 cmd/export-refdata/main_test.go:1171:7: undefined: skAIAttackChance
 cmd/export-refdata/main_test.go:1187:36: skills[0].AIAttackChance undefined (type refdata.Skill has no field or method AIAttackChance)
-FAIL	github.com/OpenSRO/srrevamp/server/cmd/export-refdata [build failed]
+FAIL	github.com/OpenSRO/OpenSRO/server/cmd/export-refdata [build failed]
 internal/refdata/csv_test.go:655:22: sk.AIAttackChance undefined (type Skill has no field or method AIAttackChance)
-FAIL	github.com/OpenSRO/srrevamp/server/internal/refdata [build failed]
+FAIL	github.com/OpenSRO/OpenSRO/server/internal/refdata [build failed]
 ```
 
 and the base exporter itself: `export-refdata -mode monsters` prints its usage and exits 2.
@@ -18779,7 +18878,7 @@ finds nothing; MOB_CH_TIGERWOMAN does), and a GM-spawned giant-HP species pays t
 
 docs/TODO.md, "The monster world": round 655 (the Org model on the client), round 657 (every
 nest), cols 75/77 per species, block, TypeID4 and the party-support nibble, the 18 species with
-unresolved skills, and srrevamp-01's re-export (deploy/README.md, "ROUND 654").
+unresolved skills, and opensro-01's re-export (deploy/README.md, "ROUND 654").
 
 ## Six-hundred-and-fifty-third round: a click on the sky, or on ground too far away, runs the character that way until a wall stops it, every other player sees the run and the stop, and every walk now stops at a wall instead of sliding along it
 
@@ -18902,7 +19001,7 @@ MOVE body 1 t=467 ms=21631 pos=(42.000,6.539) target=(42.000,6.542)
 - A turns the view 180° with a real right-drag of 600 px (0.3° a pixel) and clicks the sky:
   `MOVE run t=1115 heading=3.1416 wire=16384 dir=(0.000,-1.000)`.
 - A runs south 297 units in 6 s, from (42, 5.7) to (42.8, −291.0).
-- B received 119 positions with `heading=16384`. B's facing log (`SRREVAMP_QA_FACING_LOG`) shows
+- B received 119 positions with `heading=16384`. B's facing log (`OPENSRO_QA_FACING_LOG`) shows
   the body turning from north through east to south in about 0.4 s, which is π at 3π rad/s:
 
 ```
@@ -19009,7 +19108,7 @@ the crossing point, nudged at most 0.2, and bit 0, which ends the move.
 - `ClickWalk.blocked_ends(blocked)` is retail's rule: any blocked step ends the order. Round 649's
   1 % threshold (OURS) is gone, and so is `SkyRun.blocked_ends`.
 - `_move_on_nav_graph` walks every order with the no-slide walk (`step_tracked(..., false)`) and
-  ends it at the first blocked step. Only the QA walk (`SRREVAMP_QA_WALK`, no order) still slides.
+  ends it at the first blocked step. Only the QA walk (`OPENSRO_QA_WALK`, no order) still slides.
 - **Approaches.** An attack's or friendly cast's approach ends at the wall like any walk, but keeps
   its pending action.
   - The order's tick, `World3D._step_move_order`, was moved out of `_physics_process` so it can be
@@ -19125,9 +19224,9 @@ SCRIPT ERROR: Invalid call. Nonexistent function '_end_move_order_for_arrival (v
 
 ### Open
 
-- **What a retail body shows while its approach is held at a wall** was not read; srrevamp's
+- **What a retail body shows while its approach is held at a wall** was not read; OpenSRO's
   stands. Nor was retail's pick-up approach.
-- **The server does not step the run itself.** srrevamp is client-authoritative. Whether retail's
+- **The server does not step the run itself.** OpenSRO is client-authoritative. Whether retail's
   server sends its own stop to the watchers was not read.
 - The arrow keys' heading-form commands (READ) are not bound. `0x70c5` (the other sender) is not
   built.
@@ -19168,7 +19267,7 @@ connected and receive every byte. **NEGATIVE with §8's 3 s budget**, MEASURED:
 freezereader656_test.go:69: the freezing peer was closed after 4245010 bytes: write tcp 127.0.0.1:39729->127.0.0.1:38000: i/o timeout (debt peak 3.001s, longest write 2.964s, budget 3s)
 --- FAIL: TestAPeerThatFreezesThenReadsIsNotClosed (3.02s)
 FAIL
-FAIL	github.com/OpenSRO/srrevamp/server/internal/gateway	3.019s
+FAIL	github.com/OpenSRO/OpenSRO/server/internal/gateway	3.019s
 FAIL
 ```
 
@@ -19332,8 +19431,8 @@ SCRIPT ERROR: Invalid call. Nonexistent function '_topmost_window_at (via call)'
 
 `/var/tmp/icons652/icons_e2e.sh` on the box: an in-memory server built from this tree, a
 character registered (GM `/level 40`, `/sp`, `/gold`, Bicheon raised and Smash learned), then the
-Login → Character Select route under Xvfb with the smith's store open (`SRREVAMP_QA_SHOP`).
-xdotool clicks the coordinates the client itself prints (`SRREVAMP_QA_SLOTS`, F11):
+Login → Character Select route under Xvfb with the smith's store open (`OPENSRO_QA_SHOP`).
+xdotool clicks the coordinates the client itself prints (`OPENSRO_QA_SLOTS`, F11):
 
 | Step (run r5, the retail rule) | What the log measured |
 |---|---|
@@ -19445,7 +19544,7 @@ a player arriving while someone was berserk was never told.
   (255, 255, 255, 128) in 0.2 s, then (vslot_009) back to alpha 0 in 0.5 s; vslot_010 draws it
   as a screen quad, TEXTUREFACTOR = the colour, SRCBLEND SRCALPHA, DESTBLEND SRCCOLOR. The fade
   starts from the manager's current colour (alpha 0 after any finished fade); the constructor's
-  first RGB (`_DAT_00de523c`) was not read, so the starting RGB is OPEN -- srrevamp draws white.
+  first RGB (`_DAT_00de523c`) was not read, so the starting RGB is OPEN -- OpenSRO draws white.
 - **Arriving while someone is berserk**: the spawn state block carries the body mode (client
   `0x9d1300` -> `+0x470`; server `GObjPC::FUN_004a9b70` writes chardata[3]), applied by
   `FUN_009d17e0` with `FUN_009cf880(mode, 1, 0)` -- arg 1 skips the start effect.
@@ -19457,7 +19556,7 @@ a player arriving while someone was berserk was never told.
   40 -> 80 while berserk and 40 again after the end.
 - **Duration 60 s** + param 195, already right.
 - **Death does not end it** (READ, review): `GObjPC_OnDeath` (`0x4e6980`) and `SetLifeState`
-  (`0x4a9c80`) call no SetBodyMode; only `GObjPC::Revive` does (body mode 2) -- as srrevamp does.
+  (`0x4a9c80`) call no SetBodyMode; only `GObjPC::Revive` does (body mode 2) -- as OpenSRO does.
 - **A teleport ends it** (INFERRED, unchanged): `GObjPC::HandleTeleportUse` (`0x513590`) calls no
   SetBodyMode; the world-entry setter `CGObjPC::vslot_391` (body mode 2 or 4) replaces mode 1, and
   the teleport reaches it through the re-entry chain (char-data save -> `CharDataSavingCompleted`
@@ -19468,7 +19567,7 @@ a player arriving while someone was berserk was never told.
   slot 3, v)` (the percent scale slot; the end, `FUN_004ab060`, writes 100.0 back), `'DABR'` v ->
   params 174-177 slot 2 minus v; then the speed republish (vtable `+0x4e8`). The values are DB
   rows; Media.pk2's `hwanleveldata.txt` is titles only and the box's server package has no
-  database, so srrevamp changes no speed and applies no DABR. The spawn block's third float is
+  database, so OpenSRO changes no speed and applies no DABR. The spawn block's third float is
   NOT a berserk speed: it is param 140 (InitStats 100.0), which the server's `FUN_005a1a40` uses
   as a time percentage.
 
@@ -19476,7 +19575,7 @@ a player arriving while someone was berserk was never told.
 
 - **Server** (`session/combat.go`, `world.go`): `sendBodyModesInView` -- on world entry and on a
   zone change's arrival, a 0x30BF kind 4 value 1 for each other character in the zone that is
-  berserk, under that character's berserk turn. OURS: the carrier (srrevamp's spawn is not the
+  berserk, under that character's berserk turn. OURS: the carrier (OpenSRO's spawn is not the
   retail state block); the content is READ.
 - **Client**:
   - `effects/berserk_look.gd` (new): parses `SYSTEM_CH_HWANMODE`'s rows and Script cells from the
@@ -19489,7 +19588,7 @@ a player arriving while someone was berserk was never told.
     flash (an additive screen quad under the HUD); the hwan swing sounds for another player too.
   - `NetClient.body_modes` (`WorldNet.note_body_mode`), cleared/dropped with the buff roster, so a
     body built later -- an arrival list, a relog, a rebuilt body -- takes the look without the burst.
-  - QA: `SRREVAMP_QA_BERSERK_PROBE=1` prints each drawn player's chest on screen and its tint.
+  - QA: `OPENSRO_QA_BERSERK_PROBE=1` prints each drawn player's chest on screen and its tint.
   - Review follow-up: the mover's own 0 on a zone change's arrival (`_arrival_pending`) drops its
     look silently (`BerserkLook.end(host, true)` -> `drop`): no DEACT burst, no `hwanreturn.wav`,
     colour and size back at once -- the original meets that arrival with a rebuilt object
@@ -19500,7 +19599,7 @@ a player arriving while someone was berserk was never told.
 Harness `/var/tmp/berserk651/t651_e2e.sh` on the box: one Xvfb 2560x720, an in-memory server built
 from this branch (`-gm-accounts qa651a,qa651b`), two clients through Login -> Character select side
 by side (A at x 0, B at x 1280), A registered at the Jangan spawn (97/168 local 1002, 1020), B at
-(1020, 1040) facing A (`SRREVAMP_QA_YAW=180`), both with `SRREVAMP_QA_BERSERK_PROBE=1`. A's keys
+(1020, 1040) facing A (`OPENSRO_QA_YAW=180`), both with `OPENSRO_QA_BERSERK_PROBE=1`. A's keys
 went by `xdotool windowfocus --sync` then plain `key`: Return, `/hwan 5`, Return, Return on the
 empty box (a sent line keeps the chat focused, 0x7ad400 -- r1 lost its Tab to that), Tab.
 
@@ -19608,7 +19707,7 @@ The user reported: "The donwhang teleporter seems broken now too." Labels: READ 
 binary, MEASURED = counted or run, INFERRED = argued from shape, OURS = this project's choice.
 
 **What was broken (MEASURED).**
-- **The tester's session.** The public server's log (srrevamp-01, the session of 2026-09-30) has
+- **The tester's session.** The public server's log (opensro-01, the session of 2026-09-30) has
   one teleport, Hotan -> Donwhang at 06:06:19 (`gate=STORE_KT_GATE dest=GATE_WC`). After it, no
   `OpTeleportUse` (opcode 243) arrived and no refusal was logged. So Donwhang's gate never sent a
   request: the break is on the client, before the server.
@@ -19646,8 +19745,8 @@ binary, MEASURED = counted or run, INFERRED = argued from shape, OURS = this pro
 - **WorldID / instance refusal.** GATE_WC reads WorldID 1. No refusal was logged, and no request
   was sent at all.
 - **The talk box closing at once.** No box opened, because the gate was not clickable.
-- **Data.** The box's export (`/var/tmp/teleports/csv`) and srrevamp-01's
-  `~/srrevamp-data/teleport` have the same md5 for all three CSVs. The client reads its tables
+- **Data.** The box's export (`/var/tmp/teleports/csv`) and opensro-01's
+  `~/opensro-data/teleport` have the same md5 for all three CSVs. The client reads its tables
   from Media.pk2.
 
 **Why round 642's tests missed it.**
@@ -19671,14 +19770,14 @@ binary, MEASURED = counted or run, INFERRED = argued from shape, OURS = this pro
   the live run's Hotan click landed off-screen, at (640, -34), clamped to y 0; it still hit the
   tall portal. The Donwhang click this round is about was on-screen, at (640, 313).
 - An unbound gate's log line names the nearest placed object and its distance.
-- QA: `SRREVAMP_QA_CLICK` takes `wait:<ticks>` between two clicks; the `gate` target takes any
+- QA: `OPENSRO_QA_CLICK` takes `wait:<ticks>` between two clicks; the `gate` target takes any
   bound gate, including `STORE_SD_GATE1`/`2`.
 - Retail has no counterpart to read for this: retail's gate is a server-spawned structure, and the
   nearest-object bind is round 577's disclosed stand-in. The fix restores what that stand-in bound
   before round 643.
 
 **Live, real input (xdotool on Xvfb, Login -> CharacterSelect; in-memory server built from this
-branch with the WorldID export and srrevamp-01's npcpos; GM account `qa650`, level 40, `/goto
+branch with the WorldID export and opensro-01's npcpos; GM account `qa650`, level 40, `/goto
 hotan`).** The run clicks Hotan's gate, "Select a teleport area" and "[Donwhang]", then after the
 arrival Donwhang's gate, the teleport line and "[Jangan]".
 
@@ -19745,7 +19844,7 @@ I try to record it looks like I'm just running in place but flickers outside of 
 
 ### The mechanism, measured first (MEASURED, dev e5bf2ba plus a trace hook)
 
-**The trace.** `SRREVAMP_QA_MOVE_LOG=1` (new, measurement only) prints one line per physics tick:
+**The trace.** `OPENSRO_QA_MOVE_LOG=1` (new, measurement only) prints one line per physics tick:
 - `MOVE self`: this player's position, the click destination, whether the order is in effect, the
   run speed and the distance left;
 - `MOVE send`: each `OpMove` sent;
@@ -19958,7 +20057,7 @@ This matches "running in place" in the user's report, so it is fixed now rather 
 - When the mover's collision query (`[0x111a02c]` vtable `+0x30`) returns bit `0x10000000`, the
   tick takes the failure path: `+0x84 = 0` and `+0x80 = 0`. The movement ends and the body
   stops.
-- srrevamp now ends a click walk the same way. `World3D._move_on_nav_graph` checks each step;
+- OpenSRO now ends a click walk the same way. `World3D._move_on_nav_graph` checks each step;
   when `NavGraph.step_tracked` reports it blocked, it calls `ClickWalk.blocked_ends`, and
   `_end_blocked_click_walk` clears the order.
 - A walk to a ground item asks for it from where the walk ended, as an arrival does
@@ -20070,16 +20169,16 @@ buildings.
   water's alpha is above 0 but the ground stands above the plane. For 90/143 that is **45 square
   units** in the whole region, 25 of them within 0.1 of the plane. A band that small cannot make
   the user's picture.
-- **A pixel diff with the water on and off** (new `SRREVAMP_QA_NOWATER=1`, same boot and views):
+- **A pixel diff with the water on and off** (new `OPENSRO_QA_NOWATER=1`, same boot and views):
   - the dock view (frame 38): 1,328 pixels change, all at y 282-315 between the dock's piles, which
     is the river behind it;
   - the view back east over the sand (frame 66): **0 pixels change, and the streaks are still
     there**.
-- **The reeds hidden** (`SRREVAMP_QA_HIDE=reed`, 28 mesh instances): the streaks are gone. Against
+- **The reeds hidden** (`OPENSRO_QA_HIDE=reed`, 28 mesh instances): the streaks are gone. Against
   the normal run, 5,595 pixels differ in frame 38 and 891 in frame 66, and they are exactly the
   hatched lines and the speckle.
-- **`SRREVAMP_NO_MAP_ANIM=1`** draws the reeds as upright clumps: 60,567 pixels in frame 38 against
-  the reeds hidden. **`SRREVAMP_MAP_ANIM_NO_SHARE=1`** still draws the streaks. So the fault is
+- **`OPENSRO_NO_MAP_ANIM=1`** draws the reeds as upright clumps: 60,567 pixels in frame 38 against
+  the reeds hidden. **`OPENSRO_MAP_ANIM_NO_SHARE=1`** still draws the streaks. So the fault is
   round 645's skinning, not round 647's shared poses.
 
 ### Why the reeds smear (MEASURED, then READ)
@@ -20248,7 +20347,7 @@ after 18 overlapping renders.
 Round 645 made the map's skeletal objects move. The rounds 641–646 integration review MEASURED what
 that cost at the Jangan spawn (97/168 local 1002, 1020, yaw 0, 1280×720, default radius,
 `--print-fps --disable-vsync`, mean of the last 40 samples): 14.1–14.5 ms a frame against dev
-8658370's 10.6–11.2 ms and 10.9–11.3 ms with `SRREVAMP_NO_MAP_ANIM=1` — about 90 fps down to 70,
+8658370's 10.6–11.2 ms and 10.9–11.3 ms with `OPENSRO_NO_MAP_ANIM=1` — about 90 fps down to 70,
 all of it round 645's. Round 645's own figure for Jangan (+1.4 ms, at 640×360) understated it; its
 entry now says so and points here. This round cuts the cost without changing a pixel, fixes the
 driver's zone-change bookkeeping, and records what is left.
@@ -20258,7 +20357,7 @@ driver's zone-change bookkeeping, and records what is left.
 `MapAnimationProbe` (round 645's split): at frame 3,600 every registered object is switched to one
 state and the driver halts; each row compares the mean of the once-a-second frame times from frame
 1,200 to the split against those from 2 s after it to the end (140 s runs, one per mode, the
-c306c51 path). The same split with `SRREVAMP_NO_MAP_ANIM=1` drifted **+0.69 ms**, so a row is good
+c306c51 path). The same split with `OPENSRO_NO_MAP_ANIM=1` drifted **+0.69 ms**, so a row is good
 to about ±0.7 ms.
 
 | Mode after frame 3,600 | Change (ms/frame) |
@@ -20340,7 +20439,7 @@ Not done, and why:
   poses it would save a handful of uploads. Left.
 - The update rate is untouched: every running clip still advances every frame by the frame's dt.
 
-`SRREVAMP_MAP_ANIM_NO_SHARE=1` keeps every clip on its own player (the A/B, and what the probe's
+`OPENSRO_MAP_ANIM_NO_SHARE=1` keeps every clip on its own player (the A/B, and what the probe's
 cost modes need). The QA MAPANIM line gains `poses`, `groups`, `sectors`, `viewed`, `tested` and a
 `frame_ms` averaged over every frame since the last line; `MapAnimationProbe` gains `census` and
 `freeze_poses`. The synthetic tree the tests build moved to `map_animation_fixture.gd`, shared by
@@ -20358,11 +20457,11 @@ driver the same frame instead of sitting, freed, in a sector the bounds no longe
 
 ### 5. Before and after (MEASURED)
 
-Interleaved per repetition — c306c51, this round, this round with `SRREVAMP_NO_MAP_ANIM=1`, this
-round with `SRREVAMP_MAP_ANIM_NO_SHARE=1` — at Jangan, then the same at the reeds (98/157 local
+Interleaved per repetition — c306c51, this round, this round with `OPENSRO_NO_MAP_ANIM=1`, this
+round with `OPENSRO_MAP_ANIM_NO_SHARE=1` — at Jangan, then the same at the reeds (98/157 local
 900, 900, yaw 0), three repetitions. 1280×720, default radius, `--print-fps --disable-vsync`, mean of
 the last 40 once-a-second samples of 110 s runs, on the RX 5700 XT through VirtualGL, box shared
-with another lane. Base in `/opt/srrevamp-client-animperf-base` from `git archive c306c51`.
+with another lane. Base in `/opt/opensro-client-animperf-base` from `git archive c306c51`.
 
 | Site | Build | Run 1 | Run 2 | Run 3 | Mean ms/frame | Over NO_MAP_ANIM |
 |---|---|---|---|---|---|---|
@@ -20384,7 +20483,7 @@ The release review re-measured the same view (3 interleaved runs a build, 2026-0
   1.6 ms (NO_SHARE against this round). QA MAPANIM: 154 clips running on **23 poses** (17 groups,
   6 alone); the driver's tick **461–874 µs → 1–2 µs** with the camera held.
 - **Reeds:** +6.04 → +4.94 ms. 40 reeds on **1 pose**; driver 154–317 µs → 2 µs.
-- **Walking** (Jangan spawn, `SRREVAMP_QA_WALK=180`: about 30 s of walking north through the gate
+- **Walking** (Jangan spawn, `OPENSRO_QA_WALK=180`: about 30 s of walking north through the gate
   into the next region, then held against the palace's indoor floor at local 1002, 801; two runs
   each). The first 20 samples, while walking: c306c51 11.45 / 11.45 ms, this round **10.64 /
   10.62 ms**. A moving camera view-tests 74–79 sectors a tick: the driver took 172–301 µs against
@@ -20394,7 +20493,7 @@ The release review re-measured the same view (3 interleaved runs a build, 2026-0
   and fragments with the per-object pause, as retail's clocks do.
 
 **The picture is the same (MEASURED).** 640×360 fixed-step movies (`--write-movie`, 1/60 s a frame,
-400 frames, `SRREVAMP_QA_NOUI=1`) of c306c51 twice and this round once, at both sites: frames 100 to
+400 frames, `OPENSRO_QA_NOUI=1`) of c306c51 twice and this round once, at both sites: frames 100 to
 390, every 10th (30 frames), are **pixel-identical** to c306c51's below the top 12 rows
 (`compare -metric AE` = 0), and so are two c306c51 runs to each other. The top right 65×10 strip
 differs between the two c306c51 runs as well (93–158 px at the reeds), so it is not this round. At
@@ -20669,7 +20768,7 @@ Three causes:
   keeps it and moves only its time bound. Before this, each zone replay rebuilt the effect.
 - **`_place_at_region_local`** leaves `_last_sent_pos` at the server's position. The spawn-spot
   placement then goes out at once as a relocated OpMove.
-- QA: `SRREVAMP_QA_CLICK_WAIT=<ticks>` delays the gate click, so a run can cast by real input first.
+- QA: `OPENSRO_QA_CLICK_WAIT=<ticks>` delays the gate click, so a run can cast by real input first.
 
 **Server (OURS, walls.go / world.go / gm.go):**
 - A zone change, a gate teleport or a GM `/tp` or `/goto` marks the next relocated moves of a
@@ -20697,8 +20796,8 @@ Three causes:
 - **The target window:** A's click on B gives `HudTarget: buffs of character:2 -- 1 main, 0
   second: 113@(0, 0)` (shot `15`).
 - **A real gate:**
-  - B `/goto donwhang`. A starts at the Jangan gate (local 1230,1380) with `SRREVAMP_QA_CLICK=gate
-    SRREVAMP_QA_TELEPORT=2`, casts Grass Walk and Fire Wall by keys, then the gate's Move sends
+  - B `/goto donwhang`. A starts at the Jangan gate (local 1230,1380) with `OPENSRO_QA_CLICK=gate
+    OPENSRO_QA_TELEPORT=2`, casts Grass Walk and Fire Wall by keys, then the gate's Move sends
     `1 -> 2`.
   - Server: `teleport ... from=GATE_CH dest=GATE_WC zone=donwhang`.
   - B.log: `QaTester left/entered the zone`, `EFFECTS aura on character:1 token 9: skill 113`.
@@ -20708,7 +20807,7 @@ Three causes:
   - The two stood ~550 units apart, so shot `17` shows each alone. The logs are the measurement.
 - **Same-zone relocation:** under `-single-frame` every `/goto` and gate here is one. The body is
   rebuilt (left, entered) and the aura re-attached, as above.
-- **Not applicable: walking out of view and back.** srrevamp's server has no view range; a zone
+- **Not applicable: walking out of view and back.** OpenSRO's server has no view range; a zone
   (under `-single-frame`, the world) is one broadcast bucket.
 - **Imbue:** covered in the first cast only. Its 15 s had 3.3 s left at the first warp, and the
   replay carried it (`skill 90 ... remaining 3335 ms`, aura on B's side, then its end).
@@ -20744,7 +20843,7 @@ branch's cleanup helper:
     buffreplay646_test.go:407: after a walk with the wall up Aria stands at {X:0 Y:0 Z:0}, want the landing x 120
 ```
 The other five wire tests pass on dev: the server's replay was already right. The client suite ran
-on dev's client copy (`/opt/srrevamp-client-fxpersist-base`), 9 failures:
+on dev's client copy (`/opt/opensro-client-fxpersist-base`), 9 failures:
 ```
 FAIL BuffRoster exists (client/scripts/net/buff_roster.gd)
 FAIL NetClient keeps a buff_roster
@@ -20791,7 +20890,7 @@ about tentacles; "animated assets in Taklaman too" was a second report.
 - It is placed 10 times in 93/144–96/148, including three times in 95/147.
 - A render at 95/147 local (700, 800), looking along +Z, reproduces the picture: tentacles on the
   canyon wall and the bridge overhead.
-- With `SRREVAMP_QA_HIDE=thorng01`, 28 mesh instances (the pieces `oas_tarim_thornG01_01..04`) were
+- With `OPENSRO_QA_HIDE=thorng01`, 28 mesh instances (the pieces `oas_tarim_thornG01_01..04`) were
   hidden, and most of the tentacles in the picture went with them.
 
 **The ones left (READ against the census).** `thorng02_01`, `thorng04_01_01`, `thorng05_01_01` and
@@ -20882,7 +20981,7 @@ its objects' state: their clocks stop, and their drawn state stays as it was.
   asm 0xc47a20, zeroes +0x98 and +0x9c. The apply (`CRTBone::vslot_005`) and the skeleton update
   (`FUN_00c4c320`) run only when a clip was evaluated, so the body keeps its last pose. Holding the
   last key matches this. It is no longer OPEN.
-- **`SRREVAMP_NO_MAP_ANIM=1` now builds the pre-645 object.** `MapAnimation.prepare` returns before
+- **`OPENSRO_NO_MAP_ANIM=1` now builds the pre-645 object.** `MapAnimation.prepare` returns before
   reading anything, so there is no skeleton, skin or player. It is a clean baseline: B measures like
   dev below.
 - **The census is exact now.** `animates` builds the model with `ObjectLoader.load_object` and looks
@@ -20901,7 +21000,7 @@ samples, frames 100–390. The box is shared with other lanes. The columns:
 - process: `Performance.TIME_PROCESS`;
 - render CPU / GPU: the viewport's measured render times.
 
-**The variants and order.** A is this branch, B this branch with `SRREVAMP_NO_MAP_ANIM=1`, and C is
+**The variants and order.** A is this branch, B this branch with `OPENSRO_NO_MAP_ANIM=1`, and C is
 dev 8658370 with only the QA print patched in. They ran interleaved A, C, B, twice at each site.
 
 | Site | Run | Process ms | Render CPU ms | Render GPU ms | Sum ms | Draws |
@@ -20918,19 +21017,19 @@ dev 8658370 with only the QA print patched in. They ran interleaved A, C, B, twi
   **Corrected in round 647:** that understates it. At the Jangan spawn (1002, 1020, yaw 0) at
   1280×720 with `--print-fps --disable-vsync`, the rounds 641–646 integration review MEASURED
   14.1–14.5 ms a frame against dev 8658370's 10.6–11.2 ms and 10.9–11.3 ms with
-  `SRREVAMP_NO_MAP_ANIM=1` (about +3.3 ms, 90 fps to 70); round 647 MEASURED +2.86 ms (14.05
+  `OPENSRO_NO_MAP_ANIM=1` (about +3.3 ms, 90 fps to 70); round 647 MEASURED +2.86 ms (14.05
   against 11.19) and cut it to +0.60 ms. See round 647.
 - **Reeds.** A costs about +4.8 ms at 640×360 in those runs, nearly all process time. At 320×180
   in the split runs below it is about +2.9 ms.
 
 #### Where the reeds' cost goes (MEASURED)
 
-The split was made with `MapAnimationProbe`: `SRREVAMP_QA_MAPANIM_SPLIT=420` with
-`SRREVAMP_QA_MAPANIM_MODE=<mode>`.
+The split was made with `MapAnimationProbe`: `OPENSRO_QA_MAPANIM_SPLIT=420` with
+`OPENSRO_QA_MAPANIM_MODE=<mode>`.
 - At frame 420 every registered object is switched to one state, and the driver halts.
 - Each run compares the median process time of frames 100–420 against frames 440–800, per frame,
   at the reeds view (98/157 at 900, 900, 320×180, 197 registered, 57 running).
-- An `SRREVAMP_NO_MAP_ANIM=1` run (B) gives the drift across the two windows: 6.21 and 6.10.
+- An `OPENSRO_NO_MAP_ANIM=1` run (B) gives the drift across the two windows: 6.21 and 6.10.
 - The earlier rapid in-run toggling was abandoned: switching skins and players back and forth
   every 12–50 frames swamped the differences.
 
@@ -20988,7 +21087,7 @@ manual stepping).
   - the sector cell and a real camera's sector test in front of and behind it;
   - flag bit 0 at 9,000 units;
   - the last-entry rule and a null last entry;
-  - `SRREVAMP_NO_MAP_ANIM` building the pre-645 object;
+  - `OPENSRO_NO_MAP_ANIM` building the pre-645 object;
   - the cost probe's `entries()`, and a halted driver changing nothing.
 
   A missing or older API is reported as a FAIL line, not a script error.
@@ -21157,8 +21256,8 @@ The addresses and excerpts are in docs/protocol/BSR_FORMAT.md, "How a map object
 - **What a one-shot shows after it ends** is OPEN. It holds the last key (OURS). (**READ in the
   review follow-up:** retail keeps the last pose too.) This affects the
   horses (`chinaetc_horse*_basic`, IsCyclic 0), several scenery NPCs and nothing else in the census.
-- `SRREVAMP_QA_MAPANIM=n` prints `QA MAPANIM frame .. registered running driver_us process_ms`.
-  `SRREVAMP_NO_MAP_ANIM=1` leaves everything still, for the A/B.
+- `OPENSRO_QA_MAPANIM=n` prints `QA MAPANIM frame .. registered running driver_us process_ms`.
+  `OPENSRO_NO_MAP_ANIM=1` leaves everything still, for the A/B.
 
 ### 4. Verified
 
@@ -21205,7 +21304,7 @@ ground control rectangle.
   - The driver took 1,050 µs a frame testing every clip.
   - With world centres cached and a quarter tested per frame it takes about 200 µs.
   - 182 clips run from the maple viewpoint.
-  - Process time over 44 samples was 20.3 ms mean against 17.7 ms with `SRREVAMP_NO_MAP_ANIM=1`.
+  - Process time over 44 samples was 20.3 ms mean against 17.7 ms with `OPENSRO_NO_MAP_ANIM=1`.
     That is +2.6 ms on a box shared with other lanes; the p10–p90 bands were 17.6–22.1 and
     15.6–19.0.
 
@@ -21432,8 +21531,8 @@ review follow-up below (`collide_mode` is 1 on every walk).
 **Real input on the box (the Login -> CharacterSelect route, `/var/tmp/invisiwall/live.sh`).**
 The setup:
 - an in-memory server built from this tree, the QA account (GM) and `/speed 4`;
-- placed on the south den bridge at 91/148 (980, 300) with `SRREVAMP_QA_AT`;
-- 25 real X left clicks ahead of the player (`xdotool`, no `--window`), `SRREVAMP_QA_NAVTRACE=2`.
+- placed on the south den bridge at 91/148 (980, 300) with `OPENSRO_QA_AT`;
+- 25 real X left clicks ahead of the player (`xdotool`, no `--window`), `OPENSRO_QA_NAVTRACE=2`.
 
 Base client: `NAV 629: wall at local 980.0, 477.7 (on object oas_tarim_rob_s_brid)`, and it
 stayed there. This build: no wall line, and it was still on the deck at (980.0, 1186.7) when the
@@ -21742,7 +21841,7 @@ No placed model failed on a `.bsr` or `.bms` the readers refused, and none drew 
   either way. The registry is cleared with the grid.
 - **`MapO2Reader.Entry`** gains `owner_region`, `build_flags`, `skipped()` and `object_key()`,
   and `mapo.Entry2` gains `OwnerRegion()`, `Skipped()` and `Key()`.
-- **`SRREVAMP_QA_OBJECTS`**: at each `--shots` viewpoint, one `QA OBJECT` line per matching
+- **`OPENSRO_QA_OBJECTS`**: at each `--shots` viewpoint, one `QA OBJECT` line per matching
   placed object -- its key, the holding region, its position, pieces, triangles, visibility and
   frustum -- counted from the drawn surfaces' own index arrays.
 - `foliage_census.gd --near` and `probe_seasonal.gd` follow the same rule.
@@ -21753,7 +21852,7 @@ No placed model failed on a `.bsr` or `.bms` the readers refused, and none drew 
   that region's space.
   - It prints `(N measured, K of them held by a region other than their owner; M skipped:
     owner region not loaded)`.
-  - Hotan, `--radius 1`, `SRREVAMP_QA_FLOAT=4000`: `0 placed object(s) ... (132 measured, 5 of
+  - Hotan, `--radius 1`, `OPENSRO_QA_FLOAT=4000`: `0 placed object(s) ... (132 measured, 5 of
     them held by a region other than their owner; 12 skipped: owner region not loaded)`.
   - Those 5 were skipped before.
 
@@ -22080,7 +22179,7 @@ for 3.
 - `TestTeleportEveryRetailLink` stands the player at each source object. It now counts 108 moved
   (all 56 NPC links), 64 refused as sources in another world, 46 as instanced or dungeon
   destinations, 69 with no object at the source, 4 as dungeon sources and 1 by the Roc rules. That
-  was measured with an export and with `SRREVAMP_NPCPOS_CSV` (all 32 NPCs placed); the export was
+  was measured with an export and with `OPENSRO_NPCPOS_CSV` (all 32 NPCs placed); the export was
   deleted afterwards.
 - `cmd/server`: `teleportObjectPlaces`.
 - `teleport_test.gd`: the 4 and 3 lines.
@@ -22100,7 +22199,7 @@ Round 642's own run of the retail-link test is the source-world negative: it cou
 46 of them from an instanced gate.
 
 **Checks.** The Go suite passes: `go build ./...`, `go vet ./...` and `go test -count=1 -p 1 ./...`
-(shared cache). The retail-link test passed with an export and `SRREVAMP_NPCPOS_CSV`. On the box,
+(shared cache). The retail-link test passed with an export and `OPENSRO_NPCPOS_CSV`. On the box,
 with the lane env inline, `check` loads all 401 scripts and `tests` runs 161 suites with 0 failing.
 
 ## Six-hundred-and-forty-second round: the ferries, airships, tunnels and every other teleport NPC take a player to their linked point
@@ -22159,15 +22258,15 @@ All 32 are placed by npcpos. None worked:
   - A ferry seller's talk box reads "1. Select a teleport area:", then the end line. Its list is
     the point's links, in file order, with their fees.
 - **QA.**
-  - `SRREVAMP_QA_CLICK=npc:<CODE>` targets a named NPC, retrying while its region streams in.
-  - `SRREVAMP_QA_AIM_ONLY` stands the player and prints the click point instead of dispatching.
-  - `SRREVAMP_QA_TALK_LINES` prints each talk-box paragraph's screen point.
-  - `SRREVAMP_QA_COMMANDS` takes `wait <s>`.
+  - `OPENSRO_QA_CLICK=npc:<CODE>` targets a named NPC, retrying while its region streams in.
+  - `OPENSRO_QA_AIM_ONLY` stands the player and prints the click point instead of dispatching.
+  - `OPENSRO_QA_TALK_LINES` prints each talk-box paragraph's screen point.
+  - `OPENSRO_QA_COMMANDS` takes `wait <s>`.
   - `walk_probe.gd --column` also prints the `.m` block's drawn water.
 
 **Directions (MEASURED over the export).** Every link out of an NPC point has its reverse, except
 the two into Thief Town (`7 -> 8`, `34 -> 8`), whose destination has no link out. So there was no
-one-way link to fix. 62 of the 292 retail links are one-way. srrevamp adds none.
+one-way link to fix. 62 of the 292 retail links are one-way. OpenSRO adds none.
 
 **Fees and levels (MEASURED over the export).** 33 of the NPC links carry no rule: the ferries,
 boats, airships, tunnels, the Constantinople harbour with the pirates, and the Paros Light House's
@@ -22220,7 +22319,7 @@ inside the portal's basin.
     link;
   - a GM crossing free;
   - `TestTeleportEveryRetailLink` drives all 292 links of an operator export (with
-    `SRREVAMP_TELEPORT_DIR`) through one character at each link's lowest allowed level. The result:
+    `OPENSRO_TELEPORT_DIR`) through one character at each link's lowest allowed level. The result:
     154 moved to their point with their fee (all 56 NPC links among them), 69 refused as having no
     object at the source, 68 as instanced or dungeon, and 1 by the Roc rules.
 - `teleport_test.go`: the WorldID column and the older header.
@@ -22250,7 +22349,7 @@ arrival.
 ```
 
 **Checks.** The Go suite passes: `go build ./...` and `go test -count=1 -p 1 ./...` (shared cache, Postgres
-up), and `SRREVAMP_TELEPORT_DIR=<export> go test -count=1 ./internal/session/ -run Teleport`. The
+up), and `OPENSRO_TELEPORT_DIR=<export> go test -count=1 ./internal/session/ -run Teleport`. The
 client `check` loads all 401 scripts, and `tests` runs 161 suites with 0 failing.
 
 **Deploy.** Re-export the teleport directory for the `WorldID` column (`deploy/README.md`). An old
@@ -22365,13 +22464,13 @@ rules; a pushed mouse move. The negative, against dev 8658370 with the new test 
 
 **OPEN:**
 - the retail default of "System UI Autohide" with no settings file;
-- the Game options checkbox, which srrevamp does not offer, by the user's choice;
+- the Game options checkbox, which OpenSRO does not offer, by the user's choice;
 - the whisper list (ID 51) and its button, not built.
 
 **Review follow-up.**
 - **The edge pixel.** `0xb8f3d0` is inclusive, but Godot's hit test is half-open, so a click on
   x = end.x reached the world. Both windows now override `_has_point` with the inclusive test.
-- **Log noise.** `CHAT FRAME` / `SYSTEM FRAME` print only with `SRREVAMP_QA_FRAME_LOG` set.
+- **Log noise.** `CHAT FRAME` / `SYSTEM FRAME` print only with `OPENSRO_QA_FRAME_LOG` set.
   `CHAT LOCK` stays.
 - **The update's cadence.** Retail calls `0x7a9bd0(1)` on every frame while the frame is wanted and
   unlocked (`0x77b407`). Its show returns early when nothing changes (`0x652b70`), so calling only
@@ -22451,21 +22550,21 @@ walls".
   and `+0x18 += damage` at 0x58f015, both before 0x58f03e.
   - `buff.Books.HitWall` now does the same: a blow sharing a type with the wall charges it, and
     only then is absorbed or not.
-  - A mixed 4|8 blow would split. No `att` row has both bits (MEASURED), so srrevamp's blows never
+  - A mixed 4|8 blow would split. No `att` row has both bits (MEASURED), so OpenSRO's blows never
     do.
   - A blow of no `att` type is absorbed at no cost to the wall, since both twins return 0.
 - **The imbue term.** The absorb test's second term is the attacker's imbue: the context's `+0x78`
   comes from `book[0x79]`, is gated by `att[4]` and scaled by `att[4]/100`. It is named, not
-  modelled: srrevamp's monsters carry no imbue.
+  modelled: OpenSRO's monsters carry no imbue.
 - **Client (kind 7 and DefenseEfp).** A kind-7 number is always display type 0, never the critical
   style. The DefenseEfp is READ (`FUN_00a9c470` files column 13, "DefenseEfp", at +0x80) and plays
-  with any attached skill deco; with none, the attacker's DamageEfp plays. srrevamp stands
+  with any attached skill deco; with none, the attacker's DamageEfp plays. OpenSRO stands
   HitEffect's default in for that DamageEfp (OURS: the monster's skill is not on the wire).
 - **Doc corrections.**
   - The toggle-off runs after phase 0's 0x3003/0x3030 refusals. `FUN_0059ef90` matches a
     sub-state-1 record. `FUN_0059eff0(0)` only zeroes its end flag `+0x10`; the book update ends it.
   - The client's 500 ms lock is set by the 0x7074 senders, through `FUN_009eb130`.
-- **OPEN, not modelled.** srrevamp has none of these:
+- **OPEN, not modelled.** OpenSRO has none of these:
   - summons, mercenary scrolls and mounting, all refused while walled (0x4931d6, 0x49be6f,
     0x49b507, 0x4fc52a);
   - knockback and knockdown, skipped on a walled target (0x58fee5, `FUN_0058e540`).
@@ -22677,7 +22776,7 @@ scratch `wall_shots/`):
   that closed it hit an NPC).
 
 Not done / OPEN: the root itself (the user's call); the `BDMD` drain reduction; the absorb test's
-second-record term; walls against player blows (srrevamp has no PvP); the kind-7 sounds; the
+second-record term; walls against player blows (OpenSRO has no PvP); the kind-7 sounds; the
 `summ` lifetime.
 
 ## Six-hundred-and-thirty-ninth round, review follow-up: the saved bar follows skill upgrades and bag moves, a death writes retail's EXP-loss line, and a held arrow turns at an aimable speed
@@ -22750,7 +22849,7 @@ The negative, against af79fe9 (round 639 before this follow-up):
     FAIL no repeat 50 ms later (retail's period is not used)
     FAIL the next repeat 250 ms after the first
     internal/session/combat_test.go:105:12: undefined: expAdded
-    FAIL	github.com/OpenSRO/srrevamp/server/internal/session [build failed]
+    FAIL	github.com/OpenSRO/OpenSRO/server/internal/session [build failed]
 
 The two SCRIPT ERRORs are the old decode aborting on a bad field. The runner counts them as
 failures.
@@ -22861,7 +22960,7 @@ The negative, against dev 5a82339 (the same tests in a base worktree):
     FAIL a press on the right arrow turns 36 degrees (got 0.0075)
     FAIL ten clicks step 36 degrees each and come back to 0 (got [0.43, 0.859, 1.289, 1.719, 2.149, 2.578, 3.008, 3.438, 3.867, 4.297])
     internal/session/combat_test.go:79:3: unknown field ExpGained in struct literal of type AttackResult
-    FAIL	github.com/OpenSRO/srrevamp/server/internal/session [build failed]
+    FAIL	github.com/OpenSRO/OpenSRO/server/internal/session [build failed]
 
 On the round: `remote_godot.sh check` ALL LOAD (396 scripts); `remote_godot.sh tests` ran 158
 suites, 0 failing; `go build ./... && go test -count=1 -p 1 ./...` all ok.
@@ -22898,7 +22997,7 @@ MEASURED, INFERRED, OURS, OPEN. Record: `docs/protocol/target_window_buffs.md`.
   as items are). It refuses with 0x1894's text while the same skill's buff runs, and refuses a skill
   with no 'dura'. After the spend, it starts the buff on the user's own book (`startUsu1Buff`, under
   the owner's buff lock) for 'dura' read unsigned / 1000 s, and tells the zone with OpBuffStart.
-- **OURS, changed from round 632:** an entry srrevamp does not model is now skipped and logged
+- **OURS, changed from round 632:** an entry OpenSRO does not model is now skipped and logged
   instead of refusing the whole item. These are a UIU1 3/3/13/4 (the premium time, a
   CTJ_PremiumKeeper type-3 job), a UIU1 3/3/3/10 with a FourCC other than 0x706874, BCS1, BFI1,
   PSU1, UQL1 and USL1. An item with nothing modelled is still refused and not spent.
@@ -23016,7 +23115,7 @@ MEASURED, INFERRED, OURS, OPEN. The full record, with every address, is
   std::list in arrival order, appended by 0x9cd050).
 - Type 2 objects are made by 0xa54020, which the 0xB0BD buff-start handler calls for whatever
   owner the packet names (0x8a5d49). So every buff the zone hears of belongs to its owner.
-- Type 3 objects come from 0xB0BE (a buff carrying a name; unread, and srrevamp sends none).
+- Type 3 objects come from 0xB0BE (a buff carrying a name; unread, and OpenSRO sends none).
   The abnormal-state bits go into the second list (none are sent).
 - ~~Item states are never among the sources, so a target's premium does not show.~~ **Wrong;
   corrected by the review follow-up above:** the premium is a USU1 skill buff (0xB0BD) and does
@@ -23048,13 +23147,13 @@ tooltip because the slot's parent is not the board).**
   file.
 - The monster pieces have no such control.
 - **No server change was needed for race.** Retail reads it from the object's reference data, not
-  from a packet field. srrevamp's entity snapshot already carries Gender, its stand-in for the
+  from a packet field. OpenSRO's entity snapshot already carries Gender, its stand-in for the
   reference object. Gender maps to the body code, and characterdata column 14 gives Country (0 on
   every `CHAR_CH_*` row, MEASURED round 629).
 
 **8. The 0xB0BD handler, READ this round.** It is noted here because it settles "are others'
 buffs known": the start handler attaches a skill object to the owner it finds for every start,
-not only this player's. srrevamp's server already broadcasts OpBuffStart/End to the zone, and
+not only this player's. OpenSRO's server already broadcasts OpBuffStart/End to the zone, and
 replays them on zone entry both ways (rounds 616/622). The server starts no monster buffs, so a
 monster's row is empty (OPEN, a server feature).
 
@@ -23241,7 +23340,7 @@ things. Labels: READ, MEASURED, INFERRED, OURS, OPEN.
   replace `rotation.y = atan2(dir.x, dir.z)`.
 - The turn runs while standing too, as `FUN_009e0e60` runs it when `+0x88 & 0x31`.
 - `_player_move_order` is set by an accepted click and cleared by a zone change or the player's own
-  skill move. Both mappings are INFERRED: srrevamp has no stop message.
+  skill move. Both mappings are INFERRED: OpenSRO has no stop message.
 - A ground click still drops a pending attack or friendly cast even when the filter does not send
   it. That keeps round 622's behaviour (OURS: where retail drops a pending action is not read).
   `friend_cast_test` caught the first ordering.
@@ -23250,7 +23349,7 @@ things. Labels: READ, MEASURED, INFERRED, OURS, OPEN.
 - Server:
   - `world.Entity.Heading` holds the client's heading.
   - `Hub.MoveFacing` updates it from each walk's delta with `world.HeadingToward`, which is
-    `FUN_009ed130` in srrevamp's frame: +z is 0, +x is pi/2, and a step of 1e-6 or less keeps it.
+    `FUN_009ed130` in OpenSRO's frame: +z is 0, +x is pi/2, and a step of 1e-6 or less keeps it.
   - `Hub.Move`, used for relocations and skill moves, leaves it alone.
   - `Hub.ChangeZone` carries it.
   - A fresh entry has heading 0; it is not saved with the position.
@@ -23268,14 +23367,14 @@ things. Labels: READ, MEASURED, INFERRED, OURS, OPEN.
   - `_spawn_or_update_other` places a new body facing it and snaps a drawn one, ending any turn.
     This is READ: `FUN_009d17e0` stores the spawn's angle with a bare `FUN_009c4260`, and a new
     mover has no turn (`0x9e0cd0` zeroes `+0xa4`).
-  - `FUN_009ca320` aims a body that spawned moving. srrevamp's arrivals never do, so nothing aims.
+  - `FUN_009ca320` aims a body that spawned moving. OpenSRO's arrivals never do, so nothing aims.
 
 **4. Snap or turn, per path (READ, then matched).**
 - The stop/position message snaps to the server's angle AND ends the turn (`FUN_009e00f0` ->
-  `FUN_009e0050`). srrevamp's monster stop has no angle. It now snaps to the turn's own target and
+  `FUN_009e0050`). OpenSRO's monster stop has no angle. It now snaps to the turn's own target and
   ends the turn (INFERRED: the server's heading is the last leg's).
 - The angle-only message `FUN_008a4ec0` turns at 3 pi unless mover `+0x94` is set. `FUN_008a78b0`
-  (a u8 angle) snaps with a bare `FUN_009c4260`. srrevamp sends neither; both are documented.
+  (a u8 angle) snaps with a bare `FUN_009c4260`. OpenSRO sends neither; both are documented.
 - The skill action reader `FUN_00a54be0` snaps with a bare `FUN_009c4260`, which does NOT end a
   turn. So two snaps no longer cancel a turn:
   - the cast start's snap toward the target;
@@ -23291,7 +23390,7 @@ things. Labels: READ, MEASURED, INFERRED, OURS, OPEN.
   turned the puppet toward the jump. Measured in round 637's run: the entry leg read "move 145.0,
   face 145.0".
 - Retail places an object at a message's source position (`FUN_009e11e0`) without aiming it.
-- srrevamp's `OpMove` now has a trailing flags byte, bit 0 = relocated. Older servers read three
+- OpenSRO's `OpMove` now has a trailing flags byte, bit 0 = relocated. Older servers read three
   floats and ignore it.
   - `World3D._position_relocated` sets it when the sender knows (`_relocated_pending`: the gap
     recovery, `_place_at_region_local`).
@@ -23388,7 +23487,7 @@ INFERRED, OURS, OPEN.
 - MEASURED: two clients on the box, through Login -> CharacterSelect with real X input, against a
   server built from dev 5a82339 (`-in-memory`, `-monster-ai`). A (QaTester) walked 8 directions by
   real clicks around its own body. B (QaFriend) logged A's puppet every 50 ms with the new
-  `SRREVAMP_QA_FACING_LOG=1`. Each line has the drawn position and the way the MODEL faces, read
+  `OPENSRO_QA_FACING_LOG=1`. Each line has the drawn position and the way the MODEL faces, read
   off the skeleton's global basis (the body's front is the skeleton's -Z, MEASURED in round 533).
   `client/tools/facing_measure.py` turns the lines into movement against facing.
 - Before (dev 5a82339 plus only the log hook), per leg, the movement heading and the facing:
@@ -23409,7 +23508,7 @@ INFERRED, OURS, OPEN.
 - MEASURED, monsters (18 bodies, 24,987 moving samples after the first 3 s): 99.8% within 2
   degrees. Their longest stretch off by more than 2 degrees was 183 ms, a sample across a leg's
   corner. Monsters faced their path already; they were snapped to it at each leg's start.
-- NPCs do not move in srrevamp (they are placed statues, `NpcFacing`), so there was nothing to
+- NPCs do not move in OpenSRO (they are placed statues, `NpcFacing`), so there was nothing to
   measure.
 
 ### 2. The cause
@@ -23419,7 +23518,7 @@ INFERRED, OURS, OPEN.
   kept rotation 0. The only turn was the cast start's snap toward a target (`_on_skill_cast`).
 - The monster path differs: `_apply_monster_leg` set `rotation.y = MonsterMotion.facing_yaw(...)`
   at every leg. That is why monsters were right and players were not.
-- srrevamp's player protocol carries no angle. `OpEntityMoved` is a character id and a position.
+- OpenSRO's player protocol carries no angle. `OpEntityMoved` is a character id and a position.
   The mover's client streams positions (`MIN_SEND_INTERVAL` 0.05 s), not retail's destinations. So
   the angle-units question does not arise for players: there is no angle to convert.
 
@@ -23500,10 +23599,10 @@ INFERRED, OURS, OPEN.
   physics frame after the other bodies' lerp, is the tick.
 - Another player: each `OpEntityMoved` (and a snapshot for a body already drawn) aims the body from
   where it is drawn toward the new position.
-  - OURS: srrevamp streams positions, so each position is treated as the destination.
+  - OURS: OpenSRO streams positions, so each position is treated as the destination.
   - The retail 25.0 squared-distance guard is NOT applied. Corrected by the review: it compares
     the new destination with the body's current POSITION, and only while no movement order is in
-    effect (see the follow-up above). Applied to srrevamp's stream, it would drop the first
+    effect (see the follow-up above). Applied to OpenSRO's stream, it would drop the first
     sample (about 2.5 units away) of each walk after a spawn or placement, and nothing after
     that.
 - A monster's leg now turns at the same rate instead of snapping (`_apply_monster_leg`). The
@@ -23674,7 +23773,7 @@ in `docs/protocol/skill_buffs.md`.
 - The skill tick's case 2 then posts 0x7070 → vslot 383 `FUN_004b21b0` → `FUN_0059b7c0` →
   `FUN_0059b480`. That function runs the category end at 0x59b745, just before
   `SkillActionHandler`.
-- srrevamp now runs it once every refusal has passed: after the gate, the cost test and the reach
+- OpenSRO now runs it once every refusal has passed: after the gate, the cost test and the reach
   test.
 - The review's probe is folded in as `TestRound636ReviewLowerStealthIsRefused` and
   `TestRound636ReviewRefusedCastKeepsStealth`.
@@ -23705,15 +23804,15 @@ in `docs/protocol/skill_buffs.md`.
   book, with the target as the object (0x58d294 `push ebp`). 276 rows meet it.
 - It counts the second records that SkillAction_Buff's Target_Required 1 branch builds for the
   caster (READ: link struct `+0xc` the caster, `+0x10` the target).
-- srrevamp keeps them as the caster's link entries (`buff.Books.links`). This is contained:
+- OpenSRO keeps them as the caster's link entries (`buff.Books.links`). This is contained:
   - they are out of the visible book (OURS);
   - they are added with the target's record and dropped when it ends (INFERRED);
   - they are dropped at the caster's teardown.
 - A Warrior guard (`lnks` 1 . 2) now links two party members. A third is 0x3029, the same one again
   0x300c, and another level of the guard 0x300c.
 - The census drives all 106 friendly rows with a non-zero value[2] to their limit.
-- OPEN: retail's link record ends the target's record when it ends; srrevamp leaves it running.
-- The Warlock DOTs have no friendly group, so srrevamp still starts none.
+- OPEN: retail's link record ends the target's record when it ends; OpenSRO leaves it running.
+- The Warlock DOTs have no friendly group, so OpenSRO still starts none.
 
 **4. The 18 `dttp` rows with a state byte (READ; matched).** These are `SKILL_CH_FIRE_DETECT_*`
 (byte 0x2f) and `SKILL_CH_FIRE_DESCRY_*` (0x2e).
@@ -23728,7 +23827,7 @@ in `docs/protocol/skill_buffs.md`.
 - All 18 rows carry `efr` kind 1 with Activity 2 (MEASURED; new CSV column 82 `Efr1`). So retail
   **charges a second Fire Detect, answers success, and starts nothing**, because the engage finds
   0x2f set.
-- srrevamp:
+- OpenSRO:
   - `buff.Books.CheckEngage` is the sub-state 0 test. It runs after the category end and before the
     costs. A hit answers with `session.silentRefusal`, a marker the client ends the cast on without
     logging (OURS: our reply has no "error 0"; `SelfCast.SILENT_END_TEXT`).
@@ -23791,7 +23890,7 @@ All 311,259 byte-sharing pairs across groups are refused as the second, save the
 On this branch all three pass. The guard-link negative is at the `buff` level (its API is new);
 the census drives it over every row.
 
-**srrevamp-01** must re-export and re-import the skills again: the CSV is now 83 columns
+**opensro-01** must re-export and re-import the skills again: the CSV is now 83 columns
 (deploy/README.md).
 
 ## Six-hundred-and-thirty-sixth round: Fire Protection no longer stacks, one Grass Walk runs at a time, and a GM's /speed makes testing faster
@@ -23809,7 +23908,7 @@ in `docs/protocol/skill_buffs.md`, "The recast rule" and "Every row, by rule".
 **1. Why they stacked (READ + MEASURED).**
 - `FUN_0059d870`'s list walk passes over every record whose skill carries `cbuf` (0x59d908). All
   five Fire Protections (`SKILL_CH_FIRE_GANGGI_A..E`) carry it. So the GroupID branch never saw an
-  active Fire Protection, and srrevamp had nothing after the list.
+  active Fire Protection, and OpenSRO had nothing after the list.
 - Retail has something after the list: the **bit test** (0x59dad2). `FUN_0059db10` tests the row's
   `ovl2` and Action_Overlap bytes against a 256-bit state set at `book+0x1b0`.
   - `SkillBook::SetGroupBits` (0x59dc00) fills that set. A buff's engage sets its bytes (0x5842ce)
@@ -23862,7 +23961,7 @@ or the skill is already in use.") and the first one keeps running.
   - It never falls through to the GroupID branch.
 - **`msch` 1** skips the list.
 - **Gate order:** row 16 also refuses a `hide` row while the caster's vslot 0x100 answers 4 (OPEN
-  which state). The gate tests HP (0x58e292) and MP (0x58e2b1) before row 16. srrevamp now tests the
+  which state). The gate tests HP (0x58e292) and MP (0x58e2b1) before row 16. OpenSRO now tests the
   costs first; round 616 had it the other way round.
 - **The engage:** it re-tests Action_Overlap and does not engage on a hit (`return 2`). Its set and
   clear masks differ for an `lnks` record cast on oneself (it sets none) and for a record on another
@@ -23881,16 +23980,16 @@ byte pairs with the new row's (`FUN_005a1840`). The events:
 Mask 2 ends the EU stealth, invisibility, transform and illusion rows on any skill use, and a Bard
 dance ends the dance before it. Its place, before the gate, is INFERRED from `FUN_0059b480`'s order. **Wrong: see the review follow-up; it runs after the gate.**
 
-**5. srrevamp.**
+**5. OpenSRO.**
 - `buff.Books` keeps the bit set and applies the whole function (`overlapLocked`) on the caster's
   book and, for a Target_Required 1 row, the target's.
 - The export gains skill CSV columns 64..76 (`cmd/export-refdata` `stackColumns`: Action_Overlap's
   three low bytes, `ovl2`, `dttp`, `efr` 2, `FUN_00589d20`, `msch` 1, `hide`, `skc` value[1],
-  Basic_Group, Basic_Activity, `dtt`) and the matching Postgres columns. **srrevamp-01 must
+  Basic_Group, Basic_Activity, `dtt`) and the matching Postgres columns. **opensro-01 must
   re-export and re-import its skills** (deploy/README.md's skills steps); with an older export
   every state byte loads 0 and the old behaviour returns.
 - Not modelled:
-  - the running-action half of `FUN_0059db10` (srrevamp engages at the cast);
+  - the running-action half of `FUN_0059db10` (OpenSRO engages at the cast);
   - `FUN_0059dc80`, the `lnks` path (OPEN; 32 Target_Required 0 `lnks` rows get no recast check) -- **built in the review follow-up**;
   - the `hide` rule;
   - category masks 1, 4 and 8.
@@ -23908,7 +24007,7 @@ dance ends the dance before it. Its place, before the gate, is INFERRED from `FU
   the client sends).
 - It is documented in DEBUG_TOOLS.md.
 
-**7. Every row (MEASURED; `TestRecastRuleCensus`, `SRREVAMP_SKILLS_CSV`).**
+**7. Every row (MEASURED; `TestRecastRuleCensus`, `OPENSRO_SKILLS_CSV`).**
 - The test runs the rule over the 2,348 kind-3 rows of the box's export.
 
   | rows | rule |
@@ -24390,7 +24489,7 @@ result (0xB025's codes: 3 "Cannot find [%s].", 0x200a not a party member, 0x200b
 - Ordinary chat goes to the sender's zone.
 - A whisper goes to its target.
 - Party chat goes to the party. The guild line goes to the online guild.
-- Union and academy are refused: srrevamp has no alliances or academy.
+- Union and academy are refused: OpenSRO has no alliances or academy.
 - A type-3 line from a non-GM goes out as type 1.
 - The sender sees its own line from the OK result, as retail does.
 
@@ -24642,7 +24741,7 @@ drop. Icons are now 32x32 at the cell's top-left; they had been stretched to 36.
 
 **The size settings.**
 
-- `-inventory-size` / `SRREVAMP_INVENTORY_SIZE` sets the size for any character without its own,
+- `-inventory-size` / `OPENSRO_INVENTORY_SIZE` sets the size for any character without its own,
   clamped to 1..96. Its default is **96**, three full pages: OURS, the user's choice for testing.
 - `/invsize [1-96|default]` is a GM command (OURS). It refuses to shrink the bag below an occupied
   slot.
@@ -24895,7 +24994,7 @@ step is fixed when the display starts. MEASURED (real input: scroll, potion, Tab
   teleport handler to them was not traced.
 - `berserk.Tracker.End` clears the active window (the activation's end timer then stands down)
   and `session.endBerserk` broadcasts body mode 0, from `ReviveHandler`, the auto-revive and
-  `warpTo` (change zone and teleport). OURS: the value is 0, not the engine's 2 -- srrevamp has no
+  `warpTo` (change zone and teleport). OURS: the value is 0, not the engine's 2 -- OpenSRO has no
   body mode 2 (the invincibility and its timer); the client's handler starts the display only on
   1 and does nothing else to the orbs on either value (0x8a80a0).
 - MEASURED: berserk at 02:55:51.6, killed, Revive clicked at 02:56:06.1 -> body mode 0 at
@@ -24997,7 +25096,7 @@ labelled from `UIIT_CTL_CANCEL` at 0x7afb57; FUN_007b03e0 hit-tests all count + 
 
 **5. The pieces that had been skipped.**
 - *The FUN_00488db0 gate (READ, 0x488db0).* It answers 1 for TID bit 1 clear and TypeID
-  3/3/3/10. On 0, `0x49fc94 je 0x49fd55` skips the type-10 job with no error. srrevamp now skips
+  3/3/3/10. On 0, `0x49fc94 je 0x49fd55` skips the type-10 job with no error. OpenSRO now skips
   such a UIU1 entry the same way.
   - The type-3 branch's class is `FUN_004929c0` (0x4929c0: TypeID 3/3/13) with TID4 4. This
     corrects the previous round's "TypeID4 4" to **3/3/13/4**. Such rows are still refused, as
@@ -25018,11 +25117,11 @@ labelled from `UIIT_CTL_CANCEL` at 0x7afb57; FUN_007b03e0 hit-tests all count + 
 **6. Minor.**
 - An `items_code_name_idx` index for `GetItemByCode`.
 - 0x185b's authored text, `UIIT_MSG_STRGERR_WAIT_FOR_REUSE_DELAY` "Still have time to reuse the
-  item.", now replaces srrevamp's "wait for the reuse delay" on every item path.
+  item.", now replaces OpenSRO's "wait for the reuse delay" on every item path.
 - The client prints `World3D: use item refused: <text>`, so tester logs show refusals.
 
 **7. deploy/README.md: the ROUND 632 note.** The item CSV grows to 72 columns (70 CodeName, 71
-CompositeDesc). It needs a re-export and a re-import on srrevamp-01. The note gives the check
+CompositeDesc). It needs a re-export and a re-import on opensro-01. The note gives the check
 queries (23944's list, 23937's code).
 
 **Tests.**
@@ -25151,7 +25250,7 @@ engine needs no lock, because all of these run on the PC's own thread.
   `pc+0x217c`, set and cleared by `QB_SetBlocked`/`QB_ClearBlocked`.
 - The event-0xc listener list (`FUN_0063d4a0` → `FUN_0063d190(0, 0xc)`) can veto a use with 3.
 
-srrevamp has neither state, so there is nothing to mirror: their fill works, as the bag path
+OpenSRO has neither state, so there is nothing to mirror: their fill works, as the bag path
 reads. Who registers event-0xc listeners is not traced (OPEN).
 
 **Tests.**
@@ -25284,7 +25383,7 @@ scroll carries group 0xC9, the fill's 20 minutes also block the next scroll -- t
 
 **Real input on the box (MEASURED from the logs).** Xvfb `:93`, the lane's own server build with
 `-gm-accounts qa` and an items CSV exported from the box's Media.pk2 (deleted afterwards).
-Signed in through `Login.tscn` (`SRREVAMP_QA_RECONNECT_VIA_LOGIN=1`). Then, with xdotool:
+Signed in through `Login.tscn` (`OPENSRO_QA_RECONNECT_VIA_LOGIN=1`). Then, with xdotool:
 typed `/give 23937` in the chat, pressed `i`, right-clicked the bag cell, and pressed Tab.
 
     GM REPLY: gave 1 x item 23937
@@ -25305,7 +25404,7 @@ The orbs' drawing is round 629's lane. This round only checks the value in the l
 - The berserk-time FourCC `0x706874` on `ITEM_ETC_INCREASE_HWAN_TIME_0n` (5/8/11/14) is not in
   `param_tags.md`; which param it reaches is untraced.
 - The 20-minute delay is in memory only. The engine persists delays of 300 s or more across a
-  relog; srrevamp does not yet (round 263's gap).
+  relog; OpenSRO does not yet (round 263's gap).
 
 ## Six-hundred-and-thirty-first round, review follow-up: a world-map name plate no longer frees itself mid-click or walks the player, a confirm box closes with its window, and the gold box moves the amount once
 
@@ -25446,10 +25545,10 @@ the retail equivalents were READ and are listed in `docs/TODO.md` and
 
 **Setup.**
 - Box: Xvfb `:89`, the release route `res://scenes/Login.tscn` with
-  `SRREVAMP_QA_RECONNECT_VIA_LOGIN=1`, GPU through vglrun.
+  `OPENSRO_QA_RECONNECT_VIA_LOGIN=1`, GPU through vglrun.
 - Server: an in-memory server built from dev cfddf39.
-- Client: the Jangan spawn (97/168 at 1002,1020), with `SRREVAMP_QA_SHOP=NPC_CH_POTION` and
-  `SRREVAMP_QA_SHOP_BUY=1`. The hook buys a stack and leaves the sell box open.
+- Client: the Jangan spawn (97/168 at 1002,1020), with `OPENSRO_QA_SHOP=NPC_CH_POTION` and
+  `OPENSRO_QA_SHOP_BUY=1`. The hook buys a stack and leaves the sell box open.
 - Input: a real `xdotool click` on the box's **Sell** button (screen 474,412). The script is
   `/var/tmp/confirmcrash/cc.sh`.
 
@@ -25478,7 +25577,7 @@ INFERRED to crash the same way, as an access violation. It is not a Windows-only
 Godot `Window` is involved.
 
 The first line above is Godot's own warning and goes to the log file. So if a crash like this
-comes back, the tester's `logs/srrevamp.log` will end with that "freed ... while a signal is
+comes back, the tester's `logs/opensro.log` will end with that "freed ... while a signal is
 being emitted" line.
 
 ### Two more faults in the same boxes (MEASURED in the same run)
@@ -25840,7 +25939,7 @@ the ready circle. It found six things; this follow-up fixes them. Labels as in t
 **1. Hit rate and Parry ratio have numbers.** READ (the reviewer's): retail's server sends both in
 0x303D -- the client's `FUN_00880f80` stores the u16 hit rate at +0x14 and parry at +0x16 of the
 stats block both windows draw -- built by `CGObjPC::vslot_334` (0x4ebe30) from params 11 and 9.
-srrevamp already computes the two for combat (rounds 378/379): `combat.CharacterRate(level, the
+OpenSRO already computes the two for combat (rounds 378/379): `combat.CharacterRate(level, the
 weapon's HitRateMin)` and `CharacterRate(level, defenderParryRate)`. They are now the stats
 packet's fifth and sixth tails (`characterRates`, rounded), decoded by `StatsNet` and drawn in
 `GDR_PMI_TXT_HITDAT`/`PARRYDAT` and the character window's `GDR_PI_TEXT_HIT_DAT`/`PARRY_DAT`. The
@@ -26018,7 +26117,7 @@ not draw it. `docs/TODO.md` has the next step.
 
 ### Measured on the box
 
-One `qa_shot.sh --server` boot (the round's own server build, port 15929), `SRREVAMP_QA_PMI=360,45`
+One `qa_shot.sh --server` boot (the round's own server build, port 15929), `OPENSRO_QA_PMI=360,45`
 walking the block through its states; the stat panel opened by a mouse click pushed through the
 viewport at the button's rect (viewport input, not an X event). The log:
 
@@ -26088,8 +26187,8 @@ retail's mapping):
 | The displayed value written straight, the double tone map | 23.7/255 | 1.23, 1.28, 1.28 |
 | After the fix | **0.7/255** | 0.98, 1.00, 1.00 |
 
-Hooks: `SRREVAMP_QA_WATER_DUMP=<dir>:<frame>` saves the target and the screen, and
-`SRREVAMP_QA_WATER_NOBUMP=1` zeroes the bump. `SRREVAMP_QA_WATER_OUTMODE` = 1 writes the
+Hooks: `OPENSRO_QA_WATER_DUMP=<dir>:<frame>` saves the target and the screen, and
+`OPENSRO_QA_WATER_NOBUMP=1` zeroes the bump. `OPENSRO_QA_WATER_OUTMODE` = 1 writes the
 displayed value straight and 2 writes the ramp.
 
 ### 2. The sky is the game's cloud layer
@@ -26243,7 +26342,7 @@ after every priority-0 transparent in the scene.
   0xb42e1c; the calls are at 0xa1d164, 0xa1d17b and 0xa1d192. `FUN_00a26f60` then sets those
   as D3DRS_FOGCOLOR before the landscape draws.
 - Both the cloud layer's fog and the main Godot fog now use `EnvironmentReader.render_fog_color`.
-  `SRREVAMP_QA_FOG_RAW=1` restores the old colour, for comparison.
+  `OPENSRO_QA_FOG_RAW=1` restores the old colour, for comparison.
 - Jangan: channel 9 is (0.357, 0.580, 0.677), which now renders as (0.598, 0.762, 0.823).
 - Size of the main-view change, MEASURED on one build with and without the hook, over the world
   area of the frame (the HUD excluded), at four spawn viewpoints:
@@ -26365,13 +26464,13 @@ read. OURS is this project's choice.
   (plain underwater) plus the bump offset, with the v bias of 0.02. It draws the three cases above.
 - **`World3D`.** It reads the option once per world scene:
   - `ClientSettings` `[world] water_reflection`, default **true**;
-  - `SRREVAMP_WATER_REFLECTION=0/1` overrides it for a run.
+  - `OPENSRO_WATER_REFLECTION=0/1` overrides it for a run.
   - With the option on, each region's water gets the reflection materials and registers its drawn
     blocks for the plane choice.
   - Water meshes sit on visual layer 20, which the mirror camera leaves out. Off draws round 627's
     animated water, unchanged.
 - **`MapmWater.Built.drawn`** lists each drawn block's (x0, z0, plane).
-- **`SRREVAMP_QA_WATER_TIMING`** prints the main viewport's and the target's measured render time
+- **`OPENSRO_QA_WATER_TIMING`** prints the main viewport's and the target's measured render time
   (CPU + GPU) every 10 frames.
 
 ### What is OURS or INFERRED
@@ -27243,7 +27342,7 @@ to pixel heuristics when bit 6 was clear. The client's own rule is now read:
   - a two-sided untested layer gets the shader with a scissor of 0;
   - no pixel statistic decides anything any more. `_alpha_is_binary_cutout`,
     `_has_real_alpha_variance`, `_ALPHA_FOURCCS` and the DXT1 fraction are gone;
-    `SRREVAMP_QA_MATS` still reports.
+    `OPENSRO_QA_MATS` still reports.
 - **OURS:** the test reads mip 0's alpha. Retail tests the filtered alpha; mip 0 is round 83's
   answer to canopies dissolving with distance.
 - **The `.bmt` layer trailer (READ,** `CPrimMtrl::FUN_00bf91b0`**).** It is a `uint32` and three
@@ -27315,7 +27414,7 @@ XT through VirtualGL on every run, with 0 `SCRIPT ERROR`s.
   - `object_loader_test`'s round-566 alpha case now uses flag words and asserts that no pixel is
     consulted;
   - its fingerprints: scissor 0.5020, and the shader names its cull;
-  - `objects_prepare_test`'s held-texture case uses `fraction` under `SRREVAMP_QA_MATS`.
+  - `objects_prepare_test`'s held-texture case uses `fraction` under `OPENSRO_QA_MATS`.
 - Box: `remote_godot.sh check` gives ALL LOAD (364 scripts), and `tests` ran **143 suites, 0
   failing**. Go: `go test -count=1 -p 1 ./...` is green.
 
@@ -27461,7 +27560,7 @@ root's order and bring-to-front were not read). A retail D3D9 frame capture woul
 - INFERRED: the four exact-boundary texels (k = 2, 7, 12, 17) resolve by floor on retail's GPU
   as they do here.
 
-**Measured before and after** (the box, VirtualGL, `SRREVAMP_QA_BUFFS` with eight buffs at Jangan's
+**Measured before and after** (the box, VirtualGL, `OPENSRO_QA_BUFFS` with eight buffs at Jangan's
 spawn, 1280 × 720, frame 299; crops in the round's scratch `icon_shots/`):
 - Grass Walk's icon (id 113, `lightning_gyeonggong_a.ddj`, A1R5G5B5) sits at (220, 10). It was
   compared with a Python point sample of the same file, decoded independently on the box.
@@ -27474,7 +27573,7 @@ spawn, 1280 × 720, frame 299; crops in the round's scratch `icon_shots/`):
 
 **The skill window and the hotbar** (READ): they use the same file and the same sprite path, drawn
 32 × 32 into 32 × 32 slots. Every pixel lands on a texel centre, so POINT and LINEAR draw the same
-picture. srrevamp already draws them 1:1 (`SKILL_CELL` 32; the underbar's 32 × 32). They are
+picture. OpenSRO already draws them 1:1 (`SKILL_CELL` 32; the underbar's 32 × 32). They are
 unchanged, since the evidence shows no difference to make.
 
 **Tests:**
@@ -27613,7 +27712,7 @@ and "A particle's life", has it all):
 2. An emitter's `done` is recomputed every frame. An emitter goes only with its owner, which is
    now READ (it was OURS).
 3. `EfpEffect.loop` sets `sim.keep`. A finished effect ends, kept or not; the restart is gone.
-4. `SkillEffects` and `EfpEffect` headers corrected. `SRREVAMP_QA_FXLOG=1` prints each effect's
+4. `SkillEffects` and `EfpEffect` headers corrected. `OPENSRO_QA_FXLOG=1` prints each effect's
    particle and drawn counts after every simulation frame.
 
 **MEASURED after** (the same census, same archive):
@@ -27640,7 +27739,7 @@ and "A particle's life", has it all):
   end by themselves, as before. Each lasts **exactly one frame longer** (147 of 147, 735 of 735),
   the retail last-frame draw. `mad_general_at03` never ends, before and after.
 - **The render** (`qa_shot` at the Jangan spawn, 300 frames, Grass Walk and the cold imbue on the
-  standing player, `SRREVAMP_QA_FXLOG=1`): 93 simulation frames each, drawn counts 7→8 and 5→33
+  standing player, `OPENSRO_QA_FXLOG=1`): 93 simulation frames each, drawn counts 7→8 and 5→33
   while warming, then **8 and 33 on every frame**, over four and a half 20-frame cycles, on the RX
   5700 XT (GL Compatibility, GPU).
 
@@ -27856,7 +27955,7 @@ have every address):
 - **OpSkillCast 0x00FA**, 43 bytes, to the caster's zone without the caster. 0x00FA was free by the
   rounds-616/617 grep.
 - The act is announced after the row's PreparingTime + CastingTime, bounded at 5 s. Retail's 0xB071
-  waits for the context builder's CastingTime. srrevamp resolves the cast itself at once.
+  waits for the context builder's CastingTime. OpenSRO resolves the cast itself at once.
 - A hostile row at a player is refused "Invalid target", because PvP is not modelled.
 - The player click body (layer 8) is sized like a monster's.
 
@@ -28140,7 +28239,7 @@ commit reads how the game places an effect and what its particles follow, and im
   - a dead ancestor is not followed;
   - a synthetic node without the block keeps round 620's parent-translation follow;
   - the effect turns with the body, not its bone.
-- **QA:** `SRREVAMP_QA_EFFECT_BONE` attaches the QA effects at a bone.
+- **QA:** `OPENSRO_QA_EFFECT_BONE` attaches the QA effects at a bone.
 
 **Performance** (the reviewer's bench, same copy as the review follow-up; ms per call):
 
@@ -28187,7 +28286,7 @@ FAILURES: 1
 **Renders** (`efp_link_shots/W1_*`, `W2_*`; these SHOW, they do not prove). The player walks
 heading 180 from Jangan 97/168 (1002, 1020), on the RX 5700 XT via VirtualGL.
 - **`W1_grid.png`**: `monster\eu\skill\skill_dowb_ac3_fire_hand` at `Bip01 R Hand`, via the
-  new `SRREVAMP_QA_EFFECT_BONE`.
+  new `OPENSRO_QA_EFFECT_BONE`.
   - At frame 80 a fire streak runs back from the hand along the path.
   - At frame 120 a burst is left behind where it was emitted while the runner goes on.
   - Later frames are between cycles: headless, the file emits for about 58 frames and restarts,
@@ -28507,7 +28606,7 @@ FAIL decodes D3DFMT_A16B16G16R16F        (ddj_reader_test.gd)
 ```
 
 **Renders** (`efp_link_shots/` in the lane's scratch; these SHOW, they do not prove). All ran on
-the RX 5700 XT via VirtualGL, at Jangan 97/168 local (1002, 1020), with SRREVAMP_QA_EFFECT and
+the RX 5700 XT via VirtualGL, at Jangan 97/168 local (1002, 1020), with OPENSRO_QA_EFFECT and
 the lane's copy of `qa_shot.sh` without its box-wide `pkill`.
 - `A_grid.png` shows six Link-heavy skill files side by side at 230 units:
   - `cold_ganggi_keep_f` and `help_ganggi_keep_a` (LinkPipe, 44 nodes each);
@@ -28703,7 +28802,7 @@ SCRIPT ERROR: Parse Error: Static function "cache_sizes()" not found in base "Ef
 SCRIPT ERROR: Parse Error: Cannot find member "CACHE_TEMPLATES" in base "EfpEffect".
 ```
 
-**Render** (`efp_shots/F_grid.png`; it shows, it does not prove). `SRREVAMP_QA_CAST=149,90` through
+**Render** (`efp_shots/F_grid.png`; it shows, it does not prove). `OPENSRO_QA_CAST=149,90` through
 the sequencer:
 - the Heal's READY column (skilldata prep 1000 ms) is up through its preparing time;
 - it is gone at the `shot`;
@@ -28933,8 +29032,8 @@ The rules are written down, with addresses, in `docs/protocol/EFP_FORMAT.md` "Pl
   `.efp` when it builds and draws. HitEffect and LevelUpEffect remain the fallback
   (`USE_EFP_HITS`, `USE_EFP_LEVELUP`).
 - **QA hooks:**
-  - `SRREVAMP_QA_EFFECT="<efp>;..."` loops those files on the player;
-  - `SRREVAMP_QA_CAST="<id>,..."` runs each skill's phases in turn.
+  - `OPENSRO_QA_EFFECT="<efp>;..."` loops those files on the player;
+  - `OPENSRO_QA_CAST="<id>,..."` runs each skill's phases in turn.
 
 **Renders** (`efp_shots/` in the lane's scratch; these SHOW, they do not prove):
 
@@ -28963,7 +29062,7 @@ the lane's copy of `qa_shot.sh` without its box-wide `pkill`, so another lane's 
 - **The level-up and a skill hit** (`C_grid.png`), through the new `USE_EFP_*` path:
   - `system_levelup.efp` draws 15 nodes: a golden ground ring, a white rising burst and a gold
     halo;
-  - the skill-hit sparks fire every 15 ticks from `SRREVAMP_QA_HITFX`.
+  - the skill-hit sparks fire every 15 ticks from `OPENSRO_QA_HITFX`.
   - Both read as sane, so the decoded path is on and HitEffect / LevelUpEffect stay as the
     fallbacks.
 - **Seven random files** (`E_grid.png`) all build and play:
@@ -29178,7 +29277,7 @@ base reader accepted 3,316 (MEASURED, both run over the same archive). Among the
 **Tests.**
 - `efp_tree_test.gd` (101 checks) and the synthetic Go tests round-trip each of the 16 value
   types, a whole tree in every header version, every truncation and the frame-range rules.
-- `TestRetailCensus` runs the census when `SRREVAMP_PARTICLES_PK2` is set; CI skips it.
+- `TestRetailCensus` runs the census when `OPENSRO_PARTICLES_PK2` is set; CI skips it.
 
 Against the base b50a7b9, the new header tests fail:
 
@@ -29254,7 +29353,7 @@ Grass Walk A lv1 is id 113 and carries none of them.
 - The `lnks` frame, the red "Not affected" line and the "Target" line are not drawn (OPEN).
 - The base's NetClient has no `buff_started`, `buff_ended` or `send_buff_cancel`; round 617 adds
   them. The board connects through `has_signal` / `has_method`, so until round 617 merges, only the
-  new `SRREVAMP_QA_BUFFS` hook feeds it and a cancel logs "not sent".
+  new `OPENSRO_QA_BUFFS` hook feeds it and a cancel logs "not sent".
 
 **Measured.**
 - `hud_buff_board_test.gd` passes: 68 checks over layout, gauge, routing (including a right press
@@ -29537,7 +29636,7 @@ at ff459f0 (13 FAILED, and 2 SCRIPT ERRORs where the old Landing has no `sent`):
 buffs." The client refused every one of them: `World3D._cast_skill` answered "Select a target
 first" whenever nothing was selected, before the skill's own columns were looked at. This round is
 the client half of the skills epic (rounds 616-619; the shared contract is in
-`docs/protocol/auto_command.md`, "srrevamp's cast and buff messages").
+`docs/protocol/auto_command.md`, "OpenSRO's cast and buff messages").
 
 **What decides it (READ).** The skill tick (server `0x4ae590`, phase 0) sends a row with
 Target_Required 0 (skilldata col 22), or Target_Required 1 with TargetType_Land 1 (col 24), straight
@@ -29556,7 +29655,7 @@ decides:
   ground-cast cursor and decal were not read (OPEN).
 - Everything else: the old flow (walk into reach, then cast at the selection; refused with none).
 
-**The reply is not a blow (OURS).** srrevamp's server still answers a cast with OpAttackResult, and
+**The reply is not a blow (OURS).** OpenSRO's server still answers a cast with OpAttackResult, and
 World3D drew every reply as a hit on the selected monster -- a swing, a flinch, the counter. NetClient
 now tags each reply with the targetType of the request it answers (a queue in step with the
 existing in-flight target queue; `AttackResult.target_type`), and a type-0/2 reply with no damage is
@@ -29615,7 +29714,7 @@ codec block. `remote_godot.sh check`: 344 scripts and 5 scenes, ALL LOAD. `remot
 suites, 0 failing. Go: `go build ./...`, `go test -count=1 -p 1 ./...` 59 packages ok (no server change).
 
 **Real input (MEASURED, box, `/var/tmp/selfcast/rk/`).** Xvfb + xdotool on the Login ->
-CharacterSelect route (`SRREVAMP_QA_RECONNECT_VIA_LOGIN=1`), dev's server in memory with the QA
+CharacterSelect route (`OPENSRO_QA_RECONNECT_VIA_LOGIN=1`), dev's server in memory with the QA
 account a GM: a first run made the character level 35, learned Lightning to 32 and skills 113 and 114
 (`ok true`); the second opened the skill window with a real S (which fetches the learned skills the
 bar's gate reads), the hook put 113 and 114 on quick slots 1 and 2, and with nothing selected:
@@ -29707,7 +29806,7 @@ Also added mid-round for round 617's review, all trailing and optional to a deco
 keep-up repeat and a monster's result carry 1); `OpBuffStart`/`OpBuffEnd` end with a `u8
 ownerKind` (0 character, 1 monster -- the two id spaces overlap); and a targetType 0 cast applies
 to its caster and ignores the monster field -- a TR-0 row carrying `att` (the EU Bard's Explosion,
-'efr' kind 1 around the caster, MEASURED) resolves no blow because srrevamp builds no 'efr'
+'efr' kind 1 around the caster, MEASURED) resolves no blow because OpenSRO builds no 'efr'
 collector (OPEN), a hostile TR-1 row is refused before any cost (OURS text), and an imbue is a
 caster buff whatever it is sent with (its 'att' on later blows OPEN).
 
@@ -29742,14 +29841,14 @@ death path was not traced to a book clear) and on logout (the teardown CGObjChar
 it -- READ -- that logout runs it is INFERRED); keeping the book across a zone change; rounding
 the run speed on the wire.
 
-Not modelled, OPEN: the navmesh test of the Ghost Walk point (srrevamp's server has no navmesh;
+Not modelled, OPEN: the navmesh test of the Ghost Walk point (OpenSRO's server has no navmesh;
 movement is client-authoritative); `tele` value[0]; toggles' MP drain and summons' lifetime (kind 3
 without `dura` runs until cancelled); the imbue's `att` on later blows; debuffs on a hostile target
 (TR 1 with only enemy groups keeps its old path); every publishing param except `hste`/`hst3` --
-damage, defence and HP/MP have no ParamKeeper slots in srrevamp to take them; buffs restored at
+damage, defence and HP/MP have no ParamKeeper slots in OpenSRO to take them; buffs restored at
 login; the `skc` category ends.
 
-**srrevamp-01**: re-export the skills CSV and re-import it (deploy/README.md, "ROUND 616") --
+**opensro-01**: re-export the skills CSV and re-import it (deploy/README.md, "ROUND 616") --
 until then every skill loads kind 0 and no buff starts.
 
 Tests: `internal/buff` (expiry exactly at BuffEndsAt, contributions removed on end, 50 -> 60,
@@ -29763,8 +29862,8 @@ Negative, the new tests against the base b50a7b9 (copied into a detached worktre
 compiles --
 
 	internal/buff/buff_test.go:13:32: undefined: Spec
-	FAIL	github.com/OpenSRO/srrevamp/server/internal/buff [build failed]
-	FAIL	github.com/OpenSRO/srrevamp/server/internal/session [build failed]
+	FAIL	github.com/OpenSRO/OpenSRO/server/internal/buff [build failed]
+	FAIL	github.com/OpenSRO/OpenSRO/server/internal/session [build failed]
 	cmd/export-refdata/main_test.go:864:33: undefined: skTargetLand
 	internal/refdata/csv_test.go:585:22: sk.ActionKind undefined (type Skill has no field or method ActionKind)
 
@@ -29792,7 +29891,7 @@ The review's confirmed findings, each fixed with a test that fails without it:
 - **The recast rule, as the gate reads it** (reviewer's `rv616_58d8f0.c` / `rv616_59d870.c`, and
   `FUN_0059dc80` read this time): `FUN_0059d870` runs only for a row with no `lnks` and
   Target_Required 0. The `lnks` path is `FUN_0059dc80`, reached only with `efr` (`+0x294`), and it
-  compares attached-object records srrevamp does not keep -- so an `lnks` row now gets no overlap
+  compares attached-object records OpenSRO does not keep -- so an `lnks` row now gets no overlap
   check (OPEN), and a Target_Required 1 row gets none either (round 616 had extended the rule to
   them, OURS; withdrawn). The GroupID branch gained its three missing conditions: the new row's
   `lks2` is 0 (a new CSV column 61, 160 retail rows), an `lnks` record the owner cast on itself is
@@ -29821,7 +29920,7 @@ change resends the owner's own speed-writing records with the real speed; a buff
 cannot be done after the costs refunds HP and MP (the re-use timer stays armed, disclosed) -- the
 broadcasts now precede the `OpAttackResult`; the duration-extension setter in `0x5830b0`
 (`RPBU`/`STDU`/`DTDR` through `FUN_005a0330`'s map at book `+0x244`) is cited, with its row
-counts, and left OPEN because srrevamp keeps no passive records.
+counts, and left OPEN because OpenSRO keeps no passive records.
 
 Negatives (each fix removed on the new tree):
 
@@ -29881,7 +29980,7 @@ current skill.
 six-token weapon rows; the research had written six. In retail every blow carries a skill, so the
 group key is what sounds -- and a bare hand (group `SKILL_PUNCH` against rows keyed
 `SKILL_PUNCH_BASE`) is silent. Monster hits are keyed by the monster's attack skill, which
-srrevamp's server does not send: logged and silent.
+OpenSRO's server does not send: logged and silent.
 
 **Measured live** on the box: `AUDIO hit: PLAYER:snd_dmg:SKILL_CH_SWORD_BASE:-:-:-`, `AUDIO crit:
 PLAYER:snd_cridmg:-:-:-:-`, `AUDIO hit: PLAYER:snd_dmg:SKILL_CH_SWORD_SMASH_A:-:-:- ... (skill 3 on
@@ -30116,7 +30215,7 @@ is `docs/protocol/opcodes/motion.md`.
   separate `0x30bf` behind them was measured arriving before any body could take it (the previous
   commit's `tellSeated`, removed). Live: two bots seated in jangan and donwhang, the client entering
   one and `/goto`-ing to the other -- `SIT: player 2 drawn seated on spawn` and `player 1`.
-  `deploy/README.md` says srrevamp-01 must re-export, re-import and restart before the skill gate
+  `deploy/README.md` says opensro-01 must re-export, re-import and restart before the skill gate
   works (until then it fails open). Regen's stats push leaves the lock first; alive at HP 0 still
   gets MP; the kill window is narrowed, not closed. Seated fighting at 8% is recorded as a
   consequence of the read server gate, the retail client's side unread.
@@ -30171,7 +30270,7 @@ The full record is `docs/RE_COMPLETION.md`'s entry of the same name (round 605).
 
 - **Report.** v0.1.451: "the keyboard shortcuts stopped working"; v0.1.450 was fine. Which keys and
   when were not said.
-- **The plain path works (measured).** A new hook, `SRREVAMP_QA_INPUT`, plays clicks and keys into
+- **The plain path works (measured).** A new hook, `OPENSRO_QA_INPUT`, plays clicks and keys into
   the real world through `push_input`, with keycode, physical keycode, label and character set.
   Six live runs on d4d1303 at 1280x720 all toggled their windows. The runs covered: I C K U Q M Y P
   A L, the number keys, F1/F2, Escape, and the same key again to close; clicks inside the popup,
@@ -30469,8 +30568,8 @@ of the same name.
 - **Live.** `qa_shot.sh --server --attack`, on the RX 5700 XT, with this tree's server,
   measured from the log (`/var/tmp/rubar/live-598.log` on the box):
   - The QA account was made a GM. `/level 20` and `/sp 100000` were applied.
-  - `SRREVAMP_QA_LEARN` raised Bicheon to level 5 and learned skill 3 (`ok true`).
-  - `SRREVAMP_QA_HOTBAR` put it on quick slot 1 (`skill 3 known: true`).
+  - `OPENSRO_QA_LEARN` raised Bicheon to level 5 and learned skill 3 (`ok true`).
+  - `OPENSRO_QA_HOTBAR` put it on quick slot 1 (`skill 3 known: true`).
   - Each of the four `1` presses (ticks 700, 900, 1100, 1300, pushed through the viewport)
     logged `QA QUICKSLOT 1 (1): skill 3` on the current target. The first three logged
     `QA CAST: use_skill 3 (SKILL_CH_SWORD_SMASH_A_01)`. The fourth logged no use_skill before
@@ -30824,7 +30923,7 @@ never by id: id 3297 sits between two Halloween ids and is `arabia_fouad`. The r
 `\etc\x_mas\`, `res\etc\halloween\`, `res\etc\obt\obt_event` and `res\etc\summer_event\`.
 `World3D._objects_prepare` drops those placements after the de-duplication and before the ownership
 step and the model loop. Their models are never read, and their collision goes with them.
-`SRREVAMP_SEASONAL=christmas,...` or `seasonal="christmas,..."` under `[world]` in
+`OPENSRO_SEASONAL=christmas,...` or `seasonal="christmas,..."` under `[world]` in
 `settings.cfg` shows a set again. The value must be quoted, or the whole file fails to parse. No
 window writes that setting yet. No switch was found in the client's `.o2` loader, so this is our
 choice. The
@@ -30837,7 +30936,7 @@ full record, with the layer tables that ground the folder-to-event mapping, is
   98/169 3/6/0/0. The other three of Jangan's nine have none. That is the investigation's
   table, plus one record in 98/169: a list-2 Halloween piece owned by 97/169, which the filter
   counts because it runs before the ownership step. After the prepare, no seasonal placement is
-  left in any of the nine. With `SRREVAMP_SEASONAL=christmas`, 97/168 gets back exactly its 26
+  left in any of the nine. With `OPENSRO_SEASONAL=christmas`, 97/168 gets back exactly its 26
   Christmas pieces. No Jangan `.nvm` record is seasonal (0 of 600), so navigation is unchanged.
 - **Found in the loader** (`FUN_00a361b0`; `docs/protocol/MAPO2_FORMAT.md` is corrected). An
   `.o2` record's bytes 22-23 are its uid and bytes 28-29 its owner region. Byte 27 bit 0 makes
@@ -30927,7 +31026,7 @@ draws first whatever the RID order. The transparent overlays are unchanged. The 
 
 The tester saw the white ground after a disconnect and reconnect in one process again on
 2026-09-26. Rounds 558-560 never reproduced it on the render box, and a Windows release cannot set
-`SRREVAMP_QA_*`. So any player can now run `/groundprobe [quick]` in chat, or press the F3 panel's
+`OPENSRO_QA_*`. So any player can now run `/groundprobe [quick]` in chat, or press the F3 panel's
 **Ground probe** button. It records the ground's rendering state for the region under the player:
 the renderer and GPU, the entry number and how it was reached, and every terrain surface's material
 and texture state. That includes each surface's material RID index, GL name and RenderingServer
@@ -30958,7 +31057,7 @@ closes on the server's yes, and the board and the gate's talk box both close on 
 The full record is `docs/RE_COMPLETION.md`'s round 578.
 
 - **Measured end to end on the render box** (`qa_shot.sh --server --region '97\168.m' --radius 1
-  --at 1230,1380 --teleport 2`, `SRREVAMP_QA_CLICK=gate`, the retail export's teleport CSVs): the
+  --at 1230,1380 --teleport 2`, `OPENSRO_QA_CLICK=gate`, the retail export's teleport CSVs): the
   click hits `Obj_cj_portal_312`, NPCTALK lists the three lines, the board lists `2 Donwhang 5000,
   175 Alexandria (South) 40000, 176 Alexandria (North) 40000, 5 Hotan 5000, 20 Constantinople 5000,
   25 Samarkand 5000` over two pages, Move sends `1 -> 2`, and the player lands in
@@ -30966,7 +31065,7 @@ The full record is `docs/RE_COMPLETION.md`'s round 578.
   height -7.64 on the walkable graph, with a second `region grid loaded` and 0 `SCRIPT ERROR`.
   The level-1 QA character paid nothing (`fee=0 waiver=1`); as a GM at level 30 the board shows
   the fees, the server waives them (`fee=0 waiver=2 gm=true`) and the loading screen is up at the
-  zone change (`LoadingScreen: up at frame 200`, with `SRREVAMP_QA_FORCE_LOADING=1`).
+  zone change (`LoadingScreen: up at frame 200`, with `OPENSRO_QA_FORCE_LOADING=1`).
 - **Negative, live.** At level 111 the same gate's Move to Hotan (`1 -> 5`, whose link's level rule
   is 1..110) is refused `0x1c15`: one grid load, no arrival line. (That the board stays up on a
   refusal is the headless test's check, not a log line of this run.)
@@ -30994,7 +31093,7 @@ The full record is `docs/RE_COMPLETION.md`'s round 578.
   now ignored while a request is pending (`_teleport_request_pending`, cleared by the reply).
 - **The retail list's number is not the raw fee.** `FUN_006fc910`, which the list passes the fee
   through, is not a thousands formatter: it returns the fee plus a share computed from a short at
-  `this+0x804` (meaning unread). srrevamp shows the raw link fee -- equal while that short is 0.
+  `this+0x804` (meaning unread). OpenSRO shows the raw link fee -- equal while that short is 0.
 
 ## Five-hundred-and-seventy-seventh round: the Dimensional Gate is clickable -- the placed portal is bound as the gate and lists the client's own gate lines
 
@@ -31009,7 +31108,7 @@ the talk layer goes on the piece bodies of the placed copy, never the template. 
 lists the lines in the real client's order (`FUN_00700440`: ids 7, 9, 8; tokens read at
 `0x6fcf10`/`0x6fcf1a`/`0x6fcf24`). The full record is `docs/RE_COMPLETION.md`'s round 577.
 
-- **Measured in all five towns** (one `--radius 0` boot each, `SRREVAMP_QA_CLICK=gate`). Each
+- **Measured in all five towns** (one `--radius 0` boot each, `OPENSRO_QA_CLICK=gate`). Each
   gate bound an object 0.7 to 3.6 units from its point: `cj_portal`, `w_cd_portal`,
   `oas_hot_portal`, `euro_esteuro_fountain01` and `samarkand_center_01`. The talk ray hit the
   object's piece body, which opened "1. Designate as return/recall point / 2. Select teleport area /
@@ -31072,9 +31171,9 @@ the rules the next item's handler will call. Nothing a player sees yet. The full
   data) triples, and the server's `FUN_00513a70` walks them before the fee on
   `CMainProcess::FUN_004f2b50`'s teleport path: type 1 is a level range (`0x1c15`), 2 and 7 a trade
   cart, 3 the character's PvP state against a mask of barred states (`0x1c19`; no retail link uses
-  it, and srrevamp, with no PvP state, passes NEUTRAL -- a stand-in), 4 and 5 a held item, 6 a job
+  it, and OpenSRO, with no PvP state, passes NEUTRAL -- a stand-in), 4 and 5 a held item, 6 a job
   state. The evaluator enforces them only when a mode byte on the link is 0, and what fills it was
-  not read; srrevamp enforces them (a stand-in). Jangan's links to Hotan, Constantinople and Samarkand
+  not read; OpenSRO enforces them (a stand-in). Jangan's links to Hotan, Constantinople and Samarkand
   carry `(1, 1, 110)`, so a level-111 character is refused there.
 - **`0x1c14` is "already teleporting"** (`GetTeleportState`, tested first), not the range test the
   record called it; the range test refuses with its own return value.
@@ -31095,7 +31194,7 @@ Nothing a player sees; what changed, anchored by function:
   neighbour, Dunhuang's 98/157 is 4 regions off on both axes (a 2026-08-26 `scanlandmarks` pick).
   `World3D.gd`'s header and `JANGAN_ZONE_REGION` comment, which still called Jangan "98/168" and
   98/157 "the already-verified Dunhuang region", are dated in place.
-- **The public server does run `-npcpos-csv`**: srrevamp-01's override passes it and the running
+- **The public server does run `-npcpos-csv`**: opensro-01's override passes it and the running
   container carries it, so its Earth Ghosts stand on their 65 real rows.
 - **Round 572's crossing drain was compared with the wrong run.** Its 17754 ms was set against
   round 567's command (a) (17299); round 567's own crossing drained in 17395 ms (p95 930, 5 over
@@ -31107,7 +31206,7 @@ Nothing a player sees; what changed, anchored by function:
   others') and Samarkand's two newly high peaks; the monster list's one-packet cap under one bucket
   is now a TODO item to guard before the flip, beside the height gate's missing acceptance.
 - `_prepared_again`'s comment says ANY re-measured statistic counts, and that only
-  `SRREVAMP_QA_MATS` makes it differ from EVERY; `ToZoneWorld`'s comment says it refuses the "x/y"
+  `OPENSRO_QA_MATS` makes it differ from EVERY; `ToZoneWorld`'s comment says it refuses the "x/y"
   labels `FrameFor` names; the teleport page says an `OpEnterWorldResult` may end with the
   `Restored` byte.
 - Measured, not changed: `objects_prepare_test`'s 8 dummy-renderer `ERROR` lines are there at round
@@ -31126,7 +31225,7 @@ Nothing a player sees; what changed, anchored by function:
 The server saves a character's zone label, frame region and position on its row -- on a
 disconnect, on each zone change, at most every 30 s of walking and for everyone still in the world
 when it stops -- and the next entry answers them with a trailing `Restored` byte, behind
-`-persist-position` (env `SRREVAMP_PERSIST_POSITION`, **default off**). The engine keeps the same
+`-persist-position` (env `OPENSRO_PERSIST_POSITION`, **default off**). The engine keeps the same
 four fields on `_CHAR` (`LatestRegion`, `PosX/Y/Z`, charData +0x94..+0xa0); the cadence, the
 shape and the frame rule are own design. The full record is `docs/RE_COMPLETION.md`'s round 573.
 
@@ -31156,10 +31255,10 @@ tests and the live runs -- is `docs/RE_COMPLETION.md`'s round of the same title.
 arrives; `_spawn_or_update_monster` fires one terrain ray per body, and a miss left the body at the
 server's y -- 0 for every Jangan monster -- for good, since nothing re-rays a standing body. Whether
 the ray misses is decided by the **loading-screen drain**, the real player's path
-(`_should_show_loading_screen` is true whenever `SRREVAMP_MAPM_PATH` is unset). Of the render box's
+(`_should_show_loading_screen` is true whenever `OPENSRO_MAPM_PATH` is unset). Of the render box's
 63 first-entry logs with monsters (rounds 558-569):
 
-- the 47 that took the loading screen (`SRREVAMP_QA_FORCE_LOADING=1`, directly or through
+- the 47 that took the loading screen (`OPENSRO_QA_FORCE_LOADING=1`, directly or through
   `--reconnect`) all float monsters: the 14 on rounds 558-561's code the four Mangyangs (the list
   lands after the centre, before its neighbour 96/168), and the 33 on round 562's code and later --
   which awaits the screen's frame between the request and the centre's build -- all 23
@@ -31180,7 +31279,7 @@ the ground is there; `World3D: monster <id> <name> height resolved after <n> fra
 when. Ground items had the same race and get the same retry (`GroundItems.resolve_pending`), with a
 fair share of the budget: the monsters may take it less the items' want, up to half
 (`MonsterMotion.monster_height_share`), so bodies that never resolve can no longer starve the items.
-`SRREVAMP_QA_MOB_LOG`'s 10-second line counts the waiting bodies' retries apart from the walking
+`OPENSRO_QA_MOB_LOG`'s 10-second line counts the waiting bodies' retries apart from the walking
 legs' resolves. Other players, NPCs and the player's own placements were checked and are not the
 pattern.
 
@@ -31208,7 +31307,7 @@ pattern.
   lower. The placement ray (`_terrain_hit_height`) now passes through both; the player's own body,
   ground check and snap still see them as before.
 
-**Measured, not pictured** (`SRREVAMP_QA_MOB_HEIGHTS`: each body's drawn y against the game's own
+**Measured, not pictured** (`OPENSRO_QA_MOB_HEIGHTS`: each body's drawn y against the game's own
 terrain ray, a plain ray at the exact column, and the drawn mesh from the parsed heightmap; a
 server-backed Jangan entry with the real loading drain, radius 2, on the heightfield):
 
@@ -31242,7 +31341,7 @@ server-backed Jangan entry with the real loading drain, radius 2, on the heightf
 
 With each zone in its own frame and its own broadcast bucket, a player who walked out of Jangan
 toward Donwhang stayed in Jangan's bucket and never met Donwhang's monsters, which stood in
-Donwhang's frame. `-single-frame` (env `SRREVAMP_SINGLE_FRAME`, **default off**) names every framed
+Donwhang's frame. `-single-frame` (env `OPENSRO_SINGLE_FRAME`, **default off**) names every framed
 zone in Jangan's 97/168 frame and keeps every player and roster monster of those zones in one bucket.
 The full record is `docs/RE_COMPLETION.md`'s round 571.
 
@@ -31399,10 +31498,10 @@ The review notes on rounds 564-567, each re-checked against the logs under `/var
   held texture missing an alpha statistic; `ObjectLoader.commit_textures` merges statistics into a
   cached texture, so one can. The count now includes that case -- a log line only, in a path the
   entry benchmark never reaches (it consults no alpha probe at all).
-- The QA header's `SRREVAMP_QA_FORCE_LOADING` note is re-scoped: the unbuilt-world trap (the
-  `SRREVAMP_QA_HIDE` / `_FLOAT` / `_THROUGH` / `_SCAN` / `_COLUMNS` probes reporting on a world not
+- The QA header's `OPENSRO_QA_FORCE_LOADING` note is re-scoped: the unbuilt-world trap (the
+  `OPENSRO_QA_HIDE` / `_FLOAT` / `_THROUGH` / `_SCAN` / `_COLUMNS` probes reporting on a world not
   yet built) holds with `--server` too -- the block runs during the sign-in's awaited frames -- and
-  neither it nor the one-tick shift applies under `SRREVAMP_QA_AT`, whose ticks count from the
+  neither it nor the one-tick shift applies under `OPENSRO_QA_AT`, whose ticks count from the
   built region.
 - Tests for what had none: `_terrain_commit`'s collision wiring (a prepared job committed headless
   -- the heightfield at `TerrainCollision.shape_transform()`, a plain (20, 1, 20) scale once the
@@ -31410,7 +31509,7 @@ The review notes on rounds 564-567, each re-checked against the logs under `/var
   `_finish_cell_job`'s stale-cell guard and `_drop_cell_jobs`, and the held-texture re-decode
   above -- each shown failing on the code it guards against.
 - Wording: the prepare "prints nothing" -> prints none of its own lines (a reader may still
-  `push_error` from the task); `SRREVAMP_SYNC_LOAD=1` restores the schedule, not the old code; the
+  `push_error` from the task); `OPENSRO_SYNC_LOAD=1` restores the schedule, not the old code; the
   round-154 quote gets back its "if it is still felt"; the SYSTEMS Monster AI row says the strike
   worker's fallback does read the row's level; `recovered_names.tsv`'s `PickSkill` row gains its
   third bounds check (`0x561d52`/`0x561d54`); round 567's entry p95 (950 -> 914 ms) is inside the
@@ -31433,7 +31532,7 @@ anchored by function:
 
 - `TerrainCollision` (new): `heights_from_region` lays the region's 97x97 grid out as the shape's
   `map_data` on the prepare's task; `make_shape` and `shape_transform` build and place the shape in
-  `World3D._terrain_commit`. `SRREVAMP_TERRAIN_TRIMESH=1` builds the old trimesh for A/B.
+  `World3D._terrain_commit`. `OPENSRO_TERRAIN_TRIMESH=1` builds the old trimesh for A/B.
 - **The plan's layout would have been wrong, and a picture would not have shown it.** Godot
   4.2.2's heightmap (read from the 4.2.2-stable source) cuts each cell along the diagonal from
   (x + 1, z) to (x, z + 1); the drawn mesh cuts each quad from (r, c) to (r + 1, c + 1). Laid out
@@ -31450,9 +31549,9 @@ anchored by function:
   29/21/60/23/22 ms a cell, its longest work frame 106 -> 86 ms (113 with the flag), 1 -> 0 frames
   over 100 ms; the entry drain's frames over 100 ms 9 -> 5 (9 with the flag), and its p95 950 ->
   914 ms, inside run-to-run spread (957 with the flag). The round-567 and flag runs ran the code
-  before `SRREVAMP_QA_GROUND_RAYS` was changed to wait for the grid (a QA-only hook they do not
+  before `OPENSRO_QA_GROUND_RAYS` was changed to wait for the grid (a QA-only hook they do not
   enable); the ray runs below ran the committed code.
-- **Measured, not pictured** -- a new `SRREVAMP_QA_GROUND_RAYS=n` probes the terrain collision on
+- **Measured, not pictured** -- a new `OPENSRO_QA_GROUND_RAYS=n` probes the terrain collision on
   an n x n lattice of every loaded region and holds each hit to the drawn mesh's own triangle. On
   1,600 real columns, heightfield against trimesh: every vertical ray hits both, the heightfield's
   within 0.0009 of the drawn triangle and 0.001 of the trimesh's (steepest probed quad edge 5.43 a
@@ -31492,9 +31591,9 @@ every log line and the tests; in short, anchored by function:
   textures, materials, shapes and nodes on the main thread.
 - The three alpha probes take the Image instead of calling `Texture2D.get_image()` (a readback of
   the uploaded texture), same rules and thresholds, measured once per texture and kept in the
-  world's texture cache. `SRREVAMP_QA_ALPHA_LOG=1` prints each probe consulted. On the entry
+  world's texture cache. `OPENSRO_QA_ALPHA_LOG=1` prints each probe consulted. On the entry
   benchmark the count is **0 before and 0 after**: every real layer the 25 cells build is decided
-  by its flag word, so the readback path was never reached there. Forced with `SRREVAMP_QA_MATS=1`
+  by its flag word, so the readback path was never reached there. Forced with `OPENSRO_QA_MATS=1`
   as a control: 690 readbacks before, 0 after, the same 341 texture statistics -- 327 identical,
   14 within 0.0002, and on those the readback gave two different values for the same texture
   where the Image gives one.
@@ -31552,7 +31651,7 @@ crossing longest 114 -> 118 ms, entry p95 954 -> 990 ms; the first pair: 111 -> 
 given up while a cell commits -- one more awaited frame in the entry, 1.1 s more waiting in the
 QA drain. The count also corrects the round's first reading of `own` (894 ms at BASE, 1.1-1.2 s on
 the tasks): only 2 and 1 heightmaps were read twice, so that difference is not duplicate parses
--- it stays unattributed. `SRREVAMP_SYNC_LOAD=1` restores the schedule only: its objects
+-- it stays unattributed. `OPENSRO_SYNC_LOAD=1` restores the schedule only: its objects
 still go through the split `ObjectLoader` and the prepared trimesh faces.
 
 ## Five-hundred-and-sixty-fifth round: a streamed cell's terrain prepares on a worker thread, and a boundary crossing's frame falls from 334 to 144 ms
@@ -31598,7 +31697,7 @@ fingerprints of the pre-split builder, and the reconnect run's 49 `QA TEXPROBE` 
 centre's terrain are identical to round 560's. The trimesh repeats every ground triangle about 2.5
 times (45,768 faces for 97/168 against the base surface's 18,432), kept as it was; after this
 round a neighbour's `collision` is 746 of the 24 neighbours' 1,265 ms of main-thread terrain --
-the input the heightfield item is gated on. `SRREVAMP_SYNC_LOAD=1` restores the old schedule for one
+the input the heightfield item is gated on. `OPENSRO_SYNC_LOAD=1` restores the old schedule for one
 release -- the schedule, not the pre-change code: the split builder and the prepared faces still
 run ("the old path" until round 568; measured: three cells a frame under the screen, 314 ms at the
 crossing).
@@ -31620,16 +31719,16 @@ the world's files, anchored by function:
   of each printed lap. A group is measured around its laps, so the benchmark's numbers are
   unchanged and were not re-run; `load_timings_test.gd` reads the function's laps off the source
   and fails on the tree before this round (proven).
-- The QA header names `SRREVAMP_QA_FORCE_LOADING` and what round 562 moved under it: without
-  `--server` and `SRREVAMP_QA_AT`, `_qa_step`'s first tick and its one-time block run before the
-  world and the HUD exist -- `SRREVAMP_QA_DEBUG` / `SRREVAMP_QA_WORLDMAP` no-op through their null
-  guards, the `SRREVAMP_QA_HIDE` / `_FLOAT` / `_THROUGH` / `_SCAN` / `_COLUMNS` probes run against a
-  world not yet built, and `SRREVAMP_QA_ZONE`'s `_reload_zone_assets` runs before
-  `_load_initial_region_neighborhood` builds the `SRREVAMP_MAPM_PATH` centre -- and tick-indexed
+- The QA header names `OPENSRO_QA_FORCE_LOADING` and what round 562 moved under it: without
+  `--server` and `OPENSRO_QA_AT`, `_qa_step`'s first tick and its one-time block run before the
+  world and the HUD exist -- `OPENSRO_QA_DEBUG` / `OPENSRO_QA_WORLDMAP` no-op through their null
+  guards, the `OPENSRO_QA_HIDE` / `_FLOAT` / `_THROUGH` / `_SCAN` / `_COLUMNS` probes run against a
+  world not yet built, and `OPENSRO_QA_ZONE`'s `_reload_zone_assets` runs before
+  `_load_initial_region_neighborhood` builds the `OPENSRO_MAPM_PATH` centre -- and tick-indexed
   hooks fire one tick earlier relative to the world build. Read from `_ready` and `_qa_step`, not
   measured; nothing moved. (Round 568 re-scoped it: the trap holds with `--server` too -- the
   block runs during the sign-in's awaited frames, before the world -- and neither it nor the tick
-  shift applies under `SRREVAMP_QA_AT`, whose ticks count from the built region.)
+  shift applies under `OPENSRO_QA_AT`, whose ticks count from the built region.)
 - The Restart comment in `_try_initialize_pk2_ui` no longer claims the engine "replaces a pending
   scene"; the second call came from a node `_on_disconnected` had already detached. The detached,
   not-yet-freed state (`data.tree` null) is what round 558's runs C and D logged on the mid-load
@@ -31870,7 +31969,7 @@ change absent) and after:
 
 The tester's report (2026-09-25): disconnect and reconnect without closing the client, and the
 ground is white. Nothing was fixed this round; it was MEASURED, in one process, with a hook that
-leaves the world and comes back (`SRREVAMP_QA_RECONNECT`, `qa_shot.sh --reconnect`), on both the
+leaves the world and comes back (`OPENSRO_QA_RECONNECT`, `qa_shot.sh --reconnect`), on both the
 direct route (World3D -> World3D, which isolates `World3D.gd`'s `static var` caches) and the
 tester's (World3D -> Login -> CharacterSelect -> World3D, the front-end screens signing back in),
 at tick 200 and mid-load (`drain`). Each entry prints its renderer memory, object and orphan
@@ -31905,7 +32004,7 @@ camera on both passes. The full record is `docs/RE_COMPLETION.md`'s round 558; t
 - On 42 of the 48 texture passes the baked vertex colour is exactly 1.000, so the texture is the
   ground's only colour source there: a sampler resolving to GLES3's default white draws exactly the
   tester's picture, a missing texture draws the 0.5-grey fallback. The tester's own
-  `user://logs/srrevamp.log` -- the second `character/item/NPC tables loaded` block's `ground
+  `user://logs/opensro.log` -- the second `character/item/NPC tables loaded` block's `ground
   textures for 97\168.m -- N ids, N resolved` line, any `pk2: could not open`, any `SCRIPT ERROR`
   between the blocks, and whether buildings and water were white too -- tells the two apart.
 - Found on the way: `QaSignIn.run` compared the wanted name against `Summary` objects, so every
@@ -31923,10 +32022,10 @@ ground under it. NPCs on the same deck have stood on it since that comment was w
 `_nav_graph_for` + `to_local` + `NavGraph.landing_height_at`. This round gives a walking body the
 same path (`World3D._moving_monster_height_at`: the navmesh, the ray only where no loaded region
 covers the body), on round 534's throttle and budget. Nothing changes in play until a server with
-`-monster-ai` on moves a monster; `SRREVAMP_QA_MOB_MOVE` drives it without one. The full entry is
+`-monster-ai` on moves a monster; `OPENSRO_QA_MOB_MOVE` drives it without one. The full entry is
 `docs/RE_COMPLETION.md`, round 557; the numbers are here.
 
-**The leg.** `SRREVAMP_QA_MOB_MOVE=-45,180,20,1 SRREVAMP_QA_MOB_LOG=1 qa_shot.sh --server
+**The leg.** `OPENSRO_QA_MOB_MOVE=-45,180,20,1 OPENSRO_QA_MOB_LOG=1 qa_shot.sh --server
 --frames 1300`: the nearest monster, Yeoha 19 at world (70, -220), runs to (25, -40) -- local (985,
 1000) of 97/168, the deck's measured column. Under the log switch each height resolve now prints
 the navmesh and the terrain-ray answers side by side; the terrain ray's number carries its own
@@ -31934,7 +32033,7 @@ the navmesh and the terrain-ray answers side by side; the terrain ray's number c
 
 **Run 1 was in the wrong frame, and it is the recipe's trap, not the code's.** All 119 resolves
 read `navmesh 41.04, terrain ray 41.44`, start to arrival: flat ground, no deck at the deck's own
-column. `qa_shot.sh` exports `SRREVAMP_MAPM_PATH` from `--region` unconditionally, its default is
+column. `qa_shot.sh` exports `OPENSRO_MAPM_PATH` from `--region` unconditionally, its default is
 `98\168.m` (the palace, one region north), and `World3D._load_initial_region_neighborhood` centres
 the world on that before it looks at the server session. The server's coordinates are in the
 zone's own frame (97/168 for Jangan), so the monster was drawn on 98/168's ground. The
@@ -31992,11 +32091,11 @@ top of it, as an NPC is.
 
 ## Five-hundred-and-thirty-third round: a monster the server moves walks, faces its path and is not teleported back by the next list
 
-No server moves monsters yet. This round built the client half so that one can: srrevamp's own
+No server moves monsters yet. This round built the client half so that one can: OpenSRO's own
 `OpMonsterMoved 0x007C` and `OpMonsterMotionList 0x007F` are decoded (`CombatNet`) and drawn
 (`MonsterMotion`, `World3D._on_monster_moved` / `_on_monster_motion_list` /
 `_step_monster_bodies`). The table, fixtures and stand-ins are in `docs/protocol/monster_ai.md`,
-"srrevamp's own monster protocol (placeholders)". Nothing changes in normal play.
+"OpenSRO's own monster protocol (placeholders)". Nothing changes in normal play.
 
 **The mover is the engine's, re-read on the box (2026-09-24).** `CGObjMoverByDest::FUN_0048bff0`
 (SR_GameServer.exe) returns the owner's unit direction times min(|speed(+0x174) x dt|, cap). The cap
@@ -32011,7 +32110,7 @@ destination and never overshoots. The mover also zeroes a component under 0.01f 
 `existing.position = pos` on every refresh. That line moved into `MonsterMotion.reconcile`, still
 returning the list's position, and the new NEGATIVE (`reconcile(Vector2(100,0), Vector2(97,0),
 true)` must return (100,0)) ran red: `FAIL ... (got (97, 0))`. Now a walking body keeps where it is
-drawn unless it has drifted more than 32 units (`RESYNC_DISTANCE`, srrevamp's own) from the list.
+drawn unless it has drifted more than 32 units (`RESYNC_DISTANCE`, OpenSRO's own) from the list.
 
 **Which way the bodies face: measured, not assumed.** `client/tools/probe_monster_front.gd`
 assembles each roster species as World3D does and reads, in skeleton space, the mean toe-minus-foot
@@ -32042,7 +32141,7 @@ of the box's `characterdata_5000.txt`. Their display names ("Small-eyed Ghost", 
 "Water Ghost slave", "Tomb Stone Ghost") resolve to no row that has a model. They are drawn as the
 capsule, which has no front, and the probe says so. docs/TODO.md has the item.
 
-**Live, on the render box.** `SRREVAMP_QA_MOB_MOVE=40,0,8,0 SRREVAMP_QA_MOB_LOG=1 qa_shot.sh
+**Live, on the render box.** `OPENSRO_QA_MOB_MOVE=40,0,8,0 OPENSRO_QA_MOB_LOG=1 qa_shot.sh
 --server --frames 600 --size 640x360`, hardware GL, with the box's default `SERVER_BIN` (a
 2026-09-19 build; this check only needs its monster list):
 
@@ -32167,12 +32266,12 @@ scripts and 5 scenes load.
 
 **Not measured: the live run.** This round used the render box only through `remote_godot.sh`,
 which runs the headless suites and renders nothing. The box does have a server at `qa_shot.sh`'s
-default `SERVER_BIN`. `/opt/srrevamp-server/srrevamp-server` is an executable 64-bit ELF of
+default `SERVER_BIN`. `/opt/opensro-server/opensro-server` is an executable 64-bit ELF of
 15,276,922 bytes, dated 2026-09-19 04:04 (`stat`, `file`), so the script's `-x` guard passes.
 But that is a 2026-09-19 build, older than this tree: `git log --since` counts 129 commits under
 `server/` newer than it. The check still to run should use a server built from this tree, passed
 as `--server <host:port>`:
-`SRREVAMP_QA_ATTACK_FAST=1 SRREVAMP_QA_ATTACK_NAME=Mangyang SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh
+`OPENSRO_QA_ATTACK_FAST=1 OPENSRO_QA_ATTACK_NAME=Mangyang OPENSRO_QA_ATTACK_GOTO=1 qa_shot.sh
 --server <host:port> --attack --frames 900 --out /var/tmp/mob_killer_death`. For each `killed by
 own blow t=T, clip starts in L` line, a `dies, holding S` line should follow, and the matching
 `body removed t=R` should have R >= T + L + S - 1/60. Before this fix, R - T was expected to be one
@@ -32500,8 +32599,8 @@ join, not a dig.
 |---|---:|
 | real opcodes the client registers a handler for | **318** |
 | real server request indices | **162** |
-| opcodes srrevamp declares | **143** |
-| **srrevamp opcodes that are real ones** | **0** |
+| opcodes OpenSRO declares | **143** |
+| **OpenSRO opcodes that are real ones** | **0** |
 
 **Zero is the right answer and not a failure.** `PROTOCOL_DECISION.md` reversed
 the project's direction on 2026-08-22 to a full wire-level reimplementation and
@@ -32516,7 +32615,7 @@ dump, and 115 of 162 exist there at all. For those the handler is identified, so
 the work left per opcode is the **payload layout**, not finding the code. The
 list is now in `PACKET_FORMAT.md` as a roadmap rather than a statistic.
 
-Several land on systems srrevamp ships today: `GObjPC_HandleShopMsg_046`,
+Several land on systems OpenSRO ships today: `GObjPC_HandleShopMsg_046`,
 `GObjPC_HandleIncreaseStr`/`IncreaseInt` (`0x050`/`0x051`), four party handlers
 -- and `Item_HandleUseItem` at real opcode **`0x04c`** replying **`0xb04c`**,
 which is the same message this project relocated to `0x008a` three rounds ago
@@ -32633,7 +32732,7 @@ something is unread AND naming an address. **Five**, one of them the one round
 320 had just closed, and one already answered by a later round (the `0xc63c94`
 table, settled in round 275 as burn's damage curve).
 
-The best of the rest affects a value srrevamp ships: `teleport_network.md` had
+The best of the rest affects a value OpenSRO ships: `teleport_network.md` had
 `fee += FUN_00486390(fee, 0)` with the note *"a surcharge on top -- unread; the
 siege tax by context, labelled an inference"*.
 
@@ -32668,7 +32767,7 @@ One transcription correction fell out of it: the page showed
 `FUN_00486390(fee, 0)`, which is the decompiler's guess. The callee takes the
 object in EAX and the actor in EBX and reads no stack arguments.
 
-srrevamp has no fortresses, so nothing live moves -- but the teleport fee it
+OpenSRO has no fortresses, so nothing live moves -- but the teleport fee it
 already ships now has its full formula written down rather than a labelled hole.
 
 ## Three-hundred-and-twentieth round: the damage pipeline, read to its end
@@ -32691,7 +32790,7 @@ other function: `Formula_MitigateMagicalDamage` (`0x0040e830`) pushes `0xb3`
 | defender % | 180 | 181 |
 
 All four are range 0..100, default **0**, untagged in the registry -- so inert
-on every object srrevamp builds, the same shape as the player's percentage
+on every object OpenSRO builds, the same shape as the player's percentage
 reduction.
 
 **Stage 19 is a ceiling of 16,777,215**, held as a double at `.rdata 0x00b46110`
@@ -32706,7 +32805,7 @@ the float32 property the constant rests on -- `2^24+1` is indistinguishable from
 `2^24` while `2^24-1` is not -- so the *reason* for the number is pinned and not
 just the number.
 
-**It is unreachable with today's content.** Nothing srrevamp spawns deals
+**It is unreachable with today's content.** Nothing OpenSRO spawns deals
 sixteen million. It is here because a ceiling the engine has should be present
 and cited rather than found later as a divergence, which is the same argument
 the monster-rank HP scale was wired under.
@@ -32792,7 +32891,7 @@ as the TypeID4 -> group-name switch, in two different pages.
 
 So the *group* half of animation selection is now **confirmed rather than
 discovered**: it is a function of the held weapon and the race byte, and of
-nothing per-skill -- which is exactly what srrevamp's `_weapon_group_for`
+nothing per-skill -- which is exactly what OpenSRO's `_weapon_group_for`
 already does. Saying that plainly matters, because it also rules the group
 selection out as a hiding place for the skill -> action type link.
 
@@ -32823,7 +32922,7 @@ now ruled out properly rather than by argument.
 
 ### And the BSR table is not the better index either
 
-The suspicion worth testing was that srrevamp reads the wrong place: it builds
+The suspicion worth testing was that OpenSRO reads the wrong place: it builds
 `prim\ani\char\china\man\<name>.ban` and reads the archive directly, where
 the real client follows a BSR entry. **The entries point at exactly that
 directory**, so the path was never wrong, and:
@@ -32878,7 +32977,7 @@ Around fifty skill animations per weapon group, **99 distinct types** across
 are the coincidences -- names that happen to exist in
 `Prim\Ani\Char\China\man\` -- not the mechanism.
 
-So srrevamp's client has been asking the wrong question since cast animations
+So OpenSRO's client has been asking the wrong question since cast animations
 were added, and "i used a skill, no animation" is the direct consequence.
 
 ### The column is NOT settled, and the obvious probe cannot settle it
@@ -33049,7 +33148,7 @@ next step. **That was my framing, and it was wrong.**
 `_CHAR`'s 43 columns are now fully listed, and they carry `HwanLevel` and
 `RemainHwanCount` and **no duration or expiry column at all** -- the only
 time-like column is `LastLogout`. The engine cannot persist a running berserk
-either. srrevamp dropping it on logout is **faithful, not a gap**, and the
+either. OpenSRO dropping it on logout is **faithful, not a gap**, and the
 absence of a column is the proof.
 
 This is the same shape as the quest-objective finding that this project treats
@@ -33080,15 +33179,15 @@ refute a type id.
 15 of 20 is a suggestive curve, and this project has a rule about those. It is
 recorded in the TSV header with the confound named, and **not promoted**. By the
 tick-budget rule it is also the right place to stop: the key's meaning grounds
-**zero** values srrevamp uses, while the offsets it sits beside are done.
+**zero** values OpenSRO uses, while the offsets it sits beside are done.
 
 ### The berserk orbs now survive a logout
 
 `berserk.Tracker` carried a comment saying the count "is a DB column, but
-srrevamp clears it on disconnect like a duel until the character store carries
+OpenSRO clears it on disconnect like a duel until the character store carries
 it". Round 308's schema made that concrete: **`_CHAR.RemainHwanCount` is bound
 at charData `+0x86`**, an offset verified from the decompilation and again from
-raw disassembly. The engine persists it on the character row, so srrevamp does
+raw disassembly. The engine persists it on the character row, so OpenSRO does
 now too:
 
 - `character.Character.HwanCount`, mapped to `_CHAR.RemainHwanCount` in
@@ -33586,12 +33685,12 @@ One run of the already-validated `client/tools/re/fields.py`:
 	field 28  ->  +0xa4    the price basis
 	field 29  ->  +0xa8    the flat restore cost
 
-**And the answer was off by one from what srrevamp shipped.** Deserializer
+**And the answer was off by one from what OpenSRO shipped.** Deserializer
 fields are 1-based over the row; text columns are 0-based. So `+0xa4` is
 itemdata **column 27**. The exporter had `fRepairCost = 28`, which reads
 `+0xa8` -- the adjacent restore cost, which the authored data sets at **1.5x
-the basis**. Every repair srrevamp quoted was half again too expensive. The
-Copper Sword is **198** at column 27 and **297** at column 28; srrevamp charged
+the basis**. Every repair OpenSRO quoted was half again too expensive. The
+Copper Sword is **198** at column 27 and **297** at column 28; OpenSRO charged
 297.
 
 **Four disjoint anchors fix field k to row field k**, and the sharpest is this
@@ -33869,7 +33968,7 @@ two, found both already answered or honestly disclosed, and fell over something 
 way.
 
 **The ground-item bullets first, since they cost the probes.** The despawn timer and the drop
-scatter are both `own design, disclosed` in srrevamp (3 minutes, a 2-unit disc) -- which is
+scatter are both `own design, disclosed` in OpenSRO (3 minutes, a 2-unit disc) -- which is
 compliant, not a defect. Chasing the engine's scatter went through `CGItem::Create`
 (`0x0048f930`), which copies the drop position from `param_4+0x20/+0x24` already computed, and
 the subclass `Create`s are reached through vtables, so the spawn path is not greppable from
@@ -34030,7 +34129,7 @@ engine's own word for the three-job system.
 This page's older note that "cols 6-8 look job/cost/gold-related" turns out to have been right
 about the family and vague about the reason. It now has the reason.
 
-Nothing wired: srrevamp models job kinds but not job levels. Columns 3 and 4 are predicted by
+Nothing wired: OpenSRO models job kinds but not job levels. Columns 3 and 4 are predicted by
 the packing at `+0x14`/`+0x18` and are recorded as predicted, with no reader found.
 
 ## Two-hundred-and-ninety-fourth round: the pet's threshold is the character's EXP curve, column 1
@@ -34053,7 +34152,7 @@ server's own 64-bit field.
 each established separately.
 
 **What it changes here: nothing, and that is the useful part.** `leveldata.Table.expToNext` is
-already `int64`, so srrevamp was right by construction -- but it was right on the strength of
+already `int64`, so OpenSRO was right by construction -- but it was right on the strength of
 one live observation, and it is now right with the engine's own field width behind it. A test
 pins the width rather than a number: a curve carrying a value past 2^32 must survive parsing,
 because a 32-bit column would wrap silently at the high levels.
@@ -34084,7 +34183,7 @@ call sites index it that way, and one of them is a function this project had alr
 for another reason.
 
 By `refdata_tables.md`'s enumeration the per-level table is `_REFLEVEL` (`leveldata.txt`),
-which srrevamp already loads as `leveldata.csv` -- so a pet system here needs no new table,
+which OpenSRO already loads as `leveldata.csv` -- so a pet system here needs no new table,
 only the column holding the threshold. **The link from the global to that loader is still not
 traced** and is recorded as such: the rows are placed from further out than `0x0082afc0`, no
 function references both the global and a `"_REF…"` literal, and `FUN_006f8950` -- the one
@@ -34418,18 +34517,18 @@ anything else. The archive says what those are: `clothes_00_ba.bsr` and `clothes
 character with no chest armour is wearing a garment, not showing skin.
 
 **That corrects round 281's conclusion** -- and only the conclusion; its observation stands.
-srrevamp really never hides body meshes. But the engine does not hide them either: the body
+OpenSRO really never hides body meshes. But the engine does not hide them either: the body
 `.bsr`'s skin is drawn under the slot visual in both.
 *(Correction, round 687: the engine does hide them. Each item `.bsr`'s attachable block lists the
 body pieces it covers, and with flag 1 `CCompChar::FUN_00c1f790` switches those body meshes off
 when the item is attached; `InstallEquipVisual` was not where it happens. The paragraph is kept as
 written.)* So "we never hide" cannot be why skin
-shows through our armour. What srrevamp is missing is the **default wear** -- an unarmoured slot
+shows through our armour. What OpenSRO is missing is the **default wear** -- an unarmoured slot
 should show `clothes_00_*` and ours shows bare skin -- plus whatever keeps the engine's worn
 geometry clear of the skin, which is still unread.
 
 The buildable step falls out of the same read: nine visual slots, one visual each, default wear
-when nothing is equipped, replace on install. srrevamp has no per-slot bookkeeping at all today.
+when nothing is equipped, replace on install. OpenSRO has no per-slot bookkeeping at all today.
 
 Three names: the installer's semantics merged into its existing row, and its attach and detach
 halves added.
@@ -34473,7 +34572,7 @@ note now says the mechanical version: **`ls docs/protocol/` first** -- the file 
 OpenSRO looked at the round-280 render and said "his nips are coming out". They are, and the
 cause is not the alpha channel this lane had been chasing.
 
-**srrevamp draws the naked body AND the armour.** `_build_assembled_character` assembles the
+**OpenSRO draws the naked body AND the armour.** `_build_assembled_character` assembles the
 whole character `.bsr` -- for a China man that is nine meshes, `man_arm_lower`, `man_arm_upper`,
 `man_calf`, `man_pelvis`, `man_thigh`, `man_torso_lower`, `man_torso_upper`, plus face and hair
 -- and then calls `attach_item_from_archive` per worn item, which only ever ADDS meshes.
@@ -34574,7 +34673,7 @@ a message, with real member and method names in it:
 `pSkill->pSkillData->GetData()->m_nReq_Sp`, `((CSOItem*)m_pObject)->GetOverlapCount()`,
 `g_pMyPlayerObj->GetMyJID()`. The first says the client keeps a `LearnedSkill` set with
 `IsLearnedSkill(id)` on it and treats "already learned" as a programming error -- the same
-question srrevamp's new hotbar gate asks of the same set.
+question OpenSRO's new hotbar gate asks of the same set.
 
 Four names: the assert helper itself, `PrimMtrlSet::SaveToFile`,
 `PrimMtrlSet::WriteLayer`, and `NetProcessInInterface::AddLearnedSkill`. Nothing shipped
@@ -34748,7 +34847,7 @@ with no behaviour rather than an unread one.
 
 `internal/statuseffect` carries the mask table, the two damage formulas and the parry
 percent with tests, including the one that would have caught the swap. Two names corrected,
-three added. No shipped value changed: srrevamp still has no status-effect system, and this
+three added. No shipped value changed: OpenSRO still has no status-effect system, and this
 is the spec for one.
 
 ## Two-hundred-and-seventy-fourth round: how a timed job fires, and the getters were on the wrong object
@@ -34817,7 +34916,7 @@ when the character has a guild, and once that exceeds 9 hands it to
 inter-server dispatcher to `CGuild::AddPoints` (`0x5c4110`): the guild's total at `guild+0x3c` and
 the member's own contribution at `member+0x40` both grow by the count, and `0x38F5` types 5 and 6
 tell the online members. **Guild points = skill points earned, one for one, in batches of at least
-ten per member.** `guild.PointAccumulator` carries the rule with a test; srrevamp's guild has no
+ten per member.** `guild.PointAccumulator` carries the rule with a test; OpenSRO's guild has no
 level or points total yet, so the wiring is a build item. Three names.
 
 ## Two-hundred-and-seventy-first round: two short negatives, each with its reason
@@ -34865,8 +34964,8 @@ the disclosed 50, the item reaches 80, 110, 140, 170, 200. The warehouse migrati
 
 Shipped (v0.1.408): the renamed and retargeted constants with `InventoryAdditionSlots` /
 `WarehouseAdditionSlots`, the tests pinning 0x70 / 0xd2 and the increments, `server_sql.md` and
-the SYSTEMS row corrected. No player-visible change today -- srrevamp has no expansion path yet
--- but the cap srrevamp would enforce is no longer the wrong one. Two names.
+the SYSTEMS row corrected. No player-visible change today -- OpenSRO has no expansion path yet
+-- but the cap OpenSRO would enforce is no longer the wrong one. Two names.
 
 ## Two-hundred-and-sixty-ninth round: the party flag the aggro link tests is the exp-sharing bit
 
@@ -34976,7 +35075,7 @@ read at the cast, by the damage resolver (mode 6) and by the applier's mode swit
 
 Recorded: `skill_params.md` "efr's values are the target pattern", `skillparam.EfrKind*` with the
 value offsets and `AreaTargetShare` (100, 65, 42, 27 at 35 %) with a test, eleven names. **Not
-wired**: srrevamp hits one target per cast; the pattern needs several results per cast and is a
+wired**: OpenSRO hits one target per cast; the pattern needs several results per cast and is a
 build item. No shipped value changed; no release.
 
 ## Two-hundred-and-sixty-fourth round: a skill's hwan cost is data-dead, and the client's item sender has no pacing gate
@@ -34995,7 +35094,7 @@ client's item-use sender (`SendItem_HandleUseItem_796660`, 0x704c) was read for 
 has none -- its refusals are pet/COS and buff-overlap messages, and `CIFDelayInfo` is the delayed
 action (cast-bar) path for scrolls, not a potion limiter. What the retail client does between a
 slot double-click (`IFSlotWithHelp::FUN_00674b90/676570`) and the sender is unread, so this says
-only that the sender itself does not pace; srrevamp's client, like its server, paces potions not
+only that the sender itself does not pace; OpenSRO's client, like its server, paces potions not
 at all, which is consistent with everything read so far.
 
 Docs only; no shipped value changed.
@@ -35003,7 +35102,7 @@ Docs only; no shipped value changed.
 ## Two-hundred-and-sixty-third round: the reuse delay is a descriptor -- and potions do not have one
 
 The RE tick for 2026-09-19 18:33 followed round 262's array mapping one step further, to the
-note from 2026-09-18 that srrevamp "enforces NO item cooldown" and that the column feeding the
+note from 2026-09-18 that OpenSRO "enforces NO item cooldown" and that the column feeding the
 item's reuse span "is not identified".
 
 **The rule.** `RefObjItem::ExtractData` reads every `(Param, Desc128)` element's descriptor; one
@@ -35150,7 +35249,7 @@ floor. The idle window above is twice this interval.
 
 Recorded: `monster_ai.md` "The threat table" and column 9 relabelled; `ai.ThreatTable`
 (`Credit`, `Face`, `Resolve`, `FaceAfterHit`), `ai.AttackIntervalRange`/`AttackJitterMs`, with
-four tests; six names. No shipped value changed (srrevamp's monsters still only counter-strike);
+four tests; six names. No shipped value changed (OpenSRO's monsters still only counter-strike);
 no release.
 
 ## Two-hundred-and-fifty-eighth round: the aggro link -- what the ten nearest monsters are for
@@ -35199,12 +35298,12 @@ right not to multiply by it. The full key vocabulary (25 keys through `ServerCon
 Recorded: `monster_ai.md` "The aggro link" (round 257's "unread" note now points at it),
 `ai.AggroLinkMaxHelpers/MemberRange/DecreaseRatio/VictimDamageFactor`, `ai.AggroLinkCount`,
 `ai.AggroLinkDamage` with a test, the `rates` package comment corrected, nine names. No
-shipped value changed -- srrevamp has no monster BATTLE loop yet, and this is one of the rules
+shipped value changed -- OpenSRO has no monster BATTLE loop yet, and this is one of the rules
 it will run on. No release.
 
 ## Two-hundred-and-fifty-seventh round: how a monster notices you -- the detection radius, and where the level term really is
 
-The RE tick for 2026-09-19 17:20 turned to the monster's side of round 256: srrevamp's monsters
+The RE tick for 2026-09-19 17:20 turned to the monster's side of round 256: OpenSRO's monsters
 strike only when struck because nothing ever picks a target. The acquisition rule is now read,
 and one row of the tactics table changes meaning.
 
@@ -35248,7 +35347,7 @@ and quest files (no tactics, nest, hive or AI-skill file), `smc.bak` is the mana
 database, and the three `SR_GameServer_*.dmp` files are 2 MB minidumps with eight streams
 (threads, modules, a small memory list, exception, system info) and no heap -- `MOB_CH_` occurs
 in none of them. So the RULE is grounded and the per-species distance will be disclosed when
-srrevamp's monsters learn to notice a player.
+OpenSRO's monsters learn to notice a player.
 
 Recorded: a new section in `docs/protocol/monster_ai.md`, column 6 relabelled, `ai.DetectionRadius`
 and `ai.LevelScaledRadius` with a test (`internal/ai`), the build item in `docs/TODO.md`
@@ -35258,7 +35357,7 @@ round), ten names. No shipped value changed; no release.
 ## Two-hundred-and-fifty-sixth round: one click fights to the death -- the keep-up, read and built
 
 The RE tick for 2026-09-19 16:34 took round 255's TODO: the real server repeats the plain
-attack on its own, srrevamp wanted a click per swing. Reading the "keep-up" phase properly
+attack on its own, OpenSRO wanted a click per swing. Reading the "keep-up" phase properly
 turned over more than the repeat.
 
 **The machine has a name.** The action queue behind attacks, skills, pick-ups and traces is
@@ -35323,7 +35422,7 @@ and a cast, a move, a zone change, death, disconnect, or the target's death ends
 departures are written where they live: the server cannot walk the player, so a repeat that
 finds the target out of reach ENDS the run (the reach test is the engine's, `keepUpInReach`);
 and the retail client's explicit cancel on a move click is stood in for by `OpMove`, which
-srrevamp's client only sends for a real move. `Session.Send` gained a mutex: it was two writes
+OpenSRO's client only sends for a real move. `Session.Send` gained a mutex: it was two writes
 per frame with broadcasts already arriving from other goroutines, and the repeats made that
 routine. Tests: the tracker's replace/cancel semantics, the reach band (sword vs Mangyang lands
 from 18, not 19), the hand-off rule, and a TCP round trip where a single `OpAttack` produces
@@ -35353,7 +35452,7 @@ inside the equipped weapon's delay (a broken weapon swings bare-handed on the pu
 as the engine ignores a use while the action runs, and records the swing under the base skill's
 id in the existing cooldown store. Tests on the map and the gate; full suite green (57). Not
 built, and now in `docs/TODO.md`: the **keep-up** -- the real server repeats the swing on its own
-(`ActionTick_UseSkill` phase 3, `[HANDLE_ATTACK-KeepUp]`); srrevamp still wants a click per blow.
+(`ActionTick_UseSkill` phase 3, `[HANDLE_ATTACK-KeepUp]`); OpenSRO still wants a click per blow.
 
 ## Two-hundred-and-fifty-fourth round: a monster's attack cadence is its skill's re-use delay
 
@@ -35369,7 +35468,7 @@ Tomb Stone ghost **2500** at range **100** (a ranged monster); Earth Ghost 1533/
 
 **Wired (v0.1.404):** `combat.Species/Monster.AttackReuseMs` and `AttackRange` on the roster
 from the table, and `combat.Hub.CounterattackReady` -- a monster's blows are at least its
-re-use delay apart; the session skips the counter-blow inside the window. srrevamp's monster
+re-use delay apart; the session skips the counter-blow inside the window. OpenSRO's monster
 still strikes only when struck (there is no BATTLE loop of its own yet), so this is a ceiling
 on its cadence, not the cadence -- said in the code. Before this a player swinging once a
 second took a Mangyang blow once a second; the real Mangyang swings every three. Test on the
@@ -35410,7 +35509,7 @@ region through `Data.pk2`'s `Shader\regioninfo.txt`. That file, extracted and co
 for any Alexandria region**. `display_for_region` therefore returns `""` for 90/48 and the
 function returns early, leaving `_current_zone_name` (and the minimap header fed from it every
 tick) at whatever zone the player came from. Reproduced in one `qa_shot` run booting Jangan and
-reloading for `90/48@663,526` through `SRREVAMP_QA_ZONE`: the frame at the Alexandria spot
+reloading for `90/48@663,526` through `OPENSRO_QA_ZONE`: the frame at the Alexandria spot
 (world X -16638, Y -332 -- the reporter's own screenshot reads X -16608, Y -337) still showed
 **Jangan** over the minimap.
 
@@ -35487,7 +35586,7 @@ singleton's slot 12, and a blocked answer (bit 0 or bit 28) **reverses** the dir
 its own id -- **IDLE 2001..5999 ms, WANDER 5000..5999, FLEE 3000..5000, EMOTION 3001..4999,
 everything else 50 000** (HOMING among them). `server/internal/ai` carries the table
 (`DwellRange`) and the leg constants with a test; the doc has the rule. Four names. No shipped
-behaviour changed -- srrevamp's monsters still stand still; this is the cadence to build.
+behaviour changed -- OpenSRO's monsters still stand still; this is the cadence to build.
 
 ## Two-hundred-and-fiftieth round: playtest -- skill prerequisites, the hotbar's drag/keys/pages, and a target before a cast
 
@@ -35562,7 +35661,7 @@ Recorded: `docs/protocol/status_effects.md` (the 25-bit table with each applier 
 params thirteen of them write), the 22 appliers renamed with their state
 (`AbnormalState_Myopia_Apply10`, ...), param 183 in the registry, a new PARTIAL row in
 SYSTEMS.md (headline 12/22/0 of 34), and the comments in `combat/reach.go`. No shipped value
-changed: srrevamp has no status effects, so its myopia percent is 0.
+changed: OpenSRO has no status effects, so its myopia percent is 0.
 
 ## Two-hundred-and-forty-seventh round: the attack-distance rule -- read on the server, where it lives
 
@@ -35601,7 +35700,7 @@ So a sword against Mangyang lands from 16 (+2), and the walk stops at 14.
 **Wired (v0.1.400):** `combat.ApproachBand`, `EffectiveRange`, `InReach` with the cited
 constants and tests (the three bands, the hole, the slack); `combat.Species.BCRadius` on the
 roster from the table; `refdata.Item.Range` as CSV column 60 / SQL `attack_range` (the
-public server's items re-imported). **Not yet built:** the behaviour -- srrevamp's server does
+public server's items re-imported). **Not yet built:** the behaviour -- OpenSRO's server does
 not drive player movement, so the walk has to be the client's, and monsters need their BATTLE
 approach; recorded in `docs/TODO.md` with the rule. Six names.
 
@@ -35644,7 +35743,7 @@ reads (round 236's `Formula_...` chain). Wired (v0.1.398): `defenderBlock` inter
 group, the interpolation and both edge cases. Full suite green.
 
 **Open, and said plainly:** the shield branch also stores the shield's own physical and
-magic defence (groups 4/5 -> `+0x198/+0x1a8`), and srrevamp's `ArmorSlots` do not count the
+magic defence (groups 4/5 -> `+0x198/+0x1a8`), and OpenSRO's `ArmorSlots` do not count the
 shield in the defence sum. Whether a worn shield's `+0x198` reaches the character's param 5
 is decided at the site that folds an equipped item's block into the character's params,
 and that site is unread -- the two callbacks `param_writers.md` records for param 5
@@ -35822,7 +35921,7 @@ is non-zero, then `rand()%101 > GiantMonster_SpawnRatio` (the engine's own confi
 `.rdata 0xae0a04`, default 14) for a champion (x2) else a giant (x20), running under
 tactics column 41's row.
 
-**What moved for srrevamp:** nothing numeric -- `respawnDelay = 10 s` is now disclosed
+**What moved for OpenSRO:** nothing numeric -- `respawnDelay = 10 s` is now disclosed
 against the mechanism it stands in for (comment in `server/cmd/server/main.go`): the real
 window is per-nest data the project does not hold (`npcpos.txt` carries only id, region
 and position). Seventeen functions named. Open: the hive row (`refHive+0x08` caps a
@@ -35868,7 +35967,7 @@ the row. One dead branch: the low-HP request behaviour (`+0x10c`) tests the HP b
 
 **Not settled:** 27 columns have no AI reader in the three probes; column NAMES are in the
 database only (the package on the box has no shard DB). No shipped value changed --
-srrevamp's server does not move monsters yet (`docs/TODO.md`); the roam and give-up rules
+OpenSRO's server does not move monsters yet (`docs/TODO.md`); the roam and give-up rules
 above are what that work implements first.
 
 ## Two-hundred-and-thirty-seventh round: two params named from the speed read, and the monster publisher's offset map recorded
@@ -35897,7 +35996,7 @@ of `mob+0x1cd8` -- the rank byte `PublishStats` already switches on for the HP s
 7 = x30 HP). So a rank-7 monster, on death, drops three extra `ITEM_ETC_GOLD_03` piles of
 `LevelGold_Roll * 4` (species 10100 and 11000 excepted), and no other rank takes that path.
 Recorded beside the rank table in `combat/rarity.go`; two functions named
-(`LevelGold_Roll`, `CGObjMob_DropRank7GoldPiles`). srrevamp spawns no rank-7 species, so
+(`LevelGold_Roll`, `CGObjMob_DropRank7GoldPiles`). OpenSRO spawns no rank-7 species, so
 nothing applies it yet; no value changed. A small consistency note: the `30.0` at
 `0xb45e58` serves both the rank-7 HP factor and the 30 s drop-ownership window -- one
 pooled constant, two readings that agree on its value.
@@ -35917,7 +36016,7 @@ The RE tick's step for 2026-09-19 11:49, on the kill gold's inferred linkage. Re
 - The client's `levelgold.txt` is 140 rows of (level, min, max) -- no chance column -- so it
   cannot be the server's table either.
 
-So srrevamp's every-kill gold in levelgold's range is a stand-in twice removed from the
+So OpenSRO's every-kill gold in levelgold's range is a stand-in twice removed from the
 real path (a monster's assigned drop row, DB-only) and never gates by chance. Nothing can be
 read to replace it; `RollGold`'s note now says exactly that. No value changed.
 
@@ -35952,7 +36051,7 @@ the state.
 ## Two-hundred-and-thirty-second round: attacks have no distance rule -- the server never refuses on it, the client's approach is the rule
 
 The RE tick's step for 2026-09-19 11:04. Looking for the next per-fight value found an
-absent rule instead: srrevamp's client sends an attack for any clicked monster and its
+absent rule instead: OpenSRO's client sends an attack for any clicked monster and its
 server accepts it at any distance. Read: the server dump contains no `0x3007`
 (`UIIT_SKILL_USE_FAIL_WRONGDISTANCE`) while every neighbouring skill-failure code does
 (`0x3003/4/5/8/9` in `Skill_CheckUseConditions`, `0x3006` in `CanBeAttackedBy`), so the
@@ -36085,7 +36184,7 @@ and it closed the other way round: there is no cycle to reproduce.
   `FUN_004e55e0` (16-byte keyframes, time at `+0xc` -- the ColorGraph evaluator); the sun
   and its shadow are drawn for `0.25 <= phase <= 0.875`.
 
-So the retail client renders a fixed midday, exactly what srrevamp has done since round 136
+So the retail client renders a fixed midday, exactly what OpenSRO has done since round 136
 as a "flagged simplification". `ENVIRONMENT_REFERENCE_TIME = 0.5` is promoted from
 disclosed to read; the day/night TODO closes as not-a-gap; the server's `0x34be` clock is
 confirmed to feed nothing in the sky. The dormant machinery (rate, shift, sun angle) is
@@ -36123,7 +36222,7 @@ naming them found the clock. Spec: `docs/protocol/game_clock.md`.
   So no day/night cycle is wired; `ENVIRONMENT_REFERENCE_TIME`'s note, which said "no
   server-side game-time signal", now says the signal is read and names what is not.
 
-No srrevamp value changed. A `0x34be`-shaped sync is an additive op away once the mapping
+No OpenSRO value changed. A `0x34be`-shaped sync is an additive op away once the mapping
 is read.
 
 ## Two-hundred-and-twenty-third round: the PC tick is one second, read -- and it grounds three shipped units at once
@@ -36206,7 +36305,7 @@ The RE tick's step for 2026-09-19 08:04, still after the period of `CGObjPC::vsl
 
 Method notes worth keeping: the vcall-thunk search (`FF A0 <disp32>` in the padding after
 a function) and the load-form scan are both in the round's commands; `/var/tmp/infn2.sh`
-for two-pattern function greps. No srrevamp value changed.
+for two-pattern function greps. No OpenSRO value changed.
 
 ## Two-hundred-and-nineteenth round: the server's clock is in seconds; the PC tick's scheduler is still one hop away
 
@@ -36224,7 +36323,7 @@ closed; what was read is in `docs/protocol/character_state.md`:
   none. Controllers' slot 11 is "update this PC" for every world kind.
 
 So the scheduler that calls `controller->slot11(pc)` is the one function left between the
-loop and the stance/berserk countdowns. No srrevamp value changed this round.
+loop and the stance/berserk countdowns. No OpenSRO value changed this round.
 
 ## Two-hundred-and-eighteenth round: the battle stance lasts 20 ticks -- the server's BattleState timer, read
 
@@ -36254,9 +36353,9 @@ main loop's `CMainProcess::FUN_00414140` has a 1000 ms accumulator, but the link
 minute; `COMBAT_STANCE_SECONDS = 20` now rests on exactly that inference, labelled the
 same way berserk's 60 is -- which replaces a 5.0 that had no relation to the binary.
 
-### srrevamp's gap, named
+### OpenSRO's gap, named
 
-The original's stance is server-driven and visible to everyone in range; srrevamp's
+The original's stance is server-driven and visible to everyone in range; OpenSRO's
 client holds the pose itself from its own last action, and its server carries no
 battle-state byte. Recorded in the spec as the next step for this channel.
 
@@ -36292,7 +36391,7 @@ that the entries `UI_TELEPORT::FUN_006fd3e0` formats were a server reply. They a
 ### What it means
 
 Columns 8/9 have no reader in the server's use handler, the client's dialog, or the
-client's gate object. srrevamp does not consume them, so nothing changes in code; the
+client's gate object. OpenSRO does not consume them, so nothing changes in code; the
 spec and the SYSTEMS row now say exactly where they were looked for and not found. The
 remaining place is the server's link-binding pass (a `CRefTeleport`'s link vector is
 filled from `CRefTeleLink` rows; the `_REFTELELINK` binder, `0x82d770`, keeps its column
@@ -36301,7 +36400,7 @@ box: `/var/tmp/infn2.sh <re1> <re2>` lists functions matching BOTH patterns.
 
 ## Two-hundred-and-sixteenth round: the warehouse's capacity -- a per-user row, no default in the binary, and the client's own 30-slot pages
 
-The RE tick's step for 2026-09-19 07:00, following round 215's open probe. srrevamp's
+The RE tick's step for 2026-09-19 07:00, following round 215's open probe. OpenSRO's
 warehouse accepted 50 slots because the container inherited the bag's
 `SlotsPerCharacter`, while its authored window (`ifstorageroom`) draws 30 cells -- so
 slots 30-49 were stored but unreachable. Both halves are read now.
@@ -36347,7 +36446,7 @@ slots 30-49 were stored but unreachable. Both halves are read now.
 - `go test`: 56 packages ok, including the list round-trip with and without durability
   entries and against an old payload (capacity 0). Doc guards pass.
 - Box: `ALL LOAD` (233 scripts); 76 suites, 0 failing (`storage_test.gd` new).
-- End to end (`SRREVAMP_QA_STORAGE_ITEM=1 --server`, the new binary): `warehouse lists 0
+- End to end (`OPENSRO_QA_STORAGE_ITEM=1 --server`, the new binary): `warehouse lists 0
   slot(s), 0 item(s); capacity 50 = 2 page(s) of 30` -> `deposit accepted` -> `warehouse
   lists 1 slot(s), 1 item(s); capacity 50 = 2 page(s) of 30`, 0 script errors; the frame
   shows the spin control (arrows, page "1") on the authored strip under the lattice.
@@ -36387,7 +36486,7 @@ procedures (`_STRG_MOVE_ITEM (%d,%d,%d,%d,%d,%d,%d,0)`) receive both ids plus a 
 kind (`+0x28`: 2 = bag to chest, `0x20`/`0x21` = guild chest, 10/11/12 = the gold
 moves). So the warehouse's gold is the USER's balance, exactly as its items are.
 
-### What changed in srrevamp
+### What changed in OpenSRO
 
 - `inventory.SQLStore` takes an owner column (`OpenSQLStoreOwned`); the bag stays
   `character_id`, the warehouse is `account_storage_slots` keyed by `account_id`.
@@ -36403,14 +36502,14 @@ moves). So the warehouse's gold is the USER's balance, exactly as its items are.
 
 - Public server before deploy: 1 warehouse row, 0 stored gold, no account with two
   characters holding anything (counted in the database); `pg_dump` taken
-  (`~/backups/srrevamp-20260919T065504Z-before-warehouse-per-account.sql.gz`).
+  (`~/backups/opensro-20260919T065504Z-before-warehouse-per-account.sql.gz`).
 - `migrate_test.go` on the real schema: two characters on one account, both with
   slot 0 -> the account holds all four rows (the collision moved to slot 2, the
   others where they were), 500 gold summed, legacy table empty, second run a no-op
   even with a fresh legacy row present.
 - `storage_test.go`: what Aria deposits, Bram (same account) lists and withdraws;
   another account's character sees nothing; gold likewise.
-- End to end on the box (`SRREVAMP_QA_STORAGE_ITEM=1 --server`, the new binary):
+- End to end on the box (`OPENSRO_QA_STORAGE_ITEM=1 --server`, the new binary):
   `warehouse lists 0 slot(s)` -> `deposit accepted` -> `warehouse lists 1 slot(s), 1
   item(s)`, 0 script errors. The client now prints the warehouse's state on every
   list result and on each accepted move, so this is read from the log rather than
@@ -36427,11 +36526,11 @@ which column or procedure supplies it and its default. The 112 and 210 caps in
 
 "Give me more debug tools to test the client" — after a playtest crash in the
 storage deposit that arrived as an impression ("it crashed") rather than a fact.
-Testers had F1, F3 (with Copy), `/unstuck`, the log file, and the `SRREVAMP_QA_*`
+Testers had F1, F3 (with Copy), `/unstuck`, the log file, and the `OPENSRO_QA_*`
 hooks that only work in render-box runs. Now they have tools that work **in
 play**, with every result going to chat and the log.
 
-**All of this is srrevamp's own design.** The original client has no slash
+**All of this is OpenSRO's own design.** The original client has no slash
 console and no GM console for players; its help and notices went through an
 embedded Internet Explorer control (an ifhelp/web-board panel) that Godot has no
 equivalent for, and **the original's help dialogs were not recovered** — this
@@ -36469,7 +36568,7 @@ optional position/zone, level-up, refresh bits). New commands are new words in
 the line, not new opcodes.
 
 The gate is an account-username list: `-gm-accounts` / env
-`SRREVAMP_GM_ACCOUNTS` (comma-separated, trimmed, case as stored in
+`OPENSRO_GM_ACCOUNTS` (comma-separated, trimmed, case as stored in
 `accounts.username`; default none). The username is stored on the session at
 login (`AuthenticatedUsername`; `authenticate` now takes it) because the account
 Store has no by-id lookup. A non-GM's command is refused with a chat reply; the
@@ -36505,7 +36604,7 @@ with `is_gm=false`).
 
 ### Error capture and the Copy payload
 
-`project.godot` already writes SCRIPT ERRORs to `user://logs/srrevamp.log`
+`project.godot` already writes SCRIPT ERRORs to `user://logs/opensro.log`
 (file logging on, 10 files kept). The F3 Copy payload (`debug_panel.gd
 diagnostics()`) now ends with `== script errors (N)` (the last 20 error lines
 in the log) and `== last 20 log lines`, so a pasted report carries what a
@@ -36515,7 +36614,7 @@ the same file.
 ### The Help window (`client/scripts/ui/help_window.gd`, `md_to_bbcode.gd`)
 
 Opened from ESC → Help (which used to print a controls line), from `/help` with
-no arguments, and by `SRREVAMP_QA_HELP=1`. A one-line "Type /help …" hint prints
+no arguments, and by `OPENSRO_QA_HELP=1`. A one-line "Type /help …" hint prints
 once on entering the world instead of a popup (the original's login notice was
 a web panel; not recovered, so nothing is claimed about it). The window is a
 `HudWindow` built from `ifgameguide.txt` (a plain sized panel if an operator's
@@ -36546,10 +36645,10 @@ Go: `go build ./... && go vet ./... && go test -count=1 -p 1 ./...` all green
 the new `-gm-accounts` row). Box: `remote_godot.sh check` → `ALL LOAD` (229
 scripts, 5 scenes); `gm_test.gd`, `console_test.gd`, `md_to_bbcode_test.gd` →
 `ALL PASS`. Two `--server` renders with `SERVER_BIN=/var/tmp/srv-debug` and
-`SRREVAMP_QA_COMMANDS` feeding lines through the same parser as the chat: the
-GM run (`SRREVAMP_GM_ACCOUNTS=qa`) and the non-GM run (unset) -- both from the
-lane's own client copy (`CLIENT_DIR=/opt/srrevamp-client-debug`; the first two
-attempts rendered the default `/opt/srrevamp-client` and proved nothing, which
+`OPENSRO_QA_COMMANDS` feeding lines through the same parser as the chat: the
+GM run (`OPENSRO_GM_ACCOUNTS=qa`) and the non-GM run (unset) -- both from the
+lane's own client copy (`CLIENT_DIR=/opt/opensro-client-debug`; the first two
+attempts rendered the default `/opt/opensro-client` and proved nothing, which
 is the trap to remember: `qa_shot.sh` does `cd "$CLIENT_DIR"`).
 
 GM run, client log (`Console:`/`QA COMMAND:`/`CONSOLE:`/`GM REPLY:` are the
@@ -36557,7 +36656,7 @@ markers):
 
 ```
 Console: GM probe sent for QaTester
-Console: ready (help window authored frame, log .../SRRevamp/logs/srrevamp.log)
+Console: ready (help window authored frame, log .../OpenSRO/logs/opensro.log)
 GM REPLY: GM: /tp <x> <z>, /goto <zone|monster>, /give <item id> [qty], /gold <n>, /level <n>, /heal, /spawn <monster> [n], /kill, /durability <slot> <n>, /sp <n>
 QA HELP: opened the Help window
 QA COMMAND: /where          -> CONSOLE: zone: jangan / local: 42.0, 1860.0 / world: 42.0, -30.1, -60.0 / walkable height ...
@@ -36576,7 +36675,7 @@ QA COMMAND: /spawn MOB_CH_MANGNYANG 2 -> GM REPLY: spawned 2 x Mangyang (level 1
 QA COMMAND: /tp -300 -880   -> GM REPLY: teleporting to -300.0, -880.0
 QA COMMAND: /errors         -> CONSOLE: No script errors logged this session.
 QA COMMAND: /copy           -> CONSOLE: Copied the debug report (4253 chars) to the clipboard.
-QA COMMAND: /log            -> CONSOLE: Log file: .../srrevamp.log / Opened the log folder.
+QA COMMAND: /log            -> CONSOLE: Log file: .../opensro.log / Opened the log folder.
 ```
 
 (`/spawn MOB_CH_MANGYANG` in the first pass was refused with the list of real
@@ -36605,7 +36704,7 @@ Non-GM run (gate unset): the probe is silent (no GM line, no GM tools in
 QA COMMAND: /give 3 5       -> GM REPLY: GM commands are not enabled for your account.
 QA COMMAND: /tp -300 -880   -> GM REPLY: GM commands are not enabled for your account.
 QA COMMAND: /help           -> CONSOLE: Commands: /help /where /log /copy /fps /entities /wire on|off /cam free|orbit /errors /unstuck /w <name> <msg>
-server: "no GM accounts set (-gm-accounts / SRREVAMP_GM_ACCOUNTS) -- the GM console is off"
+server: "no GM accounts set (-gm-accounts / OPENSRO_GM_ACCOUNTS) -- the GM console is off"
 server: "gm command refused: not a GM" account=qa character=QaTester line="give 3 5"
 server: "gm command refused: not a GM" account=qa character=QaTester line="tp -300 -880"
 ```
@@ -36659,7 +36758,7 @@ against the real archives; every number below is from a log, none from a picture
 
 ### 1. The sweep (before)
 
-One boot per zone, radius 1 (nine regions each), `SRREVAMP_QA_FLOAT=400 SRREVAMP_QA_NAVGAP=1`,
+One boot per zone, radius 1 (nine regions each), `OPENSRO_QA_FLOAT=400 OPENSRO_QA_NAVGAP=1`,
 `/var/tmp/world_sweep2.sh`:
 
 | zone | regions | archive misses | floats > 12 within 400 | duplicate placements dropped (centre region) |
@@ -36732,7 +36831,7 @@ onto a deck, bridge span to span). `PlacedObject` keeps every edge with its flag
 from-side; `surface_at`/`landing_height_at` are unchanged and now only settle footing after a
 teleport, a region change or a landing. `World3D._move_on_nav_graph` carries the footing from
 frame to frame and re-settles it only when something else moved the player (> 1 unit) or the
-graph changed; `QA_WALK`/`SRREVAMP_QA_NAVTRACE` print every doorway, exit and wall as `NAV`
+graph changed; `QA_WALK`/`OPENSRO_QA_NAVTRACE` print every doorway, exit and wall as `NAV`
 lines, and the QA position line reports the tracked footing.
 
 One disclosed deviation: a terrain mover already inside an outline (after a teleport, or through
@@ -36782,7 +36881,7 @@ underpasses) replaces height-guessed footing; NAV traces; edge-flag survey and w
 
 Durability was fully READ (durability.md: the creation roll, the max formula,
 the loss rolls, the broken rule, the client update, the repair cost) but
-srrevamp carried none of it -- every item was indestructible and the shop's
+OpenSRO carried none of it -- every item was indestructible and the shop's
 repair buttons were inert. This builds it, every number from the spec's
 citations, nothing invented.
 
@@ -36813,7 +36912,7 @@ rate = hits; the counterattack rolls one armour piece per hit, or the shield
 on a block. Every loss is -1 through `durability.Apply`; at 0 the item is
 broken, and a broken weapon deals the unarmed damage while broken armour and
 a broken shield defend for nothing (the three combat stat sums skip it, which
-is how the engine's ParamKeeper removal shows up here). `SRREVAMP_DURABILITY_LOSS_ALWAYS=1`
+is how the engine's ParamKeeper removal shows up here). `OPENSRO_DURABILITY_LOSS_ALWAYS=1`
 is a QA accelerant (2%/hit is hundreds of swings otherwise), disclosed.
 
 ### Repair
@@ -36861,7 +36960,7 @@ icon (the exact original treatment is not recovered; the grey is ours).
 
 **Merged (coordinator).** Re-run on the merged build with every lane's change together: 29 weapon-wear
 events (65 -> 37) logged across the run, kills, drops, pick-ups and the attribution log all intact. No
-armour wear appeared under `SRREVAMP_DURABILITY_LOSS_ALWAYS`, and that is the engine's own rule showing
+armour wear appeared under `OPENSRO_DURABILITY_LOSS_ALWAYS`, and that is the engine's own rule showing
 through the accelerant: `RollDurabilityLoss` stops at the FIRST slot whose roll passes even when that
 slot is empty, so a helmet-less character's slot 0 absorbs every forced roll; at the real 2% the empty
 slot merely wastes a roll, as it does in the game. Armour and shield wear are covered by the unit tests.
@@ -36919,7 +37018,7 @@ refused untouched, 0 refused, 3 of 3 gives 23/22/0 with MaxHP = MaxHPFor(23, 2).
 `HudPanels._fill_character_window` fills the rows listed in its header and wires the
 two buttons once (`disabled` while the pool is empty); the title is the server's level
 once its stats have arrived (World3D had been passing a placeholder 1, so the window
-said "Lv 1" forever); HP/MP drive the authored gauges. `SRREVAMP_QA_SPEND_STAT=1`
+said "Lv 1" forever); HP/MP drive the authored gauges. `OPENSRO_QA_SPEND_STAT=1`
 presses the Str button once as soon as there is a point.
 
 ### Measured (render box, in-memory server from this branch, `--panels character --attack`, fast)
@@ -36994,7 +37093,7 @@ correctly all along. The chat lines never resolved at all: `Looted %dx item
 
 **Verified.** `remote_godot.sh check`: 222 scripts ALL LOAD; the item test ALL
 PASS. In-world (`--server`, in-memory server, Mangyang spawn, fast attacks,
-`SRREVAMP_QA_PICKUP=1`): `ground item 2 (HP Recovery Herb x2) at ...`,
+`OPENSRO_QA_PICKUP=1`): `ground item 2 (HP Recovery Herb x2) at ...`,
 `picked up 2x HP Recovery Herb (ground item 2, item 4)`, `QA PICKUP: result 0
 -> 2x HP Recovery Herb`, repeated for items 4 and 6; the frame shows the chat
 lines "Picked up 52 gold." / "Picked up 2x HP Recovery Herb." and the plates
@@ -37049,7 +37148,7 @@ row. The coloured icon at each row's left is the group's pack icon
    requirement is above the character's level -- `A mastery cannot pass your
    character level (Lv 3). Reach character level 5, then raise Bicheon to Lv 5.`
 
-**Verified.** `SRREVAMP_QA_SKILL_STATE="sp=9,level=3,257=3"` (new; sets points,
+**Verified.** `OPENSRO_QA_SKILL_STATE="sp=9,level=3,257=3"` (new; sets points,
 character level and mastery levels for a render without a server) reproduces
 the user's window: `Bicheon Lv 3, 9 SP, char Lv 3, total 3/9 -> LEVEL UP
 disabled: at your character-level cap (Lv 3)`; first cell
@@ -37122,7 +37221,7 @@ the request did.
     only `_on_monster_died` set a hold -- a push the killer never receives. So
     on the killer's own screen the monster vanished on the list reply that
     follows the result. Round 532 fixes it.
-- **QA.** `SRREVAMP_QA_ATTACK_ALTERNATE=1` makes the attack loop swing at the
+- **QA.** `OPENSRO_QA_ATTACK_ALTERNATE=1` makes the attack loop swing at the
   nearest and second-nearest monster in turn, and the deferred callbacks log
   `blow lands on monster X (now targeting Y) -- animating X` whenever the live
   target has moved on.
@@ -37219,7 +37318,7 @@ returns code 0, puts "49 gold" on the character and the potion (id 4, x2) in
 the bag, and broadcasts the removal -- zero refusals in range. Frame:
 `scratchpad/drops/f00000149.png` (a drop on the grass at the fighter's feet,
 target window up, EXP climbing). The full Go suite is green on a private test
-DB; the shared `srrevamp_test` is clobbered by the other lanes running
+DB; the shared `opensro_test` is clobbered by the other lanes running
 concurrently.
 
 ### For the coordinator
@@ -37250,7 +37349,7 @@ The report was "clicking a monster opens the NPC talk window, and there is
 no sword cursor over anything attackable". Both were measured before
 anything was changed.
 
-**The click, measured.** A new hook, `SRREVAMP_QA_CLICK="monster,npc,ground"`,
+**The click, measured.** A new hook, `OPENSRO_QA_CLICK="monster,npc,ground"`,
 stands the player 40 units in front of the nearest target of each kind,
 aims the camera, projects the target's middle to the screen and puts that
 point through the real left-click path -- after first firing both click rays
@@ -37382,7 +37481,7 @@ so. None of it was the client's.
   the rest the special one with `Client_TargetWindow_RankIcon`. (It also
   scales a special mob's *displayed* max HP by rarity -- champion x2, elite
   x4, giant x20, titan x100 -- a client display rule, noted for the server
-  lane, not applied here: srrevamp shows the server's number.)
+  lane, not applied here: OpenSRO shows the server's number.)
 - The gem and the name colour come from one classifier,
   `FUN_007780c0(targetLevel)` (`0x007780c0`): `d = targetLevel - playerLevel`
   (the player's level byte at `DAT_00eef5ec+0x868`); `d < -6` -> class 0,
@@ -37438,7 +37537,7 @@ The user's playtest on sro.opensro.org: no EXP on a kill, monster health that "f
 nothing dropping. The first two had one cause, and it was not a formula. The public server's
 database held `items 0, skills 0, monster_drops 0, drop_group_entries 0`, and its compose command
 passed only `-addr` and `-postgres-dsn` -- the server had been booting since 2026-09-11 with the
-line `no leveldata CSV set (SRREVAMP_LEVELDATA_CSV) -- characters will not level` in its log.
+line `no leveldata CSV set (OPENSRO_LEVELDATA_CSV) -- characters will not level` in its log.
 Without items a weapon has no stats, so every hit was the floor band's 1; without leveldata a
 kill pays nothing; without skills nothing can be learned. Every grounded formula in the server
 was running on empty tables.
@@ -37451,14 +37550,14 @@ files name), and the exporter keeps the *last* definition of a duplicated id, so
 fed in the index files' own order rather than glob order (they differ: `1000, 2000, ...` against
 `1000, 10000, 11000, ...`) -- 326 item and 290 skill ids conflict across parts and the client's
 load order is the only defensible tiebreak. The CSVs now sit beside the pk2s on the render box
-(the QA harness reads them from `PK2_DIR`) and in `~/srrevamp-data` on the VM; the raw extracted
+(the QA harness reads them from `PK2_DIR`) and in `~/opensro-data` on the VM; the raw extracted
 tables were deleted. Items and skills were imported into Postgres (`items 15338, skills 33698`);
 leveldata went in through the untracked `docker-compose.override.yml` as a read-only mount plus
 `-leveldata-csv=/data/leveldata.csv`, with the base command restated because a compose override
 *replaces* `command`. Boot log after: `loaded EXP curve path=/data/leveldata.csv maxLevel=140`.
 
 **Measured, against the public server, from the render box.** A fresh level-1 china_man QA
-character (`SRREVAMP_QA_SERVER=192.168.5.25:15779`, `--attack`, `QA_ATTACK_FAST`).
+character (`OPENSRO_QA_SERVER=192.168.5.25:15779`, `--attack`, `QA_ATTACK_FAST`).
 
 First attempt, booted at `--region 96\168.m`: the nearest monster was a **Yeoha** (249 HP, level
 10) and the hits were 1-2 with the counter-blows 80-93. That is the floor band doing its grounded
@@ -37557,7 +37656,7 @@ PC, alive (`GetLifeState()==1`) and in the killer's region. An ordinary kill
 pays the killer alone.
 
 **Settled by use-site, not name.** Param 184 (registry: default 0, max 1000,
-no tag) is the engine's own gain modifier; srrevamp publishes no source for
+no tag) is the engine's own gain modifier; OpenSRO publishes no source for
 it. The `HwanGain` rate `internal/rates` carries from the pserver's config is
 NOT read on this path in the dump build; how that build applied it, if at all,
 is not established.
@@ -37573,9 +37672,9 @@ reports the count on the same attack result. `hwan_test.go` proves both
 deterministic ends at the wire: a non-killing blow earns nothing, a unique
 kill pays all five. Activation still requires and spends five.
 
-**Not wired, stated:** the party-support share (srrevamp spawns no
+**Not wired, stated:** the party-support share (OpenSRO spawns no
 party-support monsters); persisting the count (the engine's is a DB column;
-srrevamp clears it on disconnect); a skill's own hwan cost on cast (needs the
+OpenSRO clears it on disconnect); a skill's own hwan cost on cast (needs the
 `Consume_WHAN` column index); param 184's source.
 
 ## Two-hundred-and-second round: an own-skeleton item hangs the way the client hangs it -- the attach bone's rest inverse, the root's rest cancels
@@ -37743,7 +37842,7 @@ and `InventoryNet` only `OP_LIST`. Added:
   until a drop lands somewhere that means something. When a vendor window is open a click
   still sells/deposits, as before.
 
-**Verified** (`SRREVAMP_QA_MOVE="0,9"`, the new hook): a fresh character's bag is empty (its
+**Verified** (`OPENSRO_QA_MOVE="0,9"`, the new hook): a fresh character's bag is empty (its
 kit is equipped straight out of it), so the hook first **unequips the boots** (real
 `OP_UNEQUIP`; they land in the lowest free slot, 0), lists, moves, lists again:
 
@@ -37775,7 +37874,7 @@ Two things this run found on the way, both fixed:
    potion-equip incident), and no `items.csv` sat beside the pk2s. That is the server being
    right. For the run, `itemdata_*.txt` were extracted with `pk2list -extract`, turned into
    `items.csv` with `export-refdata` (16,819 rows; item 3645's type ids `3,1,1,6` = clothes
-   `FA`, boots), passed as `SRREVAMP_ITEMS_CSV`, and deleted afterwards.
+   `FA`, boots), passed as `OPENSRO_ITEMS_CSV`, and deleted afterwards.
 2. **A successful equip/unequip answered `EquipmentResult{}`** — on the wire identical to
    "wearing nothing" — and the client's shared `equipment_result` handler redrew the paper
    doll bare from it while the body stayed dressed (seen in a frame: every worn-slot icon
@@ -38003,7 +38102,7 @@ at the same clip -- the item-attach lane's question, not this one.
 *in the world*, not on a plain backdrop, and drive it from real item ids
 the server could actually send.
 
-**The hook.** `SRREVAMP_QA_EQUIP="slot=item_id,.."` (and `qa_shot.sh
+**The hook.** `OPENSRO_QA_EQUIP="slot=item_id,.."` (and `qa_shot.sh
 --equip`) stands in for the server's equipment list when no server is
 present. It feeds `_real_player_equipped_items` a `slot -> item id`
 dictionary (slots are `EquipmentNet.SLOT_*`), so the ids resolve through
@@ -38022,7 +38121,7 @@ the body, the sword hangs from its own skeleton on `Bip01 R HandMid`. The
 **A measured find, not a screenshot one.** In the world the dressed body
 renders only from the waist up -- the legs are below the plaza tiles, in a
 front shot at 55 units as much as a back shot at 16. That reads as "sunk,"
-but it is not: `SRREVAMP_QA_RIG` puts the lowest bone `Bip01 R Toe0` at
+but it is not: `OPENSRO_QA_RIG` puts the lowest bone `Bip01 R Toe0` at
 y -51.89 against a landing height of -51.90 -- **the feet are on the
 ground**, and the bone chain spans a correct 16 units up to the head. The
 same body assembled by `tools/measure_assembled.gd`/`render_dressed_character.gd`
@@ -38082,7 +38181,7 @@ So the four slots are base (summed), additive % (summed), multiplier
 `GParamKeeper.cpp:301`.
 
 **What that means for damage**: a player's physical damage in the real game is
-the weapon's range **plus** a term of roughly `Str x reinforce%`. srrevamp's
+the weapon's range **plus** a term of roughly `Str x reinforce%`. OpenSRO's
 damage ignores Str entirely.
 
 **Still not shipped, and the gap is now exact rather than vague.** The magnitude
@@ -38168,7 +38267,7 @@ param 2 = Int     SetParam(2, charData+0x76)   _CHAR.Intellect
 ```
 
 Two real constants fall out: a character's innate **attack rate and parry are
-both 10.0** (`.rdata 0x00b45b44`), each with a level-derived binding. srrevamp
+both 10.0** (`.rdata 0x00b45b44`), each with a level-derived binding. OpenSRO
 models neither stat, so nothing is wired from them.
 
 **And one lead I am deliberately not promoting.** The damage quad's bases,
@@ -38284,7 +38383,7 @@ verified tooltip values and stay.
 
 **And a deliberate inconsistency, written down rather than churned.** A real
 item has per-instance variance -- the table gives a range and each instance sits
-inside it -- and srrevamp models none, so every consumer picks an end.
+inside it -- and OpenSRO models none, so every consumer picks an end.
 `defenderArmor` takes `PhysDefenseMax`, `defenderBlock` takes `BlockRatioMin`,
 and neither end is more correct than the other. Making armour match would move a
 displayed stat and a shop price for no grounded reason, so it stays as it is and
@@ -38536,7 +38635,7 @@ assumes, that the block roll takes the block chance.
 
 Not shipped because of the *input*, not the mechanic: a player's block chance is
 a shield's block ratio (itemdata cols 74-75, 10~20, on exactly the 500 shield
-rows) and srrevamp's curated item export has no such column, so wiring it needs
+rows) and OpenSRO's curated item export has no such column, so wiring it needs
 a schema change the operator's existing exports would not satisfy. The monster
 side would never fire either -- every Jangan-ladder species reads 0 for col 76,
 though 938 other monsters carry 20.
@@ -38587,7 +38686,7 @@ shared default, which is why it is carried per-species rather than hardcoded.
 Not modelled, and disclosed: the real roll also keeps a per-actor accumulator,
 raised by `chance` on every miss and dropped by 100 on every hit, and compares
 *that* on subsequent rolls instead of the raw chance -- bad-luck protection.
-srrevamp rolls memorylessly, so its criticals are streakier than the game's,
+OpenSRO rolls memorylessly, so its criticals are streakier than the game's,
 never more or less frequent on average. And the player never crits: param 12 is
 not among the fifteen `Char_PublishCombatStats` publishes, and comes from the
 item stat-tag path this project does not model.
@@ -38752,7 +38851,7 @@ its meaning is not.
 
 ## Hundred-and-eightieth round: dying costs something now
 
-srrevamp had no death penalty at all — a killed character had its HP reset and
+OpenSRO had no death penalty at all — a killed character had its HP reset and
 walked away. The real one is recovered and shipped.
 
 `GObjPC_OnDeath` (`004e6980`) gates the whole penalty on
@@ -38799,11 +38898,11 @@ lvl  30    6.1%                 lvl 110    ~0%
 Steeply regressive: brutal the moment the level-10 grace period ends, shrugged
 off at cap. That shape is the game's, not a choice made here.
 
-Only the monster branch is reachable — srrevamp has no PK system — so the other
+Only the monster branch is reachable — OpenSRO has no PK system — so the other
 three are implemented, tested and disclosed as unreachable rather than left
 out. The reduction stat is read through a register-passed ParamKeeper id this
 code has not resolved and is **left out rather than guessed at**, which makes
-srrevamp's penalty a strict upper bound on the real one.
+OpenSRO's penalty a strict upper bound on the real one.
 
 ## Hundred-and-seventy-ninth round: what "attack rate" actually does
 
@@ -38842,7 +38941,7 @@ The clamps are floats 10.0 and 90.0; the `hra/era` scale is the double 0.5.
 params 13/14, distinct from `Formula_RollWeaponDamage` (uniform,
 `rand() % (max-min+1) + min` on params 190/191) which is what this project's
 `combat.RollDamage` already implements correctly and which `Combat_ResolveDamage`
-also calls. srrevamp has no attack-rate or parry-rate stat, so porting the
+also calls. OpenSRO has no attack-rate or parry-rate stat, so porting the
 centre would mean inventing its only input.
 
 **One piece of it was wireable, and is now wired.** The same formula ends with
@@ -38967,7 +39066,7 @@ field, nothing to spawn inside or on top of. Their authored heights disagree
 with the measured terrain by 11–41 units and are dropped: the client resolves
 standing height from the walkable graph and ignores the authored y.
 
-`SRREVAMP_QA_COLUMNS` grew an `rx/ry@x,z` form to make any of this askable —
+`OPENSRO_QA_COLUMNS` grew an `rx/ry@x,z` form to make any of this askable —
 it could previously only report the region the player was standing in, and a
 spawn point's world coordinate can only come from its own region's group node.
 Its print also now names the region the frame is centred on instead of calling
@@ -39385,7 +39484,7 @@ is labelled as such in the file header.
 `NewLevel:int32, StatPoints:int32` LE, sent right behind `OpAttackResult` on a kill that crosses the
 curve. Client: `CombatNet.decode_level_up` (matching 2×u32 LE) -> `NetClient.level_up` signal ->
 `World3D._on_level_up`, which logs the real message and plays the burst on the player. A
-`SRREVAMP_QA_LEVELUP=<level>` hook fires it a moment after spawn for renders (a real level-up needs
+`OPENSRO_QA_LEVELUP=<level>` hook fires it a moment after spawn for renders (a real level-up needs
 a leveldata CSV and enough kills). First render at HEIGHT_MULTIPLE 2.2 whited the frame out; tuned
 down to 1.5 with per-layer additive intensity caps and XZ centring.
 
@@ -39529,8 +39628,8 @@ wait. Second, the feedback: the initial neighbourhood is now *queued* like
 the streaming cells (round 154) and pumped a batch a frame behind a "NOW
 LOADING" screen -- the real `loading_default.ddj` art with a gold gauge that
 fills as cells build -- so entry animates instead of freezing. A QA render
-(`SRREVAMP_MAPM_PATH` set) still drains the queue synchronously so a
-screenshot sees the whole world; `SRREVAMP_QA_FORCE_LOADING` renders the
+(`OPENSRO_MAPM_PATH` set) still drains the queue synchronously so a
+screenshot sees the whole world; `OPENSRO_QA_FORCE_LOADING` renders the
 screen itself, which is how it was verified. The screen is added as the HUD
 Control's top child (a CanvasLayer of its own did not composite in movie
 mode) after the HUD is built, so the ~1s of table loading before it is a
@@ -39632,7 +39731,7 @@ v0.1.104+ to read this server's character list.**
 
 The 3D character on the dock is a later pass; the backdrop is the
 letterboxed Constantinople loading art for now. Rendered with a QA-only
-`SRREVAMP_QA_FAKECHARS` hook (clearly `QA_`-named sample characters, never
+`OPENSRO_QA_FAKECHARS` hook (clearly `QA_`-named sample characters, never
 shipped) since a booted-in-isolation select screen has no logged-in session
 to list.
 
@@ -39904,7 +40003,7 @@ rather than the scroll the stock layout draws first. The body is a
 greeting and `1. End conversation`, a link that closes; the services
 behind a real NPC's other lines (storage, shop, honour) are their own
 systems and come later, so this greets and lets you leave, the skeleton
-the rest hangs on. `SRREVAMP_QA_TALK="<name>"` opens it for a render.
+the rest hangs on. `OPENSRO_QA_TALK="<name>"` opens it for a render.
 
 ## Hundred-and-thirty-eighth round: the Escape menu
 

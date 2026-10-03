@@ -25,12 +25,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/OpenSRO/srrevamp/server/internal/ban"
-	"github.com/OpenSRO/srrevamp/server/internal/bms"
-	"github.com/OpenSRO/srrevamp/server/internal/bmt"
-	"github.com/OpenSRO/srrevamp/server/internal/bsk"
-	"github.com/OpenSRO/srrevamp/server/internal/ddj"
-	"github.com/OpenSRO/srrevamp/server/internal/pk2"
+	"github.com/OpenSRO/OpenSRO/server/internal/ban"
+	"github.com/OpenSRO/OpenSRO/server/internal/bms"
+	"github.com/OpenSRO/OpenSRO/server/internal/bmt"
+	"github.com/OpenSRO/OpenSRO/server/internal/bsk"
+	"github.com/OpenSRO/OpenSRO/server/internal/ddj"
+	"github.com/OpenSRO/OpenSRO/server/internal/pk2"
 )
 
 type genderPaths struct {

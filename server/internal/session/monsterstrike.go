@@ -9,15 +9,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/buff"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
-	"github.com/OpenSRO/srrevamp/server/internal/mana"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/buff"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
+	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // The monster's blow as a zone push (round 541): the server half of round
@@ -29,7 +29,7 @@ import (
 // same outcome to everyone in the zone, the attacker included, so the other
 // players can draw the blow. It adds no number of its own.
 //
-// Behind cmd/server's -monster-strike-push (SRREVAMP_MONSTER_STRIKE_PUSH),
+// Behind cmd/server's -monster-strike-push (OPENSRO_MONSTER_STRIKE_PUSH),
 // which is OFF by default: off, nothing is sent and the wire is what it was.
 // It is flipped only once a client release that draws the push is out; an
 // older client ignores 0x007D with an "unhandled opcode" warning.
@@ -284,7 +284,7 @@ func monsterStrike(ctx context.Context, deps strikeDeps, monster combat.Monster,
 	raw := monster.Attack
 	// A swing of a drawn skill rolls THAT skill's 'att' block (round 554). A
 	// block whose max is 0 -- MSKILL_CH_WATERGHOST_ATTACK02 169, att
-	// 9,0,0,0,100 (its effect is a `ps` param srrevamp has no status system
+	// 9,0,0,0,100 (its effect is a `ps` param OpenSRO has no status system
 	// for) -- deals nothing, explicitly: monsterBlow's AttackMax <= 0 branch
 	// is the flat disclosed Attack for a monster with no range at all, which
 	// a zero-damage skill is not, and the pipeline below is skipped rather

@@ -204,7 +204,7 @@ func FrameFor(zone string) (rx, ry int, ok bool) {
 // coordinate system, and FrameRegion names this region for every zone.
 //
 // OWN DESIGN, disclosed: the retail client addresses a position by region id
-// plus region-local offset, and srrevamp's placeholder protocol has no retail
+// plus region-local offset, and OpenSRO's placeholder protocol has no retail
 // world frame to copy. Jangan is the choice because every character enters
 // there (session's spawnZone), because the transform above was measured in
 // its frame, and because Jangan's own coordinates are then the same with the

@@ -201,7 +201,7 @@ something the invocation does not contain, or split the literal — `"Dec""ompAl
 Hit twice on 2026-09-17, the second time while cleaning up after the first.
 
 **The RE box's lock file always exists.** `re_tick.sh` uses `flock`, not a
-pidfile, so `/opt/srrevamp-re/lock` is present whether or not a tick is running.
+pidfile, so `/opt/opensro-re/lock` is present whether or not a tick is running.
 `ls`-ing it proves nothing. Check `STATUS` for a `finished=` line newer than
 `last_tick=`, or `pgrep -af analyzeHeadless`.
 
@@ -425,7 +425,7 @@ correction:
    decision; the package plus test is the deliverable.
 4. `docs/SYSTEMS.md`: move the row, update the anchors, update the **headline
    counts** — a test checks they match the table.
-5. `cd /root/srrevamp/server && go test -p 1 ./...`
+5. `cd /root/opensro/server && go test -p 1 ./...`
 6. Commit on `dev`, tag `vX.Y.Z`, push both.
 
 Mark a row SPECIFIED only when nothing material is outstanding. Quest scripting
@@ -477,7 +477,7 @@ Before the apply, a virtual function's plate carries machine-read structure:
 	table 0x00aec0a4  slot 227  (offset 0x38c)
 	RTTI: reached as CGObjChar slot 227, CGObjMob slot 227, ...
 
-After it, the plate is `/* Identified by srrevamp RE ... */` and whatever the
+After it, the plate is `/* Identified by OpenSRO RE ... */` and whatever the
 evidence column said. The slot and offset lines are gone.
 
 **So any tool that reads plates for structure is biased against named

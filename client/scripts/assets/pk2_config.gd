@@ -9,8 +9,8 @@ class_name Pk2Config
 ##
 ## Resolution order per archive, checked in this order so this project's own
 ## existing dev/testing workflow (every debug/live-verification pass this
-## session used SRREVAMP_*_PK2_PATH) keeps working unchanged:
-##   1. The matching SRREVAMP_*_PK2_PATH environment variable, if set.
+## session used OPENSRO_*_PK2_PATH) keeps working unchanged:
+##   1. The matching OPENSRO_*_PK2_PATH environment variable, if set.
 ##   2. "<executable's real directory>/pk2/<real filename>.pk2", if present.
 ## Returns "" (never a guess) if neither resolves.
 
@@ -21,19 +21,19 @@ const PARTICLES_FILENAME := "Particles.pk2"
 const MUSIC_FILENAME := "Music.pk2"
 
 static func data_path() -> String:
-	return _resolve("SRREVAMP_PK2_PATH", DATA_FILENAME)
+	return _resolve("OPENSRO_PK2_PATH", DATA_FILENAME)
 
 static func map_path() -> String:
-	return _resolve("SRREVAMP_MAP_PK2_PATH", MAP_FILENAME)
+	return _resolve("OPENSRO_MAP_PK2_PATH", MAP_FILENAME)
 
 static func media_path() -> String:
-	return _resolve("SRREVAMP_MEDIA_PK2_PATH", MEDIA_FILENAME)
+	return _resolve("OPENSRO_MEDIA_PK2_PATH", MEDIA_FILENAME)
 
 static func particles_path() -> String:
-	return _resolve("SRREVAMP_PARTICLES_PK2_PATH", PARTICLES_FILENAME)
+	return _resolve("OPENSRO_PARTICLES_PK2_PATH", PARTICLES_FILENAME)
 
 static func music_path() -> String:
-	return _resolve("SRREVAMP_MUSIC_PK2_PATH", MUSIC_FILENAME)
+	return _resolve("OPENSRO_MUSIC_PK2_PATH", MUSIC_FILENAME)
 
 ## The real local "pk2" folder a downloaded build looks in -- the directory
 ## the running executable itself lives in, not the current working

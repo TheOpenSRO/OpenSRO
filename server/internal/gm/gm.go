@@ -7,7 +7,7 @@
 // original-client feature, and nothing in it is presented as one.
 //
 // The gate is a list of account usernames (the -gm-accounts flag, env
-// SRREVAMP_GM_ACCOUNTS); with none named, nobody is a GM. Every command,
+// OPENSRO_GM_ACCOUNTS); with none named, nobody is a GM. Every command,
 // allowed or refused, is logged with the account that sent it.
 //
 // The commands only call the stores' existing methods: a level-up here is
@@ -27,16 +27,16 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/OpenSRO/srrevamp/server/internal/berserk"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/leveldata"
-	"github.com/OpenSRO/srrevamp/server/internal/mana"
-	"github.com/OpenSRO/srrevamp/server/internal/party"
-	"github.com/OpenSRO/srrevamp/server/internal/skill"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/leveldata"
+	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/party"
+	"github.com/OpenSRO/OpenSRO/server/internal/skill"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // Gate is the set of account usernames allowed to run GM commands.
@@ -45,7 +45,7 @@ type Gate struct {
 }
 
 // ParseAccounts builds a Gate from a comma-separated list of usernames, the
-// form the -gm-accounts flag and SRREVAMP_GM_ACCOUNTS take. Names are
+// form the -gm-accounts flag and OPENSRO_GM_ACCOUNTS take. Names are
 // trimmed of surrounding whitespace; empty entries are ignored; the case is
 // the one the account store holds (accounts.username), compared exactly.
 func ParseAccounts(list string) *Gate {

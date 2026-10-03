@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // The item requirement model, recovered from the engine's own checker.
@@ -160,7 +160,7 @@ func RequirementsOf(it *refdata.Item) []Requirement {
 
 // CheckRequirements applies the engine's rule to an item's requirement slots.
 //
-// masteryLevel and tier are how the caller supplies the two values srrevamp
+// masteryLevel and tier are how the caller supplies the two values OpenSRO
 // does not track yet. **A nil lookup means that category is not enforced**,
 // which is deliberate: refusing every mastery-gated item because nothing
 // records a mastery level would be a worse answer than the engine's, not a

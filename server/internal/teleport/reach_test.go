@@ -26,7 +26,7 @@ func TestReach(t *testing.T) {
 		{"two regions over", Place{jangan, 1919, 0, 500}, Place{regionIDFor(97, 170), 0, 0, 500}, RangeStructure, true, ErrInteractionTarget},
 		{"a dungeon and a field", Place{jangan, 0, 0, 0}, Place{-32767, 0, 0, 0}, RangeStructure, true, ErrInteractionTarget},
 		{"two dungeons compare plainly", Place{-32767, 0, 0, 0}, Place{-32767, 100, 0, 0}, RangeNPC, true, 1},
-		// The height counts in retail's 3-D length and not in srrevamp's
+		// The height counts in retail's 3-D length and not in OpenSRO's
 		// horizontal mode (OURS, Reach's doc).
 		{"3-D: a tower above", Place{jangan, 100, 0, 100}, Place{jangan, 100, 350, 100}, RangeNPC, false, ErrTooFar},
 		{"horizontal: the same tower", Place{jangan, 100, 0, 100}, Place{jangan, 100, 350, 100}, RangeNPC, true, 1},

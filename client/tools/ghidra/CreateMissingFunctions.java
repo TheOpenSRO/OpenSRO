@@ -46,7 +46,7 @@
 // Run it in a NON-readOnly analyzeHeadless invocation, under re_tick.sh's lock so
 // it cannot collide with a dump rebuild on the same project:
 //
-//   flock -w 600 /opt/srrevamp-re/lock su ghidra -s /bin/bash -c \
+//   flock -w 600 /opt/opensro-re/lock su ghidra -s /bin/bash -c \
 //     "analyzeHeadless /home/ghidra/re_server SR_GameServer_re -noanalysis \
 //      -process SR_GameServer.exe -scriptPath /var/tmp \
 //      -postScript CreateMissingFunctions.java /var/tmp/missing_functions.tsv server"
@@ -55,7 +55,7 @@
 //
 // Input: docs/protocol/missing_functions.tsv -- address, binary, evidence.
 //
-// @category srrevamp
+// @category OpenSRO
 
 import java.io.BufferedReader;
 import java.io.FileReader;

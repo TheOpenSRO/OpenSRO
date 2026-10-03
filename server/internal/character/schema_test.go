@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/persistence"
+	"github.com/OpenSRO/OpenSRO/server/internal/persistence"
 )
 
 // The column list here must stay the one the binary declares. Holding it equal
@@ -101,7 +101,7 @@ func known(c string) bool {
 	return false
 }
 
-// The engine persists current MP and srrevamp does not. That is a deliberate
+// The engine persists current MP and OpenSRO does not. That is a deliberate
 // divergence, and this test exists so it stays a stated one -- internal/mana's
 // comment used to read as though non-persistence followed the game.
 func TestMPIsRecordedAsADivergence(t *testing.T) {

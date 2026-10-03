@@ -9,7 +9,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 )
 
 // ClientInfo is what a retail client tells the gateway about itself in

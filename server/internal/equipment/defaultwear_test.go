@@ -3,7 +3,7 @@ package equipment
 import (
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // packTypeWord builds the 16-bit packed TypeID the client and server both use

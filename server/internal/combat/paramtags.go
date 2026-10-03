@@ -18,13 +18,13 @@ package combat
 // _ITEMS column `MagParamNum` beside `MagParam`
 // (docs/protocol/db_columns.md) -- the same quantity, stored.
 //
-// NOTHING IN srrevamp ENFORCES THIS YET. It has the tag vocabulary and no
+// NOTHING IN OpenSRO ENFORCES THIS YET. It has the tag vocabulary and no
 // per-item option list to cap, so this is recorded for when it does rather
 // than applied to something.
 const MaxMagicOptionsPerItem = 12
 
 // The engine addresses a character stat by a short ASCII tag packed into an
-// integer, big-endian, and this file is the handful of those tags srrevamp's
+// integer, big-endian, and this file is the handful of those tags OpenSRO's
 // own comments name -- as constants, so the packed value is computed rather
 // than transcribed.
 //
@@ -281,7 +281,7 @@ const (
 	TagRepair    = "rep"  // MATTR_REPAIR -- same branch group, no chance
 )
 
-// BlessTags are the four options that roll a chance. srrevamp does not
+// BlessTags are the four options that roll a chance. OpenSRO does not
 // implement magic options, so nothing consumes this yet; it is here so that
 // whoever does implement them does not model these four as unconditional.
 var BlessTags = map[string]bool{

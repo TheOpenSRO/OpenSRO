@@ -10,7 +10,7 @@ import (
 // item in the group (round 263, docs/protocol/ITEM_FORMAT.md "Reuse
 // cooltime") and, since round 504, by every skill in the same cooldown group
 // (skillGroupCooldowns). Process-wide and in memory, keyed by character; the
-// engine additionally persists delays of 300 s or more, which srrevamp does
+// engine additionally persists delays of 300 s or more, which OpenSRO does
 // not yet.
 type itemCooldownTracker struct {
 	mu    sync.Mutex

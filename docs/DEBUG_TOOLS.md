@@ -1,6 +1,6 @@
 # Debug tools for testers
 
-These are srrevamp's own testing tools. None of them come from the original
+These are OpenSRO's own testing tools. None of them come from the original
 client; they exist so a playtest report arrives as **facts** — a position, a
 level, an error line — instead of impressions. Everything a command shows is
 disclosed, not read from real game data.
@@ -38,7 +38,7 @@ command always answers with the help line — it never stays silent.
 2. Paste that into your report. It carries the build, your position, what is
    loaded, the entities around you, and the last log lines and script errors.
 3. Attach the log file if you can — `/log` prints where it is
-   (`user://logs/srrevamp.log`; the desktop build opens the folder).
+   (`user://logs/opensro.log`; the desktop build opens the folder).
 4. If the ground is white, type `/groundprobe` while you can see it, hold
    still until chat says it is done, and attach the `groundprobe-….txt` file
    it names (it sits beside the log).
@@ -90,12 +90,12 @@ the orbs straight from the bag. For a normal player the fill has the game's own
 ## For operators: enabling GM accounts
 
 The server reads the allowed accounts from the `-gm-accounts` flag, or the
-`SRREVAMP_GM_ACCOUNTS` environment variable it defaults to:
+`OPENSRO_GM_ACCOUNTS` environment variable it defaults to:
 
 ```
-SRREVAMP_GM_ACCOUNTS="alice,bob" ./srrevamp-server ...
+OPENSRO_GM_ACCOUNTS="alice,bob" ./opensro-server ...
 # or
-./srrevamp-server -gm-accounts="alice,bob" ...
+./opensro-server -gm-accounts="alice,bob" ...
 ```
 
 The value is a comma-separated list of **account usernames**, matched exactly

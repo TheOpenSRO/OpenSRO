@@ -42,7 +42,7 @@ import (
 //
 // Only one tag has a use-site behind it: the call inside Combat_ResolveDamage
 // that passes 0x43 ('C'). The letters for the other kinds are NOT identified, so
-// the constants below are named for what they gate in srrevamp rather than for
+// the constants below are named for what they gate in OpenSRO rather than for
 // a letter this project cannot pin. ChanceCritical carries its citation;
 // ChanceBlock is a separate accumulator because the engine separates kinds, not
 // because 'B' was proven to mean block.

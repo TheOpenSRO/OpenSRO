@@ -1,7 +1,7 @@
 # CI runners
 
-Every srrevamp workflow (`.github/workflows/ci.yml` and `release.yml`) runs on
-`runs-on: [self-hosted, srrevamp-pve]`, and only there.
+Every OpenSRO workflow (`.github/workflows/ci.yml` and `release.yml`) runs on
+`runs-on: [self-hosted, opensro-pve]`, and only there.
 
 | Runner | Where | Size |
 |---|---|---|
@@ -17,7 +17,7 @@ Every srrevamp workflow (`.github/workflows/ci.yml` and `release.yml`) runs on
     has passwordless sudo, because `native/ci_toolchain.sh` installs mingw-w64 with
     `sudo -n apt-get`.
   - The runner runs as a systemd service (`svc.sh install runner`), registered to
-    `OpenSRO/srrevamp` with the label `srrevamp-pve`.
+    `OpenSRO/OpenSRO` with the label `opensro-pve`.
 - **Why.** The old runner, the `kakariko-runner` ARC scale set in the kakariko cluster, ran
   one ephemeral pod at a time. Every job re-downloaded Godot, Rust, zig and mingw. On
   2026-10-01 slow downloads (zig 4.5 min, Godot setup 4 min 17 s) held that single runner
@@ -29,16 +29,16 @@ Every srrevamp workflow (`.github/workflows/ci.yml` and `release.yml`) runs on
   deleted; that's the user's call.
 - **The work folder must be `/home/runner/_work`** (the `workFolder` in `~/actions-runner/.runner`).
   setup-godot's cache stores Godot at a path relative to the workspace, and the cache entries were
-  saved on the old kakariko pod, whose workspace is `/home/runner/_work/srrevamp/srrevamp`. With the
+  saved on the old kakariko pod, whose workspace is `/home/runner/_work/OpenSRO/OpenSRO`. With the
   default `_work` under `~/actions-runner`, a cache hit unpacked Godot one level too deep, and both
   Godot jobs failed with "No Godot executable found" (CI run 36834736619, attempt 1). With
   `/home/runner/_work`, attempt 2 passed all four jobs. `--work /home/runner/_work` when
   re-registering.
 - **Re-registering one** (e.g. after rebuilding the container): on a machine logged into `gh`
   as a repo admin, run
-  `tok=$(gh api -X POST repos/OpenSRO/srrevamp/actions/runners/registration-token --jq .token)`.
+  `tok=$(gh api -X POST repos/OpenSRO/OpenSRO/actions/runners/registration-token --jq .token)`.
   Then, as `runner` in `~/actions-runner`, run
-  `./config.sh --url https://github.com/OpenSRO/srrevamp --token "$tok" --name pve-runner-N --labels srrevamp-pve --work /home/runner/_work --unattended --replace`,
+  `./config.sh --url https://github.com/OpenSRO/OpenSRO --token "$tok" --name pve-runner-N --labels opensro-pve --work /home/runner/_work --unattended --replace`,
   and as root `./svc.sh install runner && ./svc.sh start`. The token expires after an hour;
   don't commit or log it.
-- **Checking them:** `gh api repos/OpenSRO/srrevamp/actions/runners --jq '.runners[] | "\(.name) \(.status) busy=\(.busy)"'`.
+- **Checking them:** `gh api repos/OpenSRO/OpenSRO/actions/runners --jq '.runners[] | "\(.name) \(.status) busy=\(.busy)"'`.

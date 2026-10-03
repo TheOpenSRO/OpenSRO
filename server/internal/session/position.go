@@ -1,7 +1,7 @@
 package session
 
 // A character logs back in where it left off (round 573), behind cmd/server's
-// -persist-position (SRREVAMP_PERSIST_POSITION), OFF by default.
+// -persist-position (OPENSRO_PERSIST_POSITION), OFF by default.
 //
 // GROUNDED: the engine keeps a character's position on its row. `_CHAR`
 // declares LatestRegion, PosX, PosY and PosZ, and CharData_BindDBColumns binds
@@ -36,10 +36,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
-	"github.com/OpenSRO/srrevamp/server/internal/worldmap"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/worldmap"
 )
 
 // persistPosition is cmd/server's -persist-position, OFF by default: set on the

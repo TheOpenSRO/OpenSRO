@@ -26,7 +26,7 @@ class_name SkillAudio
 ##      SkillAudio.context_of(obj: Object) -> the same, for the current skill
 ##    "code"/"group" are "-" when the skill is unknown or 0, exactly as retail
 ##    hands a handler L"-". A plain swing's skill is the weapon's base attack
-##    (CombatAudio.base_attack_skill). Monsters: srrevamp's server names no
+##    (CombatAudio.base_attack_skill). Monsters: OpenSRO's server names no
 ##    monster attack skill, so nothing records one and a monster's context is
 ##    "-" (OPEN until the server sends it).
 ##
@@ -61,7 +61,7 @@ class_name SkillAudio
 ##    one +0x5c step FUN_00a95dc0 takes (INFERRED order; no id is both).
 ##    WHEN A PHASE FIRES in this client (INFERRED / OURS -- retail's per-phase
 ##    triggers run off the server's skill-action messages and the clip's
-##    events, which srrevamp does not have):
+##    events, which OpenSRO does not have):
 ##      cast start (the cast clip starts and OpUseSkill is sent):
 ##          READY, and SHOT rows of StartEvent 0      (INFERRED)
 ##      the blow lands (the swing's hit event, when the number shows):

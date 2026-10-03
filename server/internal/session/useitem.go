@@ -9,18 +9,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/berserk"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/gm"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/mana"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/storage"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/gm"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/mana"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/storage"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // Using a consumable. Until now potions dropped, stacked in the bag and did
@@ -162,7 +162,7 @@ func DecodeUseItemResult(data []byte) (*UseItemResult, error) {
 // resurrection kind 3/3/13/6 (UseByKind 0x0049c2b0 case 6 -> FUN_0049ff20),
 // which refuses a user whose life state is not 2 with 0x1887
 // UIIT_MSG_STRGERR_ONLY_THE_DEAD_CAN_USE_RESURRECT_SCROLL and fills HP/MP only
-// as part of reviving a dead one (GObjPC::Revive) -- a use srrevamp does not
+// as part of reviving a dead one (GObjPC::Revive) -- a use OpenSRO does not
 // model. That census is scoped to direct writes: UseByKind's cases 1..3 cast
 // the skill whose id is the row's Param1 (+0x2a0, looked up by FUN_0046c1f0,
 // applied by FUN_0059b8d0), and a pool write such a skill makes was not
@@ -244,7 +244,7 @@ const (
 //     which matches the x87 at the Windows default 53-bit precision control;
 //     this function does not set the control word itself.
 //
-// srrevamp models no Str/Int bonuses, so the character's own Str and Int are
+// OpenSRO models no Str/Int bonuses, so the character's own Str and Int are
 // passed for GetParam(1)/(2) -- the same values MaxHP and MaxMP are built
 // from.
 func potionRestore(param1, param2, param3, param4, level, str, intel, maxHP, maxMP int) (hp, mp int) {
@@ -299,7 +299,7 @@ func potionRestore(param1, param2, param3, param4, level, str, intel, maxHP, max
 //     is CGObj::IsExpendables (0x482db0): 1 when TID bit 1 is clear and
 //     TypeID1 and TypeID2 are both 3 (0x482dc0..0x482dd5). Bit 1 is itemdata
 //     column 8, 0 on every item row (docs/protocol/ground_items.md), so this
-//     is always 1 for a 3/3 item and srrevamp does not ask it. FUN_004eb410
+//     is always 1 for a 3/3 item and OpenSRO does not ask it. FUN_004eb410
 //     then maps the kind to a bit through the jump table at 0x4eb574 and
 //     answers whether that bit is clear in the BYTE at [pc+0x30]+8 (0x4eb42b
 //     `movzx`).
@@ -329,7 +329,7 @@ func potionRestore(param1, param2, param3, param4, level, str, intel, maxHP, max
 //     record armed while others are queued is first decremented by the time
 //     since the last tick, not since the arm (FUN_004066a0 resets the clock
 //     only when the list is empty). So retail frees the bit on a tick, within
-//     about 0.3 s either side of the delay; srrevamp frees it at the delay.
+//     about 0.3 s either side of the delay; OpenSRO frees it at the delay.
 //   - GObjPC::FUN_004e67b0 zeroes the whole word (0x4e67d0) but drops ONE
 //     type-6 record, not all of them: FUN_004066c0(6, 6) at 0x4e67c8, with
 //     EBX 0 (0x4e67c6), walks the manager's list, erases the first record
@@ -345,11 +345,11 @@ func potionRestore(param1, param2, param3, param4, level, str, intel, maxHP, max
 //     4.1 s in China, 15.1 s in Europe) has the new lock cleared early, when
 //     the stale record runs out. CGObjPC slots 306 and 307 (0x529b10,
 //     0x52cdb0) call it; their pet and mercenary versions set life state 2
-//     (docs/protocol/character_state.md). srrevamp does not clear the lock
+//     (docs/protocol/character_state.md). OpenSRO does not clear the lock
 //     there, so a potion drunk just before one of those paths stays locked
 //     for the rest of its delay.
 //   - The lock lives on the PC object in the engine and in the handler here,
-//     so a relog inside the delay does not clear it in srrevamp.
+//     so a relog inside the delay does not clear it in OpenSRO.
 const (
 	// potionReuseAbsoluteChina is the float32 1.1 at .rdata 0xb461b8 (bytes
 	// cd cc 8c 3f; 1.10000002 s, 24 ns over 1100 ms), loaded by
@@ -357,7 +357,7 @@ const (
 	potionReuseAbsoluteChina = 1100 * time.Millisecond
 	// potionReuseAbsoluteEurope is the float32 15.1 at 0xb461ac (bytes
 	// 9a 99 71 41; 15.1000004 s), 0x49b978 `fld DWORD`, for an absolute potion
-	// when the Country byte is non-zero. Every srrevamp character is China
+	// when the Country byte is non-zero. Every OpenSRO character is China
 	// (characterCountry), so nothing selects it today.
 	potionReuseAbsoluteEurope = 15100 * time.Millisecond
 	// potionReusePercentage is the float32 4.1 at 0xb461b0 (bytes 33 33 83
@@ -441,7 +441,7 @@ var useItemClock = time.Now
 //
 // Slot 308 answers 1 after FUN_004ef450 whatever was queued (0x49b996), so
 // the potion is spent even when nothing lands -- at full HP, or with the pool
-// plus the queue already past the maximum. srrevamp used to refuse such a
+// plus the queue already past the maximum. OpenSRO used to refuse such a
 // potion as "no need for that right now" and keep it.
 const (
 	// potionStepDivisor: FUN_0049a0c0's `mov eax,0x66666667; imul DWORD
@@ -499,7 +499,7 @@ func newPotionEntry(amount int) potionEntry {
 // LOCKING (round 511). The engine runs a PC's drink and its tick on the PC's
 // own thread, so for one character the read of the pools, the queue decision
 // and the write never interleave with a step; a step landing between the read
-// and the decision would skew the pool-plus-queue test. srrevamp keeps that
+// and the decision would skew the pool-plus-queue test. OpenSRO keeps that
 // PER CHARACTER: drink and step hold the character's turn (turn) for the whole
 // read-decide-write, store calls included, so one character's drink and step
 // serialize with each other and with nothing else. The queue-wide mu guards
@@ -801,13 +801,13 @@ func (q *PotionQueue) drop(characterID int64) {
 //     slots 306 and 307 run while the life state is 1 (0x529b10, 0x52cdb0;
 //     round 508), empties both lists (0x4e67b7 -> FUN_0049a4c0), and
 //     ApplyHPMPDelta lands nothing unless GetLifeState is 1 (0x4a87e8 `cmp
-//     al,0x1`). With the flag off srrevamp respawns a dead character at once
+//     al,0x1`). With the flag off OpenSRO respawns a dead character at once
 //     (monsterstrike.go, RespawnHP) and does not clear the queue there, so
 //     steps still queued land on the respawned character. With it ON both
 //     rules are modelled (round 549): the kill empties the queue (markDead ->
 //     drop) and potionQueueTick lands nothing on a dead character.
 //   - Panic and combustion cut every step through ApplyHPMPDelta (params
-//     143/144, UseItemHandler's note); srrevamp has no status effects.
+//     143/144, UseItemHandler's note); OpenSRO has no status effects.
 func RunPotionQueue(ctx context.Context, hub *world.Hub, chars character.Store, q *PotionQueue, deps RegenDeps, logger *slog.Logger) {
 	ticker := time.NewTicker(potionTickInterval)
 	defer ticker.Stop()
@@ -904,11 +904,11 @@ func potionQueueTick(ctx context.Context, hub *world.Hub, chars character.Store,
 //   - A zombie (status bit 0x20 at pc+0xd34, the status manager at pc+0xd30;
 //     slot 5 in docs/protocol/status_effects.md) is HURT by the HP amount:
 //     0x49b912 sends it to vtable +0x308 (slot 194, IGObj::ConsumeHpMp) and
-//     applies the MP amount directly. srrevamp has no status effects.
+//     applies the MP amount directly. OpenSRO has no status effects.
 //   - Panic and combustion, the next paragraph.
 //
 // ApplyHPMPDelta's own step is a no-op ONLY while neither panic nor combustion
-// is on the character, and srrevamp does not model it.
+// is on the character, and OpenSRO does not model it.
 // GObjPC::FUN_004a86a0 (ApplyHPMPDelta) multiplies the HP amount by
 // (1 - param143/100) and the MP amount by (1 - param144/100) before the adjust
 // that writes the pool (`MOV EAX,0x8f` / `MOV EAX,0x90` into
@@ -922,7 +922,7 @@ func potionQueueTick(ctx context.Context, hub *world.Hub, chars character.Store,
 // effect's +0x34 value, while the state is on -- recorded since round 248 in
 // docs/protocol/status_effects.md (bits 21/22) and
 // docs/protocol/param_writers.md. So a panic (combustion) effect cuts a
-// potion's HP (MP) by its percentage, and srrevamp heals the full amount
+// potion's HP (MP) by its percentage, and OpenSRO heals the full amount
 // regardless.
 //
 // An item whose CanUse bit is clear (refdata.Item.CanUse, itemdata column 24)
@@ -939,12 +939,12 @@ func potionQueueTick(ctx context.Context, hub *world.Hub, chars character.Store,
 // destroying one would be the worst possible answer. That includes every
 // CanUse item that is not a recovery kind (round 491): a return scroll, a cure
 // pill, a pet potion, a resurrection scroll. The engine USES those -- each has
-// its own DoJob branch -- and srrevamp models none of their effects, so it
+// its own DoJob branch -- and OpenSRO models none of their effects, so it
 // refuses them with the restores-nothing reason and keeps the item. That
-// refusal is srrevamp's DISCLOSED GAP, not an engine refusal. The berserk
+// refusal is OpenSRO's DISCLOSED GAP, not an engine refusal. The berserk
 // potion is modelled since round 632 (useBerserkPotion).
 //
-// The one non-recovery kind srrevamp does model is the container expansion
+// The one non-recovery kind OpenSRO does model is the container expansion
 // (round 498, useExpansion): the warehouse item grows the account's
 // warehouse through warehouse (nil refuses it), and the bag item is refused.
 //
@@ -955,7 +955,7 @@ func potionQueueTick(ctx context.Context, hub *world.Hub, chars character.Store,
 //
 // zerk is the berserk tracker a berserk potion (TypeID 3/3/1/8, round 632)
 // fills; nil refuses such a potion as before. gate names the GM accounts,
-// whose berserk potions skip the reuse delay -- srrevamp's own rule, OURS, at
+// whose berserk potions skip the reuse delay -- OpenSRO's own rule, OURS, at
 // the user's request (see useBerserkPotion); nil makes nobody a GM. keeper
 // holds the Energy of life scroll's grants (composite.go); nil refuses the
 // scroll.
@@ -987,8 +987,8 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// and answers 0x1889 (0x510cd0) unless it is 1 (`cmp al,0x1` at
 		// 0x510ca6) -- or 2 for one TID class (`(tid & 0xf800) == 0x3000`
 		// under FUN_004929c0, `cmp al,0x2` at 0x510cb6), the kind usable while
-		// dead, which srrevamp does not model (it refuses every non-recovery
-		// kind below anyway). The wording is srrevamp's own; the engine's
+		// dead, which OpenSRO does not model (it refuses every non-recovery
+		// kind below anyway). The wording is OpenSRO's own; the engine's
 		// order is kept as far as the slot test, which comes after this here
 		// because the slot is read below.
 		if deadBySession(hub, sess) {
@@ -1020,7 +1020,7 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		}
 		// The item's own CanUse bit (round 489): Item_HandleUseItem
 		// (0x00510980) -- after the empty-slot (0x1809) and rental-expiry
-		// (FUN_00492680, 0x183d) checks, which srrevamp does not model here
+		// (FUN_00492680, 0x183d) checks, which OpenSRO does not model here
 		// (round 490), and the life-state check (0x1889), which it does since
 		// round 549 (above) -- calls vtable slot
 		// 0xe0 -- IGObj::CanUse, CGObj::CanUse 0x00483ee0 on every CGItem*
@@ -1114,7 +1114,7 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// first, so a failed RemoveItem answered "using failed" and kept the
 		// potion unlocked while its first step had landed and four more were
 		// queued. Undoing a landed step would take a damage write that can
-		// fail in turn, so srrevamp removes the potion first and lands it
+		// fail in turn, so OpenSRO removes the potion first and lands it
 		// second; a drink that fails leaves the pools and the queue as they
 		// were (PotionQueue.drink), and the potion is handed back the way
 		// useExpansion hands back its item (AddItemInstance). On success
@@ -1161,7 +1161,7 @@ func UseItemHandler(chars character.Store, inv inventory.Store, items combat.Ite
 		// Armed after the use succeeds, as Item_HandleUseItem does (its
 		// 0x64c320 call sits behind the success reply). In memory only: the
 		// engine persists a delay of five minutes or more across a relog,
-		// srrevamp does not yet -- disclosed.
+		// OpenSRO does not yet -- disclosed.
 		if it.CooltimeMs > 0 {
 			itemCooldowns.ArmItem(characterID, it.ID, it.CooltimeGroup, time.Duration(it.CooltimeMs)*time.Millisecond, now)
 		}
@@ -1193,11 +1193,11 @@ const errStorageExpansionRefused = "the storage cannot be expanded that far"
 // `count <= cap - size` (0x4e197e `sub eax,ecx ; cmp eax,esi ; jl` refused)
 // and `size + count <= 0x63` (0x4e1986 `cmp ecx,0x63 ; jg` refused). The
 // engine's size counts the 13 equipment slots as well as the backpack
-// (inventory.go, "HOW TO READ THE BOUNDS BELOW"), so srrevamp's is the bag's
+// (inventory.go, "HOW TO READ THE BOUNDS BELOW"), so OpenSRO's is the bag's
 // own size (`bag`, the character's -- round 633) + MaxEquipSlots. cap is
 // MaxSlotsDefault, 77: the quest flag that raises it to 99
 // (GObjPC::HasInventoryExpansionQuest, inventory.ExpansionQuestCodes) is not
-// modelled -- srrevamp keeps no quest status 8. So the 32-slot item fits a bag
+// modelled -- OpenSRO keeps no quest status 8. So the 32-slot item fits a bag
 // of at most 32 (32 + 13 + 32 = 77), and never the test server's 96.
 func bagExpansionAllowed(bag, slots int) bool {
 	size := bag + equipment.MaxEquipSlots
@@ -1227,7 +1227,7 @@ var bagExpansionCeiling = min(inventory.MaxSlotsDefault-equipment.MaxEquipSlots,
 //
 // Not modelled: UseByKind's opening refusal 0x186b
 // UIIT_MSG_STRGERR_CANT_OPERATE_REQUESTED_JOB_DURING_LOGOUT (the byte at
-// [owner+0x30]+0x11 not 1), since srrevamp has no logout state here. The two
+// [owner+0x30]+0x11 not 1), since OpenSRO has no logout state here. The two
 // rows carry no COOLTIME descriptor (their Param3..20 read -1 / "xxx"), so
 // there is no reuse delay to consult.
 //

@@ -3,7 +3,7 @@ package session
 // Buffs, self-casts and Ghost Walk (round 616; docs/protocol/skill_buffs.md,
 // the shared contract of rounds 616-619).
 //
-// The four opcodes are srrevamp's own. 0x00F5..0x00F8 were free: the highest
+// The four opcodes are OpenSRO's own. 0x00F5..0x00F8 were free: the highest
 // session opcode in use was OpTeleportResult 0x00F4 (teleport.go), no file
 // under server/ or client/scripts/ defined any of the four (re-measured by
 // grep at the start of this round), and the only mentions of the numbers were
@@ -23,12 +23,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/buff"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/buff"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 const (
@@ -123,7 +123,7 @@ const (
 // silentRefusal ends a cast that retail ends with 0xB071 kind 2 and error 0
 // (SkillAction_Buff's sub-state 0 bit test, round 636's review): the retail
 // client ends the cast deco and shows no text (FUN_00a56680 reads the u16 and
-// drops it; FUN_00a50a00). OURS: srrevamp's reply carries this marker, which
+// drops it; FUN_00a50a00). OURS: OpenSRO's reply carries this marker, which
 // the client (SelfCast.SILENT_END_TEXT) ends the cast on without logging.
 const silentRefusal = "the skill action ended"
 
@@ -612,7 +612,7 @@ func sendBuffsInView(hub *world.Hub, arriving world.Entity, now time.Time) {
 // 5 (0x4ae520 -> FUN_0059ef90 / FUN_0059eff0). A cancel that finds no record,
 // or that the 'nbuf' rule refuses, changes nothing and answers nothing -- the
 // retail handler returns silently in both cases (it answers 0x3003 only for a
-// zero skill id, which srrevamp's request cannot carry meaningfully).
+// zero skill id, which OpenSRO's request cannot carry meaningfully).
 func BuffHandler(chars character.Store, hub *world.Hub) gateway.Handler {
 	return func(ctx context.Context, sess *gateway.Session, p *proto.Packet) error {
 		if p.Opcode != OpBuffCancel {
@@ -678,7 +678,7 @@ func finitePosition(x, y, z float32) bool {
 //
 // NOT MODELLED, disclosed: the navmesh reachability test FUN_005862e0 runs
 // before it accepts the point (DAT_00cc387c vtable +0x30; bit 0x10000000
-// refuses). srrevamp's server has no navmesh -- movement is client-
+// refuses). OpenSRO's server has no navmesh -- movement is client-
 // authoritative (handleMove stores what the client sends) -- so the landing
 // point is the clamped point, and the client stands the player on its own
 // walkable graph there, as it does for every move.

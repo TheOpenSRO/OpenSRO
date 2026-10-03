@@ -4,9 +4,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
 )
 
 // Rows shaped like the real table's: type ids 3/1/family/piece, a
@@ -185,7 +185,7 @@ func TestAccessoriesAreEquippable(t *testing.T) {
 // FRPVP_VOUCHER -- so it must not resolve to an accessory slot.
 //
 // This test used to assert job suits resolved to NOTHING, on the grounds that
-// "srrevamp has no job-suit slot". It had one all along: slot 8, carrying the
+// "OpenSRO has no job-suit slot". It had one all along: slot 8, carrying the
 // invented name SlotExtra. The engine's resolver returns 8 for exactly this
 // family, which is what named the slot -- so the assertion is now that every
 // piece lands there, and only the family boundary is what it was.
@@ -397,7 +397,7 @@ func TestMaxItemOptLevelIsTheEnginesCeiling(t *testing.T) {
 
 // TestAmmunitionIsAllowedOnlyInTheShieldSlot holds the exception the engine
 // spells out in CheckEquipsetIntegrity: a "Bullet" passes validation at slot 7
-// and nowhere else. srrevamp's SlotFor already sends ammunition there; this
+// and nowhere else. OpenSRO's SlotFor already sends ammunition there; this
 // pins that it sends it NOWHERE else, which is the half a resolver could get
 // wrong silently.
 func TestAmmunitionIsAllowedOnlyInTheShieldSlot(t *testing.T) {
@@ -420,19 +420,19 @@ func TestAmmunitionIsAllowedOnlyInTheShieldSlot(t *testing.T) {
 	}
 }
 
-// TestSrrevampSlotsFitTheEnginesCombinedArray holds srrevamp's two separate
+// TestOpenSROSlotsFitTheEnginesCombinedArray holds OpenSRO's two separate
 // index spaces to the engine's single one.
 //
 // The original puts equipment and backpack in one array: slots 0..12 are worn
 // (equipment.MaxEquipSlots) and the backpack starts at 13. Its "inventory size"
 // cap of 99 therefore covers both, leaving at most 86 usable backpack slots.
-// srrevamp splits them, which is a different design rather than a wrong one --
+// OpenSRO splits them, which is a different design rather than a wrong one --
 // but the total still has to be something the engine could represent, or a
 // character here could hold more than one there ever could.
 //
 // This lives in the equipment package because it is the only one that imports
 // both. See the note in inventory.go for the two use-sites.
-func TestSrrevampSlotsFitTheEnginesCombinedArray(t *testing.T) {
+func TestOpenSROSlotsFitTheEnginesCombinedArray(t *testing.T) {
 	total := MaxEquipSlots + inventory.SlotsPerCharacter
 	if total > inventory.MaxSlotsExpanded {
 		t.Errorf("%d equipment slots + %d inventory slots = %d, more than the engine's "+

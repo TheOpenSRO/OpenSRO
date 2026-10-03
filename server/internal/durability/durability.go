@@ -128,7 +128,7 @@ func Group(variance uint64, k int) int {
 
 // WhiteStat is the base of every stat Char_BuildAggregateStats interpolates:
 // L + q*(U-L), q the instance's factor for the stat's variance group (Group/31).
-// The engine adds Inc*plus on top; srrevamp instances carry no plus level, so
+// The engine adds Inc*plus on top; OpenSRO instances carry no plus level, so
 // that term is zero here. A zero range (U == L) returns L whatever the variance.
 func WhiteStat(lo, hi float64, variance uint64, group int) float64 {
 	q := float64(Group(variance, group)) / GroupMax

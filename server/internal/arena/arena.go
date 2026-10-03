@@ -1,7 +1,7 @@
 // Package arena holds the battle-arena structure recovered from
 // SR_GameServer.exe.
 //
-// srrevamp has no arena. What this package records is the SHAPE of the system --
+// OpenSRO has no arena. What this package records is the SHAPE of the system --
 // its modes, its scoring kinds and its currency -- which is what the class
 // family and the vtable index give up without reading the match logic.
 //

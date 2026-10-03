@@ -11,17 +11,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OpenSRO/srrevamp/server/internal/berserk"
-	"github.com/OpenSRO/srrevamp/server/internal/buff"
-	"github.com/OpenSRO/srrevamp/server/internal/character"
-	"github.com/OpenSRO/srrevamp/server/internal/combat"
-	"github.com/OpenSRO/srrevamp/server/internal/equipment"
-	"github.com/OpenSRO/srrevamp/server/internal/gateway"
-	"github.com/OpenSRO/srrevamp/server/internal/gm"
-	"github.com/OpenSRO/srrevamp/server/internal/inventory"
-	"github.com/OpenSRO/srrevamp/server/internal/proto"
-	"github.com/OpenSRO/srrevamp/server/internal/refdata"
-	"github.com/OpenSRO/srrevamp/server/internal/world"
+	"github.com/OpenSRO/OpenSRO/server/internal/berserk"
+	"github.com/OpenSRO/OpenSRO/server/internal/buff"
+	"github.com/OpenSRO/OpenSRO/server/internal/character"
+	"github.com/OpenSRO/OpenSRO/server/internal/combat"
+	"github.com/OpenSRO/OpenSRO/server/internal/equipment"
+	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/gm"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
+	"github.com/OpenSRO/OpenSRO/server/internal/proto"
+	"github.com/OpenSRO/OpenSRO/server/internal/refdata"
+	"github.com/OpenSRO/OpenSRO/server/internal/world"
 )
 
 // The Energy of life scroll (round 632 review): a COMPOSITE item. What
@@ -67,7 +67,7 @@ import (
 //     vslot_007 does NOT ask IsReady: the 20 minutes gate the next SCROLL
 //     (which carries the same group 0xC9), not the fill.
 //
-// OURS: srrevamp's own opcodes (0x0104-0x0107) carry this, not 0x715f/0xb15f.
+// OURS: OpenSRO's own opcodes (0x0104-0x0107) carry this, not 0x715f/0xb15f.
 // OURS, the user's request: a GM account consults and arms neither the
 // scroll's nor the fill's COOLTIME.
 //
@@ -89,17 +89,17 @@ import (
 //     and Skill_BroadcastBuffAdded_B0BD (0x59af00): an ordinary buff,
 //     which every client in the zone is told of and draws on its owner --
 //     the buff bar and a target's CIFBuffViewer (docs/protocol/
-//     target_window_buffs.md). srrevamp starts it on the user's buff book
+//     target_window_buffs.md). OpenSRO starts it on the user's buff book
 //     (startCasterBuffOn) with that duration; the skill gate 0x58d8f0 is
 //     not modelled, and the buff's params (dru, odar, hr, luck ...) are
 //     not applied -- the book models only run speed (TODO.md).
 //
 // Not modelled (disclosed): the grant and the bonus are in memory, so a
 // server restart loses them (the engine's timed jobs survive a relog through
-// their __time32_t stamps -- srrevamp's survive a relog too, not a restart);
+// their __time32_t stamps -- OpenSRO's survive a relog too, not a restart);
 // the engine's order queues the UIL1 job before it meets a running 0x706874
-// job, srrevamp checks both first. OURS since the round 638 review: an entry
-// srrevamp does not model -- a UIU1 3/3/13/4 row (the premium time, a type-3
+// job, OpenSRO checks both first. OURS since the round 638 review: an entry
+// OpenSRO does not model -- a UIU1 3/3/13/4 row (the premium time, a type-3
 // job, FUN_0049a400), a UIU1 3/3/3/10 row whose FourCC is not 0x706874, and
 // BCS1, BFI1, PSU1, UQL1 and USL1 -- is SKIPPED and logged, where it used to
 // refuse the whole item; an item none of whose entries is modelled is still
@@ -122,13 +122,13 @@ const (
 	compositeCannotUse      = "The selected item is unusable."
 	// reuseDelayRefusal is 0x185b's authored text,
 	// UIIT_MSG_STRGERR_WAIT_FOR_REUSE_DELAY (composite review); every item
-	// path's reuse refusal uses it. It replaced srrevamp's own "wait for the
+	// path's reuse refusal uses it. It replaced OpenSRO's own "wait for the
 	// reuse delay".
 	reuseDelayRefusal = "Still have time to reuse the item."
 )
 
 // hwanTimeFourCC is the UIU1 buff item's Param2, the "ParamKeeper FourCC"
-// CTJ_CharParamKeeper maps to param 60 (0x6552fe). The only one srrevamp
+// CTJ_CharParamKeeper maps to param 60 (0x6552fe). The only one OpenSRO
 // models.
 const hwanTimeFourCC = 0x706874
 
@@ -207,7 +207,7 @@ type compositeGrant struct {
 // A grant ENDS by a timer, not lazily (composite review): retail's
 // CUsedItemLimit job sends 0x315B {compositeRefId, limitedRefId} when it
 // ends (0x653e80), and the client's handler (FUN_008993b0) removes the map
-// entry and the kind-5 icon. srrevamp sends OpCompositeEnd to the session the
+// entry and the kind-5 icon. OpenSRO sends OpCompositeEnd to the session the
 // character last used the keeper through (bind), when the grant runs out and
 // when its last use consumes it.
 type CompositeKeeper struct {
@@ -400,7 +400,7 @@ type compositePlan struct {
 	// skills are the USU1 entries' buffs, each with its job's duration.
 	skills   []*refdata.Skill
 	skillFor []time.Duration
-	// skipped names the entries srrevamp does not model (OURS, logged).
+	// skipped names the entries OpenSRO does not model (OURS, logged).
 	skipped []string
 }
 
@@ -459,7 +459,7 @@ func planComposite(ctx context.Context, items combat.ItemLookup, keeper *Composi
 		switch e.fourCC {
 		case "UIL1", "UIU1":
 		default:
-			// OURS: a kind srrevamp does not model is skipped (header).
+			// OURS: a kind OpenSRO does not model is skipped (header).
 			plan.skipped = append(plan.skipped, e.fourCC+":"+e.code)
 			continue
 		}
@@ -485,7 +485,7 @@ func planComposite(ctx context.Context, items combat.ItemLookup, keeper *Composi
 			// FUN_0049f590's UIU1 branch: a 3/3/13/4 row (FUN_004929c0,
 			// 0x4929c0: TypeID 3/3/13, and TID & 0xf800 == 0x2000) makes a
 			// type-3 job with its Param1, which
-			// srrevamp does not model -- refused. Otherwise FUN_00488db0
+			// OpenSRO does not model -- refused. Otherwise FUN_00488db0
 			// (0x49fc8d; 0x488db0: TID bit 1 clear, TypeID 3/3/3/10) must
 			// answer 1 for the type-10 job; on 0 the branch jumps to
 			// 0x49fd55 and makes NO job, silently -- mirrored by skipping the
@@ -516,7 +516,7 @@ func planComposite(ctx context.Context, items combat.ItemLookup, keeper *Composi
 		}
 	}
 	if len(plan.grants) == 0 && !plan.bonusValid && len(plan.skills) == 0 {
-		// Nothing srrevamp models: the item is refused, not spent.
+		// Nothing OpenSRO models: the item is refused, not spent.
 		return plan, "that cannot be used"
 	}
 	return plan, ""
@@ -806,7 +806,7 @@ func CompositeHandler(chars character.Store, items combat.ItemLookup, keeper *Co
 		// the position block (+0x7c..+0x90 into +0xa10..), and resets the
 		// stance when the body state is 2 or 3 -- INFERRED a movement stop.
 		// Item_HandleUseItem makes the same call on one of its paths (after
-		// its vtable +0xb8 / +0x44c tests), and srrevamp's item uses do not
+		// its vtable +0xb8 / +0x44c tests), and OpenSRO's item uses do not
 		// stop movement on any.
 		//
 		// FUN_004a0600: AddHwanCount(Param1 byte). The count is PERSISTED

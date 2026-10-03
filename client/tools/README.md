@@ -7,7 +7,7 @@ a machine with a display. See each script's header comment for full usage.
 
 `qa_shot.sh` — **the way to look at the world.** Runs the client against real pk2 archives, puts
 the player at a given region-local spot, frames the camera, and collects the rendered frames. It
-drives the QA hooks documented at the top of `client/scripts/World3D.gd` (`SRREVAMP_QA_*`), which
+drives the QA hooks documented at the top of `client/scripts/World3D.gd` (`OPENSRO_QA_*`), which
 also cover walking a heading, hiding meshes by name, reporting what the camera is pointing at,
 sweeping a region for spots where a player would stand under the geometry, and firing rays through
 a wall to see which arches are actually open.
@@ -45,8 +45,8 @@ renderer it runs on: each named `.ddj` is built through `DdjReader` as the game 
 1:1 with the client's alpha test over magenta, and the magenta pixels counted against the CPU
 decode's count (`ALPHA <file> dxt1|game ... expected cut <x> rendered cut <y> MATCH|DIFFERS`;
 `dxt1` forces the pre-695 DXT1 upload). Run it windowed through `xwl_run.sh` (Forward+) or
-VirtualGL (Compatibility); its header has the lines. `SRREVAMP_QA_DXT1_KEEP=1` makes a whole run
-keep DXT1 the old way, for a before picture; `SRREVAMP_QA_UI_SCALE=<f>` runs the world at a UI
+VirtualGL (Compatibility); its header has the lines. `OPENSRO_QA_DXT1_KEEP=1` makes a whole run
+keep DXT1 the old way, for a before picture; `OPENSRO_QA_UI_SCALE=<f>` runs the world at a UI
 scale (a QA run starts past Boot, so at 1.0 otherwise), and `ViewportPixels:` lines in the log say
 what each 3D preview renders at.
 
@@ -97,7 +97,7 @@ Measure, do not look: the lower 40% of the two `QA SHOT` frames from the same ca
 `QA ENTRY` numbers of pass 2 against pass 1's; and `grep -c 'SCRIPT ERROR\|previously freed'`
 split at the `QA RECONNECT` line. `--reconnect drain` fires while the entry's loading screen is
 still up (the drop that lands on a tester mid-load); it needs the loading-screen drain, which
-`--reconnect` exports (`SRREVAMP_QA_FORCE_LOADING=1`), and hides the HUD (`SRREVAMP_QA_NOUI=1`)
+`--reconnect` exports (`OPENSRO_QA_FORCE_LOADING=1`), and hides the HUD (`OPENSRO_QA_NOUI=1`)
 because the HUD sits in the measured band:
 
 ```
@@ -105,51 +105,51 @@ qa_shot.sh --out /var/tmp/reconnect --server --region '97\168.m' --radius 1 --fr
   --reconnect 200 --shots "square@1002,1020:0,-25,700"
 ```
 
-**A town teleport is a run too** (round 578). `--teleport <id>` with `SRREVAMP_QA_CLICK=gate`
+**A town teleport is a run too** (round 578). `--teleport <id>` with `OPENSRO_QA_CLICK=gate`
 exported clicks the nearest Dimensional Gate, chooses its 'Select teleport area' line through the
 talk box's own handler, and clicks the talk box's destination line for teleportdata id `<id>` (2 is
 Donwhang from Jangan; round 603 -- the client lists destinations in the talk box, there is no
 board), printing the talk box's lines as drawn (`QA TELEPORT: talk line: 1. ...`) and
 `QA TELEPORT: requested <gate> -> <id>`. The server needs the teleport tables
-(`SRREVAMP_TELEPORT_DIR`, or `$PK2_DIR/teleport`; `qa_shot.sh` passes `-teleport-dir` when the
+(`OPENSRO_TELEPORT_DIR`, or `$PK2_DIR/teleport`; `qa_shot.sh` passes `-teleport-dir` when the
 CSVs are there). Measure from the log: `World3D: teleport accepted -- ... waiver <w>: <receipt>`,
 a second `region grid loaded`, `World3D: teleport arrival in RealTerrain_<x>_<y> at local (x, z)`,
 and the server's `msg=teleport ... fee=<f> waiver=<w> gm=<b>`. A GM run exports
-`SRREVAMP_GM_ACCOUNTS=qa` and `SRREVAMP_QA_COMMANDS="/level 30"` (the QA character is level 1, so
-it is waived by level before the GM rule is reached); `SRREVAMP_QA_FORCE_LOADING=1` shows the zone
+`OPENSRO_GM_ACCOUNTS=qa` and `OPENSRO_QA_COMMANDS="/level 30"` (the QA character is level 1, so
+it is waived by level before the GM rule is reached); `OPENSRO_QA_FORCE_LOADING=1` shows the zone
 change's loading screen (`LoadingScreen: up at frame ...`). The QA account cannot pay: only a GM
 can raise its level, and a GM is never charged -- the charge and the short-purse refusal are
 `server/internal/session/teleport_test.go`'s.
 
 ```
-SRREVAMP_QA_CLICK=gate qa_shot.sh --out /var/tmp/teleport --server --region '97\168.m' --radius 1 \
+OPENSRO_QA_CLICK=gate qa_shot.sh --out /var/tmp/teleport --server --region '97\168.m' --radius 1 \
   --at 1230,1380 --frames 1100 --size 640x360 --teleport 2
 ```
 
-**A hotbar key is a run too** (round 598). `SRREVAMP_QA_HOTKEY="<tick>:<key>,..."` pushes
+**A hotbar key is a run too** (round 598). `OPENSRO_QA_HOTKEY="<tick>:<key>,..."` pushes
 real key presses through the viewport at those ticks, so a number key reaches the underbar the way
 a player's does; it prints `QA HOTKEY`, then `QA QUICKSLOT <index> (<label>): skill <id>, target
 <monster>`, `QA CAST: use_skill ...`, and each attack result's `QA BERSERK: gauge <g> ... <n> of 5
 orbs lit` as drawn (or `QA ATTACK RESULT: refused (...)`). The QA character knows no skill, so a
-run learns one first: `SRREVAMP_GM_ACCOUNTS=qa`, `SRREVAMP_QA_COMMANDS="/level 20;/sp 100000"`
-(tick 60), `SRREVAMP_QA_LEARN="257x5;3"` (tick 90: raise Bicheon five times, learn skill 3, each
-reply printed as `QA LEARN`), then `SRREVAMP_QA_HOTBAR=<tick>` assigns it through the same path a
-window click takes. `SRREVAMP_QA_HOTBAR_SKILLS="3,143"` (round 614) assigns those skill ids
+run learns one first: `OPENSRO_GM_ACCOUNTS=qa`, `OPENSRO_QA_COMMANDS="/level 20;/sp 100000"`
+(tick 60), `OPENSRO_QA_LEARN="257x5;3"` (tick 90: raise Bicheon five times, learn skill 3, each
+reply printed as `QA LEARN`), then `OPENSRO_QA_HOTBAR=<tick>` assigns it through the same path a
+window click takes. `OPENSRO_QA_HOTBAR_SKILLS="3,143"` (round 614) assigns those skill ids
 instead, in order, with the Basic_Code their skilldata row names -- e.g. Smash and the water
-self-heal (`SRREVAMP_QA_LEARN="257x5;276x5;3;143"`), whose cast sounds then print as `AUDIO cast
+self-heal (`OPENSRO_QA_LEARN="257x5;276x5;3;143"`), whose cast sounds then print as `AUDIO cast
 READY/...` and `AUDIO cast ACT_S/...` (docs/protocol/SOUND_FORMAT.md, "Combat and skill sounds").
 
 ```
-SRREVAMP_GM_ACCOUNTS=qa SRREVAMP_QA_COMMANDS="/level 20;/sp 100000" SRREVAMP_QA_LEARN="257x5;3" \
-  SRREVAMP_QA_HOTBAR=200 SRREVAMP_QA_HOTKEY="300:1,420:1,540:1" SRREVAMP_QA_ATTACK_FAST=1 \
-  SRREVAMP_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 620 --out /var/tmp/hotbar
+OPENSRO_GM_ACCOUNTS=qa OPENSRO_QA_COMMANDS="/level 20;/sp 100000" OPENSRO_QA_LEARN="257x5;3" \
+  OPENSRO_QA_HOTBAR=200 OPENSRO_QA_HOTKEY="300:1,420:1,540:1" OPENSRO_QA_ATTACK_FAST=1 \
+  OPENSRO_QA_ATTACK_GOTO=1 qa_shot.sh --server --attack --frames 620 --out /var/tmp/hotbar
 ```
 
 **The title screen is a run too** (round 678). `qa_shot.sh --scene res://scenes/Login.tscn` (or a
-lane-safe xvfb run of it) with `SRREVAMP_QA_TITLE_SEEK=0,12,26,40` stands the intro's camera at those
+lane-safe xvfb run of it) with `OPENSRO_QA_TITLE_SEEK=0,12,26,40` stands the intro's camera at those
 times, waits for the region window, and logs `QA TITLE SHOT t=<t> frame <n> target (...) pitch ..
 yaw .. dist ..`, then fades the login window in and logs `QA LOGIN SHOT frame <n>`;
-`SRREVAMP_QA_TITLE_HOUR=0..3` pins the random hour and `SRREVAMP_LOGIN_INTRO=<name>` picks the intro.
+`OPENSRO_QA_TITLE_HOUR=0..3` pins the random hour and `OPENSRO_LOGIN_INTRO=<name>` picks the intro.
 Three tools measure it instead of looking: `check_intro_scripts.gd -- --media=<Media.pk2>` checks
 every intro in an archive (keyframes, length, the path through each keyframe, the clamp, the regions),
 `measure_login_ready.tscn` (run as the main scene) clicks at the screen's first frame and prints how
@@ -160,13 +160,13 @@ frame reads them.
 **Sounds are logged, not heard** (round 613). The box's Godot runs the dummy audio driver, so every
 animation-fired sound prints one `AUDIO <effect key> t=<key ms> clip <type>:<group> <body> at
 <x,y,z>` line (at most one per key per second, the swallowed count appended), and a silent one
-`AUDIO skip <event> (<why>)`. `SRREVAMP_QA_AUDIO_TRACE=1` adds an `AUDIO clip` line each time a
+`AUDIO skip <event> (<why>)`. `OPENSRO_QA_AUDIO_TRACE=1` adds an `AUDIO clip` line each time a
 body starts a clip, saying which entry it is and whether it has a sound set. Footsteps on several
-materials: `SRREVAMP_QA_WALK=180 qa_shot.sh --server --region '97\168.m' --radius 1 --at 1002,1020
---frames 1200`; swings, moans and deaths: the attack loop with `SRREVAMP_GM_ACCOUNTS=qa
-SRREVAMP_QA_COMMANDS="/level 60" SRREVAMP_QA_ATTACK_FAST=1 SRREVAMP_QA_ATTACK_GOTO=1`.
+materials: `OPENSRO_QA_WALK=180 qa_shot.sh --server --region '97\168.m' --radius 1 --at 1002,1020
+--frames 1200`; swings, moans and deaths: the attack loop with `OPENSRO_GM_ACCOUNTS=qa
+OPENSRO_QA_COMMANDS="/level 60" OPENSRO_QA_ATTACK_FAST=1 OPENSRO_QA_ATTACK_GOTO=1`.
 
-**So is a player's input** (round 605). `SRREVAMP_QA_INPUT="<tick>:<action>;..."` plays clicks
+**So is a player's input** (round 605). `OPENSRO_QA_INPUT="<tick>:<action>;..."` plays clicks
 (`click:x,y`, `rclick:x,y`, `node:<control name>`, `drag:x,y,x2,y2`), keys (`key:i`, `key:shift+q`,
 `type:hello`, with the keycode, physical keycode, label and character an OS key carries), hovers
 (`hover:x,y`), `talk` (the NPC talk box) and `census` (every visible focusable control that is not
@@ -181,11 +181,11 @@ Round 608 added `key:ctrl+1` (Ctrl held), `down:<key>` / `up:<key>` (hold V, Z o
 ticks) and `whisper_from:<name>` (a whisper arrives, for R's reply), and a `keymap=[...]` field:
 what the key table ran (`KEYMAP <key> -> <action> <arg>: <result>`, also printed as it happens).
 With held V the log prints `QA KEYS: V held -- <n> of <m> monster bodies drawn; the nearest ...
-hovers as '<kind>'`. `SRREVAMP_QA_BERSERK=tab` presses Tab through the viewport once the gauge is
+hovers as '<kind>'`. `OPENSRO_QA_BERSERK=tab` presses Tab through the viewport once the gauge is
 full, instead of sending the request itself.
 
 ```
-SRREVAMP_QA_INPUT="300:click:220,647;310:type:hello;320:key:enter;330:click:946,689;340:key:k" \
+OPENSRO_QA_INPUT="300:click:220,647;310:type:hello;320:key:enter;330:click:946,689;340:key:k" \
   qa_shot.sh --server --region '97\168.m' --at 1002,1020 --radius 1 --frames 700 --out /var/tmp/input
 ```
 
@@ -193,13 +193,13 @@ SRREVAMP_QA_INPUT="300:click:220,647;310:type:hello;320:key:enter;330:click:946,
 
 The client plays the retail sounds from the player's own archives (round 611;
 `docs/protocol/SOUND_FORMAT.md` is the contract): effects and ambient from `Data.pk2`
-(`SRREVAMP_PK2_PATH`), the tables from `Media.pk2` (`SRREVAMP_MEDIA_PK2_PATH`), and the music from
-**`Music.pk2`, which `qa_shot.sh` exports as `SRREVAMP_MUSIC_PK2_PATH="$PK2_DIR/Music.pk2"`**
+(`OPENSRO_PK2_PATH`), the tables from `Media.pk2` (`OPENSRO_MEDIA_PK2_PATH`), and the music from
+**`Music.pk2`, which `qa_shot.sh` exports as `OPENSRO_MUSIC_PK2_PATH="$PK2_DIR/Music.pk2"`**
 (a downloaded build finds it in the `pk2` folder like the others). A missing archive, file or key
 is silent, with one line each:
 
 ```
-AUDIO: Music.pk2 not found (SRREVAMP_MUSIC_PK2_PATH or the pk2 folder) -- its sounds are silent
+AUDIO: Music.pk2 not found (OPENSRO_MUSIC_PK2_PATH or the pk2 folder) -- its sounds are silent
 AUDIO: no prim\snd\env\kk_day.wav in Data.pk2 -- that sound is silent
 AUDIO: no effect row for PLAYER:snd_walk1:-:-:-:- -- silent
 AUDIO: effect table 6004 rows under 5428 keys
@@ -223,8 +223,8 @@ each 8-, 16- and 24-bit kind, and two music files):
 
 ```
 client/tools/remote_godot.sh sync
-ssh root@192.168.10.78 'su - ghidra -c "cd /opt/srrevamp-client && P=/opt/sro-files/client; \
-  SRREVAMP_PK2_PATH=\$P/Data.pk2 SRREVAMP_MEDIA_PK2_PATH=\$P/Media.pk2 SRREVAMP_MUSIC_PK2_PATH=\$P/Music.pk2 \
+ssh root@192.168.10.78 'su - ghidra -c "cd /opt/opensro-client && P=/opt/sro-files/client; \
+  OPENSRO_PK2_PATH=\$P/Data.pk2 OPENSRO_MEDIA_PK2_PATH=\$P/Media.pk2 OPENSRO_MUSIC_PK2_PATH=\$P/Music.pk2 \
   /opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64 --headless --path . --script res://tools/probe_audio.gd"'
 ```
 
@@ -279,7 +279,7 @@ client/tools/remote_godot.sh script res://tools/map_object_census.gd -- \
   --pk2=/opt/sro-files/client/Data.pk2 --models=/var/tmp/<lane>/models.tsv [--verbose] [--match=bridge]
 ```
 
-In the world, `SRREVAMP_QA_OBJECTS=<fragment>,...` prints at every `--shots` viewpoint one
+In the world, `OPENSRO_QA_OBJECTS=<fragment>,...` prints at every `--shots` viewpoint one
 `QA OBJECT <shot> <node> key <owner>#<uid> held by <region> (listed by N) at world (..)
 region-local (..) of <region>: P piece(s), T triangle(s), visible <b>, in frustum <b>, <d> from
 the camera` per placed object whose node name holds a fragment, or `<fragment>: none placed` --
@@ -308,8 +308,8 @@ every clip running, every clip paused and none placed. Low-processor sleep and v
 default headless loop sleeps 6.9 ms a frame, which swamps the measurement. It can also run with the
 GL renderer, under `xvfb-run` and `vglrun` without `--headless`. `--noskin` and `--nomesh` strip
 the copies' skins or meshes, to split the cost. In the world,
-`SRREVAMP_QA_MAPANIM=n` prints the driver's counts and the process time every n frames;
-`SRREVAMP_NO_MAP_ANIM=1` is the A/B.
+`OPENSRO_QA_MAPANIM=n` prints the driver's counts and the process time every n frames;
+`OPENSRO_NO_MAP_ANIM=1` is the A/B.
 
 
 ### Particle effects: the `.efp` census
@@ -327,7 +327,7 @@ cd server && go run ./cmd/efpcensus -pk2 /opt/sro-files/client/Particles.pk2
 # one file's decoded tree
 go run ./cmd/efpcensus -pk2 /opt/sro-files/client/Particles.pk2 -show 'battle\deco_charge_light_a.efp'
 # the same census as a Go test; it is skipped where the variable is unset, which includes CI
-SRREVAMP_PARTICLES_PK2=/opt/sro-files/client/Particles.pk2 go test -count=1 -run TestRetailCensus -v ./internal/efp
+OPENSRO_PARTICLES_PK2=/opt/sro-files/client/Particles.pk2 go test -count=1 -run TestRetailCensus -v ./internal/efp
 # GDScript twin (22 s), after a sync
 client/tools/remote_godot.sh script res://tools/efp_census.gd -- --pk2=/opt/sro-files/client/Particles.pk2
 # the two readers value for value: one md5 of a canonical dump per file, diffed (prints IDENTICAL)
@@ -354,11 +354,11 @@ client/tools/remote_godot.sh script res://tools/efp_census.gd -- --pk2=/opt/sro-
 
 **Seeing effects play** (round 620). There are two hooks. The frames show what the renderer did;
 they prove nothing about retail.
-- `SRREVAMP_QA_EFFECT="<efp>[;<efp>...]"` plays those files on the player at tick 20, looping.
-  They are spaced `SRREVAMP_QA_EFFECT_SPACING` native units apart (default 40). Each file prints
+- `OPENSRO_QA_EFFECT="<efp>[;<efp>...]"` plays those files on the player at tick 20, looping.
+  They are spaced `OPENSRO_QA_EFFECT_SPACING` native units apart (default 40). Each file prints
   `QA EFFECT <path> at x <x>: <n> node(s) drawn, skipped [...]`.
-- `SRREVAMP_QA_CAST="<skill id>[,...]"` runs each skill's effect phases on the player in turn,
-  every `SRREVAMP_QA_CAST_PERIOD` ticks (default 160):
+- `OPENSRO_QA_CAST="<skill id>[,...]"` runs each skill's effect phases on the player in turn,
+  every `OPENSRO_QA_CAST_PERIOD` ticks (default 160):
   - `SkillEffects.cast` at +0: READY now, then WAIT and SHOT by the skill's timing columns;
   - `shot` and `hit` (SHOT/1) at +30;
   - `act` (ACT_S) at +40;
@@ -368,7 +368,7 @@ they prove nothing about retail.
   giving its ActType, bone and nodes drawn.
 
 ```
-SRREVAMP_QA_NOUI=1 SRREVAMP_QA_CAST=90,113,114,149,3 qa_shot.sh --out /var/tmp/cast --region '97\168.m' \
+OPENSRO_QA_NOUI=1 OPENSRO_QA_CAST=90,113,114,149,3 qa_shot.sh --out /var/tmp/cast --region '97\168.m' \
   --radius 1 --at 1002,1020 --yaw 30 --pitch -12 --dist 70 --frames 860
 ```
 
@@ -376,13 +376,13 @@ SRREVAMP_QA_NOUI=1 SRREVAMP_QA_CAST=90,113,114,149,3 qa_shot.sh --out /var/tmp/c
 
 `perf_gate.sh` is the before/after every world round runs (AGENTS.md, "Performance: every world
 round runs the gate"). It ships the working tree and its base (`git merge-base HEAD origin/dev`,
-or `--base`/`--head` revisions) to `/opt/srrevamp-client-perf-<lane>-{base,head}` on the box,
+or `--base`/`--head` revisions) to `/opt/opensro-client-perf-<lane>-{base,head}` on the box,
 boots each at fixed views, interleaved base/head, and reads four numbers from the client's log:
 
 | number | from | SLOWER when (OURS) |
 |---|---|---|
 | frame ms | the mean of the last 30 `--print-fps` samples after the first 5, standing still | +max(0.5 ms, 5 %) |
-| entry ms | `region grid loaded in N ms`, the real loading drain (`SRREVAMP_QA_FORCE_LOADING=1`) | +max(1 s, 10 %) |
+| entry ms | `region grid loaded in N ms`, the real loading drain (`OPENSRO_QA_FORCE_LOADING=1`) | +max(1 s, 10 %) |
 | freeze ms | the largest `longest work frame W ms` of the run's LoadTimings summaries | +max(100 ms, 25 %) |
 | hitches | the summaries' `H over 100 ms`, summed | +2 |
 
@@ -430,7 +430,7 @@ busy and ran 2.8x slower a frame, while the GPU averaged 37 %; 2026-09-30, `amdg
 
 **A base is measured once (2026-09-30).** The base revision's numbers are cached per (revision,
 view, frames) in `/var/tmp/perf-cache/` on the box, and its client copy is shared as
-`/opt/srrevamp-client-perf-base-<rev12>` (shipped and imported once, under a per-revision lock). A
+`/opt/opensro-client-perf-base-<rev12>` (shipped and imported once, under a per-revision lock). A
 later gate runs one fresh base run first and keeps the cache only if that run is within the gate's
 own SLOWER threshold of the cached median; otherwise the box has drifted and the base is measured
 again in full. Measured at Jangan with 2 runs a side: 216 s without either, 180 s with the cached
@@ -465,14 +465,14 @@ release.yml runs the first two; native/README.md, "CI".
 ### Native readers A/B (round 667)
 
 The pk2 reader and the `.ddj` per-pixel decodes have a native (Rust, GDExtension) twin, set out in
-native/README.md. One build compares both ways. `SRREVAMP_NATIVE=0` forces the GDScript path even
+native/README.md. One build compares both ways. `OPENSRO_NATIVE=0` forces the GDScript path even
 when the library loaded, and the client logs which path it took once:
 `NativeAssets: native readers ON|OFF (...)`.
 
 ```
-native/build.sh                                                       # client/native_bin/libsrrevamp_native.so
-PERF_LANE=native667 client/tools/perf_gate.sh --ab-env SRREVAMP_NATIVE=0 --sites jangan,mobs          # warm
-PERF_LANE=native667 client/tools/perf_gate.sh --ab-env SRREVAMP_NATIVE=0 --sites jangan,mobs --cold   # cold
+native/build.sh                                                       # client/native_bin/libopensro_native.so
+PERF_LANE=native667 client/tools/perf_gate.sh --ab-env OPENSRO_NATIVE=0 --sites jangan,mobs          # warm
+PERF_LANE=native667 client/tools/perf_gate.sh --ab-env OPENSRO_NATIVE=0 --sites jangan,mobs --cold   # cold
 ```
 
 - `--ab-env "VAR=value ..."` runs the base side on the head's own copy with those variables, so
@@ -490,14 +490,14 @@ PERF_LANE=native667 client/tools/perf_gate.sh --ab-env SRREVAMP_NATIVE=0 --sites
     library on the head only. A run whose log says ON fails the gate.
   - **`--ab-env` ships one copy with the working tree's library.** It refuses `--head REV` (a
     revision carries no library), and refuses a tree without
-    `client/native_bin/libsrrevamp_native.so`. Every head run must log ON and every base run must
+    `client/native_bin/libopensro_native.so`. Every head run must log ON and every base run must
     not, or the gate fails with
     `FAIL native readers <state>, this side must be <ON|not ON>`.
-  - The self-test is `PERF_SELFTEST_DROP_LIB=1 client/tools/perf_gate.sh --ab-env SRREVAMP_NATIVE=0
+  - The self-test is `PERF_SELFTEST_DROP_LIB=1 client/tools/perf_gate.sh --ab-env OPENSRO_NATIVE=0
     --sites jangan --runs 1`. It ships the copy without its library and must fail on the first
     head run.
 
-Per function, `SRREVAMP_PARSE_PROFILE=1` makes the client print `PARSEPROF` lines
+Per function, `OPENSRO_PARSE_PROFILE=1` makes the client print `PARSEPROF` lines
 (`client/scripts/pk2/parse_profile.gd`): a table of every reader's time on the main thread and on
 the workers, once after the boot tables and once with the entry's LoadTimings summary. Round 667
 ranked the port by these lines.
@@ -533,7 +533,7 @@ remote_godot.sh script res://tools/probe_map_anim_pose.gd -- --pk2=$PK2/Data.pk2
 remote_godot.sh script res://tools/census_bsk_bind.gd -- --pk2=$PK2/Data.pk2
 ```
 
-`SRREVAMP_QA_NOWATER=1` builds no block water, for a pixel diff that measures what the water draws
+`OPENSRO_QA_NOWATER=1` builds no block water, for a pixel diff that measures what the water draws
 (round 648's water-on/off diff). A lane that must not stop other lanes' renders runs its client with
 `xvfb-run -a ... --write-movie` under its own lock instead of `qa_shot.sh`, whose start-up reap
 kills every Godot on the box.
@@ -573,16 +573,16 @@ up) in `default` and every weapon group the race can hold, resolves the clip and
 before/after. A clip that does not play prints `TPOSE ...` and `PARITY FAIL`; `FIGURE` lines give
 each body's lowest skinned point at bind and at its stand clip's first frame (`feet`).
 
-In the world, `SRREVAMP_QA_LINEUP` (scripts/world/qa_lineup.gd) spawns the Figures through the
+In the world, `OPENSRO_QA_LINEUP` (scripts/world/qa_lineup.gd) spawns the Figures through the
 other-player path and prints a `LINEUP` line per body per phase (`posed yes|TPOSE`, `feet` against
-the walkable surface) and a `LINEUP SUMMARY`; `SRREVAMP_QA_LINEUP_SHOTS=<dir>` saves the screen.
+the walkable surface) and a `LINEUP SUMMARY`; `OPENSRO_QA_LINEUP_SHOTS=<dir>` saves the screen.
 It needs a GL context; the lane runs it under its own lock, in real time and without the movie
-writer, e.g. `/var/tmp/world689/gl.sh <out> <env file>` with `SRREVAMP_MAPM_PATH=97\168.m`,
-`SRREVAMP_QA_AT=1002,1100`, `SRREVAMP_QA_LINEUP=all`, `SRREVAMP_QA_LINEUP_WEAPONS=each`,
-`SRREVAMP_QA_LINEUP_ACTIONS=stand,run,sit,attack`, `SRREVAMP_QA_LINEUP_QUIT=1`. With
-`SRREVAMP_QA_LINEUP=none` and `SRREVAMP_QA_SERVER` it measures the player and the server's other
-players instead (`SRREVAMP_QA_CREATE=ref:scale:chest:legs:feet:weapon` makes the character; the
-live pair is `/var/tmp/world689/live.sh`). The world needs `SRREVAMP_MAPM_PATH` offline: without it
+writer, e.g. `/var/tmp/world689/gl.sh <out> <env file>` with `OPENSRO_MAPM_PATH=97\168.m`,
+`OPENSRO_QA_AT=1002,1100`, `OPENSRO_QA_LINEUP=all`, `OPENSRO_QA_LINEUP_WEAPONS=each`,
+`OPENSRO_QA_LINEUP_ACTIONS=stand,run,sit,attack`, `OPENSRO_QA_LINEUP_QUIT=1`. With
+`OPENSRO_QA_LINEUP=none` and `OPENSRO_QA_SERVER` it measures the player and the server's other
+players instead (`OPENSRO_QA_CREATE=ref:scale:chest:legs:feet:weapon` makes the character; the
+live pair is `/var/tmp/world689/live.sh`). The world needs `OPENSRO_MAPM_PATH` offline: without it
 the grid builds no cells and the lineup never finds ground.
 
 ### Load benchmark
@@ -614,7 +614,7 @@ cost is read from its own line. Three lines carry it:
   (`_terrain_prepare`: plain data) and a *commit* (`_terrain_commit`: everything that owns an RID
   or touches the tree), and the terrain list has two shapes:
   - a cell built on the main thread -- the grid's centre, always, and every cell under
-    `SRREVAMP_SYNC_LOAD=1` -- lists all three halves in order: `terrain T [tiletable, objindex,
+    `OPENSRO_SYNC_LOAD=1` -- lists all three halves in order: `terrain T [tiletable, objindex,
     snapshot, read, parse, env, lightmap, textures, mesh, heights, navmesh, walls, navgraph,
     images, upload, setup, collision, wallshape, water, graph]` (`env` the centre's alone;
     `tiletable` and `objindex` are cached after the first call, so only the centre's are
@@ -649,14 +649,14 @@ cost is read from its own line. Three lines carry it:
   What the laps are: `read`/`parse` the `.m`; `lightmap` the `.t` decoded to an Image; `textures`
   the ground tiles this world does not hold yet decoded to Images; `mesh` the surfaces as arrays;
   `heights` the collision's data: the region's 97x97 height grid (`TerrainCollision.heights_from_region`,
-  round 567), or under `SRREVAMP_TERRAIN_TRIMESH=1` the trimesh's face list
+  round 567), or under `OPENSRO_TERRAIN_TRIMESH=1` the trimesh's face list
   (`MapmTerrainBuilder.surface_faces`, what `create_trimesh_shape()` used to read back out of the
   mesh; the lap was `faces` in rounds 565-566); `navmesh` the `.nvm` read and
   parsed; `walls` the wall triangles; `navgraph` the object navigation meshes and
   `NavGraph.build`; then `images` the ImageTexture uploads; `upload` the ArrayMesh and its
   materials; `setup` the group, the untextured material, the placement and the nodes (round 564's
   lap); `collision` the shape alone -- since round 567 the `HeightMapShape3D` (`TerrainCollision.make_shape`),
-  until then and under `SRREVAMP_TERRAIN_TRIMESH=1` the `ConcavePolygonShape3D.set_faces` (round
+  until then and under `OPENSRO_TERRAIN_TRIMESH=1` the `ConcavePolygonShape3D.set_faces` (round
   156's bottleneck, before round 160's archive fix); `wallshape` the walls' shape and body; `water`; `graph` the walkable
   graph's registration. The objects': `snapshot` the job's; `parse` the `.o2` read and parsed,
   and its lists 1 and 2 taken one object per key in the owner's frame (`World3D.region_placements`,
@@ -674,7 +674,7 @@ cost is read from its own line. Three lines carry it:
   closing print, unmeasured.
 - `World3D: region grid loaded in N ms (terrain T, objects O, npcs P) at frame f -- C cells S ms,
   D ms outside the cells over A awaited frames` -- the drain's total against the cells' own sum.
-  **The check is `S <= N`, not equality**: under the loading screen (`SRREVAMP_QA_FORCE_LOADING=1`)
+  **The check is `S <= N`, not equality**: under the loading screen (`OPENSRO_QA_FORCE_LOADING=1`)
   `_ready` puts the screen up and awaits the frame that draws it before the centre cell (round
   562; the drain built it after the centre cell until then), the HUD is built between the centre
   cell and the drain, and the drain awaits a frame after every batch -- all of that is `D`, and
@@ -684,7 +684,7 @@ cost is read from its own line. Three lines carry it:
   tasks -- not in the split or in `S`, which are the main thread's. Cells a frame under the
   screen: threaded (the default), the drain is the only pump while it runs and commits at most
   `LOADING_CELLS_PER_FRAME` = 2 prepared cells a frame, as many as have finished preparing
-  (`TERRAIN_JOBS_IN_FLIGHT` = 2 prepare at once). Under `SRREVAMP_SYNC_LOAD=1` it is the
+  (`TERRAIN_JOBS_IN_FLIGHT` = 2 prepare at once). Under `OPENSRO_SYNC_LOAD=1` it is the
   pre-round-565 schedule: a batch is `LOADING_CELLS_PER_FRAME` = 2, but the frame builds three --
   the same frame's physics step runs `_process_stream_queue`, which pops `STREAM_CELLS_PER_FRAME`
   = 1 more from the same `_load_queue` -- the baseline's three `built in` lines a frame at frames
@@ -703,7 +703,7 @@ cost is read from its own line. Three lines carry it:
   screen did before), what that open and the backdrop's decode cost, and the screen's whole
   build. Its place in the log is the entry's first check: it comes before the centre cell's
   `ground textures for` and `built in` lines, or the player watched a black window for the
-  centre cell. `SRREVAMP_QA_NOUI=1` hides `$UI/Control`, which the screen is a child of, so a
+  centre cell. `OPENSRO_QA_NOUI=1` hides `$UI/Control`, which the screen is a child of, so a
   benchmark run's frames never show it; the log order is the measurement, and a run without
   `NOUI` shows the art from the first drawn frame after the line.
 
@@ -715,14 +715,14 @@ round 558's orphaned run (2026-09-25), export `GODOT_LOCK=/var/tmp/<lane>/lock` 
 (a) Entry -- the 5x5 grid a player waits for:
 
 ```
-SRREVAMP_QA_FORCE_LOADING=1 SRREVAMP_QA_NOUI=1 qa_shot.sh --out /var/tmp/loadbench --server \
+OPENSRO_QA_FORCE_LOADING=1 OPENSRO_QA_NOUI=1 qa_shot.sh --out /var/tmp/loadbench --server \
   --region '97\168.m' --radius 2 --frames 200
 ```
 
 (b) Crossing -- a walk west out of 97/168 into 97/167, so in-play streaming is measured too:
 
 ```
-SRREVAMP_QA_FORCE_LOADING=1 SRREVAMP_QA_NOUI=1 qa_shot.sh --out /var/tmp/loadcross --server \
+OPENSRO_QA_FORCE_LOADING=1 OPENSRO_QA_NOUI=1 qa_shot.sh --out /var/tmp/loadcross --server \
   --region '97\168.m' --radius 2 --at 120,1020 --walk 270 --frames 600
 ```
 
@@ -807,7 +807,7 @@ review):
            longest work frame 144 ms at frame 163 (cell 96/165) over 570 frames; 3 over 100 ms
 ```
 
-With `SRREVAMP_SYNC_LOAD=1` the same crossing command reads the old schedule back -- three cells a
+With `OPENSRO_SYNC_LOAD=1` the same crossing command reads the old schedule back -- three cells a
 frame under the screen, the column one a frame at 245-308 ms, `longest work frame 314 ms`.
 
 AFTER round 566 (a streamed cell's objects prepared on the same task as its terrain, committed on
@@ -870,11 +870,11 @@ read; its A/B totals, 103 -> 66 and 145 -> 84, are withdrawn):
 The first pair (same code but the counter) read (b) 111 -> 109 ms and (a) p95 1004 -> 947 ms: at
 one run each the order's effect on those frames is inside the run-to-run spread.
 
-Alpha probes in the load path (`SRREVAMP_QA_ALPHA_LOG=1` on command (a); BASE through a throwaway
+Alpha probes in the load path (`OPENSRO_QA_ALPHA_LOG=1` on command (a); BASE through a throwaway
 copy that prints the same line at each of its three `get_image()` probe sites): **0 before and 0
 after** -- every layer of every material the 25 cells build is decided by its flag word
 (`ObjectLoader.LAYER_FLAG_MASK`), so the readback path was never reached here. Forced with
-`SRREVAMP_QA_MATS=1` as a control (every solid textured material then consults its fraction):
+`OPENSRO_QA_MATS=1` as a control (every solid textured material then consults its fraction):
 690 probes before, all texture readbacks; 690 after, 0 readbacks (449 on decoded Images, 241
 statistics measured earlier), the same 341 texture/statistic pairs consulted the same number of
 times and the same 52 `QA MAT` lines. 327 pairs read identically; 14 differ by at most 0.0002 of
@@ -885,11 +885,11 @@ reports).
 AFTER round 567 (a region's terrain collision is a `HeightMapShape3D` over its height grid,
 `TerrainCollision`, instead of a `ConcavePolygonShape3D` of the mesh's triangles), against BASE
 (round 566's code) re-measured the same day on the same box, and the same code with
-`SRREVAMP_TERRAIN_TRIMESH=1` (the old trimesh, for A/B); `docs/RE_COMPLETION.md`, round 567, has
+`OPENSRO_TERRAIN_TRIMESH=1` (the old trimesh, for A/B); `docs/RE_COMPLETION.md`, round 567, has
 the full lines, the per-phase sums and the ground probes. The streamed-cell sums are over the
 cells' own lines (the entry's 24 neighbours, the crossing run's 29 streamed cells). Which code:
 BASE ran `git archive f25ab65`; the 567 and TRI runs ran round 567's code before
-`SRREVAMP_QA_GROUND_RAYS` was changed to wait for the grid -- a QA-only hook neither run enables
+`OPENSRO_QA_GROUND_RAYS` was changed to wait for the grid -- a QA-only hook neither run enables
 (round 567 says so; its ray runs, `rays3_*`, ran the committed code). The entry's p95 950 -> 914
 ms is inside run-to-run spread (TRI, the old collision on the same code, read 957); the frames over
 100 ms (9 -> 5, TRI 9) and the per-cell `collision` lap are the numbers that moved (round 567's
@@ -926,12 +926,12 @@ crossing's 17754 ms with (a)'s 17299, and the review caught it. (b)'s drains wer
 
 The `heights` lap is the prepare's (off the main thread for a streamed cell: 86 ms over the
 entry's 24 against `faces`' 193). The heightfield's `collision` lap reads 0 on every cell line --
-whole-ms truncation, so under 1 ms a cell. `SRREVAMP_QA_GROUND_RAYS=n` (World3D.gd's QA header)
+whole-ms truncation, so under 1 ms a cell. `OPENSRO_QA_GROUND_RAYS=n` (World3D.gd's QA header)
 is the regression probe for the ground itself: on an n x n lattice of every loaded region it fires
 vertical and slanted rays at the terrain collision and holds each hit to the drawn mesh's own
 triangle, sweeps the camera arm's sphere down (`cast_motion`, the camera spring's query) and moves
 the player's own body down (`body_test_motion`, move_and_slide's), printing `QA GROUND` lines to
-diff between a run and a `SRREVAMP_TERRAIN_TRIMESH=1` run.
+diff between a run and a `OPENSRO_TERRAIN_TRIMESH=1` run.
 
 Rules the off-thread loading items are held to, kept beside the benchmark so the two travel
 together. Round 565 (terrain) implements them, and round 566 (objects) holds to them too.
@@ -952,7 +952,7 @@ together. Round 565 (terrain) implements them, and round 566 (objects) holds to 
    lines go in its result, for `commit_object` to report); `objects_prepare_test.gd` and
    `object_loader_test.gd` walk the same way. No texture is read back to decide a material's
    alpha: the probes measure the Image the texture is uploaded from (`ObjectLoader._alpha_stat`),
-   and `SRREVAMP_QA_ALPHA_LOG=1` prints one `QA ALPHA:` line per probe consulted -- the count of
+   and `OPENSRO_QA_ALPHA_LOG=1` prints one `QA ALPHA:` line per probe consulted -- the count of
    alpha probes in the load path, each saying it came from the decoded Image or from a statistic
    measured earlier.
 2. **Reads and caches.** The scene tree is not thread-safe, and `Pk2Reader` was not until round
@@ -980,7 +980,7 @@ together. Round 565 (terrain) implements them, and round 566 (objects) holds to 
    566). The placement-ownership test's
    neighbour heightmaps are READ ON THE TASK, under the lock, not pre-parsed on the main thread:
    their parse is most of the `own` lap, which pre-parsing would put back in the frame.
-3. **The QA-drain contract.** A QA run (`SRREVAMP_MAPM_PATH` set, no `SRREVAMP_QA_FORCE_LOADING`)
+3. **The QA-drain contract.** A QA run (`OPENSRO_MAPM_PATH` set, no `OPENSRO_QA_FORCE_LOADING`)
    must still have every cell committed before its first shot, so `_drain_initial_load`'s QA branch
    dispatches, waits for each task (`WorkerThreadPool.wait_for_task_completion`) and commits
    before it returns -- `--shots`, `--radius` and the movie writer keep their contract.
@@ -991,12 +991,12 @@ together. Round 565 (terrain) implements them, and round 566 (objects) holds to 
    commit into a freed world. `objects_prepare_test.gd` holds the guard and the drop headless
    since round 568 (no box log of rounds 565-567 carries a `prepared but not committed` line).
 
-`SRREVAMP_SYNC_LOAD=1` is the escape hatch for one release after round 565: every cell's terrain
+`OPENSRO_SYNC_LOAD=1` is the escape hatch for one release after round 565: every cell's terrain
 and (round 566) objects are prepared and committed on the main thread on the pre-round-565
 schedule (above), for a tester to fall back to or compare against. It restores the SCHEDULE
 only, not the old code: the terrain still runs `_terrain_prepare` then `_terrain_commit` with
 the collision round 567 gives it (the heightfield; the faces `MapmTerrainBuilder.surface_faces`
-builds under `SRREVAMP_TERRAIN_TRIMESH=1`), and the objects `_objects_prepare` then
+builds under `OPENSRO_TERRAIN_TRIMESH=1`), and the objects `_objects_prepare` then
 `_objects_commit`, through the split `ObjectLoader` (`prepare_object` then `commit_object`) and
 the trimesh faces `ObjectLoader._piece_faces` builds -- back to back on the main thread. The
 grid's centre is built on the main thread either way -- its height anchors every neighbour and
@@ -1028,7 +1028,7 @@ name no axis, 2 (the event Jinn pets) read +Z on one weak reading, none +-X -- t
 `MonsterMotion.MODEL_FRONT`, which since round 673 turns every drawn model (the table is gone).
 
 `plate_pixels.py` (round 673) counts a name plate's own pixels in a movie frame where the client
-says it projects: a run with `SRREVAMP_QA_SHOTS` and `SRREVAMP_QA_PLATES=1` prints one `QA PLATE`
+says it projects: a run with `OPENSRO_QA_SHOTS` and `OPENSRO_QA_PLATES=1` prints one `QA PLATE`
 line per monster at each shot (its distance from the camera and from the player, its screen point),
 and the tool counts cream-beside-black pixels in a 140 x 22 box there. Pure Python (the box has no
 PIL); run it on the box against the run's directory: `python3 plate_pixels.py <dir>` (add `--white`
@@ -1040,7 +1040,7 @@ at 103 (looking straight down) before, and its name at every shot after.
 `probe_seasonal.gd` counts what round 583's seasonal filter leaves out of real regions. It runs
 World3D's own `_objects_job` and `_objects_prepare` over each region (Jangan's nine by default,
 `--region=<y>/<x>` for others) and prints the hidden count per set. It also counts the seasonal
-object records in each region's `.nvm`. `--seasonal=<list>` stands in for `SRREVAMP_SEASONAL`,
+object records in each region's `.nvm`. `--seasonal=<list>` stands in for `OPENSRO_SEASONAL`,
 which the remote runner does not pass through. `--full=1` runs the prepare to the end, reading
 every model, and counts the seasonal pieces still among the placements (`DRAWN`). It is headless
 and takes seconds. Ship the working copy first:

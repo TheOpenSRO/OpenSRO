@@ -182,7 +182,7 @@ func TestMitigateDamage(t *testing.T) {
 		}
 		prev = got
 	}
-	// Floor is 1, not the game's 0: srrevamp has no hit/evade roll, so a
+	// Floor is 1, not the game's 0: OpenSRO has no hit/evade roll, so a
 	// zero-damage hit would read as a bug rather than a miss. Disclosed.
 	if got := MitigateDamage(5, 90, 500); got != 1 {
 		t.Fatalf("over-mitigated hit = %d, want the floor 1", got)
