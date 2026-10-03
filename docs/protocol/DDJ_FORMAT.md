@@ -55,6 +55,43 @@ image/texture library can load `data[20:]` directly once the wrapper is stripped
 
 `FUN_00b8eb60`, cited in round 621, is a converter path the game does not run.
 
+## DXT1's transparent texels under Forward+ (round 695)
+
+- **The format** (Microsoft's, public): a DXT1 block whose colour0 <= colour1 is in three-colour
+  mode, and index 3 there is a transparent black texel (RGBA 0, 0, 0, 0). Direct3D 9 samples it
+  so; so does Godot's GL Compatibility, which uploads `COMPRESSED_RGBA_S3TC_DXT1` (READ, 4.2.2
+  `drivers/gles3/storage/texture_storage.cpp` 418-426).
+- **Godot 4.2.2's RenderingDevice renderers (Forward+, Mobile) drop it.** `Image.FORMAT_DXT1` is
+  uploaded as `BC1_RGB_UNORM` with the alpha swizzled to ONE (READ, `servers/rendering/renderer_rd/
+  storage_rd/texture_storage.cpp` 1721-1735), so the texel samples opaque black. There is no Image
+  format for BC1 with alpha, and `texture_rd_create` cannot wrap a `BC1_RGBA` texture
+  (`_texture_format_from_rd` has no entry for it, the same file 2184-2194).
+- **How many** (MEASURED, round 695, `native/examples/dxt1_alpha_census.rs`, every mip level):
+
+  | Archive | .ddj | DXT1 | DXT1 with a transparent texel | their bytes (DXT1) |
+  |---|---|---|---|---|
+  | Data.pk2 | 17,945 | 12,091 | 3,971 (2,468 of them lightmaps) | 183.8 MB |
+  | Media.pk2 | 21,641 | 11,640 | 44 | 11.4 MB |
+  | Particles.pk2 | 1,284 | 9 | 9 | 0.5 MB |
+  | Map.pk2 | 839 | 753 | 0 | 0 |
+
+- **What the client does** (DdjReader, round 695): under a RenderingDevice renderer, a DXT1 with
+  at least one transparent texel is decoded on the CPU by the engine's squish, **one mip level at a
+  time** (squish's whole-chain loop halves both sides with no floor of 1, so a non-square texture's
+  last levels are left undecoded -- round 695's review, M1), and handed to Godot as
+  `Image.FORMAT_RGBA8`, whose upload keeps alpha. (Godot's own RD fallback for an unsupported BC1,
+  1725-1731, decompresses too but still sets `swizzle_a = ONE` at 1735: it is the RGBA8 format
+  that keeps the alpha, not the decompress.) Alpha then matches Compatibility texel for texel;
+  colours are within a few levels of a GPU's DXT1 decode (squish interpolates in integers; GPUs
+  differ by about 1-3/255). It costs 8x the DXT1's memory. Every other DXT1, and every DXT1 under
+  Compatibility, stays DXT1. The scan is native (`native/src/core/dxt.rs`, behind `has_method`)
+  with a GDScript fallback.
+- **What is actually loaded:** no client code loads `Prim\LightMap` (the 2,468 lightmaps above);
+  the ground's lightmaps are Map.pk2's `.t`, unaffected. So the cost is the other 1,503 Data.pk2
+  textures: 122 MB as DXT1, 976 MB as RGBA8 if every one were loaded (monsters 327 MB, items 209,
+  NPCs 132, world 109, characters 35; round 695's review). The largest single ones are the four
+  2048x2048 `avatar_w_*arctic*` textures, no mips, 16 MB each as RGBA8.
+
 ## FourCC 113 ('q'): D3DFMT_A16B16G16R16F (round 621)
 
 - D3DX accepts a numeric D3DFORMAT in the FourCC slot. Four retail files store 113 there, the

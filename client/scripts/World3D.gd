@@ -1526,6 +1526,9 @@ func _ready() -> void:
 	# The sun's energy under Forward+, matched to Compatibility's look (round
 	# 693, WorldPostEffects.sun_scale; 1.0 under Compatibility).
 	directional_light.light_energy *= WorldPostEffects.sun_scale()
+	# Decided here on the main thread before any worker decodes a texture
+	# (round 695, DdjReader.dxt1_needs_alpha_format; Boot also logs it).
+	DdjReader.dxt1_needs_alpha_format()
 	# The front-end's 3D backdrop (round 678, FrontEndBackdrop): none of an
 	# entry's work -- no player, HUD, server or loading screen.
 	if title_mode:
@@ -1537,6 +1540,13 @@ func _ready() -> void:
 	# process environment (SRREVAMP_WORLD_ENTRY), never a static.
 	_world_entry = GroundProbe.next_entry()
 	print(GroundProbe.entry_line(_world_entry, get_instance_id()))
+	# SRREVAMP_QA_UI_SCALE=<f> (round 695, OURS): a QA run boots this scene
+	# directly, past Boot's ClientSettings.apply_ui_scale, so it ran at 1.0
+	# whatever the settings say; this applies a scale for the run (nothing is
+	# saved) -- how the paper doll is measured at the user's 2.0.
+	if OS.get_environment("SRREVAMP_QA_UI_SCALE") != "":
+		ClientSettings.apply_ui_scale(get_window(), OS.get_environment("SRREVAMP_QA_UI_SCALE").to_float())
+		print("World3D: SRREVAMP_QA_UI_SCALE -> UI scale %.2f" % get_window().content_scale_factor)
 	_qa_split_init()
 	# The Water Reflection option (round 628): the node always exists, so
 	# SRREVAMP_QA_WATER_TIMING can time a run with the option off too.
@@ -2118,6 +2128,11 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.name = "HudPanels"
 	ui_control.add_child(_hud_panels)
 	_hud_panels.connect_net()
+	# A body dressed before the panels existed gets its paper doll now, as
+	# the portrait does above (round 695: a QA run's loadout dresses before
+	# the HUD is built, and _refresh_paper_doll returns without panels).
+	if _player_skeleton != null and is_instance_valid(_player_skeleton) and _paper_doll == null:
+		_refresh_paper_doll(_player_equipped_last, _player_body)
 	# QA: rearrange the bag once (SRREVAMP_QA_MOVE="from,to") so a render's
 ##   SRREVAMP_QA_STORAGE_ITEM=1 (needs --server) unequip the boots into the bag, open the
 ##                          warehouse, the quantity dialog, and deposit 1 of the
@@ -8456,7 +8471,7 @@ func _refresh_paper_doll(equipped: Dictionary, body: String) -> void:
 	if idle != null and _frame_count(idle) > 1:
 		Skeleton3DBuilder.apply_ban_pose_at(doll_skeleton, idle, 0.0, true)
 		_animated.append([doll_skeleton, idle, _frame_count(idle), 0.0, true, _idle_anim_time, null])
-	_hud_panels.set_paper_doll_texture(_paper_doll.get_texture())
+	_hud_panels.set_paper_doll_texture(_paper_doll.get_texture(), _paper_doll)
 
 ## The player block's portrait (round 635, PlayerPortrait): a copy of the
 ## body just dressed -- the world's own, so it wears what the world shows --
@@ -8472,9 +8487,12 @@ func _refresh_player_portrait(skel: Skeleton3D, equipped: Dictionary, body: Stri
 	var pose := _body_animation_for(body, PlayerPortrait.ANI_POSE, _weapon_group_for(equipped, body))
 	_hud_player_info.set_portrait(copy, pose)
 	var p := _hud_player_info.portrait()
-	print("World3D: portrait dressed (%s, pose %s, %d us, %d material(s) left as they were)" % [
+	var view := _hud_player_info.portrait_view()
+	print("World3D: portrait dressed (%s, pose %s, %d us, %d material(s) left as they were; buffer %s for a picture of %s screen pixels)" % [
 		body, _body_animation_path(body, PlayerPortrait.ANI_POSE, _weapon_group_for(equipped, body)),
-		p.last_build_usec if p != null else -1, p.unmapped_materials if p != null else -1])
+		p.last_build_usec if p != null else -1, p.unmapped_materials if p != null else -1,
+		p.size if p != null else Vector2i.ZERO,
+		ViewportPixels.physical_size(view) if view != null and view.is_inside_tree() else Vector2i.ZERO])
 
 ## The doll's hands and head in its 176x318 picture, and where the weapon
 ## hangs: the log line a render is checked against (round 633's review). The
@@ -8486,8 +8504,8 @@ func _log_paper_doll_pose() -> void:
 	var r := _paper_doll.bone_on_screen("Bip01 R Hand")
 	var l := _paper_doll.bone_on_screen("Bip01 L Hand")
 	var h := _paper_doll.bone_on_screen("Bip01 Head")
-	print("World3D: doll pose: R hand %s, L hand %s, head %s, face turned %+.1f px (right +), yaw %.3f (picture 176x318)" % [
-		r.round(), l.round(), h.round(), _paper_doll.facing_screen_dx(), _hud_panels.paper_doll_yaw])
+	print("World3D: doll pose: R hand %s, L hand %s, head %s, face turned %+.1f px (right +), yaw %.3f (picture 176x318; rendered %s)" % [
+		r.round(), l.round(), h.round(), _paper_doll.facing_screen_dx(), _hud_panels.paper_doll_yaw, _paper_doll.size])
 
 ## Switches another player's looping animation between stand and run as
 ## their body starts and stops moving. The entry keeps its phase so a
@@ -11035,6 +11053,12 @@ func _update_blob_shadow() -> void:
 ##                          then click the talk box's line for that teleportdata
 ##                          id: `QA TELEPORT: requested <gate> -> <dest>`
 ##                          (_qa_advance_teleport)
+##   SRREVAMP_QA_UI_SCALE=<f> run the world at this UI scale (round 695; a
+##                          QA run starts past Boot, which applies the saved
+##                          one); `ViewportPixels:` lines say what the 3D
+##                          previews then render at
+##   SRREVAMP_QA_DXT1_KEEP=1 keep every DXT1 as DXT1 under Forward+ (round
+##                          695's before: transparent texels drawn opaque)
 ##   SRREVAMP_QA_BODY="<ref_obj_id>[:<scale>]"  the player's model and scale
 ##                          byte when no server names them (round 689; e.g.
 ##                          "14875:0x24", the Europe noble man at Height 4)
@@ -12079,7 +12103,7 @@ func _qa_print_entry_probe() -> void:
 		if tex == null:
 			nulls += 1
 	var env: Environment = world_environment.environment if world_environment != null else null
-	print("QA ENTRY %d %sloaded: frame %d tex_mem=%d buf_mem=%d video_mem=%d objects=%d nodes=%d orphans=%d resources=%d static_mem=%d debug_draw=%d cache_ground=%d cache_ground_nulls=%d cache_water_frames=%d water_attempted=%s env_table=%s light_ready=%s light_diffuse=%s terrain_ambient=%s fog_enabled=%s fog_color=%s fog_density=%s object_templates=%d object_textures=%d" % [
+	print("QA ENTRY %d %sloaded: frame %d tex_mem=%d buf_mem=%d video_mem=%d objects=%d nodes=%d orphans=%d resources=%d static_mem=%d debug_draw=%d cache_ground=%d cache_ground_nulls=%d cache_water_frames=%d water_attempted=%s env_table=%s light_ready=%s light_diffuse=%s terrain_ambient=%s fog_enabled=%s fog_color=%s fog_density=%s object_templates=%d object_textures=%d dxt1_alpha_rgba8=%d dxt1_alpha_bytes=%d" % [
 		_qa_entry, tag, Engine.get_frames_drawn(),
 		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TEXTURE_MEM_USED),
 		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED),
@@ -12096,7 +12120,8 @@ func _qa_print_entry_probe() -> void:
 		str(env.fog_enabled) if env != null else "no-env",
 		str(env.fog_light_color) if env != null else "no-env",
 		str(env.fog_density) if env != null else "no-env",
-		_object_templates.size() if _object_templates != null else 0, _object_textures.size()])
+		_object_templates.size() if _object_templates != null else 0, _object_textures.size(),
+		DdjReader.dxt1_alpha_decoded, DdjReader.dxt1_alpha_bytes])
 	if not _grid_has_origin:
 		print("QA TEXPROBE %d: no region grid origin -- nothing to probe" % _qa_entry)
 		return

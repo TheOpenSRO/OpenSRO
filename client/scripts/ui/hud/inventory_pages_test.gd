@@ -136,6 +136,7 @@ func _initialize() -> void:
 	_backdrop_checks(panels)
 	_rotation_checks(panels)
 	_doll_checks()
+	await _doll_pixel_checks(panels)
 	_capacity_checks()
 	if _failures == 0:
 		print("ALL PASS")
@@ -411,6 +412,57 @@ func _doll_checks() -> void:
 	_check(doll.render_target_update_mode == SubViewport.UPDATE_ALWAYS, "shown, it renders every frame")
 	doll.call("set_active", false)
 	_check(doll.render_target_update_mode == SubViewport.UPDATE_DISABLED, "hidden again, it stops")
+	doll.queue_free()
+
+## Round 695: the equipment window's doll renders at the size its picture
+## covers on screen in physical pixels -- the pane's 176x318 times the UI
+## scale -- so one rendered pixel is one screen pixel (the user's "much lower
+## resolution than the game" at 3840x2019, UI scale 2.0). Before, it rendered
+## 176x318 at every scale and was magnified.
+func _doll_pixel_checks(panels: Control) -> void:
+	var doll_script := load(DOLL_PATH) as GDScript
+	var doll: SubViewport = doll_script.new()
+	root.add_child(doll)
+	doll.call("use_equipment_view")
+	var takes_viewport := false
+	for m in panels.get_method_list():
+		if m["name"] == "set_paper_doll_texture":
+			takes_viewport = (m["args"] as Array).size() >= 2
+	_check(takes_viewport, "HudPanels.set_paper_doll_texture takes the doll's SubViewport, to size it")
+	if takes_viewport:
+		panels.call("set_paper_doll_texture", doll.get_texture(), doll)
+	else:
+		panels.call("set_paper_doll_texture", doll.get_texture())
+	var rect := panels.find_child("PaperDoll", true, false) as TextureRect
+	_check(rect != null, "the paper doll's picture is placed in the equipment pane")
+	if rect == null:
+		doll.queue_free()
+		return
+	for k in [1.0, 2.0, 1.5, 1.95, 1.0]:
+		root.content_scale_factor = k
+		await process_frame
+		await process_frame
+		var xf := rect.get_viewport().get_final_transform() * rect.get_global_transform_with_canvas()
+		var on_screen := rect.size * xf.get_scale().abs()
+		var want := Vector2i(roundi(on_screen.x), roundi(on_screen.y))
+		# The window's canvas is a whole number of units (1080 / 1.95 -> 553),
+		# so the real stretch is within a pixel or two of the nominal scale.
+		_check(absi(want.x - roundi(176.0 * k)) <= 2 and absi(want.y - roundi(318.0 * k)) <= 2,
+			"at UI scale %.2f the picture covers %s physical pixels (176x318 x scale)" % [k, want])
+		_check(doll.size == want, "at UI scale %.2f the doll renders %s for the %s pixels it covers (got %s)" % [k, want, want, doll.size])
+		var ratio := float(doll.size.y) / on_screen.y
+		_check(absf(ratio - 1.0) < 0.01, "at UI scale %.2f one rendered pixel is one screen pixel (texels per pixel %.3f)" % [k, ratio])
+	var head: Vector2 = doll.call("bone_on_screen", "Bip01 Head")
+	_check(head == Vector2(-1, -1), "with no model the head is not on screen")
+	# The pose log stays in the 176x318 picture's pixels whatever the buffer.
+	root.content_scale_factor = 2.0
+	await process_frame
+	await process_frame
+	if doll.has_method("pixel_scale"):
+		_check(is_equal_approx(float(doll.call("pixel_scale")), 2.0), "at 2.0 the doll's picture pixel is 2 rendered pixels")
+	root.content_scale_factor = 1.0
+	await process_frame
+	panels.call("set_paper_doll_texture", null)
 	doll.queue_free()
 
 func _capacity_checks() -> void:

@@ -2581,9 +2581,13 @@ func qa_gold_deposit(amount: int) -> void:
 ## the dressed character changes. Shown in the equipment section's central
 ## column, between the two rows of worn slots.
 var _paper_doll_texture: Texture2D = null
+## The SubViewport behind that texture (round 695), kept at the picture's
+## physical size by a ViewportPixels on the TextureRect.
+var _paper_doll_viewport: SubViewport = null
 
-func set_paper_doll_texture(texture: Texture2D) -> void:
+func set_paper_doll_texture(texture: Texture2D, viewport: SubViewport = null) -> void:
 	_paper_doll_texture = texture
+	_paper_doll_viewport = viewport
 	_place_paper_doll_docked()
 
 ## The paper doll's viewport in the equipment pane. READ (round 633):
@@ -2591,7 +2595,12 @@ func set_paper_doll_texture(texture: Texture2D) -> void:
 ## (+2, +0x0f, -2, -0x25) (0x6ad8ca..0x6ad8d3) -- (2, 15, 176, 318) for the
 ## 178x355 pane -- with a Z clear only (0x6ad94b), so the frame and tile drawn
 ## before it show behind the model. PaperDoll.use_equipment_view renders at
-## exactly this size with the client's camera, so the texture is drawn 1:1.
+## exactly this size with the client's camera, so the texture is drawn 1:1
+## -- at UI scale 1.0. At any other scale the buffer follows the rect's size
+## in physical pixels (round 695, ViewportPixels): at the user's 2.0 the doll
+## renders 352x636 for the 352x636 pixels it covers, not 176x318 magnified
+## twice. The camera keeps its height (KEEP_HEIGHT), so the picture is the
+## same, with more pixels.
 ## (It was 98x236 at (40, 46), chosen by hand and framed on the bones.)
 const PAPER_DOLL_RECT := Rect2(2, 15, 176, 318)
 
@@ -2620,6 +2629,8 @@ func _place_paper_doll_docked() -> void:
 		doll.visibility_changed.connect(func() -> void:
 			paper_doll_shown_changed.emit(doll.is_visible_in_tree()))
 	doll.texture = _paper_doll_texture
+	if _paper_doll_viewport != null:
+		ViewportPixels.attach(doll, _paper_doll_viewport)
 	paper_doll_shown_changed.emit(doll.is_visible_in_tree())
 
 ## Emitted when the paper doll comes on screen or leaves it: the preview

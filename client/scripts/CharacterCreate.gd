@@ -335,6 +335,9 @@ func _build() -> void:
 	_preview_rect.stretch_mode = TextureRect.STRETCH_SCALE
 	_preview_rect.texture = _preview.get_texture()
 	add_child(_preview_rect)
+	# The model renders at the screen's physical pixels, not the UI's units
+	# (round 695, ViewportPixels): at UI scale 2.0 it was drawn magnified 2x.
+	ViewportPixels.attach(_preview_rect, _preview)
 	if _backdrop != null and _backdrop.world != null:
 		var zl = _backdrop.world.get("_portrait_zone_light")
 		if zl is Array and (zl as Array).size() == 2:
@@ -602,8 +605,7 @@ func _relayout() -> void:
 		if n != null:
 			n.position = Vector2.ZERO
 			n.size = size
-	if _preview != null:
-		_preview.size = Vector2i(maxi(int(w), 2), maxi(int(h), 2))
+	# The preview's buffer follows _preview_rect's new size (ViewportPixels).
 
 # --- the state shown ----------------------------------------------------------
 

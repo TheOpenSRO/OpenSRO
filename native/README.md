@@ -11,6 +11,7 @@ before.
 |---|---|---|
 | pk2 archive: open, directory read + Blowfish decrypt, name index, path lookup, positional file read | `Pk2Reader` internals and `ObjectLoader.find_file`'s scan | `src/core/pk2.rs`, `src/core/blowfish.rs` |
 | `.ddj` per-pixel decodes: uncompressed (channel masks) and A16B16G16R16F (`q`) | the two looping branches of `DdjReader.to_image` | `src/core/ddj.rs` |
+| the DXT1 transparent-texel scan (round 695): does any block of a DXT1 mark a texel transparent, so Forward+ needs it as RGBA8 | `DdjReader.dxt1_has_transparent`'s block loop | `src/core/dxt.rs` (`ddj_dxt1_has_transparent`; interface still 5: an additive method, called behind `has_method`, so an older library keeps the other readers); `examples/dxt1_alpha_census.rs` counts them in an archive |
 | `.bms` mesh: header, vertices (either record size), skin (with its part-way refusal), indices, box, motion and link sections; `to_arrays`' winding and skin arrays | `BmsReader.parse` and `to_arrays` (round 669) | `src/core/bms.rs`, binding `src/gd_models.rs` |
 | `.ban` animation: header, key times, every bone's keyframes | `BanReader.parse` (round 669) | `src/core/ban.rs`, binding `src/gd_models.rs` |
 | `.bsk` skeleton: the announce-then-resolve walk, both record shapes | `BskReader.parse` (round 669) | `src/core/bsk.rs`, binding `src/gd_models.rs` |
@@ -239,7 +240,8 @@ client/tools/remote_godot.sh script res://tools/native_parity.gd -- --pk2-dir=/o
 **The negative.** `cargo build --release --features parity-negative` makes a library with
 deliberate, subtle bugs: it drops the 20th entry slot of each directory block, it leaves an
 uncompressed texture's BGR unswizzled, it rounds a `.bms` vertex's skin blend to f32, it makes
-a `.ban`'s last key time a millisecond late, and it adds a space to a `.bsk`'s last parent name. The parity tools and `native_assets_test.gd` /
+a `.ban`'s last key time a millisecond late, it adds a space to a `.bsk`'s last parent name, and
+it reads a one-colour DXT1 block as four-colour, missing its transparent texels (round 695). The parity tools and `native_assets_test.gd` /
 `native_models_test.gd` must FAIL against it, and so must `cargo test --features parity-negative`.
 
 The model readers have their own pass, over **every** `.bms` and `.ban` of the four archives

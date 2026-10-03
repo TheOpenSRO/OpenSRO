@@ -916,6 +916,20 @@ the following:
       builds screen-size and 512 x 512 targets, SWorld::vslot_043 case 1). Its parameters are
       unread, so glow's are still the 2026-08-26 guess.
 - [ ] **The first tester report from a Forward+ release** is the one to read against the box.
+- [x] **Cut-out textures drawn as solid quads under Forward+** (the user, v0.1.480: tree leaves,
+      hair) -- round 695: 4.2.2's RD renderers upload DXT1 as BC1_RGB with alpha forced to one
+      (READ); DdjReader decodes a DXT1 with transparent texels to RGBA8 there (exact, MEASURED
+      on nine real cards and in the Hotan desert).
+- [ ] **Their memory.** Those textures cost 8x their DXT1 under Forward+ (11.2 MB more in the
+      Hotan desert at radius 1, MEASURED). The 2,468 lightmaps among the 4,024 are never loaded (no
+      client code reads `Prim\LightMap`); the other 1,503 are 122 MB as DXT1, 976 MB as RGBA8 if
+      all were loaded -- monsters 327, items 209, NPCs 132, world 109, characters 35 MB. Items and
+      avatars are the target: the four 2048x2048 `avatar_w_*arctic*` textures, no mips, are 16 MB
+      each as RGBA8. Decoding only what an alpha-tested or blended material uses needs the
+      material's alpha use to reach the loader.
+- [x] **The 3D previews at a UI scale** (the user: the inventory character "much lower resolution
+      than the game" at 2.0) -- round 695: the paper doll, the customize preview and the portrait
+      render at their picture's size in physical pixels (`ViewportPixels`).
 
 ### The Option window's Video tab (round 694) -- **built: retail's rows, presets, Graphic 1 / 2, brightness curve and sight ladders READ; SSAO and Bloom (glow) through one environment function; these are left**
 

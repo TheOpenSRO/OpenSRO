@@ -27,6 +27,10 @@ func _ready() -> void:
 	# the library is missing or refused, or forced OFF. A tester's log always
 	# says which reader loaded their world.
 	NativeAssets.available()
+	# Whether a DXT1's transparent texels need RGBA8 here (round 695: Forward+
+	# drops DXT1's alpha), decided once on the main thread and logged.
+	print("DdjReader: DXT1 with transparent texels %s" % [
+		"decoded to RGBA8 (a RenderingDevice renderer drops DXT1's alpha)" if DdjReader.dxt1_needs_alpha_format() else "kept as DXT1"])
 	# A previous update's summary and leftovers (round 668, UpdateInstaller).
 	AutoUpdater.after_update_startup()
 	# Before any screen draws, so the login screen is already the size the

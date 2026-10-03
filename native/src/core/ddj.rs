@@ -1,6 +1,7 @@
 //! The per-pixel decodes of DdjReader.to_image (client/scripts/ddj/ddj_reader.gd): an
 //! uncompressed texture through its own DDS channel masks, and the A16B16G16R16F ('q') one. The
-//! DXT branches stay in GDScript: Image.create_from_data already hands them to Godot's C++.
+//! DXT branches stay in GDScript: Image.create_from_data already hands them to Godot's C++ --
+//! dxt.rs (round 695) only tells DdjReader which DXT1s mark a texel transparent.
 //! docs/protocol/DDJ_FORMAT.md has the format. Errors carry the GDScript reader's own messages.
 
 pub struct Masks {

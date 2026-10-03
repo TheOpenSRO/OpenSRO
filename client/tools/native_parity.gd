@@ -135,6 +135,8 @@ func _compare_archive(path: String, label: String) -> void:
 	var ddj_seen := 0
 	var ddj_compared := 0
 	var ddj_formats := {}
+	var dxt1_scanned := 0
+	var dxt1_transparent := 0
 	i = 0
 	for f in files:
 		i += 1
@@ -156,6 +158,18 @@ func _compare_archive(path: String, label: String) -> void:
 			continue
 		ddj_seen += 1
 		var tex := DdjReader.parse(a)
+		if tex != null and tex.four_cc == "DXT1":
+			# Round 695: the transparent-texel scan, both ways, on every DXT1.
+			var px := tex.dds.slice(4 + DdjReader.DDS_HEADER_SIZE)
+			NativeAssets.force_gdscript = true
+			var scan_g := DdjReader.dxt1_has_transparent(px)
+			NativeAssets.force_gdscript = false
+			var scan_n := DdjReader.dxt1_has_transparent(px)
+			dxt1_scanned += 1
+			if scan_g:
+				dxt1_transparent += 1
+			if scan_g != scan_n:
+				_fail("%s: ddj '%s': DXT1 transparent-texel scan GDScript %s, native %s" % [label, p, scan_g, scan_n])
 		if tex == null or not (tex.four_cc == "" or tex.four_cc == "q"):
 			continue
 		var fmt := tex.four_cc if tex.four_cc != "" else "rgb%d" % tex.rgb_bit_count
@@ -170,7 +184,7 @@ func _compare_archive(path: String, label: String) -> void:
 		elif img_g != null and (img_g.get_width() != img_n.get_width() or img_g.get_height() != img_n.get_height()
 				or img_g.get_format() != img_n.get_format() or img_g.get_data() != img_n.get_data()):
 			_fail("%s: ddj '%s' (%s %dx%d): decoded pixels differ" % [label, p, fmt, tex.width, tex.height])
-	print("PARITY %s: read -- %d files, %d bytes compared; ddj -- %d .ddj read, %d per-pixel decodes compared %s (%d ms)" % [
-		label, reads, read_bytes, ddj_seen, ddj_compared, str(ddj_formats), Time.get_ticks_msec() - t])
+	print("PARITY %s: read -- %d files, %d bytes compared; ddj -- %d .ddj read, %d per-pixel decodes compared %s; %d DXT1 scans compared, %d with a transparent texel (%d ms)" % [
+		label, reads, read_bytes, ddj_seen, ddj_compared, str(ddj_formats), dxt1_scanned, dxt1_transparent, Time.get_ticks_msec() - t])
 	g.close()
 	n.close()

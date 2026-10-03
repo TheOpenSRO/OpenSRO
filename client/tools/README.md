@@ -40,6 +40,16 @@ with your own `GODOT_LOCK` in a lane, so another lane's runs survive. `frame_ab.
 percentiles, the fraction of pixels off by more than 8 and 32, and white and black fractions. It is
 the A/B measurement of round 693's renderer table.
 
+`measure_alpha_cards.gd` (round 695) asks whether real cut-out textures keep their holes under the
+renderer it runs on: each named `.ddj` is built through `DdjReader` as the game builds it, drawn
+1:1 with the client's alpha test over magenta, and the magenta pixels counted against the CPU
+decode's count (`ALPHA <file> dxt1|game ... expected cut <x> rendered cut <y> MATCH|DIFFERS`;
+`dxt1` forces the pre-695 DXT1 upload). Run it windowed through `xwl_run.sh` (Forward+) or
+VirtualGL (Compatibility); its header has the lines. `SRREVAMP_QA_DXT1_KEEP=1` makes a whole run
+keep DXT1 the old way, for a before picture; `SRREVAMP_QA_UI_SCALE=<f>` runs the world at a UI
+scale (a QA run starts past Boot, so at 1.0 otherwise), and `ViewportPixels:` lines in the log say
+what each 3D preview renders at.
+
 **Startup dominates, so batch the pictures.** Loading the region grid costs roughly 65 seconds
 against 0.33 seconds a frame, so six pictures taken as six runs pays that cost six times. Use
 `--shots` to visit several viewpoints in one boot, and `--radius` to load fewer regions when the

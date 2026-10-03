@@ -158,6 +158,8 @@ func bone_on_screen(bone: String) -> Vector2:
 	var p := skel.global_transform * skel.get_bone_global_pose(i).origin
 	if _camera.is_position_behind(p):
 		return Vector2(-1, -1)
+	# In the buffer's pixels: the screen's physical pixels from round 695
+	# (ViewportPixels), the UI's units before it.
 	return _camera.unproject_position(p)
 
 func camera() -> Camera3D:

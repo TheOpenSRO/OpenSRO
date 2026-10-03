@@ -24,6 +24,9 @@ class_name NativeAssets
 ## both numbers, and the client reads in GDScript. Bump both together.
 ## 4: rounds 669-671 merged; each lane alone was 3, and is refused.
 ## 5: round 677, SrNativeTables.char_decay_by_code.
+## Round 695 added SrNativeParsers.ddj_dxt1_has_transparent without a bump:
+## DdjReader calls it only where has_method finds it (its review, L6), so an
+## older library keeps every other reader.
 const NATIVE_API := 5
 
 ## The native pk2 archive class (native/src/gd.rs).
