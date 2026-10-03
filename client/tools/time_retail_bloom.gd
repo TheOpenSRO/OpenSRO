@@ -2,14 +2,16 @@ extends SceneTree
 
 ## Timing (round 702 rework): the root viewport's GPU time a frame with
 ## RetailBloom off and on, over a synthetic picture, at the window's size --
-## and, for finding where it goes, the pass with its blur stubbed out.
+## and, for finding where it goes, the pass with its blur stubbed out, and
+## Compatibility's 3D anchor alone (round 707; a camera and a depth-reading 3D
+## pass are in the scene, as in the world).
 ## Prints `TIME <renderer> <w>x<h> <mode> gpu <ms> cpu <ms>` per mode.
 ##
 ##   tools/xwl_run.sh -s 3840x2160 godot --rendering-method forward_plus --rendering-driver vulkan \
 ##     --resolution 3840x2160 --path client --script res://tools/time_retail_bloom.gd
 
 const FRAMES := 240
-var _modes := ["off", "on", "stub", "off2", "on2"]
+var _modes := ["off", "on", "stub", "anchor", "off2", "on2"]
 var _mode := -1
 var _frame := 0
 var _gpu := 0.0
@@ -17,6 +19,7 @@ var _cpu := 0.0
 var _n := 0
 var _bloom: RetailBloom
 var _stub: ColorRect
+var _anchor: MeshInstance3D
 
 func _initialize() -> void:
 	RenderingServer.viewport_set_measure_render_time(root.get_viewport_rid(), true)
@@ -37,6 +40,10 @@ func _initialize() -> void:
 	_bloom = RetailBloom.new()
 	_bloom.visible = false
 	root.add_child(_bloom)
+	# The world as the bloom meets it (round 707): a camera and WorldFog's
+	# depth read, so Compatibility's anchor and its 3D copy are timed too.
+	if OS.get_environment("OPENSRO_BLOOM_NO3D") != "1":
+		preload("res://tools/measure_retail_bloom.gd").add_depth_reader(root)
 	# The copy and the composite alone: the screen read once and kept.
 	var sl := CanvasLayer.new()
 	sl.layer = RetailBloom.LAYER_INDEX
@@ -50,6 +57,11 @@ func _initialize() -> void:
 	_stub.visible = false
 	sl.add_child(_stub)
 	root.add_child(sl)
+	# Compatibility's 3D anchor alone (round 707): the 3D pass's copy of the
+	# screen it causes, with no canvas pass.
+	_anchor = RetailBloom.anchor_node()
+	_anchor.visible = false
+	root.add_child(_anchor)
 	_next()
 
 func _next() -> void:
@@ -66,6 +78,7 @@ func _next() -> void:
 		var m: String = _modes[_mode]
 		_bloom.visible = m.begins_with("on")
 		_stub.visible = m == "stub"
+		_anchor.visible = m == "anchor"
 
 func _process(_delta: float) -> bool:
 	if _mode >= _modes.size():
