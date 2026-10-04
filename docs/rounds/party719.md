@@ -1,4 +1,4 @@
-# Round 719: a character pending deletion is one even translucent sheet on the select screen, as the original draws it
+# Round 719: a character pending deletion is one translucent sheet on the select screen (blended in Godot's linear buffer, not in the original's display values)
 
 The user (2026-10-04), on the native Linux build: "There also seems to be some rendering issues
 when deleting a character that weren't there original. When they sit some parts of them become
@@ -7,158 +7,165 @@ deletion, seated: arms, dress, face and a shoulder strap show the harbour throug
 They run the native `opensro-linux.zip` (Godot Forward+ on Vulkan), the renderer the render box
 uses, so the box reproduces it.
 
-Labels: READ (the client exe, with addresses), MEASURED, INFERRED, OURS.
+Labels: READ (the client exe, with addresses), MEASURED, INFERRED, OURS, DEPARTURE.
 
 ## What the original does (READ, sro_client.exe)
 
 - **The pending alpha.** `FUN_0085def0` sets a pending character's target alpha to **0xcc**
-  (`+0x298`; 0xff otherwise), fading over 1.0 s, as round 684 read. The per-frame update
+  (`+0x298`; 0xff otherwise), fading over 1.0 s (round 684). The per-frame update
   (`0x85dc8a..0x85dd17`) hands the current byte (`+0x29a`) to the model through its vtable `+0x14`:
   **`CCompoundObj` slot 5, `CCompChar::FUN_00c25590`, `+0x4c = alpha << 24`**.
-- **How a model below 0xff is drawn.** The object draw (`0xbf10df..0xbf110b`, and four more call
-  sites at `0xbf15d5`, `0xbf1c00`, `0xbf2d62`, `0xbf4213`) passes that colour and the layer's flag
-  word (`material + 0x70`) to `CObjRendererVS::FUN_00c428c0` (`0xc428c0`, objdump):
-  - at `0xff000000` it returns at once: no state is touched;
+- **How a model below 0xff is drawn: `CObjRendererVS::FUN_00c428c0`** (objdump), called by the
+  object draws (`0xbf110b` and four more sites) with the colour (`[esi+0xc8]+0x40` when that
+  object exists, else the compound's `+0x4c`) and the layer's flag word (`material + 0x70`):
+  - at `0xff000000` it returns at once;
   - otherwise ALPHABLENDENABLE 1, SRCBLEND 5 (SRCALPHA), DESTBLEND 6 (INVSRCALPHA), TEXTUREFACTOR =
-    the colour; with alpha testing on, ALPHAREF is scaled to `ref x a >> 8`;
-  - stage 0 alpha: with flag `0x40000000`, ALPHAOP SELECTARG2 with ARG2 TFACTOR (the fade's alpha
-    alone); without it, ALPHAOP MODULATE of TEXTURE and TFACTOR;
-  - **ZWRITEENABLE is not touched**: the model keeps writing depth as every object does
-    (`CObjRendererVS::vslot_034` sets it to 1 for the object pass). `FUN_00c429f0` turns blending
-    back off after the draw.
-
-  So the original draws a translucent character mesh by mesh in its own order with depth written:
-  a near piece drawn first hides a far piece drawn later. It is not depth-sorted and has no prepass.
+    the colour; with alpha testing on, ALPHAREF = `ref x a >> 8`;
+  - stage 0 alpha: flag `0x40000000` gives ALPHAOP SELECTARG2 (ARG2 TFACTOR: the fade alone);
+    without it, ALPHAOP MODULATE of TEXTURE and TFACTOR (texture alpha x fade);
+  - **ZWRITEENABLE is not touched**: the body writes depth, mesh by mesh in its own order.
+  - In `CObjRendererVS::FUN_00bf0e20` the object's mods (`FUN_00c451e0`), then the flag word's
+    states, then the fade are set in that order, so the fade's blend and stage-0 alpha override an
+    MTRL mod's own (round 719's review, finding 6).
+- **Where `0x40000000` comes from** (the review, READ in Data.pk2 and the asm): no `.bmt` layer of
+  `Prim\Mtrl\Item` or `Prim\Mtrl\Char` has it (3,263 layers). Its sources are runtime mods:
+  `CRTModEnvMap::vslot_004` ORs `0x60000000` into every material of an env-mapped object, and
+  `CRTModProgEquipPow::vslot_004` ORs `0xe21f0000` for enhanced gear. So a plain body or item layer
+  is drawn at `tex.a x 0.8`, and an env-mapped or enhanced one at 0.8 exactly.
 - **Not a render mode.** `appear_fade.md` said `FUN_00aac913` "picks a render mode" from the
-  compound's `+0x4c` (0xff000000 -> 0x20, 0 -> 0x21). The code at `0xaacafd` compares a bitmap
-  header's channel masks (`[ebp+0x4c]` with `[ebp+0x60]`/`[ebp+0x64]` beside it) to pick a texture
-  format: D3DFMT 0x20 A8R8G8B8 / 0x21 X8R8G8B8. It has nothing to do with the model's alpha.
-  Corrected in `appear_fade.md`.
+  compound's `+0x4c`. The code at `0xaacafd` compares a bitmap header's channel masks to pick a
+  texture format: there **0x20 = D3DFMT_A8B8G8R8, 0x21 = D3DFMT_X8B8G8R8** (B mask 0xff0000, G
+  0xff00, R 0xff; A8R8G8B8 0x15 / X8R8G8B8 0x16 are the other branch, `0xaaca92`/`0xaaca7a`).
+  Unrelated to the model's alpha; corrected in `appear_fade.md`.
+- **The shadow of a character at 0xcc** is not read (`appear_fade.md`, OPEN).
 
-## The cause in OpenSRO (MEASURED)
+## The cause (MEASURED)
 
-Since round 684 the select screen set `GeometryInstance3D.transparency` on every mesh of the body.
-The bodies wear PlayerPortrait's materials (round 688): `render_mode unshaded, <cull>,
-depth_draw_opaque` with no blend. Instance transparency sends each mesh to Godot's transparent
-pass, where `depth_draw_opaque` writes **no depth**, and sorts the meshes by their centres. So the
-body's pieces blend over each other in sorted order: a far piece drawn after a near one shows
-through it, a two-sided cloth layer shows its back faces, and the background shows through
-wherever the pieces stack up differently.
+Since round 684 the select screen set `GeometryInstance3D.transparency` on every mesh. The bodies
+wear PlayerPortrait's materials (`unshaded, <cull>, depth_draw_opaque`, no blend). Instance
+transparency sends each mesh to Godot's transparent pass, where `depth_draw_opaque` writes **no
+depth**, sorted mesh by mesh: far pieces of the body blend over near ones and two-sided cloth shows
+its back faces. Measured below as the linear-sheet residual of the "before" rows.
 
-**MEASURED** with `OPENSRO_QA_PENDING_PROBE=1` (OURS, QA; `CharacterSelect._qa_pending_probe`). The
-probe selects the pending character, so the camera flies to her as in the user's screenshot. It then
-holds the pose and the camera and switches the bodies' shadows off, and saves one frame four ways:
-hidden (bg1), at 255 (O), at 0xcc (P), hidden again (bg2). A pixel counts where the opaque body
-differs from the background (|O-B| >= 90 summed over RGB) and the background did not move
-(|bg1-bg2| <= 6). Its effective alpha is sum(P-B) / sum(O-B): one even sheet gives one value
-everywhere. `OPENSRO_QA_SELECT_INSTANCE_FADE=1` draws the old way on the same build. Box, RX 7600,
-Forward+, 1280x720:
+## The fix
 
-| pending character | drawing | body px | p5 | median | p95 | in 0.65..0.95 | below 0.5 | above 1.05 |
-|---|---|---|---|---|---|---|---|---|
-| QA_Wei (man, seated) | before (instance transparency) | 19,461 | 0.337 | 0.772 | 1.213 | 73.2 % | 5.7 % | 9.5 % |
-| QA_Wei | after (the pairs) | 21,407 | 0.667 | 0.763 | 0.978 | 89.6 % | 1.4 % | 2.8 % |
-| QA_Aria (woman, dress, seated; `OPENSRO_QA_PENDING_NAME`) | before | 6,521 | 0.467 | 0.836 | 0.933 | 88.0 % | 5.3 % | 1.4 % |
-| QA_Aria | after | 6,514 | 0.667 | 0.845 | 0.883 | 95.9 % | 1.2 % | 0.5 % |
+`CharSelectStage._apply_alpha`: below 255 every mesh draws through a pair made from its own
+material (`fade_code`, `_fade_pair`):
+- a **depth pass** (the material's shader with `blend_mix, depth_draw_always`, `ALPHA = 0.0`, alpha
+  test kept) at render priority **0**, so the terrain's overlays and water (-3) and the shadow
+  catcher (-2) are drawn first and stay behind her;
+- its **colour pass** as `next_pass`, at the source's priority **+ 1**: `blend_mix` (also over a
+  mod's own blend, READ above), `depth_draw_never`, and the original's stage-0 alpha: `ALPHA =
+  mix(1.0, t.a, select_use_tex) * select_fade` -- texture alpha x fade, or the fade alone for an
+  object with an env-map mod (`SkinnedBsrAssembler.ENV_MAPPED_META`, set from the BSR's
+  `env_map_flags`, carried by PlayerPortrait's copy). A blending layer that writes no depth gets the
+  colour pass only; a blending mod that writes depth keeps a depth pass.
+- a **shadows-only twin** of each faded mesh on its own materials, so the body keeps its shadow
+  (OURS: as before this round, at full strength; the original's is not read).
 
-"Below 0.5" is the background showing through a piece; "above 1.05" is a far piece blended over a
-near one (darker or lighter than the opaque body). Both shrink about four-fold. The spread left
-(p25..p75 about 0.72..0.86) is not the pieces: Forward+ blends in linear light and then tone-maps,
-so the same alpha reads differently on light and dark texels in the display. The original blends
-in display space, where 0xcc is 0.8 everywhere. That residual is the renderer's and is not changed
-here. A first probe that did not hold the camera gave numbers that meant nothing (the camera was
-still settling in SELECTED); it is not used.
+At alpha >= 254.5 every mesh gets its own material back and its twin is freed.
 
-## The fix (OURS on the READ above)
+**DEPARTURE: the blend is in Godot's linear buffer, the original's in display values.** The
+original mixes `0.8 x O + 0.2 x B` in the D3D9 back buffer; Forward+ blends before its Filmic tone
+map. Doing the original's arithmetic in the colour pass would need what lies behind her in display
+values: `hint_screen_texture` is captured after the opaque pass (INFERRED from Godot 4.2's
+documented behaviour, not read in its source), so the transparent water, overlays and shadow catcher
+behind her would be missing from it -- finding 1's error again. Not done; measured below.
 
-`CharSelectStage._apply_alpha`: below 255 every mesh of the body draws through a pair made from
-its own material (`fade_code`, `_fade_pair`):
+ProgEquipPow (enhanced gear) is not drawn by this client, so an enhanced item takes `tex.a x 0.8`
+where the original takes 0.8: OPEN.
 
-- a **depth pass**: the material's own shader with `blend_mix, depth_draw_always` and `ALPHA =
-  0.0` at the end of `fragment()` (alpha test kept), at render priority `FADE_DEPTH_PRIORITY`
-  (-100), so the whole body's depth is in before any of its colour;
-- its **colour pass** as `next_pass`: the same shader with `blend_mix, depth_draw_never` and
-  `ALPHA = select_fade` (or `ALPHA *= select_fade` for a layer that blends itself), the fade's
-  alpha in the uniform.
+## Measurements (MEASURED)
 
-So only the body's nearest surface is drawn, blended over what lies behind it: one even sheet. A
-blended layer (hair cards and the like) gets the colour pass only, its own alpha times the fade (a
-depth pass would let its clear texels hide what is behind them). A material that is not a
-ShaderMaterial this can rewrite keeps instance transparency, as before. At 255 every mesh gets its
-own material back. The pairs are made once per body.
+`OPENSRO_QA_PENDING_PROBE=1` selects the pending character, holds pose and camera, and saves one
+frame hidden (bg1), at 255 (O), at 0xcc (P), at 1/255 and hidden again (bg2).
+`OPENSRO_QA_SELECT_INSTANCE_FADE=1` draws the old way on the same build. QA_Aria (woman, dress,
+seated) pending, hour pinned (`OPENSRO_QA_TITLE_HOUR`), bloom off (`OPENSRO_QA_VIDEO=bloom=0`), box
+RX 7600 Forward+ 1280x720. Body pixels: |O-B| >= 90 (RGB sum) with a still background. Residuals are
+|P - prediction|, RGB sum. Script: `/var/tmp/r719/r719_alpha.py`.
 
-How this differs from the original, named:
-- **Draw order.** The original writes depth in its own mesh order, so where it happens to draw a
-  far piece before a near one the far piece shows faintly through. The prepass shows only the
-  nearest surface everywhere. OURS: Godot sorts transparent meshes by distance, so the original's
-  order cannot be reproduced; the prepass gives the result the original gives wherever its order
-  is near-first.
-- **Texture alpha.** For a layer without flag `0x40000000` the original modulates the texture's
-  alpha into the fade (READ above); OpenSRO's materials do not carry that flag word, and the
-  opaque PlayerPortrait shader never used texture alpha, so the colour pass's alpha is the fade's
-  alone for an opaque layer. MEASURED (`QA PENDING TEXTURE`, QA_Aria's 14 meshes): the clothes
-  have no alpha; the skin and face textures average 0.991, 0.9 % of texels below 0.5. So the term
-  changes nothing on the body or the dress. It would on the **weapon** (`sword_01`, mean 0.330, 77.1 %
-  below 0.5: a gloss mask) and a little on the **hair** (0.781, 21.9 %). The original would draw a
-  pending character's sword fainter than her body, unless its layer has flag `0x40000000`, which
-  was not read. Not reproduced; OPEN.
+| hour | drawing | one sheet (linear): median / p90 / p99 / >15 | original's mix 0.8 O + 0.2 B: median / p90 / p99 / >15 |
+|---|---|---|---|
+| 0.5833 | before | 1.4 / 33.7 / 181.5 / 19.4 % | 17.0 / 50.0 / 183.0 / 54.2 % |
+| 0.5833 | after | **1.0 / 4.5 / 25.3 / 1.7 %** | 13.6 / 31.6 / 56.2 / 45.3 % |
+| 0.75 | before | 1.3 / 32.6 / 173.7 / 18.0 % | 17.4 / 39.6 / 180.6 / 56.5 % |
+| 0.75 | after | **1.0 / 4.6 / 23.5 / 1.7 %** | 14.6 / 29.2 / 50.2 / 48.2 % |
+| 0.9583 | before | 1.5 / 17.7 / 118.4 / 12.0 % | 9.8 / 24.8 / 132.8 / 26.2 % |
+| 0.9583 | after | **1.1 / 4.1 / 23.9 / 1.4 %** | 8.2 / 19.4 / 40.4 / 17.2 % |
 
-It also works under the Compatibility renderer, which ignores instance transparency (round 676).
+- **One sheet.** After the fix the frame is one sheet blended in Godot's linear buffer to within 25
+  levels (RGB sum) in 99 % of body pixels at every hour; before, 12-19 % of pixels were off by
+  more than 15 (the pieces drawn over each other). The numbers no longer depend on the hour.
+- **The original's own blend** (DEPARTURE): after the fix 17-48 % of body pixels are more than 15
+  from `0.8 O + 0.2 B`, median 8-15; that is the linear-vs-display difference, largest at bright
+  hours.
+- **The 1/255 check** (the review's finding 1): at alpha 1/255, inside the body, no pixel is off the
+  background by more than 15 at any hour (the review measured 1,010 with the depth pass at -100);
+  257 / 151 / 29 pixels exceed the strict 1/255 allowance by a few levels, which the linear blend's
+  dark-end gain explains.
+- **The shadow** (`OPENSRO_QA_VIDEO=bloom=0,shadow_detail=2`, `OPENSRO_QA_PENDING_SHADOWS=1`, hour
+  0.5833): at 0xcc no pixel the body changes at 255 is back at the bare ground (0, as before the
+  round; the review measured 2,679 without the twins); 14 shadow twins. At 1/255 the shadow is
+  still at full strength in both old and new (3,190 / 3,189 pixels off by more than 15): kept, not
+  faded (OURS above).
+- **Fade-in frame time** (`OPENSRO_QA_SELECT_FADEIN_FRAMES=1`, the longest wall-clock frame over the
+  first 3.0 s after the scene is usable, movie-maker mode writing PNGs): before 188.8 / 192.4 /
+  196.6 / 196.2 ms, after 193.0 / 190.3 / 195.2 / 187.3 ms. The pairs add no measurable hitch above
+  the frame the scene already has at that point; the first "after" run (cold for the new shaders)
+  is 4 ms above its "before".
+- The first measurement of this round (before the review) did not pin the hour; its table and its
+  "four-fold" claim are withdrawn.
+
+## Texture alpha on the bodies tested (MEASURED, `QA PENDING TEXTURE`)
+
+Over each texture image (not its UV surface): QA_Aria's clothes have no alpha; skin and face
+average 0.991. The sword's texture (an atlas, `sword1_2_3.bmt`, layer flag `0x340`: 128 alpha test)
+averages 0.330 over the whole image, and the hair (`0x341`: alpha-tested, two-sided, not blended)
+0.781 -- those are mostly the cut-out areas, not what is drawn. The kept texels' alpha over the
+UV surface was not measured; with the fix they draw at `tex.a x 0.8` as the original's do.
+
+## Review fixes (independent review `ef5cab72`, `docs/rounds/party719_review.md`)
+
+| # | finding | fix |
+|---|---|---|
+| 1 | depth pass at -100 hides the water, overlays and shadow catcher behind her | depth at 0, colour at source + 1; the probe's 1/255 shot checks it: 0 pixels off by more than 15 |
+| 2 | no shadow from the pairs | shadows-only twin on the own materials (full strength, as before; OURS until the original's is read); measured with Shadow Detail on |
+| 3 | measurement compared different hours | re-measured at three pinned hours, bloom off, against the linear-sheet prediction; old table and "four-fold" withdrawn |
+| 4 | linear vs display blend | not feasible with the screen texture (it lacks the transparent background); labelled DEPARTURE with the numbers; the title corrected |
+| 5 | texture alpha, flag 0x40000000 | colour alpha = `tex.a x fade`, the fade alone for an env-mapped object (READ rule); ProgEquipPow OPEN; hair/sword wording corrected |
+| 6 | fade overrides a mod's blend | the colour pass is `blend_mix` whatever the layer's blend; a z-writing mod keeps a depth pass |
+| 7 | D3DFMT names | A8B8G8R8 / X8B8G8R8 |
+| 8 | stale header comment | points at `_apply_alpha`'s pairs |
+| 9 | unfade relied on the lerp landing on 255 | unfade at alpha >= 254.5 |
+| 10 | fade-in cost unmeasured | measured: no hitch above the existing ~190 ms frame; the depth pass keeps the full fragment (not shortened) |
 
 ## Regressions checked
 
-- **Only the select screen draws this way.** MEASURED by census: the select stage is the only
-  writer of `GeometryInstance3D.transparency` on a body in `client/scripts` (the other `transparency`
-  writes are material modes, plus `ground_probe.gd`'s own material). So in-game characters, sitting
-  with N included, and the world's appear and disappear fades (AppearFade's own twins, round
-  676/677) draw exactly as before. This round's diff touches only `CharacterSelect.gd`,
-  `frontend/charselect_stage.gd`, a new test and docs.
-- **The opaque characters on the select screen** keep their own materials. The probe's line per
-  capture counts the pending body's meshes: at 255 `own=14 fade_pass=0`, at 0xcc `own=0
-  fade_pass=14`, back to `own=14` at 255. Their meshes are never touched (`_apply_alpha` at 255 only
-  gives back what it took).
-- **The fade-in** (0 to 255 over 1.0 s on every list) runs through the same pairs and ends on the
-  originals.
-- **Compatibility renderer:** the pairs are ordinary materials, so the pending character is now
-  translucent there too (instance transparency is ignored by Godot 4.2's GL Compatibility, round
-  676). Not rendered under Compatibility this round.
+- Only the select screen draws this way: it is the only writer of `GeometryInstance3D.transparency`
+  on a body in `client/scripts`; in-game characters (sitting included) and the world's fades are not
+  on this path. This round also adds one `set_meta` per body material built from a BSR with an
+  env map (`SkinnedBsrAssembler`) and copies it in PlayerPortrait; nothing reads it but the select
+  screen.
+- The other characters keep their own materials; the pending body's meshes go `own=14 ->
+  fade_pass=14 (+14 shadow twins) -> own=14`.
 
 ## Tests
 
-- `client/scripts/frontend/charselect_fade_test.gd` (new, 15 checks): `fade_code` on PlayerPortrait's
-  real opaque and blended shaders. The depth pass keeps the layer's modes and alpha test, writes
-  depth and no colour. The colour pass blends without depth and takes the fade, not the texture
-  alpha, for an opaque layer. A blended layer gets no depth pass and multiplies its own alpha. A
-  canvas shader, or one with no `render_mode`, is not rewritten. The line lands at the end of
-  `fragment()`, not in a later function. 0 failures.
-- Box (`RENDER_DIR=/opt/opensro-client-r719`, lane lock): `check` 605 scripts and 9 scenes, ALL LOAD.
-  Full suite: 232 suites, 0 failing.
-- Live, box, stock `qa_shot.sh --scene res://scenes/CharacterSelect.tscn` on the shared lock, no
-  server (`OPENSRO_QA_FAKECHARS=3`): the table above. Frames: `/var/tmp/r719/{old,new,aold,anew}/`
-  (bg1, opaque, pending, bg2 .png) and crops `/var/tmp/r719/aold_crop.png`, `anew_crop.png`.
-- Perf gate (`perf_gate.sh --base dev --sites jangan --frames 12000`, base `f6989ea9`, 3 runs each,
-  RX 7600 Forward+). The change is select-screen only and the gate's views are in the world, so
-  this is the record that the world is untouched:
+- `charselect_fade_test.gd` (19 checks): both passes on PlayerPortrait's real shaders, the alpha
+  rule, a blended layer, an additive mod mixed under the fade and keeping its depth, shaders not
+  rewritten, the tail placement. 0 failures.
+- Box (`RENDER_DIR=/opt/opensro-client-r719`, lane lock): `check` and the full suite: see the
+  commit.
+- Perf gate: see the commit.
 
-  | jangan | base | head | verdict |
-  |---|---|---|---|
-  | frame ms | 1.46 | 1.47 | SAME |
-  | entry ms | 9429 | 9453 | SAME |
-  | freeze ms | 3273 | 3273 | SAME |
-  | hitches | 4 | 4 | SAME |
+## QA hooks (OURS)
 
-  The first two attempts never measured: lane 718's `qa_shot.sh` killed the base run mid-way (its
-  reap stops every Godot on the box), and a wait-for-idle loop timed out while other lanes kept
-  rendering.
-
-## QA hooks added (OURS)
-
-- `OPENSRO_QA_PENDING_PROBE=1`: the measurement above (CharacterSelect).
-- `OPENSRO_QA_PENDING_NAME=<name>`: that fake character is the pending one.
-- `OPENSRO_QA_SELECT_INSTANCE_FADE=1`: the drawing before this round, on one build.
+`OPENSRO_QA_PENDING_PROBE`, `OPENSRO_QA_PENDING_NAME`, `OPENSRO_QA_PENDING_SHADOWS`,
+`OPENSRO_QA_SELECT_INSTANCE_FADE`, `OPENSRO_QA_SELECT_FADEIN_FRAMES`.
 
 ## Open
 
-- The texture-alpha term on layers without flag `0x40000000` (the weapon, the hair), above.
-- The original's draw order within a body (the prepass shows only the nearest surface everywhere).
-- Tone-mapped blending (the residual spread above).
+- The original's blend in display values (DEPARTURE above).
+- The original's shadow of a character at 0xcc.
+- ProgEquipPow's `0x40000000` for enhanced gear (this client draws no ProgEquipPow).
+- The original's draw order within a body (the depth pass shows only the nearest surface).
