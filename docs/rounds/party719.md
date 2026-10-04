@@ -151,12 +151,14 @@ UV surface was not measured; with the fix they draw at `tex.a x 0.8` as the orig
 
 ## Tests
 
-- `charselect_fade_test.gd` (19 checks): both passes on PlayerPortrait's real shaders, the alpha
+- `charselect_fade_test.gd` (18 checks): both passes on PlayerPortrait's real shaders, the alpha
   rule, a blended layer, an additive mod mixed under the fade and keeping its depth, shaders not
   rewritten, the tail placement. 0 failures.
-- Box (`RENDER_DIR=/opt/opensro-client-r719`, lane lock): `check` and the full suite: see the
-  commit.
-- Perf gate: see the commit.
+- Box (`RENDER_DIR=/opt/opensro-client-r719`, lane lock): `check` 605 scripts and 9 scenes ALL
+  LOAD; full suite 232 suites, 0 failing.
+- Perf gate (`--base dev --sites jangan --frames 12000`, base `f6989ea9`, 3 runs; rerun because
+  `SkinnedBsrAssembler` and PlayerPortrait changed): frame 1.46 -> 1.48 ms, entry 9453 -> 9572 ms,
+  freeze 3275.5 -> 3293 ms, hitches 4 -> 4, all SAME.
 
 ## QA hooks (OURS)
 
