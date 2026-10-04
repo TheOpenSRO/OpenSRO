@@ -652,6 +652,10 @@ func member_distance_sq(m: PartyNet.Member) -> float:
 	return record_distance_sq(pl["region"], pl["local"], m.region, float(m.x), float(m.z))
 
 func set_faraway(s: QuickSlot, level: int) -> void:
+	# 0x6d86e0 sets the art on every call; here only a change re-arts the
+	# picture (the same picture, without a redraw a frame).
+	if level == s.faraway and s.status != null and s.status.visible == (level > 0):
+		return
 	s.faraway = level
 	if s.status == null:
 		return

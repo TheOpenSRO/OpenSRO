@@ -88,6 +88,7 @@ func _initialize() -> void:
 	_test_click_and_swap()
 	_test_buffs()
 	_test_buff_grid()
+	_time_tick()
 	print("hud_quick_party_test: %d failure(s)" % _failures)
 	quit(1 if _failures > 0 else 0)
 
@@ -251,6 +252,26 @@ func _test_buffs() -> void:
 	b.rebuild()
 	_check(not b.slot(0).buffs.visible, "the buff option off clears the row")
 	body.queue_free()
+	b.queue_free()
+
+## Not a check: what one frame of the board costs with a full party (7 slots,
+## every member placed by record against a known player position), printed
+## for the round's notes. The perf gate's views carry no party.
+func _time_tick() -> void:
+	var party := _party(8)
+	for i in party.members.size():
+		party.members[i].region = (97 << 8) | 168
+		party.members[i].x = 100 + 150 * i
+		party.members[i].z = 100
+	var b := _board(party)
+	b.player_region_local = func() -> Dictionary: return {"region": Vector2i(97, 168), "local": Vector3(100, 0, 100)}
+	b.selected_jid = func() -> int: return 3
+	var n := 2000
+	var t0 := Time.get_ticks_usec()
+	for i in n:
+		b.tick(i * 16)
+	var per := float(Time.get_ticks_usec() - t0) / n
+	print("TIMING: HudQuickParty.tick with %d slots: %.1f us a frame (mean of %d)" % [b.slot_count(), per, n])
 	b.queue_free()
 
 func _test_buff_grid() -> void:

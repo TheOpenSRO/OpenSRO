@@ -21424,13 +21424,34 @@ func _party_own_jid() -> int:
 	var own := _own_id()
 	return own & 0xffffffff if own >= 0 else 0
 
-## The spawned player a party JID or inviter id names, or null.
+## The spawned player a party JID or inviter id names, or null. The party
+## boxes ask for every member every frame (round 715), so a found character
+## id is remembered per JID and checked against _other_bodies before use;
+## a miss scans again.
+var _party_body_ids: Dictionary = {}
+## JID -> the msec of a scan that found nothing: a member not spawned here is
+## looked for again 250 ms later, not every frame (OURS: a member who spawns
+## gets their box's buffs and live position within a quarter second).
+var _party_body_misses: Dictionary = {}
+const PARTY_BODY_MISS_MS := 250
+
 func _party_body(jid: int) -> Node:
+	var known = _party_body_ids.get(jid)
+	if known != null and _other_bodies.has(known):
+		var kb = _other_bodies[known]
+		if kb != null and is_instance_valid(kb):
+			return kb as Node
+	var now := Time.get_ticks_msec()
+	if now - int(_party_body_misses.get(jid, -PARTY_BODY_MISS_MS)) < PARTY_BODY_MISS_MS:
+		return null
 	for id in _other_bodies:
 		if (int(id) & 0xffffffff) == jid:
 			var b = _other_bodies[id]
 			if b != null and is_instance_valid(b):
+				_party_body_ids[jid] = id
+				_party_body_misses.erase(jid)
 				return b as Node
+	_party_body_misses[jid] = now
 	return null
 
 func _party_is_spawned(world_id: int) -> bool:

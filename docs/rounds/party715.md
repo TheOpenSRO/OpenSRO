@@ -99,8 +99,8 @@ INFERRED, OURS, OPEN.
   selection, overlay and caution levels end to end, the click (member + sound), Ctrl+n's lookup,
   the swap, the buff row (spawned only, the option), and the viewer grid (and the target
   window's unchanged).
-- Box (`RENDER_DIR=/opt/opensro-client-c3`): `check` 588 scripts ALL LOAD; full suite 227
-  suites, 0 failing.
+- Box (`RENDER_DIR=/opt/opensro-client-c3`), at the final code: `check` 588 scripts and 9
+  scenes ALL LOAD; full suite 227 suites, 0 failing.
 
 ## Live
 
@@ -151,4 +151,29 @@ the client as ghidra), Aria and Bram in a party, Bram selected by the invite:
 
 ## Perf gate
 
-(below)
+`client/tools/perf_gate.sh --base 85e6c063 --sites jangan,reeds,cross --frames 12000 --env
+'OPENSRO_QA_VIDEO_STEPS=quality=0|quality=1'` (the working tree at `0ccd00a1`'s client code
+against `int/party`; 1280x720, Forward+ on the RX 7600, median of 3):
+
+```
+jangan  frame ms   base 1.50  head 1.50  (+0.0)  SAME
+jangan  entry ms   base 9694  head 9670  (-24.0)  SAME
+jangan  freeze ms  base 3337  head 3337  (+0.0)  SAME
+jangan  hitches    base 5  head 5  (+0.0)  SAME
+reeds   frame ms   base 1.40  head 1.40  (+0.0)  SAME
+reeds   entry ms   base 7180  head 7114  (-66.0)  SAME
+reeds   freeze ms  base 1980  head 1961  (-19.0)  SAME
+reeds   hitches    base 2  head 2  (+0.0)  SAME
+cross   frame ms   base 1.66  head 1.66  (+0.0)  SAME
+cross   entry ms   base 10395  head 10400  (+5.0)  SAME
+cross   freeze ms  base 3375  head 3356  (-19.0)  SAME
+cross   hitches    base 4  head 5  (+1.0)  SAME
+```
+
+The gate's views carry no party, so the board is hidden there and its own frame cost is not in
+these numbers. MEASURED separately (`hud_quick_party_test.gd`'s `TIMING` line, the box,
+headless): **26 us a frame** for a full party's board (7 slots, every member placed by record,
+the 1 s buff refresh included), after two changes made for it: the overlay picture is re-set only
+when the level changes, and World3D remembers each member's body by JID and, for a member not
+spawned here, scans the bodies at most every 250 ms (OURS) instead of every frame. Those two came
+after the gate run and touch only in-party frames.
