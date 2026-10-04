@@ -128,4 +128,8 @@ Strings are a u16 length and the bytes. All integers are little-endian.
 | `3068_expendable.hex` | 0x3068 | S->C | 10 | Bram got 5 of item 62 (an expendable) |
 | `3068_other.hex` | 0x3068 | S->C | 9 | Aria got item 3617 (equipment): u8 1 |
 | `3068_gold.hex` | 0x3068 | S->C | 16 | Bram got 1234 gold (item 1, 8-byte amount, OURS) |
+| `3056_kill.hex` | 0x3056 | S->C | 21 | a share from monster 4321: 1170 EXP, 249 skill EXP |
+| `3056_levelup.hex` | 0x3056 | S->C | 23 | monster 4321: 5000 EXP, 10 skill EXP, the level rose, 3 stat points |
+| `3056_lose.hex` | 0x3056 | S->C | 21 | no source: -2000 EXP (a death's loss) |
+| `304e_gold.hex` | 0x304e | S->C | 10 | kind 1: the gold total is now 1234567, shown |
 <!-- /cases -->

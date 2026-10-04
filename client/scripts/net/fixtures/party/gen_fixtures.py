@@ -187,6 +187,21 @@ case("3068_other", 0x3068, "S->C", "Aria got item 3617 (equipment): u8 1", u32(1
 case("3068_gold", 0x3068, "S->C", "Bram got 1234 gold (item 1, 8-byte amount, OURS)", u32(201) + u32(1) + u64(1234))
 
 
+# --- Round 716: the reward notices -------------------------------------------
+# party_protocol.md "Rewards": 0x3056 u32 source id, u64 EXP, u64 skill EXP,
+# u8 flags (0: no training camp), then u16 RemainStatPoint only when the level
+# rose (GS 0x4e583c..0x4e58fa, c:0x8a97c0). 0x304E kind 1: u8 1, u64 the new
+# gold total, u8 show (GS FUN_004e3fb0, c:0x8a70d0).
+def i64(v):
+    return struct.pack("<q", v)
+
+
+case("3056_kill", 0x3056, "S->C", "a share from monster 4321: 1170 EXP, 249 skill EXP", u32(4321) + i64(1170) + i64(249) + u8(0))
+case("3056_levelup", 0x3056, "S->C", "monster 4321: 5000 EXP, 10 skill EXP, the level rose, 3 stat points", u32(4321) + i64(5000) + i64(10) + u8(0) + u16(3))
+case("3056_lose", 0x3056, "S->C", "no source: -2000 EXP (a death's loss)", u32(0) + i64(-2000) + i64(0) + u8(0))
+case("304e_gold", 0x304e, "S->C", "kind 1: the gold total is now 1234567, shown", u8(1) + u64(1234567) + u8(1))
+
+
 def main():
     for name in os.listdir(HERE):
         if name.endswith(".hex"):

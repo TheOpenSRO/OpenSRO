@@ -1552,6 +1552,9 @@ var _hud_player_info: HudPlayerInfo
 ## login, and on every QA run that signs in before building the world.
 var _last_enter_world_hp := 0
 var _last_enter_world_max_hp := 0
+## The gold total the last stats reply carried (round 716): a 0x304E gold
+## update prints its rise over it, as c:0x8a70d0 does over the client's own.
+var _last_known_gold := -1
 
 func _seed_vitals_from_last_enter_world() -> void:
 	var entered = NetClient.last_enter_world_result
@@ -1782,6 +1785,8 @@ func _ready() -> void:
 	NetClient.monster_died.connect(_on_monster_died)
 	NetClient.object_status.connect(_on_object_status)
 	NetClient.level_up.connect(_on_level_up)
+	NetClient.exp_gained.connect(_on_exp_gained)
+	NetClient.gold_total.connect(_on_gold_total)
 	NetClient.loot_dropped.connect(_on_loot_dropped)
 	NetClient.ground_item_list_result.connect(_on_ground_item_list_result)
 	NetClient.ground_item_spawned.connect(_on_ground_item_spawned)
@@ -2145,13 +2150,10 @@ func _try_initialize_pk2_ui() -> void:
 				print("QA ATTACK RESULT: refused (%s)" % result.error)
 		if result != null and result.error == "":
 			_audio_set_hwan(result.berserk_active)
-			# Round 639: what the kill earned, in the system window, as
-			# retail's EXP handler writes it (exp_gain_lines).
-			if result.exp_gained > 0 or result.skill_exp_gained > 0:
-				var exp_t := _ui_text_table.get_text("UIIT_MSG_STATE_GAIN_EXP", "") if _ui_text_table != null else ""
-				var sexp_t := _ui_text_table.get_text("UIIT_MSG_STATE_GET_SKILL_EXP", "") if _ui_text_table != null else ""
-				for line in exp_gain_lines(result.exp_gained, result.skill_exp_gained, exp_t, sexp_t):
-					_log_system(line, HudSystemMessage.TYPE_GAIN)
+			# What the kill earned is printed from retail's 0x3056 now
+			# (round 716, _on_exp_gained), which every receiver of a share
+			# gets; the result's own EXP tail (round 639) is no longer read
+			# for it, so the killer's line is not printed twice.
 		if result != null and result.error == "" and _last_enter_world_max_hp > 0:
 			if _hud_player_info != null:
 				_hud_player_info.set_hp(result.player_hp, _last_enter_world_max_hp)
@@ -20809,10 +20811,24 @@ func _apply_player_race() -> void:
 	print("World3D: race emblem %s (%s Country %d)" % [_hud_player_info.race_mark_path(), code, int(_country_by_code[code])])
 
 ## Requests the character's full stats (level, exp, SP, HP max) so the HUD
-## gauges stay live. Cheap; called on enter-world, each kill, and level-up.
+## gauges stay live. Called on enter-world, each kill, a level-up, 0x3056 and
+## 0x304E; coalesced (round 716's review) so the two or three causes one kill
+## brings make one request, sent from a deferred call at the frame's end.
 func _request_world_stats() -> void:
+	if _world_stats_queued:
+		return
+	_world_stats_queued = true
+	call_deferred("_flush_world_stats")
+
+var _world_stats_queued := false
+## How many stats requests _flush_world_stats has sent (tests read it).
+var _world_stats_sent := 0
+
+func _flush_world_stats() -> void:
+	_world_stats_queued = false
 	var who := NetClient.current_character_name
 	if who != "" and NetClient.is_connected_to_server():
+		_world_stats_sent += 1
 		NetClient.character_stats(who)
 
 ## Applies the stats packet to the always-on HUD: the level label, the HP bar
@@ -20820,6 +20836,14 @@ func _request_world_stats() -> void:
 func _on_world_stats(stats: StatsNet.Stats) -> void:
 	if stats == null or stats.error != "":
 		return
+	# The 0x304E gold line's base (round 716's review): seeded by the first
+	# reply, then moved by gold messages and by replies this client asked for
+	# (OpenSRO's shop, trade and storage still change gold without a 0x304E,
+	# and the refresh they request keeps the base true). An unprompted push
+	# never moves it: a regen push can read a member's row between the gold
+	# split's credit and its 0x304E, and would swallow the line.
+	if _last_known_gold < 0 or NetClient.last_stats_reply_requested:
+		_last_known_gold = stats.gold
 	if OS.get_environment("OPENSRO_QA_STATS_LOG") != "":
 		print("QA STATS: t=%.2f tick=%d HP %d/%d MP %d/%d sitting=%s pelvis %s" % [_player_anim_time, _qa_tick,
 			stats.hp, stats.max_hp, stats.mp, stats.max_mp, str(_sit.sitting), _qa_pelvis_height()])
@@ -20906,6 +20930,47 @@ static func _printf_one(template: String, specs: Array, value: int) -> String:
 		if template.contains(String(spec)):
 			return template.replace(String(spec), str(value))
 	return template
+
+## Round 716: retail 0x3056 (Client_ApplyExpAndLevelUp 0x8a97c0). Every
+## receiver of a kill share gets it, so a party member who never hit sees its
+## gain too. The lines are the client's (RewardNoticeNet.exp_lines); the EXP
+## gauge and SP readout are refreshed from the server's stats rather than
+## advanced locally (OURS: one source of truth for the level arithmetic). The
+## level-up itself is still announced by OpLevelUp.
+func _on_exp_gained(g: RewardNoticeNet.ExpGain) -> void:
+	if g == null:
+		return
+	var gain_t := _ui_text_table.get_text("UIIT_MSG_STATE_GAIN_EXP", "") if _ui_text_table != null else ""
+	var lose_t := _ui_text_table.get_text("UIIT_MSG_STATE_LOSE_EXP", "") if _ui_text_table != null else ""
+	var skill_t := _ui_text_table.get_text("UIIT_MSG_STATE_GET_SKILL_EXP", "") if _ui_text_table != null else ""
+	for line in RewardNoticeNet.exp_lines(g, gain_t, lose_t, skill_t):
+		_log_system(line, HudSystemMessage.TYPE_GAIN)
+	print("World3D: 0x3056 from %d: EXP %d, skill EXP %d%s" % [g.source, g.exp, g.skill_exp,
+		(", level up, %d stat points" % g.stat_points) if g.level_up else ""])
+	_request_world_stats()
+
+## Round 716: retail 0x304E kind 1, the new gold total (c:0x8a70d0): a shown
+## update prints UIIT_MSG_STATE_GAIN_GOLD with the rise over the last total
+## this client knew, then the purse is refreshed from the server's stats.
+func _on_gold_total(total: int, show: bool) -> void:
+	var t := _ui_text_table.get_text("UIIT_MSG_STATE_GAIN_GOLD", "") if _ui_text_table != null else ""
+	if _last_known_gold >= 0:
+		var line := RewardNoticeNet.gold_line(_last_known_gold, total, show, t)
+		if line != "":
+			_log_system(line, HudSystemMessage.TYPE_GAIN)
+	_last_known_gold = total
+	_request_world_stats()
+
+## Round 716: 0x3068, an Item Auto Share item given to a member (c:0x873990).
+func _on_party_item_notice(recipient_jid: int, recipient_name: String, item_id: int, amount: int, is_gold: bool) -> void:
+	var item_name := _hud_panels.item_name(item_id) if _hud_panels != null else ""
+	var tt := func(key: String) -> String:
+		return _ui_text_table.get_text(key, "") if _ui_text_table != null else ""
+	var line := RewardNoticeNet.item_notice_line(recipient_jid == NetClient.party.own_jid, is_gold,
+		item_name, amount, recipient_name, tt.call("UIIT_MSG_STATE_GET_ITEM_EXPENDABLE"),
+		tt.call("UIIT_MSG_PARTYGET_ITEM_EXPENDABLE"), tt.call("UIIT_MSG_PARTYGET_GOLD"))
+	_log_system(String(line[0]), HudSystemMessage.TYPE_GAIN if int(line[1]) == 1 else HudSystemMessage.TYPE_PARTY)
+	print("World3D: 0x3068 item %d x%d to %s" % [item_id, amount, recipient_name])
 
 ## Spawns the real level-up burst on the player, sized to the player's own
 ## rendered height. Does nothing (beyond the message already logged) when the
@@ -21276,6 +21341,7 @@ func _wire_party_state() -> void:
 	if party.own_jid == 0:
 		party.own_jid = _party_own_jid()
 	party.notice.connect(_on_party_notice)
+	party.item_notice.connect(_on_party_item_notice)
 	party.invitation.connect(_on_party_invitation)
 	party.invitation_closed.connect(_on_party_invitation_closed)
 	NetClient.self_id_received.connect(_on_party_self_id)

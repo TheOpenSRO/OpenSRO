@@ -118,6 +118,10 @@ signal pick_up_result(result: GroundItemsNet.PickUpResult)
 ## The player's character just advanced a level: its new level and its total
 ## unspent stat points. Sent only to the character that levelled.
 signal level_up(new_level: int, stat_points: int)
+## Round 716: retail 0x3056, what a kill (or any award) gained this character.
+signal exp_gained(gain: RewardNoticeNet.ExpGain)
+## Round 716: retail 0x304E kind 1, the character's new gold total.
+signal gold_total(total: int, show: bool)
 signal learn_skill_result(ok: bool, reason: String)
 ## The same answer with the skill it was for (round 639): the result names no
 ## skill, so the ids are queued as the requests go out and matched in order
@@ -438,6 +442,7 @@ func disconnect_from_server() -> void:
 	_peer = null
 	_connected = false
 	_tls_handshaking = false
+	_stats_requests_pending = 0
 	_attack_targets_in_flight.clear()
 	_attack_types_in_flight.clear()
 	_pending_learns.clear()
@@ -583,12 +588,23 @@ func move_item(char_name: String, from_slot: int, to_slot: int) -> void:
 
 ## Asks for the character's own gold, vitals and combat numbers.
 func character_stats(char_name: String) -> void:
+	_stats_requests_pending += 1
 	_send(StatsNet.OP_STATS, StatsNet.encode_request(char_name))
+
+## Round 716's review: the stats replies this client asked for and has not
+## yet seen, so a reply can be told from the server's unprompted pushes (the
+## regen and status ticks). The 0x304E gold line's base moves only on gold
+## messages and on replies this client asked for, never on a push that may
+## carry a total the gold message has not yet announced.
+var _stats_requests_pending := 0
+## Whether the newest stats reply answered one of this client's requests.
+var last_stats_reply_requested := false
 
 ## Spends unspent stat points on Strength and/or Intellect. The server
 ## applies the engine's rule (the sum must fit the pool; plain increments)
 ## and answers with a character_stats_result carrying the new numbers.
 func spend_stat_points(char_name: String, str_points: int, int_points: int) -> void:
+	_stats_requests_pending += 1
 	_send(StatsNet.OP_SPEND_STAT, StatsNet.encode_spend_request(char_name, str_points, int_points))
 
 func list_equipment(char_name: String) -> void:
@@ -992,6 +1008,9 @@ func _dispatch(p: Packet) -> void:
 				last_inventory_capacity = r.capacity
 			inventory_move_result.emit(r.slots, r.error)
 		StatsNet.OP_STATS_RESULT:
+			last_stats_reply_requested = _stats_requests_pending > 0
+			if _stats_requests_pending > 0:
+				_stats_requests_pending -= 1
 			character_stats_result.emit(StatsNet.decode_result(p.data))
 		EquipmentNet.OP_RESULT:
 			var r := EquipmentNet.decode_result(p.data)
@@ -1199,8 +1218,19 @@ func _dispatch(p: Packet) -> void:
 					sm.character_id, sm.skill_id, sm.x, sm.y, sm.z])
 				skill_moved.emit(sm)
 		PartyNet.OP_CREATE_ACK, PartyNet.OP_INVITE_ACK, PartyNet.OP_JOIN_ACK, \
-				PartyNet.OP_PARTY_INFO, PartyNet.OP_REQUEST, PartyNet.OP_EVENT:
+				PartyNet.OP_PARTY_INFO, PartyNet.OP_REQUEST, PartyNet.OP_EVENT, \
+				PartyNet.OP_ITEM_NOTICE:
 			party.handle(p.opcode, p.data)
+		RewardNoticeNet.OP_EXP_GAIN:
+			var g := RewardNoticeNet.decode_exp_gain(p.data)
+			if g == null:
+				push_warning("NetClient: short 0x3056 (%d bytes) dropped" % p.data.size())
+			else:
+				exp_gained.emit(g)
+		RewardNoticeNet.OP_CHAR_INFO:
+			var gold := RewardNoticeNet.decode_gold(p.data)
+			if not gold.is_empty():
+				gold_total.emit(gold[0], gold[1])
 		GuildNet.OP_CREATE_RESULT:
 			var r := GuildNet.decode_result(p.data)
 			_keep_guild(r)

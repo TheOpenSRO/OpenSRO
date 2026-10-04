@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/OpenSRO/OpenSRO/server/internal/charmsg"
 )
 
 // fixtureDir is the golden fixtures' home (round 710), under client/ so the
@@ -116,6 +118,11 @@ func TestEncodersMatchTheFixtures(t *testing.T) {
 		"3068_expendable": ItemNotice{RecipientJID: 201, RefItemID: 62, Class: ItemNoticeExpendable, Amount: 5}.Encode(),
 		"3068_other":      ItemNotice{RecipientJID: 101, RefItemID: 3617, Class: ItemNoticeOther}.Encode(),
 		"3068_gold":       ItemNotice{RecipientJID: 201, RefItemID: 1, Class: ItemNoticeGold, Amount: 1234}.Encode(),
+		// Round 716: the reward notices (internal/charmsg).
+		"3056_kill":    charmsg.ExpGain{Source: 4321, Exp: 1170, SkillExp: 249}.Encode(),
+		"3056_levelup": charmsg.ExpGain{Source: 4321, Exp: 5000, SkillExp: 10, LevelUp: true, StatPoints: 3}.Encode(),
+		"3056_lose":    charmsg.ExpGain{Exp: -2000}.Encode(),
+		"304e_gold":    charmsg.EncodeGold(1234567, true),
 	}
 	files, _ := filepath.Glob(filepath.Join(fixtureDir, "*.hex"))
 	if len(files) != len(cases) {

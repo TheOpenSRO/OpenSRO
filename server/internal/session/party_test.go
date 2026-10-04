@@ -10,7 +10,9 @@ import (
 	"github.com/OpenSRO/OpenSRO/server/internal/account"
 	"github.com/OpenSRO/OpenSRO/server/internal/character"
 	"github.com/OpenSRO/OpenSRO/server/internal/gateway"
+	"github.com/OpenSRO/OpenSRO/server/internal/grounditem"
 	"github.com/OpenSRO/OpenSRO/server/internal/guild"
+	"github.com/OpenSRO/OpenSRO/server/internal/inventory"
 	"github.com/OpenSRO/OpenSRO/server/internal/party"
 	"github.com/OpenSRO/OpenSRO/server/internal/proto"
 	"github.com/OpenSRO/OpenSRO/server/internal/skill"
@@ -24,9 +26,12 @@ type partyWorld struct {
 	hub     *world.Hub
 	parties *party.Hub
 	chars   *character.MemStore
-	deps    PartyDeps
-	ids     map[string]int64
-	c       map[string]*chatClient
+	// ground is the ground-item hub behind GroundItemHandler (round 716's
+	// gold-split test drops piles into it).
+	ground *grounditem.Hub
+	deps   PartyDeps
+	ids    map[string]int64
+	c      map[string]*chatClient
 }
 
 func newPartyWorld(t *testing.T) *partyWorld {
@@ -51,8 +56,10 @@ func newPartyWorld(t *testing.T) *partyWorld {
 	}
 	skills := skill.NewMemStore()
 	w.deps = PartyDeps{Chars: chars, Hub: w.hub, Parties: w.parties, Guilds: guild.NewMemStore(), Skills: skills}
+	w.ground = grounditem.NewHub()
 	handle := gateway.Chain(LoginHandler(accounts), WorldHandler(chars, nil, w.hub), PartyHandler(w.deps),
-		ChatHandler(ChatDeps{Hub: w.hub, Parties: w.parties}))
+		ChatHandler(ChatDeps{Hub: w.hub, Parties: w.parties}),
+		GroundItemHandler(chars, w.hub, w.ground, inventory.NewMemStore(nil), w.parties))
 	worldGone := WorldDisconnectHandler(w.hub, nil)
 	partyGone := PartyDisconnectHandler(w.deps)
 	srv := &gateway.Server{Addr: freeAddr(t), Handle: handle, OnDisconnect: func(s *gateway.Session) { worldGone(s); partyGone(s) }}
