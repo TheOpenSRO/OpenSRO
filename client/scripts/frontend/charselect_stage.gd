@@ -59,6 +59,11 @@ class Drawn:
 	var then_type := -1
 	## The local bounding box of the bind pose, for the pick.
 	var bounds := AABB()
+	## The translucent pairs made for this body's materials (_fade_pair),
+	## by source material instance id, and the colour passes whose alpha
+	## follows the fade.
+	var fade_pairs := {}
+	var fade_colours: Array[ShaderMaterial] = []
 
 var drawn: Array = []  # of Drawn, in slot order
 var props := {}        # "box"/"europe"/"china"/"lizard" -> Node3D
@@ -541,6 +546,46 @@ func qa_set_alpha(d: Drawn, a: int) -> void:
 	d.alpha_t = CharSelectMath.MODEL_FADE_S
 	_apply_alpha(d)
 
+## QA: each of `d`'s meshes' texture -- its size, whether it has alpha and its
+## mean alpha over the image -- so whether the original's texture-alpha term
+## (FUN_00c428c0's MODULATE) would change anything can be judged.
+func qa_texture_alpha_report(d: Drawn) -> PackedStringArray:
+	var out := PackedStringArray()
+	if d.body == null:
+		return out
+	for mi in AppearFade.instances_of(d.body):
+		var mat := mi.material_override
+		if mat == null and mi.mesh != null and mi.mesh.get_surface_count() > 0:
+			mat = mi.get_active_material(0)
+		var tex: Texture2D = null
+		if mat is ShaderMaterial:
+			tex = (mat as ShaderMaterial).get_shader_parameter("tex") as Texture2D
+		var line := "%s: " % mi.name
+		if tex == null:
+			line += "no texture"
+		else:
+			var img := tex.get_image()
+			if img == null:
+				line += "texture with no image"
+			else:
+				if img.is_compressed():
+					img = img.duplicate() as Image
+					img.decompress()
+				var sum := 0.0
+				var low := 0
+				var n := 0
+				for y in range(0, img.get_height(), 4):
+					for x in range(0, img.get_width(), 4):
+						var a := img.get_pixel(x, y).a
+						sum += a
+						if a < 0.5:
+							low += 1
+						n += 1
+				line += "%dx%d format %d alpha %s mean %.3f below_0.5 %.1f%%" % [img.get_width(), img.get_height(),
+					img.get_format(), str(img.detect_alpha() != Image.ALPHA_NONE), sum / maxf(n, 1), 100.0 * low / maxf(n, 1)]
+		out.append(line)
+	return out
+
 ## QA: how `d`'s meshes draw now -- the counts of meshes on their own
 ## material, on a fade pass and on instance transparency.
 func qa_fade_report(d: Drawn) -> String:
@@ -574,19 +619,205 @@ func _tick(d: Drawn, delta: float) -> void:
 			return
 	d.body.pose(d.anim, t, d.anim_loop)
 
+## Draws `d` at its alpha (round 719). Below 255 each mesh draws through a
+## translucent pair of its own material (_fade_pair): a depth-only pass first
+## -- every depth pass of the body before any colour (FADE_DEPTH_PRIORITY) --
+## then its own look blended at the alpha where it is the nearest surface. So
+## the model is one even sheet over what lies behind it, as a character at
+## alpha 0xcc is in the original (MEASURED against the user's report; the
+## original's per-mesh state at 0xcc is not read: see party719.md).
+## GeometryInstance3D.transparency, used before, sent each mesh to Godot's
+## transparent pass with no depth written, sorted mesh by mesh: the far
+## pieces of the body blended over the near ones (a kneeling body's arms,
+## dress, face; MEASURED, party719.md). It stays only for a material with no
+## pair (not a ShaderMaterial, or a shader this cannot rewrite), and Godot
+## 4.2's Compatibility renderer ignores it (round 676). At 255 every mesh has
+## its own material back.
 func _apply_alpha(d: Drawn) -> void:
 	if d.body == null:
 		return
-	var tr := clampf(1.0 - d.alpha / 255.0, 0.0, 1.0)
 	# The page shows or hides the holder (show_page); the fade the body.
 	d.body.visible = d.alpha > 0.0
-	var stack: Array[Node] = [d.body]
-	while not stack.is_empty():
-		var n: Node = stack.pop_back()
-		for c in n.get_children():
-			stack.append(c)
-		if n is GeometryInstance3D:
-			(n as GeometryInstance3D).transparency = tr
+	var a := clampf(d.alpha / 255.0, 0.0, 1.0)
+	# OPENSRO_QA_SELECT_INSTANCE_FADE=1 (OURS, QA): the drawing before round
+	# 719, for a before/after on one build.
+	if _qa_instance_fade:
+		for n in d.body.find_children("*", "GeometryInstance3D", true, false):
+			(n as GeometryInstance3D).transparency = 1.0 - a
+		return
+	for mi in AppearFade.instances_of(d.body):
+		if a >= 1.0:
+			_unfade_mesh(mi)
+			mi.transparency = 0.0
+		elif not mi.has_meta(FADE_ORIGINAL_META) and not _fade_mesh(d, mi):
+			mi.transparency = 1.0 - a
+	for m in d.fade_colours:
+		m.set_shader_parameter("select_fade", a)
+
+var _qa_instance_fade := OS.get_environment("OPENSRO_QA_SELECT_INSTANCE_FADE") != ""
+
+## The render priority of the depth passes: below every colour pass, so the
+## whole body's depth is in before any of it is blended.
+const FADE_DEPTH_PRIORITY := -100
+
+## Puts `mi` on its materials' translucent pairs. False when one of them has
+## none (nothing is changed then).
+func _fade_mesh(d: Drawn, mi: MeshInstance3D) -> bool:
+	var swaps: Array = []
+	if mi.material_override != null:
+		swaps.append([-1, mi.material_override])
+	elif mi.mesh != null:
+		for s in range(mi.mesh.get_surface_count()):
+			var src := mi.get_active_material(s)
+			if src != null:
+				swaps.append([s, src])
+	if swaps.is_empty():
+		return false
+	var pairs: Array = []
+	for sw in swaps:
+		var pair := _fade_pair(d, sw[1] as Material)
+		if pair == null:
+			return false
+		pairs.append(pair)
+	var originals: Array = []
+	for i in range(swaps.size()):
+		var s: int = swaps[i][0]
+		originals.append([s, mi.material_override if s < 0 else mi.get_surface_override_material(s)])
+		if s < 0:
+			mi.material_override = pairs[i]
+		else:
+			mi.set_surface_override_material(s, pairs[i])
+	mi.set_meta(FADE_ORIGINAL_META, originals)
+	return true
+
+## Gives `mi` its own materials back.
+func _unfade_mesh(mi: MeshInstance3D) -> void:
+	if not mi.has_meta(FADE_ORIGINAL_META):
+		return
+	for o in mi.get_meta(FADE_ORIGINAL_META):
+		var s: int = o[0]
+		if s < 0:
+			mi.material_override = o[1]
+		else:
+			mi.set_surface_override_material(s, o[1])
+	mi.remove_meta(FADE_ORIGINAL_META)
+
+## The material a mesh of `d` draws with while translucent instead of `src`,
+## made once per source material: for an opaque layer its depth pass with the
+## colour pass as next_pass, for a blended layer its colour pass alone (a
+## blended layer's clear texels must not hide what is behind them). Null when
+## `src` is not a ShaderMaterial this can rewrite.
+func _fade_pair(d: Drawn, src: Material) -> Material:
+	var id := src.get_instance_id()
+	if d.fade_pairs.has(id):
+		return d.fade_pairs[id]
+	var made: Material = null
+	var sm := src as ShaderMaterial
+	if sm != null and sm.shader != null:
+		var colour_shader := fade_shader(sm.shader, false)
+		if colour_shader != null:
+			var colour := _copy_with(sm, colour_shader)
+			d.fade_colours.append(colour)
+			if sm.next_pass != null:
+				colour.next_pass = _fade_pair(d, sm.next_pass)
+			var depth_shader := fade_shader(sm.shader, true)
+			if depth_shader == null:
+				made = colour
+			else:
+				var depth := _copy_with(sm, depth_shader)
+				depth.render_priority = FADE_DEPTH_PRIORITY
+				depth.next_pass = colour
+				made = depth
+	d.fade_pairs[id] = made
+	return made
+
+## `src`'s parameters on `shader`, copied by parameter (round 706: a
+## duplicated object material drew brighter).
+static func _copy_with(src: ShaderMaterial, shader: Shader) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = shader
+	for u in src.shader.get_shader_uniform_list():
+		var n: String = u["name"]
+		m.set_shader_parameter(n, src.get_shader_parameter(n))
+	m.render_priority = src.render_priority
+	return m
+
+static var _fade_shaders := {}
+
+## The translucent rewrite of a spatial shader (round 719), made once per
+## shader and pass: null for a shader that is not spatial, has no fragment()
+## or render_mode, or -- for the depth pass -- already blends.
+## - depth pass: blend_mix and depth_draw_always, its fragment ending in
+##   ALPHA = 0.0, so it writes depth (alpha test included) and no colour;
+## - colour pass: blend_mix (or its own blend) and depth_draw_never, its
+##   fragment ending in ALPHA = select_fade -- or ALPHA *= select_fade for a
+##   shader that sets ALPHA itself. An opaque layer's texture alpha does not
+##   enter: the opaque material never used it (round 676's lesson).
+static func fade_shader(src: Shader, depth_only: bool) -> Shader:
+	var key := "%d/%s" % [src.get_instance_id(), depth_only]
+	if _fade_shaders.has(key):
+		return _fade_shaders[key]
+	var code := fade_code(src.code, depth_only)
+	var sh: Shader = null
+	if code != "":
+		sh = Shader.new()
+		sh.code = code
+	_fade_shaders[key] = sh
+	return sh
+
+static func fade_code(code: String, depth_only: bool) -> String:
+	if not code.contains("shader_type spatial;"):
+		return ""
+	var rm := RegEx.create_from_string("render_mode([^;]*);")
+	var m := rm.search(code)
+	if m == null:
+		return ""
+	var modes: Array[String] = []
+	var blends := false
+	for part in m.get_string(1).split(","):
+		var p := part.strip_edges()
+		if p == "" or p.begins_with("depth_draw_"):
+			continue
+		if p.begins_with("blend_"):
+			blends = true
+		modes.append(p)
+	if depth_only and blends:
+		return ""
+	if not blends:
+		modes.append("blend_mix")
+	modes.append("depth_draw_always" if depth_only else "depth_draw_never")
+	var frag := code.find("void fragment()")
+	if frag < 0:
+		return ""
+	var open := code.find("{", frag)
+	if open < 0:
+		return ""
+	var depth := 0
+	var close := -1
+	for i in range(open, code.length()):
+		var ch := code[i]
+		if ch == "{":
+			depth += 1
+		elif ch == "}":
+			depth -= 1
+			if depth == 0:
+				close = i
+				break
+	if close < 0:
+		return ""
+	var body := code.substr(open, close - open)
+	var tail: String
+	if depth_only:
+		tail = "\tALPHA = 0.0;\n"
+	elif RegEx.create_from_string("\\bALPHA\\s*=").search(body) != null:
+		tail = "\tALPHA *= select_fade;\n"
+	else:
+		tail = "\tALPHA = select_fade;\n"
+	var out := code.substr(0, close) + tail + code.substr(close)
+	out = out.substr(0, m.get_start()) + "render_mode " + ", ".join(modes) + ";" + out.substr(m.get_end())
+	if not depth_only:
+		out = out.replace("shader_type spatial;", "shader_type spatial;\nuniform float select_fade = 1.0;")
+	return out
 
 # --- Helpers ------------------------------------------------------------------------------
 

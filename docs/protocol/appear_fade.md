@@ -77,7 +77,11 @@ fading object can still be hit; its id is 0 by then. What the click does with it
 - Whether the shadow or attached effects take the compound's alpha. (The name plate does not: it
   is drawn at full alpha, `FUN_008b4d90(point, 0xff)`, READ in round 673.) Only `CCompChar`'s
   +0x4c is written; who reads it in the draw was not followed far enough
-  (`FUN_00aac913` picks a render mode from it: 0xff000000 -> 0x20, 0 -> 0x21; the env-map mod
+  (~~`FUN_00aac913` picks a render mode from it: 0xff000000 -> 0x20, 0 -> 0x21~~ -- **corrected in
+  round 719**: the code at `0xaacafd` compares a bitmap header's channel masks to pick a texture
+  format, D3DFMT 0x20/0x21, and has nothing to do with a model's alpha. The reader of `+0x4c` in the
+  draw is `CObjRendererVS::FUN_00c428c0`: below 0xff000000 it blends SRCALPHA/INVSRCALPHA with the
+  alpha in TFACTOR and leaves ZWRITE on -- `docs/rounds/party719.md`. The env-map mod
   `CRTModEnvMap::vslot_004` draws only when it is 0xff000000).
 - NPCs (CICNPC), guards (CICGuard) and pets (CICCos) fade in retail -- their vslot 0x6c is
   `FUN_009d17e0` -- but this client builds NPCs from the map's data at region load and has no
