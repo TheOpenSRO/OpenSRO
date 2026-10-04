@@ -712,6 +712,15 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 			gmTP(tp2)
 		case <-killC:
 			go func() {
+				// The -tp's GM reply may still be queued: drop it, or the
+				// /spawn would read it as its own.
+				for drained := false; !drained; {
+					select {
+					case <-b.other:
+					default:
+						drained = true
+					}
+				}
 				ar, err := b.kill(botKill.species)
 				if err != nil {
 					fmt.Printf("[%s] kill failed: %v\n", name, err)

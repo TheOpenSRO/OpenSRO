@@ -26,7 +26,7 @@ class ExpGain:
 	var stat_points: int = 0
 
 ## Reads a 0x3056. The client decides whether the stat-point u16 follows by
-## running the level arithmetic on its own EXP (0x8a9930..0x8a9960); this
+## running the level arithmetic on its own EXP (in c:0x8a97c0); this
 ## reader takes it from the bytes left (OURS, equal for every well-formed
 ## message). Null when the message is short.
 static func decode_exp_gain(data: PackedByteArray) -> ExpGain:
