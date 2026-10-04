@@ -139,7 +139,9 @@ static func encode_join(number: int) -> PackedByteArray:
 static func encode_answer(job_id: int, requester_jid: int, answer: int) -> PackedByteArray:
 	return PartyNet.Writer.new().u32(job_id).u32(requester_jid).u8(answer).data
 
-## 0xb069 / 0xb06a.
+## 0xb069 / 0xb06a. Every reply decoder returns null for a result byte other
+## than 1 or 2: the client's handlers test `== 1`, then `== 2`, and do nothing
+## else (`c:0x883f90`, `0x8841f0`, `0x8801e0`, `0x8847d0`; review M1).
 static func decode_entry_result(data: PackedByteArray) -> Result:
 	var r := PartyNet.Reader.new(data)
 	var res := Result.new()
@@ -149,6 +151,8 @@ static func decode_entry_result(data: PackedByteArray) -> Result:
 		res.ok = res.entry != null
 	elif kind == 2:
 		res.code = r.u16()
+	else:
+		return null
 	return null if r.bad else res
 
 ## 0xb06b.
@@ -161,6 +165,8 @@ static func decode_delete_result(data: PackedByteArray) -> Result:
 		res.number = r.u32()
 	elif kind == 2:
 		res.code = r.u16()
+	else:
+		return null
 	return null if r.bad else res
 
 ## 0xb06d to the requester (and the leader on success).
@@ -173,6 +179,8 @@ static func decode_join_result(data: PackedByteArray) -> Result:
 		res.outcome = r.u16()
 	elif kind == 2:
 		res.code = r.u16()
+	else:
+		return null
 	return null if r.bad else res
 
 static func read_row(r: PartyNet.Reader) -> Row:
@@ -212,6 +220,8 @@ static func decode_page(data: PackedByteArray) -> Page:
 			p.rows.append(row)
 	elif kind == 2:
 		p.code = r.u16()
+	else:
+		return null
 	return null if r.bad else p
 
 static func encode_page_ack(p: Page) -> PackedByteArray:

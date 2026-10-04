@@ -181,12 +181,20 @@ func _test_state_registration() -> void:
 	var banners: Array = []
 	st.register_done.connect(func() -> void: done[0] += 1)
 	st.banner.connect(func(k: String) -> void: banners.append(k))
+	st.own_race = func() -> int: return 1
+	st.party_size = func() -> int: return 3
 	st.register(_entry(0, 0x03, 0, 1, 110, "For open hunting"))
 	_check(sent.size() == 1 and sent[0][0] == 0x7069 and sent[0][1] == _fx("7069_register"), "Form party sends 0x7069")
 	st.handle(_fx("b069_ok"), PartyMatchNet.OP_REGISTER_ACK)
 	_check(st.registration != null and st.registration.number == 12 and st.registration.leader_name == "Aria",
 		"0xb069 OK makes the registration (entry 12)")
-	_check(done[0] == 1 and banners == ["UIIT_MSG_PARTYMATCH_RECORD_COMPLETE"], "the dialog closes and RECORD_COMPLETE shows")
+	_check(st.registration.race == 1 and st.registration.members == 3 and st.registration.time == 0,
+		"the echo's row takes the player's race and the party's count (0x97c530; review B3)")
+	# A page with no rows clears the registration (0x97ddf0 -> 0x97c3b0; review B4).
+	st.handle(_fx("b06c_empty"), PartyMatchNet.OP_PAGE_ACK)
+	_check(st.registration == null and st.registration_entry == null, "an empty page unpins the registration")
+	st.handle(_fx("b069_ok"), PartyMatchNet.OP_REGISTER_ACK)
+	_check(done[0] == 2 and banners == ["UIIT_MSG_PARTYMATCH_RECORD_COMPLETE", "UIIT_MSG_PARTYMATCH_RECORD_COMPLETE"], "each echo signals and shows RECORD_COMPLETE")
 	st.delete_entry(12)
 	_check(sent.size() == 2 and sent[1][1] == _fx("706b_delete"), "Delete entry sends 0x706b")
 	st.handle(_fx("b06b_ok"), PartyMatchNet.OP_DELETE_ACK)
@@ -223,6 +231,11 @@ func _test_state_join() -> void:
 	st.answer(reqs[0], PartyMatchNet.ANSWER_CLOSED)
 	_check(sent.back()[0] == 0x306e and sent.back()[1] == _fx("306e_closed"), "the answer echoes the job id and the requester")
 
+func _test_unknown_result() -> void:
+	_check(PartyMatchNet.decode_page(PackedByteArray([3, 0, 0, 0])) == null, "a page with result 3 is ignored (review M1)")
+	_check(PartyMatchNet.decode_join_result(PackedByteArray([0, 1, 0])) == null, "a join result 0 is ignored")
+	_check(PartyMatchNet.decode_delete_result(PackedByteArray([7, 0, 0, 0, 0])) == null, "a delete result 7 is ignored")
+
 func _test_state_auto() -> void:
 	var made := _state("Bram")
 	var st: PartyMatchState = made[0]
@@ -254,6 +267,7 @@ func _initialize() -> void:
 	_test_state_registration()
 	_test_state_join()
 	_test_state_auto()
+	_test_unknown_result()
 	if _failures == 0:
 		print("party_match_test: all checks passed")
 		quit(0)

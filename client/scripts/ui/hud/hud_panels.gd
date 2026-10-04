@@ -385,6 +385,7 @@ func close_party_invitation() -> void:
 ## controller, which also owns the matching boxes (PartyMatchWindow).
 var party_match_state: PartyMatchState = null
 var party_match: PartyMatchWindow = null
+var _match_ms_acc := 0.0
 var _zone_names: Dictionary = {}
 var _zone_names_loaded := false
 
@@ -396,6 +397,11 @@ func _ensure_party_match() -> PartyMatchWindow:
 		if NetClient.is_connected_to_server():
 			NetClient._send(op, payload)
 	party_match_state.registration_key = _party_match_key
+	# 0x97c530: the echo's row takes the player's race and the party's size.
+	party_match_state.own_race = func() -> int: return _skill_race
+	party_match_state.party_size = func() -> int:
+		var p := _party()
+		return p.members.size() if p.in_party and not p.members.is_empty() else 1
 	if not Engine.is_editor_hint():
 		party_match_state.register_with(NetClient)
 	party_match = PartyMatchWindow.new(_builder, party_match_state, _party(), self)
@@ -416,7 +422,17 @@ func _ensure_party_match() -> PartyMatchWindow:
 		_party().notice.emit(k, "", code if type == 0 else 0))
 	party_match.banner.connect(_party_match_banner)
 	party_match.whisper_requested.connect(_party_match_whisper)
+	party_match.settings_lock.connect(func(on: bool) -> void:
+		if party_pane != null:
+			party_pane.set_match_lock(on))
 	return party_match
+
+## Lets the matching controller go with this HudPanels (review B6): it is
+## hooked to NetClient.party, which outlives every HudPanels.
+func _exit_tree() -> void:
+	if party_match != null:
+		party_match.dispose()
+		party_match = null
 
 ## c:0x8841f0's compare: the leader's name in a party, the player's otherwise.
 func _party_match_key() -> String:
@@ -463,9 +479,9 @@ func _party_match_banner(key: String) -> void:
 	else:
 		print("HudPanels: party match banner %s" % key)
 
-## Whisper (0x7386e0): the chat line opened with a whisper to the leader
-## (the same "$name " KeyMap.reply_line builds for R; OURS: the original
-## opens its whisper window).
+## Whisper (0x7386e0 -> 0x777d10 -> 0x7ab470, READ): the chat input set to
+## L"$" + the name + L" " (0xdbb848, 0xe19330) and focused -- the same line
+## KeyMap.reply_line builds for R.
 func _party_match_whisper(leader_name: String) -> void:
 	var chat := get_parent().get_node_or_null("HudChat") if get_parent() != null else null
 	if chat != null and chat.has_method("open_with"):
@@ -2958,7 +2974,12 @@ func _doll_turn_tick(now_ms: int) -> void:
 func _process(_delta: float) -> void:
 	_doll_turn_tick(Time.get_ticks_msec())
 	if party_match != null:
-		party_match.advance(int(_delta * 1000.0))
+		# Whole milliseconds from an accumulated float (review M2: truncating
+		# each frame's delta ran the 2 s lock about 2.08 s at 60 fps).
+		_match_ms_acc += _delta * 1000.0
+		var whole := int(_match_ms_acc)
+		_match_ms_acc -= whole
+		party_match.advance(whole)
 
 ## The System window as CIFSystemWnd::Create (0x6f6610) leaves it, which is
 ## not ifsystemwnd.txt's geometry. After building the layout it:

@@ -26,17 +26,33 @@ class_name PartyMatchWindow
 ##   its page (0x732630);
 ## - Search filters the held records (0x73bb80 -> 0x73b780); nothing left
 ##   says UIIT_MSG_PARTYMATCH_PSEARCH_NORESULT (type 4);
-## - while the progress window is up, Join, Auto match, Form party, Change,
-##   Delete, Search and Refresh are disabled (0x738890: IDs 0xf, 0x11..0x14,
-##   0x37, 0x38) and come back when it closes, unless an auto-match run is
-##   going;
+## - while the joining window is up, Form, Auto match, Join, Search and
+##   Refresh are disabled, and its close enables those five outright
+##   (0x7390b0: 0x12, 0x11, 0xf, 0x37, 0x38); while an auto-match run lasts,
+##   Join, Auto, Form, Change, Delete, Search and Refresh are disabled
+##   (0x738890(1), from 0x73ed8f and 0x7384a0's tail at 0x73869f) until it
+##   ends (0x8848da / 0x884961 / 0x73edb0);
+## - the selection is the SLOT (+0x7ec, 0x73aab0): a click resets the old
+##   slot's bar, then selects the clicked slot only if it holds data -- an
+##   empty row deselects; Join and Whisper read the selected slot's number;
 ## - while the player's party is full and it holds the registration, the
 ##   client deletes it (0x7387c0; the line is DELETE_COMPLETE2).
 ##
-## OURS: the scroll bar (GDR_PARTYMATCH_SCROLL, a CIFVerticalScroll) is not
-## drawn -- the wheel over the list scrolls it a row; the column headers do
-## not sort; the row tooltip (0x740750) is not built; a new page clears the
-## Search filter (whether 0x73b5b0 re-applies it was not read).
+## - a new page empties both lists and refills them, the edits keeping their
+##   text and the filter not re-applied (0x73b5b0 -> 0x73aa40, 0x73b4d0);
+## - the scroll bar is a CIFVerticalScroll with ifverticalscroll.txt's parts
+##   (HudChat.ChatScroll); its range is the records less 12, registration
+##   pinned or not (0x73b5b0 / 0x73b780: `count - 0xc`); its length is the
+##   record's 232 (INFERRED: CIFPartyMatch::Create sets none, and the down
+##   arrow then ends at the list's bottom);
+## - Create sets control 0x2b's text to "~" (0x73af56 / 0x73af69, 0xd884b0)
+##   and the combo's text alignment to 2, right (0x73b062..0x73b073).
+##
+## OURS: the column headers do not sort (0x73e050); the row tooltip
+## (0x740750) is not built; the Title header's text and the blank DUMY cell
+## are set here because UiBuilder's 3-slice path drops a CIFBarWnd's text and
+## draws a literal "L" for GDR_PARTYMATCH_SLOTLIST_DUMY (the original shows it
+## empty: INFERRED a missing key that resolves to nothing).
 
 const ROWS := 12
 const SLOT_LAYOUT := "resinfo\\ifpartymatchslot.txt"
@@ -55,10 +71,17 @@ const BTN_CHANGE := "GDR_PARTYMATCH_MODIFY_BTN"
 const BTN_DELETE := "GDR_PARTYMATCH_DELETE_BTN"
 const BTN_SEARCH := "GDR_PARTYMATCH_SEARCH_SEARCH_BTN"
 const BTN_REFRESH := "GDR_PARTYMATCH_UPDATE_BTN"
-const PROGRESS_DISABLES := [BTN_JOIN, BTN_AUTO, BTN_FORM, BTN_CHANGE, BTN_DELETE, BTN_SEARCH, BTN_REFRESH]
+## 0x7390b0's five (the joining window).
+const PROGRESS_DISABLES := [BTN_FORM, BTN_AUTO, BTN_JOIN, BTN_SEARCH, BTN_REFRESH]
+## 0x738890(1)'s seven (an auto-match run).
+const AUTO_DISABLES := [BTN_JOIN, BTN_AUTO, BTN_FORM, BTN_CHANGE, BTN_DELETE, BTN_SEARCH, BTN_REFRESH]
+const SCROLL_LENGTH := 232.0
 
-## A whisper to that party's leader (0x7386e0).
+## A whisper to that party's leader (0x7386e0 -> 0x7ab470: the chat line
+## "$name " focused, READ).
 signal whisper_requested(leader_name: String)
+## Party matching's lock on the party window's Set (CIFParty 0x6d5ab0).
+signal settings_lock(on: bool)
 ## A line for the system message window: key, code, type.
 signal notice(key: String, code: int, type: int)
 ## A line for the warning banner.
@@ -87,8 +110,13 @@ var _slots: Array[Control] = []
 ## The records shown, after the Search filter (null: no filter).
 var _filtered = null
 var _scroll := 0
-## The selected record's entry number, 0 when none.
+## The selected slot (+0x7ec), -1 when none.
+var selected_slot := -1
+## The selected slot's entry number (slot+0x36c), 0 when none.
 var selected_number := 0
+var _scroll_bar: Control
+## The joining window's five are off (0x7390b0).
+var _progress_up := false
 var refresh_locked_ms := 0
 var _combo: OptionButton
 
@@ -107,11 +135,26 @@ func _init(builder: UiBuilder, match_state: PartyMatchState, party_state: PartyS
 	state.paged.connect(on_page)
 	state.notice.connect(func(k: String, c: int, t: int) -> void: notice.emit(k, c, t))
 	state.banner.connect(func(k: String) -> void: banner.emit(k))
-	state.register_done.connect(_close_register)
+	state.register_done.connect(refresh)
 	state.join_request.connect(show_join_request)
 	state.join_finished.connect(_on_join_finished)
+	state.removed.connect(_on_removed)
+	state.settings_lock.connect(_on_settings_lock)
 	if party != null:
 		party.changed.connect(_on_party_changed)
+
+## Lets go of everything this controller hooked (HudPanels' exit): the party
+## state is NetClient's and lives for the process, so a controller left
+## connected to it would act on every later party change (review B6).
+func dispose() -> void:
+	if party != null and party.changed.is_connected(_on_party_changed):
+		party.changed.disconnect(_on_party_changed)
+	for sig in state.get_signal_list():
+		for c in state.get_signal_connection_list(sig["name"]):
+			state.disconnect(sig["name"], c["callable"])
+	for b in [register_box, auto_box, progress_box, req_join_box, confirm_box]:
+		_close_box(b)
+	window = null
 
 # --- The window --------------------------------------------------------------
 
@@ -124,11 +167,41 @@ func attach(win: Control) -> void:
 		_build_slots()
 		_build_search()
 		_wire_buttons()
+		_build_scroll()
+		window.visibility_changed.connect(_on_window_visibility)
 	refresh()
 
-## The window was shown: page 0 (0x73b1ff).
+## The window was shown: page 0 (0x73b1ff), and Set locked (0x79c252).
 func on_shown() -> void:
 	state.request_page(0)
+	settings_lock.emit(true)
+
+## The window's close (0x79c170(0)): refused while the joining window is up
+## (0x732ae0); else its children go with it (the register, auto and joining
+## boxes are children 105, 110 and 100) and, with no registration, Set comes
+## back (0x79c2fd).
+func _on_window_visibility() -> void:
+	if window == null or window.visible:
+		return
+	if progress_box != null and is_instance_valid(progress_box) and not progress_box.is_queued_for_deletion():
+		window.call_deferred("show")
+		return
+	_close_box(register_box)
+	_close_box(auto_box)
+	register_box = null
+	auto_box = null
+	if state.registration == null:
+		settings_lock.emit(false)
+
+func window_open() -> bool:
+	return window != null and window.visible
+
+func _on_settings_lock(on: bool) -> void:
+	# The 0xb06b of the own entry enables Set only out of a party with the
+	# window closed (0x880268).
+	if not on and (_in_party() or window_open()):
+		return
+	settings_lock.emit(on)
 
 func node(control_name: String) -> Control:
 	if window == null:
@@ -185,14 +258,54 @@ func _build_search() -> void:
 	if host_combo != null and _combo == null:
 		if host_combo.size == Vector2.ZERO:
 			host_combo.size = Vector2(74, 20)
-		# CIFComboBox drawn with the Option window's combo pieces (OURS: the
-		# two classes' art is assumed the same, com_blacksquare_ and the
-		# arrow, not read for CIFComboBox).
+		# CIFComboBox::vslot_010 (0x6327f0) builds the same pieces as the
+		# Option page's combo: com_qst_downarrow_button.ddj 20 wide,
+		# com_blacksquare_, the fill 0xff000000 (READ, round 714's review).
 		_combo = OptionVideoPage.new(null, _builder, null)._make_combo(host_combo)
 		if _combo != null:
+			_combo.alignment = HORIZONTAL_ALIGNMENT_RIGHT
 			for i in 5:
 				_combo.add_item(_text(PartyMatchNet.PURPOSE_KEYS[i], PartyMatchNet.PURPOSE_FALLBACKS[i]), i)
 			_combo.select(PartyMatchNet.PURPOSE_ALL)
+	var div := node("GDR_PARTYMATCH_SEARCH_LEVEL_DIV_STA")
+	if div != null and _builder != null:
+		_builder.set_static_text(div, "~")
+	var subject := node("GDR_PARTYMATCH_SLOTLIST_SUBJECT")
+	if subject != null and subject.get_node_or_null("HeaderText") == null:
+		var lbl := Label.new()
+		lbl.name = "HeaderText"
+		lbl.text = _text("UIIT_STT_LETTER_TITLE", "Title")
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		lbl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if _builder != null and _builder.font_at(0) != null:
+			lbl.add_theme_font_override("font", _builder.font_at(0))
+		lbl.add_theme_font_size_override("font_size", UiBuilder.FONT_SIZES[0])
+		subject.add_child(lbl)
+	var dumy := node("GDR_PARTYMATCH_SLOTLIST_DUMY")
+	if dumy != null and _builder != null:
+		_builder.set_static_text(dumy, "")
+
+func _build_scroll() -> void:
+	var host_scroll := node("GDR_PARTYMATCH_SCROLL")
+	if host_scroll == null or _scroll_bar != null:
+		return
+	var bar := HudChat.ChatScroll.new()
+	bar.name = "MatchScroll"
+	if _builder != null:
+		bar.up_texture = _builder.load_texture(HudChat.ARROW_UP_DDJ)
+		bar.down_texture = _builder.load_texture(HudChat.ARROW_DOWN_DDJ)
+		bar.bar_texture = _builder.load_texture(HudChat.SCROLL_BAR_DDJ)
+		bar.thumb_texture = _builder.load_texture(HudChat.SCROLL_THUMB_DDJ)
+	bar.length = SCROLL_LENGTH
+	bar.position = Vector2(0, -HudChat.SCROLL_BUTTON.y)
+	bar.size = Vector2(HudChat.SCROLL_BUTTON.x, HudChat.SCROLL_BUTTON.y * 3 + SCROLL_LENGTH)
+	bar.moved.connect(func(pos: int) -> void:
+		_scroll = pos
+		refresh())
+	host_scroll.add_child(bar)
+	_scroll_bar = bar
 
 func _wire_buttons() -> void:
 	var map := {BTN_JOIN: press_join, BTN_WHISPER: press_whisper, BTN_AUTO: press_auto, BTN_FORM: press_form,
@@ -229,7 +342,7 @@ func shown_rows() -> Array:
 	if state.registration != null:
 		out.append(state.registration)
 	var recs := records()
-	start = clampi(_scroll, 0, maxi(0, recs.size() - (ROWS - out.size())))
+	start = clampi(_scroll, 0, scroll_max())
 	for i in range(start, recs.size()):
 		if out.size() >= ROWS:
 			break
@@ -240,12 +353,18 @@ func refresh() -> void:
 	if window == null:
 		return
 	var rows := shown_rows()
+	# 0x740d30: a slot the fill leaves empty drops the selection.
+	if selected_slot >= rows.size():
+		selected_slot = -1
+	selected_number = (rows[selected_slot] as PartyMatchNet.Row).number if selected_slot >= 0 else 0
 	for i in ROWS:
 		var slot := _slots[i] if i < _slots.size() else null
 		if slot == null:
 			continue
 		var row: PartyMatchNet.Row = rows[i] if i < rows.size() else null
-		_fill_slot(slot, row, row != null and row == state.registration)
+		_fill_slot(slot, row, row != null and row == state.registration, i == selected_slot)
+	if _scroll_bar != null:
+		_scroll_bar.call("set_range", scroll_max(), clampi(_scroll, 0, scroll_max()))
 	var spin := node("GDR_PARTYMATCH_SPIN_PAGE")
 	if spin != null:
 		UiBuilder.set_spin_range(spin, 0, maxi(0, state.page_count - 1))
@@ -253,10 +372,9 @@ func refresh() -> void:
 		UiBuilder._spin_refresh(spin)
 	update_buttons()
 
-func _fill_slot(slot: Control, row: PartyMatchNet.Row, own: bool) -> void:
+func _fill_slot(slot: Control, row: PartyMatchNet.Row, own: bool, selected: bool) -> void:
 	var s := slot.get_node_or_null("MatchSlot")
 	var sel := s.get_node_or_null("SelectBar") as CanvasItem if s != null else null
-	var selected := row != null and row.number == selected_number and selected_number != 0
 	if sel != null:
 		sel.visible = selected
 		var plain := s.get_node_or_null("GDR_PARTYMATCH_SLOT_SELECT") as CanvasItem
@@ -278,7 +396,12 @@ func _fill_slot(slot: Control, row: PartyMatchNet.Row, own: bool) -> void:
 		if lbl != null:
 			lbl.add_theme_color_override("font_color", OWN_ROW_COLOR if own else Color.WHITE)
 			if n == "GDR_PARTYMATCH_SLOT_SUBJECT":
+				# 0x8b47c0(.., 0x12e, 1): fitted to 302 px with "..." when
+				# cut (L"..." at 0xe17a40), READ; the static is 306 wide.
 				lbl.clip_text = true
+				lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+				lbl.custom_minimum_size.x = 0
+				lbl.size.x = 302
 	var mark := s.get_node_or_null("GDR_PARTYMATCH_SLOT_MARK") as Control
 	if mark != null:
 		var icon := mark.get_node_or_null("TypeIcon") as TextureRect
@@ -315,8 +438,9 @@ func owns_registration() -> bool:
 	return state.registration != null and state.registration.leader_name == _own_name()
 
 func enabled(control_name: String) -> bool:
-	var busy := progress_box != null and is_instance_valid(progress_box)
-	if busy and control_name in PROGRESS_DISABLES:
+	if _progress_up and control_name in PROGRESS_DISABLES:
+		return false
+	if state.auto_running and control_name in AUTO_DISABLES:
 		return false
 	match control_name:
 		BTN_JOIN, BTN_AUTO:
@@ -336,6 +460,13 @@ func enabled(control_name: String) -> bool:
 	return true
 
 func update_buttons() -> void:
+	# 0x7384a0's tail re-arms timer 10 for 2000 ms (0x7386a4): a Refresh lock
+	# that is running restarts with every rules pass (READ).
+	if refresh_locked_ms > 0:
+		refresh_locked_ms = REFRESH_COOLDOWN_MS
+	_apply_buttons()
+
+func _apply_buttons() -> void:
 	for n in [BTN_JOIN, BTN_WHISPER, BTN_AUTO, BTN_FORM, BTN_CHANGE, BTN_DELETE, BTN_SEARCH, BTN_REFRESH]:
 		var b := node(n) as BaseButton
 		if b != null:
@@ -357,27 +488,26 @@ func _on_list_input(e: InputEvent) -> void:
 	if mb != null and mb.pressed and mb.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
 		scroll_by(-1 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1)
 
-## A click on a row with data selects it (0x73aab0); an empty row does not.
+## A click (0x73aab0): the old slot's bar off, then the clicked slot
+## selected if it holds data; an empty slot leaves nothing selected.
 func select_slot(i: int) -> void:
 	var rows := shown_rows()
-	if i < 0 or i >= rows.size():
-		return
-	selected_number = (rows[i] as PartyMatchNet.Row).number
+	selected_slot = i if i >= 0 and i < rows.size() else -1
 	refresh()
 
 func selected_row() -> PartyMatchNet.Row:
-	if selected_number == 0:
+	var rows := shown_rows()
+	if selected_slot < 0 or selected_slot >= rows.size():
 		return null
-	if state.registration != null and state.registration.number == selected_number:
-		return state.registration
-	for r in records():
-		if r.number == selected_number:
-			return r
-	return null
+	return rows[selected_slot]
+
+## The scroll range: the records less 12, the pinned row or not (READ, see
+## the header).
+func scroll_max() -> int:
+	return maxi(0, records().size() - ROWS)
 
 func scroll_by(step: int) -> void:
-	var room := ROWS - (1 if state.registration != null else 0)
-	_scroll = clampi(_scroll + step, 0, maxi(0, records().size() - room))
+	_scroll = clampi(_scroll + step, 0, scroll_max())
 	refresh()
 
 # --- Buttons -------------------------------------------------------------------
@@ -396,6 +526,8 @@ func press_join() -> void:
 func press_whisper() -> void:
 	var row := selected_row()
 	if row == null or row.leader_name == _own_name():
+		return
+	if state.registration != null and row.number == state.registration.number:
 		return
 	whisper_requested.emit(row.leader_name)
 
@@ -474,14 +606,10 @@ func _open_register(from_entry: PartyMatchNet.Entry) -> void:
 		if modify:
 			state.modify(e)
 		else:
-			state.register(e))
+			state.register(e)
+		register_box = null)
 	register_box.refused.connect(func(k: String) -> void: notice.emit(k, 0, 4))
 	_place_box(register_box)
-
-func _close_register() -> void:
-	_close_box(register_box)
-	register_box = null
-	refresh()
 
 ## Delete entry (0x738a30 -> 0x738940): the question, then 0x706b.
 func press_delete() -> void:
@@ -503,15 +631,40 @@ func search_filter() -> Array[PartyMatchNet.Row]:
 	var hi_edit := node("GDR_PARTYMATCH_SEARCH_MAX_LEVEL_EDIT") as LineEdit
 	var name := name_edit.text if name_edit != null else ""
 	var purpose := _combo.get_selected_id() if _combo != null and _combo.selected >= 0 else PartyMatchNet.PURPOSE_ALL
-	var lo := int(lo_edit.text) if lo_edit != null and lo_edit.text.is_valid_int() else PartyMatchNet.LEVEL_MIN
-	var hi := int(hi_edit.text) if hi_edit != null and hi_edit.text.is_valid_int() else PartyMatchNet.LEVEL_MAX
+	var lv := search_levels()
+	var lo: int = lv[0]
+	var hi: int = lv[1]
 	var out: Array[PartyMatchNet.Row] = []
 	for r in state.rows:
 		if PartyMatchNet.row_matches(r, name, purpose, lo, hi):
 			out.append(r)
 	return out
 
+## 0x73b780's levels: min = atoi, below 2 -> 1; max = atoi, 0 -> 110.
+func search_levels() -> Array[int]:
+	var lo_edit := node("GDR_PARTYMATCH_SEARCH_MIN_LEVEL_EDIT") as LineEdit
+	var hi_edit := node("GDR_PARTYMATCH_SEARCH_MAX_LEVEL_EDIT") as LineEdit
+	var lo := _atoi(lo_edit.text) if lo_edit != null else 0
+	var hi := _atoi(hi_edit.text) if hi_edit != null else 0
+	if lo < 2:
+		lo = PartyMatchNet.LEVEL_MIN
+	if hi == 0:
+		hi = PartyMatchNet.LEVEL_MAX
+	return [lo, hi]
+
+static func _atoi(t: String) -> int:
+	var digits := ""
+	for ch in t.strip_edges():
+		if ch < "0" or ch > "9":
+			break
+		digits += ch
+	return int(digits) if digits != "" else 0
+
+## Search (0x73b780): nothing at all when min > max.
 func press_search() -> void:
+	var lv := search_levels()
+	if lv[0] > lv[1]:
+		return
 	var out := search_filter()
 	if out.is_empty():
 		notice.emit("UIIT_MSG_PARTYMATCH_PSEARCH_NORESULT", 0, 4)
@@ -526,7 +679,7 @@ func press_refresh() -> void:
 	var spin := node("GDR_PARTYMATCH_SPIN_PAGE")
 	state.request_page(UiBuilder.spin_value(spin) if spin != null else 0)
 	refresh_locked_ms = REFRESH_COOLDOWN_MS
-	update_buttons()
+	_apply_buttons()
 
 ## Ticks the Refresh cooldown (HudPanels' _process).
 func advance(ms: int) -> void:
@@ -534,11 +687,21 @@ func advance(ms: int) -> void:
 		refresh_locked_ms -= ms
 		if refresh_locked_ms <= 0:
 			refresh_locked_ms = 0
-			update_buttons()
+			_apply_buttons()
 
 func on_page() -> void:
 	_filtered = null
 	_scroll = 0
+
+## 0xb06b for another number: the record leaves the displayed list too
+## (0x73a700).
+func _on_removed(number: int) -> void:
+	if _filtered != null:
+		for i in (_filtered as Array).size():
+			if (_filtered[i] as PartyMatchNet.Row).number == number:
+				(_filtered as Array).remove_at(i)
+				break
+	refresh()
 
 # --- Boxes ---------------------------------------------------------------------
 
@@ -549,17 +712,31 @@ func open_progress(own: String, party_name: String) -> void:
 		progress_box.queue_free()
 		progress_box = null
 		return
-	progress_box.finished.connect(func() -> void:
-		progress_box = null
-		update_buttons())
+	progress_box.finished.connect(_on_progress_closed)
 	_place_box(progress_box)
-	update_buttons()
+	_progress_up = true
+	_apply_buttons()
+
+## The joining window's close (0x7390b0(0)): its five enabled outright, or,
+## with an auto run going, the run's disable (0x738890(1)).
+func _on_progress_closed() -> void:
+	progress_box = null
+	_progress_up = false
+	if state.auto_running:
+		_apply_buttons()
+		return
+	for n in PROGRESS_DISABLES:
+		var b := node(n) as BaseButton
+		if b != null:
+			b.disabled = n == BTN_REFRESH and refresh_locked_ms > 0
 
 func _on_join_finished() -> void:
 	if progress_box != null and is_instance_valid(progress_box):
 		progress_box.finish()
-	progress_box = null
-	update_buttons()
+	else:
+		# An auto run's join opens no joining window (0x786e70); its end
+		# brings the buttons back (0x738890(0)).
+		_apply_buttons()
 
 ## The leader's popup (S->C 0x706d).
 func show_join_request(q: PartyMatchNet.JoinRequest) -> void:
@@ -588,6 +765,8 @@ func _close_box(box: PartyMatchBox) -> void:
 
 ## 0x7387c0: a full party's leader deletes its own registration.
 func _on_party_changed() -> void:
+	# Its only caller is UI_PARTY 0x886b10's member-joined branch (0x886c79);
+	# testing on every party change is equivalent.
 	if party != null and party.in_party and party.is_leader() and party.is_full() and owns_registration() \
 			and not state.deleted_for_full:
 		state.delete_entry(state.registration.number, true)

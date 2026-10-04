@@ -350,7 +350,7 @@ party").**
 
 | control | shows |
 |---|---|
-| 21 DESC_PML | `UIIT_STT_PARTYMATCH_JOIN_REQUEST` with the requester's name: "[%s]has requested to join this party. Confirm?", the name in (255,239,218) by the string's own `<font>` |
+| 21 DESC_PML | `UIIT_STT_PARTYMATCH_JOIN_REQUEST` with the requester's name: "[%s]has requested to join this party. Confirm?", the name in (239,218,164): the string's own `<font color="255,239,218,164">`, whose four numbers are A,R,G,B (MEASURED, round 714 review B2: the textuisystem census, screenshot 08) |
 | 34 / 35 (88,121 / 130,121, 32x32, on `pt_icon_frame02.ddj`) | the requester's two masteries' icons, from the two mastery ids of the `0x706d` message (`+0x7c4`/`+0x7c8`, not the member record's) (`0x73fed0` → `0x937010` → the mastery's icon), with the mastery name as the tooltip; an id with no record leaves the frame empty |
 | 30 LEVEL | `%d` |
 | 31 RACE | CHN / EUR from the requester's model id (`+0x9c`) |

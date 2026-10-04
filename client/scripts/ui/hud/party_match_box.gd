@@ -182,17 +182,20 @@ func close() -> void:
 	queue_free()
 
 ## The `<sml2>` markup the PML strings carry (MEASURED in textuisystem:
-## `<sml2>`, `<font color="r,g,b,a">`, `</font>`, `<br>`), as BBCode for a
-## RichTextLabel. The colour's fourth number is dropped (INFERRED: the
-## user's screenshots 08/09 draw the name opaque).
+## `<sml2>`, `<font color="a,r,g,b">`, `</font>`, `<br>`), as BBCode for a
+## RichTextLabel. The four numbers are A, R, G, B (MEASURED, round 714's
+## review: every `<font color>` in textuisystem starts with 255, e.g. 16x
+## "255,0,0,0", black as ARGB and an invisible red as RGBA; resinfo's
+## FontColor uses the same order; screenshot 08's "[Dasha]" measures
+## (230,219,171) against ARGB's (239,218,164)).
 static func sml2_to_bbcode(s: String) -> String:
 	var out := s.replace("<sml2>", "").replace("</sml2>", "").replace("<br>", "\n")
 	out = out.replace("[", "\u0001").replace("]", "\u0002").replace("\u0001", "[lb]").replace("\u0002", "[rb]")
 	var re := RegEx.new()
-	re.compile("<font color=\"(\\d+),(\\d+),(\\d+)(?:,\\d+)?\">")
+	re.compile("<font color=\"(\\d+),(\\d+),(\\d+),(\\d+)\">")
 	for m in re.search_all(out):
-		var c := Color8(int(m.get_string(1)), int(m.get_string(2)), int(m.get_string(3)))
-		out = out.replace(m.get_string(0), "[color=#%s]" % c.to_html(false))
+		var c := Color8(int(m.get_string(2)), int(m.get_string(3)), int(m.get_string(4)), int(m.get_string(1)))
+		out = out.replace(m.get_string(0), "[color=#%s]" % c.to_html(c.a8 < 255))
 	return out.replace("</font>", "[/color]")
 
 ## A RichTextLabel over a CIFPML record, centred (INFERRED from screenshots

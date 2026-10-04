@@ -23,8 +23,16 @@ signal register_done
 ## The leader's join request to show (S->C 0x706d).
 signal join_request(request: PartyMatchNet.JoinRequest)
 ## The joining progress window should close (end of 0xb06d, c:0x884a0c ->
-## 0x7390b0).
+## 0x7390b0(0), the 0 READ: `push ebx` at 0x884a01, ebx the null the window
+## pointer is tested against at 0x8849b8).
 signal join_finished
+## A record left the list on a 0xb06b for another number: the window's
+## displayed (filtered) list drops it too (0x73a700).
+signal removed(number: int)
+## Party matching's lock on the party window's Set: true on the 0xb069 OK
+## (0x884040); false on the 0xb06b of the player's own entry (0x880268, which
+## the window qualifies: out of a party, the window closed).
+signal settings_lock(on: bool)
 
 ## Sends a message: Callable(opcode: int, payload: PackedByteArray). The
 ## world binds NetClient's sender; the tests capture.
@@ -34,6 +42,11 @@ var send: Callable
 ## (c:0x8841f0: 0x987070 in party ? the leader's name 0x9921e0 : the
 ## character's name +0x110).
 var registration_key: Callable
+## The echo's registration (0x97c530, READ): race from the player's own
+## model (+0x9c), members 1 out of a party else the party's count. Each
+## Callable() -> int; unset gives 0 and 1.
+var own_race: Callable
+var party_size: Callable
 
 ## The rows of the last page, the player's own registration taken out.
 var rows: Array[PartyMatchNet.Row] = []
@@ -148,6 +161,12 @@ func apply_page(p: PartyMatchNet.Page) -> void:
 	page_count = p.page_count
 	page_index = p.page_index
 	rows.clear()
+	# A page with no rows clears the registration: 0x8841f0 builds no page
+	# object for n == 0, and 0x97ddf0's tail then zeroes it (0x97de79 ->
+	# 0x97c3b0). A page whose row 0 is someone else's leaves it.
+	if p.rows.is_empty():
+		registration = null
+		registration_entry = null
 	paged.emit()
 	var key: String = registration_key.call() if registration_key.is_valid() else ""
 	var own_found := false
@@ -167,17 +186,23 @@ func _on_entry_result(res: PartyMatchNet.Result, is_register: bool) -> void:
 		notice.emit(PartyNet.ERROR_KEYS.get(res.code, ""), res.code, 0)
 		return
 	registration_entry = res.entry
+	# 0x97c530 rewrites every field from the echo and the player (READ): time
+	# 0, race the player's model's, members 1 or the party's count, the name
+	# the player object's.
 	var row := registration if registration != null else PartyMatchNet.Row.new()
 	row.number = res.entry.number
+	row.time = 0
+	row.race = int(own_race.call()) if own_race.is_valid() else 0
+	row.members = int(party_size.call()) if party_size.is_valid() else 1
 	row.flags = res.entry.flags
 	row.purpose = res.entry.purpose
 	row.min_level = res.entry.min_level
 	row.max_level = res.entry.max_level
 	row.title = res.entry.title
-	if registration == null:
-		row.leader_name = registration_key.call() if registration_key.is_valid() else ""
+	row.leader_name = registration_key.call() if registration_key.is_valid() else ""
 	registration = row
 	register_done.emit()
+	settings_lock.emit(true)
 	banner.emit("UIIT_MSG_PARTYMATCH_RECORD_COMPLETE" if is_register else "UIIT_MSG_PARTYMATCH_MODIFY_COMPLETE")
 	changed.emit()
 
@@ -192,11 +217,13 @@ func _on_delete_result(res: PartyMatchNet.Result) -> void:
 	if registration != null and registration.number == res.number:
 		registration = null
 		registration_entry = null
+		settings_lock.emit(false)
 	else:
 		for i in rows.size():
 			if rows[i].number == res.number:
 				rows.remove_at(i)
 				break
+		removed.emit(res.number)
 	banner.emit("UIIT_MSG_PARTYMATCH_DELETE_COMPLETE2" if deleted_for_full else "UIIT_MSG_PARTYMATCH_DELETE_COMPLETE")
 	deleted_for_full = false
 	changed.emit()

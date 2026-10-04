@@ -187,7 +187,10 @@ func _test_list(builder: UiBuilder) -> void:
 	w.select_slot(1)
 	_check(w.selected_number == 15, "a click selects entry 15")
 	w.select_slot(5)
-	_check(w.selected_number == 15, "a click on an empty row changes nothing")
+	_check(w.selected_slot == -1 and w.selected_number == 0 and w.selected_row() == null,
+		"a click on an empty row deselects (0x73aab0; review D2)")
+	w.select_slot(1)
+	_check(w.selected_slot == 1 and w.selected_number == 15, "the selection is the slot (+0x7ec)")
 	# The owner holds a registration: Join and Auto off, Change / Delete on.
 	_check(not w.enabled(PartyMatchWindow.BTN_JOIN) and not w.enabled(PartyMatchWindow.BTN_AUTO),
 		"Join party and Auto match are off while the player holds a registration")
@@ -245,7 +248,30 @@ func _test_search(builder: UiBuilder) -> void:
 	w.press_search()
 	_check(w.records().is_empty() and lines.back() == ["UIIT_MSG_PARTYMATCH_PSEARCH_NORESULT", 4], "nothing left: PSEARCH_NORESULT, type 4")
 	st.handle(_fx("b06c_page"), PartyMatchNet.OP_PAGE_ACK)
-	_check(w.records().size() == 2, "a new page clears the filter (OURS)")
+	_check(w.records().size() == 2, "a new page clears the filter (0x73b5b0, READ)")
+	# 0x73b780's levels (review D6): max 0 reads as 110; min above max does nothing.
+	(w.node("GDR_PARTYMATCH_SEARCH_NAME_EDIT") as LineEdit).text = ""
+	(w.node("GDR_PARTYMATCH_SEARCH_MIN_LEVEL_EDIT") as LineEdit).text = "1"
+	(w.node("GDR_PARTYMATCH_SEARCH_MAX_LEVEL_EDIT") as LineEdit).text = "0"
+	var before := lines.size()
+	w.press_search()
+	_check(w.records().size() == 2 and lines.size() == before, "a max of 0 searches up to 110")
+	(w.node("GDR_PARTYMATCH_SEARCH_MIN_LEVEL_EDIT") as LineEdit).text = "50"
+	(w.node("GDR_PARTYMATCH_SEARCH_MAX_LEVEL_EDIT") as LineEdit).text = "40"
+	(w.node("GDR_PARTYMATCH_SEARCH_NAME_EDIT") as LineEdit).text = "nobody"
+	w.press_search()
+	_check(w.records().size() == 2 and lines.size() == before, "min above max: no filter and no NORESULT line")
+	# An auto-match run disables the seven until it ends (0x738890; review B1).
+	var picks: Array[int] = [12]
+	st.start_auto(picks)
+	w.update_buttons()
+	_check(not w.enabled(PartyMatchWindow.BTN_JOIN) and not w.enabled(PartyMatchWindow.BTN_SEARCH)
+		and not w.enabled(PartyMatchWindow.BTN_REFRESH) and not w.enabled(PartyMatchWindow.BTN_AUTO),
+		"Join, Search, Refresh and Auto are off while a run lasts")
+	st.handle(_fx("b06d_noreply"), PartyMatchNet.OP_JOIN_ACK)
+	var search_btn := w.node(PartyMatchWindow.BTN_SEARCH) as BaseButton
+	_check(not st.auto_running and w.enabled(PartyMatchWindow.BTN_SEARCH) and search_btn != null and not search_btn.disabled,
+		"the run's end brings them back")
 	(made[3] as Control).queue_free()
 
 func _test_register(builder: UiBuilder) -> void:
@@ -306,7 +332,7 @@ func _test_req_join(builder: UiBuilder) -> void:
 	_check(_label_text(box.node("GDR_PARTYMATCH_REQ_JOIN_POS")) == "Jangan", "Position: region 25000's zone name")
 	_check(_label_text(box.node("GDR_PARTYMATCH_REQ_JOIN_GUILD")) == "Wolves", "Guild shown with job state 4")
 	var rt := box.node("GDR_PARTYMATCH_REQ_JOIN_DESC_PML").get_node_or_null("PmlText") as RichTextLabel
-	_check(rt != null and rt.text.contains("Bram") and rt.text.contains("[color=#ffefda]"), "the PML names Bram in (255,239,218)")
+	_check(rt != null and rt.text.contains("Bram") and rt.text.contains("[color=#efdaa4]"), "the PML names Bram in (239,218,164), ARGB (review B2)")
 	box.advance(9990)
 	_check(sent.is_empty(), "nothing sent before 10 s")
 	box.advance(20)

@@ -154,9 +154,21 @@ func press_invite() -> void:
 	elif state.is_leader() or state.anyone_invite == 1:
 		invite_requested.emit(target)
 
+## Party matching's lock on Set (round 714): CIFParty's 0x6d5ab0(enable) on
+## control 0x15 (GDR_PTY_BTN_SETTING), called by party matching -- disabled by
+## the 0xb069 OK (0x884040) and by opening the matching window (0x79c252),
+## enabled by the 0xb06b of the player's own entry out of a party with the
+## window closed (0x880268) and by closing the window with no registration
+## (0x79c2fd). PartyMatchWindow sets it at those four points.
+var match_lock := false
+
+func set_match_lock(on: bool) -> void:
+	match_lock = on
+	refresh()
+
 ## Set (0x6d6620): opens the settings dialog only out of a party.
 func press_set() -> void:
-	if not state.in_party:
+	if not state.in_party and not match_lock:
 		settings_requested.emit()
 
 ## Dismiss (0x6d5a00 -> jmp 0x81cad0): leave, in a party.
@@ -212,7 +224,7 @@ func _refresh_out_of_party() -> void:
 		var deco := node(n) as CanvasItem
 		if deco != null:
 			deco.modulate = type_color
-	_enable(node("GDR_PTY_BTN_SETTING"), true)
+	_enable(node("GDR_PTY_BTN_SETTING"), not match_lock)
 	_enable(node("GDR_PTY_BTN_INVITE"), true)
 	_shown(node("GDR_PTY_PARTY_LEADER"), false)
 	_shown(node("GDR_PTY_PARTY_LEADER_RACE_MARK"), false)

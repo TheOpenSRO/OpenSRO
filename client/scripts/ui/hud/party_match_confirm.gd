@@ -9,8 +9,8 @@ class_name PartyMatchConfirm
 ## UIIT_CTL_YES at centre - 81 and Cancel UIIT_CTL_NO at centre + 5; the text
 ## box goes to (30, 65), (w - 60, h - 122); the "Create" background tile is
 ## sized (w - 32, h - 56) (0x63b420). Yes sends the delete (0x732680).
-## The style the call passes was not traced: 1 (Yes / No) is INFERRED from
-## the question's wording.
+## The style is READ: 0x738940 pushes 1 at 0x738986 as 0x788270's third
+## argument, the byte 0x643e50 stores at +0x908 (style 1 = Yes / No).
 
 const SIZE := Vector2(360, 151)
 const LAYOUT := "resinfo\\ifmessagebox.txt"

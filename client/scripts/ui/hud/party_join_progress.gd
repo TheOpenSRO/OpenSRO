@@ -13,7 +13,7 @@ class_name PartyJoinProgress
 ## - timer 1 every 200 ms (0xc8); the gauge is elapsed / 10000.0 ms (the
 ##   double at 0xdb3720); at 10 s it is full, the timer stops and the window
 ##   closes (0x7322e0 -> 0x7390b0(0)). A 0xb06d result closes it too
-##   (0x8847d0 ends in 0x7390b0 at 0x884a0c; the argument is INFERRED 0).
+##   (0x8847d0 ends in 0x7390b0 at 0x884a0c; the 0 READ: `push ebx` at 0x884a01, ebx the null tested at 0x8849b8).
 
 const SIZE := Vector2(365, 149)
 const LAYOUT := "resinfo\\ifpartyjoinprogress.txt"

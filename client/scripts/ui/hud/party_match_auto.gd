@@ -16,9 +16,12 @@ class_name PartyMatchAuto
 ##   x 0x14, centred, width 0x64, 2 items down: SHARE, SELF;
 ## - OK (0x73ebc0) picks candidates from the records the window holds
 ##   (PartyMatchNet.auto_candidate) and queues up to 10 of them.
-## OURS: the starting choices (the objective the job allows first, race
-## Open, both radios as the party settings block) -- the dialog's own
-## defaults were not read.
+## - the starting choices (0x73eb83..0x73eba8): race 2 (Open), exp 1 and
+##   item 1 -- item 1 of [SHARE, SELF], so Exp Free-For-All and Item
+##   Free-For-All. The objective gets no choice call (the job branches only
+##   disable items, 0x73e949..0x73e995): it keeps the radio's initial item,
+##   taken as item 0 (INFERRED: CIFRadioButton's constructor was not read),
+##   which stays chosen though disabled for a job holder, as in the original.
 
 const SIZE := Vector2(314, 337)
 const LAYOUT := "resinfo\\ifpartymatchauto.txt"
@@ -39,7 +42,6 @@ func build(builder: UiBuilder, job: int, party: PartyState) -> bool:
 	var allowed := PartyMatchNet.allowed_purposes(job)
 	for i in 4:
 		set_radio_enabled("object", i, allowed.has(i))
-	choose("object", allowed[0])
 	build_radio(node("GDR_PARTYMATCH_REGISTER_RACE_RBTN"), "race",
 		[text(PartyMatchNet.RACE_KEYS[0], "CHN"), text(PartyMatchNet.RACE_KEYS[1], "EUR"),
 		text("UIIT_CTL_PARTYMATCH_AUTOMATCH_RACE_ANYTHING", "Open")], Vector2.ZERO, 91, 22, 100, true, false)
@@ -50,9 +52,9 @@ func build(builder: UiBuilder, job: int, party: PartyState) -> bool:
 	build_radio(node("GDR_PARTYMATCH_REGISTER_ITEM_RBTN"), "item",
 		[text("UIIT_STT_PARTY_ITEM_SHARE", "Item Auto Share"), text("UIIT_STT_PARTY_ITEM_SELF", "Item Free-For-All")],
 		Vector2(2, 2), 20, 20, 100, false, true)
+	choose("exp", 1)
+	choose("item", 1)
 	if party != null:
-		choose("exp", 0 if party.exp_share == 1 else 1)
-		choose("item", 0 if party.item_share == 1 else 1)
 		_anyone = party.anyone_invite
 	var ok := button("GDR_PARTYMATCH_REGISTER_OK_BTN")
 	if ok != null:

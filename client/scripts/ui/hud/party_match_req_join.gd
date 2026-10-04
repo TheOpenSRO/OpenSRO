@@ -15,8 +15,8 @@ class_name PartyMatchReqJoin
 ##   (0x74064d);
 ## - Confirm sends 1 (0x73fc40), Cancel 0 (0x73fc90), and timer 1, 10 000 ms
 ##   (0x7406de), sends 2 and closes (0x73fb70).
-## Placement: shown through 0x79c330(1), which does not move it; the record's
-## rect is (0, 0). OURS: centred on the screen like the other party boxes.
+## Placement: shown through 0x79c330(1), which calls 0x79ac50(0x83) at
+## 0x79c39b: window 0x83 centred on the screen (w/2 - ww/2, h/2 - wh/2), READ.
 
 const SIZE := Vector2(360, 315)
 const LAYOUT := "resinfo\\ifpartymatchreqjoin.txt"
@@ -66,7 +66,11 @@ func build(builder: UiBuilder, q: PartyMatchNet.JoinRequest, race_of_model: Call
 		cancel.pressed.connect(press_cancel)
 	return true
 
+## Confirm sends only with a job id and a requester (0x73fc40 tests +0x7b8
+## and +0x7bc); Cancel and the timer have no such test.
 func press_confirm() -> void:
+	if request == null or request.job_id == 0 or request.requester_jid == 0:
+		return
 	_answer(PartyMatchNet.ANSWER_CONFIRM)
 
 func press_cancel() -> void:
