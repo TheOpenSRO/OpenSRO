@@ -128,7 +128,10 @@ class Member:
 	var member_name: String = ""
 	var ref_obj_id: int = 0
 	var level: int = 0
-	## Tenths of full, 0..10 (gs:0x5bafab chops trunc(cur/max*10)).
+	## Tenths of full: a full record's are trunc(cur/max*10), 0..10
+	## (gs:0x5bafab); an update's HP nibble is 1 + trunc(10 r), 11 at full HP
+	## (gs:FUN_005bb0c0, read in round 710). The windows clamp the ratio to
+	## full; how the client draws an 11 was not read (INFERRED).
 	var hp_tenths: int = 0
 	var mp_tenths: int = 0
 	var region: int = 0

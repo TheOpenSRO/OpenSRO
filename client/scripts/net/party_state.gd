@@ -36,6 +36,10 @@ signal send_answer(payload: PackedByteArray)
 # --- The settings block (+0x00..+0x08) --------------------------------------
 ## Exp Auto Share (1) or Free-For-All (0). Out of a party these are the
 ## player's own preferences; the next 0x7060 sends them (c:0x81c7f0).
+## Their starting values are OPEN: the block (0xeeebd8 + 0x20) lies past
+## .data's raw bytes (the image's .bss, zero at load), and no writer before
+## the first Set or 0x3065 was found. OURS: exp 1, item 0, anyone 0 -- the
+## type line screenshot 01 shows out of a party.
 var exp_share := 1
 var item_share := 0
 var anyone_invite := 0

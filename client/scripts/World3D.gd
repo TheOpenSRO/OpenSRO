@@ -15514,6 +15514,12 @@ func _on_chat_update(u: ChatNet.Update) -> void:
 	if u == null:
 		return
 	print("CHAT: type %d from '%s': %s" % [u.type, u.sender_name, u.message_text])
+	# A party line carrying the player's own name is dropped (Chat_OnChatUpdate
+	# 0x877810, case 4: FUN_004e9530(own name, sender) skips it): the server
+	# echoes party chat to its sender (gs:0x5bef50, round 710), and the client
+	# shows its own line from the 0xB025 OK instead (0x877340, case 4).
+	if u.type == HudChat.TYPE_PARTY and u.sender_name == NetClient.current_character_name:
+		return
 	if u.type == HudChat.TYPE_WHISPER:
 		# R replies to this name (KeyMap slot 20; _key_whisper_reply).
 		_last_whisperer = u.sender_name
