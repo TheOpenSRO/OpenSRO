@@ -21315,6 +21315,12 @@ var _hud_quick_party: HudQuickParty = null
 func _build_quick_party() -> void:
 	_hud_quick_party = HudQuickParty.new(_ui_builder, NetClient.party)
 	ui_control.add_child(_hud_quick_party)
+	# The player block's stat drop-down overlaps the first member box, and the
+	# original draws the drop-down on top (the user's screenshot of the
+	# original, 2026-10-04: the panel covers "Tobi"'s box). Added after the
+	# player block, the board would draw over it, so it goes directly below.
+	if _hud_player_info != null and _hud_player_info.get_parent() == ui_control:
+		ui_control.move_child(_hud_quick_party, _hud_player_info.get_index())
 	if _hud_buff_board != null:
 		_hud_quick_party.buff_catalog = _hud_buff_board.catalog
 	_hud_quick_party.own_name = func() -> String: return NetClient.current_character_name
