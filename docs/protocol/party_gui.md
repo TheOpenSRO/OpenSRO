@@ -350,7 +350,7 @@ party").**
 
 | control | shows |
 |---|---|
-| 21 DESC_PML | `UIIT_STT_PARTYMATCH_JOIN_REQUEST` with the requester's name: "[%s]has requested to join this party. Confirm?", the name in (255,239,218) by the string's own `<font>` |
+| 21 DESC_PML | `UIIT_STT_PARTYMATCH_JOIN_REQUEST` with the requester's name: "[%s]has requested to join this party. Confirm?", the name in (239,218,164): the string's own `<font color="255,239,218,164">`, whose four numbers are A,R,G,B (MEASURED, round 714 review B2: the textuisystem census, screenshot 08) |
 | 34 / 35 (88,121 / 130,121, 32x32, on `pt_icon_frame02.ddj`) | the requester's two masteries' icons, from the two mastery ids of the `0x706d` message (`+0x7c4`/`+0x7c8`, not the member record's) (`0x73fed0` → `0x937010` → the mastery's icon), with the mastery name as the tooltip; an id with no record leaves the frame empty |
 | 30 LEVEL | `%d` |
 | 31 RACE | CHN / EUR from the requester's model id (`+0x9c`) |
@@ -619,17 +619,14 @@ anyone 1; the party clear `0x998be0` never rewrites them.
    - Ctrl+2..8 (keymap no-ops).
 6. **PMI:** GDR_PMI_SELECT (yellow) and GDR_PMI_PARTY_LEADER are hidden by `HudPlayerInfo`'s
    allow-list. Both need their show rules above.
-7. **Party matching:** layout only. Not built:
-   - list fill, the own row pinned in blue, the gold selection, the type tooltip;
-   - sorting, the page spin and the Refresh cooldown;
-   - the client-side Search filter;
-   - the enable rules;
-   - the register/modify, auto-match and delete-confirm dialogs;
-   - Whisper;
-   - the join progress (10 s) and the leader's popup (10 s, codes 1/0/2).
-   - Race and Purpose columns as **text** (USER DECISION 2026-10-03), level defaults 1 / 110.
-8. **System messages:** the type-4 filter exists (`hud_system_message.gd`). None of the
-   party-match lines are routed to it.
+7. ~~**Party matching:** layout only.~~ **Built, round 714** (`docs/rounds/party714.md`): the
+   list fill, the own row pinned in (135,233,255), the gold selection, the page spin and the
+   Refresh cooldown, the client-side Search, the enable rules, the register/modify, auto-match
+   and delete dialogs, Whisper (as the chat line, OURS), the joining window and the leader's
+   popup (10 s, codes 1/0/2), Race and Purpose as **text** (USER DECISION 2026-10-03), level
+   defaults 1 / 110. Still not built: the column sorting, the row tooltip and the drawn scroll bar.
+8. **System messages:** the type-4 filter exists (`hud_system_message.gd`). The party-match lines
+   go there since round 714 (through PartyState's notice; server codes as type 0).
 9. ~~**The invitation popup** (§1b):~~ (built, round 711) not built; today an invite joins directly by party id.
 10. Out of this lane, noted only: minimap and worldmap party signs (`mm_sign_party`,
    `wmap_sign_party`), and the target window's party re-centring (UI_TODO).

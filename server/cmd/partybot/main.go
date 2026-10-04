@@ -587,6 +587,17 @@ func scenario(addr, prefix string) error {
 	return nil
 }
 
+// botEntry is the entry a -register bot lists (round 714: the client lane's
+// renders need rows that differ; the defaults are round 713's).
+var botEntry struct {
+	purpose, minLevel, maxLevel, flags int
+	title                              string
+}
+
+// botSilent leaves join requests unanswered (round 714: a requester's
+// joining window stays up until the backstop).
+var botSilent bool
+
 func botMode(addr, name string, level int, accept bool, inviteName string, registerEntry bool, requestName string) error {
 	b, err := connect(addr, strings.ToLower(name), name, level)
 	if err != nil {
@@ -594,8 +605,8 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 	}
 	fmt.Printf("[%s] in the world, character %d, JID %d\n", name, b.id, b.jid())
 	if registerEntry {
-		b.send(party.OpMatchRegister, party.AppendEntry(nil, &party.Entry{Flags: party.FlagExpShare | party.FlagItemShare,
-			Purpose: party.PurposeHunting, MinLevel: 1, MaxLevel: 110, Title: "For open hunting"}))
+		b.send(party.OpMatchRegister, party.AppendEntry(nil, &party.Entry{Flags: party.Flags(botEntry.flags),
+			Purpose: uint8(botEntry.purpose), MinLevel: uint8(botEntry.minLevel), MaxLevel: uint8(botEntry.maxLevel), Title: botEntry.title}))
 		fmt.Printf("[%s] -> 0x7069 register\n", name)
 	}
 	requested := false
@@ -608,7 +619,7 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 			if !open {
 				return errors.New("connection closed")
 			}
-			if p.Opcode == party.OpMatchJoin {
+			if p.Opcode == party.OpMatchJoin && !botSilent {
 				if j, err := party.DecodeJoinRequest(p.Data); err == nil {
 					answer := party.AnswerCancel
 					if accept {
@@ -666,6 +677,12 @@ func main() {
 	register := flag.Bool("register", false, "bot: register a party-match entry once in the world")
 	requestEntry := flag.String("request", "", "bot: ask to join this character's party-match entry once it is on page 0")
 	monster := flag.String("monster", "chakji", "share: the species to kill")
+	flag.IntVar(&botEntry.purpose, "purpose", 0, "bot -register: the entry's purpose (0 hunting, 1 quest, 2 trade, 3 thief)")
+	flag.IntVar(&botEntry.minLevel, "min", 1, "bot -register: the entry's lowest level")
+	flag.IntVar(&botEntry.maxLevel, "max", 110, "bot -register: the entry's highest level")
+	flag.IntVar(&botEntry.flags, "flags", int(party.FlagExpShare|party.FlagItemShare), "bot -register: the entry's type byte")
+	flag.BoolVar(&botSilent, "silent", false, "bot: leave party-match join requests unanswered (the server's 15 s backstop answers)")
+	flag.StringVar(&botEntry.title, "title", "For open hunting", "bot -register: the entry's title")
 	flag.Parse()
 	var err error
 	switch *mode {

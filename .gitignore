@@ -48,6 +48,7 @@ client/native_bin/
 # took these five out of the tree; `go build ./cmd/<name>/` from server/
 # drops a binary named after the package, and `go build .` drops server/server).
 /server/server
+/server/partybot
 /server/heightat
 /server/o2sectors
 /server/whatishere
