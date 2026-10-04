@@ -203,6 +203,58 @@ func _test_state_registration() -> void:
 	st.handle(_fx("b06b_ok"), PartyMatchNet.OP_DELETE_ACK)
 	_check(banners.back() == "UIIT_MSG_PARTYMATCH_DELETE_COMPLETE2", "a delete for a full party says DELETE_COMPLETE2")
 
+## Round 718, the user's report: a leader lists, the party dissolves (the
+## server drops the entry), someone else lists -- and the old entry stayed
+## pinned beside the new one, undeletable ("doesn't exist") and immune to
+## Refresh, because nothing cleared the client's own registration on a
+## 0x3864 event. UI_PARTY::FUN_00886b10 clears it (0x97c960(0)).
+func _test_state_party_events() -> void:
+	var made := _state("Aria")
+	var st: PartyMatchState = made[0]
+	var removed: Array = []
+	st.removed.connect(func(n: int) -> void: removed.append(n))
+	st.handle(_fx("b069_ok"), PartyMatchNet.OP_REGISTER_ACK)
+	_check(st.registration != null and st.registration.number == 12, "the leader's registration (entry 12)")
+	# The party dissolves; the server dropped entry 12; Bram then lists entry 13.
+	st.on_party_event(PartyNet.EVENT_DISSOLVED, false, false, 0)
+	_check(st.registration == null and st.registration_entry == null and removed == [12],
+		"kind 1 clears the registration and drops its number from the list (0x8871a7, 0x73a700)")
+	st.handle(_page_of([_row(13, "Bram", 0, 1, 110)]), PartyMatchNet.OP_PAGE_ACK)
+	_check(st.registration == null and st.rows.size() == 1 and st.rows[0].number == 13,
+		"the next page shows only the new entry: no stale own row beside it")
+	# Before the fix: the pinned entry survived a page whose row 0 is someone else's.
+	var old: PartyMatchState = _state("Aria")[0]
+	old.handle(_fx("b069_ok"), PartyMatchNet.OP_REGISTER_ACK)
+	old.handle(_page_of([_row(13, "Bram", 0, 1, 110)]), PartyMatchNet.OP_PAGE_ACK)
+	_check(old.registration != null and old.registration.number == 12,
+		"(the bug's mechanism) without a party event a page of someone else's rows leaves the pin -- so the event must clear it")
+	# Kind 3, the player left: cleared (0x886eaa).
+	st.handle(_fx("b069_ok"), PartyMatchNet.OP_REGISTER_ACK)
+	st.on_party_event(PartyNet.EVENT_LEFT, true, false, 0)
+	_check(st.registration == null, "kind 3 naming the player clears it (0x886eaa)")
+	# Kind 3, someone else left, the player still in a party: the count follows.
+	st.handle(_fx("b069_ok"), PartyMatchNet.OP_REGISTER_ACK)
+	st.on_party_event(PartyNet.EVENT_LEFT, false, true, 2)
+	_check(st.registration != null and st.registration.members == 2, "another member leaving updates the count (0x986f50()+0x10)")
+	st.on_party_event(PartyNet.EVENT_JOINED, false, true, 3)
+	_check(st.registration != null and st.registration.members == 3, "a member joining updates the count")
+	# Kind 3, someone else left and the player is out of a party: cleared (0x886f76).
+	st.on_party_event(PartyNet.EVENT_LEFT, false, false, 0)
+	_check(st.registration == null, "another member leaving with the player out of a party clears it (0x886f76)")
+	# A leader change leaves the registration alone.
+	st.handle(_fx("b069_ok"), PartyMatchNet.OP_REGISTER_ACK)
+	st.on_party_event(PartyNet.EVENT_LEADER, false, true, 3)
+	_check(st.registration != null, "kind 9 does not clear it")
+
+func _test_party_state_signals_events() -> void:
+	var ps := PartyState.new()
+	var seen: Array = []
+	ps.party_event.connect(func(k: int, j: int) -> void: seen.append([k, j]))
+	var e := PartyNet.Event.new()
+	e.kind = PartyNet.EVENT_DISSOLVED
+	ps._on_event(e)
+	_check(seen == [[PartyNet.EVENT_DISSOLVED, 0]] and not ps.in_party, "PartyState signals kind 1 after applying it")
+
 func _test_state_join() -> void:
 	var made := _state("Bram")
 	var st: PartyMatchState = made[0]
@@ -268,6 +320,8 @@ func _initialize() -> void:
 	_test_state_join()
 	_test_state_auto()
 	_test_unknown_result()
+	_test_state_party_events()
+	_test_party_state_signals_events()
 	if _failures == 0:
 		print("party_match_test: all checks passed")
 		quit(0)

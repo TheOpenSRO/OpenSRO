@@ -142,6 +142,7 @@ func _init(builder: UiBuilder, match_state: PartyMatchState, party_state: PartyS
 	state.settings_lock.connect(_on_settings_lock)
 	if party != null:
 		party.changed.connect(_on_party_changed)
+		party.party_event.connect(_on_party_event)
 
 ## Lets go of everything this controller hooked (HudPanels' exit): the party
 ## state is NetClient's and lives for the process, so a controller left
@@ -149,6 +150,8 @@ func _init(builder: UiBuilder, match_state: PartyMatchState, party_state: PartyS
 func dispose() -> void:
 	if party != null and party.changed.is_connected(_on_party_changed):
 		party.changed.disconnect(_on_party_changed)
+	if party != null and party.party_event.is_connected(_on_party_event):
+		party.party_event.disconnect(_on_party_event)
 	for sig in state.get_signal_list():
 		for c in state.get_signal_connection_list(sig["name"]):
 			state.disconnect(sig["name"], c["callable"])
@@ -692,6 +695,11 @@ func advance(ms: int) -> void:
 func on_page() -> void:
 	_filtered = null
 	_scroll = 0
+
+## A 0x3864 event (round 718): the registration follows the party as
+## UI_PARTY::FUN_00886b10 moves it (PartyMatchState.on_party_event).
+func _on_party_event(kind: int, jid: int) -> void:
+	state.on_party_event(kind, jid != 0 and jid == party.own_jid, party.in_party, party.members.size())
 
 ## 0xb06b for another number: the record leaves the displayed list too
 ## (0x73a700).
