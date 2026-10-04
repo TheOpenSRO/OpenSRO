@@ -170,7 +170,7 @@ One byte, chosen when the party is created, stored at `party+0x10`.
 | C->S | `0x7062` | invite into my party | u32 target world id | READ both: `c:0x81c8f0`; `gs:0x514560` |
 | S->C | `0xb062` | invite result (to the inviter, errors only) | u8 result; 2: u16 code | READ both: `c:Party_OnJoinResult 0x8800b0`; `gs:0x5145f1`, `0x5bea65`. **One `0x7062` refusal goes out on `0xb060` instead**: when posting the invitation fails (`Party_SendInvitation` code 2, `gs:0x5be33c`), the 0x062 handler replies `0xb060 [2][2]` (`gs:0x5146bb mov ecx,0xb060`). Range, type and availability failures use `0xb062` (`gs:0x51465e`). `server_handlers.tsv` already lists both. Retail behaviour, copied as is (review of round 709) |
 | S->C | `0x3080` | invitation (to the invitee) | u8 kind (2 = new party, 3 = existing party), u32 inviter world id, u8 flags | READ client `c:0x88aa60` (reads 1, 4, then 1 for kinds 2/3); server `gs:trs_wait_response::vslot_004 0x46c8e0` (kind `+0x28`, inviter `+0x2c`, then for kinds 2/3 the byte `+0x34`, `gs:0x46c986`/`0x46c9a3`). The flags reach `+0x34` READ: `gs:0x5be2a5`/`0x5be311` load them into `EDI`, and `gs:0x4ea0d0` stores `EDI` at `trs+0x34` for kinds 2, 3 and 7 (`gs:0x4ea150`). The kind-3 transaction also holds the party id at `+0x24`, not sent (review of round 709) |
-| C->S | `0x3080` | invitation answer | u8 answer; 1: u8 1; 2: u16 code (0x2c0c for kind 2, 0x2c17 for kind 3) | READ client `c:0x81cc30`/`0x81ce00` (yes), `c:0x81cd20`/`0x81cef0` (no), and the auto-decline in `c:0x88aa60`. `gs:trs_wait_response::vslot_002 0x46cb30` reads one u8. The bytes after it are unread by this GameServer (READ) |
+| C->S | `0x3080` | invitation answer | u8 answer; 1: u8 1; 2: u16 code (0x2c0c for kind 2, 0x2c17 for kind 3) | READ client `c:0x81cc30`/`0x81ce00` (yes), `c:0x81cd20`/`0x81cef0` (no), and the auto-decline in `c:0x88aa60`. `gs:trs_wait_response::vslot_002 0x46cb30` reads one u8. The bytes after it are unread by this GameServer (READ). A join accepts only on 1 (`0x5be39f`); a formation on any non-zero byte (`test bl,bl`, `0x5be41c`), the client's "no" included -- OpenSRO accepts only 1 for both (OURS, round 710; step 4 below) |
 | S->C | `0xb067` | join ack (to the invitee / joiner) | u8 result; 1: u32 own JID; 2: u16 code (`0x2c10` = timeout is special-cased) | READ both: `c:0x880120` ("OnJoinPartyAck"); `gs:0x5be848`, `0x5be95f`, `0x5bea6f`, `0x5bfd01` |
 | S->C | `0x3065` | full party info (to a member who just joined) | u8 mask (`0xff`), u32 party id, [mask&1: u32 leader JID, u8 flags], [mask&2: u8 count, count x member record] | READ both: `gs:0x5bc650`; `c:0x883cc0`. The client reads the party id **before** testing the mask. The server writes it inside `mask&1`. They agree because the mask is always `0xff` |
 | S->C | `0x3864` | party event | u8 kind, then per kind (next table) | READ both: `c:UI_PARTY::FUN_00886b10`; `gs:0x5bb670`, `0x5bc210`, `0x5bc390`, `0x5bdbd0`, `0x5bf150` |
@@ -282,11 +282,20 @@ Writer `sm:FUN_0044f640`. Reader `c:FUN_008841f0`. Sizes READ on both sides, in 
    - otherwise queues HUD request kind 6 (`c:0x6ec5d0`, a 308x160 popup) carrying the inviter's
      name and the flags repacked as `anyone<<2 | exp<<1 | item`. The popup is `party_gui.md` §1b.
    READ (review of round 709).
-4. The answer `0x3080 [1][1]` or `[2][code]` reaches `gs:0x46cb30` -> `gs:0x5be350`:
-   - a decline gives `0x2c0c`;
-   - a vanished inviter gives `0x2c0e`;
-   - an invitee no longer pending gives 3;
+4. The answer `0x3080 [1][1]` or `[2][code]` reaches `gs:0x46cb30` -> `gs:0x5be350`, which
+   tests in this order (round 710's second review; the codes are register arguments, read in asm):
+   - a vanished inviter gives `0x2c0e` (`0x5be45b`);
+   - an invitee not found gives 3 (`0x5be46f`);
+   - an invitee whose state byte is not 1 gives 2 (`edx = 2` at `0x5be370`, `0x5be474`);
+   - only then the answer: a decline gives `0x2c0c` (`0x5be420`);
    - a failure to post gives 2.
+
+   **Which byte declines.** The answer byte reaches `0x5be350` in `AL` (`gs:0x46cbef` reads one
+   u8). A join (kind 3) accepts on `cmp bl,1; jne` (`0x5be39f`), but a formation (kind 2) accepts
+   on `test bl,bl; jne` (`0x5be41c`). So with this GameServer any non-zero byte forms the party,
+   the stock client's "no" (`[2][0x2c0c]`, `c:0x81cd9b`) included: READ, and a bug in this
+   private-server build or a 0 the client never sends. **OURS (round 710): OpenSRO accepts only 1,
+   for both kinds** (`party.DecodeAnswer`).
 
    Any of these sends `0xb060 [2][code]` to the inviter and `0xb067 [2][code]` to the invitee
    (`gs:0x5be9b0`). If nobody answers, the transaction times out with **`0x2c10`** (TIMEOUT,
@@ -603,7 +612,13 @@ are READ in `party_gui.md` §3. What is left:
 6. **Handler 0x06f's sender** (no client sender exists; harmless to leave unimplemented).
 7. **Logout and server migration**: the client shows reasons 1 and 3; the GameServer paths that
    send them were not read (`party_rules.md` reads the call sites as world exits, INFERRED).
-8. **Where the client's member "max" HP/MP slots come from** (only tenths are on the wire).
+8. ~~**Where the client's member "max" HP/MP slots come from**~~ **CLOSED (round 710's second
+   review, client asm).** A full record (kind 2 `c:0x886b88`, `0x3065` `c:0x883e87`) stores the HP
+   and MP nibbles raw with a max of 10 each (`push 0xa; push 0xa` before `0x99a2e0`): n/10. A
+   kind-6 update calls `c:0x991f60(jid, hp, 10, mp, 10)`: an HP nibble of 0 sets the dead flag
+   (`+0x60 = 1`) and HP 0; any other n gives HP (n-1)/9 (`c:0x991fd1 lea ecx,[ebx-1]`, `lea
+   edx,[ebp-1]`); MP is n/10. So the update's `1 + trunc(10 r)` is a 0-means-dead encoding, and a
+   full bar (11) reads 10/9. Whether the gauge clamps above 1 was not traced.
 
 ## Implementation lanes
 

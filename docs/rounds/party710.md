@@ -63,12 +63,18 @@ rewrites the client side at the same time, against the same golden fixtures.
 
 | what | choice | why |
 |---|---|---|
-| **JID and world id** | `uint32(characterID)` for both | It is already the u32 object id OpenSRO sends for a player (`motion.go`'s `0x30BF`). A client maps a party JID to the spawned player whose 64-bit `CharacterID` has those low 32 bits, and learns its own from `OpSelfID` (0x00F9). Monster ids overlap character ids, so a party target is resolved among players only; an NPC uid (>= `0x7f000000`) answers 3; anything else that names no player answers 0 |
+| **JID and world id** | `uint32(characterID)` for both | It is already the u32 object id OpenSRO sends for a player (`motion.go`'s `0x30BF`). A client maps a party JID to the spawned player whose 64-bit `CharacterID` has those low 32 bits, and learns its own from `OpSelfID` (0x00F9). Monster ids overlap character ids, so a party target is resolved among players only; an NPC uid (>= `0x7f000000`) answers 3; anything else that names no player answers 0. **Consequence:** a monster id sent as a target names the player with that character id, and if that player is in the same zone within 600 units, that player is invited; retail answers 3 there (the `0x26` TypeID filter, `gs:0x4a8eb2`). The client must send player ids only |
 | world id in the record | 1 | `_RefGame_World` `INS_DEFAULT` (EXTERNAL); one field world |
 | masteries shown | the two highest-levelled above level 0, lower id first on a tie, 0 when empty | The engine's pick `GS 0x5a1890` is OPEN. A new character shows none, as screenshot 08 does |
 | member-update cadence | a 1 s sampler (`partyUpdateInterval`) | Retail raises an event at each change (`vslot_323`), and how often position fires is OPEN. Each field still goes out only when it changed. HP/MP is evaluated only when a raw HP/MP/max moved since the last sample, standing in for the HP event. Without that, a full record's HP 10 would turn into the update formula's 11 with nothing having happened |
 | logout trigger | the gateway's disconnect, reason 1 | Reason 1 is READ; retail's trigger is the ShardManager's user cleanup (`SM 0x4296f0`) |
-| a stale answer | an answer with no invitation pending is dropped | The engine's refusal 3 needs the inviter, whom nothing names any more |
+| a stale answer | an answer with no invitation pending is dropped | Nothing names its inviter any more |
+| accepting a formation | only an answer byte of 1 accepts, for both kinds | This GameServer accepts a formation on any non-zero byte (`test bl,bl`, `gs:0x5be41c`; a join on `cmp bl,1`, `0x5be39f`), which would make the stock client's "no" (`[2][0x2c0c]`) form the party (`party.DecodeAnswer`) |
+| "state not 1" on an answer | refused 2 when the invitee got into a party meanwhile | the only way the derived byte leaves 1 with an invitation pending |
+| an invitee who leaves the world | its invitation no longer holds it; the timeout still runs and reaches the inviter (`Hub.DetachSession`) | Whether the original's logout cancels the transaction was not read. READ: the transaction finds both sides by id at its answer and its timeout (`gs:0x5be350`, `0x46ce44 -> 0x46cec0`), and the state byte lives in the character object a relog replaces |
+| a race past the ladder | a second invitation slipping past `CheckTargetAvailable` is refused `0x2c1f` | what the single-threaded engine's ladder would have said |
+| guild and masteries in the sampler | re-read every 10 s (`partySlowRefresh`); a join reads them fresh | the engine announces them on their events (0x10, 0x20); two store reads per member per second saved |
+| a zone with no region frame | the record carries no position (mask without `0x20`) | rather than region 0 with world coordinates cut to u16; no zone hits it today |
 | refusals that cannot happen here | the slot-0x244 test (`0x2c19`), the character lock (`0x2c06`/`0x2c09`), arena opponents (`0x2c28`) | OpenSRO has none of those states. The exclusive interaction (INTERACTMODE) is `trade.Hub.Busy` |
 | state byte | derived, not stored | It agrees with the writers' table for every single invitation |
 
@@ -164,7 +170,28 @@ cut:
 - **Ids.** The client's own JID is the low 32 bits of `OpSelfID`'s character id. A member or
   inviter is the spawned player whose `CharacterID & 0xffffffff` equals the JID. Send a player's
   id as the `0x7060`/`0x7062` target, not a monster's.
-- **HP/MP tenths.** A full record (`0x3065`, kind 2) carries `trunc(10 r)`, so a full bar is 10. An
-  update carries `1 + trunc(10 r)` for HP, so a full bar is 11. Both are what the original sends;
-  draw as the client does (`c:0x99a34b` splits the nibbles; its "max" slots are OPEN).
+- **HP/MP tenths: two decodes** (READ in the client, round 710's second review).
+  - A full record (`0x3065`, kind 2) carries `trunc(10 r)` per nibble. Draw HP n/10 and MP n/10
+    (`push 0xa; push 0xa` before `c:0x99a2e0`).
+  - A kind-6 update calls `c:0x991f60(jid, hp, 10, mp, 10)`. An HP nibble of 0 means dead (the
+    flag at `+0x60`, HP 0). Any other HP nibble n draws as (n-1)/9 (`c:0x991fd1 lea ecx,[ebx-1]`,
+    `lea edx,[ebp-1]`), so the server's full-bar 11 is 10/9; whether the gauge clamps that was not
+    traced. MP is n/10.
 - **Fixtures** are in `client/scripts/net/fixtures/party/`. `README.md` lists every value.
+
+## Second review (independent, `party710_review2.md`) and its fixes
+
+| # | finding | fix |
+|---|---|---|
+| 1 | the answer tested the decline before the inviter | `handlePartyAnswer` follows `gs:0x5be350`: inviter gone `0x2c0e`, state not 1 → 2, then the decline (`TestPartyAnswerAfterTheInviterLeft` covers yes and no) |
+| 2 | "1 accepts" was READ only for kind 3 | labelled OURS with the `test bl,bl` evidence in `wire.go` and `party_protocol.md`; test that `[2][0x2c0c]` declines |
+| 3 | a join re-filed every member's record | only the joiner's record is built; the others come from the book (`TestPartyJoinKeepsOthersPendingUpdates`) |
+| 4 | pickup rights ignored the item-share bit | `samePartyFunc` requires `Flags.ItemShare()` (`TestPartyFlagGates`) |
+| 5 | the gap bonus and nest arming reached free-for-all parties | `inPartyWithOthers` (their only gate) requires `Flags.ExpShare()`; one line, lane S2's rewrite supersedes it |
+| 6 | the C1 note on HP/MP was incomplete | the two client decodes above; OPEN 8 closed in `party_protocol.md` |
+| 7 | a kind 6 could follow a kind 3/1 | the sampler re-checks membership before each send and sends to the live member list |
+| 8 | a race answered 2 | answered `0x2c1f` |
+| 9 | no-frame zones sent region 0 | the position bit is left out (`TestPartyPositionWithoutAFrame`) |
+| 10 | three store reads per member per second | guild and masteries cached 10 s (OURS) |
+| 11 | an invitation outlived its invitee | `Hub.DetachSession` (OURS, `TestPartyInviteeDisconnectFreesIt`) |
+| 12 | the monster-id consequence was unwritten | written into the ids row above |

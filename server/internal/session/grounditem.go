@@ -388,9 +388,8 @@ func rollDrops(monsterName string) []LootDrop {
 
 // samePartyFunc is the party rule CheckCanPickUp applies to someone else's
 // drop: allowed when picker and owner are in the same party and the party
-// shares items (its flag bit with value 2, `FUN_004ea200() & 2`). OpenSRO's
-// parties share unconditionally, the same choice already made for
-// experience (internal/party), so being in the same party is enough here.
+// shares items (its flag bit with value 2, `FUN_004ea200() & 2`; round 710:
+// a party now carries the flags it was formed with).
 // The engine never reaches this rule for an owned TypeID 3/3/9 item whose
 // codename does not begin ITEM_QNO_RM_ARCHEMY (CheckCanPickUp refuses it
 // 0x1812 at 0x4a934d first), and neither does grounditem.PickCheck, which
@@ -403,7 +402,7 @@ func samePartyFunc(parties *party.Hub) func(a, b int64) bool {
 	return func(a, b int64) bool {
 		pa, inA := parties.Get(a)
 		pb, inB := parties.Get(b)
-		return inA && inB && pa != nil && pb != nil && pa.ID == pb.ID
+		return inA && inB && pa != nil && pb != nil && pa.ID == pb.ID && pa.Flags.ItemShare()
 	}
 }
 
