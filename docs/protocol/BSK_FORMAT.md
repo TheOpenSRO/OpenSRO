@@ -171,6 +171,39 @@ unusable root's rest from what its children's stored world binds imply. The wide
 open: 855 of the 1,208 skeletons had some bone whose composed rest is more than 0.05 units or
 1 degree off its stored world bind; 850 still do after round 648 (docs/TODO.md).
 
+**Round 721: map objects bind to the stored inverse bind where it is only a root shift.**
+- **The Alexandria gate portal** (`alex_portal.bsk`) stores a root local of (19.754, 0, 0), while
+  every child's stored bind puts the root at the origin, and its clip keys the root at the origin.
+  Bound to the composed rest, every ring was drawn 19.75 off its mesh, and the inner rings spun
+  about a pivot 19.75 from their own centre (MEASURED, `probe_map_anim_pose.gd`). That is the
+  user's "rings don't spin around the same axis".
+- **The fix.** `Skeleton3DBuilder.consistent_stored_binds` takes the **third** pair, the file's
+  inverse bind, which is what the client skins with. It uses it only when every non-root bone's
+  stored bind equals its composed rest moved by the one rigid shift that re-seats the root where
+  its children put it. Then the result is exactly the client's (`P = InvBind_file x W`). Any other
+  disagreement keeps the composed bind. `MapAnimation.commit` passes them to
+  `build_skin(..., world_binds)`; characters, monsters and items are unchanged.
+- **The second pair is not the one to use.** Inverting the second pair, the world bind, also moved
+  the Roc Mountain ship, the horses, the sheep and 9 map NPCs off their meshes. In those files the
+  second pair is stale and the third agrees with the locals (MEASURED, `probe_map_bind.gd`).
+- **What it changed** (MEASURED, `client/tools/probe_map_bind.gd`, all 144 animated map models at
+  the clip's first key): 9 models move, each onto its own mesh. The mean vertex distance from the
+  authored mesh:
+  - `alex_portal`: 19.75 → 0.000;
+  - `quest\teleport01`: 31.71 → 0.000;
+  - the four `demon_altar_deco*`: 54.76 → 0.001;
+  - `fortress_ct_fort_in_door01` / `out_door01`: 89.48 / 44.61 → 0.000;
+  - `arabianf_bujok03`: 481.3 → 8.7.
+  
+  The other 135 do not move.
+- **OPEN: the skeleton scale.** `tre_willow03`'s stored binds are its chain scaled by 1.793 below
+  its first bone. Four more, `tre_tree01_big`, `demon_wall_deco*`, `oas_hot_tree_stone` and
+  `tre_bamboo04`, differ in ways that are not a root shift. The client multiplies the first bone's
+  3x3 by a skeleton scale (`FUN_00c4bcb0`'s `param_3`, READ; from skeleton `+0xa4`, written by
+  `CCompChar` slot 9 `FUN_00c25460` together with compound `+0x1b0`). What value the map path
+  passes is not read, so these keep the composed bind, which draws them on their meshes at the
+  first key.
+
 ## Implementation notes
 
 - `server/internal/bsk` (Go) and `client/scripts/bsk/bsk_reader.gd` (GDScript) both parse the

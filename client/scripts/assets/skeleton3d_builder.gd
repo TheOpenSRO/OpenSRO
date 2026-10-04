@@ -251,8 +251,19 @@ static func apply_ban_keyframe(skeleton: Skeleton3D, track: BanReader.Bone, fram
 ## are not drawn at all. The weight half of the rule is not modelled
 ## (BmsReader normalises over both slots before the skeleton is known): at
 ## rest the vertex lands in the same place either way, animated it may lag.
+## `world_binds` (round 721, bone name -> Transform3D; stored_world_binds)
+## binds a bone to the inverse of its STORED world bind, the client's own
+## rule (READ, docs/protocol/BSK_FORMAT.md "How the client skins with those
+## three matrices": `P = InvBind_file x W`, the file's inverse bind, never
+## recomputed). A bone it lacks is bound, as before, to the inverse of the
+## rest this builder composes from the locals. The two differ where a
+## skeleton's stored locals do not chain to its stored world binds -- the
+## Alexandria gate portal's root stores a local of (19.75, 0, 0) while every
+## child's world bind puts the root at the origin (MEASURED), and its
+## clip keys the root at the origin, so binding to the composed rest drew
+## every ring 19.75 off and spun the inner ones about the wrong point.
 static func build_skin(skeleton: Skeleton3D, bone_names: PackedStringArray, object_space: bool = false,
-		missing_to_object_space: bool = false) -> Skin:
+		missing_to_object_space: bool = false, world_binds: Dictionary = {}) -> Skin:
 	if skeleton == null or bone_names.is_empty():
 		return null
 	var skin := Skin.new()
@@ -264,7 +275,10 @@ static func build_skin(skeleton: Skeleton3D, bone_names: PackedStringArray, obje
 		if bone_idx == -1:
 			push_warning("Skeleton3DBuilder: skeleton has no bone named %s" % bone_names[i])
 			return null
-		skin.add_bind(bone_idx, skeleton.get_bone_global_rest(bone_idx).affine_inverse())
+		if world_binds.has(bone_names[i]):
+			skin.add_bind(bone_idx, (world_binds[bone_names[i]] as Transform3D).affine_inverse())
+		else:
+			skin.add_bind(bone_idx, skeleton.get_bone_global_rest(bone_idx).affine_inverse())
 	if object_space:
 		# One more bind, at the index BmsReader.to_arrays gives OBJECT_SPACE
 		# (one past the palette): a parentless bone at the skeleton's
@@ -273,6 +287,101 @@ static func build_skin(skeleton: Skeleton3D, bone_names: PackedStringArray, obje
 		# the client's palette entry 0 (BmsReader._parse_skin, round 626).
 		skin.add_bind(_object_space_bone(skeleton), Transform3D.IDENTITY)
 	return skin
+
+## Every bone's stored world bind, keyed by name -- the binds build_skin's
+## `world_binds` takes -- as the inverse of the record's THIRD (quaternion,
+## vector) pair, the file's own inverse bind, which is what the client skins
+## with (READ, BSK_FORMAT.md: `P = InvBind_file x W`, "the inverse bind is
+## the file's, never recomputed; no update or skinning path reads the stored
+## world bind"). The third pair is read in the convention bone_world_bind
+## reads the second. A bone whose stored inverse is not usable (non-finite,
+## not a rotation, or a translation past ROOT_TRANSLATION_LIMIT -- the 11
+## skeletons with an unset root store garbage) is left out, so build_skin
+## binds it to the composed rest as before (OURS).
+static func stored_world_binds(skel: BskReader.ParsedSkeleton) -> Dictionary:
+	var out := {}
+	if skel == null:
+		return out
+	var all: Array[BskReader.Bone] = skel.bones.duplicate()
+	if not skel.root_transform.is_empty():
+		var root_bone := BskReader.Bone.new()
+		root_bone.bone_name = skel.root_name
+		root_bone.transform = skel.root_transform
+		all.append(root_bone)
+	for b in all:
+		var inv = stored_inverse_bind(b)
+		if inv == null:
+			continue
+		out[b.bone_name] = (inv as Transform3D).affine_inverse()
+	return out
+
+## The stored binds (stored_world_binds) when, and only when, they are the
+## binds build_skin would compose anyway once the root is re-seated: every
+## bone's stored bind equals its composed global rest moved by one rigid
+## transform -- the root's own stored local against where its children's
+## stored binds put it (root_rest_from_children) -- within BIND_TOLERANCE.
+## Otherwise {} (build_skin then binds to the composed rest, as before).
+##
+## Round 721. The client binds to the stored inverse binds (READ), so where
+## the two agree this is exactly the client's skin; the Alexandria gate
+## portal (root stored at (19.75, 0, 0), its children's binds at the origin,
+## its clip keying the root at the origin) is that case. A skeleton whose
+## stored binds differ from its locals by more than a root shift -- the
+## willow `tre_willow03`'s are its chain scaled by 1.793 below the first
+## bone, which the client undoes with the compound's skeleton scale
+## (`FUN_00c4bcb0`'s param_3, skeleton +0xa4, set by CCompChar slot 9
+## `FUN_00c25460`; what value the map passes is not read, OPEN) -- keeps the
+## composed bind, which draws it on its mesh at the clip's first key.
+static func consistent_stored_binds(skeleton: Skeleton3D, skel: BskReader.ParsedSkeleton) -> Dictionary:
+	var binds := stored_world_binds(skel)
+	if binds.is_empty() or skeleton == null:
+		return {}
+	var root_idx := skeleton.find_bone(skel.root_name)
+	if root_idx == -1:
+		return {}
+	var shift := root_rest_from_children(skel) * skeleton.get_bone_global_rest(root_idx).affine_inverse()
+	var differs := false
+	for name in binds:
+		# The root stores its own local as its bind; the shift is defined by
+		# where its children put it, so it is not compared (it is kept: a
+		# vertex on the root binds to the root's stored inverse, as the client
+		# binds it).
+		if name == skel.root_name:
+			continue
+		var idx := skeleton.find_bone(name)
+		if idx == -1:
+			return {}
+		var expected := shift * skeleton.get_bone_global_rest(idx)
+		var got: Transform3D = binds[name]
+		if expected.origin.distance_to(got.origin) > BIND_TOLERANCE or \
+				expected.basis.get_rotation_quaternion().angle_to(got.basis.get_rotation_quaternion()) > deg_to_rad(BIND_TOLERANCE_DEG):
+			return {}
+		if not expected.is_equal_approx(skeleton.get_bone_global_rest(idx)):
+			differs = true
+	return binds if differs else {}
+
+## How far a stored bind may sit from the composed one and still count as
+## the same (OURS; census_bsk_bind.gd's own tolerance, 0.05 units / 1 degree).
+const BIND_TOLERANCE := 0.05
+const BIND_TOLERANCE_DEG := 1.0
+
+## One bone's stored INVERSE bind: the record's third (quaternion, vector)
+## pair, at 0x38 / 0x48 (+4 for a root's 92-byte record), or null when it is
+## not usable (see stored_world_binds).
+static func stored_inverse_bind(b: BskReader.Bone):
+	var off := 0x38 + (4 if b.transform.size() > BskReader.BONE_TRANSFORM_LEN else 0)
+	if b.transform.size() < off + 28:
+		return null
+	var q := Quaternion(b.transform.decode_float(off), b.transform.decode_float(off + 4),
+		b.transform.decode_float(off + 8), b.transform.decode_float(off + 12))
+	var qlen := q.length()
+	if not is_finite(qlen) or absf(qlen - 1.0) > 0.01:
+		return null
+	var t := Vector3(b.transform.decode_float(off + 16), b.transform.decode_float(off + 20), b.transform.decode_float(off + 24))
+	var inv := Transform3D(Basis(q.normalized()), t)
+	if not root_rest_usable(inv.basis.get_rotation_quaternion(), inv.origin):
+		return null
+	return inv
 
 ## The skeleton's OBJECT_SPACE_BONE, added on first use.
 static func _object_space_bone(skeleton: Skeleton3D) -> int:

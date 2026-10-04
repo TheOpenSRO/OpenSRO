@@ -3020,6 +3020,17 @@ Still open, by the files each would add:
   moving to the stored binds is safe for characters (the "two spaces" history in BSK_FORMAT.md), is
   OPEN. Also not read: the skeleton scale at skeleton+0xa4 (`FUN_00c4bcb0`), and who sets a
   bone's `+0x84` bit 2, whose palette `RTSkeleton::FUN_00c4a180` scales by `+0x88`.
+  - **Round 721 took the stored binds for MAP objects where they are only a root shift**
+    (`Skeleton3DBuilder.consistent_stored_binds`). That fixed the Alexandria gate portal's rings,
+    the quest teleporter, the demon altars and the fortress doors, and moved `arabianf_bujok03`
+    from 481 to 8.7 off its mesh (BSK_FORMAT.md, round 721; `client/tools/probe_map_bind.gd`).
+  - **Left:**
+    - the skeleton scale's source: `CCompChar` slot 9 `FUN_00c25460` writes skeleton `+0xa4` and
+      compound `+0x1b0`, but its map caller is unread. It decides `tre_willow03` (a 1.793-scaled
+      bind), `tre_tree01_big`, `demon_wall_deco*`, `oas_hot_tree_stone` and `tre_bamboo04`;
+    - `arabianf_bujok03`'s remaining 8.7;
+    - the character/monster path: 35 monster skeletons have a root that disagrees with its
+      children, and it still binds to the composed rest.
 - **`cj_ferry_boat_old`.** Its `.bsk` is a root with no other bone, which `BskReader` refuses
   (1 placement).
 - **Rigid pieces of a skeletal object.** 20 animated models, such as `bagh_city_portal` and the

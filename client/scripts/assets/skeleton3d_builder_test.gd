@@ -159,9 +159,105 @@ func _init() -> void:
 	var wrapped: Vector3 = skeleton3.get_bone_global_pose(c2_idx3).origin
 	_check(wrapped.is_equal_approx(Vector3(20, 0, 0)), "a loop at one duration is back on its first key (got %s)" % wrapped)
 
+	_check_stored_world_binds()
+
 	if _failures == 0:
 		print("ALL PASS")
 		quit(0)
 	else:
 		print("%d FAILURES" % _failures)
 		quit(1)
+
+## A bone transform with explicit rotations and both positions: `extra` is 4
+## for the root's 92-byte record (every field shifted by 4), 0 otherwise.
+func _bone_bytes(size: int, extra: int, local_pos: Vector3, world_pos: Vector3) -> PackedByteArray:
+	var t := PackedByteArray()
+	t.resize(size)
+	for q_off in [0x00, 0x1c, 0x38]:
+		_put_f32(t, extra + q_off + 0x0c, 1.0) # identity (x, y, z, w)
+	# The third pair, the inverse bind: with an identity rotation, -world.
+	_put_f32(t, extra + 0x48, -world_pos.x)
+	_put_f32(t, extra + 0x4c, -world_pos.y)
+	_put_f32(t, extra + 0x50, -world_pos.z)
+	_put_f32(t, extra + 0x10, local_pos.x)
+	_put_f32(t, extra + 0x14, local_pos.y)
+	_put_f32(t, extra + 0x18, local_pos.z)
+	_put_f32(t, extra + 0x2c, world_pos.x)
+	_put_f32(t, extra + 0x30, world_pos.y)
+	_put_f32(t, extra + 0x34, world_pos.z)
+	return t
+
+## Round 721: the Alexandria gate portal's shape. Its root stores a local of
+## (19.75, 0, 0), every child's stored world bind puts the root at the origin,
+## and the clip keys the root at the origin. The client skins with the file's
+## inverse bind (READ, BSK_FORMAT.md), so a ring around a spinning bone stays
+## centred on it; binding to the rest composed from the locals carried the
+## stored 19.75 into the bind and swung the ring around the bone at that
+## radius.
+func _check_stored_world_binds() -> void:
+	var s := BskReader.ParsedSkeleton.new()
+	s.root_name = "Root"
+	s.root_transform = _bone_bytes(BskReader.ROOT_TRANSFORM_LEN, 4, Vector3(20, 0, 0), Vector3(20, 0, 0))
+	var spin := BskReader.Bone.new()
+	spin.bone_name = "Spin"
+	spin.parent_name = "Root"
+	spin.transform = _bone_bytes(BskReader.BONE_TRANSFORM_LEN, 0, Vector3(0, 10, 0), Vector3(0, 10, 0))
+	s.bones.append(spin)
+	var skeleton := Skeleton3DBuilder.build_skeleton3d(s)
+	var binds := Skeleton3DBuilder.stored_world_binds(s)
+	_check(binds.has("Spin") and (binds["Spin"] as Transform3D).origin.is_equal_approx(Vector3(0, 10, 0)),
+		"stored_world_binds reads Spin's stored world bind at (0, 10, 0) (got %s)" % str(binds.get("Spin")))
+	var consistent := Skeleton3DBuilder.consistent_stored_binds(skeleton, s)
+	_check(consistent.has("Spin"), "a skeleton off only by its root's stored local takes its stored binds")
+	var new_skin := Skeleton3DBuilder.build_skin(skeleton, PackedStringArray(["Spin"]), false, false, consistent)
+	var old_skin := Skeleton3DBuilder.build_skin(skeleton, PackedStringArray(["Spin"]))
+	var root_idx := skeleton.find_bone("Root")
+	var spin_idx := skeleton.find_bone("Spin")
+	skeleton.set_bone_pose_position(root_idx, Vector3.ZERO) # the clip's root key
+	var centre := Vector3(0, 10, 0)
+	var rim := Vector3(5, 10, 0)
+	var centre_ok := true
+	var old_moves := false
+	for deg in [0.0, 90.0, 180.0, 270.0]:
+		skeleton.set_bone_pose_rotation(spin_idx, Quaternion(Vector3.UP, deg_to_rad(deg)))
+		skeleton.force_update_all_bone_transforms()
+		var pose := skeleton.get_bone_global_pose(spin_idx)
+		if not (pose * new_skin.get_bind_pose(0) * centre).is_equal_approx(centre):
+			centre_ok = false
+		if not (pose * old_skin.get_bind_pose(0) * centre).is_equal_approx(centre):
+			old_moves = true
+	_check(centre_ok, "bound to the stored world binds, a ring's centre on the spinning bone stays put at every angle")
+	_check(old_moves, "bound to the composed rest, the same centre swings (the bug the stored binds fix)")
+	skeleton.set_bone_pose_rotation(spin_idx, Quaternion(Vector3.UP, deg_to_rad(90.0)))
+	skeleton.force_update_all_bone_transforms()
+	var rim_posed := skeleton.get_bone_global_pose(spin_idx) * new_skin.get_bind_pose(0) * rim
+	_check(rim_posed.is_equal_approx(Vector3(0, 10, -5)), "a rim vertex turns 90 degrees about the bone (got %s)" % rim_posed)
+	# A chain whose stored binds are its locals scaled (the willow
+	# tre_willow03, 1.793 below its first bone) is not a root shift: it keeps
+	# the composed bind (the skeleton scale that undoes it is OPEN).
+	var scaled := BskReader.ParsedSkeleton.new()
+	scaled.root_name = "Root"
+	scaled.root_transform = _bone_bytes(BskReader.ROOT_TRANSFORM_LEN, 4, Vector3.ZERO, Vector3.ZERO)
+	var b1 := BskReader.Bone.new()
+	b1.bone_name = "B1"
+	b1.parent_name = "Root"
+	b1.transform = _bone_bytes(BskReader.BONE_TRANSFORM_LEN, 0, Vector3(0, 10, 0), Vector3(0, 10, 0))
+	scaled.bones.append(b1)
+	var b2 := BskReader.Bone.new()
+	b2.bone_name = "B2"
+	b2.parent_name = "B1"
+	b2.transform = _bone_bytes(BskReader.BONE_TRANSFORM_LEN, 0, Vector3(0, 80, 0), Vector3(0, 10 + 80 * 1.793, 0))
+	scaled.bones.append(b2)
+	var scaled_skel := Skeleton3DBuilder.build_skeleton3d(scaled)
+	_check(Skeleton3DBuilder.consistent_stored_binds(scaled_skel, scaled).is_empty(),
+		"a chain whose stored binds are scaled keeps the composed bind")
+	_check(Skeleton3DBuilder.consistent_stored_binds(skeleton, _make_skeleton()).is_empty(),
+		"a skeleton with no usable stored inverse binds keeps the composed bind")
+	scaled_skel.free()
+	# An unusable stored bind (the unset roots' garbage) is left out: the
+	# bone binds to its composed rest as before.
+	var bad := BskReader.ParsedSkeleton.new()
+	bad.root_name = "Root"
+	bad.root_transform = _bone_bytes(BskReader.ROOT_TRANSFORM_LEN, 4, Vector3(3.7e24, 0, 0), Vector3(3.7e24, 0, 0))
+	_check(not Skeleton3DBuilder.stored_world_binds(bad).has("Root"), "a root whose stored bind is 3.7e24 away is not used")
+	skeleton.free()
