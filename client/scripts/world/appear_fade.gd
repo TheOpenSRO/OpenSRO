@@ -62,7 +62,8 @@ class_name AppearFade
 ## alpha, so a twin that multiplied it in would show holes, then snap
 ## opaque), any other BaseMaterial3D duplicated with alpha blending, a
 ## ShaderMaterial duplicated onto its shader's fade
-## twin (ObjectLoader.appear_fade_shader: the foliage *_fade variants and the
+## twin (ObjectLoader.appear_fade_shader: the object shaders' fade twins,
+## ObjectLoader.object_shader(kind, true) -- every object layer since round 706 -- and the
 ## mod shader's `fade` twin), the alpha set on the twin. The twins are shared
 ## by every model whose fade started in the same frame (one cohort: they are
 ## always at the same alpha), so a list of hundreds of one species makes one
@@ -244,7 +245,10 @@ static func _make_twin(src: Material) -> Material:
 		var shader := ObjectLoader.appear_fade_shader((src as ShaderMaterial).shader)
 		if shader == null:
 			return null
-		var sm := (src as ShaderMaterial).duplicate() as ShaderMaterial
+		# Copied by parameter, not Resource.duplicate(): a duplicated object
+		# material drew its diffuse term brighter (round 706 review, MEASURED;
+		# ObjectLight.copy_material).
+		var sm := ObjectLight.copy_material(src as ShaderMaterial)
 		sm.shader = shader
 		set_twin_alpha(sm, 0.0)
 		return sm
@@ -267,7 +271,7 @@ static func set_twin_alpha(twin: Material, a: float) -> void:
 ## WORLD_ISSUES round 676, Review), the hitch landing when the first monster
 ## of each material kind appears. So while the world loads, `warm(camera)`
 ## draws one tiny quad per twin shader -- the standard fade shader both
-## culls, the two foliage fade variants, and the fade twin of every MTRL mod
+## culls, the two foliage fade variants, the solid object's (round 706), and the fade twin of every MTRL mod
 ## shader made so far -- at alpha 0 in front of the camera for WARM_FRAMES
 ## frames, then frees them. OURS.
 const WARM_FRAMES := 3
@@ -279,7 +283,8 @@ static func warm_materials() -> Array[Material]:
 	var tex := ImageTexture.create_from_image(white)
 	var shaders: Array[Shader] = [standard_fade_shader("back"), standard_fade_shader("disabled"),
 		ObjectLoader.appear_fade_shader(ObjectLoader.FOLIAGE_SHADER),
-		ObjectLoader.appear_fade_shader(ObjectLoader.FOLIAGE_SHADER_ONE_SIDED)]
+		ObjectLoader.appear_fade_shader(ObjectLoader.FOLIAGE_SHADER_ONE_SIDED),
+		ObjectLoader.appear_fade_shader(ObjectLoader.OBJECT_SHADER)]
 	for sh in ObjectLoader.mod_shaders_made():
 		var twin := ObjectLoader.appear_fade_shader(sh)
 		if twin != null and not shaders.has(twin):

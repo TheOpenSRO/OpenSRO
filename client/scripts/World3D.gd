@@ -333,6 +333,16 @@ const CAMERA_ZOOM_STEP := 15.0
 ## that way rather than dressed up as a measurement.
 const CAMERA_ZOOM_MIN := 20.0
 const CAMERA_ZOOM_MAX := 90.0
+## The camera's vertical field of view (round 706; READ in round 648 and
+## re-read): the camera's constructor `FUN_00bae0a0` stores 60.0 (0xd89ddc)
+## at +0x50 and sets +0x44 (perspective); `CGFXVideo3d::FUN_00bae810` passes
+## +0x50 x pi/180 (0xe1b8d8) and the viewport's width / height (0xed836c) to
+## `FUN_00aa4ef0`, a D3DXMatrixPerspectiveFovLH: m11 = cot(fov / 2), m00 =
+## m11 / aspect -- so 60 degrees vertical at any aspect, which is Godot's
+## Camera3D.fov under KEEP_HEIGHT. Godot's default was 75 until then, so the
+## same spot drew everything about 1.3 times smaller than the original. The
+## zoom range above (OURS, a framing choice) was kept.
+const CAMERA_FOV_DEG := 60.0
 ## The scene's own authored default CameraArm.rotation_degrees (see
 ## World3D.tscn) -- orbit-dragging (right-click) moves the arm's *local*
 ## yaw/pitch away from this and nothing ever moved it back, so after any
@@ -508,6 +518,10 @@ func apply_video_options(o: VideoOptions) -> void:
 			o.value(VideoOptions.SSAO) == 1, o.value(VideoOptions.BLOOM) == 1)
 	if _retail_bloom != null:
 		_retail_bloom.visible = o.value(VideoOptions.BLOOM) == 1
+	# The objects' diffuse scale follows the bloom target (round 706, READ:
+	# world+0x2e54, ObjectLight).
+	if changed.call(VideoOptions.BLOOM):
+		_apply_object_light()
 	# Effect Quality (READ, IDecoSkill::FUN_00a50dc0; SkillEffects.quality).
 	SkillEffects.quality = o.value(VideoOptions.EFFECT)
 	# Set Brightness (READ curve; a pass over the whole screen).
@@ -638,8 +652,12 @@ func _apply_fog() -> void:
 	var on := _fog_ready and o.value(VideoOptions.FOG) == 1 and OS.get_environment("OPENSRO_QA_NOFOG") == ""
 	var env: Environment = world_environment.environment if world_environment != null else null
 	WorldFog.set_globals(fog_planes, on, WorldFog.pass_color(_fog_display_color, env))
+	# The object shaders undo the same tone map (round 706, ObjectLight).
+	ObjectLight.set_tonemap(env)
 	if _fog_pass != null:
 		_fog_pass.visible = on
+		# Forward+ mixes in display values under this tone map (round 705).
+		WorldFog.set_pass_tonemap(_fog_pass, env)
 
 ## Whether Detail's terrain catcher draws: Shadow Detail "Detail", under
 ## Forward+ (ShadowCatcher: the Compatibility renderer's shadowed sun is its
@@ -1087,6 +1105,14 @@ var _load_timings := LoadTimings.new()
 ## before/after render of the same Dunhuang region -- real dune/terrain
 ## detail is now visible instead of a flat wash, and Jangan (a darker real
 ## palette that was never clipping) still looks correct at this energy too.
+##
+## **Round 706: no placed object or character is lit by it any more.** They
+## draw the original's own object lighting (ObjectLight: unshaded, the zone's
+## channels, READ), so this light's energy, colour and the Forward+ x4 no
+## longer reach them. It stays for what Godot still lights (the water's
+## StandardMaterial3Ds and the like) and for Shadow Detail "Detail": its
+## shadow map holds the characters' silhouettes, which ShadowCatcher lays on
+## the terrain.
 @onready var directional_light: DirectionalLight3D = $DirectionalLight3D
 @onready var zone_label: Label = $UI/Control/ZoneLabel
 @onready var character_label: Label = $UI/Control/CharacterLabel
@@ -1585,6 +1611,16 @@ func _ready() -> void:
 	# The distance fog's pass (round 702, WorldFog); the zone's environment
 	# fills it in.
 	_build_fog_pass()
+	# The original's field of view (round 706, CAMERA_FOV_DEG).
+	if camera_3d != null:
+		camera_3d.fov = CAMERA_FOV_DEG
+		camera_3d.keep_aspect = Camera3D.KEEP_HEIGHT
+	# The objects' light before any zone is known, then the zone's (round 706).
+	_apply_object_light()
+	ObjectLight.set_tonemap(world_environment.environment)
+	# Characters' object colour by their tile (round 706 and its review: both
+	# renderers, through per-level material copies).
+	_character_light = CharacterLight.new(_nav_graph_for)
 	# The original's bloom (round 702 review); the Bloom row shows it.
 	_retail_bloom = RetailBloom.new()
 	_retail_bloom.visible = false
@@ -2727,6 +2763,35 @@ var _env_light_ready := false
 ## The zone light the portrait is lit by: [channel 2, channel 3] of the
 ## current zone's environment record, or empty before one is applied.
 var _portrait_zone_light: Array = []
+## The zone's channels 2 and 3 the objects are lit from (round 706,
+## ObjectLight), [] before any zone.
+var _object_light_channels: Array = []
+## Keeps characters' object colour by their tile (round 706).
+var _character_light: CharacterLight = null
+
+## A character body's object colour now (round 706 review): when it is
+## placed, so it never draws a frame at 0.6 first (CharacterLight).
+func _light_character(body: Node3D) -> void:
+	if _character_light != null and body != null:
+		_character_light.visit(body)
+
+## The objects' light from the zone's channels and the Bloom row (round 706,
+## ObjectLight: READ); 1.0 channels before any zone (OURS fallback).
+func _apply_object_light() -> void:
+	var bloom := video_options().value(VideoOptions.BLOOM) == 1
+	var d: Color = _object_light_channels[0] if not _object_light_channels.is_empty() else ObjectLight.FALLBACK_CHANNEL
+	var a: Color = _object_light_channels[1] if not _object_light_channels.is_empty() else ObjectLight.FALLBACK_CHANNEL
+	ObjectLight.set_light(d, a, bloom)
+	print("World3D: object light (READ): ambient %s diffuse %s (channel 2 x %.1f, bloom %s) to-light %s%s" % [
+		str(ObjectLight.current_ambient), str(ObjectLight.current_diffuse), ObjectLight.diffuse_scale(bloom),
+		"on" if bloom else "off", str(ObjectLight.to_light_godot()), "" if not _object_light_channels.is_empty() else " (no zone yet)"])
+	# The portrait's and the paper doll's light follow (their diffuse scale is
+	# the same READ rule).
+	if not _object_light_channels.is_empty():
+		if _paper_doll != null:
+			_paper_doll.set_zone_light(d, a)
+		if _hud_player_info != null:
+			_hud_player_info.set_portrait_zone_light(d, a)
 
 var _tile_index_load_attempted := false
 
@@ -4077,6 +4142,12 @@ func _apply_real_environment_lighting(region: MapmReader.ParsedRegion, archive: 
 	# where it flattened shading instead of directing it.
 	directional_light.light_color = diffuse_color
 	world_environment.environment.ambient_light_color = ambient_color
+	# Round 706: objects and characters are lit by the original's own formula
+	# from these two channels (ObjectLight: ambient = channel 3 clamped,
+	# diffuse = channel 2 clamped x 0.8 with the Bloom row on, 0.6 off -- READ),
+	# not by the light and ambient above, which only what Godot lights uses.
+	_object_light_channels = [diffuse_color, ambient_color]
+	_apply_object_light()
 	# Round 635's review follow-up: the player block's portrait is lit by this
 	# zone light (retail's avatar draws with the world's vslot_025 light), and
 	# re-renders when it changes -- a zone load is world entry or a teleport,
@@ -7256,6 +7327,7 @@ func _place_npc_record(rec: NpcSpawnNet.Record, group: Node3D) -> Dictionary:
 	if npc_name != "":
 		holder.add_child(_name_plate(npc_name, bounds.y))
 	group.add_child(holder)
+	_light_character(holder)
 	_animate_skeleton(skeleton, idle_anim)
 	_npc_holders[rec.uid] = holder
 	# One line per NPC: which source turned it, and the way it faces as a
@@ -7874,6 +7946,9 @@ func _terrain_commit(job: Dictionary) -> float:
 
 	var terrain_group := Node3D.new()
 	terrain_group.name = "RealTerrain" + String(job["node_suffix"])
+	# The .t ShadowMap, where a character's object colour is read (round 706,
+	# CharacterLight).
+	terrain_group.set_meta(CharacterLight.SHADOW_META, job.get("shadow_map", PackedByteArray()))
 	# What /groundprobe (round 579) reads back about this region: the ground
 	# counts the prepare logged, how many of its tiles have a texture, the
 	# light the mesh was baked with (a zero direction: shaded, not baked), and
@@ -8697,6 +8772,10 @@ func _apply_player_equipment_visual(equipped: Dictionary) -> void:
 	player.add_child(skeleton)
 	player_mesh.visible = false
 	_player_skeleton = skeleton
+	# A new body: its object colour now, not at the next visit (round 706
+	# review). The meta drops the visit's "unchanged" shortcut.
+	player.remove_meta(CharacterLight.META_VALUE)
+	_light_character(player)
 	# Every other character in view carries a name plate and the local player
 	# did not, so the one character you always look at was the one with no
 	# name over it (playtest 2026-09-20, item 18).
@@ -11327,7 +11406,12 @@ func _update_blob_shadow() -> void:
 ##                          boundaries in 28 ticks a hop. A trailing
 ##                          `|key=value,...` sets that viewpoint's effects
 ##                          (QaShotEnv, round 702); OPENSRO_QA_PATCHES
-##                          prints ground squares' screen boxes per shot
+##                          prints ground squares' screen boxes per shot;
+##                          OPENSRO_QA_DEPTH="name:fx,fy;..." (round 705)
+##                          a ray's hit, view depth and fog amount through
+##                          those screen points (`QA CAMERA` / `QA DEPTH`),
+##                          and `|fogprobe=1` makes the fog pass draw its
+##                          own amount and depth
 ##   OPENSRO_QA_RADIUS=n   load an n-region radius instead of the default
 ##   OPENSRO_QA_MAPANIM=n  every n frames, `QA MAPANIM ... registered=
 ##                          running= driver_us= process_ms=`: the animated
@@ -12596,6 +12680,7 @@ func _qa_advance_shots() -> void:
 		if OS.get_environment("OPENSRO_QA_PLATES") != "":
 			_qa_plates_report(_qa_shots[_qa_shot_index]["name"])
 		QaShotEnv.report_patches(self, _qa_shots[_qa_shot_index]["name"])
+		QaShotEnv.report_depth(self, _qa_shots[_qa_shot_index]["name"])
 	_qa_shot_frames -= 1
 	if _qa_shot_frames > 0:
 		return
@@ -14592,6 +14677,9 @@ func _physics_step(delta: float) -> void:
 		if _qa_split != null:
 			_qa_split.minimap_usec += Time.get_ticks_usec() - split_sw
 	_update_blob_shadow()
+	# Characters' object colour by the tile under them (round 706).
+	if _character_light != null:
+		_character_light.step(get_tree())
 
 	_time_since_send += delta
 	# No position goes out while seated or getting up or down (round 607): the
@@ -15025,6 +15113,7 @@ func _spawn_or_update_other(character_id: int, char_name: String, pos: Vector3, 
 	_other_bodies[character_id] = node
 	# Its round shadow in Circle (round 702, CharacterBlobs).
 	CharacterBlobs.register(node, float(_bc_radius_by_code.get(String(node.get_meta("body", "")), 0.0)))
+	_light_character(node)
 	_other_body_targets[character_id] = pos
 	# The auras of the buffs this client holds for them go on the new body
 	# (round 646): a zone change's arrival list and the world entry build the
@@ -17518,6 +17607,9 @@ func _build_monster_body(monster: CombatNet.MonsterSnapshot) -> void:
 	_monster_bodies[monster.monster_id] = body
 	# Its round shadow in Circle (round 702, CharacterBlobs).
 	CharacterBlobs.register(body, float(_bc_radius_by_code.get(monster.code_name, 0.0)))
+	# Its object colour before its fade starts, so the fade's twins are made
+	# from the right copies (round 706 review).
+	_light_character(body)
 	_monster_builds += 1
 	# It fades into existence over 2.0 s, as retail's spawn does (round 676,
 	# AppearFade: READ, CICharactor vslot 0x6c FUN_009d17e0 -> CIDecoAppear).

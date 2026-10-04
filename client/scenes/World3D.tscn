@@ -79,6 +79,7 @@ shape = SubResource("SphereShape3D_cameraarm")
 
 [node name="Camera3D" type="Camera3D" parent="Player/CameraArm"]
 current = true
+fov = 60.0
 
 [node name="OtherEntities" type="Node3D" parent="."]
 

@@ -54,18 +54,25 @@ Real layers were seen to share the exact same default color set (`ambient=diffus
 — evidently a shared engine default rather than per-layer authored data, at least for these
 particular avatar/flag materials.
 
-**They are not always equal, and which one lights the surface matters** (2026-09-11). The five
-fields are a `D3DMATERIAL9` in its own order — ambient, diffuse, specular, emissive, power — and
-the fixed-function pipeline multiplies the ambient light by the ambient colour and only the
-directional light by the diffuse. Measured with `client/tools/dump_bmt.gd`: every layer of
-Jangan's `cj_armo.bmt` has ambient 0.59 and diffuse 0.59, 0.47 or 0.50, while **24 of the 40
-layers of Alexandria's `alex_minga02.bmt` have diffuse `(0.14, 0.14, 0.14)` against ambient
-`(0.59, 0.59, 0.59)`** (specular 0.39). The client used to set a material's albedo from the
-diffuse, which never showed on Jangan's near-equal layers and drew every Alexandria house black; it
-now uses the ambient, which is the term a mostly-ambient scene is lit by. The remaining
-approximation is stated in `ObjectLoader.build_godot_material`: a `StandardMaterial3D` scales the
-sun by the same colour, so a sunlit face of such a layer is brighter here than in the original by
-diffuse/ambient until a shader splits the two terms.
+**They are not always equal, and which one lights the surface matters** (2026-09-11). Measured
+with `client/tools/dump_bmt.gd`: every layer of Jangan's `cj_armo.bmt` has first colour 0.59 and
+second 0.59, 0.47 or 0.50, while **24 of the 40 layers of Alexandria's `alex_minga02.bmt` have a
+second colour `(0.14, 0.14, 0.14)` against a first `(0.59, 0.59, 0.59)`**. From 2026-09-11 to round
+705 the client drew a layer's albedo from the first colour (BmtReader `ambient`), lit by Godot's sun.
+
+**Round 706 (READ, sro_client.exe): the object shader uses the SECOND colour, and only it.**
+`CPrimMtrl::vslot_001` hands `this + 0x10` to `FUN_00bf9270`, which stores the file's first colour
+at the record's +0x10 and the second at its +0 -- the record is a `D3DMATERIAL9` (Diffuse, Ambient,
+Specular, Emissive, Power) and the file's order is Ambient, Diffuse, Specular, Emissive, Power, so
+BmtReader's names are right -- then Power at +0x40 and the flag word at +0x60 (the material's
++0x70, where the draw reads it). The object renderer uploads `c11 = material+0x10 (the record's
+Diffuse = the file's SECOND colour) x the light's diffuse` (`CObjRendererVS::FUN_00bf0e20`) and
+`c10 = the drawn object's colour (0.6, CCompoundObj) x the light's ambient` (`vslot_024` /
+`vslot_038`): the first colour (D3DMATERIAL9.Ambient) is in no object lighting. An Alexandria wall
+whose second colour is 0.14 is therefore lit as `0.6 x La + N.L x 0.14 x Ld` -- the ambient term
+does not depend on the material, so it does not go black. `ObjectLight` has the whole formula and
+its addresses; object.gdshader / foliage.gdshaderinc and the MTRL mod shader evaluate it per vertex.
+Specular and Power are not used by the object vertex shaders (no oD1).
 
 **Settled in round 625: the gap is seven bytes** (the texture trailer above, READ). What follows is
 the earlier record, kept for the staging-tree caveat. **The exact byte length of the gap between one
@@ -205,22 +212,20 @@ The reader and the render path are both in `sro_client.exe`:
   renderer seeds flag `0x1000`, which `FUN_00c42a60` makes COLOROP 5).
 - **DIFFUSE is the lit vertex colour** (READ, `Shader\vertexshader0.c`):
   `oD0 = saturate(N.L) * c11 + c10`. The registers are:
-  - `c11` (`VSC_DLIGHT_DIFFUSE`) = the material's D3DMATERIAL9 Diffuse × the light's Diffuse
-    (READ: `CObjRendererVS::FUN_00bf0e20` and siblings upload material+0x10.. ×
-    `DAT_01112e18..20`, w = 1.0). `DAT_01112e18..` is the D3DLIGHT9 Diffuse and `..e28..` its
-    Ambient, copied by `CObjRendererVS::vslot_025` beside `SetLight(0)`.
-  - `c10` (`VSC_DLIGHT_AMBIENT`): its product is built in `vslot_024` from the object's own
-    colour × the light's Ambient, w = 1.0. Which stack block is the upload was not resolved
-    (INFERRED).
+  - `c11` (`VSC_DLIGHT_DIFFUSE`) = the material's D3DMATERIAL9 Diffuse (the layer's second colour,
+    round 706 above) × the light's Diffuse (READ: `CObjRendererVS::FUN_00bf0e20` and siblings
+    upload material+0x10.. × `DAT_01112e18..20`, w = 1.0). `DAT_01112e18..` is the D3DLIGHT9
+    Diffuse and `..e28..` its Ambient, copied by `CObjRendererVS::vslot_025` beside `SetLight(0)`.
+  - `c10` (`VSC_DLIGHT_AMBIENT`) = the object's own colour (+0x14..+0x1c) × the light's Ambient,
+    w = 1.0 (READ, round 705: `vslot_024` 0xbf1df8..0xbf1e37, uploaded at 0xbf1f4e..0xbf1f60).
+  - `c9` = the light's direction × -1 in object space (unnormalised).
 
-  The diffuse alpha is 1 (READ: w = 1.0, and oD0 saturates). The shader does not recompute the
-  colour. It splits the stage result into the part that multiplies DIFFUSE (ALBEDO, lit by the
-  scene's lights like every other material) and the part that does not (EMISSION, unlit, as a
-  SELECTARG1 TEXTURE draw is).
-- **Brightness is anchored to the flag-word path** (OURS). The flag-word path draws ALBEDO =
-  layer ambient × texture for what the client draws as MODULATE2X(TEXTURE, DIFFUSE), so the MTRL
-  shader draws a lit coefficient L as L × ambient / 2. Whether the flag-word path itself matches
-  the client is OPEN (docs/WORLD_ISSUES.md, the material review follow-up).
+  Since round 706 the shader computes it per vertex (`ObjectLight.OD0_LINE`), unshaded, and the
+  stage result is evaluated whole. Until then it split the result into the part that multiplies
+  DIFFUSE (ALBEDO, lit by Godot's lights) and the part that does not (EMISSION), with the lit
+  coefficient anchored to the old flag-word path (L × first colour / 2, OURS).
+- **The tone map** is undone on an opaque or `mix` mod's colour (as on every object since round 706,
+  `ObjectLight`), not on an `add` or `mul` blend's, whose source is a factor (OURS).
 - **The alpha test** compares the alpha byte with the ref byte by the mod's own D3DCMPFUNC
   (NEVER, LESS, EQUAL, LESSEQUAL, GREATER, NOTEQUAL, GREATEREQUAL). It reads mip 0, as the
   foliage shader does (OURS: the client tests filtered alpha, and mipmapped alpha dissolves a

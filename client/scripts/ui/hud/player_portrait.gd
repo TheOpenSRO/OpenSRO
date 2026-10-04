@@ -70,9 +70,11 @@ class_name PlayerPortrait
 ##     coordinates -- above and to the +x side;
 ##   * diffuse: world+0x6847.., environment channel 2 (DiffuseColor; record
 ##     +0xf0, `Map::FUN_00a1baf0` 0x00a1bbf3) clamped to [0, 1]
-##     (0x00a1cb96..), times 0.6 (0x00d86fc0; 0.8 = 0x00de4c64 when
-##     world+0x2e54 is set, halved when world+0x26bb is set -- both OPEN, taken
-##     as clear) at 0x00a1d1b6..0x00a1d20b;
+##     (0x00a1cb96..), times 0.6 (0x00d86fc0), or 0.8 (0x00de4c64) while
+##     world+0x2e54 is set -- READ in round 706: the bloom's screen target
+##     exists, so 0.8 with the Bloom row on (ObjectLight.diffuse_scale) --
+##     halved when world+0x26bb (underwater) is set, taken as clear here; at
+##     0x00a1d1b6..0x00a1d20b;
 ##   * ambient: world+0x6853.., environment channel 3 (ObjectAmbientColor;
 ##     record +0x124, 0x00a1bc29) clamped to [0, 1] in the same block
 ##     (0x00a1cc50..0x00a1cc88), put in the light at 0x00a19262;
@@ -144,7 +146,9 @@ const MODEL_YAW := 0.1
 ## READ: the world light's direction, DAT_01109510 = normalize(-1, -1, 0)
 ## (Map::FUN_00a2f370), in the file's coordinates.
 const WORLD_LIGHT_DIRECTION := Vector3(-0.70710678, -0.70710678, 0.0)
-## READ: the world light's diffuse is channel 2 clamped x 0.6 (0x00d86fc0).
+## READ: the world light's diffuse is channel 2 clamped x 0.6 (0x00d86fc0)
+## with no bloom target, x 0.8 with one (round 706: zone_light_colors uses
+## ObjectLight.diffuse_scale for the Bloom row in force).
 const DIFFUSE_SCALE := 0.6
 ## READ: CCompoundObj's own colour from its constructor (0x00d86fc0 at
 ## 0x00c330ed), the factor on the ambient term (c10).
@@ -207,20 +211,15 @@ void fragment() {
 
 ## What a mod pass (ObjectLoader._mod_shader: an MTRL mod's own stage ops,
 ## alpha test and blend, READ from CRTModMtrl::vslot_004) gets injected so it
-## draws in the portrait: its DIFFUSE is this vertex colour instead of Godot's
-## lights, and its lit and unlit parts are summed unshaded.
+## draws in the portrait: its vertex colour (ObjectLight.OD0_LINE, the
+## world's light) is replaced by this one, the portrait's light.
 const MOD_INJECT := """
 uniform vec3 portrait_to_light = vec3(0.70710678, 0.70710678, 0.0);
 uniform vec3 portrait_object_color = vec3(0.6);
 uniform vec3 portrait_light_ambient = vec3(0.6);
 uniform vec3 portrait_light_diffuse = vec3(0.4);
-varying vec3 portrait_od0;
-void vertex() {
-	vec3 pn = normalize(MODEL_NORMAL_MATRIX * NORMAL);
-	float pndl = max(dot(pn, normalize(portrait_to_light)), 0.0);
-	portrait_od0 = clamp(portrait_object_color * portrait_light_ambient + pndl * srr_color(albedo, OUTPUT_IS_SRGB).rgb * portrait_light_diffuse, 0.0, 1.0);
-}
 """
+const MOD_OD0 := "srr_od0 = clamp(portrait_object_color * portrait_light_ambient + max(dot(normalize(MODEL_NORMAL_MATRIX * NORMAL), normalize(portrait_to_light)), 0.0) * srr_color(albedo, OUTPUT_IS_SRGB).rgb * portrait_light_diffuse, 0.0, 1.0);"
 
 var _root: Node3D
 var _mirror: Node3D
@@ -389,11 +388,11 @@ static func shade(texel: float, material: float, object: float, ambient: float, 
 	return clampf(MODULATE_SCALE * texel * lit, 0.0, 1.0)
 
 ## The world light's colours from the zone's environment channels: diffuse =
-## channel 2 clamped to [0, 1] x 0.6, ambient = channel 3 clamped to [0, 1]
+## channel 2 clamped to [0, 1] x 0.6 or 0.8 (the Bloom row), ambient = channel 3 clamped to [0, 1]
 ## (Map::FUN_00a1baf0 clamps both world fields, 0x00a1cb96.. and
 ## 0x00a1cc50..0x00a1cc88).
 static func zone_light_colors(diffuse_channel: Color, ambient_channel: Color) -> Dictionary:
-	var d := Color(clampf(diffuse_channel.r, 0.0, 1.0), clampf(diffuse_channel.g, 0.0, 1.0), clampf(diffuse_channel.b, 0.0, 1.0)) * DIFFUSE_SCALE
+	var d := Color(clampf(diffuse_channel.r, 0.0, 1.0), clampf(diffuse_channel.g, 0.0, 1.0), clampf(diffuse_channel.b, 0.0, 1.0)) * ObjectLight.diffuse_scale(ObjectLight.current_bloom)
 	var a := Vector3(clampf(ambient_channel.r, 0.0, 1.0), clampf(ambient_channel.g, 0.0, 1.0), clampf(ambient_channel.b, 0.0, 1.0))
 	return {"diffuse": Vector3(d.r, d.g, d.b), "ambient": a}
 
@@ -521,20 +520,15 @@ func _mod_material(src: ShaderMaterial) -> ShaderMaterial:
 	var code := src.shader.code
 	var key := "mod:%d" % code.hash()
 	if not _shaders.has(key):
-		var lit_line := "vec3 lit = c.lit * srr_color(albedo, OUTPUT_IS_SRGB).rgb * 0.5;"
-		var out_lines := "ALBEDO = lit;\n\tEMISSION = unlit;"
-		var rm := code.find("render_mode ")
-		var rm_end := code.find(";", rm) if rm >= 0 else -1
-		if rm < 0 or rm_end < 0 or code.contains("void vertex()") or not code.contains(lit_line) or not code.contains(out_lines):
+		var vert := code.find("void vertex()")
+		if vert < 0 or not code.contains(ObjectLight.OD0_LINE) or not code.contains("render_mode unshaded"):
 			return null
-		var frag := code.find("void fragment()")
-		if frag < rm_end:
-			return null
-		# The injection goes just before fragment(), after the source's own
+		# The injection goes just before vertex(), after the source's own
 		# uniforms (its vertex colour reads `albedo`).
-		var out := code.substr(0, rm) + "render_mode unshaded, " + code.substr(rm + 12, rm_end - rm - 12) + code.substr(rm_end, frag - rm_end) + MOD_INJECT + "\n" + code.substr(frag)
-		out = out.replace(lit_line, "vec3 lit = c.lit * portrait_od0;")
-		out = out.replace(out_lines, "ALBEDO = clamp(lit + unlit, 0.0, 1.0);")
+		var out := code.substr(0, vert) + MOD_INJECT + "\n" + code.substr(vert)
+		out = out.replace(ObjectLight.OD0_LINE, MOD_OD0)
+		# The portrait's environment is Linear: nothing to undo (round 706).
+		out = out.replace("ALBEDO = srr_obj_present(", "ALBEDO = (")
 		# The portrait is not in the world's fog (round 702, WorldFog).
 		out = out.replace(WorldFog.SHADER_FOG_LINE, "")
 		var sh := Shader.new()

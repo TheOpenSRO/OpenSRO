@@ -128,6 +128,7 @@ func _pose() -> BanReader.ParsedAnimation:
 
 func _init() -> void:
 	await process_frame
+	var bloom_was := ObjectLight.current_bloom
 	var script = load(PORTRAIT_PATH) if ResourceLoader.exists(PORTRAIT_PATH) else null
 	_check(script != null, "player_portrait.gd exists")
 	if script != null:
@@ -136,6 +137,8 @@ func _init() -> void:
 		_shading(script)
 		await _render_setup(script)
 	await _hud_integration()
+	# The static the bloom checks set (round 706 review): put back.
+	ObjectLight.current_bloom = bloom_was
 	print("player_portrait_test: %d failure(s)" % _failures)
 	quit(1 if _failures > 0 else 0)
 
@@ -185,7 +188,12 @@ func _shading(script) -> void:
 	if not script.get_script_constant_map().has("OBJECT_COLOR"):
 		_check(false, "shade() takes the zone light and the object colour")
 		return
-	# Jangan-like channels: diffuse 0.7 -> 0.42, ambient 0.58.
+	# Jangan-like channels: diffuse 0.7 -> 0.42, ambient 0.58 -- with the
+	# Bloom row off (x 0.6); on, x 0.8 (round 706, ObjectLight).
+	ObjectLight.current_bloom = true
+	var zb: Dictionary = script.zone_light_colors(Color(0.7, 0.6, 1.3), Color(0.58, 0.58, 0.58))
+	_check(_near3(zb["diffuse"], Vector3(0.56, 0.48, 0.8)), "with the bloom target: clamp(channel 2) x 0.8: %s" % str(zb["diffuse"]))
+	ObjectLight.current_bloom = false
 	var z: Dictionary = script.zone_light_colors(Color(0.7, 0.6, 1.3), Color(0.58, 0.58, 0.58))
 	_check(_near3(z["diffuse"], Vector3(0.42, 0.36, 0.6)), "diffuse = clamp(channel 2) x 0.6: %s" % str(z["diffuse"]))
 	_check(_near3(z["ambient"], Vector3(0.58, 0.58, 0.58)), "ambient = channel 3")
@@ -231,7 +239,7 @@ func _render_setup(script) -> void:
 	if bm != null:
 		_check(_near(float(bm.get_shader_parameter("alpha_ref")), 128.0 / 255.0), "body keeps its alpha test (0x80)")
 		_check(_near(float(bm.get_shader_parameter("modulate_scale")), 2.0), "body drawn MODULATE2X")
-		_check((bm.get_shader_parameter("material_color") as Color).is_equal_approx(Color(0.588, 0.588, 0.588, 1)), "body colour = layer ambient 0.588")
+		_check((bm.get_shader_parameter("material_color") as Color).is_equal_approx(Color(0.588, 0.588, 0.588, 1)), "body colour = the material's colour 0.588")
 		_check(bm.get_shader_parameter("tex") != null and bool(bm.get_shader_parameter("has_texture")), "body keeps its texture")
 	var hm := (sk.get_node("hair") as MeshInstance3D).material_override as ShaderMaterial
 	_check(hm != null and hm.shader.code.contains("cull_disabled"), "hair stays two-sided")
@@ -241,7 +249,7 @@ func _render_setup(script) -> void:
 	var gm := (sk.get_node("glow") as MeshInstance3D).material_override as ShaderMaterial
 	_check(gm != null and gm.shader.code.contains("blend_mix") and gm.shader.code.contains("ALPHA = t.a"), "a blended layer is mapped and still blends")
 	var mm := (sk.get_node("mod") as MeshInstance3D).material_override as ShaderMaterial
-	_check(mm != null and mm.shader.code.contains("portrait_od0") and mm.shader.code.contains("unshaded") and mm.shader.code.contains("blend_add"),
+	_check(mm != null and mm.shader.code.contains("portrait_light_diffuse") and mm.shader.code.contains("unshaded") and mm.shader.code.contains("blend_add"),
 		"an MTRL mod keeps its shader, blend and ops, lit by the portrait's vertex colour")
 	if mm != null:
 		_check(int(mm.get_shader_parameter("alpha_func")) == 5 and _near(float(mm.get_shader_parameter("alpha_scissor")), 0.25) and int(mm.get_shader_parameter("color_op")) == 4,

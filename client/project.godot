@@ -80,3 +80,26 @@ srr_fog_color={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 1)
 }
+
+; The objects' and characters' light (round 706, ObjectLight): the direction
+; to the light in Godot's world (READ: -normalize(-1, -1, 0)), the light's
+; ambient (channel 3 clamped) and diffuse (channel 2 clamped x 0.8 / 0.6 by
+; the Bloom row), and the tone map the object shaders undo (x exposure,
+; y white, z 1 Filmic, w 1 undo on). World3D sets them; these are the
+; values before it does (OURS: 1.0 channels, bloom on, Filmic).
+srr_obj_light={
+"type": "vec4",
+"value": Vector4(0.707107, 0.707107, 0, 0)
+}
+srr_obj_ambient={
+"type": "vec4",
+"value": Vector4(1, 1, 1, 1)
+}
+srr_obj_diffuse={
+"type": "vec4",
+"value": Vector4(0.8, 0.8, 0.8, 1)
+}
+srr_obj_tonemap={
+"type": "vec4",
+"value": Vector4(1, 1, 1, 1)
+}

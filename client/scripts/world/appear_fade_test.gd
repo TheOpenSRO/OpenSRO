@@ -143,7 +143,7 @@ func _test_model_fade() -> void:
 	_check(std_twin != null and std_twin.shader != null and not std_twin.shader.code.contains("albedo_tex.a"),
 		"whose alpha is the fade's alone: the texture's alpha is not multiplied in (the opaque original ignores it)")
 	_check(b.material_override != fol and b.material_override is ShaderMaterial
-		and (b.material_override as ShaderMaterial).shader == load("res://scripts/assets/foliage_fade.gdshader"),
+		and (b.material_override as ShaderMaterial).shader == ObjectLoader.object_shader("two", true),
 		"a foliage piece draws with the foliage shader's fade twin")
 	_check(b.material_override is ShaderMaterial and (b.material_override as ShaderMaterial).get_shader_parameter("alpha_scissor") == 0.5
 		and (b.material_override as ShaderMaterial).get_shader_parameter("albedo_texture") == std.albedo_texture,
