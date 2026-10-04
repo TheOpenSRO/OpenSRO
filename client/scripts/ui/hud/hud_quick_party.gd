@@ -733,6 +733,7 @@ func _refresh_buffs() -> void:
 
 ## A slot's click (0x6d8500): the member by name, then the sound.
 func click_slot(s: QuickSlot) -> void:
+	print("HudQuickParty: %s's box clicked" % s.member_name)
 	member_clicked.emit(s.jid, s.member_name)
 	if play_sound.is_valid():
 		play_sound.call(SELECT_SOUND)

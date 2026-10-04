@@ -575,9 +575,15 @@ func botMode(addr, name string, level int, accept bool, inviteName string, regis
 	fmt.Printf("[%s] in the world, character %d, JID %d\n", name, b.id, b.jid())
 	// -tp / -tp2 (round 715, OURS, a QA aid): the GM teleport, so a live run
 	// can stand bots at chosen distances from the rendered client.
+	// The GM /tp only tells a client where to stand; the client then sends
+	// the move (session/gm.go), so the bot sends it too, as a relocation.
 	gmTP := func(at string) {
 		b.send(session.OpGMCommand, (&session.GMCommandRequest{Name: name, Line: "/tp " + at}).Encode())
-		fmt.Printf("[%s] -> /tp %s\n", name, at)
+		var x, z float32
+		if _, err := fmt.Sscanf(at, "%f %f", &x, &z); err == nil {
+			b.moveTo(x, b.y, z)
+		}
+		fmt.Printf("[%s] -> /tp %s and a relocated move there\n", name, at)
 	}
 	if tp != "" {
 		gmTP(tp)
