@@ -611,6 +611,80 @@ English abridged:
 Server-reply messages (`UIIT_MSG_PARTYERR_*`, `UIIT_MSG_PARTYMATCH_JOIN_*`, `UIIT_MSG_PARTY_JOIN` …)
 are party709a's to map to codes.
 
+## 9. Party members on the minimap and the world map (round 717)
+
+The user (2026-10-04): "a greenish big dot on the map ... the minimap will show an arrow on the edge
+of the minimap in the general direction of where each party member is ... they get their own arrow
+... when you're close enough you'll see that big green circle again but on the minimap"
+(screenshots `map_vxAS9rr.png`, `map_JXHQtcH.png`, `map_yu1cjfM.png` beside the others). Built in
+`ui/hud/party_map_marks.gd` (the rules), `hud_minimap.gd` `update_party`, `hud_worldmap.gd`
+`update_party`, and World3D `_fill_party_marks`.
+
+**The textures** (READ: `CIFMinimap::Create` `0x660f70`, string `push` then the store after
+`0x5008f0`; MEASURED: the DDS headers in Media.pk2):
+
+| texture | size | kept at |
+|---|---|---|
+| `interface\minimap\mm_sign_party.ddj` | 8x8 | CIFMinimap `+0x39c` (`0x6611d6`, after `push 0xda0dac`) |
+| `interface\minimap\mm_sign_partyarrow.ddj` | 16x16 | CIFMinimap `+0x36c` (`0x660fd5`, after `push 0xda0e70`) |
+| `interface\worldmap\wmap_sign_party.ddj` | 16x16 | CNIFWorldMap `+0x7ec` (`0x616382`) |
+
+(The minimap also loads academy marks, `mm_sign_apprenticeship[arrow].ddj` at `+0x3a0`/`+0x3a4`,
+drawn by the same rule from the academy list; not built, no academy.)
+
+**The minimap** (READ, `CIFMinimap::vslot_013` `0x662bd0`, the party loop `0x6643a0..0x664ad1`):
+
+- **Who.** Every node of the party manager's member list (`0x986f50`, list `+0x20`) but the
+  player's own (`node +0x44` against `manager +0x18`, `0x6643bb`), whose record's world id
+  (`+0x68`, the member record's u32 world id) equals the player's (`player +0x20e4` through
+  `0x9d4d90`, `0x6643ca..0x6643d8`), and whose region the player can see: `0x9d5520(region, pos)`
+  is 1 for a field region (`region >= 0` as a short) while the player is in the field (`player +0x7c`
+  without `0x8000`), and for a dungeon region only when it is the player's own dungeon.
+- **Where.** The member's spawned object's position (`+0x90..+0x98`) when `0x9c35e0` finds one
+  (`0x66441f`), else the record's (`+0x5c` x, 0, `+0x64` z) in its region `+0x5a`, through
+  `0x9ecfd0` (`0x66444c`). Less the player's position (`player +0x80..+0x88`).
+- **Dot or arrow.** The offset in map pixels is `(dx / 1920 x S, -dz / 1920 x S)` with `S` the
+  drawn tile size (`+0x3fc`, the zoom), and its length `sqrt` (`0xb42de0` is `fsqrt`, `0x6644f6`).
+  If `47.0 <= length` (the float at `0xda0ef0`, `fcomp` at `0x664505`, `jne 0x6646f0` on C0|C3)
+  the arrow, else the dot. **No other cut-off**: a dot between the other signs' 44.5 and 47 is drawn.
+- **The dot**: an 8x8 quad (+-4.0, `0xe1b860`) centred on the offset, the whole texture, less the
+  half pixel (`0xe1b7d0` 0.5).
+- **The arrow**: a 16x16 quad (+-8.0, `0xd99a70` / `0xd89240`) centred on the offset scaled to
+  length 47 (`47.0 / length`, the double at `0xda0ee8`) -- on a fixed 47 px rim, whatever the zoom --
+  and turned by `-(theta + pi)` (`0xd81948` pi, `0xe1b8e8` -1.0), `theta = acos(dx_px / length)`
+  (`0xb47c50` is acos: `fsqrt` + `fpatan`) negated when `dz < 0`, through `0x8b5c50`, which rotates
+  `(x, y)` to `(x cos - y sin, x sin + y cos)` (`0xb44a10` is `fcos`, `0xb44b40` `fsin`). In screen
+  space, y down, that is `atan2(oy, ox) - pi`: the art (unturned) points west, so a member due
+  east turns it by -180 degrees.
+- **One mark per member**, every frame (vslot_013 is the draw; no throttle), after the other signs
+  and the academy marks and before the player's own arrow (`+0x374`, the loop's last draw). No
+  colour or texture varies by member.
+
+**The world map** (READ, `CNIFWorldMap::FUN_0061eec0`, the party loop `0x61f8c0..0x61ffce`):
+
+- **Who.** Every member but the player (`node +0x44` against `manager +0x18`, `0x61f8db..0x61f8e1`);
+  **no world-id test** here. In the dungeon-floor map (`+0x97d0 == 2`) only members in that dungeon;
+  otherwise a field member is placed through the map's own transform (`0x60fbd0` / `0x60fa90`).
+- **Where.** As the minimap: the spawned object's position (`0x9c35e0`, `0x61f8eb`) or the
+  record's `(x, 0, z)` through `0x9ecfd0`.
+- **The dot**: a 16x16 quad (+-8.0, `0xd89240`) centred on the member's map pixel, each corner
+  through `0xb42d10`, less the half pixel; drawn before the player's marker (`+0x7e8`, at the
+  loop's end).
+- **The name on hover**: for the first member only, when the mouse (`+0x7a4`, `+0x7a8`,
+  `0x61fecb`, `0x61fef7`) lies inside the quad inset by 2.0 (`0xe1b898`), inclusive, the party
+  manager's text object for that member (its map `+0x28`, `0x61b2f0`, `0x61ff58`; value `+0x24`) is
+  drawn centred above the quad: `0x8b2f20` its size, `0x8b48b0` at `(x - w / 2, top - h)`, alpha
+  0xff. That the text is the member's **name** is INFERRED (the map is keyed by the member; its
+  writer was not read).
+
+**OpenSRO** (OURS, labelled in the code):
+
+- A dungeon record (`region & 0x8000`) is not marked: OpenSRO sends no dungeon positions.
+- Without the player's own record (no world id to compare) the minimap marks every member.
+- A world-map dot off the current map lands off the canvas and is clipped by the map area (the
+  original's clipping was not traced).
+- The hover name is a plain Label with the builder's font.
+
 ## Gap list: OpenSRO's client today
 
 **Round 711 built items 1-4 and 9** (`docs/rounds/party711.md`); the rest stand.
