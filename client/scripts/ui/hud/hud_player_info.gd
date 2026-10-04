@@ -169,6 +169,10 @@ func setup() -> void:
 	_setup_cinfo(root)
 	_setup_race_and_statup(root)
 	_setup_portrait(root)
+	_select_glow = root.find_child("GDR_PMI_SELECT", true, false) as CanvasItem
+	_leader_flag = root.find_child("GDR_PMI_PARTY_LEADER", true, false) as CanvasItem
+	set_selected(_selected)
+	set_party_leader(_party_leader)
 
 ## Fills a gauge with the client's own bar artwork.
 ##
@@ -936,3 +940,36 @@ func portrait() -> PlayerPortrait:
 
 func portrait_view() -> TextureRect:
 	return _portrait_view
+
+# --- Selection glow and leader flag (round 715) -------------------------------
+#
+# READ (party_gui.md §7, "The player's own yellow glow"): CIFPlayerMiniInfo
+# shows GDR_PMI_SELECT (id 200, interface\playerminiinfo\pmi_select.ddj,
+# 256x128; MEASURED yellow (255,255,0) / (169,164,77)) exactly when the
+# selected id is the player's own (0x7b7cbe..0x7b7cd6 -> 0x7b5490), and
+# GDR_PMI_PARTY_LEADER (id 14) while the player leads the party
+# (0x7b81ba..0x7b81d9). Both are outside SHOWN_CONTROLS, so they start hidden
+# and only these setters show them.
+
+var _select_glow: CanvasItem
+var _leader_flag: CanvasItem
+var _selected := false
+var _party_leader := false
+
+## The player is (not) the selected object.
+func set_selected(on: bool) -> void:
+	_selected = on
+	if _select_glow != null:
+		_select_glow.visible = on
+
+func is_selected_shown() -> bool:
+	return _select_glow != null and _select_glow.visible
+
+## The player leads (does not lead) a party.
+func set_party_leader(on: bool) -> void:
+	_party_leader = on
+	if _leader_flag != null:
+		_leader_flag.visible = on
+
+func is_leader_flag_shown() -> bool:
+	return _leader_flag != null and _leader_flag.visible
