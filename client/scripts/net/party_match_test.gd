@@ -228,10 +228,12 @@ func _test_state_party_events() -> void:
 	old.handle(_page_of([_row(13, "Bram", 0, 1, 110)]), PartyMatchNet.OP_PAGE_ACK)
 	_check(old.registration != null and old.registration.number == 12,
 		"(the bug's mechanism) without a party event a page of someone else's rows leaves the pin -- so the event must clear it")
-	# Kind 3, the player left: cleared (0x886eaa).
+	# Kind 3, the player left: cleared (0x886eaa), the number NOT dropped from
+	# the list (the `*piVar5 == 0` test skips 0x73a700; review F7).
 	st.handle(_fx("b069_ok"), PartyMatchNet.OP_REGISTER_ACK)
+	removed.clear()
 	st.on_party_event(PartyNet.EVENT_LEFT, true, false, 0)
-	_check(st.registration == null, "kind 3 naming the player clears it (0x886eaa)")
+	_check(st.registration == null and removed.is_empty(), "kind 3 naming the player clears it (0x886eaa) without dropping the number")
 	# Kind 3, someone else left, the player still in a party: the count follows.
 	st.handle(_fx("b069_ok"), PartyMatchNet.OP_REGISTER_ACK)
 	st.on_party_event(PartyNet.EVENT_LEFT, false, true, 2)
@@ -241,10 +243,10 @@ func _test_state_party_events() -> void:
 	# Kind 3, someone else left and the player is out of a party: cleared (0x886f76).
 	st.on_party_event(PartyNet.EVENT_LEFT, false, false, 0)
 	_check(st.registration == null, "another member leaving with the player out of a party clears it (0x886f76)")
-	# A leader change leaves the registration alone.
+	# A leader change renames it (0x8871d0..0x8872a2; review F1).
 	st.handle(_fx("b069_ok"), PartyMatchNet.OP_REGISTER_ACK)
-	st.on_party_event(PartyNet.EVENT_LEADER, false, true, 3)
-	_check(st.registration != null, "kind 9 does not clear it")
+	st.on_party_event(PartyNet.EVENT_LEADER, false, true, 3, "Bram")
+	_check(st.registration != null and st.registration.leader_name == "Bram", "kind 9 keeps it and takes the new leader's name")
 
 func _test_party_state_signals_events() -> void:
 	var ps := PartyState.new()

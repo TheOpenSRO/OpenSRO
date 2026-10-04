@@ -744,10 +744,16 @@ func _build_frame(def: UiLayoutParser.ControlDef) -> Control:
 		# user saw `com_blacksquare_`'s bottom drawn as a row of vertical
 		# ticks: `right_side` is a 4x4 tile whose column 3 is a grey line
 		# (#7B797B, the rest black), and tiled upright along the bottom it
-		# puts a grey dot every 4 px. CNIFStretchWnd's two UV slots
-		# (`0x49b1e0`, `0x49b200`) both call the corner UVs with mode 2 (each
-		# corner its own texture, upright: `0x49a140`) and the edge UVs with
-		# mode 3 (`0x49a410`, jump table `0x49a7b8` -> `0x49a6b0`). Mode 3
+		# puts a grey dot every 4 px. A resinfo CIFStretchWnd (vtable
+		# `0xdd2174`): the loader checks the class at `0x8b57ce`, loads the
+		# six pieces (`0x819c00`) and calls slot 47 (`0x819110` ->
+		# `0x8190f0`) with the control's StretchType (`[esi+0xf0]`); every
+		# six-piece CIFStretchWnd in the archive has StretchType 0, which
+		# sets corner UV mode 2 (`0x818a50`) and edge UV mode 3 (`0x818d30`).
+		# The .2dt windows' CNIFStretchWnd does the same through its own copy
+		# (the 2dt loader `0x489b80` calls slot 49 with 0 at `0x48a408`:
+		# corners `0x49a140` mode 2, edges `0x49a410` mode 3, jump table
+		# `0x49a7b8` -> `0x49a6b0`). Mode 3
 		# writes the left and right quads upright and the top and bottom
 		# quads as TL (0,1), TR (0,0), BR (1,0), BL (1,1) -- the texture
 		# turned 90 degrees clockwise, so a texture column becomes a screen
@@ -795,16 +801,19 @@ func _build_frame(def: UiLayoutParser.ControlDef) -> Control:
 		# the last tile, which is the client's own tiling.
 		#
 		# A six-piece set (no mid_up / mid_down, the sides reused for the top
-		# and bottom) belongs to CNIFStretchWnd (every six-piece base in the
-		# archive's layouts is a CIFStretchWnd, round 718), whose layout
-		# (`0x499e10`, mislabelled `UI_ALCHEMYBOX` in the dump) places its
-		# quads around an inner rect; how that inner rect maps onto a
-		# control's rect is not read, so the placement stays this function's.
-		# Its UVs are READ (above): the reused top and bottom are the side
-		# pieces turned 90 degrees clockwise, as thick as that side is wide.
+		# and bottom) is a CIFStretchWnd's (every six-piece base in the
+		# archive's layouts is one, round 718). Its placement is READ (CIF
+		# slot 41, `0x8186a0`): every piece inside the control's rect -- top
+		# from LT.w to W - RT.w, `left_side.w` thick; bottom from LB.w to
+		# W - RB.w at H - `right_side.w`; left from LT.h to H - LB.h; right
+		# from RT.h to H - RB.h -- which this function's geometry matches for
+		# every 4x4 set. **Its edges are stretched, not tiled** (READ: mode
+		# 3's UVs are 0 and 1, and the draw `0x819d80` copies the quads and
+		# samples with point filtering, `0x819e3c`/`0x819e5f`), so a
+		# six-piece set's four edges are scaled here with NEAREST filtering;
+		# an eight-piece frame's edges stay tiled (CNIFFrame, above).
 		# `com_lattice_outline_` and `com_blacksquare_` are 4x4 in every
-		# piece; `com_square_`'s sides are 4x64 (one control in the archive),
-		# so its top and bottom are now 4 thick and 64-pixel tiles long.
+		# piece; `com_square_`'s sides are 4x64 (one control, not built).
 		var w := def.rect.size.x
 		var h := def.rect.size.y
 		var lu_s := _piece_size(lu)
@@ -819,14 +828,15 @@ func _build_frame(def: UiLayoutParser.ControlDef) -> Control:
 		var right_w := ru_s.x if bottom_reused else _piece_size(rs).x
 
 		_add_slice(container, lu, Rect2(Vector2.ZERO, lu_s))
-		_add_slice(container, mu, Rect2(lu_s.x, 0, w - lu_s.x - ru_s.x, top_h), true)
+		var six := top_reused or bottom_reused
+		_add_slice(container, mu, Rect2(lu_s.x, 0, w - lu_s.x - ru_s.x, top_h), not six, six)
 		_add_slice(container, ru, Rect2(Vector2(w - ru_s.x, 0), ru_s))
 
-		_add_slice(container, ls, Rect2(0, lu_s.y, left_w, h - lu_s.y - ld_s.y), true)
-		_add_slice(container, rs, Rect2(w - right_w, lu_s.y, right_w, h - ru_s.y - rd_s.y), true)
+		_add_slice(container, ls, Rect2(0, lu_s.y, left_w, h - lu_s.y - ld_s.y), not six, six)
+		_add_slice(container, rs, Rect2(w - right_w, lu_s.y, right_w, h - ru_s.y - rd_s.y), not six, six)
 
 		_add_slice(container, ld, Rect2(Vector2(0, h - ld_s.y), ld_s))
-		_add_slice(container, md, Rect2(ld_s.x, h - bottom_h, w - ld_s.x - rd_s.x, bottom_h), true)
+		_add_slice(container, md, Rect2(ld_s.x, h - bottom_h, w - ld_s.x - rd_s.x, bottom_h), not six, six)
 		_add_slice(container, rd, Rect2(Vector2(w - rd_s.x, h - rd_s.y), rd_s))
 
 	return container
@@ -856,7 +866,7 @@ func rotated_cw(tex: Texture2D) -> Texture2D:
 static func _piece_size(tex: Texture2D) -> Vector2:
 	return tex.get_size() if tex != null else Vector2.ZERO
 
-func _add_slice(parent: Control, tex: Texture2D, rect: Rect2, tile: bool = false) -> void:
+func _add_slice(parent: Control, tex: Texture2D, rect: Rect2, tile: bool = false, point_filter: bool = false) -> void:
 	if tex == null or rect.size.x <= 0 or rect.size.y <= 0:
 		return
 	var tr := TextureRect.new()
@@ -868,13 +878,15 @@ func _add_slice(parent: Control, tex: Texture2D, rect: Rect2, tile: bool = false
 	# setting IGNORE_SIZE afterwards never gave the height back.
 	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	tr.stretch_mode = TextureRect.STRETCH_TILE if tile else TextureRect.STRETCH_SCALE
+	if point_filter:
+		tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	tr.position = rect.position
 	tr.size = rect.size
 	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(tr)
 
-## A CIFEdit: text over the art behind it, in the layout's face, size and
-## colour.
+## A CIFEdit: text over the art behind it, in the layout's face, size,
+## colour and alignment.
 ##
 ## **No box of Godot's own** (round 718). The client's edit draws no frame:
 ## every one in the archive sits on art of its own (party matching's three
@@ -883,18 +895,32 @@ func _add_slice(parent: Control, tex: Texture2D, rect: Rect2, tile: bool = false
 ## line) is taller than the layouts' 11-15 px edit rects, so the control
 ## grew and drew its text 4-5 px low in the black boxes (the user's report:
 ## party matching's "1 ~ 110" and the page number "too low"). With the style
-## empty the minimum height is the font's own line, the text starts at the
-## edit rect's top -- the layouts' VAlign 0 -- and lands in the box where
-## the original draws it (MEASURED against the user's screenshot of the
-## original, docs/rounds/party718.md). `TwoDtBuilder._edit` already built
-## its edits this way. HAlign is left as it was: how CIFEdit applies it is
-## not read.
+## empty the edit settles at its own line. CIFEdit's draw (slot 13,
+## `0x637b70`, READ in the round's review) lays the text in the rect less
+## ClientRect (`0x652800`) and, for VAlign 0, at that rect's top
+## (`0x637d58`..`0x637d64`); Godot's LineEdit centres its line instead, so
+## the two agree only while the rect is no taller than the line -- true for
+## party matching's 11-15 px edits, not for whole chat's 36 px one (which
+## centred before this round too).
+##
+## **HAlign, READ** (`0x637c7f`): 0 left, 1 centred, 2 `left = right - w -
+## 2.0` (the double at `0xe1b898`) -- right-aligned 2 px in. Party matching's
+## Name edit and the register dialog's level edits are HAlign 2.
+## **ClientRect** (left, top, right, bottom insets) becomes the styles'
+## content margins, as `0x652800` takes it off the rect.
 func _build_edit(def: UiLayoutParser.ControlDef) -> LineEdit:
 	var edit := LineEdit.new()
 	if def.text != "":
 		edit.placeholder_text = _resolve_text(def.text)
+	var cr := def.client_rect
 	for style in ["normal", "focus", "read_only"]:
-		edit.add_theme_stylebox_override(style, StyleBoxEmpty.new())
+		var sb := StyleBoxEmpty.new()
+		sb.content_margin_left = cr.position.x
+		sb.content_margin_top = cr.position.y
+		sb.content_margin_right = cr.size.x + (EDIT_RIGHT_INSET if def.halign == 2 else 0.0)
+		sb.content_margin_bottom = cr.size.y
+		edit.add_theme_stylebox_override(style, sb)
+	edit.alignment = _map_halign(def.halign)
 	var font := font_at(def.font_index)
 	if font != null:
 		edit.add_theme_font_override("font", font)
@@ -902,6 +928,9 @@ func _build_edit(def: UiLayoutParser.ControlDef) -> LineEdit:
 	edit.add_theme_font_size_override("font_size", size)
 	edit.add_theme_color_override("font_color", def.font_color)
 	return edit
+
+## CIFEdit's right inset for HAlign 2: 2.0 (`0xe1b898`, READ).
+const EDIT_RIGHT_INSET := 2.0
 
 ## The artwork a list row draws itself with, and the one it uses when it is
 ## the selected row.

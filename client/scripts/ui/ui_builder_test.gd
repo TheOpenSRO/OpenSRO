@@ -90,6 +90,7 @@ Section = Create,"0,0,200,100","0"
 	_check_font_table()
 	_check_frame_pieces_at_own_size()
 	_check_six_piece_edges_rotated()
+	_check_edit_halign_and_client_rect()
 	_check_section_size_measures_what_is_drawn()
 	_check_text_overrun_follows_alignment()
 	_check_client_rect_style_and_captions()
@@ -392,6 +393,26 @@ Section = Create,"0,0,0,0","0"
 		_check(row0 and not ti.get_pixel(0, 3).is_equal_approx(red), "the top draws left_side's column 0 as its first row")
 	else:
 		_check(false, "the top strip is built")
+	# Its edges are stretched with point sampling, not tiled (review F4: mode
+	# 3's 0/1 UVs, the draw's SetSamplerState).
+	if bottom != null:
+		_check(bottom.stretch_mode == TextureRect.STRETCH_SCALE and bottom.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST,
+			"a six-piece edge is stretched and point-sampled")
+	root.free()
+
+## **A CIFEdit** (round 718 review F2/F6): HAlign 2 is right-aligned 2 px in
+## (0x637cad, 2.0 at 0xe1b898); ClientRect's insets are the text margins.
+func _check_edit_halign_and_client_rect() -> void:
+	var builder := UiBuilder.new(null, null)
+	var text := "Interface Text\n\nSection = Create,\"0,0,0,0\",\"0\"\n{\n\tGDR_E:CIFEdit\n\t{\n\t\tRect=RECT,\"0,0,81,11\"\n\t\tClientRect=RECT,\"7,5,7,5\"\n\t\tHAlign=INTEGER,\"2\"\n\t}\n}\n"
+	var root := builder.build_section(UiLayoutParser.parse(text), "Create")
+	var e := root.get_node_or_null("GDR_E") as LineEdit
+	_check(e != null and e.alignment == HORIZONTAL_ALIGNMENT_RIGHT, "HAlign 2 right-aligns the edit")
+	if e != null:
+		var sb := e.get_theme_stylebox("normal")
+		_check(sb is StyleBoxEmpty and sb.content_margin_left == 7 and sb.content_margin_top == 5
+			and sb.content_margin_right == 9 and sb.content_margin_bottom == 5,
+			"ClientRect 7,5,7,5 plus the 2 px right inset (got %s)" % str([sb.content_margin_left, sb.content_margin_top, sb.content_margin_right, sb.content_margin_bottom]))
 	root.free()
 
 ## **A window is sized from what it draws.** A zero-size rect draws its art at

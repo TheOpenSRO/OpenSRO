@@ -294,9 +294,15 @@ func _build_search() -> void:
 ## **The Purpose value, right-aligned and clipped on its LEFT** (round 718).
 ## The user, 2026-10-04: "in the purpose tab the original game has the text
 ## aligned to the right and then hides the left of the text that would
-## overflow ... let's replicate it for now". The combo's own drawing code
-## was not read: this is the user's description of the original, labelled
-## so. A Godot Button clips a too-long text on its right (TextLine "Clip
+## overflow ... let's replicate it for now". The right alignment is READ
+## (round 718 review): the window's create sets the combo's text-board
+## alignment to 2 (0x73b062..0x73b073), which CIFComboBox's 0x6321e0
+## forwards to its text static, made at {5, 0, W-30, H}
+## (CIFComboBox::vslot_010 0x632937..0x63294f) and laid by 0x64d9b0 case 2
+## (x = right - w); a code-made static's VAlign is 1 (CTextBoard ctor
+## 0x655c28..0x655c3b), so the vertical centring is READ too. The LEFT clip
+## of an overflowing value is the user's description; CIFStatic's draw
+## clipping was not read. A Godot Button clips a too-long text on its right (TextLine "Clip
 ## right"), so the OptionButton keeps the clicks and the list and draws no
 ## text; the value is a Label inside a clipping box over the combo's READ
 ## text rect ({5, 0, W-30, H}, OptionVideoPage.combo_text_rect), placed with
@@ -754,7 +760,11 @@ func on_page() -> void:
 ## A 0x3864 event (round 718): the registration follows the party as
 ## UI_PARTY::FUN_00886b10 moves it (PartyMatchState.on_party_event).
 func _on_party_event(kind: int, jid: int) -> void:
-	state.on_party_event(kind, jid != 0 and jid == party.own_jid, party.in_party, party.members.size())
+	var who := ""
+	if kind == PartyNet.EVENT_LEADER:
+		var m := party.member(jid)
+		who = m.member_name if m != null else ""
+	state.on_party_event(kind, jid != 0 and jid == party.own_jid, party.in_party, party.members.size(), who)
 
 ## 0xb06b for another number: the record leaves the displayed list too
 ## (0x73a700).

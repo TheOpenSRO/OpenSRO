@@ -241,19 +241,25 @@ func _on_delete_result(res: PartyMatchNet.Result) -> void:
 ##   still in one, the registration's member count becomes the party's
 ##   (`+9` <- 0x986f50()+0x10, the source 0x97c530 fills the count from) and
 ##   its row redraws (0x73a980);
-## - kind 2, someone joined: the same count update (0x886cf0..).
+## - kind 2, someone joined: the same count update (0x886cf0..);
+## - kind 9, a new leader: the registration takes the new leader's name and
+##   its row redraws (0x8871d0..0x8872a2, round 718 review F1).
+## The self-leave clear does not drop the number (`*piVar5 == 0` skips it).
 ## Those list steps run when the window exists (0x799680 = child 0x82); the
 ## original builds it with the interface, so they always run there, and here
 ## this state exists only once the window has been built. Party matching's
 ## Set lock (0x6d5ab0) is not touched on any of these paths (no call to it
 ## from 0x886b10), so it stays as it was.
-func on_party_event(kind: int, self_left: bool, in_party: bool, party_count: int) -> void:
+func on_party_event(kind: int, self_left: bool, in_party: bool, party_count: int, leader_name: String = "") -> void:
 	match kind:
 		PartyNet.EVENT_DISSOLVED:
 			_clear_registration()
 		PartyNet.EVENT_LEFT:
 			if self_left:
-				_clear_registration()
+				# 0x886eaa clears it; the `*piVar5 == 0` test after it then
+				# skips 0x73a700/0x73a770, so the number is not dropped from
+				# the list here (round 718 review, F7).
+				_clear_registration(false)
 			elif registration != null:
 				if not in_party:
 					_clear_registration()
@@ -264,14 +270,22 @@ func on_party_event(kind: int, self_left: bool, in_party: bool, party_count: int
 			if registration != null and in_party:
 				registration.members = party_count
 				changed.emit()
+		PartyNet.EVENT_LEADER:
+			# kind 9 (0x8871d0..0x8872a2, READ in the review, F1): the new
+			# leader's record (0x9921e0) -> its name, a wstring assign into
+			# the registration's +0x10 Name (0x46ed50), then the row redraws
+			# (0x73a980).
+			if registration != null and leader_name != "":
+				registration.leader_name = leader_name
+				changed.emit()
 
-func _clear_registration() -> void:
+func _clear_registration(emit_removed: bool = true) -> void:
 	if registration == null and registration_entry == null:
 		return
 	var number := registration.number if registration != null else 0
 	registration = null
 	registration_entry = null
-	if number != 0:
+	if number != 0 and emit_removed:
 		removed.emit(number)
 	changed.emit()
 
