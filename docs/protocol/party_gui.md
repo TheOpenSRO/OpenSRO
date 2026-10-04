@@ -510,7 +510,7 @@ hidden. Screenshots 03, 04 and 11 show no race mark on the HUD boxes.
   `0x7fabe0(12,12)`). **Round 715:** the target window's viewer makes the same calls
   (`0x7fabb0(8)`, `0x7fabc0(0x17,0x17)`, `0x7fabe0(0x14,0x14)`), read in round 638 as per-row
   count, pitch and icon size, so here **6 a row at a 15-px pitch, 12x12 icons** (the earlier
-  "icons 15x15, 12 per row" swapped them); `0x7fab90(1,1)` stays OPEN.
+  "icons 15x15, 12 per row" swapped them); `0x7fab90(1,1)` caps each list at one row -- at most 6 buffs and 6 states (READ, round 715's review: the adds `0x7fd020` / `0x7fd2e0` test `+0x36c` / `+0x370`).
 - Otherwise the viewer is cleared.
 - So **"can't see buffs when far" means the member is not spawned in the player's client**. That
   is the spawn range, not the 1000-unit fade.
@@ -544,7 +544,10 @@ hidden. Screenshots 03, 04 and 11 show no race mark on the HUD boxes.
   When the member is spawned it selects them (`0x78f5f0`) and plays `prim\snd\ui\uiwinopen.wav`.
   A member who is not spawned cannot be selected from the slot.
 - **Ctrl+2..8** select slot N−2's member the same way, and Ctrl+1 selects the player
-  (`0x77f230`).
+  (`0x77f230`). For a member not spawned, `0x77f230` still calls `0x78f5f0` with id 0 (it does not
+  test `0x9c3640`'s result, `0x77f2fa..0x77f30e`), so retail sends `0x7045` with 0 and the server
+  refuses it; the slot click sends only when found. OpenSRO's selection is local (round 622), so
+  nothing is sent either way (round 715's review).
 
 **The player's own yellow glow (READ).**
 - The player mini info shows GDR_PMI_SELECT (id 200, `interface\playerminiinfo\pmi_select.ddj`,
@@ -630,7 +633,7 @@ anyone 1; the party clear `0x998be0` never rewrites them.
 4. ~~**Settings dialog:**~~ (built, round 711) not built. Missing are the client-side preference block (exp/item/anyone)
    that the create request reads, and a `CIFCheckBox` builder.
 5. ~~**Quick party board:**~~ (built, round 715: `ui/hud/hud_quick_party.gd`; the game option
-   bytes +0x08/+0x12/+0x13 default on, OURS) not built at all. That covers:
+   bytes at `0x7776c0`'s defaults, READ: +0x08 on, +0x12 / +0x13 off) not built at all. That covers:
    - slot layout and column wrap;
    - 3D portraits (TODO "party and academy slots' portraits");
    - the stepped faraway overlay, exp-share only;
@@ -686,6 +689,6 @@ Still open:
    `+900` and `+0x380`, then `0x6d7db0` in the same rebuild writes the raw ratio into `+900`.)
 6. ~~The quick-party buff viewer's argument meanings.~~ **Round 715:** the target window's
    viewer was read with the same calls (round 638: per row, pitch, icon size), so 6 a row, 15-px
-   pitch, 12x12 icons (§7); `0x7fab90(1,1)` alone stays OPEN.
+   pitch, 12x12 icons (§7); `0x7fab90(1,1)` is a one-row cap per list (READ, round 715's review).
 7. **The invitation popup's text keys and timer** (§1b, HUD request kind 6 at `0x6ec5d0`).
 8. **How the server picks the two masteries** (`gs:FUN_005a1890`).

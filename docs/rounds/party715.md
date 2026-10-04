@@ -22,8 +22,10 @@ INFERRED, OURS, OPEN.
   - **Name, HP and MP gauges, the leader's red flag** (`0x6d9250`, `0x6d7db0`: the flag iff
     the party's leader id is the member's); the race mark stays hidden (never taken).
   - **Two mastery icons** (17x17 at -3,39 and 15,39) from the record's two mastery ids through
-    `skillmasterydata.txt` (icon column 11, the name code resolved as the tooltip); an id with no
-    row hides its icon (`0x937010` returning 0).
+    `skillmasterydata.txt` (icon column 11, the name code resolved as the tooltip). Since the
+    review: retail's rule exactly -- the second icon is hidden by the per-slot reset and shown iff
+    its record exists; the first is never hidden once shown (a reused slot keeps it), a retail
+    defect reproduced (READ, `0x6d8630`, `0x6d9495`, `0x6d951b`).
   - **The 3D portrait**: a PlayerPortrait at the slot's 64x64 buffer (`0x9edae0(0x40,0x40)`),
     the PMI camera (`0x6d8bf0`: Bip01 Head +1.0, yaw 0.2, distance 6.5, 30 deg), through the
     `qpt_face.ddj` disc. The body is the slot's own model built from the record's model id with
@@ -45,7 +47,8 @@ INFERRED, OURS, OPEN.
     source), re-read every 1000 ms (`0xb93320(1, 0x3e8)`); otherwise cleared. The grid: 6 a row
     (`0x7fabb0(6)`), 15-px pitch (`0x7fabc0(0xf,0xf)`), 12x12 icons (`0x7fabe0(0xc,0xc)`) --
     the meanings the target window's own calls were read with in round 638 (`HudTargetBuffs`
-    gains `set_grid`; its own grid is unchanged). `0x7fab90(1,1)` OPEN.
+    gains `set_grid`; its own grid is unchanged). Since the review: `0x7fab90(1,1)` caps each
+    list at one row (`set_row_caps`; the target window has no cap).
   - **Selection** (READ `0x6d9610`, `0x6db1a0`, `0x6dac10`): the slot whose member is the
     selected object shows GDR_QPS_SELECT (`qpt_grope_select.ddj`, MEASURED teal), the rest hide
     it, every frame; a click (`0x6d8500`) names the slot's member, World3D selects them by name
@@ -70,10 +73,10 @@ INFERRED, OURS, OPEN.
 
 | what | label | note |
 |---|---|---|
-| game option bytes +0x08 (buff row, 73-px step), +0x12, +0x13 (cautions) default on | OURS | their defaults with no `SROptionSet.dat` are not read; OpenSRO has no Game options page for them. On = the user's screenshots 03/04 (73-px rows, buffs shown) |
+| ~~game option bytes default on~~ | **READ (review fix 1)** | `0x7776c0` builds the block before `SROptionSet.dat` is read: +0x08 = 1 (buff row on, 73-px rows), +0x12 = +0x13 = 0 (both cautions off) |
 | the lock button's hover/press/disable art from the `_focus/_press/_disable` files | INFERRED | the builder's convention for every CIFButton; retail sets the normal art by the button's SetTexture |
-| caution sprite: one frame per 100 ms | INFERRED | the layout's `Speed=100` |
-| `0x7fab90(1,1)` | OPEN | |
+| caution sprite: one frame per 100 ms | INFERRED | `0x654730(t)` frames by a timer period `+0x34c` (READ); that the period is the layout's `Speed=100` is the inference; retail phases it on the player block's counter (window 0xb `+0x460`), here on the clock |
+| ~~`0x7fab90(1,1)`~~ | **READ (review fix 2)** | one row a list: at most 6 buffs and 6 states |
 | the record's byte `+0x58` | OPEN | OpenSRO never sets it, so the caution test treats it as 0 |
 | the HP gauge's 0.2 at HP 0 (`0x6d9303`) | OPEN | `0x6d9250` writes 0.2 into the gauge's `+900` and `+0x380`, then `0x6d7db0` (same rebuild) writes the raw ratio into `+900`; which of the two the gauge draws is not read. Drawn: the raw ratio |
 | dungeon positions (`region & 0x8000`) in the record distance | OPEN | OpenSRO sends none (S1 omits the position bit); taken as plain region math |
@@ -113,9 +116,13 @@ learns and casts Grass Walk (skill 113) from his hotbar, and partybots **Cara** 
 
 **Another lane's qa_shot kills every client on the box** (its reap: `pkill -f
 godot-bin/Godot_v4.2.2`, `pkill -x Xvfb`). Two of this round's qa_shot runs died that way at frame
-~230 when lane C2 started a render. The runs below use a renamed copy of Godot and Xvfb
-(`/var/tmp/c3/bin/GodotC3`, `XvfbC3`), Forward+ on the GPU with Xvfb presenting in software
-(qa_shot's `QA_VK_PRESENT=sw` path), and kill nobody: `/var/tmp/c3/run_c3a2.sh`, `run_c3b.sh`.
+~230 when lane C2 started a render. The runs below then used renamed copies of Godot and Xvfb
+(`/var/tmp/c3/bin/GodotC3`, `XvfbC3`) under a private lock. **That was wrong, and is not a method
+to repeat** (the review, finding 3): the copies were invisible to every other lane's reap and to
+the perf gate's idle test, two of their headless second clients outlived the runs (`kill -9` on
+the `runuser` wrapper missed the child) and were still running during this round's first gate
+run, until the coordinator killed them; `/var/tmp/c3/bin` is deleted. The fix for a run another
+lane kills is to queue on the shared box lock and rerun, not to hide from the reap.
 
 **Run A3** (`/var/tmp/c3/liveA/`, RADV NAVI33 on Vulkan; 680 frames):
 - the party forms by Aria's invites; the board's log at tick 520:
@@ -123,7 +130,9 @@ godot-bin/Godot_v4.2.2`, `pkill -x Xvfb`). Two of this round's qa_shot runs died
   block;
 - `f00000525.png` (screenshots 03 / 04): Bram's box with his portrait, his lightning mastery icon
   and the Grass Walk icon at slot +32,+39; Cara's disc under the light faraway_60 blue, Dex's
-  fully blue. MEASURED on the frame: Dex's overlay is exactly the 28x28 disc (632 matching
+  fully blue. **Dex's box also glows teal in this frame**: the QA invite step selects each
+  invitee, and Dex, invited last, was still the selection -- so it is not a clean screenshot 03/04
+  view in that one respect. MEASURED on the frame: Dex's overlay is exactly the 28x28 disc (632 matching
   pixels, x 23..50, y 289..316 = slot 17,283 + 6,6; mean (16,93,243) over the
   α241 (14,96,255) art), Cara's disc centre mean (74,101,169) (α130 over a face), Bram's
   (137,107,80) (the face, no overlay); the party window's rows carry the same three portraits;
@@ -151,6 +160,10 @@ the client as ghidra), Aria and Bram in a party, Bram selected by the invite:
 
 ## Perf gate
 
+**The table that stands is the head's, in the review-fixes table below (jangan SAME on all four).**
+The first run, kept for the record (reeds and cross included), was of `0ccd00a1` and overlapped
+the two orphaned second clients (review finding 3):
+
 `client/tools/perf_gate.sh --base 85e6c063 --sites jangan,reeds,cross --frames 12000 --env
 'OPENSRO_QA_VIDEO_STEPS=quality=0|quality=1'` (the working tree at `0ccd00a1`'s client code
 against `int/party`; 1280x720, Forward+ on the RX 7600, median of 3):
@@ -173,7 +186,24 @@ cross   hitches    base 4  head 5  (+1.0)  SAME
 The gate's views carry no party, so the board is hidden there and its own frame cost is not in
 these numbers. MEASURED separately (`hud_quick_party_test.gd`'s `TIMING` line, the box,
 headless): **26 us a frame** for a full party's board (7 slots, every member placed by record,
-the 1 s buff refresh included), after two changes made for it: the overlay picture is re-set only
+the 1 s buff refresh included; the world's lookups stubbed), after two changes made for it: the overlay picture is re-set only
 when the level changes, and World3D remembers each member's body by JID and, for a member not
 spawned here, scans the bodies at most every 250 ms (OURS) instead of every frame. Those two came
 after the gate run and touch only in-party frames.
+
+## Review fixes (`docs/rounds/party715_review.md`)
+
+| # | finding | fix |
+|---|---|---|
+| 1 | option defaults are READ: caution off | `hp_caution` / `mp_caution` start false, `show_buffs` true, all three labelled READ (`0x7776c0`, before `SROptionSet.dat` is read); the test now checks no caution by default and the effect with option +0x12 set; `party_gui.md` item 5 |
+| 2 | `0x7fab90(1,1)` is a row cap | `HudTargetBuffs.set_row_caps(main, second)` (0 = none, so the target window is unchanged); an add past columns x rows is dropped, in `_add`, so `sync`'s new entries respect it after its diff; the board sets (1, 1). Tested: 8 buffs + 8 states give 6 + 6, the first six kept; the target window's viewer keeps all 16 |
+| 3 | renamed binaries, orphans | the coordinator killed the two orphans; `/var/tmp/c3/bin` deleted; every box run after this used the stock `remote_godot.sh` / `perf_gate.sh` on the shared lock; the notes above strike the method |
+| 4 | mastery icon 1 | retail's rule reproduced and labelled READ: icon 2 hidden by the reset and shown iff its record exists; icon 1 shown when its record exists and never hidden after (`0x6d8630`, `0x6d9495`, `0x6d951b`). Tested, including the stale first icon on a reused slot |
+| 5 | per-frame cost, claim scope | the tick allocates nothing: the player's region/local come from two value callables backed by World3D fields updated once a frame (`_update_party_here`, from the minimap's own lookup), each slot is paired with its member by `state.member(s.jid)` (no `shown_members()` array), the caution's nested array is two plain calls. A kind-6 member update now emits `PartyState.member_updated(jid)` instead of `changed`: the board refills that one slot (no rebuild) and the party window redraws only while shown (a hidden one redraws when it next shows; OURS). The timing claim reworded ("the world's lookups stubbed"): 18.7 us a frame now |
+| 6 | gate table was not of the head | rerun on the head `23aa94e1` (the review-fix client), jangan, with no other lane's Godot running and the orphans gone (`--frames 12000 --env 'OPENSRO_QA_VIDEO_STEPS=quality=0\|quality=1'`, median of 3): frame 1.47 -> 1.47 ms SAME, entry 9505 -> 9515 ms SAME, freeze 3289 -> 3303 ms SAME, hitches 4 -> 4 SAME. (A first attempt without `--frames` collected too few fps samples and printed "missing numbers"; not a result.) |
+| 7 | slots paired by position | `tick` looks each slot's member up by its own JID (`0x6d7f40` -> `0x992260`) |
+| 8 | the miss cache changed `_party_body`'s answers | `_party_body` is exact again; the board has its own `_party_body_for_board` with the id and miss tables, cleared when the party is left |
+| 9 | lock label | READ (`0x6db2ab`, `0x6db325..0x6db33c`) |
+| 10 | caution period evidence | the addresses added to the INFERRED note (code header and the table above) |
+| 11 | Ctrl+n on an unspawned member | noted in `party_gui.md` §7: retail sends `0x7045` with id 0 there; OpenSRO's selection is local, so nothing is sent |
+| frames | Dex's leftover selection in frame 525 | said in the run's notes above |
