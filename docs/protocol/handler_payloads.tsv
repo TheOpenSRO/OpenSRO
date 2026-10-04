@@ -24,15 +24,15 @@ index	handler	server_name	server_fields	client_fields	agreement	note
 0x05d	0051a5b0	FUN_0051a5b0	u32	u32	exact	
 0x05e	00519e60	SiegeFortress_DispatchCommand	u32,u8	u32,u8  (+2 variants)	exact	
 0x060	005143b0	GObjPC_HandlePartyMsg_060	u32,u8	u32,u8	exact	
-0x061	00514530	FUN_00514530				
+0x061	00514530	Party_HandleLeave_061			exact	empty both sides: the client sender 0x81cad0 writes nothing, the server reads nothing (round 709, party_protocol.md)
 0x062	00514560	CParty::CheckCanJoin	u32	u32	exact	
 0x063	005146d0	GObjPC_HandlePartyMsg_063	u32	u32	exact	
-0x069	00514750	OnRegisterPartyReq				server side delegates to a callee; expansion NOT confirmed -- dropped
-0x06a	005147c0	PartyMatch_HandleModify				server side delegates to a callee; expansion NOT confirmed -- dropped
-0x06b	00514810	GObjPC_HandlePartyMsg_06b		u32	client-only	server side delegates to a callee; expansion NOT confirmed -- dropped
-0x06c	00514860	GObjPC_HandlePartyMsg_06c		u8	client-only	server side delegates to a callee; expansion NOT confirmed -- dropped
-0x06d	005148b0	GObjPC_HandlePartyMsg_06d	u32	u32	exact	server side via callee, confirmed exact by the client encoder
-0x06e	00514900	FUN_00514900	u32,u32,u8		server-only	
+0x069	00514750	OnRegisterPartyReq	u32,u32,u8,u8,u8,u8,str	u32,u32,u8,u8,u8,u8,str	exact	round 709: read exact, gs:0x5c2e10 against c:0x823c20 (party_protocol.md, the party-match entry)
+0x06a	005147c0	PartyMatch_HandleModify	u32,u32,u8,u8,u8,u8,str	u32,u32,u8,u8,u8,u8,str	exact	round 709: read exact, gs:0x5c2e10 against c:0x823c20 (party_protocol.md, the party-match entry)
+0x06b	00514810	PartyMatch_HandleDeleteEntry_06b	u32	u32	exact	round 709: Party_PostRequest kind 0xc reads u32 (party_protocol.md)
+0x06c	00514860	PartyMatch_HandleListPage_06c	u8	u8	exact	round 709: Party_PostRequest kind 0xd reads u8; sm:0x450d20 reads u8 (party_protocol.md)
+0x06d	005148b0	PartyMatch_HandleJoinRequest_06d	u32	u32	exact	server side via callee, confirmed exact by the client encoder
+0x06e	00514900	PartyMatch_HandleJoinAnswer_06e	u32,u32,u8	u32,u32,u8	exact	round 709: the client writer is CIFPartyMatchReqJoin 0x81d210, sent as 0x306e (party_protocol.md)
 0x06f	00514af0	FUN_00514af0				
 0x080	005157f0	FUN_005157f0				server side delegates to a callee; expansion NOT confirmed -- dropped
 0x081	005154e0	GObjPC_HandleTradeMsg_081	u32	u32	exact	

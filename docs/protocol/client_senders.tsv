@@ -43,7 +43,7 @@
 0x705d	GInterfaceSend::FUN_00822970	GInterfaceSend
 0x705e	SendSiegeFortress_DispatchCommand	-
 0x7060	SendPartyMsg_060	-
-0x7061	FUN_0081cad0	-
+0x7061	SendPartyLeave_061	-
 0x7062	InterfaceNetSender::SendPartyMsg_062	InterfaceNetSender
 0x7063	SendPartyMsg_063	-
 0x7069	UI_PARTYMATCH::SendOnRegisterPartyReq	UI_PARTYMATCH
@@ -51,6 +51,8 @@
 0x706b	UI_PARTY::SendPartyMsg_06b	UI_PARTY
 0x706c	SendPartyMsg_06c	-
 0x706d	SendPartyMsg_06d	-
+0x306e	CIFPartyMatchReqJoin::FUN_0081d210	CIFPartyMatchReqJoin
+0x3080	FUN_0081cc30,FUN_0081cd20,FUN_0081ce00,FUN_0081cef0	-
 0x7074	SendMagicStateMsg_074_78f7c0,SendMagicStateMsg_074_791d40,SendMagicStateMsg_074_81c5b0,UI_SILKMALL::SendMagicStateMsg_074_793570,UI_SILKMALL::SendMagicStateMsg_074_9ec080	UI_SILKMALL
 0x7081	SendTradeMsg_081	-
 0x7082	UI_EXCHANGE::SendTradeMsg_082	UI_EXCHANGE

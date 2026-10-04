@@ -52,6 +52,14 @@ func noteMonsterKilled(hub *world.Hub, parties *party.Hub, killer int64, m comba
 // (slot 0x14). INFERRED: the point the range is measured from -- the object
 // FUN_005bca60 is handed, the dead monster whose experience it shares out.
 // 0 for a killer in no party of two or more.
+//
+// (Round 709: the INFERRED point is WRONG. FUN_005bca60 measures from the
+// KILL CREDIT -- the biggest hitter of the most-damaging group, READ at
+// 0x5bcacb-0x5bcb29 -- in the same world, horizontally with 1920-unit region
+// steps. Only an exp-share kill arms (a free-for-all kill leaves the count at
+// 0, READ 0x529e0a), and instance worlds gate on PARTYMONSTER_SPAWN. This
+// function still counts the old way; party lane S2 fixes it.
+// docs/protocol/party_rules.md, "Party monsters".)
 func partyMembersNear(hub *world.Hub, parties *party.Hub, killer int64, m combat.Monster) int {
 	if hub == nil || !inPartyWithOthers(parties, killer) {
 		return 0

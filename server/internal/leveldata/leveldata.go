@@ -411,6 +411,17 @@ func MasteryExpScale(charLevel, maxMasteryLevel int) float64 {
 // the exp bonus to depend on it too. It does not. OpenSRO applying the bonus
 // unconditionally is therefore correct, and now checked rather than unexamined.
 //
+// ROUND 709 CORRECTION: the flag IS tested, one level up. The monster's own
+// distributor is CGObjMob::vslot_399 (0x4c44a0; the gold pet's function above
+// is its twin) and it groups contributors by (exp-share flag, party or self):
+// a group with the flag set goes to the party share GObjPC::FUN_005bca60
+// (split by level, +10%/+20% per eligible member within 1000), and only a
+// group with the flag clear reaches this 1 + (n-1)*0.03 (0x4c4820; the flag
+// test is cmp BYTE [eax+0x10],0 at 0x4c475f). So the 3% is the EXP
+// FREE-FOR-ALL party's bonus only, paid to each contributor by its own damage.
+// OpenSRO still applies it to every party; party lane S2 fixes the code.
+// docs/protocol/party_rules.md, "Kill EXP and SP".
+//
 // SCOPE, because this is only part of what the engine does with a party. The
 // real server also scales each contributor's award by its share of the victim's
 // maximum HP -- Formula_ExpShareByDamage clamps damage/MaxHP to [1e-6, 1.0] --

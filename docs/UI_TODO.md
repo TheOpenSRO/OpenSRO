@@ -140,7 +140,9 @@ Every window in the real client is authored data, and building one is now mechan
    only), and **the sample text in each record is never drawn**. Before building a window from a
    `.txt` layout, check the exe names that layout: `ifcommunity.txt`, `ifguild.txt`,
    `ifplayerinfo.txt` (the live one is `ifplayerinfo_trijob2.txt`), `ifteleportboard.txt`,
-   `ifteleportareaslot.txt`, `ifunderbar.txt` and `iftargetwindowex.txt` are not in it.
+   `ifteleportareaslot.txt`, `ifunderbar.txt` and `iftargetwindowex.txt` are not in it; nor are
+   `ifquickpartywnd.txt` and `ifpartymemberviewer.txt` (round 709: `CIFQuickPartyWnd` builds its
+   slots in code, `0x6da110`; `docs/protocol/party_gui.md` §7).
 
 The network layer behind all of this is already implemented and unit-tested — `client/scripts/net/`
 has `party`, `guild`, `quest`, `inventory`, `skill`, `shop`, `trade`, `friend`, `chat`, `combat`,
@@ -412,7 +414,10 @@ authored presentation instead:
   each item's own variance since the 629-632 integration review; buffs, masteries and the per-plus
   increments not added, OPEN); **Trader/Hunter/Thief grades** and **Honor point** — no job or honour system here.
 - **Party / Community / Guild** — the row controls exist (`CIFPartySlot` builds as a slot); they
-  need one row per member with name, level and HP.
+  need one row per member with name, level and HP. **(round 709)** The party's are specified in
+  `docs/protocol/party_gui.md` §1: a leader row above seven member rows, each with the member's
+  3D portrait, race mark (from the model id), name, `Lv`, level, HP and MP bars, guild, and a
+  Banish/Leave button; party lanes C1 (window) and C3 (HUD boxes) build them.
 - **Skill** — *done (window + economy + per-skill learning, v0.1.121)*: the real `CIFSkillBoard`
   rebuilt from the client's own resinfo and a decompile of `CIFSkillBoard`/`CIFSkillGroup`/
   `CIFSkillSlot` — Weapon/Force tabs, the mastery tabs (Bicheon/Heuksal/Pacheon…), and per mastery

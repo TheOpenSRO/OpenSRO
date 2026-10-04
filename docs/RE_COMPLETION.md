@@ -4326,6 +4326,9 @@ the pool work two ticks ago.
 	4d6bef  FADD QWORD ds:0xb45ac0        <- + 1.0
 
 **Party exp bonus = 1.0 + (members - 1) x 0.03** — 3% per extra member.
+**(round 709)** Only in an **exp free-for-all** party: the monster's distributor `CGObjMob::vslot_399`
+(`0x4c44a0`) sends an exp-share party's group to the party share `GObjPC::FUN_005bca60` instead
+(split by level, 10 %/20 % per member). See `docs/protocol/party_rules.md`.
 
 Both constants are `QWORD`, so **doubles**: 0.03 and 1.0. Read as float32 the
 first is -3.7e19. The operand-size rule earned its keep again, and Ghidra had in
