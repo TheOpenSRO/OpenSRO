@@ -72,6 +72,18 @@
 #                     World3D -> Login -> CharacterSelect -> World3D, the
 #                     front-end screens signing back in with the QA account
 #                     (needs --server)
+#   --second-client "K=V|K=V"  (round 711; needs --server) start a second,
+#                     headless client against the same server before this
+#                     one, with these OPENSRO_QA_* settings on top (its own
+#                     OPENSRO_QA_ACCOUNT / _CHARACTER, an OPENSRO_QA_PARTY
+#                     step list, OPENSRO_QA_COMMANDS ...). It draws nothing,
+#                     runs at 30 frames a second of its own, logs to
+#                     <out>/second.log and is killed when this run ends. The
+#                     main client's own OPENSRO_QA_ACCOUNT/_CHARACTER/_PARTY/
+#                     _COMMANDS/_SHOTS/_PANELS are not passed to it. The two
+#                     clients' clocks differ (this one renders a frame per
+#                     tick), so the second client's steps should react
+#                     (OPENSRO_QA_PARTY=1:accept) rather than be timed.
 #   --out <dir>       where to write frames (required)
 #
 # Startup dominates a run -- roughly 65 seconds of loading against 0.33
@@ -118,7 +130,7 @@ GODOT="${GODOT:-/opt/godot-bin/Godot_v4.2.2-stable_linux.x86_64}"
 REGION='98\168.m'; FRAMES=120; SIZE=1280x720; OUT=""; SCENE="res://scenes/World3D.tscn"
 AT=""; YAW=""; PITCH=""; DIST=""; WALK=""; NOFOG=""; FREE=""; RADIUS=""; SHOTS=""
 PANELS=""; WORLDMAP=""; SAY=""; SERVER=""; GENDER=""; ATTACK=""; DEBUG=""; COLUMNS=""; EQUIP=""; SERVER_BIN="${SERVER_BIN:-/opt/opensro-server/opensro-server}"
-RECONNECT=""; RECONNECT_VIA_LOGIN=""; TELEPORT=""; PANELS_IN_PLACE=""
+RECONNECT=""; RECONNECT_VIA_LOGIN=""; TELEPORT=""; PANELS_IN_PLACE=""; SECOND=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -160,6 +172,7 @@ while [ $# -gt 0 ]; do
     --free)   FREE=1;      shift ;;
     --reconnect) RECONNECT="$2"; shift 2 ;;
     --reconnect-via-login) RECONNECT_VIA_LOGIN=1; shift ;;
+    --second-client) SECOND="$2"; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -297,7 +310,7 @@ if [ "$SERVER" = "start" ]; then
   # SIGKILL, not SIGTERM: the in-memory server did not always die on TERM, so
   # servers piled up on the port between runs (the startup reap above now clears
   # them, but do not leave them behind in the first place).
-  trap 'kill -9 "$SERVER_PID" 2>/dev/null || true' EXIT
+  trap 'kill -9 "$SERVER_PID" ${SECOND_PID:-} 2>/dev/null || true' EXIT
   # Wait for the server to actually be listening -- and fail loudly if it is
   # not, rather than launch a client that connects to nothing and hangs (the
   # symptom that read as "flaky startup"). Stop early if the server dies.
@@ -316,6 +329,29 @@ if [ "$SERVER" = "start" ]; then
   SERVER="127.0.0.1:$SERVER_PORT"
 fi
 [ -n "$SERVER" ] && export OPENSRO_QA_SERVER="$SERVER"
+# --second-client (round 711): a second, headless client on the same server.
+SECOND_PID=""
+if [ -n "$SECOND" ]; then
+  if [ -z "$SERVER" ]; then
+    echo "qa_shot: --second-client needs --server" >&2
+    exit 2
+  fi
+  SECOND_ENV=()
+  # Split on '|': the settings themselves may hold ';' (OPENSRO_QA_PARTY's
+  # step list, OPENSRO_QA_COMMANDS).
+  IFS='|' read -ra SECOND_KV <<< "$SECOND"
+  for kv in "${SECOND_KV[@]}"; do
+    [ -n "$kv" ] && SECOND_ENV+=("$kv")
+  done
+  env -u OPENSRO_QA_ACCOUNT -u OPENSRO_QA_CHARACTER -u OPENSRO_QA_PARTY -u OPENSRO_QA_COMMANDS \
+      -u OPENSRO_QA_SHOTS -u OPENSRO_QA_PANELS -u OPENSRO_QA_PANELS_IN_PLACE -u OPENSRO_QA_WORLDMAP \
+      "${SECOND_ENV[@]}" "$GODOT" --headless --max-fps 30 --path . "$SCENE" >"$OUT/second.log" 2>&1 &
+  SECOND_PID=$!
+  # Kept for a run without its own server (--server host:port): the EXIT trap
+  # above only exists when this script started the server.
+  trap 'kill -9 ${SERVER_PID:-} "$SECOND_PID" 2>/dev/null || true' EXIT
+  echo "qa_shot: second client pid $SECOND_PID (${SECOND}) -> $OUT/second.log" >&2
+fi
 # No server, no NPCs (round 708: only the server spawns them) -- an offline
 # render places the archive's own from npcpos.txt instead (QA only, OURS).
 [ -z "$SERVER" ] && export OPENSRO_QA_LOCAL_NPCS="${OPENSRO_QA_LOCAL_NPCS-1}"

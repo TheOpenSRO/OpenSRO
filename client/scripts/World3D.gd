@@ -1174,12 +1174,6 @@ const ARMOR_SLOT_LABELS := {
 @onready var shop_buy_button: Button = $UI/Control/ActionTabs/Shop/ShopButtonRow/BuyButton
 @onready var shop_status_label: Label = $UI/Control/ActionTabs/Shop/ShopStatusLabel
 
-@onready var party_list: ItemList = $UI/Control/ActionTabs/Party/PartyList
-@onready var party_create_button: Button = $UI/Control/ActionTabs/Party/PartyButtonRow/CreateButton
-@onready var party_leave_button: Button = $UI/Control/ActionTabs/Party/PartyButtonRow/LeaveButton
-@onready var party_join_id_input: LineEdit = $UI/Control/ActionTabs/Party/PartyJoinRow/JoinIdInput
-@onready var party_join_button: Button = $UI/Control/ActionTabs/Party/PartyJoinRow/JoinButton
-@onready var party_status_label: Label = $UI/Control/ActionTabs/Party/PartyStatusLabel
 
 @onready var guild_list: ItemList = $UI/Control/ActionTabs/Guild/GuildList
 @onready var guild_name_input: LineEdit = $UI/Control/ActionTabs/Guild/GuildCreateRow/GuildNameInput
@@ -1579,11 +1573,6 @@ var _hud_warning: HudNotice
 var _hud_region: HudRegionView
 ## The region _update_zone_label_for_region last saw (-1, -1 before any).
 var _zone_region := Vector2i(-1, -1)
-## Whether the last party answer put this player in a party (chat's #).
-var _chat_in_party := false
-## The party's members by character id, from the party answers and join
-## pushes, so the leave line can name who left (round 639's review).
-var _party_names := {}
 var _hud_whole_chat: HudWholeChat
 ## The chat-input slash console (scripts/ui/console.gd) and the in-client
 ## Help window (scripts/ui/help_window.gd). GM state comes from the server's
@@ -1822,12 +1811,7 @@ func _ready() -> void:
 	NetClient.shop_list_result.connect(_on_shop_list_result)
 	NetClient.shop_buy_result.connect(_on_shop_buy_result)
 
-	NetClient.party_create_result.connect(_on_party_result)
-	NetClient.party_join_result.connect(_on_party_result)
-	NetClient.party_leave_result.connect(_on_party_leave_result)
-	NetClient.party_member_joined.connect(_on_party_member_joined)
-	NetClient.party_member_left.connect(_on_party_member_left)
-	NetClient.party_info_result.connect(_on_party_result)
+	_wire_party_state()
 
 	NetClient.guild_create_result.connect(_on_guild_create_result)
 	NetClient.guild_join_result.connect(_on_guild_result)
@@ -1885,10 +1869,6 @@ func _ready() -> void:
 	shop_refresh_button.pressed.connect(func(): NetClient.list_shop())
 	shop_buy_button.pressed.connect(_on_shop_buy_pressed)
 
-	party_create_button.pressed.connect(func(): NetClient.create_party(NetClient.current_character_name))
-	party_leave_button.pressed.connect(func(): NetClient.leave_party(NetClient.current_character_name))
-	party_join_button.pressed.connect(_on_party_join_pressed)
-
 	guild_create_button.pressed.connect(_on_guild_create_pressed)
 	guild_join_button.pressed.connect(_on_guild_join_pressed)
 	guild_leave_button.pressed.connect(func(): NetClient.leave_guild(NetClient.current_character_name))
@@ -1924,7 +1904,6 @@ func _ready() -> void:
 		NetClient.list_quests(NetClient.current_character_name)
 		NetClient.list_skills(NetClient.current_character_name)
 		NetClient.list_shop()
-		NetClient.party_info(NetClient.current_character_name)
 		NetClient.guild_info(NetClient.current_character_name)
 		_refresh_friends()
 
@@ -2302,6 +2281,8 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_panels.npc_service_selected.connect(_on_npc_service_selected)
 	_hud_panels.guild_create_requested.connect(_on_guild_create_requested)
 	_hud_panels.guild_leave_requested.connect(_on_guild_leave_requested)
+	# The party window's requests and the invitation box (round 711).
+	_wire_party_panels()
 	# A town gate's return-point box was confirmed (round 686).
 	_hud_panels.recall_designate_requested.connect(_on_recall_designate_requested)
 	# A gate's destination line in the talk box (round 603; the board's Move
@@ -2350,12 +2331,12 @@ func _try_initialize_pk2_ui() -> void:
 	_hud_chat.own_name = NetClient.current_character_name
 	_hud_chat.is_gm = _is_gm
 	# 0x7ad400's own refusals need the groups the player is in (round 634's
-	# review): the party from the party results, the guild from the kept
-	# guild info; OpenSRO has no academy.
+	# review): the party from the client's party state (round 711), the guild
+	# from the kept guild info; OpenSRO has no academy.
 	_hud_chat.group_check = func(t: int) -> bool:
 		match t:
 			HudChat.TYPE_PARTY:
-				return _chat_in_party
+				return NetClient.party.in_party
 			HudChat.TYPE_GUILD:
 				return NetClient.last_guild_result != null and NetClient.last_guild_result.guild_id != 0
 		return false
@@ -11378,7 +11359,12 @@ func _update_blob_shadow() -> void:
 ##                          window goes through _on_monster_list_result, as a
 ##                          server's list would (_qa_mobs_step); the perf
 ##                          gate's `mobs` site
-##   OPENSRO_QA_PARTY=create|join:<id>  form a party at tick 70 (round 634)
+##   OPENSRO_QA_PARTY="<tick>:<step>;..."  drive the retail party path
+##                          (round 711): window, settings, set:<exp>,<item>,
+##                          <anyone> (the Set dialog's Yes), invite:<name>
+##                          (select that spawned player and press Invite),
+##                          accept / refuse (answer the next invitation box
+##                          through its buttons), leave, kick:<name>
 ##   OPENSRO_QA_COMMANDS="/a;/b"  feed these lines through the chat console
 ##                          ("wait <seconds>" pauses the list, round 642)
 ##                          (docs/DEBUG_TOOLS.md) 2 s after boot; each prints
@@ -12000,16 +11986,9 @@ func _qa_step() -> void:
 		_run_qa_commands(OS.get_environment("OPENSRO_QA_COMMANDS"))
 	if OS.get_environment("OPENSRO_QA_NOTICES") != "":
 		_qa_notices_step(OS.get_environment("OPENSRO_QA_NOTICES"))
-	# OPENSRO_QA_PARTY=create | join:<party id> (round 634): forms a party at
-	# tick 70 through the same requests the old party panel sent, so a live
-	# run can type party chat; the retail party window's invite is not built.
 	var qa_party := OS.get_environment("OPENSRO_QA_PARTY")
-	if qa_party != "" and _qa_tick == 70 and NetClient.current_character_name != "":
-		print("QA PARTY: %s" % qa_party)
-		if qa_party == "create":
-			NetClient.create_party(NetClient.current_character_name)
-		elif qa_party.begins_with("join:"):
-			NetClient.join_party(NetClient.current_character_name, qa_party.substr(5).to_int())
+	if qa_party != "":
+		_qa_party_step(qa_party)
 	var mob_heights := OS.get_environment("OPENSRO_QA_MOB_HEIGHTS")
 	if mob_heights != "" and mob_heights.split(",").has(str(_qa_tick)):
 		_qa_mob_heights_report()
@@ -15535,6 +15514,12 @@ func _on_chat_update(u: ChatNet.Update) -> void:
 	if u == null:
 		return
 	print("CHAT: type %d from '%s': %s" % [u.type, u.sender_name, u.message_text])
+	# A party line carrying the player's own name is dropped (Chat_OnChatUpdate
+	# 0x877810, case 4: FUN_004e9530(own name, sender) skips it): the server
+	# echoes party chat to its sender (gs:0x5bef50, round 710), and the client
+	# shows its own line from the 0xB025 OK instead (0x877340, case 4).
+	if u.type == HudChat.TYPE_PARTY and u.sender_name == NetClient.current_character_name:
+		return
 	if u.type == HudChat.TYPE_WHISPER:
 		# R replies to this name (KeyMap slot 20; _key_whisper_reply).
 		_last_whisperer = u.sender_name
@@ -21262,81 +21247,250 @@ func _on_shop_buy_result(ok: bool, reason: String) -> void:
 	if ok:
 		NetClient.list_inventory(NetClient.current_character_name)
 
-# --- Party tab -------------------------------------------------------------
+# --- Party (round 711) -----------------------------------------------------
+#
+# The retail party path. NetClient.party (PartyState) applies the party
+# messages; the party window (HudPartyPane, through HudPanels) draws it and
+# asks for the requests below; the invitation box answers 0x3080. Ids follow
+# round 710's decision (client/scripts/net/fixtures/party/README.md, OURS): a
+# player's JID and world id are the low 32 bits of its character id.
 
-func _refresh_party_list(result: PartyNet.Result) -> void:
-	party_list.clear()
-	for m in result.members:
-		party_list.add_item(m.member_name)
+func _wire_party_state() -> void:
+	var party := NetClient.party
+	party.is_spawned_player = _party_is_spawned
+	party.player_name = _party_player_name
+	party.own_job_state = _party_own_job
+	if party.own_jid == 0:
+		party.own_jid = _party_own_jid()
+	party.notice.connect(_on_party_notice)
+	party.invitation.connect(_on_party_invitation)
+	party.invitation_closed.connect(_on_party_invitation_closed)
+	NetClient.self_id_received.connect(_on_party_self_id)
 
-func _on_party_result(result: PartyNet.Result) -> void:
-	if result == null:
-		return
-	if result.error != "":
-		party_status_label.text = "Error: %s" % result.error
-		return
-	_chat_in_party = result.party_id != 0
-	_party_names.clear()
-	for m in result.members:
-		var pm: PartyNet.Member = m
-		if pm != null:
-			_party_names[pm.character_id] = pm.member_name
-	if result.party_id == 0:
-		party_status_label.text = "Not in a party."
-		party_list.clear()
-		if _hud_panels != null:
-			_hud_panels.set_party_marks(false)
-		return
-	party_status_label.text = "Party #%d (%d member(s))." % [result.party_id, result.members.size()]
-	# The pane's leader marks (IFParty::FUN_006d6640). Every playable body
-	# here is Chinese (race 0); the server does not send the leader's race.
+func _wire_party_panels() -> void:
+	_hud_panels.party_state = NetClient.party
+	_hud_panels.set_party_hooks({
+		"selected_target": _party_selected_target,
+		"race_of_model": _party_race_of_model,
+		"own_vitals": _party_own_vitals,
+		"own_guild": _party_own_guild,
+		"own_portrait": _party_own_portrait,
+	})
+	_hud_panels.party_create_requested.connect(_on_party_create_requested)
+	_hud_panels.party_invite_requested.connect(_on_party_invite_requested)
+	_hud_panels.party_leave_requested.connect(_on_party_leave_requested)
+	_hud_panels.party_kick_requested.connect(_on_party_kick_requested)
+	_hud_panels.party_answer_requested.connect(_on_party_answer_requested)
+	# Party match toggles the matching window, as its key does (0x6d59f0 ->
+	# 0x79c170(1)); the window itself is lane C2's.
+	_hud_panels.party_match_requested.connect(_on_party_match_requested)
+	if _hud_player_info != null:
+		_hud_player_info.bars_changed.connect(_hud_panels.party_vitals_changed)
+
+func _on_party_match_requested() -> void:
 	if _hud_panels != null:
-		_hud_panels.set_party_marks(true, 0)
-	_refresh_party_list(result)
+		_hud_panels.toggle("partymatch")
 
-func _on_party_join_pressed() -> void:
-	var id_text := party_join_id_input.text.strip_edges()
-	if not id_text.is_valid_int():
-		party_status_label.text = "Enter a numeric party ID."
+func _on_party_self_id(_character_id: int) -> void:
+	if NetClient.party.own_jid == 0:
+		NetClient.party.own_jid = _party_own_jid()
+
+func _party_own_jid() -> int:
+	var own := _own_id()
+	return own & 0xffffffff if own >= 0 else 0
+
+## The spawned player a party JID or inviter id names, or null.
+func _party_body(jid: int) -> Node:
+	for id in _other_bodies:
+		if (int(id) & 0xffffffff) == jid:
+			var b = _other_bodies[id]
+			if b != null and is_instance_valid(b):
+				return b as Node
+	return null
+
+func _party_is_spawned(world_id: int) -> bool:
+	return _party_body(world_id) != null
+
+func _party_player_name(world_id: int) -> String:
+	var b := _party_body(world_id)
+	return String(b.get_meta("character_name", "")) if b != null else ""
+
+## The player's job state for the party's +0x0c (0x986f60). OpenSRO has no
+## job suits on the player yet, so the player is never in job mode: 4.
+func _party_own_job() -> int:
+	return PartyNet.JOB_NONE
+
+## The selected player's world id for Invite, or 0. The senders refuse the
+## player's own body (c:0x81c6d0 / 0x81c8f0 check "a character, and not the
+## player"); a pet or horse would give its owner's id (c:0x81c782), but
+## OpenSRO selects neither, so there is nothing to substitute.
+func _party_selected_target() -> int:
+	if _selected_character < 0 or _selected_character == _own_id():
+		return 0
+	if not _other_bodies.has(_selected_character):
+		return 0
+	return _selected_character & 0xffffffff
+
+## A model's race byte for the race marks: characterdata's Country of the
+## Figure the model is (the reference's +0x9c, round 689), -1 when unknown.
+func _party_race_of_model(ref_obj_id: int) -> int:
+	if ref_obj_id <= 0:
+		return -1
+	var cat := _appearance.catalog() if _appearance != null else null
+	if cat == null or cat.get_entry(ref_obj_id) == null:
+		return -1
+	return _race_of_body(WorldBodies.body_key(cat, ref_obj_id, ""))
+
+func _party_own_vitals() -> Array:
+	return _hud_player_info.bar_values() if _hud_player_info != null else []
+
+func _party_own_guild() -> String:
+	var g = NetClient.last_guild_result
+	return String(g.guild_name) if g != null and g.guild_id != 0 else ""
+
+func _party_own_portrait() -> Texture2D:
+	var p := _hud_player_info.portrait() if _hud_player_info != null else null
+	if p == null or p.character() == null:
+		return null
+	return p.get_texture()
+
+## A party line for the system message window. A server refusal (a code) is
+## drawn by the client's error path, 0x778190 (c:0x880010 / 0x8800b0 /
+## 0x880120): type 0; joins, leaves and the rest are type 4 (UI_PARTY
+## 0x886b10). A code the client has no message for shows nothing (its log
+## line says so) rather than words of ours.
+func _on_party_notice(key: String, arg: String, code: int) -> void:
+	if key == "":
+		print("World3D: party refusal code 0x%x -- the client has no message for it" % code)
 		return
-	NetClient.join_party(NetClient.current_character_name, id_text.to_int())
-
-func _on_party_leave_result(ok: bool, reason: String) -> void:
-	if ok:
-		_chat_in_party = false
-		party_status_label.text = "Left the party."
-		party_list.clear()
-		if _hud_panels != null:
-			_hud_panels.set_party_marks(false)
-	else:
-		party_status_label.text = "Leave failed: %s" % reason
-
-func _on_party_member_joined(member: PartyNet.MemberJoined) -> void:
-	if member == null:
+	var text := _ui_text_table.get_text(key, "") if _ui_text_table != null else ""
+	if text == "":
+		print("World3D: party message %s is not in the text table" % key)
 		return
-	_party_names[member.character_id] = member.member_name
-	# UI_PARTY 0x886b10 writes UIIT_MSG_PARTY_JOIN ("[%s]joined the party.")
-	# with type 4, the PARTY filter (round 639, READ).
-	var join_t := _ui_text_table.get_text("UIIT_MSG_PARTY_JOIN", "") if _ui_text_table != null else ""
-	_log_system(join_t.replace("%s", member.member_name) if join_t.contains("%s") else "%s joined your party." % member.member_name,
-		HudSystemMessage.TYPE_PARTY)
-	NetClient.party_info(NetClient.current_character_name)
+	if text.contains("%s"):
+		text = text.replace("%s", arg)
+	_log_system(text, HudSystemMessage.TYPE_ALWAYS if code != 0 else HudSystemMessage.TYPE_PARTY)
 
-func _on_party_member_left(character_id: int) -> void:
-	# UI_PARTY 0x886b10 writes UIIT_MSG_PARTY_SECEDE ("[%s] has left the
-	# party.") with type 4. The push carries only the id; the name comes from
-	# the party list this client keeps (round 639's review). An unknown id
-	# keeps our own line.
-	var left_name := String(_party_names.get(character_id, ""))
-	_party_names.erase(character_id)
-	var secede_t := _ui_text_table.get_text("UIIT_MSG_PARTY_SECEDE", "") if _ui_text_table != null else ""
-	if left_name != "" and secede_t.contains("%s"):
-		_log_system(secede_t.replace("%s", left_name), HudSystemMessage.TYPE_PARTY)
-	elif left_name != "":
-		_log_system("[%s] has left the party." % left_name, HudSystemMessage.TYPE_PARTY)
-	else:
-		_log_system("A party member left (character #%d)." % character_id, HudSystemMessage.TYPE_PARTY)
-	NetClient.party_info(NetClient.current_character_name)
+func _on_party_invitation(_inviter_id: int, inviter_name: String, _kind: int, flags: int) -> void:
+	if _hud_panels != null:
+		_hud_panels.show_party_invitation(inviter_name, flags)
+	_qa_party_answer_pending()
+
+func _on_party_invitation_closed() -> void:
+	if _hud_panels != null:
+		_hud_panels.close_party_invitation()
+
+## Invite with no party: 0x7060 with the settings block's type byte, then the
+## pending line (UIIT_STT_PARTY_PROPOSAL_PENDING, type 4, c:0x778210).
+func _on_party_create_requested(target_world_id: int) -> void:
+	NetClient.party_create(target_world_id)
+	_party_proposal_line(target_world_id)
+
+func _on_party_invite_requested(target_world_id: int) -> void:
+	NetClient.party_invite(target_world_id)
+	_party_proposal_line(target_world_id)
+
+func _party_proposal_line(target_world_id: int) -> void:
+	var t := _ui_text_table.get_text("UIIT_STT_PARTY_PROPOSAL_PENDING", "") if _ui_text_table != null else ""
+	if t != "":
+		_log_system(t.replace("%s", _party_player_name(target_world_id)), HudSystemMessage.TYPE_PARTY)
+
+func _on_party_leave_requested() -> void:
+	NetClient.party_leave()
+
+func _on_party_kick_requested(member_jid: int) -> void:
+	NetClient.party_kick(member_jid)
+
+func _on_party_answer_requested(accept: bool) -> void:
+	NetClient.party_answer(accept)
+
+# OPENSRO_QA_PARTY (round 711): "<tick>:<step>;..." -- each step at its tick
+# through the same controls a player uses (the party pane's buttons, the
+# settings dialog, the invitation box's buttons). See the QA block above.
+var _qa_party_answer := ""
+
+func _qa_party_step(spec: String) -> void:
+	for part in spec.split(";", false):
+		var colon := part.find(":")
+		if colon < 0 or not part.substr(0, colon).is_valid_int():
+			if _qa_tick == 70:
+				printerr("QA PARTY: bad step '%s' (want <tick>:<step>)" % part)
+			continue
+		if int(part.substr(0, colon)) != _qa_tick:
+			continue
+		var step := part.substr(colon + 1)
+		print("QA PARTY: tick %d %s" % [_qa_tick, step])
+		_qa_party_do(step)
+
+func _qa_party_do(step: String) -> void:
+	if _hud_panels == null:
+		return
+	var arg := step.substr(step.find(":") + 1) if step.contains(":") else ""
+	var verb := step.substr(0, step.find(":")) if step.contains(":") else step
+	match verb:
+		"window":
+			_hud_panels.open("party")
+		"settings":
+			_hud_panels.open("party")
+			if _hud_panels.party_pane != null:
+				_hud_panels.party_pane.press_set()
+		"set":
+			var v := arg.split(",")
+			_hud_panels.open("party")
+			var dlg := _hud_panels.open_party_settings()
+			if dlg != null and v.size() == 3:
+				dlg.choose("exp", 0 if v[0] == "1" else 1)
+				dlg.choose("item", 0 if v[1] == "1" else 1)
+				if dlg.anyone_box != null:
+					dlg.anyone_box.button_pressed = v[2] == "1"
+				dlg.press_yes()
+		"invite":
+			var found := false
+			for id in _other_bodies:
+				var b = _other_bodies[id]
+				if b != null and is_instance_valid(b) and String((b as Node).get_meta("character_name", "")) == arg:
+					found = true
+					_select_character(int(id), arg)
+			if not found:
+				print("QA PARTY: no spawned player named %s" % arg)
+				return
+			_hud_panels.open("party")
+			if _hud_panels.party_pane != null:
+				_hud_panels.party_pane.press_invite()
+		"accept", "refuse":
+			_qa_party_answer = verb
+			_qa_party_answer_pending()
+		"leave":
+			_hud_panels.open("party")
+			if _hud_panels.party_pane != null:
+				_hud_panels.party_pane.press_dismiss()
+		"kick":
+			_hud_panels.open("party")
+			var pane := _hud_panels.party_pane
+			if pane == null:
+				return
+			var rows := NetClient.party.row_members()
+			for i in rows.size():
+				if rows[i].member_name == arg:
+					var btn := pane.row_node(i, "GDR_PTYSLOT_BTN_EXITFROMPARTY") as BaseButton
+					if btn != null:
+						btn.pressed.emit()
+		_:
+			printerr("QA PARTY: unknown step '%s'" % step)
+
+## Presses the invitation box's Accept or Refuse when the QA run asked for
+## one and a box is up.
+func _qa_party_answer_pending() -> void:
+	if _qa_party_answer == "" or _hud_panels == null:
+		return
+	var box := _hud_panels.get_node_or_null("PartyInvitation")
+	if box == null:
+		return
+	var btn := box.find_child("GDR_MBIN_BTN_OK" if _qa_party_answer == "accept" else "GDR_MBIN_BTN_CANCEL", true, false) as BaseButton
+	if btn != null:
+		print("QA PARTY: pressing %s on the invitation" % _qa_party_answer)
+		_qa_party_answer = ""
+		btn.pressed.emit()
 
 # --- Guild tab -------------------------------------------------------------
 

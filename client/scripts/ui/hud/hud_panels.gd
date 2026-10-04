@@ -272,32 +272,112 @@ func set_equipment_avatar_mode(avatar: bool) -> void:
 	_set_shown(window, AVATAR_SKILL_STRIP, false)
 	_show_equipment_backdrops()
 
-## The party pane's leader marks (round 633's review). Both are Style 64 in
-## ifparty.txt, so the builder hides them at creation; CIFParty's refresh
-## shows them. READ: Create keeps GDR_PTY_PARTY_LEADER (ID 14) at +0x3a8 and
-## GDR_PTY_PARTY_LEADER_RACE_MARK (ID 15) at +0x3ac (0x6d70b6..0x6d70e0).
-## IFParty::FUN_006d6640 asks the party manager (0xeeebd8) whether the player
-## is in a party (0x987070: its state's byte +0xe) and shows both
-## (ShowWindow(1), 0x6d6676..0x6d6687) or hides both (0x6d6cdc..0x6d6ced);
-## in a party it gives the race mark the leader's race art (0x6d67fb..0x6d682c:
-## the object's race byte +0x9c into 0x98caa0(.., race, 1) --
-## com_kindred_china16.ddj for 0, com_kindred_europe16.ddj for 1).
-const PARTY_LEADER_MARK := "GDR_PTY_PARTY_LEADER"
-const PARTY_RACE_MARK := "GDR_PTY_PARTY_LEADER_RACE_MARK"
-const PARTY_RACE_ART := ["interface\\ifcommon\\com_kindred_china16.ddj", "interface\\ifcommon\\com_kindred_europe16.ddj"]
+# --- The party window (round 711, lane C1) -------------------------------
+#
+# The GDR_PARTY pane is filled by HudPartyPane from the client's party state
+# (PartyState, NetClient.party), built with the main popup. Its requests go
+# out through these signals; World3D sends them (NetClient.party_create ...).
+# The settings dialog (CIFSetPartyMode, child 70 of the pane) and the
+# invitation box (HUD request kind 6) are shown from here too.
 
-## Shows or hides the party pane's leader marks as FUN_006d6640 does.
-## `leader_race` is 0 (China) or 1 (Europe).
-func set_party_marks(in_party: bool, leader_race: int = 0) -> void:
-	var window: HudWindow = _windows.get("party")
-	if window == null:
+## Invite out of a party: create a party with this player (0x7060).
+signal party_create_requested(target_world_id: int)
+## Invite into this party (0x7062).
+signal party_invite_requested(target_world_id: int)
+## Leave (0x7061), also the leader's Dismiss.
+signal party_leave_requested
+## Banish a member (0x7063).
+signal party_kick_requested(member_jid: int)
+## The Party match button: the matching window (lane C2's).
+signal party_match_requested
+## The invitation box's answer (0x3080).
+signal party_answer_requested(accept: bool)
+
+## The party state the pane draws; NetClient.party when not set (tests set
+## their own).
+var party_state: PartyState = null
+## The world's hooks for the pane (HudPartyPane's Callables: selected_target,
+## race_of_model, own_vitals, own_guild, own_portrait), kept so a pane built
+## later takes them.
+var party_hooks := {}
+var party_pane: HudPartyPane = null
+var _party_settings: PartySettingsDialog = null
+var _party_invitation: PartyInvitePopup = null
+
+func _party() -> PartyState:
+	if party_state == null:
+		party_state = NetClient.party
+	return party_state
+
+## Sets the world's hooks on the pane (now, and on one built later).
+func set_party_hooks(hooks: Dictionary) -> void:
+	for k in hooks:
+		party_hooks[k] = hooks[k]
+	_apply_party_hooks()
+
+func _apply_party_hooks() -> void:
+	if party_pane == null:
 		return
-	_set_shown(window, PARTY_LEADER_MARK, in_party)
-	_set_shown(window, PARTY_RACE_MARK, in_party)
-	if in_party and _builder != null and leader_race >= 0 and leader_race < PARTY_RACE_ART.size():
-		var mark := window.node(PARTY_RACE_MARK) as TextureRect
-		if mark != null:
-			mark.texture = _builder.load_texture(PARTY_RACE_ART[leader_race])
+	for k in party_hooks:
+		party_pane.set(k, party_hooks[k])
+	party_pane.refresh()
+
+func _wire_party_pane(pane: Control) -> void:
+	if pane == null or party_pane != null:
+		return
+	party_pane = HudPartyPane.new(_builder, pane, _party())
+	party_pane.create_requested.connect(func(t: int) -> void: party_create_requested.emit(t))
+	party_pane.invite_requested.connect(func(t: int) -> void: party_invite_requested.emit(t))
+	party_pane.leave_requested.connect(func() -> void: party_leave_requested.emit())
+	party_pane.kick_requested.connect(func(j: int) -> void: party_kick_requested.emit(j))
+	party_pane.match_requested.connect(func() -> void: party_match_requested.emit())
+	party_pane.settings_requested.connect(func() -> void: open_party_settings(pane))
+	_apply_party_hooks()
+
+## The settings dialog (0x6d61e0): child 70 of the party pane; one at a time.
+func open_party_settings(pane: Control = null) -> PartySettingsDialog:
+	if is_instance_valid(_party_settings) and not _party_settings.is_queued_for_deletion():
+		return _party_settings
+	var parent: Control = pane if pane != null else (_popup.pane_control("GDR_PARTY") if _popup != null else null)
+	if parent == null or _builder == null:
+		return null
+	var dlg := PartySettingsDialog.new()
+	if not dlg.build(_builder, _party()):
+		dlg.queue_free()
+		return null
+	dlg.confirmed.connect(func(e: int, i: int, a: int) -> void: _party().set_preferences(e, i, a))
+	parent.add_child(dlg)
+	_party_settings = dlg
+	return dlg
+
+## The invitation box (HUD request kind 6), centred as CMessageBoxManager
+## places a box (0x6ec5d0: x = width / 2 - 0x9a, y = height / 2 - 0x4a).
+func show_party_invitation(who: String, flags: int) -> PartyInvitePopup:
+	close_party_invitation()
+	if _builder == null:
+		return null
+	var box := PartyInvitePopup.new()
+	if not box.build(_builder, who, flags):
+		box.queue_free()
+		return null
+	box.answered.connect(func(accept: bool) -> void: party_answer_requested.emit(accept))
+	box.expired.connect(func() -> void: _party().forget_invitation())
+	var view := get_viewport_rect().size if is_inside_tree() else Vector2(1024, 768)
+	box.position = Vector2(floorf(view.x / 2.0) - 0x9a, floorf(view.y / 2.0) - 0x4a)
+	add_child(box)
+	_party_invitation = box
+	return box
+
+## The player's own bars changed: the party window's own rows follow
+## (HudPartyPane.refresh_vitals).
+func party_vitals_changed() -> void:
+	if party_pane != null:
+		party_pane.refresh_vitals()
+
+func close_party_invitation() -> void:
+	if is_instance_valid(_party_invitation):
+		_party_invitation.close()
+	_party_invitation = null
 
 ## Whether the equipment window is showing its avatar slots.
 func is_equipment_avatar_mode() -> bool:
@@ -738,6 +818,7 @@ func _open_main_popup(panel_id: String) -> HudWindow:
 		_wire_doll_rotation(window)
 		_apply_equipment_slot_backgrounds()
 		_place_paper_doll_docked()
+		_wire_party_pane(popup.pane_control("GDR_PARTY"))
 		_fill_equipment_slots(_equipped_items)
 		# The bag's page tabs and its shown page (0x6b6620 builds them with
 		# the bag; 0x6b3d00(0) selects the first).
@@ -5586,8 +5667,9 @@ func _populate(panel_id: String) -> void:
 			NetClient.skill_state(who)
 		"community":
 			NetClient.friend_list(who)
-		"party":
-			NetClient.party_info(who)
+		# "party": nothing to ask. The window draws the client's own party
+		# state (NetClient.party), which the party messages keep current
+		# (round 711; the retail window sends no request either).
 		"guild":
 			NetClient.guild_info(who)
 		"character":

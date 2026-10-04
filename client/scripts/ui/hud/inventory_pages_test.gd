@@ -127,6 +127,9 @@ func _initialize() -> void:
 	var panels_script := load(PANELS_PATH) as GDScript
 	var builder := _builder()
 	var panels: Control = panels_script.new(builder)
+	# The panels' own party state, so the party checks leave the NetClient
+	# autoload's alone for later suites (round 711's review, 9i).
+	panels.set("party_state", PartyState.new())
 	root.add_child(panels)
 	await process_frame
 	await _registry_checks(panels)
@@ -168,14 +171,30 @@ func _registry_checks(panels: Control) -> void:
 	await process_frame
 
 func _party_mark_checks(panels: Control) -> void:
-	if not panels.has_method("set_party_marks"):
-		_check(false, "HudPanels shows the party leader marks (set_party_marks)")
-		return
+	# Round 711: the marks follow the client's party state through the party
+	# pane (HudPartyPane), not a setter of their own.
 	var window: Control = panels.call("open", "party")
+	var pane = panels.get("party_pane")
+	if pane == null:
+		_check(false, "HudPanels builds the party pane with the popup (party_pane)")
+		return
 	var mark := window.call("node", "GDR_PTY_PARTY_LEADER") as CanvasItem
-	panels.call("set_party_marks", true, 0)
+	var state: PartyState = pane.state
+	var info := PartyNet.PartyInfo.new()
+	info.mask = 0xff
+	info.party_id = 7
+	info.leader_jid = 101
+	info.flags = 1
+	var m := PartyNet.Member.new()
+	m.mask = 0xff
+	m.jid = 101
+	m.member_name = "Aria"
+	info.members.append(m)
+	state.handle(PartyNet.OP_PARTY_INFO, PartyNet.encode_party_info(info))
 	_check(mark != null and mark.is_visible_in_tree(), "in a party the leader mark shows (IFParty 0x6d6640)")
-	panels.call("set_party_marks", false)
+	var gone := PartyNet.Event.new()
+	gone.kind = PartyNet.EVENT_DISSOLVED
+	state.handle(PartyNet.OP_EVENT, PartyNet.encode_event(gone))
 	_check(mark != null and not mark.visible, "out of a party it hides again")
 	panels.call("open", "inventory")
 

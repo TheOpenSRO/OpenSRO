@@ -43,6 +43,10 @@ const decodeSurfaceNote = "Decode* in internal/session is the wire-decoding surf
 // with the reason. An entry here is a claim that the code is knowledge rather
 // than a gap -- the same contract as unwired_test.go's parked list.
 var knownOrphans = map[string]string{
+	// Round 710: the party API published for the next party lanes (the round-709
+	// plan in docs/protocol/party_protocol.md, "Implementation lanes"). Each is
+	// golden-tested against client/scripts/net/fixtures/party or in party_test.go.
+	"PartyByID": "round 710: lane S3 finds the party behind a match entry; party_test.go.",
 	"DecodeGroup": "round 708: the NPC group spawn read back the way sro_client.exe reads it (npcspawn/wire.go) -- " +
 		"the client consumes the bytes over the socket; the npcspawn and session tests hold the server's frames to it.",
 	"SingleSpawn": "round 708: the retail 0x3015 payload (record + spawn-type byte). OpenSRO's NPCs are all in the " +
@@ -141,7 +145,6 @@ var baseline = map[string]string{
 	"ArmorClassOf":        "internal/equipment/defaultwear.go",
 	"ArmourLossSlot":      "internal/durability/durability.go",
 	"BonusTier":           "internal/equipment/itemset.go",
-	"CanCreate":           "internal/party/party.go",
 	"CanDeclareWar":       "internal/guild/war.go",
 	"CanRequestAlliance":  "internal/guild/alliance.go",
 	"CapDamage":           "internal/combat/combat.go",

@@ -1984,6 +1984,15 @@ func main() {
 	if charDefaults != nil && (defaultSkills == nil || defaultQuests == nil) {
 		logger.Warn("character defaults loaded but a store cannot take them", "skills", defaultSkills != nil, "quests", defaultQuests != nil)
 	}
+	// The party on retail's opcodes (round 710): the handlers, the logout
+	// removal and the 1 s member-update sampler (session/party.go).
+	partyDeps := session.PartyDeps{Chars: chars, Hub: hub, Parties: parties, Trades: trades, Guilds: guilds, Skills: skills, Mana: manaTracker, Logger: logger}
+	go session.RunPartyUpdates(ctx, partyDeps)
+	// Party matching on retail's opcodes (round 713): the listings, their
+	// pages and the join request with its 15 s backstop
+	// (session/partymatch.go, party/match.go).
+	partyMatchDeps := session.PartyMatchDeps{PartyDeps: partyDeps, Match: party.NewMatcher(parties)}
+	go session.RunPartyMatchSweep(ctx, partyMatchDeps)
 	handle := gateway.Chain(
 		// The front-end theme (round 678): answered on any connection, before
 		// and without login; the client asks on a short connection of its own.
@@ -2056,7 +2065,8 @@ func main() {
 		session.SkillListHandler(chars, skills),
 		session.SkillStateHandlerWithRefs(chars, skills, refItems),
 		session.RaiseMasteryHandler(chars, skills),
-		session.PartyHandler(chars, parties),
+		session.PartyHandler(partyDeps),
+		session.PartyMatchHandler(partyMatchDeps),
 		session.GuildHandler(chars, guilds, hub),
 		// Chat (round 634): the five channels, whispers, the global
 		// chatting item and the GM's type-3 line.
@@ -2075,7 +2085,8 @@ func main() {
 	// charges and expired jobs are forgotten (before worldDisconnect, while
 	// the hub still knows the session).
 	berserkDisconnect := session.BerserkDisconnectHandler(hub, zerkTracker, compositeKeeper)
-	partyDisconnect := session.PartyDisconnectHandler(parties)
+	partyDisconnect := session.PartyDisconnectHandler(partyDeps)
+	partyMatchDisconnect := session.PartyMatchDisconnectHandler(partyMatchDeps)
 	duelDisconnect := session.DuelDisconnectHandler(hub, duels)
 	tradeDisconnect := session.TradeDisconnectHandler(hub, trades)
 	guildPointsDisconnect := session.GuildPointsDisconnectHandler(hub, gpSkills)
@@ -2118,8 +2129,16 @@ func main() {
 			tradeDisconnect(sess)
 			guildPointsDisconnect(sess)
 			berserkDisconnect(sess)
-			worldDisconnect(sess)
+			// The party removal first, then the match entry, as the
+			// ShardManager's logout does (SM 0x4296f0: 0x44f580 moves a
+			// leader's entry to the next leader before 0x451590 deletes a
+			// party-less owner's). Both before worldDisconnect: the match hook
+			// reads the session's character from world.Hub, and a page built
+			// while a leader is out of the world but still in its party would
+			// otherwise skip its entry (round 713's review).
 			partyDisconnect(sess)
+			partyMatchDisconnect(sess)
+			worldDisconnect(sess)
 		},
 	}
 

@@ -295,6 +295,9 @@ func build_control(def: UiLayoutParser.ControlDef) -> Control:
 				# Generic container for unhandled or compound control types
 				node = _build_generic(def)
 
+	if node != null and def.type == "CIFSubFrame" and def.text != "":
+		_add_subframe_caption(node, def)
+
 	if node != null:
 		node.name = def.name
 		node.position = Vector2(def.rect.position)
@@ -521,6 +524,9 @@ func _build_button(def: UiLayoutParser.ControlDef) -> TextureButton:
 		btn.texture_pressed = load_texture(press_path)
 		btn.texture_disabled = load_texture(disable_path)
 
+	# The def is kept so set_button_text can caption a button authored with
+	# no text (ifpartyslot's row button, round 711).
+	btn.set_meta(STATIC_DEF_META, def)
 	if def.text != "":
 		# READ: CIFButton draws its text with CIFStatic's own draw (its vtable
 		# slot 13, 0x655f30, jumps to 0x64d940) and lays it out with the same
@@ -616,6 +622,24 @@ func set_static_text(node: Control, text: String) -> Label:
 			return null
 		label = _make_text_label(def)
 		label.name = "Text"
+		node.add_child(label)
+		_lay_caption(node, label)
+	label.text = text
+	return label
+
+## Puts `text` on a button the way SetText does on a CIFButton (round 711):
+## its caption label, made from the button's def the first time when the
+## layout authored it with no text. Null for a node this builder did not make.
+func set_button_text(node: Control, text: String) -> Label:
+	if node == null:
+		return null
+	var label := node.get_node_or_null("ButtonLabel") as Label
+	if label == null:
+		var def = node.get_meta(STATIC_DEF_META, null)
+		if def == null:
+			return null
+		label = _make_text_label(def)
+		label.name = "ButtonLabel"
 		node.add_child(label)
 		_lay_caption(node, label)
 	label.text = text
@@ -1104,6 +1128,74 @@ static func _spin_refresh(ctrl: Control) -> void:
 	var label := ctrl.get_node_or_null("Value") as Label
 	if label != null:
 		label.text = str(int(ctrl.get_meta("value", 0)) + 1)
+
+## The caption a CIFSubFrame draws (round 711). READ, CIFSubFrame's Create
+## (vslot 10, 0x81a530): it makes a text static at (10, 7), the frame's width
+## less 20 wide and 12 high (`ecx = width - 0x14`, the rect 0xa/0x7/../0xc),
+## gives it font 0 (0xba5460(0) -> 0x655270), HAlign 1 (centred, slot +0x14)
+## and VAlign 0 (top, slot +0x18); SetText on the frame (vslot 45, 0x81a610)
+## is that static's SetText, so the layout's Text lands there. Nine resinfo
+## subframes carry one (MEASURED: ifparty's "Party informaiton", ifaction's
+## four headers, the academy, quest, storage and item mall frames). Its
+## colour is not set by that code: white, as the static's default (INFERRED
+## from the user's party screenshots 01/12).
+const SUBFRAME_CAPTION := "Caption"
+
+func _add_subframe_caption(frame: Control, def: UiLayoutParser.ControlDef) -> void:
+	var label := Label.new()
+	label.name = SUBFRAME_CAPTION
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.clip_text = false
+	label.set_meta(STATIC_TEXT_META, true)
+	label.set_meta(CLIENT_RECT_META, Rect2i())
+	var font := font_at(0)
+	if font != null:
+		label.add_theme_font_override("font", font)
+	label.add_theme_font_size_override("font_size", FONT_SIZES[0] if FONT_SIZES.size() > 0 else FONT_SIZE_FALLBACK)
+	crisp_text(label)
+	label.text = _resolve_text(def.text)
+	var rect := Rect2(10, 7, maxf(0.0, float(def.rect.size.x) - 20.0), 12)
+	label.set_meta(AUTHORED_RECT_META, rect)
+	place_label(label, rect)
+	_relay(label)
+	frame.add_child(label)
+
+## The caption label of a subframe built by build_control, or null.
+static func subframe_caption(frame: Node) -> Label:
+	return frame.get_node_or_null(SUBFRAME_CAPTION) as Label if frame != null else null
+
+## The check box CIFCheckBox draws (round 711), put into `holder` (the generic
+## control the builder makes for a CIFCheckBox). READ: CIFCheckBox::Create
+## (0x656f90) loads `resinfo\ifcheckbox.txt`'s Create into itself -- one
+## static, GDR_STATIC_SELECTED (ID 0), `com_checkbutton_on.ddj` at 0,0 with
+## its art's size -- over the box's own art (the layout's DDJ). A press's
+## release (message 0x202, vslot 17 0x656ce0) flips the state byte +0x36c
+## when enabled (+0x36d) and shows child 0 by it (0x8b51f0(0, 1) -> ShowWindow);
+## the constructor (0x656c70) starts it checked and enabled. Returns the
+## button; its `toggled` signal and `button_pressed` are the state.
+func make_checkbox(holder: Control, box_ddj: String, checked: bool = true) -> TextureButton:
+	var btn := TextureButton.new()
+	btn.name = "CheckBox"
+	btn.toggle_mode = true
+	btn.ignore_texture_size = true
+	btn.stretch_mode = TextureButton.STRETCH_SCALE
+	btn.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	btn.texture_normal = load_texture(box_ddj)
+	var mark := TextureRect.new()
+	mark.name = "GDR_STATIC_SELECTED"
+	mark.texture = load_texture("interface\\ifcommon\\com_checkbutton_on.ddj")
+	mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mark.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	if mark.texture != null:
+		mark.size = mark.texture.get_size()
+	btn.add_child(mark)
+	btn.button_pressed = checked
+	mark.visible = checked
+	btn.toggled.connect(func(on: bool) -> void: mark.visible = on)
+	holder.add_child(btn)
+	return btn
 
 func _build_generic(def: UiLayoutParser.ControlDef) -> Control:
 	var ctrl := Control.new()
